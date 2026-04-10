@@ -1,0 +1,14 @@
+[package]
+name = "adapters"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = ["std"]
+std = ["logic/std"]
+
+[dependencies]
+logic = { path = "../logic", default-features = false }
+hysteresis = "*"
+embedded-hal-async = "*"
+embedded-storage-async = "*"

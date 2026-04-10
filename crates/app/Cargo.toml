@@ -1,0 +1,27 @@
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "app"
+harness = false
+
+[dependencies]
+cortex-m = { workspace = true }
+cortex-m-rt = { workspace = true }
+embedded-hal-async = { workspace = true, features = ["defmt-03"] }
+embassy-stm32 = { workspace = true, features = ["defmt"] }
+embassy-executor = { workspace = true, features = ["defmt"] }
+embassy-time = { workspace = true, features = ["defmt"] }
+defmt = { workspace = true }
+defmt-rtt = { workspace = true }
+panic-probe = { workspace = true, features = ["defmt-error", "print-defmt"] }
+embassy-sync = { workspace = true, features = ["defmt"] }
+logic = { path = "../logic", default-features = false, features = ["defmt"] }
+adapters = { path = "../adapters", default-features = false }
+embedded-test-linker-script = { workspace = true }
+bsp = { path = "../bsp", default-features = false }
+
+[dev-dependencies]
+embedded-test = { workspace = true, features = ["defmt"] }

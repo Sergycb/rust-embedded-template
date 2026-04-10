@@ -1,0 +1,19 @@
+[package]
+name = "logic"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = ["std"]
+std = []
+defmt = ["dep:defmt"]
+
+[dependencies]
+embedded-hal-async = "*"
+heapless = "*"
+embedded-io-async = "*"
+embassy-sync = "*"
+embassy-futures = "*"
+embassy-time = "*"
+embedded-storage-async = "*"
+defmt = { version = "*", optional = true }

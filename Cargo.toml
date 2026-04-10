@@ -1,0 +1,48 @@
+[workspace]
+members = ["crates/*"]
+exclude = ["crates/adapters", "crates/logic"]
+resolver = "2"
+
+[workspace.package]
+authors = ["{{authors}}"]
+version = "0.1.0"
+edition = "2024"
+
+[workspace.dependencies]
+embedded-hal-async = { version = "*" }
+embedded-storage-async = "*"
+embassy-sync = { version = "*" }
+embassy-futures = "*"
+embassy-time = { version = "*" }
+embassy-embedded-hal = { version = "*" }
+embassy-stm32 = { version = "*", features = [
+	"{{chip_feature}}",
+	"time-driver-any",
+] }
+embassy-executor = { version = "*", features = [
+	"platform-cortex-m",
+	"executor-thread",
+	"executor-interrupt",
+] }
+defmt = { version = "*" }
+defmt-rtt = { version = "*" }
+embedded-test-linker-script = { version = "*" }
+embedded-test = { version = "*", features = ["embassy-010"] }
+panic-probe = { version = "*" }
+cortex-m = { version = "*", features = [
+	"critical-section-single-core",
+	"inline-asm",
+] }
+cortex-m-rt = "*"
+static_cell = "*"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+debug = true
+
+[profile.dev.package."*"]
+opt-level = "s"

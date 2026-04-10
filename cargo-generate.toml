@@ -1,0 +1,24 @@
+[template]
+cargo_generate_version = ">=0.19.0"
+
+[placeholders]
+chip = { type = "string", prompt = "Probe-rs chip identifier (e.g. STM32F407VETx)", default = "STM32F407VETx" }
+chip_feature = { type = "string", prompt = "embassy-stm32 chip feature (e.g. stm32f407ve)", default = "stm32f407ve" }
+target = { type = "string", prompt = "Rust target triple", choices = [
+	"thumbv6m-none-eabi",
+	"thumbv7m-none-eabi",
+	"thumbv7em-none-eabi",
+	"thumbv7em-none-eabihf",
+	"thumbv8m.base-none-eabi",
+	"thumbv8m.main-none-eabi",
+	"thumbv8m.main-none-eabihf",
+], default = "thumbv7em-none-eabihf" }
+cpu = { type = "string", prompt = "Target CPU for rustflags", choices = [
+	"cortex-m0",
+	"cortex-m0plus",
+	"cortex-m3",
+	"cortex-m4",
+	"cortex-m7",
+	"cortex-m23",
+	"cortex-m33",
+], default = "cortex-m4" }

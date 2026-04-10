@@ -1,0 +1,56 @@
+{
+	"configurations": [
+		{
+			"type": "probe-rs-debug",
+			"request": "launch",
+			"name": "Debug app",
+			"chip": "{{chip}}",
+			"consoleLogLevel": "Info",
+			"preLaunchTask": "rust: cargo build",
+			"flashingConfig": {
+				"flashingEnabled": true,
+				"haltAfterReset": true
+			},
+			"coreConfigs": [
+				{
+					"coreIndex": 0,
+					"programBinary": ".\\target\\{{target}}\\debug\\app",
+					"rttEnabled": true,
+					"rttChannelFormats": [
+						{
+							"channelNumber": 0,
+							"dataFormat": "Defmt",
+							"showTimestamps": true
+						}
+					]
+				}
+			]
+		},
+		{
+			"type": "probe-rs-debug",
+			"request": "launch",
+			"name": "Flash boot",
+			"chip": "{{chip}}",
+			"consoleLogLevel": "Info",
+			"preLaunchTask": "rust: cargo build",
+			"flashingConfig": {
+				"flashingEnabled": true,
+				"haltAfterReset": true
+			},
+			"coreConfigs": [
+				{
+					"coreIndex": 0,
+					"programBinary": ".\\target\\{{target}}\\release\\boot",
+					"rttEnabled": true,
+					"rttChannelFormats": [
+						{
+							"channelNumber": 0,
+							"dataFormat": "Defmt",
+							"showTimestamps": true
+						}
+					]
+				}
+			]
+		}
+	]
+}

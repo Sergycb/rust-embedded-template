@@ -1,0 +1,20 @@
+[build]
+target = "{{target}}"
+
+[target.'cfg(all(target_arch = "arm", target_os = "none"))']
+runner = "probe-rs run --chip {{chip}}"
+rustflags = [
+	"-C",
+	"target-cpu={{cpu}}",
+	"-C",
+	"linker=flip-link",
+	"-C",
+	"link-arg=-Tlink.x",
+	"-C",
+	"link-arg=-Tdefmt.x",
+	"-C",
+	"link-arg=-Tembedded-test.x",
+]
+
+[env]
+DEFMT_LOG = "info"
