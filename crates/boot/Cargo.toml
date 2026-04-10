@@ -16,3 +16,8 @@ panic-probe = { workspace = true, features = ["print-defmt"] }
 embassy-boot = { version = "*", features = ["defmt"] }
 embassy-boot-stm32 = { version = "*", features = ["defmt"] }
 embassy-stm32 = { workspace = true, features = ["defmt"] }
+embassy-sync = { workspace = true, features = ["defmt"] }
+embedded-test-linker-script = { workspace = true }
+
+[dev-dependencies]
+embedded-test = { workspace = true, features = ["defmt"] }

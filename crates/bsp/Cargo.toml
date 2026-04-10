@@ -21,6 +21,3 @@ defmt-rtt = { workspace = true }
 
 [dev-dependencies]
 embedded-test = { workspace = true }
-
-[lints]
-workspace = true
