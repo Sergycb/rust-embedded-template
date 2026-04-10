@@ -13,7 +13,7 @@ use embedded_test as _;
 #[cfg(not(test))]
 use panic_probe as _;
 
-#[cortex_m_rt::entry]
+#[cfg_attr(not(test), cortex_m_rt::entry)]
 fn main() -> ! {
     let p = embassy_stm32::init(embassy_stm32::Config::default());
     let layout = Flash::new_blocking(p.FLASH).into_blocking_regions();
