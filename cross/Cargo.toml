@@ -1,0 +1,78 @@
+[workspace]
+members = ["app", "boot", "bsp", "target-tests"]
+resolver = "3"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+let_underscore_must_use = "deny"
+dbg_macro = "deny"
+todo = "warn"
+unimplemented = "warn"
+large_stack_arrays = "warn"
+
+[workspace.dependencies]
+cortex-m = { version = "0.7.7" }
+cortex-m-rt = { version = "0.7.5" }
+defmt = { version = "1.1.0" }
+defmt-rtt = { version = "1.2.0" }
+panic-probe = { version = "1.0.0" }
+panic-abort = { version = "0.3.2" }
+embassy-stm32 = { version = "0.6.0", features = [
+	"time-driver-any",
+	"{{chip_feature}}",
+] }
+embassy-executor = { version = "0.10.0", features = [
+	"platform-cortex-m",
+	"executor-thread",
+] }
+embassy-sync = { version = "0.8.0" }
+embassy-time = { version = "0.5.1" }
+embassy-boot-stm32 = { version = "0.8.0" }
+embassy-futures = { version = "0.1.2" }
+static_cell = { version = "2.1.1" }
+array-macro = { version = "2.1.8" }
+heapless = { version = "0.9.3" }
+bon = { version = "3.9.3", default-features = false }
+shadow-rs = { version = "2.0.0", default-features = false }
+embedded-test = { version = "0.7.1", default-features = false, features = [
+	"embassy-010",
+	"semihosting",
+] }
+statig = { version = "0.4.1", features = ["async"] }
+smlang = { version = "0.8.0" }
+zerocopy = { version = "0.8.52" }
+itertools = { version = "0.15.0" }
+cfg-if = { version = "1.0.4" }
+document-features = { version = "0.2.12" }
+derive_more = { version = "2.1.1" }
+panic-persist = { version = "0.3.0" }
+fixed = { version = "1.31.0" }
+portable-atomic = { version = "1.13.1" }
+
+[profile.dev]
+codegen-units = 1
+debug = 2
+debug-assertions = true
+incremental = false
+opt-level = "s"         # <-
+overflow-checks = true
+lto = "fat"
+
+[profile.release]
+codegen-units = 1
+debug = 2
+debug-assertions = false
+incremental = false
+opt-level = "s"
+overflow-checks = false
+lto = "fat"
+
+[profile.test]
+codegen-units = 1
+debug = 2
+debug-assertions = true # <-
+incremental = false
+opt-level = "s"         # <-
+overflow-checks = true  # <-
+lto = "fat"

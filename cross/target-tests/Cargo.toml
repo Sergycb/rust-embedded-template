@@ -1,0 +1,9 @@
+[package]
+name = "target-tests"
+
+[[test]]
+name = "test"
+harness = false
+
+[lints]
+workspace = true

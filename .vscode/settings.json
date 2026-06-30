@@ -1,10 +1,7 @@
 {
 	"rust-analyzer.check.command": "clippy",
-	"rust-analyzer.check.noDefaultFeatures": true,
-	"rust-analyzer.runnables.extraTestBinaryArgs": [],
 	"rust-analyzer.linkedProjects": [
 		"Cargo.toml",
-		"crates/logic/Cargo.toml",
-		"crates/adapters/Cargo.toml",
+		"cross/Cargo.toml",
 	]
 }

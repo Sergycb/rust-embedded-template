@@ -22,3 +22,6 @@ cpu = { type = "string", prompt = "Target CPU for rustflags", choices = [
 	"cortex-m23",
 	"cortex-m33",
 ], default = "cortex-m4" }
+
+[hooks]
+post = ["post-script.rhai"]
