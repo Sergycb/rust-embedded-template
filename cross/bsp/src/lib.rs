@@ -14,19 +14,3 @@ impl Board {
         Self { p }
     }
 }
-
-#[cfg(test)]
-#[embedded_test::tests]
-mod tests {
-    use super::*;
-
-    #[init]
-    fn init() -> Board {
-        Board::init()
-    }
-
-    #[test]
-    fn test_works(board: Board) {
-        assert!(true);
-    }
-}

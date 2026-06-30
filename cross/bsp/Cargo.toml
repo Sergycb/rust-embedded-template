@@ -3,21 +3,19 @@ name = "bsp"
 version = "0.1.0"
 edition = "2024"
 
-[lib]
-harness = false
+[features]
+debug = [
+	"defmt"
+]
+release = [
+	"log"
+]
+defmt = [
+	"embassy-stm32/defmt"
+]
+log = [
+	"embassy-stm32/log"
+]
 
 [dependencies]
-adapters = { path = "../adapters", default-features = false }
 embassy-stm32 = { workspace = true }
-embassy-sync = { workspace = true }
-embassy-embedded-hal = { workspace = true }
-embassy-time = { workspace = true }
-static_cell = { workspace = true }
-cortex-m = { workspace = true }
-panic-probe = { workspace = true }
-embedded-test-linker-script = { workspace = true }
-defmt = { workspace = true }
-defmt-rtt = { workspace = true }
-
-[dev-dependencies]
-embedded-test = { workspace = true }

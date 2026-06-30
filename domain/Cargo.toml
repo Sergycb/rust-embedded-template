@@ -1,0 +1,16 @@
+[workspace]
+members = ["adapters", "ports"]
+
+[package]
+name = "domain"
+version = "0.1.0"
+edition = "2024"
+
+[dev-dependencies]
+critical-section = { version = "1.2.0", features = ["std"] }
+embassy-time = { version = "0.5.1", features = ["generic-queue-8"] }
+embedded-hal-mock = { version = "0.11.1", features = ["embedded-hal-async"] }
+mockall = "0.14.0"
+proptest = "1.11.0"
+rstest = "0.26.1"
+tokio = { version = "1.52.3", features = ["rt", "macros"] }

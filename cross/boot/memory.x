@@ -6,6 +6,7 @@ MEMORY {
     ACTIVE 				(rx) 	: ORIGIN = /* 0xXXXXXXXX */, LENGTH = /* XXXK */
     DFU 				(rx) 	: ORIGIN = /* 0xXXXXXXXX */, LENGTH = /* XXXK */
     RAM    				(xrw) 	: ORIGIN = /* 0xXXXXXXXX */, LENGTH = /* XXXK */
+	PERSIST				(xrw)	: ORIGIN = /* ADDR END RAM - LEN */, LENGTH = /* LEN  */
 }
 
 __bootloader_state_start 	= ORIGIN(BOOTLOADER_STATE) - ORIGIN(FLASH);

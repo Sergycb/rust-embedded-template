@@ -6,5 +6,18 @@ fn main() {
     let boot_version = "1.0".to_string();
     println!("cargo::rustc-env=BOOT_VERSION={}", boot_version);
 
-	println!("cargo::rustc-link-search={}", std::env::var("CARGO_MANIFEST_DIR").unwrap());
+    println!(
+        "cargo::rustc-link-search={}",
+        std::env::var("CARGO_MANIFEST_DIR").unwrap()
+    );
+
+    let profile = env::var("PROFILE").unwrap();
+
+    if profile == "debug" {
+        // Включаем фичу "debug" автоматически
+        println!("cargo:rustc-cfg=feature=\"debug\"");
+    } else if profile == "release" {
+        // Включаем фичу "release" автоматически
+        println!("cargo:rustc-cfg=feature=\"release\"");
+    }
 }

@@ -8,12 +8,13 @@ use embassy_boot::BootLoaderConfig;
 use embassy_boot_stm32::{BootLoader};
 use embassy_stm32::flash::{BANK1_REGION, Flash};
 use embassy_sync::blocking_mutex::Mutex;
-#[cfg(test)]
-use embedded_test as _;
-#[cfg(not(test))]
-use panic_probe as _;
 
-#[cfg_attr(not(test), cortex_m_rt::entry)]
+#[cfg(feature = "debug")]
+use panic_probe as _;
+#[cfg(feature = "release")]
+use panic_abort as _;
+
+#[cortex_m_rt::entry]
 fn main() -> ! {
     let p = embassy_stm32::init(embassy_stm32::Config::default());
     let layout = Flash::new_blocking(p.FLASH).into_blocking_regions();
@@ -24,20 +25,4 @@ fn main() -> ! {
     let bl = BootLoader::prepare::<_, _, _, 2048>(config);
 
     unsafe { bl.load(BANK1_REGION.base() + active_offset) }
-}
-
-#[cfg(test)]
-#[embedded_test::tests]
-mod tests {
-    use super::*;
-
-    #[init]
-    fn init() -> () {
-        ()
-    }
-
-    #[test]
-    fn test_works() {
-        assert!(true);
-    }
 }

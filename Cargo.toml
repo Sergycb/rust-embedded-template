@@ -1,48 +1,27 @@
 [workspace]
-members = ["crates/*"]
-exclude = ["crates/adapters", "crates/logic"]
-resolver = "2"
-
-[workspace.package]
-authors = ["{{authors}}"]
-version = "0.1.0"
-edition = "2024"
+members = ["domain", "host-target-tests"]
+resolver = "3"
 
 [workspace.dependencies]
-embedded-hal-async = { version = "*" }
-embedded-storage-async = "*"
-embassy-sync = { version = "*" }
-embassy-futures = "*"
-embassy-time = { version = "*" }
-embassy-embedded-hal = { version = "*" }
-embassy-stm32 = { version = "*", features = [
-	"{{chip_feature}}",
-	"time-driver-any",
-] }
-embassy-executor = { version = "*", features = [
-	"platform-cortex-m",
-	"executor-thread",
-	"executor-interrupt",
-] }
-defmt = { version = "*" }
-defmt-rtt = { version = "*" }
-embedded-test-linker-script = { version = "*" }
-embedded-test = { version = "*", features = ["embassy-010"] }
-panic-probe = { version = "*" }
-cortex-m = { version = "*", features = [
-	"critical-section-single-core",
-	"inline-asm",
-] }
-cortex-m-rt = "*"
-static_cell = "*"
-
-[profile.release]
-opt-level = "s"
-lto = true
-codegen-units = 1
-panic = "abort"
-strip = true
-debug = true
-
-[profile.dev.package."*"]
-opt-level = "s"
+thiserror = { version = "2.0.18", default-features = false }
+fixed = { version = "1.31.0" }
+portable-atomic = { version = "1.13.1" }
+statig = { version = "0.4.1", features = ["async"] }
+smlang = { version = "0.8.0" }
+zerocopy = { version = "0.8.52" }
+itertools = { version = "0.15.0" }
+cfg-if = { version = "1.0.4" }
+document-features = { version = "0.2.12" }
+derive_more = { version = "2.1.1" }
+static_cell = { version = "2.1.1" }
+array-macro = { version = "2.1.8" }
+heapless = { version = "0.9.3" }
+bon = { version = "3.9.3", default-features = false }
+shadow-rs = { version = "2.0.0", default-features = false }
+embassy-futures = { version = "0.1.2" }
+embassy-embedded-hal = { version = "0.6.0", features = ["time"] }
+embassy-sync = { version = "0.8.0" }
+embassy-time = { version = "0.5.1" }
+defmt-or-log = { version = "0.2.3" }
+log = { version = "0.4.33" }
+defmt = { version = "1.1.0" }
