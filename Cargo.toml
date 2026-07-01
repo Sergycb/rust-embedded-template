@@ -22,6 +22,13 @@ embassy-futures = { version = "0.1.2" }
 embassy-embedded-hal = { version = "0.6.0", features = ["time"] }
 embassy-sync = { version = "0.8.0" }
 embassy-time = { version = "0.5.1" }
+embassy-boot = { version = "0.7.0" }
 defmt-or-log = { version = "0.2.3" }
 log = { version = "0.4.33" }
 defmt = { version = "1.1.0" }
+critical-section = { version = "1.2.0", features = ["std"] }
+embedded-hal-mock = { version = "0.11.1", features = ["embedded-hal-async"] }
+mockall = { version = "0.15.0" }
+proptest = { version = "1.11.0" }
+rstest = { version = "0.26.1" }
+tokio = { version = "1.52.3", features = ["rt", "macros"] }

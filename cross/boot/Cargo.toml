@@ -29,7 +29,6 @@ defmt-rtt = { workspace = true, optional = true }
 panic-probe = { workspace = true, optional = true }
 panic-abort = { workspace = true, optional = true }
 panic-persist = { workspace = true }
-embassy-boot = { workspace = true }
 embassy-boot-stm32 = { workspace = true }
 embassy-stm32 = { workspace = true }
 embassy-sync = { workspace = true }

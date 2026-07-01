@@ -3,8 +3,9 @@
 
 use core::cell::RefCell;
 
+#[cfg(feature = "debug")]
 use defmt_rtt as _;
-use embassy_boot::BootLoaderConfig;
+
 use embassy_boot_stm32::{BootLoader};
 use embassy_stm32::flash::{BANK1_REGION, Flash};
 use embassy_sync::blocking_mutex::Mutex;

@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 
+#[cfg(feature = "debug")]
 use defmt_rtt as _;
 
 pub struct Board {
