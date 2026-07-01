@@ -40,6 +40,7 @@ boot = { path = "./boot" }
 app = { path = "./app" }
 domain ={ path = "../domain"}
 target-tests = { path = "./target-tests" }
+shadow-rs = { version = "2.0.0", default-features = false }
 
 
 [profile.dev]

@@ -4,18 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-debug = [
-	"defmt"
-]
-release = [
-	"log"
-]
-defmt = [
-	"embassy-stm32/defmt"
-]
-log = [
-	"embassy-stm32/log"
-]
+defmt = ["embassy-stm32/defmt", "domain/defmt"]
+log = ["embassy-stm32/log", "domain/log"]
 
 [dependencies]
 embassy-stm32 = { workspace = true }
+domain = { workspace = true }

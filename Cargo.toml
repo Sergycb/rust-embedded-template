@@ -1,34 +1,39 @@
 [workspace]
-members = ["domain", "host-target-tests"]
+members = [
+	"domain",
+	"host-target-tests",
+	"domain/adapters",
+	"domain/ports",
+	"xtask",
+]
 resolver = "3"
 
 [workspace.dependencies]
-thiserror = { version = "2.0.18", default-features = false }
-fixed = { version = "1.31.0" }
-portable-atomic = { version = "1.13.1" }
-statig = { version = "0.4.1", features = ["async"] }
-smlang = { version = "0.8.0" }
-zerocopy = { version = "0.8.52" }
-itertools = { version = "0.15.0" }
-cfg-if = { version = "1.0.4" }
-document-features = { version = "0.2.12" }
-derive_more = { version = "2.1.1" }
-static_cell = { version = "2.1.1" }
-array-macro = { version = "2.1.8" }
-heapless = { version = "0.9.3" }
-bon = { version = "3.9.3", default-features = false }
-shadow-rs = { version = "2.0.0", default-features = false }
-embassy-futures = { version = "0.1.2" }
+thiserror            = { version = "2.0.18", default-features = false }
+fixed                = { version = "1.31.0" }
+portable-atomic      = { version = "1.13.1" }
+statig               = { version = "0.4.1", features = ["async"] }
+smlang               = { version = "0.8.0" }
+zerocopy             = { version = "0.8.52" }
+itertools            = { version = "0.15.0", default-features = false }
+cfg-if               = { version = "1.0.4" }
+document-features    = { version = "0.2.12" }
+derive_more          = { version = "2.1.1", default-features = false }
+static_cell          = { version = "2.1.1" }
+array-macro          = { version = "2.1.8" }
+heapless             = { version = "0.9.3" }
+bon                  = { version = "3.9.3", default-features = false }
+embassy-futures      = { version = "0.1.2" }
 embassy-embedded-hal = { version = "0.6.0", features = ["time"] }
-embassy-sync = { version = "0.8.0" }
-embassy-time = { version = "0.5.1" }
-embassy-boot = { version = "0.7.0" }
-defmt-or-log = { version = "0.2.3" }
-log = { version = "0.4.33" }
-defmt = { version = "1.1.0" }
-critical-section = { version = "1.2.0", features = ["std"] }
-embedded-hal-mock = { version = "0.11.1", features = ["embedded-hal-async"] }
-mockall = { version = "0.15.0" }
-proptest = { version = "1.11.0" }
-rstest = { version = "0.26.1" }
-tokio = { version = "1.52.3", features = ["rt", "macros"] }
+embassy-sync         = { version = "0.8.0" }
+embassy-time         = { version = "0.5.1" }
+embassy-boot         = { version = "0.7.0" }
+defmt-or-log         = { version = "0.2.3" }
+log                  = { version = "0.4.33" }
+defmt                = { version = "1.1.0" }
+critical-section     = { version = "1.2.0" }
+embedded-hal-mock    = { version = "0.11.1", features = ["embedded-hal-async"] }
+mockall              = { version = "0.15.0" }
+proptest             = { version = "1.11.0" }
+rstest               = { version = "0.26.1" }
+tokio                = { version = "1.52.3", features = ["rt", "macros"] }

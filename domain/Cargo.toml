@@ -1,10 +1,61 @@
-[workspace]
-members = ["adapters", "ports"]
-
 [package]
 name = "domain"
 version = "0.1.0"
 edition = "2024"
+
+[features]
+defmt = [
+	"dep:defmt",
+	"defmt-or-log/defmt",
+	"embassy-boot/defmt",
+	"embassy-embedded-hal/defmt",
+	"embassy-futures/defmt",
+	"embassy-sync/defmt",
+	"embassy-time/defmt",
+	"fixed/defmt",
+	"heapless/defmt"
+]
+log = [
+	"dep:log",
+	"defmt-or-log/log",
+	"embassy-boot/log",
+	"embassy-time/log",
+	"embassy-sync/log",
+	"embassy-futures/log",
+]
+std = [
+	"fixed/std",
+	"zerocopy/std",
+	"embassy-sync/std",
+	"thiserror/std",
+	"derive_more/std",
+	"bon/std",
+	"portable-atomic/std",
+]
+
+[dependencies]
+thiserror = { workspace = true, default-features = false }
+fixed = { workspace = true }
+portable-atomic = { workspace = true }
+statig = { workspace = true, features = ["async"] }
+smlang = { workspace = true }
+zerocopy = { workspace = true }
+itertools = { workspace = true, default-features = false }
+cfg-if = { workspace = true }
+document-features = { workspace = true }
+derive_more = { workspace = true, default-features = false }
+static_cell = { workspace = true }
+array-macro = { workspace = true }
+heapless = { workspace = true }
+bon = { workspace = true, default-features = false }
+embassy-futures = { workspace = true }
+embassy-embedded-hal = { workspace = true, features = ["time"] }
+embassy-sync = { workspace = true }
+embassy-time = { workspace = true }
+embassy-boot = { workspace = true }
+defmt-or-log = { workspace = true }
+log = { workspace = true, optional = true }
+defmt = { workspace = true, optional = true }
 
 [dev-dependencies]
 embassy-time = { workspace = true, features = ["generic-queue-8"] }

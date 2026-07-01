@@ -1,4 +1,4 @@
 // Выполнить команду cargo update в только что созданном каталоге проекта
-shell("cargo update")?;
-shell("cd cross")?;
-shell("cargo update")?;
+system::command("cargo", ["update"]);
+system::command("cd", ["cross"]);
+system::command("cargo", ["update"]);
