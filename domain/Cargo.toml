@@ -31,6 +31,9 @@ std = [
 	"derive_more/std",
 	"bon/std",
 	"portable-atomic/std",
+	"embassy-time/std",
+	"log?/std"
+
 ]
 
 [dependencies]
@@ -43,7 +46,7 @@ zerocopy = { workspace = true }
 itertools = { workspace = true, default-features = false }
 cfg-if = { workspace = true }
 document-features = { workspace = true }
-derive_more = { workspace = true, default-features = false }
+derive_more = { workspace = true, default-features = false, features = ["full"] }
 static_cell = { workspace = true }
 array-macro = { workspace = true }
 heapless = { workspace = true }
@@ -58,7 +61,7 @@ log = { workspace = true, optional = true }
 defmt = { workspace = true, optional = true }
 
 [dev-dependencies]
-embassy-time = { workspace = true, features = ["generic-queue-8"] }
+embassy-time = { workspace = true, features = ["generic-queue-8", "std"] }
 embedded-hal-mock = { workspace = true }
 mockall = { workspace = true }
 proptest = { workspace = true }

@@ -4,4 +4,5 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-shell = { version = "0.3.2"}
+anyhow = "1.0.103"
+xshell = "0.2.7"

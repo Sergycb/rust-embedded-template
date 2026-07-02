@@ -1,5 +1,4 @@
 #![no_std]
-#![no_main]
 
 pub struct Board {
     p: embassy_stm32::Peripherals,

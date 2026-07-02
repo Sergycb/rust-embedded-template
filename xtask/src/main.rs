@@ -1,6 +1,5 @@
 use std::{env, path::PathBuf};
 
-use anyhow::Context;
 use xshell::cmd;
 
 fn main() -> Result<(), anyhow::Error> {
@@ -14,32 +13,44 @@ fn main() -> Result<(), anyhow::Error> {
         ["test", "host-target"] => test_host_target(&sh),
         ["test", "target"] => test_target(&sh),
         ["build"] => build(&sh),
-		["run debug"] => run_debug(&sh),
-		["run release"] => run_release(&sh),
-		["flash debug"] => flash_debug(&sh),
-		["flash release"] => flash_release(&sh),
+        ["run", "debug"] => run_debug(&sh),
+        ["run", "release"] => run_release(&sh),
+        ["flash", "debug"] => flash_debug(&sh),
+        ["flash", "release"] => flash_release(&sh),
         _ => {
             println!("USAGE cargo xtask test [all|host|host-target|target]");
             println!("      cargo xtask build");
             println!("      cargo xtask run [debug|release]");
-			println!("      cargo xtask flash [debug|release]");
+            println!("      cargo xtask flash [debug|release]");
             Ok(())
         }
     }
 }
 
 fn run_debug(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
-	flash_boot(sh)?;
-	let _p = sh.push_dir(root_dir().join("cross/app"));
-	cmd!(sh, "cargo run --features debug").run()?;
-	Ok(())
+    flash_boot(sh, "debug")?;
+    let _p = sh.push_dir(root_dir().join("cross/app"));
+    cmd!(sh, "cargo run --features debug").run()?;
+    Ok(())
 }
 
 fn run_release(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
-	flash_boot(sh)?;
-	let _p = sh.push_dir(root_dir().join("cross/app"));
-	cmd!(sh, "cargo run --release --features release").run()?;
-	Ok(())
+    flash_boot(sh, "release")?;
+    let _p = sh.push_dir(root_dir().join("cross/app"));
+    cmd!(sh, "cargo run --release --features release").run()?;
+    Ok(())
+}
+
+fn flash_debug(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
+    flash_boot(sh, "debug")?;
+    flash_app(sh, "debug")?;
+    Ok(())
+}
+
+fn flash_release(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
+    flash_boot(sh, "release")?;
+    flash_app(sh, "release")?;
+    Ok(())
 }
 
 fn build(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
@@ -59,20 +70,20 @@ fn test_host(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     let _p = sh.push_dir(root_dir());
     cmd!(
         sh,
-        "cargo nextest run --exclude host-target-tests --release --features release"
+        "cargo nextest run --workspace --exclude host-target-tests --release --features domain/log,domain/std"
     )
     .run()?;
     Ok(())
 }
 
 fn test_host_target(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
-    flash_boot(sh)?;
-    flash_app(sh)?;
+    flash_boot(sh, "release")?;
+    flash_app(sh, "release")?;
     {
         let _p = sh.push_dir(root_dir().join("host-target-tests"));
-        cmd!(sh, "cargo nextest --features release").run()?;
+        cmd!(sh, "cargo nextest run --features release").run()?;
     }
-	Ok(())
+    Ok(())
 }
 
 fn test_target(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
@@ -81,15 +92,29 @@ fn test_target(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-fn flash_app(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
-    let _p = sh.push_dir(root_dir().join("cross"));
-    cmd!(sh, "cargo flash -p app --release --chip STM32H723ZETx").run()?;
-    Ok(())
+fn flash_app(sh: &xshell::Shell, features: &str) -> Result<(), anyhow::Error> {
+    flash(sh, "app", features)
 }
 
-fn flash_boot(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
+fn flash_boot(sh: &xshell::Shell, features: &str) -> Result<(), anyhow::Error> {
+    flash(sh, "boot", features)
+}
+
+fn flash(sh: &xshell::Shell, package: &str, features: &str) -> Result<(), anyhow::Error> {
     let _p = sh.push_dir(root_dir().join("cross"));
-    cmd!(sh, "cargo flash -p boot --release --chip STM32H723ZETx").run()?;
+    match features {
+        "release" => cmd!(
+            sh,
+            "cargo flash -p {package} --release --features release --chip STM32H723ZETx"
+        )
+        .run()?,
+        "debug" => cmd!(
+            sh,
+            "cargo flash -p {package} --features debug --chip STM32H723ZETx"
+        )
+        .run()?,
+        other => anyhow::bail!("unknown features profile: {other}"),
+    }
     Ok(())
 }
 
