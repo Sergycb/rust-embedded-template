@@ -2,6 +2,8 @@ use std::{env, path::PathBuf};
 
 use xshell::cmd;
 
+const CHIP: &str = "{{chip}}";
+
 fn main() -> Result<(), anyhow::Error> {
     let args = env::args().skip(1).collect::<Vec<_>>();
     let args = args.iter().map(|s| &**s).collect::<Vec<_>>();
@@ -17,11 +19,16 @@ fn main() -> Result<(), anyhow::Error> {
         ["run", "release"] => run_release(&sh),
         ["flash", "debug"] => flash_debug(&sh),
         ["flash", "release"] => flash_release(&sh),
+        ["lint"] => lint_host(&sh),
+        ["lint", "cross"] => lint_cross(&sh),
+        ["deny"] => deny(&sh),
         _ => {
             println!("USAGE cargo xtask test [all|host|host-target|target]");
             println!("      cargo xtask build");
             println!("      cargo xtask run [debug|release]");
             println!("      cargo xtask flash [debug|release]");
+            println!("      cargo xtask lint [cross]");
+            println!("      cargo xtask deny");
             Ok(())
         }
     }
@@ -92,6 +99,37 @@ fn test_target(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
+fn lint_host(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
+    let _p = sh.push_dir(root_dir());
+    cmd!(sh, "cargo fmt --check").run()?;
+    cmd!(
+        sh,
+        "cargo clippy --workspace --all-targets --features domain/std,domain/log -- -D warnings"
+    )
+    .run()?;
+    Ok(())
+}
+
+fn lint_cross(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
+    let _p = sh.push_dir(root_dir().join("cross"));
+    cmd!(sh, "cargo fmt --check").run()?;
+    // target-tests has no default targets of its own until it grows an embedded-test
+    // harness, so --all-targets is intentionally omitted here (it would otherwise try
+    // and fail to build its empty `tests/test.rs` as a no_std test binary).
+    cmd!(
+        sh,
+        "cargo clippy --workspace --features debug -- -D warnings"
+    )
+    .run()?;
+    Ok(())
+}
+
+fn deny(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
+    let _p = sh.push_dir(root_dir());
+    cmd!(sh, "cargo deny check").run()?;
+    Ok(())
+}
+
 fn flash_app(sh: &xshell::Shell, features: &str) -> Result<(), anyhow::Error> {
     flash(sh, "app", features)
 }
@@ -105,12 +143,12 @@ fn flash(sh: &xshell::Shell, package: &str, features: &str) -> Result<(), anyhow
     match features {
         "release" => cmd!(
             sh,
-            "cargo flash -p {package} --release --features release --chip STM32H723ZETx"
+            "cargo flash -p {package} --release --features release --chip {CHIP}"
         )
         .run()?,
         "debug" => cmd!(
             sh,
-            "cargo flash -p {package} --features debug --chip STM32H723ZETx"
+            "cargo flash -p {package} --features debug --chip {CHIP}"
         )
         .run()?,
         other => anyhow::bail!("unknown features profile: {other}"),

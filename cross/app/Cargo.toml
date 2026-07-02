@@ -2,6 +2,7 @@
 name = "app"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
 
 [features]
 debug = ["defmt"]
@@ -30,3 +31,6 @@ panic-abort = { workspace = true, optional = true }
 bsp = { workspace = true }
 domain = { workspace = true }
 shadow-rs = { workspace = true }
+
+[build-dependencies]
+shadow-rs = { workspace = true, features = ["build", "no_std"] }

@@ -1,0 +1,38 @@
+stages:
+  - test
+  - build
+
+variables:
+  CARGO_TERM_COLOR: always
+
+.cache: &cache
+  cache:
+    key: "$CI_COMMIT_REF_SLUG"
+    paths:
+      - .cargo/registry
+      - target
+      - cross/target
+
+host:test:
+  stage: test
+  image: rust:1.96.0
+  <<: *cache
+  before_script:
+    - rustup component add rustfmt clippy
+    - cargo install cargo-nextest --locked
+  script:
+    - cargo xtask lint
+    - cargo xtask test host
+    - cargo xtask deny
+
+cross:build:
+  stage: build
+  image: rust:1.96.0
+  <<: *cache
+  before_script:
+    - rustup component add rustfmt clippy
+    - rustup target add {{target}}
+    - cargo install flip-link --locked
+  script:
+    - cargo xtask lint cross
+    - cargo xtask build

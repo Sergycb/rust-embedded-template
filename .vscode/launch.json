@@ -1,0 +1,43 @@
+{
+	"version": "0.2.0",
+	"configurations": [
+		{
+			"type": "probe-rs-debug",
+			"request": "launch",
+			"name": "Debug app (debug build)",
+			"cwd": "${workspaceFolder}",
+			"chip": "{{chip}}",
+			"preLaunchTask": "build: app (debug)",
+			"flashingConfig": {
+				"flashingEnabled": true,
+				"resetAfterFlash": true,
+				"haltAfterReset": true
+			},
+			"coreConfigs": [
+				{
+					"coreIndex": 0,
+					"programBinary": "cross/target/{{target}}/debug/app"
+				}
+			]
+		},
+		{
+			"type": "probe-rs-debug",
+			"request": "launch",
+			"name": "Debug app (release build)",
+			"cwd": "${workspaceFolder}",
+			"chip": "{{chip}}",
+			"preLaunchTask": "build: app (release)",
+			"flashingConfig": {
+				"flashingEnabled": true,
+				"resetAfterFlash": true,
+				"haltAfterReset": true
+			},
+			"coreConfigs": [
+				{
+					"coreIndex": 0,
+					"programBinary": "cross/target/{{target}}/release/app"
+				}
+			]
+		}
+	]
+}

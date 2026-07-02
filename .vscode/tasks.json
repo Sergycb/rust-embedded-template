@@ -1,0 +1,80 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "xtask: build",
+			"type": "shell",
+			"command": "cargo",
+			"args": ["xtask", "build"],
+			"group": { "kind": "build", "isDefault": true },
+			"problemMatcher": ["$rustc"]
+		},
+		{
+			"label": "xtask: test all",
+			"type": "shell",
+			"command": "cargo",
+			"args": ["xtask", "test", "all"],
+			"group": { "kind": "test", "isDefault": true },
+			"problemMatcher": ["$rustc"]
+		},
+		{
+			"label": "xtask: test host",
+			"type": "shell",
+			"command": "cargo",
+			"args": ["xtask", "test", "host"],
+			"group": "test",
+			"problemMatcher": ["$rustc"]
+		},
+		{
+			"label": "xtask: lint",
+			"type": "shell",
+			"command": "cargo",
+			"args": ["xtask", "lint"],
+			"problemMatcher": ["$rustc"]
+		},
+		{
+			"label": "xtask: run debug",
+			"type": "shell",
+			"command": "cargo",
+			"args": ["xtask", "run", "debug"],
+			"problemMatcher": ["$rustc"]
+		},
+		{
+			"label": "xtask: run release",
+			"type": "shell",
+			"command": "cargo",
+			"args": ["xtask", "run", "release"],
+			"problemMatcher": ["$rustc"]
+		},
+		{
+			"label": "xtask: flash debug",
+			"type": "shell",
+			"command": "cargo",
+			"args": ["xtask", "flash", "debug"],
+			"problemMatcher": ["$rustc"]
+		},
+		{
+			"label": "xtask: flash release",
+			"type": "shell",
+			"command": "cargo",
+			"args": ["xtask", "flash", "release"],
+			"problemMatcher": ["$rustc"]
+		},
+		{
+			"label": "build: app (debug)",
+			"type": "shell",
+			"command": "cargo",
+			"args": ["build", "--features", "debug"],
+			"options": { "cwd": "${workspaceFolder}/cross/app" },
+			"problemMatcher": ["$rustc"]
+		},
+		{
+			"label": "build: app (release)",
+			"type": "shell",
+			"command": "cargo",
+			"args": ["build", "--release", "--features", "release"],
+			"options": { "cwd": "${workspaceFolder}/cross/app" },
+			"problemMatcher": ["$rustc"]
+		}
+	]
+}

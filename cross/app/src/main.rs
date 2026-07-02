@@ -11,10 +11,10 @@ shadow!(build);
 
 #[cfg(feature = "debug")]
 use defmt_rtt as _;
-#[cfg(feature = "debug")]
-use panic_probe as _;
 #[cfg(feature = "release")]
 use panic_abort as _;
+#[cfg(feature = "debug")]
+use panic_probe as _;
 
 use embassy_executor::Spawner;
 
