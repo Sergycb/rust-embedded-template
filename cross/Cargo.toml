@@ -41,6 +41,7 @@ app = { path = "./app" }
 domain ={ path = "../domain"}
 target-tests = { path = "./target-tests" }
 shadow-rs = { version = "2.0.0", default-features = false }
+assign-resources = { version = "0.5.0" }
 
 
 [profile.dev]

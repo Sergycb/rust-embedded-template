@@ -11,3 +11,4 @@ log = ["embassy-stm32/log", "domain/log"]
 [dependencies]
 embassy-stm32 = { workspace = true }
 domain = { workspace = true }
+assign-resources = { workspace = true }
