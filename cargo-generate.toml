@@ -29,10 +29,10 @@ ci = { type = "string", prompt = "CI provider", choices = [
 ], default = "github" }
 
 [conditional.'ci != "github"']
-ignore = [".github/workflows/ci.yml"]
+ignore = [".github/workflows/ci.yml", ".github/dependabot.yml"]
 
 [conditional.'ci != "gitlab"']
-ignore = [".gitlab-ci.yml"]
+ignore = [".gitlab-ci.yml", "renovate.json"]
 
 [hooks]
 post = ["post-script.rhai"]

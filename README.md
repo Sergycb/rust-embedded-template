@@ -46,7 +46,9 @@ cargo generate --git https://github.com/Sergycb/rust-embedded-template
 path-зависимость. Версии зависимостей у `root` и `cross` объявлены раздельно и намеренно не
 реэкспортируются друг через друга — `domain` не должен быть фасадом для инфраструктурных крейтов
 вроде `static_cell`/`heapless`, которые `cross` использует для оркестрации задач. Синхронизацию
-версий между двумя `[workspace.dependencies]` берёт на себя Renovate (`renovate.json`).
+версий между двумя `[workspace.dependencies]` со временем берёт на себя бот, выбранный через
+`ci` (Dependabot на GitHub, Renovate на GitLab — см. ниже); `post-script.rhai` дополнительно
+обновляет `Cargo.lock` сразу при генерации, не дожидаясь первого PR от бота.
 
 ## Трёхэтапное тестирование
 
@@ -75,6 +77,12 @@ cargo xtask test [all|host|host-target|target]
 `release` (`log` + `panic-abort`); при отсутствии обеих или при обеих сразу сборка не пройдёт —
 это специально проверяется `compile_error!` в начале `main.rs`. `domain` и `bsp` не выбирают
 профиль сами, а только прокидывают одноимённые фичи (`defmt`/`log`) дальше по зависимостям.
+
+## Обновление зависимостей
+
+`ci` определяет не только CI-workflow, но и бота для PR с обновлениями версий:
+`github` → `.github/dependabot.yml`, `gitlab` → `renovate.json`, `none` → ни того, ни другого.
+Оба покрывают обе `[workspace.dependencies]` (корневую и `cross/`).
 
 ## Инструменты
 
