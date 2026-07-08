@@ -44,7 +44,7 @@ kani:test:
     - cargo kani setup
   script:
     - cd domain
-    - cargo kani
+    - cargo kani --features log
 
 cross:build:
   stage: build

@@ -5,12 +5,14 @@ edition = "2024"
 license = "MIT"
 
 [features]
-defmt = ["embassy-stm32/defmt", "domain/defmt"]
-log = ["embassy-stm32/log", "domain/log"]
+defmt = ["dep:defmt", "defmt-or-log/defmt", "embassy-stm32/defmt", "domain/defmt"]
+log = ["dep:log", "defmt-or-log/log", "embassy-stm32/log", "domain/log"]
 
 [dependencies]
 embassy-stm32 = { workspace = true }
 domain = { workspace = true }
 assign-resources = { workspace = true }
 bbqueue = { workspace = true }
-intrusive-collections = { workspace = true }
+defmt-or-log = { workspace = true }
+defmt = { workspace = true, optional = true }
+log = { workspace = true, optional = true }

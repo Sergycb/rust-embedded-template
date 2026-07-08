@@ -6,15 +6,17 @@ license = "MIT"
 
 [features]
 debug = ["defmt"]
-release = ["log", "dep:panic-abort"]
+release = ["log", "dep:panic-halt"]
 defmt = [
+	"dep:defmt",
 	"dep:defmt-rtt",
 	"dep:panic-probe",
 	"panic-probe/print-defmt",
+	"defmt-or-log/defmt",
 	"embassy-boot-stm32/defmt",
 	"embassy-stm32/defmt",
 ]
-log = ["embassy-stm32/log", "embassy-boot-stm32/log"]
+log = ["dep:log", "defmt-or-log/log", "embassy-stm32/log", "embassy-boot-stm32/log"]
 
 [[bin]]
 name = "boot"
@@ -24,9 +26,12 @@ harness = false
 cortex-m = { workspace = true }
 cortex-m-rt = { workspace = true }
 defmt-rtt = { workspace = true, optional = true }
+defmt-or-log = { workspace = true }
+defmt = { workspace = true, optional = true }
+log = { workspace = true, optional = true }
 panic-probe = { workspace = true, optional = true }
-panic-abort = { workspace = true, optional = true }
+panic-halt = { workspace = true, optional = true }
 panic-persist = { workspace = true }
 embassy-boot-stm32 = { workspace = true }
 embassy-stm32 = { workspace = true }
-domain = { workspace = true }
+embassy-sync = { workspace = true }

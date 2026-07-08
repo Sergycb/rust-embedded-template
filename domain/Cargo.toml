@@ -8,6 +8,11 @@ license = "MIT"
 workspace = true
 
 [features]
+# "embassy" в default — не просто удобство: без неё hsmc молча деградирует
+# до sync-варианта (см. предупреждение ниже у самой фичи "embassy"). Если
+# понадобится урезанная сборка domain через default-features = false,
+# фичу "embassy" нужно включить явно.
+default = ["embassy"]
 defmt = [
 	"dep:defmt",
 	"defmt-or-log/defmt",
@@ -39,6 +44,15 @@ std = [
 	"log?/std"
 
 ]
+# ВНИМАНИЕ, неочевидная особенность hsmc 0.6.0: `statechart!` эмиттит
+# `#[cfg(feature = "embassy")]`/`"tokio"` код (см. комментарий в исходнике
+# hsmc: "The code emitted by `statechart!` contains ... gates so that
+# feature-specific items ..."), и этот cfg проверяется в контексте
+# КОМПИЛИРУЕМОГО крейта (здесь — domain), а не самого hsmc. Просто включить
+# `hsmc/embassy` НЕ ДОСТАТОЧНО — без одноимённой фичи здесь макрос молча
+# генерирует sync-вариант без `run()`/событийного канала (перепроверено
+# дважды с `rm -rf target`, не кеш). В README hsmc это не задокументировано.
+embassy = ["hsmc/embassy"]
 
 [dependencies]
 thiserror = { workspace = true, default-features = false }
@@ -47,6 +61,15 @@ portable-atomic = { workspace = true }
 statig = { workspace = true, features = ["async"] }
 type-state-builder = { workspace = true }
 mitsein = { workspace = true }
+# heapless 0.8 (у hsmc) vs 0.9.3 (workspace) — дубль версии, cargo-deny
+# предупредит (bans.multiple-versions = "warn", не "deny").
+hsmc = { workspace = true }
+futures-concurrency = { workspace = true }
+aselect = { workspace = true }
+sync_wrapper = { workspace = true }
+embedded-rpc = { workspace = true }
+intrusive-collections = { workspace = true }
+miniconf = { workspace = true }
 zerocopy = { workspace = true }
 itertools = { workspace = true, default-features = false }
 cfg-if = { workspace = true }
@@ -72,6 +95,13 @@ defmt = { workspace = true, optional = true }
 # граф cross-таргета (bsp/app -> domain) сломает сборку прошивки. Годится
 # только для host-side иллюстраций/тестов (см. examples/).
 typestate = { workspace = true }
+critical-section = { workspace = true, features = ["std"] }
+futures = { workspace = true }
+# `Stream`-реализация у aselect — только под фичей "futures", которую
+# [dependencies] отключает (default-features = false, no_std-safe). Для
+# host-примера включаем её здесь же (не влияет на сборку lib для железа —
+# dev-dependencies не участвуют в этом графе).
+aselect = { workspace = true, features = ["futures"] }
 embassy-time = { workspace = true, features = ["generic-queue-8", "std"] }
 embedded-hal-mock = { workspace = true }
 mockall = { workspace = true }

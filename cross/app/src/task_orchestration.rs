@@ -28,48 +28,34 @@
 //! // где-то внутри usart_task: handle.pet().await;
 //! ```
 //!
-//! # `firmware-controller` — компонентная развязка: RPC + pub-sub + периодика
-//! в одном макросе (`#[controller]`). Функционально богаче `ector` (тот даёт
-//! только fire-and-forget `notify()` между акторами); embassy-sync у него
-//! реально no_std-safe — проверено `cargo check --target
-//! thumbv7em-none-eabihf`, собирается чисто.
+//! # `ector` — actor-паттерн (message-passing) для embassy-задач: fire-and-
+//! forget `notify()` между акторами, каждый актор — отдельная embassy-задача.
+//! `firmware-controller` (RPC + pub-sub + периодика в одном макросе)
+//! функционально богаче, но сам крейт не объявляет `#![no_std]` ни при какой
+//! фиче и физически не собирается на реальном ARM-таргете — проверено
+//! `cargo build --target thumbv7em-none-eabihf` с полностью чистым
+//! (`rm -rf target`) билдом, падает на E0463 (`std` not found). `ector`
+//! реально собирается и работает — проверено на STM32F3Discovery.
 //!
 //! ```ignore
-//! use firmware_controller::controller;
+//! use ector::{actor, Actor, Address, Inbox};
 //!
-//! #[controller]
-//! impl SensorController {
-//!     #[controller(publish)]
-//!     fn set_reading(&mut self, value: u16) {}
+//! struct Counter(u32);
 //!
-//!     #[controller(poll_millis = 100)]
-//!     async fn sample(&mut self) {}
-//! }
-//! ```
+//! impl Actor for Counter {
+//!     type Message = u32;
 //!
-//! # `hsmc` — иерархический стейтчарт как отдельная задача (таймеры и
-//! ISR/cross-task инъекция событий встроены). Используется вместе со
-//! `statig` в `domain`, не вместо него: `statig` — компонент внутри
-//! произвольной задачи (вызывающий код сам кормит события через `handle()`),
-//! `hsmc` — задача, которая целиком является чартом (`m.run().await`).
-//!
-//! ```ignore
-//! hsmc::chart! {
-//!     name: ConnectionChart,
-//!     initial: Disconnected,
-//!     states: {
-//!         Disconnected {
-//!             on(connect_requested) => Connecting,
-//!         },
-//!         Connecting {
-//!             on(after 5s) => Disconnected,
-//!             on(connected) => Connected,
-//!         },
-//!         Connected {},
+//!     async fn on_mount(&mut self, _: Address<Self>, mut inbox: impl Inbox<Self>) {
+//!         loop {
+//!             let increment = inbox.next().await;
+//!             self.0 += increment;
+//!         }
 //!     }
 //! }
-//!
-//! let mut chart = ConnectionChart::new();
-//! let sender = chart.sender(); // клонируемый handle для других задач/ISR
-//! chart.run().await; // вся задача целиком
 //! ```
+//!
+//! `hsmc` (иерархический стейтчарт как отдельная задача) сюда не входит —
+//! его "embassy"-фича тянет только embassy-sync/time/futures (без
+//! embassy-executor), поэтому определение чарта — чистая логика без
+//! привязки к железу и живёт в `domain` (см. domain/examples/), а cross
+//! только спавнит задачу, вызывающую `chart.run().await`.

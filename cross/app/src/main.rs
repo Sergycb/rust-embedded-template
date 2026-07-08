@@ -9,14 +9,13 @@ compile_error!("features \"debug\" and \"release\" are mutually exclusive");
 use shadow_rs::shadow;
 shadow!(build);
 
-mod async_utils;
-mod config;
 mod task_orchestration;
 
+use defmt_or_log::info;
 #[cfg(feature = "debug")]
 use defmt_rtt as _;
 #[cfg(feature = "release")]
-use panic_abort as _;
+use panic_halt as _;
 #[cfg(feature = "debug")]
 use panic_probe as _;
 
@@ -24,5 +23,6 @@ use embassy_executor::Spawner;
 
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
+    info!("app: starting");
     let mut _board = bsp::Board::init();
 }

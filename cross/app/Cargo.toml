@@ -6,16 +6,24 @@ license = "MIT"
 
 [features]
 debug = ["defmt"]
-release = ["log", "dep:panic-abort"]
+release = ["log", "dep:panic-halt"]
 defmt = [
+	"dep:defmt",
 	"dep:defmt-rtt",
 	"dep:panic-probe",
 	"panic-probe/print-defmt",
+	"defmt-or-log/defmt",
 	"embassy-executor/defmt",
 	"bsp/defmt",
 	"domain/defmt",
 ]
-log = ["embassy-executor/log", "bsp/log", "domain/log"]
+log = [
+	"dep:log",
+	"defmt-or-log/log",
+	"embassy-executor/log",
+	"bsp/log",
+	"domain/log",
+]
 
 [[bin]]
 name = "app"
@@ -25,22 +33,18 @@ harness = false
 cortex-m = { workspace = true }
 cortex-m-rt = { workspace = true }
 embassy-executor = { workspace = true }
+defmt-or-log = { workspace = true }
+defmt = { workspace = true, optional = true }
+log = { workspace = true, optional = true }
 defmt-rtt = { workspace = true, optional = true }
 panic-probe = { workspace = true, optional = true }
-panic-abort = { workspace = true, optional = true }
+panic-halt = { workspace = true, optional = true }
 bsp = { workspace = true }
 domain = { workspace = true }
 shadow-rs = { workspace = true }
 embassy-supervisor = { workspace = true }
 embassy-task-watchdog = { workspace = true }
-firmware-controller = { workspace = true }
-hsmc = { workspace = true }
-futures-concurrency = { workspace = true }
-aselect = { workspace = true }
-wg = { workspace = true }
-sync_wrapper = { workspace = true }
-embedded-rpc = { workspace = true }
-miniconf = { workspace = true }
+ector = { workspace = true }
 
 [build-dependencies]
 shadow-rs = { workspace = true, features = ["build", "no_std"] }
