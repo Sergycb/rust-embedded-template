@@ -28,12 +28,13 @@ fn main() -> ! {
 
     let config = BootLoaderConfig::from_linkerfile_blocking(&flash, &flash, &flash);
     let active_offset = config.active.offset();
-    // Последний параметр (WRITE_SIZE) — размер страницы/блока flash в байтах
-    // для операций bootloader'а; зависит от чипа (у STM32F1/F3/L4/G4 — как
-    // правило 2048, у STM32F4/F7/H7 сектора крупнее). Подставьте значение
-    // для вашего {{chip_feature}} перед первой прошивкой.
-    let bl = BootLoader::prepare::<_, _, _, 2048>(config);
+    let bl = BootLoader::prepare::<_, _, _, {{write_size}}>(config);
 
+    // Минимальный bootloader: как и официальный пример embassy-boot-stm32,
+    // прыгает в активный образ безусловно, не проверяя валидность вектора
+    // сброса/SP — повреждённый образ (прерванная прошивка, битый DFU) даст
+    // HardFault вместо отказа с диагностикой. Полная проверка целостности
+    // требует chip-specific границ RAM и не входит в минимальный шаблон.
     let entry = BANK1_REGION.base() + active_offset;
     info!("boot: jumping to app at {:x}", entry);
     unsafe { bl.load(entry) }

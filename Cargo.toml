@@ -41,6 +41,10 @@ mitsein              = { version = "0.9.0", default-features = false, features =
 hsmc                 = { version = "0.6.0", features = ["embassy"] }
 futures-concurrency  = { version = "7.7.1", default-features = false }
 aselect              = { version = "0.4.0", default-features = false }
+# wg (AsyncWaitGroup) сюда не включён: его async-реализация жёстко требует
+# alloc (Arc-based clone), no_std/no-alloc варианта нет ни у wg, ни у
+# исследованных альтернатив (waitgroup, awaitgroup, async-wg, mea,
+# compact-waitgroup — все тоже на Arc).
 sync_wrapper         = { version = "1.0.2" }
 embedded-rpc         = { version = "0.2.0" }
 intrusive-collections = { version = "0.10.2", default-features = false }
