@@ -9,6 +9,12 @@ ignore = [
     # statig -> statig_macro -> proc-macro-error2 is unmaintained. No safe upgrade
     # exists yet; revisit when statig releases a fix or is replaced.
     { id = "RUSTSEC-2026-0173", reason = "no safe upgrade available, tracked for statig" },
+    # typestate -> aquamarine -> proc-macro-error is unmaintained. No safe upgrade
+    # exists yet; revisit when typestate drops aquamarine or is replaced.
+    { id = "RUSTSEC-2024-0370", reason = "no safe upgrade available, tracked for typestate" },
+    # embassy-task-watchdog -> paste is unmaintained. No safe upgrade exists yet;
+    # revisit when embassy-task-watchdog drops paste or is replaced.
+    { id = "RUSTSEC-2024-0436", reason = "no safe upgrade available, tracked for embassy-task-watchdog" },
 ]
 
 [licenses]

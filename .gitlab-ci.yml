@@ -25,6 +25,27 @@ host:test:
     - cargo xtask test host
     - cargo xtask deny
 
+kani:test:
+  stage: test
+  image: rust:1.96.0
+  # Отдельный от .cache ключ/пути: kani-verifier — это toolchain-инсталл
+  # (~/.cargo/bin, ~/.kani), а не registry/target — общий кэш с host:test
+  # (тот же ref, тот же стейдж, идут параллельно) друг друга бы затирали.
+  cache:
+    key: "$CI_COMMIT_REF_SLUG-kani"
+    paths:
+      - .cargo/bin
+      - .kani
+  variables:
+    CARGO_HOME: ${CI_PROJECT_DIR}/.cargo
+    KANI_HOME: ${CI_PROJECT_DIR}/.kani
+  before_script:
+    - cargo install --locked kani-verifier
+    - cargo kani setup
+  script:
+    - cd domain
+    - cargo kani
+
 cross:build:
   stage: build
   image: rust:1.96.0

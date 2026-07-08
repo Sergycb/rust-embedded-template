@@ -9,6 +9,10 @@ compile_error!("features \"debug\" and \"release\" are mutually exclusive");
 use shadow_rs::shadow;
 shadow!(build);
 
+mod async_utils;
+mod config;
+mod task_orchestration;
+
 #[cfg(feature = "debug")]
 use defmt_rtt as _;
 #[cfg(feature = "release")]

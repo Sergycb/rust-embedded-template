@@ -31,6 +31,16 @@ panic-abort = { workspace = true, optional = true }
 bsp = { workspace = true }
 domain = { workspace = true }
 shadow-rs = { workspace = true }
+embassy-supervisor = { workspace = true }
+embassy-task-watchdog = { workspace = true }
+firmware-controller = { workspace = true }
+hsmc = { workspace = true }
+futures-concurrency = { workspace = true }
+aselect = { workspace = true }
+wg = { workspace = true }
+sync_wrapper = { workspace = true }
+embedded-rpc = { workspace = true }
+miniconf = { workspace = true }
 
 [build-dependencies]
 shadow-rs = { workspace = true, features = ["build", "no_std"] }

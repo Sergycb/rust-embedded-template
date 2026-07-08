@@ -17,12 +17,19 @@ todo = "warn"
 unimplemented = "warn"
 large_stack_arrays = "warn"
 
+[workspace.lints.rust]
+# `cargo kani` определяет cfg(kani) само; вне kani-компилятора rustc его не
+# знает (см. domain/src/kani_proofs.rs, CI-job `kani`).
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
+
 [workspace.dependencies]
 thiserror            = { version = "2.0.18", default-features = false }
 fixed                = { version = "1.31.0" }
 portable-atomic      = { version = "1.13.1" }
 statig               = { version = "0.4.1", features = ["async"] }
-smlang               = { version = "0.8.0" }
+typestate            = { version = "0.9.0-rc2" }
+type-state-builder   = { version = "0.5.1" }
+mitsein              = { version = "0.9.0", default-features = false, features = ["heapless"] }
 zerocopy             = { version = "0.8.52" }
 itertools            = { version = "0.15.0", default-features = false }
 cfg-if               = { version = "1.0.4" }

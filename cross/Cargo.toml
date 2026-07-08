@@ -43,6 +43,33 @@ target-tests = { path = "./target-tests" }
 shadow-rs = { version = "2.0.0", default-features = false }
 assign-resources = { version = "0.5.0" }
 
+# Task supervision / lifecycle. Рационале выбора и default-features — см.
+# doc-комментарии в cross/app/src/task_orchestration.rs и cross/bsp/src/buffers.rs.
+embassy-supervisor = { version = "0.3.0", default-features = false, features = [
+	"macros",
+] }
+embassy-task-watchdog = { version = "0.0.9", features = ["stm32"] }
+firmware-controller = { version = "0.5.0" }
+hsmc = { version = "0.6.0", features = ["embassy"] }
+
+# Async-комбинаторы и примитивы синхронизации сверх embassy-futures/embassy-sync
+futures-concurrency = { version = "7.7.1", default-features = false }
+aselect = { version = "0.4.0", default-features = false }
+wg = { version = "1.0.1", default-features = false, features = ["future"] }
+sync_wrapper = { version = "1.0.2" }
+embedded-rpc = { version = "0.2.0" }
+
+# Буферы/структуры данных
+bbqueue = { version = "0.7.0", default-features = false, features = [
+	"critical-section",
+] }
+intrusive-collections = { version = "0.10.2", default-features = false }
+
+# Runtime-конфигурация устройства
+miniconf = { version = "0.21.0", default-features = false, features = [
+	"derive",
+	"json-core",
+] }
 
 [profile.dev]
 codegen-units = 1

@@ -12,3 +12,5 @@ log = ["embassy-stm32/log", "domain/log"]
 embassy-stm32 = { workspace = true }
 domain = { workspace = true }
 assign-resources = { workspace = true }
+bbqueue = { workspace = true }
+intrusive-collections = { workspace = true }

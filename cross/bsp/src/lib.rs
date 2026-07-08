@@ -1,5 +1,6 @@
 #![no_std]
 
+pub mod buffers;
 pub mod resources;
 
 pub struct Board {

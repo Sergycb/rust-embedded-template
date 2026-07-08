@@ -45,7 +45,8 @@ thiserror = { workspace = true, default-features = false }
 fixed = { workspace = true }
 portable-atomic = { workspace = true }
 statig = { workspace = true, features = ["async"] }
-smlang = { workspace = true }
+type-state-builder = { workspace = true }
+mitsein = { workspace = true }
 zerocopy = { workspace = true }
 itertools = { workspace = true, default-features = false }
 cfg-if = { workspace = true }
@@ -65,6 +66,12 @@ log = { workspace = true, optional = true }
 defmt = { workspace = true, optional = true }
 
 [dev-dependencies]
+# `typestate` не объявляет `#![no_std]` в исходнике безусловно (не за фичей) —
+# перепроверено: даже с `default-features = false` (без mermaid-docs/aquamarine)
+# падает с E0463 на `thumbv7em-none-eabihf`. Не в [dependencies]: попадание в
+# граф cross-таргета (bsp/app -> domain) сломает сборку прошивки. Годится
+# только для host-side иллюстраций/тестов (см. examples/).
+typestate = { workspace = true }
 embassy-time = { workspace = true, features = ["generic-queue-8", "std"] }
 embedded-hal-mock = { workspace = true }
 mockall = { workspace = true }
