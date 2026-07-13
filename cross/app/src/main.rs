@@ -1,22 +1,21 @@
 #![no_std]
 #![no_main]
 
-#[cfg(not(any(feature = "debug", feature = "release")))]
-compile_error!("either feature \"debug\" or \"release\" must be enabled");
-#[cfg(all(feature = "debug", feature = "release"))]
-compile_error!("features \"debug\" and \"release\" are mutually exclusive");
-
 use shadow_rs::shadow;
 shadow!(build);
 
 mod task_orchestration;
 
-use defmt_or_log::info;
-#[cfg(feature = "debug")]
+use defmt::info;
+// RTT остаётся дефолтным транспортом в обоих профилях — сырой шаблон не знает,
+// какой конкретный USART/USB на плате пользователь отведёт под лог без
+// пробника. Готовый паттерн замены (USB/UART, без RTT/пробника) для release —
+// doc-комментарий в task_orchestration.rs, подключается по мере готовности
+// платы (Board должен будет отдавать реальную периферию под транспорт).
 use defmt_rtt as _;
-#[cfg(feature = "release")]
+#[cfg(not(debug_assertions))]
 use panic_halt as _;
-#[cfg(feature = "debug")]
+#[cfg(debug_assertions)]
 use panic_probe as _;
 
 use embassy_executor::Spawner;

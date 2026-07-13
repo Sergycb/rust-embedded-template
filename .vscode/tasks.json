@@ -64,7 +64,7 @@
 			"label": "build: app (debug)",
 			"type": "shell",
 			"command": "cargo",
-			"args": ["build", "--features", "debug"],
+			"args": ["build"],
 			"options": { "cwd": "${workspaceFolder}/cross/app" },
 			"problemMatcher": ["$rustc"]
 		},
@@ -72,7 +72,7 @@
 			"label": "build: app (release)",
 			"type": "shell",
 			"command": "cargo",
-			"args": ["build", "--release", "--features", "release"],
+			"args": ["build", "--release"],
 			"options": { "cwd": "${workspaceFolder}/cross/app" },
 			"problemMatcher": ["$rustc"]
 		}

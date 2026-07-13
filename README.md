@@ -79,6 +79,7 @@ supervisor-графы, watchdog). Вся остальная логика — в 
 | `embedded-rpc` | Межзадачный (не host↔target!) request/response с zero-copy буферами через `embassy_sync`-мьютексы/wakers. | `domain/examples/embedded_rpc_service.rs` |
 | `intrusive-collections` | Intrusive-коллекция: объект сам встраивает link-поле, может состоять сразу в нескольких коллекциях без отдельного выделения узла. Не дублирует `heapless` (тот копирует значения в буфер фиксированной ёмкости). | `domain/examples/intrusive_collections_wait_list.rs` |
 | `miniconf` | Runtime-конфигурация устройства: адресуемое дерево настроек, доступ к листьям по JSON-пути, без аллокатора. | `domain/examples/miniconf_settings.rs` |
+| `test-log` | Автоинициализация `log` в host-тестах (тихо на успехе, видно на провале/`--nocapture`), цветной вывод из коробки — без ручного `env_logger::init()` в каждом тесте. | `domain/tests/logging.rs` |
 
 ### `cross` — железо и оркестрация
 
@@ -88,6 +89,8 @@ supervisor-графы, watchdog). Вся остальная логика — в 
 | `embassy-task-watchdog` | Мультиплексирование watchdog'ов нескольких задач в один аппаратный watchdog. | `cross/app/src/task_orchestration.rs` |
 | `ector` | Actor-паттерн (message-passing) между embassy-задачами. Функционально беднее `firmware-controller` (тот ещё умеет RPC + pub-sub + периодику одним макросом), но `firmware-controller` физически не собирается на `no_std` ARM (не объявляет `#![no_std]`, падает с E0463) — проверено чистой сборкой. `ector` реально собирается и работает, проверено на STM32F3Discovery. | `cross/app/src/task_orchestration.rs` |
 | `bbqueue` | Zero-copy DMA-буфер: grant/commit API, DMA пишет напрямую в backing storage. Не дублирует `embassy_sync::Pipe` (тот copy-based, для обычного межзадачного обмена без DMA). | `cross/bsp/src/buffers.rs` |
+| `defmt-embassy-usbserial` | Готовый `#[global_logger]` над USB CDC-ACM — defmt-транспорт для `release` без пробника, не нужно писать свой drain-таск. `defmt@^1`-совместим (проверено); версия `embassy-usb` в нём (0.5) не проверена реальной сборкой на актуальном `embassy-stm32`. | `cross/app/src/task_orchestration.rs` |
+| свой `#[global_logger]` над `bbqueue` | UART/любой другой транспорт для `release` — turnkey-крейта нет, а `defmt-bbq` не годится (держит `defmt@0.3.x`, у нас `defmt@1.1.0`; `symbol multiply defined` при реальной проверке). | `cross/app/src/task_orchestration.rs` |
 
 ### Bootloader
 
@@ -120,12 +123,15 @@ cargo xtask deny                   # cargo-deny check (лицензии/уязв
 cargo xtask test [all|host|host-target|target]
 ```
 
-## debug vs release: defmt vs log
+## debug vs release: defmt везде, паникёр и транспорт — по профилю
 
-`cross/app` и `cross/boot` — взаимоисключающие Cargo-фичи `debug` (defmt + RTT + `panic-probe`) и
-`release` (`log` + `panic-halt`); при отсутствии обеих или при обеих сразу сборка не пройдёт —
-это специально проверяется `compile_error!` в начале `main.rs`. `domain` и `bsp` не выбирают
-профиль сами, а только прокидывают одноимённые фичи (`defmt`/`log`) дальше по зависимостям.
+`cross/app` и `cross/boot` используют `defmt` в обоих профилях (`log` в прошивке больше не
+используется, только в host-тестах `domain` — см. ниже). Паникёр (`panic-probe` в dev,
+`panic-halt` в release) выбирается через `#[cfg(debug_assertions)]`/`#[cfg(not(debug_assertions))]`
+в `main.rs`, не через Cargo-фичу `debug`/`release` — таких фич больше нет. `defmt-rtt` остаётся
+дефолтным транспортом в обоих профилях; паттерн для `release` без пробника (USB/UART, когда на
+плате появится нужная периферия) задокументирован в `cross/app/src/task_orchestration.rs`.
+Подробности и технические причины (почему через `cfg`, а не фичу) — в CLAUDE.md.
 
 ## Обновление зависимостей
 

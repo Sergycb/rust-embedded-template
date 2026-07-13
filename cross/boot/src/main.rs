@@ -1,22 +1,20 @@
 #![no_std]
 #![no_main]
 
-#[cfg(not(any(feature = "debug", feature = "release")))]
-compile_error!("either feature \"debug\" or \"release\" must be enabled");
-#[cfg(all(feature = "debug", feature = "release"))]
-compile_error!("features \"debug\" and \"release\" are mutually exclusive");
-
 use core::cell::RefCell;
 
-use defmt_or_log::info;
-#[cfg(feature = "debug")]
+use defmt::info;
+// RTT — дефолтный транспорт в обоих профилях (см. cross/app/src/main.rs);
+// boot вдобавок не спавнит embassy-задач, поэтому очередь+drain-таск под
+// USB/UART (см. task_orchestration.rs) сюда в принципе не встраивается —
+// одну диагностическую строку перед прыжком не стоит того усложнять.
 use defmt_rtt as _;
 use embassy_boot_stm32::{BootLoader, BootLoaderConfig};
 use embassy_stm32::flash::{BANK1_REGION, Flash};
 use embassy_sync::blocking_mutex::Mutex;
-#[cfg(feature = "release")]
+#[cfg(not(debug_assertions))]
 use panic_halt as _;
-#[cfg(feature = "debug")]
+#[cfg(debug_assertions)]
 use panic_probe as _;
 
 #[cortex_m_rt::entry]

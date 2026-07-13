@@ -66,6 +66,22 @@ bbqueue = { version = "0.7.0", default-features = false, features = [
 	"critical-section",
 ] }
 
+# defmt-транспорт для release-прошивки (без пробника, RTT недоступен) — см.
+# doc-комментарий в cross/app/src/task_orchestration.rs. `embassy-usb` пинуется
+# на 0.5.x, а не на актуальные 0.6.0 — потому что defmt-embassy-usbserial
+# требует именно "^0.5"; поднимать версию нельзя, будут две несовместимые копии
+# embassy-usb в графе (проверено: defmt-bbq по той же причине отбракован —
+# держит defmt@0.3.x при defmt@1.1.0 у нас, `symbol multiply defined` при
+# реальной попытке использовать оба).
+defmt-embassy-usbserial = { version = "0.2.1" }
+embassy-usb = { version = "0.5" }
+
+# ВНИМАНИЕ: `debug-assertions` в этих двух профилях — не только про проверки
+# переполнения. `app`/`boot` выбирают паникёр и defmt-транспорт через
+# `#[cfg(debug_assertions)]` в main.rs (см. CLAUDE.md, "Feature-flag
+# конвенции"), а не через Cargo-фичу. Если поменять `debug-assertions` здесь
+# (например, ради диагностики бага в release-сборке) — вслед за этим молча
+# переключится и паникёр/транспорт в прошивке, без предупреждения компилятора.
 [profile.dev]
 codegen-units = 1
 debug = 2

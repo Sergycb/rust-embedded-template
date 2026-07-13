@@ -37,14 +37,14 @@ fn main() -> Result<(), anyhow::Error> {
 fn run_debug(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     flash_boot(sh, "debug")?;
     let _p = sh.push_dir(root_dir().join("cross/app"));
-    cmd!(sh, "cargo run --features debug").run()?;
+    cmd!(sh, "cargo run").run()?;
     Ok(())
 }
 
 fn run_release(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     flash_boot(sh, "release")?;
     let _p = sh.push_dir(root_dir().join("cross/app"));
-    cmd!(sh, "cargo run --release --features release").run()?;
+    cmd!(sh, "cargo run --release").run()?;
     Ok(())
 }
 
@@ -62,8 +62,8 @@ fn flash_release(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
 
 fn build(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     let _p = sh.push_dir(root_dir().join("cross"));
-    cmd!(sh, "cargo build --features debug").run()?;
-    cmd!(sh, "cargo build --release --features release").run()?;
+    cmd!(sh, "cargo build").run()?;
+    cmd!(sh, "cargo build --release").run()?;
     Ok(())
 }
 
@@ -116,11 +116,12 @@ fn lint_cross(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     // target-tests has no default targets of its own until it grows an embedded-test
     // harness, so --all-targets is intentionally omitted here (it would otherwise try
     // and fail to build its empty `tests/test.rs` as a no_std test binary).
-    cmd!(
-        sh,
-        "cargo clippy --workspace --features debug -- -D warnings"
-    )
-    .run()?;
+    cmd!(sh, "cargo clippy --workspace -- -D warnings").run()?;
+    // Second pass, release only, scoped to app+boot: the panic handler and defmt
+    // transport there are chosen via `#[cfg(debug_assertions)]`, not a Cargo feature,
+    // so the release branch is only type-checked under this profile. bsp/target-tests
+    // have no such branches, so re-linting them here would just repeat the first pass.
+    cmd!(sh, "cargo clippy -p app -p boot --release -- -D warnings").run()?;
     Ok(())
 }
 
@@ -130,28 +131,20 @@ fn deny(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-fn flash_app(sh: &xshell::Shell, features: &str) -> Result<(), anyhow::Error> {
-    flash(sh, "app", features)
+fn flash_app(sh: &xshell::Shell, profile: &str) -> Result<(), anyhow::Error> {
+    flash(sh, "app", profile)
 }
 
-fn flash_boot(sh: &xshell::Shell, features: &str) -> Result<(), anyhow::Error> {
-    flash(sh, "boot", features)
+fn flash_boot(sh: &xshell::Shell, profile: &str) -> Result<(), anyhow::Error> {
+    flash(sh, "boot", profile)
 }
 
-fn flash(sh: &xshell::Shell, package: &str, features: &str) -> Result<(), anyhow::Error> {
+fn flash(sh: &xshell::Shell, package: &str, profile: &str) -> Result<(), anyhow::Error> {
     let _p = sh.push_dir(root_dir().join("cross"));
-    match features {
-        "release" => cmd!(
-            sh,
-            "cargo flash -p {package} --release --features release --chip {CHIP}"
-        )
-        .run()?,
-        "debug" => cmd!(
-            sh,
-            "cargo flash -p {package} --features debug --chip {CHIP}"
-        )
-        .run()?,
-        other => anyhow::bail!("unknown features profile: {other}"),
+    match profile {
+        "release" => cmd!(sh, "cargo flash -p {package} --release --chip {CHIP}").run()?,
+        "debug" => cmd!(sh, "cargo flash -p {package} --chip {CHIP}").run()?,
+        other => anyhow::bail!("unknown profile: {other}"),
     }
     Ok(())
 }
