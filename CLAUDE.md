@@ -33,8 +33,12 @@ supervisor-графы, watchdog). Вся остальная логика — в 
   между задачами) → `domain`, даже если результат используется только из `cross`.
 
 Если сомневаетесь — смотрите прецеденты (обоснование целиком в doc-комментарии, не
-повторяется здесь): `hsmc` — последний абзац `cross/app/src/task_orchestration.rs`;
-`intrusive-collections` — последний абзац `cross/bsp/src/buffers.rs`.
+повторяется здесь): `fsm`/`fsm-async` — раздел «Стейтчарты сюда не входят» в
+`cross/app/src/task_orchestration.rs`; `intrusive-collections` — последний абзац
+`cross/bsp/src/buffers.rs`. Пограничный случай в ту же сторону — `watchdog`: сам
+по себе он чистая логика без единой зависимости, но объявлен в `cross`, потому что
+существует ради драйва аппаратного IWDG и без реализации его трейтов под конкретный
+МК бесполезен.
 
 ## Правила добавления новых зависимостей
 
@@ -44,14 +48,13 @@ supervisor-графы, watchdog). Вся остальная логика — в 
    `rm -rf target && cargo build --target thumbv7em-none-eabihf ...`. Прецедент
    (детали — в README, таблица `cross`): `firmware-controller` дважды казался
    рабочим на тёплом кеше, реально не собирается на no_std ARM.
-2. **`domain` не отключать `default-features` не глядя** (общее правило
-   `default-features = false` — из skill'а `rust-engineering`, здесь только
-   проектное исключение). У `domain` `default = ["embassy"]` — это не просто
-   удобство, а обязательное условие корректной кодогенерации `hsmc::statechart!`
-   (см. предупреждение в `domain/Cargo.toml` у фичи `"embassy"`). Любая новая
-   зависимость на `domain` с `default-features = false` должна явно включать
-   `features = ["embassy"]` обратно, иначе `hsmc` молча сгенерирует урезанный
-   sync-вариант без `run()`.
+2. **Крейты из личной библиотеки** ([rust-lib](https://github.com/Sergycb/rust-lib))
+   объявляются в том workspace'е, где реально используются, а не в обоих сразу:
+   `fsm`, `fsm-async`, `sync-request`, `typestate` — в корневом (для `domain`),
+   `supervisor` и `watchdog` — в `cross/Cargo.toml`. Дублировать объявление «на
+   всякий случай» не нужно: `cross` получает первые четыре через `domain`.
+   Git-зависимости не запинены на `rev`/`tag` — сгенерированный проект едет по
+   `main`; если это станет проблемой, пинить надо оба манифеста разом.
 3. **Каждая новая библиотека в `domain` — с примером** в `domain/examples/*.rs`,
    реально компилируемым (`cargo run -p domain --example <name> --features log`;
    без явной фичи `log`/`defmt` голый `cargo build -p domain` не соберётся —
@@ -87,71 +90,70 @@ pretty-логгер (`test-pretty-log`, `pretty_env_logger` и т.п.) не ну
 
 ## Feature-flag конвенции
 
-- `cross/app` и `cross/boot` **не имеют фич `debug`/`release`** (и фичи `log`
-  тоже — `log` там больше не используется вовсе, только `defmt`). Паникёр
-  (`panic-probe`/`panic-halt`) и defmt-транспорт (RTT vs USB/UART) выбираются
-  через `#[cfg(debug_assertions)]`/`#[cfg(not(debug_assertions))]` в `main.rs`,
-  не через Cargo-фичи — это теперь полностью соответствует общему правилу
-  skill'а `rust-engineering` «фичи аддитивны, никогда не взаимоисключающие»,
-  а не отступление от него (раньше было отступлением, пока разделение
-  держалось на выборе `log` vs `defmt`).
-  Так можно, потому что и `#[panic_handler]`, и `#[global_logger]` требуют
-  ровно одной активной реализации **на бинарник** — это ограничение
-  rustc/линкера, а не Cargo, и `debug_assertions` уже даёт ровно одно значение
-  на сборку (`dev`/`test` → `true`, `release` → `false`), выбора через
-  Cargo-фичу не требуется. **Cargo при этом не умеет** гейтить сами
-  зависимости по `debug_assertions` (`[target.'cfg(debug_assertions)'.dependencies]`
-  не работает — это резолвится через `rustc --print=cfg` независимо от
-  профиля, см. rust-lang/cargo#7634) — поэтому `panic-probe`/`panic-halt`/
-  `defmt-rtt` остаются обычными (не `optional`) зависимостями, выбор — только
-  через `cfg` на `use ... as _;` в исходнике.
-  **Проверено эмпирически** (два разных технических механизма, не путать):
-  крейт, на который в исходнике нет ни одной ссылки (`use` отсутствует
-  вовсе, не просто `cfg`-исключён из текущей сборки) — не регистрирует
-  `#[panic_handler]` как lang item, поэтому оба паникёра как обычные
-  зависимости + `cfg` на `use` работают без конфликта в любом профиле.
-  `#[global_logger]` устроен иначе — резолвится линковкой по имени символа
-  (`_defmt_acquire` и т.п.), а не rustc lang item. **Сам механизм** cfg-гейтинга
-  ровно одного `use` — проверен эмпирически на паре `defmt-rtt`/
-  `defmt-embassy-usbserial` (dev и release по отдельности собираются чисто),
-  но если оба `use` окажутся активны одновременно — жёсткий
-  `error: Linking globals named '_defmt_acquire': symbol multiply defined!`.
-  Это НЕ то же самое, что «`defmt-embassy-usbserial` готов к использованию
-  в этом шаблоне» — версия `embassy-usb` в нём (0.5) отдельно от механизма
-  cfg-гейтинга и реальной сборкой на этом чипе не проверена (см. ниже и
-  doc-комментарий в `task_orchestration.rs`). При правке `main.rs` держите
-  инвариант «ровно один `use <логгер> as _;` активен на сборку».
+- `cross/app`, `cross/boot` и `cross/bsp` **не имеют фич `debug`/`release`,
+  `log` и `defmt`**: `log` в прошивке не используется вовсе, `defmt` включён
+  безусловно в обоих профилях. Выбирать через фичу больше нечего, поэтому и
+  развилок `#[cfg(debug_assertions)]` в `main.rs` сейчас нет ни одной:
+  паникёр — `panic-probe` в обоих профилях (печатает бэктрейс через defmt при
+  подключённом пробнике, иначе `udf` → HardFault-хендлер `cortex-m-rt`, то
+  есть то же поведение, ради которого раньше в release ставился
+  `panic-halt`), транспорт — `defmt-rtt` в обоих.
+- **Если развилка по профилю всё-таки понадобится** (реалистичный случай —
+  release-транспорт defmt без пробника, см. следующий пункт), делать её через
+  `#[cfg(debug_assertions)]` на `use ... as _;`, а не через Cargo-фичу. И
+  `#[panic_handler]`, и `#[global_logger]` требуют ровно одной активной
+  реализации **на бинарник** — это ограничение rustc/линкера, а не Cargo, а
+  `debug_assertions` уже даёт ровно одно значение на сборку (`dev`/`test` →
+  `true`, `release` → `false`). **Cargo при этом не умеет** гейтить сами
+  зависимости по `debug_assertions`
+  (`[target.'cfg(debug_assertions)'.dependencies]` не работает — резолвится
+  через `rustc --print=cfg` независимо от профиля, см. rust-lang/cargo#7634),
+  поэтому обе стороны развилки остаются обычными (не `optional`)
+  зависимостями, а выбор — только через `cfg` на `use`.
+  **Проверено эмпирически** (два разных механизма, не путать): крейт, на
+  который в исходнике нет ни одной ссылки (`use` отсутствует вовсе, а не
+  `cfg`-исключён), не регистрирует `#[panic_handler]` как lang item — поэтому
+  два паникёра обычными зависимостями + `cfg` на `use` не конфликтовали.
+  `#[global_logger]` устроен иначе: резолвится линковкой по имени символа
+  (`_defmt_acquire` и т.п.), и если два `use` окажутся активны одновременно —
+  жёсткий `error: Linking globals named '_defmt_acquire': symbol multiply
+  defined!`. При правке `main.rs` держите инвариант «ровно один
+  `use <логгер> as _;` активен на сборку».
   **Осторожно с `[profile.dev]`/`[profile.release]` в `cross/Cargo.toml`**:
-  `debug-assertions` там задан явно (ради `overflow-checks`) — правка этого
-  поля по несвязанной причине молча переключит и паникёр/транспорт в
-  прошивке, компилятор об этом не предупредит.
-- defmt-транспорт для `release` без пробника (USB/UART) — не в реальном коде:
+  `debug-assertions` там задан явно (ради `overflow-checks`) — если развилка
+  по профилю появится, правка этого поля по несвязанной причине молча
+  переключит и её, без предупреждения компилятора.
+- defmt-транспорт для `release` без пробника (UART) — не в реальном коде:
   сырой шаблон не знает, какую периферию конкретная плата отведёт под это, а
   `Board` пока не разбит на отдельные ресурсы (см. `cross/bsp/src/lib.rs`).
-  Паттерн (и обоснование, почему не `defmt-bbq` — держит `defmt@0.3.x` при
-  `defmt@1.1.0` у нас, `symbol multiply defined` при реальной проверке) —
-  doc-комментарий в `cross/app/src/task_orchestration.rs`. Дефолт в обоих
-  профилях реального `main.rs` — `defmt-rtt`; при подключении паттерна из
-  doc-комментария не забыть сделать существующий `use defmt_rtt as _;` тоже
-  `#[cfg(debug_assertions)]` (см. предыдущий пункт).
+  Паттерн и обоснование, почему все три turnkey-крейта отпали (`defmt-bbq` и
+  `defmt-serial` держат `defmt@0.3.x` при `defmt@1.1.0` у нас,
+  `defmt-embassy-usbserial` требует `embassy-usb ^0.5`) — doc-комментарий в
+  `cross/app/src/task_orchestration.rs`. Дефолт в обоих профилях реального
+  `main.rs` — `defmt-rtt`; при подключении паттерна не забыть сделать
+  существующий `use defmt_rtt as _;` тоже `#[cfg(debug_assertions)]`.
 - `-Tdefmt.x` линкуется статически из `cross/.cargo/config.toml` (`rustflags`,
   рядом с `-Tlink.x`), не из `build.rs` — `defmt` используется в обоих профилях
   безусловно, в отличие от прежней схемы с `log`-only `release`, где это
   приходилось делать условно через `CARGO_FEATURE_DEFMT` в build-скрипте
   каждого бинарного крейта.
 - `panic-abort` не использовать — не собирается на stable (требует nightly
-  `#![feature(core_intrinsics)]`, не обновлялся с 2019). Везде `panic-halt`.
+  `#![feature(core_intrinsics)]`, не обновлялся с 2019). Везде `panic-probe`.
+  `panic-halt` тоже больше не подключён: в release он давал ровно то же
+  поведение, что `panic-probe` без пробника, а держать вторую реализацию
+  `#[panic_handler]` ради этого незачем.
 
 ## Плейсхолдеры шаблона (`cargo-generate.toml`)
 
 `{{chip}}`, `{{chip_feature}}`, `{{cpu}}`, `{{target}}`, `{{write_size}}` — плейсхолдеры
 из `[placeholders]` в `cargo-generate.toml`. Список файлов, где они встречаются,
 меняется по мере развития шаблона — **перед проверкой найти все вхождения заново**:
-`grep -rln '{{' --include='*.rs' --include='*.toml' --include='*.json' cross xtask
-.vscode .gitlab-ci.yml`. На момент написания реально блокируют компиляцию `cross`
-(нужны для `cargo build`/`clippy`): `cross/Cargo.toml`, `cross/.cargo/config.toml`,
-`cross/boot/src/main.rs`, `cross/rust-toolchain.toml`. Остальные вхождения
-(`xtask/src/main.rs`, `.vscode/launch.json`, `.gitlab-ci.yml`, doc-комментарии в
+`grep -rln '{{' --include='*.rs' --include='*.toml' --include='*.json' --include='*.yml'
+cross xtask .vscode .github .gitlab-ci.yml`. На момент написания реально блокируют
+компиляцию `cross` (нужны для `cargo build`/`clippy`): `cross/Cargo.toml`,
+`cross/.cargo/config.toml`, `cross/boot/src/main.rs`. Остальные вхождения
+(`xtask/src/main.rs`, `.vscode/launch.json`, `.gitlab-ci.yml`,
+`.github/workflows/ci.yml`, doc-комментарии в
 `cross/app/src/task_orchestration.rs`/`cross/bsp/src/buffers.rs`/`cross/bsp/src/resources.rs`)
 не мешают сборке — там `{{...}}` либо в некомпилируемом `` ```ignore `` -блоке, либо
 используется только `cargo xtask run`/`flash`/CI/IDE, подставлять их для проверки
@@ -174,7 +176,6 @@ pretty-логгер (`test-pretty-log`, `pretty_env_logger` и т.п.) не ну
 ```
 cargo xtask lint          # domain: fmt --check + clippy -D warnings
 cargo xtask test host     # domain: cargo nextest
-cargo xtask deny          # licenses/advisories/bans
 
 cargo xtask lint cross    # cross: fmt --check + clippy -D warnings
 cargo xtask build         # cross: debug + release
@@ -188,6 +189,15 @@ cargo xtask build         # cross: debug + release
 
 Bootloader (безусловный прыжок без проверки образа) и дефолт `write_size = 2048` —
 осознанные компромиссы, описаны в README, раздел «Bootloader»; не пытайтесь «исправить»
-их без запроса пользователя. Дополнительно: `cargo-deny` `multiple-versions` — `warn`,
-не `deny` (например `heapless` 0.8 у `hsmc` и 0.9 в workspace) — оставлено на
-усмотрение разработчика, использующего шаблон.
+их без запроса пользователя.
+
+Дополнительно, по решению пользователя (не восстанавливать без запроса):
+
+- **`cargo-deny` убран целиком** — нет ни `deny.toml`, ни подкоманды
+  `cargo xtask deny`, ни job'а в обоих CI. Проверок лицензий/advisories/дублей
+  версий в шаблоне больше нет.
+- **Тулчейн не запинен** — `rust-toolchain.toml` (и его `cross`-версия) удалены,
+  `rustfmt.toml` и `.editorconfig` тоже. Минимальная версия — 1.96 (её требуют
+  крейты `rust-lib`), но принудить её нечем: CI-образы GitLab прибиты к
+  `rust:1.96.0`, а на GitHub-раннере и локально берётся то, что установлено.
+  Форматирование `cargo fmt` идёт на дефолтных настройках rustfmt.

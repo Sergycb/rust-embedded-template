@@ -11,16 +11,14 @@ harness = false
 [dependencies]
 cortex-m = { workspace = true }
 cortex-m-rt = { workspace = true }
-# См. cross/app/Cargo.toml — тот же принцип: defmt всегда включён, паникёр
-# выбирается через `#[cfg(debug_assertions)]`, не через Cargo-фичи. Boot не
-# получает release-транспорт (USB/UART) — у него нет embassy-executor/Spawner
-# для фоновой drain-задачи, а единственная диагностическая строка перед
-# прыжком в прошивку не стоит того, чтобы тянуть в bootloader целый USB/UART
-# стек ради неё (см. main.rs).
+# Boot намеренно не получает release-транспорт defmt (UART без пробника,
+# см. cross/app/src/task_orchestration.rs): у него нет embassy-executor и
+# Spawner'а под фоновую drain-задачу, а единственная диагностическая строка
+# перед прыжком в прошивку не стоит того, чтобы тянуть ради неё в bootloader
+# целый UART-стек. Здесь только RTT.
 defmt-rtt = { workspace = true }
 defmt = { workspace = true }
 panic-probe = { workspace = true, features = ["print-defmt"] }
-panic-halt = { workspace = true }
 panic-persist = { workspace = true }
 embassy-boot-stm32 = { workspace = true, features = ["defmt"] }
 embassy-stm32 = { workspace = true, features = ["defmt"] }

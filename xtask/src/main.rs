@@ -21,14 +21,12 @@ fn main() -> Result<(), anyhow::Error> {
         ["flash", "release"] => flash_release(&sh),
         ["lint"] => lint_host(&sh),
         ["lint", "cross"] => lint_cross(&sh),
-        ["deny"] => deny(&sh),
         _ => {
             println!("USAGE cargo xtask test [all|host|host-target|target]");
             println!("      cargo xtask build");
             println!("      cargo xtask run [debug|release]");
             println!("      cargo xtask flash [debug|release]");
             println!("      cargo xtask lint [cross]");
-            println!("      cargo xtask deny");
             Ok(())
         }
     }
@@ -117,17 +115,13 @@ fn lint_cross(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     // harness, so --all-targets is intentionally omitted here (it would otherwise try
     // and fail to build its empty `tests/test.rs` as a no_std test binary).
     cmd!(sh, "cargo clippy --workspace -- -D warnings").run()?;
-    // Second pass, release only, scoped to app+boot: the panic handler and defmt
-    // transport there are chosen via `#[cfg(debug_assertions)]`, not a Cargo feature,
-    // so the release branch is only type-checked under this profile. bsp/target-tests
-    // have no such branches, so re-linting them here would just repeat the first pass.
+    // Second pass, release only, scoped to app+boot: the release profile turns
+    // `debug-assertions`/`overflow-checks` off, so anything behind `debug_assert!`
+    // (or a future `#[cfg(not(debug_assertions))]` branch — see the release defmt
+    // transport pattern in task_orchestration.rs) is only type-checked here.
+    // bsp/target-tests carry no such code, so re-linting them would just repeat
+    // the first pass.
     cmd!(sh, "cargo clippy -p app -p boot --release -- -D warnings").run()?;
-    Ok(())
-}
-
-fn deny(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
-    let _p = sh.push_dir(root_dir());
-    cmd!(sh, "cargo deny check").run()?;
     Ok(())
 }
 

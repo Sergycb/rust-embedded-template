@@ -11,30 +11,19 @@ harness = false
 [dependencies]
 cortex-m = { workspace = true }
 cortex-m-rt = { workspace = true }
-# defmt всегда включён (и в dev, и в release) — меняется только транспорт
-# (RTT vs USB/UART) и паникёр, выбираются через `#[cfg(debug_assertions)]` в
-# main.rs, не через Cargo-фичи: обе стороны выбора (паникёр, global_logger)
-# требуют РОВНО одной активной реализации на бинарник, и это ограничение
-# rustc/линкера, не Cargo — проверено эмпирически (см. CLAUDE.md, раздел
-# "Feature-flag конвенции"), Cargo-фичи для этого не нужны.
 embassy-executor = { workspace = true, features = ["defmt"] }
 defmt = { workspace = true }
 defmt-rtt = { workspace = true }
 panic-probe = { workspace = true, features = ["print-defmt"] }
-panic-halt = { workspace = true }
-bsp = { workspace = true, features = ["defmt"] }
+bsp = { workspace = true }
 domain = { workspace = true, features = ["defmt"] }
 shadow-rs = { workspace = true }
-embassy-supervisor = { workspace = true }
-embassy-task-watchdog = { workspace = true }
-ector = { workspace = true }
-# Не используются напрямую в main.rs (см. `use ... as _;` инвариант выше) —
-# держатся здесь реальной (не только объявленной в workspace) зависимостью,
-# чтобы версия была проверена настоящей сборкой на ARM, как и остальные
-# библиотеки в этом файле. Паттерн использования — doc-комментарий в
-# task_orchestration.rs.
-defmt-embassy-usbserial = { workspace = true }
-embassy-usb = { workspace = true }
+# Не используются напрямую в main.rs — держатся здесь реальной (не только
+# объявленной в workspace) зависимостью, чтобы версия была проверена
+# настоящей сборкой на ARM, как и остальные библиотеки в этом файле.
+# Паттерн использования — doc-комментарий в task_orchestration.rs.
+supervisor = { workspace = true }
+watchdog = { workspace = true }
 
 [build-dependencies]
 shadow-rs = { workspace = true, features = ["build", "no_std"] }

@@ -3,7 +3,7 @@
 pub mod buffers;
 pub mod resources;
 
-use defmt_or_log::info;
+use defmt::info;
 
 pub struct Board {
     // Not yet split into individual peripherals; kept whole until board wiring is added.

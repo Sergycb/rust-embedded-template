@@ -64,19 +64,26 @@ supervisor-графы, watchdog). Вся остальная логика — в 
 обоснованием выбора и ссылкой на рабочий пример. Полное обоснование (сравнение с
 альтернативами, тонкости API) — в doc-комментарии над каждым примером.
 
+Часть из них — `fsm`, `fsm-async`, `sync-request`, `typestate`, `supervisor`,
+`watchdog` — берётся из [rust-lib](https://github.com/Sergycb/rust-lib) как
+git-зависимость; они заменили сторонние аналоги (`statig`, `hsmc`,
+`embedded-rpc`, `typestate` 0.9.0-rc2, `embassy-supervisor`,
+`embassy-task-watchdog`, `ector`). Чем именно каждый из них лучше того, что
+стоял раньше, написано в примере/doc-комментарии, на который ссылается таблица.
+
 ### `domain` — бизнес-логика
 
 | Крейт | Для чего | Пример |
 |---|---|---|
-| `statig` | Иерархический async-автомат как **компонент** внутри произвольной задачи — вызывающий код сам кормит события через `handle()`. | `domain/examples/statig_blinky.rs` |
-| `hsmc` | Иерархический стейтчарт как **вся задача целиком** (`run()`), с таймерами и cross-task-инъекцией событий через `Sender`. В отличие от `statig`, не компонент, а вся асинхронная задача. | `domain/examples/hsmc_connection_chart.rs` |
-| `typestate` | Compile-time автомат: недопустимый переход состояния — ошибка компиляции, а не runtime-проверка (в отличие от `statig`/`hsmc`). Только host/dev-dependency — не собирается на `no_std` ARM. | `domain/examples/typestate_connection.rs` |
+| `fsm` | Иерархический автомат как **компонент** внутри произвольной задачи: владелец сам подаёт события через `dispatch()`. Синхронный, без исполнителя и таймеров. | `domain/examples/fsm_light_machine.rs` |
+| `fsm-async` | Тот же `fsm::Machine`, но владеющий **своей задачей целиком**: `run()` сам ждёт события из `embassy_sync`-канала и взводит таймауты состояний по `embassy_time`. Не другая модель состояний, а другой владелец цикла. | `domain/examples/fsm_async_connection_chart.rs` |
+| `typestate` | Compile-time автомат: недопустимый переход состояния — ошибка компиляции, а не runtime-проверка (в отличие от `fsm`/`fsm-async`). Настоящий `no_std`, поэтому обычная зависимость, а не только host/dev. | `domain/examples/typestate_connection.rs` |
 | `type-state-builder` | Typestate-builder: `build()` доступен только когда выставлены все обязательные поля — компилятор ловит недостающее поле, а не рантайм. Не пересекается с `typestate` (тот про переходы поведения, этот — про конструирование). | `domain/examples/type_state_builder_config.rs` |
 | `mitsein` | `NonEmpty`-обёртка над `heapless::Vec` — непустота как инвариант типа, а не проверка `Option`/`is_empty()` в каждом месте. Дополняет `heapless`, не конкурирует. | `domain/examples/mitsein_nonempty_buffer.rs` |
 | `futures-concurrency` | `race!`/`merge` для потоков поверх `Future` — то, чего нет в `embassy_futures::select`/`select3`/`select4` (только 2-4 ветки, без `race`/`merge` для потоков). Alloc-free. | `domain/examples/futures_concurrency_race.rs` |
 | `aselect` | Альтернатива `select!`, где непроигравшие ветки гарантированно НЕ отменяются на середине (cancellation-safety) — в отличие от tokio/embassy `select!`. `no_std`, zero-alloc, реализует `Stream`. | `domain/examples/aselect_stream.rs` |
 | `sync_wrapper` | Заставляет компилятор считать `!Sync`-тип `Sync`, когда эксклюзивный доступ гарантирован вручную — нужен, если `Future` должен быть `Sync`, а внутри держит не-`Sync` тип (`RefCell`) в многопоточном/multi-core сценарии. | `domain/examples/sync_wrapper_example.rs` |
-| `embedded-rpc` | Межзадачный (не host↔target!) request/response с zero-copy буферами через `embassy_sync`-мьютексы/wakers. | `domain/examples/embedded_rpc_service.rs` |
+| `sync-request` | Межзадачный (не host↔target!) request/response поверх `embassy_sync`, без зависимости от `embassy-executor`. Отменённый (по таймауту, проигравшей веткой `select!`) запрос помечен номером поколения и не «протечёт» ответом в следующий. | `domain/examples/sync_request_service.rs` |
 | `intrusive-collections` | Intrusive-коллекция: объект сам встраивает link-поле, может состоять сразу в нескольких коллекциях без отдельного выделения узла. Не дублирует `heapless` (тот копирует значения в буфер фиксированной ёмкости). | `domain/examples/intrusive_collections_wait_list.rs` |
 | `miniconf` | Runtime-конфигурация устройства: адресуемое дерево настроек, доступ к листьям по JSON-пути, без аллокатора. | `domain/examples/miniconf_settings.rs` |
 | `test-log` | Автоинициализация `log` в host-тестах (тихо на успехе, видно на провале/`--nocapture`), цветной вывод из коробки — без ручного `env_logger::init()` в каждом тесте. | `domain/tests/logging.rs` |
@@ -85,12 +92,10 @@ supervisor-графы, watchdog). Вся остальная логика — в 
 
 | Крейт | Для чего | Где документирован |
 |---|---|---|
-| `embassy-supervisor` | Упорядоченный старт/стоп embassy-задач по графу зависимостей (`supervisor_graph!`). | `cross/app/src/task_orchestration.rs` |
-| `embassy-task-watchdog` | Мультиплексирование watchdog'ов нескольких задач в один аппаратный watchdog. | `cross/app/src/task_orchestration.rs` |
-| `ector` | Actor-паттерн (message-passing) между embassy-задачами. Функционально беднее `firmware-controller` (тот ещё умеет RPC + pub-sub + периодику одним макросом), но `firmware-controller` физически не собирается на `no_std` ARM (не объявляет `#![no_std]`, падает с E0463) — проверено чистой сборкой. `ector` реально собирается и работает, проверено на STM32F3Discovery. | `cross/app/src/task_orchestration.rs` |
+| `supervisor` | Весь граф embassy-задач одним макросом `supervisor_graph!`: упорядоченный старт по `deps:`, рестарты с backoff, graceful shutdown, передача периферии через `resources:` (переживает перезапуск задачи), почтовые ящики `inbox:`, broadcast `publish:`/`subscribe:`, RPC `request:`/`calls:` и общий watchdog. Заменил связку `embassy-supervisor` + `embassy-task-watchdog` + `ector`, где один и тот же граф описывался тремя независимыми DSL. | `cross/app/src/task_orchestration.rs` |
+| `watchdog` | `no_std`-ядро мультиплексора: несколько программных watchdog'ов задач, каждый со своим таймаутом, поверх одного аппаратного. Привязку к железу задают два трейта (`Clock`, `HardwareWatchdog`), реализуемые под конкретный МК; `supervisor` использует его из блока `watchdog:`. | `cross/app/src/task_orchestration.rs` |
 | `bbqueue` | Zero-copy DMA-буфер: grant/commit API, DMA пишет напрямую в backing storage. Не дублирует `embassy_sync::Pipe` (тот copy-based, для обычного межзадачного обмена без DMA). | `cross/bsp/src/buffers.rs` |
-| `defmt-embassy-usbserial` | Готовый `#[global_logger]` над USB CDC-ACM — defmt-транспорт для `release` без пробника, не нужно писать свой drain-таск. `defmt@^1`-совместим (проверено); версия `embassy-usb` в нём (0.5) не проверена реальной сборкой на актуальном `embassy-stm32`. | `cross/app/src/task_orchestration.rs` |
-| свой `#[global_logger]` над `bbqueue` | UART/любой другой транспорт для `release` — turnkey-крейта нет, а `defmt-bbq` не годится (держит `defmt@0.3.x`, у нас `defmt@1.1.0`; `symbol multiply defined` при реальной проверке). | `cross/app/src/task_orchestration.rs` |
+| свой `#[global_logger]` над `bbqueue` | UART/любой другой транспорт для `release` без пробника — turnkey-крейта нет: `defmt-bbq` и `defmt-serial` держат `defmt@0.3.x` при `defmt@1.1.0` у нас (`symbol multiply defined` при реальной проверке), а `defmt-embassy-usbserial` требует `embassy-usb ^0.5` вместо версии, парной к текущей `embassy-stm32`. | `cross/app/src/task_orchestration.rs` |
 
 ### Bootloader
 
@@ -119,19 +124,27 @@ cargo xtask build                  # cross: сборка app+boot в debug и re
 cargo xtask run [debug|release]    # прошить boot, запустить app через probe-rs run
 cargo xtask flash [debug|release]  # прошить boot+app без подключения дебаггера
 cargo xtask lint [cross]           # fmt --check + clippy -D warnings (host или cross)
-cargo xtask deny                   # cargo-deny check (лицензии/уязвимости/дубли версий)
 cargo xtask test [all|host|host-target|target]
 ```
 
-## debug vs release: defmt везде, паникёр и транспорт — по профилю
+## debug vs release: defmt и паникёр — одни и те же
 
-`cross/app` и `cross/boot` используют `defmt` в обоих профилях (`log` в прошивке больше не
-используется, только в host-тестах `domain` — см. ниже). Паникёр (`panic-probe` в dev,
-`panic-halt` в release) выбирается через `#[cfg(debug_assertions)]`/`#[cfg(not(debug_assertions))]`
-в `main.rs`, не через Cargo-фичу `debug`/`release` — таких фич больше нет. `defmt-rtt` остаётся
-дефолтным транспортом в обоих профилях; паттерн для `release` без пробника (USB/UART, когда на
-плате появится нужная периферия) задокументирован в `cross/app/src/task_orchestration.rs`.
-Подробности и технические причины (почему через `cfg`, а не фичу) — в CLAUDE.md.
+`cross/app` и `cross/boot` используют `defmt` в обоих профилях (`log` в прошивке не
+используется вовсе, только в host-тестах `domain` — см. ниже). Паникёр — `panic-probe`
+тоже в обоих: он печатает бэктрейс через defmt, когда пробник подключён, и упирается в
+`udf`, когда нет (RTT без читателя просто отбрасывает вывод, а не блокируется).
+Наблюдаемый результат тот же, ради которого в release раньше отдельно подключался
+`panic-halt` — устройство встаёт, — но путь другой: не `loop {}` прямо в
+`#[panic_handler]`, а HardFault, который гасится дефолтным хендлером `cortex-m-rt`.
+Разница видна, если завести свой HardFault-хендлер (например, пишущий причину в
+PERSIST-регион перед сбросом): паника пойдёт через него. Ни Cargo-фич `debug`/`release`,
+ни `#[cfg(debug_assertions)]`-развилок для выбора паникёра больше нет.
+
+`defmt-rtt` — дефолтный транспорт в обоих профилях; паттерн для `release` без пробника
+(UART, когда на плате появится нужная периферия) задокументирован в
+`cross/app/src/task_orchestration.rs`. При его подключении держите инвариант «ровно один
+активный `#[global_logger]` на бинарник» — там же объяснено, почему линкер на этом
+падает жёстко. Подробности — в CLAUDE.md.
 
 ## Обновление зависимостей
 
@@ -141,9 +154,10 @@ cargo xtask test [all|host|host-target|target]
 
 ## Инструменты
 
-Версия Rust и компоненты (`clippy`, `rustfmt`) зафиксированы в `rust-toolchain.toml` (корень —
-host-тулчейн, `cross/rust-toolchain.toml` — тот же тулчейн + целевой `target`, `rustup` поставит
-его автоматически). Для прошивки/отладки нужны `probe-rs` и `flip-link`:
+Тулчейн не запинен (`rust-toolchain.toml` в шаблоне нет) — ставьте `clippy`/`rustfmt` и
+целевой target сами (`rustup component add clippy rustfmt`, `rustup target add <target>`),
+как это делает CI. Минимальная версия Rust — 1.96 (её требуют крейты из `rust-lib`).
+Для прошивки/отладки нужны `probe-rs` и `flip-link`:
 
 ```sh
 cargo install probe-rs-tools flip-link

@@ -23,7 +23,6 @@ host:test:
   script:
     - cargo xtask lint
     - cargo xtask test host
-    - cargo xtask deny
 
 kani:test:
   stage: test

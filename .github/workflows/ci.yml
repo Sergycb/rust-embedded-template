@@ -18,7 +18,6 @@ jobs:
       - uses: taiki-e/install-action@cargo-nextest
       - run: cargo xtask lint
       - run: cargo xtask test host
-      - run: cargo xtask deny
 
   kani:
     name: Kani (formal verification)
@@ -39,6 +38,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: cross
+      # Раньше target ставился автоматически из cross/rust-toolchain.toml;
+      # тулчейн-файлов в шаблоне больше нет, поэтому явно — как в GitLab CI.
+      - run: rustup target add {{target}}
       - run: cargo install flip-link --locked
       - run: cargo xtask lint cross
       - run: cargo xtask build

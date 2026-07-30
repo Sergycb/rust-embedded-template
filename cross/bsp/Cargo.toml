@@ -4,15 +4,12 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 
-[features]
-defmt = ["dep:defmt", "defmt-or-log/defmt", "embassy-stm32/defmt", "domain/defmt"]
-log = ["dep:log", "defmt-or-log/log", "embassy-stm32/log", "domain/log"]
-
 [dependencies]
 embassy-stm32 = { workspace = true }
 domain = { workspace = true }
 assign-resources = { workspace = true }
 bbqueue = { workspace = true }
-defmt-or-log = { workspace = true }
-defmt = { workspace = true, optional = true }
-log = { workspace = true, optional = true }
+# Безусловно, не за фичей: `log` в прошивке не используется вовсе, поэтому
+# фичам `defmt`/`log` у bsp (и мосту `defmt-or-log`) выбирать больше не из
+# чего — defmt включён в обоих профилях, как в `app` и `boot`.
+defmt = { workspace = true }

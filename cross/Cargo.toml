@@ -1,15 +1,15 @@
 [workspace]
-members = ["app", "boot", "bsp", "target-tests"]
+members  = ["app", "boot", "bsp", "target-tests"]
 resolver = "3"
 
 [workspace.lints.clippy]
-all = { level = "warn", priority = -1 }
-unwrap_used = "deny"
+all                     = { level = "warn", priority = -1 }
+unwrap_used             = "deny"
 let_underscore_must_use = "deny"
-dbg_macro = "deny"
-todo = "warn"
-unimplemented = "warn"
-large_stack_arrays = "warn"
+dbg_macro               = "deny"
+todo                    = "warn"
+unimplemented           = "warn"
+large_stack_arrays      = "warn"
 
 [workspace.dependencies]
 cortex-m = { version = "0.7.7", features = [
@@ -17,16 +17,10 @@ cortex-m = { version = "0.7.7", features = [
 	"inline-asm",
 	"linker-plugin-lto",
 ] }
-cortex-m-rt = { version = "0.7.5" }
-defmt = { version = "1.1.0" }
-defmt-or-log = { version = "0.2.3" }
-defmt-rtt = { version = "1.2.0" }
-log = { version = "0.4.33" }
-panic-probe = { version = "1.0.0" }
-# panic-abort не обновлялся с 2019 года и требует nightly-фичу
-# `#![feature(core_intrinsics)]` — не собирается на stable. panic-halt —
-# актуальная, стабильная замена с тем же поведением (halt вместо unwind).
-panic-halt = { version = "1.0.0" }
+cortex-m-rt   = { version = "0.7.5" }
+defmt         = { version = "1.1.0" }
+defmt-rtt     = { version = "1.2.0" }
+panic-probe   = { version = "1.0.0" }
 embassy-stm32 = { version = "0.6.0", features = [
 	"time-driver-any",
 	"{{chip_feature}}",
@@ -36,29 +30,34 @@ embassy-executor = { version = "0.10.0", features = [
 	"executor-thread",
 ] }
 embassy-boot-stm32 = { version = "0.8.0" }
-embassy-sync = { version = "0.8.0" }
-embedded-test = { version = "0.7.1", default-features = false, features = [
+embassy-sync       = { version = "0.8.0" }
+embedded-test      = { version = "0.7.1", default-features = false, features = [
 	"embassy-010",
 	"semihosting",
 ] }
-panic-persist = { version = "0.3.0" }
-bsp = { path = "./bsp" }
-boot = { path = "./boot" }
-app = { path = "./app" }
-domain ={ path = "../domain"}
-target-tests = { path = "./target-tests" }
-shadow-rs = { version = "2.0.0", default-features = false }
+panic-persist    = { version = "0.3.0" }
+bsp              = { path = "./bsp" }
+boot             = { path = "./boot" }
+app              = { path = "./app" }
+domain           = { path = "../domain" }
+target-tests     = { path = "./target-tests" }
+shadow-rs        = { version = "2.0.0", default-features = false }
 assign-resources = { version = "0.5.0" }
 
-# Task supervision / lifecycle: реальная оркестрация embassy-задач (нужен
-# Spawner) — остаётся в cross. Логика (что делает задача) — в domain, cross
-# только создаёт объекты и спавнит. Рационале — см. doc-комментарии в
-# cross/app/src/task_orchestration.rs.
-embassy-supervisor = { version = "0.3.0", default-features = false, features = [
-	"macros",
-] }
-embassy-task-watchdog = { version = "0.0.9", features = ["stm32"] }
-ector = { version = "0.9.0", default-features = false, features = ["time"] }
+# Крейты из личной библиотеки (github.com/Sergycb/rust-lib). Здесь только те
+# два, что действительно про железо и оркестрацию; `fsm`/`fsm-async`/
+# `sync-request`/`typestate` из той же библиотеки объявлены в корневом
+# workspace'е и подключаются к `domain` — cross получает их через него.
+#
+# `supervisor` заменил сразу три сторонних крейта: `embassy-supervisor`
+# (упорядоченный старт по графу), `embassy-task-watchdog` (мультиплексор
+# watchdog'ов, теперь — блок `watchdog:` в том же макросе) и `ector`
+# (actor-паттерн, теперь — поля `inbox:`/`publish:`/`request:` узла). Раньше
+# три независимых макро-DSL описывали один и тот же граф задач трижды.
+# `watchdog` — no_std-ядро мультиплексора (`Clock`/`HardwareWatchdog`),
+# нужно напрямую, чтобы `bsp` мог реализовать эти два трейта над IWDG.
+supervisor       = { git = "https://github.com/Sergycb/rust-lib.git" }
+watchdog         = { git = "https://github.com/Sergycb/rust-lib.git" }
 
 # Zero-copy DMA-буфер: статические объекты создаются только в cross —
 # см. cross/bsp/src/buffers.rs.
@@ -66,45 +65,36 @@ bbqueue = { version = "0.7.0", default-features = false, features = [
 	"critical-section",
 ] }
 
-# defmt-транспорт для release-прошивки (без пробника, RTT недоступен) — см.
-# doc-комментарий в cross/app/src/task_orchestration.rs. `embassy-usb` пинуется
-# на 0.5.x, а не на актуальные 0.6.0 — потому что defmt-embassy-usbserial
-# требует именно "^0.5"; поднимать версию нельзя, будут две несовместимые копии
-# embassy-usb в графе (проверено: defmt-bbq по той же причине отбракован —
-# держит defmt@0.3.x при defmt@1.1.0 у нас, `symbol multiply defined` при
-# реальной попытке использовать оба).
-defmt-embassy-usbserial = { version = "0.2.1" }
-embassy-usb = { version = "0.5" }
+# `embassy-usb` здесь больше нет: он стоял запиненным на 0.5 (а не на
+# актуальную 0.6) исключительно потому, что этого требовал
+# `defmt-embassy-usbserial` — готовый `#[global_logger]` над USB CDC-ACM,
+# убранный вместе с остальными заменёнными зависимостями. Своего применения
+# у `embassy-usb` в шаблоне не было. Если понадобится USB — берите версию,
+# парную к текущей `embassy-stm32`, а не 0.5.
 
-# ВНИМАНИЕ: `debug-assertions` в этих двух профилях — не только про проверки
-# переполнения. `app`/`boot` выбирают паникёр и defmt-транспорт через
-# `#[cfg(debug_assertions)]` в main.rs (см. CLAUDE.md, "Feature-flag
-# конвенции"), а не через Cargo-фичу. Если поменять `debug-assertions` здесь
-# (например, ради диагностики бага в release-сборке) — вслед за этим молча
-# переключится и паникёр/транспорт в прошивке, без предупреждения компилятора.
 [profile.dev]
-codegen-units = 1
-debug = 2
+codegen-units    = 1
+debug            = 2
 debug-assertions = true
-incremental = false
-opt-level = "s"         # <-
-overflow-checks = true
-lto = "fat"
+incremental      = false
+opt-level        = "s"    # <-
+overflow-checks  = true
+lto              = "fat"
 
 [profile.release]
-codegen-units = 1
-debug = 2
+codegen-units    = 1
+debug            = 2
 debug-assertions = false
-incremental = false
-opt-level = "s"
-overflow-checks = false
-lto = "fat"
+incremental      = false
+opt-level        = "s"
+overflow-checks  = false
+lto              = "fat"
 
 [profile.test]
-codegen-units = 1
-debug = 2
-debug-assertions = true # <-
-incremental = false
-opt-level = "s"         # <-
-overflow-checks = true  # <-
-lto = "fat"
+codegen-units    = 1
+debug            = 2
+debug-assertions = true   # <-
+incremental      = false
+opt-level        = "s"    # <-
+overflow-checks  = true   # <-
+lto              = "fat"

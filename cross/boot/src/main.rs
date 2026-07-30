@@ -12,9 +12,7 @@ use defmt_rtt as _;
 use embassy_boot_stm32::{BootLoader, BootLoaderConfig};
 use embassy_stm32::flash::{BANK1_REGION, Flash};
 use embassy_sync::blocking_mutex::Mutex;
-#[cfg(not(debug_assertions))]
-use panic_halt as _;
-#[cfg(debug_assertions)]
+// Единственный паникёр в обоих профилях — см. cross/app/src/main.rs.
 use panic_probe as _;
 
 #[cortex_m_rt::entry]

@@ -9,46 +9,34 @@ members = [
 resolver = "3"
 
 [workspace.lints.clippy]
-all = { level = "warn", priority = -1 }
-unwrap_used = "deny"
+all                     = { level = "warn", priority = -1 }
+unwrap_used             = "deny"
 let_underscore_must_use = "deny"
-dbg_macro = "deny"
-todo = "warn"
-unimplemented = "warn"
-large_stack_arrays = "warn"
+dbg_macro               = "deny"
+todo                    = "warn"
+unimplemented           = "warn"
+large_stack_arrays      = "warn"
 
 [workspace.lints.rust]
 # `cargo kani` определяет cfg(kani) само; вне kani-компилятора rustc его не
 # знает (см. domain/src/kani_proofs.rs, CI-job `kani`).
-#
-# `hsmc`'s `statechart!` эмиттит cfg(feature = "tokio"/"journal"/"trace-*")
-# проверки в контексте вызывающего крейта (domain) независимо от того,
-# какие фичи реально объявлены у domain — сам hsmc документирует это как
-# ожидаемое поведение (см. его собственный lints.rust в hsmc/src/lib.rs).
-unexpected_cfgs = { level = "warn", check-cfg = [
-	"cfg(kani)",
-	"cfg(feature, values(\"tokio\", \"journal\", \"trace-defmt\", \"trace-log\", \"trace-tracing\"))",
-] }
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
 
 [workspace.dependencies]
-thiserror            = { version = "2.0.18", default-features = false }
-fixed                = { version = "1.31.0" }
-portable-atomic      = { version = "1.13.1" }
-statig               = { version = "0.4.1", features = ["async"] }
-typestate            = { version = "0.9.0-rc2" }
-type-state-builder   = { version = "0.5.1" }
-mitsein              = { version = "0.9.0", default-features = false, features = ["heapless"] }
-hsmc                 = { version = "0.6.0", features = ["embassy"] }
-futures-concurrency  = { version = "7.7.1", default-features = false }
-aselect              = { version = "0.4.0", default-features = false }
-# wg (AsyncWaitGroup) сюда не включён: его async-реализация жёстко требует
-# alloc (Arc-based clone), no_std/no-alloc варианта нет ни у wg, ни у
-# исследованных альтернатив (waitgroup, awaitgroup, async-wg, mea,
-# compact-waitgroup — все тоже на Arc).
-sync_wrapper         = { version = "1.0.2" }
-embedded-rpc         = { version = "0.2.0" }
+thiserror           = { version = "2.0.18", default-features = false }
+fixed               = { version = "1.31.0" }
+portable-atomic     = { version = "1.13.1" }
+type-state-builder  = { version = "0.5.1" }
+mitsein             = { version = "0.9.0", default-features = false, features = ["heapless"] }
+futures-concurrency = { version = "7.7.1", default-features = false }
+aselect             = { version = "0.4.0", default-features = false }
+  # wg (AsyncWaitGroup) сюда не включён: его async-реализация жёстко требует
+  # alloc (Arc-based clone), no_std/no-alloc варианта нет ни у wg, ни у
+  # исследованных альтернатив (waitgroup, awaitgroup, async-wg, mea,
+  # compact-waitgroup — все тоже на Arc).
+sync_wrapper          = { version = "1.0.2" }
 intrusive-collections = { version = "0.10.2", default-features = false }
-miniconf             = { version = "0.21.0", default-features = false, features = [
+miniconf              = { version = "0.21.0", default-features = false, features = [
 	"derive",
 	"json-core",
 ] }
@@ -76,8 +64,30 @@ proptest             = { version = "1.11.0" }
 rstest               = { version = "0.26.1" }
 tokio                = { version = "1.52.3", features = ["rt", "macros", "time"] }
 futures              = { version = "0.3.32", default-features = false }
-# Автоинициализация `log` в host-тестах (тихо на успехе, видно на провале/
-# --nocapture, читает RUST_LOG) — вместо ручного env_logger::init() в каждом
-# тесте. Фича `color` (в default) даёт цветной вывод уровней без отдельного
-# pretty-логгера (test-pretty-log и подобные не нужны — см. domain/tests/).
 test-log             = { version = "0.2.21" }
+
+# Крейты из личной библиотеки (github.com/Sergycb/rust-lib), заменившие
+# сторонние аналоги, которые раньше стояли здесь. Не предлагать старые
+# обратно — дело не только в дублировании, у каждого был конкретный изъян:
+#
+# * `fsm` (+ `fsm-async`) вместо `statig` и `hsmc`. Два сторонних крейта
+#   покрывали два режима одного и того же (автомат-компонент и автомат-
+#   задача); здесь это один core (`fsm::Runtime`) и async-обёртка над ним
+#   (`fsm_async::AsyncTimedRuntime`), с общей иерархией/таймаутами. Сверх
+#   того, `hsmc` требовал у domain зеркальной фичи `"embassy"` — без неё
+#   `statechart!` молча генерировал sync-вариант без `run()` — и тянул
+#   heapless 0.8 рядом с 0.9 workspace'а.
+# * `sync-request` вместо `embedded-rpc` — тот же межзадачный
+#   request/response, но с generation-tagged отменой (см. `RpcService`).
+# * `typestate` вместо одноимённого крейта 0.9.0-rc2. Тот не объявлял
+#   `#![no_std]` ни при какой конфигурации фич и падал с E0463 на
+#   `thumbv7em-none-eabihf` — годился только в `[dev-dependencies]`. Этот
+#   `no_std` по-настоящему, поэтому объявлен обычной зависимостью.
+#
+# Крейты `supervisor` и `watchdog` из той же библиотеки — не здесь, а в
+# `cross/Cargo.toml`: первый спавнит `#[embassy_executor::task]`, второй
+# драйвит аппаратный IWDG.
+fsm          = { git = "https://github.com/Sergycb/rust-lib.git", features = ["macro"] }
+fsm-async    = { git = "https://github.com/Sergycb/rust-lib.git" }
+sync-request = { git = "https://github.com/Sergycb/rust-lib.git" }
+typestate    = { git = "https://github.com/Sergycb/rust-lib.git" }
