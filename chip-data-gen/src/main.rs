@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
     process::Command,
@@ -7,13 +7,19 @@ use std::{
 
 use anyhow::{Context, bail};
 
-const BEGIN_MARKER: &str = "// BEGIN GENERATED CHIP LIST";
-const END_MARKER: &str = "// END GENERATED CHIP LIST";
+const CHIPS_BEGIN: &str = "// BEGIN GENERATED CHIP LIST";
+const CHIPS_END: &str = "// END GENERATED CHIP LIST";
+const PACKAGES_BEGIN: &str = "// BEGIN GENERATED PACKAGE CHOICES";
+const PACKAGES_END: &str = "// END GENERATED PACKAGE CHOICES";
 /// Любая реальная чип-фича годится — нужна только чтобы `cargo metadata` смог
 /// разрешить зависимость `embassy-stm32`: в самом `cross/Cargo.toml` вместо
 /// неё стоит нерезолвящийся плейсхолдер `{{chip_feature}}`, см.
 /// `PatchedRepoCopy`.
 const PLACEHOLDER_CHIP_FEATURE: &str = "stm32f407ve";
+/// Суффиксы после дефиса, обозначающие конкретное ядро (двухъядерные чипы) —
+/// не корпусировку/градацию. Должно совпадать с `core_override()` в
+/// `chip-select.rhai`.
+const CORE_MARKERS: &[&str] = &["cm0", "cm0p", "cm3", "cm4", "cm7", "cm23", "cm33"];
 
 fn main() -> anyhow::Result<()> {
     let repo_root = repo_root();
@@ -29,15 +35,38 @@ fn main() -> anyhow::Result<()> {
     suffixes.sort_unstable();
 
     let dropped = embassy_features.len() - suffixes.len();
+
+    let package_choices: BTreeMap<&str, Vec<String>> = suffixes
+        .iter()
+        .filter_map(|suffix| {
+            let candidates = package_candidates(suffix, &probe_rs_chips);
+            (!candidates.is_empty()).then_some((*suffix, candidates))
+        })
+        .collect();
+
     println!(
-        "embassy-stm32: {} чип-фич; probe-rs: {} целей; итоговый список: {} (отброшено {}, нет цели probe-rs)",
+        "embassy-stm32: {} чип-фич; probe-rs: {} целей; итоговый список: {} (отброшено {}, \
+         нет цели probe-rs); более точная цель probe-rs, чем базовая, найдена для {} чипов",
         embassy_features.len(),
         probe_rs_chips.len(),
         suffixes.len(),
-        dropped
+        dropped,
+        package_choices.len()
     );
 
-    write_chip_list(&repo_root.join("chip-select.rhai"), &suffixes)?;
+    let rhai_path = repo_root.join("chip-select.rhai");
+    write_generated_block(
+        &rhai_path,
+        CHIPS_BEGIN,
+        CHIPS_END,
+        &format_chip_list(&suffixes),
+    )?;
+    write_generated_block(
+        &rhai_path,
+        PACKAGES_BEGIN,
+        PACKAGES_END,
+        &format_package_choices(&package_choices),
+    )?;
     println!("chip-select.rhai обновлён.");
     Ok(())
 }
@@ -120,12 +149,13 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> anyhow::Result<()> {
 }
 
 /// Полный список объявленных чип-фич `embassy-stm32` (например `stm32f407ve`,
-/// а у двухъядерных чипов — с суффиксом ядра: `stm32h745zi-cm7`), взятый из
-/// его собственного `Cargo.toml` через `cargo metadata` — это декларированные
-/// features пакета, а не только разрешённые для текущей сборки. Отфильтровано
-/// от служебных фич без цифр/букв чипа: у тех либо нет дефиса вовсе
-/// (`low-power`, `time-driver-any`), либо их несколько подряд — у чип-фич
-/// дефис максимум один.
+/// а у двухъядерных чипов и силиконовых градаций — с суффиксом через дефис:
+/// `stm32h745zi-cm7`, `stm32l151c6-a`), взятый из его собственного
+/// `Cargo.toml` через `cargo metadata` — это декларированные features
+/// пакета, а не только разрешённые для текущей сборки. Отобраны только фичи
+/// вида `stm32` + строчные буквы/цифры, максимум с одним дефисом-разделителем
+/// (у всех прочих фич пакета либо нет префикса `stm32`, либо есть небуквенные
+/// символы помимо дефиса).
 fn embassy_stm32_chip_features(repo_root: &Path) -> anyhow::Result<BTreeSet<String>> {
     let repo_copy = PatchedRepoCopy::create(repo_root)?;
 
@@ -204,6 +234,34 @@ fn probe_rs_candidate(suffix: &str) -> String {
         .to_uppercase()
 }
 
+/// Для чипов с суффиксом-градацией (не ядром — те решает `core_override()` в
+/// самом `chip-select.rhai`, сюда не доходят) типа `l151c6-a` — базовая цель
+/// probe-rs (`STM32L151C6`) не всегда самая точная: у пробы отдельно бывают
+/// корпусировки вроде `STM32L151C6TxA`/`STM32L151C6UxA` с другим объёмом RAM.
+/// Возвращает все такие цели (длиннее базовой, начинаются на базу и
+/// заканчиваются буквой градации) — пусто, если их нет (значит, точнее
+/// базовой цели ничего нет) или суффикс без дефиса/с ядерным маркером.
+fn package_candidates(suffix: &str, probe_rs_chips: &BTreeSet<String>) -> Vec<String> {
+    let Some((_, marker)) = suffix.split_once('-') else {
+        return Vec::new();
+    };
+    if CORE_MARKERS.contains(&marker) {
+        return Vec::new();
+    }
+
+    let bare = format!("STM32{}", probe_rs_candidate(suffix));
+    let marker = marker.to_uppercase();
+    // probe_rs_chips — BTreeSet, порядок итерации уже лексикографический;
+    // отдельная сортировка не нужна.
+    probe_rs_chips
+        .iter()
+        .filter(|chip| {
+            chip.len() > bare.len() && chip.starts_with(&bare) && chip.ends_with(&marker)
+        })
+        .cloned()
+        .collect()
+}
+
 /// Множество идентификаторов чипов, которые знает локально установленный
 /// `probe-rs` (`probe-rs chip list`), например `STM32F407VE` — без суффикса
 /// корпус/темп.диапазон (`Tx`/`Hx`/...), см. обоснование в CLAUDE.md.
@@ -237,41 +295,77 @@ fn probe_rs_chip_names() -> anyhow::Result<BTreeSet<String>> {
     Ok(chips)
 }
 
-fn write_chip_list(rhai_path: &Path, suffixes: &[&str]) -> anyhow::Result<()> {
-    let original = std::fs::read_to_string(rhai_path)
+fn format_chip_list(suffixes: &[&str]) -> String {
+    let mut out = String::new();
+    out.push_str(CHIPS_BEGIN);
+    out.push_str(" (");
+    out.push_str(&suffixes.len().to_string());
+    out.push_str(" шт., cargo run --manifest-path chip-data-gen/Cargo.toml)\n");
+    out.push_str("const CHIPS = [\n");
+    for suffix in suffixes {
+        out.push_str("    \"");
+        out.push_str(suffix);
+        out.push_str("\",\n");
+    }
+    out.push_str("];\n");
+    out
+}
+
+fn format_package_choices(choices: &BTreeMap<&str, Vec<String>>) -> String {
+    let mut out = String::new();
+    out.push_str(PACKAGES_BEGIN);
+    out.push_str(" (");
+    out.push_str(&choices.len().to_string());
+    out.push_str(" шт., cargo run --manifest-path chip-data-gen/Cargo.toml)\n");
+    out.push_str("const PACKAGE_CHOICES = #{\n");
+    for (suffix, candidates) in choices {
+        out.push_str("    \"");
+        out.push_str(suffix);
+        out.push_str("\": [");
+        for (i, candidate) in candidates.iter().enumerate() {
+            if i > 0 {
+                out.push_str(", ");
+            }
+            out.push('"');
+            out.push_str(candidate);
+            out.push('"');
+        }
+        out.push_str("],\n");
+    }
+    out.push_str("};\n");
+    out
+}
+
+/// Заменяет содержимое между `begin_marker` и `end_marker` (маркеры входят в
+/// заменяемый блок) на `generated`. Используется для обоих сгенерированных
+/// блоков `chip-select.rhai` — списка чипов и таблицы уточнения корпусировки.
+fn write_generated_block(
+    rhai_path: &Path,
+    begin_marker: &str,
+    end_marker: &str,
+    generated: &str,
+) -> anyhow::Result<()> {
+    let original = fs::read_to_string(rhai_path)
         .with_context(|| format!("не удалось прочитать {}", rhai_path.display()))?;
 
     let begin = original
-        .find(BEGIN_MARKER)
-        .with_context(|| format!("{BEGIN_MARKER} не найден в {}", rhai_path.display()))?;
+        .find(begin_marker)
+        .with_context(|| format!("{begin_marker} не найден в {}", rhai_path.display()))?;
     let end = original
-        .find(END_MARKER)
-        .with_context(|| format!("{END_MARKER} не найден в {}", rhai_path.display()))?;
+        .find(end_marker)
+        .with_context(|| format!("{end_marker} не найден в {}", rhai_path.display()))?;
     if end < begin {
         bail!(
-            "{END_MARKER} стоит раньше {BEGIN_MARKER} в {}",
+            "{end_marker} стоит раньше {begin_marker} в {}",
             rhai_path.display()
         );
     }
 
-    let mut generated = String::new();
-    generated.push_str(BEGIN_MARKER);
-    generated.push_str(" (");
-    generated.push_str(&suffixes.len().to_string());
-    generated.push_str(" шт., cargo run --manifest-path chip-data-gen/Cargo.toml)\n");
-    generated.push_str("    const CHIPS = [\n");
-    for suffix in suffixes {
-        generated.push_str("        \"");
-        generated.push_str(suffix);
-        generated.push_str("\",\n");
-    }
-    generated.push_str("    ];\n    ");
-
     let mut updated = String::with_capacity(original.len() + generated.len());
     updated.push_str(&original[..begin]);
-    updated.push_str(&generated);
+    updated.push_str(generated);
     updated.push_str(&original[end..]);
 
-    std::fs::write(rhai_path, updated)
+    fs::write(rhai_path, updated)
         .with_context(|| format!("не удалось записать {}", rhai_path.display()))
 }
