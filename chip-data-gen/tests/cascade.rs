@@ -31,15 +31,21 @@ fn compile_script() -> AST {
 }
 
 type Vars = Rc<RefCell<HashMap<String, String>>>;
+type Files = Rc<RefCell<HashMap<String, Vec<String>>>>;
+
+/// Итог одного прогона: переменные (chip/chip_feature/cpu/target/write_size)
+/// и файлы, записанные через `file::write` (сейчас — только memory.x для
+/// chip_feature, где хватило данных на MEMORY_LAYOUT), построчно.
+struct CascadeResult {
+    vars: HashMap<String, String>,
+    files: HashMap<String, Vec<String>>,
+}
 
 /// Прогоняет уже скомпилированный chip-select.rhai один раз, ведя каскад к
 /// `target_suffix` (суффикс без "stm32", например "f407ve" или "l151c6-a").
-/// Возвращает итоговые chip/chip_feature/cpu/target.
-fn run_cascade_to(
-    ast: &AST,
-    target_suffix: &str,
-) -> Result<HashMap<String, String>, Box<EvalAltResult>> {
+fn run_cascade_to(ast: &AST, target_suffix: &str) -> Result<CascadeResult, Box<EvalAltResult>> {
     let vars: Vars = Rc::new(RefCell::new(HashMap::new()));
+    let files: Files = Rc::new(RefCell::new(HashMap::new()));
     let mut engine = Engine::new();
 
     let mut module = Module::new();
@@ -107,10 +113,34 @@ fn run_cascade_to(
         Err(format!("abort: {reason}").into())
     });
 
+    let mut file_module = Module::new();
+    {
+        let files = files.clone();
+        file_module.set_native_fn(
+            "write",
+            move |path: &str, content: Array| -> Result<(), Box<EvalAltResult>> {
+                let lines = content
+                    .iter()
+                    .map(|c| {
+                        c.clone()
+                            .into_string()
+                            .expect("file::write(path, content) — content построчно")
+                    })
+                    .collect();
+                files.borrow_mut().insert(path.to_string(), lines);
+                Ok(())
+            },
+        );
+    }
+    engine.register_static_module("file", file_module.into());
+
     let mut scope = Scope::new();
     engine.run_ast_with_scope(&mut scope, ast)?;
 
-    Ok(vars.borrow().clone())
+    Ok(CascadeResult {
+        vars: vars.borrow().clone(),
+        files: files.borrow().clone(),
+    })
 }
 
 /// Полный список суффиксов из CHIPS в chip-select.rhai — читает тот же файл,
@@ -143,8 +173,8 @@ fn cascade_reaches_every_chip_without_hanging() {
     let mut failures = Vec::new();
     for suffix in &suffixes {
         match run_cascade_to(&ast, suffix) {
-            Ok(vars) => {
-                let got = vars.get("chip_feature").map(String::as_str);
+            Ok(result) => {
+                let got = result.vars.get("chip_feature").map(String::as_str);
                 if got != Some(&*format!("stm32{suffix}")) {
                     failures.push(format!(
                         "{suffix}: chip_feature = {got:?}, ожидался stm32{suffix}"
@@ -168,34 +198,129 @@ fn cascade_reaches_every_chip_without_hanging() {
 fn cascade_stops_at_chip_that_is_a_prefix_of_another() {
     // "l151c6" — валидный чип сам по себе, но и префикс "l151c6-a". Раньше
     // здесь был баг: выбор "остановиться здесь" не завершал цикл.
-    let vars = run_cascade_to(&compile_script(), "l151c6").expect("каскад не должен падать");
+    let result = run_cascade_to(&compile_script(), "l151c6").expect("каскад не должен падать");
     assert_eq!(
-        vars.get("chip_feature").map(String::as_str),
+        result.vars.get("chip_feature").map(String::as_str),
         Some("stm32l151c6")
     );
-    assert_eq!(vars.get("chip").map(String::as_str), Some("STM32L151C6"));
+    assert_eq!(
+        result.vars.get("chip").map(String::as_str),
+        Some("STM32L151C6")
+    );
 }
 
 #[test]
 fn cascade_reaches_the_longer_sibling_too() {
-    let vars = run_cascade_to(&compile_script(), "l151c6-a").expect("каскад не должен падать");
+    let result = run_cascade_to(&compile_script(), "l151c6-a").expect("каскад не должен падать");
     assert_eq!(
-        vars.get("chip_feature").map(String::as_str),
+        result.vars.get("chip_feature").map(String::as_str),
         Some("stm32l151c6-a")
     );
     // Более точная цель probe-rs из PACKAGE_CHOICES, не общая "STM32L151C6".
-    assert_eq!(vars.get("chip").map(String::as_str), Some("STM32L151C6TxA"));
+    assert_eq!(
+        result.vars.get("chip").map(String::as_str),
+        Some("STM32L151C6TxA")
+    );
 }
 
 #[test]
 fn dual_core_suffix_uses_core_override_not_family_default() {
     // "h7" по family_table() даёт cortex-m7, но "-cm4" должен явно
     // перебивать это через core_override().
-    let vars = run_cascade_to(&compile_script(), "h745zi-cm4").expect("каскад не должен падать");
-    assert_eq!(vars.get("cpu").map(String::as_str), Some("cortex-m4"));
+    let result = run_cascade_to(&compile_script(), "h745zi-cm4").expect("каскад не должен падать");
     assert_eq!(
-        vars.get("target").map(String::as_str),
+        result.vars.get("cpu").map(String::as_str),
+        Some("cortex-m4")
+    );
+    assert_eq!(
+        result.vars.get("target").map(String::as_str),
         Some("thumbv7em-none-eabihf")
     );
-    assert_eq!(vars.get("chip").map(String::as_str), Some("STM32H745ZI"));
+    assert_eq!(
+        result.vars.get("chip").map(String::as_str),
+        Some("STM32H745ZI")
+    );
+}
+
+#[test]
+fn memory_layout_is_written_when_available() {
+    // f407ve — чип с неравномерными секторами (см. commit про BANK1_REGION),
+    // у него MEMORY_LAYOUT точно должен быть посчитан.
+    let result = run_cascade_to(&compile_script(), "f407ve").expect("каскад не должен падать");
+    assert_eq!(result.vars.get("write_size").map(String::as_str), Some("4"));
+
+    for path in ["cross/app/memory.x", "cross/boot/memory.x"] {
+        let lines = result
+            .files
+            .get(path)
+            .unwrap_or_else(|| panic!("{path} не записан"));
+        let text = lines.join("\n");
+        assert!(
+            text.contains("FLASH             (rx)  : ORIGIN = 0x08000000, LENGTH = 512K"),
+            "{text}"
+        );
+        assert!(
+            text.contains("ACTIVE            (rx)  : ORIGIN = 0x08020000, LENGTH = 128K"),
+            "{text}"
+        );
+        assert!(
+            text.contains("DFU               (rx)  : ORIGIN = 0x08040000, LENGTH = 256K"),
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn memory_layout_origin_never_equals_flash_origin() {
+    // Регрессия: на чипах, где первый flash-регион уже целиком занимает
+    // PAGE_SIZE (H7 — 128 KiB с адреса 0, без мелких секторов в начале),
+    // bootloader_state когда-то съедал весь резерв, не оставляя места
+    // самому бинарнику bootloader'а. Проверяем на всех чипах разом — дешевле
+    // и надёжнее одного точечного случая.
+    let ast = compile_script();
+    let mut checked = 0;
+    let mut failures = Vec::new();
+    for suffix in all_chip_suffixes() {
+        let result = run_cascade_to(&ast, &suffix).expect("каскад не должен падать");
+        let Some(lines) = result.files.get("cross/app/memory.x") else {
+            continue; // авточип не посчитан для этого чипа — нечего проверять
+        };
+        checked += 1;
+        let text = lines.join("\n");
+        let flash_line = text
+            .lines()
+            .find(|l| l.trim_start().starts_with("FLASH "))
+            .expect("ORIGIN не найден в строке memory.x");
+        let state_line = text
+            .lines()
+            .find(|l| l.trim_start().starts_with("BOOTLOADER_STATE"))
+            .expect("ORIGIN не найден в строке memory.x");
+        let flash_origin = flash_line
+            .split("ORIGIN = ")
+            .nth(1)
+            .expect("ORIGIN не найден в строке memory.x")
+            .split(',')
+            .next()
+            .expect("ORIGIN не найден в строке memory.x");
+        let state_origin = state_line
+            .split("ORIGIN = ")
+            .nth(1)
+            .expect("ORIGIN не найден в строке memory.x")
+            .split(',')
+            .next()
+            .expect("ORIGIN не найден в строке memory.x");
+        if flash_origin == state_origin {
+            failures.push(suffix);
+        }
+    }
+    assert!(
+        checked > 500,
+        "подозрительно мало чипов с посчитанным memory.x: {checked}"
+    );
+    assert!(
+        failures.is_empty(),
+        "у {} чипов BOOTLOADER_STATE начинается с самого начала flash (нет места bootloader'у): {:?}",
+        failures.len(),
+        failures
+    );
 }

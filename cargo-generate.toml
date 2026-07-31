@@ -17,12 +17,13 @@ exclude = ["CLAUDE.md"]
 ignore = ["chip-data-gen"]
 
 [placeholders]
-# chip/chip_feature/cpu/target здесь не объявлены: их выставляет pre-хук
-# chip-select.rhai (каскадный выбор STM32) — см. CLAUDE.md, раздел
-# "Плейсхолдеры шаблона". `variable::set` в hook работает независимо от
-# объявления в [placeholders], а `--define chip_feature=...` читается внутри
-# hook через `variable::is_set`/`variable::get`.
-write_size = { type = "string", prompt = "Bootloader flash write/page size in bytes (STM32F1/F3/L4/G4 — обычно 2048; STM32F4/F7/H7 — сектора крупнее, см. reference manual вашего чипа)", default = "2048" }
+# chip/chip_feature/cpu/target/write_size здесь не объявлены: их выставляет
+# pre-хук chip-select.rhai (каскадный выбор STM32; write_size — только когда
+# для чипа посчитан memory.x, см. MEMORY_LAYOUT там же) — см. CLAUDE.md,
+# раздел "Плейсхолдеры шаблона". `variable::set` в hook работает независимо
+# от объявления в [placeholders], а `--define chip_feature=...`/
+# `--define write_size=...` по-прежнему читаются внутри hook через
+# `variable::is_set`/`variable::get`.
 ci = { type = "string", prompt = "CI provider", choices = [
 	"github",
 	"gitlab",
