@@ -4,6 +4,22 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 
+[features]
+# Значение подставляется каскадом выбора чипа (chip-select.rhai), не
+# задаётся вручную. Двухъядерные чипы (chip_feature вида "...-cm7"/"...-cm4")
+# требуют другого API инициализации HAL — см. Board::init() в src/lib.rs и
+# раздел про dual-core в CLAUDE.md/README.
+#
+# Намеренно НЕ форвардит на "embassy-stm32/_dual-core" (тот уже включается
+# самим embassy-stm32 для любой "...-cmN" чип-фичи безусловно — форвард был
+# бы no-op в правильном случае). Без форварда рассинхрон (например ошибочный
+# `--define dual_core=true` на однопроцессорном чипе) даёт громкую ошибку
+# компиляции (`init_primary` не существует без настоящего "_dual-core" у
+# embassy-stm32), а не тихо собирается с вызовом dual-core API на чипе,
+# которому это не соответствует.
+default    = [{% if dual_core == "true" %}"dual-core"{% endif %}]
+dual-core  = []
+
 [dependencies]
 embassy-stm32 = { workspace = true }
 domain = { workspace = true }

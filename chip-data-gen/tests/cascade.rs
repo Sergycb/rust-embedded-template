@@ -221,6 +221,12 @@ fn cascade_reaches_the_longer_sibling_too() {
         result.vars.get("chip").map(String::as_str),
         Some("STM32L151C6TxA")
     );
+    // Дефис здесь — силиконовая градация ("-a"), не ядро: is_dual_core()
+    // должна отличать этот случай от "-cm4"/"-cm7" и т.п.
+    assert_eq!(
+        result.vars.get("dual_core").map(String::as_str),
+        Some("false")
+    );
 }
 
 #[test]
@@ -239,6 +245,19 @@ fn dual_core_suffix_uses_core_override_not_family_default() {
     assert_eq!(
         result.vars.get("chip").map(String::as_str),
         Some("STM32H745ZI")
+    );
+    assert_eq!(
+        result.vars.get("dual_core").map(String::as_str),
+        Some("true")
+    );
+}
+
+#[test]
+fn single_core_suffix_leaves_dual_core_false() {
+    let result = run_cascade_to(&compile_script(), "f407ve").expect("каскад не должен падать");
+    assert_eq!(
+        result.vars.get("dual_core").map(String::as_str),
+        Some("false")
     );
 }
 

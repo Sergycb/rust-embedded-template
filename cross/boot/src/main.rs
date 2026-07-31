@@ -17,7 +17,7 @@ use panic_probe as _;
 
 #[cortex_m_rt::entry]
 fn main() -> ! {
-    let p = embassy_stm32::init(embassy_stm32::Config::default());
+    let p = init_peripherals();
 
     // `Flash` (до `.into_blocking_regions()`) сам реализует `NorFlash` на
     // весь диапазон flash — erase/write внутри учитывают реальные границы
@@ -42,4 +42,18 @@ fn main() -> ! {
     let entry = FLASH_BASE as u32 + active_offset;
     info!("boot: jumping to app at {:x}", entry);
     unsafe { bl.load(entry) }
+}
+
+// См. тот же приём и обоснование в cross/bsp/src/lib.rs — здесь дублируется,
+// а не выносится в общий крейт: boot намеренно не зависит от bsp.
+#[cfg(feature = "dual-core")]
+fn init_peripherals() -> embassy_stm32::Peripherals {
+    static SHARED_DATA: core::mem::MaybeUninit<embassy_stm32::SharedData> =
+        core::mem::MaybeUninit::uninit();
+    embassy_stm32::init_primary(embassy_stm32::Config::default(), &SHARED_DATA)
+}
+
+#[cfg(not(feature = "dual-core"))]
+fn init_peripherals() -> embassy_stm32::Peripherals {
+    embassy_stm32::init(embassy_stm32::Config::default())
 }

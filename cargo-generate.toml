@@ -14,7 +14,12 @@ cargo_generate_version = ">=0.19.0"
 # Без глоба `/**` — со звёздочками cargo-generate директорию не распознаёт,
 # нужно имя каталога как есть (проверено эмпирически).
 exclude = ["CLAUDE.md"]
-ignore = ["chip-data-gen"]
+# "target"/"cross/target" — сборочный кэш (см. .gitignore), не источник
+# шаблона; без исключения `cargo generate` падает с "Substitution skipped,
+# found invalid syntax", пытаясь Liquid-рендерить бинарные файлы внутри
+# него, если он присутствует локально у того, кто генерирует (обычное
+# состояние для мейнтейнера, собиравшего репозиторий перед тестом каскада).
+ignore = ["chip-data-gen", "target", "cross/target"]
 
 [placeholders]
 # chip/chip_feature/cpu/target/write_size здесь не объявлены: их выставляет
