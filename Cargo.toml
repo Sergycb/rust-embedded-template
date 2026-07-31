@@ -35,7 +35,15 @@ aselect             = { version = "0.4.0", default-features = false }
   # исследованных альтернатив (waitgroup, awaitgroup, async-wg, mea,
   # compact-waitgroup — все тоже на Arc).
 sync_wrapper          = { version = "1.0.2" }
-intrusive-collections = { version = "0.10.2", default-features = false }
+  # intrusive-collections убран: `AtomicLink` (singly/xor_linked_list)
+  # реализован через голый core::sync::atomic::*::compare_exchange без
+  # эмуляции — на Cortex-M0/M0+ (ARMv6-M, нет аппаратного CAS) это не
+  # компилируется вообще, независимо от того, какую структуру из крейта
+  # реально использует код (весь модуль собирается безусловно, фичей не
+  # спрятан). Обнаружено сборкой cross под STM32G071RB. Крейт был подключён
+  # только ради примера (domain/examples/intrusive_collections_wait_list.rs,
+  # удалён вместе с этой записью), в реальном коде domain не использовался —
+  # менять было нечего на замену.
 miniconf              = { version = "0.21.0", default-features = false, features = [
 	"derive",
 	"json-core",

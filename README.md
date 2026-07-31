@@ -104,7 +104,6 @@ git-зависимость; они заменили сторонние анал�
 | `aselect` | Альтернатива `select!`, где непроигравшие ветки гарантированно НЕ отменяются на середине (cancellation-safety) — в отличие от tokio/embassy `select!`. `no_std`, zero-alloc, реализует `Stream`. | `domain/examples/aselect_stream.rs` |
 | `sync_wrapper` | Заставляет компилятор считать `!Sync`-тип `Sync`, когда эксклюзивный доступ гарантирован вручную — нужен, если `Future` должен быть `Sync`, а внутри держит не-`Sync` тип (`RefCell`) в многопоточном/multi-core сценарии. | `domain/examples/sync_wrapper_example.rs` |
 | `sync-request` | Межзадачный (не host↔target!) request/response поверх `embassy_sync`, без зависимости от `embassy-executor`. Отменённый (по таймауту, проигравшей веткой `select!`) запрос помечен номером поколения и не «протечёт» ответом в следующий. | `domain/examples/sync_request_service.rs` |
-| `intrusive-collections` | Intrusive-коллекция: объект сам встраивает link-поле, может состоять сразу в нескольких коллекциях без отдельного выделения узла. Не дублирует `heapless` (тот копирует значения в буфер фиксированной ёмкости). | `domain/examples/intrusive_collections_wait_list.rs` |
 | `miniconf` | Runtime-конфигурация устройства: адресуемое дерево настроек, доступ к листьям по JSON-пути, без аллокатора. | `domain/examples/miniconf_settings.rs` |
 | `test-log` | Автоинициализация `log` в host-тестах (тихо на успехе, видно на провале/`--nocapture`), цветной вывод из коробки — без ручного `env_logger::init()` в каждом тесте. | `domain/tests/logging.rs` |
 

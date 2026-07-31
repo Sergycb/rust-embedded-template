@@ -21,8 +21,3 @@
 //! // DMA пишет прямо в grant.buf()
 //! grant.commit(64);
 //! ```
-//!
-//! `intrusive-collections` сюда не входит — сама структура (intrusive
-//! linked list) не имеет привязки к железу и живёт в `domain` (см.
-//! domain/examples/), `cross` использовал бы её только если понадобится
-//! реальный wait-list на статических объектах.
