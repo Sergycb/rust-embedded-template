@@ -10,7 +10,7 @@ use defmt::info;
 // одну диагностическую строку перед прыжком не стоит того усложнять.
 use defmt_rtt as _;
 use embassy_boot_stm32::{BootLoader, BootLoaderConfig};
-use embassy_stm32::flash::{BANK1_REGION, Flash};
+use embassy_stm32::flash::{FLASH_BASE, Flash};
 use embassy_sync::blocking_mutex::Mutex;
 // Единственный паникёр в обоих профилях — см. cross/app/src/main.rs.
 use panic_probe as _;
@@ -19,8 +19,16 @@ use panic_probe as _;
 fn main() -> ! {
     let p = embassy_stm32::init(embassy_stm32::Config::default());
 
-    let layout = Flash::new_blocking(p.FLASH).into_blocking_regions();
-    let flash = Mutex::new(RefCell::new(layout.bank1_region));
+    // `Flash` (до `.into_blocking_regions()`) сам реализует `NorFlash` на
+    // весь диапазон flash — erase/write внутри учитывают реальные границы
+    // секторов чипа, даже неравномерные (F4/F7/H7: сектора внутри банка
+    // разного размера). `.into_blocking_regions().bank1_region` — для чипов
+    // с ОДНИМ равномерным регионом (F0/F1/F3/G0/L0/L1 и т.п.) даёт то же
+    // самое, но для F4/F7/H7 региона с таким именем просто нет — там
+    // `bank1_region1`/`bank1_region2`/`bank1_region3` (по одному на зону с
+    // одинаковым размером сектора), и число регионов зависит от чипа.
+    // Цельный `Flash` — единственный вариант, не завязанный на семейство.
+    let flash = Mutex::new(RefCell::new(Flash::new_blocking(p.FLASH)));
 
     let config = BootLoaderConfig::from_linkerfile_blocking(&flash, &flash, &flash);
     let active_offset = config.active.offset();
@@ -31,7 +39,7 @@ fn main() -> ! {
     // сброса/SP — повреждённый образ (прерванная прошивка, битый DFU) даст
     // HardFault вместо отказа с диагностикой. Полная проверка целостности
     // требует chip-specific границ RAM и не входит в минимальный шаблон.
-    let entry = BANK1_REGION.base() + active_offset;
+    let entry = FLASH_BASE as u32 + active_offset;
     info!("boot: jumping to app at {:x}", entry);
     unsafe { bl.load(entry) }
 }
