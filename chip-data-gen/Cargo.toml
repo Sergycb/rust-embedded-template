@@ -25,3 +25,6 @@ dbg_macro               = "deny"
 todo                    = "warn"
 unimplemented           = "warn"
 large_stack_arrays      = "warn"
+
+[dev-dependencies]
+rhai = "1.25.1"

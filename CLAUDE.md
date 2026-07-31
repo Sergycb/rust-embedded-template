@@ -264,6 +264,19 @@ cargo fmt --manifest-path chip-data-gen/Cargo.toml --check
 cargo clippy --manifest-path chip-data-gen/Cargo.toml --all-targets -- -D warnings
 ```
 
+`chip-data-gen/tests/cascade.rs` — интеграционный тест на сам `chip-select.rhai`, не на
+Rust-код генератора: гоняет реальный скрипт через движок `rhai` (dev-dependency) с
+подменённым модулем `variable` (`is_set`/`get`/`set`/`prompt`), без `cargo generate` и
+без TTY — `variable::prompt` в моке сам ведёт каскад к заранее известной цели (выбирает
+самый длинный вариант из choices, чьим префиксом является цель — не первый попавшийся,
+иначе он ошибочно "останавливается" там, где чип совпадает с началом другого, того же
+класса бага, что тест и должен ловить). `cascade_reaches_every_chip_without_hanging`
+прогоняет так все чипы из `CHIPS` (~1438) — ловит именно тот класс бага, который
+`--define chip_feature=...` в принципе не может поймать (та ветка не создаёт ни одного
+`variable::prompt`, значит не исполняет сам цикл каскада). Долгий (~7 минут, интерпретация
+Rhai, не компиляция) — поэтому не в `cargo xtask lint`/CI, гонять вручную при правке
+`chip-select.rhai`/`chip-data-gen`: `cargo test --manifest-path chip-data-gen/Cargo.toml`.
+
 ## Известные, осознанные ограничения (не баги)
 
 Bootloader (безусловный прыжок без проверки образа) и дефолт `write_size = 2048` —
