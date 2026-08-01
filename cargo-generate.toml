@@ -35,8 +35,12 @@ ci = { type = "string", prompt = "CI provider", choices = [
 	"none",
 ], default = "github" }
 
+# Каталог целиком, а не перечисление файлов: иначе в проекте остаётся пустой
+# `.github/workflows/` (в git он не попадёт — git не хранит пустые каталоги, —
+# но на диске сбивает с толку). Имя каталога как есть, без глоба `/**` — см.
+# `ignore` в [template] выше.
 [conditional.'ci != "github"']
-ignore = [".github/workflows/ci.yml", ".github/dependabot.yml"]
+ignore = [".github"]
 
 [conditional.'ci != "gitlab"']
 ignore = [".gitlab-ci.yml", "renovate.json"]

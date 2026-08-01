@@ -13,10 +13,16 @@ variables:
       - target
       - cross/target
 
+# Пайплайны по расписанию заведены ради renovate (см. джоб в конце файла) —
+# гонять на них сборку и тесты незачем.
+.not-scheduled: &not_scheduled
+  rules:
+    - if: $CI_PIPELINE_SOURCE != "schedule"
+
 host:test:
   stage: test
   image: rust:1.96.0
-  <<: *cache
+  <<: [*cache, *not_scheduled]
   before_script:
     - rustup component add rustfmt clippy
     - cargo install cargo-nextest --locked
@@ -27,6 +33,7 @@ host:test:
 kani:test:
   stage: test
   image: rust:1.96.0
+  <<: *not_scheduled
   # Отдельный от .cache ключ/пути: kani-verifier — это toolchain-инсталл
   # (~/.cargo/bin, ~/.kani), а не registry/target — общий кэш с host:test
   # (тот же ref, тот же стейдж, идут параллельно) друг друга бы затирали.
@@ -48,7 +55,7 @@ kani:test:
 cross:build:
   stage: build
   image: rust:1.96.0
-  <<: *cache
+  <<: [*cache, *not_scheduled]
   before_script:
     - rustup component add rustfmt clippy
     - rustup target add {{target}}
@@ -56,3 +63,37 @@ cross:build:
   script:
     - cargo xtask lint cross
     - cargo xtask build
+
+# renovate.json — это КОНФИГУРАЦИЯ репозитория, а не запускалка: без джоба
+# ниже (или без Mend Renovate App, подключённого к проекту) он лежит мёртвым
+# грузом и никаких MR не создаёт. В отличие от GitHub, где dependabot.yml
+# работает нативно, силами самой платформы.
+#
+# Чтобы это заработало, нужны две вещи со стороны проекта:
+#   1. CI/CD variable RENOVATE_TOKEN — Project/Group Access Token с ролью
+#      Developer и скоупом `api` (масked, не protected: расписание может идти
+#      по незащищённой ветке);
+#   2. Pipeline schedule (CI/CD -> Schedules), например раз в сутки ночью.
+#
+# Джоб намеренно не в стейдже сборки и запускается ТОЛЬКО по расписанию: на
+# обычных push/MR он не нужен, а остальные джобы, наоборот, исключены из
+# расписания (см. .not-scheduled выше).
+#
+# Взят образ renovate/renovate вместо `include:` официального
+# renovate-bot/renovate-runner — так конфиг самодостаточен и не зависит от
+# доступности внешнего проекта с self-managed инстанса.
+renovate:
+  stage: test
+  image: renovate/renovate:latest
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+  variables:
+    RENOVATE_PLATFORM: gitlab
+    RENOVATE_ENDPOINT: $CI_API_V4_URL
+    RENOVATE_TOKEN: $RENOVATE_TOKEN
+    # Обновляем только этот проект, а не всё, что видно токену.
+    RENOVATE_AUTODISCOVER: "false"
+    RENOVATE_REPOSITORIES: $CI_PROJECT_PATH
+    LOG_LEVEL: info
+  script:
+    - renovate
