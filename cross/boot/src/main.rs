@@ -44,16 +44,18 @@ fn main() -> ! {
     unsafe { bl.load(entry) }
 }
 
+{%- if dual_core == "true" %}
+
 // См. тот же приём и обоснование в cross/bsp/src/lib.rs — здесь дублируется,
 // а не выносится в общий крейт: boot намеренно не зависит от bsp.
-#[cfg(feature = "dual-core")]
 fn init_peripherals() -> embassy_stm32::Peripherals {
     static SHARED_DATA: core::mem::MaybeUninit<embassy_stm32::SharedData> =
         core::mem::MaybeUninit::uninit();
     embassy_stm32::init_primary(embassy_stm32::Config::default(), &SHARED_DATA)
 }
+{%- else %}
 
-#[cfg(not(feature = "dual-core"))]
 fn init_peripherals() -> embassy_stm32::Peripherals {
     embassy_stm32::init(embassy_stm32::Config::default())
 }
+{%- endif %}

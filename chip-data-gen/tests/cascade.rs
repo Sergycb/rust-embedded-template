@@ -360,6 +360,65 @@ fn common_boards_keep_their_ota_layout() {
 }
 
 #[test]
+fn memory_x_lists_every_region_of_the_chip() {
+    let ast = compile_script();
+
+    // H723VE: кроме 128 KiB DTCM (это и есть RAM) у чипа есть ещё 416 KiB —
+    // раньше memory.x про них молчал, и пользователь видел только DTCM.
+    let app = written(
+        &run_cascade_to(&ast, "h723ve").expect("каскад не должен падать"),
+        "cross/app/memory.x",
+    );
+    for region in ["ITCM", "AXISRAM", "SRAM2", "SRAM3", "SRAM4"] {
+        assert!(
+            region_origin(&app, region).is_some(),
+            "{region} не выведен:\n{app}"
+        );
+    }
+
+    // F407VE: CCMRAM (отдельный физический блок, не алиас) и OTP.
+    let app = written(
+        &run_cascade_to(&ast, "f407ve").expect("каскад не должен падать"),
+        "cross/app/memory.x",
+    );
+    assert!(region_origin(&app, "CCMRAM").is_some(), "{app}");
+    assert!(region_origin(&app, "OTP").is_some(), "{app}");
+
+    // G474RE: CCMRAM_ICODE — второе окно того же блока, что CCMRAM_DCODE,
+    // который уже внутри RAM. Объявить его рабочей памятью — значит дать
+    // разместить данные дважды по одному физическому адресу, чего линкер не
+    // поймает: выводим закомментированным.
+    let app = written(
+        &run_cascade_to(&ast, "g474re").expect("каскад не должен падать"),
+        "cross/app/memory.x",
+    );
+    assert!(
+        region_origin(&app, "CCMRAM_ICODE").is_none(),
+        "алиас не должен быть объявлен регионом:\n{app}"
+    );
+    assert!(
+        app.contains("/* CCMRAM_ICODE"),
+        "алиас должен быть упомянут закомментированным:\n{app}"
+    );
+
+    // H503CB: окна внешних шин (FMC/OCTOSPI/SDRAM) — памяти за ними нет, пока
+    // микросхема не распаяна, поэтому тоже только комментарием.
+    let app = written(
+        &run_cascade_to(&ast, "h503cb").expect("каскад не должен падать"),
+        "cross/app/memory.x",
+    );
+    for region in ["FMC_BANK_1", "OCTOSPI_BANK_1", "SDRAM_BANK_1"] {
+        assert!(
+            region_origin(&app, region).is_none(),
+            "{region} внешний, объявлять его регионом нельзя:\n{app}"
+        );
+        assert!(app.contains(region), "{region} не упомянут вовсе:\n{app}");
+    }
+    // А BKPSRAM у того же чипа — настоящая внутренняя память.
+    assert!(region_origin(&app, "BKPSRAM").is_some(), "{app}");
+}
+
+#[test]
 fn multi_config_chip_selects_a_bank_mode() {
     // У g474re в stm32-metapac две карты памяти, и build.rs embassy-stm32 без
     // явной фичи паникует — то есть проект не собрался бы вовсе.

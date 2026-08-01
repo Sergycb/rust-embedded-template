@@ -20,6 +20,8 @@ impl Board {
     }
 }
 
+{%- if dual_core == "true" %}
+
 // Двухъядерный чип (chip_feature вида "...-cm7"/"...-cm4") прячет
 // `embassy_stm32::init()` за `#[cfg(not(feature = "_dual-core"))]` — вместо
 // него только `init_primary()`/`init_secondary()`, координируемые через
@@ -32,14 +34,14 @@ impl Board {
 // нужна ручная проверка/настройка option bytes (BCM4) перед прошивкой, см.
 // CLAUDE.md/README, раздел про dual-core. Полноценная AMP-поддержка —
 // осознанно не входит в шаблон.
-#[cfg(feature = "dual-core")]
 fn init_peripherals() -> embassy_stm32::Peripherals {
     static SHARED_DATA: core::mem::MaybeUninit<embassy_stm32::SharedData> =
         core::mem::MaybeUninit::uninit();
     embassy_stm32::init_primary(embassy_stm32::Config::default(), &SHARED_DATA)
 }
+{%- else %}
 
-#[cfg(not(feature = "dual-core"))]
 fn init_peripherals() -> embassy_stm32::Peripherals {
     embassy_stm32::init(embassy_stm32::Config::default())
 }
+{%- endif %}

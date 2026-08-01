@@ -404,6 +404,8 @@ struct RawRegion {
 enum RegionKind {
     Flash,
     Ram,
+    /// L0/L1 — блок EEPROM, читается напрямую, пишется через контроллер flash.
+    Eeprom,
     Other,
 }
 
@@ -503,6 +505,7 @@ fn parse_regions(section: &str) -> anyhow::Result<Vec<RawRegion>> {
             let kind = match field(block, "kind").context("MemoryRegion без kind")? {
                 s if s.ends_with("Flash") => RegionKind::Flash,
                 s if s.ends_with("Ram") => RegionKind::Ram,
+                s if s.ends_with("Eeprom") => RegionKind::Eeprom,
                 _ => RegionKind::Other,
             };
             let address_str = field(block, "address").context("MemoryRegion без address")?;
@@ -619,6 +622,10 @@ struct MemoryLayout {
     /// `None` у чипов, где RAM слишком мал, чтобы отрезать от него фиксированный
     /// кусок под `PERSIST`.
     persist: Option<(u64, u64)>,
+    /// Готовые строки `MEMORY { }` для всех прочих регионов чипа (ITCM, AXISRAM,
+    /// CCMRAM, BKPSRAM, EEPROM, OTP, окна внешних шин...) — см.
+    /// `extra_region_lines`. Одинаковы для `app` и `boot`.
+    extra_regions: Vec<String>,
     /// Const generic `BootLoader::prepare::<_, _, _, N>` — размер буфера
     /// подкачки. Требования к нему (`prepare_boot` в `embassy-boot`):
     /// делит `PAGE_SIZE`, кратен `NorFlash::WRITE_SIZE` и не меньше него.
@@ -635,6 +642,19 @@ struct MemoryLayout {
 
 const FLASH_BASE: u64 = 0x0800_0000;
 const RAM_BASE: u64 = 0x2000_0000;
+/// Регионы, которые `stm32-metapac` перечисляет как окна ВНЕШНИХ шин: реальной
+/// памяти за ними нет, пока к плате не припаяна микросхема и не настроен
+/// контроллер. Метка видна и по размеру — у всех у них он одинаковый,
+/// 262144000 (не память, а максимум адресного окна). Такие регионы попадают в
+/// `memory.x` закомментированными: перечислить их полезно, а объявить рабочей
+/// памятью — значит подсунуть линкеру то, чего на плате может не быть вовсе.
+const EXTERNAL_BUS_PREFIXES: &[&str] =
+    &["FMC_", "SDRAM_", "OCTOSPI_", "QUADSPI_", "HSPI_", "XSPI_"];
+/// Суффикс второго (I-Code) окна того же физического блока RAM: `CCMRAM_ICODE`
+/// — та же память, что `CCMRAM_DCODE`, `SRAM2_ICODE` — та же, что `SRAM2`.
+/// Тоже закомментированы: разместить данные в обоих окнах разом — молчаливое
+/// наложение, которое линкер не поймает (адреса-то разные).
+const ALIAS_SUFFIX: &str = "_ICODE";
 /// Ориентир на размер бинарника bootloader (embassy-boot + defmt +
 /// cortex-m-rt) — на практике укладывается в 20-30 KiB, отсюда небольшой
 /// запас. Bootloader сам по себе не стирается во время работы, поэтому ему
@@ -725,9 +745,82 @@ fn compute_memory_layout(regions: &[RawRegion]) -> Option<MemoryLayout> {
         ram_origin: RAM_BASE,
         ram_length,
         persist,
+        // Границы цепочек, а не ram_length: PERSIST отрезан от RAM, но лежит
+        // внутри той же цепочки — регионом его дублировать не надо.
+        extra_regions: extra_region_lines(regions, FLASH_BASE + flash_total, ram_end),
         write_size,
         ota: compute_ota_partitions(&chain, flash_total, page_size, write_size),
     })
+}
+
+/// Готовая строка региона для `MEMORY { }`. Ширина поля имени — 18, как у
+/// строк, которые собирает сам хук (`FLASH`/`ACTIVE`/`RAM`/...), чтобы
+/// сгенерированный `memory.x` выглядел одним столбиком.
+fn region_line(name: &str, attrs: &str, origin: u64, length: u64) -> String {
+    format!(
+        "    {name:<18}{:<6}: ORIGIN = {}, LENGTH = {}",
+        format!("({attrs})"),
+        format_addr(origin),
+        format_size(length)
+    )
+}
+
+/// Все регионы памяти чипа, КРОМЕ покрытых `FLASH` и `RAM` (те строит хук:
+/// у `app` и `boot` они разные). Раньше не выводились вовсе, и пользователь
+/// не видел, например, 320 KiB AXISRAM у H723 — только 128 KiB DTCM.
+///
+/// Часть регионов выводится закомментированной (см. `EXTERNAL_BUS_PREFIXES` и
+/// `ALIAS_SUFFIX`): перечислить их надо, но объявлять рабочей памятью нельзя.
+fn extra_region_lines(regions: &[RawRegion], flash_end: u64, ram_end: u64) -> Vec<String> {
+    let names: BTreeSet<&str> = regions.iter().map(|r| r.name.as_str()).collect();
+    let covered = |r: &RawRegion| {
+        let end = r.address + r.size;
+        (r.address >= FLASH_BASE && end <= flash_end) || (r.address >= RAM_BASE && end <= ram_end)
+    };
+
+    let mut sorted: Vec<&RawRegion> = regions
+        .iter()
+        .filter(|r| r.size > 0 && !covered(r))
+        .collect();
+    sorted.sort_by_key(|r| (r.address, r.name.clone()));
+
+    sorted
+        .iter()
+        .map(|r| {
+            let attrs = match r.kind {
+                RegionKind::Flash => "rx",
+                RegionKind::Ram => "xrw",
+                // EEPROM пишется через контроллер flash, а не обычной записью,
+                // поэтому без `w`: класть туда `.data` нельзя.
+                RegionKind::Eeprom | RegionKind::Other => "r",
+            };
+            let line = region_line(&r.name, attrs, r.address, r.size);
+
+            let reason = if EXTERNAL_BUS_PREFIXES
+                .iter()
+                .any(|prefix| r.name.starts_with(prefix))
+            {
+                Some(
+                    "внешняя шина: памяти нет, пока она не распаяна и не настроен контроллер"
+                        .to_string(),
+                )
+            } else {
+                r.name.strip_suffix(ALIAS_SUFFIX).and_then(|stem| {
+                    // Партнёр — либо тот же блок без суффикса (SRAM2_ICODE /
+                    // SRAM2), либо через D-Code (CCMRAM_ICODE / CCMRAM_DCODE).
+                    let partner = [stem.to_string(), format!("{stem}_DCODE")]
+                        .into_iter()
+                        .find(|name| names.contains(name.as_str()))?;
+                    Some(format!("второе окно того же блока, что {partner}"))
+                })
+            };
+
+            match reason {
+                Some(reason) => format!("    /* {} - {reason} */", line.trim()),
+                None => line,
+            }
+        })
+        .collect()
 }
 
 /// Подбирает `BOOTLOADER`/`BOOTLOADER_STATE`/`ACTIVE`/`DFU` под все четыре
@@ -938,6 +1031,14 @@ fn format_memory_layouts(layouts: &BTreeMap<&str, MemoryLayout>) -> String {
         if let Some((origin, length)) = m.persist {
             push_field(&mut out, "persist_origin", &format_addr(origin));
             push_field(&mut out, "persist_length", &format_size(length));
+        }
+        if !m.extra_regions.is_empty() {
+            out.push_str("        \"extra_regions\": [\n");
+            for line in &m.extra_regions {
+                assert!(!line.contains('"'), "кавычка в строке региона: {line}");
+                out.push_str(&format!("            \"{line}\",\n"));
+            }
+            out.push_str("        ],\n");
         }
         push_field(&mut out, "write_size", &m.write_size.to_string());
         match &m.ota {
