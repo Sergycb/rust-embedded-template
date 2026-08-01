@@ -24,16 +24,14 @@ jobs:
       - run: cargo xtask lint
       - run: cargo xtask test host
 
-  kani:
-    name: Kani (formal verification)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: Swatinem/rust-cache@v2
-      - uses: model-checking/kani-github-action@v1
-        with:
-          working-directory: domain
-          args: --features log
+  # Джоб kani здесь был и намеренно убран: kani компилирует крейт вместе со
+  # всеми зависимостями СВОИМ тулчейном (0.67.0 — rustc 1.93.0-nightly), а
+  # крейты из rust-lib объявляют rust-version = 1.96, и cargo отказывается
+  # резолвить ещё до верификации. Пока kani не догонит 1.96, джоб падал бы на
+  # каждом пуше, тратя несколько минут на установку собственного тулчейна.
+  # Харнессы (domain/src/kani_proofs.rs) остались — они под cfg(kani) и на
+  # обычные сборки не влияют; запускать вручную: cd domain && cargo kani
+  # --features log.
 
   cross:
     name: Cross (fmt, clippy, build)

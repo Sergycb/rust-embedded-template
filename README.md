@@ -186,6 +186,23 @@ flash и безусловно прыгает в него (`unsafe { bl.load(entr
 
 `cargo xtask test all` прогоняет все три этапа подряд.
 
+### Формальная верификация (Kani)
+
+`domain/src/kani_proofs.rs` — харнессы `#[kani::proof]` над чистой `no_std`-логикой.
+Модуль под `cfg(kani)`, на обычные `cargo build`/`test`/`clippy` не влияет вовсе.
+Запуск вручную:
+
+```
+cd domain && cargo kani --features log
+```
+
+**В CI этого джоба нет намеренно.** Kani компилирует крейт вместе со всеми
+зависимостями своим тулчейном (в 0.67.0 это `rustc 1.93.0-nightly`), а крейты из
+`rust-lib` объявляют `rust-version = 1.96` — cargo отказывается резолвить ещё до
+верификации. Вернуть джоб имеет смысл, когда тулчейн Kani дорастёт до 1.96.
+Под Windows Kani не собирается вовсе (`kani-verifier` использует `std::os::unix`) —
+нужен Linux, macOS или WSL.
+
 ## Команды `xtask`
 
 ```
