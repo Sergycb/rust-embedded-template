@@ -32,13 +32,15 @@ fn compile_script() -> AST {
 
 type Vars = Rc<RefCell<HashMap<String, String>>>;
 type Files = Rc<RefCell<HashMap<String, Vec<String>>>>;
+type Deleted = Rc<RefCell<Vec<String>>>;
 
-/// Итог одного прогона: переменные (chip/chip_feature/cpu/target/write_size)
-/// и файлы, записанные через `file::write` (сейчас — только memory.x для
-/// chip_feature, где хватило данных на MEMORY_LAYOUT), построчно.
+/// Итог одного прогона: переменные (chip/chip_feature/cpu/target/write_size/
+/// ota/bank_mode), файлы, записанные через `file::write` (memory.x), построчно,
+/// и пути, снесённые через `file::delete` (cross/boot у чипов без OTA).
 struct CascadeResult {
     vars: HashMap<String, String>,
     files: HashMap<String, Vec<String>>,
+    deleted: Vec<String>,
 }
 
 /// Прогоняет уже скомпилированный chip-select.rhai один раз, ведя каскад к
@@ -46,6 +48,7 @@ struct CascadeResult {
 fn run_cascade_to(ast: &AST, target_suffix: &str) -> Result<CascadeResult, Box<EvalAltResult>> {
     let vars: Vars = Rc::new(RefCell::new(HashMap::new()));
     let files: Files = Rc::new(RefCell::new(HashMap::new()));
+    let deleted: Deleted = Rc::new(RefCell::new(Vec::new()));
     let mut engine = Engine::new();
 
     let mut module = Module::new();
@@ -132,6 +135,16 @@ fn run_cascade_to(ast: &AST, target_suffix: &str) -> Result<CascadeResult, Box<E
             },
         );
     }
+    {
+        let deleted = deleted.clone();
+        file_module.set_native_fn(
+            "delete",
+            move |path: &str| -> Result<(), Box<EvalAltResult>> {
+                deleted.borrow_mut().push(path.to_string());
+                Ok(())
+            },
+        );
+    }
     engine.register_static_module("file", file_module.into());
 
     let mut scope = Scope::new();
@@ -140,6 +153,7 @@ fn run_cascade_to(ast: &AST, target_suffix: &str) -> Result<CascadeResult, Box<E
     Ok(CascadeResult {
         vars: vars.borrow().clone(),
         files: files.borrow().clone(),
+        deleted: deleted.borrow().clone(),
     })
 }
 
@@ -261,85 +275,203 @@ fn single_core_suffix_leaves_dual_core_false() {
     );
 }
 
+/// Текст записанного `file::write` файла одной строкой.
+fn written(result: &CascadeResult, path: &str) -> String {
+    result
+        .files
+        .get(path)
+        .unwrap_or_else(|| panic!("{path} не записан"))
+        .join("\n")
+}
+
+/// ORIGIN региона `name` из текста memory.x (`None`, если региона нет).
+fn region_origin(memory_x: &str, name: &str) -> Option<String> {
+    memory_x
+        .lines()
+        .find(|line| line.trim_start().starts_with(&format!("{name} ")))
+        .and_then(|line| line.split("ORIGIN = ").nth(1))
+        .and_then(|rest| rest.split(',').next())
+        .map(str::to_string)
+}
+
 #[test]
 fn memory_layout_is_written_when_available() {
     // f407ve — чип с неравномерными секторами (см. commit про BANK1_REGION),
     // у него MEMORY_LAYOUT точно должен быть посчитан.
     let result = run_cascade_to(&compile_script(), "f407ve").expect("каскад не должен падать");
     assert_eq!(result.vars.get("write_size").map(String::as_str), Some("4"));
+    assert_eq!(result.vars.get("ota").map(String::as_str), Some("true"));
 
-    for path in ["cross/app/memory.x", "cross/boot/memory.x"] {
-        let lines = result
-            .files
-            .get(path)
-            .unwrap_or_else(|| panic!("{path} не записан"));
-        let text = lines.join("\n");
-        assert!(
-            text.contains("FLASH             (rx)  : ORIGIN = 0x08000000, LENGTH = 512K"),
-            "{text}"
-        );
-        assert!(
-            text.contains("ACTIVE            (rx)  : ORIGIN = 0x08020000, LENGTH = 128K"),
-            "{text}"
-        );
-        assert!(
-            text.contains("DFU               (rx)  : ORIGIN = 0x08040000, LENGTH = 256K"),
-            "{text}"
+    // У приложения FLASH — это ACTIVE, а не весь чип: с базы flash стартует
+    // bootloader. Раньше оба крейта получали одинаковый memory.x, и
+    // `cargo xtask flash` (сначала boot, потом app) затирал bootloader.
+    let app = written(&result, "cross/app/memory.x");
+    assert!(
+        app.contains("FLASH             (rx)  : ORIGIN = 0x08020000, LENGTH = 128K"),
+        "{app}"
+    );
+    assert!(
+        app.contains("DFU               (rx)  : ORIGIN = 0x08040000, LENGTH = 256K"),
+        "{app}"
+    );
+    assert!(
+        region_origin(&app, "ACTIVE").is_none(),
+        "у app отдельного региона ACTIVE быть не должно — это его же FLASH:\n{app}"
+    );
+
+    // У bootloader'а FLASH — только его собственная зона, до BOOTLOADER_STATE:
+    // переполнение должен ловить линкер, а не молчаливое наложение на ACTIVE.
+    let boot = written(&result, "cross/boot/memory.x");
+    assert!(
+        boot.contains("FLASH             (rx)  : ORIGIN = 0x08000000, LENGTH = 64K"),
+        "{boot}"
+    );
+    assert!(
+        boot.contains("ACTIVE            (rx)  : ORIGIN = 0x08020000, LENGTH = 128K"),
+        "{boot}"
+    );
+}
+
+#[test]
+fn common_boards_keep_their_ota_layout() {
+    // Ходовые чипы с отладочных плат, покрывающие все классы геометрии flash:
+    // 1 KiB сектор (F0/F1), 256 байт (L1), 2 KiB (L0/L4/G0/F3), 4 KiB (G4),
+    // неравномерные сектора до 128 KiB (F4/F7/H7). Регрессия, которую тест
+    // ловит: предел роста резерва задавался абсолютным числом страниц, а
+    // исходный резерв у мелкосекторных чипов сам по себе занимает десятки
+    // страниц (32 KiB при секторе 256 байт — 128 штук), и вся мелкосекторная
+    // половина линейки разом теряла OTA.
+    //
+    // Все — с flash заведомо больше резерва под bootloader: у 32-килобайтных
+    // (f030c6, l151c6) OTA не помещается по-честному, это не регрессия.
+    let ast = compile_script();
+    for suffix in [
+        "f103rb", "f030r8", "f051r8", "f303vc", "l073rz", "l151cb", "l432kc", "l476rg", "g071rb",
+        "g474re", "f407ve", "f411re", "f746zg", "h743zi",
+    ] {
+        let result = run_cascade_to(&ast, suffix).expect("каскад не должен падать");
+        assert_eq!(
+            result.vars.get("ota").map(String::as_str),
+            Some("true"),
+            "{suffix} остался без OTA: {:?}",
+            result.files.get("cross/app/memory.x")
         );
     }
 }
 
 #[test]
-fn memory_layout_origin_never_equals_flash_origin() {
-    // Регрессия: на чипах, где первый flash-регион уже целиком занимает
-    // PAGE_SIZE (H7 — 128 KiB с адреса 0, без мелких секторов в начале),
-    // bootloader_state когда-то съедал весь резерв, не оставляя места
-    // самому бинарнику bootloader'а. Проверяем на всех чипах разом — дешевле
-    // и надёжнее одного точечного случая.
+fn multi_config_chip_selects_a_bank_mode() {
+    // У g474re в stm32-metapac две карты памяти, и build.rs embassy-stm32 без
+    // явной фичи паникует — то есть проект не собрался бы вовсе.
+    let result = run_cascade_to(&compile_script(), "g474re").expect("каскад не должен падать");
+    assert_eq!(
+        result.vars.get("bank_mode").map(String::as_str),
+        Some("single-bank")
+    );
+
+    // У одноконфигурационного чипа фичи быть не должно: embassy-stm32
+    // паникует и на лишней ("The 'single-bank' feature is not supported on
+    // this dual bank chip").
+    let result = run_cascade_to(&compile_script(), "f407ve").expect("каскад не должен падать");
+    assert_eq!(result.vars.get("bank_mode").map(String::as_str), Some(""));
+}
+
+#[test]
+fn chip_without_room_for_ota_gets_single_image_layout() {
+    // h723ve: 512 KiB flash одним регионом с сектором 128 KiB — всего 4
+    // сектора, а схеме нужно минимум 5 (BOOTLOADER + STATE + ACTIVE + 2×DFU).
+    let result = run_cascade_to(&compile_script(), "h723ve").expect("каскад не должен падать");
+    assert_eq!(result.vars.get("ota").map(String::as_str), Some("false"));
+
+    let app = written(&result, "cross/app/memory.x");
+    assert!(
+        app.contains("FLASH             (rx)  : ORIGIN = 0x08000000, LENGTH = 512K"),
+        "{app}"
+    );
+    for region in ["BOOTLOADER_STATE", "ACTIVE", "DFU"] {
+        assert!(
+            region_origin(&app, region).is_none(),
+            "без OTA региона {region} быть не должно:\n{app}"
+        );
+    }
+    assert!(
+        app.contains("OTA (cross/boot) не подключён"),
+        "причина должна остаться в самом memory.x:\n{app}"
+    );
+    // Каталог bootloader'а сносится самим хуком: [conditional] в
+    // cargo-generate.toml переменных из хука не видит (проверено эмпирически).
+    assert!(
+        result.deleted.contains(&"cross/boot".to_string()),
+        "cross/boot должен быть удалён, а удалено: {:?}",
+        result.deleted
+    );
+    assert!(
+        !result.files.contains_key("cross/boot/memory.x"),
+        "в удалённый каталог писать нельзя — cargo generate падает с os error 3"
+    );
+}
+
+#[test]
+fn memory_layout_invariants_hold_for_every_chip() {
+    // Один проход по всем чипам вместо точечных случаев — здесь ловятся сразу
+    // три класса регрессий, каждый из которых уже случался:
+    //   1. BOOTLOADER_STATE с самого начала flash: на чипах, где первый регион
+    //      целиком занимает PAGE_SIZE (H7 — 128 KiB с адреса 0), под сам
+    //      бинарник bootloader'а не оставалось места;
+    //   2. одинаковый memory.x у app и boot: приложение линковалось с базы
+    //      flash и при прошивке затирало bootloader;
+    //   3. регионы OTA в проекте, который собирается без bootloader'а
+    //      (`__bootloader_*` некому определить — cross/boot туда не входит).
     let ast = compile_script();
-    let mut checked = 0;
+    let mut with_ota = 0;
+    let mut without_ota = 0;
     let mut failures = Vec::new();
     for suffix in all_chip_suffixes() {
         let result = run_cascade_to(&ast, &suffix).expect("каскад не должен падать");
-        let Some(lines) = result.files.get("cross/app/memory.x") else {
-            continue; // авточип не посчитан для этого чипа — нечего проверять
+        let Some(app) = result.files.get("cross/app/memory.x") else {
+            continue; // раскладка для чипа не считается — нечего проверять
         };
-        checked += 1;
-        let text = lines.join("\n");
-        let flash_line = text
-            .lines()
-            .find(|l| l.trim_start().starts_with("FLASH "))
-            .expect("ORIGIN не найден в строке memory.x");
-        let state_line = text
-            .lines()
-            .find(|l| l.trim_start().starts_with("BOOTLOADER_STATE"))
-            .expect("ORIGIN не найден в строке memory.x");
-        let flash_origin = flash_line
-            .split("ORIGIN = ")
-            .nth(1)
-            .expect("ORIGIN не найден в строке memory.x")
-            .split(',')
-            .next()
-            .expect("ORIGIN не найден в строке memory.x");
-        let state_origin = state_line
-            .split("ORIGIN = ")
-            .nth(1)
-            .expect("ORIGIN не найден в строке memory.x")
-            .split(',')
-            .next()
-            .expect("ORIGIN не найден в строке memory.x");
-        if flash_origin == state_origin {
-            failures.push(suffix);
+        let app = app.join("\n");
+        let ota = result.vars.get("ota").map(String::as_str);
+        let mut fail = |what: &str| failures.push(format!("{suffix}: {what}"));
+
+        let Some(app_flash) = region_origin(&app, "FLASH") else {
+            fail("в app/memory.x нет региона FLASH");
+            continue;
+        };
+
+        if ota == Some("true") {
+            with_ota += 1;
+            let boot = written(&result, "cross/boot/memory.x");
+            let boot_state = region_origin(&boot, "BOOTLOADER_STATE");
+            let boot_active = region_origin(&boot, "ACTIVE");
+            if region_origin(&boot, "FLASH") == boot_state {
+                fail(
+                    "BOOTLOADER_STATE начинается с самого начала flash — bootloader'у негде лежать",
+                );
+            }
+            if boot_active.as_deref() != Some(app_flash.as_str()) {
+                fail(&format!(
+                    "app линкуется по {app_flash}, а ACTIVE у bootloader'а — {boot_active:?}"
+                ));
+            }
+        } else {
+            without_ota += 1;
+            for region in ["BOOTLOADER_STATE", "ACTIVE", "DFU"] {
+                if region_origin(&app, region).is_some() {
+                    fail(&format!("без OTA не должно быть региона {region}"));
+                }
+            }
         }
     }
     assert!(
-        checked > 500,
-        "подозрительно мало чипов с посчитанным memory.x: {checked}"
+        with_ota > 500 && without_ota > 100,
+        "подозрительное распределение: с OTA {with_ota}, без OTA {without_ota}"
     );
     assert!(
         failures.is_empty(),
-        "у {} чипов BOOTLOADER_STATE начинается с самого начала flash (нет места bootloader'у): {:?}",
+        "нарушены инварианты memory.x у {} чипов:\n{}",
         failures.len(),
-        failures
+        failures.join("\n")
     );
 }

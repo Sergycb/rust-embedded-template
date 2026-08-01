@@ -169,9 +169,11 @@ hook.
 `--define`, независимо от `chip_feature` (см. таблицу `PACKAGE_CHOICES` ниже — override
 `chip` заодно и пропускает её).
 
-Оба сгенерированных блока в `chip-select.rhai` (список валидных чипов, между маркерами
-`BEGIN/END GENERATED CHIP LIST`, и таблица уточнения корпусировки `PACKAGE_CHOICES`,
-между `BEGIN/END GENERATED PACKAGE CHOICES`) пишет `chip-data-gen` — отдельный
+Все четыре сгенерированных блока в `chip-select.rhai` (список валидных чипов, между
+маркерами `BEGIN/END GENERATED CHIP LIST`; таблица уточнения корпусировки
+`PACKAGE_CHOICES`, между `BEGIN/END GENERATED PACKAGE CHOICES`; банковая схема
+`BANK_MODE`, между `BEGIN/END GENERATED BANK MODE`; раскладка памяти `MEMORY_LAYOUT`,
+между `BEGIN/END GENERATED MEMORY LAYOUT`) пишет `chip-data-gen` — отдельный
 standalone-крейт в корне репозитория, НЕ
 член корневого `[workspace]` (свой `Cargo.toml` с пустым `[workspace]`) и НЕ часть
 шаблона: он инструмент обслуживания САМОГО РЕПОЗИТОРИЯ, запускается мейнтейнером вручную
@@ -257,47 +259,112 @@ probe-rs есть более специфичные `STM32L151C6TxA`/`STM32L151C
 списком в `core_override()`) исключает ядерные суффиксы из этого поиска — там
 семантика другая (реально разные ядра, а не корпусировка одного и того же).
 
-`write_size` и оба `memory.x` (`cross/app/`, `cross/boot/`) — тоже автоматически, где
-хватает данных: `embassy-stm32` уже зависит (фича `metadata`) от `stm32-metapac`, а тот
-для каждого чипа несёт `chips/<chip>/metadata.rs` — обычный Rust-файл с литералом
-`Metadata { memory: &[&[ MemoryRegion { address, size, settings: Some(FlashSettings {
-erase_size, write_size, .. }) } ]] }`, читается текстом без сборки (`parse_chip_memory`).
-Отсюда `chip-data-gen` считает готовые адреса/размеры (`compute_memory_layout`) и пишет
-их в третий сгенерированный блок `chip-select.rhai` — `MEMORY_LAYOUT` (между маркерами
-`BEGIN/END GENERATED MEMORY LAYOUT`), а хук в конце — если для чипа есть запись и
-`write_size` ещё не задан через `--define` — выставляет `write_size` и перезаписывает оба
-`memory.x` через `file::write` (пишет во временную копию шаблона ДО рендера — то же самое
+### Банковая схема (`bank_mode`, блок `BANK_MODE`)
+
+У ~194 чипов (G4 cat3, L4+, F7, F4 dual-bank, L5, G0) `stm32-metapac` несёт НЕСКОЛЬКО
+карт памяти — одно- и двухбанковую. Для них `build.rs` самого `embassy-stm32` ТРЕБУЕТ
+фичу `single-bank`/`dual-bank` и без неё паникует («Chip supports single and dual bank
+configuration. No Cargo feature to select one is enabled»), то есть сгенерированный
+проект не собирается вовсе. `select_memory_config` повторяет его предикаты по именам
+регионов (`BANK_1` без `BANK_2` → одобанковая) и предпочитает одобанковую: непрерывный
+`ACTIVE`, а read-while-write, ради которого нужна двухбанковая, `cross/boot` не
+использует. Для одноконфигурационных чипов `bank_mode` — пустая строка, и `{% if %}` в
+`cross/Cargo.toml` фичу не выводит: лишняя фича так же фатальна («The 'single-bank'
+feature is not supported on this dual bank chip»).
+
+### Раскладка памяти (`write_size`, `ota`, блок `MEMORY_LAYOUT`)
+
+`embassy-stm32` уже зависит (фича `metadata`) от `stm32-metapac`, а тот для каждого чипа
+несёт `chips/<chip>/metadata.rs` — обычный Rust-файл с литералом `Metadata { memory: &[&[
+MemoryRegion { address, size, settings: Some(FlashSettings { erase_size, write_size, ..
+}) } ]] }`, читается текстом без сборки (`parse_chip_memory`). **Формат при этом не
+один**: у одноконфигурационных чипов `stm32-data` печатает `memory: &[&[` одной строкой,
+у многоконфигурационных — `memory: &[` и `&[` на следующей. Поэтому разбор идёт счётом
+скобок (`split_memory_configs`), а не поиском литерала `memory: &[&[`, как раньше — на
+том поиске ~194 чипа молча выпадали из генерации.
+
+Отсюда `chip-data-gen` считает адреса/размеры (`compute_memory_layout` +
+`compute_ota_partitions`) и пишет их в `MEMORY_LAYOUT`, а хук в конце — если для чипа
+есть запись и `write_size` не задан через `--define` — выставляет `write_size`/`ota` и
+пишет `memory.x` через `file::write` (во временную копию шаблона ДО рендера — то самое
 "the template folder", о котором предупреждает документация `file::write`, не в
-`cross/*/memory.x` этого репозитория). Для чипов, где авточип не считается (см. ниже),
-`memory.x` остаётся плейсхолдером на ручное заполнение, как раньше.
+`cross/*/memory.x` этого репозитория).
 
-Ключевое ограничение (реальный runtime-assert в `embassy-boot`, `assert_partitions` в
-`boot_loader.rs` из `embassy-boot`, а не документация/doc-комментарий): `ACTIVE`/`DFU`
-обязаны быть кратны `PAGE_SIZE` — максимальному `erase_size` среди ВСЕХ flash-регионов
-чипа, а не только того, где физически лежит партиция (потому что `cross/boot/src/main.rs`
-использует один и тот же generic `Flash` — весь чип целиком — для active/dfu/state сразу,
-см. коммит про `BANK1_REGION`). Отсюда и смысл плейсхолдера `write_size` — это
-`PAGE_SIZE`/`BUFFER_SIZE` (const generic у `BootLoader::prepare::<_,_,_,N>`, буфер
-подкачки для алгоритма swap), а не `NorFlash::WRITE_SIZE` (минимальная порция записи,
-у STM32 всегда мало — 4-8 байт); имя плейсхолдера осталось прежним ради совместимости.
-`BOOTLOADER`/`BOOTLOADER_STATE` этому ограничению не подчиняются (нет сравнения с
-`PAGE_SIZE` в `assert_partitions`) и подбираются по локальной границе сектора — на чипах
-с крупными секторами (F4/F7/H7, до 128 KiB) целая страница под один только отступ съела бы
-четверть чипа. Отдельный краевой случай (`reserved_pages` растёт в цикле, не константа) —
-чипы, где уже самый первый регион занимает целый `PAGE_SIZE` (H7 — 128 KiB с адреса 0, без
-мелких секторов в начале, в отличие от F4): без этого `BOOTLOADER_STATE` съедал бы весь
-резерв, не оставляя места самому бинарнику bootloader'а (регрессионный тест —
-`memory_layout_origin_never_equals_flash_origin` в `chip-data-gen/tests/cascade.rs`).
+**Файлы у `app` и `boot` разные.** У `app` `FLASH` = `ACTIVE` (приложение линкуется
+именно туда), у `boot` `FLASH` = его собственная зона до `BOOTLOADER_STATE`. Раньше
+писался один и тот же текст с `FLASH` от базы flash — и `cargo xtask flash` (сначала
+boot, потом app) затирал bootloader образом приложения; OTA не работал ни на одном чипе.
+Смещения `__bootloader_*` в обоих файлах считаются от литерала базы flash, а НЕ от
+`ORIGIN(FLASH)`: их читает `embassy-boot`, работающий с флешем целиком, а `ORIGIN(FLASH)`
+у `app` теперь означает начало `ACTIVE`.
 
-`compute_memory_layout` возвращает `None` (авточип не подходит, `memory.x` остаётся
-плейсхолдером) для чипов с слишком маленькими flash/RAM (нет 1 страницы `ACTIVE` +
-1 страницы запаса `DFU`, либо RAM < 8 KiB — незачем считать под `PERSIST`), либо если
-резерв под bootloader не укладывается ровно в границу локального сектора (на реальных
-чипах ST этого не бывает — erase_size регионов чипа кратны друг другу, — но безопаснее
-пропустить чип, чем сгенерировать битый линкер-скрипт). Ручной override — как и у
-`chip`/`cpu`/`target`: `--define write_size=...` отключает автогенерацию memory.x целиком
-(адреса привязаны именно к вычисленному `write_size`, доверять чужому нельзя) — тогда всё,
-как раньше, вручную.
+Ограничения — четыре runtime-assert'а `assert_partitions` (`boot_loader.rs` из
+`embassy-boot`; именно assert'ы, а не документация: нарушены — bootloader паникует на
+старте, а не отказывается собираться):
+
+1. `ACTIVE` кратен `PAGE_SIZE`;
+2. `DFU` кратен `PAGE_SIZE`;
+3. `DFU - ACTIVE >= PAGE_SIZE` — запас алгоритма swap;
+4. `2 + 4 * (ACTIVE / PAGE_SIZE) <= BOOTLOADER_STATE / NorFlash::WRITE_SIZE`.
+
+`PAGE_SIZE` здесь — **не** плейсхолдер `write_size`, а `max(ACTIVE::ERASE_SIZE,
+DFU::ERASE_SIZE)`, который `embassy-boot` вычисляет сам; обе партиции живут поверх
+цельного `Flash` (`cross/boot/src/main.rs`), у которого `NorFlash::ERASE_SIZE =
+MAX_ERASE_SIZE` всего чипа. Плейсхолдер `write_size` — это const generic
+`BootLoader::prepare::<_,_,_,N>`, размер буфера подкачки: обязан делить `PAGE_SIZE`, быть
+кратным `NorFlash::WRITE_SIZE` и не меньше него — `NorFlash::WRITE_SIZE` чипа (4/8/32)
+удовлетворяет всем трём, его и подставляем. Имя плейсхолдера осталось прежним ради
+совместимости с проектами, задающими его через `--define`.
+
+Четвёртый assert — причина, по которой `BOOTLOADER_STATE` нельзя делать «просто одним
+сектором»: в нём лежит журнал прогресса swap, по слову на страницу `ACTIVE` в каждом из
+четырёх проходов плюс два служебных. На L4 (1 MiB при секторе 2 KiB) это `(2 + 4*247) * 8`
+байт — четыре сектора, а не один. Раньше здесь всегда стоял ровно один сектор, и **279 из
+972 посчитанных раскладок роняли bootloader в панику при первом же старте** (среди них
+l476rg — Nucleo-L476RG). Теперь размер `BOOTLOADER_STATE` подбирается под фактический
+`ACTIVE`, а резерв при необходимости растёт на страницу (`BOOTLOADER_MIN` — сколько
+обязано остаться под сам бинарник). Чтобы это не разъехалось снова, перед возвратом
+раскладки вызывается `assert_embassy_boot_invariants` — те же четыре проверки, но на
+этапе генерации.
+
+`BOOTLOADER`/`BOOTLOADER_STATE` кратности `PAGE_SIZE` не подчиняются (в
+`assert_partitions` их нет) и режутся по локальной границе сектора — на чипах с крупными
+секторами (F4/F7/H7, до 128 KiB) целая страница под один отступ съела бы четверть чипа.
+Краевой случай, ради которого `reserved_pages` растёт в цикле, — чипы, где уже первый
+регион занимает целый `PAGE_SIZE` (H7 — 128 KiB с адреса 0, без мелких секторов в начале,
+в отличие от F4): иначе `BOOTLOADER_STATE` съедал бы весь резерв.
+
+### Чипы без OTA (`ota = "false"`)
+
+`compute_ota_partitions` возвращает `Err` с человекочитаемой причиной, когда схема не
+помещается: ей нужно минимум 5 стираемых страниц (`BOOTLOADER` + `BOOTLOADER_STATE` +
+`ACTIVE` + `DFU` на страницу больше `ACTIVE`). На STM32H723VE, например, 512 KiB одним
+регионом с сектором 128 KiB — четыре страницы, валидной раскладки не существует ни при
+каком дележе. Для таких чипов (276 из 1479 — либо flash меньше резерва под bootloader,
+либо сектора слишком крупные) `memory.x` всё равно заполняется — одним
+образом на весь flash, — а `cross/boot` из проекта убирается: `members` в
+`cross/Cargo.toml` под `{% if ota == "true" %}`, `xtask` пропускает прошивку/линт boot
+(`has_bootloader()`), а сам каталог сносит `file::delete("cross/boot")` в хуке.
+
+**Почему `file::delete`, а не `[conditional]` в `cargo-generate.toml`**: условия
+`[conditional]` вычисляются только по значениям `[placeholders]` и переменных,
+выставленных хуком через `variable::set`, НЕ видят — проверено эмпирически
+(`[conditional.'ota != "true"']` каталог не убирал, то же условие по `ci` работало).
+Порядок важен: после `file::delete` в этот каталог нельзя писать (`cargo generate` падает
+с `os error 3`), поэтому в ветке без OTA пишется только `cross/app/memory.x`.
+
+`compute_memory_layout` возвращает `None` (и тогда `memory.x` остаётся плейсхолдером на
+ручное заполнение, а `ota` — `"true"`, чтобы bootloader из проекта не исчез) только когда
+считать не из чего: нет непрерывной flash- или RAM-цепочки от базового адреса. Сейчас
+таких чипов нет ни одного — раскладка считается для всех 1479. `PERSIST` не выводится при
+RAM < 4 KiB (`PERSIST_MIN_RAM`): отрезать от такого килобайт разорительно. Ручной
+override — как и у `chip`/`cpu`/`target`: `--define write_size=...` отключает
+автогенерацию memory.x целиком (адреса привязаны именно к вычисленному `write_size`,
+доверять чужому нельзя) — тогда всё, как раньше, вручную.
+
+Регрессионные тесты на всё перечисленное — `chip-data-gen/tests/cascade.rs`
+(`memory_layout_invariants_hold_for_every_chip` проходит по всем чипам сразу) и юнит-тесты
+в `chip-data-gen/src/main.rs`.
 
 Список файлов, где встречаются сырые `{{...}}`/`{% ... %}` (актуально для проверки сборки
 `cross` — ниже, к каскаду выбора чипа не относится),
@@ -321,11 +388,14 @@ control-tag `{% if %}`, а не только `{{ }}`-интерполяцию). 
 **Перед тем как проверять сборку `cross`** (компиляция, clippy, release) — временно
 подставить реальные значения во все найденные вхождения (например
 `stm32f303vc`/`cortex-m4`/`thumbv7em-none-eabihf`/`2048` + реальные адреса в оба
-`memory.x`, см. STM32F3Discovery как референс в истории коммитов). Для `{% if dual_core ==
-"true" %}"dual-core"{% endif %}` в `cross/bsp/Cargo.toml`/`cross/boot/Cargo.toml` —
-подстановка не однострочная (как у `{{...}}`): вручную выбрать одну ветку целиком
-(`default = ["dual-core"]` для двухъядерного чипа теста или `default = []` для
-однопроцессорного) вместо всего `{% if %}...{% endif %}` блока. Если нужен реальный
+`memory.x`, см. STM32F3Discovery как референс в истории коммитов). Liquid-условий
+`{% if %}` теперь четыре, и подстановка у них не однострочная (в отличие от `{{...}}`) —
+вручную выбрать одну ветку целиком вместо всего блока: `{% if dual_core == "true" %}` в
+`cross/bsp/Cargo.toml`/`cross/boot/Cargo.toml` (`default = ["dual-core"]` для
+двухъядерного чипа теста или `default = []` для однопроцессорного) и два `{% if ota ==
+"true" %}` в `cross/Cargo.toml` (`members` и `boot = { path = "./boot" }` — оставить или
+выбросить целиком), плюс `{% if bank_mode != "" %}` там же (строка с фичей банка).
+Если нужен реальный
 прогон каскада (а не только ручная подстановка) — надёжнее просто выполнить
 `cargo generate --path . --define chip_feature=... --define ci=none --silent
 --allow-commands` во временный каталог: он сам корректно рендерит и `{{...}}`, и
@@ -360,18 +430,23 @@ cargo clippy --manifest-path chip-data-gen/Cargo.toml --all-targets -- -D warnin
 
 `chip-data-gen/tests/cascade.rs` — интеграционный тест на сам `chip-select.rhai`, не на
 Rust-код генератора: гоняет реальный скрипт через движок `rhai` (dev-dependency) с
-подменённым модулем `variable` (`is_set`/`get`/`set`/`prompt`), без `cargo generate` и
+подменённым модулем `variable` (`is_set`/`get`/`set`/`prompt`) и `file`
+(`write`/`delete`), без `cargo generate` и
 без TTY — `variable::prompt` в моке сам ведёт каскад к заранее известной цели (выбирает
 самый длинный вариант из choices, чьим префиксом является цель — не первый попавшийся,
 иначе он ошибочно "останавливается" там, где чип совпадает с началом другого, того же
 класса бага, что тест и должен ловить). `cascade_reaches_every_chip_without_hanging` и
-`memory_layout_origin_never_equals_flash_origin` прогоняют так все чипы из `CHIPS`
-(~1438 каждый) — ловят именно тот класс бага, который `--define chip_feature=...` в
+`memory_layout_invariants_hold_for_every_chip` прогоняют так все чипы из `CHIPS`
+(~1479 каждый) — ловят именно тот класс бага, который `--define chip_feature=...` в
 принципе не может поймать (та ветка не создаёт ни одного `variable::prompt`, значит не
-исполняет сам цикл каскада). В `--release` — секунды на оба полных прогона (в dev-профиле
+исполняет сам цикл каскада). Второй из них проверяет разом три уже случавшиеся регрессии:
+`BOOTLOADER_STATE` с самого начала flash, одинаковый `memory.x` у app и boot (app
+затирал bootloader) и регионы OTA в проекте, который собирается без bootloader'а. В
+`--release` — секунды на оба полных прогона (в dev-профиле
 — единицы минут, интерпретация Rhai). Не в `cargo xtask lint`/CI (`chip-data-gen` не
 член workspace, см. выше), гонять вручную при правке `chip-select.rhai`/`chip-data-gen`:
-`cargo test --manifest-path chip-data-gen/Cargo.toml --release`.
+`cargo test --manifest-path chip-data-gen/Cargo.toml --release` (там же юнит-тесты на
+разбор metadata.rs и подбор раскладки).
 
 ## Известные, осознанные ограничения (не баги)
 

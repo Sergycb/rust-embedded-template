@@ -41,6 +41,13 @@ ignore = [".github/workflows/ci.yml", ".github/dependabot.yml"]
 [conditional.'ci != "gitlab"']
 ignore = [".gitlab-ci.yml", "renovate.json"]
 
+# cross/boot убирается НЕ здесь, а в самом chip-select.rhai (`file::delete`),
+# когда OTA-схема не помещается во flash выбранного чипа. Причина: условия
+# `[conditional]` вычисляются только по значениям `[placeholders]` и переменные,
+# выставленные хуком через `variable::set`, не видят — проверено эмпирически
+# (`[conditional.'ota != "true"']` каталог не убирал, то же условие по `ci`
+# работало).
+
 [hooks]
 pre = ["chip-select.rhai"]
 post = ["post-script.rhai"]

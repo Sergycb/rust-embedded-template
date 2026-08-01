@@ -58,6 +58,26 @@ fn flash_release(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
+/// Whether this project has a bootloader at all — substituted at generation
+/// time. `"false"` when the OTA layout does not fit the chip's flash: then
+/// `cross/boot` is not part of the generated project (see `chip-select.rhai`),
+/// and the app is flashed straight to the start of flash.
+///
+/// A string rather than a `bool` literal on purpose: the template source has
+/// to stay parseable Rust (`xtask` is a member of the root workspace and is
+/// linted there), and a template placeholder only survives that inside a
+/// string literal.
+const OTA: &str = "{{ota}}";
+
+/// Compared against `"false"` rather than `"true"` so that the un-rendered
+/// template (where `OTA` is still the literal placeholder) behaves like a
+/// project *with* a bootloader — that is what the maintainer checking
+/// `cargo xtask lint cross` in the template repo itself expects. Generated
+/// projects always get an exact `"true"`/`"false"`.
+fn has_bootloader() -> bool {
+    OTA != "false"
+}
+
 fn build(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     let _p = sh.push_dir(root_dir().join("cross"));
     cmd!(sh, "cargo build").run()?;
@@ -121,7 +141,11 @@ fn lint_cross(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     // transport pattern in task_orchestration.rs) is only type-checked here.
     // bsp/target-tests carry no such code, so re-linting them would just repeat
     // the first pass.
-    cmd!(sh, "cargo clippy -p app -p boot --release -- -D warnings").run()?;
+    if has_bootloader() {
+        cmd!(sh, "cargo clippy -p app -p boot --release -- -D warnings").run()?;
+    } else {
+        cmd!(sh, "cargo clippy -p app --release -- -D warnings").run()?;
+    }
     Ok(())
 }
 
@@ -130,6 +154,9 @@ fn flash_app(sh: &xshell::Shell, profile: &str) -> Result<(), anyhow::Error> {
 }
 
 fn flash_boot(sh: &xshell::Shell, profile: &str) -> Result<(), anyhow::Error> {
+    if !has_bootloader() {
+        return Ok(());
+    }
     flash(sh, "boot", profile)
 }
 

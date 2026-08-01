@@ -1,5 +1,9 @@
 [workspace]
-members  = ["app", "boot", "bsp", "target-tests"]
+# "boot" — только когда OTA-схема embassy-boot помещается в flash выбранного
+# чипа (переменная ota из chip-select.rhai). Если нет — каталог cross/boot в
+# проект не копируется вовсе (см. [conditional] в cargo-generate.toml), и
+# членом workspace ему быть нельзя.
+members  = ["app", {% if ota == "true" %}"boot", {% endif %}"bsp", "target-tests"]
 resolver = "3"
 
 [workspace.lints.clippy]
@@ -23,7 +27,11 @@ defmt-rtt     = { version = "1.2.0" }
 panic-probe   = { version = "1.0.0" }
 embassy-stm32 = { version = "0.6.0", features = [
 	"time-driver-any",
-	"{{chip_feature}}",
+	"{{chip_feature}}",{% if bank_mode != "" %}
+	# У этого чипа stm32-metapac несёт несколько карт памяти, и build.rs
+	# embassy-stm32 без явного выбора паникует ("Chip supports single and dual
+	# bank configuration"). Значение выставляет chip-select.rhai (BANK_MODE).
+	"{{bank_mode}}",{% endif %}
 ] }
 embassy-executor = { version = "0.10.0", features = [
 	"platform-cortex-m",
@@ -36,8 +44,8 @@ embedded-test      = { version = "0.7.1", default-features = false, features = [
 	"semihosting",
 ] }
 panic-persist    = { version = "0.3.0" }
-bsp              = { path = "./bsp" }
-boot             = { path = "./boot" }
+bsp              = { path = "./bsp" }{% if ota == "true" %}
+boot             = { path = "./boot" }{% endif %}
 app              = { path = "./app" }
 domain           = { path = "../domain" }
 target-tests     = { path = "./target-tests" }
