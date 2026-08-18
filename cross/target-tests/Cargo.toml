@@ -1,12 +1,33 @@
 [package]
 name = "target-tests"
-version = "0.1.0"
-edition = "2024"
-license = "MIT"
+version.workspace      = true
+edition.workspace      = true
+license.workspace      = true
+rust-version.workspace = true
 
+# Свой harness: libtest на устройстве нет, его роль играет `embedded-test`
+# на стороне прошивки и `probe-rs run` на стороне хоста.
 [[test]]
 name = "test"
 harness = false
 
 [lints]
 workspace = true
+
+[dependencies]
+# Паникёр и транспорт нужны здесь по той же причине, что и в `app`: тестовый
+# бинарник — это полноценная прошивка, которую заливают в плату целиком.
+# `embedded-test` свой `#[panic_handler]` не ставит: фича `panic-handler`
+# входит в его default, а тот отключён в cross/Cargo.toml — иначе он
+# конфликтовал бы с `panic-probe` (одна реализация на бинарник).
+defmt = { workspace = true }
+defmt-rtt = { workspace = true }
+panic-probe = { workspace = true, features = ["print-defmt"] }
+# Макрос `#[embedded_test::tests]` с фичей `embassy-010` разворачивается в код,
+# который обращается к `::embassy_executor` — по имени, из крейта теста, поэтому
+# зависимость нужна прямая, транзитивной через embassy-stm32 не хватает.
+embassy-executor = { workspace = true }
+embedded-test = { workspace = true }
+embassy-time = { workspace = true }
+bsp = { workspace = true }
+domain = { workspace = true }

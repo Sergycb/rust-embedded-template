@@ -1,8 +1,12 @@
 [package]
 name = "app"
-version = "0.1.0"
-edition = "2024"
-license = "MIT"
+version.workspace      = true
+edition.workspace      = true
+license.workspace      = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
 
 [[bin]]
 name = "app"
@@ -16,7 +20,7 @@ defmt = { workspace = true }
 defmt-rtt = { workspace = true }
 panic-probe = { workspace = true, features = ["print-defmt"] }
 bsp = { workspace = true }
-domain = { workspace = true, features = ["defmt"] }
+domain = { workspace = true }
 shadow-rs = { workspace = true }
 # Не используются напрямую в main.rs — держатся здесь реальной (не только
 # объявленной в workspace) зависимостью, чтобы версия была проверена

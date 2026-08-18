@@ -1,8 +1,12 @@
 [package]
 name = "boot"
-version = "0.1.0"
-edition = "2024"
-license = "MIT"
+version.workspace      = true
+edition.workspace      = true
+license.workspace      = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
 
 [[bin]]
 name = "boot"
@@ -19,7 +23,6 @@ cortex-m-rt = { workspace = true }
 defmt-rtt = { workspace = true }
 defmt = { workspace = true }
 panic-probe = { workspace = true, features = ["print-defmt"] }
-panic-persist = { workspace = true }
 embassy-boot-stm32 = { workspace = true, features = ["defmt"] }
 embassy-stm32 = { workspace = true, features = ["defmt"] }
 embassy-sync = { workspace = true }

@@ -4,6 +4,6 @@ fn main() {
 
     println!(
         "cargo::rustc-link-search={}",
-        std::env::var("CARGO_MANIFEST_DIR").unwrap()
+        std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR задаёт cargo")
     );
 }

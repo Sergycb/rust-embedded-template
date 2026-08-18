@@ -1,8 +1,9 @@
 [package]
 name = "xtask"
-version = "0.1.0"
-edition = "2024"
-license = "MIT"
+version.workspace      = true
+edition.workspace      = true
+license.workspace      = true
+rust-version.workspace = true
 
 [lints]
 workspace = true
@@ -10,3 +11,11 @@ workspace = true
 [dependencies]
 anyhow = "1.0.103"
 xshell = "0.2.7"
+# Только ради `cargo xtask size`: разобрать секции собранного ELF, чтобы
+# сравнить их с MEMORY из memory.x. Внешний `cargo-size` (cargo-binutils +
+# llvm-tools) для этого пришлось бы отдельно устанавливать.
+object = { version = "0.40.0", default-features = false, features = [
+	"read_core",
+	"elf",
+	"std",
+] }

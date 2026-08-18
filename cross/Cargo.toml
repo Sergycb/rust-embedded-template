@@ -6,6 +6,19 @@
 members  = ["app", {% if ota == "true" %}"boot", {% endif %}"bsp", "target-tests"]
 resolver = "3"
 
+[workspace.package]
+version      = "0.1.0"
+edition      = "2024"
+license      = "MIT"
+# Тот же MSRV, что в корневом Cargo.toml — воркспейса два, а тулчейн один.
+rust-version = "1.96"
+
+[workspace.lints.rust]
+# `#[embedded_test::tests]` генерирует ветку под `cfg(rust_analyzer)`, чтобы IDE
+# видела тела тестов как обычный код. Для rustc этот cfg неизвестен, и
+# `-D warnings` в `cargo xtask lint cross` превращал бы предупреждение в ошибку.
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(rust_analyzer)"] }
+
 [workspace.lints.clippy]
 all                     = { level = "warn", priority = -1 }
 unwrap_used             = "deny"
@@ -39,15 +52,26 @@ embassy-executor = { version = "0.10.0", features = [
 ] }
 embassy-boot-stm32 = { version = "0.8.0" }
 embassy-sync       = { version = "0.8.0" }
+# Прямая зависимость нужна target-tests (embassy-stm32 тянет тот же крейт
+# транзитивно, но полагаться на это для `use embassy_time::..` нельзя).
+embassy-time       = { version = "0.5.1" }
+# default отключён намеренно: в него входит `panic-handler`, а паникёр в
+# бинарнике должен быть ровно один — им остаётся panic-probe, как в app и
+# boot. `defmt` включён, чтобы вывод самого харнесса шёл тем же транспортом,
+# что и логи прошивки.
 embedded-test      = { version = "0.7.1", default-features = false, features = [
 	"embassy-010",
+	"defmt",
 	"semihosting",
 ] }
-panic-persist    = { version = "0.3.0" }
 bsp              = { path = "./bsp" }{% if ota == "true" %}
 boot             = { path = "./boot" }{% endif %}
 app              = { path = "./app" }
-domain           = { path = "../domain" }
+# `default-features = false` обязательно: дефолт domain — фича `log` (нужна
+# хост-сборке, см. её [features]), а в прошивке используется только defmt.
+domain           = { path = "../domain", default-features = false, features = [
+	"defmt",
+] }
 target-tests     = { path = "./target-tests" }
 shadow-rs        = { version = "2.0.0", default-features = false }
 assign-resources = { version = "0.5.0" }

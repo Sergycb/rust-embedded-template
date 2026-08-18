@@ -26,6 +26,15 @@ use embassy_executor::Spawner;
 
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
-    info!("app: starting");
+    // Первая же строка лога отвечает на вопрос «а что вообще залито в плату»:
+    // версия пакета и коммит, из которого собран образ (их подставляет
+    // `shadow-rs` в build.rs). Без этого build-info собиралась впустую, а по
+    // OTA легко получить плату с прошивкой, происхождение которой неизвестно.
+    // `host-target-tests` ждёт именно этот баннер.
+    info!(
+        "app: starting {} ({})",
+        build::PKG_VERSION,
+        build::SHORT_COMMIT
+    );
     let mut _board = bsp::Board::init();
 }

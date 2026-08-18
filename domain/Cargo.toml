@@ -1,13 +1,20 @@
 [package]
 name = "domain"
-version = "0.1.0"
-edition = "2024"
-license = "MIT"
+version.workspace      = true
+edition.workspace      = true
+license.workspace      = true
+rust-version.workspace = true
 
 [lints]
 workspace = true
 
 [features]
+# Хост-дефолт: без одной из фич `log`/`defmt` не собирается `defmt-or-log`, и
+# первое же `cargo build`/`cargo test` в свежесгенерированном проекте (и
+# rust-analyzer в IDE) падало с compile_error из чужого крейта. В прошивку
+# `log` при этом не попадает: cross/Cargo.toml подключает domain с
+# `default-features = false, features = ["defmt"]`.
+default = ["log"]
 defmt = [
 	"dep:defmt",
 	"defmt-or-log/defmt",

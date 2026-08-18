@@ -1,8 +1,20 @@
-use std::{env, path::PathBuf};
+use std::{env, fs, path::Path, path::PathBuf};
 
+use anyhow::Context;
+use object::{Object, ObjectSection};
 use xshell::cmd;
 
 const CHIP: &str = "{{chip}}";
+/// Целевой triple прошивки — тот же, что в `cross/.cargo/config.toml`. Нужен,
+/// чтобы найти собранный ELF (`cross/target/<TARGET>/<profile>/app`) и чтобы
+/// `cargo xtask setup` поставил ровно тот target, под который собирается
+/// проект.
+const TARGET: &str = "{{target}}";
+
+/// Профиль по умолчанию для команд, где он необязателен. `debug` — потому что
+/// команды с профилем (`run`/`flash`/`attach`/`size`) чаще всего зовут во
+/// время разработки, а не при выпуске.
+const DEFAULT_PROFILE: &str = "debug";
 
 fn main() -> Result<(), anyhow::Error> {
     let args = env::args().skip(1).collect::<Vec<_>>();
@@ -10,51 +22,91 @@ fn main() -> Result<(), anyhow::Error> {
     let sh = xshell::Shell::new()?;
 
     match &args[..] {
+        ["setup"] => setup(&sh),
+        // Без аргумента — `host`: единственный этап, которому не нужна плата.
+        ["test"] | ["test", "host"] => test_host(&sh),
         ["test", "all"] => test_all(&sh),
-        ["test", "host"] => test_host(&sh),
         ["test", "host-target"] => test_host_target(&sh),
         ["test", "target"] => test_target(&sh),
         ["build"] => build(&sh),
-        ["run", "debug"] => run_debug(&sh),
-        ["run", "release"] => run_release(&sh),
-        ["flash", "debug"] => flash_debug(&sh),
-        ["flash", "release"] => flash_release(&sh),
+        ["run"] => run(&sh, DEFAULT_PROFILE),
+        ["run", profile] => run(&sh, profile),
+        ["flash"] => flash_all(&sh, DEFAULT_PROFILE),
+        ["flash", profile] => flash_all(&sh, profile),
+        ["attach"] => attach(&sh, DEFAULT_PROFILE),
+        ["attach", profile] => attach(&sh, profile),
+        ["size"] => size(&sh, DEFAULT_PROFILE),
+        ["size", profile] => size(&sh, profile),
+        ["reset"] => probe_rs(&sh, "reset"),
+        ["erase"] => probe_rs(&sh, "erase"),
         ["lint"] => lint_host(&sh),
         ["lint", "cross"] => lint_cross(&sh),
         _ => {
-            println!("USAGE cargo xtask test [all|host|host-target|target]");
-            println!("      cargo xtask build");
-            println!("      cargo xtask run [debug|release]");
-            println!("      cargo xtask flash [debug|release]");
-            println!("      cargo xtask lint [cross]");
+            usage();
             Ok(())
         }
     }
 }
 
-fn run_debug(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
-    flash_boot(sh, "debug")?;
+fn usage() {
+    println!("USAGE cargo xtask setup                      # target, probe-rs, flip-link, nextest");
+    println!("      cargo xtask build                      # cross: debug + release");
+    println!("      cargo xtask run [debug|release]        # прошить и смотреть defmt-лог");
+    println!("      cargo xtask flash [debug|release]      # прошить без дебаггера");
+    println!("      cargo xtask attach [debug|release]     # лог уже прошитой платы");
+    println!("      cargo xtask size [debug|release]       # занятость FLASH/RAM");
+    println!("      cargo xtask reset | erase              # probe-rs по чипу {CHIP}");
+    println!("      cargo xtask lint [cross]");
+    println!("      cargo xtask test [host|target|host-target|all]");
+}
+
+/// Ставит всё, без чего `build`/`run` падают с невнятной ошибкой линкера или
+/// `no such command`. Уже установленное `cargo install` пропускает сам.
+fn setup(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
+    cmd!(sh, "rustup target add {TARGET}").run()?;
+    cmd!(sh, "cargo install probe-rs-tools --locked").run()?;
+    cmd!(sh, "cargo install flip-link --locked").run()?;
+    cmd!(sh, "cargo install cargo-nextest --locked").run()?;
+    Ok(())
+}
+
+fn run(sh: &xshell::Shell, profile: &str) -> Result<(), anyhow::Error> {
+    flash_boot(sh, profile)?;
     let _p = sh.push_dir(root_dir().join("cross/app"));
-    cmd!(sh, "cargo run").run()?;
+    match profile {
+        "release" => cmd!(sh, "cargo run --release").run()?,
+        "debug" => cmd!(sh, "cargo run").run()?,
+        other => anyhow::bail!("unknown profile: {other}"),
+    }
     Ok(())
 }
 
-fn run_release(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
-    flash_boot(sh, "release")?;
-    let _p = sh.push_dir(root_dir().join("cross/app"));
-    cmd!(sh, "cargo run --release").run()?;
+fn flash_all(sh: &xshell::Shell, profile: &str) -> Result<(), anyhow::Error> {
+    flash_boot(sh, profile)?;
+    flash_app(sh, profile)?;
     Ok(())
 }
 
-fn flash_debug(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
-    flash_boot(sh, "debug")?;
-    flash_app(sh, "debug")?;
+/// Подключается к уже прошитой плате и печатает её defmt-лог, ничего не
+/// перепрошивая: `run` для этого пришлось бы стирать и заливать образ заново,
+/// теряя состояние, за которым как раз и наблюдают.
+fn attach(sh: &xshell::Shell, profile: &str) -> Result<(), anyhow::Error> {
+    let elf = artifact_path("app", profile)?;
+    let elf = elf.display().to_string();
+    let _p = sh.push_dir(root_dir().join("cross"));
+    cmd!(sh, "probe-rs attach --chip {CHIP} {elf}").run()?;
     Ok(())
 }
 
-fn flash_release(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
-    flash_boot(sh, "release")?;
-    flash_app(sh, "release")?;
+fn probe_rs(sh: &xshell::Shell, subcommand: &str) -> Result<(), anyhow::Error> {
+    cmd!(sh, "probe-rs {subcommand} --chip {CHIP}").run()?;
+    Ok(())
+}
+
+fn build(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
+    let _p = sh.push_dir(root_dir().join("cross"));
+    cmd!(sh, "cargo build").run()?;
+    cmd!(sh, "cargo build --release").run()?;
     Ok(())
 }
 
@@ -78,13 +130,6 @@ fn has_bootloader() -> bool {
     OTA != "false"
 }
 
-fn build(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
-    let _p = sh.push_dir(root_dir().join("cross"));
-    cmd!(sh, "cargo build").run()?;
-    cmd!(sh, "cargo build --release").run()?;
-    Ok(())
-}
-
 fn test_all(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     test_host(sh)?;
     test_target(sh)?;
@@ -101,12 +146,18 @@ fn test_host(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
+/// Хост управляет уже прошитым устройством: сначала заливаем то, что тест
+/// будет проверять, потом запускаем сам тест. Он ищет ELF по переменной
+/// окружения — путь зависит от профиля, а знать его в двух местах незачем.
 fn test_host_target(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     flash_boot(sh, "release")?;
     flash_app(sh, "release")?;
+    let elf = artifact_path("app", "release")?;
     {
+        let _env = sh.push_env("HOST_TARGET_APP_ELF", elf);
+        let _env_chip = sh.push_env("HOST_TARGET_CHIP", CHIP);
         let _p = sh.push_dir(root_dir().join("host-target-tests"));
-        cmd!(sh, "cargo nextest run --features release").run()?;
+        cmd!(sh, "cargo nextest run").run()?;
     }
     Ok(())
 }
@@ -131,10 +182,19 @@ fn lint_host(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
 fn lint_cross(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     let _p = sh.push_dir(root_dir().join("cross"));
     cmd!(sh, "cargo fmt --check").run()?;
-    // target-tests has no default targets of its own until it grows an embedded-test
-    // harness, so --all-targets is intentionally omitted here (it would otherwise try
-    // and fail to build its empty `tests/test.rs` as a no_std test binary).
+    // Без `--all-targets`: он добавил бы `lib test` — цель, которую cargo
+    // строит для unit-тестов внутри библиотеки. Ей нужен крейт `test`, а его
+    // для `thumbv*-none-*` не существует (E0463), так что no_std-библиотека
+    // вроде `bsp` на ней падает всегда, независимо от своего содержимого.
     cmd!(sh, "cargo clippy --workspace -- -D warnings").run()?;
+    // Тесты на устройстве при этом линтятся: у них свой harness и свой
+    // `#![no_main]`, крейт `test` им не нужен — но и в `--workspace` выше они
+    // не попадают, потому что это отдельная тестовая цель.
+    cmd!(
+        sh,
+        "cargo clippy -p target-tests --test test -- -D warnings"
+    )
+    .run()?;
     // Second pass, release only, scoped to app+boot: the release profile turns
     // `debug-assertions`/`overflow-checks` off, so anything behind `debug_assert!`
     // (or a future `#[cfg(not(debug_assertions))]` branch — see the release defmt
@@ -168,6 +228,153 @@ fn flash(sh: &xshell::Shell, package: &str, profile: &str) -> Result<(), anyhow:
         other => anyhow::bail!("unknown profile: {other}"),
     }
     Ok(())
+}
+
+/// Сколько флеша и RAM занимает собранный образ и сколько под него отведено в
+/// `memory.x`. Линкер ловит только переполнение — а знать запас полезно
+/// заранее, тем более что размер `ACTIVE` под OTA-схемой заметно меньше всего
+/// флеша чипа.
+fn size(sh: &xshell::Shell, profile: &str) -> Result<(), anyhow::Error> {
+    {
+        let _p = sh.push_dir(root_dir().join("cross"));
+        match profile {
+            "release" => cmd!(sh, "cargo build --release").run()?,
+            "debug" => cmd!(sh, "cargo build").run()?,
+            other => anyhow::bail!("unknown profile: {other}"),
+        }
+    }
+
+    let mut packages = vec!["app"];
+    if has_bootloader() {
+        packages.push("boot");
+    }
+    for package in packages {
+        let elf = artifact_path(package, profile)?;
+        let usage =
+            section_usage(&elf).with_context(|| format!("разобрать ELF {}", elf.display()))?;
+        let memory_x = root_dir().join("cross").join(package).join("memory.x");
+        let regions = parse_memory_regions(&memory_x)
+            .with_context(|| format!("разобрать {}", memory_x.display()))?;
+
+        println!(
+            "{package} ({profile}): FLASH {}   RAM {}",
+            report(usage.flash, region(&regions, "FLASH")),
+            report(usage.ram, region(&regions, "RAM")),
+        );
+    }
+    Ok(())
+}
+
+struct SectionUsage {
+    flash: u64,
+    ram: u64,
+}
+
+/// Суммирует ALLOC-секции ELF: во флеш попадает всё, что там физически лежит
+/// (`.vector_table`/`.text`/`.rodata` плюс образ инициализированных данных),
+/// в RAM — всё записываемое (`.data` + `.bss` + `.uninit`). `.data` считается
+/// в обе стороны, и это не ошибка: её образ занимает флеш, а копия — RAM.
+fn section_usage(elf: &Path) -> Result<SectionUsage, anyhow::Error> {
+    let data = fs::read(elf).with_context(|| format!("прочитать {}", elf.display()))?;
+    let file = object::File::parse(&*data)?;
+
+    let mut usage = SectionUsage { flash: 0, ram: 0 };
+    for section in file.sections() {
+        let object::SectionFlags::Elf { sh_flags, sh_type } = section.flags() else {
+            continue;
+        };
+        // Не ALLOC — отладочная информация и таблицы символов: в устройство
+        // они не попадают вовсе.
+        if sh_flags.0 & object::elf::SHF_ALLOC.0 == 0 {
+            continue;
+        }
+        let size = section.size();
+        if sh_flags.0 & object::elf::SHF_WRITE.0 != 0 {
+            usage.ram += size;
+        }
+        // `.bss`/`.uninit` места в файле не занимают (SHT_NOBITS) — во флеш
+        // идёт только то, у чего есть содержимое.
+        if sh_type != object::elf::SHT_NOBITS {
+            usage.flash += size;
+        }
+    }
+    Ok(usage)
+}
+
+/// `MEMORY { NAME (attrs) : ORIGIN = 0x..., LENGTH = 128K }` из `memory.x`.
+/// Свой разбор, а не крейт: формат пишем мы сами (`chip-select.rhai`), а
+/// нужны из него ровно два числа.
+fn parse_memory_regions(memory_x: &Path) -> Result<Vec<(String, u64)>, anyhow::Error> {
+    let text = fs::read_to_string(memory_x)?;
+    let mut regions = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with("/*") || !line.contains("ORIGIN") || !line.contains("LENGTH") {
+            continue;
+        }
+        let Some((name, rest)) = line.split_once('(') else {
+            continue;
+        };
+        let Some((_, length)) = rest.split_once("LENGTH") else {
+            continue;
+        };
+        let length = length.trim_start_matches([' ', '=']).trim();
+        if let Some(bytes) = parse_size(length) {
+            regions.push((name.trim().to_owned(), bytes));
+        }
+    }
+    Ok(regions)
+}
+
+/// `128K`, `1M`, `528` — суффиксы линкерного скрипта.
+fn parse_size(raw: &str) -> Option<u64> {
+    let raw = raw.trim().trim_end_matches(',');
+    let (digits, multiplier) = match raw.chars().last()? {
+        'K' | 'k' => (&raw[..raw.len() - 1], 1024),
+        'M' | 'm' => (&raw[..raw.len() - 1], 1024 * 1024),
+        _ => (raw, 1),
+    };
+    digits.trim().parse::<u64>().ok().map(|n| n * multiplier)
+}
+
+fn region(regions: &[(String, u64)], name: &str) -> Option<u64> {
+    regions
+        .iter()
+        .find(|(region_name, _)| region_name == name)
+        .map(|(_, size)| *size)
+}
+
+fn report(used: u64, available: Option<u64>) -> String {
+    match available {
+        Some(available) if available > 0 => format!(
+            "{} / {} ({}%)",
+            human(used),
+            human(available),
+            used * 100 / available,
+        ),
+        _ => human(used),
+    }
+}
+
+fn human(bytes: u64) -> String {
+    if bytes >= 1024 {
+        format!("{}.{} KiB", bytes / 1024, (bytes % 1024) * 10 / 1024)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
+fn artifact_path(package: &str, profile: &str) -> Result<PathBuf, anyhow::Error> {
+    let profile_dir = match profile {
+        "release" => "release",
+        "debug" => "debug",
+        other => anyhow::bail!("unknown profile: {other}"),
+    };
+    Ok(root_dir()
+        .join("cross/target")
+        .join(TARGET)
+        .join(profile_dir)
+        .join(package))
 }
 
 fn root_dir() -> PathBuf {
