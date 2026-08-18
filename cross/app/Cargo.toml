@@ -18,7 +18,12 @@ cortex-m-rt = { workspace = true }
 embassy-executor = { workspace = true, features = ["defmt"] }
 defmt = { workspace = true }
 defmt-rtt = { workspace = true }
-panic-probe = { workspace = true, features = ["print-defmt"] }
+# `panic-probe` здесь больше нет: его `#[panic_handler]` печатает бэктрейс, но
+# ничего не сохраняет, а причина падения нужна и после сброса, когда пробника
+# рядом нет. Свой хендлер в src/main.rs делает обе вещи и потому занимает
+# единственное место паникёра в бинарнике. В `boot` panic-probe остался — там
+# ни PERSIST, ни чтения дампа нет.
+panic-persist = { workspace = true }
 bsp = { workspace = true }
 domain = { workspace = true }
 shadow-rs = { workspace = true }

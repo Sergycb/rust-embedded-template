@@ -623,6 +623,9 @@ struct MemoryLayout {
     /// `None` у чипов, где RAM слишком мал, чтобы отрезать от него фиксированный
     /// кусок под `PERSIST`.
     persist: Option<(u64, u64)>,
+    /// Вторая половина того же куска — под дамп `panic-persist`. `None` там же,
+    /// где `None` у `persist`: либо оба региона есть, либо ни одного.
+    panic: Option<(u64, u64)>,
     /// Готовые строки `MEMORY { }` для всех прочих регионов чипа (ITCM, AXISRAM,
     /// CCMRAM, BKPSRAM, EEPROM, OTP, окна внешних шин...) — см.
     /// `extra_region_lines`. Одинаковы для `app` и `boot`.
@@ -671,10 +674,19 @@ const BOOTLOADER_MIN: u64 = 16 * 1024;
 /// секторе 256 байт у L0/L1 — 128 штук), и абсолютный предел отрезал бы от OTA
 /// всю мелкосекторную половину линейки.
 const MAX_EXTRA_RESERVED_PAGES: u64 = 16;
-/// Чипы с совсем маленьким RAM: отрезать 1 KiB под `PERSIST` от 4 KiB уже
-/// разорительно — регион просто не выводится.
+/// Чипы с совсем маленьким RAM: отрезать 1 KiB под `PERSIST`+`PANIC` от 4 KiB
+/// уже разорительно — оба региона просто не выводятся.
 const PERSIST_MIN_RAM: u64 = 4 * 1024;
+/// Отрезается от конца RAM и делится пополам: `PERSIST` — под данные, которые
+/// программа сама решила сохранить между сбросами (секция `.persist`), `PANIC`
+/// — под дамп `panic-persist`. Разными регионами, а не одним: `panic-persist`
+/// пишет по голым адресам `_panic_dump_start.._panic_dump_end`, ничего не зная
+/// о секциях, и в общем регионе он затирал бы пользовательские данные — молча,
+/// потому что линкеру нечего тут ловить.
 const PERSIST_LENGTH: u64 = 1024;
+/// Из них под дамп паники. 8 байт занимает заголовок (магия + длина),
+/// остальное — текст сообщения; что не влезло, `panic-persist` обрезает.
+const PANIC_LENGTH: u64 = 512;
 
 /// Собирает карту памяти чипа: непрерывную flash-цепочку от базы, RAM-цепочку
 /// от базы и — если помещается — партиции OTA. `None` только когда считать не
@@ -733,11 +745,18 @@ fn compute_memory_layout(regions: &[RawRegion]) -> Option<MemoryLayout> {
     if ram_total == 0 {
         return None;
     }
-    let (ram_length, persist) = if ram_total >= PERSIST_MIN_RAM {
+    // Отрезанный кусок делится на две части: сначала PERSIST (данные
+    // программы), за ним PANIC (дамп паники) — до самого конца RAM.
+    let (ram_length, persist, panic) = if ram_total >= PERSIST_MIN_RAM {
         let ram_length = ram_total - PERSIST_LENGTH;
-        (ram_length, Some((RAM_BASE + ram_length, PERSIST_LENGTH)))
+        let persist_length = PERSIST_LENGTH - PANIC_LENGTH;
+        (
+            ram_length,
+            Some((RAM_BASE + ram_length, persist_length)),
+            Some((RAM_BASE + ram_length + persist_length, PANIC_LENGTH)),
+        )
     } else {
-        (ram_total, None)
+        (ram_total, None, None)
     };
 
     Some(MemoryLayout {
@@ -746,6 +765,7 @@ fn compute_memory_layout(regions: &[RawRegion]) -> Option<MemoryLayout> {
         ram_origin: RAM_BASE,
         ram_length,
         persist,
+        panic,
         // Границы цепочек, а не ram_length: PERSIST отрезан от RAM, но лежит
         // внутри той же цепочки — регионом его дублировать не надо.
         extra_regions: extra_region_lines(regions, FLASH_BASE + flash_total, ram_end),
@@ -1032,6 +1052,10 @@ fn format_memory_layouts(layouts: &BTreeMap<&str, MemoryLayout>) -> String {
         if let Some((origin, length)) = m.persist {
             push_field(&mut out, "persist_origin", &format_addr(origin));
             push_field(&mut out, "persist_length", &format_size(length));
+        }
+        if let Some((origin, length)) = m.panic {
+            push_field(&mut out, "panic_origin", &format_addr(origin));
+            push_field(&mut out, "panic_length", &format_size(length));
         }
         if !m.extra_regions.is_empty() {
             out.push_str("        \"extra_regions\": [\n");
@@ -1412,6 +1436,7 @@ pub static METADATA: Metadata = Metadata {
         // Но FLASH/RAM всё равно посчитаны — memory.x не остаётся заглушкой.
         assert_eq!(layout.flash_length, 512 * 1024);
         assert!(layout.persist.is_some());
+        assert!(layout.panic.is_some(), "дамп паники живёт рядом с PERSIST");
     }
 
     #[test]

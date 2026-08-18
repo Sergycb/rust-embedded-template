@@ -31,7 +31,7 @@ dependencies = [
  "defmt-rtt",
  "domain",
  "embassy-executor",
- "panic-probe",
+ "panic-persist",
  "shadow-rs",
  "supervisor",
  "watchdog",
@@ -1390,6 +1390,15 @@ name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
+
+[[package]]
+name = "panic-persist"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32bb382689ecd2c4d2d4df9fd56700ba8d43b7b31cca11018cc0e6f8aef39fd5"
+dependencies = [
+ "cortex-m",
+]
 
 [[package]]
 name = "panic-probe"

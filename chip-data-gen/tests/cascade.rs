@@ -507,6 +507,22 @@ fn memory_layout_invariants_hold_for_every_chip() {
             fail("target-tests/memory.x должен повторять app/memory.x");
         }
 
+        // Дамп паники и пользовательские данные, переживающие сброс, живут в
+        // разных регионах: `panic-persist` пишет по голым адресам
+        // `_panic_dump_start.._panic_dump_end` и в общем регионе затирал бы
+        // секцию `.persist` молча — линкеру такое наложение не видно.
+        let has_persist = region_origin(&app, "PERSIST").is_some();
+        let has_panic = region_origin(&app, "PANIC").is_some();
+        if has_persist != has_panic {
+            fail("PERSIST и PANIC выводятся только вместе");
+        }
+        if has_panic != app.contains("_panic_dump_start = ORIGIN(PANIC);") {
+            fail("регион PANIC есть, а символов panic-persist нет (или наоборот)");
+        }
+        if has_persist && region_origin(&app, "PERSIST") == region_origin(&app, "PANIC") {
+            fail("PERSIST и PANIC начинаются с одного адреса — они наложены");
+        }
+
         let Some(app_flash) = region_origin(&app, "FLASH") else {
             fail("в app/memory.x нет региона FLASH");
             continue;

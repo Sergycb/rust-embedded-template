@@ -94,6 +94,19 @@ assign-resources = { version = "0.5.0" }
 supervisor       = { git = "https://github.com/Sergycb/rust-lib.git" }
 watchdog         = { git = "https://github.com/Sergycb/rust-lib.git" }
 
+# Причина паники, переживающая сброс: пишется в регион PANIC (посчитан при
+# генерации, см. memory.x), читается при следующем старте.
+#
+# `custom-panic-handler` отключает его собственный `#[panic_handler]` и
+# оставляет только `report_panic_info` — иначе выбирать пришлось бы между
+# «сохранить» и «напечатать через defmt», а нужны обе половины сразу; свой
+# хендлер в cross/app/src/main.rs делает и то, и другое. `utf8` добавляет
+# `get_panic_message_utf8`, без него сообщение читается только байтами.
+panic-persist = { version = "0.3.0", features = [
+	"custom-panic-handler",
+	"utf8",
+] }
+
 # Zero-copy DMA-буфер: статические объекты создаются только в cross —
 # см. cross/bsp/src/buffers.rs.
 bbqueue = { version = "0.7.0", default-features = false, features = [
