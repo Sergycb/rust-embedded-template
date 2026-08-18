@@ -23,6 +23,7 @@
 //! `init`). Свой список — позиционными аргументами.
 
 use std::{
+    collections::BTreeSet,
     env, fs,
     path::{Path, PathBuf},
     process::Command,
@@ -143,6 +144,7 @@ fn check_one(
     .with_context(|| format!("генерация проекта под {chip}"))?;
 
     check_no_raw_placeholders(&project)?;
+    report_lock_drift(repo_root, &project);
 
     if !options.quick {
         // Ровно те команды, которые README обещает пользователю шаблона.
@@ -174,6 +176,49 @@ fn check_one(
         fs::remove_dir_all(&project).with_context(|| format!("удалить {}", project.display()))?;
     }
     Ok(())
+}
+
+/// Сравнивает списки пакетов в lock-файлах шаблона и свежесгенерированного
+/// проекта (там их только что пересобрал `cargo update` из post-хука).
+///
+/// Расхождение почти всегда значит одно: манифест правили, а lock не
+/// перегенерировали. В проекте пользователя это незаметно — `cargo update`
+/// при генерации всё чинит, — но в самом репозитории шаблона `cross` никто не
+/// собирает, а CI сгенерированного проекта зовёт `cargo fetch --locked` и на
+/// отставшем lock падает. Предупреждение, а не ошибка: часть расхождений —
+/// обычные обновления версий из crates.io, за которые шаблон не отвечает.
+fn report_lock_drift(repo_root: &Path, project: &Path) {
+    for lock in ["Cargo.lock", "cross/Cargo.lock"] {
+        let (Some(template), Some(generated)) = (
+            lock_package_names(&repo_root.join(lock)),
+            lock_package_names(&project.join(lock)),
+        ) else {
+            continue;
+        };
+        let missing: Vec<&String> = generated.difference(&template).collect();
+        let extra: Vec<&String> = template.difference(&generated).collect();
+        if !missing.is_empty() || !extra.is_empty() {
+            println!("ВНИМАНИЕ: {lock} шаблона разошёлся с тем, что собралось при генерации");
+            if !missing.is_empty() {
+                println!("  нет в шаблонном lock: {missing:?}");
+            }
+            if !extra.is_empty() {
+                println!("  лишние в шаблонном lock: {extra:?}");
+            }
+            println!("  поправить: скопировать {lock} из {}", project.display());
+        }
+    }
+}
+
+fn lock_package_names(lock: &Path) -> Option<BTreeSet<String>> {
+    let text = fs::read_to_string(lock).ok()?;
+    Some(
+        text.lines()
+            .filter_map(|line| line.strip_prefix("name = \""))
+            .filter_map(|rest| rest.strip_suffix('"'))
+            .map(str::to_owned)
+            .collect(),
+    )
 }
 
 /// Ищет `{{ }}`/`{% %}`, пережившие генерацию. Мимо линта и сборки такое

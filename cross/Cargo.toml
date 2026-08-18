@@ -55,14 +55,17 @@ embassy-sync       = { version = "0.8.0" }
 # Прямая зависимость нужна target-tests (embassy-stm32 тянет тот же крейт
 # транзитивно, но полагаться на это для `use embassy_time::..` нельзя).
 embassy-time       = { version = "0.5.1" }
-# default отключён намеренно: в него входит `panic-handler`, а паникёр в
-# бинарнике должен быть ровно один — им остаётся panic-probe, как в app и
-# boot. `defmt` включён, чтобы вывод самого харнесса шёл тем же транспортом,
-# что и логи прошивки.
+# default отключён, чтобы состав фич был виден списком, но обе входящие в
+# него фичи здесь же и перечислены: `semihosting` — канал, которым тест
+# сообщает результат раннеру, `panic-handler` — то, что превращает панику в
+# «тест упал» вместо HardFault (подробности — в cross/target-tests/Cargo.toml,
+# там же про то, почему в этом бинарнике нет panic-probe). `defmt` — чтобы
+# вывод харнесса шёл тем же транспортом, что и логи прошивки.
 embedded-test      = { version = "0.7.1", default-features = false, features = [
 	"embassy-010",
 	"defmt",
 	"semihosting",
+	"panic-handler",
 ] }
 bsp              = { path = "./bsp" }{% if ota == "true" %}
 boot             = { path = "./boot" }{% endif %}

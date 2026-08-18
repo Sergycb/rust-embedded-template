@@ -15,19 +15,25 @@ harness = false
 workspace = true
 
 [dependencies]
-# Паникёр и транспорт нужны здесь по той же причине, что и в `app`: тестовый
-# бинарник — это полноценная прошивка, которую заливают в плату целиком.
-# `embedded-test` свой `#[panic_handler]` не ставит: фича `panic-handler`
-# входит в его default, а тот отключён в cross/Cargo.toml — иначе он
-# конфликтовал бы с `panic-probe` (одна реализация на бинарник).
+# Транспорт нужен здесь по той же причине, что и в `app`: тестовый бинарник —
+# это полноценная прошивка, которую заливают в плату целиком.
+#
+# А вот `panic-probe` здесь НЕ подключён, в отличие от app/boot, и это не
+# упущение: паникёр в тестовом бинарнике — это способ сообщить раннеру, что
+# тест провалился. `embedded-test` под фичей `panic-handler` (она в его
+# default) заканчивает панику через `semihosting::process::abort()`, который
+# `probe-rs run` понимает как «этот тест упал» и переходит к следующему;
+# `panic-probe` вместо этого делает `udf()`, то есть HardFault, и один
+# провалившийся assert обрушил бы весь прогон. Ограничение «ровно один
+# `#[panic_handler]`» — на бинарник, а не на workspace, поэтому app и boot
+# спокойно остаются на panic-probe.
 defmt = { workspace = true }
 defmt-rtt = { workspace = true }
-panic-probe = { workspace = true, features = ["print-defmt"] }
 # Макрос `#[embedded_test::tests]` с фичей `embassy-010` разворачивается в код,
 # который обращается к `::embassy_executor` — по имени, из крейта теста, поэтому
 # зависимость нужна прямая, транзитивной через embassy-stm32 не хватает.
 embassy-executor = { workspace = true }
-embedded-test = { workspace = true }
+embedded-test = { workspace = true, features = ["panic-handler"] }
 embassy-time = { workspace = true }
 bsp = { workspace = true }
 domain = { workspace = true }

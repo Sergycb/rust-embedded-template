@@ -63,6 +63,10 @@ fn usage() {
 /// Ставит всё, без чего `build`/`run` падают с невнятной ошибкой линкера или
 /// `no such command`. Уже установленное `cargo install` пропускает сам.
 fn setup(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
+    // Компоненты — не «на всякий случай»: профиль rustup бывает minimal (так
+    // устроены и оба CI-образа), и тогда `cargo xtask lint` сразу после setup
+    // падал бы на `cargo fmt`/`cargo clippy` с "no such command".
+    cmd!(sh, "rustup component add rustfmt clippy").run()?;
     cmd!(sh, "rustup target add {TARGET}").run()?;
     cmd!(sh, "cargo install probe-rs-tools --locked").run()?;
     cmd!(sh, "cargo install flip-link --locked").run()?;
@@ -250,16 +254,17 @@ fn size(sh: &xshell::Shell, profile: &str) -> Result<(), anyhow::Error> {
     }
     for package in packages {
         let elf = artifact_path(package, profile)?;
-        let usage =
-            section_usage(&elf).with_context(|| format!("разобрать ELF {}", elf.display()))?;
         let memory_x = root_dir().join("cross").join(package).join("memory.x");
         let regions = parse_memory_regions(&memory_x)
             .with_context(|| format!("разобрать {}", memory_x.display()))?;
+        let ram = region(&regions, "RAM");
+        let usage =
+            section_usage(&elf, ram).with_context(|| format!("разобрать ELF {}", elf.display()))?;
 
         println!(
             "{package} ({profile}): FLASH {}   RAM {}",
-            report(usage.flash, region(&regions, "FLASH")),
-            report(usage.ram, region(&regions, "RAM")),
+            report(usage.flash, region(&regions, "FLASH").map(|r| r.length)),
+            report(usage.ram, ram.map(|r| r.length)),
         );
     }
     Ok(())
@@ -270,11 +275,27 @@ struct SectionUsage {
     ram: u64,
 }
 
+struct Region {
+    origin: u64,
+    length: u64,
+}
+
+impl Region {
+    fn contains(&self, address: u64) -> bool {
+        address >= self.origin && address < self.origin + self.length
+    }
+}
+
 /// Суммирует ALLOC-секции ELF: во флеш попадает всё, что там физически лежит
 /// (`.vector_table`/`.text`/`.rodata` плюс образ инициализированных данных),
 /// в RAM — всё записываемое (`.data` + `.bss` + `.uninit`). `.data` считается
 /// в обе стороны, и это не ошибка: её образ занимает флеш, а копия — RAM.
-fn section_usage(elf: &Path) -> Result<SectionUsage, anyhow::Error> {
+///
+/// Записываемая секция засчитывается в RAM только если её адрес попал в
+/// границы одноимённого региона: `.persist` живёт в PERSIST, а данные,
+/// разложенные по CCMRAM/AXISRAM, — в своих регионах, и сложить их вместе
+/// значило бы показать занятость RAM больше настоящей.
+fn section_usage(elf: &Path, ram: Option<&Region>) -> Result<SectionUsage, anyhow::Error> {
     let data = fs::read(elf).with_context(|| format!("прочитать {}", elf.display()))?;
     let file = object::File::parse(&*data)?;
 
@@ -289,7 +310,9 @@ fn section_usage(elf: &Path) -> Result<SectionUsage, anyhow::Error> {
             continue;
         }
         let size = section.size();
-        if sh_flags.0 & object::elf::SHF_WRITE.0 != 0 {
+        if sh_flags.0 & object::elf::SHF_WRITE.0 != 0
+            && ram.is_none_or(|ram| ram.contains(section.address()))
+        {
             usage.ram += size;
         }
         // `.bss`/`.uninit` места в файле не занимают (SHT_NOBITS) — во флеш
@@ -303,8 +326,8 @@ fn section_usage(elf: &Path) -> Result<SectionUsage, anyhow::Error> {
 
 /// `MEMORY { NAME (attrs) : ORIGIN = 0x..., LENGTH = 128K }` из `memory.x`.
 /// Свой разбор, а не крейт: формат пишем мы сами (`chip-select.rhai`), а
-/// нужны из него ровно два числа.
-fn parse_memory_regions(memory_x: &Path) -> Result<Vec<(String, u64)>, anyhow::Error> {
+/// нужны из него только адрес и размер.
+fn parse_memory_regions(memory_x: &Path) -> Result<Vec<(String, Region)>, anyhow::Error> {
     let text = fs::read_to_string(memory_x)?;
     let mut regions = Vec::new();
     for line in text.lines() {
@@ -315,20 +338,28 @@ fn parse_memory_regions(memory_x: &Path) -> Result<Vec<(String, u64)>, anyhow::E
         let Some((name, rest)) = line.split_once('(') else {
             continue;
         };
-        let Some((_, length)) = rest.split_once("LENGTH") else {
+        let Some((origin, length)) = rest.split_once("LENGTH") else {
             continue;
         };
+        let Some((_, origin)) = origin.split_once("ORIGIN") else {
+            continue;
+        };
+        let origin = origin.trim_start_matches([' ', '=']).trim();
         let length = length.trim_start_matches([' ', '=']).trim();
-        if let Some(bytes) = parse_size(length) {
-            regions.push((name.trim().to_owned(), bytes));
+        if let (Some(origin), Some(length)) = (parse_size(origin), parse_size(length)) {
+            regions.push((name.trim().to_owned(), Region { origin, length }));
         }
     }
     Ok(regions)
 }
 
-/// `128K`, `1M`, `528` — суффиксы линкерного скрипта.
+/// `128K`, `1M`, `528`, `0x08020000` — то, чем линкерный скрипт записывает и
+/// размеры, и адреса.
 fn parse_size(raw: &str) -> Option<u64> {
-    let raw = raw.trim().trim_end_matches(',');
+    let raw = raw.trim().trim_end_matches(',').trim();
+    if let Some(hex) = raw.strip_prefix("0x").or_else(|| raw.strip_prefix("0X")) {
+        return u64::from_str_radix(hex, 16).ok();
+    }
     let (digits, multiplier) = match raw.chars().last()? {
         'K' | 'k' => (&raw[..raw.len() - 1], 1024),
         'M' | 'm' => (&raw[..raw.len() - 1], 1024 * 1024),
@@ -337,11 +368,11 @@ fn parse_size(raw: &str) -> Option<u64> {
     digits.trim().parse::<u64>().ok().map(|n| n * multiplier)
 }
 
-fn region(regions: &[(String, u64)], name: &str) -> Option<u64> {
+fn region<'a>(regions: &'a [(String, Region)], name: &str) -> Option<&'a Region> {
     regions
         .iter()
         .find(|(region_name, _)| region_name == name)
-        .map(|(_, size)| *size)
+        .map(|(_, region)| region)
 }
 
 fn report(used: u64, available: Option<u64>) -> String {
@@ -370,11 +401,22 @@ fn artifact_path(package: &str, profile: &str) -> Result<PathBuf, anyhow::Error>
         "debug" => "debug",
         other => anyhow::bail!("unknown profile: {other}"),
     };
-    Ok(root_dir()
-        .join("cross/target")
+    Ok(cross_target_dir()
         .join(TARGET)
         .join(profile_dir)
         .join(package))
+}
+
+/// Куда cargo кладёт артефакты `cross`. Обычно это `cross/target`, но
+/// `CARGO_TARGET_DIR` перекрывает его глобально (так делают CI и инструменты,
+/// которым нужен общий кеш) — а команды, ищущие собранный ELF (`size`,
+/// `attach`, `test host-target`), должны находить его там же, где cargo его
+/// оставил, а не там, где он лежит по умолчанию.
+fn cross_target_dir() -> PathBuf {
+    match env::var_os("CARGO_TARGET_DIR") {
+        Some(dir) => PathBuf::from(dir),
+        None => root_dir().join("cross").join("target"),
+    }
 }
 
 fn root_dir() -> PathBuf {

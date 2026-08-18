@@ -21,9 +21,13 @@
 #![no_std]
 #![no_main]
 
-// Транспорт и паникёр — те же, что в `app`: см. cross/app/src/main.rs.
+// Транспорт тот же, что в `app` (см. cross/app/src/main.rs), а паникёр —
+// нет: здесь его даёт сам `embedded-test`, и это принципиально. Его
+// `#[panic_handler]` заканчивается `semihosting::process::abort()`, который
+// `probe-rs run` читает как «этот тест упал» и переходит к следующему;
+// `panic-probe` вместо этого делает `udf()`, то есть HardFault, и один
+// провалившийся `assert!` унёс бы с собой весь прогон.
 use defmt_rtt as _;
-use panic_probe as _;
 
 #[embedded_test::tests]
 mod tests {
