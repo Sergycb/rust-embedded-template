@@ -44,6 +44,10 @@ const DEFAULT_CHIPS: &[&str] = &[
     "stm32h723ve",
     // Двухъядерный: bsp/boot получают init_primary() с SharedData.
     "stm32h745zi-cm7",
+    // Другой конец линейки: 2 KiB RAM и Cortex-M0+ (thumbv6m, без CAS в
+    // железе). Резерв под PERSIST/PANIC здесь считается долей RAM, а не
+    // фиксированным килобайтом — на таком чипе тот был бы половиной памяти.
+    "stm32l011f4",
 ];
 
 /// Файлы, где сырые `{{...}}` остаются намеренно и после генерации.
@@ -210,15 +214,24 @@ fn report_lock_drift(repo_root: &Path, project: &Path) {
     }
 }
 
+/// Пары `имя версия` из lock-файла. Версия входит в ключ намеренно: поднятая
+/// в манифесте версия при неперегенерированном lock — ровно тот случай, на
+/// котором падает `cargo fetch --locked` в CI, а по одним именам он выглядел
+/// бы как совпадение.
 fn lock_package_names(lock: &Path) -> Option<BTreeSet<String>> {
     let text = fs::read_to_string(lock).ok()?;
-    Some(
-        text.lines()
-            .filter_map(|line| line.strip_prefix("name = \""))
-            .filter_map(|rest| rest.strip_suffix('"'))
-            .map(str::to_owned)
-            .collect(),
-    )
+    let mut packages = BTreeSet::new();
+    let mut name: Option<&str> = None;
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("name = \"") {
+            name = rest.strip_suffix('"');
+        } else if let Some(rest) = line.strip_prefix("version = \"")
+            && let (Some(name), Some(version)) = (name.take(), rest.strip_suffix('"'))
+        {
+            packages.insert(format!("{name} {version}"));
+        }
+    }
+    Some(packages)
 }
 
 /// Ищет `{{ }}`/`{% %}`, пережившие генерацию. Мимо линта и сборки такое

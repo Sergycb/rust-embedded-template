@@ -620,12 +620,11 @@ struct MemoryLayout {
     flash_length: u64,
     ram_origin: u64,
     ram_length: u64,
-    /// `None` у чипов, где RAM слишком мал, чтобы отрезать от него фиксированный
-    /// кусок под `PERSIST`.
-    persist: Option<(u64, u64)>,
-    /// Вторая половина того же куска — под дамп `panic-persist`. `None` там же,
-    /// где `None` у `persist`: либо оба региона есть, либо ни одного.
-    panic: Option<(u64, u64)>,
+    /// Хвост RAM под данные, переживающие сброс (секция `.persist`).
+    persist: (u64, u64),
+    /// Соседний кусок под дамп `panic-persist`. Всегда есть, если есть
+    /// раскладка: без него `app` не слинкуется (см. RESERVED_MIN).
+    panic: (u64, u64),
     /// Готовые строки `MEMORY { }` для всех прочих регионов чипа (ITCM, AXISRAM,
     /// CCMRAM, BKPSRAM, EEPROM, OTP, окна внешних шин...) — см.
     /// `extra_region_lines`. Одинаковы для `app` и `boot`.
@@ -674,19 +673,30 @@ const BOOTLOADER_MIN: u64 = 16 * 1024;
 /// секторе 256 байт у L0/L1 — 128 штук), и абсолютный предел отрезал бы от OTA
 /// всю мелкосекторную половину линейки.
 const MAX_EXTRA_RESERVED_PAGES: u64 = 16;
-/// Чипы с совсем маленьким RAM: отрезать 1 KiB под `PERSIST`+`PANIC` от 4 KiB
-/// уже разорительно — оба региона просто не выводятся.
-const PERSIST_MIN_RAM: u64 = 4 * 1024;
-/// Отрезается от конца RAM и делится пополам: `PERSIST` — под данные, которые
-/// программа сама решила сохранить между сбросами (секция `.persist`), `PANIC`
-/// — под дамп `panic-persist`. Разными регионами, а не одним: `panic-persist`
-/// пишет по голым адресам `_panic_dump_start.._panic_dump_end`, ничего не зная
-/// о секциях, и в общем регионе он затирал бы пользовательские данные — молча,
-/// потому что линкеру нечего тут ловить.
-const PERSIST_LENGTH: u64 = 1024;
-/// Из них под дамп паники. 8 байт занимает заголовок (магия + длина),
-/// остальное — текст сообщения; что не влезло, `panic-persist` обрезает.
-const PANIC_LENGTH: u64 = 512;
+/// От конца RAM отрезается кусок и делится пополам: `PERSIST` — под данные,
+/// которые программа сама решила сохранить между сбросами (секция `.persist`),
+/// `PANIC` — под дамп `panic-persist`. Разными регионами, а не одним:
+/// `panic-persist` пишет по голым адресам `_panic_dump_start.._panic_dump_end`,
+/// ничего не зная о секциях, и в общем регионе он затирал бы пользовательские
+/// данные — молча, потому что линкеру нечего тут ловить.
+///
+/// Размер куска — доля RAM, а не константа: у чипа с 2 KiB (STM32L011 и
+/// родня) фиксированный килобайт был бы половиной всей памяти. Раньше на
+/// таких чипах регионы просто не выводились, но это перестало быть
+/// вариантом, когда `app` получил безусловный `#[panic_handler]` поверх
+/// `panic-persist`: без символов дампа он не линкуется вовсе.
+const RESERVED_FRACTION: u64 = 8;
+/// 256 байт — нижняя граница: 8 байт из них съедает заголовок дампа, дальше
+/// текст, и на «panicked at src/main.rs:42:5» с запасом хватает.
+const RESERVED_MIN: u64 = 256;
+/// Больше килобайта отдавать незачем: сообщение всё равно обрезается по
+/// размеру региона, а `.persist` под большие структуры не предназначен.
+const RESERVED_MAX: u64 = 1024;
+/// Чип, у которого RAM меньше двух минимальных резервов, автораскладки не
+/// получает вовсе (`memory.x` остаётся плейсхолдером). Среди STM32 таких нет
+/// — самый скромный вариант это 2 KiB, — но инвариант «есть раскладка →
+/// есть PERSIST и PANIC» должен держаться без оговорок.
+const MIN_RAM_FOR_LAYOUT: u64 = 2 * RESERVED_MIN;
 
 /// Собирает карту памяти чипа: непрерывную flash-цепочку от базы, RAM-цепочку
 /// от базы и — если помещается — партиции OTA. `None` только когда считать не
@@ -745,19 +755,16 @@ fn compute_memory_layout(regions: &[RawRegion]) -> Option<MemoryLayout> {
     if ram_total == 0 {
         return None;
     }
-    // Отрезанный кусок делится на две части: сначала PERSIST (данные
+    if ram_total < MIN_RAM_FOR_LAYOUT {
+        return None;
+    }
+    // Отрезанный кусок делится на две равные части: сначала PERSIST (данные
     // программы), за ним PANIC (дамп паники) — до самого конца RAM.
-    let (ram_length, persist, panic) = if ram_total >= PERSIST_MIN_RAM {
-        let ram_length = ram_total - PERSIST_LENGTH;
-        let persist_length = PERSIST_LENGTH - PANIC_LENGTH;
-        (
-            ram_length,
-            Some((RAM_BASE + ram_length, persist_length)),
-            Some((RAM_BASE + ram_length + persist_length, PANIC_LENGTH)),
-        )
-    } else {
-        (ram_total, None, None)
-    };
+    let reserved = (ram_total / RESERVED_FRACTION).clamp(RESERVED_MIN, RESERVED_MAX);
+    let half = reserved / 2;
+    let ram_length = ram_total - reserved;
+    let persist = (RAM_BASE + ram_length, half);
+    let panic = (RAM_BASE + ram_length + half, half);
 
     Some(MemoryLayout {
         flash_origin: FLASH_BASE,
@@ -1049,14 +1056,12 @@ fn format_memory_layouts(layouts: &BTreeMap<&str, MemoryLayout>) -> String {
         push_field(&mut out, "flash_length", &format_size(m.flash_length));
         push_field(&mut out, "ram_origin", &format_addr(m.ram_origin));
         push_field(&mut out, "ram_length", &format_size(m.ram_length));
-        if let Some((origin, length)) = m.persist {
-            push_field(&mut out, "persist_origin", &format_addr(origin));
-            push_field(&mut out, "persist_length", &format_size(length));
-        }
-        if let Some((origin, length)) = m.panic {
-            push_field(&mut out, "panic_origin", &format_addr(origin));
-            push_field(&mut out, "panic_length", &format_size(length));
-        }
+        let (persist_origin, persist_length) = m.persist;
+        push_field(&mut out, "persist_origin", &format_addr(persist_origin));
+        push_field(&mut out, "persist_length", &format_size(persist_length));
+        let (panic_origin, panic_length) = m.panic;
+        push_field(&mut out, "panic_origin", &format_addr(panic_origin));
+        push_field(&mut out, "panic_length", &format_size(panic_length));
         if !m.extra_regions.is_empty() {
             out.push_str("        \"extra_regions\": [\n");
             for line in &m.extra_regions {
@@ -1435,8 +1440,8 @@ pub static METADATA: Metadata = Metadata {
         assert!(note.contains("нужно 3"), "{note}");
         // Но FLASH/RAM всё равно посчитаны — memory.x не остаётся заглушкой.
         assert_eq!(layout.flash_length, 512 * 1024);
-        assert!(layout.persist.is_some());
-        assert!(layout.panic.is_some(), "дамп паники живёт рядом с PERSIST");
+        assert_ne!(layout.persist.1, 0);
+        assert_ne!(layout.panic.1, 0, "дамп паники живёт рядом с PERSIST");
     }
 
     #[test]

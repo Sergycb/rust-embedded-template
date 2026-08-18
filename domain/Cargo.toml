@@ -79,6 +79,20 @@ defmt-or-log = { workspace = true }
 log = { workspace = true, optional = true }
 defmt = { workspace = true, optional = true }
 
+# Cortex-M0/M0+ (ARMv6-M — STM32 C0/F0/G0/L0 и CM0+-ядра WB/WL) не имеет
+# аппаратного compare-and-swap, и `portable-atomic` на таких целях отказывается
+# собирать `compare_exchange`, пока ему не сказали, чем его эмулировать. Фича
+# `critical-section` — тот самый ответ; реализацию критической секции даёт
+# `cortex-m` с `critical-section-single-core`, она включена в cross/Cargo.toml.
+#
+# Секция именно здесь, а не в крейтах `cross`: фичи резолвятся отдельно для
+# каждой цели сборки, а `domain` — общий знаменатель всех трёх (app, bsp,
+# target-tests), поэтому одного объявления хватает на весь граф. Само
+# ограничение всплывает не в `domain`, а в `static_cell` (он тоже построен на
+# `portable-atomic`) — но чинится в одном месте для обоих.
+[target.thumbv6m-none-eabi.dependencies]
+portable-atomic = { workspace = true, features = ["critical-section"] }
+
 [dev-dependencies]
 critical-section = { workspace = true, features = ["std"] }
 futures = { workspace = true }

@@ -507,19 +507,26 @@ fn memory_layout_invariants_hold_for_every_chip() {
             fail("target-tests/memory.x должен повторять app/memory.x");
         }
 
-        // Дамп паники и пользовательские данные, переживающие сброс, живут в
-        // разных регионах: `panic-persist` пишет по голым адресам
-        // `_panic_dump_start.._panic_dump_end` и в общем регионе затирал бы
-        // секцию `.persist` молча — линкеру такое наложение не видно.
-        let has_persist = region_origin(&app, "PERSIST").is_some();
-        let has_panic = region_origin(&app, "PANIC").is_some();
-        if has_persist != has_panic {
-            fail("PERSIST и PANIC выводятся только вместе");
+        // Регионы обязательны, а не опциональны: `app` безусловно тянет
+        // `panic-persist`, и без символов `_panic_dump_*` проект не
+        // линкуется. Раньше их не получали 16 чипов с 2 KiB RAM (STM32L011 и
+        // родня) — тогда регионы просто не выводились, если RAM меньше 4 KiB,
+        // и на этих чипах генерация давала заведомо несобираемый проект.
+        let persist = region_origin(&app, "PERSIST");
+        let panic = region_origin(&app, "PANIC");
+        if persist.is_none() {
+            fail("нет региона PERSIST");
         }
-        if has_panic != app.contains("_panic_dump_start = ORIGIN(PANIC);") {
-            fail("регион PANIC есть, а символов panic-persist нет (или наоборот)");
+        if panic.is_none() {
+            fail("нет региона PANIC — panic-persist не слинкуется");
         }
-        if has_persist && region_origin(&app, "PERSIST") == region_origin(&app, "PANIC") {
+        if !app.contains("_panic_dump_start = ORIGIN(PANIC);") {
+            fail("нет символов panic-persist");
+        }
+        // Разными регионами, а не одним: `panic-persist` пишет по голым
+        // адресам и в общем регионе затирал бы секцию `.persist` молча —
+        // линкеру такое наложение не видно.
+        if persist.is_some() && persist == panic {
             fail("PERSIST и PANIC начинаются с одного адреса — они наложены");
         }
 
