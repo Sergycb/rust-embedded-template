@@ -95,7 +95,7 @@ test-log             = { version = "0.2.21" }
 # Крейты `supervisor` и `watchdog` из той же библиотеки — не здесь, а в
 # `cross/Cargo.toml`: первый спавнит `#[embassy_executor::task]`, второй
 # драйвит аппаратный IWDG.
-fsm          = { git = "https://github.com/Sergycb/rust-lib.git", features = ["macro"] }
+fsm          = { git = "https://github.com/Sergycb/rust-lib.git" }
 fsm-async    = { git = "https://github.com/Sergycb/rust-lib.git" }
 sync-request = { git = "https://github.com/Sergycb/rust-lib.git" }
 typestate    = { git = "https://github.com/Sergycb/rust-lib.git" }

@@ -35,12 +35,29 @@
 //!   `RequestTimeoutExt::request_timeout` для таймаута.
 //! * `watchdog: Duration` — участие узла в общем аппаратном watchdog'е,
 //!   см. следующий раздел.
+//! * `shutdown: Cooperative` — узел не отменяют дропом посреди работы:
+//!   задача получает `stop: impl Stoppable` и выходит сама, доделав то, что
+//!   нельзя бросить на середине (запись во flash, транзакция на шине).
+//! * `count: N` — N независимых копий узла со своими статиками; `resources:`
+//!   при этом становится массивом слотов (`PROBE[0]`, а не `PROBE_0`).
+//! * `executor: NAME` — узел спавнится не на общем исполнителе, а на том,
+//!   чей `SpawnerSlot` объявлен в графе (прерывательный приоритет, второе
+//!   ядро).
+//! * `cloned:` / `shared:` — общий на весь граф объект: первый отдаёт
+//!   каждому узлу собственный `Clone`, второй — `&'static` на один
+//!   физический ресурс (шина под `Mutex`).
 //!
 //! Полный список полей и их тонкости — в doc-комментариях самого
 //! `supervisor` и `supervisor-macros`; здесь только минимальный каркас.
 //!
+//! Время везде — `embassy_time::Duration`, единственный тип времени во всей
+//! библиотеке. `core::time::Duration` из неё убран намеренно: его
+//! представление `{secs, nanos}` превращает каждую конверсию в 64-битное
+//! деление, которое на 32-битной цели раскрывается в вызов
+//! `__aeabi_uldivmod`, тогда как `embassy_time` — это просто счётчик тиков.
+//!
 //! ```ignore
-//! use core::time::Duration;
+//! use embassy_time::Duration;
 //!
 //! use supervisor::policy::{BackoffPolicy, JitterPolicy, RestartPolicy};
 //! use supervisor::runtime::TaskExit;
@@ -57,12 +74,12 @@
 //! }
 //!
 //! supervisor_graph! {
-//!     node USART = Terminate, deps: [], restart: RestartPolicy::OnFailure, backoff: backoff(),
+//!     node USART, deps: [], restart: RestartPolicy::OnFailure, backoff: backoff(),
 //!         resources: [UART: UsartResources],
 //!         task: usart_worker;
 //!
 //!     // Стартует только после того, как USART сигнализировал готовность.
-//!     node APP = Terminate, deps: [USART], restart: RestartPolicy::OnFailure, backoff: backoff(),
+//!     node APP, deps: [USART], restart: RestartPolicy::OnFailure, backoff: backoff(),
 //!         inbox: [EVENTS: LinkEvent; 8],
 //!         task: app_worker;
 //! }
@@ -82,13 +99,20 @@
 //!
 //! # `watchdog` — мультиплексор задач в один аппаратный watchdog
 //!
-//! `supervisor` пользуется им внутри (блок `watchdog:` выше), но два трейта
-//! приходится реализовать самому — крейт намеренно не знает ни про
-//! `embassy-time`, ни про конкретный МК. Реализации привязаны к железу,
-//! поэтому их место — `bsp` (туда же придётся перенести саму зависимость
-//! `watchdog` из `cross/app/Cargo.toml` и добавить `embassy-time`, которого
-//! у `bsp` сейчас нет); здесь они показаны рядом с графом только чтобы
-//! связка читалась целиком.
+//! `supervisor` пользуется им внутри (блок `watchdog:` выше), а реализовать
+//! под свой МК нужно ровно один трейт — `HardwareWatchdog`. Часов крейт не
+//! держит вовсе: `now` он принимает параметром, и подаёт его туда сам граф
+//! (`embassy_time::Instant::now()`). Раньше здесь был второй трейт, `Clock`,
+//! и его убрали не ради краткости: параметр не требует ни impl'а, ни
+//! типажа, принимает любую шкалу времени (например всегда живой RTC/LPTIM —
+//! драйвер `embassy_time` в STOP/STANDBY встаёт, и watchdog слеп ровно
+//! тогда, когда МК может не проснуться), а прежний `core::time::Duration`
+//! стоил вызова `__aeabi_uldivmod` на каждой конверсии.
+//!
+//! Реализация привязана к железу, поэтому её место — `bsp` (туда же
+//! придётся перенести саму зависимость `watchdog` из `cross/app/Cargo.toml`
+//! и добавить `embassy-time`, которого у `bsp` сейчас нет); здесь она
+//! показана рядом с графом только чтобы связка читалась целиком.
 //!
 //! Важное следствие: `Heartbeat::feed()` узел зовёт **явно**, из тела своей
 //! задачи, и только когда реально продвинулся. Автоматического «задача жива,
@@ -96,17 +120,9 @@
 //! исполнитель, а не полезную работу.
 //!
 //! ```ignore
-//! use core::time::Duration;
+//! use embassy_time::Duration;
 //!
 //! use embassy_stm32::wdg::IndependentWatchdog;
-//!
-//! struct EmbassyClock;
-//!
-//! impl watchdog::Clock for EmbassyClock {
-//!     fn now(&self) -> Duration {
-//!         embassy_time::Instant::now().duration_since(embassy_time::Instant::from_ticks(0)).into()
-//!     }
-//! }
 //!
 //! struct Iwdg(IndependentWatchdog<'static, embassy_stm32::peripherals::IWDG>);
 //!
@@ -125,9 +141,9 @@
 //!
 //! // В графе: блок уровня графа плюс opt-in у каждого узла.
 //! supervisor_graph! {
-//!     watchdog: EmbassyClock, Iwdg, check_every: Duration::from_millis(100);
+//!     watchdog: Iwdg, check_every: Duration::from_millis(100);
 //!
-//!     node APP = Terminate, deps: [], restart: RestartPolicy::OnFailure, backoff: backoff(),
+//!     node APP, deps: [], restart: RestartPolicy::OnFailure, backoff: backoff(),
 //!         watchdog: Duration::from_secs(2),
 //!         task: app_worker;
 //! }
@@ -138,6 +154,12 @@
 //!         ctx.heartbeat.feed(); // только после реального прогресса
 //!     }
 //! }
+//!
+//! // в main(), после инициализации HAL и до spawn_all: граф объявил под
+//! // аппаратный watchdog пустой статик, заполнить его нужно ровно один раз
+//! // (второй `put` — паника: watchdog сеют один раз и назад не забирают).
+//! __supervisor_watchdog.put(Iwdg(IndependentWatchdog::new(p.IWDG, 2_000_000)));
+//! spawn_all(&spawner).expect("узлы свежие");
 //! ```
 //!
 //! # Стейтчарты сюда не входят

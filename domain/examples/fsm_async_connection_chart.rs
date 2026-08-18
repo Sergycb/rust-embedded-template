@@ -17,10 +17,15 @@
 //!
 //! `cargo run -p domain --example fsm_async_connection_chart`
 
-use core::time::Duration;
+// Время автомата — `embassy_time::Duration`: `fsm`/`fsm-async` завязаны на
+// один тип времени, тот же, которым их драйвит embassy на железе (см. доки
+// `fsm::Timed`). `core::time::Duration` ниже нужен только tokio, который в
+// этом host-примере играет роль исполнителя.
+use core::time::Duration as StdDuration;
 
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
+use embassy_time::Duration;
 use fsm::{Outcome, state_machine};
 use fsm_async::AsyncTimedRuntime;
 
@@ -96,19 +101,19 @@ async fn main() {
         // Первая попытка: `Established` не приходит — сработает таймаут
         // состояния `connecting`, автомат сам вернётся в `disconnected`.
         EVENTS.send(LinkEvent::Connect).await;
-        tokio::time::sleep(Duration::from_millis(150)).await;
+        tokio::time::sleep(StdDuration::from_millis(150)).await;
         // Вторая: рукопожатие успевает в окно.
         EVENTS.send(LinkEvent::Connect).await;
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        tokio::time::sleep(StdDuration::from_millis(10)).await;
         EVENTS.send(LinkEvent::Established).await;
         // Закрываем сессию штатно — таймаут `connecting` тут уже ни при чём,
         // у `connected` его нет вовсе (`Timed::timeout` вернёт `None`).
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        tokio::time::sleep(StdDuration::from_millis(10)).await;
         EVENTS.send(LinkEvent::Disconnect).await;
     });
 
     let outcome =
-        tokio::time::timeout(Duration::from_millis(400), link.run(EVENTS.receiver())).await;
+        tokio::time::timeout(StdDuration::from_millis(400), link.run(EVENTS.receiver())).await;
     assert!(
         outcome.is_err(),
         "run() не возвращается сам — истечь обязан именно таймаут"
