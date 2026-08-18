@@ -86,11 +86,12 @@ fn main() -> anyhow::Result<()> {
     );
 
     let rhai_path = repo_root.join("chip-select.rhai");
+    let stamp = format_source_stamp(&declared_embassy_version(&repo_root)?, &probe_rs_version()?);
     write_generated_block(
         &rhai_path,
         CHIPS_BEGIN,
         CHIPS_END,
-        &format_chip_list(&suffixes),
+        &format_chip_list(&suffixes, &stamp),
     )?;
     write_generated_block(
         &rhai_path,
@@ -1096,6 +1097,47 @@ fn format_bank_modes(modes: &BTreeMap<&str, &'static str>) -> String {
 /// Множество идентификаторов чипов, которые знает локально установленный
 /// `probe-rs` (`probe-rs chip list`), например `STM32F407VE` — без суффикса
 /// корпус/темп.диапазон (`Tx`/`Hx`/...), см. обоснование в CLAUDE.md.
+/// Версия `embassy-stm32` так, как она объявлена в `cross/Cargo.toml` — не
+/// разрешённая cargo: сверять надо именно объявление, иначе безобидный
+/// патч-релиз в реестре ронял бы тест штампа.
+fn declared_embassy_version(repo_root: &Path) -> anyhow::Result<String> {
+    let manifest_path = repo_root.join("cross").join("Cargo.toml");
+    let manifest = fs::read_to_string(&manifest_path)
+        .with_context(|| format!("не удалось прочитать {}", manifest_path.display()))?;
+    parse_declared_embassy_version(&manifest).with_context(|| {
+        format!(
+            "в {} не нашлась версия embassy-stm32",
+            manifest_path.display()
+        )
+    })
+}
+
+fn parse_declared_embassy_version(manifest: &str) -> Option<String> {
+    let line = manifest
+        .lines()
+        .find(|line| line.trim_start().starts_with("embassy-stm32"))?;
+    let (_, rest) = line.split_once("version")?;
+    let rest = rest.trim_start().strip_prefix('=')?;
+    let rest = rest.trim_start().strip_prefix('"')?;
+    let (version, _) = rest.split_once('"')?;
+    Some(version.to_owned())
+}
+
+fn probe_rs_version() -> anyhow::Result<String> {
+    let output = Command::new("probe-rs")
+        .arg("--version")
+        .output()
+        .context("не удалось запустить `probe-rs --version`")?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let first = stdout.lines().next().unwrap_or_default().trim();
+    // "probe-rs 0.31.0 (git commit: ...)" -> "0.31.0"
+    Ok(first
+        .strip_prefix("probe-rs ")
+        .and_then(|rest| rest.split_whitespace().next())
+        .unwrap_or(first)
+        .to_owned())
+}
+
 fn probe_rs_chip_names() -> anyhow::Result<BTreeSet<String>> {
     let output = Command::new("probe-rs")
         .args(["chip", "list"])
@@ -1126,12 +1168,25 @@ fn probe_rs_chip_names() -> anyhow::Result<BTreeSet<String>> {
     Ok(chips)
 }
 
-fn format_chip_list(suffixes: &[&str]) -> String {
+/// Строка-штамп с версиями источников данных. Её сверяет тест
+/// `generated_blocks_match_the_declared_embassy_version`: без штампа связь
+/// «подняли embassy-stm32 — перегенерируйте списки» держалась только на памяти
+/// мейнтейнера, а поднимает версию обычно бот, молча.
+pub const SOURCE_STAMP_PREFIX: &str = "// Источник: embassy-stm32 ";
+
+fn format_source_stamp(embassy_version: &str, probe_rs_version: &str) -> String {
+    format!(
+        "{SOURCE_STAMP_PREFIX}{embassy_version} (cross/Cargo.toml), probe-rs {probe_rs_version}\n"
+    )
+}
+
+fn format_chip_list(suffixes: &[&str], stamp: &str) -> String {
     let mut out = String::new();
     out.push_str(CHIPS_BEGIN);
     out.push_str(" (");
     out.push_str(&suffixes.len().to_string());
     out.push_str(" шт., cargo run --manifest-path chip-data-gen/Cargo.toml)\n");
+    out.push_str(stamp);
     out.push_str("const CHIPS = [\n");
     for suffix in suffixes {
         out.push_str("    \"");

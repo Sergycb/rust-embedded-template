@@ -3,6 +3,10 @@ name = "chip-data-gen"
 version = "0.1.0"
 edition = "2024"
 publish = false
+# Бинарей здесь два (второй — template-check), а команда перегенерации списков
+# документирована как `cargo run --manifest-path chip-data-gen/Cargo.toml`: без
+# этого ключа cargo не смог бы выбрать, какой из них запускать.
+default-run = "chip-data-gen"
 
 # Не часть корневого workspace: этот крейт — инструмент обслуживания шаблона
 # (перегенерирует список чипов в chip-select.rhai), сам каталог не должен

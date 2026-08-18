@@ -491,8 +491,21 @@ fn memory_layout_invariants_hold_for_every_chip() {
             continue; // раскладка для чипа не считается — нечего проверять
         };
         let app = app.join("\n");
+        let target_tests = result
+            .files
+            .get("cross/target-tests/memory.x")
+            .map(|lines| lines.join("\n"));
         let ota = result.vars.get("ota").map(String::as_str);
         let mut fail = |what: &str| failures.push(format!("{suffix}: {what}"));
+
+        // Четвёртая регрессия того же класса: этот файл каскад когда-то не
+        // писал вовсе, и `cargo xtask test target` не линковался ни на одном
+        // чипе — в memory.x оставались шаблонные `ORIGIN = /* 0xXXXXXXXX */`.
+        // Тесты на устройстве прошиваются на место приложения, поэтому и
+        // раскладка у них ровно та же.
+        if target_tests.as_deref() != Some(app.as_str()) {
+            fail("target-tests/memory.x должен повторять app/memory.x");
+        }
 
         let Some(app_flash) = region_origin(&app, "FLASH") else {
             fail("в app/memory.x нет региона FLASH");
@@ -532,5 +545,40 @@ fn memory_layout_invariants_hold_for_every_chip() {
         "нарушены инварианты memory.x у {} чипов:\n{}",
         failures.len(),
         failures.join("\n")
+    );
+}
+
+/// Списки чипов в `chip-select.rhai` собраны из чип-фич конкретной версии
+/// `embassy-stm32`. Связь «подняли версию — перегенерируйте» до появления
+/// штампа держалась только на памяти мейнтейнера, а поднимает версию обычно
+/// dependabot/renovate, и молча: списки при этом остались бы от старой версии,
+/// а расхождение вылезло бы у пользователя шаблона при генерации.
+///
+/// Штамп пишет `chip-data-gen` (см. `format_source_stamp`); строка здесь
+/// продублирована намеренно — тест это отдельный крейт и до констант бинарника
+/// не дотягивается.
+#[test]
+fn generated_blocks_match_the_declared_embassy_version() {
+    let manifest_path = script_path()
+        .parent()
+        .expect("chip-select.rhai лежит в корне репозитория")
+        .join("cross")
+        .join("Cargo.toml");
+    let manifest =
+        std::fs::read_to_string(&manifest_path).expect("не удалось прочитать cross/Cargo.toml");
+    let declared = manifest
+        .lines()
+        .find(|line| line.trim_start().starts_with("embassy-stm32"))
+        .and_then(|line| line.split_once("version"))
+        .and_then(|(_, rest)| rest.trim_start().strip_prefix('='))
+        .and_then(|rest| rest.trim_start().strip_prefix('"'))
+        .and_then(|rest| rest.split_once('"').map(|(version, _)| version.to_owned()))
+        .expect("в cross/Cargo.toml не нашлась версия embassy-stm32");
+
+    let expected = format!("// Источник: embassy-stm32 {declared} (cross/Cargo.toml)");
+    assert!(
+        read_script().contains(&expected),
+        "chip-select.rhai собран не под embassy-stm32 {declared} — перегенерируйте списки:\n\
+         cargo run --manifest-path chip-data-gen/Cargo.toml"
     );
 }

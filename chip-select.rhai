@@ -131,6 +131,7 @@ let suffix = "";
 // каскаду ниже — поэтому объявлен на верхнем уровне скрипта, а не внутри
 // одной из веток.
 // BEGIN GENERATED CHIP LIST (1479 шт., cargo run --manifest-path chip-data-gen/Cargo.toml)
+// Источник: embassy-stm32 0.6.0 (cross/Cargo.toml), probe-rs 0.31.0
 const CHIPS = [
     "c011d6",
     "c011f4",
@@ -29582,6 +29583,26 @@ if variable::is_set("write_size") {
     if m.contains("persist_origin") {
         ram.push("    PERSIST           (xrw) : ORIGIN = " + m["persist_origin"] + ", LENGTH = " + m["persist_length"]);
     }
+
+    // Без этого блока регион PERSIST — просто дырка в карте памяти: положить в
+    // него данные нечем, линкер о нём не знает. С ним достаточно атрибута
+    // `#[unsafe(link_section = ".persist")]` на статике, и она переживёт
+    // сброс (NOLOAD — образ её не инициализирует, cortex-m-rt не обнуляет).
+    // INSERT AFTER .uninit — вставка в раскладку link.x, а не замена её.
+    let persist_section = [];
+    if m.contains("persist_origin") {
+        persist_section = [
+            "",
+            "/* Данные, переживающие сброс: #[unsafe(link_section = \".persist\")]. */",
+            "SECTIONS {",
+            "    .persist (NOLOAD) : ALIGN(4)",
+            "    {",
+            "        *(.persist .persist.*);",
+            "        . = ALIGN(4);",
+            "    } > PERSIST",
+            "} INSERT AFTER .uninit",
+        ];
+    }
     if m.contains("extra_regions") {
         ram += m["extra_regions"];
     }
@@ -29617,7 +29638,13 @@ if variable::is_set("write_size") {
         app.push("");
         app.push("__bootloader_dfu_start = ORIGIN(DFU) - " + base + ";");
         app.push("__bootloader_dfu_end   = ORIGIN(DFU) + LENGTH(DFU) - " + base + ";");
+        app += persist_section;
         file::write("cross/app/memory.x", app);
+        // Тесты на устройстве (cross/target-tests) линкуются туда же, куда
+        // приложение: probe-rs заливает тестовый образ на место app, и после
+        // сброса в него прыгает тот же bootloader. Своей раскладки у них нет —
+        // с базы flash тестовый образ затирал бы bootloader.
+        file::write("cross/target-tests/memory.x", app);
 
         // FLASH у boot — только его собственная зона, а не весь чип: тогда
         // разросшийся bootloader ловит линкер, а не молчаливое наложение на
@@ -29642,6 +29669,7 @@ if variable::is_set("write_size") {
         boot.push("");
         boot.push("__bootloader_dfu_start = ORIGIN(DFU) - " + base + ";");
         boot.push("__bootloader_dfu_end   = ORIGIN(DFU) + LENGTH(DFU) - " + base + ";");
+        boot += persist_section;
         file::write("cross/boot/memory.x", boot);
     } else {
         // OTA-схема embassy-boot в этот чип не помещается — почему именно,
@@ -29667,7 +29695,10 @@ if variable::is_set("write_size") {
         ];
         single += ram;
         single.push("}");
-        // Только app: cross/boot удалён строкой выше, писать в него нечего.
+        single += persist_section;
+        // Boot удалён строкой выше, писать в него нечего; target-tests получают
+        // ту же раскладку, что и app (см. ветку с OTA выше).
         file::write("cross/app/memory.x", single);
+        file::write("cross/target-tests/memory.x", single);
     }
 }
