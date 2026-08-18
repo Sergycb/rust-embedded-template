@@ -26,6 +26,50 @@
 			"problemMatcher": ["$rustc"]
 		},
 		{
+			"label": "xtask: test target",
+			"type": "shell",
+			"command": "cargo",
+			"args": ["xtask", "test", "target"],
+			"group": "test",
+			"problemMatcher": ["$rustc"]
+		},
+		{
+			"label": "xtask: test host-target",
+			"type": "shell",
+			"command": "cargo",
+			"args": ["xtask", "test", "host-target"],
+			"group": "test",
+			"problemMatcher": ["$rustc"]
+		},
+		{
+			"label": "xtask: setup",
+			"type": "shell",
+			"command": "cargo",
+			"args": ["xtask", "setup"],
+			"problemMatcher": []
+		},
+		{
+			"label": "xtask: lint cross",
+			"type": "shell",
+			"command": "cargo",
+			"args": ["xtask", "lint", "cross"],
+			"problemMatcher": ["$rustc"]
+		},
+		{
+			"label": "xtask: size",
+			"type": "shell",
+			"command": "cargo",
+			"args": ["xtask", "size"],
+			"problemMatcher": []
+		},
+		{
+			"label": "xtask: attach",
+			"type": "shell",
+			"command": "cargo",
+			"args": ["xtask", "attach"],
+			"problemMatcher": []
+		},
+		{
 			"label": "xtask: lint",
 			"type": "shell",
 			"command": "cargo",

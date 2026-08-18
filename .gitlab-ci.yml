@@ -27,6 +27,10 @@ host:test:
     - rustup component add rustfmt clippy
     - cargo install cargo-nextest --locked
   script:
+    # --locked ловит рассинхрон Cargo.toml и закоммиченного Cargo.lock:
+    # без него cargo молча подобрал бы свои версии, и пайплайн остался бы
+    # зелёным на том, чего в репозитории нет.
+    - cargo fetch --locked
     - cargo xtask lint
     - cargo xtask test host
 
@@ -47,6 +51,7 @@ cross:build:
     - rustup target add {{target}}
     - cargo install flip-link --locked
   script:
+    - cargo fetch --locked --manifest-path cross/Cargo.toml
     - cargo xtask lint cross
     - cargo xtask build
 

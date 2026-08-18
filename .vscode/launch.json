@@ -2,6 +2,22 @@
 	"version": "0.2.0",
 	"configurations": [
 		{
+			// Подключение к уже работающей плате: ничего не перепрошивает и не
+			// сбрасывает, поэтому годится, чтобы поймать состояние, которое
+			// возникло до запуска отладчика.
+			"type": "probe-rs-debug",
+			"request": "attach",
+			"name": "Attach to running app (debug build)",
+			"cwd": "${workspaceFolder}",
+			"chip": "{{chip}}",
+			"coreConfigs": [
+				{
+					"coreIndex": 0,
+					"programBinary": "cross/target/{{target}}/debug/app"
+				}
+			]
+		},
+		{
 			"type": "probe-rs-debug",
 			"request": "launch",
 			"name": "Debug app (debug build)",

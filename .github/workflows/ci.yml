@@ -21,6 +21,10 @@ jobs:
       # делает before_script.
       - run: rustup component add rustfmt clippy
       - uses: taiki-e/install-action@cargo-nextest
+      # Ловит рассинхрон Cargo.toml и закоммиченного Cargo.lock: без --locked
+      # cargo молча обновил бы lock под себя, и CI остался бы зелёным на
+      # версиях, которых нет в репозитории.
+      - run: cargo fetch --locked
       - run: cargo xtask lint
       - run: cargo xtask test host
 
@@ -46,6 +50,12 @@ jobs:
       # clippy тоже: на образе его нет (см. джоб host выше).
       - run: rustup component add rustfmt clippy
       - run: rustup target add {{target}}
-      - run: cargo install flip-link --locked
+      # Через install-action, а не `cargo install`: тот собирает flip-link из
+      # исходников на каждом прогоне (минуты), install-action берёт готовый
+      # бинарник.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: flip-link
+      - run: cargo fetch --locked --manifest-path cross/Cargo.toml
       - run: cargo xtask lint cross
       - run: cargo xtask build
