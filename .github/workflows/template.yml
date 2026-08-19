@@ -1,0 +1,59 @@
+# CI самого репозитория шаблона — не сгенерированного из него проекта.
+#
+# В проекты этот файл не копируется: он перечислен в `[template].ignore`
+# (cargo-generate.toml). У проектов есть свой `ci.yml` рядом, и он проверяет
+# совсем другое — их собственную сборку.
+#
+# Ограничение, определяющее состав джобов: `domain` зависит от приватного
+# Sergycb/rust-lib, доступа к которому у Actions нет. Поэтому здесь только то,
+# что обходится без резолва зависимостей — каскад выбора чипа, инструменты
+# мейнтейнера и сама генерация. Сборку сгенерированного проекта проверяет
+# `template-check` без `--quick`, и это остаётся локальной командой
+# (см. MAINTAINING.md).
+name: Template
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  maintenance:
+    name: Каскад, chip-data-gen, генерация
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: chip-data-gen
+      - run: rustup component add rustfmt clippy
+
+      # `cargo fmt` читает только манифесты (`cargo metadata --no-deps`) и
+      # зависимости не резолвит, поэтому проходит и без доступа к rust-lib —
+      # проверено эмпирически на копии шаблона с заведомо битым git-URL.
+      # `cargo clippy` для корневого workspace так бы не смог, его здесь нет.
+      - run: cargo fmt --check
+      - run: cargo fmt --manifest-path chip-data-gen/Cargo.toml --check
+      - run: cargo clippy --manifest-path chip-data-gen/Cargo.toml --all-targets -- -D warnings
+
+      # Тесты на сам `chip-select.rhai`: гоняют его через движок rhai с
+      # подменёнными `variable`/`file`, каждый — по всем 1479 чипам. Здесь же
+      # проверка штампа версий (списки чипов собраны из той же версии
+      # embassy-stm32, что объявлена в cross/Cargo.toml) и юнит-тесты разбора
+      # метаданных. В `--release`, иначе интерпретация rhai растягивает прогон
+      # с секунд до минут.
+      - run: cargo test --manifest-path chip-data-gen/Cargo.toml --release
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-generate
+
+      # `--quick`: генерация под каждый чип из набора и проверка, что не
+      # осталось неподставленных плейсхолдеров; без сборки, которой всё равно
+      # нужен rust-lib. `cargo update` внутри post-хука здесь падает по той же
+      # причине — и это ничего не ломает: хук ловит ошибку, печатает
+      # предупреждение и оставляет проект с lock-файлом из шаблона.
+      - run: cargo run --manifest-path chip-data-gen/Cargo.toml --bin template-check -- --quick

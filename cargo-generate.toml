@@ -28,6 +28,10 @@ exclude = ["CLAUDE.md"]
 ignore = [
 	"chip-data-gen",
 	"MAINTAINING.md",
+	# CI самого репозитория шаблона. Лежит рядом с `ci.yml`, который в проекты
+	# как раз копируется, поэтому исключается поимённо: `[conditional]` ниже
+	# убирает `.github` целиком и только когда выбран не GitHub.
+	".github/workflows/template.yml",
 	"target",
 	"cross/target",
 	".local",
