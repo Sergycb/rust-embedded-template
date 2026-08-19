@@ -23,7 +23,12 @@
 			"name": "Debug app (debug build)",
 			"cwd": "${workspaceFolder}",
 			"chip": "{{chip}}",
-			"preLaunchTask": "build: app (debug)",
+			// Не просто сборка: приложение линкуется в ACTIVE, а после сброса
+			// управление получает bootloader с базы flash. Задача ниже заливает
+			// и его тоже — иначе на плате без bootloader'а F5 приводит в
+			// HardFault вместо app::main. У проектов без OTA она прошивает
+			// только приложение, так что подходит обоим.
+			"preLaunchTask": "xtask: flash debug",
 			"flashingConfig": {
 				"flashingEnabled": true,
 				"resetAfterFlash": true,
@@ -42,7 +47,8 @@
 			"name": "Debug app (release build)",
 			"cwd": "${workspaceFolder}",
 			"chip": "{{chip}}",
-			"preLaunchTask": "build: app (release)",
+			// См. конфигурацию debug выше: заливаем bootloader вместе с app.
+			"preLaunchTask": "xtask: flash release",
 			"flashingConfig": {
 				"flashingEnabled": true,
 				"resetAfterFlash": true,

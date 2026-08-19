@@ -166,7 +166,14 @@ fn test_host_target(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
+/// Тесты внутри МК. Bootloader заливается первым по той же причине, что и в
+/// `test_host_target`: тестовый образ линкуется в `ACTIVE` (его `memory.x` —
+/// копия app'ового), а `probe-rs run` после заливки сбрасывает чип, и
+/// управление получает не тест, а то, что лежит с базы flash. На плате, где
+/// bootloader'а нет — свежей или после `cargo xtask erase`, — без этой строки
+/// не выполнился бы ни один тест.
 fn test_target(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
+    flash_boot(sh, "debug")?;
     let _p = sh.push_dir(root_dir().join("cross/target-tests"));
     cmd!(sh, "cargo test").run()?;
     Ok(())
