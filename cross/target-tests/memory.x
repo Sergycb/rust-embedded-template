@@ -25,16 +25,13 @@ __bootloader_active_end   = ORIGIN(ACTIVE) + LENGTH(ACTIVE) - ORIGIN(FLASH);
 __bootloader_dfu_start = ORIGIN(DFU) - ORIGIN(FLASH);
 __bootloader_dfu_end   = ORIGIN(DFU) + LENGTH(DFU) - ORIGIN(FLASH);
 
-/* Данные, переживающие сброс: #[unsafe(link_section = ".persist")]. */
-SECTIONS {
-    .persist (NOLOAD) : ALIGN(4)
-    {
-        *(.persist .persist.*);
-        . = ALIGN(4);
-    } > PERSIST
-} INSERT AFTER .uninit
+/* Данные, переживающие сброс: адресуются через эти символы. Своей секции у
+   них нет намеренно — секция с VMA в конце RAM убеждает flip-link, что
+   свободного места не осталось, и он оставляет стек в самом начале RAM;
+   прошивка после этого уходит в HardFault на первом же push. */
+_persist_start = ORIGIN(PERSIST);
+_persist_end   = ORIGIN(PERSIST) + LENGTH(PERSIST);
 
-/* panic-persist пишет дамп по голым адресам, не через секцию: */
-/* поэтому у него свой регион, а не место внутри .persist. */
+/* Сюда пишет panic-persist — тоже по голым адресам, без секции. */
 _panic_dump_start = ORIGIN(PANIC);
 _panic_dump_end   = ORIGIN(PANIC) + LENGTH(PANIC);

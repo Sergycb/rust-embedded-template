@@ -523,6 +523,17 @@ fn memory_layout_invariants_hold_for_every_chip() {
         if !app.contains("_panic_dump_start = ORIGIN(PANIC);") {
             fail("нет символов panic-persist");
         }
+        if !app.contains("_persist_start = ORIGIN(PERSIST);") {
+            fail("нет символов PERSIST");
+        }
+        // Ровно поэтому оба региона отдаются символами: своя секция в конце
+        // RAM убеждает flip-link, что двигать стек некуда, и он оставляет
+        // `_stack_start` в её начале. Прошивка тогда уходит в HardFault на
+        // первом же push — поймано на STM32F3Discovery, когда генерация
+        // выдавала `.persist (NOLOAD) ... > PERSIST`.
+        if app.contains("SECTIONS") {
+            fail("в memory.x появилась SECTIONS-директива — она ломает flip-link");
+        }
         // Разными регионами, а не одним: `panic-persist` пишет по голым
         // адресам и в общем регионе затирал бы секцию `.persist` молча —
         // линкеру такое наложение не видно.

@@ -27,6 +27,13 @@ workspace = true
 # провалившийся assert обрушил бы весь прогон. Ограничение «ровно один
 # `#[panic_handler]`» — на бинарник, а не на workspace, поэтому app и boot
 # спокойно остаются на panic-probe.
+# Не для собственного использования, а ради impl'а `critical-section`: его
+# даёт `cortex-m` с фичей `critical-section-single-core` (см. cross/Cargo.toml),
+# и без прямой зависимости фича в графе этой цели не включается. Ошибка при
+# этом вылезает только на линковке — `undefined symbol:
+# _critical_section_1_0_acquire`, — а `cargo clippy` до неё не доходит, так что
+# поймать это можно лишь реальным `cargo xtask test target`.
+cortex-m = { workspace = true }
 defmt = { workspace = true }
 defmt-rtt = { workspace = true }
 # Макрос `#[embedded_test::tests]` с фичей `embassy-010` разворачивается в код,

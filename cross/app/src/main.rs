@@ -16,17 +16,50 @@ use defmt_rtt as _;
 
 use embassy_executor::Spawner;
 
+/// Магия, отличающая «в PERSIST лежат наши данные» от того, что оказалось в
+/// RAM при подаче питания. Первый в жизни платы старт ничем другим от
+/// перезапуска не отличается: регион не инициализируется ни образом, ни
+/// `cortex-m-rt`, в этом и смысл.
+const PERSIST_MAGIC: u32 = 0xB007_C0DE;
+
+unsafe extern "C" {
+    /// Начало региона `PERSIST` из `memory.x`. Абсолютный символ, а не
+    /// секция: своя секция в конце RAM ломает `flip-link` — подробности в
+    /// task_orchestration.rs, раздел про PERSIST.
+    static mut _persist_start: u8;
+}
+
+/// Считает перезапуски: значение переживает программный сброс, но не
+/// пропадание питания. Заодно это то, что проверяет `cargo xtask test
+/// host-target` — по нему видно, что прошивка действительно исполняется на
+/// плате, а не просто залита в неё.
+fn bump_boot_count() -> u32 {
+    let base = &raw mut _persist_start as *mut u32;
+    // SAFETY: регион PERSIST отведён под это в memory.x, кроме нас в него
+    // никто не пишет, а вызов однопоточный — до старта задач.
+    unsafe {
+        let count = if base.read_volatile() == PERSIST_MAGIC {
+            base.add(1).read_volatile().wrapping_add(1)
+        } else {
+            base.write_volatile(PERSIST_MAGIC);
+            1
+        };
+        base.add(1).write_volatile(count);
+        count
+    }
+}
+
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
     // Первая же строка лога отвечает на вопрос «а что вообще залито в плату»:
     // версия пакета и коммит, из которого собран образ (их подставляет
     // `shadow-rs` в build.rs). Без этого build-info собиралась впустую, а по
     // OTA легко получить плату с прошивкой, происхождение которой неизвестно.
-    // `host-target-tests` ждёт именно этот баннер.
     info!(
-        "app: starting {} ({})",
+        "app: starting {} ({}), запуск №{}",
         build::PKG_VERSION,
-        build::SHORT_COMMIT
+        build::SHORT_COMMIT,
+        bump_boot_count()
     );
 
     // Причина прошлого падения, если оно было: панический хендлер ниже успел

@@ -32582,21 +32582,25 @@ if variable::is_set("write_size") {
     // `#[unsafe(link_section = ".persist")]` на статике, и она переживёт
     // сброс (NOLOAD — образ её не инициализирует, cortex-m-rt не обнуляет).
     // INSERT AFTER .uninit — вставка в раскладку link.x, а не замена её.
+    // Оба региона отдаются только символами, без единой SECTIONS-директивы, и
+    // это не стилистика. flip-link (линкер-обёртка, уводящая стек от
+    // переполнения в статические данные) считает занятую часть RAM по адресам
+    // секций: собственная секция с VMA в конце региона убеждает его, что
+    // свободного места нет, и он оставляет _stack_start в самом начале RAM.
+    // Прошивка после этого не доживает до первой строки лога — первый же push
+    // уходит за нижнюю границу RAM, HardFault, LOCKUP. Проверено на
+    // STM32F3Discovery: с секцией _stack_start = 0x20000000, без неё — 0x20009768.
+    // Абсолютные символы ниже flip-link не смущают.
     let persist_section = [];
     if m.contains("persist_origin") {
         persist_section = [
             "",
-            "/* Данные, переживающие сброс: #[unsafe(link_section = \".persist\")]. */",
-            "SECTIONS {",
-            "    .persist (NOLOAD) : ALIGN(4)",
-            "    {",
-            "        *(.persist .persist.*);",
-            "        . = ALIGN(4);",
-            "    } > PERSIST",
-            "} INSERT AFTER .uninit",
+            "/* Данные, переживающие сброс: адресуются через эти символы. */",
+            "/* Секции здесь нет намеренно — она ломает flip-link, см. README. */",
+            "_persist_start = ORIGIN(PERSIST);",
+            "_persist_end   = ORIGIN(PERSIST) + LENGTH(PERSIST);",
             "",
-            "/* panic-persist пишет дамп по голым адресам, не через секцию: */",
-            "/* поэтому у него свой регион, а не место внутри .persist. */",
+            "/* Сюда пишет panic-persist — тоже по голым адресам. */",
             "_panic_dump_start = ORIGIN(PANIC);",
             "_panic_dump_end   = ORIGIN(PANIC) + LENGTH(PANIC);",
         ];

@@ -38,7 +38,7 @@ fn main() -> Result<(), anyhow::Error> {
         ["size"] => size(&sh, DEFAULT_PROFILE),
         ["size", profile] => size(&sh, profile),
         ["reset"] => probe_rs(&sh, "reset"),
-        ["erase"] => probe_rs(&sh, "erase"),
+        ["erase"] => erase(&sh),
         ["lint"] => lint_host(&sh),
         ["lint", "cross"] => lint_cross(&sh),
         _ => {
@@ -55,7 +55,10 @@ fn usage() {
     println!("      cargo xtask flash [debug|release]      # прошить без дебаггера");
     println!("      cargo xtask attach [debug|release]     # лог уже прошитой платы");
     println!("      cargo xtask size [debug|release]       # занятость FLASH/RAM");
-    println!("      cargo xtask reset | erase              # probe-rs по чипу {CHIP}");
+    println!("      cargo xtask reset                      # сбросить плату");
+    println!(
+        "      cargo xtask erase                      # стереть флеш (спасает от цикла паник)"
+    );
     println!("      cargo xtask lint [cross]");
     println!("      cargo xtask test [host|target|host-target|all]");
 }
@@ -107,6 +110,20 @@ fn probe_rs(sh: &xshell::Shell, subcommand: &str) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
+/// Стереть флеш целиком. Единственная команда здесь с
+/// `--connect-under-reset`, и не для порядка: `erase` зовут не от хорошей
+/// жизни. Типичный повод — прошивка, которая паникует на старте: в release
+/// паникёр после сохранения причины делает `sys_reset`, и плата уходит в цикл
+/// «старт → паника → сброс». К такой плате обычное подключение не успевает
+/// (`An ARM specific error occurred` / таймаут), и залить исправленный образ
+/// нельзя — сначала надо её стереть. С удержанным reset'ом probe-rs
+/// захватывает ядро до того, как оно снова дойдёт до паники. Проверено на
+/// STM32F3Discovery: без флага стереть зациклившуюся плату не удавалось.
+fn erase(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
+    cmd!(sh, "probe-rs erase --chip {CHIP} --connect-under-reset").run()?;
+    Ok(())
+}
+
 fn build(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     let _p = sh.push_dir(root_dir().join("cross"));
     cmd!(sh, "cargo build").run()?;
@@ -151,15 +168,25 @@ fn test_host(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
 }
 
 /// Хост управляет уже прошитым устройством: сначала заливаем то, что тест
-/// будет проверять, потом запускаем сам тест. Он ищет ELF по переменной
-/// окружения — путь зависит от профиля, а знать его в двух местах незачем.
+/// будет проверять, потом запускаем сам тест. Чип и адрес региона `PERSIST`
+/// уходят к нему через окружение: первое подставляется при генерации в одном
+/// месте, второе считается по `memory.x` — знать это в двух местах незачем.
 fn test_host_target(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     flash_boot(sh, "release")?;
     flash_app(sh, "release")?;
-    let elf = artifact_path("app", "release")?;
+
+    let memory_x = root_dir().join("cross").join("app").join("memory.x");
+    let regions = parse_memory_regions(&memory_x)
+        .with_context(|| format!("разобрать {}", memory_x.display()))?;
+    let persist = region(&regions, "PERSIST").context(
+        "в cross/app/memory.x нет региона PERSIST — на этом чипе host-target тесту \
+         не за что зацепиться",
+    )?;
+
     {
-        let _env = sh.push_env("HOST_TARGET_APP_ELF", elf);
         let _env_chip = sh.push_env("HOST_TARGET_CHIP", CHIP);
+        let _env_persist =
+            sh.push_env("HOST_TARGET_PERSIST_ADDR", format!("{:#x}", persist.origin));
         let _p = sh.push_dir(root_dir().join("host-target-tests"));
         cmd!(sh, "cargo nextest run").run()?;
     }
