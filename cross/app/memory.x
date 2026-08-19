@@ -9,7 +9,7 @@ MEMORY {
     DFU               (rx)  : ORIGIN = /* 0xXXXXXXXX */, LENGTH = /* XXXK */
     RAM               (xrw) : ORIGIN = /* 0xXXXXXXXX */, LENGTH = /* XXXK */
     /* Два хвостовых куска RAM, отрезанных от её конца: PERSIST — под данные,
-       переживающие сброс (секция .persist ниже), PANIC — под дамп
+       переживающие сброс (адресуются символами ниже), PANIC — под дамп
        panic-persist. Оба обязательны: `#[panic_handler]` в
        cross/app/src/main.rs без символов _panic_dump_* не слинкуется. */
     PERSIST           (xrw) : ORIGIN = /* ADDR END RAM - 2*LEN */, LENGTH = /* LEN */

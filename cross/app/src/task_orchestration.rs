@@ -335,7 +335,7 @@
 //!             base.add(1).read_volatile().wrapping_add(1)
 //!         } else {
 //!             base.write_volatile(MAGIC);
-//!             0
+//!             1
 //!         };
 //!         base.add(1).write_volatile(count);
 //!         count

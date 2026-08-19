@@ -41,9 +41,16 @@ fn main() -> Result<(), anyhow::Error> {
         ["erase"] => erase(&sh),
         ["lint"] => lint_host(&sh),
         ["lint", "cross"] => lint_cross(&sh),
-        _ => {
+        // Без аргументов — просто справка, это не ошибка. А вот непонятая
+        // команда завершается ненулевым кодом: иначе опечатка в CI-шаге или в
+        // задаче IDE даёт зелёный прогон, в котором ничего не выполнилось.
+        [] => {
             usage();
             Ok(())
+        }
+        other => {
+            usage();
+            anyhow::bail!("неизвестная команда: cargo xtask {}", other.join(" "))
         }
     }
 }
@@ -64,16 +71,49 @@ fn usage() {
 }
 
 /// Ставит всё, без чего `build`/`run` падают с невнятной ошибкой линкера или
-/// `no such command`. Уже установленное `cargo install` пропускает сам.
+/// `no such command`.
 fn setup(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     // Компоненты — не «на всякий случай»: профиль rustup бывает minimal (так
     // устроены и оба CI-образа), и тогда `cargo xtask lint` сразу после setup
     // падал бы на `cargo fmt`/`cargo clippy` с "no such command".
     cmd!(sh, "rustup component add rustfmt clippy").run()?;
     cmd!(sh, "rustup target add {TARGET}").run()?;
-    cmd!(sh, "cargo install probe-rs-tools --locked").run()?;
-    cmd!(sh, "cargo install flip-link --locked").run()?;
-    cmd!(sh, "cargo install cargo-nextest --locked").run()?;
+    install_if_missing(sh, "probe-rs", &["--version"], "probe-rs-tools")?;
+    install_if_missing(sh, "flip-link", &["--version"], "flip-link")?;
+    install_if_missing(sh, "cargo", &["nextest", "--version"], "cargo-nextest")?;
+    Ok(())
+}
+
+/// Ставит инструмент, только если его ещё нет.
+///
+/// Голый `cargo install` для этого не годится: пропускает он лишь ту же
+/// версию, а при установленной постарше падает с «binary `probe-rs.exe`
+/// already exists in destination, add --force» — то есть `cargo xtask setup`
+/// начинает падать ровно у тех, у кого всё уже стоит. Ставить с `--force`
+/// тоже не вариант: тогда каждый запуск пересобирает probe-rs-tools из
+/// исходников. Обновляются инструменты отдельно и осознанно
+/// (`cargo install <пакет> --force`), задача setup — довести пустую машину до
+/// рабочего состояния.
+fn install_if_missing(
+    sh: &xshell::Shell,
+    program: &str,
+    args: &[&str],
+    package: &str,
+) -> Result<(), anyhow::Error> {
+    // Признак «установлен» — то, что процесс вообще запустился, а не его код
+    // возврата: `flip-link --version` без аргументов линкера отвечает справкой
+    // lld и ненулевым кодом, хотя сам инструмент на месте. Отсутствующая
+    // программа даёт Err ещё до запуска.
+    let installed = cmd!(sh, "{program} {args...}")
+        .quiet()
+        .ignore_status()
+        .output()
+        .is_ok();
+    if installed {
+        println!("{package}: уже установлен, пропускаем");
+        return Ok(());
+    }
+    cmd!(sh, "cargo install {package} --locked").run()?;
     Ok(())
 }
 

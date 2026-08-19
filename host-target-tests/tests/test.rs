@@ -46,6 +46,12 @@ fn firmware_runs_and_counts_boots_across_resets() {
     let chip = required_var("HOST_TARGET_CHIP");
     let persist = required_var("HOST_TARGET_PERSIST_ADDR");
 
+    // Пауза и перед первым чтением, не только после своего сброса: сюда
+    // попадают сразу за `cargo flash`, который заканчивается сбросом платы, а
+    // на тёплом кеше nextest стартует мгновенно — без задержки чтение обгоняет
+    // `main` и тест мигает «прошивка не дошла до main».
+    thread::sleep(BOOT_TIME);
+
     let (magic, first) = read_persist(&chip, &persist);
     assert_eq!(
         magic, PERSIST_MAGIC,

@@ -25,8 +25,8 @@ workspace = true
 # `probe-rs run` понимает как «этот тест упал» и переходит к следующему;
 # `panic-probe` вместо этого делает `udf()`, то есть HardFault, и один
 # провалившийся assert обрушил бы весь прогон. Ограничение «ровно один
-# `#[panic_handler]`» — на бинарник, а не на workspace, поэтому app и boot
-# спокойно остаются на panic-probe.
+# `#[panic_handler]`» — на бинарник, а не на workspace, поэтому у `app` свой
+# хендлер поверх panic-persist, у `boot` — panic-probe, а здесь третий.
 # Не для собственного использования, а ради impl'а `critical-section`: его
 # даёт `cortex-m` с фичей `critical-section-single-core` (см. cross/Cargo.toml),
 # и без прямой зависимости фича в графе этой цели не включается. Ошибка при
