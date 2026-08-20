@@ -127,10 +127,16 @@ fn main() -> anyhow::Result<()> {
     let options = parse_args()?;
     let repo_root = repo_root();
 
-    // Внутри target/ — он уже в .gitignore, и общий CARGO_TARGET_DIR ниже
-    // переживает запуски: второй прогон не пересобирает то, что не зависит
-    // от чипа.
-    let work_dir = repo_root.join("target").join("template-check");
+    // Вне репозитория, и это важнее удобства: `cargo generate --path` копирует
+    // каталог шаблона ЦЕЛИКОМ во временную папку, прежде чем прочитать
+    // cargo-generate.toml, так что `ignore = ["target", ...]` от копирования
+    // не спасает — он решает лишь, что попадёт в готовый проект. Кеш сборки
+    // здесь общий на все конфигурации (второй прогон не пересобирает то, что
+    // от чипа не зависит) и за десяток прогонов дорастает до гигабайтов;
+    // внутри `target/` он превращал каждую генерацию из локального пути в
+    // копирование этих гигабайтов. Однажды это кончилось «Недостаточно места
+    // на диске (os error 112)» на ровном месте.
+    let work_dir = env::temp_dir().join("rust-embedded-template-check");
     fs::create_dir_all(&work_dir)
         .with_context(|| format!("создать рабочий каталог {}", work_dir.display()))?;
     let cargo_target_dir = work_dir.join("cargo-target");
