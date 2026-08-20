@@ -46,7 +46,23 @@ struct CascadeResult {
 /// Прогоняет уже скомпилированный chip-select.rhai один раз, ведя каскад к
 /// `target_suffix` (суффикс без "stm32", например "f407ve" или "l151c6-a").
 fn run_cascade_to(ast: &AST, target_suffix: &str) -> Result<CascadeResult, Box<EvalAltResult>> {
-    let vars: Vars = Rc::new(RefCell::new(HashMap::new()));
+    run_cascade_with(ast, target_suffix, &[])
+}
+
+/// То же, но с заранее выставленными переменными — так проверяются ветки,
+/// которые в реальной генерации приходят из `[placeholders]` или `--define`
+/// (`ota`, `write_size`, `chip`).
+fn run_cascade_with(
+    ast: &AST,
+    target_suffix: &str,
+    preset: &[(&str, &str)],
+) -> Result<CascadeResult, Box<EvalAltResult>> {
+    let vars: Vars = Rc::new(RefCell::new(
+        preset
+            .iter()
+            .map(|(name, value)| ((*name).to_string(), (*value).to_string()))
+            .collect::<HashMap<_, _>>(),
+    ));
     let files: Files = Rc::new(RefCell::new(HashMap::new()));
     let deleted: Deleted = Rc::new(RefCell::new(Vec::new()));
     let mut engine = Engine::new();
@@ -615,4 +631,62 @@ fn generated_blocks_match_the_declared_embassy_version() {
         "chip-select.rhai собран не под embassy-stm32 {declared} — перегенерируйте списки:\n\
          cargo run --manifest-path chip-data-gen/Cargo.toml"
     );
+}
+
+#[test]
+fn declining_ota_gives_a_single_image_even_when_it_would_fit() {
+    // f407ve — чип, где схема помещается: при обычной генерации он получает
+    // bootloader и разделы. Ответ `no` на вопрос про OTA должен перевесить.
+    let ast = compile_script();
+    let with_ota = run_cascade_to(&ast, "f407ve").expect("каскад не должен падать");
+    assert_eq!(with_ota.vars.get("ota").map(String::as_str), Some("true"));
+
+    for answer in ["no", "false"] {
+        let result = run_cascade_with(&ast, "f407ve", &[("ota", answer)])
+            .unwrap_or_else(|err| panic!("каскад с ota={answer} упал: {err}"));
+
+        assert_eq!(
+            result.vars.get("ota").map(String::as_str),
+            Some("false"),
+            "ответ {answer:?} должен отключать OTA"
+        );
+        assert!(
+            result.deleted.contains(&"cross/boot".to_string()),
+            "bootloader должен быть удалён, а удалено: {:?}",
+            result.deleted
+        );
+        assert!(
+            result.deleted.contains(&"cross/bsp/src/ota.rs".to_string()),
+            "модуль ota должен быть удалён, а удалено: {:?}",
+            result.deleted
+        );
+
+        // Приложению достаётся весь flash, а не раздел ACTIVE, и регионов
+        // OTA-схемы в memory.x не остаётся.
+        let app = written(&result, "cross/app/memory.x");
+        assert!(
+            app.contains("FLASH             (rx)  : ORIGIN = 0x08000000, LENGTH = 512K"),
+            "{app}"
+        );
+        for region in ["BOOTLOADER_STATE", "ACTIVE", "DFU"] {
+            assert!(
+                region_origin(&app, region).is_none(),
+                "без OTA региона {region} быть не должно:\n{app}"
+            );
+        }
+        assert!(
+            !result.files.contains_key("cross/boot/memory.x"),
+            "в удалённый каталог писать нельзя"
+        );
+    }
+}
+
+#[test]
+fn accepting_ota_still_loses_to_a_chip_that_cannot_fit_it() {
+    // Обратная сторона: `yes` — это «не возражаю», а не «сделай во что бы то
+    // ни стало». h723ve схему не вмещает, и ответ ничего не меняет.
+    let result = run_cascade_with(&compile_script(), "h723ve", &[("ota", "yes")])
+        .expect("каскад не должен падать");
+    assert_eq!(result.vars.get("ota").map(String::as_str), Some("false"));
+    assert!(result.deleted.contains(&"cross/boot".to_string()));
 }

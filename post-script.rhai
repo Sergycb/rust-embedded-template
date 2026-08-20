@@ -35,13 +35,13 @@ if updated {
 if ota == "true" {
 	print("Раскладка памяти в cross/app/memory.x и cross/boot/memory.x посчитана по секторам чипа.");
 } else {
-	print("OTA в этот чип не помещается: один образ на весь flash, cross/boot в проект не вошёл.");
+	print("Без OTA: один образ на весь flash, cross/boot в проект не вошёл (причина — выше).");
 }
 print("");
 print("Дальше:");
 print("  cargo xtask setup       # rustup target + probe-rs, flip-link, nextest");
 print("  cargo xtask lint        # проверить, что всё на месте");
-print("  cargo xtask flash       # прошить bootloader и приложение");
+print("  cargo xtask flash       # прошить плату");
 print("");
 print("Что заполнить под свою плату: cross/bsp/src/resources.rs (распиновка),");
 print("cross/app/src/task_orchestration.rs (граф задач), domain/ (логика).");

@@ -17,10 +17,11 @@
 //! изменение в `rust-lib` роняет генерацию, оставляя локальные проверки
 //! зелёными (так и случилось с фичей `macro` у `fsm`).
 //!
-//! Чипы по умолчанию подобраны так, чтобы задеть все ветки генерации:
-//! обычный одноядерный, чип с выбором банковой схемы, чип без OTA (у него из
-//! проекта пропадает `cross/boot`) и двухъядерный (`init_primary` вместо
-//! `init`). Свой список — позиционными аргументами.
+//! Конфигурации по умолчанию подобраны так, чтобы задеть все ветки
+//! генерации: обычный одноядерный, чип с выбором банковой схемы, чип, куда
+//! OTA не помещается, тот же обычный чип с OTA, отключённой при генерации,
+//! двухъядерный (`init_primary` вместо `init`) и чип с 2 KiB RAM на
+//! Cortex-M0+. Свой список чипов — позиционными аргументами.
 
 use std::{
     collections::BTreeSet,
@@ -31,24 +32,78 @@ use std::{
 
 use anyhow::{Context, bail};
 
-/// Каждый чип здесь включает свою ветку генерации — см. doc-комментарий выше.
-/// Менять только вместе с пониманием, какую ветку теряем.
-const DEFAULT_CHIPS: &[&str] = &[
-    // Одноядерный с OTA, одна карта памяти — самый обычный случай.
-    "stm32f407ve",
-    // Несколько карт памяти: в cross/Cargo.toml должна появиться фича
-    // "single-bank", без неё build.rs embassy-stm32 паникует.
-    "stm32f429zg",
-    // OTA не помещается: cross/boot удаляется из проекта, members и xtask
-    // должны это пережить.
-    "stm32h723ve",
-    // Двухъядерный: bsp/boot получают init_primary() с SharedData.
-    "stm32h745zi-cm7",
-    // Другой конец линейки: 2 KiB RAM и Cortex-M0+ (thumbv6m, без CAS в
-    // железе). Резерв под PERSIST/PANIC здесь считается долей RAM, а не
-    // фиксированным килобайтом — на таком чипе тот был бы половиной памяти.
-    "stm32l011f4",
-];
+/// Каждая запись здесь включает свою ветку генерации — см. doc-комментарий
+/// выше. Менять только вместе с пониманием, какую ветку теряем.
+///
+/// Второе поле — суффикс имени каталога: он нужен там, где один и тот же чип
+/// проверяется в разных конфигурациях, иначе прогоны затирали бы друг друга.
+/// Третье — дополнительные `--define`.
+fn default_cases() -> Vec<Case> {
+    vec![
+        // Одноядерный с OTA, одна карта памяти — самый обычный случай.
+        Case::new("stm32f407ve"),
+        // Тот же чип, но от OTA отказались при генерации: ветка «один образ на
+        // весь flash» на чипе, куда схема прекрасно помещается.
+        Case::new("stm32f407ve").variant("no-ota", &["ota=no"]),
+        // Несколько карт памяти: в cross/Cargo.toml должна появиться фича
+        // "single-bank", без неё build.rs embassy-stm32 паникует.
+        Case::new("stm32f429zg"),
+        // OTA не помещается: cross/boot удаляется из проекта, members и xtask
+        // должны это пережить.
+        Case::new("stm32h723ve"),
+        // Двухъядерный: bsp/boot получают init_primary() с SharedData.
+        Case::new("stm32h745zi-cm7"),
+        // Другой конец линейки: 2 KiB RAM и Cortex-M0+ (thumbv6m, без CAS в
+        // железе). Резерв под PERSIST/PANIC здесь считается долей RAM, а не
+        // фиксированным килобайтом — на таком чипе тот был бы половиной памяти.
+        Case::new("stm32l011f4"),
+    ]
+}
+
+/// Одна проверяемая конфигурация: чип плюс, если нужно, дополнительные
+/// `--define` и суффикс, отличающий её каталог от других прогонов того же чипа.
+struct Case {
+    chip: String,
+    suffix: Option<String>,
+    defines: Vec<String>,
+}
+
+impl Case {
+    fn new(chip: &str) -> Self {
+        Self {
+            chip: chip.to_owned(),
+            suffix: None,
+            defines: Vec::new(),
+        }
+    }
+
+    fn variant(self, suffix: &str, defines: &[&str]) -> Self {
+        Self {
+            suffix: Some(suffix.to_owned()),
+            defines: defines.iter().map(|d| (*d).to_owned()).collect(),
+            ..self
+        }
+    }
+
+    /// Имя проекта, оно же имя каталога.
+    fn name(&self) -> String {
+        match &self.suffix {
+            // Дефис в чип-фиче двухъядерного чипа (`stm32h745zi-cm7`)
+            // переносим как есть: cargo-generate санитизирует имя в
+            // kebab-case и молча переименовывает каталог, так что `_` привёл
+            // бы к поиску несуществующего пути.
+            Some(suffix) => format!("tc-{}-{suffix}", self.chip),
+            None => format!("tc-{}", self.chip),
+        }
+    }
+
+    fn label(&self) -> String {
+        match &self.suffix {
+            Some(suffix) => format!("{} ({suffix})", self.chip),
+            None => self.chip.clone(),
+        }
+    }
+}
 
 /// Файлы, где сырые `{{...}}` остаются намеренно и после генерации.
 /// `CLAUDE.md` документирует плейсхолдеры как текст и потому исключён из
@@ -59,7 +114,7 @@ const RAW_PLACEHOLDERS_ALLOWED: &[&str] = &["CLAUDE.md"];
 const SKIP_DIRS: &[&str] = &[".git", "target"];
 
 struct Options {
-    chips: Vec<String>,
+    cases: Vec<Case>,
     ci: String,
     /// Только сгенерировать и проверить рендер, без сборки — быстрая проверка
     /// хуков и Liquid-условий (секунды вместо минут на чип).
@@ -80,21 +135,22 @@ fn main() -> anyhow::Result<()> {
         .with_context(|| format!("создать рабочий каталог {}", work_dir.display()))?;
     let cargo_target_dir = work_dir.join("cargo-target");
 
+    let labels: Vec<String> = options.cases.iter().map(Case::label).collect();
     println!(
-        "Проверяем шаблон на {} чипах (ci={}{}): {}",
-        options.chips.len(),
+        "Проверяем шаблон на {} конфигурациях (ci={}{}): {}",
+        options.cases.len(),
         options.ci,
         if options.quick { ", --quick" } else { "" },
-        options.chips.join(", "),
+        labels.join(", "),
     );
 
-    for chip in &options.chips {
-        check_one(&repo_root, &work_dir, &cargo_target_dir, chip, &options)?;
+    for case in &options.cases {
+        check_one(&repo_root, &work_dir, &cargo_target_dir, case, &options)?;
     }
 
     println!(
-        "\nГотово: {} чип(ов) прошли {}.",
-        options.chips.len(),
+        "\nГотово: {} конфигураций прошли {}.",
+        options.cases.len(),
         if options.quick {
             "генерацию"
         } else {
@@ -108,33 +164,34 @@ fn check_one(
     repo_root: &Path,
     work_dir: &Path,
     cargo_target_dir: &Path,
-    chip: &str,
+    case: &Case,
     options: &Options,
 ) -> anyhow::Result<()> {
     // Имя проекта = имя каталога, в который cargo-generate его положит.
-    // Дефис в чип-фиче двухъядерного чипа (`stm32h745zi-cm7`) переносим как
-    // есть: cargo-generate санитизирует имя в kebab-case и молча
-    // переименовывает каталог, так что `_` здесь привёл бы к поиску
-    // несуществующего пути.
-    let name = format!("tc-{chip}");
+    let name = case.name();
     let project = work_dir.join(&name);
     if project.exists() {
         fs::remove_dir_all(&project)
             .with_context(|| format!("очистить прошлый прогон {}", project.display()))?;
     }
 
-    println!("\n=== {chip} ===");
+    println!("\n=== {} ===", case.label());
+    let mut command = Command::new("cargo");
+    command
+        .arg("generate")
+        .arg("--path")
+        .arg(repo_root)
+        .arg("--name")
+        .arg(&name)
+        .arg("--define")
+        .arg(format!("chip_feature={}", case.chip))
+        .arg("--define")
+        .arg(format!("ci={}", options.ci));
+    for define in &case.defines {
+        command.arg("--define").arg(define);
+    }
     run(
-        Command::new("cargo")
-            .arg("generate")
-            .arg("--path")
-            .arg(repo_root)
-            .arg("--name")
-            .arg(&name)
-            .arg("--define")
-            .arg(format!("chip_feature={chip}"))
-            .arg("--define")
-            .arg(format!("ci={}", options.ci))
+        command
             .arg("--silent")
             // Без него post-script.rhai (cargo update) не выполнится в
             // неинтерактивном режиме — а именно он и ловит ломающие
@@ -145,7 +202,7 @@ fn check_one(
         work_dir,
         None,
     )
-    .with_context(|| format!("генерация проекта под {chip}"))?;
+    .with_context(|| format!("генерация проекта под {}", case.label()))?;
 
     check_no_raw_placeholders(&project)?;
     report_lock_drift(repo_root, &project);
@@ -311,7 +368,7 @@ fn run(
 }
 
 fn parse_args() -> anyhow::Result<Options> {
-    let mut chips = Vec::new();
+    let mut cases: Vec<Case> = Vec::new();
     let mut ci = "github".to_owned();
     let mut quick = false;
     let mut keep = false;
@@ -331,20 +388,24 @@ fn parse_args() -> anyhow::Result<Options> {
                     "USAGE: template-check [--quick] [--keep] [--ci github|gitlab|none] \
                      [chip_feature ...]\n\n\
                      Без чипов проверяются: {}",
-                    DEFAULT_CHIPS.join(", "),
+                    default_cases()
+                        .iter()
+                        .map(Case::label)
+                        .collect::<Vec<_>>()
+                        .join(", "),
                 );
                 std::process::exit(0);
             }
             other if other.starts_with('-') => bail!("неизвестный флаг: {other}"),
-            other => chips.push(other.to_owned()),
+            other => cases.push(Case::new(other)),
         }
     }
 
-    if chips.is_empty() {
-        chips = DEFAULT_CHIPS.iter().map(|c| (*c).to_owned()).collect();
+    if cases.is_empty() {
+        cases = default_cases();
     }
     Ok(Options {
-        chips,
+        cases,
         ci,
         quick,
         keep,

@@ -32543,6 +32543,25 @@ variable::set("dual_core", if dual_core { "true" } else { "false" });
 // --define, как и dual_core: значение целиком выводится из chip_feature.
 variable::set("bank_mode", if BANK_MODE.contains(suffix) { BANK_MODE[suffix] } else { "" });
 
+// Ответ на вопрос про OTA из [placeholders] (или `--define ota=no`). Дальше по
+// коду `ota` перезаписывается уже вычисленной строкой `"true"`/`"false"`: на
+// неё смотрят Liquid-условия в шаблоне.
+//
+// «Да» здесь означает лишь «не возражаю»: помещается ли схема в flash, решает
+// раскладка ниже. А вот «нет» — окончательное, и проверять нечего.
+//
+// Принимаются оба написания: `yes`/`no` — это варианты вопроса, `true`/`false`
+// привычнее в `--define` и совпадают с тем, во что ответ превращается.
+let wants_ota = true;
+if variable::is_set("ota") {
+    let answer = variable::get("ota");
+    wants_ota = answer == "yes" || answer == "true";
+}
+
+if !wants_ota {
+    print("OTA отключён по вашему выбору: один образ на весь flash, cross/boot в проект не входит");
+}
+
 // write_size, оба memory.x и признак ota — вместе, одним источником: если
 // пользователь уже задал write_size вручную через `--define`, авточипу
 // доверять нельзя (адреса в memory.x привязаны именно к вычисленному
@@ -32550,20 +32569,29 @@ variable::set("bank_mode", if BANK_MODE.contains(suffix) { BANK_MODE[suffix] } e
 // Тогда же остаётся и ota = "true": bootloader из проекта не исчезает,
 // раскладку под него пользователь пишет сам.
 if variable::is_set("write_size") {
-    variable::set("ota", "true");
+    variable::set("ota", if wants_ota { "true" } else { "false" });
+    if !wants_ota {
+        file::delete("cross/boot");
+        file::delete("cross/bsp/src/ota.rs");
+    }
 } else if !MEMORY_LAYOUT.contains(suffix) {
     // Считать было не из чего (нет непрерывной flash/RAM-цепочки от базового
     // адреса). memory.x остаётся плейсхолдером, но write_size всё равно
     // должен быть хоть каким-то значением: без него `{{write_size}}` в
     // cross/boot/src/main.rs не подставится вовсе.
-    print("memory.x: для " + suffix + " раскладка не считается, заполните cross/app/memory.x и cross/boot/memory.x вручную");
+    print("memory.x: для " + suffix + " раскладка не считается, заполните memory.x вручную");
     variable::set("write_size", "2048");
-    variable::set("ota", "true");
+    variable::set("ota", if wants_ota { "true" } else { "false" });
+    if !wants_ota {
+        file::delete("cross/boot");
+        file::delete("cross/bsp/src/ota.rs");
+    }
 } else {
     let m = MEMORY_LAYOUT[suffix];
-    let ota = m["ota"] == "true";
+    // Схема нужна только если её и хотят, и она помещается.
+    let ota = wants_ota && m["ota"] == "true";
     variable::set("write_size", m["write_size"]);
-    variable::set("ota", m["ota"]);
+    variable::set("ota", if ota { "true" } else { "false" });
 
     // RAM одинаков в обоих крейтах и в обоих режимах. Следом — все остальные
     // регионы чипа (ITCM, AXISRAM, CCMRAM, BKPSRAM, EEPROM, OTP, окна внешних
@@ -32673,8 +32701,14 @@ if variable::is_set("write_size") {
         // сказано в "note" (посчитано chip-data-gen по реальным секторам).
         // Проект собирается одним образом на весь flash, cross/boot в него не
         // попадает вовсе (см. [conditional] в cargo-generate.toml).
-        print("OTA отключён для " + suffix + ": " + m["note"]);
-        print("  собирается один образ на весь flash, cross/boot в проект не входит");
+        // Причина у отказа две: либо схема не помещается (тогда её объясняет
+        // "note" из MEMORY_LAYOUT), либо от неё отказались при генерации —
+        // там объяснять нечего, сообщение уже напечатано выше.
+        let reason = if wants_ota { m["note"] } else { "отключён при генерации" };
+        if wants_ota {
+            print("OTA отключён для " + suffix + ": " + reason);
+            print("  собирается один образ на весь flash, cross/boot в проект не входит");
+        }
         // Каталог убирается здесь, а не через [conditional] в
         // cargo-generate.toml: условия там вычисляются по значениям
         // [placeholders] и переменных, выставленных хуком, не видят
@@ -32689,7 +32723,7 @@ if variable::is_set("write_size") {
 
         let single = [
             "/* Сгенерировано chip-select.rhai: один образ на весь flash. */",
-            "/* OTA (cross/boot) не подключён: " + m["note"] + ". */",
+            "/* OTA (cross/boot) не подключён: " + reason + ". */",
             "",
             "MEMORY {",
             "    FLASH             (rx)  : ORIGIN = " + m["flash_origin"] + ", LENGTH = " + m["flash_length"],
