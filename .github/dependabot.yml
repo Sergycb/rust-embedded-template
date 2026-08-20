@@ -16,6 +16,20 @@ updates:
       cargo-dependencies:
         patterns: ["*"]
 
+  # Свой workspace (см. chip-info/Cargo.toml), поэтому отдельной записью:
+  # без неё `stm32-metapac` там остался бы навсегда на версии, зафиксированной
+  # при генерации, и разъехался с тем, что тянет embassy-stm32 из /cross.
+  # Мажорную версию всё равно сверять руками — она должна совпадать с
+  # метапаком embassy, иначе справочник покажет данные другого поколения
+  # stm32-data, чем то, по которому собрана прошивка.
+  - package-ecosystem: "cargo"
+    directory: "/chip-info"
+    schedule:
+      interval: "weekly"
+    groups:
+      cargo-dependencies:
+        patterns: ["*"]
+
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

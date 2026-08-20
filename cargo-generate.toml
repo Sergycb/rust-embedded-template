@@ -34,6 +34,7 @@ ignore = [
 	".github/workflows/template.yml",
 	"target",
 	"cross/target",
+	"chip-info/target",
 	".local",
 	".remember",
 	".claude",

@@ -248,7 +248,7 @@ fn check_one(
     // Cargo.lock пинит ревизии, и без этого шага все проверки остаются
     // зелёными даже когда `main` библиотеки уже несовместим.
     for manifest in if refresh {
-        [None, Some("cross/Cargo.toml")].as_slice()
+        [None, Some("cross/Cargo.toml"), Some("chip-info/Cargo.toml")].as_slice()
     } else {
         &[]
     } {
@@ -270,11 +270,36 @@ fn check_one(
 
     if !options.quick {
         // Ровно те команды, которые README обещает пользователю шаблона.
-        let commands: [&[&str]; 4] = [
+        //
+        // `xtask pins` — единственный способ вообще проверить `chip-info`:
+        // его манифест до генерации не резолвится (Liquid в чип-фиче), так что
+        // ни `cargo xtask lint`, ни CI самого шаблона его не трогают. Оба
+        // вызова не случайны: без аргумента идёт перечисление блоков, с `RCC` —
+        // ветка с таблицей выводов, DMA и тактированием, а `RCC` есть на любом
+        // STM32 (в отличие от, например, `SPI4`).
+        //
+        // fmt/clippy для chip-info — здесь же и по той же причине; в
+        // сгенерированном проекте манифест уже подставлен, и обе команды
+        // работают. `cargo xtask lint` их намеренно не зовёт: тогда каждый
+        // пользовательский CI тянул бы stm32-metapac ради инструмента, который
+        // на сборку прошивки никак не влияет.
+        let commands: [&[&str]; 8] = [
             &["xtask", "lint"],
             &["xtask", "test", "host"],
             &["xtask", "lint", "cross"],
             &["xtask", "build"],
+            &["xtask", "pins"],
+            &["xtask", "pins", "RCC"],
+            &["fmt", "--manifest-path", "chip-info/Cargo.toml", "--check"],
+            &[
+                "clippy",
+                "--manifest-path",
+                "chip-info/Cargo.toml",
+                "--all-targets",
+                "--",
+                "-D",
+                "warnings",
+            ],
         ];
         for args in commands {
             run(
@@ -310,7 +335,7 @@ fn check_one(
 /// отставшем lock падает. Предупреждение, а не ошибка: часть расхождений —
 /// обычные обновления версий из crates.io, за которые шаблон не отвечает.
 fn report_lock_drift(repo_root: &Path, project: &Path) {
-    for lock in ["Cargo.lock", "cross/Cargo.lock"] {
+    for lock in ["Cargo.lock", "cross/Cargo.lock", "chip-info/Cargo.lock"] {
         let (Some(template), Some(generated)) = (
             lock_package_names(&repo_root.join(lock)),
             lock_package_names(&project.join(lock)),

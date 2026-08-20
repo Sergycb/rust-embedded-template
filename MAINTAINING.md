@@ -311,7 +311,16 @@ cargo run --manifest-path chip-data-gen/Cargo.toml --bin template-check
 Cortex-M0+. Дальше проверяет, что не осталось ни одного
 неподставленного плейсхолдера, и прогоняет в сгенерированном проекте `cargo xtask
 lint`, `test host`, `lint cross`, `build` — то есть ровно то, что README обещает
-пользователю.
+пользователю, — плюс `cargo xtask pins` (дважды: без аргумента и с `RCC`) и
+fmt/clippy для `chip-info`.
+
+Последние четыре — единственная проверка `chip-info` вообще: его манифест до
+генерации не резолвится (чип выбирается Cargo-фичей, а в ней Liquid), поэтому ни
+`cargo xtask lint`, ни CI самого шаблона его не видят, и в репозитории шаблона
+`cargo xtask pins` намеренно падает с объяснением вместо невнятной ошибки Liquid.
+`cargo xtask lint` в сгенерированном проекте его тоже не трогает — иначе каждый
+пользовательский CI тянул бы `stm32-metapac` ради инструмента, который на сборку
+прошивки не влияет.
 
 Флаги: `--quick` — только генерация и проверка плейсхолдеров (секунды вместо минут на
 чип), `--ci gitlab|none` — другой CI-провайдер, `--keep` — не удалять проекты после
@@ -357,14 +366,19 @@ lint`, `test host`, `lint cross`, `build` — то есть ровно то, ч�
 ### Lock-файлы шаблона
 
 Корневой `Cargo.lock` живёт сам: любая локальная сборка приводит его в соответствие с
-манифестами. А `cross/Cargo.lock` — нет: в репозитории шаблона `cross` не собирается
-вовсе (там Liquid), так что после правки любого `cross/*/Cargo.toml` его надо
-обновлять руками. Способ — тот же прогон:
+манифестами. А `cross/Cargo.lock` и `chip-info/Cargo.lock` — нет: в репозитории шаблона
+ни тот, ни другой не собирается вовсе (там Liquid), так что после правки
+`cross/*/Cargo.toml` или `chip-info/Cargo.toml` их надо обновлять руками. Способ — тот
+же прогон:
 
 ```
 cargo run --manifest-path chip-data-gen/Cargo.toml --bin template-check -- --keep stm32f407ve
 cp "$TEMP/rust-embedded-template-check/tc-stm32f407ve/cross/Cargo.lock" cross/Cargo.lock
+cp "$TEMP/rust-embedded-template-check/tc-stm32f407ve/chip-info/Cargo.lock" chip-info/Cargo.lock
 ```
+
+`chip-info/Cargo.lock` от чипа не зависит (фичи в lock не записываются), так что
+годится прогон под любую конфигурацию.
 
 Чтобы это не забывалось, `template-check` после каждой генерации сравнивает списки
 пакетов в lock-файлах шаблона и проекта и печатает расхождение. Предупреждение, а не
@@ -384,7 +398,9 @@ cargo test  --manifest-path chip-data-gen/Cargo.toml --release
 ```
 
 `chip-data-gen` не член ни одного `[workspace]`, поэтому в `cargo xtask lint` он не
-попадает — его команды идут отдельными строками выше.
+попадает — его команды идут отдельными строками выше. `chip-info` тоже не член, но с
+ним так не выйдет: до генерации его манифест не резолвится вовсе, и локально проверить
+его нечем — только `template-check` (см. выше).
 
 ### Что из этого делает CI
 

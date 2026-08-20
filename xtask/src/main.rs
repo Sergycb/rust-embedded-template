@@ -30,6 +30,11 @@ fn main() -> Result<(), anyhow::Error> {
         ["flash", profile] => flash_all(&sh, profile),
         ["lint"] => lint_host(&sh),
         ["lint", "cross"] => lint_cross(&sh),
+        // Пустая строка — не опечатка, а задача VS Code «xtask: pins»: её
+        // `${input:pinsQuery}` при пустом ответе доезжает сюда пустым
+        // аргументом, и это ровно тот же запрос, что без аргумента вовсе.
+        ["pins"] | ["pins", ""] => pins(&sh, None),
+        ["pins", query] => pins(&sh, Some(query)),
         // Без аргументов — просто справка, это не ошибка. А вот непонятая
         // команда завершается ненулевым кодом: иначе опечатка в CI-шаге или в
         // задаче IDE даёт зелёный прогон, в котором ничего не выполнилось.
@@ -50,6 +55,7 @@ fn usage() {
     println!("      cargo xtask flash [debug|release]      # прошить bootloader + приложение");
     println!("      cargo xtask lint [cross]");
     println!("      cargo xtask test [host|target|host-target|all]");
+    println!("      cargo xtask pins [БЛОК|ПИН]            # справочник по чипу: SPI1, PA9");
     println!();
     println!("Всё остальное про плату — напрямую через probe-rs:");
     println!("      probe-rs attach --chip {CHIP} <elf>   # defmt-лог без перепрошивки");
@@ -236,6 +242,47 @@ fn lint_cross(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     } else {
         cmd!(sh, "cargo clippy -p app --release -- -D warnings").run()?;
     }
+    Ok(())
+}
+
+/// Чип-фича `embassy-stm32`/`stm32-metapac`, выбранная при генерации. Нужна
+/// не для запуска, а чтобы отличить сгенерированный проект от самого
+/// репозитория шаблона — см. [`pins`].
+const CHIP_FEATURE: &str = "{{chip_feature}}";
+
+/// Справочник по чипу: `cargo xtask pins SPI1`, `cargo xtask pins PA9`, без
+/// аргумента — список блоков с выводами.
+///
+/// Обёртка здесь оправдана (в отличие от убранных обёрток над `probe-rs`):
+/// путь к манифесту `chip-info` относительный, и прямой вызов `cargo run
+/// --manifest-path chip-info/Cargo.toml` работал бы только из корня проекта.
+///
+/// Отдельный крейт, а не подкоманда прямо здесь, — вынужденно: `stm32-metapac`
+/// выбирает чип Cargo-фичей, то есть в его манифесте живёт Liquid, а манифест
+/// с Liquid не резолвится. Будь он членом корневого workspace, в репозитории
+/// шаблона перестали бы работать `cargo xtask lint` и `test host`. Подробнее —
+/// в doc-комментарии `chip-info/src/main.rs`.
+fn pins(sh: &xshell::Shell, query: Option<&str>) -> Result<(), anyhow::Error> {
+    // В самом репозитории шаблона плейсхолдер не подставлен — там chip-info не
+    // собирается вовсе, и невнятная ошибка Liquid-парсинга манифеста лучше
+    // объясняется здесь.
+    if CHIP_FEATURE.starts_with('{') {
+        anyhow::bail!(
+            "`cargo xtask pins` работает только в сгенерированном проекте: в репозитории \
+             шаблона в chip-info/Cargo.toml вместо чип-фичи стоит Liquid-плейсхолдер. \
+             Проверять эту команду — через `cargo run --manifest-path chip-data-gen/Cargo.toml \
+             --bin template-check`"
+        );
+    }
+    let _p = sh.push_dir(root_dir());
+    // Без `--quiet`: первый запуск собирает stm32-metapac (~15 секунд), и
+    // молчащий терминал выглядел бы как зависание.
+    let query = query.into_iter().collect::<Vec<_>>();
+    cmd!(
+        sh,
+        "cargo run --manifest-path chip-info/Cargo.toml -- {query...}"
+    )
+    .run()?;
     Ok(())
 }
 

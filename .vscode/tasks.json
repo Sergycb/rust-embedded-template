@@ -63,6 +63,13 @@
 			"problemMatcher": ["$rustc"]
 		},
 		{
+			"label": "xtask: pins",
+			"type": "shell",
+			"command": "cargo",
+			"args": ["xtask", "pins", "${input:pinsQuery}"],
+			"problemMatcher": []
+		},
+		{
 			"label": "xtask: flash debug",
 			"type": "shell",
 			"command": "cargo",
@@ -91,6 +98,14 @@
 			"args": ["build", "--release"],
 			"options": { "cwd": "${workspaceFolder}/cross/app" },
 			"problemMatcher": ["$rustc"]
+		}
+	],
+	"inputs": [
+		{
+			"id": "pinsQuery",
+			"type": "promptString",
+			"description": "Блок (SPI1) или вывод (PA9). Пусто — список блоков чипа",
+			"default": ""
 		}
 	]
 }
