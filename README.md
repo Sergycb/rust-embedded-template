@@ -22,7 +22,7 @@ cargo xtask lint         # проверить, что окружение на м
 cargo xtask test host    # тесты domain — железо не нужно
 
 # дальше нужна плата, подключённая через отладочный пробник:
-cargo xtask run          # прошить bootloader + приложение и смотреть defmt-лог
+cargo xtask flash        # прошить bootloader + приложение
 ```
 
 Свежесгенерированный проект собирается и запускается как есть: `main.rs` поднимает
@@ -190,28 +190,23 @@ cd domain && cargo kani --features log
 ```
 cargo xtask setup                  # rustup target + probe-rs-tools, flip-link, nextest
 cargo xtask build                  # cross: сборка app+boot в debug и release
-cargo xtask run [debug|release]    # прошить boot, запустить app через probe-rs run
-cargo xtask flash [debug|release]  # прошить boot+app без подключения дебаггера
-cargo xtask attach [debug|release] # defmt-лог уже прошитой платы, без перепрошивки
-cargo xtask size [debug|release]   # сколько флеша и RAM занимает образ
-cargo xtask reset | erase          # probe-rs по выбранному чипу
+cargo xtask flash [debug|release]  # прошить boot+app
 cargo xtask lint [cross]           # fmt --check + clippy -D warnings (host или cross)
 cargo xtask test [host|target|host-target|all]
 ```
 
 Профиль по умолчанию — `debug`, этап тестирования по умолчанию — `host`.
 
-`cargo xtask size` разбирает секции собранного ELF и сравнивает их с `MEMORY {}` из
-`memory.x`:
+Здесь только то, что одной командой `cargo` не делается: две сборки подряд, два
+воркспейса с разными наборами флагов, прошивка в правильном порядке (сначала
+bootloader), тесты, которым нужна залитая плата. Всё остальное про устройство —
+напрямую через `probe-rs`, он и так стоит:
 
+```sh
+probe-rs attach --chip <CHIP> cross/target/<TARGET>/debug/app   # defmt-лог живой платы
+probe-rs reset --chip <CHIP>
+probe-rs erase --chip <CHIP> --connect-under-reset              # см. ниже про цикл паник
 ```
-app (release): FLASH 23.4 KiB / 128 KiB (18%)   RAM 4.2 KiB / 127 KiB (3%)
-boot (release): FLASH 11.8 KiB / 64 KiB (18%)   RAM 2.1 KiB / 127 KiB (1%)
-```
-
-Полезно именно под OTA-схемой: приложению достаётся раздел `ACTIVE`, который заметно
-меньше всего флеша чипа, и упереться в него легко — а линкер сообщает только о самом
-факте переполнения, без запаса.
 
 ## Что происходит при панике
 
@@ -239,9 +234,9 @@ boot (release): FLASH 11.8 KiB / 64 KiB (18%)   RAM 2.1 KiB / 127 KiB (1%)
 У перезапуска есть оборотная сторона: если release-прошивка паникует прямо на старте,
 плата уходит в цикл «старт → паника → сброс», и подключиться к ней обычным способом уже
 не выходит — `cargo xtask flash` не успевает захватить ядро и падает с таймаутом. На
-этот случай `cargo xtask erase` подключается с удержанным reset'ом
-(`--connect-under-reset`): сотрите флеш этой командой, и плата снова станет доступной
-для прошивки.
+этот случай есть подключение с удержанным reset'ом — `probe-rs erase --chip <CHIP>
+--connect-under-reset` захватывает ядро до того, как оно снова дойдёт до паники.
+Сотрите флеш этой командой, и плата снова станет доступной для прошивки.
 
 `defmt-rtt` — дефолтный транспорт в обоих профилях; паттерн для `release` без пробника
 (UART, когда на плате появится нужная периферия) задокументирован в

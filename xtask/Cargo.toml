@@ -11,11 +11,3 @@ workspace = true
 [dependencies]
 anyhow = "1.0.103"
 xshell = "0.2.7"
-# Только ради `cargo xtask size`: разобрать секции собранного ELF, чтобы
-# сравнить их с MEMORY из memory.x. Внешний `cargo-size` (cargo-binutils +
-# llvm-tools) для этого пришлось бы отдельно устанавливать.
-object = { version = "0.40.0", default-features = false, features = [
-	"read_core",
-	"elf",
-	"std",
-] }

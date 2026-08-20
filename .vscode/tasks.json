@@ -56,38 +56,10 @@
 			"problemMatcher": ["$rustc"]
 		},
 		{
-			"label": "xtask: size",
-			"type": "shell",
-			"command": "cargo",
-			"args": ["xtask", "size"],
-			"problemMatcher": []
-		},
-		{
-			"label": "xtask: attach",
-			"type": "shell",
-			"command": "cargo",
-			"args": ["xtask", "attach"],
-			"problemMatcher": []
-		},
-		{
 			"label": "xtask: lint",
 			"type": "shell",
 			"command": "cargo",
 			"args": ["xtask", "lint"],
-			"problemMatcher": ["$rustc"]
-		},
-		{
-			"label": "xtask: run debug",
-			"type": "shell",
-			"command": "cargo",
-			"args": ["xtask", "run", "debug"],
-			"problemMatcher": ["$rustc"]
-		},
-		{
-			"label": "xtask: run release",
-			"type": "shell",
-			"command": "cargo",
-			"args": ["xtask", "run", "release"],
 			"problemMatcher": ["$rustc"]
 		},
 		{

@@ -41,7 +41,7 @@ print("");
 print("Дальше:");
 print("  cargo xtask setup       # rustup target + probe-rs, flip-link, nextest");
 print("  cargo xtask lint        # проверить, что всё на месте");
-print("  cargo xtask run         # прошить плату и смотреть defmt-лог");
+print("  cargo xtask flash       # прошить bootloader и приложение");
 print("");
 print("Что заполнить под свою плату: cross/bsp/src/resources.rs (распиновка),");
 print("cross/app/src/task_orchestration.rs (граф задач), domain/ (логика).");
