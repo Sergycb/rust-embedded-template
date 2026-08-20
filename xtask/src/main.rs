@@ -78,13 +78,17 @@ fn setup(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     // падал бы на `cargo fmt`/`cargo clippy` с "no such command".
     cmd!(sh, "rustup component add rustfmt clippy").run()?;
     cmd!(sh, "rustup target add {TARGET}").run()?;
-    install_if_missing(sh, "probe-rs", &["--version"], "probe-rs-tools")?;
-    install_if_missing(sh, "flip-link", &["--version"], "flip-link")?;
-    install_if_missing(sh, "cargo", &["nextest", "--version"], "cargo-nextest")?;
+
+    // Проверяем именно бинарники, а не `cargo <подкоманда>`: `cargo nextest
+    // --version` на машине без nextest запускается успешно — это сам `cargo`
+    // печатает «no such command», — и установка молча пропускалась бы.
+    install_if_missing(sh, "probe-rs", "probe-rs-tools")?;
+    install_if_missing(sh, "flip-link", "flip-link")?;
+    install_if_missing(sh, "cargo-nextest", "cargo-nextest")?;
     Ok(())
 }
 
-/// Ставит инструмент, только если его ещё нет.
+/// Ставит пакет, только если его бинарника ещё нет.
 ///
 /// Голый `cargo install` для этого не годится: пропускает он лишь ту же
 /// версию, а при установленной постарше падает с «binary `probe-rs.exe`
@@ -94,17 +98,19 @@ fn setup(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
 /// исходников. Обновляются инструменты отдельно и осознанно
 /// (`cargo install <пакет> --force`), задача setup — довести пустую машину до
 /// рабочего состояния.
+///
+/// Признак «установлен» — то, что процесс запустился, а не его код возврата:
+/// `flip-link --version` без аргументов линкера отвечает справкой lld и
+/// ненулевым кодом, хотя сам на месте. Отсутствующая программа даёт `Err`
+/// ещё до запуска. По `cargo install --list` проверять нельзя: инструмент
+/// могли поставить `cargo binstall`'ом или пакетным менеджером, и тогда его
+/// в списке нет, а бинарник есть.
 fn install_if_missing(
     sh: &xshell::Shell,
-    program: &str,
-    args: &[&str],
+    binary: &str,
     package: &str,
 ) -> Result<(), anyhow::Error> {
-    // Признак «установлен» — то, что процесс вообще запустился, а не его код
-    // возврата: `flip-link --version` без аргументов линкера отвечает справкой
-    // lld и ненулевым кодом, хотя сам инструмент на месте. Отсутствующая
-    // программа даёт Err ещё до запуска.
-    let installed = cmd!(sh, "{program} {args...}")
+    let installed = cmd!(sh, "{binary} --version")
         .quiet()
         .ignore_status()
         .output()
