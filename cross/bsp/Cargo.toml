@@ -12,6 +12,10 @@ workspace = true
 embassy-stm32 = { workspace = true }
 domain = { workspace = true }
 assign-resources = { workspace = true }
+embassy-boot = { workspace = true, features = ["defmt"] }
+embassy-boot-stm32 = { workspace = true, features = ["defmt"] }
+embassy-sync = { workspace = true }
+embedded-storage = { workspace = true }
 bbqueue = { workspace = true }
 # Безусловно, не за фичей: `log` в прошивке не используется вовсе, поэтому
 # фичам `defmt`/`log` у bsp (и мосту `defmt-or-log`) выбирать больше не из

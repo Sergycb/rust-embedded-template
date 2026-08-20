@@ -1,14 +1,24 @@
 #![no_std]
 
 pub mod buffers;
+{%- if ota == "true" %}
+pub mod ota;
+{%- endif %}
 pub mod resources;
 
 use defmt::info;
 
 pub struct Board {
+{%- if ota == "true" %}
+    /// Обновление прошивки: запись образа в раздел `DFU` и пометки, по
+    /// которым bootloader меняет разделы местами. Канал доставки — за
+    /// пределами шаблона, см. модуль `ota`.
+    pub ota: ota::Ota,
+{%- else %}
     // Not yet split into individual peripherals; kept whole until board wiring is added.
     #[allow(dead_code)]
     p: embassy_stm32::Peripherals,
+{%- endif %}
 }
 
 impl Board {
@@ -16,7 +26,17 @@ impl Board {
         let p = init_peripherals();
         info!("bsp: board initialized");
 
+{%- if ota == "true" %}
+        // Периферия разбирается здесь: `FLASH` забирает `Ota`, остальное пока
+        // никому не нужно и потому не сохраняется. Когда появится распиновка
+        // платы, эти поля разложит `assign_resources!` (см. resources.rs), и
+        // `Board` начнёт отдавать их задачам — сейчас отдавать нечего.
+        Self {
+            ota: ota::Ota::new(p.FLASH),
+        }
+{%- else %}
         Self { p }
+{%- endif %}
     }
 }
 

@@ -50,7 +50,9 @@ embassy-executor = { version = "0.10.0", features = [
 	"platform-cortex-m",
 	"executor-thread",
 ] }
+embassy-boot         = { version = "0.7.0" }
 embassy-boot-stm32 = { version = "0.8.0" }
+embedded-storage   = { version = "0.3.1" }
 embassy-sync       = { version = "0.8.0" }
 # Прямая зависимость нужна target-tests (embassy-stm32 тянет тот же крейт
 # транзитивно, но полагаться на это для `use embassy_time::..` нельзя).

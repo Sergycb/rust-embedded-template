@@ -32682,6 +32682,10 @@ if variable::is_set("write_size") {
         // оставался на месте, а то же условие по `ci` работало). Удаление
         // идёт по временной копии шаблона, до рендера — как и file::write.
         file::delete("cross/boot");
+        // Вместе с bootloader'ом уходит и работа с разделом DFU: без OTA
+        // раздела нет, а символы `__bootloader_dfu_*`, на которые опирается
+        // embassy-boot, некому определить.
+        file::delete("cross/bsp/src/ota.rs");
 
         let single = [
             "/* Сгенерировано chip-select.rhai: один образ на весь flash. */",
