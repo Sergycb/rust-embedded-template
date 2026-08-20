@@ -12,10 +12,10 @@
 //! ```
 //!
 //! Ловит ровно тот класс поломок, который не виден ни линтом, ни тестами
-//! репозитория шаблона: у самого шаблона `Cargo.lock` пинит git-зависимости,
-//! а `post-script.rhai` при генерации делает `cargo update` — ломающее
-//! изменение в `rust-lib` роняет генерацию, оставляя локальные проверки
-//! зелёными (так и случилось с фичей `macro` у `fsm`).
+//! репозитория шаблона: у самого шаблона `Cargo.lock` пинит ревизии
+//! git-зависимостей, поэтому ломающее изменение в `rust-lib` не видно нигде,
+//! пока кто-нибудь не обновит зависимости. Здесь это делается после каждой
+//! генерации — так и всплыла в своё время исчезнувшая у `fsm` фича `macro`.
 //!
 //! Конфигурации по умолчанию подобраны так, чтобы задеть все ветки
 //! генерации: обычный одноядерный, чип с выбором банковой схемы, чип, куда
@@ -113,6 +113,11 @@ const RAW_PLACEHOLDERS_ALLOWED: &[&str] = &["CLAUDE.md"];
 /// Каталоги, которые не обходим при поиске остаточных плейсхолдеров.
 const SKIP_DIRS: &[&str] = &[".git", "target"];
 
+/// Что не нужно копии шаблона, из которой идёт генерация: каталоги сборки (на
+/// любом уровне — их два, в корне и в `cross/`), история и сам этот
+/// инструмент, у которого свой `target/` рядом с исходниками.
+const SKIP_IN_TEMPLATE: &[&str] = &[".git", "target", "chip-data-gen"];
+
 struct Options {
     cases: Vec<Case>,
     ci: String,
@@ -141,6 +146,16 @@ fn main() -> anyhow::Result<()> {
         .with_context(|| format!("создать рабочий каталог {}", work_dir.display()))?;
     let cargo_target_dir = work_dir.join("cargo-target");
 
+    // Генерируем не из самого репозитория, а из его облегчённой копии — по той
+    // же причине, что и work_dir выше: `--path` копирует каталог целиком, и
+    // `target/` (гигабайты мелких файлов) уходит в копию на каждую
+    // конфигурацию. Замерено: генерация из репозитория с 3 ГБ в `target/` —
+    // 169 секунд, из копии без него — секунда. Шесть конфигураций превращали
+    // это в семнадцать минут ожидания на ровном месте.
+    let template = work_dir.join("template");
+    copy_template(&repo_root, &template)
+        .with_context(|| format!("скопировать шаблон в {}", template.display()))?;
+
     let labels: Vec<String> = options.cases.iter().map(Case::label).collect();
     println!(
         "Проверяем шаблон на {} конфигурациях (ci={}{}): {}",
@@ -150,8 +165,24 @@ fn main() -> anyhow::Result<()> {
         labels.join(", "),
     );
 
-    for case in &options.cases {
-        check_one(&repo_root, &work_dir, &cargo_target_dir, case, &options)?;
+    for (index, case) in options.cases.iter().enumerate() {
+        // Обновление зависимостей и сверку lock делаем только на первой
+        // конфигурации: граф пакетов от чипа не зависит (чипы отличаются
+        // фичами embassy-stm32, а не составом), так что ломающее изменение в
+        // rust-lib вылезет и с одного прогона, а шесть подряд стоили минут
+        // пять на пустом месте. Сверка там же и по второй причине: в
+        // конфигурации без OTA cross-lock короче на boot и embassy-boot —
+        // это не расхождение, а другая раскладка проекта.
+        let refresh = index == 0;
+        check_one(
+            &template,
+            &repo_root,
+            &work_dir,
+            &cargo_target_dir,
+            case,
+            &options,
+            refresh,
+        )?;
     }
 
     println!(
@@ -166,12 +197,17 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `template` — облегчённая копия, из которой генерируем; `repo_root` —
+/// настоящий репозиторий, он нужен только чтобы сравнить lock-файлы и назвать
+/// в подсказке путь, который правят руками.
 fn check_one(
+    template: &Path,
     repo_root: &Path,
     work_dir: &Path,
     cargo_target_dir: &Path,
     case: &Case,
     options: &Options,
+    refresh: bool,
 ) -> anyhow::Result<()> {
     // Имя проекта = имя каталога, в который cargo-generate его положит.
     let name = case.name();
@@ -186,7 +222,7 @@ fn check_one(
     command
         .arg("generate")
         .arg("--path")
-        .arg(repo_root)
+        .arg(template)
         .arg("--name")
         .arg(&name)
         .arg("--define")
@@ -197,20 +233,39 @@ fn check_one(
         command.arg("--define").arg(define);
     }
     run(
-        command
-            .arg("--silent")
-            // Без него post-script.rhai (cargo update) не выполнится в
-            // неинтерактивном режиме — а именно он и ловит ломающие
-            // изменения незапиненных git-зависимостей.
-            .arg("--allow-commands")
-            .arg("--destination")
-            .arg(work_dir),
+        command.arg("--silent").arg("--destination").arg(work_dir),
         work_dir,
         None,
     )
     .with_context(|| format!("генерация проекта под {}", case.label()))?;
 
     check_no_raw_placeholders(&project)?;
+
+    // Обновление зависимостей — здесь, а не в post-хуке шаблона: пользователю
+    // оно ни к чему (только замедляет генерацию и уводит проект с проверенных
+    // версий), а вот проверке нужно. Ломающие изменения незапиненных
+    // git-зависимостей (`rust-lib`) видны только так: у самого шаблона
+    // Cargo.lock пинит ревизии, и без этого шага все проверки остаются
+    // зелёными даже когда `main` библиотеки уже несовместим.
+    for manifest in if refresh {
+        [None, Some("cross/Cargo.toml")].as_slice()
+    } else {
+        &[]
+    } {
+        let mut update = Command::new("cargo");
+        update.arg("update");
+        if let Some(path) = manifest {
+            update.arg("--manifest-path").arg(path);
+        }
+        run(&mut update, &project, None).with_context(|| {
+            format!(
+                "`cargo update` {} в сгенерированном проекте — свежие версии зависимостей \
+                 не резолвятся",
+                manifest.unwrap_or("(корень)"),
+            )
+        })?;
+    }
+
     report_lock_drift(repo_root, &project);
 
     if !options.quick {
@@ -422,4 +477,62 @@ fn repo_root() -> PathBuf {
     let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     dir.pop();
     dir
+}
+
+/// Копирует шаблон в отдельный каталог, пропуская то, что генерации не нужно:
+/// `target/` (гигабайты артефактов), `.git/` и `chip-data-gen/` — сам этот
+/// инструмент, у которого свой `target/` рядом с исходниками.
+///
+/// Прошлая копия сносится целиком: правки шаблона должны доезжать до проверки,
+/// а не оставаться в устаревшем слепке.
+fn copy_template(repo_root: &Path, dest: &Path) -> anyhow::Result<()> {
+    if dest.exists() {
+        fs::remove_dir_all(dest)
+            .with_context(|| format!("очистить прошлую копию {}", dest.display()))?;
+    }
+    fs::create_dir_all(dest)?;
+
+    for entry in fs::read_dir(repo_root)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        if SKIP_IN_TEMPLATE.contains(&name.to_string_lossy().as_ref()) {
+            continue;
+        }
+        let from = entry.path();
+        let to = dest.join(&name);
+        if entry.file_type()?.is_dir() {
+            copy_dir(&from, &to)?;
+        } else {
+            fs::copy(&from, &to)
+                .with_context(|| format!("скопировать {} в {}", from.display(), to.display()))?;
+        }
+    }
+    Ok(())
+}
+
+fn copy_dir(from: &Path, to: &Path) -> anyhow::Result<()> {
+    fs::create_dir_all(to)?;
+    for entry in fs::read_dir(from)? {
+        let entry = entry?;
+        // Пропуск нужен на каждом уровне, а не только в корне: `cross/target`
+        // — такой же каталог сборки, и без этой проверки копия весила 2.2 ГБ
+        // вместо десятка мегабайт, а генерация из неё занимала полминуты.
+        if SKIP_IN_TEMPLATE.contains(&entry.file_name().to_string_lossy().as_ref()) {
+            continue;
+        }
+        let source = entry.path();
+        let destination = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir(&source, &destination)?;
+        } else {
+            fs::copy(&source, &destination).with_context(|| {
+                format!(
+                    "скопировать {} в {}",
+                    source.display(),
+                    destination.display()
+                )
+            })?;
+        }
+    }
+    Ok(())
 }
