@@ -141,6 +141,17 @@ const HEAD_WORDS: usize = 4;
 /// же значения в стёртом разделе; ровно это и делает `mark_updated()`.
 const SWAP_MAGIC: u8 = 0xF0;
 
+/// Магия «обновления нет, запускай что лежит» (`BOOT_MAGIC` там же). Ею тест
+/// начинает — и это не перестраховка.
+///
+/// После УСПЕШНОГО прогона состояние безопасно: bootloader, откатив образ,
+/// пишет туда `REVERT_MAGIC`, и следующий запуск ничего не откатывает. А вот
+/// прогон, прерванный между обменом и откатом (упал по таймауту, снято
+/// Ctrl+C, отвалился пробник), оставляет `SWAP_MAGIC` с завершённым журналом
+/// — то есть «обмен сделан, подтверждения не было». Первый же сброс после
+/// такого затрёт только что прошитый `ACTIVE` тем, что лежит в `DFU`.
+const BOOT_MAGIC: u8 = 0xD0;
+
 /// Значение стёртого флеша у STM32. Им заполняется остаток раздела состояния:
 /// так `probe-rs download` сотрёт его целиком, оставив ровно то, что оставляет
 /// `mark_updated()`.
@@ -186,8 +197,20 @@ fn ota_swaps_partitions_and_reverts_unconfirmed_image() {
     let state_len: usize = required_var("HOST_TARGET_STATE_LEN")
         .parse()
         .expect("HOST_TARGET_STATE_LEN — число байт");
+    // Десятичное, в отличие от адресов: размеры приходят из раскладки числом.
+    let page_size: u32 = required_var("HOST_TARGET_PAGE_SIZE")
+        .parse()
+        .expect("HOST_TARGET_PAGE_SIZE — число байт");
 
+    // Известное состояние перед началом: «обновления нет». После прошлого
+    // прогона в разделе состояния лежит неподтверждённое обновление, и первый
+    // же сброс увёл бы плату в откат — тест мерил бы не то, что думает.
+    let state_path = env::temp_dir().join("host-target-ota-state.bin");
+    write_state(&state_path, BOOT_MAGIC, write_size, state_len);
+    download(&chip, &state, &state_path);
+    reset(&chip);
     thread::sleep(BOOT_TIME);
+
     let active_hex = format!("{active:#x}");
     let original = read_words(&chip, &active_hex, HEAD_WORDS);
 
@@ -201,20 +224,9 @@ fn ota_swaps_partitions_and_reverts_unconfirmed_image() {
     let inert_path = env::temp_dir().join("host-target-ota-image.bin");
     fs::write(&inert_path, &inert).expect("записать временный образ");
 
-    // Состояние bootloader'а: магия в начале, дальше — стёртый флеш до конца
-    // раздела. Пишется он целиком не для полноты картины: `mark_updated()`
-    // начинает с erase ВСЕГО раздела, а `probe-rs download` стирает ровно те
-    // секторы, в которые пишет. Ограничься тест первым словом — на чипе с
-    // мелкими страницами (раздел состояния там многосекторный: журнал
-    // прогресса это слово на каждую страницу ACTIVE в каждом из четырёх
-    // проходов) второй прогон работал бы поверх прошлого журнала.
-    let mut state_image = vec![ERASED; state_len];
-    state_image[..write_size].fill(SWAP_MAGIC);
-    let magic_path = env::temp_dir().join("host-target-ota-state.bin");
-    fs::write(&magic_path, &state_image).expect("записать магию состояния");
-
     download(&chip, &dfu, &inert_path);
-    download(&chip, &state, &magic_path);
+    write_state(&state_path, SWAP_MAGIC, write_size, state_len);
+    download(&chip, &state, &state_path);
 
     reset(&chip);
     let expected_head = [
@@ -225,9 +237,16 @@ fn ota_swaps_partitions_and_reverts_unconfirmed_image() {
     // образ, в `DFU` старый. Смотреть только на `ACTIVE` мало: bootloader
     // переносит страницы по одной, и его голова меняется задолго до конца
     // переноса — сброс в этот момент застал бы обмен на середине.
+    //
+    // Прежний образ ищется СО СДВИГОМ НА СТРАНИЦУ, и это не деталь
+    // реализации, о которой можно забыть: `swap()` в embassy-boot переносит
+    // `ACTIVE[i]` не в `DFU[i]`, а в `DFU[i + 1]` — лишняя страница `DFU`
+    // (её требует `assert_partitions`) работает разменной. В начале `DFU`
+    // при этом так и остаётся первая страница нового образа.
+    let dfu_previous = format!("{:#x}", parse_address(&dfu) + page_size);
     let swapped = wait_for(|| {
         read_words(&chip, &active_hex, HEAD_WORDS)[..2] == expected_head
-            && read_words(&chip, &dfu, HEAD_WORDS) == original
+            && read_words(&chip, &dfu_previous, HEAD_WORDS) == original
     });
     assert!(
         swapped,
@@ -236,7 +255,9 @@ fn ota_swaps_partitions_and_reverts_unconfirmed_image() {
     );
 
     // Второй сброс: подтверждения не было (инертный образ ничего не делает),
-    // значит bootloader обязан вернуть предыдущий.
+    // значит bootloader обязан вернуть предыдущий. Здесь сдвига уже нет —
+    // `revert()` переносит `ACTIVE[i]` в `DFU[i]` и читает новый образ для
+    // `ACTIVE` из `DFU[i + 1]`, то есть оттуда, куда его положил обмен.
     reset(&chip);
     let reverted = wait_for(|| {
         read_words(&chip, &active_hex, HEAD_WORDS) == original
@@ -265,6 +286,21 @@ fn wait_for(mut done: impl FnMut() -> bool) -> bool {
         }
         thread::sleep(Duration::from_millis(500));
     }
+}
+
+/// Готовит образ раздела состояния: магия в начале, дальше стёртый флеш до
+/// конца раздела.
+///
+/// Раздел пишется целиком не для полноты картины: `mark_updated()` начинает с
+/// erase ВСЕГО раздела, а `probe-rs download` стирает ровно те секторы, в
+/// которые пишет. Ограничься тест первым словом — на чипе с мелкими
+/// страницами (раздел состояния там многосекторный: журнал прогресса это
+/// слово на каждую страницу `ACTIVE` в каждом из четырёх проходов) следующий
+/// прогон работал бы поверх прошлого журнала.
+fn write_state(path: &Path, magic: u8, write_size: usize, state_len: usize) {
+    let mut image = vec![ERASED; state_len];
+    image[..write_size].fill(magic);
+    fs::write(path, &image).expect("записать образ раздела состояния");
 }
 
 /// Заливает сырой образ по абсолютному адресу. Стиранием секторов занимается

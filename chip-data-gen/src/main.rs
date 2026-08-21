@@ -656,6 +656,11 @@ struct MemoryLayout {
     /// Имя плейсхолдера в шаблоне (`write_size`) осталось прежним ради
     /// совместимости с проектами, задающими его через `--define`.
     write_size: u64,
+    /// `PAGE_SIZE` в терминах `embassy-boot` — максимальный сектор стирания
+    /// по цепочке flash. По нему bootloader переносит разделы, а host-target
+    /// тест ищет, куда уехал прежний образ: при обмене `ACTIVE[i]`
+    /// оказывается в `DFU[i + 1]`, то есть со сдвигом ровно на страницу.
+    page_size: u64,
     /// `Ok` — OTA-схема помещается в flash; `Err` — не помещается, и текст
     /// объясняет почему (печатается при генерации и попадает комментарием в
     /// `memory.x`). Во втором случае проект собирается одним образом на весь
@@ -818,6 +823,7 @@ fn compute_memory_layout(regions: &[RawRegion]) -> Option<MemoryLayout> {
         // внутри той же цепочки — регионом его дублировать не надо.
         extra_regions: extra_region_lines(regions, FLASH_BASE + flash_total, ram_end),
         write_size,
+        page_size,
         ota: compute_ota_partitions(&chain, flash_total, page_size, write_size),
         config: compute_config_partition(&chain, flash_total, page_size, write_size),
     })
@@ -1149,6 +1155,7 @@ fn format_memory_layouts(layouts: &BTreeMap<&str, MemoryLayout>) -> String {
             out.push_str("        ],\n");
         }
         push_field(&mut out, "write_size", &m.write_size.to_string());
+        push_field(&mut out, "page_size", &m.page_size.to_string());
         match &m.ota {
             Ok(p) => {
                 push_field(&mut out, "ota", "true");

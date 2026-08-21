@@ -19,6 +19,11 @@ const DEFAULT_PROFILE: &str = "debug";
 /// записать нельзя.
 const WRITE_SIZE: &str = "{{write_size}}";
 
+/// Размер страницы стирания в терминах `embassy-boot` (максимальный сектор
+/// чипа). Ею bootloader переносит разделы, и на неё же смещается прежний
+/// образ при обмене — host-target тесту нужно знать, где его искать.
+const PAGE_SIZE: &str = "{{page_size}}";
+
 fn main() -> Result<(), anyhow::Error> {
     let args = env::args().skip(1).collect::<Vec<_>>();
     let args = args.iter().map(|s| &**s).collect::<Vec<_>>();
@@ -242,6 +247,14 @@ fn ota_env<'a>(
     let (Some(active), Some(dfu), Some(state), Some(ram)) = (active, dfu, state, ram) else {
         return Vec::new();
     };
+    // Пустой `page_size` означает, что раскладку считал не шаблон, а человек
+    // (см. chip-select.rhai): размер страницы стирания тогда неизвестен, а
+    // без него тест обмена искал бы прежний образ не по тому адресу — он
+    // уезжает ровно на страницу. Лучше пропустить проверку, чем получить
+    // падение, обвиняющее bootloader.
+    if PAGE_SIZE.is_empty() {
+        return Vec::new();
+    }
     vec![
         sh.push_env("HOST_TARGET_ACTIVE_ADDR", format!("{:#x}", active.origin)),
         sh.push_env("HOST_TARGET_DFU_ADDR", format!("{:#x}", dfu.origin)),
@@ -260,6 +273,7 @@ fn ota_env<'a>(
             format!("{:#x}", ram.origin + ram.length),
         ),
         sh.push_env("HOST_TARGET_WRITE_SIZE", WRITE_SIZE),
+        sh.push_env("HOST_TARGET_PAGE_SIZE", PAGE_SIZE),
     ]
 }
 
