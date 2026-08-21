@@ -48,6 +48,9 @@
 use embassy_boot_stm32::{AlignedBuffer, BlockingFirmwareUpdater, FirmwareUpdaterConfig};
 use embassy_stm32::flash::WRITE_SIZE;
 use embedded_storage::nor_flash::NorFlash;
+{%- if signed == "true" %}
+use embedded_storage::nor_flash::NorFlashErrorKind;
+{%- endif %}
 
 use crate::FlashMutex;
 
@@ -141,18 +144,26 @@ impl Ota {
         signature: &[u8; 64],
         length: u32,
     ) -> Result<(), Error> {
-        // Ключ не подставлен — отказ до проверки. Нулевой ключ ed25519 не
+        // Длина проверяется ПЕРВОЙ, и порядок здесь не косметика. Присылает
+        // её тот же канал, что и образ, то есть доверять ей нельзя, а
+        // `verify_and_mark_updated` в embassy-boot начинается с
+        // `assert!(update_len <= dfu.capacity())` — то есть с паники, а на
+        // release-профиле паника это сброс: одно кривое число уводило бы
+        // устройство в цикл перезагрузок.
+        //
+        // Порядок и отдельный вид ошибки — оба ради проверяемости, и это не
+        // теория: тест, где обе защиты возвращали `BadState`, оставался
+        // зелёным после удаления этой (проверено удалением на живой плате).
+        // В шаблоне ключ по умолчанию нулевой, поэтому проверь мы сначала его
+        // — сюда бы просто не доходило; а вернись отсюда тот же `BadState` —
+        // тест не отличил бы одну защиту от другой.
+        if length > dfu_capacity() {
+            return Err(Error::Flash(NorFlashErrorKind::OutOfBounds));
+        }
+        // Ключ не подставлен — отказ до криптографии. Нулевой ключ ed25519 не
         // «просто не совпадёт»: это точка малого порядка, для которой подпись
         // подделывается перебором за считанные попытки.
         if PUBLIC_KEY == [0; 32] {
-            return Err(Error::BadState);
-        }
-        // Длину присылает тот же канал, что и образ, то есть доверять ей
-        // нельзя. `verify_and_mark_updated` в embassy-boot начинается с
-        // `assert!(update_len <= dfu.capacity())` — то есть с паники, а на
-        // release-профиле паника это сброс. Обманутое устройство ушло бы в
-        // цикл перезагрузок от одного кривого пакета.
-        if length > dfu_capacity() {
             return Err(Error::BadState);
         }
         self.updater()

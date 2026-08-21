@@ -136,7 +136,7 @@ fn repo_root() -> PathBuf {
 /// `chip-data-gen/`) с замененным `{{chip_feature}}` в `crates-cross/Cargo.toml` —
 /// `cargo metadata` не может разрешить зависимости, пока там стоит буквальный
 /// нерезолвящийся плейсхолдер. Копируем репозиторий целиком, а не только
-/// `crates-cross/`: у `crates-cross/bsp` путь на `domain` относительный (`../crates-host/domain`),
+/// `crates-cross/`: у `crates-cross` путь на `domain` относительный (`../crates-host/domain`),
 /// поэтому структура каталогов вокруг `crates-cross/Cargo.toml` должна совпадать с
 /// реальной. Каталог удаляется при выходе из области видимости.
 struct PatchedRepoCopy {
