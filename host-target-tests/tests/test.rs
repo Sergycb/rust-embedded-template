@@ -9,10 +9,12 @@
 //! или соседний сервис.
 //!
 //! Прошивку заливает `cargo xtask test host-target` (release-профиль,
-//! bootloader + приложение) и передаёт сюда два значения через окружение:
-//! `HOST_TARGET_CHIP` и `HOST_TARGET_PERSIST_ADDR` (адрес региона `PERSIST`,
-//! посчитанный по `memory.x`). Через окружение, а не константами в коде: чип
-//! подставляется при генерации в одном месте, адрес зависит от чипа.
+//! bootloader + приложение) и передаёт сюда через окружение всё, что зависит
+//! от чипа: `HOST_TARGET_CHIP`, адрес региона `PERSIST` и — если в проекте
+//! есть OTA — границы разделов `ACTIVE`/`DFU`/`BOOTLOADER_STATE`, вершину RAM
+//! и размер слова записи флеша. Через окружение, а не константами в коде: чип
+//! подставляется при генерации в одном месте, а адреса считаются по
+//! `memory.x`, то есть по той же раскладке, с которой собрана прошивка.
 //!
 //! Внешних зависимостей у крейта нет намеренно: `probe-rs` для этого этапа и
 //! так обязателен (им же прошивают), и вызвать его как процесс дешевле, чем
@@ -29,7 +31,13 @@
 //! сеть), настоящие сценарии стоит писать поверх него — этот тест останется
 //! проверкой того, что устройство живо и его прошивка исполняется.
 
-use std::{env, process::Command, thread, time::Duration};
+use std::{
+    env, fs,
+    path::Path,
+    process::Command,
+    thread,
+    time::{Duration, Instant},
+};
 
 /// Магия, которую приложение кладёт в начало `PERSIST` (см. `PERSIST_MAGIC` в
 /// cross/app/src/main.rs). Совпадение с ней и означает «прошивка дошла до
@@ -115,4 +123,179 @@ fn required_var(name: &str) -> String {
              который сам прошивает плату и передаёт сюда чип и адрес PERSIST"
         )
     })
+}
+
+/// Сколько ждать смены разделов. Bootloader переносит партиции постранично, и
+/// на чипе с крупными секторами это заметные секунды; ждём не фиксированное
+/// время, а нужного содержимого (см. [`wait_for_active`]) — этот предел лишь
+/// ограничивает ожидание сверху.
+const SWAP_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// Сколько слов образа сравнивать. Первые два — начальный указатель стека и
+/// адрес обработчика сброса, дальше — таблица векторов: этого с запасом
+/// хватает, чтобы отличить один образ от другого.
+const HEAD_WORDS: usize = 4;
+
+/// Магия «поменяй разделы на следующем сбросе» из `embassy-boot`
+/// (`SWAP_MAGIC`, `lib.rs`). Состояние — это `WRITE_SIZE` байт одного и того
+/// же значения в стёртом разделе; ровно это и делает `mark_updated()`.
+const SWAP_MAGIC: u8 = 0xF0;
+
+/// Значение стёртого флеша у STM32. Им заполняется остаток раздела состояния:
+/// так `probe-rs download` сотрёт его целиком, оставив ровно то, что оставляет
+/// `mark_updated()`.
+const ERASED: u8 = 0xFF;
+
+/// Полный цикл обновления: смена разделов на сбросе и откат образа, который
+/// себя не подтвердил.
+///
+/// Это единственная проверка второй половины OTA. Тест на устройстве
+/// (`cargo xtask test target`) доходит только до записи в `DFU` и намеренно
+/// не зовёт `mark_updated`: он не переживёт собственный сброс, а раннер
+/// перезаливает образ между тестами. Отсюда и хост: он умеет и записать
+/// раздел, и сбросить плату, и посмотреть, что получилось.
+///
+/// Обновление подсовывается **инертное** — восемь байт таблицы векторов и
+/// бесконечный цикл. Так и должно быть: образ обязан стартовать (иначе
+/// проверялся бы не откат, а поведение при HardFault) и обязан НЕ дойти до
+/// `mark_booted()`, иначе откатывать будет нечего. Настоящая прошивка не
+/// годится ни для того, ни для другого — она себя подтверждает.
+///
+/// После теста плата остаётся на исходном образе: откат — часть проверки.
+///
+/// В проекте без OTA тест сам себя пропускает: адреса разделов приходят из
+/// `memory.x`, а там их нет — один образ на весь flash. Пропуск сделан
+/// проверкой окружения, а не Liquid-условием в этом файле, и это важно:
+/// `host-target-tests` — член корневого workspace, то есть его исходник
+/// компилируется и в самом репозитории шаблона, где условия ещё не
+/// подставлены. Условие сломало бы там `cargo xtask lint` и `test host`.
+#[test]
+fn ota_swaps_partitions_and_reverts_unconfirmed_image() {
+    let Ok(active) = env::var("HOST_TARGET_ACTIVE_ADDR") else {
+        eprintln!("OTA в проекте нет: раздела DFU не существует, проверять нечего");
+        return;
+    };
+    let chip = required_var("HOST_TARGET_CHIP");
+    let active = parse_address(&active);
+    let dfu = required_var("HOST_TARGET_DFU_ADDR");
+    let state = required_var("HOST_TARGET_STATE_ADDR");
+    let ram_end = parse_address(&required_var("HOST_TARGET_RAM_END"));
+    let write_size: usize = required_var("HOST_TARGET_WRITE_SIZE")
+        .parse()
+        .expect("HOST_TARGET_WRITE_SIZE — число байт");
+    let state_len: usize = required_var("HOST_TARGET_STATE_LEN")
+        .parse()
+        .expect("HOST_TARGET_STATE_LEN — число байт");
+
+    thread::sleep(BOOT_TIME);
+    let active_hex = format!("{active:#x}");
+    let original = read_words(&chip, &active_hex, HEAD_WORDS);
+
+    // Инертный образ: стек на вершину RAM, обработчик сброса — сразу за
+    // этими двумя словами, а там `b .`. Бит 0 в адресе обработчика — режим
+    // Thumb, без него Cortex-M уходит в HardFault на первой же инструкции.
+    let mut inert = Vec::new();
+    inert.extend_from_slice(&ram_end.to_le_bytes());
+    inert.extend_from_slice(&(active + 8 + 1).to_le_bytes());
+    inert.extend_from_slice(&0xE7FE_u16.to_le_bytes());
+    let inert_path = env::temp_dir().join("host-target-ota-image.bin");
+    fs::write(&inert_path, &inert).expect("записать временный образ");
+
+    // Состояние bootloader'а: магия в начале, дальше — стёртый флеш до конца
+    // раздела. Пишется он целиком не для полноты картины: `mark_updated()`
+    // начинает с erase ВСЕГО раздела, а `probe-rs download` стирает ровно те
+    // секторы, в которые пишет. Ограничься тест первым словом — на чипе с
+    // мелкими страницами (раздел состояния там многосекторный: журнал
+    // прогресса это слово на каждую страницу ACTIVE в каждом из четырёх
+    // проходов) второй прогон работал бы поверх прошлого журнала.
+    let mut state_image = vec![ERASED; state_len];
+    state_image[..write_size].fill(SWAP_MAGIC);
+    let magic_path = env::temp_dir().join("host-target-ota-state.bin");
+    fs::write(&magic_path, &state_image).expect("записать магию состояния");
+
+    download(&chip, &dfu, &inert_path);
+    download(&chip, &state, &magic_path);
+
+    reset(&chip);
+    let expected_head = [
+        u32::from_le_bytes(inert[0..4].try_into().expect("слово")),
+        u32::from_le_bytes(inert[4..8].try_into().expect("слово")),
+    ];
+    // Признак завершённого обмена — оба раздела сразу: в `ACTIVE` новый
+    // образ, в `DFU` старый. Смотреть только на `ACTIVE` мало: bootloader
+    // переносит страницы по одной, и его голова меняется задолго до конца
+    // переноса — сброс в этот момент застал бы обмен на середине.
+    let swapped = wait_for(|| {
+        read_words(&chip, &active_hex, HEAD_WORDS)[..2] == expected_head
+            && read_words(&chip, &dfu, HEAD_WORDS) == original
+    });
+    assert!(
+        swapped,
+        "после сброса разделы не поменялись местами: в ACTIVE не залитый образ или в DFU не \
+         прежний (магия SWAP не дошла до BOOTLOADER_STATE либо схема разделов не сходится)"
+    );
+
+    // Второй сброс: подтверждения не было (инертный образ ничего не делает),
+    // значит bootloader обязан вернуть предыдущий.
+    reset(&chip);
+    let reverted = wait_for(|| {
+        read_words(&chip, &active_hex, HEAD_WORDS) == original
+            && read_words(&chip, &dfu, HEAD_WORDS)[..2] == expected_head
+    });
+    assert!(
+        reverted,
+        "образ не откатился: в ACTIVE осталось не то, что было до обновления. Это значит, что \
+         неработающая прошивка, проехавшая по OTA, оставила бы плату мёртвой"
+    );
+}
+
+/// Ждёт выполнения условия, но не дольше [`SWAP_TIMEOUT`].
+///
+/// Опрос, а не фиксированная пауза: перенос разделов занимает от долей
+/// секунды до нескольких (зависит от размера страницы и раздела), и любая
+/// пауза «на глаз» была бы либо флаки, либо вдвое длиннее нужного.
+fn wait_for(mut done: impl FnMut() -> bool) -> bool {
+    let deadline = Instant::now() + SWAP_TIMEOUT;
+    loop {
+        if done() {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(500));
+    }
+}
+
+/// Заливает сырой образ по абсолютному адресу. Стиранием секторов занимается
+/// сам `probe-rs`.
+fn download(chip: &str, address: &str, path: &Path) {
+    let path = path.to_string_lossy().into_owned();
+    probe_rs(&[
+        "download",
+        "--chip",
+        chip,
+        "--binary-format",
+        "bin",
+        "--base-address",
+        address,
+        &path,
+    ]);
+}
+
+fn read_words(chip: &str, address: &str, words: usize) -> Vec<u32> {
+    let count = words.to_string();
+    probe_rs(&["read", "--chip", chip, "b32", address, &count])
+        .split_whitespace()
+        .map(|word| {
+            u32::from_str_radix(word, 16)
+                .unwrap_or_else(|_| panic!("`probe-rs read` вернул не hex-слово: {word:?}"))
+        })
+        .collect()
+}
+
+/// `0x08020000` из окружения — в число.
+fn parse_address(raw: &str) -> u32 {
+    let digits = raw.trim_start_matches("0x");
+    u32::from_str_radix(digits, 16).unwrap_or_else(|_| panic!("не адрес: {raw}"))
 }

@@ -594,9 +594,11 @@ fn check_resources() -> Result<(), anyhow::Error> {
 
     let mut used: Vec<(usize, String)> = Vec::new();
     for (number, line) in text.lines().enumerate() {
-        if line.trim_start().starts_with("//") {
-            continue;
-        }
+        // Комментарий отрезается, а не только пропускается целиком: заготовка,
+        // которую печатает `pins БЛОК --snippet`, перечисляет альтернативные
+        // выводы прямо в хвосте строки (`sck: PA5,  // ещё: PB3(AF5)`), и без
+        // этого вставленная заготовка давала бы ложный конфликт.
+        let line = line.split("//").next().unwrap_or("");
         for pin in pins_in(line) {
             if METADATA.pins.iter().any(|known| known.name == pin) {
                 used.push((number + 1, pin));

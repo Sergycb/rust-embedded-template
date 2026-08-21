@@ -13,6 +13,12 @@ const TARGET: &str = "{{target}}";
 /// при выпуске.
 const DEFAULT_PROFILE: &str = "debug";
 
+/// Минимальная единица записи во flash этого чипа. Подставляется при
+/// генерации, как и всё остальное про раскладку. Нужна host-target тесту:
+/// состояние bootloader'а — это `WRITE_SIZE` байт одинаковой магии, короче
+/// записать нельзя.
+const WRITE_SIZE: &str = "{{write_size}}";
+
 fn main() -> Result<(), anyhow::Error> {
     let args = env::args().skip(1).collect::<Vec<_>>();
     let args = args.iter().map(|s| &**s).collect::<Vec<_>>();
@@ -193,14 +199,68 @@ fn test_host_target(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
          не за что зацепиться",
     )?;
 
+    // Разделы OTA — ради теста полного цикла обновления: он пишет образ в
+    // `DFU`, просит смену разделов через `BOOTLOADER_STATE` и смотрит, что
+    // оказалось в `ACTIVE`.
+    //
+    // Сначала регион `ACTIVE`, и только потом `FLASH`: в посчитанном
+    // chip-select.rhai файле `FLASH` приложения — это и есть `ACTIVE`
+    // (приложение линкуется туда), а вот в заполненном руками memory.x
+    // `FLASH` вполне может означать базу флеша, и тогда тест сравнивал бы
+    // голову образа bootloader'а.
+    let active = region(&regions, "ACTIVE").or_else(|| region(&regions, "FLASH"));
+    let dfu = region(&regions, "DFU");
+    let state = region(&regions, "BOOTLOADER_STATE");
+    let ram = region(&regions, "RAM");
+
     {
         let _env_chip = sh.push_env("HOST_TARGET_CHIP", CHIP);
         let _env_persist =
             sh.push_env("HOST_TARGET_PERSIST_ADDR", format!("{:#x}", persist.origin));
+        let _env_ota = ota_env(sh, active, dfu, state, ram);
         let _p = sh.push_dir(root_dir().join("host-target-tests"));
-        cmd!(sh, "cargo nextest run").run()?;
+        // В один поток: пробник у платы один, а nextest по умолчанию гоняет
+        // тесты параллельно — два `probe-rs` на одной цели дерутся за неё и
+        // падают с невнятной ошибкой захвата.
+        cmd!(sh, "cargo nextest run --test-threads 1").run()?;
     }
     Ok(())
+}
+
+/// Адреса разделов OTA в окружение теста — если они вообще есть.
+///
+/// Возвращает guard'ы `xshell`: переменные живут, пока жив результат. Пустой
+/// вектор (нет bootloader'а или региона) означает, что тест полного цикла
+/// обновления сам себя пропустит — проверять там нечего.
+fn ota_env<'a>(
+    sh: &'a xshell::Shell,
+    active: Option<&Region>,
+    dfu: Option<&Region>,
+    state: Option<&Region>,
+    ram: Option<&Region>,
+) -> Vec<xshell::PushEnv<'a>> {
+    let (Some(active), Some(dfu), Some(state), Some(ram)) = (active, dfu, state, ram) else {
+        return Vec::new();
+    };
+    vec![
+        sh.push_env("HOST_TARGET_ACTIVE_ADDR", format!("{:#x}", active.origin)),
+        sh.push_env("HOST_TARGET_DFU_ADDR", format!("{:#x}", dfu.origin)),
+        sh.push_env("HOST_TARGET_STATE_ADDR", format!("{:#x}", state.origin)),
+        // Длина нужна не для красоты: `mark_updated()` стирает раздел
+        // состояния ЦЕЛИКОМ, и тест обязан делать то же самое. Раздел
+        // многосекторный на чипах с мелкими страницами (журнал прогресса —
+        // слово на страницу ACTIVE в каждом из четырёх проходов), и стирание
+        // одного первого сектора оставило бы там прошлый журнал.
+        sh.push_env("HOST_TARGET_STATE_LEN", state.length.to_string()),
+        // Вершина RAM — начальное значение указателя стека для образа,
+        // который тест зальёт в DFU. Сам он стеком не пользуется, но
+        // Cortex-M читает это слово при старте раньше первой инструкции.
+        sh.push_env(
+            "HOST_TARGET_RAM_END",
+            format!("{:#x}", ram.origin + ram.length),
+        ),
+        sh.push_env("HOST_TARGET_WRITE_SIZE", WRITE_SIZE),
+    ]
 }
 
 /// Тесты внутри МК. Bootloader заливается первым по той же причине, что и в
@@ -342,7 +402,7 @@ fn ota_key() -> Result<(), anyhow::Error> {
 
     let mut seed = [0u8; 32];
     getrandom::fill(&mut seed).context("не удалось получить случайные байты от ОС")?;
-    fs::write(&path, seed).with_context(|| format!("записать {}", path.display()))?;
+    write_private(&path, &seed).with_context(|| format!("записать {}", path.display()))?;
 
     let public = salty::Keypair::from(&seed).public.to_bytes();
     println!(
@@ -362,6 +422,25 @@ fn ota_key() -> Result<(), anyhow::Error> {
     }
     println!("];");
     Ok(())
+}
+
+/// Пишет файл, закрытый для всех, кроме владельца.
+///
+/// Права выставляются при создании, а не после: между `write` и `chmod` файл
+/// с приватным ключом успел бы полежать читаемым для всех. На Windows прав
+/// POSIX нет — там файл создаётся обычным способом, и защита сводится к тому,
+/// что он в `.gitignore` и лежит только у вас.
+fn write_private(path: &Path, bytes: &[u8]) -> Result<(), std::io::Error> {
+    use std::io::Write;
+
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options.open(path)?.write_all(bytes)
 }
 
 /// Подписывает готовый образ: считает его SHA-512 и подписывает сам хеш —
