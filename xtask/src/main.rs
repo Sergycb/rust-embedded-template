@@ -30,11 +30,10 @@ fn main() -> Result<(), anyhow::Error> {
         ["flash", profile] => flash_all(&sh, profile),
         ["lint"] => lint_host(&sh),
         ["lint", "cross"] => lint_cross(&sh),
-        // Пустая строка — не опечатка, а задача VS Code «xtask: pins»: её
-        // `${input:pinsQuery}` при пустом ответе доезжает сюда пустым
-        // аргументом, и это ровно тот же запрос, что без аргумента вовсе.
-        ["pins"] | ["pins", ""] => pins(&sh, None),
-        ["pins", query] => pins(&sh, Some(query)),
+        // Аргументы уходят в chip-info как есть (блок, вывод, `--snippet`,
+        // `--check`) — разбирает их он, здесь незачем знать его ключи.
+        ["pins", args @ ..] => pins(&sh, args),
+        ["panic"] => panic_dump(&sh),
         // Без аргументов — просто справка, это не ошибка. А вот непонятая
         // команда завершается ненулевым кодом: иначе опечатка в CI-шаге или в
         // задаче IDE даёт зелёный прогон, в котором ничего не выполнилось.
@@ -56,6 +55,13 @@ fn usage() {
     println!("      cargo xtask lint [cross]");
     println!("      cargo xtask test [host|target|host-target|all]");
     println!("      cargo xtask pins [БЛОК|ПИН]            # справочник по чипу: SPI1, PA9");
+    println!(
+        "      cargo xtask pins БЛОК --snippet        # заготовка bind_interrupts!/assign_resources!"
+    );
+    println!(
+        "      cargo xtask pins --check               # не занят ли отладочный порт в resources.rs"
+    );
+    println!("      cargo xtask panic                      # причина последней паники с платы");
     println!();
     println!("Всё остальное про плату — напрямую через probe-rs:");
     println!("      probe-rs attach --chip {CHIP} <elf>   # defmt-лог без перепрошивки");
@@ -262,7 +268,7 @@ const CHIP_FEATURE: &str = "{{chip_feature}}";
 /// с Liquid не резолвится. Будь он членом корневого workspace, в репозитории
 /// шаблона перестали бы работать `cargo xtask lint` и `test host`. Подробнее —
 /// в doc-комментарии `chip-info/src/main.rs`.
-fn pins(sh: &xshell::Shell, query: Option<&str>) -> Result<(), anyhow::Error> {
+fn pins(sh: &xshell::Shell, args: &[&str]) -> Result<(), anyhow::Error> {
     // В самом репозитории шаблона плейсхолдер не подставлен — там chip-info не
     // собирается вовсе, и невнятная ошибка Liquid-парсинга манифеста лучше
     // объясняется здесь.
@@ -277,13 +283,88 @@ fn pins(sh: &xshell::Shell, query: Option<&str>) -> Result<(), anyhow::Error> {
     let _p = sh.push_dir(root_dir());
     // Без `--quiet`: первый запуск собирает stm32-metapac (~15 секунд), и
     // молчащий терминал выглядел бы как зависание.
-    let query = query.into_iter().collect::<Vec<_>>();
     cmd!(
         sh,
-        "cargo run --manifest-path chip-info/Cargo.toml -- {query...}"
+        "cargo run --manifest-path chip-info/Cargo.toml -- {args...}"
     )
     .run()?;
     Ok(())
+}
+
+/// Магия, которой `panic-persist` помечает сохранённый дамп (первое слово
+/// региона `PANIC`, дальше длина сообщения и его байты). Значение — из самого
+/// крейта: считать формат приходится здесь, потому что читает его хост, а
+/// прошивке в этот момент, как правило, не до того.
+const PANIC_MAGIC: u32 = 0x0FAC_ADE0;
+
+/// Причина последней паники, снятая с платы без перепрошивки и без
+/// RTT-сессии.
+///
+/// Зачем отдельная команда, если `main` и так печатает дамп при старте: чтобы
+/// увидеть эту печать, нужен пробник, подключённый **в момент** старта. Под
+/// отладкой же плата после паники не стартует вовсе — хендлер заканчивается
+/// `udf()`, ядро стоит в HardFault, — и дамп лежит в RAM, пока его никто не
+/// прочитал. Этот случай команда и закрывает: пришли к зависшей плате,
+/// спросили причину.
+///
+/// Ограничение прямое следствие того же: если приложение успело стартовать
+/// (release-профиль, где хендлер делает `sys_reset`), оно дамп уже вычитало и
+/// магию стёрло — `panic-persist` так устроен намеренно, чтобы одно падение
+/// не показывалось вечно. Тогда причина есть только в defmt-логе того старта.
+/// Нужно иначе — сохранять копию причины в `PERSIST` при старте (регион для
+/// этого есть) и читать её отсюда; в шаблоне этого нет, потому что за него
+/// платит каждый проект, а нужно оно не всем.
+fn panic_dump(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
+    let memory_x = root_dir().join("cross").join("app").join("memory.x");
+    let regions = parse_memory_regions(&memory_x)
+        .with_context(|| format!("разобрать {}", memory_x.display()))?;
+    let panic = region(&regions, "PANIC").context(
+        "в cross/app/memory.x нет региона PANIC — на этом чипе дамп паники негде хранить",
+    )?;
+
+    // Заголовок: магия и длина сообщения.
+    let header = format!("{:#x}", panic.origin);
+    let header = cmd!(sh, "probe-rs read --chip {CHIP} b32 {header} 2").read()?;
+    let mut words = header.split_whitespace().map(parse_hex);
+    let magic = words.next().unwrap_or(0);
+    let length = words.next().unwrap_or(0);
+
+    if magic != PANIC_MAGIC {
+        println!("дампа нет: в начале PANIC не {PANIC_MAGIC:#010x}, а {magic:#010x}.");
+        println!(
+            "Либо плата не падала, либо приложение уже стартовало и вычитало дамп — тогда \
+             причина ушла в defmt-лог того запуска."
+        );
+        return Ok(());
+    }
+
+    // Восемь байт заголовка не входят в сообщение. Длину всё равно
+    // проверяем: в регионе могло оказаться что угодно, а `probe-rs read` с
+    // мусорным числом слов ждал бы долго и молча.
+    let available = panic.length.saturating_sub(8);
+    if length == 0 || u64::from(length) > available {
+        anyhow::bail!(
+            "магия на месте, но длина сообщения ({length}) не помещается в PANIC ({available} \
+             байт) — дамп повреждён"
+        );
+    }
+
+    let start = format!("{:#x}", panic.origin + 8);
+    let length = length.to_string();
+    let body = cmd!(sh, "probe-rs read --chip {CHIP} b8 {start} {length}").read()?;
+    let bytes = body
+        .split_whitespace()
+        .map(|byte| parse_hex(byte) as u8)
+        .collect::<Vec<_>>();
+
+    println!("причина последней паники ({} байт):", bytes.len());
+    println!("{}", String::from_utf8_lossy(&bytes));
+    Ok(())
+}
+
+/// Слово из вывода `probe-rs read`: он печатает hex без префикса.
+fn parse_hex(word: &str) -> u32 {
+    u32::from_str_radix(word, 16).unwrap_or(0)
 }
 
 fn flash_app(sh: &xshell::Shell, profile: &str) -> Result<(), anyhow::Error> {
@@ -311,9 +392,8 @@ fn flash(sh: &xshell::Shell, package: &str, profile: &str) -> Result<(), anyhow:
 /// адрес `PERSIST`, чтобы хост знал, откуда считывать счётчик запусков.
 struct Region {
     origin: u64,
-    // Длина в разборе есть, но никем пока не спрашивается: держать её здесь
-    // дешевле, чем городить отдельный тип, когда она понадобится.
-    #[allow(dead_code)]
+    /// Нужна `panic`: по ней проверяется, что записанная в дампе длина
+    /// сообщения вообще помещается в регион.
     length: u64,
 }
 

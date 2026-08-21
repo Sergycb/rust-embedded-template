@@ -70,6 +70,13 @@
 			"problemMatcher": []
 		},
 		{
+			"label": "xtask: panic",
+			"type": "shell",
+			"command": "cargo",
+			"args": ["xtask", "panic"],
+			"problemMatcher": []
+		},
+		{
 			"label": "xtask: flash debug",
 			"type": "shell",
 			"command": "cargo",

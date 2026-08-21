@@ -283,13 +283,21 @@ fn check_one(
         // работают. `cargo xtask lint` их намеренно не зовёт: тогда каждый
         // пользовательский CI тянул бы stm32-metapac ради инструмента, который
         // на сборку прошивки никак не влияет.
-        let commands: [&[&str]; 8] = [
+        let commands: [&[&str]; 10] = [
             &["xtask", "lint"],
             &["xtask", "test", "host"],
             &["xtask", "lint", "cross"],
             &["xtask", "build"],
             &["xtask", "pins"],
             &["xtask", "pins", "RCC"],
+            // Заготовка — на I2C1, и это не произвольный выбор: он есть на
+            // всех чипах набора (у stm32l011f4, например, USART1 нет вовсе —
+            // только USART2 и LPUART1), а обработчиков прерывания у него два
+            // и они разные, то есть проверяется самая ошибкоопасная ветка
+            // таблицы. `--check` на нетронутом resources.rs обязан проходить:
+            // шаблон не занимает ни одного вывода.
+            &["xtask", "pins", "I2C1", "--snippet"],
+            &["xtask", "pins", "--check"],
             &["fmt", "--manifest-path", "chip-info/Cargo.toml", "--check"],
             &[
                 "clippy",
