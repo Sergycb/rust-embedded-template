@@ -2,6 +2,6 @@
 	"rust-analyzer.check.command": "clippy",
 	"rust-analyzer.linkedProjects": [
 		"Cargo.toml",
-		"cross/Cargo.toml",
+		"crates-cross/Cargo.toml",
 	]
 }

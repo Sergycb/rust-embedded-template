@@ -45,10 +45,10 @@ fn default_cases() -> Vec<Case> {
         // Тот же чип, но от OTA отказались при генерации: ветка «один образ на
         // весь flash» на чипе, куда схема прекрасно помещается.
         Case::new("stm32f407ve").variant("no-ota", &["ota=no"]),
-        // Несколько карт памяти: в cross/Cargo.toml должна появиться фича
+        // Несколько карт памяти: в crates-cross/Cargo.toml должна появиться фича
         // "single-bank", без неё build.rs embassy-stm32 паникует.
         Case::new("stm32f429zg"),
-        // OTA не помещается: cross/boot удаляется из проекта, members и xtask
+        // OTA не помещается: crates-cross/boot удаляется из проекта, members и xtask
         // должны это пережить.
         Case::new("stm32h723ve"),
         // Двухъядерный: bsp/boot получают init_primary() с SharedData.
@@ -127,7 +127,7 @@ const RAW_PLACEHOLDERS_ALLOWED: &[&str] = &["CLAUDE.md"];
 const SKIP_DIRS: &[&str] = &[".git", "target"];
 
 /// Что не нужно копии шаблона, из которой идёт генерация: каталоги сборки (на
-/// любом уровне — их два, в корне и в `cross/`), история и сам этот
+/// любом уровне — их два, в корне и в `crates-cross/`), история и сам этот
 /// инструмент, у которого свой `target/` рядом с исходниками.
 const SKIP_IN_TEMPLATE: &[&str] = &[".git", "target", "chip-data-gen"];
 
@@ -261,7 +261,12 @@ fn check_one(
     // Cargo.lock пинит ревизии, и без этого шага все проверки остаются
     // зелёными даже когда `main` библиотеки уже несовместим.
     for manifest in if refresh {
-        [None, Some("cross/Cargo.toml"), Some("chip-info/Cargo.toml")].as_slice()
+        [
+            None,
+            Some("crates-cross/Cargo.toml"),
+            Some("crates-host/chip-info/Cargo.toml"),
+        ]
+        .as_slice()
     } else {
         &[]
     } {
@@ -279,7 +284,7 @@ fn check_one(
         })?;
     }
 
-    // Конфигурация по умолчанию — та, для которой посчитан cross/Cargo.lock
+    // Конфигурация по умолчанию — та, для которой посчитан crates-cross/Cargo.lock
     // шаблона: без дополнительных `--define`.
     report_lock_drift(repo_root, &project, case.defines.is_empty());
 
@@ -313,11 +318,16 @@ fn check_one(
             // шаблон не занимает ни одного вывода.
             &["xtask", "pins", "I2C1", "--snippet"],
             &["xtask", "pins", "--check"],
-            &["fmt", "--manifest-path", "chip-info/Cargo.toml", "--check"],
+            &[
+                "fmt",
+                "--manifest-path",
+                "crates-host/chip-info/Cargo.toml",
+                "--check",
+            ],
             &[
                 "clippy",
                 "--manifest-path",
-                "chip-info/Cargo.toml",
+                "crates-host/chip-info/Cargo.toml",
                 "--all-targets",
                 "--",
                 "-D",
@@ -358,7 +368,7 @@ fn check_one(
 /// отставшем lock падает. Предупреждение, а не ошибка: часть расхождений —
 /// обычные обновления версий из crates.io, за которые шаблон не отвечает.
 ///
-/// `cross/Cargo.lock` сравнивается только для конфигурации по умолчанию: при
+/// `crates-cross/Cargo.lock` сравнивается только для конфигурации по умолчанию: при
 /// `ota=no` из графа уходят `embassy-boot*`, при `config=yes` добавляется
 /// `sequential-storage`, при `signed=yes` — `salty`. Это не рассинхрон, а
 /// ожидаемое свойство варианта (см. «Lock-файлы шаблона» в MAINTAINING.md), и
@@ -366,9 +376,13 @@ fn check_one(
 /// бы его пролистывать.
 fn report_lock_drift(repo_root: &Path, project: &Path, default_variant: bool) {
     let locks: &[&str] = if default_variant {
-        &["Cargo.lock", "cross/Cargo.lock", "chip-info/Cargo.lock"]
+        &[
+            "Cargo.lock",
+            "crates-cross/Cargo.lock",
+            "crates-host/chip-info/Cargo.lock",
+        ]
     } else {
-        &["Cargo.lock", "chip-info/Cargo.lock"]
+        &["Cargo.lock", "crates-host/chip-info/Cargo.lock"]
     };
     for lock in locks {
         let (Some(template), Some(generated)) = (
@@ -574,7 +588,7 @@ fn copy_dir(from: &Path, to: &Path) -> anyhow::Result<()> {
     fs::create_dir_all(to)?;
     for entry in fs::read_dir(from)? {
         let entry = entry?;
-        // Пропуск нужен на каждом уровне, а не только в корне: `cross/target`
+        // Пропуск нужен на каждом уровне, а не только в корне: `crates-cross/target`
         // — такой же каталог сборки, и без этой проверки копия весила 2.2 ГБ
         // вместо десятка мегабайт, а генерация из неё занимала полминуты.
         if SKIP_IN_TEMPLATE.contains(&entry.file_name().to_string_lossy().as_ref()) {

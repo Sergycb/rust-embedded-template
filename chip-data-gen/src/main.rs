@@ -16,7 +16,7 @@ const MEMORY_END: &str = "// END GENERATED MEMORY LAYOUT";
 const BANKS_BEGIN: &str = "// BEGIN GENERATED BANK MODE";
 const BANKS_END: &str = "// END GENERATED BANK MODE";
 /// Любая реальная чип-фича годится — нужна только чтобы `cargo metadata` смог
-/// разрешить зависимость `embassy-stm32`: в самом `cross/Cargo.toml` вместо
+/// разрешить зависимость `embassy-stm32`: в самом `crates-cross/Cargo.toml` вместо
 /// неё стоит нерезолвящийся плейсхолдер `{{chip_feature}}`, см.
 /// `PatchedRepoCopy`.
 const PLACEHOLDER_CHIP_FEATURE: &str = "stm32f407ve";
@@ -81,7 +81,7 @@ fn main() -> anyhow::Result<()> {
         "embassy-stm32: {} чип-фич; probe-rs: {} целей; итоговый список: {} (отброшено {}, \
          нет цели probe-rs); более точная цель probe-rs, чем базовая, найдена для {} чипов; \
          выбор банковой схемы нужен {} чипам; memory.x посчитан для {} из {} чипов, из них \
-         с OTA {} (остальные — один образ на весь flash, без cross/boot); раздел настроек \
+         с OTA {} (остальные — один образ на весь flash, без crates-cross/boot); раздел настроек \
          возможен на {} чипах, из них с сохранением OTA — {}",
         cargo_metadata.embassy_chip_features.len(),
         probe_rs_chips.len(),
@@ -133,11 +133,11 @@ fn repo_root() -> PathBuf {
 }
 
 /// Временная копия всего репозитория (без `target/`/`.git`/самого
-/// `chip-data-gen/`) с замененным `{{chip_feature}}` в `cross/Cargo.toml` —
+/// `chip-data-gen/`) с замененным `{{chip_feature}}` в `crates-cross/Cargo.toml` —
 /// `cargo metadata` не может разрешить зависимости, пока там стоит буквальный
 /// нерезолвящийся плейсхолдер. Копируем репозиторий целиком, а не только
-/// `cross/`: у `cross/bsp` путь на `domain` относительный (`../domain`),
-/// поэтому структура каталогов вокруг `cross/Cargo.toml` должна совпадать с
+/// `crates-cross/`: у `crates-cross/bsp` путь на `domain` относительный (`../crates-host/domain`),
+/// поэтому структура каталогов вокруг `crates-cross/Cargo.toml` должна совпадать с
 /// реальной. Каталог удаляется при выходе из области видимости.
 struct PatchedRepoCopy {
     dir: PathBuf,
@@ -153,12 +153,12 @@ impl PatchedRepoCopy {
         copy_dir_recursive(repo_root, &dir)
             .context("не удалось скопировать репозиторий во временный каталог")?;
 
-        let manifest_path = dir.join("cross/Cargo.toml");
+        let manifest_path = dir.join("crates-cross/Cargo.toml");
         let manifest = fs::read_to_string(&manifest_path)?;
         let patched = manifest.replace("{{chip_feature}}", PLACEHOLDER_CHIP_FEATURE);
         if patched == manifest {
             bail!(
-                "{{{{chip_feature}}}} не найден в {} — плейсхолдер переименован в cargo-generate.toml/cross/Cargo.toml?",
+                "{{{{chip_feature}}}} не найден в {} — плейсхолдер переименован в cargo-generate.toml/crates-cross/Cargo.toml?",
                 manifest_path.display()
             );
         }
@@ -169,7 +169,7 @@ impl PatchedRepoCopy {
     }
 
     fn cross_manifest_path(&self) -> PathBuf {
-        self.dir.join("cross/Cargo.toml")
+        self.dir.join("crates-cross/Cargo.toml")
     }
 }
 
@@ -186,8 +186,8 @@ impl Drop for PatchedRepoCopy {
 /// временной копии, выбирая ЛОЖНУЮ ветку — то есть выбрасывая блок целиком.
 ///
 /// Нужно, потому что `cargo metadata` читает манифесты всех членов workspace,
-/// а те содержат условные куски (`"dual-core"` в `cross/bsp`/`cross/boot`,
-/// `"boot"` среди `members` и фича банка в `cross/Cargo.toml`) — с ними это
+/// а те содержат условные куски (`"dual-core"` в `crates-cross/bsp`/`crates-cross/boot`,
+/// `"boot"` среди `members` и фича банка в `crates-cross/Cargo.toml`) — с ними это
 /// не TOML. Ложная ветка безопаснее истинной: она оставляет манифест
 /// минимальным, а всё, что нужно генератору (`embassy-stm32` и его
 /// `stm32-metapac`), объявлено безусловно.
@@ -213,7 +213,7 @@ fn strip_liquid_from_manifests(dir: &Path) -> anyhow::Result<()> {
 /// `{% endif %}` корректен.
 ///
 /// Формы с управлением пробелами (`{%-`, `-%}`) приводятся к обычным до
-/// разбора. Без этого условие в `cross/bsp/Cargo.toml`, записанное как
+/// разбора. Без этого условие в `crates-cross/bsp/Cargo.toml`, записанное как
 /// `{%- if ota == "true" %}`, не находилось вовсе — и `cargo metadata` падал
 /// на «invalid key-value pair, expected key», то есть генератор данных
 /// переставал работать целиком. Ловится это только запуском самого
@@ -259,7 +259,7 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Результат разбора `cargo metadata` для пропатченного `cross/Cargo.toml`:
+/// Результат разбора `cargo metadata` для пропатченного `crates-cross/Cargo.toml`:
 /// всё, что нужно взять из графа зависимостей за один вызов `cargo`.
 struct CargoMetadata {
     /// Полный список объявленных чип-фич `embassy-stm32` (например
@@ -286,7 +286,7 @@ fn resolve_cargo_metadata(repo_root: &Path) -> anyhow::Result<CargoMetadata> {
         .args(["metadata", "--format-version", "1", "--manifest-path"])
         .arg(repo_copy.cross_manifest_path())
         .output()
-        .context("не удалось запустить `cargo metadata` для cross/Cargo.toml")?;
+        .context("не удалось запустить `cargo metadata` для crates-cross/Cargo.toml")?;
     if !output.status.success() {
         bail!(
             "`cargo metadata` завершился с ошибкой:\n{}",
@@ -303,7 +303,7 @@ fn resolve_cargo_metadata(repo_root: &Path) -> anyhow::Result<CargoMetadata> {
     let embassy_stm32 = packages
         .iter()
         .find(|package| package["name"] == "embassy-stm32")
-        .context("embassy-stm32 не найден среди зависимостей cross/Cargo.toml")?;
+        .context("embassy-stm32 не найден среди зависимостей crates-cross/Cargo.toml")?;
     let features = embassy_stm32["features"]
         .as_object()
         .context("embassy-stm32: нет поля features")?;
@@ -321,7 +321,7 @@ fn resolve_cargo_metadata(repo_root: &Path) -> anyhow::Result<CargoMetadata> {
     let stm32_metapac = packages
         .iter()
         .find(|package| package["name"] == "stm32-metapac")
-        .context("stm32-metapac не найден среди зависимостей cross/Cargo.toml")?;
+        .context("stm32-metapac не найден среди зависимостей crates-cross/Cargo.toml")?;
     let manifest_path = stm32_metapac["manifest_path"]
         .as_str()
         .context("stm32-metapac: нет поля manifest_path")?;
@@ -569,7 +569,7 @@ fn parse_regions(section: &str) -> anyhow::Result<Vec<RawRegion>> {
 ///
 /// Из двух режимов выбирается одобанковый: он даёт непрерывный ACTIVE и не
 /// требует от пользователя понимания, что такое банки. Двухбанковый нужен
-/// ради read-while-write, которым `cross/boot` не пользуется.
+/// ради read-while-write, которым `crates-cross/boot` не пользуется.
 fn select_memory_config(
     configs: Vec<Vec<RawRegion>>,
 ) -> anyhow::Result<(Vec<RawRegion>, &'static str)> {
@@ -616,11 +616,11 @@ fn field<'a>(block: &'a str, key: &str) -> Option<&'a str> {
     Some(rest[..end].trim())
 }
 
-/// Партиции OTA-схемы (`cross/boot`). Есть только у чипов, где схема
+/// Партиции OTA-схемы (`crates-cross/boot`). Есть только у чипов, где схема
 /// физически помещается — см. `compute_ota_partitions`.
 #[derive(Debug)]
 struct OtaPartitions {
-    /// `FLASH` в `cross/boot/memory.x`: место под сам бинарник bootloader'а,
+    /// `FLASH` в `crates-cross/boot/memory.x`: место под сам бинарник bootloader'а,
     /// от базы flash до `BOOTLOADER_STATE`. Отдельный регион (а не весь чип)
     /// нужен, чтобы переполнение ловил линкер, а не молчаливое наложение на
     /// `ACTIVE`.
@@ -664,7 +664,7 @@ struct MemoryLayout {
     /// `Ok` — OTA-схема помещается в flash; `Err` — не помещается, и текст
     /// объясняет почему (печатается при генерации и попадает комментарием в
     /// `memory.x`). Во втором случае проект собирается одним образом на весь
-    /// flash, без `cross/boot`.
+    /// flash, без `crates-cross/boot`.
     ota: Result<OtaPartitions, String>,
     /// Раздел под настройки, если он на этом чипе вообще возможен. `None` —
     /// две страницы стирания не остаются даже без всего остального.
@@ -771,7 +771,7 @@ fn compute_memory_layout(regions: &[RawRegion]) -> Option<MemoryLayout> {
     }
     // PAGE_SIZE в терминах embassy-boot — не наш const generic, а
     // `max(ACTIVE::ERASE_SIZE, DFU::ERASE_SIZE)` (`boot_loader.rs`). Обе
-    // партиции живут поверх цельного `Flash` (`cross/boot/src/main.rs`), у
+    // партиции живут поверх цельного `Flash` (`crates-cross/boot/src/main.rs`), у
     // которого `NorFlash::ERASE_SIZE = MAX_ERASE_SIZE` всего чипа — отсюда
     // максимум по цепочке, а не erase_size конкретного региона.
     let page_size = chain
@@ -1263,11 +1263,11 @@ fn format_bank_modes(modes: &BTreeMap<&str, &'static str>) -> String {
 /// Множество идентификаторов чипов, которые знает локально установленный
 /// `probe-rs` (`probe-rs chip list`), например `STM32F407VE` — без суффикса
 /// корпус/темп.диапазон (`Tx`/`Hx`/...), см. обоснование в CLAUDE.md.
-/// Версия `embassy-stm32` так, как она объявлена в `cross/Cargo.toml` — не
+/// Версия `embassy-stm32` так, как она объявлена в `crates-cross/Cargo.toml` — не
 /// разрешённая cargo: сверять надо именно объявление, иначе безобидный
 /// патч-релиз в реестре ронял бы тест штампа.
 fn declared_embassy_version(repo_root: &Path) -> anyhow::Result<String> {
-    let manifest_path = repo_root.join("cross").join("Cargo.toml");
+    let manifest_path = repo_root.join("crates-cross").join("Cargo.toml");
     let manifest = fs::read_to_string(&manifest_path)
         .with_context(|| format!("не удалось прочитать {}", manifest_path.display()))?;
     parse_declared_embassy_version(&manifest).with_context(|| {
@@ -1342,7 +1342,7 @@ pub const SOURCE_STAMP_PREFIX: &str = "// Источник: embassy-stm32 ";
 
 fn format_source_stamp(embassy_version: &str, probe_rs_version: &str) -> String {
     format!(
-        "{SOURCE_STAMP_PREFIX}{embassy_version} (cross/Cargo.toml), probe-rs {probe_rs_version}\n"
+        "{SOURCE_STAMP_PREFIX}{embassy_version} (crates-cross/Cargo.toml), probe-rs {probe_rs_version}\n"
     )
 }
 
@@ -1591,7 +1591,7 @@ pub static METADATA: Metadata = Metadata {
         assert_eq!(strip_liquid(plain), plain);
     }
 
-    /// Форма с управлением пробелами — та, что стоит в `cross/bsp/Cargo.toml`.
+    /// Форма с управлением пробелами — та, что стоит в `crates-cross/bsp/Cargo.toml`.
     /// Пока её не понимали, `cargo metadata` падал на невалидном TOML, а с ним
     /// и весь генератор данных; заметно это только при его запуске, то есть
     /// раз в обновление embassy-stm32.
@@ -1612,12 +1612,12 @@ pub static METADATA: Metadata = Metadata {
         let root = repo_root();
         let mut checked = 0;
         for manifest in [
-            root.join("cross/Cargo.toml"),
-            root.join("cross/bsp/Cargo.toml"),
-            root.join("cross/app/Cargo.toml"),
-            root.join("cross/boot/Cargo.toml"),
-            root.join("cross/target-tests/Cargo.toml"),
-            root.join("chip-info/Cargo.toml"),
+            root.join("crates-cross/Cargo.toml"),
+            root.join("crates-cross/bsp/Cargo.toml"),
+            root.join("crates-cross/app/Cargo.toml"),
+            root.join("crates-cross/boot/Cargo.toml"),
+            root.join("crates-cross/target-tests/Cargo.toml"),
+            root.join("crates-host/chip-info/Cargo.toml"),
         ] {
             let Ok(text) = fs::read_to_string(&manifest) else {
                 continue;

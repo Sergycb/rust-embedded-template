@@ -1,0 +1,321 @@
+//! Оркестрация embassy-задач: жизненный цикл, рестарты, watchdog,
+//! межзадачный обмен.
+//!
+//! Примеры ниже намеренно не компилируются (`ignore`) — этот `cross`-workspace
+//! не может собраться в сыром шаблоне: `embassy-stm32` завязан на конкретный
+//! `{{chip_feature}}`, подставляемый только при генерации проекта
+//! (`cargo generate`). Раскомментируйте и адаптируйте под свою плату по мере
+//! необходимости.
+//!
+//! # `supervisor` — граф задач: порядок старта, рестарты, обмен, watchdog
+//!
+//! Один макрос `supervisor_graph!` описывает весь набор задач сразу. Он
+//! заменил три сторонних крейта, каждый из которых описывал свой срез того
+//! же графа своим DSL: `embassy-supervisor` (порядок старта по зависимостям),
+//! `embassy-task-watchdog` (мультиплексор watchdog'ов) и `ector` (актор с
+//! почтовым ящиком). Раньше один и тот же граф приходилось объявлять трижды
+//! и следить за тем, чтобы три декларации не разъехались.
+//!
+//! Что даёт узел графа, помимо `deps:` (упорядоченный старт — через явный
+//! барьер готовности, а не порядок спавна) и `restart:`/`backoff:`
+//! (политика перезапуска с backoff'ом):
+//!
+//! * `resources: [SLOT: Type]` — эксклюзивная передача владения (обычно
+//!   ручкой периферии) в задачу на один прогон и обратно при её остановке,
+//!   чтобы следующий перезапуск получил тот же объект. Отвечает на вопрос,
+//!   который сам по себе `Spawner` не решает: как перезапустить задачу,
+//!   забравшую `Peripherals`-ручку.
+//! * `inbox: [FIELD: Type; N]` — ограниченная упорядоченная очередь входящих
+//!   сообщений (это и есть бывший `ector`: fire-and-forget между задачами).
+//!   Прямо стыкуется с `fsm_async::AsyncTimedRuntime::run` — см. ниже.
+//! * `publish: [FIELD: Type; N]` / `subscribe: [OTHER.FIELD]` — broadcast
+//!   состояния наружу через `embassy_sync::watch::Watch`.
+//! * `request: ...` / `calls: [OTHER.FIELD]` — request/response поверх
+//!   `sync_request::RpcService` (того самого, что в `domain`), с
+//!   `RequestTimeoutExt::request_timeout` для таймаута.
+//! * `watchdog: Duration` — участие узла в общем аппаратном watchdog'е,
+//!   см. следующий раздел.
+//! * `shutdown: Cooperative` — узел не отменяют дропом посреди работы:
+//!   задача получает `stop: impl Stoppable` и выходит сама, доделав то, что
+//!   нельзя бросить на середине (запись во flash, транзакция на шине).
+//! * `count: N` — N независимых копий узла со своими статиками; `resources:`
+//!   при этом становится массивом слотов (`PROBE[0]`, а не `PROBE_0`).
+//! * `executor: NAME` — узел спавнится не на общем исполнителе, а на том,
+//!   чей `SpawnerSlot` объявлен в графе (прерывательный приоритет, второе
+//!   ядро).
+//! * `cloned:` / `shared:` — общий на весь граф объект: первый отдаёт
+//!   каждому узлу собственный `Clone`, второй — `&'static` на один
+//!   физический ресурс (шина под `Mutex`).
+//!
+//! Полный список полей и их тонкости — в doc-комментариях самого
+//! `supervisor` и `supervisor-macros`; здесь только минимальный каркас.
+//!
+//! Время везде — `embassy_time::Duration`, единственный тип времени во всей
+//! библиотеке. `core::time::Duration` из неё убран намеренно: его
+//! представление `{secs, nanos}` превращает каждую конверсию в 64-битное
+//! деление, которое на 32-битной цели раскрывается в вызов
+//! `__aeabi_uldivmod`, тогда как `embassy_time` — это просто счётчик тиков.
+//!
+//! ```ignore
+//! use embassy_time::Duration;
+//!
+//! use supervisor::policy::{BackoffPolicy, JitterPolicy, RestartPolicy};
+//! use supervisor::runtime::TaskExit;
+//! use supervisor::supervisor_graph;
+//!
+//! fn backoff() -> BackoffPolicy {
+//!     BackoffPolicy {
+//!         first: Duration::from_millis(50),
+//!         factor: 2,
+//!         jitter: JitterPolicy::None,
+//!         floor: Duration::from_millis(50),
+//!         max: Duration::from_secs(5),
+//!     }
+//! }
+//!
+//! supervisor_graph! {
+//!     node USART, deps: [], restart: RestartPolicy::OnFailure, backoff: backoff(),
+//!         resources: [UART: UsartResources],
+//!         task: usart_worker;
+//!
+//!     // Стартует только после того, как USART сигнализировал готовность.
+//!     node APP, deps: [USART], restart: RestartPolicy::OnFailure, backoff: backoff(),
+//!         inbox: [EVENTS: LinkEvent; 8],
+//!         task: app_worker;
+//! }
+//!
+//! async fn app_worker(ctx: AppCtx<'_>) -> TaskExit {
+//!     // Определение автомата — в `domain` (см. crates-host/domain/examples/), здесь
+//!     // только прогон его в задаче.
+//!     let mut rt = AsyncTimedRuntime::<Link>::new(LinkId::Disconnected, LinkData::default());
+//!     rt.run(ctx.events).await; // не возвращается; отменяется дропом при shutdown
+//!     TaskExit::Completed
+//! }
+//!
+//! // в main(), после инициализации HAL:
+//! provide_uart(r.usart).expect("слот пуст до первого spawn_all");
+//! spawn_all(&spawner).expect("узлы свежие");
+//! ```
+//!
+//! # `watchdog` — мультиплексор задач в один аппаратный watchdog
+//!
+//! `supervisor` пользуется им внутри (блок `watchdog:` выше), а реализовать
+//! под свой МК нужно ровно один трейт — `HardwareWatchdog`. Часов крейт не
+//! держит вовсе: `now` он принимает параметром, и подаёт его туда сам граф
+//! (`embassy_time::Instant::now()`). Раньше здесь был второй трейт, `Clock`,
+//! и его убрали не ради краткости: параметр не требует ни impl'а, ни
+//! типажа, принимает любую шкалу времени (например всегда живой RTC/LPTIM —
+//! драйвер `embassy_time` в STOP/STANDBY встаёт, и watchdog слеп ровно
+//! тогда, когда МК может не проснуться), а прежний `core::time::Duration`
+//! стоил вызова `__aeabi_uldivmod` на каждой конверсии.
+//!
+//! Реализация привязана к железу, поэтому её место — `bsp` (туда же
+//! придётся перенести саму зависимость `watchdog` из `crates-cross/app/Cargo.toml`
+//! и добавить `embassy-time`, которого у `bsp` сейчас нет); здесь она
+//! показана рядом с графом только чтобы связка читалась целиком.
+//!
+//! Важное следствие: `Heartbeat::feed()` узел зовёт **явно**, из тела своей
+//! задачи, и только когда реально продвинулся. Автоматического «задача жива,
+//! раз её future опрашивают» здесь нет — иначе watchdog сторожил бы
+//! исполнитель, а не полезную работу.
+//!
+//! ```ignore
+//! use embassy_time::Duration;
+//!
+//! use embassy_stm32::wdg::IndependentWatchdog;
+//!
+//! struct Iwdg(IndependentWatchdog<'static, embassy_stm32::peripherals::IWDG>);
+//!
+//! impl watchdog::HardwareWatchdog for Iwdg {
+//!     fn feed(&mut self) {
+//!         self.0.pet();
+//!     }
+//!
+//!     fn trigger_reset(&mut self) -> ! {
+//!         // Перестаём кормить и ждём, пока IWDG сбросит МК.
+//!         loop {
+//!             cortex_m::asm::wfi();
+//!         }
+//!     }
+//! }
+//!
+//! // В графе: блок уровня графа плюс opt-in у каждого узла.
+//! supervisor_graph! {
+//!     watchdog: Iwdg, check_every: Duration::from_millis(100);
+//!
+//!     node APP, deps: [], restart: RestartPolicy::OnFailure, backoff: backoff(),
+//!         watchdog: Duration::from_secs(2),
+//!         task: app_worker;
+//! }
+//!
+//! async fn app_worker(ctx: AppCtx<'_>) -> TaskExit {
+//!     loop {
+//!         do_one_unit_of_work().await;
+//!         ctx.heartbeat.feed(); // только после реального прогресса
+//!     }
+//! }
+//!
+//! // в main(), после инициализации HAL и до spawn_all: граф объявил под
+//! // аппаратный watchdog пустой статик, заполнить его нужно ровно один раз
+//! // (второй `put` — паника: watchdog сеют один раз и назад не забирают).
+//! __supervisor_watchdog.put(Iwdg(IndependentWatchdog::new(p.IWDG, 2_000_000)));
+//! spawn_all(&spawner).expect("узлы свежие");
+//! ```
+//!
+//! # Стейтчарты сюда не входят
+//!
+//! `fsm` и `fsm-async` живут в `domain`, а не здесь: `fsm` вообще ни от чего
+//! не зависит, а `fsm-async` тянет только `embassy-sync`/`time`/`futures`,
+//! без `embassy-executor`. То есть определение автомата — чистая логика без
+//! привязки к железу, а `cross` лишь спавнит задачу, гоняющую `run().await`,
+//! и кормит её событиями через `inbox:` (см. `app_worker` выше).
+//!
+//! # defmt-транспорт для `release` без пробника: UART
+//!
+//! `main.rs` держит `defmt-rtt` дефолтным транспортом в обоих профилях —
+//! сырой шаблон не знает, какой конкретный USART/USB плата отведёт под лог
+//! без пробника (RTT его не даёт, отладочный пробник должен быть физически
+//! подключён). Ниже — паттерн на замену для `release`, когда `Board` начнёт
+//! отдавать реальную периферию. **При его подключении обязательно сделайте
+//! `use defmt_rtt as _;` в `main.rs` `#[cfg(debug_assertions)]`** (сейчас он
+//! безусловный): `#[global_logger]` резолвится линкером по имени символа
+//! (`_defmt_acquire` и т.п.), а не как rustc lang item, поэтому два активных
+//! разом дадут жёсткий `error: Linking globals named '_defmt_acquire':
+//! symbol multiply defined!`. Инвариант — ровно один активный
+//! `use <логгер> as _;` на сборку.
+//!
+//! **Готовых крейтов под это в шаблоне нет — все три проверенных отпали:**
+//!
+//! * `defmt-bbq` — держит `defmt@0.3.x` (не обновлялся с 2021) при
+//!   `defmt@1.1.0` у нас. Проверено вживую в другом проекте на этом же
+//!   стеке: рядом с `defmt-rtt` даёт ровно ту самую ошибку линковки выше.
+//! * `defmt-serial` — единственный turnkey-вариант под UART, отпадает по
+//!   той же причине: `defmt = "^0.3"` (проверено на актуальной 0.13.0,
+//!   публикация май 2026; апгрейда на `defmt@1.x` в issue-трекере не
+//!   видно — это не «скоро появится», а действующее ограничение).
+//! * `defmt-embassy-usbserial` — готовый `#[global_logger]` над USB CDC-ACM,
+//!   с `defmt@^1` совместим. Убран вместе с остальными заменёнными
+//!   зависимостями, и возвращать его не стоит по отдельной причине: он
+//!   требует `embassy-usb = "^0.5"`, из-за чего `embassy-usb` приходилось
+//!   держать запиненным на 0.5 вместо парной к текущей `embassy-stm32`
+//!   версии — поднять её нельзя, иначе в графе окажутся две несовместимые
+//!   копии `embassy-usb`.
+//!
+//! Раз все turnkey-варианты отпадают, паттерн приходится держать своим —
+//! благо это буквально то, чем был бы `defmt-bbq`/`defmt-serial`, только
+//! против актуального `defmt@1.1.0`. Grant/commit API `bbqueue` уже
+//! объяснён в `crates-cross/bsp/src/buffers.rs` (там — DMA-буфер, тут — очередь под
+//! лог); ниже — только то, что специфично именно для `#[global_logger]`:
+//!
+//! ```ignore
+//! use bbqueue::BBBuffer;
+//! use defmt::{Encoder, Logger};
+//!
+//! static QUEUE: BBBuffer<1024> = BBBuffer::new();
+//! static mut PRODUCER: Option<bbqueue::Producer<'static, 1024>> = None;
+//! static mut ENCODER: Encoder = Encoder::new();
+//!
+//! #[defmt::global_logger]
+//! struct UartLogger;
+//!
+//! unsafe impl Logger for UartLogger {
+//!     fn acquire() {
+//!         // критическая секция + флаг "уже захвачен" (см. AtomicBool в
+//!         // штатном примере defmt-rtt), затем ENCODER.start_frame(write)
+//!     }
+//!     unsafe fn flush() {
+//!         // не блокируемся — данные уже в очереди, drain-таск сам разберёт
+//!     }
+//!     unsafe fn release() {
+//!         // ENCODER.end_frame(write), снять флаг "захвачен"
+//!     }
+//!     unsafe fn write(bytes: &[u8]) {
+//!         // grant_max_remaining(bytes.len()) в PRODUCER, copy_from_slice, commit
+//!     }
+//! }
+//!
+//! // отдельная задача, только под release — DMA-запись consumer-половины
+//! // очереди в USART, аналогично crates-cross/bsp/src/buffers.rs:
+//! #[embassy_executor::task]
+//! async fn uart_drain_task(mut uart: embassy_stm32::usart::UartTx<'static, embassy_stm32::mode::Async>) {
+//!     let mut consumer = QUEUE.try_split().unwrap().1;
+//!     loop {
+//!         if let Ok(grant) = consumer.read() {
+//!             let len = grant.len();
+//!             let _ = uart.write(&grant).await;
+//!             grant.release(len);
+//!         }
+//!     }
+//! }
+//! ```
+//!
+//!
+{%- if ota == "true" %}
+//! # OTA: что делает шаблон и что остаётся вам
+//!
+//! Всё, что не зависит от канала доставки, уже написано и лежит в
+//! `bsp::ota` — запись образа в `DFU`, пометки для bootloader'а и
+//! подтверждение нового образа; `Board` отдаёт это полем `ota`. Читайте
+//! doc-комментарий того модуля: там же объяснено, почему без
+//! `mark_booted()` обновление живёт ровно один запуск.
+//!
+//! Вам остаётся канал — то, чего шаблон знать не может: USB CDC, UART,
+//! сеть, SD-карта, у каждого свой формат пакета и своя проверка целостности.
+//! Стыкуется он с готовой частью одной строкой в цикле приёма
+//! (`board.ota.write(offset, chunk)`), а сам приём естественно ложится на
+//! узел графа выше — с `resources:` под ручку транспорта и `inbox:` под
+//! команды «начать обновление» / «применить».
+//!
+{%- endif %}
+//!
+//! # PERSIST и PANIC: данные, переживающие сброс
+//!
+//! Если у чипа хватило RAM, генерация отрезала от её конца кусок и поделила на
+//! два региона: `PANIC` — под дамп `panic-persist` (им занят
+//! `#[panic_handler]` в `main.rs`, трогать не надо) и `PERSIST` — свободный,
+//! под что угодно своё. Оба живут в RAM, поэтому переживают программный сброс,
+//! но не пропадание питания.
+//!
+//! Адресуются они символами из `memory.x`, а не `link_section`-секцией, и это
+//! важное ограничение, а не стиль. Своя секция в конце RAM ломает `flip-link`
+//! (он уводит стек от переполнения в статические данные): тот считает занятую
+//! часть RAM по адресам секций, видит секцию у самой верхней границы, решает,
+//! что двигать стек некуда, и оставляет `_stack_start` в начале RAM. Прошивка
+//! после этого не доживает до первой строки лога — первый же push уходит ниже
+//! границы RAM, HardFault, LOCKUP. Абсолютные символы `flip-link` не смущают.
+//!
+//! ```ignore
+//! unsafe extern "C" {
+//!     static mut _persist_start: u8;
+//!     static mut _persist_end: u8;
+//! }
+//!
+//! /// Счётчик перезапусков, переживающий сброс.
+//! ///
+//! /// Первый в жизни платы старт ничем не отличается от любого другого: в RAM
+//! /// лежит то, что там оказалось при подаче питания. Поэтому рядом со
+//! /// значением — своя магия, ровно как это делает panic-persist со своим
+//! /// заголовком.
+//! const MAGIC: u32 = 0xB007_C0DE;
+//!
+//! fn bump_boot_count() -> u32 {
+//!     let base = &raw mut _persist_start as *mut u32;
+//!     // SAFETY: регион PERSIST отведён под это в memory.x, никто больше в
+//!     // него не пишет, и обращение однопоточное — до spawn_all.
+//!     unsafe {
+//!         let count = if base.read_volatile() == MAGIC {
+//!             base.add(1).read_volatile().wrapping_add(1)
+//!         } else {
+//!             base.write_volatile(MAGIC);
+//!             1
+//!         };
+//!         base.add(1).write_volatile(count);
+//!         count
+//!     }
+//! }
+//! ```
+//!
+//! Если фиксированный адрес не нужен (данные не должны пережить смену образа),
+//! проще взять штатную `.uninit` от `cortex-m-rt`: её `flip-link` понимает,
+//! `#[unsafe(link_section = ".uninit.MY")]` работает как обычно, а платой за
+//! удобство будет плавающий от сборки к сборке адрес.

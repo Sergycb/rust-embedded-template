@@ -26,7 +26,7 @@ skill'ом `rust-engineering` и не дублируются здесь. Это�
 
 - **`domain`** (корень репозитория) — вся бизнес-логика. `no_std`, не зависит от
   `embassy-executor`/`embassy-stm32`, тестируется на host (`cargo xtask test host`).
-- **`cross/`** — аппаратная прошивка STM32 (`bsp`, `app`, `boot`). Собирается под
+- **`crates-cross/`** — аппаратная прошивка STM32 (`bsp`, `app`, `boot`). Собирается под
   `thumbv7em-none-eabihf` (или другой ARM target), подключает `domain` как обычную
   path-зависимость.
 
@@ -43,14 +43,14 @@ supervisor-графы, watchdog). Вся остальная логика — в 
 
 Если сомневаетесь — смотрите прецедент (обоснование целиком в doc-комментарии, не
 повторяется здесь): `fsm`/`fsm-async` — раздел «Стейтчарты сюда не входят» в
-`cross/app/src/task_orchestration.rs`. Пограничный случай в ту же сторону — `watchdog`: сам
+`crates-cross/app/src/task_orchestration.rs`. Пограничный случай в ту же сторону — `watchdog`: сам
 по себе он чистая логика без единой зависимости, но объявлен в `cross`, потому что
 существует ради драйва аппаратного IWDG и без реализации его трейтов под конкретный
 МК бесполезен.
 
 ## Третий крейт: `chip-info` (справочник по чипу)
 
-`chip-info/` — хостовый инструмент, `cargo xtask pins [БЛОК|ПИН]`: выводы с
+`crates-host/chip-info/` — хостовый инструмент, `cargo xtask pins [БЛОК|ПИН]`: выводы с
 альтернативными функциями, DMA-каналы, источник тактирования и прерывания
 выбранного чипа. Данные — `stm32_metapac::metadata::METADATA`, тот же
 `stm32-data`, из которого `embassy-stm32` генерирует типы.
@@ -82,14 +82,14 @@ supervisor-графы, watchdog). Вся остальная логика — в 
    (`HANDLERS` в `chip-info`) сверена с `embassy-stm32` 0.6 и при её
    обновлении требует перечитывания; это подсказка, решает компилятор.
 
-   `cargo xtask pins --check` читает `cross/bsp/src/resources.rs` текстом
+   `cargo xtask pins --check` читает `crates-cross/bsp/src/resources.rs` текстом
    (`assign_resources!` — макрос, до раскрытия там токены, а не дерево) и
    ловит единственное, что не ловит компилятор: занятый отладочный порт
    (ненулевой код возврата) и выводы кварца/MCO (предупреждение).
 
-Смена чипа в существующем проекте требует правки двух мест: `cross/Cargo.toml`
-и `chip-info/Cargo.toml`. Расхождение не молчаливое — `chip-info` сверяет свою
-чип-фичу с `cross/Cargo.toml` и предупреждает.
+Смена чипа в существующем проекте требует правки двух мест: `crates-cross/Cargo.toml`
+и `crates-host/chip-info/Cargo.toml`. Расхождение не молчаливое — `chip-info` сверяет свою
+чип-фичу с `crates-cross/Cargo.toml` и предупреждает.
 
 ## Тактирование: дамп и контракт
 
@@ -115,7 +115,7 @@ supervisor-графы, watchdog). Вся остальная логика — в 
 ## Раздел настроек (`CONFIG`) и общий `Flash`
 
 Опциональный, спрашивается при генерации (`config` — второй вопрос того же
-рода, что `ota`). Выбран — в проект попадает `cross/bsp/src/config.rs`
+рода, что `ota`). Выбран — в проект попадает `crates-cross/bsp/src/config.rs`
 (`sequential-storage` поверх раздела `CONFIG`), и `Board` отдаёт поле
 `settings`; не выбран — файла нет вовсе, как и `ota.rs` в проектах без OTA.
 
@@ -191,11 +191,11 @@ supervisor-графы, watchdog). Вся остальная логика — в 
 2. **Крейты из личной библиотеки** ([rust-lib](https://github.com/Sergycb/rust-lib))
    объявляются в том workspace'е, где реально используются, а не в обоих сразу:
    `fsm`, `fsm-async`, `sync-request`, `typestate` — в корневом (для `domain`),
-   `supervisor` и `watchdog` — в `cross/Cargo.toml`. Дублировать объявление «на
+   `supervisor` и `watchdog` — в `crates-cross/Cargo.toml`. Дублировать объявление «на
    всякий случай» не нужно: `cross` получает первые четыре через `domain`.
    Git-зависимости не запинены на `rev`/`tag` — сгенерированный проект едет по
    `main`; если это станет проблемой, пинить надо оба манифеста разом.
-3. **Каждая новая библиотека в `domain` — с примером** в `domain/examples/*.rs`,
+3. **Каждая новая библиотека в `domain` — с примером** в `crates-host/domain/examples/*.rs`,
    реально компилируемым (`cargo run -p domain --example <name> --features log`;
    без явной фичи `log`/`defmt` голый `cargo build -p domain` не соберётся —
    `defmt-or-log` требует одну из них). Начинайте пример с doc-комментария `//!`:
@@ -204,8 +204,8 @@ supervisor-графы, watchdog). Вся остальная логика — в 
 4. **Каждая новая библиотека в `cross`, для которой ещё нет компилируемого
    примера** (обычно потому, что примеру нужна реальная периферия платы, а
    `Board` её пока не отдаёт) — документируется как doc-комментарий с ```` ```ignore ```` блоком
-   в `cross/app/src/task_orchestration.rs` (оркестрация) или
-   `cross/bsp/src/buffers.rs` (буферы/периферия), с тем же обоснованием «почему
+   в `crates-cross/app/src/task_orchestration.rs` (оркестрация) или
+   `crates-cross/bsp/src/buffers.rs` (буферы/периферия), с тем же обоснованием «почему
    именно эта библиотека».
 5. **Если библиотека не подошла** (не собирается на ARM/требует alloc без
    альтернатив/дублирует уже используемую) — не удалять молча: короткий комментарий
@@ -219,7 +219,7 @@ supervisor-графы, watchdog). Вся остальная логика — в 
 
 Исключение из правила 3 выше — тестовые утилиты, не библиотеки domain-логики
 (нет «почему X, а не Y» для сравнения, показывать нечего): `domain` —
-`test-log` в `[dev-dependencies]` (см. `domain/tests/logging.rs`):
+`test-log` в `[dev-dependencies]` (см. `crates-host/domain/tests/logging.rs`):
 автоинициализация `log` в host-тестах, тихо на успехе / видно на провале или
 `--nocapture`, цветной вывод из коробки (фича `color` в default) — отдельный
 pretty-логгер (`test-pretty-log`, `pretty_env_logger` и т.п.) не нужен;
@@ -230,10 +230,10 @@ pretty-логгер (`test-pretty-log`, `pretty_env_logger` и т.п.) не ну
 
 ## Feature-flag конвенции
 
-- `cross/app`, `cross/boot` и `cross/bsp` **не имеют фич `debug`/`release`,
+- `crates-cross/app`, `crates-cross/boot` и `crates-cross/bsp` **не имеют фич `debug`/`release`,
   `log` и `defmt`**: `log` в прошивке не используется вовсе, `defmt` включён
   безусловно в обоих профилях, транспорт — `defmt-rtt` в обоих. Фич у
-  `cross/bsp`/`cross/boot` нет вообще никаких: выбор одно-/двухъядерной
+  `crates-cross/bsp`/`crates-cross/boot` нет вообще никаких: выбор одно-/двухъядерной
   реализации делается Liquid-условием при генерации, а не Cargo-фичей (см.
   раздел про двухъядерные чипы ниже).
 - **У самой `embassy-stm32` фича `defmt` включена безусловно**, и это не
@@ -244,11 +244,11 @@ pretty-логгер (`test-pretty-log`, `pretty_env_logger` и т.п.) не ну
   логи embassy; flash это не занимает (строки defmt лежат в отдельной секции
   ELF).
 - **Паникёров в проекте два, и это не дублирование.** У `app` — свой
-  `#[panic_handler]` (`cross/app/src/main.rs`): он сохраняет причину в регион
+  `#[panic_handler]` (`crates-cross/app/src/main.rs`): он сохраняет причину в регион
   `PANIC` через `panic-persist` (фича `custom-panic-handler`, свой хендлер
   вместо её штатного) и печатает её же через defmt. У `boot` — `panic-probe`:
   дампа он не читает и региона `PANIC` не касается, так что тащить туда вторую
-  половину механики незачем. У `cross/target-tests` — паникёр самого
+  половину механики незачем. У `crates-cross/target-tests` — паникёр самого
   `embedded-test`, там паника это способ сообщить раннеру про упавший тест.
   Инвариант «ровно один `#[panic_handler]` на бинарник» — именно на бинарник,
   а не на workspace.
@@ -279,20 +279,20 @@ pretty-логгер (`test-pretty-log`, `pretty_env_logger` и т.п.) не ну
   жёсткий `error: Linking globals named '_defmt_acquire': symbol multiply
   defined!`. При правке `main.rs` держите инвариант «ровно один
   `use <логгер> as _;` активен на сборку».
-  **Осторожно с `[profile.dev]`/`[profile.release]` в `cross/Cargo.toml`**:
+  **Осторожно с `[profile.dev]`/`[profile.release]` в `crates-cross/Cargo.toml`**:
   `debug-assertions` там задан явно (ради `overflow-checks`) — если развилка
   по профилю появится, правка этого поля по несвязанной причине молча
   переключит и её, без предупреждения компилятора.
 - defmt-транспорт для `release` без пробника (UART) — не в реальном коде:
   сырой шаблон не знает, какую периферию конкретная плата отведёт под это, а
-  `Board` пока не разбит на отдельные ресурсы (см. `cross/bsp/src/lib.rs`).
+  `Board` пока не разбит на отдельные ресурсы (см. `crates-cross/bsp/src/lib.rs`).
   Паттерн и обоснование, почему все три turnkey-крейта отпали (`defmt-bbq` и
   `defmt-serial` держат `defmt@0.3.x` при `defmt@1.1.0` у нас,
   `defmt-embassy-usbserial` требует `embassy-usb ^0.5`) — doc-комментарий в
-  `cross/app/src/task_orchestration.rs`. Дефолт в обоих профилях реального
+  `crates-cross/app/src/task_orchestration.rs`. Дефолт в обоих профилях реального
   `main.rs` — `defmt-rtt`; при подключении паттерна не забыть сделать
   существующий `use defmt_rtt as _;` тоже `#[cfg(debug_assertions)]`.
-- `-Tdefmt.x` линкуется статически из `cross/.cargo/config.toml` (`rustflags`,
+- `-Tdefmt.x` линкуется статически из `crates-cross/.cargo/config.toml` (`rustflags`,
   рядом с `-Tlink.x`), не из `build.rs` — `defmt` используется в обоих профилях
   безусловно, в отличие от прежней схемы с `log`-only `release`, где это
   приходилось делать условно через `CARGO_FEATURE_DEFMT` в build-скрипте
@@ -351,7 +351,7 @@ cargo xtask test host-target   # хост управляет прошитым у
 вызову, а `probe-rs` в проекте всё равно обязателен.
 
 `cargo xtask panic` этому правилу не противоречит, хотя внутри и зовёт `probe-rs
-read`: руками пришлось бы сначала найти адрес региона `PANIC` в `cross/app/memory.x`,
+read`: руками пришлось бы сначала найти адрес региона `PANIC` в `crates-cross/app/memory.x`,
 потом знать формат `panic-persist` (магия `0x0FACADE0`, длина, байты) и собирать
 строку из hex-вывода. Команда делает ровно это — не удаляйте её как «ещё одну
 обёртку». То же и с `cargo xtask pins`: путь к манифесту `chip-info` относительный,
@@ -374,7 +374,7 @@ README, раздел «Bootloader»; не пытайтесь «исправит�
   крейты `rust-lib`), но принудить её нечем: CI-образы GitLab прибиты к
   `rust:1.96.0`, а на GitHub-раннере и локально берётся то, что установлено.
   Форматирование `cargo fmt` идёт на дефолтных настройках rustfmt.
-- **Джоб `kani` убран из обоих CI** — харнессы (`domain/src/kani_proofs.rs`)
+- **Джоб `kani` убран из обоих CI** — харнессы (`crates-host/domain/src/kani_proofs.rs`)
   оставлены, они под `cfg(kani)` и на обычные сборки не влияют. Причина
   подтверждена реальным прогоном: kani компилирует крейт вместе со ВСЕМИ
   зависимостями своим тулчейном (0.67.0 — `rustc 1.93.0-nightly`), а семь
@@ -382,7 +382,7 @@ README, раздел «Bootloader»; не пытайтесь «исправит�
   резолвить ещё до верификации (`rustc 1.93.0-nightly is not supported by the
   following packages`). Вернуть джоб можно, когда тулчейн kani дорастёт до 1.96
   (или когда `rust-version` в `rust-lib` опустится); запускать вручную —
-  `cd domain && cargo kani --features log`. Под Windows kani вообще не
+  `cd crates-host/domain && cargo kani --features log`. Под Windows kani вообще не
   собирается (`kani-verifier` использует `std::os::unix`), только Linux/macOS.
 
 Отдельно, НЕ ограничение шаблона, а свойство окружения, но знать надо:

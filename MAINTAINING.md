@@ -47,9 +47,9 @@ hook.
 Спрашиваются они строкой `yes`/`no` (тип `bool` не годится: `variable::get` в rhai
 читает только строки и падает с «Variable ota not a String» — проверено), а хук
 приводит ответ к `"true"`/`"false"`, на которые смотрят Liquid-условия. «Нет» —
-окончательное: для `ota` это один образ на весь flash, `cross/boot` и
-`cross/bsp/src/ota.rs` удаляются, даже если схема в чип помещается; для `config` —
-удаление `cross/bsp/src/config.rs`. «Да» в обоих случаях означает лишь «не возражаю»:
+окончательное: для `ota` это один образ на весь flash, `crates-cross/boot` и
+`crates-cross/bsp/src/ota.rs` удаляются, даже если схема в чип помещается; для `config` —
+удаление `crates-cross/bsp/src/config.rs`. «Да» в обоих случаях означает лишь «не возражаю»:
 решает всё равно раскладка, и на чипе с крупными секторами ответ будет тем же
 «нет», только с объяснением.
 
@@ -61,7 +61,7 @@ hook.
 Третий такой плейсхолдер — `signed` (подпись OTA-образа). Он ничего не считает, а
 только выключается сам: без OTA подписывать нечего, и «да» приводится к «нет» ещё до
 разбора раскладки; если схема не поместилась во flash — тоже, уже после. В шаблоне он
-управляет фичей `ed25519-salty` у `embassy-boot` и веткой в `cross/bsp/src/ota.rs`
+управляет фичей `ed25519-salty` у `embassy-boot` и веткой в `crates-cross/bsp/src/ota.rs`
 (`verify_and_mark_updated` вместо `mark_updated`).
 
 `--define chip_feature=...` сверяется со списком валидных чипов (`CHIPS.contains(suffix)`)
@@ -81,7 +81,7 @@ standalone-крейт в корне репозитория, НЕ
 член корневого `[workspace]` (свой `Cargo.toml` с пустым `[workspace]`) и НЕ часть
 шаблона: он инструмент обслуживания САМОГО РЕПОЗИТОРИЯ, запускается мейнтейнером вручную
 (`cargo run --manifest-path chip-data-gen/Cargo.toml`) при обновлении версии
-`embassy-stm32` в `cross/Cargo.toml` (обычный semver-пин на crates.io, сейчас `0.6.0` —
+`embassy-stm32` в `crates-cross/Cargo.toml` (обычный semver-пин на crates.io, сейчас `0.6.0` —
 не путать с git-зависимостями на `main` из rust-lib, см. правило 2 ниже) или локальной
 версии `probe-rs-tools`, и не
 должен попадать в проекты пользователей шаблона — отсюда `ignore = ["chip-data-gen"]` в
@@ -89,7 +89,7 @@ standalone-крейт в корне репозитория, НЕ
 скопировался бы и упал с "invalid syntax" на буквальном `{{chip_feature}}` в исходнике
 самого генератора; и без глоба `/**` — с ним cargo-generate директорию не распознаёт,
 нужно имя каталога как есть, тоже проверено эмпирически). Он не может быть частью
-`xtask/`, хотя тот и выглядит подходящим местом по названию — `xtask/` сам шаблонный
+`crates-host/xtask/`, хотя тот и выглядит подходящим местом по названию — `crates-host/xtask/` сам шаблонный
 крейт и копируется в проекты пользователей, а этому инструменту там не место. Логика
 `chip-data-gen`: чип-фичи `embassy-stm32` — из `cargo metadata` (полный список
 объявленных features пакета, не только резолвящихся для этого воркспейса); валидные
@@ -105,14 +105,14 @@ standalone-крейт в корне репозитория, НЕ
 Для этих ~60 двухъядерных чипов каскад дополнительно выставляет переменную `dual_core`
 (`"true"`/`"false"`, безусловно — без `--define`-override, см. `is_dual_core()` в конце
 `chip-select.rhai`). Она выбирает ветку **прямо при генерации**, Liquid-условием
-`{% if dual_core == "true" %}` в `cross/bsp/src/lib.rs` и `cross/boot/src/main.rs`: в
+`{% if dual_core == "true" %}` в `crates-cross/bsp/src/lib.rs` и `crates-cross/boot/src/main.rs`: в
 проект попадает ровно одна реализация `init_peripherals()` — под двухъядерный чип
 `embassy_stm32::init_primary(config, &SHARED_DATA)` (`SHARED_DATA` — локальная
 `static MaybeUninit<SharedData>`, требуемая сигнатурой, никуда не публикуется), под
 одноядерный обычный `init()`. Комментарий про AMP и option byte BCM4 тоже лежит внутри
 двухъядерной ветки и в одноядерный проект не попадает.
 
-Раньше здесь была Cargo-фича `dual-core` у `cross/bsp`/`cross/boot`, а в исходниках —
+Раньше здесь была Cargo-фича `dual-core` у `crates-cross/bsp`/`crates-cross/boot`, а в исходниках —
 обе реализации под `#[cfg(feature = ...)]`. **Фичи больше нет** (убрана по решению
 пользователя: в проект не должен попадать код для чужого класса чипа), не восстанавливать
 без запроса. Свойство «рассинхрон шумит» при этом сохранилось: `init_primary` не
@@ -143,7 +143,7 @@ standalone-крейт в корне репозитория, НЕ
 прошиваемый образ (свои `cpu`/`target`, свой `chip_feature` — второе ядро чипа) в рамках
 одной генерации, `SharedData` по одинаковому адресу в обоих `memory.x` (а не локальная,
 как сейчас), решение по оркестрации `cargo xtask flash`/`run` для двух образов и по OTA
-двух прошивок в `cross/boot` (сейчас рассчитан на одну). Это отдельная архитектурная
+двух прошивок в `crates-cross/boot` (сейчас рассчитан на одну). Это отдельная архитектурная
 задача, не входит в шаблон.
 
 Проверено ТОЛЬКО компиляцией (`cargo generate` → `cargo xtask build`/`lint cross` на
@@ -175,9 +175,9 @@ probe-rs есть более специфичные `STM32L151C6TxA`/`STM32L151C
 configuration. No Cargo feature to select one is enabled»), то есть сгенерированный
 проект не собирается вовсе. `select_memory_config` повторяет его предикаты по именам
 регионов (`BANK_1` без `BANK_2` → одобанковая) и предпочитает одобанковую: непрерывный
-`ACTIVE`, а read-while-write, ради которого нужна двухбанковая, `cross/boot` не
+`ACTIVE`, а read-while-write, ради которого нужна двухбанковая, `crates-cross/boot` не
 использует. Для одноконфигурационных чипов `bank_mode` — пустая строка, и `{% if %}` в
-`cross/Cargo.toml` фичу не выводит: лишняя фича так же фатальна («The 'single-bank'
+`crates-cross/Cargo.toml` фичу не выводит: лишняя фича так же фатальна («The 'single-bank'
 feature is not supported on this dual bank chip»).
 
 ### Раскладка памяти (`write_size`, `ota`, блок `MEMORY_LAYOUT`)
@@ -196,7 +196,7 @@ MemoryRegion { address, size, settings: Some(FlashSettings { erase_size, write_s
 есть запись и `write_size` не задан через `--define` — выставляет `write_size`/`ota` и
 пишет `memory.x` через `file::write` (во временную копию шаблона ДО рендера — то самое
 "the template folder", о котором предупреждает документация `file::write`, не в
-`cross/*/memory.x` этого репозитория).
+`crates-cross/*/memory.x` этого репозитория).
 
 **`page_size` в записи есть, а в `memory.x` его нет** — и это не забытая строка.
 `PAGE_SIZE` в терминах `embassy-boot` (максимальный сектор стирания чипа) нужен не
@@ -252,7 +252,7 @@ boot, потом app) затирал bootloader образом приложен�
 
 `PAGE_SIZE` здесь — **не** плейсхолдер `write_size`, а `max(ACTIVE::ERASE_SIZE,
 DFU::ERASE_SIZE)`, который `embassy-boot` вычисляет сам; обе партиции живут поверх
-цельного `Flash` (`cross/boot/src/main.rs`), у которого `NorFlash::ERASE_SIZE =
+цельного `Flash` (`crates-cross/boot/src/main.rs`), у которого `NorFlash::ERASE_SIZE =
 MAX_ERASE_SIZE` всего чипа. Плейсхолдер `write_size` — это const generic
 `BootLoader::prepare::<_,_,_,N>`, размер буфера подкачки: обязан делить `PAGE_SIZE`, быть
 кратным `NorFlash::WRITE_SIZE` и не меньше него — `NorFlash::WRITE_SIZE` чипа (4/8/32)
@@ -285,16 +285,16 @@ l476rg — Nucleo-L476RG). Теперь размер `BOOTLOADER_STATE` подб
 регионом с сектором 128 KiB — четыре страницы, валидной раскладки не существует ни при
 каком дележе. Для таких чипов (276 из 1479 — либо flash меньше резерва под bootloader,
 либо сектора слишком крупные) `memory.x` всё равно заполняется — одним
-образом на весь flash, — а `cross/boot` из проекта убирается: `members` в
-`cross/Cargo.toml` под `{% if ota == "true" %}`, `xtask` пропускает прошивку/линт boot
-(`has_bootloader()`), а сам каталог сносит `file::delete("cross/boot")` в хуке.
+образом на весь flash, — а `crates-cross/boot` из проекта убирается: `members` в
+`crates-cross/Cargo.toml` под `{% if ota == "true" %}`, `xtask` пропускает прошивку/линт boot
+(`has_bootloader()`), а сам каталог сносит `file::delete("crates-cross/boot")` в хуке.
 
 **Почему `file::delete`, а не `[conditional]` в `cargo-generate.toml`**: условия
 `[conditional]` вычисляются только по значениям `[placeholders]` и переменных,
 выставленных хуком через `variable::set`, НЕ видят — проверено эмпирически
 (`[conditional.'ota != "true"']` каталог не убирал, то же условие по `ci` работало).
 Порядок важен: после `file::delete` в этот каталог нельзя писать (`cargo generate` падает
-с `os error 3`), поэтому в ветке без OTA пишется только `cross/app/memory.x`.
+с `os error 3`), поэтому в ветке без OTA пишется только `crates-cross/app/memory.x`.
 
 `compute_memory_layout` возвращает `None` (и тогда `memory.x` остаётся плейсхолдером на
 ручное заполнение, а `ota` — `"true"`, чтобы bootloader из проекта не исчез) только когда
@@ -321,8 +321,8 @@ override — как и у `chip`/`cpu`/`target`: `--define write_size=...` от�
 
 ## Проверка изменений в шаблоне
 
-Репозиторий шаблона нельзя собрать как обычный проект: `cross/Cargo.toml`,
-`cross/.cargo/config.toml`, `cross/bsp/src/lib.rs` и `cross/boot/src/main.rs` содержат
+Репозиторий шаблона нельзя собрать как обычный проект: `crates-cross/Cargo.toml`,
+`crates-cross/.cargo/config.toml`, `crates-cross/bsp/src/lib.rs` и `crates-cross/boot/src/main.rs` содержат
 Liquid (`{{...}}` и `{% if %}`), а до рендера это ни валидный TOML, ни валидный Rust —
 rust-analyzer ругается на них прямо в репозитории, и так и должно быть.
 
@@ -370,7 +370,7 @@ fmt/clippy для `chip-info`.
 `cargo generate --path <каталог>` копирует каталог шаблона ЦЕЛИКОМ во временную
 папку, и только потом читает `cargo-generate.toml`. Значит `ignore = ["target", ...]`
 от копирования не спасает: он решает лишь, что попадёт в готовый проект. Всё, что
-лежит в репозитории, — включая оба `target/` (в корне и в `cross/`) с гигабайтами
+лежит в репозитории, — включая оба `target/` (в корне и в `crates-cross/`) с гигабайтами
 артефактов — копируется при каждой генерации из локального пути.
 
 Замерено на этом репозитории: генерация из каталога с 3 ГБ в `target/` — **169
@@ -397,21 +397,21 @@ fmt/clippy для `chip-info`.
 ### Lock-файлы шаблона
 
 Корневой `Cargo.lock` живёт сам: любая локальная сборка приводит его в соответствие с
-манифестами. А `cross/Cargo.lock` и `chip-info/Cargo.lock` — нет: в репозитории шаблона
+манифестами. А `crates-cross/Cargo.lock` и `crates-host/chip-info/Cargo.lock` — нет: в репозитории шаблона
 ни тот, ни другой не собирается вовсе (там Liquid), так что после правки
-`cross/*/Cargo.toml` или `chip-info/Cargo.toml` их надо обновлять руками. Способ — тот
+`crates-cross/*/Cargo.toml` или `crates-host/chip-info/Cargo.toml` их надо обновлять руками. Способ — тот
 же прогон:
 
 ```
 cargo run --manifest-path chip-data-gen/Cargo.toml --bin template-check -- --keep stm32f407ve
-cp "$TEMP/rust-embedded-template-check/tc-stm32f407ve/cross/Cargo.lock" cross/Cargo.lock
-cp "$TEMP/rust-embedded-template-check/tc-stm32f407ve/chip-info/Cargo.lock" chip-info/Cargo.lock
+cp "$TEMP/rust-embedded-template-check/tc-stm32f407ve/crates-cross/Cargo.lock" crates-cross/Cargo.lock
+cp "$TEMP/rust-embedded-template-check/tc-stm32f407ve/crates-host/chip-info/Cargo.lock" crates-host/chip-info/Cargo.lock
 ```
 
-`chip-info/Cargo.lock` от чипа не зависит (фичи в lock не записываются), так что
+`crates-host/chip-info/Cargo.lock` от чипа не зависит (фичи в lock не записываются), так что
 годится прогон под любую конфигурацию.
 
-**А вот `cross/Cargo.lock` зависит от ответов при генерации** — и это ограничение, а не
+**А вот `crates-cross/Cargo.lock` зависит от ответов при генерации** — и это ограничение, а не
 недосмотр. Он посчитан для варианта по умолчанию (с OTA, без раздела настроек); при
 `ota=no` из графа уходят `embassy-boot*`, при `config=yes` добавляются
 `sequential-storage`/`static_cell`, и закоммитированный lock перестаёт соответствовать
@@ -479,7 +479,7 @@ Rust-код генератора: гоняет реальный скрипт ч�
 исполняет сам цикл каскада). Второй из них проверяет разом четыре уже случавшиеся
 регрессии: `BOOTLOADER_STATE` с самого начала flash, одинаковый `memory.x` у app и boot
 (app затирал bootloader), регионы OTA в проекте, который собирается без bootloader'а, и
-незаполненный `cross/target-tests/memory.x` (каскад его когда-то не писал вовсе, и
+незаполненный `crates-cross/target-tests/memory.x` (каскад его когда-то не писал вовсе, и
 `cargo xtask test target` не линковался ни на одном чипе). В
 `--release` — секунды на оба полных прогона (в dev-профиле
 — единицы минут, интерпретация Rhai). Не в `cargo xtask lint`/CI (`chip-data-gen` не
@@ -493,11 +493,11 @@ Rust-код генератора: гоняет реальный скрипт ч�
 штампом в начале блока `CHIP LIST`:
 
 ```
-// Источник: embassy-stm32 0.6.0 (cross/Cargo.toml), probe-rs 0.31.0
+// Источник: embassy-stm32 0.6.0 (crates-cross/Cargo.toml), probe-rs 0.31.0
 ```
 
 Тест `generated_blocks_match_the_declared_embassy_version` сверяет штамп с версией,
-объявленной в `cross/Cargo.toml`, и падает, если они разошлись. Это не формальность:
+объявленной в `crates-cross/Cargo.toml`, и падает, если они разошлись. Это не формальность:
 версию поднимает dependabot/renovate, молча, а списки при этом остались бы от старой —
 расхождение вылезло бы уже у пользователя шаблона, при генерации. Увидели красный тест
 — перегенерируйте:
@@ -513,7 +513,7 @@ cargo run --manifest-path chip-data-gen/Cargo.toml
 **Осторожно с Liquid в манифестах.** Генератор резолвит зависимости через `cargo
 metadata`, а для этого снимает из временной копии все `{% if %}`-блоки
 (`strip_liquid`). Форму с управлением пробелами (`{%- if`) он раньше не понимал — и
-после того, как условие такого вида появилось в `cross/bsp/Cargo.toml`, генератор
+после того, как условие такого вида появилось в `crates-cross/bsp/Cargo.toml`, генератор
 перестал работать целиком, с невнятным «invalid key-value pair, expected key».
 Заметно это только при запуске самого генератора, то есть раз в обновление
 embassy-stm32, поэтому обе формы теперь под тестами

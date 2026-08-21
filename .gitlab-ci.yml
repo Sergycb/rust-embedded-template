@@ -11,7 +11,7 @@ variables:
     paths:
       - .cargo/registry
       - target
-      - cross/target
+      - crates-cross/target
 
 # Пайплайны по расписанию заведены ради renovate (см. джоб в конце файла) —
 # гонять на них сборку и тесты незачем.
@@ -39,8 +39,8 @@ host:test:
 # из rust-lib объявляют rust-version = 1.96, и cargo отказывается резолвить ещё
 # до верификации. Пока kani не догонит 1.96, джоб падал бы на каждом пайплайне,
 # тратя минуты на установку собственного тулчейна. Харнессы
-# (domain/src/kani_proofs.rs) остались — они под cfg(kani) и на обычные сборки
-# не влияют; запускать вручную: cd domain && cargo kani --features log.
+# (crates-host/domain/src/kani_proofs.rs) остались — они под cfg(kani) и на обычные сборки
+# не влияют; запускать вручную: cd crates-host/domain && cargo kani --features log.
 
 cross:build:
   stage: build
@@ -51,7 +51,7 @@ cross:build:
     - rustup target add {{target}}
     - cargo install flip-link --locked
   script:
-    - cargo fetch --locked --manifest-path cross/Cargo.toml
+    - cargo fetch --locked --manifest-path crates-cross/Cargo.toml
     - cargo xtask lint cross
     - cargo xtask build
 

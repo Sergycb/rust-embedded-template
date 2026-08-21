@@ -42,7 +42,7 @@ jobs:
       # Тесты на сам `chip-select.rhai`: гоняют его через движок rhai с
       # подменёнными `variable`/`file`, каждый — по всем 1479 чипам. Здесь же
       # проверка штампа версий (списки чипов собраны из той же версии
-      # embassy-stm32, что объявлена в cross/Cargo.toml) и юнит-тесты разбора
+      # embassy-stm32, что объявлена в crates-cross/Cargo.toml) и юнит-тесты разбора
       # метаданных. В `--release`, иначе интерпретация rhai растягивает прогон
       # с секунд до минут.
       - run: cargo test --manifest-path chip-data-gen/Cargo.toml --release

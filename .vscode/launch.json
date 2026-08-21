@@ -13,7 +13,7 @@
 			"coreConfigs": [
 				{
 					"coreIndex": 0,
-					"programBinary": "cross/target/{{target}}/debug/app"
+					"programBinary": "crates-cross/target/{{target}}/debug/app"
 				}
 			]
 		},
@@ -37,7 +37,7 @@
 			"coreConfigs": [
 				{
 					"coreIndex": 0,
-					"programBinary": "cross/target/{{target}}/debug/app"
+					"programBinary": "crates-cross/target/{{target}}/debug/app"
 				}
 			]
 		},
@@ -57,7 +57,7 @@
 			"coreConfigs": [
 				{
 					"coreIndex": 0,
-					"programBinary": "cross/target/{{target}}/release/app"
+					"programBinary": "crates-cross/target/{{target}}/release/app"
 				}
 			]
 		}

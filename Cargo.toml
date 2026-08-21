@@ -1,10 +1,10 @@
 [workspace]
 members = [
-	"domain",
-	"host-target-tests",
-	"domain/adapters",
-	"domain/ports",
-	"xtask",
+	"crates-host/domain",
+	"crates-host/host-target-tests",
+	"crates-host/domain/adapters",
+	"crates-host/domain/ports",
+	"crates-host/xtask",
 ]
 resolver = "3"
 
@@ -29,14 +29,14 @@ large_stack_arrays      = "warn"
 
 [workspace.lints.rust]
 # `cargo kani` определяет cfg(kani) само; вне kani-компилятора rustc его не
-# знает (см. domain/src/kani_proofs.rs, CI-job `kani`).
+# знает (см. crates-host/domain/src/kani_proofs.rs, CI-job `kani`).
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
 
 [workspace.dependencies]
 # Крейты самого проекта: порты/адаптеры domain объявлены здесь, чтобы версия
 # и путь были в одном месте, как у внешних зависимостей.
-ports               = { path = "domain/ports" }
-adapters            = { path = "domain/adapters" }
+ports               = { path = "crates-host/domain/ports" }
+adapters            = { path = "crates-host/domain/adapters" }
 thiserror           = { version = "2.0.18", default-features = false }
 fixed               = { version = "1.31.0" }
 portable-atomic     = { version = "1.13.1" }
@@ -55,7 +55,7 @@ sync_wrapper          = { version = "1.0.2" }
   # компилируется вообще, независимо от того, какую структуру из крейта
   # реально использует код (весь модуль собирается безусловно, фичей не
   # спрятан). Обнаружено сборкой cross под STM32G071RB. Крейт был подключён
-  # только ради примера (domain/examples/intrusive_collections_wait_list.rs,
+  # только ради примера (crates-host/domain/examples/intrusive_collections_wait_list.rs,
   # удалён вместе с этой записью), в реальном коде domain не использовался —
   # менять было нечего на замену.
 miniconf              = { version = "0.21.0", default-features = false, features = [
@@ -107,7 +107,7 @@ test-log             = { version = "0.2.21" }
 #   `no_std` по-настоящему, поэтому объявлен обычной зависимостью.
 #
 # Крейты `supervisor` и `watchdog` из той же библиотеки — не здесь, а в
-# `cross/Cargo.toml`: первый спавнит `#[embassy_executor::task]`, второй
+# `crates-cross/Cargo.toml`: первый спавнит `#[embassy_executor::task]`, второй
 # драйвит аппаратный IWDG.
 fsm          = { git = "https://github.com/Sergycb/rust-lib.git" }
 fsm-async    = { git = "https://github.com/Sergycb/rust-lib.git" }

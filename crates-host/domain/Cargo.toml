@@ -1,0 +1,110 @@
+[package]
+name = "domain"
+version.workspace      = true
+edition.workspace      = true
+license.workspace      = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+# Хост-дефолт: без одной из фич `log`/`defmt` не собирается `defmt-or-log`, и
+# первое же `cargo build`/`cargo test` в свежесгенерированном проекте (и
+# rust-analyzer в IDE) падало с compile_error из чужого крейта. В прошивку
+# `log` при этом не попадает: crates-cross/Cargo.toml подключает domain с
+# `default-features = false, features = ["defmt"]`.
+default = ["log"]
+defmt = [
+	"dep:defmt",
+	"defmt-or-log/defmt",
+	"embassy-boot/defmt",
+	"embassy-embedded-hal/defmt",
+	"embassy-futures/defmt",
+	"embassy-sync/defmt",
+	"embassy-time/defmt",
+	"fixed/defmt",
+	"heapless/defmt"
+]
+log = [
+	"dep:log",
+	"defmt-or-log/log",
+	"embassy-boot/log",
+	"embassy-time/log",
+	"embassy-sync/log",
+	"embassy-futures/log",
+]
+std = [
+	"fixed/std",
+	"zerocopy/std",
+	"embassy-sync/std",
+	"thiserror/std",
+	"derive_more/std",
+	"bon/std",
+	"portable-atomic/std",
+	"embassy-time/std",
+	"log?/std"
+
+]
+
+[dependencies]
+thiserror = { workspace = true, default-features = false }
+fixed = { workspace = true }
+portable-atomic = { workspace = true }
+type-state-builder = { workspace = true }
+typestate = { workspace = true }
+mitsein = { workspace = true }
+fsm = { workspace = true }
+fsm-async = { workspace = true }
+futures-concurrency = { workspace = true }
+aselect = { workspace = true }
+sync_wrapper = { workspace = true }
+sync-request = { workspace = true }
+miniconf = { workspace = true }
+zerocopy = { workspace = true }
+itertools = { workspace = true, default-features = false }
+cfg-if = { workspace = true }
+document-features = { workspace = true }
+derive_more = { workspace = true, default-features = false, features = ["full"] }
+static_cell = { workspace = true }
+array-macro = { workspace = true }
+heapless = { workspace = true }
+bon = { workspace = true, default-features = false }
+embassy-futures = { workspace = true }
+embassy-embedded-hal = { workspace = true, features = ["time"] }
+embassy-sync = { workspace = true }
+embassy-time = { workspace = true }
+embassy-boot = { workspace = true }
+defmt-or-log = { workspace = true }
+log = { workspace = true, optional = true }
+defmt = { workspace = true, optional = true }
+
+# Cortex-M0/M0+ (ARMv6-M — STM32 C0/F0/G0/L0 и CM0+-ядра WB/WL) не имеет
+# аппаратного compare-and-swap, и `portable-atomic` на таких целях отказывается
+# собирать `compare_exchange`, пока ему не сказали, чем его эмулировать. Фича
+# `critical-section` — тот самый ответ; реализацию критической секции даёт
+# `cortex-m` с `critical-section-single-core`, она включена в crates-cross/Cargo.toml.
+#
+# Секция именно здесь, а не в крейтах `cross`: фичи резолвятся отдельно для
+# каждой цели сборки, а `domain` — общий знаменатель всех трёх (app, bsp,
+# target-tests), поэтому одного объявления хватает на весь граф. Само
+# ограничение всплывает не в `domain`, а в `static_cell` (он тоже построен на
+# `portable-atomic`) — но чинится в одном месте для обоих.
+[target.thumbv6m-none-eabi.dependencies]
+portable-atomic = { workspace = true, features = ["critical-section"] }
+
+[dev-dependencies]
+critical-section = { workspace = true, features = ["std"] }
+futures = { workspace = true }
+# `Stream`-реализация у aselect — только под фичей "futures", которую
+# [dependencies] отключает (default-features = false, no_std-safe). Для
+# host-примера включаем её здесь же (не влияет на сборку lib для железа —
+# dev-dependencies не участвуют в этом графе).
+aselect = { workspace = true, features = ["futures"] }
+embassy-time = { workspace = true, features = ["generic-queue-8", "std"] }
+embedded-hal-mock = { workspace = true }
+mockall = { workspace = true }
+proptest = { workspace = true }
+rstest = { workspace = true }
+tokio = { workspace = true }
+test-log = { workspace = true }

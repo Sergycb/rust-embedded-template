@@ -95,7 +95,7 @@
 			"type": "shell",
 			"command": "cargo",
 			"args": ["build"],
-			"options": { "cwd": "${workspaceFolder}/cross/app" },
+			"options": { "cwd": "${workspaceFolder}/crates-cross/app" },
 			"problemMatcher": ["$rustc"]
 		},
 		{
@@ -103,7 +103,7 @@
 			"type": "shell",
 			"command": "cargo",
 			"args": ["build", "--release"],
-			"options": { "cwd": "${workspaceFolder}/cross/app" },
+			"options": { "cwd": "${workspaceFolder}/crates-cross/app" },
 			"problemMatcher": ["$rustc"]
 		}
 	],

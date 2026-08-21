@@ -9,7 +9,7 @@
 //
 // Все четыре сгенерированных блока ниже перегенерируются:
 //   cargo run --manifest-path chip-data-gen/Cargo.toml
-// при обновлении версии embassy-stm32 в cross/Cargo.toml (сейчас "0.6.0",
+// при обновлении версии embassy-stm32 в crates-cross/Cargo.toml (сейчас "0.6.0",
 // обычный semver-пин на crates.io, а не git-зависимость) или локально
 // установленной версии probe-rs-tools.
 
@@ -27,15 +27,15 @@ fn family_table() {
     //
     // ОСОЗНАННОЕ ОГРАНИЧЕНИЕ (не забытая деталь, зафиксировано по решению
     // пользователя): для выбранного суффикса каскад выставляет переменную
-    // `dual_core` (см. is_dual_core() и конец скрипта), которую cross/bsp и
-    // cross/boot используют, чтобы вызвать `embassy_stm32::init_primary()`
+    // `dual_core` (см. is_dual_core() и конец скрипта), которую crates-cross/bsp и
+    // crates-cross/boot используют, чтобы вызвать `embassy_stm32::init_primary()`
     // вместо недоступного на dual-core `init()` — сгенерированный `cross`
     // собирается. Но код пишется только под ОДНО (то, что выбрано в
     // каскаде) ядро: второй образ шаблон не генерирует, взаимодействие с
     // фактическим вторым ядром не оркеструется. Полноценная
     // symmetric/asymmetric AMP-поддержка (второй независимый образ,
     // синхронизация через `SharedData` на реальном втором адресе,
-    // раздельная OTA в cross/boot) — отдельная архитектурная задача вне
+    // раздельная OTA в crates-cross/boot) — отдельная архитектурная задача вне
     // шаблона, не сделана без отдельного запроса пользователя.
     //
     // ВАЖНО для STM32H745/747/755/757 (не относится к STM32WL54/55, см.
@@ -131,7 +131,7 @@ let suffix = "";
 // каскаду ниже — поэтому объявлен на верхнем уровне скрипта, а не внутри
 // одной из веток.
 // BEGIN GENERATED CHIP LIST (1479 шт., cargo run --manifest-path chip-data-gen/Cargo.toml)
-// Источник: embassy-stm32 0.6.0 (cross/Cargo.toml), probe-rs 0.31.0
+// Источник: embassy-stm32 0.6.0 (crates-cross/Cargo.toml), probe-rs 0.31.0
 const CHIPS = [
     "c011d6",
     "c011f4",
@@ -1665,7 +1665,7 @@ const PACKAGE_CHOICES = #{
 // "single-bank"/"dual-bank" и без неё паникует ("Chip supports single and dual
 // bank configuration. No Cargo feature to select one is enabled"), то есть
 // проект не собирается вовсе. Для остальных чипов такой фичи нет — хук
-// подставляет пустую строку, и {% if %} в cross/Cargo.toml её не выводит.
+// подставляет пустую строку, и {% if %} в crates-cross/Cargo.toml её не выводит.
 // BEGIN GENERATED BANK MODE (194 шт., cargo run --manifest-path chip-data-gen/Cargo.toml)
 const BANK_MODE = #{
     "f427ag": "single-bank",
@@ -1869,9 +1869,9 @@ const BANK_MODE = #{
 // (реальные границы секторов чипа), не гадание — см. chip-data-gen/src/main.rs,
 // compute_memory_layout(). У каждой записи есть "ota":
 //   "true"  — OTA-схема embassy-boot помещается: есть BOOTLOADER/ACTIVE/DFU/
-//             BOOTLOADER_STATE, cross/boot собирается и прошивается;
+//             BOOTLOADER_STATE, crates-cross/boot собирается и прошивается;
 //   "false" — не помещается (слишком мелкий flash или слишком крупные сектора,
-//             причина в "note"): один образ на весь flash, cross/boot из
+//             причина в "note"): один образ на весь flash, crates-cross/boot из
 //             сборки исключается.
 // Отсутствие ключа для чипа — не ошибка: считать было не из чего (нет
 // непрерывной flash/RAM-цепочки от базового адреса), memory.x остаётся
@@ -49222,7 +49222,7 @@ if !variable::is_set("cpu") {
 if !variable::is_set("target") {
     variable::set("target", family[1]);
 }
-// Читается из cross/bsp/Cargo.toml и cross/boot/Cargo.toml (условно
+// Читается из crates-cross/bsp/Cargo.toml и crates-cross/boot/Cargo.toml (условно
 // включает фичу "dual-core" в default) — см. Board::init()/main() там же.
 // Без переопределения через --define (в отличие от chip/cpu/target/
 // write_size): значение полностью выводится из chip_feature, легитимной
@@ -49250,7 +49250,7 @@ if variable::is_set("ota") {
 }
 
 if !wants_ota {
-    print("OTA отключён по вашему выбору: один образ на весь flash, cross/boot в проект не входит");
+    print("OTA отключён по вашему выбору: один образ на весь flash, crates-cross/boot в проект не входит");
 }
 
 // Раздел под настройки — вопрос того же рода, что и про OTA, и с той же
@@ -49290,8 +49290,8 @@ if wants_signed && !wants_ota {
 if variable::is_set("write_size") {
     variable::set("ota", if wants_ota { "true" } else { "false" });
     if !wants_ota {
-        file::delete("cross/boot");
-        file::delete("cross/bsp/src/ota.rs");
+        file::delete("crates-cross/boot");
+        file::delete("crates-cross/bsp/src/ota.rs");
     }
     // Раздел настроек живёт по границам из memory.x, а его тут пишет
     // пользователь — посчитать за него, где начинается CONFIG, нельзя.
@@ -49300,7 +49300,7 @@ if variable::is_set("write_size") {
         print("Раздел настроек не выделен: memory.x вы заполняете сами (задан write_size)");
         print("  добавьте регион CONFIG и символы __config_start/__config_end вручную");
     }
-    file::delete("cross/bsp/src/config.rs");
+    file::delete("crates-cross/bsp/src/config.rs");
     variable::set("signed", if wants_signed { "true" } else { "false" });
     // Размер страницы стирания знает только раскладка, а её тут пишет
     // пользователь — угадывать нельзя. Пустая строка означает «неизвестен»:
@@ -49313,15 +49313,15 @@ if variable::is_set("write_size") {
     // Считать было не из чего (нет непрерывной flash/RAM-цепочки от базового
     // адреса). memory.x остаётся плейсхолдером, но write_size всё равно
     // должен быть хоть каким-то значением: без него `{{write_size}}` в
-    // cross/boot/src/main.rs не подставится вовсе.
+    // crates-cross/boot/src/main.rs не подставится вовсе.
     print("memory.x: для " + suffix + " раскладка не считается, заполните memory.x вручную");
     variable::set("write_size", "2048");
     // Пусто — «размер страницы неизвестен», см. ветку выше.
     variable::set("page_size", "");
     variable::set("ota", if wants_ota { "true" } else { "false" });
     if !wants_ota {
-        file::delete("cross/boot");
-        file::delete("cross/bsp/src/ota.rs");
+        file::delete("crates-cross/boot");
+        file::delete("crates-cross/bsp/src/ota.rs");
     }
     // По той же причине, что и веткой выше: границы раздела берутся из
     // memory.x, а его тут никто не посчитал.
@@ -49329,7 +49329,7 @@ if variable::is_set("write_size") {
     if wants_config {
         print("Раздел настроек не выделен: раскладка для этого чипа не считается");
     }
-    file::delete("cross/bsp/src/config.rs");
+    file::delete("crates-cross/bsp/src/config.rs");
     variable::set("signed", if wants_signed { "true" } else { "false" });
 } else {
     let m = MEMORY_LAYOUT[suffix];
@@ -49374,7 +49374,7 @@ if variable::is_set("write_size") {
     variable::set("config", if config { "true" } else { "false" });
     variable::set("signed", if signed { "true" } else { "false" });
     if !config {
-        file::delete("cross/bsp/src/config.rs");
+        file::delete("crates-cross/bsp/src/config.rs");
     }
 
     // База flash одна на оба режима: и `__bootloader_*`, и `__config_*`
@@ -49387,7 +49387,7 @@ if variable::is_set("write_size") {
         config_region.push("    CONFIG            (rx)  : ORIGIN = " + m["config_origin"] + ", LENGTH = " + m["config_length"]);
         config_section = [
             "",
-            "/* Раздел настроек (cross/bsp/src/config.rs, sequential-storage). */",
+            "/* Раздел настроек (crates-cross/bsp/src/config.rs, sequential-storage). */",
             "/* Смещения от базы flash: embassy-stm32 адресует flash от неё. */",
             "__config_start = ORIGIN(CONFIG) - " + flash_base + ";",
             "__config_end   = ORIGIN(CONFIG) + LENGTH(CONFIG) - " + flash_base + ";",
@@ -49445,7 +49445,7 @@ if variable::is_set("write_size") {
         // потом app) затирал bootloader образом приложения.
         let app = [
             "/* Сгенерировано chip-select.rhai: приложение линкуется в ACTIVE, */",
-            "/* с базы flash стартует bootloader (cross/boot). */",
+            "/* с базы flash стартует bootloader (crates-cross/boot). */",
             "",
             "MEMORY {",
             "    FLASH             (rx)  : ORIGIN = " + m[key + "active_origin"] + ", LENGTH = " + m[key + "active_length"],
@@ -49467,12 +49467,12 @@ if variable::is_set("write_size") {
         app.push("__bootloader_dfu_end   = ORIGIN(DFU) + LENGTH(DFU) - " + base + ";");
         app += config_section;
         app += persist_section;
-        file::write("cross/app/memory.x", app);
-        // Тесты на устройстве (cross/target-tests) линкуются туда же, куда
+        file::write("crates-cross/app/memory.x", app);
+        // Тесты на устройстве (crates-cross/target-tests) линкуются туда же, куда
         // приложение: probe-rs заливает тестовый образ на место app, и после
         // сброса в него прыгает тот же bootloader. Своей раскладки у них нет —
         // с базы flash тестовый образ затирал бы bootloader.
-        file::write("cross/target-tests/memory.x", app);
+        file::write("crates-cross/target-tests/memory.x", app);
 
         // FLASH у boot — только его собственная зона, а не весь чип: тогда
         // разросшийся bootloader ловит линкер, а не молчаливое наложение на
@@ -49500,11 +49500,11 @@ if variable::is_set("write_size") {
         boot.push("__bootloader_dfu_start = ORIGIN(DFU) - " + base + ";");
         boot.push("__bootloader_dfu_end   = ORIGIN(DFU) + LENGTH(DFU) - " + base + ";");
         boot += persist_section;
-        file::write("cross/boot/memory.x", boot);
+        file::write("crates-cross/boot/memory.x", boot);
     } else {
         // OTA-схема embassy-boot в этот чип не помещается — почему именно,
         // сказано в "note" (посчитано chip-data-gen по реальным секторам).
-        // Проект собирается одним образом на весь flash, cross/boot в него не
+        // Проект собирается одним образом на весь flash, crates-cross/boot в него не
         // попадает вовсе (см. [conditional] в cargo-generate.toml).
         // Причина у отказа две: либо схема не помещается (тогда её объясняет
         // "note" из MEMORY_LAYOUT), либо от неё отказались при генерации —
@@ -49522,7 +49522,7 @@ if variable::is_set("write_size") {
             if !ota_explained {
                 print("OTA отключён для " + suffix + ": " + reason);
             }
-            print("  собирается один образ на весь flash, cross/boot в проект не входит");
+            print("  собирается один образ на весь flash, crates-cross/boot в проект не входит");
         }
         // Каталог убирается здесь, а не через [conditional] в
         // cargo-generate.toml: условия там вычисляются по значениям
@@ -49530,17 +49530,17 @@ if variable::is_set("write_size") {
         // (проверено эмпирически — с `[conditional.'ota != "true"']` каталог
         // оставался на месте, а то же условие по `ci` работало). Удаление
         // идёт по временной копии шаблона, до рендера — как и file::write.
-        file::delete("cross/boot");
+        file::delete("crates-cross/boot");
         // Вместе с bootloader'ом уходит и работа с разделом DFU: без OTA
         // раздела нет, а символы `__bootloader_dfu_*`, на которые опирается
         // embassy-boot, некому определить.
-        file::delete("cross/bsp/src/ota.rs");
+        file::delete("crates-cross/bsp/src/ota.rs");
 
         // FLASH берётся по тому же ключу: с разделом настроек приложению
         // достаётся не весь чип, а flash минус две последние страницы.
         let single = [
             "/* Сгенерировано chip-select.rhai: один образ на весь flash. */",
-            "/* OTA (cross/boot) не подключён: " + reason + ". */",
+            "/* OTA (crates-cross/boot) не подключён: " + reason + ". */",
             "",
             "MEMORY {",
             "    FLASH             (rx)  : ORIGIN = " + m["flash_origin"] + ", LENGTH = " + m[key + "flash_length"],
@@ -49552,7 +49552,7 @@ if variable::is_set("write_size") {
         single += persist_section;
         // Boot удалён строкой выше, писать в него нечего; target-tests получают
         // ту же раскладку, что и app (см. ветку с OTA выше).
-        file::write("cross/app/memory.x", single);
-        file::write("cross/target-tests/memory.x", single);
+        file::write("crates-cross/app/memory.x", single);
+        file::write("crates-cross/target-tests/memory.x", single);
     }
 }

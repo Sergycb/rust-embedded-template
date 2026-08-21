@@ -31,9 +31,9 @@ cargo xtask flash        # прошить плату
 
 | Что | Где | Зачем |
 |---|---|---|
-| Распиновка платы | `cross/bsp/src/resources.rs` | `assign_resources!` разложит `Peripherals` по именованным группам, и задачи начнут получать конкретные пины, а не весь чип разом |
-| Граф задач | `cross/app/src/task_orchestration.rs` | `supervisor_graph!`: порядок старта, рестарты с backoff, watchdog, обмен между задачами |
-| Логика | `domain/` | всё, что не про регистры: автоматы, протоколы, конфигурация — тестируется на хосте |
+| Распиновка платы | `crates-cross/bsp/src/resources.rs` | `assign_resources!` разложит `Peripherals` по именованным группам, и задачи начнут получать конкретные пины, а не весь чип разом |
+| Граф задач | `crates-cross/app/src/task_orchestration.rs` | `supervisor_graph!`: порядок старта, рестарты с backoff, watchdog, обмен между задачами |
+| Логика | `crates-host/domain/` | всё, что не про регистры: автоматы, протоколы, конфигурация — тестируется на хосте |
 
 Каждый из этих файлов уже содержит рабочие примеры в doc-комментариях — с объяснением,
 почему выбрана именно эта библиотека, а не соседняя.
@@ -43,22 +43,26 @@ cargo xtask flash        # прошить плату
 Два основных Cargo workspace, потому что `cross` собирается под другой target и не может
 делить `Cargo.lock`/профили с host-ориентированной частью. Третий, `chip-info`, стоит
 особняком по другой причине — чип в нём выбирается Cargo-фичей, подставляемой при
-генерации (см. ниже, «Команды `xtask`»):
+генерации (см. ниже, «Команды `xtask`»).
+
+Дальше по тексту `domain` и `cross` — это имена крейта и воркспейса, а `crates-host/` и
+`crates-cross/` — каталоги, в которых они лежат:
 
 ```
-├── domain/            # Бизнес-логика, no_std. Корневой workspace.
-│   ├── adapters/       # Реализации портов
-│   └── ports/          # Трейты-границы домена
-├── host-target-tests/  # Тесты, гоняющие хост против прошитого устройства
-├── xtask/              # Единая точка входа для сборки/тестов/флешинга
-├── chip-info/          # Справочник по чипу (`cargo xtask pins`), свой workspace
-├── Cargo.toml           # Корневой workspace: domain, adapters, ports, xtask, host-target-tests
+├── crates-host/          # Всё, что собирается под хост
+│   ├── domain/            # Бизнес-логика, no_std. Корневой workspace.
+│   │   ├── adapters/       # Реализации портов
+│   │   └── ports/          # Трейты-границы домена
+│   ├── host-target-tests/ # Тесты, гоняющие хост против прошитого устройства
+│   ├── xtask/             # Единая точка входа для сборки/тестов/флешинга
+│   └── chip-info/         # Справочник по чипу (`cargo xtask pins`), свой workspace
+├── Cargo.toml            # Корневой workspace: domain, adapters, ports, xtask, host-target-tests
 │
-└── cross/               # Отдельный workspace, aппаратная часть (thumbv7em-none-eabihf и т.п.)
-    ├── app/              # Основная прошивка (bin)
-    ├── boot/             # Bootloader (bin, embassy-boot)
+└── crates-cross/         # Отдельный workspace, аппаратная часть (thumbv7em-none-eabihf и т.п.)
+    ├── app/               # Основная прошивка (bin)
+    ├── boot/              # Bootloader (bin, embassy-boot)
     ├── bsp/               # Board support package (lib)
-    ├── target-tests/     # Тесты, исполняемые прямо на устройстве
+    ├── target-tests/      # Тесты, исполняемые прямо на устройстве
     └── Cargo.toml
 ```
 
@@ -94,30 +98,30 @@ git-зависимость; они заменили сторонние анал�
 
 | Крейт | Для чего | Пример |
 |---|---|---|
-| `fsm` | Иерархический автомат как **компонент** внутри произвольной задачи: владелец сам подаёт события через `dispatch()`. Синхронный, без исполнителя и таймеров. | `domain/examples/fsm_light_machine.rs` |
-| `fsm-async` | Тот же `fsm::Machine`, но владеющий **своей задачей целиком**: `run()` сам ждёт события из `embassy_sync`-канала и взводит таймауты состояний по `embassy_time`. Не другая модель состояний, а другой владелец цикла. | `domain/examples/fsm_async_connection_chart.rs` |
-| `typestate` | Compile-time автомат: недопустимый переход состояния — ошибка компиляции, а не runtime-проверка (в отличие от `fsm`/`fsm-async`). Настоящий `no_std`, поэтому обычная зависимость, а не только host/dev. | `domain/examples/typestate_connection.rs` |
-| `type-state-builder` | Typestate-builder: `build()` доступен только когда выставлены все обязательные поля — компилятор ловит недостающее поле, а не рантайм. Не пересекается с `typestate` (тот про переходы поведения, этот — про конструирование). | `domain/examples/type_state_builder_config.rs` |
-| `mitsein` | `NonEmpty`-обёртка над `heapless::Vec` — непустота как инвариант типа, а не проверка `Option`/`is_empty()` в каждом месте. Дополняет `heapless`, не конкурирует. | `domain/examples/mitsein_nonempty_buffer.rs` |
-| `futures-concurrency` | `race!`/`merge` для потоков поверх `Future` — то, чего нет в `embassy_futures::select`/`select3`/`select4` (только 2-4 ветки, без `race`/`merge` для потоков). Alloc-free. | `domain/examples/futures_concurrency_race.rs` |
-| `aselect` | Альтернатива `select!`, где непроигравшие ветки гарантированно НЕ отменяются на середине (cancellation-safety) — в отличие от tokio/embassy `select!`. `no_std`, zero-alloc, реализует `Stream`. | `domain/examples/aselect_stream.rs` |
-| `sync_wrapper` | Заставляет компилятор считать `!Sync`-тип `Sync`, когда эксклюзивный доступ гарантирован вручную — нужен, если `Future` должен быть `Sync`, а внутри держит не-`Sync` тип (`RefCell`) в многопоточном/multi-core сценарии. | `domain/examples/sync_wrapper_example.rs` |
-| `sync-request` | Межзадачный (не host↔target!) request/response поверх `embassy_sync`, без зависимости от `embassy-executor`. Отменённый (по таймауту, проигравшей веткой `select!`) запрос помечен номером поколения и не «протечёт» ответом в следующий. | `domain/examples/sync_request_service.rs` |
-| `miniconf` | Runtime-конфигурация устройства: адресуемое дерево настроек, доступ к листьям по JSON-пути, без аллокатора. | `domain/examples/miniconf_settings.rs` |
-| `test-log` | Автоинициализация `log` в host-тестах (тихо на успехе, видно на провале/`--nocapture`), цветной вывод из коробки — без ручного `env_logger::init()` в каждом тесте. | `domain/tests/logging.rs` |
+| `fsm` | Иерархический автомат как **компонент** внутри произвольной задачи: владелец сам подаёт события через `dispatch()`. Синхронный, без исполнителя и таймеров. | `crates-host/domain/examples/fsm_light_machine.rs` |
+| `fsm-async` | Тот же `fsm::Machine`, но владеющий **своей задачей целиком**: `run()` сам ждёт события из `embassy_sync`-канала и взводит таймауты состояний по `embassy_time`. Не другая модель состояний, а другой владелец цикла. | `crates-host/domain/examples/fsm_async_connection_chart.rs` |
+| `typestate` | Compile-time автомат: недопустимый переход состояния — ошибка компиляции, а не runtime-проверка (в отличие от `fsm`/`fsm-async`). Настоящий `no_std`, поэтому обычная зависимость, а не только host/dev. | `crates-host/domain/examples/typestate_connection.rs` |
+| `type-state-builder` | Typestate-builder: `build()` доступен только когда выставлены все обязательные поля — компилятор ловит недостающее поле, а не рантайм. Не пересекается с `typestate` (тот про переходы поведения, этот — про конструирование). | `crates-host/domain/examples/type_state_builder_config.rs` |
+| `mitsein` | `NonEmpty`-обёртка над `heapless::Vec` — непустота как инвариант типа, а не проверка `Option`/`is_empty()` в каждом месте. Дополняет `heapless`, не конкурирует. | `crates-host/domain/examples/mitsein_nonempty_buffer.rs` |
+| `futures-concurrency` | `race!`/`merge` для потоков поверх `Future` — то, чего нет в `embassy_futures::select`/`select3`/`select4` (только 2-4 ветки, без `race`/`merge` для потоков). Alloc-free. | `crates-host/domain/examples/futures_concurrency_race.rs` |
+| `aselect` | Альтернатива `select!`, где непроигравшие ветки гарантированно НЕ отменяются на середине (cancellation-safety) — в отличие от tokio/embassy `select!`. `no_std`, zero-alloc, реализует `Stream`. | `crates-host/domain/examples/aselect_stream.rs` |
+| `sync_wrapper` | Заставляет компилятор считать `!Sync`-тип `Sync`, когда эксклюзивный доступ гарантирован вручную — нужен, если `Future` должен быть `Sync`, а внутри держит не-`Sync` тип (`RefCell`) в многопоточном/multi-core сценарии. | `crates-host/domain/examples/sync_wrapper_example.rs` |
+| `sync-request` | Межзадачный (не host↔target!) request/response поверх `embassy_sync`, без зависимости от `embassy-executor`. Отменённый (по таймауту, проигравшей веткой `select!`) запрос помечен номером поколения и не «протечёт» ответом в следующий. | `crates-host/domain/examples/sync_request_service.rs` |
+| `miniconf` | Runtime-конфигурация устройства: адресуемое дерево настроек, доступ к листьям по JSON-пути, без аллокатора. | `crates-host/domain/examples/miniconf_settings.rs` |
+| `test-log` | Автоинициализация `log` в host-тестах (тихо на успехе, видно на провале/`--nocapture`), цветной вывод из коробки — без ручного `env_logger::init()` в каждом тесте. | `crates-host/domain/tests/logging.rs` |
 
 ### `cross` — железо и оркестрация
 
 | Крейт | Для чего | Где документирован |
 |---|---|---|
-| `supervisor` | Весь граф embassy-задач одним макросом `supervisor_graph!`: упорядоченный старт по `deps:`, рестарты с backoff, graceful shutdown, передача периферии через `resources:` (переживает перезапуск задачи), почтовые ящики `inbox:`, broadcast `publish:`/`subscribe:`, RPC `request:`/`calls:` и общий watchdog. Заменил связку `embassy-supervisor` + `embassy-task-watchdog` + `ector`, где один и тот же граф описывался тремя независимыми DSL. | `cross/app/src/task_orchestration.rs` |
-| `watchdog` | `no_std`-ядро мультиплексора: несколько программных watchdog'ов задач, каждый со своим таймаутом, поверх одного аппаратного. Привязку к железу задают два трейта (`Clock`, `HardwareWatchdog`), реализуемые под конкретный МК; `supervisor` использует его из блока `watchdog:`. | `cross/app/src/task_orchestration.rs` |
-| `bbqueue` | Zero-copy DMA-буфер: grant/commit API, DMA пишет напрямую в backing storage. Не дублирует `embassy_sync::Pipe` (тот copy-based, для обычного межзадачного обмена без DMA). | `cross/bsp/src/buffers.rs` |
-| свой `#[global_logger]` над `bbqueue` | UART/любой другой транспорт для `release` без пробника — turnkey-крейта нет: `defmt-bbq` и `defmt-serial` держат `defmt@0.3.x` при `defmt@1.1.0` у нас (`symbol multiply defined` при реальной проверке), а `defmt-embassy-usbserial` требует `embassy-usb ^0.5` вместо версии, парной к текущей `embassy-stm32`. | `cross/app/src/task_orchestration.rs` |
+| `supervisor` | Весь граф embassy-задач одним макросом `supervisor_graph!`: упорядоченный старт по `deps:`, рестарты с backoff, graceful shutdown, передача периферии через `resources:` (переживает перезапуск задачи), почтовые ящики `inbox:`, broadcast `publish:`/`subscribe:`, RPC `request:`/`calls:` и общий watchdog. Заменил связку `embassy-supervisor` + `embassy-task-watchdog` + `ector`, где один и тот же граф описывался тремя независимыми DSL. | `crates-cross/app/src/task_orchestration.rs` |
+| `watchdog` | `no_std`-ядро мультиплексора: несколько программных watchdog'ов задач, каждый со своим таймаутом, поверх одного аппаратного. Привязку к железу задают два трейта (`Clock`, `HardwareWatchdog`), реализуемые под конкретный МК; `supervisor` использует его из блока `watchdog:`. | `crates-cross/app/src/task_orchestration.rs` |
+| `bbqueue` | Zero-copy DMA-буфер: grant/commit API, DMA пишет напрямую в backing storage. Не дублирует `embassy_sync::Pipe` (тот copy-based, для обычного межзадачного обмена без DMA). | `crates-cross/bsp/src/buffers.rs` |
+| свой `#[global_logger]` над `bbqueue` | UART/любой другой транспорт для `release` без пробника — turnkey-крейта нет: `defmt-bbq` и `defmt-serial` держат `defmt@0.3.x` при `defmt@1.1.0` у нас (`symbol multiply defined` при реальной проверке), а `defmt-embassy-usbserial` требует `embassy-usb ^0.5` вместо версии, парной к текущей `embassy-stm32`. | `crates-cross/app/src/task_orchestration.rs` |
 
 ### Bootloader
 
-`cross/boot` — минимальный `embassy-boot-stm32` bootloader: определяет активный банк
+`crates-cross/boot` — минимальный `embassy-boot-stm32` bootloader: определяет активный банк
 flash и безусловно прыгает в него (`unsafe { bl.load(entry) }`), как и официальный
 пример `embassy-boot-stm32`. Проверки целостности образа (вектора сброса/SP) не
 делает — это осознанный компромисс минимального шаблона, не забытая деталь. `write_size`
@@ -125,15 +129,15 @@ flash и безусловно прыгает в него (`unsafe { bl.load(entr
 порцией записи flash, у STM32 она всегда маленькая, 4-8 байт, ни с `PAGE_SIZE`, который
 `embassy-boot` вычисляет сам из `NorFlash::ERASE_SIZE`) и оба `memory.x` вычисляются
 автоматически по выбранному чипу — см. «Генерация проекта» выше. На чипах, куда схема не
-помещается, `cross/boot` в проект не входит вовсе — см. там же.
+помещается, `crates-cross/boot` в проект не входит вовсе — см. там же.
 
 ### Обновление прошивки
 
 От OTA можно отказаться прямо при генерации — ответом `no` на вопрос про неё (или
 `--define ota=no`). Тогда приложению достаётся весь flash вместо раздела `ACTIVE`, а
-из проекта уходят `cross/boot`, `bsp::ota` и всё, что ниже.
+из проекта уходят `crates-cross/boot`, `bsp::ota` и всё, что ниже.
 
-Всё, что не зависит от канала доставки, готово и живёт в `cross/bsp/src/ota.rs`;
+Всё, что не зависит от канала доставки, готово и живёт в `crates-cross/bsp/src/ota.rs`;
 `Board` отдаёт это полем `ota`:
 
 ```rust
@@ -174,7 +178,7 @@ cargo xtask ota-sign app.bin        # app.bin.sig, рядом печатаетс
 
 Закрытый ключ (`ota-signing-key.bin`) остаётся у вас и внесён в `.gitignore` —
 закоммитить его значит отменить смысл подписи. Открытый, наоборот, лежит прямо в
-`cross/bsp/src/ota.rs` константой `PUBLIC_KEY`; по умолчанию там нули, и обновление с
+`crates-cross/bsp/src/ota.rs` константой `PUBLIC_KEY`; по умолчанию там нули, и обновление с
 ними отклоняется отдельной проверкой — заполните её выводом `ota-key`.
 
 Считает и проверяет одно и то же — `salty`, тот же крейт на обеих сторонах. Взят он, а
@@ -190,7 +194,7 @@ cargo xtask ota-sign app.bin        # app.bin.sig, рядом печатаетс
 ### Настройки во flash
 
 Второй вопрос при генерации — нужен ли раздел `CONFIG` (или `--define config=yes`).
-Ответили «да» — в проект попадает `cross/bsp/src/config.rs`, а `Board` отдаёт поле
+Ответили «да» — в проект попадает `crates-cross/bsp/src/config.rs`, а `Board` отдаёт поле
 `settings`: пары «ключ — значение» поверх `sequential-storage`, переживающие и
 перезапуск, и обновление прошивки.
 
@@ -202,7 +206,7 @@ if let Some(raw) = board.settings.read(KEY_CALIBRATION, &mut scratch).await? {
 ```
 
 Формат значения шаблон не выбирает — хранилище отдаёт байты. Дерево настроек, если
-нужно именно оно, уже есть в `domain`: `miniconf` (см. `domain/examples/`), и до
+нужно именно оно, уже есть в `domain`: `miniconf` (см. `crates-host/domain/examples/`), и до
 появления этого раздела его негде было хранить.
 
 По умолчанию раздел выключен, и это не случайность: он стоит **две страницы стирания**,
@@ -230,10 +234,10 @@ OTA-схему. Хук при генерации печатает и разме�
 только host.
 
 Второй и третий этапы приезжают с рабочим минимумом, а не пустым файлом:
-`cross/target-tests/tests/test.rs` проверяет на реальном чипе, что `Board::init()`
+`crates-cross/target-tests/tests/test.rs` проверяет на реальном чипе, что `Board::init()`
 доходит до конца и что драйвер времени тикает (частая молчаливая поломка
 тактирования — прошивка стартует, но любой `Timer::after` висит вечно), а
-`host-target-tests/tests/test.rs` прошивает release-образ и ждёт, что устройство
+`crates-host/host-target-tests/tests/test.rs` прошивает release-образ и ждёт, что устройство
 напечатает свой баннер в defmt. Дальше их дополняют под свою плату: `target` — для
 кода, которому нужны регистры, `host-target` — для сценариев поверх канала связи
 устройства (USB CDC, UART-протокол, сеть).
@@ -256,19 +260,19 @@ USB 47.5 МГц вместо 48, стартует без единой жалоб
 сыпящимся» UART.
 
 Когда тактирование настроено под плату, впишите задуманную частоту ядра в
-`EXPECTED_SYS_HZ` (`cross/target-tests/tests/test.rs`) — тест `clocks_match_intent`
+`EXPECTED_SYS_HZ` (`crates-cross/target-tests/tests/test.rs`) — тест `clocks_match_intent`
 начнёт её стеречь на реальном железе. По умолчанию там `None`: чип шаблон знает, а
 вашу плату — нет, — и тест в этом состоянии честно предупреждает в логе, что проверка
 выключена, вместо того чтобы выдавать зелёную галочку за проверенное тактирование.
 
 ### Формальная верификация (Kani)
 
-`domain/src/kani_proofs.rs` — харнессы `#[kani::proof]` над чистой `no_std`-логикой.
+`crates-host/domain/src/kani_proofs.rs` — харнессы `#[kani::proof]` над чистой `no_std`-логикой.
 Модуль под `cfg(kani)`, на обычные `cargo build`/`test`/`clippy` не влияет вовсе.
 Запуск вручную:
 
 ```
-cd domain && cargo kani --features log
+cd crates-host/domain && cargo kani --features log
 ```
 
 **В CI этого джоба нет намеренно.** Kani компилирует крейт вместе со всеми
@@ -319,9 +323,9 @@ FDCAN свои `IT0`/`IT1`, а у `SPI` и таймеров их нет вовс
 
 Данные — из `stm32-metapac`, то есть из того же `stm32-data`, по которому
 `embassy-stm32` генерирует свои типы: разойтись справочник и компилятор не могут.
-Живёт это в отдельном крейте `chip-info/` со своим `[workspace]`, потому что чип там
-выбирается Cargo-фичей, подставляемой при генерации. Сменили чип в `cross/Cargo.toml` —
-поправьте фичу и в `chip-info/Cargo.toml`; команда предупредит о расхождении, но
+Живёт это в отдельном крейте `crates-host/chip-info/` со своим `[workspace]`, потому что чип там
+выбирается Cargo-фичей, подставляемой при генерации. Сменили чип в `crates-cross/Cargo.toml` —
+поправьте фичу и в `crates-host/chip-info/Cargo.toml`; команда предупредит о расхождении, но
 данные покажет старые.
 
 Здесь только то, что одной командой `cargo` не делается: две сборки подряд, два
@@ -330,7 +334,7 @@ bootloader), тесты, которым нужна залитая плата. В
 напрямую через `probe-rs`, он и так стоит:
 
 ```sh
-probe-rs attach --chip <CHIP> cross/target/<TARGET>/debug/app   # defmt-лог живой платы
+probe-rs attach --chip <CHIP> crates-cross/target/<TARGET>/debug/app   # defmt-лог живой платы
 probe-rs reset --chip <CHIP>
 probe-rs erase --chip <CHIP> --connect-under-reset              # см. ниже про цикл паник
 ```
@@ -340,7 +344,7 @@ probe-rs erase --chip <CHIP> --connect-under-reset              # см. ниже
 Причина падения сохраняется в RAM и переживает сброс, поэтому её видно, даже если
 пробника рядом не было. Регион `PANIC` под это отрезан от конца RAM при генерации
 (соседний `PERSIST` — свободный, под собственные переживающие сброс данные), а
-`#[panic_handler]` в `cross/app/src/main.rs` делает три вещи: пишет туда сообщение
+`#[panic_handler]` в `crates-cross/app/src/main.rs` делает три вещи: пишет туда сообщение
 через `panic-persist`, печатает его же через defmt — и дальше расходится по профилю:
 
 | Профиль | После паники | Почему |
@@ -378,7 +382,7 @@ cargo xtask panic     # причина последней паники, снят
 
 `defmt-rtt` — дефолтный транспорт в обоих профилях; паттерн для `release` без пробника
 (UART, когда на плате появится нужная периферия) задокументирован в
-`cross/app/src/task_orchestration.rs`. При его подключении держите инвариант «ровно один
+`crates-cross/app/src/task_orchestration.rs`. При его подключении держите инвариант «ровно один
 активный `#[global_logger]` на бинарник» — там же объяснено, почему линкер на этом
 падает жёстко. Подробности — в CLAUDE.md.
 
@@ -387,7 +391,7 @@ cargo xtask panic     # причина последней паники, снят
 `ci` определяет не только CI-workflow, но и бота для PR с обновлениями версий:
 `github` → `.github/dependabot.yml`, `gitlab` → `renovate.json` плюс джоб `renovate`
 в `.gitlab-ci.yml`, `none` → ни того, ни другого. Оба покрывают обе
-`[workspace.dependencies]` (корневую и `cross/`).
+`[workspace.dependencies]` (корневую и `crates-cross/`).
 
 Разница между ними важна на практике: **dependabot работает сразу после пуша** — его
 исполняет сама платформа, ничего настраивать не нужно. **Renovate так не умеет**:
@@ -436,7 +440,7 @@ cargo xtask panic     # причина последней паники, снят
 - `write_size` — параметр буфера подкачки для bootloader (`BootLoader::prepare::<_,_,_,N>`);
 - фича банковой схемы `embassy-stm32` (`single-bank`) — только для чипов, у которых
   их несколько; без неё build-скрипт `embassy-stm32` просто паникует;
-- `MEMORY {}` в `cross/*/memory.x` — адреса и размеры `FLASH`/`BOOTLOADER_STATE`/
+- `MEMORY {}` в `crates-cross/*/memory.x` — адреса и размеры `FLASH`/`BOOTLOADER_STATE`/
   `ACTIVE`/`DFU`/`RAM`/`PERSIST`/`PANIC`, посчитанные по реальным границам секторов вашего чипа
   (источник — `stm32-metapac`, та же зависимость, что уже тянет `embassy-stm32`), плюс
   **все остальные регионы памяти чипа** под своими именами: `ITCM`, `AXISRAM`, `CCMRAM`,
@@ -448,7 +452,7 @@ cargo xtask panic     # причина последней паники, снят
 - реализация инициализации HAL под ваш класс чипа: одноядерный получает
   `embassy_stm32::init()`, двухъядерный — `init_primary()` с `SharedData`. В проект
   попадает только одна ветка, без `#[cfg]` и без кода для чужого класса чипа;
-  Файлы у `cross/app` и `cross/boot` **разные**: приложение линкуется в `ACTIVE`
+  Файлы у `crates-cross/app` и `crates-cross/boot` **разные**: приложение линкуется в `ACTIVE`
   (с базы flash стартует bootloader), bootloader — в свою зону до `BOOTLOADER_STATE`,
   чтобы разросшийся образ ловил линкер, а не молчаливое наложение на `ACTIVE`.
 
@@ -458,7 +462,7 @@ cargo xtask panic     # причина последней паники, снят
 `target`/`write_size` можно и переопределить по отдельности своим `--define` — например
 если дефолтный `chip` указывает не на самый специфичный вариант probe-rs для вашего чипа.
 `--define write_size=...` заодно отключает автогенерацию `memory.x` (адреса привязаны
-именно к вычисленному `write_size`) — в этом случае `MEMORY {}` в обоих `cross/*/memory.x`
+именно к вычисленному `write_size`) — в этом случае `MEMORY {}` в обоих `crates-cross/*/memory.x`
 придётся заполнить вручную, как раньше.
 
 ### Чипы, куда OTA не помещается
@@ -471,7 +475,7 @@ cargo xtask panic     # причина последней паники, снят
 всего четыре страницы, и валидной раскладки не существует ни при каком дележе.
 
 Для таких чипов генерируется проект **без OTA**: один образ на весь flash, каталог
-`cross/boot` в проект не попадает, `cargo xtask flash` прошивает только приложение.
+`crates-cross/boot` в проект не попадает, `cargo xtask flash` прошивает только приложение.
 Причина печатается при генерации и остаётся комментарием в самом `memory.x`:
 
 ```

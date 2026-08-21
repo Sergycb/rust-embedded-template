@@ -28,23 +28,23 @@ let config = variable::get("config");
 print("");
 print("Проект под " + chip + " (" + target + ").");
 if ota == "true" {
-	print("Раскладка памяти в cross/app/memory.x и cross/boot/memory.x посчитана по секторам чипа.");
+	print("Раскладка памяти в crates-cross/app/memory.x и crates-cross/boot/memory.x посчитана по секторам чипа.");
 } else {
-	print("Без OTA: один образ на весь flash, cross/boot в проект не вошёл (причина — выше).");
+	print("Без OTA: один образ на весь flash, crates-cross/boot в проект не вошёл (причина — выше).");
 }
 if config == "true" {
-	print("Настройки: раздел CONFIG во flash, cross/bsp/src/config.rs, Board::settings.");
+	print("Настройки: раздел CONFIG во flash, crates-cross/bsp/src/config.rs, Board::settings.");
 }
 
-// cross/Cargo.lock в шаблоне посчитан для варианта по умолчанию (с OTA, без
+// crates-cross/Cargo.lock в шаблоне посчитан для варианта по умолчанию (с OTA, без
 // раздела настроек). Любой другой ответ меняет состав зависимостей `bsp`, и
 // закоммитированный lock перестаёт соответствовать манифесту: локальная
 // сборка это чинит молча, а `cargo fetch --locked` в CI (оба провайдера
 // зовут его первым шагом) падает. Проверено вживую на обоих вариантах.
 if ota != "true" || config == "true" || variable::get("signed") == "true" {
 	print("");
-	print("ВНИМАНИЕ: состав зависимостей отличается от cross/Cargo.lock из шаблона.");
-	print("Соберите проект один раз и закоммитьте обновлённый cross/Cargo.lock:");
+	print("ВНИМАНИЕ: состав зависимостей отличается от crates-cross/Cargo.lock из шаблона.");
+	print("Соберите проект один раз и закоммитьте обновлённый crates-cross/Cargo.lock:");
 	print("  cargo xtask build");
 	print("Иначе первый же прогон CI упадёт на `cargo fetch --locked`.");
 }
@@ -55,8 +55,8 @@ print("  cargo xtask setup       # rustup target + probe-rs, flip-link, nextest"
 print("  cargo xtask lint        # проверить, что всё на месте");
 print("  cargo xtask flash       # прошить плату");
 print("");
-print("Что заполнить под свою плату: cross/bsp/src/resources.rs (распиновка),");
-print("cross/app/src/task_orchestration.rs (граф задач), domain/ (логика).");
+print("Что заполнить под свою плату: crates-cross/bsp/src/resources.rs (распиновка),");
+print("crates-cross/app/src/task_orchestration.rs (граф задач), crates-host/domain/ (логика).");
 // Справочник упомянут ровно здесь, а не в списке «Дальше» выше: он нужен не
 // на старте, а в тот момент, когда садишься за resources.rs и вспоминаешь,
 // что распиновку неоткуда взять, кроме даташита.

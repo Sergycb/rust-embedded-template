@@ -17,7 +17,7 @@ cargo_generate_version = ">=0.19.0"
 # Без глоба `/**` — со звёздочками cargo-generate директорию не распознаёт,
 # нужно имя каталога как есть (проверено эмпирически).
 exclude = ["CLAUDE.md"]
-# "target"/"cross/target" — сборочный кэш (см. .gitignore), не источник
+# "target"/"crates-cross/target" — сборочный кэш (см. .gitignore), не источник
 # шаблона; без исключения `cargo generate` падает с "Substitution skipped,
 # found invalid syntax", пытаясь Liquid-рендерить бинарные файлы внутри
 # него, если он присутствует локально у того, кто генерирует (обычное
@@ -33,11 +33,16 @@ ignore = [
 	# убирает `.github` целиком и только когда выбран не GitHub.
 	".github/workflows/template.yml",
 	"target",
-	"cross/target",
-	"chip-info/target",
+	"crates-cross/target",
+	"crates-host/chip-info/target",
 	".local",
 	".remember",
 	".claude",
+	# Не наш файл: crashpad-лог, который роняет в корень репозитория редактор.
+	# В git его нет, но `cargo generate --path .` копирует рабочее дерево
+	# целиком, вместе с неотслеживаемым мусором, — и он уезжал в каждый
+	# сгенерированный проект.
+	"debug.log",
 ]
 
 [placeholders]
@@ -57,7 +62,7 @@ ci = { type = "string", prompt = "CI provider", choices = [
 # Спрашивается ДО каскада (placeholders резолвятся раньше pre-хука), поэтому
 # формулировка не может ссылаться на выбранный чип. Ответ «нет» — один образ на
 # весь flash: приложению достаётся не раздел `ACTIVE`, а весь чип, из проекта
-# уходят `cross/boot` и `bsp::ota`. Ответ «да» — то, что было раньше
+# уходят `crates-cross/boot` и `bsp::ota`. Ответ «да» — то, что было раньше
 # безусловным поведением: bootloader и разделы, если схема помещается в flash
 # (не помещается — хук скажет об этом и всё равно сгенерирует один образ).
 #
@@ -110,7 +115,7 @@ ignore = [".github"]
 [conditional.'ci != "gitlab"']
 ignore = [".gitlab-ci.yml", "renovate.json"]
 
-# cross/boot убирается НЕ здесь, а в самом chip-select.rhai (`file::delete`),
+# crates-cross/boot убирается НЕ здесь, а в самом chip-select.rhai (`file::delete`),
 # когда OTA-схема не помещается во flash выбранного чипа. Причина: условия
 # `[conditional]` вычисляются только по значениям `[placeholders]` и переменные,
 # выставленные хуком через `variable::set`, не видят — проверено эмпирически

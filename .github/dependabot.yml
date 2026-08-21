@@ -9,21 +9,21 @@ updates:
         patterns: ["*"]
 
   - package-ecosystem: "cargo"
-    directory: "/cross"
+    directory: "/crates-cross"
     schedule:
       interval: "weekly"
     groups:
       cargo-dependencies:
         patterns: ["*"]
 
-  # Свой workspace (см. chip-info/Cargo.toml), поэтому отдельной записью:
+  # Свой workspace (см. crates-host/chip-info/Cargo.toml), поэтому отдельной записью:
   # без неё `stm32-metapac` там остался бы навсегда на версии, зафиксированной
-  # при генерации, и разъехался с тем, что тянет embassy-stm32 из /cross.
+  # при генерации, и разъехался с тем, что тянет embassy-stm32 из /crates-cross.
   # Мажорную версию всё равно сверять руками — она должна совпадать с
   # метапаком embassy, иначе справочник покажет данные другого поколения
   # stm32-data, чем то, по которому собрана прошивка.
   - package-ecosystem: "cargo"
-    directory: "/chip-info"
+    directory: "/crates-host/chip-info"
     schedule:
       interval: "weekly"
     groups:

@@ -36,7 +36,7 @@ type Deleted = Rc<RefCell<Vec<String>>>;
 
 /// Итог одного прогона: переменные (chip/chip_feature/cpu/target/write_size/
 /// ota/bank_mode), файлы, записанные через `file::write` (memory.x), построчно,
-/// и пути, снесённые через `file::delete` (cross/boot у чипов без OTA).
+/// и пути, снесённые через `file::delete` (crates-cross/boot у чипов без OTA).
 struct CascadeResult {
     vars: HashMap<String, String>,
     files: HashMap<String, Vec<String>>,
@@ -321,7 +321,7 @@ fn memory_layout_is_written_when_available() {
     // У приложения FLASH — это ACTIVE, а не весь чип: с базы flash стартует
     // bootloader. Раньше оба крейта получали одинаковый memory.x, и
     // `cargo xtask flash` (сначала boot, потом app) затирал bootloader.
-    let app = written(&result, "cross/app/memory.x");
+    let app = written(&result, "crates-cross/app/memory.x");
     assert!(
         app.contains("FLASH             (rx)  : ORIGIN = 0x08020000, LENGTH = 128K"),
         "{app}"
@@ -337,7 +337,7 @@ fn memory_layout_is_written_when_available() {
 
     // У bootloader'а FLASH — только его собственная зона, до BOOTLOADER_STATE:
     // переполнение должен ловить линкер, а не молчаливое наложение на ACTIVE.
-    let boot = written(&result, "cross/boot/memory.x");
+    let boot = written(&result, "crates-cross/boot/memory.x");
     assert!(
         boot.contains("FLASH             (rx)  : ORIGIN = 0x08000000, LENGTH = 64K"),
         "{boot}"
@@ -370,7 +370,7 @@ fn common_boards_keep_their_ota_layout() {
             result.vars.get("ota").map(String::as_str),
             Some("true"),
             "{suffix} остался без OTA: {:?}",
-            result.files.get("cross/app/memory.x")
+            result.files.get("crates-cross/app/memory.x")
         );
     }
 }
@@ -383,7 +383,7 @@ fn memory_x_lists_every_region_of_the_chip() {
     // раньше memory.x про них молчал, и пользователь видел только DTCM.
     let app = written(
         &run_cascade_to(&ast, "h723ve").expect("каскад не должен падать"),
-        "cross/app/memory.x",
+        "crates-cross/app/memory.x",
     );
     for region in ["ITCM", "AXISRAM", "SRAM2", "SRAM3", "SRAM4"] {
         assert!(
@@ -395,7 +395,7 @@ fn memory_x_lists_every_region_of_the_chip() {
     // F407VE: CCMRAM (отдельный физический блок, не алиас) и OTP.
     let app = written(
         &run_cascade_to(&ast, "f407ve").expect("каскад не должен падать"),
-        "cross/app/memory.x",
+        "crates-cross/app/memory.x",
     );
     assert!(region_origin(&app, "CCMRAM").is_some(), "{app}");
     assert!(region_origin(&app, "OTP").is_some(), "{app}");
@@ -406,7 +406,7 @@ fn memory_x_lists_every_region_of_the_chip() {
     // поймает: выводим закомментированным.
     let app = written(
         &run_cascade_to(&ast, "g474re").expect("каскад не должен падать"),
-        "cross/app/memory.x",
+        "crates-cross/app/memory.x",
     );
     assert!(
         region_origin(&app, "CCMRAM_ICODE").is_none(),
@@ -421,7 +421,7 @@ fn memory_x_lists_every_region_of_the_chip() {
     // микросхема не распаяна, поэтому тоже только комментарием.
     let app = written(
         &run_cascade_to(&ast, "h503cb").expect("каскад не должен падать"),
-        "cross/app/memory.x",
+        "crates-cross/app/memory.x",
     );
     for region in ["FMC_BANK_1", "OCTOSPI_BANK_1", "SDRAM_BANK_1"] {
         assert!(
@@ -458,7 +458,7 @@ fn chip_without_room_for_ota_gets_single_image_layout() {
     let result = run_cascade_to(&compile_script(), "h723ve").expect("каскад не должен падать");
     assert_eq!(result.vars.get("ota").map(String::as_str), Some("false"));
 
-    let app = written(&result, "cross/app/memory.x");
+    let app = written(&result, "crates-cross/app/memory.x");
     assert!(
         app.contains("FLASH             (rx)  : ORIGIN = 0x08000000, LENGTH = 512K"),
         "{app}"
@@ -470,18 +470,18 @@ fn chip_without_room_for_ota_gets_single_image_layout() {
         );
     }
     assert!(
-        app.contains("OTA (cross/boot) не подключён"),
+        app.contains("OTA (crates-cross/boot) не подключён"),
         "причина должна остаться в самом memory.x:\n{app}"
     );
     // Каталог bootloader'а сносится самим хуком: [conditional] в
     // cargo-generate.toml переменных из хука не видит (проверено эмпирически).
     assert!(
-        result.deleted.contains(&"cross/boot".to_string()),
-        "cross/boot должен быть удалён, а удалено: {:?}",
+        result.deleted.contains(&"crates-cross/boot".to_string()),
+        "crates-cross/boot должен быть удалён, а удалено: {:?}",
         result.deleted
     );
     assert!(
-        !result.files.contains_key("cross/boot/memory.x"),
+        !result.files.contains_key("crates-cross/boot/memory.x"),
         "в удалённый каталог писать нельзя — cargo generate падает с os error 3"
     );
 }
@@ -496,20 +496,20 @@ fn memory_layout_invariants_hold_for_every_chip() {
     //   2. одинаковый memory.x у app и boot: приложение линковалось с базы
     //      flash и при прошивке затирало bootloader;
     //   3. регионы OTA в проекте, который собирается без bootloader'а
-    //      (`__bootloader_*` некому определить — cross/boot туда не входит).
+    //      (`__bootloader_*` некому определить — crates-cross/boot туда не входит).
     let ast = compile_script();
     let mut with_ota = 0;
     let mut without_ota = 0;
     let mut failures = Vec::new();
     for suffix in all_chip_suffixes() {
         let result = run_cascade_to(&ast, &suffix).expect("каскад не должен падать");
-        let Some(app) = result.files.get("cross/app/memory.x") else {
+        let Some(app) = result.files.get("crates-cross/app/memory.x") else {
             continue; // раскладка для чипа не считается — нечего проверять
         };
         let app = app.join("\n");
         let target_tests = result
             .files
-            .get("cross/target-tests/memory.x")
+            .get("crates-cross/target-tests/memory.x")
             .map(|lines| lines.join("\n"));
         let ota = result.vars.get("ota").map(String::as_str);
         let mut fail = |what: &str| failures.push(format!("{suffix}: {what}"));
@@ -564,7 +564,7 @@ fn memory_layout_invariants_hold_for_every_chip() {
 
         if ota == Some("true") {
             with_ota += 1;
-            let boot = written(&result, "cross/boot/memory.x");
+            let boot = written(&result, "crates-cross/boot/memory.x");
             let boot_state = region_origin(&boot, "BOOTLOADER_STATE");
             let boot_active = region_origin(&boot, "ACTIVE");
             if region_origin(&boot, "FLASH") == boot_state {
@@ -612,10 +612,10 @@ fn generated_blocks_match_the_declared_embassy_version() {
     let manifest_path = script_path()
         .parent()
         .expect("chip-select.rhai лежит в корне репозитория")
-        .join("cross")
+        .join("crates-cross")
         .join("Cargo.toml");
-    let manifest =
-        std::fs::read_to_string(&manifest_path).expect("не удалось прочитать cross/Cargo.toml");
+    let manifest = std::fs::read_to_string(&manifest_path)
+        .expect("не удалось прочитать crates-cross/Cargo.toml");
     let declared = manifest
         .lines()
         .find(|line| line.trim_start().starts_with("embassy-stm32"))
@@ -623,9 +623,9 @@ fn generated_blocks_match_the_declared_embassy_version() {
         .and_then(|(_, rest)| rest.trim_start().strip_prefix('='))
         .and_then(|rest| rest.trim_start().strip_prefix('"'))
         .and_then(|rest| rest.split_once('"').map(|(version, _)| version.to_owned()))
-        .expect("в cross/Cargo.toml не нашлась версия embassy-stm32");
+        .expect("в crates-cross/Cargo.toml не нашлась версия embassy-stm32");
 
-    let expected = format!("// Источник: embassy-stm32 {declared} (cross/Cargo.toml)");
+    let expected = format!("// Источник: embassy-stm32 {declared} (crates-cross/Cargo.toml)");
     assert!(
         read_script().contains(&expected),
         "chip-select.rhai собран не под embassy-stm32 {declared} — перегенерируйте списки:\n\
@@ -651,19 +651,21 @@ fn declining_ota_gives_a_single_image_even_when_it_would_fit() {
             "ответ {answer:?} должен отключать OTA"
         );
         assert!(
-            result.deleted.contains(&"cross/boot".to_string()),
+            result.deleted.contains(&"crates-cross/boot".to_string()),
             "bootloader должен быть удалён, а удалено: {:?}",
             result.deleted
         );
         assert!(
-            result.deleted.contains(&"cross/bsp/src/ota.rs".to_string()),
+            result
+                .deleted
+                .contains(&"crates-cross/bsp/src/ota.rs".to_string()),
             "модуль ota должен быть удалён, а удалено: {:?}",
             result.deleted
         );
 
         // Приложению достаётся весь flash, а не раздел ACTIVE, и регионов
         // OTA-схемы в memory.x не остаётся.
-        let app = written(&result, "cross/app/memory.x");
+        let app = written(&result, "crates-cross/app/memory.x");
         assert!(
             app.contains("FLASH             (rx)  : ORIGIN = 0x08000000, LENGTH = 512K"),
             "{app}"
@@ -675,7 +677,7 @@ fn declining_ota_gives_a_single_image_even_when_it_would_fit() {
             );
         }
         assert!(
-            !result.files.contains_key("cross/boot/memory.x"),
+            !result.files.contains_key("crates-cross/boot/memory.x"),
             "в удалённый каталог писать нельзя"
         );
     }
@@ -688,5 +690,5 @@ fn accepting_ota_still_loses_to_a_chip_that_cannot_fit_it() {
     let result = run_cascade_with(&compile_script(), "h723ve", &[("ota", "yes")])
         .expect("каскад не должен падать");
     assert_eq!(result.vars.get("ota").map(String::as_str), Some("false"));
-    assert!(result.deleted.contains(&"cross/boot".to_string()));
+    assert!(result.deleted.contains(&"crates-cross/boot".to_string()));
 }
