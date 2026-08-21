@@ -151,4 +151,37 @@ mod tests {
         assert_eq!(written, read);
     }
 {%- endif %}
+{%- if config == "true" %}
+
+    /// Раздел настроек принимает запись и отдаёт её обратно.
+    ///
+    /// Проверка того же рода, что и для `DFU`, и по той же причине: границы
+    /// раздела приходят из символов линкера, размер страницы — из метаданных
+    /// чипа, а требования `sequential-storage` (две страницы, выравнивание по
+    /// их границам) проверяются только в рантайме. Разъехаться они могут
+    /// исключительно на живом чипе.
+    ///
+    /// Тест пишет во flash при каждом прогоне — это нормально: запись идёт
+    /// дозаписью в конец страницы, стирание случается, только когда страница
+    /// кончилась.
+    #[test]
+    async fn settings_store_and_read_back(mut board: Board) {
+        const KEY: u32 = 0;
+        let written = b"template";
+        let mut scratch = [0u8; 32];
+
+        board
+            .settings
+            .write(KEY, written)
+            .await
+            .expect("раздел CONFIG должен принимать запись");
+        let read = board
+            .settings
+            .read(KEY, &mut scratch)
+            .await
+            .expect("раздел CONFIG должен читаться");
+
+        assert_eq!(read, Some(&written[..]));
+    }
+{%- endif %}
 }

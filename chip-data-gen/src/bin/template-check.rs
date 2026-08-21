@@ -57,6 +57,19 @@ fn default_cases() -> Vec<Case> {
         // железе). Резерв под PERSIST/PANIC здесь считается долей RAM, а не
         // фиксированным килобайтом — на таком чипе тот был бы половиной памяти.
         Case::new("stm32l011f4"),
+        // Раздел настроек вместе с OTA: мелкие секторы (2 KiB), раздел стоит
+        // 4 KiB, схема OTA после него всё ещё помещается — в проект попадают
+        // разом bootloader, ota.rs и config.rs.
+        Case::new("stm32g071rb").variant("config", &["config=yes"]),
+        // Он же, но там, где раздел вытесняет OTA: у F407 сектор 128 KiB,
+        // раздел стоит 256 KiB из 512 KiB, и на ACTIVE+DFU уже не хватает.
+        // Ветка «config есть, bootloader и ota.rs удалены» — только здесь.
+        Case::new("stm32f407ve").variant("config", &["config=yes"]),
+        // Подпись образа: фича `ed25519-salty` у embassy-boot, `salty` со
+        // своей `slow-motion` и `verify_and_mark_updated` вместо
+        // `mark_updated` в bsp. Проверяется на чипе с OTA — без него подпись
+        // хук выключает.
+        Case::new("stm32f407ve").variant("signed", &["signed=yes"]),
     ]
 }
 
@@ -266,7 +279,9 @@ fn check_one(
         })?;
     }
 
-    report_lock_drift(repo_root, &project);
+    // Конфигурация по умолчанию — та, для которой посчитан cross/Cargo.lock
+    // шаблона: без дополнительных `--define`.
+    report_lock_drift(repo_root, &project, case.defines.is_empty());
 
     if !options.quick {
         // Ровно те команды, которые README обещает пользователю шаблона.
@@ -342,8 +357,20 @@ fn check_one(
 /// собирает, а CI сгенерированного проекта зовёт `cargo fetch --locked` и на
 /// отставшем lock падает. Предупреждение, а не ошибка: часть расхождений —
 /// обычные обновления версий из crates.io, за которые шаблон не отвечает.
-fn report_lock_drift(repo_root: &Path, project: &Path) {
-    for lock in ["Cargo.lock", "cross/Cargo.lock", "chip-info/Cargo.lock"] {
+///
+/// `cross/Cargo.lock` сравнивается только для конфигурации по умолчанию: при
+/// `ota=no` из графа уходят `embassy-boot*`, при `config=yes` добавляется
+/// `sequential-storage`, при `signed=yes` — `salty`. Это не рассинхрон, а
+/// ожидаемое свойство варианта (см. «Lock-файлы шаблона» в MAINTAINING.md), и
+/// постоянное предупреждение на трёх конфигурациях из девяти только приучало
+/// бы его пролистывать.
+fn report_lock_drift(repo_root: &Path, project: &Path, default_variant: bool) {
+    let locks: &[&str] = if default_variant {
+        &["Cargo.lock", "cross/Cargo.lock", "chip-info/Cargo.lock"]
+    } else {
+        &["Cargo.lock", "chip-info/Cargo.lock"]
+    };
+    for lock in locks {
         let (Some(template), Some(generated)) = (
             lock_package_names(&repo_root.join(lock)),
             lock_package_names(&project.join(lock)),

@@ -60,6 +60,33 @@ embassy-executor = { version = "0.10.0", features = [
 embassy-boot         = { version = "0.7.0" }
 embassy-boot-stm32 = { version = "0.8.0" }
 embedded-storage   = { version = "0.3.1" }
+# Хранилище настроек (cross/bsp/src/config.rs) — только в проектах, где при
+# генерации выбрали раздел CONFIG. Асинхронный API (в 8.x другого нет),
+# поэтому рядом `embedded-storage-async`: его трейты реализует обёртка над
+# общим `Flash`, см. `SharedFlash` там же.
+#
+# `map` требует минимум двух страниц стирания и выровненных по ним границ —
+# именно это и считает chip-select.rhai, когда выделяет раздел.
+sequential-storage     = { version = "8.0.1", default-features = false, features = [
+	"defmt",
+] }
+embedded-storage-async = { version = "0.4.1" }
+# Один `Flash` на весь чип делится между OTA и настройками, а обеим нужен
+# `&'static` (иначе их не отдать в спавнящиеся задачи — те требуют 'static).
+static_cell            = { version = "2.1.1" }
+# Проверка подписи OTA-образа (только если её выбрали при генерации). Из двух
+# реализаций, которые понимает embassy-boot, взята меньшая: `ed25519-dalek`
+# тянет `curve25519-dalek` с `sha2`, salty — самодостаточен и написан под
+# микроконтроллеры.
+#
+# `slow-motion` — портируемая tweetnacl-реализация вместо ассемблерной
+# `haase` (та использует инструкцию UMAAL и существует только для Cortex-M4/
+# M33). Она компактнее и работает на любом ядре, ценой скорости: проверка
+# подписи занимает ~100 млн тактов, то есть меньше секунды на типичной
+# частоте. Для однократной операции перед перезагрузкой это ничто.
+salty                  = { version = "0.3.0", default-features = false, features = [
+	"slow-motion",
+] }
 embassy-sync       = { version = "0.8.0" }
 # Прямая зависимость нужна target-tests (embassy-stm32 тянет тот же крейт
 # транзитивно, но полагаться на это для `use embassy_time::..` нельзя).

@@ -1,12 +1,38 @@
 #![no_std]
 
 pub mod buffers;
+{%- if config == "true" %}
+pub mod config;
+{%- endif %}
 {%- if ota == "true" %}
 pub mod ota;
 {%- endif %}
 pub mod resources;
 
 use defmt::info;
+{%- if ota == "true" or config == "true" %}
+
+use core::cell::RefCell;
+
+use embassy_stm32::flash::{Blocking, Flash};
+use embassy_sync::blocking_mutex::Mutex;
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use static_cell::StaticCell;
+
+/// Общий `Flash` всего чипа. Контроллер флеша один, а работать с ним нужно и
+/// OTA (разделы `DFU`/`BOOTLOADER_STATE`), и настройкам (раздел `CONFIG`), —
+/// поэтому объект создаётся ровно один и раздаётся ссылками.
+///
+/// `NoopRawMutex`, а не `CriticalSectionRawMutex`: обе половины работают из
+/// задач одного исполнителя, то есть без вытеснения. Появится второй
+/// исполнитель (прерывательный приоритет, второе ядро) — менять здесь.
+pub type FlashMutex = Mutex<NoopRawMutex, RefCell<Flash<'static, Blocking>>>;
+
+/// `&'static` он не для красоты: `Ota` и `Settings` отдаются в задачи, а
+/// аргументы задач embassy обязаны быть `'static`. Обычное поле `Board` этого
+/// не даёт — `Board` живёт в `main`, а не вечно.
+static FLASH: StaticCell<FlashMutex> = StaticCell::new();
+{%- endif %}
 
 pub struct Board {
     /// Частоты, которые HAL реально насчитал при инициализации — не те, что
@@ -28,7 +54,14 @@ pub struct Board {
     /// которым bootloader меняет разделы местами. Канал доставки — за
     /// пределами шаблона, см. модуль `ota`.
     pub ota: ota::Ota,
-{%- else %}
+{%- endif %}
+{%- if config == "true" %}
+    /// Настройки, переживающие перезапуск и обновление прошивки: раздел
+    /// `CONFIG` во flash. Формат значений выбирает проект, см. модуль
+    /// `config`.
+    pub settings: config::Settings,
+{%- endif %}
+{%- if ota != "true" and config != "true" %}
     // Not yet split into individual peripherals; kept whole until board wiring is added.
     #[allow(dead_code)]
     p: embassy_stm32::Peripherals,
@@ -51,14 +84,22 @@ impl Board {
         let clocks = *embassy_stm32::rcc::clocks(&p.RCC);
         info!("bsp: board initialized, clocks {}", clocks);
 
-{%- if ota == "true" %}
-        // Периферия разбирается здесь: `FLASH` забирает `Ota`, остальное пока
-        // никому не нужно и потому не сохраняется. Когда появится распиновка
-        // платы, эти поля разложит `assign_resources!` (см. resources.rs), и
-        // `Board` начнёт отдавать их задачам — сейчас отдавать нечего.
+{%- if ota == "true" or config == "true" %}
+        // Периферия разбирается здесь: `FLASH` уходит в общий объект (его
+        // делят OTA и настройки), остальное пока никому не нужно и потому не
+        // сохраняется. Когда появится распиновка платы, эти поля разложит
+        // `assign_resources!` (см. resources.rs), и `Board` начнёт отдавать их
+        // задачам — сейчас отдавать нечего.
+        let flash = FLASH.init(Mutex::new(RefCell::new(Flash::new_blocking(p.FLASH))));
+
         Self {
             clocks,
-            ota: ota::Ota::new(p.FLASH),
+{%- if ota == "true" %}
+            ota: ota::Ota::new(flash),
+{%- endif %}
+{%- if config == "true" %}
+            settings: config::Settings::new(flash),
+{%- endif %}
         }
 {%- else %}
         Self { clocks, p }

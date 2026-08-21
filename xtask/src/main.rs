@@ -34,6 +34,8 @@ fn main() -> Result<(), anyhow::Error> {
         // `--check`) — разбирает их он, здесь незачем знать его ключи.
         ["pins", args @ ..] => pins(&sh, args),
         ["panic"] => panic_dump(&sh),
+        ["ota-key"] => ota_key(),
+        ["ota-sign", image] => ota_sign(image),
         // Без аргументов — просто справка, это не ошибка. А вот непонятая
         // команда завершается ненулевым кодом: иначе опечатка в CI-шаге или в
         // задаче IDE даёт зелёный прогон, в котором ничего не выполнилось.
@@ -62,6 +64,10 @@ fn usage() {
         "      cargo xtask pins --check               # не занят ли отладочный порт в resources.rs"
     );
     println!("      cargo xtask panic                      # причина последней паники с платы");
+    if signing_enabled() {
+        println!("      cargo xtask ota-key                    # создать ключ подписи образов");
+        println!("      cargo xtask ota-sign <образ.bin>       # подписать образ для OTA");
+    }
     println!();
     println!("Всё остальное про плату — напрямую через probe-rs:");
     println!("      probe-rs attach --chip {CHIP} <elf>   # defmt-лог без перепрошивки");
@@ -288,6 +294,120 @@ fn pins(sh: &xshell::Shell, args: &[&str]) -> Result<(), anyhow::Error> {
         "cargo run --manifest-path chip-info/Cargo.toml -- {args...}"
     )
     .run()?;
+    Ok(())
+}
+
+/// Подписываются ли OTA-образы — ответ, данный при генерации.
+const SIGNED: &str = "{{signed}}";
+
+/// Файл с закрытым ключом подписи. Лежит в корне проекта и внесён в
+/// `.gitignore`: закоммитить его — то же самое, что не подписывать образы
+/// вовсе.
+const SIGNING_KEY_FILE: &str = "ota-signing-key.bin";
+
+/// Сравнение с `"true"`, а не с `"false"`: в неподставленном шаблоне (где
+/// константа — сам плейсхолдер) команды должны отказывать, а не делать вид,
+/// что подпись включена.
+fn signing_enabled() -> bool {
+    SIGNED == "true"
+}
+
+fn ensure_signing_enabled() -> Result<(), anyhow::Error> {
+    anyhow::ensure!(
+        signing_enabled(),
+        "подпись образов в этом проекте не включена: она выбирается при генерации \
+         (`--define signed=yes`) и требует OTA. Включать её в существующем проекте — \
+         это фича `ed25519-salty` у embassy-boot в cross/bsp/Cargo.toml, ключ в \
+         cross/bsp/src/ota.rs и вызов verify_and_mark_updated вместо mark_updated",
+    );
+    Ok(())
+}
+
+/// Создаёт ключевую пару и печатает открытый ключ в виде, готовом к вставке в
+/// `cross/bsp/src/ota.rs`.
+///
+/// Закрытый ключ пишется в файл и больше нигде не появляется — ни в логе, ни
+/// в прошивке. Потерять его значит потерять возможность выпускать обновления
+/// для уже прошитых устройств: открытый ключ зашит в их образ, и подпись
+/// другим ключом они не примут.
+fn ota_key() -> Result<(), anyhow::Error> {
+    ensure_signing_enabled()?;
+    let path = root_dir().join(SIGNING_KEY_FILE);
+    anyhow::ensure!(
+        !path.exists(),
+        "ключ уже есть: {}. Новый сделает бесполезными все устройства, прошитые со \
+         старым открытым ключом, — если это правда нужно, удалите файл вручную",
+        path.display(),
+    );
+
+    let mut seed = [0u8; 32];
+    getrandom::fill(&mut seed).context("не удалось получить случайные байты от ОС")?;
+    fs::write(&path, seed).with_context(|| format!("записать {}", path.display()))?;
+
+    let public = salty::Keypair::from(&seed).public.to_bytes();
+    println!(
+        "закрытый ключ: {} (в .gitignore, храните отдельно)",
+        path.display()
+    );
+    println!();
+    println!("вставьте в cross/bsp/src/ota.rs:");
+    println!("pub const PUBLIC_KEY: [u8; 32] = [");
+    for chunk in public.chunks(8) {
+        let row = chunk
+            .iter()
+            .map(|byte| format!("0x{byte:02X},"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        println!("    {row}");
+    }
+    println!("];");
+    Ok(())
+}
+
+/// Подписывает готовый образ: считает его SHA-512 и подписывает сам хеш —
+/// именно так проверяет `embassy-boot` (`verify_and_mark_updated` хеширует
+/// раздел `DFU` и проверяет подпись хеша, а не образа).
+///
+/// На вход идёт СЫРОЙ образ, тот же, что уедет в `DFU`, а не ELF из
+/// `cross/target/...`: ELF содержит секции и символы, которых во flash нет.
+/// Получить сырой можно `cargo objcopy` (llvm-tools) или
+/// `probe-rs read`-независимыми средствами вроде `arm-none-eabi-objcopy -O
+/// binary`.
+fn ota_sign(image: &str) -> Result<(), anyhow::Error> {
+    ensure_signing_enabled()?;
+    let key_path = root_dir().join(SIGNING_KEY_FILE);
+    let seed = fs::read(&key_path).with_context(|| {
+        format!(
+            "нет ключа {} — создайте его: cargo xtask ota-key",
+            key_path.display()
+        )
+    })?;
+    let seed: [u8; 32] = seed
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("{} должен быть ровно 32 байта", key_path.display()))?;
+
+    let bytes = fs::read(image).with_context(|| format!("прочитать образ {image}"))?;
+    anyhow::ensure!(!bytes.is_empty(), "образ {image} пуст");
+    if bytes.starts_with(b"\x7fELF") {
+        anyhow::bail!(
+            "{image} — это ELF, а не сырой образ. Во flash уезжают только байты секций: \
+             сделайте bin (`cargo objcopy --release -- -O binary app.bin`) и подпишите его"
+        );
+    }
+
+    let digest = salty::Sha512::new().updated(&bytes).finalize();
+    let signature = salty::Keypair::from(&seed).sign(&digest).to_bytes();
+    let signature_path = format!("{image}.sig");
+    fs::write(&signature_path, signature).with_context(|| format!("записать {signature_path}"))?;
+
+    println!("подписан {image}: {} байт", bytes.len());
+    println!("подпись: {signature_path} (64 байта)");
+    println!();
+    println!(
+        "устройству нужны обе величины: подпись и длина образа ({}) — их принимает \
+         Ota::verify_and_mark_updated",
+        bytes.len(),
+    );
     Ok(())
 }
 

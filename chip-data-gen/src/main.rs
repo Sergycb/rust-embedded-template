@@ -68,12 +68,21 @@ fn main() -> anyhow::Result<()> {
         }
     }
     let with_ota = memory_layouts.values().filter(|m| m.ota.is_ok()).count();
+    let with_config = memory_layouts
+        .values()
+        .filter(|m| m.config.is_some())
+        .count();
+    let config_keeps_ota = memory_layouts
+        .values()
+        .filter(|m| m.config.as_ref().is_some_and(|config| config.ota.is_ok()))
+        .count();
 
     println!(
         "embassy-stm32: {} чип-фич; probe-rs: {} целей; итоговый список: {} (отброшено {}, \
          нет цели probe-rs); более точная цель probe-rs, чем базовая, найдена для {} чипов; \
          выбор банковой схемы нужен {} чипам; memory.x посчитан для {} из {} чипов, из них \
-         с OTA {} (остальные — один образ на весь flash, без cross/boot)",
+         с OTA {} (остальные — один образ на весь flash, без cross/boot); раздел настроек \
+         возможен на {} чипах, из них с сохранением OTA — {}",
         cargo_metadata.embassy_chip_features.len(),
         probe_rs_chips.len(),
         suffixes.len(),
@@ -83,6 +92,8 @@ fn main() -> anyhow::Result<()> {
         memory_layouts.len(),
         suffixes.len(),
         with_ota,
+        with_config,
+        config_keeps_ota,
     );
 
     let rhai_path = repo_root.join("chip-select.rhai");
@@ -200,9 +211,18 @@ fn strip_liquid_from_manifests(dir: &Path) -> anyhow::Result<()> {
 /// Вложенных `{% if %}` в шаблоне нет (и не должно появиться — проверяется
 /// тестом `manifests_have_no_nested_liquid_ifs`), поэтому поиск ближайшего
 /// `{% endif %}` корректен.
+///
+/// Формы с управлением пробелами (`{%-`, `-%}`) приводятся к обычным до
+/// разбора. Без этого условие в `cross/bsp/Cargo.toml`, записанное как
+/// `{%- if ota == "true" %}`, не находилось вовсе — и `cargo metadata` падал
+/// на «invalid key-value pair, expected key», то есть генератор данных
+/// переставал работать целиком. Ловится это только запуском самого
+/// генератора (он нужен редко — при обновлении embassy-stm32 или probe-rs),
+/// поэтому здесь ещё и тест на обе формы.
 fn strip_liquid(text: &str) -> String {
+    let text = &text.replace("{%-", "{%").replace("-%}", "%}");
     let mut out = String::with_capacity(text.len());
-    let mut rest = text;
+    let mut rest = text.as_str();
     while let Some(start) = rest.find("{% if") {
         out.push_str(&rest[..start]);
         let after = &rest[start..];
@@ -641,6 +661,26 @@ struct MemoryLayout {
     /// `memory.x`). Во втором случае проект собирается одним образом на весь
     /// flash, без `cross/boot`.
     ota: Result<OtaPartitions, String>,
+    /// Раздел под настройки, если он на этом чипе вообще возможен. `None` —
+    /// две страницы стирания не остаются даже без всего остального.
+    config: Option<ConfigPartition>,
+}
+
+/// Раскладка того же чипа, но с отрезанным разделом под настройки.
+///
+/// Отдельным набором, а не поправкой к основному: OTA-схема считается ОТ
+/// размера доступного flash (`compute_ota_partitions`), поэтому при
+/// уменьшении flash на две страницы `ACTIVE`/`DFU` съезжают целиком. Считать
+/// это в rhai-хуке значило бы повторить там все четыре проверки
+/// `assert_partitions` из `embassy-boot`.
+struct ConfigPartition {
+    origin: u64,
+    length: u64,
+    /// Что остаётся приложению, когда OTA не используется: весь flash минус
+    /// раздел настроек.
+    flash_length: u64,
+    /// OTA-схема в оставшемся flash.
+    ota: Result<OtaPartitions, String>,
 }
 
 const FLASH_BASE: u64 = 0x0800_0000;
@@ -779,6 +819,43 @@ fn compute_memory_layout(regions: &[RawRegion]) -> Option<MemoryLayout> {
         extra_regions: extra_region_lines(regions, FLASH_BASE + flash_total, ram_end),
         write_size,
         ota: compute_ota_partitions(&chain, flash_total, page_size, write_size),
+        config: compute_config_partition(&chain, flash_total, page_size, write_size),
+    })
+}
+
+/// Раздел под настройки: две последние страницы стирания flash.
+///
+/// Две, а не одна, — требование `sequential-storage`: её `map` чередует
+/// страницы, чтобы не выхаживать одну и ту же, и на одной странице просто не
+/// работает («The map needs at least 2 pages to operate»).
+///
+/// Страница здесь — `PAGE_SIZE` всего чипа (максимальный erase по цепочке), а
+/// не сектор конкретного региона: раздел живёт поверх цельного
+/// `embassy_stm32::flash::Flash`, у которого `NorFlash::ERASE_SIZE` именно
+/// такой. На F4/F7/H7 это 128 KiB, то есть раздел стоит 256 KiB — дорого, и
+/// поэтому он спрашивается при генерации, а не выделяется всегда.
+///
+/// `None` — не выделяем: либо после раздела не остаётся ни страницы под
+/// приложение, либо flash не кратен странице (тогда граница раздела не легла
+/// бы на сектор, а `Flash::erase` отказывает на невыровненном диапазоне).
+fn compute_config_partition(
+    chain: &[&RawRegion],
+    flash_total: u64,
+    page_size: u64,
+    write_size: u64,
+) -> Option<ConfigPartition> {
+    let length = page_size.checked_mul(2)?;
+    if !flash_total.is_multiple_of(page_size) || flash_total < length + page_size {
+        return None;
+    }
+    let flash_length = flash_total - length;
+    Some(ConfigPartition {
+        origin: FLASH_BASE + flash_length,
+        length,
+        flash_length,
+        // Своя OTA-схема: она считается от размера доступного flash, а он
+        // теперь на две страницы меньше.
+        ota: compute_ota_partitions(chain, flash_length, page_size, write_size),
     })
 }
 
@@ -1099,6 +1176,58 @@ fn format_memory_layouts(layouts: &BTreeMap<&str, MemoryLayout>) -> String {
                 push_field(&mut out, "ota", "false");
                 push_field(&mut out, "note", note);
             }
+        }
+        // Второй набор цифр — для проекта с разделом настроек. Ключи с
+        // префиксом `config_`, потому что от размера flash зависит вся
+        // OTA-схема, а не только сам раздел (см. `ConfigPartition`).
+        match &m.config {
+            Some(config) => {
+                push_field(&mut out, "config", "true");
+                push_field(&mut out, "config_origin", &format_addr(config.origin));
+                push_field(&mut out, "config_length", &format_size(config.length));
+                push_field(
+                    &mut out,
+                    "config_flash_length",
+                    &format_size(config.flash_length),
+                );
+                match &config.ota {
+                    Ok(p) => {
+                        push_field(&mut out, "config_ota", "true");
+                        push_field(
+                            &mut out,
+                            "config_bootloader_length",
+                            &format_size(p.bootloader_length),
+                        );
+                        push_field(
+                            &mut out,
+                            "config_bootloader_state_origin",
+                            &format_addr(p.bootloader_state_origin),
+                        );
+                        push_field(
+                            &mut out,
+                            "config_bootloader_state_length",
+                            &format_size(p.bootloader_state_length),
+                        );
+                        push_field(
+                            &mut out,
+                            "config_active_origin",
+                            &format_addr(p.active_origin),
+                        );
+                        push_field(
+                            &mut out,
+                            "config_active_length",
+                            &format_size(p.active_length),
+                        );
+                        push_field(&mut out, "config_dfu_origin", &format_addr(p.dfu_origin));
+                        push_field(&mut out, "config_dfu_length", &format_size(p.dfu_length));
+                    }
+                    Err(note) => {
+                        push_field(&mut out, "config_ota", "false");
+                        push_field(&mut out, "config_note", note);
+                    }
+                }
+            }
+            None => push_field(&mut out, "config", "false"),
         }
         out.push_str("    },\n");
     }
@@ -1453,5 +1582,47 @@ pub static METADATA: Metadata = Metadata {
         // Без условий текст не меняется.
         let plain = "members = [\"app\"]\n";
         assert_eq!(strip_liquid(plain), plain);
+    }
+
+    /// Форма с управлением пробелами — та, что стоит в `cross/bsp/Cargo.toml`.
+    /// Пока её не понимали, `cargo metadata` падал на невалидном TOML, а с ним
+    /// и весь генератор данных; заметно это только при его запуске, то есть
+    /// раз в обновление embassy-stm32.
+    #[test]
+    fn liquid_whitespace_control_is_stripped_too() {
+        let manifest = "[dependencies]\n{%- if ota == \"true\" %}\nembassy-boot = \"1\"\n{%- endif %}\ndefmt = \"1\"\n";
+        let stripped = strip_liquid(manifest);
+        assert!(!stripped.contains("embassy-boot"), "{stripped}");
+        assert!(!stripped.contains('%'), "тег остался в тексте: {stripped}");
+        assert!(stripped.contains("defmt"), "{stripped}");
+    }
+
+    /// Все Liquid-теги в манифестах шаблона снимаются: если появится форма,
+    /// которую `strip_liquid` не понимает, тест увидит это здесь, а не через
+    /// полгода при обновлении зависимостей.
+    #[test]
+    fn every_template_manifest_strips_clean() {
+        let root = repo_root();
+        let mut checked = 0;
+        for manifest in [
+            root.join("cross/Cargo.toml"),
+            root.join("cross/bsp/Cargo.toml"),
+            root.join("cross/app/Cargo.toml"),
+            root.join("cross/boot/Cargo.toml"),
+            root.join("cross/target-tests/Cargo.toml"),
+            root.join("chip-info/Cargo.toml"),
+        ] {
+            let Ok(text) = fs::read_to_string(&manifest) else {
+                continue;
+            };
+            checked += 1;
+            let stripped = strip_liquid(&text);
+            assert!(
+                !stripped.contains("{%"),
+                "в {} остался Liquid-тег после strip_liquid:\n{stripped}",
+                manifest.display(),
+            );
+        }
+        assert!(checked >= 5, "манифесты шаблона не нашлись: {checked}");
     }
 }

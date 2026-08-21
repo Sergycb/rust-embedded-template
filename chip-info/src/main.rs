@@ -368,6 +368,9 @@ const HANDLERS: &[HandlerTable] = &[
     ("otg", "usb", &[("GLOBAL", "InterruptHandler<{}>")]),
     ("usb", "usb", &[("GLOBAL", "InterruptHandler<{}>")]),
     ("rng", "rng", &[("GLOBAL", "InterruptHandler<{}>")]),
+    // Тот же блок RNG, но на части чипов stm32-data зовёт его вид `trng`.
+    // Модуль embassy при этом всё равно `rng`.
+    ("trng", "rng", &[("GLOBAL", "InterruptHandler<{}>")]),
     ("sdmmc", "sdmmc", &[("GLOBAL", "InterruptHandler<{}>")]),
     ("adc", "adc", &[("GLOBAL", "InterruptHandler<{}>")]),
     ("dcmi", "dcmi", &[("GLOBAL", "InterruptHandler<{}>")]),

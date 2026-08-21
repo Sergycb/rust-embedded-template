@@ -14,7 +14,12 @@
 //!     board.ota.write(offset, chunk)?;
 //!     offset += chunk.len();
 //! }
+{%- if signed == "true" %}
+//! // Подпись и длина приходят по тому же каналу, что и сам образ.
+//! board.ota.verify_and_mark_updated(&signature, offset as u32)?;
+{%- else %}
 //! board.ota.mark_updated()?;
+{%- endif %}
 //! cortex_m::peripheral::SCB::sys_reset();
 //! ```
 //!
@@ -40,21 +45,29 @@
 //! Пока образ не подтверждён, [`Ota::write`] отказывает: `embassy-boot` не
 //! даёт затирать `DFU`, в котором лежит образ, куда откатываться.
 
-use core::cell::RefCell;
-
 use embassy_boot_stm32::{AlignedBuffer, BlockingFirmwareUpdater, FirmwareUpdaterConfig};
-use embassy_stm32::Peri;
-use embassy_stm32::flash::{Blocking, Flash, WRITE_SIZE};
-use embassy_stm32::peripherals::FLASH;
-use embassy_sync::blocking_mutex::Mutex;
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_stm32::flash::WRITE_SIZE;
 use embedded_storage::nor_flash::NorFlash;
+
+use crate::FlashMutex;
 
 // Оба типа возвращаются методами ниже, поэтому называть их должно быть чем —
 // иначе пользователю пришлось бы объявлять прямую зависимость на
 // `embassy-boot-stm32` только ради имени в сигнатуре своей функции.
 pub use embassy_boot::FirmwareUpdaterError as Error;
 pub use embassy_boot_stm32::State;
+{%- if signed == "true" %}
+
+/// Открытый ключ, которым проверяется подпись образа. Заполняется один раз,
+/// после `cargo xtask ota-key` — команда печатает готовый к вставке массив.
+///
+/// Нули означают «ключ ещё не подставлен», и [`Ota::verify_and_mark_updated`]
+/// отказывает, не доходя до проверки. Полагаться на то, что нулевой ключ сам
+/// по себе не примет подпись, нельзя: это валидная точка малого порядка, для
+/// таких подпись подделывается за считанные попытки, а `salty` (как и
+/// эталонная реализация ed25519) точки малого порядка не отсеивает.
+pub const PUBLIC_KEY: [u8; 32] = [0; 32];
+{%- endif %}
 
 /// Доступ к разделам OTA: `DFU` (куда пишется новый образ) и
 /// `BOOTLOADER_STATE` (где лежит решение bootloader'а, что делать на
@@ -64,16 +77,20 @@ pub struct Ota {
     /// Тот же цельный `Flash`, что и в `cross/boot`: он сам знает реальные
     /// границы секторов чипа, в том числе неравномерные (F4/F7/H7), а
     /// банковые регионы у каждого семейства называются по-своему.
-    flash: Mutex<NoopRawMutex, RefCell<Flash<'static, Blocking>>>,
+    ///
+    /// Ссылка, а не собственный объект: контроллер флеша один на чип, и тот же
+    /// `Flash` может понадобиться разделу настроек (`crate::config`). Создаёт
+    /// его `Board::init`, см. `FLASH` в `lib.rs`.
+    flash: &'static FlashMutex,
     /// Буфер под одно слово записи во flash: `embassy-boot` пишет через него
     /// состояние, и выравнивание должно быть флешевым.
     aligned: AlignedBuffer<WRITE_SIZE>,
 }
 
 impl Ota {
-    pub fn new(flash: Peri<'static, FLASH>) -> Self {
+    pub fn new(flash: &'static FlashMutex) -> Self {
         Self {
-            flash: Mutex::new(RefCell::new(Flash::new_blocking(flash))),
+            flash,
             aligned: AlignedBuffer([0; WRITE_SIZE]),
         }
     }
@@ -100,12 +117,55 @@ impl Ota {
         self.updater().read_dfu(offset, buf)
     }
 
+{%- if signed == "true" %}
+    /// Проверяет подпись принятого образа и, если она верна, просит bootloader
+    /// поменять разделы местами на следующем сбросе. Сам сброс — за
+    /// вызывающим: только он знает, когда устройство можно перезапустить.
+    ///
+    /// `signature` и `length` приезжают вместе с образом по вашему каналу:
+    /// подпись даёт `cargo xtask ota-sign`, длина — размер того же файла.
+    /// Подписан при этом не образ, а его SHA-512: так проверяет `embassy-boot`,
+    /// так же считает и хостовая команда.
+    ///
+    /// Проверка читает весь раздел и считает по нему хеш, то есть занимает
+    /// заметное время (портируемая реализация ed25519 — порядка сотни
+    /// миллионов тактов). Случается это один раз перед перезагрузкой.
+    ///
+    /// Не прошла проверка — разделы не меняются местами, и устройство
+    /// продолжает работать на текущем образе. Именно поэтому подпись
+    /// проверяется здесь, а не в bootloader'е: тот прыгает безусловно (см.
+    /// README, раздел «Bootloader»), а отвергнуть чужой образ нужно ДО того,
+    /// как он стал активным.
+    pub fn verify_and_mark_updated(
+        &mut self,
+        signature: &[u8; 64],
+        length: u32,
+    ) -> Result<(), Error> {
+        // Ключ не подставлен — отказ до проверки. Нулевой ключ ed25519 не
+        // «просто не совпадёт»: это точка малого порядка, для которой подпись
+        // подделывается перебором за считанные попытки.
+        if PUBLIC_KEY == [0; 32] {
+            return Err(Error::BadState);
+        }
+        // Длину присылает тот же канал, что и образ, то есть доверять ей
+        // нельзя. `verify_and_mark_updated` в embassy-boot начинается с
+        // `assert!(update_len <= dfu.capacity())` — то есть с паники, а на
+        // release-профиле паника это сброс. Обманутое устройство ушло бы в
+        // цикл перезагрузок от одного кривого пакета.
+        if length > dfu_capacity() {
+            return Err(Error::BadState);
+        }
+        self.updater()
+            .verify_and_mark_updated(&PUBLIC_KEY, signature, length)
+    }
+{%- else %}
     /// Просит bootloader поменять разделы местами на следующем сбросе.
     /// Сам сброс — за вызывающим: только он знает, когда устройство можно
     /// перезапустить.
     pub fn mark_updated(&mut self) -> Result<(), Error> {
         self.updater().mark_updated()
     }
+{%- endif %}
 
     /// Подтверждает, что текущий образ работоспособен, и отменяет откат.
     /// Зовите из нового образа после того, как он это доказал — см. раздел
@@ -122,7 +182,27 @@ impl Ota {
     fn updater(
         &mut self,
     ) -> BlockingFirmwareUpdater<'_, impl NorFlash + use<'_>, impl NorFlash + use<'_>> {
-        let config = FirmwareUpdaterConfig::from_linkerfile_blocking(&self.flash, &self.flash);
+        let config = FirmwareUpdaterConfig::from_linkerfile_blocking(self.flash, self.flash);
         BlockingFirmwareUpdater::new(config, &mut self.aligned.0)
     }
 }
+{%- if signed == "true" %}
+
+unsafe extern "C" {
+    /// Границы раздела `DFU` — те же символы, по которым его находит
+    /// `FirmwareUpdaterConfig::from_linkerfile_blocking`. Читаются здесь ради
+    /// одного: проверить присланную длину образа ДО того, как её проверит
+    /// `assert!` внутри embassy-boot.
+    static __bootloader_dfu_start: u32;
+    static __bootloader_dfu_end: u32;
+}
+
+/// Размер раздела `DFU` в байтах.
+fn dfu_capacity() -> u32 {
+    // SAFETY: символы объявлены линкерным скриптом как абсолютные адреса;
+    // берётся их адрес, а не содержимое.
+    let start = &raw const __bootloader_dfu_start as u32;
+    let end = &raw const __bootloader_dfu_end as u32;
+    end.saturating_sub(start)
+}
+{%- endif %}
