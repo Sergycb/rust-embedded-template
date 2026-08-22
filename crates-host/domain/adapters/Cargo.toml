@@ -10,8 +10,13 @@ workspace = true
 
 [dependencies]
 ports = { workspace = true }
+# Драйвер generic по шине: конкретную `embassy_stm32::i2c::I2c` подаёт bsp, а
+# на хосте её место занимает мок — поэтому адаптер живёт здесь, а не в bsp
+# (см. CLAUDE.md, «Главный принцип»).
+embedded-hal-async = { workspace = true }
 
 [dev-dependencies]
+embedded-hal-mock = { workspace = true }
 # Гонять async-порт в обычном `#[test]` нечем: tokio сюда тащить незачем
 # (адаптеры no_std), а `block_on` у embassy-futures — это ровно опрос future
 # в цикле, без исполнителя и аллокаций.
