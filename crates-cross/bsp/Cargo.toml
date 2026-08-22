@@ -12,6 +12,9 @@ workspace = true
 embassy-stm32 = { workspace = true }
 domain = { workspace = true }
 assign-resources = { workspace = true }
+# Периферия ядра (DWT, MPU, NVIC, SYST...): её забирает и раздаёт `Board`, см.
+# поле `core` в lib.rs. Фичи не нужны никакие — берётся только `Peripherals`.
+cortex-m = { workspace = true }
 # Общий `Flash` всего чипа: и OTA, и раздел настроек работают через один
 # объект под `blocking_mutex` (см. `flash()` в lib.rs). `static-cell` — потому
 # что обеим половинам нужен `&'static`: иначе их нельзя отдать в задачу,
