@@ -25,6 +25,9 @@ defmt-rtt = { workspace = true }
 # ни PERSIST, ни чтения дампа нет.
 panic-persist = { workspace = true }
 bsp = { workspace = true }
+# Трейты портов: приложение зовёт объекты `Board` только через них, а про
+# железо за ними — регион PERSIST, разделы флеша — не знает вовсе.
+ports = { workspace = true }
 domain = { workspace = true }
 shadow-rs = { workspace = true }
 # Не используются напрямую в main.rs — держатся здесь реальной (не только

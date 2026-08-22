@@ -15,51 +15,29 @@ use defmt::{error, info};
 use defmt_rtt as _;
 
 use embassy_executor::Spawner;
-
-/// Магия, отличающая «в PERSIST лежат наши данные» от того, что оказалось в
-/// RAM при подаче питания. Первый в жизни платы старт ничем другим от
-/// перезапуска не отличается: регион не инициализируется ни образом, ни
-/// `cortex-m-rt`, в этом и смысл.
-const PERSIST_MAGIC: u32 = 0xB007_C0DE;
-
-unsafe extern "C" {
-    /// Начало региона `PERSIST` из `memory.x`. Абсолютный символ, а не
-    /// секция: своя секция в конце RAM ломает `flip-link` — подробности в
-    /// task_orchestration.rs, раздел про PERSIST.
-    static mut _persist_start: u8;
-}
-
-/// Считает перезапуски: значение переживает программный сброс, но не
-/// пропадание питания. Заодно это то, что проверяет `cargo xtask test
-/// host-target` — по нему видно, что прошивка действительно исполняется на
-/// плате, а не просто залита в неё.
-fn bump_boot_count() -> u32 {
-    let base = &raw mut _persist_start as *mut u32;
-    // SAFETY: регион PERSIST отведён под это в memory.x, кроме нас в него
-    // никто не пишет, а вызов однопоточный — до старта задач.
-    unsafe {
-        let count = if base.read_volatile() == PERSIST_MAGIC {
-            base.add(1).read_volatile().wrapping_add(1)
-        } else {
-            base.write_volatile(PERSIST_MAGIC);
-            1
-        };
-        base.add(1).write_volatile(count);
-        count
-    }
-}
+// Трейты портов: приложение зовёт объекты `Board` только через них и про
+// железо за ними не знает — ни про регион PERSIST, ни про разделы флеша.
+use ports::BootCounter;
 
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
-    // Первая же строка лога отвечает на вопрос «а что вообще залито в плату»:
-    // версия пакета и коммит, из которого собран образ (их подставляет
-    // `shadow-rs` в build.rs). Без этого build-info собиралась впустую, а по
-    // OTA легко получить плату с прошивкой, происхождение которой неизвестно.
+    let mut board = bsp::Board::init();
+
+    // Сразу за дампом тактирования, который печатает `Board::init`, — ответ на
+    // вопрос «а что вообще залито в плату»: версия пакета и коммит, из
+    // которого собран образ (их подставляет `shadow-rs` в build.rs). Без этого
+    // build-info собиралась бы впустую, а по OTA легко получить плату с
+    // прошивкой, происхождение которой неизвестно.
+    //
+    // Номер запуска приходит из региона PERSIST через порт `BootCounter`: он
+    // переживает программный сброс, но не пропадание питания. По нему же
+    // `cargo xtask test host-target` понимает, что прошивка действительно
+    // исполняется на плате, а не просто залита в неё.
     info!(
         "app: starting {} ({}), запуск №{}",
         build::PKG_VERSION,
         build::SHORT_COMMIT,
-        bump_boot_count()
+        board.boot.bump()
     );
 
     // Причина прошлого падения, если оно было: панический хендлер ниже успел
@@ -67,11 +45,9 @@ async fn main(_spawner: Spawner) {
     // которые cortex-m-rt инициализирует при старте). Читается один раз —
     // `panic-persist` стирает свою магию, — поэтому печатать надо сразу и
     // до всего остального: следующий сброс эту строку уже не покажет.
-    if let Some(reason) = panic_persist::get_panic_message_utf8() {
+    if let Some(reason) = board.last_panic() {
         error!("app: предыдущий запуск упал: {}", reason);
     }
-
-    let mut _board = bsp::Board::init();
 
 {%- if ota == "true" %}
 
@@ -88,7 +64,7 @@ async fn main(_spawner: Spawner) {
     //
     // На обычной загрузке (без обновления) вызов ничего не меняет: состояние
     // и так `Boot`.
-    if let Err(err) = _board.ota.mark_booted() {
+    if let Err(err) = board.ota.mark_booted() {
         // Не паника: устройство работает, просто следующий сброс вернёт
         // предыдущий образ. Знать об этом важнее, чем упасть.
         error!("app: не удалось подтвердить образ: {}", err);

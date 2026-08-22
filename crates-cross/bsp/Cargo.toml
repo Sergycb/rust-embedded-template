@@ -11,6 +11,15 @@ workspace = true
 [dependencies]
 embassy-stm32 = { workspace = true }
 domain = { workspace = true }
+# Трейты, которые реализуют объекты `Board`: приложение видит только их.
+ports = { workspace = true }
+# Дамп причины паники: сохраняет его `#[panic_handler]` в `app` (lang item
+# привязан к бинарнику и уехать сюда не может), а читает — `Board::last_panic`,
+# чтобы приложению не приходилось знать про регион PANIC. Фича
+# `custom-panic-handler` (объявлена в crates-cross/Cargo.toml) отключает
+# собственный хендлер крейта — иначе он конфликтовал бы и с хендлером `app`, и
+# с паникёром `embedded-test` в target-tests.
+panic-persist = { workspace = true }
 assign-resources = { workspace = true }
 # Периферия ядра (DWT, MPU, NVIC, SYST...): её забирает и раздаёт `Board`, см.
 # поле `core` в lib.rs. Фичи не нужны никакие — берётся только `Peripherals`.

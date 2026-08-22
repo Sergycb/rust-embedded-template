@@ -7,6 +7,7 @@ pub mod config;
 {%- if ota == "true" %}
 pub mod ota;
 {%- endif %}
+pub mod persist;
 pub mod resources;
 
 use defmt::info;
@@ -77,6 +78,11 @@ pub struct Board {
     /// печатается при старте (см. `init`) и стережётся target-тестом
     /// `clocks_match_intent`.
     pub clocks: embassy_stm32::rcc::Clocks,
+    /// Счётчик запусков, переживающий программный сброс (но не пропадание
+    /// питания). Приложение видит его через [`ports::BootCounter`] и про
+    /// регион `PERSIST` не знает — в этом и смысл: чтение сырой памяти по
+    /// адресу из линкерного скрипта живёт здесь, а наружу уходит объект.
+    pub boot: persist::BootCount,
 {%- if ota == "true" %}
     /// Обновление прошивки: запись образа в раздел `DFU` и пометки, по
     /// которым bootloader меняет разделы местами. Канал доставки — за
@@ -124,14 +130,17 @@ impl Board {
 {%- if ota == "true" or config == "true" %}
         // Периферия разбирается здесь: `FLASH` уходит в общий объект (его
         // делят OTA и настройки), остальное пока никому не нужно и потому не
-        // сохраняется. Когда появится распиновка платы, эти поля разложит
-        // `assign_resources!` (см. resources.rs), и `Board` начнёт отдавать их
-        // задачам — сейчас отдавать нечего.
+        // сохраняется. Здесь же — место для распиновки платы: раскомментируйте
+        // `assign_resources!` в resources.rs, добавьте `let r =
+        // split_resources!(p);` и собирайте из `r` свои драйверы. Наружу из
+        // `bsp` уходит не периферия, а готовый объект — поле `Board`,
+        // реализующее порт из `ports`.
         let flash = FLASH.init(Mutex::new(RefCell::new(Flash::new_blocking(p.FLASH))));
 
         Self {
             core,
             clocks,
+            boot: persist::BootCount::new(),
 {%- if ota == "true" %}
             ota: ota::Ota::new(flash),
 {%- endif %}
@@ -140,8 +149,27 @@ impl Board {
 {%- endif %}
         }
 {%- else %}
-        Self { core, clocks, p }
+        Self {
+            core,
+            clocks,
+            boot: persist::BootCount::new(),
+            p,
+        }
 {%- endif %}
+    }
+
+    /// Причина, по которой упал предыдущий запуск, если он упал.
+    ///
+    /// Порта под это нет намеренно: домену причина прошлой паники не нужна,
+    /// это диагностика старта (правило — в doc-комментарии крейта `ports`).
+    ///
+    /// Читается ровно один раз: `panic-persist` стирает свою магию, чтобы одно
+    /// падение не всплывало после каждого сброса. Поэтому звать надо в начале
+    /// `main` и печатать сразу — второго шанса не будет. Причину при этом
+    /// сохраняет `#[panic_handler]` в `app`: он не может уехать сюда, потому
+    /// что это lang item, привязанный к бинарнику, а не к библиотеке.
+    pub fn last_panic(&mut self) -> Option<&'static str> {
+        panic_persist::get_panic_message_utf8()
     }
 }
 

@@ -103,6 +103,11 @@ embedded-test      = { version = "0.7.1", default-features = false, features = [
 	"semihosting",
 	"panic-handler",
 ] }
+# Трейты-границы домена: их реализует bsp, а app работает только через них и
+# про регистры не знает. Прямая path-зависимость, а не реэкспорт через
+# `domain`: типы портов действительно пересекают границу domain↔cross, но
+# `ports` — крейт этого же проекта, и явная строка в манифесте честнее фасада.
+ports            = { path = "../crates-host/domain/ports" }
 bsp              = { path = "./bsp" }{% if ota == "true" %}
 boot             = { path = "./boot" }{% endif %}
 app              = { path = "./app" }
