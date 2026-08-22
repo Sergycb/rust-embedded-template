@@ -6,6 +6,9 @@ version = 4
 name = "adapters"
 version = "0.1.0"
 dependencies = [
+ "embassy-futures",
+ "embedded-hal-async",
+ "embedded-hal-mock",
  "ports",
 ]
 
