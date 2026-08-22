@@ -33,7 +33,7 @@ impl FixedTemperature {
 impl TemperatureSensor for FixedTemperature {
     type Error = core::convert::Infallible;
 
-    fn read_millicelsius(&mut self) -> Result<i32, Self::Error> {
+    async fn read_millicelsius(&mut self) -> Result<i32, Self::Error> {
         Ok(self.millicelsius)
     }
 }
@@ -45,6 +45,9 @@ mod tests {
     #[test]
     fn fixed_sensor_reports_what_it_was_given() {
         let mut sensor = FixedTemperature::new(25_500);
-        assert_eq!(sensor.read_millicelsius(), Ok(25_500));
+        assert_eq!(
+            embassy_futures::block_on(sensor.read_millicelsius()),
+            Ok(25_500)
+        );
     }
 }

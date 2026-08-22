@@ -81,6 +81,10 @@ log                  = { version = "0.4.33" }
 defmt                = { version = "1.1.0" }
 critical-section     = { version = "1.2.0" }
 embedded-hal-mock    = { version = "0.11.1", features = ["embedded-hal-async"] }
+# Трейты шин для драйверов в `adapters`: они generic по шине, поэтому на плате
+# им подаётся `embassy_stm32::i2c::I2c` (она эти трейты реализует), а в
+# host-тесте — мок из `embedded-hal-mock` выше.
+embedded-hal-async   = { version = "1.0.0" }
 mockall              = { version = "0.15.0" }
 proptest             = { version = "1.11.0" }
 rstest               = { version = "0.26.1" }

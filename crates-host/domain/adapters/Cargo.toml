@@ -10,3 +10,9 @@ workspace = true
 
 [dependencies]
 ports = { workspace = true }
+
+[dev-dependencies]
+# Гонять async-порт в обычном `#[test]` нечем: tokio сюда тащить незачем
+# (адаптеры no_std), а `block_on` у embassy-futures — это ровно опрос future
+# в цикле, без исполнителя и аллокаций.
+embassy-futures = { workspace = true }
