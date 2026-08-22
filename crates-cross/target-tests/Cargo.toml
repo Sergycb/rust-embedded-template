@@ -43,4 +43,6 @@ embassy-executor = { workspace = true }
 embedded-test = { workspace = true, features = ["panic-handler"] }
 embassy-time = { workspace = true }
 bsp = { workspace = true }
+# Трейты портов: тесты дёргают объекты `Board` тем же способом, что и `app`.
+ports = { workspace = true }
 domain = { workspace = true }

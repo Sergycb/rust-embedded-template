@@ -15,6 +15,9 @@
 //! сериализовать значение (postcard, `miniconf`, свой формат), решает проект.
 //!
 //! ```ignore
+//! // Чтение и запись живут в порту домена — без импорта методов не видно.
+//! use ports::SettingsStorage;
+//!
 //! let mut scratch = [0u8; 64];
 //! board.settings.write(KEY_CALIBRATION, &postcard::to_slice(&cal, &mut buf)?).await?;
 //! if let Some(raw) = board.settings.read(KEY_CALIBRATION, &mut scratch).await? {
@@ -101,16 +104,26 @@ impl Settings {
             scratch: [0; SCRATCH],
         }
     }
+}
+
+/// Порт домена поверх `sequential-storage`.
+///
+/// Обе операции были собственными методами `Settings` и переехали сюда
+/// целиком, а не продублированы: собственный метод с тем же именем перекрыл
+/// бы трейтовый при вызове, и приложение работало бы с конкретным типом `bsp`
+/// вместо порта.
+impl ports::SettingsStorage for Settings {
+    type Error = Error;
 
     /// Читает значение по ключу; `None` — ключ ещё не записан.
     ///
     /// Буфер отдаёт вызывающий, потому что результат ссылается прямо на него:
     /// хранилище десериализует значение без копирования.
-    pub async fn read<'a>(
+    async fn read<'a>(
         &mut self,
         key: Key,
         scratch: &'a mut [u8],
-    ) -> Result<Option<&'a [u8]>, Error> {
+    ) -> Result<Option<&'a [u8]>, Self::Error> {
         self.map.fetch_item::<&[u8]>(scratch, &key).await
     }
 
@@ -120,9 +133,9 @@ impl Settings {
     /// когда страница закончилась. На этом и держится ресурс флеша, поэтому
     /// сохранять настройку в цикле опроса всё же не стоит.
     ///
-    /// Буфер здесь свой, в отличие от [`Settings::read`]: наружу ничего не
-    /// возвращается, а значит и заимствовать нечего.
-    pub async fn write(&mut self, key: Key, value: &[u8]) -> Result<(), Error> {
+    /// Буфер здесь свой, в отличие от чтения: наружу ничего не возвращается,
+    /// а значит и заимствовать нечего.
+    async fn write(&mut self, key: Key, value: &[u8]) -> Result<(), Self::Error> {
         self.map.store_item(&mut self.scratch, &key, &value).await
     }
 }

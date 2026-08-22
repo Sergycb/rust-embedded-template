@@ -18,6 +18,9 @@ use embassy_executor::Spawner;
 // Трейты портов: приложение зовёт объекты `Board` только через них и про
 // железо за ними не знает — ни про регион PERSIST, ни про разделы флеша.
 use ports::BootCounter;
+{%- if ota == "true" %}
+use ports::FirmwareUpdate;
+{%- endif %}
 
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {

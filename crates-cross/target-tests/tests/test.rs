@@ -135,6 +135,10 @@ mod tests {
     /// местами прямо посреди прогона.
     #[test]
     fn dfu_partition_accepts_a_write(mut board: Board) {
+        // Запись и чтение раздела приходят из порта домена, а не из
+        // собственных методов `Ota`: приложение видит их так же.
+        use ports::FirmwareUpdate;
+
         // Кратно WRITE_SIZE флеша: `write_firmware` короче не принимает.
         let written = [0xA5u8; 32];
         let mut read = [0x00u8; 32];
@@ -213,6 +217,8 @@ mod tests {
     /// кончилась.
     #[test]
     async fn settings_store_and_read_back(mut board: Board) {
+        use ports::SettingsStorage;
+
         const KEY: u32 = 0;
         let written = b"template";
         let mut scratch = [0u8; 32];
