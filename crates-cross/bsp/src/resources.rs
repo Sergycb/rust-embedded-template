@@ -1,25 +1,55 @@
 //! Именованные группы ресурсов платы (пины, периферия, DMA-каналы),
 //! собранные через [`assign_resources!`](https://docs.rs/assign-resources).
 //!
+//! Группы нужны самому `bsp`: из них он собирает драйверы. Наружу, в `app`,
+//! уходит не периферия, а готовый объект — поле `Board`, реализующее порт из
+//! `ports`. Приложение про пины, шины и DMA не знает вовсе, и это правило, а
+//! не текущее состояние: см. CLAUDE.md, «`Board` отдаёт объекты, а не
+//! периферию».
+//!
 //! Имена полей `embassy_stm32::Peripherals` зависят от выбранного чипа
 //! (`{{chip_feature}}`), поэтому шаблон не может зашить готовую распиновку —
-//! раскомментируйте пример ниже и замените поля на пины вашей платы.
+//! раскомментируйте пример ниже и замените поля на выводы вашей платы.
+//! Подсмотреть, какие выводы умеют нужный сигнал (и не заняты ли они
+//! отладочным портом или кварцем), — `cargo xtask pins I2C1`; готовую
+//! заготовку с правильными типами обработчиков прерываний печатает
+//! `cargo xtask pins I2C1 --snippet`.
 //!
 //! ```ignore
 //! use assign_resources::assign_resources;
 //! use embassy_stm32::peripherals;
 //!
 //! assign_resources! {
-//!     usart: UsartResources {
-//!         tx: PA9,
-//!         rx: PA10,
-//!         usart: USART1,
+//!     sensor: SensorResources {
+//!         i2c: I2C1,
+//!         scl: PB6,
+//!         sda: PB7,
+//!         tx_dma: DMA1_CH6,
+//!         rx_dma: DMA1_CH7,
 //!     }
 //! }
 //! ```
 //!
-//! Использование, например в `Board::init`:
+//! Дальше — в `Board::init` (lib.rs), там же, где создаётся общий `Flash`:
+//!
 //! ```ignore
 //! let r = split_resources!(p);
-//! spawner.spawn(usart_task(r.usart)).unwrap();
+//! let i2c = embassy_stm32::i2c::I2c::new(
+//!     r.sensor.i2c, r.sensor.scl, r.sensor.sda,
+//!     Irqs, r.sensor.tx_dma, r.sensor.rx_dma,
+//!     khz(100), Default::default(),
+//! );
+//! // Драйвер generic по шине и потому живёт в domain/adapters, где его
+//! // проверяет host-тест с моком, а не на плате.
+//! let sensor = adapters::Lm75::new(i2c, adapters::Lm75::<_>::DEFAULT_ADDRESS);
 //! ```
+//!
+//! и полем в `Board`: `pub sensor: adapters::Lm75<I2c<'static, Async>>`.
+//! Приложение работает с ним только через `ports::TemperatureSensor` —
+//! конкретный тип ему знать незачем. Если объект уезжает в задачу, дайте типу
+//! псевдоним (`pub type Sensor = ...`) и называйте в сигнатуре задачи его:
+//! задачи embassy не могут быть generic.
+//!
+//! **`FLASH` в группы не включайте.** Его забирает сам `Board::init` до вызова
+//! `split_resources!`, и это законное частичное перемещение ровно до тех пор,
+//! пока макрос к этому полю не обращается.
