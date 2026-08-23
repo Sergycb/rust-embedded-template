@@ -117,6 +117,31 @@ cross:build:
       fi
     - cargo xtask lint cross
     - cargo xtask build
+
+# Тесты на живой плате. Джоб выключен, пока в проекте не заведена переменная
+# CI/CD `HIL` со значением `true`: без неё пайплайн не ждёт раннера, которого
+# ни у кого нет.
+#
+# Требования к раннеру (тег `stm32`): подключённая плата с отладочным
+# пробником, rust с целевым target'ом, probe-rs-tools, flip-link — всё ставит
+# `cargo xtask setup`, см. README, «Тесты на плате в CI».
+#
+# `resource_group` — не украшение: пробник у платы один, и два пайплайна за
+# него подерутся. GitLab выполняет джобы одной группы строго по одному.
+board:test:
+  # Стейдж `build`, а не `test`: джоб зависит от `cross:build`, а `needs` не
+  # умеет смотреть в более поздний стейдж — пайплайн отказался бы стартовать.
+  stage: build
+  tags: [stm32]
+  needs: ["cross:build"]
+  resource_group: hil
+  rules:
+    - if: $HIL == "true" && $CI_PIPELINE_SOURCE != "schedule"
+  before_script:
+    - rustup target add {{target}}
+  script:
+    - cargo xtask test target
+    - cargo xtask test host-target
 {%- if ota == "true" %}
 
 # Релиз по тегу: то, что уезжает на устройства, берётся из версионированного

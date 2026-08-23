@@ -73,3 +73,36 @@ jobs:
           fi
       - run: cargo xtask lint cross
       - run: cargo xtask build
+
+  # Тесты на живой плате. Джоб выключен, пока в репозитории не заведена
+  # переменная HIL=true (Settings -> Secrets and variables -> Actions ->
+  # Variables): без неё шаг пропускается, а не висит в ожидании раннера,
+  # которого ни у кого нет.
+  #
+  # Требования к раннеру (self-hosted, метка `stm32`): подключённая плата с
+  # отладочным пробником, rust с целевым target'ом, probe-rs-tools, flip-link.
+  # Ставится всё одной командой `cargo xtask setup` — см. README, «Тесты на
+  # плате в CI».
+  hil:
+    name: Board (target + host-target)
+    needs: cross
+    # Выражение без обёртки: в ключе `if` она необязательна, а лишние скобки
+    # пришлось бы экранировать от Liquid (см. MAINTAINING, раздел про
+    # выражения Actions). Писать их даже в комментарии нельзя по той же
+    # причине — этот файл проходит через рендер.
+    if: vars.HIL == 'true'
+    runs-on: [self-hosted, stm32]
+    # Пробник у платы один, и параллельные прогоны за него дерутся — ровно по
+    # этой причине `test host-target` внутри зовёт nextest с --test-threads 1.
+    # `cancel-in-progress: false`: обрывать прогон посреди прошивки нельзя,
+    # плата останется с половиной образа.
+    concurrency:
+      group: hil
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v5
+      # Раннер свой, тулчейн на нём уже стоит — ставим только то, чего может
+      # не хватать после смены target'а в проекте.
+      - run: rustup target add {{target}}
+      - run: cargo xtask test target
+      - run: cargo xtask test host-target
