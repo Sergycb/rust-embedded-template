@@ -26,19 +26,49 @@ fn main() {
         .and_then(|crates_cross| crates_cross.parent())
         .expect("bsp лежит в crates-cross/bsp — два уровня до корня проекта");
     let source = root.join(PUBLIC_KEY_FILE);
-    println!("cargo::rerun-if-changed={}", source.display());
 
+    // `rerun-if-changed` только на существующий файл, и это не микрооптимизация.
+    // Cargo считает отсутствующий по такому пути файл вечно устаревшим: скрипт
+    // перезапускался бы на каждой сборке, а вместе с ним пересобирались бы bsp,
+    // app, boot и target-tests. Подпись по умолчанию выключена, то есть ключа
+    // нет никогда — инкрементальная сборка перестала бы существовать у всех.
+    //
+    // Обратная сторона: если ключ появился МИМО `cargo xtask build` (положили
+    // руками, вытащили из другого клона), скрипт об этом не узнает. Лечится
+    // `cargo clean -p bsp` — или тем, что ключ обычно и создаёт сам `build`,
+    // который делает это до компиляции.
     let key = match fs::read(&source) {
-        Ok(bytes) if bytes.len() == 32 => bytes,
+        Ok(bytes) if bytes.len() == 32 => {
+            println!("cargo::rerun-if-changed={}", source.display());
+            bytes
+        }
         Ok(bytes) => panic!(
             "{} должен быть ровно 32 байта, а в нём {}: удалите файл вместе с ota-signing-key.bin, \
              и `cargo xtask build` создаст пару заново",
             source.display(),
             bytes.len(),
         ),
-        Err(_) => vec![0; 32],
+        // Только «файла нет» означает «ключ ещё не создан». Любая другая ошибка
+        // — права, занятый файл, сбой ввода-вывода — это ключ, который есть, но
+        // не прочитался: подставить вместо него нули значило бы молча собрать
+        // прошивку, отвергающую ЛЮБОЕ обновление, и узнать об этом на уже
+        // прошитом устройстве.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            println!(
+                "cargo::warning=ota-public-key.bin не найден: PUBLIC_KEY будет нулевым, проверка \
+                 подписи откажет. Ключ создаст первый же `cargo xtask build`."
+            );
+            vec![0; 32]
+        }
+        Err(error) => panic!("не прочитать {}: {error}", source.display()),
     };
 
-    let out = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR задаёт cargo"));
-    fs::write(out.join(PUBLIC_KEY_FILE), key).expect("записать открытый ключ в OUT_DIR");
+    // Пишем, только если содержимое изменилось: перезапись файла в OUT_DIR
+    // делает устаревшим всё, что от него зависит, и один лишний перезапуск
+    // скрипта превращался бы в полную пересборку прошивки.
+    let out =
+        PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR задаёт cargo")).join(PUBLIC_KEY_FILE);
+    if fs::read(&out).ok().as_deref() != Some(key.as_slice()) {
+        fs::write(&out, key).expect("записать открытый ключ в OUT_DIR");
+    }
 }
