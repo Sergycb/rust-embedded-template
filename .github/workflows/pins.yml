@@ -1,0 +1,83 @@
+# Проверка распиновки: не занят ли выводами платы отладочный порт.
+#
+# Отдельным workflow, а не шагом в ci.yml, ровно ради фильтра путей: он
+# срабатывает только когда правили распиновку или сам справочник. Иначе каждый
+# пуш платил бы сборкой `stm32-metapac` ради инструмента, который на прошивку
+# не влияет, — а от этого в шаблоне отказывались осознанно (см. CLAUDE.md).
+#
+# Что именно ловится: занятый `PA13`/`PA14` (после прошивки плата перестаёт
+# отвечать пробнику, вытаскивать её придётся через `probe-rs erase
+# --connect-under-reset`) — ошибка, выводы кварца и MCO — предупреждение. Всё
+# остальное про распиновку проверяет компилятор: чужой сигнал на выводе не
+# имеет impl'а, `Peri` не `Copy`, а вывода не из корпуса нет и в типах.
+#
+# Обязательной проверкой в branch protection этот job делать не стоит: он
+# запускается по фильтру путей, а PR, не трогающий распиновку, его не
+# запустит — и обязательная проверка навсегда останется в ожидании статуса.
+name: Pins
+
+on:
+  push:
+    # Как в ci.yml: без ограничения по веткам PR-ветка запускала бы job дважды
+    # — по push и по pull_request.
+    branches: [main, master]
+    # Список продублирован ниже намеренно: GitHub Actions не поддерживает
+    # YAML-якоря, `&paths`/`*paths` он не развернёт.
+    paths:
+      - crates-cross/bsp/src/resources.rs
+      # Справочник и его зависимости: обновление `stm32-metapac` (у него своя
+      # запись в dependabot.yml) меняет ровно те метаданные, по которым идёт
+      # проверка, а смена чипа правит обе чип-фичи сразу.
+      - crates-host/chip-info/**
+      - crates-cross/Cargo.toml
+      - .github/workflows/pins.yml
+  pull_request:
+    paths:
+      - crates-cross/bsp/src/resources.rs
+      - crates-host/chip-info/**
+      - crates-cross/Cargo.toml
+      - .github/workflows/pins.yml
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  pins:
+    name: Отладочный порт и кварц
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # В репозитории самого шаблона проверять нечего и нечем: чип-фича в
+      # манифесте `chip-info` — это Liquid-плейсхолдер, и cargo такой манифест
+      # не резолвит вовсе. Без этой заглушки job краснел бы у мейнтейнера при
+      # каждой правке resources.rs — ровно то, чего избегает разделение
+      # ci.yml/template.yml.
+      - id: guard
+        run: |
+          if grep -q 'chip_feature' crates-host/chip-info/Cargo.toml; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Репозиторий шаблона: чип-фича не подставлена, проверять нечего."
+          fi
+
+      - if: steps.guard.outputs.skip != 'true'
+        uses: Swatinem/rust-cache@v2
+        with:
+          # У `chip-info` свой [workspace] (чип выбирается Cargo-фичей), поэтому
+          # и кеш отдельный — иначе он не подхватится.
+          workspaces: crates-host/chip-info
+          # Иначе именно те прогоны, ради которых job существует (упавшие),
+          # кеш не сохраняют, и каждая попытка починить конфликт заново
+          # собирает stm32-metapac.
+          cache-on-failure: true
+
+      # Напрямую, а не через `cargo xtask pins --check`: обёртка живёт в
+      # корневом workspace, и её сборка потянула бы резолв всего воркспейса
+      # вместе с `domain` и его git-зависимостями. Этому джобу они не нужны —
+      # `chip-info` зависит только от `stm32-metapac` и `anyhow`.
+      #
+      # `--locked` по той же причине, что и в ci.yml: без него cargo молча
+      # подберёт свои версии, и job останется зелёным на том, чего в
+      # репозитории нет.
+      - if: steps.guard.outputs.skip != 'true'
+        run: cargo run --locked --manifest-path crates-host/chip-info/Cargo.toml -- --check

@@ -42,6 +42,50 @@ host:test:
 # (crates-host/domain/src/kani_proofs.rs) остались — они под cfg(kani) и на обычные сборки
 # не влияют; запускать вручную: cd crates-host/domain && cargo kani --features log.
 
+# Проверка распиновки: не занят ли выводами платы отладочный порт (`PA13`/
+# `PA14` — после прошивки плата перестаёт отвечать пробнику) и выводы кварца.
+# Всё остальное про распиновку ловит компилятор.
+#
+# `changes` здесь не оптимизация, а условие существования джоба: без фильтра
+# каждый пайплайн платил бы сборкой `stm32-metapac` ради инструмента, который
+# на прошивку не влияет, — а от этого в шаблоне отказывались осознанно
+# (см. CLAUDE.md).
+pins:check:
+  stage: test
+  image: rust:1.96.0
+  # Свой кеш, а не общий `.cache`: у `chip-info` отдельный [workspace], и его
+  # артефакты лежат в `crates-host/chip-info/target`, которого в том якоре нет
+  # — джоб пересобирал бы `stm32-metapac` каждый раз, то есть ровно ту цену,
+  # ради экономии которой заведён фильтр. Отдельный ключ заодно убирает гонку:
+  # с общим ключом два джоба одной стадии перезаписывают архив друг друга.
+  cache:
+    key: "pins-$CI_COMMIT_REF_SLUG"
+    paths:
+      - .cargo/registry
+      - crates-host/chip-info/target
+  # Одним правилом: `if` и `changes` внутри одного правила GitLab соединяет по
+  # И. Источники перечислены явно, потому что в пайплайнах, где диффа нет
+  # (`web`, `api`, `trigger`, теги), `changes` истинно всегда — джоб собирал бы
+  # метапак там, где распиновку никто не трогал.
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - crates-cross/bsp/src/resources.rs
+        # Обновление `stm32-metapac` (у него своя запись в renovate) меняет те
+        # самые метаданные, по которым идёт проверка; смена чипа правит обе
+        # чип-фичи сразу.
+        - crates-host/chip-info/**
+        - crates-cross/Cargo.toml
+  script:
+    # Напрямую, а не через `cargo xtask pins --check`: обёртка живёт в корневом
+    # workspace, и её сборка потянула бы резолв всего воркспейса вместе с
+    # `domain` и его git-зависимостями. Этому джобу они не нужны — `chip-info`
+    # зависит только от `stm32-metapac` и `anyhow`.
+    #
+    # `--locked` — как в соседних джобах: иначе cargo молча подберёт свои
+    # версии, и пайплайн останется зелёным на том, чего в репозитории нет.
+    - cargo run --locked --manifest-path crates-host/chip-info/Cargo.toml -- --check
+
 cross:build:
   stage: build
   image: rust:1.96.0
