@@ -45,12 +45,12 @@ embedded-storage = { workspace = true }
 # С подписью: фича `ed25519-salty` включает у embassy-boot
 # `verify_and_mark_updated`, а сам `salty` объявлен здесь же ради своей фичи
 # `slow-motion` (обоснование — в crates-cross/Cargo.toml).
-embassy-boot = { workspace = true, features = ["defmt", "ed25519-salty"] }
+embassy-boot = { workspace = true, features = ["defmt", "ed25519-salty"{% if erase_zero == "true" %}, "flash-erase-zero"{% endif %}] }
 embassy-boot-stm32 = { workspace = true, features = ["defmt"] }
 salty = { workspace = true }
 {%- endif %}
 {%- if ota == "true" and signed != "true" %}
-embassy-boot = { workspace = true, features = ["defmt"] }
+embassy-boot = { workspace = true, features = ["defmt"{% if erase_zero == "true" %}, "flash-erase-zero"{% endif %}] }
 embassy-boot-stm32 = { workspace = true, features = ["defmt"] }
 {%- endif %}
 # Ради `config.rs` — его тоже удаляет chip-select.rhai, если раздел настроек

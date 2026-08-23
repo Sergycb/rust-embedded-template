@@ -49267,6 +49267,21 @@ variable::set("dual_core", if dual_core { "true" } else { "false" });
 // --define, как и dual_core: значение целиком выводится из chip_feature.
 variable::set("bank_mode", if BANK_MODE.contains(suffix) { BANK_MODE[suffix] } else { "" });
 
+// Чем читается СТЁРТАЯ страница флеша. У подавляющего большинства семейств
+// это 0xFF, а у L0 и L1 — 0x00: их NVM стирается в ноль (страница стирается
+// записью с флагами ERASE|PROG, см. flash/l.rs в embassy-stm32).
+//
+// Знать это обязан не только код, но и `embassy-boot`: он отличает стёртое
+// состояние от записанного, сравнивая байты с зашитой константой
+// (`STATE_ERASE_VALUE`), и переключается фичей `flash-erase-zero`. Ошибись мы
+// здесь — обмен разделов на L0/L1 читал бы признак «стёрто» наоборот, то есть
+// OTA не работала бы, причём молча.
+//
+// Прочие семейства на «L» (L4, L5) сюда не попадают намеренно: у них обычный
+// флеш со стиранием в 0xFF.
+let erase_zero = suffix.starts_with("l0") || suffix.starts_with("l1");
+variable::set("erase_zero", if erase_zero { "true" } else { "false" });
+
 // Ответ на вопрос про OTA из [placeholders] (или `--define ota=no`). Дальше по
 // коду `ota` перезаписывается уже вычисленной строкой `"true"`/`"false"`: на
 // неё смотрят Liquid-условия в шаблоне.

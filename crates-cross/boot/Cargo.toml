@@ -24,5 +24,13 @@ defmt-rtt = { workspace = true }
 defmt = { workspace = true }
 panic-probe = { workspace = true, features = ["print-defmt"] }
 embassy-boot-stm32 = { workspace = true, features = ["defmt"] }
+{%- if erase_zero == "true" %}
+# Прямая зависимость только ради фичи: у этого чипа стёртая страница читается
+# нулями, и `embassy-boot` должен ждать 0x00 вместо 0xFF, иначе признак
+# «стёрто» читается наоборот. `embassy-boot-stm32` фичу не пробрасывает, а
+# полагаться на объединение фич с `bsp` нельзя: bootloader собирается своей
+# командой (`cargo build -p boot`), где соседних крейтов в графе нет.
+embassy-boot = { workspace = true, features = ["flash-erase-zero"] }
+{%- endif %}
 embassy-stm32 = { workspace = true, features = ["defmt"] }
 embassy-sync = { workspace = true }
