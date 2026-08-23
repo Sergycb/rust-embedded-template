@@ -109,10 +109,12 @@
 //! тогда, когда МК может не проснуться), а прежний `core::time::Duration`
 //! стоил вызова `__aeabi_uldivmod` на каждой конверсии.
 //!
-//! Реализация привязана к железу, поэтому её место — `bsp` (туда же
-//! придётся перенести саму зависимость `watchdog` из `crates-cross/app/Cargo.toml`
-//! и добавить `embassy-time`, которого у `bsp` сейчас нет); здесь она
-//! показана рядом с графом только чтобы связка читалась целиком.
+//! Реализация привязана к железу, поэтому её место — `bsp`, и она там уже
+//! есть: `bsp::watchdog::Iwdg` (см. `crates-cross/bsp/src/watchdog.rs`).
+//! Писать её руками не нужно — нужно лишь добавить сам `IWDG` в группу
+//! `assign_resources!` и собрать объект в `Board::init`, как любой другой
+//! драйвер. Тип параметризован блоком: на большинстве STM32 он зовётся
+//! `IWDG`, на двухъядерных H7 — `IWDG1`.
 //!
 //! Важное следствие: `Heartbeat::feed()` узел зовёт **явно**, из тела своей
 //! задачи, и только когда реально продвинулся. Автоматического «задача жива,
@@ -122,26 +124,11 @@
 //! ```ignore
 //! use embassy_time::Duration;
 //!
-//! use embassy_stm32::wdg::IndependentWatchdog;
-//!
-//! struct Iwdg(IndependentWatchdog<'static, embassy_stm32::peripherals::IWDG>);
-//!
-//! impl watchdog::HardwareWatchdog for Iwdg {
-//!     fn feed(&mut self) {
-//!         self.0.pet();
-//!     }
-//!
-//!     fn trigger_reset(&mut self) -> ! {
-//!         // Перестаём кормить и ждём, пока IWDG сбросит МК.
-//!         loop {
-//!             cortex_m::asm::wfi();
-//!         }
-//!     }
-//! }
+//! use embassy_stm32::peripherals::IWDG;
 //!
 //! // В графе: блок уровня графа плюс opt-in у каждого узла.
 //! supervisor_graph! {
-//!     watchdog: Iwdg, check_every: Duration::from_millis(100);
+//!     watchdog: bsp::watchdog::Iwdg<IWDG>, check_every: Duration::from_millis(100);
 //!
 //!     node APP, deps: [], restart: RestartPolicy::OnFailure, backoff: backoff(),
 //!         watchdog: Duration::from_secs(2),
@@ -155,10 +142,11 @@
 //!     }
 //! }
 //!
-//! // в main(), после инициализации HAL и до spawn_all: граф объявил под
-//! // аппаратный watchdog пустой статик, заполнить его нужно ровно один раз
-//! // (второй `put` — паника: watchdog сеют один раз и назад не забирают).
-//! __supervisor_watchdog.put(Iwdg(IndependentWatchdog::new(p.IWDG, 2_000_000)));
+//! // в main(), после Board::init и до spawn_all: граф объявил под аппаратный
+//! // watchdog пустой статик, заполнить его нужно ровно один раз (второй `put`
+//! // — паника: watchdog сеют один раз и назад не забирают). Сам объект
+//! // собирает `bsp` из ресурса `iwdg` — см. bsp/src/resources.rs.
+//! __supervisor_watchdog.put(board.watchdog);
 //! spawn_all(&spawner).expect("узлы свежие");
 //! ```
 //!

@@ -135,7 +135,7 @@ assign-resources = { version = "0.5.0" }
 # watchdog'ов, теперь — блок `watchdog:` в том же макросе) и `ector`
 # (actor-паттерн, теперь — поля `inbox:`/`publish:`/`request:` узла). Раньше
 # три независимых макро-DSL описывали один и тот же граф задач трижды.
-# `watchdog` — no_std-ядро мультиплексора (`Clock`/`HardwareWatchdog`),
+# `watchdog` — no_std-ядро мультиплексора (трейт `HardwareWatchdog`),
 # нужно напрямую, чтобы `bsp` мог реализовать эти два трейта над IWDG.
 supervisor       = { git = "https://github.com/Sergycb/rust-lib.git" }
 watchdog         = { git = "https://github.com/Sergycb/rust-lib.git" }

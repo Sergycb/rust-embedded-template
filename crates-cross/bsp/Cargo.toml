@@ -60,6 +60,15 @@ sequential-storage = { workspace = true }
 embedded-storage-async = { workspace = true }
 {%- endif %}
 bbqueue = { workspace = true }
+# Аппаратный сторож под трейт `HardwareWatchdog` (см. src/wdg.rs). Крейт
+# объявлен здесь, а не у `app`, потому что реализация трейта — это железо:
+# сам `watchdog` про HAL не знает и знать не должен.
+watchdog = { workspace = true }
+# Только ради `Duration` в сигнатуре того же модуля: время в проекте одно —
+# `embassy_time::Duration` (обоснование — в crates-cross/app/src/task_orchestration.rs,
+# раздел про supervisor: `core::time::Duration` стоил бы вызова
+# `__aeabi_uldivmod` на каждой конверсии).
+embassy-time = { workspace = true }
 # Безусловно, не за фичей: `log` в прошивке не используется вовсе, поэтому
 # фичам `defmt`/`log` у bsp (и мосту `defmt-or-log`) выбирать больше не из
 # чего — defmt включён в обоих профилях, как в `app` и `boot`.

@@ -9,6 +9,7 @@ pub mod ota;
 {%- endif %}
 pub mod persist;
 pub mod resources;
+pub mod wdg;
 
 use defmt::info;
 {%- if ota == "true" or config == "true" %}

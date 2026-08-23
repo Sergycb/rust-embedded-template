@@ -35,7 +35,15 @@ shadow-rs = { workspace = true }
 # настоящей сборкой на ARM, как и остальные библиотеки в этом файле.
 # Паттерн использования — doc-комментарий в task_orchestration.rs.
 supervisor = { workspace = true }
-watchdog = { workspace = true }
+# `watchdog` отсюда уехал в `bsp`: там живёт реализация его трейта над IWDG
+# (bsp/src/wdg.rs), а граф получает готовый тип. Приложению крейт нужен только
+# транзитивно, через `supervisor`.
+#
+# А вот `embassy-time` нужен прямо: время графа задач — это `Duration`
+# (`check_every:`, `watchdog:`, backoff'ы), и транзитивно он сюда не приходит —
+# `supervisor` реэкспортирует в своём `__private` только executor, futures,
+# sync и sync_request.
+embassy-time = { workspace = true }
 
 [build-dependencies]
 shadow-rs = { workspace = true, features = ["build", "no_std"] }
