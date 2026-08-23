@@ -158,10 +158,11 @@ mod tests {
         // собственных методов `Ota`: приложение видит их так же.
         use ports::FirmwareUpdate;
 
-        // Кратно WRITE_SIZE флеша: `write_firmware` короче не принимает.
+        // Кратно WRITE_SIZE флеша: короче раздел не принимает.
         let written = [0xA5u8; 32];
         let mut read = [0x00u8; 32];
 
+        board.ota.prepare().expect("раздел DFU должен стираться");
         board
             .ota
             .write(0, &written)
@@ -172,6 +173,48 @@ mod tests {
             .expect("раздел DFU должен читаться");
 
         assert_eq!(written, read);
+    }
+
+    /// Два куска в ОДИН сектор — то, из чего состоит любой реальный приём
+    /// образа по частям.
+    ///
+    /// Тест не теоретический: до появления `prepare` каждая запись стирала
+    /// сектор, в который писала (`write_firmware` из `embassy-boot` помнит
+    /// стёртый сектор в объекте апдейтера, а тот создавался заново на каждый
+    /// вызов). Первый кусок читался как `0xFF` — проверено на живой плате.
+    /// Проверять это на хосте нечем: подделка флеша вела бы себя иначе, чем
+    /// настоящий, а вся суть — именно в стирании.
+    #[test]
+    fn dfu_partition_keeps_both_writes_into_one_sector(mut board: Board) {
+        use ports::FirmwareUpdate;
+
+        let first = [0xA1u8; 32];
+        let second = [0xB2u8; 32];
+
+        // Сначала пачкаем раздел заведомо непустыми байтами: без этого тест не
+        // отличил бы работающий `prepare` от `Ok(())`, ведь раздел мог
+        // остаться стёртым с прошлого прогона.
+        board.ota.prepare().expect("раздел DFU должен стираться");
+        board.ota.write(0, &[0x00u8; 32]).expect("запись мусора");
+
+        board.ota.prepare().expect("раздел DFU должен стираться");
+        let mut read = [0x00u8; 32];
+        board.ota.read(0, &mut read).expect("чтение после стирания");
+        assert_ne!(
+            read, [0x00u8; 32],
+            "prepare не стёр раздел: записанное осталось на месте"
+        );
+
+        board.ota.write(0, &first).expect("первая запись");
+        board.ota.write(64, &second).expect("вторая запись");
+
+        board.ota.read(0, &mut read).expect("чтение первого куска");
+        assert_eq!(
+            read, first,
+            "первый кусок затёрт вторым — приём образа по частям не работает"
+        );
+        board.ota.read(64, &mut read).expect("чтение второго куска");
+        assert_eq!(read, second);
     }
 {%- endif %}
 {%- if signed == "true" %}
@@ -204,6 +247,7 @@ mod tests {
         const LENGTH: u32 = 64;
         let mut image = [0xFFu8; LENGTH as usize];
         image[LENGTH as usize - 4..].copy_from_slice(&u32::MAX.to_le_bytes());
+        board.ota.prepare().expect("раздел DFU должен стираться");
         board
             .ota
             .write(0, &image)
@@ -261,6 +305,7 @@ mod tests {
         const LENGTH: u32 = 32;
         let mut image = [0xFFu8; LENGTH as usize];
         image[LENGTH as usize - 4..].copy_from_slice(&0u32.to_le_bytes());
+        board.ota.prepare().expect("раздел DFU должен стираться");
         board
             .ota
             .write(0, &image)
@@ -276,13 +321,21 @@ mod tests {
         // Обратная сторона: образ с версией заведомо новее проверку версии
         // ПРОХОДИТ и упирается уже в подпись. Без этой половины тест остался
         // бы зелёным, даже если бы проверка отвергала вообще всё.
-        image[LENGTH as usize - 4..].copy_from_slice(&u32::MAX.to_le_bytes());
+        // Второй образ кладётся РЯДОМ, а не поверх первого, и второго стирания
+        // не требует: `refuse_rollback` читает версию по `length - 4`, так что
+        // достаточно попросить проверить кусок подлиннее. Перезаписать те же
+        // четыре байта было нельзя (`0xFF` поверх `0x00` не ложится), а лишнее
+        // стирание раздела — это секунды на крупных секторах и лишний цикл
+        // ресурса флеша на каждом прогоне тестов.
+        const LONGER: u32 = LENGTH * 2;
+        let mut newer = [0xFFu8; LONGER as usize];
+        newer[LONGER as usize - 4..].copy_from_slice(&u32::MAX.to_le_bytes());
         board
             .ota
-            .write(0, &image)
+            .write(LENGTH, &newer[LENGTH as usize..])
             .expect("раздел DFU должен принимать запись");
 
-        let refused = board.ota.verify_and_mark_updated(&[0u8; 64], LENGTH);
+        let refused = board.ota.verify_and_mark_updated(&[0u8; 64], LONGER);
         assert!(
             !matches!(refused, Err(UpdateError::Rollback { .. })),
             "образ новее текущего не должен отвергаться как откат"
