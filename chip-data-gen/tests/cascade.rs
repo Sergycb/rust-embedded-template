@@ -360,10 +360,16 @@ fn common_boards_keep_their_ota_layout() {
     //
     // Все — с flash заведомо больше резерва под bootloader: у 32-килобайтных
     // (f030c6, l151c6) OTA не помещается по-честному, это не регрессия.
+    //
+    // Отсюда убраны f030r8 и f051r8 — тоже ходовые Nucleo, но с 64 KiB flash:
+    // под приложение у них остаётся 15 KiB, куда не влезает даже пустая
+    // прошивка (проверено сборкой — переполнение на 848 байт). OTA им теперь
+    // не предлагается вовсе, и стережёт это
+    // `ota_is_dropped_where_the_app_partition_is_too_small`.
     let ast = compile_script();
     for suffix in [
-        "f103rb", "f030r8", "f051r8", "f303vc", "l073rz", "l151cb", "l432kc", "l476rg", "g071rb",
-        "g474re", "f407ve", "f411re", "f746zg", "h743zi",
+        "f103rb", "f303vc", "l073rz", "l151cb", "l432kc", "l476rg", "g071rb", "g474re", "f407ve",
+        "f411re", "f746zg", "h743zi",
     ] {
         let result = run_cascade_to(&ast, suffix).expect("каскад не должен падать");
         assert_eq!(
@@ -781,5 +787,58 @@ fn the_release_workflow_goes_away_together_with_ota() {
         !with_ota.deleted.contains(&RELEASE.to_string()),
         "с OTA релизный workflow удалять нельзя, а удалено: {:?}",
         with_ota.deleted
+    );
+}
+
+/// OTA не предлагается там, где в раздел под приложение не влезает даже пустая
+/// прошивка.
+///
+/// Точки замерены сборкой, а не выбраны на глаз: `f030c8` (15 KiB под
+/// приложение) переполнял раздел на 848 байт, `l051c8` (16256) — на 272,
+/// `c051c8` (14 KiB) — на 1904. Такой проект генерировался, но собрать его
+/// было нельзя вовсе, хотя без OTA-схемы прошивка занимает пятую часть того же
+/// чипа.
+#[test]
+fn ota_is_dropped_where_the_app_partition_is_too_small() {
+    let ast = compile_script();
+
+    // f030r8 и f051r8 здесь не для полноты: это ходовые Nucleo, на которых
+    // потерю OTA заметят первыми — пусть отказ будет закреплён именно на них.
+    for suffix in ["f030c8", "l051c8", "c051c8", "f030r8", "f051r8"] {
+        let result = run_cascade_to(&ast, suffix)
+            .unwrap_or_else(|err| panic!("каскад до {suffix} упал: {err}"));
+
+        assert_eq!(
+            result.vars.get("ota").map(String::as_str),
+            Some("false"),
+            "{suffix}: под приложение остаётся меньше минимальной прошивки, OTA предлагать нельзя"
+        );
+        assert!(
+            result.deleted.contains(&"crates-cross/boot".to_string()),
+            "{suffix}: bootloader должен быть удалён, а удалено: {:?}",
+            result.deleted
+        );
+
+        // Приложению достаётся весь flash — то, ради чего OTA и снимается.
+        let app = written(&result, "crates-cross/app/memory.x");
+        assert!(
+            app.contains("FLASH             (rx)  : ORIGIN = 0x08000000, LENGTH = 64K"),
+            "{suffix}: приложение должно линковаться с базы flash:\n{app}"
+        );
+    }
+}
+
+/// Обратная сторона того же порога: чип, где места достаточно, OTA сохраняет.
+///
+/// Без этой половины предыдущий тест остался бы зелёным, даже если бы порог
+/// снимал OTA у всех подряд.
+#[test]
+fn ota_survives_where_the_app_partition_is_large_enough() {
+    let result = run_cascade_to(&compile_script(), "l073rz").expect("каскад до l073rz");
+
+    assert_eq!(result.vars.get("ota").map(String::as_str), Some("true"));
+    assert!(
+        !result.deleted.contains(&"crates-cross/boot".to_string()),
+        "bootloader удалять не за что: под приложение отведено 80 KiB"
     );
 }
