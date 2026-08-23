@@ -1,6 +1,12 @@
 stages:
   - test
   - build
+{%- if ota == "true" %}
+  # Только для тегов (джобы release:* в конце файла). Отдельный стейдж, а не
+  # `build`: публикация обязана идти после сборки, а внутри одного стейджа
+  # порядок джобов не гарантирован.
+  - release
+{%- endif %}
 
 variables:
   CARGO_TERM_COLOR: always
@@ -111,6 +117,92 @@ cross:build:
       fi
     - cargo xtask lint cross
     - cargo xtask build
+{%- if ota == "true" %}
+
+# Релиз по тегу: то, что уезжает на устройства, берётся из версионированного
+# места, а не из папки на машине того, кто собирал.
+#
+# Джобов два, и это не дробление ради красоты: `release:` умеет только образ
+# release-cli, а собрать прошивку можно только в rust-образе. Второй джоб
+# получает ID первого через dotenv — без него не собрать ссылку на артефакт.
+#
+# Оба вне `.not-scheduled`: тег и расписание не пересекаются, а лишнее правило
+# только маскировало бы ошибку в `rules`.
+release:build:
+  stage: release
+  image: rust:1.96.0
+  <<: *cache
+  rules:
+    - if: $CI_COMMIT_TAG
+  before_script:
+    - rustup target add {{target}}
+    - cargo install flip-link --locked
+  script:
+    # Прошивка печатает свою версию при старте (shadow-rs берёт её из
+    # [workspace.package]), а релиз называется тегом. Разойдись они — и по
+    # логу с устройства уже не понять, какой релиз на нём стоит.
+    - |
+      tag="${CI_COMMIT_TAG#v}"
+      version=$(sed -n 's/^version *= *"\(.*\)"/\1/p' crates-cross/Cargo.toml | head -1)
+      if [ "$tag" != "$version" ]; then
+        echo "тег $CI_COMMIT_TAG не совпадает с version = \"$version\" в crates-cross/Cargo.toml"
+        exit 1
+      fi
+      echo "версия $version"
+{%- if signed == "true" %}
+    # Закрытый ключ в репозитории не лежит (он в .gitignore), поэтому приходит
+    # переменной CI/CD — 32 байта seed в base64 (`base64 -w0 <
+    # ota-signing-key.bin`), тип Variable, masked. Без него сборка НЕ падает:
+    # образ соберётся, но без подписи, и такой релиз ни одно уже прошитое
+    # устройство не примет.
+    - |
+      if [ -z "$OTA_SIGNING_KEY" ]; then
+        echo "ВНИМАНИЕ: переменная OTA_SIGNING_KEY не задана — образ будет собран, но НЕ подписан"
+      else
+        printf '%s' "$OTA_SIGNING_KEY" | base64 -d > ota-signing-key.bin
+        size=$(wc -c < ota-signing-key.bin)
+        if [ "$size" -ne 32 ]; then
+          echo "OTA_SIGNING_KEY после base64 -d даёт $size байт вместо 32"
+          exit 1
+        fi
+      fi
+{%- endif %}
+    # Та же команда, что и локально: собирает оба профиля, меряет образ против
+    # раздела, кладёт рядом app.bin и подписывает его, если ключ на месте.
+    - cargo xtask build
+    # Артефакты собираются из корня: путь внутри target/ зависит от чипа, а в
+    # `artifacts:` подстановки переменных нет.
+    - cp "crates-cross/target/{{target}}/release/app.bin" app.bin
+    - if [ -f "crates-cross/target/{{target}}/release/app.bin.sig" ]; then cp "crates-cross/target/{{target}}/release/app.bin.sig" app.bin.sig; fi
+    - echo "BUILD_JOB_ID=$CI_JOB_ID" > build.env
+  artifacts:
+    paths:
+      - app.bin
+      - app.bin.sig
+    reports:
+      dotenv: build.env
+    expire_in: never
+
+release:publish:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  needs: ["release:build"]
+  rules:
+    - if: $CI_COMMIT_TAG
+  script:
+    - echo "релиз $CI_COMMIT_TAG со ссылками на артефакты джоба $BUILD_JOB_ID"
+  release:
+    tag_name: $CI_COMMIT_TAG
+    description: "Прошивка $CI_COMMIT_TAG"
+    assets:
+      links:
+        - name: app.bin
+          url: "$CI_PROJECT_URL/-/jobs/$BUILD_JOB_ID/artifacts/file/app.bin"
+{%- if signed == "true" %}
+        - name: app.bin.sig
+          url: "$CI_PROJECT_URL/-/jobs/$BUILD_JOB_ID/artifacts/file/app.bin.sig"
+{%- endif %}
+{%- endif %}
 
 # renovate.json — это КОНФИГУРАЦИЯ репозитория, а не запускалка: без джоба
 # ниже (или без Mend Renovate App, подключённого к проекту) он лежит мёртвым

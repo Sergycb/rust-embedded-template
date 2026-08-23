@@ -1,0 +1,92 @@
+{%- if ota == "true" %}
+name: Release
+
+# Тег вида v1.2.3 — и то, что уезжает на устройства, начинает браться из
+# версионированного места, а не из папки на машине того, кто собирал.
+#
+# Отдельный workflow, а не джоб в ci.yml: у него другой триггер (теги вместо
+# веток) и другие права (`contents: write` для создания релиза). Смешав их, мы
+# раздали бы право на запись каждому прогону обычного CI.
+on:
+  push:
+    tags: ["v*"]
+
+# По умолчанию токен рабочего процесса доступен только на чтение — без этой
+# строки `gh release create` падает с 403.
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    name: Собрать, подписать, выложить
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates-cross
+      - run: rustup target add {{target}}
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: flip-link
+
+      # Прошивка печатает свою версию при старте (shadow-rs берёт её из
+      # [workspace.package]), а релиз называется тегом. Разойдись они — и по
+      # логу с устройства уже не понять, какой релиз на нём стоит. Дешевле
+      # поймать это здесь, чем на устройстве в поле.
+      - name: Тег и версия проекта должны совпадать
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version=$(sed -n 's/^version *= *"\(.*\)"/\1/p' crates-cross/Cargo.toml | head -1)
+          if [ "$tag" != "$version" ]; then
+            echo "::error::тег $GITHUB_REF_NAME не совпадает с version = \"$version\" в crates-cross/Cargo.toml"
+            exit 1
+          fi
+          echo "версия $version"
+{%- if signed == "true" %}
+
+      # Закрытый ключ в репозитории не лежит (он в .gitignore), поэтому в CI
+      # он приходит секретом. Без него сборка НЕ падает: образ соберётся, но
+      # без подписи — и такой релиз ни одно уже прошитое устройство не примет,
+      # так что предупреждение здесь заметное.
+      #
+      # Секрет — 32 байта seed в base64: `base64 -w0 < ota-signing-key.bin`.
+      - name: Ключ подписи из секрета
+        env:
+          SIGNING_KEY: {% raw %}${{ secrets.OTA_SIGNING_KEY }}{% endraw %}
+        run: |
+          if [ -z "$SIGNING_KEY" ]; then
+            echo "::warning::секрет OTA_SIGNING_KEY не задан — образ будет собран, но НЕ подписан"
+            exit 0
+          fi
+          printf '%s' "$SIGNING_KEY" | base64 -d > ota-signing-key.bin
+          size=$(wc -c < ota-signing-key.bin)
+          if [ "$size" -ne 32 ]; then
+            echo "::error::OTA_SIGNING_KEY после base64 -d даёт $size байт вместо 32"
+            exit 1
+          fi
+{%- endif %}
+
+      # Та же команда, что и локально: она собирает оба профиля, меряет образ
+      # против раздела, кладёт рядом app.bin и подписывает его, если ключ на
+      # месте. Отдельного «релизного» пути сборки нет намеренно — иначе на
+      # устройства уезжало бы не то, что проверялось.
+      - run: cargo xtask build
+
+      - name: Выложить образ в релиз
+        env:
+          GH_TOKEN: {% raw %}${{ secrets.GITHUB_TOKEN }}{% endraw %}
+        run: |
+          dir="crates-cross/target/{{target}}/release"
+          files="$dir/app.bin"
+          if [ -f "$dir/app.bin.sig" ]; then
+            files="$files $dir/app.bin.sig"
+          else
+            echo "::warning::подписи рядом с образом нет — релиз выйдет неподписанным"
+          fi
+          # shellcheck disable=SC2086
+          gh release create "$GITHUB_REF_NAME" --generate-notes $files
+{%- endif %}

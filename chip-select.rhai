@@ -49336,6 +49336,11 @@ if variable::is_set("write_size") {
     if !wants_ota {
         file::delete("crates-cross/boot");
         file::delete("crates-cross/bsp/src/ota.rs");
+        // Релизу по тегу без OTA нечего выкладывать: `app.bin` делается
+        // только там, где есть раздел DFU. Тело workflow и так под
+        // Liquid-условием, но пустой файл в .github/workflows сбивал бы с
+        // толку — GitHub показывал бы его в списке рабочих процессов.
+        file::delete(".github/workflows/release.yml");
     }
     // Раздел настроек живёт по границам из memory.x, а его тут пишет
     // пользователь — посчитать за него, где начинается CONFIG, нельзя.
@@ -49370,6 +49375,11 @@ if variable::is_set("write_size") {
     if !wants_ota {
         file::delete("crates-cross/boot");
         file::delete("crates-cross/bsp/src/ota.rs");
+        // Релизу по тегу без OTA нечего выкладывать: `app.bin` делается
+        // только там, где есть раздел DFU. Тело workflow и так под
+        // Liquid-условием, но пустой файл в .github/workflows сбивал бы с
+        // толку — GitHub показывал бы его в списке рабочих процессов.
+        file::delete(".github/workflows/release.yml");
     }
     // По той же причине, что и веткой выше: границы раздела берутся из
     // memory.x, а его тут никто не посчитал.
@@ -49600,6 +49610,9 @@ if variable::is_set("write_size") {
         // раздела нет, а символы `__bootloader_dfu_*`, на которые опирается
         // embassy-boot, некому определить.
         file::delete("crates-cross/bsp/src/ota.rs");
+        // И релиз по тегу: выкладывать нечего, `app.bin` собирается только
+        // там, где есть куда его доставлять (см. ту же причину выше).
+        file::delete(".github/workflows/release.yml");
 
         // FLASH берётся по тому же ключу: с разделом настроек приложению
         // достаётся не весь чип, а flash минус две последние страницы.

@@ -451,7 +451,8 @@ fn check_no_raw_placeholders(project: &Path) -> anyhow::Result<()> {
             Err(err) => bail!("прочитать {}: {err}", path.display()),
         };
         for (number, line) in text.lines().enumerate() {
-            if line.contains("{{") || line.contains("{%") {
+            let line_without_actions = without_actions_expressions(line);
+            if line_without_actions.contains("{{") || line_without_actions.contains("{%") {
                 found.push(format!("{relative_str}:{}: {}", number + 1, line.trim()));
             }
         }
@@ -466,6 +467,33 @@ fn check_no_raw_placeholders(project: &Path) -> anyhow::Result<()> {
     }
     println!("плейсхолдеры: не осталось ни одного");
     Ok(())
+}
+
+/// Вырезает выражения GitHub Actions (`${{ secrets.X }}`) — в сгенерированном
+/// проекте это рабочий синтаксис, а не переживший генерацию плейсхолдер.
+///
+/// В шаблоне они обёрнуты в `{% raw %}`, иначе cargo-generate спотыкается о
+/// неизвестную переменную и пропускает подстановку ВО ВСЁМ файле (проверено
+/// эмпирически: рядом стоявший `{{target}}` тоже оставался сырым). Поэтому
+/// послабление ничего не ослабляет: пропусти генерация такой файл целиком —
+/// настоящие плейсхолдеры в нём никуда не денутся и будут найдены этой же
+/// проверкой.
+///
+/// Незакрытое `${{` считается вырезанным до конца строки: выражения Actions
+/// однострочные, а ложное срабатывание здесь дороже пропуска.
+fn without_actions_expressions(line: &str) -> String {
+    let mut rest = line;
+    let mut out = String::new();
+    while let Some(start) = rest.find("${{") {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + "${{".len()..];
+        match after.find("}}") {
+            Some(end) => rest = &after[end + "}}".len()..],
+            None => rest = "",
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 fn visit_files(
@@ -617,4 +645,41 @@ fn copy_dir(from: &Path, to: &Path) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::without_actions_expressions;
+
+    /// Главное свойство: послабление ради Actions не должно прятать настоящий
+    /// плейсхолдер, стоящий в той же строке.
+    #[test]
+    fn keeps_a_liquid_placeholder_next_to_an_actions_expression() {
+        let line = "        run: gh release create {{project-name}} --token ${{ secrets.TOKEN }}";
+
+        assert!(without_actions_expressions(line).contains("{{"));
+    }
+
+    #[test]
+    fn strips_an_actions_expression() {
+        let line = "          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}";
+
+        let cleaned = without_actions_expressions(line);
+        assert!(!cleaned.contains("{{"), "осталось выражение Actions: {cleaned}");
+    }
+
+    /// Несколько выражений в строке — обычное дело для `if:`.
+    #[test]
+    fn strips_every_actions_expression_in_a_line() {
+        let line = "    if: ${{ github.event_name == 'push' }} && ${{ success() }}";
+
+        assert!(!without_actions_expressions(line).contains("{{"));
+    }
+
+    /// Незакрытое выражение не должно уводить функцию в бесконечный цикл или
+    /// панику по границе среза — только этого и проверяем.
+    #[test]
+    fn survives_an_unclosed_actions_expression() {
+        assert!(!without_actions_expressions("value: ${{ secrets.X").contains("{{"));
+    }
 }

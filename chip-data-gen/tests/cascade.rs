@@ -746,3 +746,40 @@ fn manual_layout_still_answers_about_the_graph() {
         .expect("каскад не должен падать");
     assert_eq!(dropped.vars.get("graph").map(String::as_str), Some("false"));
 }
+
+/// Релиз по тегу выкладывает `app.bin`, а тот собирается только там, где есть
+/// раздел `DFU`. Тело workflow и так под Liquid-условием — снос файла нужен
+/// ради другого: пустой файл в `.github/workflows` GitHub всё равно показал бы
+/// в списке рабочих процессов.
+///
+/// Проверяются обе ветки отказа от OTA: ответ пользователя и чип, куда схема
+/// не помещается, — код удаления в них разный.
+#[test]
+fn the_release_workflow_goes_away_together_with_ota() {
+    const RELEASE: &str = ".github/workflows/release.yml";
+    let ast = compile_script();
+
+    let declined = run_cascade_with(&ast, "f407ve", &[("ota", "no")]).expect("каскад с ota=no");
+    assert!(
+        declined.deleted.contains(&RELEASE.to_string()),
+        "при отказе от OTA релизный workflow должен быть удалён, а удалено: {:?}",
+        declined.deleted
+    );
+
+    // h723ve схему не вмещает — OTA отключается независимо от ответа.
+    let no_room = run_cascade_with(&ast, "h723ve", &[("ota", "yes")]).expect("каскад без места");
+    assert!(
+        no_room.deleted.contains(&RELEASE.to_string()),
+        "на чипе без места для OTA релизный workflow должен быть удалён, а удалено: {:?}",
+        no_room.deleted
+    );
+
+    // А там, где OTA есть, файл обязан остаться: удали его — и релиза не
+    // случится вовсе, причём молча.
+    let with_ota = run_cascade_to(&ast, "f407ve").expect("каскад с OTA");
+    assert!(
+        !with_ota.deleted.contains(&RELEASE.to_string()),
+        "с OTA релизный workflow удалять нельзя, а удалено: {:?}",
+        with_ota.deleted
+    );
+}
