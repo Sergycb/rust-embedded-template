@@ -18,15 +18,20 @@ const TEMPERATURE_REGISTER: u8 = 0x00;
 /// Цена младшего разряда: 0.5 °C, то есть 500 миллиградусов.
 const MILLICELSIUS_PER_TICK: i32 = 500;
 
+/// Адрес при всех трёх адресных выводах на земле.
+///
+/// Свободная константа, а не `impl<I2C> Lm75<I2C>`: от шины она не зависит, а
+/// внутри `impl` её нельзя было бы назвать, не указав тип шины —
+/// `Lm75::<_>::DEFAULT_ADDRESS` не выводится (E0282), и каждый вызов
+/// обрастал бы турбофишем.
+pub const DEFAULT_ADDRESS: u8 = 0x48;
+
 pub struct Lm75<I2C> {
     i2c: I2C,
     address: u8,
 }
 
 impl<I2C> Lm75<I2C> {
-    /// Адрес при всех трёх адресных выводах на земле.
-    pub const DEFAULT_ADDRESS: u8 = 0x48;
-
     pub const fn new(i2c: I2C, address: u8) -> Self {
         Self { i2c, address }
     }
@@ -57,18 +62,18 @@ mod tests {
     use embedded_hal_mock::eh1::i2c::{Mock, Transaction};
     use ports::TemperatureSensor;
 
-    use super::Lm75;
+    use super::{DEFAULT_ADDRESS, Lm75};
 
     #[test]
     fn reads_positive_temperature() {
         // 25 °C — это 50 шагов по 0.5 °C, прижатые к старшему краю двух байт.
         let expectations = [Transaction::write_read(
-            Lm75::<Mock>::DEFAULT_ADDRESS,
+            DEFAULT_ADDRESS,
             vec![0x00],
             vec![0x19, 0x00],
         )];
         let mut i2c = Mock::new(&expectations);
-        let mut sensor = Lm75::new(i2c.clone(), Lm75::<Mock>::DEFAULT_ADDRESS);
+        let mut sensor = Lm75::new(i2c.clone(), DEFAULT_ADDRESS);
 
         assert_eq!(block_on(sensor.read_millicelsius()), Ok(25_000));
 
@@ -81,12 +86,12 @@ mod tests {
         // логический сдвиг вместо арифметического превратил бы его в +487 °C,
         // и на тёплом стенде это никогда бы не всплыло.
         let expectations = [Transaction::write_read(
-            Lm75::<Mock>::DEFAULT_ADDRESS,
+            DEFAULT_ADDRESS,
             vec![0x00],
             vec![0xE7, 0x00],
         )];
         let mut i2c = Mock::new(&expectations);
-        let mut sensor = Lm75::new(i2c.clone(), Lm75::<Mock>::DEFAULT_ADDRESS);
+        let mut sensor = Lm75::new(i2c.clone(), DEFAULT_ADDRESS);
 
         assert_eq!(block_on(sensor.read_millicelsius()), Ok(-25_000));
 

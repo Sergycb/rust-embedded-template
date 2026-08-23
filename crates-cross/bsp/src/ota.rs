@@ -198,8 +198,11 @@ impl ports::FirmwareUpdate for Ota {
     /// Стиранием секторов `embassy-boot` занимается сам, но длина куска должна
     /// быть кратна `WRITE_SIZE` флеша — обычно это и есть размер пакета,
     /// которым транспорт отдаёт данные.
-    fn write(&mut self, offset: usize, data: &[u8]) -> Result<(), Self::Error> {
-        self.updater().write_firmware(offset, data)
+    fn write(&mut self, offset: u32, data: &[u8]) -> Result<(), Self::Error> {
+        // `write_firmware` берёт `usize`, а порт — `u32` (см. его
+        // doc-комментарий): на этой цели типы совпадают по ширине, но порт
+        // должен одинаково выражаться и на хосте, где живут фейки.
+        self.updater().write_firmware(offset as usize, data)
     }
 
     /// Читает записанное обратно — проверить контрольную сумму принятого

@@ -108,6 +108,11 @@ embedded-test      = { version = "0.7.1", default-features = false, features = [
 # `domain`: типы портов действительно пересекают границу domain↔cross, но
 # `ports` — крейт этого же проекта, и явная строка в манифесте честнее фасада.
 ports            = { path = "../crates-host/domain/ports" }
+# Драйверы, generic по шине: их `bsp` собирает из своей периферии и отдаёт
+# готовыми объектами. Живут в domain, потому что тестируются на хосте моком
+# (см. `adapters::Lm75`), а сюда объявлены, чтобы путь из
+# `bsp/src/resources.rs` работал без правки манифестов.
+adapters         = { path = "../crates-host/domain/adapters" }
 bsp              = { path = "./bsp" }{% if ota == "true" %}
 boot             = { path = "./boot" }{% endif %}
 app              = { path = "./app" }

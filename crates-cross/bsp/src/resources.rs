@@ -40,8 +40,9 @@
 //!     khz(100), Default::default(),
 //! );
 //! // Драйвер generic по шине и потому живёт в domain/adapters, где его
-//! // проверяет host-тест с моком, а не на плате.
-//! let sensor = adapters::Lm75::new(i2c, adapters::Lm75::<_>::DEFAULT_ADDRESS);
+//! // проверяет host-тест с моком, а не на плате. Крейт уже объявлен
+//! // зависимостью bsp — правки манифеста не нужно.
+//! let sensor = adapters::Lm75::new(i2c, adapters::lm75::DEFAULT_ADDRESS);
 //! ```
 //!
 //! и полем в `Board`: `pub sensor: adapters::Lm75<I2c<'static, Async>>`.

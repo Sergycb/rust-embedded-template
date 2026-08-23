@@ -48,6 +48,11 @@ std = [
 ]
 
 [dependencies]
+# Порты — границы самого домена: логика вызывает их, а реализации приходят из
+# `adapters` (хост) и `crates-cross/bsp` (железо). Зависимость нужна, чтобы
+# правило «порт заводится под то, чем пользуется логика» было выполнимым: без
+# неё `domain` не может даже назвать `ports::BootCounter`.
+ports = { workspace = true }
 thiserror = { workspace = true, default-features = false }
 fixed = { workspace = true }
 portable-atomic = { workspace = true }
