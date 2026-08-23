@@ -3,6 +3,14 @@
 version = 4
 
 [[package]]
+name = "adapters"
+version = "0.1.0"
+dependencies = [
+ "embedded-hal-async",
+ "ports",
+]
+
+[[package]]
 name = "aho-corasick"
 version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -182,6 +190,7 @@ dependencies = [
 name = "bsp"
 version = "0.1.0"
 dependencies = [
+ "adapters",
  "assign-resources",
  "bbqueue",
  "cortex-m",
@@ -589,6 +598,7 @@ dependencies = [
  "miniconf",
  "mitsein",
  "portable-atomic",
+ "ports",
  "static_cell",
  "sync-request",
  "sync_wrapper",

@@ -380,6 +380,7 @@ dependencies = [
  "mitsein",
  "mockall",
  "portable-atomic",
+ "ports",
  "proptest",
  "rstest",
  "static_cell",
