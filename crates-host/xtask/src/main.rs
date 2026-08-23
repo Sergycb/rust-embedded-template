@@ -174,7 +174,21 @@ fn build(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
          xtask не читает",
         elf.display(),
     );
-    let (base, image) = raw_image(&elf)?;
+    let (base, mut image) = raw_image(&elf)?;
+
+    // Версия — в хвост образа, и обязательно ДО подписи: устройство читает её
+    // из последних четырёх байт принятого образа и отказывается ставить
+    // прошивку не новее текущей (защита от атаки отката). Не будь версия
+    // подписана вместе с образом, соврать ею мог бы кто угодно.
+    //
+    // Значение берётся из символа в ELF, а не из Cargo.toml: так у версии
+    // остаётся ровно один источник — то, что скомпилировано в прошивку.
+    if signing_enabled() && has_bootloader() {
+        let version = image_version(&elf, base, &image)?;
+        let (major, minor, patch) = unpack_version(version);
+        println!("версия образа: {major}.{minor}.{patch}");
+        image.extend_from_slice(&version.to_le_bytes());
+    }
 
     // Размер печатается всегда: он одинаково полезен и проекту без OTA, где
     // приложению достаётся весь флеш. Заодно сверяется адрес, с которого образ
@@ -193,6 +207,102 @@ fn build(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
         }
     }
     Ok(())
+}
+
+/// Имя символа, в котором прошивка хранит собственную версию.
+///
+/// Определён в `crates-cross/bsp/src/ota.rs` под `#[unsafe(no_mangle)]` ровно
+/// ради этого чтения.
+const FW_VERSION_SYMBOL: &str = "FW_VERSION_IN_IMAGE";
+
+/// Достаёт версию прошивки из собранного образа.
+///
+/// Через таблицу символов ELF, а не разбором `crates-cross/Cargo.toml`: в
+/// манифесте лежит то, что попросили, а в образе — то, что получилось.
+/// Разойтись они могут тихо (своя `version` у пакета вместо наследования от
+/// воркспейса), и тогда устройство сравнивало бы номер, которого в прошивке
+/// нет.
+fn image_version(elf: &Path, base: u64, image: &[u8]) -> Result<u32, anyhow::Error> {
+    use object::elf::PT_LOAD;
+    use object::read::elf::{ElfFile32, FileHeader, ProgramHeader};
+    use object::read::{Object, ObjectSymbol};
+
+    let bytes = fs::read(elf).with_context(|| format!("прочитать {}", elf.display()))?;
+    let file = ElfFile32::<object::Endianness>::parse(&*bytes)
+        .with_context(|| format!("разобрать {}", elf.display()))?;
+
+    let symbol = file
+        .symbols()
+        .find(|symbol| symbol.name() == Ok(FW_VERSION_SYMBOL))
+        .with_context(|| {
+            format!(
+                "в {} нет символа {FW_VERSION_SYMBOL}. Его определяет bsp::ota — либо \
+                 прошивка собрана без него, либо статик выбросили при линковке (тогда \
+                 верните ему #[used] и #[unsafe(no_mangle)])",
+                elf.display(),
+            )
+        })?;
+    let address = symbol.address();
+
+    // Символ адресуется виртуальным адресом, а образ собран по физическим (см.
+    // `raw_image`). У `.rodata`, где живёт версия, они совпадают, но
+    // рассчитывать на это нельзя: сегмент ищется явно, и адрес переводится
+    // через его собственную пару vaddr/paddr. Ошибись мы тут молча — в хвост
+    // образа уехали бы четыре чужих байта, и устройство сравнивало бы не
+    // версию.
+    let endian = file.endian();
+    let segment = file
+        .elf_header()
+        .program_headers(endian, &*bytes)
+        .ok()
+        .and_then(|headers| {
+            headers.iter().find(|header| {
+                let vaddr = u64::from(header.p_vaddr(endian));
+                let size = u64::from(header.p_memsz(endian));
+                header.p_type(endian) == PT_LOAD
+                    && address >= vaddr
+                    && address - vaddr < size.max(1)
+            })
+        })
+        .with_context(|| {
+            format!("{FW_VERSION_SYMBOL} по адресу {address:#x} не попал ни в один сегмент PT_LOAD")
+        })?;
+
+    let physical =
+        u64::from(segment.p_paddr(endian)) + (address - u64::from(segment.p_vaddr(endian)));
+    let offset = physical
+        .checked_sub(base)
+        .and_then(|offset| usize::try_from(offset).ok())
+        .with_context(|| {
+            format!(
+                "{FW_VERSION_SYMBOL} лежит по адресу {physical:#x}, а образ начинается с {base:#x}"
+            )
+        })?;
+    let raw: [u8; 4] = image
+        .get(offset..offset + 4)
+        .and_then(|slice| slice.try_into().ok())
+        .with_context(|| {
+            format!(
+                "{FW_VERSION_SYMBOL} по смещению {offset:#x} не помещается в образ длиной {}",
+                image.len(),
+            )
+        })?;
+
+    Ok(u32::from_le_bytes(raw))
+}
+
+/// Разбирает упакованную версию обратно — только чтобы напечатать её человеку.
+///
+/// Формула та же, что в `domain::firmware::pack`, и живёт она там; здесь
+/// повторяется, потому что `xtask` — член корневого воркспейса и зависимости
+/// на `domain` у него нет (а заводить её ради трёх сдвигов дороже, чем эти
+/// три сдвига).
+fn unpack_version(version: u32) -> (u8, u8, u16) {
+    (
+        (version >> 24) as u8,
+        ((version >> 16) & 0xFF) as u8,
+        (version & 0xFFFF) as u16,
+    )
 }
 
 /// Каталог сборки `cross`-воркспейса.
@@ -1104,6 +1214,20 @@ mod tests {
     #[test]
     fn a_budget_allows_exactly_its_own_percentage() {
         super::check_image_budget("ACTIVE", 85, Some(85)).expect("ровно бюджет — это ещё не сверх");
+    }
+
+    /// Формула та же, что в `domain::firmware::pack`, но зависимости на
+    /// `domain` у xtask нет — значит разъехаться они могут только молча.
+    ///
+    /// Ловит это ПАРА тестов: здесь и `packs_into_the_agreed_bit_layout` в
+    /// `domain::firmware`, где стоят те же три литерала. Поодиночке ни один из
+    /// них расхождения не увидит — каждый проверяет свою сторону.
+    #[test]
+    fn unpacks_a_version_the_way_domain_packs_it() {
+        // 1.2.3, 0.1.0 (версия свежего проекта) и максимум каждого поля.
+        assert_eq!(super::unpack_version(0x0102_0003), (1, 2, 3));
+        assert_eq!(super::unpack_version(0x0001_0000), (0, 1, 0));
+        assert_eq!(super::unpack_version(0xFFFF_FFFF), (255, 255, 65535));
     }
 
     #[test]

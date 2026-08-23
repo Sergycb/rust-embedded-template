@@ -192,15 +192,33 @@ mod tests {
     /// на текущем образе.
     #[test]
     fn ota_rejects_a_bad_signature(mut board: Board) {
-        use bsp::ota::Error;
+        use bsp::ota::{Error, UpdateError};
+        use ports::FirmwareUpdate;
+
+        // Хвост раздела готовится явно, и без этого тест ненадёжен: проверка
+        // версии стоит ПЕРЕД подписью и читает последние четыре байта образа,
+        // а в разделе лежат остатки прошлых прогонов (своих же тестов,
+        // host-target прогона, чего угодно). Окажись там версия не новее
+        // текущей — вызов вернул бы `Rollback`, до подписи бы не дошёл, а
+        // `is_err()` разницы не заметил бы. Ставим заведомо большую.
+        const LENGTH: u32 = 64;
+        let mut image = [0xFFu8; LENGTH as usize];
+        image[LENGTH as usize - 4..].copy_from_slice(&u32::MAX.to_le_bytes());
+        board
+            .ota
+            .write(0, &image)
+            .expect("раздел DFU должен принимать запись");
 
         // Нули — заведомо не подпись: ни для какого ключа и сообщения.
         let signature = [0u8; 64];
 
         // Длина заведомо меньше раздела, иначе отказ пришёл бы от проверки
-        // длины, а не от подписи.
+        // длины, а не от подписи. Вид ошибки сверяется по той же причине, по
+        // которой он сверяется ниже: `is_err()` не отличает отказ по подписи
+        // от отказа по версии.
+        let refused = board.ota.verify_and_mark_updated(&signature, LENGTH);
         assert!(
-            board.ota.verify_and_mark_updated(&signature, 64).is_err(),
+            matches!(refused, Err(UpdateError::Boot(_))),
             "неверная подпись принята — по OTA прошёл бы чужой образ"
         );
 
@@ -217,8 +235,57 @@ mod tests {
         // пакета.
         let refused = board.ota.verify_and_mark_updated(&signature, u32::MAX);
         assert!(
-            matches!(refused, Err(Error::Flash(_))),
+            matches!(refused, Err(UpdateError::Boot(Error::Flash(_)))),
             "длина больше раздела DFU должна отвергаться отдельной ошибкой"
+        );
+    }
+
+    /// Образ не новее текущего отвергается — защита от атаки отката.
+    ///
+    /// Смысл защиты: подпись доказывает, КТО прислал образ, но не то, что он
+    /// новее. Без этой проверки достаточно взять прошлую прошивку — честно
+    /// подписанную, с уже закрытой в новой версии дырой — и скормить её
+    /// устройству.
+    ///
+    /// Версия едет в последних четырёх байтах образа (их дописывает `cargo
+    /// xtask build`), поэтому тест их туда и кладёт: подделать их
+    /// злоумышленник не может, они внутри подписанных байтов, а вот тесту
+    /// достаточно записи в `DFU`.
+    #[test]
+    fn ota_rejects_an_older_image(mut board: Board) {
+        use bsp::ota::UpdateError;
+        use ports::FirmwareUpdate;
+
+        // Кратно WRITE_SIZE, как и в тесте записи выше. Хвост — версия
+        // `0.0.0`, заведомо не новее любой проставленной в проекте.
+        const LENGTH: u32 = 32;
+        let mut image = [0xFFu8; LENGTH as usize];
+        image[LENGTH as usize - 4..].copy_from_slice(&0u32.to_le_bytes());
+        board
+            .ota
+            .write(0, &image)
+            .expect("раздел DFU должен принимать запись");
+
+        let refused = board.ota.verify_and_mark_updated(&[0u8; 64], LENGTH);
+        assert!(
+            matches!(refused, Err(UpdateError::Rollback { .. })),
+            "старый образ должен отвергаться отдельной ошибкой, а не общей: \
+             иначе тест не отличит отказ по версии от отказа по подписи"
+        );
+
+        // Обратная сторона: образ с версией заведомо новее проверку версии
+        // ПРОХОДИТ и упирается уже в подпись. Без этой половины тест остался
+        // бы зелёным, даже если бы проверка отвергала вообще всё.
+        image[LENGTH as usize - 4..].copy_from_slice(&u32::MAX.to_le_bytes());
+        board
+            .ota
+            .write(0, &image)
+            .expect("раздел DFU должен принимать запись");
+
+        let refused = board.ota.verify_and_mark_updated(&[0u8; 64], LENGTH);
+        assert!(
+            !matches!(refused, Err(UpdateError::Rollback { .. })),
+            "образ новее текущего не должен отвергаться как откат"
         );
     }
 {%- endif %}
