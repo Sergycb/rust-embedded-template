@@ -35,6 +35,11 @@ if ota == "true" {
 if config == "true" {
 	print("Настройки: раздел CONFIG во flash, crates-cross/bsp/src/config.rs, Board::settings.");
 }
+if variable::get("graph") == "true" {
+	print("Граф задач: один узел APP в crates-cross/app/src/task_orchestration.rs — туда и дописывайте.");
+} else {
+	print("Без графа задач: main заканчивается после инициализации (причина — выше).");
+}
 
 // crates-cross/Cargo.lock в шаблоне посчитан для варианта по умолчанию (с OTA, без
 // раздела настроек). Любой другой ответ меняет состав зависимостей `bsp`, и

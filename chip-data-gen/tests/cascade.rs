@@ -692,3 +692,57 @@ fn accepting_ota_still_loses_to_a_chip_that_cannot_fit_it() {
     assert_eq!(result.vars.get("ota").map(String::as_str), Some("false"));
     assert!(result.deleted.contains(&"crates-cross/boot".to_string()));
 }
+
+/// Граф задач снимается там, где раздел приложения слишком мал.
+///
+/// Точка замера не выдумана: на l011f4 (16 KiB flash, Cortex-M0+) сборка с
+/// графом падает у линкера — не хватает двух сотен байт. Порог в
+/// `GRAPH_MIN_PARTITION` выбран по этому и по обратному случаю (c011d6, 32 KiB,
+/// занимает 39% с графом), так что тест стережёт обе стороны решения.
+#[test]
+fn graph_is_dropped_when_the_app_partition_is_too_small() {
+    let script = compile_script();
+
+    let tiny = run_cascade_to(&script, "l011f4").expect("каскад не должен падать");
+    assert_eq!(
+        tiny.vars.get("graph").map(String::as_str),
+        Some("false"),
+        "в 16 KiB граф не помещается — хук обязан его снять"
+    );
+
+    let roomy = run_cascade_to(&script, "c011d6").expect("каскад не должен падать");
+    assert_eq!(
+        roomy.vars.get("graph").map(String::as_str),
+        Some("true"),
+        "в 32 KiB граф помещается с запасом — снимать его не за что"
+    );
+}
+
+/// Ответ «нет» на вопрос про граф окончателен и на просторном чипе.
+#[test]
+fn declining_the_graph_is_final() {
+    let result = run_cascade_with(&compile_script(), "f407ve", &[("graph", "no")])
+        .expect("каскад не должен падать");
+
+    assert_eq!(result.vars.get("graph").map(String::as_str), Some("false"));
+}
+
+/// Ветка ручной раскладки (`--define write_size=...`) тоже обязана раздать
+/// `graph`.
+///
+/// Тест не теоретический: ровно здесь ответ и терялся — `variable::set` стоял
+/// в соседней ветке, и пользователь, ответивший «да», молча получал проект без
+/// графа (Liquid сравнивает с `"true"`, а сырое `"yes"` из `[placeholders]` ему
+/// не равно).
+#[test]
+fn manual_layout_still_answers_about_the_graph() {
+    let script = compile_script();
+
+    let kept = run_cascade_with(&script, "f407ve", &[("write_size", "8"), ("graph", "yes")])
+        .expect("каскад не должен падать");
+    assert_eq!(kept.vars.get("graph").map(String::as_str), Some("true"));
+
+    let dropped = run_cascade_with(&script, "f407ve", &[("write_size", "8"), ("graph", "no")])
+        .expect("каскад не должен падать");
+    assert_eq!(dropped.vars.get("graph").map(String::as_str), Some("false"));
+}

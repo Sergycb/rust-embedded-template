@@ -56,23 +56,11 @@
 //! деление, которое на 32-битной цели раскрывается в вызов
 //! `__aeabi_uldivmod`, тогда как `embassy_time` — это просто счётчик тиков.
 //!
+//! Ниже — куда его растить. Импорты и `backoff()` уже написаны ниже по файлу,
+//! настоящим кодом, поэтому здесь не повторяются: пример показывает только то,
+//! чего в минимальном узле нет — зависимости, ресурсы и почтовый ящик.
+//!
 //! ```ignore
-//! use embassy_time::Duration;
-//!
-//! use supervisor::policy::{BackoffPolicy, JitterPolicy, RestartPolicy};
-//! use supervisor::runtime::TaskExit;
-//! use supervisor::supervisor_graph;
-//!
-//! fn backoff() -> BackoffPolicy {
-//!     BackoffPolicy {
-//!         first: Duration::from_millis(50),
-//!         factor: 2,
-//!         jitter: JitterPolicy::None,
-//!         floor: Duration::from_millis(50),
-//!         max: Duration::from_secs(5),
-//!     }
-//! }
-//!
 //! supervisor_graph! {
 //!     node USART, deps: [], restart: RestartPolicy::OnFailure, backoff: backoff(),
 //!         resources: [UART: UsartResources],
@@ -110,7 +98,7 @@
 //! стоил вызова `__aeabi_uldivmod` на каждой конверсии.
 //!
 //! Реализация привязана к железу, поэтому её место — `bsp`, и она там уже
-//! есть: `bsp::watchdog::Iwdg` (см. `crates-cross/bsp/src/watchdog.rs`).
+//! есть: `bsp::wdg::Iwdg` (см. `crates-cross/bsp/src/wdg.rs`).
 //! Писать её руками не нужно — нужно лишь добавить сам `IWDG` в группу
 //! `assign_resources!` и собрать объект в `Board::init`, как любой другой
 //! драйвер. Тип параметризован блоком: на большинстве STM32 он зовётся
@@ -128,7 +116,7 @@
 //!
 //! // В графе: блок уровня графа плюс opt-in у каждого узла.
 //! supervisor_graph! {
-//!     watchdog: bsp::watchdog::Iwdg<IWDG>, check_every: Duration::from_millis(100);
+//!     watchdog: bsp::wdg::Iwdg<IWDG>, check_every: Duration::from_millis(100);
 //!
 //!     node APP, deps: [], restart: RestartPolicy::OnFailure, backoff: backoff(),
 //!         watchdog: Duration::from_secs(2),
@@ -322,3 +310,48 @@
 //! проще взять штатную `.uninit` от `cortex-m-rt`: её `flip-link` понимает,
 //! `#[unsafe(link_section = ".uninit.MY")]` работает как обычно, а платой за
 //! удобство будет плавающий от сборки к сборке адрес.
+
+{%- if graph == "true" %}
+use defmt::info;
+use embassy_time::Duration;
+use supervisor::policy::{BackoffPolicy, JitterPolicy, RestartPolicy};
+use supervisor::runtime::TaskExit;
+use supervisor::supervisor_graph;
+
+/// Политика пауз между перезапусками узла.
+///
+/// Значения намеренно скромные: первый повтор почти сразу, дальше удвоение до
+/// пяти секунд. Смысл backoff'а не в том, чтобы «подождать подольше», а в том,
+/// чтобы падающая задача не крутила рестарты в цикле, съедая процессор у
+/// соседних узлов.
+fn backoff() -> BackoffPolicy {
+    BackoffPolicy {
+        first: Duration::from_millis(50),
+        factor: 2,
+        jitter: JitterPolicy::None,
+        floor: Duration::from_millis(50),
+        max: Duration::from_secs(5),
+    }
+}
+
+supervisor_graph! {
+    node APP, deps: [], restart: RestartPolicy::OnFailure, backoff: backoff(), task: app_task;
+}
+
+/// Единственный узел графа — каркас под вашу работу.
+///
+/// Здесь он только сообщает о старте и засыпает навсегда. Это осознанно:
+/// шаблон не знает, что должно делать ваше устройство, а периодический лог в
+/// пустом узле опаснее, чем кажется — `probe-rs attach` переводит RTT-канал в
+/// режим «блокировать при заполнении», и после отключения пробника прошивка
+/// встала бы внутри критической секции.
+///
+/// Что дальше: замените тело на свой цикл, добавьте узлам `deps:` (порядок
+/// старта), `inbox:` (очередь событий), `resources:` (ручка периферии,
+/// переживающая перезапуск задачи) и `watchdog:` — всё это описано выше, а
+/// реализация сторожа уже готова в `bsp::wdg`.
+async fn app_task() -> TaskExit {
+    info!("app: узел APP запущен");
+    core::future::pending().await
+}
+{%- endif %}

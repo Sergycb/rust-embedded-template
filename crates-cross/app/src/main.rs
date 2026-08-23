@@ -23,7 +23,7 @@ use ports::FirmwareUpdate;
 {%- endif %}
 
 #[embassy_executor::main]
-async fn main(_spawner: Spawner) {
+async fn main({% if graph == "true" %}spawner{% else %}_spawner{% endif %}: Spawner) {
     // Первая же строка лога отвечает на вопрос «а что вообще залито в плату»:
     // версия пакета и коммит, из которого собран образ (их подставляет
     // `shadow-rs` в build.rs). Без этого build-info собиралась бы впустую, а по
@@ -77,6 +77,20 @@ async fn main(_spawner: Spawner) {
         // предыдущий образ. Знать об этом важнее, чем упасть.
         error!("app: не удалось подтвердить образ: {}", err);
     }
+{%- endif %}
+
+{%- if graph == "true" %}
+
+    // Граф задач — единственное место, где в этом проекте появляются задачи.
+    // Голый `spawner.spawn(..)` рядом с ним завёл бы вторую, неуправляемую
+    // ветку: без `restart:`, `deps:` и `watchdog:` (см. task_orchestration.rs).
+    //
+    // Важное про порядок, когда узлам понадобится железо: `board` живёт до
+    // конца `main`, а `main` заканчивается прямо здесь — граф остаётся крутиться
+    // без него. Поэтому всё, что узлы получают (`resources:`, `cloned:`,
+    // аппаратный watchdog), раздаётся ДО этой строки: `provide_<slot>(..)` и
+    // `__supervisor_watchdog.put(..)` идут выше, а не после.
+    task_orchestration::spawn_all(&spawner).expect("узлы графа свежие: spawn_all зовётся один раз");
 {%- endif %}
 }
 

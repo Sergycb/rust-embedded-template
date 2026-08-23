@@ -113,6 +113,39 @@ fn cpu_and_target(suffix) {
         + "\" — добавьте его в family_table() в chip-select.rhai");
 }
 
+/// Наименьший раздел приложения, в который граф задач ещё имеет смысл класть.
+///
+/// Порог эмпирический, и обе точки замерены на реальной сборке шаблона:
+/// STM32L011F4 (16 KiB, Cortex-M0+) не собирается вовсе — линкер не досчитывает
+/// двух сотен байт; STM32C011D6 (32 KiB, то же ядро) занимает 12.6 KiB из 32,
+/// то есть держит запас в шестьдесят процентов под ваш код. Сам `supervisor`
+/// стоит порядка полутора килобайт на Cortex-M4 и до пяти на Cortex-M0+ —
+/// разброс из-за того, что на Armv6-M крупнее и код, и арифметика времени.
+///
+/// Порог намеренно консервативный: лучше не дать каркас там, где он влез бы
+/// впритык, чем отдать проект, который перестанет собираться от первой же
+/// пользовательской задачи.
+const GRAPH_MIN_PARTITION = 32768;
+
+/// Размер из таблицы раскладки в байтах: `"128K"`, `"1M"`, `"5376"`.
+///
+/// Свой разбор, а не готовая функция: в rhai её нет, а формат здесь пишем мы
+/// сами — те же строки уходят в `memory.x`, где их читает линкер.
+fn size_in_bytes(text) {
+    // `trim()` в rhai мутирует строку на месте и возвращает (), поэтому копия
+    // и отдельный вызов, а не `let raw = text.trim();`.
+    let raw = text;
+    raw.trim();
+    let last = raw.sub_string(raw.len - 1, 1);
+    if last == "K" || last == "k" {
+        return parse_int(raw.sub_string(0, raw.len - 1)) * 1024;
+    }
+    if last == "M" || last == "m" {
+        return parse_int(raw.sub_string(0, raw.len - 1)) * 1024 * 1024;
+    }
+    parse_int(raw)
+}
+
 fn is_dual_core(suffix) {
     // Тот же признак, что различает ветки в cpu_and_target(): суффикс после
     // дефиса — это конкретное ядро (core_override() узнаёт его), а не
@@ -49281,6 +49314,17 @@ if wants_signed && !wants_ota {
     wants_signed = false;
 }
 
+// Граф задач. «Да» и здесь означает «не возражаю»: помещается ли он, решает
+// размер раздела, в который линкуется приложение (см. GRAPH_MIN_PARTITION).
+let wants_graph = true;
+if variable::is_set("graph") {
+    let answer = variable::get("graph");
+    wants_graph = answer == "yes" || answer == "true";
+}
+if !wants_graph {
+    print("Граф задач отключён по вашему выбору: main заканчивается после инициализации");
+}
+
 // write_size, оба memory.x и признак ota — вместе, одним источником: если
 // пользователь уже задал write_size вручную через `--define`, авточипу
 // доверять нельзя (адреса в memory.x привязаны именно к вычисленному
@@ -49309,6 +49353,10 @@ if variable::is_set("write_size") {
     // бы хуже молчания: на чипе с другим сектором тест искал бы прежний
     // образ не по тому адресу и падал бы, обвиняя bootloader.
     variable::set("page_size", "");
+    // Раздел приложения здесь задаёт человек, значит и помещается ли в него
+    // граф — знает только он. Ответ проходит как есть; не влезет — скажет
+    // линкер.
+    variable::set("graph", if wants_graph { "true" } else { "false" });
 } else if !MEMORY_LAYOUT.contains(suffix) {
     // Считать было не из чего (нет непрерывной flash/RAM-цепочки от базового
     // адреса). memory.x остаётся плейсхолдером, но write_size всё равно
@@ -49331,6 +49379,10 @@ if variable::is_set("write_size") {
     }
     file::delete("crates-cross/bsp/src/config.rs");
     variable::set("signed", if wants_signed { "true" } else { "false" });
+    // Раздел приложения здесь задаёт человек, значит и помещается ли в него
+    // граф — знает только он. Оставляем ответ как есть; если не влезет, линкер
+    // скажет об этом прямо.
+    variable::set("graph", if wants_graph { "true" } else { "false" });
 } else {
     let m = MEMORY_LAYOUT[suffix];
 
@@ -49368,11 +49420,24 @@ if variable::is_set("write_size") {
         print("Подпись образа отключена вместе с OTA (см. причину выше)");
     }
 
+    // Граф задач меряется по разделу, в который линкуется приложение: при OTA
+    // это ACTIVE, без неё — весь flash за вычетом того, что забрали настройки.
+    // Ключ считается один раз и используется и для проверки, и для
+    // сообщения: с двумя копиями выбора хук однажды сообщил бы размер,
+    // который не измерял.
+    let app_length_key = key + (if ota { "active_length" } else { "flash_length" });
+    let graph = wants_graph && size_in_bytes(m[app_length_key]) >= GRAPH_MIN_PARTITION;
+    if wants_graph && !graph {
+        print("Граф задач отключён для " + suffix + ": под приложение отведено " + m[app_length_key] + ", а supervisor туда не помещается");
+        print("  вернуть можно вручную — код графа лежит в doc-комментарии crates-cross/app/src/task_orchestration.rs");
+    }
+
     variable::set("write_size", m["write_size"]);
     variable::set("page_size", m["page_size"]);
     variable::set("ota", if ota { "true" } else { "false" });
     variable::set("config", if config { "true" } else { "false" });
     variable::set("signed", if signed { "true" } else { "false" });
+    variable::set("graph", if graph { "true" } else { "false" });
     if !config {
         file::delete("crates-cross/bsp/src/config.rs");
     }
