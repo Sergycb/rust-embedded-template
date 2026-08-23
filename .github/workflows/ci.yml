@@ -56,6 +56,20 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: flip-link
-      - run: cargo fetch --locked --manifest-path crates-cross/Cargo.toml
+      # `--locked` здесь условный, в отличие от джоба host выше. Шаблон не
+      # раздаёт crates-cross/Cargo.lock: состав зависимостей зависит от ответов
+      # при генерации (OTA, раздел настроек, подпись), и один файл подходил бы
+      # ровно одному сочетанию. Пока проект не собран и lock не закоммичен,
+      # строгий шаг падал бы не на рассинхроне, а на отсутствии файла — то есть
+      # первый же прогон свежего проекта был бы красным без причины. Как только
+      # lock в репозитории, проверка становится строгой сама.
+      - name: Fetch (cross)
+        run: |
+          if [ -f crates-cross/Cargo.lock ]; then
+            cargo fetch --locked --manifest-path crates-cross/Cargo.toml
+          else
+            echo "::warning::crates-cross/Cargo.lock не закоммичен — версии резолвятся заново на каждом прогоне"
+            cargo fetch --manifest-path crates-cross/Cargo.toml
+          fi
       - run: cargo xtask lint cross
       - run: cargo xtask build

@@ -95,7 +95,20 @@ cross:build:
     - rustup target add {{target}}
     - cargo install flip-link --locked
   script:
-    - cargo fetch --locked --manifest-path crates-cross/Cargo.toml
+    # `--locked` здесь условный, в отличие от host:test выше. Шаблон не раздаёт
+    # crates-cross/Cargo.lock: состав зависимостей зависит от ответов при
+    # генерации (OTA, раздел настроек, подпись), и один файл подходил бы ровно
+    # одному сочетанию. Пока проект не собран и lock не закоммичен, строгий шаг
+    # падал бы не на рассинхроне, а на отсутствии файла — то есть первый же
+    # пайплайн свежего проекта был бы красным без причины. Как только lock в
+    # репозитории, проверка становится строгой сама.
+    - |
+      if [ -f crates-cross/Cargo.lock ]; then
+        cargo fetch --locked --manifest-path crates-cross/Cargo.toml
+      else
+        echo "ВНИМАНИЕ: crates-cross/Cargo.lock не закоммичен — версии резолвятся заново на каждом пайплайне"
+        cargo fetch --manifest-path crates-cross/Cargo.toml
+      fi
     - cargo xtask lint cross
     - cargo xtask build
 
