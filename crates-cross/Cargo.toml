@@ -29,14 +29,14 @@ unimplemented           = "warn"
 large_stack_arrays      = "warn"
 
 [workspace.dependencies]
-cortex-m = { version = "0.7.7", features = [
+cortex-m = { version = "0.7.9", features = [
 	"critical-section-single-core",
 	"inline-asm",
 	"linker-plugin-lto",
 ] }
-cortex-m-rt   = { version = "0.7.5" }
-defmt         = { version = "1.1.0" }
-defmt-rtt     = { version = "1.2.0" }
+cortex-m-rt   = { version = "0.7.6" }
+defmt         = { version = "1.1.1" }
+defmt-rtt     = { version = "1.3.0" }
 panic-probe   = { version = "1.0.0" }
 embassy-stm32 = { version = "0.6.0", features = [
 	"time-driver-any",
@@ -112,7 +112,7 @@ embassy-time       = { version = "0.5.1", features = [
 # «тест упал» вместо HardFault (подробности — в crates-cross/target-tests/Cargo.toml,
 # там же про то, почему в этом бинарнике нет panic-probe). `defmt` — чтобы
 # вывод харнесса шёл тем же транспортом, что и логи прошивки.
-embedded-test      = { version = "0.7.1", default-features = false, features = [
+embedded-test      = { version = "0.7.2", default-features = false, features = [
 	"embassy-010",
 	"defmt",
 	"semihosting",
