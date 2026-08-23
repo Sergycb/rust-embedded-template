@@ -27,3 +27,13 @@ xshell = "0.2.7"
 # `Sha512` и `to_bytes`.
 salty = { version = "0.3.0", default-features = false }
 getrandom = "0.4.3"
+# Сырой образ из ELF. Раньше здесь советовался `cargo objcopy`, но он требует
+# cargo-binutils, которого `cargo xtask setup` не ставит — то есть
+# рекомендованная самим шаблоном команда у пользователя не запускалась.
+# Читаются только заголовки программы и их данные, поэтому default-фичи
+# (запись, прочие форматы) выключены.
+object = { version = "0.40.0", default-features = false, features = [
+	"read_core",
+	"elf",
+	"std",
+] }
