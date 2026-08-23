@@ -1,16 +1,21 @@
-use std::{env, fs, path::PathBuf};
+use std::{env, path::PathBuf};
+{%- if signed == "true" %}
+// Только ради работы с файлом открытого ключа ниже — в проектах без подписи
+// этого блока нет вовсе, и неиспользованный импорт ронял бы сборку.
+use std::fs;
 
 /// Имя файла с открытым ключом в корне проекта. Его создаёт и поддерживает
 /// `cargo xtask build`; здесь он только читается.
 const PUBLIC_KEY_FILE: &str = "ota-public-key.bin";
+{%- endif %}
 
 fn main() {
     println!("cargo::rerun-if-changed=build.rs");
-    println!("cargo::rerun-if-changed=.git/HEAD");
 
     let manifest =
         PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR задаёт cargo"));
     println!("cargo::rustc-link-search={}", manifest.display());
+{%- if signed == "true" %}
 
     // Открытый ключ подписи: из корня проекта в OUT_DIR, откуда его забирает
     // `include_bytes!` в src/ota.rs. Через промежуточный файл, а не напрямую,
@@ -71,4 +76,5 @@ fn main() {
     if fs::read(&out).ok().as_deref() != Some(key.as_slice()) {
         fs::write(&out, key).expect("записать открытый ключ в OUT_DIR");
     }
+{%- endif %}
 }
