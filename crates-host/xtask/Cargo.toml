@@ -9,7 +9,7 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
-anyhow = "1.0.103"
+anyhow = "1.0.104"
 xshell = "0.2.7"
 # Подпись OTA-образов внутри `cargo xtask build`. Тот же крейт, что
 # проверяет подпись в прошивке (см. crates-cross/bsp/src/ota.rs) — значит алгоритм и

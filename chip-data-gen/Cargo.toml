@@ -15,8 +15,8 @@ default-run = "chip-data-gen"
 [workspace]
 
 [dependencies]
-anyhow     = "1.0.100"
-serde_json = "1.0.149"
+anyhow     = "1.0.104"
+serde_json = "1.0.151"
 
 # Не член ни одного [workspace] — [workspace.lints] отсюда не наследуются,
 # поэтому те же правила, что в корневом и crates-cross/Cargo.toml, продублированы

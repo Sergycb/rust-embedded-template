@@ -415,7 +415,7 @@ domain-логики, а трейты шины: сравнивать её не с
   сырой шаблон не знает, какую периферию конкретная плата отведёт под это, а
   `Board` пока не разбит на отдельные ресурсы (см. `crates-cross/bsp/src/lib.rs`).
   Паттерн и обоснование, почему все три turnkey-крейта отпали (`defmt-bbq` и
-  `defmt-serial` держат `defmt@0.3.x` при `defmt@1.1.0` у нас,
+  `defmt-serial` держат `defmt@0.3.x` при `defmt@1.x` у нас,
   `defmt-embassy-usbserial` требует `embassy-usb ^0.5`) — doc-комментарий в
   `crates-cross/app/src/task_orchestration.rs`. Дефолт в обоих профилях реального
   `main.rs` — `defmt-rtt`; при подключении паттерна не забыть сделать

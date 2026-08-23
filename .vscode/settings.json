@@ -1,7 +1,18 @@
 {
 	"rust-analyzer.check.command": "clippy",
+	// Отдельные workspace, которые rust-analyzer сам не найдёт: он идёт от
+	// корня, а `crates-cross` и `chip-info` объявляют собственные `[workspace]`
+	// (первый — потому что собирается под другой target, второй — потому что
+	// чип выбирается Cargo-фичей). Без явного перечисления справочник по чипу
+	// остаётся для IDE просто набором текстовых файлов.
+	//
+	// В репозитории САМОГО шаблона третья строка даст постоянную ошибку
+	// «failed to load workspace»: `stm32-metapac` не имеет фичи
+	// `{{chip_feature}}`, пока её не подставила генерация. Это ожидаемо —
+	// пользы она приносит там, куда файл и едет, в сгенерированном проекте.
 	"rust-analyzer.linkedProjects": [
 		"Cargo.toml",
 		"crates-cross/Cargo.toml",
+		"crates-host/chip-info/Cargo.toml",
 	]
 }

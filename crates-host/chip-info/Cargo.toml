@@ -29,7 +29,7 @@ stm32-metapac = { version = "21", default-features = false, features = [
 	"metadata",
 	"{{chip_feature}}",
 ] }
-anyhow = "1.0.100"
+anyhow = "1.0.104"
 
 # Не член ни одного [workspace] — [workspace.lints] не наследуются, поэтому те
 # же правила, что в корневом и crates-cross/Cargo.toml, продублированы явно.
