@@ -13,10 +13,15 @@
 //! // методов не видно.
 //! use ports::FirmwareUpdate;
 //!
-//! // Раздел стирается один раз, до первого куска, и это самый долгий вызов
-//! // здесь: на чипах с крупными секторами — секунды, в течение которых
-//! // исполнитель не работает (см. doc порта).
-//! board.ota.prepare()?;
+//! // Длину образа сообщает ваш канал — по ней и стирается место, а заодно
+//! // сразу видно, влезет ли образ вообще.
+//! let total = link.announced_len();
+//! if total > board.ota.capacity()? {
+//!     return Err(/* образ не помещается в раздел */);
+//! }
+//! // Стирание — самый долгий вызов здесь: на чипах с крупными секторами это
+//! // секунды, в течение которых исполнитель не работает (см. doc порта).
+//! board.ota.prepare(total)?;
 //!
 //! let mut offset = 0;
 //! while let Some(chunk) = link.next_chunk().await {
@@ -55,17 +60,14 @@
 //!   запрос, отработало цикл.
 //!
 //! Пока образ не подтверждён, отказывают и [`Ota::prepare`], и [`Ota::write`]:
-//! в `DFU` тогда лежит образ, куда откатываться, и затирать его нельзя.
-//! Первый отказ приходит из `embassy-boot` (`verify_booted`), второй — из
-//! собственной проверки состояния: прямая запись в раздел чужих проверок не
-//! делает.
+//! в `DFU` тогда лежит образ, куда откатываться, и затирать его нельзя. Оба
+//! отказа приходят из собственной проверки состояния — ни прямое стирание, ни
+//! прямая запись в раздел чужих проверок не делают, а `embassy-boot` здесь
+//! больше не участвует.
 
 use embassy_boot_stm32::{AlignedBuffer, BlockingFirmwareUpdater, FirmwareUpdaterConfig};
 use embassy_stm32::flash::WRITE_SIZE;
-use embedded_storage::nor_flash::NorFlash;
-{%- if signed == "true" %}
-use embedded_storage::nor_flash::NorFlashErrorKind;
-{%- endif %}
+use embedded_storage::nor_flash::{NorFlash, NorFlashErrorKind};
 
 use crate::FlashMutex;
 
@@ -178,6 +180,18 @@ impl Ota {
         self.updater().get_state()
     }
 
+    /// Гранулярность стирания раздела в байтах — размер страницы или сектора
+    /// этого чипа.
+    ///
+    /// Не в порту: домену эта величина не нужна (он мыслит длиной образа), а
+    /// вот прошивке и тестам — да. `prepare` округляет длину вверх именно до
+    /// неё, и на чипах с крупными секторами разница заметна: 256 KiB против
+    /// двух килобайт.
+    pub fn erase_size(&mut self) -> u32 {
+        let config = FirmwareUpdaterConfig::from_linkerfile_blocking(self.flash, self.flash);
+        erase_size_of(&config.dfu)
+    }
+
 {%- if signed == "true" %}
     /// Проверяет подпись принятого образа и, если она верна, просит bootloader
     /// поменять разделы местами на следующем сбросе. Сам сброс — за
@@ -216,7 +230,12 @@ impl Ota {
         // В шаблоне ключ по умолчанию нулевой, поэтому проверь мы сначала его
         // — сюда бы просто не доходило; а вернись отсюда тот же `BadState` —
         // тест не отличил бы одну защиту от другой.
-        if length > dfu_capacity() {
+        //
+        // Сверяется с размером `ACTIVE`, а он меньше `DFU` — то есть проверка
+        // строже, чем `assert!` внутри embassy-boot, и заодно отсекает образ,
+        // который в раздел приёма влез бы, а при обмене оказался обрезан (см.
+        // `max_image_len`).
+        if length > max_image_len() {
             return Err(Error::Flash(NorFlashErrorKind::OutOfBounds).into());
         }
         // Версия — ПЕРЕД подписью, и это не оплошность. Читается она из
@@ -358,9 +377,34 @@ impl Ota {
 impl ports::FirmwareUpdate for Ota {
     type Error = Error;
 
-    /// Стирает раздел `DFU` целиком, готовя его к приёму нового образа.
-    fn prepare(&mut self) -> Result<(), Self::Error> {
-        self.updater().prepare_update()?;
+    /// Размер раздела `ACTIVE` — см. [`max_image_len`], почему именно его, а не
+    /// того раздела, куда образ пишется.
+    fn capacity(&mut self) -> Result<u32, Self::Error> {
+        Ok(max_image_len())
+    }
+
+    /// Стирает столько страниц раздела `DFU`, сколько нужно образу длиной
+    /// `len`.
+    ///
+    /// `prepare_update()` из `embassy-boot` здесь не годится: он стирает
+    /// раздел целиком, а это и время (стирание идёт в критической секции, на
+    /// крупных секторах — секунды), и лишний износ флеша. Проверку состояния,
+    /// с которой тот начинается, приходится повторить самим — см. `write`.
+    fn prepare(&mut self, len: u32) -> Result<(), Self::Error> {
+        if self.state()? == State::Swap {
+            return Err(Error::BadState);
+        }
+        // Негодная длина — отказ ДО стирания, и порядок здесь важнее, чем
+        // кажется. Стерев раздел, мы уничтожаем образ, в который bootloader
+        // откатывается; узнать после этого, что длина была чушью, — худший из
+        // возможных моментов. Ноль отвергается по той же причине: стирать
+        // нечего, а следующая запись легла бы в нестёртую память.
+        if len == 0 || len > max_image_len() {
+            return Err(Error::Flash(NorFlashErrorKind::OutOfBounds));
+        }
+
+        let mut config = FirmwareUpdaterConfig::from_linkerfile_blocking(self.flash, self.flash);
+        erase_for(&mut config.dfu, len)?;
         Ok(())
     }
 
@@ -415,23 +459,51 @@ impl ports::FirmwareUpdate for Ota {
         self.updater().mark_booted()
     }
 }
-{%- if signed == "true" %}
-
-unsafe extern "C" {
-    /// Границы раздела `DFU` — те же символы, по которым его находит
-    /// `FirmwareUpdaterConfig::from_linkerfile_blocking`. Читаются здесь ради
-    /// одного: проверить присланную длину образа ДО того, как её проверит
-    /// `assert!` внутри embassy-boot.
-    static __bootloader_dfu_start: u32;
-    static __bootloader_dfu_end: u32;
+/// Стирает начало раздела — ровно столько страниц, сколько накроет образ
+/// длиной `len`.
+///
+/// Обобщённая, а не метод: тип раздела у `embassy-boot` невыразим в сигнатуре
+/// (`updater()` отдаёт `impl NorFlash`), а `ERASE_SIZE` — ассоциированная
+/// константа, которую иначе не достать.
+///
+/// Длина округляется ВВЕРХ до страницы: стереть половину страницы флеш не
+/// умеет, а оставить её нестёртой — значит потерять хвост образа.
+/// Гранулярность стирания раздела — та же уловка с обобщением, что и в
+/// [`erase_for`]: `ERASE_SIZE` живёт в трейте, а тип раздела невыразим.
+fn erase_size_of<F: NorFlash>(_dfu: &F) -> u32 {
+    F::ERASE_SIZE as u32
 }
 
-/// Размер раздела `DFU` в байтах.
-fn dfu_capacity() -> u32 {
-    // SAFETY: символы объявлены линкерным скриптом как абсолютные адреса;
+fn erase_for<F: NorFlash>(dfu: &mut F, len: u32) -> Result<(), F::Error> {
+    let page = F::ERASE_SIZE as u32;
+    // Длину вызывающий уже сверил с `max_image_len()`, а раздел `DFU` ещё на
+    // страницу-две больше — так что округление вверх за его границу не уйдёт.
+    // `saturating_mul` остаётся страховкой на случай, если проверку однажды
+    // ослабят: в release-профиле `overflow-checks` выключены, и обычное
+    // умножение завернулось бы молча.
+    let end = len.div_ceil(page).saturating_mul(page);
+    dfu.erase(0, end)
+}
+unsafe extern "C" {
+    /// Границы раздела `ACTIVE` — те же символы, по которым разделы находит
+    /// `FirmwareUpdaterConfig::from_linkerfile_blocking`.
+    static __bootloader_active_start: u32;
+    static __bootloader_active_end: u32;
+}
+
+/// Самый длинный образ, который вообще доедет до устройства.
+///
+/// Это размер `ACTIVE`, а НЕ `DFU`, хотя принимается образ в `DFU`. Раздел
+/// обновления по построению больше активного на одну-две страницы (этого
+/// требует `assert_partitions` в `embassy-boot`: обмену нужна запасная
+/// страница), а обмен копирует ровно `ACTIVE`. Образ размером между ними
+/// прошёл бы и проверку длины, и подпись, и пометку к обмену — а в `ACTIVE`
+/// приехал бы обрезанным: устройство отработало бы полный цикл обновления с
+/// перезагрузкой и молча откатилось.
+fn max_image_len() -> u32 {
+    // SAFETY: символы объявлены линкерным скриптом как абсолютные значения;
     // берётся их адрес, а не содержимое.
-    let start = &raw const __bootloader_dfu_start as u32;
-    let end = &raw const __bootloader_dfu_end as u32;
+    let start = &raw const __bootloader_active_start as u32;
+    let end = &raw const __bootloader_active_end as u32;
     end.saturating_sub(start)
 }
-{%- endif %}

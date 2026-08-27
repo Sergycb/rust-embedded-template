@@ -142,6 +142,21 @@ mod tests {
     }
 {%- if ota == "true" %}
 
+    /// Чем читается стёртая страница флеша этого чипа.
+    ///
+    /// Подставляется при генерации из того же признака, по которому у
+    /// `embassy-boot` включается фича `flash-erase-zero`: у L0/L1 стёртое
+    /// состояние нулевое, у остальных семейств — `0xFF`.
+    const ERASED: u8 = {% if erase_zero == "true" %}0x00{% else %}0xFF{% endif %};
+
+    /// Заведомо НЕ стёртые байты — инверсия стёртого состояния.
+    ///
+    /// Именно инверсия, а не литерал: тесты пачкают ими раздел, чтобы отличить
+    /// работающее стирание от заглушки, и `0x00` на чипе со стиранием в ноль
+    /// мусором не является. Длина кратна `WRITE_SIZE` самых крупных чипов (у
+    /// H7 это 32 байта) — короче раздел записи не принимает.
+    const DIRTY: [u8; 32] = [!ERASED; 32];
+
     /// Раздел `DFU` доступен на запись и чтение — то есть та половина OTA,
     /// которая не зависит от канала доставки, работает на этом чипе: адреса
     /// раздела посчитаны верно, стирание сектора проходит, записанное
@@ -162,7 +177,10 @@ mod tests {
         let written = [0xA5u8; 32];
         let mut read = [0x00u8; 32];
 
-        board.ota.prepare().expect("раздел DFU должен стираться");
+        board
+            .ota
+            .prepare(written.len() as u32)
+            .expect("раздел DFU должен стираться");
         board
             .ota
             .write(0, &written)
@@ -191,17 +209,25 @@ mod tests {
     fn erased_flash_reads_as_the_bootloader_expects(mut board: Board) {
         use ports::FirmwareUpdate;
 
-        const EXPECTED: u8 = {% if erase_zero == "true" %}0x00{% else %}0xFF{% endif %};
+        // Пачкаем раздел перед стиранием: иначе тест зелёный и в случае, когда
+        // `prepare` не сделал ничего, а байты остались стёртыми с прошлого
+        // прогона. Мусор — инверсия ожидаемого, чтобы он был мусором и там,
+        // где стёртое состояние нулевое.
+        board
+            .ota
+            .prepare(DIRTY.len() as u32)
+            .expect("раздел DFU должен стираться");
+        board.ota.write(0, &DIRTY).expect("запись мусора");
 
-        board.ota.prepare().expect("раздел DFU должен стираться");
-        let mut read = [!EXPECTED; 8];
+        board.ota.prepare(8).expect("раздел DFU должен стираться");
+        let mut read = [!ERASED; 8];
         board
             .ota
             .read(0, &mut read)
             .expect("раздел DFU должен читаться");
 
         assert_eq!(
-            read, [EXPECTED; 8],
+            read, [ERASED; 8],
             "стёртый флеш читается не тем значением, которое ждёт embassy-boot: \
              проверьте фичу flash-erase-zero и признак erase_zero в chip-select.rhai"
         );
@@ -211,11 +237,77 @@ mod tests {
     /// образа по частям.
     ///
     /// Тест не теоретический: до появления `prepare` каждая запись стирала
+    /// `prepare(len)` стирает ровно столько страниц, сколько занимает образ:
+    /// не меньше (иначе хвост лёг бы в нестёртую память) и не больше (иначе
+    /// незачем было брать длину).
+    ///
+    /// Без этого теста обе половины смысла не проверялись ничем: все прочие
+    /// вызовы `prepare` в тестах укладываются в одну страницу, и «округляем
+    /// вверх» там не отличить ни от «округляем вниз», ни от «стираем всё».
+    #[test]
+    fn prepare_erases_only_what_the_image_needs(mut board: Board) {
+        use ports::FirmwareUpdate;
+
+        let page = board.ota.erase_size();
+        let capacity = board.ota.capacity().expect("вместимость раздела");
+
+        // Трёх страниц нет — проверять нечего: на чипах с сектором в четверть
+        // мегабайта весь раздел это одна-две страницы, и «лишнего не стёрли»
+        // там не выразить. Молча зеленеть тест при этом не должен.
+        if capacity < page * 3 {
+            defmt::warn!(
+                "prepare_erases_only_what_the_image_needs: в разделе {} байт при странице {} — \
+                 проверка пропущена",
+                capacity,
+                page
+            );
+            return;
+        }
+
+        // Метки на второй и третьей странице: одна попадёт под стирание,
+        // другая обязана уцелеть.
+        board.ota.prepare(capacity).expect("стереть весь раздел");
+        board
+            .ota
+            .write(page, &DIRTY)
+            .expect("метка на 2-й странице");
+        board
+            .ota
+            .write(page * 2, &DIRTY)
+            .expect("метка на 3-й странице");
+
+        // На байт больше страницы — значит страниц нужно две.
+        board.ota.prepare(page + 1).expect("стереть под образ");
+
+        let mut read = [!ERASED; 32];
+        board
+            .ota
+            .read(page, &mut read)
+            .expect("чтение 2-й страницы");
+        assert_eq!(
+            read, [ERASED; 32],
+            "вторую страницу образ занимает, а она не стёрта: длина округляется вниз"
+        );
+
+        board
+            .ota
+            .read(page * 2, &mut read)
+            .expect("чтение 3-й страницы");
+        assert_eq!(
+            read, DIRTY,
+            "стёрта страница за пределами образа — prepare стирает больше нужного"
+        );
+    }
+
+    /// Два куска в ОДИН сектор — то, из чего состоит любой реальный приём
+    /// образа по частям.
+    ///
+    /// Тест не теоретический: до появления `prepare` каждая запись стирала
     /// сектор, в который писала (`write_firmware` из `embassy-boot` помнит
     /// стёртый сектор в объекте апдейтера, а тот создавался заново на каждый
-    /// вызов). Первый кусок читался как `0xFF` — проверено на живой плате.
-    /// Проверять это на хосте нечем: подделка флеша вела бы себя иначе, чем
-    /// настоящий, а вся суть — именно в стирании.
+    /// вызов). Первый кусок читался как стёртый — проверено на живой плате.
+    /// Проверять это на хосте нечем: подделка флеша ведёт себя не как
+    /// настоящий, а вся суть именно в стирании.
     #[test]
     fn dfu_partition_keeps_both_writes_into_one_sector(mut board: Board) {
         use ports::FirmwareUpdate;
@@ -226,14 +318,14 @@ mod tests {
         // Сначала пачкаем раздел заведомо непустыми байтами: без этого тест не
         // отличил бы работающий `prepare` от `Ok(())`, ведь раздел мог
         // остаться стёртым с прошлого прогона.
-        board.ota.prepare().expect("раздел DFU должен стираться");
-        board.ota.write(0, &[0x00u8; 32]).expect("запись мусора");
+        board.ota.prepare(32).expect("раздел DFU должен стираться");
+        board.ota.write(0, &DIRTY).expect("запись мусора");
 
-        board.ota.prepare().expect("раздел DFU должен стираться");
-        let mut read = [0x00u8; 32];
+        board.ota.prepare(96).expect("раздел DFU должен стираться");
+        let mut read = [!ERASED; 32];
         board.ota.read(0, &mut read).expect("чтение после стирания");
         assert_ne!(
-            read, [0x00u8; 32],
+            read, DIRTY,
             "prepare не стёр раздел: записанное осталось на месте"
         );
 
@@ -279,7 +371,10 @@ mod tests {
         const LENGTH: u32 = 64;
         let mut image = [0xFFu8; LENGTH as usize];
         image[LENGTH as usize - 4..].copy_from_slice(&u32::MAX.to_le_bytes());
-        board.ota.prepare().expect("раздел DFU должен стираться");
+        board
+            .ota
+            .prepare(LENGTH)
+            .expect("раздел DFU должен стираться");
         board
             .ota
             .write(0, &image)
@@ -337,7 +432,10 @@ mod tests {
         const LENGTH: u32 = 32;
         let mut image = [0xFFu8; LENGTH as usize];
         image[LENGTH as usize - 4..].copy_from_slice(&0u32.to_le_bytes());
-        board.ota.prepare().expect("раздел DFU должен стираться");
+        board
+            .ota
+            .prepare(LENGTH * 2)
+            .expect("раздел DFU должен стираться");
         board
             .ota
             .write(0, &image)

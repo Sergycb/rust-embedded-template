@@ -842,3 +842,53 @@ fn ota_survives_where_the_app_partition_is_large_enough() {
         "bootloader удалять не за что: под приложение отведено 80 KiB"
     );
 }
+
+/// Раздел настроек не выделяется там, где флеш стирается в ноль.
+///
+/// `sequential-storage` считает стёртым состоянием `0xFF` — и заголовок записи
+/// ищет как «все байты `0xFF`», и состояние страницы определяет по нулевым
+/// маркерам. На L0/L1 свежестёртая страница выглядит «уже закрытой», то есть
+/// хранилище молча не работает. Настраиваемого значения у крейта нет, поэтому
+/// единственный честный выход — не предлагать раздел вовсе.
+///
+/// Тот же класс дефекта, что и с `embassy-boot` (см. `erase_zero` в
+/// chip-select.rhai), только у второй библиотеки.
+#[test]
+fn the_settings_partition_is_dropped_where_flash_erases_to_zero() {
+    let ast = compile_script();
+
+    for suffix in ["l073rz", "l051c8"] {
+        let result = run_cascade_with(&ast, suffix, &[("config", "yes")])
+            .unwrap_or_else(|err| panic!("каскад до {suffix} упал: {err}"));
+
+        assert_eq!(
+            result.vars.get("erase_zero").map(String::as_str),
+            Some("true"),
+            "{suffix}: чип из семейства со стиранием в ноль"
+        );
+        assert_eq!(
+            result.vars.get("config").map(String::as_str),
+            Some("false"),
+            "{suffix}: раздел настроек на таком флеше молча не работал бы"
+        );
+        assert!(
+            result
+                .deleted
+                .contains(&"crates-cross/bsp/src/config.rs".to_string()),
+            "{suffix}: модуль настроек должен быть удалён, а удалено: {:?}",
+            result.deleted
+        );
+    }
+}
+
+/// Обратная сторона: там, где стирание обычное, раздел настроек по-прежнему
+/// выделяется. Без этого предыдущий тест был бы зелёным и при `config`,
+/// снятом у всех подряд.
+#[test]
+fn the_settings_partition_survives_on_ordinary_flash() {
+    let result = run_cascade_with(&compile_script(), "g071rb", &[("config", "yes")])
+        .expect("каскад до g071rb");
+
+    assert_eq!(result.vars.get("erase_zero").map(String::as_str), Some("false"));
+    assert_eq!(result.vars.get("config").map(String::as_str), Some("true"));
+}
