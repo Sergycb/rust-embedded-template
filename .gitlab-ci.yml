@@ -30,8 +30,11 @@ host:test:
   image: rust:1.96.0
   <<: [*cache, *not_scheduled]
   before_script:
-    - rustup component add rustfmt clippy
+    # llvm-tools нужен покрытию: cargo-llvm-cov зовёт llvm-profdata и llvm-cov
+    # из тулчейна, а в образе их нет.
+    - rustup component add rustfmt clippy llvm-tools
     - cargo install cargo-nextest --locked
+    - cargo install cargo-llvm-cov --locked
   script:
     # --locked ловит рассинхрон Cargo.toml и закоммиченного Cargo.lock:
     # без него cargo молча подобрал бы свои версии, и пайплайн остался бы
@@ -39,6 +42,26 @@ host:test:
     - cargo fetch --locked
     - cargo xtask lint
     - cargo xtask test host
+    # Покрытие без порога: цифра нужна, чтобы видеть, куда тесты не
+    # заглядывают, а не чтобы ронять пайплайн. Порог в проекте, где половина
+    # кода — `bsp` под железо, которого у раннера нет, означал бы только одно:
+    # писать тесты ради процента. Формат cobertura — тот, который GitLab
+    # показывает прямо в диффе merge request'а.
+    - cargo llvm-cov nextest --workspace --exclude host-target-tests
+      --features domain/log,domain/std --summary-only
+    # Второй вызов ничего не пересобирает и не перезапускает: `report` строит
+    # отчёт по данным, которые оставил предыдущий шаг. Два вызова нужны потому,
+    # что форматов за раз бывает только один — а нужны оба: таблица в лог (её
+    # разбирает `coverage:` ниже) и cobertura для диффа merge request'а.
+    - cargo llvm-cov report --cobertura --output-path coverage.xml
+  # Первый процент в строке TOTAL — покрытие по регионам; GitLab покажет его
+  # рядом с пайплайном.
+  coverage: '/^\s*TOTAL.*?(\d+\.\d+)%/'
+  artifacts:
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
 
 # Джоб kani:test здесь был и намеренно убран: kani компилирует крейт вместе со
 # всеми зависимостями СВОИМ тулчейном (0.67.0 — rustc 1.93.0-nightly), а крейты

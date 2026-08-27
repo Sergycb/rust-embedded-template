@@ -28,6 +28,25 @@ jobs:
       - run: cargo xtask lint
       - run: cargo xtask test host
 
+      # Покрытие — отдельным шагом и без порога: цифра здесь нужна, чтобы
+      # видеть, куда тесты не заглядывают, а не чтобы ронять сборку. Порог
+      # («не ниже 80%») в проекте, где половина кода — это `bsp` под железо,
+      # которого на раннере нет, означал бы только одно: писать тесты ради
+      # процента. Отчёт печатается в лог и складывается в сводку прогона.
+      # llvm-tools — не «на всякий случай»: cargo-llvm-cov зовёт llvm-profdata
+      # и llvm-cov из тулчейна, а в minimal-профиле их нет.
+      - run: rustup component add llvm-tools
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Покрытие domain
+        run: |
+          set -o pipefail
+          {
+            echo '```'
+            cargo llvm-cov nextest --workspace --exclude host-target-tests \
+              --features domain/log,domain/std --summary-only
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
   # Джоб kani здесь был и намеренно убран: kani компилирует крейт вместе со
   # всеми зависимостями СВОИМ тулчейном (0.67.0 — rustc 1.93.0-nightly), а
   # крейты из rust-lib объявляют rust-version = 1.96, и cargo отказывается
