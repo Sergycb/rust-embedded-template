@@ -29,7 +29,7 @@ __bootloader_dfu_end   = ORIGIN(DFU) + LENGTH(DFU) - ORIGIN(FLASH);
    Именно литералом, а не `ORIGIN(RAM)`: flip-link переопределяет блок MEMORY,
    сдвигая начало вверх на размер статики, и после него `ORIGIN(RAM)` означает
    вершину стека, а не дно — замер стека (bsp::stack) тогда всегда даёт ноль. */
-_ram_start = /* 0xXXXXXXXX */;
+_hw_ram_start = /* 0xXXXXXXXX */;
 
 /* Данные, переживающие сброс: адресуются через эти символы. Своей секции у
    них нет намеренно — секция с VMA в конце RAM убеждает flip-link, что

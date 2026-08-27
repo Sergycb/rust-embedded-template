@@ -48,7 +48,7 @@ host:test:
     # писать тесты ради процента. Формат cobertura — тот, который GitLab
     # показывает прямо в диффе merge request'а.
     - cargo llvm-cov nextest --workspace --exclude host-target-tests
-      --features domain/log,domain/std --summary-only
+      --features domain/log,domain/std --release --ignore-filename-regex 'xtask' --summary-only
     # Второй вызов ничего не пересобирает и не перезапускает: `report` строит
     # отчёт по данным, которые оставил предыдущий шаг. Два вызова нужны потому,
     # что форматов за раз бывает только один — а нужны оба: таблица в лог (её
@@ -58,6 +58,9 @@ host:test:
   # рядом с пайплайном.
   coverage: '/^\s*TOTAL.*?(\d+\.\d+)%/'
   artifacts:
+    # `when: always` — иначе при упавших тестах отчёт не выгрузится, а именно
+    # тогда он и нужен: посмотреть, что осталось непокрытым.
+    when: always
     reports:
       coverage_report:
         coverage_format: cobertura

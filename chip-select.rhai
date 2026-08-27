@@ -49544,7 +49544,7 @@ if variable::is_set("write_size") {
         "/* Аппаратное начало RAM. Именно литерал: flip-link переопределяет */",
         "/* MEMORY, и ORIGIN(RAM) после него — это вершина стека, а не дно. */",
         "/* Отсюда стек растёт вверх, по этому символу bsp::stack его меряет. */",
-        "_ram_start = " + m["ram_origin"] + ";",
+        "_hw_ram_start = " + m["ram_origin"] + ";",
     ];
     if m.contains("persist_origin") {
         persist_section += [

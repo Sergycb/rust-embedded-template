@@ -13,27 +13,24 @@
 //! // методов не видно.
 //! use ports::FirmwareUpdate;
 //!
-//! // Длину образа сообщает ваш канал — по ней и стирается место, а заодно
-//! // сразу видно, влезет ли образ вообще.
-//! let total = link.announced_len();
-//! if total > board.ota.capacity()? {
-//!     return Err(/* образ не помещается в раздел */);
-//! }
-//! // Стирание — самый долгий вызов здесь: на чипах с крупными секторами это
-//! // секунды, в течение которых исполнитель не работает (см. doc порта).
-//! board.ota.prepare(total)?;
-//!
-//! let mut offset = 0;
+//! // `Download` делает всё, что не зависит от канала: сверяет длину с
+//! // вместимостью ДО стирания, готовит раздел, копит куски до слова флеша и
+//! // следит, чтобы образ не вылез за обещанную длину. Писать это руками не
+//! // надо — и не стоит: половина граблей тут не видна, пока не попадёшь.
+//! let mut download = domain::download::Download::begin(
+//!     &mut board.ota,
+//!     link.announced_len(),
+//! )?;
 //! while let Some(chunk) = link.next_chunk().await {
-//!     board.ota.write(offset, chunk)?;
-//!     offset += chunk.len();
+//!     download.push(&mut board.ota, chunk)?;
 //! }
+//! let len = download.finish(&mut board.ota)?;
 {%- if signed == "true" %}
 //! // Подпись и длина приходят по тому же каналу, что и сам образ. Отказать
 //! // вызов может по трём разным причинам, и различать их стоит: неверная
 //! // подпись, негодная длина и `UpdateError::Rollback` — прислали прошивку
 //! // не новее текущей.
-//! board.ota.verify_and_mark_updated(&signature, offset as u32)?;
+//! board.ota.verify_and_mark_updated(&signature, len)?;
 {%- else %}
 //! board.ota.mark_updated()?;
 {%- endif %}
@@ -376,6 +373,11 @@ impl Ota {
 /// выбрана ли подпись при генерации проекта.
 impl ports::FirmwareUpdate for Ota {
     type Error = Error;
+
+    /// Слово программирования флеша этого чипа.
+    fn write_granularity(&mut self) -> u32 {
+        WRITE_SIZE as u32
+    }
 
     /// Размер раздела `ACTIVE` — см. [`max_image_len`], почему именно его, а не
     /// того раздела, куда образ пишется.

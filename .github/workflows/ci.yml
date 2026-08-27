@@ -43,7 +43,8 @@ jobs:
           {
             echo '```'
             cargo llvm-cov nextest --workspace --exclude host-target-tests \
-              --features domain/log,domain/std --summary-only
+              --features domain/log,domain/std --release \
+              --ignore-filename-regex 'xtask' --summary-only
             echo '```'
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
