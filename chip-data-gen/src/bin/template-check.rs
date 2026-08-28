@@ -352,6 +352,8 @@ fn check_one(
                 "warnings",
             ],
         ];
+        check_snippets_compile(&project, cargo_target_dir)?;
+
         for args in commands {
             run(
                 Command::new("cargo").args(args),
@@ -523,6 +525,220 @@ fn visit_files(
         }
     }
     Ok(())
+}
+
+/// То же, что [`run`], но отдаёт stdout: нужно там, где проверяется не код
+/// возврата, а напечатанное.
+fn capture(
+    command: &mut Command,
+    current_dir: &Path,
+    cargo_target_dir: Option<&Path>,
+) -> anyhow::Result<String> {
+    command.current_dir(current_dir);
+    if let Some(target_dir) = cargo_target_dir {
+        command.env("CARGO_TARGET_DIR", target_dir);
+    }
+    let output = command
+        .output()
+        .with_context(|| format!("запустить {:?}", command.get_program()))?;
+    if !output.status.success() {
+        bail!(
+            "команда завершилась с {}:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr),
+        );
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// Заготовки из `cargo xtask pins <БЛОК> --snippet` для ВСЕХ блоков чипа —
+/// собираются в один временный модуль `bsp` и компилируются.
+///
+/// Зачем это здесь. Заготовку человек вставляет в свой проект как есть, то
+/// есть она обязана компилироваться, — а проверялось до сих пор лишь то, что
+/// команда не упала. Цена одного этого пробела: четыре дефекта разом, и
+/// каждый ронял вставленный код у пользователя. Дублирующиеся ключи там, где
+/// два сигнала делят вектор (`error[E0428]` на 217 чипах); имя структуры
+/// `Usb_otg_fsResources`, которое не проходит `non_camel_case_types` под
+/// `-D warnings`; несуществующий `adc::InterruptHandler` на большинстве
+/// версий ADC; пустая `bind_interrupts!` для классического USB. Ни один из
+/// них компилятор здесь не видел, потому что напечатанное никуда не
+/// компилировалось.
+///
+/// Проверяются все блоки с выводами (у STM32F407 их 38), а не выборка: обе
+/// половины заготовки зависят от блока, и «на I2C1 сходится» ничего не
+/// говорит про USB или ADC.
+///
+/// Каждая заготовка — в своём модуле: `bind_interrupts!` объявляет `struct
+/// Irqs`, и без модулей второй же блок дал бы конфликт имён. Линковки нет,
+/// поэтому одинаковые `#[unsafe(no_mangle)]`-обработчики у блоков, делящих
+/// вектор, друг другу не мешают: `clippy` только проверяет.
+fn check_snippets_compile(project: &Path, cargo_target_dir: &Path) -> anyhow::Result<()> {
+    let listing = capture(
+        Command::new("cargo").args(["xtask", "pins"]),
+        project,
+        Some(cargo_target_dir),
+    )?;
+    let blocks = blocks_with_pins(&listing);
+    anyhow::ensure!(
+        !blocks.is_empty(),
+        "`cargo xtask pins` не перечислил ни одного блока с выводами — разбор списка разошёлся с \
+         форматом вывода chip-info",
+    );
+
+    // Половина `assign_resources!` берётся ровно у одного блока, и это не
+    // экономия: макрос объявляет `split_resources` через `#[macro_export]`, то
+    // есть кладёт его в корень крейта — двух вызовов в одном крейте не бывает
+    // (`error[E0428]: the name split_resources is defined multiple times`).
+    // Блок выбирается с подчёркиванием в имени, если такой есть: именно на нём
+    // ловится имя структуры ресурсов (`USB_OTG_FS` давал
+    // `Usb_otg_fsResources`, который не проходит `non_camel_case_types`).
+    let with_resources = blocks
+        .iter()
+        .find(|block| block.contains('_'))
+        .unwrap_or(&blocks[0])
+        .clone();
+
+    let mut module = String::from(
+        "//! Временный модуль: сюда `template-check` складывает заготовки из\n\
+         //! `cargo xtask pins <БЛОК> --snippet` и компилирует их. В проекте\n\
+         //! пользователя этого файла нет — он создаётся и удаляется проверкой.\n\
+         #![allow(dead_code)]\n\n",
+    );
+    for block in &blocks {
+        let snippet = capture(
+            Command::new("cargo").args(["xtask", "pins", block, "--snippet"]),
+            project,
+            Some(cargo_target_dir),
+        )?;
+        let bind = part_of(&snippet, "bind_interrupts!");
+        if !bind.is_empty() {
+            // Импортов модулю не добавляется ни одного: заготовка печатает
+            // свои, и в этом половина смысла проверки — вставленная как есть,
+            // она обязана собираться сама по себе.
+            module.push_str(&format!(
+                "mod irqs_{} {{\n{}\n}}\n\n",
+                block.to_lowercase(),
+                indent(&bind),
+            ));
+        }
+        if *block == with_resources {
+            let resources = part_of(&snippet, "assign_resources!");
+            anyhow::ensure!(
+                !resources.is_empty(),
+                "в заготовке для {block} нет половины assign_resources! — разбор разошёлся с \
+                 форматом вывода chip-info",
+            );
+            module.push_str(&format!("mod resources {{\n{}\n}}\n\n", indent(&resources)));
+        }
+    }
+
+    let bsp = project.join("crates-cross").join("bsp").join("src");
+    let module_path = bsp.join("snippet_check.rs");
+    let lib_path = bsp.join("lib.rs");
+    let lib = fs::read_to_string(&lib_path)?;
+    fs::write(&module_path, &module)?;
+    fs::write(&lib_path, format!("{lib}\nmod snippet_check;\n"))?;
+
+    let checked = run(
+        Command::new("cargo").args(["clippy", "-p", "bsp", "--", "-D", "warnings"]),
+        &project.join("crates-cross"),
+        Some(cargo_target_dir),
+    );
+
+    // Проект возвращается в исходное состояние в любом случае: следом за этой
+    // проверкой идут другие, и им нужен нетронутый `bsp`.
+    //
+    // Результат восстановления НЕ пробрасывается здесь же: сорвись оно (файл
+    // занят, права), сообщение об этом вытеснило бы настоящую причину —
+    // «заготовка не компилируется», — ради которой прогон и затевался.
+    // Сначала главное, потом уборка.
+    let restored = fs::write(&lib_path, lib).and_then(|()| fs::remove_file(&module_path));
+
+    checked.context(
+        "заготовка из `cargo xtask pins --snippet` не компилируется — её вставляют в проект как \
+         есть, значит чинить надо таблицу HANDLERS или печать в crates-host/chip-info",
+    )?;
+    restored.with_context(|| {
+        format!(
+            "заготовки компилируются, но временный модуль не убран — уберите вручную: {}",
+            module_path.display(),
+        )
+    })?;
+    println!("заготовки: {} блоков компилируются", blocks.len());
+    Ok(())
+}
+
+/// Имена блоков из шапки `cargo xtask pins` без аргументов.
+///
+/// Формат её вывода — «блоки с выводами (N):» и дальше строки с именами через
+/// пробел, до пустой строки.
+fn blocks_with_pins(listing: &str) -> Vec<String> {
+    listing
+        .lines()
+        .skip_while(|line| !line.starts_with("блоки с выводами"))
+        .skip(1)
+        .take_while(|line| !line.trim().is_empty())
+        .flat_map(str::split_whitespace)
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Одна половина напечатанной заготовки: от строки, начинающейся с `head`, и
+/// до конца её блока — то есть до строки, где закрывается верхний уровень
+/// скобок.
+///
+/// Пустая строка означает, что половины нет вовсе: `bind_interrupts!` не
+/// печатается блокам, у которых в embassy нет обработчика.
+///
+/// Комментарии в заготовке адресованы человеку («вставьте это в main.rs») и в
+/// модуль не нужны.
+fn part_of(snippet: &str, head: &str) -> String {
+    let mut lines: Vec<&str> = Vec::new();
+    // Импорты половины печатаются перед её макросом, и без них она не
+    // компилируется, — значит забирать надо вместе. Сбрасываются они на
+    // комментарии-заголовке: `use` принадлежит той половине, за которой стоит.
+    let mut imports: Vec<&str> = Vec::new();
+    let mut depth = 0usize;
+    let mut started = false;
+    for line in snippet.lines() {
+        if !started {
+            if line.starts_with("// crates-cross/") {
+                imports.clear();
+            } else if line.starts_with("use ") {
+                imports.push(line);
+            }
+            if !line.starts_with(head) {
+                continue;
+            }
+            started = true;
+            lines.append(&mut imports);
+            lines.push("");
+        }
+        if line.trim_start().starts_with("//") {
+            continue;
+        }
+        depth += line.matches('{').count();
+        depth = depth.saturating_sub(line.matches('}').count());
+        lines.push(line);
+        if depth == 0 {
+            break;
+        }
+    }
+    lines.join("\n")
+}
+
+fn indent(code: &str) -> String {
+    code.lines()
+        .map(|line| {
+            if line.trim().is_empty() {
+                String::new()
+            } else {
+                format!("    {line}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn run(

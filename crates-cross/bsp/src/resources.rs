@@ -17,7 +17,10 @@
 //!
 //! ```ignore
 //! use assign_resources::assign_resources;
-//! use embassy_stm32::peripherals;
+//! // `Peri` здесь обязателен: макрос раскрывается в
+//! // `Peri<'static, peripherals::X>` и оба имени берёт из области видимости
+//! // вызова. Без него — `error[E0425]: cannot find type Peri`.
+//! use embassy_stm32::{Peri, peripherals};
 //!
 //! assign_resources! {
 //!     sensor: SensorResources {

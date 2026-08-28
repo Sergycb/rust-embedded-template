@@ -57,6 +57,12 @@ pub enum Error<E> {
     /// [`MAX_WORD`], то есть шире буфера. Ни того, ни другого у STM32 не
     /// бывает, но молча испортить образ хуже, чем отказать.
     UnusableGranularity(u32),
+    /// Обещали образ нулевой длины. Порт объявляет это ошибкой
+    /// ([`ports::FirmwareUpdate::prepare`]), и проверять надо здесь, а не
+    /// полагаться на реализацию: `Ota` из `bsp` ноль отвергает, но порт
+    /// такого не обещает, а `prepare(0)` не стёр бы ничего — и первая же
+    /// запись легла бы в нестёртую память, на F2/F4/F7 молча.
+    Empty,
     /// Отказ самого флеша.
     Flash(E),
 }
@@ -87,6 +93,10 @@ impl Download {
         flash: &mut F,
         announced: u32,
     ) -> Result<Self, Error<F::Error>> {
+        if announced == 0 {
+            return Err(Error::Empty);
+        }
+
         let capacity = flash.capacity()?;
         if announced > capacity {
             return Err(Error::TooLong {
@@ -350,6 +360,27 @@ mod tests {
         // хосте и на устройстве: «стёртым состоянием» его называть нельзя,
         // на части чипов флеш стирается в ноль.
         assert_eq!(&flash.memory[image.len()..96], &[0xFF; 26][..]);
+    }
+
+    /// Нулевая длина отвергается здесь, а не оставляется реализации порта.
+    ///
+    /// `Ota` из `bsp` её тоже отвергает, но порт такого не обещает, а
+    /// `prepare(0)` не стёр бы ничего — и первая же запись легла бы в
+    /// нестёртую память, на F2/F4/F7 молча (побитовым И со старым
+    /// содержимым). Проверять надо до `prepare`, иначе проверять уже поздно.
+    #[test]
+    fn refuses_an_empty_image_before_touching_the_partition() {
+        let mut flash = FakeFlash::new(64, 8);
+        flash.memory.fill(0xA5);
+
+        let refused = Download::begin(&mut flash, 0);
+
+        assert_eq!(refused.err(), Some(Error::Empty));
+        assert_eq!(flash.prepared, None, "раздел не должен быть подготовлен");
+        assert!(
+            flash.memory.iter().all(|b| *b == 0xA5),
+            "раздел не должен быть стёрт"
+        );
     }
 
     /// Образ длиннее раздела отвергается ДО стирания: иначе устройство

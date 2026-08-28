@@ -398,18 +398,20 @@ const HANDLERS: &[Handlers] = &[
     },
     // У классического USB вектор не один: `LP` — обычные передачи, `HP` —
     // только двойная буферизация и изохронные (драйвер embassy их не
-    // включает), `WKUP` — выход из сна. Привязывается низкоприоритетный;
-    // `GLOBAL` оставлен для чипов, где вектор всё-таки один. Пока здесь был
-    // только `GLOBAL`, на STM32F103 печаталась ПУСТАЯ `bind_interrupts!` —
-    // то есть «привязывать нечего», хотя привязать надо.
+    // включает), `WKUP` — выход из сна. Пока здесь стоял `GLOBAL`, на
+    // STM32F103 печаталась ПУСТАЯ `bind_interrupts!` — то есть «привязывать
+    // нечего», хотя привязать надо.
+    //
+    // Только `LP`, без `GLOBAL` «на всякий случай»: embassy реализует
+    // `usb::Instance` ровно из ветки `($inst, usb, $block, LP, $irq)` своего
+    // `foreach_interrupt!`. На чипе с одним вектором `GLOBAL` типа просто не
+    // существовало бы, и заготовка с ним не собралась бы — а лишняя строка
+    // здесь ещё и увела бы такой чип мимо диагностики «сигналы не совпали».
     Handlers {
         kind: "usb",
         module: "usb",
         versions: &[],
-        signals: &[
-            ("GLOBAL", "InterruptHandler<{}>"),
-            ("LP", "InterruptHandler<{}>"),
-        ],
+        signals: &[("LP", "InterruptHandler<{}>")],
     },
     Handlers {
         kind: "rng",
@@ -455,11 +457,15 @@ const HANDLERS: &[Handlers] = &[
         versions: &[],
         signals: &[("GLOBAL", "InterruptHandler<{}>")],
     },
+    // `LO`, а не `GLOBAL`: вектора у LTDC два (`LO` — строки/кадры, `ER` —
+    // ошибки), и embassy привязывает `Instance::Interrupt` именно к первому —
+    // `foreach_interrupt!(($inst, ltdc, LTDC, LO, $irq))` в ltdc.rs. Пока
+    // здесь стоял `GLOBAL`, печаталась пустая `bind_interrupts!`.
     Handlers {
         kind: "ltdc",
         module: "ltdc",
         versions: &[],
-        signals: &[("GLOBAL", "InterruptHandler<{}>")],
+        signals: &[("LO", "InterruptHandler<{}>")],
     },
     Handlers {
         kind: "quadspi",
@@ -548,8 +554,39 @@ fn print_snippet(name: &str) -> Result<(), anyhow::Error> {
     match HANDLERS.iter().find(|row| {
         row.kind == kind && (row.versions.is_empty() || row.versions.contains(&version))
     }) {
+        // Вид блока в таблице есть, а вот ни один её сигнал с сигналами этого
+        // чипа не совпал. Печатать пустую `bind_interrupts!` тут нельзя: она
+        // читается как «привязывать нечего», хотя на деле разошлись таблица и
+        // метаданные. Ровно так молчали классический USB (`LP` против
+        // `GLOBAL`) и LTDC (`LO` против `GLOBAL`) — по чипу на каждый случай.
+        Some(row) if handlers_by_interrupt(peripheral, row, name).is_empty() => println!(
+            "// bind_interrupts! для {name} не собрать: обработчик у блока есть, но сигналы \
+             прерываний ({}) не совпали с таблицей HANDLERS в crates-host/chip-info — её надо \
+             перечитать по embassy-stm32",
+            peripheral
+                .interrupts
+                .iter()
+                .map(|interrupt| interrupt.signal)
+                .collect::<Vec<_>>()
+                .join(", "),
+        ),
         Some(row) => {
             println!("// crates-cross/app/src/main.rs — рядом с созданием периферии");
+            // Импорты печатаются вместе с макросом, а не подразумеваются:
+            // заготовку вставляют как есть, и без них она не собирается.
+            // `peripherals` нужен не всегда — у `eth` обработчик без
+            // параметра.
+            let needs_peripherals = row
+                .signals
+                .iter()
+                .any(|(_, handler)| handler.contains("{}"));
+            let module = row.module;
+            if needs_peripherals {
+                println!("use embassy_stm32::{OPEN}bind_interrupts, {module}, peripherals{CLOSE};");
+            } else {
+                println!("use embassy_stm32::{OPEN}bind_interrupts, {module}{CLOSE};");
+            }
+            println!();
             println!("bind_interrupts!(struct Irqs {}", OPEN);
             for (interrupt, handlers) in handlers_by_interrupt(peripheral, row, name) {
                 println!("    {interrupt} => {};", handlers.join(", "));
@@ -565,6 +602,13 @@ fn print_snippet(name: &str) -> Result<(), anyhow::Error> {
 
     println!();
     println!("// crates-cross/bsp/src/resources.rs");
+    // `Peri` — не для красоты: `assign_resources!` раскрывается в
+    // `Peri<'static, peripherals::X>` и требует оба имени в области видимости
+    // вызова. Без него вставленная заготовка падает с `error[E0425]: cannot
+    // find type Peri` — ровно это и случалось, пока импорты подразумевались.
+    println!("use assign_resources::assign_resources;");
+    println!("use embassy_stm32::{OPEN}Peri, peripherals{CLOSE};");
+    println!();
     println!("assign_resources! {}", OPEN);
     println!(
         "    {}: {}Resources {}",
