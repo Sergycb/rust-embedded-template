@@ -92,7 +92,41 @@ jobs:
             cargo fetch --manifest-path crates-cross/Cargo.toml
           fi
       - run: cargo xtask lint cross
+
+      # Размер образа в сравнении с веткой по умолчанию. Порога здесь нет — как
+      # и у покрытия: цифра нужна, чтобы увидеть рост тогда, когда автор ещё
+      # помнит, зачем он его добавил. `IMAGE_BUDGET_PERCENT` в xtask решает
+      # другую задачу и срабатывает позже — когда место уже кончилось.
+      #
+      # База лежит в кеше и пишется ТОЛЬКО на ветке по умолчанию: иначе размер
+      # из чужого PR стал бы базой для всех остальных. Ключи кеша у Actions
+      # неизменяемы, поэтому ключ с sha плюс `restore-keys` по префиксу —
+      # обычный для них приём «скользящего» кеша. Кеш ветки по умолчанию из PR
+      # читается, кеш PR из других веток — нет, так что схема работает как
+      # задумано.
+      - uses: actions/cache/restore@v4
+        with:
+          path: .image-size-baseline
+          key: image-size-{% raw %}${{ github.sha }}{% endraw %}
+          restore-keys: image-size-
+      - name: База размера образа
+        run: |
+          if [ -f .image-size-baseline ]; then
+            echo "IMAGE_SIZE_BASELINE=$(cat .image-size-baseline)" >> "$GITHUB_ENV"
+          else
+            echo "::notice::базы размера образа ещё нет — дельта появится после первого прогона на ветке по умолчанию"
+          fi
       - run: cargo xtask build
+        env:
+          IMAGE_SIZE_OUT: .image-size
+      - name: Запомнить размер как базу
+        if: github.ref_name == github.event.repository.default_branch
+        run: cp .image-size .image-size-baseline
+      - uses: actions/cache/save@v4
+        if: github.ref_name == github.event.repository.default_branch
+        with:
+          path: .image-size-baseline
+          key: image-size-{% raw %}${{ github.sha }}{% endraw %}
 
   # Тесты на живой плате. Джоб выключен, пока в репозитории не заведена
   # переменная HIL=true (Settings -> Secrets and variables -> Actions ->

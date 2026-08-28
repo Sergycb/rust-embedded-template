@@ -372,6 +372,8 @@ fn app_region(regions: &[(String, Region)]) -> Option<(&'static str, &Region)> {
 /// предупреждения. Линкер её поймает не всегда: раскладку `memory.x` могли
 /// поправить руками после сборки.
 fn report_image(base: u64, size: u64) -> Result<(), anyhow::Error> {
+    save_image_size(size)?;
+
     let regions = app_memory_regions()?;
     let Some((name, partition)) = app_region(&regions) else {
         // Раскладку заполняли руками и назвали регионы иначе — сравнивать не с
@@ -402,12 +404,96 @@ fn report_image(base: u64, size: u64) -> Result<(), anyhow::Error> {
             partition.length as f64 / 1024.0,
         ),
     }
+    if let Some(line) = size_delta(baseline_image_size()?, size, partition.length) {
+        println!("     {line}");
+    }
     anyhow::ensure!(
         size <= partition.length,
         "образ не помещается в раздел {name}: {size} байт против {}",
         partition.length,
     );
     check_image_budget(name, percent, IMAGE_BUDGET_PERCENT)
+}
+
+/// Переменная, из которой `build` берёт размер образа на ветке по умолчанию.
+///
+/// Заполняет её CI — из кеша, который пишется только на ветке по умолчанию
+/// (иначе размер из чужого PR стал бы базой для всех остальных). Локально она
+/// не задана, и `build` о дельте молчит.
+const BASELINE_ENV: &str = "IMAGE_SIZE_BASELINE";
+/// Переменная с путём, куда положить размер этой сборки числом.
+///
+/// Тоже CI: без неё пришлось бы вылавливать цифру из человекочитаемой строки
+/// регулярным выражением прямо в yaml — то есть держать формат вывода
+/// контрактом с двумя конфигурациями CI, не имея на это ни одного теста.
+const SIZE_OUT_ENV: &str = "IMAGE_SIZE_OUT";
+
+/// Размер образа на ветке по умолчанию, если CI его передал.
+///
+/// Мусор в переменной — ошибка, а не молчание: пустая дельта выглядела бы
+/// ровно как «база не задана», и сломанный шаг CI остался бы незамеченным.
+fn baseline_image_size() -> Result<Option<u64>, anyhow::Error> {
+    // Разбирается именно «переменной нет», а не любая ошибка чтения: значение
+    // не в UTF-8 — это заданная база, которую не прочитали, и молчать о ней
+    // нельзя ровно по той же причине, что и о нечисловой.
+    let raw = match env::var(BASELINE_ENV) {
+        Ok(raw) => raw,
+        Err(env::VarError::NotPresent) => return Ok(None),
+        Err(env::VarError::NotUnicode(raw)) => {
+            anyhow::bail!("{BASELINE_ENV}={raw:?} — не текст, ожидается размер образа в байтах")
+        }
+    };
+    let value = raw
+        .trim()
+        .parse()
+        .with_context(|| format!("{BASELINE_ENV}={raw:?} — ожидается размер образа в байтах"))?;
+    Ok(Some(value))
+}
+
+/// Кладёт размер этой сборки туда, куда просит CI.
+fn save_image_size(size: u64) -> Result<(), anyhow::Error> {
+    let Some(path) = env::var_os(SIZE_OUT_ENV) else {
+        return Ok(());
+    };
+    let path = PathBuf::from(path);
+    fs::write(&path, size.to_string())
+        .with_context(|| format!("не удалось записать размер образа в {}", path.display()))
+}
+
+/// Строка про то, как изменился образ с прошлой сборки на ветке по умолчанию.
+///
+/// `None` — базы нет, и говорить нечего: так выглядит любая локальная сборка и
+/// первый прогон CI после включения этой проверки.
+///
+/// Порога здесь нет и не будет — как у покрытия. Цифра нужна, чтобы увидеть
+/// рост в тот момент, когда автор ещё помнит, зачем он его добавил: flash
+/// растёт по паре сотен байт за коммит, и `IMAGE_BUDGET_PERCENT` срабатывает
+/// на полсотни коммитов позже, когда искать виноватого уже дорого. Это разные
+/// инструменты, а не два порога.
+fn size_delta(baseline: Option<u64>, size: u64, partition: u64) -> Option<String> {
+    let baseline = baseline?;
+    if baseline == size {
+        return Some(format!(
+            "размер не изменился ({:.1} KiB)",
+            size as f64 / 1024.0
+        ));
+    }
+
+    let (sign, diff) = if size > baseline {
+        ("+", size - baseline)
+    } else {
+        ("−", baseline - size)
+    };
+    // Проценты с десятой долей, в отличие от целой цифры строкой выше: рост в
+    // триста байт от раздела в сто килобайт — это треть процента, и на целых
+    // числах обе стороны выглядели бы одинаково.
+    let percent = |bytes: u64| bytes as f64 * 100.0 / partition.max(1) as f64;
+    Some(format!(
+        "{sign}{diff} байт к ветке по умолчанию (было {:.1} KiB, {:.1}% → {:.1}%)",
+        baseline as f64 / 1024.0,
+        percent(baseline),
+        percent(size),
+    ))
 }
 
 /// Сколько процентов раздела приложению позволено занять.
@@ -1540,6 +1626,46 @@ mod tests {
             super::decode_fault("panicked at 'index out of bounds', src/main.rs:42:5").is_empty()
         );
         assert!(super::decode_fault("HardFault pc=08001234 lr=fffffff9 psr=61000000").is_empty());
+    }
+
+    /// Без базы дельты нет — и это нормальный режим, а не поломка: так
+    /// выглядит любая локальная сборка и первый прогон CI после включения
+    /// проверки.
+    #[test]
+    fn without_a_baseline_there_is_no_delta() {
+        assert!(super::size_delta(None, 13_000, 131_072).is_none());
+    }
+
+    /// Рост и уменьшение показываются по-разному, и в обоих случаях видно
+    /// «было».
+    #[test]
+    fn a_delta_says_which_way_the_image_moved() {
+        let grew = super::size_delta(Some(12_800), 13_112, 131_072).expect("образ вырос");
+        assert!(grew.starts_with("+312 байт"), "{grew}");
+        assert!(grew.contains("12.5 KiB"), "нет прежнего размера: {grew}");
+
+        let shrank = super::size_delta(Some(13_112), 12_800, 131_072).expect("образ уменьшился");
+        assert!(shrank.starts_with("−312 байт"), "{shrank}");
+    }
+
+    /// Совпадение размеров — тоже ответ, а не молчание: «дельты нет» и «база
+    /// не задана» это разные вещи, и различать их должен читатель лога.
+    #[test]
+    fn an_unchanged_image_says_so() {
+        let same = super::size_delta(Some(13_000), 13_000, 131_072).expect("размер тот же");
+        assert!(same.contains("не изменился"), "{same}");
+    }
+
+    /// Проценты с десятой долей: рост в треть процента на целых числах
+    /// выглядел бы как отсутствие роста.
+    #[test]
+    fn small_growth_is_visible_in_percent() {
+        let line = super::size_delta(Some(12_800), 13_112, 131_072).expect("образ вырос");
+
+        assert!(
+            line.contains("9.8% → 10.0%"),
+            "проценты округлены до целых или посчитаны не от раздела: {line}"
+        );
     }
 
     /// Дамп, обрезанный по границе региона `PANIC`, не разбирается по
