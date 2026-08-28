@@ -13,7 +13,7 @@ jobs:
     name: Host (fmt, clippy, tests)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
       # На образе ubuntu-latest предустановлены cargo/rustc/rustdoc/rustfmt,
       # но НЕ clippy — без этой строки `cargo xtask lint` падает на
@@ -61,7 +61,7 @@ jobs:
     name: Cross (fmt, clippy, build)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: crates-cross
