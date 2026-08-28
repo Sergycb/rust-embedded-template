@@ -208,33 +208,80 @@ fn strip_liquid_from_manifests(dir: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Вложенных `{% if %}` в шаблоне нет (и не должно появиться — проверяется
-/// тестом `manifests_have_no_nested_liquid_ifs`), поэтому поиск ближайшего
-/// `{% endif %}` корректен.
-///
 /// Формы с управлением пробелами (`{%-`, `-%}`) приводятся к обычным до
 /// разбора. Без этого условие в `crates-cross/bsp/Cargo.toml`, записанное как
 /// `{%- if ota == "true" %}`, не находилось вовсе — и `cargo metadata` падал
 /// на «invalid key-value pair, expected key», то есть генератор данных
 /// переставал работать целиком. Ловится это только запуском самого
 /// генератора (он нужен редко — при обновлении embassy-stm32 или probe-rs),
-/// поэтому здесь ещё и тест на обе формы.
+/// поэтому здесь ещё и тесты на все формы.
+///
+/// Вложенность понимается: `{% endif %}` ищется парный, а не ближайший (см.
+/// [`matching_endif`]). Раньше здесь стояло «вложенных `{% if %}` в шаблоне
+/// нет и не должно появиться» со ссылкой на тест, которого в репозитории не
+/// было, — и вложенность приехала незамеченной ровно туда, куда её
+/// естественно писать: условная фича внутри `features = [...]` у
+/// `embassy-boot`. Стриппер тогда резал от внешнего `{% if %}` до внутреннего
+/// `{% endif %}`, оставлял лишний закрывающий тег, и генератор умирал на
+/// `cargo metadata`.
 fn strip_liquid(text: &str) -> String {
     let text = &text.replace("{%-", "{%").replace("-%}", "%}");
     let mut out = String::with_capacity(text.len());
     let mut rest = text.as_str();
-    while let Some(start) = rest.find("{% if") {
-        out.push_str(&rest[..start]);
+    while let Some(start) = rest.find(LIQUID_IF) {
         let after = &rest[start..];
-        let Some(end) = after.find("{% endif %}") else {
-            // Незакрытый тег — оставляем как есть, пусть падает `cargo
-            // metadata` с понятной ошибкой, а не мы с невнятной.
+        let Some(end) = matching_endif(after) else {
+            // Незакрытый тег — оставляем остаток как есть, пусть падает
+            // `cargo metadata` с понятной ошибкой, а не мы с невнятной.
+            //
+            // Текст до тега дописывается ПОСЛЕ этой проверки, а не до неё:
+            // иначе на выходе он оказывался дважды — один раз здесь, второй
+            // вместе с необрезанным `rest` в конце функции. То есть «оставим
+            // как есть» на деле портило файл сильнее, чем сам незакрытый тег.
             break;
         };
-        rest = &after[end + "{% endif %}".len()..];
+        out.push_str(&rest[..start]);
+        rest = &after[end..];
     }
     out.push_str(rest);
     out
+}
+
+/// Начало условного тега. Не `{% if %}` целиком: между `if` и `%}` стоит само
+/// условие.
+const LIQUID_IF: &str = "{% if";
+const LIQUID_ENDIF: &str = "{% endif %}";
+
+/// Смещение сразу за `{% endif %}`, парным к `{% if %}` в начале `text`.
+///
+/// `None` — тег не закрыт; тогда [`strip_liquid`] оставляет остаток как есть.
+///
+/// # Panics
+///
+/// Не паникует, но ждёт, что `text` начинается с [`LIQUID_IF`]: с этого и
+/// начинается счёт глубины. Единственный вызывающий это обеспечивает.
+fn matching_endif(text: &str) -> Option<usize> {
+    debug_assert!(
+        text.starts_with(LIQUID_IF),
+        "не с открывающего тега: {text}"
+    );
+
+    let mut depth = 1usize;
+    let mut at = LIQUID_IF.len();
+    while depth > 0 {
+        let endif = at + text[at..].find(LIQUID_ENDIF)?;
+        let nested = text[at..].find(LIQUID_IF).map(|offset| at + offset);
+        if let Some(nested) = nested
+            && nested < endif
+        {
+            depth += 1;
+            at = nested + LIQUID_IF.len();
+        } else {
+            depth -= 1;
+            at = endif + LIQUID_ENDIF.len();
+        }
+    }
+    Some(at)
 }
 
 fn copy_dir_recursive(src: &Path, dst: &Path) -> anyhow::Result<()> {
@@ -418,7 +465,26 @@ struct RawRegion {
     size: u64,
     /// `Some` только для flash-регионов (`settings: Some(FlashSettings {..})`
     /// в исходнике `stm32-metapac`); у RAM/EEPROM-регионов — `None`.
-    erase_write_size: Option<(u64, u64)>,
+    flash: Option<FlashSettings>,
+}
+
+/// Та часть `FlashSettings` из `stm32-metapac`, которая нужна шаблону.
+///
+/// Именованные поля, а не кортеж: третье значение (`erase_value`) не читается
+/// по позиции никак, а два первых уже путались местами при чтении кода.
+#[derive(Clone, Copy)]
+struct FlashSettings {
+    erase_size: u64,
+    write_size: u64,
+    /// Чем читается СТЁРТАЯ страница: `0xFF` у подавляющего большинства
+    /// семейств, `0x00` у L0/L1 и STM32WB10CC/WB15CC.
+    ///
+    /// От этого зависит фича `flash-erase-zero` у `embassy-boot` (без неё
+    /// обмен разделов читает признак «стёрто» наоборот) и то, работает ли
+    /// раздел настроек вообще (`sequential-storage` ищет заголовок записи как
+    /// «все байты `0xFF`»). Обе поломки молчаливые, поэтому значение берётся
+    /// из метаданных, а не выводится по имени чипа.
+    erase_value: u8,
 }
 
 #[derive(PartialEq, Eq)]
@@ -536,7 +602,7 @@ fn parse_regions(section: &str) -> anyhow::Result<Vec<RawRegion>> {
                 .context("MemoryRegion без size")?
                 .parse()
                 .context("не число: size")?;
-            let erase_write_size = if block.contains("settings: None") {
+            let flash = if block.contains("settings: None") {
                 None
             } else {
                 let erase_size: u64 = field(block, "erase_size")
@@ -547,14 +613,22 @@ fn parse_regions(section: &str) -> anyhow::Result<Vec<RawRegion>> {
                     .context("FlashSettings без write_size")?
                     .parse()
                     .context("не число: write_size")?;
-                Some((erase_size, write_size))
+                let erase_value: u8 = field(block, "erase_value")
+                    .context("FlashSettings без erase_value")?
+                    .parse()
+                    .context("не число: erase_value")?;
+                Some(FlashSettings {
+                    erase_size,
+                    write_size,
+                    erase_value,
+                })
             };
             Ok(RawRegion {
                 name,
                 kind,
                 address,
                 size,
-                erase_write_size,
+                flash,
             })
         })
         .collect()
@@ -612,7 +686,14 @@ fn field<'a>(block: &'a str, key: &str) -> Option<&'a str> {
     let pat = format!("{key}: ");
     let start = block.find(&pat)? + pat.len();
     let rest = &block[start..];
-    let end = rest.find([',', '\n'])?;
+    // Закрывающие скобки — такая же граница значения, как запятая и перевод
+    // строки. В самих значениях (числа, адреса, `MemoryRegionKind::Flash`,
+    // имена в кавычках) их не бывает, а вот последнее поле блока запятой не
+    // заканчивается: `erase_value: 255 })` без них возвращалось целиком,
+    // вместе с хвостом, и `parse` падал на «invalid digit». В файлах
+    // `stm32-metapac` поля печатаются по одному на строку, поэтому наружу это
+    // не вылезало — поймал тест на сжатой в одну строку записи.
+    let end = rest.find([',', '\n', '}', ')'])?;
     Some(rest[..end].trim())
 }
 
@@ -661,6 +742,16 @@ struct MemoryLayout {
     /// тест ищет, куда уехал прежний образ: при обмене `ACTIVE[i]`
     /// оказывается в `DFU[i + 1]`, то есть со сдвигом ровно на страницу.
     page_size: u64,
+    /// Стёртая страница читается нулями, а не `0xFF`.
+    ///
+    /// Берётся из `erase_value` в метаданных, а не выводится по имени чипа, и
+    /// это не педантизм: раньше признак считался как «фича начинается на
+    /// `l0`/`l1`», и под эвристику не попадали STM32WB10CC/WB15CC — у них
+    /// `erase_value: 0` при совсем другом префиксе. Такому чипу доставался
+    /// `embassy-boot` без фичи `flash-erase-zero` (обмен разделов читает
+    /// признак «стёрто» наоборот) и раздел настроек, который не работает
+    /// вовсе. Обе поломки молчаливые.
+    erase_zero: bool,
     /// `Ok` — OTA-схема помещается в flash; `Err` — не помещается, и текст
     /// объясняет почему (печатается при генерации и попадает комментарием в
     /// `memory.x`). Во втором случае проект собирается одним образом на весь
@@ -751,7 +842,7 @@ const MIN_RAM_FOR_LAYOUT: u64 = 2 * RESERVED_MIN;
 fn compute_memory_layout(regions: &[RawRegion]) -> Option<MemoryLayout> {
     let mut flash: Vec<&RawRegion> = regions
         .iter()
-        .filter(|r| r.kind == RegionKind::Flash && r.erase_write_size.is_some())
+        .filter(|r| r.kind == RegionKind::Flash && r.flash.is_some())
         .collect();
     flash.sort_by_key(|r| r.address);
 
@@ -776,13 +867,16 @@ fn compute_memory_layout(regions: &[RawRegion]) -> Option<MemoryLayout> {
     // максимум по цепочке, а не erase_size конкретного региона.
     let page_size = chain
         .iter()
-        .filter_map(|r| r.erase_write_size)
-        .map(|(erase, _)| erase)
+        .filter_map(|r| r.flash)
+        .map(|f| f.erase_size)
         .max()?;
-    let write_size = chain[0].erase_write_size?.1;
+    let write_size = chain[0].flash?.write_size;
     if page_size == 0 || write_size == 0 {
         return None;
     }
+    // По первому региону цепочки, как и `write_size`: у чипа стёртое
+    // состояние одно на весь контроллер флеша, а не своё у каждого банка.
+    let erase_zero = chain[0].flash?.erase_value == 0;
 
     let mut ram: Vec<&RawRegion> = regions
         .iter()
@@ -824,6 +918,7 @@ fn compute_memory_layout(regions: &[RawRegion]) -> Option<MemoryLayout> {
         extra_regions: extra_region_lines(regions, FLASH_BASE + flash_total, ram_end),
         write_size,
         page_size,
+        erase_zero,
         ota: compute_ota_partitions(&chain, flash_total, page_size, write_size),
         config: compute_config_partition(&chain, flash_total, page_size, write_size),
     })
@@ -971,8 +1066,8 @@ fn compute_ota_partitions(
         chain
             .iter()
             .find(|r| addr >= r.address && addr < r.address + r.size)
-            .and_then(|r| r.erase_write_size)
-            .map(|(erase, _)| erase)
+            .and_then(|r| r.flash)
+            .map(|f| f.erase_size)
     };
     // Размеры секторов бывают и меньше килобайта (L0/L1 — 256 байт), поэтому
     // не просто деление на 1024: иначе в сообщении о причине оказался бы
@@ -1156,6 +1251,13 @@ fn format_memory_layouts(layouts: &BTreeMap<&str, MemoryLayout>) -> String {
         }
         push_field(&mut out, "write_size", &m.write_size.to_string());
         push_field(&mut out, "page_size", &m.page_size.to_string());
+        // Строкой, а не булевым: `variable::get` в rhai-хуках читает только
+        // строки, и весь остальной обмен с шаблоном устроен так же.
+        push_field(
+            &mut out,
+            "erase_zero",
+            if m.erase_zero { "true" } else { "false" },
+        );
         match &m.ota {
             Ok(p) => {
                 push_field(&mut out, "ota", "true");
@@ -1528,24 +1630,62 @@ pub static METADATA: Metadata = Metadata {
         assert_eq!(regions[0].size, 524288);
     }
 
-    /// Один flash-регион, `size`/`erase_size` в байтах.
+    /// Один flash-регион, `size`/`erase_size` в байтах. Стирание в `0xFF` —
+    /// как у подавляющего большинства семейств; обратный случай собирает
+    /// [`flash_erasing_to_zero`].
     fn uniform_flash(size: u64, erase_size: u64, write_size: u64) -> Vec<RawRegion> {
+        flash_with_erase_value(size, erase_size, write_size, 0xFF)
+    }
+
+    /// Флеш, стирающийся в ноль (L0/L1, STM32WB10CC/WB15CC).
+    fn flash_erasing_to_zero(size: u64, erase_size: u64, write_size: u64) -> Vec<RawRegion> {
+        flash_with_erase_value(size, erase_size, write_size, 0x00)
+    }
+
+    fn flash_with_erase_value(
+        size: u64,
+        erase_size: u64,
+        write_size: u64,
+        erase_value: u8,
+    ) -> Vec<RawRegion> {
         vec![
             RawRegion {
                 name: "BANK_1".to_string(),
                 kind: RegionKind::Flash,
                 address: FLASH_BASE,
                 size,
-                erase_write_size: Some((erase_size, write_size)),
+                flash: Some(FlashSettings {
+                    erase_size,
+                    write_size,
+                    erase_value,
+                }),
             },
             RawRegion {
                 name: "SRAM".to_string(),
                 kind: RegionKind::Ram,
                 address: RAM_BASE,
                 size: 64 * 1024,
-                erase_write_size: None,
+                flash: None,
             },
         ]
+    }
+
+    /// Стёртое состояние берётся из метаданных, а не из имени чипа.
+    ///
+    /// Пока признак считался как «фича начинается на `l0`/`l1`», мимо него
+    /// проходили STM32WB10CC/WB15CC: `erase_value: 0` при другом префиксе.
+    /// Такому чипу доставался `embassy-boot` без `flash-erase-zero` (обмен
+    /// разделов читает признак «стёрто» наоборот) и раздел настроек, который
+    /// не работает вовсе, — обе поломки молчаливые.
+    #[test]
+    fn erase_zero_comes_from_the_metadata() {
+        let ordinary = compute_memory_layout(&uniform_flash(512 * 1024, 2048, 8))
+            .expect("раскладка для обычного флеша");
+        assert!(!ordinary.erase_zero, "0xFF принят за ноль");
+
+        let zeroing = compute_memory_layout(&flash_erasing_to_zero(512 * 1024, 2048, 8))
+            .expect("раскладка для флеша, стирающегося в ноль");
+        assert!(zeroing.erase_zero, "0x00 не распознан");
     }
 
     #[test]
@@ -1602,6 +1742,63 @@ pub static METADATA: Metadata = Metadata {
         assert!(!stripped.contains("embassy-boot"), "{stripped}");
         assert!(!stripped.contains('%'), "тег остался в тексте: {stripped}");
         assert!(stripped.contains("defmt"), "{stripped}");
+    }
+
+    /// Вложенный `{% if %}` — ровно та форма, что стоит в
+    /// `crates-cross/bsp/Cargo.toml`: условная фича `flash-erase-zero` внутри
+    /// списка `features`, а весь блок — внутри условия по `ota`/`signed`.
+    ///
+    /// Пока `strip_liquid` искал ближайший `{% endif %}`, а не парный, он
+    /// резал от внешнего открывающего до внутреннего закрывающего: в тексте
+    /// оставался лишний `{% endif %}`, то есть невалидный TOML, и генератор
+    /// данных умирал на `cargo metadata`. Заметно это было только при его
+    /// запуске — раз в обновление embassy-stm32.
+    #[test]
+    fn nested_liquid_conditionals_are_stripped_as_a_whole() {
+        let manifest = concat!(
+            "[dependencies]\n",
+            "{%- if ota == \"true\" %}\n",
+            "embassy-boot = { features = [\"defmt\"",
+            "{% if erase_zero == \"true\" %}, \"flash-erase-zero\"{% endif %}] }\n",
+            "{%- endif %}\n",
+            "defmt = \"1\"\n",
+        );
+
+        let stripped = strip_liquid(manifest);
+
+        assert!(!stripped.contains('%'), "тег остался в тексте: {stripped}");
+        assert!(
+            !stripped.contains("embassy-boot"),
+            "внешний блок должен уйти целиком: {stripped}"
+        );
+        assert!(
+            stripped.contains("defmt = \"1\""),
+            "срезано лишнее: {stripped}"
+        );
+    }
+
+    /// Вложенность снимается и когда внешний блок остаётся единственным на
+    /// весь файл, и когда за ним идёт ещё один такой же: счёт глубины не
+    /// должен «залипать» между блоками.
+    #[test]
+    fn two_nested_blocks_in_a_row_are_stripped() {
+        let manifest = concat!(
+            "a = 1\n",
+            "{% if x %}{% if y %}inner{% endif %}outer{% endif %}\n",
+            "{% if x %}{% if y %}inner{% endif %}outer{% endif %}\n",
+            "b = 2\n",
+        );
+
+        assert_eq!(strip_liquid(manifest), "a = 1\n\n\nb = 2\n");
+    }
+
+    /// Незакрытый тег оставляется как есть — падать должен `cargo metadata`
+    /// с понятной ошибкой, а не разбор здесь с невнятной.
+    #[test]
+    fn an_unclosed_tag_is_left_alone() {
+        let manifest = "a = 1\n{% if x %}\nb = 2\n";
+
+        assert_eq!(strip_liquid(manifest), manifest);
     }
 
     /// Все Liquid-теги в манифестах шаблона снимаются: если появится форма,

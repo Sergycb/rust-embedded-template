@@ -291,6 +291,39 @@ fn single_core_suffix_leaves_dual_core_false() {
     );
 }
 
+/// Признак «стёртая страница читается нулями» идёт из метаданных, а не из
+/// имени чипа.
+///
+/// `wb10cc` и `wb15cc` здесь — не для полноты. Пока признак считался как
+/// «фича начинается на `l0`/`l1`», эти два чипа проходили мимо: `erase_value`
+/// у них тот же ноль, а префикс совсем другой. Сгенерированный под них проект
+/// получал `embassy-boot` без `flash-erase-zero` (обмен разделов читает
+/// признак «стёрто» наоборот) и раздел настроек, который не работает вовсе, —
+/// обе поломки молчаливые.
+///
+/// `wb55rg` рядом с ними не для симметрии: без него тест остался бы зелёным и
+/// у реализации «всё семейство WB стирается в ноль», которая сломала бы
+/// полсотни рабочих чипов.
+#[test]
+fn erase_zero_follows_the_metadata_not_the_chip_name() {
+    let ast = compile_script();
+    for (suffix, expected) in [
+        ("l073rz", "true"),
+        ("l151c6", "true"),
+        ("wb10cc", "true"),
+        ("wb15cc", "true"),
+        ("f407ve", "false"),
+        ("wb55rg", "false"),
+    ] {
+        let result = run_cascade_to(&ast, suffix).expect("каскад не должен падать");
+        assert_eq!(
+            result.vars.get("erase_zero").map(String::as_str),
+            Some(expected),
+            "{suffix}: erase_zero разошёлся с erase_value в stm32-metapac",
+        );
+    }
+}
+
 /// Текст записанного `file::write` файла одной строкой.
 fn written(result: &CascadeResult, path: &str) -> String {
     result
@@ -889,6 +922,9 @@ fn the_settings_partition_survives_on_ordinary_flash() {
     let result = run_cascade_with(&compile_script(), "g071rb", &[("config", "yes")])
         .expect("каскад до g071rb");
 
-    assert_eq!(result.vars.get("erase_zero").map(String::as_str), Some("false"));
+    assert_eq!(
+        result.vars.get("erase_zero").map(String::as_str),
+        Some("false")
+    );
     assert_eq!(result.vars.get("config").map(String::as_str), Some("true"));
 }

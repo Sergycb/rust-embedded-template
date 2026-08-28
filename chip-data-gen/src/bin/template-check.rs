@@ -672,7 +672,10 @@ mod tests {
         let line = "          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}";
 
         let cleaned = without_actions_expressions(line);
-        assert!(!cleaned.contains("{{"), "осталось выражение Actions: {cleaned}");
+        assert!(
+            !cleaned.contains("{{"),
+            "осталось выражение Actions: {cleaned}"
+        );
     }
 
     /// Несколько выражений в строке — обычное дело для `if:`.
