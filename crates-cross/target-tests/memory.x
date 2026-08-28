@@ -25,6 +25,16 @@ __bootloader_active_end   = ORIGIN(ACTIVE) + LENGTH(ACTIVE) - ORIGIN(FLASH);
 __bootloader_dfu_start = ORIGIN(DFU) - ORIGIN(FLASH);
 __bootloader_dfu_end   = ORIGIN(DFU) + LENGTH(DFU) - ORIGIN(FLASH);
 
+/* Аппаратное начало RAM — впишите тот же адрес, что и в ORIGIN(RAM) выше.
+   Именно литералом, а не `ORIGIN(RAM)`: flip-link переопределяет блок MEMORY,
+   сдвигая начало вверх на размер статики, и после него `ORIGIN(RAM)` означает
+   вершину стека, а не дно — замер стека (bsp::stack) тогда всегда даёт ноль.
+
+   Нужен и здесь, а не только в app/memory.x: тесты на устройстве зовут тот же
+   `Board::init`, а он первой строкой заливает стек узором. Без символа образ
+   тестов не слинкуется вовсе (`undefined symbol: _hw_ram_start`). */
+_hw_ram_start = /* 0xXXXXXXXX */;
+
 /* Данные, переживающие сброс: адресуются через эти символы. Своей секции у
    них нет намеренно — секция с VMA в конце RAM убеждает flip-link, что
    свободного места не осталось, и он оставляет стек в самом начале RAM;
