@@ -53,7 +53,11 @@ host:test:
     # отчёт по данным, которые оставил предыдущий шаг. Два вызова нужны потому,
     # что форматов за раз бывает только один — а нужны оба: таблица в лог (её
     # разбирает `coverage:` ниже) и cobertura для диффа merge request'а.
-    - cargo llvm-cov report --cobertura --output-path coverage.xml
+    # `--release` обязателен и здесь: cargo-llvm-cov ищет объектные файлы в
+    # каталоге своего профиля, и без ключа второй вызов смотрел бы в `debug/`,
+    # тогда как данные оставил release-прогон выше. GitLab получал бы пустой
+    # cobertura-отчёт и показывал его в merge request'е как покрытие.
+    - cargo llvm-cov report --release --cobertura --output-path coverage.xml
   # Первый процент в строке TOTAL — покрытие по регионам; GitLab покажет его
   # рядом с пайплайном.
   coverage: '/^\s*TOTAL.*?(\d+\.\d+)%/'

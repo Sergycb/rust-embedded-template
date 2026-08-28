@@ -1,11 +1,17 @@
 /* Заполняется вручную: сюда попадает этот файл, только если раскладку не
    удалось посчитать при генерации (или её отключили `--define write_size=...`).
-   Обычно chip-select.rhai пишет сюда готовые адреса по секторам чипа. */
+   Обычно chip-select.rhai пишет сюда ту же раскладку, что и приложению: тесты
+   на устройстве прошиваются на его место.
+
+   Форма повторяет сгенерированную, и отступать от неё не надо — ниже
+   объяснено, где это стоит рабочей прошивки. */
 
 MEMORY {
-    FLASH             (rx)  : ORIGIN = /* 0xXXXXXXXX */, LENGTH = /* XXXK */
+    /* FLASH здесь — это раздел ACTIVE, а НЕ весь чип: приложение линкуется в
+       него, а с базы flash стартует bootloader (crates-cross/boot). Впишете
+       сюда базу — `cargo xtask flash` затрёт bootloader образом приложения. */
+    FLASH             (rx)  : ORIGIN = /* 0xXXXXXXXX — начало ACTIVE */, LENGTH = /* XXXK */
     BOOTLOADER_STATE  (rx)  : ORIGIN = /* 0xXXXXXXXX */, LENGTH = /* XXXK */
-    ACTIVE            (rx)  : ORIGIN = /* 0xXXXXXXXX */, LENGTH = /* XXXK */
     DFU               (rx)  : ORIGIN = /* 0xXXXXXXXX */, LENGTH = /* XXXK */
     RAM               (xrw) : ORIGIN = /* 0xXXXXXXXX */, LENGTH = /* XXXK */
     /* Два хвостовых куска RAM, отрезанных от её конца: PERSIST — под данные,
@@ -16,23 +22,30 @@ MEMORY {
     PANIC             (xrw) : ORIGIN = /* ADDR END RAM - LEN   */, LENGTH = /* LEN */
 }
 
-__bootloader_state_start = ORIGIN(BOOTLOADER_STATE) - ORIGIN(FLASH);
-__bootloader_state_end   = ORIGIN(BOOTLOADER_STATE) + LENGTH(BOOTLOADER_STATE) - ORIGIN(FLASH);
+/* База flash всего чипа, обычно 0x08000000 — впишите литералом.
 
-__bootloader_active_start = ORIGIN(ACTIVE) - ORIGIN(FLASH);
-__bootloader_active_end   = ORIGIN(ACTIVE) + LENGTH(ACTIVE) - ORIGIN(FLASH);
+   Именно она, а не `ORIGIN(FLASH)`: смещения `__bootloader_*` читает
+   embassy-boot, работающий с флешем целиком, а `ORIGIN(FLASH)` выше — это
+   ACTIVE. Подставив его, вы получили бы отрицательное смещение, свёрнутое в
+   что-нибудь вроде 0xFFFFF800, — и bootloader искал бы своё состояние за
+   границей чипа. В crates-cross/boot/memory.x те же строки написаны через
+   `ORIGIN(FLASH)` и там верны: у бутлоадера FLASH и правда начинается с базы. */
+__flash_base = /* 0xXXXXXXXX */;
 
-__bootloader_dfu_start = ORIGIN(DFU) - ORIGIN(FLASH);
-__bootloader_dfu_end   = ORIGIN(DFU) + LENGTH(DFU) - ORIGIN(FLASH);
+__bootloader_state_start = ORIGIN(BOOTLOADER_STATE) - __flash_base;
+__bootloader_state_end   = ORIGIN(BOOTLOADER_STATE) + LENGTH(BOOTLOADER_STATE) - __flash_base;
+
+/* ACTIVE — это и есть FLASH данного крейта. */
+__bootloader_active_start = ORIGIN(FLASH) - __flash_base;
+__bootloader_active_end   = ORIGIN(FLASH) + LENGTH(FLASH) - __flash_base;
+
+__bootloader_dfu_start = ORIGIN(DFU) - __flash_base;
+__bootloader_dfu_end   = ORIGIN(DFU) + LENGTH(DFU) - __flash_base;
 
 /* Аппаратное начало RAM — впишите тот же адрес, что и в ORIGIN(RAM) выше.
    Именно литералом, а не `ORIGIN(RAM)`: flip-link переопределяет блок MEMORY,
    сдвигая начало вверх на размер статики, и после него `ORIGIN(RAM)` означает
-   вершину стека, а не дно — замер стека (bsp::stack) тогда всегда даёт ноль.
-
-   Нужен и здесь, а не только в app/memory.x: тесты на устройстве зовут тот же
-   `Board::init`, а он первой строкой заливает стек узором. Без символа образ
-   тестов не слинкуется вовсе (`undefined symbol: _hw_ram_start`). */
+   вершину стека, а не дно — замер стека (bsp::stack) тогда всегда даёт ноль. */
 _hw_ram_start = /* 0xXXXXXXXX */;
 
 /* Данные, переживающие сброс: адресуются через эти символы. Своей секции у

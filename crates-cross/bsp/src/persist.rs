@@ -72,4 +72,15 @@ impl BootCounter for BootCount {
             count
         }
     }
+
+    fn reset(&mut self) {
+        let base = &raw mut _persist_start as *mut u32;
+        // SAFETY: те же два слова региона `PERSIST`, что и в `bump`, и та же
+        // эксклюзивность — единственный экземпляр создаётся в `Board::init`.
+        //
+        // Стирается магия, а не счётчик: следующий `bump` тогда пойдёт по
+        // ветке «в регионе мусор» и вернёт 1, не полагаясь на то, что ноль в
+        // счётчике кто-то прочитает правильно.
+        unsafe { base.write_volatile(0) };
+    }
 }

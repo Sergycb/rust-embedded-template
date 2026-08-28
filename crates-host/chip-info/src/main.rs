@@ -316,16 +316,31 @@ fn describe_pin(name: &str) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-/// Строка таблицы [`HANDLERS`]: `kind` из метаданных, имя модуля
-/// `embassy_stm32` и пары «сигнал прерывания → шаблон типа обработчика».
+/// Строка таблицы [`HANDLERS`].
 ///
-/// Псевдоним, а не голый кортеж прямо в типе константы, по требованию clippy
-/// (`type_complexity` под `-D warnings`).
-type HandlerTable = (
-    &'static str,
-    &'static str,
-    &'static [(&'static str, &'static str)],
-);
+/// Структура, а не кортеж: полей стало четыре, и два из них — строковые
+/// срезы, которые в позиционной записи путаются между собой. Заодно уходит
+/// псевдоним, заведённый когда-то ради clippy (`type_complexity`).
+struct Handlers {
+    /// `kind` блока из метаданных `stm32-metapac`.
+    kind: &'static str,
+    /// Модуль `embassy_stm32`, в котором живёт обработчик.
+    module: &'static str,
+    /// Версии блока, у которых обработчик вообще существует. Пустой список —
+    /// «у всех версий этого вида».
+    ///
+    /// Нужно потому, что наличие обработчика в embassy зависит не только от
+    /// вида блока: `adc::InterruptHandler` определён лишь для пяти версий
+    /// ADC из полутора десятков, а модуль `comp` целиком закрыт
+    /// `#[cfg(any(comp_u5, comp_v2))]`. Без фильтра заготовка предлагала бы
+    /// тип, которого на этом чипе нет, — и вставивший её получал бы ошибку
+    /// компиляции вместо подсказки.
+    versions: &'static [&'static str],
+    /// Сигнал прерывания → шаблон типа. `{}` заменяется именем блока; без
+    /// него идут те, кто в embassy привязан к единственному экземпляру
+    /// (`eth`).
+    signals: &'static [(&'static str, &'static str)],
+}
 
 /// Модуль `embassy_stm32` и типы обработчиков прерываний для блока: `kind` из
 /// метаданных совпадает с именем модуля почти всегда (`usart`, `i2c`, `rng`,
@@ -337,29 +352,36 @@ type HandlerTable = (
 /// через DMA, `bind_interrupts!` им не нужен). Компилятор про ошибку скажет,
 /// но уже после того, как вы полчаса выясняете, какой именно тип он ждёт.
 ///
-/// Третье поле — шаблон типа; `{}` в нём заменяется именем блока. Без
-/// параметра идут те, кто в embassy привязан к единственному экземпляру
-/// (`eth`).
-///
 /// Сверено с `embassy-stm32` 0.6. Это подсказка, а не источник правды:
 /// последнее слово за компилятором, и при обновлении embassy таблицу стоит
 /// перечитать. Блока нет в таблице — значит `bind_interrupts!` ему, скорее
 /// всего, не нужен.
-const HANDLERS: &[HandlerTable] = &[
-    ("usart", "usart", &[("GLOBAL", "InterruptHandler<{}>")]),
-    ("lpuart", "usart", &[("GLOBAL", "InterruptHandler<{}>")]),
-    (
-        "i2c",
-        "i2c",
-        &[
+///
+/// Строки `lpuart` здесь нет намеренно: у метаданных такого вида блока не
+/// бывает вовсе, LPUART идёт как `usart` и покрыт первой же строкой
+/// (проверено на STM32G071 — заготовка для `LPUART1` печатает
+/// `usart::InterruptHandler`).
+const HANDLERS: &[Handlers] = &[
+    Handlers {
+        kind: "usart",
+        module: "usart",
+        versions: &[],
+        signals: &[("GLOBAL", "InterruptHandler<{}>")],
+    },
+    Handlers {
+        kind: "i2c",
+        module: "i2c",
+        versions: &[],
+        signals: &[
             ("EV", "EventInterruptHandler<{}>"),
             ("ER", "ErrorInterruptHandler<{}>"),
         ],
-    ),
-    (
-        "can",
-        "can",
-        &[
+    },
+    Handlers {
+        kind: "can",
+        module: "can",
+        versions: &[],
+        signals: &[
             ("IT0", "IT0InterruptHandler<{}>"),
             ("IT1", "IT1InterruptHandler<{}>"),
             ("TX", "TxInterruptHandler<{}>"),
@@ -367,26 +389,132 @@ const HANDLERS: &[HandlerTable] = &[
             ("RX1", "Rx1InterruptHandler<{}>"),
             ("SCE", "SceInterruptHandler<{}>"),
         ],
-    ),
-    ("otg", "usb", &[("GLOBAL", "InterruptHandler<{}>")]),
-    ("usb", "usb", &[("GLOBAL", "InterruptHandler<{}>")]),
-    ("rng", "rng", &[("GLOBAL", "InterruptHandler<{}>")]),
+    },
+    Handlers {
+        kind: "otg",
+        module: "usb",
+        versions: &[],
+        signals: &[("GLOBAL", "InterruptHandler<{}>")],
+    },
+    // У классического USB вектор не один: `LP` — обычные передачи, `HP` —
+    // только двойная буферизация и изохронные (драйвер embassy их не
+    // включает), `WKUP` — выход из сна. Привязывается низкоприоритетный;
+    // `GLOBAL` оставлен для чипов, где вектор всё-таки один. Пока здесь был
+    // только `GLOBAL`, на STM32F103 печаталась ПУСТАЯ `bind_interrupts!` —
+    // то есть «привязывать нечего», хотя привязать надо.
+    Handlers {
+        kind: "usb",
+        module: "usb",
+        versions: &[],
+        signals: &[
+            ("GLOBAL", "InterruptHandler<{}>"),
+            ("LP", "InterruptHandler<{}>"),
+        ],
+    },
+    Handlers {
+        kind: "rng",
+        module: "rng",
+        versions: &[],
+        signals: &[("GLOBAL", "InterruptHandler<{}>")],
+    },
     // Тот же блок RNG, но на части чипов stm32-data зовёт его вид `trng`.
     // Модуль embassy при этом всё равно `rng`.
-    ("trng", "rng", &[("GLOBAL", "InterruptHandler<{}>")]),
-    ("sdmmc", "sdmmc", &[("GLOBAL", "InterruptHandler<{}>")]),
-    ("adc", "adc", &[("GLOBAL", "InterruptHandler<{}>")]),
-    ("dcmi", "dcmi", &[("GLOBAL", "InterruptHandler<{}>")]),
-    ("ltdc", "ltdc", &[("GLOBAL", "InterruptHandler<{}>")]),
-    ("quadspi", "qspi", &[("GLOBAL", "InterruptHandler<{}>")]),
-    ("hash", "hash", &[("GLOBAL", "InterruptHandler<{}>")]),
-    ("cryp", "cryp", &[("GLOBAL", "InterruptHandler<{}>")]),
-    ("aes", "aes", &[("GLOBAL", "InterruptHandler<{}>")]),
-    ("saes", "saes", &[("GLOBAL", "InterruptHandler<{}>")]),
-    ("pka", "pka", &[("GLOBAL", "InterruptHandler<{}>")]),
-    ("tsc", "tsc", &[("GLOBAL", "InterruptHandler<{}>")]),
-    ("ucpd", "ucpd", &[("GLOBAL", "InterruptHandler<{}>")]),
-    ("eth", "eth", &[("GLOBAL", "InterruptHandler")]),
+    Handlers {
+        kind: "trng",
+        module: "rng",
+        versions: &[],
+        signals: &[("GLOBAL", "InterruptHandler<{}>")],
+    },
+    Handlers {
+        kind: "sdmmc",
+        module: "sdmmc",
+        versions: &[],
+        signals: &[("GLOBAL", "InterruptHandler<{}>")],
+    },
+    // Пять версий из полутора десятков: `adc::InterruptHandler` определён
+    // только в f1.rs, f3.rs, f3_v1_1.rs и v1.rs, а остальные версии ADC
+    // работают без обработчика. Пока фильтра не было, заготовка предлагала
+    // несуществующий тип на F407 (v2) и G071 (g0) — то есть на большинстве
+    // чипов.
+    Handlers {
+        kind: "adc",
+        module: "adc",
+        versions: &["f1", "f3v1", "f3v2", "v1", "l0"],
+        signals: &[("GLOBAL", "InterruptHandler<{}>")],
+    },
+    // Модуль `comp` в embassy закрыт `#[cfg(any(comp_u5, comp_v2))]`.
+    Handlers {
+        kind: "comp",
+        module: "comp",
+        versions: &["u5", "v2"],
+        signals: &[("WKUP", "InterruptHandler<{}>")],
+    },
+    Handlers {
+        kind: "dcmi",
+        module: "dcmi",
+        versions: &[],
+        signals: &[("GLOBAL", "InterruptHandler<{}>")],
+    },
+    Handlers {
+        kind: "ltdc",
+        module: "ltdc",
+        versions: &[],
+        signals: &[("GLOBAL", "InterruptHandler<{}>")],
+    },
+    Handlers {
+        kind: "quadspi",
+        module: "qspi",
+        versions: &[],
+        signals: &[("GLOBAL", "InterruptHandler<{}>")],
+    },
+    Handlers {
+        kind: "hash",
+        module: "hash",
+        versions: &[],
+        signals: &[("GLOBAL", "InterruptHandler<{}>")],
+    },
+    Handlers {
+        kind: "cryp",
+        module: "cryp",
+        versions: &[],
+        signals: &[("GLOBAL", "InterruptHandler<{}>")],
+    },
+    Handlers {
+        kind: "aes",
+        module: "aes",
+        versions: &[],
+        signals: &[("GLOBAL", "InterruptHandler<{}>")],
+    },
+    Handlers {
+        kind: "saes",
+        module: "saes",
+        versions: &[],
+        signals: &[("GLOBAL", "InterruptHandler<{}>")],
+    },
+    Handlers {
+        kind: "pka",
+        module: "pka",
+        versions: &[],
+        signals: &[("GLOBAL", "InterruptHandler<{}>")],
+    },
+    Handlers {
+        kind: "tsc",
+        module: "tsc",
+        versions: &[],
+        signals: &[("GLOBAL", "InterruptHandler<{}>")],
+    },
+    Handlers {
+        kind: "ucpd",
+        module: "ucpd",
+        versions: &[],
+        signals: &[("GLOBAL", "InterruptHandler<{}>")],
+    },
+    Handlers {
+        kind: "eth",
+        module: "eth",
+        versions: &[],
+        signals: &[("GLOBAL", "InterruptHandler")],
+    },
 ];
 
 /// Заготовка кода под блок: `bind_interrupts!` с правильными типами и каркас
@@ -408,34 +536,23 @@ fn print_snippet(name: &str) -> Result<(), anyhow::Error> {
                 METADATA.name
             )
         })?;
-    let kind = peripheral
+    let (kind, version) = peripheral
         .registers
         .as_ref()
-        .map_or("", |registers| registers.kind);
+        .map_or(("", ""), |registers| (registers.kind, registers.version));
 
     print_header(Some(&format!("{name}: заготовка")));
     println!("// Подсказка: типы и доступность выводов проверит компилятор.");
     println!();
 
-    match HANDLERS
-        .iter()
-        .find(|(table_kind, _, _)| *table_kind == kind)
-    {
-        Some((_, module, handlers)) => {
+    match HANDLERS.iter().find(|row| {
+        row.kind == kind && (row.versions.is_empty() || row.versions.contains(&version))
+    }) {
+        Some(row) => {
             println!("// crates-cross/app/src/main.rs — рядом с созданием периферии");
             println!("bind_interrupts!(struct Irqs {}", OPEN);
-            for interrupt in peripheral.interrupts {
-                let Some((_, handler)) = handlers
-                    .iter()
-                    .find(|(signal, _)| *signal == interrupt.signal)
-                else {
-                    continue;
-                };
-                println!(
-                    "    {} => {module}::{};",
-                    interrupt.interrupt,
-                    handler.replace("{}", &format!("peripherals::{name}")),
-                );
+            for (interrupt, handlers) in handlers_by_interrupt(peripheral, row, name) {
+                println!("    {interrupt} => {};", handlers.join(", "));
             }
             println!("{});", CLOSE);
         }
@@ -553,17 +670,68 @@ fn signals(peripheral: &Peripheral) -> Vec<(&'static str, String, Vec<String>)> 
     fields
 }
 
-/// `USART1` → `Usart1`: имя структуры ресурсов в `assign_resources!`.
+/// `USART1` → `Usart1`, `USB_OTG_FS` → `UsbOtgFs`: имя структуры ресурсов в
+/// `assign_resources!`.
+///
+/// Подчёркивания убираются, а не опускаются в нижний регистр: `assign_resources!`
+/// глушит `non_snake_case`, но не `non_camel_case_types`, а `cargo xtask lint
+/// cross` гоняет clippy с `-D warnings`. Пока здесь оставался `Usb_otg_fs`,
+/// вставленная заготовка роняла сборку.
 fn camel_case(name: &str) -> String {
     let mut result = String::with_capacity(name.len());
-    for (index, char) in name.chars().enumerate() {
-        if index == 0 {
-            result.push(char);
+    let mut start_of_word = true;
+    for char in name.chars() {
+        if char == '_' {
+            start_of_word = true;
+            continue;
+        }
+        if start_of_word {
+            result.push(char.to_ascii_uppercase());
+            start_of_word = false;
         } else {
             result.push(char.to_ascii_lowercase());
         }
     }
     result
+}
+
+/// Обработчики блока, сгруппированные по вектору прерывания.
+///
+/// Группировка — не украшение: на части чипов два сигнала одного блока
+/// приходят в ОДИН вектор (у STM32G071 `EV` и `ER` шины I2C1 — это общий
+/// `I2C1`), и построчная печать давала два одинаковых ключа, то есть
+/// `error[E0428]: the name I2C1 is defined multiple times` во вставленной
+/// заготовке. `bind_interrupts!` принимает несколько обработчиков на вектор
+/// через запятую — ровно этот случай.
+///
+/// Порядок — по таблице, а не по метаданным: у I2C сначала `Event`, потом
+/// `Error`, как в примерах embassy.
+fn handlers_by_interrupt(
+    peripheral: &'static Peripheral,
+    row: &Handlers,
+    name: &str,
+) -> Vec<(&'static str, Vec<String>)> {
+    let mut grouped: Vec<(&'static str, Vec<String>)> = Vec::new();
+    for (signal, template) in row.signals {
+        for interrupt in peripheral.interrupts {
+            if interrupt.signal != *signal {
+                continue;
+            }
+            let handler = format!(
+                "{}::{}",
+                row.module,
+                template.replace("{}", &format!("peripherals::{name}")),
+            );
+            match grouped
+                .iter_mut()
+                .find(|(vector, _)| *vector == interrupt.interrupt)
+            {
+                Some((_, handlers)) => handlers.push(handler),
+                None => grouped.push((interrupt.interrupt, vec![handler])),
+            }
+        }
+    }
+    grouped
 }
 
 /// Проверяет распиновку проекта на то, чего компилятор не видит: занятый
@@ -592,6 +760,82 @@ fn project_root() -> Option<PathBuf> {
         .map(Path::to_path_buf)
 }
 
+/// Строки тела `assign_resources!` без комментариев — то есть ровно то, что
+/// действительно назначает выводы, с номерами строк исходного файла.
+///
+/// Разбор текстом, а не по дереву: `assign_resources!` — макрос, до раскрытия
+/// там токены (см. шапку модуля). Но текстом надо разбирать честно, иначе
+/// проверка врёт, причём в сторону ложной тревоги:
+///
+/// * вырезался только `//`, поэтому вывод внутри `/* ... */` считался
+///   назначенным;
+/// * считался весь файл, поэтому обычный
+///   `use embassy_stm32::peripherals::PA13;` давал «КОНФЛИКТ: PA13» и ронял
+///   джоб `Pins` на проекте, который отладочный порт не трогал вовсе.
+///
+/// Хвостовой комментарий при этом по-прежнему отрезается, а не пропускает
+/// строку целиком: заготовка из `pins БЛОК --snippet` перечисляет
+/// альтернативные выводы прямо за запятой (`sck: PA5,  // ещё: PB3(AF5)`), и
+/// они назначенными не являются.
+///
+/// Глубина блочных комментариев считается, а не сбрасывается первым же `*/`:
+/// в Rust они вкладываются.
+fn assigned_lines(text: &str) -> Vec<(usize, String)> {
+    let mut lines = Vec::new();
+    let mut comment_depth = 0usize;
+    let mut brace_depth = 0usize;
+    let mut inside_macro = false;
+    // Тело считается закрытым только после того, как хоть одна скобка
+    // открылась: иначе `assign_resources!` с `{` на следующей строке закрывал
+    // бы блок сразу же, ещё до первого вывода.
+    let mut braces_opened = false;
+
+    for (index, raw) in text.lines().enumerate() {
+        let chars: Vec<char> = raw.chars().collect();
+        let mut cleaned = String::with_capacity(raw.len());
+        let mut at = 0;
+        while at < chars.len() {
+            let pair = (chars[at], chars.get(at + 1).copied());
+            match pair {
+                ('/', Some('*')) => {
+                    comment_depth += 1;
+                    at += 2;
+                }
+                ('*', Some('/')) if comment_depth > 0 => {
+                    comment_depth -= 1;
+                    at += 2;
+                }
+                ('/', Some('/')) if comment_depth == 0 => break,
+                _ => {
+                    if comment_depth == 0 {
+                        cleaned.push(chars[at]);
+                    }
+                    at += 1;
+                }
+            }
+        }
+
+        if !inside_macro {
+            if !cleaned.contains("assign_resources!") {
+                continue;
+            }
+            inside_macro = true;
+            brace_depth = 0;
+            braces_opened = false;
+        }
+
+        let opened = cleaned.matches('{').count();
+        braces_opened |= opened > 0;
+        brace_depth += opened;
+        brace_depth = brace_depth.saturating_sub(cleaned.matches('}').count());
+        lines.push((index + 1, cleaned));
+        if braces_opened && brace_depth == 0 {
+            inside_macro = false;
+        }
+    }
+    lines
+}
+
 fn check_resources() -> Result<(), anyhow::Error> {
     let path = project_root()
         .as_deref()
@@ -609,15 +853,10 @@ fn check_resources() -> Result<(), anyhow::Error> {
     println!("файл: {}", path.display());
 
     let mut used: Vec<(usize, String)> = Vec::new();
-    for (number, line) in text.lines().enumerate() {
-        // Комментарий отрезается, а не только пропускается целиком: заготовка,
-        // которую печатает `pins БЛОК --snippet`, перечисляет альтернативные
-        // выводы прямо в хвосте строки (`sck: PA5,  // ещё: PB3(AF5)`), и без
-        // этого вставленная заготовка давала бы ложный конфликт.
-        let line = line.split("//").next().unwrap_or("");
-        for pin in pins_in(line) {
+    for (number, line) in assigned_lines(&text) {
+        for pin in pins_in(&line) {
             if METADATA.pins.iter().any(|known| known.name == pin) {
-                used.push((number + 1, pin));
+                used.push((number, pin));
             }
         }
     }

@@ -45,6 +45,12 @@ supervisor = { workspace = true }
 # `supervisor` реэкспортирует в своём `__private` только executor, futures,
 # sync и sync_request.
 embassy-time = { workspace = true }
+# Только ради драйвера времени. В воркспейсе этой фичи нет намеренно: оттуда
+# она доставалась и бутлоадеру, который запускал TIM и оставлял его
+# прерывание размаскированным на момент прыжка в приложение (см. комментарий
+# в crates-cross/Cargo.toml). Просить её обязан тот, кто линкуется с
+# `embassy-time`, — то есть этот бинарник.
+embassy-stm32 = { workspace = true, features = ["time-driver-any"] }
 
 [build-dependencies]
 shadow-rs = { workspace = true, features = ["build", "no_std"] }

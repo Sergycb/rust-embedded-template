@@ -42,6 +42,11 @@ defmt-rtt = { workspace = true }
 embassy-executor = { workspace = true }
 embedded-test = { workspace = true, features = ["panic-handler"] }
 embassy-time = { workspace = true }
+# Только ради драйвера времени — по той же причине, что и у `app`: в
+# воркспейсе фичи нет, чтобы она не досталась бутлоадеру (см. комментарий в
+# crates-cross/Cargo.toml), а тестовый образ линкуется с `embassy-time` и без
+# драйвера не соберётся.
+embassy-stm32 = { workspace = true, features = ["time-driver-any"] }
 bsp = { workspace = true }
 # Трейты портов: тесты дёргают объекты `Board` тем же способом, что и `app`.
 ports = { workspace = true }

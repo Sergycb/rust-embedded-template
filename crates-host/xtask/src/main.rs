@@ -168,6 +168,22 @@ fn build(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
         let _p = sh.push_dir(root_dir().join("crates-cross"));
         cmd!(sh, "cargo build").run()?;
         cmd!(sh, "cargo build --release").run()?;
+
+        // Bootloader собирается ОТДЕЛЬНЫМ вызовом, и это не про удобство.
+        // Фичи зависимостей cargo объединяет по всем членам воркспейса,
+        // выбранным в одном вызове: `app` просит у `embassy-stm32` фичу
+        // `time-driver-any`, и в общей сборке она достаётся ещё и `boot` —
+        // тот запускает TIM и оставляет его прерывание размаскированным на
+        // момент прыжка в приложение. Своим вызовом `boot` получает
+        // собственный резолв фич, то есть тот же образ, что прошивает
+        // `cargo xtask flash` (он и так зовёт `cargo flash -p boot`).
+        //
+        // Уберёте эти две строки — ELF бутлоадера в `target/` перестанет
+        // совпадать с тем, что уезжает на плату, причём молча.
+        if has_bootloader() {
+            cmd!(sh, "cargo build -p boot").run()?;
+            cmd!(sh, "cargo build -p boot --release").run()?;
+        }
     }
 
     let elf = cross_target_dir().join(TARGET).join("release").join("app");
