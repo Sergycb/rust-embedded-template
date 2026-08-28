@@ -49270,6 +49270,18 @@ if !variable::is_set("cpu") {
 if !variable::is_set("target") {
     variable::set("target", family[1]);
 }
+// Armv6-M (Cortex-M0/M0+, у STM32 это C0/F0/G0/L0 и WL5x-CM0+) — ядро без
+// регистров разбора отказа: `CFSR`, `HFSR`, `MMFAR`, `BFAR` и `SHCSR`
+// появились только в Armv7-M. В `cortex-m` они закрыты `#[cfg(not(armv6m))]`,
+// то есть код с ними на таком чипе не собирается вовсе. По этому признаку
+// crates-cross/bsp/src/fault.rs выбирает, что писать в дамп аппаратного
+// отказа, — Liquid-условием при генерации, а не Cargo-фичей (см. CLAUDE.md,
+// «Feature-flag конвенции»).
+//
+// Считается по итоговому `target`, а не по chip_feature: `--define
+// target=...` разрешён, и признак обязан следовать за ним, иначе на
+// переопределённом target'е прошивка перестала бы собираться.
+variable::set("armv6m", if variable::get("target").starts_with("thumbv6m") { "true" } else { "false" });
 // Читается из crates-cross/bsp/Cargo.toml и crates-cross/boot/Cargo.toml (условно
 // включает фичу "dual-core" в default) — см. Board::init()/main() там же.
 // Без переопределения через --define (в отличие от chip/cpu/target/

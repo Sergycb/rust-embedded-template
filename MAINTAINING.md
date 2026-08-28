@@ -12,7 +12,8 @@
 ## Что здесь есть, чего нет в проектах пользователей
 
 - `chip-select.rhai` — pre-хук: каскадный выбор чипа, `memory.x`, `write_size`,
-  `ota`, `dual_core`, `bank_mode`, `erase_zero`. Хуки cargo-generate в результат не копируются.
+  `ota`, `dual_core`, `bank_mode`, `erase_zero`, `armv6m`. Хуки cargo-generate в результат
+  не копируются.
 - `post-script.rhai` — post-хук: сводка «что дальше» для пользователя. Команд
   не выполняет: `cargo update` оттуда убран (см. «Почему генерация из локального
   пути такая медленная»), поэтому и `--allow-commands` при генерации не нужен.
@@ -29,7 +30,7 @@
 ## Плейсхолдеры шаблона (`cargo-generate.toml`)
 
 `{{chip}}`, `{{chip_feature}}`, `{{cpu}}`, `{{target}}`, `{{write_size}}`,
-`{{page_size}}`, `{{dual_core}}`, `{{bank_mode}}`, `{{erase_zero}}` — плейсхолдеры, подставляемые
+`{{page_size}}`, `{{dual_core}}`, `{{bank_mode}}`, `{{erase_zero}}`, `{{armv6m}}` — плейсхолдеры, подставляемые
 Liquid-рендером cargo-generate. Из них в `[placeholders]` объявлены только `ci`, `ota`, `graph`,
 `config` и `signed`; все остальные выставляет `variable::set` в `[hooks].pre`-скрипте
 `chip-select.rhai` — каскадный посимвольный выбор STM32 (семейство → линейка → дальше по

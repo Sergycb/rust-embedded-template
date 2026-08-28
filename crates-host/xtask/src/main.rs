@@ -74,7 +74,9 @@ fn usage() {
     println!(
         "      cargo xtask pins --check               # не занят ли отладочный порт в resources.rs"
     );
-    println!("      cargo xtask panic                      # причина последней паники с платы");
+    println!(
+        "      cargo xtask panic                      # причина последнего падения с платы, с разбором"
+    );
     if signing_enabled() {
         println!();
         println!("Отдельных команд для подписи нет: `build` сам создаёт ключевую пару при первой");
@@ -895,15 +897,21 @@ fn write_private(path: &Path, bytes: &[u8]) -> Result<(), std::io::Error> {
 /// прошивке в этот момент, как правило, не до того.
 const PANIC_MAGIC: u32 = 0x0FAC_ADE0;
 
-/// Причина последней паники, снятая с платы без перепрошивки и без
-/// RTT-сессии.
+/// Причина последнего падения, снятая с платы без перепрошивки и без
+/// RTT-сессии, с разбором регистров, если это был аппаратный отказ.
 ///
 /// Зачем отдельная команда, если `main` и так печатает дамп при старте: чтобы
 /// увидеть эту печать, нужен пробник, подключённый **в момент** старта. Под
-/// отладкой же плата после паники не стартует вовсе — хендлер заканчивается
-/// `udf()`, ядро стоит в HardFault, — и дамп лежит в RAM, пока его никто не
+/// отладкой же плата после падения не стартует вовсе — оба хендлера
+/// останавливают ядро на месте, — и дамп лежит в RAM, пока его никто не
 /// прочитал. Этот случай команда и закрывает: пришли к зависшей плате,
 /// спросили причину.
+///
+/// Вторая работа команды — расшифровка `cfsr`/`hfsr` ([`decode_fault`]).
+/// Устройство пишет сырые значения намеренно: таблица расшифровки в прошивке
+/// заняла бы настоящий flash, а здесь она бесплатна. Прямой `probe-rs read`
+/// ни того, ни другого не делает — он отдал бы hex-дамп региона, из которого
+/// строку ещё надо собрать, зная формат `panic-persist`.
 ///
 /// Ограничение прямое следствие того же: если приложение успело стартовать
 /// (release-профиль, где хендлер делает `sys_reset`), оно дамп уже вычитало и
@@ -953,14 +961,214 @@ fn panic_dump(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
         .map(|byte| parse_hex(byte) as u8)
         .collect::<Vec<_>>();
 
-    println!("причина последней паники ({} байт):", bytes.len());
-    println!("{}", String::from_utf8_lossy(&bytes));
+    let dump = String::from_utf8_lossy(&bytes);
+    println!("причина последнего падения ({} байт):", bytes.len());
+    println!("{dump}");
+
+    let decoded = decode_fault(&dump);
+    if !decoded.is_empty() {
+        println!();
+        println!("разбор:");
+        for line in decoded {
+            println!("  {line}");
+        }
+    }
     Ok(())
 }
 
 /// Слово из вывода `probe-rs read`: он печатает hex без префикса.
 fn parse_hex(word: &str) -> u32 {
     u32::from_str_radix(word, 16).unwrap_or(0)
+}
+
+/// Бит регистра отказа: маска, имя из документации Arm и что оно значит.
+struct FaultBit {
+    mask: u32,
+    name: &'static str,
+    meaning: &'static str,
+}
+
+/// Биты `CFSR` — три регистра в одном слове: `MMFSR` (младший байт, нарушения
+/// MPU), `BFSR` (второй байт, ошибки шины) и `UFSR` (старшая половина,
+/// ошибки использования).
+const CFSR_BITS: &[FaultBit] = &[
+    FaultBit {
+        mask: 1 << 0,
+        name: "IACCVIOL",
+        meaning: "MPU запретил выборку инструкции",
+    },
+    FaultBit {
+        mask: 1 << 1,
+        name: "DACCVIOL",
+        meaning: "MPU запретил доступ к данным",
+    },
+    FaultBit {
+        mask: 1 << 3,
+        name: "MUNSTKERR",
+        meaning: "MPU запретил возврат из обработчика",
+    },
+    FaultBit {
+        mask: 1 << 4,
+        name: "MSTKERR",
+        meaning: "MPU запретил сохранение кадра исключения",
+    },
+    FaultBit {
+        mask: 1 << 5,
+        name: "MLSPERR",
+        meaning: "MPU запретил отложенное сохранение FPU",
+    },
+    FaultBit {
+        mask: 1 << 8,
+        name: "IBUSERR",
+        meaning: "ошибка шины при выборке инструкции",
+    },
+    FaultBit {
+        mask: 1 << 9,
+        name: "PRECISERR",
+        meaning: "точная ошибка шины, адрес в bfar",
+    },
+    FaultBit {
+        mask: 1 << 10,
+        name: "IMPRECISERR",
+        meaning: "отложенная ошибка шины: упало раньше, адрес и pc недостоверны",
+    },
+    FaultBit {
+        mask: 1 << 11,
+        name: "UNSTKERR",
+        meaning: "ошибка шины при возврате из обработчика",
+    },
+    FaultBit {
+        mask: 1 << 12,
+        name: "STKERR",
+        meaning: "ошибка шины при сохранении кадра исключения — обычный признак переполнения стека",
+    },
+    FaultBit {
+        mask: 1 << 13,
+        name: "LSPERR",
+        meaning: "ошибка шины при отложенном сохранении FPU",
+    },
+    FaultBit {
+        mask: 1 << 16,
+        name: "UNDEFINSTR",
+        meaning: "неизвестная инструкция; частый случай — udf() из паникёра",
+    },
+    FaultBit {
+        mask: 1 << 17,
+        name: "INVSTATE",
+        meaning: "недопустимое состояние: прыжок по адресу без младшего бита (ARM вместо Thumb)",
+    },
+    FaultBit {
+        mask: 1 << 18,
+        name: "INVPC",
+        meaning: "испорченный EXC_RETURN или кадр исключения",
+    },
+    FaultBit {
+        mask: 1 << 19,
+        name: "NOCP",
+        meaning: "сопроцессор недоступен: FPU не включена",
+    },
+    FaultBit {
+        mask: 1 << 20,
+        name: "STKOF",
+        meaning: "переполнение стека поймал страж ядра (только Armv8-M)",
+    },
+    FaultBit {
+        mask: 1 << 24,
+        name: "UNALIGNED",
+        meaning: "невыровненный доступ",
+    },
+    FaultBit {
+        mask: 1 << 25,
+        name: "DIVBYZERO",
+        meaning: "целочисленное деление на ноль",
+    },
+];
+
+/// Биты `HFSR`. Практически всегда взведён ровно `FORCED`: собственных причин
+/// у `HardFault` мало, обычно это эскалация чего-то из `CFSR`.
+const HFSR_BITS: &[FaultBit] = &[
+    FaultBit {
+        mask: 1 << 1,
+        name: "VECTTBL",
+        meaning: "ошибка чтения таблицы векторов",
+    },
+    FaultBit {
+        mask: 1 << 30,
+        name: "FORCED",
+        meaning: "эскалация: причина в cfsr, свой обработчик у неё запрещён или ниже приоритетом",
+    },
+    FaultBit {
+        mask: 1 << 31,
+        name: "DEBUGEVT",
+        meaning: "отладочное событие",
+    },
+];
+
+/// `MMARVALID`: адрес в `mmfar` достоверен.
+const CFSR_MMARVALID: u32 = 1 << 7;
+/// `BFARVALID`: адрес в `bfar` достоверен.
+const CFSR_BFARVALID: u32 = 1 << 15;
+
+/// Разворачивает регистры из дампа аппаратного отказа в человеческие строки.
+///
+/// Расшифровка живёт здесь, а не в прошивке, по единственной причине:
+/// таблицы выше — это настоящий flash, а на хосте они бесплатны. Устройство
+/// пишет в регион `PANIC` сырые значения (`bsp::fault`), разбирает их эта
+/// функция.
+///
+/// Дамп обычной паники (и укороченный дамп с Armv6-M, где регистров разбора
+/// у ядра нет вовсе) разбирать нечем — тогда возвращается пустой список, и
+/// раздел «разбор» не печатается.
+fn decode_fault(dump: &str) -> Vec<String> {
+    let mut lines = Vec::new();
+
+    if let Some(cfsr) = fault_field(dump, "cfsr") {
+        lines.extend(set_bits(cfsr, CFSR_BITS));
+        // Валидность адреса проверяется до его показа, и это не
+        // перестраховка: `bfar`/`mmfar` не сбрасываются между отказами, и без
+        // соответствующего бита там лежит адрес какого-то прошлого падения —
+        // показать его значило бы увести по ложному следу.
+        if cfsr & CFSR_BFARVALID != 0
+            && let Some(bfar) = fault_field(dump, "bfar")
+        {
+            lines.push(format!(
+                "адрес доступа, на котором упало: {bfar:#010x} (bfar)"
+            ));
+        }
+        if cfsr & CFSR_MMARVALID != 0
+            && let Some(mmfar) = fault_field(dump, "mmfar")
+        {
+            lines.push(format!("адрес, запрещённый MPU: {mmfar:#010x} (mmfar)"));
+        }
+    }
+    if let Some(hfsr) = fault_field(dump, "hfsr") {
+        lines.extend(set_bits(hfsr, HFSR_BITS));
+    }
+    lines
+}
+
+/// Строки по взведённым битам регистра.
+fn set_bits(value: u32, table: &[FaultBit]) -> Vec<String> {
+    table
+        .iter()
+        .filter(|bit| value & bit.mask != 0)
+        .map(|bit| format!("{}: {}", bit.name, bit.meaning))
+        .collect()
+}
+
+/// Значение поля `имя=hex` из строки дампа.
+///
+/// Формат — свой с обеих сторон (пишет `bsp::fault`), поэтому разбор ручной и
+/// нестрогий: поля нет — значит запись не от аппаратного отказа, и это
+/// нормальный случай, а не ошибка.
+fn fault_field(dump: &str, name: &str) -> Option<u32> {
+    let needle = format!("{name}=");
+    let at = dump.find(&needle)? + needle.len();
+    let digits: String = dump[at..]
+        .chars()
+        .take_while(char::is_ascii_hexdigit)
+        .collect();
+    u32::from_str_radix(&digits, 16).ok()
 }
 
 fn flash_app(sh: &xshell::Shell, profile: &str) -> Result<(), anyhow::Error> {
@@ -1241,5 +1449,67 @@ mod tests {
         assert!(text.contains("86"), "нет фактического процента: {text}");
         assert!(text.contains("85"), "нет бюджета: {text}");
         assert!(text.contains("ACTIVE"), "нет имени раздела: {text}");
+    }
+
+    /// Дамп из `bsp::fault` в том виде, в каком его пишет устройство:
+    /// разыменование мусорного указателя на Cortex-M4. `cfsr` — `PRECISERR`
+    /// вместе с `BFARVALID`, `hfsr` — эскалация.
+    const BUS_FAULT: &str = "HardFault pc=08001234 lr=fffffff9 psr=61000000 cfsr=00008200 \
+                             hfsr=40000000 mmfar=00000000 bfar=20008000";
+
+    #[test]
+    fn decodes_a_precise_bus_fault() {
+        let lines = super::decode_fault(BUS_FAULT).join("\n");
+
+        assert!(
+            lines.contains("PRECISERR"),
+            "не разобран вид ошибки шины: {lines}"
+        );
+        assert!(lines.contains("FORCED"), "не разобран hfsr: {lines}");
+        // Ради этого адреса вся расшифровка и затевалась: он говорит, ЧТО
+        // разыменовали, чего не скажет ни pc, ни имя бита.
+        assert!(
+            lines.contains("0x20008000"),
+            "не показан адрес доступа: {lines}"
+        );
+    }
+
+    /// Взведённый `BFARVALID` — единственное, что делает `bfar` осмысленным.
+    /// Без него в регистре остаётся адрес прошлого отказа, и показывать его
+    /// значило бы уводить по ложному следу.
+    #[test]
+    fn hides_the_address_when_the_core_says_it_is_stale() {
+        let stale = BUS_FAULT.replace("cfsr=00008200", "cfsr=00000400");
+        let lines = super::decode_fault(&stale).join("\n");
+
+        assert!(
+            lines.contains("IMPRECISERR"),
+            "не разобран вид ошибки шины: {lines}"
+        );
+        assert!(
+            !lines.contains("0x20008000"),
+            "показан недостоверный адрес: {lines}"
+        );
+    }
+
+    /// Дамп обычной паники разбирать нечем — как и укороченный дамп с
+    /// Armv6-M, где регистров разбора у ядра нет вовсе. Пустой список здесь
+    /// не отсутствие ответа, а ответ: раздел «разбор» тогда не печатается.
+    #[test]
+    fn says_nothing_about_dumps_without_fault_registers() {
+        assert!(
+            super::decode_fault("panicked at 'index out of bounds', src/main.rs:42:5").is_empty()
+        );
+        assert!(super::decode_fault("HardFault pc=08001234 lr=fffffff9 psr=61000000").is_empty());
+    }
+
+    /// Чистые регистры — чистый разбор. Ловит таблицу, в которой маска бита
+    /// разъехалась с нулём (например `!= 0` вместо `& mask != 0`).
+    #[test]
+    fn a_clean_core_decodes_to_nothing() {
+        let clean = "HardFault pc=08001234 lr=fffffff9 psr=61000000 cfsr=00000000 \
+                     hfsr=00000000 mmfar=00000000 bfar=00000000";
+
+        assert!(super::decode_fault(clean).is_empty());
     }
 }

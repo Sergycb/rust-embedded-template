@@ -4,6 +4,7 @@ pub mod buffers;
 {%- if config == "true" %}
 pub mod config;
 {%- endif %}
+pub mod fault;
 {%- if ota == "true" %}
 pub mod ota;
 {%- endif %}
