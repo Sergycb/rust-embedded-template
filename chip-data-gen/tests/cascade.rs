@@ -33,6 +33,11 @@ fn compile_script() -> AST {
 type Vars = Rc<RefCell<HashMap<String, String>>>;
 type Files = Rc<RefCell<HashMap<String, Vec<String>>>>;
 type Deleted = Rc<RefCell<Vec<String>>>;
+/// Всё, что хук напечатал. Сообщения при генерации — единственный способ
+/// объяснить пользователю решение, принятое за него (сняли OTA, сняли раздел
+/// настроек, не посчитали раскладку), и ошибиться в них так же легко, как в
+/// коде: одно из них уже врало (см. `ota_blamed_on_the_settings_partition`).
+type Prints = Rc<RefCell<Vec<String>>>;
 
 /// Итог одного прогона: переменные (chip/chip_feature/cpu/target/write_size/
 /// ota/bank_mode), файлы, записанные через `file::write` (memory.x), построчно,
@@ -41,6 +46,7 @@ struct CascadeResult {
     vars: HashMap<String, String>,
     files: HashMap<String, Vec<String>>,
     deleted: Vec<String>,
+    prints: Vec<String>,
 }
 
 /// Прогоняет уже скомпилированный chip-select.rhai один раз, ведя каскад к
@@ -65,7 +71,12 @@ fn run_cascade_with(
     ));
     let files: Files = Rc::new(RefCell::new(HashMap::new()));
     let deleted: Deleted = Rc::new(RefCell::new(Vec::new()));
+    let prints: Prints = Rc::new(RefCell::new(Vec::new()));
     let mut engine = Engine::new();
+    {
+        let prints = prints.clone();
+        engine.on_print(move |line| prints.borrow_mut().push(line.to_string()));
+    }
 
     let mut module = Module::new();
     {
@@ -170,6 +181,7 @@ fn run_cascade_with(
         vars: vars.borrow().clone(),
         files: files.borrow().clone(),
         deleted: deleted.borrow().clone(),
+        prints: prints.borrow().clone(),
     })
 }
 
@@ -322,6 +334,44 @@ fn erase_zero_follows_the_metadata_not_the_chip_name() {
             "{suffix}: erase_zero разошёлся с erase_value в stm32-metapac",
         );
     }
+}
+
+/// Совет «выбирайте что-то одно» даётся только там, где он верен.
+///
+/// Когда раздел настроек и правда вытеснил OTA, сказать об этом надо: без
+/// подсказки человек не догадается, что достаточно отказаться от настроек.
+/// Но условие проверяло только «цифры OTA для этого чипа посчитаны», а не
+/// «схема в них помещается», — и чип, у которого `ACTIVE` меньше порога и
+/// БЕЗ раздела настроек, получал заведомо ложный совет. Хуже того, флаг
+/// `ota_explained` глушил настоящую причину, так что верного объяснения
+/// человек не видел вовсе.
+#[test]
+fn ota_blamed_on_the_settings_partition() {
+    let ast = compile_script();
+
+    // f205re: 128K под ACTIVE без раздела настроек, с ним OTA не сходится
+    // вовсе. Здесь совет верен.
+    let displaced = run_cascade_with(&ast, "f205re", &[("config", "yes"), ("ota", "yes")])
+        .expect("каскад не должен падать");
+    let log = displaced.prints.join("\n");
+    assert!(
+        log.contains("без раздела настроек она помещалась"),
+        "совет пропал там, где он верен:\n{log}"
+    );
+
+    // f030c8: 15K под ACTIVE и без раздела настроек — это меньше
+    // OTA_MIN_ACTIVE, то есть OTA не помещается сама по себе.
+    let too_small = run_cascade_with(&ast, "f030c8", &[("config", "yes"), ("ota", "yes")])
+        .expect("каскад не должен падать");
+    let log = too_small.prints.join("\n");
+    assert!(
+        !log.contains("без раздела настроек она помещалась"),
+        "ложный совет на чипе, где OTA не помещается и без раздела:\n{log}"
+    );
+    assert!(
+        log.contains("OTA отключён"),
+        "настоящая причина осталась незаявленной:\n{log}"
+    );
 }
 
 /// Текст записанного `file::write` файла одной строкой.

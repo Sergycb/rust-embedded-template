@@ -461,6 +461,13 @@ impl ports::FirmwareUpdate for Ota {
         self.updater().mark_booted()
     }
 }
+
+/// Гранулярность стирания раздела — та же уловка с обобщением, что и в
+/// [`erase_for`]: `ERASE_SIZE` живёт в трейте, а тип раздела невыразим.
+fn erase_size_of<F: NorFlash>(_dfu: &F) -> u32 {
+    F::ERASE_SIZE as u32
+}
+
 /// Стирает начало раздела — ровно столько страниц, сколько накроет образ
 /// длиной `len`.
 ///
@@ -470,12 +477,6 @@ impl ports::FirmwareUpdate for Ota {
 ///
 /// Длина округляется ВВЕРХ до страницы: стереть половину страницы флеш не
 /// умеет, а оставить её нестёртой — значит потерять хвост образа.
-/// Гранулярность стирания раздела — та же уловка с обобщением, что и в
-/// [`erase_for`]: `ERASE_SIZE` живёт в трейте, а тип раздела невыразим.
-fn erase_size_of<F: NorFlash>(_dfu: &F) -> u32 {
-    F::ERASE_SIZE as u32
-}
-
 fn erase_for<F: NorFlash>(dfu: &mut F, len: u32) -> Result<(), F::Error> {
     let page = F::ERASE_SIZE as u32;
     // Длину вызывающий уже сверил с `max_image_len()`, а раздел `DFU` ещё на
