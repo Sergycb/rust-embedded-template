@@ -41,6 +41,7 @@ fn main() -> Result<(), anyhow::Error> {
         ["flash", profile] => flash_all(&sh, profile),
         ["lint"] => lint_host(&sh),
         ["lint", "cross"] => lint_cross(&sh),
+        ["precommit"] => precommit(&sh),
         // Аргументы уходят в chip-info как есть (блок, вывод, `--snippet`,
         // `--check`) — разбирает их он, здесь незачем знать его ключи.
         ["pins", args @ ..] => pins(&sh, args),
@@ -67,6 +68,7 @@ fn usage() {
     println!("      cargo xtask flash [debug|release]      # прошить bootloader + приложение");
     println!("      cargo xtask lint [cross]");
     println!("      cargo xtask test [host|target|host-target|all]");
+    println!("      cargo xtask precommit                  # четыре проверки подряд, без платы");
     println!("      cargo xtask pins [БЛОК|ПИН]            # справочник по чипу: SPI1, PA9");
     println!(
         "      cargo xtask pins БЛОК --snippet        # заготовка bind_interrupts!/assign_resources!"
@@ -601,6 +603,31 @@ fn test_target(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     let _p = sh.push_dir(root_dir().join("crates-cross/target-tests"));
     cmd!(sh, "cargo test").run()?;
     Ok(())
+}
+
+/// Все проверки, которым не нужна плата, — в порядке из CLAUDE.md, до первой
+/// упавшей.
+///
+/// Ничего нового не проверяет: это те же `lint`, `test host`, `lint cross` и
+/// `build`, которые вы и так зовёте перед коммитом. Чинит она ровно одно —
+/// из четырёх команд легко забыть `lint cross` (host-часть гоняют чаще), а
+/// узнать об этом после пуша дороже, чем перед ним.
+///
+/// Этапы с платой (`test target`, `test host-target`) сюда не входят и войти
+/// не могут: без подключённого пробника они не запускаются, и команда,
+/// падающая у всех, кроме владельца платы, не была бы «проверкой перед
+/// коммитом».
+///
+/// **Сам CI этой командой не пользуется и не должен.** GitHub и GitLab
+/// разносят host и cross по разным джобам, которые идут параллельно и с
+/// раздельными кешами; свести их в один вызов значило бы сериализовать
+/// прогон и потерять разделение кеша. Это локальное зеркало CI, а не то, что
+/// CI исполняет, — отсюда и имя `precommit`, а не `ci`.
+fn precommit(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
+    lint_host(sh)?;
+    test_host(sh)?;
+    lint_cross(sh)?;
+    build(sh)
 }
 
 fn lint_host(sh: &xshell::Shell) -> Result<(), anyhow::Error> {

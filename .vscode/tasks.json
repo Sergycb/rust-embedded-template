@@ -2,6 +2,13 @@
 	"version": "2.0.0",
 	"tasks": [
 		{
+			"label": "xtask: precommit",
+			"type": "shell",
+			"command": "cargo",
+			"args": ["xtask", "precommit"],
+			"problemMatcher": ["$rustc"]
+		},
+		{
 			"label": "xtask: build",
 			"type": "shell",
 			"command": "cargo",
