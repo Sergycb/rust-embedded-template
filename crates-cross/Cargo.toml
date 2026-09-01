@@ -99,6 +99,13 @@ salty                  = { version = "0.3.0", default-features = false, features
 	"slow-motion",
 ] }
 embassy-sync       = { version = "0.8.0" }
+# Cortex-M0/M0+ (ARMv6-M — STM32 C0/F0/G0/L0 и CM0+-ядра WB/WL) не имеет
+# аппаратного compare-and-swap, и `portable-atomic` на таких целях отказывается
+# собирать `compare_exchange`, пока ему не сказали, чем его эмулировать. Версия
+# здесь ради единой точки — фичу `critical-section` включают `bsp` (транзитивно
+# через `static_cell` под OTA/config) и `app` (транзитивно через `supervisor` →
+# `cloned-cell`, безусловно — см. оба Cargo.toml).
+portable-atomic    = { version = "1.15.0" }
 # Прямая зависимость нужна target-tests (embassy-stm32 тянет тот же крейт
 # транзитивно, но полагаться на это для `use embassy_time::..` нельзя).
 # Фича `defmt-timestamp-uptime-ms` ставит время рядом с КАЖДОЙ строкой лога —

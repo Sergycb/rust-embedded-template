@@ -59,3 +59,13 @@ embassy-stm32 = { workspace = true, features = ["time-driver-any"] }
 
 [build-dependencies]
 shadow-rs = { workspace = true, features = ["build", "no_std"] }
+
+# Cortex-M0/M0+ (ARMv6-M — STM32 C0/F0/G0/L0 и CM0+-ядра WB/WL) не имеет
+# аппаратного compare-and-swap, и `portable-atomic` на таких целях отказывается
+# собирать `compare_exchange`, пока ему не сказали, чем его эмулировать. Здесь,
+# а не только в `bsp`: `supervisor` выше — безусловная зависимость `app` (её
+# версия проверяется сборкой на ARM в любой конфигурации, см. комментарий у
+# неё), и тянет `static_cell` транзитивно через `cloned-cell` независимо от
+# OTA и раздела настроек — то есть до этой строки падал даже проект без обоих.
+[target.thumbv6m-none-eabi.dependencies]
+portable-atomic = { workspace = true, features = ["critical-section"] }

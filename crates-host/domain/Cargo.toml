@@ -18,33 +18,22 @@ default = ["log"]
 defmt = [
 	"dep:defmt",
 	"defmt-or-log/defmt",
-	"embassy-boot/defmt",
-	"embassy-embedded-hal/defmt",
 	"embassy-futures/defmt",
 	"embassy-sync/defmt",
 	"embassy-time/defmt",
-	"fixed/defmt",
 	"heapless/defmt"
 ]
 log = [
 	"dep:log",
 	"defmt-or-log/log",
-	"embassy-boot/log",
 	"embassy-time/log",
 	"embassy-sync/log",
 	"embassy-futures/log",
 ]
 std = [
-	"fixed/std",
-	"zerocopy/std",
 	"embassy-sync/std",
-	"thiserror/std",
-	"derive_more/std",
-	"bon/std",
-	"portable-atomic/std",
 	"embassy-time/std",
 	"log?/std"
-
 ]
 
 [dependencies]
@@ -53,9 +42,6 @@ std = [
 # правило «порт заводится под то, чем пользуется логика» было выполнимым: без
 # неё `domain` не может даже назвать `ports::BootCounter`.
 ports = { workspace = true }
-thiserror = { workspace = true, default-features = false }
-fixed = { workspace = true }
-portable-atomic = { workspace = true }
 type-state-builder = { workspace = true }
 typestate = { workspace = true }
 mitsein = { workspace = true }
@@ -66,37 +52,17 @@ aselect = { workspace = true }
 sync_wrapper = { workspace = true }
 sync-request = { workspace = true }
 miniconf = { workspace = true }
-zerocopy = { workspace = true }
-itertools = { workspace = true, default-features = false }
-cfg-if = { workspace = true }
-document-features = { workspace = true }
-derive_more = { workspace = true, default-features = false, features = ["full"] }
-static_cell = { workspace = true }
-array-macro = { workspace = true }
+# Прямого `use heapless::..` в domain нет: примеры доходят до него только через
+# `mitsein::heapless::..` (см. examples/mitsein_nonempty_buffer.rs). Зависимость
+# нужна ради унификации фич — `mitsein` не форвардит `defmt` в свой `heapless`, и
+# без этой строки `heapless/defmt` было бы неоткуда включить.
 heapless = { workspace = true }
-bon = { workspace = true, default-features = false }
 embassy-futures = { workspace = true }
-embassy-embedded-hal = { workspace = true, features = ["time"] }
 embassy-sync = { workspace = true }
 embassy-time = { workspace = true }
-embassy-boot = { workspace = true }
 defmt-or-log = { workspace = true }
 log = { workspace = true, optional = true }
 defmt = { workspace = true, optional = true }
-
-# Cortex-M0/M0+ (ARMv6-M — STM32 C0/F0/G0/L0 и CM0+-ядра WB/WL) не имеет
-# аппаратного compare-and-swap, и `portable-atomic` на таких целях отказывается
-# собирать `compare_exchange`, пока ему не сказали, чем его эмулировать. Фича
-# `critical-section` — тот самый ответ; реализацию критической секции даёт
-# `cortex-m` с `critical-section-single-core`, она включена в crates-cross/Cargo.toml.
-#
-# Секция именно здесь, а не в крейтах `cross`: фичи резолвятся отдельно для
-# каждой цели сборки, а `domain` — общий знаменатель всех трёх (app, bsp,
-# target-tests), поэтому одного объявления хватает на весь граф. Само
-# ограничение всплывает не в `domain`, а в `static_cell` (он тоже построен на
-# `portable-atomic`) — но чинится в одном месте для обоих.
-[target.thumbv6m-none-eabi.dependencies]
-portable-atomic = { workspace = true, features = ["critical-section"] }
 
 [dev-dependencies]
 critical-section = { workspace = true, features = ["std"] }
