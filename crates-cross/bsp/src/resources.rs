@@ -42,17 +42,17 @@
 //!     Irqs, r.sensor.tx_dma, r.sensor.rx_dma,
 //!     khz(100), Default::default(),
 //! );
-//! // Драйвер generic по шине и потому живёт в domain/adapters, где его
-//! // проверяет host-тест с моком, а не на плате. Крейт уже объявлен
+//! // Свой драйвер, generic по трейтам embedded-hal, живёт в domain/adapters:
+//! // его проверяет host-тест с моком, а не плата. Крейт уже объявлен
 //! // зависимостью bsp — правки манифеста не нужно.
-//! let sensor = adapters::Lm75::new(i2c, adapters::lm75::DEFAULT_ADDRESS);
+//! let sensor = adapters::YourDriver::new(i2c, YOUR_ADDRESS);
 //! ```
 //!
-//! и полем в `Board`: `pub sensor: adapters::Lm75<I2c<'static, Async>>`.
-//! Приложение работает с ним только через `ports::TemperatureSensor` —
-//! конкретный тип ему знать незачем. Если объект уезжает в задачу, дайте типу
-//! псевдоним (`pub type Sensor = ...`) и называйте в сигнатуре задачи его:
-//! задачи embassy не могут быть generic.
+//! и полем в `Board`: `pub sensor: adapters::YourDriver<I2c<'static, Async>>`.
+//! Приложение работает с ним через собственный порт из `ports` — конкретный
+//! тип ему знать незачем (см. CLAUDE.md, «Порты — границы domain»). Если
+//! объект уезжает в задачу, дайте типу псевдоним (`pub type Sensor = ...`) и
+//! называйте в сигнатуре задачи его: задачи embassy не могут быть generic.
 //!
 //! Про поля стоит сказать прямо: добавляя своё, не забудьте про ОБЕ ветки
 //! `Board` и оба конструктора `Self { .. }` в `lib.rs` — их две, потому что

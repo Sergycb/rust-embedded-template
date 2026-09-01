@@ -13,7 +13,7 @@ embassy-stm32 = { workspace = true }
 domain = { workspace = true }
 # Трейты, которые реализуют объекты `Board`: приложение видит только их.
 ports = { workspace = true }
-# Драйверы поверх шин (`adapters::Lm75` и ваши собственные): `Board::init`
+# Драйверы поверх шин, generic по embedded-hal (ваши собственные): `Board::init`
 # собирает их из периферии и кладёт полями. Объявлено заранее, чтобы пример из
 # resources.rs собирался без правки манифеста.
 adapters = { workspace = true }
@@ -48,6 +48,9 @@ embedded-storage = { workspace = true }
 embassy-boot = { workspace = true, features = ["defmt", "ed25519-salty"{% if erase_zero == "true" %}, "flash-erase-zero"{% endif %}] }
 embassy-boot-stm32 = { workspace = true, features = ["defmt"] }
 salty = { workspace = true }
+# Только ради UpdateError в ota.rs: свой вид ошибки, а не FirmwareUpdaterError
+# из embassy-boot напрямую, — см. обоснование в самом ota.rs.
+thiserror = { workspace = true }
 {%- endif %}
 {%- if ota == "true" and signed != "true" %}
 embassy-boot = { workspace = true, features = ["defmt"{% if erase_zero == "true" %}, "flash-erase-zero"{% endif %}] }

@@ -121,8 +121,9 @@ supervisor-графы, watchdog). Вся остальная логика — в 
 ```
 вывод чипа → группа assign_resources! (bsp/src/resources.rs)
            → шина и драйвер собираются в Board::init
-           → драйвер живёт в domain/adapters, generic по embedded-hal-async,
-             и потому проверяется на хосте моком (образец — adapters/src/lm75.rs)
+           → драйвер, generic по трейтам embedded-hal, живёт в domain/adapters
+             и проверяется на хосте моком — до тех пор, пока ему не понадобится
+             периферия конкретного чипа
            → готовый объект становится полем Board
            → app зовёт его методы через порт из ports
 ```
@@ -130,38 +131,21 @@ supervisor-графы, watchdog). Вся остальная логика — в 
 Драйвер переезжает из `adapters` в `bsp` только тогда, когда ему перестаёт хватать
 трейтов `embedded-hal`: понадобились `embassy_stm32::peripherals` или статический
 DMA-буфер. До этого момента его место — в `domain`, где он тестируется без железа.
-Портов в шаблоне четыре: `BootCounter`, `FirmwareUpdate` и `SettingsStorage` стоят за
-тем, что `bsp` отдаёт уже сейчас, а `TemperatureSensor` показывает форму для датчиков
-вашего устройства.
+Портов в шаблоне три: `BootCounter`, `FirmwareUpdate` и `SettingsStorage` стоят за
+тем, что `bsp` отдаёт уже сейчас. Свой порт под датчики и периферию вашего
+устройства заводится по тому же образцу — см. CLAUDE.md, «Порты — границы domain».
 
-Ниже — курированный набор зависимостей, уже подключённых в шаблоне, с кратким
-обоснованием выбора и ссылкой на рабочий пример. Полное обоснование (сравнение с
-альтернативами, тонкости API) — в doc-комментарии над каждым примером.
-
-Часть из них — `fsm`, `fsm-async`, `sync-request`, `typestate`, `supervisor`,
-`watchdog` — берётся из [rust-lib](https://github.com/Sergycb/rust-lib) как
-git-зависимость; они заменили сторонние аналоги (`statig`, `hsmc`,
-`embedded-rpc`, `typestate` 0.9.0-rc2, `embassy-supervisor`,
-`embassy-task-watchdog`, `ector`). Чем именно каждый из них лучше того, что
-стоял раньше, написано в примере/doc-комментарии, на который ссылается таблица.
-
-### `domain` — бизнес-логика
-
-| Крейт | Для чего | Пример |
-|---|---|---|
-| `fsm` | Иерархический автомат как **компонент** внутри произвольной задачи: владелец сам подаёт события через `dispatch()`. Синхронный, без исполнителя и таймеров. | `crates-host/domain/examples/fsm_light_machine.rs` |
-| `fsm-async` | Тот же `fsm::Machine`, но владеющий **своей задачей целиком**: `run()` сам ждёт события из `embassy_sync`-канала и взводит таймауты состояний по `embassy_time`. Не другая модель состояний, а другой владелец цикла. | `crates-host/domain/examples/fsm_async_connection_chart.rs` |
-| `typestate` | Compile-time автомат: недопустимый переход состояния — ошибка компиляции, а не runtime-проверка (в отличие от `fsm`/`fsm-async`). Настоящий `no_std`, поэтому обычная зависимость, а не только host/dev. | `crates-host/domain/examples/typestate_connection.rs` |
-| `type-state-builder` | Typestate-builder: `build()` доступен только когда выставлены все обязательные поля — компилятор ловит недостающее поле, а не рантайм. Не пересекается с `typestate` (тот про переходы поведения, этот — про конструирование). | `crates-host/domain/examples/type_state_builder_config.rs` |
-| `mitsein` | `NonEmpty`-обёртка над `heapless::Vec` — непустота как инвариант типа, а не проверка `Option`/`is_empty()` в каждом месте. Дополняет `heapless`, не конкурирует. | `crates-host/domain/examples/mitsein_nonempty_buffer.rs` |
-| `futures-concurrency` | `race!`/`merge` для потоков поверх `Future` — то, чего нет в `embassy_futures::select`/`select3`/`select4` (только 2-4 ветки, без `race`/`merge` для потоков). Alloc-free. | `crates-host/domain/examples/futures_concurrency_race.rs` |
-| `aselect` | Альтернатива `select!`, где непроигравшие ветки гарантированно НЕ отменяются на середине (cancellation-safety) — в отличие от tokio/embassy `select!`. `no_std`, zero-alloc, реализует `Stream`. | `crates-host/domain/examples/aselect_stream.rs` |
-| `sync_wrapper` | Заставляет компилятор считать `!Sync`-тип `Sync`, когда эксклюзивный доступ гарантирован вручную — нужен, если `Future` должен быть `Sync`, а внутри держит не-`Sync` тип (`RefCell`) в многопоточном/multi-core сценарии. | `crates-host/domain/examples/sync_wrapper_example.rs` |
-| `sync-request` | Межзадачный (не host↔target!) request/response поверх `embassy_sync`, без зависимости от `embassy-executor`. Отменённый (по таймауту, проигравшей веткой `select!`) запрос помечен номером поколения и не «протечёт» ответом в следующий. | `crates-host/domain/examples/sync_request_service.rs` |
-| `miniconf` | Runtime-конфигурация устройства: адресуемое дерево настроек, доступ к листьям по JSON-пути, без аллокатора. | `crates-host/domain/examples/miniconf_settings.rs` |
-| `test-log` | Автоинициализация `log` в host-тестах (тихо на успехе, видно на провале/`--nocapture`), цветной вывод из коробки — без ручного `env_logger::init()` в каждом тесте. | `crates-host/domain/tests/logging.rs` |
+Библиотек с заранее подключённой демонстрацией `domain` не раздаёт: чем и как
+пользоваться в бизнес-логике — решение проекта, а usage-примеры для конкретной
+библиотеки лучше показывает её собственная документация. Курированный набор
+ниже — то немногое, что шаблон подключает и объясняет сам, потому что это
+часть его собственной механики, а не готовая замена вашей логике.
 
 ### `cross` — железо и оркестрация
+
+`supervisor` и `watchdog` берутся из [rust-lib](https://github.com/Sergycb/rust-lib)
+как git-зависимость; они заменили сторонние аналоги (`embassy-supervisor`,
+`embassy-task-watchdog`, `ector`) — чем именно лучше, написано в столбце ниже.
 
 | Крейт | Для чего | Где документирован |
 |---|---|---|
@@ -402,9 +386,9 @@ if let Some(raw) = board.settings.read(KEY_CALIBRATION, &mut scratch).await? {
 }
 ```
 
-Формат значения шаблон не выбирает — хранилище отдаёт байты. Дерево настроек, если
-нужно именно оно, уже есть в `domain`: `miniconf` (см. `crates-host/domain/examples/`), и до
-появления этого раздела его негде было хранить.
+Формат значения шаблон не выбирает — хранилище отдаёт байты: `postcard`, адресуемое
+дерево настроек вроде `miniconf`, свой формат — решает проект, а до появления этого
+раздела хранить настройки было просто негде.
 
 По умолчанию раздел выключен, и это не случайность: он стоит **две страницы стирания**,
 а страница здесь — максимальный сектор чипа. На STM32G0 с секторами по 2 KiB это 4 KiB,

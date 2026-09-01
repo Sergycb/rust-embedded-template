@@ -110,14 +110,18 @@ pub static FW_VERSION_IN_IMAGE: u32 = FW_VERSION;
 /// флеша и не «неверное состояние», и человеку, разбирающему лог с
 /// устройства, разница между «подпись не сошлась» и «прислали старую
 /// прошивку» важнее всего остального.
-#[derive(Debug, defmt::Format)]
+#[derive(Debug, defmt::Format, thiserror::Error)]
 pub enum UpdateError {
     /// Всё, что приходит из `embassy-boot`: отказ флеша, негодное состояние,
-    /// неверная подпись.
+    /// неверная подпись. `{0:?}`, а не `{0}` — `FirmwareUpdaterError` чужой,
+    /// менять его ради `Display` нельзя, а `Debug` у него уже есть (иначе не
+    /// собрался бы `derive(Debug)` здесь же).
+    #[error("отказ bootloader'а: {0:?}")]
     Boot(Error),
     /// Образ не новее текущего — то есть попытка отката. Обе версии в
     /// упакованном виде, разобрать их обратно умеет
     /// `domain::firmware::unpack`.
+    #[error("отклонён откат: текущая версия {current}, предложенная {incoming}")]
     Rollback { current: u32, incoming: u32 },
 }
 

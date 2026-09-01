@@ -35,72 +35,13 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
 [workspace.dependencies]
 # Крейты самого проекта: порты/адаптеры domain объявлены здесь, чтобы версия
 # и путь были в одном месте, как у внешних зависимостей.
-ports               = { path = "crates-host/domain/ports" }
-adapters            = { path = "crates-host/domain/adapters" }
-type-state-builder  = { version = "0.5.1" }
-mitsein             = { version = "0.9.0", default-features = false, features = ["heapless"] }
-futures-concurrency = { version = "7.7.1", default-features = false }
-aselect             = { version = "0.4.0", default-features = false }
-  # wg (AsyncWaitGroup) сюда не включён: его async-реализация жёстко требует
-  # alloc (Arc-based clone), no_std/no-alloc варианта нет ни у wg, ни у
-  # исследованных альтернатив (waitgroup, awaitgroup, async-wg, mea,
-  # compact-waitgroup — все тоже на Arc).
-sync_wrapper          = { version = "1.0.2" }
-  # intrusive-collections убран: `AtomicLink` (singly/xor_linked_list)
-  # реализован через голый core::sync::atomic::*::compare_exchange без
-  # эмуляции — на Cortex-M0/M0+ (ARMv6-M, нет аппаратного CAS) это не
-  # компилируется вообще, независимо от того, какую структуру из крейта
-  # реально использует код (весь модуль собирается безусловно, фичей не
-  # спрятан). Обнаружено сборкой cross под STM32G071RB. Крейт был подключён
-  # только ради примера (crates-host/domain/examples/intrusive_collections_wait_list.rs,
-  # удалён вместе с этой записью), в реальном коде domain не использовался —
-  # менять было нечего на замену.
-miniconf              = { version = "0.21.0", default-features = false, features = [
-	"derive",
-	"json-core",
-] }
-heapless             = { version = "0.9.3" }
-embassy-futures      = { version = "0.1.2" }
-embassy-sync         = { version = "0.8.0" }
-embassy-time         = { version = "0.5.1" }
-defmt-or-log         = { version = "0.2.3" }
-log                  = { version = "0.4.34" }
-defmt                = { version = "1.1.1" }
-critical-section     = { version = "1.2.0" }
-embedded-hal-mock    = { version = "0.11.1", features = ["embedded-hal-async"] }
-# Трейты шин для драйверов в `adapters`: они generic по шине, поэтому на плате
-# им подаётся `embassy_stm32::i2c::I2c` (она эти трейты реализует), а в
-# host-тесте — мок из `embedded-hal-mock` выше.
-embedded-hal-async   = { version = "1.0.0" }
-mockall              = { version = "0.15.0" }
-proptest             = { version = "1.11.0" }
-rstest               = { version = "0.26.1" }
-tokio                = { version = "1.53.1", features = ["rt", "macros", "time"] }
-futures              = { version = "0.3.34", default-features = false }
-test-log             = { version = "0.2.21" }
-
-# Крейты из личной библиотеки (github.com/Sergycb/rust-lib), заменившие
-# сторонние аналоги, которые раньше стояли здесь. Не предлагать старые
-# обратно — дело не только в дублировании, у каждого был конкретный изъян:
-#
-# * `fsm` (+ `fsm-async`) вместо `statig` и `hsmc`. Два сторонних крейта
-#   покрывали два режима одного и того же (автомат-компонент и автомат-
-#   задача); здесь это один core (`fsm::Runtime`) и async-обёртка над ним
-#   (`fsm_async::AsyncTimedRuntime`), с общей иерархией/таймаутами. Сверх
-#   того, `hsmc` требовал у domain зеркальной фичи `"embassy"` — без неё
-#   `statechart!` молча генерировал sync-вариант без `run()` — и тянул
-#   heapless 0.8 рядом с 0.9 workspace'а.
-# * `sync-request` вместо `embedded-rpc` — тот же межзадачный
-#   request/response, но с generation-tagged отменой (см. `RpcService`).
-# * `typestate` вместо одноимённого крейта 0.9.0-rc2. Тот не объявлял
-#   `#![no_std]` ни при какой конфигурации фич и падал с E0463 на
-#   `thumbv7em-none-eabihf` — годился только в `[dev-dependencies]`. Этот
-#   `no_std` по-настоящему, поэтому объявлен обычной зависимостью.
-#
-# Крейты `supervisor` и `watchdog` из той же библиотеки — не здесь, а в
-# `crates-cross/Cargo.toml`: первый спавнит `#[embassy_executor::task]`, второй
-# драйвит аппаратный IWDG.
-fsm          = { git = "https://github.com/Sergycb/rust-lib.git" }
-fsm-async    = { git = "https://github.com/Sergycb/rust-lib.git" }
-sync-request = { git = "https://github.com/Sergycb/rust-lib.git" }
-typestate    = { git = "https://github.com/Sergycb/rust-lib.git" }
+ports        = { path = "crates-host/domain/ports" }
+adapters     = { path = "crates-host/domain/adapters" }
+defmt-or-log = { version = "0.2.3" }
+log          = { version = "0.4.34" }
+defmt        = { version = "1.1.1" }
+# no_std: у thiserror `default-features` включают "std", а domain и cross
+# собираются без него (см. рабочий пример — thiserror::Error на
+# `download::Error<E>` и `bsp::ota::UpdateError`).
+thiserror    = { version = "2.0.20", default-features = false }
+test-log     = { version = "0.2.21" }

@@ -18,21 +18,12 @@ default = ["log"]
 defmt = [
 	"dep:defmt",
 	"defmt-or-log/defmt",
-	"embassy-futures/defmt",
-	"embassy-sync/defmt",
-	"embassy-time/defmt",
-	"heapless/defmt"
 ]
 log = [
 	"dep:log",
 	"defmt-or-log/log",
-	"embassy-time/log",
-	"embassy-sync/log",
-	"embassy-futures/log",
 ]
 std = [
-	"embassy-sync/std",
-	"embassy-time/std",
 	"log?/std"
 ]
 
@@ -42,40 +33,10 @@ std = [
 # правило «порт заводится под то, чем пользуется логика» было выполнимым: без
 # неё `domain` не может даже назвать `ports::BootCounter`.
 ports = { workspace = true }
-type-state-builder = { workspace = true }
-typestate = { workspace = true }
-mitsein = { workspace = true }
-fsm = { workspace = true }
-fsm-async = { workspace = true }
-futures-concurrency = { workspace = true }
-aselect = { workspace = true }
-sync_wrapper = { workspace = true }
-sync-request = { workspace = true }
-miniconf = { workspace = true }
-# Прямого `use heapless::..` в domain нет: примеры доходят до него только через
-# `mitsein::heapless::..` (см. examples/mitsein_nonempty_buffer.rs). Зависимость
-# нужна ради унификации фич — `mitsein` не форвардит `defmt` в свой `heapless`, и
-# без этой строки `heapless/defmt` было бы неоткуда включить.
-heapless = { workspace = true }
-embassy-futures = { workspace = true }
-embassy-sync = { workspace = true }
-embassy-time = { workspace = true }
 defmt-or-log = { workspace = true }
 log = { workspace = true, optional = true }
 defmt = { workspace = true, optional = true }
+thiserror = { workspace = true }
 
 [dev-dependencies]
-critical-section = { workspace = true, features = ["std"] }
-futures = { workspace = true }
-# `Stream`-реализация у aselect — только под фичей "futures", которую
-# [dependencies] отключает (default-features = false, no_std-safe). Для
-# host-примера включаем её здесь же (не влияет на сборку lib для железа —
-# dev-dependencies не участвуют в этом графе).
-aselect = { workspace = true, features = ["futures"] }
-embassy-time = { workspace = true, features = ["generic-queue-8", "std"] }
-embedded-hal-mock = { workspace = true }
-mockall = { workspace = true }
-proptest = { workspace = true }
-rstest = { workspace = true }
-tokio = { workspace = true }
 test-log = { workspace = true }

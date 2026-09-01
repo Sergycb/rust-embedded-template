@@ -142,9 +142,9 @@ embedded-test      = { version = "0.7.2", default-features = false, features = [
 # `ports` — крейт этого же проекта, и явная строка в манифесте честнее фасада.
 ports            = { path = "../crates-host/domain/ports" }
 # Драйверы, generic по шине: их `bsp` собирает из своей периферии и отдаёт
-# готовыми объектами. Живут в domain, потому что тестируются на хосте моком
-# (см. `adapters::Lm75`), а сюда объявлены, чтобы путь из
-# `bsp/src/resources.rs` работал без правки манифестов.
+# готовыми объектами. Живут в domain, потому что тестируются на хосте моком, а
+# сюда объявлены, чтобы путь из `bsp/src/resources.rs` работал без правки
+# манифестов.
 adapters         = { path = "../crates-host/domain/adapters" }
 bsp              = { path = "./bsp" }{% if ota == "true" %}
 boot             = { path = "./boot" }{% endif %}
@@ -157,11 +157,14 @@ domain           = { path = "../crates-host/domain", default-features = false, f
 target-tests     = { path = "./target-tests" }
 shadow-rs        = { version = "2.0.0", default-features = false }
 assign-resources = { version = "0.5.0" }
+# Только для UpdateError у подписанного OTA (bsp/src/ota.rs): `Boot`/`Error`
+# там — реэкспорт стороннего `embassy_boot::FirmwareUpdaterError`, чужой тип
+# менять нельзя. no_std: `default-features` у thiserror включают "std".
+thiserror        = { version = "2.0.20", default-features = false }
 
-# Крейты из личной библиотеки (github.com/Sergycb/rust-lib). Здесь только те
-# два, что действительно про железо и оркестрацию; `fsm`/`fsm-async`/
-# `sync-request`/`typestate` из той же библиотеки объявлены в корневом
-# workspace'е и подключаются к `domain` — cross получает их через него.
+# Крейты из личной библиотеки (github.com/Sergycb/rust-lib) — оба про железо
+# и оркестрацию, поэтому объявлены здесь, а не в корневом workspace'е (для
+# `domain`).
 #
 # `supervisor` заменил сразу три сторонних крейта: `embassy-supervisor`
 # (упорядоченный старт по графу), `embassy-task-watchdog` (мультиплексор
