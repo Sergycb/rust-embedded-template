@@ -15,6 +15,13 @@ const MEMORY_BEGIN: &str = "// BEGIN GENERATED MEMORY LAYOUT";
 const MEMORY_END: &str = "// END GENERATED MEMORY LAYOUT";
 const BANKS_BEGIN: &str = "// BEGIN GENERATED BANK MODE";
 const BANKS_END: &str = "// END GENERATED BANK MODE";
+const WATCHDOG_BEGIN: &str = "// BEGIN GENERATED WATCHDOG PERIPHERAL";
+const WATCHDOG_END: &str = "// END GENERATED WATCHDOG PERIPHERAL";
+/// Имя блока независимого сторожевого таймера у подавляющего большинства
+/// чипов (800 из 891 наборов метаданных). Таблица `WATCHDOG` перечисляет
+/// только исключения, а хук подставляет это значение для всех остальных — по
+/// той же схеме, что и `BANK_MODE`.
+const DEFAULT_WATCHDOG: &str = "IWDG";
 /// Любая реальная чип-фича годится — нужна только чтобы `cargo metadata` смог
 /// разрешить зависимость `embassy-stm32`: в самом `crates-cross/Cargo.toml` вместо
 /// неё стоит нерезолвящийся плейсхолдер `{{chip_feature}}`, см.
@@ -51,6 +58,8 @@ fn main() -> anyhow::Result<()> {
 
     let mut memory_layouts: BTreeMap<&str, MemoryLayout> = BTreeMap::new();
     let mut bank_modes: BTreeMap<&str, &'static str> = BTreeMap::new();
+    let mut watchdogs: BTreeMap<&str, String> = BTreeMap::new();
+    let mut shared_metadata: BTreeMap<PathBuf, Vec<String>> = BTreeMap::new();
     for suffix in &suffixes {
         // Ошибка разбора метаданных — не «чип не подошёл», а сломанное
         // предположение о формате `stm32-metapac`. Раньше она глушилась через
@@ -66,6 +75,15 @@ fn main() -> anyhow::Result<()> {
         if let Some(layout) = compute_memory_layout(&regions) {
             memory_layouts.insert(suffix, layout);
         }
+        let watchdog = chip_watchdog(
+            &cargo_metadata.stm32_metapac_chips_dir,
+            suffix,
+            &mut shared_metadata,
+        )
+        .with_context(|| format!("чип {suffix}"))?;
+        if watchdog != DEFAULT_WATCHDOG {
+            watchdogs.insert(suffix, watchdog);
+        }
     }
     let with_ota = memory_layouts.values().filter(|m| m.ota.is_ok()).count();
     let with_config = memory_layouts
@@ -80,7 +98,8 @@ fn main() -> anyhow::Result<()> {
     println!(
         "embassy-stm32: {} чип-фич; probe-rs: {} целей; итоговый список: {} (отброшено {}, \
          нет цели probe-rs); более точная цель probe-rs, чем базовая, найдена для {} чипов; \
-         выбор банковой схемы нужен {} чипам; memory.x посчитан для {} из {} чипов, из них \
+         выбор банковой схемы нужен {} чипам; сторож зовётся не {} у {} чипов; memory.x \
+         посчитан для {} из {} чипов, из них \
          с OTA {} (остальные — один образ на весь flash, без crates-cross/boot); раздел настроек \
          возможен на {} чипах, из них с сохранением OTA — {}",
         cargo_metadata.embassy_chip_features.len(),
@@ -89,6 +108,8 @@ fn main() -> anyhow::Result<()> {
         dropped,
         package_choices.len(),
         bank_modes.len(),
+        DEFAULT_WATCHDOG,
+        watchdogs.len(),
         memory_layouts.len(),
         suffixes.len(),
         with_ota,
@@ -115,6 +136,12 @@ fn main() -> anyhow::Result<()> {
         BANKS_BEGIN,
         BANKS_END,
         &format_bank_modes(&bank_modes),
+    )?;
+    write_generated_block(
+        &rhai_path,
+        WATCHDOG_BEGIN,
+        WATCHDOG_END,
+        &format_watchdogs(&watchdogs),
     )?;
     write_generated_block(
         &rhai_path,
@@ -526,6 +553,84 @@ fn parse_chip_memory(chips_dir: &Path, suffix: &str) -> anyhow::Result<Vec<Vec<R
         bail!("{}: не найдено ни одного MemoryRegion", path.display());
     }
     Ok(configs)
+}
+
+/// Как у этого чипа зовётся блок независимого сторожевого таймера:
+/// `IWDG`, `IWDG1` или `IWDG2`.
+///
+/// Нужно потому, что `bsp` объявляет поле типа
+/// `wdg::Iwdg<peripherals::IWDG…>`, а имя типа в `embassy-stm32` — то самое,
+/// что стоит в метаданных: на большинстве STM32 `IWDG`, на H7 `IWDG1`, на
+/// двухъядерных H7 ещё и `IWDG2`. Угадывать его по имени чипа нельзя — ровно
+/// на такой эвристике уже ошибся признак `erase_zero` (см. CLAUDE.md), а
+/// метаданные знают ответ точно.
+///
+/// Читается не из `<chip>/metadata.rs`: там лежат только имя, семейство и
+/// карта памяти, а перечень блоков — в общем файле, который тот включает
+/// первой строкой (`include!("../metadata_0180.rs")`). Общий файл делят
+/// десятки чипов, поэтому разобранный список кешируется в `shared`.
+///
+/// Когда блоков два (двухъядерные H7: `IWDG1` у ядра CM7, `IWDG2` у CM4),
+/// метаданные обоих ядер перечисляют оба — различить их там нечем. Выбор
+/// делается по суффиксу ядра, который каскад УЖЕ выбрал (`-cm4`), а не по
+/// имени чипа: это не догадка о железе, а перенос уже сделанного выбора
+/// туда, где метаданные молчат.
+fn chip_watchdog(
+    chips_dir: &Path,
+    suffix: &str,
+    shared: &mut BTreeMap<PathBuf, Vec<String>>,
+) -> anyhow::Result<String> {
+    let path = chips_dir.join(format!("stm32{suffix}")).join("metadata.rs");
+    let text = fs::read_to_string(&path)
+        .with_context(|| format!("не удалось прочитать {}", path.display()))?;
+    let included = parse_included_metadata(&text)
+        .with_context(|| format!("в {} нет строки include!", path.display()))?;
+    let shared_path = path
+        .parent()
+        .expect("у пути к metadata.rs всегда есть каталог чипа")
+        .join(included);
+
+    if !shared.contains_key(&shared_path) {
+        let shared_text = fs::read_to_string(&shared_path)
+            .with_context(|| format!("не удалось прочитать {}", shared_path.display()))?;
+        shared.insert(shared_path.clone(), parse_watchdog_names(&shared_text));
+    }
+    let names = &shared[&shared_path];
+
+    match names.len() {
+        0 => bail!("{}: не найдено ни одного блока IWDG", shared_path.display()),
+        1 => Ok(names[0].clone()),
+        _ if suffix.ends_with("-cm4") => Ok(names[names.len() - 1].clone()),
+        _ => Ok(names[0].clone()),
+    }
+}
+
+/// Путь из `include!("../metadata_0180.rs")` — первой строки любого
+/// `<chip>/metadata.rs`.
+fn parse_included_metadata(text: &str) -> Option<&str> {
+    let rest = text.split_once("include!(\"")?.1;
+    rest.split_once('"').map(|(path, _)| path)
+}
+
+/// Имена блоков `IWDG*` в порядке появления, без повторов.
+///
+/// Матч намеренно грубый — по литералу `name: "IWDG`, без разбора того,
+/// перечень это блоков или прерываний: у прерывания то же имя, что у блока,
+/// а расхождения между этими двумя списками не бывает (проверено по всем 891
+/// наборам метаданных: набор `{IWDG}`, `{IWDG1}` или `{IWDG1, IWDG2}`, и ни
+/// одного, где `IWDG` соседствовал бы с `IWDG1`).
+fn parse_watchdog_names(text: &str) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    for chunk in text.split("name: \"IWDG").skip(1) {
+        let Some((tail, _)) = chunk.split_once('"') else {
+            continue;
+        };
+        let name = format!("IWDG{tail}");
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    names
 }
 
 /// Тело каждого элемента внешнего среза `memory: &[ &[..], &[..] ]` — как
@@ -1344,6 +1449,26 @@ fn format_memory_layouts(layouts: &BTreeMap<&str, MemoryLayout>) -> String {
     out
 }
 
+/// Только чипы, у которых блок сторожевого таймера зовётся НЕ `IWDG` — для
+/// остальных хук подставляет [`DEFAULT_WATCHDOG`]. Полная таблица на 1533
+/// чипа повторяла бы одно и то же слово полутора тысячами строк рядом с уже
+/// сорока девятью тысячами сгенерированных.
+fn format_watchdogs(watchdogs: &BTreeMap<&str, String>) -> String {
+    let mut out = String::new();
+    out.push_str(WATCHDOG_BEGIN);
+    out.push_str(&format!(
+        " ({} шт., остальным — {DEFAULT_WATCHDOG}; cargo run --manifest-path \
+         chip-data-gen/Cargo.toml)\n",
+        watchdogs.len()
+    ));
+    out.push_str("const WATCHDOG = #{\n");
+    for (suffix, name) in watchdogs {
+        out.push_str(&format!("    \"{suffix}\": \"{name}\",\n"));
+    }
+    out.push_str("};\n");
+    out
+}
+
 /// Только чипы, у которых `embassy-stm32` требует выбора банковой схемы
 /// (несколько карт памяти) — для остальных фичи нет вовсе, и хук подставляет
 /// пустую строку.
@@ -1615,6 +1740,35 @@ pub static METADATA: Metadata = Metadata {
         assert_eq!(multi[0][0].size, 524288);
         assert_eq!(multi[1].len(), 2);
         assert_eq!(multi[1][1].name, "BANK_2");
+    }
+
+    /// Первая строка `<chip>/metadata.rs` — это `include!` общего файла, где
+    /// и лежит перечень блоков. Разберись мы её неверно, сторож у ВСЕХ чипов
+    /// молча стал бы дефолтным `IWDG`, включая H7, где такого блока нет.
+    #[test]
+    fn included_metadata_file_is_taken_from_the_include_line() {
+        assert_eq!(
+            parse_included_metadata("include!(\"../metadata_0180.rs\");\nuse crate::x;\n"),
+            Some("../metadata_0180.rs")
+        );
+        assert_eq!(parse_included_metadata("pub static METADATA"), None);
+    }
+
+    /// Имена блоков — без повторов и в порядке появления: на этом порядке
+    /// держится выбор между `IWDG1` и `IWDG2` у двухъядерных H7.
+    #[test]
+    fn watchdog_names_are_deduplicated_in_order() {
+        // Один блок, названный дважды (у 154 наборов метаданных так и есть —
+        // блок и одноимённое прерывание).
+        assert_eq!(
+            parse_watchdog_names("name: \"IWDG\",\n  name: \"IWDG\",\n"),
+            vec!["IWDG".to_string()]
+        );
+        assert_eq!(
+            parse_watchdog_names("name: \"IWDG1\",\n  name: \"IWDG2\",\n"),
+            vec!["IWDG1".to_string(), "IWDG2".to_string()]
+        );
+        assert!(parse_watchdog_names("name: \"WWDG\",\n").is_empty());
     }
 
     #[test]

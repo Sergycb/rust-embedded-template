@@ -98,7 +98,15 @@ pub struct Board {
     /// `config`.
     pub settings: config::Settings,
 {%- endif %}
-{%- if ota != "true" and config != "true" %}
+{%- if graph == "true" %}
+    /// Ручка IWDG, ещё не запущенного. Наружу уходит не она, а объект — см.
+    /// [`Board::arm_watchdog`].
+    ///
+    /// `Option` тут не про «может не быть»: ручка забирается ровно один раз,
+    /// и `None` после этого — то, чем `arm_watchdog` ловит второй вызов.
+    watchdog: Option<embassy_stm32::Peri<'static, embassy_stm32::peripherals::{{watchdog_peripheral}}>>,
+{%- endif %}
+{%- if ota != "true" and config != "true" and graph != "true" %}
     // Not yet split into individual peripherals; kept whole until board wiring is added.
     #[allow(dead_code)]
     p: embassy_stm32::Peripherals,
@@ -156,16 +164,50 @@ impl Board {
 {%- if config == "true" %}
             settings: config::Settings::new(flash),
 {%- endif %}
+{%- if graph == "true" %}
+            watchdog: Some(p.{{watchdog_peripheral}}),
+{%- endif %}
         }
 {%- else %}
         Self {
             core,
             clocks,
             boot: persist::BootCount::new(),
+{%- if graph == "true" %}
+            watchdog: Some(p.{{watchdog_peripheral}}),
+{%- else %}
             p,
+{%- endif %}
         }
 {%- endif %}
     }
+{%- if graph == "true" %}
+
+    /// Запускает аппаратный сторожевой таймер и отдаёт его графу задач.
+    ///
+    /// Отдельным методом, а не готовым объектом в [`Board::init`], и причина
+    /// не в стиле: с этого вызова сторож ТИКАЕТ, а выключить его нельзя —
+    /// IWDG останавливается только сбросом. Значит звать его надо там, где
+    /// сразу за ним идёт первое кормление, то есть вплотную к
+    /// `__supervisor_watchdog.put(..)` и `spawn_all` в `main`. Взводи его
+    /// `init` — тот же `Board::init` в target-тестах сбрасывал бы плату
+    /// посреди теста, которого никто не кормит.
+    ///
+    /// Всё, что стоит между этим вызовом и первым тиком графа, обязано
+    /// уложиться в [`wdg::HW_TIMEOUT`]; оба соотношения таймаутов разобраны в
+    /// [`wdg::Iwdg::new`].
+    ///
+    /// # Паника
+    ///
+    /// При втором вызове: ручка IWDG забирается один раз за запуск.
+    pub fn arm_watchdog(&mut self) -> wdg::Iwdg<embassy_stm32::peripherals::{{watchdog_peripheral}}> {
+        let peripheral = self
+            .watchdog
+            .take()
+            .expect("сторож уже запущен: `arm_watchdog` зовётся один раз за запуск");
+        wdg::Iwdg::new(peripheral, wdg::HW_TIMEOUT)
+    }
+{%- endif %}
 
     /// Причина, по которой упал предыдущий запуск, если он упал.
     ///

@@ -1913,6 +1913,155 @@ const BANK_MODE = #{
 };
 // END GENERATED BANK MODE
 
+// Как у чипа зовётся блок независимого сторожевого таймера. Нужно затем, что
+// `bsp` объявляет поле типа `wdg::Iwdg<peripherals::IWDG…>`, а имя типа в
+// embassy-stm32 — ровно то, что стоит в метаданных: у подавляющего
+// большинства чипов `IWDG`, у H7 `IWDG1`, у двухъядерных H7 ещё и `IWDG2`
+// (первый принадлежит ядру CM7, второй — CM4; метаданные обоих ядер
+// перечисляют оба, поэтому выбор делается по уже выбранному каскадом
+// суффиксу `-cm4`). Таблица перечисляет только исключения — остальным хук
+// подставляет "IWDG", и полная таблица на 1479 чипов повторяла бы одно слово
+// полутора тысячами строк.
+//
+// Значение приходит из метаданных, а НЕ выводится из имени чипа: ровно на
+// такой эвристике уже ошибся признак erase_zero (см. комментарий к нему
+// ниже), и повторять это не надо.
+// BEGIN GENERATED WATCHDOG PERIPHERAL (131 шт., остальным — IWDG; cargo run --manifest-path chip-data-gen/Cargo.toml)
+const WATCHDOG = #{
+    "h723ve": "IWDG1",
+    "h723vg": "IWDG1",
+    "h723ze": "IWDG1",
+    "h723zg": "IWDG1",
+    "h725ae": "IWDG1",
+    "h725ag": "IWDG1",
+    "h725ie": "IWDG1",
+    "h725ig": "IWDG1",
+    "h725re": "IWDG1",
+    "h725rg": "IWDG1",
+    "h725ve": "IWDG1",
+    "h725vg": "IWDG1",
+    "h725ze": "IWDG1",
+    "h725zg": "IWDG1",
+    "h730ab": "IWDG1",
+    "h730ib": "IWDG1",
+    "h730vb": "IWDG1",
+    "h730zb": "IWDG1",
+    "h733vg": "IWDG1",
+    "h733zg": "IWDG1",
+    "h735ag": "IWDG1",
+    "h735ig": "IWDG1",
+    "h735rg": "IWDG1",
+    "h735vg": "IWDG1",
+    "h735zg": "IWDG1",
+    "h742ag": "IWDG1",
+    "h742ai": "IWDG1",
+    "h742bg": "IWDG1",
+    "h742bi": "IWDG1",
+    "h742ig": "IWDG1",
+    "h742ii": "IWDG1",
+    "h742vg": "IWDG1",
+    "h742vi": "IWDG1",
+    "h742xg": "IWDG1",
+    "h742xi": "IWDG1",
+    "h742zg": "IWDG1",
+    "h742zi": "IWDG1",
+    "h743ag": "IWDG1",
+    "h743ai": "IWDG1",
+    "h743bg": "IWDG1",
+    "h743bi": "IWDG1",
+    "h743ig": "IWDG1",
+    "h743ii": "IWDG1",
+    "h743vg": "IWDG1",
+    "h743vi": "IWDG1",
+    "h743xg": "IWDG1",
+    "h743xi": "IWDG1",
+    "h743zg": "IWDG1",
+    "h743zi": "IWDG1",
+    "h745bg-cm4": "IWDG2",
+    "h745bg-cm7": "IWDG1",
+    "h745bi-cm4": "IWDG2",
+    "h745bi-cm7": "IWDG1",
+    "h745ig-cm4": "IWDG2",
+    "h745ig-cm7": "IWDG1",
+    "h745ii-cm4": "IWDG2",
+    "h745ii-cm7": "IWDG1",
+    "h745xg-cm4": "IWDG2",
+    "h745xg-cm7": "IWDG1",
+    "h745xi-cm4": "IWDG2",
+    "h745xi-cm7": "IWDG1",
+    "h745zg-cm4": "IWDG2",
+    "h745zg-cm7": "IWDG1",
+    "h745zi-cm4": "IWDG2",
+    "h745zi-cm7": "IWDG1",
+    "h747ag-cm4": "IWDG2",
+    "h747ag-cm7": "IWDG1",
+    "h747ai-cm4": "IWDG2",
+    "h747ai-cm7": "IWDG1",
+    "h747bg-cm4": "IWDG2",
+    "h747bg-cm7": "IWDG1",
+    "h747bi-cm4": "IWDG2",
+    "h747bi-cm7": "IWDG1",
+    "h747ig-cm4": "IWDG2",
+    "h747ig-cm7": "IWDG1",
+    "h747ii-cm4": "IWDG2",
+    "h747ii-cm7": "IWDG1",
+    "h747xg-cm4": "IWDG2",
+    "h747xg-cm7": "IWDG1",
+    "h747xi-cm4": "IWDG2",
+    "h747xi-cm7": "IWDG1",
+    "h747zi-cm4": "IWDG2",
+    "h747zi-cm7": "IWDG1",
+    "h750ib": "IWDG1",
+    "h750vb": "IWDG1",
+    "h750xb": "IWDG1",
+    "h750zb": "IWDG1",
+    "h753ai": "IWDG1",
+    "h753bi": "IWDG1",
+    "h753ii": "IWDG1",
+    "h753vi": "IWDG1",
+    "h753xi": "IWDG1",
+    "h753zi": "IWDG1",
+    "h755bi-cm4": "IWDG2",
+    "h755bi-cm7": "IWDG1",
+    "h755ii-cm4": "IWDG2",
+    "h755ii-cm7": "IWDG1",
+    "h755xi-cm4": "IWDG2",
+    "h755xi-cm7": "IWDG1",
+    "h755zi-cm4": "IWDG2",
+    "h755zi-cm7": "IWDG1",
+    "h757ai-cm4": "IWDG2",
+    "h757ai-cm7": "IWDG1",
+    "h757bi-cm4": "IWDG2",
+    "h757bi-cm7": "IWDG1",
+    "h757ii-cm4": "IWDG2",
+    "h757ii-cm7": "IWDG1",
+    "h757xi-cm4": "IWDG2",
+    "h757xi-cm7": "IWDG1",
+    "h757zi-cm4": "IWDG2",
+    "h757zi-cm7": "IWDG1",
+    "h7a3ig": "IWDG1",
+    "h7a3ii": "IWDG1",
+    "h7a3ng": "IWDG1",
+    "h7a3ni": "IWDG1",
+    "h7a3rg": "IWDG1",
+    "h7a3ri": "IWDG1",
+    "h7a3vg": "IWDG1",
+    "h7a3vi": "IWDG1",
+    "h7a3zg": "IWDG1",
+    "h7a3zi": "IWDG1",
+    "h7b0ab": "IWDG1",
+    "h7b0ib": "IWDG1",
+    "h7b0rb": "IWDG1",
+    "h7b0vb": "IWDG1",
+    "h7b0zb": "IWDG1",
+    "h7b3ii": "IWDG1",
+    "h7b3ni": "IWDG1",
+    "h7b3ri": "IWDG1",
+    "h7b3vi": "IWDG1",
+    "h7b3zi": "IWDG1",
+};
+// END GENERATED WATCHDOG PERIPHERAL
+
 // Готовые адреса/размеры для memory.x. Строится из метаданных stm32-metapac
 // (реальные границы секторов чипа), не гадание — см. chip-data-gen/src/main.rs,
 // compute_memory_layout(). У каждой записи есть "ota":
@@ -50772,6 +50921,12 @@ variable::set("dual_core", if dual_core { "true" } else { "false" });
 // многоконфигурационные чипы не собираются вовсе. Без переопределения через
 // --define, как и dual_core: значение целиком выводится из chip_feature.
 variable::set("bank_mode", if BANK_MODE.contains(suffix) { BANK_MODE[suffix] } else { "" });
+
+// Имя блока сторожевого таймера (см. WATCHDOG выше) — подставляется в тип
+// поля `Board::watchdog` в bsp и в графовый блок `watchdog:` в app. Без
+// переопределения через --define, как dual_core и bank_mode: значение целиком
+// выводится из chip_feature.
+variable::set("watchdog_peripheral", if WATCHDOG.contains(suffix) { WATCHDOG[suffix] } else { "IWDG" });
 
 // Чем читается СТЁРТАЯ страница флеша. У подавляющего большинства семейств
 // это 0xFF, а у 189 чипов из 1533 — 0x00 (их NVM стирается в ноль: страница
