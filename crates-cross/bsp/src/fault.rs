@@ -79,7 +79,7 @@ pub fn record(pc: u32, lr: u32, xpsr: u32) {
     // ни `CFSR`, ни `HFSR`, ни адресных `MMFAR`/`BFAR`. Они появились только
     // в Armv7-M, и в `cortex-m` закрыты `#[cfg(not(armv6m))]`, то есть код с
     // ними здесь просто не собрался бы. Ветку выбирает генерация
-    // (`armv6m` в chip-select.rhai), а не Cargo-фича: см. CLAUDE.md,
+    // (`armv6m` в chip-select.rhai), а не Cargo-фича: см. docs/conventions.md,
     // «Feature-flag конвенции».
     //
     // Остаётся `pc` — самое ценное из всего набора: адрес инструкции, на

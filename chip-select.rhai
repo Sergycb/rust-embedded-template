@@ -50903,7 +50903,7 @@ if !variable::is_set("target") {
 // появились только в Armv7-M. В `cortex-m` они закрыты `#[cfg(not(armv6m))]`,
 // то есть код с ними на таком чипе не собирается вовсе. По этому признаку
 // crates-cross/bsp/src/fault.rs выбирает, что писать в дамп аппаратного
-// отказа, — Liquid-условием при генерации, а не Cargo-фичей (см. CLAUDE.md,
+// отказа, — Liquid-условием при генерации, а не Cargo-фичей (см. docs/conventions.md,
 // «Feature-flag конвенции»).
 //
 // Считается по итоговому `target`, а не по chip_feature: `--define
@@ -51028,6 +51028,7 @@ if variable::is_set("write_size") {
     if !wants_ota {
         file::delete("crates-cross/boot");
         file::delete("crates-cross/bsp/src/ota.rs");
+        file::delete("docs/modules/bsp-ota.md");
         // Релизу по тегу без OTA нечего выкладывать: `app.bin` делается
         // только там, где есть раздел DFU. Тело workflow и так под
         // Liquid-условием, но пустой файл в .github/workflows сбивал бы с
@@ -51067,6 +51068,7 @@ if variable::is_set("write_size") {
     if !wants_ota {
         file::delete("crates-cross/boot");
         file::delete("crates-cross/bsp/src/ota.rs");
+        file::delete("docs/modules/bsp-ota.md");
         // Релизу по тегу без OTA нечего выкладывать: `app.bin` делается
         // только там, где есть раздел DFU. Тело workflow и так под
         // Liquid-условием, но пустой файл в .github/workflows сбивал бы с
@@ -51153,7 +51155,7 @@ if variable::is_set("write_size") {
     let graph = wants_graph && size_in_bytes(m[app_length_key]) >= GRAPH_MIN_PARTITION;
     if wants_graph && !graph {
         print("Граф задач отключён для " + suffix + ": под приложение отведено " + m[app_length_key] + ", а supervisor туда не помещается");
-        print("  вернуть можно вручную — код графа лежит в doc-комментарии crates-cross/app/src/task_orchestration.rs");
+        print("  вернуть можно вручную — код графа лежит в docs/modules/app-task-orchestration.md");
     }
 
     variable::set("write_size", m["write_size"]);
@@ -51345,6 +51347,7 @@ if variable::is_set("write_size") {
         // раздела нет, а символы `__bootloader_dfu_*`, на которые опирается
         // embassy-boot, некому определить.
         file::delete("crates-cross/bsp/src/ota.rs");
+        file::delete("docs/modules/bsp-ota.md");
         // И релиз по тегу: выкладывать нечего, `app.bin` собирается только
         // там, где есть куда его доставлять (см. ту же причину выше).
         file::delete(".github/workflows/release.yml");

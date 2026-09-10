@@ -7,7 +7,7 @@
 - **`domain`** (корень репозитория) — вся бизнес-логика. `no_std`, не зависит от
   `embassy-executor`/`embassy-stm32`, тестируется на host (`cargo xtask test host`).
 - **`crates-cross/`** — аппаратная прошивка STM32 (`bsp`, `app`, `boot`). Собирается под
-  `thumbv7em-none-eabihf` (или другой ARM target), подключает `domain` как обычную
+  `{{target}}` (или другой ARM target), подключает `domain` как обычную
   path-зависимость.
 
 **Правило**: `cross` должен оставаться минимальным — только создание статических

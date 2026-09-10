@@ -562,7 +562,7 @@ fn parse_chip_memory(chips_dir: &Path, suffix: &str) -> anyhow::Result<Vec<Vec<R
 /// `wdg::Iwdg<peripherals::IWDG…>`, а имя типа в `embassy-stm32` — то самое,
 /// что стоит в метаданных: на большинстве STM32 `IWDG`, на H7 `IWDG1`, на
 /// двухъядерных H7 ещё и `IWDG2`. Угадывать его по имени чипа нельзя — ровно
-/// на такой эвристике уже ошибся признак `erase_zero` (см. CLAUDE.md), а
+/// на такой эвристике уже ошибся признак `erase_zero` (см. docs/flash.md), а
 /// метаданные знают ответ точно.
 ///
 /// Читается не из `<chip>/metadata.rs`: там лежат только имя, семейство и

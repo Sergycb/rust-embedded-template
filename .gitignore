@@ -61,3 +61,20 @@ debug.log
 # Личные заметки к сессии агента: у Claude Code это файл рядом с CLAUDE.md,
 # в историю ему не надо.
 CLAUDE.local.md
+
+# Рабочие файлы самого Claude Code внутри .claude/ — состояние конкретной
+# машины (сессии, реестр агентов, расписания, блокировки), а не конвенции
+# проекта. .claude/rules/ при этом остаётся под git — это конвенции по путям,
+# они едут в историю. Список сверен с .git/info/exclude (раздел
+# claude-code-runtime), плюс settings.local.json, которого там нет.
+.claude/settings.local.json
+.claude/mailbox/
+.claude/routines/.state/
+.claude/agent-registry.json
+.claude/checkpoints/
+.claude/worktrees/
+.claude/scheduled_tasks.json
+.claude/scheduled_tasks.lock
+.claude/agent-memory-local
+.claude/first-run
+.claude/assistant-daemon-state.json

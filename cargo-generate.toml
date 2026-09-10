@@ -45,8 +45,10 @@ ignore = [
 	# машины мейнтейнера (расписания, реестр агентов, воркчаты, блокировки).
 	# В git их нет, но `cargo generate --path .` копирует рабочее дерево
 	# целиком, вместе с ними. Поимённо, а не каталогом `.claude` целиком —
-	# иначе уехал бы и `.claude/rules` (см. комментарий выше). Список сверен
-	# с `.git/info/exclude` (раздел `claude-code-runtime`).
+	# иначе уехал бы и `.claude/rules` (см. комментарий выше). Список ориентирован
+	# на `.git/info/exclude` (раздел `claude-code-runtime`), но не совпадает с ним
+	# дословно: `settings.local.json` там не перечислен, а `.claude/routines` здесь
+	# взят целиком — шире, чем `routines/.state/` там.
 	".claude/settings.local.json",
 	".claude/scheduled_tasks.lock",
 	".claude/scheduled_tasks.json",
