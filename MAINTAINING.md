@@ -14,7 +14,7 @@
 ## Что здесь есть, чего нет в проектах пользователей
 
 - `chip-select.rhai` — pre-хук: каскадный выбор чипа, `memory.x`, `write_size`,
-  `ota`, `dual_core`, `bank_mode`, `erase_zero`, `armv6m`, `watchdog_peripheral`. Хуки
+  `ota`, `dual_core`, `bank_mode`, `erase_zero`, `watchdog_peripheral`. Хуки
   cargo-generate в результат
   не копируются.
 - `post-script.rhai` — post-хук: сводка «что дальше» для пользователя. Команд
@@ -44,7 +44,7 @@
 ## Плейсхолдеры шаблона (`cargo-generate.toml`)
 
 `{{chip}}`, `{{chip_feature}}`, `{{cpu}}`, `{{target}}`, `{{write_size}}`,
-`{{page_size}}`, `{{dual_core}}`, `{{bank_mode}}`, `{{erase_zero}}`, `{{armv6m}}`,
+`{{page_size}}`, `{{dual_core}}`, `{{bank_mode}}`, `{{erase_zero}}`,
 `{{watchdog_peripheral}}` — плейсхолдеры, подставляемые
 Liquid-рендером cargo-generate. Из них в `[placeholders]` объявлены только `ci`, `ota`, `graph`,
 `config` и `signed`; все остальные выставляет `variable::set` в `[hooks].pre`-скрипте
