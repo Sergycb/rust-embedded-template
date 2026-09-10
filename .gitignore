@@ -57,3 +57,7 @@ debug.log
 # cargo-generate.toml он тоже в ignore — в сгенерированные проекты не
 # попадает; здесь — чтобы не уехал в историю случайным `git add -A`.
 .local/
+
+# Личные заметки к сессии агента: у Claude Code это файл рядом с CLAUDE.md,
+# в историю ему не надо.
+CLAUDE.local.md

@@ -22,9 +22,13 @@ exclude = ["CLAUDE.md"]
 # found invalid syntax", пытаясь Liquid-рендерить бинарные файлы внутри
 # него, если он присутствует локально у того, кто генерирует (обычное
 # состояние для мейнтейнера, собиравшего репозиторий перед тестом каскада).
-# `.local`/`.remember`/`.claude` — рабочие каталоги инструментов мейнтейнера.
-# В git их нет, но `cargo generate --path .` копирует рабочее дерево целиком,
-# вместе с неотслеживаемыми файлами.
+# `.local`/`.remember` — рабочие каталоги инструментов мейнтейнера. В git их
+# нет, но `cargo generate --path .` копирует рабочее дерево целиком, вместе с
+# неотслеживаемыми файлами. `.claude` в этот список больше не входит целиком:
+# `.claude/rules` — под git, это правила по путям для проекта, который
+# получится (а не инструмент мейнтейнера), и обязан доехать. Рабочие файлы
+# Claude Code внутри `.claude` (неотслеживаемые) перечислены ниже поимённо —
+# ровно затем, чтобы не унести заодно и rules.
 ignore = [
 	"chip-data-gen",
 	"MAINTAINING.md",
@@ -37,7 +41,23 @@ ignore = [
 	"crates-host/chip-info/target",
 	".local",
 	".remember",
-	".claude",
+	# Рабочие файлы Claude Code — не источник шаблона, а состояние конкретной
+	# машины мейнтейнера (расписания, реестр агентов, воркчаты, блокировки).
+	# В git их нет, но `cargo generate --path .` копирует рабочее дерево
+	# целиком, вместе с ними. Поимённо, а не каталогом `.claude` целиком —
+	# иначе уехал бы и `.claude/rules` (см. комментарий выше). Список сверен
+	# с `.git/info/exclude` (раздел `claude-code-runtime`).
+	".claude/settings.local.json",
+	".claude/scheduled_tasks.lock",
+	".claude/scheduled_tasks.json",
+	".claude/routines",
+	".claude/worktrees",
+	".claude/checkpoints",
+	".claude/mailbox",
+	".claude/agent-registry.json",
+	".claude/agent-memory-local",
+	".claude/first-run",
+	".claude/assistant-daemon-state.json",
 	# Не наш файл: crashpad-лог, который роняет в корень репозитория редактор.
 	# В git его нет, но `cargo generate --path .` копирует рабочее дерево
 	# целиком, вместе с неотслеживаемым мусором, — и он уезжал в каждый
