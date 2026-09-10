@@ -25,13 +25,17 @@ skill'ом `rust-engineering` и не дублируются здесь. Это�
 ## Граница `domain`/`cross`
 
 Два независимых workspace: `domain` (корень) — вся бизнес-логика, `no_std`, не знает про
-`embassy-executor`/`embassy-stm32`, тестируется на host (`cargo xtask test host`).
+`embassy-stm32` и ни про какое железо, тестируется на host (`cargo xtask test host`).
 `crates-cross/` — аппаратная прошивка (`bsp`, `app`, `boot`), собирается под `{{target}}`,
 подключает `domain` как обычную path-зависимость.
 `cross` остаётся минимальным: только создание `static` hardware-объектов (буферы, DMA,
 периферия) и оркестрация задач (`Spawner`, supervisor-графы, watchdog).
 Всё остальное — даже асинхронное и «системное» на вид (стейтчарты, RPC, синхронизация
-задач) — живёт в `domain`, а не в `cross`.
+задач) — живёт в `domain`, а не в `cross`. Узлы графа тоже: подсистема объявляет свои
+`supervisor_fragment!`-ом рядом со своей задачей (`domain::app::APP_FRAG`), а
+`crates-cross/app/src/graph.rs` их только собирает (`fragments:`, `boot:`, `watchdog:`).
+Отсюда и зависимость `domain` от `supervisor` (ради `Heartbeat`/`TaskExit` в сигнатуре) —
+`embassy-executor` приезжает туда транзитивно, и это осознанно; `embassy-stm32` — нет.
 Подробности, прецеденты и пограничные случаи (например, `watchdog`) — `docs/architecture.md`.
 
 ## Команды
@@ -138,13 +142,19 @@ read`: руками пришлось бы сначала найти адрес �
 - `prepare(len)` в `domain::download::Download` зовётся один раз перед приёмом образа,
   `write()` сектор больше не стирает — `docs/ota.md`.
 {%- if graph == "true" %}
-- Три таймаута сторожа связаны цепочкой (`BACKOFF_MAX` < `APP_WATCHDOG` < `HW_TIMEOUT`) —
+- Три таймаута сторожа связаны цепочкой (`BACKOFF_MAX` < `APP_WATCHDOG` < `HW_TIMEOUT_US`) —
   менять только вместе — `docs/watchdog.md`.
+- Сторож запускается в прологе `spawn_all` (`= board.watchdog.arm()`), а не в
+  `Board::new`: с этого момента железо тикает, а кормит его только тикер графа —
+  `docs/watchdog.md`.
 {%- endif %}
-- `Board::core` (`cortex_m::Peripherals`) забирается первой строкой `Board::init()`, до
-  `init_peripherals()`: часть семейств зовёт `steal()` внутри своей инициализации —
+- `Board` отдаёт только объекты, реализующие трейты (`ports`, `HardwareWatchdog`), и
+  ничего не настраивает: ни периферии ядра, ни `Peripherals`, ни `Clocks` в полях нет —
   `docs/architecture.md`.
-- Liquid в `ports`/`adapters` запрещён: оба крейта — члены корневого workspace и
+- `cortex_m::Peripherals` (`DWT`, `MPU`, `SYST`) `bsp` не забирает; нужны — берите
+  `take()` ДО `Board::new()`, иначе на части семейств `embassy_stm32::init` уже сделал
+  `steal()` и вернётся `None` — `docs/architecture.md`.
+- Liquid в `domain`/`ports`/`adapters` запрещён: все три — члены корневого workspace и
   компилируются в самом репозитории шаблона — `docs/architecture.md`.
 - Новую зависимость для `cross` нельзя считать рабочей на тёплом кеше — проверять
   `rm -rf target && cargo build --target {{target}} ...` —

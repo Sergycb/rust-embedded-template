@@ -45,3 +45,21 @@ defmt        = { version = "1.1.1" }
 # `download::Error<E>` и `bsp::ota::UpdateError`).
 thiserror    = { version = "2.0.20", default-features = false }
 test-log     = { version = "0.2.21" }
+# Задачи графа живут в `domain` (`domain::app`), а граф, который их спавнит, —
+# в `crates-cross/app`. Проекция аргументов (`task: path(ctx.field)`) снимает с
+# задачи знание о графе, но не о типах, которыми граф с ней разговаривает:
+# `Heartbeat` и `TaskExit` приходят отсюда. Фичи не объявлены намеренно —
+# `defmt`/`metadata-name` просит `crates-cross/Cargo.toml`, и в прошивке они
+# складываются с этой строкой; хостовой сборке domain они не нужны.
+supervisor   = { git = "https://github.com/Sergycb/rust-lib.git" }
+# Время в проекте одно — `embassy_time::Duration`: тем же типом граф задаёт
+# свои таймауты, а `core::time::Duration` стоил бы вызова `__aeabi_uldivmod`
+# на каждой конверсии. Версия та же, что в `crates-cross/Cargo.toml`, — иначе
+# в прошивке оказалось бы две несовместимые копии крейта.
+embassy-time = { version = "0.5.1" }
+# Только для dev-зависимостей `domain`: хостовый тестовый бинарник линкует
+# `supervisor`, а тот — `embassy-executor`, у которого без платформенной фичи
+# нет `__pender` (и нет драйвера времени у `embassy-time`). В прошивку эти
+# фичи не уезжают: dev-зависимости пути-зависимости не собираются вовсе.
+embassy-executor = { version = "0.10.0" }
+critical-section = { version = "1.2.0" }

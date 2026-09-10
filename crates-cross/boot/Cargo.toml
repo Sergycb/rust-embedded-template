@@ -16,7 +16,7 @@ harness = false
 cortex-m = { workspace = true }
 cortex-m-rt = { workspace = true }
 # Boot намеренно не получает release-транспорт defmt (UART без пробника,
-# см. crates-cross/app/src/task_orchestration.rs): у него нет embassy-executor и
+# см. crates-cross/app/src/graph.rs): у него нет embassy-executor и
 # Spawner'а под фоновую drain-задачу, а единственная диагностическая строка
 # перед прыжком в прошивку не стоит того, чтобы тянуть ради неё в bootloader
 # целый UART-стек. Здесь только RTT.

@@ -109,7 +109,7 @@ pins:check:
   rules:
     - if: $CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "merge_request_event"
       changes:
-        - crates-cross/bsp/src/resources.rs
+        - crates-cross/bsp/src/**
         # Обновление `stm32-metapac` (у него своя запись в renovate) меняет те
         # самые метаданные, по которым идёт проверка; смена чипа правит обе
         # чип-фичи сразу.

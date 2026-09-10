@@ -38,7 +38,7 @@ unsafe extern "C" {
     static _stack_start: u32;
 }
 
-/// Заливает свободную часть стека узором. Зовётся из `Board::init`.
+/// Заливает свободную часть стека узором. Зовётся из `Board::new`.
 pub fn paint() {
     let bottom = &raw const _hw_ram_start as *mut u32;
     let sp = cortex_m::register::msp::read() as *mut u32;

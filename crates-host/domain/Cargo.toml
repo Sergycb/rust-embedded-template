@@ -37,6 +37,32 @@ defmt-or-log = { workspace = true }
 log = { workspace = true, optional = true }
 defmt = { workspace = true, optional = true }
 thiserror = { workspace = true }
+# Задачи, которые спавнит граф из `crates-cross/app`, живут здесь (`app.rs`).
+# `supervisor` нужен им ради двух типов, которыми граф разговаривает с задачей:
+# `Heartbeat` (отметка у сторожа) и `TaskExit` (чем кончился прогон). Знания о
+# самом графе это не даёт — узел объявляется через проекцию аргументов
+# (`task: domain::app::run(&ctx.heartbeat)`), и генерируемый `Ctx` здесь не
+# называется, — но `embassy-executor` приезжает транзитивно, так что старое
+# правило «в domain нет embassy» больше не действует (docs/architecture.md).
+supervisor = { workspace = true }
+# Прямо, а не транзитивно через `supervisor`: `Timer`/`Duration` стоят в теле
+# задачи, а не только в её сигнатуре.
+embassy-time = { workspace = true }
 
 [dev-dependencies]
 test-log = { workspace = true }
+# Обе строки — ради линковки хостового тестового бинарника, а не ради самих
+# тестов: он тянет `supervisor`, тот `embassy-executor` и `embassy-time`, а у
+# обоих реализация выбирается фичей. Без `platform-std` линкер не находит
+# `__pender`, без драйвера времени — символы очереди таймеров. `mock-driver`,
+# а не `std`: время в тестах должно двигаться по команде, а не по системным
+# часам. В прошивку это не уезжает — dev-зависимости path-зависимости cargo
+# не собирает, там платформу и драйвер выбирает `crates-cross`.
+embassy-executor = { workspace = true, features = [
+	"platform-std",
+	"executor-thread",
+] }
+embassy-time = { workspace = true, features = ["mock-driver"] }
+# Реализация критической секции для хоста: её просит `MockDriver`. На плате её
+# даёт `cortex-m` фичей `critical-section-single-core` (crates-cross/Cargo.toml).
+critical-section = { workspace = true, features = ["std"] }

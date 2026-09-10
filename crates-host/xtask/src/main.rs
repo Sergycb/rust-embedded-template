@@ -762,7 +762,7 @@ fn lint_cross(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     // Second pass, release only, scoped to app+boot: the release profile turns
     // `debug-assertions`/`overflow-checks` off, so anything behind `debug_assert!`
     // (or a future `#[cfg(not(debug_assertions))]` branch — see the release defmt
-    // transport pattern in task_orchestration.rs) is only type-checked here.
+    // transport pattern in graph.rs) is only type-checked here.
     // bsp/target-tests carry no such code, so re-linting them would just repeat
     // the first pass.
     if has_bootloader() {

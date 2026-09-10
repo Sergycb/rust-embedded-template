@@ -1,10 +1,9 @@
-#![doc = include_str!("../../../docs/modules/app-task-orchestration.md")]
+#![doc = include_str!("../../../docs/modules/app-graph.md")]
 
 {%- if graph == "true" %}
 use defmt::{info, warn};
-use embassy_time::{Duration, Timer};
+use embassy_time::Duration;
 use supervisor::policy::{BackoffPolicy, JitterPolicy, RestartPolicy};
-use supervisor::runtime::TaskExit;
 use supervisor::supervisor_graph;
 use watchdog::Liveness;
 
@@ -35,7 +34,7 @@ const WATCHDOG_CHECK_EVERY: Duration = Duration::from_millis(100);
 
 /// Сколько узлу APP позволено не отмечаться, прежде чем это будет замечено.
 ///
-/// **Считается от [`BACKOFF_MAX`], а не от [`HEARTBEAT_PERIOD`]** — и это
+/// **Считается от [`BACKOFF_MAX`], а не от периода отметок узла** — и это
 /// главное, что здесь легко испортить. Слот сторожа `supervisor` регистрирует
 /// ОДИН раз, при спавне узла, и снимает только когда узел уходит насовсем; во
 /// время паузы между перезапусками слот жив, а кормить его некому. Значит
@@ -44,20 +43,29 @@ const WATCHDOG_CHECK_EVERY: Duration = Duration::from_millis(100);
 /// начнёт выглядеть зависанием: с `observe` это ложная строка в логе, без
 /// него — аппаратный сброс здоровой платы.
 ///
-/// Второе соотношение, с другого конца: `bsp::wdg::HW_TIMEOUT` обязан быть
-/// больше этого значения плюс [`WATCHDOG_CHECK_EVERY`].
+/// Второе соотношение, с другого конца: `bsp::wdg::HW_TIMEOUT_US` обязан быть
+/// больше этого значения плюс [`WATCHDOG_CHECK_EVERY`]. Компилятор из этой
+/// пары проверяет только `check_every` против аппаратного таймаута (assert
+/// эмитит сам `supervisor_graph!`, читая `HARDWARE_TIMEOUT` у типа сторожа);
+/// значение ниже — по-прежнему на вас.
 const APP_WATCHDOG: Duration = Duration::from_secs(7);
 
-/// Период отметок узла APP — он же период его холостого цикла.
-const HEARTBEAT_PERIOD: Duration = Duration::from_millis(500);
-
 supervisor_graph! {
-    watchdog: bsp::wdg::Iwdg<embassy_stm32::peripherals::{{watchdog_peripheral}}>,
-        check_every: WATCHDOG_CHECK_EVERY, observe: report_liveness;
+    // Узлы приезжают из `domain`: каждая подсистема объявляет свои
+    // `supervisor_fragment!`-ом рядом со своей задачей, а здесь остаётся то,
+    // что знает про железо, — `boot:`-объект и блок `watchdog:`. Растёт
+    // проект — растёт этот список, а не тело графа.
+    //
+    // Порядок items в макросе фиксированный: `fragments:` идёт до `boot:` и
+    // `watchdog:`. Имена, которые фрагменты называют внутри себя
+    // (`RestartPolicy`, `backoff()`, `APP_WATCHDOG` — см. `domain::app`),
+    // резолвятся здесь: `macro_rules!` подставляет токены в место вызова.
+    fragments: [::domain::APP_FRAG];
 
-    node APP, deps: [], restart: RestartPolicy::OnFailure, backoff: backoff(),
-        watchdog: APP_WATCHDOG observe,
-        task: app_task;
+    boot: board: bsp::Board;
+
+    watchdog: bsp::wdg::BoardWatchdog = board.watchdog.arm(),
+        check_every: WATCHDOG_CHECK_EVERY, observe: report_liveness;
 }
 
 /// Куда уходит просрочка наблюдаемого узла.
@@ -78,30 +86,4 @@ fn report_liveness(node: &'static str, liveness: Liveness) {
     }
 }
 
-/// Единственный узел графа — каркас под вашу работу.
-///
-/// Здесь он только сообщает о старте и отмечается у сторожа в холостом цикле.
-/// Это осознанно: шаблон не знает, что должно делать ваше устройство, а
-/// периодический лог в пустом узле опаснее, чем кажется — `probe-rs attach`
-/// переводит RTT-канал в режим «блокировать при заполнении», и после
-/// отключения пробника прошивка встала бы внутри критической секции. Поэтому
-/// цикл молчит.
-///
-/// **`feed()` зовётся явно и только после реального прогресса** — здесь
-/// прогресса нет, поэтому отметка стоит рядом с таймером. Когда в цикле
-/// появится работа, отметку ставьте ПОСЛЕ неё, а не до: автоматического
-/// «задача жива, раз её future опрашивают» тут нет намеренно, иначе сторож
-/// сторожил бы исполнитель, а не полезную работу.
-///
-/// Что дальше: замените тело на свой цикл, добавьте узлам `deps:` (порядок
-/// старта), `inbox:` (очередь событий), `resources:` (ручка периферии,
-/// переживающая перезапуск задачи) — всё это описано выше.
-async fn app_task(ctx: AppCtx<'_>) -> TaskExit {
-    info!("app: узел APP запущен");
-    loop {
-        // Здесь ваша работа.
-        ctx.heartbeat.feed();
-        Timer::after(HEARTBEAT_PERIOD).await;
-    }
-}
 {%- endif %}

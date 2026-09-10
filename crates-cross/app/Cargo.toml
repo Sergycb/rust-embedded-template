@@ -30,9 +30,9 @@ bsp = { workspace = true }
 ports = { workspace = true }
 domain = { workspace = true }
 shadow-rs = { workspace = true }
-# Граф задач в task_orchestration.rs — настоящий код, а не пример: `node`,
-# политика перезапуска, `spawn_all` в main.rs. На чипах, где граф не помещается
-# (см. GRAPH_MIN_PARTITION в chip-select.rhai), он вырезается при генерации, но
+# Граф задач в graph.rs — настоящий код, а не пример: `node`, политика
+# перезапуска, `spawn_all` в main.rs. На чипах, где граф не помещается (см.
+# GRAPH_MIN_PARTITION в chip-select.rhai), он вырезается при генерации, но
 # зависимость остаётся: так её версия проверяется сборкой на ARM в любой
 # конфигурации.
 supervisor = { workspace = true }
@@ -50,12 +50,11 @@ watchdog = { workspace = true }
 # `supervisor` реэкспортирует в своём `__private` только executor, futures,
 # sync и sync_request.
 embassy-time = { workspace = true }
-# Только ради драйвера времени. В воркспейсе этой фичи нет намеренно: оттуда
-# она доставалась и бутлоадеру, который запускал TIM и оставлял его
-# прерывание размаскированным на момент прыжка в приложение (см. комментарий
-# в crates-cross/Cargo.toml). Просить её обязан тот, кто линкуется с
-# `embassy-time`, — то есть этот бинарник.
-embassy-stm32 = { workspace = true, features = ["time-driver-any"] }
+#
+# `embassy-stm32` здесь нет и быть не должно: про чип знает `bsp`, а
+# приложение — только про объекты, которые тот отдаёт. Драйвер времени
+# (`time-driver-any`) просит оттуда же — см. `bsp/Cargo.toml`, где разобрано,
+# почему фича не в воркспейсе.
 
 [build-dependencies]
 shadow-rs = { workspace = true, features = ["build", "no_std"] }

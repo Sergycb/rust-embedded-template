@@ -6,7 +6,7 @@
 //! компилятор: `SpiSck<SPI1>` для чужого пина просто не реализован, `Peri` не
 //! `Copy`, поэтому один и тот же пин нельзя отдать двум задачам, а чип-фича
 //! `stm32-metapac` пакетная — пина, которого нет в корпусе, не существует и в
-//! типах. Генератор `resources.rs` из какого-нибудь `board.toml` дублировал бы
+//! типах. Генератор распиновки из какого-нибудь `board.toml` дублировал бы
 //! эти проверки и добавил второй источник правды. Компилятор не знает ровно
 //! трёх вещей, ради которых справочник и написан:
 //!
@@ -102,7 +102,7 @@ fn main() -> Result<(), anyhow::Error> {
             "" => {}
             flag if flag.starts_with("--") => bail!(
                 "неизвестный ключ {flag}; есть только --snippet (заготовка кода под блок) и \
-                 --check (проверить занятые в resources.rs выводы)"
+                 --check (проверить занятые распиновкой выводы)"
             ),
             value if query.is_none() => query = Some(value.to_owned()),
             extra => bail!("лишний аргумент {extra}: блок или вывод указывается один"),
@@ -113,7 +113,7 @@ fn main() -> Result<(), anyhow::Error> {
         anyhow::ensure!(
             query.is_none() && !snippet,
             "--check работает сам по себе: он смотрит не на один блок, а на всю распиновку в \
-             crates-cross/bsp/src/resources.rs",
+             crates-cross/bsp/src",
         );
         return check_resources();
     }
@@ -526,7 +526,7 @@ const HANDLERS: &[Handlers] = &[
 /// Заготовка кода под блок: `bind_interrupts!` с правильными типами и каркас
 /// `assign_resources!` с реальными именами выводов.
 ///
-/// Печать, а не файл, и это принципиально: генератор `resources.rs` завёл бы
+/// Печать, а не файл, и это принципиально: генератор распиновки завёл бы
 /// второй источник правды к тому, что и так проверяет компилятор (см.
 /// doc-комментарий модуля). Здесь же экономится ровно то, на что уходит время
 /// руками, — сверка имён сигналов, AF и типов обработчиков с даташитом и
@@ -571,7 +571,7 @@ fn print_snippet(name: &str) -> Result<(), anyhow::Error> {
                 .join(", "),
         ),
         Some(row) => {
-            println!("// crates-cross/app/src/main.rs — рядом с созданием периферии");
+            println!("// crates-cross/bsp/src/board.rs — рядом с созданием объектов платы");
             // Импорты печатаются вместе с макросом, а не подразумеваются:
             // заготовку вставляют как есть, и без них она не собирается.
             // `peripherals` нужен не всегда — у `eth` обработчик без
@@ -601,7 +601,7 @@ fn print_snippet(name: &str) -> Result<(), anyhow::Error> {
     }
 
     println!();
-    println!("// crates-cross/bsp/src/resources.rs");
+    println!("// crates-cross/bsp/src/board.rs — рядом с разбором периферии");
     // `Peri` — не для красоты: `assign_resources!` раскрывается в
     // `Peri<'static, peripherals::X>` и требует оба имени в области видимости
     // вызова. Без него вставленная заготовка падает с `error[E0425]: cannot
@@ -880,27 +880,64 @@ fn assigned_lines(text: &str) -> Vec<(usize, String)> {
     lines
 }
 
+/// Исходники `bsp`, в которых ищется распиновка.
+///
+/// Каталогом, а не одним файлом: отдельного `resources.rs` в шаблоне больше
+/// нет (он был модулем без кода — только документация), и `assign_resources!`
+/// объявляется там, где из групп собираются драйверы, то есть обычно в
+/// `board.rs`. Класть его в конкретный файл проект не обязан, поэтому
+/// проверяются все.
+///
+/// Обход рекурсивный, и это не запас на будущее: `assign_resources!` в
+/// `bsp/src/board/pins.rs` пропущенным быть не может — молчаливое «выводов не
+/// назначено» на занятом `PA13` хуже отсутствия проверки, потому что выглядит
+/// как её прохождение.
+///
+/// Сортировка — чтобы порядок вывода не зависел от файловой системы: без неё
+/// один и тот же проект печатал бы находки в разном порядке на разных
+/// машинах.
+fn resource_sources(src: &Path) -> Result<Vec<PathBuf>, anyhow::Error> {
+    let mut files = Vec::new();
+    let mut dirs = vec![src.to_path_buf()];
+    while let Some(dir) = dirs.pop() {
+        for entry in fs::read_dir(&dir).with_context(|| format!("не читается {}", dir.display()))?
+        {
+            let path = entry?.path();
+            if path.is_dir() {
+                dirs.push(path);
+            } else if path.extension().is_some_and(|extension| extension == "rs") {
+                files.push(path);
+            }
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
 fn check_resources() -> Result<(), anyhow::Error> {
-    let path = project_root()
-        .as_deref()
-        .map(|root| {
-            root.join("crates-cross")
-                .join("bsp")
-                .join("src")
-                .join("resources.rs")
-        })
-        .context("не найден корень проекта рядом с chip-info")?;
-    let text =
-        fs::read_to_string(&path).with_context(|| format!("не читается {}", path.display()))?;
+    let root = project_root().context("не найден корень проекта рядом с chip-info")?;
+    let src = root.join("crates-cross").join("bsp").join("src");
+    let sources = resource_sources(&src)?;
 
     print_header(Some("проверка распиновки"));
-    println!("файл: {}", path.display());
+    println!("файлы: {}", src.display());
 
-    let mut used: Vec<(usize, String)> = Vec::new();
-    for (number, line) in assigned_lines(&text) {
-        for pin in pins_in(&line) {
-            if METADATA.pins.iter().any(|known| known.name == pin) {
-                used.push((number, pin));
+    let mut used: Vec<(String, usize, String)> = Vec::new();
+    for path in &sources {
+        let text =
+            fs::read_to_string(path).with_context(|| format!("не читается {}", path.display()))?;
+        // Путь от `bsp/src`, а не одно имя файла: с рекурсивным обходом
+        // `board/pins.rs` и `pins.rs` иначе выглядели бы одинаково.
+        let name = path
+            .strip_prefix(&src)
+            .unwrap_or(path.as_path())
+            .display()
+            .to_string();
+        for (number, line) in assigned_lines(&text) {
+            for pin in pins_in(&line) {
+                if METADATA.pins.iter().any(|known| known.name == pin) {
+                    used.push((name.clone(), number, pin));
+                }
             }
         }
     }
@@ -915,7 +952,7 @@ fn check_resources() -> Result<(), anyhow::Error> {
     println!();
 
     let mut conflicts = 0;
-    for (number, pin) in &used {
+    for (file, number, pin) in &used {
         let Some((severity, note)) = pin_note(pin) else {
             continue;
         };
@@ -926,7 +963,7 @@ fn check_resources() -> Result<(), anyhow::Error> {
             }
             Severity::Warning => "внимание",
         };
-        println!("{label}: {pin} (строка {number}) — {note}");
+        println!("{label}: {pin} ({file}, строка {number}) — {note}");
     }
 
     if conflicts == 0 {

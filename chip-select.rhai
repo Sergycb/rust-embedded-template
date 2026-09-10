@@ -50899,7 +50899,7 @@ if !variable::is_set("target") {
     variable::set("target", family[1]);
 }
 // Читается из crates-cross/bsp/Cargo.toml и crates-cross/boot/Cargo.toml (условно
-// включает фичу "dual-core" в default) — см. Board::init()/main() там же.
+// включает фичу "dual-core" в default) — см. Board::new()/main() там же.
 // Без переопределения через --define (в отличие от chip/cpu/target/
 // write_size): значение полностью выводится из chip_feature, легитимной
 // причины расходиться с ним нет.
@@ -51143,7 +51143,7 @@ if variable::is_set("write_size") {
     let graph = wants_graph && size_in_bytes(m[app_length_key]) >= GRAPH_MIN_PARTITION;
     if wants_graph && !graph {
         print("Граф задач отключён для " + suffix + ": под приложение отведено " + m[app_length_key] + ", а supervisor туда не помещается");
-        print("  вернуть можно вручную — код графа лежит в docs/modules/app-task-orchestration.md");
+        print("  вернуть можно вручную — код графа лежит в docs/modules/app-graph.md");
     }
 
     variable::set("write_size", m["write_size"]);
@@ -51359,4 +51359,15 @@ if variable::is_set("write_size") {
         file::write("crates-cross/app/memory.x", single);
         file::write("crates-cross/target-tests/memory.x", single);
     }
+}
+
+// Модуля графа в проекте без графа нет вовсе: всё его содержимое закрыто
+// `{% if graph == "true" %}`, и остался бы файл с одной строкой
+// `#![doc = include_str!(..)]` — модуль без кода, только ради документации.
+// Сама документация никуда не девается (`docs/modules/app-graph.md`), по ней
+// граф и возвращают вручную; см. сообщение выше, где он отключается по
+// размеру раздела. Условие в `crates-cross/app/src/main.rs` (`mod graph;`)
+// закрыто тем же `{% if %}`, поэтому удаление файла ничего не ломает.
+if variable::get("graph") != "true" {
+	file::delete("crates-cross/app/src/graph.rs");
 }

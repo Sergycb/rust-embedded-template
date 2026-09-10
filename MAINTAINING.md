@@ -154,7 +154,7 @@ standalone-крейт в корне репозитория, НЕ
 Для этих ~60 двухъядерных чипов каскад дополнительно выставляет переменную `dual_core`
 (`"true"`/`"false"`, безусловно — без `--define`-override, см. `is_dual_core()` в конце
 `chip-select.rhai`). Она выбирает ветку **прямо при генерации**, Liquid-условием
-`{% if dual_core == "true" %}` в `crates-cross/bsp/src/lib.rs` и `crates-cross/boot/src/main.rs`: в
+`{% if dual_core == "true" %}` в `crates-cross/bsp/src/board.rs` и `crates-cross/boot/src/main.rs`: в
 проект попадает ровно одна реализация `init_peripherals()` — под двухъядерный чип
 `embassy_stm32::init_primary(config, &SHARED_DATA)` (`SHARED_DATA` — локальная
 `static MaybeUninit<SharedData>`, требуемая сигнатурой, никуда не публикуется), под
@@ -199,7 +199,7 @@ standalone-крейт в корне репозитория, НЕ
 `stm32h745zi-cm7`), не на реальном железе — поведение второго ядра на конкретной плате
 (включая факт того, включён ли у неё BCM4 из коробки) не проверялось. Однопроцессорные
 чипы (в т.ч. остальные H7 — H743/H753 и т.п.) не затронуты — в их проекты попадает
-одноядерная ветка, `Board::init()`/`main()` вызывают обычный `init()`, как раньше.
+одноядерная ветка, `Board::new()`/`main()` вызывают обычный `init()`, как раньше.
 
 У чип-фич с суффиксом силиконовой градации, не обозначающим ядро (например `-a`/`-x` у
 STM32L1xx — автомобильный температурный диапазон, не путать с `-cm7`/`-cm4` у
@@ -231,7 +231,8 @@ feature is not supported on this dual bank chip»).
 
 ### Сторожевой таймер (`watchdog_peripheral`, блок `WATCHDOG`)
 
-`bsp` объявляет поле типа `wdg::Iwdg<peripherals::IWDG…>`, а имя типа в `embassy-stm32`
+`bsp` объявляет поле `Peri<'static, peripherals::IWDG…>` и псевдоним
+`wdg::BoardWatchdog = Iwdg<peripherals::IWDG…, HW_TIMEOUT_US>`, а имя типа в `embassy-stm32`
 — ровно то, что стоит в метаданных: у 800 наборов из 891 это `IWDG`, у 91 — `IWDG1`
 (H7), и у 32 из них рядом ещё `IWDG2` (двухъядерные H7: первый принадлежит ядру CM7,
 второй CM4). Блок `WATCHDOG` перечисляет только исключения — 131 чип каскада, — а
@@ -414,7 +415,7 @@ override — как и у `chip`/`cpu`/`target`: `--define write_size=...` от�
 ## Проверка изменений в шаблоне
 
 Репозиторий шаблона нельзя собрать как обычный проект: `crates-cross/Cargo.toml`,
-`crates-cross/.cargo/config.toml`, `crates-cross/bsp/src/lib.rs` и `crates-cross/boot/src/main.rs` содержат
+`crates-cross/.cargo/config.toml`, `crates-cross/bsp/src/board.rs` и `crates-cross/boot/src/main.rs` содержат
 Liquid (`{{...}}` и `{% if %}`), а до рендера это ни валидный TOML, ни валидный Rust —
 rust-analyzer ругается на них прямо в репозитории, и так и должно быть.
 
@@ -462,7 +463,7 @@ STM32F407 их 38) берётся вывод `pins <БЛОК> --snippet`, всё
 
 Исключение одно, и оно устроено так, чтобы правило выше осталось в силе: есть
 отдельный джоб (`pins.yml` на GitHub, `pins:check` на GitLab), зовущий
-`chip-info --check` по фильтру путей — при правке `crates-cross/bsp/src/resources.rs`,
+`chip-info --check` по фильтру путей — при правке `crates-cross/bsp/src/**`,
 самого `crates-host/chip-info/**` или `crates-cross/Cargo.toml`. Последние два не для
 полноты: у `chip-info` своя запись в dependabot/renovate, и обновление
 `stm32-metapac` меняет ровно те метаданные, по которым идёт проверка, а смена чипа
@@ -477,7 +478,7 @@ git-зависимостями, которых этому джобу не нуж
 не в `ignore`, потому что должен доехать до проектов. Поэтому первым шагом он
 проверяет, подставлена ли чип-фича в манифесте `chip-info`, и в репозитории шаблона
 завершается успехом, ничего не собирая: там этот манифест не резолвится вовсе. Уберёте
-проверку — джоб покраснеет у мейнтейнера при первой же правке `resources.rs`.
+проверку — джоб покраснеет у мейнтейнера при первой же правке `bsp/src`.
 
 Обязательной проверкой в branch protection этот джоб делать не стоит: он запускается
 по фильтру путей, и PR, не трогающий распиновку, оставит обязательный статус висеть в

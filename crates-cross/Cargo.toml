@@ -54,7 +54,7 @@ embassy-stm32 = { version = "0.6.0", features = [
 	# Не «за компанию» с остальным defmt в проекте: без этой фичи `Clocks` не
 	# реализует `defmt::Format`, а перечислить её поля вручную шаблон не может
 	# — их состав генерируется под конкретный чип и различается по семействам.
-	# То есть дамп фактических частот в `Board::init` без неё нереализуем.
+	# То есть дамп фактических частот в `Board::new` без неё нереализуем.
 	# Побочно включаются собственные логи embassy — это плюс, а не цена:
 	# строки defmt лежат в отдельной секции ELF и во flash не попадают.
 	"defmt",
@@ -143,7 +143,7 @@ embedded-test      = { version = "0.7.2", default-features = false, features = [
 ports            = { path = "../crates-host/domain/ports" }
 # Драйверы, generic по шине: их `bsp` собирает из своей периферии и отдаёт
 # готовыми объектами. Живут в domain, потому что тестируются на хосте моком, а
-# сюда объявлены, чтобы путь из `bsp/src/resources.rs` работал без правки
+# сюда объявлены, чтобы заготовка из `docs/resources.md` работала без правки
 # манифестов.
 adapters         = { path = "../crates-host/domain/adapters" }
 bsp              = { path = "./bsp" }{% if ota == "true" %}
@@ -209,7 +209,7 @@ panic-persist = { version = "0.3.0", features = [
 ] }
 
 # Zero-copy DMA-буфер: статические объекты создаются только в cross —
-# см. crates-cross/bsp/src/buffers.rs.
+# см. docs/buffers.md.
 bbqueue = { version = "0.7.0", default-features = false, features = [
 	"critical-section",
 ] }

@@ -558,8 +558,10 @@ fn parse_chip_memory(chips_dir: &Path, suffix: &str) -> anyhow::Result<Vec<Vec<R
 /// Как у этого чипа зовётся блок независимого сторожевого таймера:
 /// `IWDG`, `IWDG1` или `IWDG2`.
 ///
-/// Нужно потому, что `bsp` объявляет поле типа
-/// `wdg::Iwdg<peripherals::IWDG…>`, а имя типа в `embassy-stm32` — то самое,
+/// Нужно потому, что `bsp` объявляет пару псевдонимов
+/// `wdg::BoardWatchdog`/`UnarmedBoardWatchdog` над
+/// `Iwdg<peripherals::IWDG…, HW_TIMEOUT_US, Armed|Disarmed>` и строит из блока
+/// поле `Board`, а имя типа в `embassy-stm32` — то самое,
 /// что стоит в метаданных: на большинстве STM32 `IWDG`, на H7 `IWDG1`, на
 /// двухъядерных H7 ещё и `IWDG2`. Угадывать его по имени чипа нельзя — ровно
 /// на такой эвристике уже ошибся признак `erase_zero` (см. docs/flash.md), а

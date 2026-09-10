@@ -9,13 +9,20 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
-embassy-stm32 = { workspace = true }
+# Драйвер времени (`time-driver-any`) просит `bsp`, а не `app`: приложение про
+# чип не знает вовсе, а этот крейт — единственный, кто с ним работает. В
+# воркспейсе фичи нет намеренно: оттуда она доставалась и бутлоадеру, который
+# запускал TIM и оставлял его прерывание размаскированным на момент прыжка в
+# приложение (см. комментарий в crates-cross/Cargo.toml). `boot` от `bsp` не
+# зависит и собирается отдельным вызовом cargo, так что отсюда фича до него не
+# доходит.
+embassy-stm32 = { workspace = true, features = ["time-driver-any"] }
 domain = { workspace = true }
 # Трейты, которые реализуют объекты `Board`: приложение видит только их.
 ports = { workspace = true }
-# Драйверы поверх шин, generic по embedded-hal (ваши собственные): `Board::init`
+# Драйверы поверх шин, generic по embedded-hal (ваши собственные): `Board::new`
 # собирает их из периферии и кладёт полями. Объявлено заранее, чтобы пример из
-# resources.rs собирался без правки манифеста.
+# docs/resources.md вставлялся без правки манифеста.
 adapters = { workspace = true }
 # Дамп причины паники: сохраняет его `#[panic_handler]` в `app` (lang item
 # привязан к бинарнику и уехать сюда не может), а читает — `Board::last_panic`,
@@ -25,12 +32,14 @@ adapters = { workspace = true }
 # с паникёром `embedded-test` в target-tests.
 panic-persist = { workspace = true }
 assign-resources = { workspace = true }
-# Периферия ядра (DWT, MPU, NVIC, SYST...): её забирает и раздаёт `Board`, см.
-# поле `core` в lib.rs. Фичи не нужны никакие — берётся только `Peripherals`.
+# Регистры ядра напрямую: указатель стека для замера (src/stack.rs) и `wfi` в
+# ожидании сброса от сторожа (src/wdg.rs). Периферию ядра (`Peripherals`) `bsp`
+# не забирает: она никому здесь не нужна, а забрав её, он лишил бы её
+# приложение — `take()` отдаёт её ровно один раз за запуск.
 cortex-m = { workspace = true }
 # Общий `Flash` всего чипа: и OTA, и раздел настроек работают через один
-# объект под `blocking_mutex` (см. `flash()` в lib.rs). `static-cell` — потому
-# что обеим половинам нужен `&'static`: иначе их нельзя отдать в задачу,
+# объект под `blocking_mutex` (см. `FlashMutex` в src/board.rs). `static-cell` —
+# потому что обеим половинам нужен `&'static`: иначе их нельзя отдать в задачу,
 # которую спавнит `Spawner` (аргументы задач обязаны быть 'static).
 {%- if ota == "true" or config == "true" %}
 embassy-sync = { workspace = true }
@@ -62,13 +71,16 @@ embassy-boot-stm32 = { workspace = true, features = ["defmt"] }
 sequential-storage = { workspace = true }
 embedded-storage-async = { workspace = true }
 {%- endif %}
+# Zero-copy DMA-буфер: объявлен заранее, чтобы пример из docs/buffers.md
+# вставлялся без правки манифеста. Своего кода на нём в шаблоне нет — статику
+# под DMA заводит проект, когда доходит до периферии.
 bbqueue = { workspace = true }
 # Аппаратный сторож под трейт `HardwareWatchdog` (см. src/wdg.rs). Крейт
 # объявлен здесь, а не у `app`, потому что реализация трейта — это железо:
 # сам `watchdog` про HAL не знает и знать не должен.
 watchdog = { workspace = true }
 # Только ради `Duration` в сигнатуре того же модуля: время в проекте одно —
-# `embassy_time::Duration` (обоснование — в crates-cross/app/src/task_orchestration.rs,
+# `embassy_time::Duration` (обоснование — в docs/modules/app-graph.md,
 # раздел про supervisor: `core::time::Duration` стоил бы вызова
 # `__aeabi_uldivmod` на каждой конверсии).
 embassy-time = { workspace = true }
@@ -76,7 +88,6 @@ embassy-time = { workspace = true }
 # фичам `defmt`/`log` у bsp (и мосту `defmt-or-log`) выбирать больше не из
 # чего — defmt включён в обоих профилях, как в `app` и `boot`.
 defmt = { workspace = true }
-{%- if ota == "true" or config == "true" %}
 
 # Cortex-M0/M0+ (ARMv6-M — STM32 C0/F0/G0/L0 и CM0+-ядра WB/WL) не имеет
 # аппаратного compare-and-swap, и `portable-atomic` на таких целях отказывается
@@ -84,9 +95,11 @@ defmt = { workspace = true }
 # `critical-section` — тот самый ответ; реализацию критической секции даёт
 # `cortex-m` с `critical-section-single-core`, она включена в crates-cross/Cargo.toml.
 #
-# Секция именно здесь, а не в `domain`: `portable-atomic` в этой ветке тянет не
-# `domain` (он им не пользуется), а `static_cell` выше — и только в проектах с
-# OTA или разделом настроек, где `static_cell` вообще появляется в графе `bsp`.
+# Безусловно, как и у `app`: `static_cell` приходит сюда двумя путями — общий
+# `Flash` под OTA и раздел настроек просят его напрямую, а `domain` тянет его
+# транзитивно (`supervisor` → `cloned-cell`) в любой конфигурации. Условие
+# здесь когда-то стояло, пока второго пути не было, и ловилось это не сборкой
+# прошивки (там фичи складываются с манифестом `app`), а сборкой одного `bsp`
+# — например проверкой заготовок `pins --snippet` в template-check.
 [target.thumbv6m-none-eabi.dependencies]
 portable-atomic = { workspace = true, features = ["critical-section"] }
-{%- endif %}

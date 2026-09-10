@@ -6,7 +6,7 @@ use core::cell::RefCell;
 use defmt::info;
 // RTT — дефолтный транспорт в обоих профилях (см. crates-cross/app/src/main.rs);
 // boot вдобавок не спавнит embassy-задач, поэтому очередь+drain-таск под
-// USB/UART (см. task_orchestration.rs) сюда в принципе не встраивается —
+// USB/UART (см. graph.rs) сюда в принципе не встраивается —
 // одну диагностическую строку перед прыжком не стоит того усложнять.
 use defmt_rtt as _;
 use embassy_boot_stm32::{BootLoader, BootLoaderConfig};
@@ -46,7 +46,7 @@ fn main() -> ! {
 
 {%- if dual_core == "true" %}
 
-// См. тот же приём и обоснование в crates-cross/bsp/src/lib.rs — здесь дублируется,
+// См. тот же приём и обоснование в crates-cross/bsp/src/board.rs — здесь дублируется,
 // а не выносится в общий крейт: boot намеренно не зависит от bsp.
 fn init_peripherals() -> embassy_stm32::Peripherals {
     static SHARED_DATA: core::mem::MaybeUninit<embassy_stm32::SharedData> =

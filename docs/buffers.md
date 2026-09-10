@@ -1,12 +1,17 @@
-Буферы для периферии: zero-copy DMA-буфер.
+# Буферы для периферии: zero-copy DMA-буфер
 
 Некомпилируемый (`ignore`) пример — `cross`-workspace не собирается в
-сыром шаблоне без подстановки `{{chip_feature}}` при генерации.
+сыром шаблоне без подстановки `{{chip_feature}}` при генерации. Своего
+модуля под буферы в шаблоне нет: статика заводится там, где собирается
+драйвер, которому она нужна, — в `crates-cross/bsp/src/board.rs` или рядом
+с ним.
 
-# `bbqueue` — grant/commit API: DMA пишет напрямую в backing storage, без
+## `bbqueue`
+
+Grant/commit API: DMA пишет напрямую в backing storage, без
 промежуточного копирования CPU. Не дублирует `embassy_sync::Pipe` (тот
 copy-based, для обычного межзадачного байтового обмена без DMA). Статика
-создаётся только в `cross` — здесь. Подключён с
+создаётся только в `cross`. Подключён с
 `default-features = false, features = ["critical-section"]` — default-фича
 `maitake-sync-0_3` (async-ожидание грантов) не нужна для синхронного
 grant/commit ниже и лишь увеличивает размер прошивки.

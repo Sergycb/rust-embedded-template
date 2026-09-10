@@ -38,7 +38,7 @@ if config == "true" {
 	print("Настройки: раздел CONFIG во flash, crates-cross/bsp/src/config.rs, Board::settings.");
 }
 if variable::get("graph") == "true" {
-	print("Граф задач: один узел APP в crates-cross/app/src/task_orchestration.rs — туда и дописывайте.");
+	print("Граф задач: узел APP в crates-cross/app/src/graph.rs, его работа — в crates-host/domain/src/app.rs.");
 } else {
 	print("Без графа задач: main заканчивается после инициализации (причина — выше).");
 }
@@ -62,10 +62,17 @@ print("  cargo xtask setup       # rustup target + probe-rs, flip-link, nextest"
 print("  cargo xtask lint        # проверить, что всё на месте");
 print("  cargo xtask flash       # прошить плату");
 print("");
-print("Что заполнить под свою плату: crates-cross/bsp/src/resources.rs (распиновка),");
-print("crates-cross/app/src/task_orchestration.rs (граф задач), crates-host/domain/ (логика).");
+if variable::get("graph") == "true" {
+	print("Что заполнить под свою плату: crates-cross/bsp/src/board.rs (распиновка),");
+	print("crates-cross/app/src/graph.rs (граф задач), crates-host/domain/ (логика).");
+} else {
+	// Файла графа в таком проекте нет вовсе — его удаляет chip-select.rhai
+	// вместе с отключением графа, и звать сюда некуда.
+	print("Что заполнить под свою плату: crates-cross/bsp/src/board.rs (распиновка),");
+	print("crates-host/domain/ (логика).");
+}
 // Справочник упомянут ровно здесь, а не в списке «Дальше» выше: он нужен не
-// на старте, а в тот момент, когда садишься за resources.rs и вспоминаешь,
+// на старте, а в тот момент, когда садишься за распиновку и вспоминаешь,
 // что распиновку неоткуда взять, кроме даташита.
 print("");
 print("  cargo xtask pins SPI1   # какие выводы умеют этот блок на " + chip + ", DMA, тактирование");

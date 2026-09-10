@@ -24,7 +24,7 @@ on:
     # Список продублирован ниже намеренно: GitHub Actions не поддерживает
     # YAML-якоря, `&paths`/`*paths` он не развернёт.
     paths:
-      - crates-cross/bsp/src/resources.rs
+      - crates-cross/bsp/src/**
       # Справочник и его зависимости: обновление `stm32-metapac` (у него своя
       # запись в dependabot.yml) меняет ровно те метаданные, по которым идёт
       # проверка, а смена чипа правит обе чип-фичи сразу.
@@ -33,7 +33,7 @@ on:
       - .github/workflows/pins.yml
   pull_request:
     paths:
-      - crates-cross/bsp/src/resources.rs
+      - crates-cross/bsp/src/**
       - crates-host/chip-info/**
       - crates-cross/Cargo.toml
       - .github/workflows/pins.yml
@@ -51,7 +51,7 @@ jobs:
       # В репозитории самого шаблона проверять нечего и нечем: чип-фича в
       # манифесте `chip-info` — это Liquid-плейсхолдер, и cargo такой манифест
       # не резолвит вовсе. Без этой заглушки job краснел бы у мейнтейнера при
-      # каждой правке resources.rs — ровно то, чего избегает разделение
+      # каждой правке распиновки — ровно то, чего избегает разделение
       # ci.yml/template.yml.
       - id: guard
         run: |

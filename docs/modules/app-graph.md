@@ -50,6 +50,53 @@
 Полный список полей и их тонкости — в doc-комментариях самого
 `supervisor` и `supervisor-macros`; здесь только минимальный каркас.
 
+**И узел, и его задача живут в `domain`, а не здесь.** Держится это на двух
+возможностях `supervisor`, и обе стоит знать, потому что растить проект вы
+будете именно ими.
+
+**Первая — проекция аргументов.** Узел пишется формой
+`task: путь(аргументы)`: макрос раскладывает поля контекста по обычным
+параметрам функции и не генерирует тип `<Node>Ctx`, поэтому сигнатура задачи
+не называет ничего из крейта с графом и может лежать в любом другом. Форма
+`task: имя` без скобок тоже работает и передаёт контекст одним аргументом, но
+привязывает задачу к тому крейту, где объявлен граф, — то есть к `cross`.
+
+**Вторая — фрагменты.** `supervisor_fragment!` объявляет срез графа (узлы,
+`template`, графовые `cloned:`/`shared:`) в крейте, который сам никакого графа
+не объявляет. Узел `APP` шаблона объявлен так — в `crates-host/domain/src/app.rs`:
+
+```ignore
+supervisor::supervisor_fragment! {
+    name: APP_FRAG;
+
+    node APP, deps: [], restart: RestartPolicy::OnFailure, backoff: backoff(),
+        watchdog: APP_WATCHDOG observe,
+        task: $crate::app::run(&ctx.heartbeat);
+}
+```
+
+а этот файл его подбирает: `fragments: [::domain::APP_FRAG];` (см. ниже, в
+настоящем графе). Вторая подсистема добавляется так же — своим фрагментом
+рядом со своим кодом и одной строкой в `fragments:`.
+
+Три вещи, на которых тут спотыкаются:
+
+* **Имена внутри фрагмента резолвятся на compose-site**, а не в крейте, где
+  фрагмент написан: `macro_rules!` подставляет токены в место вызова. Поэтому
+  `RestartPolicy`, `backoff()` и `APP_WATCHDOG` обязаны быть в области
+  видимости здесь. Это не недосмотр: таймаут узла связан с аппаратным
+  `bsp::wdg::HW_TIMEOUT_US`, и цифрам место рядом с железом.
+* **Путь к задаче пишется `$crate::`** — только он переживает переименование
+  зависимости в чужом манифесте, а `crate::` означал бы крейт, который
+  фрагмент вызывает.
+* **Порядок items фиксирован**: `name:` → `fragments:` → `raw_mutex:` →
+  `boot:` → `watchdog:` → узлы. `fragments:` после `boot:` — ошибка разбора.
+
+Цена всей схемы — зависимость `domain` от `supervisor` (ради `Heartbeat` и
+`TaskExit` в сигнатуре задачи); она разобрана в `docs/architecture.md`.
+Сам фрагмент её не требует: он не генерирует задач, а `supervisor` по имени
+обязан быть только у compose-site.
+
 Время везде — `embassy_time::Duration`, единственный тип времени во всей
 библиотеке. `core::time::Duration` из неё убран намеренно: его
 представление `{secs, nanos}` превращает каждую конверсию в 64-битное
@@ -69,20 +116,28 @@ supervisor_graph! {
     // Стартует только после того, как USART сигнализировал готовность.
     node APP, deps: [USART], restart: RestartPolicy::OnFailure, backoff: backoff(),
         inbox: [EVENTS: LinkEvent; 8],
-        task: app_worker;
+        task: domain::link::run(&mut ctx.events);
 }
 
-async fn app_worker(ctx: AppCtx<'_>) -> TaskExit {
-    // Определение автомата — в `domain` (см. crates-host/domain/examples/), здесь
-    // только прогон его в задаче.
+// в crates-host/domain/src/link.rs — то есть там, где это тестируется на хосте:
+pub async fn run(events: &mut Receiver<'_, NoopRawMutex, LinkEvent, 8>) -> TaskExit {
+    // Определение автомата — тоже в `domain` (см. crates-host/domain/examples/),
+    // здесь только прогон его в задаче.
     let mut rt = AsyncTimedRuntime::<Link>::new(LinkId::Disconnected, LinkData::default());
-    rt.run(ctx.events).await; // не возвращается; отменяется дропом при shutdown
+    rt.run(events).await; // не возвращается; отменяется дропом при shutdown
     TaskExit::Completed
 }
 
 // в main(), после инициализации HAL:
 provide_uart(r.usart).expect("слот пуст до первого spawn_all");
-spawn_all(&spawner).expect("узлы свежие");
+// Второй параметр — `boot:`-объект графа; в шаблоне это `board`, и объявлен
+// он ради блока `watchdog:` (ниже по файлу). Слот, написанный с
+// инициализатором — `resources: [UART: UsartResources = board.usart]`, —
+// заполняет сам граф: строки `provide_uart` тогда нет вовсе, а значит её
+// нельзя и забыть. Формой не обслуживаются слоты `consume`/`shared` (их
+// переиздаёт `respawn_all`, а boot-объект к тому моменту потреблён) и всё,
+// что требует `await` или повтора, — для этого остаётся узел-инициализатор.
+spawn_all(&spawner, board).expect("узлы свежие");
 ```
 
 # `watchdog` — мультиплексор задач в один аппаратный watchdog
@@ -107,17 +162,18 @@ spawn_all(&spawner).expect("узлы свежие");
 {%- else %}
 Писать её руками не нужно, и подключать тоже: имя блока подставлено при
 генерации из метаданных чипа (`IWDG`, на H7 `IWDG1`, на двухъядерных H7 у
-ядра CM4 `IWDG2`), объект собирает `Board::arm_watchdog()`, а `main`
-кладёт его в статик графа соседней строкой с `spawn_all`. Всё, что здесь
-осталось на вас, — цифры: `WATCHDOG_CHECK_EVERY`, `APP_WATCHDOG` и
-`bsp::wdg::HW_TIMEOUT`.
+ядра CM4 `IWDG2`), объект собирает `Board::new`, а запускает его блок
+`watchdog:` графа — инициализатором `= board.watchdog.arm()`, где
+`board` это объявленный выше `boot:`-объект, который `main` передаёт в
+`spawn_all`. Всё, что здесь осталось на вас, — цифры:
+`WATCHDOG_CHECK_EVERY`, `APP_WATCHDOG` и `bsp::wdg::HW_TIMEOUT_US`.
 
 Узел объявлен **наблюдаемым** (`watchdog: ... observe`): его просрочка
 докладывается наблюдателю графа (`report_liveness`) и не превращается в
 аппаратный сброс. Так шаблон не раздаёт проект, который перезагружает сам
 себя, стоит добавить в узел работу длиннее его таймаута. Уберёте слово
 `observe` — у узла появится настоящая аппаратная подстраховка, и тогда же
-стоит перечитать оба соотношения таймаутов в `bsp::wdg::Iwdg::new`.
+стоит перечитать оба соотношения таймаутов в `bsp::wdg::Iwdg::arm`.
 Наблюдаемость узла ничего не меняет для железа: сторож взведён и кормится
 тикером графа, поэтому вставший целиком исполнитель сбрасывает плату в
 любом случае.
@@ -135,7 +191,7 @@ spawn_all(&spawner).expect("узлы свежие");
 не здесь, даже если он владеет своей задачей целиком и ждёт события из
 `embassy_sync`-канала: сама модель состояний остаётся чистой логикой без
 привязки к железу, а `cross` лишь спавнит задачу, гоняющую `run().await`,
-и кормит её событиями через `inbox:` (см. `app_worker` выше).
+и кормит её событиями через `inbox:` (см. `domain::link::run` выше).
 
 # defmt-транспорт для `release` без пробника: UART
 
@@ -171,7 +227,7 @@ symbol multiply defined!`. Инвариант — ровно один актив
 Раз все turnkey-варианты отпадают, паттерн приходится держать своим —
 благо это буквально то, чем был бы `defmt-bbq`/`defmt-serial`, только
 против актуального `defmt@1.x`. Grant/commit API `bbqueue` уже
-объяснён в `crates-cross/bsp/src/buffers.rs` (там — DMA-буфер, тут — очередь под
+объяснён в `docs/buffers.md` (там — DMA-буфер, тут — очередь под
 лог); ниже — только то, что специфично именно для `#[global_logger]`:
 
 ```ignore
@@ -202,7 +258,7 @@ unsafe impl Logger for UartLogger {
 }
 
 // отдельная задача, только под release — DMA-запись consumer-половины
-// очереди в USART, аналогично crates-cross/bsp/src/buffers.rs:
+// очереди в USART, аналогично примеру из docs/buffers.md:
 #[embassy_executor::task]
 async fn uart_drain_task(mut uart: embassy_stm32::usart::UartTx<'static, embassy_stm32::mode::Async>) {
     let mut consumer = QUEUE.try_split().unwrap().1;
