@@ -44,7 +44,7 @@ skill'ом `rust-engineering` и не дублируются здесь. Это�
 | `cargo xtask lint` | `domain`: `fmt --check` + `clippy -D warnings` |
 | `cargo xtask test host` | `domain`: `cargo nextest` |
 | `cargo xtask lint cross` | `crates-cross`: `fmt --check` + `clippy -D warnings` |
-| `cargo xtask build` | `crates-cross`: debug + release, `app.bin`, размер образа, подпись (если включена) |
+| `cargo xtask build` | `crates-cross`: debug + release,{% if ota == "true" %} `app.bin`,{% endif %} размер образа, подпись (если включена) |
 | `cargo xtask precommit` | четыре команды выше подряд, до первой упавшей |
 | `cargo xtask pins [БЛОК\|ПИН]` | справочник по чипу `{{chip}}`: выводы, альтернативные функции, DMA, тактирование |
 | `cargo xtask pins --check` | не занят ли отладочный порт в `resources.rs` |
@@ -139,15 +139,17 @@ read`: руками пришлось бы сначала найти адрес �
   `docs/conventions.md`.
 - `prepare(len)` в `domain::download::Download` зовётся один раз перед приёмом образа,
   `write()` сектор больше не стирает — `docs/ota.md`.
+{%- if graph == "true" %}
 - Три таймаута сторожа связаны цепочкой (`BACKOFF_MAX` < `APP_WATCHDOG` < `HW_TIMEOUT`) —
   менять только вместе — `docs/watchdog.md`.
+{%- endif %}
 - `Board::core` (`cortex_m::Peripherals`) забирается первой строкой `Board::init()`, до
   `init_peripherals()`: часть семейств зовёт `steal()` внутри своей инициализации —
   `docs/architecture.md`.
 - Liquid в `ports`/`adapters` запрещён: оба крейта — члены корневого workspace и
   компилируются в самом репозитории шаблона — `docs/architecture.md`.
 - Новую зависимость для `cross` нельзя считать рабочей на тёплом кеше — проверять
-  `rm -rf target && cargo build --target thumbv7em-none-eabihf ...` —
+  `rm -rf target && cargo build --target {{target}} ...` —
   `docs/conventions.md`.
 
 ## Карта документации
