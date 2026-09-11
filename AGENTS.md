@@ -137,8 +137,10 @@ read`: руками пришлось бы сначала найти адрес �
 - Задачи `embassy` не могут быть generic: тип, уезжающий в `#[embassy_executor::task]`,
   получает от `bsp` псевдоним (`pub type X = ...`) — `docs/architecture.md`.
 - Ровно один `#[panic_handler]` и один активный `#[global_logger]` на бинарник: логгер
-  резолвится линковкой по имени символа и даёт `multiply defined!` при нарушении —
-  `docs/conventions.md`.
+  резолвится линковкой по имени символа и даёт `multiply defined!` при нарушении;
+  паникёр выбирается `#[cfg(debug_assertions)]` на `use … as _;`, и в dev-сборке имя
+  `panic_persist` не должно упоминаться нигде (`bsp` в том числе) —
+  `docs/diagnostics.md`, `docs/conventions.md`.
 - `prepare(len)` в `domain::download::Download` зовётся один раз перед приёмом образа,
   `write()` сектор больше не стирает — `docs/ota.md`.
 {%- if graph == "true" %}
