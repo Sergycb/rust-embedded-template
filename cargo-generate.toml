@@ -60,6 +60,10 @@ ignore = [
 	".claude/agent-memory-local",
 	".claude/first-run",
 	".claude/assistant-daemon-state.json",
+	# Рабочий каталог skill'ов superpowers (брифы задач, отчёты, леджер): в git
+	# его нет, а в брифах лежат куски Liquid из плана — попади они в копию
+	# шаблона, cargo-generate попытался бы их отрендерить.
+	".superpowers",
 	# Не наш файл: crashpad-лог, который роняет в корень репозитория редактор.
 	# В git его нет, но `cargo generate --path .` копирует рабочее дерево
 	# целиком, вместе с неотслеживаемым мусором, — и он уезжал в каждый
