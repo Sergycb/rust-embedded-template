@@ -7,8 +7,6 @@ pub mod config;
 {%- if ota == "true" %}
 pub mod ota;
 {%- endif %}
-pub mod persist;
-pub mod stack;
 pub mod wdg;
 
 pub use board::Board;

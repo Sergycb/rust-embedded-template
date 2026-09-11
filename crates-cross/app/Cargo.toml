@@ -13,9 +13,9 @@ name = "app"
 harness = false
 
 [dependencies]
-# Примеру применения обновления (`SCB::sys_reset()` в docs/modules/bsp-ota.md)
-# и impl'у critical-section (фича `critical-section-single-core` в
-# crates-cross/Cargo.toml).
+# Нужен примеру применения обновления (`SCB::sys_reset()` в
+# docs/modules/bsp-ota.md) и impl'у critical-section (фича
+# `critical-section-single-core` в crates-cross/Cargo.toml).
 cortex-m = { workspace = true }
 cortex-m-rt = { workspace = true }
 embassy-executor = { workspace = true, features = ["defmt"] }

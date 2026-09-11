@@ -24,18 +24,11 @@ ports = { workspace = true }
 # собирает их из периферии и кладёт полями. Объявлено заранее, чтобы пример из
 # docs/resources.md вставлялся без правки манифеста.
 adapters = { workspace = true }
-# Дамп причины паники: сохраняет его `#[panic_handler]` в `app` (lang item
-# привязан к бинарнику и уехать сюда не может), а читает — `Board::last_panic`,
-# чтобы приложению не приходилось знать про регион PANIC. Фича
-# `custom-panic-handler` (объявлена в crates-cross/Cargo.toml) отключает
-# собственный хендлер крейта — иначе он конфликтовал бы и с хендлером `app`, и
-# с паникёром `embedded-test` в target-tests.
-panic-persist = { workspace = true }
 assign-resources = { workspace = true }
-# Регистры ядра напрямую: указатель стека для замера (src/stack.rs) и `wfi` в
-# ожидании сброса от сторожа (src/wdg.rs). Периферию ядра (`Peripherals`) `bsp`
-# не забирает: она никому здесь не нужна, а забрав её, он лишил бы её
-# приложение — `take()` отдаёт её ровно один раз за запуск.
+# Регистры ядра напрямую: `wfi` в ожидании сброса от сторожа (src/wdg.rs) и
+# impl critical-section (фича в crates-cross/Cargo.toml). Периферию ядра
+# (`Peripherals`) `bsp` не забирает: она никому здесь не нужна, а забрав её, он
+# лишил бы её приложение — `take()` отдаёт её ровно один раз за запуск.
 cortex-m = { workspace = true }
 # Общий `Flash` всего чипа: и OTA, и раздел настроек работают через один
 # объект под `blocking_mutex` (см. `FlashMutex` в src/board.rs). `static-cell` —
