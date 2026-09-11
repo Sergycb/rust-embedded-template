@@ -612,38 +612,29 @@ fn memory_layout_invariants_hold_for_every_chip() {
             fail("target-tests/memory.x должен повторять app/memory.x");
         }
 
-        // Регионы обязательны, а не опциональны: `app` безусловно тянет
-        // `panic-persist`, и без символов `_panic_dump_*` проект не
-        // линкуется. Раньше их не получали 16 чипов с 2 KiB RAM (STM32L011 и
-        // родня) — тогда регионы просто не выводились, если RAM меньше 4 KiB,
-        // и на этих чипах генерация давала заведомо несобираемый проект.
-        let persist = region_origin(&app, "PERSIST");
+        // Регион обязателен, а не опционален: паникёр release-профиля
+        // (`panic-persist`) пишет по символам `_panic_dump_*`, и без них
+        // release-образ не линкуется. Раньше его не получали 16 чипов с
+        // 2 KiB RAM (STM32L011 и родня) — регион не выводился, если RAM
+        // меньше 4 KiB, и на этих чипах генерация давала заведомо
+        // несобираемый проект.
         let panic = region_origin(&app, "PANIC");
-        if persist.is_none() {
-            fail("нет региона PERSIST");
-        }
         if panic.is_none() {
             fail("нет региона PANIC — panic-persist не слинкуется");
         }
         if !app.contains("_panic_dump_start = ORIGIN(PANIC);") {
             fail("нет символов panic-persist");
         }
-        if !app.contains("_persist_start = ORIGIN(PERSIST);") {
-            fail("нет символов PERSIST");
+        if app.contains("PERSIST") || app.contains("_hw_ram_start") {
+            fail("в memory.x остались PERSIST или _hw_ram_start — у них больше нет потребителей");
         }
-        // Ровно поэтому оба региона отдаются символами: своя секция в конце
-        // RAM убеждает flip-link, что двигать стек некуда, и он оставляет
+        // Ровно поэтому регион отдаётся символами: своя секция в конце RAM
+        // убеждает flip-link, что двигать стек некуда, и он оставляет
         // `_stack_start` в её начале. Прошивка тогда уходит в HardFault на
         // первом же push — поймано на STM32F3Discovery, когда генерация
         // выдавала `.persist (NOLOAD) ... > PERSIST`.
         if app.contains("SECTIONS") {
             fail("в memory.x появилась SECTIONS-директива — она ломает flip-link");
-        }
-        // Разными регионами, а не одним: `panic-persist` пишет по голым
-        // адресам и в общем регионе затирал бы секцию `.persist` молча —
-        // линкеру такое наложение не видно.
-        if persist.is_some() && persist == panic {
-            fail("PERSIST и PANIC начинаются с одного адреса — они наложены");
         }
 
         let Some(app_flash) = region_origin(&app, "FLASH") else {

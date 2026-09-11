@@ -828,10 +828,9 @@ struct MemoryLayout {
     flash_length: u64,
     ram_origin: u64,
     ram_length: u64,
-    /// Хвост RAM под данные, переживающие сброс (секция `.persist`).
-    persist: (u64, u64),
-    /// Соседний кусок под дамп `panic-persist`. Всегда есть, если есть
-    /// раскладка: без него `app` не слинкуется (см. RESERVED_MIN).
+    /// Хвост RAM под дамп `panic-persist` — единственный резерв в RAM. Всегда
+    /// есть, если есть раскладка: без символов `_panic_dump_*` release-образ
+    /// `app` не слинкуется (см. PANIC_MIN).
     panic: (u64, u64),
     /// Готовые строки `MEMORY { }` для всех прочих регионов чипа (ITCM, AXISRAM,
     /// CCMRAM, BKPSRAM, EEPROM, OTP, окна внешних шин...) — см.
@@ -916,31 +915,28 @@ const BOOTLOADER_MIN: u64 = 16 * 1024;
 /// секторе 256 байт у L0/L1 — 128 штук), и абсолютный предел отрезал бы от OTA
 /// всю мелкосекторную половину линейки.
 const MAX_EXTRA_RESERVED_PAGES: u64 = 16;
-/// От конца RAM отрезается кусок и делится пополам: `PERSIST` — под данные,
-/// которые программа сама решила сохранить между сбросами (секция `.persist`),
-/// `PANIC` — под дамп `panic-persist`. Разными регионами, а не одним:
-/// `panic-persist` пишет по голым адресам `_panic_dump_start.._panic_dump_end`,
-/// ничего не зная о секциях, и в общем регионе он затирал бы пользовательские
-/// данные — молча, потому что линкеру нечего тут ловить.
+/// От конца RAM отрезается регион `PANIC` под дамп `panic-persist` —
+/// паникёр release-профиля пишет туда по голым адресам
+/// `_panic_dump_start.._panic_dump_end`, ничего не зная о секциях (секция у
+/// верхней границы RAM сломала бы `flip-link`, см. комментарий в
+/// `chip-select.rhai`).
 ///
-/// Размер куска — доля RAM, а не константа: у чипа с 2 KiB (STM32L011 и
-/// родня) фиксированный килобайт был бы половиной всей памяти. Раньше на
-/// таких чипах регионы просто не выводились, но это перестало быть
-/// вариантом, когда `app` получил безусловный `#[panic_handler]` поверх
-/// `panic-persist`: без символов дампа он не линкуется вовсе.
-const RESERVED_FRACTION: u64 = 8;
-/// Нижняя граница для куска целиком, то есть по 128 байт на каждый регион.
-/// Из панических 128 восемь съедает заголовок дампа, дальше текст — на
+/// Размер — доля RAM, а не константа: у чипа с 2 KiB (STM32L011 и родня)
+/// фиксированные полкилобайта были бы четвертью всей памяти. Регион нужен
+/// каждому чипу: без символов дампа `panic-persist` не линкуется, а он стоит у
+/// `app` и `boot` безусловно (в release).
+const PANIC_FRACTION: u64 = 16;
+/// Нижняя граница: восемь байт съедает заголовок дампа, дальше текст — на
 /// «panicked at src/main.rs:42:5» хватает, длинное сообщение обрежется.
-const RESERVED_MIN: u64 = 256;
-/// Больше килобайта отдавать незачем: сообщение всё равно обрезается по
-/// размеру региона, а `.persist` под большие структуры не предназначен.
-const RESERVED_MAX: u64 = 1024;
+const PANIC_MIN: u64 = 128;
+/// Больше полукилобайта отдавать незачем: сообщение всё равно обрезается по
+/// размеру региона.
+const PANIC_MAX: u64 = 512;
 /// Чип, у которого RAM меньше двух минимальных резервов, автораскладки не
 /// получает вовсе (`memory.x` остаётся плейсхолдером). Среди STM32 таких нет
 /// — самый скромный вариант это 2 KiB, — но инвариант «есть раскладка →
-/// есть PERSIST и PANIC» должен держаться без оговорок.
-const MIN_RAM_FOR_LAYOUT: u64 = 2 * RESERVED_MIN;
+/// есть PANIC» должен держаться без оговорок.
+const MIN_RAM_FOR_LAYOUT: u64 = 2 * PANIC_MIN;
 
 /// Собирает карту памяти чипа: непрерывную flash-цепочку от базы, RAM-цепочку
 /// от базы и — если помещается — партиции OTA. `None` только когда считать не
@@ -1005,22 +1001,18 @@ fn compute_memory_layout(regions: &[RawRegion]) -> Option<MemoryLayout> {
     if ram_total < MIN_RAM_FOR_LAYOUT {
         return None;
     }
-    // Отрезанный кусок делится на две равные части: сначала PERSIST (данные
-    // программы), за ним PANIC (дамп паники) — до самого конца RAM.
-    let reserved = (ram_total / RESERVED_FRACTION).clamp(RESERVED_MIN, RESERVED_MAX);
-    let half = reserved / 2;
+    // Резерв отрезается от самого конца RAM — до её верхней границы.
+    let reserved = (ram_total / PANIC_FRACTION).clamp(PANIC_MIN, PANIC_MAX);
     let ram_length = ram_total - reserved;
-    let persist = (RAM_BASE + ram_length, half);
-    let panic = (RAM_BASE + ram_length + half, half);
+    let panic = (RAM_BASE + ram_length, reserved);
 
     Some(MemoryLayout {
         flash_origin: FLASH_BASE,
         flash_length: flash_total,
         ram_origin: RAM_BASE,
         ram_length,
-        persist,
         panic,
-        // Границы цепочек, а не ram_length: PERSIST отрезан от RAM, но лежит
+        // Границы цепочек, а не ram_length: PANIC отрезан от RAM, но лежит
         // внутри той же цепочки — регионом его дублировать не надо.
         extra_regions: extra_region_lines(regions, FLASH_BASE + flash_total, ram_end),
         write_size,
@@ -1342,9 +1334,6 @@ fn format_memory_layouts(layouts: &BTreeMap<&str, MemoryLayout>) -> String {
         push_field(&mut out, "flash_length", &format_size(m.flash_length));
         push_field(&mut out, "ram_origin", &format_addr(m.ram_origin));
         push_field(&mut out, "ram_length", &format_size(m.ram_length));
-        let (persist_origin, persist_length) = m.persist;
-        push_field(&mut out, "persist_origin", &format_addr(persist_origin));
-        push_field(&mut out, "persist_length", &format_size(persist_length));
         let (panic_origin, panic_length) = m.panic;
         push_field(&mut out, "panic_origin", &format_addr(panic_origin));
         push_field(&mut out, "panic_length", &format_size(panic_length));
@@ -1786,11 +1775,28 @@ pub static METADATA: Metadata = Metadata {
         assert_eq!(regions[0].size, 524288);
     }
 
-    /// Один flash-регион, `size`/`erase_size` в байтах. Стирание в `0xFF` —
-    /// как у подавляющего большинства семейств; обратный случай собирает
-    /// [`flash_erasing_to_zero`].
+    /// Один flash-регион, `size`/`erase_size` в байтах, RAM фиксирована в
+    /// 64 KiB. Стирание в `0xFF` — как у подавляющего большинства семейств;
+    /// обратный случай собирает [`flash_erasing_to_zero`].
     fn uniform_flash(size: u64, erase_size: u64, write_size: u64) -> Vec<RawRegion> {
-        flash_with_erase_value(size, erase_size, write_size, 0xFF)
+        uniform_flash_with_ram(size, erase_size, write_size, 64 * 1024)
+    }
+
+    /// То же самое, но с произвольным размером RAM — нужен там, где важен
+    /// именно он (например, границы `PANIC`), а не фиксированные 64 KiB.
+    fn uniform_flash_with_ram(
+        size: u64,
+        erase_size: u64,
+        write_size: u64,
+        ram: u64,
+    ) -> Vec<RawRegion> {
+        let mut regions = flash_with_erase_value(size, erase_size, write_size, 0xFF);
+        let sram = regions
+            .iter_mut()
+            .find(|r| r.kind == RegionKind::Ram)
+            .expect("flash_with_erase_value всегда добавляет регион RAM");
+        sram.size = ram;
+        regions
     }
 
     /// Флеш, стирающийся в ноль (L0/L1, STM32WB10CC/WB15CC).
@@ -1873,8 +1879,30 @@ pub static METADATA: Metadata = Metadata {
         assert!(note.contains("нужно 3"), "{note}");
         // Но FLASH/RAM всё равно посчитаны — memory.x не остаётся заглушкой.
         assert_eq!(layout.flash_length, 512 * 1024);
-        assert_ne!(layout.persist.1, 0);
-        assert_ne!(layout.panic.1, 0, "дамп паники живёт рядом с PERSIST");
+        assert_ne!(layout.panic.1, 0, "дамп паники — единственный резерв в RAM");
+        assert_eq!(
+            layout.panic.0,
+            layout.ram_origin + layout.ram_length,
+            "PANIC начинается там, где кончается RAM"
+        );
+    }
+
+    /// Резерв — доля RAM, зажатая между минимумом и максимумом: на 2 KiB это
+    /// 128 байт (не половина памяти), на 8 KiB и больше — 512 (сообщение всё
+    /// равно обрезается по региону).
+    #[test]
+    fn panic_region_is_a_clamped_fraction_of_ram() {
+        for (ram, expected) in [
+            (2 * 1024, 128),
+            (4 * 1024, 256),
+            (8 * 1024, 512),
+            (192 * 1024, 512),
+        ] {
+            let layout = compute_memory_layout(&uniform_flash_with_ram(512 * 1024, 2048, 8, ram))
+                .expect("раскладка должна посчитаться");
+            assert_eq!(layout.panic.1, expected, "RAM {ram}");
+            assert_eq!(layout.ram_length, ram - expected, "RAM {ram}");
+        }
     }
 
     #[test]
