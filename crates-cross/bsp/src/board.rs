@@ -42,6 +42,9 @@ static FLASH: StaticCell<FlashMutex> = StaticCell::new();
 /// приходит из крейта сторожа). Периферии в полях нет вовсе: разбирать её на
 /// объекты — работа `bsp`, а `Peripherals`, пины и группы `assign_resources!`
 /// остаются внутри [`Board::new`].
+// Закрывающая скобка ниже — тоже по условию: без OTA, настроек и графа
+// `Board` пуст, и rustfmt требует `{}` в одну строку, а не на двух — иначе
+// `cargo fmt --check` в сгенерированном проекте падает.
 pub struct Board {
 {%- if ota == "true" %}
     /// Обновление прошивки: запись образа в раздел `DFU` и пометки, по
@@ -68,7 +71,10 @@ pub struct Board {
     /// только у запущенного (`bsp::wdg`).
     pub watchdog: crate::wdg::UnarmedBoardWatchdog,
 {%- endif %}
+{%- if ota == "true" or config == "true" or graph == "true" %}
 }
+{%- else %}}
+{%- endif %}
 
 impl Board {
     /// Собирает объекты платы: поднимает HAL, разбирает периферию и отдаёт то,
@@ -130,7 +136,10 @@ impl Board {
 {%- if graph == "true" %}
             watchdog: crate::wdg::UnarmedBoardWatchdog::new(p.{{watchdog_peripheral}}),
 {%- endif %}
+{%- if ota == "true" or config == "true" or graph == "true" %}
         }
+{%- else %}}
+{%- endif %}
     }
 }
 
