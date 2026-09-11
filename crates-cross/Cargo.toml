@@ -195,18 +195,13 @@ supervisor       = { git = "https://github.com/Sergycb/rust-lib.git", features =
 ] }
 watchdog         = { git = "https://github.com/Sergycb/rust-lib.git" }
 
-# Причина паники, переживающая сброс: пишется в регион PANIC (посчитан при
-# генерации, см. memory.x), читается при следующем старте.
-#
-# `custom-panic-handler` отключает его собственный `#[panic_handler]` и
-# оставляет только `report_panic_info` — иначе выбирать пришлось бы между
-# «сохранить» и «напечатать через defmt», а нужны обе половины сразу; свой
-# хендлер в crates-cross/app/src/main.rs делает и то, и другое. `utf8` добавляет
-# `get_panic_message_utf8`, без него сообщение читается только байтами.
-panic-persist = { version = "0.3.0", features = [
-	"custom-panic-handler",
-	"utf8",
-] }
+# Причина паники, переживающая сброс: в release-профиле штатный `#[panic_handler]`
+# этого крейта пишет её в регион PANIC (посчитан при генерации, см. memory.x) и
+# делает `sys_reset`; следующий старт `app` читает её и печатает. В dev-профиле
+# крейт не линкуется вовсе — там стоит `panic-probe` (см. `use` в
+# crates-cross/app/src/main.rs). `utf8` добавляет `get_panic_message_utf8`, без
+# него сообщение читается только байтами.
+panic-persist = { version = "0.3.0", features = ["utf8"] }
 
 # Zero-copy DMA-буфер: статические объекты создаются только в cross —
 # см. docs/buffers.md.

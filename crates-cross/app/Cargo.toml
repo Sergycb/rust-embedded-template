@@ -13,16 +13,22 @@ name = "app"
 harness = false
 
 [dependencies]
+# Примеру применения обновления (`SCB::sys_reset()` в docs/modules/bsp-ota.md)
+# и impl'у critical-section (фича `critical-section-single-core` в
+# crates-cross/Cargo.toml).
 cortex-m = { workspace = true }
 cortex-m-rt = { workspace = true }
 embassy-executor = { workspace = true, features = ["defmt"] }
 defmt = { workspace = true }
 defmt-rtt = { workspace = true }
-# `panic-probe` здесь больше нет: его `#[panic_handler]` печатает бэктрейс, но
-# ничего не сохраняет, а причина падения нужна и после сброса, когда пробника
-# рядом нет. Свой хендлер в src/main.rs делает обе вещи и потому занимает
-# единственное место паникёра в бинарнике. В `boot` panic-probe остался — там
-# ни PERSIST, ни чтения дампа нет.
+# Паникёр по профилю — оба крейта обычные зависимости, выбор делает
+# `#[cfg(debug_assertions)]` на `use … as _;` в src/main.rs (Cargo гейтить
+# зависимости по профилю не умеет, см. docs/conventions.md). dev: `panic-probe`
+# печатает причину через defmt и останавливает ядро `udf()`; release:
+# `panic-persist` сохраняет причину в регион PANIC и перезапускает МК. Крейт без
+# `use` не линкуется и своего `#[panic_handler]` не регистрирует — поэтому два
+# паникёра в манифесте не конфликтуют.
+panic-probe = { workspace = true, features = ["print-defmt"] }
 panic-persist = { workspace = true }
 bsp = { workspace = true }
 # Трейты портов: приложение зовёт объекты `Board` только через них, а про

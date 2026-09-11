@@ -22,7 +22,13 @@ cortex-m-rt = { workspace = true }
 # целый UART-стек. Здесь только RTT.
 defmt-rtt = { workspace = true }
 defmt = { workspace = true }
+# Паникёр по профилю — то же правило, что у `app` (см. crates-cross/app/Cargo.toml):
+# dev — `panic-probe`, release — `panic-persist`. В release это единственный
+# способ узнать, почему bootloader не прыгнул: сторожа у него нет, и с
+# `panic-probe` плата стояла бы в `udf()` молча до выключения питания, а так
+# причина лежит в PANIC и читается `cargo xtask panic`.
 panic-probe = { workspace = true, features = ["print-defmt"] }
+panic-persist = { workspace = true }
 embassy-boot-stm32 = { workspace = true, features = ["defmt"] }
 {%- if erase_zero == "true" %}
 # Прямая зависимость только ради фичи: у этого чипа стёртая страница читается
