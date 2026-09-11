@@ -13,12 +13,10 @@ MEMORY {
     BOOTLOADER_STATE  (rx)  : ORIGIN = /* 0xXXXXXXXX */, LENGTH = /* XXXK */
     DFU               (rx)  : ORIGIN = /* 0xXXXXXXXX */, LENGTH = /* XXXK */
     RAM               (xrw) : ORIGIN = /* 0xXXXXXXXX */, LENGTH = /* XXXK */
-    /* Два хвостовых куска RAM, отрезанных от её конца: PERSIST — под данные,
-       переживающие сброс (адресуются символами ниже), PANIC — под дамп
-       panic-persist. Оба обязательны: `#[panic_handler]` в
-       crates-cross/app/src/main.rs без символов _panic_dump_* не слинкуется. */
-    PERSIST           (xrw) : ORIGIN = /* ADDR END RAM - 2*LEN */, LENGTH = /* LEN */
-    PANIC             (xrw) : ORIGIN = /* ADDR END RAM - LEN   */, LENGTH = /* LEN */
+    /* Хвост RAM, отрезанный от её конца: PANIC — под дамп panic-persist
+       (паникёр release-профиля). Обязателен: без символов _panic_dump_*
+       release-образ не слинкуется. */
+    PANIC             (xrw) : ORIGIN = /* ADDR END RAM - LEN */, LENGTH = /* LEN */
 }
 
 /* База flash всего чипа, обычно 0x08000000 — впишите литералом.
@@ -41,19 +39,7 @@ __bootloader_active_end   = ORIGIN(FLASH) + LENGTH(FLASH) - __flash_base;
 __bootloader_dfu_start = ORIGIN(DFU) - __flash_base;
 __bootloader_dfu_end   = ORIGIN(DFU) + LENGTH(DFU) - __flash_base;
 
-/* Аппаратное начало RAM — впишите тот же адрес, что и в ORIGIN(RAM) выше.
-   Именно литералом, а не `ORIGIN(RAM)`: flip-link переопределяет блок MEMORY,
-   сдвигая начало вверх на размер статики, и после него `ORIGIN(RAM)` означает
-   вершину стека, а не дно — замер стека (bsp::stack) тогда всегда даёт ноль. */
-_hw_ram_start = /* 0xXXXXXXXX */;
-
-/* Данные, переживающие сброс: адресуются через эти символы. Своей секции у
-   них нет намеренно — секция с VMA в конце RAM убеждает flip-link, что
-   свободного места не осталось, и он оставляет стек в самом начале RAM;
-   прошивка после этого уходит в HardFault на первом же push. */
-_persist_start = ORIGIN(PERSIST);
-_persist_end   = ORIGIN(PERSIST) + LENGTH(PERSIST);
-
-/* Сюда пишет panic-persist — тоже по голым адресам, без секции. */
+/* Сюда пишет panic-persist — по голым адресам, без секции: секция здесь
+   ломает flip-link, см. README. */
 _panic_dump_start = ORIGIN(PANIC);
 _panic_dump_end   = ORIGIN(PANIC) + LENGTH(PANIC);
