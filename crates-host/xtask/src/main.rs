@@ -612,18 +612,14 @@ fn test_host(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
 }
 
 /// Хост управляет уже прошитым устройством: сначала заливаем то, что тест
-/// будет проверять, потом запускаем сам тест. Чип и адрес региона `PERSIST`
-/// уходят к нему через окружение: первое подставляется при генерации в одном
-/// месте, второе считается по `memory.x` — знать это в двух местах незачем.
+/// будет проверять, потом запускаем сам тест. Чип и адреса разделов уходят к
+/// нему через окружение: первое подставляется при генерации в одном месте,
+/// вторые считаются по `memory.x` — знать это в двух местах незачем.
 fn test_host_target(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     flash_boot(sh, "release")?;
     flash_app(sh, "release")?;
 
     let regions = app_memory_regions()?;
-    let persist = region(&regions, "PERSIST").context(
-        "в crates-cross/app/memory.x нет региона PERSIST — на этом чипе host-target тесту \
-         не за что зацепиться",
-    )?;
 
     // Разделы OTA — ради теста полного цикла обновления: он пишет образ в
     // `DFU`, просит смену разделов через `BOOTLOADER_STATE` и смотрит, что
@@ -637,8 +633,6 @@ fn test_host_target(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
 
     {
         let _env_chip = sh.push_env("HOST_TARGET_CHIP", CHIP);
-        let _env_persist =
-            sh.push_env("HOST_TARGET_PERSIST_ADDR", format!("{:#x}", persist.origin));
         let _env_ota = ota_env(sh, active, dfu, state, ram);
         let _p = sh.push_dir(root_dir().join("crates-host").join("host-target-tests"));
         // В один поток: пробник у платы один, а nextest по умолчанию гоняет
@@ -1120,8 +1114,8 @@ fn flash(sh: &xshell::Shell, package: &str, profile: &str) -> Result<(), anyhow:
     Ok(())
 }
 
-/// Регион из `MEMORY {}`. Читается ради одного: `test host-target` нужен
-/// адрес `PERSIST`, чтобы хост знал, откуда считывать счётчик запусков.
+/// Регион из `MEMORY {}`: `build` по нему меряет раздел приложения,
+/// `test host-target` передаёт тесту адреса разделов OTA, `panic` читает PANIC.
 struct Region {
     origin: u64,
     /// Нужна `panic`: по ней проверяется, что записанная в дампе длина
