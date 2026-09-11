@@ -26,10 +26,10 @@ use defmt_rtt as _;
 // исходнике нет ни одной ссылки, не линкуется и своего `#[panic_handler]` не
 // регистрирует. Отсюда инвариант: в dev-сборке имя `panic_persist` не должно
 // упоминаться нигде, иначе два паникёра столкнутся на линковке.
-#[cfg(debug_assertions)]
-use panic_probe as _;
 #[cfg(not(debug_assertions))]
 use panic_persist as _;
+#[cfg(debug_assertions)]
+use panic_probe as _;
 
 use embassy_executor::Spawner;
 {%- if ota == "true" %}
