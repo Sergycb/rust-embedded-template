@@ -18,6 +18,7 @@ default = ["log"]
 defmt = [
 	"dep:defmt",
 	"defmt-or-log/defmt",
+	"ports/defmt",
 ]
 log = [
 	"dep:log",

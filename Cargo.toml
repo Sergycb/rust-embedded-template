@@ -63,3 +63,16 @@ embassy-time = { version = "0.5.1" }
 # фичи не уезжают: dev-зависимости пути-зависимости не собираются вовсе.
 embassy-executor = { version = "0.10.0" }
 critical-section = { version = "1.2.0" }
+# Адаптеры OTA и настроек generic по флешу и потому живут в корневом workspace:
+# здесь те же версии, что в crates-cross/Cargo.toml (иначе в прошивке оказалось
+# бы две копии крейта). `embassy-boot` — без `-stm32`: сам он от чипа не зависит,
+# а `from_linkerfile_blocking` зовёт только `bsp`.
+embassy-boot           = { version = "0.7.0" }
+embassy-sync           = { version = "0.8.0" }
+embedded-storage       = { version = "0.3.1" }
+embedded-storage-async = { version = "0.4.1" }
+sequential-storage     = { version = "8.0.1", default-features = false }
+# Проверка подписи образа — под фичей `adapters/signed`. `slow-motion` —
+# портируемая реализация вместо ассемблерной под Cortex-M4/M33 (обоснование в
+# crates-cross/Cargo.toml).
+salty                  = { version = "0.3.0", default-features = false, features = ["slow-motion"] }

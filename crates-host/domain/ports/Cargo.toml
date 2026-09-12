@@ -7,3 +7,14 @@ rust-version.workspace = true
 
 [lints]
 workspace = true
+
+[features]
+# `defmt::Format` на типах ошибок — в прошивке; на хосте фича выключена и
+# ошибки печатаются через `Debug`/`Display`.
+defmt = ["dep:defmt"]
+
+[dependencies]
+# Типы ошибок домена объявлены здесь (domain — только функции), и `Display` им
+# нужен по той же причине, что и раньше: человек читает их в логе.
+thiserror = { workspace = true }
+defmt = { workspace = true, optional = true }
