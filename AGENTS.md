@@ -148,8 +148,9 @@ read`: руками пришлось бы сначала найти адрес �
 - `lib.rs` только объявляет: атрибуты, `//!`, `mod`, `pub use` — определения
   живут в модулях — `docs/conventions.md`.
 - Узел OTA не сбрасывает МК и не решает, что делать с исходом: это
-  `ImageSource::finish` в `bsp`; отказы до стирания (`Busy`, нет подписи,
-  длина) обязаны оставаться до `receive` — `docs/ota.md`.
+  `ImageSource::finish` в `bsp`; отказы до стирания обязаны оставаться
+  такими: `Busy` и отсутствие подписи — до `receive`, длина — внутри него,
+  до `prepare` — `docs/ota.md`.
 - `NoopRawMutex` у `bsp::FlashMutex` и `local` на слотах узла OTA
   (`domain::ota`) — одно допущение «один исполнитель», менять вместе —
   `docs/flash.md`, `docs/architecture.md`.

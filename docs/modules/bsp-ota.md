@@ -34,8 +34,8 @@ impl ImageSource for Link {
 слова флеша, порядок проверок подписи, коды отказа — уже в узле
 `domain::ota`{% if graph == "true" %}, который граф спавнит из `fragments:`
 (`crates-cross/app/src/graph.rs`){% else %}. Без графа зовите узел сами:
-`domain::ota::run{% if signed == "true" %}_signed{% endif %}(&mut board.ota_link, &mut board.ota).await`{% endif %}. Слоты узла
-в графе помечены `local`: `Ota` — `!Send` (внутри ссылка на `FlashMutex` с
+`domain::ota::run{% if signed == "true" %}_signed{% endif %}(&mut board.ota_link, &mut board.ota).await`{% endif %}. Во фрагментах
+`domain::ota` слоты узла помечены `local`: `Ota` — `!Send` (внутри ссылка на `FlashMutex` с
 `NoopRawMutex`), и граф держит его на своём исполнителе, не требуя `Send`, —
 то же допущение «один исполнитель», что у самого `NoopRawMutex`; захотите
 вынести OTA на другой исполнитель — меняйте `local` во фрагменте

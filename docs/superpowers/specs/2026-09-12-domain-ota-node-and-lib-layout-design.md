@@ -152,7 +152,7 @@ fn verify_and_mark_updated(&mut self, signature: &[u8; 64], len: u32)
     -> Result<(), VerifyError<Self::Error>>;
 ```
 
-Без `#[non_exhaustive]` и с `Clone, Copy` (в отличие от `Rejection`): `domain` —
+Без `#[non_exhaustive]` (в отличие от `Rejection`) и с `Clone, Copy`: `domain` —
 другой крейт, а не `ports`, и обязан отобразить оба варианта exhaustive-`match`'ем;
 `Copy` — чтобы фейк в тестах мог вернуть значение из `&mut self`.
 
