@@ -78,3 +78,8 @@ CLAUDE.local.md
 .claude/agent-memory-local
 .claude/first-run
 .claude/assistant-daemon-state.json
+
+# Рабочий каталог skill'ов superpowers (леджер, брифы задач, отчёты ревью):
+# в cargo-generate.toml он уже в ignore — сюда, чтобы не уехал в историю
+# случайным `git add -A`.
+.superpowers/
