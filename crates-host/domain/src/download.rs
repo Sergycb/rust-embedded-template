@@ -161,117 +161,8 @@ pub async fn receive<S: ImageSource, F: FirmwareUpdate>(
 #[cfg(test)]
 mod tests {
     use super::{MAX_WORD, receive};
-    use crate::test_support::block_on;
-    use ports::{DownloadError, FirmwareUpdate, ImageSource};
-
-    /// Канал, отдающий заранее нарезанные куски; на `fail_at`-м вызове
-    /// отказывает — так разыгрывается обрыв связи.
-    struct Chunks {
-        chunks: Vec<Vec<u8>>,
-        next: usize,
-        fail_at: Option<usize>,
-    }
-
-    impl Chunks {
-        fn of(chunks: impl IntoIterator<Item = Vec<u8>>) -> Self {
-            Self {
-                chunks: chunks.into_iter().collect(),
-                next: 0,
-                fail_at: None,
-            }
-        }
-    }
-
-    impl ImageSource for Chunks {
-        type Error = &'static str;
-
-        async fn next(&mut self) -> Result<Option<&[u8]>, Self::Error> {
-            if self.fail_at == Some(self.next) {
-                return Err("обрыв канала");
-            }
-            let i = self.next;
-            self.next += 1;
-            Ok(self.chunks.get(i).map(Vec::as_slice))
-        }
-    }
-
-    /// Флеш в памяти, придирчивый ровно там же, где настоящий.
-    ///
-    /// Главное здесь — проверки кратности: без них тест не отличил бы
-    /// работающую буферизацию от её отсутствия, а на плате разница вылезла бы
-    /// отказом записи (или, на F2/F4/F7, испорченным образом).
-    struct FakeFlash {
-        memory: Vec<u8>,
-        word: u32,
-        prepared: Option<u32>,
-        writes: Vec<(u32, usize)>,
-    }
-
-    impl FakeFlash {
-        fn new(capacity: usize, word: u32) -> Self {
-            Self {
-                memory: vec![0xFF; capacity],
-                word,
-                prepared: None,
-                writes: Vec::new(),
-            }
-        }
-    }
-
-    impl FirmwareUpdate for FakeFlash {
-        type Error = &'static str;
-
-        fn write_granularity(&mut self) -> u32 {
-            self.word
-        }
-
-        fn capacity(&mut self) -> Result<u32, Self::Error> {
-            Ok(self.memory.len() as u32)
-        }
-
-        fn is_busy(&mut self) -> Result<bool, Self::Error> {
-            Ok(false)
-        }
-
-        fn prepare(&mut self, len: u32) -> Result<(), Self::Error> {
-            if len == 0 || len > self.memory.len() as u32 {
-                return Err("негодная длина");
-            }
-            self.prepared = Some(len);
-            self.memory.fill(0xFF);
-            Ok(())
-        }
-
-        fn write(&mut self, offset: u32, data: &[u8]) -> Result<(), Self::Error> {
-            if self.prepared.is_none() {
-                return Err("запись без подготовки раздела");
-            }
-            if !(data.len() as u32).is_multiple_of(self.word) {
-                return Err("длина записи не кратна слову");
-            }
-            if !offset.is_multiple_of(self.word) {
-                return Err("смещение не кратно слову");
-            }
-            let start = offset as usize;
-            self.memory[start..start + data.len()].copy_from_slice(data);
-            self.writes.push((offset, data.len()));
-            Ok(())
-        }
-
-        fn read(&mut self, offset: u32, buf: &mut [u8]) -> Result<(), Self::Error> {
-            let start = offset as usize;
-            buf.copy_from_slice(&self.memory[start..start + buf.len()]);
-            Ok(())
-        }
-
-        fn mark_booted(&mut self) -> Result<(), Self::Error> {
-            Ok(())
-        }
-
-        fn mark_updated(&mut self) -> Result<(), Self::Error> {
-            Ok(())
-        }
-    }
+    use crate::test_support::{FakeFlash, FakeLink, block_on};
+    use ports::{DownloadError, FirmwareUpdate};
 
     fn image(len: u32, seed: u32) -> Vec<u8> {
         (0..len).map(|i| (i * seed) as u8).collect()
@@ -282,7 +173,7 @@ mod tests {
     #[test]
     fn reassembles_an_image_from_single_byte_chunks() {
         let image = image(100, 1);
-        let mut source = Chunks::of(image.iter().map(|b| vec![*b]));
+        let mut source = FakeLink::of(image.iter().map(|b| vec![*b]));
         let mut flash = FakeFlash::new(1024, 8);
 
         let len = block_on(receive(&mut source, &mut flash, image.len() as u32))
@@ -296,7 +187,7 @@ mod tests {
     #[test]
     fn reassembles_an_image_from_ragged_chunks() {
         let image = image(200, 7);
-        let mut source = Chunks::of(image.chunks(13).map(<[u8]>::to_vec));
+        let mut source = FakeLink::of(image.chunks(13).map(<[u8]>::to_vec));
         let mut flash = FakeFlash::new(1024, 8);
 
         block_on(receive(&mut source, &mut flash, image.len() as u32)).expect("приём");
@@ -312,7 +203,7 @@ mod tests {
     #[test]
     fn pads_the_last_word_of_an_unaligned_image() {
         let image = image(70, 1);
-        let mut source = Chunks::of([image.clone()]);
+        let mut source = FakeLink::of([image.clone()]);
         let mut flash = FakeFlash::new(1024, MAX_WORD as u32);
 
         block_on(receive(&mut source, &mut flash, image.len() as u32)).expect("приём");
@@ -327,7 +218,7 @@ mod tests {
     /// память, на F2/F4/F7 молча.
     #[test]
     fn refuses_an_empty_image_before_touching_the_partition() {
-        let mut source = Chunks::of([]);
+        let mut source = FakeLink::of([]);
         let mut flash = FakeFlash::new(64, 8);
         flash.memory.fill(0xA5);
 
@@ -345,7 +236,7 @@ mod tests {
     /// осталось бы и без нового образа, и без того, куда откатываться.
     #[test]
     fn refuses_an_image_longer_than_the_partition_without_erasing() {
-        let mut source = Chunks::of([]);
+        let mut source = FakeLink::of([]);
         let mut flash = FakeFlash::new(64, 8);
         flash.memory.fill(0xA5);
 
@@ -366,7 +257,7 @@ mod tests {
     /// это стало видно, — канал дальше не читается.
     #[test]
     fn refuses_more_data_than_announced() {
-        let mut source = Chunks::of([vec![0; 16], vec![0; 1], vec![0; 100]]);
+        let mut source = FakeLink::of([vec![0; 16], vec![0; 1], vec![0; 100]]);
         let mut flash = FakeFlash::new(1024, 8);
 
         let refused = block_on(receive(&mut source, &mut flash, 16));
@@ -388,7 +279,7 @@ mod tests {
     /// что всё в порядке, нельзя.
     #[test]
     fn refuses_an_incomplete_transfer() {
-        let mut source = Chunks::of([vec![0; 20]]);
+        let mut source = FakeLink::of([vec![0; 20]]);
         let mut flash = FakeFlash::new(1024, 8);
 
         let refused = block_on(receive(&mut source, &mut flash, 32));
@@ -406,7 +297,7 @@ mod tests {
     #[test]
     fn refuses_an_unusable_write_granularity() {
         for word in [0, MAX_WORD as u32 + 1] {
-            let mut source = Chunks::of([]);
+            let mut source = FakeLink::of([]);
             let mut flash = FakeFlash::new(1024, word.max(1));
             flash.word = word;
 
@@ -421,7 +312,7 @@ mod tests {
     /// последнее слово ушло бы за границу раздела.
     #[test]
     fn refuses_an_image_whose_padded_length_overflows() {
-        let mut source = Chunks::of([]);
+        let mut source = FakeLink::of([]);
         let mut flash = FakeFlash::new(100, 32);
 
         let refused = block_on(receive(&mut source, &mut flash, 100));
@@ -438,7 +329,7 @@ mod tests {
     /// Отказ флеша доходит до вызывающего как есть, а не теряется.
     #[test]
     fn passes_a_flash_failure_through() {
-        let mut source = Chunks::of([vec![0; 8]]);
+        let mut source = FakeLink::of([vec![0; 8]]);
         // Обёртка, у которой `prepare` «проходит», но флаг подготовки не
         // ставит: первая же запись фейка ответит отказом, и он обязан дойти
         // до вызывающего как `Flash(_)`.
@@ -484,7 +375,7 @@ mod tests {
     /// удобства одного `From`.
     #[test]
     fn passes_a_source_failure_through() {
-        let mut source = Chunks::of([vec![0; 8], vec![0; 8]]);
+        let mut source = FakeLink::of([vec![0; 8], vec![0; 8]]);
         source.fail_at = Some(1);
         let mut flash = FakeFlash::new(1024, 8);
 

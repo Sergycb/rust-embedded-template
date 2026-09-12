@@ -98,93 +98,14 @@ pub fn apply_signed<F: SignedFirmwareUpdate>(
 
 #[cfg(test)]
 mod tests {
-    use super::{VERSION_BYTES, apply_signed};
+    use super::apply_signed;
     use crate::firmware::pack;
-    use ports::{FirmwareUpdate, SignedFirmwareUpdate, UpdateError};
-
-    const KEY: [u8; 32] = [7; 32];
-    const SIGNATURE: [u8; 64] = [9; 64];
-
-    /// Раздел с образом и настройками устройства; записывает, что у него
-    /// спросили и о чём попросили.
-    struct Fake {
-        dfu: Vec<u8>,
-        capacity: u32,
-        busy: bool,
-        version: u32,
-        key: [u8; 32],
-        verify: Result<(), &'static str>,
-        verified: Vec<([u8; 64], u32)>,
-    }
-
-    impl Fake {
-        fn with_image(len: u32, incoming: u32) -> Self {
-            let mut dfu = vec![0xFF; 256];
-            dfu[(len - VERSION_BYTES) as usize..len as usize]
-                .copy_from_slice(&incoming.to_le_bytes());
-            Self {
-                dfu,
-                capacity: 128,
-                busy: false,
-                version: pack(1, 2, 3),
-                key: KEY,
-                verify: Ok(()),
-                verified: Vec::new(),
-            }
-        }
-    }
-
-    impl FirmwareUpdate for Fake {
-        type Error = &'static str;
-
-        fn write_granularity(&mut self) -> u32 {
-            8
-        }
-        fn capacity(&mut self) -> Result<u32, Self::Error> {
-            Ok(self.capacity)
-        }
-        fn is_busy(&mut self) -> Result<bool, Self::Error> {
-            Ok(self.busy)
-        }
-        fn prepare(&mut self, _len: u32) -> Result<(), Self::Error> {
-            Ok(())
-        }
-        fn write(&mut self, _offset: u32, _data: &[u8]) -> Result<(), Self::Error> {
-            Ok(())
-        }
-        fn read(&mut self, offset: u32, buf: &mut [u8]) -> Result<(), Self::Error> {
-            let start = offset as usize;
-            buf.copy_from_slice(&self.dfu[start..start + buf.len()]);
-            Ok(())
-        }
-        fn mark_booted(&mut self) -> Result<(), Self::Error> {
-            Ok(())
-        }
-        fn mark_updated(&mut self) -> Result<(), Self::Error> {
-            Ok(())
-        }
-    }
-
-    impl SignedFirmwareUpdate for Fake {
-        fn running_version(&self) -> u32 {
-            self.version
-        }
-        fn public_key(&self) -> &[u8; 32] {
-            &self.key
-        }
-        fn verify_and_mark_updated(
-            &mut self,
-            signature: &[u8; 64],
-            len: u32,
-        ) -> Result<(), Self::Error> {
-            self.verified.push((*signature, len));
-            self.verify
-        }
-    }
+    use crate::test_support::{FakeFlash, SIGNATURE};
+    use ports::UpdateError;
 
     #[test]
     fn accepts_a_newer_signed_image() {
-        let mut flash = Fake::with_image(64, pack(1, 2, 4));
+        let mut flash = FakeFlash::with_image(64, pack(1, 2, 4));
 
         apply_signed(&mut flash, &SIGNATURE, 64).expect("образ новее и подписан");
 
@@ -195,7 +116,7 @@ mod tests {
     /// удаление одной из них тест не замечал.
     #[test]
     fn refuses_a_length_beyond_capacity_before_anything_else() {
-        let mut flash = Fake::with_image(64, pack(1, 2, 4));
+        let mut flash = FakeFlash::with_image(64, pack(1, 2, 4));
         flash.busy = true; // и занят, и ключ нулевой — а отказ всё равно по длине
         flash.key = [0; 32];
 
@@ -215,7 +136,7 @@ mod tests {
     /// ответ «откат» соврал бы о причине.
     #[test]
     fn refuses_a_busy_partition_instead_of_calling_it_a_rollback() {
-        let mut flash = Fake::with_image(64, pack(0, 0, 1));
+        let mut flash = FakeFlash::with_image(64, pack(0, 0, 1));
         flash.busy = true;
 
         assert_eq!(
@@ -226,7 +147,7 @@ mod tests {
 
     #[test]
     fn refuses_an_image_shorter_than_its_version_tail() {
-        let mut flash = Fake::with_image(64, pack(1, 2, 4));
+        let mut flash = FakeFlash::with_image(64, pack(1, 2, 4));
 
         assert_eq!(
             apply_signed(&mut flash, &SIGNATURE, 3),
@@ -239,7 +160,7 @@ mod tests {
     #[test]
     fn refuses_an_older_or_equal_image_before_the_key() {
         for incoming in [pack(1, 2, 3), pack(1, 1, 9)] {
-            let mut flash = Fake::with_image(64, incoming);
+            let mut flash = FakeFlash::with_image(64, incoming);
             flash.key = [0; 32]; // ключ нулевой, а отказ — по версии
 
             assert_eq!(
@@ -254,7 +175,7 @@ mod tests {
 
     #[test]
     fn refuses_a_zero_key_before_cryptography() {
-        let mut flash = Fake::with_image(64, pack(1, 2, 4));
+        let mut flash = FakeFlash::with_image(64, pack(1, 2, 4));
         flash.key = [0; 32];
 
         assert_eq!(
@@ -266,7 +187,7 @@ mod tests {
 
     #[test]
     fn passes_a_signature_failure_through() {
-        let mut flash = Fake::with_image(64, pack(1, 2, 4));
+        let mut flash = FakeFlash::with_image(64, pack(1, 2, 4));
         flash.verify = Err("подпись не сошлась");
 
         assert_eq!(

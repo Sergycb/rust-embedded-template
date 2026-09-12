@@ -4,23 +4,9 @@
 #[cfg(kani)]
 mod kani_proofs;
 
-/// Крутит future фейков в host-тестах: ни один порт-фейк не ждёт по-настоящему,
-/// поэтому исполнитель здесь не нужен — достаточно одного `poll`.
+/// Прогон future без исполнителя и фейки портов для host-тестов — см. модуль.
 #[cfg(test)]
-pub(crate) mod test_support {
-    use core::future::Future;
-    use core::pin::pin;
-    use core::task::{Context, Poll, Waker};
-
-    pub fn block_on<T>(future: impl Future<Output = T>) -> T {
-        let mut future = pin!(future);
-        let mut cx = Context::from_waker(Waker::noop());
-        match future.as_mut().poll(&mut cx) {
-            Poll::Ready(value) => value,
-            Poll::Pending => panic!("фейки портов не ждут: future не должна возвращать Pending"),
-        }
-    }
-}
+pub(crate) mod test_support;
 
 /// Версия прошивки и правило приёма обновления — см. модуль.
 ///
