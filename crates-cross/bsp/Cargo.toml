@@ -37,9 +37,6 @@ cortex-m = { workspace = true }
 {%- if ota == "true" or config == "true" %}
 embassy-sync = { workspace = true }
 static_cell = { workspace = true }
-# Блокирующие трейты флеша: поверх них обёртка `SharedFlash` (config.rs)
-# реализует асинхронные.
-embedded-storage = { workspace = true }
 {%- endif %}
 # Только ради `ota.rs`, которого в проектах без OTA нет вовсе — вместе с
 # `crates-cross/boot` его удаляет chip-select.rhai. Сам адаптер живёт в
@@ -49,12 +46,6 @@ embedded-storage = { workspace = true }
 {%- if ota == "true" %}
 embassy-boot = { workspace = true, features = ["defmt"{% if erase_zero == "true" %}, "flash-erase-zero"{% endif %}] }
 embassy-embedded-hal = { workspace = true }
-{%- endif %}
-# Ради `config.rs` — его тоже удаляет chip-select.rhai, если раздел настроек
-# не выбран при генерации или не помещается во flash чипа.
-{%- if config == "true" %}
-sequential-storage = { workspace = true }
-embedded-storage-async = { workspace = true }
 {%- endif %}
 # Zero-copy DMA-буфер: объявлен заранее, чтобы пример из docs/buffers.md
 # вставлялся без правки манифеста. Своего кода на нём в шаблоне нет — статику

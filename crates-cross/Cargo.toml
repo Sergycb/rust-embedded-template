@@ -73,18 +73,6 @@ embassy-boot-stm32 = { version = "0.8.0" }
 # Имя типа раздела (`BlockingPartition`) для псевдонима `bsp::ota::Ota`:
 # embassy-boot его не реэкспортирует. Версия та же, что тянет embassy-boot.
 embassy-embedded-hal = { version = "0.6.0" }
-embedded-storage   = { version = "0.3.1" }
-# Хранилище настроек (crates-cross/bsp/src/config.rs) — только в проектах, где при
-# генерации выбрали раздел CONFIG. Асинхронный API (в 8.x другого нет),
-# поэтому рядом `embedded-storage-async`: его трейты реализует обёртка над
-# общим `Flash`, см. `SharedFlash` там же.
-#
-# `map` требует минимум двух страниц стирания и выровненных по ним границ —
-# именно это и считает chip-select.rhai, когда выделяет раздел.
-sequential-storage     = { version = "8.0.1", default-features = false, features = [
-	"defmt",
-] }
-embedded-storage-async = { version = "0.4.1" }
 # Один `Flash` на весь чип делится между OTA и настройками, а обеим нужен
 # `&'static` (иначе их не отдать в спавнящиеся задачи — те требуют 'static).
 static_cell            = { version = "2.1.1" }

@@ -53,9 +53,9 @@ pub struct Board {
     pub ota: crate::ota::Ota,
 {%- endif %}
 {%- if config == "true" %}
-    /// Настройки, переживающие перезапуск и обновление прошивки: раздел
-    /// `CONFIG` во flash. Формат значений выбирает проект, см. модуль
-    /// `config`.
+    /// Настройки, переживающие перезапуск и обновление прошивки: адаптер
+    /// поверх раздела `CONFIG` (`adapters::settings`). Формат значений
+    /// выбирает проект.
     pub settings: crate::config::Settings,
 {%- endif %}
 {%- if graph == "true" %}
@@ -131,7 +131,7 @@ impl Board {
             ota: crate::ota::new(flash),
 {%- endif %}
 {%- if config == "true" %}
-            settings: crate::config::Settings::new(flash),
+            settings: crate::config::new(flash),
 {%- endif %}
 {%- if graph == "true" %}
             watchdog: crate::wdg::UnarmedBoardWatchdog::new(p.{{watchdog_peripheral}}),
