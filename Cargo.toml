@@ -41,8 +41,8 @@ defmt-or-log = { version = "0.2.3" }
 log          = { version = "0.4.34" }
 defmt        = { version = "1.1.1" }
 # no_std: у thiserror `default-features` включают "std", а domain и cross
-# собираются без него (см. рабочий пример — thiserror::Error на
-# `download::Error<E>` и `bsp::ota::UpdateError`).
+# собираются без него (рабочий пример — `thiserror::Error` на
+# `ports::DownloadError` и `ports::UpdateError`).
 thiserror    = { version = "2.0.20", default-features = false }
 test-log     = { version = "0.2.21" }
 # Задачи графа живут в `domain` (`domain::app`), а граф, который их спавнит, —
