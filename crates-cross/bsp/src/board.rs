@@ -47,9 +47,9 @@ static FLASH: StaticCell<FlashMutex> = StaticCell::new();
 // `cargo fmt --check` в сгенерированном проекте падает.
 pub struct Board {
 {%- if ota == "true" %}
-    /// Обновление прошивки: запись образа в раздел `DFU` и пометки, по
-    /// которым bootloader меняет разделы местами. Канал доставки — за
-    /// пределами шаблона, см. модуль `ota`.
+    /// Обновление прошивки: адаптер поверх разделов `DFU`/`BOOTLOADER_STATE`
+    /// (`adapters::ota`), собранный из символов `memory.x`. Канал доставки —
+    /// за пределами шаблона, см. `docs/modules/bsp-ota.md`.
     pub ota: crate::ota::Ota,
 {%- endif %}
 {%- if config == "true" %}
@@ -128,7 +128,7 @@ impl Board {
 
         Self {
 {%- if ota == "true" %}
-            ota: crate::ota::Ota::new(flash),
+            ota: crate::ota::new(flash),
 {%- endif %}
 {%- if config == "true" %}
             settings: crate::config::Settings::new(flash),

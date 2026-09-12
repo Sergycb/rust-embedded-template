@@ -72,7 +72,11 @@ embassy-sync           = { version = "0.8.0" }
 embedded-storage       = { version = "0.3.1" }
 embedded-storage-async = { version = "0.4.1" }
 sequential-storage     = { version = "8.0.1", default-features = false }
-# Проверка подписи образа — под фичей `adapters/signed`. `slow-motion` —
-# портируемая реализация вместо ассемблерной под Cortex-M4/M33 (обоснование в
-# crates-cross/Cargo.toml).
+# Проверка подписи образа — под фичей `adapters/signed`. Из двух реализаций,
+# которые понимает embassy-boot, взята меньшая: `ed25519-dalek` тянет
+# `curve25519-dalek` с `sha2`, salty самодостаточен и написан под
+# микроконтроллеры. `slow-motion` — портируемая tweetnacl-реализация вместо
+# ассемблерной `haase` (инструкция UMAAL, только Cortex-M4/M33): работает на
+# любом ядре ценой скорости — ~100 млн тактов на проверку, меньше секунды, и
+# случается это один раз перед перезагрузкой.
 salty                  = { version = "0.3.0", default-features = false, features = ["slow-motion"] }

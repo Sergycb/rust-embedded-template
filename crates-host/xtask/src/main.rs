@@ -569,7 +569,7 @@ fn sign_image(image_path: &Path, image: &[u8], seed: &[u8; 32]) -> Result<(), an
     println!("подпись: {} (64 байта)", path.display());
     println!(
         "устройству нужны обе величины: подпись и длина образа ({} байт) — их принимает \
-         Ota::verify_and_mark_updated",
+         domain::update::apply_signed",
         image.len(),
     );
     Ok(())

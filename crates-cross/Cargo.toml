@@ -70,6 +70,9 @@ embassy-executor = { version = "0.10.0", features = [
 ] }
 embassy-boot         = { version = "0.7.0" }
 embassy-boot-stm32 = { version = "0.8.0" }
+# Имя типа раздела (`BlockingPartition`) для псевдонима `bsp::ota::Ota`:
+# embassy-boot его не реэкспортирует. Версия та же, что тянет embassy-boot.
+embassy-embedded-hal = { version = "0.6.0" }
 embedded-storage   = { version = "0.3.1" }
 # Хранилище настроек (crates-cross/bsp/src/config.rs) — только в проектах, где при
 # генерации выбрали раздел CONFIG. Асинхронный API (в 8.x другого нет),
@@ -85,19 +88,6 @@ embedded-storage-async = { version = "0.4.1" }
 # Один `Flash` на весь чип делится между OTA и настройками, а обеим нужен
 # `&'static` (иначе их не отдать в спавнящиеся задачи — те требуют 'static).
 static_cell            = { version = "2.1.1" }
-# Проверка подписи OTA-образа (только если её выбрали при генерации). Из двух
-# реализаций, которые понимает embassy-boot, взята меньшая: `ed25519-dalek`
-# тянет `curve25519-dalek` с `sha2`, salty — самодостаточен и написан под
-# микроконтроллеры.
-#
-# `slow-motion` — портируемая tweetnacl-реализация вместо ассемблерной
-# `haase` (та использует инструкцию UMAAL и существует только для Cortex-M4/
-# M33). Она компактнее и работает на любом ядре, ценой скорости: проверка
-# подписи занимает ~100 млн тактов, то есть меньше секунды на типичной
-# частоте. Для однократной операции перед перезагрузкой это ничто.
-salty                  = { version = "0.3.0", default-features = false, features = [
-	"slow-motion",
-] }
 embassy-sync       = { version = "0.8.0" }
 # Cortex-M0/M0+ (ARMv6-M — STM32 C0/F0/G0/L0 и CM0+-ядра WB/WL) не имеет
 # аппаратного compare-and-swap, и `portable-atomic` на таких целях отказывается
@@ -136,16 +126,14 @@ embedded-test      = { version = "0.7.2", default-features = false, features = [
 	"semihosting",
 	"panic-handler",
 ] }
-# Трейты-границы домена: их реализует bsp, а app работает только через них и
-# про регистры не знает. Прямая path-зависимость, а не реэкспорт через
-# `domain`: типы портов действительно пересекают границу domain↔cross, но
-# `ports` — крейт этого же проекта, и явная строка в манифесте честнее фасада.
-ports            = { path = "../crates-host/domain/ports" }
-# Драйверы, generic по шине: их `bsp` собирает из своей периферии и отдаёт
-# готовыми объектами. Живут в domain, потому что тестируются на хосте моком, а
-# сюда объявлены, чтобы заготовка из `docs/resources.md` работала без правки
-# манифестов.
-adapters         = { path = "../crates-host/domain/adapters" }
+# Трейты-границы домена и типы ошибок: их реализуют adapters и bsp, а app
+# работает только через них. `defmt` — ради `Format` на ошибках в логе.
+ports            = { path = "../crates-host/domain/ports", features = ["defmt"] }
+# Адаптеры, generic по флешу/шине: OTA поверх embassy-boot, настройки поверх
+# sequential-storage. `bsp` строит их из своей периферии и отдаёт готовыми
+# объектами. `defmt` — ради `Format` на ошибках в логе прошивки; на хосте
+# крейт собирается без фич вывода вовсе.
+adapters         = { path = "../crates-host/domain/adapters", features = ["defmt"] }
 bsp              = { path = "./bsp" }{% if ota == "true" %}
 boot             = { path = "./boot" }{% endif %}
 app              = { path = "./app" }
@@ -157,10 +145,6 @@ domain           = { path = "../crates-host/domain", default-features = false, f
 target-tests     = { path = "./target-tests" }
 shadow-rs        = { version = "2.0.0", default-features = false }
 assign-resources = { version = "0.5.0" }
-# Только для UpdateError у подписанного OTA (bsp/src/ota.rs): `Boot`/`Error`
-# там — реэкспорт стороннего `embassy_boot::FirmwareUpdaterError`, чужой тип
-# менять нельзя. no_std: `default-features` у thiserror включают "std".
-thiserror        = { version = "2.0.20", default-features = false }
 
 # Крейты из личной библиотеки (github.com/Sergycb/rust-lib) — оба про железо
 # и оркестрацию, поэтому объявлены здесь, а не в корневом workspace'е (для

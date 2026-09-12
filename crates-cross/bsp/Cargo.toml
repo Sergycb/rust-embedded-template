@@ -20,10 +20,10 @@ embassy-stm32 = { workspace = true, features = ["time-driver-any"] }
 domain = { workspace = true }
 # Трейты, которые реализуют объекты `Board`: приложение видит только их.
 ports = { workspace = true }
-# Драйверы поверх шин, generic по embedded-hal (ваши собственные): `Board::new`
-# собирает их из периферии и кладёт полями. Объявлено заранее, чтобы пример из
-# docs/resources.md вставлялся без правки манифеста.
-adapters = { workspace = true }
+# Адаптеры поверх generic-флеша и шин: `Board::new` собирает их из периферии
+# и кладёт полями. `signed` включает проверку подписи у OTA-адаптера — ровно
+# тогда, когда её выбрали при генерации.
+adapters = { workspace = true{% if signed == "true" %}, features = ["signed"]{% endif %} }
 assign-resources = { workspace = true }
 # Регистры ядра напрямую: `wfi` в ожидании сброса от сторожа (src/wdg.rs) и
 # impl critical-section (фича в crates-cross/Cargo.toml). Периферию ядра
@@ -37,26 +37,18 @@ cortex-m = { workspace = true }
 {%- if ota == "true" or config == "true" %}
 embassy-sync = { workspace = true }
 static_cell = { workspace = true }
-# Блокирующие трейты флеша: ими пользуется и embassy-boot (ota.rs), и обёртка
-# `SharedFlash` (config.rs), которая поверх них реализует асинхронные.
+# Блокирующие трейты флеша: поверх них обёртка `SharedFlash` (config.rs)
+# реализует асинхронные.
 embedded-storage = { workspace = true }
 {%- endif %}
 # Только ради `ota.rs`, которого в проектах без OTA нет вовсе — вместе с
-# `crates-cross/boot` его удаляет chip-select.rhai.
-{%- if ota == "true" and signed == "true" %}
-# С подписью: фича `ed25519-salty` включает у embassy-boot
-# `verify_and_mark_updated`, а сам `salty` объявлен здесь же ради своей фичи
-# `slow-motion` (обоснование — в crates-cross/Cargo.toml).
-embassy-boot = { workspace = true, features = ["defmt", "ed25519-salty"{% if erase_zero == "true" %}, "flash-erase-zero"{% endif %}] }
-embassy-boot-stm32 = { workspace = true, features = ["defmt"] }
-salty = { workspace = true }
-# Только ради UpdateError в ota.rs: свой вид ошибки, а не FirmwareUpdaterError
-# из embassy-boot напрямую, — см. обоснование в самом ota.rs.
-thiserror = { workspace = true }
-{%- endif %}
-{%- if ota == "true" and signed != "true" %}
+# `crates-cross/boot` его удаляет chip-select.rhai. Сам адаптер живёт в
+# `adapters::ota`; здесь `embassy-boot` нужен ради `from_linkerfile_blocking`
+# (разделы из символов memory.x) и фичи `flash-erase-zero`, а
+# `embassy-embedded-hal` — ради имени типа раздела в псевдониме `Ota`.
+{%- if ota == "true" %}
 embassy-boot = { workspace = true, features = ["defmt"{% if erase_zero == "true" %}, "flash-erase-zero"{% endif %}] }
-embassy-boot-stm32 = { workspace = true, features = ["defmt"] }
+embassy-embedded-hal = { workspace = true }
 {%- endif %}
 # Ради `config.rs` — его тоже удаляет chip-select.rhai, если раздел настроек
 # не выбран при генерации или не помещается во flash чипа.

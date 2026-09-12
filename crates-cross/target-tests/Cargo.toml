@@ -52,3 +52,6 @@ bsp = { workspace = true }
 # Трейты портов: тесты дёргают объекты `Board` тем же способом, что и `app`.
 ports = { workspace = true }
 domain = { workspace = true }
+# Имя ошибки адаптера (`adapters::ota::Error`) в signed-тестах: сверяется
+# конкретный вариант отказа, а не `is_err()`.
+adapters = { workspace = true }
