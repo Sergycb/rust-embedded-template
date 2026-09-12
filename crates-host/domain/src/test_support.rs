@@ -88,9 +88,6 @@ pub(crate) struct FakeFlash {
     /// Что ответить на `mark_updated`; `Err` разыгрывает отказ флеша.
     pub(crate) mark_updated: Result<(), &'static str>,
     /// Сколько раз просили обмен разделов.
-    // `cargo xtask lint` — это clippy `--all-targets -D warnings`: поле, которое
-    // до задачи 5 никто не читает, уронило бы его. Снять в задаче 5.
-    #[expect(dead_code, reason = "читают тесты узла OTA — задача 5")]
     pub(crate) updated: usize,
 }
 
@@ -174,6 +171,7 @@ impl FirmwareUpdate for FakeFlash {
     }
 
     fn mark_updated(&mut self) -> Result<(), Self::Error> {
+        self.updated += 1;
         self.mark_updated
     }
 }
