@@ -9,8 +9,9 @@
 use core::future::Future;
 use core::pin::pin;
 use core::task::{Context, Poll, Waker};
+use std::collections::VecDeque;
 
-use ports::{FirmwareUpdate, ImageSource, SignedFirmwareUpdate, VerifyError};
+use ports::{Announce, FirmwareUpdate, ImageSource, Rejection, SignedFirmwareUpdate, VerifyError};
 
 use crate::firmware::pack;
 use crate::update::VERSION_BYTES;
@@ -34,26 +35,47 @@ pub(crate) fn block_on<T>(future: impl Future<Output = T>) -> T {
 }
 
 /// Канал, отдающий заранее нарезанные куски; на `fail_at`-м вызове `next`
-/// отказывает — так разыгрывается обрыв связи.
+/// отказывает — так разыгрывается обрыв связи. Заголовки — по одному на
+/// цикл; когда они кончаются, `begin` отвечает отказом — единственный выход
+/// из цикла узла в тесте.
 pub(crate) struct FakeLink {
+    announces: VecDeque<Announce>,
     chunks: Vec<Vec<u8>>,
     /// Сколько кусков уже отдано — по нему тест видит, читался ли канал.
     pub(crate) next: usize,
     pub(crate) fail_at: Option<usize>,
+    /// Что ответить на `finish`; `Err` разыгрывает обрыв при отчёте.
+    pub(crate) finish: Result<(), &'static str>,
+    /// Всё, что узел сообщил отправителю, в порядке вызовов.
+    pub(crate) finished: Vec<Result<(), Rejection>>,
 }
 
 impl FakeLink {
     pub(crate) fn of(chunks: impl IntoIterator<Item = Vec<u8>>) -> Self {
         Self {
+            announces: VecDeque::new(),
             chunks: chunks.into_iter().collect(),
             next: 0,
             fail_at: None,
+            finish: Ok(()),
+            finished: Vec::new(),
         }
+    }
+
+    /// Заголовки, которые `begin` отдаст по одному на цикл.
+    #[expect(dead_code, reason = "зовут тесты узла OTA — задача 5")]
+    pub(crate) fn announcing(mut self, announces: impl IntoIterator<Item = Announce>) -> Self {
+        self.announces = announces.into_iter().collect();
+        self
     }
 }
 
 impl ImageSource for FakeLink {
     type Error = &'static str;
+
+    async fn begin(&mut self) -> Result<Announce, Self::Error> {
+        self.announces.pop_front().ok_or("канал закрыт")
+    }
 
     async fn next(&mut self) -> Result<Option<&[u8]>, Self::Error> {
         if self.fail_at == Some(self.next) {
@@ -62,6 +84,11 @@ impl ImageSource for FakeLink {
         let i = self.next;
         self.next += 1;
         Ok(self.chunks.get(i).map(Vec::as_slice))
+    }
+
+    async fn finish(&mut self, outcome: Result<(), Rejection>) -> Result<(), Self::Error> {
+        self.finished.push(outcome);
+        self.finish
     }
 }
 

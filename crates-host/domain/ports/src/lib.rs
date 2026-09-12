@@ -42,6 +42,6 @@ pub mod download;
 /// Хранилище настроек.
 pub mod settings;
 
-pub use download::{DownloadError, ImageSource};
+pub use download::{Announce, DownloadError, ImageSource, Rejection};
 pub use settings::SettingsStorage;
 pub use update::{FirmwareUpdate, SignedFirmwareUpdate, UpdateError, VerifyError};
