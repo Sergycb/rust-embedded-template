@@ -15,7 +15,10 @@
 //! * последний кусок почти наверняка неполный, и его надо дописать, добив до
 //!   слова.
 //!
-//! [`receive`](crate::download::receive) делает всё перечисленное:
+//! [`receive`](crate::download::receive) делает всё перечисленное. Зовёт её
+//! узел [`ota`](crate::ota) — из него же приходят длина (из
+//! `ImageSource::begin`) и применение; напрямую, как ниже, — только проект
+//! без графа:
 //!
 //! ```ignore
 //! let len = domain::download::receive(&mut link, &mut board.ota, announced_len).await?;

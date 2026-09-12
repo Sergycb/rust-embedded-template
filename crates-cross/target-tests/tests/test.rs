@@ -339,13 +339,13 @@ mod tests {
     /// неё подделывается перебором. Как только ключ появился — а его создаёт
     /// первый же `cargo xtask build`, — тот же тест начинает проверять
     /// главное: что `salty` действительно считается на этом ядре и отвергает
-    /// мусор (`UpdateError::Flash(Error::Signature(_))`).
+    /// мусор (`UpdateError::BadSignature` — адаптер отдаёт отказ подписи своим
+    /// вариантом, а не как ошибку флеша).
     ///
     /// Обновление при этом не запрашивается ни в одном случае: `embassy-boot`
     /// зовёт `mark_updated()` только после успешной проверки.
     #[test]
     fn ota_rejects_a_bad_signature(mut board: Board) {
-        use adapters::ota::Error;
         use ports::{FirmwareUpdate, UpdateError};
 
         // Хвост раздела готовится явно, и без этого тест ненадёжен: проверка
@@ -370,10 +370,7 @@ mod tests {
 
         let refused = domain::update::apply_signed(&mut board.ota, &signature, LENGTH);
         assert!(
-            matches!(
-                refused,
-                Err(UpdateError::NoPublicKey | UpdateError::Flash(Error::Signature(_)))
-            ),
+            matches!(refused, Err(UpdateError::NoPublicKey | UpdateError::BadSignature)),
             "неверная подпись принята — по OTA прошёл бы чужой образ"
         );
 

@@ -1,8 +1,8 @@
 Обвязка OTA этой платы: разделы из символов `memory.x`{% if signed == "true" %}, версия образа и ключ{% endif %}.
 
 Сам адаптер — `adapters::ota` (generic по `NorFlash`, тестируется на хосте),
-логика приёма и применения — `domain::download` и `domain::update`. Здесь
-остаётся ровно то, что привязано к чипу и сборке:
+логика приёма и применения — `domain::download` и `domain::update`, а зовёт
+их узел `domain::ota`. Здесь остаётся ровно то, что привязано к чипу и сборке:
 `FirmwareUpdaterConfig::from_linkerfile_blocking` (границы `DFU`/`BOOTLOADER_STATE`
 из линкерных символов), размер `ACTIVE` как вместимость{% if signed == "true" %},
 версия из `build.rs` и открытый ключ из `ota-public-key.bin`{% endif %}, — и
