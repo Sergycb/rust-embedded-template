@@ -38,9 +38,12 @@
 ## Раздел настроек (`CONFIG`) и общий `Flash`
 
 Опциональный, спрашивается при генерации (`config` — второй вопрос того же
-рода, что `ota`). Выбран — в проект попадает `crates-cross/bsp/src/config.rs`
-(`sequential-storage` поверх раздела `CONFIG`), и `Board` отдаёт поле
-`settings`; не выбран — файла нет вовсе, как и `ota.rs` в проектах без OTA.
+рода, что `ota`). Выбран — хранилище, `adapters::settings` (поверх
+`sequential-storage`), получает границы раздела `CONFIG` от обвязки
+`crates-cross/bsp/src/config.rs`: та читает символы `memory.x` и собирает мост
+из блокирующего `Flash` в асинхронный — `adapters::flash::Shared`. `Board`
+отдаёт поле `settings`; не выбран — файла `config.rs` нет вовсе, как и
+`ota.rs` в проектах без OTA.
 
 Что здесь нельзя нарушать:
 

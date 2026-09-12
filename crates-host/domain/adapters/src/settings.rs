@@ -12,6 +12,7 @@
 //! use ports::SettingsStorage;
 //!
 //! let mut scratch = [0u8; 64];
+//! let mut buf = [0u8; 64];
 //! board.settings.write(KEY_CALIBRATION, &postcard::to_slice(&cal, &mut buf)?).await?;
 //! if let Some(raw) = board.settings.read(KEY_CALIBRATION, &mut scratch).await? {
 //!     let cal: Calibration = postcard::from_bytes(raw)?;

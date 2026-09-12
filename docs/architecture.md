@@ -42,9 +42,8 @@ supervisor-графы, watchdog). Вся остальная логика — в 
 **Адаптеры делятся по одному признаку — нужен ли чип.** Реализация порта, которой
 хватает трейтов `embedded-storage`/`embedded-hal` (раздел флеша или шина приходят
 параметром), лежит в `crates-host/domain/adapters` и тестируется на хосте на фейке:
-пока это `adapters::ota` (поверх `embassy-boot`) — настройки (`SettingsStorage`) под
-этот же признак подходят, но в `adapters` ещё не переехали и остаются
-`bsp::config::Settings`. Реализация, которой нужны `embassy_stm32::peripherals`,
+`adapters::ota` (поверх `embassy-boot`), `adapters::settings` и `adapters::flash`
+(поверх `sequential-storage`). Та, которой нужны `embassy_stm32::peripherals`,
 линкерный символ или регистр, — в `crates-cross/bsp`: сторож над IWDG (`bsp::wdg`) и
 обвязка, строящая адаптеры из символов `memory.x` (`bsp::ota`, `bsp::config`) и
 дающая им псевдонимы для задач.
@@ -190,7 +189,7 @@ let board = bsp::Board::new();
 перед вызовом — `domain::update::apply_signed`, и он host-тестируем.
 
 **Дублировать методы портов собственными нельзя.** У `adapters::ota::Updater` и
-`bsp::config::Settings` inherent-методы `write`/`read`/`mark_booted` были
+`adapters::settings::Settings` inherent-методы `write`/`read`/`mark_booted` были
 удалены, а не оставлены рядом с трейтовыми: собственный метод с тем же именем
 перекрывает трейтовый при вызове, и приложение снова начало бы работать с
 конкретным типом мимо порта — то есть мимо той самой границы.
