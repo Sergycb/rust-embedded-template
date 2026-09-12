@@ -370,7 +370,10 @@ mod tests {
 
         let refused = domain::update::apply_signed(&mut board.ota, &signature, LENGTH);
         assert!(
-            matches!(refused, Err(UpdateError::NoPublicKey | UpdateError::BadSignature)),
+            matches!(
+                refused,
+                Err(UpdateError::NoPublicKey | UpdateError::BadSignature)
+            ),
             "неверная подпись принята — по OTA прошёл бы чужой образ"
         );
 
