@@ -7,3 +7,34 @@ rust-version.workspace = true
 
 [lints]
 workspace = true
+
+[features]
+# Сами адаптеры ничего не пишут в лог, а у `embassy-boot` без фич `log`/`defmt`
+# его макросы вывода превращаются в пустые выражения — на хосте это ровно то,
+# что нужно. Фичи `log` здесь нет намеренно: в `embassy-boot 0.7.0` она не
+# собирается вместе с проверкой подписи (`trace!` в `verify_and_mark_updated`
+# форматирует `[u8; N]` через `{}`, что умеет только `defmt::Format`). В
+# прошивку `defmt` включает crates-cross/Cargo.toml.
+defmt = [
+	"dep:defmt",
+	"ports/defmt",
+	"embassy-boot/defmt",
+	"sequential-storage/defmt",
+]
+# Проверка подписи образа: `verify_and_mark_updated` у embassy-boot и обёртка
+# `ota::Signed`. Включает `bsp` в проекте, где при генерации выбрана подпись;
+# в корневом workspace её включают `cargo xtask lint`/`test host`, чтобы
+# обёртка проверялась и на хосте.
+signed = ["embassy-boot/ed25519-salty", "dep:salty"]
+
+[dependencies]
+ports = { workspace = true }
+# Обновление прошивки поверх разделов `NorFlash` — сам крейт от чипа не зависит.
+embassy-boot = { workspace = true }
+embedded-storage = { workspace = true }
+embedded-storage-async = { workspace = true }
+# Хранилище настроек (settings.rs) — async API, отсюда и мост в flash.rs.
+sequential-storage = { workspace = true }
+embassy-sync = { workspace = true }
+defmt = { workspace = true, optional = true }
+salty = { workspace = true, optional = true }

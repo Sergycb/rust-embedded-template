@@ -605,7 +605,7 @@ fn test_host(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     let _p = sh.push_dir(root_dir());
     cmd!(
         sh,
-        "cargo nextest run --workspace --exclude host-target-tests --release --features domain/log,domain/std"
+        "cargo nextest run --workspace --exclude host-target-tests --release --features domain/log,domain/std,adapters/signed"
     )
     .run()?;
     Ok(())
@@ -731,7 +731,7 @@ fn lint_host(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     cmd!(sh, "cargo fmt --check").run()?;
     cmd!(
         sh,
-        "cargo clippy --workspace --all-targets --features domain/std,domain/log -- -D warnings"
+        "cargo clippy --workspace --all-targets --features domain/std,domain/log,adapters/signed -- -D warnings"
     )
     .run()?;
     Ok(())
