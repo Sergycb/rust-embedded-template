@@ -20,10 +20,13 @@
 use core::fmt::Debug;
 
 use defmt_or_log::{Debug2Format, info, warn};
-use ports::{Announce, DownloadError, FirmwareUpdate, ImageSource, Rejection, UpdateError};
+use ports::{
+    Announce, DownloadError, FirmwareUpdate, ImageSource, Rejection, SignedFirmwareUpdate,
+    UpdateError,
+};
 use supervisor::runtime::TaskExit;
 
-use crate::download;
+use crate::{download, update};
 
 /// Что узлу нужно на входе. Строит compose-site из полей `Board`:
 ///
@@ -69,6 +72,33 @@ where
         &Mode {
             check: plain_check,
             apply: plain_apply,
+        },
+    )
+    .await
+}
+
+/// Узел `OTA` с проверкой подписи: принятый образ применяется
+/// [`update::apply_signed`](crate::update::apply_signed) — длина, занятость,
+/// версия, ключ, подпись, в этом порядке.
+///
+/// Поведение по каналу — как у [`run`]. Отличие до приёма одно: заголовок
+/// без подписи отвергается ДО стирания раздела — применить такой образ всё
+/// равно нечем, а стирание уничтожило бы образ, в который устройство
+/// откатывается.
+pub async fn run_signed<S, F>(link: &mut S, flash: &mut F) -> TaskExit
+where
+    S: ImageSource,
+    S::Error: Debug,
+    F: SignedFirmwareUpdate,
+    F::Error: Debug,
+{
+    info!("domain: узел OTA (с подписью) запущен");
+    serve(
+        link,
+        flash,
+        &Mode {
+            check: signed_check,
+            apply: signed_apply,
         },
     )
     .await
@@ -151,6 +181,7 @@ where
     }
     let len = match download::receive(link, flash, announce.len).await {
         Ok(len) => len,
+        Err(DownloadError::Source(err)) => return Err(err),
         Err(err) => {
             warn!("ota: приём не удался: {:?}", Debug2Format(&err));
             return Ok(Err(download_rejection(err)?));
@@ -177,6 +208,32 @@ where
     })
 }
 
+/// С подписью заголовок обязан её нести — иначе отказ до стирания.
+fn signed_check(announce: &Announce) -> Result<(), Rejection> {
+    if announce.signature.is_none() {
+        return Err(Rejection::Signature);
+    }
+    Ok(())
+}
+
+/// С подписью применение — [`update::apply_signed`](crate::update::apply_signed)
+/// с подписью из заголовка.
+fn signed_apply<F>(flash: &mut F, announce: &Announce, len: u32) -> Result<(), Rejection>
+where
+    F: SignedFirmwareUpdate,
+    F::Error: Debug,
+{
+    // `signed_check` уже отказал бы без подписи; ветка `None` здесь — чтобы
+    // не паниковать, а не потому что она достижима.
+    let Some(signature) = announce.signature.as_ref() else {
+        return Err(Rejection::Signature);
+    };
+    update::apply_signed(flash, signature, len).map_err(|err| {
+        warn!("ota: применение отвергнуто: {:?}", Debug2Format(&err));
+        update_rejection(&err)
+    })
+}
+
 /// Код отказа для отправителя; `Err` — отказал сам канал, и сообщать некому.
 fn download_rejection<S, F>(err: DownloadError<S, F>) -> Result<Rejection, S> {
     Ok(match err {
@@ -188,7 +245,6 @@ fn download_rejection<S, F>(err: DownloadError<S, F>) -> Result<Rejection, S> {
 }
 
 /// Код отказа для отправителя по ошибке применения с подписью.
-#[expect(dead_code, reason = "применение с подписью — задача 6")]
 fn update_rejection<E>(err: &UpdateError<E>) -> Rejection {
     match err {
         UpdateError::TooLong { .. } | UpdateError::Truncated { .. } => Rejection::Length,
@@ -201,9 +257,13 @@ fn update_rejection<E>(err: &UpdateError<E>) -> Rejection {
 
 #[cfg(test)]
 mod tests {
-    use super::{Mode, cycle, plain_apply, plain_check, run};
-    use crate::test_support::{FakeFlash, FakeLink, block_on};
-    use ports::{Announce, Rejection};
+    use super::{
+        Mode, cycle, plain_apply, plain_check, run, run_signed, signed_apply, signed_check,
+    };
+    use crate::firmware::pack;
+    use crate::test_support::{FakeFlash, FakeLink, SIGNATURE, block_on};
+    use crate::update::VERSION_BYTES;
+    use ports::{Announce, Rejection, VerifyError};
     use supervisor::runtime::TaskExit;
 
     fn plain() -> Mode<FakeFlash> {
@@ -278,6 +338,20 @@ mod tests {
         assert_eq!(flash.updated, 0, "обмен не запрашивался");
     }
 
+    /// Негодная гранулярность — вина устройства, не отправителя, и до
+    /// стирания: `receive` отказывает, не трогая раздел.
+    #[test]
+    fn maps_an_unusable_granularity_to_device_without_erasing() {
+        let mut link = FakeLink::of([vec![0; 8]]).announcing([announce(8)]);
+        let mut flash = FakeFlash::new(64, 8);
+        flash.word = 0;
+
+        block_on(cycle(&mut link, &mut flash, &plain())).expect("канал жив");
+
+        assert_eq!(link.finished, vec![Err(Rejection::Device)]);
+        assert_eq!(flash.prepared, None);
+    }
+
     #[test]
     fn maps_a_flash_failure_on_apply_to_device() {
         let mut link = FakeLink::of([vec![0; 8]]).announcing([announce(8)]);
@@ -325,5 +399,106 @@ mod tests {
 
         assert_eq!(exit, TaskExit::Failed);
         assert_eq!(link.finished, vec![Ok(())], "первый цикл дошёл до отчёта");
+    }
+
+    fn signed() -> Mode<FakeFlash> {
+        Mode {
+            check: signed_check,
+            apply: signed_apply,
+        }
+    }
+
+    fn signed_announce(len: usize) -> Announce {
+        Announce {
+            len: len as u32,
+            signature: Some(SIGNATURE),
+        }
+    }
+
+    /// Образ с версией в хвосте — как его собирает `cargo xtask build`.
+    fn versioned_image(len: usize, version: u32) -> Vec<u8> {
+        let mut image = image(len);
+        image[len - VERSION_BYTES as usize..].copy_from_slice(&version.to_le_bytes());
+        image
+    }
+
+    /// Счастливый путь с подписью: подпись из заголовка и длина доехали до
+    /// адаптера, `mark_updated` не звался — обмен делает только проверка.
+    #[test]
+    fn applies_a_signed_image_with_the_signature_from_the_announce() {
+        let image = versioned_image(64, pack(1, 2, 4));
+        let mut link = FakeLink::of([image.clone()]).announcing([signed_announce(64)]);
+        let mut flash = FakeFlash::new(1024, 8);
+
+        block_on(cycle(&mut link, &mut flash, &signed())).expect("канал жив");
+
+        assert_eq!(&flash.memory[..64], &image[..]);
+        assert_eq!(flash.verified, vec![(SIGNATURE, 64)]);
+        assert_eq!(flash.updated, 0);
+        assert_eq!(link.finished, vec![Ok(())]);
+    }
+
+    /// Без подписи в заголовке — отказ ДО стирания: стирание уничтожило бы
+    /// образ, в который устройство откатывается, а применить всё равно нечем.
+    #[test]
+    fn refuses_a_signed_update_without_a_signature_before_erasing() {
+        let mut link = FakeLink::of([vec![0; 8]]).announcing([announce(8)]);
+        let mut flash = FakeFlash::new(64, 8);
+
+        block_on(cycle(&mut link, &mut flash, &signed())).expect("канал жив");
+
+        assert_eq!(link.finished, vec![Err(Rejection::Signature)]);
+        assert_eq!(flash.prepared, None, "раздел не должен быть стёрт");
+        assert_eq!(link.next, 0, "куски не читались");
+    }
+
+    /// Та же версия — откат, и код для отправителя свой.
+    #[test]
+    fn maps_a_rollback_to_rollback() {
+        let image = versioned_image(64, pack(1, 2, 3));
+        let mut link = FakeLink::of([image]).announcing([signed_announce(64)]);
+        let mut flash = FakeFlash::new(1024, 8);
+
+        block_on(cycle(&mut link, &mut flash, &signed())).expect("канал жив");
+
+        assert_eq!(link.finished, vec![Err(Rejection::Rollback)]);
+        assert!(flash.verified.is_empty(), "до криптографии дойти не должно");
+    }
+
+    #[test]
+    fn maps_a_bad_signature_to_signature() {
+        let image = versioned_image(64, pack(1, 2, 4));
+        let mut link = FakeLink::of([image]).announcing([signed_announce(64)]);
+        let mut flash = FakeFlash::new(1024, 8);
+        flash.verify = Err(VerifyError::BadSignature);
+
+        block_on(cycle(&mut link, &mut flash, &signed())).expect("канал жив");
+
+        assert_eq!(link.finished, vec![Err(Rejection::Signature)]);
+    }
+
+    #[test]
+    fn maps_a_zero_key_to_signature() {
+        let image = versioned_image(64, pack(1, 2, 4));
+        let mut link = FakeLink::of([image]).announcing([signed_announce(64)]);
+        let mut flash = FakeFlash::new(1024, 8);
+        flash.key = [0; 32];
+
+        block_on(cycle(&mut link, &mut flash, &signed())).expect("канал жив");
+
+        assert_eq!(link.finished, vec![Err(Rejection::Signature)]);
+        assert!(flash.verified.is_empty());
+    }
+
+    #[test]
+    fn run_signed_serves_until_the_link_fails() {
+        let image = versioned_image(64, pack(1, 2, 4));
+        let mut link = FakeLink::of([image]).announcing([signed_announce(64)]);
+        let mut flash = FakeFlash::new(1024, 8);
+
+        let exit = block_on(run_signed(&mut link, &mut flash));
+
+        assert_eq!(exit, TaskExit::Failed);
+        assert_eq!(link.finished, vec![Ok(())]);
     }
 }
