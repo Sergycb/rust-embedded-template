@@ -4,8 +4,9 @@
 //! Здесь, а не в адаптере: «принимать ли этот образ» — правило продукта, и
 //! проверяется оно на хосте с фейком порта. Адаптер поверх `embassy-boot`
 //! умеет только криптографию и пометку разделов
-//! ([`SignedFirmwareUpdate::verify_and_mark_updated`]); всё, что перед ней, —
-//! здесь. Без подписи применять нечего: `board.ota.mark_updated()` через порт.
+//! ([`SignedFirmwareUpdate::verify_and_mark_updated`](ports::SignedFirmwareUpdate::verify_and_mark_updated));
+//! всё, что перед ней, — здесь. Без подписи применять нечего:
+//! `board.ota.mark_updated()` через порт.
 
 use ports::{SignedFirmwareUpdate, UpdateError};
 

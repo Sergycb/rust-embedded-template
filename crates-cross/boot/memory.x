@@ -24,6 +24,6 @@ __bootloader_dfu_start = ORIGIN(DFU) - ORIGIN(FLASH);
 __bootloader_dfu_end   = ORIGIN(DFU) + LENGTH(DFU) - ORIGIN(FLASH);
 
 /* Сюда пишет panic-persist — по голым адресам, без секции: секция здесь
-   ломает flip-link, см. README. */
+   ломает flip-link, см. docs/diagnostics.md. */
 _panic_dump_start = ORIGIN(PANIC);
 _panic_dump_end   = ORIGIN(PANIC) + LENGTH(PANIC);

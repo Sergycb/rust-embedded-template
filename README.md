@@ -818,7 +818,7 @@ protection: PR, не трогающий распиновку, его не зап
 - фича банковой схемы `embassy-stm32` (`single-bank`) — только для чипов, у которых
   их несколько; без неё build-скрипт `embassy-stm32` просто паникует;
 - `MEMORY {}` в `crates-cross/*/memory.x` — адреса и размеры `FLASH`/`BOOTLOADER_STATE`/
-  `ACTIVE`/`DFU`/`RAM`/`PERSIST`/`PANIC`, посчитанные по реальным границам секторов вашего чипа
+  `ACTIVE`/`DFU`/`RAM`/`PANIC`, посчитанные по реальным границам секторов вашего чипа
   (источник — `stm32-metapac`, та же зависимость, что уже тянет `embassy-stm32`), плюс
   **все остальные регионы памяти чипа** под своими именами: `ITCM`, `AXISRAM`, `CCMRAM`,
   `BKPSRAM`, `EEPROM`, `OTP` и т.д. Окна внешних шин (`FMC_*`, `SDRAM_*`, `OCTOSPI_*`) и

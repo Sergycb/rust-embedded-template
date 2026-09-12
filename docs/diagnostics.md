@@ -24,7 +24,8 @@ dev-сборке имя `panic_persist` не упоминается нигде**
 
 ## Регион `PANIC`
 
-Отрезан от конца RAM при генерации (`chip-data-gen`, `RESERVED_*`), адресуется
+Отрезан от конца RAM при генерации (`chip-data-gen`, `PANIC_FRACTION`/`PANIC_MIN`/
+`PANIC_MAX`), адресуется
 символами `_panic_dump_start`/`_panic_dump_end` из `memory.x` — без секции: секция с
 VMA у верхней границы RAM убеждает `flip-link`, что двигать стек некуда, и прошивка
 уходит в HardFault на первом же `push`. Формат записи — `panic-persist`: магия

@@ -37,7 +37,6 @@ ports = { workspace = true }
 defmt-or-log = { workspace = true }
 log = { workspace = true, optional = true }
 defmt = { workspace = true, optional = true }
-thiserror = { workspace = true }
 # Задачи, которые спавнит граф из `crates-cross/app`, живут здесь (`app.rs`).
 # `supervisor` нужен им ради двух типов, которыми граф разговаривает с задачей:
 # `Heartbeat` (отметка у сторожа) и `TaskExit` (чем кончился прогон). Знания о

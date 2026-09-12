@@ -48238,7 +48238,7 @@ if variable::is_set("write_size") {
         panic_section = [
             "",
             "/* Сюда пишет panic-persist (паникёр release-профиля) — по голым */",
-            "/* адресам, без секции: секция здесь ломает flip-link, см. README. */",
+            "/* адресам, без секции: секция здесь ломает flip-link, см. docs/diagnostics.md. */",
             "_panic_dump_start = ORIGIN(PANIC);",
             "_panic_dump_end   = ORIGIN(PANIC) + LENGTH(PANIC);",
         ];

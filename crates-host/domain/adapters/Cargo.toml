@@ -16,7 +16,6 @@ workspace = true
 # форматирует `[u8; N]` через `{}`, что умеет только `defmt::Format`). В
 # прошивку `defmt` включает crates-cross/Cargo.toml.
 defmt = [
-	"dep:defmt",
 	"ports/defmt",
 	"embassy-boot/defmt",
 	"sequential-storage/defmt",
@@ -36,5 +35,4 @@ embedded-storage-async = { workspace = true }
 # Хранилище настроек (settings.rs) — async API, отсюда и мост в flash.rs.
 sequential-storage = { workspace = true }
 embassy-sync = { workspace = true }
-defmt = { workspace = true, optional = true }
 salty = { workspace = true, optional = true }

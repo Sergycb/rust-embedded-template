@@ -259,8 +259,16 @@ impl<DFU: NorFlash, STATE: NorFlash> FirmwareUpdate for Signed<DFU, STATE> {
     fn mark_booted(&mut self) -> Result<(), Self::Error> {
         self.inner.mark_booted()
     }
+    /// В проекте с подписью единственный путь к обмену разделов —
+    /// `domain::update::apply_signed` (проверка длины, занятости, версии,
+    /// ключа и самой подписи). Порт объявляет `mark_updated` безусловно,
+    /// поэтому метод остаётся, но отвечает `BadState` — тот же отказ, которым
+    /// `embassy-boot` отвечает на попытку обмена в негодном состоянии, и тот
+    /// же, что даёт `verify_and_mark_updated` при неподтверждённом образе. Так
+    /// восстанавливается гарантия старого `bsp::ota`, где у подписанного
+    /// варианта метода `mark_updated` не было вовсе.
     fn mark_updated(&mut self) -> Result<(), Self::Error> {
-        self.inner.mark_updated()
+        Err(Error::BadState)
     }
 }
 
@@ -289,6 +297,8 @@ impl<DFU: NorFlash, STATE: NorFlash> ports::SignedFirmwareUpdate for Signed<DFU,
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "signed")]
+    use super::Signed;
     use super::{Error, Updater};
     use crate::mem_flash::MemFlash;
     use embedded_storage::nor_flash::NorFlashErrorKind;
@@ -391,6 +401,21 @@ mod tests {
 
         u.mark_booted().expect("подтвердить");
         assert!(!u.is_busy().expect("состояние"));
+    }
+
+    /// Порт объявляет `mark_updated` безусловно, но у `Signed` он не должен
+    /// давать обменять разделы мимо проверки подписи — единственный путь
+    /// туда лежит через `domain::update::apply_signed`.
+    #[cfg(feature = "signed")]
+    #[test]
+    fn signed_mark_updated_always_refuses() {
+        let mut signed = Signed::new(updater(), 1, [7; 32]);
+
+        assert!(matches!(signed.mark_updated(), Err(Error::BadState)));
+        assert!(
+            !signed.is_busy().expect("состояние"),
+            "состояние не тронуто"
+        );
     }
 
     #[test]

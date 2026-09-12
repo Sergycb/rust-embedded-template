@@ -79,9 +79,9 @@ fn default_cases() -> Vec<Case> {
         // Ветка «config есть, bootloader и ota.rs удалены» — только здесь.
         Case::new("stm32f407ve").variant("config", &["config=yes"]),
         // Подпись образа: фича `ed25519-salty` у embassy-boot, `salty` со
-        // своей `slow-motion` и `verify_and_mark_updated` вместо
-        // `mark_updated` в bsp. Проверяется на чипе с OTA — без него подпись
-        // хук выключает.
+        // своей `slow-motion` и тип `Ota` в bsp — `adapters::ota::Signed`
+        // вместо `Updater`, с добавленными `FW_VERSION`/`PUBLIC_KEY`.
+        // Проверяется на чипе с OTA — без него подпись хук выключает.
         Case::new("stm32f407ve").variant("signed", &["signed=yes"]),
         // Единственная ветка, где стёртый флеш читается нулями: у L0/L1 хук
         // включает `flash-erase-zero` у embassy-boot, иначе bootloader читает
