@@ -8,7 +8,7 @@
 //! всё, что перед ней, — здесь. Без подписи применять нечего:
 //! `board.ota.mark_updated()` через порт.
 
-use ports::{SignedFirmwareUpdate, UpdateError};
+use ports::{SignedFirmwareUpdate, UpdateError, VerifyError};
 
 use crate::firmware;
 
@@ -92,7 +92,12 @@ pub fn apply_signed<F: SignedFirmwareUpdate>(
         return Err(UpdateError::NoPublicKey);
     }
 
-    flash.verify_and_mark_updated(signature, len)?;
+    flash
+        .verify_and_mark_updated(signature, len)
+        .map_err(|err| match err {
+            VerifyError::BadSignature => UpdateError::BadSignature,
+            VerifyError::Flash(err) => UpdateError::Flash(err),
+        })?;
     Ok(())
 }
 
@@ -101,7 +106,7 @@ mod tests {
     use super::apply_signed;
     use crate::firmware::pack;
     use crate::test_support::{FakeFlash, SIGNATURE};
-    use ports::UpdateError;
+    use ports::{UpdateError, VerifyError};
 
     #[test]
     fn accepts_a_newer_signed_image() {
@@ -185,14 +190,28 @@ mod tests {
         assert!(flash.verified.is_empty(), "до криптографии дойти не должно");
     }
 
+    /// Подпись не сошлась — свой вариант, а не `Flash(_)`: отправителю
+    /// важно отличить «исправь ключ» от «устройство неисправно».
     #[test]
-    fn passes_a_signature_failure_through() {
+    fn reports_a_bad_signature_as_such() {
         let mut flash = FakeFlash::with_image(64, pack(1, 2, 4));
-        flash.verify = Err("подпись не сошлась");
+        flash.verify = Err(VerifyError::BadSignature);
 
         assert_eq!(
             apply_signed(&mut flash, &SIGNATURE, 64),
-            Err(UpdateError::Flash("подпись не сошлась"))
+            Err(UpdateError::BadSignature)
+        );
+    }
+
+    /// Отказ флеша внутри проверки доходит как отказ флеша.
+    #[test]
+    fn passes_a_flash_failure_inside_verify_through() {
+        let mut flash = FakeFlash::with_image(64, pack(1, 2, 4));
+        flash.verify = Err(VerifyError::Flash("флеш отказал"));
+
+        assert_eq!(
+            apply_signed(&mut flash, &SIGNATURE, 64),
+            Err(UpdateError::Flash("флеш отказал"))
         );
     }
 }

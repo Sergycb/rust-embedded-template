@@ -10,7 +10,7 @@ use core::future::Future;
 use core::pin::pin;
 use core::task::{Context, Poll, Waker};
 
-use ports::{FirmwareUpdate, ImageSource, SignedFirmwareUpdate};
+use ports::{FirmwareUpdate, ImageSource, SignedFirmwareUpdate, VerifyError};
 
 use crate::firmware::pack;
 use crate::update::VERSION_BYTES;
@@ -83,7 +83,7 @@ pub(crate) struct FakeFlash {
     pub(crate) writes: Vec<(u32, usize)>,
     pub(crate) version: u32,
     pub(crate) key: [u8; 32],
-    pub(crate) verify: Result<(), &'static str>,
+    pub(crate) verify: Result<(), VerifyError<&'static str>>,
     pub(crate) verified: Vec<([u8; 64], u32)>,
     /// Что ответить на `mark_updated`; `Err` разыгрывает отказ флеша.
     pub(crate) mark_updated: Result<(), &'static str>,
@@ -189,7 +189,7 @@ impl SignedFirmwareUpdate for FakeFlash {
         &mut self,
         signature: &[u8; 64],
         len: u32,
-    ) -> Result<(), Self::Error> {
+    ) -> Result<(), VerifyError<Self::Error>> {
         self.verified.push((*signature, len));
         self.verify
     }

@@ -44,4 +44,4 @@ pub mod settings;
 
 pub use download::{DownloadError, ImageSource};
 pub use settings::SettingsStorage;
-pub use update::{FirmwareUpdate, SignedFirmwareUpdate, UpdateError};
+pub use update::{FirmwareUpdate, SignedFirmwareUpdate, UpdateError, VerifyError};

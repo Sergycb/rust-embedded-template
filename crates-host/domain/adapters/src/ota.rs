@@ -24,7 +24,7 @@ use embassy_boot::{
     AlignedBuffer, BlockingFirmwareState, BlockingFirmwareUpdater, FirmwareUpdaterConfig, State,
 };
 use embedded_storage::nor_flash::{NorFlash, NorFlashErrorKind};
-use ports::FirmwareUpdate;
+use ports::{FirmwareUpdate, VerifyError};
 
 // Тип возвращается портом, поэтому называть его должно быть чем — иначе
 // пользователю пришлось бы объявлять прямую зависимость на `embassy-boot`
@@ -285,13 +285,22 @@ impl<DFU: NorFlash, STATE: NorFlash> ports::SignedFirmwareUpdate for Signed<DFU,
     /// Проверка читает весь раздел и считает по нему хеш — заметное время
     /// (портируемая реализация ed25519 — порядка сотни миллионов тактов).
     /// Случается это один раз перед перезагрузкой.
+    ///
+    /// `Signature(_)` у embassy-boot — и не сошедшаяся подпись, и ключ,
+    /// который не разбирается как точка кривой; для отправителя это одно и
+    /// то же «подпись негодная».
     fn verify_and_mark_updated(
         &mut self,
         signature: &[u8; 64],
         len: u32,
-    ) -> Result<(), Self::Error> {
+    ) -> Result<(), VerifyError<Self::Error>> {
         let key = self.public_key;
-        self.inner.verify_and_mark_updated(&key, signature, len)
+        self.inner
+            .verify_and_mark_updated(&key, signature, len)
+            .map_err(|err| match err {
+                Error::Signature(_) => VerifyError::BadSignature,
+                other => VerifyError::Flash(other),
+            })
     }
 }
 
@@ -415,6 +424,26 @@ mod tests {
         assert!(
             !signed.is_busy().expect("состояние"),
             "состояние не тронуто"
+        );
+    }
+
+    /// Подпись, которая не может сойтись (ключ и подпись — константы), доходит
+    /// до порта своим вариантом, а не как отказ флеша.
+    #[cfg(feature = "signed")]
+    #[test]
+    fn signed_reports_a_bad_signature_as_such() {
+        use ports::{SignedFirmwareUpdate, VerifyError};
+        let mut signed = Signed::new(updater(), 1, [7; 32]);
+        signed.prepare(64).expect("стереть под образ");
+        signed.write(0, &[0xA5; 64]).expect("записать образ");
+
+        assert!(matches!(
+            signed.verify_and_mark_updated(&[9; 64], 64),
+            Err(VerifyError::BadSignature)
+        ));
+        assert!(
+            !signed.is_busy().expect("состояние"),
+            "негодная подпись не должна помечать обмен"
         );
     }
 
