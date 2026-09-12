@@ -52,8 +52,10 @@ pub struct Board {
     /// поле `ota_link` ниже.
     pub ota: crate::ota::Ota,
     /// Канал доставки образа — заглушка `bsp::ota::Link`, пока проект не
-    /// подставит свой транспорт. Вместе с `ota` уезжает в узел `OTA`
-    /// графа (`fragments:` в `crates-cross/app/src/graph.rs`).
+    /// подставит свой транспорт. Вместе с `ota` {% if graph == "true" %}уезжает в узел `OTA`
+    /// графа (`fragments:` в `crates-cross/app/src/graph.rs`){% else %}уходит в
+    /// `domain::ota::run{% if signed == "true" %}_signed{% endif %}(&mut board.ota_link, &mut board.ota)`
+    /// — зовите его сами из `main`{% endif %}.
     pub ota_link: crate::ota::Link,
 {%- endif %}
 {%- if config == "true" %}

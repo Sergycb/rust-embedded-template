@@ -161,17 +161,19 @@ assign-resources = { version = "0.5.0" }
 #   `embassy_executor::Metadata`, то есть в defmt-виды задач и в дампы, где
 #   иначе стоял бы непрозрачный идентификатор. Единственная из двух фич,
 #   которая правда занимает flash: по `&'static str` на узел.
+{%- if ota == "true" %}
 #
-# Третья, `local-resources`, есть только в проекте с OTA (её ставит генерация
-# вместе с узлом `OTA`): слоты узла (`LINK`, `FLASH` во фрагменте
-# `domain::ota`) помечены `local`, потому что держат `!Send`-объекты платы —
-# `bsp::ota::Ota` ссылается на `Mutex<NoopRawMutex, …>`, а обычный слот графа
-# это `static`, которому нужен `Send`. Фича включает `LocalResourceSlot` и
-# снимает у `supervisor` `forbid(unsafe_code)` до `deny` (у слота один
-# документированный `unsafe impl Sync`), а макрос эмитит один `unsafe`-блок
-# (`LocalResourceSlot::empty()`) в `app`: обязательство «значение живёт на
-# исполнителе, спавнящем граф» лежит в крейте графа, а не в библиотеке. Это
-# то же допущение, что у `NoopRawMutex` в `bsp::FlashMutex`; менять их вместе.
+# Третья, `local-resources`, — ради узла `OTA`: его слоты (`LINK`, `FLASH` во
+# фрагменте `domain::ota`) помечены `local`, потому что держат `!Send`-объекты
+# платы — `bsp::ota::Ota` ссылается на `Mutex<NoopRawMutex, …>`, а обычный
+# слот графа это `static`, которому нужен `Send`. Фича включает
+# `LocalResourceSlot` и снимает у `supervisor` `forbid(unsafe_code)` до `deny`
+# (у слота один документированный `unsafe impl Sync`), а макрос эмитит по
+# `unsafe`-блоку на каждый такой `static` (`LocalResourceSlot::empty()`, здесь
+# два) в `app`: обязательство «значение живёт на исполнителе, спавнящем граф»
+# лежит в крейте графа, а не в библиотеке. Это то же допущение, что у
+# `NoopRawMutex` в `bsp::FlashMutex`; менять их вместе.
+{%- endif %}
 supervisor       = { git = "https://github.com/Sergycb/rust-lib.git", features = [
 	"defmt",
 	"metadata-name",{% if ota == "true" %}
