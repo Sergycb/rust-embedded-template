@@ -52,7 +52,8 @@ cargo xtask flash        # прошить плату
 |---|---|---|
 | Распиновка платы | `crates-cross/bsp/src/board.rs` | `assign_resources!` разложит `Peripherals` по именованным группам — из них `bsp` соберёт драйверы; наружу уходит не периферия, а готовый объект (`docs/resources.md`) |
 | Граф задач | `crates-cross/app/src/graph.rs` | `supervisor_graph!`: порядок старта, рестарты с backoff, watchdog, обмен между задачами |
-| Логика и узлы графа | `crates-host/domain/` | всё, что не про регистры: автоматы, протоколы, конфигурация, а также объявления узлов (`supervisor_fragment!`) и их работа (`domain::app::run`) — тестируется на хосте |
+| Логика и узлы графа | `crates-host/domain/` | всё, что не про регистры: автоматы, протоколы, конфигурация, а также объявления узлов (`supervisor_fragment!`) и их работа (`domain::app::run`) — тестируется на хосте, только функции над портами |
+| Адаптеры без чипа | `crates-host/domain/adapters/` | реализации портов, которым хватает `embedded-storage`/`embedded-hal`: пока это OTA поверх `embassy-boot` (`adapters::ota`) — generic по флешу, тестируется на хосте |
 
 Граф и модули `bsp` уже содержат рабочие примеры в doc-комментариях и в `docs/` — с
 объяснением, почему выбрана именно эта библиотека, а не соседняя.
@@ -188,21 +189,23 @@ flash и безусловно прыгает в него (`unsafe { bl.load(entr
 `--define ota=no`). Тогда приложению достаётся весь flash вместо раздела `ACTIVE`, а
 из проекта уходят `crates-cross/boot`, `bsp::ota` и всё, что ниже.
 
-Всё, что не зависит от канала доставки, готово и живёт в `crates-cross/bsp/src/ota.rs`;
-`Board` отдаёт это полем `ota`:
+Всё, что не зависит от канала доставки, готово: адаптер `adapters::ota` (поверх
+`embassy-boot`) пишет образ и хранит состояние bootloader'а, а `crates-cross/bsp/src/ota.rs`
+собирает его из линкерных символов `memory.x`; `Board` отдаёт это полем `ota`:
 
 ```rust
-use domain::download::Download;
+use domain::download::receive;
 
-// Download берёт на себя всё, что не зависит от канала: сверяет длину с
+// receive берёт на себя всё, что не зависит от канала: сверяет длину с
 // вместимостью до стирания, готовит раздел, копит куски до слова флеша.
-let mut download = Download::begin(&mut board.ota, link.announced_len())?;
-while let Some(chunk) = link.next_chunk().await {
-    download.push(&mut board.ota, chunk)?;
-}
-download.finish(&mut board.ota)?;
+let len = receive(&mut link, &mut board.ota, link.announced_len()).await?;
 
-board.ota.mark_updated()?;         // поменять разделы на следующем сбросе
+// Дальше — применение: без подписи поменять разделы просит сам порт,
+use ports::FirmwareUpdate;
+board.ota.mark_updated()?;
+// а с подписью (signed=yes) — вместо строки выше:
+// domain::update::apply_signed(&mut board.ota, &signature, len)?;
+
 cortex_m::peripheral::SCB::sys_reset();
 ```
 
@@ -211,9 +214,9 @@ cortex_m::peripheral::SCB::sys_reset();
 в зависимости от чипа), а канал отдаёт пакеты какой угодно длины — значит куски надо
 копить; последний почти никогда не кратен слову; смещение надо вести самому и не дать
 образу вылезти за обещанную длину; а длину — сверить с вместимостью **до** стирания,
-потому что стирание уничтожает образ, в который устройство откатывается. `Download`
-делает всё это и проверен host-тестами на кусках по одному байту, обрыве связи и лишних
-данных — `crates-host/domain/src/download.rs`.
+потому что стирание уничтожает образ, в который устройство откатывается. `receive`
+делает всё это и проверена host-тестами на кусках по одному байту, обрыве связи и
+лишних данных — `crates-host/domain/src/download.rs`.
 
 Под ним лежит `prepare`, и он не формальность: без него запись ляжет в нестёртую память
 — на F2/F4/F7 молча, побитовым И со старым содержимым, на остальных семействах ошибкой.
@@ -247,9 +250,11 @@ cortex_m::peripheral::SCB::sys_reset();
 
 #### Подпись образа
 
-Четвёртый и последний вопрос при генерации (`--define signed=yes`, требует OTA). С ним вместо
-`mark_updated()` появляется `verify_and_mark_updated(&signature, length)`: устройство
-считает SHA-512 принятого образа и проверяет его подпись открытым ключом, зашитым в
+Четвёртый и последний вопрос при генерации (`--define signed=yes`, требует OTA). С ним
+вместо `board.ota.mark_updated()` вызывается `domain::update::apply_signed(&mut
+board.ota, &signature, length)`: она проверяет длину, занятость раздела и версию образа
+(защита от отката — ниже) и лишь затем поручает адаптеру (`adapters::ota::Signed`)
+посчитать SHA-512 принятого образа и проверить его подпись открытым ключом, зашитым в
 прошивку. Не сошлось — разделы не меняются, устройство продолжает работать на текущем
 образе.
 

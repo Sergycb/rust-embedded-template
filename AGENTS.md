@@ -141,8 +141,9 @@ read`: руками пришлось бы сначала найти адрес �
   паникёр выбирается `#[cfg(debug_assertions)]` на `use … as _;`, и в dev-сборке имя
   `panic_persist` не должно упоминаться нигде (`bsp` в том числе) —
   `docs/diagnostics.md`, `docs/conventions.md`.
-- `prepare(len)` в `domain::download::Download` зовётся один раз перед приёмом образа,
-  `write()` сектор больше не стирает — `docs/ota.md`.
+- `prepare(len)` порта `FirmwareUpdate` зовётся один раз перед приёмом образа
+  (внутри `domain::download::receive`), `write()` сектор больше не стирает —
+  `docs/ota.md`.
 {%- if graph == "true" %}
 - Три таймаута сторожа связаны цепочкой (`BACKOFF_MAX` < `APP_WATCHDOG` < `HW_TIMEOUT_US`) —
   менять только вместе — `docs/watchdog.md`.

@@ -55,7 +55,8 @@ fn main() {
     // гарантирована: либо 32 байта ключа, либо 32 нуля.
     //
     // Нули означают «ключ ещё не создан», и `domain::update::apply_signed`
-    // отказывается работать с ними отдельной явной проверкой — см. src/ota.rs.
+    // отказывается работать с ними отдельной явной проверкой — см.
+    // crates-host/domain/src/update.rs.
     let root = manifest
         .parent()
         .and_then(|crates_cross| crates_cross.parent())
