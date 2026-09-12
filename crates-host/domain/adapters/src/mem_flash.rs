@@ -117,12 +117,6 @@ impl<const SIZE: usize, const ERASE: usize, const WRITE: usize>
 }
 
 /// Один `poll` — фейки не ждут.
-///
-/// Пока не вызывается ни одним тестом этой задачи — понадобится Task 14-15
-/// (мост в `sequential-storage`); `#[allow(dead_code)]`, чтобы `-D warnings`
-/// не спотыкался о временно неиспользуемую публичную функцию `pub(crate)`
-/// модуля.
-#[allow(dead_code)]
 pub fn block_on<T>(future: impl core::future::Future<Output = T>) -> T {
     use core::task::{Context, Poll, Waker};
     let mut future = core::pin::pin!(future);

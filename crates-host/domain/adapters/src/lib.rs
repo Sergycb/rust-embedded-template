@@ -14,5 +14,9 @@
 /// как два `NorFlash`.
 pub mod ota;
 
+/// Мост blocking → async над общим `Flash` под `blocking_mutex` — то, чего
+/// ждёт `sequential-storage` от флеша, который делится с OTA.
+pub mod flash;
+
 #[cfg(test)]
 pub(crate) mod mem_flash;
