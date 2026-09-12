@@ -63,7 +63,6 @@ impl FakeLink {
     }
 
     /// Заголовки, которые `begin` отдаст по одному на цикл.
-    #[expect(dead_code, reason = "зовут тесты узла OTA — задача 5")]
     pub(crate) fn announcing(mut self, announces: impl IntoIterator<Item = Announce>) -> Self {
         self.announces = announces.into_iter().collect();
         self
