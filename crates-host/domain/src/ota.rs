@@ -183,6 +183,7 @@ where
     }
     let len = match download::receive(link, flash, announce.len).await {
         Ok(len) => len,
+        // Канал — наверх без warn!: о нём скажет serve, сообщать отправителю некому.
         Err(DownloadError::Source(err)) => return Err(err),
         Err(err) => {
             warn!("ota: приём не удался: {:?}", Debug2Format(&err));
@@ -237,6 +238,9 @@ where
 }
 
 /// Код отказа для отправителя; `Err` — отказал сам канал, и сообщать некому.
+///
+/// `attempt` перехватывает `Source` раньше — здесь эта ветка нужна
+/// тотальности, а не потоку.
 fn download_rejection<S, F>(err: DownloadError<S, F>) -> Result<Rejection, S> {
     Ok(match err {
         DownloadError::Empty | DownloadError::TooLong { .. } => Rejection::Length,
@@ -255,6 +259,44 @@ fn update_rejection<E>(err: &UpdateError<E>) -> Rejection {
         UpdateError::NoPublicKey | UpdateError::BadSignature => Rejection::Signature,
         UpdateError::Flash(_) => Rejection::Device,
     }
+}
+
+// Узлы объявлены здесь же, где лежит их задача, — как `APP_FRAG` в
+// `domain::app`; compose-site (`crates-cross/app/src/graph.rs`) только
+// перечисляет фрагмент и кормит его входом. Два фрагмента, а не один,
+// потому что применение различается по Cargo-варианту `signed`, а Liquid в
+// `domain` запрещён: какой из двух назвать — решает `graph.rs`.
+//
+// `boot: inputs: …` — собственная привязка фрагмента: compose-site пишет
+// `fragments: [::domain::OTA_FRAG = ::domain::ota::Inputs { link: …, flash: … }]`,
+// а `spawn_all` связывает её первой строкой пролога, и инициализаторы слотов
+// ниже читают её поля. Так фрагмент не видит `Board` вовсе — только то, что
+// ему дали.
+//
+// Имена `OtaLink`, `OtaFlash`, `RestartPolicy`, `backoff()` резолвятся НЕ
+// здесь, а на compose-site (`macro_rules!` подставляет токены в место
+// вызова). Для политики это прецедент `APP_FRAG`; для типов слотов — его
+// расширение: тип ресурсного слота — `static`, назвать его фрагмент обязан,
+// а конкретный тип (`bsp::ota::Ota`, транспорт проекта) `domain` не видит и
+// видеть не должен. `graph.rs` объявляет оба псевдонима одной строкой каждый.
+//
+// Без `watchdog:` намеренно — см. `run`.
+supervisor::supervisor_fragment! {
+    name: OTA_FRAG;
+    boot: inputs: $crate::ota::Inputs<OtaLink, OtaFlash>;
+
+    node OTA, deps: [], restart: RestartPolicy::OnFailure, backoff: backoff(),
+        resources: [LINK: OtaLink = inputs.link, FLASH: OtaFlash = inputs.flash],
+        task: $crate::ota::run(ctx.link, ctx.flash);
+}
+
+supervisor::supervisor_fragment! {
+    name: OTA_SIGNED_FRAG;
+    boot: inputs: $crate::ota::Inputs<OtaLink, OtaFlash>;
+
+    node OTA, deps: [], restart: RestartPolicy::OnFailure, backoff: backoff(),
+        resources: [LINK: OtaLink = inputs.link, FLASH: OtaFlash = inputs.flash],
+        task: $crate::ota::run_signed(ctx.link, ctx.flash);
 }
 
 #[cfg(test)]
@@ -502,5 +544,10 @@ mod tests {
 
         assert_eq!(exit, TaskExit::Failed);
         assert_eq!(link.finished, vec![Ok(())]);
+        assert_eq!(
+            flash.verified,
+            vec![(SIGNATURE, 64)],
+            "режим с подписью: обмен через verify_and_mark_updated"
+        );
     }
 }
