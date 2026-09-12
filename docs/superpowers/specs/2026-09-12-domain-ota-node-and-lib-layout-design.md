@@ -138,8 +138,7 @@ pub trait ImageSource {
 вместо `Signature`. Поэтому:
 
 ```rust
-#[non_exhaustive]
-#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum VerifyError<E> {
     #[error("подпись не сошлась")]
@@ -152,6 +151,10 @@ pub enum VerifyError<E> {
 fn verify_and_mark_updated(&mut self, signature: &[u8; 64], len: u32)
     -> Result<(), VerifyError<Self::Error>>;
 ```
+
+Без `#[non_exhaustive]` и с `Clone, Copy` (в отличие от `Rejection`): `domain` —
+другой крейт, а не `ports`, и обязан отобразить оба варианта exhaustive-`match`'ем;
+`Copy` — чтобы фейк в тестах мог вернуть значение из `&mut self`.
 
 `adapters::ota::Signed` маппит `FirmwareUpdaterError::Signature(_)` →
 `BadSignature`, остальное → `Flash`. `UpdateError` получает вариант
@@ -221,7 +224,7 @@ supervisor::supervisor_fragment! {
     name: OTA_FRAG;
     boot: inputs: $crate::ota::Inputs<OtaLink, OtaFlash>;
     node OTA, deps: [], restart: RestartPolicy::OnFailure, backoff: backoff(),
-        resources: [LINK: OtaLink = inputs.link, FLASH: OtaFlash = inputs.flash],
+        resources: [LINK: local OtaLink = inputs.link, FLASH: local OtaFlash = inputs.flash],
         task: $crate::ota::run(ctx.link, ctx.flash);
 }
 
@@ -229,10 +232,14 @@ supervisor::supervisor_fragment! {
     name: OTA_SIGNED_FRAG;
     boot: inputs: $crate::ota::Inputs<OtaLink, OtaFlash>;
     node OTA, deps: [], restart: RestartPolicy::OnFailure, backoff: backoff(),
-        resources: [LINK: OtaLink = inputs.link, FLASH: OtaFlash = inputs.flash],
+        resources: [LINK: local OtaLink = inputs.link, FLASH: local OtaFlash = inputs.flash],
         task: $crate::ota::run_signed(ctx.link, ctx.flash);
 }
 ```
+
+Оба слота — `local`: объекты платы `!Send` (`bsp::ota::Ota` держит
+`&'static Mutex<NoopRawMutex, …>`), а обычный слот графа — `static`, которому
+нужен `Send`.
 
 `OtaLink`, `OtaFlash`, `RestartPolicy`, `backoff()` резолвятся на
 compose-site. Для констант политики это уже прецедент (`APP_WATCHDOG`); для

@@ -32,8 +32,9 @@ skill'ом `rust-engineering` и не дублируются здесь. Это�
 периферия) и оркестрация задач (`Spawner`, supervisor-графы, watchdog).
 Всё остальное — даже асинхронное и «системное» на вид (стейтчарты, RPC, синхронизация
 задач) — живёт в `domain`, а не в `cross`. Узлы графа тоже: подсистема объявляет свои
-`supervisor_fragment!`-ом рядом со своей задачей (`domain::app::APP_FRAG`), а
-`crates-cross/app/src/graph.rs` их только собирает (`fragments:`, `boot:`, `watchdog:`).
+`supervisor_fragment!`-ом рядом со своей задачей (`domain::app::APP_FRAG`,
+`domain::ota::OTA_FRAG`), а `crates-cross/app/src/graph.rs` их только собирает
+(`fragments:`, `boot:`, `watchdog:`).
 Отсюда и зависимость `domain` от `supervisor` (ради `Heartbeat`/`TaskExit` в сигнатуре) —
 `embassy-executor` приезжает туда транзитивно, и это осознанно; `embassy-stm32` — нет.
 Подробности, прецеденты и пограничные случаи (например, `watchdog`) — `docs/architecture.md`.
@@ -144,6 +145,14 @@ read`: руками пришлось бы сначала найти адрес �
 - `prepare(len)` порта `FirmwareUpdate` зовётся один раз перед приёмом образа
   (внутри `domain::download::receive`), `write()` сектор больше не стирает —
   `docs/ota.md`.
+- `lib.rs` только объявляет: атрибуты, `//!`, `mod`, `pub use` — определения
+  живут в модулях — `docs/conventions.md`.
+- Узел OTA не сбрасывает МК и не решает, что делать с исходом: это
+  `ImageSource::finish` в `bsp`; отказы до стирания (`Busy`, нет подписи,
+  длина) обязаны оставаться до `receive` — `docs/ota.md`.
+- `NoopRawMutex` у `bsp::FlashMutex` и `local` на слотах узла OTA
+  (`domain::ota`) — одно допущение «один исполнитель», менять вместе —
+  `docs/flash.md`, `docs/architecture.md`.
 {%- if graph == "true" %}
 - Три таймаута сторожа связаны цепочкой (`BACKOFF_MAX` < `APP_WATCHDOG` < `HW_TIMEOUT_US`) —
   менять только вместе — `docs/watchdog.md`.
