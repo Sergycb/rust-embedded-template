@@ -42,8 +42,10 @@ supervisor-графы, watchdog). Вся остальная логика — в 
 **Адаптеры делятся по одному признаку — нужен ли чип.** Реализация порта, которой
 хватает трейтов `embedded-storage`/`embedded-hal` (раздел флеша или шина приходят
 параметром), лежит в `crates-host/domain/adapters` и тестируется на хосте на фейке:
-`adapters::ota` (поверх `embassy-boot`), `adapters::settings` и `adapters::flash`
-(поверх `sequential-storage`). Та, которой нужны `embassy_stm32::peripherals`,
+`adapters::ota` (поверх `embassy-boot`), `adapters::settings` (поверх
+`sequential-storage`) и `adapters::flash` (мост blocking → async над общим
+`Flash`, ради асинхронного API того же `sequential-storage`). Та, которой
+нужны `embassy_stm32::peripherals`,
 линкерный символ или регистр, — в `crates-cross/bsp`: сторож над IWDG (`bsp::wdg`) и
 обвязка, строящая адаптеры из символов `memory.x` (`bsp::ota`, `bsp::config`) и
 дающая им псевдонимы для задач.
