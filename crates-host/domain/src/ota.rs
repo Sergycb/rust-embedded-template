@@ -4,18 +4,20 @@
 //! Здесь, а не в `crates-cross/app`, по общему правилу проекта (см.
 //! `domain::app`): что узел делает — логика, и проверяется она на хосте на
 //! фейках обоих портов. Проекту остаётся канал — реализация
-//! [`ImageSource`] под свой транспорт (USB CDC, UART, сеть) в `bsp`:
-//! заголовок, куски, отчёт отправителю — и одна строка в `fragments:` графа.
+//! [`ImageSource`](ports::ImageSource) под свой транспорт (USB CDC, UART,
+//! сеть) в `bsp`: заголовок, куски, отчёт отправителю — и одна строка в
+//! `fragments:` графа.
 //!
-//! Два входа — [`run`] и [`run_signed`] — потому что применение различается
-//! по Cargo-варианту (`signed`), а Liquid в `domain` запрещён. Выбор делает
-//! `crates-cross/app/src/graph.rs`: `OTA_FRAG` или `OTA_SIGNED_FRAG`. Обе
-//! функции лежат в любом проекте; во flash попадает только позванная —
-//! generic без вызова не мономорфизируется.
+//! Два входа — [`run`](crate::ota::run) и [`run_signed`](crate::ota::run_signed) —
+//! потому что применение различается по Cargo-варианту (`signed`), а Liquid в
+//! `domain` запрещён. Выбор делает `crates-cross/app/src/graph.rs`: `OTA_FRAG`
+//! или `OTA_SIGNED_FRAG`. Обе функции лежат в любом проекте; во flash попадает
+//! только позванная — generic без вызова не мономорфизируется.
 //!
-//! Что узел делает с исходом, он не решает: [`ImageSource::finish`] получает
-//! `Ok(())` или код отказа [`Rejection`], а ответить хосту, сбросить МК или и
-//! то и другое — выбор реализации порта. Подробности — `docs/ota.md`.
+//! Что узел делает с исходом, он не решает:
+//! [`ImageSource::finish`](ports::ImageSource::finish) получает `Ok(())` или
+//! код отказа [`Rejection`](ports::Rejection), а ответить хосту, сбросить МК
+//! или и то и другое — выбор реализации порта. Подробности — `docs/ota.md`.
 
 use core::fmt::Debug;
 
@@ -78,7 +80,7 @@ where
 }
 
 /// Узел `OTA` с проверкой подписи: принятый образ применяется
-/// [`update::apply_signed`](crate::update::apply_signed) — длина, занятость,
+/// [`apply_signed`](crate::update::apply_signed) — длина, занятость,
 /// версия, ключ, подпись, в этом порядке.
 ///
 /// Поведение по каналу — как у [`run`]. Отличие до приёма одно: заголовок
@@ -216,7 +218,7 @@ fn signed_check(announce: &Announce) -> Result<(), Rejection> {
     Ok(())
 }
 
-/// С подписью применение — [`update::apply_signed`](crate::update::apply_signed)
+/// С подписью применение — [`apply_signed`](crate::update::apply_signed)
 /// с подписью из заголовка.
 fn signed_apply<F>(flash: &mut F, announce: &Announce, len: u32) -> Result<(), Rejection>
 where
