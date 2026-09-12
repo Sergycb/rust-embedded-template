@@ -69,12 +69,14 @@ supervisor_graph! {
     // `watchdog:`. Имена, которые фрагменты называют внутри себя
     // (`RestartPolicy`, `backoff()`, `APP_WATCHDOG` — см. `domain::app`),
     // резолвятся здесь: `macro_rules!` подставляет токены в место вызова.
+{%- if ota == "true" %}
     //
     // Фрагмент со своей `boot:`-привязкой кормится прямо здесь (`= …`):
     // выражение вычисляется в прологе `spawn_all` первой строкой, полями
     // `board` по частичному move — `ota_link` и `ota` уезжают в слоты узла,
     // `watchdog` строкой ниже забирает сторож, остаток `board` дропается в
     // конце пролога.
+{%- endif %}
     fragments: [::domain::APP_FRAG{% if ota == "true" %}, ::domain::OTA{% if signed == "true" %}_SIGNED{% endif %}_FRAG = ::domain::ota::Inputs { link: board.ota_link, flash: board.ota }{% endif %}];
 
     boot: board: bsp::Board;

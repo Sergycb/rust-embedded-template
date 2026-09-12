@@ -280,13 +280,26 @@ fn update_rejection<E>(err: &UpdateError<E>) -> Rejection {
 // а конкретный тип (`bsp::ota::Ota`, транспорт проекта) `domain` не видит и
 // видеть не должен. `graph.rs` объявляет оба псевдонима одной строкой каждый.
 //
+// `local` на обоих слотах: объекты платы — `!Send` (`bsp::ota::Ota` держит
+// `&'static Mutex<NoopRawMutex, …>`, а `NoopRawMutex` намеренно не `Sync`),
+// тогда как обычный слот — `static`, которому нужен `Send`. `local` меняет
+// слот на `LocalResourceSlot` и снимает это требование, взамен обязывая
+// держать значение на одном исполнителе — том, что спавнит граф. Это то же
+// допущение, на котором держится `NoopRawMutex` у `FlashMutex`: один
+// исполнитель, без вытеснения. `LINK` помечен тоже, хотя заглушка шаблона
+// `Send`: транспорт проекта вправе быть `!Send` (DMA-буферы, периферия), и
+// править ради этого фрагмент здесь не придётся. Compose-site платит фичей
+// `supervisor/local-resources` и одним `unsafe`-блоком, который макрос
+// эмитит в `app`; узел с `local`-слотом нельзя перевести на другой
+// исполнитель (`executor:`).
+//
 // Без `watchdog:` намеренно — см. `run`.
 supervisor::supervisor_fragment! {
     name: OTA_FRAG;
     boot: inputs: $crate::ota::Inputs<OtaLink, OtaFlash>;
 
     node OTA, deps: [], restart: RestartPolicy::OnFailure, backoff: backoff(),
-        resources: [LINK: OtaLink = inputs.link, FLASH: OtaFlash = inputs.flash],
+        resources: [LINK: local OtaLink = inputs.link, FLASH: local OtaFlash = inputs.flash],
         task: $crate::ota::run(ctx.link, ctx.flash);
 }
 
@@ -295,7 +308,7 @@ supervisor::supervisor_fragment! {
     boot: inputs: $crate::ota::Inputs<OtaLink, OtaFlash>;
 
     node OTA, deps: [], restart: RestartPolicy::OnFailure, backoff: backoff(),
-        resources: [LINK: OtaLink = inputs.link, FLASH: OtaFlash = inputs.flash],
+        resources: [LINK: local OtaLink = inputs.link, FLASH: local OtaFlash = inputs.flash],
         task: $crate::ota::run_signed(ctx.link, ctx.flash);
 }
 

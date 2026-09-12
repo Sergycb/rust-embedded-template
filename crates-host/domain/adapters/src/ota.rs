@@ -24,7 +24,12 @@ use embassy_boot::{
     AlignedBuffer, BlockingFirmwareState, BlockingFirmwareUpdater, FirmwareUpdaterConfig, State,
 };
 use embedded_storage::nor_flash::{NorFlash, NorFlashErrorKind};
-use ports::{FirmwareUpdate, VerifyError};
+use ports::FirmwareUpdate;
+// Нужен только `Signed` (под фичей): безусловный импорт в проекте без подписи
+// давал `unused_imports` на каждой сборке — корневой lint этого не видит,
+// он всегда включает `adapters/signed`.
+#[cfg(feature = "signed")]
+use ports::VerifyError;
 
 // Тип возвращается портом, поэтому называть его должно быть чем — иначе
 // пользователю пришлось бы объявлять прямую зависимость на `embassy-boot`

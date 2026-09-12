@@ -294,6 +294,11 @@ SD-карта, у каждого свой формат пакета и своя 
 Вход узла собирается здесь же, в `fragments:`, из полей `Board`
 (`::domain::ota::Inputs { link: board.ota_link, flash: board.ota }`);
 подставили свой транспорт — поправьте псевдоним `OtaLink` выше по файлу.
+Оба слота узла — `local` (фича `supervisor/local-resources` в
+`crates-cross/Cargo.toml`): объекты платы `!Send`, и граф держит их на своём
+исполнителе, не требуя `Send`; захотите вынести OTA на другой исполнитель
+(`executor:`) — менять `local` во фрагменте `domain::ota` и `NoopRawMutex` у
+`bsp::FlashMutex` вместе.
 
 У узла нет `watchdog:`, и это не забывчивость: он законно висит в `begin()`
 сколько угодно, а опрашивать его с таймаутом нельзя — отмена future
