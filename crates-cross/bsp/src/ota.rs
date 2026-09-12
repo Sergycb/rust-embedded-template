@@ -1,9 +1,12 @@
 #![doc = include_str!("../../../docs/modules/bsp-ota.md")]
 
+use core::convert::Infallible;
+
 use embassy_boot::FirmwareUpdaterConfig;
 use embassy_embedded_hal::flash::partition::BlockingPartition;
 use embassy_stm32::flash::{Blocking, Flash};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use ports::{Announce, ImageSource, Rejection};
 
 use crate::FlashMutex;
 
@@ -61,6 +64,41 @@ pub const PUBLIC_KEY: [u8; 32] = *include_bytes!(concat!(env!("OUT_DIR"), "/ota-
 /// приходит из `adapters`.
 pub type Ota = adapters::ota::Updater<Partition, Partition>;
 {%- endif %}
+
+/// Канал доставки образа этой платы — заглушка, которую проект заменяет
+/// своим транспортом.
+///
+/// Каркас, как `domain::app::run`: узел `OTA` уже собран и спавнится графом,
+/// а как приходит образ — USB CDC, UART, сеть, SD-карта — шаблон не знает.
+/// Заглушка ждёт заголовок вечно, то есть узел висит в `begin()` и ничего не
+/// принимает; о себе она сообщает одной строкой в лог при старте.
+///
+/// Заменить — значит реализовать три метода `ports::ImageSource` на объекте,
+/// собранном в `Board::new` из вашей периферии: `begin` — дождаться и
+/// разобрать заголовок (длина{% if signed == "true" %}, подпись{% endif %}),
+/// `next` — отдавать куски образа, `finish` — сообщить исход отправителю и
+/// решить, перезапускать ли МК (`cortex_m::peripheral::SCB::sys_reset()`).
+/// Формат пакетов и проверка целостности — ваши; узел про них не знает.
+/// Всё, что не зависит от канала — сверка длины до стирания, буферизация до
+/// слова флеша, порядок проверок подписи, — уже в `domain::ota`.
+pub struct Link;
+
+impl ImageSource for Link {
+    type Error = Infallible;
+
+    async fn begin(&mut self) -> Result<Announce, Self::Error> {
+        defmt::warn!("bsp: транспорт OTA не реализован — узел OTA ждёт впустую");
+        core::future::pending().await
+    }
+
+    async fn next(&mut self) -> Result<Option<&[u8]>, Self::Error> {
+        Ok(None)
+    }
+
+    async fn finish(&mut self, _outcome: Result<(), Rejection>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
 
 /// Собирает адаптер из разделов `DFU` и `BOOTLOADER_STATE`, найденных по
 /// символам `memory.x`, — единственное здесь, что привязано к раскладке чипа.

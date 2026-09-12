@@ -49,6 +49,15 @@ const WATCHDOG_CHECK_EVERY: Duration = Duration::from_millis(100);
 /// эмитит сам `supervisor_graph!`, читая `HARDWARE_TIMEOUT` у типа сторожа);
 /// значение ниже — по-прежнему на вас.
 const APP_WATCHDOG: Duration = Duration::from_secs(7);
+{%- if ota == "true" %}
+
+// Два имени, которые называет фрагмент узла OTA (`domain::ota`): тип
+// ресурсного слота — `static`, назвать его фрагмент обязан, а конкретные
+// типы знает только эта сторона. Подставили свой транспорт вместо заглушки
+// — меняйте правую часть первой строки.
+type OtaLink = bsp::ota::Link;
+type OtaFlash = bsp::ota::Ota;
+{%- endif %}
 
 supervisor_graph! {
     // Узлы приезжают из `domain`: каждая подсистема объявляет свои
@@ -60,7 +69,13 @@ supervisor_graph! {
     // `watchdog:`. Имена, которые фрагменты называют внутри себя
     // (`RestartPolicy`, `backoff()`, `APP_WATCHDOG` — см. `domain::app`),
     // резолвятся здесь: `macro_rules!` подставляет токены в место вызова.
-    fragments: [::domain::APP_FRAG];
+    //
+    // Фрагмент со своей `boot:`-привязкой кормится прямо здесь (`= …`):
+    // выражение вычисляется в прологе `spawn_all` первой строкой, полями
+    // `board` по частичному move — `ota_link` и `ota` уезжают в слоты узла,
+    // `watchdog` строкой ниже забирает сторож, остаток `board` дропается в
+    // конце пролога.
+    fragments: [::domain::APP_FRAG{% if ota == "true" %}, ::domain::OTA{% if signed == "true" %}_SIGNED{% endif %}_FRAG = ::domain::ota::Inputs { link: board.ota_link, flash: board.ota }{% endif %}];
 
     boot: board: bsp::Board;
 

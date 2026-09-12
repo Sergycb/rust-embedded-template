@@ -49,8 +49,12 @@ pub struct Board {
 {%- if ota == "true" %}
     /// Обновление прошивки: адаптер поверх разделов `DFU`/`BOOTLOADER_STATE`
     /// (`adapters::ota`), собранный из символов `memory.x`. Канал доставки —
-    /// за пределами шаблона, см. `docs/modules/bsp-ota.md`.
+    /// поле `ota_link` ниже.
     pub ota: crate::ota::Ota,
+    /// Канал доставки образа — заглушка `bsp::ota::Link`, пока проект не
+    /// подставит свой транспорт. Вместе с `ota` уезжает в узел `OTA`
+    /// графа (`fragments:` в `crates-cross/app/src/graph.rs`).
+    pub ota_link: crate::ota::Link,
 {%- endif %}
 {%- if config == "true" %}
     /// Настройки, переживающие перезапуск и обновление прошивки: адаптер
@@ -129,6 +133,7 @@ impl Board {
         Self {
 {%- if ota == "true" %}
             ota: crate::ota::new(flash),
+            ota_link: crate::ota::Link,
 {%- endif %}
 {%- if config == "true" %}
             settings: crate::config::new(flash),
