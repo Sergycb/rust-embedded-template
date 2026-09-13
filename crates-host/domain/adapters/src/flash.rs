@@ -70,10 +70,10 @@ mod tests {
     use embedded_storage_async::nor_flash::{NorFlash, ReadNorFlash};
 
     use super::Shared;
-    use crate::mem_flash::{MemFlash, block_on};
+    use crate::mem_flash::MemFlash;
 
-    #[test]
-    fn forwards_every_operation_to_the_flash_under_the_mutex() {
+    #[tokio::test]
+    async fn forwards_every_operation_to_the_flash_under_the_mutex() {
         let flash: Mutex<NoopRawMutex, _> =
             Mutex::new(RefCell::new(MemFlash::<64, 16, 4>::filled(0)));
         let mut shared = Shared::new(&flash);
@@ -84,10 +84,10 @@ mod tests {
             4
         );
 
-        block_on(shared.erase(16, 32)).expect("стирание");
-        block_on(shared.write(16, &[0xA5; 4])).expect("запись");
+        shared.erase(16, 32).await.expect("стирание");
+        shared.write(16, &[0xA5; 4]).await.expect("запись");
         let mut back = [0; 8];
-        block_on(shared.read(16, &mut back)).expect("чтение");
+        shared.read(16, &mut back).await.expect("чтение");
 
         assert_eq!(back, [0xA5, 0xA5, 0xA5, 0xA5, 0xFF, 0xFF, 0xFF, 0xFF]);
         assert!(

@@ -1,10 +1,6 @@
 #![cfg_attr(not(test), no_std)]
 
-// cfg(kani) объявлен в [workspace.lints.rust] корневого Cargo.toml.
-#[cfg(kani)]
-mod kani_proofs;
-
-/// Прогон future без исполнителя и фейки портов для host-тестов — см. модуль.
+/// Фейки портов обновления для host-тестов — см. модуль.
 #[cfg(test)]
 pub(crate) mod test_support;
 

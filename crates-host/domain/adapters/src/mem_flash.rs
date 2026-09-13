@@ -115,16 +115,3 @@ impl<const SIZE: usize, const ERASE: usize, const WRITE: usize>
         NorFlash::write(self, offset, bytes)
     }
 }
-
-/// Один `poll` — фейки не ждут.
-pub fn block_on<T>(future: impl core::future::Future<Output = T>) -> T {
-    use core::task::{Context, Poll, Waker};
-    let mut future = core::pin::pin!(future);
-    match future
-        .as_mut()
-        .poll(&mut Context::from_waker(Waker::noop()))
-    {
-        Poll::Ready(value) => value,
-        Poll::Pending => panic!("фейк флеша не ждёт: future не должна возвращать Pending"),
-    }
-}

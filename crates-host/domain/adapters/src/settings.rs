@@ -19,6 +19,47 @@
 //! }
 //! ```
 //!
+//! # Настройки как дерево: `miniconf` поверх порта
+//!
+//! Структура целиком под одним ключом — самый короткий путь, но с первым же
+//! добавленным полем старая запись перестаёт читаться. Приём из экосистемы
+//! Stabilizer (`serial-settings`): `#[derive(Tree)]` на структуре настроек, и
+//! каждый лист адресуется путём (`/gain/1`); во flash уезжает по листу под
+//! ключом `fnv1a(путь)` — ровно `u32`, которого ждёт порт. Новое поле
+//! остаётся `Default`, старые читаются. Сам `miniconf` ничего не хранит и
+//! зависимостью шаблона не является — это выбор проекта, как и `postcard` с
+//! `yafnv` в этом наброске (имена функций — по документации версии, которую
+//! возьмёте).
+//!
+//! ```ignore
+//! use heapless::String;
+//! use miniconf::{Path, Tree, TreeSchema};
+//! use ports::SettingsStorage;
+//!
+//! #[derive(Default, Tree)]
+//! struct Config {
+//!     gain: [u16; 2],
+//!     enabled: bool,
+//! }
+//!
+//! // Старт: пройти все листья, прочитать те, что уже записаны.
+//! let mut config = Config::default();
+//! let mut scratch = [0u8; 64];
+//! for node in Config::nodes::<Path<String<32>, '/'>, 2>() {
+//!     let (path, _node) = node?;
+//!     let key: u32 = yafnv::fnv1a(path.as_str().as_bytes());
+//!     if let Some(raw) = board.settings.read(key, &mut scratch).await? {
+//!         miniconf::postcard::set_by_key(&mut config, &path, postcard::de_flavors::Slice::new(raw))?;
+//!     }
+//! }
+//!
+//! // Изменился один лист — пишется один лист.
+//! let path = Path::<String<32>, '/'>::from("/gain/1");
+//! let mut buf = [0u8; 64];
+//! let raw = miniconf::postcard::get_by_key(&config, &path, postcard::ser_flavors::Slice::new(&mut buf))?;
+//! board.settings.write(yafnv::fnv1a(path.as_str().as_bytes()), raw).await?;
+//! ```
+//!
 //! # Чего здесь нет
 //!
 //! **Удаления ключа.** `sequential_storage::map::remove_item` требует
@@ -122,44 +163,41 @@ mod tests {
     use ports::SettingsStorage;
 
     use super::Settings;
-    use crate::mem_flash::{MemFlash, block_on};
+    use crate::mem_flash::MemFlash;
 
     /// Две страницы по 256 байт, слово 8 — минимум, который берёт
     /// `sequential-storage`.
     type Flash = MemFlash<512, 256, 8>;
 
-    #[test]
-    fn stores_and_reads_back() {
+    #[tokio::test]
+    async fn stores_and_reads_back() {
         let mut settings = Settings::new(Flash::erased(), 0..512);
         let mut scratch = [0u8; 32];
 
-        block_on(settings.write(7, b"template")).expect("запись");
-        let back = block_on(settings.read(7, &mut scratch)).expect("чтение");
+        settings.write(7, b"template").await.expect("запись");
+        let back = settings.read(7, &mut scratch).await.expect("чтение");
 
         assert_eq!(back, Some(&b"template"[..]));
     }
 
-    #[test]
-    fn a_missing_key_reads_as_none() {
+    #[tokio::test]
+    async fn a_missing_key_reads_as_none() {
         let mut settings = Settings::new(Flash::erased(), 0..512);
         let mut scratch = [0u8; 32];
 
-        assert_eq!(
-            block_on(settings.read(1, &mut scratch)).expect("чтение"),
-            None
-        );
+        assert_eq!(settings.read(1, &mut scratch).await.expect("чтение"), None);
     }
 
-    #[test]
-    fn a_later_write_shadows_the_earlier_one() {
+    #[tokio::test]
+    async fn a_later_write_shadows_the_earlier_one() {
         let mut settings = Settings::new(Flash::erased(), 0..512);
         let mut scratch = [0u8; 32];
 
-        block_on(settings.write(3, b"first")).expect("первая");
-        block_on(settings.write(3, b"second")).expect("вторая");
+        settings.write(3, b"first").await.expect("первая");
+        settings.write(3, b"second").await.expect("вторая");
 
         assert_eq!(
-            block_on(settings.read(3, &mut scratch)).expect("чтение"),
+            settings.read(3, &mut scratch).await.expect("чтение"),
             Some(&b"second"[..])
         );
     }

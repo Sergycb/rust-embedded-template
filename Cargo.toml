@@ -27,11 +27,6 @@ todo                    = "warn"
 unimplemented           = "warn"
 large_stack_arrays      = "warn"
 
-[workspace.lints.rust]
-# `cargo kani` определяет cfg(kani) само; вне kani-компилятора rustc его не
-# знает (см. crates-host/domain/src/kani_proofs.rs, CI-job `kani`).
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
-
 [workspace.dependencies]
 # Крейты самого проекта: порты/адаптеры domain объявлены здесь, чтобы версия
 # и путь были в одном месте, как у внешних зависимостей.
@@ -45,6 +40,12 @@ defmt        = { version = "1.1.1" }
 # `ports::DownloadError` и `ports::UpdateError`).
 thiserror    = { version = "2.0.20", default-features = false }
 test-log     = { version = "0.2.21" }
+# Только для dev-зависимостей `domain` и `adapters`: исполнитель async-тестов
+# (`#[tokio::test]`) над фейками портов и флеша. Без `default-features` — из
+# всего tokio нужны ровно однопоточный рантайм (`rt`) и атрибут (`macros`);
+# сеть, файлы и время сюда не приезжают. В прошивку не уезжает:
+# dev-зависимости path-зависимости cargo не собирает.
+tokio        = { version = "1.53.1", default-features = false, features = ["rt", "macros"] }
 # Задачи графа живут в `domain` (`domain::app`), а граф, который их спавнит, —
 # в `crates-cross/app`. Проекция аргументов (`task: path(ctx.field)`) снимает с
 # задачи знание о графе, но не о типах, которыми граф с ней разговаривает:

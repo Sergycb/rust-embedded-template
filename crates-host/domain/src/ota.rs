@@ -323,7 +323,7 @@ mod tests {
         Mode, cycle, plain_apply, plain_check, run, run_signed, signed_apply, signed_check,
     };
     use crate::firmware::pack;
-    use crate::test_support::{FakeFlash, FakeLink, SIGNATURE, block_on};
+    use crate::test_support::{FakeFlash, FakeLink, SIGNATURE};
     use crate::update::VERSION_BYTES;
     use ports::{Announce, Rejection, VerifyError};
     use supervisor::runtime::TaskExit;
@@ -348,14 +348,16 @@ mod tests {
 
     /// Счастливый путь: раздел подготовлен один раз, байты на месте, обмен
     /// запрошен, отправитель получил `Ok`.
-    #[test]
-    fn applies_an_unsigned_image_and_reports_success() {
+    #[tokio::test]
+    async fn applies_an_unsigned_image_and_reports_success() {
         let image = image(64);
         let mut link =
             FakeLink::of(image.chunks(13).map(<[u8]>::to_vec)).announcing([announce(64)]);
         let mut flash = FakeFlash::new(1024, 8);
 
-        block_on(cycle(&mut link, &mut flash, &plain())).expect("канал жив");
+        cycle(&mut link, &mut flash, &plain())
+            .await
+            .expect("канал жив");
 
         assert_eq!(flash.prepared, Some(64));
         assert_eq!(&flash.memory[..64], &image[..]);
@@ -365,36 +367,42 @@ mod tests {
 
     /// Занятость — до стирания и до чтения канала: адаптер и так отказал бы
     /// в `prepare`, но отправитель услышал бы `Device` вместо «перезагрузи».
-    #[test]
-    fn reports_busy_before_touching_the_partition_or_the_link() {
+    #[tokio::test]
+    async fn reports_busy_before_touching_the_partition_or_the_link() {
         let mut link = FakeLink::of([vec![0; 8]]).announcing([announce(8)]);
         let mut flash = FakeFlash::new(64, 8);
         flash.busy = true;
 
-        block_on(cycle(&mut link, &mut flash, &plain())).expect("канал жив");
+        cycle(&mut link, &mut flash, &plain())
+            .await
+            .expect("канал жив");
 
         assert_eq!(link.finished, vec![Err(Rejection::Busy)]);
         assert_eq!(flash.prepared, None, "раздел не должен быть стёрт");
         assert_eq!(link.next, 0, "куски не читались");
     }
 
-    #[test]
-    fn maps_a_bad_length_to_length_without_erasing() {
+    #[tokio::test]
+    async fn maps_a_bad_length_to_length_without_erasing() {
         let mut link = FakeLink::of([]).announcing([announce(65)]);
         let mut flash = FakeFlash::new(64, 8);
 
-        block_on(cycle(&mut link, &mut flash, &plain())).expect("канал жив");
+        cycle(&mut link, &mut flash, &plain())
+            .await
+            .expect("канал жив");
 
         assert_eq!(link.finished, vec![Err(Rejection::Length)]);
         assert_eq!(flash.prepared, None);
     }
 
-    #[test]
-    fn maps_excess_data_to_transfer() {
+    #[tokio::test]
+    async fn maps_excess_data_to_transfer() {
         let mut link = FakeLink::of([vec![0; 16], vec![0; 8]]).announcing([announce(16)]);
         let mut flash = FakeFlash::new(64, 8);
 
-        block_on(cycle(&mut link, &mut flash, &plain())).expect("канал жив");
+        cycle(&mut link, &mut flash, &plain())
+            .await
+            .expect("канал жив");
 
         assert_eq!(link.finished, vec![Err(Rejection::Transfer)]);
         assert_eq!(flash.updated, 0, "обмен не запрашивался");
@@ -402,62 +410,66 @@ mod tests {
 
     /// Негодная гранулярность — вина устройства, не отправителя, и до
     /// стирания: `receive` отказывает, не трогая раздел.
-    #[test]
-    fn maps_an_unusable_granularity_to_device_without_erasing() {
+    #[tokio::test]
+    async fn maps_an_unusable_granularity_to_device_without_erasing() {
         let mut link = FakeLink::of([vec![0; 8]]).announcing([announce(8)]);
         let mut flash = FakeFlash::new(64, 8);
         flash.word = 0;
 
-        block_on(cycle(&mut link, &mut flash, &plain())).expect("канал жив");
+        cycle(&mut link, &mut flash, &plain())
+            .await
+            .expect("канал жив");
 
         assert_eq!(link.finished, vec![Err(Rejection::Device)]);
         assert_eq!(flash.prepared, None);
     }
 
-    #[test]
-    fn maps_a_flash_failure_on_apply_to_device() {
+    #[tokio::test]
+    async fn maps_a_flash_failure_on_apply_to_device() {
         let mut link = FakeLink::of([vec![0; 8]]).announcing([announce(8)]);
         let mut flash = FakeFlash::new(64, 8);
         flash.mark_updated = Err("флеш отказал");
 
-        block_on(cycle(&mut link, &mut flash, &plain())).expect("канал жив");
+        cycle(&mut link, &mut flash, &plain())
+            .await
+            .expect("канал жив");
 
         assert_eq!(link.finished, vec![Err(Rejection::Device)]);
     }
 
     /// Обрыв канала посреди приёма: сообщать некому, цикл кончается ошибкой
     /// канала, `finish` не зовётся.
-    #[test]
-    fn a_link_failure_while_receiving_ends_the_cycle_without_a_report() {
+    #[tokio::test]
+    async fn a_link_failure_while_receiving_ends_the_cycle_without_a_report() {
         let mut link = FakeLink::of([vec![0; 8], vec![0; 8]]).announcing([announce(16)]);
         link.fail_at = Some(1);
         let mut flash = FakeFlash::new(64, 8);
 
-        let failed = block_on(cycle(&mut link, &mut flash, &plain()));
+        let failed = cycle(&mut link, &mut flash, &plain()).await;
 
         assert_eq!(failed, Err("обрыв канала"));
         assert!(link.finished.is_empty(), "сообщать некому");
     }
 
-    #[test]
-    fn a_link_failure_on_finish_ends_the_cycle() {
+    #[tokio::test]
+    async fn a_link_failure_on_finish_ends_the_cycle() {
         let mut link = FakeLink::of([vec![0; 8]]).announcing([announce(8)]);
         link.finish = Err("обрыв при отчёте");
         let mut flash = FakeFlash::new(64, 8);
 
-        let failed = block_on(cycle(&mut link, &mut flash, &plain()));
+        let failed = cycle(&mut link, &mut flash, &plain()).await;
 
         assert_eq!(failed, Err("обрыв при отчёте"));
     }
 
     /// `run` крутит циклы, пока жив канал, и выходит `Failed` на его отказе —
     /// здесь на исчерпании сценария: второй `begin` отвечает отказом.
-    #[test]
-    fn run_serves_until_the_link_fails() {
+    #[tokio::test]
+    async fn run_serves_until_the_link_fails() {
         let mut link = FakeLink::of([vec![0; 8]]).announcing([announce(8)]);
         let mut flash = FakeFlash::new(64, 8);
 
-        let exit = block_on(run(&mut link, &mut flash));
+        let exit = run(&mut link, &mut flash).await;
 
         assert_eq!(exit, TaskExit::Failed);
         assert_eq!(link.finished, vec![Ok(())], "первый цикл дошёл до отчёта");
@@ -486,13 +498,15 @@ mod tests {
 
     /// Счастливый путь с подписью: подпись из заголовка и длина доехали до
     /// адаптера, `mark_updated` не звался — обмен делает только проверка.
-    #[test]
-    fn applies_a_signed_image_with_the_signature_from_the_announce() {
+    #[tokio::test]
+    async fn applies_a_signed_image_with_the_signature_from_the_announce() {
         let image = versioned_image(64, pack(1, 2, 4));
         let mut link = FakeLink::of([image.clone()]).announcing([signed_announce(64)]);
         let mut flash = FakeFlash::new(1024, 8);
 
-        block_on(cycle(&mut link, &mut flash, &signed())).expect("канал жив");
+        cycle(&mut link, &mut flash, &signed())
+            .await
+            .expect("канал жив");
 
         assert_eq!(&flash.memory[..64], &image[..]);
         assert_eq!(flash.verified, vec![(SIGNATURE, 64)]);
@@ -502,12 +516,14 @@ mod tests {
 
     /// Без подписи в заголовке — отказ ДО стирания: стирание уничтожило бы
     /// образ, в который устройство откатывается, а применить всё равно нечем.
-    #[test]
-    fn refuses_a_signed_update_without_a_signature_before_erasing() {
+    #[tokio::test]
+    async fn refuses_a_signed_update_without_a_signature_before_erasing() {
         let mut link = FakeLink::of([vec![0; 8]]).announcing([announce(8)]);
         let mut flash = FakeFlash::new(64, 8);
 
-        block_on(cycle(&mut link, &mut flash, &signed())).expect("канал жив");
+        cycle(&mut link, &mut flash, &signed())
+            .await
+            .expect("канал жив");
 
         assert_eq!(link.finished, vec![Err(Rejection::Signature)]);
         assert_eq!(flash.prepared, None, "раздел не должен быть стёрт");
@@ -515,50 +531,56 @@ mod tests {
     }
 
     /// Та же версия — откат, и код для отправителя свой.
-    #[test]
-    fn maps_a_rollback_to_rollback() {
+    #[tokio::test]
+    async fn maps_a_rollback_to_rollback() {
         let image = versioned_image(64, pack(1, 2, 3));
         let mut link = FakeLink::of([image]).announcing([signed_announce(64)]);
         let mut flash = FakeFlash::new(1024, 8);
 
-        block_on(cycle(&mut link, &mut flash, &signed())).expect("канал жив");
+        cycle(&mut link, &mut flash, &signed())
+            .await
+            .expect("канал жив");
 
         assert_eq!(link.finished, vec![Err(Rejection::Rollback)]);
         assert!(flash.verified.is_empty(), "до криптографии дойти не должно");
     }
 
-    #[test]
-    fn maps_a_bad_signature_to_signature() {
+    #[tokio::test]
+    async fn maps_a_bad_signature_to_signature() {
         let image = versioned_image(64, pack(1, 2, 4));
         let mut link = FakeLink::of([image]).announcing([signed_announce(64)]);
         let mut flash = FakeFlash::new(1024, 8);
         flash.verify = Err(VerifyError::BadSignature);
 
-        block_on(cycle(&mut link, &mut flash, &signed())).expect("канал жив");
+        cycle(&mut link, &mut flash, &signed())
+            .await
+            .expect("канал жив");
 
         assert_eq!(link.finished, vec![Err(Rejection::Signature)]);
     }
 
-    #[test]
-    fn maps_a_zero_key_to_signature() {
+    #[tokio::test]
+    async fn maps_a_zero_key_to_signature() {
         let image = versioned_image(64, pack(1, 2, 4));
         let mut link = FakeLink::of([image]).announcing([signed_announce(64)]);
         let mut flash = FakeFlash::new(1024, 8);
         flash.key = [0; 32];
 
-        block_on(cycle(&mut link, &mut flash, &signed())).expect("канал жив");
+        cycle(&mut link, &mut flash, &signed())
+            .await
+            .expect("канал жив");
 
         assert_eq!(link.finished, vec![Err(Rejection::Signature)]);
         assert!(flash.verified.is_empty());
     }
 
-    #[test]
-    fn run_signed_serves_until_the_link_fails() {
+    #[tokio::test]
+    async fn run_signed_serves_until_the_link_fails() {
         let image = versioned_image(64, pack(1, 2, 4));
         let mut link = FakeLink::of([image]).announcing([signed_announce(64)]);
         let mut flash = FakeFlash::new(1024, 8);
 
-        let exit = block_on(run_signed(&mut link, &mut flash));
+        let exit = run_signed(&mut link, &mut flash).await;
 
         assert_eq!(exit, TaskExit::Failed);
         assert_eq!(link.finished, vec![Ok(())]);

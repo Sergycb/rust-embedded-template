@@ -1,14 +1,13 @@
-//! Помощники host-тестов: прогон future без исполнителя и фейки обоих портов
-//! обновления.
+//! Фейки портов обновления для host-тестов.
 //!
 //! Один фейк на порт, общий для `download`, `update` и `ota`: сценарии у
 //! модулей разные, а придирки фейка — те же, что у настоящего адаптера
 //! (кратность записи слову, запись только после `prepare`), и держать их в
 //! трёх копиях значило бы проверять три разных флеша.
+//!
+//! Ни один фейк не ждёт по-настоящему — их future готовы с первого `poll`, —
+//! поэтому тестам хватает однопоточного `#[tokio::test]`.
 
-use core::future::Future;
-use core::pin::pin;
-use core::task::{Context, Poll, Waker};
 use std::collections::VecDeque;
 
 use ports::{Announce, FirmwareUpdate, ImageSource, Rejection, SignedFirmwareUpdate, VerifyError};
@@ -22,17 +21,6 @@ pub(crate) const KEY: [u8; 32] = [7; 32];
 /// Подпись, которую тесты кладут в заголовок; фейк её не проверяет, а
 /// записывает — важно, что до него доехала именно она.
 pub(crate) const SIGNATURE: [u8; 64] = [9; 64];
-
-/// Крутит future фейков в host-тестах: ни один порт-фейк не ждёт по-настоящему,
-/// поэтому исполнитель здесь не нужен — достаточно одного `poll`.
-pub(crate) fn block_on<T>(future: impl Future<Output = T>) -> T {
-    let mut future = pin!(future);
-    let mut cx = Context::from_waker(Waker::noop());
-    match future.as_mut().poll(&mut cx) {
-        Poll::Ready(value) => value,
-        Poll::Pending => panic!("фейки портов не ждут: future не должна возвращать Pending"),
-    }
-}
 
 /// Канал, отдающий заранее нарезанные куски; на `fail_at`-м вызове `next`
 /// отказывает — так разыгрывается обрыв связи. Заголовки — по одному на

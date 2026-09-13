@@ -164,7 +164,7 @@ pub async fn receive<S: ImageSource, F: FirmwareUpdate>(
 #[cfg(test)]
 mod tests {
     use super::{MAX_WORD, receive};
-    use crate::test_support::{FakeFlash, FakeLink, block_on};
+    use crate::test_support::{FakeFlash, FakeLink};
     use ports::{DownloadError, FirmwareUpdate};
 
     fn image(len: u32, seed: u32) -> Vec<u8> {
@@ -173,13 +173,14 @@ mod tests {
 
     /// Принять образ кусками по одному байту — самый недружелюбный случай,
     /// какой может выдать канал.
-    #[test]
-    fn reassembles_an_image_from_single_byte_chunks() {
+    #[tokio::test]
+    async fn reassembles_an_image_from_single_byte_chunks() {
         let image = image(100, 1);
         let mut source = FakeLink::of(image.iter().map(|b| vec![*b]));
         let mut flash = FakeFlash::new(1024, 8);
 
-        let len = block_on(receive(&mut source, &mut flash, image.len() as u32))
+        let len = receive(&mut source, &mut flash, image.len() as u32)
+            .await
             .expect("приём должен завершиться");
 
         assert_eq!(len, image.len() as u32);
@@ -187,13 +188,15 @@ mod tests {
     }
 
     /// Куски, не кратные ни слову, ни друг другу.
-    #[test]
-    fn reassembles_an_image_from_ragged_chunks() {
+    #[tokio::test]
+    async fn reassembles_an_image_from_ragged_chunks() {
         let image = image(200, 7);
         let mut source = FakeLink::of(image.chunks(13).map(<[u8]>::to_vec));
         let mut flash = FakeFlash::new(1024, 8);
 
-        block_on(receive(&mut source, &mut flash, image.len() as u32)).expect("приём");
+        receive(&mut source, &mut flash, image.len() as u32)
+            .await
+            .expect("приём");
 
         assert_eq!(&flash.memory[..image.len()], &image[..]);
         // Всё, что дошло до флеша, было кратно слову — иначе фейк отказал бы;
@@ -203,13 +206,15 @@ mod tests {
     }
 
     /// Слово в 32 байта (самое широкое у STM32) и образ, не кратный ему.
-    #[test]
-    fn pads_the_last_word_of_an_unaligned_image() {
+    #[tokio::test]
+    async fn pads_the_last_word_of_an_unaligned_image() {
         let image = image(70, 1);
         let mut source = FakeLink::of([image.clone()]);
         let mut flash = FakeFlash::new(1024, MAX_WORD as u32);
 
-        block_on(receive(&mut source, &mut flash, image.len() as u32)).expect("приём");
+        receive(&mut source, &mut flash, image.len() as u32)
+            .await
+            .expect("приём");
 
         assert_eq!(&flash.memory[..image.len()], &image[..]);
         // Хвост добит единицами — фиксированным значением, а не мусором.
@@ -219,13 +224,13 @@ mod tests {
     /// Нулевая длина отвергается здесь, а не оставляется реализации порта:
     /// `prepare(0)` не стёр бы ничего, и первая же запись легла бы в нестёртую
     /// память, на F2/F4/F7 молча.
-    #[test]
-    fn refuses_an_empty_image_before_touching_the_partition() {
+    #[tokio::test]
+    async fn refuses_an_empty_image_before_touching_the_partition() {
         let mut source = FakeLink::of([]);
         let mut flash = FakeFlash::new(64, 8);
         flash.memory.fill(0xA5);
 
-        let refused = block_on(receive(&mut source, &mut flash, 0));
+        let refused = receive(&mut source, &mut flash, 0).await;
 
         assert_eq!(refused, Err(DownloadError::Empty));
         assert_eq!(flash.prepared, None, "раздел не должен быть подготовлен");
@@ -237,13 +242,13 @@ mod tests {
 
     /// Образ длиннее раздела отвергается ДО стирания: иначе устройство
     /// осталось бы и без нового образа, и без того, куда откатываться.
-    #[test]
-    fn refuses_an_image_longer_than_the_partition_without_erasing() {
+    #[tokio::test]
+    async fn refuses_an_image_longer_than_the_partition_without_erasing() {
         let mut source = FakeLink::of([]);
         let mut flash = FakeFlash::new(64, 8);
         flash.memory.fill(0xA5);
 
-        let refused = block_on(receive(&mut source, &mut flash, 65));
+        let refused = receive(&mut source, &mut flash, 65).await;
 
         assert_eq!(
             refused,
@@ -258,12 +263,12 @@ mod tests {
 
     /// Канал прислал больше, чем обещал: приём прекращается на том куске, где
     /// это стало видно, — канал дальше не читается.
-    #[test]
-    fn refuses_more_data_than_announced() {
+    #[tokio::test]
+    async fn refuses_more_data_than_announced() {
         let mut source = FakeLink::of([vec![0; 16], vec![0; 1], vec![0; 100]]);
         let mut flash = FakeFlash::new(1024, 8);
 
-        let refused = block_on(receive(&mut source, &mut flash, 16));
+        let refused = receive(&mut source, &mut flash, 16).await;
 
         assert_eq!(
             refused,
@@ -280,12 +285,12 @@ mod tests {
 
     /// Передача оборвалась (канал ответил «конец» раньше времени): делать вид,
     /// что всё в порядке, нельзя.
-    #[test]
-    fn refuses_an_incomplete_transfer() {
+    #[tokio::test]
+    async fn refuses_an_incomplete_transfer() {
         let mut source = FakeLink::of([vec![0; 20]]);
         let mut flash = FakeFlash::new(1024, 8);
 
-        let refused = block_on(receive(&mut source, &mut flash, 32));
+        let refused = receive(&mut source, &mut flash, 32).await;
 
         assert_eq!(
             refused,
@@ -297,14 +302,14 @@ mod tests {
     }
 
     /// Гранулярность, с которой работать нельзя, отвергается до стирания.
-    #[test]
-    fn refuses_an_unusable_write_granularity() {
+    #[tokio::test]
+    async fn refuses_an_unusable_write_granularity() {
         for word in [0, MAX_WORD as u32 + 1] {
             let mut source = FakeLink::of([]);
             let mut flash = FakeFlash::new(1024, word.max(1));
             flash.word = word;
 
-            let refused = block_on(receive(&mut source, &mut flash, 32));
+            let refused = receive(&mut source, &mut flash, 32).await;
 
             assert_eq!(refused, Err(DownloadError::UnusableGranularity(word)));
             assert_eq!(flash.prepared, None);
@@ -313,12 +318,12 @@ mod tests {
 
     /// Образ, чья добитая до слова длина не влезает, отвергается тоже: иначе
     /// последнее слово ушло бы за границу раздела.
-    #[test]
-    fn refuses_an_image_whose_padded_length_overflows() {
+    #[tokio::test]
+    async fn refuses_an_image_whose_padded_length_overflows() {
         let mut source = FakeLink::of([]);
         let mut flash = FakeFlash::new(100, 32);
 
-        let refused = block_on(receive(&mut source, &mut flash, 100));
+        let refused = receive(&mut source, &mut flash, 100).await;
 
         assert_eq!(
             refused,
@@ -330,8 +335,8 @@ mod tests {
     }
 
     /// Отказ флеша доходит до вызывающего как есть, а не теряется.
-    #[test]
-    fn passes_a_flash_failure_through() {
+    #[tokio::test]
+    async fn passes_a_flash_failure_through() {
         let mut source = FakeLink::of([vec![0; 8]]);
         // Обёртка, у которой `prepare` «проходит», но флаг подготовки не
         // ставит: первая же запись фейка ответит отказом, и он обязан дойти
@@ -366,7 +371,7 @@ mod tests {
         }
         let mut flash = NoPrepare(FakeFlash::new(1024, 8));
 
-        let failed = block_on(receive(&mut source, &mut flash, 8));
+        let failed = receive(&mut source, &mut flash, 8).await;
 
         assert_eq!(
             failed,
@@ -376,13 +381,13 @@ mod tests {
 
     /// Отказ канала — тоже, и своим вариантом: кто именно отказал, важнее
     /// удобства одного `From`.
-    #[test]
-    fn passes_a_source_failure_through() {
+    #[tokio::test]
+    async fn passes_a_source_failure_through() {
         let mut source = FakeLink::of([vec![0; 8], vec![0; 8]]);
         source.fail_at = Some(1);
         let mut flash = FakeFlash::new(1024, 8);
 
-        let failed = block_on(receive(&mut source, &mut flash, 16));
+        let failed = receive(&mut source, &mut flash, 16).await;
 
         assert_eq!(failed, Err(DownloadError::Source("обрыв канала")));
     }

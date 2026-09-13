@@ -1,0 +1,12 @@
+# Host-тесты `domain` и `adapters` идут над фейками портов и флеша, которые
+# не ждут по-настоящему: их future готовы с первого `poll`
+# (crates-host/domain/src/test_support.rs), и тест, не кончившийся за секунды,
+# уже завис. Раньше это ловил самописный `block_on` — паникой на `Pending`;
+# с `#[tokio::test]` такой тест висел бы до таймаута CI-раннера. Поэтому
+# nextest его убивает, а не только помечает медленным.
+#
+# Только этим двум крейтам: `host-target-tests` в том же workspace прошивают и
+# гоняют живую плату, и им честные десятки секунд нужны.
+[[profile.default.overrides]]
+filter = 'package(domain) | package(adapters)'
+slow-timeout = { period = "10s", terminate-after = 2 }

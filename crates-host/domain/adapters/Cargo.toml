@@ -36,3 +36,8 @@ embedded-storage-async = { workspace = true }
 sequential-storage = { workspace = true }
 embassy-sync = { workspace = true }
 salty = { workspace = true, optional = true }
+
+[dev-dependencies]
+# Исполнитель для async-тестов над флешем в памяти (`#[tokio::test]`); фичи —
+# в корневом Cargo.toml.
+tokio = { workspace = true }
