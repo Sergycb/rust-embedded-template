@@ -64,6 +64,18 @@
 (`HardwareWatchdog::feed`) — тоже ваша забота.
 
 ```ignore
+// Узел — фрагмент: у графа собственных узлов нет. Таймаут узла обязан
+// покрывать самый длинный законный промежуток между кормлениями, а это не
+// период работы узла, а потолок backoff'а: слот сторожа взводится один раз
+// и переживает перезапуски.
+supervisor_fragment! {
+    name: APP_FRAG;
+    node deps: [], restart: ::supervisor::policy::RestartPolicy::OnFailure,
+        backoff: BACKOFF,
+        watchdog: Duration::from_secs(7),
+        task: app_worker;
+}
+
 supervisor_graph! {
     // Сторожа в этом проекте `Board` не строит (поле есть только при
     // `graph = yes`), поэтому здесь — форма без инициализатора: объект
@@ -80,13 +92,8 @@ supervisor_graph! {
     watchdog: bsp::wdg::Iwdg<peripherals::{{watchdog_peripheral}}, 10_000_000, bsp::wdg::Armed>,
         check_every: Duration::from_millis(100);
 
-    // Таймаут узла обязан покрывать самый длинный законный промежуток
-    // между кормлениями, а это не период работы узла, а потолок
-    // backoff'а: слот сторожа регистрируется один раз и переживает
-    // перезапуски.
-    node APP, deps: [], restart: RestartPolicy::OnFailure, backoff: backoff(),
-        watchdog: Duration::from_secs(7),
-        task: app_worker;
+    // Имя узлу даёт эта запись, а не фрагмент.
+    fragments: [APP_FRAG as APP];
 }
 ```
 {%- endif %}

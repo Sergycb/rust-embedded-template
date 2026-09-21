@@ -22,18 +22,34 @@
 use core::fmt::Debug;
 
 use defmt_or_log::{Debug2Format, info, warn};
+use embassy_time::Duration;
 use ports::{
     Announce, DownloadError, FirmwareUpdate, ImageSource, Rejection, SignedFirmwareUpdate,
     UpdateError,
 };
+use supervisor::policy::{BackoffPolicy, JitterPolicy};
 use supervisor::runtime::TaskExit;
 
 use crate::{download, update};
 
-/// Что узлу нужно на входе. Строит compose-site из полей `Board`:
+/// Политика пауз между перезапусками узла — те же цифры, что у
+/// [`app::BACKOFF`](crate::app::BACKOFF), и своя константа намеренно: фрагмент
+/// самодостаточен, а у канала доставки свои поводы разойтись с холостым циклом
+/// (например, дать хосту время переподключиться).
+pub const BACKOFF: BackoffPolicy = BackoffPolicy {
+    first: Duration::from_millis(50),
+    factor: 2,
+    jitter: JitterPolicy::None,
+    floor: Duration::from_millis(50),
+    max: Duration::from_secs(5),
+};
+
+/// Что узлу нужно на входе. Строит compose-site из полей `Board`, подставляя
+/// типы порта и адаптера аргументами фрагмента:
 ///
 /// ```ignore
-/// fragments: [::domain::OTA_FRAG = ::domain::ota::Inputs { link: board.ota_link, flash: board.ota }];
+/// fragments: [::domain::OTA_FRAG<bsp::ota::Link, bsp::ota::Ota> as OTA
+///                 = ::domain::ota::Inputs { link: board.ota_link, flash: board.ota }];
 /// ```
 ///
 /// Тип объявлен здесь, а не назван графом, по правилу фрагментов
@@ -265,22 +281,25 @@ fn update_rejection<E>(err: &UpdateError<E>) -> Rejection {
 
 // Узлы объявлены здесь же, где лежит их задача, — как `APP_FRAG` в
 // `domain::app`; compose-site (`crates-cross/app/src/graph.rs`) только
-// перечисляет фрагмент и кормит его входом. Два фрагмента, а не один,
-// потому что применение различается по Cargo-варианту `signed`, а Liquid в
-// `domain` запрещён: какой из двух назвать — решает `graph.rs`.
+// перечисляет фрагмент, называет узел (`as OTA`) и кормит его входом. Два
+// фрагмента, а не один, потому что применение различается по Cargo-варианту
+// `signed`, а Liquid в `domain` запрещён: какой из двух назвать — решает
+// `graph.rs`.
 //
 // `boot: inputs: …` — собственная привязка фрагмента: compose-site пишет
-// `fragments: [::domain::OTA_FRAG = ::domain::ota::Inputs { link: …, flash: … }]`,
+// `fragments: [::domain::OTA_FRAG<…> as OTA = ::domain::ota::Inputs { link: …, flash: … }]`,
 // а `spawn_all` связывает её первой строкой пролога, и инициализаторы слотов
 // ниже читают её поля. Так фрагмент не видит `Board` вовсе — только то, что
 // ему дали.
 //
-// Имена `OtaLink`, `OtaFlash`, `RestartPolicy`, `backoff()` резолвятся НЕ
-// здесь, а на compose-site (`macro_rules!` подставляет токены в место
-// вызова). Для политики это прецедент `APP_FRAG`; для типов слотов — его
-// расширение: тип ресурсного слота — `static`, назвать его фрагмент обязан,
-// а конкретный тип (`bsp::ota::Ota`, транспорт проекта) `domain` не видит и
-// видеть не должен. `graph.rs` объявляет оба псевдонима одной строкой каждый.
+// `<S, F>` — параметры фрагмента: тип ресурсного слота — `static`, назвать
+// его фрагмент обязан, а конкретный тип (`bsp::ota::Ota`, транспорт проекта)
+// `domain` не видит и видеть не должен. Compose-site подставляет их в
+// `fragments:` угловыми скобками, по позиции; bound'ов у параметров нет
+// намеренно — их держит сигнатура `run`, и rustc проверяет её, а не копию в
+// DSL. Всё остальное, что фрагмент называет, написано полным путём
+// (`$crate::ota::BACKOFF`, `::supervisor::…`) — от `graph.rs` он не требует
+// ни одного объявления, см. `APP_FRAG`.
 //
 // `local` на обоих слотах: объекты платы — `!Send` (`bsp::ota::Ota` держит
 // `&'static Mutex<NoopRawMutex, …>`, а `NoopRawMutex` намеренно не `Sync`),
@@ -300,20 +319,22 @@ fn update_rejection<E>(err: &UpdateError<E>) -> Rejection {
 //
 // Без `watchdog:` намеренно — см. `run`.
 supervisor::supervisor_fragment! {
-    name: OTA_FRAG;
-    boot: inputs: $crate::ota::Inputs<OtaLink, OtaFlash>;
+    name: OTA_FRAG<S, F>;
+    boot: inputs: $crate::ota::Inputs<S, F>;
 
-    node OTA, deps: [], restart: RestartPolicy::OnFailure, backoff: backoff(),
-        resources: [LINK: local OtaLink = inputs.link, FLASH: local OtaFlash = inputs.flash],
+    node deps: [], restart: ::supervisor::policy::RestartPolicy::OnFailure,
+        backoff: $crate::ota::BACKOFF,
+        resources: [LINK: local S = inputs.link, FLASH: local F = inputs.flash],
         task: $crate::ota::run(ctx.link, ctx.flash);
 }
 
 supervisor::supervisor_fragment! {
-    name: OTA_SIGNED_FRAG;
-    boot: inputs: $crate::ota::Inputs<OtaLink, OtaFlash>;
+    name: OTA_SIGNED_FRAG<S, F>;
+    boot: inputs: $crate::ota::Inputs<S, F>;
 
-    node OTA, deps: [], restart: RestartPolicy::OnFailure, backoff: backoff(),
-        resources: [LINK: local OtaLink = inputs.link, FLASH: local OtaFlash = inputs.flash],
+    node deps: [], restart: ::supervisor::policy::RestartPolicy::OnFailure,
+        backoff: $crate::ota::BACKOFF,
+        resources: [LINK: local S = inputs.link, FLASH: local F = inputs.flash],
         task: $crate::ota::run_signed(ctx.link, ctx.flash);
 }
 

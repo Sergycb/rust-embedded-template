@@ -38,8 +38,6 @@
 * `shutdown: Cooperative` — узел не отменяют дропом посреди работы:
   задача получает `stop: impl Stoppable` и выходит сама, доделав то, что
   нельзя бросить на середине (запись во flash, транзакция на шине).
-* `count: N` — N независимых копий узла со своими статиками; `resources:`
-  при этом становится массивом слотов (`PROBE[0]`, а не `PROBE_0`).
 * `executor: NAME` — узел спавнится не на общем исполнителе, а на том,
   чей `SpawnerSlot` объявлен в графе (прерывательный приоритет, второе
   ядро).
@@ -50,9 +48,12 @@
 Полный список полей и их тонкости — в doc-комментариях самого
 `supervisor` и `supervisor-macros`; здесь только минимальный каркас.
 
-**И узел, и его задача живут в `domain`, а не здесь.** Держится это на двух
-возможностях `supervisor`, и обе стоит знать, потому что растить проект вы
-будете именно ими.
+**Узел графа — это фрагмент, и живёт он в `domain` вместе со своей
+задачей.** Граф собственных узлов не объявляет вовсе: каждый приходит из
+`supervisor_fragment!`, а `supervisor_graph!` здесь — это `boot:`-объект,
+блок `watchdog:` и список `fragments:`. Держится это на двух возможностях
+`supervisor`, и обе стоит знать, потому что растить проект вы будете именно
+ими.
 
 **Первая — проекция аргументов.** Узел пишется формой
 `task: путь(аргументы)`: макрос раскладывает поля контекста по обычным
@@ -61,66 +62,88 @@
 `task: имя` без скобок тоже работает и передаёт контекст одним аргументом, но
 привязывает задачу к тому крейту, где объявлен граф, — то есть к `cross`.
 
-**Вторая — фрагменты.** `supervisor_fragment!` объявляет срез графа (узлы,
-`template`, графовые `cloned:`/`shared:`) в крейте, который сам никакого графа
-не объявляет. Узел `APP` шаблона объявлен так — в `crates-host/domain/src/app.rs`:
+**Вторая — фрагменты.** `supervisor_fragment!` объявляет самодостаточный
+срез графа — один узел (без имени) с его политикой, таймаутом, слотами и
+задачей, плюс, если надо, свои `cloned:`/`shared:` и собственная
+`boot:`-привязка — в крейте, который сам никакого графа не объявляет. Узел
+`APP` шаблона объявлен так — в `crates-host/domain/src/app.rs`:
 
 ```ignore
 supervisor::supervisor_fragment! {
     name: APP_FRAG;
 
-    node APP, deps: [], restart: RestartPolicy::OnFailure, backoff: backoff(),
-        watchdog: APP_WATCHDOG observe,
-        task: $crate::app::run(&ctx.heartbeat);
+    node deps: [], restart: ::supervisor::policy::RestartPolicy::OnFailure,
+        backoff: $crate::app::BACKOFF,
+        watchdog: $crate::app::WATCHDOG observe,
+        task: $crate::app::run(ctx.heartbeat);
 }
 ```
 
-а этот файл его подбирает: `fragments: [::domain::APP_FRAG];` (см. ниже, в
-настоящем графе). Вторая подсистема добавляется так же — своим фрагментом
-рядом со своим кодом и одной строкой в `fragments:`.
+а этот файл его подбирает и называет: `fragments: [::domain::APP_FRAG as APP]`
+(см. ниже, в настоящем графе). Вторая подсистема добавляется так же — своим
+фрагментом рядом со своим кодом и одной записью в `fragments:`. Тот же фрагмент
+под двумя `as` — два независимых узла со своими статиками; `as NAME[N]` — N
+копий под одним именем (`NAME_0`, `NAME_1`, …).
 
 Три вещи, на которых тут спотыкаются:
 
-* **Имена внутри фрагмента резолвятся на compose-site**, а не в крейте, где
-  фрагмент написан: `macro_rules!` подставляет токены в место вызова. Поэтому
-  `RestartPolicy`, `backoff()` и `APP_WATCHDOG` обязаны быть в области
-  видимости здесь. Это не недосмотр: таймаут узла связан с аппаратным
-  `bsp::wdg::HW_TIMEOUT_US`, и цифрам место рядом с железом.
-* **Путь к задаче пишется `$crate::`** — только он переживает переименование
-  зависимости в чужом манифесте, а `crate::` означал бы крейт, который
-  фрагмент вызывает.
-* **Порядок items фиксирован**: `name:` → `fragments:` → `raw_mutex:` →
-  `boot:` → `watchdog:` → узлы. `fragments:` после `boot:` — ошибка разбора.
+* **Имя узлу даёт запись `fragments:`, а не фрагмент.** `as APP` — узел
+  `APP`; без `as` узел зовётся как фрагмент (`APP_FRAG`). Всё, что фрагмент
+  объявляет сверх узла (слоты, `provide_*`, `publish:`-приёмники), получает
+  префикс этого имени: `resources: [LINK: …]` у `… as OTA` — это слот
+  `OTA_LINK` и `provide_ota_link`.
+* **Токены фрагмента резолвятся на compose-site**, а не в крейте, где он
+  написан: `macro_rules!` подставляет их в место вызова. Поэтому всё, что
+  фрагмент называет, пишется полным путём — `$crate::app::BACKOFF`,
+  `::supervisor::policy::RestartPolicy` — и от этого файла ничего не требует;
+  голое имя искалось бы здесь и падало бы с `E0425`. `$crate::` при этом
+  указывает в крейт фрагмента и переживает переименование зависимости в чужом
+  манифесте, а `crate::` означал бы крейт, который фрагмент вызывает. Типы,
+  которых фрагмент назвать не может (адаптер платы в слоте), — его параметры:
+  `name: OTA_FRAG<S, F>` во фрагменте, `::domain::OTA_FRAG<bsp::ota::Link,
+  bsp::ota::Ota>` здесь.
+* **Порядок items фиксирован**: `name:` → `boot:` → `watchdog:` →
+  `cloned:`/`shared:` → `executor` → `fragments:` последним. `fragments:`
+  раньше `boot:` — ошибка разбора; блок `watchdog:` внутри фрагмента — тоже
+  (это решение на весь граф, фрагмент лишь опрашивает его полем `watchdog:`
+  своего узла).
 
 Цена всей схемы — зависимость `domain` от `supervisor` (ради `Heartbeat` и
-`TaskExit` в сигнатуре задачи); она разобрана в `docs/architecture.md`.
-Сам фрагмент её не требует: он не генерирует задач, а `supervisor` по имени
-обязан быть только у compose-site.
+`TaskExit` в сигнатуре задачи, `BackoffPolicy` и `Duration` в политике); она
+разобрана в `docs/architecture.md`. Сам фрагмент её не требует: он не
+генерирует задач, а `supervisor` по имени обязан быть только у compose-site.
 
 Время везде — `embassy_time::Duration`, единственный тип времени во всей
-библиотеке. `core::time::Duration` из неё убран намеренно: его
-представление `{secs, nanos}` превращает каждую конверсию в 64-битное
-деление, которое на 32-битной цели раскрывается в вызов
+библиотеке (`supervisor::Duration` — он же, реэкспортом). `core::time::Duration`
+из неё убран намеренно: его представление `{secs, nanos}` превращает каждую
+конверсию в 64-битное деление, которое на 32-битной цели раскрывается в вызов
 `__aeabi_uldivmod`, тогда как `embassy_time` — это просто счётчик тиков.
 
-Ниже — куда его растить. Импорты и `backoff()` уже написаны ниже по файлу,
-настоящим кодом, поэтому здесь не повторяются: пример показывает только то,
-чего в минимальном узле нет — зависимости, ресурсы и почтовый ящик.
+Ниже — куда его растить: пример показывает только то, чего в минимальном узле
+нет — зависимости, ресурсы, почтовый ящик и тип, который знает лишь плата.
 
 ```ignore
-supervisor_graph! {
-    node USART, deps: [], restart: RestartPolicy::OnFailure, backoff: backoff(),
-        resources: [UART: UsartResources],
-        task: usart_worker;
-
-    // Стартует только после того, как USART сигнализировал готовность.
-    node APP, deps: [USART], restart: RestartPolicy::OnFailure, backoff: backoff(),
-        inbox: [EVENTS: LinkEvent; 8],
-        task: domain::link::run(&mut ctx.events);
+// в crates-host/domain/src/usart.rs: слот под ручку периферии, тип которой
+// `domain` не видит, — отсюда параметр фрагмента.
+supervisor::supervisor_fragment! {
+    name: USART_FRAG<R>;
+    node deps: [], restart: ::supervisor::policy::RestartPolicy::OnFailure,
+        backoff: $crate::usart::BACKOFF,
+        resources: [UART: R],
+        task: $crate::usart::run(ctx.uart);
 }
 
 // в crates-host/domain/src/link.rs — то есть там, где это тестируется на хосте:
-pub async fn run(events: &mut Receiver<'_, NoopRawMutex, LinkEvent, 8>) -> TaskExit {
+supervisor::supervisor_fragment! {
+    name: LINK_FRAG;
+    // Стартует только после того, как USART сигнализировал готовность.
+    node deps: [USART], restart: ::supervisor::policy::RestartPolicy::OnFailure,
+        backoff: $crate::link::BACKOFF,
+        inbox: [EVENTS: $crate::link::LinkEvent; 8],
+        task: $crate::link::run(&mut ctx.events);
+}
+
+pub async fn run(events: &mut Receiver<'_, CriticalSectionRawMutex, LinkEvent, 8>) -> TaskExit {
     // Определение автомата — тоже в `domain` (см. crates-host/domain/examples/),
     // здесь только прогон его в задаче.
     let mut rt = AsyncTimedRuntime::<Link>::new(LinkId::Disconnected, LinkData::default());
@@ -128,15 +151,22 @@ pub async fn run(events: &mut Receiver<'_, NoopRawMutex, LinkEvent, 8>) -> TaskE
     TaskExit::Completed
 }
 
-// в main(), после инициализации HAL:
-provide_uart(r.usart).expect("слот пуст до первого spawn_all");
+// здесь, в graph.rs: две записи вместо одной.
+fragments: [::domain::APP_FRAG as APP,
+            ::domain::USART_FRAG<UsartResources> as USART,
+            ::domain::LINK_FRAG as LINK];
+
+// в main(), после инициализации HAL: слот назван по узлу и по слоту.
+provide_usart_uart(r.usart).expect("слот пуст до первого spawn_all");
 // Второй параметр — `boot:`-объект графа; в шаблоне это `board`, и объявлен
-// он ради блока `watchdog:` (ниже по файлу). Слот, написанный с
-// инициализатором — `resources: [UART: UsartResources = board.usart]`, —
-// заполняет сам граф: строки `provide_uart` тогда нет вовсе, а значит её
-// нельзя и забыть. Формой не обслуживаются слоты `consume`/`shared` (их
-// переиздаёт `respawn_all`, а boot-объект к тому моменту потреблён) и всё,
-// что требует `await` или повтора, — для этого остаётся узел-инициализатор.
+// он ради блока `watchdog:`. Слот, написанный с инициализатором — во
+// фрагменте `resources: [UART: R = hw.usart]` при его собственной
+// `boot: hw: …;`, а здесь `… as USART = board.usart`, — заполняет сам граф:
+// строки `provide_usart_uart` тогда нет вовсе, а значит её нельзя и забыть
+// (так устроен узел OTA ниже). Формой не обслуживаются слоты
+// `consume`/`shared` (их переиздаёт `respawn_all`, а boot-объект к тому
+// моменту потреблён) и всё, что требует `await` или повтора, — для этого
+// остаётся узел-инициализатор.
 spawn_all(&spawner, board).expect("узлы свежие");
 ```
 
@@ -165,8 +195,11 @@ spawn_all(&spawner, board).expect("узлы свежие");
 ядра CM4 `IWDG2`), объект собирает `Board::new`, а запускает его блок
 `watchdog:` графа — инициализатором `= board.watchdog.arm()`, где
 `board` это объявленный выше `boot:`-объект, который `main` передаёт в
-`spawn_all`. Всё, что здесь осталось на вас, — цифры:
-`WATCHDOG_CHECK_EVERY`, `APP_WATCHDOG` и `bsp::wdg::HW_TIMEOUT_US`.
+`spawn_all`. Всё, что осталось на вас, — цифры, и живут они там, о чём
+каждая: `WATCHDOG_CHECK_EVERY` здесь (про один сторож на всех), таймаут узла
+`domain::app::WATCHDOG` во фрагменте (про этот узел, вместе с его backoff'ом
+— и их соотношение держит `const`-assert там же), `bsp::wdg::HW_TIMEOUT_US`
+у железа.
 
 Узел объявлен **наблюдаемым** (`watchdog: ... observe`): его просрочка
 докладывается наблюдателю графа (`report_liveness`) и не превращается в
@@ -278,7 +311,8 @@ async fn uart_drain_task(mut uart: embassy_stm32::usart::UartTx<'static, embassy
 
 Узел `OTA` объявлен в `domain::ota` (`OTA_FRAG` без подписи,
 `OTA_SIGNED_FRAG` с ней — какой из двух, решила генерация) и спавнится
-отсюда строкой в `fragments:`. Он в цикле ждёт заголовок, принимает образ
+отсюда записью в `fragments:` — она же даёт ему имя (`as OTA`) и типы двух
+его слотов аргументами. Он в цикле ждёт заголовок, принимает образ
 (`domain::download::receive` — сверка длины до стирания, буферизация до
 слова флеша), применяет его (`mark_updated` или `domain::update::apply_signed`)
 и сообщает исход отправителю кодом `ports::Rejection`. Всё это — host-тесты
@@ -292,9 +326,11 @@ SD-карта, у каждого свой формат пакета и своя 
 ваш `finish`; узел этого не знает.
 
 Вход узла собирается здесь же, в `fragments:`, из полей `Board`
-(`::domain::ota::Inputs { link: board.ota_link, flash: board.ota }`);
-подставили свой транспорт — поправьте псевдоним `OtaLink` выше по файлу.
-Оба слота узла — `local` (фича `supervisor/local-resources` в
+(`::domain::ota::Inputs { link: board.ota_link, flash: board.ota }`), а типы
+слотов — аргументы фрагмента (`OTA_FRAG<bsp::ota::Link, bsp::ota::Ota>`):
+слот — `static`, тип ему нужен, а знает его только эта сторона. Подставили
+свой транспорт — поправьте первый аргумент. Оба слота узла — `local` (фича
+`supervisor/local-resources` в
 `crates-cross/Cargo.toml`): объекты платы `!Send`, и граф держит их на своём
 исполнителе, не требуя `Send`. Узел, чей `local`-слот заполняется
 инициализатором (здесь — оба, из `inputs`), нельзя перевести на другой

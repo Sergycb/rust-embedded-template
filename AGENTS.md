@@ -31,10 +31,13 @@ skill'ом `rust-engineering` и не дублируются здесь. Это�
 `cross` остаётся минимальным: только создание `static` hardware-объектов (буферы, DMA,
 периферия) и оркестрация задач (`Spawner`, supervisor-графы, watchdog).
 Всё остальное — даже асинхронное и «системное» на вид (стейтчарты, RPC, синхронизация
-задач) — живёт в `domain`, а не в `cross`. Узлы графа тоже: подсистема объявляет свои
-`supervisor_fragment!`-ом рядом со своей задачей (`domain::app::APP_FRAG`,
-`domain::ota::OTA_FRAG`), а `crates-cross/app/src/graph.rs` их только собирает
-(`fragments:`, `boot:`, `watchdog:`).
+задач) — живёт в `domain`, а не в `cross`. Узлы графа тоже: подсистема объявляет свой
+`supervisor_fragment!`-ом рядом со своей задачей — самодостаточным модулем с задачей,
+политикой и таймаутом, все имена внутри полным путём (`$crate::…`, `::supervisor::…`),
+типы, которых он не видит, — параметрами (`domain::app::APP_FRAG`,
+`domain::ota::OTA_FRAG<S, F>`). Граф собственных узлов не объявляет:
+`crates-cross/app/src/graph.rs` — только `boot:`, блок `watchdog:` и `fragments:`,
+который перечисляет фрагменты и даёт узлам имена (`APP_FRAG as APP`).
 Отсюда и зависимость `domain` от `supervisor` (ради `Heartbeat`/`TaskExit` в сигнатуре) —
 `embassy-executor` приезжает туда транзитивно, и это осознанно; `embassy-stm32` — нет.
 Подробности, прецеденты и пограничные случаи (например, `watchdog`) — `docs/architecture.md`.
@@ -155,8 +158,10 @@ read`: руками пришлось бы сначала найти адрес �
   (`domain::ota`) — одно допущение «один исполнитель», менять вместе —
   `docs/flash.md`, `docs/architecture.md`.
 {%- if graph == "true" %}
-- Три таймаута сторожа связаны цепочкой (`BACKOFF_MAX` < `APP_WATCHDOG` < `HW_TIMEOUT_US`) —
-  менять только вместе — `docs/watchdog.md`.
+- Три таймаута сторожа связаны цепочкой (`domain::app::BACKOFF.max` <
+  `domain::app::WATCHDOG` < `bsp::wdg::HW_TIMEOUT_US` минус `WATCHDOG_CHECK_EVERY`
+  графа) — менять только вместе; левое звено держит `const`-assert в `domain::app`,
+  правое — на вас — `docs/watchdog.md`.
 - Сторож запускается в прологе `spawn_all` (`= board.watchdog.arm()`), а не в
   `Board::new`: с этого момента железо тикает, а кормит его только тикер графа —
   `docs/watchdog.md`.

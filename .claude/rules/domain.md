@@ -6,10 +6,14 @@ paths: crates-host/domain/**
   знание о железе здесь запрещены — всё, что их требует, живёт в `crates-cross`.
 - `supervisor` (и приезжающий с ним `embassy-executor`) — можно и нужно: здесь лежат
   и объявления узлов (`supervisor_fragment!`), и их задачи (`domain::app::run`),
-  сигнатуры которых называют `Heartbeat` и `TaskExit`. Compose-site — граф в
-  `crates-cross/app` — собирает узлы через `fragments:` и добавляет к ним железо.
-  Имена, которые фрагмент называет внутри себя (`RestartPolicy`, `backoff()`,
-  таймауты), резолвятся на compose-site, поэтому объявлять их здесь не нужно.
+  сигнатуры которых называют `Heartbeat` и `TaskExit`, и их политика с таймаутом
+  (`domain::app::{BACKOFF, WATCHDOG}` — `const`). Фрагмент самодостаточен: один узел
+  без имени, всё, что он называет, — полным путём (`$crate::app::BACKOFF`,
+  `::supervisor::policy::RestartPolicy`), потому что токены `macro_rules!` резолвятся
+  на compose-site, а голое имя искалось бы там; тип, которого фрагмент не видит
+  (адаптер платы в слоте), — его параметр (`name: OTA_FRAG<S, F>`). Compose-site —
+  граф в `crates-cross/app` — перечисляет фрагменты в `fragments:`, даёт узлам имена
+  (`as APP`), подставляет типы и добавляет железо.
 - Liquid в `domain`, `ports` и `adapters` запрещён: все три — члены корневого
   workspace и компилируются в самом репозитории шаблона. Трейты и функции объявляются
   безусловно, условными бывают только реализации в `crates-cross/bsp`.

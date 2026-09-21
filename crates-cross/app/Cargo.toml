@@ -36,26 +36,19 @@ bsp = { workspace = true }
 ports = { workspace = true }
 domain = { workspace = true }
 shadow-rs = { workspace = true }
-# Граф задач в graph.rs — настоящий код, а не пример: `node`, политика
-# перезапуска, `spawn_all` в main.rs. На чипах, где граф не помещается (см.
-# GRAPH_MIN_PARTITION в chip-select.rhai), он вырезается при генерации, но
-# зависимость остаётся: так её версия проверяется сборкой на ARM в любой
-# конфигурации.
-supervisor = { workspace = true }
-# Реализация трейта `HardwareWatchdog` над IWDG живёт в `bsp` (bsp/src/wdg.rs),
-# и граф получает оттуда готовый тип. Прямая зависимость здесь ради одного
-# имени: наблюдатель за просрочкой узлов (`observe:` в блоке `watchdog:`)
-# обязан иметь сигнатуру `fn(&'static str, watchdog::Liveness)`, а `Liveness`
-# `supervisor` наружу не реэкспортирует. В проекте без графа наблюдателя нет и
-# зависимость не используется — остаётся по той же причине, что и `supervisor`
-# выше.
-watchdog = { workspace = true }
+# Граф задач в graph.rs — настоящий код, а не пример: compose-site фрагментов
+# из `domain`, блок `watchdog:`, `spawn_all` в main.rs. На чипах, где граф не
+# помещается (см. GRAPH_MIN_PARTITION в chip-select.rhai), он вырезается при
+# генерации, но зависимость остаётся: так её версия проверяется сборкой на ARM
+# в любой конфигурации.
 #
-# А вот `embassy-time` нужен прямо: время графа задач — это `Duration`
-# (`check_every:`, `watchdog:`, backoff'ы), и транзитивно он сюда не приходит —
-# `supervisor` реэкспортирует в своём `__private` только executor, futures,
-# sync и sync_request.
-embassy-time = { workspace = true }
+# И единственная зависимость графа — это обещание самого `supervisor`
+# (`supervisor-sole-dep-fixture` в rust-lib): всё, что compose-site называет
+# сам, — `Duration` для `check_every:`, `Liveness` в сигнатуре наблюдателя
+# (`observe:`), `HardwareWatchdog` — он реэкспортирует публичными путями.
+# Реализация трейта над IWDG живёт в `bsp` (bsp/src/wdg.rs), и там `watchdog`
+# стоит прямой зависимостью; граф получает оттуда готовый тип.
+supervisor = { workspace = true }
 #
 # `embassy-stm32` здесь нет и быть не должно: про чип знает `bsp`, а
 # приложение — только про объекты, которые тот отдаёт. Драйвер времени
