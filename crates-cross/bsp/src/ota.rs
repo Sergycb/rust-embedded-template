@@ -22,9 +22,17 @@ pub type Partition = BlockingPartition<'static, NoopRawMutex, Flash<'static, Blo
 /// узла OTA должен быть конкретным, а адаптер приходит из `adapters` generic.
 pub type Updater = adapters::ota::Updater<Partition, Partition>;
 
-/// Всё, что плата отдаёт узлу OTA: канал доставки и адаптер разделов — ровно
-/// та привязка, которую ждёт фрагмент `domain::ota`.
-pub type Ota = domain::ota::Inputs<Link, Updater>;
+/// Всё, что плата отдаёт узлу OTA: канал доставки и адаптер разделов.
+///
+/// Своя структура, а не `domain::ota::Inputs`: `bsp` зависит только от
+/// `ports` и `adapters`, про `domain` он не знает. Во вход узла её
+/// раскладывает compose-site (`crates-cross/app/src/graph.rs`).
+pub struct Ota {
+    /// Канал доставки образа — реализация `ports::ImageSource`.
+    pub link: Link,
+    /// Адаптер разделов — реализация `ports::FirmwareUpdate`.
+    pub flash: Updater,
+}
 
 /// Канал доставки образа этой платы — заглушка, которую проект заменяет
 /// своим транспортом.

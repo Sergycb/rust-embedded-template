@@ -5,7 +5,7 @@
 //! адаптер разделов (`board.ota`), приложение оборачивает его в
 //! `adapters::ota::Signed` — проверка отката и подписи до обмена разделов.
 
-use bsp::ota::{Link, Partition, Updater};
+use bsp::ota::{Link, Ota, Partition};
 use domain::ota::Inputs;
 
 /// Адаптер с проверкой подписи — тип слота узла OTA в графе.
@@ -14,16 +14,17 @@ pub type Signed = adapters::ota::Signed<Partition, Partition>;
 /// Версия этого образа — `version` из Cargo.toml, свёрнутая
 /// `domain::firmware::pack` в четыре байта.
 ///
-/// Считается на компиляции: компоненты cargo отдаёт уже разобранными, а
-/// версия, не влезшая в поля (`major`/`minor` до 255, `patch` до 65535), —
-/// ошибка сборки, а не прошивка, молча принимающая откат. Пререлизный
-/// суффикс не учитывается: semver считает `1.2.3-rc1` младше `1.2.3`, а
-/// уместить это в четыре байта нечем — README, «Защита от отката».
+/// Компоненты берутся из того же `shadow-rs`, что печатает версию в баннере
+/// старта (`crate::build`), — у версии в прошивке один источник. Считается
+/// на компиляции: версия, не влезшая в поля (`major`/`minor` до 255, `patch`
+/// до 65535), — ошибка сборки, а не прошивка, молча принимающая откат.
+/// Пререлизный суффикс не учитывается: semver считает `1.2.3-rc1` младше
+/// `1.2.3`, а уместить это в четыре байта нечем — README, «Защита от отката».
 pub const FW_VERSION: u32 = {
     let (Ok(major), Ok(minor), Ok(patch)) = (
-        u8::from_str_radix(env!("CARGO_PKG_VERSION_MAJOR"), 10),
-        u8::from_str_radix(env!("CARGO_PKG_VERSION_MINOR"), 10),
-        u16::from_str_radix(env!("CARGO_PKG_VERSION_PATCH"), 10),
+        u8::from_str_radix(crate::build::PKG_VERSION_MAJOR, 10),
+        u8::from_str_radix(crate::build::PKG_VERSION_MINOR, 10),
+        u16::from_str_radix(crate::build::PKG_VERSION_PATCH, 10),
     ) else {
         panic!("version в Cargo.toml не влезает в четыре байта образа: см. domain::firmware::pack");
     };
@@ -64,7 +65,7 @@ pub static OTA_PUBLIC_KEY_IN_IMAGE: [u8; 32] =
 
 /// Вход узла OTA с проверкой подписи: адаптер платы, обёрнутый версией и
 /// ключом этой прошивки.
-pub fn signed(ota: Inputs<Link, Updater>) -> Inputs<Link, Signed> {
+pub fn signed(ota: Ota) -> Inputs<Link, Signed> {
     Inputs {
         link: ota.link,
         flash: Signed::new(ota.flash, FW_VERSION, OTA_PUBLIC_KEY_IN_IMAGE),

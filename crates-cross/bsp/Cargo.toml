@@ -17,7 +17,6 @@ workspace = true
 # зависит и собирается отдельным вызовом cargo, так что отсюда фича до него не
 # доходит.
 embassy-stm32 = { workspace = true, features = ["time-driver-any"] }
-domain = { workspace = true }
 # Трейты, которые реализуют объекты `Board`: приложение видит только их.
 ports = { workspace = true }
 # Адаптеры поверх generic-флеша и шин: `Board::new` собирает их из периферии

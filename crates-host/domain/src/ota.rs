@@ -44,11 +44,13 @@ pub const BACKOFF: BackoffPolicy = BackoffPolicy {
     max: Duration::from_secs(5),
 };
 
-/// Что узлу нужно на входе. Собирает его плата — поле `Board::ota`, — а
-/// compose-site подставляет типы порта и адаптера аргументами фрагмента:
+/// Что узлу нужно на входе. Строит compose-site из поля платы `Board::ota`
+/// (`bsp` про `domain` не знает, поэтому раскладка там), подставляя типы порта
+/// и адаптера аргументами фрагмента:
 ///
 /// ```ignore
-/// fragments: [::domain::OTA_FRAG<bsp::ota::Link, bsp::ota::Updater> as OTA = board.ota];
+/// fragments: [::domain::OTA_FRAG<bsp::ota::Link, bsp::ota::Updater> as OTA
+///                 = ::domain::ota::Inputs { link: board.ota.link, flash: board.ota.flash }];
 /// ```
 ///
 /// Тип объявлен здесь, а не назван графом, по правилу фрагментов
@@ -286,7 +288,7 @@ fn update_rejection<E>(err: &UpdateError<E>) -> Rejection {
 // `graph.rs`.
 //
 // `boot: inputs: …` — собственная привязка фрагмента: compose-site пишет
-// `fragments: [::domain::OTA_FRAG<…> as OTA = board.ota]`,
+// `fragments: [::domain::OTA_FRAG<…> as OTA = ::domain::ota::Inputs { link: …, flash: … }]`,
 // а `spawn_all` связывает её первой строкой пролога, и инициализаторы слотов
 // ниже читают её поля. Так фрагмент не видит `Board` вовсе — только то, что
 // ему дали.

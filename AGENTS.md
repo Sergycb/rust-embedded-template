@@ -166,7 +166,7 @@ read`: руками пришлось бы сначала найти адрес �
 - Сторож запускается в прологе `spawn_all` (`= board.watchdog.arm()`), а не в
   `Board::new`: с этого момента железо тикает, а кормит его только тикер графа.
   В release с OTA его раньше запускает bootloader — с тем же `HW_TIMEOUT_US`
-  (файл `bsp/src/wdg_timeout.rs` у обоих общий), и путь от прыжка до
+  (число в `[env]` crates-cross/.cargo/config.toml у обоих общее), и путь от прыжка до
   `spawn_all` обязан в него уложиться — `docs/watchdog.md`.
 {%- endif %}
 - `Board` отдаёт адаптеры — объекты, реализующие трейты (`ports`, `HardwareWatchdog`), —
@@ -175,6 +175,9 @@ read`: руками пришлось бы сначала найти адрес �
 - `cortex_m::Peripherals` (`DWT`, `MPU`, `SYST`) `bsp` не забирает; нужны — берите
   `take()` ДО `Board::new()`, иначе на части семейств `embassy_stm32::init` уже сделал
   `steal()` и вернётся `None` — `docs/architecture.md`.
+- `bsp` зависит только от `ports` и `adapters` (и HAL), не от `domain`: типы
+  домена — например вход узла OTA — собирает из полей `Board` compose-site в
+  `app` — `docs/architecture.md`.
 - Liquid в `domain`/`ports`/`adapters` запрещён: все три — члены корневого workspace и
   компилируются в самом репозитории шаблона — `docs/architecture.md`.
 - Новую зависимость для `cross` нельзя считать рабочей на тёплом кеше — проверять
