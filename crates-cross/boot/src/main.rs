@@ -12,15 +12,12 @@ use defmt_rtt as _;
 use embassy_boot_stm32::{BootLoader, BootLoaderConfig};
 use embassy_stm32::flash::{FLASH_BASE, Flash};
 use embassy_sync::blocking_mutex::Mutex;
-// Паникёр по профилю — то же правило и тот же инвариант, что у `app`
-// (crates-cross/app/src/main.rs): dev — `panic-probe`, release —
-// `panic-persist`. Дамп bootloader никогда не читает (это делает `app` при
-// старте), так что причина падения bootloader'а в release лежит в PANIC до
-// первого удачного старта приложения или до `cargo xtask panic`.
-#[cfg(not(debug_assertions))]
-use panic_persist as _;
-#[cfg(debug_assertions)]
-use panic_probe as _;
+
+// Паникёр по профилю — тот же, что у `app` (см. panic.rs). Дамп bootloader
+// никогда не читает (это делает `app` при старте), так что причина падения
+// bootloader'а в release лежит в PANIC до первого удачного старта приложения
+// или до `cargo xtask panic`.
+mod panic;
 
 #[cortex_m_rt::entry]
 fn main() -> ! {

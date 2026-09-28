@@ -22,12 +22,12 @@ embassy-executor = { workspace = true, features = ["defmt"] }
 defmt = { workspace = true }
 defmt-rtt = { workspace = true }
 # Паникёр по профилю — оба крейта обычные зависимости, выбор делает
-# `#[cfg(debug_assertions)]` на `use … as _;` в src/main.rs (Cargo гейтить
-# зависимости по профилю не умеет, см. docs/conventions.md). dev: `panic-probe`
-# печатает причину через defmt и останавливает ядро `udf()`; release:
-# `panic-persist` сохраняет причину в регион PANIC и перезапускает МК. Крейт без
-# `use` не линкуется и своего `#[panic_handler]` не регистрирует — поэтому два
-# паникёра в манифесте не конфликтуют.
+# `#[cfg(debug_assertions)]` в src/panic.rs (Cargo гейтить зависимости по
+# профилю не умеет, см. docs/conventions.md). dev: `panic-probe` печатает
+# причину через defmt и останавливает ядро `udf()`; release: собственный
+# `#[panic_handler]` сохраняет причину через `panic-persist` в регион PANIC,
+# печатает её и перезапускает МК. `panic-probe` без `use` не линкуется, а
+# `panic-persist` собран с `custom-panic-handler` — своего обработчика у него нет.
 panic-probe = { workspace = true, features = ["print-defmt"] }
 panic-persist = { workspace = true }
 bsp = { workspace = true }

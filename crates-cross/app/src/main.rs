@@ -7,6 +7,7 @@ shadow!(build);
 
 mod graph;
 {%- endif %}
+mod panic;
 
 use defmt::info;
 // RTT остаётся дефолтным транспортом в обоих профилях — сырой шаблон не знает,
@@ -15,21 +16,6 @@ use defmt::info;
 // graph.rs, подключается по мере готовности платы (Board должен будет отдавать
 // объект транспорта, собранный из реальной периферии).
 use defmt_rtt as _;
-// Паникёр по профилю, и это единственная развилка по профилю в шаблоне
-// (docs/conventions.md). Под отладчиком полезнее встать там, где упало:
-// `panic-probe` печатает причину через defmt и делает `udf()`, пробник ловит
-// остановку со стеком. В поле полезнее вернуться в работу: `panic-persist`
-// пишет причину в регион PANIC и делает `sys_reset`, а причину печатает
-// следующий старт (см. ниже в `main`).
-//
-// Оба крейта — обычные зависимости, а выбирает `cfg`: крейт, на который в
-// исходнике нет ни одной ссылки, не линкуется и своего `#[panic_handler]` не
-// регистрирует. Отсюда инвариант: в dev-сборке имя `panic_persist` не должно
-// упоминаться нигде, иначе два паникёра столкнутся на линковке.
-#[cfg(not(debug_assertions))]
-use panic_persist as _;
-#[cfg(debug_assertions)]
-use panic_probe as _;
 
 use embassy_executor::Spawner;
 {%- if ota == "true" %}
@@ -61,8 +47,8 @@ async fn main({% if graph == "true" %}spawner{% else %}_spawner{% endif %}: Spaw
     // паника это сброс. Печатай мы после него — устройство, падающее внутри
     // `new`, крутилось бы в цикле перезагрузок молча.
     //
-    // Только release: в dev паникёр — `panic-probe`, и само имя `panic_persist`
-    // здесь упоминать нельзя (см. `use` выше).
+    // Только release: в dev паникёр — `panic-probe`, дамп никто не пишет, и
+    // читать было бы нечего (см. `panic.rs`).
     #[cfg(not(debug_assertions))]
     if let Some(reason) = panic_persist::get_panic_message_utf8() {
         defmt::error!("app: предыдущий запуск упал: {}", reason);

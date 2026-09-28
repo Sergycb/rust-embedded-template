@@ -23,7 +23,7 @@ cortex-m-rt = { workspace = true }
 defmt-rtt = { workspace = true }
 defmt = { workspace = true }
 # Паникёр по профилю — то же правило, что у `app` (см. crates-cross/app/Cargo.toml):
-# dev — `panic-probe`, release — `panic-persist`. В release это единственный
+# dev — `panic-probe`, release — src/panic.rs поверх `panic-persist`. В release это единственный
 # способ узнать, почему bootloader не прыгнул: сторожа у него нет, и с
 # `panic-probe` плата стояла бы в `udf()` молча до выключения питания, а так
 # причина лежит в PANIC и читается `cargo xtask panic`.
