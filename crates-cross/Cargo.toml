@@ -77,6 +77,9 @@ embassy-embedded-hal = { version = "0.6.0" }
 # `&'static` (иначе их не отдать в спавнящиеся задачи — те требуют 'static).
 static_cell            = { version = "2.1.1" }
 embassy-sync       = { version = "0.8.0" }
+# Трейты `NorFlash` для обёртки флеша в bootloader'е, кормящей сторож
+# (crates-cross/boot/src/main.rs). Та же версия, что тянет embassy-boot.
+embedded-storage   = { version = "0.3.1" }
 # `portable-atomic` здесь не объявлен намеренно: на Cortex-M0/M0+ ему нужно
 # сказать, чем эмулировать CAS, и это делает cfg в `.cargo/config.toml`
 # (`[target.thumbv6m-none-eabi] rustflags`), а не фича у членов workspace —
