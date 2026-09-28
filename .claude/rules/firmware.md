@@ -6,7 +6,7 @@ paths: crates-cross/**
   `#[embassy_executor::task]`, обязан иметь псевдоним типа в `bsp`.
 - Ровно один `#[panic_handler]` и один `#[global_logger]` на бинарник — это
   ограничение линкера, а не Cargo. Развилка по профилю делается через
-  `#[cfg(debug_assertions)]` (паникёр — в `panic.rs` у `app` и `boot`), не
+  `#[cfg(debug_assertions)]` (паникёр — `app/src/panic.rs`, `boot` берёт его через `#[path]`), не
   Cargo-фичей.
 - `Board` отдаёт адаптеры, реализующие порты, и данные с типом из `ports`
   (`BoardInfo`), а не `Peripherals`, не пины, не периферию ядра и не `Clocks`.

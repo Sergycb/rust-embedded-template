@@ -2,8 +2,8 @@
 
 ## Два паникёра, один на сборку
 
-Выбирает профиль — `#[cfg(debug_assertions)]` в `crates-cross/app/src/panic.rs` и
-его копии `crates-cross/boot/src/panic.rs`:
+Выбирает профиль — `#[cfg(debug_assertions)]` в `crates-cross/app/src/panic.rs`; тот же
+файл подключает и bootloader (`#[path]` в `crates-cross/boot/src/main.rs`):
 
 | Профиль | Паникёр | Что делает | Почему |
 |---|---|---|---|

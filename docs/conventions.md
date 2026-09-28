@@ -79,7 +79,8 @@ nextest убивает, а не ждёт до таймаута CI.
   `embassy_executor::Metadata` — она единственная из двух правда занимает
   flash, по `&'static str` на узел. Обе бесплатны в том смысле, что выбирать
   было не из чего: прошивка defmt-only в обоих профилях.
-- **Паникёр — модуль `panic.rs` у `app` и `boot`.** Выбирает профиль:
+- **Паникёр — модуль `crates-cross/app/src/panic.rs`, общий для `app` и `boot`**
+  (bootloader подключает его через `#[path]`). Выбирает профиль:
   `#[cfg(debug_assertions)]` на `use panic_probe as _;`, `#[cfg(not(debug_assertions))]`
   на собственном `#[panic_handler]`, который пишет причину через `panic-persist`
   (фича `custom-panic-handler`, штатного обработчика у крейта нет). У

@@ -21,10 +21,12 @@ use embassy_sync::blocking_mutex::Mutex;
 use embedded_storage::nor_flash::{ErrorType, NorFlash, ReadNorFlash};
 {%- endif %}
 
-// Паникёр по профилю — тот же, что у `app` (см. panic.rs). Дамп bootloader
-// никогда не читает (это делает `app` при старте), так что причина падения
-// bootloader'а в release лежит в PANIC до первого удачного старта приложения
-// или до `cargo xtask panic`.
+// Паникёр по профилю — тот же исходник, что у `app`: модуль подключён по
+// пути, а не копией и не общим крейтом (boot намеренно не зависит ни от
+// `bsp`, ни от `app`). Дамп bootloader никогда не читает (это делает `app` при
+// старте), так что причина падения bootloader'а в release лежит в PANIC до
+// первого удачного старта приложения или до `cargo xtask panic`.
+#[path = "../../app/src/panic.rs"]
 mod panic;
 
 #[cortex_m_rt::entry]
@@ -139,10 +141,12 @@ impl<F: NorFlash> NorFlash for Fed<F> {
     const WRITE_SIZE: usize = F::WRITE_SIZE;
     const ERASE_SIZE: usize = F::ERASE_SIZE;
 
-    /// Диапазон не дробится: `embassy-boot` сам стирает по одной странице
-    /// (крупнейший сектор чипа) за вызов, а дробить по `ERASE_SIZE` здесь
-    /// нельзя — на F4/F7/H7 секторы неравные, и граница посреди настоящего
-    /// сектора дала бы отказ стирания.
+    /// Диапазон не дробится: `embassy-boot` при обмене стирает по одной
+    /// странице (крупнейший сектор чипа) за вызов, а дробить по `ERASE_SIZE`
+    /// здесь нельзя — на F4/F7/H7 секторы неравные, и граница посреди
+    /// настоящего сектора дала бы отказ стирания. Единственное стирание
+    /// крупнее — раздел `BOOTLOADER_STATE` целиком после отката, но он и сам
+    /// одна-две страницы; таймаут должен пережить и его.
     fn erase(&mut self, from: u32, to: u32) -> Result<(), Self::Error> {
         self.watchdog.pet();
         self.flash.erase(from, to)

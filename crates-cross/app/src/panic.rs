@@ -1,4 +1,8 @@
 //! Обработчик паники: в dev — `panic-probe`, в release — дамп в переживающую сброс память.
+//!
+//! Тот же файл подключает и bootloader (`#[path]` в crates-cross/boot/src/main.rs):
+//! ничего, кроме `cortex-m`, `defmt`, `panic-probe` и `panic-persist`, здесь не
+//! использовать — у `boot` других зависимостей нет.
 
 /// В dev-сборке паника печатается в RTT и оставляет МК в HardFault — под отладчиком.
 #[cfg(debug_assertions)]
