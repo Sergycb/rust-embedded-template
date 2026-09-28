@@ -30,9 +30,15 @@
   Прямо стыкуется с `fsm_async::AsyncTimedRuntime::run` — см. ниже.
 * `publish: [FIELD: Type; N]` / `subscribe: [OTHER.FIELD]` — broadcast
   состояния наружу через `embassy_sync::watch::Watch`.
-* `request: ...` / `calls: [OTHER.FIELD]` — request/response поверх
-  `sync_request::RpcService` (того самого, что в `domain`), с
-  `RequestTimeoutExt::request_timeout` для таймаута.
+* `flags: [FIELD: Type]` — слово статуса подсистемы (`flags::Word`, битовые
+  флаги): владелец получает `flags::Writer`, читатели — `flags::Reader` через
+  тот же `subscribe:`, без счётчика подписчиков.
+* `request: [FIELD: Req -> Resp]` / `calls: [OTHER.FIELD]` — request/response
+  поверх `sync_request::RpcService`, с `RequestTimeoutExt::request_timeout`
+  для таймаута. `Req`/`Resp` обязаны укладываться в 32 байта — больше
+  задаётся явно, `[FIELD: Req -> Resp; 128]`, или на весь узел фрагмента
+  `request_capacity: 128;`. Отвечать — `served.respond_with(fut).await`, а не
+  `respond(fut.await)`: вторая форма стоит лишнего `memmove` на флеше.
 * `watchdog: Duration` — участие узла в общем аппаратном watchdog'е,
   см. следующий раздел.
 * `shutdown: Cooperative` — узел не отменяют дропом посреди работы:
