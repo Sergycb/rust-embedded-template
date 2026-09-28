@@ -49,7 +49,7 @@ fn main() -> ! {
     #[cfg(not(debug_assertions))]
     let flash = Mutex::new(RefCell::new(Fed::new(
         Flash::new_blocking(p.FLASH),
-        IndependentWatchdog::new(p.{{watchdog_peripheral}}, wdg_timeout::HW_TIMEOUT_US),
+        IndependentWatchdog::new(p.{{watchdog_peripheral}}, WATCHDOG_TIMEOUT_US),
     )));
     #[cfg(debug_assertions)]
 {%- endif %}
@@ -76,11 +76,13 @@ fn main() -> ! {
 }
 {%- if graph == "true" %}
 
-/// Таймаут сторожа — тот же файл и та же цифра, что у приложения
-/// (`bsp::wdg::HW_TIMEOUT_US`); почему одна — в самом файле.
+/// Таймаут сторожа — то же число из `[env]` crates-cross/.cargo/config.toml,
+/// что у приложения (`bsp::wdg::HW_TIMEOUT_US`, там же и почему одно).
 #[cfg(not(debug_assertions))]
-#[path = "../../bsp/src/wdg_timeout.rs"]
-mod wdg_timeout;
+const WATCHDOG_TIMEOUT_US: u32 = match u32::from_str_radix(env!("WATCHDOG_TIMEOUT_US"), 10) {
+    Ok(us) => us,
+    Err(_) => panic!("WATCHDOG_TIMEOUT_US в .cargo/config.toml — не число"),
+};
 
 /// Флеш, кормящий сторож перед каждым стиранием и записью.
 ///

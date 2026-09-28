@@ -52,3 +52,10 @@ rustflags = ["--cfg", "portable_atomic_unsafe_assume_single_core"]
 
 [env]
 DEFMT_LOG = "info"
+{%- if graph == "true" %}
+# Аппаратный таймаут сторожа, мкс. Здесь, а не константой в коде, потому что
+# его читают двое — приложение (`bsp::wdg::HW_TIMEOUT_US`, там же обоснование
+# цифры) и bootloader (`crates-cross/boot`), который от `bsp` не зависит, — и
+# расходиться им нельзя (docs/watchdog.md).
+WATCHDOG_TIMEOUT_US = "10000000"
+{%- endif %}

@@ -33,10 +33,6 @@ let config = variable::get("config");
 if variable::get("signed") != "true" {
 	file::delete("crates-cross/app/src/ota.rs");
 }
-// Таймаут сторожа нужен только графу задач (и bootloader'у в проекте с ним).
-if variable::get("graph") != "true" {
-	file::delete("crates-cross/bsp/src/wdg_timeout.rs");
-}
 
 print("");
 print("Проект под " + chip + " (" + target + ").");
