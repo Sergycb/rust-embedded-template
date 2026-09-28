@@ -21,7 +21,7 @@ embassy-stm32 = { workspace = true, features = ["time-driver-any"] }
 ports = { workspace = true }
 # Адаптеры поверх generic-флеша и шин: `Board::new` собирает их из периферии
 # и кладёт полями. Проверку подписи (`signed`) плата не включает: версию и
-# ключ задаёт приложение, оно же и оборачивает адаптер (crates-cross/app/src/ota.rs).
+# ключ задаёт приложение, оно же и оборачивает адаптер (crates-cross/app/src/image.rs).
 adapters = { workspace = true }
 assign-resources = { workspace = true }
 # Регистры ядра напрямую: `wfi` в ожидании сброса от сторожа (src/wdg.rs) и

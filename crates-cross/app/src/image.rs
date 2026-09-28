@@ -1,12 +1,11 @@
-//! Подпись OTA-образа: версия этого образа и ключ, которым проверяются
-//! следующие.
+//! Свойства этого образа: его версия и ключ, которым проверяются следующие.
 //!
 //! Здесь, а не в `bsp`: это свойства прошивки, а не платы. Плата отдаёт
-//! адаптер разделов (`board.ota`), приложение оборачивает его в
-//! `adapters::ota::Signed` — проверка отката и подписи до обмена разделов.
+//! адаптер разделов (`board.ota.flash`), а compose-site (`graph.rs`)
+//! оборачивает его в [`Signed`] этими двумя величинами — проверка отката и
+//! подписи до обмена разделов.
 
-use bsp::ota::{Link, Ota, Partition};
-use domain::ota::Inputs;
+use bsp::ota::Partition;
 
 /// Адаптер с проверкой подписи — тип слота узла OTA в графе.
 pub type Signed = adapters::ota::Signed<Partition, Partition>;
@@ -57,17 +56,9 @@ pub static FW_VERSION_IN_IMAGE: u32 = FW_VERSION;
 /// Статик с именем, а не `const`, по той же причине, что и
 /// [`FW_VERSION_IN_IMAGE`]: `cargo xtask build` находит его в ELF и сверяет с
 /// ключом, которым подписывает образ. Ровно этот статик и уходит в адаптер
-/// ([`signed`]) — значит проверена вся проводка, а не копия ключа рядом с ней.
+/// (`Signed::new` в `graph.rs`) — значит проверена вся проводка, а не копия
+/// ключа рядом с ней.
 #[used]
 #[unsafe(no_mangle)]
 pub static OTA_PUBLIC_KEY_IN_IMAGE: [u8; 32] =
     *include_bytes!(concat!(env!("OUT_DIR"), "/ota-public-key.bin"));
-
-/// Вход узла OTA с проверкой подписи: адаптер платы, обёрнутый версией и
-/// ключом этой прошивки.
-pub fn signed(ota: Ota) -> Inputs<Link, Signed> {
-    Inputs {
-        link: ota.link,
-        flash: Signed::new(ota.flash, FW_VERSION, OTA_PUBLIC_KEY_IN_IMAGE),
-    }
-}

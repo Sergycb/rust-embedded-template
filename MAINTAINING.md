@@ -98,7 +98,7 @@ GH_TOKEN: {% raw %}${{ secrets.GITHUB_TOKEN }}{% endraw %}
 Третий такой плейсхолдер — `signed` (подпись OTA-образа). Он ничего не считает, а
 только выключается сам: без OTA подписывать нечего, и «да» приводится к «нет» ещё до
 разбора раскладки; если схема не поместилась во flash — тоже, уже после. В шаблоне он
-управляет фичей `ed25519-salty` у `embassy-boot` и файлом `crates-cross/app/src/ota.rs`
+управляет фичей `ed25519-salty` у `embassy-boot` и файлом `crates-cross/app/src/image.rs`
 (`FW_VERSION`/`OTA_PUBLIC_KEY_IN_IMAGE` и обёртка `adapters::ota::Signed` над адаптером платы; без
 подписи его удаляет `post-script.rhai`); сама проверка подписи живёт в `adapters` (`SignedFirmwareUpdate`), а порядок
 проверок — в `domain::update::apply_signed`.

@@ -232,7 +232,7 @@ fn build(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
 
 /// Имя символа, в котором прошивка хранит собственную версию.
 ///
-/// Определён в `crates-cross/app/src/ota.rs` под `#[unsafe(no_mangle)]` ровно
+/// Определён в `crates-cross/app/src/image.rs` под `#[unsafe(no_mangle)]` ровно
 /// ради этого чтения.
 const FW_VERSION_SYMBOL: &str = "FW_VERSION_IN_IMAGE";
 
@@ -275,7 +275,7 @@ fn image_symbol<'a>(
         .find(|symbol| symbol.name() == Ok(name))
         .with_context(|| {
             format!(
-                "в {} нет символа {name}. Его определяет crates-cross/app/src/ota.rs — либо \
+                "в {} нет символа {name}. Его определяет crates-cross/app/src/image.rs — либо \
                  прошивка собрана без него, либо статик выбросили при линковке (тогда \
                  верните ему #[used] и #[unsafe(no_mangle)])",
                 elf.display(),

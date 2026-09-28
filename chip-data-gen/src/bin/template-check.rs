@@ -79,11 +79,11 @@ fn default_cases() -> Vec<Case> {
         // Ветка «config есть, bootloader и ota.rs удалены» — только здесь.
         Case::new("stm32f407ve").variant("config", &["config=yes"]),
         // Подпись образа: фича `ed25519-salty` у embassy-boot, `salty` со
-        // своей `slow-motion` и `app/src/ota.rs` — `FW_VERSION`/`OTA_PUBLIC_KEY_IN_IMAGE`
+        // своей `slow-motion` и `app/src/image.rs` — `FW_VERSION`/`OTA_PUBLIC_KEY_IN_IMAGE`
         // и обёртка `adapters::ota::Signed` над `Updater` платы.
         // Проверяется на чипе с OTA — без него подпись хук выключает.
         Case::new("stm32f407ve").variant("signed", &["signed=yes"]),
-        // Подпись без графа: узел OTA зовёт сам `main` (`app/src/ota.rs`
+        // Подпись без графа: узел OTA зовёт сам `main` (`app/src/image.rs`
         // есть, `graph.rs` нет), а bootloader — без сторожа и без
         // `embedded-storage`, потому что кормить сторож в приложении некому.
         Case::new("stm32f407ve").variant("signed-no-graph", &["signed=yes", "graph=no"]),

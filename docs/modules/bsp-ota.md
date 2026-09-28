@@ -8,7 +8,7 @@
 из линкерных символов), размер `ACTIVE` — его порт отдаёт методом
 `FirmwareUpdate::capacity`, — и псевдонимы типов, потому что задачи embassy
 не могут быть generic.{% if signed == "true" %} Версию образа и открытый ключ задаёт не
-плата, а приложение: `crates-cross/app/src/ota.rs` оборачивает адаптер в
+плата, а приложение: `crates-cross/app/src/image.rs` оборачивает адаптер в
 `adapters::ota::Signed`.{% endif %}
 
 Транспорт — поле `link` в `Board::ota`: в шаблоне это заглушка [`Link`], которая

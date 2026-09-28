@@ -8,7 +8,7 @@ shadow!(build);
 mod graph;
 {%- endif %}
 {%- if signed == "true" %}
-mod ota;
+mod image;
 {%- endif %}
 mod panic;
 
@@ -85,10 +85,14 @@ async fn main({% if graph == "true" %}spawner{% else %}_spawner{% endif %}: Spaw
 {%- endif %}
 {%- if signed == "true" and graph != "true" %}
 
-    // Вход узла OTA с проверкой подписи. Графа нет, так что узел зовёте вы:
-    // переименуйте `_ota` в `ota` и вызовите
-    // `domain::ota::run_signed(&mut ota.link, &mut ota.flash).await`.
-    let _ota = ota::signed(board.ota);
+    // Адаптер с проверкой подписи. Графа нет, так что узел OTA зовёте вы:
+    // переименуйте `_flash` во `flash` и вызовите
+    // `domain::ota::run_signed(&mut board.ota.link, &mut flash).await`.
+    let _flash = image::Signed::new(
+        board.ota.flash,
+        image::FW_VERSION,
+        image::OTA_PUBLIC_KEY_IN_IMAGE,
+    );
 {%- endif %}
 
 {%- if graph == "true" %}

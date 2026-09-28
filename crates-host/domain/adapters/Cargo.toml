@@ -21,7 +21,7 @@ defmt = [
 	"sequential-storage/defmt",
 ]
 # Проверка подписи образа: `verify_and_mark_updated` у embassy-boot и обёртка
-# `ota::Signed`. Включает `bsp` в проекте, где при генерации выбрана подпись;
+# `ota::Signed`. Включает `app` в проекте, где при генерации выбрана подпись;
 # в корневом workspace её включают `cargo xtask lint`/`test host`, чтобы
 # обёртка проверялась и на хосте.
 signed = ["embassy-boot/ed25519-salty", "dep:salty"]

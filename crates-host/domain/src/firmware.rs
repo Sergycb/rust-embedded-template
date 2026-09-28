@@ -65,7 +65,7 @@ mod tests {
     /// порядком: те же литералы стоят в тесте `xtask`
     /// (`unpacks_a_version_the_way_domain_packs_it`), который про этот крейт
     /// ничего не знает. Проверяй тесты только порядок — смена раскладки на
-    /// 16/8/8 прошла бы мимо обоих, а `FW_VERSION` в `crates-cross/app/src/ota.rs`
+    /// 16/8/8 прошла бы мимо обоих, а `FW_VERSION` в `crates-cross/app/src/image.rs`
     /// от неё зависит по-настоящему: он разбирает поля в `u8`/`u16`.
     #[test]
     fn packs_into_the_agreed_bit_layout() {

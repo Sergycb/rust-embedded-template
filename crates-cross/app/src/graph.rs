@@ -38,14 +38,14 @@ supervisor_graph! {
     // нужен, а знает его только эта сторона; подставили свой транспорт вместо
     // заглушки — меняйте первый аргумент. Привязка (`= …`) — вход узла
     // (`domain::ota::Inputs`), разложенный из поля платы `board.ota`{% if signed == "true" %} с
-    // адаптером, обёрнутым версией и ключом прошивки (`crate::ota::signed`){% endif %}: `bsp`
+    // адаптером, обёрнутым версией и ключом этого образа (`crate::image`){% endif %}: `bsp`
     // про `domain` не знает, поэтому раскладка здесь. Вычисляется она в
     // прологе `spawn_all` первой строкой — раньше инициализатора блока
     // `watchdog:`, как бы они ни стояли в тексте, — частичным move: `ota`
     // уезжает в слоты узла, `watchdog` следом забирает сторож, остаток
     // `board` дропается в конце пролога.
 {%- endif %}
-    fragments: [::domain::APP_FRAG as APP{% if ota == "true" %}, {% if signed == "true" %}::domain::OTA_SIGNED_FRAG<bsp::ota::Link, crate::ota::Signed> as OTA = crate::ota::signed(board.ota){% else %}::domain::OTA_FRAG<bsp::ota::Link, bsp::ota::Updater> as OTA = ::domain::ota::Inputs { link: board.ota.link, flash: board.ota.flash }{% endif %}{% endif %}];
+    fragments: [::domain::APP_FRAG as APP{% if ota == "true" %}, {% if signed == "true" %}::domain::OTA_SIGNED_FRAG<bsp::ota::Link, crate::image::Signed> as OTA = ::domain::ota::Inputs { link: board.ota.link, flash: crate::image::Signed::new(board.ota.flash, crate::image::FW_VERSION, crate::image::OTA_PUBLIC_KEY_IN_IMAGE) }{% else %}::domain::OTA_FRAG<bsp::ota::Link, bsp::ota::Updater> as OTA = ::domain::ota::Inputs { link: board.ota.link, flash: board.ota.flash }{% endif %}{% endif %}];
 }
 
 /// Куда уходит просрочка наблюдаемого узла.

@@ -94,7 +94,7 @@ datasheet, обязано быть меньше `bsp::wdg::HW_TIMEOUT_US` (10 с
 
 Спрашивается при генерации (`signed`), имеет смысл только вместе с OTA — хук
 приводит «да» без OTA к «нет». Включено: у `embassy-boot` фича
-`ed25519-salty`, в приложении появляется `crates-cross/app/src/ota.rs` с
+`ed25519-salty`, в приложении появляется `crates-cross/app/src/image.rs` с
 `FW_VERSION`/`OTA_PUBLIC_KEY_IN_IMAGE` — это свойства прошивки, а не платы, — и адаптер
 платы оборачивается там в `adapters::ota::Signed`, применение обновления делает
 `domain::update::apply_signed` (без подписи — `mark_updated()` через порт) —
@@ -126,7 +126,7 @@ cargo-binutils, а `xtask setup` его не ставит). Три шага, и�
   открытый ключ, просящийся в коммит, и закрытый, охраняющий пустоту.
 - **Открытый ключ приезжает файлом, а не правкой исходника.**
   `ota-public-key.bin` в корне проекта коммитится, `app/build.rs` кладёт его в
-  `OUT_DIR`, `app/src/ota.rs` берёт через `include_bytes!`. Через промежуточный файл —
+  `OUT_DIR`, `app/src/image.rs` берёт через `include_bytes!`. Через промежуточный файл —
   чтобы `OTA_PUBLIC_KEY_IN_IMAGE: [u8; 32]` собирался и когда ключа ещё нет: `build.rs`
   пишет тогда 32 нуля.
 - **Проводку ключа проверяет `cargo xtask build`.** Статик

@@ -53,7 +53,7 @@ pub struct Board {
     /// `memory.x`. {% if graph == "true" %}Уезжает в узел `OTA` графа (`fragments:` в
     /// `crates-cross/app/src/graph.rs`){% else %}Зовите узел сами из `main`:
     /// `domain::ota::run{% if signed == "true" %}_signed{% endif %}(&mut board.ota.link, &mut board.ota.flash)`{% if signed == "true" %},
-    /// обернув `flash` подписью (`crates-cross/app/src/ota.rs`){% endif %}{% endif %}.
+    /// обернув `flash` подписью (`crates-cross/app/src/image.rs`){% endif %}{% endif %}.
     pub ota: crate::ota::Ota,
 {%- endif %}
 {%- if config == "true" %}
