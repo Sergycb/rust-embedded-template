@@ -223,6 +223,7 @@ fn build(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
         println!("образ для OTA: {}", path.display());
 
         if let Some(seed) = seed {
+            ensure_image_key(&elf, base, &image, &seed)?;
             sign_image(&path, &image, &seed)?;
         }
     }
@@ -231,9 +232,13 @@ fn build(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
 
 /// Имя символа, в котором прошивка хранит собственную версию.
 ///
-/// Определён в `crates-cross/bsp/src/ota.rs` под `#[unsafe(no_mangle)]` ровно
+/// Определён в `crates-cross/app/src/ota.rs` под `#[unsafe(no_mangle)]` ровно
 /// ради этого чтения.
 const FW_VERSION_SYMBOL: &str = "FW_VERSION_IN_IMAGE";
+
+/// Имя символа с открытым ключом, которым прошивка проверяет подпись, —
+/// там же и так же, что [`FW_VERSION_SYMBOL`].
+const PUBLIC_KEY_SYMBOL: &str = "OTA_PUBLIC_KEY_IN_IMAGE";
 
 /// Достаёт версию прошивки из собранного образа.
 ///
@@ -243,6 +248,20 @@ const FW_VERSION_SYMBOL: &str = "FW_VERSION_IN_IMAGE";
 /// воркспейса), и тогда устройство сравнивало бы номер, которого в прошивке
 /// нет.
 fn image_version(elf: &Path, base: u64, image: &[u8]) -> Result<u32, anyhow::Error> {
+    let raw = image_symbol(elf, base, image, FW_VERSION_SYMBOL, 4)?;
+    Ok(u32::from_le_bytes(
+        raw.try_into().expect("ровно четыре байта"),
+    ))
+}
+
+/// Байты статика `name` длиной `len` — такими, какими они лежат в образе.
+fn image_symbol<'a>(
+    elf: &Path,
+    base: u64,
+    image: &'a [u8],
+    name: &str,
+    len: usize,
+) -> Result<&'a [u8], anyhow::Error> {
     use object::elf::PT_LOAD;
     use object::read::elf::{ElfFile32, FileHeader, ProgramHeader};
     use object::read::{Object, ObjectSymbol};
@@ -253,10 +272,10 @@ fn image_version(elf: &Path, base: u64, image: &[u8]) -> Result<u32, anyhow::Err
 
     let symbol = file
         .symbols()
-        .find(|symbol| symbol.name() == Ok(FW_VERSION_SYMBOL))
+        .find(|symbol| symbol.name() == Ok(name))
         .with_context(|| {
             format!(
-                "в {} нет символа {FW_VERSION_SYMBOL}. Его определяет crates-cross/app/src/ota.rs — либо \
+                "в {} нет символа {name}. Его определяет crates-cross/app/src/ota.rs — либо \
                  прошивка собрана без него, либо статик выбросили при линковке (тогда \
                  верните ему #[used] и #[unsafe(no_mangle)])",
                 elf.display(),
@@ -285,7 +304,7 @@ fn image_version(elf: &Path, base: u64, image: &[u8]) -> Result<u32, anyhow::Err
             })
         })
         .with_context(|| {
-            format!("{FW_VERSION_SYMBOL} по адресу {address:#x} не попал ни в один сегмент PT_LOAD")
+            format!("{name} по адресу {address:#x} не попал ни в один сегмент PT_LOAD")
         })?;
 
     let physical =
@@ -294,21 +313,14 @@ fn image_version(elf: &Path, base: u64, image: &[u8]) -> Result<u32, anyhow::Err
         .checked_sub(base)
         .and_then(|offset| usize::try_from(offset).ok())
         .with_context(|| {
-            format!(
-                "{FW_VERSION_SYMBOL} лежит по адресу {physical:#x}, а образ начинается с {base:#x}"
-            )
+            format!("{name} лежит по адресу {physical:#x}, а образ начинается с {base:#x}")
         })?;
-    let raw: [u8; 4] = image
-        .get(offset..offset + 4)
-        .and_then(|slice| slice.try_into().ok())
-        .with_context(|| {
-            format!(
-                "{FW_VERSION_SYMBOL} по смещению {offset:#x} не помещается в образ длиной {}",
-                image.len(),
-            )
-        })?;
-
-    Ok(u32::from_le_bytes(raw))
+    image.get(offset..offset + len).with_context(|| {
+        format!(
+            "{name} по смещению {offset:#x} не помещается в образ длиной {}",
+            image.len(),
+        )
+    })
 }
 
 /// Разбирает упакованную версию обратно — только чтобы напечатать её человеку.
@@ -552,6 +564,30 @@ fn check_image_budget(name: &str, percent: u64, budget: Option<u64>) -> Result<(
          (IMAGE_BUDGET_PERCENT в crates-host/xtask/src/main.rs). Либо прошивка выросла \
          сильнее, чем планировалось, либо бюджет пора пересмотреть — но менять его \
          молча, чтобы сборка позеленела, значит выключить проверку",
+    );
+    Ok(())
+}
+
+/// Сверяет ключ, скомпилированный в прошивку, с ключом, которым образ сейчас
+/// будет подписан.
+///
+/// Единственная проверка того, что проводка ключа в приложении целая: файл →
+/// `app/build.rs` → `OTA_PUBLIC_KEY_IN_IMAGE` → адаптер `Signed`. Сломайся она (нули вместо
+/// ключа, чужой файл) — прошивка отвергала бы каждое обновление, и узнали бы
+/// об этом на уже прошитом устройстве.
+fn ensure_image_key(
+    elf: &Path,
+    base: u64,
+    image: &[u8],
+    seed: &[u8; 32],
+) -> Result<(), anyhow::Error> {
+    let compiled = image_symbol(elf, base, image, PUBLIC_KEY_SYMBOL, 32)?;
+    let signing = salty::Keypair::from(seed).public.to_bytes();
+    anyhow::ensure!(
+        compiled == signing,
+        "в прошивке не тот открытый ключ, которым подписывается образ: устройство отвергнет \
+         это обновление. Пересоберите приложение (`cargo clean -p app`) — ключ попадает в \
+         него через crates-cross/app/build.rs из {PUBLIC_KEY_FILE}"
     );
     Ok(())
 }

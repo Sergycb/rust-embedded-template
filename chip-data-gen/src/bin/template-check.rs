@@ -25,8 +25,8 @@
 //! OTA не помещается, тот же обычный чип с OTA, отключённой при генерации,
 //! двухъядерный (`init_primary` вместо `init`), чип с 2 KiB RAM на
 //! Cortex-M0+, раздел настроек на мелких секторах (влезает вместе с OTA) и на
-//! крупных (вытесняет её), подпись образа и чип, у которого стёртый флеш
-//! читается нулями. Итого десять — точный список в `default_cases()`. Свой
+//! крупных (вытесняет её), подпись образа (с графом и без) и чип, у которого
+//! стёртый флеш читается нулями. Итого одиннадцать — точный список в `default_cases()`. Свой
 //! набор чипов — позиционными аргументами.
 
 use std::{
@@ -79,10 +79,14 @@ fn default_cases() -> Vec<Case> {
         // Ветка «config есть, bootloader и ota.rs удалены» — только здесь.
         Case::new("stm32f407ve").variant("config", &["config=yes"]),
         // Подпись образа: фича `ed25519-salty` у embassy-boot, `salty` со
-        // своей `slow-motion` и `app/src/ota.rs` — `FW_VERSION`/`PUBLIC_KEY`
+        // своей `slow-motion` и `app/src/ota.rs` — `FW_VERSION`/`OTA_PUBLIC_KEY_IN_IMAGE`
         // и обёртка `adapters::ota::Signed` над `Updater` платы.
         // Проверяется на чипе с OTA — без него подпись хук выключает.
         Case::new("stm32f407ve").variant("signed", &["signed=yes"]),
+        // Подпись без графа: узел OTA зовёт сам `main` (`app/src/ota.rs`
+        // есть, `graph.rs` нет), а bootloader — без сторожа и без
+        // `embedded-storage`, потому что кормить сторож в приложении некому.
+        Case::new("stm32f407ve").variant("signed-no-graph", &["signed=yes", "graph=no"]),
         // Единственная ветка, где стёртый флеш читается нулями: у L0/L1 хук
         // включает `flash-erase-zero` у embassy-boot, иначе bootloader читает
         // признак «стёрто» наоборот. Взят чип с запасом flash — на 64 KiB

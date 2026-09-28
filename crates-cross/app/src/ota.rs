@@ -52,13 +52,21 @@ pub static FW_VERSION_IN_IMAGE: u32 = FW_VERSION;
 /// создаёт `cargo xtask build` вместе с закрытым и приносит сюда `build.rs`
 /// через `OUT_DIR`. Нули означают «ключ ещё не создан» (файла нет), и
 /// `domain::update::apply_signed` отказывает, не доходя до проверки.
-pub const PUBLIC_KEY: [u8; 32] = *include_bytes!(concat!(env!("OUT_DIR"), "/ota-public-key.bin"));
+///
+/// Статик с именем, а не `const`, по той же причине, что и
+/// [`FW_VERSION_IN_IMAGE`]: `cargo xtask build` находит его в ELF и сверяет с
+/// ключом, которым подписывает образ. Ровно этот статик и уходит в адаптер
+/// ([`signed`]) — значит проверена вся проводка, а не копия ключа рядом с ней.
+#[used]
+#[unsafe(no_mangle)]
+pub static OTA_PUBLIC_KEY_IN_IMAGE: [u8; 32] =
+    *include_bytes!(concat!(env!("OUT_DIR"), "/ota-public-key.bin"));
 
 /// Вход узла OTA с проверкой подписи: адаптер платы, обёрнутый версией и
 /// ключом этой прошивки.
 pub fn signed(ota: Inputs<Link, Updater>) -> Inputs<Link, Signed> {
     Inputs {
         link: ota.link,
-        flash: Signed::new(ota.flash, FW_VERSION, PUBLIC_KEY),
+        flash: Signed::new(ota.flash, FW_VERSION, OTA_PUBLIC_KEY_IN_IMAGE),
     }
 }
