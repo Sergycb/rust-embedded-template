@@ -163,7 +163,7 @@ mod tests {
     use ports::SettingsStorage;
 
     use super::Settings;
-    use crate::mem_flash::MemFlash;
+    use test_support::MemFlash;
 
     /// Две страницы по 256 байт, слово 8 — минимум, который берёт
     /// `sequential-storage`.

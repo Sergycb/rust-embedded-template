@@ -21,6 +21,3 @@ pub mod flash;
 /// Настройки во flash поверх `sequential-storage`: пары «ключ — значение»,
 /// переживающие перезапуск и обновление прошивки.
 pub mod settings;
-
-#[cfg(test)]
-pub(crate) mod mem_flash;

@@ -13,6 +13,7 @@ dependencies = [
  "ports",
  "salty",
  "sequential-storage",
+ "test-support",
  "tokio",
 ]
 
@@ -991,6 +992,14 @@ checksum = "944ad38adcbb71eaa682c56bceeb079e4ca82b4b3edc2a0fde5cb297b77dac8d"
 dependencies = [
  "syn 2.0.119",
  "test-log-core",
+]
+
+[[package]]
+name = "test-support"
+version = "0.1.0"
+dependencies = [
+ "embedded-storage",
+ "embedded-storage-async",
 ]
 
 [[package]]

@@ -41,3 +41,5 @@ salty = { workspace = true, optional = true }
 # Исполнитель для async-тестов над флешем в памяти (`#[tokio::test]`); фичи —
 # в корневом Cargo.toml.
 tokio = { workspace = true }
+# Флеш в памяти с семантикой NOR — фейк для тестов всех трёх адаптеров.
+test-support = { workspace = true }

@@ -1,0 +1,17 @@
+[package]
+name = "test-support"
+version.workspace      = true
+edition.workspace      = true
+license.workspace      = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+# Только для dev-зависимостей host-тестов: фейки железа, которые нужны больше
+# чем одному тесту. В прошивку не уезжает — dev-зависимости path-зависимостей
+# cargo не собирает.
+[dependencies]
+embedded-storage       = { workspace = true }
+embedded-storage-async = { workspace = true }

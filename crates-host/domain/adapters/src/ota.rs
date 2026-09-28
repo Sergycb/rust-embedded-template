@@ -314,9 +314,9 @@ mod tests {
     #[cfg(feature = "signed")]
     use super::Signed;
     use super::{Error, Updater};
-    use crate::mem_flash::MemFlash;
     use embedded_storage::nor_flash::NorFlashErrorKind;
     use ports::FirmwareUpdate;
+    use test_support::MemFlash;
 
     /// Четыре страницы по 256 байт, слово 8; ACTIVE (= capacity) — три
     /// страницы, как требует запас на обмен.

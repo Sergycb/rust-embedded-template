@@ -70,7 +70,7 @@ mod tests {
     use embedded_storage_async::nor_flash::{NorFlash, ReadNorFlash};
 
     use super::Shared;
-    use crate::mem_flash::MemFlash;
+    use test_support::MemFlash;
 
     #[tokio::test]
     async fn forwards_every_operation_to_the_flash_under_the_mutex() {

@@ -4,6 +4,7 @@ members = [
 	"crates-host/host-target-tests",
 	"crates-host/domain/adapters",
 	"crates-host/domain/ports",
+	"crates-host/test-support",
 	"crates-host/xtask",
 ]
 resolver = "3"
@@ -32,6 +33,7 @@ large_stack_arrays      = "warn"
 # и путь были в одном месте, как у внешних зависимостей.
 ports        = { path = "crates-host/domain/ports" }
 adapters     = { path = "crates-host/domain/adapters" }
+test-support = { path = "crates-host/test-support" }
 defmt-or-log = { version = "0.2.3" }
 log          = { version = "0.4.34" }
 defmt        = { version = "1.1.1" }
