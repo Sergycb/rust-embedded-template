@@ -89,6 +89,12 @@ const HEAD_WORDS: usize = 4;
 /// же значения в стёртом разделе; ровно это и делает `mark_updated()`.
 const SWAP_MAGIC: u8 = 0xF0;
 
+/// Магия «откат сделан» (`REVERT_MAGIC` там же). Её пишет только `revert()`,
+/// а зовётся он, только если обмен уже состоялся (`is_swapped`), — поэтому
+/// она в разделе состояния доказывает весь цикл «обмен → откат» сама, как бы
+/// ни легли по времени сбросы.
+const REVERT_MAGIC: u8 = 0xC0;
+
 /// Магия «обновления нет, запускай что лежит» (`BOOT_MAGIC` там же). Ею тест
 /// начинает — и это не перестраховка.
 ///
@@ -191,10 +197,23 @@ fn ota_swaps_partitions_and_reverts_unconfirmed_image() {
     // `ACTIVE[i]` не в `DFU[i]`, а в `DFU[i + 1]` — лишняя страница `DFU`
     // (её требует `assert_partitions`) работает разменной. В начале `DFU`
     // при этом так и остаётся первая страница нового образа.
+    //
+    // В проекте с графом задач обмен можно и не застать: release-bootloader
+    // запускает сторож, а инертный образ его не кормит и через
+    // `WATCHDOG_TIMEOUT_US` (10 с) после прыжка сбрасывается сам — bootloader
+    // тут же откатывает его. Тогда обмен доказывает магия `REVERT`: без
+    // состоявшегося обмена отката не бывает.
     let dfu_previous = format!("{:#x}", parse_address(&dfu) + page_size);
+    // Магия занимает одно слово записи — у F0/F1 это два байта, дальше уже
+    // журнал, поэтому сравнивается не больше слова.
+    let state_is_reverted = || {
+        let head = read_words(&chip, &state, 1)[0].to_le_bytes();
+        head[..write_size.min(4)].iter().all(|&b| b == REVERT_MAGIC)
+    };
     let swapped = wait_for(|| {
-        read_words(&chip, &active_hex, HEAD_WORDS)[..2] == expected_head
-            && read_words(&chip, &dfu_previous, HEAD_WORDS) == original
+        (read_words(&chip, &active_hex, HEAD_WORDS)[..2] == expected_head
+            && read_words(&chip, &dfu_previous, HEAD_WORDS) == original)
+            || state_is_reverted()
     });
     assert!(
         swapped,
@@ -203,18 +222,16 @@ fn ota_swaps_partitions_and_reverts_unconfirmed_image() {
     );
 
     // Второй сброс: подтверждения не было (инертный образ ничего не делает),
-    // значит bootloader обязан вернуть предыдущий. В проекте с графом задач
-    // этот сброс может опоздать: release-bootloader запускает сторож, и
-    // инертный образ, не кормящий его, сбрасывается сам через
-    // `WATCHDOG_TIMEOUT_US` (10 с) после прыжка — тот же откат тем же путём.
-    // Поэтому и обмен выше надо успеть увидеть за эти 10 с; опрос укладывается
-    // в них с запасом. Здесь сдвига уже нет —
+    // значит bootloader обязан вернуть предыдущий. Если откат уже сделал
+    // сторож (см. выше), сброс ничего не меняет: состояние `REVERT`, и
+    // bootloader просто запускает прежний образ. Здесь сдвига уже нет —
     // `revert()` переносит `ACTIVE[i]` в `DFU[i]` и читает новый образ для
     // `ACTIVE` из `DFU[i + 1]`, то есть оттуда, куда его положил обмен.
     reset(&chip);
     let reverted = wait_for(|| {
         read_words(&chip, &active_hex, HEAD_WORDS) == original
             && read_words(&chip, &dfu, HEAD_WORDS)[..2] == expected_head
+            && state_is_reverted()
     });
     assert!(
         reverted,
