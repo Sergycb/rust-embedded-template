@@ -107,7 +107,7 @@ supervisor::supervisor_fragment! {
   манифесте, а `crate::` означал бы крейт, который фрагмент вызывает. Типы,
   которых фрагмент назвать не может (адаптер платы в слоте), — его параметры:
   `name: OTA_FRAG<S, F>` во фрагменте, `::domain::OTA_FRAG<bsp::ota::Link,
-  bsp::ota::Ota>` здесь.
+  bsp::ota::Updater>` здесь.
 * **Порядок items фиксирован**: `name:` → `boot:` → `watchdog:` →
   `cloned:`/`shared:` → `executor` → `fragments:` последним. `fragments:`
   раньше `boot:` — ошибка разбора; блок `watchdog:` внутри фрагмента — тоже
@@ -331,9 +331,11 @@ SD-карта, у каждого свой формат пакета и своя 
 делать с исходом — ответить хосту, сбросить МК, и то и другое — решает
 ваш `finish`; узел этого не знает.
 
-Вход узла собирается здесь же, в `fragments:`, из полей `Board`
-(`::domain::ota::Inputs { link: board.ota_link, flash: board.ota }`), а типы
-слотов — аргументы фрагмента (`OTA_FRAG<bsp::ota::Link, bsp::ota::Ota>`):
+Вход узла плата отдаёт уже собранным — поле `board.ota` в форме
+`domain::ota::Inputs`, и в `fragments:` он называется как есть (`= board.ota`;
+с подписью — `= crate::ota::signed(board.ota)`, обёртка версией и ключом
+прошивки). Типы слотов — аргументы фрагмента (`OTA_FRAG<bsp::ota::Link,
+bsp::ota::Updater>`):
 слот — `static`, тип ему нужен, а знает его только эта сторона. Подставили
 свой транспорт — поправьте первый аргумент. Оба слота узла — `local` (фича
 `supervisor/local-resources` в

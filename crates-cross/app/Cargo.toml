@@ -35,6 +35,11 @@ bsp = { workspace = true }
 # железо за ними — регион PANIC, разделы флеша — не знает вовсе.
 ports = { workspace = true }
 domain = { workspace = true }
+{%- if signed == "true" %}
+# Проверка подписи OTA-образа: адаптер платы приложение оборачивает в
+# `adapters::ota::Signed` своей версией и своим ключом (src/ota.rs).
+adapters = { workspace = true, features = ["signed"] }
+{%- endif %}
 shadow-rs = { workspace = true }
 # Граф задач в graph.rs — настоящий код, а не пример: compose-site фрагментов
 # из `domain`, блок `watchdog:`, `spawn_all` в main.rs. На чипах, где граф не

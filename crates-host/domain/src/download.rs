@@ -21,9 +21,9 @@
 //! без графа:
 //!
 //! ```ignore
-//! let len = domain::download::receive(&mut link, &mut board.ota, announced_len).await?;
+//! let len = domain::download::receive(&mut ota.link, &mut ota.flash, announced_len).await?;
 //! // дальше — применение обновления: `domain::update::apply_signed` или
-//! // `board.ota.mark_updated()`, смотря выбрана ли подпись при генерации
+//! // `ota.flash.mark_updated()`, смотря выбрана ли подпись при генерации
 //! ```
 //!
 //! Функция, а не структура с состоянием, по общему правилу проекта: домен —

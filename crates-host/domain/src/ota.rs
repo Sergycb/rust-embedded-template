@@ -44,12 +44,11 @@ pub const BACKOFF: BackoffPolicy = BackoffPolicy {
     max: Duration::from_secs(5),
 };
 
-/// Что узлу нужно на входе. Строит compose-site из полей `Board`, подставляя
-/// типы порта и адаптера аргументами фрагмента:
+/// Что узлу нужно на входе. Собирает его плата — поле `Board::ota`, — а
+/// compose-site подставляет типы порта и адаптера аргументами фрагмента:
 ///
 /// ```ignore
-/// fragments: [::domain::OTA_FRAG<bsp::ota::Link, bsp::ota::Ota> as OTA
-///                 = ::domain::ota::Inputs { link: board.ota_link, flash: board.ota }];
+/// fragments: [::domain::OTA_FRAG<bsp::ota::Link, bsp::ota::Updater> as OTA = board.ota];
 /// ```
 ///
 /// Тип объявлен здесь, а не назван графом, по правилу фрагментов
@@ -60,7 +59,7 @@ pub const BACKOFF: BackoffPolicy = BackoffPolicy {
 pub struct Inputs<S, F> {
     /// Канал доставки образа — реализация `ImageSource` из `bsp`.
     pub link: S,
-    /// Адаптер обновления — `board.ota`.
+    /// Адаптер обновления — реализация `FirmwareUpdate` поверх разделов флеша.
     pub flash: F,
 }
 
@@ -287,13 +286,13 @@ fn update_rejection<E>(err: &UpdateError<E>) -> Rejection {
 // `graph.rs`.
 //
 // `boot: inputs: …` — собственная привязка фрагмента: compose-site пишет
-// `fragments: [::domain::OTA_FRAG<…> as OTA = ::domain::ota::Inputs { link: …, flash: … }]`,
+// `fragments: [::domain::OTA_FRAG<…> as OTA = board.ota]`,
 // а `spawn_all` связывает её первой строкой пролога, и инициализаторы слотов
 // ниже читают её поля. Так фрагмент не видит `Board` вовсе — только то, что
 // ему дали.
 //
 // `<S, F>` — параметры фрагмента: тип ресурсного слота — `static`, назвать
-// его фрагмент обязан, а конкретный тип (`bsp::ota::Ota`, транспорт проекта)
+// его фрагмент обязан, а конкретный тип (`bsp::ota::Updater`, транспорт проекта)
 // `domain` не видит и видеть не должен. Compose-site подставляет их в
 // `fragments:` угловыми скобками, по позиции; bound'ов у параметров нет
 // намеренно — их держит сигнатура `run`, и rustc проверяет её, а не копию в
@@ -301,7 +300,7 @@ fn update_rejection<E>(err: &UpdateError<E>) -> Rejection {
 // (`$crate::ota::BACKOFF`, `::supervisor::…`) — от `graph.rs` он не требует
 // ни одного объявления, см. `APP_FRAG`.
 //
-// `local` на обоих слотах: объекты платы — `!Send` (`bsp::ota::Ota` держит
+// `local` на обоих слотах: объекты платы — `!Send` (`bsp::ota::Updater` держит
 // `&'static Mutex<NoopRawMutex, …>`, а `NoopRawMutex` намеренно не `Sync`),
 // тогда как обычный слот — `static`, которому нужен `Send`. `local` меняет
 // слот на `LocalResourceSlot` и снимает это требование, взамен обязывая

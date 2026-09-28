@@ -52,3 +52,7 @@ bsp = { workspace = true }
 # Трейты портов: тесты дёргают объекты `Board` тем же способом, что и `app`.
 ports = { workspace = true }
 domain = { workspace = true }
+{%- if signed == "true" %}
+# Тесты подписи оборачивают адаптер платы сами, как это делает приложение.
+adapters = { workspace = true, features = ["signed"] }
+{%- endif %}

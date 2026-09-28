@@ -6,7 +6,7 @@
 //! умеет только криптографию и пометку разделов
 //! ([`SignedFirmwareUpdate::verify_and_mark_updated`](ports::SignedFirmwareUpdate::verify_and_mark_updated));
 //! всё, что перед ней, — здесь. Без подписи применять нечего:
-//! `board.ota.mark_updated()` через порт.
+//! `FirmwareUpdate::mark_updated` адаптера платы.
 
 use ports::{SignedFirmwareUpdate, UpdateError, VerifyError};
 

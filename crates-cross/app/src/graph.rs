@@ -34,15 +34,17 @@ supervisor_graph! {
 {%- if ota == "true" %}
 
     // Фрагмент OTA — с параметрами и своей `boot:`-привязкой. Параметры
-    // (`<Link, Ota>`) — типы двух его слотов: слот — `static`, тип ему нужен,
-    // а знает его только эта сторона; подставили свой транспорт вместо
-    // заглушки — меняйте первый аргумент. Привязка (`= …`) вычисляется в
+    // (`<Link, Updater>`) — типы двух его слотов: слот — `static`, тип ему
+    // нужен, а знает его только эта сторона; подставили свой транспорт вместо
+    // заглушки — меняйте первый аргумент. Привязка (`= …`) — поле `board.ota`,
+    // уже собранное платой в нужную фрагменту форму{% if signed == "true" %} и обёрнутое здесь
+    // версией и ключом прошивки (`crate::ota::signed`){% endif %}. Вычисляется она в
     // прологе `spawn_all` первой строкой — раньше инициализатора блока
-    // `watchdog:`, как бы они ни стояли в тексте, — полями `board` по
-    // частичному move: `ota_link` и `ota` уезжают в слоты узла, `watchdog`
-    // следом забирает сторож, остаток `board` дропается в конце пролога.
+    // `watchdog:`, как бы они ни стояли в тексте, — частичным move: `ota`
+    // уезжает в слоты узла, `watchdog` следом забирает сторож, остаток
+    // `board` дропается в конце пролога.
 {%- endif %}
-    fragments: [::domain::APP_FRAG as APP{% if ota == "true" %}, ::domain::OTA{% if signed == "true" %}_SIGNED{% endif %}_FRAG<bsp::ota::Link, bsp::ota::Ota> as OTA = ::domain::ota::Inputs { link: board.ota_link, flash: board.ota }{% endif %}];
+    fragments: [::domain::APP_FRAG as APP{% if ota == "true" %}, {% if signed == "true" %}::domain::OTA_SIGNED_FRAG<bsp::ota::Link, crate::ota::Signed> as OTA = crate::ota::signed(board.ota){% else %}::domain::OTA_FRAG<bsp::ota::Link, bsp::ota::Updater> as OTA = board.ota{% endif %}{% endif %}];
 }
 
 /// Куда уходит просрочка наблюдаемого узла.

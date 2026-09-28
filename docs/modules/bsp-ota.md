@@ -1,14 +1,17 @@
-Обвязка OTA этой платы: разделы из символов `memory.x`{% if signed == "true" %}, версия образа и ключ{% endif %}.
+Обвязка OTA этой платы: адаптер разделов из символов `memory.x` и канал
+доставки — вместе полем `Board::ota` ([`Ota`], вход узла `domain::ota`).
 
 Сам адаптер — `adapters::ota` (generic по `NorFlash`, тестируется на хосте),
 логика приёма и применения — `domain::download` и `domain::update`, а зовёт
-их узел `domain::ota`. Здесь остаётся ровно то, что привязано к чипу и сборке:
+их узел `domain::ota`. Здесь остаётся ровно то, что привязано к чипу:
 `FirmwareUpdaterConfig::from_linkerfile_blocking` (границы `DFU`/`BOOTLOADER_STATE`
-из линкерных символов), размер `ACTIVE` как вместимость{% if signed == "true" %},
-версия из `build.rs` и открытый ключ из `ota-public-key.bin`{% endif %}, — и
-псевдоним `Ota`, потому что задачи embassy не могут быть generic.
+из линкерных символов), размер `ACTIVE` — его порт отдаёт методом
+`FirmwareUpdate::capacity`, — и псевдонимы типов, потому что задачи embassy
+не могут быть generic.{% if signed == "true" %} Версию образа и открытый ключ задаёт не
+плата, а приложение: `crates-cross/app/src/ota.rs` оборачивает адаптер в
+`adapters::ota::Signed`.{% endif %}
 
-Транспорт — поле `Board::ota_link`: в шаблоне это заглушка [`Link`], которая
+Транспорт — поле `link` в `Board::ota`: в шаблоне это заглушка [`Link`], которая
 ждёт заголовок вечно. Заменить её — значит реализовать три метода
 `ports::ImageSource` на объекте, собранном из вашей периферии:
 
@@ -34,8 +37,8 @@ impl ImageSource for Link {
 слова флеша, порядок проверок подписи, коды отказа — уже в узле
 `domain::ota`{% if graph == "true" %}, который граф спавнит из `fragments:`
 (`crates-cross/app/src/graph.rs`){% else %}. Без графа зовите узел сами:
-`domain::ota::run{% if signed == "true" %}_signed{% endif %}(&mut board.ota_link, &mut board.ota).await`{% endif %}. Во фрагментах
-`domain::ota` слоты узла помечены `local`: `Ota` — `!Send` (внутри ссылка на `FlashMutex` с
+`domain::ota::run{% if signed == "true" %}_signed{% endif %}(&mut {% if signed == "true" %}ota{% else %}board.ota{% endif %}.link, &mut {% if signed == "true" %}ota{% else %}board.ota{% endif %}.flash).await`{% endif %}. Во фрагментах
+`domain::ota` слоты узла помечены `local`: [`Updater`] — `!Send` (внутри ссылка на `FlashMutex` с
 `NoopRawMutex`), и граф держит его на своём исполнителе, не требуя `Send`, —
 то же допущение «один исполнитель», что у самого `NoopRawMutex`; захотите
 вынести OTA на другой исполнитель — меняйте `local` во фрагменте

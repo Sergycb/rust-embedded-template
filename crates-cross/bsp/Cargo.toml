@@ -21,9 +21,9 @@ domain = { workspace = true }
 # Трейты, которые реализуют объекты `Board`: приложение видит только их.
 ports = { workspace = true }
 # Адаптеры поверх generic-флеша и шин: `Board::new` собирает их из периферии
-# и кладёт полями. `signed` включает проверку подписи у OTA-адаптера — ровно
-# тогда, когда её выбрали при генерации.
-adapters = { workspace = true{% if signed == "true" %}, features = ["signed"]{% endif %} }
+# и кладёт полями. Проверку подписи (`signed`) плата не включает: версию и
+# ключ задаёт приложение, оно же и оборачивает адаптер (crates-cross/app/src/ota.rs).
+adapters = { workspace = true }
 assign-resources = { workspace = true }
 # Регистры ядра напрямую: `wfi` в ожидании сброса от сторожа (src/wdg.rs) и
 # impl critical-section (фича в crates-cross/Cargo.toml). Периферию ядра

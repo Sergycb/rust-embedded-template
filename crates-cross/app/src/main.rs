@@ -7,6 +7,9 @@ shadow!(build);
 
 mod graph;
 {%- endif %}
+{%- if signed == "true" %}
+mod ota;
+{%- endif %}
 mod panic;
 
 use defmt::info;
@@ -74,11 +77,17 @@ async fn main({% if graph == "true" %}spawner{% else %}_spawner{% endif %}: Spaw
     //
     // На обычной загрузке (без обновления) вызов ничего не меняет: состояние
     // и так `Boot`.
-    if let Err(err) = board.ota.mark_booted() {
+    if let Err(err) = board.ota.flash.mark_booted() {
         // Не паника: устройство работает, просто следующий сброс вернёт
         // предыдущий образ. Знать об этом важнее, чем упасть.
         defmt::error!("app: не удалось подтвердить образ: {}", err);
     }
+{%- endif %}
+{%- if signed == "true" and graph != "true" %}
+
+    // Вход узла OTA с проверкой подписи. Графа нет, так что узел зовёте вы:
+    // `domain::ota::run_signed(&mut ota.link, &mut ota.flash).await`.
+    let _ota = ota::signed(board.ota);
 {%- endif %}
 
 {%- if graph == "true" %}
@@ -89,8 +98,8 @@ async fn main({% if graph == "true" %}spawner{% else %}_spawner{% endif %}: Spaw
     //
     // `board` уезжает сюда целиком — это объявленный графом `boot:`-объект,
     // из которого его инициализаторы забирают объекты частичными move.
-    // Такие заборы уже есть — сторож в блоке `watchdog:`{% if ota == "true" %}, канал и адаптер
-    // OTA в `fragments:` (`board.ota_link`, `board.ota`){% endif %} — и здесь же
+    // Такие заборы уже есть — сторож в блоке `watchdog:`{% if ota == "true" %}, вход узла
+    // OTA в `fragments:` (`board.ota`){% endif %} — и здесь же
     // окажутся ваши: `resources: [SLOT: T = board.<поле>]` вместо
     // `provide_<slot>(..)` перед этой строкой. Оттого и последняя строка
     // `main`: после неё `board` принадлежит прологу `spawn_all`.

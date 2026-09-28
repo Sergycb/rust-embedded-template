@@ -70,7 +70,7 @@ embassy-executor = { version = "0.10.0", features = [
 ] }
 embassy-boot         = { version = "0.7.0" }
 embassy-boot-stm32 = { version = "0.8.0" }
-# Имя типа раздела (`BlockingPartition`) для псевдонима `bsp::ota::Ota`:
+# Имя типа раздела (`BlockingPartition`) для псевдонима `bsp::ota::Partition`:
 # embassy-boot его не реэкспортирует. Версия та же, что тянет embassy-boot.
 embassy-embedded-hal = { version = "0.6.0" }
 # Один `Flash` на весь чип делится между OTA и настройками, а обеим нужен
@@ -162,7 +162,7 @@ assign-resources = { version = "0.5.0" }
 #
 # Третья, `local-resources`, — ради узла `OTA`: его слоты (`LINK`, `FLASH` во
 # фрагменте `domain::ota`) помечены `local`, потому что держат `!Send`-объекты
-# платы — `bsp::ota::Ota` ссылается на `Mutex<NoopRawMutex, …>`, а обычный
+# платы — `bsp::ota::Updater` ссылается на `Mutex<NoopRawMutex, …>`, а обычный
 # слот графа это `static`, которому нужен `Send`. Фича включает
 # `LocalResourceSlot` и снимает у `supervisor` `forbid(unsafe_code)` до `deny`
 # (у слота один документированный `unsafe impl Sync`), а макрос эмитит по

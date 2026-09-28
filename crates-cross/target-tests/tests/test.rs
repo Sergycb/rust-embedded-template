@@ -28,6 +28,28 @@
 // `panic-probe` вместо этого делает `udf()`, то есть HardFault, и один
 // провалившийся `assert!` унёс бы с собой весь прогон.
 use defmt_rtt as _;
+{%- if signed == "true" %}
+
+/// Адаптер с проверкой подписи поверх разделов платы — так его собирает
+/// приложение (`crates-cross/app/src/ota.rs`), только версия и ключ свои.
+///
+/// Ключ — открытый ключ из первого тестового вектора RFC 8032, а не ключ
+/// проекта: тест не должен зависеть от того, создан ли `ota-public-key.bin`, и
+/// с настоящей точкой кривой всегда доходит до криптографии. Версия — `0.1.0`:
+/// ниже `u32::MAX` и не ниже `0.0.0`, которые кладут в хвост образа тесты.
+fn signed(board: bsp::Board) -> adapters::ota::Signed<bsp::ota::Partition, bsp::ota::Partition> {
+    const RFC8032_TEST1_PUBLIC_KEY: [u8; 32] = [
+        0xd7, 0x5a, 0x98, 0x01, 0x82, 0xb1, 0x0a, 0xb7, 0xd5, 0x4b, 0xfe, 0xd3, 0xc9, 0x64, 0x07,
+        0x3a, 0x0e, 0xe1, 0x72, 0xf3, 0xda, 0xa6, 0x23, 0x25, 0xaf, 0x02, 0x1a, 0x68, 0xf7, 0x07,
+        0x51, 0x1a,
+    ];
+    adapters::ota::Signed::new(
+        board.ota.flash,
+        domain::firmware::pack(0, 1, 0),
+        RFC8032_TEST1_PUBLIC_KEY,
+    )
+}
+{%- endif %}
 
 #[embedded_test::tests]
 mod tests {
@@ -170,14 +192,17 @@ mod tests {
 
         board
             .ota
+            .flash
             .prepare(written.len() as u32)
             .expect("раздел DFU должен стираться");
         board
             .ota
+            .flash
             .write(0, &written)
             .expect("раздел DFU должен принимать запись");
         board
             .ota
+            .flash
             .read(0, &mut read)
             .expect("раздел DFU должен читаться");
 
@@ -206,14 +231,20 @@ mod tests {
         // где стёртое состояние нулевое.
         board
             .ota
+            .flash
             .prepare(DIRTY.len() as u32)
             .expect("раздел DFU должен стираться");
-        board.ota.write(0, &DIRTY).expect("запись мусора");
+        board.ota.flash.write(0, &DIRTY).expect("запись мусора");
 
-        board.ota.prepare(8).expect("раздел DFU должен стираться");
+        board
+            .ota
+            .flash
+            .prepare(8)
+            .expect("раздел DFU должен стираться");
         let mut read = [!ERASED; 8];
         board
             .ota
+            .flash
             .read(0, &mut read)
             .expect("раздел DFU должен читаться");
 
@@ -235,8 +266,8 @@ mod tests {
     fn prepare_erases_only_what_the_image_needs(mut board: Board) {
         use ports::FirmwareUpdate;
 
-        let page = board.ota.erase_size();
-        let capacity = board.ota.capacity().expect("вместимость раздела");
+        let page = board.ota.flash.erase_size();
+        let capacity = board.ota.flash.capacity().expect("вместимость раздела");
 
         // Трёх страниц нет — проверять нечего: на чипах с сектором в четверть
         // мегабайта весь раздел это одна-две страницы, и «лишнего не стёрли»
@@ -253,22 +284,33 @@ mod tests {
 
         // Метки на второй и третьей странице: одна попадёт под стирание,
         // другая обязана уцелеть.
-        board.ota.prepare(capacity).expect("стереть весь раздел");
         board
             .ota
+            .flash
+            .prepare(capacity)
+            .expect("стереть весь раздел");
+        board
+            .ota
+            .flash
             .write(page, &DIRTY)
             .expect("метка на 2-й странице");
         board
             .ota
+            .flash
             .write(page * 2, &DIRTY)
             .expect("метка на 3-й странице");
 
         // На байт больше страницы — значит страниц нужно две.
-        board.ota.prepare(page + 1).expect("стереть под образ");
+        board
+            .ota
+            .flash
+            .prepare(page + 1)
+            .expect("стереть под образ");
 
         let mut read = [!ERASED; 32];
         board
             .ota
+            .flash
             .read(page, &mut read)
             .expect("чтение 2-й страницы");
         assert_eq!(
@@ -278,6 +320,7 @@ mod tests {
 
         board
             .ota
+            .flash
             .read(page * 2, &mut read)
             .expect("чтение 3-й страницы");
         assert_eq!(
@@ -305,26 +348,46 @@ mod tests {
         // Сначала пачкаем раздел заведомо непустыми байтами: без этого тест не
         // отличил бы работающий `prepare` от `Ok(())`, ведь раздел мог
         // остаться стёртым с прошлого прогона.
-        board.ota.prepare(32).expect("раздел DFU должен стираться");
-        board.ota.write(0, &DIRTY).expect("запись мусора");
+        board
+            .ota
+            .flash
+            .prepare(32)
+            .expect("раздел DFU должен стираться");
+        board.ota.flash.write(0, &DIRTY).expect("запись мусора");
 
-        board.ota.prepare(96).expect("раздел DFU должен стираться");
+        board
+            .ota
+            .flash
+            .prepare(96)
+            .expect("раздел DFU должен стираться");
         let mut read = [!ERASED; 32];
-        board.ota.read(0, &mut read).expect("чтение после стирания");
+        board
+            .ota
+            .flash
+            .read(0, &mut read)
+            .expect("чтение после стирания");
         assert_ne!(
             read, DIRTY,
             "prepare не стёр раздел: записанное осталось на месте"
         );
 
-        board.ota.write(0, &first).expect("первая запись");
-        board.ota.write(64, &second).expect("вторая запись");
+        board.ota.flash.write(0, &first).expect("первая запись");
+        board.ota.flash.write(64, &second).expect("вторая запись");
 
-        board.ota.read(0, &mut read).expect("чтение первого куска");
+        board
+            .ota
+            .flash
+            .read(0, &mut read)
+            .expect("чтение первого куска");
         assert_eq!(
             read, first,
             "первый кусок затёрт вторым — приём образа по частям не работает"
         );
-        board.ota.read(64, &mut read).expect("чтение второго куска");
+        board
+            .ota
+            .flash
+            .read(64, &mut read)
+            .expect("чтение второго куска");
         assert_eq!(read, second);
     }
 {%- endif %}
@@ -332,21 +395,19 @@ mod tests {
 
     /// Неверная подпись не проходит — проверка идёт на самом чипе.
     ///
-    /// Что именно доказывает тест, зависит от того, подставлен ли открытый
-    /// ключ. Пока в `PUBLIC_KEY` нули (значение по умолчанию), отказ приходит
-    /// раньше криптографии — `UpdateError::NoPublicKey` из логики, и тест
-    /// стережёт её: нулевой ключ ed25519 это точка малого порядка, подпись для
-    /// неё подделывается перебором. Как только ключ появился — а его создаёт
-    /// первый же `cargo xtask build`, — тот же тест начинает проверять
+    /// Ключ тестовый (см. [`super::signed`]), поэтому тест всегда проверяет
     /// главное: что `salty` действительно считается на этом ядре и отвергает
     /// мусор (`UpdateError::BadSignature` — адаптер отдаёт отказ подписи своим
-    /// вариантом, а не как ошибку флеша).
+    /// вариантом, а не как ошибку флеша). Отказ нулевому ключу до
+    /// криптографии (`NoPublicKey`) — логика `domain`, её стерегут host-тесты.
     ///
     /// Обновление при этом не запрашивается ни в одном случае: `embassy-boot`
     /// зовёт `mark_updated()` только после успешной проверки.
     #[test]
-    fn ota_rejects_a_bad_signature(mut board: Board) {
+    fn ota_rejects_a_bad_signature(board: Board) {
         use ports::{FirmwareUpdate, UpdateError};
+
+        let mut ota = super::signed(board);
 
         // Хвост раздела готовится явно, и без этого тест ненадёжен: проверка
         // версии стоит ПЕРЕД подписью и читает последние четыре байта образа,
@@ -356,31 +417,23 @@ mod tests {
         const LENGTH: u32 = 64;
         let mut image = [0xFFu8; LENGTH as usize];
         image[LENGTH as usize - 4..].copy_from_slice(&u32::MAX.to_le_bytes());
-        board
-            .ota
-            .prepare(LENGTH)
-            .expect("раздел DFU должен стираться");
-        board
-            .ota
-            .write(0, &image)
+        ota.prepare(LENGTH).expect("раздел DFU должен стираться");
+        ota.write(0, &image)
             .expect("раздел DFU должен принимать запись");
 
         // Нули — заведомо не подпись: ни для какого ключа и сообщения.
         let signature = [0u8; 64];
 
-        let refused = domain::update::apply_signed(&mut board.ota, &signature, LENGTH);
+        let refused = domain::update::apply_signed(&mut ota, &signature, LENGTH);
         assert!(
-            matches!(
-                refused,
-                Err(UpdateError::NoPublicKey | UpdateError::BadSignature)
-            ),
+            matches!(refused, Err(UpdateError::BadSignature)),
             "неверная подпись принята — по OTA прошёл бы чужой образ"
         );
 
         // А это уже про длину — своим вариантом, а не общим: пока обе защиты
         // отвечали одинаково, тест оставался зелёным после удаления той, что
         // проверяет длину (проверено удалением на живой плате).
-        let refused = domain::update::apply_signed(&mut board.ota, &signature, u32::MAX);
+        let refused = domain::update::apply_signed(&mut ota, &signature, u32::MAX);
         assert!(
             matches!(refused, Err(UpdateError::TooLong { .. })),
             "длина больше раздела должна отвергаться отдельной ошибкой"
@@ -395,24 +448,22 @@ mod tests {
     /// злоумышленник не может, они внутри подписанных байтов, а вот тесту
     /// достаточно записи в `DFU`.
     #[test]
-    fn ota_rejects_an_older_image(mut board: Board) {
+    fn ota_rejects_an_older_image(board: Board) {
         use ports::{FirmwareUpdate, UpdateError};
+
+        let mut ota = super::signed(board);
 
         // Кратно WRITE_SIZE, как и в тесте записи выше. Хвост — версия
         // `0.0.0`, заведомо не новее любой проставленной в проекте.
         const LENGTH: u32 = 32;
         let mut image = [0xFFu8; LENGTH as usize];
         image[LENGTH as usize - 4..].copy_from_slice(&0u32.to_le_bytes());
-        board
-            .ota
-            .prepare(LENGTH * 2)
+        ota.prepare(LENGTH * 2)
             .expect("раздел DFU должен стираться");
-        board
-            .ota
-            .write(0, &image)
+        ota.write(0, &image)
             .expect("раздел DFU должен принимать запись");
 
-        let refused = domain::update::apply_signed(&mut board.ota, &[0u8; 64], LENGTH);
+        let refused = domain::update::apply_signed(&mut ota, &[0u8; 64], LENGTH);
         assert!(
             matches!(refused, Err(UpdateError::Rollback { .. })),
             "старый образ должен отвергаться отдельной ошибкой, а не общей"
@@ -426,12 +477,10 @@ mod tests {
         const LONGER: u32 = LENGTH * 2;
         let mut newer = [0xFFu8; LONGER as usize];
         newer[LONGER as usize - 4..].copy_from_slice(&u32::MAX.to_le_bytes());
-        board
-            .ota
-            .write(LENGTH, &newer[LENGTH as usize..])
+        ota.write(LENGTH, &newer[LENGTH as usize..])
             .expect("раздел DFU должен принимать запись");
 
-        let refused = domain::update::apply_signed(&mut board.ota, &[0u8; 64], LONGER);
+        let refused = domain::update::apply_signed(&mut ota, &[0u8; 64], LONGER);
         assert!(
             !matches!(refused, Err(UpdateError::Rollback { .. })),
             "образ новее текущего не должен отвергаться как откат"

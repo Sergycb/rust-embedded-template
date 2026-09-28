@@ -27,6 +27,13 @@ let target = variable::get("target");
 let ota = variable::get("ota");
 let config = variable::get("config");
 
+// Версия и ключ подписи живут в приложении и нужны только с подписью. Здесь,
+// а не в pre-хуке: окончательное `signed` pre-хук выставляет в трёх ветках
+// раскладки, а к этому моменту оно уже одно.
+if variable::get("signed") != "true" {
+	file::delete("crates-cross/app/src/ota.rs");
+}
+
 print("");
 print("Проект под " + chip + " (" + target + ").");
 if ota == "true" {

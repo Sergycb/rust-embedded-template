@@ -152,7 +152,7 @@ fn flash_all(sh: &xshell::Shell, profile: &str) -> Result<(), anyhow::Error> {
 
 fn build(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     // Ключ приводится в порядок ДО сборки, а не после: открытый попадает в
-    // прошивку через build.rs крейта bsp, то есть должен существовать к моменту
+    // прошивку через build.rs крейта app, то есть должен существовать к моменту
     // компиляции.
     //
     // И только там, где есть что подписывать: без bootloader'а раздела `DFU` не
@@ -256,7 +256,7 @@ fn image_version(elf: &Path, base: u64, image: &[u8]) -> Result<u32, anyhow::Err
         .find(|symbol| symbol.name() == Ok(FW_VERSION_SYMBOL))
         .with_context(|| {
             format!(
-                "в {} нет символа {FW_VERSION_SYMBOL}. Его определяет bsp::ota — либо \
+                "в {} нет символа {FW_VERSION_SYMBOL}. Его определяет crates-cross/app/src/ota.rs — либо \
                  прошивка собрана без него, либо статик выбросили при линковке (тогда \
                  верните ему #[used] и #[unsafe(no_mangle)])",
                 elf.display(),
@@ -817,7 +817,7 @@ const SIGNING_KEY_FILE: &str = "ota-signing-key.bin";
 
 /// Открытый ключ, которым устройство проверяет подпись. В отличие от закрытого
 /// — коммитится: именно он попадает в прошивку (его читает
-/// `crates-cross/bsp/build.rs`), и без него собранный образ не примет ни одно
+/// `crates-cross/app/build.rs`), и без него собранный образ не примет ни одно
 /// устройство.
 const PUBLIC_KEY_FILE: &str = "ota-public-key.bin";
 

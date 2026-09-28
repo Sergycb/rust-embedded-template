@@ -47,16 +47,14 @@ pub struct Board {
     /// Сведения о чипе: имя, заводской номер, объём flash.
     pub info: ports::BoardInfo,
 {%- if ota == "true" %}
-    /// Обновление прошивки: адаптер поверх разделов `DFU`/`BOOTLOADER_STATE`
-    /// (`adapters::ota`), собранный из символов `memory.x`. Канал доставки —
-    /// поле `ota_link` ниже.
+    /// Обновление прошивки — вход узла OTA: канал доставки `link` (заглушка
+    /// `bsp::ota::Link`, пока проект не подставит свой транспорт) и адаптер
+    /// `flash` поверх разделов `DFU`/`BOOTLOADER_STATE`, собранный из символов
+    /// `memory.x`. {% if graph == "true" %}Уезжает в узел `OTA` графа (`fragments:` в
+    /// `crates-cross/app/src/graph.rs`){% else %}Зовите узел сами из `main`:
+    /// `domain::ota::run{% if signed == "true" %}_signed{% endif %}(&mut board.ota.link, &mut board.ota.flash)`{% if signed == "true" %},
+    /// обернув `flash` подписью (`crates-cross/app/src/ota.rs`){% endif %}{% endif %}.
     pub ota: crate::ota::Ota,
-    /// Канал доставки образа — заглушка `bsp::ota::Link`, пока проект не
-    /// подставит свой транспорт. Вместе с `ota` {% if graph == "true" %}уезжает в узел `OTA`
-    /// графа (`fragments:` в `crates-cross/app/src/graph.rs`){% else %}уходит в
-    /// `domain::ota::run{% if signed == "true" %}_signed{% endif %}(&mut board.ota_link, &mut board.ota)`
-    /// — зовите его сами из `main`{% endif %}.
-    pub ota_link: crate::ota::Link,
 {%- endif %}
 {%- if config == "true" %}
     /// Настройки, переживающие перезапуск и обновление прошивки: адаптер
@@ -137,7 +135,6 @@ impl Board {
             },
 {%- if ota == "true" %}
             ota: crate::ota::new(flash),
-            ota_link: crate::ota::Link,
 {%- endif %}
 {%- if config == "true" %}
             settings: crate::config::new(flash),
