@@ -167,9 +167,9 @@ read`: руками пришлось бы сначала найти адрес �
   `Board::new`: с этого момента железо тикает, а кормит его только тикер графа —
   `docs/watchdog.md`.
 {%- endif %}
-- `Board` отдаёт только объекты, реализующие трейты (`ports`, `HardwareWatchdog`), и
-  ничего не настраивает: ни периферии ядра, ни `Peripherals`, ни `Clocks` в полях нет —
-  `docs/architecture.md`.
+- `Board` отдаёт адаптеры — объекты, реализующие трейты (`ports`, `HardwareWatchdog`), —
+  и данные, тип которых объявлен в `ports` (`BoardInfo`), и ничего не настраивает: ни
+  периферии ядра, ни `Peripherals`, ни `Clocks` в полях нет — `docs/architecture.md`.
 - `cortex_m::Peripherals` (`DWT`, `MPU`, `SYST`) `bsp` не забирает; нужны — берите
   `take()` ДО `Board::new()`, иначе на части семейств `embassy_stm32::init` уже сделал
   `steal()` и вернётся `None` — `docs/architecture.md`.

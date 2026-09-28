@@ -42,6 +42,10 @@ pub mod download;
 /// Хранилище настроек.
 pub mod settings;
 
+/// Сведения о плате и чипе.
+pub mod board;
+
+pub use board::BoardInfo;
 pub use download::{Announce, DownloadError, ImageSource, Rejection};
 pub use settings::SettingsStorage;
 pub use update::{FirmwareUpdate, SignedFirmwareUpdate, UpdateError, VerifyError};

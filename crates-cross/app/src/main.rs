@@ -54,13 +54,10 @@ async fn main({% if graph == "true" %}spawner{% else %}_spawner{% endif %}: Spaw
         defmt::error!("app: предыдущий запуск упал: {}", reason);
     }
 
-{%- if ota == "true" %}
-    let mut board = bsp::Board::new();
-{%- elsif graph == "true" %}
-    let board = bsp::Board::new();
-{%- else %}
-    let _board = bsp::Board::new();
-{%- endif %}
+    let {% if ota == "true" %}mut {% endif %}board = bsp::Board::new();
+    // Следом — на чём именно: чип и его заводской номер, по которому
+    // экземпляр платы отличается от соседнего.
+    info!("app: {}", board.info);
 
 {%- if ota == "true" %}
 

@@ -37,15 +37,15 @@ static FLASH: StaticCell<FlashMutex> = StaticCell::new();
 
 /// Объекты этой платы — всё, что приложение о ней знает.
 ///
-/// Каждое поле реализует порт из `ports` (кроме сторожа, который реализует
-/// `watchdog::HardwareWatchdog` — тот же приём границы, только трейт
-/// приходит из крейта сторожа). Периферии в полях нет вовсе: разбирать её на
-/// объекты — работа `bsp`, а `Peripherals`, пины и группы `assign_resources!`
-/// остаются внутри [`Board::new`].
-// Закрывающая скобка ниже — тоже по условию: без OTA, настроек и графа
-// `Board` пуст, и rustfmt требует `{}` в одну строку, а не на двух — иначе
-// `cargo fmt --check` в сгенерированном проекте падает.
+/// Каждое поле — адаптер, реализующий порт из `ports` (кроме сторожа, который
+/// реализует `watchdog::HardwareWatchdog` — тот же приём границы, только трейт
+/// приходит из крейта сторожа), или данные, тип которых объявлен там же
+/// (`info`). Периферии в полях нет вовсе: разбирать её на объекты — работа
+/// `bsp`, а `Peripherals`, пины и группы `assign_resources!` остаются внутри
+/// [`Board::new`].
 pub struct Board {
+    /// Сведения о чипе: имя, заводской номер, объём flash.
+    pub info: ports::BoardInfo,
 {%- if ota == "true" %}
     /// Обновление прошивки: адаптер поверх разделов `DFU`/`BOOTLOADER_STATE`
     /// (`adapters::ota`), собранный из символов `memory.x`. Канал доставки —
@@ -77,10 +77,7 @@ pub struct Board {
     /// только у запущенного (`bsp::wdg`).
     pub watchdog: crate::wdg::UnarmedBoardWatchdog,
 {%- endif %}
-{%- if ota == "true" or config == "true" or graph == "true" %}
 }
-{%- else %}}
-{%- endif %}
 
 impl Board {
     /// Собирает объекты платы: поднимает HAL, разбирает периферию и отдаёт то,
@@ -133,6 +130,11 @@ impl Board {
 {%- endif %}
 
         Self {
+            info: ports::BoardInfo {
+                chip: "{{chip}}",
+                uid: embassy_stm32::uid::uid(),
+                flash_size: embassy_stm32::flash::FLASH_SIZE as u32,
+            },
 {%- if ota == "true" %}
             ota: crate::ota::new(flash),
             ota_link: crate::ota::Link,
@@ -143,10 +145,7 @@ impl Board {
 {%- if graph == "true" %}
             watchdog: crate::wdg::UnarmedBoardWatchdog::new(p.{{watchdog_peripheral}}),
 {%- endif %}
-{%- if ota == "true" or config == "true" or graph == "true" %}
         }
-{%- else %}}
-{%- endif %}
     }
 }
 
