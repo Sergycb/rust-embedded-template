@@ -165,8 +165,9 @@ read`: руками пришлось бы сначала найти адрес �
   правое — на вас — `docs/watchdog.md`.
 - Сторож запускается в прологе `spawn_all` (`= board.watchdog.arm()`), а не в
   `Board::new`: с этого момента железо тикает, а кормит его только тикер графа.
-  В release с OTA его раньше запускает bootloader (таймаут 10 с), и путь от
-  прыжка до `spawn_all` обязан в него уложиться — `docs/watchdog.md`.
+  В release с OTA его раньше запускает bootloader — с тем же `HW_TIMEOUT_US`
+  (файл `bsp/src/wdg_timeout.rs` у обоих общий), и путь от прыжка до
+  `spawn_all` обязан в него уложиться — `docs/watchdog.md`.
 {%- endif %}
 - `Board` отдаёт адаптеры — объекты, реализующие трейты (`ports`, `HardwareWatchdog`), —
   и данные, тип которых объявлен в `ports` (`BoardInfo`), и ничего не настраивает: ни

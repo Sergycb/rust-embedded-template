@@ -49,7 +49,7 @@ fn main() -> ! {
     #[cfg(not(debug_assertions))]
     let flash = Mutex::new(RefCell::new(Fed::new(
         Flash::new_blocking(p.FLASH),
-        IndependentWatchdog::new(p.{{watchdog_peripheral}}, WATCHDOG_TIMEOUT_US),
+        IndependentWatchdog::new(p.{{watchdog_peripheral}}, wdg_timeout::HW_TIMEOUT_US),
     )));
     #[cfg(debug_assertions)]
 {%- endif %}
@@ -76,16 +76,11 @@ fn main() -> ! {
 }
 {%- if graph == "true" %}
 
-/// Таймаут сторожа bootloader'а — он же у приложения до первого кормления из
-/// графа.
-///
-/// Должен пережить самую долгую ОДНУ операцию флеша ([`Fed`] кормит между
-/// ними) — стирание страницы обмена, то есть крупнейшего сектора: секунды на
-/// F4/H7, — и путь приложения
-/// от прыжка до тикера графа (подъём HAL, `mark_booted`). Верхний предел —
-/// диапазон IWDG, 26.2 с при LSI 40 кГц.
+/// Таймаут сторожа — тот же файл и та же цифра, что у приложения
+/// (`bsp::wdg::HW_TIMEOUT_US`); почему одна — в самом файле.
 #[cfg(not(debug_assertions))]
-const WATCHDOG_TIMEOUT_US: u32 = 10_000_000;
+#[path = "../../bsp/src/wdg_timeout.rs"]
+mod wdg_timeout;
 
 /// Флеш, кормящий сторож перед каждым стиранием и записью.
 ///

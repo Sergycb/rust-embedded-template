@@ -113,7 +113,7 @@ async fn main({% if graph == "true" %}spawner{% else %}_spawner{% endif %}: Spaw
     // долгое (проверка подписи, запись во flash) держите ВЫШЕ этой строки.{% if ota == "true" %}
     //
     // Но в release сторож к этой строке уже тикает: его запустил bootloader
-    // (`WATCHDOG_TIMEOUT_US` в crates-cross/boot/src/main.rs, 10 с), и весь
+    // (на той же цифре `bsp::wdg::HW_TIMEOUT_US`, 10 с), и весь
     // путь от прыжка сюда — `Board::new`, подтверждение образа, ваше долгое —
     // обязан в него уложиться (docs/watchdog.md).{% endif %}
     //

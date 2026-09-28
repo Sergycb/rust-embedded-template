@@ -200,7 +200,7 @@ fn ota_swaps_partitions_and_reverts_unconfirmed_image() {
     //
     // В проекте с графом задач обмен можно и не застать: release-bootloader
     // запускает сторож, а инертный образ его не кормит и через
-    // `WATCHDOG_TIMEOUT_US` (10 с) после прыжка сбрасывается сам — bootloader
+    // таймаут сторожа (10 с, `bsp::wdg::HW_TIMEOUT_US`) после прыжка сбрасывается сам — bootloader
     // тут же откатывает его. Тогда обмен доказывает магия `REVERT`: без
     // состоявшегося обмена отката не бывает.
     let dfu_previous = format!("{:#x}", parse_address(&dfu) + page_size);
