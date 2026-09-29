@@ -19,6 +19,12 @@ harness = false
 cortex-m = { workspace = true }
 cortex-m-rt = { workspace = true }
 embassy-executor = { workspace = true, features = ["defmt"] }
+# Прямо, а не транзитивно: `main.rs` поднимает `raw::Executor` в `StaticCell`
+# сам, а не макросом `#[embassy_executor::main]` — иначе нечем мерить, сколько
+# тиков исполнитель стоял (docs/modules/app-cpu-load.md).
+static_cell = { workspace = true }
+# Прямо, а не транзитивно: тем же временем цикл исполнителя меряет свой сон.
+embassy-time = { workspace = true }
 defmt = { workspace = true }
 defmt-rtt = { workspace = true }
 # Паникёр по профилю — оба крейта обычные зависимости, выбор делает

@@ -50,6 +50,13 @@ supervisor = { workspace = true }
 # Прямо, а не транзитивно через `supervisor`: `Timer`/`Duration` стоят в теле
 # задачи, а не только в её сигнатуре.
 embassy-time = { workspace = true }
+# Прямо, а не транзитивно через `supervisor`: `watch::Sender` стоит в сигнатуре
+# `tasks::cpu_load::task` — того получателя, который граф создаёт из `publish:`.
+embassy-sync = { workspace = true }
+# Прямо, а не транзитивно: тип счётчика в `tasks::cpu_load::SleepTicks` —
+# `portable_atomic::AtomicU64`, потому что на Cortex-M0/M0+ у `core` такого
+# атомика нет вовсе.
+portable-atomic = { workspace = true }
 
 [dev-dependencies]
 test-log = { workspace = true }

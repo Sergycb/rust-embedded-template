@@ -60,6 +60,11 @@ supervisor   = { git = "https://github.com/Sergycb/rust-lib.git" }
 # на каждой конверсии. Версия та же, что в `crates-cross/Cargo.toml`, — иначе
 # в прошивке оказалось бы две несовместимые копии крейта.
 embassy-time = { version = "0.5.1" }
+# Тип счётчика тиков сна в `domain::tasks::cpu_load::SleepTicks`. Не
+# `core::sync::atomic::AtomicU64`: на Cortex-M0/M0+ его нет вовсе. Про то, чем
+# там эмулируется CAS, — `docs/conventions.md` и
+# `[target.thumbv6m-none-eabi]` в `crates-cross/.cargo/config.toml`.
+portable-atomic = { version = "1.15.0" }
 # Только для dev-зависимостей `domain`: хостовый тестовый бинарник линкует
 # `supervisor`, а тот — `embassy-executor`, у которого без платформенной фичи
 # нет `__pender` (и нет драйвера времени у `embassy-time`). В прошивку эти
@@ -71,6 +76,10 @@ critical-section = { version = "1.2.0" }
 # бы две копии крейта). `embassy-boot` — без `-stm32`: сам он от чипа не зависит,
 # а `from_linkerfile_blocking` зовёт только `bsp`.
 embassy-boot           = { version = "0.7.0" }
+# `Watch` из `publish:` в `domain::tasks::cpu_load`. Версия та же, что в
+# `crates-cross/Cargo.toml` и у `supervisor`, из чьего `__private` приходит
+# этот тип в сгенерированном коде, — иначе в прошивке оказалось бы две
+# несовместимые копии крейта.
 embassy-sync           = { version = "0.8.0" }
 embedded-storage       = { version = "0.3.1" }
 embedded-storage-async = { version = "0.4.1" }

@@ -1,4 +1,13 @@
 #![doc = include_str!("../../../docs/modules/app-graph.md")]
+// Разворачивает этот файл `supervisor_graph!`, и разворачивает он его в
+// `crates-cross/app`, то есть в бинарник. `pub fn` в приватном модуле бинарника
+// для `dead_code` мёртв, если его никто не зовёт, а звать некому именно то,
+// ради чего макрос их и эмитит: получатели `publish:`, `provide_*` и
+// `*_take()` — это ручки к полям графа, за которые отвечает проект. В сыром
+// шаблоне подписчиков нет, и без этого `-D warnings` в `cargo xtask lint cross`
+// ронял бы сборку на месте, где не сломалось ничего. Свою логику сюда не пишут
+// — она в `domain`.
+#![allow(dead_code)]
 
 {%- if graph == "true" %}
 use defmt::{info, warn};
@@ -45,7 +54,19 @@ supervisor_graph! {
     // уезжает в слоты узла, `watchdog` следом забирает сторож, остаток
     // `board` дропается в конце пролога.
 {%- endif %}
-    fragments: [::domain::APP_FRAG as APP{% if ota == "true" %}, {% if signed == "true" %}::domain::OTA_SIGNED_FRAG<bsp::ota::Link, crate::image::Signed> as OTA = ::domain::ota::Inputs { link: board.ota.link, flash: crate::image::Signed::new(board.ota.flash, crate::image::FW_VERSION, crate::image::OTA_PUBLIC_KEY_IN_IMAGE) }{% else %}::domain::OTA_FRAG<bsp::ota::Link, bsp::ota::Updater> as OTA = ::domain::ota::Inputs { link: board.ota.link, flash: board.ota.flash }{% endif %}{% endif %}];
+    fragments: [::domain::APP_FRAG as APP,
+    //
+    // Узел `CPU_LOAD` меряет загрузку процессора. Вход — счётчик тиков сна,
+    // который ведёт ручной цикл исполнителя в `main.rs` (docs/modules/
+    // app-cpu-load.md); всё, что нужно фрагменту, — ссылка на него, поэтому
+    // привязка такая же, как у узла OTA: тип входа объявляет подсистема
+    // (`domain::tasks::cpu_load::Inputs`), а значение собирает приложение.
+    //
+    // Подписчика в шаблоне нет: слот `PERCENT` объявлен явно, единицей, и
+    // первым его занимает тот, кто первым позовёт
+    // `cpu_load_percent_receiver()`. Само значение в лог не идёт — читатель
+    // должен быть, иначе процент некуда девать.
+    ::domain::CPU_LOAD_FRAG as CPU_LOAD = ::domain::tasks::cpu_load::Inputs { sleep_ticks: crate::cpu_load::sleep_ticks() }{% if ota == "true" %}, {% if signed == "true" %}::domain::OTA_SIGNED_FRAG<bsp::ota::Link, crate::image::Signed> as OTA = ::domain::ota::Inputs { link: board.ota.link, flash: crate::image::Signed::new(board.ota.flash, crate::image::FW_VERSION, crate::image::OTA_PUBLIC_KEY_IN_IMAGE) }{% else %}::domain::OTA_FRAG<bsp::ota::Link, bsp::ota::Updater> as OTA = ::domain::ota::Inputs { link: board.ota.link, flash: board.ota.flash }{% endif %}{% endif %}];
 }
 
 /// Куда уходит просрочка наблюдаемого узла.

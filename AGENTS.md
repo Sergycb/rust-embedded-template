@@ -37,7 +37,8 @@ skill'ом `rust-engineering` и не дублируются здесь. Это�
 типы, которых он не видит, — параметрами (`domain::app::APP_FRAG`,
 `domain::ota::OTA_FRAG<S, F>`). Граф собственных узлов не объявляет:
 `crates-cross/app/src/graph.rs` — только `boot:`, блок `watchdog:` и `fragments:`,
-который перечисляет фрагменты и даёт узлам имена (`APP_FRAG as APP`).
+который перечисляет фрагменты и даёт узлам имена (`APP_FRAG as APP`,
+`CPU_LOAD_FRAG as CPU_LOAD`).
 Отсюда и зависимость `domain` от `supervisor` (ради `Heartbeat`/`TaskExit` в сигнатуре) —
 `embassy-executor` приезжает туда транзитивно, и это осознанно; `embassy-stm32` — нет.
 Подробности, прецеденты и пограничные случаи (например, `watchdog`) — `docs/architecture.md`.
@@ -159,9 +160,11 @@ read`: руками пришлось бы сначала найти адрес �
   (`domain::ota`) — одно допущение «один исполнитель», менять вместе —
   `docs/flash.md`, `docs/architecture.md`.
 {%- if graph == "true" %}
-- Три таймаута сторожа связаны цепочкой (`domain::app::BACKOFF.max` <
-  `domain::app::WATCHDOG` < `bsp::wdg::HW_TIMEOUT_US` минус `WATCHDOG_CHECK_EVERY`
-  графа) — менять только вместе; левое звено держит `const`-assert в `domain::app`,
+- У каждого узла с `watchdog:` своя связанная цепочка таймаутов
+  (`domain::app::BACKOFF.max` < `domain::app::WATCHDOG`,
+  `domain::tasks::cpu_load::BACKOFF.max` < `domain::tasks::cpu_load::WATCHDOG`,
+  и обе < `bsp::wdg::HW_TIMEOUT_US` минус `WATCHDOG_CHECK_EVERY` графа) —
+  менять только вместе; левое звено держит `const`-assert в своём фрагменте,
   правое — на вас — `docs/watchdog.md`.
 - Сторож запускается в прологе `spawn_all` (`= board.watchdog.arm()`), а не в
   `Board::new`: с этого момента железо тикает, а кормит его только тикер графа.
@@ -169,6 +172,16 @@ read`: руками пришлось бы сначала найти адрес �
   (число в `[env]` crates-cross/.cargo/config.toml у обоих общее), и путь от прыжка до
   `spawn_all` обязан в него уложиться — `docs/watchdog.md`.
 {%- endif %}
+- Цикл исполнителя в `crates-cross/app/src/main.rs` поднят руками, а не
+  `#[embassy_executor::main]`: только так измеряется сон задач, на котором стоит
+  узел `CPU_LOAD`. Возврат к макросу молча ломает измерение (счётчик сна
+  перестаёт расти, узел публикует 100%), и ничем, кроме линтера, это не
+  ловится — `docs/modules/app-cpu-load.md`.
+- `#![allow(dead_code)]` в начале `crates-cross/app/src/graph.rs` — не
+  украшение, а условие `-D warnings`: файл целиком генерируемый, а
+  `*_receiver()`/`provide_*`/`*_take()` в сыром шаблоне никто не зовёт, потому
+  что подписчиков нет. Снимать allow нельзя, пока у графа нет читателей; писать
+  в `graph.rs` свою логику — тоже.
 - `Board` отдаёт адаптеры — объекты, реализующие трейты (`ports`, `HardwareWatchdog`), —
   и данные, тип которых объявлен в `ports` (`BoardInfo`), и ничего не настраивает: ни
   периферии ядра, ни `Peripherals`, ни `Clocks` в полях нет — `docs/architecture.md`.

@@ -3,8 +3,8 @@
 
 use shadow_rs::shadow;
 shadow!(build);
+mod cpu_load;
 {%- if graph == "true" %}
-
 mod graph;
 {%- endif %}
 {%- if signed == "true" %}
@@ -20,15 +20,17 @@ use defmt::info;
 // объект транспорта, собранный из реальной периферии).
 use defmt_rtt as _;
 
-use embassy_executor::Spawner;
+use embassy_executor::raw::Executor;
+use embassy_time::Instant;
+use static_cell::StaticCell;
 {%- if ota == "true" %}
 // Трейт порта: приложение зовёт объекты `Board` только через него и про
 // железо за ним — разделы флеша — не знает.
 use ports::FirmwareUpdate;
 {%- endif %}
 
-#[embassy_executor::main]
-async fn main({% if graph == "true" %}spawner{% else %}_spawner{% endif %}: Spawner) {
+#[cortex_m_rt::entry]
+fn main() -> ! {
     // Первая же строка лога отвечает на вопрос «а что вообще залито в плату»:
     // версия пакета и коммит, из которого собран образ (их подставляет
     // `shadow-rs` в build.rs). Без этого build-info собиралась бы впустую, а по
@@ -95,6 +97,22 @@ async fn main({% if graph == "true" %}spawner{% else %}_spawner{% endif %}: Spaw
     );
 {%- endif %}
 
+    // Исполнитель — свой, а не `#[embassy_executor::main]`, и это единственная
+    // причина, по которой `main` здесь синхронный. У макроса `WFE` живёт
+    // внутри `Executor::run`, между двумя вызовами `poll`, и снаружи их не
+    // видно — а именно там проходит всё время, когда задач нет. Измерению
+    // загрузки нужно знать, сколько тиков микроконтроллер стоял, и кроме
+    // явного `WFE` этой величины взять неоткуда. Подробности — в модуле
+    // `cpu_load` (docs/modules/app-cpu-load.md).
+    //
+    // `usize::MAX` вместо нуля — тот же «контекст», что и у макроса: на
+    // thread-режиме `__pender` делает `SEV` (пока `executor-interrupt` не
+    // включён, ровно так же), а не `WFE`, то есть пробуждение задач не теряет.
+    // Цикл ниже ставит `WFE` сам, и всё, что остаётся на долю pender'а, — это
+    // возврат из него, а не сон.
+    static EXECUTOR: StaticCell<Executor> = StaticCell::new();
+    let executor = EXECUTOR.init(Executor::new(usize::MAX as *mut ()));
+    let spawner = executor.spawner();
 {%- if graph == "true" %}
 
     // Граф задач — единственное место, где в этом проекте появляются задачи.
@@ -107,7 +125,7 @@ async fn main({% if graph == "true" %}spawner{% else %}_spawner{% endif %}: Spaw
     // OTA в `fragments:` (`board.ota`){% endif %} — и здесь же
     // окажутся ваши: `resources: [SLOT: T = board.<поле>]` вместо
     // `provide_<slot>(..)` перед этой строкой. Оттого и последняя строка
-    // `main`: после неё `board` принадлежит прологу `spawn_all`.
+    // `spawn_all`: после неё `board` принадлежит прологу.
     //
     // Аппаратный сторож запускается ВНУТРИ этого вызова — инициализатором
     // блока `watchdog:`, — а не в `Board::new` и не строкой выше: с этого
@@ -126,5 +144,29 @@ async fn main({% if graph == "true" %}spawner{% else %}_spawner{% endif %}: Spaw
     // железо тикающим, а кормить его некому — проглоти вы `Err`, плата ушла
     // бы в сброс через `bsp::wdg::HW_TIMEOUT_US` без единой строки о причине.
     graph::spawn_all(&spawner, board).expect("узлы графа свежие: spawn_all зовётся один раз");
+{%- else %}
+
+    // Графа нет, поэтому задачу, которая меряет загрузку, спавнит сам `main`.
+    // `Spawner::spawn` берёт `SpawnToken`, а не функцию, поэтому обёртка
+    // `#[embassy_executor::task]` объявлена в `cpu_load.rs`: в домене
+    // executor-обвязки быть не может, а здесь ровно место для неё. Токен
+    // выдаёт она же, и `expect` — на нём: `Spawner::spawn` отказ не вернёт,
+    // а проглоченный `SpawnError::Busy` означал бы, что загрузку не меряет
+    // никто, и это молча.
+    let token = cpu_load::standalone_task().expect("задача CPU_LOAD свежая: спавнится один раз");
+    spawner.spawn(token);
 {%- endif %}
+
+    // Цикл исполнителя: спим, пока нечего делать, и отмечаем в счётчике, сколько
+    // тиков проспали. `wfe()` возвращается и по событию (SEV от `spawn`, от
+    // пробуждения задачи), и по таймеру — от того, что сработал следующий
+    // `Timer` задачи, — так что это единственное место, где цикл ждёт.
+    // `poll` — `unsafe`, и это то же обещание, что у `Executor::run`: поллить
+    // исполнитель можно только из единственного места, а оно здесь.
+    loop {
+        let before = Instant::now().as_ticks();
+        cortex_m::asm::wfe();
+        cpu_load::record_sleep_ticks(Instant::now().as_ticks().saturating_sub(before));
+        unsafe { executor.poll() };
+    }
 }
