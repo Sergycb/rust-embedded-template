@@ -61,7 +61,9 @@ supervisor-графы, watchdog). Вся остальная логика — в 
 объявления. Левое звено цепочки таймаутов — потолок backoff'а меньше таймаута узла —
 при этом целиком внутри фрагмента, и его держит `const`-assert в `domain::app`;
 compose-site остаётся правое: таймаут узла плюс `WATCHDOG_CHECK_EVERY` меньше
-аппаратного `bsp::wdg::HW_TIMEOUT_US` (`docs/watchdog.md`).
+аппаратного `bsp::wdg::HW_TIMEOUT_US` — его тоже держит `const`-assert, уже в
+`graph.rs`, потому что это единственное место, где видны оба конца
+(`docs/watchdog.md`).
 
 **Типы ресурсных слотов** узла OTA — параметры фрагмента: `name: OTA_FRAG<S, F>`,
 а compose-site подставляет их в `fragments:` угловыми скобками

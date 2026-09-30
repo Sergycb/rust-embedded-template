@@ -61,10 +61,11 @@ pub const BACKOFF: BackoffPolicy = BackoffPolicy {
 ///
 /// Второе звено — с другого конца, и оно не здесь: `bsp::wdg::HW_TIMEOUT_US`
 /// обязан быть больше этого значения плюс `WATCHDOG_CHECK_EVERY` графа
-/// (`crates-cross/app/src/graph.rs`). Компилятор из этой пары проверяет только
-/// `check_every` против аппаратного таймаута (assert эмитит сам
-/// `supervisor_graph!`, читая `HARDWARE_TIMEOUT` у типа сторожа); эта константа
-/// в него не входит намеренно — `docs/watchdog.md`.
+/// (`crates-cross/app/src/graph.rs`). Из этой пары `check_every` против
+/// аппаратного таймаута проверяет сам `supervisor_graph!` (assert эмитит он,
+/// читая `HARDWARE_TIMEOUT` у типа сторожа), а сумму с таймаутом узла —
+/// `const`-assert в графе, потому что там видны оба конца; эта константа в
+/// проверку `supervisor` не входит намеренно — `docs/watchdog.md`.
 pub const WATCHDOG: Duration = Duration::from_secs(7);
 
 // Левое звено цепочки таймаутов, проверенное компилятором: `<` на `Duration`

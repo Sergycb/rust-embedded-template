@@ -205,7 +205,10 @@ spawn_all(&spawner, board).expect("узлы свежие");
 каждая: `WATCHDOG_CHECK_EVERY` здесь (про один сторож на всех), таймаут узла
 во фрагменте (про этот узел, вместе с его backoff'ом — и их соотношение
 держит `const`-assert там же; узлов в шаблоне два, `APP` и `CPU_LOAD`, и
-цифры у них свои), `bsp::wdg::HW_TIMEOUT_US` у железа.
+цифры у них свои), `bsp::wdg::HW_TIMEOUT_US` у железа. Второе соотношение
+(таймаут узла плюс `WATCHDOG_CHECK_EVERY` меньше `HW_TIMEOUT_US`) держит
+`const`-assert рядом с `WATCHDOG_CHECK_EVERY`: второго места, где видны оба
+конца, нет, а `supervisor` намеренно их не связывает.
 
 Узел объявлен **наблюдаемым** (`watchdog: ... observe`): его просрочка
 докладывается наблюдателю графа (`report_liveness`) и не превращается в

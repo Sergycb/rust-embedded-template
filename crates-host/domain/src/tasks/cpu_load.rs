@@ -73,7 +73,8 @@ pub const BACKOFF: BackoffPolicy = BackoffPolicy {
 /// что и у [`app::WATCHDOG`](crate::app::WATCHDOG), и то же левое звено
 /// цепочки таймаутов — `const`-assert ниже. Второе, с другого конца, не здесь:
 /// `WATCHDOG + WATCHDOG_CHECK_EVERY < bsp::wdg::HW_TIMEOUT_US`
-/// (`docs/watchdog.md`).
+/// (`docs/watchdog.md`) — его держит `const`-assert в `app/src/graph.rs`, где
+/// видны оба конца.
 pub const WATCHDOG: Duration = Duration::from_secs(2);
 
 // Левое звено цепочки таймаутов, проверенное компилятором: `<` на `Duration`
