@@ -18,12 +18,33 @@ use supervisor::{Duration, Liveness, supervisor_graph};
 /// Единственная цифра графа, которая живёт здесь: она про один аппаратный
 /// сторож на всех, а не про какой-то узел. Таймаут узла — во фрагменте
 /// (`domain::app::WATCHDOG`), аппаратный — у железа (`bsp::wdg::HW_TIMEOUT_US`),
-/// и соотношение между ними держите сами: `WATCHDOG + WATCHDOG_CHECK_EVERY <
-/// HW_TIMEOUT_US`. Компилятор проверяет только `check_every` против
-/// аппаратного таймаута — `supervisor_graph!` эмитит `const`-assert, читая
-/// `HARDWARE_TIMEOUT` у типа сторожа; левое звено цепочки (потолок backoff'а
-/// < таймаут узла) держит `const`-assert в `domain::app` — `docs/watchdog.md`.
+/// и соотношение между ними проверяет `const`-assert ниже. Компилятор проверяет
+/// сам `check_every` против аппаратного таймаута — `supervisor_graph!` эмитит
+/// `const`-assert, читая `HARDWARE_TIMEOUT` у типа сторожа; левое звено цепочки
+/// (потолок backoff'а < таймаут узла) держит `const`-assert во фрагменте
+/// (`domain::app`) — `docs/watchdog.md`.
 const WATCHDOG_CHECK_EVERY: Duration = Duration::from_millis(100);
+
+// Правое звено цепочки таймаутов, и единственное место в шаблоне, где видны оба
+// его конца: таймаут узла живёт в `domain`, аппаратный — в `bsp`. `supervisor`
+// намеренно не связывает дедлайн узла с таймаутом железа (граф с длинным
+// дедлайном корректен сам по себе), а шаблон — должен: иначе `check_every`
+// укладывается, все гейты зелёные, а IWDG сбрасывает МК в штатной паузе
+// backoff'а, и сброс приходит от железа — ни один узел не назван причиной, а
+// диагностика `supervisor` оказывается мёртвым кодом.
+//
+// Узлов с `watchdog:` в списке `fragments:` ниже ровно два; новый фрагмент со
+// своим `watchdog:` обязан встать в этот assert — иначе его дедлайн проверит
+// один только этот комментарий. `<` на `Duration` в `const` не работает (нет
+// const-трейтов), поэтому сравниваются тики.
+const _: () = assert!(
+    ::domain::app::WATCHDOG.as_ticks() + WATCHDOG_CHECK_EVERY.as_ticks()
+        < bsp::wdg::HW_TIMEOUT_US as u64
+        && ::domain::tasks::cpu_load::WATCHDOG.as_ticks() + WATCHDOG_CHECK_EVERY.as_ticks()
+            < bsp::wdg::HW_TIMEOUT_US as u64,
+    "таймаут узла плюс WATCHDOG_CHECK_EVERY обязан быть меньше bsp::wdg::HW_TIMEOUT_US: иначе железо \
+     сбросит МК раньше, чем узел заметит зависшую задачу, и сброс придёт от железа, а не от supervisor"
+);
 
 supervisor_graph! {
     // Узлы приезжают из `domain`: каждая подсистема объявляет свой фрагмент

@@ -80,6 +80,12 @@ pub(crate) fn new(flash: &'static FlashMutex) -> Ota {
     }
 }
 
+// Одно из четырёх `#[allow(unsafe_code)]` в `crates-cross` (остальные —
+// `boot/src/main.rs`, `app/src/main.rs` и `steal` RCC в target-тесте): взять
+// адрес линкерного символа иначе нельзя, а сам символ — это ровно то, для чего
+// `extern` и существует. `clippy::undocumented_unsafe_blocks` этот блок не видит
+// — он про `unsafe`-блоки, а не про объявления, — поэтому объяснение здесь.
+#[allow(unsafe_code)]
 unsafe extern "C" {
     /// Границы раздела `ACTIVE` — те же символы, по которым разделы находит
     /// `FirmwareUpdaterConfig::from_linkerfile_blocking`.

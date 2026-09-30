@@ -18,6 +18,15 @@ rust-version = "1.96"
 # видела тела тестов как обычный код. Для rustc этот cfg неизвестен, и
 # `-D warnings` в `cargo xtask lint cross` превращал бы предупреждение в ошибку.
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(rust_analyzer)"] }
+# `warn`, а не `deny`, как в корневом workspace: unsafe в `crates-cross` есть
+# и оправдан — прыжок в образ в `boot`, поллинг исполнителя в `app`, блок
+# линкерных символов в `bsp/src/ota.rs`, `steal` RCC в target-тесте. Ровно на
+# этих четырёх местах стоит `#[allow(unsafe_code)]` с объяснением, и это весь
+# unsafe этого воркспейса, который видит clippy (проверено прогоном с
+# `-W unsafe_code`, а не перечислением файлов). Вместе с `-D warnings` в
+# `cargo xtask lint cross` линт делает новый unsafe ошибкой сборки — то есть
+# добавить его можно, только обдумав, и нигде он не спрячется.
+unsafe_code = "warn"
 
 [workspace.lints.clippy]
 all                     = { level = "warn", priority = -1 }
@@ -27,6 +36,11 @@ dbg_macro               = "deny"
 todo                    = "warn"
 unimplemented           = "warn"
 large_stack_arrays      = "warn"
+# Каждый `unsafe`-блок обязан объяснять, почему он корректен. Линт нашёл то,
+# чего не видел ни один линтер: `executor.poll()` в `app/src/main.rs` шёл без
+# `// SAFETY:`, хотя объяснение рядом стояло — на несколько строк выше и без
+# префикса, которого ждёт clippy.
+undocumented_unsafe_blocks = "warn"
 
 [workspace.dependencies]
 cortex-m = { version = "0.7.9", features = [

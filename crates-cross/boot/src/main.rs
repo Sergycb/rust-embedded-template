@@ -72,7 +72,29 @@ fn main() -> ! {
     #[cfg(not(debug_assertions))]
     flash.lock(|flash| flash.borrow_mut().watchdog.pet());
 {%- endif %}
-    unsafe { bl.load(entry) }
+    // SAFETY: `load` ставит VTOR на этот адрес, читает из образа по нему
+    // начальный MSP (первое слово) и reset-вектор (второе) и прыгает — за этой
+    // строкой не живёт ни один инвариант Rust, в том числе паникёр и таблица
+    // векторов, на которых держится release-сборка.
+    //
+    // Предпосылки — раскладка и записанный образ, и обе сводятся к файлам:
+    // * `entry` — это `FLASH_BASE` плюс смещение раздела ACTIVE, которое
+    //   `BootLoaderConfig::from_linkerfile_blocking` берёт из символов
+    //   `__bootloader_active_*`, то есть из `ORIGIN(FLASH)` и `LENGTH(FLASH)`
+    //   в `crates-cross/boot/memory.x`; раскладку приложения с линковкой
+    //   сверяют `cargo xtask build` и `cargo xtask flash`.
+    // * первое и второе слова по этому адресу — MSP и reset-вектор образа,
+    //   которые линкер положил в тот же раздел. Что bootloader их не
+    //   проверяет — оговорка выше, про повреждённый образ.
+    //
+    // `#[allow(unsafe_code)]` — как и три остальных unsafe в `crates-cross`
+    // (`app/src/main.rs`, блок линкерных символов в `bsp/src/ota.rs` и
+    // `steal` RCC в target-тесте): линт требует, чтобы каждое такое место
+    // было перечислено явно.
+    #[allow(unsafe_code)]
+    unsafe {
+        bl.load(entry)
+    }
 }
 {%- if graph == "true" %}
 

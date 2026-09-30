@@ -167,6 +167,18 @@ fn main() -> ! {
         let before = Instant::now().as_ticks();
         cortex_m::asm::wfe();
         cpu_load::record_sleep_ticks(Instant::now().as_ticks().saturating_sub(before));
-        unsafe { executor.poll() };
+        // SAFETY: поллить исполнитель можно только из единственного места, а
+        // оно здесь — цикл ниже единственный, кто его крутит, и `spawn_all` к
+        // этому моменту уже отработал. Ровно то же обещание, что у `Executor::run`.
+        //
+        // `#[allow(unsafe_code)]` — вместе с тремя другими в `crates-cross`
+        // (`boot/src/main.rs`, блок линкерных символов в `bsp/src/ota.rs` и
+        // `steal` RCC в target-тесте): unsafe в прошивке допустим, но каждое
+        // место обязано быть перечислено и объяснено, а линт `unsafe_code`
+        // заставляет перечислять.
+        #[allow(unsafe_code)]
+        unsafe {
+            executor.poll()
+        };
     }
 }

@@ -19,6 +19,17 @@ license      = "MIT"
 # зависимостях.
 rust-version = "1.96"
 
+[workspace.lints.rust]
+# Ни одного `unsafe` в host-крейтах (`domain`, `ports`, `adapters`,
+# `test-support`, `xtask`) нет и быть не должно: это обычный Rust, а
+# единственное, что могло бы его потребовать, — макросы, и появление unsafe
+# в макросе чужого крейта должно быть видно сразу. В `crates-cross` тот же
+# линт стоит как `warn`: там unsafe есть и оправдан (прыжок в образ, запись
+# во флеш, блок линкерных символов, `steal` RCC в тесте), и каждое из этих
+# мест перечислено `#[allow(unsafe_code)]` с объяснением — `deny` упал бы
+# именно на них.
+unsafe_code = "deny"
+
 [workspace.lints.clippy]
 all                     = { level = "warn", priority = -1 }
 unwrap_used             = "deny"
@@ -27,6 +38,12 @@ dbg_macro               = "deny"
 todo                    = "warn"
 unimplemented           = "warn"
 large_stack_arrays      = "warn"
+# Каждый `unsafe`-блок обязан объяснять, почему он корректен. Ловит ровно то,
+# что иначе ловить нечем: unsafe без комментария выглядит как обычная строка.
+# Таких мест в шаблоне четыре, все в `crates-cross` и все подписаны, а
+# `executor.poll()` в `app/src/main.rs` этому линту и обязан — до него он шёл
+# без `// SAFETY:` вовсе.
+undocumented_unsafe_blocks = "warn"
 
 [workspace.dependencies]
 # Крейты самого проекта: порты/адаптеры domain объявлены здесь, чтобы версия

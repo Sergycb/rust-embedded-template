@@ -116,6 +116,12 @@ mod tests {
         // SAFETY: `Board::new` в `#[init]` уже отработал, то есть настоящий
         // владелец `RCC` своё дело сделал; ниже только чтение посчитанных
         // частот.
+        //
+        // `#[allow(unsafe_code)]` — как и три остальных unsafe в `crates-cross`
+        // (`boot/src/main.rs`, `app/src/main.rs`, блок линкерных символов в
+        // `bsp/src/ota.rs`): линт требует, чтобы каждое такое место было
+        // перечислено явно.
+        #[allow(unsafe_code)]
         let rcc = unsafe { embassy_stm32::peripherals::RCC::steal() };
         let clocks = embassy_stm32::rcc::clocks(&rcc);
 
