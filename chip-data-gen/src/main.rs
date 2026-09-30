@@ -95,6 +95,36 @@ fn main() -> anyhow::Result<()> {
         .filter(|m| m.config.as_ref().is_some_and(|config| config.ota.is_ok()))
         .count();
 
+    // Инвариант «раскладка посчитана для каждого чипа», который до сих пор жил
+    // только в прозе MAINTAINING.md. Без него смена формата в `stm32-data`
+    // (неизвестный `kind`, потерянная непрерывная цепочка flash) тихо оставила
+    // бы нужное число чипов с плейсхолдером `memory.x`, и единственным следом
+    // осталась бы строка сводки ниже — цифра, на которую никто не смотрит.
+    // Считаем до печати: упавший прогон не должен успеть переписать
+    // `chip-select.rhai`.
+    let without_layout: Vec<&str> = suffixes
+        .iter()
+        .filter(|suffix| !memory_layouts.contains_key(*suffix))
+        .copied()
+        .collect();
+    anyhow::ensure!(
+        without_layout.is_empty(),
+        "раскладка памяти не посчитана для {} чипов из {}: {}. Их `memory.x` остался бы \
+         плейсхолдером, и проект собрался бы только после ручного заполнения. Причина, скорее \
+         всего, — смена формата метаданных в stm32-data: посмотрите на первый из этих чипов \
+         ({}/stm32{}/metadata.rs) и на `compute_memory_layout`",
+        without_layout.len(),
+        suffixes.len(),
+        without_layout
+            .iter()
+            .take(10)
+            .copied()
+            .collect::<Vec<_>>()
+            .join(", "),
+        cargo_metadata.stm32_metapac_chips_dir.display(),
+        without_layout[0],
+    );
+
     println!(
         "embassy-stm32: {} чип-фич; probe-rs: {} целей; итоговый список: {} (отброшено {}, \
          нет цели probe-rs); более точная цель probe-rs, чем базовая, найдена для {} чипов; \
@@ -119,35 +149,23 @@ fn main() -> anyhow::Result<()> {
 
     let rhai_path = repo_root.join("chip-select.rhai");
     let stamp = format_source_stamp(&declared_embassy_version(&repo_root)?, &probe_rs_version()?);
-    write_generated_block(
+    write_generated_blocks(
         &rhai_path,
-        CHIPS_BEGIN,
-        CHIPS_END,
-        &format_chip_list(&suffixes, &stamp),
-    )?;
-    write_generated_block(
-        &rhai_path,
-        PACKAGES_BEGIN,
-        PACKAGES_END,
-        &format_package_choices(&package_choices),
-    )?;
-    write_generated_block(
-        &rhai_path,
-        BANKS_BEGIN,
-        BANKS_END,
-        &format_bank_modes(&bank_modes),
-    )?;
-    write_generated_block(
-        &rhai_path,
-        WATCHDOG_BEGIN,
-        WATCHDOG_END,
-        &format_watchdogs(&watchdogs),
-    )?;
-    write_generated_block(
-        &rhai_path,
-        MEMORY_BEGIN,
-        MEMORY_END,
-        &format_memory_layouts(&memory_layouts),
+        &[
+            GeneratedBlock::new(CHIPS_BEGIN, CHIPS_END, format_chip_list(&suffixes, &stamp)),
+            GeneratedBlock::new(
+                PACKAGES_BEGIN,
+                PACKAGES_END,
+                format_package_choices(&package_choices),
+            ),
+            GeneratedBlock::new(BANKS_BEGIN, BANKS_END, format_bank_modes(&bank_modes)),
+            GeneratedBlock::new(WATCHDOG_BEGIN, WATCHDOG_END, format_watchdogs(&watchdogs)),
+            GeneratedBlock::new(
+                MEMORY_BEGIN,
+                MEMORY_END,
+                format_memory_layouts(&memory_layouts),
+            ),
+        ],
     )?;
     println!("chip-select.rhai обновлён.");
     Ok(())
@@ -514,13 +532,20 @@ struct FlashSettings {
     erase_value: u8,
 }
 
-#[derive(PartialEq, Eq)]
+/// Виды регионов в метаданных `stm32-data` — ровно те, что есть в
+/// `MemoryRegionKind`.
+///
+/// Без варианта «прочее» намеренно: раньше неузнанное имя становилось `Other`,
+/// а `compute_memory_layout` отбирает flash-регионы по `kind == Flash` — то
+/// после переименования `MemoryRegionKind::Flash` в `stm32-data` раскладка
+/// памяти перестала бы считаться для ВСЕХ чипов, и `cargo generate` не упал бы:
+/// единственным следом осталась бы цифра в сводке, на которую никто не смотрит.
+#[derive(PartialEq, Eq, Debug)]
 enum RegionKind {
     Flash,
     Ram,
     /// L0/L1 — блок EEPROM, читается напрямую, пишется через контроллер flash.
     Eeprom,
-    Other,
 }
 
 /// Разбирает `<stm32_metapac_chips_dir>/<chip>/metadata.rs` — это обычный
@@ -696,12 +721,7 @@ fn parse_regions(section: &str) -> anyhow::Result<Vec<RawRegion>> {
                 .context("MemoryRegion без name")?
                 .trim_matches('"')
                 .to_string();
-            let kind = match field(block, "kind").context("MemoryRegion без kind")? {
-                s if s.ends_with("Flash") => RegionKind::Flash,
-                s if s.ends_with("Ram") => RegionKind::Ram,
-                s if s.ends_with("Eeprom") => RegionKind::Eeprom,
-                _ => RegionKind::Other,
-            };
+            let kind = region_kind(block)?;
             let address_str = field(block, "address").context("MemoryRegion без address")?;
             let address = u64::from_str_radix(address_str.trim_start_matches("0x"), 16)
                 .with_context(|| format!("не число: address = {address_str}"))?;
@@ -783,25 +803,69 @@ fn select_memory_config(
     }
 }
 
+/// Вид региона по полю `kind` — строго, без «прочее».
+///
+/// Сопоставление по суффиксу имени (`…Flash`, `…Ram`, `…Eeprom`) само по себе
+/// переживает переименование окружающих типов и не переживает переименование
+/// варианта: `MemoryRegionKind::FlashBank1` дал бы «прочее», а
+/// [`compute_memory_layout`] отбирает flash-регионы по `kind == Flash` — и
+/// раскладка памяти молча перестала бы считаться у всех чипов разом. Именно
+/// поэтому неизвестное имя здесь ошибка, а не значение по умолчанию.
+fn region_kind(block: &str) -> anyhow::Result<RegionKind> {
+    let raw = field(block, "kind").context("MemoryRegion без kind")?;
+    Ok(match raw {
+        kind if kind.ends_with("Flash") => RegionKind::Flash,
+        kind if kind.ends_with("Ram") => RegionKind::Ram,
+        kind if kind.ends_with("Eeprom") => RegionKind::Eeprom,
+        other => bail!(
+            "неизвестный вид региона `{other}`: в stm32-data их ровно три — Flash, Ram, \
+             Eeprom. Если вариант переименовали, починить надо здесь и в [`RegionKind`], а не \
+             оставлять чипы без посчитанного memory.x"
+        ),
+    })
+}
+
 /// Значение поля `{key}: ...` до ближайшей запятой/переноса строки внутри
 /// одного `block` (текст между `MemoryRegion {` и следующим таким же
 /// заголовком, см. `parse_chip_memory`) — этого достаточно, все нужные поля
 /// здесь плоские (`name: "..."`, `address: 0x...`, `size: ...`), кроме
 /// вложенного `FlashSettings { erase_size: ..., write_size: ... }`, у
 /// которого поля тоже плоские и не пересекаются по имени с полями снаружи.
+///
+/// **Совпадение ищется по границе поля, а не по подстроке.** Иначе `size: `
+/// матчит `erase_size: `, и всё работает только потому, что `stm32-metapac`
+/// печатает поля в порядке `name, kind, address, size, settings`: переезд
+/// `settings` выше `size` вернул бы `2048` вместо размера региона, и
+/// `flash_total` оказался бы неверным у сотен чипов — полностью молча, потому
+/// что `parse` такой результат принимает.
 fn field<'a>(block: &'a str, key: &str) -> Option<&'a str> {
     let pat = format!("{key}: ");
-    let start = block.find(&pat)? + pat.len();
-    let rest = &block[start..];
-    // Закрывающие скобки — такая же граница значения, как запятая и перевод
-    // строки. В самих значениях (числа, адреса, `MemoryRegionKind::Flash`,
-    // имена в кавычках) их не бывает, а вот последнее поле блока запятой не
-    // заканчивается: `erase_value: 255 })` без них возвращалось целиком,
-    // вместе с хвостом, и `parse` падал на «invalid digit». В файлах
-    // `stm32-metapac` поля печатаются по одному на строку, поэтому наружу это
-    // не вылезало — поймал тест на сжатой в одну строку записи.
-    let end = rest.find([',', '\n', '}', ')'])?;
-    Some(rest[..end].trim())
+    let mut from = 0;
+    while let Some(found) = block[from..].find(&pat) {
+        let start = from + found;
+        // Перед полем — либо начало строки, либо `{`/`,` c пробелами: все
+        // варианты, где `key` начинает поле. `_` и буква означают, что это
+        // суффикс чужого поля (`erase_size` для `size`), и такой матч пропускаем.
+        let starts_field = block[..start]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !c.is_alphanumeric() && c != '_');
+        if starts_field {
+            let rest = &block[start + pat.len()..];
+            // Закрывающие скобки — такая же граница значения, как запятая и
+            // перевод строки. В самих значениях (числа, адреса,
+            // `MemoryRegionKind::Flash`, имена в кавычках) их не бывает, а вот
+            // последнее поле блока запятой не заканчивается: `erase_value: 255
+            // })` без них возвращалось целиком, вместе с хвостом, и `parse`
+            // падал на «invalid digit». В файлах `stm32-metapac` поля
+            // печатаются по одному на строку, поэтому наружу это не вылезало —
+            // поймал тест на сжатой в одну строку записи.
+            let end = rest.find([',', '\n', '}', ')'])?;
+            return Some(rest[..end].trim());
+        }
+        from = start + pat.len();
+    }
+    None
 }
 
 /// Партиции OTA-схемы (`crates-cross/boot`). Есть только у чипов, где схема
@@ -1098,7 +1162,7 @@ fn extra_region_lines(regions: &[RawRegion], flash_end: u64, ram_end: u64) -> Ve
                 RegionKind::Ram => "xrw",
                 // EEPROM пишется через контроллер flash, а не обычной записью,
                 // поэтому без `w`: класть туда `.data` нельзя.
-                RegionKind::Eeprom | RegionKind::Other => "r",
+                RegionKind::Eeprom => "r",
             };
             let line = region_line(&r.name, attrs, r.address, r.size);
 
@@ -1606,36 +1670,59 @@ fn format_package_choices(choices: &BTreeMap<&str, Vec<String>>) -> String {
     out
 }
 
-/// Заменяет содержимое между `begin_marker` и `end_marker` (маркеры входят в
-/// заменяемый блок) на `generated`. Используется для обоих сгенерированных
-/// блоков `chip-select.rhai` — списка чипов и таблицы уточнения корпусировки.
-fn write_generated_block(
-    rhai_path: &Path,
-    begin_marker: &str,
-    end_marker: &str,
-    generated: &str,
-) -> anyhow::Result<()> {
+/// Сгенерированный блок `chip-select.rhai`: маркеры (входят в заменяемый
+/// текст) и новое содержимое между ними.
+struct GeneratedBlock {
+    begin: &'static str,
+    end: &'static str,
+    body: String,
+}
+
+impl GeneratedBlock {
+    fn new(begin: &'static str, end: &'static str, body: String) -> Self {
+        Self { begin, end, body }
+    }
+}
+
+/// Перезаписывает все сгенерированные блоки `chip-select.rhai` ОДНОЙ записью.
+///
+/// Раньше блоков было пять, и каждый перезаписывался сам по себе: пять чтений
+/// 50-килобайтного файла и пять записей. Хуже не скорость — прерывание между
+/// любыми двумя из них оставляло файл с новым списком чипов и старой раскладкой
+/// памяти, то есть ровно то состояние, в котором всё выглядит правдоподобно и
+/// ничего не работает. Штамп версии в списке чипов такой разрыв не ловит: он
+/// проверяет, что строка есть в файле, а не что блоки одного поколения.
+fn write_generated_blocks(rhai_path: &Path, blocks: &[GeneratedBlock]) -> anyhow::Result<()> {
     let original = fs::read_to_string(rhai_path)
         .with_context(|| format!("не удалось прочитать {}", rhai_path.display()))?;
 
-    let begin = original
-        .find(begin_marker)
-        .with_context(|| format!("{begin_marker} не найден в {}", rhai_path.display()))?;
-    let end = original
-        .find(end_marker)
-        .with_context(|| format!("{end_marker} не найден в {}", rhai_path.display()))?;
-    if end < begin {
-        bail!(
-            "{end_marker} стоит раньше {begin_marker} в {}",
-            rhai_path.display()
-        );
+    // Смещения считаются по исходному тексту, а подстановки идут с конца файла к
+    // началу — иначе уже сдвинутый блок сбил бы смещения следующего.
+    let mut splices: Vec<(usize, usize, &str)> = blocks
+        .iter()
+        .map(|block| {
+            let begin = original
+                .find(block.begin)
+                .with_context(|| format!("{} не найден в {}", block.begin, rhai_path.display()))?;
+            let end = original
+                .find(block.end)
+                .with_context(|| format!("{} не найден в {}", block.end, rhai_path.display()))?;
+            anyhow::ensure!(
+                end >= begin,
+                "{} стоит раньше {} в {}",
+                block.end,
+                block.begin,
+                rhai_path.display(),
+            );
+            Ok((begin, end, block.body.as_str()))
+        })
+        .collect::<anyhow::Result<_>>()?;
+    splices.sort_by_key(|(begin, ..)| std::cmp::Reverse(*begin));
+
+    let mut updated = original;
+    for (begin, end, body) in splices {
+        updated.replace_range(begin..end, body);
     }
-
-    let mut updated = String::with_capacity(original.len() + generated.len());
-    updated.push_str(&original[..begin]);
-    updated.push_str(generated);
-    updated.push_str(&original[end..]);
-
     fs::write(rhai_path, updated)
         .with_context(|| format!("не удалось записать {}", rhai_path.display()))
 }
@@ -1731,6 +1818,53 @@ pub static METADATA: Metadata = Metadata {
         assert_eq!(multi[0][0].size, 524288);
         assert_eq!(multi[1].len(), 2);
         assert_eq!(multi[1][1].name, "BANK_2");
+    }
+
+    /// Порядок полей в `MemoryRegion` держится на том, что `stm32-data` печатает
+    /// `size` раньше `settings`. Переедем `settings` выше — и `find("size: ")`
+    /// начнёт матчить `erase_size`, вернёт `2048` вместо размера региона, и
+    /// `flash_total` окажется неверным у сотен чипов, полностью молча: `parse`
+    /// такой результат принимает. Разбор полей идёт поэтому по границе поля, а
+    /// не по подстроке, и порядок полей больше не важен.
+    #[test]
+    fn a_field_is_found_even_when_a_longer_name_comes_first() {
+        let block = "\
+ name: \"BANK_1\",
+ kind: MemoryRegionKind::Flash,
+ settings: Some(FlashSettings { erase_size: 2048, write_size: 8, erase_value: 255 }),
+ address: 0x8000000,
+ size: 131072,
+";
+        assert_eq!(super::field(block, "size"), Some("131072"));
+        assert_eq!(super::field(block, "erase_size"), Some("2048"));
+        assert_eq!(super::field(block, "write_size"), Some("8"));
+        assert_eq!(super::field(block, "address"), Some("0x8000000"));
+    }
+
+    /// Неизвестный вид региона — ошибка, а не «прочее». Иначе переименование
+    /// варианта в `stm32-data` молча оставило бы все чипы без `MEMORY_LAYOUT`,
+    /// а `cargo generate` закончил бы работу с нулевым кодом.
+    #[test]
+    fn an_unknown_region_kind_is_an_error() {
+        let block = "\
+ name: \"BANK_1\",
+ kind: MemoryRegionKind::FlashBank1,
+ address: 0x8000000,
+ size: 131072,
+";
+        let err = region_kind(block).expect_err("неизвестный вид региона обязан быть ошибкой");
+        assert!(err.to_string().contains("FlashBank1"), "{err:#}");
+
+        // Известные виды по-прежнему разбираются — с суффиксом, а не точным
+        // совпадением: имя типа печатает `stm32-data`, а не шаблон.
+        for (printed, expected) in [
+            ("MemoryRegionKind::Flash", RegionKind::Flash),
+            ("MemoryRegionKind::Ram", RegionKind::Ram),
+            ("MemoryRegionKind::Eeprom", RegionKind::Eeprom),
+        ] {
+            let block = format!("kind: {printed},");
+            assert_eq!(region_kind(&block).expect("известный вид"), expected);
+        }
     }
 
     /// Первая строка `<chip>/metadata.rs` — это `include!` общего файла, где

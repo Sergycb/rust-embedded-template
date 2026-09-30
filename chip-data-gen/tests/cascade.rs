@@ -73,6 +73,12 @@ fn run_cascade_with(
     let deleted: Deleted = Rc::new(RefCell::new(Vec::new()));
     let prints: Prints = Rc::new(RefCell::new(Vec::new()));
     let mut engine = Engine::new();
+    // Предел операций обязателен: без него `Engine::new()` считает регрессию с
+    // бесконечным циклом не ошибкой, а зависанием, и подвешивает пайплайн
+    // вместо того, чтобы упасть на тесте. С запасом выше нынешнего расхода на
+    // самый длинный каскад, иначе ограничение срабатывало бы на здоровом
+    // скрипте.
+    engine.set_max_operations(2_000_000);
     {
         let prints = prints.clone();
         engine.on_print(move |line| prints.borrow_mut().push(line.to_string()));
@@ -590,10 +596,17 @@ fn memory_layout_invariants_hold_for_every_chip() {
     let mut with_ota = 0;
     let mut without_ota = 0;
     let mut failures = Vec::new();
+    let mut without_layout = Vec::new();
     for suffix in all_chip_suffixes() {
         let result = run_cascade_to(&ast, &suffix).expect("каскад не должен падать");
         let Some(app) = result.files.get("crates-cross/app/memory.x") else {
-            continue; // раскладка для чипа не считается — нечего проверять
+            // Раскладки нет — значит, у чипа остался плейсхолдер `memory.x` и
+            // проект не собирается без ручного заполнения. Раньше такой чип
+            // просто пропускался (`continue`), и потеря сотни чипов проходила
+            // незамеченной: `chip-data-gen` теперь падает на этом же месте
+            // (см. `ensure!` в его main), а тест обязан ловить то же самое.
+            without_layout.push(suffix);
+            continue;
         };
         let app = app.join("\n");
         let target_tests = result
@@ -669,6 +682,17 @@ fn memory_layout_invariants_hold_for_every_chip() {
     assert!(
         with_ota > 500 && without_ota > 100,
         "подозрительное распределение: с OTA {with_ota}, без OTA {without_ota}"
+    );
+    assert!(
+        without_layout.is_empty(),
+        "у {} чипов не посчитана раскладка memory.x — они остались бы плейсхолдером: {}",
+        without_layout.len(),
+        without_layout
+            .iter()
+            .take(10)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ")
     );
     assert!(
         failures.is_empty(),
