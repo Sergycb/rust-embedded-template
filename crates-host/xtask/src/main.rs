@@ -103,9 +103,10 @@ fn setup(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     // Проверяем именно бинарники, а не `cargo <подкоманда>`: `cargo nextest
     // --version` на машине без nextest запускается успешно — это сам `cargo`
     // печатает «no such command», — и установка молча пропускалась бы.
-    install_if_missing(sh, "probe-rs", "probe-rs-tools")?;
-    install_if_missing(sh, "flip-link", "flip-link")?;
-    install_if_missing(sh, "cargo-nextest", "cargo-nextest")?;
+    // `cargo-flash` — отдельный бинарь того же пакета, и зовёт его `flash`.
+    install_if_missing(sh, &["probe-rs", "cargo-flash"], "probe-rs-tools")?;
+    install_if_missing(sh, &["flip-link"], "flip-link")?;
+    install_if_missing(sh, &["cargo-nextest"], "cargo-nextest")?;
     Ok(())
 }
 
@@ -128,26 +129,42 @@ fn setup(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
 /// в списке нет, а бинарник есть.
 fn install_if_missing(
     sh: &xshell::Shell,
-    binary: &str,
+    binaries: &[&str],
     package: &str,
 ) -> Result<(), anyhow::Error> {
-    let installed = cmd!(sh, "{binary} --version")
-        .quiet()
-        .ignore_status()
-        .output()
-        .is_ok();
-    if installed {
+    let present = |binary: &&str| {
+        cmd!(sh, "{binary} --version")
+            .quiet()
+            .ignore_status()
+            .output()
+            .is_ok()
+    };
+    if binaries.iter().all(present) {
         println!("{package}: уже установлен, пропускаем");
         return Ok(());
     }
     cmd!(sh, "cargo install {package} --locked").run()?;
+    // Постусловие: успешный `cargo install` ещё не значит, что бинарь виден. Он
+    // лежит в `~/.cargo/bin`, которого может не быть в PATH оболочки, запущенной
+    // до правки профиля rustup, — и `setup` с кодом 0 оставил бы все следующие
+    // команды без `probe-rs`/`flip-link`/`cargo-nextest`.
+    if let Some(missing) = binaries.iter().find(|binary| !present(binary)) {
+        anyhow::bail!(
+            "`cargo install {package}` прошёл, но `{missing}` по-прежнему не запускается: \
+             проверьте, что каталог bin из CARGO_HOME (по умолчанию ~/.cargo/bin) есть в PATH \
+             этой оболочки"
+        );
+    }
     Ok(())
 }
 
 fn flash_all(sh: &xshell::Shell, profile: &str) -> Result<(), anyhow::Error> {
+    ensure_profile(profile)?;
+    // Сверка образа приложения — ДО прошивки bootloader'а: иначе при расхождении
+    // базы плата к моменту отказа уже получила бы новый bootloader.
+    check_image_origin(sh, profile)?;
     flash_boot(sh, profile)?;
-    flash_app(sh, profile)?;
-    Ok(())
+    flash_unchecked(sh, APP_ARTIFACT, profile)
 }
 
 fn build(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
@@ -300,7 +317,9 @@ fn image_symbol<'a>(
         .and_then(|headers| {
             headers.iter().find(|header| {
                 let vaddr = u64::from(header.p_vaddr(endian));
-                let size = u64::from(header.p_memsz(endian));
+                // `p_filesz`, как и в `raw_image`: символ в хвосте `.bss` лежит вне образа,
+                // и читать его из файла нельзя.
+                let size = u64::from(header.p_filesz(endian));
                 header.p_type(endian) == PT_LOAD
                     && address >= vaddr
                     && address - vaddr < size.max(1)
@@ -409,29 +428,25 @@ fn report_image(base: u64, size: u64) -> Result<(), anyhow::Error> {
 
     let regions = app_memory_regions()?;
     let Some((name, partition)) = app_region(&regions) else {
-        // Раскладку заполняли руками и назвали регионы иначе — сравнивать не с
-        // чем, но сам размер всё равно скажем. Молчать об этом нельзя: строка
-        // ниже — единственное, что отличает «проверок не было» от «проверки
-        // прошли».
+        // Раздела приложения в раскладке нет — сверять образ не с чем, а подписывать
+        // и раздавать образ без единой проверки нельзя (так же отказывает `flash`).
         println!("app: {:.1} KiB", size as f64 / 1024.0);
-        println!(
-            "ВНИМАНИЕ: в memory.x нет ни ACTIVE, ни FLASH — адрес и размер образа не \
-             сверялись. Проверьте раскладку в crates-cross/app/memory.x"
+        anyhow::bail!(
+            "в crates-cross/app/memory.x нет ни региона ACTIVE, ни FLASH — адрес и размер              образа не с чем сверять"
         );
-        return Ok(());
     };
 
     ensure_image_base(base, name, partition)?;
 
-    let percent = size * 100 / partition.length.max(1);
+    let percent = size as f64 * 100.0 / partition.length.max(1) as f64;
     match IMAGE_BUDGET_PERCENT {
         Some(budget) => println!(
-            "app: {:.1} KiB из {:.1} KiB {name} ({percent}%, бюджет {budget}%)",
+            "app: {:.1} KiB из {:.1} KiB {name} ({percent:.1}%, бюджет {budget}%)",
             size as f64 / 1024.0,
             partition.length as f64 / 1024.0,
         ),
         None => println!(
-            "app: {:.1} KiB из {:.1} KiB {name} ({percent}%)",
+            "app: {:.1} KiB из {:.1} KiB {name} ({percent:.1}%)",
             size as f64 / 1024.0,
             partition.length as f64 / 1024.0,
         ),
@@ -444,7 +459,7 @@ fn report_image(base: u64, size: u64) -> Result<(), anyhow::Error> {
         "образ не помещается в раздел {name}: {size} байт против {}",
         partition.length,
     );
-    check_image_budget(name, percent, IMAGE_BUDGET_PERCENT)
+    check_image_budget(name, size, partition.length, IMAGE_BUDGET_PERCENT)
 }
 
 /// Начало образа обязано совпасть с началом раздела приложения.
@@ -571,20 +586,29 @@ const IMAGE_BUDGET_PERCENT: Option<u64> = None;
 /// Сверка занятого места с бюджетом — отдельно от `report_image`, чтобы её
 /// можно было проверить тестом: сам `report_image` читает `memory.x` с диска
 /// и без собранного проекта не работает.
-fn check_image_budget(name: &str, percent: u64, budget: Option<u64>) -> Result<(), anyhow::Error> {
+fn check_image_budget(
+    name: &str,
+    size: u64,
+    length: u64,
+    budget: Option<u64>,
+) -> Result<(), anyhow::Error> {
+    // Целыми и без промежуточного деления: усечённый процент пропускал бы 85,9 %
+    // при бюджете 85 и не сработал бы предупреждение на 89,9 %.
+    let length = length.max(1);
+    let percent = size as f64 * 100.0 / length as f64;
     let Some(budget) = budget else {
         // Порог не задан — остаётся прежняя мягкая подсказка. Не ошибка:
         // проект, сознательно занявший раздел под завязку, имеет на это право,
         // а шаблон не знает, планируется ли рост.
-        if percent >= 90 {
+        if size * 10 >= length * 9 {
             println!("ВНИМАНИЕ: до границы раздела осталось меньше десятой части");
         }
         return Ok(());
     };
 
     anyhow::ensure!(
-        percent <= budget,
-        "образ занял {percent}% раздела {name} при бюджете {budget}% \
+        size * 100 <= budget * length,
+        "образ занял {percent:.1}% раздела {name} при бюджете {budget}% \
          (IMAGE_BUDGET_PERCENT в crates-host/xtask/src/main.rs). Либо прошивка выросла \
          сильнее, чем планировалось, либо бюджет пора пересмотреть — но менять его \
          молча, чтобы сборка позеленела, значит выключить проверку",
@@ -680,8 +704,7 @@ fn test_host(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
 /// нему через окружение: первое подставляется при генерации в одном месте,
 /// вторые считаются по `memory.x` — знать это в двух местах незачем.
 fn test_host_target(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
-    flash_boot(sh, "release")?;
-    flash_app(sh, "release")?;
+    flash_all(sh, "release")?;
 
     let regions = app_memory_regions()?;
 
@@ -720,6 +743,12 @@ fn ota_env<'a>(
     ram: Option<&Region>,
 ) -> Vec<xshell::PushEnv<'a>> {
     let (Some(active), Some(dfu), Some(state), Some(ram)) = (active, dfu, state, ram) else {
+        if has_bootloader() {
+            println!(
+                "ВНИМАНИЕ: в memory.x не хватает регионов ACTIVE/DFU/BOOTLOADER_STATE/RAM — \
+                 тест цикла OTA пропущен"
+            );
+        }
         return Vec::new();
     };
     // Пустой `page_size` означает, что раскладку считал не шаблон, а человек
@@ -728,6 +757,7 @@ fn ota_env<'a>(
     // уезжает ровно на страницу. Лучше пропустить проверку, чем получить
     // падение, обвиняющее bootloader.
     if PAGE_SIZE.is_empty() {
+        println!("ВНИМАНИЕ: размер страницы стирания неизвестен — тест цикла OTA пропущен");
         return Vec::new();
     }
     vec![
@@ -977,6 +1007,11 @@ const ERASED_FLASH: u8 = 0xFF;
 /// чем сломаться: смещения, дыры, наложения. Читать ELF умеет `object`, а вот
 /// проверить укладку без такой функции было бы нечем — для этого понадобился
 /// бы настоящий ELF-файл в тестах.
+/// Верхняя граница размаха сырого образа. Флеш серии STM32 — до единиц мегабайт;
+/// 64 MiB с запасом больше любого реального образа и заведомо меньше разрыва
+/// между флешем и RAM.
+const MAX_IMAGE_SPAN: u64 = 64 * 1024 * 1024;
+
 fn image_from_segments(segments: &[(u64, Vec<u8>)]) -> Result<(u64, Vec<u8>), anyhow::Error> {
     let Some(base) = segments.iter().map(|(address, _)| *address).min() else {
         anyhow::bail!("в ELF нет ни одного загружаемого сегмента");
@@ -987,6 +1022,13 @@ fn image_from_segments(segments: &[(u64, Vec<u8>)]) -> Result<(u64, Vec<u8>), an
         .max()
         .unwrap_or(base);
 
+    // Потолок на размах образа: разрыв между сегментами (например, `vaddr` вместо
+    // `p_paddr` для `.data`) иначе превратился бы в аллокацию на сотни мегабайт.
+    anyhow::ensure!(
+        end - base <= MAX_IMAGE_SPAN,
+        "образ занимает {} байт от {base:#x} до {end:#x} — больше {MAX_IMAGE_SPAN}: сегменты \n         ELF разбросаны по адресному пространству, скорее всего, линкер положил один из них \n         не во флеш",
+        end - base,
+    );
     let mut image = vec![ERASED_FLASH; (end - base) as usize];
     let mut filled = vec![false; image.len()];
     for (address, bytes) in segments {
@@ -1135,6 +1177,10 @@ fn panic_dump(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
 
     if magic != PANIC_MAGIC {
         println!("дампа нет: в начале PANIC не {PANIC_MAGIC:#010x}, а {magic:#010x}.");
+        // Сырой ответ рядом с разобранным: обрезанное слово (`0FACADE` вместо
+        // `0FACADE0`) разбирается в другое число, и без исходной строки «плата не
+        // падала» от «probe-rs напечатал не то» не отличить.
+        println!("Ответ probe-rs: {}", header.trim());
         println!(
             "Либо плата не падала, либо приложение уже стартовало и вычитало дамп — тогда \
              причина ушла в defmt-лог того запуска."
@@ -1200,11 +1246,11 @@ fn panic_dump(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
 /// префиксом `{address:08x}: `, — и такой вывод разбор принимать не должен,
 /// а переписывать разбор под него надо вместе с проверкой на реальной плате.
 fn parse_hex(word: &str) -> Option<u32> {
+    // `from_str_radix` принимает ведущий `+`, а слово из `probe-rs read` — только цифры.
+    if word.is_empty() || !word.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
     u32::from_str_radix(word, 16).ok()
-}
-
-fn flash_app(sh: &xshell::Shell, profile: &str) -> Result<(), anyhow::Error> {
-    flash(sh, "app", profile)
 }
 
 fn flash_boot(sh: &xshell::Shell, profile: &str) -> Result<(), anyhow::Error> {
@@ -1217,11 +1263,16 @@ fn flash_boot(sh: &xshell::Shell, profile: &str) -> Result<(), anyhow::Error> {
 /// Имя файла ELF приложения в каталоге сборки — то, что [`build`] читает.
 const APP_ARTIFACT: &str = "app";
 
-fn flash(sh: &xshell::Shell, package: &str, profile: &str) -> Result<(), anyhow::Error> {
+fn ensure_profile(profile: &str) -> Result<(), anyhow::Error> {
     anyhow::ensure!(
         matches!(profile, "debug" | "release"),
         "unknown profile: {profile}"
     );
+    Ok(())
+}
+
+fn flash(sh: &xshell::Shell, package: &str, profile: &str) -> Result<(), anyhow::Error> {
+    ensure_profile(profile)?;
     let _p = sh.push_dir(root_dir().join("crates-cross"));
 
     // Проверка раскладки — до первой записи в железо, а не после: прошивка
@@ -1238,7 +1289,12 @@ fn flash(sh: &xshell::Shell, package: &str, profile: &str) -> Result<(), anyhow:
     if package == APP_ARTIFACT {
         check_image_origin(sh, profile)?;
     }
+    flash_unchecked(sh, package, profile)
+}
 
+/// Сама прошивка без сверки образа — для `flash_all`, который сверил его раньше.
+fn flash_unchecked(sh: &xshell::Shell, package: &str, profile: &str) -> Result<(), anyhow::Error> {
+    let _p = sh.push_dir(root_dir().join("crates-cross"));
     match profile {
         "release" => cmd!(sh, "cargo flash -p {package} --release --chip {CHIP}").run()?,
         _ => cmd!(sh, "cargo flash -p {package} --chip {CHIP}").run()?,
@@ -1311,9 +1367,15 @@ struct Region {
 fn parse_memory_regions(memory_x: &Path) -> Result<Vec<(String, Region)>, anyhow::Error> {
     let text = fs::read_to_string(memory_x)?;
     let mut regions = Vec::new();
+    let mut in_comment = false;
     for line in text.lines() {
         let line = line.trim();
-        if !is_region_line(line) {
+        // Внутри многострочного `/* … */` строка вида `FLASH (rx) : ORIGIN = …` —
+        // закомментированный старый вариант, а не регион: иначе он перекрыл бы
+        // настоящий (`region()` берёт первое совпадение по имени).
+        let inside_comment = in_comment;
+        in_comment = comment_open_after(line, in_comment);
+        if inside_comment || !is_region_line(line) {
             continue;
         }
         regions.push(parse_region_line(line, memory_x)?);
@@ -1330,11 +1392,39 @@ fn parse_memory_regions(memory_x: &Path) -> Result<Vec<(String, Region)>, anyhow
 fn is_region_line(line: &str) -> bool {
     // `chip-data-gen` комментирует регионы, которых у чипа нет физически
     // (`/* NAME (rw) : ORIGIN=…, LENGTH=1K - причина */`): это не регион.
-    !line.starts_with("/*")
-        && line
-            .split_once('(')
-            .and_then(|(_, after_open)| after_open.split_once(')'))
-            .is_some_and(|(_, after_close)| after_close.trim_start().starts_with(':'))
+    if line.starts_with("/*") {
+        return false;
+    }
+    let Some((head, values)) = line.split_once(':') else {
+        return false;
+    };
+    let name = head.split('(').next().unwrap_or("").trim();
+    let has_attrs = head.contains('(') && head.trim_end().ends_with(')');
+    // Атрибуты линкер допускает опустить (`ACTIVE : ORIGIN = …`), поэтому без
+    // них строка считается регионом по ключевым словам значения, включая
+    // сокращения `ORG`/`LEN`: молчаливо отбросить такой регион — то самое
+    // «потеряли все проверки».
+    !name.is_empty()
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && (has_attrs
+            || ["ORIGIN", "LENGTH", "ORG", "LEN"]
+                .iter()
+                .any(|k| values.contains(k)))
+}
+
+/// Остаётся ли блочный комментарий открытым к концу строки.
+fn comment_open_after(line: &str, mut open: bool) -> bool {
+    let mut rest = line;
+    loop {
+        let marker = if open { "*/" } else { "/*" };
+        match rest.find(marker) {
+            Some(at) => {
+                rest = &rest[at + 2..];
+                open = !open;
+            }
+            None => return open,
+        }
+    }
 }
 
 /// Разбирает одну строку региона. Возвращает пару `(имя, Region)` или ошибку с
@@ -1350,9 +1440,8 @@ fn parse_region_line(line: &str, source: &Path) -> Result<(String, Region), anyh
         )
     };
     let parsed = (|| {
-        let (name, after_open) = line.split_once('(')?;
-        let (_, after_close) = after_open.split_once(')')?;
-        let (_, values) = after_close.split_once(':')?;
+        let (head, values) = line.split_once(':')?;
+        let name = head.split('(').next()?;
         let (origin, length) = values.split_once("LENGTH")?;
         let origin = origin.split_once("ORIGIN").map_or("", |(_, value)| value);
         Some((name, origin, length))
@@ -1400,7 +1489,11 @@ fn parse_size(raw: &str) -> Option<u64> {
         'M' | 'm' => (&raw[..raw.len() - 1], 1024 * 1024),
         _ => (raw, 1),
     };
-    digits.trim().parse::<u64>().ok().map(|n| n * multiplier)
+    digits
+        .trim()
+        .parse::<u64>()
+        .ok()
+        .and_then(|n| n.checked_mul(multiplier))
 }
 
 fn region<'a>(regions: &'a [(String, Region)], name: &str) -> Option<&'a Region> {
@@ -1572,14 +1665,15 @@ mod tests {
     /// получал бы красную сборку без единой ошибки в коде.
     #[test]
     fn an_unset_budget_lets_the_image_fill_the_partition() {
-        super::check_image_budget("ACTIVE", 99, None).expect("без бюджета проверки нет");
+        super::check_image_budget("ACTIVE", 99, 100, None).expect("без бюджета проверки нет");
     }
 
     /// Граница включительно: бюджет 85 означает «до 85 процентов можно», а не
     /// «меньше 85». Иначе цифра в константе значила бы не то, что написано.
     #[test]
     fn a_budget_allows_exactly_its_own_percentage() {
-        super::check_image_budget("ACTIVE", 85, Some(85)).expect("ровно бюджет — это ещё не сверх");
+        super::check_image_budget("ACTIVE", 85, 100, Some(85))
+            .expect("ровно бюджет — это ещё не сверх");
     }
 
     /// Формула та же, что в `domain::firmware::pack`, но зависимости на
@@ -1598,15 +1692,61 @@ mod tests {
 
     #[test]
     fn a_budget_rejects_the_first_percent_over_it() {
-        let err = super::check_image_budget("ACTIVE", 86, Some(85))
+        let err = super::check_image_budget("ACTIVE", 86, 100, Some(85))
             .expect_err("перерасход бюджета должен ронять сборку");
 
         // В сообщении обязаны быть обе цифры и имя раздела: без них человек,
         // увидевший красную сборку, не поймёт, насколько он промахнулся.
         let text = err.to_string();
-        assert!(text.contains("86"), "нет фактического процента: {text}");
+        assert!(text.contains("86.0"), "нет фактического процента: {text}");
         assert!(text.contains("85"), "нет бюджета: {text}");
         assert!(text.contains("ACTIVE"), "нет имени раздела: {text}");
+    }
+
+    /// Закомментированный многострочным блоком старый вариант региона не должен
+    /// перекрывать настоящий.
+    #[test]
+    fn ignores_regions_inside_a_multiline_comment() {
+        let dir = scratch("multiline-comment");
+        let path = dir.path().join("memory.x");
+        fs::write(
+            &path,
+            "MEMORY {\n/* старый вариант:\n   FLASH (rx) : ORIGIN = 0x08000000, LENGTH = 1M\n*/\n\
+             FLASH (rx) : ORIGIN = 0x08010000, LENGTH = 64K\n}\n",
+        )
+        .expect("записать memory.x");
+        let regions = super::parse_memory_regions(&path).expect("разобрать");
+        assert_eq!(regions.len(), 1);
+        assert_eq!(regions[0].1.origin, 0x0801_0000);
+    }
+
+    /// Атрибуты в MEMORY необязательны: такая форма — регион, а не мусор.
+    #[test]
+    fn parses_a_region_without_attributes() {
+        let dir = scratch("no-attrs");
+        let path = dir.path().join("memory.x");
+        fs::write(
+            &path,
+            "MEMORY {\n    ACTIVE : ORIGIN = 0x08000000, LENGTH = 64K\n}\n",
+        )
+        .expect("записать memory.x");
+        let regions = super::parse_memory_regions(&path).expect("разобрать");
+        assert_eq!(regions[0].0, "ACTIVE");
+        assert_eq!(regions[0].1.length, 64 * 1024);
+    }
+
+    /// `+` перед числом — не hex-цифра.
+    #[test]
+    fn parse_hex_rejects_signs() {
+        assert_eq!(super::parse_hex("+1f"), None);
+    }
+
+    /// Усечение процента до сравнения пропускало 85,9 % при бюджете 85.
+    #[test]
+    fn a_budget_is_not_truncated_before_the_comparison() {
+        super::check_image_budget("ACTIVE", 8590, 10_000, Some(85))
+            .expect_err("85,9 % — это сверх бюджета 85 %");
+        super::check_image_budget("ACTIVE", 8500, 10_000, Some(85)).expect("ровно 85,0 % можно");
     }
 
     /// Без базы дельты нет — и это нормальный режим, а не поломка: так
