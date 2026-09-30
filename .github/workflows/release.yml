@@ -16,6 +16,11 @@ on:
 permissions:
   contents: write
 
+# Релизы не отменяем: оборванный прогон оставил бы тег без образа.
+concurrency:
+  group: {% raw %}${{ github.workflow }}-${{ github.ref }}{% endraw %}
+  cancel-in-progress: false
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -23,6 +28,7 @@ jobs:
   release:
     name: Собрать, подписать, выложить
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2 (2.9.2)
@@ -75,6 +81,19 @@ jobs:
       # месте. Отдельного «релизного» пути сборки нет намеренно — иначе на
       # устройства уезжало бы не то, что проверялось.
       - run: cargo xtask build
+{%- if signed == "true" %}
+
+      # Сверку открытого ключа с закрытым и с зашитым в прошивку xtask делает
+      # сам (ensure_signing_key, ensure_image_key) и падает при расхождении.
+      # Здесь остаётся то, чего он не видит: если ключ в секрете был, подпись
+      # обязана появиться — иначе выложился бы неподписанный релиз.
+      - name: Подпись должна появиться, если ключ был задан
+        run: |
+          if [ -f ota-signing-key.bin ] && [ ! -f crates-cross/target/{{target}}/release/app.bin.sig ]; then
+            echo "::error::ключ подписи был, а app.bin.sig после cargo xtask build нет — релиз вышел бы неподписанным"
+            exit 1
+          fi
+{%- endif %}
 
       - name: Выложить образ в релиз
         env:

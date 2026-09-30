@@ -252,6 +252,16 @@ release:build:
     # Та же команда, что и локально: собирает оба профиля, меряет образ против
     # раздела, кладёт рядом app.bin и подписывает его, если ключ на месте.
     - cargo xtask build
+{%- if signed == "true" %}
+    # Сверку открытого ключа с закрытым и с зашитым в прошивку xtask делает сам
+    # (ensure_signing_key, ensure_image_key). Здесь — то, чего он не видит: если
+    # ключ был, подпись обязана появиться, иначе релиз вышел бы неподписанным.
+    - |
+      if [ -f ota-signing-key.bin ] && [ ! -f "crates-cross/target/{{target}}/release/app.bin.sig" ]; then
+        echo "ключ подписи был, а app.bin.sig после cargo xtask build нет — релиз вышел бы неподписанным"
+        exit 1
+      fi
+{%- endif %}
     # Артефакты собираются из корня: путь внутри target/ зависит от чипа, а в
     # `artifacts:` подстановки переменных нет.
     - cp "crates-cross/target/{{target}}/release/app.bin" app.bin

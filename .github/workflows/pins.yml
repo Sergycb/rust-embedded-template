@@ -44,6 +44,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: {% raw %}${{ github.workflow }}-${{ github.ref }}{% endraw %}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -51,6 +55,7 @@ jobs:
   pins:
     name: Отладочный порт и кварц
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       # По коммиту, а не по тегу: тег переставляем, и тогда прогон без правок
       # в этом репозитории выполнит другой код. Комментарий справа — версия,

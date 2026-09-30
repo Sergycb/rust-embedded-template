@@ -13,6 +13,11 @@ on:
 permissions:
   contents: read
 
+# Новый пуш в ту же ветку/PR отменяет прогон предыдущего: он всё равно устарел.
+concurrency:
+  group: {% raw %}${{ github.workflow }}-${{ github.ref }}{% endraw %}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -20,6 +25,7 @@ jobs:
   host:
     name: Host (fmt, clippy, tests)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       # Действия запинены по коммиту: тег переставляем, и тогда прогон без
       # единой правки в этом репозитории выполнит другой код. Комментарий
@@ -32,7 +38,7 @@ jobs:
       # `cargo clippy` с "no such command" (код 101). В GitLab CI то же самое
       # делает before_script.
       - run: rustup component add rustfmt clippy
-      - uses: taiki-e/install-action@f518d12f5e8c169ccb8d6521f843b272ba949746 # ветка cargo-nextest
+      - uses: taiki-e/install-action@f518d12f5e8c169ccb8d6521f843b272ba949746 # плавающий тег cargo-nextest
       # Ловит рассинхрон Cargo.toml и закоммиченного Cargo.lock: без --locked
       # cargo молча обновил бы lock под себя, и CI остался бы зелёным на
       # версиях, которых нет в репозитории.
@@ -48,7 +54,7 @@ jobs:
       # llvm-tools — не «на всякий случай»: cargo-llvm-cov зовёт llvm-profdata
       # и llvm-cov из тулчейна, а в minimal-профиле их нет.
       - run: rustup component add llvm-tools
-      - uses: taiki-e/install-action@72f835688cb6c15903b796f704b01e652a2b8835 # ветка cargo-llvm-cov
+      - uses: taiki-e/install-action@72f835688cb6c15903b796f704b01e652a2b8835 # плавающий тег cargo-llvm-cov
       - name: Покрытие domain
         run: |
           set -o pipefail
@@ -66,6 +72,7 @@ jobs:
   cross:
     name: Cross (fmt, clippy, build)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2 (2.9.2)
@@ -152,6 +159,9 @@ jobs:
     # причине — этот файл проходит через рендер.
     if: vars.HIL == 'true'
     runs-on: [self-hosted, stm32]
+    # Запас на прошивку и оба этапа тестов; зависший пробник иначе держал бы
+    # единственный раннер (и группу hil) до шести часов, а то и дольше.
+    timeout-minutes: 30
     # Пробник у платы один, и параллельные прогоны за него дерутся — ровно по
     # этой причине `test host-target` внутри зовёт nextest с --test-threads 1.
     # `cancel-in-progress: false`: обрывать прогон посреди прошивки нельзя,
