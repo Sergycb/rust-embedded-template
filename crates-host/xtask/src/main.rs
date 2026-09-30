@@ -1328,9 +1328,13 @@ fn parse_memory_regions(memory_x: &Path) -> Result<Vec<(String, Region)>, anyhow
 /// присваивания символов (`__flash_base = 0x08000000;`), у которых скобки есть,
 /// а двоеточия после них нет.
 fn is_region_line(line: &str) -> bool {
-    line.split_once('(')
-        .and_then(|(_, after_open)| after_open.split_once(')'))
-        .is_some_and(|(_, after_close)| after_close.trim_start().starts_with(':'))
+    // `chip-data-gen` комментирует регионы, которых у чипа нет физически
+    // (`/* NAME (rw) : ORIGIN=…, LENGTH=1K - причина */`): это не регион.
+    !line.starts_with("/*")
+        && line
+            .split_once('(')
+            .and_then(|(_, after_open)| after_open.split_once(')'))
+            .is_some_and(|(_, after_close)| after_close.trim_start().starts_with(':'))
 }
 
 /// Разбирает одну строку региона. Возвращает пару `(имя, Region)` или ошибку с
@@ -1707,6 +1711,23 @@ __bootloader_state_start = ORIGIN(BOOTLOADER_STATE) - __flash_base;
     /// Формы, которые линкер принимает, а парсер не знает. Раньше такой регион
     /// просто исчезал: `build` подписывал образ, не сверив ни базу, ни размер, и
     /// ошибка выглядела бы не как поломка, а как «всё в порядке».
+    #[test]
+    fn skips_regions_commented_out_by_the_generator() {
+        let dir = scratch("commented-region");
+        let path = dir.path().join("memory.x");
+        fs::write(
+            &path,
+            "MEMORY {
+    FLASH (rx) : ORIGIN = 0x08000000, LENGTH = 64K
+                 /* FMC (rw) : ORIGIN = 0x60000000, LENGTH = 1K - внешняя шина */
+}
+",
+        )
+        .expect("записать memory.x");
+        let regions = super::parse_memory_regions(&path).expect("комментарий не регион");
+        assert_eq!(regions.len(), 1);
+    }
+
     #[test]
     fn refuses_forms_it_does_not_know() {
         let dir = scratch("unknown-form");
