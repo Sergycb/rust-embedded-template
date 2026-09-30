@@ -17,6 +17,14 @@ on:
     branches: [main, master]
   pull_request:
 
+# Ни одному джобу этого workflow ничего записывать не нужно: все они только
+# читают репозиторий. Права по умолчанию зависят от настроек организации, и
+# без этой строки прогон получал бы ровно столько, сколько надумает владелец
+# репозитория. Право на запись есть только у release.yml — там оно объявлено
+# явно, потому что `gh release create` без него падает с 403.
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -25,8 +33,13 @@ jobs:
     name: Каскад, chip-data-gen, генерация
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: Swatinem/rust-cache@v2
+      # Действия запинены по коммиту, а не по тегу: тег `v5` — указатель,
+      # который в любой момент могут переставить на другой коммит, и тогда
+      # прогон без единой правки в этом репозитории выполнит другой код.
+      # Комментарий справа — версия, для которой SHA снят; dependabot
+      # обновляет и SHA, и комментарий сам.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2 (2.9.2)
         with:
           workspaces: chip-data-gen
       - run: rustup component add rustfmt clippy
@@ -47,7 +60,7 @@ jobs:
       # с секунд до минут.
       - run: cargo test --manifest-path chip-data-gen/Cargo.toml --release
 
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2 (2.87.22)
         with:
           tool: cargo-generate
 
@@ -57,3 +70,15 @@ jobs:
       # генерация зависимости не резолвит, а `cargo update` делает только
       # полный прогон template-check — то есть локально.
       - run: cargo run --manifest-path chip-data-gen/Cargo.toml --bin template-check -- --quick
+
+      # Два прогона, закрывающие ветки, которые до сих пор не генерировались
+      # ни разу: дефолт `--ci` — `github`, и CI звал только его. Ветка `gitlab`
+      # держала в `.gitlab-ci.yml` четыре куска Liquid, не отрендеренные ни в
+      # одной из 11 конфигураций, а `ci=none` не проверял нигде, что каталоги
+      # действительно исчезают. Одного чипа здесь достаточно: `[conditional]`
+      # в `cargo-generate.toml` от чипа не зависит, а `template-check` сверяет
+      # состав файлов проекта с ожидаемым для каждого `ci`.
+      - name: Генерация под ci=gitlab
+        run: cargo run --manifest-path chip-data-gen/Cargo.toml --bin template-check -- --quick --ci gitlab stm32f407ve
+      - name: Генерация под ci=none
+        run: cargo run --manifest-path chip-data-gen/Cargo.toml --bin template-check -- --quick --ci none stm32f407ve

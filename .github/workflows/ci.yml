@@ -5,6 +5,14 @@ on:
     branches: [main, master]
   pull_request:
 
+# Все три джобы этого workflow только читают репозиторий, поэтому права
+# объявлены явно и минимально: по умолчанию они зависят от настроек
+# организации, и без этой строки прогон получил бы ровно столько, сколько
+# надумает владелец. Право на запись есть только у release.yml — там оно
+# объявлено отдельно, потому что `gh release create` без него падает с 403.
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -13,14 +21,18 @@ jobs:
     name: Host (fmt, clippy, tests)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: Swatinem/rust-cache@v2
+      # Действия запинены по коммиту: тег переставляем, и тогда прогон без
+      # единой правки в этом репозитории выполнит другой код. Комментарий
+      # справа — версия, для которой SHA снят; dependabot обновляет и SHA,
+      # и комментарий сам.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2 (2.9.2)
       # На образе ubuntu-latest предустановлены cargo/rustc/rustdoc/rustfmt,
       # но НЕ clippy — без этой строки `cargo xtask lint` падает на
       # `cargo clippy` с "no such command" (код 101). В GitLab CI то же самое
       # делает before_script.
       - run: rustup component add rustfmt clippy
-      - uses: taiki-e/install-action@cargo-nextest
+      - uses: taiki-e/install-action@f518d12f5e8c169ccb8d6521f843b272ba949746 # ветка cargo-nextest
       # Ловит рассинхрон Cargo.toml и закоммиченного Cargo.lock: без --locked
       # cargo молча обновил бы lock под себя, и CI остался бы зелёным на
       # версиях, которых нет в репозитории.
@@ -36,7 +48,7 @@ jobs:
       # llvm-tools — не «на всякий случай»: cargo-llvm-cov зовёт llvm-profdata
       # и llvm-cov из тулчейна, а в minimal-профиле их нет.
       - run: rustup component add llvm-tools
-      - uses: taiki-e/install-action@cargo-llvm-cov
+      - uses: taiki-e/install-action@72f835688cb6c15903b796f704b01e652a2b8835 # ветка cargo-llvm-cov
       - name: Покрытие domain
         run: |
           set -o pipefail
@@ -55,8 +67,8 @@ jobs:
     name: Cross (fmt, clippy, build)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2 (2.9.2)
         with:
           workspaces: crates-cross
       # Раньше target ставился автоматически из crates-cross/rust-toolchain.toml;
@@ -67,7 +79,7 @@ jobs:
       # Через install-action, а не `cargo install`: тот собирает flip-link из
       # исходников на каждом прогоне (минуты), install-action берёт готовый
       # бинарник.
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2 (2.87.22)
         with:
           tool: flip-link
       # `--locked` здесь условный, в отличие от джоба host выше. Шаблон не
@@ -98,7 +110,7 @@ jobs:
       # обычный для них приём «скользящего» кеша. Кеш ветки по умолчанию из PR
       # читается, кеш PR из других веток — нет, так что схема работает как
       # задумано.
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4 (4.3.0)
         with:
           path: .image-size-baseline
           key: image-size-{% raw %}${{ github.sha }}{% endraw %}
@@ -116,7 +128,7 @@ jobs:
       - name: Запомнить размер как базу
         if: github.ref_name == github.event.repository.default_branch
         run: cp .image-size .image-size-baseline
-      - uses: actions/cache/save@v4
+      - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4 (4.3.0)
         if: github.ref_name == github.event.repository.default_branch
         with:
           path: .image-size-baseline
@@ -148,7 +160,7 @@ jobs:
       group: hil
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       # Раннер свой, тулчейн на нём уже стоит — ставим только то, чего может
       # не хватать после смены target'а в проекте.
       - run: rustup target add {{target}}

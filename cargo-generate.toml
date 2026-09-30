@@ -60,6 +60,17 @@ ignore = [
 	".claude/agent-memory-local",
 	".claude/first-run",
 	".claude/assistant-daemon-state.json",
+	# Рабочие файлы agent-manager того же образца, что и `.claude` выше: воркчаты
+	# клонов репозитория, планы и состояние сессии лежат в `.kilo` и под git их
+	# нет. В воркчатах лежит целый checkout шаблона, поэтому Liquid из
+	# MAINTAINING.md и chip-select.rhai в нём — уже отрендеренный, и cargo-generate
+	# спотыкался бы о нём дважды: сначала на файлах воркчата, а после падения
+	# `template-check` не проверял бы шаблон вообще. Перечислены поимённо (как
+	# `.claude`), а не каталогом целиком — на месте возможных `.kilo/command` и
+	# `.kilo/agent`, которым в сгенерированном проекте самое место.
+	".kilo/worktrees",
+	".kilo/plans",
+	".kilo/agent-manager.json",
 	# Рабочий каталог skill'ов superpowers (брифы задач, отчёты, леджер): в git
 	# его нет, а в брифах лежат куски Liquid из плана — попади они в копию
 	# шаблона, cargo-generate попытался бы их отрендерить.

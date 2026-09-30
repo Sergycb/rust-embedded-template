@@ -11,12 +11,24 @@ stages:
 variables:
   CARGO_TERM_COLOR: always
 
-.cache: &cache
+# Кеша два, а не один, и это не избыточность: GitLab не перезаписывает уже
+# существующий ключ, поэтому с общим ключом первым завершившийся джоб (а это
+# всегда `host:test`, он в стейдже `test`) забирал бы ключ себе, и
+# `cross:build` лишь скачивал бы его — `crates-cross/target`, самая дорогая
+# часть, не сохранилась бы никогда. Отдельный ключ у `pins:check` уже стоит
+# (см. ниже), и комментарий там объясняет ту же причину.
+.cache-host: &cache_host
   cache:
-    key: "$CI_COMMIT_REF_SLUG"
+    key: "$CI_COMMIT_REF_SLUG-host"
     paths:
       - .cargo/registry
       - target
+
+.cache-cross: &cache_cross
+  cache:
+    key: "$CI_COMMIT_REF_SLUG-cross"
+    paths:
+      - .cargo/registry
       - crates-cross/target
 
 # Пайплайны по расписанию заведены ради renovate (см. джоб в конце файла) —
@@ -28,7 +40,7 @@ variables:
 host:test:
   stage: test
   image: rust:1.96.0
-  <<: [*cache, *not_scheduled]
+  <<: [*cache_host, *not_scheduled]
   before_script:
     # llvm-tools нужен покрытию: cargo-llvm-cov зовёт llvm-profdata и llvm-cov
     # из тулчейна, а в образе их нет.
@@ -123,7 +135,7 @@ pins:check:
 cross:build:
   stage: build
   image: rust:1.96.0
-  <<: [*cache, *not_scheduled]
+  <<: [*cache_cross, *not_scheduled]
   before_script:
     - rustup component add rustfmt clippy
     - rustup target add {{target}}
@@ -201,7 +213,7 @@ board:test:
 release:build:
   stage: release
   image: rust:1.96.0
-  <<: *cache
+  <<: *cache_cross
   rules:
     - if: $CI_COMMIT_TAG
   before_script:
@@ -255,7 +267,10 @@ release:build:
 
 release:publish:
   stage: release
-  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  # Образ запинен на версию, а не на `latest`: сюда доходят секреты проекта
+  # (право публикации релиза), и `latest` — это «что собрали вчера», а не
+  # «что мы проверили». Версию обновляет renovate (см. конфиг ниже).
+  image: registry.gitlab.com/gitlab-org/release-cli:v0.24.0
   needs: ["release:build"]
   rules:
     - if: $CI_COMMIT_TAG
@@ -294,7 +309,11 @@ release:publish:
 # доступности внешнего проекта с self-managed инстанса.
 renovate:
   stage: test
-  image: renovate/renovate:latest
+  # Версия, а не `latest`: джоб ходит в API GitLab токеном с правом Developer
+  # и сам создаёт merge request'ы, то есть это второй по опасности секрет в
+  # файле после публикации релиза. Свежая незнакомая версия образа с правом
+  # писать в репозиторий — ровно то, чего не должно быть в расписании.
+  image: renovate/renovate:44.121.4
   rules:
     - if: $CI_PIPELINE_SOURCE == "schedule"
   variables:

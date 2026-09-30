@@ -502,7 +502,7 @@ USB 47.5 МГц вместо 48, стартует без единой жалоб
 ```
 cargo xtask setup                  # rustup target + probe-rs-tools, flip-link, nextest
 cargo xtask build                  # cross: debug + release, app.bin, размер, подпись
-cargo xtask flash [debug|release]  # прошить boot+app
+cargo xtask flash [debug|release]  # прошить boot+app (сперва сверяет начало образа с memory.x)
 cargo xtask lint [cross]           # fmt --check + clippy -D warnings (host или cross)
 cargo xtask test [host|target|host-target|all]
 cargo xtask precommit              # lint, test host, lint cross, build — подряд
@@ -701,13 +701,20 @@ panicked at crates-cross/app/src/main.rs:194:5:
 
 К host-прогону добавлено покрытие — `cargo llvm-cov`. На GitHub таблица попадает в
 сводку прогона, на GitLab процент показывается рядом с пайплайном, а cobertura-отчёт
-подсвечивает непокрытые строки прямо в диффе merge request'а. Локально то же самое:
+подсвечивает непокрытые строки прямо в диффе merge request'а. Локально — ровно та же
+команда, что в обоих CI, чтобы цифры можно было сравнивать:
 
 ```sh
 cargo install cargo-llvm-cov --locked
 cargo llvm-cov nextest --workspace --exclude host-target-tests \
-  --features domain/log,domain/std --summary-only
+  --features domain/log,domain/std,adapters/signed --release \
+  --ignore-filename-regex 'xtask' --summary-only
 ```
+
+`adapters/signed`, `--release` и `--ignore-filename-regex` — не украшение: без них
+локальный прогон считает не то же, что CI, и сравнивать проценты бессмысленно.
+`--release` обязателен ещё и потому, что `llvm-cov` ищет объектные файлы в каталоге
+своего профиля: `cargo-llvm-cov report` без него смотрел бы в `debug/`.
 
 Считается покрытие **только логики**: прошивка (`crates-cross`) живёт в другом
 воркспейсе и в отчёт не попадает вовсе, а `xtask` исключён явно
@@ -791,8 +798,23 @@ protection: PR, не трогающий распиновку, его не зап
 2. **Pipeline schedule** (*CI/CD → Schedules*), например ежедневно ночью. Без расписания
    джоб не запустится никогда — на обычных push/MR он намеренно не срабатывает.
 
+Образы в `.gitlab-ci.yml` (`rust`, `release-cli`, сам `renovate`) запинены на версии, а
+не на `latest` — два из трёх получают секреты. Поднимает их Renovate: в `renovate.json`
+включён менеджер `docker` с правилом на `.gitlab-ci.yml`. На GitHub те же версии
+обновляет dependabot, в том числе SHA-пины экшенов.
+
 Альтернатива джобу — подключить к проекту [Mend Renovate App](https://docs.renovatebot.com/getting-started/running/)
 (он поддерживает и GitLab); тогда джоб можно удалить.
+
+Два манифеста в `renovate.json` исключены через `ignorePaths` — не из-за
+нераспознавания версий, а потому что cargo их не резолвит: в
+`crates-cross/Cargo.toml` в `members` стоит Liquid-плейсхолдер, а
+`crates-host/chip-info/Cargo.toml` выбирает чип Cargo-фичей, которой в шаблоне
+ещё нет. Без исключения Renovate либо споткнётся на невалидном TOML, либо
+пропустит обновления молча — что хуже: `stm32-metapac` и `embassy-stm32` в
+`crates-cross` тогда останутся на старых версиях навсегда. Оба манифеста
+разбираются только в сгенерированном проекте, и там обновления работают
+(см. «Проверка изменений в шаблоне» в `MAINTAINING.md`).
 
 ## Инструменты
 

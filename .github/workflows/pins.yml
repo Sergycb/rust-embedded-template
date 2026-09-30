@@ -38,6 +38,12 @@ on:
       - crates-cross/Cargo.toml
       - .github/workflows/pins.yml
 
+# Джоб только читает репозиторий и запускает `chip-info` — никакой записи, и
+# тем более никаких секретов. Права объявлены явно и минимально: по умолчанию
+# они зависят от настроек организации (см. комментарий в ci.yml).
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -46,7 +52,10 @@ jobs:
     name: Отладочный порт и кварц
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      # По коммиту, а не по тегу: тег переставляем, и тогда прогон без правок
+      # в этом репозитории выполнит другой код. Комментарий справа — версия,
+      # для которой SHA снят; dependabot обновляет и SHA, и комментарий.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       # В репозитории самого шаблона проверять нечего и нечем: чип-фича в
       # манифесте `chip-info` — это Liquid-плейсхолдер, и cargo такой манифест
@@ -61,7 +70,7 @@ jobs:
           fi
 
       - if: steps.guard.outputs.skip != 'true'
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2 (2.9.2)
         with:
           # У `chip-info` свой [workspace] (чип выбирается Cargo-фичей), поэтому
           # и кеш отдельный — иначе он не подхватится.

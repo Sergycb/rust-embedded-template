@@ -4,12 +4,24 @@
   "cargo": {
     "enabled": true
   },
+  "docker": {
+    "enabled": true
+  },
   "packageRules": [
     {
       "matchManagers": ["cargo"],
       "matchFileNames": ["Cargo.toml", "**/Cargo.toml"],
       "groupName": "cargo dependencies"
+    },
+    {
+      "matchManagers": ["docker"],
+      "matchFileNames": [".gitlab-ci.yml", "**/.gitlab-ci.yml"],
+      "groupName": "gitlab images"
     }
+  ],
+  "ignorePaths": [
+    "crates-cross/Cargo.toml",
+    "crates-host/chip-info/Cargo.toml"
   ],
   "lockFileMaintenance": {
     "enabled": true
