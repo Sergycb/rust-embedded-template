@@ -72,7 +72,7 @@ fn main() -> anyhow::Result<()> {
         if !bank_mode.is_empty() {
             bank_modes.insert(suffix, bank_mode);
         }
-        if let Some(layout) = compute_memory_layout(&regions) {
+        if let Some(layout) = compute_memory_layout(suffix, &regions) {
             memory_layouts.insert(suffix, layout);
         }
         let watchdog = chip_watchdog(
@@ -805,18 +805,22 @@ fn select_memory_config(
 
 /// Вид региона по полю `kind` — строго, без «прочее».
 ///
-/// Сопоставление по суффиксу имени (`…Flash`, `…Ram`, `…Eeprom`) само по себе
-/// переживает переименование окружающих типов и не переживает переименование
-/// варианта: `MemoryRegionKind::FlashBank1` дал бы «прочее», а
+/// Сопоставление точное (после префикса `MemoryRegionKind::`): оно не
+/// переживает переименование варианта: `MemoryRegionKind::FlashBank1` дал бы «прочее», а
 /// [`compute_memory_layout`] отбирает flash-регионы по `kind == Flash` — и
 /// раскладка памяти молча перестала бы считаться у всех чипов разом. Именно
 /// поэтому неизвестное имя здесь ошибка, а не значение по умолчанию.
 fn region_kind(block: &str) -> anyhow::Result<RegionKind> {
     let raw = field(block, "kind").context("MemoryRegion без kind")?;
-    Ok(match raw {
-        kind if kind.ends_with("Flash") => RegionKind::Flash,
-        kind if kind.ends_with("Ram") => RegionKind::Ram,
-        kind if kind.ends_with("Eeprom") => RegionKind::Eeprom,
+    // Имя печатается как `MemoryRegionKind::Flash`; префикс типа отбрасываем,
+    // остальное сверяем ТОЧНО. Суффиксное сопоставление (`ends_with("Ram")`)
+    // приняло бы за RAM любой будущий `BackupRam`/`CcmRam` — и flash/RAM-цепочки
+    // молча получили бы лишний регион.
+    let name = raw.strip_prefix("MemoryRegionKind::").unwrap_or(raw);
+    Ok(match name {
+        "Flash" => RegionKind::Flash,
+        "Ram" => RegionKind::Ram,
+        "Eeprom" => RegionKind::Eeprom,
         other => bail!(
             "неизвестный вид региона `{other}`: в stm32-data их ровно три — Flash, Ram, \
              Eeprom. Если вариант переименовали, починить надо здесь и в [`RegionKind`], а не \
@@ -1006,7 +1010,7 @@ const MIN_RAM_FOR_LAYOUT: u64 = 2 * PANIC_MIN;
 /// от базы и — если помещается — партиции OTA. `None` только когда считать не
 /// из чего (нет flash- или RAM-цепочки от базового адреса); тогда
 /// `chip-select.rhai` оставляет `memory.x` плейсхолдером, как раньше.
-fn compute_memory_layout(regions: &[RawRegion]) -> Option<MemoryLayout> {
+fn compute_memory_layout(chip: &str, regions: &[RawRegion]) -> Option<MemoryLayout> {
     let mut flash: Vec<&RawRegion> = regions
         .iter()
         .filter(|r| r.kind == RegionKind::Flash && r.flash.is_some())
@@ -1082,8 +1086,8 @@ fn compute_memory_layout(regions: &[RawRegion]) -> Option<MemoryLayout> {
         write_size,
         page_size,
         erase_zero,
-        ota: compute_ota_partitions(&chain, flash_total, page_size, write_size),
-        config: compute_config_partition(&chain, flash_total, page_size, write_size),
+        ota: compute_ota_partitions(chip, &chain, flash_total, page_size, write_size),
+        config: compute_config_partition(chip, &chain, flash_total, page_size, write_size),
     })
 }
 
@@ -1103,6 +1107,7 @@ fn compute_memory_layout(regions: &[RawRegion]) -> Option<MemoryLayout> {
 /// приложение, либо flash не кратен странице (тогда граница раздела не легла
 /// бы на сектор, а `Flash::erase` отказывает на невыровненном диапазоне).
 fn compute_config_partition(
+    chip: &str,
     chain: &[&RawRegion],
     flash_total: u64,
     page_size: u64,
@@ -1119,7 +1124,7 @@ fn compute_config_partition(
         flash_length,
         // Своя OTA-схема: она считается от размера доступного flash, а он
         // теперь на две страницы меньше.
-        ota: compute_ota_partitions(chain, flash_length, page_size, write_size),
+        ota: compute_ota_partitions(chip, chain, flash_length, page_size, write_size),
     })
 }
 
@@ -1219,6 +1224,7 @@ fn extra_region_lines(regions: &[RawRegion], flash_end: u64, ram_end: u64) -> Ve
 /// `Err` — схема не помещается; текст объясняет, чего именно не хватило, и
 /// доходит до пользователя при генерации.
 fn compute_ota_partitions(
+    chip: &str,
     chain: &[&RawRegion],
     flash_total: u64,
     page_size: u64,
@@ -1316,7 +1322,7 @@ fn compute_ota_partitions(
             dfu_origin: active_origin + active_length,
             dfu_length: dfu_pages * page_size,
         };
-        assert_embassy_boot_invariants(&partitions, page_size, write_size);
+        assert_embassy_boot_invariants(chip, &partitions, page_size, write_size);
         return Ok(partitions);
     }
 }
@@ -1326,20 +1332,20 @@ fn compute_ota_partitions(
 /// обязан выдавать только валидные раскладки, невалидная — баг в нём самом, а
 /// не «чип не подошёл». Ровно этой проверки не хватало: 279 из 972 прежних
 /// раскладок нарушали четвёртую и роняли bootloader на первом же старте.
-fn assert_embassy_boot_invariants(p: &OtaPartitions, page_size: u64, write_size: u64) {
+fn assert_embassy_boot_invariants(chip: &str, p: &OtaPartitions, page_size: u64, write_size: u64) {
     assert!(
         p.active_length.is_multiple_of(page_size),
-        "ACTIVE {} не кратен PAGE_SIZE {page_size}",
+        "{chip}: ACTIVE {} не кратен PAGE_SIZE {page_size}",
         p.active_length
     );
     assert!(
         p.dfu_length.is_multiple_of(page_size),
-        "DFU {} не кратен PAGE_SIZE {page_size}",
+        "{chip}: DFU {} не кратен PAGE_SIZE {page_size}",
         p.dfu_length
     );
     assert!(
         p.dfu_length >= p.active_length + page_size,
-        "DFU {} не на страницу больше ACTIVE {}",
+        "{chip}: DFU {} не на страницу больше ACTIVE {}",
         p.dfu_length,
         p.active_length
     );
@@ -1347,12 +1353,12 @@ fn assert_embassy_boot_invariants(p: &OtaPartitions, page_size: u64, write_size:
     let state_words = p.bootloader_state_length / write_size;
     assert!(
         journal_words <= state_words,
-        "журналу прогресса нужно {journal_words} слов, в BOOTLOADER_STATE помещается {state_words}"
+        "{chip}: журналу прогресса нужно {journal_words} слов, в BOOTLOADER_STATE помещается {state_words}"
     );
     assert!(
         p.active_origin == p.bootloader_state_origin + p.bootloader_state_length
             && p.dfu_origin == p.active_origin + p.active_length,
-        "партиции не стыкуются встык"
+        "{chip}: партиции не стыкуются встык"
     );
 }
 
@@ -1692,39 +1698,74 @@ impl GeneratedBlock {
 /// памяти, то есть ровно то состояние, в котором всё выглядит правдоподобно и
 /// ничего не работает. Штамп версии в списке чипов такой разрыв не ловит: он
 /// проверяет, что строка есть в файле, а не что блоки одного поколения.
+///
+/// Запись атомарна: результат пишется во временный файл РЯДОМ (тот же каталог,
+/// значит и та же файловая система) и переименовывается поверх оригинала.
+/// `fs::write` обрезал бы файл сразу, и сбой посреди записи оставил бы
+/// `chip-select.rhai` обрезанным. `fs::rename` заменяет существующий файл и на
+/// Windows (`MoveFileExW` с `MOVEFILE_REPLACE_EXISTING`); откажет он только если
+/// файл открыт без share-delete — тогда оригинал остаётся нетронутым.
 fn write_generated_blocks(rhai_path: &Path, blocks: &[GeneratedBlock]) -> anyhow::Result<()> {
     let original = fs::read_to_string(rhai_path)
         .with_context(|| format!("не удалось прочитать {}", rhai_path.display()))?;
+    let updated = splice_blocks(&original, blocks, &rhai_path.display().to_string())?;
 
+    let mut tmp_name = rhai_path.as_os_str().to_owned();
+    tmp_name.push(".tmp");
+    let tmp_path = PathBuf::from(tmp_name);
+    fs::write(&tmp_path, updated)
+        .with_context(|| format!("не удалось записать {}", tmp_path.display()))?;
+    fs::rename(&tmp_path, rhai_path).map_err(|err| {
+        // Временный файл не должен остаться в репозитории; ошибка удаления
+        // вторична — главная причина уже у нас в руках.
+        drop(fs::remove_file(&tmp_path));
+        anyhow::Error::new(err).context(format!(
+            "не удалось заменить {} временным файлом {}",
+            rhai_path.display(),
+            tmp_path.display()
+        ))
+    })
+}
+
+/// Подставляет тела блоков в `original`. `name` — только для сообщений об
+/// ошибках. Диапазоны блоков не должны пересекаться: иначе `replace_range`
+/// паниковал бы на сдвинутых границах вместо понятной ошибки.
+fn splice_blocks(original: &str, blocks: &[GeneratedBlock], name: &str) -> anyhow::Result<String> {
     // Смещения считаются по исходному тексту, а подстановки идут с конца файла к
     // началу — иначе уже сдвинутый блок сбил бы смещения следующего.
-    let mut splices: Vec<(usize, usize, &str)> = blocks
+    let mut splices: Vec<(usize, usize, &str, &str)> = blocks
         .iter()
         .map(|block| {
             let begin = original
                 .find(block.begin)
-                .with_context(|| format!("{} не найден в {}", block.begin, rhai_path.display()))?;
+                .with_context(|| format!("{} не найден в {name}", block.begin))?;
             let end = original
                 .find(block.end)
-                .with_context(|| format!("{} не найден в {}", block.end, rhai_path.display()))?;
+                .with_context(|| format!("{} не найден в {name}", block.end))?;
             anyhow::ensure!(
                 end >= begin,
-                "{} стоит раньше {} в {}",
+                "{} стоит раньше {} в {name}",
                 block.end,
                 block.begin,
-                rhai_path.display(),
             );
-            Ok((begin, end, block.body.as_str()))
+            Ok((begin, end, block.body.as_str(), block.begin))
         })
         .collect::<anyhow::Result<_>>()?;
-    splices.sort_by_key(|(begin, ..)| std::cmp::Reverse(*begin));
+    splices.sort_by_key(|(begin, ..)| *begin);
+    for pair in splices.windows(2) {
+        let (_, prev_end, _, prev_marker) = pair[0];
+        let (next_begin, _, _, next_marker) = pair[1];
+        anyhow::ensure!(
+            prev_end <= next_begin,
+            "блоки {prev_marker} и {next_marker} пересекаются в {name}"
+        );
+    }
 
-    let mut updated = original;
-    for (begin, end, body) in splices {
+    let mut updated = original.to_owned();
+    for (begin, end, body, _) in splices.into_iter().rev() {
         updated.replace_range(begin..end, body);
     }
-    fs::write(rhai_path, updated)
-        .with_context(|| format!("не удалось записать {}", rhai_path.display()))
+    Ok(updated)
 }
 
 #[cfg(test)]
@@ -1855,8 +1896,13 @@ pub static METADATA: Metadata = Metadata {
         let err = region_kind(block).expect_err("неизвестный вид региона обязан быть ошибкой");
         assert!(err.to_string().contains("FlashBank1"), "{err:#}");
 
-        // Известные виды по-прежнему разбираются — с суффиксом, а не точным
-        // совпадением: имя типа печатает `stm32-data`, а не шаблон.
+        // Суффикс совпадает с известным видом, а вид другой: не должен стать RAM.
+        let err =
+            region_kind("kind: MemoryRegionKind::BackupRam,").expect_err("BackupRam — не Ram");
+        assert!(err.to_string().contains("BackupRam"), "{err:#}");
+
+        // Известные виды по-прежнему разбираются: имя типа печатает
+        // `stm32-data`, а не шаблон.
         for (printed, expected) in [
             ("MemoryRegionKind::Flash", RegionKind::Flash),
             ("MemoryRegionKind::Ram", RegionKind::Ram),
@@ -1975,11 +2021,11 @@ pub static METADATA: Metadata = Metadata {
     /// не работает вовсе, — обе поломки молчаливые.
     #[test]
     fn erase_zero_comes_from_the_metadata() {
-        let ordinary = compute_memory_layout(&uniform_flash(512 * 1024, 2048, 8))
+        let ordinary = compute_memory_layout("test", &uniform_flash(512 * 1024, 2048, 8))
             .expect("раскладка для обычного флеша");
         assert!(!ordinary.erase_zero, "0xFF принят за ноль");
 
-        let zeroing = compute_memory_layout(&flash_erasing_to_zero(512 * 1024, 2048, 8))
+        let zeroing = compute_memory_layout("test", &flash_erasing_to_zero(512 * 1024, 2048, 8))
             .expect("раскладка для флеша, стирающегося в ноль");
         assert!(zeroing.erase_zero, "0x00 не распознан");
     }
@@ -1989,7 +2035,7 @@ pub static METADATA: Metadata = Metadata {
         // L476RG: 1 MiB при секторе 2 KiB. Одного сектора под STATE не хватает
         // (журналу нужно (2 + 4*247) слов по 8 байт) — раньше здесь стоял
         // ровно один сектор, и bootloader падал в панику на старте.
-        let layout = compute_memory_layout(&uniform_flash(1024 * 1024, 2048, 8))
+        let layout = compute_memory_layout("test", &uniform_flash(1024 * 1024, 2048, 8))
             .expect("раскладка должна посчитаться");
         let ota = layout.ota.expect("OTA должна помещаться");
         assert!(
@@ -2006,7 +2052,7 @@ pub static METADATA: Metadata = Metadata {
     fn chip_with_too_few_sectors_reports_why() {
         // H723VE: 512 KiB одним регионом с сектором 128 KiB — 4 сектора, а
         // схеме нужно минимум 5 (BOOTLOADER + STATE + ACTIVE + 2×DFU).
-        let layout = compute_memory_layout(&uniform_flash(512 * 1024, 128 * 1024, 32))
+        let layout = compute_memory_layout("test", &uniform_flash(512 * 1024, 128 * 1024, 32))
             .expect("раскладка должна посчитаться");
         let note = layout.ota.expect_err("OTA не должна помещаться");
         assert!(note.contains("512 KiB"), "{note}");
@@ -2032,8 +2078,9 @@ pub static METADATA: Metadata = Metadata {
             (8 * 1024, 512),
             (192 * 1024, 512),
         ] {
-            let layout = compute_memory_layout(&uniform_flash_with_ram(512 * 1024, 2048, 8, ram))
-                .expect("раскладка должна посчитаться");
+            let layout =
+                compute_memory_layout("test", &uniform_flash_with_ram(512 * 1024, 2048, 8, ram))
+                    .expect("раскладка должна посчитаться");
             assert_eq!(layout.panic.1, expected, "RAM {ram}");
             assert_eq!(layout.ram_length, ram - expected, "RAM {ram}");
         }
@@ -2146,5 +2193,243 @@ pub static METADATA: Metadata = Metadata {
             );
         }
         assert!(checked >= 5, "манифесты шаблона не нашлись: {checked}");
+    }
+
+    const RHAI_SAMPLE: &str =
+        "head\n// BEGIN A\nold a\n// END A\nmid\n// BEGIN B\nold b\n// END B\ntail\n";
+
+    fn block(begin: &'static str, end: &'static str, body: &str) -> GeneratedBlock {
+        GeneratedBlock::new(begin, end, body.to_string())
+    }
+
+    /// Подстановка заменяет текст от начала блока до его END-маркера (маркер
+    /// остаётся) и не зависит от порядка блоков в списке.
+    #[test]
+    fn blocks_are_spliced_in_any_order() {
+        let expected =
+            "head\n// BEGIN A\nnew a\n// END A\nmid\n// BEGIN B\nnew b\n// END B\ntail\n";
+        let a = || block("// BEGIN A", "// END A", "// BEGIN A\nnew a\n");
+        let b = || block("// BEGIN B", "// END B", "// BEGIN B\nnew b\n");
+        assert_eq!(
+            splice_blocks(RHAI_SAMPLE, &[a(), b()], "t").expect("склейка"),
+            expected
+        );
+        assert_eq!(
+            splice_blocks(RHAI_SAMPLE, &[b(), a()], "t").expect("склейка"),
+            expected
+        );
+    }
+
+    /// Пересекающиеся диапазоны — понятная ошибка, а не паника `replace_range`.
+    #[test]
+    fn overlapping_blocks_are_an_error_not_a_panic() {
+        let text = "// BEGIN A\n// BEGIN B\n// END A\n// END B\n";
+        let err = splice_blocks(
+            text,
+            &[
+                block("// BEGIN A", "// END A", "x"),
+                block("// BEGIN B", "// END B", "y"),
+            ],
+            "t",
+        )
+        .expect_err("блоки пересекаются");
+        assert!(err.to_string().contains("пересекаются"), "{err:#}");
+
+        let err = splice_blocks(
+            RHAI_SAMPLE,
+            &[
+                block("// BEGIN A", "// END B", "x"),
+                block("// BEGIN B", "// END B", "y"),
+            ],
+            "t",
+        )
+        .expect_err("вложенные блоки пересекаются");
+        assert!(err.to_string().contains("пересекаются"), "{err:#}");
+    }
+
+    /// Запись идёт через временный файл: результат на месте, временного файла
+    /// не осталось; при ошибке склейки оригинал не тронут.
+    #[test]
+    fn generated_blocks_are_written_via_rename_and_failure_keeps_the_original() {
+        let dir = std::env::temp_dir().join(format!("chip-data-gen-write-{}", std::process::id()));
+        fs::create_dir_all(&dir).expect("временный каталог");
+        let path = dir.join("chip-select.rhai");
+        let tmp = dir.join("chip-select.rhai.tmp");
+        fs::write(&path, RHAI_SAMPLE).expect("исходный файл");
+
+        write_generated_blocks(
+            &path,
+            &[block("// BEGIN A", "// END A", "// BEGIN A\nnew\n")],
+        )
+        .expect("запись");
+        let written = fs::read_to_string(&path).expect("чтение");
+        assert!(written.contains("// BEGIN A\nnew\n// END A"), "{written}");
+        assert!(!tmp.exists(), "временный файл остался");
+
+        write_generated_blocks(&path, &[block("// BEGIN X", "// END X", "x")])
+            .expect_err("маркера нет");
+        assert_eq!(fs::read_to_string(&path).expect("чтение"), written);
+        assert!(!tmp.exists(), "временный файл остался");
+
+        drop(fs::remove_dir_all(&dir));
+    }
+
+    #[test]
+    fn chip_features_are_told_from_service_features() {
+        for yes in [
+            "stm32f407ve",
+            "stm32h745zi-cm7",
+            "stm32l151c6-a",
+            "stm32c011d6",
+        ] {
+            assert!(is_chip_feature(yes), "{yes}");
+        }
+        for no in [
+            "stm32",
+            "stm32-cm7",
+            "stm32f4-",
+            "stm32a-b-c",
+            "stm32F407",
+            "f407ve",
+            "defmt",
+            "stm32f4_x",
+        ] {
+            assert!(!is_chip_feature(no), "{no}");
+        }
+    }
+
+    #[test]
+    fn package_candidates_are_longer_targets_ending_in_the_grade_letter() {
+        let chips: BTreeSet<String> = [
+            "STM32L151C6",
+            "STM32L151C6TxA",
+            "STM32L151C6UxA",
+            "STM32L151C6TxB",
+            "STM32L151C8TxA",
+            "STM32H745ZI",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        assert_eq!(
+            package_candidates("l151c6-a", &chips),
+            vec!["STM32L151C6TxA".to_string(), "STM32L151C6UxA".to_string()]
+        );
+        // Ядерный маркер и суффикс без дефиса сюда не доходят.
+        assert!(package_candidates("h745zi-cm4", &chips).is_empty());
+        assert!(package_candidates("l151c6", &chips).is_empty());
+        // Градация, для которой нет более точной цели.
+        assert!(package_candidates("l151c6-c", &chips).is_empty());
+    }
+
+    /// Раздел настроек — две последние страницы; OTA считается от того, что
+    /// осталось. Не кратный странице flash или отсутствие места под приложение —
+    /// `None`.
+    #[test]
+    fn config_partition_takes_the_last_two_pages() {
+        let regions = uniform_flash(512 * 1024, 2048, 8);
+        let chain: Vec<&RawRegion> = regions
+            .iter()
+            .filter(|r| r.kind == RegionKind::Flash)
+            .collect();
+        let config = compute_config_partition("test", &chain, 512 * 1024, 2048, 8)
+            .expect("раздел должен поместиться");
+        assert_eq!(config.length, 4096);
+        assert_eq!(config.flash_length, 512 * 1024 - 4096);
+        assert_eq!(config.origin, FLASH_BASE + config.flash_length);
+
+        // Не кратно странице.
+        assert!(compute_config_partition("test", &chain, 512 * 1024 + 8, 2048, 8).is_none());
+        // Две страницы целиком уходят под раздел — приложению ничего.
+        assert!(compute_config_partition("test", &chain, 2 * 2048, 2048, 8).is_none());
+        // Ровно одна страница остаётся приложению — граница включительно.
+        assert!(compute_config_partition("test", &chain, 3 * 2048, 2048, 8).is_some());
+    }
+
+    fn region(name: &str, kind: RegionKind, address: u64, size: u64) -> RawRegion {
+        RawRegion {
+            name: name.to_string(),
+            kind,
+            address,
+            size,
+            flash: None,
+        }
+    }
+
+    #[test]
+    fn extra_regions_skip_covered_and_comment_out_aliases_and_external_buses() {
+        let regions = [
+            region("SRAM", RegionKind::Ram, RAM_BASE, 64 * 1024),
+            region("CCMRAM", RegionKind::Ram, 0x1000_0000, 64 * 1024),
+            region("SRAM2", RegionKind::Ram, 0x3000_0000, 16 * 1024),
+            region("SRAM2_ICODE", RegionKind::Ram, 0x1000_8000, 16 * 1024),
+            region("FMC_BANK1", RegionKind::Ram, 0x6000_0000, 262_144_000),
+            region("EMPTY", RegionKind::Ram, 0x4000_0000, 0),
+            region("EEPROM", RegionKind::Eeprom, 0x0808_0000, 2048),
+        ];
+        // SRAM (основная RAM) покрыта хуком, EMPTY нулевого размера пропущен.
+        let lines = extra_region_lines(&regions, FLASH_BASE + 512 * 1024, RAM_BASE + 64 * 1024);
+        let joined = lines.join("\n");
+        assert_eq!(lines.len(), 5, "{joined}");
+        assert!(!joined.contains("EMPTY"), "{joined}");
+        assert!(!joined.contains(" SRAM "), "{joined}");
+        let find = |name: &str| {
+            lines
+                .iter()
+                .find(|l| l.contains(name))
+                .unwrap_or_else(|| panic!("{name} нет в:\n{joined}"))
+        };
+        // Обычный регион — рабочая строка с правами по виду.
+        assert!(find("CCMRAM").contains("(xrw) : ORIGIN = 0x10000000, LENGTH = 64K"));
+        assert!(!find("CCMRAM").contains("/*"));
+        assert!(find("EEPROM").contains("(r)"));
+        // Алиас и внешняя шина закомментированы.
+        assert!(find("SRAM2_ICODE").contains("/* "));
+        assert!(find("SRAM2_ICODE").contains("второе окно"));
+        assert!(find("FMC_BANK1").contains("внешняя шина"));
+        // Сортировка по адресу: CCMRAM (0x1000_0000) раньше SRAM2_ICODE (0x1000_8000).
+        assert!(joined.find("CCMRAM") < joined.find("SRAM2_ICODE"));
+    }
+
+    /// Нарушенный инвариант называет чип — иначе по одной панике на 1479 чипов
+    /// не понять, чья раскладка сломана.
+    #[test]
+    #[should_panic(expected = "STM32TEST")]
+    fn boot_invariant_panic_names_the_chip() {
+        let broken = OtaPartitions {
+            bootloader_length: 0,
+            bootloader_state_origin: FLASH_BASE,
+            bootloader_state_length: 2048,
+            active_origin: FLASH_BASE + 2048,
+            active_length: 3000,
+            dfu_origin: FLASH_BASE + 2048 + 3000,
+            dfu_length: 6000,
+        };
+        assert_embassy_boot_invariants("STM32TEST", &broken, 2048, 8);
+    }
+
+    /// `CORE_MARKERS` (какие суффиксы считать ядром, а не градацией) и
+    /// `core_override()` в `chip-select.rhai` (какие ядра он знает) — один и тот
+    /// же список в двух местах.
+    #[test]
+    fn core_markers_match_core_override_in_the_hook() {
+        let script = fs::read_to_string(repo_root().join("chip-select.rhai"))
+            .expect("chip-select.rhai читается");
+        let start = script
+            .find("fn core_override(marker) {")
+            .expect("core_override не найден");
+        let body = &script[start..];
+        let body = &body[..body.find("\n}").expect("конец core_override")];
+        let mut in_hook: Vec<&str> = body
+            .lines()
+            .filter_map(|line| {
+                let (key, _) = line.trim().split_once(" => ")?;
+                key.strip_prefix('"')?.strip_suffix('"')
+            })
+            .collect();
+        in_hook.sort_unstable();
+        let mut in_generator = CORE_MARKERS.to_vec();
+        in_generator.sort_unstable();
+        assert_eq!(in_hook, in_generator);
     }
 }

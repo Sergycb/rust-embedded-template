@@ -598,7 +598,13 @@ fn memory_layout_invariants_hold_for_every_chip() {
     let mut failures = Vec::new();
     let mut without_layout = Vec::new();
     for suffix in all_chip_suffixes() {
-        let result = run_cascade_to(&ast, &suffix).expect("каскад не должен падать");
+        let result = match run_cascade_to(&ast, &suffix) {
+            Ok(result) => result,
+            Err(err) => {
+                failures.push(format!("{suffix}: каскад упал: {err}"));
+                continue;
+            }
+        };
         let Some(app) = result.files.get("crates-cross/app/memory.x") else {
             // Раскладки нет — значит, у чипа остался плейсхолдер `memory.x` и
             // проект не собирается без ручного заполнения. Раньше такой чип
@@ -992,4 +998,79 @@ fn the_settings_partition_survives_on_ordinary_flash() {
         Some("false")
     );
     assert_eq!(result.vars.get("config").map(String::as_str), Some("true"));
+}
+
+/// Значение `watchdog_peripheral`, которое хук выбирает для чипа. У двухъядерных
+/// H745 у каждого ядра свой сторож (`IWDG1` у CM7, `IWDG2` у CM4) — перепутанный
+/// блок собрался бы, но сторож не кормился бы никогда.
+#[test]
+fn watchdog_peripheral_follows_the_chip_metadata() {
+    let ast = compile_script();
+    for (suffix, expected) in [
+        ("h745zi-cm4", "IWDG2"),
+        ("h745zi-cm7", "IWDG1"),
+        ("h723ve", "IWDG1"),
+        ("f407ve", "IWDG"),
+    ] {
+        let result = run_cascade_to(&ast, suffix).expect("каскад не должен падать");
+        assert_eq!(
+            result.vars.get("watchdog_peripheral").map(String::as_str),
+            Some(expected),
+            "{suffix}"
+        );
+    }
+}
+
+/// Ключи первого уровня таблицы `const NAME = #{ ... };` из `chip-select.rhai`:
+/// строки с отступом ровно в четыре пробела, начинающиеся с `"ключ":`.
+fn table_keys(script: &str, name: &str) -> Vec<String> {
+    let header = format!("const {name} = #{{");
+    let begin = script
+        .find(&header)
+        .unwrap_or_else(|| panic!("{name} не найден"));
+    let body = &script[begin + header.len()..];
+    let end = body
+        .find("\n};")
+        .unwrap_or_else(|| panic!("конец {name} не найден"));
+    body[..end]
+        .lines()
+        .filter_map(|line| {
+            let line = line.strip_suffix('\r').unwrap_or(line);
+            let rest = line.strip_prefix("    \"")?;
+            Some(rest.split_once('"')?.0.to_string())
+        })
+        .collect()
+}
+
+/// Таблицы, ключом которых служит суффикс чипа, не должны знать чипов, которых
+/// нет в `CHIPS`: ключ-опечатка (или чип, ушедший из `embassy-stm32`) молча
+/// никогда бы не сработал. Обратное неверно и не проверяется — таблицы
+/// покрывают лишь часть чипов.
+#[test]
+fn table_keys_are_a_subset_of_chips() {
+    let script = read_script();
+    let chips: std::collections::HashSet<String> = all_chip_suffixes().into_iter().collect();
+    // Легитимных исключений нет: если появятся, перечислить здесь явно, с причиной.
+    let exceptions: &[(&str, &str)] = &[];
+    for table in ["MEMORY_LAYOUT", "BANK_MODE", "WATCHDOG", "PACKAGE_CHOICES"] {
+        let keys = table_keys(&script, table);
+        assert!(
+            keys.len() >= 20,
+            "{table}: подозрительно мало ключей: {}",
+            keys.len()
+        );
+        let unknown: Vec<&String> = keys
+            .iter()
+            .filter(|key| {
+                !chips.contains(*key)
+                    && !exceptions
+                        .iter()
+                        .any(|(t, k)| *t == table && *k == key.as_str())
+            })
+            .collect();
+        assert!(
+            unknown.is_empty(),
+            "{table}: ключи, которых нет в CHIPS: {unknown:?}"
+        );
+    }
 }
