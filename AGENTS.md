@@ -65,7 +65,7 @@ skill'ом `rust-engineering` и не дублируются здесь. Это�
 | Команда | Что делает |
 |---|---|
 | `cargo xtask setup` | ставит `rustup target`, `probe-rs`, `flip-link`, `cargo-nextest` — меняет систему |
-| `cargo xtask flash [debug\|release]` | прошивает{% if ota == "true" %} bootloader и{% endif %} приложение — необратимо |
+| `cargo xtask flash [debug\|release]` | прошивает{% if ota == "true" %} bootloader и{% endif %} приложение — необратимо; сперва собирает образ и сверяет его начало с `ORIGIN` раздела из `memory.x` |
 | `cargo xtask test target` | тесты внутри МК (`embedded-test` + `probe-rs run`) |
 | `cargo xtask test host-target` | хост управляет прошитым устройством |
 | `cargo xtask test all` | обе строки выше |
@@ -165,7 +165,8 @@ read`: руками пришлось бы сначала найти адрес �
   `domain::tasks::cpu_load::BACKOFF.max` < `domain::tasks::cpu_load::WATCHDOG`,
   и обе < `bsp::wdg::HW_TIMEOUT_US` минус `WATCHDOG_CHECK_EVERY` графа) —
   менять только вместе; левое звено держит `const`-assert в своём фрагменте,
-  правое — на вас — `docs/watchdog.md`.
+  правое — `const`-assert в `crates-cross/app/src/graph.rs`, и новый узел с
+  `watchdog:` обязан встать в его список — `docs/watchdog.md`.
 - Сторож запускается в прологе `spawn_all` (`= board.watchdog.arm()`), а не в
   `Board::new`: с этого момента железо тикает, а кормит его только тикер графа.
   В release с OTA его раньше запускает bootloader — с тем же `HW_TIMEOUT_US`

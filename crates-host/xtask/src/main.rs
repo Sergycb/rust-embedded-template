@@ -186,7 +186,10 @@ fn build(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
         }
     }
 
-    let elf = cross_target_dir().join(TARGET).join("release").join("app");
+    let elf = cross_target_dir()
+        .join(TARGET)
+        .join("release")
+        .join(APP_ARTIFACT);
     anyhow::ensure!(
         elf.exists(),
         "сборка прошла, но ELF по пути {} не найден. Так бывает, если каталог сборки задан \
@@ -395,6 +398,8 @@ fn app_region(regions: &[(String, Region)]) -> Option<(&'static str, &Region)> {
 /// внутрь, и `p_paddr` уезжает ниже `ORIGIN`. Флаг лежит в списке, который с
 /// OTA никто не связывает, — убери его, и `.bin` получит лишний префикс,
 /// каждый байт сместится, а подпись честно подтвердит испорченный образ.
+/// Проверку вынесло [`ensure_image_base`]: тем же адресом прошивка
+/// сверяется и в `flash`, где подпись уже позади.
 ///
 /// Размер: образ, не помещающийся в раздел, — это ошибка, а не повод для
 /// предупреждения. Линкер её поймает не всегда: раскладку `memory.x` могли
@@ -405,19 +410,18 @@ fn report_image(base: u64, size: u64) -> Result<(), anyhow::Error> {
     let regions = app_memory_regions()?;
     let Some((name, partition)) = app_region(&regions) else {
         // Раскладку заполняли руками и назвали регионы иначе — сравнивать не с
-        // чем, но сам размер всё равно скажем.
+        // чем, но сам размер всё равно скажем. Молчать об этом нельзя: строка
+        // ниже — единственное, что отличает «проверок не было» от «проверки
+        // прошли».
         println!("app: {:.1} KiB", size as f64 / 1024.0);
+        println!(
+            "ВНИМАНИЕ: в memory.x нет ни ACTIVE, ни FLASH — адрес и размер образа не \
+             сверялись. Проверьте раскладку в crates-cross/app/memory.x"
+        );
         return Ok(());
     };
 
-    anyhow::ensure!(
-        base == partition.origin,
-        "образ начинается с {base:#x}, а раздел {name} — с {:#x}. Раскладка и линковка разошлись: \
-         подписывать и заливать такой образ нельзя, каждый его байт сместится относительно того, \
-         что ждёт устройство. Проверьте memory.x и rustflags в crates-cross/.cargo/config.toml \
-         (в частности `--nmagic`)",
-        partition.origin,
-    );
+    ensure_image_base(base, name, partition)?;
 
     let percent = size * 100 / partition.length.max(1);
     match IMAGE_BUDGET_PERCENT {
@@ -441,6 +445,26 @@ fn report_image(base: u64, size: u64) -> Result<(), anyhow::Error> {
         partition.length,
     );
     check_image_budget(name, percent, IMAGE_BUDGET_PERCENT)
+}
+
+/// Начало образа обязано совпасть с началом раздела приложения.
+///
+/// Отдельная функция, потому что сверять это место должны ДВА места, а не
+/// одно: `build`, где следствие — испорченный `.bin` с честной подписью, и
+/// [`flash`], где следствие — испорченная плата. Прошивка необратима, и
+/// линкер расхождение не ловит (см. [`report_image`]), так что проверка перед
+/// записью в железо — не «перестраховка ради красоты», а последний момент,
+/// когда ещё можно сказать «не надо».
+fn ensure_image_base(base: u64, name: &str, partition: &Region) -> Result<(), anyhow::Error> {
+    anyhow::ensure!(
+        base == partition.origin,
+        "образ начинается с {base:#x}, а раздел {name} — с {:#x}. Раскладка и линковка разошлись: \
+         подписывать и заливать такой образ нельзя, каждый его байт сместится относительно того, \
+         что ждёт устройство. Проверьте memory.x и rustflags в crates-cross/.cargo/config.toml \
+         (в частности `--nmagic`)",
+        partition.origin,
+    );
+    Ok(())
 }
 
 /// Переменная, из которой `build` берёт размер образа на ветке по умолчанию.
@@ -624,9 +648,13 @@ const OTA: &str = "{{ota}}";
 
 /// Compared against `"false"` rather than `"true"` so that the un-rendered
 /// template (where `OTA` is still the literal placeholder) behaves like a
-/// project *with* a bootloader — that is what the maintainer checking
-/// `cargo xtask lint cross` in the template repo itself expects. Generated
-/// projects always get an exact `"true"`/`"false"`.
+/// project *with* a bootloader — that is what the maintainer expects from
+/// every command that touches `crates-cross`. Note that
+/// `cargo xtask lint cross` in the template repo itself cannot be that
+/// command: `crates-cross/Cargo.toml` contains Liquid, so cargo refuses to
+/// parse the manifest there. It is `template-check` that renders a real
+/// project and lints its `crates-cross` (same reasoning as in `pins` below).
+/// Generated projects always get an exact `"true"`/`"false"`.
 fn has_bootloader() -> bool {
     OTA != "false"
 }
@@ -1083,12 +1111,27 @@ fn panic_dump(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
         "в crates-cross/app/memory.x нет региона PANIC — на этом чипе дамп паники негде хранить",
     )?;
 
-    // Заголовок: магия и длина сообщения.
+    // Заголовок: магия и длина сообщения. Разбор строгий (см. [`parse_hex`]):
+    // «плата не падала» и «я не понял вывод probe-rs» обязаны быть разными
+    // ответами, а при `_ => 0` они были одним.
     let header = format!("{:#x}", panic.origin);
     let header = cmd!(sh, "probe-rs read --chip {CHIP} b32 {header} 2").read()?;
-    let mut words = header.split_whitespace().map(parse_hex);
-    let magic = words.next().unwrap_or(0);
-    let length = words.next().unwrap_or(0);
+    let words = header
+        .split_whitespace()
+        .map(parse_hex)
+        .collect::<Option<Vec<_>>>()
+        .with_context(|| {
+            format!(
+                "не разобрал вывод `probe-rs read` ({header:?}) — ожидался голый hex-список слов"
+            )
+        })?;
+    let [magic, length] = words[..] else {
+        anyhow::bail!(
+            "из `probe-rs read` вернулось {} слов, а ожидались магия и длина ({:?})",
+            words.len(),
+            header,
+        );
+    };
 
     if magic != PANIC_MAGIC {
         println!("дампа нет: в начале PANIC не {PANIC_MAGIC:#010x}, а {magic:#010x}.");
@@ -1111,12 +1154,31 @@ fn panic_dump(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     }
 
     let start = format!("{:#x}", panic.origin + 8);
-    let length = length.to_string();
-    let body = cmd!(sh, "probe-rs read --chip {CHIP} b8 {start} {length}").read()?;
+    let wanted = length;
+    let words = wanted.to_string();
+    let body = cmd!(sh, "probe-rs read --chip {CHIP} b8 {start} {words}").read()?;
+    // Строго, как заголовок: молчаливый `0x00` вместо непрочитанного слова дал бы
+    // обрезанное сообщение паники с ВЫГЛЯДЯЩИМ выводом, а это худший вид
+    // ответа — читатель поверит ему и ищет не ту причину.
     let bytes = body
         .split_whitespace()
-        .map(|byte| parse_hex(byte) as u8)
-        .collect::<Vec<_>>();
+        .map(parse_hex)
+        .collect::<Option<Vec<_>>>()
+        .with_context(|| {
+            format!("не разобрал вывод `probe-rs read` ({body:?}) — ожидался голый hex-список байт")
+        })?
+        .into_iter()
+        .map(|byte| {
+            u8::try_from(byte).with_context(|| {
+                format!("`probe-rs read` вернул слово {byte:#x} — байтом оно не является")
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    anyhow::ensure!(
+        bytes.len() as u32 == wanted,
+        "из PANIC прочитано {} байт вместо {wanted} — дамп собран не полностью",
+        bytes.len(),
+    );
 
     let dump = String::from_utf8_lossy(&bytes);
     println!("причина последнего падения ({} байт):", bytes.len());
@@ -1125,9 +1187,20 @@ fn panic_dump(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-/// Слово из вывода `probe-rs read`: он печатает hex без префикса.
-fn parse_hex(word: &str) -> u32 {
-    u32::from_str_radix(word, 16).unwrap_or(0)
+/// Слово из вывода `probe-rs read`: hex без префикса.
+///
+/// `Option`, а не число с запасным нулём. При разборе дампа паники ноль —
+/// законное значение, и подставив его вместо непрочитанного слова, мы получили
+/// бы два разных ответа («плата не падала» и «я не понял вывод `probe-rs`»)
+/// одним и тем же `println!` с кодом выхода 0. Второй ответ при отладке нужен
+/// не меньше первого.
+///
+/// Формат сверен с probe-rs 0.31: `read_to_console` печатает голый
+/// hex-список слов. На `master` формат по умолчанию другой — `HexTable` с
+/// префиксом `{address:08x}: `, — и такой вывод разбор принимать не должен,
+/// а переписывать разбор под него надо вместе с проверкой на реальной плате.
+fn parse_hex(word: &str) -> Option<u32> {
+    u32::from_str_radix(word, 16).ok()
 }
 
 fn flash_app(sh: &xshell::Shell, profile: &str) -> Result<(), anyhow::Error> {
@@ -1141,14 +1214,73 @@ fn flash_boot(sh: &xshell::Shell, profile: &str) -> Result<(), anyhow::Error> {
     flash(sh, "boot", profile)
 }
 
+/// Имя файла ELF приложения в каталоге сборки — то, что [`build`] читает.
+const APP_ARTIFACT: &str = "app";
+
 fn flash(sh: &xshell::Shell, package: &str, profile: &str) -> Result<(), anyhow::Error> {
+    anyhow::ensure!(
+        matches!(profile, "debug" | "release"),
+        "unknown profile: {profile}"
+    );
     let _p = sh.push_dir(root_dir().join("crates-cross"));
+
+    // Проверка раскладки — до первой записи в железо, а не после: прошивка
+    // необратима, и её откат стоит отдельного флеш-цикла. `cargo flash` сам
+    // пересобирает пакет, но прочитать ELF получается только после сборки, а
+    // `build` между ними может не стоять (и обычно не стоит: разработчик
+    // прошивает много раз подряд). Поэтому образ собираем здесь и сразу
+    // сверяем его начало с началом раздела — той же проверкой, что и в
+    // `build`, только без подписи и печати размера.
+    //
+    // Только для `app`: ELF бутлоадера линкуется с базы флеша, а не в раздел
+    // приложения, и сверять его с `ORIGIN(ACTIVE)` было бы сравнением разных
+    // адресов.
+    if package == APP_ARTIFACT {
+        check_image_origin(sh, profile)?;
+    }
+
     match profile {
         "release" => cmd!(sh, "cargo flash -p {package} --release --chip {CHIP}").run()?,
-        "debug" => cmd!(sh, "cargo flash -p {package} --chip {CHIP}").run()?,
-        other => anyhow::bail!("unknown profile: {other}"),
+        _ => cmd!(sh, "cargo flash -p {package} --chip {CHIP}").run()?,
     }
     Ok(())
+}
+
+/// Собирает пакет и сверяет начало его образа с началом раздела приложения.
+///
+/// Лишний `cargo build` здесь — попадание в кеш: следующий `cargo flash`
+/// собирает тот же пакет теми же флагами и почти ничего не делает.
+fn check_image_origin(sh: &xshell::Shell, profile: &str) -> Result<(), anyhow::Error> {
+    {
+        let _p = sh.push_dir(root_dir().join("crates-cross"));
+        if profile == "release" {
+            cmd!(sh, "cargo build -p {APP_ARTIFACT} --release").run()?;
+        } else {
+            cmd!(sh, "cargo build -p {APP_ARTIFACT}").run()?;
+        }
+    }
+
+    let elf = cross_target_dir()
+        .join(TARGET)
+        .join(profile)
+        .join(APP_ARTIFACT);
+    anyhow::ensure!(
+        elf.exists(),
+        "сборка прошла, но ELF по пути {} не найден — сверять нечего, а прошивать без сверки \
+         опасно. Так бывает, если каталог сборки задан не переменной CARGO_TARGET_DIR, а \
+         `[build] target-dir` в .cargo/config.toml — его xtask не читает",
+        elf.display(),
+    );
+    let (base, _) = raw_image(&elf)?;
+
+    let regions = app_memory_regions()?;
+    let (name, partition) = app_region(&regions).with_context(|| {
+        format!(
+            "в {} нет ни региона ACTIVE, ни FLASH — адрес образа не с чем сверять",
+            root_dir().join("crates-cross/app/memory.x").display(),
+        )
+    })?;
+    ensure_image_base(base, name, partition)
 }
 
 /// Регион из `MEMORY {}`: `build` по нему меряет раздел приложения,
@@ -1163,30 +1295,93 @@ struct Region {
 /// `MEMORY { NAME (attrs) : ORIGIN = 0x..., LENGTH = 128K }` из `memory.x`.
 /// Свой разбор, а не крейт: формат пишем мы сами (`chip-select.rhai`), а
 /// нужны из него только адрес и размер.
+///
+/// **Нераспознанная строка региона — ошибка, а не пропуск.** Раньше здесь стояло
+/// пять `continue` подряд, и любая форма, которую парсер не знал, превращалась
+/// в «региона нет»: `build` писал `.bin` и подписывал его, не сверив ни базу, ни
+/// размер, `test host-target` молча пропускал цикл OTA, а `panic` отвечал, что
+/// дампа нет. Такие формы линкер принимает — то есть отказ был не «сломан
+/// файл», а «тихо потеряны все проверки». Разбирается ровно то, что пишет
+/// шаблон, всё прочее падает с текстом строки.
+///
+/// Незаполненный шаблон (`crates-cross/app/memory.x` в репозитории шаблона, где
+/// значения стоят внутри `/* … */`) — тоже ошибка, но с другим текстом: линкер
+/// такой файл не собирает вовсе, и оставить проект без `memory.x` молча всё
+/// равно нельзя.
 fn parse_memory_regions(memory_x: &Path) -> Result<Vec<(String, Region)>, anyhow::Error> {
     let text = fs::read_to_string(memory_x)?;
     let mut regions = Vec::new();
     for line in text.lines() {
         let line = line.trim();
-        if line.starts_with("/*") || !line.contains("ORIGIN") || !line.contains("LENGTH") {
+        if !is_region_line(line) {
             continue;
         }
-        let Some((name, rest)) = line.split_once('(') else {
-            continue;
-        };
-        let Some((origin, length)) = rest.split_once("LENGTH") else {
-            continue;
-        };
-        let Some((_, origin)) = origin.split_once("ORIGIN") else {
-            continue;
-        };
-        let origin = origin.trim_start_matches([' ', '=']).trim();
-        let length = length.trim_start_matches([' ', '=']).trim();
-        if let (Some(origin), Some(length)) = (parse_size(origin), parse_size(length)) {
-            regions.push((name.trim().to_owned(), Region { origin, length }));
-        }
+        regions.push(parse_region_line(line, memory_x)?);
     }
     Ok(regions)
+}
+
+/// Строка региона — это `NAME (attrs) : …`, и больше ничего: скобка с
+/// атрибутами и двоеточие сразу за ней.
+///
+/// Отсекает всё остальное содержимое файла — `MEMORY {`, `}`, комментарии и
+/// присваивания символов (`__flash_base = 0x08000000;`), у которых скобки есть,
+/// а двоеточия после них нет.
+fn is_region_line(line: &str) -> bool {
+    line.split_once('(')
+        .and_then(|(_, after_open)| after_open.split_once(')'))
+        .is_some_and(|(_, after_close)| after_close.trim_start().starts_with(':'))
+}
+
+/// Разбирает одну строку региона. Возвращает пару `(имя, Region)` или ошибку с
+/// этой строкой в сообщении.
+fn parse_region_line(line: &str, source: &Path) -> Result<(String, Region), anyhow::Error> {
+    let unparsed = || {
+        format!(
+            "{}: не удалось разобрать строку региона: {line}\nОжидается форма \
+             `NAME (attrs) : ORIGIN = <число>, LENGTH = <число>` — та, что пишет \
+             chip-select.rhai. Другая форма (ORIGIN(SYMBOL), разбитая на две строки) молча \
+             лишила бы образ всех проверок",
+            source.display(),
+        )
+    };
+    let parsed = (|| {
+        let (name, after_open) = line.split_once('(')?;
+        let (_, after_close) = after_open.split_once(')')?;
+        let (_, values) = after_close.split_once(':')?;
+        let (origin, length) = values.split_once("LENGTH")?;
+        let origin = origin.split_once("ORIGIN").map_or("", |(_, value)| value);
+        Some((name, origin, length))
+    })();
+    let Some((name, origin, length)) = parsed else {
+        anyhow::bail!(unparsed());
+    };
+
+    // Комментарий убирается у значения, а не у всей строки: в незаполненном
+    // шаблоне `/* … */` стоит ВМЕСТО значения, и обрезание всей строки унесло
+    // бы вместе с ним ключевое слово `LENGTH` — заставив сообщать о «форме,
+    // которую не удалось разобрать», вместо «значение в файле не заполнено».
+    fn region_value(raw: &str) -> &str {
+        let raw = raw.split_once("/*").map_or(raw, |(before, _)| before);
+        raw.trim_start_matches([' ', '=', ',']).trim()
+    }
+    let (origin, length) = (region_value(origin), region_value(length));
+    if origin.is_empty() || length.is_empty() {
+        anyhow::bail!(
+            "{}: строка региона не заполнена, значение стоит в /* … */: {line}\nРаскладку \
+             считает chip-data-gen при генерации; если она не вышла, регионы вписывают руками \
+             по образцу в crates-cross/app/memory.x",
+            source.display(),
+        );
+    }
+    match (parse_size(origin), parse_size(length)) {
+        (Some(origin), Some(length)) => Ok((name.trim().to_owned(), Region { origin, length })),
+        _ => anyhow::bail!(
+            "{}: не разобраны значения региона ({origin:?}, {length:?}) в строке: {line}\nАдрес \
+             и длина пишутся числом: 0x08020000, 128K, 1M или 528",
+            source.display(),
+        ),
+    }
 }
 
 /// `128K`, `1M`, `528`, `0x08020000` — то, чем линкерный скрипт записывает и
@@ -1448,5 +1643,140 @@ mod tests {
             line.contains("9.8% → 10.0%"),
             "проценты округлены до целых или посчитаны не от раздела: {line}"
         );
+    }
+
+    /// Раскладка в том виде, в каком её пишет `chip-select.rhai`, плюс строки,
+    /// которые рядом с ней обязаны быть и которые не должны попасть в разбор:
+    /// присваивания символов содержат скобки, а комментарий в конце строки
+    /// региона — это валидный для линкера текст.
+    #[test]
+    fn parses_the_generated_layout_and_ignores_the_rest() {
+        let dir = scratch("layout");
+        let path = dir.path().join("memory.x");
+        fs::write(
+            &path,
+            "\
+/* Сгенерировано chip-select.rhai */
+
+MEMORY {
+    FLASH             (rx)  : ORIGIN = 0x08020000, LENGTH = 128K
+    BOOTLOADER_STATE  (rx)  : ORIGIN = 0x08000000, LENGTH = 16K
+    RAM               (xrw) : ORIGIN = 0x20000000, LENGTH = 128K
+}
+
+__flash_base = 0x08000000;
+__bootloader_state_start = ORIGIN(BOOTLOADER_STATE) - __flash_base;
+",
+        )
+        .expect("записать memory.x");
+
+        let regions = super::parse_memory_regions(&path).expect("раскладка обязана разбираться");
+
+        let names = regions
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            names,
+            ["FLASH", "BOOTLOADER_STATE", "RAM"],
+            "лишние строки в разборе"
+        );
+        let (name, flash) = &regions[0];
+        assert_eq!(name, "FLASH");
+        assert_eq!((flash.origin, flash.length), (0x0802_0000, 128 * 1024));
+    }
+
+    /// Комментарий после значения — не ошибка, а избыточная форма записи, которую
+    /// линкер понимает и на которой человек вписывает пояснение.
+    #[test]
+    fn accepts_a_comment_after_the_length() {
+        let dir = scratch("comment");
+        let path = dir.path().join("memory.x");
+        fs::write(
+            &path,
+            "MEMORY {\n    FLASH (rx) : ORIGIN = 0x08000000, LENGTH = 64K /* раздел под приложение */\n}\n",
+        )
+        .expect("записать memory.x");
+
+        let regions = super::parse_memory_regions(&path).expect("комментарий не должен мешать");
+
+        assert_eq!(regions.len(), 1);
+        assert_eq!(regions[0].1.length, 64 * 1024);
+    }
+
+    /// Формы, которые линкер принимает, а парсер не знает. Раньше такой регион
+    /// просто исчезал: `build` подписывал образ, не сверив ни базу, ни размер, и
+    /// ошибка выглядела бы не как поломка, а как «всё в порядке».
+    #[test]
+    fn refuses_forms_it_does_not_know() {
+        let dir = scratch("unknown-form");
+        let path = dir.path().join("memory.x");
+
+        // Регион, разбитый на две строки: половина условия не разбирается вовсе.
+        fs::write(
+            &path,
+            "MEMORY {\n    FLASH (rx) : ORIGIN = 0x08000000,\n            LENGTH = 64K\n}\n",
+        )
+        .expect("записать memory.x");
+        let Err(split) = super::parse_memory_regions(&path) else {
+            panic!("разбитая на две строки строка обязана быть ошибкой");
+        };
+        assert!(
+            split.to_string().contains("не удалось разобрать"),
+            "{split:#}"
+        );
+
+        // Функциональная форма `ORIGIN(SYMBOL)`: числа там нет, и подставить
+        // вместо него что-либо молча нельзя.
+        fs::write(
+            &path,
+            "MEMORY {\n    FLASH (rx) : ORIGIN(ACTIVE_START), LENGTH = 64K\n}\n",
+        )
+        .expect("записать memory.x");
+        let Err(functional) = super::parse_memory_regions(&path) else {
+            panic!("ORIGIN(SYMBOL) обязана быть ошибкой, а не молчаливым нулём");
+        };
+        let text = format!("{functional:#}");
+        assert!(
+            text.contains("ACTIVE_START"),
+            "в сообщении нет самой строки: {text}"
+        );
+        assert!(text.contains("128K"), "нет образца формы: {text}");
+    }
+
+    /// Незаполненный шаблон `crates-cross/app/memory.x`: значения стоят внутри
+    /// `/* … */`, и линкер такой файл не собирает. Раньше он разбирался в пустой
+    /// список, и проект оставался без единой проверки.
+    #[test]
+    fn refuses_an_unfilled_template() {
+        let dir = scratch("unfilled");
+        let path = dir.path().join("memory.x");
+        fs::write(
+            &path,
+            "MEMORY {\n    FLASH             (rx)  : ORIGIN = /* 0xXXXXXXXX */, LENGTH = /* XXXK */\n    \
+             RAM               (xrw) : ORIGIN = /* 0xXXXXXXXX */, LENGTH = /* XXXK */\n}\n",
+        )
+        .expect("записать memory.x");
+
+        let Err(err) = super::parse_memory_regions(&path) else {
+            panic!("незаполненный шаблон обязан быть ошибкой");
+        };
+
+        assert!(err.to_string().contains("не заполнена"), "{err:#}");
+    }
+
+    /// Слово из `probe-rs read` обязано разбираться строго: при подстановке нуля
+    /// вместо непрочитанного слова «плата не падала» и «я не понял вывод
+    /// probe-rs» стали бы одним ответом с кодом выхода 0.
+    #[test]
+    fn parses_only_real_words_of_probe_rs_output() {
+        assert_eq!(super::parse_hex("0facade0"), Some(0x0FAC_ADE0));
+        assert_eq!(super::parse_hex("0"), Some(0));
+
+        // Префикс таблицы, который печатает probe-rs на `master`, и обрезок
+        // слова — обе подстановки молча дали бы «нули» вместо ошибки.
+        assert_eq!(super::parse_hex("0800_0000:"), None);
+        assert_eq!(super::parse_hex("0100"), Some(0x0100));
+        assert_eq!(super::parse_hex(""), None);
     }
 }
