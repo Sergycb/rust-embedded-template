@@ -171,7 +171,7 @@ fn main() -> ! {
         // оно здесь — цикл ниже единственный, кто его крутит, и `spawn_all` к
         // этому моменту уже отработал. Ровно то же обещание, что у `Executor::run`.
         //
-        // `#[allow(unsafe_code)]` — вместе с тремя другими в `crates-cross`
+        // `#[allow(unsafe_code)]` — вместе с остальными в `crates-cross` (см. `crates-cross/Cargo.toml`)
         // (`boot/src/main.rs`, блок линкерных символов в `bsp/src/ota.rs` и
         // `steal` RCC в target-тесте): unsafe в прошивке допустим, но каждое
         // место обязано быть перечислено и объяснено, а линт `unsafe_code`

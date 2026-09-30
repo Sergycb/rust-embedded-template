@@ -24,6 +24,9 @@ pub type Settings = adapters::settings::Settings<
     adapters::flash::Shared<'static, NoopRawMutex, Flash<'static, Blocking>>,
 >;
 
+// Пятое `#[allow(unsafe_code)]` в `crates-cross` (есть только при `config=yes`):
+// причина та же, что у блока в `ota.rs` — адрес линкерного символа иначе не взять.
+#[allow(unsafe_code)]
 unsafe extern "C" {
     /// Границы раздела `CONFIG` из `memory.x`, отсчитанные от базы flash —
     /// именно так их ждёт `embassy_stm32::flash::Flash` (у него нулевое

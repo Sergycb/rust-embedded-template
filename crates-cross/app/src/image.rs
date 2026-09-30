@@ -43,6 +43,7 @@ pub const FW_VERSION: u32 = {
 /// LLVM ставит символу `SHF_GNU_RETAIN`, и в release он на месте; пропади он —
 /// `cargo xtask build` не найдёт символ и остановит сборку.
 #[used]
+#[allow(unsafe_code)] // имя символа нужно xtask, см. выше
 #[unsafe(no_mangle)]
 pub static FW_VERSION_IN_IMAGE: u32 = FW_VERSION;
 
@@ -59,6 +60,7 @@ pub static FW_VERSION_IN_IMAGE: u32 = FW_VERSION;
 /// (`Signed::new` в `graph.rs`) — значит проверена вся проводка, а не копия
 /// ключа рядом с ней.
 #[used]
+#[allow(unsafe_code)] // имя символа нужно xtask, см. выше
 #[unsafe(no_mangle)]
 pub static OTA_PUBLIC_KEY_IN_IMAGE: [u8; 32] =
     *include_bytes!(concat!(env!("OUT_DIR"), "/ota-public-key.bin"));

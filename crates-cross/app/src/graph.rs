@@ -36,11 +36,12 @@ const WATCHDOG_CHECK_EVERY: Duration = Duration::from_millis(100);
 // Узлов с `watchdog:` в списке `fragments:` ниже ровно два; новый фрагмент со
 // своим `watchdog:` обязан встать в этот assert — иначе его дедлайн проверит
 // один только этот комментарий. `<` на `Duration` в `const` не работает (нет
-// const-трейтов), поэтому сравниваются тики.
+// const-трейтов), поэтому сравниваются микросекунды — как в `HW_TIMEOUT_US`,
+// а не тики, чья частота зависит от фичи `tick-hz-*`.
 const _: () = assert!(
-    ::domain::app::WATCHDOG.as_ticks() + WATCHDOG_CHECK_EVERY.as_ticks()
+    ::domain::app::WATCHDOG.as_micros() + WATCHDOG_CHECK_EVERY.as_micros()
         < bsp::wdg::HW_TIMEOUT_US as u64
-        && ::domain::tasks::cpu_load::WATCHDOG.as_ticks() + WATCHDOG_CHECK_EVERY.as_ticks()
+        && ::domain::tasks::cpu_load::WATCHDOG.as_micros() + WATCHDOG_CHECK_EVERY.as_micros()
             < bsp::wdg::HW_TIMEOUT_US as u64,
     "таймаут узла плюс WATCHDOG_CHECK_EVERY обязан быть меньше bsp::wdg::HW_TIMEOUT_US: иначе железо \
      сбросит МК раньше, чем узел заметит зависшую задачу, и сброс придёт от железа, а не от supervisor"

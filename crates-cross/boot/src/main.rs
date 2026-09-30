@@ -87,7 +87,7 @@ fn main() -> ! {
     //   которые линкер положил в тот же раздел. Что bootloader их не
     //   проверяет — оговорка выше, про повреждённый образ.
     //
-    // `#[allow(unsafe_code)]` — как и три остальных unsafe в `crates-cross`
+    // `#[allow(unsafe_code)]` — как и остальные unsafe в `crates-cross` (см. `crates-cross/Cargo.toml`)
     // (`app/src/main.rs`, блок линкерных символов в `bsp/src/ota.rs` и
     // `steal` RCC в target-тесте): линт требует, чтобы каждое такое место
     // было перечислено явно.

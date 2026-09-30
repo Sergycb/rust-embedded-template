@@ -21,7 +21,7 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(rust_analyzer)"] }
 # `warn`, а не `deny`, как в корневом workspace: unsafe в `crates-cross` есть
 # и оправдан — прыжок в образ в `boot`, поллинг исполнителя в `app`, блок
 # линкерных символов в `bsp/src/ota.rs`, `steal` RCC в target-тесте. Ровно на
-# этих четырёх местах стоит `#[allow(unsafe_code)]` с объяснением, и это весь
+# этих местах стоит `#[allow(unsafe_code)]` с объяснением, и это весь
 # unsafe этого воркспейса, который видит clippy (проверено прогоном с
 # `-W unsafe_code`, а не перечислением файлов). Вместе с `-D warnings` в
 # `cargo xtask lint cross` линт делает новый unsafe ошибкой сборки — то есть
