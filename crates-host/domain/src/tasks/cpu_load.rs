@@ -30,12 +30,12 @@ use core::sync::atomic::Ordering;
 
 use defmt_or_log::info;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::watch::Sender;
 use embassy_time::{Duration, Instant, Timer};
 use portable_atomic::AtomicU64;
 use supervisor::Heartbeat;
 use supervisor::policy::{BackoffPolicy, JitterPolicy};
 use supervisor::runtime::TaskExit;
+use sync_unsized::watch::Sender;
 
 use crate::services::cpu_load::{CpuLoad, Sample};
 
@@ -153,7 +153,7 @@ async fn sample_loop(
 /// нет.
 pub async fn task(
     sleep_ticks: &SleepTicks,
-    percent: &Sender<'_, CriticalSectionRawMutex, u8, 1>,
+    percent: &Sender<'_, CriticalSectionRawMutex, u8>,
     heartbeat: Heartbeat,
 ) -> TaskExit {
     sample_loop(
