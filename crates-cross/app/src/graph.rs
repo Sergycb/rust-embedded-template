@@ -69,7 +69,8 @@ supervisor_graph! {
     // нужен, а знает его только эта сторона; подставили свой транспорт вместо
     // заглушки — меняйте первый аргумент. Привязка (`= …`) — вход узла
     // (`domain::ota::Inputs`), разложенный из поля платы `board.ota`{% if signed == "true" %} с
-    // адаптером, обёрнутым версией и ключом этого образа (`crate::image`){% endif %}: `bsp`
+    // адаптером, обёрнутым версией и ключом этого образа (`crate::image`){% endif %}, и режим
+    // применения (`Mode::{% if signed == "true" %}signed{% else %}plain{% endif %}()`): `bsp`
     // про `domain` не знает, поэтому раскладка здесь. Вычисляется она в
     // прологе `spawn_all` первой строкой — раньше инициализатора блока
     // `watchdog:`, как бы они ни стояли в тексте, — частичным move: `ota`
@@ -88,7 +89,7 @@ supervisor_graph! {
     // первым его занимает тот, кто первым позовёт
     // `cpu_load_percent_receiver()`. Само значение в лог не идёт — читатель
     // должен быть, иначе процент некуда девать.
-    ::domain::CPU_LOAD_FRAG as CPU_LOAD = ::domain::tasks::cpu_load::Inputs { sleep_ticks: crate::cpu_load::sleep_ticks() }{% if ota == "true" %}, {% if signed == "true" %}::domain::OTA_SIGNED_FRAG<bsp::ota::Link, crate::image::Signed> as OTA = ::domain::ota::Inputs { link: board.ota.link, flash: crate::image::Signed::new(board.ota.flash, crate::image::FW_VERSION, crate::image::OTA_PUBLIC_KEY_IN_IMAGE) }{% else %}::domain::OTA_FRAG<bsp::ota::Link, bsp::ota::Updater> as OTA = ::domain::ota::Inputs { link: board.ota.link, flash: board.ota.flash }{% endif %}{% endif %}];
+    ::domain::CPU_LOAD_FRAG as CPU_LOAD = ::domain::tasks::cpu_load::Inputs { sleep_ticks: crate::cpu_load::sleep_ticks() }{% if ota == "true" %}, {% if signed == "true" %}::domain::OTA_FRAG<bsp::ota::Link, crate::image::Signed> as OTA = ::domain::ota::Inputs { link: board.ota.link, flash: crate::image::Signed::new(board.ota.flash, crate::image::FW_VERSION, crate::image::OTA_PUBLIC_KEY_IN_IMAGE), mode: ::domain::ota::Mode::signed() }{% else %}::domain::OTA_FRAG<bsp::ota::Link, bsp::ota::Updater> as OTA = ::domain::ota::Inputs { link: board.ota.link, flash: board.ota.flash, mode: ::domain::ota::Mode::plain() }{% endif %}{% endif %}];
 }
 
 /// Куда уходит просрочка наблюдаемого узла.

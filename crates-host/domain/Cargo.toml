@@ -41,20 +41,17 @@ defmt = { workspace = true, optional = true }
 # `ota.rs`) — вместе со своими фрагментами и политикой. `supervisor` нужен им
 # ради типов, которыми граф разговаривает с задачей: `Heartbeat` (отметка у
 # сторожа), `TaskExit` (чем кончился прогон), `BackoffPolicy` (константа
-# политики узла). Знания о самом графе это не даёт — узел объявляется через
-# проекцию аргументов (`task: $crate::app::run(ctx.heartbeat)`), и генерируемый
-# `Ctx` здесь не называется, — но `embassy-executor` приезжает транзитивно, так
-# что старое правило «в domain нет embassy» больше не действует
-# (docs/architecture.md).
+# политики узла). Знания о самом графе это не даёт — контекст задачи эмитит
+# фрагмент здесь же (`ctx: $crate::app::AppCtx`), типы его полей приходят через
+# `::supervisor::__private`, и тип compose-site здесь не называется, — но
+# `embassy-executor` приезжает транзитивно, так что старое правило «в domain
+# нет embassy» больше не действует (docs/architecture.md).
 supervisor = { workspace = true }
-# Прямо, а не транзитивно через `supervisor`: `Timer`/`Duration` стоят в теле
-# задачи, а не только в её сигнатуре.
+# Прямо, а не транзитивно через `supervisor`: `Ticker`/`Timer`/`Duration` стоят
+# в теле задачи, а не только в её сигнатуре.
 embassy-time = { workspace = true }
-# Прямо, а не транзитивно через `supervisor`: `watch::Sender` стоит в сигнатуре
-# `tasks::cpu_load::task` — того хэндла, который граф создаёт из `publish:`.
-sync-unsized = { workspace = true }
-# Его мьютекс (`CriticalSectionRawMutex`) — из `embassy-sync`.
-embassy-sync = { workspace = true }
+# Задачи узлов — автоматы `#[fsm::typestate]` на контексте фрагмента.
+fsm = { workspace = true }
 # Прямо, а не транзитивно: тип счётчика в `tasks::cpu_load::SleepTicks` —
 # `portable_atomic::AtomicU64`, потому что на Cortex-M0/M0+ у `core` такого
 # атомика нет вовсе.

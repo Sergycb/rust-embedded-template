@@ -66,9 +66,9 @@ test-log     = { version = "0.2.21" }
 # dev-зависимости path-зависимости cargo не собирает.
 tokio        = { version = "1.53.1", default-features = false, features = ["rt", "macros"] }
 # Задачи графа живут в `domain` (`domain::app`), а граф, который их спавнит, —
-# в `crates-cross/app`. Проекция аргументов (`task: path(ctx.field)`) снимает с
-# задачи знание о графе, но не о типах, которыми граф с ней разговаривает:
-# `Heartbeat` и `TaskExit` приходят отсюда. Фичи не объявлены намеренно —
+# в `crates-cross/app`. Контекст, который фрагмент эмитит в `domain` (`ctx:`),
+# снимает с задачи знание о графе, но не о типах, которыми граф с ней
+# разговаривает: `Heartbeat`, `TaskExit` и хэндлы каналов приходят отсюда. Фичи не объявлены намеренно —
 # `defmt`/`metadata-name` просит `crates-cross/Cargo.toml`, и в прошивке они
 # складываются с этой строкой; хостовой сборке domain они не нужны.
 supervisor   = { git = "https://github.com/Sergycb/rust-lib.git" }
@@ -77,10 +77,10 @@ supervisor   = { git = "https://github.com/Sergycb/rust-lib.git" }
 # на каждой конверсии. Версия та же, что в `crates-cross/Cargo.toml`, — иначе
 # в прошивке оказалось бы две несовместимые копии крейта.
 embassy-time = { version = "0.5.1" }
-# Тип хэндла `publish:` в `domain::tasks::cpu_load` (`watch::Sender` без
-# ёмкости в типе): граф строит `Watch` из этого крейта, а не из `embassy-sync`.
-# Тот же репозиторий, что у `supervisor`, — lock держит их на одной ревизии.
-sync-unsized = { git = "https://github.com/Sergycb/rust-lib.git" }
+# Каждая задача графа — автомат `#[fsm::typestate]` на своём контексте
+# (`ctx:` фрагмента): таблица переходов проверяется компилятором. Тот же
+# репозиторий, что у `supervisor`.
+fsm          = { git = "https://github.com/Sergycb/rust-lib.git" }
 # Тип счётчика тиков сна в `domain::tasks::cpu_load::SleepTicks`. Не
 # `core::sync::atomic::AtomicU64`: на Cortex-M0/M0+ его нет вовсе. Про то, чем
 # там эмулируется CAS, — `docs/conventions.md` и
@@ -97,8 +97,7 @@ critical-section = { version = "1.2.0" }
 # бы две копии крейта). `embassy-boot` — без `-stm32`: сам он от чипа не зависит,
 # а `from_linkerfile_blocking` зовёт только `bsp`.
 embassy-boot           = { version = "0.7.0" }
-# Мьютекс хэндла `publish:` в `domain::tasks::cpu_load` и флеш адаптеров.
-# Версия та же, что в `crates-cross/Cargo.toml` и у `supervisor`, — иначе в
+# Мьютекс флеша адаптеров. Версия та же, что в `crates-cross/Cargo.toml` и у `supervisor`, — иначе в
 # прошивке оказалось бы две несовместимые копии крейта.
 embassy-sync           = { version = "0.8.0" }
 embedded-storage       = { version = "0.3.1" }

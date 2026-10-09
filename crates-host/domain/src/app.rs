@@ -5,16 +5,15 @@
 //! упавшим узлом, чем кормить сторож), а то, что узел делает, — логика.
 //! Логика тестируется на хосте и про чип не знает.
 //!
-//! Связь с графом держится на проекции аргументов `supervisor_graph!`
-//! (`task: $crate::app::run(ctx.heartbeat)`): при ней макрос не генерирует
-//! тип контекста, а раскладывает поля по обычным параметрам — поэтому
-//! сигнатура ниже не называет ни одного типа из крейта, где объявлен граф, и
-//! функция может лежать в другом крейте вовсе. Именно так устроен и пример в
-//! самом `supervisor` (`supervisor-logic-fixture`).
+//! Задача — автомат `#[fsm::typestate]` на контексте узла. Контекст
+//! [`AppCtx`] эмитит фрагмент ниже (`ctx: $crate::app::AppCtx`) здесь же, в
+//! `domain`, а не compose-site: поэтому сигнатура не называет ни одного типа
+//! из крейта, где объявлен граф, и автомат с его действиями живёт рядом с
+//! узлом. Так же устроен и пример в самом `supervisor`
+//! (`supervisor-logic-fixture`).
 
 use defmt_or_log::info;
-use embassy_time::{Duration, Timer};
-use supervisor::Heartbeat;
+use embassy_time::{Duration, Instant};
 use supervisor::policy::{BackoffPolicy, JitterPolicy};
 use supervisor::runtime::TaskExit;
 
@@ -84,26 +83,59 @@ const _: () = assert!(
 /// строки, которые важны. Поэтому цикл молчит.
 ///
 /// **`feed()` зовётся явно и только после реального прогресса** — здесь
-/// прогресса нет, поэтому отметка стоит рядом с таймером. Когда в цикле
-/// появится работа, отметку ставьте ПОСЛЕ неё, а не до: автоматического
-/// «задача жива, раз её future опрашивают» тут нет намеренно, иначе сторож
-/// сторожил бы исполнитель, а не полезную работу.
+/// прогресса нет, поэтому отметка стоит в действии такта. Когда появится
+/// работа, отметку ставьте ПОСЛЕ неё, а не до: автоматического «задача жива,
+/// раз её future опрашивают» тут нет намеренно, иначе сторож сторожил бы
+/// исполнитель, а не полезную работу.
 ///
 /// Возвращаемый `TaskExit` — то, что граф делает с закончившимся прогоном
-/// (`restart:`/`backoff:` узла). Цикл ниже не кончается никогда, так что
-/// значение недостижимо; у задачи, которая может закончиться, `Completed`
-/// против `Failed` решает, перезапустят её или нет.
+/// (`restart:`/`backoff:` узла). У автомата нет выходного состояния, `run`
+/// не возвращается никогда, так что значение недостижимо; у задачи, которая
+/// может закончиться, выходное состояние (`exit Done { result: TaskExit }`,
+/// как у [`ota`](crate::ota)) решает, перезапустят её или нет.
 ///
-/// Что дальше: замените тело на свой цикл, добавьте узлам `deps:` (порядок
-/// старта), `inbox:` (очередь событий), `resources:` (ручка периферии,
-/// переживающая перезапуск задачи) — всё это описано в
-/// `docs/modules/app-graph.md`.
-pub async fn run(heartbeat: Heartbeat) -> TaskExit {
-    info!("domain: узел APP запущен");
-    loop {
-        // Здесь ваша работа.
-        heartbeat.feed();
-        Timer::after(IDLE_PERIOD).await;
+/// Что дальше: добавьте автомату состояния и строки переходов, узлу —
+/// `deps:` (порядок старта), `inbox:` (очередь событий — источник в
+/// `listen`), `resources:` (ручка периферии, переживающая перезапуск задачи)
+/// — всё это описано в `docs/modules/app-graph.md`.
+pub async fn run(mut ctx: AppCtx<'_>) -> TaskExit {
+    match ctx.run().await {}
+}
+
+#[fsm::typestate]
+impl AppCtx<'_> {
+    fsm::machine! {
+        machine App mod edges {
+            states {
+                /// Холостой ход: ждёт такт в `next`.
+                Idle { next: Instant },
+            }
+            start => begin -> Idle;
+            listen {
+                Idle { next } => tick: fsm::deadline(*next),
+            }
+            transitions {
+                Idle + tick(()) => idle -> self,
+            }
+        }
+    }
+
+    /// Сообщает о старте и назначает первый такт.
+    fn begin(&mut self) -> Idle {
+        info!("domain: узел APP запущен");
+        Idle {
+            next: Instant::now() + IDLE_PERIOD,
+        }
+    }
+
+    /// Такт холостого хода: здесь ваша работа, отметка у сторожа — после неё.
+    ///
+    /// Следующий такт — `fsm::next_tick`, а не `Ticker`: отставший `Ticker`
+    /// догоняет пачкой тиков подряд, и работа выполнилась бы N раз разом;
+    /// `next_tick` пропущенные такты отбрасывает.
+    fn idle(&mut self, s: &mut Idle) {
+        self.heartbeat.feed();
+        s.next = fsm::next_tick(s.next, IDLE_PERIOD, Instant::now());
     }
 }
 
@@ -142,5 +174,6 @@ supervisor::supervisor_fragment! {
     node deps: [], restart: ::supervisor::policy::RestartPolicy::OnFailure,
         backoff: $crate::app::BACKOFF,
         watchdog: $crate::app::WATCHDOG observe,
-        task: $crate::app::run(ctx.heartbeat);
+        ctx: $crate::app::AppCtx,
+        task: $crate::app::run;
 }

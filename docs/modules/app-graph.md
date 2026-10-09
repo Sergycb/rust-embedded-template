@@ -61,12 +61,18 @@
 `supervisor`, и обе стоит знать, потому что растить проект вы будете именно
 ими.
 
-**Первая — проекция аргументов.** Узел пишется формой
-`task: путь(аргументы)`: макрос раскладывает поля контекста по обычным
-параметрам функции и не генерирует тип `<Node>Ctx`, поэтому сигнатура задачи
-не называет ничего из крейта с графом и может лежать в любом другом. Форма
-`task: имя` без скобок тоже работает и передаёт контекст одним аргументом, но
-привязывает задачу к тому крейту, где объявлен граф, — то есть к `cross`.
+**Первая — контекст, который эмитит фрагмент.** Узел пишется с
+`ctx: $crate::путь::ИмяCtx, task: $crate::путь::задача;`: `supervisor_fragment!`
+эмитит структуру контекста (поля — слоты, каналы, `heartbeat`, `index`) в
+крейте фрагмента, а не compose-site, поэтому сигнатура задачи не называет
+ничего из крейта с графом. **Каждая задача — автомат `#[fsm::typestate]` на
+этом контексте**: таблица состояний и переходов стоит на `impl ИмяCtx`, действия
+— его методы, задача — `match ctx.run().await {}` (или `ctx.run().await.result`,
+если у автомата есть выходное состояние). Нелегальный переход и необработанное
+событие так не компилируются. Форма `task: имя` без `ctx:` тоже работает, но
+тип контекста тогда генерирует compose-site, и задача привязана к `cross`;
+проекция аргументов (`task: путь(ctx.поле)`) контекста не даёт вовсе — автомат
+стоять не на чем.
 
 **Вторая — фрагменты.** `supervisor_fragment!` объявляет самодостаточный
 срез графа — один узел (без имени) с его политикой, таймаутом, слотами и
@@ -81,7 +87,27 @@ supervisor::supervisor_fragment! {
     node deps: [], restart: ::supervisor::policy::RestartPolicy::OnFailure,
         backoff: $crate::app::BACKOFF,
         watchdog: $crate::app::WATCHDOG observe,
-        task: $crate::app::run(ctx.heartbeat);
+        ctx: $crate::app::AppCtx,
+        task: $crate::app::run;
+}
+
+pub async fn run(mut ctx: AppCtx<'_>) -> TaskExit {
+    match ctx.run().await {}
+}
+
+#[fsm::typestate]
+impl AppCtx<'_> {
+    fsm::machine! {
+        machine App mod edges {
+            states { Idle { next: Instant } }
+            start => begin -> Idle;
+            listen { Idle { next } => tick: fsm::deadline(*next) }
+            transitions { Idle + tick(()) => idle -> self }
+        }
+    }
+    // begin(), idle() — методы контекста; idle() переносит срок:
+    // s.next = fsm::next_tick(s.next, IDLE_PERIOD, Instant::now())
+    // (не `Ticker`: отставший догоняет пачкой тиков подряд).
 }
 ```
 
@@ -136,7 +162,8 @@ supervisor::supervisor_fragment! {
     node deps: [], restart: ::supervisor::policy::RestartPolicy::OnFailure,
         backoff: $crate::usart::BACKOFF,
         resources: [UART: R],
-        task: $crate::usart::run(ctx.uart);
+        ctx: $crate::usart::UsartCtx,
+        task: $crate::usart::run;
 }
 
 // в crates-host/domain/src/link.rs — то есть там, где это тестируется на хосте:
@@ -146,15 +173,33 @@ supervisor::supervisor_fragment! {
     node deps: [USART], restart: ::supervisor::policy::RestartPolicy::OnFailure,
         backoff: $crate::link::BACKOFF,
         inbox: [EVENTS: $crate::link::LinkEvent; 8],
-        task: $crate::link::run(&mut ctx.events);
+        ctx: $crate::link::LinkCtx,
+        task: $crate::link::run;
 }
 
-pub async fn run(events: &mut Receiver<'_, CriticalSectionRawMutex, LinkEvent, 8>) -> TaskExit {
-    // Определение автомата — тоже в `domain` (см. crates-host/domain/examples/),
-    // здесь только прогон его в задаче.
-    let mut rt = AsyncTimedRuntime::<Link>::new(LinkId::Disconnected, LinkData::default());
-    rt.run(events).await; // не возвращается; отменяется дропом при shutdown
-    TaskExit::Completed
+pub async fn run(mut ctx: LinkCtx<'_>) -> TaskExit {
+    match ctx.run().await {} // не возвращается; отменяется дропом при shutdown
+}
+
+#[fsm::typestate]
+impl LinkCtx<'_> {
+    fsm::machine! {
+        machine Link mod edges {
+            states { Disconnected, Connected { peer: u8 } }
+            start -> Disconnected;
+            // Почтовый ящик узла — обычный источник событий.
+            listen { * => ev: self.events.receive() }
+            transitions {
+                Disconnected + ev(LinkEvent::Up(peer)) => up   -> Connected,
+                Connected    + ev(LinkEvent::Down)     => down -> Disconnected,
+                // Каждое событие каждого состояния — строкой: забытое не
+                // скомпилируется (`E0004`), `_ =>` здесь нет.
+                Disconnected + ev(LinkEvent::Down)     => ignore,
+                Connected    + ev(LinkEvent::Up(_))    => ignore,
+            }
+        }
+    }
+    // up(), down() — методы контекста
 }
 
 // здесь, в graph.rs: две записи вместо одной.
@@ -347,10 +392,10 @@ async fn uart_drain_task(mut uart: embassy_stm32::usart::UartTx<'static, embassy
 {%- if ota == "true" %}
 # OTA: узел уже в графе, вам остаётся канал
 
-Узел `OTA` объявлен в `domain::ota` (`OTA_FRAG` без подписи,
-`OTA_SIGNED_FRAG` с ней — какой из двух, решила генерация) и спавнится
-отсюда записью в `fragments:` — она же даёт ему имя (`as OTA`) и типы двух
-его слотов аргументами. Он в цикле ждёт заголовок, принимает образ
+Узел `OTA` объявлен в `domain::ota` (`OTA_FRAG`; режим — без подписи или с
+ней — решила генерация и подставила во вход) и спавнится отсюда записью в
+`fragments:` — она же даёт ему имя (`as OTA`) и типы двух его слотов
+аргументами. Его автомат по кругу ждёт заголовок, принимает образ
 (`domain::download::receive` — сверка длины до стирания, буферизация до
 слова флеша), применяет его (`mark_updated` или `domain::update::apply_signed`)
 и сообщает исход отправителю кодом `ports::Rejection`. Всё это — host-тесты
@@ -366,12 +411,12 @@ SD-карта, у каждого свой формат пакета и своя 
 Вход узла плата отдаёт одним полем — `board.ota` (`bsp::ota::Ota`, канал и
 адаптер), а во вход фрагмента его раскладывает эта сторона: `bsp` зависит
 только от `ports` и `adapters`, про `domain` он не знает (`= ::domain::ota::Inputs
-{ link: board.ota.link, flash: board.ota.flash }`; с подписью —
-тот же `Inputs`, где `flash` обёрнут в `crate::image::Signed` версией и ключом
-образа). Типы слотов — аргументы фрагмента (`OTA_FRAG<bsp::ota::Link,
-bsp::ota::Updater>`):
+{ link: board.ota.link, flash: board.ota.flash, mode: ::domain::ota::Mode::plain() }`;
+с подписью — тот же `Inputs`, где `flash` обёрнут в `crate::image::Signed` версией
+и ключом образа, а режим — `Mode::signed()`). Типы слотов — аргументы фрагмента
+(`OTA_FRAG<bsp::ota::Link, bsp::ota::Updater>`):
 слот — `static`, тип ему нужен, а знает его только эта сторона. Подставили
-свой транспорт — поправьте первый аргумент. Оба слота узла — `local` (фича
+свой транспорт — поправьте первый аргумент. Слоты канала и адаптера — `local` (фича
 `supervisor/local-resources` в
 `crates-cross/Cargo.toml`): объекты платы `!Send`, и граф держит их на своём
 исполнителе, не требуя `Send`. Узел, чей `local`-слот заполняется

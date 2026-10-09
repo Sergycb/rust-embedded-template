@@ -36,9 +36,10 @@ impl ImageSource for Link {
 Всё остальное — сверка длины до стирания, `prepare` один раз, буферизация до
 слова флеша, порядок проверок подписи, коды отказа — уже в узле
 `domain::ota`{% if graph == "true" %}, который граф спавнит из `fragments:`
-(`crates-cross/app/src/graph.rs`){% else %}. Без графа зовите узел сами:
-`domain::ota::run{% if signed == "true" %}_signed{% endif %}(&mut {% if signed == "true" %}ota{% else %}board.ota{% endif %}.link, &mut {% if signed == "true" %}ota{% else %}board.ota{% endif %}.flash).await`{% endif %}. Во фрагментах
-`domain::ota` слоты узла помечены `local`: [`Updater`] — `!Send` (внутри ссылка на `FlashMutex` с
+(`crates-cross/app/src/graph.rs`){% else %}. Без графа зовите узел сами, собрав
+его контекст руками:
+`domain::ota::run(domain::ota::OtaCtx { link: &mut board.ota.link, flash: &mut {% if signed == "true" %}flash{% else %}board.ota.flash{% endif %}, mode: &mut domain::ota::Mode::{% if signed == "true" %}signed{% else %}plain{% endif %}(), index: 0 }).await`{% endif %}. Во фрагменте
+`domain::ota` слоты канала и адаптера помечены `local`: [`Updater`] — `!Send` (внутри ссылка на `FlashMutex` с
 `NoopRawMutex`), и граф держит его на своём исполнителе, не требуя `Send`, —
 то же допущение «один исполнитель», что у самого `NoopRawMutex`; захотите
 вынести OTA на другой исполнитель — меняйте `local` во фрагменте

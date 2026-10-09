@@ -88,8 +88,9 @@ fn main() -> ! {
 {%- if signed == "true" and graph != "true" %}
 
     // Адаптер с проверкой подписи. Графа нет, так что узел OTA зовёте вы:
-    // переименуйте `_flash` во `flash` и вызовите
-    // `domain::ota::run_signed(&mut board.ota.link, &mut flash).await`.
+    // переименуйте `_flash` в `mut flash` и вызовите
+    // `domain::ota::run(domain::ota::OtaCtx { link: &mut board.ota.link, flash: &mut flash,
+    // mode: &mut domain::ota::Mode::signed(), index: 0 }).await`.
     let _flash = image::Signed::new(
         board.ota.flash,
         image::FW_VERSION,
@@ -139,11 +140,15 @@ fn main() -> ! {
     // путь от прыжка сюда — `Board::new`, подтверждение образа, ваше долгое —
     // обязан в него уложиться (docs/watchdog.md).{% endif %}
     //
-    // `expect`, а не `let _ =`, и это не педантизм: сторож запускается в
+    // Паника, а не `let _ =`, и это не педантизм: сторож запускается в
     // прологе, ДО спавна узлов, поэтому отказ (узел уже занят) оставляет
     // железо тикающим, а кормить его некому — проглоти вы `Err`, плата ушла
     // бы в сброс через `bsp::wdg::HW_TIMEOUT_US` без единой строки о причине.
-    graph::spawn_all(&spawner, board).expect("узлы графа свежие: spawn_all зовётся один раз");
+    // Через `Display2Format`, а не `expect`: `Debug` у ошибки графа нет —
+    // `supervisor` убрал его ради флеша, имя узла и вид отказа даёт `Display`.
+    if let Err(err) = graph::spawn_all(&spawner, board) {
+        defmt::panic!("app: spawn_all: {}", defmt::Display2Format(&err));
+    }
 {%- else %}
 
     // Графа нет, поэтому задачу, которая меряет загрузку, спавнит сам `main`.

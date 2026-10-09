@@ -60,7 +60,7 @@ cargo xtask flash        # прошить плату
 |---|---|---|
 | Распиновка платы | `crates-cross/bsp/src/board.rs` | `assign_resources!` разложит `Peripherals` по именованным группам — из них `bsp` соберёт драйверы; наружу уходит не периферия, а готовый объект (`docs/resources.md`) |
 | Граф задач | `crates-cross/app/src/graph.rs` | `supervisor_graph!`: порядок старта, рестарты с backoff, watchdog, обмен между задачами |
-| Логика и узлы графа | `crates-host/domain/` | всё, что не про регистры: автоматы, протоколы, конфигурация, а также объявления узлов (`supervisor_fragment!`) и их работа (`domain::app::run`, `domain::tasks::cpu_load::task`) — тестируется на хосте; сама логика — только функции над портами |
+| Логика и узлы графа | `crates-host/domain/` | всё, что не про регистры: автоматы, протоколы, конфигурация, а также объявления узлов (`supervisor_fragment!`) и их работа (`domain::app::run`, `domain::tasks::cpu_load::task` — автоматы `#[fsm::typestate]` на контексте узла) — тестируется на хосте; логика вне автоматов — функции над портами |
 | Адаптеры без чипа | `crates-host/domain/adapters/` | реализации портов, которым хватает `embedded-storage`/`embedded-hal`: OTA поверх `embassy-boot` (`adapters::ota`) и настройки поверх `sequential-storage` (`adapters::settings`, мост к общему флешу — `adapters::flash`) — generic по флешу, тестируется на хосте |
 
 Граф и модули `bsp` уже содержат рабочие примеры в doc-комментариях и в `docs/` — с
@@ -284,7 +284,7 @@ host-тестами на кусках по одному байту, обрыве
 #### Подпись образа
 
 Четвёртый и последний вопрос при генерации (`--define signed=yes`, требует OTA). С ним
-граф спавнит узел OTA с подписью (`OTA_SIGNED_FRAG` → `domain::ota::run_signed`):
+граф кормит узел OTA режимом с подписью (`domain::ota::Mode::signed()` во входе `OTA_FRAG`):
 вместо `mark_updated()` принятый образ применяет `domain::update::apply_signed` с
 подписью из заголовка (`Announce::signature`): она проверяет длину, занятость раздела и версию образа
 (защита от отката — ниже) и лишь затем поручает адаптеру (`adapters::ota::Signed`)

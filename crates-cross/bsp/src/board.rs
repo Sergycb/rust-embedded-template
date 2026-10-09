@@ -52,7 +52,8 @@ pub struct Board {
     /// `flash` поверх разделов `DFU`/`BOOTLOADER_STATE`, собранный из символов
     /// `memory.x`. {% if graph == "true" %}Уезжает в узел `OTA` графа (`fragments:` в
     /// `crates-cross/app/src/graph.rs`){% else %}Зовите узел сами из `main`:
-    /// `domain::ota::run{% if signed == "true" %}_signed{% endif %}(&mut board.ota.link, &mut board.ota.flash)`{% if signed == "true" %},
+    /// `domain::ota::run` с контекстом `domain::ota::OtaCtx`, собранным руками
+    /// из `link`, `flash` и `domain::ota::Mode::{% if signed == "true" %}signed{% else %}plain{% endif %}()`{% if signed == "true" %},
     /// обернув `flash` подписью (`crates-cross/app/src/image.rs`){% endif %}{% endif %}.
     pub ota: crate::ota::Ota,
 {%- endif %}

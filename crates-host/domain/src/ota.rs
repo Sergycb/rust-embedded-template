@@ -8,11 +8,15 @@
 //! сеть) в `bsp`: заголовок, куски, отчёт отправителю — и одна строка в
 //! `fragments:` графа.
 //!
-//! Два входа — [`run`](crate::ota::run) и [`run_signed`](crate::ota::run_signed) —
-//! потому что применение различается по Cargo-варианту (`signed`), а Liquid в
-//! `domain` запрещён. Выбор делает `crates-cross/app/src/graph.rs`: `OTA_FRAG`
-//! или `OTA_SIGNED_FRAG`. Обе функции лежат в любом проекте; во flash попадает
-//! только позванная — generic без вызова не мономорфизируется.
+//! Задача — автомат `#[fsm::typestate]` на контексте [`OtaCtx`], который
+//! эмитит фрагмент `OTA_FRAG`: заголовок → проверки до стирания → приём →
+//! применение → отчёт → снова заголовок; отказ канала — выходное состояние.
+//!
+//! Применение различается по Cargo-варианту (`signed`), а Liquid в `domain`
+//! запрещён, поэтому режим — данные входа узла: [`Mode::plain`] или
+//! [`Mode::signed`], и выбирает его `crates-cross/app/src/graph.rs`. Обе
+//! функции режима лежат в любом проекте; во flash попадает только выбранная —
+//! generic без вызова не мономорфизируется.
 //!
 //! Что узел делает с исходом, он не решает:
 //! [`ImageSource::finish`](ports::ImageSource::finish) получает `Ok(())` или
@@ -50,7 +54,8 @@ pub const BACKOFF: BackoffPolicy = BackoffPolicy {
 ///
 /// ```ignore
 /// fragments: [::domain::OTA_FRAG<bsp::ota::Link, bsp::ota::Updater> as OTA
-///                 = ::domain::ota::Inputs { link: board.ota.link, flash: board.ota.flash }];
+///                 = ::domain::ota::Inputs { link: board.ota.link, flash: board.ota.flash,
+///                                           mode: ::domain::ota::Mode::plain() }];
 /// ```
 ///
 /// Тип объявлен здесь, а не назван графом, по правилу фрагментов
@@ -63,153 +68,188 @@ pub struct Inputs<S, F> {
     pub link: S,
     /// Адаптер обновления — реализация `FirmwareUpdate` поверх разделов флеша.
     pub flash: F,
-}
-
-/// Узел `OTA` без проверки подписи: принятый образ применяется
-/// [`FirmwareUpdate::mark_updated`].
-///
-/// Не возвращается, пока жив канал: после каждого цикла — удачного или нет —
-/// ждёт следующий заголовок. `TaskExit::Failed` — только когда отказал сам
-/// канал (`begin`, `next` или `finish`); граф перезапустит узел с backoff'ом,
-/// и объект канала вернётся в слот к новому прогону. `Completed` не
-/// возвращается никогда.
-///
-/// Без `watchdog:` намеренно — по той же логике, что у [`app::run`](crate::app::run):
-/// отметка ставится после реального прогресса, а пока узел ждёт заголовок в
-/// `begin()`, прогресса у него нет, и отметка по таймеру сторожила бы
-/// исполнитель, а не работу. Побочно это избавляет от аккуратного пиннинга
-/// `begin()` под `select` с таймером. Железо кормит узел `APP`.
-pub async fn run<S, F>(link: &mut S, flash: &mut F) -> TaskExit
-where
-    S: ImageSource,
-    S::Error: Debug,
-    F: FirmwareUpdate,
-    F::Error: Debug,
-{
-    info!("domain: узел OTA запущен");
-    serve(
-        link,
-        flash,
-        &Mode {
-            check: plain_check,
-            apply: plain_apply,
-        },
-    )
-    .await
-}
-
-/// Узел `OTA` с проверкой подписи: принятый образ применяется
-/// [`apply_signed`](crate::update::apply_signed) — длина, занятость,
-/// версия, ключ, подпись, в этом порядке.
-///
-/// Поведение по каналу — как у [`run`]. Отличие до приёма одно: заголовок
-/// без подписи отвергается ДО стирания раздела — применить такой образ всё
-/// равно нечем, а стирание уничтожило бы образ, в который устройство
-/// откатывается.
-pub async fn run_signed<S, F>(link: &mut S, flash: &mut F) -> TaskExit
-where
-    S: ImageSource,
-    S::Error: Debug,
-    F: SignedFirmwareUpdate,
-    F::Error: Debug,
-{
-    info!("domain: узел OTA (с подписью) запущен");
-    serve(
-        link,
-        flash,
-        &Mode {
-            check: signed_check,
-            apply: signed_apply,
-        },
-    )
-    .await
+    /// Режим применения: [`Mode::plain`] или [`Mode::signed`].
+    pub mode: Mode<F>,
 }
 
 /// Чем режимы отличаются: проверка заголовка до стирания и применение.
 ///
 /// Указатели на функции, а не трейт: две пары по нескольку строк не стоят
-/// публичной абстракции, а цикл при этом один — и тестируется один.
-struct Mode<F> {
+/// публичной абстракции, а автомат при этом один — и тестируется один.
+#[derive(Debug)]
+pub struct Mode<F> {
     /// Проверка заголовка ДО стирания раздела.
     check: fn(&Announce) -> Result<(), Rejection>,
     /// Применение принятого образа длиной `len`.
     apply: fn(&mut F, &Announce, u32) -> Result<(), Rejection>,
 }
 
-/// Циклы до отказа канала.
-async fn serve<S, F>(link: &mut S, flash: &mut F, mode: &Mode<F>) -> TaskExit
+impl<F> Mode<F>
 where
-    S: ImageSource,
-    S::Error: Debug,
     F: FirmwareUpdate,
     F::Error: Debug,
 {
-    loop {
-        if let Err(err) = cycle(link, flash, mode).await {
-            warn!("ota: отказ канала: {:?}", Debug2Format(&err));
-            return TaskExit::Failed;
+    /// Без проверки подписи: принятый образ применяется
+    /// [`FirmwareUpdate::mark_updated`].
+    pub fn plain() -> Self {
+        Self {
+            check: plain_check,
+            apply: plain_apply,
         }
     }
 }
 
-/// Один цикл: заголовок → проверки до стирания → приём → применение → отчёт.
+impl<F> Mode<F>
+where
+    F: SignedFirmwareUpdate,
+    F::Error: Debug,
+{
+    /// С проверкой подписи: принятый образ применяется
+    /// [`apply_signed`](crate::update::apply_signed) — длина, занятость,
+    /// версия, ключ, подпись, в этом порядке.
+    ///
+    /// Отличие до приёма одно: заголовок без подписи отвергается ДО стирания
+    /// раздела — применить такой образ всё равно нечем, а стирание уничтожило
+    /// бы образ, в который устройство откатывается.
+    pub fn signed() -> Self {
+        Self {
+            check: signed_check,
+            apply: signed_apply,
+        }
+    }
+}
+
+/// Узел `OTA`: принимает и применяет образы, пока жив канал.
 ///
-/// `Err` — отказал сам канал, и сообщать отправителю уже некому; всё
-/// остальное ушло ему через `finish` кодом отказа.
-async fn cycle<S, F>(link: &mut S, flash: &mut F, mode: &Mode<F>) -> Result<(), S::Error>
+/// После каждого цикла — удачного или нет — ждёт следующий заголовок.
+/// `TaskExit::Failed` — только когда отказал сам канал (`begin`, `next` или
+/// `finish`): автомат уходит в выходное состояние `Down`, граф перезапустит
+/// узел с backoff'ом, и объект канала вернётся в слот к новому прогону.
+/// `Completed` не возвращается никогда.
+///
+/// Без `watchdog:` намеренно — по той же логике, что у [`app::run`](crate::app::run):
+/// отметка ставится после реального прогресса, а пока узел ждёт заголовок в
+/// `begin()`, прогресса у него нет, и отметка по таймеру сторожила бы
+/// исполнитель, а не работу. Железо кормит узел `APP`.
+pub async fn run<S, F>(mut ctx: OtaCtx<'_, S, F>) -> TaskExit
 where
     S: ImageSource,
     S::Error: Debug,
     F: FirmwareUpdate,
     F::Error: Debug,
 {
-    let announce = link.begin().await?;
-    info!("ota: заголовок: {} байт", announce.len);
-    let outcome = attempt(link, flash, &announce, mode).await?;
-    match outcome {
-        Ok(()) => info!("ota: образ принят, обмен разделов на следующем сбросе"),
-        Err(rejection) => warn!("ota: образ отвергнут: {:?}", rejection),
-    }
-    link.finish(outcome).await
+    ctx.run().await.result
 }
 
-/// От заголовка до применения. Внешний `Result` — канал
-/// (`DownloadError::Source`), внутренний — вердикт для отправителя.
-async fn attempt<S, F>(
-    link: &mut S,
-    flash: &mut F,
-    announce: &Announce,
-    mode: &Mode<F>,
-) -> Result<Result<(), Rejection>, S::Error>
+#[fsm::typestate]
+impl<S, F> OtaCtx<'_, S, F>
 where
     S: ImageSource,
     S::Error: Debug,
     F: FirmwareUpdate,
     F::Error: Debug,
 {
-    // Занятость — до всего: адаптер и так откажет в `prepare`, но тогда
-    // отправитель услышал бы `Device` вместо «сначала перезагрузи».
-    match flash.is_busy() {
-        Ok(false) => {}
-        Ok(true) => return Ok(Err(Rejection::Busy)),
-        Err(err) => {
-            warn!("ota: флеш не ответил о занятости: {:?}", Debug2Format(&err));
-            return Ok(Err(Rejection::Device));
+    fsm::machine! {
+        machine Ota mod edges {
+            states {
+                /// Ждёт заголовок следующего образа.
+                Waiting,
+                /// Заголовок прошёл проверки до стирания — образ принимается.
+                Accepted { announce: Announce },
+                /// Образ принят целиком, `len` байт.
+                Received { announce: Announce, len: u32 },
+                /// Исход для отправителя.
+                Verdict { outcome: Result<(), Rejection> },
+                /// Отказал сам канал: сообщать некому, прогон окончен.
+                exit Down { result: TaskExit },
+            }
+            start => begin -> Waiting;
+            listen {
+                Waiting => announce: self.link.begin(),
+            }
+            transitions {
+                Waiting + announce(Ok(a))  => screen  -> Accepted | Verdict,
+                Waiting + announce(Err(e)) => lost    -> Down,
+                Accepted                   => receive -> Received | Verdict | Down,
+                Received                   => apply   -> Verdict,
+                Verdict                    => report  -> Waiting | Down,
+            }
         }
     }
-    if let Err(rejection) = (mode.check)(announce) {
-        return Ok(Err(rejection));
+
+    fn begin(&mut self) -> Waiting {
+        info!("domain: узел OTA запущен");
+        Waiting
     }
-    let len = match download::receive(link, flash, announce.len).await {
-        Ok(len) => len,
-        // Канал — наверх без warn!: о нём скажет serve, сообщать отправителю некому.
-        Err(DownloadError::Source(err)) => return Err(err),
-        Err(err) => {
-            warn!("ota: приём не удался: {:?}", Debug2Format(&err));
-            return Ok(Err(download_rejection(err)?));
+
+    /// Проверки до стирания: занятость, затем режим (подпись).
+    fn screen(&mut self, _: Waiting, announce: Announce) -> edges::Screen {
+        info!("ota: заголовок: {} байт", announce.len);
+        // Занятость — до всего: адаптер и так откажет в `prepare`, но тогда
+        // отправитель услышал бы `Device` вместо «сначала перезагрузи».
+        let outcome = match self.flash.is_busy() {
+            Ok(false) => (self.mode.check)(&announce),
+            Ok(true) => Err(Rejection::Busy),
+            Err(err) => {
+                warn!("ota: флеш не ответил о занятости: {:?}", Debug2Format(&err));
+                Err(Rejection::Device)
+            }
+        };
+        match outcome {
+            Ok(()) => Accepted { announce }.into(),
+            Err(_) => Verdict { outcome }.into(),
         }
-    };
-    Ok((mode.apply)(flash, announce, len))
+    }
+
+    /// Приём образа; длину сверяет `receive` до `prepare`.
+    async fn receive(&mut self, s: Accepted) -> edges::Receive {
+        match download::receive(self.link, self.flash, s.announce.len).await {
+            Ok(len) => Received {
+                announce: s.announce,
+                len,
+            }
+            .into(),
+            // Канал — без warn! о приёме: о нём скажет `lost`, сообщать
+            // отправителю некому.
+            Err(DownloadError::Source(err)) => self.lost(err).into(),
+            Err(err) => {
+                warn!("ota: приём не удался: {:?}", Debug2Format(&err));
+                match download_rejection(err) {
+                    Ok(rejection) => Verdict {
+                        outcome: Err(rejection),
+                    }
+                    .into(),
+                    Err(err) => self.lost(err).into(),
+                }
+            }
+        }
+    }
+
+    fn apply(&mut self, s: Received) -> Verdict {
+        Verdict {
+            outcome: (self.mode.apply)(self.flash, &s.announce, s.len),
+        }
+    }
+
+    /// Исход — в лог и отправителю.
+    async fn report(&mut self, s: Verdict) -> edges::Report {
+        match s.outcome {
+            Ok(()) => info!("ota: образ принят, обмен разделов на следующем сбросе"),
+            Err(rejection) => warn!("ota: образ отвергнут: {:?}", rejection),
+        }
+        match self.link.finish(s.outcome).await {
+            Ok(()) => Waiting.into(),
+            Err(err) => self.lost(err).into(),
+        }
+    }
+
+    /// Отказ канала: сообщать отправителю некому, прогон кончается `Failed`.
+    fn lost(&mut self, err: S::Error) -> Down {
+        warn!("ota: отказ канала: {:?}", Debug2Format(&err));
+        Down {
+            result: TaskExit::Failed,
+        }
+    }
 }
 
 /// Без подписи заголовок проверять нечего — длину сверит `receive`.
@@ -258,7 +298,7 @@ where
 
 /// Код отказа для отправителя; `Err` — отказал сам канал, и сообщать некому.
 ///
-/// `attempt` перехватывает `Source` раньше — здесь эта ветка нужна
+/// `receive` перехватывает `Source` раньше — здесь эта ветка нужна
 /// тотальности, а не потоку.
 fn download_rejection<S, F>(err: DownloadError<S, F>) -> Result<Rejection, S> {
     Ok(match err {
@@ -280,18 +320,22 @@ fn update_rejection<E>(err: &UpdateError<E>) -> Rejection {
     }
 }
 
-// Узлы объявлены здесь же, где лежит их задача, — как `APP_FRAG` в
+// Узел объявлен здесь же, где лежит его задача, — как `APP_FRAG` в
 // `domain::app`; compose-site (`crates-cross/app/src/graph.rs`) только
-// перечисляет фрагмент, называет узел (`as OTA`) и кормит его входом. Два
-// фрагмента, а не один, потому что применение различается по Cargo-варианту
-// `signed`, а Liquid в `domain` запрещён: какой из двух назвать — решает
-// `graph.rs`.
+// перечисляет фрагмент, называет узел (`as OTA`) и кормит его входом. Фрагмент
+// один на оба Cargo-варианта `signed`: режим применения — данные входа
+// (`Inputs::mode`), а не второй фрагмент, иначе было бы два контекста и две
+// одинаковые таблицы автомата. Какой режим подставить — решает `graph.rs`.
 //
 // `boot: inputs: …` — собственная привязка фрагмента: compose-site пишет
-// `fragments: [::domain::OTA_FRAG<…> as OTA = ::domain::ota::Inputs { link: …, flash: … }]`,
+// `fragments: [::domain::OTA_FRAG<…> as OTA = ::domain::ota::Inputs { link: …, flash: …, mode: … }]`,
 // а `spawn_all` связывает её первой строкой пролога, и инициализаторы слотов
 // ниже читают её поля. Так фрагмент не видит `Board` вовсе — только то, что
-// ему дали.
+// ему дали. `MODE` — обычный слот, не `local`: указатели на функции `Send`
+// при любом `F`.
+//
+// `ctx:` — контекст [`OtaCtx`] эмитит фрагмент здесь, в `domain`; автомат
+// стоит на нём (см. `domain::app`).
 //
 // `<S, F>` — параметры фрагмента: тип ресурсного слота — `static`, назвать
 // его фрагмент обязан, а конкретный тип (`bsp::ota::Updater`, транспорт проекта)
@@ -325,36 +369,39 @@ supervisor::supervisor_fragment! {
 
     node deps: [], restart: ::supervisor::policy::RestartPolicy::OnFailure,
         backoff: $crate::ota::BACKOFF,
-        resources: [LINK: local S = inputs.link, FLASH: local F = inputs.flash],
-        task: $crate::ota::run(ctx.link, ctx.flash);
-}
-
-supervisor::supervisor_fragment! {
-    name: OTA_SIGNED_FRAG<S, F>;
-    boot: inputs: $crate::ota::Inputs<S, F>;
-
-    node deps: [], restart: ::supervisor::policy::RestartPolicy::OnFailure,
-        backoff: $crate::ota::BACKOFF,
-        resources: [LINK: local S = inputs.link, FLASH: local F = inputs.flash],
-        task: $crate::ota::run_signed(ctx.link, ctx.flash);
+        resources: [
+            LINK: local S = inputs.link,
+            FLASH: local F = inputs.flash,
+            MODE: $crate::ota::Mode<F> = inputs.mode
+        ],
+        ctx: $crate::ota::OtaCtx,
+        task: $crate::ota::run;
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        Mode, cycle, plain_apply, plain_check, run, run_signed, signed_apply, signed_check,
-    };
+    use super::{Mode, OtaCtx, run};
     use crate::firmware::pack;
     use crate::test_support::{FakeFlash, FakeLink, SIGNATURE};
     use crate::update::VERSION_BYTES;
     use ports::{Announce, Rejection, VerifyError};
     use supervisor::runtime::TaskExit;
 
+    /// Гоняет узел, пока не кончится канал: после последнего заголовка `begin`
+    /// у `FakeLink` отвечает отказом, так что прогон всегда кончается `Failed`
+    /// — раньше, если канал отказал посреди цикла.
+    async fn serve(link: &mut FakeLink, flash: &mut FakeFlash, mut mode: Mode<FakeFlash>) {
+        let ctx = OtaCtx {
+            link,
+            flash,
+            mode: &mut mode,
+            index: 0,
+        };
+        assert_eq!(run(ctx).await, TaskExit::Failed);
+    }
+
     fn plain() -> Mode<FakeFlash> {
-        Mode {
-            check: plain_check,
-            apply: plain_apply,
-        }
+        Mode::plain()
     }
 
     fn announce(len: usize) -> Announce {
@@ -377,9 +424,7 @@ mod tests {
             FakeLink::of(image.chunks(13).map(<[u8]>::to_vec)).announcing([announce(64)]);
         let mut flash = FakeFlash::new(1024, 8);
 
-        cycle(&mut link, &mut flash, &plain())
-            .await
-            .expect("канал жив");
+        serve(&mut link, &mut flash, plain()).await;
 
         assert_eq!(flash.prepared, Some(64));
         assert_eq!(&flash.memory[..64], &image[..]);
@@ -395,9 +440,7 @@ mod tests {
         let mut flash = FakeFlash::new(64, 8);
         flash.busy = true;
 
-        cycle(&mut link, &mut flash, &plain())
-            .await
-            .expect("канал жив");
+        serve(&mut link, &mut flash, plain()).await;
 
         assert_eq!(link.finished, vec![Err(Rejection::Busy)]);
         assert_eq!(flash.prepared, None, "раздел не должен быть стёрт");
@@ -409,9 +452,7 @@ mod tests {
         let mut link = FakeLink::of([]).announcing([announce(65)]);
         let mut flash = FakeFlash::new(64, 8);
 
-        cycle(&mut link, &mut flash, &plain())
-            .await
-            .expect("канал жив");
+        serve(&mut link, &mut flash, plain()).await;
 
         assert_eq!(link.finished, vec![Err(Rejection::Length)]);
         assert_eq!(flash.prepared, None);
@@ -422,9 +463,7 @@ mod tests {
         let mut link = FakeLink::of([vec![0; 16], vec![0; 8]]).announcing([announce(16)]);
         let mut flash = FakeFlash::new(64, 8);
 
-        cycle(&mut link, &mut flash, &plain())
-            .await
-            .expect("канал жив");
+        serve(&mut link, &mut flash, plain()).await;
 
         assert_eq!(link.finished, vec![Err(Rejection::Transfer)]);
         assert_eq!(flash.updated, 0, "обмен не запрашивался");
@@ -438,9 +477,7 @@ mod tests {
         let mut flash = FakeFlash::new(64, 8);
         flash.word = 0;
 
-        cycle(&mut link, &mut flash, &plain())
-            .await
-            .expect("канал жив");
+        serve(&mut link, &mut flash, plain()).await;
 
         assert_eq!(link.finished, vec![Err(Rejection::Device)]);
         assert_eq!(flash.prepared, None);
@@ -452,56 +489,52 @@ mod tests {
         let mut flash = FakeFlash::new(64, 8);
         flash.mark_updated = Err("флеш отказал");
 
-        cycle(&mut link, &mut flash, &plain())
-            .await
-            .expect("канал жив");
+        serve(&mut link, &mut flash, plain()).await;
 
         assert_eq!(link.finished, vec![Err(Rejection::Device)]);
     }
 
-    /// Обрыв канала посреди приёма: сообщать некому, цикл кончается ошибкой
-    /// канала, `finish` не зовётся.
+    /// Обрыв канала посреди приёма: сообщать некому, прогон кончается
+    /// `Failed`, `finish` не зовётся. Второй заголовок — проверка, что узел
+    /// встал именно на обрыве: продолжи он цикл, его отчёт попал бы в `finished`.
     #[tokio::test]
-    async fn a_link_failure_while_receiving_ends_the_cycle_without_a_report() {
-        let mut link = FakeLink::of([vec![0; 8], vec![0; 8]]).announcing([announce(16)]);
+    async fn a_link_failure_while_receiving_ends_the_run_without_a_report() {
+        let mut link =
+            FakeLink::of([vec![0; 8], vec![0; 8]]).announcing([announce(16), announce(8)]);
         link.fail_at = Some(1);
         let mut flash = FakeFlash::new(64, 8);
 
-        let failed = cycle(&mut link, &mut flash, &plain()).await;
+        serve(&mut link, &mut flash, plain()).await;
 
-        assert_eq!(failed, Err("обрыв канала"));
         assert!(link.finished.is_empty(), "сообщать некому");
     }
 
+    /// Обрыв при отчёте кончает прогон: второй заголовок уже не читается.
     #[tokio::test]
-    async fn a_link_failure_on_finish_ends_the_cycle() {
-        let mut link = FakeLink::of([vec![0; 8]]).announcing([announce(8)]);
+    async fn a_link_failure_on_finish_ends_the_run() {
+        let mut link = FakeLink::of([vec![0; 8]]).announcing([announce(8), announce(8)]);
         link.finish = Err("обрыв при отчёте");
         let mut flash = FakeFlash::new(64, 8);
 
-        let failed = cycle(&mut link, &mut flash, &plain()).await;
+        serve(&mut link, &mut flash, plain()).await;
 
-        assert_eq!(failed, Err("обрыв при отчёте"));
+        assert_eq!(link.finished, vec![Ok(())], "второго цикла не было");
     }
 
-    /// `run` крутит циклы, пока жив канал, и выходит `Failed` на его отказе —
-    /// здесь на исчерпании сценария: второй `begin` отвечает отказом.
+    /// После отчёта автомат возвращается к заголовку: второй цикл идёт
+    /// своим ходом — здесь кусков на него не осталось, и он отвергнут.
     #[tokio::test]
-    async fn run_serves_until_the_link_fails() {
-        let mut link = FakeLink::of([vec![0; 8]]).announcing([announce(8)]);
+    async fn serves_cycle_after_cycle_until_the_link_fails() {
+        let mut link = FakeLink::of([vec![0; 8]]).announcing([announce(8), announce(8)]);
         let mut flash = FakeFlash::new(64, 8);
 
-        let exit = run(&mut link, &mut flash).await;
+        serve(&mut link, &mut flash, plain()).await;
 
-        assert_eq!(exit, TaskExit::Failed);
-        assert_eq!(link.finished, vec![Ok(())], "первый цикл дошёл до отчёта");
+        assert_eq!(link.finished, vec![Ok(()), Err(Rejection::Transfer)]);
     }
 
     fn signed() -> Mode<FakeFlash> {
-        Mode {
-            check: signed_check,
-            apply: signed_apply,
-        }
+        Mode::signed()
     }
 
     fn signed_announce(len: usize) -> Announce {
@@ -526,9 +559,7 @@ mod tests {
         let mut link = FakeLink::of([image.clone()]).announcing([signed_announce(64)]);
         let mut flash = FakeFlash::new(1024, 8);
 
-        cycle(&mut link, &mut flash, &signed())
-            .await
-            .expect("канал жив");
+        serve(&mut link, &mut flash, signed()).await;
 
         assert_eq!(&flash.memory[..64], &image[..]);
         assert_eq!(flash.verified, vec![(SIGNATURE, 64)]);
@@ -543,9 +574,7 @@ mod tests {
         let mut link = FakeLink::of([vec![0; 8]]).announcing([announce(8)]);
         let mut flash = FakeFlash::new(64, 8);
 
-        cycle(&mut link, &mut flash, &signed())
-            .await
-            .expect("канал жив");
+        serve(&mut link, &mut flash, signed()).await;
 
         assert_eq!(link.finished, vec![Err(Rejection::Signature)]);
         assert_eq!(flash.prepared, None, "раздел не должен быть стёрт");
@@ -559,9 +588,7 @@ mod tests {
         let mut link = FakeLink::of([image]).announcing([signed_announce(64)]);
         let mut flash = FakeFlash::new(1024, 8);
 
-        cycle(&mut link, &mut flash, &signed())
-            .await
-            .expect("канал жив");
+        serve(&mut link, &mut flash, signed()).await;
 
         assert_eq!(link.finished, vec![Err(Rejection::Rollback)]);
         assert!(flash.verified.is_empty(), "до криптографии дойти не должно");
@@ -574,9 +601,7 @@ mod tests {
         let mut flash = FakeFlash::new(1024, 8);
         flash.verify = Err(VerifyError::BadSignature);
 
-        cycle(&mut link, &mut flash, &signed())
-            .await
-            .expect("канал жив");
+        serve(&mut link, &mut flash, signed()).await;
 
         assert_eq!(link.finished, vec![Err(Rejection::Signature)]);
     }
@@ -588,28 +613,9 @@ mod tests {
         let mut flash = FakeFlash::new(1024, 8);
         flash.key = [0; 32];
 
-        cycle(&mut link, &mut flash, &signed())
-            .await
-            .expect("канал жив");
+        serve(&mut link, &mut flash, signed()).await;
 
         assert_eq!(link.finished, vec![Err(Rejection::Signature)]);
         assert!(flash.verified.is_empty());
-    }
-
-    #[tokio::test]
-    async fn run_signed_serves_until_the_link_fails() {
-        let image = versioned_image(64, pack(1, 2, 4));
-        let mut link = FakeLink::of([image]).announcing([signed_announce(64)]);
-        let mut flash = FakeFlash::new(1024, 8);
-
-        let exit = run_signed(&mut link, &mut flash).await;
-
-        assert_eq!(exit, TaskExit::Failed);
-        assert_eq!(link.finished, vec![Ok(())]);
-        assert_eq!(
-            flash.verified,
-            vec![(SIGNATURE, 64)],
-            "режим с подписью: обмен через verify_and_mark_updated"
-        );
     }
 }

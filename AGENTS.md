@@ -39,7 +39,14 @@ skill'ом `rust-engineering` и не дублируются здесь. Это�
 `crates-cross/app/src/graph.rs` — только `boot:`, блок `watchdog:` и `fragments:`,
 который перечисляет фрагменты и даёт узлам имена (`APP_FRAG as APP`,
 `CPU_LOAD_FRAG as CPU_LOAD`).
-Отсюда и зависимость `domain` от `supervisor` (ради `Heartbeat`/`TaskExit` в сигнатуре) —
+**Каждая задача узла — автомат `#[fsm::typestate]`** на контексте, который эмитит
+фрагмент (`ctx: $crate::app::AppCtx, task: $crate::app::run;`): таблица на
+`impl <Узел>Ctx`, действия — его методы, задача — `match ctx.run().await {}`
+(у автомата с выходным состоянием `exit Done { result: TaskExit }` —
+`ctx.run().await.result`, как у `domain::ota`).
+Голый `loop` в задаче узла и проекция аргументов (`task: f(ctx.поле)`) не пишутся;
+единственное исключение — `cpu_load::task_standalone` (проект без графа, не узел).
+Отсюда и зависимость `domain` от `supervisor` (ради контекста и `TaskExit` в сигнатуре) —
 `embassy-executor` приезжает туда транзитивно, и это осознанно; `embassy-stm32` — нет.
 Подробности, прецеденты и пограничные случаи (например, `watchdog`) — `docs/architecture.md`.
 

@@ -17,9 +17,12 @@
 //! Считать сон как «всё, что не сон», — значит получить 100% на пустой плате.
 //!
 //! Два входа — [`task`] для проекта с графом и [`task_standalone`] для проекта
-//! без него. Различаются они не вычислением (оно одно, [`sample_loop`]), а
-//! тем, куда уходит результат: в графе он публикуется в `Watch`, без графа
-//! публиковать некому, и значение уходит в лог. Выбор между ними делает
+//! без него. Различаются они не вычислением (оно одно, [`CpuLoad::sample`]
+//! над [`snapshot`]), а тем, куда уходит результат: в графе он публикуется в
+//! `Watch`, без графа публиковать некому, и значение уходит в лог. Узел графа
+//! — автомат `#[fsm::typestate]` на контексте [`CpuLoadCtx`], который эмитит
+//! фрагмент ниже; `task_standalone` — не узел, контекста у него нет, и он
+//! остаётся простым циклом. Выбор между ними делает
 //! `crates-cross/app/src/main.rs`, потому что Liquid в `domain` запрещён.
 //!
 //! Публикация — только половина задачи. Кто и зачем читает загрузку, решает
@@ -29,13 +32,10 @@
 use core::sync::atomic::Ordering;
 
 use defmt_or_log::info;
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_time::{Duration, Instant, Timer};
 use portable_atomic::AtomicU64;
-use supervisor::Heartbeat;
 use supervisor::policy::{BackoffPolicy, JitterPolicy};
 use supervisor::runtime::TaskExit;
-use sync_unsized::watch::Sender;
 
 use crate::services::cpu_load::{CpuLoad, Sample};
 
@@ -107,89 +107,108 @@ pub struct Inputs {
     pub sleep_ticks: &'static SleepTicks,
 }
 
-/// Цикл измерения: ждёт интервал, отмечается у сторожа, снимает оба счётчика
-/// и отдаёт процент в `report`.
+/// Снимок обоих счётчиков.
 ///
-/// Первый снимок уходит в никуда (сравнивать не с чем) — так и задумано, см.
-/// [`CpuLoad::sample`].
-///
-/// Никогда не возвращается, о чём и говорит тип: узлу, который меряет, не
-/// из чего выходить, а `TaskExit` без графа докладывать некуда.
-async fn sample_loop(
-    sleep_ticks: &SleepTicks,
-    mut feed: impl FnMut(),
-    mut report: impl FnMut(u8),
-) -> ! {
-    let mut cpu_load = CpuLoad::new();
-    loop {
-        Timer::after(SAMPLE_INTERVAL).await;
-        // Отметка — ПОСЛЕ пробуждения и до измерения: «узел жив» здесь
-        // значит ровно «узел дождался своего интервала», а не «future опрашивают».
-        // Автоматической отметки по факту опроса нет намеренно — иначе сторож
-        // сторожил бы исполнитель, а не работу (см. `domain::app`).
-        feed();
-        // Оба счётчика читаются здесь, в одном месте и максимально близко
-        // друг к другу: разъехавшиеся на миллисекунду чтения дали бы
-        // загрузку, которой не было.
-        if let Some(percent) = cpu_load.sample(Sample {
-            total_ticks: Instant::now().as_ticks(),
-            sleep_ticks: sleep_ticks.load(Ordering::Relaxed),
-        }) {
-            report(percent);
-        }
+/// Оба читаются здесь, в одном месте и максимально близко друг к другу:
+/// разъехавшиеся на миллисекунду чтения дали бы загрузку, которой не было.
+fn snapshot(sleep_ticks: &SleepTicks) -> Sample {
+    Sample {
+        total_ticks: Instant::now().as_ticks(),
+        sleep_ticks: sleep_ticks.load(Ordering::Relaxed),
     }
 }
 
 /// Узел `CPU_LOAD` графа: раз в [`SAMPLE_INTERVAL`] публикует занятость
 /// процессора в процентах.
 ///
-/// `percent` — получатель, который граф создал из `publish: [PERCENT: u8; 1]`
-/// во фрагменте ниже. `Watch` хранит последнее значение, так что подписчик
-/// получит и пропущенные интервалы, лишь показав последний из них: счётчик
-/// знает «сколько сейчас», а не «сколько было когда».
+/// `ctx.percent` — отправитель, который граф создал из
+/// `publish: [PERCENT: u8; 1]` во фрагменте ниже. `Watch` хранит последнее
+/// значение, так что подписчик получит и пропущенные интервалы, лишь показав
+/// последний из них: счётчик знает «сколько сейчас», а не «сколько было когда».
 ///
-/// Не кончается никогда, поэтому [`TaskExit`] недостижим; у задачи, которая
-/// может закончиться, `Completed` против `Failed` решает, перезапустят её или
-/// нет.
-pub async fn task(
-    sleep_ticks: &SleepTicks,
-    percent: &Sender<'_, CriticalSectionRawMutex, u8>,
-    heartbeat: Heartbeat,
-) -> TaskExit {
-    sample_loop(
-        sleep_ticks,
-        || heartbeat.feed(),
-        |value| percent.send(value),
-    )
-    .await
+/// У автомата нет выходного состояния, поэтому [`TaskExit`] недостижим; у
+/// задачи, которая может закончиться, `Completed` против `Failed` решает,
+/// перезапустят её или нет.
+pub async fn task(mut ctx: CpuLoadCtx<'_>) -> TaskExit {
+    match ctx.run().await {}
 }
 
-/// Тот же цикл для проекта без графа задач: спавнится из `main.rs` (через
+#[fsm::typestate]
+impl CpuLoadCtx<'_> {
+    fsm::machine! {
+        machine Sampler mod edges {
+            states {
+                /// Ждёт замера в `next`; `load` помнит прошлый снимок.
+                Waiting { next: Instant, load: CpuLoad },
+            }
+            start => begin -> Waiting;
+            listen {
+                Waiting { next, .. } => tick: fsm::deadline(*next),
+            }
+            transitions {
+                Waiting + tick(()) => sample -> self,
+            }
+        }
+    }
+
+    /// Назначает первый замер; прошлого снимка ещё нет.
+    fn begin(&mut self) -> Waiting {
+        Waiting {
+            next: Instant::now() + SAMPLE_INTERVAL,
+            load: CpuLoad::new(),
+        }
+    }
+
+    /// Отмечается у сторожа, снимает счётчики и публикует процент.
+    ///
+    /// Отметка — ПОСЛЕ пробуждения и до измерения: «узел жив» здесь значит
+    /// ровно «узел дождался своего интервала», а не «future опрашивают».
+    /// Автоматической отметки по факту опроса нет намеренно — иначе сторож
+    /// сторожил бы исполнитель, а не работу (см. `domain::app`).
+    ///
+    /// Первый снимок уходит в никуда (сравнивать не с чем) — так и задумано,
+    /// см. [`CpuLoad::sample`].
+    ///
+    /// Следующий замер — `fsm::next_tick`, а не `Ticker`: отставший `Ticker`
+    /// догоняет пачкой тиков подряд, и замеры через микросекунды
+    /// опубликовали бы ложные 0% или 100% поверх честного значения.
+    fn sample(&mut self, s: &mut Waiting) {
+        self.heartbeat.feed();
+        if let Some(percent) = s.load.sample(snapshot(self.sleep_ticks)) {
+            self.percent.send(percent);
+        }
+        s.next = fsm::next_tick(s.next, SAMPLE_INTERVAL, Instant::now());
+    }
+}
+
+/// Тот же замер для проекта без графа задач: спавнится из `main.rs` (через
 /// `#[embassy_executor::task]`, потому что `Spawner::spawn` берёт токен, а не
 /// функцию), а значение уходит в лог — публиковать ему некуда.
+///
+/// Не автомат: это не узел графа, контекста у него нет, а одно состояние с
+/// тактом — ровно этот цикл.
 ///
 /// Строка на каждом интервале — сознательное исключение из правила «пустой узел
 /// молчит»: здесь она и есть результат измерения, и в проекте без графа иначе
 /// негде его увидеть. Подпишетесь на узел и сможете убрать.
 pub async fn task_standalone(sleep_ticks: &SleepTicks) {
-    sample_loop(
-        sleep_ticks,
-        || {},
-        |value| {
-            info!("domain: узел CPU_LOAD: загрузка {}%", value);
-        },
-    )
-    .await
+    let mut cpu_load = CpuLoad::new();
+    loop {
+        Timer::after(SAMPLE_INTERVAL).await;
+        if let Some(percent) = cpu_load.sample(snapshot(sleep_ticks)) {
+            info!("domain: узел CPU_LOAD: загрузка {}%", percent);
+        }
+    }
 }
 
 // Узел объявлен здесь же, где лежит его задача, — как `APP_FRAG` в
 // `domain::app`; compose-site (`crates-cross/app/src/graph.rs`) только
 // перечисляет фрагмент, называет узел (`as CPU_LOAD`) и кормит его входом.
 //
-// Проекция аргументов (`task: name(ctx.field)`), а не генерируемый тип
-// контекста — по той же причине, что в `domain::app`: сигнатура ниже не должна
-// называть ни одного типа, который эмитит compose-site, иначе задача перестала
-// бы быть обычной `async fn`.
+// `ctx:` — по той же причине, что в `domain::app`: контекст [`CpuLoadCtx`]
+// эмитит фрагмент здесь, в `domain`, а не compose-site, и автомат стоит на нём
+// рядом с узлом. Поле слота в нём — `&mut &'static SleepTicks`, поле
+// публикации — `watch::Sender` из `sync-unsized`.
 //
 // `boot: inputs:` — собственная привязка фрагмента: compose-site пишет
 // `fragments: [::domain::CPU_LOAD_FRAG as CPU_LOAD = ::domain::tasks::cpu_load::Inputs { sleep_ticks: … }]`,
@@ -221,5 +240,6 @@ supervisor::supervisor_fragment! {
         resources: [SLEEP_TICKS: &'static $crate::tasks::cpu_load::SleepTicks = inputs.sleep_ticks],
         publish: [PERCENT: u8; 1],
         watchdog: $crate::tasks::cpu_load::WATCHDOG observe,
-        task: $crate::tasks::cpu_load::task(ctx.sleep_ticks, &ctx.percent, ctx.heartbeat);
+        ctx: $crate::tasks::cpu_load::CpuLoadCtx,
+        task: $crate::tasks::cpu_load::task;
 }

@@ -98,7 +98,7 @@ datasheet, обязано быть меньше `bsp::wdg::HW_TIMEOUT_US` (10 с
 `FW_VERSION`/`OTA_PUBLIC_KEY_IN_IMAGE` — это свойства прошивки, а не платы, — и адаптер
 платы оборачивается там в `adapters::ota::Signed`, применение обновления делает
 `domain::update::apply_signed` (без подписи — `mark_updated()` через порт) —
-из узла OTA (`run_signed` против `run`); неверная подпись приходит от
+из узла OTA (режим `Mode::signed()` против `Mode::plain()` во входе узла); неверная подпись приходит от
 адаптера своим вариантом (`ports::VerifyError::BadSignature` →
 `UpdateError::BadSignature` → код `Signature` отправителю), а не как отказ
 флеша, а `cargo xtask build` создаёт ключевую пару и подписывает
