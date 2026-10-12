@@ -1,0 +1,50 @@
+# cargo-deny: лицензии, источники, уязвимости зависимостей.
+# Запуск: `cargo deny check` (корневой workspace) и
+# `cargo deny --manifest-path crates-cross/Cargo.toml check` (прошивка).
+
+[graph]
+# Что считается зависимостями: только то, что реально собирается под цели
+# проекта (хост и Cortex-M), а не весь список платформ из lock-файла.
+targets = [
+	"x86_64-pc-windows-msvc",
+	"x86_64-unknown-linux-gnu",
+	"thumbv6m-none-eabi",
+	"thumbv7em-none-eabihf",
+	"thumbv8m.main-none-eabihf",
+]
+
+[licenses]
+# Только пермиссивные лицензии: проект распространяется под MIT, копилефт
+# в дерево зависимостей попадать не должен.
+allow = [
+	"MIT",
+	"Apache-2.0",
+	"Apache-2.0 WITH LLVM-exception",
+	"BSD-2-Clause",
+	"BSD-3-Clause",
+	"ISC",
+	"Zlib",
+	"Unicode-3.0",
+	"CC0-1.0",
+]
+confidence-threshold = 0.9
+
+[bans]
+# Две версии одного крейта в дереве — предупреждение, а не ошибка: часть
+# дублей приезжает из HAL и не лечится на нашей стороне.
+multiple-versions = "warn"
+# Крейты проекта (`path`) и библиотека по git версии не имеют, и deny считает
+# их wildcard. Проект не публикуется на crates.io, так что проверка не нужна.
+wildcards = "allow"
+
+[advisories]
+# Уязвимости из RustSec; неподдерживаемые крейты — тоже сигнал.
+unmaintained = "workspace"
+yanked = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# Собственная библиотека (supervisor, fsm, watchdog) — по git.
+allow-git = ["https://github.com/Sergycb/rust-lib"]

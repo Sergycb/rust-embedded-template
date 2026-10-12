@@ -333,11 +333,20 @@ fn check_one(
         // работают. `cargo xtask lint` их намеренно не зовёт: тогда каждый
         // пользовательский CI тянул бы stm32-metapac ради инструмента, который
         // на сборку прошивки никак не влияет.
-        let commands: [&[&str]; 10] = [
+        let commands: [&[&str]; 12] = [
             &["xtask", "lint"],
             &["xtask", "test", "host"],
             &["xtask", "lint", "cross"],
             &["xtask", "build"],
+            // Лицензии, источники, уязвимости: и хостовый workspace, и
+            // прошивка (у неё свой `Cargo.lock`, он появляется после `build`).
+            &["deny", "check"],
+            &[
+                "deny",
+                "--manifest-path",
+                "crates-cross/Cargo.toml",
+                "check",
+            ],
             &["xtask", "pins"],
             &["xtask", "pins", "RCC"],
             // Заготовка — на I2C1, и это не произвольный выбор: он есть на

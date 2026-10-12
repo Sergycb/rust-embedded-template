@@ -46,16 +46,24 @@ jobs:
       - run: cargo xtask lint
       - run: cargo xtask test host
 
-      # cargo-hack: проверяет компиляцию с разными комбинациями фич, чтобы
-      # поймать ошибки, которые проходят при одной конкретной комбинации.
-      # Особенно важно для `domain` с фичами `std`/`log`/`defmt` и `adapters/signed`.
-      - name: cargo-hack (feature combinations)
-        run: |
-          cargo install cargo-hack --locked
-          cargo hack --workspace --exclude host-target-tests --features domain/log,domain/std,adapters/signed check
-          cargo hack --workspace --exclude host-target-tests --features domain/defmt,adapters/signed check
-          cargo hack --workspace --exclude host-target-tests --features domain/log,domain/std check
-          cargo hack --workspace --exclude host-target-tests --features domain/defmt check
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2 (2.87.22)
+        with:
+          tool: cargo-hack,cargo-deny
+
+      # cargo-hack: `check` для каждого сочетания фич каждого крейта. Фичи
+      # аддитивны, и cargo в одной сборке объединяет их со всего графа, так что
+      # «невозможное» сочетание рано или поздно встретится (например,
+      # `domain` без `log` и без `defmt` не собирается вовсе). `log` и `defmt`
+      # взаимоисключающие, но одна из них обязательна; dev-зависимости не нужны.
+      - name: cargo-hack (feature powerset)
+        run: >
+          cargo hack check --workspace --exclude host-target-tests --exclude xtask
+          --exclude test-support --feature-powerset --no-dev-deps
+          --mutually-exclusive-features log,defmt --at-least-one-of log,defmt
+
+      # Лицензии (только пермиссивные), источники зависимостей, уязвимости.
+      # Политика — `deny.toml`.
+      - run: cargo deny check
 
       # Покрытие — отдельным шагом и без порога: цифра здесь нужна, чтобы
       # видеть, куда тесты не заглядывают, а не чтобы ронять сборку. Порог
@@ -116,6 +124,11 @@ jobs:
             cargo fetch --manifest-path crates-cross/Cargo.toml
           fi
       - run: cargo xtask lint cross
+      # Свой `Cargo.lock` прошивки, та же политика `deny.toml`.
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2 (2.87.22)
+        with:
+          tool: cargo-deny
+      - run: cargo deny --manifest-path crates-cross/Cargo.toml check
 
       # Размер образа в сравнении с веткой по умолчанию. Порога здесь нет — как
       # и у покрытия: цифра нужна, чтобы увидеть рост тогда, когда автор ещё

@@ -55,15 +55,19 @@ host:test:
     - cargo xtask lint
     - cargo xtask test host
 
-    # cargo-hack: проверяет компиляцию с разными комбинациями фич, чтобы
-    # поймать ошибки, которые проходят при одной конкретной комбинации.
-    # Особенно важно для `domain` с фичами `std`/`log`/`defmt` и `adapters/signed`.
-    - |
-      cargo install cargo-hack --locked
-      cargo hack --workspace --exclude host-target-tests --features domain/log,domain/std,adapters/signed check
-      cargo hack --workspace --exclude host-target-tests --features domain/defmt,adapters/signed check
-      cargo hack --workspace --exclude host-target-tests --features domain/log,domain/std check
-      cargo hack --workspace --exclude host-target-tests --features domain/defmt check
+    # cargo-hack: `check` для каждого сочетания фич каждого крейта. Фичи
+    # аддитивны, и cargo в одной сборке объединяет их со всего графа, так что
+    # «невозможное» сочетание рано или поздно встретится (например, `domain`
+    # без `log` и без `defmt` не собирается вовсе). `log` и `defmt`
+    # взаимоисключающие, но одна из них обязательна; dev-зависимости не нужны.
+    - cargo install cargo-hack cargo-deny --locked
+    - >
+      cargo hack check --workspace --exclude host-target-tests --exclude xtask
+      --exclude test-support --feature-powerset --no-dev-deps
+      --mutually-exclusive-features log,defmt --at-least-one-of log,defmt
+    # Лицензии (только пермиссивные), источники зависимостей, уязвимости.
+    # Политика — `deny.toml`.
+    - cargo deny check
 
     # Покрытие без порога: цифра нужна, чтобы видеть, куда тесты не
     # заглядывают, а не чтобы ронять пайплайн. Порог в проекте, где половина
@@ -167,6 +171,9 @@ cross:build:
         cargo fetch --manifest-path crates-cross/Cargo.toml
       fi
     - cargo xtask lint cross
+    # Свой `Cargo.lock` прошивки, та же политика `deny.toml`.
+    - cargo install cargo-deny --locked
+    - cargo deny --manifest-path crates-cross/Cargo.toml check
     - cargo xtask build
     # Размер образа отдельной метрикой. Кеша и базы, в отличие от GitHub, здесь
     # не нужно: GitLab сам сравнивает metrics-отчёт merge request'а с отчётом

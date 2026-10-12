@@ -64,6 +64,7 @@ skill'ом `rust-engineering` и не дублируются здесь. Это�
 | `cargo xtask lint cross` | `crates-cross`: `fmt --check` + `clippy -D warnings` |
 | `cargo xtask build` | `crates-cross`: debug + release,{% if ota == "true" %} `app.bin`,{% endif %} размер образа, подпись (если включена) |
 | `cargo xtask precommit` | четыре команды выше подряд, до первой упавшей |
+| `cargo deny check` | лицензии (только пермиссивные), источники, уязвимости зависимостей по `deny.toml`; для прошивки — с `--manifest-path crates-cross/Cargo.toml`. Нужен `cargo-deny`, в `precommit` не входит, гоняется в CI |
 | `cargo xtask pins [БЛОК\|ПИН]` | справочник по чипу `{{chip}}`: выводы, альтернативные функции, DMA, тактирование |
 | `cargo xtask pins --check` | не занят ли отладочный порт в `resources.rs` |
 
