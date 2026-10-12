@@ -141,12 +141,12 @@ embedded-test      = { version = "0.7.2", default-features = false, features = [
 ] }
 # Трейты-границы домена и типы ошибок: их реализуют adapters и bsp, а app
 # работает только через них. `defmt` — ради `Format` на ошибках в логе.
-ports            = { path = "../crates-host/domain/ports", features = ["defmt"] }
+ports            = { path = "../crates-host/ports", features = ["defmt"] }
 # Адаптеры, generic по флешу/шине: OTA поверх embassy-boot, настройки поверх
 # sequential-storage. `bsp` строит их из своей периферии и отдаёт готовыми
 # объектами. `defmt` — ради `Format` на ошибках в логе прошивки; на хосте
 # крейт собирается без фич вывода вовсе.
-adapters         = { path = "../crates-host/domain/adapters", features = ["defmt"] }
+adapters         = { path = "../crates-host/adapters", features = ["defmt"] }
 bsp              = { path = "./bsp" }{% if ota == "true" %}
 boot             = { path = "./boot" }{% endif %}
 app              = { path = "./app" }

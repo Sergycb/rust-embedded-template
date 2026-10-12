@@ -50,7 +50,7 @@ let i2c = embassy_stm32::i2c::I2c::new(
     Irqs, r.sensor.tx_dma, r.sensor.rx_dma,
     khz(100), Default::default(),
 );
-// Свой драйвер, generic по трейтам embedded-hal, живёт в domain/adapters:
+// Свой драйвер, generic по трейтам embedded-hal, живёт в crates-host/adapters:
 // его проверяет host-тест с моком, а не плата. Крейт уже объявлен
 // зависимостью bsp — правки манифеста не нужно.
 let sensor = adapters::YourDriver::new(i2c, YOUR_ADDRESS);

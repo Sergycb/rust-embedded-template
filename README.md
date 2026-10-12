@@ -61,14 +61,14 @@ cargo xtask flash        # прошить плату
 | Распиновка платы | `crates-cross/bsp/src/board.rs` | `assign_resources!` разложит `Peripherals` по именованным группам — из них `bsp` соберёт драйверы; наружу уходит не периферия, а готовый объект (`docs/resources.md`) |
 | Граф задач | `crates-cross/app/src/graph.rs` | `supervisor_graph!`: порядок старта, рестарты с backoff, watchdog, обмен между задачами |
 | Логика и узлы графа | `crates-host/domain/` | всё, что не про регистры: автоматы, протоколы, конфигурация, а также объявления узлов (`supervisor_fragment!`) и их работа (`domain::app::run`, `domain::tasks::cpu_load::task` — автоматы `#[fsm::typestate]` на контексте узла) — тестируется на хосте; логика вне автоматов — функции над портами |
-| Адаптеры без чипа | `crates-host/domain/adapters/` | реализации портов, которым хватает `embedded-storage`/`embedded-hal`: OTA поверх `embassy-boot` (`adapters::ota`) и настройки поверх `sequential-storage` (`adapters::settings`, мост к общему флешу — `adapters::flash`) — generic по флешу, тестируется на хосте |
+| Адаптеры без чипа | `crates-host/adapters/` | реализации портов, которым хватает `embedded-storage`/`embedded-hal`: OTA поверх `embassy-boot` (`adapters::ota`) и настройки поверх `sequential-storage` (`adapters::settings`, мост к общему флешу — `adapters::flash`) — generic по флешу, тестируется на хосте |
 
 Граф и модули `bsp` уже содержат рабочие примеры в doc-комментариях и в `docs/` — с
 объяснением, почему выбрана именно эта библиотека, а не соседняя.
 
 `Board::new()` — единственное место, где начинается владение железом, и единственное
 место, где оно заканчивается: наружу `Board` отдаёт не периферию, а объекты,
-реализующие трейты из `crates-host/domain/ports`. Приложение зовёт
+реализующие трейты из `crates-host/ports`. Приложение зовёт
 `board.ota.flash.mark_booted()` через порт и про разделы флеша и шины не знает —
 `embassy-stm32` нет даже в манифесте `app`. Ни `Peripherals`, ни периферия
 ядра Cortex-M, ни посчитанные частоты полями не отдаются: нужен `DWT`, `MPU` или
@@ -131,12 +131,12 @@ supervisor-графы, watchdog). Вся остальная логика — в 
 Отсюда следует, что именно пересекает границу `bsp` → `app`: **объекты, а не
 периферия**. `Board` не отдаёт наружу ни `Peripherals`, ни отдельные пины — он
 собирает из них драйверы и отдаёт готовые объекты, реализующие трейты из
-`crates-host/domain/ports`. Полный путь такой:
+`crates-host/ports`. Полный путь такой:
 
 ```
 вывод чипа → группа assign_resources! (bsp/src/board.rs)
            → шина и драйвер собираются в Board::new
-           → драйвер, generic по трейтам embedded-hal, живёт в domain/adapters
+           → драйвер, generic по трейтам embedded-hal, живёт в crates-host/adapters
              и проверяется на хосте моком — до тех пор, пока ему не понадобится
              периферия конкретного чипа
            → готовый объект становится полем Board

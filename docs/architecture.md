@@ -57,7 +57,7 @@ supervisor-графы, watchdog). Вся остальная логика — в 
 
 **Адаптеры делятся по одному признаку — нужен ли чип.** Реализация порта, которой
 хватает трейтов `embedded-storage`/`embedded-hal` (раздел флеша или шина приходят
-параметром), лежит в `crates-host/domain/adapters` и тестируется на хосте на фейке:
+параметром), лежит в `crates-host/adapters` и тестируется на хосте на фейке:
 `adapters::ota` (поверх `embassy-boot`), `adapters::settings` (поверх
 `sequential-storage`) и `adapters::flash` (мост blocking → async над общим
 `Flash`, ради асинхронного API того же `sequential-storage`). Та, которой
@@ -184,7 +184,7 @@ let board = bsp::Board::new();
 ## `Board` отдаёт объекты, а не периферию
 
 Границу `bsp` → `app` пересекают объекты, реализующие порты из
-`crates-host/domain/ports`, и только они. `Peripherals`, отдельные пины и
+`crates-host/ports`, и только они. `Peripherals`, отдельные пины и
 группы `assign_resources!` наружу из `bsp` не выходят: их потребляет сам
 `Board::new`, собирая драйверы. Приложение работает через трейты и про
 регистры не знает. Прямое следствие того же правила: `embassy-stm32` нет и в
