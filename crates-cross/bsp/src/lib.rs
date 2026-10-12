@@ -10,6 +10,3 @@ pub mod ota;
 pub mod wdg;
 
 pub use board::Board;
-{%- if ota == "true" or config == "true" %}
-pub use board::FlashMutex;
-{%- endif %}

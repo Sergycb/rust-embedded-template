@@ -57,6 +57,12 @@ pub struct Updater<DFU: NorFlash, STATE: NorFlash> {
     capacity: u32,
 }
 
+impl<DFU: NorFlash, STATE: NorFlash> core::fmt::Debug for Updater<DFU, STATE> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Updater").finish_non_exhaustive()
+    }
+}
+
 impl<DFU: NorFlash, STATE: NorFlash> Updater<DFU, STATE> {
     /// `capacity` — размер раздела, в который образ будет исполняться
     /// (`ACTIVE`), см. поле.
@@ -224,6 +230,13 @@ pub struct Signed<DFU: NorFlash, STATE: NorFlash> {
     inner: Updater<DFU, STATE>,
     version: u32,
     public_key: [u8; 32],
+}
+
+#[cfg(feature = "signed")]
+impl<DFU: NorFlash, STATE: NorFlash> core::fmt::Debug for Signed<DFU, STATE> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Signed").finish_non_exhaustive()
+    }
 }
 
 #[cfg(feature = "signed")]

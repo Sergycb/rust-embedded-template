@@ -27,7 +27,39 @@ use static_cell::StaticCell;
 /// `NoopRawMutex`, а не `CriticalSectionRawMutex`: обе половины работают из
 /// задач одного исполнителя, то есть без вытеснения. Появится второй
 /// исполнитель (прерывательный приоритет, второе ядро) — менять здесь.
-pub type FlashMutex = Mutex<NoopRawMutex, RefCell<Flash<'static, Blocking>>>;
+///
+/// `RefCell` внутри нужен блокирующему `Mutex` embassy (`embassy-boot` и
+/// `BlockingPartition` принимают только его), поэтому ячейка спрятана в
+/// newtype: наружу тип торчит лишь как параметр [`adapters::flash::Shared`].
+pub struct FlashMutex(Mutex<NoopRawMutex, RefCell<Flash<'static, Blocking>>>);
+
+impl FlashMutex {
+    fn new(flash: Flash<'static, Blocking>) -> Self {
+        Self(Mutex::new(RefCell::new(flash)))
+    }
+
+{%- if ota == "true" %}
+
+    /// Мьютекс в том виде, в каком его ждёт `embassy-boot`.
+    pub(crate) const fn raw(&self) -> &Mutex<NoopRawMutex, RefCell<Flash<'static, Blocking>>> {
+        &self.0
+    }
+{%- endif %}
+}
+
+impl adapters::flash::FlashLock for FlashMutex {
+    type Flash = Flash<'static, Blocking>;
+
+    fn with<R>(&self, op: impl FnOnce(&mut Self::Flash) -> R) -> R {
+        self.0.with(op)
+    }
+}
+
+impl core::fmt::Debug for FlashMutex {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("FlashMutex").finish_non_exhaustive()
+    }
+}
 
 /// `&'static` он не для красоты: `Ota` и `Settings` отдаются в задачи, а
 /// аргументы задач embassy обязаны быть `'static`. Обычное поле `Board` этого
@@ -40,12 +72,13 @@ static FLASH: StaticCell<FlashMutex> = StaticCell::new();
 /// Каждое поле — адаптер, реализующий порт из `ports` (кроме сторожа, который
 /// реализует `watchdog::HardwareWatchdog` — тот же приём границы, только трейт
 /// приходит из крейта сторожа), или данные, тип которых объявлен там же
-/// (`info`). Периферии в полях нет вовсе: разбирать её на объекты — работа
+/// (`spec`). Периферии в полях нет вовсе: разбирать её на объекты — работа
 /// `bsp`, а `Peripherals`, пины и группы `assign_resources!` остаются внутри
 /// [`Board::new`].
+#[derive(Debug)]
 pub struct Board {
-    /// Сведения о чипе: имя, заводской номер, объём flash.
-    pub info: ports::BoardInfo,
+    /// Сведения о чипе: имя, заводской номер, объём flash, частоты `sys` и `hclk1`.
+    pub spec: ports::ChipSpec,
 {%- if ota == "true" %}
     /// Обновление прошивки — вход узла OTA: канал доставки `link` (заглушка
     /// `bsp::ota::Link`, пока проект не подставит свой транспорт) и адаптер
@@ -91,7 +124,10 @@ impl Board {
     /// once!» при втором вызове.
     // `Default` тут был бы ложью: конструктор не только не дёшев, он ещё и
     // одноразовый — `Default::default()` на второй вызов уронил бы прошивку.
-    #[allow(clippy::new_without_default)]
+    #[expect(
+        clippy::new_without_default,
+        reason = "конструктор одноразовый: `Default` на второй вызов уронил бы прошивку"
+    )]
     #[must_use]
     pub fn new() -> Self {
         let p = init_peripherals();
@@ -99,18 +135,15 @@ impl Board {
         // заполняется внутри `init_peripherals`, наружу отдаётся только так.
         // Дамп в лог — не отладочный мусор, а штатная сводка старта: по нему
         // видно, какой источник выиграл (HSE не завёлся — HAL молча уедет на
-        // HSI) и что получили делители. Полем `Board` частоты не остаются:
-        // домену они не нужны, а тому, кто их спросит (target-тест
-        // `clocks_match_intent`), доступен тот же `rcc::clocks`.
+        // HSI) и что получили делители. В `ChipSpec` уходят только `sys` и
+        // `hclk1` числами: целый `Clocks` — тип HAL, генерируется под чип.
         //
         // Частота конкретного блока, когда `Board` начнёт отдавать периферию:
         // `defmt::info!("uart clk {}", rcc::frequency::<peripherals::USART1>().0)`
         // — она берётся не с шины, а через мультиплексор (`Config.rcc.mux`),
         // и от общего дампа может отличаться.
-        info!(
-            "bsp: board initialized, clocks {}",
-            embassy_stm32::rcc::clocks(&p.RCC)
-        );
+        let clocks = embassy_stm32::rcc::clocks(&p.RCC);
+        info!("bsp: board initialized, clocks {}", clocks);
 
 {%- if ota == "true" or config == "true" %}
         // Периферия разбирается здесь: `FLASH` уходит в общий объект (его
@@ -120,7 +153,7 @@ impl Board {
         // split_resources!(p);` и собирайте из `r` свои драйверы. Наружу из
         // `bsp` уходит не периферия, а готовый объект — поле `Board`,
         // реализующее порт из `ports`.
-        let flash = FLASH.init(Mutex::new(RefCell::new(Flash::new_blocking(p.FLASH))));
+        let flash = FLASH.init(FlashMutex::new(Flash::new_blocking(p.FLASH)));
 {%- else %}
         // Место для распиновки платы: объявите `assign_resources!`
         // (docs/resources.md), добавьте `let r = split_resources!(p);` и
@@ -129,15 +162,23 @@ impl Board {
         // `ports`.
 {%- endif %}
 
+        let sys_hz = clocks.sys.to_hertz().map(|hz| hz.0);
+        let hclk1_hz = clocks.hclk1.to_hertz().map(|hz| hz.0);
+
         // `usize` на Cortex-M — 32 бита, усечения нет.
-        #[allow(clippy::cast_possible_truncation)]
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "`usize` на Cortex-M — 32 бита"
+        )]
         let flash_size = embassy_stm32::flash::FLASH_SIZE as u32;
 
         Self {
-            info: ports::BoardInfo {
+            spec: ports::ChipSpec {
                 chip: "{{chip}}",
                 uid: embassy_stm32::uid::uid(),
                 flash_size,
+                sys_hz,
+                hclk1_hz,
             },
 {%- if ota == "true" %}
             ota: crate::ota::new(flash),

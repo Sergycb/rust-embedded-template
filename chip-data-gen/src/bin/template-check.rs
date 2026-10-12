@@ -663,7 +663,7 @@ fn check_snippets_compile(project: &Path, cargo_target_dir: &Path) -> anyhow::Re
         "//! Временный модуль: сюда `template-check` складывает заготовки из\n\
          //! `cargo xtask pins <БЛОК> --snippet` и компилирует их. В проекте\n\
          //! пользователя этого файла нет — он создаётся и удаляется проверкой.\n\
-         #![allow(dead_code)]\n\n",
+         #![allow(dead_code, reason = \"заготовки никто не вызывает\")]\n\n",
     );
     for block in &blocks {
         let snippet = capture(

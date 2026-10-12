@@ -8,13 +8,13 @@
 //! сеть) в `bsp`: заголовок, куски, отчёт отправителю — и одна строка в
 //! `fragments:` графа.
 //!
-//! Задача — автомат `#[fsm::typestate]` на контексте [`OtaCtx`], который
+//! Задача — автомат `#[fsm::typestate]` на контексте `OtaCtx`, который
 //! эмитит фрагмент `OTA_FRAG`: заголовок → проверки до стирания → приём →
 //! применение → отчёт → снова заголовок; отказ канала — выходное состояние.
 //!
 //! Применение различается по Cargo-варианту (`signed`), а Liquid в `domain`
-//! запрещён, поэтому режим — данные входа узла: [`Mode::plain`] или
-//! [`Mode::signed`], и выбирает его `crates-cross/app/src/graph.rs`. Обе
+//! запрещён, поэтому режим — данные входа узла: `Mode::plain` или
+//! `Mode::signed`, и выбирает его `crates-cross/app/src/graph.rs`. Обе
 //! функции режима лежат в любом проекте; во flash попадает только выбранная —
 //! generic без вызова не мономорфизируется.
 //!
@@ -54,7 +54,7 @@ pub const BACKOFF: BackoffPolicy = BackoffPolicy {
 ///
 /// ```ignore
 /// fragments: [::domain::OTA_FRAG<bsp::ota::Link, bsp::ota::Updater> as OTA
-///                 = ::domain::ota::Inputs { link: board.ota.link, flash: board.ota.flash,
+///                 = ::domain::ota::OtaWiring { link: board.ota.link, flash: board.ota.flash,
 ///                                           mode: ::domain::ota::Mode::plain() }];
 /// ```
 ///
@@ -63,12 +63,12 @@ pub const BACKOFF: BackoffPolicy = BackoffPolicy {
 /// конструирует — зависимость направлена от приложения к подсистеме и никогда
 /// обратно.
 #[derive(Debug)]
-pub struct Inputs<S, F> {
+pub struct OtaWiring<S, F> {
     /// Канал доставки образа — реализация `ImageSource` из `bsp`.
     pub link: S,
     /// Адаптер обновления — реализация `FirmwareUpdate` поверх разделов флеша.
     pub flash: F,
-    /// Режим применения: [`Mode::plain`] или [`Mode::signed`].
+    /// Режим применения: `Mode::plain` или `Mode::signed`.
     pub mode: Mode<F>,
 }
 
@@ -179,7 +179,10 @@ where
         }
     }
 
-    #[allow(clippy::unused_self)]
+    #[expect(
+        clippy::unused_self,
+        reason = "сигнатуру действия задаёт таблица `#[fsm::typestate]`"
+    )]
     fn begin(&mut self) -> Waiting {
         info!("domain: узел OTA запущен");
         Waiting
@@ -251,7 +254,10 @@ where
     }
 
     /// Отказ канала: сообщать отправителю некому, прогон кончается `Failed`.
-    #[allow(clippy::unused_self)]
+    #[expect(
+        clippy::unused_self,
+        reason = "сигнатуру действия задаёт таблица `#[fsm::typestate]`"
+    )]
     fn lost(&mut self, err: S::Error) -> Down {
         warn!("ota: отказ канала: {:?}", Debug2Format(&err));
         Down {
@@ -261,7 +267,10 @@ where
 }
 
 /// Без подписи заголовок проверять нечего — длину сверит `receive`.
-#[allow(clippy::unnecessary_wraps)]
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "сигнатуру задаёт указатель на функцию `Mode::check`"
+)]
 fn plain_check(_: &Announce) -> Result<(), Rejection> {
     Ok(())
 }
@@ -314,8 +323,10 @@ fn download_rejection<S, F>(err: DownloadError<S, F>) -> Result<Rejection, S> {
     Ok(match err {
         DownloadError::Empty | DownloadError::TooLong { .. } => Rejection::Length,
         DownloadError::TooMuchData { .. } | DownloadError::Incomplete { .. } => Rejection::Transfer,
-        DownloadError::UnusableGranularity(_) | DownloadError::Flash(_) => Rejection::Device,
         DownloadError::Source(err) => return Err(err),
+        // `UnusableGranularity`, `Flash` и незнакомые варианты (перечисление
+        // `non_exhaustive`) сообщаются как отказ устройства, а не прячутся.
+        _ => Rejection::Device,
     })
 }
 
@@ -326,7 +337,8 @@ fn update_rejection<E>(err: &UpdateError<E>) -> Rejection {
         UpdateError::Busy => Rejection::Busy,
         UpdateError::Rollback { .. } => Rejection::Rollback,
         UpdateError::NoPublicKey | UpdateError::BadSignature => Rejection::Signature,
-        UpdateError::Flash(_) => Rejection::Device,
+        // `Flash` и незнакомые варианты (перечисление `non_exhaustive`).
+        _ => Rejection::Device,
     }
 }
 
@@ -334,11 +346,11 @@ fn update_rejection<E>(err: &UpdateError<E>) -> Rejection {
 // `domain::app`; compose-site (`crates-cross/app/src/graph.rs`) только
 // перечисляет фрагмент, называет узел (`as OTA`) и кормит его входом. Фрагмент
 // один на оба Cargo-варианта `signed`: режим применения — данные входа
-// (`Inputs::mode`), а не второй фрагмент, иначе было бы два контекста и две
+// (`OtaWiring::mode`), а не второй фрагмент, иначе было бы два контекста и две
 // одинаковые таблицы автомата. Какой режим подставить — решает `graph.rs`.
 //
 // `boot: inputs: …` — собственная привязка фрагмента: compose-site пишет
-// `fragments: [::domain::OTA_FRAG<…> as OTA = ::domain::ota::Inputs { link: …, flash: …, mode: … }]`,
+// `fragments: [::domain::OTA_FRAG<…> as OTA = ::domain::ota::OtaWiring { link: …, flash: …, mode: … }]`,
 // а `spawn_all` связывает её первой строкой пролога, и инициализаторы слотов
 // ниже читают её поля. Так фрагмент не видит `Board` вовсе — только то, что
 // ему дали. `MODE` — обычный слот, не `local`: указатели на функции `Send`
@@ -375,7 +387,7 @@ fn update_rejection<E>(err: &UpdateError<E>) -> Rejection {
 // Без `watchdog:` намеренно — см. `run`.
 supervisor::supervisor_fragment! {
     name: OTA_FRAG<S, F>;
-    boot: inputs: $crate::ota::Inputs<S, F>;
+    boot: inputs: $crate::ota::OtaWiring<S, F>;
 
     node deps: [], restart: ::supervisor::policy::RestartPolicy::OnFailure,
         backoff: $crate::ota::BACKOFF,
@@ -414,7 +426,7 @@ mod tests {
         Mode::plain()
     }
 
-    #[allow(clippy::cast_possible_truncation)]
+    #[expect(clippy::cast_possible_truncation, reason = "размеры в тестах малы")]
     fn announce(len: usize) -> Announce {
         Announce {
             len: len as u32,
@@ -422,7 +434,7 @@ mod tests {
         }
     }
 
-    #[allow(clippy::cast_possible_truncation)]
+    #[expect(clippy::cast_possible_truncation, reason = "размеры в тестах малы")]
     fn image(len: usize) -> Vec<u8> {
         (0..len).map(|i| (i * 3) as u8).collect()
     }
@@ -549,7 +561,7 @@ mod tests {
         Mode::signed()
     }
 
-    #[allow(clippy::cast_possible_truncation)]
+    #[expect(clippy::cast_possible_truncation, reason = "размеры в тестах малы")]
     fn signed_announce(len: usize) -> Announce {
         Announce {
             len: len as u32,

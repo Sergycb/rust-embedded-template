@@ -184,7 +184,7 @@ pub async fn receive<S: ImageSource, F: FirmwareUpdate>(
 }
 
 #[cfg(test)]
-#[allow(clippy::cast_possible_truncation)]
+#[expect(clippy::cast_possible_truncation, reason = "размеры в тестах малы")]
 mod tests {
     use super::{MAX_WORD, receive};
     use crate::test_support::{FakeFlash, FakeLink};
@@ -400,9 +400,15 @@ mod tests {
         // Обёртка, у которой `prepare` «проходит», но флаг подготовки не
         // ставит: первая же запись фейка ответит отказом, и он обязан дойти
         // до вызывающего как `Flash(_)`.
-        #[allow(clippy::items_after_statements)]
+        #[expect(
+            clippy::items_after_statements,
+            reason = "локальный тип теста стоит рядом с использованием"
+        )]
         struct NoPrepare(FakeFlash);
-        #[allow(clippy::items_after_statements)]
+        #[expect(
+            clippy::items_after_statements,
+            reason = "локальный тип теста стоит рядом с использованием"
+        )]
         impl FirmwareUpdate for NoPrepare {
             type Error = &'static str;
             fn write_granularity(&mut self) -> u32 {

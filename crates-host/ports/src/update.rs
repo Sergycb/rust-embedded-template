@@ -194,6 +194,7 @@ pub trait SignedFirmwareUpdate: FirmwareUpdate {
 /// вариантом, узел OTA не мог сказать отправителю ничего точнее «не вышло».
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[non_exhaustive]
 pub enum VerifyError<E> {
     /// Подпись не сошлась с ключом устройства — или ключ не разбирается.
     #[error("подпись не сошлась")]
@@ -213,6 +214,7 @@ pub enum VerifyError<E> {
 /// «подпись не сошлась» и «прислали старую прошивку» важнее всего остального.
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[non_exhaustive]
 pub enum UpdateError<E> {
     /// Длина из недоверенного канала больше вместимости. Проверяется ПЕРВОЙ:
     /// `verify_and_mark_updated` в embassy-boot начинается с

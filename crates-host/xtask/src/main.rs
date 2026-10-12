@@ -430,7 +430,10 @@ fn report_image(base: u64, size: u64) -> Result<(), anyhow::Error> {
     let Some((name, partition)) = app_region(&regions) else {
         // Раздела приложения в раскладке нет — сверять образ не с чем, а подписывать
         // и раздавать образ без единой проверки нельзя (так же отказывает `flash`).
-        #[allow(clippy::cast_precision_loss)]
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "размеры образа и раздела на порядки меньше 2^52"
+        )]
         let size_kib = size as f64 / 1024.0;
         println!("app: {size_kib:.1} KiB");
         anyhow::bail!(
@@ -440,11 +443,20 @@ fn report_image(base: u64, size: u64) -> Result<(), anyhow::Error> {
 
     ensure_image_base(base, name, partition)?;
 
-    #[allow(clippy::cast_precision_loss)]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "размеры образа и раздела на порядки меньше 2^52"
+    )]
     let percent = size as f64 * 100.0 / partition.length.max(1) as f64;
-    #[allow(clippy::cast_precision_loss)]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "размеры образа и раздела на порядки меньше 2^52"
+    )]
     let size_kib = size as f64 / 1024.0;
-    #[allow(clippy::cast_precision_loss)]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "размеры образа и раздела на порядки меньше 2^52"
+    )]
     let partition_kib = partition.length as f64 / 1024.0;
     match IMAGE_BUDGET_PERCENT {
         Some(budget) => println!(
@@ -542,7 +554,10 @@ fn save_image_size(size: u64) -> Result<(), anyhow::Error> {
 fn size_delta(baseline: Option<u64>, size: u64, partition: u64) -> Option<String> {
     let baseline = baseline?;
     if baseline == size {
-        #[allow(clippy::cast_precision_loss)]
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "размеры образа и раздела на порядки меньше 2^52"
+        )]
         return Some(format!(
             "размер не изменился ({:.1} KiB)",
             size as f64 / 1024.0
@@ -557,9 +572,15 @@ fn size_delta(baseline: Option<u64>, size: u64, partition: u64) -> Option<String
     // Проценты с десятой долей, в отличие от целой цифры строкой выше: рост в
     // триста байт от раздела в сто килобайт — это треть процента, и на целых
     // числах обе стороны выглядели бы одинаково.
-    #[allow(clippy::cast_precision_loss)]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "размеры образа и раздела на порядки меньше 2^52"
+    )]
     let percent = |bytes: u64| bytes as f64 * 100.0 / partition.max(1) as f64;
-    #[allow(clippy::cast_precision_loss)]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "размеры образа и раздела на порядки меньше 2^52"
+    )]
     Some(format!(
         "{sign}{diff} байт к ветке по умолчанию (было {:.1} KiB, {:.1}% → {:.1}%)",
         baseline as f64 / 1024.0,
@@ -600,7 +621,10 @@ fn check_image_budget(
     // Целыми и без промежуточного деления: усечённый процент пропускал бы 85,9 %
     // при бюджете 85 и не сработал бы предупреждение на 89,9 %.
     let length = length.max(1);
-    #[allow(clippy::cast_precision_loss)]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "размеры образа и раздела на порядки меньше 2^52"
+    )]
     let percent = size as f64 * 100.0 / length as f64;
     let Some(budget) = budget else {
         // Порог не задан — остаётся прежняя мягкая подсказка. Не ошибка:
@@ -700,6 +724,12 @@ fn test_host(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     cmd!(
         sh,
         "cargo nextest run --workspace --exclude host-target-tests --release --features domain/log,domain/std,adapters/signed"
+    )
+    .run()?;
+    // nextest doc-тесты не запускает.
+    cmd!(
+        sh,
+        "cargo test --doc --workspace --exclude host-target-tests --release --features domain/log,domain/std,adapters/signed"
     )
     .run()?;
     Ok(())
@@ -833,6 +863,13 @@ fn lint_host(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
         sh,
         "cargo clippy --workspace --all-targets --features domain/std,domain/log,adapters/signed -- -D warnings"
     )
+    .run()?;
+    // Битые ссылки в документации ломали бы `cargo doc` у пользователя крейта.
+    cmd!(
+        sh,
+        "cargo doc --no-deps --workspace --exclude host-target-tests --features domain/std,domain/log,adapters/signed"
+    )
+    .env("RUSTDOCFLAGS", "-D warnings")
     .run()?;
     Ok(())
 }
@@ -1093,9 +1130,13 @@ fn raw_image(elf: &Path) -> Result<(u64, Vec<u8>), anyhow::Error> {
 /// Закрытый ключ — 32 байта seed, из которых `salty` разворачивает пару.
 fn read_seed(path: &Path) -> Result<[u8; 32], anyhow::Error> {
     let bytes = fs::read(path).with_context(|| format!("прочитать {}", path.display()))?;
-    bytes
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("{} должен быть ровно 32 байта", path.display()))
+    bytes.try_into().map_err(|bytes: Vec<u8>| {
+        anyhow::anyhow!(
+            "{} должен быть ровно 32 байта, а в нём {}",
+            path.display(),
+            bytes.len()
+        )
+    })
 }
 
 fn write_public(path: &Path, seed: &[u8; 32]) -> Result<(), anyhow::Error> {
@@ -1463,7 +1504,10 @@ fn parse_region_line(line: &str, source: &Path) -> Result<(String, Region), anyh
     // шаблоне `/* … */` стоит ВМЕСТО значения, и обрезание всей строки унесло
     // бы вместе с ним ключевое слово `LENGTH` — заставив сообщать о «форме,
     // которую не удалось разобрать», вместо «значение в файле не заполнено».
-    #[allow(clippy::items_after_statements)]
+    #[expect(
+        clippy::items_after_statements,
+        reason = "вспомогательная функция стоит рядом с использованием"
+    )]
     fn region_value(raw: &str) -> &str {
         let raw = raw.split_once("/*").map_or(raw, |(before, _)| before);
         raw.trim_start_matches([' ', '=', ',']).trim()

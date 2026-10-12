@@ -7,7 +7,10 @@
 // шаблоне подписчиков нет, и без этого `-D warnings` в `cargo xtask lint cross`
 // ронял бы сборку на месте, где не сломалось ничего. Свою логику сюда не пишут
 // — она в `domain`.
-#![allow(dead_code)]
+#![allow(
+    dead_code,
+    reason = "граф генерируется целиком: часть функций без читателей, пока нет подписчиков"
+)]
 
 {%- if graph == "true" %}
 use defmt::{info, warn};
@@ -68,7 +71,7 @@ supervisor_graph! {
     // (`<Link, Updater>`) — типы двух его слотов: слот — `static`, тип ему
     // нужен, а знает его только эта сторона; подставили свой транспорт вместо
     // заглушки — меняйте первый аргумент. Привязка (`= …`) — вход узла
-    // (`domain::ota::Inputs`), разложенный из поля платы `board.ota`{% if signed == "true" %} с
+    // (`domain::ota::OtaWiring`), разложенный из поля платы `board.ota`{% if signed == "true" %} с
     // адаптером, обёрнутым версией и ключом этого образа (`crate::image`){% endif %}, и режим
     // применения (`Mode::{% if signed == "true" %}signed{% else %}plain{% endif %}()`): `bsp`
     // про `domain` не знает, поэтому раскладка здесь. Вычисляется она в
@@ -83,13 +86,13 @@ supervisor_graph! {
     // который ведёт ручной цикл исполнителя в `main.rs` (docs/modules/
     // app-cpu-load.md); всё, что нужно фрагменту, — ссылка на него, поэтому
     // привязка такая же, как у узла OTA: тип входа объявляет подсистема
-    // (`domain::tasks::cpu_load::Inputs`), а значение собирает приложение.
+    // (`domain::tasks::cpu_load::IdleMeter`), а значение собирает приложение.
     //
     // Подписчика в шаблоне нет: слот `PERCENT` объявлен явно, единицей, и
     // первым его занимает тот, кто первым позовёт
     // `cpu_load_percent_receiver()`. Само значение в лог не идёт — читатель
     // должен быть, иначе процент некуда девать.
-    ::domain::CPU_LOAD_FRAG as CPU_LOAD = ::domain::tasks::cpu_load::Inputs { sleep_ticks: crate::cpu_load::sleep_ticks() }{% if ota == "true" %}, {% if signed == "true" %}::domain::OTA_FRAG<bsp::ota::Link, crate::image::Signed> as OTA = ::domain::ota::Inputs { link: board.ota.link, flash: crate::image::Signed::new(board.ota.flash, crate::image::FW_VERSION, crate::image::OTA_PUBLIC_KEY_IN_IMAGE), mode: ::domain::ota::Mode::signed() }{% else %}::domain::OTA_FRAG<bsp::ota::Link, bsp::ota::Updater> as OTA = ::domain::ota::Inputs { link: board.ota.link, flash: board.ota.flash, mode: ::domain::ota::Mode::plain() }{% endif %}{% endif %}];
+    ::domain::CPU_LOAD_FRAG as CPU_LOAD = ::domain::tasks::cpu_load::IdleMeter { sleep_ticks: crate::cpu_load::sleep_ticks() }{% if ota == "true" %}, {% if signed == "true" %}::domain::OTA_FRAG<bsp::ota::Link, crate::image::Signed> as OTA = ::domain::ota::OtaWiring { link: board.ota.link, flash: crate::image::Signed::new(board.ota.flash, crate::image::FW_VERSION, crate::image::OTA_PUBLIC_KEY_IN_IMAGE), mode: ::domain::ota::Mode::signed() }{% else %}::domain::OTA_FRAG<bsp::ota::Link, bsp::ota::Updater> as OTA = ::domain::ota::OtaWiring { link: board.ota.link, flash: board.ota.flash, mode: ::domain::ota::Mode::plain() }{% endif %}{% endif %}];
 }
 
 /// Куда уходит просрочка наблюдаемого узла.

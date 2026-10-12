@@ -15,50 +15,71 @@ use core::cell::RefCell;
 
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::RawMutex;
-use embedded_storage::nor_flash::{ErrorType, NorFlash};
+use embedded_storage::nor_flash::{ErrorType, NorFlash, ReadNorFlash};
 
-/// Ссылка на общий флеш; операции — под его мьютексом, по одной.
-pub struct Shared<'a, M: RawMutex, F: NorFlash> {
-    flash: &'a Mutex<M, RefCell<F>>,
+/// Флеш, к которому доступ идёт только под замком, по одной операции.
+///
+/// Трейт, а не `&Mutex<M, RefCell<F>>` в сигнатуре [`Shared`]: `RefCell`
+/// нужен блокирующему `Mutex` embassy (его API другого не принимает), но это
+/// деталь реализации, которая не должна расползаться по публичным типам.
+/// Для самого `Mutex<M, RefCell<F>>` трейт реализован ниже; владелец общего
+/// флеша может реализовать его на своём типе и спрятать ячейку.
+pub trait FlashLock {
+    /// Флеш под замком.
+    type Flash: NorFlash;
+
+    /// Выполняет `op` с исключительным доступом к флешу.
+    fn with<R>(&self, op: impl FnOnce(&mut Self::Flash) -> R) -> R;
 }
 
-impl<'a, M: RawMutex, F: NorFlash> Shared<'a, M, F> {
-    pub fn new(flash: &'a Mutex<M, RefCell<F>>) -> Self {
+impl<M: RawMutex, F: NorFlash> FlashLock for Mutex<M, RefCell<F>> {
+    type Flash = F;
+
+    fn with<R>(&self, op: impl FnOnce(&mut F) -> R) -> R {
+        self.lock(|flash| op(&mut flash.borrow_mut()))
+    }
+}
+
+/// Ссылка на общий флеш; операции — под его замком, по одной.
+#[derive(Debug)]
+pub struct Shared<'a, L: FlashLock> {
+    flash: &'a L,
+}
+
+impl<'a, L: FlashLock> Shared<'a, L> {
+    /// Оборачивает общий флеш.
+    #[must_use]
+    pub const fn new(flash: &'a L) -> Self {
         Self { flash }
     }
 }
 
-impl<M: RawMutex, F: NorFlash> ErrorType for Shared<'_, M, F> {
-    type Error = F::Error;
+impl<L: FlashLock> ErrorType for Shared<'_, L> {
+    type Error = <L::Flash as ErrorType>::Error;
 }
 
-impl<M: RawMutex, F: NorFlash> embedded_storage_async::nor_flash::ReadNorFlash
-    for Shared<'_, M, F>
-{
-    const READ_SIZE: usize = F::READ_SIZE;
+impl<L: FlashLock> embedded_storage_async::nor_flash::ReadNorFlash for Shared<'_, L> {
+    const READ_SIZE: usize = <L::Flash as ReadNorFlash>::READ_SIZE;
 
     fn read(
         &mut self,
         offset: u32,
         bytes: &mut [u8],
     ) -> impl Future<Output = Result<(), Self::Error>> {
-        core::future::ready(
-            self.flash
-                .lock(|flash| flash.borrow_mut().read(offset, bytes)),
-        )
+        core::future::ready(self.flash.with(|flash| flash.read(offset, bytes)))
     }
 
     fn capacity(&self) -> usize {
-        self.flash.lock(|flash| flash.borrow().capacity())
+        self.flash.with(|flash| flash.capacity())
     }
 }
 
-impl<M: RawMutex, F: NorFlash> embedded_storage_async::nor_flash::NorFlash for Shared<'_, M, F> {
-    const WRITE_SIZE: usize = F::WRITE_SIZE;
-    const ERASE_SIZE: usize = F::ERASE_SIZE;
+impl<L: FlashLock> embedded_storage_async::nor_flash::NorFlash for Shared<'_, L> {
+    const WRITE_SIZE: usize = <L::Flash as NorFlash>::WRITE_SIZE;
+    const ERASE_SIZE: usize = <L::Flash as NorFlash>::ERASE_SIZE;
 
     fn erase(&mut self, from: u32, to: u32) -> impl Future<Output = Result<(), Self::Error>> {
-        core::future::ready(self.flash.lock(|flash| flash.borrow_mut().erase(from, to)))
+        core::future::ready(self.flash.with(|flash| flash.erase(from, to)))
     }
 
     fn write(
@@ -66,10 +87,7 @@ impl<M: RawMutex, F: NorFlash> embedded_storage_async::nor_flash::NorFlash for S
         offset: u32,
         bytes: &[u8],
     ) -> impl Future<Output = Result<(), Self::Error>> {
-        core::future::ready(
-            self.flash
-                .lock(|flash| flash.borrow_mut().write(offset, bytes)),
-        )
+        core::future::ready(self.flash.with(|flash| flash.write(offset, bytes)))
     }
 }
 
@@ -92,7 +110,7 @@ mod tests {
 
         assert_eq!(shared.capacity(), 64);
         assert_eq!(
-            <Shared<'_, NoopRawMutex, MemFlash<64, 16, 4>> as NorFlash>::WRITE_SIZE,
+            <Shared<'_, Mutex<NoopRawMutex, RefCell<MemFlash<64, 16, 4>>>> as NorFlash>::WRITE_SIZE,
             4
         );
 

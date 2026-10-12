@@ -120,6 +120,7 @@ pub trait ImageSource {
 /// удобства.
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[non_exhaustive]
 pub enum DownloadError<S, F> {
     /// Обещали образ нулевой длины. Проверяется здесь, а не оставляется
     /// реализации порта: `prepare(0)` не стёр бы ничего, и первая же запись

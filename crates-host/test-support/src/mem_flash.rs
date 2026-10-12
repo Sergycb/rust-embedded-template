@@ -5,6 +5,7 @@ use embedded_storage::nor_flash::{
     ErrorType, NorFlash, NorFlashError, NorFlashErrorKind, ReadNorFlash,
 };
 
+#[derive(Debug)]
 pub struct MemFlash<const SIZE: usize, const ERASE: usize, const WRITE: usize> {
     pub mem: Vec<u8>,
 }

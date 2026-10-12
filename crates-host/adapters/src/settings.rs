@@ -105,6 +105,12 @@ pub struct Settings<F: NorFlash> {
     scratch: [u8; SCRATCH],
 }
 
+impl<F: NorFlash> core::fmt::Debug for Settings<F> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Settings").finish_non_exhaustive()
+    }
+}
+
 impl<F: NorFlash> Settings<F> {
     /// `range` — границы раздела в адресации флеша `flash` (у `embassy-stm32`
     /// нулевое смещение это база flash, а не адрес в адресном пространстве).

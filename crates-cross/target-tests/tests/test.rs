@@ -106,46 +106,29 @@ mod tests {
     /// которые заполняют все семейные реализации `rcc` в embassy; остальной
     /// состав `Clocks` генерируется под чип и в шаблоне неизвестен.
     #[test]
-    fn clocks_match_intent(_board: Board) {
-        // Частоты берутся у самого HAL, а не полем `Board`: снаружи `bsp`
-        // видны только объекты, реализующие порты, а `Clocks` — данные. Ручка
-        // `RCC` уже уехала внутрь `Board::new`, поэтому `steal`; безопасно
-        // ровно потому, что инициализация прошла (`_board` тому
-        // доказательство), а читается регистр без записи.
-        //
-        // SAFETY: `Board::new` в `#[init]` уже отработал, то есть настоящий
-        // владелец `RCC` своё дело сделал; ниже только чтение посчитанных
-        // частот.
-        //
-        // `#[allow(unsafe_code)]` — как и три остальных unsafe в `crates-cross`
-        // (`boot/src/main.rs`, `app/src/main.rs`, блок линкерных символов в
-        // `bsp/src/ota.rs`): линт требует, чтобы каждое такое место было
-        // перечислено явно.
-        #[allow(unsafe_code)]
-        let rcc = unsafe { embassy_stm32::peripherals::RCC::steal() };
-        let clocks = embassy_stm32::rcc::clocks(&rcc);
-
-        let sys = clocks
-            .sys
-            .to_hertz()
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "`embedded-test` отдаёт состояние `#[init]` по значению"
+    )]
+    fn clocks_match_intent(board: Board) {
+        // Частоты приходят данными из `Board::spec`: `Board::new` считал их у
+        // HAL сам, пока владел `RCC`.
+        let sys = board
+            .spec
+            .sys_hz
             .expect("частота ядра должна быть посчитана");
-        let hclk1 = clocks
-            .hclk1
-            .to_hertz()
+        let hclk1 = board
+            .spec
+            .hclk1_hz
             .expect("частота шины AHB должна быть посчитана");
 
         // Шина не может тикать быстрее источника: если это не так, значит
         // считалось не то, что настроено.
-        assert!(
-            hclk1.0 <= sys.0,
-            "hclk1 {} Гц выше sys {} Гц",
-            hclk1.0,
-            sys.0
-        );
+        assert!(hclk1 <= sys, "hclk1 {hclk1} Гц выше sys {sys} Гц");
 
         if let Some(expected) = EXPECTED_SYS_HZ {
             assert_eq!(
-                sys.0, expected,
+                sys, expected,
                 "тактирование разошлось с задуманным (EXPECTED_SYS_HZ)"
             );
         } else {
@@ -156,7 +139,7 @@ mod tests {
             // «проверено», хотя не проверено ничего.
             defmt::warn!(
                 "clocks_match_intent: EXPECTED_SYS_HZ не заполнена — проверка выключена, sys = {} Гц",
-                sys.0,
+                sys,
             );
         }
     }

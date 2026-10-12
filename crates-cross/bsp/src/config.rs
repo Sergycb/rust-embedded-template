@@ -12,21 +12,16 @@
 
 use core::ops::Range;
 
-use embassy_stm32::flash::{Blocking, Flash};
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-
-use crate::FlashMutex;
+use crate::board::FlashMutex;
 
 /// Хранилище настроек этой платы — то, что лежит полем `Board` и уезжает в
 /// задачи. Псевдоним по общему правилу шаблона: тип в сигнатуре
 /// `#[embassy_executor::task]` должен быть конкретным.
-pub type Settings = adapters::settings::Settings<
-    adapters::flash::Shared<'static, NoopRawMutex, Flash<'static, Blocking>>,
->;
+pub type Settings = adapters::settings::Settings<adapters::flash::Shared<'static, FlashMutex>>;
 
-// Пятое `#[allow(unsafe_code)]` в `crates-cross` (есть только при `config=yes`):
+// Ещё один `#[expect(unsafe_code)]` в `crates-cross` (есть только при `config=yes`):
 // причина та же, что у блока в `ota.rs` — адрес линкерного символа иначе не взять.
-#[allow(unsafe_code)]
+#[expect(unsafe_code, reason = "обоснование — в комментарии выше")]
 unsafe extern "C" {
     /// Границы раздела `CONFIG` из `memory.x`, отсчитанные от базы flash —
     /// именно так их ждёт `embassy_stm32::flash::Flash` (у него нулевое

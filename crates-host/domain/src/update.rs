@@ -106,8 +106,10 @@ pub fn apply_signed<F: SignedFirmwareUpdate>(
     flash
         .verify_and_mark_updated(signature, len)
         .map_err(|err| match err {
-            VerifyError::BadSignature => UpdateError::BadSignature,
             VerifyError::Flash(err) => UpdateError::Flash(err),
+            // `BadSignature` и незнакомые варианты (перечисление
+            // `non_exhaustive`): отказ проверки — это отказ, а не пропуск образа.
+            _ => UpdateError::BadSignature,
         })?;
     Ok(())
 }
@@ -118,6 +120,9 @@ mod tests {
     use crate::firmware::pack;
     use crate::test_support::{FakeFlash, SIGNATURE};
     use ports::{UpdateError, VerifyError};
+    use rstest::rstest;
+
+    use crate::update::VERSION_BYTES;
 
     #[test]
     fn accepts_a_newer_signed_image() {
@@ -225,16 +230,6 @@ mod tests {
             Err(UpdateError::Flash("флеш отказал"))
         );
     }
-}
-
-#[cfg(test)]
-mod rstest_apply_signed {
-    use super::apply_signed;
-    use crate::firmware::pack;
-    use crate::test_support::{FakeFlash, SIGNATURE};
-    use crate::update::VERSION_BYTES;
-    use ports::{UpdateError, VerifyError};
-    use rstest::rstest;
 
     type FlashErr = &'static str;
 

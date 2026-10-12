@@ -5,10 +5,10 @@
 //! исполнителю всегда, — время: сколько тиков прошло и сколько из них
 //! микроконтроллер стоял. Всё остальное — работа.
 //!
-//! **Считает не этот узел, а цикл исполнителя.** Счётчик [`SleepTicks`] живёт
+//! **Считает не этот узел, а цикл исполнителя.** Счётчик `SleepTicks` живёт
 //! в `crates-cross/app/src/cpu_load.rs`, а пополняет его ручной цикл в
 //! `main.rs`: тот спит в `WFE` и кладёт в счётчик ровно то, сколько тиков
-//! проспал. Отсюда и [`SleepTicks`] в `Inputs` — узел его только читает, и
+//! проспал. Отсюда и `SleepTicks` в `IdleMeter` — узел его только читает, и
 //! то через слот ресурса, который переживает перезапуск задачи.
 //!
 //! Почему цикл в `main` написан руками, а не `#[embassy_executor::main]`:
@@ -16,11 +16,11 @@
 //! снаружи их не видно. А именно там проходит всё время, когда задач нет.
 //! Считать сон как «всё, что не сон», — значит получить 100% на пустой плате.
 //!
-//! Два входа — [`task`] для проекта с графом и [`task_standalone`] для проекта
-//! без него. Различаются они не вычислением (оно одно, [`CpuLoad::sample`]
-//! над [`snapshot`]), а тем, куда уходит результат: в графе он публикуется в
+//! Два входа — `task` для проекта с графом и `task_standalone` для проекта
+//! без него. Различаются они не вычислением (оно одно, `CpuLoad::sample`
+//! над `snapshot`), а тем, куда уходит результат: в графе он публикуется в
 //! `Watch`, без графа публиковать некому, и значение уходит в лог. Узел графа
-//! — автомат `#[fsm::typestate]` на контексте [`CpuLoadCtx`], который эмитит
+//! — автомат `#[fsm::typestate]` на контексте `CpuLoadCtx`, который эмитит
 //! фрагмент ниже; `task_standalone` — не узел, контекста у него нет, и он
 //! остаётся простым циклом. Выбор между ними делает
 //! `crates-cross/app/src/main.rs`, потому что Liquid в `domain` запрещён.
@@ -37,13 +37,13 @@ use portable_atomic::AtomicU64;
 use supervisor::policy::{BackoffPolicy, JitterPolicy};
 use supervisor::runtime::TaskExit;
 
-use crate::services::cpu_load::{CpuLoad, Sample};
+use crate::metrics::cpu_load::{CpuLoad, Sample};
 
 /// Как часто снимаются счётчики.
 ///
 /// Заодно период отметок у сторожа узла: замерение дольше, чем отметка, и
 /// узел выглядел бы зависшим. Второе следствие — разрешение самой оценки:
-/// усреднение идёт по [`SAMPLE_INTERVAL`], и профиль с характерным временем
+/// усреднение идёт по `SAMPLE_INTERVAL`, и профиль с характерным временем
 /// меньше него в эти проценты не попадёт.
 const SAMPLE_INTERVAL: Duration = Duration::from_millis(500);
 
@@ -67,7 +67,7 @@ pub const BACKOFF: BackoffPolicy = BackoffPolicy {
 
 /// Сколько узлу позволено не отмечаться, прежде чем это будет замечено.
 ///
-/// Считается от [`BACKOFF_MAX`], а не от [`SAMPLE_INTERVAL`]: слот сторожа граф
+/// Считается от `BACKOFF_MAX`, а не от `SAMPLE_INTERVAL`: слот сторожа граф
 /// взводит один раз и снимает только когда узел уходит насовсем, а во время
 /// паузы между перезапусками слот жив и кормить его некому. Та же поправка,
 /// что и у [`app::WATCHDOG`](crate::app::WATCHDOG), и то же левое звено
@@ -102,7 +102,8 @@ pub type SleepTicks = AtomicU64;
 /// `supervisor`: подсистема говорит, что ей нужно, приложение это
 /// конструирует — зависимость направлена от приложения к подсистеме и никогда
 /// наоборот.
-pub struct Inputs {
+#[derive(Debug)]
+pub struct IdleMeter {
     /// Счётчик тиков сна, который ведёт цикл исполнителя.
     pub sleep_ticks: &'static SleepTicks,
 }
@@ -118,7 +119,7 @@ fn snapshot(sleep_ticks: &SleepTicks) -> Sample {
     }
 }
 
-/// Узел `CPU_LOAD` графа: раз в [`SAMPLE_INTERVAL`] публикует занятость
+/// Узел `CPU_LOAD` графа: раз в `SAMPLE_INTERVAL` публикует занятость
 /// процессора в процентах.
 ///
 /// `ctx.percent` — отправитель, который граф создал из
@@ -152,7 +153,10 @@ impl CpuLoadCtx<'_> {
     }
 
     /// Назначает первый замер; прошлого снимка ещё нет.
-    #[allow(clippy::unused_self)]
+    #[expect(
+        clippy::unused_self,
+        reason = "сигнатуру действия задаёт таблица `#[fsm::typestate]`"
+    )]
     fn begin(&mut self) -> Waiting {
         Waiting {
             next: Instant::now() + SAMPLE_INTERVAL,
@@ -168,7 +172,7 @@ impl CpuLoadCtx<'_> {
     /// сторожил бы исполнитель, а не работу (см. `domain::app`).
     ///
     /// Первый снимок уходит в никуда (сравнивать не с чем) — так и задумано,
-    /// см. [`CpuLoad::sample`].
+    /// см. `CpuLoad::sample`.
     ///
     /// Следующий замер — `fsm::next_tick`, а не `Ticker`: отставший `Ticker`
     /// догоняет пачкой тиков подряд, и замеры через микросекунды
@@ -212,7 +216,7 @@ pub async fn task_standalone(sleep_ticks: &SleepTicks) {
 // публикации — `watch::Sender` из `sync-unsized`.
 //
 // `boot: inputs:` — собственная привязка фрагмента: compose-site пишет
-// `fragments: [::domain::CPU_LOAD_FRAG as CPU_LOAD = ::domain::tasks::cpu_load::Inputs { sleep_ticks: … }]`,
+// `fragments: [::domain::CPU_LOAD_FRAG as CPU_LOAD = ::domain::tasks::cpu_load::IdleMeter { sleep_ticks: … }]`,
 // а `spawn_all` связывает её первой строкой пролога, и инициализатор слота ниже
 // читает её поле. Так фрагмент не видит `Board` вовсе — только то, что ему
 // дали, и счётчик не может «забыться» при заполнении: без него узел не
@@ -234,7 +238,7 @@ pub async fn task_standalone(sleep_ticks: &SleepTicks) {
 // жалко. Без `observe` просрочка ушла бы в аппаратный сброс здоровой платы.
 supervisor::supervisor_fragment! {
     name: CPU_LOAD_FRAG;
-    boot: inputs: $crate::tasks::cpu_load::Inputs;
+    boot: inputs: $crate::tasks::cpu_load::IdleMeter;
 
     node deps: [], restart: ::supervisor::policy::RestartPolicy::OnFailure,
         backoff: $crate::tasks::cpu_load::BACKOFF,

@@ -107,14 +107,24 @@ const MAX_RELOAD: u32 = 0xFFF;
 const MAX_TIMEOUT_US: u32 = 1_000_000 * (MAX_RELOAD + 1) / (LSI_FREQ.0 / MAX_PRESCALER);
 
 /// Сторож заряжен, но не запущен: регистры заполнены, счётчик стоит.
+#[derive(Debug)]
 pub struct Disarmed;
 
 /// Сторож тикает. Только в этом состоянии он реализует [`HardwareWatchdog`].
+#[derive(Debug)]
 pub struct Armed;
 
 pub struct Iwdg<T: Instance + 'static, const TIMEOUT_US: u32, S> {
     inner: IndependentWatchdog<'static, T>,
     state: PhantomData<S>,
+}
+
+impl<T: Instance + 'static, const TIMEOUT_US: u32, S> core::fmt::Debug for Iwdg<T, TIMEOUT_US, S> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Iwdg")
+            .field("timeout_us", &TIMEOUT_US)
+            .finish_non_exhaustive()
+    }
 }
 
 impl<T: Instance + 'static, const TIMEOUT_US: u32> Iwdg<T, TIMEOUT_US, Disarmed> {

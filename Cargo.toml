@@ -25,10 +25,16 @@ rust-version = "1.96"
 # единственное, что могло бы его потребовать, — макросы, и появление unsafe
 # в макросе чужого крейта должно быть видно сразу. В `crates-cross` тот же
 # линт стоит как `warn`: там unsafe есть и оправдан (прыжок в образ, запись
-# во флеш, блок линкерных символов, `steal` RCC в тесте), и каждое из этих
-# мест перечислено `#[allow(unsafe_code)]` с объяснением — `deny` упал бы
+# во флеш, блок линкерных символов), и каждое из этих
+# мест перечислено `#[expect(unsafe_code)]` с объяснением — `deny` упал бы
 # именно на них.
 unsafe_code = "deny"
+# Публичные типы печатаются в логах и в сообщениях `expect`: без `Debug` их
+# нечем показать.
+missing_debug_implementations = "warn"
+# Тело `unsafe fn` не получает unsafe автоматически: каждая небезопасная
+# операция внутри оборачивается в явный блок со своим `// SAFETY:`.
+unsafe_op_in_unsafe_fn        = "warn"
 
 [workspace.lints.clippy]
 all                     = { level = "warn", priority = -1 }
@@ -44,12 +50,19 @@ large_stack_arrays      = "warn"
 # `executor.poll()` в `app/src/main.rs` этому линту и обязан — до него он шёл
 # без `// SAFETY:` вовсе.
 undocumented_unsafe_blocks = "warn"
-# `pedantic` — без предупреждений, а не без ошибок: ловит `missing_const_for_fn`,
-# `similar_names`, `module_name_repetitions`, `cast_possible_truncation` и др.
-# Шаблон — для старта, а не для production-кода, где каждый предупреждение
-# стоит разобрать. Отключать точечными `#[allow(pedantic)]` можно, как и
-# любой другой `warn`-линт.
+# `pedantic`: приведения без `as`, `# Errors`/`# Panics` в doc, `#[must_use]`.
+# Приоритет -1, иначе группа конфликтует с отдельными линтами (clippy
+# `lint_groups_priority`). `warn` вместе с `-D warnings` в `cargo xtask lint`
+# даёт ошибку сборки, поэтому исключения пишутся точечно:
+# `#[expect(lint, reason = "…")]`, а не `#[allow]`.
 pedantic = { level = "warn", priority = -1 }
+# Подавление без причины и мёртвое подавление — тоже долг: `reason` обязателен,
+# а `#[expect]` сам падает, когда подавлять уже нечего.
+allow_attributes_without_reason = "warn"
+# Подмодули — `foo.rs` + `foo/`, а не `foo/mod.rs`.
+mod_module_files        = "warn"
+# `map_err(|_| …)` теряет причину отказа.
+map_err_ignore          = "warn"
 
 [workspace.dependencies]
 # Крейты самого проекта: порты/адаптеры domain объявлены здесь, чтобы версия

@@ -276,7 +276,7 @@ spawn_all(&spawner, board).expect("узлы свежие");
 Второй узел шаблона, кроме `APP`, — `CPU_LOAD`: он меряет, во сколько
 процентов занят процессор, и публикует результат в `PERCENT`. Фрагмент —
 `crates-host/domain/src/tasks/cpu_load.rs`, арифметика и её host-тесты —
-`crates-host/domain/src/services/cpu_load.rs`, счётчик и объяснения —
+`crates-host/domain/src/metrics/cpu_load.rs`, счётчик и объяснения —
 `app-cpu-load.md`.
 
 Читать загрузку — ваше дело: у него ровно один слот подписчика, и первым его
@@ -410,9 +410,9 @@ SD-карта, у каждого свой формат пакета и своя 
 
 Вход узла плата отдаёт одним полем — `board.ota` (`bsp::ota::Ota`, канал и
 адаптер), а во вход фрагмента его раскладывает эта сторона: `bsp` зависит
-только от `ports` и `adapters`, про `domain` он не знает (`= ::domain::ota::Inputs
+только от `ports` и `adapters`, про `domain` он не знает (`= ::domain::ota::OtaWiring
 { link: board.ota.link, flash: board.ota.flash, mode: ::domain::ota::Mode::plain() }`;
-с подписью — тот же `Inputs`, где `flash` обёрнут в `crate::image::Signed` версией
+с подписью — тот же `OtaWiring`, где `flash` обёрнут в `crate::image::Signed` версией
 и ключом образа, а режим — `Mode::signed()`). Типы слотов — аргументы фрагмента
 (`OTA_FRAG<bsp::ota::Link, bsp::ota::Updater>`):
 слот — `static`, тип ему нужен, а знает его только эта сторона. Подставили

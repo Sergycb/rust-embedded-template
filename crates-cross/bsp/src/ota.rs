@@ -8,7 +8,7 @@ use embassy_stm32::flash::{Blocking, Flash};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use ports::{Announce, ImageSource, Rejection};
 
-use crate::FlashMutex;
+use crate::board::FlashMutex;
 
 /// Раздел поверх общего `Flash` чипа — то, из чего собирается адаптер.
 ///
@@ -24,9 +24,10 @@ pub type Updater = adapters::ota::Updater<Partition, Partition>;
 
 /// Всё, что плата отдаёт узлу OTA: канал доставки и адаптер разделов.
 ///
-/// Своя структура, а не `domain::ota::Inputs`: `bsp` зависит только от
+/// Своя структура, а не `domain::ota::OtaWiring`: `bsp` зависит только от
 /// `ports` и `adapters`, про `domain` он не знает. Во вход узла её
 /// раскладывает compose-site (`crates-cross/app/src/graph.rs`).
+#[derive(Debug)]
 pub struct Ota {
     /// Канал доставки образа — реализация `ports::ImageSource`.
     pub link: Link,
@@ -51,6 +52,7 @@ pub struct Ota {
 /// Формат пакетов и проверка целостности — ваши; узел про них не знает.
 /// Всё, что не зависит от канала — сверка длины до стирания, буферизация до
 /// слова флеша, порядок проверок подписи, — уже в `domain::ota`.
+#[derive(Debug)]
 pub struct Link;
 
 impl ImageSource for Link {
@@ -76,19 +78,19 @@ impl ImageSource for Link {
 /// Собирает вход узла OTA: адаптер из разделов `DFU` и `BOOTLOADER_STATE`,
 /// найденных по символам `memory.x`, и канал доставки.
 pub(crate) fn new(flash: &'static FlashMutex) -> Ota {
-    let config = FirmwareUpdaterConfig::from_linkerfile_blocking(flash, flash);
+    let config = FirmwareUpdaterConfig::from_linkerfile_blocking(flash.raw(), flash.raw());
     Ota {
         link: Link,
         flash: Updater::new(config.dfu, config.state, max_image_len()),
     }
 }
 
-// Одно из `#[allow(unsafe_code)]` в `crates-cross` (остальные —
-// `boot/src/main.rs`, `app/src/main.rs` и `steal` RCC в target-тесте): взять
+// Одно из `#[expect(unsafe_code)]` в `crates-cross` (остальные —
+// `boot/src/main.rs` и `app/src/main.rs`): взять
 // адрес линкерного символа иначе нельзя, а сам символ — это ровно то, для чего
 // `extern` и существует. `clippy::undocumented_unsafe_blocks` этот блок не видит
 // — он про `unsafe`-блоки, а не про объявления, — поэтому объяснение здесь.
-#[allow(unsafe_code)]
+#[expect(unsafe_code, reason = "обоснование — в комментарии выше")]
 unsafe extern "C" {
     /// Границы раздела `ACTIVE` — те же символы, по которым разделы находит
     /// `FirmwareUpdaterConfig::from_linkerfile_blocking`.

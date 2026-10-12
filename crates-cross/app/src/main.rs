@@ -1,5 +1,9 @@
 #![no_std]
 #![no_main]
+#![allow(
+    missing_debug_implementations,
+    reason = "бинарник ничего не экспортирует, а shadow-rs генерирует pub-типы без Debug"
+)]
 
 use shadow_rs::shadow;
 shadow!(build);
@@ -62,7 +66,7 @@ fn main() -> ! {
     let {% if ota == "true" %}mut {% endif %}board = bsp::Board::new();
     // Следом — на чём именно: чип и его заводской номер, по которому
     // экземпляр платы отличается от соседнего.
-    info!("app: {}", board.info);
+    info!("app: {}", board.spec);
 
 {%- if ota == "true" %}
 
@@ -111,7 +115,10 @@ fn main() -> ! {
     // включён, ровно так же), а не `WFE`, то есть пробуждение задач не теряет.
     // Цикл ниже ставит `WFE` сам, и всё, что остаётся на долю pender'а, — это
     // возврат из него, а не сон.
-    #[allow(clippy::items_after_statements)]
+    #[expect(
+        clippy::items_after_statements,
+        reason = "статик стоит рядом с использованием"
+    )]
     static EXECUTOR: StaticCell<Executor> = StaticCell::new();
     let executor = EXECUTOR.init(Executor::new(usize::MAX as *mut ()));
     let spawner = executor.spawner();
@@ -177,12 +184,11 @@ fn main() -> ! {
         // оно здесь — цикл ниже единственный, кто его крутит, и `spawn_all` к
         // этому моменту уже отработал. Ровно то же обещание, что у `Executor::run`.
         //
-        // `#[allow(unsafe_code)]` — вместе с остальными в `crates-cross` (см. `crates-cross/Cargo.toml`)
-        // (`boot/src/main.rs`, блок линкерных символов в `bsp/src/ota.rs` и
-        // `steal` RCC в target-тесте): unsafe в прошивке допустим, но каждое
+        // `#[expect(unsafe_code)]` — вместе с остальными в `crates-cross` (см. `crates-cross/Cargo.toml`)
+        // (`boot/src/main.rs`, блок линкерных символов в `bsp/src/ota.rs`): unsafe в прошивке допустим, но каждое
         // место обязано быть перечислено и объяснено, а линт `unsafe_code`
         // заставляет перечислять.
-        #[allow(unsafe_code)]
+        #[expect(unsafe_code, reason = "обоснование — в комментарии выше")]
         unsafe {
             executor.poll();
         }

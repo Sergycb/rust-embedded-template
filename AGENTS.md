@@ -59,8 +59,8 @@ skill'ом `rust-engineering` и не дублируются здесь. Это�
 
 | Команда | Что делает |
 |---|---|
-| `cargo xtask lint` | `domain`: `fmt --check` + `clippy -D warnings` |
-| `cargo xtask test host` | `domain`: `cargo nextest` |
+| `cargo xtask lint` | `domain`: `fmt --check` + `clippy -D warnings` + `cargo doc` без предупреждений |
+| `cargo xtask test host` | `domain`: `cargo nextest` + doc-тесты |
 | `cargo xtask lint cross` | `crates-cross`: `fmt --check` + `clippy -D warnings` |
 | `cargo xtask build` | `crates-cross`: debug + release,{% if ota == "true" %} `app.bin`,{% endif %} размер образа, подпись (если включена) |
 | `cargo xtask precommit` | четыре команды выше подряд, до первой упавшей |
@@ -90,8 +90,8 @@ cargo xtask precommit     # все четыре ниже подряд, до пе
 дальше вы будете гонять один этап, а не все четыре.
 
 ```
-cargo xtask lint          # domain: fmt --check + clippy -D warnings
-cargo xtask test host     # domain: cargo nextest
+cargo xtask lint          # domain: fmt --check + clippy -D warnings + cargo doc
+cargo xtask test host     # domain: cargo nextest + doc-тесты
 
 cargo xtask lint cross    # cross: fmt --check + clippy -D warnings
 cargo xtask build         # cross: debug + release
@@ -191,7 +191,7 @@ read`: руками пришлось бы сначала найти адрес �
   что подписчиков нет. Снимать allow нельзя, пока у графа нет читателей; писать
   в `graph.rs` свою логику — тоже.
 - `Board` отдаёт адаптеры — объекты, реализующие трейты (`ports`, `HardwareWatchdog`), —
-  и данные, тип которых объявлен в `ports` (`BoardInfo`), и ничего не настраивает: ни
+  и данные, тип которых объявлен в `ports` (`ChipSpec`), и ничего не настраивает: ни
   периферии ядра, ни `Peripherals`, ни `Clocks` в полях нет — `docs/architecture.md`.
 - `cortex_m::Peripherals` (`DWT`, `MPU`, `SYST`) `bsp` не забирает; нужны — берите
   `take()` ДО `Board::new()`, иначе на части семейств `embassy_stm32::init` уже сделал

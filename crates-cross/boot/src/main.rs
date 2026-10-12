@@ -65,7 +65,10 @@ fn main() -> ! {
     // HardFault вместо отказа с диагностикой. Полная проверка целостности
     // требует chip-specific границ RAM и не входит в минимальный шаблон.
     // `usize` на Cortex-M — 32 бита, усечения нет.
-    #[allow(clippy::cast_possible_truncation)]
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "`usize` на Cortex-M — 32 бита"
+    )]
     let entry = FLASH_BASE as u32 + active_offset;
     info!("boot: jumping to app at {:x}", entry);
 {%- if graph == "true" %}
@@ -89,11 +92,10 @@ fn main() -> ! {
     //   которые линкер положил в тот же раздел. Что bootloader их не
     //   проверяет — оговорка выше, про повреждённый образ.
     //
-    // `#[allow(unsafe_code)]` — как и остальные unsafe в `crates-cross` (см. `crates-cross/Cargo.toml`)
-    // (`app/src/main.rs`, блок линкерных символов в `bsp/src/ota.rs` и
-    // `steal` RCC в target-тесте): линт требует, чтобы каждое такое место
+    // `#[expect(unsafe_code)]` — как и остальные unsafe в `crates-cross` (см. `crates-cross/Cargo.toml`)
+    // (`app/src/main.rs`, блок линкерных символов в `bsp/src/ota.rs`): линт требует, чтобы каждое такое место
     // было перечислено явно.
-    #[allow(unsafe_code)]
+    #[expect(unsafe_code, reason = "обоснование — в комментарии выше")]
     unsafe {
         bl.load(entry)
     }
