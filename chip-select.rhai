@@ -179,7 +179,7 @@ let suffix = "";
 // каскаду ниже — поэтому объявлен на верхнем уровне скрипта, а не внутри
 // одной из веток.
 // BEGIN GENERATED CHIP LIST (1479 шт., cargo run --manifest-path chip-data-gen/Cargo.toml)
-// Источник: embassy-stm32 0.6.0 (crates-cross/Cargo.toml), probe-rs 0.31.0
+// Источник: embassy-stm32 0.6.0 (crates-cross/Cargo.toml), probe-rs 0.32.0
 const CHIPS = [
     "c011d6",
     "c011f4",
