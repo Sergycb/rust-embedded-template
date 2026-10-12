@@ -42,7 +42,14 @@ if ota == "true" {
 	print("Без OTA: один образ на весь flash, crates-cross/boot в проект не вошёл (причина — выше).");
 }
 if config == "true" {
-	print("Настройки: раздел CONFIG во flash, crates-cross/bsp/src/config.rs, Board::settings.");
+	let store = variable::get("config_store");
+	if store == "eeprom" {
+		print("Настройки: внутренняя EEPROM чипа, crates-cross/bsp/src/config.rs, Board::settings.");
+	} else if store == "external" {
+		print("Настройки: внешняя флеш — подставьте драйвер в crates-cross/bsp/src/config.rs, Board::settings.");
+	} else {
+		print("Настройки: раздел CONFIG во flash, crates-cross/bsp/src/config.rs, Board::settings.");
+	}
 }
 if variable::get("graph") == "true" {
 	print("Граф задач: узел HEARTBEAT в crates-cross/app/src/graph.rs, его работа — в crates-host/domain/src/heartbeat.rs.");

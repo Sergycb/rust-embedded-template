@@ -142,6 +142,12 @@ const GRAPH_MIN_PARTITION = 32768;
 /// неработающие конфигурации, поэтому взято круглое.
 const OTA_MIN_ACTIVE = 24576;
 
+/// Меньше этого объёма EEPROM под настройки не годится: `sequential-storage`
+/// нужны две страницы, а страница обёртки `adapters::eeprom::Eeprom` — 128
+/// байт (`Eeprom::MIN_SIZE`). У STM32L010F4/K4 EEPROM всего 128 байт — им
+/// настройки предлагаются, как всем остальным, во флеше.
+const EEPROM_MIN = 256;
+
 /// Размер из таблицы раскладки в байтах: `"128K"`, `"1M"`, `"5376"`.
 ///
 /// Свой разбор, а не готовая функция: в rhai её нет, а формат здесь пишем мы
@@ -55891,10 +55897,22 @@ if !wants_ota {
 // но без OTA это две последние страницы flash по максимальному сектору чипа: на
 // F4/F7/H7 — 256 KiB. Поэтому по умолчанию «нет», а цена печатается ниже — до
 // того, как пользователь увидит собранный проект.
+//
+// Где лежат настройки (`config_store`, на него смотрит bsp::config):
+//   "flash"    — раздел во внутреннем флеше (как описано выше);
+//   "eeprom"   — внутренняя EEPROM, если она у чипа есть (L0/L1): флеш не
+//                тратится вовсе, и это единственное место под настройки на
+//                чипах, чей флеш стирается в ноль;
+//   "external" — внешняя флеш: ответ `external`; шаблон кладёт заглушку
+//                (`adapters::flash::Unconnected`), драйвер подставляете вы;
+//   "none"     — настроек нет.
+// `yes` выбирает между первыми двумя сам.
 let wants_config = false;
+let wants_external = false;
 if variable::is_set("config") {
     let answer = variable::get("config");
-    wants_config = answer == "yes" || answer == "true";
+    wants_external = answer == "external";
+    wants_config = wants_external || answer == "yes" || answer == "true";
 }
 
 // Подпись образа. Смысл имеет только вместе с OTA — подписывается то, что
@@ -55921,6 +55939,27 @@ if !wants_graph {
     print("Граф задач отключён по вашему выбору: main заканчивается после инициализации");
 }
 
+// Где лежат настройки (`config_store`) — одним решением для всех трёх веток
+// ниже: ни внешней флеши, ни EEPROM раскладка flash не нужна. EEPROM — регионы
+// `EEPROM`/`EEPROM_BANK_n` из памяти чипа (их кладёт chip-data-gen), объёмом не
+// меньше EEPROM_MIN; закомментированные строки (окна внешних шин, алиасы)
+// начинаются с `/*`, а не с имени.
+let eeprom_size = 0;
+if MEMORY_LAYOUT.contains(suffix) && MEMORY_LAYOUT[suffix].contains("extra_regions") {
+    for line in MEMORY_LAYOUT[suffix]["extra_regions"] {
+        if line.starts_with("    EEPROM") {
+            eeprom_size += size_in_bytes(line.split("LENGTH = ")[1]);
+        }
+    }
+}
+let store = if wants_external {
+    "external"
+} else if wants_config && eeprom_size >= EEPROM_MIN {
+    "eeprom"
+} else {
+    "flash"
+};
+
 // write_size, оба memory.x и признак ota — вместе, одним источником: если
 // пользователь уже задал write_size вручную через `--define`, авточипу
 // доверять нельзя (адреса в memory.x привязаны именно к вычисленному
@@ -55939,14 +55978,24 @@ if variable::is_set("write_size") {
         // толку — GitHub показывал бы его в списке рабочих процессов.
         file::delete(".github/workflows/release.yml");
     }
-    // Раздел настроек живёт по границам из memory.x, а его тут пишет
-    // пользователь — посчитать за него, где начинается CONFIG, нельзя.
-    variable::set("config", "false");
-    if wants_config {
-        print("Раздел настроек не выделен: memory.x вы заполняете сами (задан write_size)");
-        print("  добавьте регион CONFIG и символы __config_start/__config_end вручную");
+    // Раздел настроек во флеше живёт по границам из memory.x, а его тут пишет
+    // пользователь — посчитать за него, где начинается CONFIG, нельзя. Внешней
+    // флеши и EEPROM раскладка не нужна, их слот работает и здесь.
+    if wants_config && store != "flash" {
+        variable::set("config", "true");
+        variable::set("config_store", store);
+    } else {
+        variable::set("config", "false");
+        variable::set("config_store", "none");
+        if wants_config {
+            print("Раздел настроек не выделен: memory.x вы заполняете сами (задан write_size)");
+            print("  добавьте регион CONFIG и символы __config_start/__config_end вручную");
+        }
+        file::delete("crates-cross/bsp/src/config.rs");
     }
-    file::delete("crates-cross/bsp/src/config.rs");
+    // Общий объект `Flash` в bsp нужен OTA и настройкам во флеше или EEPROM;
+    // внешней флеши он не нужен (см. ту же переменную ниже).
+    variable::set("shared_flash", if wants_ota || (wants_config && store == "eeprom") { "true" } else { "false" });
     variable::set("signed", if wants_signed { "true" } else { "false" });
     // Размер страницы стирания знает только раскладка, а её тут пишет
     // пользователь — угадывать нельзя. Пустая строка означает «неизвестен»:
@@ -55998,13 +56047,21 @@ if variable::is_set("write_size") {
         // толку — GitHub показывал бы его в списке рабочих процессов.
         file::delete(".github/workflows/release.yml");
     }
-    // По той же причине, что и веткой выше: границы раздела берутся из
-    // memory.x, а его тут никто не посчитал.
-    variable::set("config", "false");
-    if wants_config {
-        print("Раздел настроек не выделен: раскладка для этого чипа не считается");
+    // По той же причине, что и веткой выше: границы раздела во флеше берутся из
+    // memory.x, а его тут никто не посчитал. Внешней флеши это не мешает (а
+    // про EEPROM без раскладки чипа ничего не известно).
+    if wants_external {
+        variable::set("config", "true");
+        variable::set("config_store", "external");
+    } else {
+        variable::set("config", "false");
+        variable::set("config_store", "none");
+        if wants_config {
+            print("Раздел настроек не выделен: раскладка для этого чипа не считается");
+        }
+        file::delete("crates-cross/bsp/src/config.rs");
     }
-    file::delete("crates-cross/bsp/src/config.rs");
+    variable::set("shared_flash", if wants_ota { "true" } else { "false" });
     variable::set("signed", if wants_signed { "true" } else { "false" });
     // Раздел приложения здесь задаёт человек, значит и помещается ли в него
     // граф — знает только он. Оставляем ответ как есть; если не влезет, линкер
@@ -56023,7 +56080,9 @@ if variable::is_set("write_size") {
     // по нулевым маркерам), и настраиваемого значения у неё нет. На флеше,
     // стирающемся в ноль, свежая страница выглядит «уже закрытой», и хранилище
     // молча не работает. Раздавать такое нельзя.
-    let config = wants_config && m["config"] == "true" && !erase_zero;
+    // Раздел во внутреннем флеше — только когда настройки хранятся там.
+    let in_flash = wants_config && store == "flash" && m["config"] == "true" && !erase_zero;
+    let config = wants_external || (wants_config && store == "eeprom") || in_flash;
     if wants_config && !config {
         if erase_zero {
             print("Раздел настроек для " + suffix + " не выделен: у этого чипа флеш стирается в ноль,");
@@ -56033,7 +56092,7 @@ if variable::is_set("write_size") {
         }
     }
     // Дальше все партиции берутся по одному из двух наборов ключей.
-    let key = if config { "config_" } else { "" };
+    let key = if in_flash { "config_" } else { "" };
 
     // Схема нужна только если её и хотят, и она помещается. «Помещается» — это
     // две проверки: раскладка вообще сходится (цифры посчитаны заранее) и в
@@ -56047,8 +56106,13 @@ if variable::is_set("write_size") {
     // если так ACTIVE больше (F2/F4/F7), иначе тоже в хвосте. Страница — сектор
     // под разделом (`adapters::flash::Paged` в bsp::config).
     let settings_key = if ota { "config_ota_settings_" } else { "config_" };
-    if config {
+    if in_flash {
         print("Раздел настроек: " + m[settings_key + "length"] + " с адреса " + m[settings_key + "origin"]);
+    } else if config && store == "eeprom" {
+        print("Настройки — во внутренней EEPROM чипа: флеш под них не тратится");
+    } else if config && store == "external" {
+        print("Настройки — на внешней флеши: подставьте свой драйвер в crates-cross/bsp/src/config.rs");
+        print("  (пока там заглушка adapters::flash::Unconnected — проект собирается, настройки не сохраняются)");
     }
 
     // Подпись живёт и умирает вместе с OTA: если схема не поместилась,
@@ -56082,9 +56146,14 @@ if variable::is_set("write_size") {
     }
     variable::set("ota", if ota { "true" } else { "false" });
     variable::set("config", if config { "true" } else { "false" });
-    if config {
+    variable::set("config_store", if config { store } else { "none" });
+    if in_flash {
         variable::set("config_erase_size", m[settings_key + "erase_size"]);
     }
+    // Общий объект `Flash` в bsp: его делят OTA и настройки во флеше или EEPROM
+    // (EEPROM пишется через тот же контроллер). Внешней флеши он не нужен, и
+    // без OTA создавать его незачем — был бы неиспользуемый код.
+    variable::set("shared_flash", if ota || (config && store != "external") { "true" } else { "false" });
     variable::set("signed", if signed { "true" } else { "false" });
     variable::set("graph", if graph { "true" } else { "false" });
     if !config {
@@ -56097,7 +56166,7 @@ if variable::is_set("write_size") {
     let flash_base = m["flash_origin"];
     let config_region = [];
     let config_section = [];
-    if config {
+    if in_flash {
         config_region.push("    CONFIG            (rx)  : ORIGIN = " + m[settings_key + "origin"] + ", LENGTH = " + m[settings_key + "length"]);
         config_section = [
             "",

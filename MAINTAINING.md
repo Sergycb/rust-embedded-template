@@ -44,7 +44,8 @@
 ## Плейсхолдеры шаблона (`cargo-generate.toml`)
 
 `{{chip}}`, `{{chip_feature}}`, `{{cpu}}`, `{{target}}`, `{{write_size}}`,
-`{{page_size}}`, `{{state_erase_size}}`, `{{config_erase_size}}`, `{{dual_core}}`, `{{bank_mode}}`, `{{erase_zero}}`,
+`{{page_size}}`, `{{state_erase_size}}`, `{{config_erase_size}}`, `{{config_store}}`,
+`{{shared_flash}}`, `{{dual_core}}`, `{{bank_mode}}`, `{{erase_zero}}`,
 `{{watchdog_peripheral}}` — плейсхолдеры, подставляемые
 Liquid-рендером cargo-generate. Из них в `[placeholders]` объявлены только `ci`, `ota`, `graph`,
 `config` и `signed`; все остальные выставляет `variable::set` в `[hooks].pre`-скрипте
@@ -460,8 +461,9 @@ cargo run --manifest-path chip-data-gen/Cargo.toml --bin template-check
 обычный одноядерный, он же с `ota=no`, чип с выбором банковой схемы, чип, куда OTA не
 помещается (он же — единственный с `IWDG1` вместо `IWDG`), двухъядерный
 (`init_primary` вместо `init`, он же — единственный с `IWDG2`), чип с 2 KiB RAM на
-Cortex-M0+, раздел настроек с OTA на равных секторах и без OTA (оба — в хвосте flash)
-и с OTA на неравных (в мелких секторах перед ACTIVE), подпись образа — с графом задач и без него, и чип, где стёртый флеш
+Cortex-M0+, раздел настроек с OTA на равных секторах и без OTA (оба — в хвосте flash),
+с OTA на неравных (в мелких секторах перед ACTIVE), во внутренней EEPROM (L0/L1) и на
+внешней флеши (слот с заглушкой, на H7 без OTA), подпись образа — с графом задач и без него, и чип, где стёртый флеш
 читается нулями (`flash-erase-zero` у embassy-boot, включает хук на L0/L1). Дальше
 проверяет, что не осталось ни одного
 неподставленного плейсхолдера, что состав CI-файлов проекта совпадает с выбранным

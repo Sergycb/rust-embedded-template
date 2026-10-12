@@ -223,6 +223,65 @@ where
     }
 }
 
+/// Внешняя флеш, которую ещё не подключили, — место под ваш драйвер.
+///
+/// Шаблон не знает, какая микросхема будет на плате (W25Q, GD25, MX25, IS25,
+/// SST26…), и не гадает: хранилище настроек принимает любой асинхронный
+/// `NorFlash`, а это — заглушка в его слоте, как `bsp::ota::Link` в слоте
+/// канала OTA. Проект с ней собирается и запускается, а каждая операция
+/// отвечает [`NotConnected`] — настройки не сохраняются, но и ничего не
+/// падает. Заменить её — значит подставить в `bsp::config` свой драйвер:
+/// готовый крейт (`spi-memory-async`, `w25q32jv`…) или собственный.
+///
+/// Геометрия правдоподобная — две страницы по 4 KiB, сектор почти любой
+/// SPI NOR, — ровно столько, сколько нужно хранилищу, чтобы собраться.
+#[derive(Debug, Default)]
+pub struct Unconnected;
+
+impl Unconnected {
+    /// Объём, под который строится хранилище с заглушкой.
+    pub const CAPACITY: u32 = 2 * 4096;
+}
+
+/// Ответ [`Unconnected`] на любую операцию.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NotConnected;
+
+impl embedded_storage::nor_flash::NorFlashError for NotConnected {
+    fn kind(&self) -> embedded_storage::nor_flash::NorFlashErrorKind {
+        embedded_storage::nor_flash::NorFlashErrorKind::Other
+    }
+}
+
+impl ErrorType for Unconnected {
+    type Error = NotConnected;
+}
+
+impl embedded_storage_async::nor_flash::ReadNorFlash for Unconnected {
+    const READ_SIZE: usize = 1;
+
+    fn read(&mut self, _: u32, _: &mut [u8]) -> impl Future<Output = Result<(), Self::Error>> {
+        core::future::ready(Err(NotConnected))
+    }
+
+    fn capacity(&self) -> usize {
+        Self::CAPACITY as usize
+    }
+}
+
+impl embedded_storage_async::nor_flash::NorFlash for Unconnected {
+    const WRITE_SIZE: usize = 1;
+    const ERASE_SIZE: usize = 4096;
+
+    fn erase(&mut self, _: u32, _: u32) -> impl Future<Output = Result<(), Self::Error>> {
+        core::future::ready(Err(NotConnected))
+    }
+
+    fn write(&mut self, _: u32, _: &[u8]) -> impl Future<Output = Result<(), Self::Error>> {
+        core::future::ready(Err(NotConnected))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use core::cell::RefCell;
@@ -232,7 +291,7 @@ mod tests {
     use embedded_storage::nor_flash::{ErrorType, NorFlashErrorKind};
     use embedded_storage_async::nor_flash::{NorFlash, ReadNorFlash};
 
-    use super::{Paged, Shared};
+    use super::{Paged, Shared, Unconnected};
 
     /// Блокирующий флеш в памяти: 64 байта, страница 16, слово 4. Мосту
     /// неважно, что под ним, — проверяется только, что каждая операция дошла
@@ -297,6 +356,18 @@ mod tests {
             flash.lock(|f| f.borrow().mem[..16].iter().all(|b| *b == 0)),
             "соседняя страница не тронута"
         );
+    }
+
+    /// С заглушкой хранилище собирается, а операции честно отказывают, а не
+    /// паникуют: проект без подключённой флеши работает, просто без настроек.
+    #[tokio::test]
+    async fn settings_over_an_unconnected_flash_refuse_without_panicking() {
+        use ports::SettingsStorage;
+
+        let mut settings = crate::settings::Settings::new(Unconnected, 0..Unconnected::CAPACITY);
+
+        assert!(settings.write(1, b"x").await.is_err());
+        assert!(settings.read(1, &mut [0; 8]).await.is_err());
     }
 
     /// `Paged` меняет только объявленную страницу: операции доходят до флеша

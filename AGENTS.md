@@ -168,6 +168,12 @@ read`: руками пришлось бы сначала найти адрес �
   и `Partition::new` паникует на старте. Так же и `CONFIG` (`CONFIG_ERASE_SIZE`
   в `bsp::config`): с OTA он может лежать в мелких секторах перед `ACTIVE` —
   `docs/flash.md`.
+- Хранилище настроек — слот под любой async `NorFlash` (`bsp::config`):
+  внутренний флеш, EEPROM L0/L1 (`adapters::eeprom::Eeprom`) или внешняя флеш
+  (драйвер подставляет проект, в шаблоне — заглушка
+  `adapters::flash::Unconnected`). EEPROM под хранилищем инвертирована: без
+  этого заводские нули выглядели бы для `sequential-storage` закрытыми
+  страницами — `docs/flash.md`.
 {%- if graph == "true" %}
 - У каждого узла с `watchdog:` своя связанная цепочка таймаутов
   (`domain::heartbeat::BACKOFF.max` < `domain::heartbeat::WATCHDOG`,

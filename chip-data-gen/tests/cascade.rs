@@ -930,18 +930,21 @@ fn ota_survives_where_the_app_partition_is_large_enough() {
     );
 }
 
-/// Раздел настроек не выделяется там, где флеш стирается в ноль.
+/// Раздела настроек во флеше нет там, где флеш стирается в ноль.
 ///
 /// `sequential-storage` считает стёртым состоянием `0xFF` — и заголовок записи
 /// ищет как «все байты `0xFF`», и состояние страницы определяет по нулевым
 /// маркерам. На L0/L1 свежестёртая страница выглядит «уже закрытой», то есть
-/// хранилище молча не работает. Настраиваемого значения у крейта нет, поэтому
-/// единственный честный выход — не предлагать раздел вовсе.
+/// хранилище во флеше молча не работает. Тот же класс дефекта, что и с
+/// `embassy-boot` (см. `erase_zero` в chip-select.rhai), только у второй
+/// библиотеки.
 ///
-/// Тот же класс дефекта, что и с `embassy-boot` (см. `erase_zero` в
-/// chip-select.rhai), только у второй библиотеки.
+/// У L0/L1 есть внутренняя EEPROM — настройки уходят туда (обёртка
+/// `adapters::eeprom` инвертирует байты, и заводской ноль читается как `0xFF`),
+/// а раздела `CONFIG` во флеше нет. У WB10CC/WB15CC флеш тоже стирается в
+/// ноль, а EEPROM нет — им настройки по-прежнему не предлагаются.
 #[test]
-fn the_settings_partition_is_dropped_where_flash_erases_to_zero() {
+fn settings_avoid_flash_that_erases_to_zero() {
     let ast = compile_script();
 
     for suffix in ["l073rz", "l051c8"] {
@@ -954,9 +957,26 @@ fn the_settings_partition_is_dropped_where_flash_erases_to_zero() {
             "{suffix}: чип из семейства со стиранием в ноль"
         );
         assert_eq!(
+            result.vars.get("config_store").map(String::as_str),
+            Some("eeprom"),
+            "{suffix}: настройки — во внутренней EEPROM"
+        );
+        let app = written(&result, "crates-cross/app/memory.x");
+        assert!(
+            region_origin(&app, "CONFIG").is_none(),
+            "{suffix}: раздела настроек во флеше быть не должно:\n{app}"
+        );
+    }
+
+    // У L010F4 EEPROM есть, но 128 байт — меньше двух страниц хранилища.
+    for suffix in ["wb10cc", "wb15cc", "l010f4"] {
+        let result = run_cascade_with(&ast, suffix, &[("config", "yes")])
+            .unwrap_or_else(|err| panic!("каскад до {suffix} упал: {err}"));
+
+        assert_eq!(
             result.vars.get("config").map(String::as_str),
             Some("false"),
-            "{suffix}: раздел настроек на таком флеше молча не работал бы"
+            "{suffix}: флеш стирается в ноль, EEPROM нет или она мала — настройкам негде жить"
         );
         assert!(
             result
@@ -966,6 +986,55 @@ fn the_settings_partition_is_dropped_where_flash_erases_to_zero() {
             result.deleted
         );
     }
+}
+
+/// EEPROM раскладка flash не нужна, поэтому и при ручной раскладке
+/// (`--define write_size=...`) настройки на L0/L1 остаются — в EEPROM.
+#[test]
+fn eeprom_settings_survive_a_manual_layout() {
+    let result = run_cascade_with(
+        &compile_script(),
+        "l073rz",
+        &[("config", "yes"), ("write_size", "4")],
+    )
+    .expect("каскад до l073rz");
+
+    assert_eq!(result.vars.get("config").map(String::as_str), Some("true"));
+    assert_eq!(
+        result.vars.get("config_store").map(String::as_str),
+        Some("eeprom")
+    );
+    assert_eq!(
+        result.vars.get("shared_flash").map(String::as_str),
+        Some("true"),
+        "EEPROM пишется через общий Flash"
+    );
+}
+
+/// `config=external` — слот под драйвер внешней флеши: внутренний флеш под
+/// настройки не тратится, раздела `CONFIG` нет, общий `Flash` без OTA не
+/// создаётся вовсе.
+#[test]
+fn external_settings_take_no_internal_flash() {
+    let ast = compile_script();
+    let result = run_cascade_with(&ast, "h743zi", &[("config", "external"), ("ota", "no")])
+        .expect("каскад до h743zi");
+
+    assert_eq!(result.vars.get("config").map(String::as_str), Some("true"));
+    assert_eq!(
+        result.vars.get("config_store").map(String::as_str),
+        Some("external")
+    );
+    assert_eq!(
+        result.vars.get("shared_flash").map(String::as_str),
+        Some("false")
+    );
+    let app = written(&result, "crates-cross/app/memory.x");
+    assert!(region_origin(&app, "CONFIG").is_none(), "{app}");
+    assert!(
+        app.contains("FLASH             (rx)  : ORIGIN = 0x08000000, LENGTH = 2048K"),
+        "весь флеш — приложению:\n{app}"
+    );
 }
 
 /// Обратная сторона: там, где стирание обычное, раздел настроек по-прежнему

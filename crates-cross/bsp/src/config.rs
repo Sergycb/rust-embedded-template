@@ -1,13 +1,23 @@
-//! Обвязка раздела настроек этой платы: границы `CONFIG` из символов `memory.x`
-//! и псевдоним типа для задач.
+//! Обвязка хранилища настроек этой платы: на чём оно лежит и псевдоним типа
+//! для задач.
 //!
 //! Само хранилище — `adapters::settings::Settings` (generic по флешу,
-//! тестируется на хосте), мост к общему блокирующему `Flash` —
-//! `adapters::flash::Shared`. Здесь остаётся то, что знает про чип: раздел —
-//! две страницы стирания (меньше `sequential-storage` не берёт), положенные
-//! при генерации туда, где они дешевле: с OTA на F2/F4/F7 — в мелкие сектора
-//! перед `ACTIVE` (у F4 — 2×16 KiB), иначе в хвост flash. Границы приезжают
-//! символами линкера, страница — [`CONFIG_ERASE_SIZE`].
+//! тестируется на хосте); ему годится любой асинхронный `NorFlash`. Здесь
+//! остаётся то, что знает про плату: что именно в этот слот подставлено. При
+//! генерации выбрано одно из трёх (`config` в cargo-generate, см.
+//! docs/flash.md):
+//!
+//! - раздел во внутреннем флеше — границы `CONFIG` приезжают символами
+//!   `memory.x`, страница — [`CONFIG_ERASE_SIZE`];
+//! - внутренняя EEPROM (STM32L0/L1) — через `adapters::eeprom::Eeprom`;
+//! - внешняя флеш — ваш драйвер; пока на его месте заглушка
+//!   `adapters::flash::Unconnected`.
+{%- if config_store == "flash" %}
+//!
+//! Здесь — раздел во внутреннем флеше: две страницы стирания (меньше
+//! `sequential-storage` не берёт), положенные при генерации туда, где они
+//! дешевле: с OTA на F2/F4/F7 — в мелкие сектора перед `ACTIVE` (у F4 —
+//! 2×16 KiB), иначе в хвост flash.
 
 use core::ops::Range;
 
@@ -59,3 +69,91 @@ fn flash_range() -> Range<u32> {
     let end = &raw const __config_end as u32;
     start..end
 }
+{%- elsif config_store == "eeprom" %}
+//!
+//! Здесь — внутренняя EEPROM: флеш под настройки не тратится вовсе. EEPROM
+//! пишется через тот же контроллер, что и флеш, поэтому доступ к ней — через
+//! общий [`FlashMutex`] (`embassy_stm32::flash::Flash::eeprom_*`), по операции
+//! под замком. Под хранилище отдана вся EEPROM, округлённая до страницы
+//! обёртки (`adapters::eeprom::Eeprom::PAGE`).
+
+use adapters::eeprom::{Eeprom, EepromAccess};
+use adapters::flash::FlashLock;
+
+use crate::board::FlashMutex;
+
+/// Хранилище настроек этой платы — то, что лежит полем `Board` и уезжает в
+/// задачи. Псевдоним по общему правилу шаблона: тип в сигнатуре
+/// `#[embassy_executor::task]` должен быть конкретным.
+pub type Settings = adapters::settings::Settings<Eeprom<'static, FlashMutex>>;
+
+impl EepromAccess for FlashMutex {
+    type Error = embassy_stm32::flash::Error;
+
+    fn size(&self) -> u32 {
+        // `usize` на Cortex-M — 32 бита, усечения нет.
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "`usize` на Cortex-M — 32 бита"
+        )]
+        let size = embassy_stm32::flash::EEPROM_SIZE as u32;
+        size
+    }
+
+    fn read(&self, offset: u32, buf: &mut [u8]) -> Result<(), Self::Error> {
+        self.with(|flash| flash.eeprom_read_slice(offset, buf))
+    }
+
+    fn write(&self, offset: u32, data: &[u8]) -> Result<(), Self::Error> {
+        self.with(|flash| flash.eeprom_write_slice(offset, data))
+    }
+}
+
+/// Собирает хранилище над всей внутренней EEPROM.
+///
+/// # Паника
+///
+/// Если EEPROM меньше двух страниц обёртки — см.
+/// `adapters::settings::Settings::new`; у STM32L0/L1 таких нет.
+pub(crate) fn new(flash: &'static FlashMutex) -> Settings {
+    let eeprom = Eeprom::new(flash);
+    let size = eeprom.usable();
+    adapters::settings::Settings::new(eeprom, 0..size)
+}
+{%- elsif config_store == "external" %}
+//!
+//! Здесь — внешняя флеш. Какая микросхема стоит на плате, шаблон не знает и не
+//! гадает: на месте драйвера заглушка [`ExternalFlash`] (=
+//! `adapters::flash::Unconnected`). С ней проект собирается и работает, но
+//! каждая операция хранилища отвечает ошибкой — настройки не сохраняются.
+//!
+//! Подключить свою микросхему — две правки в этом файле:
+//!
+//! 1. `ExternalFlash` — тип вашего драйвера. Годится любой, реализующий
+//!    `embedded_storage_async::nor_flash::NorFlash`: готовый крейт
+//!    (`spi-memory-async` для серии 25, `w25q32jv` и подобные) или свой.
+//! 2. `new` — собрать драйвер из периферии (SPI и вывод CS; какие выводы умеет
+//!    блок — `cargo xtask pins SPI1 --snippet`) и указать диапазон под
+//!    настройки: не меньше двух секторов стирания микросхемы.
+//!
+//! Аргументы задач embassy обязаны быть `'static`, а драйвер — конкретным
+//! типом: `Settings` остаётся псевдонимом, как и сейчас.
+
+/// Драйвер внешней флеши — замените на свой.
+pub type ExternalFlash = adapters::flash::Unconnected;
+
+/// Хранилище настроек этой платы — то, что лежит полем `Board` и уезжает в
+/// задачи. Псевдоним по общему правилу шаблона: тип в сигнатуре
+/// `#[embassy_executor::task]` должен быть конкретным.
+pub type Settings = adapters::settings::Settings<ExternalFlash>;
+
+/// Собирает хранилище над внешней флешью. Сейчас — над заглушкой: о том, что
+/// драйвер не подставлен, говорит одна строка в лог при старте.
+pub(crate) fn new() -> Settings {
+    defmt::warn!("bsp: внешняя флеш не подключена — настройки не сохраняются (bsp/src/config.rs)");
+    adapters::settings::Settings::new(
+        adapters::flash::Unconnected,
+        0..adapters::flash::Unconnected::CAPACITY,
+    )
+}
+{%- endif %}

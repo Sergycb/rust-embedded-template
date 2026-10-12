@@ -129,9 +129,15 @@ ota = { type = "string", prompt = "OTA (bootloader + разделы ACTIVE/DFU)"
 # страница там — максимальный сектор чипа (на F4/F7/H7 128 KiB, то есть
 # 256 KiB под настройки). Молча отдавать четверть flash нельзя, поэтому
 # включается он явно, а его цену хук печатает при генерации.
-config = { type = "string", prompt = "Раздел под настройки во flash (две страницы стирания, sequential-storage)", choices = [
-	"yes",
+#
+# `external` — настройки на внешней флеши: шаблон кладёт в слот хранилища
+# заглушку (`adapters::flash::Unconnected`), драйвер своей микросхемы
+# подставляете вы (bsp/src/config.rs). `yes` сам выбирает внутреннюю EEPROM,
+# если она у чипа есть (L0/L1), иначе раздел во flash.
+config = { type = "string", prompt = "Хранилище настроек (sequential-storage): yes — внутренняя EEPROM или flash, external — внешняя флеш", choices = [
 	"no",
+	"yes",
+	"external",
 ], default = "no" }
 
 # Третий вопрос той же формы. Смысл имеет только вместе с OTA: подписывается

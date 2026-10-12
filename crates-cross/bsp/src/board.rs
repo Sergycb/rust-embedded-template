@@ -5,23 +5,24 @@
 //! выходят: что не разобрано на объекты, то и не отдано (docs/architecture.md,
 //! «`Board` отдаёт объекты, а не периферию»).
 
-{%- if ota == "true" or config == "true" %}
+{%- if shared_flash == "true" %}
 
 use core::cell::RefCell;
 {%- endif %}
 
 use defmt::info;
-{%- if ota == "true" or config == "true" %}
+{%- if shared_flash == "true" %}
 use embassy_stm32::flash::{Blocking, Flash};
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use static_cell::StaticCell;
 {%- endif %}
 
-{%- if ota == "true" or config == "true" %}
+{%- if shared_flash == "true" %}
 
 /// Общий `Flash` всего чипа. Контроллер флеша один, а работать с ним нужно и
-/// OTA (разделы `DFU`/`BOOTLOADER_STATE`), и настройкам (раздел `CONFIG`), —
+/// OTA (разделы `DFU`/`BOOTLOADER_STATE`), и настройкам (раздел `CONFIG` во
+/// флеше или внутренняя EEPROM — она пишется через тот же контроллер), —
 /// поэтому объект создаётся ровно один и раздаётся ссылками.
 ///
 /// `NoopRawMutex`, а не `CriticalSectionRawMutex`: обе половины работают из
@@ -114,9 +115,9 @@ pub struct Board {
     pub ota: crate::ota::Ota,
 {%- endif %}
 {%- if config == "true" %}
-    /// Настройки, переживающие перезапуск и обновление прошивки: адаптер
-    /// поверх раздела `CONFIG` (`adapters::settings`). Формат значений
-    /// выбирает проект.
+    /// Настройки, переживающие перезапуск и обновление прошивки:
+    /// `adapters::settings` поверх {% if config_store == "eeprom" %}внутренней EEPROM{% elsif config_store == "external" %}внешней флеши (драйвер — `bsp/src/config.rs`){% else %}раздела `CONFIG` во флеше{% endif %}.
+    /// Формат значений выбирает проект.
     pub settings: crate::config::Settings,
 {%- endif %}
 {%- if graph == "true" %}
@@ -168,7 +169,7 @@ impl Board {
         let clocks = embassy_stm32::rcc::clocks(&p.RCC);
         info!("bsp: board initialized, clocks {}", clocks);
 
-{%- if ota == "true" or config == "true" %}
+{%- if shared_flash == "true" %}
         // Периферия разбирается здесь: `FLASH` уходит в общий объект (его
         // делят OTA и настройки), остальное пока никому не нужно и потому не
         // сохраняется. Здесь же — место для распиновки платы: объявите
@@ -205,7 +206,7 @@ impl Board {
             ota: crate::ota::new(flash),
 {%- endif %}
 {%- if config == "true" %}
-            settings: crate::config::new(flash),
+            settings: crate::config::new({% if config_store != "external" %}flash{% endif %}),
 {%- endif %}
 {%- if graph == "true" %}
             watchdog: crate::wdg::UnarmedBoardWatchdog::new(p.{{watchdog_peripheral}}),
