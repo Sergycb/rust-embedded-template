@@ -44,7 +44,7 @@
 ## Плейсхолдеры шаблона (`cargo-generate.toml`)
 
 `{{chip}}`, `{{chip_feature}}`, `{{cpu}}`, `{{target}}`, `{{write_size}}`,
-`{{page_size}}`, `{{dual_core}}`, `{{bank_mode}}`, `{{erase_zero}}`,
+`{{page_size}}`, `{{state_erase_size}}`, `{{dual_core}}`, `{{bank_mode}}`, `{{erase_zero}}`,
 `{{watchdog_peripheral}}` — плейсхолдеры, подставляемые
 Liquid-рендером cargo-generate. Из них в `[placeholders]` объявлены только `ci`, `ota`, `graph`,
 `config` и `signed`; все остальные выставляет `variable::set` в `[hooks].pre`-скрипте
@@ -356,6 +356,17 @@ l476rg — Nucleo-L476RG). Теперь размер `BOOTLOADER_STATE` подб
 `BOOTLOADER`/`BOOTLOADER_STATE` кратности `PAGE_SIZE` не подчиняются (в
 `assert_partitions` их нет) и режутся по локальной границе сектора — на чипах с крупными
 секторами (F4/F7/H7, до 128 KiB) целая страница под один отступ съела бы четверть чипа.
+Но **пятая проверка** — уже не из `assert_partitions`, а из `Partition::new`
+(`embassy-embedded-hal`): смещение и размер раздела кратны `ERASE_SIZE` флеша под ним,
+иначе паника при построении раздела. Над цельным `Flash` (страница — `MAX_ERASE_SIZE`)
+`STATE` в мелком секторе её не проходил, и у всех 223 чипов F2/F4/F7 с OTA и bootloader,
+и приложение падали на первом старте. Теперь `STATE` живёт над `adapters::flash::Paged`
+со страницей своего сектора — она лежит в записи полем `bootloader_state_erase_size`
+(и `config_…` во втором наборе), хук раздаёт её плейсхолдером `state_erase_size`, а
+`assert_embassy_boot_invariants` проверяет кратность всех трёх разделов своей странице.
+Сам сектор выбирает `place_state` — самый мелкий в резерве, как можно ближе к `ACTIVE`;
+на чипах с равными секторами раскладка от этого не изменилась, на F4 `STATE` — 16 KiB в
+секторе 3 вместо 64 KiB в секторе 4.
 Краевой случай, ради которого `reserved_pages` растёт в цикле, — чипы, где уже первый
 регион занимает целый `PAGE_SIZE` (H7 — 128 KiB с адреса 0, без мелких секторов в начале,
 в отличие от F4): иначе `BOOTLOADER_STATE` съедал бы весь резерв.

@@ -158,9 +158,14 @@ read`: руками пришлось бы сначала найти адрес �
   `ImageSource::finish` в `bsp`; отказы до стирания обязаны оставаться
   такими: `Busy` и отсутствие подписи — до `receive`, длина — внутри него,
   до `prepare` — `docs/ota.md`.
-- `NoopRawMutex` у `bsp::FlashMutex` и `local` на слотах узла OTA
+- `NoopRawMutex` у `bsp::FlashMutex`, у мьютекса раздела `STATE`
+  (`bsp::ota::STATE_FLASH`) и `local` на слотах узла OTA
   (`domain::ota`) — одно допущение «один исполнитель», менять вместе —
   `docs/flash.md`, `docs/architecture.md`.
+- `BOOTLOADER_STATE` строится над `adapters::flash::Paged` со страницей своего
+  сектора (`STATE_ERASE_SIZE` в `crates-cross/boot` и в `bsp::ota` — одно число
+  из генерации). Над цельным `Flash` на F2/F4/F7 раздел не кратен его странице,
+  и `Partition::new` паникует на старте — `docs/flash.md`.
 {%- if graph == "true" %}
 - У каждого узла с `watchdog:` своя связанная цепочка таймаутов
   (`domain::heartbeat::BACKOFF.max` < `domain::heartbeat::WATCHDOG`,

@@ -5,10 +5,10 @@
 //! оборачивает его в [`Signed`] этими двумя величинами — проверка отката и
 //! подписи до обмена разделов.
 
-use bsp::ota::Partition;
+use bsp::ota::{Partition, StatePartition};
 
 /// Адаптер с проверкой подписи — тип слота узла OTA в графе.
-pub type Signed = adapters::ota::Signed<Partition, Partition>;
+pub type Signed = adapters::ota::Signed<Partition, StatePartition>;
 
 /// Версия этого образа — `version` из Cargo.toml, свёрнутая
 /// `domain::ota::version::pack` в четыре байта.

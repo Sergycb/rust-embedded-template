@@ -1,12 +1,16 @@
 #![doc = include_str!("../../../docs/modules/bsp-ota.md")]
 
+use core::cell::RefCell;
 use core::convert::Infallible;
 
+use adapters::flash::{Paged, Shared};
 use embassy_boot::FirmwareUpdaterConfig;
 use embassy_embedded_hal::flash::partition::BlockingPartition;
 use embassy_stm32::flash::{Blocking, Flash};
+use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use ports::{Announce, ImageSource, Rejection};
+use static_cell::StaticCell;
 
 use crate::board::FlashMutex;
 
@@ -17,10 +21,34 @@ use crate::board::FlashMutex;
 /// регионы у каждого семейства называются по-своему.
 pub type Partition = BlockingPartition<'static, NoopRawMutex, Flash<'static, Blocking>>;
 
+/// Страница раздела `BOOTLOADER_STATE` — размер сектора, в котором он лежит.
+///
+/// Цельный `Flash` объявляет страницей самый крупный сектор чипа, а
+/// `Partition::new` паникует на разделе, не кратном странице. На F2/F4/F7
+/// `STATE` лежит в мелком секторе (у F4 — 16 KiB при странице 128 KiB),
+/// поэтому его страница своя. Число посчитано при генерации тем же
+/// расчётом, что адреса в `memory.x`; то же самое стоит в
+/// `crates-cross/boot` — разделу в приложении и в bootloader'е расходиться
+/// нельзя.
+const STATE_ERASE_SIZE: usize = {{state_erase_size}};
+
+/// Флеш под разделом `BOOTLOADER_STATE`: тот же общий `Flash`, но со
+/// страницей [`STATE_ERASE_SIZE`].
+type StateFlash = Paged<Shared<'static, FlashMutex>, STATE_ERASE_SIZE>;
+
+/// Раздел `BOOTLOADER_STATE` — над [`StateFlash`], а не над цельным `Flash`,
+/// как [`Partition`].
+pub type StatePartition = BlockingPartition<'static, NoopRawMutex, StateFlash>;
+
 /// Адаптер обновления этой платы — порт `FirmwareUpdate` поверх разделов
 /// `DFU`/`BOOTLOADER_STATE`. Псевдоним по общему правилу шаблона: тип слота
 /// узла OTA должен быть конкретным, а адаптер приходит из `adapters` generic.
-pub type Updater = adapters::ota::Updater<Partition, Partition>;
+pub type Updater = adapters::ota::Updater<Partition, StatePartition>;
+
+/// Свой мьютекс разделу `STATE`: `embassy-boot` строит каждый раздел из
+/// `&Mutex<_, RefCell<T>>` своего типа. Внутри — ссылка на общий
+/// [`FlashMutex`], а не второй `Flash`: контроллер на чипе один.
+static STATE_FLASH: StaticCell<Mutex<NoopRawMutex, RefCell<StateFlash>>> = StaticCell::new();
 
 /// Всё, что плата отдаёт узлу OTA: канал доставки и адаптер разделов.
 ///
@@ -78,7 +106,8 @@ impl ImageSource for Link {
 /// Собирает вход узла OTA: адаптер из разделов `DFU` и `BOOTLOADER_STATE`,
 /// найденных по символам `memory.x`, и канал доставки.
 pub(crate) fn new(flash: &'static FlashMutex) -> Ota {
-    let config = FirmwareUpdaterConfig::from_linkerfile_blocking(flash.raw(), flash.raw());
+    let state = STATE_FLASH.init(Mutex::new(RefCell::new(Paged::new(Shared::new(flash)))));
+    let config = FirmwareUpdaterConfig::from_linkerfile_blocking(flash.raw(), state);
     Ota {
         link: Link,
         flash: Updater::new(config.dfu, config.state, max_image_len()),

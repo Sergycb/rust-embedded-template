@@ -426,9 +426,14 @@ fn memory_layout_is_written_when_available() {
 
     // У bootloader'а FLASH — только его собственная зона, до BOOTLOADER_STATE:
     // переполнение должен ловить линкер, а не молчаливое наложение на ACTIVE.
+    // STATE — в последнем 16-килобайтном секторе (3), сектор 4 до ACTIVE пуст.
     let boot = written(&result, "crates-cross/boot/memory.x");
     assert!(
-        boot.contains("FLASH             (rx)  : ORIGIN = 0x08000000, LENGTH = 64K"),
+        boot.contains("FLASH             (rx)  : ORIGIN = 0x08000000, LENGTH = 48K"),
+        "{boot}"
+    );
+    assert!(
+        boot.contains("BOOTLOADER_STATE  (rx)  : ORIGIN = 0x0800C000, LENGTH = 16K"),
         "{boot}"
     );
     assert!(

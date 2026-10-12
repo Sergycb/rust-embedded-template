@@ -3,6 +3,7 @@
 
 use core::cell::RefCell;
 
+use adapters::flash::{Paged, Shared};
 use defmt::info;
 // RTT — дефолтный транспорт в обоих профилях (см. crates-cross/app/src/main.rs);
 // boot вдобавок не спавнит embassy-задач, поэтому очередь+drain-таск под
@@ -54,8 +55,14 @@ fn main() -> ! {
     #[cfg(debug_assertions)]
 {%- endif %}
     let flash = Mutex::new(RefCell::new(Flash::new_blocking(p.FLASH)));
+    // `BOOTLOADER_STATE` — со страницей своего сектора, а не всего чипа (см.
+    // `STATE_ERASE_SIZE`), но над тем же `Flash`: свой мьютекс, а не второй
+    // объект контроллера.
+    let state = Mutex::new(RefCell::new(Paged::<_, STATE_ERASE_SIZE>::new(
+        Shared::new(&flash),
+    )));
 
-    let config = BootLoaderConfig::from_linkerfile_blocking(&flash, &flash, &flash);
+    let config = BootLoaderConfig::from_linkerfile_blocking(&flash, &flash, &state);
     let active_offset = config.active.offset();
     let bl = BootLoader::prepare::<_, _, _, {{write_size}}>(config);
 
@@ -100,6 +107,16 @@ fn main() -> ! {
         bl.load(entry)
     }
 }
+
+/// Страница раздела `BOOTLOADER_STATE` — размер сектора, в котором он лежит.
+///
+/// Цельный `Flash` объявляет страницей самый крупный сектор чипа, а
+/// `Partition::new` паникует на разделе, не кратном странице. На F2/F4/F7
+/// `STATE` лежит в мелком секторе (у F4 — 16 KiB при странице 128 KiB),
+/// поэтому его страница своя. Число посчитано при
+/// генерации тем же расчётом, что адреса в `memory.x`; то же самое стоит в
+/// `bsp::ota` — разделу в приложении и в bootloader'е расходиться нельзя.
+const STATE_ERASE_SIZE: usize = {{state_erase_size}};
 {%- if graph == "true" %}
 
 /// Таймаут сторожа — то же число из `[env]` crates-cross/.cargo/config.toml,
@@ -167,9 +184,10 @@ impl<F: NorFlash> NorFlash for Fed<F> {
     /// Диапазон не дробится: `embassy-boot` при обмене стирает по одной
     /// странице (крупнейший сектор чипа) за вызов, а дробить по `ERASE_SIZE`
     /// здесь нельзя — на F4/F7/H7 секторы неравные, и граница посреди
-    /// настоящего сектора дала бы отказ стирания. Единственное стирание
-    /// крупнее — раздел `BOOTLOADER_STATE` целиком после отката, но он и сам
-    /// одна-две страницы; таймаут должен пережить и его.
+    /// настоящего сектора дала бы отказ стирания. Раздел `BOOTLOADER_STATE`
+    /// (стирается целиком после отката) приходит сюда же — через
+    /// `Paged`→`Shared`, — и он не крупнее: это самые мелкие сектора чипа, на
+    /// равносекторных чипах — несколько страниц по паре килобайт.
     fn erase(&mut self, from: u32, to: u32) -> Result<(), Self::Error> {
         self.watchdog.pet();
         self.flash.erase(from, to)

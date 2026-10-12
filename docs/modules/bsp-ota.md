@@ -7,7 +7,9 @@
 `FirmwareUpdaterConfig::from_linkerfile_blocking` (границы `DFU`/`BOOTLOADER_STATE`
 из линкерных символов), размер `ACTIVE` — его порт отдаёт методом
 `FirmwareUpdate::capacity`, — и псевдонимы типов, потому что задачи embassy
-не могут быть generic.{% if signed == "true" %} Версию образа и открытый ключ задаёт не
+не могут быть generic. `BOOTLOADER_STATE` строится не над цельным `Flash`, как
+`DFU`, а над `adapters::flash::Paged` со страницей своего сектора
+(`STATE_ERASE_SIZE`) — почему, см. docs/flash.md.{% if signed == "true" %} Версию образа и открытый ключ задаёт не
 плата, а приложение: `crates-cross/app/src/image.rs` оборачивает адаптер в
 `adapters::ota::Signed`.{% endif %}
 

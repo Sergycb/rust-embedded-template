@@ -37,7 +37,9 @@ use defmt_rtt as _;
 /// проекта: тест не должен зависеть от того, создан ли `ota-public-key.bin`, и
 /// с настоящей точкой кривой всегда доходит до криптографии. Версия — `0.1.0`:
 /// ниже `u32::MAX` и не ниже `0.0.0`, которые кладут в хвост образа тесты.
-fn signed(board: bsp::Board) -> adapters::ota::Signed<bsp::ota::Partition, bsp::ota::Partition> {
+fn signed(
+    board: bsp::Board,
+) -> adapters::ota::Signed<bsp::ota::Partition, bsp::ota::StatePartition> {
     const RFC8032_TEST1_PUBLIC_KEY: [u8; 32] = [
         0xd7, 0x5a, 0x98, 0x01, 0x82, 0xb1, 0x0a, 0xb7, 0xd5, 0x4b, 0xfe, 0xd3, 0xc9, 0x64, 0x07,
         0x3a, 0x0e, 0xe1, 0x72, 0xf3, 0xda, 0xa6, 0x23, 0x25, 0xaf, 0x02, 0x1a, 0x68, 0xf7, 0x07,

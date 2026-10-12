@@ -883,6 +883,10 @@ struct OtaPartitions {
     bootloader_length: u64,
     bootloader_state_origin: u64,
     bootloader_state_length: u64,
+    /// Сектор, в котором лежит `BOOTLOADER_STATE`, — страница, которую ему
+    /// объявляет `adapters::flash::Paged` (см. `compute_ota_partitions`, пятая
+    /// проверка). Меньше `PAGE_SIZE` на чипах с неравными секторами.
+    bootloader_state_erase_size: u64,
     active_origin: u64,
     active_length: u64,
     dfu_origin: u64,
@@ -1221,6 +1225,16 @@ fn extra_region_lines(regions: &[RawRegion], flash_end: u64, ram_end: u64) -> Ve
 /// (в `assert_partitions` их нет) и режутся по локальной границе сектора —
 /// иначе на F4/F7/H7 (сектор до 128 KiB) один отступ съедал бы четверть чипа.
 ///
+/// Но есть пятая проверка, не из `assert_partitions`: раздел строится
+/// `Partition::new` из `embassy-embedded-hal`, а тот паникует, если смещение
+/// или размер не кратны `NorFlash::ERASE_SIZE` флеша под разделом. У цельного
+/// `Flash` это самый крупный сектор, и на F2/F4/F7 `STATE` в мелком секторе
+/// (0x10000 при странице 128 KiB у F4) ронял и bootloader, и приложение на
+/// первом же старте — у всех 223 таких чипов с OTA. Поэтому `STATE` строится
+/// поверх `adapters::flash::Paged` со страницей своего сектора, и размер этого
+/// сектора — `bootloader_state_erase_size` — уходит в шаблон вместе с адресами.
+/// Сам сектор — самый мелкий в резерве, см. `place_state`.
+///
 /// `Err` — схема не помещается; текст объясняет, чего именно не хватило, и
 /// доходит до пользователя при генерации.
 fn compute_ota_partitions(
@@ -1297,26 +1311,25 @@ fn compute_ota_partitions(
         let dfu_pages = remaining_pages - active_pages;
 
         // Проверка 4, решённая относительно STATE: сколько журнала нужно под
-        // такой ACTIVE и в сколько локальных секторов это укладывается.
+        // такой ACTIVE.
         let state_needed = (2 + 4 * active_pages) * write_size;
-        let state_length = state_needed.div_ceil(local_erase) * local_erase;
-        let bootloader_length = reserved_size.saturating_sub(state_length);
-        let state_offset = reserved_size - state_length.min(reserved_size);
-        if bootloader_length < BOOTLOADER_MIN || erase_size_at(state_offset) != Some(local_erase) {
-            // Либо журнал съел место под сам бинарник, либо начало STATE
-            // попало в зону с другим размером сектора — в обоих случаях
-            // помогает более крупный резерв: он уменьшает ACTIVE, а с ним и
-            // журнал.
+        let Some((state_offset, state_length, state_erase)) =
+            place_state(&erase_size_at, reserved_size, state_needed)
+        else {
+            // Журнал не лёг в мелкие сектора резерва, не отняв у bootloader'а
+            // минимума, — помогает резерв крупнее: он уменьшает ACTIVE, а с
+            // ним и журнал.
             reserved_pages += 1;
             continue;
-        }
+        };
 
         let active_origin = FLASH_BASE + reserved_size;
         let active_length = active_pages * page_size;
         let partitions = OtaPartitions {
-            bootloader_length,
+            bootloader_length: state_offset,
             bootloader_state_origin: FLASH_BASE + state_offset,
             bootloader_state_length: state_length,
+            bootloader_state_erase_size: state_erase,
             active_origin,
             active_length,
             dfu_origin: active_origin + active_length,
@@ -1327,8 +1340,52 @@ fn compute_ota_partitions(
     }
 }
 
-/// Те же четыре проверки, что `assert_partitions` делает в рантайме на плате —
-/// но здесь, на этапе генерации. Паника вместо `Err`: `compute_ota_partitions`
+/// Где в резерве `[0, reserved_size)` лежит `BOOTLOADER_STATE`: смещение,
+/// длина и размер его сектора. `None` — не лёг.
+///
+/// В самых мелких секторах резерва и как можно ближе к его концу. Журналу
+/// нужны десятки байт, а стирается раздел при каждом обновлении, так что
+/// мелкий сектор и места не отнимает, и стирается быстрее. Всё, что перед
+/// ним, — bootloader, и он обязан получить хотя бы `BOOTLOADER_MIN`. Что
+/// остаётся между `STATE` и `ACTIVE`, не занято: на F4 это 64-килобайтный
+/// сектор 4 — под `ACTIVE` он не годится (страница там 128 KiB), а `STATE`
+/// ему мельче предпочтителен.
+///
+/// На чипе с равными секторами «самые мелкие» — все, «ближе к концу» — вплотную
+/// к `ACTIVE`, то есть раскладка та же, что до этого правила.
+///
+/// Если мелкие сектора стоят так близко к началу, что bootloader'у перед ними
+/// не хватает минимума, пробуется следующий размер — а не сразу резерв крупнее:
+/// тот не поменял бы, где лежат мелкие сектора.
+fn place_state(
+    erase_size_at: &impl Fn(u64) -> Option<u64>,
+    reserved_size: u64,
+    state_needed: u64,
+) -> Option<(u64, u64, u64)> {
+    let mut sectors = Vec::new();
+    let mut offset = 0;
+    while offset < reserved_size {
+        let erase = erase_size_at(offset).filter(|erase| *erase > 0)?;
+        sectors.push((offset, erase));
+        offset += erase;
+    }
+    let sizes: BTreeSet<u64> = sectors.iter().map(|(_, erase)| *erase).collect();
+    sizes.into_iter().find_map(|size| {
+        let count = usize::try_from(state_needed.div_ceil(size)).ok()?;
+        // Окно из `count` подряд идущих секторов этого размера — от последнего
+        // к первому.
+        sectors
+            .windows(count)
+            .rev()
+            .find(|window| window.iter().all(|(_, erase)| *erase == size))
+            .map(|window| (window[0].0, size * count as u64, size))
+            .filter(|(state_offset, _, _)| *state_offset >= BOOTLOADER_MIN)
+    })
+}
+
+/// Те же четыре проверки, что `assert_partitions` делает в рантайме на плате, и
+/// пятая — от `Partition::new` (кратность смещения и размера раздела странице
+/// флеша под ним), — но здесь, на этапе генерации. Паника вместо `Err`: `compute_ota_partitions`
 /// обязан выдавать только валидные раскладки, невалидная — баг в нём самом, а
 /// не «чип не подошёл». Ровно этой проверки не хватало: 279 из 972 прежних
 /// раскладок нарушали четвёртую и роняли bootloader на первом же старте.
@@ -1355,15 +1412,57 @@ fn assert_embassy_boot_invariants(chip: &str, p: &OtaPartitions, page_size: u64,
         journal_words <= state_words,
         "{chip}: журналу прогресса нужно {journal_words} слов, в BOOTLOADER_STATE помещается {state_words}"
     );
+    // Между `STATE` и `ACTIVE` может остаться незанятый сектор (см.
+    // `place_state`), но не наложение.
     assert!(
-        p.active_origin == p.bootloader_state_origin + p.bootloader_state_length
+        p.bootloader_state_origin == FLASH_BASE + p.bootloader_length
+            && p.bootloader_state_origin + p.bootloader_state_length <= p.active_origin
             && p.dfu_origin == p.active_origin + p.active_length,
-        "{chip}: партиции не стыкуются встык"
+        "{chip}: партиции накладываются или идут не по порядку"
     );
+    // `ACTIVE`/`DFU` строятся поверх цельного `Flash` (страница — `PAGE_SIZE`),
+    // `STATE` — поверх `Paged` со страницей своего сектора.
+    let state_offset = p.bootloader_state_origin - FLASH_BASE;
+    for (name, offset, length, page) in [
+        (
+            "ACTIVE",
+            p.active_origin - FLASH_BASE,
+            p.active_length,
+            page_size,
+        ),
+        ("DFU", p.dfu_origin - FLASH_BASE, p.dfu_length, page_size),
+        (
+            "BOOTLOADER_STATE",
+            state_offset,
+            p.bootloader_state_length,
+            p.bootloader_state_erase_size,
+        ),
+    ] {
+        assert!(
+            offset.is_multiple_of(page) && length.is_multiple_of(page),
+            "{chip}: {name} (смещение {offset:#x}, размер {length}) не кратен своей странице {page}: Partition::new запаникует"
+        );
+    }
 }
 
 fn format_addr(v: u64) -> String {
     format!("0x{v:08X}")
+}
+
+/// Число как литерал Rust с разделителями разрядов (`131_072`): значение
+/// уходит прямо в `const` crates-cross (`STATE_ERASE_SIZE`), а там
+/// `clippy::unreadable_literal` под `-D warnings` не пропускает шесть цифр
+/// подряд.
+fn rust_literal(v: u64) -> String {
+    let digits = v.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push('_');
+        }
+        out.push(c);
+    }
+    out
 }
 
 /// `K`-нотация линкер-скрипта, когда значение делится ровно — а оно всегда
@@ -1442,6 +1541,11 @@ fn format_memory_layouts(layouts: &BTreeMap<&str, MemoryLayout>) -> String {
                     "bootloader_state_length",
                     &format_size(p.bootloader_state_length),
                 );
+                push_field(
+                    &mut out,
+                    "bootloader_state_erase_size",
+                    &rust_literal(p.bootloader_state_erase_size),
+                );
                 push_field(&mut out, "active_origin", &format_addr(p.active_origin));
                 push_field(&mut out, "active_length", &format_size(p.active_length));
                 push_field(&mut out, "dfu_origin", &format_addr(p.dfu_origin));
@@ -1482,6 +1586,11 @@ fn format_memory_layouts(layouts: &BTreeMap<&str, MemoryLayout>) -> String {
                             &mut out,
                             "config_bootloader_state_length",
                             &format_size(p.bootloader_state_length),
+                        );
+                        push_field(
+                            &mut out,
+                            "config_bootloader_state_erase_size",
+                            &rust_literal(p.bootloader_state_erase_size),
                         );
                         push_field(
                             &mut out,
@@ -2048,6 +2157,96 @@ pub static METADATA: Metadata = Metadata {
         assert_eq!(ota.bootloader_state_length, 8192);
     }
 
+    /// Карта F407VE: 4×16 KiB, 64 KiB, дальше по 128 KiB. `STATE` — в
+    /// последнем 16-килобайтном секторе (журналу хватает с запасом), перед ним
+    /// bootloader, сектор 4 пустует. Со страницей всего чипа (128 KiB)
+    /// `Partition::new` на таком разделе паниковал, поэтому раскладка обязана
+    /// отдать страницу его собственного сектора.
+    #[test]
+    fn state_takes_the_last_smallest_sector_with_its_own_page() {
+        let sector = |name: &str, address: u64, size: u64, erase_size: u64| RawRegion {
+            name: name.to_string(),
+            kind: RegionKind::Flash,
+            address,
+            size,
+            flash: Some(FlashSettings {
+                erase_size,
+                write_size: 4,
+                erase_value: 0xFF,
+            }),
+        };
+        let mut regions = uniform_flash(0, 1, 4);
+        regions.retain(|r| r.kind == RegionKind::Ram);
+        regions.extend([
+            sector("BANK_1_REGION_1", FLASH_BASE, 64 * 1024, 16 * 1024),
+            sector(
+                "BANK_1_REGION_2",
+                FLASH_BASE + 0x1_0000,
+                64 * 1024,
+                64 * 1024,
+            ),
+            sector(
+                "BANK_1_REGION_3",
+                FLASH_BASE + 0x2_0000,
+                384 * 1024,
+                128 * 1024,
+            ),
+        ]);
+
+        let layout = compute_memory_layout("test", &regions).expect("раскладка должна посчитаться");
+        assert_eq!(layout.page_size, 128 * 1024);
+        let ota = layout.ota.expect("OTA должна помещаться");
+        assert_eq!(ota.bootloader_length, 48 * 1024);
+        assert_eq!(ota.bootloader_state_origin, FLASH_BASE + 0xC000);
+        assert_eq!(ota.bootloader_state_length, 16 * 1024);
+        assert_eq!(ota.bootloader_state_erase_size, 16 * 1024);
+        assert_eq!(ota.active_origin, FLASH_BASE + 0x2_0000);
+    }
+
+    /// Пятая проверка — от `Partition::new`: раздел, не кратный странице флеша
+    /// под ним, ловится при генерации, а не паникой на плате.
+    #[test]
+    #[should_panic(expected = "Partition::new")]
+    fn state_misaligned_to_its_page_is_caught() {
+        let state_on_the_chip_page = OtaPartitions {
+            bootloader_length: 64 * 1024,
+            bootloader_state_origin: FLASH_BASE + 0x1_0000,
+            bootloader_state_length: 64 * 1024,
+            bootloader_state_erase_size: 128 * 1024,
+            active_origin: FLASH_BASE + 0x2_0000,
+            active_length: 128 * 1024,
+            dfu_origin: FLASH_BASE + 0x4_0000,
+            dfu_length: 256 * 1024,
+        };
+        assert_embassy_boot_invariants("test", &state_on_the_chip_page, 128 * 1024, 4);
+    }
+
+    /// Мелкие сектора у самого начала (4×4 KiB): bootloader'у перед последним
+    /// из них досталось бы 12 KiB, меньше `BOOTLOADER_MIN`. Тогда `STATE` —
+    /// в следующем по размеру секторе, а не отказ от OTA.
+    #[test]
+    fn state_falls_back_to_a_larger_sector_when_small_ones_are_too_early() {
+        let sector = |offset: u64| -> Option<u64> {
+            Some(if offset < 16 * 1024 {
+                4 * 1024
+            } else {
+                64 * 1024
+            })
+        };
+        assert_eq!(
+            place_state(&sector, 144 * 1024, 64),
+            Some((80 * 1024, 64 * 1024, 64 * 1024))
+        );
+    }
+
+    #[test]
+    fn rust_literal_groups_digits_by_three() {
+        assert_eq!(rust_literal(128), "128");
+        assert_eq!(rust_literal(16_384), "16_384");
+        assert_eq!(rust_literal(131_072), "131_072");
+        assert_eq!(rust_literal(1_048_576), "1_048_576");
+    }
+
     #[test]
     fn chip_with_too_few_sectors_reports_why() {
         // H723VE: 512 KiB одним регионом с сектором 128 KiB — 4 сектора, а
@@ -2400,6 +2599,7 @@ pub static METADATA: Metadata = Metadata {
             bootloader_length: 0,
             bootloader_state_origin: FLASH_BASE,
             bootloader_state_length: 2048,
+            bootloader_state_erase_size: 2048,
             active_origin: FLASH_BASE + 2048,
             active_length: 3000,
             dfu_origin: FLASH_BASE + 2048 + 3000,
