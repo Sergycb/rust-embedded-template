@@ -260,3 +260,16 @@ incremental      = false
 opt-level        = "s"    # <-
 overflow-checks  = true   # <-
 lto              = "fat"
+{%- if signed == "true" %}
+
+# Проверка подписи живёт в bootloader'е (`adapters::ota::screen_update`), а
+# зона bootloader'а — 32 KiB на F4 с разделом настроек. В debug `salty` с
+# overflow-checks и debug-assertions весит ~18 KiB против ~12 в release, и
+# debug-bootloader (его заливают тесты на плате) выходил ~31 KiB — впритык.
+# С `opt-level = "z"` и без проверок — ~26 KiB. Проверки в криптографии,
+# которую мы не пишем, отладке ничего не дают.
+[profile.dev.package.salty]
+opt-level        = "z"
+debug-assertions = false
+overflow-checks  = false
+{%- endif %}

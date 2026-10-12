@@ -133,8 +133,8 @@ salty                  = { version = "0.3.0", default-features = false, features
 # выбранных руками. Только `[dev-dependencies]` `domain`.
 proptest               = { version = "1.0.0" }
 # Parametric tests: одна фикстура — несколько сценариев без дублирования
-# тела (`domain::ota::update::apply_signed`: длина, занятость, версия, ключ,
-# подпись — каждый отказ своим кейсом). Только `[dev-dependencies]` `domain`.
+# тела (`domain::ota::update::apply_signed`: длина, занятость, версия, отказ
+# флеша — каждый своим кейсом). Только `[dev-dependencies]` `domain`.
 rstest                 = { version = "0.18.0" }
 # Snapshot tests: точный вид строк отчёта `cargo xtask build` фиксируется
 # целиком, а не набором `contains`. Только `[dev-dependencies]` `xtask`.

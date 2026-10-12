@@ -93,7 +93,7 @@ supervisor_graph! {
     // первым его занимает тот, кто первым позовёт
     // `cpu_load_percent_receiver()`. Само значение в лог не идёт — читатель
     // должен быть, иначе процент некуда девать.
-    ::domain::CPU_LOAD_FRAG as CPU_LOAD = ::domain::cpu_load::IdleMeter { sleep_ticks: crate::cpu_load::sleep_ticks() }{% if ota == "true" %}, {% if signed == "true" %}::domain::OTA_FRAG<bsp::ota::Link, crate::image::Signed> as OTA = ::domain::ota::OtaWiring { link: board.ota.link, flash: crate::image::Signed::new(board.ota.flash, crate::image::FW_VERSION, crate::image::OTA_PUBLIC_KEY_IN_IMAGE), mode: ::domain::ota::Mode::signed() }{% else %}::domain::OTA_FRAG<bsp::ota::Link, bsp::ota::Updater> as OTA = ::domain::ota::OtaWiring { link: board.ota.link, flash: board.ota.flash, mode: ::domain::ota::Mode::plain() }{% endif %}{% endif %}];
+    ::domain::CPU_LOAD_FRAG as CPU_LOAD = ::domain::cpu_load::IdleMeter { sleep_ticks: crate::cpu_load::sleep_ticks() }{% if ota == "true" %}, {% if signed == "true" %}::domain::OTA_FRAG<bsp::ota::Link, crate::image::Signed> as OTA = ::domain::ota::OtaWiring { link: board.ota.link, flash: crate::image::Signed::new(board.ota.flash, crate::image::FW_VERSION), mode: ::domain::ota::Mode::signed() }{% else %}::domain::OTA_FRAG<bsp::ota::Link, bsp::ota::Updater> as OTA = ::domain::ota::OtaWiring { link: board.ota.link, flash: board.ota.flash, mode: ::domain::ota::Mode::plain() }{% endif %}{% endif %}];
 }
 
 /// Куда уходит просрочка наблюдаемого узла.

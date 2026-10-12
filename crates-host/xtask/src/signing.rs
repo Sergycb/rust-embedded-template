@@ -6,13 +6,13 @@ use anyhow::Context;
 
 use crate::image::{PUBLIC_KEY_SYMBOL, image_symbol};
 
-/// Сверяет ключ, скомпилированный в прошивку, с ключом, которым образ сейчас
+/// Сверяет ключ, скомпилированный в bootloader, с ключом, которым образ сейчас
 /// будет подписан.
 ///
-/// Единственная проверка того, что проводка ключа в приложении целая: файл →
-/// `app/build.rs` → `OTA_PUBLIC_KEY_IN_IMAGE` → адаптер `Signed`. Сломайся она (нули вместо
-/// ключа, чужой файл) — прошивка отвергала бы каждое обновление, и узнали бы
-/// об этом на уже прошитом устройстве.
+/// Единственная проверка того, что проводка ключа целая: файл →
+/// `boot/build.rs` → `OTA_PUBLIC_KEY_IN_IMAGE` → `screen_update`. Сломайся она
+/// (нули вместо ключа, чужой файл) — bootloader отвергал бы каждое обновление,
+/// и узнали бы об этом на уже прошитом устройстве.
 pub fn ensure_image_key(
     elf: &Path,
     base: u64,
@@ -23,16 +23,15 @@ pub fn ensure_image_key(
     let signing = salty::Keypair::from(seed).public.to_bytes();
     anyhow::ensure!(
         compiled == signing,
-        "в прошивке не тот открытый ключ, которым подписывается образ: устройство отвергнет \
-         это обновление. Пересоберите приложение (`cargo clean -p app`) — ключ попадает в \
-         него через crates-cross/app/build.rs из {PUBLIC_KEY_FILE}"
+        "в bootloader'е не тот открытый ключ, которым подписывается образ: устройство отвергнет \
+         это обновление. Пересоберите bootloader (`cargo clean -p boot`) — ключ попадает в \
+         него через crates-cross/boot/build.rs из {PUBLIC_KEY_FILE}"
     );
     Ok(())
 }
 
-/// Подписывает образ: SHA-512 от его байтов, подпись самого хеша — так
-/// проверяет `verify_and_mark_updated` в embassy-boot, так же считает и
-/// устройство.
+/// Подписывает образ: SHA-512 от его байтов, подпись самого хеша — так же
+/// считает bootloader (`adapters::ota::screen_update`).
 pub fn sign_image(image_path: &Path, image: &[u8], seed: &[u8; 32]) -> Result<(), anyhow::Error> {
     let digest = salty::Sha512::new().updated(image).finalize();
     let signature = salty::Keypair::from(seed).sign(&digest).to_bytes();

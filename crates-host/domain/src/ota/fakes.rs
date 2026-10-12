@@ -10,14 +10,11 @@
 
 use std::collections::VecDeque;
 
-use ports::{Announce, FirmwareUpdate, ImageSource, Rejection, SignedFirmwareUpdate, VerifyError};
+use ports::{Announce, FirmwareUpdate, ImageSource, Rejection, SignedFirmwareUpdate};
 
 use crate::ota::update::VERSION_BYTES;
 use crate::ota::version::pack;
 
-/// Ключ, которым «подписаны» образы в тестах. Ненулевой: нули — «ключ не
-/// подставлен», и логика отказывает до криптографии.
-pub(crate) const KEY: [u8; 32] = [7; 32];
 /// Подпись, которую тесты кладут в заголовок; фейк её не проверяет, а
 /// записывает — важно, что до него доехала именно она.
 pub(crate) const SIGNATURE: [u8; 64] = [9; 64];
@@ -99,9 +96,10 @@ pub(crate) struct FakeFlash {
     pub(crate) prepared: Option<u32>,
     pub(crate) writes: Vec<(u32, usize)>,
     pub(crate) version: u32,
-    pub(crate) key: [u8; 32],
-    pub(crate) verify: Result<(), VerifyError<&'static str>>,
-    pub(crate) verified: Vec<([u8; 64], u32)>,
+    /// Что ответить на запись для bootloader'а; `Err` разыгрывает отказ флеша.
+    pub(crate) record: Result<(), &'static str>,
+    /// Что оставлено bootloader'у: подпись и длина.
+    pub(crate) recorded: Vec<([u8; 64], u32)>,
     /// Что ответить на `mark_updated`; `Err` разыгрывает отказ флеша.
     pub(crate) mark_updated: Result<(), &'static str>,
     /// Сколько раз просили обмен разделов.
@@ -118,9 +116,8 @@ impl FakeFlash {
             prepared: None,
             writes: Vec::new(),
             version: pack(1, 2, 3),
-            key: KEY,
-            verify: Ok(()),
-            verified: Vec::new(),
+            record: Ok(()),
+            recorded: Vec::new(),
             mark_updated: Ok(()),
             updated: 0,
         }
@@ -198,16 +195,13 @@ impl SignedFirmwareUpdate for FakeFlash {
         self.version
     }
 
-    fn public_key(&self) -> &[u8; 32] {
-        &self.key
-    }
-
-    fn verify_and_mark_updated(
+    fn record_and_mark_updated(
         &mut self,
         signature: &[u8; 64],
         len: u32,
-    ) -> Result<(), VerifyError<Self::Error>> {
-        self.verified.push((*signature, len));
-        self.verify
+    ) -> Result<(), Self::Error> {
+        self.record?;
+        self.recorded.push((*signature, len));
+        Ok(())
     }
 }

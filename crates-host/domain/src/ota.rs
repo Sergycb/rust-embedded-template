@@ -121,9 +121,10 @@ where
     F: SignedFirmwareUpdate,
     F::Error: Debug,
 {
-    /// С проверкой подписи: принятый образ применяется
+    /// С подписью: принятый образ применяется
     /// [`apply_signed`](crate::ota::update::apply_signed) — длина, занятость,
-    /// версия, ключ, подпись, в этом порядке.
+    /// версия, в этом порядке, и запись подписи для bootloader'а, который её и
+    /// проверит перед обменом.
     ///
     /// Отличие до приёма одно: заголовок без подписи отвергается ДО стирания
     /// раздела — применить такой образ всё равно нечем, а стирание уничтожило
@@ -353,7 +354,6 @@ fn update_rejection<E>(err: &UpdateError<E>) -> Rejection {
         UpdateError::TooLong { .. } | UpdateError::Truncated { .. } => Rejection::Length,
         UpdateError::Busy => Rejection::Busy,
         UpdateError::Rollback { .. } => Rejection::Rollback,
-        UpdateError::NoPublicKey | UpdateError::BadSignature => Rejection::Signature,
         // `Flash` и незнакомые варианты (перечисление `non_exhaustive`).
         _ => Rejection::Device,
     }
@@ -423,7 +423,7 @@ mod tests {
     use crate::ota::fakes::{FakeFlash, FakeLink, SIGNATURE};
     use crate::ota::update::VERSION_BYTES;
     use crate::ota::version::pack;
-    use ports::{Announce, Rejection, VerifyError};
+    use ports::{Announce, Rejection};
     use supervisor::runtime::TaskExit;
 
     /// Гоняет узел, пока не кончится канал: после последнего заголовка `begin`
@@ -594,7 +594,7 @@ mod tests {
     }
 
     /// Счастливый путь с подписью: подпись из заголовка и длина доехали до
-    /// адаптера, `mark_updated` не звался — обмен делает только проверка.
+    /// адаптера записью для bootloader'а, голый `mark_updated` не звался.
     #[tokio::test]
     async fn applies_a_signed_image_with_the_signature_from_the_announce() {
         let image = versioned_image(64, pack(1, 2, 4));
@@ -604,7 +604,7 @@ mod tests {
         serve(&mut link, &mut flash, signed()).await;
 
         assert_eq!(&flash.memory[..64], &image[..]);
-        assert_eq!(flash.verified, vec![(SIGNATURE, 64)]);
+        assert_eq!(flash.recorded, vec![(SIGNATURE, 64)]);
         assert_eq!(flash.updated, 0);
         assert_eq!(link.finished, vec![Ok(())]);
     }
@@ -633,31 +633,6 @@ mod tests {
         serve(&mut link, &mut flash, signed()).await;
 
         assert_eq!(link.finished, vec![Err(Rejection::Rollback)]);
-        assert!(flash.verified.is_empty(), "до криптографии дойти не должно");
-    }
-
-    #[tokio::test]
-    async fn maps_a_bad_signature_to_signature() {
-        let image = versioned_image(64, pack(1, 2, 4));
-        let mut link = FakeLink::of([image]).announcing([signed_announce(64)]);
-        let mut flash = FakeFlash::new(1024, 8);
-        flash.verify = Err(VerifyError::BadSignature);
-
-        serve(&mut link, &mut flash, signed()).await;
-
-        assert_eq!(link.finished, vec![Err(Rejection::Signature)]);
-    }
-
-    #[tokio::test]
-    async fn maps_a_zero_key_to_signature() {
-        let image = versioned_image(64, pack(1, 2, 4));
-        let mut link = FakeLink::of([image]).announcing([signed_announce(64)]);
-        let mut flash = FakeFlash::new(1024, 8);
-        flash.key = [0; 32];
-
-        serve(&mut link, &mut flash, signed()).await;
-
-        assert_eq!(link.finished, vec![Err(Rejection::Signature)]);
-        assert!(flash.verified.is_empty());
+        assert!(flash.recorded.is_empty(), "обмен не должен быть запрошен");
     }
 }

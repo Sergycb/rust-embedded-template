@@ -33,6 +33,13 @@ mod panic;
 #[cortex_m_rt::entry]
 fn main() -> ! {
     let p = init_peripherals();
+    let flash = Flash::new_blocking(p.FLASH);
+{%- if signed == "true" %}
+    // Новый образ проверяется ДО сторожа: проверка — один неделимый вызов
+    // (сотня миллионов тактов на частоте после сброса), покормить сторож
+    // внутри нечем. См. `screen`.
+    let flash = screen(flash);
+{%- endif %}
 
     // `Flash` (до `.into_blocking_regions()`) сам реализует `NorFlash` на
     // весь диапазон flash — erase/write внутри учитывают реальные границы
@@ -46,15 +53,15 @@ fn main() -> ! {
 {%- if graph == "true" %}
     //
     // В release флеш обёрнут сторожем (см. [`Fed`]), запущенным здесь же —
-    // первым делом, до обмена разделов.
+    // до обмена разделов, но после проверки нового образа (если она есть).
     #[cfg(not(debug_assertions))]
     let flash = Mutex::new(RefCell::new(Fed::new(
-        Flash::new_blocking(p.FLASH),
+        flash,
         IndependentWatchdog::new(p.{{watchdog_peripheral}}, WATCHDOG_TIMEOUT_US),
     )));
     #[cfg(debug_assertions)]
 {%- endif %}
-    let flash = Mutex::new(RefCell::new(Flash::new_blocking(p.FLASH)));
+    let flash = Mutex::new(RefCell::new(flash));
     // `BOOTLOADER_STATE` — со страницей своего сектора, а не всего чипа (см.
     // `STATE_ERASE_SIZE`), но над тем же `Flash`: свой мьютекс, а не второй
     // объект контроллера.
@@ -117,6 +124,82 @@ fn main() -> ! {
 /// генерации тем же расчётом, что адреса в `memory.x`; то же самое стоит в
 /// `bsp::ota` — разделу в приложении и в bootloader'е расходиться нельзя.
 const STATE_ERASE_SIZE: usize = {{state_erase_size}};
+{%- if signed == "true" %}
+
+/// Проверяет новый образ в `DFU`, если обмен запрошен, и возвращает флеш
+/// дальше — в обмен и прыжок.
+///
+/// Проверка подписи живёт здесь, а не в приложении: ключ зашит в bootloader,
+/// который обновлением не перезаписывается, и проверяется именно то, что
+/// сейчас станет `ACTIVE`, — ни ошибка в OTA-коде приложения, ни запись в
+/// `DFU` в обход него не приведут к запуску неподписанного образа. Решает
+/// `adapters::ota::screen_update` (там же — почему проверяется только новый
+/// запрос, а откат нет); отказ снимает запрос на обмен, и загружается прежний
+/// образ. О неудаче отправитель узнаёт по тому, что версия после перезагрузки
+/// не сменилась.
+///
+/// Свой мьютекс над `Flash`, а не тот, что дальше: сторож в release запускает
+/// `Fed::new`, и проверка обязана закончиться раньше.
+///
+/// Причина отказа печатается строкой на вариант, а не через
+/// `defmt::Debug2Format`: тот тянет `core::fmt` — несколько килобайт в зону
+/// bootloader'а, где их и так впритык.
+fn screen(
+    flash: Flash<'static, embassy_stm32::flash::Blocking>,
+) -> Flash<'static, embassy_stm32::flash::Blocking> {
+    use adapters::ota::{Rejection, Screening};
+    use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+
+    let flash = Mutex::<NoopRawMutex, _>::new(RefCell::new(flash));
+    {
+        let state = Mutex::<NoopRawMutex, _>::new(RefCell::new(Paged::<_, STATE_ERASE_SIZE>::new(
+            Shared::new(&flash),
+        )));
+        let mut config = BootLoaderConfig::from_linkerfile_blocking(&flash, &flash, &state);
+        let capacity = config.active.size();
+        let Ok(screening) = adapters::ota::screen_update(
+            &mut config.dfu,
+            &mut config.state,
+            capacity,
+            &OTA_PUBLIC_KEY_IN_IMAGE,
+        ) else {
+            // Флеш не читается — дальше обмен всё равно упал бы; паника хотя
+            // бы оставляет причину в PANIC (`cargo xtask panic-info`).
+            panic!("boot: проверка нового образа: ошибка флеша");
+        };
+        match screening {
+            Screening::NothingToCheck => {}
+            Screening::Approved => info!("boot: подпись нового образа сошлась"),
+            Screening::Rejected(why) => defmt::warn!(
+                "boot: новый образ отвергнут ({=str}), загружается прежний",
+                match why {
+                    Rejection::NoRecord => "нет записи о подписи",
+                    Rejection::Length => "негодная длина",
+                    Rejection::NoPublicKey => "ключ не подставлен",
+                    Rejection::Signature => "подпись не сошлась",
+                }
+            ),
+        }
+    }
+    flash.into_inner().into_inner()
+}
+
+/// Открытый ключ, которым проверяется подпись нового образа.
+///
+/// Не константа в исходнике, а файл `ota-public-key.bin` в корне проекта: его
+/// создаёт `cargo xtask build` вместе с закрытым и приносит сюда `build.rs`
+/// через `OUT_DIR`. Нули означают «ключ ещё не создан» (файла нет), и
+/// `screen_update` отвергает с ними любой образ.
+///
+/// Статик с именем, а не `const`: `cargo xtask build` находит его в ELF
+/// bootloader'а и сверяет с ключом, которым подписывает образ. `#[used]` и
+/// `no_mangle` вдвоём: первое просит оставить статик, второе — сохранить имя.
+#[used]
+#[expect(unsafe_code, reason = "обоснование — в комментарии выше")] // имя символа нужно xtask, см. выше
+#[unsafe(no_mangle)]
+pub static OTA_PUBLIC_KEY_IN_IMAGE: [u8; 32] =
+    *include_bytes!(concat!(env!("OUT_DIR"), "/ota-public-key.bin"));
+{%- endif %}
 {%- if graph == "true" %}
 
 /// Таймаут сторожа — то же число из `[env]` crates-cross/.cargo/config.toml,

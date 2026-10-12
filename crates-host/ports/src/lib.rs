@@ -51,5 +51,5 @@ pub mod ota;
 pub mod settings;
 
 pub use ota::download::{Announce, DownloadError, ImageSource, Rejection};
-pub use ota::update::{FirmwareUpdate, SignedFirmwareUpdate, UpdateError, VerifyError};
+pub use ota::update::{FirmwareUpdate, SignedFirmwareUpdate, UpdateError};
 pub use settings::SettingsStorage;

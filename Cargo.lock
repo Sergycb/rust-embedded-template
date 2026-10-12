@@ -379,15 +379,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ed25519"
-version = "2.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "115531babc129696a58c64a4fef0a8bf9e9698629fb97e9e40767d235cfbcd53"
-dependencies = [
- "signature",
-]
-
-[[package]]
 name = "embassy-boot"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -400,7 +391,6 @@ dependencies = [
  "embassy-sync",
  "embedded-storage",
  "embedded-storage-async",
- "salty",
  "signature",
 ]
 
@@ -1213,7 +1203,6 @@ version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b947325a585e90733e0e9ec097228f40b637cc346f9bd68f84d5c6297d0fcfef"
 dependencies = [
- "ed25519",
  "subtle",
  "zeroize",
 ]

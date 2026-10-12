@@ -91,15 +91,11 @@ fn main() -> ! {
 {%- endif %}
 {%- if signed == "true" and graph != "true" %}
 
-    // Адаптер с проверкой подписи. Графа нет, так что узел OTA зовёте вы:
+    // Адаптер проекта с подписью. Графа нет, так что узел OTA зовёте вы:
     // переименуйте `_flash` в `mut flash` и вызовите
     // `domain::ota::run(domain::ota::OtaCtx { link: &mut board.ota.link, flash: &mut flash,
     // mode: &mut domain::ota::Mode::signed(), index: 0 }).await`.
-    let _flash = image::Signed::new(
-        board.ota.flash,
-        image::FW_VERSION,
-        image::OTA_PUBLIC_KEY_IN_IMAGE,
-    );
+    let _flash = image::Signed::new(board.ota.flash, image::FW_VERSION);
 {%- endif %}
 
     // Исполнитель — свой, а не `#[embassy_executor::main]`, и это единственная

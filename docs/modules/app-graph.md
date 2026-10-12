@@ -413,7 +413,7 @@ SD-карта, у каждого свой формат пакета и своя 
 только от `ports` и `adapters`, про `domain` он не знает (`= ::domain::ota::OtaWiring
 { link: board.ota.link, flash: board.ota.flash, mode: ::domain::ota::Mode::plain() }`;
 с подписью — тот же `OtaWiring`, где `flash` обёрнут в `crate::image::Signed` версией
-и ключом образа, а режим — `Mode::signed()`). Типы слотов — аргументы фрагмента
+образа, а режим — `Mode::signed()`). Типы слотов — аргументы фрагмента
 (`OTA_FRAG<bsp::ota::Link, bsp::ota::Updater>`):
 слот — `static`, тип ему нужен, а знает его только эта сторона. Подставили
 свой транспорт — поправьте первый аргумент. Слоты канала и адаптера — `local` (фича

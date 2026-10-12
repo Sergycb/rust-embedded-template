@@ -5,7 +5,8 @@
 //!
 //! Что здесь есть: подготовка раздела под образ, запись и чтение кусков,
 //! состояние bootloader'а, подтверждение образа, пометка обмена и — под фичей
-//! `signed` — проверка подписи. Чего нет: ни порядка проверок при применении
+//! `signed` — запись подписи для bootloader'а и сама её проверка, которую
+//! зовёт bootloader (`screen_update`). Чего нет: ни порядка проверок при применении
 //! (`domain::ota::update`), ни буферизации до слова (`domain::ota::download`) —
 //! это логика, а здесь только доступ к разделам.
 //!
@@ -25,12 +26,6 @@ use embassy_boot::{
 };
 use embedded_storage::nor_flash::{NorFlash, NorFlashErrorKind};
 use ports::FirmwareUpdate;
-// Нужен только `Signed` (под фичей): безусловный импорт в проекте без подписи
-// давал `unused_imports` на каждой сборке — корневой lint этого не видит,
-// он всегда включает `adapters/signed`.
-#[cfg(feature = "signed")]
-use ports::VerifyError;
-
 // Тип возвращается портом, поэтому называть его должно быть чем — иначе
 // пользователю пришлось бы объявлять прямую зависимость на `embassy-boot`
 // только ради имени в сигнатуре своей функции.
@@ -110,11 +105,11 @@ impl<DFU: NorFlash, STATE: NorFlash> Updater<DFU, STATE> {
     /// `#[cfg(not(feature = "_verify"))]` — с включённой проверкой подписи он
     /// не хочет давать пометить обмен без проверки. Порт же объявляет
     /// `mark_updated` безусловно (путь без подписи, проверок там нет
-    /// намеренно — см. `ports`), а `Signed` его делегирует; поэтому пометка
-    /// идёт через `BlockingFirmwareState`, который под фичей не спрятан и
-    /// делает ровно то же (`set_magic(SWAP_MAGIC)`). Защита от непроверенного
-    /// образа в проекте с подписью — `domain::ota::update::apply_signed`,
-    /// единственный путь, которым им пользуется `app`.
+    /// намеренно — см. `ports`), и `Signed` метит обмен им же после записи
+    /// подписи; поэтому пометка идёт через `BlockingFirmwareState`, который под
+    /// фичей не спрятан и делает ровно то же (`set_magic(SWAP_MAGIC)`). Защита
+    /// от неподписанного образа — bootloader (`screen_update`): без записи о
+    /// подписи он обмен не пропустит.
     fn state(&mut self) -> BlockingFirmwareState<'_, &mut STATE> {
         BlockingFirmwareState::new(&mut self.state, &mut self.aligned.0[..STATE::WRITE_SIZE])
     }
@@ -131,17 +126,6 @@ impl<DFU: NorFlash, STATE: NorFlash> Updater<DFU, STATE> {
             self.updater().get_state()?,
             State::Swap | State::Revert
         ))
-    }
-
-    #[cfg(feature = "signed")]
-    fn verify_and_mark_updated(
-        &mut self,
-        public_key: &[u8; 32],
-        signature: &[u8; 64],
-        len: u32,
-    ) -> Result<(), Error> {
-        self.updater()
-            .verify_and_mark_updated(public_key, signature, len)
     }
 }
 
@@ -221,15 +205,14 @@ impl<DFU: NorFlash, STATE: NorFlash> FirmwareUpdate for Updater<DFU, STATE> {
     }
 }
 
-/// [`Updater`] вместе с тем, что нужно проверке подписи: версией текущей
-/// прошивки и открытым ключом. Обёртка, а не поля в `Updater`: без подписи
-/// они ничего не значат, а тридцать шесть байт RAM «на всякий случай» — не
-/// то, что стоит раздавать каждому проекту.
+/// [`Updater`] проекта с подписью: знает версию текущей прошивки (защита от
+/// отката) и оставляет bootloader'у запись о подписи в запасной странице
+/// `DFU` — см. [`PendingImage`]. Саму подпись проверяет bootloader
+/// ([`screen_update`]), ключа здесь нет.
 #[cfg(feature = "signed")]
 pub struct Signed<DFU: NorFlash, STATE: NorFlash> {
     inner: Updater<DFU, STATE>,
     version: u32,
-    public_key: [u8; 32],
 }
 
 #[cfg(feature = "signed")]
@@ -242,13 +225,11 @@ impl<DFU: NorFlash, STATE: NorFlash> core::fmt::Debug for Signed<DFU, STATE> {
 #[cfg(feature = "signed")]
 impl<DFU: NorFlash, STATE: NorFlash> Signed<DFU, STATE> {
     /// `running_version` — упакованная версия этого образа
-    /// (`domain::ota::version::pack`), `public_key` — корень доверия; нули
-    /// означают «ключ не подставлен» и отвергаются логикой до криптографии.
-    pub fn new(inner: Updater<DFU, STATE>, running_version: u32, public_key: [u8; 32]) -> Self {
+    /// (`domain::ota::version::pack`).
+    pub fn new(inner: Updater<DFU, STATE>, running_version: u32) -> Self {
         Self {
             inner,
             version: running_version,
-            public_key,
         }
     }
 
@@ -271,8 +252,17 @@ impl<DFU: NorFlash, STATE: NorFlash> FirmwareUpdate for Signed<DFU, STATE> {
     fn is_busy(&mut self) -> Result<bool, Self::Error> {
         self.inner.is_busy()
     }
+    /// Сверх страниц под образ стирает и запасную страницу `DFU` — туда ляжет
+    /// запись о подписи ([`PendingImage`]). Она стоит за пределами образа
+    /// (смещение `capacity`), и обычная подготовка её не трогает; оставь её
+    /// нестёртой — запись легла бы поверх остатков прошлого обмена. Время:
+    /// ещё одно стирание страницы, на F4 — сектор 128 KiB.
     fn prepare(&mut self, len: u32) -> Result<(), Self::Error> {
-        self.inner.prepare(len)
+        self.inner.prepare(len)?;
+        let page = self.inner.erase_size();
+        let spare = self.inner.capacity;
+        self.inner.dfu.erase(spare, spare + page)?;
+        Ok(())
     }
     fn write(&mut self, offset: u32, data: &[u8]) -> Result<(), Self::Error> {
         self.inner.write(offset, data)
@@ -284,13 +274,12 @@ impl<DFU: NorFlash, STATE: NorFlash> FirmwareUpdate for Signed<DFU, STATE> {
         self.inner.mark_booted()
     }
     /// В проекте с подписью единственный путь к обмену разделов —
-    /// `domain::ota::update::apply_signed` (проверка длины, занятости, версии,
-    /// ключа и самой подписи). Порт объявляет `mark_updated` безусловно,
-    /// поэтому метод остаётся, но отвечает `BadState` — тот же отказ, которым
-    /// `embassy-boot` отвечает на попытку обмена в негодном состоянии, и тот
-    /// же, что даёт `verify_and_mark_updated` при неподтверждённом образе. Так
-    /// восстанавливается гарантия старого `bsp::ota`, где у подписанного
-    /// варианта метода `mark_updated` не было вовсе.
+    /// `domain::ota::update::apply_signed` (проверка длины, занятости, версии и
+    /// запись подписи для bootloader'а). Порт объявляет `mark_updated`
+    /// безусловно, поэтому метод остаётся, но отвечает `BadState` — тот же
+    /// отказ, которым `embassy-boot` отвечает на попытку обмена в негодном
+    /// состоянии. Обмен без записи bootloader всё равно отверг бы, но узнать об
+    /// этом лучше сразу, а не после перезагрузки.
     fn mark_updated(&mut self) -> Result<(), Self::Error> {
         Err(Error::BadState)
     }
@@ -302,29 +291,28 @@ impl<DFU: NorFlash, STATE: NorFlash> ports::SignedFirmwareUpdate for Signed<DFU,
         self.version
     }
 
-    fn public_key(&self) -> &[u8; 32] {
-        &self.public_key
-    }
-
-    /// Проверка читает весь раздел и считает по нему хеш — заметное время
-    /// (портируемая реализация ed25519 — порядка сотни миллионов тактов).
-    /// Случается это один раз перед перезагрузкой.
-    ///
-    /// `Signature(_)` у embassy-boot — и не сошедшаяся подпись, и ключ,
-    /// который не разбирается как точка кривой; для отправителя это одно и
-    /// то же «подпись негодная».
-    fn verify_and_mark_updated(
+    /// Запись — в запасную страницу `DFU`, которую стёр `prepare`; пометка
+    /// обмена — после неё: bootloader, увидев запрос, обязан найти и запись.
+    /// Занятость раздела проверена логикой раньше, но и здесь она проверяется:
+    /// запись в `DFU` занятого раздела испортила бы образ отката.
+    fn record_and_mark_updated(
         &mut self,
         signature: &[u8; 64],
         len: u32,
-    ) -> Result<(), VerifyError<Self::Error>> {
-        let key = self.public_key;
-        self.inner
-            .verify_and_mark_updated(&key, signature, len)
-            .map_err(|err| match err {
-                Error::Signature(_) => VerifyError::BadSignature,
-                other => VerifyError::Flash(other),
-            })
+    ) -> Result<(), Self::Error> {
+        if self.inner.dfu_is_busy()? {
+            return Err(Error::BadState);
+        }
+        let capacity = self.inner.capacity;
+        write_pending(
+            &mut self.inner.dfu,
+            capacity,
+            PendingImage {
+                len,
+                signature: *signature,
+            },
+        )?;
+        self.inner.state().mark_updated()
     }
 }
 
@@ -716,12 +704,12 @@ mod tests {
     }
 
     /// Порт объявляет `mark_updated` безусловно, но у `Signed` он не должен
-    /// давать обменять разделы мимо проверки подписи — единственный путь
-    /// туда лежит через `domain::ota::update::apply_signed`.
+    /// давать обменять разделы мимо записи подписи — единственный путь туда
+    /// лежит через `domain::ota::update::apply_signed`.
     #[cfg(feature = "signed")]
     #[test]
     fn signed_mark_updated_always_refuses() {
-        let mut signed = Signed::new(updater(), 1, [7; 32]);
+        let mut signed = Signed::new(updater(), 1);
 
         assert!(matches!(signed.mark_updated(), Err(Error::BadState)));
         assert!(
@@ -730,24 +718,28 @@ mod tests {
         );
     }
 
-    /// Подпись, которая не может сойтись (ключ и подпись — константы), доходит
-    /// до порта своим вариантом, а не как отказ флеша.
+    /// Запись для bootloader'а ложится в запасную страницу, которую стёр
+    /// `prepare`, и после неё обмен помечен — `screen_update` найдёт её там.
     #[cfg(feature = "signed")]
     #[test]
-    fn signed_reports_a_bad_signature_as_such() {
-        use ports::{SignedFirmwareUpdate, VerifyError};
-        let mut signed = Signed::new(updater(), 1, [7; 32]);
-        signed.prepare(64).expect("стереть под образ");
-        signed.write(0, &[0xA5; 64]).expect("записать образ");
+    fn signed_leaves_the_record_where_the_bootloader_looks() {
+        use ports::SignedFirmwareUpdate;
+        let mut u = updater();
+        u.dfu.mem[768..].fill(0x00); // остатки прошлого обмена в запасной странице
+        let mut signed = Signed::new(u, 1);
 
-        assert!(matches!(
-            signed.verify_and_mark_updated(&[9; 64], 64),
-            Err(VerifyError::BadSignature)
-        ));
-        assert!(
-            !signed.is_busy().expect("состояние"),
-            "негодная подпись не должна помечать обмен"
-        );
+        signed.prepare(64).expect("стереть под образ и запись");
+        signed.write(0, &[0xA5; 64]).expect("записать образ");
+        signed
+            .record_and_mark_updated(&[9; 64], 64)
+            .expect("запись и пометка");
+
+        assert!(signed.is_busy().expect("состояние"), "обмен помечен");
+        let mut record = [0; crate::ota::PENDING_RECORD_LEN];
+        signed.read(768, &mut record).expect("чтение записи");
+        assert_eq!(&record[..8], b"OTA-SIG1");
+        assert_eq!(&record[8..12], &64u32.to_le_bytes());
+        assert_eq!(&record[16..80], &[9; 64]);
     }
 
     #[test]

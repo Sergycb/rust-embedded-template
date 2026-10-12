@@ -43,7 +43,13 @@ embassy-sync = { workspace = true }
 # Раздел BOOTLOADER_STATE со страницей своего сектора, а не всего чипа
 # (`adapters::flash::Paged` поверх `Shared`, src/main.rs). Тот же код, что
 # строит этот раздел в приложении (bsp::ota), — расходиться им нельзя.
+{%- if signed == "true" %}
+# С подписью — ещё и проверка нового образа перед обменом
+# (`adapters::ota::screen_update`, фича `signed`).
+adapters = { workspace = true, features = ["signed"] }
+{%- else %}
 adapters = { workspace = true }
+{%- endif %}
 {%- if graph == "true" %}
 # Обёртка флеша, кормящая сторож во время обмена разделов (`Fed` в src/main.rs).
 embedded-storage = { workspace = true }

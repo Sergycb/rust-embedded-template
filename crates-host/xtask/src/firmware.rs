@@ -14,8 +14,8 @@ use crate::size::report_image;
 
 pub fn build(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     // Ключ приводится в порядок ДО сборки, а не после: открытый попадает в
-    // прошивку через build.rs крейта app, то есть должен существовать к моменту
-    // компиляции.
+    // bootloader через build.rs крейта boot, то есть должен существовать к
+    // моменту компиляции.
     //
     // И только там, где есть что подписывать: без bootloader'а раздела `DFU` не
     // существует, доставлять образ некуда, а пара ключей в корне проекта была
@@ -88,7 +88,10 @@ pub fn build(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
         println!("образ для OTA: {}", path.display());
 
         if let Some(seed) = seed {
-            ensure_image_key(&elf, base, &image, &seed)?;
+            // Ключ проверяет bootloader — с его release-ELF и сверяем.
+            let boot_elf = cross_target_dir().join(TARGET).join("release").join("boot");
+            let (boot_base, boot_image) = raw_image(&boot_elf)?;
+            ensure_image_key(&boot_elf, boot_base, &boot_image, &seed)?;
             sign_image(&path, &image, &seed)?;
         }
     }

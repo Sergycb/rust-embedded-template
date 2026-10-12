@@ -212,9 +212,10 @@ compose-site раскладывает его во вход узла, `domain::ot
 `link`, в шаблоне — заглушка `bsp::ota::Link` (ждёт заголовок вечно). Оба по
 общему правилу — адаптеры, реализующие порты (`FirmwareUpdate`,
 `ImageSource`); вместимость раздела плата отдаёт через порт же
-(`FirmwareUpdate::capacity`). Версия образа и ключ подписи — свойства
-прошивки, а не платы: их задаёт приложение (`crates-cross/app/src/image.rs`),
-оборачивая `flash` в `adapters::ota::Signed` прямо в `fragments:`. Заглушка
+(`FirmwareUpdate::capacity`). Версия образа — свойство прошивки, а не
+платы: её задаёт приложение (`crates-cross/app/src/image.rs`), оборачивая
+`flash` в `adapters::ota::Signed` прямо в `fragments:`; ключ подписи — в
+bootloader'е (`crates-cross/boot`), который подпись и проверяет. Заглушка
 ещё и ради проверяемости: с ней `template-check` раскрывает фрагменты узла OTA
 в обоих вариантах, без неё они не компилировались бы нигде. Проект заменяет
 заглушку своим транспортом, не трогая ни узел, ни граф
@@ -243,10 +244,11 @@ compose-site раскладывает его во вход узла, `domain::ot
 под неё нет.
 
 **Применение обновления — тоже через порт.** `mark_updated` — метод `FirmwareUpdate`,
-`verify_and_mark_updated` вместе с версией и ключом — `SignedFirmwareUpdate`;
-трейт объявлен безусловно (Liquid в `ports` запрещён), реализован только в проекте с
-подписью (`adapters::ota::Signed`, Cargo-фича `adapters/signed`). Порядок проверок
-перед вызовом — `domain::ota::update::apply_signed`, и он host-тестируем.
+`record_and_mark_updated` вместе с версией — `SignedFirmwareUpdate`; трейт объявлен
+безусловно (Liquid в `ports` запрещён), реализован только в проекте с подписью
+(`adapters::ota::Signed`, Cargo-фича `adapters/signed`). Порядок проверок перед
+вызовом — `domain::ota::update::apply_signed`, и он host-тестируем. Саму подпись
+проверяет bootloader (`adapters::ota::screen_update`) — `docs/ota.md`.
 
 **Дублировать методы портов собственными нельзя.** У `adapters::ota::Updater` и
 `adapters::settings::Settings` inherent-методы `write`/`read`/`mark_booted` были

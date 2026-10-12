@@ -30,26 +30,13 @@
 use defmt_rtt as _;
 {%- if signed == "true" %}
 
-/// Адаптер с проверкой подписи поверх разделов платы — так его собирает
-/// приложение (`crates-cross/app/src/image.rs`), только версия и ключ свои.
-///
-/// Ключ — открытый ключ из первого тестового вектора RFC 8032, а не ключ
-/// проекта: тест не должен зависеть от того, создан ли `ota-public-key.bin`, и
-/// с настоящей точкой кривой всегда доходит до криптографии. Версия — `0.1.0`:
+/// Адаптер проекта с подписью поверх разделов платы — так его собирает
+/// приложение (`crates-cross/app/src/image.rs`), только версия своя: `0.1.0`,
 /// ниже `u32::MAX` и не ниже `0.0.0`, которые кладут в хвост образа тесты.
 fn signed(
     board: bsp::Board,
 ) -> adapters::ota::Signed<bsp::ota::Partition, bsp::ota::StatePartition> {
-    const RFC8032_TEST1_PUBLIC_KEY: [u8; 32] = [
-        0xd7, 0x5a, 0x98, 0x01, 0x82, 0xb1, 0x0a, 0xb7, 0xd5, 0x4b, 0xfe, 0xd3, 0xc9, 0x64, 0x07,
-        0x3a, 0x0e, 0xe1, 0x72, 0xf3, 0xda, 0xa6, 0x23, 0x25, 0xaf, 0x02, 0x1a, 0x68, 0xf7, 0x07,
-        0x51, 0x1a,
-    ];
-    adapters::ota::Signed::new(
-        board.ota.flash,
-        domain::ota::version::pack(0, 1, 0),
-        RFC8032_TEST1_PUBLIC_KEY,
-    )
+    adapters::ota::Signed::new(board.ota.flash, domain::ota::version::pack(0, 1, 0))
 }
 {%- endif %}
 
@@ -375,54 +362,6 @@ mod tests {
 {%- endif %}
 {%- if signed == "true" %}
 
-    /// Неверная подпись не проходит — проверка идёт на самом чипе.
-    ///
-    /// Ключ тестовый (см. [`super::signed`]), поэтому тест всегда проверяет
-    /// главное: что `salty` действительно считается на этом ядре и отвергает
-    /// мусор (`UpdateError::BadSignature` — адаптер отдаёт отказ подписи своим
-    /// вариантом, а не как ошибку флеша). Отказ нулевому ключу до
-    /// криптографии (`NoPublicKey`) — логика `domain`, её стерегут host-тесты.
-    ///
-    /// Обновление при этом не запрашивается ни в одном случае: `embassy-boot`
-    /// зовёт `mark_updated()` только после успешной проверки.
-    #[test]
-    fn ota_rejects_a_bad_signature(board: Board) {
-        use ports::{FirmwareUpdate, UpdateError};
-
-        const LENGTH: u32 = 64;
-
-        let mut ota = super::signed(board);
-
-        // Хвост раздела готовится явно, и без этого тест ненадёжен: проверка
-        // версии стоит ПЕРЕД подписью и читает последние четыре байта образа,
-        // а в разделе лежат остатки прошлых прогонов. Окажись там версия не
-        // новее текущей — вызов вернул бы `Rollback`, до подписи бы не дошёл.
-        // Ставим заведомо большую.
-        let mut image = [0xFFu8; LENGTH as usize];
-        image[LENGTH as usize - 4..].copy_from_slice(&u32::MAX.to_le_bytes());
-        ota.prepare(LENGTH).expect("раздел DFU должен стираться");
-        ota.write(0, &image)
-            .expect("раздел DFU должен принимать запись");
-
-        // Нули — заведомо не подпись: ни для какого ключа и сообщения.
-        let signature = [0u8; 64];
-
-        let refused = domain::ota::update::apply_signed(&mut ota, &signature, LENGTH);
-        assert!(
-            matches!(refused, Err(UpdateError::BadSignature)),
-            "неверная подпись принята — по OTA прошёл бы чужой образ"
-        );
-
-        // А это уже про длину — своим вариантом, а не общим: пока обе защиты
-        // отвечали одинаково, тест оставался зелёным после удаления той, что
-        // проверяет длину (проверено удалением на живой плате).
-        let refused = domain::ota::update::apply_signed(&mut ota, &signature, u32::MAX);
-        assert!(
-            matches!(refused, Err(UpdateError::TooLong { .. })),
-            "длина больше раздела должна отвергаться отдельной ошибкой"
-        );
-    }
-
     /// Образ не новее текущего отвергается — защита от атаки отката.
     ///
     /// Смысл защиты: подпись доказывает, КТО прислал образ, но не то, что он
@@ -455,7 +394,10 @@ mod tests {
         );
 
         // Обратная сторона: образ с версией заведомо новее проверку версии
-        // ПРОХОДИТ и упирается уже в ключ или подпись. Второй образ кладётся
+        // ПРОХОДИТ — и доходит до записи для bootloader'а с пометкой обмена.
+        // Подпись тут нули, и bootloader на следующем сбросе отверг бы образ,
+        // но тест снимает пометку сам (`mark_booted`), чтобы не оставлять
+        // запрос на обмен соседям по прогону. Второй образ кладётся
         // РЯДОМ, а не поверх первого: версия читается по `length - 4`, так что
         // достаточно попросить проверить кусок подлиннее, а перезаписать те же
         // четыре байта нельзя (`0xFF` поверх `0x00` не ложится).
@@ -464,10 +406,11 @@ mod tests {
         ota.write(LENGTH, &newer[LENGTH as usize..])
             .expect("раздел DFU должен принимать запись");
 
-        let refused = domain::ota::update::apply_signed(&mut ota, &[0u8; 64], LONGER);
+        let accepted = domain::ota::update::apply_signed(&mut ota, &[0u8; 64], LONGER);
+        ota.mark_booted().expect("снять запрос на обмен");
         assert!(
-            !matches!(refused, Err(UpdateError::Rollback { .. })),
-            "образ новее текущего не должен отвергаться как откат"
+            accepted.is_ok(),
+            "образ новее текущего должен дойти до записи для bootloader'а: {accepted:?}"
         );
     }
 {%- endif %}

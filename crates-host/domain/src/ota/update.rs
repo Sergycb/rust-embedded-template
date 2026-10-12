@@ -2,13 +2,13 @@
 //! отказ различим.
 //!
 //! Здесь, а не в адаптере: «принимать ли этот образ» — правило продукта, и
-//! проверяется оно на хосте с фейком порта. Адаптер поверх `embassy-boot`
-//! умеет только криптографию и пометку разделов
-//! ([`SignedFirmwareUpdate::verify_and_mark_updated`](ports::SignedFirmwareUpdate::verify_and_mark_updated));
-//! всё, что перед ней, — здесь. Без подписи применять нечего:
-//! `FirmwareUpdate::mark_updated` адаптера платы.
+//! проверяется оно на хосте с фейком порта. Подпись приложение не проверяет —
+//! это делает bootloader перед обменом (`adapters::ota::screen_update`), а
+//! отсюда ему уходит запись с подписью и длиной
+//! ([`SignedFirmwareUpdate::record_and_mark_updated`](ports::SignedFirmwareUpdate::record_and_mark_updated)).
+//! Без подписи применять нечего: `FirmwareUpdate::mark_updated` адаптера платы.
 
-use ports::{SignedFirmwareUpdate, UpdateError, VerifyError};
+use ports::{SignedFirmwareUpdate, UpdateError};
 
 use crate::ota::version;
 
@@ -22,8 +22,9 @@ use crate::ota::version;
 /// `FW_VERSION_IN_IMAGE` в ELF (`crates-host/xtask`).
 pub const VERSION_BYTES: u32 = 4;
 
-/// Проверяет принятый образ и, если всё сошлось, просит bootloader поменять
-/// разделы местами на следующем сбросе. Сам сброс — за вызывающим.
+/// Проверяет принятый образ и, если всё сошлось, оставляет bootloader'у
+/// подпись и просит поменять разделы местами на следующем сбросе. Сам сброс —
+/// за вызывающим.
 ///
 /// `signature` и `len` приезжают вместе с образом по вашему каналу, а берутся
 /// из сборки: `cargo xtask build` кладёт рядом с ELF сырой `app.bin`, его
@@ -31,31 +32,22 @@ pub const VERSION_BYTES: u32 = 4;
 ///
 /// Порядок проверок — не косметика, у каждого шага своя причина:
 ///
-/// 1. **Длина — первой.** Присылает её тот же недоверенный канал, а
-///    `verify_and_mark_updated` в embassy-boot начинается с
-///    `assert!(update_len <= dfu.capacity())`, то есть с паники; в release
-///    паника это сброс, и одно кривое число уводило бы устройство в цикл.
-///    Сверяется с [`capacity`](ports::FirmwareUpdate::capacity), а это размер
-///    `ACTIVE`, меньший `DFU`, — строже, чем `assert!`, и заодно отсекает
-///    образ, который в приёмник влез бы, а при обмене оказался обрезан.
+/// 1. **Длина — первой.** Присылает её тот же недоверенный канал. Сверяется с
+///    [`capacity`](ports::FirmwareUpdate::capacity), а это размер `ACTIVE`,
+///    меньший `DFU`, — так отсекается образ, который в приёмник влез бы, а при
+///    обмене оказался обрезан.
 /// 2. **Занятость раздела — до версии.** В состояниях обмена и отката в `DFU`
 ///    лежит не присланный образ, а предыдущая прошивка; версия у неё заведомо
 ///    старее, и проверка версии честно ответила бы «откат» — соврав о причине.
-/// 3. **Версия — до подписи.** Читается из ещё не проверенных байтов, но
-///    подделать её нельзя: она внутри подписанного, и хеш считается по ней
-///    тоже. После подписи проверять поздно — `verify_and_mark_updated` при
-///    успехе сразу помечает разделы к обмену.
-/// 4. **Версия — до ключа.** В шаблоне ключ по умолчанию нулевой; стой ключ
-///    раньше, до версии дело не доходило бы, и target-тест
-///    `ota_rejects_an_older_image` был бы вечно красным — защиту нечем было бы
-///    проверить.
-/// 5. **Нулевой ключ — до криптографии.** Это не «просто не совпадёт»: точка
-///    малого порядка, подпись для которой подделывается перебором.
+/// 3. **Версия — здесь, а не в bootloader'е.** Bootloader не знает версию
+///    текущего образа (записи о нём у него нет — только о новом), а приложение
+///    знает свою. Читается она из ещё не проверенных байтов, но подделать её
+///    нельзя: она внутри подписанного, и bootloader, проверяя подпись, проверит
+///    и её.
 ///
-/// Не прошла проверка — разделы не меняются местами, устройство продолжает
-/// работать на текущем образе. Именно поэтому подпись проверяется здесь, а не
-/// в bootloader'е: тот прыгает безусловно, а отвергнуть чужой образ нужно ДО
-/// того, как он стал активным.
+/// Подпись не проверяется вовсе: это делает bootloader перед обменом, а
+/// отвергнутый им образ просто не станет активным. Отправитель узнает об этом
+/// по версии после перезагрузки, а не кодом отказа.
 ///
 /// # Errors
 ///
@@ -64,8 +56,6 @@ pub const VERSION_BYTES: u32 = 4;
 /// - `Busy` — если раздел обновления занят образом отката,
 /// - `Truncated` — если длина меньше хвоста с версией,
 /// - `Rollback` — если версия не новее текущей,
-/// - `NoPublicKey` — если открытый ключ не подставлен (нули),
-/// - `BadSignature` — если подпись не сошлась,
 /// - `Flash` — если адаптер флеша вернул ошибку.
 pub fn apply_signed<F: SignedFirmwareUpdate>(
     flash: &mut F,
@@ -99,18 +89,7 @@ pub fn apply_signed<F: SignedFirmwareUpdate>(
         return Err(UpdateError::Rollback { current, incoming });
     }
 
-    if *flash.public_key() == [0; 32] {
-        return Err(UpdateError::NoPublicKey);
-    }
-
-    flash
-        .verify_and_mark_updated(signature, len)
-        .map_err(|err| match err {
-            VerifyError::Flash(err) => UpdateError::Flash(err),
-            // `BadSignature` и незнакомые варианты (перечисление
-            // `non_exhaustive`): отказ проверки — это отказ, а не пропуск образа.
-            _ => UpdateError::BadSignature,
-        })?;
+    flash.record_and_mark_updated(signature, len)?;
     Ok(())
 }
 
@@ -119,27 +98,26 @@ mod tests {
     use super::apply_signed;
     use crate::ota::fakes::{FakeFlash, SIGNATURE};
     use crate::ota::version::pack;
-    use ports::{UpdateError, VerifyError};
+    use ports::UpdateError;
     use rstest::rstest;
 
     use crate::ota::update::VERSION_BYTES;
 
     #[test]
-    fn accepts_a_newer_signed_image() {
+    fn records_a_newer_signed_image_for_the_bootloader() {
         let mut flash = FakeFlash::with_image(64, pack(1, 2, 4));
 
-        apply_signed(&mut flash, &SIGNATURE, 64).expect("образ новее и подписан");
+        apply_signed(&mut flash, &SIGNATURE, 64).expect("образ новее");
 
-        assert_eq!(flash.verified, vec![(SIGNATURE, 64)]);
+        assert_eq!(flash.recorded, vec![(SIGNATURE, 64)]);
     }
 
-    /// Длина — первой, и своим вариантом: пока обе защиты отвечали одинаково,
+    /// Длина — первой, и своим вариантом: пока защиты отвечали одинаково,
     /// удаление одной из них тест не замечал.
     #[test]
     fn refuses_a_length_beyond_capacity_before_anything_else() {
         let mut flash = FakeFlash::with_image(64, pack(1, 2, 4));
-        flash.busy = true; // и занят, и ключ нулевой — а отказ всё равно по длине
-        flash.key = [0; 32];
+        flash.busy = true; // и занят — а отказ всё равно по длине
 
         let refused = apply_signed(&mut flash, &SIGNATURE, 129);
 
@@ -150,7 +128,7 @@ mod tests {
                 capacity: 128
             })
         );
-        assert!(flash.verified.is_empty());
+        assert!(flash.recorded.is_empty());
     }
 
     /// Занятый раздел — до версии: версия у образа отката заведомо старее, и
@@ -179,10 +157,9 @@ mod tests {
     /// Та же версия — тоже откат: повторная заливка того же номера — типичный
     /// вид атаки.
     #[test]
-    fn refuses_an_older_or_equal_image_before_the_key() {
+    fn refuses_an_older_or_equal_image() {
         for incoming in [pack(1, 2, 3), pack(1, 1, 9)] {
             let mut flash = FakeFlash::with_image(64, incoming);
-            flash.key = [0; 32]; // ключ нулевой, а отказ — по версии
 
             assert_eq!(
                 apply_signed(&mut flash, &SIGNATURE, 64),
@@ -191,39 +168,15 @@ mod tests {
                     incoming
                 })
             );
+            assert!(flash.recorded.is_empty());
         }
     }
 
+    /// Отказ флеша при записи для bootloader'а доходит как отказ флеша.
     #[test]
-    fn refuses_a_zero_key_before_cryptography() {
+    fn passes_a_flash_failure_while_recording_through() {
         let mut flash = FakeFlash::with_image(64, pack(1, 2, 4));
-        flash.key = [0; 32];
-
-        assert_eq!(
-            apply_signed(&mut flash, &SIGNATURE, 64),
-            Err(UpdateError::NoPublicKey)
-        );
-        assert!(flash.verified.is_empty(), "до криптографии дойти не должно");
-    }
-
-    /// Подпись не сошлась — свой вариант, а не `Flash(_)`: отправителю
-    /// важно отличить «исправь ключ» от «устройство неисправно».
-    #[test]
-    fn reports_a_bad_signature_as_such() {
-        let mut flash = FakeFlash::with_image(64, pack(1, 2, 4));
-        flash.verify = Err(VerifyError::BadSignature);
-
-        assert_eq!(
-            apply_signed(&mut flash, &SIGNATURE, 64),
-            Err(UpdateError::BadSignature)
-        );
-    }
-
-    /// Отказ флеша внутри проверки доходит как отказ флеша.
-    #[test]
-    fn passes_a_flash_failure_inside_verify_through() {
-        let mut flash = FakeFlash::with_image(64, pack(1, 2, 4));
-        flash.verify = Err(VerifyError::Flash("флеш отказал"));
+        flash.record = Err("флеш отказал");
 
         assert_eq!(
             apply_signed(&mut flash, &SIGNATURE, 64),
@@ -241,8 +194,7 @@ mod tests {
         /* capacity */ 128,
         /* busy */ false,
         /* incoming_version */ pack(1, 2, 4),
-        /* key */ [1u8; 32],
-        /* verify */ Ok(()),
+        /* record */ Ok(()),
         /* expected */ UpdateError::<FlashErr>::TooLong { len: 129, capacity: 128 }
     )]
     #[case::busy(
@@ -250,8 +202,7 @@ mod tests {
         /* capacity */ 128,
         /* busy */ true,
         /* incoming_version */ pack(1, 2, 4),
-        /* key */ [1u8; 32],
-        /* verify */ Ok(()),
+        /* record */ Ok(()),
         /* expected */ UpdateError::<FlashErr>::Busy
     )]
     #[case::truncated(
@@ -259,8 +210,7 @@ mod tests {
         /* capacity */ 128,
         /* busy */ false,
         /* incoming_version */ pack(1, 2, 4),
-        /* key */ [1u8; 32],
-        /* verify */ Ok(()),
+        /* record */ Ok(()),
         /* expected */ UpdateError::<FlashErr>::Truncated { len: 3 }
     )]
     #[case::rollback_older(
@@ -268,8 +218,7 @@ mod tests {
         /* capacity */ 128,
         /* busy */ false,
         /* incoming_version */ pack(1, 1, 9),
-        /* key */ [1u8; 32],
-        /* verify */ Ok(()),
+        /* record */ Ok(()),
         /* expected */ UpdateError::<FlashErr>::Rollback { current: pack(1, 2, 3), incoming: pack(1, 1, 9) }
     )]
     #[case::rollback_equal(
@@ -277,35 +226,15 @@ mod tests {
         /* capacity */ 128,
         /* busy */ false,
         /* incoming_version */ pack(1, 2, 3),
-        /* key */ [1u8; 32],
-        /* verify */ Ok(()),
+        /* record */ Ok(()),
         /* expected */ UpdateError::<FlashErr>::Rollback { current: pack(1, 2, 3), incoming: pack(1, 2, 3) }
-    )]
-    #[case::no_public_key(
-        /* len */ 64,
-        /* capacity */ 128,
-        /* busy */ false,
-        /* incoming_version */ pack(1, 2, 4),
-        /* key */ [0u8; 32],
-        /* verify */ Ok(()),
-        /* expected */ UpdateError::<FlashErr>::NoPublicKey
-    )]
-    #[case::bad_signature(
-        /* len */ 64,
-        /* capacity */ 128,
-        /* busy */ false,
-        /* incoming_version */ pack(1, 2, 4),
-        /* key */ [1u8; 32],
-        /* verify */ Err(VerifyError::<FlashErr>::BadSignature),
-        /* expected */ UpdateError::<FlashErr>::BadSignature
     )]
     #[case::flash_error(
         /* len */ 64,
         /* capacity */ 128,
         /* busy */ false,
         /* incoming_version */ pack(1, 2, 4),
-        /* key */ [1u8; 32],
-        /* verify */ Err(VerifyError::<FlashErr>::Flash("флеш отказал")),
+        /* record */ Err("флеш отказал"),
         /* expected */ UpdateError::<FlashErr>::Flash("флеш отказал")
     )]
     fn apply_signed_rejects_when(
@@ -313,8 +242,7 @@ mod tests {
         #[case] capacity: u32,
         #[case] busy: bool,
         #[case] incoming_version: u32,
-        #[case] key: [u8; 32],
-        #[case] verify: Result<(), VerifyError<FlashErr>>,
+        #[case] record: Result<(), FlashErr>,
         #[case] expected: UpdateError<FlashErr>,
     ) {
         // `with_image` пишет версию в хвост образа длиной `len`, поэтому
@@ -326,38 +254,27 @@ mod tests {
             FakeFlash::new(capacity as usize, 8)
         };
         flash.busy = busy;
-        flash.key = key;
-        flash.verify = verify;
+        flash.record = record;
 
         let result = apply_signed(&mut flash, &SIGNATURE, len);
 
         assert_eq!(result, Err(expected));
-        if !matches!(
-            &result,
-            Err(UpdateError::BadSignature | UpdateError::Flash(_))
-        ) {
+        if !matches!(&result, Err(UpdateError::Flash(_))) {
             assert!(
-                flash.verified.is_empty(),
-                "verify не должен вызываться для {result:?}"
+                flash.recorded.is_empty(),
+                "запись для bootloader'а не должна появиться при {result:?}"
             );
         }
     }
 
     #[rstest]
-    #[case::accept1(64, false, pack(1, 2, 4), [1u8; 32])]
-    #[case::accept2(128, false, pack(2, 0, 0), [2u8; 32])]
-    fn apply_signed_accepts(
-        #[case] len: u32,
-        #[case] busy: bool,
-        #[case] incoming_version: u32,
-        #[case] key: [u8; 32],
-    ) {
+    #[case::accept1(64, pack(1, 2, 4))]
+    #[case::accept2(128, pack(2, 0, 0))]
+    fn apply_signed_accepts(#[case] len: u32, #[case] incoming_version: u32) {
         let mut flash = FakeFlash::with_image(len, incoming_version);
-        flash.busy = busy;
-        flash.key = key;
 
         apply_signed(&mut flash, &SIGNATURE, len).expect("должно принять");
 
-        assert_eq!(flash.verified, vec![(SIGNATURE, len)]);
+        assert_eq!(flash.recorded, vec![(SIGNATURE, len)]);
     }
 }
