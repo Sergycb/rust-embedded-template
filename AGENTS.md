@@ -63,8 +63,7 @@ skill'ом `rust-engineering` и не дублируются здесь. Это�
 | `cargo xtask test host` | `domain`: `cargo nextest` + doc-тесты |
 | `cargo xtask lint cross` | `crates-cross`: `fmt --check` + `clippy -D warnings` |
 | `cargo xtask build` | `crates-cross`: debug + release,{% if ota == "true" %} `app.bin`,{% endif %} размер образа, подпись (если включена) |
-| `cargo xtask precommit` | четыре команды выше подряд, до первой упавшей |
-| `cargo deny check` | лицензии (только пермиссивные), источники, уязвимости зависимостей по `deny.toml`; для прошивки — с `--manifest-path crates-cross/Cargo.toml`. Нужен `cargo-deny`, в `precommit` не входит, гоняется в CI |
+| `cargo deny check` | лицензии (только пермиссивные), источники, уязвимости зависимостей по `deny.toml`; для прошивки — с `--manifest-path crates-cross/Cargo.toml`. Нужен `cargo-deny` (ставит `cargo xtask setup`), гоняется в CI |
 | `cargo xtask pins [БЛОК\|ПИН]` | справочник по чипу `{{chip}}`: выводы, альтернативные функции, DMA, тактирование |
 | `cargo xtask pins --check` | не занят ли отладочный порт в `resources.rs` |
 
@@ -72,23 +71,16 @@ skill'ом `rust-engineering` и не дублируются здесь. Это�
 
 | Команда | Что делает |
 |---|---|
-| `cargo xtask setup` | ставит `rustup target`, `probe-rs`, `flip-link`, `cargo-nextest` — меняет систему |
-| `cargo xtask flash [debug\|release]` | прошивает{% if ota == "true" %} bootloader и{% endif %} приложение — необратимо; сперва собирает образ и сверяет его начало с `ORIGIN` раздела из `memory.x` |
-| `cargo xtask test target` | тесты внутри МК (`embedded-test` + `probe-rs run`) |
-| `cargo xtask test host-target` | хост управляет прошитым устройством |
+| `cargo xtask setup` | ставит `rustup target` и компоненты, `probe-rs`, `flip-link`, `cargo-nextest`, `cargo-deny`, `cargo-hack`, `cargo-llvm-cov`, `cargo-insta` — меняет систему |
+| {% if ota == "true" %}`cargo flash -p boot --chip {{chip}}`, затем {% endif %}`cargo run -p app` (исключение из правила выше: запускать в `crates-cross/`) | прошивка руками — необратимо; отдельной команды в `xtask` нет, и начало образа с `memory.x` здесь не сверяется — это делает `cargo xtask build` |
+| `cargo xtask test target` | тесты внутри МК (`embedded-test` + `probe-rs run`); сам заливает bootloader |
+| `cargo xtask test host-target` | хост управляет прошитым устройством; сам заливает release-образы, сверив начало приложения с `ORIGIN` раздела из `memory.x` |
 | `cargo xtask test all` | обе строки выше |
-| `cargo xtask panic` | читает регион `PANIC` с живой платы через `probe-rs` |
+| `cargo xtask panic-info` | читает регион `PANIC` с живой платы через `probe-rs` |
 | `probe-rs attach --chip {{chip}} crates-cross/target/{{target}}/debug/app` | лог живой платы |
 | `probe-rs erase --chip {{chip}} --connect-under-reset` | снять плату, зациклившуюся на панике |
 
 ### Порядок проверки перед коммитом
-
-```
-cargo xtask precommit     # все четыре ниже подряд, до первой упавшей
-```
-
-Разворачивается она ровно в это, и знать состав надо: когда команда упадёт,
-дальше вы будете гонять один этап, а не все четыре.
 
 ```
 cargo xtask lint          # domain: fmt --check + clippy -D warnings + cargo doc
@@ -98,11 +90,12 @@ cargo xtask lint cross    # cross: fmt --check + clippy -D warnings
 cargo xtask build         # cross: debug + release
 ```
 
-**`precommit` — локальное зеркало CI, а не то, что CI исполняет**, и подменять
-им джобы нельзя: GitHub и GitLab разносят host и cross по разным джобам,
-которые идут параллельно и с раздельными кешами. Отсюда и имя — `ci` обещало
-бы связь, которой нет. Обратная сторона у зеркала одна: добавили шаг в CI —
-добавьте и сюда, компилятор такого расхождения не увидит.
+Это основа CI — там host и cross разнесены по разным джобам, которые идут
+параллельно и с раздельными кешами. Сверх этих четырёх CI гоняет `cargo deny
+check`, `cargo hack --feature-powerset` и покрытие (`cargo llvm-cov`): все три
+ставит `cargo xtask setup`, и при правке зависимостей или фич их стоит
+прогнать и локально. Добавили шаг в CI — допишите его сюда, компилятор такого
+расхождения не увидит.
 
 Первая cross-сборка в свежесгенерированном проекте создаёт
 `crates-cross/Cargo.lock` — **его надо закоммитить**, а не принять за мусор
@@ -122,12 +115,12 @@ cargo xtask test host-target   # хост управляет прошитым у
 ```
 
 В `xtask` намеренно только то, что не делается одной командой `cargo`: две сборки
-подряд, два воркспейса с разными наборами флагов, прошивка в правильном порядке
-(сначала bootloader) и этапы тестирования. Обёрток над `probe-rs` (`run`, `attach`,
+подряд, два воркспейса с разными наборами флагов и этапы тестирования (вместе с
+прошивкой перед ними в правильном порядке — сначала bootloader). Обёрток над `probe-rs` (`run`, `attach`,
 `size`, `reset`, `erase`) здесь нет и не надо: они ничего не добавляли к прямому
 вызову, а `probe-rs` в проекте всё равно обязателен.
 
-`cargo xtask panic` этому правилу не противоречит, хотя внутри и зовёт `probe-rs
+`cargo xtask panic-info` этому правилу не противоречит, хотя внутри и зовёт `probe-rs
 read`: руками пришлось бы сначала найти адрес региона `PANIC` в `crates-cross/app/memory.x`,
 потом знать формат `panic-persist` (магия `0x0FACADE0`, длина, байты) и собирать
 строку из hex-вывода. Команда делает ровно это — не удаляйте её как «ещё одну
@@ -138,8 +131,9 @@ read`: руками пришлось бы сначала найти адрес �
 
 ## Запреты
 
-- Не прошивать плату (`flash`, `test target`, `test host-target`, `panic`, `probe-rs`)
-  без явного разрешения пользователя — необратимо и требует железа.
+- Не прошивать плату (`cargo flash`, `cargo run` в `crates-cross`, `test target`,
+  `test host-target`, `panic-info`, `probe-rs`) без явного разрешения
+  пользователя — необратимо и требует железа.
 - Не править `memory.x` и линкер-скрипты (`.cargo/config.toml`, `link.x`) — раскладка
   памяти считается генерацией шаблона, вручную не трогается.
 - Не добавлять зависимости без разрешения пользователя — правила см. `docs/conventions.md`.
@@ -217,5 +211,5 @@ read`: руками пришлось бы сначала найти адрес �
 3. `cargo xtask lint cross`
 4. `cargo xtask build`
 
-Не сообщать о завершении задачи, пока все четыре не прошли (`EXIT=0`) — по одной, а не
-`precommit` целиком: так видно, какая именно упала.
+Не сообщать о завершении задачи, пока все четыре не прошли (`EXIT=0`) — по одной: так видно,
+какая именно упала.

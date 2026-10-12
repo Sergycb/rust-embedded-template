@@ -26,7 +26,7 @@ defmt = { workspace = true }
 # dev — `panic-probe`, release — src/panic.rs поверх `panic-persist`. В release это единственный
 # способ узнать, почему bootloader не прыгнул: с `panic-probe` плата стояла
 # бы в `udf()` молча (до выключения питания или, в проекте с графом, до сброса
-# сторожем), а так причина лежит в PANIC и читается `cargo xtask panic`.
+# сторожем), а так причина лежит в PANIC и читается `cargo xtask panic-info`.
 panic-probe = { workspace = true, features = ["print-defmt"] }
 panic-persist = { workspace = true }
 embassy-boot-stm32 = { workspace = true, features = ["defmt"] }

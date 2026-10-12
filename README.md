@@ -21,15 +21,17 @@ cargo generate --git https://github.com/Sergycb/rust-embedded-template
 ## Быстрый старт
 
 ```sh
-cargo xtask setup        # target тулчейна + probe-rs, flip-link, cargo-nextest
+cargo xtask setup        # тулчейн, probe-rs, flip-link и cargo-плагины из CI
 cargo xtask lint         # проверить, что окружение на месте
 cargo xtask test host    # тесты domain — железо не нужно
 
 # дальше нужна плата, подключённая через отладочный пробник:
-cargo xtask flash        # прошить плату
+cd crates-cross
+cargo flash -p boot --chip <CHIP>   # bootloader — только в проекте с OTA, и первым
+cargo run -p app                    # прошить приложение и смотреть defmt-лог
 ```
 
-Первая сборка прошивки (`flash`, `build` или `lint cross`) создаст
+Первая сборка прошивки (`build`, `lint cross` или `cargo run`) создаст
 `crates-cross/Cargo.lock` — **закоммитьте его**. Из шаблона он не приезжает намеренно:
 состав зависимостей зависит от ответов при генерации (OTA, раздел настроек, подпись),
 и один файл на все варианты был бы неверен для пяти сочетаний из шести — а
@@ -459,7 +461,7 @@ OTA-схему. Хук при генерации печатает и разме�
 | host-target | хост смотрит на прошитое устройство снаружи | `cargo xtask test host-target` | да |
 
 `cargo xtask test all` прогоняет все три подряд, `cargo xtask test` без аргумента —
-только host.
+печатает список этапов и завершается с ошибкой, ничего не запуская.
 
 Второй и третий этапы приезжают с рабочим минимумом, а не пустым файлом:
 `crates-cross/target-tests/tests/test.rs` проверяет на реальном чипе, что `Board::new()`
@@ -500,24 +502,21 @@ USB 47.5 МГц вместо 48, стартует без единой жалоб
 ## Команды `xtask`
 
 ```
-cargo xtask setup                  # rustup target + probe-rs-tools, flip-link, nextest
+cargo xtask setup                  # тулчейн, probe-rs-tools, flip-link, cargo-плагины из CI
 cargo xtask build                  # cross: debug + release, app.bin, размер, подпись
-cargo xtask flash [debug|release]  # прошить boot+app (сперва сверяет начало образа с memory.x)
 cargo xtask lint [cross]           # fmt --check + clippy -D warnings (host или cross)
 cargo xtask test [host|target|host-target|all]
-cargo xtask precommit              # lint, test host, lint cross, build — подряд
 cargo xtask pins [БЛОК|ПИН]        # справочник по чипу
-cargo xtask panic                  # причина последнего падения, снятая с платы
+cargo xtask panic-info             # причина последнего падения, снятая с платы
 ```
 
-Профиль по умолчанию — `debug`, этап тестирования по умолчанию — `host`.
+`cargo xtask test` без этапа печатает список этапов, ничего не запускает и завершается
+с ошибкой — чтобы в скрипте это не выглядело как пройденные тесты.
 
-`precommit` — это `lint`, `test host`, `lint cross` и `build` подряд, до первой упавшей.
-Ничего нового она не проверяет; смысл в том, что из четырёх команд забыть легче всего
-`lint cross` — host-часть гоняют чаще, — а узнать об этом после пуша дороже, чем перед
-ним. Этапы с платой внутрь не входят: без пробника они не запускаются. И `precommit` не
-то, чем пользуется сам CI: там host и cross идут разными джобами, параллельно и с
-раздельными кешами.
+Отдельной команды прошивки нет: это `cargo flash`/`cargo run` в `crates-cross` (см.
+«Быстрый старт»). Этапы `test target` и `test host-target` заливают нужные образы
+сами — сначала bootloader, — а образ приложения перед записью сверяют с началом раздела
+из `memory.x`.
 
 `build` не только собирает: он печатает, сколько release-образ занимает от раздела, в
 который линкуется (`app: 12.8 KiB из 128.0 KiB ACTIVE (9%)`), кладёт рядом с ELF сырой
@@ -533,7 +532,7 @@ cargo xtask panic                  # причина последнего пад�
 OTA — там образ в `DFU` ещё поместится, а вот запаса на следующее обновление уже не
 будет, и устройство в поле останется без пути назад.
 
-Поэтому в [`crates-host/xtask/src/main.rs`](crates-host/xtask/src/main.rs) есть
+Поэтому в [`crates-host/xtask/src/size.rs`](crates-host/xtask/src/size.rs) есть
 константа:
 
 ```rust
@@ -652,7 +651,7 @@ probe-rs erase --chip <CHIP> --connect-under-reset              # см. ниже
 bootloader'а, который дамп сам не читает:
 
 ```sh
-cargo xtask panic     # причина последнего падения, снятая с платы как есть
+cargo xtask panic-info   # причина последнего падения, снятая с платы как есть
 ```
 
 Команда читает регион `PANIC` через `probe-rs` — ни перепрошивки, ни открытой RTT-сессии
@@ -675,7 +674,7 @@ panicked at crates-cross/app/src/main.rs:194:5:
 
 У перезапуска есть оборотная сторона: если release-прошивка паникует прямо на старте,
 плата уходит в цикл «старт → паника → сброс», и подключиться к ней обычным способом уже
-не выходит — `cargo xtask flash` не успевает захватить ядро и падает с таймаутом. На
+не выходит — `cargo flash` не успевает захватить ядро и падает с таймаутом. На
 этот случай есть подключение с удержанным reset'ом — `probe-rs erase --chip <CHIP>
 --connect-under-reset` захватывает ядро до того, как оно снова дойдёт до паники.
 Сотрите флеш этой командой, и плата снова станет доступной для прошивки.
@@ -768,7 +767,7 @@ protection: PR, не трогающий распиновку, его не зап
    тегом `stm32`. Executor — `shell`: пробник пробрасывать в docker можно, но это
    отдельная возня с `--device`, а выигрыша никакого.
 2. **Окружение** ставится одной командой в клоне проекта: `cargo xtask setup` (target
-   тулчейна, `probe-rs-tools`, `flip-link`, `cargo-nextest`).
+   тулчейна, `probe-rs-tools`, `flip-link`, `cargo-nextest` и остальные cargo-плагины).
 3. **Плата с отладочным пробником**, видимая `probe-rs list` от имени пользователя
    раннера. На Linux это обычно про udev-правила: без них пробник виден только root.
 
@@ -818,9 +817,11 @@ protection: PR, не трогающий распиновку, его не зап
 
 ## Инструменты
 
-`cargo xtask setup` ставит всё нужное: целевой target тулчейна, `probe-rs-tools`
-(прошивка, отладка, запуск тестов на устройстве), `flip-link` (линкер, уводящий стек
-от переполнения в статические данные) и `cargo-nextest`.
+`cargo xtask setup` ставит всё нужное: целевой target тулчейна, компоненты `rustfmt`,
+`clippy` и `llvm-tools-preview`, `probe-rs-tools` (прошивка, отладка, запуск тестов на
+устройстве), `flip-link` (линкер, уводящий стек от переполнения в статические данные),
+`cargo-nextest`, а также то, что гоняет CI: `cargo-deny`, `cargo-hack`, `cargo-llvm-cov`
+и `cargo-insta` (разбор изменившихся снапшотов). Уже установленное не переставляется.
 
 `flip-link` даёт HardFault при переполнении стека вместо тихой порчи статики; замера
 «сколько запаса осталось» в шаблоне нет. Тулчейн при этом не запинен
@@ -892,7 +893,7 @@ protection: PR, не трогающий распиновку, его не зап
 числе ходовые Nucleo-F030R8 и F051R8.
 
 Для таких чипов генерируется проект **без OTA**: один образ на весь flash, каталог
-`crates-cross/boot` в проект не попадает, `cargo xtask flash` прошивает только приложение.
+`crates-cross/boot` в проект не попадает, прошивается только приложение.
 Причина печатается при генерации и остаётся комментарием в самом `memory.x`:
 
 ```

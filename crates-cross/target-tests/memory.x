@@ -9,7 +9,7 @@
 MEMORY {
     /* FLASH здесь — это раздел ACTIVE, а НЕ весь чип: приложение линкуется в
        него, а с базы flash стартует bootloader (crates-cross/boot). Впишете
-       сюда базу — `cargo xtask flash` затрёт bootloader образом приложения. */
+       сюда базу — прошивка приложения затрёт bootloader. */
     FLASH             (rx)  : ORIGIN = /* 0xXXXXXXXX — начало ACTIVE */, LENGTH = /* XXXK */
     BOOTLOADER_STATE  (rx)  : ORIGIN = /* 0xXXXXXXXX */, LENGTH = /* XXXK */
     DFU               (rx)  : ORIGIN = /* 0xXXXXXXXX */, LENGTH = /* XXXK */

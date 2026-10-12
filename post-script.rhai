@@ -65,9 +65,9 @@ print("  cargo xtask build");
 
 print("");
 print("Дальше:");
-print("  cargo xtask setup       # rustup target + probe-rs, flip-link, nextest");
+print("  cargo xtask setup       # тулчейн, probe-rs, flip-link, cargo-плагины");
 print("  cargo xtask lint        # проверить, что всё на месте");
-print("  cargo xtask flash       # прошить плату");
+print("  cargo xtask test        # этапы тестирования");
 print("");
 if variable::get("graph") == "true" {
 	print("Что заполнить под свою плату: crates-cross/bsp/src/board.rs (распиновка),");

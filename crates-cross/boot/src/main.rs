@@ -25,7 +25,7 @@ use embedded_storage::nor_flash::{ErrorType, NorFlash, ReadNorFlash};
 // пути, а не копией и не общим крейтом (boot намеренно не зависит ни от
 // `bsp`, ни от `app`). Дамп bootloader никогда не читает (это делает `app` при
 // старте), так что причина падения bootloader'а в release лежит в PANIC до
-// первого удачного старта приложения или до `cargo xtask panic`.
+// первого удачного старта приложения или до `cargo xtask panic-info`.
 #[path = "../../app/src/panic.rs"]
 mod panic;
 
@@ -87,7 +87,7 @@ fn main() -> ! {
     //   `BootLoaderConfig::from_linkerfile_blocking` берёт из символов
     //   `__bootloader_active_*`, то есть из `ORIGIN(FLASH)` и `LENGTH(FLASH)`
     //   в `crates-cross/boot/memory.x`; раскладку приложения с линковкой
-    //   сверяют `cargo xtask build` и `cargo xtask flash`.
+    //   сверяют `cargo xtask build` и прошивка перед тестами на плате.
     // * первое и второе слова по этому адресу — MSP и reset-вектор образа,
     //   которые линкер положил в тот же раздел. Что bootloader их не
     //   проверяет — оговорка выше, про повреждённый образ.

@@ -2,13 +2,6 @@
 	"version": "2.0.0",
 	"tasks": [
 		{
-			"label": "xtask: precommit",
-			"type": "shell",
-			"command": "cargo",
-			"args": ["xtask", "precommit"],
-			"problemMatcher": ["$rustc"]
-		},
-		{
 			"label": "xtask: build",
 			"type": "shell",
 			"command": "cargo",
@@ -77,25 +70,45 @@
 			"problemMatcher": []
 		},
 		{
-			"label": "xtask: panic",
+			"label": "xtask: panic-info",
 			"type": "shell",
 			"command": "cargo",
-			"args": ["xtask", "panic"],
+			"args": ["xtask", "panic-info"],
 			"problemMatcher": []
 		},
 		{
-			"label": "xtask: flash debug",
+			// Bootloader для отладки из launch.json: приложение линкуется в
+			// ACTIVE, а после сброса управление получает то, что лежит с базы
+			// flash. Только в проекте с OTA — без него каталога boot нет, и
+			// launch.json зовёт просто сборку app. Убрать задачи из проекта без
+			// OTA нельзя: Liquid-условие вне строки сломало бы этот JSON в
+			// самом репозитории шаблона.
+			"label": "flash: boot (debug, только с OTA)",
 			"type": "shell",
 			"command": "cargo",
-			"args": ["xtask", "flash", "debug"],
+			"args": ["flash", "-p", "boot", "--chip", "{{chip}}"],
+			"options": { "cwd": "${workspaceFolder}/crates-cross" },
 			"problemMatcher": ["$rustc"]
 		},
 		{
-			"label": "xtask: flash release",
+			"label": "flash: boot (release, только с OTA)",
 			"type": "shell",
 			"command": "cargo",
-			"args": ["xtask", "flash", "release"],
+			"args": ["flash", "-p", "boot", "--release", "--chip", "{{chip}}"],
+			"options": { "cwd": "${workspaceFolder}/crates-cross" },
 			"problemMatcher": ["$rustc"]
+		},
+		{
+			"label": "debug: prepare (debug)",
+			"dependsOrder": "sequence",
+			"dependsOn": ["flash: boot (debug, только с OTA)", "build: app (debug)"],
+			"problemMatcher": []
+		},
+		{
+			"label": "debug: prepare (release)",
+			"dependsOrder": "sequence",
+			"dependsOn": ["flash: boot (release, только с OTA)", "build: app (release)"],
+			"problemMatcher": []
 		},
 		{
 			"label": "build: app (debug)",
