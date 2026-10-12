@@ -30,11 +30,13 @@
 ///
 /// Функция `const`: значение подставляется на этапе компиляции, в статик,
 /// который линкер кладёт в образ.
+#[must_use]
 pub const fn pack(major: u8, minor: u8, patch: u16) -> u32 {
     ((major as u32) << 24) | ((minor as u32) << 16) | patch as u32
 }
 
 /// Обратное преобразование — для логов и диагностики.
+#[must_use]
 pub const fn unpack(version: u32) -> (u8, u8, u16) {
     (
         (version >> 24) as u8,
@@ -53,6 +55,7 @@ pub const fn unpack(version: u32) -> (u8, u8, u16) {
 ///
 /// Порядок сравнения — обычный числовой, и он совпадает с semver ровно
 /// потому, что [`pack`] раскладывает поля по старшинству.
+#[must_use]
 pub const fn is_upgrade(current: u32, incoming: u32) -> bool {
     incoming > current
 }

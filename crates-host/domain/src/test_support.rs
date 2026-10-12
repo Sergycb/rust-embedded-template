@@ -60,22 +60,25 @@ impl FakeLink {
 impl ImageSource for FakeLink {
     type Error = &'static str;
 
-    async fn begin(&mut self) -> Result<Announce, Self::Error> {
-        self.announces.pop_front().ok_or("канал закрыт")
+    fn begin(&mut self) -> impl Future<Output = Result<Announce, Self::Error>> {
+        std::future::ready(self.announces.pop_front().ok_or("канал закрыт"))
     }
 
-    async fn next(&mut self) -> Result<Option<&[u8]>, Self::Error> {
+    fn next(&mut self) -> impl Future<Output = Result<Option<&[u8]>, Self::Error>> {
         if self.fail_at == Some(self.next) {
-            return Err("обрыв канала");
+            return std::future::ready(Err("обрыв канала"));
         }
         let i = self.next;
         self.next += 1;
-        Ok(self.chunks.get(i).map(Vec::as_slice))
+        std::future::ready(Ok(self.chunks.get(i).map(Vec::as_slice)))
     }
 
-    async fn finish(&mut self, outcome: Result<(), Rejection>) -> Result<(), Self::Error> {
+    fn finish(
+        &mut self,
+        outcome: Result<(), Rejection>,
+    ) -> impl Future<Output = Result<(), Self::Error>> {
         self.finished.push(outcome);
-        self.finish
+        std::future::ready(self.finish)
     }
 }
 
@@ -109,7 +112,7 @@ impl FakeFlash {
     pub(crate) fn new(capacity: usize, word: u32) -> Self {
         Self {
             memory: vec![0xFF; capacity],
-            capacity: capacity as u32,
+            capacity: u32::try_from(capacity).unwrap(),
             word,
             busy: false,
             prepared: None,
@@ -162,7 +165,7 @@ impl FirmwareUpdate for FakeFlash {
         if self.prepared.is_none() {
             return Err("запись без подготовки раздела");
         }
-        if !(data.len() as u32).is_multiple_of(self.word) {
+        if !u32::try_from(data.len()).is_ok_and(|v| v.is_multiple_of(self.word)) {
             return Err("длина записи не кратна слову");
         }
         if !offset.is_multiple_of(self.word) {

@@ -92,6 +92,7 @@ impl Board {
     // `Default` тут был бы ложью: конструктор не только не дёшев, он ещё и
     // одноразовый — `Default::default()` на второй вызов уронил бы прошивку.
     #[allow(clippy::new_without_default)]
+    #[must_use]
     pub fn new() -> Self {
         let p = init_peripherals();
         // Единственный способ узнать фактическое тактирование: `Clocks`
@@ -128,11 +129,15 @@ impl Board {
         // `ports`.
 {%- endif %}
 
+        // `usize` на Cortex-M — 32 бита, усечения нет.
+        #[allow(clippy::cast_possible_truncation)]
+        let flash_size = embassy_stm32::flash::FLASH_SIZE as u32;
+
         Self {
             info: ports::BoardInfo {
                 chip: "{{chip}}",
                 uid: embassy_stm32::uid::uid(),
-                flash_size: embassy_stm32::flash::FLASH_SIZE as u32,
+                flash_size,
             },
 {%- if ota == "true" %}
             ota: crate::ota::new(flash),

@@ -62,6 +62,10 @@ test-log = { workspace = true }
 # Исполнитель для async-тестов над фейками портов (`#[tokio::test]`); фичи —
 # в корневом Cargo.toml.
 tokio = { workspace = true }
+# Property-тесты `download::receive` (любое разбиение образа на куски).
+proptest = { workspace = true }
+# Параметрические тесты `update::apply_signed`.
+rstest = { workspace = true }
 # Обе строки — ради линковки хостового тестового бинарника, а не ради самих
 # тестов: он тянет `supervisor`, тот `embassy-executor` и `embassy-time`, а у
 # обоих реализация выбирается фичей. Без `platform-std` линкер не находит

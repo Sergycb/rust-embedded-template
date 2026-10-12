@@ -37,3 +37,7 @@ object = { version = "0.40.0", default-features = false, features = [
 	"elf",
 	"std",
 ] }
+
+[dev-dependencies]
+# Точный вид строк отчёта `build` (`size_delta`) — снапшотами.
+insta = { workspace = true }

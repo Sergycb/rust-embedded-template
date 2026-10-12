@@ -152,6 +152,7 @@ impl CpuLoadCtx<'_> {
     }
 
     /// Назначает первый замер; прошлого снимка ещё нет.
+    #[allow(clippy::unused_self)]
     fn begin(&mut self) -> Waiting {
         Waiting {
             next: Instant::now() + SAMPLE_INTERVAL,

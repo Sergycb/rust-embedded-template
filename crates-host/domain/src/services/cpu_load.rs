@@ -39,6 +39,7 @@ pub struct CpuLoad {
 
 impl CpuLoad {
     /// Пустой счётчик — первый снимок с него только запоминается.
+    #[must_use]
     pub const fn new() -> Self {
         Self { previous: None }
     }

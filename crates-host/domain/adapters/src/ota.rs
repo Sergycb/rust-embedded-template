@@ -79,8 +79,14 @@ impl<DFU: NorFlash, STATE: NorFlash> Updater<DFU, STATE> {
     ///
     /// Не в порту: домену эта величина не нужна (он мыслит длиной образа), а
     /// вот target-тестам — да: `prepare` округляет длину вверх именно до неё.
+    ///
+    /// # Panics
+    ///
+    /// Паникует, если `DFU::ERASE_SIZE` превышает `u32::MAX`. На STM32 размер
+    /// сектора ограничен аппаратными пределами (максимум 256 Кбайт), поэтому
+    /// на практике это невозможно.
     pub fn erase_size(&self) -> u32 {
-        DFU::ERASE_SIZE as u32
+        u32::try_from(DFU::ERASE_SIZE).expect("ERASE_SIZE не должен превышать u32::MAX")
     }
 
     /// Апдейтер держит ссылки и на разделы, и на буфер, поэтому хранить его
@@ -141,7 +147,7 @@ impl<DFU: NorFlash, STATE: NorFlash> FirmwareUpdate for Updater<DFU, STATE> {
     type Error = Error;
 
     fn write_granularity(&mut self) -> u32 {
-        DFU::WRITE_SIZE as u32
+        u32::try_from(DFU::WRITE_SIZE).expect("WRITE_SIZE не должен превышать u32::MAX")
     }
 
     fn capacity(&mut self) -> Result<u32, Self::Error> {
@@ -172,7 +178,7 @@ impl<DFU: NorFlash, STATE: NorFlash> FirmwareUpdate for Updater<DFU, STATE> {
         // За границу раздела округление не уйдёт: `DFU` больше `ACTIVE`
         // (= `capacity`) минимум на страницу; `saturating_mul` — страховка на
         // случай, если проверку однажды ослабят.
-        let page = DFU::ERASE_SIZE as u32;
+        let page = u32::try_from(DFU::ERASE_SIZE).expect("ERASE_SIZE не должен превышать u32::MAX");
         let end = len.div_ceil(page).saturating_mul(page);
         self.dfu.erase(0, end)?;
         Ok(())

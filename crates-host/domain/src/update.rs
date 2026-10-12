@@ -56,6 +56,17 @@ pub const VERSION_BYTES: u32 = 4;
 /// работать на текущем образе. Именно поэтому подпись проверяется здесь, а не
 /// в bootloader'е: тот прыгает безусловно, а отвергнуть чужой образ нужно ДО
 /// того, как он стал активным.
+///
+/// # Errors
+///
+/// Возвращает ошибку:
+/// - `TooLong` — если длина больше вместимости раздела,
+/// - `Busy` — если раздел обновления занят образом отката,
+/// - `Truncated` — если длина меньше хвоста с версией,
+/// - `Rollback` — если версия не новее текущей,
+/// - `NoPublicKey` — если открытый ключ не подставлен (нули),
+/// - `BadSignature` — если подпись не сошлась,
+/// - `Flash` — если адаптер флеша вернул ошибку.
 pub fn apply_signed<F: SignedFirmwareUpdate>(
     flash: &mut F,
     signature: &[u8; 64],
@@ -213,5 +224,145 @@ mod tests {
             apply_signed(&mut flash, &SIGNATURE, 64),
             Err(UpdateError::Flash("флеш отказал"))
         );
+    }
+}
+
+#[cfg(test)]
+mod rstest_apply_signed {
+    use super::apply_signed;
+    use crate::firmware::pack;
+    use crate::test_support::{FakeFlash, SIGNATURE};
+    use crate::update::VERSION_BYTES;
+    use ports::{UpdateError, VerifyError};
+    use rstest::rstest;
+
+    type FlashErr = &'static str;
+
+    /// Матрица проверок `apply_signed`:
+    /// каждая строка — независимый сценарий с набором параметров.
+    #[rstest]
+    #[case::too_long(
+        /* len */ 129,
+        /* capacity */ 128,
+        /* busy */ false,
+        /* incoming_version */ pack(1, 2, 4),
+        /* key */ [1u8; 32],
+        /* verify */ Ok(()),
+        /* expected */ UpdateError::<FlashErr>::TooLong { len: 129, capacity: 128 }
+    )]
+    #[case::busy(
+        /* len */ 64,
+        /* capacity */ 128,
+        /* busy */ true,
+        /* incoming_version */ pack(1, 2, 4),
+        /* key */ [1u8; 32],
+        /* verify */ Ok(()),
+        /* expected */ UpdateError::<FlashErr>::Busy
+    )]
+    #[case::truncated(
+        /* len */ 3,
+        /* capacity */ 128,
+        /* busy */ false,
+        /* incoming_version */ pack(1, 2, 4),
+        /* key */ [1u8; 32],
+        /* verify */ Ok(()),
+        /* expected */ UpdateError::<FlashErr>::Truncated { len: 3 }
+    )]
+    #[case::rollback_older(
+        /* len */ 64,
+        /* capacity */ 128,
+        /* busy */ false,
+        /* incoming_version */ pack(1, 1, 9),
+        /* key */ [1u8; 32],
+        /* verify */ Ok(()),
+        /* expected */ UpdateError::<FlashErr>::Rollback { current: pack(1, 2, 3), incoming: pack(1, 1, 9) }
+    )]
+    #[case::rollback_equal(
+        /* len */ 64,
+        /* capacity */ 128,
+        /* busy */ false,
+        /* incoming_version */ pack(1, 2, 3),
+        /* key */ [1u8; 32],
+        /* verify */ Ok(()),
+        /* expected */ UpdateError::<FlashErr>::Rollback { current: pack(1, 2, 3), incoming: pack(1, 2, 3) }
+    )]
+    #[case::no_public_key(
+        /* len */ 64,
+        /* capacity */ 128,
+        /* busy */ false,
+        /* incoming_version */ pack(1, 2, 4),
+        /* key */ [0u8; 32],
+        /* verify */ Ok(()),
+        /* expected */ UpdateError::<FlashErr>::NoPublicKey
+    )]
+    #[case::bad_signature(
+        /* len */ 64,
+        /* capacity */ 128,
+        /* busy */ false,
+        /* incoming_version */ pack(1, 2, 4),
+        /* key */ [1u8; 32],
+        /* verify */ Err(VerifyError::<FlashErr>::BadSignature),
+        /* expected */ UpdateError::<FlashErr>::BadSignature
+    )]
+    #[case::flash_error(
+        /* len */ 64,
+        /* capacity */ 128,
+        /* busy */ false,
+        /* incoming_version */ pack(1, 2, 4),
+        /* key */ [1u8; 32],
+        /* verify */ Err(VerifyError::<FlashErr>::Flash("флеш отказал")),
+        /* expected */ UpdateError::<FlashErr>::Flash("флеш отказал")
+    )]
+    fn apply_signed_rejects_when(
+        #[case] len: u32,
+        #[case] capacity: u32,
+        #[case] busy: bool,
+        #[case] incoming_version: u32,
+        #[case] key: [u8; 32],
+        #[case] verify: Result<(), VerifyError<FlashErr>>,
+        #[case] expected: UpdateError<FlashErr>,
+    ) {
+        // `with_image` пишет версию в хвост образа длиной `len`, поэтому
+        // передаём туда тот же `len`, что пойдёт в `apply_signed`.
+        // Для `len < VERSION_BYTES` версию писать некуда — создаём флеш вручную.
+        let mut flash = if len >= VERSION_BYTES {
+            FakeFlash::with_image(len, incoming_version)
+        } else {
+            FakeFlash::new(capacity as usize, 8)
+        };
+        flash.busy = busy;
+        flash.key = key;
+        flash.verify = verify;
+
+        let result = apply_signed(&mut flash, &SIGNATURE, len);
+
+        assert_eq!(result, Err(expected));
+        if !matches!(
+            &result,
+            Err(UpdateError::BadSignature | UpdateError::Flash(_))
+        ) {
+            assert!(
+                flash.verified.is_empty(),
+                "verify не должен вызываться для {result:?}"
+            );
+        }
+    }
+
+    #[rstest]
+    #[case::accept1(64, false, pack(1, 2, 4), [1u8; 32])]
+    #[case::accept2(128, false, pack(2, 0, 0), [2u8; 32])]
+    fn apply_signed_accepts(
+        #[case] len: u32,
+        #[case] busy: bool,
+        #[case] incoming_version: u32,
+        #[case] key: [u8; 32],
+    ) {
+        let mut flash = FakeFlash::with_image(len, incoming_version);
+        flash.busy = busy;
+        flash.key = key;
+
+        apply_signed(&mut flash, &SIGNATURE, len).expect("должно принять");
+
+        assert_eq!(flash.verified, vec![(SIGNATURE, len)]);
     }
 }

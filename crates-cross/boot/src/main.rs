@@ -64,6 +64,8 @@ fn main() -> ! {
     // сброса/SP — повреждённый образ (прерванная прошивка, битый DFU) даст
     // HardFault вместо отказа с диагностикой. Полная проверка целостности
     // требует chip-specific границ RAM и не входит в минимальный шаблон.
+    // `usize` на Cortex-M — 32 бита, усечения нет.
+    #[allow(clippy::cast_possible_truncation)]
     let entry = FLASH_BASE as u32 + active_offset;
     info!("boot: jumping to app at {:x}", entry);
 {%- if graph == "true" %}

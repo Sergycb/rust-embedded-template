@@ -53,6 +53,24 @@ pub const MAX_WORD: usize = 32;
 /// неполное слово добивается единицами — фиксированным значением, и только
 /// поэтому: называть `0xFF` «стёртым состоянием флеша» нельзя, на L0/L1 оно
 /// нулевое (docs/flash.md), и там добор — самая обычная запись.
+///
+/// # Errors
+///
+/// Возвращает ошибку:
+/// - `Empty` — если заявлена нулевая длина,
+/// - `TooLong` — если длина больше вместимости раздела или добитая длина не влезает,
+/// - `UnusableGranularity` — если порт вернул негодную гранулярность,
+/// - `TooMuchData` — если прислали больше, чем обещали,
+/// - `Incomplete` — если передача прервалась раньше обещанной длины,
+/// - `Source` — если канал вернул ошибку,
+/// - `Flash` — если флеш вернул ошибку.
+///
+/// # Panics
+///
+/// Паникует, если внутренние счётчики превышают `u32::MAX`. На 32-битных
+/// платформах `usize` может быть шире `u32`, а размеры образов ограничены
+/// аппаратными пределами (максимальный сектор флеша — 256 Кбайт), поэтому
+/// на практике это невозможно.
 pub async fn receive<S: ImageSource, F: FirmwareUpdate>(
     source: &mut S,
     flash: &mut F,
@@ -98,7 +116,11 @@ pub async fn receive<S: ImageSource, F: FirmwareUpdate>(
     let mut pending: usize = 0;
 
     while let Some(mut chunk) = source.next().await.map_err(DownloadError::Source)? {
-        let received = (written + pending as u32).saturating_add(chunk.len() as u32);
+        let received = (written
+            + u32::try_from(pending).expect("pending не должен превышать u32::MAX"))
+        .saturating_add(
+            u32::try_from(chunk.len()).expect("chunk.len() не должен превышать u32::MAX"),
+        );
         if received > announced {
             return Err(DownloadError::TooMuchData {
                 announced,
@@ -135,7 +157,7 @@ pub async fn receive<S: ImageSource, F: FirmwareUpdate>(
             flash
                 .write(written, &chunk[..whole])
                 .map_err(DownloadError::Flash)?;
-            written += whole as u32;
+            written += u32::try_from(whole).expect("whole не должен превышать u32::MAX");
         }
 
         // Остаток короче слова ждёт следующего куска.
@@ -144,7 +166,7 @@ pub async fn receive<S: ImageSource, F: FirmwareUpdate>(
         pending = rest.len();
     }
 
-    let received = written + pending as u32;
+    let received = written + u32::try_from(pending).expect("pending не должен превышать u32::MAX");
     if received != announced {
         return Err(DownloadError::Incomplete {
             announced,
@@ -162,6 +184,7 @@ pub async fn receive<S: ImageSource, F: FirmwareUpdate>(
 }
 
 #[cfg(test)]
+#[allow(clippy::cast_possible_truncation)]
 mod tests {
     use super::{MAX_WORD, receive};
     use crate::test_support::{FakeFlash, FakeLink};
@@ -169,6 +192,42 @@ mod tests {
 
     fn image(len: u32, seed: u32) -> Vec<u8> {
         (0..len).map(|i| (i * seed) as u8).collect()
+    }
+
+    proptest::proptest! {
+        /// Как бы канал ни нарезал образ и какой бы ширины ни было слово флеша,
+        /// во флеше оказывается ровно образ, добитый `0xFF` до целого слова.
+        /// Три теста выше проверяют по одной нарезке, здесь их тысячи.
+        #[test]
+        fn any_chunking_reassembles_the_image(
+            data in proptest::collection::vec(proptest::prelude::any::<u8>(), 1..300),
+            sizes in proptest::collection::vec(1usize..=40, 1..20),
+            word in proptest::sample::select(vec![1u32, 2, 4, 8, 16, 32]),
+        ) {
+            let mut rest = data.as_slice();
+            let mut chunks = Vec::new();
+            for size in sizes.iter().cycle() {
+                if rest.is_empty() {
+                    break;
+                }
+                let (head, tail) = rest.split_at((*size).min(rest.len()));
+                chunks.push(head.to_vec());
+                rest = tail;
+            }
+            let mut source = FakeLink::of(chunks);
+            let mut flash = FakeFlash::new(1024, word);
+
+            let len = tokio::runtime::Builder::new_current_thread()
+                .build()
+                .expect("рантайм")
+                .block_on(receive(&mut source, &mut flash, data.len() as u32))
+                .expect("приём");
+
+            proptest::prop_assert_eq!(len, data.len() as u32);
+            proptest::prop_assert_eq!(&flash.memory[..data.len()], &data[..]);
+            let padded = data.len().next_multiple_of(word as usize);
+            proptest::prop_assert!(flash.memory[data.len()..padded].iter().all(|b| *b == 0xFF));
+        }
     }
 
     /// Принять образ кусками по одному байту — самый недружелюбный случай,
@@ -304,7 +363,7 @@ mod tests {
     /// Гранулярность, с которой работать нельзя, отвергается до стирания.
     #[tokio::test]
     async fn refuses_an_unusable_write_granularity() {
-        for word in [0, MAX_WORD as u32 + 1] {
+        for word in [0, u32::try_from(MAX_WORD).unwrap() + 1] {
             let mut source = FakeLink::of([]);
             let mut flash = FakeFlash::new(1024, word.max(1));
             flash.word = word;
@@ -341,7 +400,9 @@ mod tests {
         // Обёртка, у которой `prepare` «проходит», но флаг подготовки не
         // ставит: первая же запись фейка ответит отказом, и он обязан дойти
         // до вызывающего как `Flash(_)`.
+        #[allow(clippy::items_after_statements)]
         struct NoPrepare(FakeFlash);
+        #[allow(clippy::items_after_statements)]
         impl FirmwareUpdate for NoPrepare {
             type Error = &'static str;
             fn write_granularity(&mut self) -> u32 {

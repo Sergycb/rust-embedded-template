@@ -44,6 +44,12 @@ large_stack_arrays      = "warn"
 # `executor.poll()` в `app/src/main.rs` этому линту и обязан — до него он шёл
 # без `// SAFETY:` вовсе.
 undocumented_unsafe_blocks = "warn"
+# `pedantic` — без предупреждений, а не без ошибок: ловит `missing_const_for_fn`,
+# `similar_names`, `module_name_repetitions`, `cast_possible_truncation` и др.
+# Шаблон — для старта, а не для production-кода, где каждый предупреждение
+# стоит разобрать. Отключать точечными `#[allow(pedantic)]` можно, как и
+# любой другой `warn`-линт.
+pedantic = { level = "warn", priority = -1 }
 
 [workspace.dependencies]
 # Крейты самого проекта: порты/адаптеры domain объявлены здесь, чтобы версия
@@ -111,3 +117,14 @@ sequential-storage     = { version = "8.0.1", default-features = false }
 # любом ядре ценой скорости — ~100 млн тактов на проверку, меньше секунды, и
 # случается это один раз перед перезагрузкой.
 salty                  = { version = "0.3.0", default-features = false, features = ["slow-motion"] }
+# Property-based testing: `domain::download::receive` проверяется на любом
+# разбиении образа на куски и любой ширине слова, а не на нескольких
+# выбранных руками. Только `[dev-dependencies]` `domain`.
+proptest               = { version = "1.0.0" }
+# Parametric tests: одна фикстура — несколько сценариев без дублирования
+# тела (`domain::update::apply_signed`: длина, занятость, версия, ключ,
+# подпись — каждый отказ своим кейсом). Только `[dev-dependencies]` `domain`.
+rstest                 = { version = "0.18.0" }
+# Snapshot tests: точный вид строк отчёта `cargo xtask build` фиксируется
+# целиком, а не набором `contains`. Только `[dev-dependencies]` `xtask`.
+insta                  = { version = "1.34.0", default-features = false }

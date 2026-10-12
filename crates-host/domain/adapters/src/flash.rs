@@ -37,9 +37,15 @@ impl<M: RawMutex, F: NorFlash> embedded_storage_async::nor_flash::ReadNorFlash
 {
     const READ_SIZE: usize = F::READ_SIZE;
 
-    async fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), Self::Error> {
-        self.flash
-            .lock(|flash| flash.borrow_mut().read(offset, bytes))
+    fn read(
+        &mut self,
+        offset: u32,
+        bytes: &mut [u8],
+    ) -> impl Future<Output = Result<(), Self::Error>> {
+        core::future::ready(
+            self.flash
+                .lock(|flash| flash.borrow_mut().read(offset, bytes)),
+        )
     }
 
     fn capacity(&self) -> usize {
@@ -51,13 +57,19 @@ impl<M: RawMutex, F: NorFlash> embedded_storage_async::nor_flash::NorFlash for S
     const WRITE_SIZE: usize = F::WRITE_SIZE;
     const ERASE_SIZE: usize = F::ERASE_SIZE;
 
-    async fn erase(&mut self, from: u32, to: u32) -> Result<(), Self::Error> {
-        self.flash.lock(|flash| flash.borrow_mut().erase(from, to))
+    fn erase(&mut self, from: u32, to: u32) -> impl Future<Output = Result<(), Self::Error>> {
+        core::future::ready(self.flash.lock(|flash| flash.borrow_mut().erase(from, to)))
     }
 
-    async fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), Self::Error> {
-        self.flash
-            .lock(|flash| flash.borrow_mut().write(offset, bytes))
+    fn write(
+        &mut self,
+        offset: u32,
+        bytes: &[u8],
+    ) -> impl Future<Output = Result<(), Self::Error>> {
+        core::future::ready(
+            self.flash
+                .lock(|flash| flash.borrow_mut().write(offset, bytes)),
+        )
     }
 }
 

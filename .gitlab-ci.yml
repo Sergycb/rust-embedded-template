@@ -54,6 +54,17 @@ host:test:
     - cargo fetch --locked
     - cargo xtask lint
     - cargo xtask test host
+
+    # cargo-hack: проверяет компиляцию с разными комбинациями фич, чтобы
+    # поймать ошибки, которые проходят при одной конкретной комбинации.
+    # Особенно важно для `domain` с фичами `std`/`log`/`defmt` и `adapters/signed`.
+    - |
+      cargo install cargo-hack --locked
+      cargo hack --workspace --exclude host-target-tests --features domain/log,domain/std,adapters/signed check
+      cargo hack --workspace --exclude host-target-tests --features domain/defmt,adapters/signed check
+      cargo hack --workspace --exclude host-target-tests --features domain/log,domain/std check
+      cargo hack --workspace --exclude host-target-tests --features domain/defmt check
+
     # Покрытие без порога: цифра нужна, чтобы видеть, куда тесты не
     # заглядывают, а не чтобы ронять пайплайн. Порог в проекте, где половина
     # кода — `bsp` под железо, которого у раннера нет, означал бы только одно:

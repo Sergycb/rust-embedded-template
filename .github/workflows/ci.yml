@@ -46,6 +46,17 @@ jobs:
       - run: cargo xtask lint
       - run: cargo xtask test host
 
+      # cargo-hack: проверяет компиляцию с разными комбинациями фич, чтобы
+      # поймать ошибки, которые проходят при одной конкретной комбинации.
+      # Особенно важно для `domain` с фичами `std`/`log`/`defmt` и `adapters/signed`.
+      - name: cargo-hack (feature combinations)
+        run: |
+          cargo install cargo-hack --locked
+          cargo hack --workspace --exclude host-target-tests --features domain/log,domain/std,adapters/signed check
+          cargo hack --workspace --exclude host-target-tests --features domain/defmt,adapters/signed check
+          cargo hack --workspace --exclude host-target-tests --features domain/log,domain/std check
+          cargo hack --workspace --exclude host-target-tests --features domain/defmt check
+
       # Покрытие — отдельным шагом и без порога: цифра здесь нужна, чтобы
       # видеть, куда тесты не заглядывают, а не чтобы ронять сборку. Порог
       # («не ниже 80%») в проекте, где половина кода — это `bsp` под железо,

@@ -61,12 +61,15 @@ impl ImageSource for Link {
         core::future::pending().await
     }
 
-    async fn next(&mut self) -> Result<Option<&[u8]>, Self::Error> {
-        Ok(None)
+    fn next(&mut self) -> impl Future<Output = Result<Option<&[u8]>, Self::Error>> {
+        core::future::ready(Ok(None))
     }
 
-    async fn finish(&mut self, _outcome: Result<(), Rejection>) -> Result<(), Self::Error> {
-        Ok(())
+    fn finish(
+        &mut self,
+        _outcome: Result<(), Rejection>,
+    ) -> impl Future<Output = Result<(), Self::Error>> {
+        core::future::ready(Ok(()))
     }
 }
 

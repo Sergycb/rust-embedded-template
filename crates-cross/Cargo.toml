@@ -41,6 +41,12 @@ large_stack_arrays      = "warn"
 # `// SAFETY:`, хотя объяснение рядом стояло — на несколько строк выше и без
 # префикса, которого ждёт clippy.
 undocumented_unsafe_blocks = "warn"
+# `pedantic` — без предупреждений, а не без ошибок: ловит `missing_const_for_fn`,
+# `similar_names`, `module_name_repetitions`, `cast_possible_truncation` и др.
+# Шаблон — для старта, а не для production-кода, где каждый предупреждение
+# стоит разобрать. Отключать точечными `#[allow(pedantic)]` можно, как и
+# любой другой `warn`-линт.
+pedantic                  = { level = "warn", priority = -1 }
 
 [workspace.dependencies]
 cortex-m = { version = "0.7.9", features = [

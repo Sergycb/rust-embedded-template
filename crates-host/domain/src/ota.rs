@@ -91,6 +91,7 @@ where
 {
     /// Без проверки подписи: принятый образ применяется
     /// [`FirmwareUpdate::mark_updated`].
+    #[must_use]
     pub fn plain() -> Self {
         Self {
             check: plain_check,
@@ -111,6 +112,7 @@ where
     /// Отличие до приёма одно: заголовок без подписи отвергается ДО стирания
     /// раздела — применить такой образ всё равно нечем, а стирание уничтожило
     /// бы образ, в который устройство откатывается.
+    #[must_use]
     pub fn signed() -> Self {
         Self {
             check: signed_check,
@@ -177,6 +179,7 @@ where
         }
     }
 
+    #[allow(clippy::unused_self)]
     fn begin(&mut self) -> Waiting {
         info!("domain: узел OTA запущен");
         Waiting
@@ -197,7 +200,10 @@ where
         };
         match outcome {
             Ok(()) => Accepted { announce }.into(),
-            Err(_) => Verdict { outcome }.into(),
+            Err(rejection) => Verdict {
+                outcome: Err(rejection),
+            }
+            .into(),
         }
     }
 
@@ -225,7 +231,8 @@ where
         }
     }
 
-    fn apply(&mut self, s: Received) -> Verdict {
+    /// Применяет принятый образ через режим (plain или signed).
+    fn apply(&mut self, s: &Received) -> Verdict {
         Verdict {
             outcome: (self.mode.apply)(self.flash, &s.announce, s.len),
         }
@@ -244,6 +251,7 @@ where
     }
 
     /// Отказ канала: сообщать отправителю некому, прогон кончается `Failed`.
+    #[allow(clippy::unused_self)]
     fn lost(&mut self, err: S::Error) -> Down {
         warn!("ota: отказ канала: {:?}", Debug2Format(&err));
         Down {
@@ -253,6 +261,7 @@ where
 }
 
 /// Без подписи заголовок проверять нечего — длину сверит `receive`.
+#[allow(clippy::unnecessary_wraps)]
 fn plain_check(_: &Announce) -> Result<(), Rejection> {
     Ok(())
 }
@@ -272,10 +281,11 @@ where
 
 /// С подписью заголовок обязан её нести — иначе отказ до стирания.
 fn signed_check(announce: &Announce) -> Result<(), Rejection> {
-    if announce.signature.is_none() {
-        return Err(Rejection::Signature);
+    if announce.signature.is_some() {
+        Ok(())
+    } else {
+        Err(Rejection::Signature)
     }
-    Ok(())
 }
 
 /// С подписью применение — [`apply_signed`](crate::update::apply_signed)
@@ -404,6 +414,7 @@ mod tests {
         Mode::plain()
     }
 
+    #[allow(clippy::cast_possible_truncation)]
     fn announce(len: usize) -> Announce {
         Announce {
             len: len as u32,
@@ -411,6 +422,7 @@ mod tests {
         }
     }
 
+    #[allow(clippy::cast_possible_truncation)]
     fn image(len: usize) -> Vec<u8> {
         (0..len).map(|i| (i * 3) as u8).collect()
     }
@@ -537,6 +549,7 @@ mod tests {
         Mode::signed()
     }
 
+    #[allow(clippy::cast_possible_truncation)]
     fn signed_announce(len: usize) -> Announce {
         Announce {
             len: len as u32,

@@ -121,6 +121,7 @@ impl AppCtx<'_> {
     }
 
     /// Сообщает о старте и назначает первый такт.
+    #[allow(clippy::unused_self)]
     fn begin(&mut self) -> Idle {
         info!("domain: узел APP запущен");
         Idle {

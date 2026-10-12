@@ -111,6 +111,7 @@ fn main() -> ! {
     // включён, ровно так же), а не `WFE`, то есть пробуждение задач не теряет.
     // Цикл ниже ставит `WFE` сам, и всё, что остаётся на долю pender'а, — это
     // возврат из него, а не сон.
+    #[allow(clippy::items_after_statements)]
     static EXECUTOR: StaticCell<Executor> = StaticCell::new();
     let executor = EXECUTOR.init(Executor::new(usize::MAX as *mut ()));
     let spawner = executor.spawner();
@@ -183,7 +184,7 @@ fn main() -> ! {
         // заставляет перечислять.
         #[allow(unsafe_code)]
         unsafe {
-            executor.poll()
-        };
+            executor.poll();
+        }
     }
 }

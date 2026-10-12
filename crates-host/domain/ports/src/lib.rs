@@ -4,7 +4,13 @@
 // сможет. Для однопоточного исполнителя embassy это ровно то, что нужно, а с
 // `-D warnings` предупреждение стало бы ошибкой сборки. Так же поступает
 // `embedded-hal-async` (его lib.rs, строка 10).
-#![allow(async_fn_in_trait)]
+//
+// `#[expect]`, а не `#[allow]`: если линт перестанет срабатывать, компилятор
+// сам напомнит убрать атрибут.
+#![expect(
+    async_fn_in_trait,
+    reason = "Embassy tasks require async fn in trait; supervisor fragments call them on a single executor"
+)]
 
 //! Порты — границы `domain`: трейты, которые логика вызывает, не зная, что за
 //! ними стоит, и типы, которыми она с ними разговаривает. Реализации живут в

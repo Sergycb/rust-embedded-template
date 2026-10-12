@@ -98,7 +98,7 @@ mod tests {
     /// которая ловит расхождение «заказали одно — получили другое»:
     /// компилятор про частоты не знает ничего, а embassy проверяет только
     /// верхние границы шин (`assert!(hclk <= hclk_max)`). Конфигурация,
-    /// дающая USB 47.5 МГц вместо 48 или UART с ошибкой по битрейту,
+    /// дающая USB 47.5 вместо 48 мегагерц или UART с ошибкой по битрейту,
     /// стартует молча. С `None` тест только печатает дамп и предупреждает,
     /// что проверка выключена.
     ///
@@ -143,20 +143,21 @@ mod tests {
             sys.0
         );
 
-        match EXPECTED_SYS_HZ {
-            Some(expected) => assert_eq!(
+        if let Some(expected) = EXPECTED_SYS_HZ {
+            assert_eq!(
                 sys.0, expected,
                 "тактирование разошлось с задуманным (EXPECTED_SYS_HZ)"
-            ),
+            );
+        } else {
             // Инвариант выше — структурный (`hclk1` это `sys`, делённая на
             // предделитель AHB), расхождения с задуманным им не поймать.
             // Пока константа не заполнена, тест по сути только печатает дамп,
             // и зелёная галочка без этого предупреждения означала бы
             // «проверено», хотя не проверено ничего.
-            None => defmt::warn!(
+            defmt::warn!(
                 "clocks_match_intent: EXPECTED_SYS_HZ не заполнена — проверка выключена, sys = {} Гц",
                 sys.0,
-            ),
+            );
         }
     }
 {%- if ota == "true" %}
@@ -199,7 +200,7 @@ mod tests {
         board
             .ota
             .flash
-            .prepare(written.len() as u32)
+            .prepare(u32::try_from(written.len()).expect("образ короче 4 ГиБ"))
             .expect("раздел DFU должен стираться");
         board
             .ota
@@ -238,7 +239,7 @@ mod tests {
         board
             .ota
             .flash
-            .prepare(DIRTY.len() as u32)
+            .prepare(u32::try_from(DIRTY.len()).expect("образ короче 4 ГиБ"))
             .expect("раздел DFU должен стираться");
         board.ota.flash.write(0, &DIRTY).expect("запись мусора");
 
@@ -413,6 +414,8 @@ mod tests {
     fn ota_rejects_a_bad_signature(board: Board) {
         use ports::{FirmwareUpdate, UpdateError};
 
+        const LENGTH: u32 = 64;
+
         let mut ota = super::signed(board);
 
         // Хвост раздела готовится явно, и без этого тест ненадёжен: проверка
@@ -420,7 +423,6 @@ mod tests {
         // а в разделе лежат остатки прошлых прогонов. Окажись там версия не
         // новее текущей — вызов вернул бы `Rollback`, до подписи бы не дошёл.
         // Ставим заведомо большую.
-        const LENGTH: u32 = 64;
         let mut image = [0xFFu8; LENGTH as usize];
         image[LENGTH as usize - 4..].copy_from_slice(&u32::MAX.to_le_bytes());
         ota.prepare(LENGTH).expect("раздел DFU должен стираться");
@@ -457,11 +459,13 @@ mod tests {
     fn ota_rejects_an_older_image(board: Board) {
         use ports::{FirmwareUpdate, UpdateError};
 
+        const LENGTH: u32 = 32;
+        const LONGER: u32 = LENGTH * 2;
+
         let mut ota = super::signed(board);
 
         // Кратно WRITE_SIZE, как и в тесте записи выше. Хвост — версия
         // `0.0.0`, заведомо не новее любой проставленной в проекте.
-        const LENGTH: u32 = 32;
         let mut image = [0xFFu8; LENGTH as usize];
         image[LENGTH as usize - 4..].copy_from_slice(&0u32.to_le_bytes());
         ota.prepare(LENGTH * 2)
@@ -480,7 +484,6 @@ mod tests {
         // РЯДОМ, а не поверх первого: версия читается по `length - 4`, так что
         // достаточно попросить проверить кусок подлиннее, а перезаписать те же
         // четыре байта нельзя (`0xFF` поверх `0x00` не ложится).
-        const LONGER: u32 = LENGTH * 2;
         let mut newer = [0xFFu8; LONGER as usize];
         newer[LONGER as usize - 4..].copy_from_slice(&u32::MAX.to_le_bytes());
         ota.write(LENGTH, &newer[LENGTH as usize..])

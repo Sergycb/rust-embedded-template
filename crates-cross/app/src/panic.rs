@@ -4,7 +4,7 @@
 //! ничего, кроме `cortex-m`, `defmt`, `panic-probe` и `panic-persist`, здесь не
 //! использовать — у `boot` других зависимостей нет.
 
-/// В dev-сборке паника печатается в RTT и оставляет МК в HardFault — под отладчиком.
+/// В dev-сборке паника печатается в RTT и оставляет МК в `HardFault` — под отладчиком.
 #[cfg(debug_assertions)]
 use panic_probe as _;
 

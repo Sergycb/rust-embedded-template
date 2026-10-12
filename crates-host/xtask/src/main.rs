@@ -430,7 +430,9 @@ fn report_image(base: u64, size: u64) -> Result<(), anyhow::Error> {
     let Some((name, partition)) = app_region(&regions) else {
         // Раздела приложения в раскладке нет — сверять образ не с чем, а подписывать
         // и раздавать образ без единой проверки нельзя (так же отказывает `flash`).
-        println!("app: {:.1} KiB", size as f64 / 1024.0);
+        #[allow(clippy::cast_precision_loss)]
+        let size_kib = size as f64 / 1024.0;
+        println!("app: {size_kib:.1} KiB");
         anyhow::bail!(
             "в crates-cross/app/memory.x нет ни региона ACTIVE, ни FLASH — адрес и размер              образа не с чем сверять"
         );
@@ -438,18 +440,17 @@ fn report_image(base: u64, size: u64) -> Result<(), anyhow::Error> {
 
     ensure_image_base(base, name, partition)?;
 
+    #[allow(clippy::cast_precision_loss)]
     let percent = size as f64 * 100.0 / partition.length.max(1) as f64;
+    #[allow(clippy::cast_precision_loss)]
+    let size_kib = size as f64 / 1024.0;
+    #[allow(clippy::cast_precision_loss)]
+    let partition_kib = partition.length as f64 / 1024.0;
     match IMAGE_BUDGET_PERCENT {
         Some(budget) => println!(
-            "app: {:.1} KiB из {:.1} KiB {name} ({percent:.1}%, бюджет {budget}%)",
-            size as f64 / 1024.0,
-            partition.length as f64 / 1024.0,
+            "app: {size_kib:.1} KiB из {partition_kib:.1} KiB {name} ({percent:.1}%, бюджет {budget}%)"
         ),
-        None => println!(
-            "app: {:.1} KiB из {:.1} KiB {name} ({percent:.1}%)",
-            size as f64 / 1024.0,
-            partition.length as f64 / 1024.0,
-        ),
+        None => println!("app: {size_kib:.1} KiB из {partition_kib:.1} KiB {name} ({percent:.1}%)"),
     }
     if let Some(line) = size_delta(baseline_image_size()?, size, partition.length) {
         println!("     {line}");
@@ -507,13 +508,14 @@ fn baseline_image_size() -> Result<Option<u64>, anyhow::Error> {
         Ok(raw) => raw,
         Err(env::VarError::NotPresent) => return Ok(None),
         Err(env::VarError::NotUnicode(raw)) => {
-            anyhow::bail!("{BASELINE_ENV}={raw:?} — не текст, ожидается размер образа в байтах")
+            let raw = raw.to_string_lossy();
+            anyhow::bail!("{BASELINE_ENV}={raw} — не текст, ожидается размер образа в байтах")
         }
     };
     let value = raw
         .trim()
         .parse()
-        .with_context(|| format!("{BASELINE_ENV}={raw:?} — ожидается размер образа в байтах"))?;
+        .with_context(|| format!("{BASELINE_ENV}={raw} — ожидается размер образа в байтах"))?;
     Ok(Some(value))
 }
 
@@ -540,6 +542,7 @@ fn save_image_size(size: u64) -> Result<(), anyhow::Error> {
 fn size_delta(baseline: Option<u64>, size: u64, partition: u64) -> Option<String> {
     let baseline = baseline?;
     if baseline == size {
+        #[allow(clippy::cast_precision_loss)]
         return Some(format!(
             "размер не изменился ({:.1} KiB)",
             size as f64 / 1024.0
@@ -554,7 +557,9 @@ fn size_delta(baseline: Option<u64>, size: u64, partition: u64) -> Option<String
     // Проценты с десятой долей, в отличие от целой цифры строкой выше: рост в
     // триста байт от раздела в сто килобайт — это треть процента, и на целых
     // числах обе стороны выглядели бы одинаково.
+    #[allow(clippy::cast_precision_loss)]
     let percent = |bytes: u64| bytes as f64 * 100.0 / partition.max(1) as f64;
+    #[allow(clippy::cast_precision_loss)]
     Some(format!(
         "{sign}{diff} байт к ветке по умолчанию (было {:.1} KiB, {:.1}% → {:.1}%)",
         baseline as f64 / 1024.0,
@@ -595,6 +600,7 @@ fn check_image_budget(
     // Целыми и без промежуточного деления: усечённый процент пропускал бы 85,9 %
     // при бюджете 85 и не сработал бы предупреждение на 89,9 %.
     let length = length.max(1);
+    #[allow(clippy::cast_precision_loss)]
     let percent = size as f64 * 100.0 / length as f64;
     let Some(budget) = budget else {
         // Порог не задан — остаётся прежняя мягкая подсказка. Не ошибка:
@@ -1029,10 +1035,13 @@ fn image_from_segments(segments: &[(u64, Vec<u8>)]) -> Result<(u64, Vec<u8>), an
         "образ занимает {} байт от {base:#x} до {end:#x} — больше {MAX_IMAGE_SPAN}: сегменты \n         ELF разбросаны по адресному пространству, скорее всего, линкер положил один из них \n         не во флеш",
         end - base,
     );
-    let mut image = vec![ERASED_FLASH; (end - base) as usize];
+    let mut image = vec![
+        ERASED_FLASH;
+        usize::try_from(end - base).expect("образ не должен превышать usize::MAX")
+    ];
     let mut filled = vec![false; image.len()];
     for (address, bytes) in segments {
-        let offset = (address - base) as usize;
+        let offset = usize::try_from(address - base).expect("адрес не должен превышать usize::MAX");
         for (index, byte) in bytes.iter().enumerate() {
             anyhow::ensure!(
                 !filled[offset + index],
@@ -1221,7 +1230,7 @@ fn panic_dump(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
         })
         .collect::<Result<Vec<_>, _>>()?;
     anyhow::ensure!(
-        bytes.len() as u32 == wanted,
+        u32::try_from(bytes.len()).is_ok_and(|v| v == wanted),
         "из PANIC прочитано {} байт вместо {wanted} — дамп собран не полностью",
         bytes.len(),
     );
@@ -1454,6 +1463,7 @@ fn parse_region_line(line: &str, source: &Path) -> Result<(String, Region), anyh
     // шаблоне `/* … */` стоит ВМЕСТО значения, и обрезание всей строки унесло
     // бы вместе с ним ключевое слово `LENGTH` — заставив сообщать о «форме,
     // которую не удалось разобрать», вместо «значение в файле не заполнено».
+    #[allow(clippy::items_after_statements)]
     fn region_value(raw: &str) -> &str {
         let raw = raw.split_once("/*").map_or(raw, |(before, _)| before);
         raw.trim_start_matches([' ', '=', ',']).trim()
@@ -1762,11 +1772,10 @@ mod tests {
     #[test]
     fn a_delta_says_which_way_the_image_moved() {
         let grew = super::size_delta(Some(12_800), 13_112, 131_072).expect("образ вырос");
-        assert!(grew.starts_with("+312 байт"), "{grew}");
-        assert!(grew.contains("12.5 KiB"), "нет прежнего размера: {grew}");
+        insta::assert_snapshot!(grew, @"+312 байт к ветке по умолчанию (было 12.5 KiB, 9.8% → 10.0%)");
 
         let shrank = super::size_delta(Some(13_112), 12_800, 131_072).expect("образ уменьшился");
-        assert!(shrank.starts_with("−312 байт"), "{shrank}");
+        insta::assert_snapshot!(shrank, @"−312 байт к ветке по умолчанию (было 12.8 KiB, 10.0% → 9.8%)");
     }
 
     /// Совпадение размеров — тоже ответ, а не молчание: «дельты нет» и «база
@@ -1774,19 +1783,7 @@ mod tests {
     #[test]
     fn an_unchanged_image_says_so() {
         let same = super::size_delta(Some(13_000), 13_000, 131_072).expect("размер тот же");
-        assert!(same.contains("не изменился"), "{same}");
-    }
-
-    /// Проценты с десятой долей: рост в треть процента на целых числах
-    /// выглядел бы как отсутствие роста.
-    #[test]
-    fn small_growth_is_visible_in_percent() {
-        let line = super::size_delta(Some(12_800), 13_112, 131_072).expect("образ вырос");
-
-        assert!(
-            line.contains("9.8% → 10.0%"),
-            "проценты округлены до целых или посчитаны не от раздела: {line}"
-        );
+        insta::assert_snapshot!(same, @"размер не изменился (12.7 KiB)");
     }
 
     /// Раскладка в том виде, в каком её пишет `chip-select.rhai`, плюс строки,

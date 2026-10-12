@@ -191,6 +191,7 @@ impl<T: Instance + 'static, const TIMEOUT_US: u32> Iwdg<T, TIMEOUT_US, Disarmed>
     /// компилятор; таймаут узла в эту проверку не входит намеренно, его
     /// проверяет `const`-assert в `app/src/graph.rs` — там, где видны оба
     /// конца, см. её документацию в `watchdog`.
+    #[must_use]
     pub fn arm(self) -> Iwdg<T, TIMEOUT_US, Armed> {
         let mut inner = self.inner;
         inner.unleash();

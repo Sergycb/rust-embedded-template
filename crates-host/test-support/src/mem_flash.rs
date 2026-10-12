@@ -19,12 +19,14 @@ impl NorFlashError for MemFlashError {
 }
 
 impl<const SIZE: usize, const ERASE: usize, const WRITE: usize> MemFlash<SIZE, ERASE, WRITE> {
+    #[must_use]
     pub fn erased() -> Self {
         Self {
             mem: vec![0xFF; SIZE],
         }
     }
 
+    #[must_use]
     pub fn filled(byte: u8) -> Self {
         Self {
             mem: vec![byte; SIZE],
@@ -92,8 +94,12 @@ impl<const SIZE: usize, const ERASE: usize, const WRITE: usize>
 {
     const READ_SIZE: usize = 1;
 
-    async fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), Self::Error> {
-        ReadNorFlash::read(self, offset, bytes)
+    fn read(
+        &mut self,
+        offset: u32,
+        bytes: &mut [u8],
+    ) -> impl Future<Output = Result<(), Self::Error>> {
+        std::future::ready(ReadNorFlash::read(self, offset, bytes))
     }
 
     fn capacity(&self) -> usize {
@@ -107,11 +113,15 @@ impl<const SIZE: usize, const ERASE: usize, const WRITE: usize>
     const WRITE_SIZE: usize = WRITE;
     const ERASE_SIZE: usize = ERASE;
 
-    async fn erase(&mut self, from: u32, to: u32) -> Result<(), Self::Error> {
-        NorFlash::erase(self, from, to)
+    fn erase(&mut self, from: u32, to: u32) -> impl Future<Output = Result<(), Self::Error>> {
+        core::future::ready(NorFlash::erase(self, from, to))
     }
 
-    async fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), Self::Error> {
-        NorFlash::write(self, offset, bytes)
+    fn write(
+        &mut self,
+        offset: u32,
+        bytes: &[u8],
+    ) -> impl Future<Output = Result<(), Self::Error>> {
+        core::future::ready(NorFlash::write(self, offset, bytes))
     }
 }
