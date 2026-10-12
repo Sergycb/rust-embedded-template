@@ -9,4 +9,4 @@ pub mod ota;
 {%- endif %}
 pub mod wdg;
 
-pub use board::Board;
+pub use board::{Board, ChipSpec};

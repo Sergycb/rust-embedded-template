@@ -24,6 +24,9 @@
 //! под каждую железную деталь. Причина прошлой паники домену не нужна — это
 //! диагностика старта, и её печатает `main` сам.
 //!
+//! Отсюда и то, чего здесь нет: сведения о чипе (`bsp::ChipSpec`) домен не
+//! читает, поэтому их тип живёт в `bsp`, рядом с `Board`.
+//!
 //! Типы ошибок тоже здесь, а не в `domain`: домен — только функции над портами,
 //! а всё, что он возвращает, объявлено в его словаре.
 //!
@@ -40,19 +43,13 @@
 //! пользователя не касается (`docs/conventions.md`, «`lib.rs` только объявляет
 //! модули»).
 
-/// Обновление прошивки: запись образа, проверка подписи, ошибки применения.
-pub mod update;
-
-/// Канал доставки образа и ошибка приёма.
-pub mod download;
+/// OTA: канал доставки образа, запись во флеш, проверка подписи и ошибки
+/// приёма и применения.
+pub mod ota;
 
 /// Хранилище настроек.
 pub mod settings;
 
-/// Сведения о плате и чипе.
-pub mod board;
-
-pub use board::ChipSpec;
-pub use download::{Announce, DownloadError, ImageSource, Rejection};
+pub use ota::download::{Announce, DownloadError, ImageSource, Rejection};
+pub use ota::update::{FirmwareUpdate, SignedFirmwareUpdate, UpdateError, VerifyError};
 pub use settings::SettingsStorage;
-pub use update::{FirmwareUpdate, SignedFirmwareUpdate, UpdateError, VerifyError};

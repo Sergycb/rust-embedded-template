@@ -1,6 +1,6 @@
 //! Порт канала доставки образа и ошибка его приёма.
 //!
-//! [`ImageSource`] реализует проект под свой транспорт (USB CDC, UART, сеть,
+//! [`ImageSource`](crate::ImageSource) реализует проект под свой транспорт (USB CDC, UART, сеть,
 //! SD-карта) — в `crates-cross/bsp`, там, где живёт периферия. Пользуется им
 //! `domain::ota::download::receive` и узел `domain::ota`.
 

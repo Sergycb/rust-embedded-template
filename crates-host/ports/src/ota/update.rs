@@ -1,9 +1,10 @@
 //! Порты обновления прошивки и ошибки его применения.
 //!
-//! [`FirmwareUpdate`] — то, что нужно приёму и применению образа без подписи;
-//! [`SignedFirmwareUpdate`] — то же плюс проверка подписи. Реализует их
-//! `adapters::ota` (`Updater` и `Signed`), пользуются — `domain::ota::download`,
-//! `domain::ota::update` и узел `domain::ota`.
+//! [`FirmwareUpdate`](crate::FirmwareUpdate) — то, что нужно приёму и
+//! применению образа без подписи;
+//! [`SignedFirmwareUpdate`](crate::SignedFirmwareUpdate) — то же плюс проверка
+//! подписи. Реализует их `adapters::ota` (`Updater` и `Signed`), пользуются —
+//! `domain::ota::download`, `domain::ota::update` и узел `domain::ota`.
 
 /// Обновление прошивки: то, что нужно логике приёма и применения образа.
 ///
