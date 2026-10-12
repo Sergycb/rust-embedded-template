@@ -333,15 +333,83 @@ mod tests {
     #[cfg(feature = "signed")]
     use super::Signed;
     use super::{Error, Updater};
-    use crate::mem_flash::MemFlash;
-    use embedded_storage::nor_flash::NorFlashErrorKind;
+    use embedded_storage::nor_flash::{ErrorType, NorFlash, NorFlashErrorKind, ReadNorFlash};
     use ports::FirmwareUpdate;
+
+    /// Флеш в памяти с семантикой NOR: стирание страницами по 256 байт в
+    /// `0xFF`, запись словами по 8 байт и только «единицы в нули». Готового
+    /// мока `NorFlash` в экосистеме нет (`embedded-hal-mock` флеш не
+    /// покрывает), поэтому фейк свой и ровно под эти тесты.
+    #[derive(Debug)]
+    struct MemFlash<const SIZE: usize> {
+        mem: Vec<u8>,
+    }
+
+    impl<const SIZE: usize> MemFlash<SIZE> {
+        fn erased() -> Self {
+            Self::filled(0xFF)
+        }
+
+        fn filled(byte: u8) -> Self {
+            Self {
+                mem: vec![byte; SIZE],
+            }
+        }
+
+        fn check(offset: u32, len: usize, unit: usize) -> Result<(), NorFlashErrorKind> {
+            if offset as usize + len > SIZE {
+                return Err(NorFlashErrorKind::OutOfBounds);
+            }
+            if !(offset as usize).is_multiple_of(unit) || !len.is_multiple_of(unit) {
+                return Err(NorFlashErrorKind::NotAligned);
+            }
+            Ok(())
+        }
+    }
+
+    impl<const SIZE: usize> ErrorType for MemFlash<SIZE> {
+        type Error = NorFlashErrorKind;
+    }
+
+    impl<const SIZE: usize> ReadNorFlash for MemFlash<SIZE> {
+        const READ_SIZE: usize = 1;
+
+        fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), Self::Error> {
+            Self::check(offset, bytes.len(), 1)?;
+            let start = offset as usize;
+            bytes.copy_from_slice(&self.mem[start..start + bytes.len()]);
+            Ok(())
+        }
+
+        fn capacity(&self) -> usize {
+            SIZE
+        }
+    }
+
+    impl<const SIZE: usize> NorFlash for MemFlash<SIZE> {
+        const WRITE_SIZE: usize = 8;
+        const ERASE_SIZE: usize = 256;
+
+        fn erase(&mut self, from: u32, to: u32) -> Result<(), Self::Error> {
+            Self::check(from, (to - from) as usize, Self::ERASE_SIZE)?;
+            self.mem[from as usize..to as usize].fill(0xFF);
+            Ok(())
+        }
+
+        fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), Self::Error> {
+            Self::check(offset, bytes.len(), Self::WRITE_SIZE)?;
+            for (cell, byte) in self.mem[offset as usize..].iter_mut().zip(bytes) {
+                *cell &= *byte;
+            }
+            Ok(())
+        }
+    }
 
     /// Четыре страницы по 256 байт, слово 8; ACTIVE (= capacity) — три
     /// страницы, как требует запас на обмен.
-    type Dfu = MemFlash<1024, 256, 8>;
+    type Dfu = MemFlash<1024>;
     /// Раздел состояния: страница на магию плюс журнал прогресса.
-    type State = MemFlash<256, 256, 8>;
+    type State = MemFlash<256>;
 
     fn updater() -> Updater<Dfu, State> {
         Updater::new(Dfu::erased(), State::erased(), 768)
