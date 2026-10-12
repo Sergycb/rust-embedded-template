@@ -166,14 +166,71 @@ impl<F: NorFlash> ports::SettingsStorage for Settings<F> {
 
 #[cfg(test)]
 mod tests {
+    use embedded_storage::nor_flash::{ErrorType, NorFlashErrorKind};
+    use embedded_storage_async::nor_flash::{NorFlash, ReadNorFlash};
     use ports::SettingsStorage;
 
     use super::Settings;
-    use crate::mem_flash::MemFlash;
 
-    /// Две страницы по 256 байт, слово 8 — минимум, который берёт
-    /// `sequential-storage`.
-    type Flash = MemFlash<512, 256, 8>;
+    /// Асинхронный флеш в памяти — то, чего ждёт `sequential-storage`: две
+    /// страницы по 256 байт (меньше он не берёт), слово 8, стирание в `0xFF`,
+    /// запись только «единицы в нули» — иначе не проверить, что хранилище не
+    /// пишет поверх нестёртого.
+    #[derive(Debug)]
+    struct Flash {
+        mem: Vec<u8>,
+    }
+
+    impl Flash {
+        fn erased() -> Self {
+            Self {
+                mem: vec![0xFF; 512],
+            }
+        }
+    }
+
+    impl ErrorType for Flash {
+        type Error = NorFlashErrorKind;
+    }
+
+    impl ReadNorFlash for Flash {
+        const READ_SIZE: usize = 1;
+
+        fn read(
+            &mut self,
+            offset: u32,
+            bytes: &mut [u8],
+        ) -> impl Future<Output = Result<(), Self::Error>> {
+            let start = offset as usize;
+            bytes.copy_from_slice(&self.mem[start..start + bytes.len()]);
+            core::future::ready(Ok(()))
+        }
+
+        fn capacity(&self) -> usize {
+            self.mem.len()
+        }
+    }
+
+    impl NorFlash for Flash {
+        const WRITE_SIZE: usize = 8;
+        const ERASE_SIZE: usize = 256;
+
+        fn erase(&mut self, from: u32, to: u32) -> impl Future<Output = Result<(), Self::Error>> {
+            self.mem[from as usize..to as usize].fill(0xFF);
+            core::future::ready(Ok(()))
+        }
+
+        fn write(
+            &mut self,
+            offset: u32,
+            bytes: &[u8],
+        ) -> impl Future<Output = Result<(), Self::Error>> {
+            for (cell, byte) in self.mem[offset as usize..].iter_mut().zip(bytes) {
+                *cell &= *byte;
+            }
+            core::future::ready(Ok(()))
+        }
+    }
 
     #[tokio::test]
     async fn stores_and_reads_back() {

@@ -229,20 +229,61 @@ mod tests {
 
     use embassy_sync::blocking_mutex::Mutex;
     use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+    use embedded_storage::nor_flash::{ErrorType, NorFlashErrorKind};
     use embedded_storage_async::nor_flash::{NorFlash, ReadNorFlash};
 
     use super::{Paged, Shared};
-    use crate::mem_flash::MemFlash;
+
+    /// Блокирующий флеш в памяти: 64 байта, страница 16, слово 4. Мосту
+    /// неважно, что под ним, — проверяется только, что каждая операция дошла
+    /// до флеша и задела ровно свой диапазон.
+    #[derive(Debug)]
+    struct MemFlash {
+        mem: [u8; 64],
+    }
+
+    impl ErrorType for MemFlash {
+        type Error = NorFlashErrorKind;
+    }
+
+    impl embedded_storage::nor_flash::ReadNorFlash for MemFlash {
+        const READ_SIZE: usize = 1;
+
+        fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), Self::Error> {
+            let start = offset as usize;
+            bytes.copy_from_slice(&self.mem[start..start + bytes.len()]);
+            Ok(())
+        }
+
+        fn capacity(&self) -> usize {
+            self.mem.len()
+        }
+    }
+
+    impl embedded_storage::nor_flash::NorFlash for MemFlash {
+        const WRITE_SIZE: usize = 4;
+        const ERASE_SIZE: usize = 16;
+
+        fn erase(&mut self, from: u32, to: u32) -> Result<(), Self::Error> {
+            self.mem[from as usize..to as usize].fill(0xFF);
+            Ok(())
+        }
+
+        fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), Self::Error> {
+            let start = offset as usize;
+            self.mem[start..start + bytes.len()].copy_from_slice(bytes);
+            Ok(())
+        }
+    }
 
     #[tokio::test]
     async fn forwards_every_operation_to_the_flash_under_the_mutex() {
-        let flash: Mutex<NoopRawMutex, _> =
-            Mutex::new(RefCell::new(MemFlash::<64, 16, 4>::filled(0)));
+        let flash: Mutex<NoopRawMutex, _> = Mutex::new(RefCell::new(MemFlash { mem: [0; 64] }));
         let mut shared = Shared::new(&flash);
 
         assert_eq!(shared.capacity(), 64);
         assert_eq!(
-            <Shared<'_, Mutex<NoopRawMutex, RefCell<MemFlash<64, 16, 4>>>> as NorFlash>::WRITE_SIZE,
+            <Shared<'_, Mutex<NoopRawMutex, RefCell<MemFlash>>> as NorFlash>::WRITE_SIZE,
             4
         );
 
@@ -263,9 +304,9 @@ mod tests {
     /// и по асинхронным (`sequential-storage`).
     #[tokio::test]
     async fn paged_declares_its_own_page_and_forwards_the_rest() {
-        type Flash = Mutex<NoopRawMutex, RefCell<MemFlash<64, 16, 4>>>;
+        type Flash = Mutex<NoopRawMutex, RefCell<MemFlash>>;
         type Page32<'a> = Paged<Shared<'a, Flash>, 32>;
-        let flash: Flash = Mutex::new(RefCell::new(MemFlash::filled(0)));
+        let flash: Flash = Mutex::new(RefCell::new(MemFlash { mem: [0; 64] }));
 
         assert_eq!(<Page32<'_> as NorFlash>::ERASE_SIZE, 32);
         assert_eq!(
