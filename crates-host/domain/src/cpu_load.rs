@@ -58,9 +58,9 @@ const SAMPLE_INTERVAL: Duration = Duration::from_millis(500);
 const BACKOFF_MAX: Duration = Duration::from_millis(500);
 
 /// Политика пауз между перезапусками узла — те же цифры, что у
-/// [`heartbeat::BACKOFF`](crate::heartbeat::BACKOFF), но свой потолок: у задачи, которая
-/// меряет, а не ждёт, нет смысла держать паузу в секунды — нечего
-/// перезапускать дольше, чем на цикл измерения.
+/// [`heartbeat::BACKOFF`](crate::heartbeat::BACKOFF), но свой потолок: у
+/// задачи, которая меряет, а не ждёт, нет смысла держать паузу в секунды —
+/// нечего перезапускать дольше, чем на цикл измерения.
 pub const BACKOFF: BackoffPolicy = BackoffPolicy {
     first: Duration::from_millis(50),
     factor: 2,
@@ -73,8 +73,8 @@ pub const BACKOFF: BackoffPolicy = BackoffPolicy {
 ///
 /// Считается от `BACKOFF_MAX`, а не от `SAMPLE_INTERVAL`: слот сторожа граф
 /// взводит один раз и снимает только когда узел уходит насовсем, а во время
-/// паузы между перезапусками слот жив и кормить его некому. Та же поправка,
-/// что и у [`heartbeat::WATCHDOG`](crate::heartbeat::WATCHDOG), и то же левое звено
+/// паузы между перезапусками слот жив и кормить его некому. Та же поправка, что
+/// и у [`heartbeat::WATCHDOG`](crate::heartbeat::WATCHDOG), и то же левое звено
 /// цепочки таймаутов — `const`-assert ниже. Второе, с другого конца, не здесь:
 /// `WATCHDOG + WATCHDOG_CHECK_EVERY < bsp::wdg::HW_TIMEOUT_US`
 /// (`docs/watchdog.md`) — его держит `const`-assert в `app/src/graph.rs`, где

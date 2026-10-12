@@ -45,7 +45,7 @@ fn signed(board: bsp::Board) -> adapters::ota::Signed<bsp::ota::Partition, bsp::
     ];
     adapters::ota::Signed::new(
         board.ota.flash,
-        domain::firmware::pack(0, 1, 0),
+        domain::ota::version::pack(0, 1, 0),
         RFC8032_TEST1_PUBLIC_KEY,
     )
 }

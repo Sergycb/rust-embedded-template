@@ -10,7 +10,7 @@
 
 use ports::{SignedFirmwareUpdate, UpdateError, VerifyError};
 
-use crate::firmware;
+use crate::ota::version;
 
 /// Сколько байт в хвосте образа занимает версия.
 ///
@@ -95,7 +95,7 @@ pub fn apply_signed<F: SignedFirmwareUpdate>(
     // Порядок байт — тот же, что пишет xtask: little-endian, как у Cortex-M.
     let incoming = u32::from_le_bytes(raw);
     let current = flash.running_version();
-    if !firmware::is_upgrade(current, incoming) {
+    if !version::is_upgrade(current, incoming) {
         return Err(UpdateError::Rollback { current, incoming });
     }
 
@@ -117,8 +117,8 @@ pub fn apply_signed<F: SignedFirmwareUpdate>(
 #[cfg(test)]
 mod tests {
     use super::apply_signed;
-    use crate::firmware::pack;
     use crate::ota::fakes::{FakeFlash, SIGNATURE};
+    use crate::ota::version::pack;
     use ports::{UpdateError, VerifyError};
     use rstest::rstest;
 

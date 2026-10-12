@@ -6,8 +6,8 @@
 //! Что здесь есть: подготовка раздела под образ, запись и чтение кусков,
 //! состояние bootloader'а, подтверждение образа, пометка обмена и — под фичей
 //! `signed` — проверка подписи. Чего нет: ни порядка проверок при применении
-//! (`domain::ota::update`), ни буферизации до слова (`domain::ota::download`) — это
-//! логика, а здесь только доступ к разделам.
+//! (`domain::ota::update`), ни буферизации до слова (`domain::ota::download`) —
+//! это логика, а здесь только доступ к разделам.
 //!
 //! # Про подтверждение: без него обновление живёт один запуск
 //!
@@ -242,8 +242,8 @@ impl<DFU: NorFlash, STATE: NorFlash> core::fmt::Debug for Signed<DFU, STATE> {
 #[cfg(feature = "signed")]
 impl<DFU: NorFlash, STATE: NorFlash> Signed<DFU, STATE> {
     /// `running_version` — упакованная версия этого образа
-    /// (`domain::firmware::pack`), `public_key` — корень доверия; нули означают
-    /// «ключ не подставлен» и отвергаются логикой до криптографии.
+    /// (`domain::ota::version::pack`), `public_key` — корень доверия; нули
+    /// означают «ключ не подставлен» и отвергаются логикой до криптографии.
     pub fn new(inner: Updater<DFU, STATE>, running_version: u32, public_key: [u8; 32]) -> Self {
         Self {
             inner,

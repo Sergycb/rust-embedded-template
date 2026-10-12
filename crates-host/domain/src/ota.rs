@@ -32,6 +32,11 @@ pub mod download;
 /// отказ различим. Функция над портом `SignedFirmwareUpdate` — см. модуль.
 pub mod update;
 
+/// Версия прошивки в 32 битах и правило приёма обновления (защита от
+/// отката). Образец границы: `bsp` достаёт четыре байта из флеша, `domain`
+/// решает, что с ними делать, — см. модуль.
+pub mod version;
+
 /// Фейки портов обновления, общие для тестов узла и обоих подмодулей.
 #[cfg(test)]
 mod fakes;
@@ -48,9 +53,9 @@ use supervisor::policy::{BackoffPolicy, JitterPolicy};
 use supervisor::runtime::TaskExit;
 
 /// Политика пауз между перезапусками узла — те же цифры, что у
-/// [`heartbeat::BACKOFF`](crate::heartbeat::BACKOFF), и своя константа намеренно: фрагмент
-/// самодостаточен, а у канала доставки свои поводы разойтись с холостым циклом
-/// (например, дать хосту время переподключиться).
+/// [`heartbeat::BACKOFF`](crate::heartbeat::BACKOFF), и своя константа
+/// намеренно: фрагмент самодостаточен, а у канала доставки свои поводы
+/// разойтись с холостым циклом (например, дать хосту время переподключиться).
 pub const BACKOFF: BackoffPolicy = BackoffPolicy {
     first: Duration::from_millis(50),
     factor: 2,
@@ -140,10 +145,11 @@ where
 /// узел с backoff'ом, и объект канала вернётся в слот к новому прогону.
 /// `Completed` не возвращается никогда.
 ///
-/// Без `watchdog:` намеренно — по той же логике, что у [`heartbeat::run`](crate::heartbeat::run):
-/// отметка ставится после реального прогресса, а пока узел ждёт заголовок в
-/// `begin()`, прогресса у него нет, и отметка по таймеру сторожила бы
-/// исполнитель, а не работу. Железо кормит узел `HEARTBEAT`.
+/// Без `watchdog:` намеренно — по тому же правилу, что у
+/// [`heartbeat::run`](crate::heartbeat::run): отметка ставится после
+/// реального прогресса, а пока узел ждёт заголовок в `begin()`, прогресса у
+/// него нет, и отметка по таймеру сторожила бы исполнитель, а не работу.
+/// Аппаратный сторож кормит тикер графа, а не какой-то узел.
 pub async fn run<S, F>(mut ctx: OtaCtx<'_, S, F>) -> TaskExit
 where
     S: ImageSource,
@@ -414,9 +420,9 @@ supervisor::supervisor_fragment! {
 #[cfg(test)]
 mod tests {
     use super::{Mode, OtaCtx, run};
-    use crate::firmware::pack;
     use crate::ota::fakes::{FakeFlash, FakeLink, SIGNATURE};
     use crate::ota::update::VERSION_BYTES;
+    use crate::ota::version::pack;
     use ports::{Announce, Rejection, VerifyError};
     use supervisor::runtime::TaskExit;
 

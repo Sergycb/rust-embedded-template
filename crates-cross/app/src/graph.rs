@@ -20,12 +20,13 @@ use supervisor::{Duration, Liveness, supervisor_graph};
 ///
 /// Единственная цифра графа, которая живёт здесь: она про один аппаратный
 /// сторож на всех, а не про какой-то узел. Таймаут узла — во фрагменте
-/// (`domain::heartbeat::WATCHDOG`), аппаратный — у железа (`bsp::wdg::HW_TIMEOUT_US`),
-/// и соотношение между ними проверяет `const`-assert ниже. Компилятор проверяет
-/// сам `check_every` против аппаратного таймаута — `supervisor_graph!` эмитит
-/// `const`-assert, читая `HARDWARE_TIMEOUT` у типа сторожа; левое звено цепочки
-/// (потолок backoff'а < таймаут узла) держит `const`-assert во фрагменте
-/// (`domain::heartbeat`) — `docs/watchdog.md`.
+/// (`domain::heartbeat::WATCHDOG`), аппаратный — у железа
+/// (`bsp::wdg::HW_TIMEOUT_US`), и соотношение между ними проверяет
+/// `const`-assert ниже. Компилятор проверяет сам `check_every` против
+/// аппаратного таймаута — `supervisor_graph!` эмитит `const`-assert, читая
+/// `HARDWARE_TIMEOUT` у типа сторожа; левое звено цепочки (потолок backoff'а <
+/// таймаут узла) держит `const`-assert во фрагменте (`domain::heartbeat`) —
+/// `docs/watchdog.md`.
 const WATCHDOG_CHECK_EVERY: Duration = Duration::from_millis(100);
 
 // Правое звено цепочки таймаутов, и единственное место в шаблоне, где видны оба
@@ -58,8 +59,8 @@ supervisor_graph! {
     // растёт список, а не тело графа.
     //
     // Порядок items фиксированный: `boot:` → `watchdog:` → `fragments:`
-    // последним. Имя узлу даёт запись списка (`as HEARTBEAT`), не фрагмент: тот же
-    // фрагмент под двумя `as` — два узла. Всё остальное, что объявляет
+    // последним. Имя узлу даёт запись списка (`as HEARTBEAT`), не фрагмент: тот
+    // же фрагмент под двумя `as` — два узла. Всё остальное, что объявляет
     // фрагмент (слоты, `provide_*`), получает префикс этого имени.
     boot: board: bsp::Board;
 

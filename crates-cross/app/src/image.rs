@@ -11,7 +11,7 @@ use bsp::ota::Partition;
 pub type Signed = adapters::ota::Signed<Partition, Partition>;
 
 /// Версия этого образа — `version` из Cargo.toml, свёрнутая
-/// `domain::firmware::pack` в четыре байта.
+/// `domain::ota::version::pack` в четыре байта.
 ///
 /// Компоненты берутся из того же `shadow-rs`, что печатает версию в баннере
 /// старта (`crate::build`), — у версии в прошивке один источник. Считается
@@ -25,9 +25,11 @@ pub const FW_VERSION: u32 = {
         u8::from_str_radix(crate::build::PKG_VERSION_MINOR, 10),
         u16::from_str_radix(crate::build::PKG_VERSION_PATCH, 10),
     ) else {
-        panic!("version в Cargo.toml не влезает в четыре байта образа: см. domain::firmware::pack");
+        panic!(
+            "version в Cargo.toml не влезает в четыре байта образа: см. domain::ota::version::pack"
+        );
     };
-    domain::firmware::pack(major, minor, patch)
+    domain::ota::version::pack(major, minor, patch)
 };
 
 /// Версия этого образа, видимая снаружи по имени символа.
