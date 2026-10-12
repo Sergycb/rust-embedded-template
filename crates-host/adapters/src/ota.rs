@@ -328,6 +328,217 @@ impl<DFU: NorFlash, STATE: NorFlash> ports::SignedFirmwareUpdate for Signed<DFU,
     }
 }
 
+/// Что приложение оставляет bootloader'у о принятом образе: длину и подпись.
+///
+/// Лежит в запасной странице `DFU` — по смещению `capacity` (размер `ACTIVE`).
+/// `DFU` по построению на страницу больше `ACTIVE` (`assert_partitions` в
+/// `embassy-boot`), и эта страница нужна только самому обмену как черновик:
+/// до него она свободна, а первый же шаг обмена (`ACTIVE[last]` →
+/// `DFU[last + 1]`) её затирает — к этому моменту bootloader запись уже
+/// проверил. Своё место в разделе, а не отдельная запись: подпись должна
+/// пережить перезагрузку между приёмом и проверкой, а `STATE` `embassy-boot`
+/// стирает сам.
+#[cfg(feature = "signed")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PendingImage {
+    /// Длина образа в байтах — сколько начальных байт `DFU` покрывает подпись.
+    pub len: u32,
+    /// Подпись ed25519 над SHA-512 образа — так её ставит `cargo xtask build`.
+    pub signature: [u8; 64],
+}
+
+/// Магия записи — отличает её от стёртой страницы и от остатков чужих данных.
+#[cfg(feature = "signed")]
+const PENDING_MAGIC: [u8; 8] = *b"OTA-SIG1";
+
+/// Размер записи во флеше: магия (8), длина (4), резерв (4), подпись (64) —
+/// 80 байт, дополненные до кратного [`MAX_WRITE_SIZE`]: запись идёт одним
+/// куском, и на любом STM32 она обязана быть кратна слову.
+#[cfg(feature = "signed")]
+pub const PENDING_RECORD_LEN: usize = 96;
+
+#[cfg(feature = "signed")]
+impl PendingImage {
+    fn to_bytes(self) -> [u8; PENDING_RECORD_LEN] {
+        let mut out = [0xFF; PENDING_RECORD_LEN];
+        out[..8].copy_from_slice(&PENDING_MAGIC);
+        out[8..12].copy_from_slice(&self.len.to_le_bytes());
+        out[16..80].copy_from_slice(&self.signature);
+        out
+    }
+
+    fn from_bytes(bytes: &[u8; PENDING_RECORD_LEN]) -> Option<Self> {
+        if bytes[..8] != PENDING_MAGIC {
+            return None;
+        }
+        let mut len = [0; 4];
+        len.copy_from_slice(&bytes[8..12]);
+        let mut signature = [0; 64];
+        signature.copy_from_slice(&bytes[16..80]);
+        Some(Self {
+            len: u32::from_le_bytes(len),
+            signature,
+        })
+    }
+}
+
+/// Пишет запись о принятом образе в запасную страницу `DFU` (смещение
+/// `capacity`). Страница к этому моменту должна быть стёрта — это делает
+/// `prepare` проекта с подписью.
+///
+/// # Errors
+///
+/// Ошибка флеша, в том числе запись в нестёртую память.
+#[cfg(feature = "signed")]
+pub fn write_pending<DFU: NorFlash>(
+    dfu: &mut DFU,
+    capacity: u32,
+    image: PendingImage,
+) -> Result<(), Error> {
+    const {
+        assert!(
+            PENDING_RECORD_LEN.is_multiple_of(DFU::WRITE_SIZE),
+            "запись о принятом образе не кратна слову записи"
+        );
+    }
+    dfu.write(capacity, &image.to_bytes())?;
+    Ok(())
+}
+
+/// Что решил bootloader об обновлении — см. [`screen_update`].
+#[cfg(feature = "signed")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Screening {
+    /// Нового запроса на обмен нет: обычный старт, обмен, прерванный на
+    /// середине, или откат неподтверждённого образа. Проверять нечего —
+    /// `embassy-boot` делает своё.
+    NothingToCheck,
+    /// Образ в `DFU` подписан верно — обмен пусть идёт.
+    Approved,
+    /// Образ отвергнут, запрос на обмен снят (`STATE` → `Boot`): загрузится
+    /// прежний образ.
+    Rejected(Rejection),
+}
+
+/// Почему образ в `DFU` отвергнут.
+#[cfg(feature = "signed")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Rejection {
+    /// Обмен запрошен, а записи о принятом образе нет — образ положили мимо
+    /// `write_pending`, то есть без подписи.
+    NoRecord,
+    /// Длина в записи — ноль или больше `ACTIVE`.
+    Length,
+    /// Открытый ключ — нули, то есть не подставлен. Отдельной проверкой, а не
+    /// «с нулями всё равно не сойдётся»: нулевой ключ ed25519 — точка малого
+    /// порядка, подпись под него подделывается, и `salty` такие не отсеивает.
+    NoPublicKey,
+    /// Ключ не разбирается как точка кривой или подпись не сошлась.
+    Signature,
+}
+
+/// Проверка нового образа bootloader'ом — один раз, перед обменом.
+///
+/// Проверяет только **новый** запрос: магия `Swap` в `STATE` и пустой журнал
+/// прогресса. Та же магия держится и после обмена, пока новый образ не
+/// подтвердится, — тогда `embassy-boot` откатывает его, и запись к этому
+/// времени уже затёрта обменом; проверять там нечего, а «отвергнуть» значило бы
+/// сорвать откат. Журнал читается без знания стёртого значения (у части чипов
+/// это `0x00`): при магии `Swap` слово 1 («журнал действителен») всегда
+/// стёрто, поэтому «обмен не начинался» — это слово 2 (первая отметка
+/// прогресса), побайтно равное слову 1. Формат журнала — внутренний у
+/// `embassy-boot` (doc у `BootLoader::state`), и привязку к нему держит
+/// host-тест с настоящим обменом `embassy-boot`.
+///
+/// Отказ снимает запрос: в `STATE` пишется магия `Boot` (`mark_booted`), и
+/// следующий за этим `BootLoader::prepare` грузит прежний образ.
+///
+/// Время: SHA-512 всего образа и одна проверка ed25519 — порядка сотни
+/// миллионов тактов в портируемой реализации. Сторож к этому моменту не
+/// запущен: проверка — один неделимый вызов, покормить его внутри нечем.
+///
+/// # Errors
+///
+/// Ошибка флеша при чтении разделов или при снятии запроса.
+///
+/// # Panics
+///
+/// Если `STATE::WRITE_SIZE` шире [`MAX_WRITE_SIZE`] или не помещается в
+/// `u32` — на STM32 слово записи не больше 32 байт, так что на практике нет.
+#[cfg(feature = "signed")]
+pub fn screen_update<DFU: NorFlash, STATE: NorFlash>(
+    dfu: &mut DFU,
+    state: &mut STATE,
+    capacity: u32,
+    public_key: &[u8; 32],
+) -> Result<Screening, Error> {
+    let mut aligned = AlignedBuffer([0; MAX_WRITE_SIZE]);
+    let word = &mut aligned.0[..STATE::WRITE_SIZE];
+    if BlockingFirmwareState::new(&mut *state, &mut *word).get_state()? != State::Swap {
+        return Ok(Screening::NothingToCheck);
+    }
+    let mut validity = [0; MAX_WRITE_SIZE];
+    let mut first_step = [0; MAX_WRITE_SIZE];
+    let size = u32::try_from(STATE::WRITE_SIZE).expect("WRITE_SIZE не должен превышать u32::MAX");
+    state.read(size, &mut validity[..STATE::WRITE_SIZE])?;
+    state.read(2 * size, &mut first_step[..STATE::WRITE_SIZE])?;
+    if validity != first_step {
+        return Ok(Screening::NothingToCheck);
+    }
+
+    let verdict = check_pending(dfu, capacity, public_key)?;
+    if let Err(rejection) = verdict {
+        BlockingFirmwareState::new(&mut *state, &mut aligned.0[..STATE::WRITE_SIZE])
+            .mark_booted()?;
+        return Ok(Screening::Rejected(rejection));
+    }
+    Ok(Screening::Approved)
+}
+
+/// Сама проверка записи и подписи — без решения, что делать с отказом.
+#[cfg(feature = "signed")]
+fn check_pending<DFU: NorFlash>(
+    dfu: &mut DFU,
+    capacity: u32,
+    public_key: &[u8; 32],
+) -> Result<Result<(), Rejection>, Error> {
+    /// Сколько байт образа читается за раз на хеш.
+    const CHUNK: u32 = 256;
+    let mut record = [0; PENDING_RECORD_LEN];
+    dfu.read(capacity, &mut record)?;
+    let Some(pending) = PendingImage::from_bytes(&record) else {
+        return Ok(Err(Rejection::NoRecord));
+    };
+    if pending.len == 0 || pending.len > capacity {
+        return Ok(Err(Rejection::Length));
+    }
+    if public_key.iter().all(|byte| *byte == 0) {
+        return Ok(Err(Rejection::NoPublicKey));
+    }
+
+    let mut digest = salty::Sha512::new();
+    let mut chunk = [0; CHUNK as usize];
+    let mut offset = 0;
+    while offset < pending.len {
+        let len = CHUNK.min(pending.len - offset);
+        let bytes = &mut chunk[..len as usize];
+        dfu.read(offset, bytes)?;
+        digest.update(bytes);
+        offset += len;
+    }
+    let message = digest.finalize();
+
+    let Ok(key) = salty::PublicKey::try_from(public_key) else {
+        return Ok(Err(Rejection::Signature));
+    };
+    let signature = salty::Signature::from(&pending.signature);
+    if key.verify(&message, &signature).is_ok() {
+        Ok(Ok(()))
+    } else {
+        Ok(Err(Rejection::Signature))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[cfg(feature = "signed")]
@@ -545,5 +756,182 @@ mod tests {
         assert_eq!(u.write_granularity(), 8);
         assert_eq!(u.erase_size(), 256);
         assert_eq!(u.capacity().expect("вместимость"), 768);
+    }
+
+    /// Проверка нового образа bootloader'ом (`screen_update`): настоящие ключи
+    /// `salty` и — для отката — настоящий обмен `embassy-boot` над теми же
+    /// фейками, что и выше.
+    #[cfg(feature = "signed")]
+    mod screening {
+        use embassy_boot::{
+            BlockingFirmwareState, BootLoader, BootLoaderConfig, State as BootState,
+        };
+
+        use super::{Dfu, MemFlash, State};
+        use crate::ota::{PendingImage, Rejection, Screening, screen_update, write_pending};
+
+        /// `ACTIVE` — три страницы, как `capacity` у `updater()` выше.
+        const CAPACITY: u32 = 768;
+        const SEED: [u8; 32] = [42; 32];
+
+        fn public_key() -> [u8; 32] {
+            salty::Keypair::from(&SEED).public.to_bytes()
+        }
+
+        /// Подпись так, как её ставит `cargo xtask build`: ed25519 над SHA-512
+        /// образа.
+        fn sign(image: &[u8]) -> [u8; 64] {
+            let digest = salty::Sha512::new().updated(image).finalize();
+            salty::Keypair::from(&SEED).sign(&digest).to_bytes()
+        }
+
+        /// `DFU` с образом и записью о нём и `STATE` с запрошенным обменом —
+        /// то, что оставляет приложение перед перезагрузкой.
+        fn pending(image: &[u8], record: PendingImage) -> (Dfu, State) {
+            let mut dfu = Dfu::erased();
+            dfu.mem[..image.len()].copy_from_slice(image);
+            write_pending(&mut dfu, CAPACITY, record).expect("запись о принятом образе");
+            let mut state = State::erased();
+            BlockingFirmwareState::new(&mut state, &mut [0; 8])
+                .mark_updated()
+                .expect("запросить обмен");
+            (dfu, state)
+        }
+
+        fn state_of(state: &mut State) -> BootState {
+            BlockingFirmwareState::new(state, &mut [0; 8])
+                .get_state()
+                .expect("состояние")
+        }
+
+        fn image() -> Vec<u8> {
+            (0..600u32).map(|i| (i % 251) as u8).collect()
+        }
+
+        #[test]
+        fn a_correctly_signed_image_is_approved_and_the_swap_stays_requested() {
+            let image = image();
+            let (mut dfu, mut state) = pending(
+                &image,
+                PendingImage {
+                    len: 600,
+                    signature: sign(&image),
+                },
+            );
+
+            let screening = screen_update(&mut dfu, &mut state, CAPACITY, &public_key());
+
+            assert_eq!(screening.expect("проверка"), Screening::Approved);
+            assert_eq!(state_of(&mut state), BootState::Swap);
+        }
+
+        #[test]
+        fn a_bad_image_is_rejected_and_the_swap_request_is_withdrawn() {
+            let image = image();
+            let mut tampered = image.clone();
+            tampered[10] ^= 1;
+            let good = sign(&image);
+            let cases = [
+                (
+                    tampered.clone(),
+                    600,
+                    good,
+                    public_key(),
+                    Rejection::Signature,
+                ),
+                (image.clone(), 0, good, public_key(), Rejection::Length),
+                (
+                    image.clone(),
+                    CAPACITY + 1,
+                    good,
+                    public_key(),
+                    Rejection::Length,
+                ),
+                (image.clone(), 600, good, [0; 32], Rejection::NoPublicKey),
+            ];
+            for (bytes, len, signature, key, expected) in cases {
+                let (mut dfu, mut state) = pending(&bytes, PendingImage { len, signature });
+
+                let screening = screen_update(&mut dfu, &mut state, CAPACITY, &key);
+
+                assert_eq!(
+                    screening.expect("проверка"),
+                    Screening::Rejected(expected),
+                    "{expected:?}"
+                );
+                assert_eq!(state_of(&mut state), BootState::Boot, "{expected:?}");
+            }
+        }
+
+        /// Обмен запросили, минуя запись (образ без подписи), — отказ, а не
+        /// «проверять нечего».
+        #[test]
+        fn a_swap_request_without_a_record_is_rejected() {
+            let mut dfu = Dfu::erased();
+            let mut state = State::erased();
+            BlockingFirmwareState::new(&mut state, &mut [0; 8])
+                .mark_updated()
+                .expect("запросить обмен");
+
+            let screening = screen_update(&mut dfu, &mut state, CAPACITY, &public_key());
+
+            assert_eq!(
+                screening.expect("проверка"),
+                Screening::Rejected(Rejection::NoRecord)
+            );
+            assert_eq!(state_of(&mut state), BootState::Boot);
+        }
+
+        #[test]
+        fn nothing_is_checked_without_a_swap_request() {
+            let mut dfu = Dfu::erased();
+            let mut state = State::erased();
+
+            let screening = screen_update(&mut dfu, &mut state, CAPACITY, &public_key());
+
+            assert_eq!(screening.expect("проверка"), Screening::NothingToCheck);
+        }
+
+        /// Главное: после настоящего обмена `embassy-boot` магия в `STATE` та же
+        /// (`Swap`, пока образ не подтверждён), а запись затёрта. Проверка
+        /// обязана это узнать по журналу и не трогать `STATE` — иначе следующий
+        /// сброс не откатил бы неподтверждённый образ. Заодно тест держит
+        /// привязку к внутреннему формату журнала `embassy-boot`.
+        #[test]
+        fn after_the_swap_the_pending_revert_is_left_alone() {
+            let image = image();
+            let (mut dfu, mut state) = pending(
+                &image,
+                PendingImage {
+                    len: 600,
+                    signature: sign(&image),
+                },
+            );
+            assert_eq!(
+                screen_update(&mut dfu, &mut state, CAPACITY, &public_key()).expect("проверка"),
+                Screening::Approved
+            );
+            let mut active = MemFlash::<768>::filled(0x11);
+
+            let mut boot = BootLoader::new(BootLoaderConfig {
+                active: &mut active,
+                dfu: &mut dfu,
+                state: &mut state,
+            });
+            assert_eq!(
+                boot.prepare_boot(&mut [0; 8]).expect("обмен"),
+                BootState::Swap
+            );
+            assert_eq!(&active.mem[..600], &image[..], "образ переехал в ACTIVE");
+
+            let screening = screen_update(&mut dfu, &mut state, CAPACITY, &public_key());
+
+            assert_eq!(screening.expect("проверка"), Screening::NothingToCheck);
+            assert_eq!(
+                state_of(&mut state),
+                BootState::Swap,
+                "откат должен остаться запрошенным"
+            );
+        }
     }
 }
