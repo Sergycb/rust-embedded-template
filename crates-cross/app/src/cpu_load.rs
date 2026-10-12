@@ -2,7 +2,7 @@
 
 use core::sync::atomic::Ordering;
 
-use domain::tasks::cpu_load::SleepTicks;
+use domain::cpu_load::SleepTicks;
 
 /// Тики, проведённые во сне. Пишет цикл исполнителя в `main.rs`, читает узел
 /// `CPU_LOAD`, и ничего больше — отсюда и `Relaxed`: значение нужно как грубая
@@ -39,6 +39,6 @@ pub fn sleep_ticks() -> &'static SleepTicks {
 // приложении незачем. Свою подписку заводите сами, когда появится читатель.
 #[embassy_executor::task]
 pub async fn standalone_task() {
-    domain::tasks::cpu_load::task_standalone(sleep_ticks()).await;
+    domain::cpu_load::task_standalone(sleep_ticks()).await;
 }
 {%- endif %}

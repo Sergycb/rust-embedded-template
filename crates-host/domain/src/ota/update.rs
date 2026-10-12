@@ -118,11 +118,11 @@ pub fn apply_signed<F: SignedFirmwareUpdate>(
 mod tests {
     use super::apply_signed;
     use crate::firmware::pack;
-    use crate::test_support::{FakeFlash, SIGNATURE};
+    use crate::ota::fakes::{FakeFlash, SIGNATURE};
     use ports::{UpdateError, VerifyError};
     use rstest::rstest;
 
-    use crate::update::VERSION_BYTES;
+    use crate::ota::update::VERSION_BYTES;
 
     #[test]
     fn accepts_a_newer_signed_image() {

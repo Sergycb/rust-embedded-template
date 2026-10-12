@@ -101,7 +101,7 @@ GH_TOKEN: {% raw %}${{ secrets.GITHUB_TOKEN }}{% endraw %}
 управляет фичей `ed25519-salty` у `embassy-boot` и файлом `crates-cross/app/src/image.rs`
 (`FW_VERSION`/`OTA_PUBLIC_KEY_IN_IMAGE` и обёртка `adapters::ota::Signed` над адаптером платы; без
 подписи его удаляет `post-script.rhai`); сама проверка подписи живёт в `adapters` (`SignedFirmwareUpdate`), а порядок
-проверок — в `domain::update::apply_signed`.
+проверок — в `domain::ota::update::apply_signed`.
 
 Четвёртый — `graph` (граф задач `supervisor`). Он выключается по размеру: раздел, в
 который линкуется приложение (`ACTIVE` при OTA, иначе весь flash за вычетом настроек),

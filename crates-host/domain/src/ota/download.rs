@@ -15,14 +15,14 @@
 //! * последний кусок почти наверняка неполный, и его надо дописать, добив до
 //!   слова.
 //!
-//! [`receive`](crate::download::receive) делает всё перечисленное. Зовёт её
+//! [`receive`](crate::ota::download::receive) делает всё перечисленное. Зовёт её
 //! узел [`ota`](crate::ota) — из него же приходят длина (из
 //! `ImageSource::begin`) и применение; напрямую, как ниже, — только проект
 //! без графа:
 //!
 //! ```ignore
-//! let len = domain::download::receive(&mut ota.link, &mut ota.flash, announced_len).await?;
-//! // дальше — применение обновления: `domain::update::apply_signed` или
+//! let len = domain::ota::download::receive(&mut ota.link, &mut ota.flash, announced_len).await?;
+//! // дальше — применение обновления: `domain::ota::update::apply_signed` или
 //! // `ota.flash.mark_updated()`, смотря выбрана ли подпись при генерации
 //! ```
 //!
@@ -187,7 +187,7 @@ pub async fn receive<S: ImageSource, F: FirmwareUpdate>(
 #[expect(clippy::cast_possible_truncation, reason = "размеры в тестах малы")]
 mod tests {
     use super::{MAX_WORD, receive};
-    use crate::test_support::{FakeFlash, FakeLink};
+    use crate::ota::fakes::{FakeFlash, FakeLink};
     use ports::{DownloadError, FirmwareUpdate};
 
     fn image(len: u32, seed: u32) -> Vec<u8> {

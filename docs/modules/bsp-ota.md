@@ -2,7 +2,7 @@
 доставки — вместе полем `Board::ota` ([`Ota`], вход узла `domain::ota`).
 
 Сам адаптер — `adapters::ota` (generic по `NorFlash`, тестируется на хосте),
-логика приёма и применения — `domain::download` и `domain::update`, а зовёт
+логика приёма и применения — `domain::ota::download` и `domain::ota::update`, а зовёт
 их узел `domain::ota`. Здесь остаётся ровно то, что привязано к чипу:
 `FirmwareUpdaterConfig::from_linkerfile_blocking` (границы `DFU`/`BOOTLOADER_STATE`
 из линкерных символов), размер `ACTIVE` — его порт отдаёт методом

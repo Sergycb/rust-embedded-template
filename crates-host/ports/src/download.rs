@@ -2,7 +2,7 @@
 //!
 //! [`ImageSource`] реализует проект под свой транспорт (USB CDC, UART, сеть,
 //! SD-карта) — в `crates-cross/bsp`, там, где живёт периферия. Пользуется им
-//! `domain::download::receive` и узел `domain::ota`.
+//! `domain::ota::download::receive` и узел `domain::ota`.
 
 /// Заголовок образа, который канал получил от отправителя, — то, что нужно
 /// знать до первого куска.
@@ -112,7 +112,7 @@ pub trait ImageSource {
     async fn finish(&mut self, outcome: Result<(), Rejection>) -> Result<(), Self::Error>;
 }
 
-/// Что может пойти не так при приёме образа (`domain::download::receive`).
+/// Что может пойти не так при приёме образа (`domain::ota::download::receive`).
 ///
 /// Два параметра — два порта: отказ канала и отказ флеша приходят разными
 /// вариантами, и `From` для них нет намеренно — при одинаковых типах ошибок

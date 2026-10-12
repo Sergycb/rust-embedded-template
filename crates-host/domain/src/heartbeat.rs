@@ -1,4 +1,4 @@
-//! Узел `APP` графа задач: каркас под работу вашего устройства.
+//! Узел `HEARTBEAT` графа задач: каркас под работу вашего устройства.
 //!
 //! Задача живёт здесь, а не рядом с графом в `crates-cross/app`, по общему
 //! правилу проекта: граф — это оркестрация (кто кого спавнит, что делать с
@@ -6,7 +6,7 @@
 //! Логика тестируется на хосте и про чип не знает.
 //!
 //! Задача — автомат `#[fsm::typestate]` на контексте узла. Контекст
-//! `AppCtx` эмитит фрагмент ниже (`ctx: $crate::app::AppCtx`) здесь же, в
+//! `HeartbeatCtx` эмитит фрагмент ниже (`ctx: $crate::heartbeat::HeartbeatCtx`) здесь же, в
 //! `domain`, а не compose-site: поэтому сигнатура не называет ни одного типа
 //! из крейта, где объявлен граф, и автомат с его действиями живёт рядом с
 //! узлом. Так же устроен и пример в самом `supervisor`
@@ -71,7 +71,7 @@ pub const WATCHDOG: Duration = Duration::from_secs(7);
 // в `const` не работает (нет const-трейтов), поэтому сравниваются тики.
 const _: () = assert!(
     BACKOFF.max.as_ticks() < WATCHDOG.as_ticks(),
-    "таймаут узла APP обязан быть больше потолка backoff'а: слот сторожа переживает паузу между \
+    "таймаут узла HEARTBEAT обязан быть больше потолка backoff'а: слот сторожа переживает паузу между \
      перезапусками, и кормить его в это время некому"
 );
 
@@ -98,14 +98,14 @@ const _: () = assert!(
 /// `deps:` (порядок старта), `inbox:` (очередь событий — источник в
 /// `listen`), `resources:` (ручка периферии, переживающая перезапуск задачи)
 /// — всё это описано в `docs/modules/app-graph.md`.
-pub async fn run(mut ctx: AppCtx<'_>) -> TaskExit {
+pub async fn run(mut ctx: HeartbeatCtx<'_>) -> TaskExit {
     match ctx.run().await {}
 }
 
 #[fsm::typestate]
-impl AppCtx<'_> {
+impl HeartbeatCtx<'_> {
     fsm::machine! {
-        machine App mod edges {
+        machine Heartbeat mod edges {
             states {
                 /// Холостой ход: ждёт такт в `next`.
                 Idle { next: Instant },
@@ -126,7 +126,7 @@ impl AppCtx<'_> {
         reason = "сигнатуру действия задаёт таблица `#[fsm::typestate]`"
     )]
     fn begin(&mut self) -> Idle {
-        info!("domain: узел APP запущен");
+        info!("domain: узел HEARTBEAT запущен");
         Idle {
             next: Instant::now() + IDLE_PERIOD,
         }
@@ -152,16 +152,16 @@ impl AppCtx<'_> {
 // `#[macro_export] macro_rules!`-ретранслятор и больше ни во что — ни задач,
 // ни статиков, ни `spawn_all`. Отсюда три следствия:
 //
-// * Ретранслятор виден по пути от корня крейта — `::domain::APP_FRAG`, как бы
-//   глубоко ни лежал этот модуль. Имя `APP_FRAG` compose-site и называет в
+// * Ретранслятор виден по пути от корня крейта — `::domain::HEARTBEAT_FRAG`, как бы
+//   глубоко ни лежал этот модуль. Имя `HEARTBEAT_FRAG` compose-site и называет в
 //   своём `fragments: [..]`.
-// * Узел не носит имени — его даёт запись `fragments:` (`APP_FRAG as APP`), и
+// * Узел не носит имени — его даёт запись `fragments:` (`HEARTBEAT_FRAG as HEARTBEAT`), и
 //   тот же фрагмент, названный дважды под разными `as`, — два узла. Поэтому
-//   ниже `node …` без имени, а «узел APP» в этом файле — про то, как его
+//   ниже `node …` без имени, а «узел HEARTBEAT» в этом файле — про то, как его
 //   зовёт граф шаблона.
 // * Токены ниже резолвятся НЕ здесь, а на compose-site: так работает
 //   `macro_rules!`. Поэтому всё, что фрагмент называет, написано полным путём
-//   — `$crate::app::BACKOFF`, `::supervisor::policy::RestartPolicy` — и от
+//   — `$crate::heartbeat::BACKOFF`, `::supervisor::policy::RestartPolicy` — и от
 //   compose-site ничего не требует: голое имя (`BACKOFF`) искалось бы в
 //   `graph.rs` и падало бы там с `E0425`. `$crate::` при этом указывает сюда
 //   и переживает переименование зависимости в чужом манифесте
@@ -173,11 +173,11 @@ impl AppCtx<'_> {
 // граф (один аппаратный сторож, один `check_every`), и фрагменту его
 // объявлять нельзя.
 supervisor::supervisor_fragment! {
-    name: APP_FRAG;
+    name: HEARTBEAT_FRAG;
 
     node deps: [], restart: ::supervisor::policy::RestartPolicy::OnFailure,
-        backoff: $crate::app::BACKOFF,
-        watchdog: $crate::app::WATCHDOG observe,
-        ctx: $crate::app::AppCtx,
-        task: $crate::app::run;
+        backoff: $crate::heartbeat::BACKOFF,
+        watchdog: $crate::heartbeat::WATCHDOG observe,
+        ctx: $crate::heartbeat::HeartbeatCtx,
+        task: $crate::heartbeat::run;
 }

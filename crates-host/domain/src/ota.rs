@@ -2,7 +2,7 @@
 //! цикле, пока жив канал.
 //!
 //! Здесь, а не в `crates-cross/app`, по общему правилу проекта (см.
-//! `domain::app`): что узел делает — логика, и проверяется она на хосте на
+//! `domain::heartbeat`): что узел делает — логика, и проверяется она на хосте на
 //! фейках обоих портов. Проекту остаётся канал — реализация
 //! [`ImageSource`](ports::ImageSource) под свой транспорт (USB CDC, UART,
 //! сеть) в `bsp`: заголовок, куски, отчёт отправителю — и одна строка в
@@ -23,6 +23,19 @@
 //! код отказа [`Rejection`](ports::Rejection), а ответить хосту, сбросить МК
 //! или и то и другое — выбор реализации порта. Подробности — `docs/ota.md`.
 
+/// Приём образа по кускам: сверка длины, стирание один раз, буферизация до
+/// слова флеша. Функция над портами `ImageSource` и `FirmwareUpdate` — см.
+/// модуль.
+pub mod download;
+
+/// Применение подписанного обновления: порядок проверок, в котором каждый
+/// отказ различим. Функция над портом `SignedFirmwareUpdate` — см. модуль.
+pub mod update;
+
+/// Фейки портов обновления, общие для тестов узла и обоих подмодулей.
+#[cfg(test)]
+mod fakes;
+
 use core::fmt::Debug;
 
 use defmt_or_log::{Debug2Format, info, warn};
@@ -34,10 +47,8 @@ use ports::{
 use supervisor::policy::{BackoffPolicy, JitterPolicy};
 use supervisor::runtime::TaskExit;
 
-use crate::{download, update};
-
 /// Политика пауз между перезапусками узла — те же цифры, что у
-/// [`app::BACKOFF`](crate::app::BACKOFF), и своя константа намеренно: фрагмент
+/// [`heartbeat::BACKOFF`](crate::heartbeat::BACKOFF), и своя константа намеренно: фрагмент
 /// самодостаточен, а у канала доставки свои поводы разойтись с холостым циклом
 /// (например, дать хосту время переподключиться).
 pub const BACKOFF: BackoffPolicy = BackoffPolicy {
@@ -106,7 +117,7 @@ where
     F::Error: Debug,
 {
     /// С проверкой подписи: принятый образ применяется
-    /// [`apply_signed`](crate::update::apply_signed) — длина, занятость,
+    /// [`apply_signed`](crate::ota::update::apply_signed) — длина, занятость,
     /// версия, ключ, подпись, в этом порядке.
     ///
     /// Отличие до приёма одно: заголовок без подписи отвергается ДО стирания
@@ -129,10 +140,10 @@ where
 /// узел с backoff'ом, и объект канала вернётся в слот к новому прогону.
 /// `Completed` не возвращается никогда.
 ///
-/// Без `watchdog:` намеренно — по той же логике, что у [`app::run`](crate::app::run):
+/// Без `watchdog:` намеренно — по той же логике, что у [`heartbeat::run`](crate::heartbeat::run):
 /// отметка ставится после реального прогресса, а пока узел ждёт заголовок в
 /// `begin()`, прогресса у него нет, и отметка по таймеру сторожила бы
-/// исполнитель, а не работу. Железо кормит узел `APP`.
+/// исполнитель, а не работу. Железо кормит узел `HEARTBEAT`.
 pub async fn run<S, F>(mut ctx: OtaCtx<'_, S, F>) -> TaskExit
 where
     S: ImageSource,
@@ -297,7 +308,7 @@ fn signed_check(announce: &Announce) -> Result<(), Rejection> {
     }
 }
 
-/// С подписью применение — [`apply_signed`](crate::update::apply_signed)
+/// С подписью применение — [`apply_signed`](crate::ota::update::apply_signed)
 /// с подписью из заголовка.
 fn signed_apply<F>(flash: &mut F, announce: &Announce, len: u32) -> Result<(), Rejection>
 where
@@ -342,8 +353,8 @@ fn update_rejection<E>(err: &UpdateError<E>) -> Rejection {
     }
 }
 
-// Узел объявлен здесь же, где лежит его задача, — как `APP_FRAG` в
-// `domain::app`; compose-site (`crates-cross/app/src/graph.rs`) только
+// Узел объявлен здесь же, где лежит его задача, — как `HEARTBEAT_FRAG` в
+// `domain::heartbeat`; compose-site (`crates-cross/app/src/graph.rs`) только
 // перечисляет фрагмент, называет узел (`as OTA`) и кормит его входом. Фрагмент
 // один на оба Cargo-варианта `signed`: режим применения — данные входа
 // (`OtaWiring::mode`), а не второй фрагмент, иначе было бы два контекста и две
@@ -357,7 +368,7 @@ fn update_rejection<E>(err: &UpdateError<E>) -> Rejection {
 // при любом `F`.
 //
 // `ctx:` — контекст [`OtaCtx`] эмитит фрагмент здесь, в `domain`; автомат
-// стоит на нём (см. `domain::app`).
+// стоит на нём (см. `domain::heartbeat`).
 //
 // `<S, F>` — параметры фрагмента: тип ресурсного слота — `static`, назвать
 // его фрагмент обязан, а конкретный тип (`bsp::ota::Updater`, транспорт проекта)
@@ -366,7 +377,7 @@ fn update_rejection<E>(err: &UpdateError<E>) -> Rejection {
 // намеренно — их держит сигнатура `run`, и rustc проверяет её, а не копию в
 // DSL. Всё остальное, что фрагмент называет, написано полным путём
 // (`$crate::ota::BACKOFF`, `::supervisor::…`) — от `graph.rs` он не требует
-// ни одного объявления, см. `APP_FRAG`.
+// ни одного объявления, см. `HEARTBEAT_FRAG`.
 //
 // `local` на обоих слотах: объекты платы — `!Send` (`bsp::ota::Updater` держит
 // `&'static Mutex<NoopRawMutex, …>`, а `NoopRawMutex` намеренно не `Sync`),
@@ -404,8 +415,8 @@ supervisor::supervisor_fragment! {
 mod tests {
     use super::{Mode, OtaCtx, run};
     use crate::firmware::pack;
-    use crate::test_support::{FakeFlash, FakeLink, SIGNATURE};
-    use crate::update::VERSION_BYTES;
+    use crate::ota::fakes::{FakeFlash, FakeLink, SIGNATURE};
+    use crate::ota::update::VERSION_BYTES;
     use ports::{Announce, Rejection, VerifyError};
     use supervisor::runtime::TaskExit;
 

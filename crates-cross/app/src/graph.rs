@@ -20,12 +20,12 @@ use supervisor::{Duration, Liveness, supervisor_graph};
 ///
 /// Единственная цифра графа, которая живёт здесь: она про один аппаратный
 /// сторож на всех, а не про какой-то узел. Таймаут узла — во фрагменте
-/// (`domain::app::WATCHDOG`), аппаратный — у железа (`bsp::wdg::HW_TIMEOUT_US`),
+/// (`domain::heartbeat::WATCHDOG`), аппаратный — у железа (`bsp::wdg::HW_TIMEOUT_US`),
 /// и соотношение между ними проверяет `const`-assert ниже. Компилятор проверяет
 /// сам `check_every` против аппаратного таймаута — `supervisor_graph!` эмитит
 /// `const`-assert, читая `HARDWARE_TIMEOUT` у типа сторожа; левое звено цепочки
 /// (потолок backoff'а < таймаут узла) держит `const`-assert во фрагменте
-/// (`domain::app`) — `docs/watchdog.md`.
+/// (`domain::heartbeat`) — `docs/watchdog.md`.
 const WATCHDOG_CHECK_EVERY: Duration = Duration::from_millis(100);
 
 // Правое звено цепочки таймаутов, и единственное место в шаблоне, где видны оба
@@ -42,9 +42,9 @@ const WATCHDOG_CHECK_EVERY: Duration = Duration::from_millis(100);
 // const-трейтов), поэтому сравниваются микросекунды — как в `HW_TIMEOUT_US`,
 // а не тики, чья частота зависит от фичи `tick-hz-*`.
 const _: () = assert!(
-    ::domain::app::WATCHDOG.as_micros() + WATCHDOG_CHECK_EVERY.as_micros()
+    ::domain::heartbeat::WATCHDOG.as_micros() + WATCHDOG_CHECK_EVERY.as_micros()
         < bsp::wdg::HW_TIMEOUT_US as u64
-        && ::domain::tasks::cpu_load::WATCHDOG.as_micros() + WATCHDOG_CHECK_EVERY.as_micros()
+        && ::domain::cpu_load::WATCHDOG.as_micros() + WATCHDOG_CHECK_EVERY.as_micros()
             < bsp::wdg::HW_TIMEOUT_US as u64,
     "таймаут узла плюс WATCHDOG_CHECK_EVERY обязан быть меньше bsp::wdg::HW_TIMEOUT_US: иначе железо \
      сбросит МК раньше, чем узел заметит зависшую задачу, и сброс придёт от железа, а не от supervisor"
@@ -58,7 +58,7 @@ supervisor_graph! {
     // растёт список, а не тело графа.
     //
     // Порядок items фиксированный: `boot:` → `watchdog:` → `fragments:`
-    // последним. Имя узлу даёт запись списка (`as APP`), не фрагмент: тот же
+    // последним. Имя узлу даёт запись списка (`as HEARTBEAT`), не фрагмент: тот же
     // фрагмент под двумя `as` — два узла. Всё остальное, что объявляет
     // фрагмент (слоты, `provide_*`), получает префикс этого имени.
     boot: board: bsp::Board;
@@ -80,19 +80,19 @@ supervisor_graph! {
     // уезжает в слоты узла, `watchdog` следом забирает сторож, остаток
     // `board` дропается в конце пролога.
 {%- endif %}
-    fragments: [::domain::APP_FRAG as APP,
+    fragments: [::domain::HEARTBEAT_FRAG as HEARTBEAT,
     //
     // Узел `CPU_LOAD` меряет загрузку процессора. Вход — счётчик тиков сна,
     // который ведёт ручной цикл исполнителя в `main.rs` (docs/modules/
     // app-cpu-load.md); всё, что нужно фрагменту, — ссылка на него, поэтому
     // привязка такая же, как у узла OTA: тип входа объявляет подсистема
-    // (`domain::tasks::cpu_load::IdleMeter`), а значение собирает приложение.
+    // (`domain::cpu_load::IdleMeter`), а значение собирает приложение.
     //
     // Подписчика в шаблоне нет: слот `PERCENT` объявлен явно, единицей, и
     // первым его занимает тот, кто первым позовёт
     // `cpu_load_percent_receiver()`. Само значение в лог не идёт — читатель
     // должен быть, иначе процент некуда девать.
-    ::domain::CPU_LOAD_FRAG as CPU_LOAD = ::domain::tasks::cpu_load::IdleMeter { sleep_ticks: crate::cpu_load::sleep_ticks() }{% if ota == "true" %}, {% if signed == "true" %}::domain::OTA_FRAG<bsp::ota::Link, crate::image::Signed> as OTA = ::domain::ota::OtaWiring { link: board.ota.link, flash: crate::image::Signed::new(board.ota.flash, crate::image::FW_VERSION, crate::image::OTA_PUBLIC_KEY_IN_IMAGE), mode: ::domain::ota::Mode::signed() }{% else %}::domain::OTA_FRAG<bsp::ota::Link, bsp::ota::Updater> as OTA = ::domain::ota::OtaWiring { link: board.ota.link, flash: board.ota.flash, mode: ::domain::ota::Mode::plain() }{% endif %}{% endif %}];
+    ::domain::CPU_LOAD_FRAG as CPU_LOAD = ::domain::cpu_load::IdleMeter { sleep_ticks: crate::cpu_load::sleep_ticks() }{% if ota == "true" %}, {% if signed == "true" %}::domain::OTA_FRAG<bsp::ota::Link, crate::image::Signed> as OTA = ::domain::ota::OtaWiring { link: board.ota.link, flash: crate::image::Signed::new(board.ota.flash, crate::image::FW_VERSION, crate::image::OTA_PUBLIC_KEY_IN_IMAGE), mode: ::domain::ota::Mode::signed() }{% else %}::domain::OTA_FRAG<bsp::ota::Link, bsp::ota::Updater> as OTA = ::domain::ota::OtaWiring { link: board.ota.link, flash: board.ota.flash, mode: ::domain::ota::Mode::plain() }{% endif %}{% endif %}];
 }
 
 /// Куда уходит просрочка наблюдаемого узла.

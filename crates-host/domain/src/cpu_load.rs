@@ -29,6 +29,10 @@
 //! проект: узел объявляет поле `PERCENT`, а подписчика добавляют в графе
 //! (`subscribe:`), см. `docs/modules/app-graph.md`.
 
+/// Загрузка процессора по двум счётчикам тиков: чистая арифметика без
+/// времени, железа и каналов — см. модуль.
+pub mod load;
+
 use core::sync::atomic::Ordering;
 
 use defmt_or_log::info;
@@ -37,7 +41,7 @@ use portable_atomic::AtomicU64;
 use supervisor::policy::{BackoffPolicy, JitterPolicy};
 use supervisor::runtime::TaskExit;
 
-use crate::metrics::cpu_load::{CpuLoad, Sample};
+use load::{CpuLoad, Sample};
 
 /// Как часто снимаются счётчики.
 ///
@@ -54,7 +58,7 @@ const SAMPLE_INTERVAL: Duration = Duration::from_millis(500);
 const BACKOFF_MAX: Duration = Duration::from_millis(500);
 
 /// Политика пауз между перезапусками узла — те же цифры, что у
-/// [`app::BACKOFF`](crate::app::BACKOFF), но свой потолок: у задачи, которая
+/// [`heartbeat::BACKOFF`](crate::heartbeat::BACKOFF), но свой потолок: у задачи, которая
 /// меряет, а не ждёт, нет смысла держать паузу в секунды — нечего
 /// перезапускать дольше, чем на цикл измерения.
 pub const BACKOFF: BackoffPolicy = BackoffPolicy {
@@ -70,7 +74,7 @@ pub const BACKOFF: BackoffPolicy = BackoffPolicy {
 /// Считается от `BACKOFF_MAX`, а не от `SAMPLE_INTERVAL`: слот сторожа граф
 /// взводит один раз и снимает только когда узел уходит насовсем, а во время
 /// паузы между перезапусками слот жив и кормить его некому. Та же поправка,
-/// что и у [`app::WATCHDOG`](crate::app::WATCHDOG), и то же левое звено
+/// что и у [`heartbeat::WATCHDOG`](crate::heartbeat::WATCHDOG), и то же левое звено
 /// цепочки таймаутов — `const`-assert ниже. Второе, с другого конца, не здесь:
 /// `WATCHDOG + WATCHDOG_CHECK_EVERY < bsp::wdg::HW_TIMEOUT_US`
 /// (`docs/watchdog.md`) — его держит `const`-assert в `app/src/graph.rs`, где
@@ -169,7 +173,7 @@ impl CpuLoadCtx<'_> {
     /// Отметка — ПОСЛЕ пробуждения и до измерения: «узел жив» здесь значит
     /// ровно «узел дождался своего интервала», а не «future опрашивают».
     /// Автоматической отметки по факту опроса нет намеренно — иначе сторож
-    /// сторожил бы исполнитель, а не работу (см. `domain::app`).
+    /// сторожил бы исполнитель, а не работу (см. `domain::heartbeat`).
     ///
     /// Первый снимок уходит в никуда (сравнивать не с чем) — так и задумано,
     /// см. `CpuLoad::sample`.
@@ -206,17 +210,17 @@ pub async fn task_standalone(sleep_ticks: &SleepTicks) {
     }
 }
 
-// Узел объявлен здесь же, где лежит его задача, — как `APP_FRAG` в
-// `domain::app`; compose-site (`crates-cross/app/src/graph.rs`) только
+// Узел объявлен здесь же, где лежит его задача, — как `HEARTBEAT_FRAG` в
+// `domain::heartbeat`; compose-site (`crates-cross/app/src/graph.rs`) только
 // перечисляет фрагмент, называет узел (`as CPU_LOAD`) и кормит его входом.
 //
-// `ctx:` — по той же причине, что в `domain::app`: контекст [`CpuLoadCtx`]
+// `ctx:` — по той же причине, что в `domain::heartbeat`: контекст [`CpuLoadCtx`]
 // эмитит фрагмент здесь, в `domain`, а не compose-site, и автомат стоит на нём
 // рядом с узлом. Поле слота в нём — `&mut &'static SleepTicks`, поле
 // публикации — `watch::Sender` из `sync-unsized`.
 //
 // `boot: inputs:` — собственная привязка фрагмента: compose-site пишет
-// `fragments: [::domain::CPU_LOAD_FRAG as CPU_LOAD = ::domain::tasks::cpu_load::IdleMeter { sleep_ticks: … }]`,
+// `fragments: [::domain::CPU_LOAD_FRAG as CPU_LOAD = ::domain::cpu_load::IdleMeter { sleep_ticks: … }]`,
 // а `spawn_all` связывает её первой строкой пролога, и инициализатор слота ниже
 // читает её поле. Так фрагмент не видит `Board` вовсе — только то, что ему
 // дали, и счётчик не может «забыться» при заполнении: без него узел не
@@ -238,13 +242,13 @@ pub async fn task_standalone(sleep_ticks: &SleepTicks) {
 // жалко. Без `observe` просрочка ушла бы в аппаратный сброс здоровой платы.
 supervisor::supervisor_fragment! {
     name: CPU_LOAD_FRAG;
-    boot: inputs: $crate::tasks::cpu_load::IdleMeter;
+    boot: inputs: $crate::cpu_load::IdleMeter;
 
     node deps: [], restart: ::supervisor::policy::RestartPolicy::OnFailure,
-        backoff: $crate::tasks::cpu_load::BACKOFF,
-        resources: [SLEEP_TICKS: &'static $crate::tasks::cpu_load::SleepTicks = inputs.sleep_ticks],
+        backoff: $crate::cpu_load::BACKOFF,
+        resources: [SLEEP_TICKS: &'static $crate::cpu_load::SleepTicks = inputs.sleep_ticks],
         publish: [PERCENT: u8; 1],
-        watchdog: $crate::tasks::cpu_load::WATCHDOG observe,
-        ctx: $crate::tasks::cpu_load::CpuLoadCtx,
-        task: $crate::tasks::cpu_load::task;
+        watchdog: $crate::cpu_load::WATCHDOG observe,
+        ctx: $crate::cpu_load::CpuLoadCtx,
+        task: $crate::cpu_load::task;
 }

@@ -34,13 +34,13 @@ skill'ом `rust-engineering` и не дублируются здесь. Это�
 задач) — живёт в `domain`, а не в `cross`. Узлы графа тоже: подсистема объявляет свой
 `supervisor_fragment!`-ом рядом со своей задачей — самодостаточным модулем с задачей,
 политикой и таймаутом, все имена внутри полным путём (`$crate::…`, `::supervisor::…`),
-типы, которых он не видит, — параметрами (`domain::app::APP_FRAG`,
+типы, которых он не видит, — параметрами (`domain::heartbeat::HEARTBEAT_FRAG`,
 `domain::ota::OTA_FRAG<S, F>`). Граф собственных узлов не объявляет:
 `crates-cross/app/src/graph.rs` — только `boot:`, блок `watchdog:` и `fragments:`,
-который перечисляет фрагменты и даёт узлам имена (`APP_FRAG as APP`,
+который перечисляет фрагменты и даёт узлам имена (`HEARTBEAT_FRAG as HEARTBEAT`,
 `CPU_LOAD_FRAG as CPU_LOAD`).
 **Каждая задача узла — автомат `#[fsm::typestate]`** на контексте, который эмитит
-фрагмент (`ctx: $crate::app::AppCtx, task: $crate::app::run;`): таблица на
+фрагмент (`ctx: $crate::heartbeat::HeartbeatCtx, task: $crate::heartbeat::run;`): таблица на
 `impl <Узел>Ctx`, действия — его методы, задача — `match ctx.run().await {}`
 (у автомата с выходным состоянием `exit Done { result: TaskExit }` —
 `ctx.run().await.result`, как у `domain::ota`).
@@ -150,7 +150,7 @@ read`: руками пришлось бы сначала найти адрес �
   `#[panic_handler]` поверх `panic_persist::report_panic_info` (фича
   `custom-panic-handler`) — `docs/diagnostics.md`, `docs/conventions.md`.
 - `prepare(len)` порта `FirmwareUpdate` зовётся один раз перед приёмом образа
-  (внутри `domain::download::receive`), `write()` сектор больше не стирает —
+  (внутри `domain::ota::download::receive`), `write()` сектор больше не стирает —
   `docs/ota.md`.
 - `lib.rs` только объявляет: атрибуты, `//!`, `mod`, `pub use` — определения
   живут в модулях — `docs/conventions.md`.
@@ -163,8 +163,8 @@ read`: руками пришлось бы сначала найти адрес �
   `docs/flash.md`, `docs/architecture.md`.
 {%- if graph == "true" %}
 - У каждого узла с `watchdog:` своя связанная цепочка таймаутов
-  (`domain::app::BACKOFF.max` < `domain::app::WATCHDOG`,
-  `domain::tasks::cpu_load::BACKOFF.max` < `domain::tasks::cpu_load::WATCHDOG`,
+  (`domain::heartbeat::BACKOFF.max` < `domain::heartbeat::WATCHDOG`,
+  `domain::cpu_load::BACKOFF.max` < `domain::cpu_load::WATCHDOG`,
   и обе < `bsp::wdg::HW_TIMEOUT_US` минус `WATCHDOG_CHECK_EVERY` графа) —
   менять только вместе; левое звено держит `const`-assert в своём фрагменте,
   правое — `const`-assert в `crates-cross/app/src/graph.rs`, и новый узел с

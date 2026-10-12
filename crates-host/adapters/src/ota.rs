@@ -6,7 +6,7 @@
 //! Что здесь есть: подготовка раздела под образ, запись и чтение кусков,
 //! состояние bootloader'а, подтверждение образа, пометка обмена и — под фичей
 //! `signed` — проверка подписи. Чего нет: ни порядка проверок при применении
-//! (`domain::update`), ни буферизации до слова (`domain::download`) — это
+//! (`domain::ota::update`), ни буферизации до слова (`domain::ota::download`) — это
 //! логика, а здесь только доступ к разделам.
 //!
 //! # Про подтверждение: без него обновление живёт один запуск
@@ -113,7 +113,7 @@ impl<DFU: NorFlash, STATE: NorFlash> Updater<DFU, STATE> {
     /// намеренно — см. `ports`), а `Signed` его делегирует; поэтому пометка
     /// идёт через `BlockingFirmwareState`, который под фичей не спрятан и
     /// делает ровно то же (`set_magic(SWAP_MAGIC)`). Защита от непроверенного
-    /// образа в проекте с подписью — `domain::update::apply_signed`,
+    /// образа в проекте с подписью — `domain::ota::update::apply_signed`,
     /// единственный путь, которым им пользуется `app`.
     fn state(&mut self) -> BlockingFirmwareState<'_, &mut STATE> {
         BlockingFirmwareState::new(&mut self.state, &mut self.aligned.0[..STATE::WRITE_SIZE])
@@ -284,7 +284,7 @@ impl<DFU: NorFlash, STATE: NorFlash> FirmwareUpdate for Signed<DFU, STATE> {
         self.inner.mark_booted()
     }
     /// В проекте с подписью единственный путь к обмену разделов —
-    /// `domain::update::apply_signed` (проверка длины, занятости, версии,
+    /// `domain::ota::update::apply_signed` (проверка длины, занятости, версии,
     /// ключа и самой подписи). Порт объявляет `mark_updated` безусловно,
     /// поэтому метод остаётся, но отвечает `BadState` — тот же отказ, которым
     /// `embassy-boot` отвечает на попытку обмена в негодном состоянии, и тот
@@ -333,9 +333,9 @@ mod tests {
     #[cfg(feature = "signed")]
     use super::Signed;
     use super::{Error, Updater};
+    use crate::mem_flash::MemFlash;
     use embedded_storage::nor_flash::NorFlashErrorKind;
     use ports::FirmwareUpdate;
-    use test_support::MemFlash;
 
     /// Четыре страницы по 256 байт, слово 8; ACTIVE (= capacity) — три
     /// страницы, как требует запас на обмен.
@@ -438,7 +438,7 @@ mod tests {
 
     /// Порт объявляет `mark_updated` безусловно, но у `Signed` он не должен
     /// давать обменять разделы мимо проверки подписи — единственный путь
-    /// туда лежит через `domain::update::apply_signed`.
+    /// туда лежит через `domain::ota::update::apply_signed`.
     #[cfg(feature = "signed")]
     #[test]
     fn signed_mark_updated_always_refuses() {

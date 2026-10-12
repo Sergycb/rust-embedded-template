@@ -415,7 +415,7 @@ mod tests {
         // Нули — заведомо не подпись: ни для какого ключа и сообщения.
         let signature = [0u8; 64];
 
-        let refused = domain::update::apply_signed(&mut ota, &signature, LENGTH);
+        let refused = domain::ota::update::apply_signed(&mut ota, &signature, LENGTH);
         assert!(
             matches!(refused, Err(UpdateError::BadSignature)),
             "неверная подпись принята — по OTA прошёл бы чужой образ"
@@ -424,7 +424,7 @@ mod tests {
         // А это уже про длину — своим вариантом, а не общим: пока обе защиты
         // отвечали одинаково, тест оставался зелёным после удаления той, что
         // проверяет длину (проверено удалением на живой плате).
-        let refused = domain::update::apply_signed(&mut ota, &signature, u32::MAX);
+        let refused = domain::ota::update::apply_signed(&mut ota, &signature, u32::MAX);
         assert!(
             matches!(refused, Err(UpdateError::TooLong { .. })),
             "длина больше раздела должна отвергаться отдельной ошибкой"
@@ -456,7 +456,7 @@ mod tests {
         ota.write(0, &image)
             .expect("раздел DFU должен принимать запись");
 
-        let refused = domain::update::apply_signed(&mut ota, &[0u8; 64], LENGTH);
+        let refused = domain::ota::update::apply_signed(&mut ota, &[0u8; 64], LENGTH);
         assert!(
             matches!(refused, Err(UpdateError::Rollback { .. })),
             "старый образ должен отвергаться отдельной ошибкой, а не общей"
@@ -472,7 +472,7 @@ mod tests {
         ota.write(LENGTH, &newer[LENGTH as usize..])
             .expect("раздел DFU должен принимать запись");
 
-        let refused = domain::update::apply_signed(&mut ota, &[0u8; 64], LONGER);
+        let refused = domain::ota::update::apply_signed(&mut ota, &[0u8; 64], LONGER);
         assert!(
             !matches!(refused, Err(UpdateError::Rollback { .. })),
             "образ новее текущего не должен отвергаться как откат"

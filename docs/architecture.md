@@ -24,10 +24,10 @@ supervisor-графы, watchdog). Вся остальная логика — в 
 **Узлы графа и их тела — тоже `domain`.** Подсистема объявляет свой узел
 `supervisor_fragment!`-ом рядом со своим кодом — самодостаточным модулем: задача,
 политика перезапуска, таймаут, слоты, при необходимости собственная `boot:`-привязка
-(`domain::app::APP_FRAG`; `domain::ota::OTA_FRAG`, виден как
+(`domain::heartbeat::HEARTBEAT_FRAG`; `domain::ota::OTA_FRAG`, виден как
 `::domain::OTA_FRAG`). Граф собственных узлов не объявляет: `crates-cross/app/src/graph.rs`
 — compose-site, то есть `boot:`-объект, блок `watchdog:` и список `fragments:`,
-который перечисляет фрагменты и даёт узлам имена (`APP_FRAG as APP`, `OTA_FRAG<…> as OTA`)
+который перечисляет фрагменты и даёт узлам имена (`HEARTBEAT_FRAG as HEARTBEAT`, `OTA_FRAG<…> as OTA`)
 — ровно то, что знает про железо. Тот же фрагмент под другим `as` — второй узел.
 Держится это на двух возможностях `supervisor`: фрагмент раскрывается в один
 `#[macro_export] macro_rules!`-ретранслятор (ни задач, ни статиков, ни `spawn_all` —
@@ -37,8 +37,8 @@ supervisor-графы, watchdog). Вся остальная логика — в 
 (`supervisor-logic-fixture`).
 
 **Каждая задача узла — автомат `#[fsm::typestate]` на этом контексте.** Таблица
-состояний и переходов стоит на `impl <Узел>Ctx` (`app::AppCtx`,
-`tasks::cpu_load::CpuLoadCtx`, `ota::OtaCtx`), действия — методы контекста, задача —
+состояний и переходов стоит на `impl <Узел>Ctx` (`heartbeat::HeartbeatCtx`,
+`cpu_load::CpuLoadCtx`, `ota::OtaCtx`), действия — методы контекста, задача —
 `match ctx.run().await {}` или, у автомата с выходным состоянием, `ctx.run().await.result`
 (узел `OTA`: отказ канала — `exit Down`). Нелегальный переход — `E0277`,
 необработанное событие — `E0004`; второй структуры вокруг контекста нет. Данные,
@@ -66,11 +66,11 @@ supervisor-графы, watchdog). Вся остальная логика — в 
 обвязка, строящая адаптеры из символов `memory.x` (`bsp::ota`, `bsp::config`) и
 дающая им псевдонимы для задач.
 
-Цифры узла — тоже в `domain`: `domain::app::{BACKOFF, WATCHDOG}` фрагмент называет
-полным путём `$crate::app::…` (токены `macro_rules!` резолвятся на compose-site, и
+Цифры узла — тоже в `domain`: `domain::heartbeat::{BACKOFF, WATCHDOG}` фрагмент называет
+полным путём `$crate::heartbeat::…` (токены `macro_rules!` резолвятся на compose-site, и
 голое имя искалось бы в `graph.rs`), так что от compose-site он не требует ни одного
 объявления. Левое звено цепочки таймаутов — потолок backoff'а меньше таймаута узла —
-при этом целиком внутри фрагмента, и его держит `const`-assert в `domain::app`;
+при этом целиком внутри фрагмента, и его держит `const`-assert в `domain::heartbeat`;
 compose-site остаётся правое: таймаут узла плюс `WATCHDOG_CHECK_EVERY` меньше
 аппаратного `bsp::wdg::HW_TIMEOUT_US` — его тоже держит `const`-assert, уже в
 `graph.rs`, потому что это единственное место, где видны оба конца
@@ -245,7 +245,7 @@ compose-site раскладывает его во вход узла, `domain::ot
 `verify_and_mark_updated` вместе с версией и ключом — `SignedFirmwareUpdate`;
 трейт объявлен безусловно (Liquid в `ports` запрещён), реализован только в проекте с
 подписью (`adapters::ota::Signed`, Cargo-фича `adapters/signed`). Порядок проверок
-перед вызовом — `domain::update::apply_signed`, и он host-тестируем.
+перед вызовом — `domain::ota::update::apply_signed`, и он host-тестируем.
 
 **Дублировать методы портов собственными нельзя.** У `adapters::ota::Updater` и
 `adapters::settings::Settings` inherent-методы `write`/`read`/`mark_booted` были
@@ -257,7 +257,7 @@ compose-site раскладывает его во вход узла, `domain::ot
 workspace, их исходники компилируются и в самом репозитории шаблона (та же
 причина, по которой его нет в `host-target-tests`). Поэтому трейты
 объявляются безусловно, а условными бывают только реализации в
-`crates-cross/bsp`. Того же правила держится и `domain::app`: модуль есть в
+`crates-cross/bsp`. Того же правила держится и `domain::heartbeat`: модуль есть в
 любом проекте, даже там, где граф задач не поместился и звать эту задачу
 некому.
 

@@ -13,7 +13,7 @@ use std::collections::VecDeque;
 use ports::{Announce, FirmwareUpdate, ImageSource, Rejection, SignedFirmwareUpdate, VerifyError};
 
 use crate::firmware::pack;
-use crate::update::VERSION_BYTES;
+use crate::ota::update::VERSION_BYTES;
 
 /// Ключ, которым «подписаны» образы в тестах. Ненулевой: нули — «ключ не
 /// подставлен», и логика отказывает до криптографии.

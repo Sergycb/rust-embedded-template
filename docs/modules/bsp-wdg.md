@@ -11,7 +11,7 @@
 {%- if graph == "true" %}
 **Всё это уже собрано.** Объект строит `Board::new` (поле `watchdog`,
 ещё не запущенный), блок `watchdog:` графа запускает его сам
-(`= board.watchdog.arm()`), а узел `APP` объявляет `watchdog:` и
+(`= board.watchdog.arm()`), а узел `HEARTBEAT` объявляет `watchdog:` и
 отмечается через `heartbeat.feed()` — см. `app/src/graph.rs`. Ниже —
 только то, что стоит знать, прежде чем это менять.
 
@@ -69,7 +69,7 @@
 // период работы узла, а потолок backoff'а: слот сторожа взводится один раз
 // и переживает перезапуски.
 supervisor_fragment! {
-    name: APP_FRAG;
+    name: HEARTBEAT_FRAG;
     node deps: [], restart: ::supervisor::policy::RestartPolicy::OnFailure,
         backoff: BACKOFF,
         watchdog: Duration::from_secs(7),
@@ -93,7 +93,7 @@ supervisor_graph! {
         check_every: Duration::from_millis(100);
 
     // Имя узлу даёт эта запись, а не фрагмент.
-    fragments: [APP_FRAG as APP];
+    fragments: [HEARTBEAT_FRAG as HEARTBEAT];
 }
 ```
 {%- endif %}

@@ -5,22 +5,22 @@ paths: crates-host/domain/**
 - `no_std`, но тестируется на хосте (`cargo xtask test host`). `embassy-stm32` и любое
   знание о железе здесь запрещены — всё, что их требует, живёт в `crates-cross`.
 - `supervisor` (и приезжающий с ним `embassy-executor`) — можно и нужно: здесь лежат
-  и объявления узлов (`supervisor_fragment!`), и их задачи (`domain::app::run`),
+  и объявления узлов (`supervisor_fragment!`), и их задачи (`domain::heartbeat::run`),
   сигнатуры которых называют контекст узла и `TaskExit`, и их политика с таймаутом
-  (`domain::app::{BACKOFF, WATCHDOG}` — `const`). Фрагмент самодостаточен: один узел
-  без имени, всё, что он называет, — полным путём (`$crate::app::BACKOFF`,
+  (`domain::heartbeat::{BACKOFF, WATCHDOG}` — `const`). Фрагмент самодостаточен: один узел
+  без имени, всё, что он называет, — полным путём (`$crate::heartbeat::BACKOFF`,
   `::supervisor::policy::RestartPolicy`), потому что токены `macro_rules!` резолвятся
   на compose-site, а голое имя искалось бы там; тип, которого фрагмент не видит
   (адаптер платы в слоте), — его параметр (`name: OTA_FRAG<S, F>`). Compose-site —
   граф в `crates-cross/app` — перечисляет фрагменты в `fragments:`, даёт узлам имена
-  (`as APP`), подставляет типы и добавляет железо.
+  (`as HEARTBEAT`), подставляет типы и добавляет железо.
 - Liquid в `domain`, `ports` и `adapters` запрещён: все три — члены корневого
   workspace и компилируются в самом репозитории шаблона. Трейты и функции объявляются
   безусловно, условными бывают только реализации в `crates-cross/bsp`.
 - Асинхронный код и стейтчарты — это логика, и место им здесь, а не в
   `cross`, даже если результат используется только оттуда.
 - **Каждая задача узла — автомат `#[fsm::typestate]`** на контексте, который
-  эмитит фрагмент (`ctx: $crate::app::AppCtx, task: $crate::app::run;`): таблица
+  эмитит фрагмент (`ctx: $crate::heartbeat::HeartbeatCtx, task: $crate::heartbeat::run;`): таблица
   на `impl <Узел>Ctx`, действия — его методы, задача — `match ctx.run().await {}`
   (с выходным состоянием — `ctx.run().await.result`). Проекцию аргументов
   (`task: f(ctx.поле)`) и голые циклы в задачах узлов не писать; второй структуры

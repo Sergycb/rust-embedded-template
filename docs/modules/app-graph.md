@@ -78,27 +78,27 @@
 срез графа — один узел (без имени) с его политикой, таймаутом, слотами и
 задачей, плюс, если надо, свои `cloned:`/`shared:` и собственная
 `boot:`-привязка — в крейте, который сам никакого графа не объявляет. Узел
-`APP` шаблона объявлен так — в `crates-host/domain/src/app.rs`:
+`HEARTBEAT` шаблона объявлен так — в `crates-host/domain/src/heartbeat.rs`:
 
 ```ignore
 supervisor::supervisor_fragment! {
-    name: APP_FRAG;
+    name: HEARTBEAT_FRAG;
 
     node deps: [], restart: ::supervisor::policy::RestartPolicy::OnFailure,
-        backoff: $crate::app::BACKOFF,
-        watchdog: $crate::app::WATCHDOG observe,
-        ctx: $crate::app::AppCtx,
-        task: $crate::app::run;
+        backoff: $crate::heartbeat::BACKOFF,
+        watchdog: $crate::heartbeat::WATCHDOG observe,
+        ctx: $crate::heartbeat::HeartbeatCtx,
+        task: $crate::heartbeat::run;
 }
 
-pub async fn run(mut ctx: AppCtx<'_>) -> TaskExit {
+pub async fn run(mut ctx: HeartbeatCtx<'_>) -> TaskExit {
     match ctx.run().await {}
 }
 
 #[fsm::typestate]
-impl AppCtx<'_> {
+impl HeartbeatCtx<'_> {
     fsm::machine! {
-        machine App mod edges {
+        machine Heartbeat mod edges {
             states { Idle { next: Instant } }
             start => begin -> Idle;
             listen { Idle { next } => tick: fsm::deadline(*next) }
@@ -111,7 +111,7 @@ impl AppCtx<'_> {
 }
 ```
 
-а этот файл его подбирает и называет: `fragments: [::domain::APP_FRAG as APP]`
+а этот файл его подбирает и называет: `fragments: [::domain::HEARTBEAT_FRAG as HEARTBEAT]`
 (см. ниже, в настоящем графе). Вторая подсистема добавляется так же — своим
 фрагментом рядом со своим кодом и одной записью в `fragments:`. Тот же фрагмент
 под двумя `as` — два независимых узла со своими статиками; `as NAME[N]` — N
@@ -119,14 +119,14 @@ impl AppCtx<'_> {
 
 Три вещи, на которых тут спотыкаются:
 
-* **Имя узлу даёт запись `fragments:`, а не фрагмент.** `as APP` — узел
-  `APP`; без `as` узел зовётся как фрагмент (`APP_FRAG`). Всё, что фрагмент
+* **Имя узлу даёт запись `fragments:`, а не фрагмент.** `as HEARTBEAT` — узел
+  `HEARTBEAT`; без `as` узел зовётся как фрагмент (`HEARTBEAT_FRAG`). Всё, что фрагмент
   объявляет сверх узла (слоты, `provide_*`, `publish:`-приёмники), получает
   префикс этого имени: `resources: [LINK: …]` у `… as OTA` — это слот
   `OTA_LINK` и `provide_ota_link`.
 * **Токены фрагмента резолвятся на compose-site**, а не в крейте, где он
   написан: `macro_rules!` подставляет их в место вызова. Поэтому всё, что
-  фрагмент называет, пишется полным путём — `$crate::app::BACKOFF`,
+  фрагмент называет, пишется полным путём — `$crate::heartbeat::BACKOFF`,
   `::supervisor::policy::RestartPolicy` — и от этого файла ничего не требует;
   голое имя искалось бы здесь и падало бы с `E0425`. `$crate::` при этом
   указывает в крейт фрагмента и переживает переименование зависимости в чужом
@@ -203,7 +203,7 @@ impl LinkCtx<'_> {
 }
 
 // здесь, в graph.rs: две записи вместо одной.
-fragments: [::domain::APP_FRAG as APP,
+fragments: [::domain::HEARTBEAT_FRAG as HEARTBEAT,
             ::domain::USART_FRAG<UsartResources> as USART,
             ::domain::LINK_FRAG as LINK];
 
@@ -249,7 +249,7 @@ spawn_all(&spawner, board).expect("узлы свежие");
 `spawn_all`. Всё, что осталось на вас, — цифры, и живут они там, о чём
 каждая: `WATCHDOG_CHECK_EVERY` здесь (про один сторож на всех), таймаут узла
 во фрагменте (про этот узел, вместе с его backoff'ом — и их соотношение
-держит `const`-assert там же; узлов в шаблоне два, `APP` и `CPU_LOAD`, и
+держит `const`-assert там же; узлов в шаблоне два, `HEARTBEAT` и `CPU_LOAD`, и
 цифры у них свои), `bsp::wdg::HW_TIMEOUT_US` у железа. Второе соотношение
 (таймаут узла плюс `WATCHDOG_CHECK_EVERY` меньше `HW_TIMEOUT_US`) держит
 `const`-assert рядом с `WATCHDOG_CHECK_EVERY`: второго места, где видны оба
@@ -273,10 +273,10 @@ spawn_all(&spawner, board).expect("узлы свежие");
 
 # `CPU_LOAD`: загрузка процессора, и почему цикл исполнителя ручной
 
-Второй узел шаблона, кроме `APP`, — `CPU_LOAD`: он меряет, во сколько
+Второй узел шаблона, кроме `HEARTBEAT`, — `CPU_LOAD`: он меряет, во сколько
 процентов занят процессор, и публикует результат в `PERCENT`. Фрагмент —
-`crates-host/domain/src/tasks/cpu_load.rs`, арифметика и её host-тесты —
-`crates-host/domain/src/metrics/cpu_load.rs`, счётчик и объяснения —
+`crates-host/domain/src/cpu_load.rs`, арифметика и её host-тесты —
+`crates-host/domain/src/cpu_load/load.rs`, счётчик и объяснения —
 `app-cpu-load.md`.
 
 Читать загрузку — ваше дело: у него ровно один слот подписчика, и первым его
@@ -396,8 +396,8 @@ async fn uart_drain_task(mut uart: embassy_stm32::usart::UartTx<'static, embassy
 ней — решила генерация и подставила во вход) и спавнится отсюда записью в
 `fragments:` — она же даёт ему имя (`as OTA`) и типы двух его слотов
 аргументами. Его автомат по кругу ждёт заголовок, принимает образ
-(`domain::download::receive` — сверка длины до стирания, буферизация до
-слова флеша), применяет его (`mark_updated` или `domain::update::apply_signed`)
+(`domain::ota::download::receive` — сверка длины до стирания, буферизация до
+слова флеша), применяет его (`mark_updated` или `domain::ota::update::apply_signed`)
 и сообщает исход отправителю кодом `ports::Rejection`. Всё это — host-тесты
 в `crates-host/domain/src/ota.rs`.
 
@@ -426,7 +426,7 @@ SD-карта, у каждого свой формат пакета и своя 
 
 У узла нет `watchdog:`, и это не забывчивость: он законно висит в `begin()`
 сколько угодно, а опрашивать его с таймаутом нельзя — отмена future
-уронила бы полупрочитанный заголовок. Железо кормит узел `APP`.
+уронила бы полупрочитанный заголовок. Железо кормит узел `HEARTBEAT`.
 
 {%- endif %}
 

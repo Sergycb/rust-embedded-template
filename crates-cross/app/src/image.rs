@@ -52,7 +52,7 @@ pub static FW_VERSION_IN_IMAGE: u32 = FW_VERSION;
 /// Не константа в исходнике, а файл `ota-public-key.bin` в корне проекта: его
 /// создаёт `cargo xtask build` вместе с закрытым и приносит сюда `build.rs`
 /// через `OUT_DIR`. Нули означают «ключ ещё не создан» (файла нет), и
-/// `domain::update::apply_signed` отказывает, не доходя до проверки.
+/// `domain::ota::update::apply_signed` отказывает, не доходя до проверки.
 ///
 /// Статик с именем, а не `const`, по той же причине, что и
 /// [`FW_VERSION_IN_IMAGE`]: `cargo xtask build` находит его в ELF и сверяет с

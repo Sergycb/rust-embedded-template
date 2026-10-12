@@ -18,8 +18,8 @@ use watchdog::HardwareWatchdog;
 ///
 /// Десять секунд — величина не измеренная, а выведенная из цепочки, которую
 /// шаблон обязан удержать целиком: потолок backoff'а (5 с) < таймаут узла
-/// (`domain::app::WATCHDOG`, 7 с) < этот таймаут минус `WATCHDOG_CHECK_EVERY`.
-/// Обе цифры слева живут во фрагменте узла (`domain::app`) и связаны там
+/// (`domain::heartbeat::WATCHDOG`, 7 с) < этот таймаут минус `WATCHDOG_CHECK_EVERY`.
+/// Обе цифры слева живут во фрагменте узла (`domain::heartbeat`) и связаны там
 /// `const`-assert'ом; `WATCHDOG_CHECK_EVERY` — в `app/src/graph.rs`, и там же
 /// `const`-assert на правую часть цепочки: таймаут узла плюс
 /// `WATCHDOG_CHECK_EVERY` строго меньше этой цифры. Правьте их только вместе.

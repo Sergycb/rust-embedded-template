@@ -63,7 +63,7 @@ host:test:
     - cargo install cargo-hack cargo-deny --locked
     - >
       cargo hack check --workspace --exclude host-target-tests --exclude xtask
-      --exclude test-support --feature-powerset --no-dev-deps
+      --feature-powerset --no-dev-deps
       --mutually-exclusive-features log,defmt --at-least-one-of log,defmt
     # Лицензии (только пермиссивные), источники зависимостей, уязвимости.
     # Политика — `deny.toml`.

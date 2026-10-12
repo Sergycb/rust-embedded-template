@@ -4,7 +4,6 @@ members = [
 	"crates-host/host-target-tests",
 	"crates-host/adapters",
 	"crates-host/ports",
-	"crates-host/test-support",
 	"crates-host/xtask",
 ]
 resolver = "3"
@@ -21,7 +20,7 @@ rust-version = "1.96"
 
 [workspace.lints.rust]
 # Ни одного `unsafe` в host-крейтах (`domain`, `ports`, `adapters`,
-# `test-support`, `xtask`) нет и быть не должно: это обычный Rust, а
+# `xtask`) нет и быть не должно: это обычный Rust, а
 # единственное, что могло бы его потребовать, — макросы, и появление unsafe
 # в макросе чужого крейта должно быть видно сразу. В `crates-cross` тот же
 # линт стоит как `warn`: там unsafe есть и оправдан (прыжок в образ, запись
@@ -69,7 +68,6 @@ map_err_ignore          = "warn"
 # и путь были в одном месте, как у внешних зависимостей.
 ports        = { path = "crates-host/ports" }
 adapters     = { path = "crates-host/adapters" }
-test-support = { path = "crates-host/test-support" }
 defmt-or-log = { version = "0.2.3" }
 log          = { version = "0.4.34" }
 defmt        = { version = "1.1.1" }
@@ -84,7 +82,7 @@ test-log     = { version = "0.2.21" }
 # сеть, файлы и время сюда не приезжают. В прошивку не уезжает:
 # dev-зависимости path-зависимости cargo не собирает.
 tokio        = { version = "1.53.1", default-features = false, features = ["rt", "macros"] }
-# Задачи графа живут в `domain` (`domain::app`), а граф, который их спавнит, —
+# Задачи графа живут в `domain` (`domain::heartbeat`), а граф, который их спавнит, —
 # в `crates-cross/app`. Контекст, который фрагмент эмитит в `domain` (`ctx:`),
 # снимает с задачи знание о графе, но не о типах, которыми граф с ней
 # разговаривает: `Heartbeat`, `TaskExit` и хэндлы каналов приходят отсюда. Фичи не объявлены намеренно —
@@ -100,7 +98,7 @@ embassy-time = { version = "0.5.1" }
 # (`ctx:` фрагмента): таблица переходов проверяется компилятором. Тот же
 # репозиторий, что у `supervisor`.
 fsm          = { git = "https://github.com/Sergycb/rust-lib.git" }
-# Тип счётчика тиков сна в `domain::tasks::cpu_load::SleepTicks`. Не
+# Тип счётчика тиков сна в `domain::cpu_load::SleepTicks`. Не
 # `core::sync::atomic::AtomicU64`: на Cortex-M0/M0+ его нет вовсе. Про то, чем
 # там эмулируется CAS, — `docs/conventions.md` и
 # `[target.thumbv6m-none-eabi]` в `crates-cross/.cargo/config.toml`.
@@ -130,12 +128,12 @@ sequential-storage     = { version = "8.0.1", default-features = false }
 # любом ядре ценой скорости — ~100 млн тактов на проверку, меньше секунды, и
 # случается это один раз перед перезагрузкой.
 salty                  = { version = "0.3.0", default-features = false, features = ["slow-motion"] }
-# Property-based testing: `domain::download::receive` проверяется на любом
+# Property-based testing: `domain::ota::download::receive` проверяется на любом
 # разбиении образа на куски и любой ширине слова, а не на нескольких
 # выбранных руками. Только `[dev-dependencies]` `domain`.
 proptest               = { version = "1.0.0" }
 # Parametric tests: одна фикстура — несколько сценариев без дублирования
-# тела (`domain::update::apply_signed`: длина, занятость, версия, ключ,
+# тела (`domain::ota::update::apply_signed`: длина, занятость, версия, ключ,
 # подпись — каждый отказ своим кейсом). Только `[dev-dependencies]` `domain`.
 rstest                 = { version = "0.18.0" }
 # Snapshot tests: точный вид строк отчёта `cargo xtask build` фиксируется

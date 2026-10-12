@@ -45,7 +45,7 @@ if config == "true" {
 	print("Настройки: раздел CONFIG во flash, crates-cross/bsp/src/config.rs, Board::settings.");
 }
 if variable::get("graph") == "true" {
-	print("Граф задач: узел APP в crates-cross/app/src/graph.rs, его работа — в crates-host/domain/src/app.rs.");
+	print("Граф задач: узел HEARTBEAT в crates-cross/app/src/graph.rs, его работа — в crates-host/domain/src/heartbeat.rs.");
 } else {
 	print("Без графа задач: main заканчивается после инициализации (причина — выше).");
 }
