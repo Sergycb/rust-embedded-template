@@ -891,6 +891,19 @@ struct OtaPartitions {
     active_length: u64,
     dfu_origin: u64,
     dfu_length: u64,
+    /// Раздел настроек, если схема считалась вместе с ним (набор `config_`):
+    /// в мелких секторах перед `ACTIVE` или в хвосте flash — что оставляет
+    /// `ACTIVE` больше (см. `compute_config_partition`). `None` — без настроек.
+    settings: Option<SettingsPartition>,
+}
+
+/// Где лежит раздел настроек и какая у него страница (`adapters::flash::Paged`
+/// в `bsp::config`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SettingsPartition {
+    origin: u64,
+    length: u64,
+    erase_size: u64,
 }
 
 /// Готовые для `memory.x` адреса/размеры одного чипа. Всё в байтах —
@@ -948,12 +961,13 @@ struct MemoryLayout {
 /// это в rhai-хуке значило бы повторить там все четыре проверки
 /// `assert_partitions` из `embassy-boot`.
 struct ConfigPartition {
-    origin: u64,
-    length: u64,
+    /// Раздел в хвосте flash — так он лежит в проекте без OTA: таблица векторов
+    /// приложения стоит в секторе 0, и раздел посреди `FLASH` разорвал бы его.
+    tail: SettingsPartition,
     /// Что остаётся приложению, когда OTA не используется: весь flash минус
     /// раздел настроек.
     flash_length: u64,
-    /// OTA-схема в оставшемся flash.
+    /// OTA-схема вместе с разделом; где в ней сам раздел — `settings`.
     ota: Result<OtaPartitions, String>,
 }
 
@@ -1090,22 +1104,24 @@ fn compute_memory_layout(chip: &str, regions: &[RawRegion]) -> Option<MemoryLayo
         write_size,
         page_size,
         erase_zero,
-        ota: compute_ota_partitions(chip, &chain, flash_total, page_size, write_size),
+        ota: compute_ota_partitions(chip, &chain, flash_total, page_size, write_size, false),
         config: compute_config_partition(chip, &chain, flash_total, page_size, write_size),
     })
 }
 
-/// Раздел под настройки: две последние страницы стирания flash.
+/// Раздел под настройки: две страницы стирания.
 ///
 /// Две, а не одна, — требование `sequential-storage`: её `map` чередует
 /// страницы, чтобы не выхаживать одну и ту же, и на одной странице просто не
-/// работает («The map needs at least 2 pages to operate»).
+/// работает («The map needs at least 2 pages to operate»). Одной и не хватило
+/// бы: перед стиранием старой страницы живые записи переносятся на свободную.
 ///
-/// Страница здесь — `PAGE_SIZE` всего чипа (максимальный erase по цепочке), а
-/// не сектор конкретного региона: раздел живёт поверх цельного
-/// `embassy_stm32::flash::Flash`, у которого `NorFlash::ERASE_SIZE` именно
-/// такой. На F4/F7/H7 это 128 KiB, то есть раздел стоит 256 KiB — дорого, и
-/// поэтому он спрашивается при генерации, а не выделяется всегда.
+/// Без OTA раздел — две последние страницы flash (`PAGE_SIZE`, крупнейший
+/// сектор): в начале flash стоит таблица векторов приложения. С OTA есть второй
+/// вариант — две соседние мелкие страницы в резерве перед `ACTIVE`, между
+/// bootloader'ом и `STATE` (на F4 — сектора 2–3 по 16 KiB вместо 2×128 KiB в
+/// хвосте). Берётся тот, при котором `ACTIVE` больше; при равенстве — хвост,
+/// чтобы не двигать раскладку чипов с равными секторами без выигрыша.
 ///
 /// `None` — не выделяем: либо после раздела не остаётся ни страницы под
 /// приложение, либо flash не кратен странице (тогда граница раздела не легла
@@ -1122,13 +1138,29 @@ fn compute_config_partition(
         return None;
     }
     let flash_length = flash_total - length;
-    Some(ConfigPartition {
+    let tail = SettingsPartition {
         origin: FLASH_BASE + flash_length,
         length,
+        erase_size: page_size,
+    };
+    // Раздел в хвосте: OTA-схема считается от flash, ставшего на две страницы
+    // меньше.
+    let behind = compute_ota_partitions(chip, chain, flash_length, page_size, write_size, false)
+        .map(|partitions| OtaPartitions {
+            settings: Some(tail),
+            ..partitions
+        });
+    // Раздел в резерве перед ACTIVE: схема — от всего flash.
+    let ahead = compute_ota_partitions(chip, chain, flash_total, page_size, write_size, true);
+    let ota = match (ahead, behind) {
+        (Ok(ahead), Ok(behind)) if ahead.active_length > behind.active_length => Ok(ahead),
+        (Ok(ahead), Err(_)) => Ok(ahead),
+        (_, behind) => behind,
+    };
+    Some(ConfigPartition {
+        tail,
         flash_length,
-        // Своя OTA-схема: она считается от размера доступного flash, а он
-        // теперь на две страницы меньше.
-        ota: compute_ota_partitions(chip, chain, flash_length, page_size, write_size),
+        ota,
     })
 }
 
@@ -1243,6 +1275,7 @@ fn compute_ota_partitions(
     flash_total: u64,
     page_size: u64,
     write_size: u64,
+    with_settings: bool,
 ) -> Result<OtaPartitions, String> {
     let erase_size_at = |offset_from_flash_base: u64| -> Option<u64> {
         let addr = FLASH_BASE + offset_from_flash_base;
@@ -1313,12 +1346,18 @@ fn compute_ota_partitions(
         // Проверка 4, решённая относительно STATE: сколько журнала нужно под
         // такой ACTIVE.
         let state_needed = (2 + 4 * active_pages) * write_size;
-        let Some((state_offset, state_length, state_erase)) =
-            place_state(&erase_size_at, reserved_size, state_needed)
-        else {
-            // Журнал не лёг в мелкие сектора резерва, не отняв у bootloader'а
-            // минимума, — помогает резерв крупнее: он уменьшает ACTIVE, а с
-            // ним и журнал.
+        let placed = reserve_sectors(&erase_size_at, reserved_size).and_then(|sectors| {
+            if with_settings {
+                place_settings_and_state(&sectors, state_needed)
+                    .map(|(settings, state)| (Some(settings), state))
+            } else {
+                place_state(&sectors, state_needed, BOOTLOADER_MIN).map(|state| (None, state))
+            }
+        });
+        let Some((settings, (state_offset, state_length, state_erase))) = placed else {
+            // Журнал (и раздел настроек) не легли в сектора резерва, не отняв у
+            // bootloader'а минимума, — помогает резерв крупнее: в нём больше
+            // секторов, а ACTIVE, а с ним и журнал, меньше.
             reserved_pages += 1;
             continue;
         };
@@ -1326,7 +1365,7 @@ fn compute_ota_partitions(
         let active_origin = FLASH_BASE + reserved_size;
         let active_length = active_pages * page_size;
         let partitions = OtaPartitions {
-            bootloader_length: state_offset,
+            bootloader_length: settings.map_or(state_offset, |s| s.origin - FLASH_BASE),
             bootloader_state_origin: FLASH_BASE + state_offset,
             bootloader_state_length: state_length,
             bootloader_state_erase_size: state_erase,
@@ -1334,6 +1373,7 @@ fn compute_ota_partitions(
             active_length,
             dfu_origin: active_origin + active_length,
             dfu_length: dfu_pages * page_size,
+            settings,
         };
         assert_embassy_boot_invariants(chip, &partitions, page_size, write_size);
         return Ok(partitions);
@@ -1357,18 +1397,15 @@ fn compute_ota_partitions(
 /// Если мелкие сектора стоят так близко к началу, что bootloader'у перед ними
 /// не хватает минимума, пробуется следующий размер — а не сразу резерв крупнее:
 /// тот не поменял бы, где лежат мелкие сектора.
+///
+/// `sectors` — `(смещение, размер)` секторов, где можно искать; `min_offset` —
+/// раньше какого смещения `STATE` начинаться не может (перед ним bootloader или
+/// раздел настроек).
 fn place_state(
-    erase_size_at: &impl Fn(u64) -> Option<u64>,
-    reserved_size: u64,
+    sectors: &[(u64, u64)],
     state_needed: u64,
+    min_offset: u64,
 ) -> Option<(u64, u64, u64)> {
-    let mut sectors = Vec::new();
-    let mut offset = 0;
-    while offset < reserved_size {
-        let erase = erase_size_at(offset).filter(|erase| *erase > 0)?;
-        sectors.push((offset, erase));
-        offset += erase;
-    }
     let sizes: BTreeSet<u64> = sectors.iter().map(|(_, erase)| *erase).collect();
     sizes.into_iter().find_map(|size| {
         let count = usize::try_from(state_needed.div_ceil(size)).ok()?;
@@ -1379,7 +1416,60 @@ fn place_state(
             .rev()
             .find(|window| window.iter().all(|(_, erase)| *erase == size))
             .map(|window| (window[0].0, size * count as u64, size))
-            .filter(|(state_offset, _, _)| *state_offset >= BOOTLOADER_MIN)
+            .filter(|(state_offset, _, _)| *state_offset >= min_offset)
+    })
+}
+
+/// Сектора резерва `[0, reserved_size)` по порядку: `(смещение, размер)`.
+/// `None` — на каком-то смещении размер сектора неизвестен.
+fn reserve_sectors(
+    erase_size_at: &impl Fn(u64) -> Option<u64>,
+    reserved_size: u64,
+) -> Option<Vec<(u64, u64)>> {
+    let mut sectors = Vec::new();
+    let mut offset = 0;
+    while offset < reserved_size {
+        let erase = erase_size_at(offset).filter(|erase| *erase > 0)?;
+        sectors.push((offset, erase));
+        offset += erase;
+    }
+    Some(sectors)
+}
+
+/// Раздел настроек и `STATE` в резерве: bootloader, за ним настройки — две
+/// соседние страницы одного размера, — за ними `STATE`. `None` — не легли.
+///
+/// Настройки — как можно ближе к концу резерва, но так, чтобы после них нашлось
+/// место под `STATE`: на F4 это сектора 2–3 (2×16 KiB), `STATE` — сектор 4
+/// (64 KiB), bootloader — 32 KiB. `STATE` здесь, в отличие от проекта без
+/// настроек, может попасть в сектор крупнее: журналу нужны десятки байт и
+/// размер сектора ему всё равно, а настройкам нужны две равные страницы, и
+/// мелкие сектора отдаются им.
+///
+/// Bootloader перед разделом получает не меньше `BOOTLOADER_TARGET`, а не
+/// `BOOTLOADER_MIN`, как без настроек: раздел в резерве — это выгода для
+/// `ACTIVE`, и оплачивать её бинарником bootloader'а нельзя. Иначе на чипах с
+/// равными секторами раздел садился бы в запас bootloader'а и ужимал его до
+/// 16 KiB ради одной-двух страниц `ACTIVE`; с этой границей такие чипы честно
+/// получают раздел в хвосте (см. `compute_config_partition`).
+fn place_settings_and_state(
+    sectors: &[(u64, u64)],
+    state_needed: u64,
+) -> Option<(SettingsPartition, (u64, u64, u64))> {
+    (0..sectors.len().saturating_sub(1)).rev().find_map(|i| {
+        let (offset, erase) = sectors[i];
+        if sectors[i + 1].1 != erase || offset < BOOTLOADER_TARGET {
+            return None;
+        }
+        let state = place_state(&sectors[i + 2..], state_needed, 0)?;
+        Some((
+            SettingsPartition {
+                origin: FLASH_BASE + offset,
+                length: 2 * erase,
+                erase_size: erase,
+            },
+            state,
+        ))
     })
 }
 
@@ -1412,14 +1502,28 @@ fn assert_embassy_boot_invariants(chip: &str, p: &OtaPartitions, page_size: u64,
         journal_words <= state_words,
         "{chip}: журналу прогресса нужно {journal_words} слов, в BOOTLOADER_STATE помещается {state_words}"
     );
-    // Между `STATE` и `ACTIVE` может остаться незанятый сектор (см.
+    // Порядок: bootloader, [настройки,] STATE, ACTIVE, DFU[, настройки в
+    // хвосте]. Между STATE и ACTIVE может остаться незанятый сектор (см.
     // `place_state`), но не наложение.
+    let ahead = p.settings.filter(|s| s.origin < p.active_origin);
+    let after_bootloader = ahead.map_or(p.bootloader_state_origin, |s| s.origin);
     assert!(
-        p.bootloader_state_origin == FLASH_BASE + p.bootloader_length
+        after_bootloader == FLASH_BASE + p.bootloader_length
+            && ahead.is_none_or(|s| s.origin + s.length <= p.bootloader_state_origin)
             && p.bootloader_state_origin + p.bootloader_state_length <= p.active_origin
-            && p.dfu_origin == p.active_origin + p.active_length,
+            && p.dfu_origin == p.active_origin + p.active_length
+            && p.settings
+                .is_none_or(|s| { ahead.is_some() || s.origin >= p.dfu_origin + p.dfu_length }),
         "{chip}: партиции накладываются или идут не по порядку"
     );
+    if let Some(s) = p.settings {
+        assert!(
+            s.length == 2 * s.erase_size,
+            "{chip}: раздел настроек {} — не две страницы по {}",
+            s.length,
+            s.erase_size
+        );
+    }
     // `ACTIVE`/`DFU` строятся поверх цельного `Flash` (страница — `PAGE_SIZE`),
     // `STATE` — поверх `Paged` со страницей своего сектора.
     let state_offset = p.bootloader_state_origin - FLASH_BASE;
@@ -1437,7 +1541,12 @@ fn assert_embassy_boot_invariants(chip: &str, p: &OtaPartitions, page_size: u64,
             p.bootloader_state_length,
             p.bootloader_state_erase_size,
         ),
-    ] {
+    ]
+    .into_iter()
+    .chain(
+        p.settings
+            .map(|s| ("CONFIG", s.origin - FLASH_BASE, s.length, s.erase_size)),
+    ) {
         assert!(
             offset.is_multiple_of(page) && length.is_multiple_of(page),
             "{chip}: {name} (смещение {offset:#x}, размер {length}) не кратен своей странице {page}: Partition::new запаникует"
@@ -1562,8 +1671,15 @@ fn format_memory_layouts(layouts: &BTreeMap<&str, MemoryLayout>) -> String {
         match &m.config {
             Some(config) => {
                 push_field(&mut out, "config", "true");
-                push_field(&mut out, "config_origin", &format_addr(config.origin));
-                push_field(&mut out, "config_length", &format_size(config.length));
+                // Раздел в хвосте — для проекта без OTA. С OTA он может лежать
+                // в другом месте: `config_ota_settings_*` ниже.
+                push_field(&mut out, "config_origin", &format_addr(config.tail.origin));
+                push_field(&mut out, "config_length", &format_size(config.tail.length));
+                push_field(
+                    &mut out,
+                    "config_erase_size",
+                    &rust_literal(config.tail.erase_size),
+                );
                 push_field(
                     &mut out,
                     "config_flash_length",
@@ -1604,6 +1720,24 @@ fn format_memory_layouts(layouts: &BTreeMap<&str, MemoryLayout>) -> String {
                         );
                         push_field(&mut out, "config_dfu_origin", &format_addr(p.dfu_origin));
                         push_field(&mut out, "config_dfu_length", &format_size(p.dfu_length));
+                        let settings = p
+                            .settings
+                            .expect("схема набора config_ всегда считается с разделом настроек");
+                        push_field(
+                            &mut out,
+                            "config_ota_settings_origin",
+                            &format_addr(settings.origin),
+                        );
+                        push_field(
+                            &mut out,
+                            "config_ota_settings_length",
+                            &format_size(settings.length),
+                        );
+                        push_field(
+                            &mut out,
+                            "config_ota_settings_erase_size",
+                            &rust_literal(settings.erase_size),
+                        );
                     }
                     Err(note) => {
                         push_field(&mut out, "config_ota", "false");
@@ -2201,6 +2335,28 @@ pub static METADATA: Metadata = Metadata {
         assert_eq!(ota.bootloader_state_length, 16 * 1024);
         assert_eq!(ota.bootloader_state_erase_size, 16 * 1024);
         assert_eq!(ota.active_origin, FLASH_BASE + 0x2_0000);
+
+        // С разделом настроек — вариант A: bootloader 0–1, настройки 2–3
+        // (2×16 KiB), STATE в секторе 4. ACTIVE тот же, что без настроек, а в
+        // хвосте раздел стоил бы 2×128 KiB и вытеснил бы OTA вовсе.
+        let config = layout.config.expect("раздел настроек возможен");
+        let ota = config.ota.expect("OTA с настройками должна помещаться");
+        assert_eq!(ota.bootloader_length, 32 * 1024);
+        assert_eq!(
+            ota.settings,
+            Some(SettingsPartition {
+                origin: FLASH_BASE + 0x8000,
+                length: 32 * 1024,
+                erase_size: 16 * 1024,
+            })
+        );
+        assert_eq!(ota.bootloader_state_origin, FLASH_BASE + 0x1_0000);
+        assert_eq!(ota.bootloader_state_erase_size, 64 * 1024);
+        assert_eq!(ota.active_origin, FLASH_BASE + 0x2_0000);
+        assert_eq!(ota.active_length, 128 * 1024);
+        // Без OTA раздел по-прежнему в хвосте.
+        assert_eq!(config.tail.origin, FLASH_BASE + 0x4_0000);
+        assert_eq!(config.tail.erase_size, 128 * 1024);
     }
 
     /// Пятая проверка — от `Partition::new`: раздел, не кратный странице флеша
@@ -2217,6 +2373,7 @@ pub static METADATA: Metadata = Metadata {
             active_length: 128 * 1024,
             dfu_origin: FLASH_BASE + 0x4_0000,
             dfu_length: 256 * 1024,
+            settings: None,
         };
         assert_embassy_boot_invariants("test", &state_on_the_chip_page, 128 * 1024, 4);
     }
@@ -2233,8 +2390,9 @@ pub static METADATA: Metadata = Metadata {
                 64 * 1024
             })
         };
+        let sectors = reserve_sectors(&sector, 144 * 1024).expect("сектора известны");
         assert_eq!(
-            place_state(&sector, 144 * 1024, 64),
+            place_state(&sectors, 64, BOOTLOADER_MIN),
             Some((80 * 1024, 64 * 1024, 64 * 1024))
         );
     }
@@ -2533,9 +2691,9 @@ pub static METADATA: Metadata = Metadata {
             .collect();
         let config = compute_config_partition("test", &chain, 512 * 1024, 2048, 8)
             .expect("раздел должен поместиться");
-        assert_eq!(config.length, 4096);
+        assert_eq!(config.tail.length, 4096);
         assert_eq!(config.flash_length, 512 * 1024 - 4096);
-        assert_eq!(config.origin, FLASH_BASE + config.flash_length);
+        assert_eq!(config.tail.origin, FLASH_BASE + config.flash_length);
 
         // Не кратно странице.
         assert!(compute_config_partition("test", &chain, 512 * 1024 + 8, 2048, 8).is_none());
@@ -2604,6 +2762,7 @@ pub static METADATA: Metadata = Metadata {
             active_length: 3000,
             dfu_origin: FLASH_BASE + 2048 + 3000,
             dfu_length: 6000,
+            settings: None,
         };
         assert_embassy_boot_invariants("STM32TEST", &broken, 2048, 8);
     }

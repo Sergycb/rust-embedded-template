@@ -342,38 +342,16 @@ fn erase_zero_follows_the_metadata_not_the_chip_name() {
     }
 }
 
-/// Совет «выбирайте что-то одно» даётся только там, где он верен.
-///
-/// Когда раздел настроек и правда вытеснил OTA, сказать об этом надо: без
-/// подсказки человек не догадается, что достаточно отказаться от настроек.
-/// Но условие проверяло только «цифры OTA для этого чипа посчитаны», а не
-/// «схема в них помещается», — и чип, у которого `ACTIVE` меньше порога и
-/// БЕЗ раздела настроек, получал заведомо ложный совет. Хуже того, флаг
-/// `ota_explained` глушил настоящую причину, так что верного объяснения
-/// человек не видел вовсе.
+/// Чип, куда OTA не помещается и без раздела настроек, получает при генерации
+/// настоящую причину отказа, а не совет отказаться от настроек: пока такой
+/// совет был, на f030c8 (15K под ACTIVE при OTA_MIN_ACTIVE 24K) он печатался
+/// ложно и глушил настоящую причину.
 #[test]
-fn ota_blamed_on_the_settings_partition() {
+fn ota_refusal_names_the_real_reason_with_settings() {
     let ast = compile_script();
-
-    // f205re: 128K под ACTIVE без раздела настроек, с ним OTA не сходится
-    // вовсе. Здесь совет верен.
-    let displaced = run_cascade_with(&ast, "f205re", &[("config", "yes"), ("ota", "yes")])
-        .expect("каскад не должен падать");
-    let log = displaced.prints.join("\n");
-    assert!(
-        log.contains("без раздела настроек она помещалась"),
-        "совет пропал там, где он верен:\n{log}"
-    );
-
-    // f030c8: 15K под ACTIVE и без раздела настроек — это меньше
-    // OTA_MIN_ACTIVE, то есть OTA не помещается сама по себе.
     let too_small = run_cascade_with(&ast, "f030c8", &[("config", "yes"), ("ota", "yes")])
         .expect("каскад не должен падать");
     let log = too_small.prints.join("\n");
-    assert!(
-        !log.contains("без раздела настроек она помещалась"),
-        "ложный совет на чипе, где OTA не помещается и без раздела:\n{log}"
-    );
     assert!(
         log.contains("OTA отключён"),
         "настоящая причина осталась незаявленной:\n{log}"
@@ -1003,6 +981,48 @@ fn the_settings_partition_survives_on_ordinary_flash() {
         Some("false")
     );
     assert_eq!(result.vars.get("config").map(String::as_str), Some("true"));
+}
+
+/// С OTA на неравных секторах раздел настроек ложится в мелкие сектора перед
+/// ACTIVE (у F407 — 2–3 по 16 KiB), и OTA при этом остаётся; без OTA — в хвост
+/// по странице чипа. Раньше на F407 раздел в хвосте (2×128 KiB) вытеснял OTA.
+#[test]
+fn settings_go_to_small_sectors_with_ota_and_to_the_tail_without() {
+    let ast = compile_script();
+
+    let with_ota =
+        run_cascade_with(&ast, "f407ve", &[("config", "yes")]).expect("каскад до f407ve");
+    assert_eq!(with_ota.vars.get("ota").map(String::as_str), Some("true"));
+    assert_eq!(
+        with_ota.vars.get("config_erase_size").map(String::as_str),
+        Some("16_384")
+    );
+    assert_eq!(
+        with_ota.vars.get("state_erase_size").map(String::as_str),
+        Some("65_536")
+    );
+    let app = written(&with_ota, "crates-cross/app/memory.x");
+    assert!(
+        app.contains("CONFIG            (rx)  : ORIGIN = 0x08008000, LENGTH = 32K"),
+        "{app}"
+    );
+    let boot = written(&with_ota, "crates-cross/boot/memory.x");
+    assert!(
+        boot.contains("FLASH             (rx)  : ORIGIN = 0x08000000, LENGTH = 32K"),
+        "{boot}"
+    );
+
+    let without = run_cascade_with(&ast, "f407ve", &[("config", "yes"), ("ota", "no")])
+        .expect("каскад до f407ve");
+    assert_eq!(
+        without.vars.get("config_erase_size").map(String::as_str),
+        Some("131_072")
+    );
+    let app = written(&without, "crates-cross/app/memory.x");
+    assert!(
+        app.contains("CONFIG            (rx)  : ORIGIN = 0x08040000, LENGTH = 256K"),
+        "{app}"
+    );
 }
 
 /// Значение `watchdog_peripheral`, которое хук выбирает для чипа. У двухъядерных

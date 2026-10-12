@@ -165,7 +165,9 @@ read`: руками пришлось бы сначала найти адрес �
 - `BOOTLOADER_STATE` строится над `adapters::flash::Paged` со страницей своего
   сектора (`STATE_ERASE_SIZE` в `crates-cross/boot` и в `bsp::ota` — одно число
   из генерации). Над цельным `Flash` на F2/F4/F7 раздел не кратен его странице,
-  и `Partition::new` паникует на старте — `docs/flash.md`.
+  и `Partition::new` паникует на старте. Так же и `CONFIG` (`CONFIG_ERASE_SIZE`
+  в `bsp::config`): с OTA он может лежать в мелких секторах перед `ACTIVE` —
+  `docs/flash.md`.
 {%- if graph == "true" %}
 - У каждого узла с `watchdog:` своя связанная цепочка таймаутов
   (`domain::heartbeat::BACKOFF.max` < `domain::heartbeat::WATCHDOG`,
