@@ -960,6 +960,9 @@ struct MemoryLayout {
     /// OTA с `DFU` и `STATE` на внешней флеши: внутри только bootloader и
     /// `ACTIVE`. `Err` — даже так не помещается; текст объясняет почему.
     external: Result<ExternalOta, String>,
+    /// То же, но настройки — во внутреннем флеше (`ExternalOta::settings`):
+    /// когда проект выбрал их там, а не на внешней флеши.
+    external_config: Result<ExternalOta, String>,
 }
 
 /// Раскладка того же чипа, но с отрезанным разделом под настройки.
@@ -991,7 +994,8 @@ struct ConfigPartition {
 /// `const`-assert рядом с драйвером, а не генератор.
 #[derive(Debug)]
 struct ExternalOta {
-    /// Зона bootloader'а: от базы flash до `ACTIVE`.
+    /// `FLASH` в `crates-cross/boot/memory.x`: от базы flash до `ACTIVE` или до
+    /// раздела настроек, если тот лёг в зону bootloader'а.
     bootloader_length: u64,
     active_origin: u64,
     active_length: u64,
@@ -1009,6 +1013,8 @@ struct ExternalOta {
     /// `ext_align`. Используется, только если настройки выбраны.
     config_offset: u64,
     config_length: u64,
+    /// Раздел настроек во ВНУТРЕННЕМ флеше — только у набора `ext_cfg_`.
+    settings: Option<SettingsPartition>,
 }
 
 /// Самое мелкое стирание, которое раскладка ждёт от внешней флеши: сектор
@@ -1162,7 +1168,8 @@ fn compute_memory_layout(chip: &str, regions: &[RawRegion]) -> Option<MemoryLayo
         erase_zero,
         ota: compute_ota_partitions(chip, &chain, flash_total, page_size, write_size, false),
         config: compute_config_partition(chip, &chain, flash_total, page_size, write_size),
-        external: compute_external_ota(chip, flash_total, page_size),
+        external: compute_external_ota(chip, &chain, flash_total, page_size, false),
+        external_config: compute_external_ota(chip, &chain, flash_total, page_size, true),
     })
 }
 
@@ -1182,22 +1189,70 @@ fn compute_memory_layout(chip: &str, regions: &[RawRegion]) -> Option<MemoryLayo
 /// `ext_align`. Четыре проверки `assert_partitions` при этом выполнены для
 /// любого драйвера, чьё стирание делит `page_size`, — см.
 /// `assert_external_invariants`.
+///
+/// `internal_settings` — настройки во внутреннем флеше. Сначала — в две
+/// соседние равные страницы зоны bootloader'а за `BOOTLOADER_TARGET`: на F4
+/// это сектора 2–3 (2×16 KiB), которые иначе пропадают, и `ACTIVE` не теряет
+/// ничего. Нет таких — две последние страницы flash, на них короче `ACTIVE`.
 fn compute_external_ota(
     chip: &str,
+    chain: &[&RawRegion],
     flash_total: u64,
     page_size: u64,
+    internal_settings: bool,
 ) -> Result<ExternalOta, String> {
     let page = page_size.max(EXT_ERASE_MIN);
-    let bootloader_length = BOOTLOADER_TARGET.next_multiple_of(page_size);
-    let active_length = flash_total.saturating_sub(bootloader_length) / page * page;
+    let zone = BOOTLOADER_TARGET.next_multiple_of(page_size);
+    let erase_size_at = |offset: u64| -> Option<u64> {
+        let addr = FLASH_BASE + offset;
+        chain
+            .iter()
+            .find(|r| addr >= r.address && addr < r.address + r.size)
+            .and_then(|r| r.flash)
+            .map(|f| f.erase_size)
+    };
+    let in_zone = if internal_settings {
+        reserve_sectors(&erase_size_at, zone).and_then(|sectors| {
+            sectors.windows(2).find_map(|pair| {
+                let ((offset, erase), (_, next)) = (pair[0], pair[1]);
+                (offset >= BOOTLOADER_TARGET && erase == next).then_some(SettingsPartition {
+                    origin: FLASH_BASE + offset,
+                    length: 2 * erase,
+                    erase_size: erase,
+                })
+            })
+        })
+    } else {
+        None
+    };
+    let tail_length = if internal_settings && in_zone.is_none() {
+        if !flash_total.is_multiple_of(page_size) {
+            return Err(
+                "flash не кратен странице чипа: раздел настроек в хвосте не ляжет \
+                        на границу сектора"
+                    .to_string(),
+            );
+        }
+        2 * page_size
+    } else {
+        0
+    };
+    let active_length = flash_total.saturating_sub(zone + tail_length) / page * page;
     if active_length == 0 {
         return Err(format!(
             "flash {} KiB: за bootloader'ом ({} KiB) не остаётся ни страницы обмена ({} KiB)",
             flash_total / 1024,
-            bootloader_length / 1024,
+            zone / 1024,
             page / 1024
         ));
     }
+    let settings = in_zone.or_else(|| {
+        (tail_length > 0).then_some(SettingsPartition {
+            origin: FLASH_BASE + flash_total - tail_length,
+            length: tail_length,
+            erase_size: page_size,
+        })
+    });
     let ext_align = page.max(EXT_ALIGN);
     // Журнал — на самую мелкую страницу обмена, какая может выйти: драйвер со
     // стиранием мельче `page` даст `PAGE_SIZE` = странице чипа, и страниц
@@ -1206,8 +1261,8 @@ fn compute_external_ota(
     let state_length = journal.next_multiple_of(ext_align);
     let dfu_length = (active_length + page).next_multiple_of(ext_align);
     let external = ExternalOta {
-        bootloader_length,
-        active_origin: FLASH_BASE + bootloader_length,
+        bootloader_length: in_zone.map_or(zone, |s| s.origin - FLASH_BASE),
+        active_origin: FLASH_BASE + zone,
         active_length,
         page_size: page,
         ext_align,
@@ -1217,6 +1272,7 @@ fn compute_external_ota(
         dfu_length,
         config_offset: state_length + dfu_length,
         config_length: 2 * ext_align,
+        settings,
     };
     assert_external_invariants(chip, &external, page_size);
     Ok(external)
@@ -1255,11 +1311,28 @@ fn assert_external_invariants(chip: &str, e: &ExternalOta, chip_page: u64) {
         "{chip}: журналу прогресса нужно {journal_words} слов по {EXT_WRITE_MAX}, в STATE {} байт",
         e.state_length
     );
+    let active_offset = e.active_origin - FLASH_BASE;
     assert!(
-        (e.active_origin - FLASH_BASE).is_multiple_of(chip_page)
-            && e.active_origin - FLASH_BASE == e.bootloader_length,
-        "{chip}: ACTIVE не с границы страницы чипа сразу за bootloader'ом"
+        active_offset.is_multiple_of(chip_page) && e.bootloader_length <= active_offset,
+        "{chip}: ACTIVE не с границы страницы чипа или налезает на bootloader"
     );
+    if let Some(s) = e.settings {
+        let offset = s.origin - FLASH_BASE;
+        let before_active = offset == e.bootloader_length && offset + s.length <= active_offset;
+        let after_active = offset >= active_offset + e.active_length;
+        assert!(
+            s.length == 2 * s.erase_size
+                && offset.is_multiple_of(s.erase_size)
+                && (before_active || after_active),
+            "{chip}: внутренний раздел настроек {offset:#x}+{} не на месте",
+            s.length
+        );
+    } else {
+        assert_eq!(
+            e.bootloader_length, active_offset,
+            "{chip}: без настроек bootloader занимает всю зону до ACTIVE"
+        );
+    }
     for (name, offset, length) in [
         ("STATE", e.state_offset, e.state_length),
         ("DFU", e.dfu_offset, e.dfu_length),
@@ -1916,36 +1989,46 @@ fn format_memory_layouts(layouts: &BTreeMap<&str, MemoryLayout>) -> String {
             }
             None => push_field(&mut out, "config", "false"),
         }
-        // Третий набор — OTA с `DFU`/`STATE` на внешней флеши (`ExternalOta`).
-        // Внешние значения — смещения от начала внешней флеши, а не адреса.
-        match &m.external {
-            Ok(e) => {
-                push_field(&mut out, "ext_ota", "true");
-                push_field(
-                    &mut out,
-                    "ext_bootloader_length",
-                    &format_size(e.bootloader_length),
-                );
-                push_field(&mut out, "ext_active_origin", &format_addr(e.active_origin));
-                push_field(&mut out, "ext_active_length", &format_size(e.active_length));
-                push_field(&mut out, "ext_page_size", &rust_literal(e.page_size));
-                push_field(&mut out, "ext_align", &rust_literal(e.ext_align));
-                push_field(&mut out, "ext_state_offset", &format_addr(e.state_offset));
-                push_field(&mut out, "ext_state_length", &format_size(e.state_length));
-                push_field(&mut out, "ext_dfu_offset", &format_addr(e.dfu_offset));
-                push_field(&mut out, "ext_dfu_length", &format_size(e.dfu_length));
-                push_field(&mut out, "ext_config_offset", &format_addr(e.config_offset));
-                push_field(&mut out, "ext_config_length", &format_size(e.config_length));
-            }
-            Err(note) => {
-                push_field(&mut out, "ext_ota", "false");
-                push_field(&mut out, "ext_note", note);
-            }
-        }
+        // Третий и четвёртый наборы — OTA с `DFU`/`STATE` на внешней флеши
+        // (`ExternalOta`): настройки снаружи или их нет (`ext_`) и настройки
+        // во внутреннем флеше (`ext_cfg_`).
+        push_external(&mut out, "ext_", &m.external);
+        push_external(&mut out, "ext_cfg_", &m.external_config);
         out.push_str("    },\n");
     }
     out.push_str("};\n");
     out
+}
+
+/// Поля одного набора `ExternalOta` с префиксом `prefix`. Внешние значения —
+/// смещения от начала внешней флеши, а не адреса.
+fn push_external(out: &mut String, prefix: &str, external: &Result<ExternalOta, String>) {
+    let mut field = |key: &str, value: &str| push_field(out, &format!("{prefix}{key}"), value);
+    match external {
+        Ok(e) => {
+            field("ota", "true");
+            field("bootloader_length", &format_size(e.bootloader_length));
+            field("active_origin", &format_addr(e.active_origin));
+            field("active_length", &format_size(e.active_length));
+            field("page_size", &rust_literal(e.page_size));
+            field("align", &rust_literal(e.ext_align));
+            field("state_offset", &format_addr(e.state_offset));
+            field("state_length", &format_size(e.state_length));
+            field("dfu_offset", &format_addr(e.dfu_offset));
+            field("dfu_length", &format_size(e.dfu_length));
+            field("config_offset", &format_addr(e.config_offset));
+            field("config_length", &format_size(e.config_length));
+            if let Some(s) = e.settings {
+                field("settings_origin", &format_addr(s.origin));
+                field("settings_length", &format_size(s.length));
+                field("settings_erase_size", &rust_literal(s.erase_size));
+            }
+        }
+        Err(note) => {
+            field("ota", "false");
+            field("note", note);
+        }
+    }
 }
 
 /// Только чипы, у которых блок сторожевого таймера зовётся НЕ `IWDG` — для
@@ -2491,8 +2574,8 @@ pub static METADATA: Metadata = Metadata {
     /// bootloader, сектор 4 пустует. Со страницей всего чипа (128 KiB)
     /// `Partition::new` на таком разделе паниковал, поэтому раскладка обязана
     /// отдать страницу его собственного сектора.
-    #[test]
-    fn state_takes_the_last_smallest_sector_with_its_own_page() {
+    /// Карта F407VE: 4×16 KiB, 64 KiB, дальше 3×128 KiB.
+    fn f407ve() -> Vec<RawRegion> {
         let sector = |name: &str, address: u64, size: u64, erase_size: u64| RawRegion {
             name: name.to_string(),
             kind: RegionKind::Flash,
@@ -2521,8 +2604,13 @@ pub static METADATA: Metadata = Metadata {
                 128 * 1024,
             ),
         ]);
+        regions
+    }
 
-        let layout = compute_memory_layout("test", &regions).expect("раскладка должна посчитаться");
+    #[test]
+    fn state_takes_the_last_smallest_sector_with_its_own_page() {
+        let layout =
+            compute_memory_layout("test", &f407ve()).expect("раскладка должна посчитаться");
         assert_eq!(layout.page_size, 128 * 1024);
         let ota = layout.ota.expect("OTA должна помещаться");
         assert_eq!(ota.bootloader_length, 48 * 1024);
@@ -2597,7 +2685,8 @@ pub static METADATA: Metadata = Metadata {
     /// `STATE`, `DFU`, настройки по 128 KiB (страница обмена крупнее блока).
     #[test]
     fn external_layout_keeps_everything_but_the_bootloader_for_active() {
-        let e = compute_external_ota("test", 512 * 1024, 128 * 1024).expect("помещается");
+        let e =
+            compute_external_ota("test", &[], 512 * 1024, 128 * 1024, false).expect("помещается");
         assert_eq!(e.bootloader_length, 128 * 1024);
         assert_eq!(e.active_origin, FLASH_BASE + 0x2_0000);
         assert_eq!(e.active_length, 384 * 1024);
@@ -2612,7 +2701,8 @@ pub static METADATA: Metadata = Metadata {
     /// `ACTIVE` кратен 4 KiB — стиранию внешней NOR, — а не 2 KiB чипа.
     #[test]
     fn external_layout_on_small_pages_rounds_active_to_the_external_sector() {
-        let e = compute_external_ota("test", 128 * 1024 + 2048, 2048).expect("помещается");
+        let e =
+            compute_external_ota("test", &[], 128 * 1024 + 2048, 2048, false).expect("помещается");
         assert_eq!(e.bootloader_length, 32 * 1024);
         assert_eq!(e.active_length, 96 * 1024);
         assert_eq!(e.page_size, 4 * 1024);
@@ -2625,8 +2715,48 @@ pub static METADATA: Metadata = Metadata {
 
     #[test]
     fn external_layout_reports_a_chip_too_small_for_it() {
-        let note = compute_external_ota("test", 32 * 1024, 1024).expect_err("не помещается");
+        let note =
+            compute_external_ota("test", &[], 32 * 1024, 1024, false).expect_err("не помещается");
         assert!(note.contains("ни страницы"), "{note}");
+    }
+
+    /// Настройки во внутреннем флеше при внешней OTA на F407VE: сектора 2–3
+    /// (2×16 KiB) зоны bootloader'а, которые иначе пропадают; `ACTIVE` тот же,
+    /// что без настроек.
+    #[test]
+    fn external_layout_puts_internal_settings_into_the_bootloader_zone() {
+        let layout = compute_memory_layout("test", &f407ve()).expect("раскладка");
+        let e = layout.external_config.expect("помещается");
+        assert_eq!(
+            e.settings,
+            Some(SettingsPartition {
+                origin: FLASH_BASE + 0x8000,
+                length: 32 * 1024,
+                erase_size: 16 * 1024,
+            })
+        );
+        assert_eq!(e.bootloader_length, 32 * 1024);
+        assert_eq!(e.active_origin, FLASH_BASE + 0x2_0000);
+        assert_eq!(e.active_length, 384 * 1024);
+    }
+
+    /// Равные мелкие страницы (G0: 2 KiB): в зоне bootloader'а за 32 KiB
+    /// места нет, настройки — две последние страницы, `ACTIVE` короче.
+    #[test]
+    fn external_layout_puts_internal_settings_at_the_tail_on_uniform_pages() {
+        let layout =
+            compute_memory_layout("test", &uniform_flash(128 * 1024, 2048, 8)).expect("раскладка");
+        let e = layout.external_config.expect("помещается");
+        assert_eq!(
+            e.settings,
+            Some(SettingsPartition {
+                origin: FLASH_BASE + 124 * 1024,
+                length: 4 * 1024,
+                erase_size: 2048,
+            })
+        );
+        assert_eq!(e.bootloader_length, 32 * 1024);
+        assert_eq!(e.active_length, 92 * 1024);
     }
 
     #[test]
