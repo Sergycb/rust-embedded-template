@@ -83,7 +83,7 @@ fn main() -> ! {
     //
     // На обычной загрузке (без обновления) вызов ничего не меняет: состояние
     // и так `Boot`.
-    if let Err(err) = board.ota.flash.mark_booted() {
+    if let Err(err) = ready_now(board.ota.flash.mark_booted()) {
         // Не паника: устройство работает, просто следующий сброс вернёт
         // предыдущий образ. Знать об этом важнее, чем упасть.
         defmt::error!("app: не удалось подтвердить образ: {}", err);
@@ -91,11 +91,17 @@ fn main() -> ! {
 {%- endif %}
 {%- if signed == "true" and graph != "true" %}
 
-    // Адаптер проекта с подписью. Графа нет, так что узел OTA зовёте вы:
-    // переименуйте `_flash` в `mut flash` и вызовите
-    // `domain::ota::run(domain::ota::OtaCtx { link: &mut board.ota.link, flash: &mut flash,
-    // mode: &mut domain::ota::Mode::signed(), index: 0 }).await`.
-    let _flash = image::Signed::new(board.ota.flash, image::FW_VERSION);
+    // Режим проекта с подписью. Графа нет, так что узел OTA зовёте вы:
+    // переименуйте `_mode` в `mut mode` и вызовите
+    // `domain::ota::run(domain::ota::OtaCtx { link: &mut board.ota.link,
+    // flash: &mut board.ota.flash, mode: &mut mode, index: 0 }).await`.
+    #[expect(
+        clippy::no_effect_underscore_binding,
+        reason = "заготовка под ручной вызов узла OTA, см. комментарий выше"
+    )]
+    let _mode = domain::ota::Mode::Signed {
+        running_version: image::FW_VERSION,
+    };
 {%- endif %}
 
     // Исполнитель — свой, а не `#[embassy_executor::main]`, и это единственная
@@ -190,3 +196,22 @@ fn main() -> ! {
         }
     }
 }
+{%- if ota == "true" %}
+
+/// Довести future до конца до старта исполнителя.
+///
+/// Порт OTA асинхронный, а подтверждение образа — до исполнителя, чтобы
+/// отработать раньше всего остального. Над внутренней флешью future готов с
+/// первого `poll` (мьютексы свободны, драйвер блокирующий), так что цикл —
+/// страховка, а не ожидание. `Waker::noop()`: будить некого, крутимся сами.
+// ponytail: busy-poll; для внешней флеши с DMA — перенести вызов в задачу.
+fn ready_now<F: core::future::Future>(future: F) -> F::Output {
+    let mut future = core::pin::pin!(future);
+    let mut cx = core::task::Context::from_waker(core::task::Waker::noop());
+    loop {
+        if let core::task::Poll::Ready(out) = future.as_mut().poll(&mut cx) {
+            return out;
+        }
+    }
+}
+{%- endif %}

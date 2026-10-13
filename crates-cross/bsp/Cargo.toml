@@ -23,8 +23,8 @@ embassy-stm32 = { workspace = true, features = ["time-driver-any"] }
 ports = { workspace = true }
 {%- endif %}
 # Адаптеры поверх generic-флеша и шин: `Board::new` собирает их из периферии
-# и кладёт полями. Проверку подписи (`signed`) плата не включает: версию и
-# ключ задаёт приложение, оно же и оборачивает адаптер (crates-cross/app/src/image.rs).
+# и кладёт полями. Проверку подписи (`signed`) плата не включает: подпись
+# проверяет bootloader (crates-cross/boot), версию задаёт приложение.
 adapters = { workspace = true }
 assign-resources = { workspace = true }
 # Регистры ядра напрямую: `wfi` в ожидании сброса от сторожа (src/wdg.rs) и
@@ -42,7 +42,7 @@ static_cell = { workspace = true }
 {%- endif %}
 # Только ради `ota.rs`, которого в проектах без OTA нет вовсе — вместе с
 # `crates-cross/boot` его удаляет chip-select.rhai. Сам адаптер живёт в
-# `adapters::ota`; здесь `embassy-boot` нужен ради `from_linkerfile_blocking`
+# `adapters::ota`; здесь `embassy-boot` нужен ради `from_linkerfile`
 # (разделы из символов memory.x) и фичи `flash-erase-zero`, а
 # `embassy-embedded-hal` — ради имени типа раздела в псевдониме `Ota`.
 {%- if ota == "true" %}

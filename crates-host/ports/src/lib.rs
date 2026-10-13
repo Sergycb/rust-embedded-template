@@ -32,9 +32,9 @@
 //!
 //! Трейты объявлены безусловно, потому что Liquid в этом крейте запрещён (он
 //! компилируется и в самом репозитории шаблона): [`FirmwareUpdate`] и
-//! [`SettingsStorage`] реализованы, когда при генерации выбраны OTA и раздел
-//! настроек, [`SignedFirmwareUpdate`] — когда выбрана подпись, а [`ImageSource`]
-//! реализует проект под свой канал доставки.
+//! [`SettingsStorage`] реализованы, когда при генерации выбраны OTA и
+//! хранилище настроек, а [`ImageSource`] реализует проект под свой канал
+//! доставки.
 //!
 //! Модули названы по операции домена, которая ими пользуется, а не по трейту:
 //! ошибка операции (`DownloadError` у `domain::ota::download::receive`) лежит
@@ -51,5 +51,5 @@ pub mod ota;
 pub mod settings;
 
 pub use ota::download::{Announce, DownloadError, ImageSource, Rejection};
-pub use ota::update::{FirmwareUpdate, SignedFirmwareUpdate, UpdateError};
+pub use ota::update::{FirmwareUpdate, PendingImage, UpdateError};
 pub use settings::SettingsStorage;

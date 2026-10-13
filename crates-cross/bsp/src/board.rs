@@ -29,23 +29,15 @@ use static_cell::StaticCell;
 /// задач одного исполнителя, то есть без вытеснения. Появится второй
 /// исполнитель (прерывательный приоритет, второе ядро) — менять здесь.
 ///
-/// `RefCell` внутри нужен блокирующему `Mutex` embassy (`embassy-boot` и
-/// `BlockingPartition` принимают только его), поэтому ячейка спрятана в
-/// newtype: наружу тип торчит лишь как параметр [`adapters::flash::Shared`].
+/// `RefCell` внутри нужен блокирующему `Mutex` embassy, поэтому ячейка
+/// спрятана в newtype: наружу тип торчит лишь как параметр
+/// [`adapters::flash::Shared`].
 pub struct FlashMutex(Mutex<NoopRawMutex, RefCell<Flash<'static, Blocking>>>);
 
 impl FlashMutex {
     fn new(flash: Flash<'static, Blocking>) -> Self {
         Self(Mutex::new(RefCell::new(flash)))
     }
-
-{%- if ota == "true" %}
-
-    /// Мьютекс в том виде, в каком его ждёт `embassy-boot`.
-    pub(crate) const fn raw(&self) -> &Mutex<NoopRawMutex, RefCell<Flash<'static, Blocking>>> {
-        &self.0
-    }
-{%- endif %}
 }
 
 impl adapters::flash::FlashLock for FlashMutex {
@@ -110,8 +102,8 @@ pub struct Board {
     /// `memory.x`. {% if graph == "true" %}Уезжает в узел `OTA` графа (`fragments:` в
     /// `crates-cross/app/src/graph.rs`){% else %}Зовите узел сами из `main`:
     /// `domain::ota::run` с контекстом `domain::ota::OtaCtx`, собранным руками
-    /// из `link`, `flash` и `domain::ota::Mode::{% if signed == "true" %}signed{% else %}plain{% endif %}()`{% if signed == "true" %},
-    /// обернув `flash` подписью (`crates-cross/app/src/image.rs`){% endif %}{% endif %}.
+    /// из `link`, `flash` и `domain::ota::Mode::{% if signed == "true" %}Signed` с версией
+    /// образа (`crates-cross/app/src/image.rs`){% else %}Plain`{% endif %}{% endif %}.
     pub ota: crate::ota::Ota,
 {%- endif %}
 {%- if config == "true" %}

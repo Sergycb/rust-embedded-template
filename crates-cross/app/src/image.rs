@@ -1,15 +1,9 @@
 //! Свойства этого образа: его версия.
 //!
-//! Здесь, а не в `bsp`: это свойство прошивки, а не платы. Плата отдаёт
-//! адаптер разделов (`board.ota.flash`), а compose-site (`graph.rs`)
-//! оборачивает его в [`Signed`] этой версией — защита от отката. Подпись
-//! приложение не проверяет: ключ зашит в bootloader, и проверяет он
+//! Здесь, а не в `bsp`: это свойство прошивки, а не платы. Compose-site
+//! (`graph.rs`) отдаёт её узлу OTA режимом `Mode::Signed` — защита от отката.
+//! Подпись приложение не проверяет: ключ зашит в bootloader, и проверяет он
 //! (`crates-cross/boot`, `adapters::ota::screen_update`).
-
-use bsp::ota::{Partition, StatePartition};
-
-/// Адаптер проекта с подписью — тип слота узла OTA в графе.
-pub type Signed = adapters::ota::Signed<Partition, StatePartition>;
 
 /// Версия этого образа — `version` из Cargo.toml, свёрнутая
 /// `domain::ota::version::pack` в четыре байта.

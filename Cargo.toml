@@ -112,7 +112,7 @@ critical-section = { version = "1.2.0" }
 # Адаптеры OTA и настроек generic по флешу и потому живут в корневом workspace:
 # здесь те же версии, что в crates-cross/Cargo.toml (иначе в прошивке оказалось
 # бы две копии крейта). `embassy-boot` — без `-stm32`: сам он от чипа не зависит,
-# а `from_linkerfile_blocking` зовёт только `bsp`.
+# а `from_linkerfile` зовёт только `bsp`.
 embassy-boot           = { version = "0.7.0" }
 # Мьютекс флеша адаптеров. Версия та же, что в `crates-cross/Cargo.toml` и у `supervisor`, — иначе в
 # прошивке оказалось бы две несовместимые копии крейта.

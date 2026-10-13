@@ -13,10 +13,8 @@
 //! применение → отчёт → снова заголовок; отказ канала — выходное состояние.
 //!
 //! Применение различается по Cargo-варианту (`signed`), а Liquid в `domain`
-//! запрещён, поэтому режим — данные входа узла: `Mode::plain` или
-//! `Mode::signed`, и выбирает его `crates-cross/app/src/graph.rs`. Обе
-//! функции режима лежат в любом проекте; во flash попадает только выбранная —
-//! generic без вызова не мономорфизируется.
+//! запрещён, поэтому режим — данные входа узла: [`Mode::Plain`](crate::ota::Mode::Plain) или
+//! [`Mode::Signed`](crate::ota::Mode::Signed), и выбирает его `crates-cross/app/src/graph.rs`.
 //!
 //! Что узел делает с исходом, он не решает:
 //! [`ImageSource::finish`](ports::ImageSource::finish) получает `Ok(())` или
@@ -29,7 +27,8 @@
 pub mod download;
 
 /// Применение подписанного обновления: порядок проверок, в котором каждый
-/// отказ различим. Функция над портом `SignedFirmwareUpdate` — см. модуль.
+/// отказ различим, и запись подписи для bootloader'а. Функция над портом
+/// `FirmwareUpdate` — см. модуль.
 pub mod update;
 
 /// Версия прошивки в 32 битах и правило приёма обновления (защита от
@@ -45,10 +44,7 @@ use core::fmt::Debug;
 
 use defmt_or_log::{Debug2Format, info, warn};
 use embassy_time::Duration;
-use ports::{
-    Announce, DownloadError, FirmwareUpdate, ImageSource, Rejection, SignedFirmwareUpdate,
-    UpdateError,
-};
+use ports::{Announce, DownloadError, FirmwareUpdate, ImageSource, Rejection, UpdateError};
 use supervisor::policy::{BackoffPolicy, JitterPolicy};
 use supervisor::runtime::TaskExit;
 
@@ -71,7 +67,7 @@ pub const BACKOFF: BackoffPolicy = BackoffPolicy {
 /// ```ignore
 /// fragments: [::domain::OTA_FRAG<bsp::ota::Link, bsp::ota::Updater> as OTA
 ///                 = ::domain::ota::OtaWiring { link: board.ota.link, flash: board.ota.flash,
-///                                           mode: ::domain::ota::Mode::plain() }];
+///                                           mode: ::domain::ota::Mode::Plain }];
 /// ```
 ///
 /// Тип объявлен здесь, а не назван графом, по правилу фрагментов
@@ -84,43 +80,21 @@ pub struct OtaWiring<S, F> {
     pub link: S,
     /// Адаптер обновления — реализация `FirmwareUpdate` поверх разделов флеша.
     pub flash: F,
-    /// Режим применения: `Mode::plain` или `Mode::signed`.
-    pub mode: Mode<F>,
+    /// Режим применения: [`Mode::Plain`] или [`Mode::Signed`].
+    pub mode: Mode,
 }
 
 /// Чем режимы отличаются: проверка заголовка до стирания и применение.
 ///
-/// Указатели на функции, а не трейт: две пары по нескольку строк не стоят
-/// публичной абстракции, а автомат при этом один — и тестируется один.
-#[derive(Debug)]
-pub struct Mode<F> {
-    /// Проверка заголовка ДО стирания раздела.
-    check: fn(&Announce) -> Result<(), Rejection>,
-    /// Применение принятого образа длиной `len`.
-    apply: fn(&mut F, &Announce, u32) -> Result<(), Rejection>,
-}
-
-impl<F> Mode<F>
-where
-    F: FirmwareUpdate,
-    F::Error: Debug,
-{
-    /// Без проверки подписи: принятый образ применяется
+/// Данные, а не трейт и не указатели на функции: применение асинхронное (порт
+/// может стоять на внешней флеши), а указатель на `async fn` не сохранить; и
+/// обоим режимам хватает одного порта [`FirmwareUpdate`] — запись о подписи
+/// для bootloader'а это обычная запись в раздел.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    /// Без подписи: принятый образ применяется
     /// [`FirmwareUpdate::mark_updated`].
-    #[must_use]
-    pub fn plain() -> Self {
-        Self {
-            check: plain_check,
-            apply: plain_apply,
-        }
-    }
-}
-
-impl<F> Mode<F>
-where
-    F: SignedFirmwareUpdate,
-    F::Error: Debug,
-{
+    Plain,
     /// С подписью: принятый образ применяется
     /// [`apply_signed`](crate::ota::update::apply_signed) — длина, занятость,
     /// версия, в этом порядке, и запись подписи для bootloader'а, который её и
@@ -129,11 +103,48 @@ where
     /// Отличие до приёма одно: заголовок без подписи отвергается ДО стирания
     /// раздела — применить такой образ всё равно нечем, а стирание уничтожило
     /// бы образ, в который устройство откатывается.
-    #[must_use]
-    pub fn signed() -> Self {
-        Self {
-            check: signed_check,
-            apply: signed_apply,
+    Signed {
+        /// Версия этой прошивки (`FW_VERSION` приложения) — защита от отката.
+        running_version: u32,
+    },
+}
+
+impl Mode {
+    /// Проверка заголовка ДО стирания раздела.
+    fn check(self, announce: &Announce) -> Result<(), Rejection> {
+        match self {
+            Self::Plain => Ok(()),
+            Self::Signed { .. } if announce.signature.is_some() => Ok(()),
+            Self::Signed { .. } => Err(Rejection::Signature),
+        }
+    }
+
+    /// Применение принятого образа длиной `len`.
+    async fn apply<F>(self, flash: &mut F, announce: &Announce, len: u32) -> Result<(), Rejection>
+    where
+        F: FirmwareUpdate,
+        F::Error: Debug,
+    {
+        match self {
+            // Без подписи применение — просьба об обмене разделов; проверок у
+            // неё нет намеренно (см. `FirmwareUpdate::mark_updated`).
+            Self::Plain => flash.mark_updated().await.map_err(|err| {
+                warn!("ota: пометить обмен не удалось: {:?}", Debug2Format(&err));
+                Rejection::Device
+            }),
+            Self::Signed { running_version } => {
+                // `check` уже отказал бы без подписи; ветка `None` здесь —
+                // чтобы не паниковать, а не потому что она достижима.
+                let Some(signature) = announce.signature.as_ref() else {
+                    return Err(Rejection::Signature);
+                };
+                update::apply_signed(flash, running_version, signature, len)
+                    .await
+                    .map_err(|err| {
+                        warn!("ota: применение отвергнуто: {:?}", Debug2Format(&err));
+                        update_rejection(&err)
+                    })
+            }
         }
     }
 }
@@ -207,12 +218,12 @@ where
     }
 
     /// Проверки до стирания: занятость, затем режим (подпись).
-    fn screen(&mut self, _: Waiting, announce: Announce) -> edges::Screen {
+    async fn screen(&mut self, _: Waiting, announce: Announce) -> edges::Screen {
         info!("ota: заголовок: {} байт", announce.len);
         // Занятость — до всего: адаптер и так откажет в `prepare`, но тогда
         // отправитель услышал бы `Device` вместо «сначала перезагрузи».
-        let outcome = match self.flash.is_busy() {
-            Ok(false) => (self.mode.check)(&announce),
+        let outcome = match self.flash.is_busy().await {
+            Ok(false) => self.mode.check(&announce),
             Ok(true) => Err(Rejection::Busy),
             Err(err) => {
                 warn!("ota: флеш не ответил о занятости: {:?}", Debug2Format(&err));
@@ -253,9 +264,9 @@ where
     }
 
     /// Применяет принятый образ через режим (plain или signed).
-    fn apply(&mut self, s: &Received) -> Verdict {
+    async fn apply(&mut self, s: &Received) -> Verdict {
         Verdict {
-            outcome: (self.mode.apply)(self.flash, &s.announce, s.len),
+            outcome: self.mode.apply(self.flash, &s.announce, s.len).await,
         }
     }
 
@@ -282,55 +293,6 @@ where
             result: TaskExit::Failed,
         }
     }
-}
-
-/// Без подписи заголовок проверять нечего — длину сверит `receive`.
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "сигнатуру задаёт указатель на функцию `Mode::check`"
-)]
-fn plain_check(_: &Announce) -> Result<(), Rejection> {
-    Ok(())
-}
-
-/// Без подписи применение — просьба об обмене разделов; проверок у неё нет
-/// намеренно (см. [`FirmwareUpdate::mark_updated`]).
-fn plain_apply<F>(flash: &mut F, _: &Announce, _: u32) -> Result<(), Rejection>
-where
-    F: FirmwareUpdate,
-    F::Error: Debug,
-{
-    flash.mark_updated().map_err(|err| {
-        warn!("ota: пометить обмен не удалось: {:?}", Debug2Format(&err));
-        Rejection::Device
-    })
-}
-
-/// С подписью заголовок обязан её нести — иначе отказ до стирания.
-fn signed_check(announce: &Announce) -> Result<(), Rejection> {
-    if announce.signature.is_some() {
-        Ok(())
-    } else {
-        Err(Rejection::Signature)
-    }
-}
-
-/// С подписью применение — [`apply_signed`](crate::ota::update::apply_signed)
-/// с подписью из заголовка.
-fn signed_apply<F>(flash: &mut F, announce: &Announce, len: u32) -> Result<(), Rejection>
-where
-    F: SignedFirmwareUpdate,
-    F::Error: Debug,
-{
-    // `signed_check` уже отказал бы без подписи; ветка `None` здесь — чтобы
-    // не паниковать, а не потому что она достижима.
-    let Some(signature) = announce.signature.as_ref() else {
-        return Err(Rejection::Signature);
-    };
-    update::apply_signed(flash, signature, len).map_err(|err| {
-        warn!("ota: применение отвергнуто: {:?}", Debug2Format(&err));
-        update_rejection(&err)
-    })
 }
 
 /// Код отказа для отправителя; `Err` — отказал сам канал, и сообщать некому.
@@ -370,8 +332,8 @@ fn update_rejection<E>(err: &UpdateError<E>) -> Rejection {
 // `fragments: [::domain::OTA_FRAG<…> as OTA = ::domain::ota::OtaWiring { link: …, flash: …, mode: … }]`,
 // а `spawn_all` связывает её первой строкой пролога, и инициализаторы слотов
 // ниже читают её поля. Так фрагмент не видит `Board` вовсе — только то, что
-// ему дали. `MODE` — обычный слот, не `local`: указатели на функции `Send`
-// при любом `F`.
+// ему дали. `MODE` — обычный слот, не `local`: перечисление из данных
+// `Send` всегда.
 //
 // `ctx:` — контекст [`OtaCtx`] эмитит фрагмент здесь, в `domain`; автомат
 // стоит на нём (см. `domain::heartbeat`).
@@ -411,7 +373,7 @@ supervisor::supervisor_fragment! {
         resources: [
             LINK: local S = inputs.link,
             FLASH: local F = inputs.flash,
-            MODE: $crate::ota::Mode<F> = inputs.mode
+            MODE: $crate::ota::Mode = inputs.mode
         ],
         ctx: $crate::ota::OtaCtx,
         task: $crate::ota::run;
@@ -429,7 +391,7 @@ mod tests {
     /// Гоняет узел, пока не кончится канал: после последнего заголовка `begin`
     /// у `FakeLink` отвечает отказом, так что прогон всегда кончается `Failed`
     /// — раньше, если канал отказал посреди цикла.
-    async fn serve(link: &mut FakeLink, flash: &mut FakeFlash, mut mode: Mode<FakeFlash>) {
+    async fn serve(link: &mut FakeLink, flash: &mut FakeFlash, mut mode: Mode) {
         let ctx = OtaCtx {
             link,
             flash,
@@ -439,8 +401,8 @@ mod tests {
         assert_eq!(run(ctx).await, TaskExit::Failed);
     }
 
-    fn plain() -> Mode<FakeFlash> {
-        Mode::plain()
+    fn plain() -> Mode {
+        Mode::Plain
     }
 
     #[expect(clippy::cast_possible_truncation, reason = "размеры в тестах малы")]
@@ -574,8 +536,11 @@ mod tests {
         assert_eq!(link.finished, vec![Ok(()), Err(Rejection::Transfer)]);
     }
 
-    fn signed() -> Mode<FakeFlash> {
-        Mode::signed()
+    /// С подписью; версия «этой прошивки» — 1.2.3.
+    fn signed() -> Mode {
+        Mode::Signed {
+            running_version: pack(1, 2, 3),
+        }
     }
 
     #[expect(clippy::cast_possible_truncation, reason = "размеры в тестах малы")]
@@ -594,7 +559,7 @@ mod tests {
     }
 
     /// Счастливый путь с подписью: подпись из заголовка и длина доехали до
-    /// адаптера записью для bootloader'а, голый `mark_updated` не звался.
+    /// адаптера записью для bootloader'а, и только после неё помечен обмен.
     #[tokio::test]
     async fn applies_a_signed_image_with_the_signature_from_the_announce() {
         let image = versioned_image(64, pack(1, 2, 4));
@@ -605,7 +570,7 @@ mod tests {
 
         assert_eq!(&flash.memory[..64], &image[..]);
         assert_eq!(flash.recorded, vec![(SIGNATURE, 64)]);
-        assert_eq!(flash.updated, 0);
+        assert_eq!(flash.updated, 1);
         assert_eq!(link.finished, vec![Ok(())]);
     }
 

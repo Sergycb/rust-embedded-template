@@ -158,8 +158,8 @@ read`: руками пришлось бы сначала найти адрес �
   `ImageSource::finish` в `bsp`; отказы до стирания обязаны оставаться
   такими: `Busy` и отсутствие подписи — до `receive`, длина — внутри него,
   до `prepare` — `docs/ota.md`.
-- `NoopRawMutex` у `bsp::FlashMutex`, у мьютекса раздела `STATE`
-  (`bsp::ota::STATE_FLASH`) и `local` на слотах узла OTA
+- `NoopRawMutex` у `bsp::FlashMutex`, у мьютексов разделов `DFU` и `STATE`
+  (`bsp::ota::DFU_FLASH`, `bsp::ota::STATE_FLASH`) и `local` на слотах узла OTA
   (`domain::ota`) — одно допущение «один исполнитель», менять вместе —
   `docs/flash.md`, `docs/architecture.md`.
 - `BOOTLOADER_STATE` строится над `adapters::flash::Paged` со страницей своего

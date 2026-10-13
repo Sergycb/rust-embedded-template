@@ -4,11 +4,14 @@
 //! линкерных символов (`crates-cross/bsp/src/ota.rs`), host-тест — из памяти.
 //!
 //! Что здесь есть: подготовка раздела под образ, запись и чтение кусков,
-//! состояние bootloader'а, подтверждение образа, пометка обмена и — под фичей
-//! `signed` — запись подписи для bootloader'а и сама её проверка, которую
-//! зовёт bootloader (`screen_update`). Чего нет: ни порядка проверок при применении
-//! (`domain::ota::update`), ни буферизации до слова (`domain::ota::download`) —
-//! это логика, а здесь только доступ к разделам.
+//! состояние bootloader'а, подтверждение образа, пометка обмена — это
+//! [`Updater`](crate::ota::Updater), реализация порта `ports::FirmwareUpdate` для приложения, над
+//! **асинхронными** разделами: за ними может стоять и внутренний флеш, и
+//! внешняя микросхема на SPI. И — под фичей `signed` — проверка подписи
+//! нового образа, которую зовёт bootloader (`screen_update`, над
+//! блокирующими разделами: bootloader без исполнителя). Чего нет: ни порядка
+//! проверок при применении (`domain::ota::update`), ни буферизации до слова
+//! (`domain::ota::download`) — это логика, а здесь только доступ к разделам.
 //!
 //! # Про подтверждение: без него обновление живёт один запуск
 //!
@@ -21,11 +24,14 @@
 //! работоспособность). Пока образ не подтверждён, отказывают и `prepare`, и
 //! `write`: в `DFU` тогда лежит образ, куда откатываться, и затирать его нельзя.
 
-use embassy_boot::{
-    AlignedBuffer, BlockingFirmwareState, BlockingFirmwareUpdater, FirmwareUpdaterConfig, State,
-};
-use embedded_storage::nor_flash::{NorFlash, NorFlashErrorKind};
+#[cfg(feature = "signed")]
+use embassy_boot::BlockingFirmwareState;
+use embassy_boot::{AlignedBuffer, FirmwareState, FirmwareUpdater, FirmwareUpdaterConfig, State};
+use embedded_storage::nor_flash::NorFlashErrorKind;
+use embedded_storage_async::nor_flash::NorFlash;
 use ports::FirmwareUpdate;
+#[cfg(feature = "signed")]
+use ports::PendingImage;
 // Тип возвращается портом, поэтому называть его должно быть чем — иначе
 // пользователю пришлось бы объявлять прямую зависимость на `embassy-boot`
 // только ради имени в сигнатуре своей функции.
@@ -50,6 +56,9 @@ pub struct Updater<DFU: NorFlash, STATE: NorFlash> {
     /// (`assert_partitions` в embassy-boot), а обмен копирует ровно `ACTIVE`;
     /// образ между ними прошёл бы все проверки и приехал обрезанным.
     capacity: u32,
+    /// Проект с подписью: `prepare` стирает и запасную страницу за `capacity`
+    /// — туда ляжет запись для bootloader'а (`ports::PendingImage`).
+    signed: bool,
 }
 
 impl<DFU: NorFlash, STATE: NorFlash> core::fmt::Debug for Updater<DFU, STATE> {
@@ -59,8 +68,8 @@ impl<DFU: NorFlash, STATE: NorFlash> core::fmt::Debug for Updater<DFU, STATE> {
 }
 
 impl<DFU: NorFlash, STATE: NorFlash> Updater<DFU, STATE> {
-    /// `capacity` — размер раздела, в который образ будет исполняться
-    /// (`ACTIVE`), см. поле.
+    /// Проект без подписи. `capacity` — размер раздела, в который образ будет
+    /// исполняться (`ACTIVE`), см. поле.
     pub fn new(dfu: DFU, state: STATE, capacity: u32) -> Self {
         const {
             assert!(
@@ -73,6 +82,25 @@ impl<DFU: NorFlash, STATE: NorFlash> Updater<DFU, STATE> {
             state,
             aligned: AlignedBuffer([0; MAX_WRITE_SIZE]),
             capacity,
+            signed: false,
+        }
+    }
+
+    /// Проект с подписью: то же, но `prepare` стирает и запасную страницу
+    /// `DFU` за `capacity`. Туда `domain::ota::update::apply_signed` кладёт
+    /// запись для bootloader'а; обычная подготовка её не трогает, а оставь её
+    /// нестёртой — запись легла бы поверх остатков прошлого обмена. Цена —
+    /// ещё одно стирание страницы на обновление (на F4 — сектор 128 KiB).
+    pub fn signed(dfu: DFU, state: STATE, capacity: u32) -> Self {
+        const {
+            assert!(
+                ports::PendingImage::LEN.is_multiple_of(DFU::WRITE_SIZE),
+                "запись для bootloader'а не кратна слову записи DFU"
+            );
+        }
+        Self {
+            signed: true,
+            ..Self::new(dfu, state, capacity)
         }
     }
 
@@ -93,25 +121,21 @@ impl<DFU: NorFlash, STATE: NorFlash> Updater<DFU, STATE> {
     /// Апдейтер держит ссылки и на разделы, и на буфер, поэтому хранить его
     /// полем нельзя — структура вышла бы самоссылающейся. Собирается он
     /// дёшево (две ссылки и срез), так что каждая операция делает себе свой.
-    fn updater(&mut self) -> BlockingFirmwareUpdater<'_, &mut DFU, &mut STATE> {
+    fn updater(&mut self) -> FirmwareUpdater<'_, &mut DFU, &mut STATE> {
         let config = FirmwareUpdaterConfig {
             dfu: &mut self.dfu,
             state: &mut self.state,
         };
-        BlockingFirmwareUpdater::new(config, &mut self.aligned.0[..STATE::WRITE_SIZE])
+        FirmwareUpdater::new(config, &mut self.aligned.0[..STATE::WRITE_SIZE])
     }
 
-    /// `embassy-boot` прячет `BlockingFirmwareUpdater::mark_updated` под
-    /// `#[cfg(not(feature = "_verify"))]` — с включённой проверкой подписи он
-    /// не хочет давать пометить обмен без проверки. Порт же объявляет
-    /// `mark_updated` безусловно (путь без подписи, проверок там нет
-    /// намеренно — см. `ports`), и `Signed` метит обмен им же после записи
-    /// подписи; поэтому пометка идёт через `BlockingFirmwareState`, который под
-    /// фичей не спрятан и делает ровно то же (`set_magic(SWAP_MAGIC)`). Защита
-    /// от неподписанного образа — bootloader (`screen_update`): без записи о
-    /// подписи он обмен не пропустит.
-    fn state(&mut self) -> BlockingFirmwareState<'_, &mut STATE> {
-        BlockingFirmwareState::new(&mut self.state, &mut self.aligned.0[..STATE::WRITE_SIZE])
+    /// Пометка обмена — через `FirmwareState`, а не апдейтер: тот прячет
+    /// `mark_updated` под фичей `_verify` у `embassy-boot`, а состояние — нет,
+    /// и делает ровно то же (`set_magic(SWAP_MAGIC)`). Защита от
+    /// неподписанного образа в проекте с подписью — bootloader
+    /// (`screen_update`): без записи о подписи он обмен не пропустит.
+    fn state(&mut self) -> FirmwareState<'_, &mut STATE> {
+        FirmwareState::new(&mut self.state, &mut self.aligned.0[..STATE::WRITE_SIZE])
     }
 
     /// Занят ли раздел `DFU` тем, что терять нельзя — см.
@@ -121,9 +145,9 @@ impl<DFU: NorFlash, STATE: NorFlash> Updater<DFU, STATE> {
     /// намеренно: README советует переносить `mark_booted()` туда, где
     /// устройство доказало работоспособность, то есть окно `Revert` в реальном
     /// проекте живёт долго, и начатая в нём передача стирала бы образ отката.
-    fn dfu_is_busy(&mut self) -> Result<bool, Error> {
+    async fn dfu_is_busy(&mut self) -> Result<bool, Error> {
         Ok(matches!(
-            self.updater().get_state()?,
+            self.updater().get_state().await?,
             State::Swap | State::Revert
         ))
     }
@@ -144,16 +168,16 @@ impl<DFU: NorFlash, STATE: NorFlash> FirmwareUpdate for Updater<DFU, STATE> {
         Ok(self.capacity)
     }
 
-    fn is_busy(&mut self) -> Result<bool, Self::Error> {
-        self.dfu_is_busy()
+    async fn is_busy(&mut self) -> Result<bool, Self::Error> {
+        self.dfu_is_busy().await
     }
 
     /// Стирает столько страниц раздела `DFU`, сколько нужно образу длиной
-    /// `len`. `prepare_update()` из `embassy-boot` здесь не годится: он
-    /// стирает раздел целиком, а это и время (стирание идёт в критической
-    /// секции, на крупных секторах — секунды), и лишний износ флеша.
-    fn prepare(&mut self, len: u32) -> Result<(), Self::Error> {
-        if self.dfu_is_busy()? {
+    /// `len` (и запасную, если проект с подписью). `prepare_update()` из
+    /// `embassy-boot` здесь не годится: он стирает раздел целиком, а это и
+    /// время (на крупных секторах — секунды), и лишний износ флеша.
+    async fn prepare(&mut self, len: u32) -> Result<(), Self::Error> {
+        if self.dfu_is_busy().await? {
             return Err(Error::BadState);
         }
         // Негодная длина — отказ ДО стирания: стерев раздел, мы уничтожаем
@@ -168,9 +192,13 @@ impl<DFU: NorFlash, STATE: NorFlash> FirmwareUpdate for Updater<DFU, STATE> {
         // За границу раздела округление не уйдёт: `DFU` больше `ACTIVE`
         // (= `capacity`) минимум на страницу; `saturating_mul` — страховка на
         // случай, если проверку однажды ослабят.
-        let page = u32::try_from(DFU::ERASE_SIZE).expect("ERASE_SIZE не должен превышать u32::MAX");
+        let page = self.erase_size();
         let end = len.div_ceil(page).saturating_mul(page);
-        self.dfu.erase(0, end)?;
+        self.dfu.erase(0, end).await?;
+        if self.signed {
+            let spare = self.capacity;
+            self.dfu.erase(spare, spare + page).await?;
+        }
         Ok(())
     }
 
@@ -180,217 +208,29 @@ impl<DFU: NorFlash, STATE: NorFlash> FirmwareUpdate for Updater<DFU, STATE> {
     /// создаётся заново на каждый вызов. У свежего «в прошлый раз» пусто, и
     /// каждая запись стирала бы сектор, в который пишет (проверено на живой
     /// плате: две записи в один сектор, первая читалась как `0xFF`).
-    fn write(&mut self, offset: u32, data: &[u8]) -> Result<(), Self::Error> {
+    async fn write(&mut self, offset: u32, data: &[u8]) -> Result<(), Self::Error> {
         // Запрет на запись, пока раздел занят, — та самая проверка, с которой
         // начинался `write_firmware` (`verify_booted`), только строже на одно
         // состояние. Прямая запись её не делает, а без неё приложение затёрло
         // бы образ, в который bootloader собирается откатиться.
-        if self.dfu_is_busy()? {
+        if self.dfu_is_busy().await? {
             return Err(Error::BadState);
         }
-        self.dfu.write(offset, data)?;
+        self.dfu.write(offset, data).await?;
         Ok(())
     }
 
-    fn read(&mut self, offset: u32, buf: &mut [u8]) -> Result<(), Self::Error> {
-        self.updater().read_dfu(offset, buf)
+    async fn read(&mut self, offset: u32, buf: &mut [u8]) -> Result<(), Self::Error> {
+        self.updater().read_dfu(offset, buf).await
     }
 
-    fn mark_booted(&mut self) -> Result<(), Self::Error> {
-        self.updater().mark_booted()
+    async fn mark_booted(&mut self) -> Result<(), Self::Error> {
+        self.updater().mark_booted().await
     }
 
-    fn mark_updated(&mut self) -> Result<(), Self::Error> {
-        self.state().mark_updated()
+    async fn mark_updated(&mut self) -> Result<(), Self::Error> {
+        self.state().mark_updated().await
     }
-}
-
-/// [`Updater`] проекта с подписью: знает версию текущей прошивки (защита от
-/// отката) и оставляет bootloader'у запись о подписи в запасной странице
-/// `DFU` — см. [`PendingImage`]. Саму подпись проверяет bootloader
-/// ([`screen_update`]), ключа здесь нет.
-#[cfg(feature = "signed")]
-pub struct Signed<DFU: NorFlash, STATE: NorFlash> {
-    inner: Updater<DFU, STATE>,
-    version: u32,
-}
-
-#[cfg(feature = "signed")]
-impl<DFU: NorFlash, STATE: NorFlash> core::fmt::Debug for Signed<DFU, STATE> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("Signed").finish_non_exhaustive()
-    }
-}
-
-#[cfg(feature = "signed")]
-impl<DFU: NorFlash, STATE: NorFlash> Signed<DFU, STATE> {
-    /// `running_version` — упакованная версия этого образа
-    /// (`domain::ota::version::pack`).
-    pub fn new(inner: Updater<DFU, STATE>, running_version: u32) -> Self {
-        Self {
-            inner,
-            version: running_version,
-        }
-    }
-
-    /// См. [`Updater::erase_size`].
-    pub fn erase_size(&self) -> u32 {
-        self.inner.erase_size()
-    }
-}
-
-#[cfg(feature = "signed")]
-impl<DFU: NorFlash, STATE: NorFlash> FirmwareUpdate for Signed<DFU, STATE> {
-    type Error = Error;
-
-    fn write_granularity(&mut self) -> u32 {
-        self.inner.write_granularity()
-    }
-    fn capacity(&mut self) -> Result<u32, Self::Error> {
-        self.inner.capacity()
-    }
-    fn is_busy(&mut self) -> Result<bool, Self::Error> {
-        self.inner.is_busy()
-    }
-    /// Сверх страниц под образ стирает и запасную страницу `DFU` — туда ляжет
-    /// запись о подписи ([`PendingImage`]). Она стоит за пределами образа
-    /// (смещение `capacity`), и обычная подготовка её не трогает; оставь её
-    /// нестёртой — запись легла бы поверх остатков прошлого обмена. Время:
-    /// ещё одно стирание страницы, на F4 — сектор 128 KiB.
-    fn prepare(&mut self, len: u32) -> Result<(), Self::Error> {
-        self.inner.prepare(len)?;
-        let page = self.inner.erase_size();
-        let spare = self.inner.capacity;
-        self.inner.dfu.erase(spare, spare + page)?;
-        Ok(())
-    }
-    fn write(&mut self, offset: u32, data: &[u8]) -> Result<(), Self::Error> {
-        self.inner.write(offset, data)
-    }
-    fn read(&mut self, offset: u32, buf: &mut [u8]) -> Result<(), Self::Error> {
-        self.inner.read(offset, buf)
-    }
-    fn mark_booted(&mut self) -> Result<(), Self::Error> {
-        self.inner.mark_booted()
-    }
-    /// В проекте с подписью единственный путь к обмену разделов —
-    /// `domain::ota::update::apply_signed` (проверка длины, занятости, версии и
-    /// запись подписи для bootloader'а). Порт объявляет `mark_updated`
-    /// безусловно, поэтому метод остаётся, но отвечает `BadState` — тот же
-    /// отказ, которым `embassy-boot` отвечает на попытку обмена в негодном
-    /// состоянии. Обмен без записи bootloader всё равно отверг бы, но узнать об
-    /// этом лучше сразу, а не после перезагрузки.
-    fn mark_updated(&mut self) -> Result<(), Self::Error> {
-        Err(Error::BadState)
-    }
-}
-
-#[cfg(feature = "signed")]
-impl<DFU: NorFlash, STATE: NorFlash> ports::SignedFirmwareUpdate for Signed<DFU, STATE> {
-    fn running_version(&self) -> u32 {
-        self.version
-    }
-
-    /// Запись — в запасную страницу `DFU`, которую стёр `prepare`; пометка
-    /// обмена — после неё: bootloader, увидев запрос, обязан найти и запись.
-    /// Занятость раздела проверена логикой раньше, но и здесь она проверяется:
-    /// запись в `DFU` занятого раздела испортила бы образ отката.
-    fn record_and_mark_updated(
-        &mut self,
-        signature: &[u8; 64],
-        len: u32,
-    ) -> Result<(), Self::Error> {
-        if self.inner.dfu_is_busy()? {
-            return Err(Error::BadState);
-        }
-        let capacity = self.inner.capacity;
-        write_pending(
-            &mut self.inner.dfu,
-            capacity,
-            PendingImage {
-                len,
-                signature: *signature,
-            },
-        )?;
-        self.inner.state().mark_updated()
-    }
-}
-
-/// Что приложение оставляет bootloader'у о принятом образе: длину и подпись.
-///
-/// Лежит в запасной странице `DFU` — по смещению `capacity` (размер `ACTIVE`).
-/// `DFU` по построению на страницу больше `ACTIVE` (`assert_partitions` в
-/// `embassy-boot`), и эта страница нужна только самому обмену как черновик:
-/// до него она свободна, а первый же шаг обмена (`ACTIVE[last]` →
-/// `DFU[last + 1]`) её затирает — к этому моменту bootloader запись уже
-/// проверил. Своё место в разделе, а не отдельная запись: подпись должна
-/// пережить перезагрузку между приёмом и проверкой, а `STATE` `embassy-boot`
-/// стирает сам.
-#[cfg(feature = "signed")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PendingImage {
-    /// Длина образа в байтах — сколько начальных байт `DFU` покрывает подпись.
-    pub len: u32,
-    /// Подпись ed25519 над SHA-512 образа — так её ставит `cargo xtask build`.
-    pub signature: [u8; 64],
-}
-
-/// Магия записи — отличает её от стёртой страницы и от остатков чужих данных.
-#[cfg(feature = "signed")]
-const PENDING_MAGIC: [u8; 8] = *b"OTA-SIG1";
-
-/// Размер записи во флеше: магия (8), длина (4), резерв (4), подпись (64) —
-/// 80 байт, дополненные до кратного [`MAX_WRITE_SIZE`]: запись идёт одним
-/// куском, и на любом STM32 она обязана быть кратна слову.
-#[cfg(feature = "signed")]
-pub const PENDING_RECORD_LEN: usize = 96;
-
-#[cfg(feature = "signed")]
-impl PendingImage {
-    fn to_bytes(self) -> [u8; PENDING_RECORD_LEN] {
-        let mut out = [0xFF; PENDING_RECORD_LEN];
-        out[..8].copy_from_slice(&PENDING_MAGIC);
-        out[8..12].copy_from_slice(&self.len.to_le_bytes());
-        out[16..80].copy_from_slice(&self.signature);
-        out
-    }
-
-    fn from_bytes(bytes: &[u8; PENDING_RECORD_LEN]) -> Option<Self> {
-        if bytes[..8] != PENDING_MAGIC {
-            return None;
-        }
-        let mut len = [0; 4];
-        len.copy_from_slice(&bytes[8..12]);
-        let mut signature = [0; 64];
-        signature.copy_from_slice(&bytes[16..80]);
-        Some(Self {
-            len: u32::from_le_bytes(len),
-            signature,
-        })
-    }
-}
-
-/// Пишет запись о принятом образе в запасную страницу `DFU` (смещение
-/// `capacity`). Страница к этому моменту должна быть стёрта — это делает
-/// `prepare` проекта с подписью.
-///
-/// # Errors
-///
-/// Ошибка флеша, в том числе запись в нестёртую память.
-#[cfg(feature = "signed")]
-pub fn write_pending<DFU: NorFlash>(
-    dfu: &mut DFU,
-    capacity: u32,
-    image: PendingImage,
-) -> Result<(), Error> {
-    const {
-        assert!(
-            PENDING_RECORD_LEN.is_multiple_of(DFU::WRITE_SIZE),
-            "запись о принятом образе не кратна слову записи"
-        );
-    }
-    dfu.write(capacity, &image.to_bytes())?;
-    Ok(())
 }
 
 /// Что решил bootloader об обновлении — см. [`screen_update`].
@@ -413,7 +253,7 @@ pub enum Screening {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Rejection {
     /// Обмен запрошен, а записи о принятом образе нет — образ положили мимо
-    /// `write_pending`, то есть без подписи.
+    /// `domain::ota::update::apply_signed`, то есть без подписи.
     NoRecord,
     /// Длина в записи — ноль или больше `ACTIVE`.
     Length,
@@ -454,12 +294,16 @@ pub enum Rejection {
 /// Если `STATE::WRITE_SIZE` шире [`MAX_WRITE_SIZE`] или не помещается в
 /// `u32` — на STM32 слово записи не больше 32 байт, так что на практике нет.
 #[cfg(feature = "signed")]
-pub fn screen_update<DFU: NorFlash, STATE: NorFlash>(
+pub fn screen_update<DFU, STATE>(
     dfu: &mut DFU,
     state: &mut STATE,
     capacity: u32,
     public_key: &[u8; 32],
-) -> Result<Screening, Error> {
+) -> Result<Screening, Error>
+where
+    DFU: embedded_storage::nor_flash::NorFlash,
+    STATE: embedded_storage::nor_flash::NorFlash,
+{
     let mut aligned = AlignedBuffer([0; MAX_WRITE_SIZE]);
     let word = &mut aligned.0[..STATE::WRITE_SIZE];
     if BlockingFirmwareState::new(&mut *state, &mut *word).get_state()? != State::Swap {
@@ -485,14 +329,14 @@ pub fn screen_update<DFU: NorFlash, STATE: NorFlash>(
 
 /// Сама проверка записи и подписи — без решения, что делать с отказом.
 #[cfg(feature = "signed")]
-fn check_pending<DFU: NorFlash>(
+fn check_pending<DFU: embedded_storage::nor_flash::NorFlash>(
     dfu: &mut DFU,
     capacity: u32,
     public_key: &[u8; 32],
 ) -> Result<Result<(), Rejection>, Error> {
     /// Сколько байт образа читается за раз на хеш.
     const CHUNK: u32 = 256;
-    let mut record = [0; PENDING_RECORD_LEN];
+    let mut record = [0; PendingImage::LEN];
     dfu.read(capacity, &mut record)?;
     let Some(pending) = PendingImage::from_bytes(&record) else {
         return Ok(Err(Rejection::NoRecord));
@@ -529,8 +373,6 @@ fn check_pending<DFU: NorFlash>(
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "signed")]
-    use super::Signed;
     use super::{Error, Updater};
     use embedded_storage::nor_flash::{ErrorType, NorFlash, NorFlashErrorKind, ReadNorFlash};
     use ports::FirmwareUpdate;
@@ -604,6 +446,42 @@ mod tests {
         }
     }
 
+    // `Updater` работает с асинхронными разделами, `screen_update` и обмен
+    // `embassy-boot` — с блокирующими: фейк умеет оба, асинхронные — поверх
+    // блокирующих (готовы с первого `poll`).
+    impl<const SIZE: usize> embedded_storage_async::nor_flash::ReadNorFlash for MemFlash<SIZE> {
+        const READ_SIZE: usize = 1;
+
+        fn read(
+            &mut self,
+            offset: u32,
+            bytes: &mut [u8],
+        ) -> impl Future<Output = Result<(), Self::Error>> {
+            core::future::ready(ReadNorFlash::read(self, offset, bytes))
+        }
+
+        fn capacity(&self) -> usize {
+            SIZE
+        }
+    }
+
+    impl<const SIZE: usize> embedded_storage_async::nor_flash::NorFlash for MemFlash<SIZE> {
+        const WRITE_SIZE: usize = 8;
+        const ERASE_SIZE: usize = 256;
+
+        fn erase(&mut self, from: u32, to: u32) -> impl Future<Output = Result<(), Self::Error>> {
+            core::future::ready(NorFlash::erase(self, from, to))
+        }
+
+        fn write(
+            &mut self,
+            offset: u32,
+            bytes: &[u8],
+        ) -> impl Future<Output = Result<(), Self::Error>> {
+            core::future::ready(NorFlash::write(self, offset, bytes))
+        }
+    }
+
     /// Четыре страницы по 256 байт, слово 8; ACTIVE (= capacity) — три
     /// страницы, как требует запас на обмен.
     type Dfu = MemFlash<1024>;
@@ -620,11 +498,11 @@ mod tests {
         Updater::new(Dfu::erased(), state, 768)
     }
 
-    #[test]
-    fn prepare_erases_only_the_pages_the_image_needs() {
+    #[tokio::test]
+    async fn prepare_erases_only_the_pages_the_image_needs() {
         let mut u = Updater::new(Dfu::filled(0x00), State::erased(), 768);
 
-        u.prepare(257).expect("стереть под образ");
+        u.prepare(257).await.expect("стереть под образ");
 
         assert!(
             u.dfu.mem[..512].iter().all(|b| *b == 0xFF),
@@ -632,16 +510,35 @@ mod tests {
         );
         assert!(
             u.dfu.mem[512..].iter().all(|b| *b == 0x00),
-            "третья не тронута"
+            "третья и запасная не тронуты"
         );
     }
 
-    #[test]
-    fn prepare_refuses_zero_and_oversized_lengths_before_erasing() {
+    /// С подписью `prepare` стирает и запасную страницу — под запись для
+    /// bootloader'а; остальное — как без подписи.
+    #[tokio::test]
+    async fn signed_prepare_also_erases_the_spare_page() {
+        let mut u = Updater::signed(Dfu::filled(0x00), State::erased(), 768);
+
+        u.prepare(257).await.expect("стереть под образ и запись");
+
+        assert!(u.dfu.mem[..512].iter().all(|b| *b == 0xFF));
+        assert!(
+            u.dfu.mem[512..768].iter().all(|b| *b == 0x00),
+            "третья не тронута"
+        );
+        assert!(
+            u.dfu.mem[768..].iter().all(|b| *b == 0xFF),
+            "запасная стёрта"
+        );
+    }
+
+    #[tokio::test]
+    async fn prepare_refuses_zero_and_oversized_lengths_before_erasing() {
         for len in [0, 769] {
             let mut u = Updater::new(Dfu::filled(0x00), State::erased(), 768);
 
-            let refused = u.prepare(len);
+            let refused = u.prepare(len).await;
 
             assert!(
                 matches!(refused, Err(Error::Flash(NorFlashErrorKind::OutOfBounds))),
@@ -654,92 +551,54 @@ mod tests {
         }
     }
 
-    #[test]
-    fn write_and_prepare_refuse_while_the_partition_holds_a_rollback_image() {
+    #[tokio::test]
+    async fn write_and_prepare_refuse_while_the_partition_holds_a_rollback_image() {
         // 0xF0 — SWAP_MAGIC, 0xC0 — REVERT_MAGIC (`embassy-boot`, lib.rs).
         for magic in [0xF0, 0xC0] {
             let mut u = with_state(magic);
 
-            assert!(u.is_busy().expect("состояние"), "{magic:#x}");
-            assert!(matches!(u.prepare(8), Err(Error::BadState)));
-            assert!(matches!(u.write(0, &[0; 8]), Err(Error::BadState)));
+            assert!(u.is_busy().await.expect("состояние"), "{magic:#x}");
+            assert!(matches!(u.prepare(8).await, Err(Error::BadState)));
+            assert!(matches!(u.write(0, &[0; 8]).await, Err(Error::BadState)));
             assert!(
-                u.read(0, &mut [0; 8]).is_ok(),
+                u.read(0, &mut [0; 8]).await.is_ok(),
                 "чтение занятого раздела разрешено"
             );
         }
     }
 
-    #[test]
-    fn a_booted_state_is_not_busy() {
+    #[tokio::test]
+    async fn a_booted_state_is_not_busy() {
         // 0xD0 — BOOT_MAGIC; стёртый раздел читается как Boot тоже.
-        assert!(!with_state(0xD0).is_busy().expect("состояние"));
-        assert!(!updater().is_busy().expect("состояние"));
+        assert!(!with_state(0xD0).is_busy().await.expect("состояние"));
+        assert!(!updater().is_busy().await.expect("состояние"));
     }
 
-    #[test]
-    fn writes_and_reads_back_after_prepare() {
+    #[tokio::test]
+    async fn writes_and_reads_back_after_prepare() {
         let mut u = updater();
-        u.prepare(16).expect("подготовка");
+        u.prepare(16).await.expect("подготовка");
 
-        u.write(0, &[0xA5; 8]).expect("первая запись");
+        u.write(0, &[0xA5; 8]).await.expect("первая запись");
         u.write(8, &[0x5A; 8])
+            .await
             .expect("вторая запись в тот же сектор");
         let mut back = [0; 16];
-        u.read(0, &mut back).expect("чтение");
+        u.read(0, &mut back).await.expect("чтение");
 
         assert_eq!(&back[..8], &[0xA5; 8]);
         assert_eq!(&back[8..], &[0x5A; 8]);
     }
 
-    #[test]
-    fn mark_updated_makes_the_partition_busy_and_mark_booted_frees_it() {
+    #[tokio::test]
+    async fn mark_updated_makes_the_partition_busy_and_mark_booted_frees_it() {
         let mut u = updater();
 
-        u.mark_updated().expect("пометить обмен");
-        assert!(u.is_busy().expect("состояние"));
+        u.mark_updated().await.expect("пометить обмен");
+        assert!(u.is_busy().await.expect("состояние"));
 
-        u.mark_booted().expect("подтвердить");
-        assert!(!u.is_busy().expect("состояние"));
-    }
-
-    /// Порт объявляет `mark_updated` безусловно, но у `Signed` он не должен
-    /// давать обменять разделы мимо записи подписи — единственный путь туда
-    /// лежит через `domain::ota::update::apply_signed`.
-    #[cfg(feature = "signed")]
-    #[test]
-    fn signed_mark_updated_always_refuses() {
-        let mut signed = Signed::new(updater(), 1);
-
-        assert!(matches!(signed.mark_updated(), Err(Error::BadState)));
-        assert!(
-            !signed.is_busy().expect("состояние"),
-            "состояние не тронуто"
-        );
-    }
-
-    /// Запись для bootloader'а ложится в запасную страницу, которую стёр
-    /// `prepare`, и после неё обмен помечен — `screen_update` найдёт её там.
-    #[cfg(feature = "signed")]
-    #[test]
-    fn signed_leaves_the_record_where_the_bootloader_looks() {
-        use ports::SignedFirmwareUpdate;
-        let mut u = updater();
-        u.dfu.mem[768..].fill(0x00); // остатки прошлого обмена в запасной странице
-        let mut signed = Signed::new(u, 1);
-
-        signed.prepare(64).expect("стереть под образ и запись");
-        signed.write(0, &[0xA5; 64]).expect("записать образ");
-        signed
-            .record_and_mark_updated(&[9; 64], 64)
-            .expect("запись и пометка");
-
-        assert!(signed.is_busy().expect("состояние"), "обмен помечен");
-        let mut record = [0; crate::ota::PENDING_RECORD_LEN];
-        signed.read(768, &mut record).expect("чтение записи");
-        assert_eq!(&record[..8], b"OTA-SIG1");
-        assert_eq!(&record[8..12], &64u32.to_le_bytes());
-        assert_eq!(&record[16..80], &[9; 64]);
+        u.mark_booted().await.expect("подтвердить");
+        assert!(!u.is_busy().await.expect("состояние"));
     }
 
     #[test]
@@ -759,8 +618,10 @@ mod tests {
             BlockingFirmwareState, BootLoader, BootLoaderConfig, State as BootState,
         };
 
+        use ports::PendingImage;
+
         use super::{Dfu, MemFlash, State};
-        use crate::ota::{PendingImage, Rejection, Screening, screen_update, write_pending};
+        use crate::ota::{Rejection, Screening, screen_update};
 
         /// `ACTIVE` — три страницы, как `capacity` у `updater()` выше.
         const CAPACITY: u32 = 768;
@@ -782,7 +643,8 @@ mod tests {
         fn pending(image: &[u8], record: PendingImage) -> (Dfu, State) {
             let mut dfu = Dfu::erased();
             dfu.mem[..image.len()].copy_from_slice(image);
-            write_pending(&mut dfu, CAPACITY, record).expect("запись о принятом образе");
+            let spare = CAPACITY as usize;
+            dfu.mem[spare..spare + PendingImage::LEN].copy_from_slice(&record.to_bytes());
             let mut state = State::erased();
             BlockingFirmwareState::new(&mut state, &mut [0; 8])
                 .mark_updated()
@@ -798,6 +660,32 @@ mod tests {
 
         fn image() -> Vec<u8> {
             (0..600u32).map(|i| (i % 251) as u8).collect()
+        }
+
+        /// Сквозной путь через порт: `Updater::signed` готовит раздел, образ
+        /// и запись ложатся туда, куда пишет `domain::ota::update::apply_signed`
+        /// (смещение `capacity`), — и bootloader находит их там же.
+        #[tokio::test]
+        async fn what_the_signed_port_writes_is_what_the_bootloader_reads() {
+            use ports::FirmwareUpdate;
+
+            let image = image();
+            let len = u32::try_from(image.len()).expect("образ короткий");
+            let mut u = super::Updater::signed(Dfu::filled(0x00), State::erased(), CAPACITY);
+            u.prepare(len).await.expect("подготовка");
+            let mut padded = image.clone();
+            padded.resize(image.len().next_multiple_of(8), 0xFF);
+            u.write(0, &padded).await.expect("образ");
+            let record = PendingImage {
+                len,
+                signature: sign(&image),
+            };
+            u.write(CAPACITY, &record.to_bytes()).await.expect("запись");
+            u.mark_updated().await.expect("запросить обмен");
+
+            let screening = screen_update(&mut u.dfu, &mut u.state, CAPACITY, &public_key());
+
+            assert_eq!(screening.expect("проверка"), Screening::Approved);
         }
 
         #[test]

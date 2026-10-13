@@ -28,17 +28,6 @@
 // `panic-probe` вместо этого делает `udf()`, то есть HardFault, и один
 // провалившийся `assert!` унёс бы с собой весь прогон.
 use defmt_rtt as _;
-{%- if signed == "true" %}
-
-/// Адаптер проекта с подписью поверх разделов платы — так его собирает
-/// приложение (`crates-cross/app/src/image.rs`), только версия своя: `0.1.0`,
-/// ниже `u32::MAX` и не ниже `0.0.0`, которые кладут в хвост образа тесты.
-fn signed(
-    board: bsp::Board,
-) -> adapters::ota::Signed<bsp::ota::Partition, bsp::ota::StatePartition> {
-    adapters::ota::Signed::new(board.ota.flash, domain::ota::version::pack(0, 1, 0))
-}
-{%- endif %}
 
 #[embedded_test::tests]
 mod tests {
@@ -150,7 +139,7 @@ mod tests {
     /// тест намеренно не зовёт — иначе следующий сброс поменял бы разделы
     /// местами прямо посреди прогона.
     #[test]
-    fn dfu_partition_accepts_a_write(mut board: Board) {
+    async fn dfu_partition_accepts_a_write(mut board: Board) {
         // Запись и чтение раздела приходят из порта домена, а не из
         // собственных методов `Ota`: приложение видит их так же.
         use ports::FirmwareUpdate;
@@ -163,16 +152,19 @@ mod tests {
             .ota
             .flash
             .prepare(u32::try_from(written.len()).expect("образ короче 4 ГиБ"))
+            .await
             .expect("раздел DFU должен стираться");
         board
             .ota
             .flash
             .write(0, &written)
+            .await
             .expect("раздел DFU должен принимать запись");
         board
             .ota
             .flash
             .read(0, &mut read)
+            .await
             .expect("раздел DFU должен читаться");
 
         assert_eq!(written, read);
@@ -191,7 +183,7 @@ mod tests {
     /// которому включается фича, так что тест сверяет две стороны одного
     /// решения: что мы сказали `embassy-boot` и что на самом деле делает чип.
     #[test]
-    fn erased_flash_reads_as_the_bootloader_expects(mut board: Board) {
+    async fn erased_flash_reads_as_the_bootloader_expects(mut board: Board) {
         use ports::FirmwareUpdate;
 
         // Пачкаем раздел перед стиранием: иначе тест зелёный и в случае, когда
@@ -202,19 +194,27 @@ mod tests {
             .ota
             .flash
             .prepare(u32::try_from(DIRTY.len()).expect("образ короче 4 ГиБ"))
+            .await
             .expect("раздел DFU должен стираться");
-        board.ota.flash.write(0, &DIRTY).expect("запись мусора");
+        board
+            .ota
+            .flash
+            .write(0, &DIRTY)
+            .await
+            .expect("запись мусора");
 
         board
             .ota
             .flash
             .prepare(8)
+            .await
             .expect("раздел DFU должен стираться");
         let mut read = [!ERASED; 8];
         board
             .ota
             .flash
             .read(0, &mut read)
+            .await
             .expect("раздел DFU должен читаться");
 
         assert_eq!(
@@ -232,7 +232,7 @@ mod tests {
     /// вызовы `prepare` в тестах укладываются в одну страницу, и «округляем
     /// вверх» там не отличить ни от «округляем вниз», ни от «стираем всё».
     #[test]
-    fn prepare_erases_only_what_the_image_needs(mut board: Board) {
+    async fn prepare_erases_only_what_the_image_needs(mut board: Board) {
         use ports::FirmwareUpdate;
 
         let page = board.ota.flash.erase_size();
@@ -257,16 +257,19 @@ mod tests {
             .ota
             .flash
             .prepare(capacity)
+            .await
             .expect("стереть весь раздел");
         board
             .ota
             .flash
             .write(page, &DIRTY)
+            .await
             .expect("метка на 2-й странице");
         board
             .ota
             .flash
             .write(page * 2, &DIRTY)
+            .await
             .expect("метка на 3-й странице");
 
         // На байт больше страницы — значит страниц нужно две.
@@ -274,6 +277,7 @@ mod tests {
             .ota
             .flash
             .prepare(page + 1)
+            .await
             .expect("стереть под образ");
 
         let mut read = [!ERASED; 32];
@@ -281,6 +285,7 @@ mod tests {
             .ota
             .flash
             .read(page, &mut read)
+            .await
             .expect("чтение 2-й страницы");
         assert_eq!(
             read, [ERASED; 32],
@@ -291,6 +296,7 @@ mod tests {
             .ota
             .flash
             .read(page * 2, &mut read)
+            .await
             .expect("чтение 3-й страницы");
         assert_eq!(
             read, DIRTY,
@@ -308,7 +314,7 @@ mod tests {
     /// Проверять это на хосте нечем: подделка флеша ведёт себя не как
     /// настоящий, а вся суть именно в стирании.
     #[test]
-    fn dfu_partition_keeps_both_writes_into_one_sector(mut board: Board) {
+    async fn dfu_partition_keeps_both_writes_into_one_sector(mut board: Board) {
         use ports::FirmwareUpdate;
 
         let first = [0xA1u8; 32];
@@ -321,32 +327,51 @@ mod tests {
             .ota
             .flash
             .prepare(32)
+            .await
             .expect("раздел DFU должен стираться");
-        board.ota.flash.write(0, &DIRTY).expect("запись мусора");
+        board
+            .ota
+            .flash
+            .write(0, &DIRTY)
+            .await
+            .expect("запись мусора");
 
         board
             .ota
             .flash
             .prepare(96)
+            .await
             .expect("раздел DFU должен стираться");
         let mut read = [!ERASED; 32];
         board
             .ota
             .flash
             .read(0, &mut read)
+            .await
             .expect("чтение после стирания");
         assert_ne!(
             read, DIRTY,
             "prepare не стёр раздел: записанное осталось на месте"
         );
 
-        board.ota.flash.write(0, &first).expect("первая запись");
-        board.ota.flash.write(64, &second).expect("вторая запись");
+        board
+            .ota
+            .flash
+            .write(0, &first)
+            .await
+            .expect("первая запись");
+        board
+            .ota
+            .flash
+            .write(64, &second)
+            .await
+            .expect("вторая запись");
 
         board
             .ota
             .flash
             .read(0, &mut read)
+            .await
             .expect("чтение первого куска");
         assert_eq!(
             read, first,
@@ -356,6 +381,7 @@ mod tests {
             .ota
             .flash
             .read(64, &mut read)
+            .await
             .expect("чтение второго куска");
         assert_eq!(read, second);
     }
@@ -370,24 +396,30 @@ mod tests {
     /// злоумышленник не может, они внутри подписанных байтов, а вот тесту
     /// достаточно записи в `DFU`.
     #[test]
-    fn ota_rejects_an_older_image(board: Board) {
+    async fn ota_rejects_an_older_image(board: Board) {
         use ports::{FirmwareUpdate, UpdateError};
 
         const LENGTH: u32 = 32;
         const LONGER: u32 = LENGTH * 2;
 
-        let mut ota = super::signed(board);
+        // Версия «этой прошивки» в тесте — 0.1.0: ниже `u32::MAX` и не ниже
+        // `0.0.0`, которые кладутся в хвост образа.
+        const RUNNING: u32 = domain::ota::version::pack(0, 1, 0);
+        let mut ota = board.ota.flash;
 
         // Кратно WRITE_SIZE, как и в тесте записи выше. Хвост — версия
         // `0.0.0`, заведомо не новее любой проставленной в проекте.
         let mut image = [0xFFu8; LENGTH as usize];
         image[LENGTH as usize - 4..].copy_from_slice(&0u32.to_le_bytes());
         ota.prepare(LENGTH * 2)
+            .await
             .expect("раздел DFU должен стираться");
         ota.write(0, &image)
+            .await
             .expect("раздел DFU должен принимать запись");
 
-        let refused = domain::ota::update::apply_signed(&mut ota, &[0u8; 64], LENGTH);
+        let refused =
+            domain::ota::update::apply_signed(&mut ota, RUNNING, &[0u8; 64], LENGTH).await;
         assert!(
             matches!(refused, Err(UpdateError::Rollback { .. })),
             "старый образ должен отвергаться отдельной ошибкой, а не общей"
@@ -404,10 +436,12 @@ mod tests {
         let mut newer = [0xFFu8; LONGER as usize];
         newer[LONGER as usize - 4..].copy_from_slice(&u32::MAX.to_le_bytes());
         ota.write(LENGTH, &newer[LENGTH as usize..])
+            .await
             .expect("раздел DFU должен принимать запись");
 
-        let accepted = domain::ota::update::apply_signed(&mut ota, &[0u8; 64], LONGER);
-        ota.mark_booted().expect("снять запрос на обмен");
+        let accepted =
+            domain::ota::update::apply_signed(&mut ota, RUNNING, &[0u8; 64], LONGER).await;
+        ota.mark_booted().await.expect("снять запрос на обмен");
         assert!(
             accepted.is_ok(),
             "образ новее текущего должен дойти до записи для bootloader'а: {accepted:?}"

@@ -4,14 +4,18 @@
 Сам адаптер — `adapters::ota` (generic по `NorFlash`, тестируется на хосте),
 логика приёма и применения — `domain::ota::download` и `domain::ota::update`, а зовёт
 их узел `domain::ota`. Здесь остаётся ровно то, что привязано к чипу:
-`FirmwareUpdaterConfig::from_linkerfile_blocking` (границы `DFU`/`BOOTLOADER_STATE`
+`FirmwareUpdaterConfig::from_linkerfile` (границы `DFU`/`BOOTLOADER_STATE`
 из линкерных символов), размер `ACTIVE` — его порт отдаёт методом
 `FirmwareUpdate::capacity`, — и псевдонимы типов, потому что задачи embassy
 не могут быть generic. `BOOTLOADER_STATE` строится не над цельным `Flash`, как
 `DFU`, а над `adapters::flash::Paged` со страницей своего сектора
-(`STATE_ERASE_SIZE`) — почему, см. docs/flash.md.{% if signed == "true" %} Версию образа и открытый ключ задаёт не
-плата, а приложение: `crates-cross/app/src/image.rs` оборачивает адаптер в
-`adapters::ota::Signed`.{% endif %}
+(`STATE_ERASE_SIZE`) — почему, см. docs/flash.md. Оба раздела асинхронные:
+общий блокирующий `Flash` виден им через мост `adapters::flash::Shared`, а
+порт `FirmwareUpdate` — асинхронный, чтобы за ним могла стоять и внешняя
+флеш.{% if signed == "true" %} Адаптер собран `Updater::signed` — его
+`prepare` стирает и запасную страницу `DFU` под запись о подписи; версию
+образа задаёт приложение (`crates-cross/app/src/image.rs`), ключ —
+bootloader.{% endif %}
 
 Транспорт — поле `link` в `Board::ota`: в шаблоне это заглушка [`Link`], которая
 ждёт заголовок вечно. Заменить её — значит реализовать три метода
@@ -40,7 +44,7 @@ impl ImageSource for Link {
 `domain::ota`{% if graph == "true" %}, который граф спавнит из `fragments:`
 (`crates-cross/app/src/graph.rs`){% else %}. Без графа зовите узел сами, собрав
 его контекст руками:
-`domain::ota::run(domain::ota::OtaCtx { link: &mut board.ota.link, flash: &mut {% if signed == "true" %}flash{% else %}board.ota.flash{% endif %}, mode: &mut domain::ota::Mode::{% if signed == "true" %}signed{% else %}plain{% endif %}(), index: 0 }).await`{% endif %}. Во фрагменте
+`domain::ota::run(domain::ota::OtaCtx { link: &mut board.ota.link, flash: &mut board.ota.flash, mode: &mut domain::ota::Mode::{% if signed == "true" %}Signed { running_version: image::FW_VERSION }{% else %}Plain{% endif %}, index: 0 }).await`{% endif %}. Во фрагменте
 `domain::ota` слоты канала и адаптера помечены `local`: [`Updater`] — `!Send` (внутри ссылка на `FlashMutex` с
 `NoopRawMutex`), и граф держит его на своём исполнителе, не требуя `Send`, —
 то же допущение «один исполнитель», что у самого `NoopRawMutex`; захотите

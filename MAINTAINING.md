@@ -101,10 +101,10 @@ bootloader и `STATE`. Отсюда и второй набор цифр в `MEMO
 Третий такой плейсхолдер — `signed` (подпись OTA-образа). Он ничего не считает, а
 только выключается сам: без OTA подписывать нечего, и «да» приводится к «нет» ещё до
 разбора раскладки; если схема не поместилась во flash — тоже, уже после. В шаблоне он
-управляет фичей `signed` у `adapters` в `boot` и `app`, ключом в `crates-cross/boot`
-(`boot/build.rs`, `OTA_PUBLIC_KEY_IN_IMAGE`, вызов `screen_update`) и файлом
-`crates-cross/app/src/image.rs` (`FW_VERSION` и обёртка `adapters::ota::Signed` над адаптером
-платы; без подписи его удаляет `post-script.rhai`). Подпись проверяет bootloader
+управляет фичей `signed` у `adapters` в `boot`, ключом в `crates-cross/boot`
+(`boot/build.rs`, `OTA_PUBLIC_KEY_IN_IMAGE`, вызов `screen_update`), выбором
+`Updater::signed` в `bsp::ota` и файлом `crates-cross/app/src/image.rs`
+(`FW_VERSION` для `Mode::Signed`; без подписи его удаляет `post-script.rhai`). Подпись проверяет bootloader
 (`adapters::ota::screen_update`), приложение — только длину, занятость и версию
 (`domain::ota::update::apply_signed`), см. docs/ota.md.
 

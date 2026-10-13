@@ -213,8 +213,8 @@ compose-site раскладывает его во вход узла, `domain::ot
 общему правилу — адаптеры, реализующие порты (`FirmwareUpdate`,
 `ImageSource`); вместимость раздела плата отдаёт через порт же
 (`FirmwareUpdate::capacity`). Версия образа — свойство прошивки, а не
-платы: её задаёт приложение (`crates-cross/app/src/image.rs`), оборачивая
-`flash` в `adapters::ota::Signed` прямо в `fragments:`; ключ подписи — в
+платы: её задаёт приложение (`crates-cross/app/src/image.rs`) режимом
+узла `Mode::Signed` прямо в `fragments:`; ключ подписи — в
 bootloader'е (`crates-cross/boot`), который подпись и проверяет. Заглушка
 ещё и ради проверяемости: с ней `template-check` раскрывает фрагменты узла OTA
 в обоих вариантах, без неё они не компилировались бы нигде. Проект заменяет
@@ -243,11 +243,11 @@ bootloader'е (`crates-cross/boot`), который подпись и прове
 старта, — поэтому её печатает `main` напрямую из `panic-persist`, а у `Board` метода
 под неё нет.
 
-**Применение обновления — тоже через порт.** `mark_updated` — метод `FirmwareUpdate`,
-`record_and_mark_updated` вместе с версией — `SignedFirmwareUpdate`; трейт объявлен
-безусловно (Liquid в `ports` запрещён), реализован только в проекте с подписью
-(`adapters::ota::Signed`, Cargo-фича `adapters/signed`). Порядок проверок перед
-вызовом — `domain::ota::update::apply_signed`, и он host-тестируем. Саму подпись
+**Применение обновления — тоже через порт.** `mark_updated` — метод
+`FirmwareUpdate`; запись о подписи (`ports::PendingImage`) кладётся обычным
+`write` в запасную страницу `DFU`, отдельного трейта под подпись нет. Порядок
+проверок перед вызовом — `domain::ota::update::apply_signed`, и он
+host-тестируем. Саму подпись
 проверяет bootloader (`adapters::ota::screen_update`) — `docs/ota.md`.
 
 **Дублировать методы портов собственными нельзя.** У `adapters::ota::Updater` и

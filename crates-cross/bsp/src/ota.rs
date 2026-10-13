@@ -1,25 +1,27 @@
 #![doc = include_str!("../../../docs/modules/bsp-ota.md")]
 
-use core::cell::RefCell;
 use core::convert::Infallible;
 
 use adapters::flash::{Paged, Shared};
 use embassy_boot::FirmwareUpdaterConfig;
-use embassy_embedded_hal::flash::partition::BlockingPartition;
-use embassy_stm32::flash::{Blocking, Flash};
-use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::mutex::Mutex;
 use ports::{Announce, ImageSource, Rejection};
 use static_cell::StaticCell;
 
 use crate::board::FlashMutex;
 
-/// Раздел поверх общего `Flash` чипа — то, из чего собирается адаптер.
+/// Флеш под разделом `DFU`: общий `Flash` чипа, видимый асинхронно (мост
+/// `Shared`) — порт OTA асинхронный, за ним может стоять и внешняя флеш.
 ///
 /// Тот же цельный `Flash`, что и в `crates-cross/boot`: он сам знает реальные
 /// границы секторов чипа, в том числе неравномерные (F4/F7/H7), а банковые
 /// регионы у каждого семейства называются по-своему.
-pub type Partition = BlockingPartition<'static, NoopRawMutex, Flash<'static, Blocking>>;
+type DfuFlash = Shared<'static, FlashMutex>;
+
+/// Раздел `DFU` — то, из чего собирается адаптер.
+pub type Partition =
+    embassy_embedded_hal::flash::partition::Partition<'static, NoopRawMutex, DfuFlash>;
 
 /// Страница раздела `BOOTLOADER_STATE` — размер сектора, в котором он лежит.
 ///
@@ -38,17 +40,19 @@ type StateFlash = Paged<Shared<'static, FlashMutex>, STATE_ERASE_SIZE>;
 
 /// Раздел `BOOTLOADER_STATE` — над [`StateFlash`], а не над цельным `Flash`,
 /// как [`Partition`].
-pub type StatePartition = BlockingPartition<'static, NoopRawMutex, StateFlash>;
+pub type StatePartition =
+    embassy_embedded_hal::flash::partition::Partition<'static, NoopRawMutex, StateFlash>;
 
 /// Адаптер обновления этой платы — порт `FirmwareUpdate` поверх разделов
 /// `DFU`/`BOOTLOADER_STATE`. Псевдоним по общему правилу шаблона: тип слота
 /// узла OTA должен быть конкретным, а адаптер приходит из `adapters` generic.
 pub type Updater = adapters::ota::Updater<Partition, StatePartition>;
 
-/// Свой мьютекс разделу `STATE`: `embassy-boot` строит каждый раздел из
-/// `&Mutex<_, RefCell<T>>` своего типа. Внутри — ссылка на общий
+/// Свои асинхронные мьютексы разделам: `embassy-boot` строит каждый раздел
+/// из `&Mutex<_, T>` своего типа. Внутри обоих — ссылка на общий
 /// [`FlashMutex`], а не второй `Flash`: контроллер на чипе один.
-static STATE_FLASH: StaticCell<Mutex<NoopRawMutex, RefCell<StateFlash>>> = StaticCell::new();
+static DFU_FLASH: StaticCell<Mutex<NoopRawMutex, DfuFlash>> = StaticCell::new();
+static STATE_FLASH: StaticCell<Mutex<NoopRawMutex, StateFlash>> = StaticCell::new();
 
 /// Всё, что плата отдаёт узлу OTA: канал доставки и адаптер разделов.
 ///
@@ -106,11 +110,12 @@ impl ImageSource for Link {
 /// Собирает вход узла OTA: адаптер из разделов `DFU` и `BOOTLOADER_STATE`,
 /// найденных по символам `memory.x`, и канал доставки.
 pub(crate) fn new(flash: &'static FlashMutex) -> Ota {
-    let state = STATE_FLASH.init(Mutex::new(RefCell::new(Paged::new(Shared::new(flash)))));
-    let config = FirmwareUpdaterConfig::from_linkerfile_blocking(flash.raw(), state);
+    let dfu = DFU_FLASH.init(Mutex::new(Shared::new(flash)));
+    let state = STATE_FLASH.init(Mutex::new(Paged::new(Shared::new(flash))));
+    let config = FirmwareUpdaterConfig::from_linkerfile(dfu, state);
     Ota {
         link: Link,
-        flash: Updater::new(config.dfu, config.state, max_image_len()),
+        flash: Updater::{% if signed == "true" %}signed{% else %}new{% endif %}(config.dfu, config.state, max_image_len()),
     }
 }
 
@@ -122,7 +127,7 @@ pub(crate) fn new(flash: &'static FlashMutex) -> Ota {
 #[expect(unsafe_code, reason = "обоснование — в комментарии выше")]
 unsafe extern "C" {
     /// Границы раздела `ACTIVE` — те же символы, по которым разделы находит
-    /// `FirmwareUpdaterConfig::from_linkerfile_blocking`.
+    /// `FirmwareUpdaterConfig::from_linkerfile`.
     static __bootloader_active_start: u32;
     static __bootloader_active_end: u32;
 }

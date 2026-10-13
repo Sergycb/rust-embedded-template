@@ -10,10 +10,9 @@
 
 use std::collections::VecDeque;
 
-use ports::{Announce, FirmwareUpdate, ImageSource, Rejection, SignedFirmwareUpdate};
+use ports::{Announce, FirmwareUpdate, ImageSource, PendingImage, Rejection};
 
 use crate::ota::update::VERSION_BYTES;
-use crate::ota::version::pack;
 
 /// Подпись, которую тесты кладут в заголовок; фейк её не проверяет, а
 /// записывает — важно, что до него доехала именно она.
@@ -79,8 +78,9 @@ impl ImageSource for FakeLink {
     }
 }
 
-/// Флеш в памяти, придирчивый ровно там же, где настоящий, плюс всё, что
-/// нужно применению с подписью: версия, ключ, исход проверки.
+/// Флеш в памяти, придирчивый ровно там же, где настоящий, плюс запасная
+/// страница за `capacity` — туда применение с подписью кладёт запись для
+/// bootloader'а.
 ///
 /// Главное здесь — проверки кратности: без них тест не отличил бы
 /// работающую буферизацию от её отсутствия, а на плате разница вылезла бы
@@ -95,10 +95,10 @@ pub(crate) struct FakeFlash {
     pub(crate) busy: bool,
     pub(crate) prepared: Option<u32>,
     pub(crate) writes: Vec<(u32, usize)>,
-    pub(crate) version: u32,
-    /// Что ответить на запись для bootloader'а; `Err` разыгрывает отказ флеша.
+    /// Что ответить на запись в запасную страницу (запись для
+    /// bootloader'а); `Err` разыгрывает отказ флеша.
     pub(crate) record: Result<(), &'static str>,
-    /// Что оставлено bootloader'у: подпись и длина.
+    /// Что оставлено bootloader'у в запасной странице: подпись и длина.
     pub(crate) recorded: Vec<([u8; 64], u32)>,
     /// Что ответить на `mark_updated`; `Err` разыгрывает отказ флеша.
     pub(crate) mark_updated: Result<(), &'static str>,
@@ -107,15 +107,17 @@ pub(crate) struct FakeFlash {
 }
 
 impl FakeFlash {
+    /// Запасная страница за `capacity` — под запись для bootloader'а.
+    const SPARE: usize = 128;
+
     pub(crate) fn new(capacity: usize, word: u32) -> Self {
         Self {
-            memory: vec![0xFF; capacity],
+            memory: vec![0xFF; capacity + Self::SPARE],
             capacity: u32::try_from(capacity).unwrap(),
             word,
             busy: false,
             prepared: None,
             writes: Vec::new(),
-            version: pack(1, 2, 3),
             record: Ok(()),
             recorded: Vec::new(),
             mark_updated: Ok(()),
@@ -134,22 +136,8 @@ impl FakeFlash {
     }
 }
 
-impl FirmwareUpdate for FakeFlash {
-    type Error = &'static str;
-
-    fn write_granularity(&mut self) -> u32 {
-        self.word
-    }
-
-    fn capacity(&mut self) -> Result<u32, Self::Error> {
-        Ok(self.capacity)
-    }
-
-    fn is_busy(&mut self) -> Result<bool, Self::Error> {
-        Ok(self.busy)
-    }
-
-    fn prepare(&mut self, len: u32) -> Result<(), Self::Error> {
+impl FakeFlash {
+    fn do_prepare(&mut self, len: u32) -> Result<(), &'static str> {
         if len == 0 || len > self.capacity {
             return Err("негодная длина");
         }
@@ -158,7 +146,23 @@ impl FirmwareUpdate for FakeFlash {
         Ok(())
     }
 
-    fn write(&mut self, offset: u32, data: &[u8]) -> Result<(), Self::Error> {
+    fn do_write(&mut self, offset: u32, data: &[u8]) -> Result<(), &'static str> {
+        if offset >= self.capacity {
+            // Запасная страница: запись для bootloader'а — ровно там, где её
+            // ищет `adapters::ota::screen_update`, и целыми словами.
+            if offset != self.capacity {
+                return Err("запись для bootloader'а не по смещению capacity");
+            }
+            if !u32::try_from(data.len()).is_ok_and(|v| v.is_multiple_of(self.word)) {
+                return Err("длина записи не кратна слову");
+            }
+            self.record?;
+            let bytes: &[u8; PendingImage::LEN] =
+                data.try_into().ok().ok_or("запись не той длины")?;
+            let record = PendingImage::from_bytes(bytes).ok_or("не запись о подписи")?;
+            self.recorded.push((record.signature, record.len));
+            return Ok(());
+        }
         if self.prepared.is_none() {
             return Err("запись без подготовки раздела");
         }
@@ -174,34 +178,51 @@ impl FirmwareUpdate for FakeFlash {
         Ok(())
     }
 
-    fn read(&mut self, offset: u32, buf: &mut [u8]) -> Result<(), Self::Error> {
-        let start = offset as usize;
-        buf.copy_from_slice(&self.memory[start..start + buf.len()]);
-        Ok(())
-    }
-
-    fn mark_booted(&mut self) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn mark_updated(&mut self) -> Result<(), Self::Error> {
+    fn do_mark_updated(&mut self) -> Result<(), &'static str> {
+        self.mark_updated?;
         self.updated += 1;
-        self.mark_updated
+        Ok(())
     }
 }
 
-impl SignedFirmwareUpdate for FakeFlash {
-    fn running_version(&self) -> u32 {
-        self.version
+impl FirmwareUpdate for FakeFlash {
+    type Error = &'static str;
+
+    fn write_granularity(&mut self) -> u32 {
+        self.word
     }
 
-    fn record_and_mark_updated(
+    fn capacity(&mut self) -> Result<u32, Self::Error> {
+        Ok(self.capacity)
+    }
+
+    fn is_busy(&mut self) -> impl Future<Output = Result<bool, Self::Error>> {
+        std::future::ready(Ok(self.busy))
+    }
+
+    fn prepare(&mut self, len: u32) -> impl Future<Output = Result<(), Self::Error>> {
+        std::future::ready(self.do_prepare(len))
+    }
+
+    fn write(&mut self, offset: u32, data: &[u8]) -> impl Future<Output = Result<(), Self::Error>> {
+        std::future::ready(self.do_write(offset, data))
+    }
+
+    fn read(
         &mut self,
-        signature: &[u8; 64],
-        len: u32,
-    ) -> Result<(), Self::Error> {
-        self.record?;
-        self.recorded.push((*signature, len));
-        Ok(())
+        offset: u32,
+        buf: &mut [u8],
+    ) -> impl Future<Output = Result<(), Self::Error>> {
+        let start = offset as usize;
+        buf.copy_from_slice(&self.memory[start..start + buf.len()]);
+        std::future::ready(Ok(()))
+    }
+
+    fn mark_booted(&mut self) -> impl Future<Output = Result<(), Self::Error>> {
+        std::future::ready(Ok(()))
+    }
+
+    fn mark_updated(&mut self) -> impl Future<Output = Result<(), Self::Error>> {
+        std::future::ready(self.do_mark_updated())
     }
 }

@@ -108,7 +108,10 @@ pub async fn receive<S: ImageSource, F: FirmwareUpdate>(
         });
     }
 
-    flash.prepare(announced).map_err(DownloadError::Flash)?;
+    flash
+        .prepare(announced)
+        .await
+        .map_err(DownloadError::Flash)?;
 
     let mut written: u32 = 0;
     // Хвост, не добравший до целого слова. Первые `pending` байт значимы.
@@ -142,6 +145,7 @@ pub async fn receive<S: ImageSource, F: FirmwareUpdate>(
             }
             flash
                 .write(written, &tail[..word_len])
+                .await
                 .map_err(DownloadError::Flash)?;
             written += word;
             // `pending` не обнуляется здесь явно: до его следующего чтения
@@ -156,6 +160,7 @@ pub async fn receive<S: ImageSource, F: FirmwareUpdate>(
         if whole > 0 {
             flash
                 .write(written, &chunk[..whole])
+                .await
                 .map_err(DownloadError::Flash)?;
             written += u32::try_from(whole).expect("whole не должен превышать u32::MAX");
         }
@@ -178,6 +183,7 @@ pub async fn receive<S: ImageSource, F: FirmwareUpdate>(
         tail[pending..word_len].fill(0xFF);
         flash
             .write(written, &tail[..word_len])
+            .await
             .map_err(DownloadError::Flash)?;
     }
     Ok(announced)
@@ -417,23 +423,24 @@ mod tests {
             fn capacity(&mut self) -> Result<u32, Self::Error> {
                 self.0.capacity()
             }
-            fn is_busy(&mut self) -> Result<bool, Self::Error> {
-                self.0.is_busy()
+            async fn is_busy(&mut self) -> Result<bool, Self::Error> {
+                self.0.is_busy().await
             }
-            fn prepare(&mut self, _len: u32) -> Result<(), Self::Error> {
-                Ok(()) // «подготовил», но флаг не поставил — запись откажет
+            fn prepare(&mut self, _len: u32) -> impl Future<Output = Result<(), Self::Error>> {
+                // «подготовил», но флаг не поставил — запись откажет
+                std::future::ready(Ok(()))
             }
-            fn write(&mut self, offset: u32, data: &[u8]) -> Result<(), Self::Error> {
-                self.0.write(offset, data)
+            async fn write(&mut self, offset: u32, data: &[u8]) -> Result<(), Self::Error> {
+                self.0.write(offset, data).await
             }
-            fn read(&mut self, offset: u32, buf: &mut [u8]) -> Result<(), Self::Error> {
-                self.0.read(offset, buf)
+            async fn read(&mut self, offset: u32, buf: &mut [u8]) -> Result<(), Self::Error> {
+                self.0.read(offset, buf).await
             }
-            fn mark_booted(&mut self) -> Result<(), Self::Error> {
-                self.0.mark_booted()
+            async fn mark_booted(&mut self) -> Result<(), Self::Error> {
+                self.0.mark_booted().await
             }
-            fn mark_updated(&mut self) -> Result<(), Self::Error> {
-                self.0.mark_updated()
+            async fn mark_updated(&mut self) -> Result<(), Self::Error> {
+                self.0.mark_updated().await
             }
         }
         let mut flash = NoPrepare(FakeFlash::new(1024, 8));

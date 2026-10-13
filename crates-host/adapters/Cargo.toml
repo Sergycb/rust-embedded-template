@@ -17,9 +17,8 @@ defmt = [
 	"embassy-boot/defmt",
 	"sequential-storage/defmt",
 ]
-# Подпись образа: проверка в bootloader'е (`ota::screen_update`) и запись для
-# неё из приложения (`ota::Signed`). Включают `boot` и `app` в проекте, где при
-# генерации выбрана подпись; в корневом workspace её включают
+# Подпись образа: проверка в bootloader'е (`ota::screen_update`). Включает
+# `boot` в проекте, где при генерации выбрана подпись; в корневом workspace её включают
 # `cargo xtask lint`/`test host`, чтобы всё это проверялось и на хосте.
 # Проверяет `salty` напрямую, а не `verify_and_mark_updated` из embassy-boot:
 # тот живёт в апдейтере приложения, а проверка — в bootloader'е.

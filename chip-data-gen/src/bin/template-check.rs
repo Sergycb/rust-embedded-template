@@ -94,8 +94,8 @@ fn default_cases() -> Vec<Case> {
         Case::new("stm32f407ve").variant("config", &["config=yes"]),
         // Подпись образа: проверка в bootloader'е (`screen_update`, ключ через
         // `boot/build.rs`, `salty` со своей `slow-motion` и профилем dev), а в
-        // `app/src/image.rs` — `FW_VERSION` и обёртка `adapters::ota::Signed`
-        // над `Updater` платы.
+        // `app/src/image.rs` — `FW_VERSION` для режима `Mode::Signed`, а
+        // `Updater` платы собран `Updater::signed`.
         // Проверяется на чипе с OTA — без него подпись хук выключает.
         Case::new("stm32f407ve").variant("signed", &["signed=yes"]),
         // Подпись без графа: узел OTA зовёт сам `main` (`app/src/image.rs`
