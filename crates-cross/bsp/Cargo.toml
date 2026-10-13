@@ -36,7 +36,7 @@ cortex-m = { workspace = true }
 # объект под `blocking_mutex` (см. `FlashMutex` в src/board.rs). `static-cell` —
 # потому что обеим половинам нужен `&'static`: иначе их нельзя отдать в задачу,
 # которую спавнит `Spawner` (аргументы задач обязаны быть 'static).
-{%- if shared_flash == "true" %}
+{%- if shared_flash == "true" or ota == "true" %}
 embassy-sync = { workspace = true }
 static_cell = { workspace = true }
 {%- endif %}

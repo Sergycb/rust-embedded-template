@@ -91463,9 +91463,9 @@ if variable::is_set("write_size") {
         }
         file::delete("crates-cross/bsp/src/config.rs");
     }
-    // Общий объект `Flash` в bsp нужен OTA и настройкам во флеше или EEPROM;
-    // внешней флеши он не нужен (см. ту же переменную ниже).
-    variable::set("shared_flash", if wants_ota || (wants_config && store == "eeprom") { "true" } else { "false" });
+    // Общий объект `Flash` в bsp нужен OTA во внутреннем flash и настройкам во
+    // флеше или EEPROM; внешней флеши он не нужен (см. ту же переменную ниже).
+    variable::set("shared_flash", if (wants_ota && !wants_ext_ota) || (wants_config && store == "eeprom") { "true" } else { "false" });
     variable::set("signed", if wants_signed { "true" } else { "false" });
     // Размер страницы стирания знает только раскладка, а её тут пишет
     // пользователь — угадывать нельзя. Пустая строка означает «неизвестен»:
@@ -91481,10 +91481,18 @@ if variable::is_set("write_size") {
     // приведёт к панике `Partition::new` при старте — об этом печатается
     // предупреждение ниже.
     variable::set("state_erase_size", "embassy_stm32::flash::MAX_ERASE_SIZE");
-    if wants_ota {
+    if wants_ota && !wants_ext_ota {
         print("BOOTLOADER_STATE: страница раздела — сектор всего чипа (MAX_ERASE_SIZE); если STATE");
         print("  лежит в более мелком секторе (F2/F4/F7), впишите его размер в STATE_ERASE_SIZE");
         print("  в crates-cross/boot/src/main.rs и crates-cross/bsp/src/ota.rs, иначе паника при старте");
+    }
+    // Страница обмена с внешними разделами — тоже знание раскладки. Сектор
+    // внешней NOR (4 KiB) — нижняя граница: верна, если ACTIVE в memory.x
+    // кратен max(странице чипа, 4 KiB); иначе `assert_partitions` паникует.
+    variable::set("ext_page_size", "4_096");
+    if wants_ota && wants_ext_ota {
+        print("ota=external: страница обмена EXT_PAGE_SIZE в crates-cross/boot/src/main.rs — 4 KiB;");
+        print("  впишите max(сектор чипа, стирание драйвера) и сделайте ACTIVE кратным ей");
     }
     // Раздел приложения здесь задаёт человек, значит и помещается ли в него
     // граф — знает только он. Ответ проходит как есть; не влезет — скажет
@@ -91501,10 +91509,16 @@ if variable::is_set("write_size") {
     variable::set("page_size", "");
     // Страница цельного `Flash` — по той же причине, что и веткой выше.
     variable::set("state_erase_size", "embassy_stm32::flash::MAX_ERASE_SIZE");
-    if wants_ota {
+    if wants_ota && !wants_ext_ota {
         print("BOOTLOADER_STATE: страница раздела — сектор всего чипа (MAX_ERASE_SIZE); если STATE");
         print("  лежит в более мелком секторе (F2/F4/F7), впишите его размер в STATE_ERASE_SIZE");
         print("  в crates-cross/boot/src/main.rs и crates-cross/bsp/src/ota.rs, иначе паника при старте");
+    }
+    // Страница обмена с внешними разделами — по той же причине, что веткой выше.
+    variable::set("ext_page_size", "4_096");
+    if wants_ota && wants_ext_ota {
+        print("ota=external: страница обмена EXT_PAGE_SIZE в crates-cross/boot/src/main.rs — 4 KiB;");
+        print("  впишите max(сектор чипа, стирание драйвера) и сделайте ACTIVE кратным ей");
     }
     variable::set("ota", if wants_ota { "true" } else { "false" });
     variable::set("ota_store", if wants_ext_ota { "external" } else { "internal" });
@@ -91532,7 +91546,7 @@ if variable::is_set("write_size") {
         }
         file::delete("crates-cross/bsp/src/config.rs");
     }
-    variable::set("shared_flash", if wants_ota { "true" } else { "false" });
+    variable::set("shared_flash", if wants_ota && !wants_ext_ota { "true" } else { "false" });
     variable::set("signed", if wants_signed { "true" } else { "false" });
     // Раздел приложения здесь задаёт человек, значит и помещается ли в него
     // граф — знает только он. Оставляем ответ как есть; если не влезет, линкер
@@ -91657,10 +91671,12 @@ if variable::is_set("write_size") {
     if in_flash {
         variable::set("config_erase_size", m[settings_key + "erase_size"]);
     }
-    // Общий объект `Flash` в bsp: его делят OTA и настройки во флеше или EEPROM
-    // (EEPROM пишется через тот же контроллер). Внешней флеши он не нужен, и
-    // без OTA создавать его незачем — был бы неиспользуемый код.
-    variable::set("shared_flash", if ota || (config && store != "external") { "true" } else { "false" });
+    // Общий объект `Flash` в bsp: его делят OTA во внутреннем flash и настройки
+    // во флеше или EEPROM (EEPROM пишется через тот же контроллер). Внешней
+    // флеши он не нужен — с `ota=external` приложение во внутренний flash не
+    // пишет вовсе (`ACTIVE` пишет bootloader), — и без OTA создавать его
+    // незачем: был бы неиспользуемый код.
+    variable::set("shared_flash", if (ota && !ext_ota) || (config && store != "external") { "true" } else { "false" });
     variable::set("signed", if signed { "true" } else { "false" });
     variable::set("graph", if graph { "true" } else { "false" });
     if !config {
@@ -91921,4 +91937,10 @@ if variable::is_set("write_size") {
 // закрыто тем же `{% if %}`, поэтому удаление файла ничего не ломает.
 if variable::get("graph") != "true" {
 	file::delete("crates-cross/app/src/graph.rs");
+}
+
+// Слот драйвера внешней флеши в bsp — только у OTA с разделами на ней. Без
+// него `bsp::external` не объявлен, и файл остался бы мусором с Liquid внутри.
+if variable::get("ota") != "true" || variable::get("ota_store") != "external" {
+	file::delete("crates-cross/bsp/src/external.rs");
 }

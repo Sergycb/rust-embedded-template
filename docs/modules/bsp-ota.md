@@ -44,7 +44,7 @@ impl ImageSource for Link {
 `domain::ota`{% if graph == "true" %}, который граф спавнит из `fragments:`
 (`crates-cross/app/src/graph.rs`){% else %}. Без графа зовите узел сами, собрав
 его контекст руками:
-`domain::ota::run(domain::ota::OtaCtx { link: &mut board.ota.link, flash: &mut board.ota.flash, mode: &mut domain::ota::Mode::{% if signed == "true" %}Signed { running_version: image::FW_VERSION }{% else %}Plain{% endif %}, index: 0 }).await`{% endif %}. Во фрагменте
+`domain::ota::run(domain::ota::OtaCtx { link: &mut board.ota.link, flash: &mut board.ota.flash, mode: &mut domain::ota::Mode::{% if signed == "true" %}Signed { running_version: image::FW_VERSION }{% else %}Plain{% endif %}, confirmed: &mut false, index: 0 }).await`{% endif %}. Во фрагменте
 `domain::ota` слоты канала и адаптера помечены `local`: [`Updater`] — `!Send` (внутри ссылка на `FlashMutex` с
 `NoopRawMutex`), и граф держит его на своём исполнителе, не требуя `Send`, —
 то же допущение «один исполнитель», что у самого `NoopRawMutex`; захотите
@@ -52,5 +52,7 @@ impl ImageSource for Link {
 `domain::ota` и тип мьютекса вместе.
 
 Подтверждение образа (`mark_booted`) и то, почему без него обновление живёт
-один запуск, описано в `adapters::ota`; вызов стоит в `main` и его стоит
-перенести туда, где устройство доказало работоспособность.
+один запуск, описано в `adapters::ota`; зовёт его сам узел `domain::ota` при
+старте (действие `begin`), и его стоит перенести туда, где устройство доказало
+работоспособность. Не в `main` до исполнителя — порт асинхронный, и драйвер
+внешней флеши может ждать таймер или прерывание.

@@ -104,6 +104,10 @@ pub(crate) struct FakeFlash {
     pub(crate) mark_updated: Result<(), &'static str>,
     /// Сколько раз просили обмен разделов.
     pub(crate) updated: usize,
+    /// Что ответить на `mark_booted`; `Err` разыгрывает отказ флеша.
+    pub(crate) mark_booted: Result<(), &'static str>,
+    /// Сколько раз образ подтвердили успешно.
+    pub(crate) booted: usize,
 }
 
 impl FakeFlash {
@@ -122,6 +126,8 @@ impl FakeFlash {
             recorded: Vec::new(),
             mark_updated: Ok(()),
             updated: 0,
+            mark_booted: Ok(()),
+            booted: 0,
         }
     }
 
@@ -219,7 +225,10 @@ impl FirmwareUpdate for FakeFlash {
     }
 
     fn mark_booted(&mut self) -> impl Future<Output = Result<(), Self::Error>> {
-        std::future::ready(Ok(()))
+        if self.mark_booted.is_ok() {
+            self.booted += 1;
+        }
+        std::future::ready(self.mark_booted)
     }
 
     fn mark_updated(&mut self) -> impl Future<Output = Result<(), Self::Error>> {

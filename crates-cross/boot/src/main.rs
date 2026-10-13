@@ -2,14 +2,18 @@
 #![no_main]
 
 use core::cell::RefCell;
-
+{% if ota_store != "external" %}
 use adapters::flash::{Paged, Shared};
+{%- endif %}
 use defmt::info;
 // RTT — дефолтный транспорт в обоих профилях (см. crates-cross/app/src/main.rs);
 // boot вдобавок не спавнит embassy-задач, поэтому очередь+drain-таск под
 // USB/UART (см. graph.rs) сюда в принципе не встраивается —
 // одну диагностическую строку перед прыжком не стоит того усложнять.
 use defmt_rtt as _;
+{%- if ota_store == "external" %}
+use embassy_boot_stm32::{BlockingFirmwareState, State};
+{%- endif %}
 use embassy_boot_stm32::{BootLoader, BootLoaderConfig};
 use embassy_stm32::flash::{FLASH_BASE, Flash};
 {%- if graph == "true" %}
@@ -17,9 +21,12 @@ use embassy_stm32::flash::{FLASH_BASE, Flash};
 use embassy_stm32::wdg::IndependentWatchdog;
 {%- endif %}
 use embassy_sync::blocking_mutex::Mutex;
+{%- if ota_store == "external" %}
+use embedded_storage::nor_flash::NorFlash;
+{%- endif %}
 {%- if graph == "true" %}
 #[cfg(not(debug_assertions))]
-use embedded_storage::nor_flash::{ErrorType, NorFlash, ReadNorFlash};
+use embedded_storage::nor_flash::{ErrorType, {% if ota_store != "external" %}NorFlash, {% endif %}ReadNorFlash};
 {%- endif %}
 
 // Паникёр по профилю — тот же исходник, что у `app`: модуль подключён по
@@ -34,11 +41,22 @@ mod panic;
 fn main() -> ! {
     let p = init_peripherals();
     let flash = Flash::new_blocking(p.FLASH);
+{%- if ota_store == "external" %}
+    // `STATE` и `DFU` — на внешней флеши. Драйвер блокирующий (в приложении —
+    // асинхронный, `bsp::external`), собирается здесь из периферии `p` (SPI и
+    // вывод CS). В шаблоне на его месте заглушка: каждая операция отвечает
+    // ошибкой, и bootloader загружает текущий образ, не обменивая разделы.
+    let external: ExternalFlash = adapters::flash::Unconnected;
+{%- endif %}
 {%- if signed == "true" %}
     // Новый образ проверяется ДО сторожа: проверка — один неделимый вызов
     // (сотня миллионов тактов на частоте после сброса), покормить сторож
     // внутри нечем. См. `screen`.
+{%- if ota_store == "external" %}
+    let (flash, external, swap_allowed) = screen(flash, external);
+{%- else %}
     let flash = screen(flash);
+{%- endif %}
 {%- endif %}
 
     // `Flash` (до `.into_blocking_regions()`) сам реализует `NorFlash` на
@@ -52,16 +70,40 @@ fn main() -> ! {
     // Цельный `Flash` — единственный вариант, не завязанный на семейство.
 {%- if graph == "true" %}
     //
-    // В release флеш обёрнут сторожем (см. [`Fed`]), запущенным здесь же —
-    // до обмена разделов, но после проверки нового образа (если она есть).
+    // В release флеш{% if ota_store == "external" %} — оба, внутренний и внешний, —{% endif %} обёрнут сторожем (см. [`Fed`]),
+    // запущенным здесь же — до обмена разделов, но после проверки нового
+    // образа (если она есть).
     #[cfg(not(debug_assertions))]
-    let flash = Mutex::new(RefCell::new(Fed::new(
-        flash,
-        IndependentWatchdog::new(p.{{watchdog_peripheral}}, WATCHDOG_TIMEOUT_US),
-    )));
-    #[cfg(debug_assertions)]
+    let watchdog = {
+        let mut watchdog = IndependentWatchdog::new(p.{{watchdog_peripheral}}, WATCHDOG_TIMEOUT_US);
+        watchdog.unleash();
+        RefCell::new(watchdog)
+    };
+    #[cfg(not(debug_assertions))]
+    let flash = Fed::new(flash, &watchdog);
+{%- if ota_store == "external" %}
+    #[cfg(not(debug_assertions))]
+    let external = Fed::new(external, &watchdog);
+{%- endif %}
 {%- endif %}
     let flash = Mutex::new(RefCell::new(flash));
+{%- if ota_store == "external" %}
+    // `STATE` и `DFU` — над одним драйвером: свой мьютекс на микросхему, а не
+    // по объекту на раздел.
+    let external = Mutex::new(RefCell::new(external));
+
+    let config = BootLoaderConfig::from_linkerfile_blocking(&flash, &external, &external);
+    let active_offset = config.active.offset();
+{%- if signed == "true" %}
+    let bl = if swap_allowed {
+        prepare(config)
+    } else {
+        BootLoader { state: State::Boot }
+    };
+{%- else %}
+    let bl = prepare(config);
+{%- endif %}
+{%- else %}
     // `BOOTLOADER_STATE` — со страницей своего сектора, а не всего чипа (см.
     // `STATE_ERASE_SIZE`), но над тем же `Flash`: свой мьютекс, а не второй
     // объект контроллера.
@@ -72,6 +114,7 @@ fn main() -> ! {
     let config = BootLoaderConfig::from_linkerfile_blocking(&flash, &flash, &state);
     let active_offset = config.active.offset();
     let bl = BootLoader::prepare::<_, _, _, {{write_size}}>(config);
+{%- endif %}
 
     // Минимальный bootloader: как и официальный пример embassy-boot-stm32,
     // прыгает в активный образ безусловно, не проверяя валидность вектора
@@ -87,9 +130,9 @@ fn main() -> ! {
     info!("boot: jumping to app at {:x}", entry);
 {%- if graph == "true" %}
     // Полный таймаут — приложению: до первого кормления из графа ему нужно
-    // поднять HAL и подтвердить образ.
+    // поднять HAL и запустить граф.
     #[cfg(not(debug_assertions))]
-    flash.lock(|flash| flash.borrow_mut().watchdog.pet());
+    watchdog.borrow_mut().pet();
 {%- endif %}
     // SAFETY: `load` ставит VTOR на этот адрес, читает из образа по нему
     // начальный MSP (первое слово) и reset-вектор (второе) и прыгает — за этой
@@ -114,6 +157,7 @@ fn main() -> ! {
         bl.load(entry)
     }
 }
+{%- if ota_store != "external" %}
 
 /// Страница раздела `BOOTLOADER_STATE` — размер сектора, в котором он лежит.
 ///
@@ -124,6 +168,77 @@ fn main() -> ! {
 /// генерации тем же расчётом, что адреса в `memory.x`; то же самое стоит в
 /// `bsp::ota` — разделу в приложении и в bootloader'е расходиться нельзя.
 const STATE_ERASE_SIZE: usize = {{state_erase_size}};
+{%- else %}
+
+/// Драйвер внешней флеши, на которой лежат `STATE` и `DFU`, — замените на
+/// свой: любой блокирующий `embedded_storage::nor_flash::NorFlash`. Та же
+/// микросхема, что у приложения (`bsp::external`), но драйвер блокирующий:
+/// bootloader не поднимает исполнитель.
+type ExternalFlash = adapters::flash::Unconnected;
+
+/// Страница обмена, под которую посчитана раскладка (`memory.x`): `ACTIVE`
+/// кратен ей. Обмен идёт страницами `max(ACTIVE::ERASE_SIZE,
+/// DFU::ERASE_SIZE)`, и драйвер с более крупным стиранием потребовал бы
+/// `ACTIVE`, кратного уже его странице, — `assert_partitions` паниковал бы на
+/// старте. Поэтому стирание драйвера обязано эту страницу делить.
+const EXT_PAGE_SIZE: usize = {{ext_page_size}};
+
+const _: () = assert!(
+    EXT_PAGE_SIZE.is_multiple_of(<ExternalFlash as NorFlash>::ERASE_SIZE),
+    "стирание драйвера внешней флеши не делит страницу обмена (EXT_PAGE_SIZE): \
+     перегенерируйте раскладку или возьмите стирание мельче (сектор 4 KiB)"
+);
+
+/// Журнал `STATE` в раскладке посчитан на слово не шире 32 байт — столько же
+/// держит буфер адаптера в приложении (`adapters::ota::MAX_WRITE_SIZE`).
+const _: () = assert!(
+    <ExternalFlash as NorFlash>::WRITE_SIZE <= adapters::ota::MAX_WRITE_SIZE,
+    "слово записи драйвера внешней флеши шире 32 байт"
+);
+
+/// Буфер обмена: кратен слову записи и внутреннего флеша (`ACTIVE`), и
+/// внешнего (`DFU`), и не меньше слова `STATE` — требования `prepare_boot`.
+/// Оба слова — степени двойки, так что общее кратное — большее из них.
+const BUFFER_SIZE: usize = if <ExternalFlash as NorFlash>::WRITE_SIZE > {{write_size}} {
+    <ExternalFlash as NorFlash>::WRITE_SIZE
+} else {
+    {{write_size}}
+};
+
+/// Обмен разделов, если он запрошен, — или текущий образ, если внешняя флеш
+/// не отвечает, а обмен не начат.
+///
+/// Внешняя микросхема — отдельная деталь платы (не распаяна, не подставлен
+/// драйвер, отказала), и из-за неё устройство не должно перестать
+/// загружаться вовсе: образ в `ACTIVE` внутренний, и, пока обмен его не
+/// тронул, он цел. Отсюда три случая по `STATE`:
+///
+/// - не читается — загружается текущий образ. Был ли начат обмен, узнать
+///   нечем; не начат — частый случай (заглушка, не распаянная микросхема), а
+///   отказ флеши посреди обмена, который не проходит и после сброса, — редкий;
+/// - `Swap` — обмен запрошен или идёт, и прерывать его нельзя: часть страниц
+///   `ACTIVE` может быть уже переписана, и прыжок в такую смесь — `HardFault`, а
+///   то и подтверждение битого образа. Поэтому `BootLoader::prepare`: ошибка —
+///   паника, сброс и продолжение обмена по журналу с того же места;
+/// - иначе обмена нет, `prepare_boot` только читает — его ошибка не страшна.
+fn prepare<ACTIVE: NorFlash, DFU: NorFlash, STATE: NorFlash>(
+    mut config: BootLoaderConfig<ACTIVE, DFU, STATE>,
+) -> BootLoader {
+    let mut word = [0; adapters::ota::MAX_WRITE_SIZE];
+    match BlockingFirmwareState::new(&mut config.state, &mut word[..STATE::WRITE_SIZE]).get_state()
+    {
+        Ok(State::Swap) => BootLoader::prepare::<_, _, _, BUFFER_SIZE>(config),
+        Ok(_) => BootLoader::try_prepare::<_, _, _, BUFFER_SIZE>(config).unwrap_or_else(|_| {
+            defmt::warn!("boot: внешняя флеш не отвечает — загружается текущий образ");
+            BootLoader { state: State::Boot }
+        }),
+        Err(_) => {
+            defmt::warn!("boot: внешняя флеш не отвечает — загружается текущий образ");
+            BootLoader { state: State::Boot }
+        }
+    }
+}
+{%- endif %}
 {%- if signed == "true" %}
 
 /// Проверяет новый образ в `DFU`, если обмен запрошен, и возвращает флеш
@@ -144,10 +259,52 @@ const STATE_ERASE_SIZE: usize = {{state_erase_size}};
 /// Причина отказа печатается строкой на вариант, а не через
 /// `defmt::Debug2Format`: тот тянет `core::fmt` — несколько килобайт в зону
 /// bootloader'а, где их и так впритык.
+{%- if ota_store == "external" %}
+///
+/// Третье в ответе — можно ли обменивать разделы. Нельзя, если внешняя флеш
+/// не ответила: образ не проверен, и обмен без проверки запустил бы
+/// неподписанный — даже если на следующем шаге флеш вдруг ответит. Тогда
+/// загружается текущий образ, запрос на обмен остаётся до следующего сброса.
+fn screen(
+    flash: Flash<'static, embassy_stm32::flash::Blocking>,
+    external: ExternalFlash,
+) -> (
+    Flash<'static, embassy_stm32::flash::Blocking>,
+    ExternalFlash,
+    bool,
+) {
+    use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+
+    let flash = Mutex::<NoopRawMutex, _>::new(RefCell::new(flash));
+    let external = Mutex::<NoopRawMutex, _>::new(RefCell::new(external));
+    let swap_allowed = {
+        let mut config = BootLoaderConfig::from_linkerfile_blocking(&flash, &external, &external);
+        let capacity = config.active.size();
+        if let Ok(screening) = adapters::ota::screen_update(
+            &mut config.dfu,
+            &mut config.state,
+            capacity,
+            &OTA_PUBLIC_KEY_IN_IMAGE,
+        ) {
+            report(screening);
+            true
+        } else {
+            defmt::warn!(
+                "boot: внешняя флеш не отвечает — новый образ не проверен, обмен пропущен"
+            );
+            false
+        }
+    };
+    (
+        flash.into_inner().into_inner(),
+        external.into_inner().into_inner(),
+        swap_allowed,
+    )
+}
+{%- else %}
 fn screen(
     flash: Flash<'static, embassy_stm32::flash::Blocking>,
 ) -> Flash<'static, embassy_stm32::flash::Blocking> {
-    use adapters::ota::{Rejection, Screening};
     use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
     let flash = Mutex::<NoopRawMutex, _>::new(RefCell::new(flash));
@@ -167,21 +324,29 @@ fn screen(
             // бы оставляет причину в PANIC (`cargo xtask panic-info`).
             panic!("boot: проверка нового образа: ошибка флеша");
         };
-        match screening {
-            Screening::NothingToCheck => {}
-            Screening::Approved => info!("boot: подпись нового образа сошлась"),
-            Screening::Rejected(why) => defmt::warn!(
-                "boot: новый образ отвергнут ({=str}), загружается прежний",
-                match why {
-                    Rejection::NoRecord => "нет записи о подписи",
-                    Rejection::Length => "негодная длина",
-                    Rejection::NoPublicKey => "ключ не подставлен",
-                    Rejection::Signature => "подпись не сошлась",
-                }
-            ),
-        }
+        report(screening);
     }
     flash.into_inner().into_inner()
+}
+{%- endif %}
+
+/// Исход проверки — в лог.
+fn report(screening: adapters::ota::Screening) {
+    use adapters::ota::{Rejection, Screening};
+
+    match screening {
+        Screening::NothingToCheck => {}
+        Screening::Approved => info!("boot: подпись нового образа сошлась"),
+        Screening::Rejected(why) => defmt::warn!(
+            "boot: новый образ отвергнут ({=str}), загружается прежний",
+            match why {
+                Rejection::NoRecord => "нет записи о подписи",
+                Rejection::Length => "негодная длина",
+                Rejection::NoPublicKey => "ключ не подставлен",
+                Rejection::Signature => "подпись не сошлась",
+            }
+        ),
+    }
 }
 
 /// Открытый ключ, которым проверяется подпись нового образа.
@@ -224,30 +389,33 @@ const WATCHDOG_TIMEOUT_US: u32 = match u32::from_str_radix(env!("WATCHDOG_TIMEOU
 /// останавливается. Новый образ, зависший раньше тикера графа, сбрасывается
 /// им, не подтвердив себя (`mark_booted`), и следующий старт bootloader'а
 /// откатывает его — без сторожа плата висела бы до выключения питания.
+///
+/// Сторож — по ссылке, а не полем: флешей под обменом может быть две
+/// (внутренняя и внешняя, `ota=external`), а сторож один.
 #[cfg(not(debug_assertions))]
-struct Fed<F> {
+struct Fed<'w, F> {
     flash: F,
-    watchdog: IndependentWatchdog<'static, embassy_stm32::peripherals::{{watchdog_peripheral}}>,
+    watchdog: &'w Watchdog,
 }
 
+/// Запущенный сторож, общий для всех [`Fed`].
 #[cfg(not(debug_assertions))]
-impl<F> Fed<F> {
-    fn new(
-        flash: F,
-        mut watchdog: IndependentWatchdog<'static, embassy_stm32::peripherals::{{watchdog_peripheral}}>,
-    ) -> Self {
-        watchdog.unleash();
+type Watchdog = RefCell<IndependentWatchdog<'static, embassy_stm32::peripherals::{{watchdog_peripheral}}>>;
+
+#[cfg(not(debug_assertions))]
+impl<'w, F> Fed<'w, F> {
+    const fn new(flash: F, watchdog: &'w Watchdog) -> Self {
         Self { flash, watchdog }
     }
 }
 
 #[cfg(not(debug_assertions))]
-impl<F: ErrorType> ErrorType for Fed<F> {
+impl<F: ErrorType> ErrorType for Fed<'_, F> {
     type Error = F::Error;
 }
 
 #[cfg(not(debug_assertions))]
-impl<F: ReadNorFlash> ReadNorFlash for Fed<F> {
+impl<F: ReadNorFlash> ReadNorFlash for Fed<'_, F> {
     const READ_SIZE: usize = F::READ_SIZE;
 
     fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), Self::Error> {
@@ -260,26 +428,41 @@ impl<F: ReadNorFlash> ReadNorFlash for Fed<F> {
 }
 
 #[cfg(not(debug_assertions))]
-impl<F: NorFlash> NorFlash for Fed<F> {
+impl<F: NorFlash> NorFlash for Fed<'_, F> {
     const WRITE_SIZE: usize = F::WRITE_SIZE;
     const ERASE_SIZE: usize = F::ERASE_SIZE;
 
-    /// Диапазон не дробится: `embassy-boot` при обмене стирает по одной
-    /// странице (крупнейший сектор чипа) за вызов, а дробить по `ERASE_SIZE`
-    /// здесь нельзя — на F4/F7/H7 секторы неравные, и граница посреди
-    /// настоящего сектора дала бы отказ стирания. Раздел `BOOTLOADER_STATE`
-    /// (стирается целиком после отката) приходит сюда же — через
-    /// `Paged`→`Shared`, — и он не крупнее страницы обмена: на F4 это сектор
-    /// 3 (16 KiB) или, с разделом настроек, сектор 4 (64 KiB), на
-    /// равносекторных чипах — несколько страниц по паре килобайт. Таймаут
-    /// сторожа должен пережить стирание самого крупного из них.
-    fn erase(&mut self, from: u32, to: u32) -> Result<(), Self::Error> {
-        self.watchdog.pet();
-        self.flash.erase(from, to)
+    /// Длинный диапазон — по кускам до границы `ERASE_SIZE`, со сторожем перед
+    /// каждым. `embassy-boot` стирает страницу обмена или весь
+    /// `BOOTLOADER_STATE` (после отката) одним вызовом, и у внешней флеши со
+    /// страницей 4 KiB это десятки команд стирания по 45–400 мс — дольше
+    /// таймаута сторожа.
+    ///
+    /// Резать по самому `ERASE_SIZE` от начала диапазона было бы нельзя: у
+    /// внутреннего флеша это крупнейший сектор, а на F4/F7/H7 секторы
+    /// неравные, и кусок мог бы кончиться посреди настоящего сектора — отказ
+    /// стирания. Граница же кратна `ERASE_SIZE` и потому всегда совпадает с
+    /// границей сектора (они кратны своему размеру): у внутреннего флеша
+    /// страница обмена и `STATE` в мелких секторах так и остаются одним
+    /// куском. Таймаут сторожа должен пережить стирание одного куска — самого
+    /// крупного сектора чипа.
+    fn erase(&mut self, mut from: u32, to: u32) -> Result<(), Self::Error> {
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "`ERASE_SIZE` флеша — меньше 4 ГиБ"
+        )]
+        let page = F::ERASE_SIZE as u32;
+        while from < to {
+            let end = to.min((from / page + 1) * page);
+            self.watchdog.borrow_mut().pet();
+            self.flash.erase(from, end)?;
+            from = end;
+        }
+        Ok(())
     }
 
     fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), Self::Error> {
-        self.watchdog.pet();
+        self.watchdog.borrow_mut().pet();
         self.flash.write(offset, bytes)
     }
 }

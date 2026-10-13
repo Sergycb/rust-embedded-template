@@ -159,7 +159,8 @@ read`: руками пришлось бы сначала найти адрес �
   такими: `Busy` и отсутствие подписи — до `receive`, длина — внутри него,
   до `prepare` — `docs/ota.md`.
 - `NoopRawMutex` у `bsp::FlashMutex`, у мьютексов разделов `DFU` и `STATE`
-  (`bsp::ota::DFU_FLASH`, `bsp::ota::STATE_FLASH`) и `local` на слотах узла OTA
+  (`bsp::ota::DFU_FLASH`, `bsp::ota::STATE_FLASH`; с `ota=external` —
+  `bsp::external::ExternalMutex`) и `local` на слотах узла OTA
   (`domain::ota`) — одно допущение «один исполнитель», менять вместе —
   `docs/flash.md`, `docs/architecture.md`.
 - `BOOTLOADER_STATE` строится над `adapters::flash::Paged` со страницей своего

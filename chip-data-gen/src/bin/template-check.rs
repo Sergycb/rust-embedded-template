@@ -98,6 +98,29 @@ fn default_cases() -> Vec<Case> {
         // `Updater` платы собран `Updater::signed`.
         // Проверяется на чипе с OTA — без него подпись хук выключает.
         Case::new("stm32f407ve").variant("signed", &["signed=yes"]),
+        // OTA с `STATE`/`DFU` на внешней флеши (`ota=external`) — на чипе, куда
+        // внутренняя схема не помещается вовсе. Разом: слот драйвера в `boot`
+        // (блокирующий, `try_prepare` без паники) и в `bsp::external`
+        // (асинхронный, общий мьютекс), проверка подписи над внешними
+        // разделами, сторож на двух флешах (`Fed`), настройки на той же
+        // микросхеме за `DFU` (`__config_*` — смещения от её начала), и
+        // `shared_flash = false` при OTA.
+        Case::new("stm32h723ve").variant(
+            "ota-external",
+            &["ota=external", "config=external", "signed=yes"],
+        ),
+        // Внешняя OTA и настройки во внутреннем флеше: на F4 — в секторах 2–3
+        // зоны bootloader'а, которые без них пропадали бы. Без графа — `boot`
+        // без сторожа и `Fed`, а `embedded-storage` ему нужен только ради
+        // геометрии драйвера.
+        Case::new("stm32f407ve").variant(
+            "ota-external-config",
+            &["ota=external", "config=yes", "graph=no"],
+        ),
+        // Флеш, стирающийся в ноль, с внешней OTA: `flash-erase-zero` у
+        // `embassy-boot` выключен — `STATE` на внешней NOR, а она стирается в
+        // единицы.
+        Case::new("stm32l073rz").variant("ota-external", &["ota=external"]),
         // Подпись без графа: узел OTA зовёт сам `main` (`app/src/image.rs`
         // есть, `graph.rs` нет), а bootloader — без сторожа и без
         // `embedded-storage`, потому что кормить сторож в приложении некому.

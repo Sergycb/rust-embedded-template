@@ -235,6 +235,11 @@ where
 ///
 /// Геометрия правдоподобная — две страницы по 4 KiB, сектор почти любой
 /// SPI NOR, — ровно столько, сколько нужно хранилищу, чтобы собраться.
+///
+/// Тот же слот и у OTA с разделами на внешней флеши (`ota=external`): в
+/// приложении — асинхронные трейты, в bootloader'е — блокирующие, поэтому
+/// заглушка реализует оба. Bootloader с ней не обменивает разделы, а
+/// загружает текущий образ.
 #[derive(Debug, Default)]
 pub struct Unconnected;
 
@@ -279,6 +284,31 @@ impl embedded_storage_async::nor_flash::NorFlash for Unconnected {
 
     fn write(&mut self, _: u32, _: &[u8]) -> impl Future<Output = Result<(), Self::Error>> {
         core::future::ready(Err(NotConnected))
+    }
+}
+
+impl ReadNorFlash for Unconnected {
+    const READ_SIZE: usize = 1;
+
+    fn read(&mut self, _: u32, _: &mut [u8]) -> Result<(), Self::Error> {
+        Err(NotConnected)
+    }
+
+    fn capacity(&self) -> usize {
+        Self::CAPACITY as usize
+    }
+}
+
+impl NorFlash for Unconnected {
+    const WRITE_SIZE: usize = 1;
+    const ERASE_SIZE: usize = 4096;
+
+    fn erase(&mut self, _: u32, _: u32) -> Result<(), Self::Error> {
+        Err(NotConnected)
+    }
+
+    fn write(&mut self, _: u32, _: &[u8]) -> Result<(), Self::Error> {
+        Err(NotConnected)
     }
 }
 

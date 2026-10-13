@@ -51,7 +51,8 @@ adapters = { workspace = true, features = ["signed"] }
 {%- else %}
 adapters = { workspace = true }
 {%- endif %}
-{%- if graph == "true" %}
-# Обёртка флеша, кормящая сторож во время обмена разделов (`Fed` в src/main.rs).
+{%- if graph == "true" or ota_store == "external" %}
+# Обёртка флеша, кормящая сторож во время обмена разделов (`Fed` в src/main.rs),
+# и геометрия драйвера внешней флеши в проверках при компиляции.
 embedded-storage = { workspace = true }
 {%- endif %}

@@ -4,6 +4,9 @@ pub mod board;
 {%- if config == "true" %}
 pub mod config;
 {%- endif %}
+{%- if ota == "true" and ota_store == "external" %}
+pub mod external;
+{%- endif %}
 {%- if ota == "true" %}
 pub mod ota;
 {%- endif %}

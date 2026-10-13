@@ -120,6 +120,51 @@ pub(crate) fn new(flash: &'static FlashMutex) -> Settings {
     let size = eeprom.usable();
     adapters::settings::Settings::new(eeprom, 0..size)
 }
+{%- elsif config_store == "external" and ota == "true" and ota_store == "external" %}
+//!
+//! Здесь — внешняя флеш, та же, что у OTA (`crate::external`): раздел под
+//! настройки лежит на ней за `DFU`, границы — символами `__config_*` в
+//! `memory.x` (смещения от начала микросхемы). Драйвер подставляется там же,
+//! в `crate::external`.
+
+use core::ops::Range;
+
+use crate::external::{ExternalMutex, ExternalPartition};
+
+/// Хранилище настроек этой платы — то, что лежит полем `Board` и уезжает в
+/// задачи. Псевдоним по общему правилу шаблона: тип в сигнатуре
+/// `#[embassy_executor::task]` должен быть конкретным.
+pub type Settings = adapters::settings::Settings<ExternalPartition>;
+
+// Ещё один `#[expect(unsafe_code)]` в `crates-cross`: причина та же, что у
+// блока в `ota.rs` — адрес линкерного символа иначе не взять.
+#[expect(unsafe_code, reason = "обоснование — в комментарии выше")]
+unsafe extern "C" {
+    /// Границы раздела настроек на внешней флеши, от её начала.
+    static __config_start: u32;
+    static __config_end: u32;
+}
+
+/// Собирает хранилище над разделом внешней флеши.
+///
+/// # Паника
+///
+/// Если раздел не годится под `sequential-storage` — см.
+/// `adapters::settings::Settings::new`.
+pub(crate) fn new(external: &'static ExternalMutex) -> Settings {
+    let range = flash_range();
+    let partition = ExternalPartition::new(external, range.start, range.end - range.start);
+    adapters::settings::Settings::new(partition, 0..range.end - range.start)
+}
+
+/// Границы раздела по символам линкера.
+fn flash_range() -> Range<u32> {
+    // SAFETY: символы объявлены линкерным скриптом как абсолютные значения;
+    // читается их адрес, а не содержимое (памяти за ними нет).
+    let start = &raw const __config_start as u32;
+    let end = &raw const __config_end as u32;
+    start..end
+}
 {%- elsif config_store == "external" %}
 //!
 //! Здесь — внешняя флеш. Какая микросхема стоит на плате, шаблон не знает и не

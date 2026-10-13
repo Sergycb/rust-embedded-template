@@ -208,12 +208,41 @@ where
         }
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "сигнатуру действия задаёт таблица `#[fsm::typestate]`"
-    )]
-    fn begin(&mut self) -> Waiting {
+    /// Подтверждение образа, затем ожидание заголовка.
+    ///
+    /// Без подтверждения bootloader считает попытку неудачной и на следующем
+    /// сбросе откатывает образ — обновление отработало бы ровно один запуск.
+    /// Здесь, а не в `main` до исполнителя: порт асинхронный, и драйвер внешней
+    /// флеши может ждать таймер или прерывание, а это требует исполнителя. На
+    /// обычной загрузке вызов ничего не меняет (состояние и так `Boot`), на
+    /// рестарте узла — тоже.
+    ///
+    /// Место — самое раннее из возможных, и это компромисс шаблона: он не
+    /// знает, что для устройства значит «работает». Появится критерий
+    /// (подняли связь, отработали цикл измерений) — переносите подтверждение
+    /// туда; тогда откат застрахует и от образа, который стартует, но не
+    /// работает.
+    ///
+    /// Ошибка — не повод ронять узел: устройство работает, просто следующий
+    /// сброс вернёт прежний образ. Знать об этом важнее, чем упасть.
+    ///
+    /// Один раз за запуск, а не на каждом рестарте узла (`confirmed` — слот,
+    /// он рестарт переживает): `STATE` после обмена и `STATE` с принятым, но
+    /// ещё не применённым образом выглядят одинаково (`Swap`), и подтверждение
+    /// на рестарте — после отказа канала уже за `mark_updated` — молча сняло бы
+    /// запрос на обмен, о котором отправитель уже услышал `Ok`. Не удалось —
+    /// флаг не ставится, и следующий рестарт попробует снова.
+    async fn begin(&mut self) -> Waiting {
         info!("domain: узел OTA запущен");
+        if !*self.confirmed {
+            match self.flash.mark_booted().await {
+                Ok(()) => *self.confirmed = true,
+                Err(err) => warn!(
+                    "ota: не удалось подтвердить образ: {:?}",
+                    Debug2Format(&err)
+                ),
+            }
+        }
         Waiting
     }
 
@@ -333,7 +362,9 @@ fn update_rejection<E>(err: &UpdateError<E>) -> Rejection {
 // а `spawn_all` связывает её первой строкой пролога, и инициализаторы слотов
 // ниже читают её поля. Так фрагмент не видит `Board` вовсе — только то, что
 // ему дали. `MODE` — обычный слот, не `local`: перечисление из данных
-// `Send` всегда.
+// `Send` всегда. `CONFIRMED` — без входа: подтверждён ли уже образ в этом
+// запуске (см. действие `begin`); слот, а не поле автомата, потому что должен
+// пережить рестарт узла.
 //
 // `ctx:` — контекст [`OtaCtx`] эмитит фрагмент здесь, в `domain`; автомат
 // стоит на нём (см. `domain::heartbeat`).
@@ -373,7 +404,8 @@ supervisor::supervisor_fragment! {
         resources: [
             LINK: local S = inputs.link,
             FLASH: local F = inputs.flash,
-            MODE: $crate::ota::Mode = inputs.mode
+            MODE: $crate::ota::Mode = inputs.mode,
+            CONFIRMED: bool = false
         ],
         ctx: $crate::ota::OtaCtx,
         task: $crate::ota::run;
@@ -391,11 +423,23 @@ mod tests {
     /// Гоняет узел, пока не кончится канал: после последнего заголовка `begin`
     /// у `FakeLink` отвечает отказом, так что прогон всегда кончается `Failed`
     /// — раньше, если канал отказал посреди цикла.
-    async fn serve(link: &mut FakeLink, flash: &mut FakeFlash, mut mode: Mode) {
+    async fn serve(link: &mut FakeLink, flash: &mut FakeFlash, mode: Mode) {
+        serve_again(link, flash, mode, &mut false).await;
+    }
+
+    /// То же, но со слотом `CONFIRMED` снаружи — как у узла, перезапущенного
+    /// графом.
+    async fn serve_again(
+        link: &mut FakeLink,
+        flash: &mut FakeFlash,
+        mut mode: Mode,
+        confirmed: &mut bool,
+    ) {
         let ctx = OtaCtx {
             link,
             flash,
             mode: &mut mode,
+            confirmed,
             index: 0,
         };
         assert_eq!(run(ctx).await, TaskExit::Failed);
@@ -433,6 +477,61 @@ mod tests {
         assert_eq!(&flash.memory[..64], &image[..]);
         assert_eq!(flash.updated, 1, "обмен разделов запрошен один раз");
         assert_eq!(link.finished, vec![Ok(())]);
+    }
+
+    /// Образ подтверждается при старте узла — до первого заголовка, даже если
+    /// канал отказал сразу: иначе bootloader откатил бы обновление на
+    /// следующем сбросе.
+    #[tokio::test]
+    async fn confirms_the_running_image_before_the_first_header() {
+        let mut link = FakeLink::of([]);
+        let mut flash = FakeFlash::new(64, 8);
+
+        serve(&mut link, &mut flash, plain()).await;
+
+        assert_eq!(flash.booted, 1);
+        assert_eq!(flash.prepared, None, "раздел не тронут");
+    }
+
+    /// Рестарт узла после принятого образа (канал отказал уже после
+    /// `mark_updated`) не подтверждает снова: иначе запрос на обмен, о котором
+    /// отправитель услышал `Ok`, был бы молча снят.
+    #[tokio::test]
+    async fn a_restarted_node_does_not_confirm_again() {
+        let image = image(16);
+        let mut confirmed = false;
+        let mut flash = FakeFlash::new(64, 8);
+
+        let mut link = FakeLink::of([image]).announcing([announce(16)]);
+        serve_again(&mut link, &mut flash, plain(), &mut confirmed).await;
+        assert_eq!((flash.booted, flash.updated), (1, 1));
+
+        let mut link = FakeLink::of([]);
+        serve_again(&mut link, &mut flash, plain(), &mut confirmed).await;
+        assert_eq!(flash.booted, 1, "второй прогон не подтверждает");
+    }
+
+    /// Подтверждение не удалось — узел работает дальше и пробует снова на
+    /// следующем рестарте.
+    #[tokio::test]
+    async fn a_failed_confirmation_is_retried_on_restart() {
+        let mut confirmed = false;
+        let mut flash = FakeFlash::new(64, 8);
+        flash.mark_booted = Err("флеш не отвечает");
+
+        let mut link = FakeLink::of([vec![0; 8]]).announcing([announce(8)]);
+        serve_again(&mut link, &mut flash, plain(), &mut confirmed).await;
+        assert!(!confirmed);
+        assert_eq!(
+            link.finished,
+            vec![Ok(())],
+            "образ принят, несмотря на отказ"
+        );
+
+        flash.mark_booted = Ok(());
+        let mut link = FakeLink::of([]);
+        serve_again(&mut link, &mut flash, plain(), &mut confirmed).await;
+        assert!(confirmed);
     }
 
     /// Занятость — до стирания и до чтения канала: адаптер и так отказал бы

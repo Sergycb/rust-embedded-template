@@ -27,11 +27,6 @@ use defmt_rtt as _;
 use embassy_executor::raw::Executor;
 use embassy_time::Instant;
 use static_cell::StaticCell;
-{%- if ota == "true" %}
-// Трейт порта: приложение зовёт объекты `Board` только через него и про
-// железо за ним — разделы флеша — не знает.
-use ports::FirmwareUpdate;
-{%- endif %}
 
 #[cortex_m_rt::entry]
 fn main() -> ! {
@@ -63,38 +58,25 @@ fn main() -> ! {
         defmt::error!("app: предыдущий запуск упал: {}", reason);
     }
 
-    let {% if ota == "true" %}mut {% endif %}board = bsp::Board::new();
+    let board = bsp::Board::new();
     // Следом — на чём именно: чип и его заводской номер, по которому
     // экземпляр платы отличается от соседнего.
     info!("app: {}", board.spec);
 
-{%- if ota == "true" %}
+{%- if ota == "true" and graph != "true" %}
 
-    // Подтверждение обновления. Без него bootloader считает попытку неудачной
-    // и на следующем сбросе откатит образ обратно — то есть обновление
-    // отработает ровно один запуск и молча исчезнет.
-    //
-    // Место вызова здесь — самое раннее из возможных, и это осознанный
-    // компромисс шаблона: он не знает, что для вашего устройства значит
-    // «работает». Как только появится критерий (подняли связь, ответили на
-    // первый запрос, отработали цикл измерений), перенесите вызов туда —
-    // тогда откат начнёт страховать от образа, который стартует, но не
-    // работает, а не только от того, который не стартует вовсе.
-    //
-    // На обычной загрузке (без обновления) вызов ничего не меняет: состояние
-    // и так `Boot`.
-    if let Err(err) = ready_now(board.ota.flash.mark_booted()) {
-        // Не паника: устройство работает, просто следующий сброс вернёт
-        // предыдущий образ. Знать об этом важнее, чем упасть.
-        defmt::error!("app: не удалось подтвердить образ: {}", err);
-    }
+    // Графа нет, так что узел OTA зовёте вы{% if signed == "true" %}: переименуйте `_mode` в
+    // `mut mode`, `board` — в `mut board` и вызовите
+    // `domain::ota::run(domain::ota::OtaCtx { link: &mut board.ota.link,
+    // flash: &mut board.ota.flash, mode: &mut mode, confirmed: &mut false,
+    // index: 0 }).await`{% else %}: переименуйте `board` в `mut board` и вызовите
+    // `domain::ota::run(domain::ota::OtaCtx { link: &mut board.ota.link,
+    // flash: &mut board.ota.flash, mode: &mut domain::ota::Mode::Plain,
+    // confirmed: &mut false, index: 0 }).await`{% endif %}. Узел же подтверждает
+    // образ (`mark_booted`) — без него bootloader откатит обновление на
+    // следующем сбросе; применяете образ своим кодом — подтверждайте сами.
 {%- endif %}
 {%- if signed == "true" and graph != "true" %}
-
-    // Режим проекта с подписью. Графа нет, так что узел OTA зовёте вы:
-    // переименуйте `_mode` в `mut mode` и вызовите
-    // `domain::ota::run(domain::ota::OtaCtx { link: &mut board.ota.link,
-    // flash: &mut board.ota.flash, mode: &mut mode, index: 0 }).await`.
     #[expect(
         clippy::no_effect_underscore_binding,
         reason = "заготовка под ручной вызов узла OTA, см. комментарий выше"
@@ -147,7 +129,7 @@ fn main() -> ! {
     //
     // Но в release сторож к этой строке уже тикает: его запустил bootloader
     // (на той же цифре `bsp::wdg::HW_TIMEOUT_US`, 10 с), и весь
-    // путь от прыжка сюда — `Board::new`, подтверждение образа, ваше долгое —
+    // путь от прыжка сюда — `Board::new` и ваше долгое —
     // обязан в него уложиться (docs/watchdog.md).{% endif %}
     //
     // Паника, а не `let _ =`, и это не педантизм: сторож запускается в
@@ -196,22 +178,3 @@ fn main() -> ! {
         }
     }
 }
-{%- if ota == "true" %}
-
-/// Довести future до конца до старта исполнителя.
-///
-/// Порт OTA асинхронный, а подтверждение образа — до исполнителя, чтобы
-/// отработать раньше всего остального. Над внутренней флешью future готов с
-/// первого `poll` (мьютексы свободны, драйвер блокирующий), так что цикл —
-/// страховка, а не ожидание. `Waker::noop()`: будить некого, крутимся сами.
-// ponytail: busy-poll; для внешней флеши с DMA — перенести вызов в задачу.
-fn ready_now<F: core::future::Future>(future: F) -> F::Output {
-    let mut future = core::pin::pin!(future);
-    let mut cx = core::task::Context::from_waker(core::task::Waker::noop());
-    loop {
-        if let core::task::Poll::Ready(out) = future.as_mut().poll(&mut cx) {
-            return out;
-        }
-    }
-}
-{%- endif %}

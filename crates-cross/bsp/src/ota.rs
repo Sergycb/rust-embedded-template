@@ -2,6 +2,21 @@
 
 use core::convert::Infallible;
 
+{%- if ota_store == "external" %}
+
+use embassy_boot::FirmwareUpdaterConfig;
+use ports::{Announce, ImageSource, Rejection};
+
+use crate::external::{ExternalMutex, ExternalPartition};
+
+/// Раздел `DFU` — на внешней флеши (`crate::external`).
+pub type Partition = ExternalPartition;
+
+/// Раздел `BOOTLOADER_STATE` — на той же внешней флеши: его страницу несёт
+/// драйвер.
+pub type StatePartition = ExternalPartition;
+{%- else %}
+
 use adapters::flash::{Paged, Shared};
 use embassy_boot::FirmwareUpdaterConfig;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
@@ -43,16 +58,17 @@ type StateFlash = Paged<Shared<'static, FlashMutex>, STATE_ERASE_SIZE>;
 pub type StatePartition =
     embassy_embedded_hal::flash::partition::Partition<'static, NoopRawMutex, StateFlash>;
 
-/// Адаптер обновления этой платы — порт `FirmwareUpdate` поверх разделов
-/// `DFU`/`BOOTLOADER_STATE`. Псевдоним по общему правилу шаблона: тип слота
-/// узла OTA должен быть конкретным, а адаптер приходит из `adapters` generic.
-pub type Updater = adapters::ota::Updater<Partition, StatePartition>;
-
 /// Свои асинхронные мьютексы разделам: `embassy-boot` строит каждый раздел
 /// из `&Mutex<_, T>` своего типа. Внутри обоих — ссылка на общий
 /// [`FlashMutex`], а не второй `Flash`: контроллер на чипе один.
 static DFU_FLASH: StaticCell<Mutex<NoopRawMutex, DfuFlash>> = StaticCell::new();
 static STATE_FLASH: StaticCell<Mutex<NoopRawMutex, StateFlash>> = StaticCell::new();
+{%- endif %}
+
+/// Адаптер обновления этой платы — порт `FirmwareUpdate` поверх разделов
+/// `DFU`/`BOOTLOADER_STATE`. Псевдоним по общему правилу шаблона: тип слота
+/// узла OTA должен быть конкретным, а адаптер приходит из `adapters` generic.
+pub type Updater = adapters::ota::Updater<Partition, StatePartition>;
 
 /// Всё, что плата отдаёт узлу OTA: канал доставки и адаптер разделов.
 ///
@@ -109,10 +125,18 @@ impl ImageSource for Link {
 
 /// Собирает вход узла OTA: адаптер из разделов `DFU` и `BOOTLOADER_STATE`,
 /// найденных по символам `memory.x`, и канал доставки.
+{%- if ota_store == "external" %}
+///
+/// Оба раздела — над одной внешней флешью: символы в `memory.x` для них —
+/// смещения от её начала.
+pub(crate) fn new(external: &'static ExternalMutex) -> Ota {
+    let config = FirmwareUpdaterConfig::from_linkerfile(external, external);
+{%- else %}
 pub(crate) fn new(flash: &'static FlashMutex) -> Ota {
     let dfu = DFU_FLASH.init(Mutex::new(Shared::new(flash)));
     let state = STATE_FLASH.init(Mutex::new(Paged::new(Shared::new(flash))));
     let config = FirmwareUpdaterConfig::from_linkerfile(dfu, state);
+{%- endif %}
     Ota {
         link: Link,
         flash: Updater::{% if signed == "true" %}signed{% else %}new{% endif %}(config.dfu, config.state, max_image_len()),

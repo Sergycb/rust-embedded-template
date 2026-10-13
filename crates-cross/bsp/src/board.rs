@@ -108,7 +108,7 @@ pub struct Board {
 {%- endif %}
 {%- if config == "true" %}
     /// Настройки, переживающие перезапуск и обновление прошивки:
-    /// `adapters::settings` поверх {% if config_store == "eeprom" %}внутренней EEPROM{% elsif config_store == "external" %}внешней флеши (драйвер — `bsp/src/config.rs`){% else %}раздела `CONFIG` во флеше{% endif %}.
+    /// `adapters::settings` поверх {% if config_store == "eeprom" %}внутренней EEPROM{% elsif config_store == "external" %}внешней флеши (драйвер — `bsp/src/{% if ota == "true" and ota_store == "external" %}external{% else %}config{% endif %}.rs`){% else %}раздела `CONFIG` во флеше{% endif %}.
     /// Формат значений выбирает проект.
     pub settings: crate::config::Settings,
 {%- endif %}
@@ -177,6 +177,11 @@ impl Board {
         // периферия, а готовый объект — поле `Board`, реализующее порт из
         // `ports`.
 {%- endif %}
+{%- if ota == "true" and ota_store == "external" %}
+        // Внешняя флеш — одна на `STATE`/`DFU`{% if config_store == "external" %} и настройки{% endif %}: драйвер
+        // собирается здесь же, из периферии (см. `crate::external`).
+        let external = crate::external::new();
+{%- endif %}
 
         let sys_hz = clocks.sys.to_hertz().map(|hz| hz.0);
 
@@ -195,10 +200,10 @@ impl Board {
                 sys_hz,
             },
 {%- if ota == "true" %}
-            ota: crate::ota::new(flash),
+            ota: crate::ota::new({% if ota_store == "external" %}external{% else %}flash{% endif %}),
 {%- endif %}
 {%- if config == "true" %}
-            settings: crate::config::new({% if config_store != "external" %}flash{% endif %}),
+            settings: crate::config::new({% if config_store != "external" %}flash{% elsif ota == "true" and ota_store == "external" %}external{% endif %}),
 {%- endif %}
 {%- if graph == "true" %}
             watchdog: crate::wdg::UnarmedBoardWatchdog::new(p.{{watchdog_peripheral}}),
