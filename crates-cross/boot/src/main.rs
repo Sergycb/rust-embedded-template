@@ -2,7 +2,9 @@
 #![no_main]
 
 use core::cell::RefCell;
-{% if ota_store != "external" %}
+{% if ota_store == "external" %}
+use adapters::ota::BootPlan;
+{%- else %}
 use adapters::flash::{Paged, Shared};
 {%- endif %}
 use defmt::info;
@@ -12,7 +14,7 @@ use defmt::info;
 // одну диагностическую строку перед прыжком не стоит того усложнять.
 use defmt_rtt as _;
 {%- if ota_store == "external" %}
-use embassy_boot_stm32::{BlockingFirmwareState, State};
+use embassy_boot_stm32::State;
 {%- endif %}
 use embassy_boot_stm32::{BootLoader, BootLoaderConfig};
 use embassy_stm32::flash::{FLASH_BASE, Flash};
@@ -206,33 +208,22 @@ const BUFFER_SIZE: usize = if <ExternalFlash as NorFlash>::WRITE_SIZE > {{write_
 };
 
 /// Обмен разделов, если он запрошен, — или текущий образ, если внешняя флеш
-/// не отвечает, а обмен не начат.
-///
-/// Внешняя микросхема — отдельная деталь платы (не распаяна, не подставлен
-/// драйвер, отказала), и из-за неё устройство не должно перестать
-/// загружаться вовсе: образ в `ACTIVE` внутренний, и, пока обмен его не
-/// тронул, он цел. Отсюда три случая по `STATE`:
-///
-/// - не читается — загружается текущий образ. Был ли начат обмен, узнать
-///   нечем; не начат — частый случай (заглушка, не распаянная микросхема), а
-///   отказ флеши посреди обмена, который не проходит и после сброса, — редкий;
-/// - `Swap` — обмен запрошен или идёт, и прерывать его нельзя: часть страниц
-///   `ACTIVE` может быть уже переписана, и прыжок в такую смесь — `HardFault`, а
-///   то и подтверждение битого образа. Поэтому `BootLoader::prepare`: ошибка —
-///   паника, сброс и продолжение обмена по журналу с того же места;
-/// - иначе обмена нет, `prepare_boot` только читает — его ошибка не страшна.
+/// не отвечает, а обмен не начат. Решает `adapters::ota::boot_plan` (там же
+/// почему и host-тест с прерванным обменом): `Swap` — строгий
+/// `BootLoader::prepare`, ошибка которого — паника, сброс и продолжение обмена
+/// по журналу, а не прыжок в наполовину переписанный `ACTIVE`.
 fn prepare<ACTIVE: NorFlash, DFU: NorFlash, STATE: NorFlash>(
     mut config: BootLoaderConfig<ACTIVE, DFU, STATE>,
 ) -> BootLoader {
-    let mut word = [0; adapters::ota::MAX_WRITE_SIZE];
-    match BlockingFirmwareState::new(&mut config.state, &mut word[..STATE::WRITE_SIZE]).get_state()
-    {
-        Ok(State::Swap) => BootLoader::prepare::<_, _, _, BUFFER_SIZE>(config),
-        Ok(_) => BootLoader::try_prepare::<_, _, _, BUFFER_SIZE>(config).unwrap_or_else(|_| {
-            defmt::warn!("boot: внешняя флеш не отвечает — загружается текущий образ");
-            BootLoader { state: State::Boot }
-        }),
-        Err(_) => {
+    match adapters::ota::boot_plan(&mut config.state) {
+        BootPlan::Swap => BootLoader::prepare::<_, _, _, BUFFER_SIZE>(config),
+        BootPlan::Boot => {
+            BootLoader::try_prepare::<_, _, _, BUFFER_SIZE>(config).unwrap_or_else(|_| {
+                defmt::warn!("boot: внешняя флеш не отвечает — загружается текущий образ");
+                BootLoader { state: State::Boot }
+            })
+        }
+        BootPlan::BootCurrent => {
             defmt::warn!("boot: внешняя флеш не отвечает — загружается текущий образ");
             BootLoader { state: State::Boot }
         }

@@ -24,9 +24,10 @@
 //! работоспособность). Пока образ не подтверждён, отказывают и `prepare`, и
 //! `write`: в `DFU` тогда лежит образ, куда откатываться, и затирать его нельзя.
 
-#[cfg(feature = "signed")]
-use embassy_boot::BlockingFirmwareState;
-use embassy_boot::{AlignedBuffer, FirmwareState, FirmwareUpdater, FirmwareUpdaterConfig, State};
+use embassy_boot::{
+    AlignedBuffer, BlockingFirmwareState, FirmwareState, FirmwareUpdater, FirmwareUpdaterConfig,
+    State,
+};
 use embedded_storage::nor_flash::NorFlashErrorKind;
 use embedded_storage_async::nor_flash::NorFlash;
 use ports::FirmwareUpdate;
@@ -230,6 +231,50 @@ impl<DFU: NorFlash, STATE: NorFlash> FirmwareUpdate for Updater<DFU, STATE> {
 
     async fn mark_updated(&mut self) -> Result<(), Self::Error> {
         self.state().mark_updated().await
+    }
+}
+
+/// Что bootloader'у делать при старте — см. [`boot_plan`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BootPlan {
+    /// `STATE` не читается: загрузить текущий образ, разделы не трогать.
+    BootCurrent,
+    /// Обмен запрошен или прерван посередине: строгий
+    /// `BootLoader::prepare` — его ошибка обязана кончиться паникой и
+    /// сбросом, а не прыжком в `ACTIVE`.
+    Swap,
+    /// Обмена нет: `BootLoader::try_prepare` только читает, и его ошибку
+    /// можно пережить, загрузив текущий образ.
+    Boot,
+}
+
+/// Решение bootloader'а с разделами на внешней флеши (`ota=external`):
+/// обменивать или грузить текущий образ.
+///
+/// Внешняя микросхема — отдельная деталь платы (не распаяна, не подставлен
+/// драйвер, отказала), и из-за неё устройство не должно перестать
+/// загружаться: образ в `ACTIVE` внутренний и, пока обмен его не тронул, цел.
+/// Но прыжок в `ACTIVE` посреди обмена — смесь старых и новых страниц:
+/// `HardFault`, а дойди такой образ до подтверждения — битый образ навсегда.
+/// Отсюда три исхода по `STATE`:
+///
+/// - не читается — [`BootPlan::BootCurrent`]: был ли начат обмен, узнать
+///   нечем; не начатый — частый случай (заглушка, не распаянная микросхема), а
+///   отказ флеши посреди обмена, не проходящий и после сброса, — редкий;
+/// - `Swap` — [`BootPlan::Swap`]: магия держится всё время обмена (и отката),
+///   так что прерванный обмен узнаётся по ней же;
+/// - иначе — [`BootPlan::Boot`].
+///
+/// # Panics
+///
+/// Если `STATE::WRITE_SIZE` шире [`MAX_WRITE_SIZE`] — на STM32 и
+/// распространённых SPI NOR такого нет.
+pub fn boot_plan<STATE: embedded_storage::nor_flash::NorFlash>(state: &mut STATE) -> BootPlan {
+    let mut word = [0; MAX_WRITE_SIZE];
+    match BlockingFirmwareState::new(state, &mut word[..STATE::WRITE_SIZE]).get_state() {
+        Ok(State::Swap) => BootPlan::Swap,
+        Ok(_) => BootPlan::Boot,
+        Err(_) => BootPlan::BootCurrent,
     }
 }
 
@@ -607,6 +652,123 @@ mod tests {
         assert_eq!(u.write_granularity(), 8);
         assert_eq!(u.erase_size(), 256);
         assert_eq!(u.capacity().expect("вместимость"), 768);
+    }
+
+    /// Решение bootloader'а с внешней флешью (`boot_plan`) — над настоящим
+    /// обменом `embassy-boot`.
+    mod plan {
+        use embassy_boot::{BlockingFirmwareState, BootLoader, BootLoaderConfig};
+        use embedded_storage::nor_flash::{ErrorType, NorFlash, NorFlashErrorKind, ReadNorFlash};
+
+        use super::{Dfu, MemFlash, State};
+        use crate::flash::Unconnected;
+        use crate::ota::{BootPlan, boot_plan};
+
+        /// `DFU`, который после `ops` удачных стираний и записей отказывает —
+        /// внешняя флеш, отвалившаяся посреди обмена.
+        struct Flaky {
+            flash: Dfu,
+            ops: usize,
+        }
+
+        impl Flaky {
+            fn tick(&mut self) -> Result<(), NorFlashErrorKind> {
+                self.ops = self.ops.checked_sub(1).ok_or(NorFlashErrorKind::Other)?;
+                Ok(())
+            }
+        }
+
+        impl ErrorType for Flaky {
+            type Error = NorFlashErrorKind;
+        }
+
+        impl ReadNorFlash for Flaky {
+            const READ_SIZE: usize = 1;
+
+            fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), Self::Error> {
+                self.flash.read(offset, bytes)
+            }
+
+            fn capacity(&self) -> usize {
+                self.flash.capacity()
+            }
+        }
+
+        impl NorFlash for Flaky {
+            const WRITE_SIZE: usize = 8;
+            const ERASE_SIZE: usize = 256;
+
+            fn erase(&mut self, from: u32, to: u32) -> Result<(), Self::Error> {
+                self.tick()?;
+                self.flash.erase(from, to)
+            }
+
+            fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), Self::Error> {
+                self.tick()?;
+                self.flash.write(offset, bytes)
+            }
+        }
+
+        fn requested() -> State {
+            let mut state = State::erased();
+            BlockingFirmwareState::new(&mut state, &mut [0; 8])
+                .mark_updated()
+                .expect("запросить обмен");
+            state
+        }
+
+        #[test]
+        fn without_a_request_the_bootloader_may_survive_a_flash_error() {
+            assert_eq!(boot_plan(&mut State::erased()), BootPlan::Boot);
+        }
+
+        #[test]
+        fn an_unreadable_state_boots_the_current_image() {
+            assert_eq!(boot_plan(&mut Unconnected), BootPlan::BootCurrent);
+        }
+
+        #[test]
+        fn a_requested_swap_is_strict() {
+            assert_eq!(boot_plan(&mut requested()), BootPlan::Swap);
+        }
+
+        /// Главное свойство: обмен, прерванный отказом внешней флеши, —
+        /// по-прежнему `Swap`, то есть строгий `prepare` (сброс и повтор), а
+        /// не прыжок в наполовину переписанный `ACTIVE`. И повтор с ожившей
+        /// флешью доводит обмен до конца.
+        #[test]
+        fn an_interrupted_swap_stays_strict_and_resumes() {
+            let image: Vec<u8> = (0..768u32).map(|i| (i % 253) as u8).collect();
+            let mut active = MemFlash::<768>::filled(0x11);
+            let mut dfu = Flaky {
+                flash: Dfu::erased(),
+                ops: 0,
+            };
+            dfu.flash.mem[..768].copy_from_slice(&image);
+            let mut state = requested();
+            // Пара удачных шагов — и флеш отказывает посреди обмена.
+            dfu.ops = 2;
+
+            let interrupted = BootLoader::new(BootLoaderConfig {
+                active: &mut active,
+                dfu: &mut dfu,
+                state: &mut state,
+            })
+            .prepare_boot(&mut [0; 8]);
+            assert!(interrupted.is_err(), "обмен должен был прерваться");
+
+            assert_eq!(boot_plan(&mut state), BootPlan::Swap);
+
+            dfu.ops = usize::MAX;
+            BootLoader::new(BootLoaderConfig {
+                active: &mut active,
+                dfu: &mut dfu,
+                state: &mut state,
+            })
+            .prepare_boot(&mut [0; 8])
+            .expect("обмен после сброса");
+            assert_eq!(&active.mem[..], &image[..], "обмен доведён до конца");
+        }
     }
 
     /// Проверка нового образа bootloader'ом (`screen_update`): настоящие ключи
