@@ -14,7 +14,8 @@
 ## Что здесь есть, чего нет в проектах пользователей
 
 - `chip-select.rhai` — pre-хук: каскадный выбор чипа, `memory.x`, `write_size`,
-  `ota`, `dual_core`, `bank_mode`, `erase_zero`, `watchdog_peripheral`. Хуки
+  `ota`, `dual_core`, `bank_mode`, `erase_zero`, `watchdog_peripheral`,
+  `cpu_freq_boost`. Хуки
   cargo-generate в результат
   не копируются.
 - `post-script.rhai` — post-хук: сводка «что дальше» для пользователя. Команд
@@ -22,7 +23,7 @@
   пути такая медленная»), поэтому и `--allow-commands` при генерации не нужен.
 - `chip-data-gen/` — два инструмента мейнтейнера (каталог в `ignore`):
   - `cargo run --manifest-path chip-data-gen/Cargo.toml` — перегенерирует
-    пять блоков данных в `chip-select.rhai`;
+    шесть блоков данных в `chip-select.rhai`;
   - `cargo run --manifest-path chip-data-gen/Cargo.toml --bin template-check` —
     генерирует проект во временный каталог и прогоняет в нём весь набор
     проверок (см. «Порядок проверки» ниже).
@@ -46,7 +47,7 @@
 `{{chip}}`, `{{chip_feature}}`, `{{cpu}}`, `{{target}}`, `{{write_size}}`,
 `{{page_size}}`, `{{state_erase_size}}`, `{{config_erase_size}}`, `{{config_store}}`,
 `{{shared_flash}}`, `{{dual_core}}`, `{{bank_mode}}`, `{{erase_zero}}`,
-`{{watchdog_peripheral}}` — плейсхолдеры, подставляемые
+`{{watchdog_peripheral}}`, `{{cpu_freq_boost}}` — плейсхолдеры, подставляемые
 Liquid-рендером cargo-generate. Из них в `[placeholders]` объявлены только `ci`, `ota`, `graph`,
 `config` и `signed`; все остальные выставляет `variable::set` в `[hooks].pre`-скрипте
 `chip-select.rhai` — каскадный посимвольный выбор STM32 (семейство → линейка → дальше по
@@ -251,6 +252,12 @@ feature is not supported on this dual bank chip»).
 первой строкой (`include!("../metadata_0180.rs")`) и делит с десятками других чипов.
 Отсюда две функции вместо одной: `parse_included_metadata` и `parse_watchdog_names`,
 плюс кеш разобранных общих файлов.
+
+Из того же общего файла берётся признак `CPU_FREQ_BOOST` (блок `CPU_FREQ_BOOST`,
+переменная `cpu_freq_boost`): блок `PWR` версии `h7rm0468` — 25 чипов
+H723/725/730/733/735. Им `bsp` получает `src/clocks.rs`, остальным хук его удаляет
+(docs/clocks.md). Поэтому кеш хранит не список имён, а `SharedMetadata` — оба факта
+файла разом.
 
 Когда блоков два, метаданные обоих ядер перечисляют оба — различить их там нечем, и
 выбор делается по суффиксу ядра (`-cm4`), который каскад **уже** выбрал. Это не

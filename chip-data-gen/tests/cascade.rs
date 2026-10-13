@@ -349,8 +349,12 @@ fn erase_zero_follows_the_metadata_not_the_chip_name() {
 #[test]
 fn ota_refusal_names_the_real_reason_with_settings() {
     let ast = compile_script();
-    let too_small = run_cascade_with(&ast, "f030c8", &[("config", "internal"), ("ota", "internal")])
-        .expect("каскад не должен падать");
+    let too_small = run_cascade_with(
+        &ast,
+        "f030c8",
+        &[("config", "internal"), ("ota", "internal")],
+    )
+    .expect("каскад не должен падать");
     let log = too_small.prints.join("\n");
     assert!(
         log.contains("OTA отключён"),
@@ -801,7 +805,10 @@ fn an_unknown_config_answer_is_an_error() {
         let err = run_cascade_with(&ast, "f407ve", &[("config", answer)])
             .err()
             .unwrap_or_else(|| panic!("config={answer} должен быть ошибкой"));
-        assert!(err.to_string().contains("internal, external или no"), "{err}");
+        assert!(
+            err.to_string().contains("internal, external или no"),
+            "{err}"
+        );
     }
 }
 
@@ -884,8 +891,12 @@ fn external_ota_keeps_only_the_bootloader_and_active_inside() {
 fn external_ota_places_settings_where_the_project_asked() {
     let ast = compile_script();
 
-    let inside = run_cascade_with(&ast, "f407ve", &[("ota", "external"), ("config", "internal")])
-        .expect("каскад с config=internal");
+    let inside = run_cascade_with(
+        &ast,
+        "f407ve",
+        &[("ota", "external"), ("config", "internal")],
+    )
+    .expect("каскад с config=internal");
     assert_eq!(
         inside.vars.get("config_store").map(String::as_str),
         Some("flash")
@@ -1264,6 +1275,36 @@ fn watchdog_peripheral_follows_the_chip_metadata() {
             result.vars.get("watchdog_peripheral").map(String::as_str),
             Some(expected),
             "{suffix}"
+        );
+    }
+}
+
+/// `CPU_FREQ_BOOST` — только у линии RM0468 (H723/725/730/733/735): им bsp
+/// получает `clocks.rs`, остальным файл удаляется. Соседняя H743 — та же
+/// серия, но boost у неё нет, и `clocks.rs` с регистрами `OPTSR2` там писал бы
+/// не туда.
+#[test]
+fn cpu_freq_boost_only_on_the_rm0468_line() {
+    let ast = compile_script();
+    for (suffix, expected) in [
+        ("h723ve", true),
+        ("h735ig", true),
+        ("h743zi", false),
+        ("f407ve", false),
+    ] {
+        let result = run_cascade_to(&ast, suffix).expect("каскад не должен падать");
+        assert_eq!(
+            result.vars.get("cpu_freq_boost").map(String::as_str),
+            Some(if expected { "true" } else { "false" }),
+            "{suffix}"
+        );
+        assert_eq!(
+            !result
+                .deleted
+                .iter()
+                .any(|path| path == "crates-cross/bsp/src/clocks.rs"),
+            expected,
+            "{suffix}: clocks.rs"
         );
     }
 }

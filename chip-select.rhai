@@ -2068,6 +2068,40 @@ const WATCHDOG = #{
 };
 // END GENERATED WATCHDOG PERIPHERAL
 
+// Чипы с option byte CPU_FREQ_BOOST (STM32H723/725/730/733/735, RM0468): без
+// него потолок ядра на VOS0 — 520 МГц, с ним — 550 МГц. Признак — блок PWR
+// версии h7rm0468 в метаданных, по нему же embassy-stm32 выбирает предел
+// частоты. Таким чипам bsp получает `ensure_cpu_freq_boost()` (docs/clocks.md).
+// BEGIN GENERATED CPU_FREQ_BOOST (25 шт., cargo run --manifest-path chip-data-gen/Cargo.toml)
+const CPU_FREQ_BOOST = [
+    "h723ve",
+    "h723vg",
+    "h723ze",
+    "h723zg",
+    "h725ae",
+    "h725ag",
+    "h725ie",
+    "h725ig",
+    "h725re",
+    "h725rg",
+    "h725ve",
+    "h725vg",
+    "h725ze",
+    "h725zg",
+    "h730ab",
+    "h730ib",
+    "h730vb",
+    "h730zb",
+    "h733vg",
+    "h733zg",
+    "h735ag",
+    "h735ig",
+    "h735rg",
+    "h735vg",
+    "h735zg",
+];
+// END GENERATED CPU_FREQ_BOOST
+
 // Готовые адреса/размеры для memory.x. Строится из метаданных stm32-metapac
 // (реальные границы секторов чипа), не гадание — см. chip-data-gen/src/main.rs,
 // compute_memory_layout(). У каждой записи есть "ota":
@@ -91293,6 +91327,14 @@ variable::set("bank_mode", if BANK_MODE.contains(suffix) { BANK_MODE[suffix] } e
 // переопределения через --define, как dual_core и bank_mode: значение целиком
 // выводится из chip_feature.
 variable::set("watchdog_peripheral", if WATCHDOG.contains(suffix) { WATCHDOG[suffix] } else { "IWDG" });
+
+// Option byte CPU_FREQ_BOOST (см. CPU_FREQ_BOOST выше): включает в bsp модуль
+// `clocks` с `ensure_cpu_freq_boost()`. Без переопределения через --define:
+// значение целиком выводится из chip_feature.
+variable::set("cpu_freq_boost", if CPU_FREQ_BOOST.contains(suffix) { "true" } else { "false" });
+if !CPU_FREQ_BOOST.contains(suffix) {
+    file::delete("crates-cross/bsp/src/clocks.rs");
+}
 
 // Чем читается СТЁРТАЯ страница флеша. У подавляющего большинства семейств
 // это 0xFF, а у 189 чипов из 1533 — 0x00 (их NVM стирается в ноль: страница

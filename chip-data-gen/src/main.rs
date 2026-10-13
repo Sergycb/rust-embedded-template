@@ -17,6 +17,8 @@ const BANKS_BEGIN: &str = "// BEGIN GENERATED BANK MODE";
 const BANKS_END: &str = "// END GENERATED BANK MODE";
 const WATCHDOG_BEGIN: &str = "// BEGIN GENERATED WATCHDOG PERIPHERAL";
 const WATCHDOG_END: &str = "// END GENERATED WATCHDOG PERIPHERAL";
+const BOOST_BEGIN: &str = "// BEGIN GENERATED CPU_FREQ_BOOST";
+const BOOST_END: &str = "// END GENERATED CPU_FREQ_BOOST";
 /// Имя блока независимого сторожевого таймера у подавляющего большинства
 /// чипов (800 из 891 наборов метаданных). Таблица `WATCHDOG` перечисляет
 /// только исключения, а хук подставляет это значение для всех остальных — по
@@ -59,7 +61,8 @@ fn main() -> anyhow::Result<()> {
     let mut memory_layouts: BTreeMap<&str, MemoryLayout> = BTreeMap::new();
     let mut bank_modes: BTreeMap<&str, &'static str> = BTreeMap::new();
     let mut watchdogs: BTreeMap<&str, String> = BTreeMap::new();
-    let mut shared_metadata: BTreeMap<PathBuf, Vec<String>> = BTreeMap::new();
+    let mut cpu_freq_boost: Vec<&str> = Vec::new();
+    let mut shared_metadata_cache: BTreeMap<PathBuf, SharedMetadata> = BTreeMap::new();
     for suffix in &suffixes {
         // Ошибка разбора метаданных — не «чип не подошёл», а сломанное
         // предположение о формате `stm32-metapac`. Раньше она глушилась через
@@ -75,14 +78,19 @@ fn main() -> anyhow::Result<()> {
         if let Some(layout) = compute_memory_layout(suffix, &regions) {
             memory_layouts.insert(suffix, layout);
         }
-        let watchdog = chip_watchdog(
+        let (shared_path, shared) = shared_metadata(
             &cargo_metadata.stm32_metapac_chips_dir,
             suffix,
-            &mut shared_metadata,
+            &mut shared_metadata_cache,
         )
         .with_context(|| format!("чип {suffix}"))?;
+        let watchdog =
+            chip_watchdog(suffix, shared, &shared_path).with_context(|| format!("чип {suffix}"))?;
         if watchdog != DEFAULT_WATCHDOG {
             watchdogs.insert(suffix, watchdog);
+        }
+        if shared.cpu_freq_boost {
+            cpu_freq_boost.push(suffix);
         }
     }
     let with_ota = memory_layouts.values().filter(|m| m.ota.is_ok()).count();
@@ -132,7 +140,8 @@ fn main() -> anyhow::Result<()> {
     println!(
         "embassy-stm32: {} чип-фич; probe-rs: {} целей; итоговый список: {} (отброшено {}, \
          нет цели probe-rs); более точная цель probe-rs, чем базовая, найдена для {} чипов; \
-         выбор банковой схемы нужен {} чипам; сторож зовётся не {} у {} чипов; memory.x \
+         выбор банковой схемы нужен {} чипам; сторож зовётся не {} у {} чипов; option byte \
+         CPU_FREQ_BOOST есть у {} чипов; memory.x \
          посчитан для {} из {} чипов, из них \
          с OTA {} (остальные — один образ на весь flash, без crates-cross/boot); раздел настроек \
          возможен на {} чипах, из них с сохранением OTA — {}; OTA с DFU на внешней флеши \
@@ -145,6 +154,7 @@ fn main() -> anyhow::Result<()> {
         bank_modes.len(),
         DEFAULT_WATCHDOG,
         watchdogs.len(),
+        cpu_freq_boost.len(),
         memory_layouts.len(),
         suffixes.len(),
         with_ota,
@@ -166,6 +176,11 @@ fn main() -> anyhow::Result<()> {
             ),
             GeneratedBlock::new(BANKS_BEGIN, BANKS_END, format_bank_modes(&bank_modes)),
             GeneratedBlock::new(WATCHDOG_BEGIN, WATCHDOG_END, format_watchdogs(&watchdogs)),
+            GeneratedBlock::new(
+                BOOST_BEGIN,
+                BOOST_END,
+                format_cpu_freq_boost(&cpu_freq_boost),
+            ),
             GeneratedBlock::new(
                 MEMORY_BEGIN,
                 MEMORY_END,
@@ -599,9 +614,7 @@ fn parse_chip_memory(chips_dir: &Path, suffix: &str) -> anyhow::Result<Vec<Vec<R
 /// метаданные знают ответ точно.
 ///
 /// Читается не из `<chip>/metadata.rs`: там лежат только имя, семейство и
-/// карта памяти, а перечень блоков — в общем файле, который тот включает
-/// первой строкой (`include!("../metadata_0180.rs")`). Общий файл делят
-/// десятки чипов, поэтому разобранный список кешируется в `shared`.
+/// карта памяти, а перечень блоков — в общем файле (см. [`shared_metadata`]).
 ///
 /// Когда блоков два (двухъядерные H7: `IWDG1` у ядра CM7, `IWDG2` у CM4),
 /// метаданные обоих ядер перечисляют оба — различить их там нечем. Выбор
@@ -609,10 +622,41 @@ fn parse_chip_memory(chips_dir: &Path, suffix: &str) -> anyhow::Result<Vec<Vec<R
 /// имени чипа: это не догадка о железе, а перенос уже сделанного выбора
 /// туда, где метаданные молчат.
 fn chip_watchdog(
+    suffix: &str,
+    shared: &SharedMetadata,
+    shared_path: &Path,
+) -> anyhow::Result<String> {
+    let names = &shared.watchdogs;
+    match names.len() {
+        0 => bail!("{}: не найдено ни одного блока IWDG", shared_path.display()),
+        1 => Ok(names[0].clone()),
+        _ if suffix.ends_with("-cm4") => Ok(names[names.len() - 1].clone()),
+        _ => Ok(names[0].clone()),
+    }
+}
+
+/// Что генератор берёт из общего файла метаданных — того, который
+/// `<chip>/metadata.rs` включает первой строкой
+/// (`include!("../metadata_0180.rs")`): перечень блоков живёт там, а не в
+/// файле чипа.
+struct SharedMetadata {
+    /// Имена блоков `IWDG*` — см. [`chip_watchdog`].
+    watchdogs: Vec<String>,
+    /// Блок `PWR` версии `h7rm0468` (STM32H723/725/730/733/735): только у этой
+    /// линии потолок ядра на VOS0 зависит от option byte `CPU_FREQ_BOOST` —
+    /// 520 МГц без него, 550 МГц с ним. По той же версии `embassy-stm32`
+    /// выбирает предел частоты (`cfg(pwr_h7rm0468)` в `rcc/h.rs`), так что
+    /// признак и HAL расходиться не могут.
+    cpu_freq_boost: bool,
+}
+
+/// Путь к общему файлу метаданных чипа и разобранные из него факты. Общий файл
+/// делят десятки чипов, поэтому разбор кешируется в `cache` по пути.
+fn shared_metadata<'c>(
     chips_dir: &Path,
     suffix: &str,
-    shared: &mut BTreeMap<PathBuf, Vec<String>>,
-) -> anyhow::Result<String> {
+    cache: &'c mut BTreeMap<PathBuf, SharedMetadata>,
+) -> anyhow::Result<(PathBuf, &'c SharedMetadata)> {
     let path = chips_dir.join(format!("stm32{suffix}")).join("metadata.rs");
     let text = fs::read_to_string(&path)
         .with_context(|| format!("не удалось прочитать {}", path.display()))?;
@@ -623,19 +667,30 @@ fn chip_watchdog(
         .expect("у пути к metadata.rs всегда есть каталог чипа")
         .join(included);
 
-    if !shared.contains_key(&shared_path) {
+    if !cache.contains_key(&shared_path) {
         let shared_text = fs::read_to_string(&shared_path)
             .with_context(|| format!("не удалось прочитать {}", shared_path.display()))?;
-        shared.insert(shared_path.clone(), parse_watchdog_names(&shared_text));
+        cache.insert(
+            shared_path.clone(),
+            SharedMetadata {
+                watchdogs: parse_watchdog_names(&shared_text),
+                cpu_freq_boost: has_pwr_rm0468(&shared_text),
+            },
+        );
     }
-    let names = &shared[&shared_path];
+    let facts = &cache[&shared_path];
+    Ok((shared_path, facts))
+}
 
-    match names.len() {
-        0 => bail!("{}: не найдено ни одного блока IWDG", shared_path.display()),
-        1 => Ok(names[0].clone()),
-        _ if suffix.ends_with("-cm4") => Ok(names[names.len() - 1].clone()),
-        _ => Ok(names[0].clone()),
-    }
+/// Есть ли в метаданных блок `PWR` с регистрами версии `h7rm0468`.
+///
+/// Матч по паре строк `kind: "pwr"` / `version: "h7rm0468"` подряд: версия
+/// `h7rm0468` бывает и у других блоков (`rcc`, `syscfg` той же линии), а
+/// предел частоты держит именно `pwr`.
+fn has_pwr_rm0468(text: &str) -> bool {
+    text.split("kind: \"pwr\",")
+        .skip(1)
+        .any(|rest| rest.trim_start().starts_with("version: \"h7rm0468\""))
 }
 
 /// Путь из `include!("../metadata_0180.rs")` — первой строки любого
@@ -2048,6 +2103,24 @@ fn format_watchdogs(watchdogs: &BTreeMap<&str, String>) -> String {
         out.push_str(&format!("    \"{suffix}\": \"{name}\",\n"));
     }
     out.push_str("};\n");
+    out
+}
+
+/// Чипы с option byte `CPU_FREQ_BOOST` (см. [`SharedMetadata::cpu_freq_boost`])
+/// — массивом, а не таблицей: значение у всех одно, важна только
+/// принадлежность.
+fn format_cpu_freq_boost(chips: &[&str]) -> String {
+    let mut out = String::new();
+    out.push_str(BOOST_BEGIN);
+    out.push_str(&format!(
+        " ({} шт., cargo run --manifest-path chip-data-gen/Cargo.toml)\n",
+        chips.len()
+    ));
+    out.push_str("const CPU_FREQ_BOOST = [\n");
+    for suffix in chips {
+        out.push_str(&format!("    \"{suffix}\",\n"));
+    }
+    out.push_str("];\n");
     out
 }
 

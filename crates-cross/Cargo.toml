@@ -20,7 +20,8 @@ rust-version = "1.96"
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(rust_analyzer)"] }
 # `warn`, а не `deny`, как в корневом workspace: unsafe в `crates-cross` есть
 # и оправдан — прыжок в образ в `boot`, поллинг исполнителя в `app`, блок
-# линкерных символов в `bsp/src/ota.rs`. Ровно на
+# линкерных символов в `bsp/src/ota.rs`, регистры option bytes, которых нет
+# в `stm32-metapac` (`bsp/src/clocks.rs`, только H723/725/730/733/735). Ровно на
 # этих местах стоит `#[expect(unsafe_code)]` с объяснением, и это весь
 # unsafe этого воркспейса, который видит clippy (проверено прогоном с
 # `-W unsafe_code`, а не перечислением файлов). Вместе с `-D warnings` в

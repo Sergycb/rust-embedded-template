@@ -1,6 +1,9 @@
 #![no_std]
 
 pub mod board;
+{%- if cpu_freq_boost == "true" %}
+pub mod clocks;
+{%- endif %}
 {%- if config == "true" %}
 pub mod config;
 {%- endif %}
