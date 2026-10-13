@@ -46,7 +46,7 @@ static_cell = { workspace = true }
 # (разделы из символов memory.x) и фичи `flash-erase-zero`, а
 # `embassy-embedded-hal` — ради имени типа раздела в псевдониме `Ota`.
 {%- if ota == "true" %}
-embassy-boot = { workspace = true, features = ["defmt"{% if erase_zero == "true" %}, "flash-erase-zero"{% endif %}] }
+embassy-boot = { workspace = true, features = ["defmt"{% if erase_zero == "true" and ota_store != "external" %}, "flash-erase-zero"{% endif %}] }
 embassy-embedded-hal = { workspace = true }
 {%- endif %}
 # Zero-copy DMA-буфер: объявлен заранее, чтобы пример из docs/buffers.md

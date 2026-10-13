@@ -349,7 +349,7 @@ fn erase_zero_follows_the_metadata_not_the_chip_name() {
 #[test]
 fn ota_refusal_names_the_real_reason_with_settings() {
     let ast = compile_script();
-    let too_small = run_cascade_with(&ast, "f030c8", &[("config", "yes"), ("ota", "yes")])
+    let too_small = run_cascade_with(&ast, "f030c8", &[("config", "yes"), ("ota", "internal")])
         .expect("каскад не должен падать");
     let log = too_small.prints.join("\n");
     assert!(
@@ -734,7 +734,7 @@ fn declining_ota_gives_a_single_image_even_when_it_would_fit() {
     let with_ota = run_cascade_to(&ast, "f407ve").expect("каскад не должен падать");
     assert_eq!(with_ota.vars.get("ota").map(String::as_str), Some("true"));
 
-    for answer in ["no", "false"] {
+    for answer in ["no"] {
         let result = run_cascade_with(&ast, "f407ve", &[("ota", answer)])
             .unwrap_or_else(|err| panic!("каскад с ota={answer} упал: {err}"));
 
@@ -776,14 +776,154 @@ fn declining_ota_gives_a_single_image_even_when_it_would_fit() {
     }
 }
 
+/// Незнакомый ответ — ошибка генерации, а не «без OTA»: опечатка в
+/// `--define` молча сняла бы bootloader. Старые `yes`/`true`/`false` тоже
+/// незнакомы — варианты вопроса теперь `internal`/`external`/`no`.
+#[test]
+fn an_unknown_ota_answer_is_an_error() {
+    let ast = compile_script();
+    for answer in ["yes", "true", "false", "interal"] {
+        let err = run_cascade_with(&ast, "f407ve", &[("ota", answer)])
+            .err()
+            .unwrap_or_else(|| panic!("ota={answer} должен быть ошибкой"));
+        assert!(
+            err.to_string().contains("internal, external или no"),
+            "{err}"
+        );
+    }
+}
+
 #[test]
 fn accepting_ota_still_loses_to_a_chip_that_cannot_fit_it() {
     // Обратная сторона: `yes` — это «не возражаю», а не «сделай во что бы то
     // ни стало». h723ve схему не вмещает, и ответ ничего не меняет.
-    let result = run_cascade_with(&compile_script(), "h723ve", &[("ota", "yes")])
+    let result = run_cascade_with(&compile_script(), "h723ve", &[("ota", "internal")])
         .expect("каскад не должен падать");
     assert_eq!(result.vars.get("ota").map(String::as_str), Some("false"));
     assert!(result.deleted.contains(&"crates-cross/boot".to_string()));
+}
+
+/// `ota=external`: внутри только bootloader и `ACTIVE`, а `STATE`/`DFU` —
+/// символами-смещениями на внешней флеши, без регионов в `MEMORY`. Там же,
+/// где внутренней схеме места нет (h723ve), внешняя помещается.
+#[test]
+fn external_ota_keeps_only_the_bootloader_and_active_inside() {
+    let ast = compile_script();
+    for chip in ["f407ve", "h723ve"] {
+        let result = run_cascade_with(&ast, chip, &[("ota", "external")])
+            .unwrap_or_else(|err| panic!("{chip}: каскад упал: {err}"));
+        assert_eq!(
+            result.vars.get("ota").map(String::as_str),
+            Some("true"),
+            "{chip}"
+        );
+        assert_eq!(
+            result.vars.get("ota_store").map(String::as_str),
+            Some("external"),
+            "{chip}"
+        );
+        assert_eq!(
+            result.vars.get("page_size").map(String::as_str),
+            Some(""),
+            "{chip}"
+        );
+        assert_eq!(
+            result.vars.get("ext_page_size").map(String::as_str),
+            Some("131_072"),
+            "{chip}"
+        );
+
+        let app = written(&result, "crates-cross/app/memory.x");
+        assert!(
+            app.contains("FLASH             (rx)  : ORIGIN = 0x08020000, LENGTH = 384K"),
+            "{chip}:\n{app}"
+        );
+        for region in ["DFU", "BOOTLOADER_STATE"] {
+            assert!(
+                region_origin(&app, region).is_none(),
+                "{chip}: {region}\n{app}"
+            );
+        }
+        assert!(
+            app.contains("__bootloader_state_start = 0x00000000;"),
+            "{chip}:\n{app}"
+        );
+        assert!(
+            app.contains("__bootloader_dfu_start   = 0x00020000;"),
+            "{chip}:\n{app}"
+        );
+
+        let boot = written(&result, "crates-cross/boot/memory.x");
+        assert!(
+            boot.contains("FLASH             (rx)  : ORIGIN = 0x08000000, LENGTH = 128K"),
+            "{chip}:\n{boot}"
+        );
+        assert!(
+            boot.contains("__bootloader_dfu_end     = 0x00020000 + 512K;"),
+            "{chip}:\n{boot}"
+        );
+    }
+}
+
+/// Настройки во внутреннем флеше при внешней OTA (`config=yes`): на F4 — в
+/// мелких секторах зоны bootloader'а, `ACTIVE` при этом не короче; настройки
+/// на внешней флеши (`config=external`) — символами за `DFU`.
+#[test]
+fn external_ota_places_settings_where_the_project_asked() {
+    let ast = compile_script();
+
+    let inside = run_cascade_with(&ast, "f407ve", &[("ota", "external"), ("config", "yes")])
+        .expect("каскад с config=yes");
+    assert_eq!(
+        inside.vars.get("config_store").map(String::as_str),
+        Some("flash")
+    );
+    assert_eq!(
+        inside.vars.get("config_erase_size").map(String::as_str),
+        Some("16_384")
+    );
+    let app = written(&inside, "crates-cross/app/memory.x");
+    assert!(
+        app.contains("CONFIG            (rx)  : ORIGIN = 0x08008000, LENGTH = 32K"),
+        "{app}"
+    );
+    assert!(app.contains("LENGTH = 384K"), "{app}");
+    let boot = written(&inside, "crates-cross/boot/memory.x");
+    assert!(
+        boot.contains("FLASH             (rx)  : ORIGIN = 0x08000000, LENGTH = 32K"),
+        "bootloader кончается там, где начинаются настройки:\n{boot}"
+    );
+
+    let outside = run_cascade_with(
+        &ast,
+        "f407ve",
+        &[("ota", "external"), ("config", "external")],
+    )
+    .expect("каскад с config=external");
+    assert_eq!(
+        outside.vars.get("config_store").map(String::as_str),
+        Some("external")
+    );
+    let app = written(&outside, "crates-cross/app/memory.x");
+    assert!(region_origin(&app, "CONFIG").is_none(), "{app}");
+    assert!(app.contains("__config_start = 0x000A0000;"), "{app}");
+}
+
+/// Внутренняя схема не помещается, внешняя — да: хук подсказывает
+/// `ota=external`, а не просто снимает OTA.
+#[test]
+fn internal_ota_that_does_not_fit_suggests_the_external_one() {
+    let result = run_cascade_with(&compile_script(), "h723ve", &[("ota", "internal")])
+        .expect("каскад не должен падать");
+    assert_eq!(result.vars.get("ota").map(String::as_str), Some("false"));
+    assert!(
+        result
+            .prints
+            .iter()
+            .any(|line| line.contains("ota=external")),
+        "{:?}",
+        result.prints
+    );
 }
 
 /// Граф задач снимается там, где раздел приложения слишком мал.
@@ -860,7 +1000,8 @@ fn the_release_workflow_goes_away_together_with_ota() {
     );
 
     // h723ve схему не вмещает — OTA отключается независимо от ответа.
-    let no_room = run_cascade_with(&ast, "h723ve", &[("ota", "yes")]).expect("каскад без места");
+    let no_room =
+        run_cascade_with(&ast, "h723ve", &[("ota", "internal")]).expect("каскад без места");
     assert!(
         no_room.deleted.contains(&RELEASE.to_string()),
         "на чипе без места для OTA релизный workflow должен быть удалён, а удалено: {:?}",

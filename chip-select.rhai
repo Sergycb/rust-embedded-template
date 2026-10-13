@@ -91332,12 +91332,25 @@ variable::set("erase_zero", if erase_zero { "true" } else { "false" });
 // «Да» здесь означает лишь «не возражаю»: помещается ли схема в flash, решает
 // раскладка ниже. А вот «нет» — окончательное, и проверять нечего.
 //
-// Принимаются оба написания: `yes`/`no` — это варианты вопроса, `true`/`false`
-// привычнее в `--define` и совпадают с тем, во что ответ превращается.
+// Где лежат `DFU` и `STATE` (`ota_store`, на него смотрят boot и bsp::ota):
+//   `internal` — во внутреннем flash, рядом с `ACTIVE`;
+//   `external` — на внешней флеши: внутри остаются bootloader и `ACTIVE`,
+//                который забирает почти весь flash; драйвер микросхемы
+//                подставляет проект (в шаблоне — заглушка).
+// Меню вариантов от чипа не зависит — вопрос задаётся до каскада, — поэтому
+// невозможный на этом чипе вариант отсекается ниже, с подсказкой.
+//
+// Незнакомый ответ (опечатка в `--define`) — ошибка, а не «без OTA»: молча
+// снятый bootloader заметили бы только на первом обновлении.
 let wants_ota = true;
+let wants_ext_ota = false;
 if variable::is_set("ota") {
     let answer = variable::get("ota");
-    wants_ota = answer == "yes" || answer == "true";
+    if answer != "internal" && answer != "external" && answer != "no" {
+        throw "ota: ожидается internal, external или no, а не «" + answer + "»";
+    }
+    wants_ext_ota = answer == "external";
+    wants_ota = answer != "no";
 }
 
 if !wants_ota {
@@ -91424,6 +91437,7 @@ let store = if wants_external {
 // раскладку под него пользователь пишет сам.
 if variable::is_set("write_size") {
     variable::set("ota", if wants_ota { "true" } else { "false" });
+    variable::set("ota_store", if wants_ext_ota { "external" } else { "internal" });
     if !wants_ota {
         file::delete("crates-cross/boot");
         file::delete("crates-cross/bsp/src/ota.rs");
@@ -91493,6 +91507,7 @@ if variable::is_set("write_size") {
         print("  в crates-cross/boot/src/main.rs и crates-cross/bsp/src/ota.rs, иначе паника при старте");
     }
     variable::set("ota", if wants_ota { "true" } else { "false" });
+    variable::set("ota_store", if wants_ext_ota { "external" } else { "internal" });
     if !wants_ota {
         file::delete("crates-cross/boot");
         file::delete("crates-cross/bsp/src/ota.rs");
@@ -91547,21 +91562,47 @@ if variable::is_set("write_size") {
             print("Раздел настроек для " + suffix + " не выделен: под него нужны две страницы стирания, а их не остаётся");
         }
     }
-    // Дальше все партиции берутся по одному из двух наборов ключей.
+    // Дальше партиции берутся по одному из наборов ключей: `key` — раскладка
+    // без OTA (весь flash или он без раздела настроек в хвосте), `ota_key` —
+    // раскладка с OTA. Внутренняя OTA — те же наборы (`` или `config_`),
+    // внешняя — свои (`ext_` или `ext_cfg_`, настройки во внутреннем флеше).
     let key = if in_flash { "config_" } else { "" };
+    let ext_key = if in_flash { "ext_cfg_" } else { "ext_" };
+    let ota_key = if wants_ext_ota { ext_key } else { key };
 
     // Схема нужна только если её и хотят, и она помещается. «Помещается» — это
     // две проверки: раскладка вообще сходится (цифры посчитаны заранее) и в
     // разделе `ACTIVE` остаётся место под саму прошивку.
-    let ota_fits = m[key + "ota"] == "true"
-        && size_in_bytes(m[key + "active_length"]) >= OTA_MIN_ACTIVE;
+    let ota_fits = m[ota_key + "ota"] == "true"
+        && size_in_bytes(m[ota_key + "active_length"]) >= OTA_MIN_ACTIVE;
+    let ext_fits = m[ext_key + "ota"] == "true"
+        && size_in_bytes(m[ext_key + "active_length"]) >= OTA_MIN_ACTIVE;
     let ota = wants_ota && ota_fits;
+    let ext_ota = ota && wants_ext_ota;
+    // Подсказки про внешнюю флешь: внутри схема не помещается, а снаружи
+    // помещается — или помещается, но `ACTIVE` с внешней флешью заметно (в
+    // полтора раза и больше) крупнее.
+    if wants_ota && !wants_ext_ota && ext_fits {
+        if !ota_fits {
+            print("OTA во внутреннем flash не помещается, а с DFU/STATE на внешней флеши — да:");
+            print("  ACTIVE " + m[ext_key + "active_length"] + "; сгенерируйте с --define ota=external");
+        } else if size_in_bytes(m[ext_key + "active_length"]) * 2 >= size_in_bytes(m[ota_key + "active_length"]) * 3 {
+            print("Подсказка: с DFU/STATE на внешней флеши ACTIVE был бы " + m[ext_key + "active_length"]
+                + " вместо " + m[ota_key + "active_length"] + " (--define ota=external)");
+        }
+    }
     // Где лежит раздел настроек. Без OTA — в хвосте flash (`config_*`): в
     // начале стоит таблица векторов приложения. С OTA — там, где его положил
     // chip-data-gen (`config_ota_settings_*`): в мелких секторах перед ACTIVE,
     // если так ACTIVE больше (F2/F4/F7), иначе тоже в хвосте. Страница — сектор
     // под разделом (`adapters::flash::Paged` в bsp::config).
-    let settings_key = if ota { "config_ota_settings_" } else { "config_" };
+    let settings_key = if ext_ota {
+        "ext_cfg_settings_"
+    } else if ota {
+        "config_ota_settings_"
+    } else {
+        "config_"
+    };
     if in_flash {
         print("Раздел настроек: " + m[settings_key + "length"] + " с адреса " + m[settings_key + "origin"]);
     } else if config && store == "eeprom" {
@@ -91584,7 +91625,7 @@ if variable::is_set("write_size") {
     // Ключ считается один раз и используется и для проверки, и для
     // сообщения: с двумя копиями выбора хук однажды сообщил бы размер,
     // который не измерял.
-    let app_length_key = key + (if ota { "active_length" } else { "flash_length" });
+    let app_length_key = if ota { ota_key + "active_length" } else { key + "flash_length" };
     let graph = wants_graph && size_in_bytes(m[app_length_key]) >= GRAPH_MIN_PARTITION;
     if wants_graph && !graph {
         print("Граф задач отключён для " + suffix + ": под приложение отведено " + m[app_length_key] + ", а supervisor туда не помещается");
@@ -91592,15 +91633,25 @@ if variable::is_set("write_size") {
     }
 
     variable::set("write_size", m["write_size"]);
-    variable::set("page_size", m["page_size"]);
+    // С внешними разделами страница обмена зависит от стирания драйвера, а
+    // DFU в адресном пространстве МК нет вовсе — host-target тест обмена
+    // (он читает DFU пробником) здесь не к чему применить. Пусто — «размер
+    // неизвестен», тест сам себя пропускает.
+    variable::set("page_size", if ext_ota { "" } else { m["page_size"] });
     // Сектор, в котором лежит `BOOTLOADER_STATE`: на F2/F4/F7 он мельче
     // `page_size`, и раздел над цельным `Flash` не строился бы вовсе (см.
     // `compute_ota_partitions` в chip-data-gen). Без OTA его нет, как и
-    // файлов, которые его читают.
-    if ota {
-        variable::set("state_erase_size", m[key + "bootloader_state_erase_size"]);
+    // файлов, которые его читают; с внешней — его страницу несёт драйвер.
+    if ota && !ext_ota {
+        variable::set("state_erase_size", m[ota_key + "bootloader_state_erase_size"]);
+    }
+    // Шаг внешних разделов и страница обмена, которую раскладка ждёт от
+    // драйвера: его `ERASE_SIZE` обязан её делить (const-assert рядом с ним).
+    if ext_ota {
+        variable::set("ext_page_size", m[ota_key + "page_size"]);
     }
     variable::set("ota", if ota { "true" } else { "false" });
+    variable::set("ota_store", if ext_ota { "external" } else { "internal" });
     variable::set("config", if config { "true" } else { "false" });
     variable::set("config_store", if config { store } else { "none" });
     if in_flash {
@@ -91665,7 +91716,67 @@ if variable::is_set("write_size") {
         ram += m["extra_regions"];
     }
 
-    if ota {
+    if ext_ota {
+        // Внутри — только ACTIVE (и, если так решено, раздел настроек);
+        // `STATE` и `DFU` — на внешней флеши. Их символы — смещения от начала
+        // ВНЕШНЕЙ флеши: embassy-boot читает их как смещения в том `NorFlash`,
+        // над которым строит раздел, а там стоит драйвер микросхемы. Регионов
+        // в `MEMORY` у них нет: в адресном пространстве МК внешней флеши нет.
+        let base = flash_base;
+        let ext_symbols = [
+            "",
+            "/* STATE и DFU — на внешней флеши (драйвер в bsp и boot). Смещения от её */",
+            "/* начала; шаг " + m[ota_key + "align"] + " байт, страница обмена — " + m[ota_key + "page_size"] + ": */",
+            "/* стирание драйвера обязано её делить. */",
+            "__bootloader_state_start = " + m[ota_key + "state_offset"] + ";",
+            "__bootloader_state_end   = " + m[ota_key + "state_offset"] + " + " + m[ota_key + "state_length"] + ";",
+            "__bootloader_dfu_start   = " + m[ota_key + "dfu_offset"] + ";",
+            "__bootloader_dfu_end     = " + m[ota_key + "dfu_offset"] + " + " + m[ota_key + "dfu_length"] + ";",
+        ];
+        if config && store == "external" {
+            ext_symbols += [
+                "",
+                "/* Раздел настроек — на той же внешней флеши, за DFU. */",
+                "__config_start = " + m[ota_key + "config_offset"] + ";",
+                "__config_end   = " + m[ota_key + "config_offset"] + " + " + m[ota_key + "config_length"] + ";",
+            ];
+        }
+        let app = [
+            "/* Сгенерировано chip-select.rhai: приложение линкуется в ACTIVE, */",
+            "/* с базы flash стартует bootloader (crates-cross/boot). */",
+            "",
+            "MEMORY {",
+            "    FLASH             (rx)  : ORIGIN = " + m[ota_key + "active_origin"] + ", LENGTH = " + m[ota_key + "active_length"],
+        ];
+        app += config_region;
+        app += ram;
+        app.push("}");
+        app.push("");
+        app.push("/* ACTIVE — это и есть FLASH данного крейта. */");
+        app.push("__bootloader_active_start = ORIGIN(FLASH) - " + base + ";");
+        app.push("__bootloader_active_end   = ORIGIN(FLASH) + LENGTH(FLASH) - " + base + ";");
+        app += ext_symbols;
+        app += config_section;
+        app += panic_section;
+        file::write("crates-cross/app/memory.x", app);
+        file::write("crates-cross/target-tests/memory.x", app);
+
+        let boot = [
+            "/* Сгенерировано chip-select.rhai: зона bootloader, до ACTIVE. */",
+            "",
+            "MEMORY {",
+            "    FLASH             (rx)  : ORIGIN = " + m["flash_origin"] + ", LENGTH = " + m[ota_key + "bootloader_length"],
+            "    ACTIVE            (rx)  : ORIGIN = " + m[ota_key + "active_origin"] + ", LENGTH = " + m[ota_key + "active_length"],
+        ];
+        boot += ram;
+        boot.push("}");
+        boot.push("");
+        boot.push("__bootloader_active_start = ORIGIN(ACTIVE) - " + base + ";");
+        boot.push("__bootloader_active_end   = ORIGIN(ACTIVE) + LENGTH(ACTIVE) - " + base + ";");
+        boot += ext_symbols;
+        boot += panic_section;
+        file::write("crates-cross/boot/memory.x", boot);
+    } else if ota {
         // Смещения __bootloader_* отсчитываются от БАЗЫ FLASH, а не от
         // ORIGIN(FLASH) конкретного крейта: их читает embassy-boot, работающий
         // с флешем целиком. У app ORIGIN(FLASH) — это ACTIVE, у boot — база,
@@ -91680,9 +91791,9 @@ if variable::is_set("write_size") {
             "/* с базы flash стартует bootloader (crates-cross/boot). */",
             "",
             "MEMORY {",
-            "    FLASH             (rx)  : ORIGIN = " + m[key + "active_origin"] + ", LENGTH = " + m[key + "active_length"],
-            "    BOOTLOADER_STATE  (rx)  : ORIGIN = " + m[key + "bootloader_state_origin"] + ", LENGTH = " + m[key + "bootloader_state_length"],
-            "    DFU               (rx)  : ORIGIN = " + m[key + "dfu_origin"] + ", LENGTH = " + m[key + "dfu_length"],
+            "    FLASH             (rx)  : ORIGIN = " + m[ota_key + "active_origin"] + ", LENGTH = " + m[ota_key + "active_length"],
+            "    BOOTLOADER_STATE  (rx)  : ORIGIN = " + m[ota_key + "bootloader_state_origin"] + ", LENGTH = " + m[ota_key + "bootloader_state_length"],
+            "    DFU               (rx)  : ORIGIN = " + m[ota_key + "dfu_origin"] + ", LENGTH = " + m[ota_key + "dfu_length"],
         ];
         app += config_region;
         app += ram;
@@ -91715,10 +91826,10 @@ if variable::is_set("write_size") {
             "/* Сгенерировано chip-select.rhai: зона bootloader, до BOOTLOADER_STATE. */",
             "",
             "MEMORY {",
-            "    FLASH             (rx)  : ORIGIN = " + m["flash_origin"] + ", LENGTH = " + m[key + "bootloader_length"],
-            "    BOOTLOADER_STATE  (rx)  : ORIGIN = " + m[key + "bootloader_state_origin"] + ", LENGTH = " + m[key + "bootloader_state_length"],
-            "    ACTIVE            (rx)  : ORIGIN = " + m[key + "active_origin"] + ", LENGTH = " + m[key + "active_length"],
-            "    DFU               (rx)  : ORIGIN = " + m[key + "dfu_origin"] + ", LENGTH = " + m[key + "dfu_length"],
+            "    FLASH             (rx)  : ORIGIN = " + m["flash_origin"] + ", LENGTH = " + m[ota_key + "bootloader_length"],
+            "    BOOTLOADER_STATE  (rx)  : ORIGIN = " + m[ota_key + "bootloader_state_origin"] + ", LENGTH = " + m[ota_key + "bootloader_state_length"],
+            "    ACTIVE            (rx)  : ORIGIN = " + m[ota_key + "active_origin"] + ", LENGTH = " + m[ota_key + "active_length"],
+            "    DFU               (rx)  : ORIGIN = " + m[ota_key + "dfu_origin"] + ", LENGTH = " + m[ota_key + "dfu_length"],
         ];
         boot += ram;
         boot.push("}");
@@ -91745,7 +91856,7 @@ if variable::is_set("write_size") {
         // вытеснил раздел настроек, объяснение лежит в "config_note", а
         // "note" у такого чипа нет вовсе — и в комментарий memory.x попадала
         // пустота (rhai на отсутствующем ключе молча отдаёт unit).
-        let note_key = key + "note";
+        let note_key = ota_key + "note";
         let reason = "отключён при генерации";
         if wants_ota {
             reason = if m.contains(note_key) { m[note_key] } else { "схема не помещается во flash" };
@@ -91753,10 +91864,10 @@ if variable::is_set("write_size") {
             // приложение не влезает даже пустая прошивка шаблона. Общее
             // «схема не помещается» тут вводило бы в заблуждение — цифры
             // сошлись, не сошёлся смысл.
-            if m.contains(key + "active_length")
-                && size_in_bytes(m[key + "active_length"]) < OTA_MIN_ACTIVE
+            if m.contains(ota_key + "active_length")
+                && size_in_bytes(m[ota_key + "active_length"]) < OTA_MIN_ACTIVE
             {
-                reason = "под приложение осталось бы " + m[key + "active_length"]
+                reason = "под приложение осталось бы " + m[ota_key + "active_length"]
                     + ", куда не помещается даже пустая прошивка";
             }
         }

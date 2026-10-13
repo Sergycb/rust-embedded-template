@@ -103,9 +103,13 @@ ci = { type = "string", prompt = "CI provider", choices = [
 # Спрашивается ДО каскада (placeholders резолвятся раньше pre-хука), поэтому
 # формулировка не может ссылаться на выбранный чип. Ответ «нет» — один образ на
 # весь flash: приложению достаётся не раздел `ACTIVE`, а весь чип, из проекта
-# уходят `crates-cross/boot` и `bsp::ota`. Ответ «да» — то, что было раньше
+# уходят `crates-cross/boot` и `bsp::ota`. `internal` — то, что было раньше
 # безусловным поведением: bootloader и разделы, если схема помещается в flash
 # (не помещается — хук скажет об этом и всё равно сгенерирует один образ).
+# `external` — `DFU` и `STATE` на внешней флеши, внутри только bootloader и
+# `ACTIVE` почти на весь чип; драйвер микросхемы подставляет проект. Меню от
+# чипа не зависит (вопрос задаётся до каскада): если на этом чипе возможна
+# только внешняя схема, хук скажет об этом при `internal`.
 #
 # Дальше это же имя перезаписывает `chip-select.rhai` через `variable::set`,
 # приводя ответ к строке `"true"`/`"false"` — на неё смотрят Liquid-условия в
@@ -114,10 +118,11 @@ ci = { type = "string", prompt = "CI provider", choices = [
 # Тип строковый, а не `bool`, хотя вопрос двоичный: `variable::get` в
 # rhai-хуках читает только строки и на булевом плейсхолдере падает с
 # «Variable ota not a String» (проверено эмпирически).
-ota = { type = "string", prompt = "OTA (bootloader + разделы ACTIVE/DFU)", choices = [
-	"yes",
+ota = { type = "string", prompt = "OTA (bootloader + разделы ACTIVE/DFU): internal — DFU во flash чипа, external — DFU и STATE на внешней флеши", choices = [
+	"internal",
+	"external",
 	"no",
-], default = "yes" }
+], default = "internal" }
 
 # Второй вопрос того же рода — и с той же механикой: строка, потому что
 # `variable::get` в rhai читает только строки; ответ перезаписывается хуком в
