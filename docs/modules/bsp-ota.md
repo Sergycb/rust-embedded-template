@@ -7,12 +7,14 @@
 `FirmwareUpdaterConfig::from_linkerfile` (границы `DFU`/`BOOTLOADER_STATE`
 из линкерных символов), размер `ACTIVE` — его порт отдаёт методом
 `FirmwareUpdate::capacity`, — и псевдонимы типов, потому что задачи embassy
-не могут быть generic. `BOOTLOADER_STATE` строится не над цельным `Flash`, как
+не могут быть generic.{% if ota_store == "external" %} Здесь `DFU` и `BOOTLOADER_STATE` — на внешней флеши:
+оба раздела строятся над одним драйвером из `crate::external`, символы в
+`memory.x` — смещения от её начала (docs/flash.md).{% else %} `BOOTLOADER_STATE` строится не над цельным `Flash`, как
 `DFU`, а над `adapters::flash::Paged` со страницей своего сектора
 (`STATE_ERASE_SIZE`) — почему, см. docs/flash.md. Оба раздела асинхронные:
 общий блокирующий `Flash` виден им через мост `adapters::flash::Shared`, а
 порт `FirmwareUpdate` — асинхронный, чтобы за ним могла стоять и внешняя
-флеш.{% if signed == "true" %} Адаптер собран `Updater::signed` — его
+флеш.{% endif %}{% if signed == "true" %} Адаптер собран `Updater::signed` — его
 `prepare` стирает и запасную страницу `DFU` под запись о подписи; версию
 образа задаёт приложение (`crates-cross/app/src/image.rs`), ключ —
 bootloader.{% endif %}
@@ -45,7 +47,7 @@ impl ImageSource for Link {
 (`crates-cross/app/src/graph.rs`){% else %}. Без графа зовите узел сами, собрав
 его контекст руками:
 `domain::ota::run(domain::ota::OtaCtx { link: &mut board.ota.link, flash: &mut board.ota.flash, mode: &mut domain::ota::Mode::{% if signed == "true" %}Signed { running_version: image::FW_VERSION }{% else %}Plain{% endif %}, confirmed: &mut false, index: 0 }).await`{% endif %}. Во фрагменте
-`domain::ota` слоты канала и адаптера помечены `local`: [`Updater`] — `!Send` (внутри ссылка на `FlashMutex` с
+`domain::ota` слоты канала и адаптера помечены `local`: [`Updater`] — `!Send` (внутри ссылка на {% if ota_store == "external" %}`crate::external::ExternalMutex`{% else %}`FlashMutex`{% endif %} с
 `NoopRawMutex`), и граф держит его на своём исполнителе, не требуя `Send`, —
 то же допущение «один исполнитель», что у самого `NoopRawMutex`; захотите
 вынести OTA на другой исполнитель — меняйте `local` во фрагменте

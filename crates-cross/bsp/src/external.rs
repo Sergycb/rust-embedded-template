@@ -19,11 +19,14 @@
 //!    (`embedded_storage::nor_flash::NorFlash`): исполнителя там нет.
 //!
 //! Требование к драйверу одно: его страница стирания делит страницу обмена,
-//! под которую посчитана раскладка (`EXT_PAGE_SIZE` в bootloader'е, там же
-//! проверка при компиляции). Сектор 4 KiB есть у всех распространённых SPI NOR.
+//! под которую посчитана раскладка (`EXT_PAGE_SIZE` — здесь и в bootloader'е,
+//! оба проверяют это при компиляции). Сектор 4 KiB есть у всех
+//! распространённых SPI NOR.
 //!
 //! Разделы — одним объектом под одним мьютексом: микросхема одна, и операции
 //! разных разделов не должны перемежаться посреди команды SPI.
+
+use core::any::TypeId;
 
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::mutex::Mutex;
@@ -31,6 +34,25 @@ use static_cell::StaticCell;
 
 /// Драйвер внешней флеши — замените на свой.
 pub type ExternalFlash = adapters::flash::Unconnected;
+
+/// Страница обмена, под которую посчитана раскладка; то же число, что в
+/// bootloader'е. С драйвером, чьё стирание её не делит, страница обмена
+/// `embassy-boot` выросла бы, `ACTIVE` перестал бы быть ей кратен, и
+/// bootloader паниковал бы в `assert_partitions` на каждом старте. Проверка
+/// здесь — вдобавок к той, что в bootloader'е: у приложения свой тип драйвера.
+const EXT_PAGE_SIZE: usize = {{ext_page_size}};
+
+const _: () = assert!(
+    EXT_PAGE_SIZE.is_multiple_of(adapters::flash::erase_size::<ExternalFlash>()),
+    "стирание драйвера внешней флеши не делит страницу обмена (EXT_PAGE_SIZE)"
+);
+
+/// Подставлен ли драйвер вместо заглушки — для target-тестов, которым без
+/// микросхемы проверять нечего.
+#[must_use]
+pub fn connected() -> bool {
+    TypeId::of::<ExternalFlash>() != TypeId::of::<adapters::flash::Unconnected>()
+}
 
 /// Внешняя флеш под замком — то, над чем строятся её разделы.
 ///

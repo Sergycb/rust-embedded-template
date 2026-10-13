@@ -4,7 +4,7 @@ use xshell::cmd;
 
 use crate::flash::{flash_all, flash_boot};
 use crate::memory::{Region, app_memory_regions, app_region, region};
-use crate::project::{CHIP, PAGE_SIZE, WRITE_SIZE, has_bootloader, root_dir};
+use crate::project::{CHIP, PAGE_SIZE, WRITE_SIZE, external_partitions, has_bootloader, root_dir};
 
 type Stage = fn(&xshell::Shell) -> Result<(), anyhow::Error>;
 
@@ -109,6 +109,13 @@ fn ota_env<'a>(
     state: Option<&Region>,
     ram: Option<&Region>,
 ) -> Vec<xshell::PushEnv<'a>> {
+    // Тест пишет образ в `DFU` и запрос в `STATE` пробником, по адресам из
+    // memory.x. На внешней флеши этих адресов нет, и регионов в memory.x тоже
+    // — это не ошибка раскладки, говорить о ней как об ошибке нельзя.
+    if external_partitions() {
+        println!("тест цикла OTA пропущен: DFU и STATE на внешней флеши, пробнику их не достать");
+        return Vec::new();
+    }
     let (Some(active), Some(dfu), Some(state), Some(ram)) = (active, dfu, state, ram) else {
         if has_bootloader() {
             println!(

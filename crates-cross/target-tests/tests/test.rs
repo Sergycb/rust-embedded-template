@@ -119,8 +119,6 @@ mod tests {
     /// `embassy-boot` включается фича `flash-erase-zero`: у L0/L1 стёртое
     /// состояние нулевое, у остальных семейств — `0xFF`. С разделами на
     /// внешней флеши (`ota=external`) — `0xFF` всегда: NOR стирается в единицы.
-    /// Тогда же тесты ниже проверяют подставленный драйвер внешней флеши, а с
-    /// заглушкой на его месте падают — проверять ещё нечего.
     const ERASED: u8 = {% if erase_zero == "true" and ota_store != "external" %}0x00{% else %}0xFF{% endif %};
 
     /// Заведомо НЕ стёртые байты — инверсия стёртого состояния.
@@ -130,6 +128,19 @@ mod tests {
     /// мусором не является. Длина кратна `WRITE_SIZE` самых крупных чипов (у
     /// H7 это 32 байта) — короче раздел записи не принимает.
     const DIRTY: [u8; 32] = [!ERASED; 32];
+{%- if ota_store == "external" %}
+
+    /// С разделами на внешней флеши тесты ниже проверяют подставленный драйвер
+    /// микросхемы. Пока на его месте заглушка (`bsp/src/external.rs`),
+    /// проверять нечего: тест пропускается с предупреждением, а не падает.
+    fn no_external_flash() -> bool {
+        let stub = !bsp::external::connected();
+        if stub {
+            defmt::warn!("внешняя флеш не подключена (bsp/src/external.rs) — тест пропущен");
+        }
+        stub
+    }
+{%- endif %}
 
     /// Раздел `DFU` доступен на запись и чтение — то есть та половина OTA,
     /// которая не зависит от канала доставки, работает на этом чипе: адреса
@@ -146,6 +157,11 @@ mod tests {
         // Запись и чтение раздела приходят из порта домена, а не из
         // собственных методов `Ota`: приложение видит их так же.
         use ports::FirmwareUpdate;
+{%- if ota_store == "external" %}
+        if no_external_flash() {
+            return;
+        }
+{%- endif %}
 
         // Кратно WRITE_SIZE флеша: короче раздел не принимает.
         let written = [0xA5u8; 32];
@@ -188,6 +204,11 @@ mod tests {
     #[test]
     async fn erased_flash_reads_as_the_bootloader_expects(mut board: Board) {
         use ports::FirmwareUpdate;
+{%- if ota_store == "external" %}
+        if no_external_flash() {
+            return;
+        }
+{%- endif %}
 
         // Пачкаем раздел перед стиранием: иначе тест зелёный и в случае, когда
         // `prepare` не сделал ничего, а байты остались стёртыми с прошлого
@@ -237,6 +258,12 @@ mod tests {
     #[test]
     async fn prepare_erases_only_what_the_image_needs(mut board: Board) {
         use ports::FirmwareUpdate;
+
+{%- if ota_store == "external" %}
+        if no_external_flash() {
+            return;
+        }
+{%- endif %}
 
         let page = board.ota.flash.erase_size();
         let capacity = board.ota.flash.capacity().expect("вместимость раздела");
@@ -319,6 +346,12 @@ mod tests {
     #[test]
     async fn dfu_partition_keeps_both_writes_into_one_sector(mut board: Board) {
         use ports::FirmwareUpdate;
+
+{%- if ota_store == "external" %}
+        if no_external_flash() {
+            return;
+        }
+{%- endif %}
 
         let first = [0xA1u8; 32];
         let second = [0xB2u8; 32];
@@ -408,6 +441,13 @@ mod tests {
         // Версия «этой прошивки» в тесте — 0.1.0: ниже `u32::MAX` и не ниже
         // `0.0.0`, которые кладутся в хвост образа.
         const RUNNING: u32 = domain::ota::version::pack(0, 1, 0);
+
+{%- if ota_store == "external" %}
+        if no_external_flash() {
+            return;
+        }
+{%- endif %}
+
         let mut ota = board.ota.flash;
 
         // Кратно WRITE_SIZE, как и в тесте записи выше. Хвост — версия
