@@ -90,6 +90,10 @@ fn main() -> anyhow::Result<()> {
         .values()
         .filter(|m| m.config.is_some())
         .count();
+    let with_external = memory_layouts
+        .values()
+        .filter(|m| m.external.is_ok())
+        .count();
     let config_keeps_ota = memory_layouts
         .values()
         .filter(|m| m.config.as_ref().is_some_and(|config| config.ota.is_ok()))
@@ -131,7 +135,8 @@ fn main() -> anyhow::Result<()> {
          выбор банковой схемы нужен {} чипам; сторож зовётся не {} у {} чипов; memory.x \
          посчитан для {} из {} чипов, из них \
          с OTA {} (остальные — один образ на весь flash, без crates-cross/boot); раздел настроек \
-         возможен на {} чипах, из них с сохранением OTA — {}",
+         возможен на {} чипах, из них с сохранением OTA — {}; OTA с DFU на внешней флеши \
+         помещается на {} чипах",
         cargo_metadata.embassy_chip_features.len(),
         probe_rs_chips.len(),
         suffixes.len(),
@@ -145,6 +150,7 @@ fn main() -> anyhow::Result<()> {
         with_ota,
         with_config,
         config_keeps_ota,
+        with_external,
     );
 
     let rhai_path = repo_root.join("chip-select.rhai");
@@ -951,6 +957,9 @@ struct MemoryLayout {
     /// Раздел под настройки, если он на этом чипе вообще возможен. `None` —
     /// две страницы стирания не остаются даже без всего остального.
     config: Option<ConfigPartition>,
+    /// OTA с `DFU` и `STATE` на внешней флеши: внутри только bootloader и
+    /// `ACTIVE`. `Err` — даже так не помещается; текст объясняет почему.
+    external: Result<ExternalOta, String>,
 }
 
 /// Раскладка того же чипа, но с отрезанным разделом под настройки.
@@ -970,6 +979,53 @@ struct ConfigPartition {
     /// OTA-схема вместе с разделом; где в ней сам раздел — `settings`.
     ota: Result<OtaPartitions, String>,
 }
+
+/// OTA с разделами на внешней флеши: во внутренней — bootloader и `ACTIVE`
+/// (он и обязан быть внутри: из него исполняется код), на внешней — `STATE`,
+/// `DFU` и, если нужен, раздел настроек.
+///
+/// Геометрию внешней микросхемы генератор не знает — её несёт драйвер,
+/// который подставит проект. Поэтому всё внешнее выровнено с запасом
+/// (`ext_align`), а сколько раскладка требует от драйвера, сказано явно
+/// (`page_size`): его `ERASE_SIZE` обязан этот размер делить. Проверяет это
+/// `const`-assert рядом с драйвером, а не генератор.
+#[derive(Debug)]
+struct ExternalOta {
+    /// Зона bootloader'а: от базы flash до `ACTIVE`.
+    bootloader_length: u64,
+    active_origin: u64,
+    active_length: u64,
+    /// `PAGE_SIZE` обмена в предположении, что стирание драйвера его делит:
+    /// крупнейший сектор чипа, но не меньше `EXT_ERASE_MIN`.
+    page_size: u64,
+    /// Шаг, по которому выровнены смещения и размеры на внешней флеши.
+    ext_align: u64,
+    /// Смещения — от начала внешней флеши, а не адреса.
+    state_offset: u64,
+    state_length: u64,
+    dfu_offset: u64,
+    dfu_length: u64,
+    /// Раздел настроек на внешней флеши — сразу за `DFU`; две страницы по
+    /// `ext_align`. Используется, только если настройки выбраны.
+    config_offset: u64,
+    config_length: u64,
+}
+
+/// Самое мелкое стирание, которое раскладка ждёт от внешней флеши: сектор
+/// 4 KiB есть у последовательной NOR всех крупных производителей (W25Q, MX25,
+/// GD25, IS25, AT25). `ACTIVE` кратен ему: обмен идёт страницами
+/// `max(ACTIVE::ERASE_SIZE, DFU::ERASE_SIZE)`, и драйвер с более крупным
+/// стиранием потребовал бы `ACTIVE` кратного уже его странице.
+const EXT_ERASE_MIN: u64 = 4 * 1024;
+/// Шаг разделов на внешней флеши: блок 64 KiB — самое крупное стирание,
+/// которое бывает у той же NOR. Внешняя память дешёвая, и запас здесь ничего
+/// не стоит, а разделы остаются годными для драйвера с любым стиранием до
+/// блока.
+const EXT_ALIGN: u64 = 64 * 1024;
+/// Самое широкое слово записи, на которое считается журнал `STATE`: то же,
+/// что `adapters::ota::MAX_WRITE_SIZE`, — буфер шире адаптер всё равно не
+/// держит.
+const EXT_WRITE_MAX: u64 = 32;
 
 const FLASH_BASE: u64 = 0x0800_0000;
 const RAM_BASE: u64 = 0x2000_0000;
@@ -1106,7 +1162,120 @@ fn compute_memory_layout(chip: &str, regions: &[RawRegion]) -> Option<MemoryLayo
         erase_zero,
         ota: compute_ota_partitions(chip, &chain, flash_total, page_size, write_size, false),
         config: compute_config_partition(chip, &chain, flash_total, page_size, write_size),
+        external: compute_external_ota(chip, flash_total, page_size),
     })
+}
+
+/// Раскладка OTA, когда `DFU` и `STATE` уезжают на внешнюю флешь.
+///
+/// Внутри — bootloader и `ACTIVE`, больше ничего: `ACTIVE` начинается с первой
+/// границы страницы чипа после `BOOTLOADER_TARGET` (раздел над цельным
+/// `Flash`, `Partition::new` требует смещения, кратного его странице) и
+/// забирает всё до конца flash, сколько ложится целыми страницами обмена.
+/// Bootloader не растёт сверх нужного ради `STATE` — `STATE` снаружи.
+///
+/// На F2/F4/F7 зона bootloader'а всё равно 128 KiB: `ACTIVE` не может начаться
+/// посреди 128-килобайтного сектора, а мелкие сектора перед ним — только
+/// bootloader'у.
+///
+/// Снаружи — `STATE`, `DFU`, раздел настроек подряд с нуля, всё по
+/// `ext_align`. Четыре проверки `assert_partitions` при этом выполнены для
+/// любого драйвера, чьё стирание делит `page_size`, — см.
+/// `assert_external_invariants`.
+fn compute_external_ota(
+    chip: &str,
+    flash_total: u64,
+    page_size: u64,
+) -> Result<ExternalOta, String> {
+    let page = page_size.max(EXT_ERASE_MIN);
+    let bootloader_length = BOOTLOADER_TARGET.next_multiple_of(page_size);
+    let active_length = flash_total.saturating_sub(bootloader_length) / page * page;
+    if active_length == 0 {
+        return Err(format!(
+            "flash {} KiB: за bootloader'ом ({} KiB) не остаётся ни страницы обмена ({} KiB)",
+            flash_total / 1024,
+            bootloader_length / 1024,
+            page / 1024
+        ));
+    }
+    let ext_align = page.max(EXT_ALIGN);
+    // Журнал — на самую мелкую страницу обмена, какая может выйти: драйвер со
+    // стиранием мельче `page` даст `PAGE_SIZE` = странице чипа, и страниц
+    // (а с ними слов журнала) станет больше.
+    let journal = (2 + 4 * (active_length / page_size)) * EXT_WRITE_MAX;
+    let state_length = journal.next_multiple_of(ext_align);
+    let dfu_length = (active_length + page).next_multiple_of(ext_align);
+    let external = ExternalOta {
+        bootloader_length,
+        active_origin: FLASH_BASE + bootloader_length,
+        active_length,
+        page_size: page,
+        ext_align,
+        state_offset: 0,
+        state_length,
+        dfu_offset: state_length,
+        dfu_length,
+        config_offset: state_length + dfu_length,
+        config_length: 2 * ext_align,
+    };
+    assert_external_invariants(chip, &external, page_size);
+    Ok(external)
+}
+
+/// Проверки `assert_partitions` и `Partition::new` для внешней раскладки — на
+/// этапе генерации, по той же причине, что `assert_embassy_boot_invariants`.
+/// `chip_page` — крупнейший сектор чипа: страница цельного `Flash` под
+/// `ACTIVE`.
+fn assert_external_invariants(chip: &str, e: &ExternalOta, chip_page: u64) {
+    let page = e.page_size;
+    assert!(
+        page.is_multiple_of(chip_page) && page.is_multiple_of(EXT_ERASE_MIN),
+        "{chip}: страница обмена {page} не кратна странице чипа или EXT_ERASE_MIN"
+    );
+    assert!(
+        e.ext_align.is_multiple_of(page),
+        "{chip}: шаг внешних разделов {} не кратен странице обмена {page}",
+        e.ext_align
+    );
+    assert!(
+        e.active_length.is_multiple_of(page) && e.dfu_length.is_multiple_of(page),
+        "{chip}: ACTIVE {} или DFU {} не кратен PAGE_SIZE {page}",
+        e.active_length,
+        e.dfu_length
+    );
+    assert!(
+        e.dfu_length >= e.active_length + page,
+        "{chip}: DFU {} не на страницу больше ACTIVE {}",
+        e.dfu_length,
+        e.active_length
+    );
+    let journal_words = 2 + 4 * (e.active_length / chip_page);
+    assert!(
+        journal_words * EXT_WRITE_MAX <= e.state_length,
+        "{chip}: журналу прогресса нужно {journal_words} слов по {EXT_WRITE_MAX}, в STATE {} байт",
+        e.state_length
+    );
+    assert!(
+        (e.active_origin - FLASH_BASE).is_multiple_of(chip_page)
+            && e.active_origin - FLASH_BASE == e.bootloader_length,
+        "{chip}: ACTIVE не с границы страницы чипа сразу за bootloader'ом"
+    );
+    for (name, offset, length) in [
+        ("STATE", e.state_offset, e.state_length),
+        ("DFU", e.dfu_offset, e.dfu_length),
+        ("CONFIG", e.config_offset, e.config_length),
+    ] {
+        assert!(
+            offset.is_multiple_of(e.ext_align) && length.is_multiple_of(e.ext_align),
+            "{chip}: внешний {name} (смещение {offset:#x}, размер {length}) не по шагу {}",
+            e.ext_align
+        );
+    }
+    assert!(
+        e.state_offset + e.state_length <= e.dfu_offset
+            && e.dfu_offset + e.dfu_length <= e.config_offset,
+        "{chip}: внешние разделы накладываются"
+    );
 }
 
 /// Раздел под настройки: две страницы стирания.
@@ -1746,6 +1915,32 @@ fn format_memory_layouts(layouts: &BTreeMap<&str, MemoryLayout>) -> String {
                 }
             }
             None => push_field(&mut out, "config", "false"),
+        }
+        // Третий набор — OTA с `DFU`/`STATE` на внешней флеши (`ExternalOta`).
+        // Внешние значения — смещения от начала внешней флеши, а не адреса.
+        match &m.external {
+            Ok(e) => {
+                push_field(&mut out, "ext_ota", "true");
+                push_field(
+                    &mut out,
+                    "ext_bootloader_length",
+                    &format_size(e.bootloader_length),
+                );
+                push_field(&mut out, "ext_active_origin", &format_addr(e.active_origin));
+                push_field(&mut out, "ext_active_length", &format_size(e.active_length));
+                push_field(&mut out, "ext_page_size", &rust_literal(e.page_size));
+                push_field(&mut out, "ext_align", &rust_literal(e.ext_align));
+                push_field(&mut out, "ext_state_offset", &format_addr(e.state_offset));
+                push_field(&mut out, "ext_state_length", &format_size(e.state_length));
+                push_field(&mut out, "ext_dfu_offset", &format_addr(e.dfu_offset));
+                push_field(&mut out, "ext_dfu_length", &format_size(e.dfu_length));
+                push_field(&mut out, "ext_config_offset", &format_addr(e.config_offset));
+                push_field(&mut out, "ext_config_length", &format_size(e.config_length));
+            }
+            Err(note) => {
+                push_field(&mut out, "ext_ota", "false");
+                push_field(&mut out, "ext_note", note);
+            }
         }
         out.push_str("    },\n");
     }
@@ -2395,6 +2590,43 @@ pub static METADATA: Metadata = Metadata {
             place_state(&sectors, 64, BOOTLOADER_MIN),
             Some((80 * 1024, 64 * 1024, 64 * 1024))
         );
+    }
+
+    /// Внешняя раскладка на F407VE (4×16, 64, 3×128 KiB): bootloader — до
+    /// первой 128-килобайтной границы, `ACTIVE` — всё остальное, снаружи
+    /// `STATE`, `DFU`, настройки по 128 KiB (страница обмена крупнее блока).
+    #[test]
+    fn external_layout_keeps_everything_but_the_bootloader_for_active() {
+        let e = compute_external_ota("test", 512 * 1024, 128 * 1024).expect("помещается");
+        assert_eq!(e.bootloader_length, 128 * 1024);
+        assert_eq!(e.active_origin, FLASH_BASE + 0x2_0000);
+        assert_eq!(e.active_length, 384 * 1024);
+        assert_eq!(e.page_size, 128 * 1024);
+        assert_eq!(e.ext_align, 128 * 1024);
+        assert_eq!((e.state_offset, e.state_length), (0, 128 * 1024));
+        assert_eq!((e.dfu_offset, e.dfu_length), (128 * 1024, 512 * 1024));
+        assert_eq!(e.config_offset, 640 * 1024);
+    }
+
+    /// Мелкие страницы (G0: 2 KiB): bootloader ровно `BOOTLOADER_TARGET`,
+    /// `ACTIVE` кратен 4 KiB — стиранию внешней NOR, — а не 2 KiB чипа.
+    #[test]
+    fn external_layout_on_small_pages_rounds_active_to_the_external_sector() {
+        let e = compute_external_ota("test", 128 * 1024 + 2048, 2048).expect("помещается");
+        assert_eq!(e.bootloader_length, 32 * 1024);
+        assert_eq!(e.active_length, 96 * 1024);
+        assert_eq!(e.page_size, 4 * 1024);
+        assert_eq!(e.ext_align, 64 * 1024);
+        assert_eq!(e.dfu_length, 128 * 1024);
+        // Журнал — на страницу чипа: (2 + 4*48) слов по 32 байта — 6208
+        // байт, один блок.
+        assert_eq!(e.state_length, 64 * 1024);
+    }
+
+    #[test]
+    fn external_layout_reports_a_chip_too_small_for_it() {
+        let note = compute_external_ota("test", 32 * 1024, 1024).expect_err("не помещается");
+        assert!(note.contains("ни страницы"), "{note}");
     }
 
     #[test]
