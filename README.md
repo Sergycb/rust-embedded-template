@@ -425,9 +425,10 @@ docs/ota.md.
 
 ### Настройки во flash
 
-Третий вопрос при генерации (после CI-провайдера и OTA) — нужен ли раздел `CONFIG`
-(или `--define config=yes`).
-Ответили «да» — `Board` отдаёт поле `settings`: `adapters::settings::Settings`
+Третий вопрос при генерации (после CI-провайдера и OTA) — где хранить настройки:
+`internal` (внутренняя EEPROM, если она есть у чипа, иначе раздел `CONFIG` во flash),
+`external` (внешняя флеш) или `no` (`--define config=internal` и т. д.).
+Выбрали хранилище — `Board` отдаёт поле `settings`: `adapters::settings::Settings`
 (тестируется на хосте) поверх `sequential-storage`, пары «ключ — значение»,
 переживающие и перезапуск, и обновление прошивки. В проект также попадает
 `crates-cross/bsp/src/config.rs` — тонкая обвязка, которая приносит хранилищу

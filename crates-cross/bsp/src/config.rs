@@ -40,7 +40,7 @@ const CONFIG_ERASE_SIZE: usize = {{config_erase_size}};
 pub type Settings =
     adapters::settings::Settings<Paged<Shared<'static, FlashMutex>, CONFIG_ERASE_SIZE>>;
 
-// Ещё один `#[expect(unsafe_code)]` в `crates-cross` (есть только при `config=yes`):
+// Ещё один `#[expect(unsafe_code)]` в `crates-cross` (есть только при `config=internal`):
 // причина та же, что у блока в `ota.rs` — адрес линкерного символа иначе не взять.
 #[expect(unsafe_code, reason = "обоснование — в комментарии выше")]
 unsafe extern "C" {

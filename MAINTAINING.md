@@ -611,7 +611,7 @@ cp "$TEMP/rust-embedded-template-check/tc-stm32f407ve/crates-host/chip-info/Carg
 
 **Третьего, `crates-cross/Cargo.lock`, в шаблоне нет — и это решение, а не пропуск.**
 Состав пакетов там зависит от ответов при генерации: при `ota=no` уходят
-`embassy-boot*`, при `config=yes` добавляются `sequential-storage` и
+`embassy-boot*`, при `config=internal` добавляются `sequential-storage` и
 `embedded-storage-async`, при `signed=yes` — `salty`. Один закоммиченный файл подходил
 бы ровно одному сочетанию из шести, а остальным ломал бы `cargo fetch --locked`
 (проверено вживую). Альтернатива — держать шесть файлов по 54 KB и обновлять все шесть

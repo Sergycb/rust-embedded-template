@@ -58,7 +58,7 @@ if variable::get("graph") == "true" {
 }
 
 // crates-cross/Cargo.lock шаблон не раздаёт: состав зависимостей `bsp` зависит
-// от ответов выше — при `ota=no` уходят `embassy-boot*`, при `config=yes`
+// от ответов выше — при `ota=no` уходят `embassy-boot*`, при `config=internal`
 // добавляются `sequential-storage` с `embedded-storage-async`, при
 // `signed=yes` — `salty`. Один закоммиченный lock подходил бы ровно одному
 // сочетанию, а остальным ломал бы `cargo fetch --locked` в CI. Поэтому его

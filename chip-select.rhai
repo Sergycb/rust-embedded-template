@@ -91375,13 +91375,17 @@ if !wants_ota {
 //   "external" — внешняя флеш: ответ `external`; шаблон кладёт заглушку
 //                (`adapters::flash::Unconnected`), драйвер подставляете вы;
 //   "none"     — настроек нет.
-// `yes` выбирает между первыми двумя сам.
+// Ответ `internal` выбирает между первыми двумя сам, `external` — третий,
+// `no` — четвёртый. Незнакомый ответ — ошибка, как у `ota`.
 let wants_config = false;
 let wants_external = false;
 if variable::is_set("config") {
     let answer = variable::get("config");
+    if answer != "internal" && answer != "external" && answer != "no" {
+        throw "config: ожидается internal, external или no, а не «" + answer + "»";
+    }
     wants_external = answer == "external";
-    wants_config = wants_external || answer == "yes" || answer == "true";
+    wants_config = answer != "no";
 }
 
 // Подпись образа. Смысл имеет только вместе с OTA — подписывается то, что

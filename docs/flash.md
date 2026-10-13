@@ -83,8 +83,8 @@ F2/F4/F7 (у F4 16, 64 и 128 KiB): в мелких секторах можно 
 
 | Ответ | Где лежат настройки | Что в слоте |
 |---|---|---|
-| `yes`, у чипа есть EEPROM (L0/L1) | внутренняя EEPROM, вся | `adapters::eeprom::Eeprom` над `Flash::eeprom_*` |
-| `yes`, EEPROM нет | раздел `CONFIG` во внутреннем флеше | `Paged<Shared<FlashMutex>>` |
+| `internal`, у чипа есть EEPROM (L0/L1) | внутренняя EEPROM, вся | `adapters::eeprom::Eeprom` над `Flash::eeprom_*` |
+| `internal`, EEPROM нет | раздел `CONFIG` во внутреннем флеше | `Paged<Shared<FlashMutex>>` |
 | `external` | внешняя флеш на плате | **ваш драйвер**; в шаблоне — заглушка `adapters::flash::Unconnected` |
 
 `Board` отдаёт поле `settings`; `no` — файла `config.rs` нет вовсе, как и
@@ -211,7 +211,7 @@ NOR. Во внутреннем флеше остаются bootloader и `ACTIVE
 проверка — при компиляции, рядом с драйвером.
 
 **Настройки при внешней OTA — где решит проект.** `config=external` кладёт
-раздел на ту же микросхему за `DFU`; `config=yes` — во внутренний флеш:
+раздел на ту же микросхему за `DFU`; `config=internal` — во внутренний флеш:
 сначала в две равные страницы зоны bootloader'а за 32 KiB (на F4 — сектора 2–3
 по 16 KiB, которые иначе пропадают, и `ACTIVE` не теряет ничего), нет их — в
 хвост flash (набор `ext_cfg_*`). EEPROM L0/L1 — как и без OTA.

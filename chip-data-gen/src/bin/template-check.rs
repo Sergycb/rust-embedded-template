@@ -81,17 +81,17 @@ fn default_cases() -> Vec<Case> {
         // Раздел настроек вместе с OTA на равных секторах (2 KiB): в хвосте
         // flash, страница раздела — страница чипа, схема OTA после него всё ещё
         // помещается — в проект попадают разом bootloader, ota.rs и config.rs.
-        Case::new("stm32g071rb").variant("config", &["config=yes"]),
+        Case::new("stm32g071rb").variant("config", &["config=internal"]),
         // Он же без OTA: две последние страницы flash (таблица векторов
         // приложения стоит в начале). Ветка «config есть, bootloader и ota.rs
         // удалены» — только здесь.
-        Case::new("stm32g071rb").variant("config-no-ota", &["config=yes", "ota=no"]),
+        Case::new("stm32g071rb").variant("config-no-ota", &["config=internal", "ota=no"]),
         // Раздел настроек вместе с OTA на неравных секторах: у F407 он ложится
         // в сектора 2–3 по 16 KiB перед ACTIVE, `STATE` — в сектор 4 (64 KiB);
         // `CONFIG_ERASE_SIZE` и `STATE_ERASE_SIZE` меньше страницы чипа, оба
         // раздела — над `Paged`. В проект попадают разом bootloader, ota.rs и
         // config.rs.
-        Case::new("stm32f407ve").variant("config", &["config=yes"]),
+        Case::new("stm32f407ve").variant("config", &["config=internal"]),
         // Подпись образа: проверка в bootloader'е (`screen_update`, ключ через
         // `boot/build.rs`, `salty` со своей `slow-motion` и профилем dev), а в
         // `app/src/image.rs` — `FW_VERSION` для режима `Mode::Signed`, а
@@ -115,7 +115,7 @@ fn default_cases() -> Vec<Case> {
         // геометрии драйвера.
         Case::new("stm32f407ve").variant(
             "ota-external-config",
-            &["ota=external", "config=yes", "graph=no"],
+            &["ota=external", "config=internal", "graph=no"],
         ),
         // Флеш, стирающийся в ноль, с внешней OTA: `flash-erase-zero` у
         // `embassy-boot` выключен — `STATE` на внешней NOR, а она стирается в
@@ -134,10 +134,10 @@ fn default_cases() -> Vec<Case> {
         // раздел ACTIVE выходит меньше минимальной debug-прошивки (см. там же
         // известные ограничения).
         //
-        // Заодно — настройки во внутренней EEPROM (`config=yes` на L0/L1):
+        // Заодно — настройки во внутренней EEPROM (`config=internal` на L0/L1):
         // `adapters::eeprom::Eeprom` поверх `Flash::eeprom_*`, единственное место
         // под настройки на флеше, стирающемся в ноль.
-        Case::new("stm32l073rz").variant("config", &["config=yes"]),
+        Case::new("stm32l073rz").variant("config", &["config=internal"]),
     ]
 }
 

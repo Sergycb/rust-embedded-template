@@ -349,7 +349,7 @@ fn erase_zero_follows_the_metadata_not_the_chip_name() {
 #[test]
 fn ota_refusal_names_the_real_reason_with_settings() {
     let ast = compile_script();
-    let too_small = run_cascade_with(&ast, "f030c8", &[("config", "yes"), ("ota", "internal")])
+    let too_small = run_cascade_with(&ast, "f030c8", &[("config", "internal"), ("ota", "internal")])
         .expect("каскад не должен падать");
     let log = too_small.prints.join("\n");
     assert!(
@@ -793,6 +793,18 @@ fn an_unknown_ota_answer_is_an_error() {
     }
 }
 
+/// То же для `config`: варианты те же, что у `ota`, и `yes` среди них нет.
+#[test]
+fn an_unknown_config_answer_is_an_error() {
+    let ast = compile_script();
+    for answer in ["yes", "true", "flash"] {
+        let err = run_cascade_with(&ast, "f407ve", &[("config", answer)])
+            .err()
+            .unwrap_or_else(|| panic!("config={answer} должен быть ошибкой"));
+        assert!(err.to_string().contains("internal, external или no"), "{err}");
+    }
+}
+
 #[test]
 fn accepting_ota_still_loses_to_a_chip_that_cannot_fit_it() {
     // Обратная сторона: `yes` — это «не возражаю», а не «сделай во что бы то
@@ -865,15 +877,15 @@ fn external_ota_keeps_only_the_bootloader_and_active_inside() {
     }
 }
 
-/// Настройки во внутреннем флеше при внешней OTA (`config=yes`): на F4 — в
+/// Настройки во внутреннем флеше при внешней OTA (`config=internal`): на F4 — в
 /// мелких секторах зоны bootloader'а, `ACTIVE` при этом не короче; настройки
 /// на внешней флеши (`config=external`) — символами за `DFU`.
 #[test]
 fn external_ota_places_settings_where_the_project_asked() {
     let ast = compile_script();
 
-    let inside = run_cascade_with(&ast, "f407ve", &[("ota", "external"), ("config", "yes")])
-        .expect("каскад с config=yes");
+    let inside = run_cascade_with(&ast, "f407ve", &[("ota", "external"), ("config", "internal")])
+        .expect("каскад с config=internal");
     assert_eq!(
         inside.vars.get("config_store").map(String::as_str),
         Some("flash")
@@ -1089,7 +1101,7 @@ fn settings_avoid_flash_that_erases_to_zero() {
     let ast = compile_script();
 
     for suffix in ["l073rz", "l051c8"] {
-        let result = run_cascade_with(&ast, suffix, &[("config", "yes")])
+        let result = run_cascade_with(&ast, suffix, &[("config", "internal")])
             .unwrap_or_else(|err| panic!("каскад до {suffix} упал: {err}"));
 
         assert_eq!(
@@ -1111,7 +1123,7 @@ fn settings_avoid_flash_that_erases_to_zero() {
 
     // У L010F4 EEPROM есть, но 128 байт — меньше двух страниц хранилища.
     for suffix in ["wb10cc", "wb15cc", "l010f4"] {
-        let result = run_cascade_with(&ast, suffix, &[("config", "yes")])
+        let result = run_cascade_with(&ast, suffix, &[("config", "internal")])
             .unwrap_or_else(|err| panic!("каскад до {suffix} упал: {err}"));
 
         assert_eq!(
@@ -1136,7 +1148,7 @@ fn eeprom_settings_survive_a_manual_layout() {
     let result = run_cascade_with(
         &compile_script(),
         "l073rz",
-        &[("config", "yes"), ("write_size", "4")],
+        &[("config", "internal"), ("write_size", "4")],
     )
     .expect("каскад до l073rz");
 
@@ -1183,7 +1195,7 @@ fn external_settings_take_no_internal_flash() {
 /// снятом у всех подряд.
 #[test]
 fn the_settings_partition_survives_on_ordinary_flash() {
-    let result = run_cascade_with(&compile_script(), "g071rb", &[("config", "yes")])
+    let result = run_cascade_with(&compile_script(), "g071rb", &[("config", "internal")])
         .expect("каскад до g071rb");
 
     assert_eq!(
@@ -1201,7 +1213,7 @@ fn settings_go_to_small_sectors_with_ota_and_to_the_tail_without() {
     let ast = compile_script();
 
     let with_ota =
-        run_cascade_with(&ast, "f407ve", &[("config", "yes")]).expect("каскад до f407ve");
+        run_cascade_with(&ast, "f407ve", &[("config", "internal")]).expect("каскад до f407ve");
     assert_eq!(with_ota.vars.get("ota").map(String::as_str), Some("true"));
     assert_eq!(
         with_ota.vars.get("config_erase_size").map(String::as_str),
@@ -1222,7 +1234,7 @@ fn settings_go_to_small_sectors_with_ota_and_to_the_tail_without() {
         "{boot}"
     );
 
-    let without = run_cascade_with(&ast, "f407ve", &[("config", "yes"), ("ota", "no")])
+    let without = run_cascade_with(&ast, "f407ve", &[("config", "internal"), ("ota", "no")])
         .expect("каскад до f407ve");
     assert_eq!(
         without.vars.get("config_erase_size").map(String::as_str),
