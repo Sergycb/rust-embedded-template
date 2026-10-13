@@ -47,7 +47,7 @@
 `{{chip}}`, `{{chip_feature}}`, `{{cpu}}`, `{{target}}`, `{{write_size}}`,
 `{{page_size}}`, `{{state_erase_size}}`, `{{config_erase_size}}`, `{{config_store}}`,
 `{{shared_flash}}`, `{{dual_core}}`, `{{bank_mode}}`, `{{erase_zero}}`,
-`{{watchdog_peripheral}}`, `{{cpu_freq_boost}}` — плейсхолдеры, подставляемые
+`{{watchdog_peripheral}}`, `{{cpu_freq_boost}}`, `{{dfu_bank}}` — плейсхолдеры, подставляемые
 Liquid-рендером cargo-generate. Из них в `[placeholders]` объявлены только `ci`, `ota`, `graph`,
 `config` и `signed`; все остальные выставляет `variable::set` в `[hooks].pre`-скрипте
 `chip-select.rhai` — каскадный посимвольный выбор STM32 (семейство → линейка → дальше по
@@ -236,6 +236,15 @@ configuration. No Cargo feature to select one is enabled»), то есть сг�
 использует. Для одноконфигурационных чипов `bank_mode` — пустая строка, и `{% if %}` в
 `crates-cross/Cargo.toml` фичу не выводит: лишняя фича так же фатальна («The 'single-bank'
 feature is not supported on this dual bank chip»).
+
+Второй банк за разрывом в адресах (`bank2_of` + проверка «вне цепочки» в
+`compute_memory_layout`) — у 36 чипов с фиксированным dual: H742/743/745/747 и H7A3 с
+1 MiB, U5F7/U5F9 с 2 MiB. С внутренней OTA там `DFU` в банке 2, раскладка несёт ключ
+`dfu_bank_origin`, хук по нему выставляет `dfu_bank` и считает `__bootloader_dfu_*` от
+начала банка, а `boot`/`bsp` пишут `DFU` через `Bank2Region` (почему не через цельный
+`Flash` — docs/flash.md, «Банки flash»). Ветку проверяет `template-check`
+(`stm32h743zg`, `dfu-bank`). Стыкующиеся банки — один непрерывный flash, `DFU` к банку
+2 не привязан.
 
 ### Сторожевой таймер (`watchdog_peripheral`, блок `WATCHDOG`)
 

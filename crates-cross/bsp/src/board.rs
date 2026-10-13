@@ -12,6 +12,9 @@ use core::cell::RefCell;
 
 use defmt::info;
 {%- if shared_flash == "true" %}
+{%- if dfu_bank == "true" %}
+use embassy_stm32::flash::{Bank1Region, Bank2Region};
+{%- endif %}
 use embassy_stm32::flash::{Blocking, Flash};
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
@@ -32,16 +35,38 @@ use static_cell::StaticCell;
 /// `RefCell` внутри нужен блокирующему `Mutex` embassy, поэтому ячейка
 /// спрятана в newtype: наружу тип торчит лишь как параметр
 /// [`adapters::flash::Shared`].
-pub struct FlashMutex(Mutex<NoopRawMutex, RefCell<Flash<'static, Blocking>>>);
+pub struct FlashMutex(Mutex<NoopRawMutex, RefCell<ChipFlash>>);
+
+{%- if dfu_bank == "true" %}
+
+/// Флеш под [`FlashMutex`] — банк 1, а не весь чип: банк 2 стоит за
+/// разрывом, и цельный `Flash` туда не дотягивается (`FLASH_SIZE` у него —
+/// сумма банков, меньше смещения банка 2). Смещения в банке 1 те же, что у
+/// цельного `Flash`, — от базы flash.
+pub type ChipFlash = Bank1Region<'static, Blocking>;
+
+/// Банк 2 — под `DFU`, и только под него: смещения в нём отсчитаны от его
+/// начала, и символы `memory.x` у `DFU` посчитаны так же. Без newtype, в
+/// отличие от [`FlashMutex`]: наружу тип не выходит, он нужен одному
+/// `bsp::ota`, а `FlashLock` для голого мьютекса уже есть в `adapters`.
+pub type DfuBankMutex = Mutex<NoopRawMutex, RefCell<Bank2Region<'static, Blocking>>>;
+
+/// `&'static` — по той же причине, что [`FLASH`].
+static DFU_BANK: StaticCell<DfuBankMutex> = StaticCell::new();
+{%- else %}
+
+/// Флеш под [`FlashMutex`] — весь чип одним объектом.
+pub type ChipFlash = Flash<'static, Blocking>;
+{%- endif %}
 
 impl FlashMutex {
-    fn new(flash: Flash<'static, Blocking>) -> Self {
+    fn new(flash: ChipFlash) -> Self {
         Self(Mutex::new(RefCell::new(flash)))
     }
 }
 
 impl adapters::flash::FlashLock for FlashMutex {
-    type Flash = Flash<'static, Blocking>;
+    type Flash = ChipFlash;
 
     fn with<R>(&self, op: impl FnOnce(&mut Self::Flash) -> R) -> R {
         self.0.with(op)
@@ -169,7 +194,13 @@ impl Board {
         // split_resources!(p);` и собирайте из `r` свои драйверы. Наружу из
         // `bsp` уходит не периферия, а готовый объект — поле `Board`,
         // реализующее порт из `ports`.
+{%- if dfu_bank == "true" %}
+        let banks = Flash::new_blocking(p.FLASH).into_blocking_regions();
+        let flash = FLASH.init(FlashMutex::new(banks.bank1_region));
+        let dfu_bank = DFU_BANK.init(Mutex::new(RefCell::new(banks.bank2_region)));
+{%- else %}
         let flash = FLASH.init(FlashMutex::new(Flash::new_blocking(p.FLASH)));
+{%- endif %}
 {%- else %}
         // Место для распиновки платы: объявите `assign_resources!`
         // (docs/resources.md), добавьте `let r = split_resources!(p);` и
@@ -200,7 +231,7 @@ impl Board {
                 sys_hz,
             },
 {%- if ota == "true" %}
-            ota: crate::ota::new({% if ota_store == "external" %}external{% else %}flash{% endif %}),
+            ota: crate::ota::new({% if ota_store == "external" %}external{% elsif dfu_bank == "true" %}flash, dfu_bank{% else %}flash{% endif %}),
 {%- endif %}
 {%- if config == "true" %}
             settings: crate::config::new({% if config_store != "external" %}flash{% elsif ota == "true" and ota_store == "external" %}external{% endif %}),

@@ -42,7 +42,16 @@ mod panic;
 #[cortex_m_rt::entry]
 fn main() -> ! {
     let p = init_peripherals();
+{%- if dfu_bank == "true" %}
+    // Банк 2 стоит за разрывом, и цельный `Flash` туда не дотягивается (его
+    // `FLASH_SIZE` — сумма банков, меньше смещения банка 2): флеш разбирается на
+    // регионы банков. Банк 1 — bootloader, `STATE` и `ACTIVE`, банк 2 — `DFU`;
+    // смещения в `memory.x` у `DFU` отсчитаны от начала банка 2.
+    let banks = Flash::new_blocking(p.FLASH).into_blocking_regions();
+    let (flash, dfu): (Bank1, Bank2) = (banks.bank1_region, banks.bank2_region);
+{%- else %}
     let flash = Flash::new_blocking(p.FLASH);
+{%- endif %}
 {%- if ota_store == "external" %}
     // `STATE` и `DFU` — на внешней флеши. Драйвер блокирующий (в приложении —
     // асинхронный, `bsp::external`), собирается здесь из периферии `p` (SPI и
@@ -56,6 +65,8 @@ fn main() -> ! {
     // внутри нечем. См. `screen`.
 {%- if ota_store == "external" %}
     let (flash, external, swap_allowed) = screen(flash, external);
+{%- elsif dfu_bank == "true" %}
+    let (flash, dfu) = screen(flash, dfu);
 {%- else %}
     let flash = screen(flash);
 {%- endif %}
@@ -87,6 +98,10 @@ fn main() -> ! {
     #[cfg(not(debug_assertions))]
     let external = Fed::new(external, &watchdog);
 {%- endif %}
+{%- if dfu_bank == "true" %}
+    #[cfg(not(debug_assertions))]
+    let dfu = Fed::new(dfu, &watchdog);
+{%- endif %}
 {%- endif %}
     let flash = Mutex::new(RefCell::new(flash));
 {%- if ota_store == "external" %}
@@ -112,8 +127,14 @@ fn main() -> ! {
     let state = Mutex::new(RefCell::new(Paged::<_, STATE_ERASE_SIZE>::new(
         Shared::new(&flash),
     )));
+{%- if dfu_bank == "true" %}
+    let dfu = Mutex::new(RefCell::new(dfu));
+
+    let config = BootLoaderConfig::from_linkerfile_blocking(&flash, &dfu, &state);
+{%- else %}
 
     let config = BootLoaderConfig::from_linkerfile_blocking(&flash, &flash, &state);
+{%- endif %}
     let active_offset = config.active.offset();
     let bl = BootLoader::prepare::<_, _, _, {{write_size}}>(config);
 {%- endif %}
@@ -170,6 +191,16 @@ fn main() -> ! {
 /// генерации тем же расчётом, что адреса в `memory.x`; то же самое стоит в
 /// `bsp::ota` — разделу в приложении и в bootloader'е расходиться нельзя.
 const STATE_ERASE_SIZE: usize = {{state_erase_size}};
+{%- if dfu_bank == "true" %}
+
+/// Банк 1 — bootloader, `STATE`, `ACTIVE` (смещения от базы flash, как у
+/// цельного `Flash`).
+type Bank1 = embassy_stm32::flash::Bank1Region<'static, embassy_stm32::flash::Blocking>;
+
+/// Банк 2 — `DFU`, со смещениями от своего начала (символы `memory.x`
+/// посчитаны так же).
+type Bank2 = embassy_stm32::flash::Bank2Region<'static, embassy_stm32::flash::Blocking>;
+{%- endif %}
 {%- else %}
 
 /// Драйвер внешней флеши, на которой лежат `STATE` и `DFU`, — замените на
@@ -291,6 +322,32 @@ fn screen(
         external.into_inner().into_inner(),
         swap_allowed,
     )
+}
+{%- elsif dfu_bank == "true" %}
+fn screen(flash: Bank1, dfu: Bank2) -> (Bank1, Bank2) {
+    use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+
+    let flash = Mutex::<NoopRawMutex, _>::new(RefCell::new(flash));
+    let dfu = Mutex::<NoopRawMutex, _>::new(RefCell::new(dfu));
+    {
+        let state = Mutex::<NoopRawMutex, _>::new(RefCell::new(Paged::<_, STATE_ERASE_SIZE>::new(
+            Shared::new(&flash),
+        )));
+        let mut config = BootLoaderConfig::from_linkerfile_blocking(&flash, &dfu, &state);
+        let capacity = config.active.size();
+        let Ok(screening) = adapters::ota::screen_update(
+            &mut config.dfu,
+            &mut config.state,
+            capacity,
+            &OTA_PUBLIC_KEY_IN_IMAGE,
+        ) else {
+            // Флеш не читается — дальше обмен всё равно упал бы; паника хотя
+            // бы оставляет причину в PANIC (`cargo xtask panic-info`).
+            panic!("boot: проверка нового образа: ошибка флеша");
+        };
+        report(screening);
+    }
+    (flash.into_inner().into_inner(), dfu.into_inner().into_inner())
 }
 {%- else %}
 fn screen(

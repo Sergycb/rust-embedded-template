@@ -829,9 +829,16 @@ fn parse_regions(section: &str) -> anyhow::Result<Vec<RawRegion>> {
 /// enabled». Именно поэтому ~200 чипов не собирались из шаблона вовсе, а не
 /// только оставались без `memory.x`.
 ///
-/// Из двух режимов выбирается одобанковый: он даёт непрерывный ACTIVE и не
-/// требует от пользователя понимания, что такое банки. Двухбанковый нужен
-/// ради read-while-write, которым `crates-cross/boot` не пользуется.
+/// Из двух режимов выбирается одобанковый: флеш в нём непрерывен, и
+/// `ACTIVE`/`DFU` делят его пополам — прошивка выходит максимально возможного
+/// размера. У двухбанкового чипа с разрывом между банками (G47x с 128/256 KiB)
+/// приложению достался бы только банк 1, а у стыкующихся банков страница
+/// вдвое мельче, но раскладка та же. С завода одобанковый режим стоит у
+/// F42x/F43x/F46x/F47x с 1 MiB и F76x/F77x; у G4 cat3, L4+, L5 и G0B/G0C — нет,
+/// и прошивка переключает его сама при первом старте (docs/flash.md):
+/// одобанковая раскладка на чипе в двухбанковом режиме не работает вовсе —
+/// `embassy-stm32` на G0/G4 паникует в `Flash::new`, а на L4+ молча стирает
+/// страницы не того размера.
 fn select_memory_config(
     configs: Vec<Vec<RawRegion>>,
 ) -> anyhow::Result<(Vec<RawRegion>, &'static str)> {
@@ -1004,6 +1011,11 @@ struct MemoryLayout {
     /// признак «стёрто» наоборот) и раздел настроек, который не работает
     /// вовсе. Обе поломки молчаливые.
     erase_zero: bool,
+    /// Начало второго банка, если между банками разрыв (H743 с 1 MiB и т.п.).
+    /// Цельный `Flash` embassy туда не дотягивается — его `FLASH_SIZE` равен
+    /// сумме банков, а смещение банка 2 больше неё, — и `DFU` берётся через
+    /// регион банка (`Bank2Region`), со смещениями от этого адреса.
+    dfu_bank_origin: Option<u64>,
     /// `Ok` — OTA-схема помещается в flash; `Err` — не помещается, и текст
     /// объясняет почему (печатается при генерации и попадает комментарием в
     /// `memory.x`). Во втором случае проект собирается одним образом на весь
@@ -1141,6 +1153,46 @@ const PANIC_MAX: u64 = 512;
 /// есть PANIC» должен держаться без оговорок.
 const MIN_RAM_FOR_LAYOUT: u64 = 2 * PANIC_MIN;
 
+/// Второй банк flash — куда кладётся `DFU` (см. `compute_ota_partitions`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Bank2 {
+    origin: u64,
+    length: u64,
+}
+
+/// Второй банк по именам регионов (`BANK_2`, `BANK_2_REGION_n`): непрерывная
+/// цепочка от первого из них. `None` — банк один.
+///
+/// Банк 2, начинающийся внутри банка 1, — не банк, а ошибка метаданных: у
+/// STM32U375/U385 `stm32-data` объявляет `BANK_2` с 0x0801_0000 при `BANK_1`
+/// с 0x0800_0000 на 512 KiB. Положить туда DFU значило бы писать образ поверх
+/// своего же кода, поэтому такой чип считается однобанковым — как и раньше,
+/// когда налезающий регион просто не попадал в цепочку flash.
+fn bank2_of(regions: &[RawRegion]) -> Option<Bank2> {
+    let flash = || regions.iter().filter(|r| r.kind == RegionKind::Flash);
+    let bank1_end = flash()
+        .filter(|r| r.name.starts_with("BANK_1"))
+        .map(|r| r.address + r.size)
+        .max()?;
+    let mut bank: Vec<&RawRegion> = flash().filter(|r| r.name.starts_with("BANK_2")).collect();
+    bank.sort_by_key(|r| r.address);
+    let origin = bank.first()?.address;
+    if origin < bank1_end {
+        return None;
+    }
+    let mut end = origin;
+    for region in bank {
+        if region.address != end {
+            break;
+        }
+        end += region.size;
+    }
+    Some(Bank2 {
+        origin,
+        length: end - origin,
+    })
+}
+
 /// Собирает карту памяти чипа: непрерывную flash-цепочку от базы, RAM-цепочку
 /// от базы и — если помещается — партиции OTA. `None` только когда считать не
 /// из чего (нет flash- или RAM-цепочки от базового адреса); тогда
@@ -1166,13 +1218,24 @@ fn compute_memory_layout(chip: &str, regions: &[RawRegion]) -> Option<MemoryLayo
     if chain.is_empty() || flash_total == 0 {
         return None;
     }
+    let bank2 = bank2_of(regions);
+    // Второй банк вне цепочки — между банками разрыв (H742/743/745/747 и H7A3
+    // с 1 MiB: банк 2 с 0x0810_0000; U5F7/U5F9 с 2 MiB). Приложению без OTA он
+    // не достаётся (раздел кода обязан быть непрерывным), а с OTA в нём лежит
+    // DFU. Стыкующийся банк 2 — просто продолжение flash.
+    let bank_gap = bank2.filter(|b| b.origin >= FLASH_BASE + flash_total);
     // PAGE_SIZE в терминах embassy-boot — не наш const generic, а
     // `max(ACTIVE::ERASE_SIZE, DFU::ERASE_SIZE)` (`boot_loader.rs`). Обе
     // партиции живут поверх цельного `Flash` (`crates-cross/boot/src/main.rs`), у
     // которого `NorFlash::ERASE_SIZE = MAX_ERASE_SIZE` всего чипа — отсюда
-    // максимум по цепочке, а не erase_size конкретного региона.
+    // максимум по цепочке (и второму банку, если он за разрывом), а не
+    // erase_size конкретного региона.
     let page_size = chain
         .iter()
+        .copied()
+        .chain(regions.iter().filter(|r| {
+            bank_gap.is_some() && r.kind == RegionKind::Flash && r.name.starts_with("BANK_2")
+        }))
         .filter_map(|r| r.flash)
         .map(|f| f.erase_size)
         .max()?;
@@ -1221,8 +1284,24 @@ fn compute_memory_layout(chip: &str, regions: &[RawRegion]) -> Option<MemoryLayo
         write_size,
         page_size,
         erase_zero,
-        ota: compute_ota_partitions(chip, &chain, flash_total, page_size, write_size, false),
-        config: compute_config_partition(chip, &chain, flash_total, page_size, write_size),
+        dfu_bank_origin: bank_gap.map(|b| b.origin),
+        ota: compute_ota_partitions(
+            chip,
+            &chain,
+            flash_total,
+            page_size,
+            write_size,
+            false,
+            bank_gap,
+        ),
+        config: compute_config_partition(
+            chip,
+            &chain,
+            flash_total,
+            page_size,
+            write_size,
+            bank_gap,
+        ),
         external: compute_external_ota(chip, &chain, flash_total, page_size, false),
         external_config: compute_external_ota(chip, &chain, flash_total, page_size, true),
     })
@@ -1429,6 +1508,7 @@ fn compute_config_partition(
     flash_total: u64,
     page_size: u64,
     write_size: u64,
+    bank_gap: Option<Bank2>,
 ) -> Option<ConfigPartition> {
     let length = page_size.checked_mul(2)?;
     if !flash_total.is_multiple_of(page_size) || flash_total < length + page_size {
@@ -1442,13 +1522,29 @@ fn compute_config_partition(
     };
     // Раздел в хвосте: OTA-схема считается от flash, ставшего на две страницы
     // меньше.
-    let behind = compute_ota_partitions(chip, chain, flash_length, page_size, write_size, false)
-        .map(|partitions| OtaPartitions {
-            settings: Some(tail),
-            ..partitions
-        });
+    let behind = compute_ota_partitions(
+        chip,
+        chain,
+        flash_length,
+        page_size,
+        write_size,
+        false,
+        bank_gap,
+    )
+    .map(|partitions| OtaPartitions {
+        settings: Some(tail),
+        ..partitions
+    });
     // Раздел в резерве перед ACTIVE: схема — от всего flash.
-    let ahead = compute_ota_partitions(chip, chain, flash_total, page_size, write_size, true);
+    let ahead = compute_ota_partitions(
+        chip,
+        chain,
+        flash_total,
+        page_size,
+        write_size,
+        true,
+        bank_gap,
+    );
     let ota = match (ahead, behind) {
         (Ok(ahead), Ok(behind)) if ahead.active_length > behind.active_length => Ok(ahead),
         (Ok(ahead), Err(_)) => Ok(ahead),
@@ -1564,6 +1660,15 @@ fn extra_region_lines(regions: &[RawRegion], flash_end: u64, ram_end: u64) -> Ve
 /// сектора — `bootloader_state_erase_size` — уходит в шаблон вместе с адресами.
 /// Сам сектор — самый мелкий в резерве, см. `place_state`.
 ///
+/// Обычно `DFU` идёт сразу за `ACTIVE`, а остаток flash делится между ними
+/// пополам — так прошивка выходит наибольшей. Банки, которые стыкуются, для
+/// этого — один непрерывный flash. Если же банк 2 стоит за разрывом
+/// (`bank_gap`; `flash_total` тогда кончается на банке 1), кода в нём быть не
+/// может, и он целиком отдаётся под `DFU`: `ACTIVE` — всё, что осталось от
+/// банка 1 после резерва (но не больше, чем позволяет банк 2), `DFU` — с
+/// начала банка 2. Пишет его прошивка через регион банка
+/// (`MemoryLayout::dfu_bank_origin`).
+///
 /// `Err` — схема не помещается; текст объясняет, чего именно не хватило, и
 /// доходит до пользователя при генерации.
 fn compute_ota_partitions(
@@ -1573,7 +1678,10 @@ fn compute_ota_partitions(
     page_size: u64,
     write_size: u64,
     with_settings: bool,
+    bank_gap: Option<Bank2>,
 ) -> Result<OtaPartitions, String> {
+    // Банк 2 за разрывом — весь под `DFU`.
+    let dfu_zone = bank_gap.map(|b| (b.origin, b.origin + b.length));
     let erase_size_at = |offset_from_flash_base: u64| -> Option<u64> {
         let addr = FLASH_BASE + offset_from_flash_base;
         chain
@@ -1624,21 +1732,41 @@ fn compute_ota_partitions(
             ));
         }
 
-        let remaining_pages = (flash_total - reserved_size) / page_size;
-        if remaining_pages < 3 {
-            // Дальше растить резерв бессмысленно — остаток только уменьшится.
-            return Err(format!(
-                "flash {} при секторе {}: под BOOTLOADER+STATE уходит {}, \
-                 на ACTIVE+DFU остаётся стираемых страниц: {remaining_pages} (нужно 3)",
-                size(flash_total),
-                size(page_size),
-                size(reserved_size)
-            ));
-        }
-        // Пополам остаток не делится: DFU обязан быть на страницу больше
-        // ACTIVE (проверка 3).
-        let active_pages = (remaining_pages - 1) / 2;
-        let dfu_pages = remaining_pages - active_pages;
+        let active_room = (flash_total - reserved_size) / page_size;
+        let (active_pages, dfu_pages, dfu_origin) = if let Some((origin, end)) = dfu_zone {
+            // DFU обязан быть на страницу больше ACTIVE (проверка 3), так что
+            // ACTIVE упирается в меньшее из двух: остаток банка 1 и банк 2 без
+            // страницы.
+            let dfu_room = (end - origin) / page_size;
+            let active_pages = active_room.min(dfu_room.saturating_sub(1));
+            if active_pages == 0 {
+                return Err(format!(
+                    "двухбанковый flash при секторе {}: под BOOTLOADER+STATE уходит {}, \
+                     в банке 1 под ACTIVE остаётся страниц: {active_room}, в банке 2 под DFU — \
+                     {dfu_room} (нужно хотя бы 1 и 2)",
+                    size(page_size),
+                    size(reserved_size)
+                ));
+            }
+            (active_pages, active_pages + 1, origin)
+        } else {
+            let remaining_pages = active_room;
+            if remaining_pages < 3 {
+                // Дальше растить резерв бессмысленно — остаток только уменьшится.
+                return Err(format!(
+                    "flash {} при секторе {}: под BOOTLOADER+STATE уходит {}, \
+                     на ACTIVE+DFU остаётся стираемых страниц: {remaining_pages} (нужно 3)",
+                    size(flash_total),
+                    size(page_size),
+                    size(reserved_size)
+                ));
+            }
+            // Пополам остаток не делится: DFU обязан быть на страницу больше
+            // ACTIVE (проверка 3).
+            let active_pages = (remaining_pages - 1) / 2;
+            let dfu_start = FLASH_BASE + reserved_size + active_pages * page_size;
+            (active_pages, remaining_pages - active_pages, dfu_start)
+        };
 
         // Проверка 4, решённая относительно STATE: сколько журнала нужно под
         // такой ACTIVE.
@@ -1668,7 +1796,7 @@ fn compute_ota_partitions(
             bootloader_state_erase_size: state_erase,
             active_origin,
             active_length,
-            dfu_origin: active_origin + active_length,
+            dfu_origin,
             dfu_length: dfu_pages * page_size,
             settings,
         };
@@ -1799,18 +1927,25 @@ fn assert_embassy_boot_invariants(chip: &str, p: &OtaPartitions, page_size: u64,
         journal_words <= state_words,
         "{chip}: журналу прогресса нужно {journal_words} слов, в BOOTLOADER_STATE помещается {state_words}"
     );
-    // Порядок: bootloader, [настройки,] STATE, ACTIVE, DFU[, настройки в
-    // хвосте]. Между STATE и ACTIVE может остаться незанятый сектор (см.
-    // `place_state`), но не наложение.
+    // Порядок: bootloader, [настройки,] STATE, ACTIVE, DFU — и настройки в
+    // хвосте, если не в резерве. Между STATE и ACTIVE может остаться незанятый
+    // сектор (см. `place_state`), между ACTIVE и DFU — остаток банка 1 у
+    // двухбанкового чипа; хвостовые настройки лежат после ACTIVE и не задевают
+    // DFU (за ним — на непрерывном flash, перед ним — у банка 2 за разрывом).
     let ahead = p.settings.filter(|s| s.origin < p.active_origin);
     let after_bootloader = ahead.map_or(p.bootloader_state_origin, |s| s.origin);
+    let active_end = p.active_origin + p.active_length;
+    let dfu_end = p.dfu_origin + p.dfu_length;
     assert!(
         after_bootloader == FLASH_BASE + p.bootloader_length
             && ahead.is_none_or(|s| s.origin + s.length <= p.bootloader_state_origin)
             && p.bootloader_state_origin + p.bootloader_state_length <= p.active_origin
-            && p.dfu_origin == p.active_origin + p.active_length
-            && p.settings
-                .is_none_or(|s| { ahead.is_some() || s.origin >= p.dfu_origin + p.dfu_length }),
+            && p.dfu_origin >= active_end
+            && p.settings.is_none_or(|s| {
+                ahead.is_some()
+                    || (s.origin >= active_end
+                        && (s.origin + s.length <= p.dfu_origin || s.origin >= dfu_end))
+            }),
         "{chip}: партиции накладываются или идут не по порядку"
     );
     if let Some(s) = p.settings {
@@ -1929,6 +2064,11 @@ fn format_memory_layouts(layouts: &BTreeMap<&str, MemoryLayout>) -> String {
             "erase_zero",
             if m.erase_zero { "true" } else { "false" },
         );
+        // Только у чипов с разрывом между банками — по наличию ключа хук и
+        // решает, что DFU пишется через регион банка.
+        if let Some(origin) = m.dfu_bank_origin {
+            push_field(&mut out, "dfu_bank_origin", &format_addr(origin));
+        }
         match &m.ota {
             Ok(p) => {
                 push_field(&mut out, "ota", "true");
@@ -2543,10 +2683,66 @@ pub static METADATA: Metadata = Metadata {
         assert_eq!(regions.len(), 2);
 
         // Из двух карт выбирается одобанковая — та, где есть BANK_1 и нет
-        // BANK_2 (предикат повторяет build.rs embassy-stm32).
+        // BANK_2 (предикат повторяет build.rs embassy-stm32): непрерывный flash
+        // и наибольший ACTIVE.
         let (regions, mode) = select_memory_config(configs(MULTI_CONFIG)).expect("две карты");
         assert_eq!(mode, "single-bank");
         assert_eq!(regions[0].size, 524288);
+    }
+
+    /// Флеш из двух банков по `bank` байт со страницей 2 KiB; второй — с
+    /// адреса `bank2_origin` (вплотную к первому или за разрывом, как у G47x
+    /// с 128/256 KiB).
+    fn two_banks(bank: u64, bank2_origin: u64) -> Vec<RawRegion> {
+        let mut regions = uniform_flash(bank, 2048, 8);
+        regions.push(RawRegion {
+            name: "BANK_2".to_string(),
+            kind: RegionKind::Flash,
+            address: bank2_origin,
+            size: bank,
+            flash: regions[0].flash,
+        });
+        regions
+    }
+
+    /// Банки стыкуются (H743ZI, L476): это один непрерывный flash, и ACTIVE с
+    /// DFU делят его пополам, как у однобанкового, — DFU не привязан к банку 2.
+    #[test]
+    fn contiguous_banks_are_one_flash() {
+        let bank = 256 * 1024;
+        let layout =
+            compute_memory_layout("test", &two_banks(bank, FLASH_BASE + bank)).expect("раскладка");
+        assert_eq!(layout.flash_length, 2 * bank);
+        assert_eq!(layout.dfu_bank_origin, None);
+        let ota = layout.ota.expect("OTA помещается");
+        assert_eq!(ota.dfu_origin, ota.active_origin + ota.active_length);
+        assert!(ota.active_origin + ota.active_length > FLASH_BASE + bank);
+    }
+
+    /// Банк 2 за разрывом (как у H743 с 1 MiB: банк 2 с 0x0810_0000): цепочка
+    /// для приложения — только банк 1, DFU — в банке 2, и хук узнаёт об этом
+    /// по `dfu_bank_origin`.
+    #[test]
+    fn bank_2_behind_a_gap_still_takes_the_dfu() {
+        let bank = 64 * 1024;
+        let layout = compute_memory_layout("test", &two_banks(bank, FLASH_BASE + 0x4_0000))
+            .expect("раскладка");
+        assert_eq!(layout.flash_length, bank);
+        assert_eq!(layout.dfu_bank_origin, Some(FLASH_BASE + 0x4_0000));
+        let ota = layout.ota.expect("OTA помещается");
+        assert_eq!(ota.dfu_origin, FLASH_BASE + 0x4_0000);
+        assert!(ota.dfu_origin + ota.dfu_length <= FLASH_BASE + 0x4_0000 + bank);
+        assert_eq!(ota.dfu_length, ota.active_length + 2048);
+
+        // Настройки в хвосте — в конце банка 1, между ACTIVE и разрывом.
+        let with_config = layout
+            .config
+            .expect("раздел")
+            .ota
+            .expect("OTA с настройками");
+        let settings = with_config.settings.expect("раздел");
+        assert!(settings.origin >= with_config.active_origin + with_config.active_length);
+        assert_eq!(settings.origin + settings.length, FLASH_BASE + bank);
     }
 
     /// Один flash-регион, `size`/`erase_size` в байтах, RAM фиксирована в
@@ -3124,18 +3320,18 @@ pub static METADATA: Metadata = Metadata {
             .iter()
             .filter(|r| r.kind == RegionKind::Flash)
             .collect();
-        let config = compute_config_partition("test", &chain, 512 * 1024, 2048, 8)
+        let config = compute_config_partition("test", &chain, 512 * 1024, 2048, 8, None)
             .expect("раздел должен поместиться");
         assert_eq!(config.tail.length, 4096);
         assert_eq!(config.flash_length, 512 * 1024 - 4096);
         assert_eq!(config.tail.origin, FLASH_BASE + config.flash_length);
 
         // Не кратно странице.
-        assert!(compute_config_partition("test", &chain, 512 * 1024 + 8, 2048, 8).is_none());
+        assert!(compute_config_partition("test", &chain, 512 * 1024 + 8, 2048, 8, None).is_none());
         // Две страницы целиком уходят под раздел — приложению ничего.
-        assert!(compute_config_partition("test", &chain, 2 * 2048, 2048, 8).is_none());
+        assert!(compute_config_partition("test", &chain, 2 * 2048, 2048, 8, None).is_none());
         // Ровно одна страница остаётся приложению — граница включительно.
-        assert!(compute_config_partition("test", &chain, 3 * 2048, 2048, 8).is_some());
+        assert!(compute_config_partition("test", &chain, 3 * 2048, 2048, 8, None).is_some());
     }
 
     fn region(name: &str, kind: RegionKind, address: u64, size: u64) -> RawRegion {

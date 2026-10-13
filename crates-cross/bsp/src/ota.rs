@@ -24,7 +24,7 @@ use embassy_sync::mutex::Mutex;
 use ports::{Announce, ImageSource, Rejection};
 use static_cell::StaticCell;
 
-use crate::board::FlashMutex;
+use crate::board::{% if dfu_bank == "true" %}{DfuBankMutex, FlashMutex}{% else %}FlashMutex{% endif %};
 
 /// Флеш под разделом `DFU`: общий `Flash` чипа, видимый асинхронно (мост
 /// `Shared`) — порт OTA асинхронный, за ним может стоять и внешняя флеш.
@@ -32,7 +32,14 @@ use crate::board::FlashMutex;
 /// Тот же цельный `Flash`, что и в `crates-cross/boot`: он сам знает реальные
 /// границы секторов чипа, в том числе неравномерные (F4/F7/H7), а банковые
 /// регионы у каждого семейства называются по-своему.
+{%- if dfu_bank == "true" %}
+///
+/// Кроме этого чипа: банк 2 у него стоит за разрывом, цельный `Flash` туда не
+/// дотягивается, и `DFU` лежит в регионе банка 2 (`crate::board::DfuBankMutex`).
+type DfuFlash = Shared<'static, DfuBankMutex>;
+{%- else %}
 type DfuFlash = Shared<'static, FlashMutex>;
+{%- endif %}
 
 /// Раздел `DFU` — то, из чего собирается адаптер.
 pub type Partition =
@@ -132,8 +139,15 @@ impl ImageSource for Link {
 pub(crate) fn new(external: &'static ExternalMutex) -> Ota {
     let config = FirmwareUpdaterConfig::from_linkerfile(external, external);
 {%- else %}
+{%- if dfu_bank == "true" %}
+///
+/// `DFU` — в банке 2 (`dfu_bank`), `STATE` — в банке 1 (`flash`).
+pub(crate) fn new(flash: &'static FlashMutex, dfu_bank: &'static DfuBankMutex) -> Ota {
+    let dfu = DFU_FLASH.init(Mutex::new(Shared::new(dfu_bank)));
+{%- else %}
 pub(crate) fn new(flash: &'static FlashMutex) -> Ota {
     let dfu = DFU_FLASH.init(Mutex::new(Shared::new(flash)));
+{%- endif %}
     let state = STATE_FLASH.init(Mutex::new(Paged::new(Shared::new(flash))));
     let config = FirmwareUpdaterConfig::from_linkerfile(dfu, state);
 {%- endif %}

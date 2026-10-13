@@ -1279,6 +1279,52 @@ fn watchdog_peripheral_follows_the_chip_metadata() {
     }
 }
 
+/// Банк 2 за разрывом (H743ZG: 2×512 KiB, банк 2 с 0x0810_0000): DFU в нём, а
+/// его символы — от начала банка 2, потому что прошивка пишет его через
+/// `Bank2Region` (`dfu_bank = true`); цельный `Flash` туда не дотягивается.
+#[test]
+fn dfu_behind_a_bank_gap_is_addressed_from_the_bank() {
+    let result = run_cascade_to(&compile_script(), "h743zg").expect("каскад не должен падать");
+    assert_eq!(result.vars.get("ota").map(String::as_str), Some("true"));
+    assert_eq!(
+        result.vars.get("dfu_bank").map(String::as_str),
+        Some("true")
+    );
+    for file in ["crates-cross/boot/memory.x", "crates-cross/app/memory.x"] {
+        let memory = written(&result, file);
+        assert_eq!(
+            region_origin(&memory, "DFU").as_deref(),
+            Some("0x08100000"),
+            "{file}"
+        );
+        assert!(
+            memory.contains("__bootloader_dfu_start = ORIGIN(DFU) - 0x08100000;"),
+            "{file}: {memory}"
+        );
+        // Всё остальное — по-прежнему от базы flash.
+        assert!(
+            memory.contains("__bootloader_state_start = ORIGIN(BOOTLOADER_STATE) - 0x08000000;"),
+            "{file}: {memory}"
+        );
+    }
+}
+
+/// Внешняя OTA на чипе с разрывом — как на любом другом: DFU на внешней
+/// флеши, и регион банка 2 прошивке не нужен (`dfu_bank = false`).
+#[test]
+fn external_ota_on_a_bank_gap_chip_leaves_bank_2_alone() {
+    let result = run_cascade_with(&compile_script(), "h743zg", &[("ota", "external")])
+        .expect("каскад не должен падать");
+    assert_eq!(
+        result.vars.get("ota_store").map(String::as_str),
+        Some("external")
+    );
+    assert_eq!(
+        result.vars.get("dfu_bank").map(String::as_str),
+        Some("false")
+    );
+}
+
 /// `CPU_FREQ_BOOST` — только у линии RM0468 (H723/725/730/733/735): им bsp
 /// получает `clocks.rs`, остальным файл удаляется. Соседняя H743 — та же
 /// серия, но boost у неё нет, и `clocks.rs` с регистрами `OPTSR2` там писал бы
