@@ -19,10 +19,12 @@ defmt = [
 	"dep:defmt",
 	"defmt-or-log/defmt",
 	"ports/defmt",
+	"zencan-node/defmt",
 ]
 log = [
 	"dep:log",
 	"defmt-or-log/log",
+	"zencan-node/log",
 ]
 std = [
 	"log?/std"
@@ -65,10 +67,15 @@ crc                = { workspace = true }
 # Узел HOST (`domain::host`): разбор и кодирование сообщений protobuf. Схему
 # узел не знает — она в `crates-host/proto` и у обработчика приложения.
 micropb            = { workspace = true }
+# Узел CANOPEN (`domain::canopen`): стек CANopen и кадр шины.
+zencan-node        = { workspace = true }
+embedded-can       = { workspace = true }
 
 [dev-dependencies]
 # Пример схемы — сообщения для тестов узла HOST.
 proto = { workspace = true }
+# Пример словаря объектов — для тестов узла CANOPEN.
+canopen = { workspace = true }
 test-log = { workspace = true }
 # Исполнитель для async-тестов над фейками портов (`#[tokio::test]`); фичи —
 # в корневом Cargo.toml.
@@ -88,7 +95,10 @@ embassy-executor = { workspace = true, features = [
 	"platform-std",
 	"executor-thread",
 ] }
-embassy-time = { workspace = true, features = ["mock-driver"] }
+# `generic-queue-8` — очередь таймеров, которой годится любой waker: узлы с
+# тактом (`domain::canopen`) тестируются под `#[tokio::test]`, а очередь,
+# встроенная в исполнитель embassy, принимает только его waker и паникует.
+embassy-time = { workspace = true, features = ["mock-driver", "generic-queue-8"] }
 # Реализация критической секции для хоста: её просит `MockDriver`. На плате её
 # даёт `cortex-m` фичей `critical-section-single-core` (crates-cross/Cargo.toml).
 critical-section = { workspace = true, features = ["std"] }

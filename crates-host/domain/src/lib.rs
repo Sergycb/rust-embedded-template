@@ -13,6 +13,9 @@ pub mod ota;
 /// подмодуль — см. модуль.
 pub mod cpu_load;
 
+/// Узел `CANOPEN`: узел CANopen на шине CAN — стек `zencan` — см. модуль.
+pub mod canopen;
+
 /// Узел `HOST`: сообщения protobuf от хоста по кадровому каналу — разбор,
 /// обработчик приложения, ответ — см. модуль.
 pub mod host;

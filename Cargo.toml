@@ -3,6 +3,7 @@ members = [
 	"crates-host/domain",
 	"crates-host/host-target-tests",
 	"crates-host/adapters",
+	"crates-host/canopen",
 	"crates-host/ports",
 	"crates-host/proto",
 	"crates-host/xtask",
@@ -70,6 +71,7 @@ map_err_ignore          = "warn"
 ports        = { path = "crates-host/ports" }
 adapters     = { path = "crates-host/adapters" }
 proto        = { path = "crates-host/proto" }
+canopen      = { path = "crates-host/canopen" }
 defmt-or-log = { version = "0.2.3" }
 log          = { version = "0.4.34" }
 defmt        = { version = "1.1.1" }
@@ -155,6 +157,14 @@ heapless               = { version = "0.9.3" }
 # разработчику, ни в CI.
 micropb-gen            = { version = "0.6.0" }
 protox                 = { version = "0.9.1" }
+# CANopen: стек узла (`zencan-node`) и генерация словаря объектов из TOML-описания
+# устройства (`zencan-build`, в `build.rs` крейта `canopen`). MPL-2.0 —
+# исключение в `deny.toml`. Без `std`/`log` в default — их выбирают крейты.
+zencan-node            = { version = "0.0.5", default-features = false }
+zencan-build           = { version = "0.0.5" }
+# Кадр CAN в порту `ports::CanBus`: трейт `Frame`, который реализует кадр
+# `embassy-stm32` — та же версия 0.4.
+embedded-can           = { version = "0.4.1" }
 # Проверка подписи образа — под фичей `adapters/signed`. Из двух реализаций,
 # которые понимает embassy-boot, взята меньшая: `ed25519-dalek` тянет
 # `curve25519-dalek` с `sha2`, salty самодостаточен и написан под

@@ -45,6 +45,9 @@
 //! пользователя не касается (`docs/conventions.md`, «`lib.rs` только объявляет
 //! модули»).
 
+/// Шина CAN: кадры для узла CANopen.
+pub mod can;
+
 /// Обработчик сообщений хоста: сообщения схемы → типы приложения.
 pub mod host;
 
@@ -63,6 +66,7 @@ pub mod ota;
 /// Хранилище настроек.
 pub mod settings;
 
+pub use can::CanBus;
 pub use host::HostService;
 pub use link::{FrameLink, LinkError};
 pub use modbus::{Bits, BitsMut, Exception, MasterError, Registers, ServeError, Words, WordsMut};

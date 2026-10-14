@@ -1,0 +1,41 @@
+# Описание устройства CANopen — пример, который проект заменяет своим.
+#
+# Из него `build.rs` генерирует словарь объектов (OD) и всё, что нужно узлу:
+# стандартные объекты связи CiA 301 (0x1000–0x1FFF: тип устройства,
+# идентичность, heartbeat, PDO) добавляются сами, здесь — только
+# идентичность, число PDO и объекты приложения (0x2000 и выше).
+#
+# Формат — `zencan_common::device_config` (документация `zencan-build`).
+
+device_name = "Template node"
+hardware_version = "v1"
+software_version = "v1"
+
+[identity]
+vendor_id = 0
+product_code = 1
+revision_number = 1
+
+[pdos]
+num_rpdo = 1
+num_tpdo = 1
+
+# Уставка, которую хост пишет по SDO или RPDO.
+[[objects]]
+index = 0x2000
+parameter_name = "Setpoint"
+object_type = "var"
+data_type = "UInt16"
+access_type = "rw"
+default_value = 0
+pdo_mapping = "rpdo"
+
+# Измерение, которое устройство отдаёт по SDO или TPDO.
+[[objects]]
+index = 0x2001
+parameter_name = "Measurement"
+object_type = "var"
+data_type = "Int32"
+access_type = "ro"
+default_value = 0
+pdo_mapping = "tpdo"

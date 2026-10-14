@@ -22,3 +22,7 @@
 allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 allow-dbg-in-tests = true
+
+# Имена протоколов в документации — не идентификаторы кода (`doc_markdown`);
+# `..` сохраняет встроенный список clippy.
+doc-valid-idents = ["CANopen", "CiA", ".."]
