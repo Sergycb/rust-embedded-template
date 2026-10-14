@@ -177,6 +177,11 @@ impl Board {
         // приложение без bootloader'а (OTA нет) — иначе переключил бы он.
         crate::banks::ensure_single_bank();
 {%- endif %}
+{%- if cpu_freq_boost == "true" %}
+        // До HAL: `init()` проверяет частоту ядра по option byte, а записанный
+        // бит вступает в силу только сбросом (см. `crate::clocks`).
+        crate::clocks::ensure_cpu_freq_boost();
+{%- endif %}
         let p = init_peripherals();
         // Единственный способ узнать фактическое тактирование: `Clocks`
         // заполняется внутри `init_peripherals`, наружу отдаётся только так.
