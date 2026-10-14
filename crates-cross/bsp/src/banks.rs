@@ -15,17 +15,12 @@
 
 use embassy_stm32::pac;
 
-/// Биты двухбанкового режима в `FLASH_OPTR` (`OpenOCD` `stm32l4x.h`, `RM0440`,
-/// `RM0444`, `RM0432`, `RM0438`). На L4+ и L5 их два: старший у чипа с наибольшим
-/// объёмом в серии (`DBANK`), младший — у остальных (`DB1M`/`DB256`); для
-/// одобанкового режима сбрасываются оба, чтобы не угадывать объём.
-{%- if bank_switch == "g0" %}
-const DUAL_BANK_BITS: u32 = 1 << 21;
-{%- elsif bank_switch == "g4" %}
-const DUAL_BANK_BITS: u32 = 1 << 22;
-{%- else %}
-const DUAL_BANK_BITS: u32 = (1 << 22) | (1 << 21);
-{%- endif %}
+/// Бит двухбанкового режима в `FLASH_OPTR` (`OpenOCD` `stm32l4x.h`, `RM0440`,
+/// `RM0444`, `RM0432`, `RM0438`): `DBANK` (22) у G4 и у чипа с наибольшим
+/// объёмом в серии L4+/L5, `DUAL_BANK`/`DB1M`/`DB256` (21) — у G0 и у
+/// остальных. Какой именно — посчитано при генерации; чужой бит не трогается:
+/// на этом чипе он может быть не определён.
+const DUAL_BANK_BIT: u32 = 1 << {{dual_bank_bit}};
 
 /// Флаги ошибок в `FLASH_SR` (сбрасываются записью единицы; остальные биты
 /// зарезервированы, писать туда нельзя).
@@ -43,6 +38,17 @@ const KEY2: u32 = 0xCDEF_89AB;
 const OPT_KEY1: u32 = 0x0819_2A3B;
 const OPT_KEY2: u32 = 0x4C5D_6E7F;
 
+{%- if bank_switch == "g0" %}
+
+/// `BSY1`, `BSY2`, `CFGBSY` в `FLASH_SR` у G0B/G0C: у каждого банка свой флаг
+/// занятости, и option bytes пишутся, только когда свободны оба и настройка.
+const SR_BUSY: u32 = 0b111 << 16;
+{%- elsif bank_switch != "l5" %}
+
+/// `BSY` в `FLASH_SR`.
+const SR_BUSY: u32 = 1 << 16;
+{%- endif %}
+
 /// Переводит флеш в одобанковый режим, если он ещё двухбанковый.
 ///
 /// Звать до `Flash::new` (и вообще до любой работы с флешем) — первым делом
@@ -58,11 +64,13 @@ const OPT_KEY2: u32 = 0x4C5D_6E7F;
 ///
 /// # Panics
 ///
-/// Если контроллер отверг запись option bytes (флаг ошибки в `SR`): иначе
-/// сброс повторялся бы на каждом старте, каждый раз с новой записью.
+/// Если ключи не отперли контроллер, запись отвергнута (флаг ошибки в `SR`)
+/// или бит не читается сброшенным. До сброса доходит только проверенная
+/// запись: иначе он повторялся бы на каждом старте, каждый раз с новой
+/// попыткой, — а запертый контроллер молча игнорирует запись, флагов не ставя.
 pub fn ensure_single_bank() {
     let flash = pac::FLASH;
-    if flash.optr().read().0 & DUAL_BANK_BITS == 0 {
+    if flash.optr().read().0 & DUAL_BANK_BIT == 0 {
         return;
     }
     defmt::warn!(
@@ -80,12 +88,16 @@ pub fn ensure_single_bank() {
         flash.optkeyr().write_value(OPT_KEY1);
         flash.optkeyr().write_value(OPT_KEY2);
     }
-    flash.optr().modify(|w| w.0 &= !DUAL_BANK_BITS);
+    assert!(
+        !flash.nscr().read().nslock() && !flash.nscr().read().optlock(),
+        "ключи не отперли контроллер флеша"
+    );
+    flash.optr().modify(|w| w.0 &= !DUAL_BANK_BIT);
     flash.nscr().modify(|w| w.set_optstrt(true));
     while flash.nssr().read().nsbsy() {}
     let errors = flash.nssr().read().0 & SR_ERRORS;
     {%- else %}
-    while flash.sr().read().bsy() {}
+    while flash.sr().read().0 & SR_BUSY != 0 {}
     flash.sr().write_value(pac::flash::regs::Sr(SR_ERRORS));
     if flash.cr().read().lock() {
         flash.keyr().write_value(KEY1);
@@ -95,9 +107,13 @@ pub fn ensure_single_bank() {
         flash.optkeyr().write_value(OPT_KEY1);
         flash.optkeyr().write_value(OPT_KEY2);
     }
-    flash.optr().modify(|w| w.0 &= !DUAL_BANK_BITS);
+    assert!(
+        !flash.cr().read().lock() && !flash.cr().read().optlock(),
+        "ключи не отперли контроллер флеша"
+    );
+    flash.optr().modify(|w| w.0 &= !DUAL_BANK_BIT);
     flash.cr().modify(|w| w.set_optstrt(true));
-    while flash.sr().read().bsy() {}
+    while flash.sr().read().0 & SR_BUSY != 0 {}
     let errors = flash.sr().read().0 & SR_ERRORS;
     {%- endif %}
 
@@ -107,6 +123,11 @@ pub fn ensure_single_bank() {
         defmt::error!("запись option bytes отвергнута, SR = {=u32:#x}", errors);
         panic!("запись option bytes отвергнута");
     }
+    // `OPTR` до загрузки показывает записанное: бит на месте — запись не дошла.
+    assert!(
+        flash.optr().read().0 & DUAL_BANK_BIT == 0,
+        "бит двухбанкового режима не сбросился в OPTR"
+    );
     // Загрузка option bytes — это сброс МК: дальше этой строки код не идёт.
     {%- if bank_switch == "l5" %}
     flash.nscr().modify(|w| w.set_obl_launch(true));

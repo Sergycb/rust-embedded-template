@@ -160,7 +160,8 @@ read`: руками пришлось бы сначала найти адрес �
   до `prepare` — `docs/ota.md`.
 - `NoopRawMutex` у `bsp::FlashMutex`, у мьютексов разделов `DFU` и `STATE`
   (`bsp::ota::DFU_FLASH`, `bsp::ota::STATE_FLASH`; с `ota=external` —
-  `bsp::external::ExternalMutex`) и `local` на слотах узла OTA
+  `bsp::external::ExternalMutex`{% if dfu_bank == "true" %}; `DFU` во втором банке —
+  `bsp::board::DfuBankMutex`{% endif %}) и `local` на слотах узла OTA
   (`domain::ota`) — одно допущение «один исполнитель», менять вместе —
   `docs/flash.md`, `docs/architecture.md`.
 - Подтверждение образа (`mark_booted`) — в стартовом действии узла OTA

@@ -1332,21 +1332,28 @@ fn external_ota_on_a_bank_gap_chip_leaves_bank_2_alone() {
 #[test]
 fn bank_switch_follows_the_factory_bank_mode() {
     let ast = compile_script();
-    for (suffix, expected) in [
-        ("g474re", "g4"),
-        ("g0b1rc", "g0"),
-        ("l4r5zi", "l4"),
-        ("l552ze", "l5"),
-        ("f429zg", ""),
-        ("f767zi", ""),
-        ("h743zg", ""),
-        ("f407ve", ""),
+    for (suffix, expected, bit) in [
+        ("g474re", "g4", "22"),
+        ("g0b1rc", "g0", "21"),
+        // L4R: у 2 MiB (наибольший объём серии) бит DBANK, у 1 MiB — DB1M.
+        ("l4r5zi", "l4", "22"),
+        ("l4r5zg", "l4", "21"),
+        ("l552ze", "l5", "22"),
+        ("f429zg", "", ""),
+        ("f767zi", "", ""),
+        ("h743zg", "", ""),
+        ("f407ve", "", ""),
     ] {
         let result = run_cascade_to(&ast, suffix).expect("каскад не должен падать");
         assert_eq!(
             result.vars.get("bank_switch").map(String::as_str),
             Some(expected),
             "{suffix}"
+        );
+        assert_eq!(
+            result.vars.get("dual_bank_bit").map(String::as_str),
+            Some(bit),
+            "{suffix}: бит"
         );
         assert_eq!(
             result

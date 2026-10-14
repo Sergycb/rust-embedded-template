@@ -15,7 +15,7 @@
 
 - `chip-select.rhai` — pre-хук: каскадный выбор чипа, `memory.x`, `write_size`,
   `ota`, `dual_core`, `bank_mode`, `erase_zero`, `watchdog_peripheral`,
-  `cpu_freq_boost`, `bank_switch`, `dfu_bank`. Хуки
+  `cpu_freq_boost`, `bank_switch`, `dual_bank_bit`, `dfu_bank`. Хуки
   cargo-generate в результат
   не копируются.
 - `post-script.rhai` — post-хук: сводка «что дальше» для пользователя. Команд
@@ -47,7 +47,7 @@
 `{{chip}}`, `{{chip_feature}}`, `{{cpu}}`, `{{target}}`, `{{write_size}}`,
 `{{page_size}}`, `{{state_erase_size}}`, `{{config_erase_size}}`, `{{config_store}}`,
 `{{shared_flash}}`, `{{dual_core}}`, `{{bank_mode}}`, `{{erase_zero}}`,
-`{{watchdog_peripheral}}`, `{{cpu_freq_boost}}`, `{{dfu_bank}}`, `{{bank_switch}}` — плейсхолдеры, подставляемые
+`{{watchdog_peripheral}}`, `{{cpu_freq_boost}}`, `{{dfu_bank}}`, `{{bank_switch}}`, `{{dual_bank_bit}}` — плейсхолдеры, подставляемые
 Liquid-рендером cargo-generate. Из них в `[placeholders]` объявлены только `ci`, `ota`, `graph`,
 `config` и `signed`; все остальные выставляет `variable::set` в `[hooks].pre`-скрипте
 `chip-select.rhai` — каскадный посимвольный выбор STM32 (семейство → линейка → дальше по
@@ -239,7 +239,8 @@ feature is not supported on this dual bank chip»).
 
 Предпочтение одобанковой стоит одного шага в прошивке: у G4 cat3, L4+, L5 и G0B/G0C с завода стоит
 двухбанковый режим, и `bsp/src/banks.rs` (его же `boot` подключает через `#[path]`) переключает
-его при первом старте. Каким чипам и какой вариант регистров (`g0`/`g4`/`l4`/`l5`) — блок
+его при первом старте. Каким чипам, какой вариант регистров (`g0`/`g4`/`l4`/`l5`) и какой бит режима
+(`g4:22`; у L4+/L5 бит зависит от объёма — `bank_switch_bits`) — блок
 `BANK_SWITCH`: версия блока FLASH из метаданных через таблицу `FACTORY_DUAL_BANK` в
 `chip-data-gen` — заводское значение option byte в метаданных нет, оно из документации. Каждый
 вариант собран `template-check` до коммита (`stm32g474re`, `stm32g0b1rc`, `stm32l4r5zi`,

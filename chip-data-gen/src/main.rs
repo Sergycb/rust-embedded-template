@@ -72,7 +72,7 @@ fn main() -> anyhow::Result<()> {
     let mut bank_modes: BTreeMap<&str, &'static str> = BTreeMap::new();
     let mut watchdogs: BTreeMap<&str, String> = BTreeMap::new();
     let mut cpu_freq_boost: Vec<&str> = Vec::new();
-    let mut bank_switch: BTreeMap<&str, &'static str> = BTreeMap::new();
+    let mut switch_variants: BTreeMap<&str, &'static str> = BTreeMap::new();
     let mut shared_metadata_cache: BTreeMap<PathBuf, SharedMetadata> = BTreeMap::new();
     for suffix in &suffixes {
         // Ошибка разбора метаданных — не «чип не подошёл», а сломанное
@@ -113,9 +113,10 @@ fn main() -> anyhow::Result<()> {
                     .map(|(_, variant)| *variant)
             })
         {
-            bank_switch.insert(*suffix, variant);
+            switch_variants.insert(*suffix, variant);
         }
     }
+    let bank_switch = bank_switch_bits(&switch_variants, &memory_layouts);
     let with_ota = memory_layouts.values().filter(|m| m.ota.is_ok()).count();
     let with_config = memory_layouts
         .values()
@@ -2304,9 +2305,42 @@ fn format_cpu_freq_boost(chips: &[&str]) -> String {
     out
 }
 
+/// Какой бит `FLASH_OPTR` у чипа включает двухбанковый режим.
+///
+/// У G4 — `DBANK` (22), у G0 — `DUAL_BANK` (21) на любом объёме. У L4+ и L5
+/// бит зависит от объёма: у чипа с наибольшим flash в серии — `DBANK` (22), у
+/// остальных — `DB1M`/`DB256` (21), а у старшего объёма бит 21 не определён
+/// (так их различает OpenOCD, `stm32l4x.c`: `is_max_flash_size`). Серия — три
+/// первых символа суффикса (`l4r`, `l4p`, `l55`): у L4R/L4S наибольший объём
+/// 2 MiB, у L4P/L4Q — 1 MiB, у L55/L56 — 512 KiB, и ровно столько находит
+/// максимум по чипам серии.
+fn bank_switch_bits<'a>(
+    variants: &BTreeMap<&'a str, &'static str>,
+    layouts: &BTreeMap<&str, MemoryLayout>,
+) -> BTreeMap<&'a str, (&'static str, u8)> {
+    let flash = |suffix: &str| layouts.get(suffix).map_or(0, |m| m.flash_length);
+    let mut series_max: BTreeMap<&str, u64> = BTreeMap::new();
+    for suffix in variants.keys() {
+        let max = series_max.entry(&suffix[..3]).or_default();
+        *max = (*max).max(flash(suffix));
+    }
+    variants
+        .iter()
+        .map(|(suffix, variant)| {
+            let bit = match *variant {
+                "g4" => 22,
+                "g0" => 21,
+                _ if flash(suffix) == series_max[&suffix[..3]] => 22,
+                _ => 21,
+            };
+            (*suffix, (*variant, bit))
+        })
+        .collect()
+}
+
 /// Чипы, которым прошивка переключает флеш в одобанковый режим, — с вариантом
-/// регистров (см. [`FACTORY_DUAL_BANK`]).
-fn format_bank_switch(chips: &BTreeMap<&str, &'static str>) -> String {
+/// регистров (см. [`FACTORY_DUAL_BANK`]) и битом режима через двоеточие.
+fn format_bank_switch(chips: &BTreeMap<&str, (&'static str, u8)>) -> String {
     let mut out = String::new();
     out.push_str(BANK_SWITCH_BEGIN);
     out.push_str(&format!(
@@ -2314,8 +2348,8 @@ fn format_bank_switch(chips: &BTreeMap<&str, &'static str>) -> String {
         chips.len()
     ));
     out.push_str("const BANK_SWITCH = #{\n");
-    for (suffix, variant) in chips {
-        out.push_str(&format!("    \"{suffix}\": \"{variant}\",\n"));
+    for (suffix, (variant, bit)) in chips {
+        out.push_str(&format!("    \"{suffix}\": \"{variant}:{bit}\",\n"));
     }
     out.push_str("};\n");
     out
