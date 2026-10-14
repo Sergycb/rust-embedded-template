@@ -33,8 +33,8 @@
 //! Трейты объявлены безусловно, потому что Liquid в этом крейте запрещён (он
 //! компилируется и в самом репозитории шаблона): [`FirmwareUpdate`] и
 //! [`SettingsStorage`] реализованы, когда при генерации выбраны OTA и
-//! хранилище настроек, а [`ImageSource`] реализует проект под свой канал
-//! доставки.
+//! хранилище настроек, а [`ImageSource`] и [`FrameLink`] реализует проект
+//! под свой канал доставки и свою линию связи.
 //!
 //! Модули названы по операции домена, которая ими пользуется, а не по трейту:
 //! ошибка операции (`DownloadError` у `domain::ota::download::receive`) лежит
@@ -43,6 +43,9 @@
 //! пользователя не касается (`docs/conventions.md`, «`lib.rs` только объявляет
 //! модули»).
 
+/// Кадровый канал связи для протоколов, у которых границы кадра задаёт линия.
+pub mod link;
+
 /// OTA: канал доставки образа, запись во флеш, проверка подписи и ошибки
 /// приёма и применения.
 pub mod ota;
@@ -50,6 +53,7 @@ pub mod ota;
 /// Хранилище настроек.
 pub mod settings;
 
+pub use link::FrameLink;
 pub use ota::download::{Announce, DownloadError, ImageSource, Rejection};
 pub use ota::update::{FirmwareUpdate, PendingImage, UpdateError};
 pub use settings::SettingsStorage;
