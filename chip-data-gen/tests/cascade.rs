@@ -1325,6 +1325,40 @@ fn external_ota_on_a_bank_gap_chip_leaves_bank_2_alone() {
     );
 }
 
+/// Переключение в одобанковый режим — у тех, кто с завода двухбанковый и получил
+/// одобанковую раскладку, с вариантом регистров своего семейства. F4 с 1 MiB и F7 с
+/// завода одобанковые — переключать нечего; у чипа с одной картой памяти выбора нет
+/// вовсе. Без переключения `banks.rs` удаляется.
+#[test]
+fn bank_switch_follows_the_factory_bank_mode() {
+    let ast = compile_script();
+    for (suffix, expected) in [
+        ("g474re", "g4"),
+        ("g0b1rc", "g0"),
+        ("l4r5zi", "l4"),
+        ("l552ze", "l5"),
+        ("f429zg", ""),
+        ("f767zi", ""),
+        ("h743zg", ""),
+        ("f407ve", ""),
+    ] {
+        let result = run_cascade_to(&ast, suffix).expect("каскад не должен падать");
+        assert_eq!(
+            result.vars.get("bank_switch").map(String::as_str),
+            Some(expected),
+            "{suffix}"
+        );
+        assert_eq!(
+            result
+                .deleted
+                .iter()
+                .any(|path| path == "crates-cross/bsp/src/banks.rs"),
+            expected.is_empty(),
+            "{suffix}: banks.rs"
+        );
+    }
+}
+
 /// `CPU_FREQ_BOOST` — только у линии RM0468 (H723/725/730/733/735): им bsp
 /// получает `clocks.rs`, остальным файл удаляется. Соседняя H743 — та же
 /// серия, но boost у неё нет, и `clocks.rs` с регистрами `OPTSR2` там писал бы

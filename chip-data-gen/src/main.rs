@@ -19,6 +19,16 @@ const WATCHDOG_BEGIN: &str = "// BEGIN GENERATED WATCHDOG PERIPHERAL";
 const WATCHDOG_END: &str = "// END GENERATED WATCHDOG PERIPHERAL";
 const BOOST_BEGIN: &str = "// BEGIN GENERATED CPU_FREQ_BOOST";
 const BOOST_END: &str = "// END GENERATED CPU_FREQ_BOOST";
+const BANK_SWITCH_BEGIN: &str = "// BEGIN GENERATED BANK SWITCH";
+const BANK_SWITCH_END: &str = "// END GENERATED BANK SWITCH";
+/// Семейства, у которых двухбанковый режим стоит с завода, — по версии блока
+/// FLASH в метаданных, с именем варианта регистров option bytes в
+/// `crates-cross/bsp/src/banks.rs`. Заводское значение — знание документации, а
+/// не метаданных: `DBANK`/`DUAL_BANK` = 1 в FLASH_OPTR нового кристалла (RM0440
+/// G4, RM0444 G0, RM0432 L4+, RM0438 L5; OpenOCD `stm32l4x.c`). У F4 с 1 MiB
+/// (`DB1M` = 0) и F76x/F77x (`nDBANK` = 1) с завода одобанковый, и их здесь нет.
+const FACTORY_DUAL_BANK: &[(&str, &str)] =
+    &[("g0x1", "g0"), ("g4c3", "g4"), ("l4", "l4"), ("l5", "l5")];
 /// Имя блока независимого сторожевого таймера у подавляющего большинства
 /// чипов (800 из 891 наборов метаданных). Таблица `WATCHDOG` перечисляет
 /// только исключения, а хук подставляет это значение для всех остальных — по
@@ -62,6 +72,7 @@ fn main() -> anyhow::Result<()> {
     let mut bank_modes: BTreeMap<&str, &'static str> = BTreeMap::new();
     let mut watchdogs: BTreeMap<&str, String> = BTreeMap::new();
     let mut cpu_freq_boost: Vec<&str> = Vec::new();
+    let mut bank_switch: BTreeMap<&str, &'static str> = BTreeMap::new();
     let mut shared_metadata_cache: BTreeMap<PathBuf, SharedMetadata> = BTreeMap::new();
     for suffix in &suffixes {
         // Ошибка разбора метаданных — не «чип не подошёл», а сломанное
@@ -91,6 +102,18 @@ fn main() -> anyhow::Result<()> {
         }
         if shared.cpu_freq_boost {
             cpu_freq_boost.push(suffix);
+        }
+        // Одобанковая раскладка на чипе, который с завода двухбанковый: режим
+        // переключает прошивка (`bsp::banks`).
+        if bank_mode == "single-bank"
+            && let Some(variant) = shared.flash_version.as_deref().and_then(|version| {
+                FACTORY_DUAL_BANK
+                    .iter()
+                    .find(|(flash, _)| *flash == version)
+                    .map(|(_, variant)| *variant)
+            })
+        {
+            bank_switch.insert(*suffix, variant);
         }
     }
     let with_ota = memory_layouts.values().filter(|m| m.ota.is_ok()).count();
@@ -141,7 +164,7 @@ fn main() -> anyhow::Result<()> {
         "embassy-stm32: {} чип-фич; probe-rs: {} целей; итоговый список: {} (отброшено {}, \
          нет цели probe-rs); более точная цель probe-rs, чем базовая, найдена для {} чипов; \
          выбор банковой схемы нужен {} чипам; сторож зовётся не {} у {} чипов; option byte \
-         CPU_FREQ_BOOST есть у {} чипов; memory.x \
+         CPU_FREQ_BOOST есть у {} чипов; режим банков переключает прошивка у {} чипов; memory.x \
          посчитан для {} из {} чипов, из них \
          с OTA {} (остальные — один образ на весь flash, без crates-cross/boot); раздел настроек \
          возможен на {} чипах, из них с сохранением OTA — {}; OTA с DFU на внешней флеши \
@@ -155,6 +178,7 @@ fn main() -> anyhow::Result<()> {
         DEFAULT_WATCHDOG,
         watchdogs.len(),
         cpu_freq_boost.len(),
+        bank_switch.len(),
         memory_layouts.len(),
         suffixes.len(),
         with_ota,
@@ -180,6 +204,11 @@ fn main() -> anyhow::Result<()> {
                 BOOST_BEGIN,
                 BOOST_END,
                 format_cpu_freq_boost(&cpu_freq_boost),
+            ),
+            GeneratedBlock::new(
+                BANK_SWITCH_BEGIN,
+                BANK_SWITCH_END,
+                format_bank_switch(&bank_switch),
             ),
             GeneratedBlock::new(
                 MEMORY_BEGIN,
@@ -648,6 +677,8 @@ struct SharedMetadata {
     /// выбирает предел частоты (`cfg(pwr_h7rm0468)` в `rcc/h.rs`), так что
     /// признак и HAL расходиться не могут.
     cpu_freq_boost: bool,
+    /// Версия регистров блока `FLASH` (`g4c3`, `f4`, `l5`...).
+    flash_version: Option<String>,
 }
 
 /// Путь к общему файлу метаданных чипа и разобранные из него факты. Общий файл
@@ -675,11 +706,20 @@ fn shared_metadata<'c>(
             SharedMetadata {
                 watchdogs: parse_watchdog_names(&shared_text),
                 cpu_freq_boost: has_pwr_rm0468(&shared_text),
+                flash_version: registers_version(&shared_text, "flash"),
             },
         );
     }
     let facts = &cache[&shared_path];
     Ok((shared_path, facts))
+}
+
+/// Версия регистров блока вида `kind` — строка за `kind: "<kind>",` и
+/// `version: "`.
+fn registers_version(text: &str, kind: &str) -> Option<String> {
+    let rest = text.split_once(&format!("kind: \"{kind}\","))?.1;
+    let rest = rest.trim_start().strip_prefix("version: \"")?;
+    rest.split_once('"').map(|(version, _)| version.to_string())
 }
 
 /// Есть ли в метаданных блок `PWR` с регистрами версии `h7rm0468`.
@@ -2264,6 +2304,23 @@ fn format_cpu_freq_boost(chips: &[&str]) -> String {
     out
 }
 
+/// Чипы, которым прошивка переключает флеш в одобанковый режим, — с вариантом
+/// регистров (см. [`FACTORY_DUAL_BANK`]).
+fn format_bank_switch(chips: &BTreeMap<&str, &'static str>) -> String {
+    let mut out = String::new();
+    out.push_str(BANK_SWITCH_BEGIN);
+    out.push_str(&format!(
+        " ({} шт., cargo run --manifest-path chip-data-gen/Cargo.toml)\n",
+        chips.len()
+    ));
+    out.push_str("const BANK_SWITCH = #{\n");
+    for (suffix, variant) in chips {
+        out.push_str(&format!("    \"{suffix}\": \"{variant}\",\n"));
+    }
+    out.push_str("};\n");
+    out
+}
+
 /// Только чипы, у которых `embassy-stm32` требует выбора банковой схемы
 /// (несколько карт памяти) — для остальных фичи нет вовсе, и хук подставляет
 /// пустую строку.
@@ -2657,6 +2714,14 @@ pub static METADATA: Metadata = Metadata {
             Some("../metadata_0180.rs")
         );
         assert_eq!(parse_included_metadata("pub static METADATA"), None);
+    }
+
+    /// Версия регистров — у блока нужного вида, а не у первого попавшегося.
+    #[test]
+    fn registers_version_is_taken_from_the_right_block() {
+        let text = "kind: \"rcc\",\n  version: \"g4\",\nkind: \"flash\",\n  version: \"g4c3\",\n";
+        assert_eq!(registers_version(text, "flash").as_deref(), Some("g4c3"));
+        assert_eq!(registers_version(text, "pwr"), None);
     }
 
     /// Имена блоков — без повторов и в порядке появления: на этом порядке

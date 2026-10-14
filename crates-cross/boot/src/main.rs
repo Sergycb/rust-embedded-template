@@ -38,9 +38,21 @@ use embedded_storage::nor_flash::{ErrorType, {% if ota_store != "external" %}Nor
 // первого удачного старта приложения или до `cargo xtask panic-info`.
 #[path = "../../app/src/panic.rs"]
 mod panic;
+{%- if bank_switch != "" %}
+
+// Переключение флеша в одобанковый режим — тот же исходник, что у `bsp`, по той
+// же причине, что и паникёр: bootloader не зависит от `bsp`.
+#[path = "../../bsp/src/banks.rs"]
+mod banks;
+{%- endif %}
 
 #[cortex_m_rt::entry]
 fn main() -> ! {
+{%- if bank_switch != "" %}
+    // Первым делом: `Flash::new` ниже паникует на двухбанковом флеше при
+    // одобанковой раскладке (см. `banks`).
+    banks::ensure_single_bank();
+{%- endif %}
     let p = init_peripherals();
 {%- if dfu_bank == "true" %}
     // Банк 2 стоит за разрывом, и цельный `Flash` туда не дотягивается (его

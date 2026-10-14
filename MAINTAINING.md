@@ -15,7 +15,7 @@
 
 - `chip-select.rhai` — pre-хук: каскадный выбор чипа, `memory.x`, `write_size`,
   `ota`, `dual_core`, `bank_mode`, `erase_zero`, `watchdog_peripheral`,
-  `cpu_freq_boost`. Хуки
+  `cpu_freq_boost`, `bank_switch`, `dfu_bank`. Хуки
   cargo-generate в результат
   не копируются.
 - `post-script.rhai` — post-хук: сводка «что дальше» для пользователя. Команд
@@ -23,7 +23,7 @@
   пути такая медленная»), поэтому и `--allow-commands` при генерации не нужен.
 - `chip-data-gen/` — два инструмента мейнтейнера (каталог в `ignore`):
   - `cargo run --manifest-path chip-data-gen/Cargo.toml` — перегенерирует
-    шесть блоков данных в `chip-select.rhai`;
+    семь блоков данных в `chip-select.rhai`;
   - `cargo run --manifest-path chip-data-gen/Cargo.toml --bin template-check` —
     генерирует проект во временный каталог и прогоняет в нём весь набор
     проверок (см. «Порядок проверки» ниже).
@@ -47,7 +47,7 @@
 `{{chip}}`, `{{chip_feature}}`, `{{cpu}}`, `{{target}}`, `{{write_size}}`,
 `{{page_size}}`, `{{state_erase_size}}`, `{{config_erase_size}}`, `{{config_store}}`,
 `{{shared_flash}}`, `{{dual_core}}`, `{{bank_mode}}`, `{{erase_zero}}`,
-`{{watchdog_peripheral}}`, `{{cpu_freq_boost}}`, `{{dfu_bank}}` — плейсхолдеры, подставляемые
+`{{watchdog_peripheral}}`, `{{cpu_freq_boost}}`, `{{dfu_bank}}`, `{{bank_switch}}` — плейсхолдеры, подставляемые
 Liquid-рендером cargo-generate. Из них в `[placeholders]` объявлены только `ci`, `ota`, `graph`,
 `config` и `signed`; все остальные выставляет `variable::set` в `[hooks].pre`-скрипте
 `chip-select.rhai` — каскадный посимвольный выбор STM32 (семейство → линейка → дальше по
@@ -236,6 +236,14 @@ configuration. No Cargo feature to select one is enabled»), то есть сг�
 использует. Для одноконфигурационных чипов `bank_mode` — пустая строка, и `{% if %}` в
 `crates-cross/Cargo.toml` фичу не выводит: лишняя фича так же фатальна («The 'single-bank'
 feature is not supported on this dual bank chip»).
+
+Предпочтение одобанковой стоит одного шага в прошивке: у G4 cat3, L4+, L5 и G0B/G0C с завода стоит
+двухбанковый режим, и `bsp/src/banks.rs` (его же `boot` подключает через `#[path]`) переключает
+его при первом старте. Каким чипам и какой вариант регистров (`g0`/`g4`/`l4`/`l5`) — блок
+`BANK_SWITCH`: версия блока FLASH из метаданных через таблицу `FACTORY_DUAL_BANK` в
+`chip-data-gen` — заводское значение option byte в метаданных нет, оно из документации. Каждый
+вариант собран `template-check` до коммита (`stm32g474re`, `stm32g0b1rc`, `stm32l4r5zi`,
+`stm32l552ze`), на плате — не проверен. В наборе по умолчанию стоит `stm32g474re`.
 
 Второй банк за разрывом в адресах (`bank2_of` + проверка «вне цепочки» в
 `compute_memory_layout`) — у 36 чипов с фиксированным dual: H742/743/745/747 и H7A3 с

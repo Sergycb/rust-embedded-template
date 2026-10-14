@@ -171,6 +171,12 @@ impl Board {
     )]
     #[must_use]
     pub fn new() -> Self {
+{%- if bank_switch != "" %}
+        // До HAL и до любой работы с флешем: раскладка одобанковая, а с завода
+        // чип двухбанковый (см. `crate::banks`). На новом кристалле сюда доходит
+        // приложение без bootloader'а (OTA нет) — иначе переключил бы он.
+        crate::banks::ensure_single_bank();
+{%- endif %}
         let p = init_peripherals();
         // Единственный способ узнать фактическое тактирование: `Clocks`
         // заполняется внутри `init_peripherals`, наружу отдаётся только так.

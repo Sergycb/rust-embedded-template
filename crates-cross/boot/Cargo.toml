@@ -39,7 +39,9 @@ embassy-boot-stm32 = { workspace = true, features = ["defmt"] }
 # командой (`cargo build -p boot`), где соседних крейтов в графе нет.
 embassy-boot = { workspace = true, features = ["flash-erase-zero"] }
 {%- endif %}
-embassy-stm32 = { workspace = true, features = ["defmt"] }
+# `unstable-pac` — ради регистров option bytes в `bsp/src/banks.rs`, который bootloader
+# подключает по пути: режим банков обязан быть выставлен до его `Flash::new`.
+embassy-stm32 = { workspace = true, features = ["defmt"{% if bank_switch != "" %}, "unstable-pac"{% endif %}] }
 embassy-sync = { workspace = true }
 # Раздел BOOTLOADER_STATE со страницей своего сектора, а не всего чипа
 # (`adapters::flash::Paged` поверх `Shared`, src/main.rs). Тот же код, что

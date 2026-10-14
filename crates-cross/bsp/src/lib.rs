@@ -1,5 +1,7 @@
 #![no_std]
-
+{% if bank_switch != "" %}
+pub mod banks;
+{%- endif %}
 pub mod board;
 {%- if cpu_freq_boost == "true" %}
 pub mod clocks;
