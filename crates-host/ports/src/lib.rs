@@ -46,6 +46,10 @@
 /// Кадровый канал связи для протоколов, у которых границы кадра задаёт линия.
 pub mod link;
 
+/// Modbus: данные slave'а, представления битов и регистров кадра, ошибки
+/// обмена.
+pub mod modbus;
+
 /// OTA: канал доставки образа, запись во флеш, проверка подписи и ошибки
 /// приёма и применения.
 pub mod ota;
@@ -54,6 +58,7 @@ pub mod ota;
 pub mod settings;
 
 pub use link::FrameLink;
+pub use modbus::{Bits, BitsMut, Exception, MasterError, Registers, ServeError, Words, WordsMut};
 pub use ota::download::{Announce, DownloadError, ImageSource, Rejection};
 pub use ota::update::{FirmwareUpdate, PendingImage, UpdateError};
 pub use settings::SettingsStorage;

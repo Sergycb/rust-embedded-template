@@ -120,6 +120,17 @@ embassy-sync           = { version = "0.8.0" }
 embedded-storage       = { version = "0.3.1" }
 embedded-storage-async = { version = "0.4.1" }
 sequential-storage     = { version = "8.0.1", default-features = false }
+# Транспорт протоколов `domain` (`domain::modbus`): поток байтов, который уже
+# реализуют `BufferedUart` из `embassy-stm32`, USB CDC и сокет `embassy-net`.
+# Версия та же, что у `embassy-stm32` 0.6, — иначе в прошивке были бы две копии
+# трейта, и UART его бы не реализовывал.
+embedded-io-async      = { version = "0.7.0" }
+# Разбор PDU Modbus: запросы на стороне slave, ответы на стороне master.
+# Выбран из десятка кандидатов прогоном одних и тех же проверок по спецификации
+# и фаззингом — обоснование в `//!` модуля `domain::modbus`. `-types` — его словарь
+# (`ExceptionCode`, `Address`); тянет `zerocopy` (MIT/Apache/BSD).
+rusty-modbus-codec     = { version = "0.1.1", default-features = false }
+rusty-modbus-types     = { version = "0.1.1", default-features = false }
 # Проверка подписи образа — под фичей `adapters/signed`. Из двух реализаций,
 # которые понимает embassy-boot, взята меньшая: `ed25519-dalek` тянет
 # `curve25519-dalek` с `sha2`, salty самодостаточен и написан под

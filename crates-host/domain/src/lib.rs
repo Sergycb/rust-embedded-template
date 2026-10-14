@@ -12,3 +12,7 @@ pub mod ota;
 /// Узел `CPU_LOAD`: периодически публикует загрузку процессора; арифметика —
 /// подмодуль — см. модуль.
 pub mod cpu_load;
+
+/// Modbus RTU: slave над портом `ports::Registers` и master — поверх потока
+/// байтов `embedded-io-async` — см. модуль.
+pub mod modbus;
