@@ -13,6 +13,10 @@ pub mod ota;
 /// подмодуль — см. модуль.
 pub mod cpu_load;
 
+/// Узел `HOST`: сообщения protobuf от хоста по кадровому каналу — разбор,
+/// обработчик приложения, ответ — см. модуль.
+pub mod host;
+
 /// Modbus RTU: slave над портом `ports::Registers` и master — поверх потока
 /// байтов `embedded-io-async` — см. модуль.
 pub mod modbus;

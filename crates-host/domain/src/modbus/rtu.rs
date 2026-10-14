@@ -5,6 +5,8 @@
 //! следует из кода функции и счётчика байт, CRC подтверждает, что кадр
 //! найден верно.
 
+use crc::{CRC_16_MODBUS, Crc, NoTable};
+
 /// Наибольший кадр RTU: адрес, PDU до 253 байт, CRC.
 pub(crate) const MAX_ADU: usize = 256;
 
@@ -54,20 +56,13 @@ pub(crate) fn response_len(header: &[u8]) -> usize {
 }
 
 /// CRC-16/MODBUS: полином 0xA001 (отражённый 0x8005), начальное значение
-/// 0xFFFF.
+/// 0xFFFF. Без таблицы: 512 байт флеша не стоят выигрыша на кадрах до 256
+/// байт.
+const CRC: Crc<u16, NoTable> = Crc::<u16, NoTable>::new(&CRC_16_MODBUS);
+
+/// CRC кадра по `bytes`.
 pub(crate) fn crc16(bytes: &[u8]) -> u16 {
-    let mut crc = 0xFFFF_u16;
-    for &byte in bytes {
-        crc ^= u16::from(byte);
-        for _ in 0..8 {
-            crc = if crc & 1 == 0 {
-                crc >> 1
-            } else {
-                (crc >> 1) ^ 0xA001
-            };
-        }
-    }
-    crc
+    CRC.checksum(bytes)
 }
 
 /// Сошлась ли CRC в последних двух байтах кадра (младший байт первым).

@@ -1,0 +1,45 @@
+// Протокол обмена с хостом — пример, который проект заменяет своим.
+//
+// Конверт: каждый запрос несёт `request_id`, ответ возвращает его как есть.
+// По нему хост сопоставляет ответ с запросом — даже если ответы придут не по
+// порядку или один потеряется (UDP), и даже когда устройство начнёт слать
+// сообщения само.
+//
+// Ёмкости строк и повторяющихся полей (контейнеры `heapless`) заданы в
+// `build.rs`: в `.proto` их не выразить.
+syntax = "proto3";
+
+package host;
+
+message Request {
+  uint32 request_id = 1;
+  oneof command {
+    Ping ping = 2;
+    GetInfo get_info = 3;
+  }
+}
+
+message Response {
+  uint32 request_id = 1;
+  oneof result {
+    Pong pong = 2;
+    Info info = 3;
+    Error error = 4;
+  }
+}
+
+// Проверка связи.
+message Ping {}
+message Pong {}
+
+// Что за устройство.
+message GetInfo {}
+message Info {
+  string version = 1;
+}
+
+// Запрос не выполнен: не разобрался, неизвестная команда, недопустимые
+// значения. Текст — для человека.
+message Error {
+  string text = 1;
+}

@@ -61,8 +61,14 @@ portable-atomic = { workspace = true }
 embedded-io-async  = { workspace = true }
 rusty-modbus-codec = { workspace = true }
 rusty-modbus-types = { workspace = true }
+crc                = { workspace = true }
+# Узел HOST (`domain::host`): разбор и кодирование сообщений protobuf. Схему
+# узел не знает — она в `crates-host/proto` и у обработчика приложения.
+micropb            = { workspace = true }
 
 [dev-dependencies]
+# Пример схемы — сообщения для тестов узла HOST.
+proto = { workspace = true }
 test-log = { workspace = true }
 # Исполнитель для async-тестов над фейками портов (`#[tokio::test]`); фичи —
 # в корневом Cargo.toml.

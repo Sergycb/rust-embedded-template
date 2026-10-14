@@ -1,0 +1,19 @@
+[package]
+name = "proto"
+version.workspace      = true
+edition.workspace      = true
+license.workspace      = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Сгенерированные типы сообщений: кодирование, разбор, контейнеры полей.
+micropb  = { workspace = true }
+heapless = { workspace = true }
+
+[build-dependencies]
+# Схема → описание (`protox`, без `protoc`) → код (`micropb-gen`).
+micropb-gen = { workspace = true }
+protox      = { workspace = true }

@@ -133,9 +133,9 @@ fn consume(rx: &mut [u8; MAX_ADU], have: &mut usize, n: usize) {
 async fn respond<R: Registers>(pdu: &[u8], regs: &mut R, out: &mut [u8]) -> usize {
     let fc = pdu[0];
     // Сейчас сюда доходят только FC01–06/15/16 (`rtu::request_header`), и
-    // неизвестной функции не бывает; ветка — для транспорта, где границу
-    // кадра задаёт линия (`ports::FrameLink`), и кадр с любой функцией
-    // доходит до разбора.
+    // неизвестной функции не бывает; ветка — для транспорта, который
+    // отдаёт кадр целиком (`ports::FrameLink` с паузой на линии), и кадр с
+    // любой функцией доходит до разбора.
     let result = match decode_request(pdu) {
         Ok(request) => execute(&request, pdu, regs, out).await,
         Err(DecodeError::UnknownFunctionCode(_)) => Err(Exception::IllegalFunction),

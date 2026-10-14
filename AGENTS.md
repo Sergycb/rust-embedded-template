@@ -244,8 +244,8 @@ read`: руками пришлось бы сначала найти адрес �
 - `bsp` зависит только от `ports` и `adapters` (и HAL), не от `domain`: типы
   домена — например вход узла OTA — собирает из полей `Board` compose-site в
   `app` — `docs/architecture.md`.
-- Liquid в `domain`/`ports`/`adapters` запрещён: все три — члены корневого workspace и
-  компилируются в самом репозитории шаблона — `docs/architecture.md`.
+- Liquid в `domain`/`ports`/`adapters`/`proto` запрещён: все четыре — члены корневого
+  workspace и компилируются в самом репозитории шаблона — `docs/architecture.md`.
 - Новую зависимость для `cross` нельзя считать рабочей на тёплом кеше — проверять
   `rm -rf target && cargo build --target {{target}} ...` —
   `docs/conventions.md`.

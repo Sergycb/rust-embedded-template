@@ -33,8 +33,10 @@
 //! Трейты объявлены безусловно, потому что Liquid в этом крейте запрещён (он
 //! компилируется и в самом репозитории шаблона): [`FirmwareUpdate`] и
 //! [`SettingsStorage`] реализованы, когда при генерации выбраны OTA и
-//! хранилище настроек, а [`ImageSource`] и [`FrameLink`] реализует проект
-//! под свой канал доставки и свою линию связи.
+//! хранилище настроек. [`FrameLink`] поверх потока реализует
+//! `adapters::cobs::Cobs`, поверх датаграмм — интерфейс проекта; канал
+//! доставки образа ([`ImageSource`]), данные Modbus-slave'а ([`Registers`]) и
+//! обработчик сообщений хоста ([`HostService`]) — сам проект.
 //!
 //! Модули названы по операции домена, которая ими пользуется, а не по трейту:
 //! ошибка операции (`DownloadError` у `domain::ota::download::receive`) лежит
@@ -43,7 +45,11 @@
 //! пользователя не касается (`docs/conventions.md`, «`lib.rs` только объявляет
 //! модули»).
 
-/// Кадровый канал связи для протоколов, у которых границы кадра задаёт линия.
+/// Обработчик сообщений хоста: сообщения схемы → типы приложения.
+pub mod host;
+
+/// Кадровый канал связи: сообщения целиком, поверх датаграмм или адаптера
+/// кадрирования потока.
 pub mod link;
 
 /// Modbus: данные slave'а, представления битов и регистров кадра, ошибки
@@ -57,7 +63,8 @@ pub mod ota;
 /// Хранилище настроек.
 pub mod settings;
 
-pub use link::FrameLink;
+pub use host::HostService;
+pub use link::{FrameLink, LinkError};
 pub use modbus::{Bits, BitsMut, Exception, MasterError, Registers, ServeError, Words, WordsMut};
 pub use ota::download::{Announce, DownloadError, ImageSource, Rejection};
 pub use ota::update::{FirmwareUpdate, PendingImage, UpdateError};

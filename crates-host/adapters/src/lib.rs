@@ -22,6 +22,10 @@ pub mod flash;
 /// переживающие перезапуск и обновление прошивки.
 pub mod settings;
 
+/// Кадрирование потока байтов (UART, USB CDC, TCP) в кадры `ports::FrameLink`:
+/// COBS и CRC.
+pub mod cobs;
+
 /// Внутренняя EEPROM (STM32L0/L1) как флеш с семантикой NOR — чтобы поверх
 /// неё работало то же хранилище настроек.
 pub mod eeprom;

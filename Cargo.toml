@@ -4,6 +4,7 @@ members = [
 	"crates-host/host-target-tests",
 	"crates-host/adapters",
 	"crates-host/ports",
+	"crates-host/proto",
 	"crates-host/xtask",
 ]
 resolver = "3"
@@ -68,6 +69,7 @@ map_err_ignore          = "warn"
 # и путь были в одном месте, как у внешних зависимостей.
 ports        = { path = "crates-host/ports" }
 adapters     = { path = "crates-host/adapters" }
+proto        = { path = "crates-host/proto" }
 defmt-or-log = { version = "0.2.3" }
 log          = { version = "0.4.34" }
 defmt        = { version = "1.1.1" }
@@ -131,6 +133,28 @@ embedded-io-async      = { version = "0.7.0" }
 # (`ExceptionCode`, `Address`); тянет `zerocopy` (MIT/Apache/BSD).
 rusty-modbus-codec     = { version = "0.1.1", default-features = false }
 rusty-modbus-types     = { version = "0.1.1", default-features = false }
+# Кадрирование потока (`adapters::cobs`): COBS — синхронизация по 0x00 после
+# мусора или обрыва. Потоковый декодер берётся отсюда, своё — только транспорт
+# и CRC. Тот же крейт стоит под `postcard` и `ergot`. Без `std` (он в default).
+cobs                   = { version = "0.5.1", default-features = false }
+# CRC кадров: CRC-16/IBM-SDLC (X.25, FCS у HDLC/PPP) в `adapters::cobs`,
+# CRC-16/MODBUS в `domain::modbus` — одна реализация вместо своих.
+crc                    = { version = "3.4.0" }
+# Protobuf (`crates-host/proto` — схема и сгенерированные типы, `domain` —
+# узел HOST): без alloc, повторяющиеся поля и строки — в контейнерах
+# `heapless` 0.9, той же версии, что у остального дерева.
+micropb                = { version = "0.6.0", default-features = false, features = [
+	"encode",
+	"decode",
+	"container-heapless-0-9",
+] }
+heapless               = { version = "0.9.3" }
+# Генерация кода из `.proto` в `build.rs` крейта `proto`. Схему разбирает
+# `protox` — компилятор protobuf на чистом Rust, — и `micropb-gen` строит код
+# из готового описания (`compile_fdset_file`): системный `protoc` не нужен ни
+# разработчику, ни в CI.
+micropb-gen            = { version = "0.6.0" }
+protox                 = { version = "0.9.1" }
 # Проверка подписи образа — под фичей `adapters/signed`. Из двух реализаций,
 # которые понимает embassy-boot, взята меньшая: `ed25519-dalek` тянет
 # `curve25519-dalek` с `sha2`, salty самодостаточен и написан под

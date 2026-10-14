@@ -13,6 +13,7 @@ workspace = true
 # его макросы вывода превращаются в пустые выражения — на хосте это ровно то,
 # что нужно. В прошивку `defmt` включает crates-cross/Cargo.toml.
 defmt = [
+	"dep:defmt",
 	"ports/defmt",
 	"embassy-boot/defmt",
 	"sequential-storage/defmt",
@@ -34,8 +35,17 @@ embedded-storage-async = { workspace = true }
 sequential-storage = { workspace = true }
 embassy-sync = { workspace = true }
 salty = { workspace = true, optional = true }
+# Кадрирование потока: `cobs::Cobs` реализует `ports::FrameLink` поверх
+# `embedded_io_async::{Read, Write}`.
+embedded-io-async = { workspace = true }
+cobs = { workspace = true }
+crc = { workspace = true }
+# `defmt::Format` на `cobs::CobsError` — в прошивке.
+defmt = { workspace = true, optional = true }
 
 [dev-dependencies]
 # Исполнитель для async-тестов над флешем в памяти (`#[tokio::test]`); фичи —
 # в корневом Cargo.toml.
 tokio = { workspace = true }
+# Property-тесты кадрирования: любое дробление потока и любой мусор.
+proptest = { workspace = true }

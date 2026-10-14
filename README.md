@@ -63,7 +63,8 @@ cargo run -p app                    # прошить приложение и с�
 | Распиновка платы | `crates-cross/bsp/src/board.rs` | `assign_resources!` разложит `Peripherals` по именованным группам — из них `bsp` соберёт драйверы; наружу уходит не периферия, а готовый объект (`docs/resources.md`) |
 | Граф задач | `crates-cross/app/src/graph.rs` | `supervisor_graph!`: порядок старта, рестарты с backoff, watchdog, обмен между задачами |
 | Логика и узлы графа | `crates-host/domain/` | всё, что не про регистры: автоматы, протоколы, конфигурация, а также объявления узлов (`supervisor_fragment!`) и их работа (`domain::heartbeat::run`, `domain::cpu_load::task` — автоматы `#[fsm::typestate]` на контексте узла) — тестируется на хосте; логика вне автоматов — функции над портами |
-| Адаптеры без чипа | `crates-host/adapters/` | реализации портов, которым хватает `embedded-storage`/`embedded-hal`: OTA поверх `embassy-boot` (`adapters::ota`) и настройки поверх `sequential-storage` (`adapters::settings`, мост к общему флешу — `adapters::flash`) — generic по флешу, тестируется на хосте |
+| Адаптеры без чипа | `crates-host/adapters/` | реализации портов, которым хватает `embedded-storage`/`embedded-hal`/`embedded-io-async`: OTA поверх `embassy-boot` (`adapters::ota`), настройки поверх `sequential-storage` (`adapters::settings`, мост к общему флешу — `adapters::flash`), кадрирование потока COBS + CRC (`adapters::cobs`) — тестируется на хосте |
+| Схема protobuf | `crates-host/proto/` | `.proto` и типы, сгенерированные `micropb-gen` в `build.rs` (схему разбирает `protox`, системный `protoc` не нужен); пример — конверт `Request`/`Response` с `request_id`, проект заменяет своим. Обрабатывает узел `domain::HOST_FRAG` |
 
 Граф и модули `bsp` уже содержат рабочие примеры в doc-комментариях и в `docs/` — с
 объяснением, почему выбрана именно эта библиотека, а не соседняя.
@@ -148,12 +149,16 @@ supervisor-графы, watchdog). Вся остальная логика — в 
 Драйвер переезжает из `adapters` в `bsp` только тогда, когда ему перестаёт хватать
 трейтов `embedded-hal`: понадобились `embassy_stm32::peripherals` или статический
 DMA-буфер. До этого момента его место — в `domain`, где он тестируется без железа.
-В `ports` объявлено пять трейтов. `FirmwareUpdate` и `SettingsStorage`
+В `ports` объявлено шесть трейтов. `FirmwareUpdate` и `SettingsStorage`
 реализованы в `adapters`, а `Board` отдаёт их готовыми объектами, когда при
 генерации выбраны OTA и раздел настроек. `ImageSource` под свой канал доставки
-образа реализует сам проект, `FrameLink` — под линию, где границу кадра задаёт
-пауза (Modbus RTU поверх UART). `Registers` — данные устройства, видимые по
-Modbus: его реализует приложение, а обслуживает узел `domain::MODBUS_SLAVE_FRAG`;
+образа реализует сам проект. `FrameLink` — канал целых сообщений: его
+реализует интерфейс с датаграммами (UDP-сокет) или адаптер кадрирования
+`adapters::cobs::Cobs` поверх потока (UART, USB CDC, TCP). `Registers` — данные устройства, видимые по
+Modbus: его реализует приложение, а обслуживает узел `domain::MODBUS_SLAVE_FRAG`.
+`HostService` — обработчик сообщений protobuf от хоста: его реализует приложение
+(перевод сообщений схемы в свои проверенные типы), а принимает и отвечает узел
+`domain::HOST_FRAG`;
 транспорт протоколов `domain` — поток `embedded-io-async`. Свой порт под датчики и периферию вашего
 устройства заводится по тому же образцу — см. doc-комментарий крейта `ports`
 и `docs/architecture.md`.
