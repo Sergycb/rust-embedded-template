@@ -83,3 +83,6 @@ CLAUDE.local.md
 # в cargo-generate.toml он уже в ignore — сюда, чтобы не уехал в историю
 # случайным `git add -A`.
 .superpowers/
+# Следы прерванного прогона chip-data-gen (см. write_data_dir).
+chip-data.tmp/
+chip-data.old/

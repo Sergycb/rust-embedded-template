@@ -9,7 +9,7 @@ publish = false
 default-run = "chip-data-gen"
 
 # Не часть корневого workspace: этот крейт — инструмент обслуживания шаблона
-# (перегенерирует список чипов в chip-select.rhai), сам каталог не должен
+# (перегенерирует таблицы чипов в chip-data/), сам каталог не должен
 # попадать в проекты пользователей шаблона — см. cargo-generate.toml,
 # [template].ignore (не .exclude — см. комментарий там же).
 [workspace]

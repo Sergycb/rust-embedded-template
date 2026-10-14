@@ -18,12 +18,18 @@
   `cpu_freq_boost`, `bank_switch`, `dual_bank_bit`, `dfu_bank`. Хуки
   cargo-generate в результат
   не копируются.
+- `chip-data/` — сгенерированные таблицы, которые хук подключает через `import`
+  (каталог в `ignore`; `import` находит его и так): `chips.rhai`, `packages.rhai`,
+  `bank_mode.rhai`, `bank_switch.rhai`, `watchdog.rhai`, `cpu_freq_boost.rhai` и
+  `layout/<семейство>.rhai` — раскладка памяти, разложенная по первым двум символам
+  суффикса (`f4`, `h7`, `wb`). Целиком раскладка — ~89 тысяч строк, а хуку нужна одна
+  запись, поэтому он импортирует только файл своего семейства. Руками не правится.
 - `post-script.rhai` — post-хук: сводка «что дальше» для пользователя. Команд
   не выполняет: `cargo update` оттуда убран (см. «Почему генерация из локального
   пути такая медленная»), поэтому и `--allow-commands` при генерации не нужен.
 - `chip-data-gen/` — два инструмента мейнтейнера (каталог в `ignore`):
   - `cargo run --manifest-path chip-data-gen/Cargo.toml` — перегенерирует
-    семь блоков данных в `chip-select.rhai`;
+    `chip-data/` целиком;
   - `cargo run --manifest-path chip-data-gen/Cargo.toml --bin template-check` —
     генерирует проект во временный каталог и прогоняет в нём весь набор
     проверок (см. «Порядок проверки» ниже).
@@ -129,11 +135,12 @@ STM32C011D6 (32 KiB, то же ядро) проект занимает 12.6 KiB 
 `--define`, независимо от `chip_feature` (см. таблицу `PACKAGE_CHOICES` ниже — override
 `chip` заодно и пропускает её).
 
-Все четыре сгенерированных блока в `chip-select.rhai` (список валидных чипов, между
-маркерами `BEGIN/END GENERATED CHIP LIST`; таблица уточнения корпусировки
-`PACKAGE_CHOICES`, между `BEGIN/END GENERATED PACKAGE CHOICES`; банковая схема
-`BANK_MODE`, между `BEGIN/END GENERATED BANK MODE`; раскладка памяти `MEMORY_LAYOUT`,
-между `BEGIN/END GENERATED MEMORY LAYOUT`) пишет `chip-data-gen` — отдельный
+Все таблицы в `chip-data/` (список валидных чипов `CHIPS`, уточнение корпусировки
+`PACKAGE_CHOICES`, банковая схема `BANK_MODE`, раскладка памяти `MEMORY_LAYOUT` и
+остальные) пишет `chip-data-gen` — целиком, через соседний `chip-data.tmp` и подмену
+каталога, чтобы файлы всегда были одного поколения и не оставалось файлов исчезнувших
+семейств. Хук берёт их `import`'ом и копирует в одноимённые `const`, так что дальше по
+скрипту они выглядят как раньше. Пишет их `chip-data-gen` — отдельный
 standalone-крейт в корне репозитория, НЕ
 член корневого `[workspace]` (свой `Cargo.toml` с пустым `[workspace]`) и НЕ часть
 шаблона: он инструмент обслуживания САМОГО РЕПОЗИТОРИЯ, запускается мейнтейнером вручную
@@ -218,7 +225,7 @@ probe-rs есть более специфичные `STM32L151C6TxA`/`STM32L151C
 только корпусировкой (`Tx`/`Ux`/`Hx`/`Yx`) — по `probe-rs chip info` они побайтово
 идентичны (ядро, память), так что выбирать между ними незачем: `chip-data-gen` находит
 все такие цели через `package_candidates()` и пишет их массивом в `PACKAGE_CHOICES`
-(между маркерами `BEGIN/END GENERATED PACKAGE CHOICES`, тот же `chip-select.rhai`), а
+(`chip-data/packages.rhai`), а
 хук берёт первую (`PACKAGE_CHOICES[suffix][0]`) без вопроса — список из `BTreeSet`, поэтому
 детерминирован. `CORE_MARKERS` в `chip-data-gen` (должен буквально совпадать со
 списком в `core_override()`) исключает ядерные суффиксы из этого поиска — там
@@ -770,7 +777,9 @@ cargo test  --manifest-path chip-data-gen/Cargo.toml --release
 Rust-код генератора: гоняет реальный скрипт через движок `rhai` (dev-dependency) с
 подменённым модулем `variable` (`is_set`/`get`/`set`/`prompt`) и `file`
 (`write`/`delete`), без `cargo generate` и
-без TTY — `variable::prompt` в моке сам ведёт каскад к заранее известной цели (выбирает
+без TTY. Таблицы из `chip-data/` разбираются один раз и подаются движку через
+`StaticModuleResolver` под теми же путями, что пишет `import`, — так что выбор файла
+семейства проверяется кодом самого хука. `variable::prompt` в моке сам ведёт каскад к заранее известной цели (выбирает
 самый длинный вариант из choices, чьим префиксом является цель — не первый попавшийся,
 иначе он ошибочно "останавливается" там, где чип совпадает с началом другого, того же
 класса бага, что тест и должен ловить). `cascade_reaches_every_chip_without_hanging` и
@@ -789,9 +798,9 @@ Rust-код генератора: гоняет реальный скрипт ч�
 
 ### Когда перегенерировать данные
 
-Списки в `chip-select.rhai` собраны из чип-фич конкретной версии `embassy-stm32` и из
+Списки в `chip-data/` собраны из чип-фич конкретной версии `embassy-stm32` и из
 `probe-rs chip list` конкретной установленной версии probe-rs. Обе версии записаны
-штампом в начале блока `CHIP LIST`:
+штампом в начале `chip-data/chips.rhai`:
 
 ```
 // Источник: embassy-stm32 0.6.0 (crates-cross/Cargo.toml), probe-rs 0.31.0

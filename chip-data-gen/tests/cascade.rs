@@ -8,26 +8,80 @@
 
 use std::{cell::RefCell, collections::HashMap, path::PathBuf, rc::Rc};
 
-use rhai::{AST, Array, Dynamic, Engine, EvalAltResult, Module, Scope};
+use rhai::{
+    AST, Array, Dynamic, Engine, EvalAltResult, Module, Scope,
+    module_resolvers::StaticModuleResolver,
+};
 
-fn script_path() -> PathBuf {
+fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("chip-data-gen должен лежать внутри репозитория")
-        .join("chip-select.rhai")
+        .to_path_buf()
+}
+
+fn script_path() -> PathBuf {
+    repo_root().join("chip-select.rhai")
 }
 
 fn read_script() -> String {
     std::fs::read_to_string(script_path()).expect("не удалось прочитать chip-select.rhai")
 }
 
-/// Парсинг ~1600-строчного скрипта — основная стоимость прогона; компилируем
-/// один раз на вызывающий тест, а не при каждом обращении к `run_cascade_to`
-/// (для `cascade_reaches_every_chip_without_hanging` — 1438 раз).
-fn compile_script() -> AST {
-    Engine::new()
+/// Список чипов со штампом версий — тот файл, который хук импортирует первым.
+fn read_chip_list() -> String {
+    std::fs::read_to_string(repo_root().join("chip-data").join("chips.rhai"))
+        .expect("не удалось прочитать chip-data/chips.rhai")
+}
+
+/// Скрипт хука и таблицы, которые он импортирует из `chip-data/`.
+struct Script {
+    ast: AST,
+    modules: StaticModuleResolver,
+}
+
+/// Парсинг — основная стоимость прогона, а таблицы раскладок в `chip-data/`
+/// — это ~90 тысяч строк; поэтому и скрипт, и все его модули разбираются один
+/// раз на вызывающий тест, а не при каждом обращении к `run_cascade_to` (для
+/// `cascade_reaches_every_chip_without_hanging` — 1479 раз). Модули ложатся
+/// в резолвер под теми же путями, что пишет `import` (`chip-data/layout/f4`),
+/// так что выбор файла семейства проверяется тем же кодом хука.
+fn compile_script() -> Script {
+    let engine = Engine::new();
+    let ast = engine
         .compile(read_script())
-        .expect("chip-select.rhai не парсится")
+        .expect("chip-select.rhai не парсится");
+
+    let root = repo_root();
+    let mut modules = StaticModuleResolver::new();
+    let mut dirs = vec![root.join("chip-data")];
+    while let Some(dir) = dirs.pop() {
+        for entry in std::fs::read_dir(&dir).expect("не удалось прочитать chip-data/")
+        {
+            let path = entry.expect("элемент каталога").path();
+            if path.is_dir() {
+                dirs.push(path);
+                continue;
+            }
+            // Резервные копии редактора и прочий мусор рядом — не модули.
+            if path.extension().is_none_or(|ext| ext != "rhai") {
+                continue;
+            }
+            let module_ast = engine
+                .compile_file(path.clone())
+                .unwrap_or_else(|err| panic!("{} не парсится: {err}", path.display()));
+            let module = Module::eval_ast_as_new(Scope::new(), &module_ast, &engine)
+                .unwrap_or_else(|err| panic!("{} не исполняется: {err}", path.display()));
+            let key = path
+                .strip_prefix(&root)
+                .expect("модуль внутри репозитория")
+                .with_extension("")
+                .to_string_lossy()
+                .replace('\\', "/");
+            modules.insert(key, module);
+        }
+    }
+    Script { ast, modules }
 }
 
 type Vars = Rc<RefCell<HashMap<String, String>>>;
@@ -51,15 +105,18 @@ struct CascadeResult {
 
 /// Прогоняет уже скомпилированный chip-select.rhai один раз, ведя каскад к
 /// `target_suffix` (суффикс без "stm32", например "f407ve" или "l151c6-a").
-fn run_cascade_to(ast: &AST, target_suffix: &str) -> Result<CascadeResult, Box<EvalAltResult>> {
-    run_cascade_with(ast, target_suffix, &[])
+fn run_cascade_to(
+    script: &Script,
+    target_suffix: &str,
+) -> Result<CascadeResult, Box<EvalAltResult>> {
+    run_cascade_with(script, target_suffix, &[])
 }
 
 /// То же, но с заранее выставленными переменными — так проверяются ветки,
 /// которые в реальной генерации приходят из `[placeholders]` или `--define`
 /// (`ota`, `write_size`, `chip`).
 fn run_cascade_with(
-    ast: &AST,
+    script: &Script,
     target_suffix: &str,
     preset: &[(&str, &str)],
 ) -> Result<CascadeResult, Box<EvalAltResult>> {
@@ -79,6 +136,7 @@ fn run_cascade_with(
     // самый длинный каскад, иначе ограничение срабатывало бы на здоровом
     // скрипте.
     engine.set_max_operations(2_000_000);
+    engine.set_module_resolver(script.modules.clone());
     {
         let prints = prints.clone();
         engine.on_print(move |line| prints.borrow_mut().push(line.to_string()));
@@ -181,7 +239,7 @@ fn run_cascade_with(
     engine.register_static_module("file", file_module.into());
 
     let mut scope = Scope::new();
-    engine.run_ast_with_scope(&mut scope, ast)?;
+    engine.run_ast_with_scope(&mut scope, &script.ast)?;
 
     Ok(CascadeResult {
         vars: vars.borrow().clone(),
@@ -191,10 +249,10 @@ fn run_cascade_with(
     })
 }
 
-/// Полный список суффиксов из CHIPS в chip-select.rhai — читает тот же файл,
-/// что и сам хук, не дублирует данные руками.
+/// Полный список суффиксов из CHIPS — читает тот же файл, что импортирует
+/// сам хук, не дублирует данные руками.
 fn all_chip_suffixes() -> Vec<String> {
-    let script = read_script();
+    let script = read_chip_list();
     let begin = script.find("const CHIPS = [").expect("CHIPS не найден");
     let end = script[begin..].find("];").expect("конец CHIPS не найден") + begin;
     script[begin..end]
@@ -695,7 +753,7 @@ fn memory_layout_invariants_hold_for_every_chip() {
     );
 }
 
-/// Списки чипов в `chip-select.rhai` собраны из чип-фич конкретной версии
+/// Списки чипов в `chip-data/` собраны из чип-фич конкретной версии
 /// `embassy-stm32`. Связь «подняли версию — перегенерируйте» до появления
 /// штампа держалась только на памяти мейнтейнера, а поднимает версию обычно
 /// dependabot/renovate, и молча: списки при этом остались бы от старой версии,
@@ -706,11 +764,7 @@ fn memory_layout_invariants_hold_for_every_chip() {
 /// не дотягивается.
 #[test]
 fn generated_blocks_match_the_declared_embassy_version() {
-    let manifest_path = script_path()
-        .parent()
-        .expect("chip-select.rhai лежит в корне репозитория")
-        .join("crates-cross")
-        .join("Cargo.toml");
+    let manifest_path = repo_root().join("crates-cross").join("Cargo.toml");
     let manifest = std::fs::read_to_string(&manifest_path)
         .expect("не удалось прочитать crates-cross/Cargo.toml");
     let declared = manifest
@@ -724,8 +778,8 @@ fn generated_blocks_match_the_declared_embassy_version() {
 
     let expected = format!("// Источник: embassy-stm32 {declared} (crates-cross/Cargo.toml)");
     assert!(
-        read_script().contains(&expected),
-        "chip-select.rhai собран не под embassy-stm32 {declared} — перегенерируйте списки:\n\
+        read_chip_list().contains(&expected),
+        "chip-data/ собран не под embassy-stm32 {declared} — перегенерируйте списки:\n\
          cargo run --manifest-path chip-data-gen/Cargo.toml"
     );
 }
@@ -1396,10 +1450,11 @@ fn cpu_freq_boost_only_on_the_rm0468_line() {
     }
 }
 
-/// Ключи первого уровня таблицы `const NAME = #{ ... };` из `chip-select.rhai`:
-/// строки с отступом ровно в четыре пробела, начинающиеся с `"ключ":`.
+/// Ключи первого уровня таблицы `export const NAME = #{ ... };` из файла в
+/// `chip-data/`: строки с отступом ровно в четыре пробела, начинающиеся с
+/// `"ключ":`.
 fn table_keys(script: &str, name: &str) -> Vec<String> {
-    let header = format!("const {name} = #{{");
+    let header = format!("export const {name} = #{{");
     let begin = script
         .find(&header)
         .unwrap_or_else(|| panic!("{name} не найден"));
@@ -1423,12 +1478,30 @@ fn table_keys(script: &str, name: &str) -> Vec<String> {
 /// покрывают лишь часть чипов.
 #[test]
 fn table_keys_are_a_subset_of_chips() {
-    let script = read_script();
+    let data = repo_root().join("chip-data");
+    let read = |path: PathBuf| {
+        std::fs::read_to_string(&path)
+            .unwrap_or_else(|err| panic!("не удалось прочитать {}: {err}", path.display()))
+    };
+    let layouts: Vec<String> = std::fs::read_dir(data.join("layout"))
+        .expect("не удалось прочитать chip-data/layout")
+        .map(|entry| entry.expect("элемент каталога").path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "rhai"))
+        .map(read)
+        .collect();
     let chips: std::collections::HashSet<String> = all_chip_suffixes().into_iter().collect();
     // Легитимных исключений нет: если появятся, перечислить здесь явно, с причиной.
     let exceptions: &[(&str, &str)] = &[];
-    for table in ["MEMORY_LAYOUT", "BANK_MODE", "WATCHDOG", "PACKAGE_CHOICES"] {
-        let keys = table_keys(&script, table);
+    for (table, files) in [
+        ("MEMORY_LAYOUT", layouts),
+        ("BANK_MODE", vec![read(data.join("bank_mode.rhai"))]),
+        ("WATCHDOG", vec![read(data.join("watchdog.rhai"))]),
+        ("PACKAGE_CHOICES", vec![read(data.join("packages.rhai"))]),
+    ] {
+        let keys: Vec<String> = files
+            .iter()
+            .flat_map(|script| table_keys(script, table))
+            .collect();
         assert!(
             keys.len() >= 20,
             "{table}: подозрительно мало ключей: {}",

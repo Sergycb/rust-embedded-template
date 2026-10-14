@@ -7,20 +7,11 @@ use std::{
 
 use anyhow::{Context, bail};
 
-const CHIPS_BEGIN: &str = "// BEGIN GENERATED CHIP LIST";
-const CHIPS_END: &str = "// END GENERATED CHIP LIST";
-const PACKAGES_BEGIN: &str = "// BEGIN GENERATED PACKAGE CHOICES";
-const PACKAGES_END: &str = "// END GENERATED PACKAGE CHOICES";
-const MEMORY_BEGIN: &str = "// BEGIN GENERATED MEMORY LAYOUT";
-const MEMORY_END: &str = "// END GENERATED MEMORY LAYOUT";
-const BANKS_BEGIN: &str = "// BEGIN GENERATED BANK MODE";
-const BANKS_END: &str = "// END GENERATED BANK MODE";
-const WATCHDOG_BEGIN: &str = "// BEGIN GENERATED WATCHDOG PERIPHERAL";
-const WATCHDOG_END: &str = "// END GENERATED WATCHDOG PERIPHERAL";
-const BOOST_BEGIN: &str = "// BEGIN GENERATED CPU_FREQ_BOOST";
-const BOOST_END: &str = "// END GENERATED CPU_FREQ_BOOST";
-const BANK_SWITCH_BEGIN: &str = "// BEGIN GENERATED BANK SWITCH";
-const BANK_SWITCH_END: &str = "// END GENERATED BANK SWITCH";
+/// Каталог с таблицами, которые `chip-select.rhai` подключает через `import`.
+/// Пишется целиком при каждом прогоне — руками там ничего не правится.
+const DATA_DIR: &str = "chip-data";
+/// Первая строка каждого файла в [`DATA_DIR`].
+const DATA_HEADER: &str = "// Сгенерировано chip-data-gen, руками не править: cargo run --manifest-path chip-data-gen/Cargo.toml\n";
 /// Семейства, у которых двухбанковый режим стоит с завода, — по версии блока
 /// FLASH в метаданных, с именем варианта регистров option bytes в
 /// `crates-cross/bsp/src/banks.rs`. Заводское значение — знание документации, а
@@ -137,7 +128,7 @@ fn main() -> anyhow::Result<()> {
     // бы нужное число чипов с плейсхолдером `memory.x`, и единственным следом
     // осталась бы строка сводки ниже — цифра, на которую никто не смотрит.
     // Считаем до печати: упавший прогон не должен успеть переписать
-    // `chip-select.rhai`.
+    // `chip-data/`.
     let without_layout: Vec<&str> = suffixes
         .iter()
         .filter(|suffix| !memory_layouts.contains_key(*suffix))
@@ -188,37 +179,31 @@ fn main() -> anyhow::Result<()> {
         with_external,
     );
 
-    let rhai_path = repo_root.join("chip-select.rhai");
     let stamp = format_source_stamp(&declared_embassy_version(&repo_root)?, &probe_rs_version()?);
-    write_generated_blocks(
-        &rhai_path,
-        &[
-            GeneratedBlock::new(CHIPS_BEGIN, CHIPS_END, format_chip_list(&suffixes, &stamp)),
-            GeneratedBlock::new(
-                PACKAGES_BEGIN,
-                PACKAGES_END,
-                format_package_choices(&package_choices),
-            ),
-            GeneratedBlock::new(BANKS_BEGIN, BANKS_END, format_bank_modes(&bank_modes)),
-            GeneratedBlock::new(WATCHDOG_BEGIN, WATCHDOG_END, format_watchdogs(&watchdogs)),
-            GeneratedBlock::new(
-                BOOST_BEGIN,
-                BOOST_END,
-                format_cpu_freq_boost(&cpu_freq_boost),
-            ),
-            GeneratedBlock::new(
-                BANK_SWITCH_BEGIN,
-                BANK_SWITCH_END,
-                format_bank_switch(&bank_switch),
-            ),
-            GeneratedBlock::new(
-                MEMORY_BEGIN,
-                MEMORY_END,
-                format_memory_layouts(&memory_layouts),
-            ),
-        ],
-    )?;
-    println!("chip-select.rhai обновлён.");
+    let mut files = vec![
+        ("chips.rhai".to_owned(), format_chip_list(&suffixes, &stamp)),
+        (
+            "packages.rhai".to_owned(),
+            format_package_choices(&package_choices),
+        ),
+        ("bank_mode.rhai".to_owned(), format_bank_modes(&bank_modes)),
+        ("watchdog.rhai".to_owned(), format_watchdogs(&watchdogs)),
+        (
+            "cpu_freq_boost.rhai".to_owned(),
+            format_cpu_freq_boost(&cpu_freq_boost),
+        ),
+        (
+            "bank_switch.rhai".to_owned(),
+            format_bank_switch(&bank_switch),
+        ),
+    ];
+    files.extend(
+        format_memory_layouts(&memory_layouts)
+            .into_iter()
+            .map(|(family, body)| (format!("layout/{family}.rhai"), body)),
+    );
+    write_data_dir(&repo_root.join(DATA_DIR), &files)?;
+    println!("{DATA_DIR}/ обновлён.");
     Ok(())
 }
 
@@ -2069,17 +2054,13 @@ fn push_field(out: &mut String, key: &str, value: &str) {
     out.push_str(&format!("        \"{key}\": \"{value}\",\n"));
 }
 
-fn format_memory_layouts(layouts: &BTreeMap<&str, MemoryLayout>) -> String {
-    let with_ota = layouts.values().filter(|m| m.ota.is_ok()).count();
-    let mut out = String::new();
-    out.push_str(MEMORY_BEGIN);
-    out.push_str(&format!(
-        " ({} шт., из них {with_ota} с OTA, cargo run --manifest-path \
-         chip-data-gen/Cargo.toml)\n",
-        layouts.len(),
-    ));
-    out.push_str("const MEMORY_LAYOUT = #{\n");
+/// Раскладки по файлам семейств: ключ — [`layout_family`], значение — текст
+/// `chip-data/layout/<ключ>.rhai`. Одной таблицей это 89 тысяч строк, а хуку
+/// нужна одна запись — он импортирует только файл своего семейства.
+fn format_memory_layouts(layouts: &BTreeMap<&str, MemoryLayout>) -> BTreeMap<String, String> {
+    let mut files: BTreeMap<String, String> = BTreeMap::new();
     for (suffix, m) in layouts {
+        let mut out = String::new();
         out.push_str(&format!("    \"{suffix}\": #{{\n"));
         push_field(&mut out, "flash_origin", &format_addr(m.flash_origin));
         push_field(&mut out, "flash_length", &format_size(m.flash_length));
@@ -2231,9 +2212,21 @@ fn format_memory_layouts(layouts: &BTreeMap<&str, MemoryLayout>) -> String {
         push_external(&mut out, "ext_", &m.external);
         push_external(&mut out, "ext_cfg_", &m.external_config);
         out.push_str("    },\n");
+        files
+            .entry(layout_family(suffix).to_owned())
+            .or_insert_with(|| format!("{DATA_HEADER}export const MEMORY_LAYOUT = #{{\n"))
+            .push_str(&out);
     }
-    out.push_str("};\n");
-    out
+    for body in files.values_mut() {
+        body.push_str("};\n");
+    }
+    files
+}
+
+/// Файл раскладок, в котором лежит чип: первые два символа суффикса (`f4`,
+/// `h7`, `wb`). Тот же ключ хук вычисляет в `import` — менять только вместе.
+fn layout_family(suffix: &str) -> &str {
+    &suffix[..2]
 }
 
 /// Поля одного набора `ExternalOta` с префиксом `prefix`. Внешние значения —
@@ -2269,17 +2262,15 @@ fn push_external(out: &mut String, prefix: &str, external: &Result<ExternalOta, 
 
 /// Только чипы, у которых блок сторожевого таймера зовётся НЕ `IWDG` — для
 /// остальных хук подставляет [`DEFAULT_WATCHDOG`]. Полная таблица на 1533
-/// чипа повторяла бы одно и то же слово полутора тысячами строк рядом с уже
-/// сорока девятью тысячами сгенерированных.
+/// чипа повторяла бы одно и то же слово полутора тысячами строк.
 fn format_watchdogs(watchdogs: &BTreeMap<&str, String>) -> String {
     let mut out = String::new();
-    out.push_str(WATCHDOG_BEGIN);
+    out.push_str(DATA_HEADER);
     out.push_str(&format!(
-        " ({} шт., остальным — {DEFAULT_WATCHDOG}; cargo run --manifest-path \
-         chip-data-gen/Cargo.toml)\n",
+        "// {} шт., остальным — {DEFAULT_WATCHDOG}\n",
         watchdogs.len()
     ));
-    out.push_str("const WATCHDOG = #{\n");
+    out.push_str("export const WATCHDOG = #{\n");
     for (suffix, name) in watchdogs {
         out.push_str(&format!("    \"{suffix}\": \"{name}\",\n"));
     }
@@ -2292,12 +2283,9 @@ fn format_watchdogs(watchdogs: &BTreeMap<&str, String>) -> String {
 /// принадлежность.
 fn format_cpu_freq_boost(chips: &[&str]) -> String {
     let mut out = String::new();
-    out.push_str(BOOST_BEGIN);
-    out.push_str(&format!(
-        " ({} шт., cargo run --manifest-path chip-data-gen/Cargo.toml)\n",
-        chips.len()
-    ));
-    out.push_str("const CPU_FREQ_BOOST = [\n");
+    out.push_str(DATA_HEADER);
+    out.push_str(&format!("// {} шт.\n", chips.len()));
+    out.push_str("export const CPU_FREQ_BOOST = [\n");
     for suffix in chips {
         out.push_str(&format!("    \"{suffix}\",\n"));
     }
@@ -2342,12 +2330,9 @@ fn bank_switch_bits<'a>(
 /// регистров (см. [`FACTORY_DUAL_BANK`]) и битом режима через двоеточие.
 fn format_bank_switch(chips: &BTreeMap<&str, (&'static str, u8)>) -> String {
     let mut out = String::new();
-    out.push_str(BANK_SWITCH_BEGIN);
-    out.push_str(&format!(
-        " ({} шт., cargo run --manifest-path chip-data-gen/Cargo.toml)\n",
-        chips.len()
-    ));
-    out.push_str("const BANK_SWITCH = #{\n");
+    out.push_str(DATA_HEADER);
+    out.push_str(&format!("// {} шт.\n", chips.len()));
+    out.push_str("export const BANK_SWITCH = #{\n");
     for (suffix, (variant, bit)) in chips {
         out.push_str(&format!("    \"{suffix}\": \"{variant}:{bit}\",\n"));
     }
@@ -2360,12 +2345,9 @@ fn format_bank_switch(chips: &BTreeMap<&str, (&'static str, u8)>) -> String {
 /// пустую строку.
 fn format_bank_modes(modes: &BTreeMap<&str, &'static str>) -> String {
     let mut out = String::new();
-    out.push_str(BANKS_BEGIN);
-    out.push_str(&format!(
-        " ({} шт., cargo run --manifest-path chip-data-gen/Cargo.toml)\n",
-        modes.len()
-    ));
-    out.push_str("const BANK_MODE = #{\n");
+    out.push_str(DATA_HEADER);
+    out.push_str(&format!("// {} шт.\n", modes.len()));
+    out.push_str("export const BANK_MODE = #{\n");
     for (suffix, mode) in modes {
         out.push_str(&format!("    \"{suffix}\": \"{mode}\",\n"));
     }
@@ -2461,12 +2443,10 @@ fn format_source_stamp(embassy_version: &str, probe_rs_version: &str) -> String 
 
 fn format_chip_list(suffixes: &[&str], stamp: &str) -> String {
     let mut out = String::new();
-    out.push_str(CHIPS_BEGIN);
-    out.push_str(" (");
-    out.push_str(&suffixes.len().to_string());
-    out.push_str(" шт., cargo run --manifest-path chip-data-gen/Cargo.toml)\n");
+    out.push_str(DATA_HEADER);
+    out.push_str(&format!("// {} шт.\n", suffixes.len()));
     out.push_str(stamp);
-    out.push_str("const CHIPS = [\n");
+    out.push_str("export const CHIPS = [\n");
     for suffix in suffixes {
         out.push_str("    \"");
         out.push_str(suffix);
@@ -2478,11 +2458,9 @@ fn format_chip_list(suffixes: &[&str], stamp: &str) -> String {
 
 fn format_package_choices(choices: &BTreeMap<&str, Vec<String>>) -> String {
     let mut out = String::new();
-    out.push_str(PACKAGES_BEGIN);
-    out.push_str(" (");
-    out.push_str(&choices.len().to_string());
-    out.push_str(" шт., cargo run --manifest-path chip-data-gen/Cargo.toml)\n");
-    out.push_str("const PACKAGE_CHOICES = #{\n");
+    out.push_str(DATA_HEADER);
+    out.push_str(&format!("// {} шт.\n", choices.len()));
+    out.push_str("export const PACKAGE_CHOICES = #{\n");
     for (suffix, candidates) in choices {
         out.push_str("    \"");
         out.push_str(suffix);
@@ -2501,96 +2479,74 @@ fn format_package_choices(choices: &BTreeMap<&str, Vec<String>>) -> String {
     out
 }
 
-/// Сгенерированный блок `chip-select.rhai`: маркеры (входят в заменяемый
-/// текст) и новое содержимое между ними.
-struct GeneratedBlock {
-    begin: &'static str,
-    end: &'static str,
-    body: String,
-}
-
-impl GeneratedBlock {
-    fn new(begin: &'static str, end: &'static str, body: String) -> Self {
-        Self { begin, end, body }
-    }
-}
-
-/// Перезаписывает все сгенерированные блоки `chip-select.rhai` ОДНОЙ записью.
+/// Перезаписывает каталог `dir` ровно набором `files` (путь относительно
+/// `dir`, текст).
 ///
-/// Раньше блоков было пять, и каждый перезаписывался сам по себе: пять чтений
-/// 50-килобайтного файла и пять записей. Хуже не скорость — прерывание между
-/// любыми двумя из них оставляло файл с новым списком чипов и старой раскладкой
-/// памяти, то есть ровно то состояние, в котором всё выглядит правдоподобно и
-/// ничего не работает. Штамп версии в списке чипов такой разрыв не ловит: он
-/// проверяет, что строка есть в файле, а не что блоки одного поколения.
-///
-/// Запись атомарна: результат пишется во временный файл РЯДОМ (тот же каталог,
-/// значит и та же файловая система) и переименовывается поверх оригинала.
-/// `fs::write` обрезал бы файл сразу, и сбой посреди записи оставил бы
-/// `chip-select.rhai` обрезанным. `fs::rename` заменяет существующий файл и на
-/// Windows (`MoveFileExW` с `MOVEFILE_REPLACE_EXISTING`); откажет он только если
-/// файл открыт без share-delete — тогда оригинал остаётся нетронутым.
-fn write_generated_blocks(rhai_path: &Path, blocks: &[GeneratedBlock]) -> anyhow::Result<()> {
-    let original = fs::read_to_string(rhai_path)
-        .with_context(|| format!("не удалось прочитать {}", rhai_path.display()))?;
-    let updated = splice_blocks(&original, blocks, &rhai_path.display().to_string())?;
-
-    let mut tmp_name = rhai_path.as_os_str().to_owned();
-    tmp_name.push(".tmp");
-    let tmp_path = PathBuf::from(tmp_name);
-    fs::write(&tmp_path, updated)
-        .with_context(|| format!("не удалось записать {}", tmp_path.display()))?;
-    fs::rename(&tmp_path, rhai_path).map_err(|err| {
-        // Временный файл не должен остаться в репозитории; ошибка удаления
-        // вторична — главная причина уже у нас в руках.
-        drop(fs::remove_file(&tmp_path));
-        anyhow::Error::new(err).context(format!(
-            "не удалось заменить {} временным файлом {}",
-            rhai_path.display(),
-            tmp_path.display()
-        ))
-    })
-}
-
-/// Подставляет тела блоков в `original`. `name` — только для сообщений об
-/// ошибках. Диапазоны блоков не должны пересекаться: иначе `replace_range`
-/// паниковал бы на сдвинутых границах вместо понятной ошибки.
-fn splice_blocks(original: &str, blocks: &[GeneratedBlock], name: &str) -> anyhow::Result<String> {
-    // Смещения считаются по исходному тексту, а подстановки идут с конца файла к
-    // началу — иначе уже сдвинутый блок сбил бы смещения следующего.
-    let mut splices: Vec<(usize, usize, &str, &str)> = blocks
-        .iter()
-        .map(|block| {
-            let begin = original
-                .find(block.begin)
-                .with_context(|| format!("{} не найден в {name}", block.begin))?;
-            let end = original
-                .find(block.end)
-                .with_context(|| format!("{} не найден в {name}", block.end))?;
-            anyhow::ensure!(
-                end >= begin,
-                "{} стоит раньше {} в {name}",
-                block.end,
-                block.begin,
-            );
-            Ok((begin, end, block.body.as_str(), block.begin))
-        })
-        .collect::<anyhow::Result<_>>()?;
-    splices.sort_by_key(|(begin, ..)| *begin);
-    for pair in splices.windows(2) {
-        let (_, prev_end, _, prev_marker) = pair[0];
-        let (next_begin, _, _, next_marker) = pair[1];
-        anyhow::ensure!(
-            prev_end <= next_begin,
-            "блоки {prev_marker} и {next_marker} пересекаются в {name}"
-        );
+/// Файлы одного поколения: новый список чипов при старой раскладке памяти —
+/// ровно то состояние, в котором всё выглядит правдоподобно и ничего не
+/// работает. Поэтому всё пишется в соседний `<dir>.tmp` и подменяет `dir`
+/// двумя переименованиями каталогов; сбой посреди записи оставляет старый
+/// `dir` нетронутым. Между переименованиями `dir` на мгновение нет вовсе, и
+/// упавший там прогон хук заметит громко (`import` не найдёт модуль), а не
+/// молча. Каталог пишется целиком ещё и затем, чтобы не оставалось файлов
+/// семейств, которых больше нет.
+fn write_data_dir(dir: &Path, files: &[(String, String)]) -> anyhow::Result<()> {
+    let with_suffix = |suffix: &str| {
+        let mut name = dir.as_os_str().to_owned();
+        name.push(suffix);
+        PathBuf::from(name)
+    };
+    let tmp = with_suffix(".tmp");
+    let old = with_suffix(".old");
+    for stale in [&tmp, &old] {
+        if stale.exists() {
+            fs::remove_dir_all(stale)
+                .with_context(|| format!("не удалось удалить {}", stale.display()))?;
+        }
     }
 
-    let mut updated = original.to_owned();
-    for (begin, end, body, _) in splices.into_iter().rev() {
-        updated.replace_range(begin..end, body);
+    for (relative, body) in files {
+        let path = tmp.join(relative);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("не удалось создать {}", parent.display()))?;
+        }
+        fs::write(&path, body)
+            .with_context(|| format!("не удалось записать {}", path.display()))?;
     }
-    Ok(updated)
+
+    if dir.exists() {
+        fs::rename(dir, &old).with_context(|| {
+            format!(
+                "не удалось переименовать {} в {}",
+                dir.display(),
+                old.display()
+            )
+        })?;
+    }
+    if let Err(err) = fs::rename(&tmp, dir) {
+        // Старое поколение возвращается на место: иначе оно осталось бы только
+        // в `.old`, который следующий прогон первым же делом удаляет.
+        let restored = old.exists() && fs::rename(&old, dir).is_ok();
+        return Err(anyhow::Error::new(err).context(format!(
+            "не удалось переименовать {} в {} (старый каталог {})",
+            tmp.display(),
+            dir.display(),
+            if restored {
+                "возвращён на место".to_owned()
+            } else {
+                format!("остался в {}", old.display())
+            },
+        )));
+    }
+    // Новое поколение уже на месте — недоудалённый `.old` не ошибка прогона,
+    // его снесёт следующий.
+    if old.exists()
+        && let Err(err) = fs::remove_dir_all(&old)
+    {
+        eprintln!("не удалось удалить {}: {err}", old.display());
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -3282,83 +3238,48 @@ pub static METADATA: Metadata = Metadata {
         assert!(checked >= 5, "манифесты шаблона не нашлись: {checked}");
     }
 
-    const RHAI_SAMPLE: &str =
-        "head\n// BEGIN A\nold a\n// END A\nmid\n// BEGIN B\nold b\n// END B\ntail\n";
-
-    fn block(begin: &'static str, end: &'static str, body: &str) -> GeneratedBlock {
-        GeneratedBlock::new(begin, end, body.to_string())
-    }
-
-    /// Подстановка заменяет текст от начала блока до его END-маркера (маркер
-    /// остаётся) и не зависит от порядка блоков в списке.
+    /// Каталог заменяется целиком: новые файлы на месте, файл, которого в
+    /// новом наборе нет, исчез, временных каталогов не осталось.
     #[test]
-    fn blocks_are_spliced_in_any_order() {
-        let expected =
-            "head\n// BEGIN A\nnew a\n// END A\nmid\n// BEGIN B\nnew b\n// END B\ntail\n";
-        let a = || block("// BEGIN A", "// END A", "// BEGIN A\nnew a\n");
-        let b = || block("// BEGIN B", "// END B", "// BEGIN B\nnew b\n");
+    fn data_dir_is_replaced_as_a_whole() {
+        let root = std::env::temp_dir().join(format!("chip-data-gen-write-{}", std::process::id()));
+        drop(fs::remove_dir_all(&root));
+        let dir = root.join("chip-data");
+        let file = |relative: &str, body: &str| (relative.to_owned(), body.to_owned());
+
+        write_data_dir(
+            &dir,
+            &[file("chips.rhai", "old"), file("layout/f1.rhai", "f1")],
+        )
+        .expect("первая запись");
+        write_data_dir(
+            &dir,
+            &[file("chips.rhai", "new"), file("layout/f4.rhai", "f4")],
+        )
+        .expect("вторая запись");
+
         assert_eq!(
-            splice_blocks(RHAI_SAMPLE, &[a(), b()], "t").expect("склейка"),
-            expected
+            fs::read_to_string(dir.join("chips.rhai")).expect("chips"),
+            "new"
         );
         assert_eq!(
-            splice_blocks(RHAI_SAMPLE, &[b(), a()], "t").expect("склейка"),
-            expected
+            fs::read_to_string(dir.join("layout/f4.rhai")).expect("f4"),
+            "f4"
         );
-    }
+        assert!(
+            !dir.join("layout/f1.rhai").exists(),
+            "устаревший файл остался"
+        );
+        assert!(
+            !root.join("chip-data.tmp").exists(),
+            "временный каталог остался"
+        );
+        assert!(
+            !root.join("chip-data.old").exists(),
+            "старый каталог остался"
+        );
 
-    /// Пересекающиеся диапазоны — понятная ошибка, а не паника `replace_range`.
-    #[test]
-    fn overlapping_blocks_are_an_error_not_a_panic() {
-        let text = "// BEGIN A\n// BEGIN B\n// END A\n// END B\n";
-        let err = splice_blocks(
-            text,
-            &[
-                block("// BEGIN A", "// END A", "x"),
-                block("// BEGIN B", "// END B", "y"),
-            ],
-            "t",
-        )
-        .expect_err("блоки пересекаются");
-        assert!(err.to_string().contains("пересекаются"), "{err:#}");
-
-        let err = splice_blocks(
-            RHAI_SAMPLE,
-            &[
-                block("// BEGIN A", "// END B", "x"),
-                block("// BEGIN B", "// END B", "y"),
-            ],
-            "t",
-        )
-        .expect_err("вложенные блоки пересекаются");
-        assert!(err.to_string().contains("пересекаются"), "{err:#}");
-    }
-
-    /// Запись идёт через временный файл: результат на месте, временного файла
-    /// не осталось; при ошибке склейки оригинал не тронут.
-    #[test]
-    fn generated_blocks_are_written_via_rename_and_failure_keeps_the_original() {
-        let dir = std::env::temp_dir().join(format!("chip-data-gen-write-{}", std::process::id()));
-        fs::create_dir_all(&dir).expect("временный каталог");
-        let path = dir.join("chip-select.rhai");
-        let tmp = dir.join("chip-select.rhai.tmp");
-        fs::write(&path, RHAI_SAMPLE).expect("исходный файл");
-
-        write_generated_blocks(
-            &path,
-            &[block("// BEGIN A", "// END A", "// BEGIN A\nnew\n")],
-        )
-        .expect("запись");
-        let written = fs::read_to_string(&path).expect("чтение");
-        assert!(written.contains("// BEGIN A\nnew\n// END A"), "{written}");
-        assert!(!tmp.exists(), "временный файл остался");
-
-        write_generated_blocks(&path, &[block("// BEGIN X", "// END X", "x")])
-            .expect_err("маркера нет");
-        assert_eq!(fs::read_to_string(&path).expect("чтение"), written);
-        assert!(!tmp.exists(), "временный файл остался");
-
-        drop(fs::remove_dir_all(&dir));
+        drop(fs::remove_dir_all(&root));
     }
 
     #[test]
