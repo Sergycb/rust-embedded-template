@@ -1,10 +1,8 @@
 // pre-хук: каскадный посимвольный выбор STM32 (семейство -> линейка -> дальше
-// по символу), подставляет chip_feature/chip/cpu/target/dual_core/bank_mode и,
-// где хватает данных, write_size/ota + оба memory.x (см. MEMORY_LAYOUT ниже —
-// не для всех чипов, для остальных memory.x остаётся плейсхолдером на ручное
-// заполнение, как раньше). Не init-хук — init выполняется ДО того, как
-// cargo-generate резолвит `--define` в liquid-объект, поэтому
-// `variable::is_set("chip_feature")` ниже не увидел бы значение с CLI
+// по символу), подставляет chip_feature/chip/cpu/target/dual_core/bank_mode,
+// write_size/ota и оба memory.x (см. MEMORY_LAYOUT ниже). Не init-хук — init
+// выполняется ДО того, как cargo-generate резолвит `--define` в liquid-объект,
+// поэтому `variable::is_set("chip_feature")` ниже не увидел бы значение с CLI
 // (проверено эмпирически).
 //
 // Таблицы чипов лежат в chip-data/ (подключаются `import` ниже) и перегенерируются:
@@ -395,9 +393,6 @@ if !CPU_FREQ_BOOST.contains(suffix) {
 //   "false" — не помещается (слишком мелкий flash или слишком крупные сектора,
 //             причина в "note"): один образ на весь flash, crates-cross/boot из
 //             сборки исключается.
-// Отсутствие ключа для чипа — не ошибка: считать было не из чего (нет
-// непрерывной flash/RAM-цепочки от базового адреса), memory.x остаётся
-// плейсхолдером на ручное заполнение, как раньше.
 // "write_size" — const generic BootLoader::prepare::<_,_,_,N>, размер буфера
 // подкачки (НЕ PAGE_SIZE: тот embassy-boot вычисляет сам из ERASE_SIZE флеша).
 // Имя плейсхолдера осталось прежним ради совместимости с проектами, которые
@@ -408,6 +403,13 @@ if !CPU_FREQ_BOOST.contains(suffix) {
 // нужна одна запись.
 import "chip-data/layout/" + suffix.sub_string(0, 2) as layout_data;
 const MEMORY_LAYOUT = layout_data::MEMORY_LAYOUT;
+// Запись есть у каждого чипа из CHIPS: без неё chip-data-gen падает, не
+// записав каталог. Нет записи — значит хук и chip-data/ разошлись (другое
+// правило семейства у `layout_family`, недоперегенерированный каталог).
+if !MEMORY_LAYOUT.contains(suffix) {
+    abort("chip-select: в chip-data/layout/ нет раскладки для \"" + suffix + "\" — "
+        + "перегенерируйте: `cargo run --manifest-path chip-data-gen/Cargo.toml`");
+}
 
 // Чем читается СТЁРТАЯ страница флеша. У подавляющего большинства семейств
 // это 0xFF, а у 189 чипов из 1533 — 0x00 (их NVM стирается в ноль: страница
@@ -428,16 +430,7 @@ const MEMORY_LAYOUT = layout_data::MEMORY_LAYOUT;
 // другом префиксе, оба есть в каскаде, и оба получали неработающие OTA и
 // раздел настроек. Эвристика по имени рядом с метаданными — это второй
 // источник правды, и он ошибся ровно так, как такие источники и ошибаются.
-let erase_zero = if MEMORY_LAYOUT.contains(suffix) {
-    MEMORY_LAYOUT[suffix]["erase_zero"] == "true"
-} else {
-    // Сюда попадают только чипы, для которых раскладка не посчиталась вовсе,
-    // — сейчас таких нет (MEMORY_LAYOUT покрывает весь CHIPS). Останется без
-    // ответа — молча соврать нельзя ни в одну сторону, поэтому берём прежнюю
-    // эвристику и говорим вслух.
-    print("erase_zero: для " + suffix + " нет записи в MEMORY_LAYOUT, признак взят по имени чипа — проверьте erase_value в stm32-metapac");
-    suffix.starts_with("l0") || suffix.starts_with("l1")
-};
+let erase_zero = MEMORY_LAYOUT[suffix]["erase_zero"] == "true";
 variable::set("erase_zero", if erase_zero { "true" } else { "false" });
 
 // Ответ на вопрос про OTA из [placeholders] (или `--define ota=no`). Дальше по
@@ -533,7 +526,7 @@ if !wants_graph {
 // меньше EEPROM_MIN; закомментированные строки (окна внешних шин, алиасы)
 // начинаются с `/*`, а не с имени.
 let eeprom_size = 0;
-if MEMORY_LAYOUT.contains(suffix) && MEMORY_LAYOUT[suffix].contains("extra_regions") {
+if MEMORY_LAYOUT[suffix].contains("extra_regions") {
     for line in MEMORY_LAYOUT[suffix]["extra_regions"] {
         if line.starts_with("    EEPROM") {
             eeprom_size += size_in_bytes(line.split("LENGTH = ")[1]);
@@ -618,62 +611,6 @@ if variable::is_set("write_size") {
     // Раздел приложения здесь задаёт человек, значит и помещается ли в него
     // граф — знает только он. Ответ проходит как есть; не влезет — скажет
     // линкер.
-    variable::set("graph", if wants_graph { "true" } else { "false" });
-} else if !MEMORY_LAYOUT.contains(suffix) {
-    // Считать было не из чего (нет непрерывной flash/RAM-цепочки от базового
-    // адреса). memory.x остаётся плейсхолдером, но write_size всё равно
-    // должен быть хоть каким-то значением: без него `{{write_size}}` в
-    // crates-cross/boot/src/main.rs не подставится вовсе.
-    print("memory.x: для " + suffix + " раскладка не считается, заполните memory.x вручную");
-    variable::set("write_size", "2048");
-    // Пусто — «размер страницы неизвестен», см. ветку выше.
-    variable::set("page_size", "");
-    // Страница цельного `Flash` — по той же причине, что и веткой выше.
-    variable::set("state_erase_size", "embassy_stm32::flash::MAX_ERASE_SIZE");
-    if wants_ota && !wants_ext_ota {
-        print("BOOTLOADER_STATE: страница раздела — сектор всего чипа (MAX_ERASE_SIZE); если STATE");
-        print("  лежит в более мелком секторе (F2/F4/F7), впишите его размер в STATE_ERASE_SIZE");
-        print("  в crates-cross/boot/src/main.rs и crates-cross/bsp/src/ota.rs, иначе паника при старте");
-    }
-    // Страница обмена с внешними разделами — по той же причине, что веткой выше.
-    variable::set("ext_page_size", "4_096");
-    if wants_ota && wants_ext_ota {
-        print("ota=external: страница обмена EXT_PAGE_SIZE в crates-cross/boot/src/main.rs — 4 KiB;");
-        print("  впишите max(сектор чипа, стирание драйвера) и сделайте ACTIVE кратным ей");
-    }
-    variable::set("ota", if wants_ota { "true" } else { "false" });
-    variable::set("ota_store", if wants_ext_ota { "external" } else { "internal" });
-    // Разкладку здесь пишет человек: DFU через регион банка 2 включает он сам.
-    variable::set("dfu_bank", "false");
-    if !wants_ota {
-        file::delete("crates-cross/boot");
-        file::delete("crates-cross/bsp/src/ota.rs");
-        file::delete("docs/modules/bsp-ota.md");
-        // Релизу по тегу без OTA нечего выкладывать: `app.bin` делается
-        // только там, где есть раздел DFU. Тело workflow и так под
-        // Liquid-условием, но пустой файл в .github/workflows сбивал бы с
-        // толку — GitHub показывал бы его в списке рабочих процессов.
-        file::delete(".github/workflows/release.yml");
-    }
-    // По той же причине, что и веткой выше: границы раздела во флеше берутся из
-    // memory.x, а его тут никто не посчитал. Внешней флеши это не мешает (а
-    // про EEPROM без раскладки чипа ничего не известно).
-    if wants_external {
-        variable::set("config", "true");
-        variable::set("config_store", "external");
-    } else {
-        variable::set("config", "false");
-        variable::set("config_store", "none");
-        if wants_config {
-            print("Раздел настроек не выделен: раскладка для этого чипа не считается");
-        }
-        file::delete("crates-cross/bsp/src/config.rs");
-    }
-    variable::set("shared_flash", if wants_ota && !wants_ext_ota { "true" } else { "false" });
-    variable::set("signed", if wants_signed { "true" } else { "false" });
-    // Раздел приложения здесь задаёт человек, значит и помещается ли в него
-    // граф — знает только он. Оставляем ответ как есть; если не влезет, линкер
-    // скажет об этом прямо.
     variable::set("graph", if wants_graph { "true" } else { "false" });
 } else {
     let m = MEMORY_LAYOUT[suffix];
