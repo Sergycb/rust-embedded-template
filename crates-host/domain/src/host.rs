@@ -71,31 +71,20 @@ pub const BACKOFF: BackoffPolicy = BackoffPolicy {
 /// служит любой принятый кадр.
 pub const MAX_LOST_IN_A_ROW: u8 = 32;
 
-/// Что узлу нужно на входе. Строит compose-site из полей платы и
-/// обработчика приложения, подставляя их типы аргументами фрагмента:
-///
-/// ```ignore
-/// fragments: [::domain::HOST_FRAG<HostLink, ::domain::host::Service> as HOST
-///                 = ::domain::host::HostWiring { link: HostLink::new(board.serial, FRAME.init([0; 262])),
-///                                                service: ::domain::host::Service::new("1.0.0"),
-///                                                rx: RX.init([0; 258]), tx: TX.init([0; 256]) }];
-/// ```
-///
-/// Буферы — `&'static mut`, а не массивы в узле: размер сообщения задаёт
-/// схема проекта, а не узел.
-#[derive(Debug)]
-pub struct HostWiring<L, S> {
-    /// Кадровый канал к хосту.
-    pub link: L,
-    /// Обработчик сообщений приложения.
-    pub service: S,
-    /// Буфер приёма: самый длинный запрос и то, что канал кладёт туда
-    /// сверх него (`adapters::cobs::Cobs::rx_len` — ещё 2 байта CRC).
-    pub rx: &'static mut [u8],
-    /// Буфер закодированного ответа: не меньше самого длинного ответа
-    /// (`MAX_SIZE` сообщения ответа, если схема его ограничивает).
-    pub tx: &'static mut [u8],
-}
+// Вход узла — `HostWiring`: структуру эмитит сам фрагмент (`boot: …
+// struct`), по полю на каждый слот, читающий `inputs.<поле>`. Строит её
+// compose-site из полей платы и обработчика, подставляя их типы
+// аргументами фрагмента:
+//
+// ```ignore
+// fragments: [::domain::HOST_FRAG<HostLink, ::domain::host::Service> as HOST
+//                 = ::domain::host::HostWiring { link: HostLink::new(board.serial, FRAME.init([0; 262])),
+//                                                service: ::domain::host::Service::new("1.0.0"),
+//                                                rx: RX.init([0; 258]), tx: TX.init([0; 256]) }];
+// ```
+//
+// Буферы — `&'static mut`, а не массивы в узле: размер сообщения задаёт
+// схема проекта, а не узел.
 
 /// Узел `HOST`: отвечает хосту, пока жив канал.
 ///
@@ -236,14 +225,20 @@ fn encode(message: &impl MessageEncode, buf: &mut [u8]) -> Option<usize> {
 // `&'static mut [u8]` — `Send`.
 supervisor::supervisor_fragment! {
     name: HOST_FRAG<L, S>;
-    boot: inputs: $crate::host::HostWiring<L, S>;
+    boot: inputs: struct $crate::host::HostWiring;
 
     node deps: [], restart: ::supervisor::policy::RestartPolicy::OnFailure,
         backoff: $crate::host::BACKOFF,
         resources: [
+            /// Кадровый канал к хосту.
             LINK: local L = inputs.link,
+            /// Обработчик сообщений приложения.
             SERVICE: local S = inputs.service,
+            /// Буфер приёма: самый длинный запрос и то, что канал кладёт туда
+            /// сверх него (`adapters::cobs::Cobs::rx_len` — ещё 2 байта CRC).
             RX: &'static mut [u8] = inputs.rx,
+            /// Буфер закодированного ответа: не меньше самого длинного ответа
+            /// (`MAX_SIZE` сообщения ответа, если схема его ограничивает).
             TX: &'static mut [u8] = inputs.tx
         ],
         ctx: $crate::host::HostCtx,

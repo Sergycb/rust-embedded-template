@@ -93,27 +93,14 @@ pub struct Dictionary {
     pub od: &'static [ODEntry<'static>],
 }
 
-/// Что узлу нужно на входе. Строит compose-site:
-///
-/// ```ignore
-/// // `bsp::Can` и `board.can` — реализация `CanBus` в `bsp` (этап интерфейсов).
-/// fragments: [::domain::CANOPEN_FRAG<bsp::Can> as CANOPEN
-///                 = ::domain::canopen::CanOpenWiring { bus: board.can, node_id: 5,
-///                       dictionary: ::domain::canopen::Dictionary {
-///                           mbox: &canopen::NODE_MBOX, state: &canopen::NODE_STATE, od: &canopen::OD_TABLE } }];
-/// ```
-#[expect(
-    missing_debug_implementations,
-    reason = "Dictionary держит типы zencan-node без Debug"
-)]
-pub struct CanOpenWiring<C> {
-    /// Шина CAN платы.
-    pub bus: C,
-    /// Адрес узла на шине, 1..=127.
-    pub node_id: u8,
-    /// Словарь объектов устройства.
-    pub dictionary: Dictionary,
-}
+// Вход узла — `CanOpenWiring`: структуру эмитит сам фрагмент (`boot: …
+// struct`). Строит её compose-site:
+//
+// ```ignore
+// fragments: [::domain::CANOPEN_FRAG<bsp::can::Can> as CANOPEN
+//                 = ::domain::canopen::CanOpenWiring { bus: board.can, node_id: 1,
+//                       dictionary: ::domain::canopen::dictionary() }];
+// ```
 
 /// Узел `CANOPEN`: ведёт стек CANopen, пока жива шина.
 ///
@@ -373,13 +360,16 @@ fn to_frame<F: Frame>(message: &CanMessage) -> Option<F> {
 // — `Send`.
 supervisor::supervisor_fragment! {
     name: CANOPEN_FRAG<C>;
-    boot: inputs: $crate::canopen::CanOpenWiring<C>;
+    boot: inputs: struct $crate::canopen::CanOpenWiring;
 
     node deps: [], restart: ::supervisor::policy::RestartPolicy::OnFailure,
         backoff: $crate::canopen::BACKOFF,
         resources: [
+            /// Шина CAN платы.
             BUS: local C = inputs.bus,
+            /// Адрес узла на шине, 1..=127.
             NODE_ID: u8 = inputs.node_id,
+            /// Словарь объектов устройства.
             DICTIONARY: $crate::canopen::Dictionary = inputs.dictionary
         ],
         ctx: $crate::canopen::CanOpenCtx,

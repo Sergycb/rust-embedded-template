@@ -99,18 +99,14 @@ const _: () = assert!(
 /// вовсе, а [`portable_atomic`] — ровно про это (см. `docs/conventions.md`).
 pub type SleepTicks = AtomicU64;
 
-/// Что узлу нужно на входе. Собирает compose-site из того, что знает
-/// приложение (счётчик лежит в `crates-cross/app/src/cpu_load.rs`).
-///
-/// Тип объявлен здесь, а не назван графом, по правилу фрагментов
-/// `supervisor`: подсистема говорит, что ей нужно, приложение это
-/// конструирует — зависимость направлена от приложения к подсистеме и никогда
-/// наоборот.
-#[derive(Debug)]
-pub struct IdleMeter {
-    /// Счётчик тиков сна, который ведёт цикл исполнителя.
-    pub sleep_ticks: &'static SleepTicks,
-}
+// Вход узла — `IdleMeter`: структуру эмитит сам фрагмент (`boot: …
+// struct`). Собирает её compose-site из того, что знает
+// приложение (счётчик лежит в `crates-cross/app/src/cpu_load.rs`).
+//
+// Тип объявлен здесь, а не назван графом, по правилу фрагментов
+// `supervisor`: подсистема говорит, что ей нужно, приложение это
+// конструирует — зависимость направлена от приложения к подсистеме и никогда
+// наоборот.
 
 /// Снимок обоих счётчиков.
 ///
@@ -242,11 +238,14 @@ pub async fn task_standalone(sleep_ticks: &SleepTicks) {
 // жалко. Без `observe` просрочка ушла бы в аппаратный сброс здоровой платы.
 supervisor::supervisor_fragment! {
     name: CPU_LOAD_FRAG;
-    boot: inputs: $crate::cpu_load::IdleMeter;
+    boot: inputs: struct $crate::cpu_load::IdleMeter;
 
     node deps: [], restart: ::supervisor::policy::RestartPolicy::OnFailure,
         backoff: $crate::cpu_load::BACKOFF,
-        resources: [SLEEP_TICKS: &'static $crate::cpu_load::SleepTicks = inputs.sleep_ticks],
+        resources: [
+            /// Счётчик тиков сна, который ведёт цикл исполнителя.
+            SLEEP_TICKS: &'static $crate::cpu_load::SleepTicks = inputs.sleep_ticks
+        ],
         publish: [PERCENT: u8; 1],
         watchdog: $crate::cpu_load::WATCHDOG observe,
         ctx: $crate::cpu_load::CpuLoadCtx,

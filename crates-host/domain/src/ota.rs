@@ -60,29 +60,21 @@ pub const BACKOFF: BackoffPolicy = BackoffPolicy {
     max: Duration::from_secs(5),
 };
 
-/// Что узлу нужно на входе. Строит compose-site из поля платы `Board::ota`
-/// (`bsp` про `domain` не знает, поэтому раскладка там), подставляя типы порта
-/// и адаптера аргументами фрагмента:
-///
-/// ```ignore
-/// fragments: [::domain::OTA_FRAG<bsp::ota::Link, bsp::ota::Updater> as OTA
-///                 = ::domain::ota::OtaWiring { link: board.ota.link, flash: board.ota.flash,
-///                                           mode: ::domain::ota::Mode::Plain }];
-/// ```
-///
-/// Тип объявлен здесь, а не назван графом, по правилу фрагментов
-/// `supervisor`: подсистема говорит, что ей нужно, приложение это
-/// конструирует — зависимость направлена от приложения к подсистеме и никогда
-/// обратно.
-#[derive(Debug)]
-pub struct OtaWiring<S, F> {
-    /// Канал доставки образа — реализация `ImageSource` из `bsp`.
-    pub link: S,
-    /// Адаптер обновления — реализация `FirmwareUpdate` поверх разделов флеша.
-    pub flash: F,
-    /// Режим применения: [`Mode::Plain`] или [`Mode::Signed`].
-    pub mode: Mode,
-}
+// Вход узла — `OtaWiring`: структуру эмитит сам фрагмент (`boot: …
+// struct`). Строит её compose-site из поля платы `Board::ota`
+// (`bsp` про `domain` не знает, поэтому раскладка там), подставляя типы порта
+// и адаптера аргументами фрагмента:
+//
+// ```ignore
+// fragments: [::domain::OTA_FRAG<bsp::ota::Link, bsp::ota::Updater> as OTA
+//                 = ::domain::ota::OtaWiring { link: board.ota.link, flash: board.ota.flash,
+//                                           mode: ::domain::ota::Mode::Plain }];
+// ```
+//
+// Тип объявлен здесь, а не назван графом, по правилу фрагментов
+// `supervisor`: подсистема говорит, что ей нужно, приложение это
+// конструирует — зависимость направлена от приложения к подсистеме и никогда
+// обратно.
 
 /// Чем режимы отличаются: проверка заголовка до стирания и применение.
 ///
@@ -397,13 +389,16 @@ fn update_rejection<E>(err: &UpdateError<E>) -> Rejection {
 // Без `watchdog:` намеренно — см. `run`.
 supervisor::supervisor_fragment! {
     name: OTA_FRAG<S, F>;
-    boot: inputs: $crate::ota::OtaWiring<S, F>;
+    boot: inputs: struct $crate::ota::OtaWiring;
 
     node deps: [], restart: ::supervisor::policy::RestartPolicy::OnFailure,
         backoff: $crate::ota::BACKOFF,
         resources: [
+            /// Канал доставки образа — реализация `ImageSource` из `bsp`.
             LINK: local S = inputs.link,
+            /// Адаптер обновления — реализация `FirmwareUpdate` поверх разделов флеша.
             FLASH: local F = inputs.flash,
+            /// Режим применения: `Mode::Plain` или `Mode::Signed`.
             MODE: $crate::ota::Mode = inputs.mode,
             CONFIRMED: bool = false
         ],

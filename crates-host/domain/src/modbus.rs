@@ -63,28 +63,19 @@ pub const BACKOFF: BackoffPolicy = BackoffPolicy {
     max: Duration::from_secs(5),
 };
 
-/// Что узлу нужно на входе. Строит compose-site из полей платы, подставляя
-/// типы транспорта и данных аргументами фрагмента:
-///
-/// ```ignore
-/// // `bsp::serial::Serial` и `board.serial` — поток байтов UART платы.
-/// fragments: [::domain::MODBUS_SLAVE_FRAG<::adapters::modbus::Rtu<bsp::serial::Serial>, ::domain::modbus::Registers> as MODBUS
-///                 = ::domain::modbus::ModbusSlaveWiring {
-///                     link: ::adapters::modbus::Rtu::new(board.serial),
-///                     regs: ::domain::modbus::Registers,
-///                     unit: 1,
-///                 }];
-/// ```
-#[derive(Debug)]
-pub struct ModbusSlaveWiring<L, R> {
-    /// Транспорт — `adapters::modbus::{Rtu, Tcp, Udp}` над интерфейсом платы.
-    pub link: L,
-    /// Данные устройства — реализация [`ports::Registers`] (по умолчанию —
-    /// пустая карта [`Registers`]).
-    pub regs: R,
-    /// Адрес slave'а на шине, 1..=247.
-    pub unit: u8,
-}
+// Вход узла — `ModbusSlaveWiring`: структуру эмитит сам фрагмент (`boot:
+// … struct`). Строит её compose-site из полей платы, подставляя типы
+// транспорта и данных аргументами фрагмента:
+//
+// ```ignore
+// // `bsp::serial::Serial` и `board.serial` — поток байтов UART платы.
+// fragments: [::domain::MODBUS_SLAVE_FRAG<::adapters::modbus::Rtu<bsp::serial::Serial>, ::domain::modbus::Registers> as MODBUS
+//                 = ::domain::modbus::ModbusSlaveWiring {
+//                     link: ::adapters::modbus::Rtu::new(board.serial),
+//                     regs: ::domain::modbus::Registers,
+//                     unit: 1,
+//                 }];
+// ```
 
 /// Узел `MODBUS` (slave): обслуживает транспорт, пока тот жив.
 ///
@@ -159,13 +150,17 @@ where
 // слот.
 supervisor::supervisor_fragment! {
     name: MODBUS_SLAVE_FRAG<L, R>;
-    boot: inputs: $crate::modbus::ModbusSlaveWiring<L, R>;
+    boot: inputs: struct $crate::modbus::ModbusSlaveWiring;
 
     node deps: [], restart: ::supervisor::policy::RestartPolicy::OnFailure,
         backoff: $crate::modbus::BACKOFF,
         resources: [
+            /// Транспорт — `adapters::modbus::{Rtu, Tcp, Udp}` над интерфейсом платы.
             LINK: local L = inputs.link,
+            /// Данные устройства — реализация `ports::Registers` (по умолчанию —
+            /// пустая карта `domain::modbus::Registers`).
             REGS: local R = inputs.regs,
+            /// Адрес slave'а на шине, 1..=247.
             UNIT: u8 = inputs.unit
         ],
         ctx: $crate::modbus::ModbusSlaveCtx,
