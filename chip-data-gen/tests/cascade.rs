@@ -1050,8 +1050,18 @@ fn no_protocol_by_default() {
     );
     for path in [
         "crates-host/proto",
-        "crates-host/domain/src/host",
         "crates-host/canopen",
+        "crates-host/ports/src/link.rs",
+        "crates-host/ports/src/modbus.rs",
+        "crates-host/ports/src/host.rs",
+        "crates-host/ports/src/can.rs",
+        "crates-host/adapters/src/modbus",
+        "crates-host/adapters/src/cobs.rs",
+        "crates-host/adapters/src/serial.rs",
+        "crates-host/adapters/src/can.rs",
+        "crates-host/domain/src/modbus",
+        "crates-host/domain/src/host",
+        "crates-host/domain/src/canopen.rs",
     ] {
         assert!(
             result.deleted.iter().any(|deleted| deleted == path),
@@ -1086,15 +1096,22 @@ fn protocol_over_uart_keeps_the_serial_module() {
                 .any(|path| path == "crates-cross/bsp/src/serial.rs"),
             "{protocol}: заглушка UART удалена"
         );
-        let schema_kept = !result
-            .deleted
-            .iter()
-            .any(|path| path == "crates-host/proto");
-        assert_eq!(
-            schema_kept,
-            protocol == "protobuf",
-            "{protocol}: crates-host/proto"
-        );
+        // Стек — только выбранного протокола: modbus поверх uart не тянет ни
+        // protobuf, ни CAN, и наоборот.
+        let kept = |path: &str| !result.deleted.iter().any(|deleted| deleted == path);
+        for (path, wanted) in [
+            ("crates-host/proto", protocol == "protobuf"),
+            ("crates-host/domain/src/host.rs", protocol == "protobuf"),
+            ("crates-host/adapters/src/cobs.rs", protocol == "protobuf"),
+            ("crates-host/domain/src/modbus.rs", protocol == "modbus"),
+            ("crates-host/ports/src/modbus.rs", protocol == "modbus"),
+            ("crates-host/ports/src/link.rs", true),
+            ("crates-host/canopen", false),
+            ("crates-host/ports/src/can.rs", false),
+            ("crates-host/adapters/src/can.rs", false),
+        ] {
+            assert_eq!(kept(path), wanted, "{protocol}: {path}");
+        }
     }
 }
 

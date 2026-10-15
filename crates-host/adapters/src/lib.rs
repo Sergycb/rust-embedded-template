@@ -22,20 +22,28 @@ pub mod flash;
 /// переживающие перезапуск и обновление прошивки.
 pub mod settings;
 
+// {%- if protocol == "protobuf" %}
 /// Кадрирование потока байтов (UART, USB CDC, TCP) в кадры `ports::FrameLink`:
 /// COBS и CRC.
 pub mod cobs;
 
+// {%- endif %}
+// {%- if interface == "uart" %}
 /// Заглушка потока байтов в слоте UART — до драйвера платы.
 pub mod serial;
 
+// {%- endif %}
+// {%- if interface == "can" %}
 /// Заглушка шины в слоте CAN — до контроллера платы.
 pub mod can;
 
+// {%- endif %}
+// {%- if protocol == "modbus" %}
 /// Транспорты Modbus — RTU, TCP, UDP — для портов `ports::ModbusClient` и
 /// `ports::ModbusServer`.
 pub mod modbus;
 
+// {%- endif %}
 /// Внутренняя EEPROM (STM32L0/L1) как флеш с семантикой NOR — чтобы поверх
 /// неё работало то же хранилище настроек.
 pub mod eeprom;

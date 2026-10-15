@@ -13,13 +13,19 @@ pub mod ota;
 /// подмодуль — см. модуль.
 pub mod cpu_load;
 
+// {%- if protocol == "canopen" %}
 /// Узел `CANOPEN`: узел CANopen на шине CAN — стек `zencan` — см. модуль.
 pub mod canopen;
+// {%- endif %}
+// {%- if protocol == "protobuf" %}
 
 /// Узел `HOST`: сообщения protobuf от хоста по кадровому каналу — разбор,
 /// обработчик приложения, ответ — см. модуль.
 pub mod host;
+// {%- endif %}
+// {%- if protocol == "modbus" %}
 
 /// Modbus: slave над портом `ports::Registers` и master — поверх
 /// транспортов `ports::ModbusServer`/`ports::ModbusClient` — см. модуль.
 pub mod modbus;
+// {%- endif %}

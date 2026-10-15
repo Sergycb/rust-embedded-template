@@ -70,7 +70,7 @@ pub const BACKOFF: BackoffPolicy = BackoffPolicy {
 
 /// Сколько потерянных кадров подряд узел терпит, прежде чем считать шину
 /// отказавшей — по той же причине, что
-/// [`host::MAX_LOST_IN_A_ROW`](crate::host::MAX_LOST_IN_A_ROW): шина,
+/// `host::MAX_LOST_IN_A_ROW` у узла HOST: шина,
 /// отвечающая ошибкой на каждый приём или отправку без ожидания, иначе
 /// крутила бы цикл, не отдавая исполнитель. Приём и отправка считаются
 /// порознь: шина, которая принимает, но не отправляет ни одного кадра, тоже
@@ -93,7 +93,6 @@ pub struct Dictionary {
     pub od: &'static [ODEntry<'static>],
 }
 
-// {%- if protocol == "canopen" %}
 // Словарь примера `crates-host/canopen` — только в проекте с CANopen: без него
 // крейта словаря в проекте нет вовсе.
 /// Словарь примера устройства `crates-host/canopen` — с ним узел стоит в
@@ -106,7 +105,6 @@ pub fn dictionary() -> Dictionary {
         od: &::canopen::OD_TABLE,
     }
 }
-// {%- endif %}
 
 // Вход узла — `CanOpenWiring`: структуру эмитит сам фрагмент (`boot: …
 // struct`). Строит её compose-site:
@@ -391,7 +389,6 @@ supervisor::supervisor_fragment! {
         task: $crate::canopen::run;
 }
 
-// {%- if protocol == "canopen" %}
 // Тесты гоняют узел на словаре примера `crates-host/canopen`.
 #[cfg(test)]
 mod tests {
@@ -633,4 +630,3 @@ mod tests {
         assert_eq!(bus.incoming.len(), 1, "запрос не прочитан");
     }
 }
-// {%- endif %}

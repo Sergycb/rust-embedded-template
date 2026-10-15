@@ -35,15 +35,21 @@ embedded-storage-async = { workspace = true }
 sequential-storage = { workspace = true }
 embassy-sync = { workspace = true }
 salty = { workspace = true, optional = true }
-# Кадрирование потока: `cobs::Cobs` реализует `ports::FrameLink` поверх
-# `embedded_io_async::{Read, Write}`; поверх него же — `modbus::{Rtu, Tcp}`,
-# CRC — у обоих.
+# {%- if protocol == "modbus" or protocol == "protobuf" %}
+# Транспорты поверх потока байтов `embedded_io_async::{Read, Write}` —
+# `modbus::{Rtu, Tcp}` и `cobs::Cobs`; CRC кадра — у обоих.
 embedded-io-async = { workspace = true }
+crc = { workspace = true }
+# {%- endif %}
+# {%- if protocol == "protobuf" %}
+# Кадрирование COBS под `cobs::Cobs`.
+cobs = { workspace = true }
+# {%- endif %}
+# {%- if interface == "can" %}
 # Кадр шины CAN — параметр заглушки `can::Unconnected`.
 embedded-can = { workspace = true }
-cobs = { workspace = true }
-crc = { workspace = true }
-# `defmt::Format` на `cobs::CobsError` — в прошивке.
+# {%- endif %}
+# `defmt::Format` на ошибках адаптеров — в прошивке.
 defmt = { workspace = true, optional = true }
 
 [dev-dependencies]

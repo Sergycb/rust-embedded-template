@@ -1091,12 +1091,37 @@ if iface != "can" {
 // схемы protobuf (и её генерации в `build.rs`), ни словаря CANopen. Ссылки на
 // них в корневом `Cargo.toml`, `domain/Cargo.toml` и исходниках `domain`
 // вырезает Liquid в комментариях вокруг них.
+// Стек протокола целиком — порт, адаптер, узел, крейт примера — только в
+// проекте, где он выбран: «modbus поверх uart» не тянет ни protobuf, ни CAN,
+// а проект без протокола — ничего из них. Ссылки на удалённое (`mod`,
+// `pub use`, зависимости, фичи) вырезает Liquid в комментариях.
+if protocol != "modbus" {
+	file::delete("crates-host/ports/src/modbus.rs");
+	file::delete("crates-host/adapters/src/modbus.rs");
+	file::delete("crates-host/adapters/src/modbus");
+	file::delete("crates-host/domain/src/modbus.rs");
+	file::delete("crates-host/domain/src/modbus");
+}
 if protocol != "protobuf" {
-	file::delete("crates-host/proto");
+	file::delete("crates-host/ports/src/host.rs");
+	file::delete("crates-host/adapters/src/cobs.rs");
+	file::delete("crates-host/domain/src/host.rs");
 	file::delete("crates-host/domain/src/host");
+	file::delete("crates-host/proto");
 }
 if protocol != "canopen" {
+	file::delete("crates-host/ports/src/can.rs");
+	file::delete("crates-host/domain/src/canopen.rs");
 	file::delete("crates-host/canopen");
+}
+if protocol == "none" {
+	file::delete("crates-host/ports/src/link.rs");
+}
+if iface != "uart" {
+	file::delete("crates-host/adapters/src/serial.rs");
+}
+if iface != "can" {
+	file::delete("crates-host/adapters/src/can.rs");
 }
 
 // Слот драйвера внешней флеши в bsp — только у OTA с разделами на ней. Без

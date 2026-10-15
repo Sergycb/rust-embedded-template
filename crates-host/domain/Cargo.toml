@@ -19,12 +19,16 @@ defmt = [
 	"dep:defmt",
 	"defmt-or-log/defmt",
 	"ports/defmt",
+	# {%- if protocol == "canopen" %}
 	"zencan-node/defmt",
+	# {%- endif %}
 ]
 log = [
 	"dep:log",
 	"defmt-or-log/log",
+	# {%- if protocol == "canopen" %}
 	"zencan-node/log",
+	# {%- endif %}
 ]
 std = [
 	"log?/std"
@@ -58,21 +62,23 @@ fsm = { workspace = true }
 # `portable_atomic::AtomicU64`, потому что на Cortex-M0/M0+ у `core` такого
 # атомика нет вовсе.
 portable-atomic = { workspace = true }
+# {%- if protocol == "modbus" %}
 # Modbus (`domain::modbus`): разбор PDU — кодек; транспорты — в `adapters`.
 # Обоснование выбора — `//!` модуля `domain::modbus`.
 rusty-modbus-codec = { workspace = true }
 rusty-modbus-types = { workspace = true }
+# {%- endif %}
+# {%- if protocol == "protobuf" %}
 # Узел HOST (`domain::host`): разбор и кодирование сообщений protobuf. Схему
 # узел не знает — её знает обработчик приложения.
 micropb            = { workspace = true }
-# {%- if protocol == "protobuf" %}
 # Схема `crates-host/proto` — для обработчика `domain::host::Service`.
 proto              = { workspace = true }
 # {%- endif %}
+# {%- if protocol == "canopen" %}
 # Узел CANOPEN (`domain::canopen`): стек CANopen и кадр шины.
 zencan-node        = { workspace = true }
 embedded-can       = { workspace = true }
-# {%- if protocol == "canopen" %}
 # Словарь объектов устройства — для `domain::canopen::dictionary`.
 canopen            = { workspace = true }
 # {%- endif %}

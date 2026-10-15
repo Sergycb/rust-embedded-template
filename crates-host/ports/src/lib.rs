@@ -30,14 +30,11 @@
 //! Типы ошибок тоже здесь, а не в `domain`: домен — только функции над портами,
 //! а всё, что он возвращает, объявлено в его словаре.
 //!
-//! Трейты объявлены безусловно, потому что Liquid в этом крейте запрещён (он
-//! компилируется и в самом репозитории шаблона): [`FirmwareUpdate`] и
-//! [`SettingsStorage`] реализованы, когда при генерации выбраны OTA и
-//! хранилище настроек. [`FrameLink`] поверх потока реализует
-//! `adapters::cobs::Cobs`, поверх датаграмм — интерфейс проекта;
-//! [`ModbusClient`] и [`ModbusServer`] — `adapters::modbus`; канал
-//! доставки образа ([`ImageSource`]), данные Modbus-slave'а ([`Registers`]) и
-//! обработчик сообщений хоста ([`HostService`]) — сам проект.
+//! [`FirmwareUpdate`] и [`SettingsStorage`] реализованы, когда при генерации
+//! выбраны OTA и хранилище настроек; канал доставки образа ([`ImageSource`])
+//! — сам проект. Порты протоколов связи (`FrameLink`, `Registers`,
+//! `ModbusClient`/`ModbusServer`, `HostService`, `CanBus`) есть только в
+//! проекте, где протокол выбран при генерации.
 //!
 //! Модули названы по операции домена, которая ими пользуется, а не по трейту:
 //! ошибка операции (`DownloadError` у `domain::ota::download::receive`) лежит
@@ -46,20 +43,28 @@
 //! пользователя не касается (`docs/conventions.md`, «`lib.rs` только объявляет
 //! модули»).
 
+// {%- if protocol == "canopen" %}
 /// Шина CAN: кадры для узла CANopen.
 pub mod can;
 
+// {%- endif %}
+// {%- if protocol == "protobuf" %}
 /// Обработчик сообщений хоста: сообщения схемы → типы приложения.
 pub mod host;
 
+// {%- endif %}
+// {%- if protocol != "none" %}
 /// Кадровый канал связи: сообщения целиком, поверх датаграмм или адаптера
 /// кадрирования потока.
 pub mod link;
 
+// {%- endif %}
+// {%- if protocol == "modbus" %}
 /// Modbus: данные slave'а, представления битов и регистров кадра, транспорты
 /// master'а и slave'а, ошибки обмена.
 pub mod modbus;
 
+// {%- endif %}
 /// OTA: канал доставки образа, запись во флеш, проверка подписи и ошибки
 /// приёма и применения.
 pub mod ota;
@@ -67,13 +72,21 @@ pub mod ota;
 /// Хранилище настроек.
 pub mod settings;
 
+// {%- if protocol == "canopen" %}
 pub use can::CanBus;
+// {%- endif %}
+// {%- if protocol == "protobuf" %}
 pub use host::HostService;
+// {%- endif %}
+// {%- if protocol != "none" %}
 pub use link::{FrameLink, LinkError};
+// {%- endif %}
+// {%- if protocol == "modbus" %}
 pub use modbus::{
     Bits, BitsMut, Exception, MAX_PDU, MasterError, ModbusClient, ModbusServer, Received,
     Registers, ServeError, Words, WordsMut,
 };
+// {%- endif %}
 pub use ota::download::{Announce, DownloadError, ImageSource, Rejection};
 pub use ota::update::{FirmwareUpdate, PendingImage, UpdateError};
 pub use settings::SettingsStorage;

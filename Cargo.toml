@@ -134,24 +134,33 @@ embassy-sync           = { version = "0.8.0" }
 embedded-storage       = { version = "0.3.1" }
 embedded-storage-async = { version = "0.4.1" }
 sequential-storage     = { version = "8.0.1", default-features = false }
+# {%- if protocol == "modbus" or protocol == "protobuf" %}
 # Транспорт протоколов `domain` (`domain::modbus`): поток байтов, который уже
 # реализуют `BufferedUart` из `embassy-stm32`, USB CDC и сокет `embassy-net`.
 # Версия та же, что у `embassy-stm32` 0.6, — иначе в прошивке были бы две копии
 # трейта, и UART его бы не реализовывал.
 embedded-io-async      = { version = "0.7.0" }
+# {%- endif %}
+# {%- if protocol == "modbus" %}
 # Разбор PDU Modbus: запросы на стороне slave, ответы на стороне master.
 # Выбран из десятка кандидатов прогоном одних и тех же проверок по спецификации
 # и фаззингом — обоснование в `//!` модуля `domain::modbus`. `-types` — его словарь
 # (`ExceptionCode`, `Address`); тянет `zerocopy` (MIT/Apache/BSD).
 rusty-modbus-codec     = { version = "0.1.1", default-features = false }
 rusty-modbus-types     = { version = "0.1.1", default-features = false }
+# {%- endif %}
+# {%- if protocol == "protobuf" %}
 # Кадрирование потока (`adapters::cobs`): COBS — синхронизация по 0x00 после
 # мусора или обрыва. Потоковый декодер берётся отсюда, своё — только транспорт
 # и CRC. Тот же крейт стоит под `postcard` и `ergot`. Без `std` (он в default).
 cobs                   = { version = "0.5.1", default-features = false }
+# {%- endif %}
+# {%- if protocol == "modbus" or protocol == "protobuf" %}
 # CRC кадров: CRC-16/IBM-SDLC (X.25, FCS у HDLC/PPP) в `adapters::cobs`,
 # CRC-16/MODBUS в `domain::modbus` — одна реализация вместо своих.
 crc                    = { version = "3.4.0" }
+# {%- endif %}
+# {%- if protocol == "protobuf" %}
 # Protobuf (`crates-host/proto` — схема и сгенерированные типы, `domain` —
 # узел HOST): без alloc, повторяющиеся поля и строки — в контейнерах
 # `heapless` 0.9, той же версии, что у остального дерева.
@@ -167,6 +176,8 @@ heapless               = { version = "0.9.3" }
 # разработчику, ни в CI.
 micropb-gen            = { version = "0.6.0" }
 protox                 = { version = "0.9.1" }
+# {%- endif %}
+# {%- if protocol == "canopen" %}
 # CANopen: стек узла (`zencan-node`) и генерация словаря объектов из TOML-описания
 # устройства (`zencan-build`, в `build.rs` крейта `canopen`). MPL-2.0 —
 # исключение в `deny.toml`. Без `std`/`log` в default — их выбирают крейты.
@@ -175,6 +186,7 @@ zencan-build           = { version = "0.0.5" }
 # Кадр CAN в порту `ports::CanBus`: трейт `Frame`, который реализует кадр
 # `embassy-stm32` — та же версия 0.4.
 embedded-can           = { version = "0.4.1" }
+# {%- endif %}
 # Проверка подписи образа — под фичей `adapters/signed`. Из двух реализаций,
 # которые понимает embassy-boot, взята меньшая: `ed25519-dalek` тянет
 # `curve25519-dalek` с `sha2`, salty самодостаточен и написан под
