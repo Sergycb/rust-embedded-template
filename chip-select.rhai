@@ -1070,6 +1070,17 @@ if iface != "uart" {
 	file::delete("crates-cross/bsp/src/serial.rs");
 	file::delete("docs/modules/bsp-serial.md");
 }
+// Крейты протоколов — только в проекте, где протокол выбран: без них нет ни
+// схемы protobuf (и её генерации в `build.rs`), ни словаря CANopen. Ссылки на
+// них в корневом `Cargo.toml`, `domain/Cargo.toml` и исходниках `domain`
+// вырезает Liquid в комментариях вокруг них.
+if protocol != "protobuf" {
+	file::delete("crates-host/proto");
+	file::delete("crates-host/domain/src/host");
+}
+if protocol != "canopen" {
+	file::delete("crates-host/canopen");
+}
 
 // Слот драйвера внешней флеши в bsp — только у OTA с разделами на ней. Без
 // него `bsp::external` не объявлен, и файл остался бы мусором с Liquid внутри.

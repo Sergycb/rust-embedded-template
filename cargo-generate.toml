@@ -38,6 +38,12 @@ ignore = [
 	"chip-data",
 	"chip-data.tmp",
 	"chip-data.old",
+	# Lock-файлы проект считает сам первой сборкой: их состав зависит от
+	# ответов при генерации (протокол уносит или приносит целые крейты —
+	# `crates-host/proto`, `crates-host/canopen`), и шаблонный lock подходил бы
+	# одному сочетанию, а остальным ронял бы `cargo fetch --locked` в CI.
+	"Cargo.lock",
+	"crates-host/chip-info/Cargo.lock",
 	"MAINTAINING.md",
 	# CI самого репозитория шаблона. Лежит рядом с `ci.yml`, который в проекты
 	# как раз копируется, поэтому исключается поимённо: `[conditional]` ниже

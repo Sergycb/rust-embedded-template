@@ -386,6 +386,8 @@ supervisor::supervisor_fragment! {
         task: $crate::canopen::run;
 }
 
+// Тесты гоняют узел на словаре примера `crates-host/canopen`.
+// {%- if protocol == "canopen" %}
 #[cfg(test)]
 mod tests {
     use std::collections::VecDeque;
@@ -626,3 +628,4 @@ mod tests {
         assert_eq!(bus.incoming.len(), 1, "запрос не прочитан");
     }
 }
+// {%- endif %}

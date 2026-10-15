@@ -50,8 +50,15 @@ host:test:
   script:
     # --locked ловит рассинхрон Cargo.toml и закоммиченного Cargo.lock:
     # без него cargo молча подобрал бы свои версии, и пайплайн остался бы
-    # зелёным на том, чего в репозитории нет.
-    - cargo fetch --locked
+    # зелёным на том, чего в репозитории нет. Условный, как у cross:build ниже:
+    # lock-файлов шаблон не раздаёт, проект считает их сам первой сборкой.
+    - |
+      if [ -f Cargo.lock ]; then
+        cargo fetch --locked
+      else
+        echo "ВНИМАНИЕ: Cargo.lock не закоммичен — версии резолвятся заново на каждом пайплайне"
+        cargo fetch
+      fi
     - cargo xtask lint
     - cargo xtask test host
 
@@ -144,8 +151,15 @@ pins:check:
     # зависит только от `stm32-metapac` и `anyhow`.
     #
     # `--locked` — как в соседних джобах: иначе cargo молча подберёт свои
-    # версии, и пайплайн останется зелёным на том, чего в репозитории нет.
-    - cargo run --locked --manifest-path crates-host/chip-info/Cargo.toml -- --check
+    # версии, и пайплайн останется зелёным на том, чего в репозитории нет. И
+    # так же условный: lock `chip-info` проект считает сам.
+    - |
+      if [ -f crates-host/chip-info/Cargo.lock ]; then
+        cargo run --locked --manifest-path crates-host/chip-info/Cargo.toml -- --check
+      else
+        echo "ВНИМАНИЕ: crates-host/chip-info/Cargo.lock не закоммичен — версии резолвятся заново"
+        cargo run --manifest-path crates-host/chip-info/Cargo.toml -- --check
+      fi
 
 cross:build:
   stage: build
@@ -156,9 +170,9 @@ cross:build:
     - rustup target add {{target}}
     - cargo install flip-link --locked
   script:
-    # `--locked` здесь условный, в отличие от host:test выше. Шаблон не раздаёт
-    # crates-cross/Cargo.lock: состав зависимостей зависит от ответов при
-    # генерации (OTA, раздел настроек, подпись), и один файл подходил бы ровно
+    # `--locked` условный, как у host:test выше. Шаблон не раздаёт lock-файлов:
+    # состав зависимостей зависит от ответов при генерации (OTA, раздел
+    # настроек, подпись, протокол), и один файл подходил бы ровно
     # одному сочетанию. Пока проект не собран и lock не закоммичен, строгий шаг
     # падал бы не на рассинхроне, а на отсутствии файла — то есть первый же
     # пайплайн свежего проекта был бы красным без причины. Как только lock в

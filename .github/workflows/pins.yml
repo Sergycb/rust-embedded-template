@@ -92,6 +92,13 @@ jobs:
       #
       # `--locked` по той же причине, что и в ci.yml: без него cargo молча
       # подберёт свои версии, и job останется зелёным на том, чего в
-      # репозитории нет.
+      # репозитории нет. И так же условный: lock `chip-info` проект считает
+      # сам первым `cargo xtask pins`.
       - if: steps.guard.outputs.skip != 'true'
-        run: cargo run --locked --manifest-path crates-host/chip-info/Cargo.toml -- --check
+        run: |
+          if [ -f crates-host/chip-info/Cargo.lock ]; then
+            cargo run --locked --manifest-path crates-host/chip-info/Cargo.toml -- --check
+          else
+            echo "::warning::crates-host/chip-info/Cargo.lock не закоммичен — версии резолвятся заново"
+            cargo run --manifest-path crates-host/chip-info/Cargo.toml -- --check
+          fi

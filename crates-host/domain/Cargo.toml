@@ -66,14 +66,18 @@ rusty-modbus-types = { workspace = true }
 # узел не знает — она в `crates-host/proto`, её знает обработчик
 # `domain::host::Service`.
 micropb            = { workspace = true }
+# {%- if protocol == "protobuf" %}
 proto              = { workspace = true }
+# {%- endif %}
 # Узел CANOPEN (`domain::canopen`): стек CANopen и кадр шины.
 zencan-node        = { workspace = true }
 embedded-can       = { workspace = true }
 
 [dev-dependencies]
 # Пример словаря объектов — для тестов узла CANOPEN.
+# {%- if protocol == "canopen" %}
 canopen = { workspace = true }
+# {%- endif %}
 test-log = { workspace = true }
 # Исполнитель для async-тестов над фейками портов (`#[tokio::test]`); фичи —
 # в корневом Cargo.toml.

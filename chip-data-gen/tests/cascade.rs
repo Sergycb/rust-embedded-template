@@ -1032,8 +1032,14 @@ fn graph_is_dropped_when_the_app_partition_is_too_small() {
 #[test]
 fn no_protocol_by_default() {
     let result = run_cascade_to(&compile_script(), "f407ve").expect("каскад не должен падать");
-    assert_eq!(result.vars.get("protocol").map(String::as_str), Some("none"));
-    assert_eq!(result.vars.get("interface").map(String::as_str), Some("none"));
+    assert_eq!(
+        result.vars.get("protocol").map(String::as_str),
+        Some("none")
+    );
+    assert_eq!(
+        result.vars.get("interface").map(String::as_str),
+        Some("none")
+    );
     assert!(
         result
             .deleted
@@ -1042,6 +1048,13 @@ fn no_protocol_by_default() {
         "заглушка UART без интерфейса uart: {:?}",
         result.deleted
     );
+    for path in ["crates-host/proto", "crates-host/domain/src/host", "crates-host/canopen"] {
+        assert!(
+            result.deleted.iter().any(|deleted| deleted == path),
+            "{path} без своего протокола остался: {:?}",
+            result.deleted
+        );
+    }
 }
 
 /// Протокол поверх UART оставляет в `bsp` модуль заглушки.
@@ -1054,8 +1067,14 @@ fn protocol_over_uart_keeps_the_serial_module() {
             &[("protocol", protocol), ("interface", "uart")],
         )
         .expect("каскад не должен падать");
-        assert_eq!(result.vars.get("protocol").map(String::as_str), Some(protocol));
-        assert_eq!(result.vars.get("interface").map(String::as_str), Some("uart"));
+        assert_eq!(
+            result.vars.get("protocol").map(String::as_str),
+            Some(protocol)
+        );
+        assert_eq!(
+            result.vars.get("interface").map(String::as_str),
+            Some("uart")
+        );
         assert!(
             !result
                 .deleted
@@ -1063,6 +1082,8 @@ fn protocol_over_uart_keeps_the_serial_module() {
                 .any(|path| path == "crates-cross/bsp/src/serial.rs"),
             "{protocol}: заглушка UART удалена"
         );
+        let schema_kept = !result.deleted.iter().any(|path| path == "crates-host/proto");
+        assert_eq!(schema_kept, protocol == "protobuf", "{protocol}: crates-host/proto");
     }
 }
 
@@ -1071,9 +1092,15 @@ fn protocol_over_uart_keeps_the_serial_module() {
 /// проектом, который молча делает не то.
 #[test]
 fn impossible_protocol_answers_are_rejected() {
+    /// Чип, ответы, часть ожидаемого сообщения об ошибке.
+    type Rejected<'a> = (&'a str, &'a [(&'a str, &'a str)], &'a str);
     let script = compile_script();
-    let cases: [(&str, &[(&str, &str)], &str); 5] = [
-        ("f407ve", &[("protocol", "modbus")], "работает поверх uart, а не"),
+    let cases: [Rejected; 5] = [
+        (
+            "f407ve",
+            &[("protocol", "modbus")],
+            "работает поверх uart, а не",
+        ),
         ("f407ve", &[("interface", "uart")], "без протокола"),
         (
             "f407ve",
@@ -1082,11 +1109,19 @@ fn impossible_protocol_answers_are_rejected() {
         ),
         (
             "f407ve",
-            &[("protocol", "protobuf"), ("interface", "uart"), ("graph", "no")],
+            &[
+                ("protocol", "protobuf"),
+                ("interface", "uart"),
+                ("graph", "no"),
+            ],
             "нужен граф",
         ),
         // Граф здесь снимает размер раздела, а не ответ.
-        ("l011f4", &[("protocol", "modbus"), ("interface", "uart")], "нужен граф"),
+        (
+            "l011f4",
+            &[("protocol", "modbus"), ("interface", "uart")],
+            "нужен граф",
+        ),
     ];
     for (chip, preset, reason) in cases {
         let err = run_cascade_with(&script, chip, preset)

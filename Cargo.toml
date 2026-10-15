@@ -3,9 +3,13 @@ members = [
 	"crates-host/domain",
 	"crates-host/host-target-tests",
 	"crates-host/adapters",
+	# {%- if protocol == "canopen" %}
 	"crates-host/canopen",
+	# {%- endif %}
 	"crates-host/ports",
+	# {%- if protocol == "protobuf" %}
 	"crates-host/proto",
+	# {%- endif %}
 	"crates-host/xtask",
 ]
 resolver = "3"
@@ -70,8 +74,15 @@ map_err_ignore          = "warn"
 # и путь были в одном месте, как у внешних зависимостей.
 ports        = { path = "crates-host/ports" }
 adapters     = { path = "crates-host/adapters" }
+# Крейты протоколов — только в проекте, где протокол выбран при генерации
+# (Liquid в комментариях: в репозитории шаблона оба подключены, хук
+# удаляет невыбранный каталог).
+# {%- if protocol == "protobuf" %}
 proto        = { path = "crates-host/proto" }
+# {%- endif %}
+# {%- if protocol == "canopen" %}
 canopen      = { path = "crates-host/canopen" }
+# {%- endif %}
 defmt-or-log = { version = "0.2.3" }
 log          = { version = "0.4.34" }
 defmt        = { version = "1.1.1" }

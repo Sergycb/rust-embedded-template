@@ -13,12 +13,10 @@
 //!
 //! Ловит ровно тот класс поломок, который не виден ни линтом, ни тестами
 //! репозитория шаблона: у самого шаблона `Cargo.lock` пинит ревизии
-//! git-зависимостей, поэтому ломающее изменение в `rust-lib` не видно нигде,
-//! пока кто-нибудь не обновит зависимости. Здесь это делается после первой
-//! генерации полного прогона — так и всплыла в своё время исчезнувшая у `fsm`
-//! фича `macro`. Зависимости `crates-cross` (`supervisor`, `watchdog`) в этом
-//! не нуждаются: их lock шаблон не раздаёт, и каждая конфигурация резолвит их
-//! заново сама.
+//! git-зависимостей, поэтому ломающее изменение в `rust-lib` локально не
+//! видно. Сгенерированный проект lock-файлов из шаблона не получает и
+//! резолвит зависимости заново — так что каждая конфигурация собирается на
+//! текущих версиях, как собрался бы свежий проект пользователя.
 //!
 //! Конфигурации по умолчанию подобраны так, чтобы задеть все ветки
 //! генерации: обычный одноядерный, чип с выбором банковой схемы, чип, куда
@@ -32,7 +30,6 @@
 //! набор чипов — позиционными аргументами.
 
 use std::{
-    collections::BTreeSet,
     env, fs,
     path::{Path, PathBuf},
     process::Command,
@@ -261,28 +258,8 @@ fn main() -> anyhow::Result<()> {
         labels.join(", "),
     );
 
-    for (index, case) in options.cases.iter().enumerate() {
-        // Обновление зависимостей и сверку lock делаем только на первой
-        // конфигурации: граф пакетов от чипа не зависит (чипы отличаются
-        // фичами embassy-stm32, а не составом), так что ломающее изменение в
-        // rust-lib вылезет и с одного прогона, а семнадцать подряд стоили бы минут
-        // пять на пустом месте. Сверка там же и по второй причине: в
-        // конфигурации без OTA cross-lock короче на boot и embassy-boot —
-        // это не расхождение, а другая раскладка проекта.
-        // `--quick` не обновляет зависимости вовсе, и это не экономия времени:
-        // `cargo update` лезет в git за `rust-lib`, а он приватный. CI самого
-        // шаблона доступа туда не имеет — с обновлением он падал бы на первой
-        // же конфигурации, хотя проверять там надо только генерацию.
-        let refresh = index == 0 && !options.quick;
-        check_one(
-            &template,
-            &repo_root,
-            &work_dir,
-            &cargo_target_dir,
-            case,
-            &options,
-            refresh,
-        )?;
+    for case in &options.cases {
+        check_one(&template, &work_dir, &cargo_target_dir, case, &options)?;
     }
 
     println!(
@@ -297,17 +274,13 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `template` — облегчённая копия, из которой генерируем; `repo_root` —
-/// настоящий репозиторий, он нужен только чтобы сравнить lock-файлы и назвать
-/// в подсказке путь, который правят руками.
+/// `template` — облегчённая копия, из которой генерируем.
 fn check_one(
     template: &Path,
-    repo_root: &Path,
     work_dir: &Path,
     cargo_target_dir: &Path,
     case: &Case,
     options: &Options,
-    refresh: bool,
 ) -> anyhow::Result<()> {
     // Имя проекта = имя каталога, в который cargo-generate его положит.
     let name = case.name();
@@ -341,42 +314,6 @@ fn check_one(
 
     check_no_raw_placeholders(&project)?;
     check_ci_files(&project, &options.ci)?;
-
-    // Обновление зависимостей — здесь, а не в post-хуке шаблона: пользователю
-    // оно ни к чему (только замедляет генерацию и уводит проект с проверенных
-    // версий), а вот проверке нужно. Ломающие изменения незапиненных
-    // git-зависимостей (`rust-lib`) видны только так: у самого шаблона
-    // Cargo.lock пинит ревизии, и без этого шага все проверки остаются
-    // зелёными даже когда `main` библиотеки уже несовместим.
-    //
-    // `crates-cross` в списке нет, и это не пропуск: шаблон не раздаёт его
-    // lock, так что сборка любой конфигурации и так резолвит `supervisor` с
-    // `watchdog` заново. Обновлять нечего — `cargo update` там лишь сделал бы
-    // раньше ровно то, что через минуту делает `cargo xtask build`.
-    for manifest in if refresh {
-        [None, Some("crates-host/chip-info/Cargo.toml")].as_slice()
-    } else {
-        &[]
-    } {
-        let mut update = Command::new("cargo");
-        update.arg("update");
-        if let Some(path) = manifest {
-            update.arg("--manifest-path").arg(path);
-        }
-        run(&mut update, &project, None).with_context(|| {
-            format!(
-                "`cargo update` {} в сгенерированном проекте — свежие версии зависимостей \
-                 не резолвятся",
-                manifest.unwrap_or("(корень)"),
-            )
-        })?;
-    }
-
-    // Только там, где lock-файлы только что пересобраны: без `cargo update`
-    // они побайтово те же, что в шаблоне, и сравнение не может ничего найти.
-    if refresh {
-        report_lock_drift(repo_root, &project);
-    }
 
     if !options.quick {
         // Ровно те команды, которые README обещает пользователю шаблона.
@@ -457,71 +394,6 @@ fn check_one(
         fs::remove_dir_all(&project).with_context(|| format!("удалить {}", project.display()))?;
     }
     Ok(())
-}
-
-/// Сравнивает списки пакетов в lock-файлах шаблона и свежесгенерированного
-/// проекта — их там только что пересобрал `cargo update`. Зовётся только под
-/// `refresh` (первая конфигурация полного прогона): без обновления файлы
-/// побайтово те же, что в шаблоне, и сравнивать было бы нечего.
-///
-/// Расхождение почти всегда значит одно: манифест правили, а lock не
-/// перегенерировали. Само по себе это тихо: в репозитории шаблона `chip-info`
-/// никто не собирает, а вот CI сгенерированного проекта зовёт `cargo run
-/// --locked` и на отставшем lock падает. Чинить — по рецепту из «Lock-файлы
-/// шаблона» в MAINTAINING.md. Предупреждение, а не ошибка: часть расхождений —
-/// обычные обновления версий из crates.io, за которые шаблон не отвечает.
-///
-/// Оговорка, которую эта проверка НЕ ловит: набор пакетов может совпасть, а
-/// lock всё равно устареть — так бывает, когда зависимость переезжает между
-/// членами воркспейса. Проверено на живом примере (`watchdog` из `app` в
-/// `bsp`): списки пакетов идентичны, а `cargo fetch --locked` падает.
-///
-/// `crates-cross/Cargo.lock` в списке нет намеренно: шаблон его не раздаёт
-/// (состав пакетов там зависит от ответов при генерации, см. «Lock-файлы
-/// шаблона» в MAINTAINING.md), сравнивать не с чем — проект считает его сам
-/// при первой сборке.
-fn report_lock_drift(repo_root: &Path, project: &Path) {
-    let locks = ["Cargo.lock", "crates-host/chip-info/Cargo.lock"];
-    for lock in locks {
-        let (Some(template), Some(generated)) = (
-            lock_package_names(&repo_root.join(lock)),
-            lock_package_names(&project.join(lock)),
-        ) else {
-            continue;
-        };
-        let missing: Vec<&String> = generated.difference(&template).collect();
-        let extra: Vec<&String> = template.difference(&generated).collect();
-        if !missing.is_empty() || !extra.is_empty() {
-            println!("ВНИМАНИЕ: {lock} шаблона разошёлся с тем, что собралось при генерации");
-            if !missing.is_empty() {
-                println!("  нет в шаблонном lock: {missing:?}");
-            }
-            if !extra.is_empty() {
-                println!("  лишние в шаблонном lock: {extra:?}");
-            }
-            println!("  поправить: скопировать {lock} из {}", project.display());
-        }
-    }
-}
-
-/// Пары `имя версия` из lock-файла. Версия входит в ключ намеренно: поднятая
-/// в манифесте версия при неперегенерированном lock — ровно тот случай, на
-/// котором падает `cargo fetch --locked` в CI, а по одним именам он выглядел
-/// бы как совпадение.
-fn lock_package_names(lock: &Path) -> Option<BTreeSet<String>> {
-    let text = fs::read_to_string(lock).ok()?;
-    let mut packages = BTreeSet::new();
-    let mut name: Option<&str> = None;
-    for line in text.lines() {
-        if let Some(rest) = line.strip_prefix("name = \"") {
-            name = rest.strip_suffix('"');
-        } else if let Some(rest) = line.strip_prefix("version = \"")
-            && let (Some(name), Some(version)) = (name.take(), rest.strip_suffix('"'))
-        {
-            packages.insert(format!("{name} {version}"));
-        }
-    }
-    Some(packages)
 }
 
 /// Ищет `{{ }}`/`{% %}`, пережившие генерацию. Мимо линта и сборки такое
