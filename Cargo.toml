@@ -74,13 +74,12 @@ map_err_ignore          = "warn"
 # и путь были в одном месте, как у внешних зависимостей.
 ports        = { path = "crates-host/ports" }
 adapters     = { path = "crates-host/adapters" }
-# Крейты протоколов — только в проекте, где протокол выбран при генерации
-# (Liquid в комментариях: в репозитории шаблона оба подключены, хук
-# удаляет невыбранный каталог).
 # {%- if protocol == "protobuf" %}
+# Схема protobuf — крейт протокола, выбранного при генерации.
 proto        = { path = "crates-host/proto" }
 # {%- endif %}
 # {%- if protocol == "canopen" %}
+# Словарь CANopen — крейт протокола, выбранного при генерации.
 canopen      = { path = "crates-host/canopen" }
 # {%- endif %}
 defmt-or-log = { version = "0.2.3" }

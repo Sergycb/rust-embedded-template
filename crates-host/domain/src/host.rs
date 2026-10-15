@@ -29,9 +29,9 @@
 //! Сообщения по инициативе устройства (события, телеметрия) — второй вход
 //! узла; появятся по вопросу при генерации проекта.
 
+// {%- if protocol == "protobuf" %}
 // Обработчик по умолчанию над схемой `crates-host/proto` — только в проекте с
 // протоколом protobuf: без него крейта схемы в проекте нет вовсе.
-// {%- if protocol == "protobuf" %}
 /// Обработчик по умолчанию над примером схемы `crates-host/proto`.
 mod service;
 
@@ -245,8 +245,8 @@ supervisor::supervisor_fragment! {
         task: $crate::host::run;
 }
 
-// Тесты гоняют узел с обработчиком над схемой `crates-host/proto`.
 // {%- if protocol == "protobuf" %}
+// Тесты гоняют узел с обработчиком над схемой `crates-host/proto`.
 #[cfg(test)]
 mod tests {
     use std::collections::VecDeque;

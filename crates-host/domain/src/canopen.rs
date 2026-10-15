@@ -93,9 +93,9 @@ pub struct Dictionary {
     pub od: &'static [ODEntry<'static>],
 }
 
+// {%- if protocol == "canopen" %}
 // Словарь примера `crates-host/canopen` — только в проекте с CANopen: без него
 // крейта словаря в проекте нет вовсе.
-// {%- if protocol == "canopen" %}
 /// Словарь примера устройства `crates-host/canopen` — с ним узел стоит в
 /// графе шаблона. Проект меняет `device.toml` того крейта, а не эту функцию.
 #[must_use]
@@ -391,8 +391,8 @@ supervisor::supervisor_fragment! {
         task: $crate::canopen::run;
 }
 
-// Тесты гоняют узел на словаре примера `crates-host/canopen`.
 // {%- if protocol == "canopen" %}
+// Тесты гоняют узел на словаре примера `crates-host/canopen`.
 #[cfg(test)]
 mod tests {
     use std::collections::VecDeque;

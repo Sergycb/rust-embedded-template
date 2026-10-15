@@ -63,7 +63,8 @@ if variable::get("graph") == "true" {
 	if iface == "uart" {
 		print("UART — заглушка: подставьте свой USART в crates-cross/bsp/src/serial.rs (cargo xtask pins USART2 --snippet).");
 	} else if iface == "can" {
-		print("CAN — заглушка: подставьте свой контроллер в crates-cross/bsp/src/can.rs (cargo xtask pins FDCAN1 --snippet или CAN1).");
+		let block = if variable::get("can_kind") == "fdcan" { "FDCAN1" } else { "CAN1" };
+		print("CAN — заглушка: подставьте свой контроллер в crates-cross/bsp/src/can.rs (cargo xtask pins " + block + " --snippet).");
 	}
 } else {
 	print("Без графа задач: main заканчивается после инициализации (причина — выше).");

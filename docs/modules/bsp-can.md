@@ -12,7 +12,7 @@
 1. Блоки для своего контроллера — из справочника по чипу:
 
    ```text
-   cargo xtask pins FDCAN1 --snippet     # или CAN1 — у чипов с bxCAN
+   cargo xtask pins {% if can_kind == "fdcan" %}FDCAN1{% else %}CAN1{% endif %} --snippet
    ```
 
    Он печатает `bind_interrupts!` и группу `assign_resources!` со свободными
@@ -22,25 +22,29 @@
 
    ```rust,ignore
    pub type Can = Bus;
-
-   // FDCAN (G0, G4, H5, H7, L5, U5):
+{% if can_kind == "fdcan" %}
    pub(crate) fn new(r: Fdcan1Resources) -> Can {
        let mut can = embassy_stm32::can::CanConfigurator::new(r.can, r.rx, r.tx, Irqs);
        can.set_bitrate(250_000);
        Bus::new(can.into_normal_mode())
    }
-
-   // bxCAN (F1, F2, F3, F4, F7, L4):
+{%- else %}
    pub(crate) fn new(r: Can1Resources) -> Can {
        let mut can = embassy_stm32::can::Can::new(r.can, r.rx, r.tx, Irqs);
        can.set_bitrate(250_000);
        Bus::new(can) // включит контроллер первый обмен
    }
+{%- endif %}
    ```
 
    В `Board::new` вызов `crate::can::new()` получает свою группу:
-   `crate::can::new(r.fdcan1)` после `let r = split_resources!(p);`
+   `crate::can::new(r.{% if can_kind == "fdcan" %}fdcan1{% else %}can1{% endif %})` после `let r = split_resources!(p);`
    (`docs/resources.md`).
+
+Отправка ждёт место в очереди передачи не дольше 5 мс, а у bxCAN включение
+ждёт синхронизации с линией тоже не дольше 5 мс: на шине, где кадры никто не
+подтверждает, узел CANopen не встаёт внутри отправки, а считает потери и после
+серии объявляет шину отказавшей (`CanError`).
 
 Скорость шины — одна на всю сеть CANopen (обычно 125, 250, 500 или
 1000 кбит/с); адрес узла — `node_id` во входе узла в
