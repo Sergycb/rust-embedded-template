@@ -137,6 +137,13 @@ pub struct Board {
     /// Формат значений выбирает проект.
     pub settings: crate::config::Settings,
 {%- endif %}
+{%- if interface == "uart" %}
+    /// UART под узлом протокола ({{protocol}}) — заглушка `bsp::serial::Serial`,
+    /// пока проект не подставит драйвер своей платы (`docs/modules/bsp-serial.md`).
+    /// Уезжает в узел `{% if protocol == "modbus" %}MODBUS{% else %}HOST{% endif %}` графа (`fragments:` в
+    /// `crates-cross/app/src/graph.rs`).
+    pub serial: crate::serial::Serial,
+{%- endif %}
 {%- if graph == "true" %}
     /// Сторож платы — заряженный, но ещё не запущенный: его забирает
     /// инициализатор блока `watchdog:` в графе задач
@@ -246,6 +253,9 @@ impl Board {
 {%- endif %}
 {%- if config == "true" %}
             settings: crate::config::new({% if config_store != "external" %}flash{% elsif ota == "true" and ota_store == "external" %}external{% endif %}),
+{%- endif %}
+{%- if interface == "uart" %}
+            serial: crate::serial::new(),
 {%- endif %}
 {%- if graph == "true" %}
             watchdog: crate::wdg::UnarmedBoardWatchdog::new(p.{{watchdog_peripheral}}),

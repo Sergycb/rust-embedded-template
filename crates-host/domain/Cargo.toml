@@ -63,15 +63,15 @@ portable-atomic = { workspace = true }
 rusty-modbus-codec = { workspace = true }
 rusty-modbus-types = { workspace = true }
 # Узел HOST (`domain::host`): разбор и кодирование сообщений protobuf. Схему
-# узел не знает — она в `crates-host/proto` и у обработчика приложения.
+# узел не знает — она в `crates-host/proto`, её знает обработчик
+# `domain::host::Service`.
 micropb            = { workspace = true }
+proto              = { workspace = true }
 # Узел CANOPEN (`domain::canopen`): стек CANopen и кадр шины.
 zencan-node        = { workspace = true }
 embedded-can       = { workspace = true }
 
 [dev-dependencies]
-# Пример схемы — сообщения для тестов узла HOST.
-proto = { workspace = true }
 # Пример словаря объектов — для тестов узла CANOPEN.
 canopen = { workspace = true }
 test-log = { workspace = true }

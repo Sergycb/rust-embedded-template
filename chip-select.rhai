@@ -238,6 +238,11 @@ const WATCHDOG = watchdog_data::WATCHDOG;
 import "chip-data/cpu_freq_boost" as boost_data;
 const CPU_FREQ_BOOST = boost_data::CPU_FREQ_BOOST;
 
+// Интерфейсы связи, выведенные в корпусе чипа (`usart`, `fdcan`, `bxcan`,
+// `eth`, `usb`, `otg`) — по ним проверяется ответ об интерфейсе в конце хука.
+import "chip-data/interfaces" as interfaces_data;
+const INTERFACES = interfaces_data::INTERFACES;
+
 if variable::is_set("chip_feature") {
     // Значение уже задано через `--define chip_feature=...` — каскад не
     // нужен, chip/cpu/target выводятся из него напрямую.
@@ -1008,6 +1013,62 @@ if variable::is_set("write_size") {
 // закрыто тем же `{% if %}`, поэтому удаление файла ничего не ломает.
 if variable::get("graph") != "true" {
 	file::delete("crates-cross/app/src/graph.rs");
+}
+
+// Протокол связи и интерфейс под ним. Проверяются здесь, в конце, а не при
+// ответе: вопросы задаются до каскада, а допустимость зависит и от чипа (есть
+// ли у него блок), и от графа (узлу протокола без него некуда встать — граф
+// мог снять и размер раздела выше).
+//
+// Какие интерфейсы годятся протоколу и какой блок чипа каждый требует —
+// таблицами; новый интерфейс добавляется строкой в обе.
+const PROTOCOL_INTERFACES = #{
+    "none": ["none"],
+    "modbus": ["uart"],
+    "protobuf": ["uart"],
+};
+const INTERFACE_BLOCK = #{
+    "uart": "usart",
+};
+// Значения через запятую — для сообщений об ошибке. `reduce` без начального
+// значения начинает с `()`, и список получил бы ведущую запятую.
+fn listed(values) {
+    let out = "";
+    for v in values {
+        if out != "" { out += ", "; }
+        out += v;
+    }
+    out
+}
+let chip_name = variable::get("chip");
+let protocol = if variable::is_set("protocol") { variable::get("protocol") } else { "none" };
+let iface = if variable::is_set("interface") { variable::get("interface") } else { "none" };
+if !PROTOCOL_INTERFACES.contains(protocol) {
+    throw "protocol: ожидается " + listed(PROTOCOL_INTERFACES.keys()) + ", а не «" + protocol + "»";
+}
+let fits = PROTOCOL_INTERFACES[protocol];
+if !fits.contains(iface) {
+    if protocol == "none" {
+        throw "interface: интерфейс «" + iface + "» выбран без протокола — его не обслуживал бы ни один узел; выберите протокол или interface=none";
+    }
+    throw "interface: протокол " + protocol + " работает поверх " + listed(fits) + ", а не «" + iface + "»";
+}
+if protocol != "none" {
+    if variable::get("graph") != "true" {
+        throw "protocol: узлу " + protocol + " нужен граф задач, а он отключён (ответом graph=no или потому, что не помещается во flash " + chip_name + ")";
+    }
+    let block = INTERFACE_BLOCK[iface];
+    if !INTERFACES[suffix].contains(block) {
+        throw "interface: у " + chip_name + " нет выведенного блока " + block.to_upper() + " — интерфейс " + iface + " недоступен";
+    }
+}
+variable::set("protocol", protocol);
+variable::set("interface", iface);
+// Модуль заглушки UART в bsp — только под интерфейс uart: без него
+// `bsp::serial` не объявлен, и файл остался бы мусором с Liquid внутри.
+if iface != "uart" {
+	file::delete("crates-cross/bsp/src/serial.rs");
+	file::delete("docs/modules/bsp-serial.md");
 }
 
 // Слот драйвера внешней флеши в bsp — только у OTA с разделами на ней. Без

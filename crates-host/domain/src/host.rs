@@ -29,6 +29,11 @@
 //! Сообщения по инициативе устройства (события, телеметрия) — второй вход
 //! узла; появятся по вопросу при генерации проекта.
 
+/// Обработчик по умолчанию над примером схемы `crates-host/proto`.
+mod service;
+
+pub use service::Service;
+
 use core::fmt::Debug;
 
 use defmt_or_log::{Debug2Format, info, warn};
@@ -66,8 +71,9 @@ pub const MAX_LOST_IN_A_ROW: u8 = 32;
 /// обработчика приложения, подставляя их типы аргументами фрагмента:
 ///
 /// ```ignore
-/// fragments: [::domain::HOST_FRAG<bsp::HostLink, crate::host::Service> as HOST
-///                 = ::domain::host::HostWiring { link: board.host, service: crate::host::Service::new(),
+/// fragments: [::domain::HOST_FRAG<HostLink, ::domain::host::Service> as HOST
+///                 = ::domain::host::HostWiring { link: HostLink::new(board.serial, FRAME.init([0; 262])),
+///                                                service: ::domain::host::Service::new("1.0.0"),
 ///                                                rx: RX.init([0; 258]), tx: TX.init([0; 256]) }];
 /// ```
 ///
@@ -245,13 +251,11 @@ mod tests {
     use std::collections::VecDeque;
 
     use micropb::{MessageDecode, MessageEncode, PbEncoder};
-    use ports::{FrameLink, HostService, LinkError};
-    use proto::{
-        Error, GetInfo, Info, Ping, Pong, Request, Request_, Response, Response_, heapless,
-    };
+    use ports::{FrameLink, LinkError};
+    use proto::{GetInfo, Ping, Request, Request_, Response, Response_, heapless};
     use supervisor::runtime::TaskExit;
 
-    use super::{HostCtx, run};
+    use super::{HostCtx, Service, run};
 
     /// Канал: отдаёт заранее заготовленные исходы `recv`, когда они кончаются,
     /// — закрыт. Отправленные кадры складывает в `sent`.
@@ -288,40 +292,6 @@ mod tests {
         }
     }
 
-    /// Обработчик: на `ping` — `pong`, на `get_info` — версия; `request_id`
-    /// — обратно.
-    struct Service;
-
-    impl HostService for Service {
-        type Request = Request;
-        type Response = Response;
-
-        fn handle(&mut self, request: Request) -> impl Future<Output = Response> {
-            let result = match request.command {
-                Some(Request_::Command::Ping(_)) => Response_::Result::Pong(Pong::default()),
-                Some(Request_::Command::GetInfo(_)) => Response_::Result::Info(Info {
-                    version: heapless::String::try_from("1.2.3").unwrap(),
-                }),
-                None => Response_::Result::Error(Error {
-                    text: heapless::String::try_from("unknown command").unwrap(),
-                }),
-            };
-            std::future::ready(Response {
-                request_id: request.request_id,
-                result: Some(result),
-            })
-        }
-
-        fn malformed(&mut self) -> Response {
-            Response {
-                request_id: 0,
-                result: Some(Response_::Result::Error(Error {
-                    text: heapless::String::try_from("bad frame").unwrap(),
-                })),
-            }
-        }
-    }
-
     fn encode(message: &impl MessageEncode) -> Vec<u8> {
         let mut encoder = PbEncoder::new(heapless::Vec::<u8, 128>::new());
         message.encode(&mut encoder).unwrap();
@@ -347,7 +317,7 @@ mod tests {
         let mut tx = vec![0; tx_len];
         let ctx = HostCtx {
             link,
-            service: &mut Service,
+            service: &mut Service::new("1.2.3"),
             rx: &mut rx,
             tx: &mut tx,
             index: 0,

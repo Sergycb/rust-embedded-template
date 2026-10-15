@@ -15,6 +15,9 @@ pub mod external;
 {%- if ota == "true" %}
 pub mod ota;
 {%- endif %}
+{%- if interface == "uart" %}
+pub mod serial;
+{%- endif %}
 pub mod wdg;
 
 pub use board::{Board, ChipSpec};

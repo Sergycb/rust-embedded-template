@@ -36,6 +36,11 @@ pub mod slave;
 /// Master: по функции на запрос, ответ сверяется с запросом.
 pub mod master;
 
+/// Карта регистров по умолчанию — пустая, место под карту устройства.
+mod registers;
+
+pub use registers::Registers;
+
 #[cfg(test)]
 mod fakes;
 
@@ -43,7 +48,7 @@ use core::fmt::Debug;
 
 use defmt_or_log::{Debug2Format, info, warn};
 use embassy_time::Duration;
-use ports::{ModbusServer, Registers};
+use ports::ModbusServer;
 use supervisor::policy::{BackoffPolicy, JitterPolicy};
 use supervisor::runtime::TaskExit;
 
@@ -62,11 +67,11 @@ pub const BACKOFF: BackoffPolicy = BackoffPolicy {
 /// типы транспорта и данных аргументами фрагмента:
 ///
 /// ```ignore
-/// // `bsp::Rs485` и `board.rs485` — поток байтов линии в `bsp` (этап интерфейсов).
-/// fragments: [::domain::MODBUS_SLAVE_FRAG<::adapters::modbus::Rtu<bsp::Rs485>, crate::Registers> as MODBUS
+/// // `bsp::serial::Serial` и `board.serial` — поток байтов UART платы.
+/// fragments: [::domain::MODBUS_SLAVE_FRAG<::adapters::modbus::Rtu<bsp::serial::Serial>, ::domain::modbus::Registers> as MODBUS
 ///                 = ::domain::modbus::ModbusSlaveWiring {
-///                     link: ::adapters::modbus::Rtu::new(board.rs485),
-///                     regs: crate::Registers::new(),
+///                     link: ::adapters::modbus::Rtu::new(board.serial),
+///                     regs: ::domain::modbus::Registers,
 ///                     unit: 1,
 ///                 }];
 /// ```
@@ -74,7 +79,8 @@ pub const BACKOFF: BackoffPolicy = BackoffPolicy {
 pub struct ModbusSlaveWiring<L, R> {
     /// Транспорт — `adapters::modbus::{Rtu, Tcp, Udp}` над интерфейсом платы.
     pub link: L,
-    /// Данные устройства — реализация [`Registers`] приложения.
+    /// Данные устройства — реализация [`ports::Registers`] (по умолчанию —
+    /// пустая карта [`Registers`]).
     pub regs: R,
     /// Адрес slave'а на шине, 1..=247.
     pub unit: u8,
@@ -99,7 +105,7 @@ pub async fn run<L, R>(mut ctx: ModbusSlaveCtx<'_, L, R>) -> TaskExit
 where
     L: ModbusServer,
     L::Error: Debug,
-    R: Registers,
+    R: ports::Registers,
 {
     ctx.run().await.result
 }
@@ -109,7 +115,7 @@ impl<L, R> ModbusSlaveCtx<'_, L, R>
 where
     L: ModbusServer,
     L::Error: Debug,
-    R: Registers,
+    R: ports::Registers,
 {
     fsm::machine! {
         machine ModbusSlave mod edges {

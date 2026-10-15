@@ -53,6 +53,15 @@ if config == "true" {
 }
 if variable::get("graph") == "true" {
 	print("Граф задач: узел HEARTBEAT в crates-cross/app/src/graph.rs, его работа — в crates-host/domain/src/heartbeat.rs.");
+	let protocol = variable::get("protocol");
+	if protocol == "modbus" {
+		print("Modbus slave: узел MODBUS поверх UART; карта регистров — crates-host/domain/src/modbus/registers.rs.");
+	} else if protocol == "protobuf" {
+		print("protobuf: узел HOST поверх UART (COBS + CRC); схема — crates-host/proto, обработчик — crates-host/domain/src/host/service.rs.");
+	}
+	if variable::get("interface") == "uart" {
+		print("UART — заглушка: подставьте свой USART в crates-cross/bsp/src/serial.rs (cargo xtask pins USART2 --snippet).");
+	}
 } else {
 	print("Без графа задач: main заканчивается после инициализации (причина — выше).");
 }

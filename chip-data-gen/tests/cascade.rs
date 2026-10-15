@@ -1027,6 +1027,78 @@ fn graph_is_dropped_when_the_app_partition_is_too_small() {
     );
 }
 
+/// Без ответов про протокол проект — без протокола: ни узла, ни заглушки
+/// UART в `bsp`.
+#[test]
+fn no_protocol_by_default() {
+    let result = run_cascade_to(&compile_script(), "f407ve").expect("каскад не должен падать");
+    assert_eq!(result.vars.get("protocol").map(String::as_str), Some("none"));
+    assert_eq!(result.vars.get("interface").map(String::as_str), Some("none"));
+    assert!(
+        result
+            .deleted
+            .iter()
+            .any(|path| path == "crates-cross/bsp/src/serial.rs"),
+        "заглушка UART без интерфейса uart: {:?}",
+        result.deleted
+    );
+}
+
+/// Протокол поверх UART оставляет в `bsp` модуль заглушки.
+#[test]
+fn protocol_over_uart_keeps_the_serial_module() {
+    for protocol in ["modbus", "protobuf"] {
+        let result = run_cascade_with(
+            &compile_script(),
+            "g474re",
+            &[("protocol", protocol), ("interface", "uart")],
+        )
+        .expect("каскад не должен падать");
+        assert_eq!(result.vars.get("protocol").map(String::as_str), Some(protocol));
+        assert_eq!(result.vars.get("interface").map(String::as_str), Some("uart"));
+        assert!(
+            !result
+                .deleted
+                .iter()
+                .any(|path| path == "crates-cross/bsp/src/serial.rs"),
+            "{protocol}: заглушка UART удалена"
+        );
+    }
+}
+
+/// Сочетания, при которых узел протокола не встал бы в граф или обслуживать
+/// интерфейс было бы некому, генерацию останавливают — с объяснением, а не
+/// проектом, который молча делает не то.
+#[test]
+fn impossible_protocol_answers_are_rejected() {
+    let script = compile_script();
+    let cases: [(&str, &[(&str, &str)], &str); 5] = [
+        ("f407ve", &[("protocol", "modbus")], "работает поверх uart, а не"),
+        ("f407ve", &[("interface", "uart")], "без протокола"),
+        (
+            "f407ve",
+            &[("protocol", "canopen"), ("interface", "uart")],
+            "protocol: ожидается modbus, none, protobuf, а не",
+        ),
+        (
+            "f407ve",
+            &[("protocol", "protobuf"), ("interface", "uart"), ("graph", "no")],
+            "нужен граф",
+        ),
+        // Граф здесь снимает размер раздела, а не ответ.
+        ("l011f4", &[("protocol", "modbus"), ("interface", "uart")], "нужен граф"),
+    ];
+    for (chip, preset, reason) in cases {
+        let err = run_cascade_with(&script, chip, preset)
+            .err()
+            .unwrap_or_else(|| panic!("{chip} {preset:?}: каскад не остановился"));
+        assert!(
+            err.to_string().contains(reason),
+            "{chip} {preset:?}: ждали «{reason}», а получили: {err}"
+        );
+    }
+}
+
 /// Ответ «нет» на вопрос про граф окончателен и на просторном чипе.
 #[test]
 fn declining_the_graph_is_final() {

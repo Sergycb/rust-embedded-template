@@ -27,7 +27,8 @@
 //! Cortex-M0+, раздел настроек с OTA на равных секторах и без OTA (оба — в
 //! хвосте flash), с OTA на неравных (в мелких секторах перед ACTIVE), во
 //! внутренней EEPROM и на внешней флеши (слот с заглушкой), подпись образа (с графом и без) и чип, у которого
-//! стёртый флеш читается нулями. Итого семнадцать — точный список в `default_cases()`. Свой
+//! стёртый флеш читается нулями, и два протокола поверх UART (Modbus и protobuf).
+//! Итого девятнадцать — точный список в `default_cases()`. Свой
 //! набор чипов — позиционными аргументами.
 
 use std::{
@@ -146,6 +147,12 @@ fn default_cases() -> Vec<Case> {
         // `adapters::eeprom::Eeprom` поверх `Flash::eeprom_*`, единственное место
         // под настройки на флеше, стирающемся в ноль.
         Case::new("stm32l073rz").variant("config", &["config=internal"]),
+        // Протоколы поверх UART: узел в графе, заглушка `bsp::serial` и
+        // транспорт из `adapters` вокруг неё. Modbus — на USART v4 (G4, есть
+        // аппаратный DE), protobuf — на F4 (USART v2, без него): оба
+        // интерфейса из таблицы chip-data/interfaces.rhai.
+        Case::new("stm32g474re").variant("modbus-uart", &["protocol=modbus", "interface=uart"]),
+        Case::new("stm32f407ve").variant("protobuf-uart", &["protocol=protobuf", "interface=uart"]),
     ]
 }
 

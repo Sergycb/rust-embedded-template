@@ -26,6 +26,9 @@ pub mod settings;
 /// COBS и CRC.
 pub mod cobs;
 
+/// Заглушка потока байтов в слоте UART — до драйвера платы.
+pub mod serial;
+
 /// Транспорты Modbus — RTU, TCP, UDP — для портов `ports::ModbusClient` и
 /// `ports::ModbusServer`.
 pub mod modbus;
