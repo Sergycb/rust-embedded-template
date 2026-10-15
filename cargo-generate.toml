@@ -196,16 +196,19 @@ graph = { type = "string", prompt = "Граф задач supervisor (поряд�
 # драйвер своей платы (`cargo xtask pins USARTn --snippet`).
 #
 # modbus — Modbus slave (RTU поверх UART, RS-485 — тот же UART с DE);
-# protobuf — сообщения protobuf от хоста, кадры COBS + CRC поверх UART.
+# protobuf — сообщения protobuf от хоста, кадры COBS + CRC поверх UART;
+# canopen — узел CANopen (стек zencan) поверх CAN.
 protocol = { type = "string", prompt = "Протокол связи (узел в графе)", choices = [
 	"none",
 	"modbus",
 	"protobuf",
+	"canopen",
 ], default = "none" }
 
 interface = { type = "string", prompt = "Интерфейс под протоколом (uart — в том числе RS-485)", choices = [
 	"none",
 	"uart",
+	"can",
 ], default = "none" }
 
 # Каталог целиком, а не перечисление файлов: иначе в проекте остаётся пустой

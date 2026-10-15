@@ -29,6 +29,9 @@ pub mod cobs;
 /// Заглушка потока байтов в слоте UART — до драйвера платы.
 pub mod serial;
 
+/// Заглушка шины в слоте CAN — до контроллера платы.
+pub mod can;
+
 /// Транспорты Modbus — RTU, TCP, UDP — для портов `ports::ModbusClient` и
 /// `ports::ModbusServer`.
 pub mod modbus;

@@ -54,11 +54,16 @@ if variable::get("graph") == "true" {
 	let protocol = variable::get("protocol");
 	if protocol == "modbus" {
 		print("Modbus slave: узел MODBUS поверх UART; карта регистров — crates-host/domain/src/modbus/registers.rs.");
+	} else if protocol == "canopen" {
+		print("CANopen: узел CANOPEN поверх CAN; словарь объектов — crates-host/canopen/device.toml.");
 	} else if protocol == "protobuf" {
 		print("protobuf: узел HOST поверх UART (COBS + CRC); схема — crates-host/proto, обработчик — crates-host/domain/src/host/service.rs.");
 	}
-	if variable::get("interface") == "uart" {
+	let iface = variable::get("interface");
+	if iface == "uart" {
 		print("UART — заглушка: подставьте свой USART в crates-cross/bsp/src/serial.rs (cargo xtask pins USART2 --snippet).");
+	} else if iface == "can" {
+		print("CAN — заглушка: подставьте свой контроллер в crates-cross/bsp/src/can.rs (cargo xtask pins FDCAN1 --snippet или CAN1).");
 	}
 } else {
 	print("Без графа задач: main заканчивается после инициализации (причина — выше).");

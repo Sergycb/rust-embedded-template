@@ -3,6 +3,9 @@
 pub mod banks;
 {%- endif %}
 pub mod board;
+{%- if interface == "can" %}
+pub mod can;
+{%- endif %}
 {%- if cpu_freq_boost == "true" %}
 pub mod clocks;
 {%- endif %}

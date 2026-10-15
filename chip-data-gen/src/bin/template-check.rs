@@ -25,8 +25,9 @@
 //! Cortex-M0+, раздел настроек с OTA на равных секторах и без OTA (оба — в
 //! хвосте flash), с OTA на неравных (в мелких секторах перед ACTIVE), во
 //! внутренней EEPROM и на внешней флеши (слот с заглушкой), подпись образа (с графом и без) и чип, у которого
-//! стёртый флеш читается нулями, и два протокола поверх UART (Modbus и protobuf).
-//! Итого девятнадцать — точный список в `default_cases()`. Свой
+//! стёртый флеш читается нулями, два протокола поверх UART (Modbus и protobuf)
+//! и CANopen на FDCAN и bxCAN. Итого двадцать одна — точный список в
+//! `default_cases()`. Свой
 //! набор чипов — позиционными аргументами.
 
 use std::{
@@ -150,6 +151,12 @@ fn default_cases() -> Vec<Case> {
         // интерфейса из таблицы chip-data/interfaces.rhai.
         Case::new("stm32g474re").variant("modbus-uart", &["protocol=modbus", "interface=uart"]),
         Case::new("stm32f407ve").variant("protobuf-uart", &["protocol=protobuf", "interface=uart"]),
+        // CANopen на обоих CAN-контроллерах: `bsp::can::Bus` различается по
+        // `can_kind` — FDCAN (G4) включается сразу, bxCAN (F4) — асинхронно
+        // при первом обмене. Заодно — крейт словаря `crates-host/canopen`,
+        // который в остальных конфигурациях удаляется.
+        Case::new("stm32g474re").variant("canopen-fdcan", &["protocol=canopen", "interface=can"]),
+        Case::new("stm32f407ve").variant("canopen-bxcan", &["protocol=canopen", "interface=can"]),
     ]
 }
 

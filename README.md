@@ -522,15 +522,20 @@ ST-Link захваченным до переподключения кабеля 
 | `none` (по умолчанию) | — | — |
 | `modbus` | `MODBUS` — Modbus slave, транспорт RTU (`adapters::modbus::Rtu`) | карта регистров `crates-host/domain/src/modbus/registers.rs` |
 | `protobuf` | `HOST` — сообщения protobuf, кадры COBS + CRC (`adapters::cobs::Cobs`) | схема `crates-host/proto`, обработчик `crates-host/domain/src/host/service.rs` |
+| `canopen` | `CANOPEN` — узел CANopen, стек `zencan` | словарь объектов `crates-host/canopen/device.toml` |
 
-Интерфейс пока один — `uart` (RS-485 — тот же UART с выводом DE). Узлу протокола
-нужен граф задач, а интерфейс должен быть выведен в корпусе чипа: недопустимое
-сочетание генерация отвергает с объяснением.
+Интерфейсы — `uart` (Modbus и protobuf; RS-485 — тот же UART с выводом DE) и `can`
+(CANopen; FDCAN или bxCAN — какой у чипа). Узлу протокола нужен граф задач, а
+интерфейс должен быть выведен в корпусе чипа: недопустимое сочетание генерация
+отвергает с объяснением. Крейты невыбранного протокола (`crates-host/proto`,
+`crates-host/canopen`) в проект не попадают.
 
-Выводы шаблон не выбирает: в `Board::serial` встаёт заглушка `bsp::serial::Serial`,
-с которой проект собирается и запускается, но узел ждёт байтов впустую. Подставить
-свой USART — правка в `crates-cross/bsp/src/serial.rs` по рецепту в
-`docs/modules/bsp-serial.md` (`cargo xtask pins USART2 --snippet`). Master Modbus —
+Выводы шаблон не выбирает: в `Board::serial` или `Board::can` встаёт заглушка, с
+которой проект собирается и запускается, но узел ждёт впустую. Подставить своё
+железо — правка в `crates-cross/bsp/src/serial.rs` или `can.rs` по рецепту в
+`docs/modules/bsp-serial.md` и `bsp-can.md` (`cargo xtask pins USART2 --snippet`,
+`FDCAN1`/`CAN1`). Прослойка `bsp::can::Bus` — порт `CanBus` поверх контроллера —
+уже там; не хватает только выводов. Master Modbus —
 не узел, а функции `domain::modbus::master` поверх `ports::ModbusClient`: что и как
 часто опрашивать, решает узел приложения.
 

@@ -93,6 +93,21 @@ pub struct Dictionary {
     pub od: &'static [ODEntry<'static>],
 }
 
+// Словарь примера `crates-host/canopen` — только в проекте с CANopen: без него
+// крейта словаря в проекте нет вовсе.
+// {%- if protocol == "canopen" %}
+/// Словарь примера устройства `crates-host/canopen` — с ним узел стоит в
+/// графе шаблона. Проект меняет `device.toml` того крейта, а не эту функцию.
+#[must_use]
+pub fn dictionary() -> Dictionary {
+    Dictionary {
+        mbox: &::canopen::NODE_MBOX,
+        state: &::canopen::NODE_STATE,
+        od: &::canopen::OD_TABLE,
+    }
+}
+// {%- endif %}
+
 // Вход узла — `CanOpenWiring`: структуру эмитит сам фрагмент (`boot: …
 // struct`). Строит её compose-site:
 //

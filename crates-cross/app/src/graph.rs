@@ -101,6 +101,12 @@ supervisor_graph! {
     // не подставит свой UART — docs/modules/bsp-serial.md) и карта регистров
     // `domain::modbus::Registers` — пустая, её проект описывает в `domain`.
     // Адрес slave'а на шине — `unit`.
+{%- elsif protocol == "canopen" %}
+
+    // Узел `CANOPEN` — узел CANopen (стек `zencan`) на шине CAN платы:
+    // `board.can` (заглушка, пока проект не подставит свой контроллер —
+    // docs/modules/bsp-can.md) и словарь объектов из `crates-host/canopen`
+    // (`device.toml`). Адрес узла в сети — `node_id`, 1..=127.
 {%- elsif protocol == "protobuf" %}
 
     // Узел `HOST` — сообщения protobuf от хоста поверх UART платы: кадры COBS +
@@ -122,7 +128,7 @@ supervisor_graph! {
     // первым его занимает тот, кто первым позовёт
     // `cpu_load_percent_receiver()`. Само значение в лог не идёт — читатель
     // должен быть, иначе процент некуда девать.
-    ::domain::CPU_LOAD_FRAG as CPU_LOAD = ::domain::cpu_load::IdleMeter { sleep_ticks: crate::cpu_load::sleep_ticks() }{% if ota == "true" %}, ::domain::OTA_FRAG<bsp::ota::Link, bsp::ota::Updater> as OTA = ::domain::ota::OtaWiring { link: board.ota.link, flash: board.ota.flash, mode: {% if signed == "true" %}::domain::ota::Mode::Signed { running_version: crate::image::FW_VERSION }{% else %}::domain::ota::Mode::Plain{% endif %} }{% endif %}{% if protocol == "modbus" %}, ::domain::MODBUS_SLAVE_FRAG<::adapters::modbus::Rtu<bsp::serial::Serial>, ::domain::modbus::Registers> as MODBUS = ::domain::modbus::ModbusSlaveWiring { link: ::adapters::modbus::Rtu::new(board.serial), regs: ::domain::modbus::Registers, unit: 1 }{% elsif protocol == "protobuf" %}, ::domain::HOST_FRAG<HostLink, ::domain::host::Service> as HOST = ::domain::host::HostWiring { link: HostLink::new(board.serial, { static FRAME: StaticCell<[u8; HostLink::tx_len(HOST_MESSAGE)]> = StaticCell::new(); FRAME.init([0; HostLink::tx_len(HOST_MESSAGE)]) }), service: ::domain::host::Service::new(crate::build::PKG_VERSION), rx: { static RX: StaticCell<[u8; HostLink::rx_len(HOST_MESSAGE)]> = StaticCell::new(); RX.init([0; HostLink::rx_len(HOST_MESSAGE)]) }, tx: { static TX: StaticCell<[u8; HOST_MESSAGE]> = StaticCell::new(); TX.init([0; HOST_MESSAGE]) } }{% endif %}];
+    ::domain::CPU_LOAD_FRAG as CPU_LOAD = ::domain::cpu_load::IdleMeter { sleep_ticks: crate::cpu_load::sleep_ticks() }{% if ota == "true" %}, ::domain::OTA_FRAG<bsp::ota::Link, bsp::ota::Updater> as OTA = ::domain::ota::OtaWiring { link: board.ota.link, flash: board.ota.flash, mode: {% if signed == "true" %}::domain::ota::Mode::Signed { running_version: crate::image::FW_VERSION }{% else %}::domain::ota::Mode::Plain{% endif %} }{% endif %}{% if protocol == "modbus" %}, ::domain::MODBUS_SLAVE_FRAG<::adapters::modbus::Rtu<bsp::serial::Serial>, ::domain::modbus::Registers> as MODBUS = ::domain::modbus::ModbusSlaveWiring { link: ::adapters::modbus::Rtu::new(board.serial), regs: ::domain::modbus::Registers, unit: 1 }{% elsif protocol == "canopen" %}, ::domain::CANOPEN_FRAG<bsp::can::Can> as CANOPEN = ::domain::canopen::CanOpenWiring { bus: board.can, node_id: 1, dictionary: ::domain::canopen::dictionary() }{% elsif protocol == "protobuf" %}, ::domain::HOST_FRAG<HostLink, ::domain::host::Service> as HOST = ::domain::host::HostWiring { link: HostLink::new(board.serial, { static FRAME: StaticCell<[u8; HostLink::tx_len(HOST_MESSAGE)]> = StaticCell::new(); FRAME.init([0; HostLink::tx_len(HOST_MESSAGE)]) }), service: ::domain::host::Service::new(crate::build::PKG_VERSION), rx: { static RX: StaticCell<[u8; HostLink::rx_len(HOST_MESSAGE)]> = StaticCell::new(); RX.init([0; HostLink::rx_len(HOST_MESSAGE)]) }, tx: { static TX: StaticCell<[u8; HOST_MESSAGE]> = StaticCell::new(); TX.init([0; HOST_MESSAGE]) } }{% endif %}];
 }
 
 /// Куда уходит просрочка наблюдаемого узла.

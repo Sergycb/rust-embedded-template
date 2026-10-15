@@ -69,15 +69,15 @@ micropb            = { workspace = true }
 # {%- if protocol == "protobuf" %}
 proto              = { workspace = true }
 # {%- endif %}
-# Узел CANOPEN (`domain::canopen`): стек CANopen и кадр шины.
+# Узел CANOPEN (`domain::canopen`): стек CANopen и кадр шины; словарь объектов
+# устройства — `crates-host/canopen` (`domain::canopen::dictionary`).
 zencan-node        = { workspace = true }
 embedded-can       = { workspace = true }
+# {%- if protocol == "canopen" %}
+canopen            = { workspace = true }
+# {%- endif %}
 
 [dev-dependencies]
-# Пример словаря объектов — для тестов узла CANOPEN.
-# {%- if protocol == "canopen" %}
-canopen = { workspace = true }
-# {%- endif %}
 test-log = { workspace = true }
 # Исполнитель для async-тестов над фейками портов (`#[tokio::test]`); фичи —
 # в корневом Cargo.toml.

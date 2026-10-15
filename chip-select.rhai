@@ -1026,9 +1026,14 @@ const PROTOCOL_INTERFACES = #{
     "none": ["none"],
     "modbus": ["uart"],
     "protobuf": ["uart"],
+    "canopen": ["can"],
 };
-const INTERFACE_BLOCK = #{
-    "uart": "usart",
+// Блоки чипа (метки chip-data/interfaces.rhai), на которых работает
+// интерфейс: CAN — любой из двух контроллеров, драйвер `bsp::can` выбирает по
+// `can_kind`.
+const INTERFACE_BLOCKS = #{
+    "uart": ["usart"],
+    "can": ["fdcan", "bxcan"],
 };
 // Значения через запятую — для сообщений об ошибке. `reduce` без начального
 // значения начинает с `()`, и список получил бы ведущую запятую.
@@ -1057,9 +1062,16 @@ if protocol != "none" {
     if variable::get("graph") != "true" {
         throw "protocol: узлу " + protocol + " нужен граф задач, а он отключён (ответом graph=no или потому, что не помещается во flash " + chip_name + ")";
     }
-    let block = INTERFACE_BLOCK[iface];
-    if !INTERFACES[suffix].contains(block) {
-        throw "interface: у " + chip_name + " нет выведенного блока " + block.to_upper() + " — интерфейс " + iface + " недоступен";
+    let blocks = INTERFACE_BLOCKS[iface];
+    let found = [];
+    for tag in INTERFACES[suffix] {
+        if blocks.contains(tag) { found.push(tag); }
+    }
+    if found.is_empty() {
+        throw "interface: у " + chip_name + " нет выведенного блока " + listed(blocks).to_upper() + " — интерфейс " + iface + " недоступен";
+    }
+    if iface == "can" {
+        variable::set("can_kind", found[0]);
     }
 }
 variable::set("protocol", protocol);
@@ -1069,6 +1081,11 @@ variable::set("interface", iface);
 if iface != "uart" {
 	file::delete("crates-cross/bsp/src/serial.rs");
 	file::delete("docs/modules/bsp-serial.md");
+}
+// То же для CAN: модуль шины и его документация — только под интерфейс can.
+if iface != "can" {
+	file::delete("crates-cross/bsp/src/can.rs");
+	file::delete("docs/modules/bsp-can.md");
 }
 // Крейты протоколов — только в проекте, где протокол выбран: без них нет ни
 // схемы protobuf (и её генерации в `build.rs`), ни словаря CANopen. Ссылки на

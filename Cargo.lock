@@ -11,6 +11,7 @@ dependencies = [
  "defmt",
  "embassy-boot",
  "embassy-sync",
+ "embedded-can",
  "embedded-io-async",
  "embedded-storage",
  "embedded-storage-async",

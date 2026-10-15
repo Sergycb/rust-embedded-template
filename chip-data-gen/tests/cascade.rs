@@ -1048,7 +1048,11 @@ fn no_protocol_by_default() {
         "заглушка UART без интерфейса uart: {:?}",
         result.deleted
     );
-    for path in ["crates-host/proto", "crates-host/domain/src/host", "crates-host/canopen"] {
+    for path in [
+        "crates-host/proto",
+        "crates-host/domain/src/host",
+        "crates-host/canopen",
+    ] {
         assert!(
             result.deleted.iter().any(|deleted| deleted == path),
             "{path} без своего протокола остался: {:?}",
@@ -1082,8 +1086,40 @@ fn protocol_over_uart_keeps_the_serial_module() {
                 .any(|path| path == "crates-cross/bsp/src/serial.rs"),
             "{protocol}: заглушка UART удалена"
         );
-        let schema_kept = !result.deleted.iter().any(|path| path == "crates-host/proto");
-        assert_eq!(schema_kept, protocol == "protobuf", "{protocol}: crates-host/proto");
+        let schema_kept = !result
+            .deleted
+            .iter()
+            .any(|path| path == "crates-host/proto");
+        assert_eq!(
+            schema_kept,
+            protocol == "protobuf",
+            "{protocol}: crates-host/proto"
+        );
+    }
+}
+
+/// CANopen поверх CAN: хук берёт вид контроллера из таблицы интерфейсов
+/// (`bsp::can::Bus` у FDCAN и bxCAN разный) и оставляет крейт словаря.
+#[test]
+fn canopen_picks_the_can_controller_of_the_chip() {
+    for (chip, kind) in [("g474re", "fdcan"), ("f407ve", "bxcan")] {
+        let result = run_cascade_with(
+            &compile_script(),
+            chip,
+            &[("protocol", "canopen"), ("interface", "can")],
+        )
+        .expect("каскад не должен падать");
+        assert_eq!(
+            result.vars.get("can_kind").map(String::as_str),
+            Some(kind),
+            "{chip}"
+        );
+        for kept in ["crates-cross/bsp/src/can.rs", "crates-host/canopen"] {
+            assert!(
+                !result.deleted.iter().any(|path| path == kept),
+                "{chip}: {kept} удалён"
+            );
+        }
     }
 }
 
@@ -1095,7 +1131,13 @@ fn impossible_protocol_answers_are_rejected() {
     /// Чип, ответы, часть ожидаемого сообщения об ошибке.
     type Rejected<'a> = (&'a str, &'a [(&'a str, &'a str)], &'a str);
     let script = compile_script();
-    let cases: [Rejected; 5] = [
+    let cases: [Rejected; 6] = [
+        // У G071 нет CAN-контроллера вовсе.
+        (
+            "g071rb",
+            &[("protocol", "canopen"), ("interface", "can")],
+            "нет выведенного блока FDCAN, BXCAN",
+        ),
         (
             "f407ve",
             &[("protocol", "modbus")],
@@ -1104,8 +1146,8 @@ fn impossible_protocol_answers_are_rejected() {
         ("f407ve", &[("interface", "uart")], "без протокола"),
         (
             "f407ve",
-            &[("protocol", "canopen"), ("interface", "uart")],
-            "protocol: ожидается modbus, none, protobuf, а не",
+            &[("protocol", "opcua"), ("interface", "uart")],
+            "protocol: ожидается canopen, modbus, none, protobuf, а не",
         ),
         (
             "f407ve",

@@ -144,6 +144,12 @@ pub struct Board {
     /// `crates-cross/app/src/graph.rs`).
     pub serial: crate::serial::Serial,
 {%- endif %}
+{%- if interface == "can" %}
+    /// Шина CAN под узлом `CANOPEN` — заглушка `bsp::can::Can`, пока проект не
+    /// подставит контроллер своей платы (`docs/modules/bsp-can.md`). Уезжает в
+    /// узел `CANOPEN` графа (`fragments:` в `crates-cross/app/src/graph.rs`).
+    pub can: crate::can::Can,
+{%- endif %}
 {%- if graph == "true" %}
     /// Сторож платы — заряженный, но ещё не запущенный: его забирает
     /// инициализатор блока `watchdog:` в графе задач
@@ -256,6 +262,9 @@ impl Board {
 {%- endif %}
 {%- if interface == "uart" %}
             serial: crate::serial::new(),
+{%- endif %}
+{%- if interface == "can" %}
+            can: crate::can::new(),
 {%- endif %}
 {%- if graph == "true" %}
             watchdog: crate::wdg::UnarmedBoardWatchdog::new(p.{{watchdog_peripheral}}),
