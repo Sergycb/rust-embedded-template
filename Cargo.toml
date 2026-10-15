@@ -191,6 +191,12 @@ embassy-net            = { version = "0.9.1", features = [
 	"dhcpv4",
 ] }
 # {%- endif %}
+# {%- if interface == "usb" %}
+# USB-устройство под интерфейсом usb (`adapters::usb`, узел `domain::usb`):
+# версия, парная к `embassy-stm32` 0.6 (те же `embassy-usb-driver` 0.2,
+# `embassy-sync`, `heapless`). Без default-фич: `usbd-hid` шаблону не нужен.
+embassy-usb            = { version = "0.6.0", default-features = false }
+# {%- endif %}
 # {%- if protocol == "canopen" %}
 # CANopen: стек узла (`zencan-node`) и генерация словаря объектов из TOML-описания
 # устройства (`zencan-build`, в `build.rs` крейта `canopen`). MPL-2.0 —

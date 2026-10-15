@@ -6,9 +6,6 @@ pub mod board;
 {%- if interface == "can" %}
 pub mod can;
 {%- endif %}
-{%- if interface == "tcp" or interface == "udp" %}
-pub mod net;
-{%- endif %}
 {%- if cpu_freq_boost == "true" %}
 pub mod clocks;
 {%- endif %}
@@ -18,11 +15,17 @@ pub mod config;
 {%- if ota == "true" and ota_store == "external" %}
 pub mod external;
 {%- endif %}
+{%- if interface == "tcp" or interface == "udp" %}
+pub mod net;
+{%- endif %}
 {%- if ota == "true" %}
 pub mod ota;
 {%- endif %}
 {%- if interface == "uart" %}
 pub mod serial;
+{%- endif %}
+{%- if interface == "usb" %}
+pub mod usb;
 {%- endif %}
 pub mod wdg;
 

@@ -1066,6 +1066,10 @@ fn no_protocol_by_default() {
         "crates-host/adapters/src/net.rs",
         "crates-cross/bsp/src/net.rs",
         "docs/modules/bsp-net.md",
+        "crates-cross/bsp/src/usb.rs",
+        "crates-host/adapters/src/usb.rs",
+        "crates-host/domain/src/usb.rs",
+        "docs/modules/bsp-usb.md",
     ] {
         assert!(
             result.deleted.iter().any(|deleted| deleted == path),
@@ -1176,6 +1180,34 @@ fn protocol_over_network_keeps_the_net_stack() {
     }
 }
 
+/// Протокол по USB (protobuf и Modbus RTU): хук берёт вид USB-блока из таблицы интерфейсов (у G4 —
+/// USB device, у F4 — OTG) и оставляет устройство `embassy-usb`.
+#[test]
+fn protocol_over_usb_picks_the_usb_block_of_the_chip() {
+    for (chip, kind, protocol) in [("g474re", "usb", "protobuf"), ("f407ve", "otg", "modbus")] {
+        let result = run_cascade_with(
+            &compile_script(),
+            chip,
+            &[("protocol", protocol), ("interface", "usb")],
+        )
+        .expect("каскад не должен падать");
+        assert_eq!(
+            result.vars.get("usb_kind").map(String::as_str),
+            Some(kind),
+            "{chip}"
+        );
+        for kept in [
+            "crates-cross/bsp/src/usb.rs",
+            "crates-host/domain/src/usb.rs",
+        ] {
+            assert!(
+                !result.deleted.iter().any(|path| path == kept),
+                "{chip}: {kept} удалён"
+            );
+        }
+    }
+}
+
 /// Сочетания, при которых узел протокола не встал бы в граф или обслуживать
 /// интерфейс было бы некому, генерацию останавливают — с объяснением, а не
 /// проектом, который молча делает не то.
@@ -1184,7 +1216,13 @@ fn impossible_protocol_answers_are_rejected() {
     /// Чип, ответы, часть ожидаемого сообщения об ошибке.
     type Rejected<'a> = (&'a str, &'a [(&'a str, &'a str)], &'a str);
     let script = compile_script();
-    let cases: [Rejected; 8] = [
+    let cases: [Rejected; 9] = [
+        // У G071 USB нет.
+        (
+            "g071rb",
+            &[("protocol", "protobuf"), ("interface", "usb")],
+            "нет выведенного блока USB, OTG",
+        ),
         // У G474 нет Ethernet.
         (
             "g474re",
@@ -1206,7 +1244,7 @@ fn impossible_protocol_answers_are_rejected() {
         (
             "f407ve",
             &[("protocol", "modbus")],
-            "работает поверх uart, tcp, udp, а не",
+            "работает поверх uart, tcp, udp, usb, а не",
         ),
         ("f407ve", &[("interface", "uart")], "без протокола"),
         (

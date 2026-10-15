@@ -20,6 +20,9 @@ defmt = [
 	# {%- if interface == "tcp" or interface == "udp" %}
 	"embassy-net/defmt",
 	# {%- endif %}
+	# {%- if interface == "usb" %}
+	"embassy-usb/defmt",
+	# {%- endif %}
 ]
 # Подпись образа: проверка в bootloader'е (`ota::screen_update`). Включает
 # `boot` в проекте, где при генерации выбрана подпись; в корневом workspace её включают
@@ -49,9 +52,15 @@ crc = { workspace = true }
 cobs = { workspace = true }
 # {%- endif %}
 # {%- if interface == "tcp" or interface == "udp" %}
-# Сеть (`adapters::net`): заглушка устройства, TCP-сервер, UDP-канал;
-# `embassy-time` — таймауты сокета TCP (keep-alive).
+# Сеть (`adapters::net`): заглушка устройства, TCP-сервер, UDP-канал.
 embassy-net = { workspace = true }
+# {%- endif %}
+# {%- if interface == "usb" %}
+# USB (`adapters::usb`): заглушка драйвера и поток CDC ACM.
+embassy-usb = { workspace = true }
+# {%- endif %}
+# {%- if interface == "tcp" or interface == "udp" or interface == "usb" %}
+# Таймауты: keep-alive сокета TCP (`net`), запись, которую хост не забирает (`usb`).
 embassy-time = { workspace = true }
 # {%- endif %}
 # {%- if interface == "can" %}

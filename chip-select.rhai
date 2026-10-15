@@ -1024,8 +1024,8 @@ if variable::get("graph") != "true" {
 // таблицами; новый интерфейс добавляется строкой в обе.
 const PROTOCOL_INTERFACES = #{
     "none": ["none"],
-    "modbus": ["uart", "tcp", "udp"],
-    "protobuf": ["uart", "tcp", "udp"],
+    "modbus": ["uart", "tcp", "udp", "usb"],
+    "protobuf": ["uart", "tcp", "udp", "usb"],
     "canopen": ["can"],
 };
 // Блоки чипа (метки chip-data/interfaces.rhai), на которых работает
@@ -1036,6 +1036,7 @@ const INTERFACE_BLOCKS = #{
     "can": ["fdcan", "bxcan"],
     "tcp": ["eth"],
     "udp": ["eth"],
+    "usb": ["usb", "otg"],
 };
 // Значения через запятую — для сообщений об ошибке. `reduce` без начального
 // значения начинает с `()`, и список получил бы ведущую запятую.
@@ -1074,6 +1075,9 @@ if protocol != "none" {
     }
     if iface == "can" {
         variable::set("can_kind", found[0]);
+    }
+    if iface == "usb" {
+        variable::set("usb_kind", found[0]);
     }
 }
 variable::set("protocol", protocol);
@@ -1124,6 +1128,13 @@ if iface != "uart" {
 }
 if iface != "can" {
 	file::delete("crates-host/adapters/src/can.rs");
+}
+// USB — устройство `embassy-usb`, узел USB и поток CDC — только под usb.
+if iface != "usb" {
+	file::delete("crates-cross/bsp/src/usb.rs");
+	file::delete("docs/modules/bsp-usb.md");
+	file::delete("crates-host/adapters/src/usb.rs");
+	file::delete("crates-host/domain/src/usb.rs");
 }
 // Сеть — стек `embassy-net`, узел NET и их сокеты — только под tcp/udp.
 if iface != "tcp" && iface != "udp" {

@@ -26,8 +26,8 @@
 //! хвосте flash), с OTA на неравных (в мелких секторах перед ACTIVE), во
 //! внутренней EEPROM и на внешней флеши (слот с заглушкой), подпись образа (с графом и без) и чип, у которого
 //! стёртый флеш читается нулями, два протокола поверх UART (Modbus и protobuf)
-//! CANopen на FDCAN и bxCAN, Modbus TCP и protobuf UDP. Итого двадцать три —
-//! точный список в `default_cases()`. Свой
+//! CANopen на FDCAN и bxCAN, Modbus TCP, protobuf UDP, protobuf и Modbus по
+//! USB. Итого двадцать пять — точный список в `default_cases()`. Свой
 //! набор чипов — позиционными аргументами.
 
 use std::{
@@ -162,6 +162,12 @@ fn default_cases() -> Vec<Case> {
         // v2), protobuf UDP — на F4 (Ethernet v1).
         Case::new("stm32h743zg").variant("modbus-tcp", &["protocol=modbus", "interface=tcp"]),
         Case::new("stm32f407ve").variant("protobuf-udp", &["protocol=protobuf", "interface=udp"]),
+        // protobuf по USB CDC: устройство `embassy-usb`, узел USB и поток CDC
+        // под COBS. G4 — блок USB device (у F4/H7 — OTG, драйвер тот же).
+        Case::new("stm32g474re").variant("protobuf-usb", &["protocol=protobuf", "interface=usb"]),
+        // Modbus RTU по USB CDC — на F4, у которого USB — блок OTG: второй
+        // драйвер в рецепте и `Rtu` поверх потока CDC вместо UART.
+        Case::new("stm32f407ve").variant("modbus-usb", &["protocol=modbus", "interface=usb"]),
     ]
 }
 

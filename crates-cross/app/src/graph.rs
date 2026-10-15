@@ -20,13 +20,18 @@ use static_cell::StaticCell;
 use supervisor::{Duration, Liveness, supervisor_graph};
 {%- if protocol == "modbus" %}
 
-/// Транспорт узла `MODBUS` поверх {% if interface == "uart" %}UART{% elsif interface == "tcp" %}TCP{% else %}UDP{% endif %} платы: {% if interface == "uart" %}кадр RTU с CRC{% else %}заголовок MBAP{% endif %}.
-type ModbusLink = ::adapters::modbus::{% if interface == "uart" %}Rtu<bsp::serial::Serial>{% elsif interface == "tcp" %}Tcp<::adapters::net::TcpServer>{% else %}Udp<::adapters::net::UdpLink>{% endif %};
+/// Транспорт узла `MODBUS` поверх {% if interface == "uart" %}UART{% elsif interface == "tcp" %}TCP{% elsif interface == "usb" %}USB CDC{% else %}UDP{% endif %} платы: {% if interface == "uart" or interface == "usb" %}кадр RTU с CRC{% else %}заголовок MBAP{% endif %}.
+type ModbusLink = ::adapters::modbus::{% if interface == "uart" %}Rtu<bsp::serial::Serial>{% elsif interface == "usb" %}Rtu<::adapters::usb::CdcStream<'static, bsp::usb::UsbDriver>>{% elsif interface == "tcp" %}Tcp<::adapters::net::TcpServer>{% else %}Udp<::adapters::net::UdpLink>{% endif %};
 {%- endif %}
 {%- if protocol == "protobuf" %}
 
-/// Канал узла `HOST` поверх {% if interface == "uart" %}UART{% elsif interface == "tcp" %}TCP{% else %}UDP{% endif %} платы: {% if interface == "udp" %}датаграмма — уже кадр{% else %}кадры COBS + CRC{% endif %}.
+/// Канал узла `HOST` поверх {% if interface == "uart" %}UART{% elsif interface == "tcp" %}TCP{% elsif interface == "usb" %}USB CDC{% else %}UDP{% endif %} платы: {% if interface == "udp" %}датаграмма — уже кадр{% else %}кадры COBS + CRC{% endif %}.
+{%- if interface == "usb" %}
+type HostLink =
+    ::adapters::cobs::Cobs<'static, ::adapters::usb::CdcStream<'static, bsp::usb::UsbDriver>>;
+{%- else %}
 type HostLink = {% if interface == "udp" %}::adapters::net::UdpLink{% else %}::adapters::cobs::Cobs<'static, {% if interface == "uart" %}bsp::serial::Serial{% else %}::adapters::net::TcpServer{% endif %}>{% endif %};
+{%- endif %}
 
 /// Самое длинное сообщение схемы, под которое заведены буферы узла `HOST`.
 /// Схема с сообщениями длиннее — меняйте здесь; узел предупредит при старте,
@@ -101,12 +106,13 @@ supervisor_graph! {
 {%- endif %}
 {%- if protocol == "modbus" %}
 
-    // Узел `MODBUS` — Modbus slave поверх {% if interface == "uart" %}UART{% elsif interface == "tcp" %}TCP{% else %}UDP{% endif %} платы: транспорт `ModbusLink`
-    // вокруг `{% if interface == "uart" %}board.serial{% elsif interface == "tcp" %}board.net.tcp{% else %}board.net.udp{% endif %}` ({% if interface == "uart" %}заглушка, пока проект не подставит свой UART —
-    // docs/modules/bsp-serial.md{% else %}сокет стека над заглушкой устройства, пока проект не подставит
+    // Узел `MODBUS` — Modbus slave поверх {% if interface == "uart" %}UART{% elsif interface == "tcp" %}TCP{% elsif interface == "usb" %}USB CDC{% else %}UDP{% endif %} платы: транспорт `ModbusLink`
+    // вокруг `{% if interface == "uart" %}board.serial{% elsif interface == "tcp" %}board.net.tcp{% elsif interface == "usb" %}board.usb.cdc{% else %}board.net.udp{% endif %}` ({% if interface == "uart" %}заглушка, пока проект не подставит свой UART —
+    // docs/modules/bsp-serial.md{% elsif interface == "usb" %}поток CDC над заглушкой драйвера, пока проект не
+    // подставит свой USB — docs/modules/bsp-usb.md{% else %}сокет стека над заглушкой устройства, пока проект не подставит
     // Ethernet — docs/modules/bsp-net.md{% endif %}) и карта регистров
     // `domain::modbus::Registers` — пустая, её проект описывает в `domain`.
-    // Адрес slave'а — `unit`{% if interface != "uart" %}: по сети устройство адресуется по IP, и slave
+    // Адрес slave'а — `unit`{% if interface == "tcp" or interface == "udp" %}: по сети устройство адресуется по IP, и slave
     // отвечает на любой адрес в MBAP{% endif %}.
 {%- elsif protocol == "canopen" %}
 
@@ -116,13 +122,20 @@ supervisor_graph! {
     // (`device.toml`). Адрес узла в сети — `node_id`, 1..=127.
 {%- elsif protocol == "protobuf" %}
 
-    // Узел `HOST` — сообщения protobuf от хоста поверх {% if interface == "uart" %}UART{% elsif interface == "tcp" %}TCP{% else %}UDP{% endif %} платы: канал
-    // `HostLink` вокруг `{% if interface == "uart" %}board.serial{% elsif interface == "tcp" %}board.net.tcp{% else %}board.net.udp{% endif %}` ({% if interface == "uart" %}заглушка, пока проект не подставит свой
-    // UART — docs/modules/bsp-serial.md{% else %}сокет стека над заглушкой устройства, пока проект не
+    // Узел `HOST` — сообщения protobuf от хоста поверх {% if interface == "uart" %}UART{% elsif interface == "tcp" %}TCP{% elsif interface == "usb" %}USB CDC{% else %}UDP{% endif %} платы: канал
+    // `HostLink` вокруг `{% if interface == "uart" %}board.serial{% elsif interface == "tcp" %}board.net.tcp{% elsif interface == "usb" %}board.usb.cdc{% else %}board.net.udp{% endif %}` ({% if interface == "uart" %}заглушка, пока проект не подставит свой
+    // UART — docs/modules/bsp-serial.md{% elsif interface == "usb" %}поток CDC над заглушкой драйвера, пока
+    // проект не подставит свой USB — docs/modules/bsp-usb.md{% else %}сокет стека над заглушкой устройства, пока проект не
     // подставит Ethernet — docs/modules/bsp-net.md{% endif %}) и обработчик `domain::host::Service` над
     // схемой `crates-host/proto`. Буферы — на `HOST_MESSAGE` байт{% if interface != "udp" %}: приёму нужно
     // ещё место под CRC (`rx_len`), кадру передачи — под худший случай COBS
     // (`tx_len`){% endif %}.
+{%- endif %}
+{%- if interface == "usb" %}
+
+    // Узел `USB` — фоновая работа устройства `embassy-usb` (`domain::usb`) над
+    // драйвером платы `bsp::usb::UsbDriver`: без него хост не видит
+    // устройства, а поток CDC — ни одного пакета.
 {%- endif %}
 {%- if interface == "tcp" or interface == "udp" %}
 
@@ -142,7 +155,7 @@ supervisor_graph! {
     // первым его занимает тот, кто первым позовёт
     // `cpu_load_percent_receiver()`. Само значение в лог не идёт — читатель
     // должен быть, иначе процент некуда девать.
-    ::domain::CPU_LOAD_FRAG as CPU_LOAD = ::domain::cpu_load::IdleMeter { sleep_ticks: crate::cpu_load::sleep_ticks() }{% if ota == "true" %}, ::domain::OTA_FRAG<bsp::ota::Link, bsp::ota::Updater> as OTA = ::domain::ota::OtaWiring { link: board.ota.link, flash: board.ota.flash, mode: {% if signed == "true" %}::domain::ota::Mode::Signed { running_version: crate::image::FW_VERSION }{% else %}::domain::ota::Mode::Plain{% endif %} }{% endif %}{% if interface == "tcp" or interface == "udp" %}, ::domain::NET_FRAG<::domain::net::Runner<'static, bsp::net::Device>> as NET = ::domain::net::NetWiring { runner: board.net.runner }{% endif %}{% if protocol == "modbus" %}, ::domain::MODBUS_SLAVE_FRAG<ModbusLink, ::domain::modbus::Registers> as MODBUS = ::domain::modbus::ModbusSlaveWiring { link: ModbusLink::new({% if interface == "uart" %}board.serial{% elsif interface == "tcp" %}board.net.tcp{% else %}board.net.udp{% endif %}), regs: ::domain::modbus::Registers, unit: 1 }{% elsif protocol == "canopen" %}, ::domain::CANOPEN_FRAG<bsp::can::Can> as CANOPEN = ::domain::canopen::CanOpenWiring { bus: board.can, node_id: 1, dictionary: ::domain::canopen::dictionary() }{% elsif protocol == "protobuf" %}, ::domain::HOST_FRAG<HostLink, ::domain::host::Service> as HOST = ::domain::host::HostWiring { link: {% if interface == "udp" %}board.net.udp{% else %}HostLink::new({% if interface == "uart" %}board.serial{% elsif interface == "tcp" %}board.net.tcp{% else %}board.net.udp{% endif %}, { static FRAME: StaticCell<[u8; HostLink::tx_len(HOST_MESSAGE)]> = StaticCell::new(); FRAME.init([0; HostLink::tx_len(HOST_MESSAGE)]) }){% endif %}, service: ::domain::host::Service::new(crate::build::PKG_VERSION), rx: { static RX: StaticCell<[u8; {% if interface == "udp" %}HOST_MESSAGE{% else %}HostLink::rx_len(HOST_MESSAGE){% endif %}]> = StaticCell::new(); RX.init([0; {% if interface == "udp" %}HOST_MESSAGE{% else %}HostLink::rx_len(HOST_MESSAGE){% endif %}]) }, tx: { static TX: StaticCell<[u8; HOST_MESSAGE]> = StaticCell::new(); TX.init([0; HOST_MESSAGE]) } }{% endif %}];
+    ::domain::CPU_LOAD_FRAG as CPU_LOAD = ::domain::cpu_load::IdleMeter { sleep_ticks: crate::cpu_load::sleep_ticks() }{% if ota == "true" %}, ::domain::OTA_FRAG<bsp::ota::Link, bsp::ota::Updater> as OTA = ::domain::ota::OtaWiring { link: board.ota.link, flash: board.ota.flash, mode: {% if signed == "true" %}::domain::ota::Mode::Signed { running_version: crate::image::FW_VERSION }{% else %}::domain::ota::Mode::Plain{% endif %} }{% endif %}{% if interface == "usb" %}, ::domain::USB_FRAG<::domain::usb::UsbDevice<'static, bsp::usb::UsbDriver>> as USB = ::domain::usb::UsbWiring { device: board.usb.device }{% endif %}{% if interface == "tcp" or interface == "udp" %}, ::domain::NET_FRAG<::domain::net::Runner<'static, bsp::net::Device>> as NET = ::domain::net::NetWiring { runner: board.net.runner }{% endif %}{% if protocol == "modbus" %}, ::domain::MODBUS_SLAVE_FRAG<ModbusLink, ::domain::modbus::Registers> as MODBUS = ::domain::modbus::ModbusSlaveWiring { link: ModbusLink::new({% if interface == "uart" %}board.serial{% elsif interface == "tcp" %}board.net.tcp{% elsif interface == "usb" %}board.usb.cdc{% else %}board.net.udp{% endif %}), regs: ::domain::modbus::Registers, unit: 1 }{% elsif protocol == "canopen" %}, ::domain::CANOPEN_FRAG<bsp::can::Can> as CANOPEN = ::domain::canopen::CanOpenWiring { bus: board.can, node_id: 1, dictionary: ::domain::canopen::dictionary() }{% elsif protocol == "protobuf" %}, ::domain::HOST_FRAG<HostLink, ::domain::host::Service> as HOST = ::domain::host::HostWiring { link: {% if interface == "udp" %}board.net.udp{% else %}HostLink::new({% if interface == "uart" %}board.serial{% elsif interface == "tcp" %}board.net.tcp{% elsif interface == "usb" %}board.usb.cdc{% else %}board.net.udp{% endif %}, { static FRAME: StaticCell<[u8; HostLink::tx_len(HOST_MESSAGE)]> = StaticCell::new(); FRAME.init([0; HostLink::tx_len(HOST_MESSAGE)]) }){% endif %}, service: ::domain::host::Service::new(crate::build::PKG_VERSION), rx: { static RX: StaticCell<[u8; {% if interface == "udp" %}HOST_MESSAGE{% else %}HostLink::rx_len(HOST_MESSAGE){% endif %}]> = StaticCell::new(); RX.init([0; {% if interface == "udp" %}HOST_MESSAGE{% else %}HostLink::rx_len(HOST_MESSAGE){% endif %}]) }, tx: { static TX: StaticCell<[u8; HOST_MESSAGE]> = StaticCell::new(); TX.init([0; HOST_MESSAGE]) } }{% endif %}];
 }
 
 /// Куда уходит просрочка наблюдаемого узла.

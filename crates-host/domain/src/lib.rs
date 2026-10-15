@@ -34,3 +34,8 @@ pub mod modbus;
 /// Узел `NET`: ведёт сетевой стек `embassy-net` — см. модуль.
 pub mod net;
 // {%- endif %}
+
+// {%- if interface == "usb" %}
+/// Узел `USB`: ведёт USB-устройство `embassy-usb` — см. модуль.
+pub mod usb;
+// {%- endif %}

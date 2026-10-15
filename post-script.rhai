@@ -62,6 +62,9 @@ if variable::get("graph") == "true" {
 	let iface = variable::get("interface");
 	if iface == "uart" {
 		print("UART — заглушка: подставьте свой USART в crates-cross/bsp/src/serial.rs (cargo xtask pins USART2 --snippet).");
+	} else if iface == "usb" {
+		let block = if variable::get("usb_kind") == "otg" { "USB_OTG_FS (или USB_OTG_HS)" } else { "USB" };
+		print("USB — устройство embassy-usb над заглушкой драйвера: подставьте USB-блок в crates-cross/bsp/src/usb.rs (cargo xtask pins " + block + " --snippet).");
 	} else if iface == "tcp" || iface == "udp" {
 		print("Сеть — стек embassy-net над заглушкой устройства: подставьте Ethernet в crates-cross/bsp/src/net.rs (cargo xtask pins ETH --snippet).");
 	} else if iface == "can" {

@@ -198,7 +198,8 @@ graph = { type = "string", prompt = "Граф задач supervisor (поряд�
 # modbus — Modbus slave (RTU поверх UART, RS-485 — тот же UART с DE);
 # protobuf — сообщения protobuf от хоста, кадры COBS + CRC поверх UART;
 # canopen — узел CANopen (стек zencan) поверх CAN. Modbus и protobuf идут
-# и по сети: tcp/udp — стек embassy-net над Ethernet чипа.
+# и по сети: tcp/udp — стек embassy-net над Ethernet чипа, — и по usb:
+# виртуальный COM-порт (CDC ACM, embassy-usb), Modbus — RTU поверх него.
 protocol = { type = "string", prompt = "Протокол связи (узел в графе)", choices = [
 	"none",
 	"modbus",
@@ -206,12 +207,13 @@ protocol = { type = "string", prompt = "Протокол связи (узел в
 	"canopen",
 ], default = "none" }
 
-interface = { type = "string", prompt = "Интерфейс под протоколом (uart — в том числе RS-485; tcp/udp — Ethernet)", choices = [
+interface = { type = "string", prompt = "Интерфейс под протоколом (uart — в том числе RS-485; tcp/udp — Ethernet; usb — CDC ACM)", choices = [
 	"none",
 	"uart",
 	"can",
 	"tcp",
 	"udp",
+	"usb",
 ], default = "none" }
 
 # Каталог целиком, а не перечисление файлов: иначе в проекте остаётся пустой

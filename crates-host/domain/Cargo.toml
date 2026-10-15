@@ -25,6 +25,9 @@ defmt = [
 	# {%- if interface == "tcp" or interface == "udp" %}
 	"embassy-net/defmt",
 	# {%- endif %}
+	# {%- if interface == "usb" %}
+	"embassy-usb/defmt",
+	# {%- endif %}
 ]
 log = [
 	"dep:log",
@@ -88,6 +91,10 @@ canopen            = { workspace = true }
 # {%- if interface == "tcp" or interface == "udp" %}
 # Узел NET (`domain::net`): ведёт стек `embassy-net` над устройством платы.
 embassy-net        = { workspace = true }
+# {%- endif %}
+# {%- if interface == "usb" %}
+# Узел USB (`domain::usb`): ведёт устройство `embassy-usb` над драйвером платы.
+embassy-usb        = { workspace = true }
 # {%- endif %}
 
 [dev-dependencies]

@@ -115,6 +115,10 @@ embassy-embedded-hal = { version = "0.6.0" }
 # Один `Flash` на весь чип делится между OTA и настройками, а обеим нужен
 # `&'static` (иначе их не отдать в спавнящиеся задачи — те требуют 'static).
 static_cell            = { version = "2.1.1" }
+{%- if interface == "usb" %}
+# USB-устройство (`bsp::usb`): та же версия, что в корневом Cargo.toml.
+embassy-usb            = { version = "0.6.0", default-features = false, features = ["defmt"] }
+{%- endif %}
 {%- if interface == "tcp" or interface == "udp" %}
 # Сетевой стек (`bsp::net`): та же версия и фичи, что в корневом Cargo.toml.
 embassy-net            = { version = "0.9.1", features = ["tcp", "udp", "proto-ipv4", "medium-ethernet", "dhcpv4", "defmt"] }
@@ -232,12 +236,10 @@ bbqueue = { version = "0.7.0", default-features = false, features = [
 	"critical-section",
 ] }
 
-# `embassy-usb` здесь больше нет: он стоял запиненным на 0.5 (а не на
-# актуальную 0.6) исключительно потому, что этого требовал
-# `defmt-embassy-usbserial` — готовый `#[global_logger]` над USB CDC-ACM,
-# убранный вместе с остальными заменёнными зависимостями. Своего применения
-# у `embassy-usb` в шаблоне не было. Если понадобится USB — берите версию,
-# парную к текущей `embassy-stm32`, а не 0.5.
+# `embassy-usb` подключается выше, только под `interface=usb`, — версия 0.6,
+# парная к `embassy-stm32` 0.6. Прежде он стоял запиненным на 0.5 ради
+# `defmt-embassy-usbserial` (`#[global_logger]` над USB CDC-ACM), убранного
+# вместе с остальными заменёнными зависимостями: 0.5 больше не брать.
 
 [profile.dev]
 codegen-units    = 1

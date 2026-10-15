@@ -38,6 +38,11 @@ pub mod serial;
 pub mod net;
 
 // {%- endif %}
+// {%- if interface == "usb" %}
+/// USB поверх `embassy-usb`: заглушка драйвера и поток CDC ACM.
+pub mod usb;
+
+// {%- endif %}
 // {%- if interface == "can" %}
 /// Заглушка шины в слоте CAN — до контроллера платы.
 pub mod can;

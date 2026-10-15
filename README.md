@@ -525,17 +525,18 @@ ST-Link захваченным до переподключения кабеля 
 | `canopen` | `CANOPEN` — узел CANopen, стек `zencan` | словарь объектов `crates-host/canopen/device.toml` |
 
 Интерфейсы — `uart` (Modbus и protobuf; RS-485 — тот же UART с выводом DE), `tcp` и
-`udp` (Modbus и protobuf по Ethernet: стек `embassy-net`, узел `NET` в графе) и `can`
+`udp` (Modbus и protobuf по Ethernet: стек `embassy-net`, узел `NET` в графе), `usb`
+(Modbus RTU и protobuf по виртуальному COM-порту CDC ACM: `embassy-usb`, узел `USB` в графе) и `can`
 (CANopen; FDCAN или bxCAN — какой у чипа). Узлу протокола нужен граф задач, а
 интерфейс должен быть выведен в корпусе чипа: недопустимое сочетание генерация
 отвергает с объяснением. Крейты невыбранного протокола (`crates-host/proto`,
 `crates-host/canopen`) в проект не попадают.
 
-Выводы шаблон не выбирает: в `Board::serial`, `Board::can` или под `Board::net` встаёт заглушка, с
+Выводы шаблон не выбирает: в `Board::serial`, `Board::can` или под `Board::net`/`Board::usb` встаёт заглушка, с
 которой проект собирается и запускается, но узел ждёт впустую. Подставить своё
-железо — правка в `crates-cross/bsp/src/serial.rs` или `can.rs` по рецепту в
-`docs/modules/bsp-serial.md` и `bsp-can.md` (`cargo xtask pins USART2 --snippet`,
-`FDCAN1`/`CAN1`). Прослойка `bsp::can::Bus` — порт `CanBus` поверх контроллера —
+железо — правка в `crates-cross/bsp/src/serial.rs`, `can.rs`, `net.rs` или `usb.rs` по
+рецепту в `docs/modules/bsp-*.md` того же имени (`cargo xtask pins USART2 --snippet`,
+`FDCAN1`/`CAN1`, `ETH`, `USB`/`USB_OTG_FS`). Прослойка `bsp::can::Bus` — порт `CanBus` поверх контроллера —
 уже там; не хватает только выводов. Master Modbus —
 не узел, а функции `domain::modbus::master` поверх `ports::ModbusClient`: что и как
 часто опрашивать, решает узел приложения.

@@ -156,6 +156,12 @@ pub struct Board {
     /// Ethernet своей платы (`docs/modules/bsp-net.md`).
     pub net: crate::net::Net,
 {%- endif %}
+{%- if interface == "usb" %}
+    /// USB под протоколом: устройство для узла `USB` и поток CDC (`bsp::usb`).
+    /// Драйвер — заглушка, пока проект не подставит USB-блок своей платы
+    /// (`docs/modules/bsp-usb.md`).
+    pub usb: crate::usb::Usb,
+{%- endif %}
 {%- if graph == "true" %}
     /// Сторож платы — заряженный, но ещё не запущенный: его забирает
     /// инициализатор блока `watchdog:` в графе задач
@@ -274,6 +280,9 @@ impl Board {
 {%- endif %}
 {%- if interface == "tcp" or interface == "udp" %}
             net: crate::net::new(embassy_stm32::uid::uid()),
+{%- endif %}
+{%- if interface == "usb" %}
+            usb: crate::usb::new(),
 {%- endif %}
 {%- if graph == "true" %}
             watchdog: crate::wdg::UnarmedBoardWatchdog::new(p.{{watchdog_peripheral}}),
