@@ -63,6 +63,7 @@ fn main() -> anyhow::Result<()> {
     let mut bank_modes: BTreeMap<&str, &'static str> = BTreeMap::new();
     let mut watchdogs: BTreeMap<&str, String> = BTreeMap::new();
     let mut cpu_freq_boost: Vec<&str> = Vec::new();
+    let mut interfaces: BTreeMap<&str, Vec<&'static str>> = BTreeMap::new();
     let mut switch_variants: BTreeMap<&str, &'static str> = BTreeMap::new();
     let mut shared_metadata_cache: BTreeMap<PathBuf, SharedMetadata> = BTreeMap::new();
     for suffix in &suffixes {
@@ -94,6 +95,7 @@ fn main() -> anyhow::Result<()> {
         if shared.cpu_freq_boost {
             cpu_freq_boost.push(suffix);
         }
+        interfaces.insert(suffix, shared.interfaces.clone());
         // Одобанковая раскладка на чипе, который с завода двухбанковый: режим
         // переключает прошивка (`bsp::banks`).
         if bank_mode == "single-bank"
@@ -196,6 +198,7 @@ fn main() -> anyhow::Result<()> {
             "bank_switch.rhai".to_owned(),
             format_bank_switch(&bank_switch),
         ),
+        ("interfaces.rhai".to_owned(), format_interfaces(&interfaces)),
     ];
     files.extend(
         format_memory_layouts(&memory_layouts)
@@ -665,6 +668,8 @@ struct SharedMetadata {
     cpu_freq_boost: bool,
     /// Версия регистров блока `FLASH` (`g4c3`, `f4`, `l5`...).
     flash_version: Option<String>,
+    /// Интерфейсы связи, выведенные в корпусе, — см. [`parse_interfaces`].
+    interfaces: Vec<&'static str>,
 }
 
 /// Путь к общему файлу метаданных чипа и разобранные из него факты. Общий файл
@@ -693,6 +698,7 @@ fn shared_metadata<'c>(
                 watchdogs: parse_watchdog_names(&shared_text),
                 cpu_freq_boost: has_pwr_rm0468(&shared_text),
                 flash_version: registers_version(&shared_text, "flash"),
+                interfaces: parse_interfaces(&shared_text),
             },
         );
     }
@@ -718,6 +724,41 @@ fn has_pwr_rm0468(text: &str) -> bool {
         .skip(1)
         .any(|rest| rest.trim_start().starts_with("version: \"h7rm0468\""))
 }
+
+/// Интерфейсы связи чипа — по блокам, у которых в корпусе есть выводы, в
+/// порядке [`INTERFACE_TAGS`] и без повторов.
+///
+/// Блок без выводов (`pins: &[]`) в метаданных бывает: кристалл тот же, а в
+/// мелком корпусе линии не выведены, — и такой интерфейс чипу недоступен.
+/// Метка — то, что различает код в `bsp`: у FDCAN и bxCAN разные драйверы
+/// `embassy-stm32`, у USB OTG и USB device — разные конструкторы.
+fn parse_interfaces(text: &str) -> Vec<&'static str> {
+    let mut found: Vec<&'static str> = Vec::new();
+    for block in text.split("Peripheral {").skip(1) {
+        let kind = field(block, "kind").map(|v| v.trim_matches('"'));
+        let version = field(block, "version").map(|v| v.trim_matches('"'));
+        let tag = match (kind, version) {
+            (Some("usart"), _) => "usart",
+            (Some("can"), Some("bxcan")) => "bxcan",
+            (Some("can"), Some(v)) if v.starts_with("fdcan") => "fdcan",
+            (Some("eth"), _) => "eth",
+            (Some("usb"), _) => "usb",
+            (Some("otg"), _) => "otg",
+            _ => continue,
+        };
+        let has_pins = block
+            .split_once("pins: &[")
+            .is_some_and(|(_, rest)| !rest.trim_start().starts_with(']'));
+        if has_pins && !found.contains(&tag) {
+            found.push(tag);
+        }
+    }
+    found.sort_by_key(|tag| INTERFACE_TAGS.iter().position(|t| t == tag));
+    found
+}
+
+/// Метки интерфейсов в таблице `INTERFACES` — в этом порядке.
+const INTERFACE_TAGS: [&str; 6] = ["usart", "fdcan", "bxcan", "eth", "usb", "otg"];
 
 /// Путь из `include!("../metadata_0180.rs")` — первой строки любого
 /// `<chip>/metadata.rs`.
@@ -2278,6 +2319,36 @@ fn format_watchdogs(watchdogs: &BTreeMap<&str, String>) -> String {
     out
 }
 
+/// Интерфейсы связи каждого чипа (см. [`parse_interfaces`]): по ним хук
+/// проверяет ответ на вопрос об интерфейсе, а `bsp` выбирает драйвер.
+fn format_interfaces(chips: &BTreeMap<&str, Vec<&'static str>>) -> String {
+    let mut out = String::new();
+    out.push_str(DATA_HEADER);
+    out.push_str(&format!(
+        "// {} шт.; метки: {}
+",
+        chips.len(),
+        INTERFACE_TAGS.join(", ")
+    ));
+    out.push_str(
+        "export const INTERFACES = #{
+",
+    );
+    for (suffix, tags) in chips {
+        let tags: Vec<String> = tags.iter().map(|t| format!("\"{t}\"")).collect();
+        out.push_str(&format!(
+            "    \"{suffix}\": [{}],
+",
+            tags.join(", ")
+        ));
+    }
+    out.push_str(
+        "};
+",
+    );
+    out
+}
+
 /// Чипы с option byte `CPU_FREQ_BOOST` (см. [`SharedMetadata::cpu_freq_boost`])
 /// — массивом, а не таблицей: значение у всех одно, важна только
 /// принадлежность.
@@ -2729,6 +2800,39 @@ pub static METADATA: Metadata = Metadata {
             vec!["IWDG1".to_string(), "IWDG2".to_string()]
         );
         assert!(parse_watchdog_names("name: \"WWDG\",\n").is_empty());
+    }
+
+    /// Блок без выводов в корпусе — не интерфейс; FDCAN и bxCAN различаются
+    /// по версии регистров, а не по имени блока.
+    #[test]
+    fn interfaces_come_from_blocks_with_pins() {
+        let block = |kind: &str, version: &str, pins: &str| {
+            format!(
+                "    Peripheral {{
+        name: \"X\",
+        registers: Some(PeripheralRegisters {{
+                             kind: \"{kind}\",
+            version: \"{version}\",
+        }}),
+                         pins: &[{pins}],
+    }},
+"
+            )
+        };
+        let pin = "
+            PeripheralPin { pin: \"PA11\", signal: \"RX\", af: Some(9) },
+        ";
+        let text = [
+            block("otg", "v1", pin),
+            block("can", "fdcan_h7", pin),
+            block("eth", "v2", ""),
+            block("usart", "v4", pin),
+            block("usart", "v2", pin),
+            block("can", "bxcan", pin),
+            block("i2c", "v2", pin),
+        ]
+        .concat();
+        assert_eq!(parse_interfaces(&text), ["usart", "fdcan", "bxcan", "otg"]);
     }
 
     #[test]

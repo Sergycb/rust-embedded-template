@@ -1496,6 +1496,7 @@ fn table_keys_are_a_subset_of_chips() {
         ("BANK_MODE", vec![read(data.join("bank_mode.rhai"))]),
         ("WATCHDOG", vec![read(data.join("watchdog.rhai"))]),
         ("PACKAGE_CHOICES", vec![read(data.join("packages.rhai"))]),
+        ("INTERFACES", vec![read(data.join("interfaces.rhai"))]),
     ] {
         let keys: Vec<String> = files
             .iter()
@@ -1520,4 +1521,20 @@ fn table_keys_are_a_subset_of_chips() {
             "{table}: ключи, которых нет в CHIPS: {unknown:?}"
         );
     }
+}
+
+/// `INTERFACES`, в отличие от остальных таблиц, покрывает каждый чип: по ней
+/// хук проверяет ответ об интерфейсе, и чип без записи отвергался бы с любым
+/// ответом, кроме «без интерфейса».
+#[test]
+fn every_chip_has_interfaces() {
+    let script = std::fs::read_to_string(repo_root().join("chip-data/interfaces.rhai"))
+        .expect("не удалось прочитать chip-data/interfaces.rhai");
+    let keys: std::collections::HashSet<String> =
+        table_keys(&script, "INTERFACES").into_iter().collect();
+    let missing: Vec<String> = all_chip_suffixes()
+        .into_iter()
+        .filter(|chip| !keys.contains(chip))
+        .collect();
+    assert!(missing.is_empty(), "INTERFACES: нет записи для {missing:?}");
 }

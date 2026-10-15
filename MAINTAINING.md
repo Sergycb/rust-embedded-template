@@ -20,7 +20,9 @@
   не копируются.
 - `chip-data/` — сгенерированные таблицы, которые хук подключает через `import`
   (каталог в `ignore`; `import` находит его и так): `chips.rhai`, `packages.rhai`,
-  `bank_mode.rhai`, `bank_switch.rhai`, `watchdog.rhai`, `cpu_freq_boost.rhai` и
+  `bank_mode.rhai`, `bank_switch.rhai`, `watchdog.rhai`, `cpu_freq_boost.rhai`,
+  `interfaces.rhai` (интерфейсы связи, выведенные в корпусе: `usart`, `fdcan`,
+  `bxcan`, `eth`, `usb`, `otg` — по ним хук проверит ответ об интерфейсе) и
   `layout/<семейство>.rhai` — раскладка памяти, разложенная по первым двум символам
   суффикса (`f4`, `h7`, `wb`). Целиком раскладка — ~89 тысяч строк, а хуку нужна одна
   запись, поэтому он импортирует только файл своего семейства. Руками не правится.
