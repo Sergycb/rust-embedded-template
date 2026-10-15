@@ -33,6 +33,11 @@ pub mod cobs;
 pub mod serial;
 
 // {%- endif %}
+// {%- if interface == "tcp" or interface == "udp" %}
+/// Сеть поверх `embassy-net`: заглушка устройства, TCP-сервер и UDP-канал.
+pub mod net;
+
+// {%- endif %}
 // {%- if interface == "can" %}
 /// Заглушка шины в слоте CAN — до контроллера платы.
 pub mod can;

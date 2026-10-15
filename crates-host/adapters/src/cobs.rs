@@ -40,7 +40,10 @@ const CHUNK: usize = 64;
 pub enum CobsError<E> {
     /// Отказ потока.
     Io(E),
-    /// Поток кончился: соединение закрыто.
+    /// Поток кончился: соединение закрыто. Потеря, а не отказ канала: над
+    /// TCP-сервером, который принимает следующего клиента
+    /// (`net::TcpServer`), следующий `recv` работает; поток, кончившийся
+    /// насовсем, узел объявит отказавшим после серии потерь подряд.
     Eof,
     /// Кадр не разобрался как COBS.
     Corrupt,
@@ -59,9 +62,9 @@ pub enum CobsError<E> {
 /// Буферу приёма, который передают в `recv`, нужно [`Cobs::rx_len`]`(n)`:
 /// CRC декодируется туда же, следом за сообщением.
 ///
-/// Разорванное соединение (TCP) поток не восстанавливает: `recv` будет
-/// отвечать [`LinkError::Down`], пока поток не заменят новым. Принять новое
-/// соединение — дело обёртки над сокетом в `bsp`.
+/// Разорванное соединение (TCP) поток не восстанавливает: конец потока —
+/// [`LinkError::Lost`] с [`CobsError::Eof`], а принять новое соединение — дело
+/// потока под ним (`net::TcpServer` делает это на следующем чтении).
 #[derive(Debug)]
 pub struct Cobs<'b, T> {
     io: T,
@@ -135,7 +138,7 @@ impl<T: Read + Write> Cobs<'_, T> {
         if self.start == self.end {
             let n = self.io.read(&mut self.chunk).await.map_err(io_error)?;
             if n == 0 {
-                return Err(LinkError::Down(CobsError::Eof));
+                return Err(LinkError::Lost(CobsError::Eof));
             }
             self.start = 0;
             self.end = n;
@@ -300,7 +303,7 @@ mod tests {
         loop {
             let mut buf = [0; 64];
             match link.recv(&mut buf).await {
-                Err(LinkError::Down(CobsError::Eof)) => return out,
+                Err(LinkError::Lost(CobsError::Eof)) => return out,
                 other => out.push(other.map(|len| buf[..len].to_vec())),
             }
         }
@@ -426,7 +429,7 @@ mod tests {
         let mut buf = [0; 16];
         assert_eq!(
             link.recv(&mut buf).await,
-            Err(LinkError::Down(CobsError::Eof))
+            Err(LinkError::Lost(CobsError::Eof))
         );
     }
 

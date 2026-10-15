@@ -41,9 +41,13 @@ cortex-m = { workspace = true }
 # объект под `blocking_mutex` (см. `FlashMutex` в src/board.rs). `static-cell` —
 # потому что обеим половинам нужен `&'static`: иначе их нельзя отдать в задачу,
 # которую спавнит `Spawner` (аргументы задач обязаны быть 'static).
-{%- if shared_flash == "true" or ota == "true" %}
+{%- if shared_flash == "true" or ota == "true" or interface == "tcp" or interface == "udp" %}
 embassy-sync = { workspace = true }
 static_cell = { workspace = true }
+{%- endif %}
+{%- if interface == "tcp" or interface == "udp" %}
+# Стек над Ethernet платы (`bsp::net`); сокеты и заглушка — в `adapters::net`.
+embassy-net = { workspace = true }
 {%- endif %}
 # Только ради `ota.rs`, которого в проектах без OTA нет вовсе — вместе с
 # `crates-cross/boot` его удаляет chip-select.rhai. Сам адаптер живёт в

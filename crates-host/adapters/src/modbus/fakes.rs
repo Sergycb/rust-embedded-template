@@ -36,6 +36,9 @@ pub(crate) struct Duplex {
     /// Ответ, который дописывается к входу только после первой записи — как
     /// на линии, где slave отвечает на запрос, а не до него.
     reply: Option<Vec<u8>>,
+    /// Когда читать нечего — ждать (`Pending`), а не отдавать конец потока:
+    /// так в тесте бросается future посреди приёма, как на таймауте.
+    waits: bool,
     pub(crate) tx: Vec<u8>,
 }
 
@@ -46,6 +49,7 @@ impl Duplex {
             rx: rx.to_vec(),
             pos: 0,
             reply: None,
+            waits: false,
             tx: Vec::new(),
         }
     }
@@ -65,6 +69,12 @@ impl Duplex {
         self
     }
 
+    /// Пустой вход — ожидание, а не конец потока.
+    pub(crate) fn waiting(mut self) -> Self {
+        self.waits = true;
+        self
+    }
+
     /// Дописывает `bytes` ко входу — пришли позже.
     pub(crate) fn push(&mut self, bytes: &[u8]) {
         self.rx.extend_from_slice(bytes);
@@ -77,10 +87,15 @@ impl ErrorType for Duplex {
 
 impl Read for Duplex {
     fn read(&mut self, buf: &mut [u8]) -> impl Future<Output = Result<usize, Self::Error>> {
-        let n = buf.len().min(self.rx.len() - self.pos);
-        buf[..n].copy_from_slice(&self.rx[self.pos..self.pos + n]);
-        self.pos += n;
-        std::future::ready(Ok(n))
+        std::future::poll_fn(move |_| {
+            let n = buf.len().min(self.rx.len() - self.pos);
+            if n == 0 && self.waits && !buf.is_empty() {
+                return std::task::Poll::Pending;
+            }
+            buf[..n].copy_from_slice(&self.rx[self.pos..self.pos + n]);
+            self.pos += n;
+            std::task::Poll::Ready(Ok(n))
+        })
     }
 }
 

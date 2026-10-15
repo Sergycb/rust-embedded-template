@@ -150,6 +150,12 @@ pub struct Board {
     /// узел `CANOPEN` графа (`fragments:` в `crates-cross/app/src/graph.rs`).
     pub can: crate::can::Can,
 {%- endif %}
+{%- if interface == "tcp" or interface == "udp" %}
+    /// Сеть под протоколом: фоновая работа стека для узла `NET` и сокет
+    /// протокола (`bsp::net`). Устройство — заглушка, пока проект не подставит
+    /// Ethernet своей платы (`docs/modules/bsp-net.md`).
+    pub net: crate::net::Net,
+{%- endif %}
 {%- if graph == "true" %}
     /// Сторож платы — заряженный, но ещё не запущенный: его забирает
     /// инициализатор блока `watchdog:` в графе задач
@@ -265,6 +271,9 @@ impl Board {
 {%- endif %}
 {%- if interface == "can" %}
             can: crate::can::new(),
+{%- endif %}
+{%- if interface == "tcp" or interface == "udp" %}
+            net: crate::net::new(embassy_stm32::uid::uid()),
 {%- endif %}
 {%- if graph == "true" %}
             watchdog: crate::wdg::UnarmedBoardWatchdog::new(p.{{watchdog_peripheral}}),

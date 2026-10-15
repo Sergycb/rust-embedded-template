@@ -524,13 +524,14 @@ ST-Link захваченным до переподключения кабеля 
 | `protobuf` | `HOST` — сообщения protobuf, кадры COBS + CRC (`adapters::cobs::Cobs`) | схема `crates-host/proto`, обработчик `crates-host/domain/src/host/service.rs` |
 | `canopen` | `CANOPEN` — узел CANopen, стек `zencan` | словарь объектов `crates-host/canopen/device.toml` |
 
-Интерфейсы — `uart` (Modbus и protobuf; RS-485 — тот же UART с выводом DE) и `can`
+Интерфейсы — `uart` (Modbus и protobuf; RS-485 — тот же UART с выводом DE), `tcp` и
+`udp` (Modbus и protobuf по Ethernet: стек `embassy-net`, узел `NET` в графе) и `can`
 (CANopen; FDCAN или bxCAN — какой у чипа). Узлу протокола нужен граф задач, а
 интерфейс должен быть выведен в корпусе чипа: недопустимое сочетание генерация
 отвергает с объяснением. Крейты невыбранного протокола (`crates-host/proto`,
 `crates-host/canopen`) в проект не попадают.
 
-Выводы шаблон не выбирает: в `Board::serial` или `Board::can` встаёт заглушка, с
+Выводы шаблон не выбирает: в `Board::serial`, `Board::can` или под `Board::net` встаёт заглушка, с
 которой проект собирается и запускается, но узел ждёт впустую. Подставить своё
 железо — правка в `crates-cross/bsp/src/serial.rs` или `can.rs` по рецепту в
 `docs/modules/bsp-serial.md` и `bsp-can.md` (`cargo xtask pins USART2 --snippet`,

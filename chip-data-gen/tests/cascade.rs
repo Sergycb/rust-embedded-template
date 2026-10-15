@@ -1062,6 +1062,10 @@ fn no_protocol_by_default() {
         "crates-host/domain/src/modbus",
         "crates-host/domain/src/host",
         "crates-host/domain/src/canopen.rs",
+        "crates-host/domain/src/net.rs",
+        "crates-host/adapters/src/net.rs",
+        "crates-cross/bsp/src/net.rs",
+        "docs/modules/bsp-net.md",
     ] {
         assert!(
             result.deleted.iter().any(|deleted| deleted == path),
@@ -1140,6 +1144,38 @@ fn canopen_picks_the_can_controller_of_the_chip() {
     }
 }
 
+/// Протокол по сети оставляет стек — `bsp::net`, `adapters::net`, узел
+/// `domain::net` — только у чипа с выведенным Ethernet.
+#[test]
+fn protocol_over_network_keeps_the_net_stack() {
+    for iface in ["tcp", "udp"] {
+        let result = run_cascade_with(
+            &compile_script(),
+            "h743zg",
+            &[("protocol", "modbus"), ("interface", iface)],
+        )
+        .expect("каскад не должен падать");
+        for kept in [
+            "crates-cross/bsp/src/net.rs",
+            "crates-host/adapters/src/net.rs",
+            "crates-host/domain/src/net.rs",
+            "crates-host/domain/src/modbus.rs",
+        ] {
+            assert!(
+                !result.deleted.iter().any(|path| path == kept),
+                "{iface}: {kept} удалён"
+            );
+        }
+        assert!(
+            result
+                .deleted
+                .iter()
+                .any(|path| path == "crates-host/adapters/src/serial.rs"),
+            "{iface}: заглушка UART осталась"
+        );
+    }
+}
+
 /// Сочетания, при которых узел протокола не встал бы в граф или обслуживать
 /// интерфейс было бы некому, генерацию останавливают — с объяснением, а не
 /// проектом, который молча делает не то.
@@ -1148,7 +1184,19 @@ fn impossible_protocol_answers_are_rejected() {
     /// Чип, ответы, часть ожидаемого сообщения об ошибке.
     type Rejected<'a> = (&'a str, &'a [(&'a str, &'a str)], &'a str);
     let script = compile_script();
-    let cases: [Rejected; 6] = [
+    let cases: [Rejected; 8] = [
+        // У G474 нет Ethernet.
+        (
+            "g474re",
+            &[("protocol", "modbus"), ("interface", "tcp")],
+            "нет выведенного блока ETH",
+        ),
+        // CANopen — только поверх CAN.
+        (
+            "h743zg",
+            &[("protocol", "canopen"), ("interface", "udp")],
+            "работает поверх can, а не",
+        ),
         // У G071 нет CAN-контроллера вовсе.
         (
             "g071rb",
@@ -1158,7 +1206,7 @@ fn impossible_protocol_answers_are_rejected() {
         (
             "f407ve",
             &[("protocol", "modbus")],
-            "работает поверх uart, а не",
+            "работает поверх uart, tcp, udp, а не",
         ),
         ("f407ve", &[("interface", "uart")], "без протокола"),
         (

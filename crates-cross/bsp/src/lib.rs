@@ -6,6 +6,9 @@ pub mod board;
 {%- if interface == "can" %}
 pub mod can;
 {%- endif %}
+{%- if interface == "tcp" or interface == "udp" %}
+pub mod net;
+{%- endif %}
 {%- if cpu_freq_boost == "true" %}
 pub mod clocks;
 {%- endif %}

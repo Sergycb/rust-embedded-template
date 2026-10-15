@@ -177,6 +177,20 @@ heapless               = { version = "0.9.3" }
 micropb-gen            = { version = "0.6.0" }
 protox                 = { version = "0.9.1" }
 # {%- endif %}
+# {%- if interface == "tcp" or interface == "udp" %}
+# Сетевой стек под интерфейсами tcp/udp (`adapters::net`, узел `domain::net`):
+# версия, парная к `embassy-stm32` 0.6 (те же `embassy-net-driver` 0.2,
+# `embassy-sync`, `embassy-time`, `embedded-io-async`). `smoltcp` под ним —
+# 0BSD, разрешение в `deny.toml`. DHCP и статический адрес — оба: что из них,
+# решает `bsp::net`.
+embassy-net            = { version = "0.9.1", features = [
+	"tcp",
+	"udp",
+	"proto-ipv4",
+	"medium-ethernet",
+	"dhcpv4",
+] }
+# {%- endif %}
 # {%- if protocol == "canopen" %}
 # CANopen: стек узла (`zencan-node`) и генерация словаря объектов из TOML-описания
 # устройства (`zencan-build`, в `build.rs` крейта `canopen`). MPL-2.0 —

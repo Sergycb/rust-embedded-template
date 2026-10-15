@@ -77,8 +77,16 @@ impl<T: Read + Write> Tcp<T> {
         Ok((header, total))
     }
 
+    /// Брошенное чтение (таймаут) недочитанный кадр сохраняет — следующий
+    /// обмен его дочитает. Оборванное (конец потока, ошибка) — сбрасывает:
+    /// поток над TCP-сервером продолжится уже другим соединением, и хвост
+    /// прошлого склеился бы с его первым кадром.
     async fn fill(&mut self, want: usize) -> Result<(), ReadExactError<T::Error>> {
-        super::fill(&mut self.io, &mut self.rx, &mut self.have, want).await
+        let result = super::fill(&mut self.io, &mut self.rx, &mut self.have, want).await;
+        if result.is_err() {
+            self.have = 0;
+        }
+        result
     }
 
     async fn send(&mut self, tid: u16, unit: u8, pdu: &[u8]) -> Result<(), T::Error> {
@@ -255,26 +263,41 @@ mod tests {
         }
     }
 
-    /// Брошенный посреди приёма обмен не сбивает поток: следующий
-    /// дочитывает недочитанный кадр, пропускает его по номеру транзакции и
-    /// получает свой.
+    /// Брошенный посреди приёма обмен (таймаут) не сбивает поток:
+    /// следующий дочитывает недочитанный кадр, пропускает его по номеру
+    /// транзакции и получает свой.
     #[tokio::test]
     async fn cancelled_exchange_keeps_stream_aligned() {
         let (stale, fresh) = (
             frame(1, 0, 1, &[0x03, 2, 0, 1]),
             frame(2, 0, 1, &[0x03, 2, 0, 2]),
         );
-        let mut tcp = Tcp::new(Duplex::replying(&stale[..4]));
+        let mut tcp = Tcp::new(Duplex::replying(&stale[..4]).waiting());
         let mut out = [0; MAX_PDU];
-        // Ответ на первый запрос обрывается на четвёртом байте: обмен
-        // «бросается» на конце потока, как на таймауте.
-        assert_eq!(
-            tcp.exchange(1, &[0x03, 0, 0, 0, 1], &mut out).await,
-            Err(MasterError::Eof)
-        );
+        {
+            // Ответ на первый запрос пришёл до четвёртого байта, дальше —
+            // тишина: один опрос, и future бросается, как на таймауте.
+            let exchange = std::pin::pin!(tcp.exchange(1, &[0x03, 0, 0, 0, 1], &mut out));
+            let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+            assert!(exchange.poll(&mut cx).is_pending());
+        }
         tcp.io.push(&[&stale[4..], &fresh[..]].concat());
         assert_eq!(tcp.exchange(1, &[0x03, 0, 0, 0, 1], &mut out).await, Ok(4));
         assert_eq!(out[..4], [0x03, 2, 0, 2]);
+    }
+
+    /// Оборванное чтение (конец потока) — не таймаут: недочитанный кадр
+    /// сбрасывается, и поток, продолжившийся другим соединением
+    /// (`net::TcpServer`), читается с начала кадра.
+    #[tokio::test]
+    async fn ended_stream_drops_the_partial_frame() {
+        let fresh = frame(1, 0, 7, &[0x03, 0, 1, 0, 1]);
+        let mut tcp = Tcp::new(Duplex::new(&fresh[..4]));
+        let mut buf = [0; MAX_PDU];
+        assert_eq!(tcp.recv(&mut buf).await, Err(ServeError::Eof));
+        tcp.io.push(&fresh);
+        let r = tcp.recv(&mut buf).await.unwrap();
+        assert_eq!(&buf[..r.len], &[0x03, 0, 1, 0, 1]);
     }
 
     proptest::proptest! {

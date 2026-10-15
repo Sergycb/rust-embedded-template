@@ -17,6 +17,9 @@ defmt = [
 	"ports/defmt",
 	"embassy-boot/defmt",
 	"sequential-storage/defmt",
+	# {%- if interface == "tcp" or interface == "udp" %}
+	"embassy-net/defmt",
+	# {%- endif %}
 ]
 # Подпись образа: проверка в bootloader'е (`ota::screen_update`). Включает
 # `boot` в проекте, где при генерации выбрана подпись; в корневом workspace её включают
@@ -44,6 +47,12 @@ crc = { workspace = true }
 # {%- if protocol == "protobuf" %}
 # Кадрирование COBS под `cobs::Cobs`.
 cobs = { workspace = true }
+# {%- endif %}
+# {%- if interface == "tcp" or interface == "udp" %}
+# Сеть (`adapters::net`): заглушка устройства, TCP-сервер, UDP-канал;
+# `embassy-time` — таймауты сокета TCP (keep-alive).
+embassy-net = { workspace = true }
+embassy-time = { workspace = true }
 # {%- endif %}
 # {%- if interface == "can" %}
 # Кадр шины CAN — параметр заглушки `can::Unconnected`.

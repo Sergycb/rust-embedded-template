@@ -56,9 +56,11 @@ impl ModbusClient for Client {
 }
 
 /// Транспорт slave'а: отдаёт заранее заданные запросы, затем — конец
-/// потока; ответы копит в `replies`.
+/// потока, а после него — отказ (`Framing`): так узел, переживающий конец
+/// сессии, в тесте всё же заканчивается. Ответы копит в `replies`.
 pub(crate) struct Server {
     incoming: VecDeque<(u8, Vec<u8>)>,
+    ended: bool,
     pub(crate) replies: Vec<Vec<u8>>,
 }
 
@@ -67,6 +69,7 @@ impl Server {
     pub(crate) fn new(requests: &[(u8, &[u8])]) -> Self {
         Self {
             incoming: requests.iter().map(|&(u, p)| (u, p.to_vec())).collect(),
+            ended: false,
             replies: Vec::new(),
         }
     }
@@ -79,17 +82,17 @@ impl ModbusServer for Server {
         &mut self,
         buf: &mut [u8],
     ) -> impl Future<Output = Result<Received, ServeError<Infallible>>> {
-        let result = self
-            .incoming
-            .pop_front()
-            .ok_or(ServeError::Eof)
-            .map(|(unit, pdu)| {
+        let result = match self.incoming.pop_front() {
+            Some((unit, pdu)) => {
                 buf[..pdu.len()].copy_from_slice(&pdu);
-                Received {
+                Ok(Received {
                     unit,
                     len: pdu.len(),
-                }
-            });
+                })
+            }
+            None if std::mem::replace(&mut self.ended, true) => Err(ServeError::Framing),
+            None => Err(ServeError::Eof),
+        };
         std::future::ready(result)
     }
 

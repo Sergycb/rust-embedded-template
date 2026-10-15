@@ -115,6 +115,10 @@ embassy-embedded-hal = { version = "0.6.0" }
 # Один `Flash` на весь чип делится между OTA и настройками, а обеим нужен
 # `&'static` (иначе их не отдать в спавнящиеся задачи — те требуют 'static).
 static_cell            = { version = "2.1.1" }
+{%- if interface == "tcp" or interface == "udp" %}
+# Сетевой стек (`bsp::net`): та же версия и фичи, что в корневом Cargo.toml.
+embassy-net            = { version = "0.9.1", features = ["tcp", "udp", "proto-ipv4", "medium-ethernet", "dhcpv4", "defmt"] }
+{%- endif %}
 embassy-sync       = { version = "0.8.0" }
 # Трейты `NorFlash` для обёртки флеша в bootloader'е, кормящей сторож
 # (crates-cross/boot/src/main.rs). Та же версия, что тянет embassy-boot.

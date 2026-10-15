@@ -1024,8 +1024,8 @@ if variable::get("graph") != "true" {
 // таблицами; новый интерфейс добавляется строкой в обе.
 const PROTOCOL_INTERFACES = #{
     "none": ["none"],
-    "modbus": ["uart"],
-    "protobuf": ["uart"],
+    "modbus": ["uart", "tcp", "udp"],
+    "protobuf": ["uart", "tcp", "udp"],
     "canopen": ["can"],
 };
 // Блоки чипа (метки chip-data/interfaces.rhai), на которых работает
@@ -1034,6 +1034,8 @@ const PROTOCOL_INTERFACES = #{
 const INTERFACE_BLOCKS = #{
     "uart": ["usart"],
     "can": ["fdcan", "bxcan"],
+    "tcp": ["eth"],
+    "udp": ["eth"],
 };
 // Значения через запятую — для сообщений об ошибке. `reduce` без начального
 // значения начинает с `()`, и список получил бы ведущую запятую.
@@ -1122,6 +1124,13 @@ if iface != "uart" {
 }
 if iface != "can" {
 	file::delete("crates-host/adapters/src/can.rs");
+}
+// Сеть — стек `embassy-net`, узел NET и их сокеты — только под tcp/udp.
+if iface != "tcp" && iface != "udp" {
+	file::delete("crates-cross/bsp/src/net.rs");
+	file::delete("docs/modules/bsp-net.md");
+	file::delete("crates-host/adapters/src/net.rs");
+	file::delete("crates-host/domain/src/net.rs");
 }
 
 // Слот драйвера внешней флеши в bsp — только у OTA с разделами на ней. Без

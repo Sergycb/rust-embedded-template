@@ -48,7 +48,7 @@ use core::fmt::Debug;
 
 use defmt_or_log::{Debug2Format, info, warn};
 use embassy_time::Duration;
-use ports::ModbusServer;
+use ports::{ModbusServer, ServeError};
 use supervisor::policy::{BackoffPolicy, JitterPolicy};
 use supervisor::runtime::TaskExit;
 
@@ -128,12 +128,26 @@ where
         Serving
     }
 
-    /// Обслуживает транспорт до его отказа.
+    /// Обслуживает транспорт до конца сессии или отказа.
+    ///
+    /// Конец потока — не отказ, а конец сессии: TCP-клиент отключился, и
+    /// транспорт над `net::TcpServer` на следующем приёме примет нового.
+    /// Узел обслуживает его дальше, не выходя: выход `Failed` на каждое
+    /// отключение растил бы паузу перезапуска графа до `BACKOFF.max`, и
+    /// мастер, открывающий соединение на каждый опрос, ждал бы секунды.
     async fn serve(&mut self, _: Serving) -> Down {
-        let Err(err) = slave::serve(self.link, *self.unit, self.regs).await;
-        warn!("modbus: отказ транспорта: {:?}", Debug2Format(&err));
-        Down {
-            result: TaskExit::Failed,
+        // Сессии — подряд: каждая ждёт данных транспорта, так что цикл
+        // уступает исполнитель, а не крутится.
+        loop {
+            match slave::serve(self.link, *self.unit, self.regs).await {
+                Err(ServeError::Eof) => info!("modbus: сессия закончилась, ждём следующую"),
+                Err(err) => {
+                    warn!("modbus: отказ транспорта: {:?}", Debug2Format(&err));
+                    return Down {
+                        result: TaskExit::Failed,
+                    };
+                }
+            }
         }
     }
 }
@@ -173,10 +187,10 @@ mod tests {
     use crate::modbus::fakes::{Map, Server};
     use supervisor::runtime::TaskExit;
 
-    /// Узел отвечает на запросы и выходит `Failed`, когда поток кончается, —
-    /// граф перезапустит его.
+    /// Узел отвечает на запросы, конец потока переживает как конец сессии и
+    /// выходит `Failed` только при отказе транспорта — граф перезапустит его.
     #[tokio::test]
-    async fn serves_until_transport_ends() {
+    async fn serves_sessions_until_transport_fails() {
         let mut link = Server::new(&[(7, &[0x06, 0, 1, 0, 42])]);
         let mut regs = Map::default();
         let ctx = ModbusSlaveCtx {

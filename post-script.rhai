@@ -53,15 +53,17 @@ if variable::get("graph") == "true" {
 	print("Граф задач: узел HEARTBEAT в crates-cross/app/src/graph.rs, его работа — в crates-host/domain/src/heartbeat.rs.");
 	let protocol = variable::get("protocol");
 	if protocol == "modbus" {
-		print("Modbus slave: узел MODBUS поверх UART; карта регистров — crates-host/domain/src/modbus/registers.rs.");
+		print("Modbus slave: узел MODBUS поверх " + variable::get("interface").to_upper() + "; карта регистров — crates-host/domain/src/modbus/registers.rs.");
 	} else if protocol == "canopen" {
 		print("CANopen: узел CANOPEN поверх CAN; словарь объектов — crates-host/canopen/device.toml.");
 	} else if protocol == "protobuf" {
-		print("protobuf: узел HOST поверх UART (COBS + CRC); схема — crates-host/proto, обработчик — crates-host/domain/src/host/service.rs.");
+		print("protobuf: узел HOST поверх " + variable::get("interface").to_upper() + "; схема — crates-host/proto, обработчик — crates-host/domain/src/host/service.rs.");
 	}
 	let iface = variable::get("interface");
 	if iface == "uart" {
 		print("UART — заглушка: подставьте свой USART в crates-cross/bsp/src/serial.rs (cargo xtask pins USART2 --snippet).");
+	} else if iface == "tcp" || iface == "udp" {
+		print("Сеть — стек embassy-net над заглушкой устройства: подставьте Ethernet в crates-cross/bsp/src/net.rs (cargo xtask pins ETH --snippet).");
 	} else if iface == "can" {
 		let block = if variable::get("can_kind") == "fdcan" { "FDCAN1" } else { "CAN1" };
 		print("CAN — заглушка: подставьте свой контроллер в crates-cross/bsp/src/can.rs (cargo xtask pins " + block + " --snippet).");

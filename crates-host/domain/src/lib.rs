@@ -29,3 +29,8 @@ pub mod host;
 /// транспортов `ports::ModbusServer`/`ports::ModbusClient` — см. модуль.
 pub mod modbus;
 // {%- endif %}
+
+// {%- if interface == "tcp" or interface == "udp" %}
+/// Узел `NET`: ведёт сетевой стек `embassy-net` — см. модуль.
+pub mod net;
+// {%- endif %}

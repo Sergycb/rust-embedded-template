@@ -26,6 +26,10 @@ allow = [
 	"Zlib",
 	"Unicode-3.0",
 	"CC0-1.0",
+	# {%- if interface == "tcp" or interface == "udp" %}
+	# `smoltcp` — TCP/IP-стек под `embassy-net`.
+	"0BSD",
+	# {%- endif %}
 ]
 confidence-threshold = 0.9
 
