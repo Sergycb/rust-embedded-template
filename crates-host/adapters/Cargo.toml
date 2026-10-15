@@ -36,7 +36,8 @@ sequential-storage = { workspace = true }
 embassy-sync = { workspace = true }
 salty = { workspace = true, optional = true }
 # Кадрирование потока: `cobs::Cobs` реализует `ports::FrameLink` поверх
-# `embedded_io_async::{Read, Write}`.
+# `embedded_io_async::{Read, Write}`; поверх него же — `modbus::{Rtu, Tcp}`,
+# CRC — у обоих.
 embedded-io-async = { workspace = true }
 cobs = { workspace = true }
 crc = { workspace = true }

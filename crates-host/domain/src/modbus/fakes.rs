@@ -1,91 +1,103 @@
-//! Фейки для host-тестов Modbus: поток байтов и карта регистров.
+//! Фейки для host-тестов Modbus: транспорты на уровне PDU и карта регистров.
 //!
 //! Ни один не ждёт по-настоящему — их future готовы с первого `poll`, —
 //! поэтому тестам хватает однопоточного `#[tokio::test]`.
 
 use core::convert::Infallible;
+use std::collections::VecDeque;
 
-use embedded_io_async::{ErrorType, Read, ReadReady, Write};
-use ports::{Bits, BitsMut, Exception, Registers, Words, WordsMut};
+use ports::{
+    Bits, BitsMut, Exception, MasterError, ModbusClient, ModbusServer, Received, Registers,
+    ServeError, Words, WordsMut,
+};
 
-use super::rtu::seal;
-
-/// Кадр RTU: адрес `unit`, `pdu` и CRC.
-pub(crate) fn frame(unit: u8, pdu: &[u8]) -> Vec<u8> {
-    let mut buf = [&[unit][..], pdu, &[0, 0]].concat();
-    let len = buf.len() - 2;
-    seal(&mut buf, len);
-    buf
-}
-
-/// Поток: читает заранее записанные байты, пишет в `tx`. Когда читать
-/// нечего, `read` отдаёт 0 — конец потока.
-pub(crate) struct Duplex {
-    rx: Vec<u8>,
-    /// Сколько из `rx` уже прочитано.
-    pos: usize,
-    /// Ответ, который дописывается к входу только после первой записи — как
-    /// на линии, где slave отвечает на запрос, а не до него.
+/// Транспорт master'а: записывает запросы, на первый обмен отвечает
+/// `reply`, без него — концом потока.
+#[derive(Default)]
+pub(crate) struct Client {
     reply: Option<Vec<u8>>,
-    pub(crate) tx: Vec<u8>,
+    /// Каждый запрос: адрес (0 — широковещательный) и PDU.
+    pub(crate) sent: Vec<(u8, Vec<u8>)>,
 }
 
-impl Duplex {
-    /// Байты читаемы сразу — вход slave'а.
-    pub(crate) fn new(rx: &[u8]) -> Self {
-        Self {
-            rx: rx.to_vec(),
-            pos: 0,
-            reply: None,
-            tx: Vec::new(),
-        }
-    }
-
-    /// `reply` читаем только после того, как master отправил запрос.
+impl Client {
     pub(crate) fn replying(reply: &[u8]) -> Self {
         Self {
             reply: Some(reply.to_vec()),
-            ..Self::new(&[])
+            sent: Vec::new(),
         }
-    }
-
-    /// До запроса во входном буфере уже лежит `stale` — опоздавший ответ;
-    /// ответ на запрос придёт после него.
-    pub(crate) fn with_stale(mut self, stale: &[u8]) -> Self {
-        self.rx = stale.to_vec();
-        self
     }
 }
 
-impl ErrorType for Duplex {
+impl ModbusClient for Client {
     type Error = Infallible;
-}
 
-impl Read for Duplex {
-    fn read(&mut self, buf: &mut [u8]) -> impl Future<Output = Result<usize, Self::Error>> {
-        let n = buf.len().min(self.rx.len() - self.pos);
-        buf[..n].copy_from_slice(&self.rx[self.pos..self.pos + n]);
-        self.pos += n;
-        std::future::ready(Ok(n))
+    fn exchange(
+        &mut self,
+        unit: u8,
+        request: &[u8],
+        response: &mut [u8],
+    ) -> impl Future<Output = Result<usize, MasterError<Infallible>>> {
+        self.sent.push((unit, request.to_vec()));
+        let result = self.reply.take().map_or(Err(MasterError::Eof), |reply| {
+            response[..reply.len()].copy_from_slice(&reply);
+            Ok(reply.len())
+        });
+        std::future::ready(result)
+    }
+
+    fn broadcast(
+        &mut self,
+        request: &[u8],
+    ) -> impl Future<Output = Result<(), MasterError<Infallible>>> {
+        self.sent.push((0, request.to_vec()));
+        std::future::ready(Ok(()))
     }
 }
 
-impl ReadReady for Duplex {
-    fn read_ready(&mut self) -> Result<bool, Self::Error> {
-        Ok(self.pos < self.rx.len())
-    }
+/// Транспорт slave'а: отдаёт заранее заданные запросы, затем — конец
+/// потока; ответы копит в `replies`.
+pub(crate) struct Server {
+    incoming: VecDeque<(u8, Vec<u8>)>,
+    pub(crate) replies: Vec<Vec<u8>>,
 }
 
-impl Write for Duplex {
-    fn write(&mut self, buf: &[u8]) -> impl Future<Output = Result<usize, Self::Error>> {
-        if let Some(reply) = self.reply.take() {
-            self.rx.extend_from_slice(&reply);
+impl Server {
+    /// Запросы — адрес и PDU.
+    pub(crate) fn new(requests: &[(u8, &[u8])]) -> Self {
+        Self {
+            incoming: requests.iter().map(|&(u, p)| (u, p.to_vec())).collect(),
+            replies: Vec::new(),
         }
-        self.tx.extend_from_slice(buf);
-        std::future::ready(Ok(buf.len()))
+    }
+}
+
+impl ModbusServer for Server {
+    type Error = Infallible;
+
+    fn recv(
+        &mut self,
+        buf: &mut [u8],
+    ) -> impl Future<Output = Result<Received, ServeError<Infallible>>> {
+        let result = self
+            .incoming
+            .pop_front()
+            .ok_or(ServeError::Eof)
+            .map(|(unit, pdu)| {
+                buf[..pdu.len()].copy_from_slice(&pdu);
+                Received {
+                    unit,
+                    len: pdu.len(),
+                }
+            });
+        std::future::ready(result)
     }
 
-    fn flush(&mut self) -> impl Future<Output = Result<(), Self::Error>> {
+    fn reply(
+        &mut self,
+        response: &[u8],
+    ) -> impl Future<Output = Result<(), ServeError<Infallible>>> {
+        self.replies.push(response.to_vec());
         std::future::ready(Ok(()))
     }
 }

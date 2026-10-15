@@ -20,6 +20,6 @@ pub mod canopen;
 /// обработчик приложения, ответ — см. модуль.
 pub mod host;
 
-/// Modbus RTU: slave над портом `ports::Registers` и master — поверх потока
-/// байтов `embedded-io-async` — см. модуль.
+/// Modbus: slave над портом `ports::Registers` и master — поверх
+/// транспортов `ports::ModbusServer`/`ports::ModbusClient` — см. модуль.
 pub mod modbus;

@@ -34,7 +34,8 @@
 //! компилируется и в самом репозитории шаблона): [`FirmwareUpdate`] и
 //! [`SettingsStorage`] реализованы, когда при генерации выбраны OTA и
 //! хранилище настроек. [`FrameLink`] поверх потока реализует
-//! `adapters::cobs::Cobs`, поверх датаграмм — интерфейс проекта; канал
+//! `adapters::cobs::Cobs`, поверх датаграмм — интерфейс проекта;
+//! [`ModbusClient`] и [`ModbusServer`] — `adapters::modbus`; канал
 //! доставки образа ([`ImageSource`]), данные Modbus-slave'а ([`Registers`]) и
 //! обработчик сообщений хоста ([`HostService`]) — сам проект.
 //!
@@ -55,8 +56,8 @@ pub mod host;
 /// кадрирования потока.
 pub mod link;
 
-/// Modbus: данные slave'а, представления битов и регистров кадра, ошибки
-/// обмена.
+/// Modbus: данные slave'а, представления битов и регистров кадра, транспорты
+/// master'а и slave'а, ошибки обмена.
 pub mod modbus;
 
 /// OTA: канал доставки образа, запись во флеш, проверка подписи и ошибки
@@ -69,7 +70,10 @@ pub mod settings;
 pub use can::CanBus;
 pub use host::HostService;
 pub use link::{FrameLink, LinkError};
-pub use modbus::{Bits, BitsMut, Exception, MasterError, Registers, ServeError, Words, WordsMut};
+pub use modbus::{
+    Bits, BitsMut, Exception, MAX_PDU, MasterError, ModbusClient, ModbusServer, Received,
+    Registers, ServeError, Words, WordsMut,
+};
 pub use ota::download::{Announce, DownloadError, ImageSource, Rejection};
 pub use ota::update::{FirmwareUpdate, PendingImage, UpdateError};
 pub use settings::SettingsStorage;

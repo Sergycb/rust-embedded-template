@@ -437,14 +437,12 @@ name = "domain"
 version = "0.1.0"
 dependencies = [
  "canopen",
- "crc",
  "critical-section",
  "defmt",
  "defmt-or-log",
  "embassy-executor",
  "embassy-time",
  "embedded-can",
- "embedded-io-async",
  "fsm",
  "log",
  "micropb",

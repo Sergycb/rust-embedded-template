@@ -26,6 +26,10 @@ pub mod settings;
 /// COBS и CRC.
 pub mod cobs;
 
+/// Транспорты Modbus — RTU, TCP, UDP — для портов `ports::ModbusClient` и
+/// `ports::ModbusServer`.
+pub mod modbus;
+
 /// Внутренняя EEPROM (STM32L0/L1) как флеш с семантикой NOR — чтобы поверх
 /// неё работало то же хранилище настроек.
 pub mod eeprom;

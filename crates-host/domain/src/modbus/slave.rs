@@ -1,9 +1,11 @@
-//! Modbus RTU slave поверх потока байтов.
+//! Modbus slave поверх транспорта [`ports::ModbusServer`].
 
 use core::convert::Infallible;
 
-use embedded_io_async::{Read, ReadExactError, Write};
-use ports::{Bits, BitsMut, Exception, Registers, ServeError, Words, WordsMut};
+use ports::{
+    Bits, BitsMut, Exception, MAX_PDU, ModbusServer, Received, Registers, ServeError, Words,
+    WordsMut,
+};
 use rusty_modbus_codec::error::DecodeError;
 use rusty_modbus_codec::validate::{
     validate_read_coils, validate_read_discrete_inputs, validate_read_registers,
@@ -12,130 +14,63 @@ use rusty_modbus_codec::validate::{
 use rusty_modbus_codec::{RequestPdu, decode_request};
 use rusty_modbus_types::ExceptionCode;
 
-use super::rtu::{self, MAX_ADU};
-
-/// Обслуживает линию как slave с адресом `unit`: принимает запросы, отдаёт
-/// их `regs` и отвечает — до отказа транспорта.
+/// Обслуживает транспорт `link` как slave с адресом `unit`: принимает
+/// запросы, отдаёт их `regs` и отвечает — до отказа транспорта.
 ///
-/// Чего slave не делает и почему:
-///
-/// * не отвечает на запрос с чужим адресом и на широковещательный (адрес 0)
-///   — запись из широковещательного при этом выполняется, чтение нет;
-/// * не отвечает на кадр с неверной CRC: границу кадра в потоке он ищет по
-///   содержимому, и после такого кадра сдвигается на байт, пока CRC не
-///   сойдётся снова;
-/// * не отвечает на функции, кроме FC01–06, 15, 16: длину их кадра по коду
-///   функции не вывести, а отвечать, не проверив CRC, нельзя — master
-///   получит таймаут, а не Illegal Function.
+/// Отвечает на запрос с адресом `unit` и с 0xFF — так TCP и UDP
+/// обращаются к самому устройству. На чужой адрес и на широковещательный
+/// (0) не отвечает; запись из широковещательного при этом выполняется,
+/// чтение нет.
 ///
 /// Недопустимый запрос — количество вне диапазона спецификации, счётчик
 /// байт не сходится, coil не 0x0000/0xFF00 — получает исключение до вызова
-/// `regs`.
+/// `regs`, неизвестная функция — Illegal Function. Битые кадры отбрасывает
+/// транспорт.
 ///
 /// # Errors
 ///
-/// Возвращает отказ транспорта или конец потока; ошибкой не кончается
-/// ничего, что приходит по линии.
+/// Возвращает отказ транспорта; ошибкой не кончается ничего, что приходит
+/// по линии.
 ///
 /// # Panics
 ///
 /// Если `unit` не 1..=247 — адреса slave'а по спецификации.
-pub async fn serve<T, R>(
-    io: &mut T,
+pub async fn serve<L, R>(
+    link: &mut L,
     unit: u8,
     regs: &mut R,
-) -> Result<Infallible, ServeError<T::Error>>
+) -> Result<Infallible, ServeError<L::Error>>
 where
-    T: Read + Write,
+    L: ModbusServer,
     R: Registers,
 {
     assert!(
         (1..=247).contains(&unit),
         "адрес slave'а {unit} вне 1..=247"
     );
-    let mut rx = [0_u8; MAX_ADU];
-    let mut have = 0;
-    let mut tx = [0_u8; MAX_ADU];
+    let mut rx = [0_u8; MAX_PDU];
+    let mut tx = [0_u8; MAX_PDU];
     loop {
-        let len = next_request(io, &mut rx, &mut have).await?;
-        let addr = rx[0];
-        let broadcast = addr == 0;
-        // Широковещательное чтение не выполняется вовсе: ответа на него нет,
-        // а у чтения бывают побочные эффекты (сброс счётчика при чтении).
-        let read = matches!(rx[1], 0x01..=0x04);
-        if addr == unit || (broadcast && !read) {
-            let reply = respond(&rx[1..len - 2], regs, &mut tx[1..]).await;
-            if !broadcast {
-                tx[0] = unit;
-                let total = rtu::seal(&mut tx, 1 + reply);
-                io.write_all(&tx[..total]).await.map_err(ServeError::Io)?;
-                io.flush().await.map_err(ServeError::Io)?;
-            }
-        }
-        consume(&mut rx, &mut have, len);
-    }
-}
-
-/// Ждёт кадр запроса с верной CRC в начале `rx`; возвращает его длину.
-///
-/// `rx[..*have]` — принятые, но ещё не разобранные байты. Читает ровно
-/// столько, сколько не хватает до кадра, — ни байтом больше, иначе начало
-/// следующего кадра пришлось бы хранить где-то ещё.
-async fn next_request<T: Read>(
-    io: &mut T,
-    rx: &mut [u8; MAX_ADU],
-    have: &mut usize,
-) -> Result<usize, ServeError<T::Error>> {
-    loop {
-        fill(io, rx, have, 2).await?;
-        let Some(header) = rtu::request_header(rx[1]) else {
-            consume(rx, have, 1);
+        let Received { unit: to, len } = link.recv(&mut rx).await?;
+        let pdu = &rx[..len];
+        let Some(&fc) = pdu.first() else {
             continue;
         };
-        fill(io, rx, have, header).await?;
-        let len = rtu::request_len(&rx[..header]);
-        if len <= MAX_ADU {
-            fill(io, rx, have, len).await?;
-            if rtu::crc_ok(&rx[..len]) {
-                return Ok(len);
-            }
+        if to == unit || to == 0xFF {
+            let reply = respond(pdu, regs, &mut tx).await;
+            link.reply(&tx[..reply]).await?;
+        } else if to == 0 && !matches!(fc, 0x01..=0x04) {
+            // Широковещательное чтение не выполняется вовсе: ответа на него
+            // нет, а у чтения бывают побочные эффекты (сброс счётчика при
+            // чтении).
+            respond(pdu, regs, &mut tx).await;
         }
-        consume(rx, have, 1);
     }
-}
-
-/// Дочитывает `rx` до `want` байт.
-async fn fill<T: Read>(
-    io: &mut T,
-    rx: &mut [u8; MAX_ADU],
-    have: &mut usize,
-    want: usize,
-) -> Result<(), ServeError<T::Error>> {
-    if *have < want {
-        io.read_exact(&mut rx[*have..want])
-            .await
-            .map_err(|e| match e {
-                ReadExactError::UnexpectedEof => ServeError::Eof,
-                ReadExactError::Other(e) => ServeError::Io(e),
-            })?;
-        *have = want;
-    }
-    Ok(())
-}
-
-/// Убирает `n` байт из начала принятого.
-fn consume(rx: &mut [u8; MAX_ADU], have: &mut usize, n: usize) {
-    rx.copy_within(n..*have, 0);
-    *have -= n;
 }
 
 /// Выполняет запрос `pdu` и кладёт PDU ответа в `out`; возвращает его длину.
 async fn respond<R: Registers>(pdu: &[u8], regs: &mut R, out: &mut [u8]) -> usize {
     let fc = pdu[0];
-    // Сейчас сюда доходят только FC01–06/15/16 (`rtu::request_header`), и
-    // неизвестной функции не бывает; ветка — для транспорта, который
-    // отдаёт кадр целиком (`ports::FrameLink` с паузой на линии), и кадр с
-    // любой функцией доходит до разбора.
     let result = match decode_request(pdu) {
         Ok(request) => execute(&request, pdu, regs, out).await,
         Err(DecodeError::UnknownFunctionCode(_)) => Err(Exception::IllegalFunction),
@@ -193,33 +128,34 @@ async fn execute<R: Registers>(
         RequestPdu::WriteSingleCoil(r) => {
             let bit = [u8::from(r.value.as_bool())];
             regs.write_coils(r.address.0, Bits::new(&bit, 1)).await?;
-            Ok(echo(out, pdu, pdu.len()))
+            Ok(echo(out, pdu))
         }
         RequestPdu::WriteSingleRegister(r) => {
             let word = r.value.to_be_bytes();
             regs.write_holding(r.address.0, Words::new(&word)).await?;
-            Ok(echo(out, pdu, pdu.len()))
+            Ok(echo(out, pdu))
         }
         RequestPdu::WriteMultipleCoils(r) => {
             let (start, qty) = (r.address.0, r.quantity.0);
             validate_write_coils(start, qty, r.byte_count).map_err(exception)?;
             regs.write_coils(start, Bits::new(r.coil_values, qty))
                 .await?;
-            Ok(echo(out, pdu, ECHO_MULTIPLE))
+            Ok(echo(out, pdu))
         }
         RequestPdu::WriteMultipleRegisters(r) => {
             let (start, qty) = (r.address.0, r.quantity.0);
             validate_write_registers(start, qty, r.byte_count).map_err(exception)?;
             regs.write_holding(start, Words::new(r.register_values))
                 .await?;
-            Ok(echo(out, pdu, ECHO_MULTIPLE))
+            Ok(echo(out, pdu))
         }
         _ => Err(Exception::IllegalFunction),
     }
 }
 
-/// Ответ на FC15/16 — код функции, адрес и количество из запроса.
-const ECHO_MULTIPLE: usize = 5;
+/// Ответ на запись — первые пять байт запроса: функция, адрес и значение
+/// (FC05/06) или количество (FC15/16).
+const ECHO: usize = 5;
 
 /// Заголовок ответа на чтение `qty` бит; возвращает длину PDU ответа.
 fn bits_reply(out: &mut [u8], fc: u8, qty: u16) -> usize {
@@ -243,10 +179,10 @@ fn reply_head(out: &mut [u8], fc: u8, bytes: usize) -> usize {
     2 + bytes
 }
 
-/// Копирует первые `len` байт запроса в ответ.
-fn echo(out: &mut [u8], pdu: &[u8], len: usize) -> usize {
-    out[..len].copy_from_slice(&pdu[..len]);
-    len
+/// Копирует в ответ первые [`ECHO`] байт запроса записи.
+fn echo(out: &mut [u8], pdu: &[u8]) -> usize {
+    out[..ECHO].copy_from_slice(&pdu[..ECHO]);
+    ECHO
 }
 
 fn exception(code: ExceptionCode) -> Exception {
@@ -256,14 +192,15 @@ fn exception(code: ExceptionCode) -> Exception {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modbus::fakes::{Duplex, Map, frame};
+    use crate::modbus::fakes::{Map, Server};
 
-    /// Прогоняет `input` через slave с адресом 1; возвращает ответы целиком.
-    async fn run(input: &[u8], map: &mut Map) -> Vec<u8> {
-        let mut io = Duplex::new(input);
-        let end = serve(&mut io, 1, map).await;
+    /// Прогоняет запросы `(адрес, PDU)` через slave с адресом 1; возвращает
+    /// ответы.
+    async fn run(requests: &[(u8, &[u8])], map: &mut Map) -> Vec<Vec<u8>> {
+        let mut link = Server::new(requests);
+        let end = serve(&mut link, 1, map).await;
         assert_eq!(end, Err(ServeError::Eof), "slave кончился не концом потока");
-        io.tx
+        link.replies
     }
 
     #[tokio::test]
@@ -271,8 +208,8 @@ mod tests {
         let mut map = Map::default();
         map.holding[2] = 0x1234;
         map.holding[3] = 0xABCD;
-        let out = run(&frame(1, &[0x03, 0, 2, 0, 2]), &mut map).await;
-        assert_eq!(out, frame(1, &[0x03, 4, 0x12, 0x34, 0xAB, 0xCD]));
+        let out = run(&[(1, &[0x03, 0, 2, 0, 2])], &mut map).await;
+        assert_eq!(out, [[0x03, 4, 0x12, 0x34, 0xAB, 0xCD]]);
     }
 
     #[tokio::test]
@@ -281,32 +218,32 @@ mod tests {
         map.coils[0] = true;
         map.coils[2] = true;
         map.coils[8] = true;
-        let out = run(&frame(1, &[0x01, 0, 0, 0, 9]), &mut map).await;
-        assert_eq!(out, frame(1, &[0x01, 2, 0b0000_0101, 0b0000_0001]));
+        let out = run(&[(1, &[0x01, 0, 0, 0, 9])], &mut map).await;
+        assert_eq!(out, [[0x01, 2, 0b0000_0101, 0b0000_0001]]);
     }
 
     #[tokio::test]
     async fn write_multiple_registers_arrives_in_one_call() {
         let mut map = Map::default();
-        let out = run(&frame(1, &[0x10, 0, 4, 0, 2, 4, 0, 1, 0, 2]), &mut map).await;
-        assert_eq!(out, frame(1, &[0x10, 0, 4, 0, 2]));
+        let out = run(&[(1, &[0x10, 0, 4, 0, 2, 4, 0, 1, 0, 2])], &mut map).await;
+        assert_eq!(out, [[0x10, 0, 4, 0, 2]]);
         assert_eq!(map.writes, vec![(4, vec![1, 2])]);
     }
 
     #[tokio::test]
     async fn single_write_echoes_request() {
         let mut map = Map::default();
-        let coil = frame(1, &[0x05, 0, 3, 0xFF, 0x00]);
-        let reg = frame(1, &[0x06, 0, 1, 0x00, 0x2A]);
-        let out = run(&[coil.clone(), reg.clone()].concat(), &mut map).await;
-        assert_eq!(out, [coil, reg].concat());
+        let coil = [0x05, 0, 3, 0xFF, 0x00];
+        let reg = [0x06, 0, 1, 0x00, 0x2A];
+        let out = run(&[(1, &coil), (1, &reg)], &mut map).await;
+        assert_eq!(out, [coil, reg]);
         assert!(map.coils[3]);
         assert_eq!(map.holding[1], 42);
     }
 
     #[tokio::test]
     async fn invalid_requests_get_exceptions() {
-        let cases: [(&[u8], &[u8]); 5] = [
+        let cases: [(&[u8], &[u8]); 7] = [
             // qty=0 и qty>125 — Illegal Data Value
             (&[0x03, 0, 0, 0, 0], &[0x83, 0x03]),
             (&[0x03, 0, 0, 0, 200], &[0x83, 0x03]),
@@ -316,11 +253,15 @@ mod tests {
             (&[0x10, 0, 0, 0, 3, 4, 0, 1, 0, 2], &[0x90, 0x03]),
             // вне карты устройства — отвечает само приложение
             (&[0x03, 0, 15, 0, 2], &[0x83, 0x02]),
+            // функция, которой slave не знает, — TCP и UDP доносят её
+            (&[0x2B, 0x0E, 0x01, 0x00], &[0xAB, 0x01]),
+            // запрос обрезан
+            (&[0x03, 0, 0], &[0x83, 0x03]),
         ];
         for (request, reply) in cases {
             let mut map = Map::default();
-            let out = run(&frame(1, request), &mut map).await;
-            assert_eq!(out, frame(1, reply), "запрос {request:02X?}");
+            let out = run(&[(1, request)], &mut map).await;
+            assert_eq!(out, [reply], "запрос {request:02X?}");
             assert!(
                 map.writes.is_empty(),
                 "при исключении записано {:?}",
@@ -332,79 +273,66 @@ mod tests {
     #[tokio::test]
     async fn unimplemented_table_is_illegal_function() {
         let mut map = Map::default();
-        let out = run(&frame(1, &[0x04, 0, 0, 0, 1]), &mut map).await;
-        assert_eq!(out, frame(1, &[0x84, 0x01]));
+        let out = run(&[(1, &[0x04, 0, 0, 0, 1])], &mut map).await;
+        assert_eq!(out, [[0x84, 0x01]]);
     }
 
     #[tokio::test]
-    async fn foreign_and_broadcast_get_no_reply() {
+    async fn addressing() {
         let mut map = Map::default();
-        let foreign = frame(2, &[0x06, 0, 0, 0, 7]);
-        let broadcast = frame(0, &[0x06, 0, 1, 0, 9]);
-        let out = run(&[foreign, broadcast].concat(), &mut map).await;
-        assert!(out.is_empty(), "ответ {out:02X?}");
+        let out = run(
+            &[
+                (2, &[0x06, 0, 0, 0, 7]),
+                (0, &[0x06, 0, 1, 0, 9]),
+                (0xFF, &[0x06, 0, 2, 0, 3]),
+                (1, &[]),
+            ],
+            &mut map,
+        )
+        .await;
+        assert_eq!(out, [[0x06, 0, 2, 0, 3]], "ответ только на 0xFF");
         assert_eq!(map.holding[0], 0, "записал чужой запрос");
         assert_eq!(map.holding[1], 9, "не выполнил широковещательную запись");
-    }
-
-    #[tokio::test]
-    async fn resyncs_after_garbage_and_bad_crc() {
-        let mut map = Map::default();
-        map.holding[0] = 5;
-        let good = frame(1, &[0x03, 0, 0, 0, 1]);
-        let mut broken = good.clone();
-        broken[3] ^= 0xFF;
-        let input = [&[0x55, 0x01, 0xAA][..], &broken, &good].concat();
-        let out = run(&input, &mut map).await;
-        assert_eq!(out, frame(1, &[0x03, 2, 0, 5]));
+        assert_eq!(map.holding[2], 3);
     }
 
     proptest::proptest! {
-        /// Что бы ни пришло по линии — slave не паникует и кончается только
-        /// концом потока.
+        /// Какой бы PDU ни пришёл — slave не паникует и отвечает на него.
         #[test]
-        fn never_panics(input in proptest::collection::vec(proptest::num::u8::ANY, 0..600)) {
-            let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
-            rt.block_on(async {
-                let mut map = Map::default();
-                run(&input, &mut map).await;
-            });
-        }
-
-        /// Кадр с верной CRC, согласованной длиной и случайным
-        /// содержимым доходит до разбора и исполнения — и там тоже без
-        /// паники; ответ — кадр с верной CRC.
-        #[test]
-        fn never_panics_on_valid_crc(
-            fc in proptest::sample::select(vec![0x01_u8, 0x02, 0x03, 0x04, 0x05, 0x06, 0x0F, 0x10]),
-            fields in proptest::array::uniform4(proptest::num::u8::ANY),
-            data in proptest::collection::vec(proptest::num::u8::ANY, 0..40),
-        ) {
-            // Длина кадра такая, какую slave выведет из заголовка, а у
-            // FC15/16 количество согласовано со счётчиком байт — иначе кадр
-            // отсекался бы ещё до разбора или до `Bits::new`/`Words::new`.
-            let pdu: Vec<u8> = match fc {
-                0x0F | 0x10 => {
-                    let mut data = data;
-                    let qty = if fc == 0x0F {
-                        (data.len() * 8).saturating_sub(usize::from(fields[3] % 8))
-                    } else {
-                        data.truncate(data.len() / 2 * 2);
-                        data.len() / 2
-                    };
-                    let qty = u16::try_from(qty).unwrap().to_be_bytes();
-                    let count = u8::try_from(data.len()).unwrap();
-                    [&[fc, fields[0], fields[1]][..], &qty, &[count], &data].concat()
-                }
-                _ => [&[fc][..], &fields].concat(),
-            };
-            let request = frame(1, &pdu);
+        fn never_panics(pdu in proptest::collection::vec(proptest::num::u8::ANY, 1..=MAX_PDU)) {
             let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
             let out = rt.block_on(async {
                 let mut map = Map::default();
-                run(&request, &mut map).await
+                run(&[(1, &pdu)], &mut map).await
             });
-            proptest::prop_assert!(rtu::crc_ok(&out), "ответ {out:02X?}");
+            proptest::prop_assert_eq!(out.len(), 1);
+        }
+
+        /// PDU записи с согласованным количеством и случайным содержимым
+        /// доходит до `Bits::new`/`Words::new` и исполнения — и там тоже без
+        /// паники.
+        #[test]
+        fn never_panics_on_consistent_writes(
+            fc in proptest::sample::select(vec![0x0F_u8, 0x10]),
+            fields in proptest::array::uniform3(proptest::num::u8::ANY),
+            data in proptest::collection::vec(proptest::num::u8::ANY, 0..40),
+        ) {
+            let mut data = data;
+            let qty = if fc == 0x0F {
+                (data.len() * 8).saturating_sub(usize::from(fields[2] % 8))
+            } else {
+                data.truncate(data.len() / 2 * 2);
+                data.len() / 2
+            };
+            let qty = u16::try_from(qty).unwrap().to_be_bytes();
+            let count = u8::try_from(data.len()).unwrap();
+            let pdu = [&[fc, fields[0], fields[1]][..], &qty, &[count], &data].concat();
+            let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
+            let out = rt.block_on(async {
+                let mut map = Map::default();
+                run(&[(1, &pdu)], &mut map).await
+            });
+            proptest::prop_assert_eq!(out.len(), 1);
         }
     }
 }
