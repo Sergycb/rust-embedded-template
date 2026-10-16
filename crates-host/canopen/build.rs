@@ -6,18 +6,15 @@
 
 use std::path::PathBuf;
 
-/// Сохраняет ли узел объекты (`0x1010`): только в проекте с разделом
-/// настроек — ему есть куда (`domain::canopen`). Пусто — проект без раздела:
-/// объекта в словаре нет, и стек честно его не объявляет.
-const STORAGE: &[bool] = &[
-    // {%- if config == "true" %}
-    true,
-    // {%- endif %}
-];
+/// Ответ генерации на вопрос о разделе настроек (`true`/`false`; в самом
+/// репозитории шаблона — неподставленный плейсхолдер). Сохраняет ли узел
+/// объекты (`0x1010`): только с разделом — ему есть куда (`domain::canopen`);
+/// без него объекта в словаре нет, и стек честно его не объявляет.
+const CONFIG: &str = "{{config}}";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-changed=device.toml");
-    let device = if STORAGE.is_empty() {
+    let device = if CONFIG == "false" {
         // Ключ верхнего уровня — в начало: в конце он попал бы в последнюю
         // таблицу файла.
         let out = PathBuf::from(std::env::var_os("OUT_DIR").ok_or("OUT_DIR не задан")?);
