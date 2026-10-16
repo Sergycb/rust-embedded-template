@@ -258,6 +258,7 @@ impl Unconnected {
 
 /// Ответ [`Unconnected`] на любую операцию.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct NotConnected;
 
 impl embedded_storage::nor_flash::NorFlashError for NotConnected {

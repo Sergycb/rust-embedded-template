@@ -40,9 +40,7 @@ pub mod version;
 #[cfg(test)]
 mod fakes;
 
-use core::fmt::Debug;
-
-use defmt_or_log::{Debug2Format, info, warn};
+use defmt_or_log::{FormatOrDebug, info, warn};
 use embassy_time::Duration;
 use ports::{Announce, DownloadError, FirmwareUpdate, ImageSource, Rejection, UpdateError};
 use supervisor::policy::{BackoffPolicy, JitterPolicy};
@@ -115,13 +113,13 @@ impl Mode {
     async fn apply<F>(self, flash: &mut F, announce: &Announce, len: u32) -> Result<(), Rejection>
     where
         F: FirmwareUpdate,
-        F::Error: Debug,
+        F::Error: FormatOrDebug,
     {
         match self {
             // Без подписи применение — просьба об обмене разделов; проверок у
             // неё нет намеренно (см. `FirmwareUpdate::mark_updated`).
             Self::Plain => flash.mark_updated().await.map_err(|err| {
-                warn!("ota: пометить обмен не удалось: {:?}", Debug2Format(&err));
+                warn!("ota: пометить обмен не удалось: {:?}", &err);
                 Rejection::Device
             }),
             Self::Signed { running_version } => {
@@ -133,7 +131,7 @@ impl Mode {
                 update::apply_signed(flash, running_version, signature, len)
                     .await
                     .map_err(|err| {
-                        warn!("ota: применение отвергнуто: {:?}", Debug2Format(&err));
+                        warn!("ota: применение отвергнуто: {:?}", &err);
                         update_rejection(&err)
                     })
             }
@@ -157,9 +155,9 @@ impl Mode {
 pub async fn run<S, F>(mut ctx: OtaCtx<'_, S, F>) -> TaskExit
 where
     S: ImageSource,
-    S::Error: Debug,
+    S::Error: FormatOrDebug,
     F: FirmwareUpdate,
-    F::Error: Debug,
+    F::Error: FormatOrDebug,
 {
     ctx.run().await.result
 }
@@ -168,9 +166,9 @@ where
 impl<S, F> OtaCtx<'_, S, F>
 where
     S: ImageSource,
-    S::Error: Debug,
+    S::Error: FormatOrDebug,
     F: FirmwareUpdate,
-    F::Error: Debug,
+    F::Error: FormatOrDebug,
 {
     fsm::machine! {
         machine Ota mod edges {
@@ -229,10 +227,7 @@ where
         if !*self.confirmed {
             match self.flash.mark_booted().await {
                 Ok(()) => *self.confirmed = true,
-                Err(err) => warn!(
-                    "ota: не удалось подтвердить образ: {:?}",
-                    Debug2Format(&err)
-                ),
+                Err(err) => warn!("ota: не удалось подтвердить образ: {:?}", &err),
             }
         }
         Waiting
@@ -247,7 +242,7 @@ where
             Ok(false) => self.mode.check(&announce),
             Ok(true) => Err(Rejection::Busy),
             Err(err) => {
-                warn!("ota: флеш не ответил о занятости: {:?}", Debug2Format(&err));
+                warn!("ota: флеш не ответил о занятости: {:?}", &err);
                 Err(Rejection::Device)
             }
         };
@@ -272,7 +267,7 @@ where
             // отправителю некому.
             Err(DownloadError::Source(err)) => self.lost(err).into(),
             Err(err) => {
-                warn!("ota: приём не удался: {:?}", Debug2Format(&err));
+                warn!("ota: приём не удался: {:?}", &err);
                 match download_rejection(err) {
                     Ok(rejection) => Verdict {
                         outcome: Err(rejection),
@@ -309,7 +304,7 @@ where
         reason = "сигнатуру действия задаёт таблица `#[fsm::typestate]`"
     )]
     fn lost(&mut self, err: S::Error) -> Down {
-        warn!("ota: отказ канала: {:?}", Debug2Format(&err));
+        warn!("ota: отказ канала: {:?}", &err);
         Down {
             result: TaskExit::Failed,
         }

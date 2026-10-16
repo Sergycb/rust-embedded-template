@@ -36,11 +36,9 @@ mod service;
 
 pub use service::Service;
 
-use core::fmt::Debug;
-
-use defmt_or_log::{Debug2Format, info, warn};
+use defmt_or_log::{FormatOrDebug, info, warn};
 use embassy_time::Duration;
-use micropb::{MessageDecode, MessageEncode, PbEncoder};
+use micropb::{DecodeError, MessageDecode, MessageEncode, PbEncoder};
 use ports::{FrameLink, HostService, LinkError};
 use supervisor::policy::{BackoffPolicy, JitterPolicy};
 use supervisor::runtime::TaskExit;
@@ -94,7 +92,7 @@ pub const MAX_LOST_IN_A_ROW: u8 = 32;
 pub async fn run<L, S>(mut ctx: HostCtx<'_, L, S>) -> TaskExit
 where
     L: FrameLink,
-    L::Error: Debug,
+    L::Error: FormatOrDebug,
     S: HostService,
     S::Request: MessageDecode + Default,
     S::Response: MessageEncode,
@@ -106,7 +104,7 @@ where
 impl<L, S> HostCtx<'_, L, S>
 where
     L: FrameLink,
-    L::Error: Debug,
+    L::Error: FormatOrDebug,
     S: HostService,
     S::Request: MessageDecode + Default,
     S::Response: MessageEncode,
@@ -152,7 +150,7 @@ where
         let response = match request.decode_from_bytes(&self.rx[..len]) {
             Ok(()) => self.service.handle(request).await,
             Err(err) => {
-                warn!("host: кадр не разобрался: {:?}", Debug2Format(&err));
+                warn!("host: кадр не разобрался: {}", decode_reason(&err));
                 self.service.malformed()
             }
         };
@@ -180,7 +178,7 @@ where
         reason = "сигнатуру действия задаёт таблица `#[fsm::typestate]`"
     )]
     fn lost(&mut self, s: &Listening, err: L::Error) -> edges::Lost {
-        warn!("host: кадр потерян: {:?}", Debug2Format(&err));
+        warn!("host: кадр потерян: {:?}", &err);
         let lost = s.lost.saturating_add(1);
         if lost < MAX_LOST_IN_A_ROW {
             Listening { lost }.into()
@@ -199,10 +197,30 @@ where
         reason = "сигнатуру действия задаёт таблица `#[fsm::typestate]`"
     )]
     fn down(&mut self, _: Listening, err: L::Error) -> Down {
-        warn!("host: канал закрыт: {:?}", Debug2Format(&err));
+        warn!("host: канал закрыт: {:?}", &err);
         Down {
             result: TaskExit::Failed,
         }
+    }
+}
+
+/// Почему кадр не разобрался — строкой: у `micropb::DecodeError` нет
+/// `defmt::Format`, а `Debug2Format` втянул бы в прошивку `core::fmt` ради
+/// одной строки лога.
+fn decode_reason<E>(err: &DecodeError<E>) -> &'static str {
+    match err {
+        DecodeError::VarIntLimit => "varint длиннее 10 байт",
+        DecodeError::UnexpectedEof => "кадр оборвался",
+        DecodeError::Deprecation => "устаревший тип поля",
+        DecodeError::UnknownWireType => "неизвестный тип поля",
+        DecodeError::ZeroField => "поле с номером 0",
+        DecodeError::CustomField => "поле не разобралось",
+        DecodeError::Utf8 => "строка не UTF-8",
+        DecodeError::Capacity => "поле не помещается в контейнер",
+        DecodeError::WrongLen => "длина поля не сходится",
+        DecodeError::Reader(_) => "ошибка чтения",
+        // `DecodeError` — `#[non_exhaustive]`: новая причина в `micropb`.
+        _ => "кадр не разобрался",
     }
 }
 

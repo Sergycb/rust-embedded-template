@@ -165,6 +165,7 @@ impl TcpServer {
 
 /// Почему [`TcpServer`] не прочитал или не записал.
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum TcpError {
     /// Клиента не удалось принять.
     Accept(AcceptError),
@@ -294,6 +295,7 @@ impl UdpLink {
 
 /// Почему [`UdpLink`] потерял датаграмму.
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum UdpError {
     /// Датаграмма длиннее буфера.
     Truncated,

@@ -44,9 +44,7 @@ pub use registers::Registers;
 #[cfg(test)]
 mod fakes;
 
-use core::fmt::Debug;
-
-use defmt_or_log::{Debug2Format, info, warn};
+use defmt_or_log::{FormatOrDebug, info, warn};
 use embassy_time::Duration;
 use ports::{ModbusServer, ServeError};
 use supervisor::policy::{BackoffPolicy, JitterPolicy};
@@ -95,7 +93,7 @@ pub const BACKOFF: BackoffPolicy = BackoffPolicy {
 pub async fn run<L, R>(mut ctx: ModbusSlaveCtx<'_, L, R>) -> TaskExit
 where
     L: ModbusServer,
-    L::Error: Debug,
+    L::Error: FormatOrDebug,
     R: ports::Registers,
 {
     ctx.run().await.result
@@ -105,7 +103,7 @@ where
 impl<L, R> ModbusSlaveCtx<'_, L, R>
 where
     L: ModbusServer,
-    L::Error: Debug,
+    L::Error: FormatOrDebug,
     R: ports::Registers,
 {
     fsm::machine! {
@@ -142,7 +140,7 @@ where
             match slave::serve(self.link, *self.unit, self.regs).await {
                 Err(ServeError::Eof) => info!("modbus: сессия закончилась, ждём следующую"),
                 Err(err) => {
-                    warn!("modbus: отказ транспорта: {:?}", Debug2Format(&err));
+                    warn!("modbus: отказ транспорта: {:?}", &err);
                     return Down {
                         result: TaskExit::Failed,
                     };
