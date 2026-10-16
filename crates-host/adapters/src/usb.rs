@@ -248,3 +248,255 @@ impl<'d, D: Driver<'d>> Write for CdcStream<'d, D> {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use core::pin::pin;
+    use core::task::{Context, Poll, Waker};
+    use std::cell::RefCell;
+    use std::collections::VecDeque;
+    use std::rc::Rc;
+
+    use embassy_time::MockDriver;
+    use embassy_usb::Builder;
+    use embassy_usb::class::cdc_acm::{CdcAcmClass, State};
+
+    use super::*;
+
+    /// Пакет — 16 байт: полный пакет в тестах собирается без длинных литералов.
+    const PACKET: u16 = 16;
+
+    /// Что делает хост — общее состояние всех точек сценарного драйвера.
+    #[derive(Default)]
+    struct Host {
+        /// Порт открыт: точки включены.
+        enabled: bool,
+        /// Пакеты от хоста; `None` — отключение посреди сессии.
+        sent: VecDeque<Option<Vec<u8>>>,
+        /// Пакеты, которые хост забрал.
+        taken: Vec<Vec<u8>>,
+        /// Хост пакеты не забирает — запись ждёт.
+        stalled: bool,
+    }
+
+    type Shared = Rc<RefCell<Host>>;
+
+    /// Драйвер, точки которого делают то, что велит [`Host`]. Waker'а точки
+    /// не запоминают: ждущий future тест поллит сам, после того как поменял
+    /// [`Host`], — `.await` на нём повис бы.
+    struct Scripted(Shared);
+
+    struct Point(Shared, EndpointInfo);
+
+    impl Endpoint for Point {
+        fn info(&self) -> &EndpointInfo {
+            &self.1
+        }
+
+        async fn wait_enabled(&mut self) {
+            core::future::poll_fn(|_| {
+                if self.0.borrow().enabled {
+                    Poll::Ready(())
+                } else {
+                    Poll::Pending
+                }
+            })
+            .await;
+        }
+    }
+
+    impl EndpointOut for Point {
+        async fn read(&mut self, buf: &mut [u8]) -> Result<usize, EndpointError> {
+            core::future::poll_fn(|_| {
+                let mut host = self.0.borrow_mut();
+                match host.sent.pop_front() {
+                    Some(Some(packet)) => {
+                        buf[..packet.len()].copy_from_slice(&packet);
+                        Poll::Ready(Ok(packet.len()))
+                    }
+                    Some(None) => {
+                        host.enabled = false;
+                        Poll::Ready(Err(EndpointError::Disabled))
+                    }
+                    None => Poll::Pending,
+                }
+            })
+            .await
+        }
+    }
+
+    impl EndpointIn for Point {
+        async fn write(&mut self, buf: &[u8]) -> Result<(), EndpointError> {
+            core::future::poll_fn(|_| {
+                let mut host = self.0.borrow_mut();
+                if host.stalled {
+                    Poll::Pending
+                } else {
+                    host.taken.push(buf.to_vec());
+                    Poll::Ready(Ok(()))
+                }
+            })
+            .await
+        }
+    }
+
+    impl Scripted {
+        fn point(&self, dir: Direction, ep_type: EndpointType, max_packet_size: u16) -> Point {
+            let index = match (dir, ep_type) {
+                (Direction::In, EndpointType::Interrupt) => 1,
+                _ => 2,
+            };
+            Point(
+                Rc::clone(&self.0),
+                EndpointInfo {
+                    addr: EndpointAddress::from_parts(index, dir),
+                    ep_type,
+                    max_packet_size,
+                    interval_ms: 0,
+                },
+            )
+        }
+    }
+
+    impl Driver<'static> for Scripted {
+        type EndpointOut = Point;
+        type EndpointIn = Point;
+        type ControlPipe = NoBus;
+        type Bus = NoBus;
+
+        fn alloc_endpoint_out(
+            &mut self,
+            ep_type: EndpointType,
+            _: Option<EndpointAddress>,
+            max_packet_size: u16,
+            _: u8,
+        ) -> Result<Point, EndpointAllocError> {
+            Ok(self.point(Direction::Out, ep_type, max_packet_size))
+        }
+
+        fn alloc_endpoint_in(
+            &mut self,
+            ep_type: EndpointType,
+            _: Option<EndpointAddress>,
+            max_packet_size: u16,
+            _: u8,
+        ) -> Result<Point, EndpointAllocError> {
+            Ok(self.point(Direction::In, ep_type, max_packet_size))
+        }
+
+        fn start(self, _: u16) -> (NoBus, NoBus) {
+            (NoBus, NoBus)
+        }
+    }
+
+    fn leak<T>(value: T) -> &'static mut T {
+        Box::leak(Box::new(value))
+    }
+
+    /// Поток CDC над сценарным драйвером и хост, который им управляет.
+    fn stream() -> (CdcStream<'static, Scripted>, Shared) {
+        let host = Shared::default();
+        let mut builder = Builder::new(
+            Scripted(Rc::clone(&host)),
+            embassy_usb::Config::new(0xC0DE, 0xCAFE),
+            leak([0; 256]),
+            leak([0; 256]),
+            &mut [],
+            leak([0; 64]),
+        );
+        let class = CdcAcmClass::new(&mut builder, leak(State::new()), PACKET);
+        let (tx, rx) = class.split();
+        let stream = CdcStream::new(tx, rx.into_buffered(leak([0; PACKET as usize])));
+        (stream, host)
+    }
+
+    /// Чтение отдаёт пакеты хоста, а отключение потоком не кончается: поток
+    /// ждёт, пока хост снова откроет порт, и читает дальше.
+    #[tokio::test]
+    async fn read_survives_a_reconnect() {
+        let (mut stream, host) = stream();
+        host.borrow_mut().enabled = true;
+        host.borrow_mut()
+            .sent
+            .extend([Some(vec![1, 2]), None, Some(vec![3])]);
+
+        let mut buf = [0; 32];
+        assert_eq!(stream.read(&mut buf).await, Ok(2));
+        assert_eq!(buf[..2], [1, 2]);
+
+        let mut cx = Context::from_waker(Waker::noop());
+        {
+            let mut read = pin!(stream.read(&mut buf));
+            assert!(read.as_mut().poll(&mut cx).is_pending(), "ждёт хоста");
+            host.borrow_mut().enabled = true;
+            assert_eq!(read.poll(&mut cx), Poll::Ready(Ok(1)));
+        }
+        assert_eq!(buf[0], 3);
+    }
+
+    /// Запись режет буфер по пакету, а полный последний пакет сброс
+    /// закрывает пакетом нулевой длины — неполный не закрывает.
+    #[tokio::test]
+    async fn full_packet_is_terminated_on_flush() {
+        let (mut stream, host) = stream();
+        host.borrow_mut().enabled = true;
+
+        assert_eq!(stream.write(&[7; 20]).await, Ok(usize::from(PACKET)));
+        stream.flush().await.unwrap();
+        assert_eq!(stream.write(&[8; 4]).await, Ok(4));
+        stream.flush().await.unwrap();
+
+        let taken = host.borrow().taken.clone();
+        assert_eq!(taken, [vec![7; 16], vec![], vec![8; 4]]);
+    }
+
+    /// Пакет, который хост не забирает, отбрасывается по таймауту — запись
+    /// не стоит вечно, и неотправленный полный пакет сброс не закрывает.
+    #[tokio::test]
+    async fn untaken_packet_is_dropped_after_timeout() {
+        let (mut stream, host) = stream();
+        host.borrow_mut().stalled = true;
+
+        let mut cx = Context::from_waker(Waker::noop());
+        {
+            let mut write = pin!(stream.write(&[1; 16]));
+            assert!(write.as_mut().poll(&mut cx).is_pending());
+            MockDriver::get().advance(WRITE_TIMEOUT);
+            assert_eq!(write.poll(&mut cx), Poll::Ready(Ok(16)));
+        }
+
+        host.borrow_mut().stalled = false;
+        stream.flush().await.unwrap();
+        assert!(host.borrow().taken.is_empty(), "{:?}", host.borrow().taken);
+    }
+
+    /// Заглушка выдаёт точки с растущими адресами и ничего не делает:
+    /// шина и точки ждут вечно.
+    #[test]
+    fn unconnected_driver_never_wakes() {
+        let mut driver = Unconnected::default();
+        let out = driver
+            .alloc_endpoint_out(EndpointType::Bulk, None, 64, 0)
+            .unwrap();
+        let mut input = driver
+            .alloc_endpoint_in(EndpointType::Bulk, None, 64, 0)
+            .unwrap();
+        assert_eq!(
+            out.info().addr,
+            EndpointAddress::from_parts(1, Direction::Out)
+        );
+        assert_eq!(
+            input.info().addr,
+            EndpointAddress::from_parts(2, Direction::In)
+        );
+
+        let (mut bus, mut control) = driver.start(64);
+        let mut cx = Context::from_waker(Waker::noop());
+        assert!(pin!(bus.poll()).poll(&mut cx).is_pending());
+        assert!(pin!(control.setup()).poll(&mut cx).is_pending());
+        assert!(pin!(input.write(&[1])).poll(&mut cx).is_pending());
+        assert!(pin!(input.wait_enabled()).poll(&mut cx).is_pending());
+        assert_eq!(control.max_packet_size(), CONTROL_PACKET);
+        assert!(!bus.endpoint_is_stalled(out.info().addr));
+    }
+}

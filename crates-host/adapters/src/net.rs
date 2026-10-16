@@ -326,3 +326,270 @@ impl FrameLink for UdpLink {
             .map_err(|err| LinkError::Lost(UdpError::Send(err)))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use core::task::{Context, Waker};
+    use std::cell::RefCell;
+    use std::collections::VecDeque;
+    use std::rc::Rc;
+
+    use embassy_net::{Config, Ipv4Address, Ipv4Cidr, Runner, StackResources, StaticConfigV4};
+
+    use super::*;
+
+    /// Половина кабеля: кадры, ждущие приёма, и кто их ждёт.
+    #[derive(Default)]
+    struct Wire {
+        frames: VecDeque<Vec<u8>>,
+        waker: Option<Waker>,
+    }
+
+    /// Устройство на одном конце кабеля: принимает из `inbox`, отправляет в
+    /// `outbox` — второй конец читает их как свой `inbox`.
+    struct Loopback {
+        inbox: Rc<RefCell<Wire>>,
+        outbox: Rc<RefCell<Wire>>,
+        mac: [u8; 6],
+    }
+
+    struct Rx(Vec<u8>);
+    struct Tx(Rc<RefCell<Wire>>);
+
+    impl RxToken for Rx {
+        fn consume<R, F: FnOnce(&mut [u8]) -> R>(mut self, f: F) -> R {
+            f(&mut self.0)
+        }
+    }
+
+    impl TxToken for Tx {
+        fn consume<R, F: FnOnce(&mut [u8]) -> R>(self, len: usize, f: F) -> R {
+            let mut frame = vec![0; len];
+            let result = f(&mut frame);
+            let mut wire = self.0.borrow_mut();
+            wire.frames.push_back(frame);
+            if let Some(waker) = wire.waker.take() {
+                waker.wake();
+            }
+            result
+        }
+    }
+
+    impl Driver for Loopback {
+        type RxToken<'a> = Rx;
+        type TxToken<'a> = Tx;
+
+        fn receive(&mut self, cx: &mut Context) -> Option<(Rx, Tx)> {
+            let mut inbox = self.inbox.borrow_mut();
+            if let Some(frame) = inbox.frames.pop_front() {
+                Some((Rx(frame), Tx(Rc::clone(&self.outbox))))
+            } else {
+                inbox.waker = Some(cx.waker().clone());
+                None
+            }
+        }
+
+        fn transmit(&mut self, _: &mut Context) -> Option<Tx> {
+            Some(Tx(Rc::clone(&self.outbox)))
+        }
+
+        fn link_state(&mut self, _: &mut Context) -> LinkState {
+            LinkState::Up
+        }
+
+        fn capabilities(&self) -> Capabilities {
+            let mut capabilities = Capabilities::default();
+            capabilities.max_transmission_unit = ETHERNET_MTU;
+            capabilities
+        }
+
+        fn hardware_address(&self) -> HardwareAddress {
+            HardwareAddress::Ethernet(self.mac)
+        }
+    }
+
+    type Node = (Stack<'static>, Runner<'static, Loopback>);
+
+    const DEVICE: Ipv4Address = Ipv4Address::new(10, 0, 0, 1);
+    const HOST: Ipv4Address = Ipv4Address::new(10, 0, 0, 2);
+    const PORT: u16 = 502;
+
+    fn leak<T>(value: T) -> &'static mut T {
+        Box::leak(Box::new(value))
+    }
+
+    /// Стек на конце кабеля `device` с адресом `address`.
+    fn stack(device: Loopback, address: Ipv4Address) -> Node {
+        #[expect(
+            clippy::default_trait_access,
+            reason = "тип списка DNS — heapless из embassy-net, по имени не назван"
+        )]
+        let config = Config::ipv4_static(StaticConfigV4 {
+            address: Ipv4Cidr::new(address, 24),
+            gateway: None,
+            dns_servers: Default::default(),
+        });
+        let seed = u64::from(address.octets()[3]);
+        embassy_net::new(device, config, leak(StackResources::<4>::new()), seed)
+    }
+
+    /// Два стека — устройство и хост — на одном кабеле.
+    fn pair() -> (Node, Node) {
+        let (a, b): (Rc<RefCell<Wire>>, Rc<RefCell<Wire>>) = (Rc::default(), Rc::default());
+        let device = Loopback {
+            inbox: Rc::clone(&a),
+            outbox: Rc::clone(&b),
+            mac: [2, 0, 0, 0, 0, 1],
+        };
+        let host = Loopback {
+            inbox: b,
+            outbox: a,
+            mac: [2, 0, 0, 0, 0, 2],
+        };
+        (stack(device, DEVICE), stack(host, HOST))
+    }
+
+    /// Гоняет оба стека, пока идёт `test`.
+    async fn with_network<R>(
+        mut device: Runner<'static, Loopback>,
+        mut host: Runner<'static, Loopback>,
+        test: impl Future<Output = R>,
+    ) -> R {
+        tokio::select! {
+            never = device.run() => never,
+            never = host.run() => never,
+            result = test => result,
+        }
+    }
+
+    #[test]
+    fn unconnected_device_has_no_link_and_no_frames() {
+        let mut device = Unconnected::new([2, 1, 2, 3, 4, 5]);
+        let mut cx = Context::from_waker(Waker::noop());
+        assert!(device.receive(&mut cx).is_none());
+        assert!(device.transmit(&mut cx).is_none());
+        assert!(matches!(device.link_state(&mut cx), LinkState::Down));
+        assert_eq!(device.capabilities().max_transmission_unit, ETHERNET_MTU);
+        assert_eq!(
+            device.hardware_address(),
+            HardwareAddress::Ethernet([2, 1, 2, 3, 4, 5])
+        );
+    }
+
+    /// Сервер принимает клиента, отвечает ему, видит его отключение концом
+    /// потока — и принимает следующего на том же сокете.
+    ///
+    /// Время `mock-driver` стоит, и отложенное подтверждение `smoltcp` не
+    /// уходит никогда: `server.flush()` дожидается подтверждения ответа
+    /// только потому, что его несёт FIN клиента. Порядок на стороне клиента
+    /// (прочитать, закрыть) этим и задан.
+    #[tokio::test]
+    async fn tcp_server_serves_and_takes_the_next_client() {
+        let ((device, device_runner), (host, host_runner)) = pair();
+        let mut server = TcpServer::new(device, PORT, leak([0; 256]), leak([0; 256]));
+        with_network(device_runner, host_runner, async {
+            for round in 0..2_u8 {
+                // Сервер слушает с первого чтения — как узел протокола,
+                // который читает сразу после старта, — поэтому обе стороны
+                // идут одновременно.
+                let device_side = async {
+                    let mut buf = [0; 8];
+                    let n = server.read(&mut buf).await.unwrap();
+                    assert_eq!(buf[..n], [round, 1, 2]);
+                    server.write_all(b"ok").await.unwrap();
+                    server.flush().await.unwrap();
+                    assert_eq!(
+                        server.read(&mut buf).await.unwrap(),
+                        0,
+                        "раунд {round}: конец потока"
+                    );
+                };
+                let host_side = async {
+                    let mut client = TcpSocket::new(host, leak([0; 256]), leak([0; 256]));
+                    client.connect((DEVICE, PORT)).await.unwrap();
+                    client.write_all(&[round, 1, 2]).await.unwrap();
+                    client.flush().await.unwrap();
+                    let mut reply = [0; 2];
+                    client.read_exact(&mut reply).await.unwrap();
+                    assert_eq!(&reply, b"ok");
+                    client.close();
+                    client.flush().await.unwrap();
+                };
+                tokio::join!(device_side, host_side);
+            }
+        })
+        .await;
+    }
+
+    /// Запись без соединения — ошибка, а не ожидание клиента; пустой буфер
+    /// — 0 без попытки принять соединение.
+    #[tokio::test]
+    async fn tcp_server_without_client_refuses_writes() {
+        let ((device, _), _) = pair();
+        let mut server = TcpServer::new(device, PORT, leak([0; 64]), leak([0; 64]));
+        assert!(matches!(
+            server.write(b"late").await,
+            Err(TcpError::NotConnected)
+        ));
+        assert!(matches!(server.flush().await, Err(TcpError::NotConnected)));
+        assert_eq!(server.read(&mut []).await.unwrap(), 0);
+        assert_eq!(
+            embedded_io_async::Error::kind(&TcpError::NotConnected),
+            ErrorKind::NotConnected
+        );
+        assert_eq!(
+            embedded_io_async::Error::kind(&TcpError::Accept(AcceptError::InvalidPort)),
+            ErrorKind::Other
+        );
+        assert_eq!(
+            embedded_io_async::Error::kind(&TcpError::Io(tcp::Error::ConnectionReset)),
+            ErrorKind::ConnectionReset
+        );
+    }
+
+    fn udp(stack: Stack<'static>, port: u16) -> UdpLink {
+        UdpLink::new(
+            stack,
+            port,
+            leak([PacketMetadata::EMPTY; 4]),
+            leak([0; 16]),
+            leak([PacketMetadata::EMPTY; 4]),
+            leak([0; 64]),
+        )
+    }
+
+    /// UDP-канал отвечает отправителю последней датаграммы; ответить до
+    /// первой датаграммы некому, длинная датаграмма — потеря.
+    #[tokio::test]
+    async fn udp_link_replies_to_the_last_sender() {
+        let ((device, device_runner), (host, host_runner)) = pair();
+        let mut link = udp(device, PORT);
+        let peer = udp(host, 4000);
+        with_network(device_runner, host_runner, async {
+            assert!(matches!(
+                link.send(b"x").await,
+                Err(LinkError::Lost(UdpError::NoPeer))
+            ));
+
+            peer.socket
+                .send_to(&[1, 2, 3], (DEVICE, PORT))
+                .await
+                .unwrap();
+            let mut buf = [0; 8];
+            assert_eq!(link.recv(&mut buf).await.unwrap(), 3);
+            assert_eq!(buf[..3], [1, 2, 3]);
+            link.send(&[9, 8]).await.unwrap();
+            let mut reply = [0; 16];
+            let (n, from) = peer.socket.recv_from(&mut reply).await.unwrap();
+            assert_eq!((&reply[..n], from.endpoint.port), (&[9, 8][..], PORT));
+
+            peer.socket.send_to(&[0; 12], (DEVICE, PORT)).await.unwrap();
+            let mut short = [0; 4];
+            assert!(matches!(
+                link.recv(&mut short).await,
+                Err(LinkError::Lost(UdpError::Truncated))
+            ));
+        })
+        .await;
+    }
+}

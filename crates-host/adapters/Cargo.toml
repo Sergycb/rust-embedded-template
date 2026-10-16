@@ -76,3 +76,10 @@ defmt = { workspace = true, optional = true }
 tokio = { workspace = true }
 # Property-тесты кадрирования: любое дробление потока и любой мусор.
 proptest = { workspace = true }
+# {%- if interface == "tcp" or interface == "udp" or interface == "usb" %}
+# Сетевые и USB-тесты: стеки `embassy-net`/`embassy-usb` ждут таймеров и
+# критической секции — на хосте их дают драйвер времени `mock-driver` и
+# `critical-section/std`, как в `domain`.
+embassy-time = { workspace = true, features = ["mock-driver", "generic-queue-8"] }
+critical-section = { workspace = true, features = ["std"] }
+# {%- endif %}

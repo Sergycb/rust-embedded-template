@@ -35,3 +35,50 @@ impl<F: embedded_can::Frame> CanBus for Unconnected<F> {
         core::future::ready(Ok(()))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use core::pin::pin;
+    use core::task::{Context, Waker};
+
+    use embedded_can::{Frame, Id, StandardId};
+
+    use super::*;
+
+    /// Кадр для заглушки — минимальная реализация `embedded_can::Frame`.
+    #[derive(Debug)]
+    struct TestFrame;
+
+    impl Frame for TestFrame {
+        fn new(_: impl Into<Id>, _: &[u8]) -> Option<Self> {
+            Some(Self)
+        }
+        fn new_remote(_: impl Into<Id>, _: usize) -> Option<Self> {
+            Some(Self)
+        }
+        fn is_extended(&self) -> bool {
+            false
+        }
+        fn is_remote_frame(&self) -> bool {
+            false
+        }
+        fn id(&self) -> Id {
+            Id::Standard(StandardId::ZERO)
+        }
+        fn dlc(&self) -> usize {
+            0
+        }
+        fn data(&self) -> &[u8] {
+            &[]
+        }
+    }
+
+    /// Приём ждёт вечно, отправка молча выбрасывает кадр.
+    #[tokio::test]
+    async fn waits_forever_and_swallows_sends() {
+        let mut can = Unconnected::<TestFrame>::default();
+        let mut cx = Context::from_waker(Waker::noop());
+        assert!(pin!(can.recv()).poll(&mut cx).is_pending());
+        assert_eq!(can.send(&TestFrame).await, Ok(()));
+    }
+}

@@ -124,3 +124,7 @@ embassy-time = { workspace = true, features = ["mock-driver", "generic-queue-8"]
 # Реализация критической секции для хоста: её просит `MockDriver`. На плате её
 # даёт `cortex-m` фичей `critical-section-single-core` (crates-cross/Cargo.toml).
 critical-section = { workspace = true, features = ["std"] }
+# {%- if interface == "tcp" or interface == "udp" or interface == "usb" %}
+# Узлы NET/USB тестируются над заглушками устройства из `adapters`.
+adapters = { workspace = true }
+# {%- endif %}

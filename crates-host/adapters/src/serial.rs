@@ -42,3 +42,24 @@ impl Write for Unconnected {
         core::future::ready(Ok(()))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use core::pin::pin;
+    use core::task::{Context, Waker};
+
+    use super::*;
+
+    /// Заглушка не отдаёт ни байта и не кончается — чтение ждёт вечно, а
+    /// запись и сброс проходят, выбрасывая байты.
+    #[tokio::test]
+    async fn waits_forever_and_swallows_writes() {
+        let mut serial = Unconnected;
+        let mut buf = [0; 4];
+        let mut cx = Context::from_waker(Waker::noop());
+        assert!(pin!(serial.read(&mut buf)).poll(&mut cx).is_pending());
+        assert_eq!(serial.read_ready(), Ok(false));
+        assert_eq!(serial.write(b"abc").await, Ok(3));
+        assert_eq!(serial.flush().await, Ok(()));
+    }
+}
