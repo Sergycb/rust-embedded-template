@@ -180,7 +180,7 @@ mod tests {
     use std::fs;
 
     use super::{PUBLIC_KEY_FILE, SIGNING_KEY_FILE, ensure_signing_key};
-    use crate::scratch::scratch;
+    use crate::memory::scratch::scratch;
 
     fn public_of(seed: &[u8; 32]) -> [u8; 32] {
         salty::Keypair::from(seed).public.to_bytes()

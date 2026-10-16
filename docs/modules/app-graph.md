@@ -18,7 +18,9 @@
 
 Что даёт узел графа, помимо `deps:` (упорядоченный старт — через явный
 барьер готовности, а не порядок спавна) и `restart:`/`backoff:`
-(политика перезапуска с backoff'ом):
+(политика перезапуска с backoff'ом; узлы шаблона ею не пользуются — они не
+падают, `restart: Never`: на отказ связи пишут в лог и продолжают, а
+пережидает отказ реализация порта):
 
 * `resources: [SLOT: Type]` — эксклюзивная передача владения (обычно
   ручкой периферии) в задачу на один прогон и обратно при её остановке,
@@ -84,8 +86,7 @@
 supervisor::supervisor_fragment! {
     name: HEARTBEAT_FRAG;
 
-    node deps: [], restart: ::supervisor::policy::RestartPolicy::OnFailure,
-        backoff: $crate::heartbeat::BACKOFF,
+    node deps: [], restart: Never,
         watchdog: $crate::heartbeat::WATCHDOG observe,
         ctx: $crate::heartbeat::HeartbeatCtx,
         task: $crate::heartbeat::run;
@@ -126,8 +127,8 @@ impl HeartbeatCtx<'_> {
   `OTA_LINK` и `provide_ota_link`.
 * **Токены фрагмента резолвятся на compose-site**, а не в крейте, где он
   написан: `macro_rules!` подставляет их в место вызова. Поэтому всё, что
-  фрагмент называет, пишется полным путём — `$crate::heartbeat::BACKOFF`,
-  `::supervisor::policy::RestartPolicy` — и от этого файла ничего не требует;
+  фрагмент называет, пишется полным путём — `$crate::heartbeat::WATCHDOG`,
+  `$crate::heartbeat::run` — и от этого файла ничего не требует;
   голое имя искалось бы здесь и падало бы с `E0425`. `$crate::` при этом
   указывает в крейт фрагмента и переживает переименование зависимости в чужом
   манифесте, а `crate::` означал бы крейт, который фрагмент вызывает. Типы,
@@ -141,7 +142,7 @@ impl HeartbeatCtx<'_> {
   своего узла).
 
 Цена всей схемы — зависимость `domain` от `supervisor` (ради `Heartbeat` и
-`TaskExit` в сигнатуре задачи, `BackoffPolicy` и `Duration` в политике); она
+`TaskExit` в сигнатуре задачи, `Duration` в таймауте); она
 разобрана в `docs/architecture.md`. Сам фрагмент её не требует: он не
 генерирует задач, а `supervisor` по имени обязан быть только у compose-site.
 
@@ -159,8 +160,9 @@ impl HeartbeatCtx<'_> {
 // `domain` не видит, — отсюда параметр фрагмента.
 supervisor::supervisor_fragment! {
     name: USART_FRAG<R>;
-    node deps: [], restart: ::supervisor::policy::RestartPolicy::OnFailure,
-        backoff: $crate::usart::BACKOFF,
+    // Узлы шаблона не падают: на отказ автомат возвращается в начальное
+    // состояние, перезапускать графу нечего.
+    node deps: [], restart: Never,
         resources: [UART: R],
         ctx: $crate::usart::UsartCtx,
         task: $crate::usart::run;
@@ -170,8 +172,7 @@ supervisor::supervisor_fragment! {
 supervisor::supervisor_fragment! {
     name: LINK_FRAG;
     // Стартует только после того, как USART сигнализировал готовность.
-    node deps: [USART], restart: ::supervisor::policy::RestartPolicy::OnFailure,
-        backoff: $crate::link::BACKOFF,
+    node deps: [USART], restart: Never,
         inbox: [EVENTS: $crate::link::LinkEvent; 8],
         ctx: $crate::link::LinkCtx,
         task: $crate::link::run;
@@ -248,7 +249,7 @@ spawn_all(&spawner, board).expect("узлы свежие");
 `board` это объявленный выше `boot:`-объект, который `main` передаёт в
 `spawn_all`. Всё, что осталось на вас, — цифры, и живут они там, о чём
 каждая: `WATCHDOG_CHECK_EVERY` здесь (про один сторож на всех), таймаут узла
-во фрагменте (про этот узел, вместе с его backoff'ом — и их соотношение
+во фрагменте (про этот узел, вместе с периодом его отметок — и их соотношение
 держит `const`-assert там же; узлов в шаблоне два, `HEARTBEAT` и `CPU_LOAD`, и
 цифры у них свои), `bsp::wdg::HW_TIMEOUT_US` у железа. Второе соотношение
 (таймаут узла плюс `WATCHDOG_CHECK_EVERY` меньше `HW_TIMEOUT_US`) держит

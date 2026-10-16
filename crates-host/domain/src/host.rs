@@ -16,13 +16,9 @@
 //!
 //! * кадр не разобрался как запрос — ответ
 //!   [`HostService::malformed`](ports::HostService::malformed);
-//! * кадр потерян на приёме или на отправке
-//!   ([`LinkError::Lost`](ports::LinkError::Lost)) — в лог, ждёт следующий;
-//!   [`MAX_LOST_IN_A_ROW`](crate::host::MAX_LOST_IN_A_ROW) потерь подряд —
-//!   как отказ канала;
-//! * канал закрыт или отказал ([`LinkError::Down`](ports::LinkError::Down))
-//!   — выход `Failed`, граф перезапустит узел с backoff'ом, а канал на
-//!   следующем `recv` восстановит реализация `FrameLink`;
+//! * кадр потерян или канал отказал — на приёме или на отправке — в лог, и
+//!   узел ждёт следующий кадр: восстановить канал и подождать, пока он
+//!   вернётся, — дело реализации `FrameLink` на следующем `recv`;
 //! * ответ не помещается в буфер — в лог, хост получит таймаут; что буфер
 //!   мал для какого-то ответа схемы, узел предупреждает уже при старте.
 //!
@@ -37,35 +33,9 @@ mod service;
 pub use service::Service;
 
 use defmt_or_log::{FormatOrDebug, info, warn};
-use embassy_time::Duration;
 use micropb::{DecodeError, MessageDecode, MessageEncode, PbEncoder};
 use ports::{FrameLink, HostService, LinkError};
-use supervisor::policy::{BackoffPolicy, JitterPolicy};
 use supervisor::runtime::TaskExit;
-
-/// Политика пауз между перезапусками узла — те же цифры, что у
-/// [`ota::BACKOFF`](crate::ota::BACKOFF), и своя константа намеренно:
-/// фрагмент самодостаточен. Пауза нужна и на случай канала, который
-/// отказывает сразу: перезапуск без неё крутился бы впустую.
-pub const BACKOFF: BackoffPolicy = BackoffPolicy {
-    first: Duration::from_millis(50),
-    factor: 2,
-    jitter: JitterPolicy::None,
-    floor: Duration::from_millis(50),
-    max: Duration::from_secs(5),
-};
-
-/// Сколько потерянных кадров подряд узел терпит, прежде чем считать канал
-/// отказавшим.
-///
-/// Шум на линии теряет кадры по одному, и между потерями приходят байты —
-/// приём ждёт. Поток, который на каждый `read` сразу отвечает ошибкой
-/// (сломанная периферия: `embassy-stm32` отдаёт все ошибки UART одним
-/// `ErrorKind::Other`), не ждёт никогда, и без предела узел крутил бы
-/// цикл, не отдавая исполнитель другим задачам. Перезапуск с backoff'ом
-/// вставляет паузу. Значение — с запасом на пачку помех, сбросом счётчика
-/// служит любой принятый кадр.
-pub const MAX_LOST_IN_A_ROW: u8 = 32;
 
 // Вход узла — `HostWiring`: структуру эмитит сам фрагмент (`boot: …
 // struct`), по полю на каждый слот, читающий `inputs.<поле>`. Строит её
@@ -84,8 +54,8 @@ pub const MAX_LOST_IN_A_ROW: u8 = 32;
 
 /// Узел `HOST`: отвечает хосту, пока жив канал.
 ///
-/// `TaskExit::Failed` — только когда канал закрыт или отказал;
-/// `Completed` не возвращается никогда.
+/// Не выходит никогда: закрытый или отказавший канал — строка в лог, и
+/// узел ждёт следующий кадр.
 ///
 /// Без `watchdog:` намеренно — по правилу [`ota::run`](crate::ota::run):
 /// узел законно ждёт запрос сколько угодно.
@@ -97,7 +67,7 @@ where
     S::Request: MessageDecode + Default,
     S::Response: MessageEncode,
 {
-    ctx.run().await.result
+    match ctx.run().await {}
 }
 
 #[fsm::typestate]
@@ -112,20 +82,16 @@ where
     fsm::machine! {
         machine Host mod edges {
             states {
-                /// Ждёт кадр от хоста; `lost` — сколько кадров подряд
-                /// потеряно.
-                Listening { lost: u8 },
-                /// Канал закрыт или отказал: прогон окончен.
-                exit Down { result: TaskExit },
+                /// Ждёт кадр от хоста.
+                Listening,
             }
             start => begin -> Listening;
             listen {
-                Listening { .. } => frame: self.link.recv(self.rx),
+                Listening => frame: self.link.recv(self.rx),
             }
             transitions {
-                Listening + frame(Ok(len))                  => serve -> Listening | Down,
-                Listening + frame(Err(LinkError::Lost(err))) => lost  -> Listening | Down,
-                Listening + frame(Err(LinkError::Down(err))) => down  -> Down,
+                Listening + frame(Ok(len))  => serve  -> self,
+                Listening + frame(Err(ref err)) => failed -> self,
             }
         }
     }
@@ -141,11 +107,11 @@ where
                 max
             );
         }
-        Listening { lost: 0 }
+        Listening
     }
 
     /// Разбирает запрос, отдаёт обработчику, отправляет ответ.
-    async fn serve(&mut self, s: Listening, len: usize) -> edges::Serve {
+    async fn serve(&mut self, len: usize) {
         let mut request = S::Request::default();
         let response = match request.decode_from_bytes(&self.rx[..len]) {
             Ok(()) => self.service.handle(request).await,
@@ -159,48 +125,20 @@ where
                 "host: ответ не помещается в буфер на {} байт",
                 self.tx.len()
             );
-            return Listening { lost: 0 }.into();
+            return;
         };
-        match self.link.send(&self.tx[..len]).await {
-            Ok(()) => Listening { lost: 0 }.into(),
-            Err(LinkError::Lost(err)) => match self.lost(&s, err) {
-                edges::Lost::Listening(next) => next.into(),
-                edges::Lost::Down(next) => next.into(),
-            },
-            Err(LinkError::Down(err)) => self.down(s, err).into(),
+        if let Err(err) = self.link.send(&self.tx[..len]).await {
+            warn!("host: ответ не ушёл: {:?}", &err);
         }
     }
 
-    /// Кадр потерян — канал жив, ждём следующий; слишком много подряд —
-    /// канал считается отказавшим.
+    /// Кадр потерян или канал отказал — в лог; узел ждёт следующий кадр.
     #[expect(
         clippy::unused_self,
         reason = "сигнатуру действия задаёт таблица `#[fsm::typestate]`"
     )]
-    fn lost(&mut self, s: &Listening, err: L::Error) -> edges::Lost {
-        warn!("host: кадр потерян: {:?}", &err);
-        let lost = s.lost.saturating_add(1);
-        if lost < MAX_LOST_IN_A_ROW {
-            Listening { lost }.into()
-        } else {
-            warn!("host: {} кадров потеряно подряд — канал не работает", lost);
-            Down {
-                result: TaskExit::Failed,
-            }
-            .into()
-        }
-    }
-
-    /// Канал закрыт или отказал.
-    #[expect(
-        clippy::unused_self,
-        reason = "сигнатуру действия задаёт таблица `#[fsm::typestate]`"
-    )]
-    fn down(&mut self, _: Listening, err: L::Error) -> Down {
-        warn!("host: канал закрыт: {:?}", &err);
-        Down {
-            result: TaskExit::Failed,
-        }
+    fn failed(&mut self, err: &LinkError<L::Error>) {
+        warn!("host: кадр не принят: {:?}", err);
     }
 }
 
@@ -243,8 +181,7 @@ supervisor::supervisor_fragment! {
     name: HOST_FRAG<L, S>;
     boot: inputs: struct $crate::host::HostWiring;
 
-    node deps: [], restart: ::supervisor::policy::RestartPolicy::OnFailure,
-        backoff: $crate::host::BACKOFF,
+    node deps: [], restart: Never,
         resources: [
             /// Кадровый канал к хосту.
             LINK: local L = inputs.link,
@@ -266,15 +203,17 @@ supervisor::supervisor_fragment! {
 mod tests {
     use std::collections::VecDeque;
 
+    use core::pin::pin;
+    use core::task::{Context, Waker};
     use micropb::{MessageDecode, MessageEncode, PbEncoder};
     use ports::{FrameLink, LinkError};
     use proto::{GetInfo, Ping, Request, Request_, Response, Response_, heapless};
-    use supervisor::runtime::TaskExit;
 
     use super::{HostCtx, Service, run};
 
     /// Канал: отдаёт заранее заготовленные исходы `recv`, когда они кончаются,
-    /// — закрыт. Отправленные кадры складывает в `sent`.
+    /// ждёт следующего кадра вечно — как настоящий канал. Отправленные кадры
+    /// складывает в `sent`.
     struct Link {
         incoming: VecDeque<Result<Vec<u8>, LinkError<&'static str>>>,
         sent: Vec<Vec<u8>>,
@@ -288,15 +227,18 @@ mod tests {
             &mut self,
             buf: &mut [u8],
         ) -> impl Future<Output = Result<usize, LinkError<Self::Error>>> {
-            let next = self
-                .incoming
-                .pop_front()
-                .unwrap_or(Err(LinkError::Down("закрыт")))
-                .map(|frame| {
+            let next = self.incoming.pop_front().map(|next| {
+                next.map(|frame| {
                     buf[..frame.len()].copy_from_slice(&frame);
                     frame.len()
-                });
-            std::future::ready(next)
+                })
+            });
+            async move {
+                match next {
+                    Some(next) => next,
+                    None => std::future::pending().await,
+                }
+            }
         }
 
         fn send(
@@ -327,8 +269,9 @@ mod tests {
         })
     }
 
-    /// Гоняет узел, пока канал не закроется; возвращает исход и отправленное.
-    async fn serve(link: &mut Link, tx_len: usize) -> TaskExit {
+    /// Гоняет узел по всем заготовленным кадрам, пока он не станет ждать
+    /// следующий.
+    fn serve(link: &mut Link, tx_len: usize) {
         let mut rx = vec![0; 64];
         let mut tx = vec![0; tx_len];
         let ctx = HostCtx {
@@ -338,11 +281,13 @@ mod tests {
             tx: &mut tx,
             index: 0,
         };
-        run(ctx).await
+        let mut task = pin!(run(ctx));
+        let mut cx = Context::from_waker(Waker::noop());
+        assert!(task.as_mut().poll(&mut cx).is_pending(), "ждёт кадр");
     }
 
-    #[tokio::test]
-    async fn answers_requests_with_their_request_id() {
+    #[test]
+    fn answers_requests_with_their_request_id() {
         let mut link = Link {
             incoming: VecDeque::from([
                 Ok(request(7, Request_::Command::Ping(Ping::default()))),
@@ -351,7 +296,7 @@ mod tests {
             sent: Vec::new(),
             send: Ok(()),
         };
-        assert_eq!(serve(&mut link, 64).await, TaskExit::Failed);
+        serve(&mut link, 64);
         let replies: Vec<Response> = link.sent.iter().map(|f| decode(f)).collect();
         assert_eq!(replies[0].request_id, 7);
         assert!(matches!(
@@ -364,8 +309,8 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn malformed_frame_gets_an_error_and_lost_frame_is_skipped() {
+    #[test]
+    fn malformed_frame_gets_an_error_and_lost_frame_is_skipped() {
         let mut link = Link {
             incoming: VecDeque::from([
                 Ok(vec![0xFF, 0xFF, 0xFF]),
@@ -375,7 +320,7 @@ mod tests {
             sent: Vec::new(),
             send: Ok(()),
         };
-        assert_eq!(serve(&mut link, 64).await, TaskExit::Failed);
+        serve(&mut link, 64);
         assert_eq!(link.sent.len(), 2, "на потерянный кадр ответа нет");
         let malformed = decode(&link.sent[0]);
         assert_eq!(malformed.request_id, 0);
@@ -386,8 +331,10 @@ mod tests {
         assert_eq!(decode(&link.sent[1]).request_id, 9);
     }
 
-    #[tokio::test]
-    async fn failed_send_ends_the_run() {
+    /// Канал, отказавший на отправке, узел не останавливает: он ждёт
+    /// следующий кадр и отвечает на него.
+    #[test]
+    fn failed_send_does_not_stop_the_node() {
         let mut link = Link {
             incoming: VecDeque::from([
                 Ok(request(1, Request_::Command::Ping(Ping::default()))),
@@ -396,18 +343,14 @@ mod tests {
             sent: Vec::new(),
             send: Err(LinkError::Down("обрыв")),
         };
-        assert_eq!(serve(&mut link, 64).await, TaskExit::Failed);
-        assert_eq!(
-            link.sent.len(),
-            1,
-            "после отказа отправки узел не читает дальше"
-        );
+        serve(&mut link, 64);
+        assert_eq!(link.sent.len(), 2, "оба запроса обработаны");
     }
 
     /// Ответ, не принятый каналом (не влез в кадр транспорта), — потеря
     /// кадра, а не отказ канала: узел читает дальше.
-    #[tokio::test]
-    async fn lost_send_does_not_end_the_run() {
+    #[test]
+    fn lost_send_keeps_the_node_listening() {
         let mut link = Link {
             incoming: VecDeque::from([
                 Ok(request(1, Request_::Command::Ping(Ping::default()))),
@@ -416,33 +359,12 @@ mod tests {
             sent: Vec::new(),
             send: Err(LinkError::Lost("не влез")),
         };
-        assert_eq!(serve(&mut link, 64).await, TaskExit::Failed);
+        serve(&mut link, 64);
         assert_eq!(link.sent.len(), 2, "оба запроса обработаны");
     }
 
-    /// Поток, который отказывает на каждом чтении, не крутит узел вечно:
-    /// после `MAX_LOST_IN_A_ROW` потерь подряд — выход, и паузу вставит
-    /// backoff графа. Принятый кадр счётчик сбрасывает.
-    #[tokio::test]
-    async fn too_many_lost_frames_in_a_row_end_the_run() {
-        let lost = usize::from(super::MAX_LOST_IN_A_ROW);
-        let mut incoming: VecDeque<_> =
-            (0..lost - 1).map(|_| Err(LinkError::Lost("шум"))).collect();
-        incoming.push_back(Ok(request(1, Request_::Command::Ping(Ping::default()))));
-        incoming.extend((0..lost).map(|_| Err(LinkError::Lost("шум"))));
-        incoming.push_back(Ok(request(2, Request_::Command::Ping(Ping::default()))));
-        let mut link = Link {
-            incoming,
-            sent: Vec::new(),
-            send: Ok(()),
-        };
-        assert_eq!(serve(&mut link, 64).await, TaskExit::Failed);
-        assert_eq!(link.sent.len(), 1, "после серии потерь узел вышел");
-        assert_eq!(link.incoming.len(), 1, "последний запрос не прочитан");
-    }
-
-    #[tokio::test]
-    async fn reply_that_does_not_fit_is_dropped_not_truncated() {
+    #[test]
+    fn reply_that_does_not_fit_is_dropped_not_truncated() {
         let mut link = Link {
             incoming: VecDeque::from([
                 Ok(request(1, Request_::Command::GetInfo(GetInfo::default()))),
@@ -452,8 +374,24 @@ mod tests {
             send: Ok(()),
         };
         // `pong` с id влезает в 4 байта, `info` с версией — нет.
-        assert_eq!(serve(&mut link, 4).await, TaskExit::Failed);
+        serve(&mut link, 4);
         assert_eq!(link.sent.len(), 1);
         assert_eq!(decode(&link.sent[0]).request_id, 2);
+    }
+
+    /// Закрытый канал узел не останавливает: следующий кадр — ответ.
+    #[test]
+    fn a_closed_link_does_not_stop_the_node() {
+        let mut link = Link {
+            incoming: VecDeque::from([
+                Err(LinkError::Down("кабель вынут")),
+                Ok(request(5, Request_::Command::Ping(Ping::default()))),
+            ]),
+            sent: Vec::new(),
+            send: Ok(()),
+        };
+        serve(&mut link, 64);
+        assert_eq!(link.sent.len(), 1, "ответ после отказа");
+        assert_eq!(decode(&link.sent[0]).request_id, 5);
     }
 }

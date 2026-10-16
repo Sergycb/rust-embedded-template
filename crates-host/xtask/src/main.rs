@@ -8,8 +8,6 @@ mod memory;
 mod panic_info;
 mod pins;
 mod project;
-#[cfg(test)]
-mod scratch;
 mod setup;
 mod signing;
 mod size;

@@ -89,7 +89,6 @@ defmt        = { version = "1.1.1" }
 # собираются без него (рабочий пример — `thiserror::Error` на
 # `ports::DownloadError` и `ports::UpdateError`).
 thiserror    = { version = "2.0.20", default-features = false }
-test-log     = { version = "0.2.21" }
 # Только для dev-зависимостей `domain` и `adapters`: исполнитель async-тестов
 # (`#[tokio::test]`) над фейками портов и флеша. Без `default-features` — из
 # всего tokio нужны ровно однопоточный рантайм (`rt`) и атрибут (`macros`);

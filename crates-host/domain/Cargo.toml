@@ -52,8 +52,7 @@ defmt = { workspace = true, optional = true }
 # Задачи, которые спавнит граф из `crates-cross/app`, живут здесь (`app.rs`,
 # `ota.rs`) — вместе со своими фрагментами и политикой. `supervisor` нужен им
 # ради типов, которыми граф разговаривает с задачей: `Heartbeat` (отметка у
-# сторожа), `TaskExit` (чем кончился прогон), `BackoffPolicy` (константа
-# политики узла). Знания о самом графе это не даёт — контекст задачи эмитит
+# сторожа), `TaskExit` (чем кончился прогон). Знания о самом графе это не даёт — контекст задачи эмитит
 # фрагмент здесь же (`ctx: $crate::heartbeat::HeartbeatCtx`), типы его полей приходят через
 # `::supervisor::__private`, и тип compose-site здесь не называется, — но
 # `embassy-executor` приезжает транзитивно, так что старое правило «в domain
@@ -98,7 +97,6 @@ embassy-usb        = { workspace = true }
 # {%- endif %}
 
 [dev-dependencies]
-test-log = { workspace = true }
 # Исполнитель для async-тестов над фейками портов (`#[tokio::test]`); фичи —
 # в корневом Cargo.toml.
 tokio = { workspace = true }

@@ -36,56 +36,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "anstream"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "824a212faf96e9acacdbd09febd34438f8f711fb84e09a8916013cd7815ca28d"
-dependencies = [
- "anstyle",
- "anstyle-parse",
- "anstyle-query",
- "anstyle-wincon",
- "colorchoice",
- "is_terminal_polyfill",
- "utf8parse",
-]
-
-[[package]]
-name = "anstyle"
-version = "1.0.14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "940b3a0ca603d1eade50a4846a2afffd5ef57a9feac2c0e2ec2e14f9ead76000"
-
-[[package]]
-name = "anstyle-parse"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52ce7f38b242319f7cabaa6813055467063ecdc9d355bbb4ce0c68908cd8130e"
-dependencies = [
- "utf8parse",
-]
-
-[[package]]
-name = "anstyle-query"
-version = "1.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
-dependencies = [
- "windows-sys",
-]
-
-[[package]]
-name = "anstyle-wincon"
-version = "3.0.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
-dependencies = [
- "anstyle",
- "once_cell_polyfill",
- "windows-sys",
-]
-
-[[package]]
 name = "anyhow"
 version = "1.0.104"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -238,7 +188,7 @@ dependencies = [
 [[package]]
 name = "cloned-cell"
 version = "0.3.0"
-source = "git+https://github.com/Sergycb/rust-lib.git#b5bce4e99c4eaf85a99f2f14a0606ac87f09812c"
+source = "git+https://github.com/Sergycb/rust-lib.git#e2607c2024b14446a3c0554805cd7356d9b8f8e9"
 dependencies = [
  "static_cell",
 ]
@@ -252,12 +202,6 @@ dependencies = [
  "heapless",
  "thiserror",
 ]
-
-[[package]]
-name = "colorchoice"
-version = "1.0.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
 name = "convert_case"
@@ -471,7 +415,6 @@ dependencies = [
  "rusty-modbus-codec",
  "rusty-modbus-types",
  "supervisor",
- "test-log",
  "tokio",
  "zencan-node",
 ]
@@ -797,28 +740,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "env_filter"
-version = "2.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "900d271a03799a1ee8d1ca9b19893b48ca674a9284fefcfb85f05e74ed314217"
-dependencies = [
- "log",
- "regex",
-]
-
-[[package]]
-name = "env_logger"
-version = "0.11.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "de671bd27a75a797dc9ae289ba1e77276e75e2026408aab65185384e2d5cd3f6"
-dependencies = [
- "anstream",
- "anstyle",
- "env_filter",
- "log",
-]
-
-[[package]]
 name = "equivalent"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -849,7 +770,7 @@ checksum = "aedcfb3409746eddb02b9e19ebda1c3394f759a152e48ee875a0844d1b955484"
 [[package]]
 name = "flags"
 version = "0.3.0"
-source = "git+https://github.com/Sergycb/rust-lib.git#b5bce4e99c4eaf85a99f2f14a0606ac87f09812c"
+source = "git+https://github.com/Sergycb/rust-lib.git#e2607c2024b14446a3c0554805cd7356d9b8f8e9"
 dependencies = [
  "enumflags2",
  "flags-macros",
@@ -859,7 +780,7 @@ dependencies = [
 [[package]]
 name = "flags-macros"
 version = "0.3.0"
-source = "git+https://github.com/Sergycb/rust-lib.git#b5bce4e99c4eaf85a99f2f14a0606ac87f09812c"
+source = "git+https://github.com/Sergycb/rust-lib.git#e2607c2024b14446a3c0554805cd7356d9b8f8e9"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -875,7 +796,7 @@ checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 [[package]]
 name = "fsm"
 version = "0.3.0"
-source = "git+https://github.com/Sergycb/rust-lib.git#b5bce4e99c4eaf85a99f2f14a0606ac87f09812c"
+source = "git+https://github.com/Sergycb/rust-lib.git#e2607c2024b14446a3c0554805cd7356d9b8f8e9"
 dependencies = [
  "embassy-futures",
  "embassy-time",
@@ -885,7 +806,7 @@ dependencies = [
 [[package]]
 name = "fsm-macros"
 version = "0.3.0"
-source = "git+https://github.com/Sergycb/rust-lib.git#b5bce4e99c4eaf85a99f2f14a0606ac87f09812c"
+source = "git+https://github.com/Sergycb/rust-lib.git#e2607c2024b14446a3c0554805cd7356d9b8f8e9"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1103,12 +1024,6 @@ dependencies = [
  "quote",
  "syn 2.0.119",
 ]
-
-[[package]]
-name = "is_terminal_polyfill"
-version = "1.70.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
 
 [[package]]
 name = "itertools"
@@ -1346,12 +1261,6 @@ name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
-
-[[package]]
-name = "once_cell_polyfill"
-version = "1.70.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "pin-project-lite"
@@ -1867,7 +1776,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 [[package]]
 name = "supervisor"
 version = "0.3.0"
-source = "git+https://github.com/Sergycb/rust-lib.git#b5bce4e99c4eaf85a99f2f14a0606ac87f09812c"
+source = "git+https://github.com/Sergycb/rust-lib.git#e2607c2024b14446a3c0554805cd7356d9b8f8e9"
 dependencies = [
  "cloned-cell",
  "embassy-executor",
@@ -1885,7 +1794,7 @@ dependencies = [
 [[package]]
 name = "supervisor-macros"
 version = "0.3.0"
-source = "git+https://github.com/Sergycb/rust-lib.git#b5bce4e99c4eaf85a99f2f14a0606ac87f09812c"
+source = "git+https://github.com/Sergycb/rust-lib.git#e2607c2024b14446a3c0554805cd7356d9b8f8e9"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1917,7 +1826,7 @@ dependencies = [
 [[package]]
 name = "sync-request"
 version = "0.3.0"
-source = "git+https://github.com/Sergycb/rust-lib.git#b5bce4e99c4eaf85a99f2f14a0606ac87f09812c"
+source = "git+https://github.com/Sergycb/rust-lib.git#e2607c2024b14446a3c0554805cd7356d9b8f8e9"
 dependencies = [
  "embassy-sync",
 ]
@@ -1925,7 +1834,7 @@ dependencies = [
 [[package]]
 name = "sync-unsized"
 version = "0.3.0"
-source = "git+https://github.com/Sergycb/rust-lib.git#b5bce4e99c4eaf85a99f2f14a0606ac87f09812c"
+source = "git+https://github.com/Sergycb/rust-lib.git#e2607c2024b14446a3c0554805cd7356d9b8f8e9"
 dependencies = [
  "embassy-sync",
 ]
@@ -1941,38 +1850,6 @@ dependencies = [
  "once_cell",
  "rustix",
  "windows-sys",
-]
-
-[[package]]
-name = "test-log"
-version = "0.2.21"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b9c218384242b5c89b68303ab6f6fc53a312d923f0c14dc6bb860c6aeee40f1"
-dependencies = [
- "env_logger",
- "test-log-macros",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "test-log-core"
-version = "0.2.21"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c26ef8b00e4d382e59f6a8ddb3cd790b3a5bb29f21a358a9a69ea2f29f13f27b"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
-name = "test-log-macros"
-version = "0.2.21"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "944ad38adcbb71eaa682c56bceeb079e4ca82b4b3edc2a0fde5cb297b77dac8d"
-dependencies = [
- "syn 2.0.119",
- "test-log-core",
 ]
 
 [[package]]
@@ -2218,12 +2095,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7dd6e30e90baa6f72411720665d41d89b9a3d039dc45b8faea1ddd07f617f6af"
 
 [[package]]
-name = "utf8parse"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
-
-[[package]]
 name = "valuable"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2253,7 +2124,7 @@ dependencies = [
 [[package]]
 name = "watchdog"
 version = "0.3.0"
-source = "git+https://github.com/Sergycb/rust-lib.git#b5bce4e99c4eaf85a99f2f14a0606ac87f09812c"
+source = "git+https://github.com/Sergycb/rust-lib.git#e2607c2024b14446a3c0554805cd7356d9b8f8e9"
 dependencies = [
  "embassy-time",
 ]

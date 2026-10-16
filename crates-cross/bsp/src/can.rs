@@ -2,7 +2,7 @@
 
 use embassy_stm32::can::enums::BusError;
 use embassy_stm32::can::{Can as Controller, Frame};
-use embassy_time::{Duration, TimeoutError, with_timeout};
+use embassy_time::{Duration, Instant, TimeoutError, Timer, with_timeout};
 use ports::{CanBus, LinkError};
 
 /// Шина CAN платы — пока заглушка, до контроллера (см. модуль).
@@ -22,21 +22,32 @@ pub(crate) fn new() -> Can {
 /// не замечая ни такта, ни приёма. Кадр 8 байт на 125 кбит/с уходит за
 /// ~1 мс, очередь — три кадра: 5 мс с запасом хватает на живой шине.
 const SEND_TIMEOUT: Duration = Duration::from_millis(5);
+
+/// Пауза после ошибки шины на приёме: следующий приём начинается с неё.
+///
+/// Порт обязан переждать отказ сам (`ports::CanBus`): контроллер в bus-off
+/// или на линии с помехой отвечает ошибкой на каждое чтение без ожидания, и
+/// узел крутил бы цикл, не отдавая исполнитель. Ошибка возвращается сразу, а
+/// ждёт следующий вызов: пауза длиннее такта узла CANopen, и такт, отменив
+/// `recv` посреди паузы, иначе ни разу не дал бы ошибке дойти до лога. 50 мс
+/// — короткий сбой ловится почти сразу, а выход из bus-off (128 × 11
+/// рецессивных бит; на 10 кбит/с — 141 мс) занимает несколько пауз, а не
+/// тысячи чтений.
+const ERROR_PAUSE: Duration = Duration::from_millis(50);
 {%- if can_kind == "bxcan" %}
 
 /// Сколько ждать синхронизации bxCAN с линией при включении (11
 /// рецессивных бит; на 10 кбит/с — 1,1 мс). Включение `embassy-stm32`
 /// ждёт её в цикле `yield_now` без сна, и на линии, застрявшей в
 /// доминантном уровне, исполнитель не уснул бы вовсе; с пределом это
-/// потеря, которую узел CANopen считает, а после серии — отказ шины и
-/// перезапуск с паузой.
+/// потеря кадра, а не зависший узел.
 const ENABLE_TIMEOUT: Duration = Duration::from_millis(5);
 {%- endif %}
 
 /// Почему [`Bus`] не принял или не отправил кадр. Каждый случай — потеря
-/// кадра ([`LinkError::Lost`]): шина та же, следующий может пройти; серию
-/// потерь подряд узел CANopen сам объявляет отказом шины
-/// (`domain::canopen::MAX_LOST_IN_A_ROW`).
+/// кадра ([`LinkError::Lost`]): шина та же, следующий может пройти. Сразу
+/// снова ошибкой шина не ответит: приём после ошибки ждёт [`ERROR_PAUSE`],
+/// отправка — до [`SEND_TIMEOUT`].
 #[derive(Debug, defmt::Format)]
 pub enum CanError {
     /// Ошибка шины на приёме: stuff, form, CRC, нет ACK.
@@ -58,6 +69,8 @@ pub enum CanError {
 /// появились выводы.
 pub struct Bus {
     can: Controller<'static>,
+    /// До какого момента приём пережидает последнюю ошибку шины.
+    paused_until: Option<Instant>,
 {%- if can_kind == "bxcan" %}
     /// Включён ли контроллер: у bxCAN выход из режима инициализации —
     /// `async` (ждёт синхронизации с линией), а `Board::new` — синхронный,
@@ -82,10 +95,14 @@ impl Bus {
 {%- if can_kind == "bxcan" %}
         Self {
             can,
+            paused_until: None,
             enabled: false,
         }
 {%- else %}
-        Self { can }
+        Self {
+            can,
+            paused_until: None,
+        }
 {%- endif %}
     }
 {%- if can_kind == "bxcan" %}
@@ -110,11 +127,19 @@ impl CanBus for Bus {
 {%- if can_kind == "bxcan" %}
         self.enable().await?;
 {%- endif %}
-        self.can
-            .read()
-            .await
-            .map(|envelope| envelope.frame)
-            .map_err(|err| LinkError::Lost(CanError::Bus(err)))
+        if let Some(until) = self.paused_until {
+            // Сброс — после паузы: `recv`, отменённый посреди неё, начнёт
+            // её заново, а не пропустит.
+            Timer::at(until).await;
+            self.paused_until = None;
+        }
+        match self.can.read().await {
+            Ok(envelope) => Ok(envelope.frame),
+            Err(err) => {
+                self.paused_until = Some(Instant::now() + ERROR_PAUSE);
+                Err(LinkError::Lost(CanError::Bus(err)))
+            }
+        }
     }
 
     async fn send(&mut self, frame: &Frame) -> Result<(), LinkError<CanError>> {

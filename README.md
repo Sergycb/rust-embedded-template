@@ -42,7 +42,7 @@ cargo run -p app                    # прошить приложение и с�
 Свежесгенерированный проект собирается и запускается как есть: `main.rs` поднимает
 `Board`, печатает версию с номером запуска и спавнит граф задач — узел `HEARTBEAT`,
 который сообщает о старте и ждёт, и узел `CPU_LOAD`, который меряет загрузку
-процессора. Это каркас: у обоих уже есть политика перезапуска, и дописывать
+процессора. Это каркас: оба уже стоят в графе под сторожем, и дописывать
 свою работу вы будете внутрь `HEARTBEAT`, а не с нуля. Загрузку же читать уже вам:
 `CPU_LOAD` только публикует процент (`docs/modules/app-cpu-load.md`).
 
@@ -62,7 +62,7 @@ cargo run -p app                    # прошить приложение и с�
 | Что | Где | Зачем |
 |---|---|---|
 | Распиновка платы | `crates-cross/bsp/src/board.rs` | `assign_resources!` разложит `Peripherals` по именованным группам — из них `bsp` соберёт драйверы; наружу уходит не периферия, а готовый объект (`docs/resources.md`) |
-| Граф задач | `crates-cross/app/src/graph.rs` | `supervisor_graph!`: порядок старта, рестарты с backoff, watchdog, обмен между задачами |
+| Граф задач | `crates-cross/app/src/graph.rs` | `supervisor_graph!`: порядок старта, watchdog, обмен между задачами |
 | Логика и узлы графа | `crates-host/domain/` | всё, что не про регистры: автоматы, протоколы, конфигурация, а также объявления узлов (`supervisor_fragment!`) и их работа (`domain::heartbeat::run`, `domain::cpu_load::task` — автоматы `#[fsm::typestate]` на контексте узла) — тестируется на хосте; логика вне автоматов — функции над портами |
 | Адаптеры без чипа | `crates-host/adapters/` | реализации портов, которым хватает `embedded-storage`/`embedded-hal`/`embedded-io-async`: OTA поверх `embassy-boot` (`adapters::ota`), настройки поверх `sequential-storage` (`adapters::settings`, мост к общему флешу — `adapters::flash`){% if protocol == "protobuf" and interface != "udp" %}, кадрирование потока COBS + CRC (`adapters::cobs`){% endif %}{% if protocol == "modbus" %}, транспорт Modbus {% if interface == "tcp" %}TCP{% elsif interface == "udp" %}UDP{% else %}RTU{% endif %} (`adapters::modbus`){% endif %} — тестируется на хосте |
 {%- if protocol == "protobuf" %}

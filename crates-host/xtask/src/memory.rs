@@ -205,7 +205,7 @@ pub fn region<'a>(regions: &'a [(String, Region)], name: &str) -> Option<&'a Reg
 mod tests {
     use std::fs;
 
-    use crate::scratch::scratch;
+    use super::scratch::scratch;
 
     /// Закомментированный многострочным блоком старый вариант региона не должен
     /// перекрывать настоящий.
@@ -374,5 +374,52 @@ __bootloader_state_start = ORIGIN(BOOTLOADER_STATE) - __flash_base;
         };
 
         assert!(err.to_string().contains("не заполнена"), "{err:#}");
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod scratch {
+    //! Временные каталоги для тестов, которые пишут файлы.
+
+    use std::{fs, path::PathBuf};
+
+    /// Свой каталог на каждый тест — и на каждый ПРОЦЕСС.
+    ///
+    /// Имя включает pid не для красоты: `std::env::temp_dir()` общий на машину,
+    /// а тесты пишут в него файлы ключей и `memory.x`. Два прогона разом (свой `cargo xtask
+    /// test host` рядом с `template-check`, который зовёт то же самое в каждом
+    /// сгенерированном проекте, или просто два клона репозитория) чистили бы
+    /// каталог друг у друга посреди работы. На общем CI-раннере каталог с
+    /// фиксированным именем к тому же мог бы принадлежать другому пользователю.
+    ///
+    /// Возвращается страж: он удаляет каталог при выходе из теста, в том числе
+    /// при панике. Иначе в `%TEMP%` оставался бы настоящий закрытый ключ
+    /// ed25519 — пусть и от игрушечного проекта, привычка плохая.
+    pub struct Scratch(PathBuf);
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            if self.0.exists() {
+                // В Drop разбирать ошибку некому: тест уже закончился, а
+                // паниковать в Drop нельзя — при развёртывании стека это
+                // прервало бы процесс.
+                drop(fs::remove_dir_all(&self.0));
+            }
+        }
+    }
+
+    impl Scratch {
+        pub fn path(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+
+    pub fn scratch(name: &str) -> Scratch {
+        let dir = std::env::temp_dir().join(format!("xtask-key-{name}-{}", std::process::id()));
+        if dir.exists() {
+            fs::remove_dir_all(&dir).expect("очистить каталог прошлого прогона");
+        }
+        fs::create_dir_all(&dir).expect("создать временный каталог");
+        Scratch(dir)
     }
 }

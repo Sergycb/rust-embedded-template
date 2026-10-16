@@ -38,7 +38,7 @@ use core::sync::atomic::Ordering;
 use defmt_or_log::info;
 use embassy_time::{Duration, Instant, Timer};
 use portable_atomic::AtomicU32;
-use supervisor::policy::{BackoffPolicy, JitterPolicy};
+
 use supervisor::runtime::TaskExit;
 
 use load::{CpuLoad, Sample};
@@ -51,42 +51,25 @@ use load::{CpuLoad, Sample};
 /// меньше него в эти проценты не попадёт.
 const SAMPLE_INTERVAL: Duration = Duration::from_millis(500);
 
-/// Потолок паузы между перезапусками узла.
-///
-/// Отдельная константа не ради читаемости, а потому что от неё зависит
-/// [`WATCHDOG`] и связь эту держит `const`-assert ниже.
-const BACKOFF_MAX: Duration = Duration::from_millis(500);
-
-/// Политика пауз между перезапусками узла — те же цифры, что у
-/// [`heartbeat::BACKOFF`](crate::heartbeat::BACKOFF), но свой потолок: у
-/// задачи, которая меряет, а не ждёт, нет смысла держать паузу в секунды —
-/// нечего перезапускать дольше, чем на цикл измерения.
-pub const BACKOFF: BackoffPolicy = BackoffPolicy {
-    first: Duration::from_millis(50),
-    factor: 2,
-    jitter: JitterPolicy::None,
-    floor: Duration::from_millis(50),
-    max: BACKOFF_MAX,
-};
-
 /// Сколько узлу позволено не отмечаться, прежде чем это будет замечено.
 ///
-/// Считается от `BACKOFF_MAX`, а не от `SAMPLE_INTERVAL`: слот сторожа граф
-/// взводит один раз и снимает только когда узел уходит насовсем, а во время
-/// паузы между перезапусками слот жив и кормить его некому. Та же поправка, что
-/// и у [`heartbeat::WATCHDOG`](crate::heartbeat::WATCHDOG), и то же левое звено
-/// цепочки таймаутов — `const`-assert ниже. Второе, с другого конца, не здесь:
+/// Узел не падает и не перезапускается (`restart: Never`): самый длинный
+/// законный промежуток между отметками — `SAMPLE_INTERVAL` плюс занятость
+/// исполнителя, и 7 с — тот же запас, что у
+/// [`heartbeat::WATCHDOG`](crate::heartbeat::WATCHDOG): стирание крупного
+/// сектора флеша при приёме образа блокирует исполнитель на секунды. Нижнюю
+/// границу — больше интервала — держит `const`-assert ниже. Второе звено, с
+/// другого конца, не здесь:
 /// `WATCHDOG + WATCHDOG_CHECK_EVERY < bsp::wdg::HW_TIMEOUT_US`
 /// (`docs/watchdog.md`) — его держит `const`-assert в `app/src/graph.rs`, где
 /// видны оба конца.
-pub const WATCHDOG: Duration = Duration::from_secs(2);
+pub const WATCHDOG: Duration = Duration::from_secs(7);
 
 // Левое звено цепочки таймаутов, проверенное компилятором: `<` на `Duration`
 // в `const` не работает (нет const-трейтов), поэтому сравниваются тики.
 const _: () = assert!(
-    BACKOFF.max.as_ticks() < WATCHDOG.as_ticks(),
-    "таймаут узла CPU_LOAD обязан быть больше потолка backoff'а: слот сторожа переживает паузу между \
-     перезапусками, и кормить его в это время некому"
+    SAMPLE_INTERVAL.as_ticks() < WATCHDOG.as_ticks(),
+    "таймаут узла CPU_LOAD обязан быть больше периода его отметок"
 );
 
 /// Счётчик тиков, проведённых исполнителем во сне.
@@ -135,9 +118,8 @@ fn snapshot(sleep_ticks: &SleepTicks) -> Sample {
 /// значение, так что подписчик получит и пропущенные интервалы, лишь показав
 /// последний из них: счётчик знает «сколько сейчас», а не «сколько было когда».
 ///
-/// У автомата нет выходного состояния, поэтому [`TaskExit`] недостижим; у
-/// задачи, которая может закончиться, `Completed` против `Failed` решает,
-/// перезапустят её или нет.
+/// У автомата нет выходного состояния, поэтому [`TaskExit`] недостижим: узел
+/// не падает (`restart: Never`).
 pub async fn task(mut ctx: CpuLoadCtx<'_>) -> TaskExit {
     match ctx.run().await {}
 }
@@ -233,8 +215,8 @@ pub async fn task_standalone(sleep_ticks: &SleepTicks) {
 // `SLEEP_TICKS` — ресурсный слот, а не `shared:`, потому что значение пришло
 // извне и принадлежит не узлу, а циклу исполнителя: слот отдаёт его на время
 // прогона и забирает назад, `shared` просто делил бы ссылку. `&'static` в
-// типе слота — ровно то, что нужно, чтобы ссылка пережила и создание
-// статика, и паузу между перезапусками.
+// типе слота — ровно то, что нужно, чтобы ссылка пережила создание
+// статика.
 //
 // `PERCENT: u8; 1` — количество подписчиков задано явно, потому что в сыром
 // шаблоне их ноль, а без числа макрос такое объявление не принимает. Один
@@ -248,8 +230,7 @@ supervisor::supervisor_fragment! {
     name: CPU_LOAD_FRAG;
     boot: inputs: struct $crate::cpu_load::IdleMeter;
 
-    node deps: [], restart: ::supervisor::policy::RestartPolicy::OnFailure,
-        backoff: $crate::cpu_load::BACKOFF,
+    node deps: [], restart: Never,
         resources: [
             /// Счётчик тиков сна, который ведёт цикл исполнителя.
             SLEEP_TICKS: &'static $crate::cpu_load::SleepTicks = inputs.sleep_ticks

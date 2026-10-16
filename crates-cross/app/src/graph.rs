@@ -14,7 +14,7 @@
 
 {%- if graph == "true" %}
 use defmt::{info, warn};
-{%- if protocol == "protobuf" or protocol == "canopen" and config == "true" %}
+{%- if protocol == "protobuf" %}
 use static_cell::StaticCell;
 {%- endif %}
 use supervisor::{Duration, Liveness, supervisor_graph};
@@ -47,7 +47,7 @@ const HOST_MESSAGE: usize = 256;
 /// (`bsp::wdg::HW_TIMEOUT_US`), и соотношение между ними проверяет
 /// `const`-assert ниже. Компилятор проверяет сам `check_every` против
 /// аппаратного таймаута — `supervisor_graph!` эмитит `const`-assert, читая
-/// `HARDWARE_TIMEOUT` у типа сторожа; левое звено цепочки (потолок backoff'а <
+/// `HARDWARE_TIMEOUT` у типа сторожа; левое звено цепочки (период отметок <
 /// таймаут узла) держит `const`-assert во фрагменте (`domain::heartbeat`) —
 /// `docs/watchdog.md`.
 const WATCHDOG_CHECK_EVERY: Duration = Duration::from_millis(100);
@@ -56,8 +56,8 @@ const WATCHDOG_CHECK_EVERY: Duration = Duration::from_millis(100);
 // его конца: таймаут узла живёт в `domain`, аппаратный — в `bsp`. `supervisor`
 // намеренно не связывает дедлайн узла с таймаутом железа (граф с длинным
 // дедлайном корректен сам по себе), а шаблон — должен: иначе `check_every`
-// укладывается, все гейты зелёные, а IWDG сбрасывает МК в штатной паузе
-// backoff'а, и сброс приходит от железа — ни один узел не назван причиной, а
+// укладывается, все гейты зелёные, а IWDG сбрасывает МК раньше, чем граф
+// заметит застой узла, и сброс приходит от железа — ни один узел не назван причиной, а
 // диагностика `supervisor` оказывается мёртвым кодом.
 //
 // Узлов с `watchdog:` в списке `fragments:` ниже ровно два; новый фрагмент со
@@ -158,7 +158,7 @@ supervisor_graph! {
     // первым его занимает тот, кто первым позовёт
     // `cpu_load_percent_receiver()`. Само значение в лог не идёт — читатель
     // должен быть, иначе процент некуда девать.
-    ::domain::CPU_LOAD_FRAG as CPU_LOAD = ::domain::cpu_load::IdleMeter { sleep_ticks: crate::cpu_load::sleep_ticks() }{% if ota == "true" %}, ::domain::OTA_FRAG<bsp::ota::Link, bsp::ota::Updater> as OTA = ::domain::ota::OtaWiring { link: board.ota.link, flash: board.ota.flash, mode: {% if signed == "true" %}::domain::ota::Mode::Signed { running_version: crate::image::FW_VERSION }{% else %}::domain::ota::Mode::Plain{% endif %} }{% endif %}{% if interface == "usb" %}, ::domain::USB_FRAG<::domain::usb::UsbDevice<'static, bsp::usb::UsbDriver>> as USB = ::domain::usb::UsbWiring { device: board.usb.device }{% endif %}{% if interface == "tcp" or interface == "udp" %}, ::domain::NET_FRAG<::domain::net::Runner<'static, bsp::net::Device>> as NET = ::domain::net::NetWiring { runner: board.net.runner }{% endif %}{% if protocol == "modbus" %}, ::domain::MODBUS_SLAVE_FRAG<ModbusLink, ::domain::modbus::Registers> as MODBUS = ::domain::modbus::ModbusSlaveWiring { link: ModbusLink::new({% if interface == "uart" %}board.serial{% elsif interface == "tcp" %}board.net.tcp{% elsif interface == "usb" %}board.usb.cdc{% else %}board.net.udp{% endif %}), regs: ::domain::modbus::Registers, unit: 1 }{% elsif protocol == "canopen" %}, ::domain::CANOPEN_FRAG<bsp::can::Can, {% if config == "true" %}bsp::config::Settings{% else %}::adapters::settings::Unavailable{% endif %}> as CANOPEN = ::domain::canopen::CanOpenWiring { bus: board.can, node_id: 1, dictionary: ::domain::canopen::dictionary(), settings: {% if config == "true" %}board.settings{% else %}::adapters::settings::Unavailable{% endif %}, stack: ::domain::canopen::Stack::new({% if config == "true" %}Some({ static HOOKS: StaticCell<::domain::canopen::Hooks> = StaticCell::new(); HOOKS.init(::domain::canopen::Hooks::new()) }){% else %}None{% endif %}) }{% elsif protocol == "protobuf" %}, ::domain::HOST_FRAG<HostLink, ::domain::host::Service> as HOST = ::domain::host::HostWiring { link: {% if interface == "udp" %}board.net.udp{% else %}HostLink::new({% if interface == "uart" %}board.serial{% elsif interface == "tcp" %}board.net.tcp{% elsif interface == "usb" %}board.usb.cdc{% else %}board.net.udp{% endif %}, { static FRAME: StaticCell<[u8; HostLink::tx_len(HOST_MESSAGE)]> = StaticCell::new(); FRAME.init([0; HostLink::tx_len(HOST_MESSAGE)]) }){% endif %}, service: ::domain::host::Service::new(crate::build::PKG_VERSION), rx: { static RX: StaticCell<[u8; {% if interface == "udp" %}HOST_MESSAGE{% else %}HostLink::rx_len(HOST_MESSAGE){% endif %}]> = StaticCell::new(); RX.init([0; {% if interface == "udp" %}HOST_MESSAGE{% else %}HostLink::rx_len(HOST_MESSAGE){% endif %}]) }, tx: { static TX: StaticCell<[u8; HOST_MESSAGE]> = StaticCell::new(); TX.init([0; HOST_MESSAGE]) } }{% endif %}];
+    ::domain::CPU_LOAD_FRAG as CPU_LOAD = ::domain::cpu_load::IdleMeter { sleep_ticks: crate::cpu_load::sleep_ticks() }{% if ota == "true" %}, ::domain::OTA_FRAG<bsp::ota::Link, bsp::ota::Updater> as OTA = ::domain::ota::OtaWiring { link: board.ota.link, flash: board.ota.flash, mode: {% if signed == "true" %}::domain::ota::Mode::Signed { running_version: crate::image::FW_VERSION }{% else %}::domain::ota::Mode::Plain{% endif %} }{% endif %}{% if interface == "usb" %}, ::domain::USB_FRAG<::domain::usb::UsbDevice<'static, bsp::usb::UsbDriver>> as USB = ::domain::usb::UsbWiring { device: board.usb.device }{% endif %}{% if interface == "tcp" or interface == "udp" %}, ::domain::NET_FRAG<::domain::net::Runner<'static, bsp::net::Device>> as NET = ::domain::net::NetWiring { runner: board.net.runner }{% endif %}{% if protocol == "modbus" %}, ::domain::MODBUS_SLAVE_FRAG<ModbusLink, ::domain::modbus::Registers> as MODBUS = ::domain::modbus::ModbusSlaveWiring { link: ModbusLink::new({% if interface == "uart" %}board.serial{% elsif interface == "tcp" %}board.net.tcp{% elsif interface == "usb" %}board.usb.cdc{% else %}board.net.udp{% endif %}), regs: ::domain::modbus::Registers, unit: 1 }{% elsif protocol == "canopen" %}, ::domain::CANOPEN_FRAG<bsp::can::Can, {% if config == "true" %}bsp::config::Settings{% else %}::adapters::settings::Unavailable{% endif %}> as CANOPEN = ::domain::canopen::CanOpenWiring { bus: board.can, node_id: 1, dictionary: ::domain::canopen::dictionary(), settings: {% if config == "true" %}board.settings{% else %}::adapters::settings::Unavailable{% endif %}, persist: {{config}} }{% elsif protocol == "protobuf" %}, ::domain::HOST_FRAG<HostLink, ::domain::host::Service> as HOST = ::domain::host::HostWiring { link: {% if interface == "udp" %}board.net.udp{% else %}HostLink::new({% if interface == "uart" %}board.serial{% elsif interface == "tcp" %}board.net.tcp{% elsif interface == "usb" %}board.usb.cdc{% else %}board.net.udp{% endif %}, { static FRAME: StaticCell<[u8; HostLink::tx_len(HOST_MESSAGE)]> = StaticCell::new(); FRAME.init([0; HostLink::tx_len(HOST_MESSAGE)]) }){% endif %}, service: ::domain::host::Service::new(crate::build::PKG_VERSION), rx: { static RX: StaticCell<[u8; {% if interface == "udp" %}HOST_MESSAGE{% else %}HostLink::rx_len(HOST_MESSAGE){% endif %}]> = StaticCell::new(); RX.init([0; {% if interface == "udp" %}HOST_MESSAGE{% else %}HostLink::rx_len(HOST_MESSAGE){% endif %}]) }, tx: { static TX: StaticCell<[u8; HOST_MESSAGE]> = StaticCell::new(); TX.init([0; HOST_MESSAGE]) } }{% endif %}];
 }
 
 /// Куда уходит просрочка наблюдаемого узла.
