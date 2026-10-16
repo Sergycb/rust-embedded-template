@@ -64,6 +64,7 @@ fn main() -> anyhow::Result<()> {
     let mut watchdogs: BTreeMap<&str, String> = BTreeMap::new();
     let mut cpu_freq_boost: Vec<&str> = Vec::new();
     let mut interfaces: BTreeMap<&str, Vec<&'static str>> = BTreeMap::new();
+    let mut rngs: BTreeMap<&str, (String, RngClock)> = BTreeMap::new();
     let mut switch_variants: BTreeMap<&str, &'static str> = BTreeMap::new();
     let mut shared_metadata_cache: BTreeMap<PathBuf, SharedMetadata> = BTreeMap::new();
     for suffix in &suffixes {
@@ -96,6 +97,14 @@ fn main() -> anyhow::Result<()> {
             cpu_freq_boost.push(suffix);
         }
         interfaces.insert(suffix, shared.interfaces.clone());
+        // HSI48 `embassy-stm32` включает только при CRS (`#[cfg(crs)]` в
+        // `rcc`): без него источник «HSI48» — клок, который не идёт
+        // (STM32WB10/15/30/50).
+        let clock = rng_clock(suffix)
+            .filter(|&(kind, source)| shared.has_crs || (kind != "default" && source != "HSI48"));
+        if let (Some(interrupt), Some(clock)) = (&shared.rng_interrupt, clock) {
+            rngs.insert(suffix, (interrupt.clone(), clock));
+        }
         // Одобанковая раскладка на чипе, который с завода двухбанковый: режим
         // переключает прошивка (`bsp::banks`).
         if bank_mode == "single-bank"
@@ -158,7 +167,7 @@ fn main() -> anyhow::Result<()> {
         "embassy-stm32: {} чип-фич; probe-rs: {} целей; итоговый список: {} (отброшено {}, \
          нет цели probe-rs); более точная цель probe-rs, чем базовая, найдена для {} чипов; \
          выбор банковой схемы нужен {} чипам; сторож зовётся не {} у {} чипов; option byte \
-         CPU_FREQ_BOOST есть у {} чипов; режим банков переключает прошивка у {} чипов; memory.x \
+         CPU_FREQ_BOOST есть у {} чипов; RNG подключается у {} чипов; режим банков переключает прошивка у {} чипов; memory.x \
          посчитан для {} из {} чипов, из них \
          с OTA {} (остальные — один образ на весь flash, без crates-cross/boot); раздел настроек \
          возможен на {} чипах, из них с сохранением OTA — {}; OTA с DFU на внешней флеши \
@@ -172,6 +181,7 @@ fn main() -> anyhow::Result<()> {
         DEFAULT_WATCHDOG,
         watchdogs.len(),
         cpu_freq_boost.len(),
+        rngs.len(),
         bank_switch.len(),
         memory_layouts.len(),
         suffixes.len(),
@@ -199,6 +209,7 @@ fn main() -> anyhow::Result<()> {
             format_bank_switch(&bank_switch),
         ),
         ("interfaces.rhai".to_owned(), format_interfaces(&interfaces)),
+        ("rng.rhai".to_owned(), format_rngs(&rngs)),
     ];
     files.extend(
         format_memory_layouts(&memory_layouts)
@@ -670,6 +681,10 @@ struct SharedMetadata {
     flash_version: Option<String>,
     /// Интерфейсы связи, выведенные в корпусе, — см. [`parse_interfaces`].
     interfaces: Vec<&'static str>,
+    /// Прерывание блока `RNG` — см. [`parse_rng_interrupt`].
+    rng_interrupt: Option<String>,
+    /// Есть блок `CRS` — по нему `embassy-stm32` включает HSI48 (см. [`rng_clock`]).
+    has_crs: bool,
 }
 
 /// Путь к общему файлу метаданных чипа и разобранные из него факты. Общий файл
@@ -699,6 +714,8 @@ fn shared_metadata<'c>(
                 cpu_freq_boost: has_pwr_rm0468(&shared_text),
                 flash_version: registers_version(&shared_text, "flash"),
                 interfaces: parse_interfaces(&shared_text),
+                rng_interrupt: parse_rng_interrupt(&shared_text),
+                has_crs: shared_text.contains("kind: \"crs\""),
             },
         );
     }
@@ -755,6 +772,68 @@ fn parse_interfaces(text: &str) -> Vec<&'static str> {
     }
     found.sort_by_key(|tag| INTERFACE_TAGS.iter().position(|t| t == tag));
     found
+}
+
+/// Прерывание блока `RNG`: у разных линий оно своё и бывает общим с
+/// соседями (`RNG`, `HASH_RNG`, `AES_RNG`, `RNG_LPUART1`, `RNG_CRYP`...), а
+/// `bind_interrupts!` в `bsp` называет его по имени. `None` — блока нет или
+/// у него нет прерывания (STM32WB0).
+fn parse_rng_interrupt(text: &str) -> Option<String> {
+    text.split("Peripheral {").skip(1).find_map(|block| {
+        if field(block, "kind")?.trim_matches('"') != "rng" {
+            return None;
+        }
+        let rest = block.split_once("interrupt: \"")?.1;
+        rest.split_once('"')
+            .map(|(interrupt, _)| interrupt.to_owned())
+    })
+}
+
+/// Что добавить к `embassy_stm32::Config::default()`, чтобы у блока `RNG`
+/// был клок: способ (`bsp::board` разворачивает его в строку конфига) и
+/// вариант мультиплексора, если способ — мультиплексор.
+type RngClock = (&'static str, &'static str);
+
+/// Клок `RNG` по линии чипа (RM каждой линии, раздел RCC).
+///
+/// В метаданных этого нет: у половины линий источник RNG там записан шиной
+/// (`HCLK2`), хотя на деле блок тактируется от 48 МГц, а мультиплексоры
+/// `embassy-stm32` по умолчанию пишет нулями, и ноль у части линий — «без
+/// клока» (`RNGSEL` у G0) или выключенный PLL (`RNGSEL` у WL). Без клока
+/// `Rng::new` у линий с мультиплексором паникует на старте, а у остальных
+/// (F2/F4/F7, L0, L4, U0) виснет: внутри он ждёт первое слово. Поэтому
+/// линия, источник которой не проверен по RM, не получает RNG вовсе (`None`)
+/// — у неё затравка остаётся из заводского номера: F410 (свой RCC), H7R/H7S,
+/// STM32WB0, U031 (`CLK48SEL` нет в метаданных). Источник HSI48 к тому же
+/// требует CRS — это проверяет вызывающий.
+fn rng_clock(suffix: &str) -> Option<RngClock> {
+    let line = |prefixes: &[&str]| prefixes.iter().any(|p| suffix.starts_with(p));
+    if line(&["f410", "h7r", "h7s", "wb0", "u031"]) {
+        None
+    } else if line(&["f2", "f4", "f7"]) {
+        // PLL48CK — выход Q основного PLL; по умолчанию PLL выключен.
+        Some(("pll48", ""))
+    } else if line(&["g0"]) {
+        // `RNGSEL` = 0 — клока нет.
+        Some(("rngsel", "SYS"))
+    } else if line(&["wba"]) {
+        // `RNGSEL` = 0 — LSE, по умолчанию выключенный.
+        Some(("rngsel", "HSI"))
+    } else if line(&["wl"]) {
+        // `RNGSEL` = 0 — PLLQ, а PLL выключен; MSI включён по умолчанию.
+        Some(("rngsel", "MSI"))
+    } else if line(&["l0", "u0"]) {
+        // `CLK48SEL` = 0 — PLL (L0) или клока нет (U0); HSI48 включён.
+        Some(("clk48sel", "HSI48"))
+    } else if line(&["l471", "l475", "l476", "l486"]) {
+        // HSI48 у этих L4 нет, и `CLK48SEL` = 0 у них — «без клока».
+        Some(("clk48sel", "MSI"))
+    } else if line(&["g4", "h5", "h7", "l4", "l5", "u5", "wb"]) {
+        // Ноль мультиплексора — HSI48, а его `embassy-stm32` включает сам.
+        Some(("default", ""))
+    } else {
+        None
+    }
 }
 
 /// Метки интерфейсов в таблице `INTERFACES` — в этом порядке.
@@ -2319,6 +2398,25 @@ fn format_watchdogs(watchdogs: &BTreeMap<&str, String>) -> String {
     out
 }
 
+/// RNG каждого чипа, у которого он подключается (см. [`rng_clock`]):
+/// прерывание, способ дать клок и вариант мультиплексора.
+fn format_rngs(chips: &BTreeMap<&str, (String, RngClock)>) -> String {
+    let mut out = String::new();
+    out.push_str(DATA_HEADER);
+    out.push_str(&format!(
+        "// {} шт.: [прерывание, клок, источник]\n",
+        chips.len()
+    ));
+    out.push_str("export const RNG = #{\n");
+    for (suffix, (interrupt, (clock, source))) in chips {
+        out.push_str(&format!(
+            "    \"{suffix}\": [\"{interrupt}\", \"{clock}\", \"{source}\"],\n"
+        ));
+    }
+    out.push_str("};\n");
+    out
+}
+
 /// Интерфейсы связи каждого чипа (см. [`parse_interfaces`]): по ним хук
 /// проверяет ответ на вопрос об интерфейсе, а `bsp` выбирает драйвер.
 fn format_interfaces(chips: &BTreeMap<&str, Vec<&'static str>>) -> String {
@@ -2833,6 +2931,43 @@ pub static METADATA: Metadata = Metadata {
         ]
         .concat();
         assert_eq!(parse_interfaces(&text), ["usart", "fdcan", "bxcan", "otg"]);
+    }
+
+    /// Прерывание RNG — у блока `rng`, а не у соседнего блока.
+    #[test]
+    fn rng_interrupt_comes_from_the_rng_block() {
+        let text = "    Peripheral {
+        registers: Some(PeripheralRegisters { kind: \"hash\", version: \"v1\" }),
+        interrupts: &[PeripheralInterrupt { signal: \"GLOBAL\", interrupt: \"HASH_RNG\" }],
+    },
+    Peripheral {
+        registers: Some(PeripheralRegisters { kind: \"rng\", version: \"v1\" }),
+        interrupts: &[PeripheralInterrupt { signal: \"GLOBAL\", interrupt: \"AES_RNG\" }],
+    },
+";
+        assert_eq!(parse_rng_interrupt(text).as_deref(), Some("AES_RNG"));
+        assert_eq!(
+            parse_rng_interrupt("    Peripheral {\n kind: \"usart\",\n"),
+            None
+        );
+    }
+
+    /// Линии с нулём мультиплексора «без клока» получают свой источник, а
+    /// непроверенные — ничего.
+    #[test]
+    fn rng_clock_follows_the_line() {
+        assert_eq!(rng_clock("f407ve"), Some(("pll48", "")));
+        assert_eq!(rng_clock("g081rb"), Some(("rngsel", "SYS")));
+        assert_eq!(rng_clock("wle5jc"), Some(("rngsel", "MSI")));
+        assert_eq!(rng_clock("wba52cg"), Some(("rngsel", "HSI")));
+        assert_eq!(rng_clock("wb55rg"), Some(("default", "")));
+        assert_eq!(rng_clock("l476rg"), Some(("clk48sel", "MSI")));
+        assert_eq!(rng_clock("l496zg"), Some(("default", "")));
+        assert_eq!(rng_clock("l072cz"), Some(("clk48sel", "HSI48")));
+        assert_eq!(rng_clock("h743zi"), Some(("default", "")));
+        for unchecked in ["f410rb", "h7s3l8", "wb07cc", "u031r8", "c071rb"] {
+            assert_eq!(rng_clock(unchecked), None, "{unchecked}");
+        }
     }
 
     #[test]

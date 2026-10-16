@@ -43,9 +43,9 @@ const SOCKETS: usize = 3;
 /// (260 байт) и сообщение protobuf (`HOST_MESSAGE` в графе).
 const SOCKET_BUFFER: usize = 1024;
 
-/// Собирает стек над устройством платы. Адрес — по DHCP; MAC и затравка
-/// случайных чисел стека — из заводского номера чипа `uid`.
-pub(crate) fn new(uid: [u8; 12]) -> Net {
+/// Собирает стек над устройством платы. Адрес — по DHCP; MAC — из
+/// заводского номера чипа `uid`, затравка случайных чисел стека — `seed`.
+pub(crate) fn new(uid: [u8; 12], seed: u64) -> Net {
     static RESOURCES: StaticCell<StackResources<SOCKETS>> = StaticCell::new();
     static RX: StaticCell<[u8; SOCKET_BUFFER]> = StaticCell::new();
     static TX: StaticCell<[u8; SOCKET_BUFFER]> = StaticCell::new();
@@ -58,7 +58,7 @@ pub(crate) fn new(uid: [u8; 12]) -> Net {
         Unconnected::new(mac(uid)),
         Config::dhcpv4(DhcpConfig::default()),
         RESOURCES.init(StackResources::new()),
-        seed(uid),
+        seed,
     );
 {%- if interface == "tcp" %}
     let tcp = TcpServer::new(
@@ -97,11 +97,14 @@ const fn mac(uid: [u8; 12]) -> [u8; 6] {
     ]
 }
 
+{%- if rng_irq == "" %}
+
 /// Затравка стека (порты, номера последовательностей TCP) из заводского
-/// номера. Не случайна: у одной платы она одна и та же после каждого сброса.
-// ponytail: затравка из uid, а не из RNG; на чипе с RNG — `Rng::next_u64()`.
-fn seed(uid: [u8; 12]) -> u64 {
+/// номера — у чипа нет RNG. Не случайна: у одной платы она одна и та же после
+/// каждого сброса.
+pub(crate) fn uid_seed(uid: [u8; 12]) -> u64 {
     let mut bytes = [0; 8];
     bytes.copy_from_slice(&uid[..8]);
     u64::from_le_bytes(bytes) ^ u64::from(u32::from_le_bytes([uid[8], uid[9], uid[10], uid[11]]))
 }
+{%- endif %}

@@ -21,6 +21,9 @@ pub mod net;
 {%- if ota == "true" %}
 pub mod ota;
 {%- endif %}
+{%- if rng_irq != "" %}
+pub mod rng;
+{%- endif %}
 {%- if interface == "uart" %}
 pub mod serial;
 {%- endif %}

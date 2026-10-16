@@ -156,6 +156,10 @@ pub struct Board {
     /// Ethernet своей платы (`docs/modules/bsp-net.md`).
     pub net: crate::net::Net,
 {%- endif %}
+{%- if rng_irq != "" %}
+    /// Аппаратный генератор случайных чисел (`bsp::rng`).
+    pub rng: crate::rng::Rng,
+{%- endif %}
 {%- if interface == "usb" %}
     /// USB под протоколом: устройство для узла `USB` и поток CDC (`bsp::usb`).
     /// Драйвер — заглушка, пока проект не подставит USB-блок своей платы
@@ -249,6 +253,12 @@ impl Board {
         // собирается здесь же, из периферии (см. `crate::external`).
         let external = crate::external::new();
 {%- endif %}
+{%- if rng_irq != "" %}
+        let {% if interface == "tcp" or interface == "udp" %}mut {% endif %}rng = crate::rng::new(p.RNG);
+{%- endif %}
+{%- if interface == "tcp" or interface == "udp" %}
+        let seed = {% if rng_irq != "" %}rng.next_u64(){% else %}crate::net::uid_seed(embassy_stm32::uid::uid()){% endif %};
+{%- endif %}
 
         let sys_hz = clocks.sys.to_hertz().map(|hz| hz.0);
 
@@ -279,10 +289,13 @@ impl Board {
             can: crate::can::new(),
 {%- endif %}
 {%- if interface == "tcp" or interface == "udp" %}
-            net: crate::net::new(embassy_stm32::uid::uid()),
+            net: crate::net::new(embassy_stm32::uid::uid(), seed),
 {%- endif %}
 {%- if interface == "usb" %}
             usb: crate::usb::new(),
+{%- endif %}
+{%- if rng_irq != "" %}
+            rng,
 {%- endif %}
 {%- if graph == "true" %}
             watchdog: crate::wdg::UnarmedBoardWatchdog::new(p.{{watchdog_peripheral}}),
@@ -308,11 +321,37 @@ impl Board {
 fn init_peripherals() -> embassy_stm32::Peripherals {
     static SHARED_DATA: core::mem::MaybeUninit<embassy_stm32::SharedData> =
         core::mem::MaybeUninit::uninit();
-    embassy_stm32::init_primary(embassy_stm32::Config::default(), &SHARED_DATA)
+    embassy_stm32::init_primary(config(), &SHARED_DATA)
 }
 {%- else %}
 
 fn init_peripherals() -> embassy_stm32::Peripherals {
-    embassy_stm32::init(embassy_stm32::Config::default())
+    embassy_stm32::init(config())
 }
 {%- endif %}
+
+/// Конфиг HAL: умолчания `embassy-stm32`{% if rng_clock != "" and rng_clock != "default" %} и клок блока `RNG`, которого
+/// они не дают (`docs/modules/bsp-rng.md`){% endif %}.
+fn config() -> embassy_stm32::Config {
+{%- if rng_clock == "pll48" %}
+    let mut config = embassy_stm32::Config::default();
+    // RNG — от PLL48CK, выхода Q основного PLL, а по умолчанию PLL выключен:
+    // HSI 16 МГц / 8 × 96 = 192 МГц на VCO, / 4 = 48 МГц. Ядро остаётся на HSI.
+    config.rcc.pll = Some(embassy_stm32::rcc::Pll {
+        prediv: embassy_stm32::rcc::PllPreDiv::DIV8,
+        mul: embassy_stm32::rcc::PllMul::MUL96,
+        divp: None,
+        divq: Some(embassy_stm32::rcc::PllQDiv::DIV4),
+        divr: None,
+    });
+    config
+{%- elsif rng_clock == "rngsel" or rng_clock == "clk48sel" %}
+    let mut config = embassy_stm32::Config::default();
+    // Мультиплексор по умолчанию — ноль, а ноль у этой линии — клок, которого
+    // нет: без него `Rng::new` не заведётся.
+    config.rcc.mux.{{rng_clock}} = embassy_stm32::rcc::mux::{% if rng_clock == "rngsel" %}Rngsel{% else %}Clk48sel{% endif %}::{{rng_source}};
+    config
+{%- else %}
+    embassy_stm32::Config::default()
+{%- endif %}
+}

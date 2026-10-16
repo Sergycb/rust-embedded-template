@@ -1671,6 +1671,42 @@ fn bank_switch_follows_the_factory_bank_mode() {
     }
 }
 
+/// RNG — из таблицы `chip-data/rng.rhai`: прерывание и клок по линии. Чипу
+/// без RNG модуль `bsp::rng` и его рецепт удаляются.
+#[test]
+fn rng_follows_the_chip_table() {
+    let ast = compile_script();
+    for (suffix, irq, clock, source) in [
+        ("f429zg", "HASH_RNG", "pll48", ""),
+        ("g081rb", "AES_RNG", "rngsel", "SYS"),
+        ("l073rz", "RNG_LPUART1", "clk48sel", "HSI48"),
+        ("h743zg", "RNG", "default", ""),
+        ("g071rb", "", "", ""),
+        // HSI48 без CRS `embassy-stm32` не включает — RNG нечем тактировать.
+        ("wb15cc", "", "", ""),
+    ] {
+        let result = run_cascade_to(&ast, suffix).expect("каскад не должен падать");
+        for (var, expected) in [
+            ("rng_irq", irq),
+            ("rng_clock", clock),
+            ("rng_source", source),
+        ] {
+            assert_eq!(
+                result.vars.get(var).map(String::as_str),
+                Some(expected),
+                "{suffix}: {var}"
+            );
+        }
+        for file in ["crates-cross/bsp/src/rng.rs", "docs/modules/bsp-rng.md"] {
+            assert_eq!(
+                result.deleted.iter().any(|path| path == file),
+                irq.is_empty(),
+                "{suffix}: {file}"
+            );
+        }
+    }
+}
+
 /// `CPU_FREQ_BOOST` — только у линии RM0468 (H723/725/730/733/735): им bsp
 /// получает `clocks.rs`, остальным файл удаляется. Соседняя H743 — та же
 /// серия, но boost у неё нет, и `clocks.rs` с регистрами `OPTSR2` там писал бы

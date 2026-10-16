@@ -168,6 +168,14 @@ fn default_cases() -> Vec<Case> {
         // Modbus RTU по USB CDC — на F4, у которого USB — блок OTG: второй
         // драйвер в рецепте и `Rtu` поверх потока CDC вместо UART.
         Case::new("stm32f407ve").variant("modbus-usb", &["protocol=modbus", "interface=usb"]),
+        // Клок RNG, которого умолчания HAL не дают, — мультиплексор на своём
+        // источнике (`config()` в `bsp::board`): `RNGSEL` у G0 (SYS), WL
+        // (MSI) и WBA (HSI), `CLK48SEL` у L476 без HSI48 (MSI). PLL48 и HSI48
+        // проверяют F4, L0 и G4/H7 выше.
+        Case::new("stm32g081rb"),
+        Case::new("stm32wle5jc"),
+        Case::new("stm32wba52cg"),
+        Case::new("stm32l476rg"),
     ]
 }
 

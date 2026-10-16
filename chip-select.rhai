@@ -243,6 +243,12 @@ const CPU_FREQ_BOOST = boost_data::CPU_FREQ_BOOST;
 import "chip-data/interfaces" as interfaces_data;
 const INTERFACES = interfaces_data::INTERFACES;
 
+// Аппаратный RNG: [прерывание, клок, источник] — по ним bsp заводит
+// `bsp::rng` и даёт блоку клок в конфиге HAL (docs/modules/bsp-rng.md). Чипа
+// нет в таблице — RNG у него нет или источник клока не проверен.
+import "chip-data/rng" as rng_data;
+const RNG = rng_data::RNG;
+
 if variable::is_set("chip_feature") {
     // Значение уже задано через `--define chip_feature=...` — каскад не
     // нужен, chip/cpu/target выводятся из него напрямую.
@@ -388,6 +394,17 @@ variable::set("watchdog_peripheral", if WATCHDOG.contains(suffix) { WATCHDOG[suf
 variable::set("cpu_freq_boost", if CPU_FREQ_BOOST.contains(suffix) { "true" } else { "false" });
 if !CPU_FREQ_BOOST.contains(suffix) {
     file::delete("crates-cross/bsp/src/clocks.rs");
+}
+
+// RNG (см. RNG выше). Без переопределения через --define: значение целиком
+// выводится из chip_feature.
+let rng = if RNG.contains(suffix) { RNG[suffix] } else { ["", "", ""] };
+variable::set("rng_irq", rng[0]);
+variable::set("rng_clock", rng[1]);
+variable::set("rng_source", rng[2]);
+if rng[0] == "" {
+    file::delete("crates-cross/bsp/src/rng.rs");
+    file::delete("docs/modules/bsp-rng.md");
 }
 
 // Готовые адреса/размеры для memory.x. Строится из метаданных stm32-metapac
