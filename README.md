@@ -64,9 +64,13 @@ cargo run -p app                    # прошить приложение и с�
 | Распиновка платы | `crates-cross/bsp/src/board.rs` | `assign_resources!` разложит `Peripherals` по именованным группам — из них `bsp` соберёт драйверы; наружу уходит не периферия, а готовый объект (`docs/resources.md`) |
 | Граф задач | `crates-cross/app/src/graph.rs` | `supervisor_graph!`: порядок старта, рестарты с backoff, watchdog, обмен между задачами |
 | Логика и узлы графа | `crates-host/domain/` | всё, что не про регистры: автоматы, протоколы, конфигурация, а также объявления узлов (`supervisor_fragment!`) и их работа (`domain::heartbeat::run`, `domain::cpu_load::task` — автоматы `#[fsm::typestate]` на контексте узла) — тестируется на хосте; логика вне автоматов — функции над портами |
-| Адаптеры без чипа | `crates-host/adapters/` | реализации портов, которым хватает `embedded-storage`/`embedded-hal`/`embedded-io-async`: OTA поверх `embassy-boot` (`adapters::ota`), настройки поверх `sequential-storage` (`adapters::settings`, мост к общему флешу — `adapters::flash`), кадрирование потока COBS + CRC (`adapters::cobs`), транспорты Modbus RTU/TCP/UDP (`adapters::modbus`) — тестируется на хосте |
+| Адаптеры без чипа | `crates-host/adapters/` | реализации портов, которым хватает `embedded-storage`/`embedded-hal`/`embedded-io-async`: OTA поверх `embassy-boot` (`adapters::ota`), настройки поверх `sequential-storage` (`adapters::settings`, мост к общему флешу — `adapters::flash`){% if protocol == "protobuf" and interface != "udp" %}, кадрирование потока COBS + CRC (`adapters::cobs`){% endif %}{% if protocol == "modbus" %}, транспорт Modbus {% if interface == "tcp" %}TCP{% elsif interface == "udp" %}UDP{% else %}RTU{% endif %} (`adapters::modbus`){% endif %} — тестируется на хосте |
+{%- if protocol == "protobuf" %}
 | Схема protobuf | `crates-host/proto/` | `.proto` и типы, сгенерированные `micropb-gen` в `build.rs` (схему разбирает `protox`, системный `protoc` не нужен); пример — конверт `Request`/`Response` с `request_id`, проект заменяет своим. Обрабатывает узел `domain::HOST_FRAG` |
+{%- endif %}
+{%- if protocol == "canopen" %}
 | Описание устройства CANopen | `crates-host/canopen/` | `device.toml` — идентичность, PDO, объекты приложения; `build.rs` (`zencan-build`) генерирует из него словарь объектов и `static`-объекты узла (`NODE_MBOX`, `NODE_STATE`, `OD_TABLE`), которые compose-site передаёт узлу `domain::CANOPEN_FRAG`; пример — проект заменяет своим |
+{%- endif %}
 
 Граф и модули `bsp` уже содержат рабочие примеры в doc-комментариях и в `docs/` — с
 объяснением, почему выбрана именно эта библиотека, а не соседняя.
@@ -151,21 +155,28 @@ supervisor-графы, watchdog). Вся остальная логика — в 
 Драйвер переезжает из `adapters` в `bsp` только тогда, когда ему перестаёт хватать
 трейтов `embedded-hal`: понадобились `embassy_stm32::peripherals` или статический
 DMA-буфер. До этого момента его место — в `domain`, где он тестируется без железа.
-В `ports` объявлено девять трейтов. `FirmwareUpdate` и `SettingsStorage`
+В `ports` объявлено {% if protocol == "modbus" %}семь трейтов{% elsif protocol == "none" %}три трейта{% else %}пять трейтов{% endif %}. `FirmwareUpdate` и `SettingsStorage`
 реализованы в `adapters`, а `Board` отдаёт их готовыми объектами, когда при
 генерации выбраны OTA и раздел настроек. `ImageSource` под свой канал доставки
-образа реализует сам проект. `FrameLink` — канал целых сообщений: его
-реализует интерфейс с датаграммами (UDP-сокет) или адаптер кадрирования
-`adapters::cobs::Cobs` поверх потока (UART, USB CDC, TCP). `Registers` — данные устройства, видимые по
+образа реализует сам проект.
+{%- if protocol != "none" %} `FrameLink` — канал целых сообщений{% if interface == "udp" %}: его реализует
+UDP-сокет `adapters::net::UdpLink`{% elsif protocol == "protobuf" %}: его реализует адаптер
+кадрирования `adapters::cobs::Cobs` поверх потока {% if interface == "uart" %}UART{% elsif interface == "usb" %}USB CDC{% else %}TCP{% endif %}{% endif %}.
+{%- endif %}
+{%- if protocol == "modbus" %} `Registers` — данные устройства, видимые по
 Modbus: его реализует приложение, а обслуживает узел `domain::MODBUS_SLAVE_FRAG`.
 `ModbusServer` и `ModbusClient` — транспорт Modbus под slave'ом и master'ом:
-`adapters::modbus::{Rtu, Tcp, Udp}` — RTU поверх потока, MBAP поверх потока
-TCP и в датаграмме UDP.
+{% if interface == "tcp" %}`adapters::modbus::Tcp` — MBAP поверх потока TCP{% elsif interface == "udp" %}`adapters::modbus::Udp` — MBAP в датаграмме UDP{% else %}`adapters::modbus::Rtu` — RTU поверх потока {% if interface == "usb" %}USB CDC{% else %}UART{% endif %}{% endif %}.
+{%- endif %}
+{%- if protocol == "protobuf" %}
 `HostService` — обработчик сообщений protobuf от хоста: его реализует приложение
 (перевод сообщений схемы в свои проверенные типы), а принимает и отвечает узел
-`domain::HOST_FRAG`. `CanBus` — шина CAN под узлом CANopen `domain::CANOPEN_FRAG`
-(стек `zencan`); реализация поверх CAN-контроллера чипа появится в `bsp` вместе с
-интерфейсами, а до тех пор узел проверяется на хосте. Свой порт под датчики и периферию вашего
+`domain::HOST_FRAG`.
+{%- endif %}
+{%- if protocol == "canopen" %} `CanBus` — шина CAN под узлом CANopen `domain::CANOPEN_FRAG`
+(стек `zencan`): его реализует `bsp::can::Bus` поверх CAN-контроллера чипа, а
+на хосте узел проверяется над фейком шины.
+{%- endif %} Свой порт под датчики и периферию вашего
 устройства заводится по тому же образцу — см. doc-комментарий крейта `ports`
 и `docs/architecture.md`.
 
@@ -512,34 +523,38 @@ ST-Link захваченным до переподключения кабеля 
 настоящий, именно поэтому: настоящий подтверждает сам себя, и откат стало бы нечем
 проверять. Плата после теста остаётся на исходном образе.
 
+{%- if protocol != "none" %}
+
 ### Протокол связи и интерфейс
 
-Последние два вопроса при генерации — протокол (`--define protocol=…`) и интерфейс
-под ним (`--define interface=…`):
+При генерации выбраны протокол `{{protocol}}` и интерфейс `{{interface}}` — {% if interface == "uart" %}UART
+(RS-485 — тот же UART с выводом DE){% elsif interface == "can" %}CAN, у этого чипа — {% if can_kind == "fdcan" %}FDCAN{% else %}bxCAN{% endif %}{% elsif interface == "usb" %}виртуальный COM-порт
+CDC ACM: устройство `embassy-usb`, узел `USB` в графе{% else %}Ethernet: стек
+`embassy-net`, узел `NET` в графе{% endif %}. Стек других протоколов и интерфейсов в
+проект не попал.
 
-| `protocol` | Узел в графе | Что править проекту |
-|---|---|---|
-| `none` (по умолчанию) | — | — |
-| `modbus` | `MODBUS` — Modbus slave, транспорт RTU (`adapters::modbus::Rtu`) | карта регистров `crates-host/domain/src/modbus/registers.rs` |
-| `protobuf` | `HOST` — сообщения protobuf, кадры COBS + CRC (`adapters::cobs::Cobs`) | схема `crates-host/proto`, обработчик `crates-host/domain/src/host/service.rs` |
-| `canopen` | `CANOPEN` — узел CANopen, стек `zencan` | словарь объектов `crates-host/canopen/device.toml` |
+| Узел в графе | Что править проекту |
+|---|---|
+{%- if protocol == "modbus" %}
+| `MODBUS` — Modbus slave, транспорт {% if interface == "tcp" %}Modbus TCP (`adapters::modbus::Tcp`){% elsif interface == "udp" %}Modbus UDP (`adapters::modbus::Udp`){% else %}RTU (`adapters::modbus::Rtu`){% endif %} | карта регистров `crates-host/domain/src/modbus/registers.rs` |
+{%- elsif protocol == "protobuf" %}
+| `HOST` — сообщения protobuf, {% if interface == "udp" %}одно сообщение в датаграмме{% else %}кадры COBS + CRC (`adapters::cobs::Cobs`){% endif %} | схема `crates-host/proto`, обработчик `crates-host/domain/src/host/service.rs` |
+{%- else %}
+| `CANOPEN` — узел CANopen, стек `zencan` | словарь объектов `crates-host/canopen/device.toml` |
+{%- endif %}
 
-Интерфейсы — `uart` (Modbus и protobuf; RS-485 — тот же UART с выводом DE), `tcp` и
-`udp` (Modbus и protobuf по Ethernet: стек `embassy-net`, узел `NET` в графе), `usb`
-(Modbus RTU и protobuf по виртуальному COM-порту CDC ACM: `embassy-usb`, узел `USB` в графе) и `can`
-(CANopen; FDCAN или bxCAN — какой у чипа). Узлу протокола нужен граф задач, а
-интерфейс должен быть выведен в корпусе чипа: недопустимое сочетание генерация
-отвергает с объяснением. Крейты невыбранного протокола (`crates-host/proto`,
-`crates-host/canopen`) в проект не попадают.
-
-Выводы шаблон не выбирает: в `Board::serial`, `Board::can` или под `Board::net`/`Board::usb` встаёт заглушка, с
-которой проект собирается и запускается, но узел ждёт впустую. Подставить своё
-железо — правка в `crates-cross/bsp/src/serial.rs`, `can.rs`, `net.rs` или `usb.rs` по
-рецепту в `docs/modules/bsp-*.md` того же имени (`cargo xtask pins USART2 --snippet`,
-`FDCAN1`/`CAN1`, `ETH`, `USB`/`USB_OTG_FS`). Прослойка `bsp::can::Bus` — порт `CanBus` поверх контроллера —
-уже там; не хватает только выводов. Master Modbus —
-не узел, а функции `domain::modbus::master` поверх `ports::ModbusClient`: что и как
-часто опрашивать, решает узел приложения.
+Выводы шаблон не выбирает: в `Board::{% if interface == "uart" %}serial{% elsif interface == "can" %}can{% elsif interface == "usb" %}usb{% else %}net{% endif %}` встаёт заглушка, с которой проект
+собирается и запускается, но узел ждёт впустую. Подставить своё железо — правка
+в `crates-cross/bsp/src/{% if interface == "uart" %}serial{% elsif interface == "can" %}can{% elsif interface == "usb" %}usb{% else %}net{% endif %}.rs` по рецепту в `docs/modules/bsp-{% if interface == "uart" %}serial{% elsif interface == "can" %}can{% elsif interface == "usb" %}usb{% else %}net{% endif %}.md`
+(`cargo xtask pins {% if interface == "uart" %}USART2{% elsif interface == "can" %}{% if can_kind == "fdcan" %}FDCAN1{% else %}CAN1{% endif %}{% elsif interface == "usb" %}{% if usb_kind == "otg" %}USB_OTG_FS{% else %}USB{% endif %}{% else %}ETH{% endif %} --snippet`).
+{%- if interface == "can" %} Прослойка `bsp::can::Bus` — порт `CanBus` поверх
+контроллера — уже там; не хватает только выводов.
+{%- endif %}
+{%- if protocol == "modbus" %} Master Modbus — не узел, а функции
+`domain::modbus::master` поверх `ports::ModbusClient`: что и как часто
+опрашивать, решает узел приложения.
+{%- endif %}
+{%- endif %}
 
 ### Тактирование: дамп при старте и контракт платы
 

@@ -251,7 +251,7 @@ read`: руками пришлось бы сначала найти адрес �
 - `bsp` зависит только от `ports` и `adapters` (и HAL), не от `domain`: типы
   домена — например вход узла OTA — собирает из полей `Board` compose-site в
   `app` — `docs/architecture.md`.
-- Liquid в корневом workspace (`domain`, `ports`, `adapters`, `proto`, `canopen`,
+- Liquid в корневом workspace (`domain`, `ports`, `adapters`{% if protocol == "protobuf" %}, `proto`{% elsif protocol == "canopen" %}, `canopen`{% endif %},
   корневой `Cargo.toml`) пишется внутри комментариев (строки `//` и `#` с тегами `if`/`endif`): в
   репозитории шаблона эти крейты компилируются целиком, в проекте Liquid вырезает
   невыбранное — `docs/architecture.md`.
