@@ -102,7 +102,7 @@ mod fakes {
     use super::rtu::seal;
 
     /// Кадр RTU: адрес `unit`, `pdu` и CRC.
-    pub(crate) fn rtu_frame(unit: u8, pdu: &[u8]) -> Vec<u8> {
+    pub(super) fn rtu_frame(unit: u8, pdu: &[u8]) -> Vec<u8> {
         let mut buf = [&[unit][..], pdu, &[0, 0]].concat();
         let len = buf.len() - 2;
         seal(&mut buf, len);
@@ -110,7 +110,7 @@ mod fakes {
     }
 
     /// Кадр MBAP: транзакция `tid`, протокол `protocol`, адрес `unit`, `pdu`.
-    pub(crate) fn mbap_frame(tid: u16, protocol: u16, unit: u8, pdu: &[u8]) -> Vec<u8> {
+    pub(super) fn mbap_frame(tid: u16, protocol: u16, unit: u8, pdu: &[u8]) -> Vec<u8> {
         let mut head = mbap::head(tid, unit, pdu.len());
         head[2..4].copy_from_slice(&protocol.to_be_bytes());
         [&head[..], pdu].concat()
@@ -118,7 +118,7 @@ mod fakes {
 
     /// Поток: читает заранее записанные байты, пишет в `tx`. Когда читать
     /// нечего, `read` отдаёт 0 — конец потока.
-    pub(crate) struct Duplex {
+    pub(super) struct Duplex {
         rx: Vec<u8>,
         /// Сколько из `rx` уже прочитано.
         pos: usize,
@@ -128,12 +128,12 @@ mod fakes {
         /// Когда читать нечего — ждать (`Pending`), а не отдавать конец потока:
         /// так в тесте бросается future посреди приёма, как на таймауте.
         waits: bool,
-        pub(crate) tx: Vec<u8>,
+        pub(super) tx: Vec<u8>,
     }
 
     impl Duplex {
         /// Байты читаемы сразу — вход slave'а.
-        pub(crate) fn new(rx: &[u8]) -> Self {
+        pub(super) fn new(rx: &[u8]) -> Self {
             Self {
                 rx: rx.to_vec(),
                 pos: 0,
@@ -144,7 +144,7 @@ mod fakes {
         }
 
         /// `reply` читаем только после того, как master отправил запрос.
-        pub(crate) fn replying(reply: &[u8]) -> Self {
+        pub(super) fn replying(reply: &[u8]) -> Self {
             Self {
                 reply: Some(reply.to_vec()),
                 ..Self::new(&[])
@@ -153,19 +153,19 @@ mod fakes {
 
         /// До запроса во входном буфере уже лежит `stale` — опоздавший ответ;
         /// ответ на запрос придёт после него.
-        pub(crate) fn with_stale(mut self, stale: &[u8]) -> Self {
+        pub(super) fn with_stale(mut self, stale: &[u8]) -> Self {
             self.rx = stale.to_vec();
             self
         }
 
         /// Пустой вход — ожидание, а не конец потока.
-        pub(crate) fn waiting(mut self) -> Self {
+        pub(super) fn waiting(mut self) -> Self {
             self.waits = true;
             self
         }
 
         /// Дописывает `bytes` ко входу — пришли позже.
-        pub(crate) fn push(&mut self, bytes: &[u8]) {
+        pub(super) fn push(&mut self, bytes: &[u8]) {
             self.rx.extend_from_slice(bytes);
         }
     }
@@ -210,15 +210,15 @@ mod fakes {
 
     /// Канал датаграмм: отдаёт заранее заданные исходы приёма, затем — `Down`;
     /// отправленное копит в `sent`.
-    pub(crate) struct Datagrams {
-        pub(crate) incoming: VecDeque<Result<Vec<u8>, LinkError<&'static str>>>,
+    pub(super) struct Datagrams {
+        pub(super) incoming: VecDeque<Result<Vec<u8>, LinkError<&'static str>>>,
         /// Исход каждой отправки; успешные попадают в `sent`.
-        pub(crate) send: Result<(), LinkError<&'static str>>,
-        pub(crate) sent: Vec<Vec<u8>>,
+        pub(super) send: Result<(), LinkError<&'static str>>,
+        pub(super) sent: Vec<Vec<u8>>,
     }
 
     impl Datagrams {
-        pub(crate) fn with(
+        pub(super) fn with(
             incoming: impl IntoIterator<Item = Result<Vec<u8>, LinkError<&'static str>>>,
         ) -> Self {
             Self {

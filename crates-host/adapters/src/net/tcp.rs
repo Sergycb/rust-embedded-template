@@ -1,4 +1,4 @@
-//! TCP-сервер на одном порту — поток байтов для транспортов протоколов.
+//! TCP-транспорт: [`TcpServer`] и его ошибка.
 
 use embassy_net::Stack;
 use embassy_net::tcp::{self, AcceptError, State, TcpSocket};

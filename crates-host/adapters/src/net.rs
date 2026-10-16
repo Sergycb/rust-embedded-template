@@ -123,21 +123,21 @@ mod fakes {
 
     /// Половина кабеля: кадры, ждущие приёма, и кто их ждёт.
     #[derive(Default)]
-    pub(crate) struct Wire {
-        pub(crate) frames: VecDeque<Vec<u8>>,
-        pub(crate) waker: Option<Waker>,
+    pub(super) struct Wire {
+        frames: VecDeque<Vec<u8>>,
+        waker: Option<Waker>,
     }
 
     /// Устройство на одном конце кабеля: принимает из `inbox`, отправляет в
     /// `outbox` — второй конец читает их как свой `inbox`.
-    pub(crate) struct Loopback {
-        pub(crate) inbox: Rc<RefCell<Wire>>,
-        pub(crate) outbox: Rc<RefCell<Wire>>,
-        pub(crate) mac: [u8; 6],
+    pub(super) struct Loopback {
+        inbox: Rc<RefCell<Wire>>,
+        outbox: Rc<RefCell<Wire>>,
+        mac: [u8; 6],
     }
 
-    pub(crate) struct Rx(Vec<u8>);
-    pub(crate) struct Tx(Rc<RefCell<Wire>>);
+    pub(super) struct Rx(Vec<u8>);
+    pub(super) struct Tx(Rc<RefCell<Wire>>);
 
     impl RxToken for Rx {
         fn consume<R, F: FnOnce(&mut [u8]) -> R>(mut self, f: F) -> R {
@@ -191,18 +191,18 @@ mod fakes {
         }
     }
 
-    pub(crate) type Node = (Stack<'static>, Runner<'static, Loopback>);
+    pub(super) type Node = (Stack<'static>, Runner<'static, Loopback>);
 
-    pub(crate) const DEVICE: Ipv4Address = Ipv4Address::new(10, 0, 0, 1);
-    pub(crate) const HOST: Ipv4Address = Ipv4Address::new(10, 0, 0, 2);
-    pub(crate) const PORT: u16 = 502;
+    pub(super) const DEVICE: Ipv4Address = Ipv4Address::new(10, 0, 0, 1);
+    const HOST: Ipv4Address = Ipv4Address::new(10, 0, 0, 2);
+    pub(super) const PORT: u16 = 502;
 
-    pub(crate) fn leak<T>(value: T) -> &'static mut T {
+    pub(super) fn leak<T>(value: T) -> &'static mut T {
         Box::leak(Box::new(value))
     }
 
     /// Стек на конце кабеля `device` с адресом `address`.
-    pub(crate) fn stack(device: Loopback, address: Ipv4Address) -> Node {
+    fn stack(device: Loopback, address: Ipv4Address) -> Node {
         #[expect(
             clippy::default_trait_access,
             reason = "тип списка DNS — heapless из embassy-net, по имени не назван"
@@ -217,7 +217,7 @@ mod fakes {
     }
 
     /// Два стека — устройство и хост — на одном кабеле.
-    pub(crate) fn pair() -> (Node, Node) {
+    pub(super) fn pair() -> (Node, Node) {
         let (a, b): (Rc<RefCell<Wire>>, Rc<RefCell<Wire>>) = (Rc::default(), Rc::default());
         let device = Loopback {
             inbox: Rc::clone(&a),
@@ -233,7 +233,7 @@ mod fakes {
     }
 
     /// Гоняет оба стека, пока идёт `test`.
-    pub(crate) async fn with_network<R>(
+    pub(super) async fn with_network<R>(
         mut device: Runner<'static, Loopback>,
         mut host: Runner<'static, Loopback>,
         test: impl Future<Output = R>,

@@ -211,14 +211,14 @@ mod fakes {
     /// Транспорт master'а: записывает запросы, на первый обмен отвечает
     /// `reply`, без него — концом потока.
     #[derive(Default)]
-    pub(crate) struct Client {
+    pub(super) struct Client {
         reply: Option<Vec<u8>>,
         /// Каждый запрос: адрес (0 — широковещательный) и PDU.
-        pub(crate) sent: Vec<(u8, Vec<u8>)>,
+        pub(super) sent: Vec<(u8, Vec<u8>)>,
     }
 
     impl Client {
-        pub(crate) fn replying(reply: &[u8]) -> Self {
+        pub(super) fn replying(reply: &[u8]) -> Self {
             Self {
                 reply: Some(reply.to_vec()),
                 sent: Vec::new(),
@@ -255,15 +255,15 @@ mod fakes {
     /// Транспорт slave'а: отдаёт заранее заданные запросы, затем — конец
     /// потока, а после него ждёт следующего запроса вечно, как настоящий
     /// транспорт. Ответы копит в `replies`.
-    pub(crate) struct Server {
+    pub(super) struct Server {
         incoming: VecDeque<(u8, Vec<u8>)>,
         ended: bool,
-        pub(crate) replies: Vec<Vec<u8>>,
+        pub(super) replies: Vec<Vec<u8>>,
     }
 
     impl Server {
         /// Запросы — адрес и PDU.
-        pub(crate) fn new(requests: &[(u8, &[u8])]) -> Self {
+        pub(super) fn new(requests: &[(u8, &[u8])]) -> Self {
             Self {
                 incoming: requests.iter().map(|&(u, p)| (u, p.to_vec())).collect(),
                 ended: false,
@@ -310,12 +310,12 @@ mod fakes {
     /// Карта устройства: 16 coils и 16 holding-регистров; input registers и
     /// discrete inputs не реализованы — на них slave отвечает Illegal Function.
     #[derive(Default)]
-    pub(crate) struct Map {
-        pub(crate) coils: [bool; 16],
-        pub(crate) holding: [u16; 16],
+    pub(super) struct Map {
+        pub(super) coils: [bool; 16],
+        pub(super) holding: [u16; 16],
         /// Каждый вызов записи регистров: начало и значения — по нему тест
         /// видит, что многорегистровая запись пришла одним вызовом.
-        pub(crate) writes: Vec<(u16, Vec<u16>)>,
+        pub(super) writes: Vec<(u16, Vec<u16>)>,
     }
 
     /// Диапазон `start..start + len` внутри карты из 16 элементов.

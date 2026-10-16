@@ -1,5 +1,4 @@
-//! UDP-канал на одном порту — [`FrameLink`] для протоколов, которым
-//! датаграмма и есть кадр.
+//! UDP-транспорт: [`UdpLink`] и его ошибка.
 
 use embassy_net::Stack;
 use embassy_net::udp::{PacketMetadata, RecvError, SendError, UdpMetadata, UdpSocket};

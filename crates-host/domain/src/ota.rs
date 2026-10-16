@@ -742,26 +742,26 @@ mod fakes {
 
     /// Подпись, которую тесты кладут в заголовок; фейк её не проверяет, а
     /// записывает — важно, что до него доехала именно она.
-    pub(crate) const SIGNATURE: [u8; 64] = [9; 64];
+    pub(super) const SIGNATURE: [u8; 64] = [9; 64];
 
     /// Канал, отдающий заранее нарезанные куски; на `fail_at`-м вызове `next`
     /// отказывает — так разыгрывается обрыв связи. Заголовки — по одному на
     /// цикл; когда они кончаются, `begin` отвечает отказом — единственный выход
     /// из цикла узла в тесте.
-    pub(crate) struct FakeLink {
+    pub(super) struct FakeLink {
         announces: VecDeque<Announce>,
         chunks: Vec<Vec<u8>>,
         /// Сколько кусков уже отдано — по нему тест видит, читался ли канал.
-        pub(crate) next: usize,
-        pub(crate) fail_at: Option<usize>,
+        pub(super) next: usize,
+        pub(super) fail_at: Option<usize>,
         /// Что ответить на `finish`; `Err` разыгрывает обрыв при отчёте.
-        pub(crate) finish: Result<(), &'static str>,
+        pub(super) finish: Result<(), &'static str>,
         /// Всё, что узел сообщил отправителю, в порядке вызовов.
-        pub(crate) finished: Vec<Result<(), Rejection>>,
+        pub(super) finished: Vec<Result<(), Rejection>>,
     }
 
     impl FakeLink {
-        pub(crate) fn of(chunks: impl IntoIterator<Item = Vec<u8>>) -> Self {
+        pub(super) fn of(chunks: impl IntoIterator<Item = Vec<u8>>) -> Self {
             Self {
                 announces: VecDeque::new(),
                 chunks: chunks.into_iter().collect(),
@@ -773,7 +773,7 @@ mod fakes {
         }
 
         /// Заголовки, которые `begin` отдаст по одному на цикл.
-        pub(crate) fn announcing(mut self, announces: impl IntoIterator<Item = Announce>) -> Self {
+        pub(super) fn announcing(mut self, announces: impl IntoIterator<Item = Announce>) -> Self {
             self.announces = announces.into_iter().collect();
             self
         }
@@ -818,38 +818,38 @@ mod fakes {
     /// Главное здесь — проверки кратности: без них тест не отличил бы
     /// работающую буферизацию от её отсутствия, а на плате разница вылезла бы
     /// отказом записи (или, на F2/F4/F7, испорченным образом).
-    pub(crate) struct FakeFlash {
-        pub(crate) memory: Vec<u8>,
+    pub(super) struct FakeFlash {
+        pub(super) memory: Vec<u8>,
         /// То, что отдаёт `capacity()`. По умолчанию — длина `memory`; тесты
         /// применения ставят меньше, чтобы разыграть «в приёмник влез, в
         /// активный раздел — нет».
-        pub(crate) capacity: u32,
-        pub(crate) word: u32,
-        pub(crate) busy: bool,
-        pub(crate) prepared: Option<u32>,
-        pub(crate) writes: Vec<(u32, usize)>,
+        pub(super) capacity: u32,
+        pub(super) word: u32,
+        pub(super) busy: bool,
+        pub(super) prepared: Option<u32>,
+        pub(super) writes: Vec<(u32, usize)>,
         /// Что ответить на запись в запасную страницу (запись для
         /// bootloader'а); `Err` разыгрывает отказ флеша.
-        pub(crate) record: Result<(), &'static str>,
+        pub(super) record: Result<(), &'static str>,
         /// Что оставлено bootloader'у в запасной странице: подпись и длина.
-        pub(crate) recorded: Vec<([u8; 64], u32)>,
+        pub(super) recorded: Vec<([u8; 64], u32)>,
         /// Что ответить на `mark_updated`; `Err` разыгрывает отказ флеша.
-        pub(crate) mark_updated: Result<(), &'static str>,
+        pub(super) mark_updated: Result<(), &'static str>,
         /// Сколько раз просили обмен разделов.
-        pub(crate) updated: usize,
+        pub(super) updated: usize,
         /// Что ответить на `mark_booted`; `Err` разыгрывает отказ флеша.
-        pub(crate) mark_booted: Result<(), &'static str>,
+        pub(super) mark_booted: Result<(), &'static str>,
         /// Сколько раз образ подтвердили успешно.
-        pub(crate) booted: usize,
+        pub(super) booted: usize,
         /// Сколько раз звали `mark_booted` — удачно или нет.
-        pub(crate) confirm_attempts: usize,
+        pub(super) confirm_attempts: usize,
     }
 
     impl FakeFlash {
         /// Запасная страница за `capacity` — под запись для bootloader'а.
         const SPARE: usize = 128;
 
-        pub(crate) fn new(capacity: usize, word: u32) -> Self {
+        pub(super) fn new(capacity: usize, word: u32) -> Self {
             Self {
                 memory: vec![0xFF; capacity + Self::SPARE],
                 capacity: u32::try_from(capacity).unwrap(),
@@ -869,7 +869,7 @@ mod fakes {
 
         /// Раздел, в котором уже лежит образ длиной `len` с версией `incoming` в
         /// хвосте, и вместимость меньше раздела — как у настоящей схемы с обменом.
-        pub(crate) fn with_image(len: u32, incoming: u32) -> Self {
+        pub(super) fn with_image(len: u32, incoming: u32) -> Self {
             let mut flash = Self::new(256, 8);
             flash.capacity = 128;
             flash.memory[(len - VERSION_BYTES) as usize..len as usize]

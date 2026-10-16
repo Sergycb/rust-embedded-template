@@ -376,16 +376,16 @@ mod fakes {
     /// мока `NorFlash` в экосистеме нет (`embedded-hal-mock` флеш не
     /// покрывает), поэтому фейк свой и ровно под тесты `ota` и `ota::boot`.
     #[derive(Debug)]
-    pub(crate) struct MemFlash<const SIZE: usize> {
-        pub(crate) mem: Vec<u8>,
+    pub(super) struct MemFlash<const SIZE: usize> {
+        pub(super) mem: Vec<u8>,
     }
 
     impl<const SIZE: usize> MemFlash<SIZE> {
-        pub(crate) fn erased() -> Self {
+        pub(super) fn erased() -> Self {
             Self::filled(0xFF)
         }
 
-        pub(crate) fn filled(byte: u8) -> Self {
+        pub(super) fn filled(byte: u8) -> Self {
             Self {
                 mem: vec![byte; SIZE],
             }
@@ -478,7 +478,7 @@ mod fakes {
 
     /// Четыре страницы по 256 байт, слово 8; ACTIVE (= capacity) — три
     /// страницы, как требует запас на обмен.
-    pub(crate) type Dfu = MemFlash<1024>;
+    pub(super) type Dfu = MemFlash<1024>;
     /// Раздел состояния: страница на магию плюс журнал прогресса.
-    pub(crate) type State = MemFlash<256>;
+    pub(super) type State = MemFlash<256>;
 }
