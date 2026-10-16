@@ -16,20 +16,9 @@
 //!
 //! # Сохранение объектов и адреса
 //!
-//! Мастер, настроивший узел по шине (раскладка PDO, период heartbeat,
-//! уставки), пишет сигнатуру `save` в объект `0x1010` — узел сохраняет
-//! постоянные объекты (`persist` в `device.toml`) в хранилище настроек под
-//! ключом [`OBJECTS_KEY`](crate::canopen::OBJECTS_KEY), а при старте восстанавливает их. Так же адрес,
-//! назначенный по LSS («Store configuration»), — под
-//! [`NODE_ID_KEY`](crate::canopen::NODE_ID_KEY): при
-//! следующем старте узел берёт его вместо `node_id` из графа.
-//!
-//! Стек зовёт колбэки синхронно изнутри `Node::process`, а хранилище
-//! асинхронное: колбэк только копирует данные в буфер в RAM (он — в кадре
-//! задачи, см. [`run`](crate::canopen::run)), а пишет их узел — сразу после
-//! обработки, отправив ответы стека. Без хранилища (проект без раздела
-//! настроек) колбэков нет вовсе, и объекта `0x1010` в словаре тоже
-//! (`crates-host/canopen/build.rs`).
+//! Мастер сохраняет настроенные по шине объекты записью `save` в `0x1010`, а
+//! адрес, назначенный по LSS, — командой «Store configuration»; при старте
+//! узел их восстанавливает. Как и где лежат — подмодуль `persisted`.
 //!
 //! # Почему `zencan`
 //!
@@ -53,12 +42,15 @@
 //! * `funcan-rs` — заготовка без NMT/SDO/PDO; `oze-canopen`,
 //!   `industrial-protocols-canopen` — требуют `std`.
 
+mod frame;
+mod persisted;
+
 use core::cell::RefCell;
 use core::convert::Infallible;
 
 use defmt_or_log::{FormatOrDebug, info, warn};
 use embassy_time::{Duration, Instant};
-use embedded_can::{ExtendedId, Frame, Id, StandardId};
+use embedded_can::Frame;
 use ports::{CanBus, LinkError, SettingsStorage};
 use supervisor::runtime::TaskExit;
 use zencan_node::common::NodeId;
@@ -66,9 +58,11 @@ use zencan_node::common::messages::{CanId, CanMessage};
 use zencan_node::common::nmt::NmtState;
 use zencan_node::embedded_io::Read;
 use zencan_node::object_dict::ODEntry;
-use zencan_node::{
-    Callbacks, Node, NodeMbox, NodeState, restore_stored_comm_objects, restore_stored_objects,
-};
+use zencan_node::{Callbacks, Node, NodeMbox, NodeState};
+
+use crate::canopen::frame::{fix_save_signature, is_heartbeat, to_frame, to_message};
+
+pub use persisted::{NODE_ID_KEY, OBJECTS_KEY, Persisted, STORE_CAPACITY};
 
 /// Такт обработки: как часто узел зовёт `Node::process`, даже если кадров нет.
 ///
@@ -77,108 +71,6 @@ use zencan_node::{
 /// МК будится без дела, реже — heartbeat с периодом 100 мс уходит с
 /// ощутимым дрожанием.
 pub const TICK: Duration = Duration::from_millis(10);
-
-/// Ключ хранилища настроек, под которым лежат сохранённые объекты.
-///
-/// Ключи узла — в своей сотне (`0xC0_0000`), чтобы не пересечься с
-/// настройками проекта в том же хранилище.
-pub const OBJECTS_KEY: u32 = 0x00C0_0001;
-
-/// Ключ адреса узла, назначенного по LSS: один байт ([`NodeId::raw`]). 255 —
-/// мастер сохранил «не назначен»: узел стартует ненастроенным и ждёт адреса по
-/// LSS, как велит CiA 305, а не берёт адрес из графа.
-pub const NODE_ID_KEY: u32 = 0x00C0_0002;
-
-/// Сколько байт сохранённых объектов помещается.
-///
-/// Граница — не этот буфер, а значение хранилища настроек: у
-/// `adapters::settings` рабочий буфер на 128 байт вмещает ключ (4 байта) и
-/// значение. Постоянные объекты примера сериализуются в 43 байта; свой
-/// `device.toml` с большим числом постоянных объектов — поднимите оба числа.
-/// Не поместившееся не сохраняется (предупреждение в лог).
-///
-/// Подтверждение `save` по SDO стек отправляет раньше, чем объекты дойдут до
-/// флеша, и сообщить мастеру об отказе записи нечем: отказ — предупреждение в
-/// лог, повторит его следующий `save`.
-pub const STORE_CAPACITY: usize = 96;
-
-/// Буфер чтения хранилища: `sequential-storage` кладёт туда весь элемент —
-/// ключ (4 байта) и значение, с выравниванием по слову флеша, — и отдаёт
-/// значение срезом после ключа. Размер — как у рабочего буфера
-/// `adapters::settings`.
-const READ_SCRATCH: usize = 128;
-
-/// Сохранённые объекты и то, что колбэки стека передали узлу на запись.
-///
-/// Живёт в кадре задачи ([`run`]): колбэки — замыкания над ним, стек держит их
-/// всё время работы, и автомат получает ссылку аргументом стартового действия.
-/// Колбэки зовутся только изнутри `Node::process` той же задачи, так что
-/// `RefCell` никогда не занят дважды.
-#[derive(Debug)]
-pub struct Persisted {
-    /// Сохранённые объекты — то, что `restore_stored_objects` читает при
-    /// старте и после NMT-сброса.
-    objects: [u8; STORE_CAPACITY],
-    len: usize,
-    /// Объекты сменились и ждут записи в хранилище.
-    objects_dirty: bool,
-    /// Адрес, назначенный по LSS, ждёт записи (байт [`NodeId::raw`]).
-    node_id: Option<u8>,
-}
-
-impl Persisted {
-    /// Пустой: ничего не сохранено и ничего не ждёт записи.
-    #[must_use]
-    pub const fn new() -> Self {
-        Self {
-            objects: [0; STORE_CAPACITY],
-            len: 0,
-            objects_dirty: false,
-            node_id: None,
-        }
-    }
-
-    /// `0x1010 save`: постоянные объекты — в буфер; в хранилище их пишет узел.
-    fn store(&mut self, reader: &mut dyn Read<Error = Infallible>, size: usize) {
-        let Some(buf) = self.objects.get_mut(..size) else {
-            warn!(
-                "canopen: {} байт объектов не помещаются в {} — не сохранены",
-                size, STORE_CAPACITY
-            );
-            return;
-        };
-        let mut filled = 0;
-        while filled < size {
-            match reader.read(&mut buf[filled..]) {
-                Ok(0) => break,
-                Ok(n) => filled += n,
-                Err(never) => match never {},
-            }
-        }
-        self.len = filled;
-        self.objects_dirty = true;
-    }
-
-    /// Старт стека и NMT Reset Node: все сохранённые объекты; NMT Reset
-    /// Communication (`comms`) — только объекты связи (`0x1000..=0x1FFF`).
-    fn restore(&self, od: &[ODEntry<'_>], comms: bool) {
-        if self.len == 0 {
-            return;
-        }
-        let stored = &self.objects[..self.len];
-        if comms {
-            restore_stored_comm_objects(od, stored);
-        } else {
-            restore_stored_objects(od, stored);
-        }
-    }
-}
-
-impl Default for Persisted {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 /// Стек CANopen с тем, на чём он держится: колбэки заимствуют буфер
 /// [`Persisted`] из кадра задачи на `'f`.
@@ -271,7 +163,7 @@ where
         persisted.borrow_mut().store(reader, size);
     };
     let mut store_node_config = |node_id: NodeId| {
-        persisted.borrow_mut().node_id = Some(node_id.raw());
+        persisted.borrow_mut().store_node_id(node_id);
     };
     let mut reset_app = |od: &[ODEntry<'_>]| persisted.borrow().restore(od, false);
     let mut reset_comms = |od: &[ODEntry<'_>]| persisted.borrow().restore(od, true);
@@ -444,7 +336,7 @@ where
         }
         // После ответов: запись во флеш долгая, а мастер ждёт подтверждения
         // `save` по SDO. Хранилищу шина не нужна: `save` уже принят стеком.
-        self.persist(s.stack.persisted).await;
+        persisted::save(s.stack.persisted, self.settings).await;
     }
 
     /// Досылает кадр boot-up, на котором отказала шина.
@@ -460,79 +352,20 @@ where
     }
 
     /// Адрес узла и сохранённые объекты — из хранилища, до создания стека.
-    ///
-    /// Отказ чтения — не отказ узла: стек стартует с адресом из графа и
-    /// объектами из `device.toml`, как на новой плате.
+    /// Без хранилища (`persist` — `false`) не читает ничего.
     ///
     /// # Panics
     ///
     /// Если `node_id` во входе не 1..=127, а сохранённого адреса нет.
-    /// Без хранилища (`persist` — `false`) не читает ничего.
     async fn restore(&mut self, persisted: &RefCell<Persisted>) -> NodeId {
-        if *self.persist {
-            let mut scratch = [0; READ_SCRATCH];
-            match self.settings.read(OBJECTS_KEY, &mut scratch).await {
-                Ok(Some(stored)) => {
-                    let mut persisted = persisted.borrow_mut();
-                    if let Some(objects) = persisted.objects.get_mut(..stored.len()) {
-                        objects.copy_from_slice(stored);
-                        persisted.len = stored.len();
-                    } else {
-                        warn!(
-                            "canopen: сохранённые объекты ({} байт) больше {} — не восстановлены",
-                            stored.len(),
-                            STORE_CAPACITY
-                        );
-                    }
-                }
-                Ok(None) => {}
-                Err(err) => warn!("canopen: сохранённые объекты не прочитаны: {:?}", &err),
-            }
-            match self.settings.read(NODE_ID_KEY, &mut scratch).await {
-                Ok(Some(&[raw])) => {
-                    if let Ok(node_id) = NodeId::new(raw) {
-                        return node_id;
-                    }
-                }
-                Ok(_) => {}
-                Err(err) => warn!("canopen: сохранённый адрес не прочитан: {:?}", &err),
-            }
+        if *self.persist
+            && let Some(node_id) = persisted::load(persisted, self.settings).await
+        {
+            return node_id;
         }
         match NodeId::new(*self.node_id) {
             Ok(node_id @ NodeId::Configured(_)) => node_id,
             _ => panic!("адрес узла CANopen {} вне 1..=127", *self.node_id),
-        }
-    }
-
-    /// То, что колбэки стека передали на сохранение, — в хранилище.
-    #[expect(
-        clippy::await_holding_refcell_ref,
-        reason = "колбэки стека зовутся только из `Node::process` этой задачи, \
-                  а не во время записи"
-    )]
-    async fn persist(&mut self, persisted: &RefCell<Persisted>) {
-        let (objects, node_id) = {
-            let mut persisted = persisted.borrow_mut();
-            let len = persisted.len;
-            let objects = core::mem::take(&mut persisted.objects_dirty).then_some(len);
-            (objects, persisted.node_id.take())
-        };
-        if let Some(len) = objects {
-            let persisted = persisted.borrow();
-            match self
-                .settings
-                .write(OBJECTS_KEY, &persisted.objects[..len])
-                .await
-            {
-                Ok(()) => info!("canopen: объекты сохранены, {} байт", len),
-                Err(err) => warn!("canopen: объекты не сохранены: {:?}", &err),
-            }
-        }
-        if let Some(raw) = node_id {
-            match self.settings.write(NODE_ID_KEY, &[raw]).await {
-                Ok(()) => info!("canopen: адрес {} сохранён", raw),
-                Err(err) => warn!("canopen: адрес не сохранён: {:?}", &err),
-            }
         }
     }
 
@@ -570,66 +403,6 @@ fn drop_stale(mbox: &NodeMbox) {
 
 /// Шина отказала на отправке: остаток очереди передачи — выбросить.
 struct BusDown;
-
-/// Кадр heartbeat этого узла: `0x700 + адрес`, один байт состояния.
-fn is_heartbeat(message: &CanMessage, node_id: u8) -> bool {
-    message.id() == CanId::std(0x700 + u16::from(node_id)) && message.dlc == 1
-}
-
-/// Сигнатура `save` в SDO-записи `0x1010:01` — в том порядке байтов, которого
-/// ждёт стек.
-///
-/// CiA 301: сигнатура — ASCII `save`, в кадре байты `73 61 76 65`, то есть
-/// `u32` `0x6576_6173`. `zencan-common` 0.0.5 сравнивает с `0x7361_7665`
-/// (`SAVE_CMD`) — байты наоборот, — и `save` от стандартного мастера
-/// отвергает (`IncompatibleParameter`). Узел переставляет их до стека. Убрать,
-/// когда исправят в zencan.
-fn fix_save_signature(message: &mut CanMessage) {
-    /// Индекс `0x1010` младшим байтом первым и подындекс 1.
-    const STORE_OBJECT: [u8; 3] = [0x10, 0x10, 0x01];
-    const SAVE: [u8; 4] = *b"save";
-    let CanId::Std(id) = message.id() else {
-        return;
-    };
-    // Expedited-запись: cs 0x23 — с размером (4 байта), 0x22 — без него.
-    if (0x601..=0x67F).contains(&id)
-        && message.dlc == 8
-        && matches!(message.data[0], 0x22 | 0x23)
-        && message.data[1..4] == STORE_OBJECT
-        && message.data[4..8] == SAVE
-    {
-        message.data[4..8].reverse();
-    }
-}
-
-/// Кадр шины → сообщение стека; `None` — кадр CAN FD длиннее 8 байт, стек
-/// классический. DLC удалённого кадра стек 0.0.5 не хранит (`new_rtr`).
-fn to_message(frame: &impl Frame) -> Option<CanMessage> {
-    let id = match frame.id() {
-        Id::Standard(id) => CanId::std(id.as_raw()),
-        Id::Extended(id) => CanId::extended(id.as_raw()),
-    };
-    if frame.is_remote_frame() {
-        Some(CanMessage::new_rtr(id))
-    } else if frame.data().len() <= 8 {
-        Some(CanMessage::new(id, frame.data()))
-    } else {
-        None
-    }
-}
-
-/// Сообщение стека → кадр шины; `None` — идентификатор вне диапазона.
-fn to_frame<F: Frame>(message: &CanMessage) -> Option<F> {
-    let id: Id = match message.id() {
-        CanId::Std(id) => StandardId::new(id)?.into(),
-        CanId::Extended(id) => ExtendedId::new(id)?.into(),
-    };
-    if message.is_rtr() {
-        F::new_remote(id, usize::from(message.dlc))
-    } else {
-        F::new(id, message.data())
-    }
-}
 
 // Узел объявлен рядом со своей задачей — как `OTA_FRAG`, `MODBUS_SLAVE_FRAG`,
 // `HOST_FRAG`; в граф шаблона попадёт по выбору протокола при генерации.

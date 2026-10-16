@@ -1120,6 +1120,7 @@ if iface != "can" {
 // `pub use`, зависимости, фичи) вырезает Liquid в комментариях.
 if protocol != "modbus" {
 	file::delete("crates-host/ports/src/modbus.rs");
+	file::delete("crates-host/ports/src/modbus");
 	file::delete("crates-host/adapters/src/modbus.rs");
 	file::delete("crates-host/adapters/src/modbus");
 	file::delete("crates-host/domain/src/modbus.rs");
@@ -1135,6 +1136,7 @@ if protocol != "protobuf" {
 if protocol != "canopen" {
 	file::delete("crates-host/ports/src/can.rs");
 	file::delete("crates-host/domain/src/canopen.rs");
+	file::delete("crates-host/domain/src/canopen");
 	file::delete("crates-host/canopen");
 }
 if protocol == "none" {
@@ -1158,6 +1160,7 @@ if iface != "tcp" && iface != "udp" {
 	file::delete("crates-cross/bsp/src/net.rs");
 	file::delete("docs/modules/bsp-net.md");
 	file::delete("crates-host/adapters/src/net.rs");
+	file::delete("crates-host/adapters/src/net");
 	file::delete("crates-host/domain/src/net.rs");
 }
 

@@ -1053,6 +1053,7 @@ fn no_protocol_by_default() {
         "crates-host/canopen",
         "crates-host/ports/src/link.rs",
         "crates-host/ports/src/modbus.rs",
+        "crates-host/ports/src/modbus",
         "crates-host/ports/src/host.rs",
         "crates-host/ports/src/can.rs",
         "crates-host/adapters/src/modbus",
@@ -1062,8 +1063,10 @@ fn no_protocol_by_default() {
         "crates-host/domain/src/modbus",
         "crates-host/domain/src/host",
         "crates-host/domain/src/canopen.rs",
+        "crates-host/domain/src/canopen",
         "crates-host/domain/src/net.rs",
         "crates-host/adapters/src/net.rs",
+        "crates-host/adapters/src/net",
         "crates-cross/bsp/src/net.rs",
         "docs/modules/bsp-net.md",
         "crates-cross/bsp/src/usb.rs",
@@ -1113,6 +1116,7 @@ fn protocol_over_uart_keeps_the_serial_module() {
             ("crates-host/adapters/src/cobs.rs", protocol == "protobuf"),
             ("crates-host/domain/src/modbus.rs", protocol == "modbus"),
             ("crates-host/ports/src/modbus.rs", protocol == "modbus"),
+            ("crates-host/ports/src/modbus", protocol == "modbus"),
             ("crates-host/ports/src/link.rs", true),
             ("crates-host/canopen", false),
             ("crates-host/ports/src/can.rs", false),
@@ -1139,7 +1143,12 @@ fn canopen_picks_the_can_controller_of_the_chip() {
             Some(kind),
             "{chip}"
         );
-        for kept in ["crates-cross/bsp/src/can.rs", "crates-host/canopen"] {
+        for kept in [
+            "crates-cross/bsp/src/can.rs",
+            "crates-host/canopen",
+            "crates-host/domain/src/canopen.rs",
+            "crates-host/domain/src/canopen",
+        ] {
             assert!(
                 !result.deleted.iter().any(|path| path == kept),
                 "{chip}: {kept} удалён"
@@ -1162,8 +1171,10 @@ fn protocol_over_network_keeps_the_net_stack() {
         for kept in [
             "crates-cross/bsp/src/net.rs",
             "crates-host/adapters/src/net.rs",
+            "crates-host/adapters/src/net",
             "crates-host/domain/src/net.rs",
             "crates-host/domain/src/modbus.rs",
+            "crates-host/ports/src/modbus",
         ] {
             assert!(
                 !result.deleted.iter().any(|path| path == kept),
