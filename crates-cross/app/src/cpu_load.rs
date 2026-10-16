@@ -11,11 +11,15 @@ static SLEEP_TICKS: SleepTicks = SleepTicks::new(0);
 
 /// Записать, сколько тиков цикл исполнителя проспал в `WFE`.
 ///
-/// Счётчик монотонный, и переполнение в `fetch_add` — единственное, чего тут
-/// не бывает: перемотался бы `u64` тиков, а это сотни лет при любой частоте,
-/// на которой плата вообще работает.
+/// Счётчик 32-битный и перематывается штатно: `fetch_add` складывает по
+/// модулю 2³², и усечение `delta_ticks` — то же сложение по модулю. Узел
+/// `CPU_LOAD` считает прирост между снимками так же (`domain::cpu_load`).
 pub fn record_sleep_ticks(delta_ticks: u64) {
-    SLEEP_TICKS.fetch_add(delta_ticks, Ordering::Relaxed);
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "счётчик по модулю 2³²: усечение и есть сложение по модулю"
+    )]
+    SLEEP_TICKS.fetch_add(delta_ticks as u32, Ordering::Relaxed);
 }
 
 /// Счётчик, который читает узел `CPU_LOAD`.

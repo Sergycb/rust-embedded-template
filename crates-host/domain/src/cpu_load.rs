@@ -37,7 +37,7 @@ use core::sync::atomic::Ordering;
 
 use defmt_or_log::info;
 use embassy_time::{Duration, Instant, Timer};
-use portable_atomic::AtomicU64;
+use portable_atomic::AtomicU32;
 use supervisor::policy::{BackoffPolicy, JitterPolicy};
 use supervisor::runtime::TaskExit;
 
@@ -95,9 +95,17 @@ const _: () = assert!(
 /// на стендовом стенде разные частоты дают разные числа при одной и той же
 /// загрузке, и это не расходится, это разные единицы.
 ///
-/// Не [`core::sync::atomic::AtomicU64`] потому, что на Cortex-M0/M0+ его нет
-/// вовсе, а [`portable_atomic`] — ровно про это (см. `docs/conventions.md`).
-pub type SleepTicks = AtomicU64;
+/// 32 бита, а не 64: 64-битных атомиков у Cortex-M нет, и `AtomicU64` там —
+/// эмуляция `portable-atomic` с глобальной таблицей блокировок (два килобайта
+/// оперативной памяти на M4/M7). Счётчику хватает и 32: загрузку дают не его значения, а прирост
+/// между двумя снимками, и он считается по модулю 2³² ([`load::CpuLoad`]) —
+/// верно, пока между снимками меньше 2³² тиков (71 минута при тике 1 мегагерц,
+/// а снимок — раз в полсекунды).
+///
+/// Не [`core::sync::atomic::AtomicU32`] потому, что на Cortex-M0/M0+ у него
+/// нет `fetch_add` (нет CAS), а [`portable_atomic`] — ровно про это (см.
+/// `docs/conventions.md`).
+pub type SleepTicks = AtomicU32;
 
 // Вход узла — `IdleMeter`: структуру эмитит сам фрагмент (`boot: …
 // struct`). Собирает её compose-site из того, что знает

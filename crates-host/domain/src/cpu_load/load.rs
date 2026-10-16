@@ -22,10 +22,10 @@ pub struct Sample {
     /// Все тики с момента старта — `embassy_time::Instant::as_ticks`.
     pub total_ticks: u64,
 
-    /// Сколько из них исполнитель проспал. Счётчик ведёт цикл в
-    /// `crates-cross/app/src/main.rs`, а его тип объявлен здесь
+    /// Сколько из них исполнитель проспал — по модулю 2³². Счётчик ведёт
+    /// цикл в `crates-cross/app/src/main.rs`, а его тип объявлен рядом
     /// ([`crate::cpu_load::SleepTicks`]).
-    pub sleep_ticks: u64,
+    pub sleep_ticks: u32,
 }
 
 /// Держатель предыдущего снимка: без него нечем посчитать прирост.
@@ -52,13 +52,13 @@ impl CpuLoad {
     /// загрузка. Публиковать ноль там, где значения ещё нет, — значит врать.
     pub fn sample(&mut self, sample: Sample) -> Option<u8> {
         let previous = self.previous.replace(sample)?;
-        // Насыщающие вычитания — не паранойя, а формат счётчиков: оба
-        // могут перемотаться (u64 тиков это сотни лет, но «сотни лет» здесь
-        // значит «перемотается на стендовом прогоне с вывернутым временем»),
-        // и молчаливое переполнение отдало бы процент, посчитанный от
-        // мусора.
+        // Общее время — насыщающим вычитанием: u64 тиков не перематывается
+        // (сотни лет), и ушедшее назад время — мусор, а не переполнение.
+        // Счётчик сна — 32-битный и перематывается штатно, поэтому его
+        // прирост — по модулю 2³²: верен, пока между снимками меньше 2³²
+        // тиков.
         let total = sample.total_ticks.saturating_sub(previous.total_ticks);
-        let sleep = sample.sleep_ticks.saturating_sub(previous.sleep_ticks);
+        let sleep = u64::from(sample.sleep_ticks.wrapping_sub(previous.sleep_ticks));
         if total == 0 {
             // Два снимка подряд с одним и тем же общим временем: интервал
             // выродился в ноль, делить не на что. Ноль — честное «загрузки
@@ -82,7 +82,7 @@ impl CpuLoad {
 mod tests {
     use super::{CpuLoad, Sample};
 
-    fn sample(total_ticks: u64, sleep_ticks: u64) -> Sample {
+    fn sample(total_ticks: u64, sleep_ticks: u32) -> Sample {
         Sample {
             total_ticks,
             sleep_ticks,
@@ -149,17 +149,22 @@ mod tests {
         assert_eq!(load.sample(sample(2_000, 5_000)), Some(0));
     }
 
-    /// Счётчик, ушедший назад (или перемотанный), не должен ронять вычитание
-    /// в минус: из мусора вышел бы процент в сотни миллионов.
+    /// Общее время, ушедшее назад, не должно ронять вычитание в минус: из
+    /// мусора вышел бы процент в сотни миллионов.
     #[test]
-    fn a_counter_that_went_backwards_saturates_instead_of_wrapping() {
+    fn a_clock_that_went_backwards_saturates_instead_of_wrapping() {
         let mut load = CpuLoad::new();
-        // Общее время ушло назад — прирост выродился в ноль.
         load.sample(sample(u64::MAX - 500, 0));
         assert_eq!(load.sample(sample(400, 0)), Some(0));
-        // Ушёл назад счётчик сна: всё, что осталось в приросте общего,
-        // считается работой, а не отрицательным сном.
-        load.sample(sample(0, u64::MAX));
-        assert_eq!(load.sample(sample(1_000, 0)), Some(100));
+    }
+
+    /// 32-битный счётчик сна перематывается штатно: прирост через ноль
+    /// считается по модулю 2³², а не как отрицательный сон.
+    #[test]
+    fn the_sleep_counter_wraps_around() {
+        let mut load = CpuLoad::new();
+        load.sample(sample(0, u32::MAX - 99));
+        // Проспали 500 из 1000: 100 тиков до перемотки и 400 после.
+        assert_eq!(load.sample(sample(1_000, 400)), Some(50));
     }
 }
