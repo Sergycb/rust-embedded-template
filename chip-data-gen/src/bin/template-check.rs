@@ -157,6 +157,19 @@ fn default_cases() -> Vec<Case> {
         // который в остальных конфигурациях удаляется.
         Case::new("stm32g474re").variant("canopen-fdcan", &["protocol=canopen", "interface=can"]),
         Case::new("stm32f407ve").variant("canopen-bxcan", &["protocol=canopen", "interface=can"]),
+        // CANopen с разделом настроек: объекты по `save` и адрес по LSS — в
+        // `board.settings` (`domain::canopen`), колбэки стека — `StaticCell`
+        // в графе.
+        Case::new("stm32g474re").variant(
+            "canopen-config",
+            &["protocol=canopen", "interface=can", "config=internal"],
+        ),
+        // То же над заглушкой внешней флеши (`config=external`): у её ошибки
+        // свой `defmt::Format`.
+        Case::new("stm32f407ve").variant(
+            "canopen-config-external",
+            &["protocol=canopen", "interface=can", "config=external"],
+        ),
         // Протоколы по сети: стек `embassy-net` над заглушкой устройства, узел
         // NET в графе и сокет из `adapters::net`. Modbus TCP — на H7 (Ethernet
         // v2), protobuf UDP — на F4 (Ethernet v1).

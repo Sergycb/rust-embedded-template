@@ -20,7 +20,8 @@ revision_number = 1
 num_rpdo = 1
 num_tpdo = 1
 
-# Уставка, которую хост пишет по SDO или RPDO.
+# Уставка, которую хост пишет по SDO или RPDO. `persist` — переживает
+# перезагрузку: сохраняется командой `save` в 0x1010 (`domain::canopen`).
 [[objects]]
 index = 0x2000
 parameter_name = "Setpoint"
@@ -29,6 +30,7 @@ data_type = "UInt16"
 access_type = "rw"
 default_value = 0
 pdo_mapping = "rpdo"
+persist = true
 
 # Измерение, которое устройство отдаёт по SDO или TPDO.
 [[objects]]

@@ -137,6 +137,31 @@ impl<F: NorFlash> Settings<F> {
     }
 }
 
+/// Хранилища нет — у проекта нет раздела настроек.
+///
+/// Для узлов, которым хранилище нужно по сигнатуре, но не обязательно для
+/// работы (`domain::canopen` без раздела настроек сохранять не берётся):
+/// читается пустым, а запись отвечает успехом и данные не хранит — узлу,
+/// который всё же в неё пишет, она не годится.
+#[derive(Debug, Default)]
+pub struct Unavailable;
+
+impl ports::SettingsStorage for Unavailable {
+    type Error = core::convert::Infallible;
+
+    fn read<'a>(
+        &mut self,
+        _: Key,
+        _: &'a mut [u8],
+    ) -> impl Future<Output = Result<Option<&'a [u8]>, Self::Error>> {
+        core::future::ready(Ok(None))
+    }
+
+    fn write(&mut self, _: Key, _: &[u8]) -> impl Future<Output = Result<(), Self::Error>> {
+        core::future::ready(Ok(()))
+    }
+}
+
 /// Порт домена. Собственных `read`/`write` у `Settings` нет намеренно: они
 /// перекрыли бы трейтовые при вызове, и приложение работало бы с конкретным
 /// типом мимо порта.
