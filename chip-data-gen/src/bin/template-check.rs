@@ -630,6 +630,8 @@ fn check_snippets_compile(project: &Path, cargo_target_dir: &Path) -> anyhow::Re
     // экономия: макрос объявляет `split_resources` через `#[macro_export]`, то
     // есть кладёт его в корень крейта — двух вызовов в одном крейте не бывает
     // (`error[E0428]: the name split_resources is defined multiple times`).
+    // По той же причине она встаёт не рядом с `bind_interrupts!`, а на место
+    // `resources.rs` — туда, куда группу переносит человек.
     // Блок выбирается с подчёркиванием в имени, если такой есть: именно на нём
     // ловится имя структуры ресурсов (`USB_OTG_FS` давал
     // `Usb_otg_fsResources`, который не проходит `non_camel_case_types`).
@@ -639,6 +641,7 @@ fn check_snippets_compile(project: &Path, cargo_target_dir: &Path) -> anyhow::Re
         .unwrap_or(&blocks[0])
         .clone();
 
+    let mut resources = String::new();
     let mut module = String::from(
         "//! Временный модуль: сюда `template-check` складывает заготовки из\n\
          //! `cargo xtask pins <БЛОК> --snippet` и компилирует их. В проекте\n\
@@ -663,20 +666,22 @@ fn check_snippets_compile(project: &Path, cargo_target_dir: &Path) -> anyhow::Re
             ));
         }
         if *block == with_resources {
-            let resources = part_of(&snippet, "assign_resources!");
+            resources = part_of(&snippet, "assign_resources!");
             anyhow::ensure!(
                 !resources.is_empty(),
                 "в заготовке для {block} нет половины assign_resources! — разбор разошёлся с \
                  форматом вывода chip-info",
             );
-            module.push_str(&format!("mod resources {{\n{}\n}}\n\n", indent(&resources)));
         }
     }
 
     let bsp = project.join("crates-cross").join("bsp").join("src");
     let module_path = bsp.join("snippet_check.rs");
     let lib_path = bsp.join("lib.rs");
+    let resources_path = bsp.join("resources.rs");
     let lib = fs::read_to_string(&lib_path)?;
+    let original_resources = fs::read_to_string(&resources_path)?;
+    fs::write(&resources_path, format!("{resources}\n"))?;
     fs::write(&module_path, &module)?;
     fs::write(&lib_path, format!("{lib}\nmod snippet_check;\n"))?;
 
@@ -693,7 +698,15 @@ fn check_snippets_compile(project: &Path, cargo_target_dir: &Path) -> anyhow::Re
     // занят, права), сообщение об этом вытеснило бы настоящую причину —
     // «заготовка не компилируется», — ради которой прогон и затевался.
     // Сначала главное, потом уборка.
-    let restored = fs::write(&lib_path, lib).and_then(|()| fs::remove_file(&module_path));
+    // Каждый файл — независимо: сорвись `lib.rs`, `resources.rs` всё равно
+    // должен вернуться, иначе следующие проверки идут на чужой распиновке.
+    let restored = [
+        fs::write(&lib_path, lib),
+        fs::write(&resources_path, original_resources),
+        fs::remove_file(&module_path),
+    ]
+    .into_iter()
+    .collect::<std::io::Result<()>>();
 
     checked.context(
         "заготовка из `cargo xtask pins --snippet` не компилируется — её вставляют в проект как \

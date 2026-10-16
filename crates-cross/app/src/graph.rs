@@ -15,7 +15,7 @@
 {%- if graph == "true" %}
 use defmt::{info, warn};
 {%- if protocol == "protobuf" %}
-use static_cell::StaticCell;
+use static_cell::ConstStaticCell;
 {%- endif %}
 use supervisor::{Duration, Liveness, supervisor_graph};
 {%- if protocol == "modbus" %}
@@ -37,6 +37,20 @@ type HostLink = {% if interface == "udp" %}::adapters::net::UdpLink{% else %}::a
 /// Схема с сообщениями длиннее — меняйте здесь; узел предупредит при старте,
 /// если самый длинный ответ схемы не помещается.
 const HOST_MESSAGE: usize = 256;
+
+// Буферы узла `HOST`{% if interface != "udp" %}: приёму нужно место ещё под CRC (`rx_len`), кадру
+// передачи — под худший случай COBS (`tx_len`){% endif %}. `ConstStaticCell`, а не
+// `StaticCell`: значения известны при компиляции и лежат в `.bss`, а не
+// собираются на стеке при старте.
+{%- if interface == "udp" %}
+static HOST_RX: ConstStaticCell<[u8; HOST_MESSAGE]> = ConstStaticCell::new([0; HOST_MESSAGE]);
+{%- else %}
+static HOST_FRAME: ConstStaticCell<[u8; HostLink::tx_len(HOST_MESSAGE)]> =
+    ConstStaticCell::new([0; HostLink::tx_len(HOST_MESSAGE)]);
+static HOST_RX: ConstStaticCell<[u8; HostLink::rx_len(HOST_MESSAGE)]> =
+    ConstStaticCell::new([0; HostLink::rx_len(HOST_MESSAGE)]);
+{%- endif %}
+static HOST_TX: ConstStaticCell<[u8; HOST_MESSAGE]> = ConstStaticCell::new([0; HOST_MESSAGE]);
 {%- endif %}
 
 /// Как часто тикер графа опрашивает сторожей узлов и кормит железо.
@@ -89,76 +103,118 @@ supervisor_graph! {
 
     watchdog: bsp::wdg::BoardWatchdog = board.watchdog.arm(),
         check_every: WATCHDOG_CHECK_EVERY, observe: report_liveness;
+
+    fragments: [
+        ::domain::HEARTBEAT_FRAG as HEARTBEAT,
+
+        // Узел `CPU_LOAD` меряет загрузку процессора. Вход — счётчик тиков сна,
+        // который ведёт ручной цикл исполнителя в `main.rs` (docs/modules/
+        // app-cpu-load.md); всё, что нужно фрагменту, — ссылка на него: тип
+        // входа объявляет подсистема (`domain::cpu_load::IdleMeter`), а
+        // значение собирает приложение.
+        //
+        // Подписчика в шаблоне нет: слот `PERCENT` объявлен явно, единицей, и
+        // первым его занимает тот, кто первым позовёт
+        // `cpu_load_percent_receiver()`. Само значение в лог не идёт — читатель
+        // должен быть, иначе процент некуда девать.
+        ::domain::CPU_LOAD_FRAG as CPU_LOAD = ::domain::cpu_load::IdleMeter {
+            sleep_ticks: crate::cpu_load::sleep_ticks(),
+        },
 {%- if ota == "true" %}
 
-    // Фрагмент OTA — с параметрами и своей `boot:`-привязкой. Параметры
-    // (`<Link, Updater>`) — типы двух его слотов: слот — `static`, тип ему
-    // нужен, а знает его только эта сторона; подставили свой транспорт вместо
-    // заглушки — меняйте первый аргумент. Привязка (`= …`) — вход узла
-    // (`domain::ota::OtaWiring`), разложенный из поля платы `board.ota`, и режим
-    // применения (`Mode::{% if signed == "true" %}Signed` с версией этого образа из
-    // `crate::image`{% else %}Plain`{% endif %}): `bsp`
-    // про `domain` не знает, поэтому раскладка здесь. Вычисляется она в
-    // прологе `spawn_all` первой строкой — раньше инициализатора блока
-    // `watchdog:`, как бы они ни стояли в тексте, — частичным move: `ota`
-    // уезжает в слоты узла, `watchdog` следом забирает сторож, остаток
-    // `board` дропается в конце пролога.
+        // Фрагмент OTA — с параметрами и своей привязкой. Параметры
+        // (`<Link, Updater>`) — типы двух его слотов: слот — `static`, тип ему
+        // нужен, а знает его только эта сторона; подставили свой транспорт
+        // вместо заглушки — меняйте первый аргумент. Привязка (`= …`) — вход
+        // узла (`domain::ota::OtaWiring`), разложенный из поля платы
+        // `board.ota`, и режим применения (`Mode::{% if signed == "true" %}Signed` с версией этого образа
+        // из `crate::image`{% else %}Plain`{% endif %}): `bsp` про `domain` не знает, поэтому
+        // раскладка здесь. Вычисляется она в прологе `spawn_all` первой
+        // строкой — раньше инициализатора блока `watchdog:`, как бы они ни
+        // стояли в тексте, — частичным move: `ota` уезжает в слоты узла,
+        // `watchdog` следом забирает сторож, остаток `board` дропается в конце
+        // пролога.
+        ::domain::OTA_FRAG<bsp::ota::Link, bsp::ota::Updater> as OTA = ::domain::ota::OtaWiring {
+            link: board.ota.link,
+            flash: board.ota.flash,
+{%- if signed == "true" %}
+            mode: ::domain::ota::Mode::Signed {
+                running_version: crate::image::FW_VERSION,
+            },
+{%- else %}
+            mode: ::domain::ota::Mode::Plain,
 {%- endif %}
-{%- if protocol == "modbus" %}
-
-    // Узел `MODBUS` — Modbus slave поверх {% if interface == "uart" %}UART{% elsif interface == "tcp" %}TCP{% elsif interface == "usb" %}USB CDC{% else %}UDP{% endif %} платы: транспорт `ModbusLink`
-    // вокруг `{% if interface == "uart" %}board.serial{% elsif interface == "tcp" %}board.net.tcp{% elsif interface == "usb" %}board.usb.cdc{% else %}board.net.udp{% endif %}` ({% if interface == "uart" %}заглушка, пока проект не подставит свой UART —
-    // docs/modules/bsp-serial.md{% elsif interface == "usb" %}поток CDC над заглушкой драйвера, пока проект не
-    // подставит свой USB — docs/modules/bsp-usb.md{% else %}сокет стека над заглушкой устройства, пока проект не подставит
-    // Ethernet — docs/modules/bsp-net.md{% endif %}) и карта регистров
-    // `domain::modbus::Registers` — пустая, её проект описывает в `domain`.
-    // Адрес slave'а — `unit`{% if interface == "tcp" or interface == "udp" %}: по сети устройство адресуется по IP, и slave
-    // отвечает на любой адрес в MBAP{% endif %}.
-{%- elsif protocol == "canopen" %}
-
-    // Узел `CANOPEN` — узел CANopen (стек `zencan`) на шине CAN платы:
-    // `board.can` (заглушка, пока проект не подставит свой контроллер —
-    // docs/modules/bsp-can.md) и словарь объектов из `crates-host/canopen`
-    // (`device.toml`). Адрес узла в сети — `node_id`, 1..=127.{% if config == "true" %} Хранилище —
-    // `board.settings`: в нём узел сохраняет объекты по команде `save` и адрес,
-    // назначенный по LSS (ключи `domain::canopen::{OBJECTS_KEY, NODE_ID_KEY}`).{% else %} Раздела
-    // настроек нет — объекты и адрес не сохраняются.{% endif %}
-{%- elsif protocol == "protobuf" %}
-
-    // Узел `HOST` — сообщения protobuf от хоста поверх {% if interface == "uart" %}UART{% elsif interface == "tcp" %}TCP{% elsif interface == "usb" %}USB CDC{% else %}UDP{% endif %} платы: канал
-    // `HostLink` вокруг `{% if interface == "uart" %}board.serial{% elsif interface == "tcp" %}board.net.tcp{% elsif interface == "usb" %}board.usb.cdc{% else %}board.net.udp{% endif %}` ({% if interface == "uart" %}заглушка, пока проект не подставит свой
-    // UART — docs/modules/bsp-serial.md{% elsif interface == "usb" %}поток CDC над заглушкой драйвера, пока
-    // проект не подставит свой USB — docs/modules/bsp-usb.md{% else %}сокет стека над заглушкой устройства, пока проект не
-    // подставит Ethernet — docs/modules/bsp-net.md{% endif %}) и обработчик `domain::host::Service` над
-    // схемой `crates-host/proto`. Буферы — на `HOST_MESSAGE` байт{% if interface != "udp" %}: приёму нужно
-    // ещё место под CRC (`rx_len`), кадру передачи — под худший случай COBS
-    // (`tx_len`){% endif %}.
+        },
 {%- endif %}
 {%- if interface == "usb" %}
 
-    // Узел `USB` — фоновая работа устройства `embassy-usb` (`domain::usb`) над
-    // драйвером платы `bsp::usb::UsbDriver`: без него хост не видит
-    // устройства, а поток CDC — ни одного пакета.
+        // Узел `USB` — фоновая работа устройства `embassy-usb` (`domain::usb`) над
+        // драйвером платы `bsp::usb::UsbDriver`: без него хост не видит
+        // устройства, а поток CDC — ни одного пакета.
+        ::domain::USB_FRAG<::domain::usb::UsbDevice<'static, bsp::usb::UsbDriver>> as USB =
+            ::domain::usb::UsbWiring { device: board.usb.device },
 {%- endif %}
 {%- if interface == "tcp" or interface == "udp" %}
 
-    // Узел `NET` — фоновая работа стека `embassy-net` (`domain::net`) над
-    // устройством платы `bsp::net::Device`: без него сокеты протокола не
-    // получают ни одного пакета.
+        // Узел `NET` — фоновая работа стека `embassy-net` (`domain::net`) над
+        // устройством платы `bsp::net::Device`: без него сокеты протокола не
+        // получают ни одного пакета.
+        ::domain::NET_FRAG<::domain::net::Runner<'static, bsp::net::Device>> as NET =
+            ::domain::net::NetWiring { runner: board.net.runner },
 {%- endif %}
-    fragments: [::domain::HEARTBEAT_FRAG as HEARTBEAT,
-    //
-    // Узел `CPU_LOAD` меряет загрузку процессора. Вход — счётчик тиков сна,
-    // который ведёт ручной цикл исполнителя в `main.rs` (docs/modules/
-    // app-cpu-load.md); всё, что нужно фрагменту, — ссылка на него, поэтому
-    // привязка такая же, как у узла OTA: тип входа объявляет подсистема
-    // (`domain::cpu_load::IdleMeter`), а значение собирает приложение.
-    //
-    // Подписчика в шаблоне нет: слот `PERCENT` объявлен явно, единицей, и
-    // первым его занимает тот, кто первым позовёт
-    // `cpu_load_percent_receiver()`. Само значение в лог не идёт — читатель
-    // должен быть, иначе процент некуда девать.
-    ::domain::CPU_LOAD_FRAG as CPU_LOAD = ::domain::cpu_load::IdleMeter { sleep_ticks: crate::cpu_load::sleep_ticks() }{% if ota == "true" %}, ::domain::OTA_FRAG<bsp::ota::Link, bsp::ota::Updater> as OTA = ::domain::ota::OtaWiring { link: board.ota.link, flash: board.ota.flash, mode: {% if signed == "true" %}::domain::ota::Mode::Signed { running_version: crate::image::FW_VERSION }{% else %}::domain::ota::Mode::Plain{% endif %} }{% endif %}{% if interface == "usb" %}, ::domain::USB_FRAG<::domain::usb::UsbDevice<'static, bsp::usb::UsbDriver>> as USB = ::domain::usb::UsbWiring { device: board.usb.device }{% endif %}{% if interface == "tcp" or interface == "udp" %}, ::domain::NET_FRAG<::domain::net::Runner<'static, bsp::net::Device>> as NET = ::domain::net::NetWiring { runner: board.net.runner }{% endif %}{% if protocol == "modbus" %}, ::domain::MODBUS_SLAVE_FRAG<ModbusLink, ::domain::modbus::Registers> as MODBUS = ::domain::modbus::ModbusSlaveWiring { link: ModbusLink::new({% if interface == "uart" %}board.serial{% elsif interface == "tcp" %}board.net.tcp{% elsif interface == "usb" %}board.usb.cdc{% else %}board.net.udp{% endif %}), regs: ::domain::modbus::Registers, unit: 1 }{% elsif protocol == "canopen" %}, ::domain::CANOPEN_FRAG<bsp::can::Can, {% if config == "true" %}bsp::config::Settings{% else %}::adapters::settings::Unavailable{% endif %}> as CANOPEN = ::domain::canopen::CanOpenWiring { bus: board.can, node_id: 1, dictionary: ::domain::canopen::dictionary(), settings: {% if config == "true" %}board.settings{% else %}::adapters::settings::Unavailable{% endif %}, persist: {{config}} }{% elsif protocol == "protobuf" %}, ::domain::HOST_FRAG<HostLink, ::domain::host::Service> as HOST = ::domain::host::HostWiring { link: {% if interface == "udp" %}board.net.udp{% else %}HostLink::new({% if interface == "uart" %}board.serial{% elsif interface == "tcp" %}board.net.tcp{% elsif interface == "usb" %}board.usb.cdc{% else %}board.net.udp{% endif %}, { static FRAME: StaticCell<[u8; HostLink::tx_len(HOST_MESSAGE)]> = StaticCell::new(); FRAME.init([0; HostLink::tx_len(HOST_MESSAGE)]) }){% endif %}, service: ::domain::host::Service::new(crate::build::PKG_VERSION), rx: { static RX: StaticCell<[u8; {% if interface == "udp" %}HOST_MESSAGE{% else %}HostLink::rx_len(HOST_MESSAGE){% endif %}]> = StaticCell::new(); RX.init([0; {% if interface == "udp" %}HOST_MESSAGE{% else %}HostLink::rx_len(HOST_MESSAGE){% endif %}]) }, tx: { static TX: StaticCell<[u8; HOST_MESSAGE]> = StaticCell::new(); TX.init([0; HOST_MESSAGE]) } }{% endif %}];
+{%- if protocol == "modbus" %}
+
+        // Узел `MODBUS` — Modbus slave поверх {% if interface == "uart" %}UART{% elsif interface == "tcp" %}TCP{% elsif interface == "usb" %}USB CDC{% else %}UDP{% endif %} платы: транспорт `ModbusLink`
+        // вокруг `{% if interface == "uart" %}board.serial{% elsif interface == "tcp" %}board.net.tcp{% elsif interface == "usb" %}board.usb.cdc{% else %}board.net.udp{% endif %}` ({% if interface == "uart" %}заглушка, пока проект не подставит свой UART —
+        // docs/modules/bsp-serial.md{% elsif interface == "usb" %}поток CDC над заглушкой драйвера, пока проект не
+        // подставит свой USB — docs/modules/bsp-usb.md{% else %}сокет стека над заглушкой устройства, пока проект не подставит
+        // Ethernet — docs/modules/bsp-net.md{% endif %}) и карта регистров
+        // `domain::modbus::Registers` — пустая, её проект описывает в `domain`.
+        // Адрес slave'а — `unit`{% if interface == "tcp" or interface == "udp" %}: по сети устройство адресуется по IP, и slave
+        // отвечает на любой адрес в MBAP{% endif %}.
+        ::domain::MODBUS_SLAVE_FRAG<ModbusLink, ::domain::modbus::Registers> as MODBUS =
+            ::domain::modbus::ModbusSlaveWiring {
+                link: ModbusLink::new({% if interface == "uart" %}board.serial{% elsif interface == "tcp" %}board.net.tcp{% elsif interface == "usb" %}board.usb.cdc{% else %}board.net.udp{% endif %}),
+                regs: ::domain::modbus::Registers,
+                unit: 1,
+            },
+{%- elsif protocol == "canopen" %}
+
+        // Узел `CANOPEN` — узел CANopen (стек `zencan`) на шине CAN платы:
+        // `board.can` (заглушка, пока проект не подставит свой контроллер —
+        // docs/modules/bsp-can.md) и словарь объектов из `crates-host/canopen`
+        // (`device.toml`). Адрес узла в сети — `node_id`, 1..=127.{% if config == "true" %} Хранилище —
+        // `board.settings`: в нём узел сохраняет объекты по команде `save` и адрес,
+        // назначенный по LSS (ключи `domain::canopen::{OBJECTS_KEY, NODE_ID_KEY}`).{% else %} Раздела
+        // настроек нет — объекты и адрес не сохраняются.{% endif %}
+        ::domain::CANOPEN_FRAG<bsp::can::Can, {% if config == "true" %}bsp::config::Settings{% else %}::adapters::settings::Unavailable{% endif %}> as CANOPEN =
+            ::domain::canopen::CanOpenWiring {
+                bus: board.can,
+                node_id: 1,
+                dictionary: ::domain::canopen::dictionary(),
+                settings: {% if config == "true" %}board.settings{% else %}::adapters::settings::Unavailable{% endif %},
+                persist: {{config}},
+            },
+{%- elsif protocol == "protobuf" %}
+
+        // Узел `HOST` — сообщения protobuf от хоста поверх {% if interface == "uart" %}UART{% elsif interface == "tcp" %}TCP{% elsif interface == "usb" %}USB CDC{% else %}UDP{% endif %} платы: канал
+        // `HostLink` вокруг `{% if interface == "uart" %}board.serial{% elsif interface == "tcp" %}board.net.tcp{% elsif interface == "usb" %}board.usb.cdc{% else %}board.net.udp{% endif %}` ({% if interface == "uart" %}заглушка, пока проект не подставит свой
+        // UART — docs/modules/bsp-serial.md{% elsif interface == "usb" %}поток CDC над заглушкой драйвера, пока
+        // проект не подставит свой USB — docs/modules/bsp-usb.md{% else %}сокет стека над заглушкой устройства, пока проект не
+        // подставит Ethernet — docs/modules/bsp-net.md{% endif %}) и обработчик `domain::host::Service` над
+        // схемой `crates-host/proto`. Буферы — статики `HOST_*` выше.
+        ::domain::HOST_FRAG<HostLink, ::domain::host::Service> as HOST = ::domain::host::HostWiring {
+{%- if interface == "udp" %}
+            link: board.net.udp,
+{%- else %}
+            link: HostLink::new({% if interface == "uart" %}board.serial{% elsif interface == "tcp" %}board.net.tcp{% elsif interface == "usb" %}board.usb.cdc{% else %}board.net.udp{% endif %}, HOST_FRAME.take()),
+{%- endif %}
+            service: ::domain::host::Service::new(crate::build::PKG_VERSION),
+            rx: HOST_RX.take(),
+            tx: HOST_TX.take(),
+        },
+{%- endif %}
+    ];
 }
 
 /// Куда уходит просрочка наблюдаемого узла.

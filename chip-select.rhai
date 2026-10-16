@@ -627,7 +627,7 @@ if variable::is_set("write_size") {
     // кратен max(странице чипа, 4 KiB); иначе `assert_partitions` паникует.
     variable::set("ext_page_size", "4_096");
     if wants_ota && wants_ext_ota {
-        print("ota=external: страница обмена EXT_PAGE_SIZE в crates-cross/boot/src/main.rs — 4 KiB;");
+        print("ota=external: страница обмена EXT_PAGE_SIZE в crates-cross/boot/src/external.rs — 4 KiB;");
         print("  впишите max(сектор чипа, стирание драйвера) и сделайте ACTIVE кратным ей");
     }
     // Раздел приложения здесь задаёт человек, значит и помещается ли в него
@@ -1168,4 +1168,19 @@ if iface != "tcp" && iface != "udp" {
 // него `bsp::external` не объявлен, и файл остался бы мусором с Liquid внутри.
 if variable::get("ota") != "true" || variable::get("ota_store") != "external" {
 	file::delete("crates-cross/bsp/src/external.rs");
+}
+
+// Подмодули bootloader'а под ответы — по той же причине: `mod` в
+// `crates-cross/boot/src/main.rs` закрыт тем же `{% if %}`, а файл с Liquid
+// остался бы мусором. Без OTA каталога `boot` нет вовсе.
+if variable::get("ota") == "true" {
+	if variable::get("ota_store") != "external" {
+		file::delete("crates-cross/boot/src/external.rs");
+	}
+	if variable::get("graph") != "true" {
+		file::delete("crates-cross/boot/src/fed.rs");
+	}
+	if variable::get("signed") != "true" {
+		file::delete("crates-cross/boot/src/signature.rs");
+	}
 }

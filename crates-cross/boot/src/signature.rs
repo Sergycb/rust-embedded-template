@@ -1,0 +1,158 @@
+//! Проверка подписи нового образа до обмена разделов.
+
+use core::cell::RefCell;
+{% if ota_store != "external" %}
+use adapters::flash::{Paged, Shared};
+{%- endif %}
+use defmt::info;
+use embassy_boot_stm32::BootLoaderConfig;
+{%- if dfu_bank != "true" %}
+use embassy_stm32::flash::{Blocking, Flash};
+{%- endif %}
+use embassy_sync::blocking_mutex::Mutex;
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+{% if ota_store == "external" %}
+use crate::external::ExternalFlash;
+{%- elsif dfu_bank == "true" %}
+use crate::{Bank1, Bank2, STATE_ERASE_SIZE};
+{%- else %}
+use crate::STATE_ERASE_SIZE;
+{%- endif %}
+
+/// Проверяет новый образ в `DFU`, если обмен запрошен, и возвращает флеш
+/// дальше — в обмен и прыжок.
+///
+/// Проверка подписи живёт здесь, а не в приложении: ключ зашит в bootloader,
+/// который обновлением не перезаписывается, и проверяется именно то, что
+/// сейчас станет `ACTIVE`, — ни ошибка в OTA-коде приложения, ни запись в
+/// `DFU` в обход него не приведут к запуску неподписанного образа. Решает
+/// `adapters::ota::screen_update` (там же — почему проверяется только новый
+/// запрос, а откат нет); отказ снимает запрос на обмен, и загружается прежний
+/// образ. О неудаче отправитель узнаёт по тому, что версия после перезагрузки
+/// не сменилась.
+///
+/// Свой мьютекс над `Flash`, а не тот, что дальше: сторож в release
+/// запускается в `main` после этой проверки, и закончиться она обязана раньше.
+///
+/// Причина отказа печатается строкой на вариант, а не через
+/// `defmt::Debug2Format`: тот тянет `core::fmt` — несколько килобайт в зону
+/// bootloader'а, где их и так впритык.
+{%- if ota_store == "external" %}
+///
+/// Третье в ответе — можно ли обменивать разделы. Нельзя, если внешняя флеш
+/// не ответила: образ не проверен, и обмен без проверки запустил бы
+/// неподписанный — даже если на следующем шаге флеш вдруг ответит. Тогда
+/// загружается текущий образ, запрос на обмен остаётся до следующего сброса.
+pub(crate) fn screen(
+    flash: Flash<'static, Blocking>,
+    external: ExternalFlash,
+) -> (Flash<'static, Blocking>, ExternalFlash, bool) {
+    let flash = Mutex::<NoopRawMutex, _>::new(RefCell::new(flash));
+    let external = Mutex::<NoopRawMutex, _>::new(RefCell::new(external));
+    let swap_allowed = {
+        let mut config = BootLoaderConfig::from_linkerfile_blocking(&flash, &external, &external);
+        let capacity = config.active.size();
+        if let Ok(screening) = adapters::ota::screen_update(
+            &mut config.dfu,
+            &mut config.state,
+            capacity,
+            &OTA_PUBLIC_KEY_IN_IMAGE,
+        ) {
+            report(screening);
+            true
+        } else {
+            defmt::warn!(
+                "boot: внешняя флеш не отвечает — новый образ не проверен, обмен пропущен"
+            );
+            false
+        }
+    };
+    (
+        flash.into_inner().into_inner(),
+        external.into_inner().into_inner(),
+        swap_allowed,
+    )
+}
+{%- elsif dfu_bank == "true" %}
+pub(crate) fn screen(flash: Bank1, dfu: Bank2) -> (Bank1, Bank2) {
+    let flash = Mutex::<NoopRawMutex, _>::new(RefCell::new(flash));
+    let dfu = Mutex::<NoopRawMutex, _>::new(RefCell::new(dfu));
+    {
+        let state = Mutex::<NoopRawMutex, _>::new(RefCell::new(Paged::<_, STATE_ERASE_SIZE>::new(
+            Shared::new(&flash),
+        )));
+        let mut config = BootLoaderConfig::from_linkerfile_blocking(&flash, &dfu, &state);
+        let capacity = config.active.size();
+        let Ok(screening) = adapters::ota::screen_update(
+            &mut config.dfu,
+            &mut config.state,
+            capacity,
+            &OTA_PUBLIC_KEY_IN_IMAGE,
+        ) else {
+            // Флеш не читается — дальше обмен всё равно упал бы; паника хотя
+            // бы оставляет причину в PANIC (`cargo xtask panic-info`).
+            panic!("boot: проверка нового образа: ошибка флеша");
+        };
+        report(screening);
+    }
+    (flash.into_inner().into_inner(), dfu.into_inner().into_inner())
+}
+{%- else %}
+pub(crate) fn screen(flash: Flash<'static, Blocking>) -> Flash<'static, Blocking> {
+    let flash = Mutex::<NoopRawMutex, _>::new(RefCell::new(flash));
+    {
+        let state = Mutex::<NoopRawMutex, _>::new(RefCell::new(Paged::<_, STATE_ERASE_SIZE>::new(
+            Shared::new(&flash),
+        )));
+        let mut config = BootLoaderConfig::from_linkerfile_blocking(&flash, &flash, &state);
+        let capacity = config.active.size();
+        let Ok(screening) = adapters::ota::screen_update(
+            &mut config.dfu,
+            &mut config.state,
+            capacity,
+            &OTA_PUBLIC_KEY_IN_IMAGE,
+        ) else {
+            // Флеш не читается — дальше обмен всё равно упал бы; паника хотя
+            // бы оставляет причину в PANIC (`cargo xtask panic-info`).
+            panic!("boot: проверка нового образа: ошибка флеша");
+        };
+        report(screening);
+    }
+    flash.into_inner().into_inner()
+}
+{%- endif %}
+
+/// Исход проверки — в лог.
+fn report(screening: adapters::ota::Screening) {
+    use adapters::ota::{Rejection, Screening};
+
+    match screening {
+        Screening::NothingToCheck => {}
+        Screening::Approved => info!("boot: подпись нового образа сошлась"),
+        Screening::Rejected(why) => defmt::warn!(
+            "boot: новый образ отвергнут ({=str}), загружается прежний",
+            match why {
+                Rejection::NoRecord => "нет записи о подписи",
+                Rejection::Length => "негодная длина",
+                Rejection::NoPublicKey => "ключ не подставлен",
+                Rejection::Signature => "подпись не сошлась",
+            }
+        ),
+    }
+}
+
+/// Открытый ключ, которым проверяется подпись нового образа.
+///
+/// Не константа в исходнике, а файл `ota-public-key.bin` в корне проекта: его
+/// создаёт `cargo xtask build` вместе с закрытым и приносит сюда `build.rs`
+/// через `OUT_DIR`. Нули означают «ключ ещё не создан» (файла нет), и
+/// `screen_update` отвергает с ними любой образ.
+///
+/// Статик с именем, а не `const`: `cargo xtask build` находит его в ELF
+/// bootloader'а и сверяет с ключом, которым подписывает образ. `#[used]` и
+/// `no_mangle` вдвоём: первое просит оставить статик, второе — сохранить имя.
+#[used]
+#[expect(unsafe_code, reason = "обоснование — в комментарии выше")] // имя символа нужно xtask, см. выше
+#[unsafe(no_mangle)]
+pub static OTA_PUBLIC_KEY_IN_IMAGE: [u8; 32] =
+    *include_bytes!(concat!(env!("OUT_DIR"), "/ota-public-key.bin"));

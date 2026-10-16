@@ -13,7 +13,7 @@ use crate::memory::Region;
 const FW_VERSION_SYMBOL: &str = "FW_VERSION_IN_IMAGE";
 
 /// Имя символа с открытым ключом, которым bootloader проверяет подпись.
-/// Определён в `crates-cross/boot/src/main.rs` так же, как
+/// Определён в `crates-cross/boot/src/signature.rs` так же, как
 /// [`FW_VERSION_SYMBOL`] в приложении.
 pub const PUBLIC_KEY_SYMBOL: &str = "OTA_PUBLIC_KEY_IN_IMAGE";
 
@@ -53,7 +53,7 @@ pub fn image_symbol<'a>(
         .with_context(|| {
             format!(
                 "в {} нет символа {name} (версию определяет crates-cross/app/src/image.rs, ключ — \
-                 crates-cross/boot/src/main.rs): либо прошивка собрана без него, либо статик \
+                 crates-cross/boot/src/signature.rs): либо прошивка собрана без него, либо статик \
                  выбросили при линковке (тогда верните ему #[used] и #[unsafe(no_mangle)])",
                 elf.display(),
             )

@@ -7,7 +7,7 @@ use adapters::net::{UdpLink, Unconnected};
 use embassy_net::udp::PacketMetadata;
 {%- endif %}
 use embassy_net::{Config, DhcpConfig, Runner, StackResources};
-use static_cell::StaticCell;
+use static_cell::ConstStaticCell;
 
 /// Сетевое устройство платы — пока заглушка, до Ethernet (см. модуль).
 pub type Device = Unconnected;
@@ -45,39 +45,41 @@ const SOCKETS: usize = 2;
 /// (260 байт) и сообщение protobuf (`HOST_MESSAGE` в графе).
 const SOCKET_BUFFER: usize = 1024;
 
+// Память стека и сокета протокола: `embassy_net::new` и сокет держат её
+// `&'static mut`. `ConstStaticCell` — значения известны при компиляции и
+// лежат в `.bss`, а не собираются на стеке и копируются при старте.
+static RESOURCES: ConstStaticCell<StackResources<SOCKETS>> =
+    ConstStaticCell::new(StackResources::new());
+static RX: ConstStaticCell<[u8; SOCKET_BUFFER]> = ConstStaticCell::new([0; SOCKET_BUFFER]);
+static TX: ConstStaticCell<[u8; SOCKET_BUFFER]> = ConstStaticCell::new([0; SOCKET_BUFFER]);
+{%- if interface == "udp" %}
+static RX_META: ConstStaticCell<[PacketMetadata; 4]> =
+    ConstStaticCell::new([PacketMetadata::EMPTY; 4]);
+static TX_META: ConstStaticCell<[PacketMetadata; 4]> =
+    ConstStaticCell::new([PacketMetadata::EMPTY; 4]);
+{%- endif %}
+
 /// Собирает стек над устройством платы. Адрес — по DHCP; MAC — из
 /// заводского номера чипа `uid`, затравка случайных чисел стека — `seed`.
 pub(crate) fn new(uid: [u8; 12], seed: u64) -> Net {
-    static RESOURCES: StaticCell<StackResources<SOCKETS>> = StaticCell::new();
-    static RX: StaticCell<[u8; SOCKET_BUFFER]> = StaticCell::new();
-    static TX: StaticCell<[u8; SOCKET_BUFFER]> = StaticCell::new();
-{%- if interface == "udp" %}
-    static RX_META: StaticCell<[PacketMetadata; 4]> = StaticCell::new();
-    static TX_META: StaticCell<[PacketMetadata; 4]> = StaticCell::new();
-{%- endif %}
     defmt::warn!("bsp: Ethernet не подключён — сеть без линка, протокол ждёт впустую");
     let (stack, runner) = embassy_net::new(
         Unconnected::new(mac(uid)),
         Config::dhcpv4(DhcpConfig::default()),
-        RESOURCES.init(StackResources::new()),
+        RESOURCES.take(),
         seed,
     );
 {%- if interface == "tcp" %}
-    let tcp = TcpServer::new(
-        stack,
-        PORT,
-        RX.init([0; SOCKET_BUFFER]),
-        TX.init([0; SOCKET_BUFFER]),
-    );
+    let tcp = TcpServer::new(stack, PORT, RX.take(), TX.take());
     Net { runner, tcp }
 {%- else %}
     let udp = UdpLink::new(
         stack,
         PORT,
-        RX_META.init([PacketMetadata::EMPTY; 4]),
-        RX.init([0; SOCKET_BUFFER]),
-        TX_META.init([PacketMetadata::EMPTY; 4]),
-        TX.init([0; SOCKET_BUFFER]),
+        RX_META.take(),
+        RX.take(),
+        TX_META.take(),
+        TX.take(),
     );
     Net { runner, udp }
 {%- endif %}

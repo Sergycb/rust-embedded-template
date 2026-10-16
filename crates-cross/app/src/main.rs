@@ -28,6 +28,10 @@ use embassy_executor::raw::Executor;
 use embassy_time::Instant;
 use static_cell::StaticCell;
 
+/// Исполнитель задач — свой, а не из `#[embassy_executor::main]` (почему — в
+/// `main`). `StaticCell`, а не `ConstStaticCell`: `Executor::new` не `const`.
+static EXECUTOR: StaticCell<Executor> = StaticCell::new();
+
 #[cortex_m_rt::entry]
 fn main() -> ! {
     // Первая же строка лога отвечает на вопрос «а что вообще залито в плату»:
@@ -99,11 +103,6 @@ fn main() -> ! {
     // включён, ровно так же), а не `WFE`, то есть пробуждение задач не теряет.
     // Цикл ниже ставит `WFE` сам, и всё, что остаётся на долю pender'а, — это
     // возврат из него, а не сон.
-    #[expect(
-        clippy::items_after_statements,
-        reason = "статик стоит рядом с использованием"
-    )]
-    static EXECUTOR: StaticCell<Executor> = StaticCell::new();
     let executor = EXECUTOR.init(Executor::new(usize::MAX as *mut ()));
     let spawner = executor.spawner();
 {%- if graph == "true" %}

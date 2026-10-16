@@ -3,7 +3,7 @@
 use adapters::usb::{CdcStream, Unconnected};
 use embassy_usb::class::cdc_acm::{CdcAcmClass, State};
 use embassy_usb::{Builder, Config, UsbDevice};
-use static_cell::StaticCell;
+use static_cell::{ConstStaticCell, StaticCell};
 
 /// USB-драйвер платы — пока заглушка, до USB-блока чипа (см. модуль).
 pub type UsbDriver = Unconnected;
@@ -16,6 +16,17 @@ const PID: u16 = 0xCAFE;
 
 /// Пакет CDC — 64 байта: предел full-speed для bulk-точек.
 const PACKET: u16 = 64;
+
+// Буферы и состояние устройства: `Builder` и класс держат их `&'static mut`.
+// `ConstStaticCell`, а не `StaticCell`: значения известны при компиляции и
+// лежат в `.bss`/`.data`, а не собираются на стеке и копируются при старте.
+// Кроме `CDC_STATE`: `ConstStaticCell` требует `Send`, а состояние класса его
+// не реализует (внутри ссылка на `RefCell`).
+static CONFIG_DESCRIPTOR: ConstStaticCell<[u8; 256]> = ConstStaticCell::new([0; 256]);
+static BOS_DESCRIPTOR: ConstStaticCell<[u8; 256]> = ConstStaticCell::new([0; 256]);
+static CONTROL: ConstStaticCell<[u8; 64]> = ConstStaticCell::new([0; 64]);
+static CDC_STATE: StaticCell<State<'static>> = StaticCell::new();
+static RX: ConstStaticCell<[u8; PACKET as usize]> = ConstStaticCell::new([0; PACKET as usize]);
 
 /// USB платы: устройство для узла `USB` и поток CDC под протоколом.
 pub struct Usb {
@@ -35,11 +46,6 @@ impl core::fmt::Debug for Usb {
 /// Собирает USB-устройство с одним классом CDC ACM над драйвером платы.
 /// Серийный номер устройства — заводской номер чипа.
 pub(crate) fn new() -> Usb {
-    static CONFIG_DESCRIPTOR: StaticCell<[u8; 256]> = StaticCell::new();
-    static BOS_DESCRIPTOR: StaticCell<[u8; 256]> = StaticCell::new();
-    static CONTROL: StaticCell<[u8; 64]> = StaticCell::new();
-    static CDC_STATE: StaticCell<State<'static>> = StaticCell::new();
-    static RX: StaticCell<[u8; PACKET as usize]> = StaticCell::new();
     defmt::warn!("bsp: USB не подключён — хост устройство не увидит, протокол ждёт впустую");
 
     let mut config = Config::new(VID, PID);
@@ -49,16 +55,16 @@ pub(crate) fn new() -> Usb {
     let mut builder = Builder::new(
         Unconnected::default(),
         config,
-        CONFIG_DESCRIPTOR.init([0; 256]),
-        BOS_DESCRIPTOR.init([0; 256]),
+        CONFIG_DESCRIPTOR.take(),
+        BOS_DESCRIPTOR.take(),
         &mut [],
-        CONTROL.init([0; 64]),
+        CONTROL.take(),
     );
     let class = CdcAcmClass::new(&mut builder, CDC_STATE.init(State::new()), PACKET);
     let device = builder.build();
     let (tx, rx) = class.split();
     Usb {
         device,
-        cdc: CdcStream::new(tx, rx.into_buffered(RX.init([0; PACKET as usize]))),
+        cdc: CdcStream::new(tx, rx.into_buffered(RX.take())),
     }
 }

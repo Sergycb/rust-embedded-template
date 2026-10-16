@@ -229,9 +229,10 @@ impl Board {
 {%- if shared_flash == "true" %}
         // Периферия разбирается здесь: `FLASH` уходит в общий объект (его
         // делят OTA и настройки), остальное пока никому не нужно и потому не
-        // сохраняется. Здесь же — место для распиновки платы: объявите
-        // `assign_resources!` (docs/resources.md), добавьте `let r =
-        // split_resources!(p);` и собирайте из `r` свои драйверы. Наружу из
+        // сохраняется. Здесь же — место для распиновки платы: заполните
+        // группы в `resources.rs` (docs/resources.md), добавьте `use
+        // crate::resources::*;` и `let r = split_resources!(p);` и собирайте
+        // из `r` свои драйверы. Наружу из
         // `bsp` уходит не периферия, а готовый объект — поле `Board`,
         // реализующее порт из `ports`.
 {%- if dfu_bank == "true" %}
@@ -242,9 +243,9 @@ impl Board {
         let flash = FLASH.init(FlashMutex::new(Flash::new_blocking(p.FLASH)));
 {%- endif %}
 {%- else %}
-        // Место для распиновки платы: объявите `assign_resources!`
-        // (docs/resources.md), добавьте `let r = split_resources!(p);` и
-        // собирайте из `r` свои драйверы. Наружу из `bsp` уходит не
+        // Место для распиновки платы: заполните группы в `resources.rs`
+        // (docs/resources.md), добавьте `use crate::resources::*;` и `let r =
+        // split_resources!(p);` и собирайте из `r` свои драйверы. Наружу из `bsp` уходит не
         // периферия, а готовый объект — поле `Board`, реализующее порт из
         // `ports`.
 {%- endif %}

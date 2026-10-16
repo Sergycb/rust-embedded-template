@@ -28,10 +28,12 @@ DHCP, его фоновая работа в узле `NET` графа (`domain::
 
    pub type Device = Ethernet<'static, ETH, GenericPhy<Sma<'static, ETH_SMA>>>;
 
+   // Рядом с остальными статиками модуля:
+   static QUEUE: ConstStaticCell<PacketQueue<4, 4>> = ConstStaticCell::new(PacketQueue::new());
+
    // В `new`, вместо `Unconnected::new(mac(uid))`:
-   static QUEUE: StaticCell<PacketQueue<4, 4>> = StaticCell::new();
    let device = Ethernet::new(
-       QUEUE.init(PacketQueue::new()), r.eth, Irqs,
+       QUEUE.take(), r.eth, Irqs,
        r.ref_clk, r.crs, r.rx_d0, r.rx_d1, r.tx_d0, r.tx_d1, r.tx_en,
        mac(uid), r.sma, r.mdio, r.mdc,
    );

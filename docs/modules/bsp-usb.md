@@ -35,13 +35,17 @@ COM-порт») под протоколом: {% if protocol == "modbus" %}Modbus
 
    pub type UsbDriver = Driver<'static, {% if usb_kind == "otg" %}USB_OTG_FS{% else %}USB{% endif %}>;
 
-   // В `new`, вместо `Unconnected::default()`:
 {%- if usb_kind == "otg" %}
-   static EP_OUT: StaticCell<[u8; 256]> = StaticCell::new();
+   // Рядом с остальными статиками модуля:
+   static EP_OUT: ConstStaticCell<[u8; 256]> = ConstStaticCell::new([0; 256]);
+
+   // В `new`, вместо `Unconnected::default()`:
    let mut otg = embassy_stm32::usb::Config::default();
    otg.vbus_detection = false; // VBUS не разведён — иначе true
-   let driver = Driver::new_fs(r.usb, Irqs, r.dp, r.dm, EP_OUT.init([0; 256]), otg);
+   let driver = Driver::new_fs(r.usb, Irqs, r.dp, r.dm, EP_OUT.take(), otg);
 {%- else %}
+
+   // В `new`, вместо `Unconnected::default()`:
    let driver = Driver::new(r.usb, Irqs, r.dp, r.dm);
 {%- endif %}
    ```

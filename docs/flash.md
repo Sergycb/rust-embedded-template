@@ -274,7 +274,7 @@ NOR. Во внутреннем флеше остаются bootloader и `ACTIVE
 (`bsp::external`: `ExternalFlash` под одним `embassy_sync::mutex::Mutex` на
 `DFU`, `STATE` и настройки — команды SPI разных разделов не должны
 перемежаться), bootloader — блокирующим драйвером (`ExternalFlash` в
-`crates-cross/boot/src/main.rs`: исполнителя там нет). В шаблоне в обоих
+`crates-cross/boot/src/external.rs`: исполнителя там нет). В шаблоне в обоих
 заглушка `adapters::flash::Unconnected`: проект собирается и работает, OTA
 не принимает образы, bootloader грузит текущий.
 

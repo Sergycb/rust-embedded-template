@@ -302,7 +302,7 @@ pub(crate) fn print_snippet(name: &str) -> Result<(), anyhow::Error> {
     }
 
     println!();
-    println!("// crates-cross/bsp/src/board.rs — рядом с разбором периферии");
+    println!("// crates-cross/bsp/src/resources.rs — оттуда в макрос переносится только группа");
     // `Peri` — не для красоты: `assign_resources!` раскрывается в
     // `Peri<'static, peripherals::X>` и требует оба имени в области видимости
     // вызова. Без него вставленная заготовка падает с `error[E0425]: cannot

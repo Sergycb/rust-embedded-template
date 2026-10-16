@@ -24,16 +24,18 @@ UART платы — поток байтов под узлом протокола
 
    ```rust,ignore
    use embassy_stm32::usart::{BufferedUart, Config};
-   use static_cell::StaticCell;
+   use crate::resources::Usart2Resources;
+   use static_cell::ConstStaticCell;
 
    pub type Serial = BufferedUart<'static>;
 
+   static TX: ConstStaticCell<[u8; 256]> = ConstStaticCell::new([0; 256]);
+   static RX: ConstStaticCell<[u8; 256]> = ConstStaticCell::new([0; 256]);
+
    pub(crate) fn new(r: Usart2Resources) -> Serial {
-       static TX: StaticCell<[u8; 256]> = StaticCell::new();
-       static RX: StaticCell<[u8; 256]> = StaticCell::new();
        let mut config = Config::default();
        config.baudrate = 115_200;
-       BufferedUart::new(r.usart, r.rx, r.tx, TX.init([0; 256]), RX.init([0; 256]), Irqs, config)
+       BufferedUart::new(r.usart, r.rx, r.tx, TX.take(), RX.take(), Irqs, config)
            .expect("конфигурация UART")
    }
    ```

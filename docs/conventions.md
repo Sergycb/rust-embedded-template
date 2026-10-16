@@ -74,8 +74,9 @@ nextest убивает, а не ждёт до таймаута CI.
   `before_reset` в `bsp::wdg`, застой узла — наблюдатель `observe:` в
   `graph.rs`. Перезапусков узлов в шаблоне нет: отказ связи узел пишет в лог
   и продолжает, а пережидает его реализация порта.
-- **Паникёр — модуль `crates-cross/app/src/panic.rs`, общий для `app` и `boot`**
-  (bootloader подключает его через `#[path]`). Выбирает профиль:
+- **Паникёр — модуль `panic.rs`, одинаковый у `app` и `boot`** (две копии,
+  `crates-cross/{app,boot}/src/panic.rs`, правятся вместе: `#[path]` на файл
+  чужого пакета rust-analyzer не резолвит). Выбирает профиль:
   `#[cfg(debug_assertions)]` на `use panic_probe as _;`, `#[cfg(not(debug_assertions))]`
   на собственном `#[panic_handler]`, который пишет причину через `panic-persist`
   (фича `custom-panic-handler`, штатного обработчика у крейта нет). У

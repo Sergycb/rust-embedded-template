@@ -9,27 +9,24 @@
 не текущее состояние: см. docs/architecture.md, «`Board` отдаёт объекты, а не
 периферию».
 
-Отдельного модуля под это в шаблоне нет: распиновка живёт там же, где из неё
-собираются драйверы, — в `crates-cross/bsp/src/board.rs`. Пустой файл
-`resources.rs`, который раньше стоял под неё, был модулем без кода, а
-`cargo xtask pins --check` теперь читает весь `crates-cross/bsp/src`, так что
-объявить группы можно и отдельным модулем, если их станет много.
+Распиновка живёт в `crates-cross/bsp/src/resources.rs`: там уже стоит
+`assign_resources!` с одной пустой группой `board` — пустой макрос не
+компилируется, ему нужна хотя бы одна. Модуль подключён в `lib.rs` первым и с
+`#[macro_use]`, иначе `split_resources!` не был бы виден из `board.rs`.
 
 Имена полей `embassy_stm32::Peripherals` зависят от выбранного чипа
 (`{{chip_feature}}`), поэтому шаблон не может зашить готовую распиновку —
-вставьте пример ниже в `board.rs` и замените поля на выводы вашей платы.
+добавьте свои группы в макрос (пустую `board` можно заменить или заполнить)
+и снимите `#[expect(unused_imports)]` с импорта `Peri`/`peripherals`, когда
+появится первый вывод.
 Подсмотреть, какие выводы умеют нужный сигнал (и не заняты ли они
 отладочным портом или кварцем), — `cargo xtask pins I2C1`; готовую
 заготовку с правильными типами обработчиков прерываний печатает
-`cargo xtask pins I2C1 --snippet`.
+`cargo xtask pins I2C1 --snippet` — из её половины `assign_resources!` в
+`resources.rs` переносится только группа: второй вызов макроса в крейте
+не компилируется (`split_resources` объявлен дважды).
 
 ```ignore
-use assign_resources::assign_resources;
-// `Peri` здесь обязателен: макрос раскрывается в
-// `Peri<'static, peripherals::X>` и оба имени берёт из области видимости
-// вызова. Без него — `error[E0425]: cannot find type Peri`.
-use embassy_stm32::{Peri, peripherals};
-
 assign_resources! {
     sensor: SensorResources {
         i2c: I2C1,
@@ -44,6 +41,10 @@ assign_resources! {
 Дальше — в `Board::new` (board.rs), там же, где создаётся общий `Flash`:
 
 ```ignore
+// Макрос раскрывается в `AssignedResources { .. }` — типы групп нужны в
+// области видимости вызова.
+use crate::resources::*;
+
 let r = split_resources!(p);
 let i2c = embassy_stm32::i2c::I2c::new(
     r.sensor.i2c, r.sensor.scl, r.sensor.sda,

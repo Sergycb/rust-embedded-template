@@ -8,7 +8,8 @@
 //! своего драйвера, загружает текущий образ.
 //!
 //! Подключить свою микросхему — две правки в этом файле и одна в
-//! `crates-cross/boot/src/main.rs`:
+//! bootloader'е (тип — `crates-cross/boot/src/external.rs`, сборка из
+//! периферии — `crates-cross/boot/src/main.rs`):
 //!
 //! 1. [`ExternalFlash`] — тип вашего драйвера. Годится любой, реализующий
 //!    `embedded_storage_async::nor_flash::NorFlash`: готовый крейт

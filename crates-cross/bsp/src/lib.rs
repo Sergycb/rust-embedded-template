@@ -1,4 +1,10 @@
 #![no_std]
+
+// Первым и с `#[macro_use]`: `split_resources!`, который объявляет
+// `assign_resources!`, виден `board.rs` только в текстовой области — модуль
+// с ним обязан стоять раньше. rustfmt такие модули не переставляет.
+#[macro_use]
+mod resources;
 {% if bank_switch != "" %}
 pub mod banks;
 {%- endif %}

@@ -151,8 +151,8 @@ read`: руками пришлось бы сначала найти адрес �
   получает от `bsp` псевдоним (`pub type X = ...`) — `docs/architecture.md`.
 - Ровно один `#[panic_handler]` и один активный `#[global_logger]` на бинарник: логгер
   резолвится линковкой по имени символа и даёт `multiply defined!` при нарушении;
-  паникёр выбирается `#[cfg(debug_assertions)]` в `crates-cross/app/src/panic.rs` (его же
-  подключает `boot` через `#[path]`): dev — `use panic_probe as _;`, release — свой
+  паникёр выбирается `#[cfg(debug_assertions)]` в `crates-cross/app/src/panic.rs` (у
+  `boot` — его копия `crates-cross/boot/src/panic.rs`, правятся вместе): dev — `use panic_probe as _;`, release — свой
   `#[panic_handler]` поверх `panic_persist::report_panic_info` (фича
   `custom-panic-handler`) — `docs/diagnostics.md`, `docs/conventions.md`.
 - `prepare(len)` порта `FirmwareUpdate` зовётся один раз перед приёмом образа

@@ -61,7 +61,7 @@ cargo run -p app                    # прошить приложение и с�
 
 | Что | Где | Зачем |
 |---|---|---|
-| Распиновка платы | `crates-cross/bsp/src/board.rs` | `assign_resources!` разложит `Peripherals` по именованным группам — из них `bsp` соберёт драйверы; наружу уходит не периферия, а готовый объект (`docs/resources.md`) |
+| Распиновка платы | `crates-cross/bsp/src/resources.rs` | `assign_resources!` разложит `Peripherals` по именованным группам — из них `bsp` соберёт драйверы; наружу уходит не периферия, а готовый объект (`docs/resources.md`) |
 | Граф задач | `crates-cross/app/src/graph.rs` | `supervisor_graph!`: порядок старта, watchdog, обмен между задачами |
 | Логика и узлы графа | `crates-host/domain/` | всё, что не про регистры: автоматы, протоколы, конфигурация, а также объявления узлов (`supervisor_fragment!`) и их работа (`domain::heartbeat::run`, `domain::cpu_load::task` — автоматы `#[fsm::typestate]` на контексте узла) — тестируется на хосте; логика вне автоматов — функции над портами |
 | Адаптеры без чипа | `crates-host/adapters/` | реализации портов, которым хватает `embedded-storage`/`embedded-hal`/`embedded-io-async`: OTA поверх `embassy-boot` (`adapters::ota`), настройки поверх `sequential-storage` (`adapters::settings`, мост к общему флешу — `adapters::flash`){% if protocol == "protobuf" and interface != "udp" %}, кадрирование потока COBS + CRC (`adapters::cobs`){% endif %}{% if protocol == "modbus" %}, транспорт Modbus {% if interface == "tcp" %}TCP{% elsif interface == "udp" %}UDP{% else %}RTU{% endif %} (`adapters::modbus`){% endif %} — тестируется на хосте |
@@ -143,7 +143,7 @@ supervisor-графы, watchdog). Вся остальная логика — в 
 `crates-host/ports`. Полный путь такой:
 
 ```
-вывод чипа → группа assign_resources! (bsp/src/board.rs)
+вывод чипа → группа assign_resources! (bsp/src/resources.rs)
            → шина и драйвер собираются в Board::new
            → драйвер, generic по трейтам embedded-hal, живёт в crates-host/adapters
              и проверяется на хосте моком — до тех пор, пока ему не понадобится
@@ -235,7 +235,7 @@ flash и безусловно прыгает в него (`unsafe { bl.load(entr
 Ответ `external` уносит `DFU` и `BOOTLOADER_STATE` на внешнюю SPI NOR: внутри
 остаются bootloader и `ACTIVE` почти на весь чип (на F407VE 384 KiB вместо 128).
 Драйвер микросхемы подставляете вы — в `bsp/src/external.rs` (асинхронный) и в
-`crates-cross/boot/src/main.rs` (блокирующий); в шаблоне там заглушки. Требование к
+`crates-cross/boot/src/external.rs` (блокирующий); в шаблоне там заглушки. Требование к
 драйверу одно — стирание делит страницу обмена `EXT_PAGE_SIZE` (сектор 4 KiB годится
 везде), его проверяет компилятор. Раскладка и ограничения — `docs/flash.md`,
 поведение bootloader'а — `docs/ota.md`.
@@ -346,7 +346,7 @@ cargo xtask build     # создаст ключ при первой сборке
 | `ota-public-key.bin` | **коммитится** | попадает в bootloader через `build.rs` крейта `boot`; им устройство проверяет подпись |
 
 Правка исходника после создания ключа не нужна: `OTA_PUBLIC_KEY_IN_IMAGE` в
-`crates-cross/boot/src/main.rs` читает файл, а не хранит массив. Файла нет — там нули, и
+`crates-cross/boot/src/signature.rs` читает файл, а не хранит массив. Файла нет — там нули, и
 bootloader отклоняет с ними любое обновление отдельной проверкой.
 
 Одно поведение стоит знать заранее: **если открытый ключ в репозитории есть, а
@@ -699,7 +699,7 @@ probe-rs erase --chip <CHIP> --connect-under-reset              # см. ниже
 ## Что происходит при падении
 
 Паникёр выбирает профиль (`#[cfg(debug_assertions)]` в `crates-cross/app/src/panic.rs`,
-тот же файл у bootloader'а):
+его копия — у bootloader'а):
 
 | Профиль | Паникёр | После падения | Почему |
 |---|---|---|---|
