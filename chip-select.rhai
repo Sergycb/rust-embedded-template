@@ -1097,9 +1097,10 @@ if protocol != "none" {
 }
 variable::set("protocol", protocol);
 variable::set("interface", iface);
-// Master Modbus. Смысл имеет только при protocol=modbus: «yes» с другим
-// протоколом приводится к «нет» молча (как `signed` без OTA) — вопрос
-// задаётся до выбора протокола, и отвергать сочетание нечего.
+// Master Modbus. Вопрос условный (`[conditional]` в cargo-generate.toml) и
+// задаётся только при protocol=modbus; с другим протоколом переменной нет.
+// Но `--define modbus_master=yes` при другом протоколе возможен — такое
+// сочетание приводится к «нет» молча (как `signed` без OTA).
 let wants_master = false;
 if variable::is_set("modbus_master") {
     let answer = variable::get("modbus_master");

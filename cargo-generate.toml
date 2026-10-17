@@ -217,15 +217,18 @@ interface = { type = "string", prompt = "Интерфейс под проток�
 ], default = "none" }
 
 # Клиентская половина Modbus — master (`ports::ModbusClient`, `domain::modbus::master`,
-# клиентские реализации транспортов в `adapters::modbus`). Вопрос задаётся
-# всегда, но смысл имеет только при `protocol=modbus`: с другим протоколом хук
-# приводит ответ к «false». Той же формы, что `signed` (строка, `variable::get`
-# в rhai читает только строки): ответ становится `"true"`/`"false"`.
+# клиентские реализации транспортов в `adapters::modbus`). Вопрос условный:
+# задаётся только после выбора `protocol=modbus` (`[conditional]` с
+# `placeholders` читает уже полученные ответы), с другим протоколом его нет, а
+# переменная не заводится вовсе — хук читает её через `variable::is_set`.
+# Ответ становится строкой `"true"`/`"false"` (`variable::get` в rhai читает
+# только строки), как у `signed`.
 #
 # По умолчанию «нет»: узел `MODBUS` в графе — slave, потребителей master'а в
 # шаблоне нет, а мёртвый код — это и flash, и код, который надо сопровождать.
 # Нужен устройству, которое само опрашивает другие (шлюз, мастер шины).
-modbus_master = { type = "string", prompt = "Modbus master (клиент) в дополнение к slave (только protocol=modbus)", choices = [
+[conditional.'protocol == "modbus"'.placeholders]
+modbus_master = { type = "string", prompt = "Modbus master (клиент) в дополнение к slave", choices = [
 	"yes",
 	"no",
 ], default = "no" }

@@ -58,7 +58,7 @@
 `{{shared_flash}}`, `{{dual_core}}`, `{{bank_mode}}`, `{{erase_zero}}`,
 `{{watchdog_peripheral}}`, `{{cpu_freq_boost}}`, `{{dfu_bank}}`, `{{bank_switch}}`, `{{dual_bank_bit}}` — плейсхолдеры, подставляемые
 Liquid-рендером cargo-generate. Из них в `[placeholders]` объявлены только `ci`, `ota`, `graph`,
-`config`, `signed` и `modbus_master`; все остальные выставляет `variable::set` в `[hooks].pre`-скрипте
+`config`, `signed` (и условный `modbus_master`, см. ниже); все остальные выставляет `variable::set` в `[hooks].pre`-скрипте
 `chip-select.rhai` — каскадный посимвольный выбор STM32 (семейство → линейка → дальше по
 символу) по списку чипов, одновременно валидных и для `embassy-stm32`, и для
 установленного локально `probe-rs`. Не `init`-хук: init-хуки выполняются ДО резолвинга
@@ -119,11 +119,13 @@ bootloader и `STATE`. Отсюда и второй набор цифр в `MEMO
 (`domain::ota::update::apply_signed`), см. docs/ota.md.
 
 `modbus_master` (Modbus master, клиентская половина; по умолчанию `no`) — той же формы:
-строка `yes`/`no` в `[placeholders]`, хук приводит ответ к `"true"`/`"false"`. Смысл он
-имеет только при `protocol=modbus`: с другим протоколом (в том числе `none`) «yes»
-молча становится `"false"`, и master не получают ни protobuf, ни CANopen. Вопрос
-задаётся всегда — `[placeholders]` не умеют условных вопросов (то же у `signed` без OTA
-и `interface` без протокола). «true» оставляет `ports::ModbusClient`/`MasterError`,
+строка `yes`/`no`, хук приводит ответ к `"true"`/`"false"`. Смысл он имеет только при
+`protocol=modbus`, поэтому вопрос объявлен условным —
+`[conditional.'protocol == "modbus"'.placeholders]` в `cargo-generate.toml`: при другом
+протоколе (в том числе `none`) его не задают, а переменная не заводится вовсе (хук
+читает её через `variable::is_set`). `--define modbus_master=yes` при другом протоколе
+всё равно возможен — такой «yes» молча становится `"false"`, и master не получают ни
+protobuf, ни CANopen. «true» оставляет `ports::ModbusClient`/`MasterError`,
 `domain::modbus::master`, клиентские impl'ы транспортов `Rtu`/`Tcp`/`Udp` (в них же
 слив `MAX_DRAIN` RTU и `master_error`) и их тесты; «false» вырезает всё это
 Liquid-блоками `// {%- if modbus_master == "true" %}` … `// {%- endif %}` (в
