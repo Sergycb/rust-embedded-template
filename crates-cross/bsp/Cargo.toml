@@ -38,11 +38,14 @@ assign-resources = { workspace = true }
 # лишил бы её приложение — `take()` отдаёт её ровно один раз за запуск.
 cortex-m = { workspace = true }
 # Общий `Flash` всего чипа: и OTA, и раздел настроек работают через один
-# объект под `blocking_mutex` (см. `FlashMutex` в src/board.rs). `static-cell` —
-# потому что обеим половинам нужен `&'static`: иначе их нельзя отдать в задачу,
-# которую спавнит `Spawner` (аргументы задач обязаны быть 'static).
-{%- if shared_flash == "true" or ota == "true" or interface == "tcp" or interface == "udp" or interface == "usb" %}
+# объект под `blocking_mutex` (см. `FlashMutex` в src/board.rs).
+{%- if shared_flash == "true" or ota == "true" %}
 embassy-sync = { workspace = true }
+{%- endif %}
+# `static-cell` — потому что общему флешу, сети и USB нужен `&'static`: иначе их
+# нельзя отдать в задачу, которую спавнит `Spawner` (аргументы задач обязаны
+# быть 'static).
+{%- if shared_flash == "true" or ota == "true" or interface == "tcp" or interface == "udp" or interface == "usb" %}
 static_cell = { workspace = true }
 {%- endif %}
 {%- if interface == "usb" %}
@@ -63,10 +66,6 @@ embassy-net = { workspace = true }
 embassy-boot = { workspace = true, features = ["defmt"{% if erase_zero == "true" and ota_store != "external" %}, "flash-erase-zero"{% endif %}] }
 embassy-embedded-hal = { workspace = true }
 {%- endif %}
-# Zero-copy DMA-буфер: объявлен заранее, чтобы пример из docs/buffers.md
-# вставлялся без правки манифеста. Своего кода на нём в шаблоне нет — статику
-# под DMA заводит проект, когда доходит до периферии.
-bbqueue = { workspace = true }
 # Аппаратный сторож под трейт `HardwareWatchdog` (см. src/wdg.rs). Крейт
 # объявлен здесь, а не у `app`, потому что реализация трейта — это железо:
 # сам `watchdog` про HAL не знает и знать не должен.

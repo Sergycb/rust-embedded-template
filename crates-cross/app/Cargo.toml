@@ -13,9 +13,9 @@ name = "app"
 harness = false
 
 [dependencies]
-# Нужен примеру применения обновления (`SCB::sys_reset()` в
-# docs/modules/bsp-ota.md) и impl'у critical-section (фича
-# `critical-section-single-core` в crates-cross/Cargo.toml).
+# Нужен самому `app`: `asm::wfe` в цикле исполнителя (src/main.rs) и паникёру
+# (`interrupt::disable`, `SCB::sys_reset` в src/panic.rs), — и impl'у
+# critical-section (фича `critical-section-single-core` в crates-cross/Cargo.toml).
 cortex-m = { workspace = true }
 cortex-m-rt = { workspace = true }
 embassy-executor = { workspace = true, features = ["defmt"] }
@@ -37,9 +37,6 @@ defmt-rtt = { workspace = true }
 panic-probe = { workspace = true, features = ["print-defmt"] }
 panic-persist = { workspace = true }
 bsp = { workspace = true }
-# Трейты портов: приложение зовёт объекты `Board` только через них, а про
-# железо за ними — регион PANIC, разделы флеша — не знает вовсе.
-ports = { workspace = true }
 domain = { workspace = true }
 {%- if protocol != "none" %}
 # Транспорты протоколов (`adapters::modbus::Rtu`, `adapters::cobs::Cobs`) вокруг

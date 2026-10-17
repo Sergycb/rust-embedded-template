@@ -125,10 +125,8 @@ pub struct Board {
     /// `bsp::ota::Link`, пока проект не подставит свой транспорт) и адаптер
     /// `flash` поверх разделов `DFU`/`BOOTLOADER_STATE`, собранный из символов
     /// `memory.x`. {% if graph == "true" %}Уезжает в узел `OTA` графа (`fragments:` в
-    /// `crates-cross/app/src/graph.rs`){% else %}Зовите узел сами из `main`:
-    /// `domain::ota::run` с контекстом `domain::ota::OtaCtx`, собранным руками
-    /// из `link`, `flash` и `domain::ota::Mode::{% if signed == "true" %}Signed` с версией
-    /// образа (`crates-cross/app/src/image.rs`){% else %}Plain`{% endif %}{% endif %}.
+    /// `crates-cross/app/src/graph.rs`){% else %}Уезжает в задачу узла, которую спавнит `main`
+    /// (`domain::ota::task_standalone`){% endif %}.
     pub ota: crate::ota::Ota,
 {%- endif %}
 {%- if config == "true" %}
@@ -155,10 +153,11 @@ pub struct Board {
     /// протокола (`bsp::net`). Устройство — заглушка, пока проект не подставит
     /// Ethernet своей платы (`docs/modules/bsp-net.md`).
     pub net: crate::net::Net,
-{%- endif %}
 {%- if rng_irq != "" %}
-    /// Аппаратный генератор случайных чисел (`bsp::rng`).
+    /// Аппаратный генератор случайных чисел (`bsp::rng`) — только для
+    /// сетевого стека: его первое слово затравливает `embassy-net`.
     pub rng: crate::rng::Rng,
+{%- endif %}
 {%- endif %}
 {%- if interface == "usb" %}
     /// USB под протоколом: устройство для узла `USB` и поток CDC (`bsp::usb`).
@@ -254,11 +253,13 @@ impl Board {
         // собирается здесь же, из периферии (см. `crate::external`).
         let external = crate::external::new();
 {%- endif %}
-{%- if rng_irq != "" %}
-        let {% if interface == "tcp" or interface == "udp" %}mut {% endif %}rng = crate::rng::new(p.RNG);
-{%- endif %}
 {%- if interface == "tcp" or interface == "udp" %}
-        let seed = {% if rng_irq != "" %}rng.next_u64(){% else %}crate::net::uid_seed(embassy_stm32::uid::uid()){% endif %};
+{%- if rng_irq != "" %}
+        let mut rng = crate::rng::new(p.RNG);
+        let seed = rng.next_u64();
+{%- else %}
+        let seed = crate::net::uid_seed(embassy_stm32::uid::uid());
+{%- endif %}
 {%- endif %}
 
         let sys_hz = clocks.sys.to_hertz().map(|hz| hz.0);
@@ -291,12 +292,12 @@ impl Board {
 {%- endif %}
 {%- if interface == "tcp" or interface == "udp" %}
             net: crate::net::new(embassy_stm32::uid::uid(), seed),
+{%- if rng_irq != "" %}
+            rng,
+{%- endif %}
 {%- endif %}
 {%- if interface == "usb" %}
             usb: crate::usb::new(),
-{%- endif %}
-{%- if rng_irq != "" %}
-            rng,
 {%- endif %}
 {%- if graph == "true" %}
             watchdog: crate::wdg::UnarmedBoardWatchdog::new(p.{{watchdog_peripheral}}),
@@ -331,10 +332,12 @@ fn init_peripherals() -> embassy_stm32::Peripherals {
 }
 {%- endif %}
 
-/// Конфиг HAL: умолчания `embassy-stm32`{% if rng_clock != "" and rng_clock != "default" %} и клок блока `RNG`, которого
-/// они не дают (`docs/modules/bsp-rng.md`){% endif %}.
+/// Конфиг HAL: умолчания `embassy-stm32`{% if interface == "tcp" or interface == "udp" %}{% if rng_clock != "" and rng_clock != "default" %} и клок блока `RNG` для сетевого
+/// стека, которого они не дают (`docs/modules/bsp-rng.md`){% endif %}{% endif %}.
 fn config() -> embassy_stm32::Config {
-{%- if rng_clock == "pll48" %}
+{%- if interface != "tcp" and interface != "udp" %}
+    embassy_stm32::Config::default()
+{%- elsif rng_clock == "pll48" %}
     let mut config = embassy_stm32::Config::default();
     // RNG — от PLL48CK, выхода Q основного PLL, а по умолчанию PLL выключен:
     // HSI 16 МГц / 8 × 96 = 192 МГц на VCO, / 4 = 48 МГц. Ядро остаётся на HSI.

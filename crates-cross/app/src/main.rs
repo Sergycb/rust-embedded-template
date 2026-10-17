@@ -19,9 +19,9 @@ mod panic;
 use defmt::info;
 // RTT остаётся дефолтным транспортом в обоих профилях — сырой шаблон не знает,
 // какой конкретный USART на плате пользователь отведёт под лог без пробника.
-// Паттерн замены (UART, без RTT/пробника) для release — doc-комментарий в
-// graph.rs, подключается по мере готовности платы (Board должен будет отдавать
-// объект транспорта, собранный из реальной периферии).
+// Паттерн замены (UART, без RTT/пробника) для release — в
+// docs/modules/app-graph.md, подключается по мере готовности платы (Board
+// должен будет отдавать объект транспорта, собранный из реальной периферии).
 use defmt_rtt as _;
 
 use embassy_executor::raw::Executor;
@@ -31,6 +31,16 @@ use static_cell::StaticCell;
 /// Исполнитель задач — свой, а не из `#[embassy_executor::main]` (почему — в
 /// `main`). `StaticCell`, а не `ConstStaticCell`: `Executor::new` не `const`.
 static EXECUTOR: StaticCell<Executor> = StaticCell::new();
+{%- if ota == "true" and graph != "true" %}
+
+/// Узел OTA проекта без графа. Обёртка нужна по той же причине, что и
+/// `cpu_load::standalone_task`: `Spawner::spawn` берёт токен, а задача не может
+/// быть generic — поэтому типы слотов названы псевдонимами из `bsp::ota`.
+#[embassy_executor::task]
+async fn ota_task(link: bsp::ota::Link, flash: bsp::ota::Updater, mode: domain::ota::Mode) {
+    domain::ota::task_standalone(link, flash, mode).await;
+}
+{%- endif %}
 
 #[cortex_m_rt::entry]
 fn main() -> ! {
@@ -66,29 +76,6 @@ fn main() -> ! {
     // Следом — на чём именно: чип и его заводской номер, по которому
     // экземпляр платы отличается от соседнего.
     info!("app: {}", board.spec);
-
-{%- if ota == "true" and graph != "true" %}
-
-    // Графа нет, так что узел OTA зовёте вы{% if signed == "true" %}: переименуйте `_mode` в
-    // `mut mode`, `board` — в `mut board` и вызовите
-    // `domain::ota::run(domain::ota::OtaCtx { link: &mut board.ota.link,
-    // flash: &mut board.ota.flash, mode: &mut mode, confirmed: &mut false,
-    // index: 0 }).await`{% else %}: переименуйте `board` в `mut board` и вызовите
-    // `domain::ota::run(domain::ota::OtaCtx { link: &mut board.ota.link,
-    // flash: &mut board.ota.flash, mode: &mut domain::ota::Mode::Plain,
-    // confirmed: &mut false, index: 0 }).await`{% endif %}. Узел же подтверждает
-    // образ (`mark_booted`) — без него bootloader откатит обновление на
-    // следующем сбросе; применяете образ своим кодом — подтверждайте сами.
-{%- endif %}
-{%- if signed == "true" and graph != "true" %}
-    #[expect(
-        clippy::no_effect_underscore_binding,
-        reason = "заготовка под ручной вызов узла OTA, см. комментарий выше"
-    )]
-    let _mode = domain::ota::Mode::Signed {
-        running_version: image::FW_VERSION,
-    };
-{%- endif %}
 
     // Исполнитель — свой, а не `#[embassy_executor::main]`, и это единственная
     // причина, по которой `main` здесь синхронный. У макроса `WFE` живёт
@@ -151,6 +138,25 @@ fn main() -> ! {
     // никто, и это молча.
     let token = cpu_load::standalone_task().expect("задача CPU_LOAD свежая: спавнится один раз");
     spawner.spawn(token);
+{%- if ota == "true" %}
+
+    // Узел OTA без графа спавнится так же: он подтверждает образ
+    // (`mark_booted`) в стартовом действии, а без него bootloader откатит
+    // обновление на следующем сбросе. Канал и адаптер уезжают в задачу
+    // владением{% if signed == "true" %}; режим — `Signed` с версией этого образа
+    // (`image::FW_VERSION`){% else %}; режим — `Plain`{% endif %}.
+    // Применяете образ своим кодом — уберите этот спавн и подтверждайте сами.
+{%- if signed == "true" %}
+    let mode = domain::ota::Mode::Signed {
+        running_version: image::FW_VERSION,
+    };
+{%- else %}
+    let mode = domain::ota::Mode::Plain;
+{%- endif %}
+    let token = ota_task(board.ota.link, board.ota.flash, mode)
+        .expect("задача OTA свежая: спавнится один раз");
+    spawner.spawn(token);
+{%- endif %}
 {%- endif %}
 
     // Цикл исполнителя: спим, пока нечего делать, и отмечаем в счётчике, сколько

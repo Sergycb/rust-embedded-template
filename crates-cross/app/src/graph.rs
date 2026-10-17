@@ -45,10 +45,10 @@ const HOST_MESSAGE: usize = 256;
 {%- if interface == "udp" %}
 static HOST_RX: ConstStaticCell<[u8; HOST_MESSAGE]> = ConstStaticCell::new([0; HOST_MESSAGE]);
 {%- else %}
-static HOST_FRAME: ConstStaticCell<[u8; HostLink::tx_len(HOST_MESSAGE)]> =
-    ConstStaticCell::new([0; HostLink::tx_len(HOST_MESSAGE)]);
-static HOST_RX: ConstStaticCell<[u8; HostLink::rx_len(HOST_MESSAGE)]> =
-    ConstStaticCell::new([0; HostLink::rx_len(HOST_MESSAGE)]);
+static HOST_FRAME: ConstStaticCell<[u8; ::adapters::cobs::tx_len(HOST_MESSAGE)]> =
+    ConstStaticCell::new([0; ::adapters::cobs::tx_len(HOST_MESSAGE)]);
+static HOST_RX: ConstStaticCell<[u8; ::adapters::cobs::rx_len(HOST_MESSAGE)]> =
+    ConstStaticCell::new([0; ::adapters::cobs::rx_len(HOST_MESSAGE)]);
 {%- endif %}
 static HOST_TX: ConstStaticCell<[u8; HOST_MESSAGE]> = ConstStaticCell::new([0; HOST_MESSAGE]);
 {%- endif %}
@@ -169,13 +169,13 @@ supervisor_graph! {
         // docs/modules/bsp-serial.md{% elsif interface == "usb" %}поток CDC над заглушкой драйвера, пока проект не
         // подставит свой USB — docs/modules/bsp-usb.md{% else %}сокет стека над заглушкой устройства, пока проект не подставит
         // Ethernet — docs/modules/bsp-net.md{% endif %}) и карта регистров
-        // `domain::modbus::Registers` — пустая, её проект описывает в `domain`.
+        // `domain::modbus::EmptyRegisters` — пустая, её проект описывает в `domain`.
         // Адрес slave'а — `unit`{% if interface == "tcp" or interface == "udp" %}: по сети устройство адресуется по IP, и slave
         // отвечает на любой адрес в MBAP{% endif %}.
-        ::domain::MODBUS_SLAVE_FRAG<ModbusLink, ::domain::modbus::Registers> as MODBUS =
+        ::domain::MODBUS_SLAVE_FRAG<ModbusLink, ::domain::modbus::EmptyRegisters> as MODBUS =
             ::domain::modbus::ModbusSlaveWiring {
                 link: ModbusLink::new({% if interface == "uart" %}board.serial{% elsif interface == "tcp" %}board.net.tcp{% elsif interface == "usb" %}board.usb.cdc{% else %}board.net.udp{% endif %}),
-                regs: ::domain::modbus::Registers,
+                regs: ::domain::modbus::EmptyRegisters,
                 unit: 1,
             },
 {%- elsif protocol == "canopen" %}

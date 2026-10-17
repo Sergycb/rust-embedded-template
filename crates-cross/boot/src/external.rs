@@ -1,7 +1,7 @@
 //! `STATE` и `DFU` на внешней флеши: драйвер, страница обмена и решение,
 //! менять ли разделы местами.
 
-use adapters::ota::BootPlan;
+use domain::ota::boot::{BootPlan, boot_plan};
 use embassy_boot_stm32::{BootLoader, BootLoaderConfig, State};
 use embedded_storage::nor_flash::NorFlash;
 
@@ -40,22 +40,23 @@ const BUFFER_SIZE: usize = if <ExternalFlash as NorFlash>::WRITE_SIZE > {{write_
     {{write_size}}
 };
 
-/// Обмен разделов, если он запрошен, — или текущий образ, если внешняя флеш
-/// не отвечает, а обмен не начат. Решает `adapters::ota::boot_plan` (там же
-/// почему и host-тест с прерванным обменом): `Swap` — строгий
+const _: () = assert!(
+    BUFFER_SIZE.is_multiple_of(embassy_stm32::flash::WRITE_SIZE),
+    "буфер обмена не кратен слову записи внутреннего флеша (embassy_stm32::flash::WRITE_SIZE): \
+     проверьте write_size из генерации"
+);
+
+/// Подготовка к загрузке. Решает `domain::ota::boot::boot_plan` (там же почему
+/// и host-тест с прерванным обменом): `Prepare` — строгий
 /// `BootLoader::prepare`, ошибка которого — паника, сброс и продолжение обмена
-/// по журналу, а не прыжок в наполовину переписанный `ACTIVE`.
+/// по журналу, а не прыжок в наполовину переписанный `ACTIVE`; `BootCurrent` —
+/// `STATE` не читается (внешняя флеш не отвечает), был ли начат обмен, узнать
+/// нельзя, и загружается текущий образ без обмена.
 pub(crate) fn prepare<ACTIVE: NorFlash, DFU: NorFlash, STATE: NorFlash>(
     mut config: BootLoaderConfig<ACTIVE, DFU, STATE>,
 ) -> BootLoader {
-    match adapters::ota::boot_plan(&mut config.state) {
-        BootPlan::Swap => BootLoader::prepare::<_, _, _, BUFFER_SIZE>(config),
-        BootPlan::Boot => {
-            BootLoader::try_prepare::<_, _, _, BUFFER_SIZE>(config).unwrap_or_else(|_| {
-                defmt::warn!("boot: внешняя флеш не отвечает — загружается текущий образ");
-                BootLoader { state: State::Boot }
-            })
-        }
+    match boot_plan(&mut config.state) {
+        BootPlan::Prepare => BootLoader::prepare::<_, _, _, BUFFER_SIZE>(config),
         BootPlan::BootCurrent => {
             defmt::warn!("boot: внешняя флеш не отвечает — загружается текущий образ");
             BootLoader { state: State::Boot }

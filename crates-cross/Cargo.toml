@@ -124,8 +124,9 @@ embassy-usb            = { version = "0.6.0", default-features = false, features
 embassy-net            = { version = "0.9.1", features = ["tcp", "udp", "proto-ipv4", "medium-ethernet", "dhcpv4", "defmt"] }
 {%- endif %}
 embassy-sync       = { version = "0.8.0" }
-# Трейты `NorFlash` для обёртки флеша в bootloader'е, кормящей сторож
-# (crates-cross/boot/src/main.rs). Та же версия, что тянет embassy-boot.
+# Трейты `NorFlash` — нужны только `boot/src/external.rs` при `ota=external`
+# (геометрия драйвера внешней флеши в проверках при компиляции). Та же версия,
+# что тянет embassy-boot.
 embedded-storage   = { version = "0.3.1" }
 # `portable-atomic` здесь не объявлен намеренно: на Cortex-M0/M0+ ему нужно
 # сказать, чем эмулировать CAS, и это делает cfg в `.cargo/config.toml`
@@ -169,15 +170,12 @@ ports            = { path = "../crates-host/ports", features = ["defmt"] }
 # объектами. `defmt` — ради `Format` на ошибках в логе прошивки; на хосте
 # крейт собирается без фич вывода вовсе.
 adapters         = { path = "../crates-host/adapters", features = ["defmt"] }
-bsp              = { path = "./bsp" }{% if ota == "true" %}
-boot             = { path = "./boot" }{% endif %}
-app              = { path = "./app" }
+bsp              = { path = "./bsp" }
 # `default-features = false` обязательно: дефолт domain — фича `log` (нужна
 # хост-сборке, см. её [features]), а в прошивке используется только defmt.
 domain           = { path = "../crates-host/domain", default-features = false, features = [
 	"defmt",
 ] }
-target-tests     = { path = "./target-tests" }
 shadow-rs        = { version = "2.0.0", default-features = false }
 assign-resources = { version = "0.5.0" }
 
@@ -230,12 +228,6 @@ watchdog         = { git = "https://github.com/Sergycb/rust-lib.git" }
 # `get_panic_message_utf8`, без него сообщение читается только байтами.
 panic-persist = { version = "0.3.0", features = ["utf8", "custom-panic-handler"] }
 
-# Zero-copy DMA-буфер: статические объекты создаются только в cross —
-# см. docs/buffers.md.
-bbqueue = { version = "0.7.0", default-features = false, features = [
-	"critical-section",
-] }
-
 # `embassy-usb` подключается выше, только под `interface=usb`, — версия 0.6,
 # парная к `embassy-stm32` 0.6. Прежде он стоял запиненным на 0.5 ради
 # `defmt-embassy-usbserial` (`#[global_logger]` над USB CDC-ACM), убранного
@@ -246,7 +238,7 @@ codegen-units    = 1
 debug            = 2
 debug-assertions = true
 incremental      = false
-opt-level        = "s"    # <-
+opt-level        = "s"
 overflow-checks  = true
 lto              = "fat"
 
@@ -259,22 +251,15 @@ opt-level        = "s"
 overflow-checks  = false
 lto              = "fat"
 
-[profile.test]
-codegen-units    = 1
-debug            = 2
-debug-assertions = true   # <-
-incremental      = false
-opt-level        = "s"    # <-
-overflow-checks  = true   # <-
-lto              = "fat"
 {%- if signed == "true" %}
 
-# Проверка подписи живёт в bootloader'е (`adapters::ota::screen_update`), а
+# Проверка подписи живёт в bootloader'е (`domain::ota::boot::screen_update`), а
 # зона bootloader'а — 32 KiB на F4 с разделом настроек. В debug `salty` с
 # overflow-checks и debug-assertions весит ~18 KiB против ~12 в release, и
 # debug-bootloader (его заливают тесты на плате) выходил ~31 KiB — впритык.
 # С `opt-level = "z"` и без проверок — ~26 KiB. Проверки в криптографии,
 # которую мы не пишем, отладке ничего не дают.
+# Цифры измерены до зависимости `boot` -> `domain`: пересчитать.
 [profile.dev.package.salty]
 opt-level        = "z"
 debug-assertions = false

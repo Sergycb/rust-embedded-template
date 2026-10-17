@@ -25,8 +25,8 @@ defmt = { workspace = true }
 # Паникёр по профилю — то же правило, что у `app` (см. crates-cross/app/Cargo.toml):
 # dev — `panic-probe`, release — src/panic.rs поверх `panic-persist`. В release это единственный
 # способ узнать, почему bootloader не прыгнул: с `panic-probe` плата стояла
-# бы в `udf()` молча (до выключения питания или, в проекте с графом, до сброса
-# сторожем), а так причина лежит в PANIC и читается `cargo xtask panic-info`.
+# бы в `udf()` молча (до выключения питания), а так причина лежит в PANIC и
+# читается `cargo xtask panic-info`.
 panic-probe = { workspace = true, features = ["print-defmt"] }
 panic-persist = { workspace = true }
 embassy-boot-stm32 = { workspace = true, features = ["defmt"] }
@@ -46,15 +46,18 @@ embassy-sync = { workspace = true }
 # Раздел BOOTLOADER_STATE со страницей своего сектора, а не всего чипа
 # (`adapters::flash::Paged` поверх `Shared`, src/main.rs). Тот же код, что
 # строит этот раздел в приложении (bsp::ota), — расходиться им нельзя.
-{%- if signed == "true" %}
-# С подписью — ещё и проверка нового образа перед обменом
-# (`adapters::ota::screen_update`, фича `signed`).
-adapters = { workspace = true, features = ["signed"] }
-{%- else %}
 adapters = { workspace = true }
+{%- if signed == "true" or ota_store == "external" %}
+# Решение bootloader'а — обмен или текущий образ (`domain::ota::boot::boot_plan`,
+# с `ota=external`){% if signed == "true" %} и проверка нового образа перед обменом
+# (`domain::ota::boot::screen_update`, фича `signed`){% endif %}. Зависит от `domain`
+# ради двух функций над блокирующими разделами; в образ попадают только они:
+# `lto = "fat"` и `--gc-sections` выбрасывают всё, на что нет ссылок
+# (узлы, `supervisor`, `embassy-executor`). Драйвер времени `domain` не
+# включает — см. комментарий к `embassy-stm32` в crates-cross/Cargo.toml.
+domain = { workspace = true{% if signed == "true" %}, features = ["signed"]{% endif %} }
 {%- endif %}
-{%- if graph == "true" or ota_store == "external" %}
-# Обёртка флеша, кормящая сторож во время обмена разделов (`Fed` в src/main.rs),
-# и геометрия драйвера внешней флеши в проверках при компиляции.
+{%- if ota_store == "external" %}
+# Геометрия драйвера внешней флеши в проверках при компиляции.
 embedded-storage = { workspace = true }
 {%- endif %}

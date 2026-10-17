@@ -49,6 +49,12 @@ embassy-time = { workspace = true }
 # драйвера не соберётся.
 embassy-stm32 = { workspace = true, features = ["time-driver-any"] }
 bsp = { workspace = true }
-# Трейты портов: тесты дёргают объекты `Board` тем же способом, что и `app`.
+{%- if ota == "true" or config == "true" %}
+# Трейты портов: тесты дёргают объекты `Board` тем же способом, что и `app`
+# (`FirmwareUpdate` — тесты OTA, `SettingsStorage` — тест настроек).
 ports = { workspace = true }
+{%- endif %}
+{%- if signed == "true" %}
+# Проверка версии образа в тесте отката (`domain::ota::update::apply_signed`).
 domain = { workspace = true }
+{%- endif %}

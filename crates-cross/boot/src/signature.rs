@@ -5,6 +5,7 @@ use core::cell::RefCell;
 use adapters::flash::{Paged, Shared};
 {%- endif %}
 use defmt::info;
+use domain::ota::boot::{ScreenFailure, Screening, screen_update};
 use embassy_boot_stm32::BootLoaderConfig;
 {%- if dfu_bank != "true" %}
 use embassy_stm32::flash::{Blocking, Flash};
@@ -26,13 +27,10 @@ use crate::STATE_ERASE_SIZE;
 /// который обновлением не перезаписывается, и проверяется именно то, что
 /// сейчас станет `ACTIVE`, — ни ошибка в OTA-коде приложения, ни запись в
 /// `DFU` в обход него не приведут к запуску неподписанного образа. Решает
-/// `adapters::ota::screen_update` (там же — почему проверяется только новый
+/// `domain::ota::boot::screen_update` (там же — почему проверяется только новый
 /// запрос, а откат нет); отказ снимает запрос на обмен, и загружается прежний
 /// образ. О неудаче отправитель узнаёт по тому, что версия после перезагрузки
 /// не сменилась.
-///
-/// Свой мьютекс над `Flash`, а не тот, что дальше: сторож в release
-/// запускается в `main` после этой проверки, и закончиться она обязана раньше.
 ///
 /// Причина отказа печатается строкой на вариант, а не через
 /// `defmt::Debug2Format`: тот тянет `core::fmt` — несколько килобайт в зону
@@ -52,7 +50,7 @@ pub(crate) fn screen(
     let swap_allowed = {
         let mut config = BootLoaderConfig::from_linkerfile_blocking(&flash, &external, &external);
         let capacity = config.active.size();
-        if let Ok(screening) = adapters::ota::screen_update(
+        if let Ok(screening) = screen_update(
             &mut config.dfu,
             &mut config.state,
             capacity,
@@ -83,7 +81,7 @@ pub(crate) fn screen(flash: Bank1, dfu: Bank2) -> (Bank1, Bank2) {
         )));
         let mut config = BootLoaderConfig::from_linkerfile_blocking(&flash, &dfu, &state);
         let capacity = config.active.size();
-        let Ok(screening) = adapters::ota::screen_update(
+        let Ok(screening) = screen_update(
             &mut config.dfu,
             &mut config.state,
             capacity,
@@ -106,7 +104,7 @@ pub(crate) fn screen(flash: Flash<'static, Blocking>) -> Flash<'static, Blocking
         )));
         let mut config = BootLoaderConfig::from_linkerfile_blocking(&flash, &flash, &state);
         let capacity = config.active.size();
-        let Ok(screening) = adapters::ota::screen_update(
+        let Ok(screening) = screen_update(
             &mut config.dfu,
             &mut config.state,
             capacity,
@@ -123,19 +121,17 @@ pub(crate) fn screen(flash: Flash<'static, Blocking>) -> Flash<'static, Blocking
 {%- endif %}
 
 /// Исход проверки — в лог.
-fn report(screening: adapters::ota::Screening) {
-    use adapters::ota::{Rejection, Screening};
-
+fn report(screening: Screening) {
     match screening {
         Screening::NothingToCheck => {}
         Screening::Approved => info!("boot: подпись нового образа сошлась"),
         Screening::Rejected(why) => defmt::warn!(
             "boot: новый образ отвергнут ({=str}), загружается прежний",
             match why {
-                Rejection::NoRecord => "нет записи о подписи",
-                Rejection::Length => "негодная длина",
-                Rejection::NoPublicKey => "ключ не подставлен",
-                Rejection::Signature => "подпись не сошлась",
+                ScreenFailure::NoRecord => "нет записи о подписи",
+                ScreenFailure::Length => "негодная длина",
+                ScreenFailure::NoPublicKey => "ключ не подставлен",
+                ScreenFailure::Signature => "подпись не сошлась",
             }
         ),
     }

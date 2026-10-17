@@ -8,8 +8,9 @@ use adapters::flash::{Paged, Shared};
 use defmt::info;
 // RTT — дефолтный транспорт в обоих профилях (см. crates-cross/app/src/main.rs);
 // boot вдобавок не спавнит embassy-задач, поэтому очередь+drain-таск под
-// USB/UART (см. graph.rs) сюда в принципе не встраивается —
-// одну диагностическую строку перед прыжком не стоит того усложнять.
+// USB/UART (паттерн — docs/modules/app-graph.md) сюда в принципе не
+// встраивается — одну диагностическую строку перед прыжком не стоит того
+// усложнять.
 use defmt_rtt as _;
 {%- if ota_store == "external" and signed == "true" %}
 use embassy_boot_stm32::{BootLoader, BootLoaderConfig, State};
@@ -33,10 +34,6 @@ mod banks;
 {%- if ota_store == "external" %}
 mod external;
 {%- endif %}
-{%- if graph == "true" %}
-#[cfg(not(debug_assertions))]
-mod fed;
-{%- endif %}
 // Паникёр по профилю — копия паникёра `app` (boot намеренно не зависит ни от
 // `bsp`, ни от `app`). Дамп bootloader никогда не читает (это делает `app` при
 // старте), так что причина падения bootloader'а в release лежит в PANIC до
@@ -44,6 +41,17 @@ mod fed;
 mod panic;
 {%- if signed == "true" %}
 mod signature;
+{%- endif %}
+{%- if graph == "true" %}
+
+/// Таймаут сторожа, который bootloader запускает перед прыжком, — то же число
+/// из `[env]` crates-cross/.cargo/config.toml, что у приложения
+/// (`bsp::wdg::HW_TIMEOUT_US`, там же и почему одно).
+#[cfg(not(debug_assertions))]
+const WATCHDOG_TIMEOUT_US: u32 = match u32::from_str_radix(env!("WATCHDOG_TIMEOUT_US"), 10) {
+    Ok(us) => us,
+    Err(_) => panic!("WATCHDOG_TIMEOUT_US в .cargo/config.toml — не число"),
+};
 {%- endif %}
 
 #[cortex_m_rt::entry]
@@ -72,9 +80,7 @@ fn main() -> ! {
     let external: external::ExternalFlash = adapters::flash::Unconnected;
 {%- endif %}
 {%- if signed == "true" %}
-    // Новый образ проверяется ДО сторожа: проверка — один неделимый вызов
-    // (сотня миллионов тактов на частоте после сброса), покормить сторож
-    // внутри нечем. См. `signature::screen`.
+    // Новый образ проверяется до обмена разделов: см. `signature::screen`.
 {%- if ota_store == "external" %}
     let (flash, external, swap_allowed) = signature::screen(flash, external);
 {%- elsif dfu_bank == "true" %}
@@ -96,28 +102,6 @@ fn main() -> ! {
 {%- if dfu_bank == "true" %}
     // Кроме этого чипа: банк 2 стоит за разрывом, и регионы банков выше — не
     // выбор, а единственный способ до него дотянуться (см. начало `main`).
-{%- endif %}
-{%- if graph == "true" %}
-    //
-    // В release флеш{% if ota_store == "external" %} — оба, внутренний и внешний, —{% endif %} обёрнут сторожем (см. [`fed::Fed`]),
-    // запущенным здесь же — до обмена разделов, но после проверки нового
-    // образа (если она есть).
-    #[cfg(not(debug_assertions))]
-    let watchdog = {
-        let mut watchdog = IndependentWatchdog::new(p.{{watchdog_peripheral}}, fed::WATCHDOG_TIMEOUT_US);
-        watchdog.unleash();
-        RefCell::new(watchdog)
-    };
-    #[cfg(not(debug_assertions))]
-    let flash = fed::Fed::new(flash, &watchdog);
-{%- if ota_store == "external" %}
-    #[cfg(not(debug_assertions))]
-    let external = fed::Fed::new(external, &watchdog);
-{%- endif %}
-{%- if dfu_bank == "true" %}
-    #[cfg(not(debug_assertions))]
-    let dfu = fed::Fed::new(dfu, &watchdog);
-{%- endif %}
 {%- endif %}
     let flash = Mutex::new(RefCell::new(flash));
 {%- if ota_store == "external" %}
@@ -152,7 +136,7 @@ fn main() -> ! {
     let config = BootLoaderConfig::from_linkerfile_blocking(&flash, &flash, &state);
 {%- endif %}
     let active_offset = config.active.offset();
-    let bl = BootLoader::prepare::<_, _, _, {{write_size}}>(config);
+    let bl = BootLoader::prepare::<_, _, _, SWAP_BUFFER_SIZE>(config);
 {%- endif %}
 
     // Минимальный bootloader: как и официальный пример embassy-boot-stm32,
@@ -168,10 +152,15 @@ fn main() -> ! {
     let entry = FLASH_BASE as u32 + active_offset;
     info!("boot: jumping to app at {:x}", entry);
 {%- if graph == "true" %}
-    // Полный таймаут — приложению: до первого кормления из графа ему нужно
-    // поднять HAL и запустить граф.
+    // Сторож — последним, прямо перед прыжком, и целиком достаётся приложению:
+    // до первого кормления из графа ему нужно поднять HAL и запустить граф.
+    // Раньше он не нужен: бутлоадер защищает от неисправного образа (не
+    // стартует, не кормит), а не от собственного обмена разделов, сколько бы
+    // тот ни длился. Остановить его уже нельзя — приложение лишь подхватывает
+    // идущий счётчик (`bsp::wdg`, `arm()`). Только release: в debug на
+    // bootloader'е гоняются target-тесты, где кормить некому.
     #[cfg(not(debug_assertions))]
-    watchdog.borrow_mut().pet();
+    IndependentWatchdog::new(p.{{watchdog_peripheral}}, WATCHDOG_TIMEOUT_US).unleash();
 {%- endif %}
     // SAFETY: `load` ставит VTOR на этот адрес, читает из образа по нему
     // начальный MSP (первое слово) и reset-вектор (второе) и прыгает — за этой
@@ -207,6 +196,18 @@ fn main() -> ! {
 /// генерации тем же расчётом, что адреса в `memory.x`; то же самое стоит в
 /// `bsp::ota` — разделу в приложении и в bootloader'е расходиться нельзя.
 const STATE_ERASE_SIZE: usize = {{state_erase_size}};
+
+/// Буфер обмена `BootLoader::prepare` — слово записи флеша из генерации
+/// (`write_size`, его можно переопределить `--define`). `prepare` требует,
+/// чтобы буфер был кратен слову записи реального флеша; несовпадение — ошибка
+/// сборки, а не паника на старте bootloader'а.
+const SWAP_BUFFER_SIZE: usize = {{write_size}};
+
+const _: () = assert!(
+    SWAP_BUFFER_SIZE.is_multiple_of(embassy_stm32::flash::WRITE_SIZE),
+    "write_size из генерации не кратен слову записи флеша чипа (embassy_stm32::flash::WRITE_SIZE): \
+     пересоберите проект без --define write_size или поправьте значение"
+);
 {%- if dfu_bank == "true" %}
 
 /// Банк 1 — bootloader, `STATE`, `ACTIVE` (смещения от базы flash, как у

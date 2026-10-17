@@ -27,8 +27,10 @@ pub mod net;
 {%- if ota == "true" %}
 pub mod ota;
 {%- endif %}
+{%- if interface == "tcp" or interface == "udp" %}
 {%- if rng_irq != "" %}
 pub mod rng;
+{%- endif %}
 {%- endif %}
 {%- if interface == "uart" %}
 pub mod serial;

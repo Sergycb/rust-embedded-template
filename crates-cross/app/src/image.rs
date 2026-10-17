@@ -3,7 +3,7 @@
 //! Здесь, а не в `bsp`: это свойство прошивки, а не платы. Compose-site
 //! (`graph.rs`) отдаёт её узлу OTA режимом `Mode::Signed` — защита от отката.
 //! Подпись приложение не проверяет: ключ зашит в bootloader, и проверяет он
-//! (`crates-cross/boot`, `adapters::ota::screen_update`).
+//! (`crates-cross/boot`, `domain::ota::boot::screen_update`).
 
 /// Версия этого образа — `version` из Cargo.toml, свёрнутая
 /// `domain::ota::version::pack` в четыре байта.
