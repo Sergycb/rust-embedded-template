@@ -565,6 +565,7 @@ if variable::is_set("write_size") {
     if !wants_ota {
         file::delete("crates-cross/boot");
         file::delete("crates-cross/bsp/src/ota.rs");
+        file::delete("crates-cross/bsp/src/layout.rs");
         file::delete("docs/modules/bsp-ota.md");
         // Релизу по тегу без OTA нечего выкладывать: `app.bin` делается
         // только там, где есть раздел DFU. Тело workflow и так под
@@ -601,8 +602,9 @@ if variable::is_set("write_size") {
     // `ACTIVE`/`DFU` без раскладки не оборачиваются в `Paged`: страница обмена
     // здесь — страница цельного `Flash` (как было до расширения страницы).
     variable::set("swap_paged", "false");
-    // Страница раздела `BOOTLOADER_STATE` (`adapters::flash::Paged` в
-    // crates-cross/boot и bsp::ota) — тоже знание раскладки. Её здесь нет,
+    // Страница раздела `BOOTLOADER_STATE` (`adapters::flash::Paged`; число
+    // живёт в crates-cross/bsp/src/layout.rs, boot подключает его по пути) —
+    // тоже знание раскладки. Её здесь нет,
     // поэтому — страница цельного `Flash`, как было до `Paged`: верно на
     // чипах с равными секторами, а на F2/F4/F7 `STATE` в мелком секторе
     // приведёт к панике `Partition::new` при старте — об этом печатается
@@ -611,14 +613,14 @@ if variable::is_set("write_size") {
     if wants_ota && !wants_ext_ota {
         print("BOOTLOADER_STATE: страница раздела — сектор всего чипа (MAX_ERASE_SIZE); если STATE");
         print("  лежит в более мелком секторе (F2/F4/F7), впишите его размер в STATE_ERASE_SIZE");
-        print("  в crates-cross/boot/src/main.rs и crates-cross/bsp/src/ota.rs, иначе паника при старте");
+        print("  в crates-cross/bsp/src/layout.rs (общий у приложения и bootloader'а), иначе паника при старте");
     }
     // Страница обмена с внешними разделами — тоже знание раскладки. Сектор
     // внешней NOR (4 KiB) — нижняя граница: верна, если ACTIVE в memory.x
     // кратен max(странице чипа, 4 KiB); иначе `assert_partitions` паникует.
     variable::set("ext_page_size", "4_096");
     if wants_ota && wants_ext_ota {
-        print("ota=external: страница обмена EXT_PAGE_SIZE в crates-cross/boot/src/external.rs — 4 KiB;");
+        print("ota=external: страница обмена EXT_PAGE_SIZE в crates-cross/bsp/src/layout.rs — 4 KiB;");
         print("  впишите max(сектор чипа, стирание драйвера) и сделайте ACTIVE кратным ей");
     }
     // Раздел приложения здесь задаёт человек, значит и помещается ли в него
@@ -998,6 +1000,7 @@ if variable::is_set("write_size") {
         // раздела нет, а символы `__bootloader_dfu_*`, на которые опирается
         // embassy-boot, некому определить.
         file::delete("crates-cross/bsp/src/ota.rs");
+        file::delete("crates-cross/bsp/src/layout.rs");
         file::delete("docs/modules/bsp-ota.md");
         // И релиз по тегу: выкладывать нечего, `app.bin` собирается только
         // там, где есть куда его доставлять (см. ту же причину выше).

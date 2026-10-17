@@ -22,6 +22,11 @@ use embassy_sync::mutex::Mutex;
 use static_cell::StaticCell;
 
 use crate::board::{% if dfu_bank == "true" %}{DfuBankMutex, FlashMutex}{% else %}FlashMutex{% endif %};
+{%- if swap_paged == "true" %}
+use crate::layout::{STATE_ERASE_SIZE, SWAP_PAGE_SIZE};
+{%- else %}
+use crate::layout::STATE_ERASE_SIZE;
+{%- endif %}
 
 /// Флеш под разделом `DFU`: общий `Flash` чипа, видимый асинхронно
 /// (`BlockingAsync` поверх `Shared`) — порт OTA асинхронный, за ним может
@@ -49,35 +54,6 @@ type DfuFlash = BlockingAsync<Shared<'static, FlashMutex>>;
 /// Раздел `DFU` — то, из чего собирается адаптер.
 pub type Partition =
     embassy_embedded_hal::flash::partition::Partition<'static, NoopRawMutex, DfuFlash>;
-
-/// Страница раздела `BOOTLOADER_STATE` — размер сектора, в котором он лежит.
-///
-/// Цельный `Flash` объявляет страницей самый крупный сектор чипа, а
-/// `Partition::new` паникует на разделе, не кратном странице. На F2/F4/F7
-/// `STATE` лежит в мелком секторе (у F4 — 16 KiB, а с разделом настроек
-/// 64 KiB при странице 128 KiB), поэтому его страница своя. Число посчитано при генерации тем же
-/// расчётом, что адреса в `memory.x`; то же самое стоит в
-/// `crates-cross/boot` — разделу в приложении и в bootloader'е расходиться
-/// нельзя.
-const STATE_ERASE_SIZE: usize = {{state_erase_size}};
-{%- if swap_paged == "true" %}
-
-/// Страница обмена `ACTIVE` и `DFU` — крупнее физической страницы флеша.
-///
-/// Генерация берёт её больше физической, чтобы журнал `BOOTLOADER_STATE`
-/// (запись на каждую страницу `ACTIVE`) стал короче и коду bootloader'а
-/// остался почти весь его блок. Раздел `DFU` строится над
-/// `Paged<_, SWAP_PAGE_SIZE>`; `ACTIVE` с той же страницей собирает
-/// bootloader. Число — `page_size` из генерации, то же самое стоит в
-/// `crates-cross/boot` — менять только вместе.
-const SWAP_PAGE_SIZE: usize = {{page_size}};
-
-const _: () = assert!(
-    SWAP_PAGE_SIZE.is_multiple_of(embassy_stm32::flash::MAX_ERASE_SIZE),
-    "page_size из генерации не кратен странице стирания флеша чипа \
-     (embassy_stm32::flash::MAX_ERASE_SIZE): стирание раздела заденет чужие секторы"
-);
-{%- endif %}
 
 /// Флеш под разделом `BOOTLOADER_STATE`: тот же общий `Flash`, но со
 /// страницей [`STATE_ERASE_SIZE`].

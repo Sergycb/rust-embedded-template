@@ -33,19 +33,16 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::mutex::Mutex;
 use static_cell::StaticCell;
 
+use crate::layout::EXT_PAGE_SIZE;
+
 /// Драйвер внешней флеши — замените на свой.
 pub type ExternalFlash = adapters::flash::Unconnected;
 
-/// Страница обмена, под которую посчитана раскладка; то же число, что в
-/// bootloader'е. С драйвером, чьё стирание её не делит, страница обмена
-/// `embassy-boot` выросла бы, `ACTIVE` перестал бы быть ей кратен, и
-/// bootloader паниковал бы в `assert_partitions` на каждом старте. Проверка
-/// здесь — вдобавок к той, что в bootloader'е: у приложения свой тип драйвера.
-const EXT_PAGE_SIZE: usize = {{ext_page_size}};
-
+// Вдобавок к проверке в bootloader'е: у приложения свой тип драйвера
+// (асинхронный), и расходиться они могут.
 const _: () = assert!(
     EXT_PAGE_SIZE.is_multiple_of(adapters::flash::erase_size::<ExternalFlash>()),
-    "стирание драйвера внешней флеши не делит страницу обмена (EXT_PAGE_SIZE)"
+    "стирание драйвера внешней флеши не делит страницу обмена (EXT_PAGE_SIZE в layout.rs)"
 );
 
 /// Подставлен ли драйвер вместо заглушки — для target-тестов, которым без

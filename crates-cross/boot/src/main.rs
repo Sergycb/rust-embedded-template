@@ -35,6 +35,17 @@ mod banks;
 {%- if ota_store == "external" %}
 mod external;
 {%- endif %}
+// Числа раскладки (страницы обмена и `STATE`) — тот же исходник, что у `bsp`:
+// приложение и bootloader обязаны строить разделы с одними и теми же числами.
+#[path = "../../bsp/src/layout.rs"]
+mod layout;
+{%- if ota_store != "external" %}
+{%- if swap_paged == "true" %}
+use layout::{STATE_ERASE_SIZE, SWAP_PAGE_SIZE};
+{%- else %}
+use layout::STATE_ERASE_SIZE;
+{%- endif %}
+{%- endif %}
 // Паникёр по профилю — копия паникёра `app` (boot намеренно не зависит ни от
 // `bsp`, ни от `app`). Дамп bootloader никогда не читает (это делает `app` при
 // старте), так что причина падения bootloader'а в release лежит в PANIC до
@@ -197,37 +208,6 @@ fn main() -> ! {
     }
 }
 {%- if ota_store != "external" %}
-
-/// Страница раздела `BOOTLOADER_STATE` — размер сектора, в котором он лежит.
-///
-/// Цельный `Flash` объявляет страницей самый крупный сектор чипа, а
-/// `Partition::new` паникует на разделе, не кратном странице. На F2/F4/F7
-/// `STATE` лежит в мелком секторе (у F4 — 16 KiB, а с разделом настроек
-/// 64 KiB при странице 128 KiB), поэтому его страница своя. Число посчитано при
-/// генерации тем же расчётом, что адреса в `memory.x`; то же самое стоит в
-/// `bsp::ota` — разделу в приложении и в bootloader'е расходиться нельзя.
-const STATE_ERASE_SIZE: usize = {{state_erase_size}};
-{%- if swap_paged == "true" %}
-
-/// Страница обмена `ACTIVE` и `DFU` — крупнее физической страницы флеша.
-///
-/// `embassy-boot` берёт страницу обмена из `ERASE_SIZE` разделов, а журнал
-/// `BOOTLOADER_STATE` ведёт запись на каждую страницу `ACTIVE`: чем крупнее
-/// страница, тем короче журнал и тем больше блока bootloader'а остаётся его
-/// коду (подписанный release-образ на мелких страницах, как у L0, иначе не
-/// влезает в зону). Разделы поэтому строятся над
-/// `Paged<_, SWAP_PAGE_SIZE>`, а не над цельным `Flash` с его физической
-/// страницей. Число — из генерации (`page_size`), то же самое стоит в
-/// `bsp::ota` и в `signature`: разделам в приложении и в bootloader'е
-/// расходиться нельзя, менять только вместе.
-const SWAP_PAGE_SIZE: usize = {{page_size}};
-
-const _: () = assert!(
-    SWAP_PAGE_SIZE.is_multiple_of(embassy_stm32::flash::MAX_ERASE_SIZE),
-    "page_size из генерации не кратен странице стирания флеша чипа \
-     (embassy_stm32::flash::MAX_ERASE_SIZE): стирание раздела заденет чужие секторы"
-);
-{%- endif %}
 
 /// Буфер обмена `BootLoader::prepare` — слово записи флеша из генерации
 /// (`write_size`, его можно переопределить `--define`). `prepare` требует,

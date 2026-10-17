@@ -64,9 +64,10 @@ F2/F4/F7 (у F4 16, 64 и 128 KiB): в мелких секторах можно 
   меняется. Расчёт — `place_state` в `chip-data-gen`. С разделом настроек мелкие
   сектора отдаются ему (ему нужны две равные страницы), и `STATE` на F4 уходит
   в сектор 4 — см. раздел про `CONFIG` ниже.
-- **`STATE_ERASE_SIZE` в `crates-cross/boot` и в `bsp::ota` — одно число** из
-  плейсхолдера `state_erase_size`: разделу в bootloader'е и в приложении
-  расходиться нельзя. При ручной раскладке (`--define write_size=...`) хук
+- **`STATE_ERASE_SIZE` — одно число на `boot` и `bsp::ota`** из плейсхолдера
+  `state_erase_size`: оно лежит в `crates-cross/bsp/src/layout.rs`, а `boot`
+  подключает этот файл по пути (как `banks.rs`) — разделу в bootloader'е и в
+  приложении расходиться нельзя. При ручной раскладке (`--define write_size=...`) хук
   подставляет страницу цельного `Flash` — на F2/F4/F7 туда надо вписать размер
   сектора `STATE` руками.
 - **Страница обмена `ACTIVE`/`DFU` бывает крупнее физической — ради `STATE`.**
@@ -269,8 +270,8 @@ NOR. Во внутреннем флеше остаются bootloader и `ACTIVE
   `__bootloader_state_*`/`__bootloader_dfu_*` (и `__config_*` при
   `config=external`) в `memory.x` — смещения от начала внешней флеши, без
   регионов в `MEMORY`: в адресном пространстве МК её нет.
-- **Страница обмена** (`ext_page_size`, `EXT_PAGE_SIZE` в `boot` и
-  `bsp::external`) — max(крупнейший сектор чипа, 4 KiB). `embassy-boot`
+- **Страница обмена** (`ext_page_size`, `EXT_PAGE_SIZE` в
+  `crates-cross/bsp/src/layout.rs`, общем у `boot` и `bsp::external`) — max(крупнейший сектор чипа, 4 KiB). `embassy-boot`
   меняет разделы страницами `max(ACTIVE::ERASE_SIZE, DFU::ERASE_SIZE)`, и
   `ACTIVE` обязан быть им кратен, иначе `assert_partitions` паникует на
   старте. Поэтому **стирание драйвера обязано делить `EXT_PAGE_SIZE`** — это

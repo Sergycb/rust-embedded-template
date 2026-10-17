@@ -5,18 +5,13 @@ use domain::ota::boot::{BootPlan, boot_plan};
 use embassy_boot_stm32::{BootLoader, BootLoaderConfig, State};
 use embedded_storage::nor_flash::NorFlash;
 
+use crate::layout::EXT_PAGE_SIZE;
+
 /// Драйвер внешней флеши, на которой лежат `STATE` и `DFU`, — замените на
 /// свой: любой блокирующий `embedded_storage::nor_flash::NorFlash`. Та же
 /// микросхема, что у приложения (`bsp::external`), но драйвер блокирующий:
 /// bootloader не поднимает исполнитель.
 pub(crate) type ExternalFlash = adapters::flash::Unconnected;
-
-/// Страница обмена, под которую посчитана раскладка (`memory.x`): `ACTIVE`
-/// кратен ей. Обмен идёт страницами `max(ACTIVE::ERASE_SIZE,
-/// DFU::ERASE_SIZE)`, и драйвер с более крупным стиранием потребовал бы
-/// `ACTIVE`, кратного уже его странице, — `assert_partitions` паниковал бы на
-/// старте. Поэтому стирание драйвера обязано эту страницу делить.
-const EXT_PAGE_SIZE: usize = {{ext_page_size}};
 
 const _: () = assert!(
     EXT_PAGE_SIZE.is_multiple_of(<ExternalFlash as NorFlash>::ERASE_SIZE),

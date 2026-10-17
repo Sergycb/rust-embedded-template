@@ -21,6 +21,9 @@ pub mod config;
 {%- if ota == "true" and ota_store == "external" %}
 pub mod external;
 {%- endif %}
+{%- if ota == "true" %}
+mod layout;
+{%- endif %}
 {%- if interface == "tcp" or interface == "udp" %}
 pub mod net;
 {%- endif %}

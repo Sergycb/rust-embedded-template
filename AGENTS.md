@@ -187,24 +187,26 @@ read`: руками пришлось бы сначала найти адрес �
   таймер. Не звать после принятого образа (`mark_updated` ставит тот же
   флаг): после обмена и до него `STATE` одинаково `Swap`, и повтор снял бы
   принятое обновление — `docs/ota.md`.
-- С `ota=external` (`DFU`/`STATE` на внешней флеши): `EXT_PAGE_SIZE` в
-  `crates-cross/boot` и в `bsp::external` — одно число из генерации, и
-  стирание драйвера обязано его делить (`const`-assert в обоих); драйвер —
+- С `ota=external` (`DFU`/`STATE` на внешней флеши): `EXT_PAGE_SIZE` — одно
+  число из генерации (`crates-cross/bsp/src/layout.rs`, `boot` подключает файл
+  по пути), и стирание драйвера обязано его делить (`const`-assert в `boot` и в
+  `bsp::external`); драйвер —
   два слота одной микросхемы (блокирующий в `boot`, асинхронный в `bsp`).
   Bootloader загружает текущий образ без обмена, только если `STATE` не
   читается (`BootPlan::BootCurrent`) или (с подписью) новый образ отвергнут; при
   читаемом `STATE` (`BootPlan::Prepare`) — строгий `prepare`, `try_prepare` не
   используется, прыжок в наполовину переписанный `ACTIVE` недопустим — `docs/flash.md`, `docs/ota.md`.
 {%- if swap_paged == "true" %}
-- `SWAP_PAGE_SIZE` в `crates-cross/boot` и `bsp::ota` — одно число из генерации
-  ({{page_size}}): страница обмена крупнее физической, `ACTIVE` и `DFU`
+- `SWAP_PAGE_SIZE` — число из генерации ({{page_size}}) в
+  `crates-cross/bsp/src/layout.rs`, общем у `bsp::ota` и `boot` (тот
+  подключает файл по пути): страница обмена крупнее физической, `ACTIVE` и `DFU`
   оборачиваются в `Paged<_, SWAP_PAGE_SIZE>` ради малого журнала `STATE`
-  (подписанному `boot` нужна зона ≥ 26 KiB). Менять вместе; `STATE_ERASE_SIZE` —
-  другое число (страница сектора `STATE`) — `docs/flash.md`.
+  (подписанному `boot` нужна зона ≥ 26 KiB). `STATE_ERASE_SIZE` — другое число
+  (страница сектора `STATE`) — `docs/flash.md`.
 {%- endif %}
 - `BOOTLOADER_STATE` строится над `adapters::flash::Paged` со страницей своего
-  сектора (`STATE_ERASE_SIZE` в `crates-cross/boot` и в `bsp::ota` — одно число
-  из генерации). Над цельным `Flash` на F2/F4/F7 раздел не кратен его странице,
+  сектора (`STATE_ERASE_SIZE` — число из генерации, одно на `boot` и `bsp::ota`:
+  `crates-cross/bsp/src/layout.rs`). Над цельным `Flash` на F2/F4/F7 раздел не кратен его странице,
   и `Partition::new` паникует на старте. Так же и `CONFIG` (`CONFIG_ERASE_SIZE`
   в `bsp::config`): с OTA он может лежать в мелких секторах перед `ACTIVE` —
   `docs/flash.md`.
