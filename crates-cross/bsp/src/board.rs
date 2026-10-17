@@ -23,19 +23,17 @@ use static_cell::StaticCell;
 
 {%- if shared_flash == "true" %}
 
-/// Общий `Flash` всего чипа. Контроллер флеша один, а работать с ним нужно и
-/// OTA (разделы `DFU`/`BOOTLOADER_STATE`), и настройкам (раздел `CONFIG` во
-/// флеше или внутренняя EEPROM — она пишется через тот же контроллер), —
-/// поэтому объект создаётся ровно один и раздаётся ссылками.
+/// Общий `Flash` всего чипа под блокирующим замком. Контроллер флеша один, а
+/// работать с ним нужно и OTA (разделы `DFU`/`BOOTLOADER_STATE`), и настройкам
+/// (раздел `CONFIG` во флеше или внутренняя EEPROM — она пишется через тот же
+/// контроллер), — поэтому объект создаётся ровно один и раздаётся ссылками;
+/// к нему обращается [`adapters::flash::Shared`] (трейт `FlashLock` реализован
+/// для самого `Mutex<_, RefCell<_>>`).
 ///
 /// `NoopRawMutex`, а не `CriticalSectionRawMutex`: обе половины работают из
 /// задач одного исполнителя, то есть без вытеснения. Появится второй
 /// исполнитель (прерывательный приоритет, второе ядро) — менять здесь.
-///
-/// `RefCell` внутри нужен блокирующему `Mutex` embassy, поэтому ячейка
-/// спрятана в newtype: наружу тип торчит лишь как параметр
-/// [`adapters::flash::Shared`].
-pub struct FlashMutex(Mutex<NoopRawMutex, RefCell<ChipFlash>>);
+pub type FlashMutex = Mutex<NoopRawMutex, RefCell<ChipFlash>>;
 
 {%- if dfu_bank == "true" %}
 
@@ -46,9 +44,7 @@ pub struct FlashMutex(Mutex<NoopRawMutex, RefCell<ChipFlash>>);
 pub type ChipFlash = Bank1Region<'static, Blocking>;
 
 /// Банк 2 — под `DFU`, и только под него: смещения в нём отсчитаны от его
-/// начала, и символы `memory.x` у `DFU` посчитаны так же. Без newtype, в
-/// отличие от [`FlashMutex`]: наружу тип не выходит, он нужен одному
-/// `bsp::ota`, а `FlashLock` для голого мьютекса уже есть в `adapters`.
+/// начала, и символы `memory.x` у `DFU` посчитаны так же.
 pub type DfuBankMutex = Mutex<NoopRawMutex, RefCell<Bank2Region<'static, Blocking>>>;
 
 /// `&'static` — по той же причине, что [`FLASH`].
@@ -58,26 +54,6 @@ static DFU_BANK: StaticCell<DfuBankMutex> = StaticCell::new();
 /// Флеш под [`FlashMutex`] — весь чип одним объектом.
 pub type ChipFlash = Flash<'static, Blocking>;
 {%- endif %}
-
-impl FlashMutex {
-    fn new(flash: ChipFlash) -> Self {
-        Self(Mutex::new(RefCell::new(flash)))
-    }
-}
-
-impl adapters::flash::FlashLock for FlashMutex {
-    type Flash = ChipFlash;
-
-    fn with<R>(&self, op: impl FnOnce(&mut Self::Flash) -> R) -> R {
-        self.0.with(op)
-    }
-}
-
-impl core::fmt::Debug for FlashMutex {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("FlashMutex").finish_non_exhaustive()
-    }
-}
 
 /// `&'static` он не для красоты: `Ota` и `Settings` отдаются в задачи, а
 /// аргументы задач embassy обязаны быть `'static`. Обычное поле `Board` этого
@@ -236,10 +212,10 @@ impl Board {
         // реализующее порт из `ports`.
 {%- if dfu_bank == "true" %}
         let banks = Flash::new_blocking(p.FLASH).into_blocking_regions();
-        let flash = FLASH.init(FlashMutex::new(banks.bank1_region));
+        let flash = FLASH.init(Mutex::new(RefCell::new(banks.bank1_region)));
         let dfu_bank = DFU_BANK.init(Mutex::new(RefCell::new(banks.bank2_region)));
 {%- else %}
-        let flash = FLASH.init(FlashMutex::new(Flash::new_blocking(p.FLASH)));
+        let flash = FLASH.init(Mutex::new(RefCell::new(Flash::new_blocking(p.FLASH))));
 {%- endif %}
 {%- else %}
         // Место для распиновки платы: заполните группы в `resources.rs`

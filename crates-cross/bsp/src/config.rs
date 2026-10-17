@@ -84,15 +84,27 @@ fn flash_range() -> Range<u32> {
 
 use adapters::eeprom::{Eeprom, EepromAccess};
 use adapters::flash::FlashLock;
+use static_cell::StaticCell;
 
 use crate::board::FlashMutex;
 
 /// Хранилище настроек этой платы — то, что лежит полем `Board` и уезжает в
 /// задачи. Псевдоним по общему правилу шаблона: тип в сигнатуре
 /// `#[embassy_executor::task]` должен быть конкретным.
-pub type Settings = adapters::settings::Settings<Eeprom<'static, FlashMutex>>;
+pub type Settings = adapters::settings::Settings<Eeprom<'static, EepromFlash>>;
 
-impl EepromAccess for FlashMutex {
+/// Общий [`FlashMutex`] как источник EEPROM. Свой тип, а не `impl` на самом
+/// мьютексе: и трейт `EepromAccess`, и `Mutex` чужие для `bsp`.
+pub struct EepromFlash(&'static FlashMutex);
+
+// Вручную: у `Flash` из `embassy-stm32` нет `Debug`.
+impl core::fmt::Debug for EepromFlash {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("EepromFlash").finish_non_exhaustive()
+    }
+}
+
+impl EepromAccess for EepromFlash {
     type Error = embassy_stm32::flash::Error;
 
     fn size(&self) -> u32 {
@@ -106,13 +118,17 @@ impl EepromAccess for FlashMutex {
     }
 
     fn read(&self, offset: u32, buf: &mut [u8]) -> Result<(), Self::Error> {
-        self.with(|flash| flash.eeprom_read_slice(offset, buf))
+        self.0.with(|flash| flash.eeprom_read_slice(offset, buf))
     }
 
     fn write(&self, offset: u32, data: &[u8]) -> Result<(), Self::Error> {
-        self.with(|flash| flash.eeprom_write_slice(offset, data))
+        self.0.with(|flash| flash.eeprom_write_slice(offset, data))
     }
 }
+
+/// `&'static` — `Eeprom` держит доступ к EEPROM ссылкой, а хранилище уезжает в
+/// задачу.
+static ACCESS: StaticCell<EepromFlash> = StaticCell::new();
 
 /// Собирает хранилище над всей внутренней EEPROM.
 ///
@@ -121,7 +137,7 @@ impl EepromAccess for FlashMutex {
 /// Если EEPROM меньше двух страниц обёртки — см.
 /// `adapters::settings::Settings::new`; у STM32L0/L1 таких нет.
 pub(crate) fn new(flash: &'static FlashMutex) -> Settings {
-    let eeprom = Eeprom::new(flash);
+    let eeprom = Eeprom::new(ACCESS.init(EepromFlash(flash)));
     let size = eeprom.usable();
     adapters::settings::Settings::new(eeprom, 0..size)
 }
