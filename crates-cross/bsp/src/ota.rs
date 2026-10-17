@@ -1,11 +1,8 @@
 #![doc = include_str!("../../../docs/modules/bsp-ota.md")]
 
-use core::convert::Infallible;
-
 {%- if ota_store == "external" %}
 
 use embassy_boot::FirmwareUpdaterConfig;
-use ports::{Announce, ImageSource, Rejection};
 
 use crate::external::{ExternalMutex, ExternalPartition};
 
@@ -22,7 +19,6 @@ use embassy_boot::FirmwareUpdaterConfig;
 use embassy_embedded_hal::adapter::BlockingAsync;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::mutex::Mutex;
-use ports::{Announce, ImageSource, Rejection};
 use static_cell::StaticCell;
 
 use crate::board::{% if dfu_bank == "true" %}{DfuBankMutex, FlashMutex}{% else %}FlashMutex{% endif %};
@@ -104,57 +100,19 @@ static STATE_FLASH: StaticCell<Mutex<NoopRawMutex, StateFlash>> = StaticCell::ne
 /// узла OTA должен быть конкретным, а адаптер приходит из `adapters` generic.
 pub type Updater = adapters::ota::Updater<Partition, StatePartition>;
 
-/// Всё, что плата отдаёт узлу OTA: канал доставки и адаптер разделов.
-///
-/// Своя структура, а не `domain::ota::OtaWiring`: `bsp` зависит только от
-/// `ports` и `adapters`, про `domain` он не знает. Во вход узла её
-/// раскладывает compose-site (`crates-cross/app/src/graph.rs`).
-#[derive(Debug)]
-pub struct Ota {
-    /// Канал доставки образа — реализация `ports::ImageSource`.
-    pub link: Link,
-    /// Адаптер разделов — реализация `ports::FirmwareUpdate`.
-    pub flash: Updater,
-}
-
 /// Канал доставки образа этой платы — заглушка, которую проект заменяет
-/// своим транспортом.
+/// своим транспортом (как реализовать — `adapters::ota::Unconnected`).
 ///
-/// Каркас, как `domain::heartbeat::run`: узел `OTA` уже собран и спавнится{% if graph == "true" %} графом{% else %} из `main`{% endif %},
-/// а как приходит образ — USB CDC, UART, сеть, SD-карта — шаблон не знает.
-/// Заглушка ждёт заголовок вечно, то есть узел висит в `begin()` и ничего не
-/// принимает; о себе она сообщает одной строкой в лог при старте.
-///
-/// Заменить — значит реализовать три метода `ports::ImageSource` на объекте,
-/// собранном в `Board::new` из вашей периферии: `begin` — дождаться и
-/// разобрать заголовок (длина{% if signed == "true" %}, подпись{% endif %}),
-/// `next` — отдавать куски образа, `finish` — сообщить исход отправителю и
-/// решить, перезапускать ли МК (`cortex_m::peripheral::SCB::sys_reset()`).
-/// Формат пакетов и проверка целостности — ваши; узел про них не знает.
-/// Всё, что не зависит от канала — сверка длины до стирания, буферизация до
-/// слова флеша, порядок проверок подписи, — уже в `domain::ota`.
-#[derive(Debug)]
-pub struct Link;
+/// Псевдоним, а не голый тип в графе и в `main`, по общему правилу шаблона:
+/// конкретный тип слота приходит из `bsp` под именем, и подставить свой
+/// транспорт — значит поменять эту строку и `new`.
+pub type Link = adapters::ota::Unconnected;
 
-impl ImageSource for Link {
-    type Error = Infallible;
-
-    async fn begin(&mut self) -> Result<Announce, Self::Error> {
-        defmt::warn!("bsp: транспорт OTA не реализован — узел OTA ждёт впустую");
-        core::future::pending().await
-    }
-
-    fn next(&mut self) -> impl Future<Output = Result<Option<&[u8]>, Self::Error>> {
-        core::future::ready(Ok(None))
-    }
-
-    fn finish(
-        &mut self,
-        _outcome: Result<(), Rejection>,
-    ) -> impl Future<Output = Result<(), Self::Error>> {
-        core::future::ready(Ok(()))
-    }
-}
+/// Всё, что плата отдаёт узлу OTA: канал доставки образа `link` и адаптер
+/// `flash` поверх разделов `DFU`/`BOOTLOADER_STATE`. Во вход узла
+/// (`domain::ota::OtaWiring`) их раскладывает compose-site
+/// (`crates-cross/app/src/graph.rs`): `bsp` про `domain` не знает.
+pub type Ota = adapters::ota::Ota<Link, Updater>;
 
 /// Собирает вход узла OTA: адаптер из разделов `DFU` и `BOOTLOADER_STATE`,
 /// найденных по символам `memory.x`, и канал доставки.
@@ -182,8 +140,9 @@ pub(crate) fn new(flash: &'static FlashMutex) -> Ota {
     let state = STATE_FLASH.init(Mutex::new(state));
     let config = FirmwareUpdaterConfig::from_linkerfile(dfu, state);
 {%- endif %}
+    defmt::warn!("bsp: транспорт OTA не реализован — узел OTA ждёт впустую");
     Ota {
-        link: Link,
+        link: Link::default(),
         flash: Updater::{% if signed == "true" %}signed{% else %}new{% endif %}(config.dfu, config.state, max_image_len()),
     }
 }

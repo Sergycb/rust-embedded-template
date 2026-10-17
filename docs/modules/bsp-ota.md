@@ -1,5 +1,6 @@
 Обвязка OTA этой платы: адаптер разделов из символов `memory.x` и канал
-доставки — вместе полем `Board::ota` ([`Ota`], вход узла `domain::ota`).
+доставки — вместе полем `Board::ota` ([`Ota`] — пара `adapters::ota::Ota`, вход узла
+`domain::ota`).
 
 Сам адаптер — `adapters::ota` (generic по `NorFlash`, тестируется на хосте),
 логика приёма и применения — `domain::ota::download` и `domain::ota::update`, а зовёт
@@ -26,12 +27,14 @@
 образа задаёт приложение (`crates-cross/app/src/image.rs`), ключ —
 bootloader.{% endif %}
 
-Транспорт — поле `link` в `Board::ota`: в шаблоне это заглушка [`Link`], которая
-ждёт заголовок вечно. Заменить её — значит реализовать три метода
-`ports::ImageSource` на объекте, собранном из вашей периферии:
+Транспорт — поле `link` в `Board::ota`: в шаблоне это заглушка
+`adapters::ota::Unconnected` под именем [`Link`], которая ждёт заголовок вечно.
+Заменить её — значит завести свой тип, реализующий три метода
+`ports::ImageSource` на объекте, собранном из вашей периферии, и поменять
+псевдоним `Link` и `new`:
 
 ```ignore
-impl ImageSource for Link {
+impl ImageSource for MyLink {
     type Error = LinkError;
     // Дождаться и разобрать заголовок: длина{% if signed == "true" %} и подпись{% endif %}.
     async fn begin(&mut self) -> Result<Announce, LinkError> { .. }
