@@ -70,6 +70,9 @@ defmt = { workspace = true, optional = true }
 # cargo разрешена: в обычную сборку ни та ни другая не попадает.
 domain = { path = "../domain", features = ["signed"] }
 salty = { workspace = true }
+# `BlockingAsync` (async-вид `Shared`/`Paged`) и `BlockingPartition` — как их
+# собирают `bsp` и bootloader; свои копии в тестах не нужны.
+embassy-embedded-hal = { workspace = true }
 # Исполнитель для async-тестов над флешем в памяти (`#[tokio::test]`); фичи —
 # в корневом Cargo.toml.
 tokio = { workspace = true }

@@ -12,7 +12,8 @@
 `memory.x` — смещения от её начала (docs/flash.md).{% else %} `BOOTLOADER_STATE` строится не над цельным `Flash`, как
 `DFU`, а над `adapters::flash::Paged` со страницей своего сектора
 (`STATE_ERASE_SIZE`) — почему, см. docs/flash.md. Оба раздела асинхронные:
-общий блокирующий `Flash` виден им через мост `adapters::flash::Shared`, а
+общий блокирующий `Flash` виден им через `adapters::flash::Shared` и
+`embassy_embedded_hal::adapter::BlockingAsync`, а
 порт `FirmwareUpdate` — асинхронный, чтобы за ним могла стоять и внешняя
 флеш.{% if swap_paged == "true" %} Раздел `DFU` строится тоже не над цельным `Flash`, а над
 `Paged` со страницей обмена `SWAP_PAGE_SIZE` — она крупнее физической страницы

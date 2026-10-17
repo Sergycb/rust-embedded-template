@@ -41,6 +41,10 @@ cortex-m = { workspace = true }
 # объект под `blocking_mutex` (см. `FlashMutex` в src/board.rs).
 {%- if shared_flash == "true" or ota == "true" %}
 embassy-sync = { workspace = true }
+# `BlockingAsync` — асинхронный вид блокирующего флеша под `Partition`,
+# `FirmwareUpdater` и `sequential-storage` (src/ota.rs, src/config.rs); с OTA —
+# ещё и имя типа раздела в псевдониме `Ota`.
+embassy-embedded-hal = { workspace = true }
 {%- endif %}
 # `static-cell` — потому что общему флешу, сети и USB нужен `&'static`: иначе их
 # нельзя отдать в задачу, которую спавнит `Spawner` (аргументы задач обязаны
@@ -60,11 +64,9 @@ embassy-net = { workspace = true }
 # Только ради `ota.rs`, которого в проектах без OTA нет вовсе — вместе с
 # `crates-cross/boot` его удаляет chip-select.rhai. Сам адаптер живёт в
 # `adapters::ota`; здесь `embassy-boot` нужен ради `from_linkerfile`
-# (разделы из символов memory.x) и фичи `flash-erase-zero`, а
-# `embassy-embedded-hal` — ради имени типа раздела в псевдониме `Ota`.
+# (разделы из символов memory.x) и фичи `flash-erase-zero`.
 {%- if ota == "true" %}
 embassy-boot = { workspace = true, features = ["defmt"{% if erase_zero == "true" and ota_store != "external" %}, "flash-erase-zero"{% endif %}] }
-embassy-embedded-hal = { workspace = true }
 {%- endif %}
 # Аппаратный сторож под трейт `HardwareWatchdog` (см. src/wdg.rs). Крейт
 # объявлен здесь, а не у `app`, потому что реализация трейта — это железо:

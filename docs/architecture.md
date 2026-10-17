@@ -73,8 +73,9 @@ supervisor-графы, watchdog). Вся остальная логика — в 
 хватает трейтов `embedded-storage`/`embedded-hal` (раздел флеша или шина приходят
 параметром), лежит в `crates-host/adapters` и тестируется на хосте на фейке:
 `adapters::ota` (поверх `embassy-boot`), `adapters::settings` (поверх
-`sequential-storage`) и `adapters::flash` (мост blocking → async над общим
-`Flash`, ради асинхронного API того же `sequential-storage`). Та, которой
+`sequential-storage`) и `adapters::flash` (общий блокирующий `Flash` под замком —
+`Shared`, `Paged`; async-вид даёт `BlockingAsync` из `embassy-embedded-hal`,
+ради асинхронного API того же `sequential-storage`). Та, которой
 нужны `embassy_stm32::peripherals`,
 линкерный символ или регистр, — в `crates-cross/bsp`: сторож над IWDG (`bsp::wdg`) и
 обвязка, строящая адаптеры из символов `memory.x` (`bsp::ota`, `bsp::config`) и

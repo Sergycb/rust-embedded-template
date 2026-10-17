@@ -22,6 +22,7 @@
 use core::ops::Range;
 
 use adapters::flash::{Paged, Shared};
+use embassy_embedded_hal::adapter::BlockingAsync;
 
 use crate::board::FlashMutex;
 
@@ -37,8 +38,9 @@ const CONFIG_ERASE_SIZE: usize = {{config_erase_size}};
 /// Хранилище настроек этой платы — то, что лежит полем `Board` и уезжает в
 /// задачи. Псевдоним по общему правилу шаблона: тип в сигнатуре
 /// `#[embassy_executor::task]` должен быть конкретным.
-pub type Settings =
-    adapters::settings::Settings<Paged<Shared<'static, FlashMutex>, CONFIG_ERASE_SIZE>>;
+pub type Settings = adapters::settings::Settings<
+    BlockingAsync<Paged<Shared<'static, FlashMutex>, CONFIG_ERASE_SIZE>>,
+>;
 
 // Ещё один `#[expect(unsafe_code)]` в `crates-cross` (есть только при `config=internal`):
 // причина та же, что у блока в `ota.rs` — адрес линкерного символа иначе не взять.
@@ -58,7 +60,10 @@ unsafe extern "C" {
 /// Если раздел не годится под `sequential-storage` — см.
 /// `adapters::settings::Settings::new`.
 pub(crate) fn new(flash: &'static FlashMutex) -> Settings {
-    adapters::settings::Settings::new(Paged::new(Shared::new(flash)), flash_range())
+    adapters::settings::Settings::new(
+        BlockingAsync::new(Paged::new(Shared::new(flash))),
+        flash_range(),
+    )
 }
 
 /// Границы раздела по символам линкера.

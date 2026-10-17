@@ -19,6 +19,7 @@ pub type StatePartition = ExternalPartition;
 
 use adapters::flash::{Paged, Shared};
 use embassy_boot::FirmwareUpdaterConfig;
+use embassy_embedded_hal::adapter::BlockingAsync;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::mutex::Mutex;
 use ports::{Announce, ImageSource, Rejection};
@@ -26,8 +27,9 @@ use static_cell::StaticCell;
 
 use crate::board::{% if dfu_bank == "true" %}{DfuBankMutex, FlashMutex}{% else %}FlashMutex{% endif %};
 
-/// Флеш под разделом `DFU`: общий `Flash` чипа, видимый асинхронно (мост
-/// `Shared`) — порт OTA асинхронный, за ним может стоять и внешняя флеш.
+/// Флеш под разделом `DFU`: общий `Flash` чипа, видимый асинхронно
+/// (`BlockingAsync` поверх `Shared`) — порт OTA асинхронный, за ним может
+/// стоять и внешняя флеш.
 ///
 /// Тот же цельный `Flash`, что и в `crates-cross/boot`: он сам знает реальные
 /// границы секторов чипа, в том числе неравномерные (F4/F7/H7), а банковые
@@ -36,16 +38,16 @@ use crate::board::{% if dfu_bank == "true" %}{DfuBankMutex, FlashMutex}{% else %
 ///
 /// Кроме этого чипа: банк 2 у него стоит за разрывом, цельный `Flash` туда не
 /// дотягивается, и `DFU` лежит в регионе банка 2 (`crate::board::DfuBankMutex`).
-type DfuFlash = Shared<'static, DfuBankMutex>;
+type DfuFlash = BlockingAsync<Shared<'static, DfuBankMutex>>;
 {%- elsif swap_paged == "true" %}
 ///
 /// Но со страницей обмена [`SWAP_PAGE_SIZE`], крупнее физической страницы
 /// флеша (`adapters::flash::Paged`): `DFU` обязан видеть ту же страницу, что
 /// `ACTIVE` и `DFU` в bootloader'е, иначе размеры и смещения разделов у них
 /// разойдутся.
-type DfuFlash = Paged<Shared<'static, FlashMutex>, SWAP_PAGE_SIZE>;
+type DfuFlash = BlockingAsync<Paged<Shared<'static, FlashMutex>, SWAP_PAGE_SIZE>>;
 {%- else %}
-type DfuFlash = Shared<'static, FlashMutex>;
+type DfuFlash = BlockingAsync<Shared<'static, FlashMutex>>;
 {%- endif %}
 
 /// Раздел `DFU` — то, из чего собирается адаптер.
@@ -83,7 +85,7 @@ const _: () = assert!(
 
 /// Флеш под разделом `BOOTLOADER_STATE`: тот же общий `Flash`, но со
 /// страницей [`STATE_ERASE_SIZE`].
-type StateFlash = Paged<Shared<'static, FlashMutex>, STATE_ERASE_SIZE>;
+type StateFlash = BlockingAsync<Paged<Shared<'static, FlashMutex>, STATE_ERASE_SIZE>>;
 
 /// Раздел `BOOTLOADER_STATE` — над [`StateFlash`], а не над цельным `Flash`,
 /// как [`Partition`].
@@ -167,15 +169,17 @@ pub(crate) fn new(external: &'static ExternalMutex) -> Ota {
 ///
 /// `DFU` — в банке 2 (`dfu_bank`), `STATE` — в банке 1 (`flash`).
 pub(crate) fn new(flash: &'static FlashMutex, dfu_bank: &'static DfuBankMutex) -> Ota {
-    let dfu = DFU_FLASH.init(Mutex::new(Shared::new(dfu_bank)));
+    let dfu = DFU_FLASH.init(Mutex::new(BlockingAsync::new(Shared::new(dfu_bank))));
 {%- elsif swap_paged == "true" %}
 pub(crate) fn new(flash: &'static FlashMutex) -> Ota {
-    let dfu = DFU_FLASH.init(Mutex::new(Paged::new(Shared::new(flash))));
+    let dfu = BlockingAsync::new(Paged::new(Shared::new(flash)));
+    let dfu = DFU_FLASH.init(Mutex::new(dfu));
 {%- else %}
 pub(crate) fn new(flash: &'static FlashMutex) -> Ota {
-    let dfu = DFU_FLASH.init(Mutex::new(Shared::new(flash)));
+    let dfu = DFU_FLASH.init(Mutex::new(BlockingAsync::new(Shared::new(flash))));
 {%- endif %}
-    let state = STATE_FLASH.init(Mutex::new(Paged::new(Shared::new(flash))));
+    let state = BlockingAsync::new(Paged::new(Shared::new(flash)));
+    let state = STATE_FLASH.init(Mutex::new(state));
     let config = FirmwareUpdaterConfig::from_linkerfile(dfu, state);
 {%- endif %}
     Ota {
