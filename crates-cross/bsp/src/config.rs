@@ -43,7 +43,7 @@ pub type Settings = adapters::settings::Settings<
 >;
 
 // Ещё один `#[expect(unsafe_code)]` в `crates-cross` (есть только при `config=internal`):
-// причина та же, что у блока в `ota.rs` — адрес линкерного символа иначе не взять.
+// причина та же, что у блока в `flash.rs` — адрес линкерного символа иначе не взять.
 #[expect(unsafe_code, reason = "обоснование — в комментарии выше")]
 unsafe extern "C" {
     /// Границы раздела `CONFIG` из `memory.x`, отсчитанные от базы flash —
@@ -158,7 +158,7 @@ use crate::external::{ExternalMutex, ExternalPartition};
 pub type Settings = adapters::settings::Settings<ExternalPartition>;
 
 // Ещё один `#[expect(unsafe_code)]` в `crates-cross`: причина та же, что у
-// блока в `ota.rs` — адрес линкерного символа иначе не взять.
+// блока в `flash.rs` — адрес линкерного символа иначе не взять.
 #[expect(unsafe_code, reason = "обоснование — в комментарии выше")]
 unsafe extern "C" {
     /// Границы раздела настроек на внешней флеши, от её начала.

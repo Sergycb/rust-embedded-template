@@ -459,7 +459,6 @@ const NEED = #{
     ota: variable::is_set("ota") && wants_ota,
     ext_ota: variable::is_set("ota") && wants_ext_ota,
     config: variable::is_set("config") && wants_config,
-    external: wants_external,
     graph: variable::is_set("graph") && wants_graph,
 };
 
@@ -769,7 +768,7 @@ if variable::is_set("write_size") {
     // Модуль флеша в bsp нужен, пока есть общий замок или разделы OTA; без обоих
     // файла и его документации быть не должно (`pub mod flash;` закрыт тем же
     // условием в lib.rs).
-    if !wants_ota && !((wants_ota && !wants_ext_ota) || (wants_config && store == "eeprom")) {
+    if !wants_ota && !(wants_config && store == "eeprom") {
         file::delete("crates-cross/bsp/src/flash.rs");
         file::delete("docs/modules/bsp-flash.md");
     }

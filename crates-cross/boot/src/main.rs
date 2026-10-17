@@ -227,7 +227,8 @@ const SWAP_PAGE_SIZE: usize = adapters::flash::size_from_env(option_env!("SWAP_P
 
 const _: () = assert!(
     SWAP_PAGE_SIZE != 0 && SWAP_PAGE_SIZE.is_multiple_of(embassy_stm32::flash::MAX_ERASE_SIZE),
-    "SWAP_PAGE_SIZE из генерации не задан или не кратен странице стирания флеша чипа      (embassy_stm32::flash::MAX_ERASE_SIZE): стирание раздела заденет чужие секторы"
+    "SWAP_PAGE_SIZE из генерации не задан или не кратен странице стирания флеша чипа \
+     (embassy_stm32::flash::MAX_ERASE_SIZE): стирание раздела заденет чужие секторы"
 );
 {%- endif %}
 
