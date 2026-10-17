@@ -64,6 +64,25 @@ pub fn seed_from_uid(uid: [u8; 12]) -> u64 {
     u64::from_le_bytes(bytes) ^ u64::from(u32::from_le_bytes([uid[8], uid[9], uid[10], uid[11]]))
 }
 
+/// Сеть платы: фоновая работа стека для узла `NET` и сам стек, на котором
+/// приложение открывает сокет протокола.
+///
+/// Пара, потому что их даёт один `embassy_net::new`; чипа она не знает —
+/// устройство `D` подставляет плата.
+pub struct Net<D: Driver + 'static> {
+    /// Фоновая работа стека — уезжает в узел `NET` графа.
+    pub runner: embassy_net::Runner<'static, D>,
+    /// Стек — на нём приложение открывает сокет протокола.
+    pub stack: embassy_net::Stack<'static>,
+}
+
+// Вручную: у `Runner` нет `Debug`.
+impl<D: Driver + 'static> core::fmt::Debug for Net<D> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Net").finish_non_exhaustive()
+    }
+}
+
 /// Кадр, которого не бывает: токены приёма и передачи [`Unconnected`].
 #[derive(Debug)]
 pub enum NoFrame {}

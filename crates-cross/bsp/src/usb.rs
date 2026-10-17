@@ -1,8 +1,8 @@
 #![doc = include_str!("../../../docs/modules/bsp-usb.md")]
 
-use adapters::usb::{CdcBuffers, CdcStream, Unconnected};
+use adapters::usb::{CdcBuffers, Unconnected};
+use embassy_usb::Config;
 use embassy_usb::class::cdc_acm::State;
-use embassy_usb::{Config, UsbDevice};
 use static_cell::{ConstStaticCell, StaticCell};
 
 /// USB-драйвер платы — пока заглушка, до USB-блока чипа (см. модуль).
@@ -23,19 +23,7 @@ static BUFFERS: ConstStaticCell<CdcBuffers> = ConstStaticCell::new(CdcBuffers::n
 static CDC_STATE: StaticCell<State<'static>> = StaticCell::new();
 
 /// USB платы: устройство для узла `USB` и поток CDC под протоколом.
-pub struct Usb {
-    /// USB-устройство — уезжает в узел `USB` графа.
-    pub device: UsbDevice<'static, UsbDriver>,
-    /// Поток CDC ACM («виртуальный COM-порт») — под транспортом протокола.
-    pub cdc: CdcStream<'static, UsbDriver>,
-}
-
-// Вручную: у `UsbDevice` нет `Debug`.
-impl core::fmt::Debug for Usb {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("Usb").finish_non_exhaustive()
-    }
-}
+pub type Usb = adapters::usb::Usb<UsbDriver>;
 
 /// Собирает USB-устройство с одним классом CDC ACM над драйвером платы
 /// (`adapters::usb::cdc`). Серийный номер устройства — заводской номер чипа.
@@ -48,11 +36,10 @@ pub(crate) fn new(_resources: crate::resources::UsbResources) -> Usb {
     config.product = Some("{{project-name}}");
     config.serial_number = Some(embassy_stm32::uid::uid_hex());
 
-    let (device, cdc) = adapters::usb::cdc(
+    adapters::usb::cdc(
         Unconnected::default(),
         config,
         BUFFERS.take(),
         CDC_STATE.init(State::new()),
-    );
-    Usb { device, cdc }
+    )
 }

@@ -287,6 +287,24 @@ impl Default for CdcBuffers {
     }
 }
 
+/// USB платы: устройство для узла `USB` и поток CDC под протоколом.
+///
+/// Пара, потому что обе половины делает один `Builder`; чипа она не знает —
+/// `D` подставляет плата.
+pub struct Usb<D: Driver<'static>> {
+    /// USB-устройство — уезжает в узел `USB` графа.
+    pub device: UsbDevice<'static, D>,
+    /// Поток CDC ACM («виртуальный COM-порт») — под транспортом протокола.
+    pub cdc: CdcStream<'static, D>,
+}
+
+// Вручную: у `UsbDevice` нет `Debug`.
+impl<D: Driver<'static>> core::fmt::Debug for Usb<D> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Usb").finish_non_exhaustive()
+    }
+}
+
 /// Собирает USB-устройство с одним классом CDC ACM над драйвером платы:
 /// устройство уезжает в узел `USB`, поток — под транспорт протокола.
 #[must_use]
@@ -295,7 +313,7 @@ pub fn cdc<D: Driver<'static>>(
     config: Config<'static>,
     buffers: &'static mut CdcBuffers,
     state: &'static mut State<'static>,
-) -> (UsbDevice<'static, D>, CdcStream<'static, D>) {
+) -> Usb<D> {
     let CdcBuffers {
         config_descriptor,
         bos_descriptor,
@@ -313,7 +331,10 @@ pub fn cdc<D: Driver<'static>>(
     let class = CdcAcmClass::new(&mut builder, state, PACKET);
     let device = builder.build();
     let (tx, rx_half) = class.split();
-    (device, CdcStream::new(tx, rx_half.into_buffered(rx)))
+    Usb {
+        device,
+        cdc: CdcStream::new(tx, rx_half.into_buffered(rx)),
+    }
 }
 
 #[cfg(test)]
@@ -459,7 +480,7 @@ mod tests {
     /// Поток CDC над сценарным драйвером и хост, который им управляет.
     fn stream() -> (CdcStream<'static, Scripted>, Shared) {
         let host = Shared::default();
-        let (_device, stream) = cdc(
+        let Usb { cdc: stream, .. } = cdc(
             Scripted(Rc::clone(&host)),
             embassy_usb::Config::new(0xC0DE, 0xCAFE),
             leak(CdcBuffers::new()),

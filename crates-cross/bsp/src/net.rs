@@ -1,7 +1,7 @@
 #![doc = include_str!("../../../docs/modules/bsp-net.md")]
 
 use adapters::net::Unconnected;
-use embassy_net::{Config, DhcpConfig, Runner, StackResources};
+use embassy_net::{Config, DhcpConfig, StackResources};
 use static_cell::ConstStaticCell;
 
 /// Сетевое устройство платы — пока заглушка, до Ethernet (см. модуль).
@@ -20,19 +20,7 @@ pub use embassy_net::udp::PacketMetadata;
 /// Сеть платы: фоновая работа стека для узла `NET` и сам стек. Сокет
 /// протокола и его порт — дело приложения (`crates-cross/app/src/graph.rs`):
 /// порт задаёт протокол, а не плата.
-pub struct Net {
-    /// Фоновая работа стека — уезжает в узел `NET` графа.
-    pub runner: Runner<'static, Device>,
-    /// Стек — на нём приложение открывает сокет протокола.
-    pub stack: Stack,
-}
-
-// Вручную: у `Runner` нет `Debug`.
-impl core::fmt::Debug for Net {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("Net").finish_non_exhaustive()
-    }
-}
+pub type Net = adapters::net::Net<Device>;
 
 /// Сокетов в стеке: DHCP-клиент и сокет протокола. Слот — около 500 байт
 /// оперативной памяти, поэтому без запаса: добавите свой сокет (или фичу
