@@ -1049,8 +1049,8 @@ const PROTOCOL_INTERFACES = #{
     "canopen": ["can"],
 };
 // Блоки чипа (метки chip-data/interfaces.rhai), на которых работает
-// интерфейс: CAN — любой из двух контроллеров, драйвер `bsp::can` выбирает по
-// `can_kind`.
+// интерфейс: CAN — любой из двух контроллеров, имя блока в документации и
+// справочнике выбирает `can_kind`.
 const INTERFACE_BLOCKS = #{
     "uart": ["usart"],
     "can": ["fdcan", "bxcan"],

@@ -21,10 +21,9 @@ workspace = true
 # регистров FLASH для этого нет в API HAL, а сырой адрес вместо типизированного
 # регистра `stm32-metapac` ничем не проверялся бы.
 embassy-stm32 = { workspace = true, features = ["time-driver-any"{% if cpu_freq_boost == "true" or bank_switch != "" %}, "unstable-pac"{% endif %}] }
-{%- if ota == "true" or interface == "can" %}
-# Трейты портов, которые `bsp` реализует сам: канал доставки образа
-# (`bsp::ota`) и шина CAN поверх контроллера чипа (`bsp::can::Bus`). Без них
-# `bsp` портов не называет: настройки реализуют свой порт в `adapters`.
+{%- if ota == "true" %}
+# Типы портов в сигнатурах `bsp::ota`. Остальные порты `bsp` не называет:
+# реализации — в `adapters`.
 ports = { workspace = true }
 {%- endif %}
 # Адаптеры поверх generic-флеша и шин: `Board::new` собирает их из периферии

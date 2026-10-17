@@ -151,10 +151,10 @@ fn default_cases() -> Vec<Case> {
         // интерфейса из таблицы chip-data/interfaces.rhai.
         Case::new("stm32g474re").variant("modbus-uart", &["protocol=modbus", "interface=uart"]),
         Case::new("stm32f407ve").variant("protobuf-uart", &["protocol=protobuf", "interface=uart"]),
-        // CANopen на обоих CAN-контроллерах: `bsp::can::Bus` различается по
-        // `can_kind` — FDCAN (G4) включается сразу, bxCAN (F4) — асинхронно
-        // при первом обмене. Заодно — крейт словаря `crates-host/canopen`,
-        // который в остальных конфигурациях удаляется.
+        // CANopen на обоих CAN-контроллерах: `can_kind` — FDCAN (G4) и bxCAN
+        // (F4) — различает документацию и имя блока в справочнике. Заодно —
+        // крейт словаря `crates-host/canopen`, который в остальных
+        // конфигурациях удаляется.
         Case::new("stm32g474re").variant("canopen-fdcan", &["protocol=canopen", "interface=can"]),
         Case::new("stm32f407ve").variant("canopen-bxcan", &["protocol=canopen", "interface=can"]),
         // CANopen с разделом настроек: объекты по `save` и адрес по LSS — в

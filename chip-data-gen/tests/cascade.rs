@@ -1278,7 +1278,8 @@ fn modbus_master_is_false_without_modbus() {
 }
 
 /// CANopen поверх CAN: хук берёт вид контроллера из таблицы интерфейсов
-/// (`bsp::can::Bus` у FDCAN и bxCAN разный) и оставляет крейт словаря.
+/// (имя блока и рецепт в `docs/modules/bsp-can.md` у FDCAN и bxCAN разные) и
+/// оставляет крейт словаря.
 #[test]
 fn canopen_picks_the_can_controller_of_the_chip() {
     for (chip, kind) in [("g474re", "fdcan"), ("f407ve", "bxcan")] {
