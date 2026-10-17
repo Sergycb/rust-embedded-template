@@ -125,8 +125,8 @@ pub struct Board {
     pub can: crate::can::Can,
 {%- endif %}
 {%- if interface == "tcp" or interface == "udp" %}
-    /// Сеть под протоколом: фоновая работа стека для узла `NET` и сокет
-    /// протокола (`bsp::net`). Устройство — заглушка, пока проект не подставит
+    /// Сеть под протоколом: фоновая работа стека для узла `NET` и сам стек, на
+    /// котором приложение открывает сокет протокола (`bsp::net`). Устройство — заглушка, пока проект не подставит
     /// Ethernet своей платы (`docs/modules/bsp-net.md`).
     pub net: crate::net::Net,
 {%- if rng_irq != "" %}
@@ -234,7 +234,7 @@ impl Board {
         let mut rng = crate::rng::new(p.RNG);
         let seed = rng.next_u64();
 {%- else %}
-        let seed = crate::net::uid_seed(embassy_stm32::uid::uid());
+        let seed = adapters::net::seed_from_uid(embassy_stm32::uid::uid());
 {%- endif %}
 {%- endif %}
 

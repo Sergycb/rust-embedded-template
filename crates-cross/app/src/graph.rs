@@ -14,7 +14,7 @@
 
 {%- if graph == "true" %}
 use defmt::{info, warn};
-{%- if protocol == "protobuf" %}
+{%- if protocol == "protobuf" or interface == "tcp" or interface == "udp" %}
 use static_cell::ConstStaticCell;
 {%- endif %}
 use supervisor::{Duration, Liveness, supervisor_graph};
@@ -51,6 +51,47 @@ static HOST_RX: ConstStaticCell<[u8; ::adapters::cobs::rx_len(HOST_MESSAGE)]> =
     ConstStaticCell::new([0; ::adapters::cobs::rx_len(HOST_MESSAGE)]);
 {%- endif %}
 static HOST_TX: ConstStaticCell<[u8; HOST_MESSAGE]> = ConstStaticCell::new([0; HOST_MESSAGE]);
+{%- endif %}
+
+{%- if interface == "tcp" or interface == "udp" %}
+
+/// Порт, на котором протокол ждёт хост: {% if protocol == "modbus" %}502 — стандартный порт Modbus
+/// TCP и UDP{% else %}5000 — выбран шаблоном, у protobuf стандартного нет{% endif %}. Порт задаёт протокол, а не
+/// плата, поэтому он здесь, а не в `bsp::net`.
+const PORT: u16 = {% if protocol == "modbus" %}502{% else %}5000{% endif %};
+
+/// Буфер сокета протокола — с запасом на самый длинный кадр Modbus TCP
+/// (260 байт) и сообщение protobuf (`HOST_MESSAGE`).
+const SOCKET_BUFFER: usize = 1024;
+
+// Память сокета протокола: он держит её `&'static mut`. `ConstStaticCell` —
+// значения известны при компиляции и лежат в `.bss`.
+static SOCKET_RX: ConstStaticCell<[u8; SOCKET_BUFFER]> = ConstStaticCell::new([0; SOCKET_BUFFER]);
+static SOCKET_TX: ConstStaticCell<[u8; SOCKET_BUFFER]> = ConstStaticCell::new([0; SOCKET_BUFFER]);
+{%- if interface == "udp" %}
+static SOCKET_RX_META: ConstStaticCell<[bsp::net::PacketMetadata; 4]> =
+    ConstStaticCell::new([bsp::net::PacketMetadata::EMPTY; 4]);
+static SOCKET_TX_META: ConstStaticCell<[bsp::net::PacketMetadata; 4]> =
+    ConstStaticCell::new([bsp::net::PacketMetadata::EMPTY; 4]);
+{%- endif %}
+
+/// Сокет протокола на стеке платы: {% if interface == "tcp" %}TCP-сервер — поток байтов под транспортом{% else %}UDP-канал — датаграммы{% endif %} протокола.
+{%- if interface == "tcp" %}
+fn socket(stack: bsp::net::Stack) -> ::adapters::net::TcpServer {
+    ::adapters::net::TcpServer::new(stack, PORT, SOCKET_RX.take(), SOCKET_TX.take())
+}
+{%- else %}
+fn socket(stack: bsp::net::Stack) -> ::adapters::net::UdpLink {
+    ::adapters::net::UdpLink::new(
+        stack,
+        PORT,
+        SOCKET_RX_META.take(),
+        SOCKET_RX.take(),
+        SOCKET_TX_META.take(),
+        SOCKET_TX.take(),
+    )
+}
+{%- endif %}
 {%- endif %}
 
 /// Как часто тикер графа опрашивает сторожей узлов и кормит железо.
@@ -165,7 +206,7 @@ supervisor_graph! {
 {%- if protocol == "modbus" %}
 
         // Узел `MODBUS` — Modbus slave поверх {% if interface == "uart" %}UART{% elsif interface == "tcp" %}TCP{% elsif interface == "usb" %}USB CDC{% else %}UDP{% endif %} платы: транспорт `ModbusLink`
-        // вокруг `{% if interface == "uart" %}board.serial{% elsif interface == "tcp" %}board.net.tcp{% elsif interface == "usb" %}board.usb.cdc{% else %}board.net.udp{% endif %}` ({% if interface == "uart" %}заглушка, пока проект не подставит свой UART —
+        // вокруг `{% if interface == "uart" %}board.serial{% elsif interface == "tcp" %}socket(board.net.stack){% elsif interface == "usb" %}board.usb.cdc{% else %}socket(board.net.stack){% endif %}` ({% if interface == "uart" %}заглушка, пока проект не подставит свой UART —
         // docs/modules/bsp-serial.md{% elsif interface == "usb" %}поток CDC над заглушкой драйвера, пока проект не
         // подставит свой USB — docs/modules/bsp-usb.md{% else %}сокет стека над заглушкой устройства, пока проект не подставит
         // Ethernet — docs/modules/bsp-net.md{% endif %}) и карта регистров
@@ -174,7 +215,7 @@ supervisor_graph! {
         // отвечает на любой адрес в MBAP{% endif %}.
         ::domain::MODBUS_SLAVE_FRAG<ModbusLink, ::domain::modbus::EmptyRegisters> as MODBUS =
             ::domain::modbus::ModbusSlaveWiring {
-                link: ModbusLink::new({% if interface == "uart" %}board.serial{% elsif interface == "tcp" %}board.net.tcp{% elsif interface == "usb" %}board.usb.cdc{% else %}board.net.udp{% endif %}),
+                link: ModbusLink::new({% if interface == "uart" %}board.serial{% elsif interface == "tcp" %}socket(board.net.stack){% elsif interface == "usb" %}board.usb.cdc{% else %}socket(board.net.stack){% endif %}),
                 regs: ::domain::modbus::EmptyRegisters,
                 unit: 1,
             },
@@ -198,16 +239,16 @@ supervisor_graph! {
 {%- elsif protocol == "protobuf" %}
 
         // Узел `HOST` — сообщения protobuf от хоста поверх {% if interface == "uart" %}UART{% elsif interface == "tcp" %}TCP{% elsif interface == "usb" %}USB CDC{% else %}UDP{% endif %} платы: канал
-        // `HostLink` вокруг `{% if interface == "uart" %}board.serial{% elsif interface == "tcp" %}board.net.tcp{% elsif interface == "usb" %}board.usb.cdc{% else %}board.net.udp{% endif %}` ({% if interface == "uart" %}заглушка, пока проект не подставит свой
+        // `HostLink` вокруг `{% if interface == "uart" %}board.serial{% elsif interface == "tcp" %}socket(board.net.stack){% elsif interface == "usb" %}board.usb.cdc{% else %}socket(board.net.stack){% endif %}` ({% if interface == "uart" %}заглушка, пока проект не подставит свой
         // UART — docs/modules/bsp-serial.md{% elsif interface == "usb" %}поток CDC над заглушкой драйвера, пока
         // проект не подставит свой USB — docs/modules/bsp-usb.md{% else %}сокет стека над заглушкой устройства, пока проект не
         // подставит Ethernet — docs/modules/bsp-net.md{% endif %}) и обработчик `domain::host::Service` над
         // схемой `crates-host/proto`. Буферы — статики `HOST_*` выше.
         ::domain::HOST_FRAG<HostLink, ::domain::host::Service> as HOST = ::domain::host::HostWiring {
 {%- if interface == "udp" %}
-            link: board.net.udp,
+            link: socket(board.net.stack),
 {%- else %}
-            link: HostLink::new({% if interface == "uart" %}board.serial{% elsif interface == "tcp" %}board.net.tcp{% elsif interface == "usb" %}board.usb.cdc{% else %}board.net.udp{% endif %}, HOST_FRAME.take()),
+            link: HostLink::new({% if interface == "uart" %}board.serial{% elsif interface == "tcp" %}socket(board.net.stack){% elsif interface == "usb" %}board.usb.cdc{% else %}socket(board.net.stack){% endif %}, HOST_FRAME.take()),
 {%- endif %}
             service: ::domain::host::Service::new(crate::build::PKG_VERSION),
             rx: HOST_RX.take(),

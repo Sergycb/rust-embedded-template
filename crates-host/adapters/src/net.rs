@@ -37,6 +37,33 @@ impl Unconnected {
     }
 }
 
+/// MAC из заводского номера чипа: локально администрируемый (бит 1 первого
+/// байта), без группового (бит 0) — у каждой платы свой и постоянный. Все
+/// 12 байт номера свёрнуты в 5: выброшенный байт сделал бы MAC общим у
+/// чипов, которые различаются только им. Свой адрес от производителя —
+/// подставьте в `bsp::net`.
+#[must_use]
+pub const fn mac_from_uid(uid: [u8; 12]) -> [u8; 6] {
+    [
+        0x02,
+        uid[0] ^ uid[5] ^ uid[10],
+        uid[1] ^ uid[6] ^ uid[11],
+        uid[2] ^ uid[7],
+        uid[3] ^ uid[8],
+        uid[4] ^ uid[9],
+    ]
+}
+
+/// Затравка стека (порты, номера последовательностей TCP) из заводского
+/// номера — для чипов без RNG. Не случайна: у одной платы она одна и та же
+/// после каждого сброса.
+#[must_use]
+pub fn seed_from_uid(uid: [u8; 12]) -> u64 {
+    let mut bytes = [0; 8];
+    bytes.copy_from_slice(&uid[..8]);
+    u64::from_le_bytes(bytes) ^ u64::from(u32::from_le_bytes([uid[8], uid[9], uid[10], uid[11]]))
+}
+
 /// Кадр, которого не бывает: токены приёма и передачи [`Unconnected`].
 #[derive(Debug)]
 pub enum NoFrame {}
@@ -80,6 +107,37 @@ impl Driver for Unconnected {
 
     fn hardware_address(&self) -> HardwareAddress {
         HardwareAddress::Ethernet(self.mac)
+    }
+}
+
+#[cfg(test)]
+mod uid_tests {
+    use super::{mac_from_uid, seed_from_uid};
+
+    const UID: [u8; 12] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+
+    /// Локально администрируемый, индивидуальный; каждый байт номера влияет
+    /// на результат — чипы, различающиеся одним байтом, получают разные MAC.
+    #[test]
+    fn mac_is_local_unicast_and_depends_on_every_uid_byte() {
+        let mac = mac_from_uid(UID);
+        assert_eq!(mac[0] & 0b11, 0b10);
+        for i in 0..UID.len() {
+            let mut other = UID;
+            other[i] ^= 0x40;
+            assert_ne!(mac_from_uid(other), mac, "байт {i} выброшен");
+        }
+    }
+
+    /// Затравка зависит от всех 12 байт номера.
+    #[test]
+    fn seed_depends_on_every_uid_byte() {
+        let seed = seed_from_uid(UID);
+        for i in 0..UID.len() {
+            let mut other = UID;
+            other[i] ^= 0x40;
+            assert_ne!(seed_from_uid(other), seed, "байт {i} выброшен");
+        }
     }
 }
 
