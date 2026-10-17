@@ -232,7 +232,7 @@ flash и безусловно прыгает в него (`unsafe { bl.load(entr
 
 От OTA можно отказаться прямо при генерации — ответом `no` на вопрос про неё (или
 `--define ota=no`). Тогда приложению достаётся весь flash вместо раздела `ACTIVE`, а
-из проекта уходят `crates-cross/boot`, `bsp::ota` и всё, что ниже.
+из проекта уходят `crates-cross/boot`, разделы OTA в `bsp::flash` и всё, что ниже.
 
 Ответ `external` уносит `DFU` и `BOOTLOADER_STATE` на внешнюю SPI NOR: внутри
 остаются bootloader и `ACTIVE` почти на весь чип (на F407VE 384 KiB вместо 128).
@@ -247,16 +247,18 @@ flash и безусловно прыгает в него (`unsafe { bl.load(entr
 (`domain::ota::download::receive`), применяет (`mark_updated` или, с подписью,
 `domain::ota::update::apply_signed`) и сообщает исход отправителю. Адаптер
 `adapters::ota` (поверх `embassy-boot`) пишет образ и хранит состояние
-bootloader'а, `crates-cross/bsp/src/ota.rs` собирает его из линкерных символов
-`memory.x`, `Board` отдаёт его вместе с каналом полем `ota`, а граф забирает
-одной строкой (`fragments:` в `crates-cross/app/src/graph.rs`). Версию образа
+bootloader'а. Плата отдаёт только разделы флеша (`crates-cross/bsp/src/flash.rs`
+находит их по линкерным символам `memory.x`, поле `Board::partitions`): алгоритм
+обновления — не железо, и адаптер над разделами собирает приложение
+(`updater()` в `crates-cross/app/src/main.rs`), а граф забирает одной строкой
+(`fragments:` в `crates-cross/app/src/graph.rs`). Версию образа
 задаёт приложение (`crates-cross/app/src/image.rs`), а не плата; ключ подписи
 зашит в bootloader (`crates-cross/boot`).
 
 Канал остаётся за вами — USB CDC, UART, сеть, SD-карта: формат пакета и
-проверка целостности у каждого свои, и шаблон их не выбирает. В `Board` он
-лежит в `ota.link`, в шаблоне это заглушка `bsp::ota::Link`, которая ждёт
-заголовок вечно. Заменить её — значит реализовать три метода
+проверка целостности у каждого свои, и шаблон их не выбирает. Он живёт в
+приложении (`Link` и `link()` в `crates-cross/app/src/main.rs`), в шаблоне это
+заглушка `adapters::ota::Unconnected`, которая ждёт заголовок вечно. Заменить её — значит реализовать три метода
 `ports::ImageSource`:
 
 ```rust

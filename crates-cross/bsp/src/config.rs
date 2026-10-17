@@ -24,7 +24,7 @@ use core::ops::Range;
 use adapters::flash::{Paged, Shared};
 use embassy_embedded_hal::adapter::BlockingAsync;
 
-use crate::board::FlashMutex;
+use crate::flash::FlashMutex;
 
 /// Страница раздела `CONFIG` — размер сектора, в котором он лежит.
 ///
@@ -86,7 +86,7 @@ use adapters::eeprom::{Eeprom, EepromAccess};
 use adapters::flash::FlashLock;
 use static_cell::StaticCell;
 
-use crate::board::FlashMutex;
+use crate::flash::FlashMutex;
 
 /// Хранилище настроек этой платы — то, что лежит полем `Board` и уезжает в
 /// задачи. Псевдоним по общему правилу шаблона: тип в сигнатуре

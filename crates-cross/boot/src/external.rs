@@ -5,7 +5,14 @@ use domain::ota::boot::{BootPlan, boot_plan};
 use embassy_boot_stm32::{BootLoader, BootLoaderConfig, State};
 use embedded_storage::nor_flash::NorFlash;
 
-use crate::layout::EXT_PAGE_SIZE;
+/// Страница обмена, под которую посчитана раскладка (`memory.x`): `ACTIVE`
+/// кратен ей. Обмен идёт страницами `max(ACTIVE::ERASE_SIZE,
+/// DFU::ERASE_SIZE)`, и драйвер с более крупным стиранием потребовал бы
+/// `ACTIVE`, кратного уже его странице, — `assert_partitions` паниковал бы на
+/// старте. Поэтому стирание драйвера обязано эту страницу делить. Число —
+/// переменная среды `EXT_PAGE_SIZE` из `[env]` `crates-cross/.cargo/config.toml`,
+/// та же, что читает приложение (`bsp::external`).
+const EXT_PAGE_SIZE: usize = adapters::flash::size_from_env(option_env!("EXT_PAGE_SIZE"), 0);
 
 /// Драйвер внешней флеши, на которой лежат `STATE` и `DFU`, — замените на
 /// свой: любой блокирующий `embedded_storage::nor_flash::NorFlash`. Та же
@@ -14,7 +21,7 @@ use crate::layout::EXT_PAGE_SIZE;
 pub(crate) type ExternalFlash = adapters::flash::Unconnected;
 
 const _: () = assert!(
-    EXT_PAGE_SIZE.is_multiple_of(<ExternalFlash as NorFlash>::ERASE_SIZE),
+    EXT_PAGE_SIZE != 0 && EXT_PAGE_SIZE.is_multiple_of(<ExternalFlash as NorFlash>::ERASE_SIZE),
     "стирание драйвера внешней флеши не делит страницу обмена (EXT_PAGE_SIZE): \
      перегенерируйте раскладку или возьмите стирание мельче (сектор 4 KiB)"
 );

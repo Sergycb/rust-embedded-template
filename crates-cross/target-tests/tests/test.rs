@@ -136,6 +136,13 @@ mod tests {
     }
 {%- endif %}
 
+    /// Адаптер обновления над разделами платы — тот, что собирает `app`.
+    type Updater = adapters::ota::Updater<bsp::flash::Dfu, bsp::flash::State>;
+
+    fn updater(partitions: bsp::flash::Partitions) -> Updater {
+        Updater::{% if signed == "true" %}signed{% else %}new{% endif %}(partitions.dfu, partitions.state, partitions.active_len)
+    }
+
     /// `prepare(len)` стирает раздел так, как ждёт `embassy-boot`, и ровно
     /// столько страниц, сколько занимает образ.
     ///
@@ -156,7 +163,7 @@ mod tests {
     /// укладываются в одну страницу, и «округляем вверх» там не отличить ни от
     /// «округляем вниз», ни от «стираем всё».
     #[test]
-    async fn prepare_erases_only_what_the_image_needs(mut board: Board) {
+    async fn prepare_erases_only_what_the_image_needs(board: Board) {
         use ports::FirmwareUpdate;
 
 {%- if ota_store == "external" %}
@@ -165,34 +172,20 @@ mod tests {
         }
 {%- endif %}
 
+        let mut ota = updater(board.partitions);
+
         // Пачкаем раздел перед стиранием: иначе тест зелёный и в случае, когда
         // `prepare` не сделал ничего, а байты остались стёртыми с прошлого
         // прогона. Мусор — инверсия ожидаемого, чтобы он был мусором и там,
         // где стёртое состояние нулевое.
-        board
-            .ota
-            .flash
-            .prepare(u32::try_from(DIRTY.len()).expect("образ короче 4 ГиБ"))
+        ota.prepare(u32::try_from(DIRTY.len()).expect("образ короче 4 ГиБ"))
             .await
             .expect("раздел DFU должен стираться");
-        board
-            .ota
-            .flash
-            .write(0, &DIRTY)
-            .await
-            .expect("запись мусора");
+        ota.write(0, &DIRTY).await.expect("запись мусора");
 
-        board
-            .ota
-            .flash
-            .prepare(8)
-            .await
-            .expect("раздел DFU должен стираться");
+        ota.prepare(8).await.expect("раздел DFU должен стираться");
         let mut head = [!ERASED; 8];
-        board
-            .ota
-            .flash
-            .read(0, &mut head)
+        ota.read(0, &mut head)
             .await
             .expect("раздел DFU должен читаться");
         assert_eq!(
@@ -201,8 +194,8 @@ mod tests {
              проверьте фичу flash-erase-zero и признак erase_zero в chip-select.rhai"
         );
 
-        let page = board.ota.flash.erase_size();
-        let capacity = board.ota.flash.capacity().expect("вместимость раздела");
+        let page = ota.erase_size();
+        let capacity = ota.capacity().expect("вместимость раздела");
 
         // Трёх страниц нет — проверять нечего: на чипах с сектором в четверть
         // мегабайта весь раздел это одна-две страницы, и «лишнего не стёрли»
@@ -219,38 +212,19 @@ mod tests {
 
         // Метки на второй и третьей странице: одна попадёт под стирание,
         // другая обязана уцелеть.
-        board
-            .ota
-            .flash
-            .prepare(capacity)
-            .await
-            .expect("стереть весь раздел");
-        board
-            .ota
-            .flash
-            .write(page, &DIRTY)
+        ota.prepare(capacity).await.expect("стереть весь раздел");
+        ota.write(page, &DIRTY)
             .await
             .expect("метка на 2-й странице");
-        board
-            .ota
-            .flash
-            .write(page * 2, &DIRTY)
+        ota.write(page * 2, &DIRTY)
             .await
             .expect("метка на 3-й странице");
 
         // На байт больше страницы — значит страниц нужно две.
-        board
-            .ota
-            .flash
-            .prepare(page + 1)
-            .await
-            .expect("стереть под образ");
+        ota.prepare(page + 1).await.expect("стереть под образ");
 
         let mut read = [!ERASED; 32];
-        board
-            .ota
-            .flash
-            .read(page, &mut read)
+        ota.read(page, &mut read)
             .await
             .expect("чтение 2-й страницы");
         assert_eq!(
@@ -258,10 +232,7 @@ mod tests {
             "вторую страницу образ занимает, а она не стёрта: длина округляется вниз"
         );
 
-        board
-            .ota
-            .flash
-            .read(page * 2, &mut read)
+        ota.read(page * 2, &mut read)
             .await
             .expect("чтение 3-й страницы");
         assert_eq!(
@@ -280,7 +251,7 @@ mod tests {
     /// Проверять это на хосте нечем: подделка флеша ведёт себя не как
     /// настоящий, а вся суть именно в стирании.
     #[test]
-    async fn dfu_partition_keeps_both_writes_into_one_sector(mut board: Board) {
+    async fn dfu_partition_keeps_both_writes_into_one_sector(board: Board) {
         use ports::FirmwareUpdate;
 
 {%- if ota_store == "external" %}
@@ -289,72 +260,34 @@ mod tests {
         }
 {%- endif %}
 
+        let mut ota = updater(board.partitions);
+
         let first = [0xA1u8; 32];
         let second = [0xB2u8; 32];
 
         // Сначала пачкаем раздел заведомо непустыми байтами: без этого тест не
         // отличил бы работающий `prepare` от `Ok(())`, ведь раздел мог
         // остаться стёртым с прошлого прогона.
-        board
-            .ota
-            .flash
-            .prepare(32)
-            .await
-            .expect("раздел DFU должен стираться");
-        board
-            .ota
-            .flash
-            .write(0, &DIRTY)
-            .await
-            .expect("запись мусора");
+        ota.prepare(32).await.expect("раздел DFU должен стираться");
+        ota.write(0, &DIRTY).await.expect("запись мусора");
 
-        board
-            .ota
-            .flash
-            .prepare(96)
-            .await
-            .expect("раздел DFU должен стираться");
+        ota.prepare(96).await.expect("раздел DFU должен стираться");
         let mut read = [!ERASED; 32];
-        board
-            .ota
-            .flash
-            .read(0, &mut read)
-            .await
-            .expect("чтение после стирания");
+        ota.read(0, &mut read).await.expect("чтение после стирания");
         assert_ne!(
             read, DIRTY,
             "prepare не стёр раздел: записанное осталось на месте"
         );
 
-        board
-            .ota
-            .flash
-            .write(0, &first)
-            .await
-            .expect("первая запись");
-        board
-            .ota
-            .flash
-            .write(64, &second)
-            .await
-            .expect("вторая запись");
+        ota.write(0, &first).await.expect("первая запись");
+        ota.write(64, &second).await.expect("вторая запись");
 
-        board
-            .ota
-            .flash
-            .read(0, &mut read)
-            .await
-            .expect("чтение первого куска");
+        ota.read(0, &mut read).await.expect("чтение первого куска");
         assert_eq!(
             read, first,
             "первый кусок затёрт вторым — приём образа по частям не работает"
         );
-        board
-            .ota
-            .flash
-            .read(64, &mut read)
-            .await
-            .expect("чтение второго куска");
+        ota.read(64, &mut read).await.expect("чтение второго куска");
         assert_eq!(read, second);
     }
 {%- endif %}
@@ -384,7 +317,7 @@ mod tests {
         }
 {%- endif %}
 
-        let mut ota = board.ota.flash;
+        let mut ota = updater(board.partitions);
 
         // Кратно WRITE_SIZE флеша. Хвост — версия
         // `0.0.0`, заведомо не новее любой проставленной в проекте.

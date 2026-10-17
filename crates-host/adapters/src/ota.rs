@@ -1,7 +1,7 @@
 //! Обновление прошивки поверх `embassy-boot`: разделы `DFU` (куда пишется
 //! новый образ) и `BOOTLOADER_STATE` (где лежит решение bootloader'а) — два
 //! `NorFlash`, откуда они взялись, адаптеру всё равно. Прошивка строит их из
-//! линкерных символов (`crates-cross/bsp/src/ota.rs`), host-тест — из памяти.
+//! линкерных символов (`crates-cross/bsp/src/flash.rs`), host-тест — из памяти.
 //!
 //! Что здесь есть: подготовка раздела под образ, запись и чтение кусков,
 //! состояние bootloader'а, подтверждение образа, пометка обмена — это
@@ -239,21 +239,6 @@ impl<DFU: NorFlash, STATE: NorFlash> FirmwareUpdate for Updater<DFU, STATE> {
     async fn mark_updated(&mut self) -> Result<(), Self::Error> {
         self.state().mark_updated().await
     }
-}
-
-/// Всё, что плата отдаёт узлу OTA: канал доставки образа и адаптер разделов.
-///
-/// Обобщённая пара, а не тип из `bsp`: в ней нет ничего, что зависело бы от
-/// чипа, — типы `L` и `F` подставляет плата псевдонимом. Во вход узла
-/// (`domain::ota::OtaWiring`) её раскладывает compose-site; `bsp` про
-/// `domain` не знает.
-#[derive(Debug)]
-pub struct Ota<L, F> {
-    /// Канал доставки образа — реализация `ports::ImageSource`.
-    pub link: L,
-    /// Адаптер разделов — реализация `ports::FirmwareUpdate`, обычно
-    /// [`Updater`].
-    pub flash: F,
 }
 
 /// Канал доставки образа, которого ещё нет, — место под транспорт проекта.

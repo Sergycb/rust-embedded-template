@@ -16,7 +16,11 @@ mod image;
 {%- endif %}
 mod panic;
 
+{%- if ota == "true" %}
+use defmt::{info, warn};
+{%- else %}
 use defmt::info;
+{%- endif %}
 // RTT остаётся дефолтным транспортом в обоих профилях — сырой шаблон не знает,
 // какой конкретный USART на плате пользователь отведёт под лог без пробника.
 // Паттерн замены (UART, без RTT/пробника) для release — в
@@ -31,15 +35,39 @@ use static_cell::StaticCell;
 /// Исполнитель задач — свой, а не из `#[embassy_executor::main]` (почему — в
 /// `main`). `StaticCell`, а не `ConstStaticCell`: `Executor::new` не `const`.
 static EXECUTOR: StaticCell<Executor> = StaticCell::new();
-{%- if ota == "true" and graph != "true" %}
+{%- if ota == "true" %}
+
+/// Канал доставки образа — заглушка, которую проект заменяет своим
+/// транспортом (как — `adapters::ota::Unconnected`). Псевдоним, а не голый
+/// тип в графе и в задаче: конкретный тип слота приходит под именем, и
+/// подставить свой транспорт — значит поменять эту строку и `link`.
+type Link = adapters::ota::Unconnected;
+
+/// Адаптер обновления над разделами платы (`bsp::flash::Partitions`). Тот же
+/// довод про имя: задача embassy не может быть generic.
+type Updater = adapters::ota::Updater<bsp::flash::Dfu, bsp::flash::State>;
+
+/// Канал доставки образа. Пока в слоте заглушка, об этом говорит одна строка
+/// в лог при старте.
+fn link() -> Link {
+    warn!("app: транспорт OTA не реализован — узел OTA ждёт впустую");
+    Link::default()
+}
+
+/// Адаптер обновления из разделов, которые отдала плата.
+fn updater(partitions: bsp::flash::Partitions) -> Updater {
+    Updater::{% if signed == "true" %}signed{% else %}new{% endif %}(partitions.dfu, partitions.state, partitions.active_len)
+}
+{%- if graph != "true" %}
 
 /// Узел OTA проекта без графа. Обёртка нужна по той же причине, что и
 /// `cpu_load::standalone_task`: `Spawner::spawn` берёт токен, а задача не может
-/// быть generic — поэтому типы слотов названы псевдонимами из `bsp::ota`.
+/// быть generic — поэтому типы слотов названы псевдонимами выше.
 #[embassy_executor::task]
-async fn ota_task(link: bsp::ota::Link, flash: bsp::ota::Updater, mode: domain::ota::Mode) {
+async fn ota_task(link: Link, flash: Updater, mode: domain::ota::Mode) {
     domain::ota::task_standalone(link, flash, mode).await;
 }
+{%- endif %}
 {%- endif %}
 
 #[cortex_m_rt::entry]
@@ -101,7 +129,7 @@ fn main() -> ! {
     // `board` уезжает сюда целиком — это объявленный графом `boot:`-объект,
     // из которого его инициализаторы забирают объекты частичными move.
     // Такие заборы уже есть — сторож в блоке `watchdog:`{% if ota == "true" %}, вход узла
-    // OTA в `fragments:` (`board.ota`){% endif %} — и здесь же
+    // OTA в `fragments:` (`board.partitions`){% endif %} — и здесь же
     // окажутся ваши: `resources: [SLOT: T = board.<поле>]` вместо
     // `provide_<slot>(..)` перед этой строкой. Оттого и последняя строка
     // `spawn_all`: после неё `board` принадлежит прологу.
@@ -153,7 +181,7 @@ fn main() -> ! {
 {%- else %}
     let mode = domain::ota::Mode::Plain;
 {%- endif %}
-    let token = ota_task(board.ota.link, board.ota.flash, mode)
+    let token = ota_task(link(), updater(board.partitions), mode)
         .expect("задача OTA свежая: спавнится один раз");
     spawner.spawn(token);
 {%- endif %}
@@ -174,7 +202,7 @@ fn main() -> ! {
         // этому моменту уже отработал. Ровно то же обещание, что у `Executor::run`.
         //
         // `#[expect(unsafe_code)]` — вместе с остальными в `crates-cross` (см. `crates-cross/Cargo.toml`)
-        // (`boot/src/main.rs`, блок линкерных символов в `bsp/src/ota.rs`): unsafe в прошивке допустим, но каждое
+        // (`boot/src/main.rs`, блок линкерных символов в `bsp/src/flash.rs`): unsafe в прошивке допустим, но каждое
         // место обязано быть перечислено и объяснено, а линт `unsafe_code`
         // заставляет перечислять.
         #[expect(unsafe_code, reason = "обоснование — в комментарии выше")]

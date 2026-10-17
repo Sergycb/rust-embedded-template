@@ -21,14 +21,11 @@ pub mod config;
 {%- if ota == "true" and ota_store == "external" %}
 pub mod external;
 {%- endif %}
-{%- if ota == "true" %}
-mod layout;
+{%- if shared_flash == "true" or ota == "true" %}
+pub mod flash;
 {%- endif %}
 {%- if interface == "tcp" or interface == "udp" %}
 pub mod net;
-{%- endif %}
-{%- if ota == "true" %}
-pub mod ota;
 {%- endif %}
 {%- if interface == "tcp" or interface == "udp" %}
 {%- if rng_irq != "" %}

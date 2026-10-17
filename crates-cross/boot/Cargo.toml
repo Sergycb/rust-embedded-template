@@ -50,7 +50,7 @@ embassy-stm32 = { workspace = true, features = ["defmt"{% if bank_switch != "" %
 embassy-sync = { workspace = true }
 # Раздел BOOTLOADER_STATE со страницей своего сектора, а не всего чипа
 # (`adapters::flash::Paged` поверх `Shared`, src/main.rs). Тот же код, что
-# строит этот раздел в приложении (bsp::ota), — расходиться им нельзя.
+# строит этот раздел в приложении (bsp::flash), — расходиться им нельзя.
 adapters = { workspace = true }
 {%- if signed == "true" or ota_store == "external" %}
 # Решение bootloader'а — обмен или текущий образ (`domain::ota::boot::boot_plan`,

@@ -167,17 +167,18 @@ supervisor_graph! {
         // (`<Link, Updater>`) — типы двух его слотов: слот — `static`, тип ему
         // нужен, а знает его только эта сторона; подставили свой транспорт
         // вместо заглушки — меняйте первый аргумент. Привязка (`= …`) — вход
-        // узла (`domain::ota::OtaWiring`), разложенный из поля платы
-        // `board.ota`, и режим применения (`Mode::{% if signed == "true" %}Signed` с версией этого образа
-        // из `crate::image`{% else %}Plain`{% endif %}): `bsp` про `domain` не знает, поэтому
-        // раскладка здесь. Вычисляется она в прологе `spawn_all` первой
-        // строкой — раньше инициализатора блока `watchdog:`, как бы они ни
-        // стояли в тексте, — частичным move: `ota` уезжает в слоты узла,
-        // `watchdog` следом забирает сторож, остаток `board` дропается в конце
-        // пролога.
-        ::domain::OTA_FRAG<bsp::ota::Link, bsp::ota::Updater> as OTA = ::domain::ota::OtaWiring {
-            link: board.ota.link,
-            flash: board.ota.flash,
+        // узла (`domain::ota::OtaWiring`): канал `link()` и адаптер из разделов
+        // платы (`board.partitions`, `updater()` в `main.rs`) и режим
+        // применения (`Mode::{% if signed == "true" %}Signed` с версией этого образа
+        // из `crate::image`{% else %}Plain`{% endif %}). Алгоритм обновления — не железо, поэтому
+        // собирает его `app`, а `bsp` отдаёт только разделы. Вычисляется
+        // привязка в прологе `spawn_all` первой строкой — раньше инициализатора
+        // блока `watchdog:`, как бы они ни стояли в тексте, — частичным move:
+        // `partitions` уезжает в слот узла, `watchdog` следом забирает сторож,
+        // остаток `board` дропается в конце пролога.
+        ::domain::OTA_FRAG<crate::Link, crate::Updater> as OTA = ::domain::ota::OtaWiring {
+            link: crate::link(),
+            flash: crate::updater(board.partitions),
 {%- if signed == "true" %}
             mode: ::domain::ota::Mode::Signed {
                 running_version: crate::image::FW_VERSION,

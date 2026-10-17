@@ -174,10 +174,10 @@ read`: руками пришлось бы сначала найти адрес �
   `ImageSource::finish` в `bsp`; отказы до стирания обязаны оставаться
   такими: `Busy` и отсутствие подписи — до `receive`, длина — внутри него,
   до `prepare` — `docs/ota.md`.
-- `NoopRawMutex` у `bsp::FlashMutex`, у мьютексов разделов `DFU` и `STATE`
-  (`bsp::ota::DFU_FLASH`, `bsp::ota::STATE_FLASH`; с `ota=external` —
+- `NoopRawMutex` у `bsp::flash::FlashMutex`, у мьютексов разделов `DFU` и `STATE`
+  (`bsp::flash::DFU_FLASH`, `bsp::flash::STATE_FLASH`; с `ota=external` —
   `bsp::external::ExternalMutex`{% if dfu_bank == "true" %}; `DFU` во втором банке —
-  `bsp::board::DfuBankMutex`{% endif %}) и `local` на слотах узла OTA
+  `bsp::flash::DfuBankMutex`{% endif %}) и `local` на слотах узла OTA
   (`domain::ota`) — одно допущение «один исполнитель», менять вместе —
   `docs/flash.md`, `docs/architecture.md`.
 - Подтверждение образа (`mark_booted`) — в стартовом действии узла OTA
@@ -188,25 +188,25 @@ read`: руками пришлось бы сначала найти адрес �
   флаг): после обмена и до него `STATE` одинаково `Swap`, и повтор снял бы
   принятое обновление — `docs/ota.md`.
 - С `ota=external` (`DFU`/`STATE` на внешней флеши): `EXT_PAGE_SIZE` — одно
-  число из генерации (`crates-cross/bsp/src/layout.rs`, `boot` подключает файл
-  по пути), и стирание драйвера обязано его делить (`const`-assert в `boot` и в
-  `bsp::external`); драйвер —
+  число из генерации — переменная среды `[env]` в
+  `crates-cross/.cargo/config.toml`, общая у `boot` и `bsp::external`, — и стирание
+  драйвера обязано его делить (`const`-assert в обоих); драйвер —
   два слота одной микросхемы (блокирующий в `boot`, асинхронный в `bsp`).
   Bootloader загружает текущий образ без обмена, только если `STATE` не
   читается (`BootPlan::BootCurrent`) или (с подписью) новый образ отвергнут; при
   читаемом `STATE` (`BootPlan::Prepare`) — строгий `prepare`, `try_prepare` не
   используется, прыжок в наполовину переписанный `ACTIVE` недопустим — `docs/flash.md`, `docs/ota.md`.
 {%- if swap_paged == "true" %}
-- `SWAP_PAGE_SIZE` — число из генерации ({{page_size}}) в
-  `crates-cross/bsp/src/layout.rs`, общем у `bsp::ota` и `boot` (тот
-  подключает файл по пути): страница обмена крупнее физической, `ACTIVE` и `DFU`
+- `SWAP_PAGE_SIZE` — число из генерации ({{page_size}}), переменная среды
+  `[env]` в `crates-cross/.cargo/config.toml`, общая у `bsp::flash` и `boot`:
+  страница обмена крупнее физической, `ACTIVE` и `DFU`
   оборачиваются в `Paged<_, SWAP_PAGE_SIZE>` ради малого журнала `STATE`
   (подписанному `boot` нужна зона ≥ 26 KiB). `STATE_ERASE_SIZE` — другое число
   (страница сектора `STATE`) — `docs/flash.md`.
 {%- endif %}
 - `BOOTLOADER_STATE` строится над `adapters::flash::Paged` со страницей своего
-  сектора (`STATE_ERASE_SIZE` — число из генерации, одно на `boot` и `bsp::ota`:
-  `crates-cross/bsp/src/layout.rs`). Над цельным `Flash` на F2/F4/F7 раздел не кратен его странице,
+  сектора (`STATE_ERASE_SIZE` — число из генерации, одно на `boot` и `bsp::flash`:
+  переменная среды в `crates-cross/.cargo/config.toml`). Над цельным `Flash` на F2/F4/F7 раздел не кратен его странице,
   и `Partition::new` паникует на старте. Так же и `CONFIG` (`CONFIG_ERASE_SIZE`
   в `bsp::config`): с OTA он может лежать в мелких секторах перед `ACTIVE` —
   `docs/flash.md`.
@@ -288,7 +288,8 @@ read`: руками пришлось бы сначала найти адрес �
   что подписчиков нет. Снимать allow нельзя, пока у графа нет читателей; писать
   в `graph.rs` свою логику — тоже.
 - `Board` отдаёт адаптеры — объекты, реализующие трейты (`ports`, `HardwareWatchdog`), —
-  и данные о чипе (`bsp::ChipSpec`), и ничего не настраивает: ни
+  данные о чипе (`bsp::ChipSpec`) и разделы флеша (`bsp::flash::Partitions`:
+  алгоритм обновления над ними собирает `app`), и ничего не настраивает: ни
   периферии ядра, ни `Peripherals`, ни `Clocks` в полях нет — `docs/architecture.md`.
 - `cortex_m::Peripherals` (`DWT`, `MPU`, `SYST`) `bsp` не забирает; нужны — берите
   `take()` ДО `Board::new()`, иначе на части семейств `embassy_stm32::init` уже сделал

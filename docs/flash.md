@@ -52,7 +52,7 @@ F2/F4/F7 (у F4 16, 64 и 128 KiB): в мелких секторах можно 
   `Partition::new` из `embassy-embedded-hal` паникует, если смещение или размер
   не кратны `ERASE_SIZE`. Ровно так был сломан `BOOTLOADER_STATE` у всех 223
   чипов F2/F4/F7 с OTA: он лежал в мелком секторе над цельным `Flash` со
-  страницей 128 KiB — и bootloader, и приложение (`bsp::ota::new`) падали при
+  страницей 128 KiB — и bootloader, и приложение (`bsp::flash::partitions`) падали при
   первом запуске. `template-check` этого не видит (он собирает, а не
   запускает), поэтому та же проверка стоит в `chip-data-gen`
   (`assert_embassy_boot_invariants`) — при генерации, а не на плате.
@@ -64,10 +64,13 @@ F2/F4/F7 (у F4 16, 64 и 128 KiB): в мелких секторах можно 
   меняется. Расчёт — `place_state` в `chip-data-gen`. С разделом настроек мелкие
   сектора отдаются ему (ему нужны две равные страницы), и `STATE` на F4 уходит
   в сектор 4 — см. раздел про `CONFIG` ниже.
-- **`STATE_ERASE_SIZE` — одно число на `boot` и `bsp::ota`** из плейсхолдера
-  `state_erase_size`: оно лежит в `crates-cross/bsp/src/layout.rs`, а `boot`
-  подключает этот файл по пути (как `banks.rs`) — разделу в bootloader'е и в
-  приложении расходиться нельзя. При ручной раскладке (`--define write_size=...`) хук
+- **`STATE_ERASE_SIZE` — одно число на `boot` и `bsp::flash`** из плейсхолдера
+  `state_erase_size`: оно едет переменной среды в `[env]`
+  `crates-cross/.cargo/config.toml`, и оба крейта читают её своим `option_env!`
+  (`adapters::flash::size_from_env`) — разделу в bootloader'е и в приложении
+  расходиться нельзя. Плейсхолдер бывает не числом, а выражением
+  (`embassy_stm32::flash::MAX_ERASE_SIZE`, страница цельного `Flash`) — тогда
+  переменной нет, и оба крейта берут это умолчание. При ручной раскладке (`--define write_size=...`) хук
   подставляет страницу цельного `Flash` — на F2/F4/F7 туда надо вписать размер
   сектора `STATE` руками.
 - **Страница обмена `ACTIVE`/`DFU` бывает крупнее физической — ради `STATE`.**
@@ -115,7 +118,7 @@ GD25, MX25, IS25, SST26…), шаблон не знает и не гадает: 
 (`spi-memory-async` для серии 25, `w25q32jv` и подобные) или свой. Заглушка в
 слоте отвечает ошибкой на каждую операцию — проект с ней собирается и
 работает, просто без сохранения настроек, и говорит об этом строкой в лог при
-старте (так же устроен `bsp::ota::Link` в слоте канала OTA). Подключить —
+старте (так же устроен `Link` в слоте канала OTA в `app`). Подключить —
 поменять псевдоним `ExternalFlash` и функцию `new` в `bsp/src/config.rs`
 (с `ota=external` — в `bsp/src/external.rs`: микросхема общая с OTA, см.
 ниже); какие выводы умеет SPI-блок — `cargo xtask pins SPI1 --snippet`.
@@ -125,10 +128,10 @@ GD25, MX25, IS25, SST26…), шаблон не знает и не гадает: 
 Что здесь нельзя нарушать:
 
 - **`Flash` на чипе один и создаётся ровно один раз** — `FLASH: StaticCell` в
-  `bsp/src/board.rs`. И `Ota`, и `Settings` получают `&'static FlashMutex`, а не
+  `bsp/src/flash.rs`. И разделы OTA, и `Settings` получают `&'static FlashMutex`, а не
   свой объект: контроллер физически один. Ссылка `'static`, потому что обе
   половины отдаются в задачи, а аргументы задач embassy обязаны быть `'static`.
-- **К общему флешу ходят через `Shared`.** `bsp::FlashMutex` — псевдоним на
+- **К общему флешу ходят через `Shared`.** `bsp::flash::FlashMutex` — псевдоним на
   `Mutex<NoopRawMutex, RefCell<…>>` (`RefCell` нужен блокирующему `Mutex`
   embassy), а `adapters::flash::Shared` принимает любой `FlashLock` (трейт
   «выполни операцию под замком», реализован для самого такого мьютекса).
@@ -140,7 +143,7 @@ GD25, MX25, IS25, SST26…), шаблон не знает и не гадает: 
 - **`NoopRawMutex` подразумевает один исполнитель.** Появится второй
   (прерывательный приоритет, второе ядро) — менять тип мьютекса, иначе доступ
   к флешу перестанет быть эксклюзивным. С этим же допущением связаны
-  мьютексы разделов OTA (`bsp::ota::DFU_FLASH`, `STATE_FLASH`; с
+  мьютексы разделов OTA (`bsp::flash::DFU_FLASH`, `STATE_FLASH`; с
   `ota=external` — `bsp::external::ExternalMutex`) и
   `local`-слоты узла OTA (`domain::ota`, фрагмент `OTA_FRAG`) —
   менять их вместе с типом мьютекса.
@@ -270,8 +273,8 @@ NOR. Во внутреннем флеше остаются bootloader и `ACTIVE
   `__bootloader_state_*`/`__bootloader_dfu_*` (и `__config_*` при
   `config=external`) в `memory.x` — смещения от начала внешней флеши, без
   регионов в `MEMORY`: в адресном пространстве МК её нет.
-- **Страница обмена** (`ext_page_size`, `EXT_PAGE_SIZE` в
-  `crates-cross/bsp/src/layout.rs`, общем у `boot` и `bsp::external`) — max(крупнейший сектор чипа, 4 KiB). `embassy-boot`
+- **Страница обмена** (`ext_page_size`, переменная среды `EXT_PAGE_SIZE` в
+  `[env]` `crates-cross/.cargo/config.toml`, общая у `boot` и `bsp::external`) — max(крупнейший сектор чипа, 4 KiB). `embassy-boot`
   меняет разделы страницами `max(ACTIVE::ERASE_SIZE, DFU::ERASE_SIZE)`, и
   `ACTIVE` обязан быть им кратен, иначе `assert_partitions` паникует на
   старте. Поэтому **стирание драйвера обязано делить `EXT_PAGE_SIZE`** — это

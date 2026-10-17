@@ -96,7 +96,7 @@ GH_TOKEN: {% raw %}${{ secrets.GITHUB_TOKEN }}{% endraw %}
 читает только строки и падает с «Variable ota not a String» — проверено), а хук
 приводит ответ к `"true"`/`"false"`, на которые смотрят Liquid-условия. «Нет» —
 окончательное: для `ota` это один образ на весь flash, `crates-cross/boot` и
-`crates-cross/bsp/src/ota.rs` удаляются, даже если схема в чип помещается; для `config` —
+разделы OTA в `crates-cross/bsp/src/flash.rs` уходят (файл целиком — если нет и общего замка под настройки), даже если схема в чип помещается; для `config` —
 удаление `crates-cross/bsp/src/config.rs`. «Да» в обоих случаях означает лишь «не возражаю»:
 решает всё равно раскладка, и на чипе с крупными секторами ответ будет тем же
 «нет», только с объяснением.
@@ -112,7 +112,7 @@ bootloader и `STATE`. Отсюда и второй набор цифр в `MEMO
 есть подпись, нет OTA (в том числе если схема не поместилась во flash) — нет и подписи.
 `--define signed=...` на него не влияет. В шаблоне он управляет фичей `signed` у `domain` (проверка подписи — `domain::ota::boot`, ею пользуется `boot`), ключом в `crates-cross/boot`
 (`boot/build.rs`, `OTA_PUBLIC_KEY_IN_IMAGE`, вызов `screen_update`), выбором
-`Updater::signed` в `bsp::ota` и файлом `crates-cross/app/src/image.rs`
+`Updater::signed` в `app` (`updater()`) и файлом `crates-cross/app/src/image.rs`
 (`FW_VERSION` для `Mode::Signed`; без подписи его удаляет `post-script.rhai`). Подпись проверяет bootloader
 (`domain::ota::boot::screen_update`), приложение — только длину, занятость и версию
 (`domain::ota::update::apply_signed`), см. docs/ota.md.
@@ -457,7 +457,7 @@ F2/F4/F7/H7 страница обмена и так крупнейший сек�
 независимо от размера страницы). Запись несёт `swap_page_size` и `swap_paged` (и `config_…`
 во втором наборе); хук выставляет `page_size` = `swap_page_size` и `swap_paged`; для `ota=no`,
 `ota=external`, `dfu_bank` и ручной раскладки `swap_paged` = "false". Прошивка (`boot`,
-`bsp::ota`) при "true" оборачивает `ACTIVE` и `DFU` в `adapters::flash::Paged<_, SWAP_PAGE_SIZE>`,
+`bsp::flash`) при "true" оборачивает `ACTIVE` и `DFU` в `adapters::flash::Paged<_, SWAP_PAGE_SIZE>`,
 число — то же `{{page_size}}` (менять только вместе). `DFU` не короче `ACTIVE` + `S` и кратен
 `S` (бывает на страницу длиннее, если остаток чётный). Инвариант «у каждого чипа с OTA зона
 bootloader'а не меньше `BOOTLOADER_MIN`» стережёт `bootloader_zone_and_swap_page_hold_for_every_chip`.
@@ -473,7 +473,7 @@ bootloader'а не меньше `BOOTLOADER_MIN`» стережёт `bootloader_
 
 Хук выбирает набор по ответу `ota` (`internal`/`external`/`no`; незнакомый ответ —
 ошибка генерации) и `config`, пишет `memory.x` с символами-смещениями внешней флеши и
-выставляет `ota_store` (на него смотрят `boot`, `bsp::ota`, `bsp::config`,
+выставляет `ota_store` (на него смотрят `boot`, `bsp::flash`, `bsp::config`,
 `target-tests`, `xtask`) и `ext_page_size`. Вопрос задаётся до каскада, поэтому
 вариант от чипа не зависит: невозможный отсекается после ответа с подсказкой. В
 ветках с ручной раскладкой (`write_size` через `--define`, чип без раскладки)

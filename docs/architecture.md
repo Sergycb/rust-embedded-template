@@ -78,7 +78,7 @@ supervisor-графы, watchdog). Вся остальная логика — в 
 ради асинхронного API того же `sequential-storage`). Та, которой
 нужны `embassy_stm32::peripherals`,
 линкерный символ или регистр, — в `crates-cross/bsp`: сторож над IWDG (`bsp::wdg`) и
-обвязка, строящая адаптеры из символов `memory.x` (`bsp::ota`, `bsp::config`) и
+обвязка, строящая разделы флеша из символов `memory.x` (`bsp::flash`, `bsp::config`) и
 дающая им псевдонимы для задач.
 
 Цифры узла — тоже в `domain`: `domain::heartbeat::WATCHDOG` фрагмент называет
@@ -93,12 +93,12 @@ compose-site остаётся правое: таймаут узла плюс `WA
 
 **Типы ресурсных слотов** узла OTA — параметры фрагмента: `name: OTA_FRAG<S, F>`,
 а compose-site подставляет их в `fragments:` угловыми скобками
-(`::domain::OTA_FRAG<bsp::ota::Link, bsp::ota::Updater>`). Слот — `static`, тип ему
+(`::domain::OTA_FRAG<crate::Link, crate::Updater>`). Слот — `static`, тип ему
 нужен, а конкретный тип знает только `cross`; generic-`static` не бывает, и
 параметр — единственный способ фрагмента назвать тип, которого он не видит.
 Bound'ов у параметров нет намеренно: их держит сигнатура `ota::run`, и rustc
 проверяет её, а не копию в DSL. Слоты канала и адаптера к тому же помечены `local`,
-потому что `bsp::ota::Updater` — `!Send` (держит `&'static Mutex<NoopRawMutex,
+потому что `Updater` над разделами `bsp::flash` — `!Send` (держит `&'static Mutex<NoopRawMutex,
 …>`), а обычный слот — `static`, которому нужен `Send`; `local` снимает это
 требование, но взамен обязывает держать значение на одном исполнителе — том,
 что спавнит граф, и не даёт перевести узел, чей `local`-слот заполнен
@@ -106,7 +106,7 @@ Bound'ов у параметров нет намеренно: их держит 
 `supervisor/local-resources` в `crates-cross/Cargo.toml` и по `unsafe`-блоку
 на каждый такой `local`-`static`, который макрос эмитит в `app` (здесь —
 два). Это то же допущение «один исполнитель», что у `NoopRawMutex` в
-`bsp::FlashMutex` — менять их вместе (`docs/flash.md`).
+`bsp::flash::FlashMutex` — менять их вместе (`docs/flash.md`).
 
 Цена решения «узлы — в `domain`» записана явно: `domain` зависит от `supervisor` ради двух типов в
 сигнатуре (`Heartbeat`, `TaskExit`), а вместе с ним транзитивно от `embassy-executor`,
@@ -221,12 +221,14 @@ let board = bsp::Board::new();
 теста. Забыть `arm()` нельзя: `HardwareWatchdog` реализован только у
 запущенного типа, а блок `watchdog:` требует именно его (`docs/watchdog.md`).
 
-Кроме сторожа в граф целиком уезжает поле `ota` (`bsp::ota::Ota`), и
-compose-site раскладывает его во вход узла, `domain::ota::OtaWiring`, прямо в
-`fragments:` — сам `bsp` про `domain` не знает. Внутри — адаптер обновления `flash` и канал доставки образа
-`link`, в шаблоне — заглушка `bsp::ota::Link` (ждёт заголовок вечно). Оба по
-общему правилу — адаптеры, реализующие порты (`FirmwareUpdate`,
-`ImageSource`); вместимость раздела плата отдаёт через порт же
+Кроме сторожа в граф уезжает поле `partitions` (`bsp::flash::Partitions`: разделы
+`DFU` и `BOOTLOADER_STATE` и размер `ACTIVE`) — единственное, что про OTA знает
+плата: алгоритм обновления железа не касается. Compose-site собирает из него вход
+узла, `domain::ota::OtaWiring`, прямо в `fragments:`: адаптер обновления
+`adapters::ota::Updater` (`updater()` в `main.rs`) и канал доставки образа
+(`link()`, в шаблоне — заглушка `adapters::ota::Unconnected`, ждёт заголовок
+вечно). Оба по общему правилу — адаптеры, реализующие порты (`FirmwareUpdate`,
+`ImageSource`); вместимость раздела адаптер отдаёт через порт же
 (`FirmwareUpdate::capacity`). Версия образа — свойство прошивки, а не
 платы: её задаёт приложение (`crates-cross/app/src/image.rs`) режимом
 узла `Mode::Signed` прямо в `fragments:`; ключ подписи — в
@@ -234,7 +236,7 @@ bootloader'е (`crates-cross/boot`), который подпись и прове
 ещё и ради проверяемости: с ней `template-check` раскрывает фрагменты узла OTA
 в обоих вариантах, без неё они не компилировались бы нигде. Проект заменяет
 заглушку своим транспортом, не трогая ни узел, ни граф
-(`docs/modules/bsp-ota.md`).
+(`docs/modules/bsp-flash.md`, «Свой транспорт»).
 
 **`Board::new` ничего не настраивает.** Он поднимает HAL (`embassy_stm32::init`
 — иначе `Peripherals` взять негде) и собирает объекты. Ни сторож не

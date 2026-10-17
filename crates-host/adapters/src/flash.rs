@@ -173,11 +173,48 @@ pub const fn erase_size<F: embedded_storage_async::nor_flash::NorFlash>() -> usi
     F::ERASE_SIZE
 }
 
+/// Размер из переменной среды сборки: десятичное число, `_` пропускаются.
+///
+/// Раскладку flash считает генерация проекта, а читают её два крейта,
+/// которые друг от друга не зависят, — приложение и bootloader, — и страницы
+/// разделов у них обязаны совпадать. Число поэтому лежит один раз, в `[env]`
+/// `crates-cross/.cargo/config.toml`, а каждый крейт читает его своим
+/// `option_env!` (макрос раскрывается в том крейте, который его вызвал, —
+/// отсюда параметр, а не `env!` внутри). `None` — переменной нет — даёт
+/// `default`.
+///
+/// # Panics
+///
+/// В `const`-контексте — ошибка сборки, если в значении не цифра.
+#[must_use]
+pub const fn size_from_env(value: Option<&str>, default: usize) -> usize {
+    let Some(text) = value else {
+        return default;
+    };
+    let bytes = text.as_bytes();
+    let mut size = 0usize;
+    let mut digits = 0usize;
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'0'..=b'9' => {
+                size = size * 10 + (bytes[i] - b'0') as usize;
+                digits += 1;
+            }
+            b'_' => {}
+            _ => panic!("в переменной среды размера не цифра"),
+        }
+        i += 1;
+    }
+    assert!(digits > 0, "переменная среды размера пуста");
+    size
+}
+
 /// Внешняя флеш, которую ещё не подключили, — место под ваш драйвер.
 ///
 /// Шаблон не знает, какая микросхема будет на плате (W25Q, GD25, MX25, IS25,
 /// SST26…), и не гадает: хранилище настроек принимает любой асинхронный
-/// `NorFlash`, а это — заглушка в его слоте, как `bsp::ota::Link` в слоте
+/// `NorFlash`, а это — заглушка в его слоте, как `app::Link` в слоте
 /// канала OTA. Проект с ней собирается и запускается, а каждая операция
 /// отвечает [`NotConnected`] — настройки не сохраняются, но и ничего не
 /// падает. Заменить её — значит подставить в `bsp::config` свой драйвер:
@@ -276,7 +313,7 @@ mod tests {
     use embedded_storage::nor_flash::{ErrorType, NorFlashErrorKind};
     use embedded_storage_async::nor_flash::{NorFlash, ReadNorFlash};
 
-    use super::{Paged, Shared, Unconnected};
+    use super::{Paged, Shared, Unconnected, size_from_env};
 
     /// Блокирующий флеш в памяти: 64 байта, страница 16, слово 4. Мосту
     /// неважно, что под ним, — проверяется только, что каждая операция дошла
@@ -341,6 +378,14 @@ mod tests {
             flash.lock(|f| f.borrow().mem[..16].iter().all(|b| *b == 0)),
             "соседняя страница не тронута"
         );
+    }
+
+    /// Размер читается из десятичной строки с `_`; без переменной — умолчание.
+    #[test]
+    fn size_from_env_reads_digits_and_falls_back() {
+        assert_eq!(size_from_env(None, 7), 7);
+        assert_eq!(size_from_env(Some("16384"), 7), 16_384);
+        assert_eq!(size_from_env(Some("1_024"), 7), 1_024);
     }
 
     /// С заглушкой хранилище собирается, а операции честно отказывают, а не

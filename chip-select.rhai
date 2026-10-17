@@ -468,7 +468,7 @@ variable::set("erase_zero", if erase_zero { "true" } else { "false" });
 // «Да» здесь означает лишь «не возражаю»: помещается ли схема в flash, решает
 // раскладка ниже. А вот «нет» — окончательное, и проверять нечего.
 //
-// Где лежат `DFU` и `STATE` (`ota_store`, на него смотрят boot и bsp::ota):
+// Где лежат `DFU` и `STATE` (`ota_store`, на него смотрят boot и bsp::flash):
 //   `internal` — во внутреннем flash, рядом с `ACTIVE`;
 //   `external` — на внешней флеши: внутри остаются bootloader и `ACTIVE`,
 //                который забирает почти весь flash; драйвер микросхемы
@@ -569,9 +569,6 @@ if variable::is_set("write_size") {
     variable::set("dfu_bank", "false");
     if !wants_ota {
         file::delete("crates-cross/boot");
-        file::delete("crates-cross/bsp/src/ota.rs");
-        file::delete("crates-cross/bsp/src/layout.rs");
-        file::delete("docs/modules/bsp-ota.md");
         // Релизу по тегу без OTA нечего выкладывать: `app.bin` делается
         // только там, где есть раздел DFU. Тело workflow и так под
         // Liquid-условием, но пустой файл в .github/workflows сбивал бы с
@@ -596,6 +593,13 @@ if variable::is_set("write_size") {
     // Общий объект `Flash` в bsp нужен OTA во внутреннем flash и настройкам во
     // флеше или EEPROM; внешней флеши он не нужен (см. ту же переменную ниже).
     variable::set("shared_flash", if (wants_ota && !wants_ext_ota) || (wants_config && store == "eeprom") { "true" } else { "false" });
+    // Модуль флеша в bsp нужен, пока есть общий замок или разделы OTA; без обоих
+    // файла и его документации быть не должно (`pub mod flash;` закрыт тем же
+    // условием в lib.rs).
+    if !wants_ota && !((wants_ota && !wants_ext_ota) || (wants_config && store == "eeprom")) {
+        file::delete("crates-cross/bsp/src/flash.rs");
+        file::delete("docs/modules/bsp-flash.md");
+    }
     variable::set("signed", if wants_ota { "true" } else { "false" });
     // Страницу обмена знает только раскладка, а её тут пишет пользователь —
     // угадывать нельзя. Пустая строка означает «неизвестна»:
@@ -608,8 +612,8 @@ if variable::is_set("write_size") {
     // здесь — страница цельного `Flash` (как было до расширения страницы).
     variable::set("swap_paged", "false");
     // Страница раздела `BOOTLOADER_STATE` (`adapters::flash::Paged`; число
-    // живёт в crates-cross/bsp/src/layout.rs, boot подключает его по пути) —
-    // тоже знание раскладки. Её здесь нет,
+    // уезжает переменной среды в crates-cross/.cargo/config.toml, её читают
+    // bsp::flash и boot) — тоже знание раскладки. Её здесь нет,
     // поэтому — страница цельного `Flash`, как было до `Paged`: верно на
     // чипах с равными секторами, а на F2/F4/F7 `STATE` в мелком секторе
     // приведёт к панике `Partition::new` при старте — об этом печатается
@@ -618,14 +622,14 @@ if variable::is_set("write_size") {
     if wants_ota && !wants_ext_ota {
         print("BOOTLOADER_STATE: страница раздела — сектор всего чипа (MAX_ERASE_SIZE); если STATE");
         print("  лежит в более мелком секторе (F2/F4/F7), впишите его размер в STATE_ERASE_SIZE");
-        print("  в crates-cross/bsp/src/layout.rs (общий у приложения и bootloader'а), иначе паника при старте");
+        print("  в [env] crates-cross/.cargo/config.toml (STATE_ERASE_SIZE; общая у приложения и bootloader'а), иначе паника при старте");
     }
     // Страница обмена с внешними разделами — тоже знание раскладки. Сектор
     // внешней NOR (4 KiB) — нижняя граница: верна, если ACTIVE в memory.x
     // кратен max(странице чипа, 4 KiB); иначе `assert_partitions` паникует.
     variable::set("ext_page_size", "4_096");
     if wants_ota && wants_ext_ota {
-        print("ota=external: страница обмена EXT_PAGE_SIZE в crates-cross/bsp/src/layout.rs — 4 KiB;");
+        print("ota=external: страница обмена EXT_PAGE_SIZE в [env] crates-cross/.cargo/config.toml — 4 KiB;");
         print("  впишите max(сектор чипа, стирание драйвера) и сделайте ACTIVE кратным ей");
     }
     // Раздел приложения здесь задаёт человек, значит и помещается ли в него
@@ -776,6 +780,10 @@ if variable::is_set("write_size") {
     // пишет вовсе (`ACTIVE` пишет bootloader), — и без OTA создавать его
     // незачем: был бы неиспользуемый код.
     variable::set("shared_flash", if (ota && !ext_ota) || (config && store != "external") { "true" } else { "false" });
+    if !ota && !(config && store != "external") {
+        file::delete("crates-cross/bsp/src/flash.rs");
+        file::delete("docs/modules/bsp-flash.md");
+    }
     variable::set("signed", if signed { "true" } else { "false" });
     variable::set("graph", if graph { "true" } else { "false" });
     if !config {
@@ -1004,9 +1012,6 @@ if variable::is_set("write_size") {
         // Вместе с bootloader'ом уходит и работа с разделом DFU: без OTA
         // раздела нет, а символы `__bootloader_dfu_*`, на которые опирается
         // embassy-boot, некому определить.
-        file::delete("crates-cross/bsp/src/ota.rs");
-        file::delete("crates-cross/bsp/src/layout.rs");
-        file::delete("docs/modules/bsp-ota.md");
         // И релиз по тегу: выкладывать нечего, `app.bin` собирается только
         // там, где есть куда его доставлять (см. ту же причину выше).
         file::delete(".github/workflows/release.yml");

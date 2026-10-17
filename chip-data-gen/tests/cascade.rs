@@ -874,8 +874,8 @@ fn declining_ota_gives_a_single_image_even_when_it_would_fit() {
         assert!(
             result
                 .deleted
-                .contains(&"crates-cross/bsp/src/ota.rs".to_string()),
-            "модуль ota должен быть удалён, а удалено: {:?}",
+                .contains(&"crates-cross/bsp/src/flash.rs".to_string()),
+            "модуль flash без OTA и настроек должен быть удалён, а удалено: {:?}",
             result.deleted
         );
 

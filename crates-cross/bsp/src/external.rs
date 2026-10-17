@@ -33,16 +33,22 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::mutex::Mutex;
 use static_cell::StaticCell;
 
-use crate::layout::EXT_PAGE_SIZE;
-
 /// Драйвер внешней флеши — замените на свой.
 pub type ExternalFlash = adapters::flash::Unconnected;
+
+/// Страница обмена, под которую посчитана раскладка; то же число, что в
+/// bootloader'е, — переменная среды `EXT_PAGE_SIZE` из `[env]`
+/// `crates-cross/.cargo/config.toml`. С драйвером, чьё стирание её не делит,
+/// страница обмена `embassy-boot` выросла бы, `ACTIVE` перестал бы быть ей
+/// кратен, и bootloader паниковал бы в `assert_partitions` на каждом старте.
+const EXT_PAGE_SIZE: usize = adapters::flash::size_from_env(option_env!("EXT_PAGE_SIZE"), 0);
 
 // Вдобавок к проверке в bootloader'е: у приложения свой тип драйвера
 // (асинхронный), и расходиться они могут.
 const _: () = assert!(
-    EXT_PAGE_SIZE.is_multiple_of(adapters::flash::erase_size::<ExternalFlash>()),
-    "стирание драйвера внешней флеши не делит страницу обмена (EXT_PAGE_SIZE в layout.rs)"
+    EXT_PAGE_SIZE != 0
+        && EXT_PAGE_SIZE.is_multiple_of(adapters::flash::erase_size::<ExternalFlash>()),
+    "стирание драйвера внешней флеши не делит страницу обмена (EXT_PAGE_SIZE)"
 );
 
 /// Подставлен ли драйвер вместо заглушки — для target-тестов, которым без
@@ -55,7 +61,7 @@ pub fn connected() -> bool {
 /// Внешняя флеш под замком — то, над чем строятся её разделы.
 ///
 /// `NoopRawMutex` — то же допущение «один исполнитель», что у
-/// `crate::board::FlashMutex`; менять вместе.
+/// `crate::flash::FlashMutex`; менять вместе.
 pub type ExternalMutex = Mutex<NoopRawMutex, ExternalFlash>;
 
 /// Раздел внешней флеши.

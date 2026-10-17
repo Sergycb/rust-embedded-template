@@ -54,6 +54,12 @@ bsp = { workspace = true }
 # (`FirmwareUpdate` — тесты OTA, `SettingsStorage` — тест настроек).
 ports = { workspace = true }
 {%- endif %}
+{%- if ota == "true" %}
+# Адаптер обновления (`adapters::ota::Updater`) над разделами платы: `bsp`
+# отдаёт только сами разделы (`bsp::flash::Partitions`), а адаптер собирает
+# тот, кто их использует, — `app` и эти тесты.
+adapters = { workspace = true }
+{%- endif %}
 {%- if signed == "true" %}
 # Проверка версии образа в тесте отката (`domain::ota::update::apply_signed`).
 domain = { workspace = true }

@@ -3,12 +3,13 @@ paths: crates-cross/**
 ---
 
 - Задачи embassy не могут быть generic: объект, уезжающий в
-  `#[embassy_executor::task]`, обязан иметь псевдоним типа в `bsp`.
+  `#[embassy_executor::task]`, обязан иметь псевдоним типа (в `bsp`; `Link` и `Updater` узла OTA собирает `app`, и псевдонимы у него).
 - Ровно один `#[panic_handler]` и один `#[global_logger]` на бинарник — это
   ограничение линкера, а не Cargo. Развилка по профилю делается через
   `#[cfg(debug_assertions)]` (паникёр — `app/src/panic.rs`; `boot` собирается только в release, у него
   `boot/src/panic.rs` — одна release-ветка), не Cargo-фичей.
-- `Board` отдаёт адаптеры, реализующие порты, и данные о чипе (`bsp::ChipSpec`),
+- `Board` отдаёт адаптеры, реализующие порты, данные о чипе (`bsp::ChipSpec`) и
+  разделы флеша (`bsp::flash::Partitions`; алгоритм OTA над ними — в `app`),
   а не `Peripherals`, не пины, не периферию ядра и не `Clocks`.
   Исключение (сторож) и его причина — в `docs/architecture.md`; новых не заводить.
 - `bsp` ничего не инициализирует сверх подъёма HAL: конструкторы зовутся `new`

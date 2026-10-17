@@ -133,8 +133,8 @@ impl HeartbeatCtx<'_> {
   указывает в крейт фрагмента и переживает переименование зависимости в чужом
   манифесте, а `crate::` означал бы крейт, который фрагмент вызывает. Типы,
   которых фрагмент назвать не может (адаптер платы в слоте), — его параметры:
-  `name: OTA_FRAG<S, F>` во фрагменте, `::domain::OTA_FRAG<bsp::ota::Link,
-  bsp::ota::Updater>` здесь.
+  `name: OTA_FRAG<S, F>` во фрагменте, `::domain::OTA_FRAG<crate::Link,
+  crate::Updater>` здесь.
 * **Порядок items фиксирован**: `name:` → `boot:` → `watchdog:` →
   `cloned:`/`shared:` → `executor` → `fragments:` последним. `fragments:`
   раньше `boot:` — ошибка разбора; блок `watchdog:` внутри фрагмента — тоже
@@ -404,17 +404,17 @@ async fn uart_drain_task(mut uart: embassy_stm32::usart::UartTx<'static, embassy
 
 Вам остаётся канал — то, чего шаблон знать не может: USB CDC, UART, сеть,
 SD-карта, у каждого свой формат пакета и своя проверка целостности. Это
-реализация `ports::ImageSource` на месте заглушки `bsp::ota::Link`
-(`docs/modules/bsp-ota.md`): три метода — `begin`, `next`, `finish`. Что
+реализация `ports::ImageSource` на месте заглушки `Link` в `main.rs`
+(`docs/modules/bsp-flash.md`, «Свой транспорт»): три метода — `begin`, `next`, `finish`. Что
 делать с исходом — ответить хосту, сбросить МК, и то и другое — решает
 ваш `finish`; узел этого не знает.
 
-Вход узла плата отдаёт одним полем — `board.ota` (`bsp::ota::Ota`, канал и
-адаптер), а во вход фрагмента его раскладывает эта сторона: `bsp` зависит
-только от `ports` и `adapters`, про `domain` он не знает (`= ::domain::ota::OtaWiring
-{ link: board.ota.link, flash: board.ota.flash, mode: ::domain::ota::Mode::Signed
-{ running_version: crate::image::FW_VERSION } }`). Типы слотов — аргументы фрагмента
-(`OTA_FRAG<bsp::ota::Link, bsp::ota::Updater>`):
+Плата отдаёт для узла только разделы флеша — `board.partitions`
+(`bsp::flash::Partitions`), а вход фрагмента собирает эта сторона: канал `link()` и
+адаптер `updater()` из `main.rs` (`= ::domain::ota::OtaWiring
+{ link: crate::link(), flash: crate::updater(board.partitions), mode:
+::domain::ota::Mode::Signed { running_version: crate::image::FW_VERSION } }`). Типы
+слотов — аргументы фрагмента (`OTA_FRAG<crate::Link, crate::Updater>`):
 слот — `static`, тип ему нужен, а знает его только эта сторона. Подставили
 свой транспорт — поправьте первый аргумент. Слоты канала и адаптера — `local` (фича
 `supervisor/local-resources` в
@@ -422,7 +422,7 @@ SD-карта, у каждого свой формат пакета и своя 
 исполнителе, не требуя `Send`. Узел, чей `local`-слот заполняется
 инициализатором (здесь — оба, из `inputs`), нельзя перевести на другой
 исполнитель (`executor:`); захотите вынести OTA туда — менять `local` во
-фрагменте `domain::ota` и `NoopRawMutex` у `bsp::FlashMutex` вместе.
+фрагменте `domain::ota` и `NoopRawMutex` у `bsp::flash::FlashMutex` вместе.
 
 У узла нет `watchdog:`, и это не забывчивость: он законно висит в `begin()`
 сколько угодно, а опрашивать его с таймаутом нельзя — отмена future

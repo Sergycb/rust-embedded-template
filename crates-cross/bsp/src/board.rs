@@ -5,21 +5,7 @@
 //! выходят: что не разобрано на объекты, то и не отдано (docs/architecture.md,
 //! «`Board` отдаёт объекты, а не периферию»).
 
-{%- if shared_flash == "true" %}
-
-use core::cell::RefCell;
-{%- endif %}
-
 use defmt::info;
-{%- if shared_flash == "true" %}
-{%- if dfu_bank == "true" %}
-use embassy_stm32::flash::{Bank1Region, Bank2Region};
-{%- endif %}
-use embassy_stm32::flash::{Blocking, Flash};
-use embassy_sync::blocking_mutex::Mutex;
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-use static_cell::StaticCell;
-{%- endif %}
 {%- if interface != "none" %}
 
 // Типы групп `resources.rs`: `split_resources!` раскрывается в них по именам, а
@@ -29,46 +15,6 @@ use static_cell::StaticCell;
     reason = "`split_resources!` раскрывается в типы групп по именам"
 )]
 use crate::resources::*;
-{%- endif %}
-
-{%- if shared_flash == "true" %}
-
-/// Общий `Flash` всего чипа под блокирующим замком. Контроллер флеша один, а
-/// работать с ним нужно и OTA (разделы `DFU`/`BOOTLOADER_STATE`), и настройкам
-/// (раздел `CONFIG` во флеше или внутренняя EEPROM — она пишется через тот же
-/// контроллер), — поэтому объект создаётся ровно один и раздаётся ссылками;
-/// к нему обращается [`adapters::flash::Shared`] (трейт `FlashLock` реализован
-/// для самого `Mutex<_, RefCell<_>>`).
-///
-/// `NoopRawMutex`, а не `CriticalSectionRawMutex`: обе половины работают из
-/// задач одного исполнителя, то есть без вытеснения. Появится второй
-/// исполнитель (прерывательный приоритет, второе ядро) — менять здесь.
-pub type FlashMutex = Mutex<NoopRawMutex, RefCell<ChipFlash>>;
-
-{%- if dfu_bank == "true" %}
-
-/// Флеш под [`FlashMutex`] — банк 1, а не весь чип: банк 2 стоит за
-/// разрывом, и цельный `Flash` туда не дотягивается (`FLASH_SIZE` у него —
-/// сумма банков, меньше смещения банка 2). Смещения в банке 1 те же, что у
-/// цельного `Flash`, — от базы flash.
-pub type ChipFlash = Bank1Region<'static, Blocking>;
-
-/// Банк 2 — под `DFU`, и только под него: смещения в нём отсчитаны от его
-/// начала, и символы `memory.x` у `DFU` посчитаны так же.
-pub type DfuBankMutex = Mutex<NoopRawMutex, RefCell<Bank2Region<'static, Blocking>>>;
-
-/// `&'static` — по той же причине, что [`FLASH`].
-static DFU_BANK: StaticCell<DfuBankMutex> = StaticCell::new();
-{%- else %}
-
-/// Флеш под [`FlashMutex`] — весь чип одним объектом.
-pub type ChipFlash = Flash<'static, Blocking>;
-{%- endif %}
-
-/// `&'static` он не для красоты: `Ota` и `Settings` отдаются в задачи, а
-/// аргументы задач embassy обязаны быть `'static`. Обычное поле `Board` этого
-/// не даёт — `Board` живёт в `main`, а не вечно.
-static FLASH: StaticCell<FlashMutex> = StaticCell::new();
 {%- endif %}
 
 /// Что прошивка знает о чипе, на котором запущена.
@@ -107,13 +53,11 @@ pub struct Board {
     /// Сведения о чипе: имя, заводской номер, объём flash, частота `sys`.
     pub spec: ChipSpec,
 {%- if ota == "true" %}
-    /// Обновление прошивки — вход узла OTA: канал доставки `link` (заглушка
-    /// `bsp::ota::Link`, пока проект не подставит свой транспорт) и адаптер
-    /// `flash` поверх разделов `DFU`/`BOOTLOADER_STATE`, собранный из символов
-    /// `memory.x`. {% if graph == "true" %}Уезжает в узел `OTA` графа (`fragments:` в
-    /// `crates-cross/app/src/graph.rs`){% else %}Уезжает в задачу узла, которую спавнит `main`
-    /// (`domain::ota::task_standalone`){% endif %}.
-    pub ota: crate::ota::Ota,
+    /// Разделы обновления прошивки: `DFU`, `BOOTLOADER_STATE` и размер
+    /// `ACTIVE`, собранные из символов `memory.x` (`bsp::flash`). Алгоритм
+    /// обновления над ними — не железо: адаптер и узел OTA собирает `app`
+    /// ({% if graph == "true" %}`fragments:` в `crates-cross/app/src/graph.rs`{% else %}задача `ota_task` в `main.rs`{% endif %}).
+    pub partitions: crate::flash::Partitions,
 {%- endif %}
 {%- if config == "true" %}
     /// Настройки, переживающие перезапуск и обновление прошивки:
@@ -207,15 +151,9 @@ impl Board {
         info!("bsp: board initialized, clocks {}", clocks);
 
 {%- if shared_flash == "true" %}
-        // Периферия разбирается здесь: `FLASH` уходит в общий объект (его
+        // Периферия разбирается здесь: `FLASH` уходит в общий замок (его
         // делят OTA и настройки), остальное — в группы `resources.rs`.
-{%- if dfu_bank == "true" %}
-        let banks = Flash::new_blocking(p.FLASH).into_blocking_regions();
-        let flash = FLASH.init(Mutex::new(RefCell::new(banks.bank1_region)));
-        let dfu_bank = DFU_BANK.init(Mutex::new(RefCell::new(banks.bank2_region)));
-{%- else %}
-        let flash = FLASH.init(Mutex::new(RefCell::new(Flash::new_blocking(p.FLASH))));
-{%- endif %}
+        let flash = crate::flash::chip(p.FLASH);
 {%- endif %}
 {%- if interface != "none" %}
         // Блоки выбранного интерфейса{% if rng_irq != "" and interface == "tcp" or rng_irq != "" and interface == "udp" %} и RNG{% endif %}, разложенные по группам `resources.rs`
@@ -261,10 +199,10 @@ impl Board {
                 sys_hz,
             },
 {%- if ota == "true" %}
-            ota: crate::ota::new({% if ota_store == "external" %}external{% elsif dfu_bank == "true" %}flash, dfu_bank{% else %}flash{% endif %}),
+            partitions: crate::flash::partitions({% if ota_store == "external" %}external{% else %}flash{% endif %}),
 {%- endif %}
 {%- if config == "true" %}
-            settings: crate::config::new({% if config_store != "external" %}flash{% elsif ota == "true" and ota_store == "external" %}external{% endif %}),
+            settings: crate::config::new({% if config_store != "external" %}flash.shared{% elsif ota == "true" and ota_store == "external" %}external{% endif %}),
 {%- endif %}
 {%- if interface == "uart" %}
             serial: crate::serial::new(r.serial),
