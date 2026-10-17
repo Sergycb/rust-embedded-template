@@ -37,7 +37,6 @@ use std::{
     env, fs,
     path::{Path, PathBuf},
     process::Command,
-    time::Instant,
 };
 
 use anyhow::{Context, bail};
@@ -313,13 +312,7 @@ fn main() -> anyhow::Result<()> {
     );
 
     for case in &options.cases {
-        let started = Instant::now();
         check_one(&template, &work_dir, &cargo_target_dir, case, &options)?;
-        println!(
-            "[время] {:>7.1}s  ИТОГО {}",
-            started.elapsed().as_secs_f64(),
-            case.label()
-        );
     }
 
     println!(
@@ -599,11 +592,9 @@ fn capture(
     if let Some(target_dir) = cargo_target_dir {
         command.env("CARGO_TARGET_DIR", target_dir);
     }
-    let started = Instant::now();
     let output = command
         .output()
         .with_context(|| format!("запустить {:?}", command.get_program()))?;
-    report_time(command, started);
     if !output.status.success() {
         bail!(
             "команда завершилась с {}:\n{}",
@@ -828,26 +819,13 @@ fn run(
         // (domain и весь host-граф), собирается один раз на весь прогон.
         command.env("CARGO_TARGET_DIR", target_dir);
     }
-    let started = Instant::now();
     let status = command
         .status()
         .with_context(|| format!("запустить {:?}", command.get_program()))?;
-    report_time(command, started);
     if !status.success() {
         bail!("команда завершилась с {status}");
     }
     Ok(())
-}
-
-/// Печатает, сколько шла команда: без этого непонятно, какой шаг проверки
-/// съедает время прогона.
-fn report_time(command: &Command, started: Instant) {
-    let args: Vec<_> = command.get_args().map(|a| a.to_string_lossy()).collect();
-    println!(
-        "[время] {:>7.1}s  {}",
-        started.elapsed().as_secs_f64(),
-        args.join(" ")
-    );
 }
 
 fn parse_args() -> anyhow::Result<Options> {
