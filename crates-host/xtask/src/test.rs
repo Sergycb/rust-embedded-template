@@ -54,13 +54,13 @@ fn test_host(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     let _p = sh.push_dir(root_dir());
     cmd!(
         sh,
-        "cargo nextest run --workspace --exclude host-target-tests --release --features domain/log,domain/std,adapters/signed"
+        "cargo nextest run --workspace --exclude host-target-tests --release --features domain/log,domain/signed"
     )
     .run()?;
     // nextest doc-тесты не запускает.
     cmd!(
         sh,
-        "cargo test --doc --workspace --exclude host-target-tests --release --features domain/log,domain/std,adapters/signed"
+        "cargo test --doc --workspace --exclude host-target-tests --release --features domain/log,domain/signed"
     )
     .run()?;
     Ok(())

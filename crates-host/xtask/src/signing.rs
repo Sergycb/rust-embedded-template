@@ -31,7 +31,7 @@ pub fn ensure_image_key(
 }
 
 /// Подписывает образ: SHA-512 от его байтов, подпись самого хеша — так же
-/// считает bootloader (`adapters::ota::screen_update`).
+/// считает bootloader (`domain::ota::boot::screen_update`).
 pub fn sign_image(image_path: &Path, image: &[u8], seed: &[u8; 32]) -> Result<(), anyhow::Error> {
     let digest = salty::Sha512::new().updated(image).finalize();
     let signature = salty::Keypair::from(seed).sign(&digest).to_bytes();

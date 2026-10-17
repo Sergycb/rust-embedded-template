@@ -26,9 +26,13 @@
 //! хвосте flash), с OTA на неравных (в мелких секторах перед ACTIVE), во
 //! внутренней EEPROM и на внешней флеши (слот с заглушкой), подпись образа (с графом и без) и чип, у которого
 //! стёртый флеш читается нулями, два протокола поверх UART (Modbus и protobuf)
-//! CANopen на FDCAN и bxCAN, Modbus TCP, protobuf UDP, protobuf и Modbus по
-//! USB. Итого двадцать пять — точный список в `default_cases()`. Свой
-//! набор чипов — позиционными аргументами.
+//! CANopen на FDCAN и bxCAN, Modbus TCP (с master), protobuf UDP, protobuf и
+//! Modbus по USB (Modbus без master — по UART и по USB); чипы с клоком RNG через мультиплексор (G0, WL, WBA, L4) и по одному
+//! чипу на каждый вариант регистров `banks.rs` (`g0`, `g4`, `l4`, `l5`).
+//! Итого тридцать четыре — точный список в `default_cases()`. Свой набор чипов —
+//! позиционными аргументами; `--define k=v` (многократно) добавляет определение
+//! к каждой конфигурации, например `--ci gitlab --define signed=yes stm32f407ve`
+//! проверяет ветку `signed` в `.gitlab-ci.yml`.
 
 use std::{
     env, fs,
@@ -107,9 +111,9 @@ fn default_cases() -> Vec<Case> {
         Case::new("stm32f407ve").variant("signed", &["signed=yes"]),
         // OTA с `STATE`/`DFU` на внешней флеши (`ota=external`) — на чипе, куда
         // внутренняя схема не помещается вовсе. Разом: слот драйвера в `boot`
-        // (блокирующий, `try_prepare` без паники) и в `bsp::external`
+        // (блокирующий, с запасным выходом `BootCurrent`) и в `bsp::external`
         // (асинхронный, общий мьютекс), проверка подписи над внешними
-        // разделами, сторож на двух флешах (`Fed`), настройки на той же
+        // разделами, настройки на той же
         // микросхеме за `DFU` (`__config_*` — смещения от её начала), и
         // `shared_flash = false` при OTA.
         Case::new("stm32h723ve").variant(
@@ -118,8 +122,8 @@ fn default_cases() -> Vec<Case> {
         ),
         // Внешняя OTA и настройки во внутреннем флеше: на F4 — в секторах 2–3
         // зоны bootloader'а, которые без них пропадали бы. Без графа — `boot`
-        // без сторожа и `Fed`, а `embedded-storage` ему нужен только ради
-        // геометрии драйвера.
+        // без сторожа, а `embedded-storage` ему нужен только ради геометрии
+        // драйвера.
         Case::new("stm32f407ve").variant(
             "ota-external-config",
             &["ota=external", "config=internal", "graph=no"],
@@ -172,8 +176,15 @@ fn default_cases() -> Vec<Case> {
         ),
         // Протоколы по сети: стек `embassy-net` над заглушкой устройства, узел
         // NET в графе и сокет из `adapters::net`. Modbus TCP — на H7 (Ethernet
-        // v2), protobuf UDP — на F4 (Ethernet v1).
-        Case::new("stm32h743zg").variant("modbus-tcp", &["protocol=modbus", "interface=tcp"]),
+        // v2), protobuf UDP — на F4 (Ethernet v1). Modbus TCP — заодно с master
+        // (`modbus_master=yes`): единственная конфигурация, где клиентская
+        // половина (`ports::ModbusClient`, `domain::modbus::master`, клиентские
+        // impl'ы транспортов) собирается в сгенерированном проекте; остальные
+        // Modbus (`modbus-uart`, `modbus-usb`) — без неё, по умолчанию.
+        Case::new("stm32h743zg").variant(
+            "modbus-tcp-master",
+            &["protocol=modbus", "interface=tcp", "modbus_master=yes"],
+        ),
         Case::new("stm32f407ve").variant("protobuf-udp", &["protocol=protobuf", "interface=udp"]),
         // protobuf по USB CDC: устройство `embassy-usb`, узел USB и поток CDC
         // под COBS. G4 — блок USB device (у F4/H7 — OTG, драйвер тот же).
@@ -189,6 +200,11 @@ fn default_cases() -> Vec<Case> {
         Case::new("stm32wle5jc"),
         Case::new("stm32wba52cg"),
         Case::new("stm32l476rg"),
+        // Остальные варианты `bsp/src/banks.rs` (`g4` — у g474re выше): регистры
+        // FLASH у G0B/G0C (`g0`), L4+ (`l4`) и L5 (`l5`) различаются.
+        Case::new("stm32g0b1rc"),
+        Case::new("stm32l4r5zi"),
+        Case::new("stm32l552ze"),
     ]
 }
 
@@ -253,6 +269,8 @@ const SKIP_IN_TEMPLATE: &[&str] = &[".git", "target", "chip-data-gen"];
 struct Options {
     cases: Vec<Case>,
     ci: String,
+    /// Общие `--define k=v` для каждой конфигурации (после её собственных).
+    defines: Vec<String>,
     /// Только сгенерировать и проверить рендер, без сборки — быстрая проверка
     /// хуков и Liquid-условий (секунды вместо минут на чип).
     quick: bool,
@@ -341,7 +359,7 @@ fn check_one(
         .arg(format!("chip_feature={}", case.chip))
         .arg("--define")
         .arg(format!("ci={}", options.ci));
-    for define in &case.defines {
+    for define in case.defines.iter().chain(&options.defines) {
         command.arg("--define").arg(define);
     }
     run(
@@ -817,6 +835,7 @@ fn run(
 fn parse_args() -> anyhow::Result<Options> {
     let mut cases: Vec<Case> = Vec::new();
     let mut ci = "github".to_owned();
+    let mut defines: Vec<String> = Vec::new();
     let mut quick = false;
     let mut keep = false;
 
@@ -830,10 +849,16 @@ fn parse_args() -> anyhow::Result<Options> {
                     .next()
                     .context("--ci требует значения (github|gitlab|none)")?;
             }
+            "--define" => {
+                defines.push(
+                    args.next()
+                        .context("--define требует значения (ключ=значение)")?,
+                );
+            }
             "-h" | "--help" => {
                 println!(
                     "USAGE: template-check [--quick] [--keep] [--ci github|gitlab|none] \
-                     [chip_feature ...]\n\n\
+                     [--define k=v ...] [chip_feature ...]\n\n\
                      Без чипов проверяются: {}",
                     default_cases()
                         .iter()
@@ -854,6 +879,7 @@ fn parse_args() -> anyhow::Result<Options> {
     Ok(Options {
         cases,
         ci,
+        defines,
         quick,
         keep,
     })

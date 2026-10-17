@@ -16,6 +16,16 @@ pub fn app_memory_regions() -> Result<Vec<(String, Region)>, anyhow::Error> {
     parse_memory_regions(&memory_x).with_context(|| format!("разобрать {}", memory_x.display()))
 }
 
+/// Регионы из `memory.x` bootloader'а: его `FLASH` — собственная зона до
+/// `BOOTLOADER_STATE`. Только при `has_bootloader()`: без OTA каталога нет.
+pub fn boot_memory_regions() -> Result<Vec<(String, Region)>, anyhow::Error> {
+    let memory_x = root_dir()
+        .join("crates-cross")
+        .join("boot")
+        .join("memory.x");
+    parse_memory_regions(&memory_x).with_context(|| format!("разобрать {}", memory_x.display()))
+}
+
 /// Раздел, в который линкуется приложение, и как его называть в выводе.
 ///
 /// Приложение линкуется в `ACTIVE`, а если такого региона нет — в `FLASH`.

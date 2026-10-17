@@ -752,6 +752,72 @@ fn memory_layout_invariants_hold_for_every_chip() {
     );
 }
 
+/// LENGTH региона `name` из текста memory.x в байтах (`None` — региона нет или
+/// длина записана не как `<число>K`/`<число>M`/`<число>`).
+fn region_length(memory_x: &str, name: &str) -> Option<u64> {
+    let line = memory_x
+        .lines()
+        .find(|line| line.trim_start().starts_with(&format!("{name} ")))?;
+    let text = line.split("LENGTH = ").nth(1)?.trim();
+    let (digits, unit) = match text.chars().last()? {
+        'K' => (&text[..text.len() - 1], 1024),
+        'M' => (&text[..text.len() - 1], 1024 * 1024),
+        _ => (text, 1),
+    };
+    digits.parse::<u64>().ok().map(|n| n * unit)
+}
+
+/// `Partition::new` (embassy-embedded-hal) паникует на старте, если длина
+/// раздела не кратна `ERASE_SIZE` флеша под ним. Для `BOOTLOADER_STATE` и
+/// `CONFIG` эту страницу задают `state_erase_size`/`config_erase_size` — здесь
+/// кратность сверяется с длиной региона в memory.x у всех чипов, с настройками
+/// и без.
+#[test]
+fn state_and_config_lengths_are_multiples_of_their_erase_size() {
+    let ast = compile_script();
+    let mut failures = Vec::new();
+    let mut checked = 0;
+    for suffix in all_chip_suffixes() {
+        for preset in [&[][..], &[("config", "internal")][..]] {
+            let Ok(result) = run_cascade_with(&ast, &suffix, preset) else {
+                continue; // падения каскада ловят соседние тесты
+            };
+            let Some(app) = result.files.get("crates-cross/app/memory.x") else {
+                continue;
+            };
+            let app = app.join("\n");
+            for (region, var) in [
+                ("BOOTLOADER_STATE", "state_erase_size"),
+                ("CONFIG", "config_erase_size"),
+            ] {
+                let Some(length) = region_length(&app, region) else {
+                    continue;
+                };
+                let Some(page) = result
+                    .vars
+                    .get(var)
+                    .and_then(|v| v.replace('_', "").parse::<u64>().ok())
+                else {
+                    continue; // страница не число (ручная ветка) — сверять нечем
+                };
+                checked += 1;
+                if page == 0 || length % page != 0 {
+                    failures.push(format!(
+                        "{suffix} {preset:?}: {region} {length} / {var} {page}"
+                    ));
+                }
+            }
+        }
+    }
+    assert!(checked > 1000, "подозрительно мало проверок: {checked}");
+    assert!(
+        failures.is_empty(),
+        "длина раздела не кратна странице у {}:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
 /// Списки чипов в `chip-data/` собраны из чип-фич конкретной версии
 /// `embassy-stm32`. Связь «подняли версию — перегенерируйте» до появления
 /// штампа держалась только на памяти мейнтейнера, а поднимает версию обычно
@@ -1123,6 +1189,90 @@ fn protocol_over_uart_keeps_the_serial_module() {
             ("crates-host/adapters/src/can.rs", false),
         ] {
             assert_eq!(kept(path), wanted, "{protocol}: {path}");
+        }
+    }
+}
+
+const MASTER_FILE: &str = "crates-host/domain/src/modbus/master.rs";
+
+/// Master Modbus выключен по умолчанию: ответ «false», а файл логики master'а
+/// хук удаляет — вместе с ним остальное вырезает Liquid.
+#[test]
+fn modbus_master_is_off_by_default() {
+    let result = run_cascade_with(
+        &compile_script(),
+        "g474re",
+        &[("protocol", "modbus"), ("interface", "uart")],
+    )
+    .expect("каскад не должен падать");
+    assert_eq!(
+        result.vars.get("modbus_master").map(String::as_str),
+        Some("false")
+    );
+    assert!(
+        result.deleted.iter().any(|path| path == MASTER_FILE),
+        "master.rs без modbus_master остался: {:?}",
+        result.deleted
+    );
+}
+
+/// `modbus_master=yes` (и старое `true`) при Modbus оставляет файл master'а.
+#[test]
+fn modbus_master_yes_keeps_the_master() {
+    for answer in ["yes", "true"] {
+        let result = run_cascade_with(
+            &compile_script(),
+            "g474re",
+            &[
+                ("protocol", "modbus"),
+                ("interface", "uart"),
+                ("modbus_master", answer),
+            ],
+        )
+        .expect("каскад не должен падать");
+        assert_eq!(
+            result.vars.get("modbus_master").map(String::as_str),
+            Some("true"),
+            "ответ {answer}"
+        );
+        assert!(
+            !result.deleted.iter().any(|path| path == MASTER_FILE),
+            "master.rs удалён при modbus_master={answer}: {:?}",
+            result.deleted
+        );
+    }
+}
+
+/// Без Modbus master'у нечем быть: «yes» молча приводится к «false», а файл
+/// не удаляется отдельно — каталог `modbus` уходит целиком.
+#[test]
+fn modbus_master_is_false_without_modbus() {
+    for (protocol, interface) in [("none", "none"), ("protobuf", "uart"), ("canopen", "can")] {
+        for preset in [None, Some("yes")] {
+            let mut vars = vec![("protocol", protocol), ("interface", interface)];
+            if let Some(answer) = preset {
+                vars.push(("modbus_master", answer));
+            }
+            let result = run_cascade_with(&compile_script(), "g474re", &vars)
+                .expect("каскад не должен падать");
+            assert_eq!(
+                result.vars.get("modbus_master").map(String::as_str),
+                Some("false"),
+                "{protocol}, ответ {preset:?}"
+            );
+            assert!(
+                !result.deleted.iter().any(|path| path == MASTER_FILE),
+                "{protocol}: файл удаляется второй раз: {:?}",
+                result.deleted
+            );
+            assert!(
+                result
+                    .deleted
+                    .iter()
+                    .any(|path| path == "crates-host/domain/src/modbus"),
+                "{protocol}: каталог modbus остался: {:?}",
+                result.deleted
+            );
         }
     }
 }
@@ -1708,13 +1858,58 @@ fn rng_follows_the_chip_table() {
                 "{suffix}: {var}"
             );
         }
-        for file in ["crates-cross/bsp/src/rng.rs", "docs/modules/bsp-rng.md"] {
-            assert_eq!(
-                result.deleted.iter().any(|path| path == file),
-                irq.is_empty(),
-                "{suffix}: {file}"
-            );
-        }
+    }
+}
+
+/// Файлы `bsp::rng` остаются только под tcp/udp (сид стека `embassy-net`) и
+/// только у чипа с RNG; без интерфейса или на другом интерфейсе — удалены.
+#[test]
+fn rng_files_stay_only_for_network_interfaces() {
+    let ast = compile_script();
+    let files = ["crates-cross/bsp/src/rng.rs", "docs/modules/bsp-rng.md"];
+    let deleted = |suffix: &str, preset: &[(&str, &str)]| {
+        let result = run_cascade_with(&ast, suffix, preset).expect("каскад не должен падать");
+        files
+            .iter()
+            .map(|file| result.deleted.iter().any(|path| path == file))
+            .collect::<Vec<_>>()
+    };
+    // (чип, ответы, удалены ли файлы)
+    type RngCase<'a> = (&'a str, &'a [(&'a str, &'a str)], bool);
+    let cases: [RngCase; 6] = [
+        ("h743zg", &[], true),
+        (
+            "h743zg",
+            &[("protocol", "modbus"), ("interface", "tcp")],
+            false,
+        ),
+        (
+            "h743zg",
+            &[("protocol", "protobuf"), ("interface", "udp")],
+            false,
+        ),
+        (
+            "h743zg",
+            &[("protocol", "modbus"), ("interface", "uart")],
+            true,
+        ),
+        (
+            "f407ve",
+            &[("protocol", "modbus"), ("interface", "usb")],
+            true,
+        ),
+        (
+            "f429zg",
+            &[("protocol", "modbus"), ("interface", "udp")],
+            false,
+        ),
+    ];
+    for (suffix, preset, gone) in cases {
+        assert_eq!(
+            deleted(suffix, preset),
+            vec![gone; 2],
+            "{suffix} {preset:?}"
+        );
     }
 }
 

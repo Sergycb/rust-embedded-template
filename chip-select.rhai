@@ -142,7 +142,7 @@ const OTA_MIN_ACTIVE = 24576;
 
 /// Меньше этого объёма EEPROM под настройки не годится: `sequential-storage`
 /// нужны две страницы, а страница обёртки `adapters::eeprom::Eeprom` — 128
-/// байт (`Eeprom::MIN_SIZE`). У STM32L010F4/K4 EEPROM всего 128 байт — им
+/// байт, то есть минимум две страницы (`Eeprom::PAGE`). У STM32L010F4/K4 EEPROM всего 128 байт — им
 /// настройки предлагаются, как всем остальным, во флеше.
 const EEPROM_MIN = 256;
 
@@ -402,10 +402,8 @@ let rng = if RNG.contains(suffix) { RNG[suffix] } else { ["", "", ""] };
 variable::set("rng_irq", rng[0]);
 variable::set("rng_clock", rng[1]);
 variable::set("rng_source", rng[2]);
-if rng[0] == "" {
-    file::delete("crates-cross/bsp/src/rng.rs");
-    file::delete("docs/modules/bsp-rng.md");
-}
+// Файлы модуля удаляются ниже, после проверки interface: RNG заводится только
+// под tcp/udp (сид стека `embassy-net`) и только там, где он есть у чипа.
 
 // Готовые адреса/размеры для memory.x. Строится из метаданных stm32-metapac
 // (реальные границы секторов чипа), не гадание — см. chip-data-gen/src/main.rs,
@@ -434,7 +432,7 @@ if !MEMORY_LAYOUT.contains(suffix) {
 }
 
 // Чем читается СТЁРТАЯ страница флеша. У подавляющего большинства семейств
-// это 0xFF, а у 189 чипов из 1533 — 0x00 (их NVM стирается в ноль: страница
+// это 0xFF, а у 188 чипов из 1479 — 0x00 (их NVM стирается в ноль: страница
 // стирается записью с флагами ERASE|PROG, см. flash/l.rs в embassy-stm32).
 //
 // Знать это обязан не только код, но и `embassy-boot`: он отличает стёртое
@@ -1099,6 +1097,22 @@ if protocol != "none" {
 }
 variable::set("protocol", protocol);
 variable::set("interface", iface);
+// Master Modbus. Смысл имеет только при protocol=modbus: «yes» с другим
+// протоколом приводится к «нет» молча (как `signed` без OTA) — вопрос
+// задаётся до выбора протокола, и отвергать сочетание нечего.
+let wants_master = false;
+if variable::is_set("modbus_master") {
+    let answer = variable::get("modbus_master");
+    wants_master = answer == "yes" || answer == "true";
+}
+let master = protocol == "modbus" && wants_master;
+variable::set("modbus_master", if master { "true" } else { "false" });
+// Файл master'а — только там, где он выбран; `pub mod master;`, порт и
+// клиентские impl'ы вырезает Liquid в комментариях. Без modbus каталог
+// `domain/src/modbus` уже удалён ниже целиком, второй раз его не трогаем.
+if protocol == "modbus" && !master {
+	file::delete("crates-host/domain/src/modbus/master.rs");
+}
 // Модуль заглушки UART в bsp — только под интерфейс uart: без него
 // `bsp::serial` не объявлен, и файл остался бы мусором с Liquid внутри.
 if iface != "uart" {
@@ -1163,6 +1177,11 @@ if iface != "tcp" && iface != "udp" {
 	file::delete("crates-host/adapters/src/net");
 	file::delete("crates-host/domain/src/net.rs");
 }
+// RNG — только под tcp/udp и только если он есть у чипа (`rng_irq` не пуст).
+if rng[0] == "" || (iface != "tcp" && iface != "udp") {
+	file::delete("crates-cross/bsp/src/rng.rs");
+	file::delete("docs/modules/bsp-rng.md");
+}
 
 // Слот драйвера внешней флеши в bsp — только у OTA с разделами на ней. Без
 // него `bsp::external` не объявлен, и файл остался бы мусором с Liquid внутри.
@@ -1176,9 +1195,6 @@ if variable::get("ota") != "true" || variable::get("ota_store") != "external" {
 if variable::get("ota") == "true" {
 	if variable::get("ota_store") != "external" {
 		file::delete("crates-cross/boot/src/external.rs");
-	}
-	if variable::get("graph") != "true" {
-		file::delete("crates-cross/boot/src/fed.rs");
 	}
 	if variable::get("signed") != "true" {
 		file::delete("crates-cross/boot/src/signature.rs");

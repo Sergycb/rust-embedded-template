@@ -10,7 +10,7 @@ use crate::project::{
     APP_ARTIFACT, TARGET, cross_target_dir, has_bootloader, root_dir, signing_enabled,
 };
 use crate::signing::{ensure_image_key, ensure_signing_key, sign_image};
-use crate::size::report_image;
+use crate::size::{report_boot, report_image, warn_boot_runtime_symbols};
 
 pub fn build(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     // Ключ приводится в порядок ДО сборки, а не после: открытый попадает в
@@ -83,14 +83,17 @@ pub fn build(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     // А файл нужен только там, где есть куда его доставлять: `.bin` — это
     // ровно то, что уезжает в раздел `DFU`.
     if has_bootloader() {
+        let boot_elf = cross_target_dir().join(TARGET).join("release").join("boot");
+        let (boot_base, boot_image) = raw_image(&boot_elf)?;
+        report_boot(boot_image.len() as u64)?;
+        warn_boot_runtime_symbols(&boot_elf)?;
+
         let path = elf.with_extension("bin");
         fs::write(&path, &image).with_context(|| format!("записать {}", path.display()))?;
         println!("образ для OTA: {}", path.display());
 
         if let Some(seed) = seed {
             // Ключ проверяет bootloader — с его release-ELF и сверяем.
-            let boot_elf = cross_target_dir().join(TARGET).join("release").join("boot");
-            let (boot_base, boot_image) = raw_image(&boot_elf)?;
             ensure_image_key(&boot_elf, boot_base, &boot_image, &seed)?;
             sign_image(&path, &image, &seed)?;
         }

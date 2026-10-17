@@ -19,10 +19,6 @@
       "groupName": "gitlab images"
     }
   ],
-  "ignorePaths": [
-    "crates-cross/Cargo.toml",
-    "crates-host/chip-info/Cargo.toml"
-  ],
   "lockFileMaintenance": {
     "enabled": true
   }

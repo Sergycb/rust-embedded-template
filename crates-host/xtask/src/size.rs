@@ -1,11 +1,14 @@
 //! Сколько образ занимает от раздела: отчёт, дельта к ветке по умолчанию, бюджет.
 
-use std::{env, fs, path::PathBuf};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
 
 use anyhow::Context;
 
 use crate::image::ensure_image_base;
-use crate::memory::{app_memory_regions, app_region};
+use crate::memory::{app_memory_regions, app_region, boot_memory_regions, region};
 
 /// Печатает, сколько образ занимает от раздела, и проверяет, что он вообще
 /// лёг туда, куда должен.
@@ -76,6 +79,54 @@ pub fn report_image(base: u64, size: u64) -> Result<(), anyhow::Error> {
         partition.length,
     );
     check_image_budget(name, size, partition.length, IMAGE_BUDGET_PERCENT)
+}
+
+/// Занятость зоны bootloader'а (`FLASH` его `memory.x`). Только предупреждение:
+/// переполнение поймает линкер, а близость к границе — повод подумать, не отказ.
+pub fn report_boot(size: u64) -> Result<(), anyhow::Error> {
+    let regions = boot_memory_regions()?;
+    let Some(flash) = region(&regions, "FLASH") else {
+        anyhow::bail!("в crates-cross/boot/memory.x нет региона FLASH");
+    };
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "размеры образа и раздела на порядки меньше 2^52"
+    )]
+    let (size_kib, zone_kib, percent) = (
+        size as f64 / 1024.0,
+        flash.length as f64 / 1024.0,
+        size as f64 * 100.0 / flash.length.max(1) as f64,
+    );
+    println!("boot: {size_kib:.1} KiB из {zone_kib:.1} KiB FLASH ({percent:.1}%)");
+    if size * 10 >= flash.length * 9 {
+        println!("ВНИМАНИЕ: зона bootloader'а занята больше чем на 90%");
+    }
+    Ok(())
+}
+
+/// Bootloader не должен тянуть исполнитель и граф задач: после зависимости
+/// `boot` -> `domain` (ради `screen_update`) они могли приехать транзитивно.
+/// Предупреждение, не отказ — проверка по именам крейтов в таблице символов.
+pub fn warn_boot_runtime_symbols(elf: &Path) -> Result<(), anyhow::Error> {
+    use object::read::elf::ElfFile32;
+    use object::read::{Object, ObjectSymbol};
+
+    let bytes = fs::read(elf).with_context(|| format!("прочитать {}", elf.display()))?;
+    let file = ElfFile32::<object::Endianness>::parse(&*bytes)
+        .with_context(|| format!("разобрать {}", elf.display()))?;
+    for krate in ["embassy_executor", "supervisor"] {
+        let hits = file
+            .symbols()
+            .filter(|symbol| symbol.name().is_ok_and(|name| name.contains(krate)))
+            .count();
+        if hits > 0 {
+            println!(
+                "ВНИМАНИЕ: в ELF bootloader'а {hits} символов {krate} — исполнителю и графу задач \
+                 там делать нечего (зависимость boot -> domain потянула лишнее?)"
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Переменная, из которой `build` берёт размер образа на ветке по умолчанию.
