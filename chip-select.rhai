@@ -165,6 +165,120 @@ fn size_in_bytes(text) {
     parse_int(raw)
 }
 
+/// Где лежат настройки (`config_store`): `"flash"` — раздел во внутреннем
+/// флеше, `"eeprom"` — внутренняя EEPROM (объёмом не меньше `EEPROM_MIN`,
+/// регионы `EEPROM`/`EEPROM_BANK_n`; закомментированные строки — окна внешних
+/// шин, алиасы — начинаются с `/*`, а не с имени), `"external"` — внешняя
+/// флеш. Ни внешней флеши, ни EEPROM раскладка flash не нужна.
+fn config_store(m, wants_config, wants_external, eeprom_min) {
+    let eeprom_size = 0;
+    if m.contains("extra_regions") {
+        for line in m["extra_regions"] {
+            if line.starts_with("    EEPROM") {
+                eeprom_size += size_in_bytes(line.split("LENGTH = ")[1]);
+            }
+        }
+    }
+    if wants_external {
+        "external"
+    } else if wants_config && eeprom_size >= eeprom_min {
+        "eeprom"
+    } else {
+        "flash"
+    }
+}
+
+/// Что получится из ответов на чипе с раскладкой `m`: помещается ли OTA,
+/// раздел настроек и граф. Чистая функция — без `print` и без `variable::set`:
+/// её зовёт и сам хук (выбранный чип), и фильтр списка чипов (все чипы
+/// сразу), и решение обязано быть одно.
+///
+/// `wants` — ответы пользователя (`ota`, `ext_ota`, `config`, `external`,
+/// `graph`), `limits` — пороги `OTA_MIN_ACTIVE`, `GRAPH_MIN_PARTITION` и `EEPROM_MIN`:
+/// функция не видит глобальных констант скрипта.
+fn plan(m, erase_zero, wants, limits) {
+    let store = config_store(m, wants.config, wants.external, limits.eeprom_min);
+
+    // Раздел настроек решается первым: он меняет всю OTA-схему — в хвосте
+    // отрезает flash, а в резерве перед ACTIVE (F2/F4/F7) теснит bootloader и
+    // STATE. Под это в таблице отдельный набор цифр с префиксом `config_` — см.
+    // ConfigPartition в chip-data-gen.
+    // `!erase_zero` — то же ограничение, что и у OTA, только у другой
+    // библиотеки: `sequential-storage` считает стёртым состоянием 0xFF
+    // (`item.rs`: заголовок ищется как «все байты 0xFF», а состояние страницы —
+    // по нулевым маркерам), и настраиваемого значения у неё нет. На флеше,
+    // стирающемся в ноль, свежая страница выглядит «уже закрытой», и хранилище
+    // молча не работает. Раздавать такое нельзя.
+    // Раздел во внутреннем флеше — только когда настройки хранятся там.
+    let in_flash = wants.config && store == "flash" && m["config"] == "true" && !erase_zero;
+    let config = wants.external || (wants.config && store == "eeprom") || in_flash;
+
+    // Дальше партиции берутся по одному из наборов ключей: `key` — раскладка
+    // без OTA (весь flash или он без раздела настроек в хвосте), `ota_key` —
+    // раскладка с OTA. Внутренняя OTA — те же наборы (`` или `config_`),
+    // внешняя — свои (`ext_` или `ext_cfg_`, настройки во внутреннем флеше).
+    let key = if in_flash { "config_" } else { "" };
+    let ext_key = if in_flash { "ext_cfg_" } else { "ext_" };
+    let ota_key = if wants.ext_ota { ext_key } else { key };
+
+    // Схема нужна только если её и хотят, и она помещается. «Помещается» — это
+    // две проверки: раскладка вообще сходится (цифры посчитаны заранее) и в
+    // разделе `ACTIVE` остаётся место под саму прошивку.
+    let ota_fits = m[ota_key + "ota"] == "true"
+        && size_in_bytes(m[ota_key + "active_length"]) >= limits.ota_min;
+    let ext_fits = m[ext_key + "ota"] == "true"
+        && size_in_bytes(m[ext_key + "active_length"]) >= limits.ota_min;
+    let ota = wants.ota && ota_fits;
+    let ext_ota = ota && wants.ext_ota;
+
+    // Где лежит раздел настроек. Без OTA — в хвосте flash (`config_*`): в
+    // начале стоит таблица векторов приложения. С OTA — там, где его положил
+    // chip-data-gen (`config_ota_settings_*`): в мелких секторах перед ACTIVE,
+    // если так ACTIVE больше (F2/F4/F7), иначе тоже в хвосте. Страница — сектор
+    // под разделом (`adapters::flash::Paged` в bsp::config).
+    let settings_key = if ext_ota {
+        "ext_cfg_settings_"
+    } else if ota {
+        "config_ota_settings_"
+    } else {
+        "config_"
+    };
+
+    // Граф задач меряется по разделу, в который линкуется приложение: при OTA
+    // это ACTIVE, без неё — весь flash за вычетом того, что забрали настройки.
+    // Ключ считается один раз и используется и для проверки, и для
+    // сообщения: с двумя копиями выбора хук однажды сообщил бы размер,
+    // который не измерял.
+    let app_length_key = if ota { ota_key + "active_length" } else { key + "flash_length" };
+    let graph = wants.graph && size_in_bytes(m[app_length_key]) >= limits.graph_min;
+
+    #{
+        store: store,
+        in_flash: in_flash,
+        config: config,
+        key: key,
+        ext_key: ext_key,
+        ota_key: ota_key,
+        ota_fits: ota_fits,
+        ext_fits: ext_fits,
+        ota: ota,
+        ext_ota: ext_ota,
+        settings_key: settings_key,
+        app_length_key: app_length_key,
+        graph: graph,
+    }
+}
+
+/// Выполняются ли ответы на чипе: каждое «хочу» из `need` должно получиться.
+/// План считается по `wants` (все ответы, с умолчаниями), а проверяется по
+/// `need` (только то, о чём спросили): так умолчание «да» для вопроса, который
+/// не задавался, чипов не отсекает.
+fn fits_answers(m, erase_zero, wants, need, limits) {
+    let p = plan(m, erase_zero, wants, limits);
+    (!need.ota || p.ota) && (!need.ext_ota || p.ext_ota)
+        && (!need.config || p.config) && (!need.graph || p.graph)
+}
+
 fn is_dual_core(suffix) {
     // Тот же признак, что различает ветки в cpu_and_target(): суффикс после
     // дефиса — это конкретное ядро (core_override() узнаёт его), а не
@@ -254,6 +368,156 @@ const INSTANCES = instances_data::INSTANCES;
 import "chip-data/rng" as rng_data;
 const RNG = rng_data::RNG;
 
+// Ответ на вопрос про OTA из [placeholders] (или `--define ota=no`). Дальше по
+// коду `ota` перезаписывается уже вычисленной строкой `"true"`/`"false"`: на
+// неё смотрят Liquid-условия в шаблоне.
+//
+// «Да» здесь означает лишь «не возражаю»: помещается ли схема в flash, решает
+// раскладка ниже. А вот «нет» — окончательное, и проверять нечего.
+//
+// Где лежат `DFU` и `STATE` (`ota_store`, на него смотрят boot и bsp::flash):
+//   `internal` — во внутреннем flash, рядом с `ACTIVE`;
+//   `external` — на внешней флеши: внутри остаются bootloader и `ACTIVE`,
+//                который забирает почти весь flash; драйвер микросхемы
+//                подставляет проект (в шаблоне — заглушка).
+// Вопрос задаётся до каскада и сам сужает список чипов (см. `allowed` ниже);
+// для чипа, заданного напрямую, невозможный вариант отсекается с подсказкой.
+//
+// Незнакомый ответ (опечатка в `--define`) — ошибка, а не «без OTA»: молча
+// снятый bootloader заметили бы только на первом обновлении.
+let wants_ota = true;
+let wants_ext_ota = false;
+if variable::is_set("ota") {
+    let answer = variable::get("ota");
+    if answer != "internal" && answer != "external" && answer != "no" {
+        throw "ota: ожидается internal, external или no, а не «" + answer + "»";
+    }
+    wants_ext_ota = answer == "external";
+    wants_ota = answer != "no";
+}
+
+if !wants_ota {
+    print("OTA отключён по вашему выбору: один образ на весь flash, crates-cross/boot в проект не входит");
+}
+
+// Раздел под настройки — вопрос того же рода, что и про OTA, и с той же
+// механикой ответа. «Да» здесь тоже означает «не возражаю»: хватит ли под него
+// места, решает раскладка ниже.
+//
+// Стоит он дороже, чем кажется: две страницы стирания. С OTA chip-data-gen
+// кладёт их в мелкие сектора перед ACTIVE, где это выгоднее (на F4 — 2×16 KiB),
+// но без OTA это две последние страницы flash по максимальному сектору чипа: на
+// F4/F7/H7 — 256 KiB. Поэтому по умолчанию «нет», а цена печатается ниже — до
+// того, как пользователь увидит собранный проект.
+//
+// Где лежат настройки (`config_store`, на него смотрит bsp::config):
+//   "flash"    — раздел во внутреннем флеше (как описано выше);
+//   "eeprom"   — внутренняя EEPROM, если она у чипа есть (L0/L1): флеш не
+//                тратится вовсе, и это единственное место под настройки на
+//                чипах, чей флеш стирается в ноль;
+//   "external" — внешняя флеш: ответ `external`; шаблон кладёт заглушку
+//                (`adapters::flash::Unconnected`), драйвер подставляете вы;
+//   "none"     — настроек нет.
+// Ответ `internal` выбирает между первыми двумя сам, `external` — третий,
+// `no` — четвёртый. Незнакомый ответ — ошибка, как у `ota`.
+let wants_config = false;
+let wants_external = false;
+if variable::is_set("config") {
+    let answer = variable::get("config");
+    if answer != "internal" && answer != "external" && answer != "no" {
+        throw "config: ожидается internal, external или no, а не «" + answer + "»";
+    }
+    wants_external = answer == "external";
+    wants_config = answer != "no";
+}
+
+// Граф задач. «Да» и здесь означает «не возражаю»: помещается ли он, решает
+// размер раздела, в который линкуется приложение (см. GRAPH_MIN_PARTITION).
+let wants_graph = true;
+if variable::is_set("graph") {
+    let answer = variable::get("graph");
+    wants_graph = answer == "yes" || answer == "true";
+}
+if !wants_graph {
+    print("Граф задач отключён по вашему выбору: main заканчивается после инициализации");
+}
+
+// Пороги для `plan()`: функция глобальных констант не видит.
+const LIMITS = #{ ota_min: OTA_MIN_ACTIVE, graph_min: GRAPH_MIN_PARTITION, eeprom_min: EEPROM_MIN };
+const WANTS = #{
+    ota: wants_ota,
+    ext_ota: wants_ext_ota,
+    config: wants_config,
+    external: wants_external,
+    graph: wants_graph,
+};
+
+// Что из ответов реально задано: в генерации через cargo-generate заданы все
+// вопросы (у них есть умолчания), а в прогоне без них «не спрашивали» не
+// должно отсекать чипы.
+const NEED = #{
+    ota: variable::is_set("ota") && wants_ota,
+    ext_ota: variable::is_set("ota") && wants_ext_ota,
+    config: variable::is_set("config") && wants_config,
+    external: wants_external,
+    graph: variable::is_set("graph") && wants_graph,
+};
+
+// Блоки чипа (метки chip-data/interfaces.rhai), на которых работает
+// интерфейс: CAN — любой из двух контроллеров, имя блока в документации и
+// справочнике выбирает `can_kind`.
+const INTERFACE_BLOCKS = #{
+    "uart": ["usart"],
+    "can": ["fdcan", "bxcan"],
+    "tcp": ["eth"],
+    "udp": ["eth"],
+    "usb": ["usb", "otg"],
+};
+
+// Ответы отсекают чипы ещё до каскада: сетевой стек просит чип с Ethernet,
+// OTA — чип, где схема помещается, граф — где он влезает в раздел
+// приложения. Каскад по символам тогда предлагает только то, с чем ответы
+// выполнимы, а не отказывает в конце, когда выбор уже сделан. Чип, заданный
+// напрямую (`--define chip_feature=...`), не фильтруется: там остаются
+// прежние отказы с объяснением.
+const WANTED_INTERFACE = if variable::is_set("interface") { variable::get("interface") } else { "none" };
+let allowed = CHIPS;
+if !variable::is_set("chip_feature")
+    && (NEED.ota || NEED.config || NEED.graph || WANTED_INTERFACE != "none")
+{
+    let layouts = #{};
+    for chip in CHIPS {
+        let family = chip.sub_string(0, 2);
+        if !layouts.contains(family) {
+            import "chip-data/layout/" + family as family_layout;
+            layouts[family] = family_layout::MEMORY_LAYOUT;
+        }
+    }
+    allowed = CHIPS.filter(|chip| {
+        if WANTED_INTERFACE != "none" && INTERFACE_BLOCKS.contains(WANTED_INTERFACE) {
+            let have = INTERFACES[chip];
+            let any_block = false;
+            for tag in INTERFACE_BLOCKS[WANTED_INTERFACE] {
+                if have.contains(tag) { any_block = true; }
+            }
+            if !any_block { return false; }
+        }
+        let m = layouts[chip.sub_string(0, 2)][chip];
+        fits_answers(m, m["erase_zero"] == "true", WANTS, NEED, LIMITS)
+    });
+    if allowed.len() == 0 {
+        throw "ни один из " + CHIPS.len() + " чипов не подходит под ответы (interface=" + WANTED_INTERFACE
+            + ", ota=" + (if wants_ext_ota { "external" } else if wants_ota { "internal" } else { "no" })
+            + ", config=" + (if wants_external { "external" } else if wants_config { "internal" } else { "no" })
+            + ", graph=" + (if wants_graph { "yes" } else { "no" })
+            + ") — смягчите ответы: чип поменьше берёт ota=no и graph=no";
+    }
+    if allowed.len() < CHIPS.len() {
+        print("Под ваши ответы подходит " + allowed.len() + " из " + CHIPS.len() + " чипов; остальные не показываются."
+            + " Нужен чип поменьше — ответьте ota=no / graph=no (или interface=none).");
+    }
+}
+
 if variable::is_set("chip_feature") {
     // Значение уже задано через `--define chip_feature=...` — каскад не
     // нужен, chip/cpu/target выводятся из него напрямую.
@@ -271,7 +535,7 @@ if variable::is_set("chip_feature") {
 } else {
     let prefix = "";
     loop {
-        let candidates = CHIPS.filter(|c| c.starts_with(prefix));
+        let candidates = allowed.filter(|c| c.starts_with(prefix));
 
         if candidates.len() == 1 {
             prefix = candidates[0];
@@ -461,100 +725,9 @@ if !MEMORY_LAYOUT.contains(suffix) {
 let erase_zero = MEMORY_LAYOUT[suffix]["erase_zero"] == "true";
 variable::set("erase_zero", if erase_zero { "true" } else { "false" });
 
-// Ответ на вопрос про OTA из [placeholders] (или `--define ota=no`). Дальше по
-// коду `ota` перезаписывается уже вычисленной строкой `"true"`/`"false"`: на
-// неё смотрят Liquid-условия в шаблоне.
-//
-// «Да» здесь означает лишь «не возражаю»: помещается ли схема в flash, решает
-// раскладка ниже. А вот «нет» — окончательное, и проверять нечего.
-//
-// Где лежат `DFU` и `STATE` (`ota_store`, на него смотрят boot и bsp::flash):
-//   `internal` — во внутреннем flash, рядом с `ACTIVE`;
-//   `external` — на внешней флеши: внутри остаются bootloader и `ACTIVE`,
-//                который забирает почти весь flash; драйвер микросхемы
-//                подставляет проект (в шаблоне — заглушка).
-// Меню вариантов от чипа не зависит — вопрос задаётся до каскада, — поэтому
-// невозможный на этом чипе вариант отсекается ниже, с подсказкой.
-//
-// Незнакомый ответ (опечатка в `--define`) — ошибка, а не «без OTA»: молча
-// снятый bootloader заметили бы только на первом обновлении.
-let wants_ota = true;
-let wants_ext_ota = false;
-if variable::is_set("ota") {
-    let answer = variable::get("ota");
-    if answer != "internal" && answer != "external" && answer != "no" {
-        throw "ota: ожидается internal, external или no, а не «" + answer + "»";
-    }
-    wants_ext_ota = answer == "external";
-    wants_ota = answer != "no";
-}
-
-if !wants_ota {
-    print("OTA отключён по вашему выбору: один образ на весь flash, crates-cross/boot в проект не входит");
-}
-
-// Раздел под настройки — вопрос того же рода, что и про OTA, и с той же
-// механикой ответа. «Да» здесь тоже означает «не возражаю»: хватит ли под него
-// места, решает раскладка ниже.
-//
-// Стоит он дороже, чем кажется: две страницы стирания. С OTA chip-data-gen
-// кладёт их в мелкие сектора перед ACTIVE, где это выгоднее (на F4 — 2×16 KiB),
-// но без OTA это две последние страницы flash по максимальному сектору чипа: на
-// F4/F7/H7 — 256 KiB. Поэтому по умолчанию «нет», а цена печатается ниже — до
-// того, как пользователь увидит собранный проект.
-//
-// Где лежат настройки (`config_store`, на него смотрит bsp::config):
-//   "flash"    — раздел во внутреннем флеше (как описано выше);
-//   "eeprom"   — внутренняя EEPROM, если она у чипа есть (L0/L1): флеш не
-//                тратится вовсе, и это единственное место под настройки на
-//                чипах, чей флеш стирается в ноль;
-//   "external" — внешняя флеш: ответ `external`; шаблон кладёт заглушку
-//                (`adapters::flash::Unconnected`), драйвер подставляете вы;
-//   "none"     — настроек нет.
-// Ответ `internal` выбирает между первыми двумя сам, `external` — третий,
-// `no` — четвёртый. Незнакомый ответ — ошибка, как у `ota`.
-let wants_config = false;
-let wants_external = false;
-if variable::is_set("config") {
-    let answer = variable::get("config");
-    if answer != "internal" && answer != "external" && answer != "no" {
-        throw "config: ожидается internal, external или no, а не «" + answer + "»";
-    }
-    wants_external = answer == "external";
-    wants_config = answer != "no";
-}
-
-// Граф задач. «Да» и здесь означает «не возражаю»: помещается ли он, решает
-// размер раздела, в который линкуется приложение (см. GRAPH_MIN_PARTITION).
-let wants_graph = true;
-if variable::is_set("graph") {
-    let answer = variable::get("graph");
-    wants_graph = answer == "yes" || answer == "true";
-}
-if !wants_graph {
-    print("Граф задач отключён по вашему выбору: main заканчивается после инициализации");
-}
-
 // Где лежат настройки (`config_store`) — одним решением для всех трёх веток
-// ниже: ни внешней флеши, ни EEPROM раскладка flash не нужна. EEPROM — регионы
-// `EEPROM`/`EEPROM_BANK_n` из памяти чипа (их кладёт chip-data-gen), объёмом не
-// меньше EEPROM_MIN; закомментированные строки (окна внешних шин, алиасы)
-// начинаются с `/*`, а не с имени.
-let eeprom_size = 0;
-if MEMORY_LAYOUT[suffix].contains("extra_regions") {
-    for line in MEMORY_LAYOUT[suffix]["extra_regions"] {
-        if line.starts_with("    EEPROM") {
-            eeprom_size += size_in_bytes(line.split("LENGTH = ")[1]);
-        }
-    }
-}
-let store = if wants_external {
-    "external"
-} else if wants_config && eeprom_size >= EEPROM_MIN {
-    "eeprom"
-} else {
-    "flash"
-};
+// ниже (см. `config_store()` выше).
+let store = config_store(MEMORY_LAYOUT[suffix], wants_config, wants_external, EEPROM_MIN);
 
 // write_size, оба memory.x и признак ota — вместе, одним источником: если
 // пользователь уже задал write_size вручную через `--define`, авточипу
@@ -643,19 +816,24 @@ if variable::is_set("write_size") {
     // DFU лежит в нём, и прошивка пишет его через регион банка.
     let dfu_bank = m.contains("dfu_bank_origin");
 
-    // Раздел настроек решается первым: он меняет всю OTA-схему — в хвосте
-    // отрезает flash, а в резерве перед ACTIVE (F2/F4/F7) теснит bootloader и
-    // STATE. Под это в таблице отдельный набор цифр с префиксом `config_` — см.
-    // ConfigPartition в chip-data-gen.
-    // `!erase_zero` — то же ограничение, что и у OTA, только у другой
-    // библиотеки: `sequential-storage` считает стёртым состоянием 0xFF
-    // (`item.rs`: заголовок ищется как «все байты 0xFF», а состояние страницы —
-    // по нулевым маркерам), и настраиваемого значения у неё нет. На флеше,
-    // стирающемся в ноль, свежая страница выглядит «уже закрытой», и хранилище
-    // молча не работает. Раздавать такое нельзя.
-    // Раздел во внутреннем флеше — только когда настройки хранятся там.
-    let in_flash = wants_config && store == "flash" && m["config"] == "true" && !erase_zero;
-    let config = wants_external || (wants_config && store == "eeprom") || in_flash;
+    let pl = plan(m, erase_zero, WANTS, LIMITS);
+    let in_flash = pl.in_flash;
+    let config = pl.config;
+    let key = pl.key;
+    let ext_key = pl.ext_key;
+    let ota_key = pl.ota_key;
+    let ota_fits = pl.ota_fits;
+    let ext_fits = pl.ext_fits;
+    let ota = pl.ota;
+    let ext_ota = pl.ext_ota;
+    let settings_key = pl.settings_key;
+    let app_length_key = pl.app_length_key;
+    let graph = pl.graph;
+    // Подпись есть всегда, когда есть OTA, и только тогда: подписывается то,
+    // что приезжает в раздел DFU, и отдельного вопроса нет. Если схема не
+    // поместилась, нет ни OTA, ни подписи.
+    let signed = ota;
+
     if wants_config && !config {
         if erase_zero {
             print("Раздел настроек для " + suffix + " не выделен: у этого чипа флеш стирается в ноль,");
@@ -664,23 +842,6 @@ if variable::is_set("write_size") {
             print("Раздел настроек для " + suffix + " не выделен: под него нужны две страницы стирания, а их не остаётся");
         }
     }
-    // Дальше партиции берутся по одному из наборов ключей: `key` — раскладка
-    // без OTA (весь flash или он без раздела настроек в хвосте), `ota_key` —
-    // раскладка с OTA. Внутренняя OTA — те же наборы (`` или `config_`),
-    // внешняя — свои (`ext_` или `ext_cfg_`, настройки во внутреннем флеше).
-    let key = if in_flash { "config_" } else { "" };
-    let ext_key = if in_flash { "ext_cfg_" } else { "ext_" };
-    let ota_key = if wants_ext_ota { ext_key } else { key };
-
-    // Схема нужна только если её и хотят, и она помещается. «Помещается» — это
-    // две проверки: раскладка вообще сходится (цифры посчитаны заранее) и в
-    // разделе `ACTIVE` остаётся место под саму прошивку.
-    let ota_fits = m[ota_key + "ota"] == "true"
-        && size_in_bytes(m[ota_key + "active_length"]) >= OTA_MIN_ACTIVE;
-    let ext_fits = m[ext_key + "ota"] == "true"
-        && size_in_bytes(m[ext_key + "active_length"]) >= OTA_MIN_ACTIVE;
-    let ota = wants_ota && ota_fits;
-    let ext_ota = ota && wants_ext_ota;
     // Подсказки про внешнюю флешь: внутри схема не помещается, а снаружи
     // помещается — или помещается, но `ACTIVE` с внешней флешью заметно (в
     // полтора раза и больше) крупнее.
@@ -693,18 +854,6 @@ if variable::is_set("write_size") {
                 + " вместо " + m[ota_key + "active_length"] + " (--define ota=external)");
         }
     }
-    // Где лежит раздел настроек. Без OTA — в хвосте flash (`config_*`): в
-    // начале стоит таблица векторов приложения. С OTA — там, где его положил
-    // chip-data-gen (`config_ota_settings_*`): в мелких секторах перед ACTIVE,
-    // если так ACTIVE больше (F2/F4/F7), иначе тоже в хвосте. Страница — сектор
-    // под разделом (`adapters::flash::Paged` в bsp::config).
-    let settings_key = if ext_ota {
-        "ext_cfg_settings_"
-    } else if ota {
-        "config_ota_settings_"
-    } else {
-        "config_"
-    };
     if in_flash {
         print("Раздел настроек: " + m[settings_key + "length"] + " с адреса " + m[settings_key + "origin"]);
     } else if config && store == "eeprom" {
@@ -713,19 +862,6 @@ if variable::is_set("write_size") {
         print("Настройки — на внешней флеши: подставьте свой драйвер в crates-cross/bsp/src/config.rs");
         print("  (пока там заглушка adapters::flash::Unconnected — проект собирается, настройки не сохраняются)");
     }
-
-    // Подпись есть всегда, когда есть OTA, и только тогда: подписывается то,
-    // что приезжает в раздел DFU, и отдельного вопроса нет. Если схема не
-    // поместилась, нет ни OTA, ни подписи.
-    let signed = ota;
-
-    // Граф задач меряется по разделу, в который линкуется приложение: при OTA
-    // это ACTIVE, без неё — весь flash за вычетом того, что забрали настройки.
-    // Ключ считается один раз и используется и для проверки, и для
-    // сообщения: с двумя копиями выбора хук однажды сообщил бы размер,
-    // который не измерял.
-    let app_length_key = if ota { ota_key + "active_length" } else { key + "flash_length" };
-    let graph = wants_graph && size_in_bytes(m[app_length_key]) >= GRAPH_MIN_PARTITION;
     if wants_graph && !graph {
         print("Граф задач отключён для " + suffix + ": под приложение отведено " + m[app_length_key] + ", а supervisor туда не помещается");
         print("  вернуть можно вручную — код графа лежит в docs/modules/app-graph.md");
@@ -1060,16 +1196,6 @@ const PROTOCOL_INTERFACES = #{
     "modbus": ["uart", "tcp", "udp", "usb"],
     "protobuf": ["uart", "tcp", "udp", "usb"],
     "canopen": ["can"],
-};
-// Блоки чипа (метки chip-data/interfaces.rhai), на которых работает
-// интерфейс: CAN — любой из двух контроллеров, имя блока в документации и
-// справочнике выбирает `can_kind`.
-const INTERFACE_BLOCKS = #{
-    "uart": ["usart"],
-    "can": ["fdcan", "bxcan"],
-    "tcp": ["eth"],
-    "udp": ["eth"],
-    "usb": ["usb", "otg"],
 };
 // Значения через запятую — для сообщений об ошибке. `reduce` без начального
 // значения начинает с `()`, и список получил бы ведущую запятую.

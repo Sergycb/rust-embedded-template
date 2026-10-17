@@ -112,6 +112,20 @@ fn run_cascade_to(
     run_cascade_with(script, target_suffix, &[])
 }
 
+/// Чип задан напрямую (`--define chip_feature=...`): каскад по символам и
+/// отсечение чипов ответами обходятся. Так проверяется, что хук делает с
+/// чипом, которому ответы не подходят, — в каскаде такой чип не показывается.
+fn run_chip_with(
+    script: &Script,
+    suffix: &str,
+    preset: &[(&str, &str)],
+) -> Result<CascadeResult, Box<EvalAltResult>> {
+    let chip = format!("stm32{suffix}");
+    let mut all = preset.to_vec();
+    all.push(("chip_feature", chip.as_str()));
+    run_cascade_with(script, suffix, &all)
+}
+
 /// То же, но с заранее выставленными переменными — так проверяются ветки,
 /// которые в реальной генерации приходят из `[placeholders]` или `--define`
 /// (`ota`, `write_size`, `chip`).
@@ -407,7 +421,7 @@ fn erase_zero_follows_the_metadata_not_the_chip_name() {
 #[test]
 fn ota_refusal_names_the_real_reason_with_settings() {
     let ast = compile_script();
-    let too_small = run_cascade_with(
+    let too_small = run_chip_with(
         &ast,
         "f030c8",
         &[("config", "internal"), ("ota", "internal")],
@@ -779,7 +793,7 @@ fn state_and_config_lengths_are_multiples_of_their_erase_size() {
     let mut checked = 0;
     for suffix in all_chip_suffixes() {
         for preset in [&[][..], &[("config", "internal")][..]] {
-            let Ok(result) = run_cascade_with(&ast, &suffix, preset) else {
+            let Ok(result) = run_chip_with(&ast, &suffix, preset) else {
                 continue; // падения каскада ловят соседние тесты
             };
             let Some(app) = result.files.get("crates-cross/app/memory.x") else {
@@ -935,7 +949,7 @@ fn an_unknown_config_answer_is_an_error() {
 fn accepting_ota_still_loses_to_a_chip_that_cannot_fit_it() {
     // Обратная сторона: `yes` — это «не возражаю», а не «сделай во что бы то
     // ни стало». h723ve схему не вмещает, и ответ ничего не меняет.
-    let result = run_cascade_with(&compile_script(), "h723ve", &[("ota", "internal")])
+    let result = run_chip_with(&compile_script(), "h723ve", &[("ota", "internal")])
         .expect("каскад не должен падать");
     assert_eq!(result.vars.get("ota").map(String::as_str), Some("false"));
     assert!(result.deleted.contains(&"crates-cross/boot".to_string()));
@@ -1055,7 +1069,7 @@ fn external_ota_places_settings_where_the_project_asked() {
 /// `ota=external`, а не просто снимает OTA.
 #[test]
 fn internal_ota_that_does_not_fit_suggests_the_external_one() {
-    let result = run_cascade_with(&compile_script(), "h723ve", &[("ota", "internal")])
+    let result = run_chip_with(&compile_script(), "h723ve", &[("ota", "internal")])
         .expect("каскад не должен падать");
     assert_eq!(result.vars.get("ota").map(String::as_str), Some("false"));
     assert!(
@@ -1459,7 +1473,7 @@ fn impossible_protocol_answers_are_rejected() {
         ),
     ];
     for (chip, preset, reason) in cases {
-        let err = run_cascade_with(&script, chip, preset)
+        let err = run_chip_with(&script, chip, preset)
             .err()
             .unwrap_or_else(|| panic!("{chip} {preset:?}: каскад не остановился"));
         assert!(
@@ -1518,8 +1532,7 @@ fn the_release_workflow_goes_away_together_with_ota() {
     );
 
     // h723ve схему не вмещает — OTA отключается независимо от ответа.
-    let no_room =
-        run_cascade_with(&ast, "h723ve", &[("ota", "internal")]).expect("каскад без места");
+    let no_room = run_chip_with(&ast, "h723ve", &[("ota", "internal")]).expect("каскад без места");
     assert!(
         no_room.deleted.contains(&RELEASE.to_string()),
         "на чипе без места для OTA релизный workflow должен быть удалён, а удалено: {:?}",
@@ -1607,7 +1620,7 @@ fn settings_avoid_flash_that_erases_to_zero() {
     let ast = compile_script();
 
     for suffix in ["l073rz", "l051c8"] {
-        let result = run_cascade_with(&ast, suffix, &[("config", "internal")])
+        let result = run_chip_with(&ast, suffix, &[("config", "internal")])
             .unwrap_or_else(|err| panic!("каскад до {suffix} упал: {err}"));
 
         assert_eq!(
@@ -1629,7 +1642,7 @@ fn settings_avoid_flash_that_erases_to_zero() {
 
     // У L010F4 EEPROM есть, но 128 байт — меньше двух страниц хранилища.
     for suffix in ["wb10cc", "wb15cc", "l010f4"] {
-        let result = run_cascade_with(&ast, suffix, &[("config", "internal")])
+        let result = run_chip_with(&ast, suffix, &[("config", "internal")])
             .unwrap_or_else(|err| panic!("каскад до {suffix} упал: {err}"));
 
         assert_eq!(
@@ -2124,7 +2137,7 @@ fn bootloader_zone_and_swap_page_hold_for_every_chip() {
     let mut paged = 0;
     for suffix in all_chip_suffixes() {
         for preset in [&[][..], &[("config", "internal")][..]] {
-            let Ok(result) = run_cascade_with(&ast, &suffix, preset) else {
+            let Ok(result) = run_chip_with(&ast, &suffix, preset) else {
                 continue; // падения каскада ловят соседние тесты
             };
             if result.vars.get("ota").map(String::as_str) != Some("true") {
@@ -2177,4 +2190,56 @@ fn bootloader_zone_and_swap_page_hold_for_every_chip() {
         failures.len(),
         failures.join("\n")
     );
+}
+
+/// Ответы отсекают чипы ещё до каскада: сетевой стек просит Ethernet, OTA и
+/// граф — места во flash. Каскад до такого чипа не доходит, и пользователь
+/// видит только то, с чем ответы выполнимы.
+#[test]
+fn answers_cut_the_chip_list_before_the_cascade() {
+    let ast = compile_script();
+    let net = [("protocol", "modbus"), ("interface", "tcp")];
+
+    // С Ethernet — доходит, и хук сообщает, сколько чипов осталось.
+    let ok = run_cascade_with(&ast, "f407ve", &net).expect("f407ve годится под сеть");
+    assert!(
+        ok.prints.iter().any(|line| line.contains("подходит")),
+        "хук не сказал, что список сужен: {:?}",
+        ok.prints
+    );
+
+    // Без Ethernet — каскад не может привести к чипу.
+    let err = run_cascade_with(&ast, "g474re", &net)
+        .err()
+        .expect("g474re без Ethernet не должен быть в списке");
+    assert!(err.to_string().contains("не ведёт к цели"), "{err}");
+
+    // OTA, которая не помещается, и граф, который не влезает, — тоже: каскад
+    // либо не может привести к чипу, либо приводит к соседу, которому место
+    // есть (у h723ve это h723vg — 1 MiB).
+    for (chip, preset) in [
+        ("h723ve", [("ota", "internal"), ("graph", "no")]),
+        ("l011f4", [("ota", "no"), ("graph", "yes")]),
+    ] {
+        let target = format!("stm32{chip}");
+        match run_cascade_with(&ast, chip, &preset) {
+            Err(err) => {
+                assert!(err.to_string().contains("не ведёт к цели"), "{chip}: {err}");
+            }
+            Ok(result) => assert_ne!(
+                result.vars.get("chip").map(String::as_str),
+                Some(target.as_str()),
+                "{chip} {preset:?}: чип не должен быть в списке"
+            ),
+        }
+    }
+
+    // Смягчили ответы — тот же чип снова доступен.
+    for (chip, preset) in [
+        ("h723ve", [("ota", "no"), ("graph", "no")]),
+        ("l011f4", [("ota", "no"), ("graph", "no")]),
+    ] {
+        run_cascade_with(&ast, chip, &preset)
+            .unwrap_or_else(|err| panic!("{chip} {preset:?}: {err}"));
+    }
 }
