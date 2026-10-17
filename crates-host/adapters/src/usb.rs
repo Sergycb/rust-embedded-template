@@ -7,11 +7,12 @@
 use core::convert::Infallible;
 
 use embassy_time::{Duration, with_timeout};
-use embassy_usb::class::cdc_acm::{BufferedReceiver, CdcAcmError, Sender};
+use embassy_usb::class::cdc_acm::{BufferedReceiver, CdcAcmClass, CdcAcmError, Sender, State};
 use embassy_usb::driver::{
     Bus, ControlPipe, Direction, Driver, Endpoint, EndpointAddress, EndpointAllocError,
     EndpointError, EndpointIn, EndpointInfo, EndpointOut, EndpointType, Event, Unsupported,
 };
+use embassy_usb::{Builder, Config, UsbDevice};
 use embedded_io_async::{ErrorType, Read, Write};
 
 /// USB-блок, которого ещё нет на плате, — место под драйвер `embassy-stm32`.
@@ -249,6 +250,72 @@ impl<'d, D: Driver<'d>> Write for CdcStream<'d, D> {
     }
 }
 
+/// Пакет CDC — 64 байта: предел full-speed для bulk-точек.
+pub const PACKET: u16 = 64;
+
+/// Память под устройство CDC ACM: `Builder` и класс держат её `&'static mut`.
+///
+/// Отдельной структурой, а не россыпью `static` на стороне платы: сборка
+/// устройства от чипа не зависит, и плата даёт ей только место. Состояние
+/// класса ([`State`]) сюда не входит: оно не `Send` (внутри ссылка на
+/// `RefCell`), а `ConstStaticCell`, в котором плата хранит эту структуру, `Send`
+/// требует.
+#[derive(Debug)]
+pub struct CdcBuffers {
+    config_descriptor: [u8; 256],
+    bos_descriptor: [u8; 256],
+    control: [u8; 64],
+    rx: [u8; PACKET as usize],
+}
+
+impl CdcBuffers {
+    /// Нулевые буферы — для `static`.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            config_descriptor: [0; 256],
+            bos_descriptor: [0; 256],
+            control: [0; 64],
+            rx: [0; PACKET as usize],
+        }
+    }
+}
+
+impl Default for CdcBuffers {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Собирает USB-устройство с одним классом CDC ACM над драйвером платы:
+/// устройство уезжает в узел `USB`, поток — под транспорт протокола.
+#[must_use]
+pub fn cdc<D: Driver<'static>>(
+    driver: D,
+    config: Config<'static>,
+    buffers: &'static mut CdcBuffers,
+    state: &'static mut State<'static>,
+) -> (UsbDevice<'static, D>, CdcStream<'static, D>) {
+    let CdcBuffers {
+        config_descriptor,
+        bos_descriptor,
+        control,
+        rx,
+    } = buffers;
+    let mut builder = Builder::new(
+        driver,
+        config,
+        config_descriptor,
+        bos_descriptor,
+        &mut [],
+        control,
+    );
+    let class = CdcAcmClass::new(&mut builder, state, PACKET);
+    let device = builder.build();
+    let (tx, rx_half) = class.split();
+    (device, CdcStream::new(tx, rx_half.into_buffered(rx)))
+}
+
 #[cfg(test)]
 mod tests {
     use core::pin::pin;
@@ -258,13 +325,9 @@ mod tests {
     use std::rc::Rc;
 
     use embassy_time::MockDriver;
-    use embassy_usb::Builder;
-    use embassy_usb::class::cdc_acm::{CdcAcmClass, State};
+    use embassy_usb::class::cdc_acm::State;
 
     use super::*;
-
-    /// Пакет — 16 байт: полный пакет в тестах собирается без длинных литералов.
-    const PACKET: u16 = 16;
 
     /// Что делает хост — общее состояние всех точек сценарного драйвера.
     #[derive(Default)]
@@ -396,17 +459,12 @@ mod tests {
     /// Поток CDC над сценарным драйвером и хост, который им управляет.
     fn stream() -> (CdcStream<'static, Scripted>, Shared) {
         let host = Shared::default();
-        let mut builder = Builder::new(
+        let (_device, stream) = cdc(
             Scripted(Rc::clone(&host)),
             embassy_usb::Config::new(0xC0DE, 0xCAFE),
-            leak([0; 256]),
-            leak([0; 256]),
-            &mut [],
-            leak([0; 64]),
+            leak(CdcBuffers::new()),
+            leak(State::new()),
         );
-        let class = CdcAcmClass::new(&mut builder, leak(State::new()), PACKET);
-        let (tx, rx) = class.split();
-        let stream = CdcStream::new(tx, rx.into_buffered(leak([0; PACKET as usize])));
         (stream, host)
     }
 
@@ -441,13 +499,13 @@ mod tests {
         let (mut stream, host) = stream();
         host.borrow_mut().enabled = true;
 
-        assert_eq!(stream.write(&[7; 20]).await, Ok(usize::from(PACKET)));
+        assert_eq!(stream.write(&[7; 70]).await, Ok(usize::from(PACKET)));
         stream.flush().await.unwrap();
         assert_eq!(stream.write(&[8; 4]).await, Ok(4));
         stream.flush().await.unwrap();
 
         let taken = host.borrow().taken.clone();
-        assert_eq!(taken, [vec![7; 16], vec![], vec![8; 4]]);
+        assert_eq!(taken, [vec![7; usize::from(PACKET)], vec![], vec![8; 4]]);
     }
 
     /// Пакет, который хост не забирает, отбрасывается по таймауту — запись
@@ -459,10 +517,10 @@ mod tests {
 
         let mut cx = Context::from_waker(Waker::noop());
         {
-            let mut write = pin!(stream.write(&[1; 16]));
+            let mut write = pin!(stream.write(&[1; PACKET as usize]));
             assert!(write.as_mut().poll(&mut cx).is_pending());
             MockDriver::get().advance(WRITE_TIMEOUT);
-            assert_eq!(write.poll(&mut cx), Poll::Ready(Ok(16)));
+            assert_eq!(write.poll(&mut cx), Poll::Ready(Ok(usize::from(PACKET))));
         }
 
         host.borrow_mut().stalled = false;
