@@ -13,7 +13,7 @@ pub fn lint_host(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
         "cargo clippy --workspace --all-targets --features domain/log,domain/signed -- -D warnings"
     )
     .run()?;
-    // Ветка без подписи (`signed=no`): иначе её код нигде не собирался бы.
+    // Ветка без подписи (`ota=no`): иначе её код нигде не собирался бы.
     // Только clippy — тесты и doc без `signed` время не стоят.
     cmd!(
         sh,
@@ -74,6 +74,13 @@ pub fn lint_cross(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     // the first pass.
     if has_bootloader() {
         cmd!(sh, "cargo clippy -p app -p boot --release -- -D warnings").run()?;
+        // Bootloader под тесты на плате (`cargo xtask test target`) собирается с
+        // фичей `no-watchdog`: эта ветка нигде больше не компилируется.
+        cmd!(
+            sh,
+            "cargo clippy -p boot --release --features no-watchdog -- -D warnings"
+        )
+        .run()?;
     } else {
         cmd!(sh, "cargo clippy -p app --release -- -D warnings").run()?;
     }

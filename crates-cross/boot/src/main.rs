@@ -21,10 +21,11 @@ use embassy_boot_stm32::{BootLoader, BootLoaderConfig};
 {%- endif %}
 use embassy_stm32::flash::{FLASH_BASE, Flash};
 {%- if graph == "true" %}
-#[cfg(not(debug_assertions))]
+#[cfg(not(feature = "no-watchdog"))]
 use embassy_stm32::wdg::IndependentWatchdog;
 {%- endif %}
 use embassy_sync::blocking_mutex::Mutex;
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 {% if bank_switch != "" %}
 // Переключение флеша в одобанковый режим — тот же исходник, что у `bsp`:
 // bootloader не зависит от `bsp`.
@@ -47,7 +48,7 @@ mod signature;
 /// Таймаут сторожа, который bootloader запускает перед прыжком, — то же число
 /// из `[env]` crates-cross/.cargo/config.toml, что у приложения
 /// (`bsp::wdg::HW_TIMEOUT_US`, там же и почему одно).
-#[cfg(not(debug_assertions))]
+#[cfg(not(feature = "no-watchdog"))]
 const WATCHDOG_TIMEOUT_US: u32 = match u32::from_str_radix(env!("WATCHDOG_TIMEOUT_US"), 10) {
     Ok(us) => us,
     Err(_) => panic!("WATCHDOG_TIMEOUT_US в .cargo/config.toml — не число"),
@@ -103,7 +104,7 @@ fn main() -> ! {
     // Кроме этого чипа: банк 2 стоит за разрывом, и регионы банков выше — не
     // выбор, а единственный способ до него дотянуться (см. начало `main`).
 {%- endif %}
-    let flash = Mutex::new(RefCell::new(flash));
+    let flash = Mutex::<NoopRawMutex, _>::new(RefCell::new(flash));
 {%- if ota_store == "external" %}
     // `STATE` и `DFU` — над одним драйвером: свой мьютекс на микросхему, а не
     // по объекту на раздел.
@@ -131,6 +132,15 @@ fn main() -> ! {
     let dfu = Mutex::new(RefCell::new(dfu));
 
     let config = BootLoaderConfig::from_linkerfile_blocking(&flash, &dfu, &state);
+{%- elsif swap_paged == "true" %}
+    // `ACTIVE` и `DFU` — со страницей обмена `SWAP_PAGE_SIZE`, крупнее физической
+    // страницы флеша (см. её описание): один мьютекс на оба раздела, как и
+    // раньше у цельного `Flash`.
+    let swap = Mutex::new(RefCell::new(Paged::<_, SWAP_PAGE_SIZE>::new(Shared::new(
+        &flash,
+    ))));
+
+    let config = BootLoaderConfig::from_linkerfile_blocking(&swap, &swap, &state);
 {%- else %}
 
     let config = BootLoaderConfig::from_linkerfile_blocking(&flash, &flash, &state);
@@ -157,9 +167,10 @@ fn main() -> ! {
     // Раньше он не нужен: бутлоадер защищает от неисправного образа (не
     // стартует, не кормит), а не от собственного обмена разделов, сколько бы
     // тот ни длился. Остановить его уже нельзя — приложение лишь подхватывает
-    // идущий счётчик (`bsp::wdg`, `arm()`). Только release: в debug на
-    // bootloader'е гоняются target-тесты, где кормить некому.
-    #[cfg(not(debug_assertions))]
+    // идущий счётчик (`bsp::wdg`, `arm()`). Без фичи `no-watchdog`: ею `cargo
+    // xtask test target` собирает bootloader под тесты на плате, где кормить
+    // сторож некому.
+    #[cfg(not(feature = "no-watchdog"))]
     IndependentWatchdog::new(p.{{watchdog_peripheral}}, WATCHDOG_TIMEOUT_US).unleash();
 {%- endif %}
     // SAFETY: `load` ставит VTOR на этот адрес, читает из образа по нему
@@ -196,6 +207,27 @@ fn main() -> ! {
 /// генерации тем же расчётом, что адреса в `memory.x`; то же самое стоит в
 /// `bsp::ota` — разделу в приложении и в bootloader'е расходиться нельзя.
 const STATE_ERASE_SIZE: usize = {{state_erase_size}};
+{%- if swap_paged == "true" %}
+
+/// Страница обмена `ACTIVE` и `DFU` — крупнее физической страницы флеша.
+///
+/// `embassy-boot` берёт страницу обмена из `ERASE_SIZE` разделов, а журнал
+/// `BOOTLOADER_STATE` ведёт запись на каждую страницу `ACTIVE`: чем крупнее
+/// страница, тем короче журнал и тем больше блока bootloader'а остаётся его
+/// коду (подписанный release-образ на мелких страницах, как у L0, иначе не
+/// влезает в зону). Разделы поэтому строятся над
+/// `Paged<_, SWAP_PAGE_SIZE>`, а не над цельным `Flash` с его физической
+/// страницей. Число — из генерации (`page_size`), то же самое стоит в
+/// `bsp::ota` и в `signature`: разделам в приложении и в bootloader'е
+/// расходиться нельзя, менять только вместе.
+const SWAP_PAGE_SIZE: usize = {{page_size}};
+
+const _: () = assert!(
+    SWAP_PAGE_SIZE.is_multiple_of(embassy_stm32::flash::MAX_ERASE_SIZE),
+    "page_size из генерации не кратен странице стирания флеша чипа \
+     (embassy_stm32::flash::MAX_ERASE_SIZE): стирание раздела заденет чужие секторы"
+);
+{%- endif %}
 
 /// Буфер обмена `BootLoader::prepare` — слово записи флеша из генерации
 /// (`write_size`, его можно переопределить `--define`). `prepare` требует,

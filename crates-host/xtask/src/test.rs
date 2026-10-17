@@ -163,7 +163,7 @@ fn ota_env<'a>(
 /// bootloader'а нет — свежей или после `probe-rs erase`, — без этой строки
 /// не выполнился бы ни один тест.
 fn test_target(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
-    flash_boot(sh, "debug")?;
+    flash_boot(sh, false)?;
     let _p = sh.push_dir(root_dir().join("crates-cross/target-tests"));
     cmd!(sh, "cargo test").run()?;
     Ok(())

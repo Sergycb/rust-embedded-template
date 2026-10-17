@@ -37,6 +37,13 @@ use crate::board::{% if dfu_bank == "true" %}{DfuBankMutex, FlashMutex}{% else %
 /// Кроме этого чипа: банк 2 у него стоит за разрывом, цельный `Flash` туда не
 /// дотягивается, и `DFU` лежит в регионе банка 2 (`crate::board::DfuBankMutex`).
 type DfuFlash = Shared<'static, DfuBankMutex>;
+{%- elsif swap_paged == "true" %}
+///
+/// Но со страницей обмена [`SWAP_PAGE_SIZE`], крупнее физической страницы
+/// флеша (`adapters::flash::Paged`): `DFU` обязан видеть ту же страницу, что
+/// `ACTIVE` и `DFU` в bootloader'е, иначе размеры и смещения разделов у них
+/// разойдутся.
+type DfuFlash = Paged<Shared<'static, FlashMutex>, SWAP_PAGE_SIZE>;
 {%- else %}
 type DfuFlash = Shared<'static, FlashMutex>;
 {%- endif %}
@@ -55,6 +62,24 @@ pub type Partition =
 /// `crates-cross/boot` — разделу в приложении и в bootloader'е расходиться
 /// нельзя.
 const STATE_ERASE_SIZE: usize = {{state_erase_size}};
+{%- if swap_paged == "true" %}
+
+/// Страница обмена `ACTIVE` и `DFU` — крупнее физической страницы флеша.
+///
+/// Генерация берёт её больше физической, чтобы журнал `BOOTLOADER_STATE`
+/// (запись на каждую страницу `ACTIVE`) стал короче и коду bootloader'а
+/// остался почти весь его блок. Раздел `DFU` строится над
+/// `Paged<_, SWAP_PAGE_SIZE>`; `ACTIVE` с той же страницей собирает
+/// bootloader. Число — `page_size` из генерации, то же самое стоит в
+/// `crates-cross/boot` — менять только вместе.
+const SWAP_PAGE_SIZE: usize = {{page_size}};
+
+const _: () = assert!(
+    SWAP_PAGE_SIZE.is_multiple_of(embassy_stm32::flash::MAX_ERASE_SIZE),
+    "page_size из генерации не кратен странице стирания флеша чипа \
+     (embassy_stm32::flash::MAX_ERASE_SIZE): стирание раздела заденет чужие секторы"
+);
+{%- endif %}
 
 /// Флеш под разделом `BOOTLOADER_STATE`: тот же общий `Flash`, но со
 /// страницей [`STATE_ERASE_SIZE`].
@@ -143,6 +168,9 @@ pub(crate) fn new(external: &'static ExternalMutex) -> Ota {
 /// `DFU` — в банке 2 (`dfu_bank`), `STATE` — в банке 1 (`flash`).
 pub(crate) fn new(flash: &'static FlashMutex, dfu_bank: &'static DfuBankMutex) -> Ota {
     let dfu = DFU_FLASH.init(Mutex::new(Shared::new(dfu_bank)));
+{%- elsif swap_paged == "true" %}
+pub(crate) fn new(flash: &'static FlashMutex) -> Ota {
+    let dfu = DFU_FLASH.init(Mutex::new(Paged::new(Shared::new(flash))));
 {%- else %}
 pub(crate) fn new(flash: &'static FlashMutex) -> Ota {
     let dfu = DFU_FLASH.init(Mutex::new(Shared::new(flash)));

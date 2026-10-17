@@ -1,6 +1,6 @@
 //! Прошивка платы перед этапами `test target` и `test host-target`.
 //!
-//! Отдельной команды `flash` нет: руками прошивают `cargo flash -p boot` и
+//! Отдельной команды `flash` нет: руками прошивают `cargo flash -p boot --release` и
 //! `cargo run -p app` в `crates-cross` (см. README, «Быстрый старт»). Здесь
 //! только то, что тестам нужно залить самим, и в правильном порядке —
 //! сначала bootloader.
@@ -12,8 +12,8 @@ use crate::image::{ensure_image_base, raw_image};
 use crate::memory::{app_memory_regions, app_region};
 use crate::project::{APP_ARTIFACT, CHIP, TARGET, cross_target_dir, has_bootloader, root_dir};
 
-/// Bootloader и приложение. `profile` — `"debug"` или `"release"`, он же имя
-/// каталога сборки.
+/// Bootloader (всегда release) и приложение. `profile` — `"debug"` или
+/// `"release"` — относится к приложению и он же имя каталога его сборки.
 pub fn flash_all(sh: &xshell::Shell, profile: &str) -> Result<(), anyhow::Error> {
     // Сверка образа приложения — ДО прошивки bootloader'а: иначе при расхождении
     // базы плата к моменту отказа уже получила бы новый bootloader.
@@ -25,18 +25,31 @@ pub fn flash_all(sh: &xshell::Shell, profile: &str) -> Result<(), anyhow::Error>
     // здесь и сразу сверяем его начало с началом раздела — той же проверкой,
     // что и в `build`, только без подписи и печати размера.
     check_image_origin(sh, profile)?;
-    flash_boot(sh, profile)?;
+    flash_boot(sh, true)?;
     flash_package(sh, APP_ARTIFACT, profile)
 }
 
 /// Только bootloader — если он в проекте есть. Сверять его образ с разделом
 /// приложения не нужно: ELF бутлоадера линкуется с базы флеша, а не в
 /// `ACTIVE`, и сравнение с `ORIGIN(ACTIVE)` было бы сравнением разных адресов.
-pub fn flash_boot(sh: &xshell::Shell, profile: &str) -> Result<(), anyhow::Error> {
+///
+/// Bootloader всегда release. `watchdog = false` собирает его с фичей
+/// `no-watchdog` — для тестов на плате, где кормить сторож некому.
+pub fn flash_boot(sh: &xshell::Shell, watchdog: bool) -> Result<(), anyhow::Error> {
     if !has_bootloader() {
         return Ok(());
     }
-    flash_package(sh, "boot", profile)
+    let _p = sh.push_dir(root_dir().join("crates-cross"));
+    if watchdog {
+        cmd!(sh, "cargo flash -p boot --release --chip {CHIP}").run()?;
+    } else {
+        cmd!(
+            sh,
+            "cargo flash -p boot --release --features no-watchdog --chip {CHIP}"
+        )
+        .run()?;
+    }
+    Ok(())
 }
 
 fn flash_package(sh: &xshell::Shell, package: &str, profile: &str) -> Result<(), anyhow::Error> {

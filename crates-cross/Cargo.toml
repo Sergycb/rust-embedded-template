@@ -4,6 +4,12 @@
 # проект не копируется вовсе (см. [conditional] в cargo-generate.toml), и
 # членом workspace ему быть нельзя.
 members  = ["app", {% if ota == "true" %}"boot", {% endif %}"bsp", "target-tests"]
+# Bootloader собирается только в release и только явно (`cargo build -p boot
+# --release`, `cargo flash -p boot --release`): debug-сборки у него нет, поэтому
+# голые `cargo build`/`cargo check` его не трогают. Размер зоны bootloader'а
+# (порядка 28–32 KiB) рассчитан на release — с подписью debug-сборка в неё не
+# влезает.
+default-members = ["app", "bsp", "target-tests"]
 resolver = "3"
 
 [workspace.package]
@@ -251,17 +257,3 @@ opt-level        = "s"
 overflow-checks  = false
 lto              = "fat"
 
-{%- if signed == "true" %}
-
-# Проверка подписи живёт в bootloader'е (`domain::ota::boot::screen_update`), а
-# зона bootloader'а — 32 KiB на F4 с разделом настроек. В debug `salty` с
-# overflow-checks и debug-assertions весит ~18 KiB против ~12 в release, и
-# debug-bootloader (его заливают тесты на плате) выходил ~31 KiB — впритык.
-# С `opt-level = "z"` и без проверок — ~26 KiB. Проверки в криптографии,
-# которую мы не пишем, отладке ничего не дают.
-# Цифры измерены до зависимости `boot` -> `domain`: пересчитать.
-[profile.dev.package.salty]
-opt-level        = "z"
-debug-assertions = false
-overflow-checks  = false
-{%- endif %}

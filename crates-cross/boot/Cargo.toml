@@ -8,6 +8,13 @@ rust-version.workspace = true
 [lints]
 workspace = true
 
+[features]
+# Не запускать сторож перед прыжком в образ. Нужна одному: `cargo xtask test
+# target` собирает bootloader с ней под тесты на плате (`target-tests`), которые
+# кормить сторож не умеют. В остальных сборках её нет. Без графа сторожа в
+# bootloader'е нет вовсе, и фича ничего не меняет.
+no-watchdog = []
+
 [[bin]]
 name = "boot"
 harness = false
@@ -22,12 +29,10 @@ cortex-m-rt = { workspace = true }
 # целый UART-стек. Здесь только RTT.
 defmt-rtt = { workspace = true }
 defmt = { workspace = true }
-# Паникёр по профилю — то же правило, что у `app` (см. crates-cross/app/Cargo.toml):
-# dev — `panic-probe`, release — src/panic.rs поверх `panic-persist`. В release это единственный
-# способ узнать, почему bootloader не прыгнул: с `panic-probe` плата стояла
-# бы в `udf()` молча (до выключения питания), а так причина лежит в PANIC и
-# читается `cargo xtask panic-info`.
-panic-probe = { workspace = true, features = ["print-defmt"] }
+# Паникёр — src/panic.rs поверх `panic-persist`: bootloader собирается только в
+# release, `panic-probe` ему не нужен. Это единственный способ узнать, почему
+# bootloader не прыгнул: причина лежит в PANIC и читается `cargo xtask
+# panic-info`.
 panic-persist = { workspace = true }
 embassy-boot-stm32 = { workspace = true, features = ["defmt"] }
 {%- if erase_zero == "true" and ota_store != "external" %}

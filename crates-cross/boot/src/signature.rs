@@ -17,7 +17,11 @@ use crate::external::ExternalFlash;
 {%- elsif dfu_bank == "true" %}
 use crate::{Bank1, Bank2, STATE_ERASE_SIZE};
 {%- else %}
+{%- if swap_paged == "true" %}
+use crate::{STATE_ERASE_SIZE, SWAP_PAGE_SIZE};
+{%- else %}
 use crate::STATE_ERASE_SIZE;
+{%- endif %}
 {%- endif %}
 
 /// Проверяет новый образ в `DFU`, если обмен запрошен, и возвращает флеш
@@ -93,7 +97,10 @@ pub(crate) fn screen(flash: Bank1, dfu: Bank2) -> (Bank1, Bank2) {
         };
         report(screening);
     }
-    (flash.into_inner().into_inner(), dfu.into_inner().into_inner())
+    (
+        flash.into_inner().into_inner(),
+        dfu.into_inner().into_inner(),
+    )
 }
 {%- else %}
 pub(crate) fn screen(flash: Flash<'static, Blocking>) -> Flash<'static, Blocking> {
@@ -102,7 +109,15 @@ pub(crate) fn screen(flash: Flash<'static, Blocking>) -> Flash<'static, Blocking
         let state = Mutex::<NoopRawMutex, _>::new(RefCell::new(Paged::<_, STATE_ERASE_SIZE>::new(
             Shared::new(&flash),
         )));
+{%- if swap_paged == "true" %}
+        // `ACTIVE` и `DFU` — со страницей обмена, как в `main` (`SWAP_PAGE_SIZE`).
+        let swap = Mutex::<NoopRawMutex, _>::new(RefCell::new(Paged::<_, SWAP_PAGE_SIZE>::new(
+            Shared::new(&flash),
+        )));
+        let mut config = BootLoaderConfig::from_linkerfile_blocking(&swap, &swap, &state);
+{%- else %}
         let mut config = BootLoaderConfig::from_linkerfile_blocking(&flash, &flash, &state);
+{%- endif %}
         let capacity = config.active.size();
         let Ok(screening) = screen_update(
             &mut config.dfu,
