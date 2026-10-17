@@ -242,6 +242,11 @@ const CPU_FREQ_BOOST = boost_data::CPU_FREQ_BOOST;
 // `eth`, `usb`, `otg`) — по ним проверяется ответ об интерфейсе в конце хука.
 import "chip-data/interfaces" as interfaces_data;
 const INTERFACES = interfaces_data::INTERFACES;
+// Имя блока каждого интерфейса (`USART1`, `FDCAN1`, `USB_OTG_HS`...) — для групп
+// `resources.rs`: по метке его не угадать, у части чипов нет и `USART2`, и
+// `USB_OTG_FS`.
+import "chip-data/instances" as instances_data;
+const INSTANCES = instances_data::INSTANCES;
 
 // Аппаратный RNG: [прерывание, клок, источник] — по ним bsp заводит
 // `bsp::rng` и даёт блоку клок в конфиге HAL (docs/modules/bsp-rng.md). Чипа
@@ -1096,6 +1101,7 @@ if protocol != "none" {
     if found.is_empty() {
         throw "interface: у " + chip_name + " нет выведенного блока " + listed(blocks).to_upper() + " — интерфейс " + iface + " недоступен";
     }
+    variable::set("iface_periph", INSTANCES[suffix][found[0]]);
     if iface == "can" {
         variable::set("can_kind", found[0]);
     }

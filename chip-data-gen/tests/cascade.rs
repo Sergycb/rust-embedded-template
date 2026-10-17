@@ -1308,6 +1308,34 @@ fn canopen_picks_the_can_controller_of_the_chip() {
     }
 }
 
+/// Блок интерфейса берётся из таблицы имён чипа, а не по соглашению: у
+/// STM32C011 нет `USART2`, у STM32H723 нет `USB_OTG_FS`.
+#[test]
+fn the_interface_block_is_named_by_the_chip() {
+    for (chip, protocol, iface, block) in [
+        ("c011d6", "modbus", "uart", "USART1"),
+        ("g474re", "canopen", "can", "FDCAN1"),
+        ("f407ve", "canopen", "can", "CAN1"),
+        ("h723ve", "modbus", "usb", "USB_OTG_HS"),
+        ("f407ve", "modbus", "usb", "USB_OTG_FS"),
+        ("f407ve", "modbus", "tcp", "ETH"),
+    ] {
+        // Без OTA: у малого чипа (C011, 32 KiB) иначе граф не помещается в
+        // раздел приложения, и хук отвергает протокол раньше, чем дойдёт до имени.
+        let result = run_cascade_with(
+            &compile_script(),
+            chip,
+            &[("protocol", protocol), ("interface", iface), ("ota", "no")],
+        )
+        .expect("каскад не должен падать");
+        assert_eq!(
+            result.vars.get("iface_periph").map(String::as_str),
+            Some(block),
+            "{chip} {iface}"
+        );
+    }
+}
+
 /// Протокол по сети оставляет стек — `bsp::net`, `adapters::net`, узел
 /// `domain::net` — только у чипа с выведенным Ethernet.
 #[test]
