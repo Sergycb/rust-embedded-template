@@ -231,9 +231,11 @@ read`: руками пришлось бы сначала найти адрес �
   каждой линии свой источник (PLL Q, HSI48, `RNGSEL`). Меняете тактирование —
   сохраните его: без клока `Rng::new` в `Board::new` паникует (линии с
   мультиплексором RNG) или виснет до первой строки лога (F2/F4/F7, L0, L4,
-  U0) — `docs/modules/bsp-rng.md`. `Board::rng` и клок заводятся только при
-  `interface` = tcp/udp (сетевому стеку нужно зерно); в остальных проектах
-  `bsp/src/rng.rs` и `docs/modules/bsp-rng.md` хук удаляет.
+  U0) — `docs/modules/bsp-rng.md`. Блок `RNG` берёт группа `rng` из
+  `resources.rs` (`Board::new` снимает с него зерно сетевому стеку и поля в
+  `Board` не оставляет); блок и клок заводятся только при `interface` =
+  tcp/udp, в остальных проектах `bsp/src/rng.rs` и `docs/modules/bsp-rng.md`
+  хук удаляет.
 {%- endif %}
 {%- endif %}
 {%- if protocol == "canopen" %}

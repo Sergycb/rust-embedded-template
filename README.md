@@ -552,7 +552,7 @@ CDC ACM: устройство `embassy-usb`, узел `USB` в графе{% else
 Выводы шаблон не выбирает: в `Board::{% if interface == "uart" %}serial{% elsif interface == "can" %}can{% elsif interface == "usb" %}usb{% else %}net{% endif %}` встаёт заглушка, с которой проект
 собирается и запускается, но узел ждёт впустую. Подставить своё железо — правка
 в `crates-cross/bsp/src/{% if interface == "uart" %}serial{% elsif interface == "can" %}can{% elsif interface == "usb" %}usb{% else %}net{% endif %}.rs` по рецепту в `docs/modules/bsp-{% if interface == "uart" %}serial{% elsif interface == "can" %}can{% elsif interface == "usb" %}usb{% else %}net{% endif %}.md`
-(`cargo xtask pins {% if interface == "uart" %}USART2{% elsif interface == "can" %}{% if can_kind == "fdcan" %}FDCAN1{% else %}CAN1{% endif %}{% elsif interface == "usb" %}{% if usb_kind == "otg" %}USB_OTG_FS{% else %}USB{% endif %}{% else %}ETH{% endif %} --snippet`).
+(`cargo xtask pins {{iface_periph}} --snippet`).
 {%- if modbus_master == "true" %} Master Modbus (вопрос `--define modbus_master=yes`) —
 не узел, а функции `domain::modbus::master` поверх `ports::ModbusClient`: что и как
 часто опрашивать, решает узел приложения.

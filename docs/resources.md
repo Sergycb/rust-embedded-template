@@ -9,9 +9,19 @@
 не текущее состояние: см. docs/architecture.md, «`Board` отдаёт объекты, а не
 периферию».
 
-Распиновка живёт в `crates-cross/bsp/src/resources.rs`: там уже стоит
+Распиновка живёт в `crates-cross/bsp/src/resources.rs`.
+{%- if interface == "none" %} Там уже стоит
 `assign_resources!` с одной пустой группой `board` — пустой макрос не
-компилируется, ему нужна хотя бы одна. Модуль подключён в `lib.rs` первым и с
+компилируется, ему нужна хотя бы одна.
+{%- else %} Там уже стоят группы того, что выбрано при генерации:
+{%- if interface == "tcp" or interface == "udp" %}{% if rng_irq != "" %} `rng` (`RNG`, затравка стека — `crate::rng::seed`) и{% endif %} `eth` (`{{iface_periph}}`)
+{%- elsif interface == "uart" %} `serial` (`{{iface_periph}}`)
+{%- elsif interface == "can" %} `can` (`{{iface_periph}}`)
+{%- else %} `usb` (`{{iface_periph}}`)
+{%- endif %}. В группах только блоки, без выводов и DMA-каналов: их выбирает плата, добавьте
+их в группу, а конструктор модуля (`crate::{% if interface == "uart" %}serial{% elsif interface == "can" %}can{% elsif interface == "usb" %}usb{% else %}net{% endif %}::new`) уже принимает свою группу
+параметром — заглушка её не трогает.
+{%- endif %} Модуль подключён в `lib.rs` первым и с
 `#[macro_use]`, иначе `split_resources!` не был бы виден из `board.rs`.
 
 Имена полей `embassy_stm32::Peripherals` зависят от выбранного чипа

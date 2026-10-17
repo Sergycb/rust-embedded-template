@@ -39,7 +39,9 @@ impl core::fmt::Debug for Usb {
 
 /// Собирает USB-устройство с одним классом CDC ACM над драйвером платы
 /// (`adapters::usb::cdc`). Серийный номер устройства — заводской номер чипа.
-pub(crate) fn new() -> Usb {
+/// Блок приходит группой `resources.rs` — заглушка его не трогает, драйвер
+/// платы соберётся из него и выводов.
+pub(crate) fn new(_resources: crate::resources::UsbResources) -> Usb {
     defmt::warn!("bsp: USB не подключён — хост устройство не увидит, протокол ждёт впустую");
 
     let mut config = Config::new(VID, PID);

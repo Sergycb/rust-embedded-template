@@ -14,13 +14,13 @@ COM-порт») под протоколом: {% if protocol == "modbus" %}Modbus
 1. Выводы и прерывание — из справочника по чипу:
 
    ```text
-   cargo xtask pins {% if usb_kind == "otg" %}USB_OTG_FS{% else %}USB{% endif %} --snippet
+   cargo xtask pins {{iface_periph}} --snippet
    ```
-{%- if usb_kind == "otg" %}
+{%- if usb_kind == "otg" and iface_periph != "USB_OTG_FS" %}
 
-   У чипа может быть выведен только `USB_OTG_HS` (H723, H730, H7A3) — тогда
-   везде ниже `USB_OTG_HS` вместо `USB_OTG_FS`; какие блоки есть, покажет
-   `cargo xtask pins`.
+   У этого чипа выведен только `{{iface_periph}}` (так бывает у H723, H730,
+   H7A3): ниже `USB_OTG_FS` читайте как `{{iface_periph}}`, а `Driver::new_fs` — как
+   конструктор для этого блока.
 {%- endif %}
 
    Он печатает `bind_interrupts!` и группу `assign_resources!` с выводами
@@ -31,9 +31,9 @@ COM-порт») под протоколом: {% if protocol == "modbus" %}Modbus
 
    ```rust,ignore
    use embassy_stm32::usb::Driver;
-   use embassy_stm32::peripherals::{% if usb_kind == "otg" %}USB_OTG_FS{% else %}USB{% endif %};
+   use embassy_stm32::peripherals::{{iface_periph}};
 
-   pub type UsbDriver = Driver<'static, {% if usb_kind == "otg" %}USB_OTG_FS{% else %}USB{% endif %}>;
+   pub type UsbDriver = Driver<'static, {{iface_periph}}>;
 
 {%- if usb_kind == "otg" %}
    // Рядом с остальными статиками модуля:
@@ -50,8 +50,8 @@ COM-порт») под протоколом: {% if protocol == "modbus" %}Modbus
 {%- endif %}
    ```
 
-   `new` получает свою группу ресурсов: `crate::usb::new(r.{% if usb_kind == "otg" %}usb_otg_fs{% else %}usb{% endif %})` после
-   `let r = split_resources!(p);` (`docs/resources.md`).
+   `new` получает свою группу ресурсов, `usb` в `resources.rs`: `Board::new` уже
+   зовёт `crate::usb::new(r.usb)` (`docs/resources.md`); выводы добавляются в группу.
 
 ## Идентификаторы
 

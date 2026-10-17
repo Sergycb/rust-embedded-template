@@ -13,7 +13,7 @@ UART платы — поток байтов под узлом протокола
 1. Блоки для своего USART — из справочника по чипу:
 
    ```text
-   cargo xtask pins USART2 --snippet
+   cargo xtask pins {{iface_periph}} --snippet
    ```
 
    Он печатает `bind_interrupts!` и группу `assign_resources!` со свободными
@@ -24,7 +24,7 @@ UART платы — поток байтов под узлом протокола
 
    ```rust,ignore
    use embassy_stm32::usart::{BufferedUart, Config};
-   use crate::resources::Usart2Resources;
+   use crate::resources::SerialResources;
    use static_cell::ConstStaticCell;
 
    pub type Serial = BufferedUart<'static>;
@@ -32,7 +32,7 @@ UART платы — поток байтов под узлом протокола
    static TX: ConstStaticCell<[u8; 256]> = ConstStaticCell::new([0; 256]);
    static RX: ConstStaticCell<[u8; 256]> = ConstStaticCell::new([0; 256]);
 
-   pub(crate) fn new(r: Usart2Resources) -> Serial {
+   pub(crate) fn new(r: SerialResources) -> Serial {
        let mut config = Config::default();
        config.baudrate = 115_200;
        BufferedUart::new(r.usart, r.rx, r.tx, TX.take(), RX.take(), Irqs, config)
@@ -40,9 +40,8 @@ UART платы — поток байтов под узлом протокола
    }
    ```
 
-   В `Board::new` вызов `crate::serial::new()` получает свою группу:
-   `crate::serial::new(r.usart2)` после `let r = split_resources!(p);`
-   (`docs/resources.md`).
+   `Board::new` уже передаёт группу `serial` из `resources.rs`:
+   `crate::serial::new(r.serial)` (`docs/resources.md`); выводы добавляются в неё.
 
 `BufferedUart` реализует `embedded_io_async::{Read, ReadReady, Write}` сам —
 ровно то, что ждут транспорты `adapters::modbus::Rtu` и `adapters::cobs::Cobs`,
@@ -61,4 +60,4 @@ RS-485 — тот же UART плюс вывод DE, который включа�
   опустить после `flush`, — обёрткой поверх `OutputPin`. В шаблоне её нет,
   добавить её в `adapters` — по первой нужде.
 
-Версию USART показывает тот же `cargo xtask pins USART2`.
+Версию USART показывает тот же `cargo xtask pins {{iface_periph}}`.

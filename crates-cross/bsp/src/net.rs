@@ -47,7 +47,9 @@ static RESOURCES: ConstStaticCell<StackResources<SOCKETS>> =
 
 /// Собирает стек над устройством платы. Адрес — по DHCP; MAC — из
 /// заводского номера чипа `uid`, затравка случайных чисел стека — `seed`.
-pub(crate) fn new(uid: [u8; 12], seed: u64) -> Net {
+/// Блок Ethernet приходит группой `resources.rs` — заглушка его не трогает,
+/// драйвер платы соберётся из него и выводов.
+pub(crate) fn new(uid: [u8; 12], seed: u64, _resources: crate::resources::EthResources) -> Net {
     defmt::warn!("bsp: Ethernet не подключён — сеть без линка, протокол ждёт впустую");
     let (stack, runner) = embassy_net::new(
         Unconnected::new(adapters::net::mac_from_uid(uid)),

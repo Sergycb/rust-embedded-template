@@ -14,7 +14,7 @@ DHCP, его фоновая работа в узле `NET` графа (`domain::
 1. Выводы RMII и прерывание — из справочника по чипу:
 
    ```text
-   cargo xtask pins ETH --snippet
+   cargo xtask pins {{iface_periph}} --snippet
    ```
 
    Он печатает `bind_interrupts!` и группу `assign_resources!`: `REF_CLK`,
@@ -42,8 +42,9 @@ DHCP, его фоновая работа в узле `NET` графа (`domain::
 
    Точные аргументы зависят от версии блока Ethernet чипа (v1 у F4/F7, v2 у
    H5/H7) — сверяйте с `embassy-stm32` 0.6 (`src/eth/v1`, `src/eth/v2`).
-   `new` получает свою группу ресурсов: `crate::net::new(uid, seed, r.eth)` после
-   `let r = split_resources!(p);` (`docs/resources.md`).
+   `new` получает свою группу ресурсов, `eth` в `resources.rs`: `Board::new` уже
+   зовёт `crate::net::new(uid, seed, r.eth)` (`docs/resources.md`); выводы
+   добавляются в группу.
 
 3. В графе — тип устройства во фрагменте `NET`: он уже назван через
    `bsp::net::Device`, менять ничего не нужно.

@@ -655,6 +655,16 @@ fn check_snippets_compile(project: &Path, cargo_target_dir: &Path) -> anyhow::Re
         .unwrap_or(&blocks[0])
         .clone();
 
+    // В проекте с выбранным интерфейсом `resources.rs` уже не пуст: в нём
+    // группы блока интерфейса и RNG, на которые опирается `Board::new`, и
+    // подменять файл заготовкой нельзя. Половина `assign_resources!` проверяется
+    // тогда в проектах без интерфейса (те же чипы, `resources.rs` — заглушка),
+    // а здесь — только `bind_interrupts!`.
+    let bsp = project.join("crates-cross").join("bsp").join("src");
+    let resources_path = bsp.join("resources.rs");
+    let original_resources = fs::read_to_string(&resources_path)?;
+    let placeholder_only = original_resources.contains("BoardResources {}");
+
     let mut resources = String::new();
     let mut module = String::from(
         "//! Временный модуль: сюда `template-check` складывает заготовки из\n\
@@ -679,7 +689,7 @@ fn check_snippets_compile(project: &Path, cargo_target_dir: &Path) -> anyhow::Re
                 indent(&bind),
             ));
         }
-        if *block == with_resources {
+        if placeholder_only && *block == with_resources {
             resources = part_of(&snippet, "assign_resources!");
             anyhow::ensure!(
                 !resources.is_empty(),
@@ -689,13 +699,18 @@ fn check_snippets_compile(project: &Path, cargo_target_dir: &Path) -> anyhow::Re
         }
     }
 
-    let bsp = project.join("crates-cross").join("bsp").join("src");
     let module_path = bsp.join("snippet_check.rs");
     let lib_path = bsp.join("lib.rs");
-    let resources_path = bsp.join("resources.rs");
     let lib = fs::read_to_string(&lib_path)?;
-    let original_resources = fs::read_to_string(&resources_path)?;
-    fs::write(&resources_path, format!("{resources}\n"))?;
+    if placeholder_only {
+        fs::write(
+            &resources_path,
+            format!(
+                "{resources}
+"
+            ),
+        )?;
+    }
     fs::write(&module_path, &module)?;
     fs::write(&lib_path, format!("{lib}\nmod snippet_check;\n"))?;
 

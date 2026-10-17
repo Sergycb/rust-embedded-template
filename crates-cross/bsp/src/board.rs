@@ -20,6 +20,16 @@ use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use static_cell::StaticCell;
 {%- endif %}
+{%- if interface != "none" %}
+
+// Типы групп `resources.rs`: `split_resources!` раскрывается в них по именам, а
+// перечислять группы поимённо — значит править этот список с каждой новой.
+#[expect(
+    clippy::wildcard_imports,
+    reason = "`split_resources!` раскрывается в типы групп по именам"
+)]
+use crate::resources::*;
+{%- endif %}
 
 {%- if shared_flash == "true" %}
 
@@ -129,11 +139,6 @@ pub struct Board {
     /// котором приложение открывает сокет протокола (`bsp::net`). Устройство — заглушка, пока проект не подставит
     /// Ethernet своей платы (`docs/modules/bsp-net.md`).
     pub net: crate::net::Net,
-{%- if rng_irq != "" %}
-    /// Аппаратный генератор случайных чисел (`bsp::rng`) — только для
-    /// сетевого стека: его первое слово затравливает `embassy-net`.
-    pub rng: crate::rng::Rng,
-{%- endif %}
 {%- endif %}
 {%- if interface == "usb" %}
     /// USB под протоколом: устройство для узла `USB` и поток CDC (`bsp::usb`).
@@ -203,13 +208,7 @@ impl Board {
 
 {%- if shared_flash == "true" %}
         // Периферия разбирается здесь: `FLASH` уходит в общий объект (его
-        // делят OTA и настройки), остальное пока никому не нужно и потому не
-        // сохраняется. Здесь же — место для распиновки платы: заполните
-        // группы в `resources.rs` (docs/resources.md), добавьте `use
-        // crate::resources::*;` и `let r = split_resources!(p);` и собирайте
-        // из `r` свои драйверы. Наружу из
-        // `bsp` уходит не периферия, а готовый объект — поле `Board`,
-        // реализующее порт из `ports`.
+        // делят OTA и настройки), остальное — в группы `resources.rs`.
 {%- if dfu_bank == "true" %}
         let banks = Flash::new_blocking(p.FLASH).into_blocking_regions();
         let flash = FLASH.init(Mutex::new(RefCell::new(banks.bank1_region)));
@@ -217,6 +216,14 @@ impl Board {
 {%- else %}
         let flash = FLASH.init(Mutex::new(RefCell::new(Flash::new_blocking(p.FLASH))));
 {%- endif %}
+{%- endif %}
+{%- if interface != "none" %}
+        // Блоки выбранного интерфейса{% if rng_irq != "" and interface == "tcp" or rng_irq != "" and interface == "udp" %} и RNG{% endif %}, разложенные по группам `resources.rs`
+        // (docs/resources.md): каждая группа уходит в конструктор своего
+        // модуля. Выводы и DMA-каналы платы добавляются в группы — наружу из
+        // `bsp` по-прежнему уходит не периферия, а готовый объект, поле
+        // `Board`, реализующее порт из `ports`.
+        let r = split_resources!(p);
 {%- else %}
         // Место для распиновки платы: заполните группы в `resources.rs`
         // (docs/resources.md), добавьте `use crate::resources::*;` и `let r =
@@ -231,8 +238,7 @@ impl Board {
 {%- endif %}
 {%- if interface == "tcp" or interface == "udp" %}
 {%- if rng_irq != "" %}
-        let mut rng = crate::rng::new(p.RNG);
-        let seed = rng.next_u64();
+        let seed = crate::rng::seed(r.rng.rng);
 {%- else %}
         let seed = adapters::net::seed_from_uid(embassy_stm32::uid::uid());
 {%- endif %}
@@ -261,19 +267,16 @@ impl Board {
             settings: crate::config::new({% if config_store != "external" %}flash{% elsif ota == "true" and ota_store == "external" %}external{% endif %}),
 {%- endif %}
 {%- if interface == "uart" %}
-            serial: crate::serial::new(),
+            serial: crate::serial::new(r.serial),
 {%- endif %}
 {%- if interface == "can" %}
-            can: crate::can::new(),
+            can: crate::can::new(r.can),
 {%- endif %}
 {%- if interface == "tcp" or interface == "udp" %}
-            net: crate::net::new(embassy_stm32::uid::uid(), seed),
-{%- if rng_irq != "" %}
-            rng,
-{%- endif %}
+            net: crate::net::new(embassy_stm32::uid::uid(), seed, r.eth),
 {%- endif %}
 {%- if interface == "usb" %}
-            usb: crate::usb::new(),
+            usb: crate::usb::new(r.usb),
 {%- endif %}
 {%- if graph == "true" %}
             watchdog: crate::wdg::UnarmedBoardWatchdog::new(p.{{watchdog_peripheral}}),

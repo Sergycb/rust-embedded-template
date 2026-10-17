@@ -9,17 +9,18 @@
 1. Блоки для своего контроллера — из справочника по чипу:
 
    ```text
-   cargo xtask pins {% if can_kind == "fdcan" %}FDCAN1{% else %}CAN1{% endif %} --snippet
+   cargo xtask pins {{iface_periph}} --snippet
    ```
 
    Он печатает `bind_interrupts!` и группу `assign_resources!` со свободными
-   выводами RX/TX; выберите те, что разведены на плате к трансиверу.
+   выводами RX/TX; выберите те, что разведены на плате к трансиверу, и
+   добавьте их в готовую группу `can` в `resources.rs` — блок в ней уже есть.
 
 2. Свой тип — реализация `ports::CanBus` поверх контроллера `embassy-stm32`
    (`{% if can_kind == "fdcan" %}CanConfigurator::into_normal_mode{% else %}Can::new` + `set_bitrate{% endif %}`);
-   псевдоним `Can` — на него, `new` — на сборку контроллера. В `Board::new`
-   вызов `crate::can::new()` получает свою группу после
-   `let r = split_resources!(p);` (`docs/resources.md`).
+   псевдоним `Can` — на него, `new` — на сборку контроллера из группы
+   `CanResources` (`Board::new` уже передаёт её: `crate::can::new(r.can)`,
+   `docs/resources.md`).
 
 Контракт порта (`ports::CanBus`) требует двух вещей, которые драйвер
 `embassy-stm32` сам не даёт:
