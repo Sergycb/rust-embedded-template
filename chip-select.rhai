@@ -1101,6 +1101,9 @@ if protocol != "none" {
     if found.is_empty() {
         throw "interface: у " + chip_name + " нет выведенного блока " + listed(blocks).to_upper() + " — интерфейс " + iface + " недоступен";
     }
+    if !INSTANCES.contains(suffix) || !INSTANCES[suffix].contains(found[0]) {
+        throw "interface: в chip-data/instances.rhai нет имени блока " + found[0] + " у " + chip_name + " — перегенерируйте таблицы (chip-data-gen)";
+    }
     variable::set("iface_periph", INSTANCES[suffix][found[0]]);
     if iface == "can" {
         variable::set("can_kind", found[0]);

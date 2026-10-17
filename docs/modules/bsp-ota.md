@@ -30,8 +30,9 @@ bootloader.{% endif %}
 Транспорт — поле `link` в `Board::ota`: в шаблоне это заглушка
 `adapters::ota::Unconnected` под именем [`Link`], которая ждёт заголовок вечно.
 Заменить её — значит завести свой тип, реализующий три метода
-`ports::ImageSource` на объекте, собранном из вашей периферии, и поменять
-псевдоним `Link` и `new`:
+`ports::ImageSource` на объекте, собранном из вашей периферии (`bsp` зависит
+от `ports` не по умолчанию: добавьте `ports = { workspace = true }` в
+`crates-cross/bsp/Cargo.toml`), и поменять псевдоним `Link` и `new`:
 
 ```ignore
 impl ImageSource for MyLink {

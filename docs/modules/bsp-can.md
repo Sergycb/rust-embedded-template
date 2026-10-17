@@ -17,6 +17,8 @@
    добавьте их в готовую группу `can` в `resources.rs` — блок в ней уже есть.
 
 2. Свой тип — реализация `ports::CanBus` поверх контроллера `embassy-stm32`
+   (`bsp` зависит от `ports` не по умолчанию: добавьте
+   `ports = { workspace = true }` в `crates-cross/bsp/Cargo.toml`)
    (`{% if can_kind == "fdcan" %}CanConfigurator::into_normal_mode{% else %}Can::new` + `set_bitrate{% endif %}`);
    псевдоним `Can` — на него, `new` — на сборку контроллера из группы
    `CanResources` (`Board::new` уже передаёт её: `crate::can::new(r.can)`,

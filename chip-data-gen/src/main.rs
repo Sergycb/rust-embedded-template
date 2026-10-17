@@ -759,26 +759,36 @@ fn has_pwr_rm0468(text: &str) -> bool {
 fn parse_interfaces(text: &str) -> Vec<&'static str> {
     let mut found: Vec<&'static str> = Vec::new();
     for block in text.split("Peripheral {").skip(1) {
-        let kind = field(block, "kind").map(|v| v.trim_matches('"'));
-        let version = field(block, "version").map(|v| v.trim_matches('"'));
-        let tag = match (kind, version) {
-            (Some("usart"), _) => "usart",
-            (Some("can"), Some("bxcan")) => "bxcan",
-            (Some("can"), Some(v)) if v.starts_with("fdcan") => "fdcan",
-            (Some("eth"), _) => "eth",
-            (Some("usb"), _) => "usb",
-            (Some("otg"), _) => "otg",
-            _ => continue,
-        };
-        let has_pins = block
-            .split_once("pins: &[")
-            .is_some_and(|(_, rest)| !rest.trim_start().starts_with(']'));
-        if has_pins && !found.contains(&tag) {
+        if let Some(tag) = interface_block(block).map(|(tag, _)| tag)
+            && !found.contains(&tag)
+        {
             found.push(tag);
         }
     }
     found.sort_by_key(|tag| INTERFACE_TAGS.iter().position(|t| t == tag));
     found
+}
+
+/// Метка интерфейса и имя блока, если блок — интерфейс связи с выводами в
+/// корпусе. Общая для [`parse_interfaces`] и [`parse_instances`]: метка и имя
+/// не должны расходиться.
+fn interface_block(block: &str) -> Option<(&'static str, &str)> {
+    let kind = field(block, "kind").map(|v| v.trim_matches('"'));
+    let version = field(block, "version").map(|v| v.trim_matches('"'));
+    let tag = match (kind, version) {
+        (Some("usart"), _) => "usart",
+        (Some("can"), Some("bxcan")) => "bxcan",
+        (Some("can"), Some(v)) if v.starts_with("fdcan") => "fdcan",
+        (Some("eth"), _) => "eth",
+        (Some("usb"), _) => "usb",
+        (Some("otg"), _) => "otg",
+        _ => return None,
+    };
+    let has_pins = block
+        .split_once("pins: &[")
+        .is_some_and(|(_, rest)| !rest.trim_start().starts_with(']'));
+    let name = field(block, "name").map(|v| v.trim_matches('"'))?;
+    has_pins.then_some((tag, name))
 }
 
 /// Какой блок чипа называет `resources.rs` для каждой метки интерфейса.
@@ -794,26 +804,9 @@ fn parse_interfaces(text: &str) -> Vec<&'static str> {
 fn parse_instances(text: &str) -> BTreeMap<&'static str, String> {
     let mut best: BTreeMap<&'static str, (u8, usize, String)> = BTreeMap::new();
     for block in text.split("Peripheral {").skip(1) {
-        let kind = field(block, "kind").map(|v| v.trim_matches('"'));
-        let version = field(block, "version").map(|v| v.trim_matches('"'));
-        let tag = match (kind, version) {
-            (Some("usart"), _) => "usart",
-            (Some("can"), Some("bxcan")) => "bxcan",
-            (Some("can"), Some(v)) if v.starts_with("fdcan") => "fdcan",
-            (Some("eth"), _) => "eth",
-            (Some("usb"), _) => "usb",
-            (Some("otg"), _) => "otg",
-            _ => continue,
-        };
-        let has_pins = block
-            .split_once("pins: &[")
-            .is_some_and(|(_, rest)| !rest.trim_start().starts_with(']'));
-        let Some(name) = field(block, "name").map(|v| v.trim_matches('"')) else {
+        let Some((tag, name)) = interface_block(block) else {
             continue;
         };
-        if !has_pins {
-            continue;
-        }
         let preferred = match tag {
             "usart" => name.starts_with("USART"),
             "otg" => name == "USB_OTG_FS",

@@ -116,7 +116,11 @@ pub(crate) fn new(flash: &'static FlashMutex) -> Ota {
     let state = STATE_FLASH.init(Mutex::new(state));
     let config = FirmwareUpdaterConfig::from_linkerfile(dfu, state);
 {%- endif %}
-    defmt::warn!("bsp: транспорт OTA не реализован — узел OTA ждёт впустую");
+    // Пока в слоте заглушка: подставили свой `Link` — предупреждение пропадает
+    // само (как `external::connected`).
+    if core::any::TypeId::of::<Link>() == core::any::TypeId::of::<adapters::ota::Unconnected>() {
+        defmt::warn!("bsp: транспорт OTA не реализован — узел OTA ждёт впустую");
+    }
     Ota {
         link: Link::default(),
         flash: Updater::{% if signed == "true" %}signed{% else %}new{% endif %}(config.dfu, config.state, max_image_len()),
