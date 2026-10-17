@@ -133,10 +133,19 @@ impl<L: FlashLock> NorFlash for Shared<'_, L> {
 /// именно этого размера. Обёртка объявляет страницей сектор, в котором раздел
 /// действительно лежит, — остальное передаётся как есть.
 ///
-/// Что `ERASE_SIZE` совпадает с настоящими секторами под разделом, обёртка
-/// проверить не может: это знает раскладка (`chip-data-gen`), откуда число и
-/// приезжает. Ошибись она — стирание вернёт ошибку выравнивания от самого
-/// `Flash`, а не сотрёт лишнее.
+/// Страница может быть и крупнее физической: на чипах с мелкими страницами
+/// (L0: 128 Б) обмен `embassy-boot` стоит вести страницами в 1–4 KiB, иначе
+/// журнал `BOOTLOADER_STATE` (`2 + 4N` слов, `N` = `ACTIVE / страница`) не
+/// влезает в раздел. Тогда `ERASE_SIZE` обязан делиться на физическую
+/// страницу, а `ACTIVE`/`DFU` лежать на границах `ERASE_SIZE`
+/// (`Partition::new` и `assert_partitions` проверяют это сами) — тесты
+/// `coarse_swap` гоняют настоящий `BootLoader` над такой раскладкой.
+///
+/// Границы `erase(from, to)` обёртка не проверяет и не расширяет: диапазон
+/// уходит флешу как есть, и его выравнивание по физическим страницам
+/// проверяет он сам (ошибка, а не стирание лишнего). Что `ERASE_SIZE`
+/// согласован с настоящими секторами под разделом, обёртка проверить не
+/// может: это знает раскладка (`chip-data-gen`), откуда число и приезжает.
 #[derive(Debug)]
 pub struct Paged<F, const ERASE_SIZE: usize> {
     flash: F,
@@ -444,5 +453,335 @@ mod tests {
             flash.lock(|f| f.borrow().mem[..32].iter().all(|b| *b == 0)),
             "стирание не вышло за свой диапазон"
         );
+    }
+
+    /// Обмен `embassy-boot` над страницей, более крупной физической (L0:
+    /// физическая 128 Б, страница обмена 1 KiB), — настоящий `BootLoader` над
+    /// разделами, как собирает их прошивка: `ACTIVE`/`DFU` — окна в `Paged<_, 1024>`,
+    /// `STATE` — окно в `Paged<_, STATE_PAGE>`, всё над одним флешем.
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "фейк: размеры в тестах малы"
+    )]
+    mod coarse_swap {
+        use core::cell::RefCell;
+
+        use embassy_boot::{BlockingFirmwareState, BootError, BootLoader, BootLoaderConfig, State};
+        use embassy_sync::blocking_mutex::Mutex;
+        use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+        use embedded_storage::nor_flash::{ErrorType, NorFlash, NorFlashErrorKind, ReadNorFlash};
+
+        use crate::flash::{Paged, Shared};
+
+        /// Страница обмена и раскладка: ACTIVE — 3 страницы, DFU — 4 (запасная).
+        const SWAP: usize = 1024;
+        const ACTIVE_LEN: u32 = 3 * SWAP as u32;
+        const DFU_OFFSET: u32 = ACTIVE_LEN;
+        const DFU_LEN: u32 = 4 * SWAP as u32;
+        const STATE_OFFSET: u32 = DFU_OFFSET + DFU_LEN;
+        const WORD: usize = 4;
+        /// `2 + 4N` слов журнала, `N` = страниц в ACTIVE.
+        const STATE_MIN: u32 = ((2 + 4 * 3) * WORD) as u32;
+        const TOTAL: usize = STATE_OFFSET as usize + 1024;
+
+        /// NOR в памяти: стирание физическими страницами `PHYS`, запись словами
+        /// по 4 «единицы в нули»; после `budget` операций (страница стирания
+        /// или запись) отказывает — питание пропало посреди обмена, а
+        /// стирание умирает между страницами, оставляя часть стёртой.
+        struct Sim<const PHYS: usize> {
+            mem: Vec<u8>,
+            budget: usize,
+        }
+
+        impl<const PHYS: usize> Sim<PHYS> {
+            fn tick(&mut self) -> Result<(), NorFlashErrorKind> {
+                self.budget = self.budget.checked_sub(1).ok_or(NorFlashErrorKind::Other)?;
+                Ok(())
+            }
+        }
+
+        impl<const PHYS: usize> ErrorType for Sim<PHYS> {
+            type Error = NorFlashErrorKind;
+        }
+
+        impl<const PHYS: usize> ReadNorFlash for Sim<PHYS> {
+            const READ_SIZE: usize = 1;
+
+            fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), Self::Error> {
+                let start = offset as usize;
+                let src = self
+                    .mem
+                    .get(start..start + bytes.len())
+                    .ok_or(NorFlashErrorKind::OutOfBounds)?;
+                bytes.copy_from_slice(src);
+                Ok(())
+            }
+
+            fn capacity(&self) -> usize {
+                self.mem.len()
+            }
+        }
+
+        impl<const PHYS: usize> NorFlash for Sim<PHYS> {
+            const WRITE_SIZE: usize = WORD;
+            const ERASE_SIZE: usize = PHYS;
+
+            fn erase(&mut self, from: u32, to: u32) -> Result<(), Self::Error> {
+                let (from, to) = (from as usize, to as usize);
+                if to > self.mem.len() {
+                    return Err(NorFlashErrorKind::OutOfBounds);
+                }
+                if !from.is_multiple_of(PHYS) || !to.is_multiple_of(PHYS) {
+                    return Err(NorFlashErrorKind::NotAligned);
+                }
+                for page in (from..to).step_by(PHYS) {
+                    self.tick()?;
+                    self.mem[page..page + PHYS].fill(0xFF);
+                }
+                Ok(())
+            }
+
+            fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), Self::Error> {
+                let start = offset as usize;
+                if start + bytes.len() > self.mem.len() {
+                    return Err(NorFlashErrorKind::OutOfBounds);
+                }
+                if !start.is_multiple_of(WORD) || !bytes.len().is_multiple_of(WORD) {
+                    return Err(NorFlashErrorKind::NotAligned);
+                }
+                self.tick()?;
+                for (cell, byte) in self.mem[start..].iter_mut().zip(bytes) {
+                    *cell &= *byte;
+                }
+                Ok(())
+            }
+        }
+
+        type Chip<const PHYS: usize> = Mutex<NoopRawMutex, RefCell<Sim<PHYS>>>;
+
+        /// Копия `embassy_embedded_hal::flash::partition::BlockingPartition`
+        /// (зависимости в `adapters` нет): те же проверки `new` и те же границы.
+        struct Window<'a, F: NorFlash> {
+            cell: &'a Mutex<NoopRawMutex, RefCell<F>>,
+            offset: u32,
+            size: u32,
+        }
+
+        impl<'a, F: NorFlash> Window<'a, F> {
+            fn new(cell: &'a Mutex<NoopRawMutex, RefCell<F>>, offset: u32, size: u32) -> Self {
+                let unit = F::ERASE_SIZE as u32;
+                assert!(
+                    offset.is_multiple_of(unit),
+                    "смещение раздела не кратно странице"
+                );
+                assert!(
+                    size.is_multiple_of(unit),
+                    "размер раздела не кратен странице"
+                );
+                Self { cell, offset, size }
+            }
+        }
+
+        impl<F: NorFlash> ErrorType for Window<'_, F> {
+            type Error = F::Error;
+        }
+
+        impl<F: NorFlash> ReadNorFlash for Window<'_, F> {
+            const READ_SIZE: usize = F::READ_SIZE;
+
+            fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), Self::Error> {
+                assert!(offset as usize + bytes.len() <= self.size as usize);
+                self.cell
+                    .lock(|f| f.borrow_mut().read(self.offset + offset, bytes))
+            }
+
+            fn capacity(&self) -> usize {
+                self.size as usize
+            }
+        }
+
+        impl<F: NorFlash> NorFlash for Window<'_, F> {
+            const WRITE_SIZE: usize = F::WRITE_SIZE;
+            const ERASE_SIZE: usize = F::ERASE_SIZE;
+
+            fn erase(&mut self, from: u32, to: u32) -> Result<(), Self::Error> {
+                assert!(to <= self.size);
+                self.cell
+                    .lock(|f| f.borrow_mut().erase(self.offset + from, self.offset + to))
+            }
+
+            fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), Self::Error> {
+                assert!(offset as usize + bytes.len() <= self.size as usize);
+                self.cell
+                    .lock(|f| f.borrow_mut().write(self.offset + offset, bytes))
+            }
+        }
+
+        fn chip<const PHYS: usize>() -> Chip<PHYS> {
+            Mutex::new(RefCell::new(Sim {
+                mem: vec![0xFF; TOTAL],
+                budget: usize::MAX,
+            }))
+        }
+
+        fn image() -> Vec<u8> {
+            (0..ACTIVE_LEN).map(|i| (i % 251) as u8).collect()
+        }
+
+        fn old() -> Vec<u8> {
+            (0..ACTIVE_LEN).map(|i| (i % 241) as u8 ^ 0x5A).collect()
+        }
+
+        /// Прошивает `old` в ACTIVE и `image` в DFU и запрашивает обмен.
+        fn staged<const PHYS: usize, const SP: usize>(chip: &Chip<PHYS>, state_len: u32) {
+            chip.lock(|f| {
+                let mem = &mut f.borrow_mut().mem;
+                mem[..ACTIVE_LEN as usize].copy_from_slice(&old());
+                mem[DFU_OFFSET as usize..(DFU_OFFSET + ACTIVE_LEN) as usize]
+                    .copy_from_slice(&image());
+            });
+            let cell = Mutex::new(RefCell::new(Paged::<_, SP>::new(Shared::new(chip))));
+            let mut state = Window::new(&cell, STATE_OFFSET, state_len);
+            BlockingFirmwareState::new(&mut state, &mut [0; WORD])
+                .mark_updated()
+                .expect("запросить обмен");
+        }
+
+        /// Один заход `prepare_boot` — разделы собираются заново, как при каждом
+        /// сбросе: всё состояние живёт во флеше.
+        fn boot<const PHYS: usize, const SP: usize>(
+            chip: &Chip<PHYS>,
+            state_len: u32,
+        ) -> Result<State, BootError> {
+            let active = Mutex::new(RefCell::new(Paged::<_, SWAP>::new(Shared::new(chip))));
+            let dfu = Mutex::new(RefCell::new(Paged::<_, SWAP>::new(Shared::new(chip))));
+            let state = Mutex::new(RefCell::new(Paged::<_, SP>::new(Shared::new(chip))));
+            BootLoader::new(BootLoaderConfig {
+                active: Window::new(&active, 0, ACTIVE_LEN),
+                dfu: Window::new(&dfu, DFU_OFFSET, DFU_LEN),
+                state: Window::new(&state, STATE_OFFSET, state_len),
+            })
+            .prepare_boot(&mut [0; 8])
+        }
+
+        fn dump<const PHYS: usize>(chip: &Chip<PHYS>, from: u32, len: u32) -> Vec<u8> {
+            chip.lock(|f| f.borrow().mem[from as usize..(from + len) as usize].to_vec())
+        }
+
+        /// (а) + (б): обмен доходит до конца, ACTIVE — образ из DFU, прежний
+        /// образ — в DFU (со сдвигом на запасную страницу, как в `embassy-boot`);
+        /// `assert_partitions` не паникует при странице 1 KiB над физической 128 Б
+        /// и STATE в одном физическом секторе.
+        #[test]
+        fn a_swap_over_a_page_coarser_than_the_physical_one_completes() {
+            let chip = chip::<128>();
+            staged::<128, 128>(&chip, 128);
+
+            let state = boot::<128, 128>(&chip, 128).expect("обмен");
+
+            assert_eq!(state, State::Swap);
+            assert_eq!(dump(&chip, 0, ACTIVE_LEN), image(), "ACTIVE");
+            assert_eq!(
+                dump(&chip, DFU_OFFSET + SWAP as u32, ACTIVE_LEN),
+                old(),
+                "прежний образ в DFU"
+            );
+        }
+
+        /// (в): питание пропадает посреди обмена — в том числе посреди стирания
+        /// страницы обмена (часть физических страниц уже стёрта); повторные
+        /// заходы с разными бюджетами операций доводят обмен до конца.
+        #[test]
+        fn an_interrupted_swap_resumes_whatever_the_budget() {
+            for budget in [1, 2, 7, 8, 9, 50, 140, 300, 600] {
+                let chip = chip::<128>();
+                staged::<128, 128>(&chip, 128);
+
+                chip.lock(|f| f.borrow_mut().budget = budget);
+                assert!(
+                    boot::<128, 128>(&chip, 128).is_err(),
+                    "бюджет {budget}: обмен должен был прерваться"
+                );
+
+                let mut resumes = 0;
+                loop {
+                    chip.lock(|f| f.borrow_mut().budget = budget.max(300));
+                    resumes += 1;
+                    assert!(resumes < 50, "бюджет {budget}: обмен не сходится");
+                    if boot::<128, 128>(&chip, 128).is_ok() {
+                        break;
+                    }
+                }
+                assert_eq!(dump(&chip, 0, ACTIVE_LEN), image(), "бюджет {budget}");
+                assert_eq!(
+                    dump(&chip, DFU_OFFSET + SWAP as u32, ACTIVE_LEN),
+                    old(),
+                    "бюджет {budget}"
+                );
+            }
+        }
+
+        /// После завершённого обмена повторный заход откатывает (приложение не
+        /// подтвердило образ): ACTIVE снова прежний — журнал на `2 + 4N` слов
+        /// держит и ход вперёд, и ход назад.
+        #[test]
+        fn a_second_boot_without_confirmation_reverts() {
+            let chip = chip::<128>();
+            staged::<128, 128>(&chip, 128);
+            boot::<128, 128>(&chip, 128).expect("обмен");
+
+            boot::<128, 128>(&chip, 128).expect("откат");
+
+            assert_eq!(dump(&chip, 0, ACTIVE_LEN), old());
+        }
+
+        /// (г): журнал ровно `(2 + 4N)` слов достаточен — физическая страница 4 Б
+        /// позволяет раздел STATE любой длины в словах.
+        #[test]
+        fn a_state_of_exactly_the_formula_length_is_enough() {
+            let chip = chip::<4>();
+            staged::<4, 4>(&chip, STATE_MIN);
+
+            boot::<4, 4>(&chip, STATE_MIN).expect("обмен");
+
+            assert_eq!(dump(&chip, 0, ACTIVE_LEN), image());
+        }
+
+        /// (г): на слово меньше — `assert_partitions` паникует до всякой записи.
+        #[test]
+        #[should_panic(expected = "2 + 4 *")]
+        fn a_state_one_word_short_is_refused_by_embassy_boot() {
+            let chip = chip::<4>();
+            staged::<4, 4>(&chip, STATE_MIN);
+
+            drop(boot::<4, 4>(&chip, STATE_MIN - WORD as u32));
+        }
+
+        /// Раздел не по странице обёртки (STATE не кратен 1 KiB, смещение DFU
+        /// не кратно) отвергает окно при сборке, как `BlockingPartition::new`.
+        #[test]
+        #[should_panic(expected = "не кратен")]
+        fn a_partition_off_the_wrapper_page_is_refused() {
+            let chip = chip::<128>();
+            let cell = Mutex::new(RefCell::new(Paged::<_, SWAP>::new(Shared::new(&chip))));
+            let _ = Window::new(&cell, 0, 128);
+        }
+
+        /// `Paged` не проверяет границы `erase(from, to)` по своей странице:
+        /// диапазон, кратный физической странице, но не `ERASE_SIZE` обёртки,
+        /// проходит и стирает ровно его; не кратный физической — ошибка флеша.
+        #[test]
+        fn paged_erase_checks_only_the_physical_alignment() {
+            let chip = chip::<128>();
+            chip.lock(|f| f.borrow_mut().mem.fill(0));
+            let mut paged = Paged::<_, SWAP>::new(Shared::new(&chip));
+
+            paged.erase(128, 256).expect("кратно физической странице");
+            assert!(dump(&chip, 128, 128).iter().all(|b| *b == 0xFF));
+            assert!(dump(&chip, 0, 128).iter().all(|b| *b == 0));
+            assert!(dump(&chip, 256, 128).iter().all(|b| *b == 0));
+
+            assert_eq!(paged.erase(64, 192), Err(NorFlashErrorKind::NotAligned));
+        }
     }
 }
