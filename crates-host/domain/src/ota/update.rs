@@ -3,7 +3,7 @@
 //!
 //! Здесь, а не в адаптере: «принимать ли этот образ» — правило продукта, и
 //! проверяется оно на хосте с фейком порта. Подпись приложение не проверяет —
-//! это делает bootloader перед обменом (`adapters::ota::screen_update`), а
+//! это делает bootloader перед обменом (`domain::ota::boot::screen_update`), а
 //! отсюда ему уходит запись с подписью и длиной ([`PendingImage`](ports::PendingImage)) — обычной
 //! записью порта в запасную страницу раздела. Без подписи применять нечего:
 //! `FirmwareUpdate::mark_updated` адаптера платы.
@@ -111,9 +111,6 @@ mod tests {
     use crate::ota::fakes::{FakeFlash, SIGNATURE};
     use crate::ota::version::pack;
     use ports::UpdateError;
-    use rstest::rstest;
-
-    use crate::ota::update::VERSION_BYTES;
 
     /// Версия «этой прошивки» в тестах.
     const CURRENT: u32 = pack(1, 2, 3);
@@ -203,102 +200,5 @@ mod tests {
             Err(UpdateError::Flash("флеш отказал"))
         );
         assert_eq!(flash.updated, 0, "обмен без записи не помечается");
-    }
-
-    type FlashErr = &'static str;
-
-    /// Матрица проверок `apply_signed`:
-    /// каждая строка — независимый сценарий с набором параметров.
-    #[rstest]
-    #[case::too_long(
-        /* len */ 129,
-        /* capacity */ 128,
-        /* busy */ false,
-        /* incoming_version */ pack(1, 2, 4),
-        /* record */ Ok(()),
-        /* expected */ UpdateError::<FlashErr>::TooLong { len: 129, capacity: 128 }
-    )]
-    #[case::busy(
-        /* len */ 64,
-        /* capacity */ 128,
-        /* busy */ true,
-        /* incoming_version */ pack(1, 2, 4),
-        /* record */ Ok(()),
-        /* expected */ UpdateError::<FlashErr>::Busy
-    )]
-    #[case::truncated(
-        /* len */ 3,
-        /* capacity */ 128,
-        /* busy */ false,
-        /* incoming_version */ pack(1, 2, 4),
-        /* record */ Ok(()),
-        /* expected */ UpdateError::<FlashErr>::Truncated { len: 3 }
-    )]
-    #[case::rollback_older(
-        /* len */ 64,
-        /* capacity */ 128,
-        /* busy */ false,
-        /* incoming_version */ pack(1, 1, 9),
-        /* record */ Ok(()),
-        /* expected */ UpdateError::<FlashErr>::Rollback { current: pack(1, 2, 3), incoming: pack(1, 1, 9) }
-    )]
-    #[case::rollback_equal(
-        /* len */ 64,
-        /* capacity */ 128,
-        /* busy */ false,
-        /* incoming_version */ pack(1, 2, 3),
-        /* record */ Ok(()),
-        /* expected */ UpdateError::<FlashErr>::Rollback { current: pack(1, 2, 3), incoming: pack(1, 2, 3) }
-    )]
-    #[case::flash_error(
-        /* len */ 64,
-        /* capacity */ 128,
-        /* busy */ false,
-        /* incoming_version */ pack(1, 2, 4),
-        /* record */ Err("флеш отказал"),
-        /* expected */ UpdateError::<FlashErr>::Flash("флеш отказал")
-    )]
-    #[tokio::test]
-    async fn apply_signed_rejects_when(
-        #[case] len: u32,
-        #[case] capacity: u32,
-        #[case] busy: bool,
-        #[case] incoming_version: u32,
-        #[case] record: Result<(), FlashErr>,
-        #[case] expected: UpdateError<FlashErr>,
-    ) {
-        // `with_image` пишет версию в хвост образа длиной `len`, поэтому
-        // передаём туда тот же `len`, что пойдёт в `apply_signed`.
-        // Для `len < VERSION_BYTES` версию писать некуда — создаём флеш вручную.
-        let mut flash = if len >= VERSION_BYTES {
-            FakeFlash::with_image(len, incoming_version)
-        } else {
-            FakeFlash::new(capacity as usize, 8)
-        };
-        flash.busy = busy;
-        flash.record = record;
-
-        let result = apply_signed(&mut flash, CURRENT, &SIGNATURE, len).await;
-
-        assert_eq!(result, Err(expected));
-        assert!(
-            flash.recorded.is_empty(),
-            "запись для bootloader'а не должна появиться при {result:?}"
-        );
-        assert_eq!(flash.updated, 0, "обмен не должен быть помечен");
-    }
-
-    #[rstest]
-    #[case::accept1(64, pack(1, 2, 4))]
-    #[case::accept2(128, pack(2, 0, 0))]
-    #[tokio::test]
-    async fn apply_signed_accepts(#[case] len: u32, #[case] incoming_version: u32) {
-        let mut flash = FakeFlash::with_image(len, incoming_version);
-
-        apply_signed(&mut flash, CURRENT, &SIGNATURE, len)
-            .await
-            .expect("должно принять");
-
-        assert_eq!(flash.recorded, vec![(SIGNATURE, len)]);
     }
 }

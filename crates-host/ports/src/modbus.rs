@@ -1,12 +1,15 @@
-//! Порты Modbus: данные slave'а, транспорты master'а и slave'а, ошибки обмена.
+//! Порты Modbus: данные slave'а, транспорты, ошибки обмена.
 //!
 //! [`Registers`](crate::Registers) реализует приложение — это его данные,
 //! которые видны по шине; пользуется им `domain::modbus::slave::serve`.
-//! Транспорты — [`ModbusClient`](crate::ModbusClient) и
-//! [`ModbusServer`](crate::ModbusServer) — реализуют `adapters::modbus`
-//! (RTU, TCP, UDP). Ошибки — у `domain::modbus::slave`
-//! ([`ServeError`](crate::modbus::ServeError)) и `domain::modbus::master`
-//! ([`MasterError`](crate::modbus::MasterError)).
+//! Транспорт slave'а — [`ModbusServer`](crate::ModbusServer) — реализует
+//! `adapters::modbus` (RTU, TCP, UDP); ошибка обмена — у
+//! `domain::modbus::slave` ([`ServeError`](crate::modbus::ServeError)).
+// {%- if modbus_master == "true" %}
+//! Транспорт master'а — [`ModbusClient`](crate::ModbusClient) — реализуют они
+//! же; его ошибка — [`MasterError`](crate::modbus::MasterError)
+//! (`domain::modbus::master`).
+// {%- endif %}
 
 mod registers;
 
@@ -14,12 +17,12 @@ pub use registers::{Bits, BitsMut, Registers, Words, WordsMut};
 
 /// Наибольший PDU Modbus — функция и данные: 253 байта. Предел пришёл из
 /// кадра RTU (256 байт с адресом и CRC) и одинаков для всех транспортов.
-/// Буферы PDU у [`ModbusClient`] и [`ModbusServer`] — не короче.
+/// Буферы PDU транспортов ([`ModbusServer`]) — не короче.
 pub const MAX_PDU: usize = 253;
 
 /// Код исключения Modbus — ответ slave'а вместо данных.
 ///
-/// Slave из [`Registers`] возвращает обычно первые четыре; master получает
+/// Slave из [`Registers`] возвращает обычно первые четыре; на проводе бывает
 /// любой, включая коды шлюза и нестандартные ([`Exception::Other`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -86,6 +89,7 @@ impl Exception {
     }
 }
 
+// {%- if modbus_master == "true" %}
 /// Транспорт Modbus-master'а: кадр запроса — устройству, кадр ответа —
 /// обратно.
 ///
@@ -135,7 +139,7 @@ pub trait ModbusClient {
     /// Если `request` длиннее [`MAX_PDU`].
     async fn broadcast(&mut self, request: &[u8]) -> Result<(), MasterError<Self::Error>>;
 }
-
+// {%- endif %}
 /// Принятый slave'ом запрос: кому он и сколько байт PDU.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -151,7 +155,7 @@ pub struct Received {
 /// Транспорт Modbus-slave'а: принимает кадры запросов, отправляет кадры
 /// ответов.
 ///
-/// Реализуют `adapters::modbus::{Rtu, Tcp, Udp}` (см. [`ModbusClient`]).
+/// Реализуют `adapters::modbus::{Rtu, Tcp, Udp}`.
 /// Битые кадры (CRC, MBAP с чужим протоколом, длина не сходится) транспорт
 /// отбрасывает сам и ждёт следующий: до логики slave'а доходят только целые
 /// PDU.
@@ -213,6 +217,7 @@ pub enum ServeError<E> {
     Framing,
 }
 
+// {%- if modbus_master == "true" %}
 /// Что может пойти не так в запросе master'а (`domain::modbus::master`).
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -234,4 +239,22 @@ pub enum MasterError<E> {
     /// не то количество, неразборное содержимое, кадр не по протоколу.
     #[error("ответ не соответствует запросу")]
     Unexpected,
+}
+// {%- endif %}
+
+#[cfg(test)]
+mod tests {
+    use super::Exception;
+
+    #[test]
+    fn exception_code_round_trips_for_every_code() {
+        for code in 0..=u8::MAX {
+            assert_eq!(Exception::from_code(code).code(), code, "код {code:#04x}");
+        }
+        assert_eq!(
+            Exception::from_code(0x0A),
+            Exception::GatewayPathUnavailable
+        );
+        assert_eq!(Exception::from_code(0x09), Exception::Other(0x09));
+    }
 }

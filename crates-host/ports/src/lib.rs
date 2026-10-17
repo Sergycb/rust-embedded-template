@@ -33,7 +33,7 @@
 //! [`FirmwareUpdate`] и [`SettingsStorage`] реализованы, когда при генерации
 //! выбраны OTA и хранилище настроек; канал доставки образа ([`ImageSource`])
 //! — сам проект. Порты протоколов связи (`FrameLink`, `Registers`,
-//! `ModbusClient`/`ModbusServer`, `HostService`, `CanBus`) есть только в
+//! `ModbusServer`, `HostService`, `CanBus`) есть только в
 //! проекте, где протокол выбран при генерации.
 //!
 //! Модули названы по операции домена, которая ими пользуется, а не по трейту:
@@ -60,8 +60,8 @@ pub mod link;
 
 // {%- endif %}
 // {%- if protocol == "modbus" %}
-/// Modbus: данные slave'а, представления битов и регистров кадра, транспорты
-/// master'а и slave'а, ошибки обмена.
+/// Modbus: данные slave'а, представления битов и регистров кадра, транспорты,
+/// ошибки обмена.
 pub mod modbus;
 
 // {%- endif %}
@@ -83,10 +83,13 @@ pub use link::{FrameLink, LinkError};
 // {%- endif %}
 // {%- if protocol == "modbus" %}
 pub use modbus::{
-    Bits, BitsMut, Exception, MAX_PDU, MasterError, ModbusClient, ModbusServer, Received,
-    Registers, ServeError, Words, WordsMut,
+    Bits, BitsMut, Exception, MAX_PDU, ModbusServer, Received, Registers, ServeError, Words,
+    WordsMut,
 };
+// {%- if modbus_master == "true" %}
+pub use modbus::{MasterError, ModbusClient};
+// {%- endif %}
 // {%- endif %}
 pub use ota::download::{Announce, DownloadError, ImageSource, Rejection};
-pub use ota::update::{FirmwareUpdate, PendingImage, UpdateError};
+pub use ota::update::{FirmwareUpdate, MAX_WRITE_SIZE, PendingImage, UpdateError};
 pub use settings::SettingsStorage;

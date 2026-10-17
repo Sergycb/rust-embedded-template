@@ -225,6 +225,38 @@ mod tests {
         .await;
     }
 
+    /// Обрыв соединения клиентом: чтение отвечает ошибкой, сокет сброшен в
+    /// `Closed`, и запись после этого — `NotConnected`, а не ответ чужому
+    /// клиенту.
+    #[tokio::test]
+    async fn tcp_server_drops_a_reset_connection() {
+        let ((device, device_runner), (host, host_runner)) = pair();
+        let mut server = TcpServer::new(device, PORT, leak([0; 64]), leak([0; 64]));
+        with_network(device_runner, host_runner, async {
+            let device_side = async {
+                let mut buf = [0; 8];
+                assert!(matches!(
+                    server.read(&mut buf).await,
+                    Err(TcpError::Io(tcp::Error::ConnectionReset))
+                ));
+                assert_eq!(server.socket.state(), State::Closed);
+                assert!(!server.is_connected());
+                assert!(matches!(
+                    server.write(b"late").await,
+                    Err(TcpError::NotConnected)
+                ));
+            };
+            let host_side = async {
+                let mut client = TcpSocket::new(host, leak([0; 64]), leak([0; 64]));
+                client.connect((DEVICE, PORT)).await.unwrap();
+                client.abort();
+                client.flush().await.ok();
+            };
+            tokio::join!(device_side, host_side);
+        })
+        .await;
+    }
+
     /// Запись без соединения — ошибка, а не ожидание клиента; пустой буфер
     /// — 0 без попытки принять соединение.
     #[tokio::test]

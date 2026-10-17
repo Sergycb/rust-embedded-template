@@ -1,7 +1,10 @@
 //! Транспорты Modbus: RTU поверх потока байтов, TCP поверх потока, UDP
-//! поверх датаграмм. Каждый реализует оба порта — [`ports::ModbusClient`]
-//! для master'а и [`ports::ModbusServer`] для slave'а, — и логика
-//! `domain::modbus` работает с PDU, не зная, какой транспорт под ней.
+//! поверх датаграмм. Каждый реализует порт slave'а
+//! [`ports::ModbusServer`].
+// {%- if modbus_master == "true" %}
+//! Они же реализуют порт master'а [`ports::ModbusClient`].
+// {%- endif %}
+//! Логика `domain::modbus` работает с PDU, не зная, какой транспорт под ней.
 //!
 //! Чем транспорты отличаются, и почему каждый устроен так:
 //!
@@ -15,23 +18,30 @@
 //!   протокол 0, длина, адрес) и PDU поверх потока. CRC нет — целостность
 //!   обеспечивает TCP, границу — длина в заголовке. Длина вне допустимой —
 //!   граница потеряна, и поток не выровнять: slave кончается
-//!   [`ServeError::Framing`](ports::ServeError::Framing), master —
+//!   [`ServeError::Framing`](ports::ServeError::Framing).
+// {%- if modbus_master == "true" %}
+//!   Master в этом случае получает
 //!   [`MasterError::Unexpected`](ports::MasterError::Unexpected).
+// {%- endif %}
 //! * [`Udp`](crate::modbus::Udp) — тот же MBAP, по запросу или ответу в
 //!   датаграмме (`ports::FrameLink`): границу даёт датаграмма, и битая
 //!   просто пропускается.
 //!
+// {%- if modbus_master == "true" %}
 //! Номер транзакции master'а растёт с каждым запросом, ответ с чужим
 //! номером — опоздавший ответ на брошенный по таймауту запрос — пропускается.
 //! В RTU номера нет, и там то же делает слив входного буфера перед запросом.
 //!
+// {%- endif %}
 //! TCP и UDP адресуют устройство по IP, и адрес в MBAP нужен только шлюзу
 //! на шину RS-485. Поэтому slave получает любой запрос по TCP и UDP как
-//! адресованный ему (0xFF), а ответ несёт адрес из запроса. Master
-//! по-прежнему шлёт адресу 0 без ожидания ответа
+//! адресованный ему (0xFF), а ответ несёт адрес из запроса.
+// {%- if modbus_master == "true" %}
+//! Master по-прежнему шлёт адресу 0 без ожидания ответа
 //! ([`ports::ModbusClient::broadcast`]): ответ, если он придёт, будет
 //! пропущен по номеру транзакции; к самому устройству за TCP master
 //! обращается адресом 0xFF.
+// {%- endif %}
 
 /// Заголовок MBAP — общий для TCP и UDP.
 mod mbap;
@@ -50,7 +60,7 @@ pub use tcp::Tcp;
 pub use udp::Udp;
 
 use embedded_io_async::{Read, ReadExactError};
-use ports::{MasterError, ServeError};
+use ports::ServeError;
 
 /// Дочитывает `rx` из `io` до `want` байт. Каждый прочитанный кусок сразу
 /// учтён в `have`, поэтому брошенное чтение ничего не теряет: следующий
@@ -78,12 +88,14 @@ fn serve_error<E>(e: ReadExactError<E>) -> ServeError<E> {
     }
 }
 
-fn master_error<E>(e: ReadExactError<E>) -> MasterError<E> {
+// {%- if modbus_master == "true" %}
+fn master_error<E>(e: ReadExactError<E>) -> ports::MasterError<E> {
     match e {
-        ReadExactError::UnexpectedEof => MasterError::Eof,
-        ReadExactError::Other(e) => MasterError::Io(e),
+        ReadExactError::UnexpectedEof => ports::MasterError::Eof,
+        ReadExactError::Other(e) => ports::MasterError::Io(e),
     }
 }
+// {%- endif %}
 
 #[cfg(test)]
 mod fakes {
@@ -143,6 +155,7 @@ mod fakes {
             }
         }
 
+        // {%- if modbus_master == "true" %}
         /// `reply` читаем только после того, как master отправил запрос.
         pub(super) fn replying(reply: &[u8]) -> Self {
             Self {
@@ -163,6 +176,7 @@ mod fakes {
             self.waits = true;
             self
         }
+        // {%- endif %}
 
         /// Дописывает `bytes` ко входу — пришли позже.
         pub(super) fn push(&mut self, bytes: &[u8]) {

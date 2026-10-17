@@ -33,14 +33,7 @@
 //! фейками обоих портов, на которых можно разыграть и обрыв связи, и лишний
 //! байт, и кусок в один байт.
 
-use ports::{DownloadError, FirmwareUpdate, ImageSource};
-
-/// Самое большое слово программирования среди STM32 — тридцать два байта (H7).
-///
-/// Буфер фиксированного размера, а не `const N: usize`: гранулярность известна
-/// только в рантайме (её отдаёт порт), а тащить её в тип значило бы протащить
-/// параметр через весь код приёма ради экономии двух десятков байт RAM.
-pub const MAX_WORD: usize = 32;
+use ports::{DownloadError, FirmwareUpdate, ImageSource, MAX_WRITE_SIZE};
 
 /// Принимает образ длиной `announced` из `source` в `flash` и возвращает эту
 /// же длину — её ждёт применение обновления.
@@ -92,7 +85,7 @@ pub async fn receive<S: ImageSource, F: FirmwareUpdate>(
     // ради симметрии: на нуле первый же кусок делил бы на ноль, а деление
     // паникует и в release — то есть уводит устройство в сброс.
     let word = flash.write_granularity();
-    if word == 0 || word as usize > MAX_WORD {
+    if word == 0 || word as usize > MAX_WRITE_SIZE {
         return Err(DownloadError::UnusableGranularity(word));
     }
     let word_len = word as usize;
@@ -114,8 +107,10 @@ pub async fn receive<S: ImageSource, F: FirmwareUpdate>(
         .map_err(DownloadError::Flash)?;
 
     let mut written: u32 = 0;
-    // Хвост, не добравший до целого слова. Первые `pending` байт значимы.
-    let mut tail = [0u8; MAX_WORD];
+    // Хвост, не добравший до целого слова (буфер на самое широкое слово
+    // чипа — гранулярность известна только в рантайме). Первые `pending`
+    // байт значимы.
+    let mut tail = [0u8; MAX_WRITE_SIZE];
     let mut pending: usize = 0;
 
     while let Some(mut chunk) = source.next().await.map_err(DownloadError::Source)? {
@@ -192,7 +187,9 @@ pub async fn receive<S: ImageSource, F: FirmwareUpdate>(
 #[cfg(test)]
 #[expect(clippy::cast_possible_truncation, reason = "размеры в тестах малы")]
 mod tests {
-    use super::{MAX_WORD, receive};
+    use ports::MAX_WRITE_SIZE;
+
+    use super::receive;
     use crate::ota::fakes::{FakeFlash, FakeLink};
     use ports::{DownloadError, FirmwareUpdate};
 
@@ -275,7 +272,7 @@ mod tests {
     async fn pads_the_last_word_of_an_unaligned_image() {
         let image = image(70, 1);
         let mut source = FakeLink::of([image.clone()]);
-        let mut flash = FakeFlash::new(1024, MAX_WORD as u32);
+        let mut flash = FakeFlash::new(1024, MAX_WRITE_SIZE as u32);
 
         receive(&mut source, &mut flash, image.len() as u32)
             .await
@@ -369,7 +366,7 @@ mod tests {
     /// Гранулярность, с которой работать нельзя, отвергается до стирания.
     #[tokio::test]
     async fn refuses_an_unusable_write_granularity() {
-        for word in [0, u32::try_from(MAX_WORD).unwrap() + 1] {
+        for word in [0, u32::try_from(MAX_WRITE_SIZE).unwrap() + 1] {
             let mut source = FakeLink::of([]);
             let mut flash = FakeFlash::new(1024, word.max(1));
             flash.word = word;

@@ -296,4 +296,53 @@ mod tests {
     fn refuses_a_partition_smaller_than_two_pages() {
         let _ = Settings::new(Flash::erased(), 0..256);
     }
+
+    #[test]
+    #[should_panic(expected = "не годится под sequential-storage")]
+    fn refuses_a_partition_off_the_page_boundary() {
+        let _ = Settings::new(Flash::erased(), 8..520);
+    }
+
+    /// Значение, которое вместе с ключом не лезет в рабочий буфер, — ошибка
+    /// записи, а не паника и не обрезанная запись.
+    #[tokio::test]
+    async fn a_value_bigger_than_the_scratch_is_an_error() {
+        let mut settings = Settings::new(Flash::erased(), 0..512);
+        let mut scratch = [0u8; 256];
+
+        let refused = settings.write(1, &[0xAB; super::SCRATCH]).await;
+
+        assert!(refused.is_err(), "{refused:?}");
+        assert_eq!(settings.read(1, &mut scratch).await.expect("чтение"), None);
+    }
+
+    /// Раздел переживает перезапуск: новое хранилище над тем же флешем видит
+    /// записанное прежним.
+    #[tokio::test]
+    async fn a_new_storage_over_the_same_flash_reads_what_was_written() {
+        let mut first = Settings::new(Flash::erased(), 0..512);
+        first.write(5, b"kept").await.expect("запись");
+        first.write(5, b"newest").await.expect("перезапись");
+        let mem = core::mem::take(&mut first.map.flash().mem);
+
+        let mut second = Settings::new(Flash { mem }, 0..512);
+        let mut scratch = [0u8; 32];
+
+        assert_eq!(
+            second.read(5, &mut scratch).await.expect("чтение"),
+            Some(&b"newest"[..])
+        );
+    }
+
+    /// `Unavailable` читается пустым, а запись «успешна» и ничего не хранит —
+    /// как заявлено в документации.
+    #[tokio::test]
+    async fn unavailable_reads_empty_and_forgets_writes() {
+        let mut settings = super::Unavailable;
+        let mut scratch = [0u8; 8];
+
+        settings.write(1, b"lost").await.expect("запись «успешна»");
+
+        assert_eq!(settings.read(1, &mut scratch).await.expect("чтение"), None);
+    }
 }

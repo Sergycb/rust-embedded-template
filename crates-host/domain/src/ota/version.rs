@@ -35,16 +35,6 @@ pub const fn pack(major: u8, minor: u8, patch: u16) -> u32 {
     ((major as u32) << 24) | ((minor as u32) << 16) | patch as u32
 }
 
-/// Обратное преобразование — для логов и диагностики.
-#[must_use]
-pub const fn unpack(version: u32) -> (u8, u8, u16) {
-    (
-        (version >> 24) as u8,
-        ((version >> 16) & 0xFF) as u8,
-        (version & 0xFFFF) as u16,
-    )
-}
-
 /// Принимать ли образ версии `incoming` устройству, на котором работает
 /// `current`.
 ///
@@ -62,11 +52,10 @@ pub const fn is_upgrade(current: u32, incoming: u32) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_upgrade, pack, unpack};
+    use super::{is_upgrade, pack};
 
     /// Раскладка полей закреплена конкретными числами, а не только взаимным
-    /// порядком: те же литералы стоят в тесте `xtask`
-    /// (`unpacks_a_version_the_way_domain_packs_it`), который про этот крейт
+    /// порядком: те же литералы стоят в тесте `xtask`, который про этот крейт
     /// ничего не знает. Проверяй тесты только порядок — смена раскладки на
     /// 16/8/8 прошла бы мимо обоих, а `FW_VERSION` в `crates-cross/app/src/image.rs`
     /// от неё зависит по-настоящему: он разбирает поля в `u8`/`u16`.
@@ -82,13 +71,6 @@ mod tests {
         assert!(pack(1, 0, 0) > pack(0, 99, 999));
         assert!(pack(0, 2, 0) > pack(0, 1, 999));
         assert!(pack(0, 0, 2) > pack(0, 0, 1));
-    }
-
-    #[test]
-    fn unpack_returns_what_pack_took() {
-        assert_eq!(unpack(pack(3, 14, 1592)), (3, 14, 1592));
-        assert_eq!(unpack(pack(255, 255, 65535)), (255, 255, 65535));
-        assert_eq!(unpack(pack(0, 0, 0)), (0, 0, 0));
     }
 
     /// Та самая пара, ради которой всё затевалось: старый образ моложе не

@@ -54,7 +54,7 @@ use embedded_can::Frame;
 use ports::{CanBus, LinkError, SettingsStorage};
 use supervisor::runtime::TaskExit;
 use zencan_node::common::NodeId;
-use zencan_node::common::messages::{CanId, CanMessage};
+use zencan_node::common::messages::CanMessage;
 use zencan_node::common::nmt::NmtState;
 use zencan_node::embedded_io::Read;
 use zencan_node::object_dict::ODEntry;
@@ -85,10 +85,6 @@ pub struct Stack<'f> {
     /// Момент создания стека — начало его отсчёта времени.
     start: Instant,
     persisted: &'f RefCell<Persisted>,
-    /// Кадр boot-up не ушёл (шина отказала на нём): узел досылает его на
-    /// следующей обработке — стек второй раз его не поставит, а NMT-мастер
-    /// иначе о старте не узнал бы.
-    unannounced: bool,
 }
 
 /// Сгенерированный словарь объектов: ссылки на `static` из крейта
@@ -216,9 +212,6 @@ where
 
     /// Поднимает стек: адрес и сохранённые объекты — из хранилища, затем
     /// `Node::new`.
-    ///
-    /// Почтовый ящик — `static`: то, что в нём лежит до старта, к узлу
-    /// отношения не имеет и выбрасывается.
     async fn begin(
         &mut self,
         persisted: &'f RefCell<Persisted>,
@@ -226,7 +219,6 @@ where
         node: &'f mut Option<Node<'f>>,
     ) -> Booting<'f> {
         let d = *self.dictionary;
-        drop_stale(d.mbox);
         let node_id = self.restore(persisted).await;
         info!("domain: узел CANOPEN запущен, адрес {}", node_id.raw());
         // `Node::new` сам зовёт `reset_app` — тот восстанавливает объекты из
@@ -243,7 +235,6 @@ where
                 node,
                 start: Instant::now(),
                 persisted,
-                unannounced: false,
             },
         }
     }
@@ -295,9 +286,6 @@ where
 
     /// `Node::process`, затем всё, что стек поставил в очередь, — на шину.
     async fn step(&mut self, s: &mut Running<'f>) {
-        if s.stack.unannounced {
-            self.announce(&mut s.stack).await;
-        }
         let node = &mut *s.stack.node;
         // Стек объявляет о себе кадром boot-up при первом запуске, после
         // NMT Reset Node / Reset Communication и после смены адреса — в
@@ -322,33 +310,11 @@ where
                 message.data[0] = 0x00;
                 boot_up = false;
             }
-            match self.transmit(&message).await {
-                Ok(sent) if announcing => s.stack.unannounced = !sent,
-                Ok(_) => {}
-                Err(BusDown) => {
-                    // Boot-up — этот кадр или ещё в очереди за ним.
-                    s.stack.unannounced |= announcing || boot_up;
-                    // Остальное устарело к тому времени, как шина вернётся:
-                    // мастер уйдёт по таймауту.
-                    drop_stale(self.dictionary.mbox);
-                }
-            }
+            self.transmit(&message).await;
         }
         // После ответов: запись во флеш долгая, а мастер ждёт подтверждения
         // `save` по SDO. Хранилищу шина не нужна: `save` уже принят стеком.
         persisted::save(s.stack.persisted, self.settings).await;
-    }
-
-    /// Досылает кадр boot-up, на котором отказала шина.
-    async fn announce(&mut self, stack: &mut Stack<'f>) {
-        let node_id = stack.node.node_id();
-        if NodeId::new(node_id).is_ok_and(|id| id.is_configured()) {
-            let boot_up = CanMessage::new(CanId::std(0x700 + u16::from(node_id)), &[0x00]);
-            stack.unannounced = !matches!(self.transmit(&boot_up).await, Ok(true));
-        } else {
-            // Адрес сняли по LSS: объявлять некого, объявит назначенный.
-            stack.unannounced = false;
-        }
     }
 
     /// Адрес узла и сохранённые объекты — из хранилища, до создания стека.
@@ -369,40 +335,20 @@ where
         }
     }
 
-    /// Сообщение стека — на шину; `true` — ушло, потеря кадра — в лог.
-    async fn transmit(&mut self, message: &CanMessage) -> Result<bool, BusDown> {
+    /// Сообщение стека — на шину; отказ (кадр не принят шиной, потеря, bus-off)
+    /// — в лог: кадр пропадает, а мастер уходит по таймауту.
+    async fn transmit(&mut self, message: &CanMessage) {
         let Some(frame) = to_frame::<C::Frame>(message) else {
             warn!("canopen: стек поставил в очередь кадр, который шина не примет");
-            return Ok(false);
+            return;
         };
         match self.bus.send(&frame).await {
-            Ok(()) => Ok(true),
-            Err(LinkError::Lost(err)) => {
-                warn!("canopen: кадр не отправлен: {:?}", &err);
-                Ok(false)
-            }
-            Err(LinkError::Down(err)) => {
-                warn!("canopen: шина недоступна: {:?}", &err);
-                Err(BusDown)
-            }
+            Ok(()) => {}
+            Err(LinkError::Lost(err)) => warn!("canopen: кадр не отправлен: {:?}", &err),
+            Err(LinkError::Down(err)) => warn!("canopen: шина недоступна: {:?}", &err),
         }
     }
 }
-
-/// Кадры, которые стек поставил в очередь и которые уже некому слать: до
-/// старта узла (почтовый ящик — `static`) или после отказа шины.
-fn drop_stale(mbox: &NodeMbox) {
-    let mut stale = 0_u32;
-    while mbox.next_transmit_message().is_some() {
-        stale += 1;
-    }
-    if stale > 0 {
-        warn!("canopen: выброшено {} устаревших кадров", stale);
-    }
-}
-
-/// Шина отказала на отправке: остаток очереди передачи — выбросить.
-struct BusDown;
 
 // Узел объявлен рядом со своей задачей — как `OTA_FRAG`, `MODBUS_SLAVE_FRAG`,
 // `HOST_FRAG`; в граф шаблона попадёт по выбору протокола при генерации.
@@ -440,11 +386,10 @@ mod tests {
     use std::collections::{HashMap, VecDeque};
     use std::sync::{Mutex, PoisonError};
 
-    use embassy_time::MockDriver;
     use embedded_can::{Frame, Id, StandardId};
     use ports::{CanBus, LinkError, SettingsStorage};
 
-    use super::{CanOpenCtx, Dictionary, NODE_ID_KEY, TICK, run};
+    use super::{CanOpenCtx, Dictionary, NODE_ID_KEY, run};
 
     /// Адрес узла в тестах: SDO-запросы — на `0x605`, ответы — с `0x585`.
     const NODE: u8 = 5;
@@ -500,8 +445,6 @@ mod tests {
         incoming: VecDeque<Result<TestFrame, LinkError<&'static str>>>,
         sent: Vec<TestFrame>,
         send: Result<(), LinkError<&'static str>>,
-        /// Сколько первых отправок отвечают `Down` — шина отказала и вернулась.
-        down_for: usize,
     }
 
     impl Bus {
@@ -512,7 +455,6 @@ mod tests {
                 incoming: incoming.into_iter().collect(),
                 sent: Vec::new(),
                 send: Ok(()),
-                down_for: 0,
             }
         }
     }
@@ -536,10 +478,6 @@ mod tests {
             frame: &TestFrame,
         ) -> impl Future<Output = Result<(), LinkError<Self::Error>>> {
             self.sent.push(frame.clone());
-            if self.down_for > 0 {
-                self.down_for -= 1;
-                return std::future::ready(Err(LinkError::Down("bus-off")));
-            }
             std::future::ready(self.send)
         }
     }
@@ -597,13 +535,15 @@ mod tests {
     /// То же над заданным хранилищем: новый прогон — новый стек над ним, как
     /// после сброса МК.
     fn serve_with(bus: &mut Bus, settings: &mut Memory) {
-        serve_ticks(bus, settings, true, 0);
+        serve_persist(bus, settings, true);
     }
 
-    /// То же, но ещё `ticks` раз даёт такту пройти; `persist` — есть ли у
-    /// узла хранилище.
-    fn serve_ticks(bus: &mut Bus, settings: &mut Memory, mut persist: bool, ticks: u32) {
+    /// То же; `persist` — есть ли у узла хранилище.
+    fn serve_persist(bus: &mut Bus, settings: &mut Memory, mut persist: bool) {
         let _only_one = DICTIONARY.lock().unwrap_or_else(PoisonError::into_inner);
+        // Почтовый ящик — `static`: очередь передачи после прошлого прогона к
+        // этому не относится.
+        while canopen::NODE_MBOX.next_transmit_message().is_some() {}
         let mut dictionary = Dictionary {
             mbox: &canopen::NODE_MBOX,
             state: &canopen::NODE_STATE,
@@ -620,10 +560,6 @@ mod tests {
         let mut task = pin!(run(ctx));
         let mut cx = Context::from_waker(Waker::noop());
         assert!(task.as_mut().poll(&mut cx).is_pending(), "ждёт кадр");
-        for _ in 0..ticks {
-            MockDriver::get().advance(TICK);
-            assert!(task.as_mut().poll(&mut cx).is_pending(), "ждёт кадр");
-        }
     }
 
     /// SDO-запись `save` (`0x73 0x61 0x76 0x65`) в `0x1010:01`.
@@ -796,7 +732,7 @@ mod tests {
     fn without_storage_nothing_is_saved() {
         let mut settings = Memory::default();
         let mut bus = Bus::with([Ok(frame(0x605, &SAVE))]);
-        serve_ticks(&mut bus, &mut settings, false, 0);
+        serve_persist(&mut bus, &mut settings, false);
         assert!(settings.0.is_empty(), "{:?}", settings.0);
     }
 
@@ -834,23 +770,6 @@ mod tests {
                 .any(|f| f.id == Id::Standard(StandardId::new(0x585).unwrap())),
             "ответ SDO после отказа: {:?}",
             bus.sent
-        );
-    }
-
-    /// Шина отказала на самом кадре boot-up: на следующем такте узел досылает
-    /// его — стек второй раз его не поставит, а NMT-мастер иначе о старте не
-    /// узнал бы.
-    #[test]
-    fn a_boot_up_lost_to_a_bus_failure_is_sent_on_the_next_tick() {
-        let mut bus = Bus::with([]);
-        bus.down_for = 1;
-        serve_ticks(&mut bus, &mut Memory::default(), true, 1);
-        let boot_ups: Vec<_> = bus.sent.iter().filter(|f| is_heartbeat(f, NODE)).collect();
-        assert_eq!(boot_ups.len(), 2, "потерянный и досланный: {:?}", bus.sent);
-        assert_eq!(
-            boot_ups[1].data,
-            [0x00],
-            "досланный — boot-up, а не heartbeat"
         );
     }
 }

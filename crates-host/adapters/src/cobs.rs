@@ -50,16 +50,30 @@ pub enum CobsError<E> {
     /// CRC кадра не сошлась.
     Crc,
     /// Кадр длиннее буфера: при приёме — буфера `recv` (ему нужно
-    /// [`Cobs::rx_len`]), при отправке — буфера передачи ([`Cobs::tx_len`]).
+    /// [`rx_len`]), при отправке — буфера передачи ([`tx_len`]).
     TooLong,
+}
+
+/// Сколько байт буфера отправки нужно на сообщение длиной `message`:
+/// худший случай COBS, CRC и два разделителя.
+#[must_use]
+pub const fn tx_len(message: usize) -> usize {
+    max_encoding_length(message + CRC_LEN) + 2
+}
+
+/// Сколько байт буфера приёма нужно на сообщение длиной `message`:
+/// сообщение и CRC.
+#[must_use]
+pub const fn rx_len(message: usize) -> usize {
+    message + CRC_LEN
 }
 
 /// Кадрированный канал поверх потока `io`.
 ///
 /// `tx` — буфер под закодированный кадр отправки: на сообщение длиной `n`
-/// нужно [`Cobs::tx_len`]`(n)` байт. Свой, а не общий с приёмом: ответ
+/// нужно [`tx_len`]`(n)` байт. Свой, а не общий с приёмом: ответ
 /// кодируется, пока принятый запрос ещё может быть нужен вызывающему.
-/// Буферу приёма, который передают в `recv`, нужно [`Cobs::rx_len`]`(n)`:
+/// Буферу приёма, который передают в `recv`, нужно [`rx_len`]`(n)`:
 /// CRC декодируется туда же, следом за сообщением.
 ///
 /// Разорванное соединение (TCP) поток не восстанавливает: конец потока —
@@ -92,20 +106,6 @@ impl<'b, T> Cobs<'b, T> {
             end: 0,
             inside: false,
         }
-    }
-
-    /// Сколько байт буфера отправки нужно на сообщение длиной `message`:
-    /// худший случай COBS, CRC и два разделителя.
-    #[must_use]
-    pub const fn tx_len(message: usize) -> usize {
-        max_encoding_length(message + CRC_LEN) + 2
-    }
-
-    /// Сколько байт буфера приёма нужно на сообщение длиной `message`:
-    /// сообщение и CRC.
-    #[must_use]
-    pub const fn rx_len(message: usize) -> usize {
-        message + CRC_LEN
     }
 
     /// Поток обратно — например, чтобы закрыть сокет.
@@ -185,7 +185,7 @@ impl<T: Read + Write> FrameLink for Cobs<'_, T> {
     }
 
     async fn send(&mut self, frame: &[u8]) -> Result<(), LinkError<Self::Error>> {
-        if Self::tx_len(frame.len()) > self.tx.len() {
+        if tx_len(frame.len()) > self.tx.len() {
             return Err(LinkError::Lost(CobsError::TooLong));
         }
         let crc = CRC.checksum(frame).to_le_bytes();

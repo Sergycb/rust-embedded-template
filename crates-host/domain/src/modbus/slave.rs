@@ -296,6 +296,42 @@ mod tests {
         assert_eq!(map.holding[2], 3);
     }
 
+    /// Широковещательное чтение не выполняется вовсе и не отвечает: у чтения
+    /// бывают побочные эффекты.
+    #[tokio::test]
+    async fn broadcast_reads_are_neither_executed_nor_answered() {
+        let mut map = Map::default();
+        let out = run(
+            &[
+                (0, &[0x01, 0, 0, 0, 1]),
+                (0, &[0x02, 0, 0, 0, 1]),
+                (0, &[0x03, 0, 0, 0, 1]),
+                (0, &[0x04, 0, 0, 0, 1]),
+            ],
+            &mut map,
+        )
+        .await;
+        assert!(out.is_empty(), "ответов быть не должно: {out:02X?}");
+        assert_eq!(map.reads, 0, "карту не читали");
+    }
+
+    /// Пустая карта шаблона на любой запрос отвечает Illegal Function.
+    #[tokio::test]
+    async fn the_empty_map_answers_illegal_function() {
+        let mut link = Server::new(&[
+            (1, &[0x01, 0, 0, 0, 1]),
+            (1, &[0x02, 0, 0, 0, 1]),
+            (1, &[0x03, 0, 0, 0, 1]),
+            (1, &[0x04, 0, 0, 0, 1]),
+            (1, &[0x05, 0, 0, 0xFF, 0x00]),
+            (1, &[0x06, 0, 0, 0, 1]),
+        ]);
+        let end = serve(&mut link, 1, &mut crate::modbus::EmptyRegisters).await;
+        assert_eq!(end, Err(ServeError::Eof));
+        let expected: Vec<Vec<u8>> = (1..=6_u8).map(|fc| vec![fc | 0x80, 0x01]).collect();
+        assert_eq!(link.replies, expected);
+    }
+
     proptest::proptest! {
         /// Какой бы PDU ни пришёл — slave не паникует и отвечает на него.
         #[test]

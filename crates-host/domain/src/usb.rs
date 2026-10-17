@@ -11,9 +11,9 @@
 //! (`restart: Never`).
 
 pub use embassy_usb::UsbDevice;
-pub use embassy_usb::driver::Driver;
 
 use defmt_or_log::info;
+use embassy_usb::driver::Driver;
 use supervisor::runtime::TaskExit;
 
 /// Узел `USB`: исполняет устройство, пока жива прошивка; не возвращается.

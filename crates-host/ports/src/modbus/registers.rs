@@ -323,3 +323,57 @@ pub trait Registers {
         Err(Exception::IllegalFunction)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bits_pack_lsb_first_and_zero_the_buffer() {
+        let mut bytes = [0xFF; 2];
+        let mut out = BitsMut::new(&mut bytes, 10);
+        out.set(0, true);
+        out.set(9, true);
+        assert_eq!(bytes, [0b0000_0001, 0b0000_0010]);
+        let bits = Bits::new(&bytes, 10);
+        assert_eq!(bits.len(), 10);
+        assert!(bits.get(0) && bits.get(9) && !bits.get(1));
+        assert_eq!(bits.iter().filter(|b| *b).count(), 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "вне диапазона")]
+    fn bit_past_the_end_panics() {
+        // Бит 10 лежит в последнем байте, но за `len`.
+        assert!(Bits::new(&[0xFF, 0xFF], 10).get(10));
+    }
+
+    #[test]
+    #[should_panic(expected = "не упаковываются")]
+    fn bits_with_a_wrong_byte_count_panic() {
+        assert!(Bits::new(&[0; 3], 10).is_empty());
+    }
+
+    #[test]
+    fn words_are_big_endian() {
+        let mut bytes = [0xFF; 4];
+        let mut out = WordsMut::new(&mut bytes);
+        out.set(1, 0x1234);
+        assert_eq!(bytes, [0, 0, 0x12, 0x34]);
+        let words = Words::new(&bytes);
+        assert_eq!((words.len(), words.get(1)), (2, 0x1234));
+        assert_eq!(words.iter().collect::<Vec<_>>(), [0, 0x1234]);
+    }
+
+    #[test]
+    #[should_panic(expected = "не целое число регистров")]
+    fn odd_word_bytes_panic() {
+        assert!(Words::new(&[0; 3]).is_empty());
+    }
+
+    #[test]
+    #[should_panic(expected = "не целое число регистров")]
+    fn more_than_u16_words_panic() {
+        assert!(Words::new(&vec![0; 2 * 65_536]).is_empty());
+    }
+}

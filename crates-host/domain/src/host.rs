@@ -188,7 +188,7 @@ supervisor::supervisor_fragment! {
             /// Обработчик сообщений приложения.
             SERVICE: local S = inputs.service,
             /// Буфер приёма: самый длинный запрос и то, что канал кладёт туда
-            /// сверх него (`adapters::cobs::Cobs::rx_len` — ещё 2 байта CRC).
+            /// сверх него (`adapters::cobs::rx_len` — ещё 2 байта CRC).
             RX: &'static mut [u8] = inputs.rx,
             /// Буфер закодированного ответа: не меньше самого длинного ответа
             /// (`MAX_SIZE` сообщения ответа, если схема его ограничивает).
@@ -377,6 +377,24 @@ mod tests {
         serve(&mut link, 4);
         assert_eq!(link.sent.len(), 1);
         assert_eq!(decode(&link.sent[0]).request_id, 2);
+    }
+
+    /// Запрос без команды — тоже запрос: ответ-ошибка с тем же `request_id`.
+    #[test]
+    fn a_request_without_a_command_gets_an_error_reply() {
+        let mut link = Link {
+            incoming: VecDeque::from([Ok(encode(&Request {
+                request_id: 4,
+                command: None,
+            }))]),
+            sent: Vec::new(),
+            send: Ok(()),
+        };
+        serve(&mut link, 64);
+        assert_eq!(link.sent.len(), 1);
+        let reply = decode(&link.sent[0]);
+        assert_eq!(reply.request_id, 4);
+        assert!(matches!(reply.result, Some(Response_::Result::Error(_))));
     }
 
     /// Закрытый канал узел не останавливает: следующий кадр — ответ.

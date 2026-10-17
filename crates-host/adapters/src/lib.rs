@@ -49,8 +49,10 @@ pub mod can;
 
 // {%- endif %}
 // {%- if protocol == "modbus" %}
-/// Транспорты Modbus — RTU, TCP, UDP — для портов `ports::ModbusClient` и
-/// `ports::ModbusServer`.
+/// Транспорты Modbus — RTU, TCP, UDP — для порта slave'а `ports::ModbusServer`.
+// {%- if modbus_master == "true" %}
+/// Они же реализуют порт master'а `ports::ModbusClient`.
+// {%- endif %}
 pub mod modbus;
 
 // {%- endif %}

@@ -12,9 +12,9 @@
 //! паникой.
 
 pub use embassy_net::Runner;
-pub use embassy_net::driver::Driver;
 
 use defmt_or_log::info;
+use embassy_net::driver::Driver;
 use supervisor::runtime::TaskExit;
 
 /// Узел `NET`: исполняет стек, пока жива прошивка; не возвращается.

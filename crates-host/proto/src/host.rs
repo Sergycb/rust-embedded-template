@@ -62,6 +62,13 @@ mod tests {
         assert_eq!(encode(&response), [0x22, 0x03, 0x0A, 0x01, 0x78]);
     }
 
+    /// Константы ёмкости — те самые, что стоят в сгенерированных типах.
+    #[test]
+    fn capacity_constants_match_the_generated_types() {
+        assert_eq!(Info::default().version.capacity(), crate::VERSION_BYTES);
+        assert_eq!(Error::default().text.capacity(), crate::ERROR_TEXT_BYTES);
+    }
+
     /// Строка длиннее ёмкости из `build.rs` не разбирается, а не обрезается.
     #[test]
     fn too_long_string_is_rejected() {

@@ -10,7 +10,8 @@
 //!
 //! Задача — автомат `#[fsm::typestate]` на контексте `OtaCtx`, который
 //! эмитит фрагмент `OTA_FRAG`: заголовок → проверки до стирания → приём →
-//! применение → отчёт → снова заголовок; отказ канала — выходное состояние.
+//! применение → отчёт → снова заголовок; отказ канала — в лог и снова ожидание
+//! заголовка.
 //!
 //! Применение различается по Cargo-варианту (`signed`), а Liquid в `domain`
 //! запрещён, поэтому режим — данные входа узла: [`Mode::Plain`](crate::ota::Mode::Plain) или
@@ -26,6 +27,11 @@
 /// модуль.
 pub mod download;
 
+/// Решение bootloader'а при старте и проверка подписи нового образа — над
+/// блокирующими разделами: у bootloader'а нет исполнителя. Функции над
+/// `embassy-boot`, не над портами — см. модуль.
+pub mod boot;
+
 /// Применение подписанного обновления: порядок проверок, в котором каждый
 /// отказ различим, и запись подписи для bootloader'а. Функция над портом
 /// `FirmwareUpdate` — см. модуль.
@@ -36,7 +42,6 @@ pub mod update;
 /// решает, что с ними делать, — см. модуль.
 pub mod version;
 
-/// Фейки портов обновления, общие для тестов узла и обоих подмодулей.
 use defmt_or_log::{FormatOrDebug, info, warn};
 use ports::{Announce, DownloadError, FirmwareUpdate, ImageSource, Rejection, UpdateError};
 use supervisor::runtime::TaskExit;
@@ -106,11 +111,9 @@ impl Mode {
                 Rejection::Device
             }),
             Self::Signed { running_version } => {
-                // `check` уже отказал бы без подписи; ветка `None` здесь —
-                // чтобы не паниковать, а не потому что она достижима.
-                let Some(signature) = announce.signature.as_ref() else {
-                    return Err(Rejection::Signature);
-                };
+                // `check` уже отказал бы без подписи; `ok_or` — чтобы не
+                // паниковать, а не потому что отказ здесь достижим.
+                let signature = announce.signature.as_ref().ok_or(Rejection::Signature)?;
                 update::apply_signed(flash, running_version, signature, len)
                     .await
                     .map_err(|err| {
@@ -141,6 +144,33 @@ where
     F::Error: FormatOrDebug,
 {
     match ctx.run().await {}
+}
+
+/// Тот же узел для проекта без графа: спавнится из `main.rs` (через
+/// `#[embassy_executor::task]`, потому что `Spawner::spawn` берёт токен, а не
+/// функцию), а слоты, которые в графе держит `static`, — локальные переменные
+/// кадра: канал и адаптер приходят владением, `CONFIRMED` начинается с
+/// `false`, как слот графа.
+///
+/// Нужен, чтобы подтверждение образа (`mark_booted`, действие `begin`) не
+/// зависело от того, вспомнил ли проект позвать узел: без него bootloader
+/// откатывает любое обновление на следующем сбросе.
+pub async fn task_standalone<S, F>(mut link: S, mut flash: F, mut mode: Mode) -> TaskExit
+where
+    S: ImageSource,
+    S::Error: FormatOrDebug,
+    F: FirmwareUpdate,
+    F::Error: FormatOrDebug,
+{
+    let mut confirmed = false;
+    run(OtaCtx {
+        link: &mut link,
+        flash: &mut flash,
+        mode: &mut mode,
+        confirmed: &mut confirmed,
+        index: 0,
+    })
+    .await
 }
 
 #[fsm::typestate]
@@ -253,13 +283,10 @@ where
             Err(DownloadError::Source(err)) => self.lost(err).into(),
             Err(err) => {
                 warn!("ota: приём не удался: {:?}", &err);
-                match download_rejection(err) {
-                    Ok(rejection) => Verdict {
-                        outcome: Err(rejection),
-                    }
-                    .into(),
-                    Err(err) => self.lost(err).into(),
+                Verdict {
+                    outcome: Err(download_rejection(&err)),
                 }
+                .into()
             }
         }
     }
@@ -297,19 +324,16 @@ where
     }
 }
 
-/// Код отказа для отправителя; `Err` — отказал сам канал, и сообщать некому.
-///
-/// `receive` перехватывает `Source` раньше — здесь эта ветка нужна
-/// тотальности, а не потоку.
-fn download_rejection<S, F>(err: DownloadError<S, F>) -> Result<Rejection, S> {
-    Ok(match err {
+/// Код отказа для отправителя по ошибке приёма. `Source` сюда не доходит —
+/// `receive` перехватывает его раньше как отказ канала.
+fn download_rejection<S, F>(err: &DownloadError<S, F>) -> Rejection {
+    match err {
         DownloadError::Empty | DownloadError::TooLong { .. } => Rejection::Length,
         DownloadError::TooMuchData { .. } | DownloadError::Incomplete { .. } => Rejection::Transfer,
-        DownloadError::Source(err) => return Err(err),
         // `UnusableGranularity`, `Flash` и незнакомые варианты (перечисление
         // `non_exhaustive`) сообщаются как отказ устройства, а не прячутся.
         _ => Rejection::Device,
-    })
+    }
 }
 
 /// Код отказа для отправителя по ошибке применения с подписью.
@@ -396,20 +420,10 @@ mod tests {
     use crate::ota::version::pack;
     use ports::{Announce, Rejection};
 
-    /// Гоняет узел, пока не кончится канал: после последнего заголовка `begin`
-    /// у `FakeLink` отвечает отказом, так что узел всегда уходит ждать повтора
-    /// — раньше, если канал отказал посреди цикла.
-    fn serve(link: &mut FakeLink, flash: &mut FakeFlash, mode: Mode) {
-        serve_again(link, flash, mode, &mut false);
-    }
-
-    /// То же, но со слотом `CONFIRMED` снаружи — как у второго прогона узла
-    /// в том же запуске прошивки.
-    fn serve_again(link: &mut FakeLink, flash: &mut FakeFlash, mode: Mode, confirmed: &mut bool) {
-        serve_until_idle(link, flash, mode, confirmed);
-    }
-
-    /// Гоняет узел, пока он не станет ждать следующий заголовок.
+    /// Гоняет узел, пока он не станет ждать следующий заголовок: заголовки
+    /// кончились — `begin` у `FakeLink` ждёт вечно, как настоящий канал.
+    /// `confirmed` — слот снаружи, как у второго прогона узла в том же запуске
+    /// прошивки.
     fn serve_until_idle(
         link: &mut FakeLink,
         flash: &mut FakeFlash,
@@ -426,6 +440,10 @@ mod tests {
         let mut task = pin!(run(ctx));
         let mut cx = Context::from_waker(Waker::noop());
         assert!(task.as_mut().poll(&mut cx).is_pending(), "ждёт заголовок");
+    }
+
+    fn serve(link: &mut FakeLink, flash: &mut FakeFlash, mode: Mode) {
+        serve_until_idle(link, flash, mode, &mut false);
     }
 
     fn plain() -> Mode {
@@ -486,11 +504,11 @@ mod tests {
         let mut flash = FakeFlash::new(64, 8);
 
         let mut link = FakeLink::of([image]).announcing([announce(16)]);
-        serve_again(&mut link, &mut flash, plain(), &mut confirmed);
+        serve_until_idle(&mut link, &mut flash, plain(), &mut confirmed);
         assert_eq!((flash.booted, flash.updated), (1, 1));
 
         let mut link = FakeLink::of([]);
-        serve_again(&mut link, &mut flash, plain(), &mut confirmed);
+        serve_until_idle(&mut link, &mut flash, plain(), &mut confirmed);
         assert_eq!(flash.booted, 1, "второй прогон не подтверждает");
     }
 
@@ -504,12 +522,12 @@ mod tests {
         flash.mark_booted = Err("флеш не отвечает");
 
         let mut link = FakeLink::of([]);
-        serve_again(&mut link, &mut flash, plain(), &mut confirmed);
+        serve_until_idle(&mut link, &mut flash, plain(), &mut confirmed);
         assert!(!confirmed);
 
         flash.mark_booted = Ok(());
         let mut link = FakeLink::of([]);
-        serve_again(&mut link, &mut flash, plain(), &mut confirmed);
+        serve_until_idle(&mut link, &mut flash, plain(), &mut confirmed);
         assert!(confirmed);
     }
 
@@ -689,6 +707,44 @@ mod tests {
         assert!(flash.recorded.is_empty(), "обмен не должен быть запрошен");
     }
 
+    /// Заголовок короче хвоста с версией — `Length`, а не паника на вычитании.
+    #[test]
+    fn maps_a_signed_header_shorter_than_the_version_tail_to_length() {
+        let mut link = FakeLink::of([vec![0; 3]]).announcing([signed_announce(3)]);
+        let mut flash = FakeFlash::new(1024, 8);
+
+        serve(&mut link, &mut flash, signed());
+
+        assert_eq!(link.finished, vec![Err(Rejection::Length)]);
+        assert!(flash.recorded.is_empty());
+    }
+
+    /// Длина больше вместимости — `Length` ещё в приёме, до стирания.
+    #[test]
+    fn maps_a_too_long_signed_image_to_length_without_erasing() {
+        let mut link = FakeLink::of([]).announcing([signed_announce(65)]);
+        let mut flash = FakeFlash::new(64, 8);
+
+        serve(&mut link, &mut flash, signed());
+
+        assert_eq!(link.finished, vec![Err(Rejection::Length)]);
+        assert_eq!(flash.prepared, None);
+    }
+
+    /// Отказ флеша при записи для bootloader'а — `Device`, обмен не помечен.
+    #[test]
+    fn maps_a_flash_failure_on_the_signature_record_to_device() {
+        let image = versioned_image(64, pack(1, 2, 4));
+        let mut link = FakeLink::of([image]).announcing([signed_announce(64)]);
+        let mut flash = FakeFlash::new(1024, 8);
+        flash.record = Err("флеш отказал");
+
+        serve(&mut link, &mut flash, signed());
+
+        assert_eq!(link.finished, vec![Err(Rejection::Device)]);
+        assert_eq!(flash.updated, 0);
+    }
+
     /// Не удалось подтвердить при старте — узел пробует ещё раз на каждом
     /// заголовке, а на отказе канала — нет: повтор стоит стирания `STATE`.
     #[test]
@@ -746,8 +802,8 @@ mod fakes {
 
     /// Канал, отдающий заранее нарезанные куски; на `fail_at`-м вызове `next`
     /// отказывает — так разыгрывается обрыв связи. Заголовки — по одному на
-    /// цикл; когда они кончаются, `begin` отвечает отказом — единственный выход
-    /// из цикла узла в тесте.
+    /// цикл; когда они кончаются, `begin` ждёт вечно — на этом узел в тесте
+    /// останавливается.
     pub(super) struct FakeLink {
         announces: VecDeque<Announce>,
         chunks: Vec<Vec<u8>>,
@@ -891,7 +947,7 @@ mod fakes {
         fn do_write(&mut self, offset: u32, data: &[u8]) -> Result<(), &'static str> {
             if offset >= self.capacity {
                 // Запасная страница: запись для bootloader'а — ровно там, где её
-                // ищет `adapters::ota::screen_update`, и целыми словами.
+                // ищет `domain::ota::boot::screen_update`, и целыми словами.
                 if offset != self.capacity {
                     return Err("запись для bootloader'а не по смещению capacity");
                 }

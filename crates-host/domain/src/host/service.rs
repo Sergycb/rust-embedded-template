@@ -18,8 +18,18 @@ pub struct Service {
 
 impl Service {
     /// Обработчик, отвечающий на `get_info` версией `version`.
+    ///
+    /// # Panics
+    ///
+    /// Если `version` длиннее `proto::VERSION_BYTES`: обрезанная версия
+    /// выглядела бы как настоящая, а пустую строку ответ не заслуживает. В
+    /// `const`-контексте — ошибка компиляции.
     #[must_use]
     pub const fn new(version: &'static str) -> Self {
+        assert!(
+            version.len() <= proto::VERSION_BYTES,
+            "версия не помещается в Info.version"
+        );
         Self { version }
     }
 }
@@ -55,7 +65,27 @@ impl HostService for Service {
 }
 
 /// Строка схемы из `s`; не помещается в предел поля (`build.rs` крейта
-/// `proto`) — пустая: обрезанная версия выглядела бы как настоящая.
+/// `proto`) — пустая: обрезанная строка выглядела бы как настоящая. Версию
+/// длиннее предела отсекает [`Service::new`], так что это касается только
+/// текстов ошибок.
 fn text<const N: usize>(s: &str) -> heapless::String<N> {
     heapless::String::try_from(s).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_version_of_exactly_the_limit_is_accepted() {
+        let version: &'static str = "v".repeat(proto::VERSION_BYTES).leak();
+        drop(Service::new(version));
+    }
+
+    #[test]
+    #[should_panic(expected = "не помещается")]
+    fn a_version_over_the_limit_is_refused() {
+        let version: &'static str = "v".repeat(proto::VERSION_BYTES + 1).leak();
+        drop(Service::new(version));
+    }
 }

@@ -1,10 +1,17 @@
 //! Modbus TCP: заголовок MBAP и PDU поверх потока байтов.
 
 use embedded_io_async::{Read, ReadExactError, Write};
-use ports::{MAX_PDU, MasterError, ModbusClient, ModbusServer, Received, ServeError};
+use ports::{MAX_PDU, ModbusServer, Received, ServeError};
 
+// {%- if modbus_master == "true" %}
+use ports::{MasterError, ModbusClient};
+
+// {%- endif %}
 use super::mbap::{self, HEADER, Header, MAX_ADU};
-use super::{master_error, serve_error};
+// {%- if modbus_master == "true" %}
+use super::master_error;
+// {%- endif %}
+use super::serve_error;
 
 /// Modbus TCP поверх потока `io` (сокет `embassy-net`).
 ///
@@ -16,8 +23,11 @@ use super::{master_error, serve_error};
 /// переоткрыть.
 ///
 /// Slave получает любой запрос как адресованный ему, 0xFF (см.
-/// [модуль](super)); master ждёт ответ с тем же номером транзакции, что у
-/// запроса, и устройство, которое его не повторяет, так и не ответит.
+/// [модуль](super)).
+// {%- if modbus_master == "true" %}
+/// Master ждёт ответ с тем же номером транзакции, что у запроса, и
+/// устройство, которое его не повторяет, так и не ответит.
+// {%- endif %}
 ///
 /// Соединение — забота потока `io`: закрытое клиентом кончается для slave'а
 /// [`ServeError::Eof`] — концом сессии, а не отказом: узел обслуживает
@@ -29,8 +39,10 @@ pub struct Tcp<T> {
     /// Принятые байты текущего кадра — `rx[..have]`.
     rx: [u8; MAX_ADU],
     have: usize,
-    /// Номер транзакции: master — последнего запроса, slave — последнего
-    /// принятого (им подписан ответ).
+    /// Номер транзакции последнего принятого запроса — им подписан ответ.
+    // {%- if modbus_master == "true" %}
+    /// У master — последнего отправленного: по нему ищется ответ.
+    // {%- endif %}
     tid: u16,
     /// Адрес из последнего принятого запроса — slave повторяет его в ответе.
     unit: u8,
@@ -128,6 +140,7 @@ impl<T: Read + Write> ModbusServer for Tcp<T> {
     }
 }
 
+// {%- if modbus_master == "true" %}
 impl<T: Read + Write> ModbusClient for Tcp<T> {
     type Error = T::Error;
 
@@ -171,11 +184,14 @@ impl<T: Read + Write> ModbusClient for Tcp<T> {
             .map_err(MasterError::Io)
     }
 }
+// {%- endif %}
 
 #[cfg(test)]
 mod tests {
+    // {%- if modbus_master == "true" %}
     use core::convert::Infallible;
 
+    // {%- endif %}
     use super::*;
     use crate::modbus::fakes::{Duplex, mbap_frame as frame};
 
@@ -225,6 +241,7 @@ mod tests {
         assert_eq!(tcp.recv(&mut buf).await, Err(ServeError::Framing));
     }
 
+    // {%- if modbus_master == "true" %}
     async fn exchange(unit: u8, io: Duplex) -> (Result<Vec<u8>, MasterError<Infallible>>, Vec<u8>) {
         let mut tcp = Tcp::new(io);
         let mut out = [0; MAX_PDU];
@@ -285,6 +302,7 @@ mod tests {
         assert_eq!(tcp.exchange(1, &[0x03, 0, 0, 0, 1], &mut out).await, Ok(4));
         assert_eq!(out[..4], [0x03, 2, 0, 2]);
     }
+    // {%- endif %}
 
     /// Оборванное чтение (конец потока) — не таймаут: недочитанный кадр
     /// сбрасывается, и поток, продолжившийся другим соединением
@@ -301,7 +319,7 @@ mod tests {
     }
 
     proptest::proptest! {
-        /// Что бы ни пришло по соединению — ни slave, ни master не паникуют.
+        /// Что бы ни пришло по соединению — транспорт не паникует.
         #[test]
         fn never_panics(input in proptest::collection::vec(proptest::num::u8::ANY, 0..600)) {
             let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
@@ -309,7 +327,9 @@ mod tests {
                 let mut tcp = Tcp::new(Duplex::new(&input));
                 let mut buf = [0; MAX_PDU];
                 while tcp.recv(&mut buf).await.is_ok() {}
+                // {%- if modbus_master == "true" %}
                 let _ignored = exchange(1, Duplex::replying(&input)).await;
+                // {%- endif %}
             });
         }
     }

@@ -19,6 +19,7 @@ defmt = [
 	"dep:defmt",
 	"defmt-or-log/defmt",
 	"ports/defmt",
+	"embassy-boot/defmt",
 	# {%- if protocol == "canopen" %}
 	"zencan-node/defmt",
 	# {%- endif %}
@@ -29,15 +30,19 @@ defmt = [
 	"embassy-usb/defmt",
 	# {%- endif %}
 ]
+# Проверка подписи нового образа в bootloader'е (`ota::boot::screen_update`).
+# Включает `boot` в проекте, где при генерации выбрана подпись; в корневом
+# workspace её включают `cargo xtask lint`/`test host`, чтобы всё это
+# проверялось и на хосте. Проверяет `salty` напрямую, а не
+# `verify_and_mark_updated` из embassy-boot: тот живёт в апдейтере приложения,
+# а проверка — в bootloader'е.
+signed = ["dep:salty"]
 log = [
 	"dep:log",
 	"defmt-or-log/log",
 	# {%- if protocol == "canopen" %}
 	"zencan-node/log",
 	# {%- endif %}
-]
-std = [
-	"log?/std"
 ]
 
 [dependencies]
@@ -49,7 +54,7 @@ ports = { workspace = true }
 defmt-or-log = { workspace = true }
 log = { workspace = true, optional = true }
 defmt = { workspace = true, optional = true }
-# Задачи, которые спавнит граф из `crates-cross/app`, живут здесь (`app.rs`,
+# Задачи, которые спавнит граф из `crates-cross/app`, живут здесь (`heartbeat.rs`,
 # `ota.rs`) — вместе со своими фрагментами и политикой. `supervisor` нужен им
 # ради типов, которыми граф разговаривает с задачей: `Heartbeat` (отметка у
 # сторожа), `TaskExit` (чем кончился прогон). Знания о самом графе это не даёт — контекст задачи эмитит
@@ -63,6 +68,11 @@ supervisor = { workspace = true }
 embassy-time = { workspace = true }
 # Задачи узлов — автоматы `#[fsm::typestate]` на контексте фрагмента.
 fsm = { workspace = true }
+# Решение bootloader'а (`ota::boot`): состояние `embassy-boot` над блокирующими
+# разделами `NorFlash`. Сам крейт от чипа не зависит.
+embassy-boot = { workspace = true }
+embedded-storage = { workspace = true }
+salty = { workspace = true, optional = true }
 # Прямо, а не транзитивно: тип счётчика в `cpu_load::SleepTicks` —
 # `portable_atomic::AtomicU32`, потому что на Cortex-M0/M0+ у `core`
 # атомика нет `fetch_add`.
@@ -102,8 +112,6 @@ embassy-usb        = { workspace = true }
 tokio = { workspace = true }
 # Property-тесты `download::receive` (любое разбиение образа на куски).
 proptest = { workspace = true }
-# Параметрические тесты `update::apply_signed`.
-rstest = { workspace = true }
 # Обе строки — ради линковки хостового тестового бинарника, а не ради самих
 # тестов: он тянет `supervisor`, тот `embassy-executor` и `embassy-time`, а у
 # обоих реализация выбирается фичей. Без `platform-std` линкер не находит

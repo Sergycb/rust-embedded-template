@@ -253,7 +253,10 @@ pub struct Unconnected;
 
 impl Unconnected {
     /// Объём, под который строится хранилище с заглушкой.
-    pub const CAPACITY: u32 = 2 * 4096;
+    pub const CAPACITY: u32 = 2 * Self::PAGE;
+
+    /// Страница стирания.
+    const PAGE: u32 = 4096;
 }
 
 /// Ответ [`Unconnected`] на любую операцию.
@@ -285,7 +288,7 @@ impl embedded_storage_async::nor_flash::ReadNorFlash for Unconnected {
 
 impl embedded_storage_async::nor_flash::NorFlash for Unconnected {
     const WRITE_SIZE: usize = 1;
-    const ERASE_SIZE: usize = 4096;
+    const ERASE_SIZE: usize = Self::PAGE as usize;
 
     fn erase(&mut self, _: u32, _: u32) -> impl Future<Output = Result<(), Self::Error>> {
         core::future::ready(Err(NotConnected))
@@ -310,7 +313,7 @@ impl ReadNorFlash for Unconnected {
 
 impl NorFlash for Unconnected {
     const WRITE_SIZE: usize = 1;
-    const ERASE_SIZE: usize = 4096;
+    const ERASE_SIZE: usize = Self::PAGE as usize;
 
     fn erase(&mut self, _: u32, _: u32) -> Result<(), Self::Error> {
         Err(NotConnected)

@@ -24,12 +24,6 @@ defmt = [
 	"embassy-usb/defmt",
 	# {%- endif %}
 ]
-# Подпись образа: проверка в bootloader'е (`ota::screen_update`). Включает
-# `boot` в проекте, где при генерации выбрана подпись; в корневом workspace её включают
-# `cargo xtask lint`/`test host`, чтобы всё это проверялось и на хосте.
-# Проверяет `salty` напрямую, а не `verify_and_mark_updated` из embassy-boot:
-# тот живёт в апдейтере приложения, а проверка — в bootloader'е.
-signed = ["dep:salty"]
 
 [dependencies]
 ports = { workspace = true }
@@ -40,7 +34,6 @@ embedded-storage-async = { workspace = true }
 # Хранилище настроек (settings.rs) — async API, отсюда и мост в flash.rs.
 sequential-storage = { workspace = true }
 embassy-sync = { workspace = true }
-salty = { workspace = true, optional = true }
 # {%- if protocol == "modbus" or protocol == "protobuf" %}
 # Транспорты поверх потока байтов `embedded_io_async::{Read, Write}` —
 # `modbus::{Rtu, Tcp}` и `cobs::Cobs`; CRC кадра — у обоих.
@@ -71,11 +64,19 @@ embedded-can = { workspace = true }
 defmt = { workspace = true, optional = true }
 
 [dev-dependencies]
+# Сквозной тест `ota`: то, что пишет `Updater::signed`, находит проверка
+# bootloader'а (`domain::ota::boot::screen_update`). Подписывает `salty`, как
+# `cargo xtask build`. Циклическая dev-зависимость (у `domain` она на `adapters`)
+# cargo разрешена: в обычную сборку ни та ни другая не попадает.
+domain = { path = "../domain", features = ["signed"] }
+salty = { workspace = true }
 # Исполнитель для async-тестов над флешем в памяти (`#[tokio::test]`); фичи —
 # в корневом Cargo.toml.
 tokio = { workspace = true }
+# {%- if protocol == "modbus" or protocol == "protobuf" %}
 # Property-тесты кадрирования: любое дробление потока и любой мусор.
 proptest = { workspace = true }
+# {%- endif %}
 # {%- if interface == "tcp" or interface == "udp" or interface == "usb" %}
 # Сетевые и USB-тесты: стеки `embassy-net`/`embassy-usb` ждут таймеров и
 # критической секции — на хосте их дают драйвер времени `mock-driver` и

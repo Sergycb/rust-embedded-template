@@ -1,15 +1,20 @@
-//! Modbus: slave и master на уровне PDU — функция и данные — поверх
-//! транспортов [`ports::ModbusServer`] и [`ports::ModbusClient`].
+//! Modbus: slave на уровне PDU — функция и данные — поверх транспорта
+//! [`ports::ModbusServer`].
+// {%- if modbus_master == "true" %}
+//! Master — тоже на уровне PDU, поверх транспорта [`ports::ModbusClient`].
+// {%- endif %}
 //!
 //! Транспорт — RTU поверх UART, TCP или UDP — подставляет compose-site
 //! (`adapters::modbus::{Rtu, Tcp, Udp}`); здесь про него ничего не известно:
 //! кадр, CRC, заголовок MBAP и пропуск битых кадров — дело транспорта.
 //! Данные slave'а — порт [`ports::Registers`], его реализует приложение;
-//! обслуживает транспорт узел графа `MODBUS_SLAVE_FRAG` (ниже). Master — по
-//! функции на запрос, без узла: что опрашивать, как часто и куда
-//! публиковать, решает приложение в своём узле. Разбор PDU —
-//! `rusty-modbus-codec`; кодирование — здесь: оно тривиально, а разбор
-//! чужих байт — то место, где решается надёжность.
+//! обслуживает транспорт узел графа `MODBUS_SLAVE_FRAG` (ниже).
+// {%- if modbus_master == "true" %}
+//! Master — по функции на запрос, без узла: что опрашивать, как часто и куда
+//! публиковать, решает приложение в своём узле.
+// {%- endif %}
+//! Разбор PDU — `rusty-modbus-codec`; кодирование — здесь: оно тривиально, а
+//! разбор чужих байт — то место, где решается надёжность.
 //!
 //! # Почему `rusty-modbus-codec`
 //!
@@ -33,13 +38,16 @@
 /// Slave: обслуживает транспорт, отдавая запросы порту [`ports::Registers`].
 pub mod slave;
 
+// {%- if modbus_master == "true" %}
 /// Master: по функции на запрос, ответ сверяется с запросом.
 pub mod master;
+
+// {%- endif %}
 
 /// Карта регистров по умолчанию — пустая, место под карту устройства.
 mod registers;
 
-pub use registers::Registers;
+pub use registers::EmptyRegisters;
 
 use defmt_or_log::{FormatOrDebug, info, warn};
 use ports::{ModbusServer, ServeError};
@@ -51,10 +59,10 @@ use supervisor::runtime::TaskExit;
 //
 // ```ignore
 // // `bsp::serial::Serial` и `board.serial` — поток байтов UART платы.
-// fragments: [::domain::MODBUS_SLAVE_FRAG<::adapters::modbus::Rtu<bsp::serial::Serial>, ::domain::modbus::Registers> as MODBUS
+// fragments: [::domain::MODBUS_SLAVE_FRAG<::adapters::modbus::Rtu<bsp::serial::Serial>, ::domain::modbus::EmptyRegisters> as MODBUS
 //                 = ::domain::modbus::ModbusSlaveWiring {
 //                     link: ::adapters::modbus::Rtu::new(board.serial),
-//                     regs: ::domain::modbus::Registers,
+//                     regs: ::domain::modbus::EmptyRegisters,
 //                     unit: 1,
 //                 }];
 // ```
@@ -150,7 +158,7 @@ supervisor::supervisor_fragment! {
             /// Транспорт — `adapters::modbus::{Rtu, Tcp, Udp}` над интерфейсом платы.
             LINK: local L = inputs.link,
             /// Данные устройства — реализация `ports::Registers` (по умолчанию —
-            /// пустая карта `domain::modbus::Registers`).
+            /// пустая карта `domain::modbus::EmptyRegisters`).
             REGS: local R = inputs.regs,
             /// Адрес slave'а на шине, 1..=247.
             UNIT: u8 = inputs.unit
@@ -204,10 +212,13 @@ mod fakes {
     use std::collections::VecDeque;
 
     use ports::{
-        Bits, BitsMut, Exception, MasterError, ModbusClient, ModbusServer, Received, Registers,
-        ServeError, Words, WordsMut,
+        Bits, BitsMut, Exception, ModbusServer, Received, Registers, ServeError, Words, WordsMut,
     };
+    // {%- if modbus_master == "true" %}
+    use ports::{MasterError, ModbusClient};
+    // {%- endif %}
 
+    // {%- if modbus_master == "true" %}
     /// Транспорт master'а: записывает запросы, на первый обмен отвечает
     /// `reply`, без него — концом потока.
     #[derive(Default)]
@@ -251,6 +262,7 @@ mod fakes {
             std::future::ready(Ok(()))
         }
     }
+    // {%- endif %}
 
     /// Транспорт slave'а: отдаёт заранее заданные запросы, затем — конец
     /// потока, а после него ждёт следующего запроса вечно, как настоящий
@@ -316,6 +328,8 @@ mod fakes {
         /// Каждый вызов записи регистров: начало и значения — по нему тест
         /// видит, что многорегистровая запись пришла одним вызовом.
         pub(super) writes: Vec<(u16, Vec<u16>)>,
+        /// Сколько раз карту читали (coils и holding).
+        pub(super) reads: usize,
     }
 
     /// Диапазон `start..start + len` внутри карты из 16 элементов.
@@ -335,6 +349,7 @@ mod fakes {
             start: u16,
             mut out: BitsMut<'_>,
         ) -> impl Future<Output = Result<(), Exception>> {
+            self.reads += 1;
             std::future::ready(range(start, out.len()).map(|range| {
                 for (i, &value) in (0..).zip(&self.coils[range]) {
                     out.set(i, value);
@@ -347,6 +362,7 @@ mod fakes {
             start: u16,
             mut out: WordsMut<'_>,
         ) -> impl Future<Output = Result<(), Exception>> {
+            self.reads += 1;
             std::future::ready(range(start, out.len()).map(|range| {
                 for (i, &value) in (0..).zip(&self.holding[range]) {
                     out.set(i, value);

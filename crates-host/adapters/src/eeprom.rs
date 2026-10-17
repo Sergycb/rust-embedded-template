@@ -24,6 +24,10 @@
 
 use embedded_storage::nor_flash::{ErrorType, NorFlashError, NorFlashErrorKind};
 
+/// Слово записи EEPROM: единица, кратность которой требует `write`, и шаг, которым
+/// `rewrite` сравнивает старое с новым.
+const WORD: u32 = 4;
+
 /// Побайтный доступ к EEPROM. Методы берут `&self`: реализация в `bsp` берёт
 /// общий флеш под замком на каждую операцию.
 pub trait EepromAccess {
@@ -80,12 +84,10 @@ impl<'a, A: EepromAccess> Eeprom<'a, A> {
     /// Страница «стирания». Своей у EEPROM нет; 128 байт — компромисс:
     /// `sequential-storage` нужны минимум две страницы, и под хранилище
     /// годится EEPROM от 256 байт (у STM32L010F4/K4 её всего 128 — им хук
-    /// EEPROM не предлагает, см. `MIN_SIZE`); полное стирание страницы — 32
+    /// EEPROM не предлагает: границу, 2 * `PAGE` = 256 байт, проверяет хук
+    /// генерации в `chip-select.rhai`); полное стирание страницы — 32
     /// записи слова, около 0,1 с у L0.
     pub const PAGE: u32 = 128;
-
-    /// Меньше двух страниц `sequential-storage` не берёт.
-    pub const MIN_SIZE: u32 = 2 * Self::PAGE;
 
     /// Оборачивает доступ к EEPROM.
     #[must_use]
@@ -123,8 +125,6 @@ impl<'a, A: EepromAccess> Eeprom<'a, A> {
     ) -> Result<(), Error<A::Error>> {
         /// Сколько байт читается за раз.
         const CHUNK: u32 = 32;
-        /// Слово записи EEPROM.
-        const WORD: usize = 4;
         let mut done = 0;
         while done < len {
             let size = CHUNK.min(len - done) as usize;
@@ -137,11 +137,17 @@ impl<'a, A: EepromAccess> Eeprom<'a, A> {
             let new = &mut new[..size];
             new.copy_from_slice(old);
             next(done as usize, new);
-            for (index, (word, was)) in new.chunks(WORD).zip(old.chunks(WORD)).enumerate() {
+            for (index, (word, was)) in new
+                .chunks(WORD as usize)
+                .zip(old.chunks(WORD as usize))
+                .enumerate()
+            {
                 if word != was {
                     let at = offset
                         + done
-                        + u32::try_from(index * WORD).ok().ok_or(Error::OutOfBounds)?;
+                        + u32::try_from(index * WORD as usize)
+                            .ok()
+                            .ok_or(Error::OutOfBounds)?;
                     self.eeprom.write(at, word).map_err(Error::Device)?;
                 }
             }
@@ -181,7 +187,7 @@ impl<A: EepromAccess> embedded_storage_async::nor_flash::ReadNorFlash for Eeprom
 impl<A: EepromAccess> embedded_storage_async::nor_flash::NorFlash for Eeprom<'_, A> {
     /// Слово: хранилище пишет кусками этой кратности, а EEPROM словом
     /// записывает быстрее, чем побайтно.
-    const WRITE_SIZE: usize = 4;
+    const WRITE_SIZE: usize = WORD as usize;
     const ERASE_SIZE: usize = Self::PAGE as usize;
 
     /// Сырой ноль — это логическое `0xFF`, то есть «стёрто».
@@ -203,7 +209,7 @@ impl<A: EepromAccess> embedded_storage_async::nor_flash::NorFlash for Eeprom<'_,
         offset: u32,
         bytes: &[u8],
     ) -> impl Future<Output = Result<(), Self::Error>> {
-        let result = self.check(offset, bytes.len(), 4).and_then(|()| {
+        let result = self.check(offset, bytes.len(), WORD).and_then(|()| {
             let len = u32::try_from(bytes.len()).ok().ok_or(Error::OutOfBounds)?;
             self.rewrite(offset, len, |done, raw| {
                 for (cell, byte) in raw.iter_mut().zip(&bytes[done..]) {
@@ -329,6 +335,32 @@ mod tests {
         assert!(flash.write(2, &[0; 4]).await.is_err(), "не по слову");
         assert!(flash.write(512, &[0; 4]).await.is_err(), "за границей");
         assert_eq!(flash.capacity(), 512);
+    }
+
+    /// Объём не кратен странице: лишний хвост хранилищу не отдаётся и не
+    /// читается.
+    #[tokio::test]
+    async fn usable_rounds_down_to_a_whole_page() {
+        let eeprom = MemEeprom::new(300);
+        let mut flash = Eeprom::new(&eeprom);
+
+        assert_eq!(Eeprom::new(&eeprom).usable(), 256);
+        assert_eq!(flash.capacity(), 256);
+        assert!(
+            flash.read(252, &mut [0; 8]).await.is_err(),
+            "хвост за usable"
+        );
+        assert!(flash.write(256, &[0; 4]).await.is_err(), "хвост за usable");
+    }
+
+    /// Обратный диапазон стирания — отказ, а не переполнение вычитания.
+    #[tokio::test]
+    async fn erase_with_to_below_from_is_refused() {
+        let eeprom = MemEeprom::new(512);
+        let mut flash = Eeprom::new(&eeprom);
+
+        assert!(flash.erase(256, 128).await.is_err());
+        assert_eq!(*eeprom.writes.borrow(), 0);
     }
 
     /// Главное: хранилище настроек работает поверх EEPROM с завода, без

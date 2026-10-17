@@ -141,7 +141,7 @@ sequential-storage     = { version = "8.0.1", default-features = false }
 embedded-io-async      = { version = "0.7.0" }
 # {%- endif %}
 # {%- if protocol == "modbus" %}
-# Разбор PDU Modbus: запросы на стороне slave, ответы на стороне master.
+# Разбор PDU Modbus: запросы на стороне slave (и ответы на стороне master, если он выбран).
 # Выбран из десятка кандидатов прогоном одних и тех же проверок по спецификации
 # и фаззингом — обоснование в `//!` модуля `domain::modbus`. `-types` — его словарь
 # (`ExceptionCode`, `Address`); тянет `zerocopy` (MIT/Apache/BSD).
@@ -206,7 +206,7 @@ zencan-build           = { version = "0.0.5" }
 # `embassy-stm32` — та же версия 0.4.
 embedded-can           = { version = "0.4.1" }
 # {%- endif %}
-# Проверка подписи образа — под фичей `adapters/signed`. Из двух реализаций,
+# Проверка подписи образа — под фичей `domain/signed`. Из двух реализаций,
 # которые понимает embassy-boot, взята меньшая: `ed25519-dalek` тянет
 # `curve25519-dalek` с `sha2`, salty самодостаточен и написан под
 # микроконтроллеры. `slow-motion` — портируемая tweetnacl-реализация вместо
@@ -218,10 +218,6 @@ salty                  = { version = "0.3.0", default-features = false, features
 # разбиении образа на куски и любой ширине слова, а не на нескольких
 # выбранных руками. Только `[dev-dependencies]` `domain`.
 proptest               = { version = "1.0.0" }
-# Parametric tests: одна фикстура — несколько сценариев без дублирования
-# тела (`domain::ota::update::apply_signed`: длина, занятость, версия, отказ
-# флеша — каждый своим кейсом). Только `[dev-dependencies]` `domain`.
-rstest                 = { version = "0.18.0" }
 # Snapshot tests: точный вид строк отчёта `cargo xtask build` фиксируется
 # целиком, а не набором `contains`. Только `[dev-dependencies]` `xtask`.
 insta                  = { version = "1.34.0", default-features = false }

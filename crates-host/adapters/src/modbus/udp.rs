@@ -1,9 +1,11 @@
 //! Modbus UDP: заголовок MBAP и PDU, по кадру в датаграмме.
 
-use ports::{
-    FrameLink, LinkError, MAX_PDU, MasterError, ModbusClient, ModbusServer, Received, ServeError,
-};
+use ports::{FrameLink, LinkError, MAX_PDU, ModbusServer, Received, ServeError};
 
+// {%- if modbus_master == "true" %}
+use ports::{MasterError, ModbusClient};
+
+// {%- endif %}
 use super::mbap::{self, HEADER, Header, MAX_ADU};
 
 /// Сколько потерянных датаграмм подряд терпит приём, прежде чем объявить
@@ -18,18 +20,26 @@ const MAX_LOST_IN_A_ROW: u8 = 32;
 /// адрес помнит реализация `link`, порт его не передаёт.
 ///
 /// Битая датаграмма (короче заголовка, длина в MBAP не совпала с
-/// датаграммой, чужой протокол) пропускается, master пропускает и ответ с
-/// чужим номером транзакции. Потерянный ответ slave'а
-/// ([`LinkError::Lost`] на отправке) — как помеха на линии: master
-/// повторит запрос. Slave получает любой запрос как адресованный ему, 0xFF
-/// (см. [модуль](super)).
+/// датаграммой, чужой протокол) пропускается.
+// {%- if modbus_master == "true" %}
+/// Master пропускает и ответ с чужим номером транзакции.
+// {%- endif %}
+/// Потерянный ответ slave'а ([`LinkError::Lost`] на отправке) — как помеха на
+/// линии, не отказ.
+// {%- if modbus_master == "true" %}
+/// Master повторит запрос.
+// {%- endif %}
+/// Slave получает любой запрос как адресованный ему, 0xFF (см.
+/// [модуль](super)).
 #[derive(Debug)]
 pub struct Udp<L> {
     link: L,
     /// Датаграмма — принятая или собираемая к отправке.
     buf: [u8; MAX_ADU],
-    /// Номер транзакции: master — последнего запроса, slave — последнего
-    /// принятого (им подписан ответ).
+    /// Номер транзакции последнего принятого запроса — им подписан ответ.
+    // {%- if modbus_master == "true" %}
+    /// У master — последнего отправленного: по нему ищется ответ.
+    // {%- endif %}
     tid: u16,
     /// Адрес из последнего принятого запроса — slave повторяет его в ответе.
     unit: u8,
@@ -103,6 +113,7 @@ impl<L: FrameLink> ModbusServer for Udp<L> {
     }
 }
 
+// {%- if modbus_master == "true" %}
 impl<L: FrameLink> ModbusClient for Udp<L> {
     type Error = LinkError<L::Error>;
 
@@ -143,6 +154,7 @@ impl<L: FrameLink> ModbusClient for Udp<L> {
             .map_err(MasterError::Io)
     }
 }
+// {%- endif %}
 
 #[cfg(test)]
 mod tests {
@@ -174,6 +186,7 @@ mod tests {
         ));
     }
 
+    // {%- if modbus_master == "true" %}
     #[tokio::test]
     async fn client_skips_stale_transactions() {
         let mut udp = Udp::new(Datagrams::with([
@@ -212,9 +225,10 @@ mod tests {
             "приём не остановился на пределе"
         );
     }
+    // {%- endif %}
 
     proptest::proptest! {
-        /// Какая бы датаграмма ни пришла — ни slave, ни master не паникуют.
+        /// Какая бы датаграмма ни пришла — транспорт не паникует.
         #[test]
         fn never_panics(datagram in proptest::collection::vec(proptest::num::u8::ANY, 0..300)) {
             let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
@@ -222,8 +236,10 @@ mod tests {
                 let mut buf = [0; MAX_PDU];
                 let mut udp = Udp::new(Datagrams::with([Ok(datagram.clone())]));
                 let _ignored = udp.recv(&mut buf).await;
+                // {%- if modbus_master == "true" %}
                 let mut udp = Udp::new(Datagrams::with([Ok(datagram)]));
                 let _ignored = udp.exchange(1, &[0x03, 0, 0, 0, 1], &mut buf).await;
+                // {%- endif %}
             });
         }
     }

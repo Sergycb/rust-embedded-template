@@ -40,5 +40,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Config::new().max_bytes(ERROR_TEXT_BYTES),
     );
     generator.compile_fdset_file(&descriptor_path, out.join("host.rs"))?;
+
+    // Те же ёмкости — константами крейта: тот, кто кладёт в поле строку своей
+    // длины (`domain::host::Service` — версию), сверяет её на этапе компиляции
+    // с `proto::VERSION_BYTES`, а не узнаёт об обрезке на проводе.
+    std::fs::write(
+        out.join("limits.rs"),
+        format!(
+            "/// Ёмкость `Info.version`, байт (`build.rs`).
+             pub const VERSION_BYTES: usize = {VERSION_BYTES};
+             /// Ёмкость `Error.text`, байт (`build.rs`).
+             pub const ERROR_TEXT_BYTES: usize = {ERROR_TEXT_BYTES};
+"
+        ),
+    )?;
     Ok(())
 }

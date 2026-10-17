@@ -7,7 +7,7 @@
 /// Это отправная точка: проект описывает здесь свою карту — какие coils и
 /// регистры видны по шине и что делать при записи (применить уставку,
 /// отправить событие задаче), реализуя нужные методы трейта.
-#[derive(Debug, Default)]
-pub struct Registers;
+#[derive(Debug, Default, Clone, Copy)]
+pub struct EmptyRegisters;
 
-impl ports::Registers for Registers {}
+impl ports::Registers for EmptyRegisters {}

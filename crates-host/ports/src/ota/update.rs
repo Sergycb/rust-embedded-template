@@ -9,11 +9,18 @@
 //!
 //! [`PendingImage`](crate::PendingImage) — то, что приложение оставляет
 //! bootloader'у о принятом подписанном образе; пишет его `domain::ota::update`,
-//! читает `adapters::ota::screen_update` в bootloader'е. Формат здесь, потому
+//! читает `domain::ota::boot::screen_update` в bootloader'е. Формат здесь, потому
 //! что обе стороны обязаны понимать его одинаково.
 
-/// Обновление прошивки: то, что нужно логике приёма и применения образа.
+/// Самое широкое слово записи среди STM32 — тридцать два байта (H7).
 ///
+/// `embassy-boot` требует буфер ровно в `STATE::WRITE_SIZE` байт с
+/// выравниванием флеша; буфер держится на максимум, а `embassy-boot` отдаётся
+/// срез нужной длины — так адаптер обновления и решение bootloader'а
+/// (`domain::ota::boot`) остаются generic, не зная слова конкретного чипа.
+pub const MAX_WRITE_SIZE: usize = 32;
+
+/// Обновление прошивки: то, что нужно логике приёма и применения образа.
 #[must_use]
 pub trait FirmwareUpdate {
     /// Отказ флеша или состояние, в котором операция запрещена (например,
@@ -214,6 +221,9 @@ impl PendingImage {
     }
 }
 
+// Запись идёт одним куском: её длина обязана быть кратна самому широкому слову.
+const _: () = assert!(PendingImage::LEN.is_multiple_of(MAX_WRITE_SIZE));
+
 /// Чем может закончиться применение подписанного обновления
 /// (`domain::ota::update::apply_signed`).
 ///
@@ -240,7 +250,7 @@ pub enum UpdateError<E> {
     #[error("раздел обновления занят образом, в который устройство откатывается")]
     Busy,
     /// Образ не новее текущего — попытка отката. Обе версии в упакованном
-    /// виде, разобрать их обратно умеет `domain::ota::version::unpack`.
+    /// виде (см. `domain::ota::version`).
     #[error("отклонён откат: текущая версия {current}, предложенная {incoming}")]
     Rollback { current: u32, incoming: u32 },
     /// Всё, что приходит из адаптера: отказ флеша, негодное состояние.
@@ -251,5 +261,37 @@ pub enum UpdateError<E> {
 impl<E> From<E> for UpdateError<E> {
     fn from(error: E) -> Self {
         Self::Flash(error)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pending_image_round_trips() {
+        let image = PendingImage {
+            len: 0x0001_2345,
+            signature: [0xA5; 64],
+        };
+        let bytes = image.to_bytes();
+        assert_eq!(bytes.len(), PendingImage::LEN);
+        assert_eq!(PendingImage::from_bytes(&bytes), Some(image));
+    }
+
+    #[test]
+    fn foreign_magic_and_erased_flash_are_not_a_record() {
+        let mut bytes = PendingImage {
+            len: 1,
+            signature: [7; 64],
+        }
+        .to_bytes();
+        bytes[0] ^= 1;
+        assert_eq!(PendingImage::from_bytes(&bytes), None, "чужая магия");
+        assert_eq!(
+            PendingImage::from_bytes(&[0xFF; PendingImage::LEN]),
+            None,
+            "стёртая страница"
+        );
     }
 }

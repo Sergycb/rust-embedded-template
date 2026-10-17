@@ -25,8 +25,11 @@ pub mod host;
 // {%- endif %}
 // {%- if protocol == "modbus" %}
 
-/// Modbus: slave над портом `ports::Registers` и master — поверх
-/// транспортов `ports::ModbusServer`/`ports::ModbusClient` — см. модуль.
+/// Modbus: slave над портом `ports::Registers` поверх транспорта
+/// `ports::ModbusServer` — см. модуль.
+// {%- if modbus_master == "true" %}
+/// Master — функции поверх `ports::ModbusClient`.
+// {%- endif %}
 pub mod modbus;
 // {%- endif %}
 

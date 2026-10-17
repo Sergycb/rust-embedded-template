@@ -55,6 +55,14 @@ pub const STORE_CAPACITY: usize = 96;
 /// `adapters::settings`.
 const READ_SCRATCH: usize = 128;
 
+// Элемент хранилища — 4 байта ключа и значение до `STORE_CAPACITY`, дополненные
+// до слова флеша (не шире `MAX_WRITE_SIZE`): иначе сохранённые объекты
+// записываются, а прочитать их при старте нечем.
+const _: () = assert!(
+    READ_SCRATCH >= (4 + STORE_CAPACITY).next_multiple_of(ports::MAX_WRITE_SIZE),
+    "READ_SCRATCH не вмещает самый большой элемент STORE_CAPACITY"
+);
+
 /// Сохранённые объекты и то, что колбэки стека передали узлу на запись.
 ///
 /// Живёт в кадре задачи ([`run`](crate::canopen::run)): колбэки — замыкания над ним, стек держит их
@@ -199,5 +207,119 @@ where
             Ok(()) => info!("canopen: адрес {} сохранён", raw),
             Err(err) => warn!("canopen: адрес не сохранён: {:?}", &err),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::*;
+
+    /// Хранилище в памяти; `fail` — каждый вызов отказывает.
+    #[derive(Default)]
+    struct Memory {
+        items: HashMap<u32, Vec<u8>>,
+        fail: bool,
+    }
+
+    impl SettingsStorage for Memory {
+        type Error = &'static str;
+
+        fn read<'a>(
+            &mut self,
+            key: u32,
+            scratch: &'a mut [u8],
+        ) -> impl Future<Output = Result<Option<&'a [u8]>, Self::Error>> {
+            let outcome = if self.fail {
+                Err("отказ")
+            } else if let Some(value) = self.items.get(&key) {
+                // Как `sequential-storage`: ключ и значение — в буфер.
+                match scratch.get_mut(..4 + value.len()) {
+                    Some(item) => {
+                        item[4..].copy_from_slice(value);
+                        Ok(Some(&item[4..]))
+                    }
+                    None => Err("буфер меньше элемента"),
+                }
+            } else {
+                Ok(None)
+            };
+            std::future::ready(outcome)
+        }
+
+        fn write(
+            &mut self,
+            key: u32,
+            value: &[u8],
+        ) -> impl Future<Output = Result<(), Self::Error>> {
+            self.items.insert(key, value.to_vec());
+            std::future::ready(Ok(()))
+        }
+    }
+
+    #[test]
+    fn store_over_capacity_keeps_nothing() {
+        let data = [7; STORE_CAPACITY + 1];
+        let mut persisted = Persisted::new();
+        persisted.store(&mut &data[..], data.len());
+        assert_eq!((persisted.len, persisted.objects_dirty), (0, false));
+    }
+
+    #[test]
+    fn store_at_capacity_is_kept_and_dirty() {
+        let data = [7; STORE_CAPACITY];
+        let mut persisted = Persisted::new();
+        persisted.store(&mut &data[..], data.len());
+        assert_eq!(
+            (persisted.len, persisted.objects_dirty),
+            (STORE_CAPACITY, true)
+        );
+    }
+
+    #[tokio::test]
+    async fn load_of_a_too_large_value_restores_nothing() {
+        let mut settings = Memory::default();
+        settings
+            .items
+            .insert(OBJECTS_KEY, vec![1; STORE_CAPACITY + 1]);
+        let persisted = RefCell::new(Persisted::new());
+        assert_eq!(load(&persisted, &mut settings).await, None);
+        assert_eq!(persisted.borrow().len, 0);
+    }
+
+    #[tokio::test]
+    async fn load_of_a_stored_value_and_address() {
+        let mut settings = Memory::default();
+        settings.items.insert(OBJECTS_KEY, vec![1, 2, 3]);
+        settings.items.insert(NODE_ID_KEY, vec![9]);
+        let persisted = RefCell::new(Persisted::new());
+        let node_id = load(&persisted, &mut settings).await;
+        assert_eq!(node_id.map(|id| id.raw()), Some(9));
+        assert_eq!(&persisted.borrow().objects[..3], [1, 2, 3]);
+        assert_eq!(persisted.borrow().len, 3);
+    }
+
+    #[tokio::test]
+    async fn load_survives_read_errors() {
+        let mut settings = Memory {
+            fail: true,
+            ..Memory::default()
+        };
+        let persisted = RefCell::new(Persisted::new());
+        assert_eq!(load(&persisted, &mut settings).await, None);
+        assert_eq!(persisted.borrow().len, 0);
+    }
+
+    #[tokio::test]
+    async fn save_writes_once_and_clears_the_flags() {
+        let mut settings = Memory::default();
+        let persisted = RefCell::new(Persisted::new());
+        persisted.borrow_mut().store(&mut &[4, 5][..], 2);
+        save(&persisted, &mut settings).await;
+        assert_eq!(settings.items.get(&OBJECTS_KEY), Some(&vec![4, 5]));
+        settings.items.clear();
+        save(&persisted, &mut settings).await;
+        assert!(settings.items.is_empty(), "второй раз писать нечего");
     }
 }

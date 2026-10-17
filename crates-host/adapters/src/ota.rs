@@ -7,11 +7,11 @@
 //! состояние bootloader'а, подтверждение образа, пометка обмена — это
 //! [`Updater`](crate::ota::Updater), реализация порта `ports::FirmwareUpdate` для приложения, над
 //! **асинхронными** разделами: за ними может стоять и внутренний флеш, и
-//! внешняя микросхема на SPI. И — под фичей `signed` — проверка подписи
-//! нового образа, которую зовёт bootloader (`screen_update`, над
-//! блокирующими разделами: bootloader без исполнителя). Чего нет: ни порядка
-//! проверок при применении (`domain::ota::update`), ни буферизации до слова
-//! (`domain::ota::download`) — это логика, а здесь только доступ к разделам.
+//! внешняя микросхема на SPI. Чего нет: ни решения bootloader'а и проверки
+//! подписи нового образа (`domain::ota::boot`, над блокирующими разделами:
+//! у bootloader'а нет исполнителя), ни порядка проверок при применении
+//! (`domain::ota::update`), ни буферизации до слова (`domain::ota::download`) —
+//! это логика, а здесь только доступ к разделам.
 //!
 //! # Про подтверждение: без него обновление живёт один запуск
 //!
@@ -24,8 +24,6 @@
 //! работоспособность). Пока образ не подтверждён, отказывают и `prepare`, и
 //! `write`: в `DFU` тогда лежит образ, куда откатываться, и затирать его нельзя.
 
-mod boot;
-
 use embassy_boot::{AlignedBuffer, FirmwareState, FirmwareUpdater, FirmwareUpdaterConfig, State};
 use embedded_storage::nor_flash::NorFlashErrorKind;
 use embedded_storage_async::nor_flash::NorFlash;
@@ -33,18 +31,9 @@ use ports::FirmwareUpdate;
 // Тип возвращается портом, поэтому называть его должно быть чем — иначе
 // пользователю пришлось бы объявлять прямую зависимость на `embassy-boot`
 // только ради имени в сигнатуре своей функции.
-pub use embassy_boot::FirmwareUpdaterError as Error;
+use embassy_boot::FirmwareUpdaterError as Error;
 
-pub use boot::{BootPlan, boot_plan};
-#[cfg(feature = "signed")]
-pub use boot::{Rejection, Screening, screen_update};
-
-/// Самое широкое слово записи среди STM32 — тридцать два байта (H7).
-///
-/// `embassy-boot` требует буфер ровно в `STATE::WRITE_SIZE` байт с
-/// выравниванием флеша; держится буфер на максимум, а апдейтеру отдаётся срез
-/// нужной длины — так адаптер остаётся generic, не зная слова конкретного чипа.
-pub const MAX_WRITE_SIZE: usize = 32;
+pub use ports::MAX_WRITE_SIZE;
 
 /// Доступ к разделам обновления.
 pub struct Updater<DFU: NorFlash, STATE: NorFlash> {
@@ -93,6 +82,13 @@ impl<DFU: NorFlash, STATE: NorFlash> Updater<DFU, STATE> {
     /// запись для bootloader'а; обычная подготовка её не трогает, а оставь её
     /// нестёртой — запись легла бы поверх остатков прошлого обмена. Цена —
     /// ещё одно стирание страницы на обновление (на F4 — сектор 128 KiB).
+    ///
+    /// # Panics
+    ///
+    /// Паникует, если `capacity` не кратна странице стирания `DFU` или за ней
+    /// не помещается запасная страница: запись для bootloader'а легла бы мимо
+    /// раздела. Раскладку считает генерация, поэтому падение случится на
+    /// первом же запуске.
     pub fn signed(dfu: DFU, state: STATE, capacity: u32) -> Self {
         const {
             assert!(
@@ -100,6 +96,16 @@ impl<DFU: NorFlash, STATE: NorFlash> Updater<DFU, STATE> {
                 "запись для bootloader'а не кратна слову записи DFU"
             );
         }
+        let page = DFU::ERASE_SIZE as u64;
+        assert!(
+            u64::from(capacity).is_multiple_of(page),
+            "размер ACTIVE ({capacity}) не кратен странице стирания DFU ({page}) — проверьте memory.x"
+        );
+        assert!(
+            u64::from(capacity) + page <= dfu.capacity() as u64,
+            "в DFU ({}) не помещается ACTIVE ({capacity}) и запасная страница ({page}) — проверьте memory.x",
+            dfu.capacity()
+        );
         Self {
             signed: true,
             ..Self::new(dfu, state, capacity)
@@ -253,6 +259,51 @@ mod tests {
         Updater::new(Dfu::erased(), state, 768)
     }
 
+    /// Сквозной путь через порт: `Updater::signed` готовит раздел, образ и
+    /// запись ложатся туда, куда пишет `domain::ota::update::apply_signed`
+    /// (смещение `capacity`), — и bootloader находит их там же.
+    #[tokio::test]
+    async fn what_the_signed_port_writes_is_what_the_bootloader_reads() {
+        use domain::ota::boot::{Screening, screen_update};
+        use ports::PendingImage;
+
+        const SEED: [u8; 32] = [42; 32];
+        let image: Vec<u8> = (0..600u32).map(|i| (i % 251) as u8).collect();
+        let len = u32::try_from(image.len()).expect("образ короткий");
+        let digest = salty::Sha512::new().updated(&image).finalize();
+        let keys = salty::Keypair::from(&SEED);
+        let record = PendingImage {
+            len,
+            signature: keys.sign(&digest).to_bytes(),
+        };
+        let mut u = Updater::signed(Dfu::filled(0x00), State::erased(), 768);
+        u.prepare(len).await.expect("подготовка");
+        let mut padded = image.clone();
+        padded.resize(image.len().next_multiple_of(8), 0xFF);
+        u.write(0, &padded).await.expect("образ");
+        u.write(768, &record.to_bytes()).await.expect("запись");
+        u.mark_updated().await.expect("запросить обмен");
+
+        let screening = screen_update(&mut u.dfu, &mut u.state, 768, &keys.public.to_bytes());
+
+        assert_eq!(screening.expect("проверка"), Screening::Approved);
+    }
+
+    /// Геометрия, при которой запись для bootloader'а легла бы мимо раздела,
+    /// отвергается при сборке адаптера.
+    #[test]
+    #[should_panic(expected = "не кратен странице")]
+    fn signed_refuses_a_capacity_off_the_erase_page() {
+        let _ = Updater::signed(Dfu::erased(), State::erased(), 700);
+    }
+
+    #[test]
+    #[should_panic(expected = "запасная страница")]
+    fn signed_refuses_a_dfu_without_room_for_the_spare_page() {
+        // Вместимость DFU равна `capacity`: за образом страницы под запись нет.
+        let _ = Updater::signed(Dfu::erased(), State::erased(), 1024);
+    }
+
     #[tokio::test]
     async fn prepare_erases_only_the_pages_the_image_needs() {
         let mut u = Updater::new(Dfu::filled(0x00), State::erased(), 768);
@@ -367,14 +418,14 @@ mod tests {
 
 #[cfg(test)]
 mod fakes {
-    //! Флеш в памяти — общий для тестов `Updater` и решения bootloader'а.
+    //! Флеш в памяти для тестов `Updater`.
 
     use embedded_storage::nor_flash::{ErrorType, NorFlash, NorFlashErrorKind, ReadNorFlash};
 
     /// Флеш в памяти с семантикой NOR: стирание страницами по 256 байт в
     /// `0xFF`, запись словами по 8 байт и только «единицы в нули». Готового
     /// мока `NorFlash` в экосистеме нет (`embedded-hal-mock` флеш не
-    /// покрывает), поэтому фейк свой и ровно под тесты `ota` и `ota::boot`.
+    /// покрывает), поэтому фейк свой и ровно под тесты `ota`.
     #[derive(Debug)]
     pub(super) struct MemFlash<const SIZE: usize> {
         pub(super) mem: Vec<u8>,
@@ -440,9 +491,10 @@ mod fakes {
         }
     }
 
-    // `Updater` работает с асинхронными разделами, `screen_update` и обмен
-    // `embassy-boot` — с блокирующими: фейк умеет оба, асинхронные — поверх
-    // блокирующих (готовы с первого `poll`).
+    // `Updater` работает с асинхронными разделами, а сквозной тест передаёт те
+    // же разделы проверке bootloader'а (`domain::ota::boot`) — блокирующей:
+    // фейк умеет оба, асинхронные — поверх блокирующих (готовы с первого
+    // `poll`).
     impl<const SIZE: usize> embedded_storage_async::nor_flash::ReadNorFlash for MemFlash<SIZE> {
         const READ_SIZE: usize = 1;
 

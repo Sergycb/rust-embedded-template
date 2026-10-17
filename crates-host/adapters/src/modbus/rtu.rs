@@ -1,18 +1,25 @@
 //! Кадр Modbus RTU — адрес, PDU, CRC16 — поверх потока байтов.
 
 use crc::{CRC_16_MODBUS, Crc, NoTable};
-use embedded_io_async::{Read, ReadExactError, ReadReady, Write};
-use ports::{MAX_PDU, MasterError, ModbusClient, ModbusServer, Received, ServeError};
+use embedded_io_async::{Read, ReadExactError, Write};
+use ports::{MAX_PDU, ModbusServer, Received, ServeError};
 
-use super::{master_error, serve_error};
+// {%- if modbus_master == "true" %}
+use ports::{MasterError, ModbusClient};
+
+use super::master_error;
+// {%- endif %}
+use super::serve_error;
 
 /// Наибольший кадр RTU: адрес, PDU до 253 байт, CRC.
 const MAX_ADU: usize = MAX_PDU + 3;
 
+// {%- if modbus_master == "true" %}
 /// Сколько байт слива хватит, чтобы убрать опоздавший ответ и хвост битого
 /// кадра, — не больше двух кадров. Предел нужен, чтобы линия, на которой
 /// приём не кончается (шум, второй master), не держала запрос вечно.
 const MAX_DRAIN: usize = 2 * MAX_ADU;
+// {%- endif %}
 
 /// Modbus RTU поверх потока байтов `io` (`BufferedUart` с DE для RS-485).
 ///
@@ -22,6 +29,7 @@ const MAX_DRAIN: usize = 2 * MAX_ADU;
 /// не Illegal Function. Кадры на зарезервированные адреса 248–255
 /// пропускаются.
 ///
+// {%- if modbus_master == "true" %}
 /// Master ([`ModbusClient`]) перед каждым запросом сливает всё, что уже
 /// лежит во входном буфере (`ReadReady` — его реализуют `BufferedUart` и
 /// `RingBufferedUartRx` из `embassy-stm32`): брошенный на таймауте запрос
@@ -30,6 +38,7 @@ const MAX_DRAIN: usize = 2 * MAX_ADU;
 /// запрос, — тот будет прочитан как ответ на новый. Таймаут поэтому стоит
 /// брать с запасом на время ответа самого медленного slave'а.
 ///
+// {%- endif %}
 /// На общей шине RS-485 slave видит и ответы других slave'ов, и чужой ответ
 /// может на время сбить его с границы кадра, пока CRC не выровняет поток.
 #[derive(Debug)]
@@ -84,7 +93,8 @@ impl<T: Read + Write> ModbusServer for Rtu<T> {
     }
 }
 
-impl<T: Read + ReadReady + Write> ModbusClient for Rtu<T> {
+// {%- if modbus_master == "true" %}
+impl<T: Read + embedded_io_async::ReadReady + Write> ModbusClient for Rtu<T> {
     type Error = T::Error;
 
     async fn exchange(
@@ -116,6 +126,7 @@ impl<T: Read + ReadReady + Write> ModbusClient for Rtu<T> {
         self.send(0, request).await
     }
 }
+// {%- endif %}
 
 impl<T: Read> Rtu<T> {
     /// Ждёт кадр запроса с верной CRC в начале `rx`; возвращает его длину.
@@ -151,6 +162,7 @@ impl<T: Read> Rtu<T> {
         self.have -= n;
     }
 
+    // {%- if modbus_master == "true" %}
     /// Принимает один кадр ответа в начало `rx`; возвращает его длину.
     async fn receive(&mut self) -> Result<usize, MasterError<T::Error>> {
         let rx = &mut self.rx;
@@ -177,9 +189,11 @@ impl<T: Read> Rtu<T> {
             Err(MasterError::Crc)
         }
     }
+    // {%- endif %}
 }
 
-impl<T: Read + ReadReady + Write> Rtu<T> {
+// {%- if modbus_master == "true" %}
+impl<T: Read + embedded_io_async::ReadReady + Write> Rtu<T> {
     /// Сливает входной буфер и отправляет кадр запроса.
     async fn send(&mut self, unit: u8, request: &[u8]) -> Result<(), MasterError<T::Error>> {
         self.drain().await?;
@@ -210,6 +224,7 @@ impl<T: Read + ReadReady + Write> Rtu<T> {
         Ok(())
     }
 }
+// {%- endif %}
 
 /// Собирает в `tx` кадр «`unit`, `pdu`, CRC»; возвращает его длину.
 fn frame(tx: &mut [u8; MAX_ADU], unit: u8, pdu: &[u8]) -> usize {
@@ -240,6 +255,7 @@ fn request_len(header: &[u8]) -> usize {
     }
 }
 
+// {%- if modbus_master == "true" %}
 /// Сколько первых байт ответа нужно, чтобы узнать длину кадра; `None` —
 /// функция, на которую master не отправляет запросов.
 fn response_header(fc: u8) -> Option<usize> {
@@ -262,6 +278,7 @@ fn response_len(header: &[u8]) -> usize {
         _ => 8,
     }
 }
+// {%- endif %}
 
 /// CRC-16/MODBUS: полином 0xA001 (отражённый 0x8005), начальное значение
 /// 0xFFFF. Без таблицы: 512 байт флеша не стоят выигрыша на кадрах до 256
@@ -287,8 +304,10 @@ pub(super) fn seal(buf: &mut [u8], len: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    // {%- if modbus_master == "true" %}
     use core::convert::Infallible;
 
+    // {%- endif %}
     use super::*;
     use crate::modbus::fakes::{Duplex, rtu_frame as frame};
 
@@ -330,6 +349,7 @@ mod tests {
         assert_eq!(request_header(0x08), None);
     }
 
+    // {%- if modbus_master == "true" %}
     #[test]
     fn response_lengths() {
         assert_eq!(response_header(0x83), Some(2));
@@ -339,6 +359,7 @@ mod tests {
         assert_eq!(response_len(&[1, 0x10]), 8);
         assert_eq!(response_header(0x2B), None);
     }
+    // {%- endif %}
 
     /// Все запросы из `input` до конца потока: адрес и PDU.
     async fn requests(input: &[u8]) -> Vec<(u8, Vec<u8>)> {
@@ -387,6 +408,7 @@ mod tests {
         assert_eq!(units, [2, 0]);
     }
 
+    // {%- if modbus_master == "true" %}
     /// Обмен по RTU с `reply` в ответ; возвращает исход и отправленное.
     async fn exchange(
         unit: u8,
@@ -441,6 +463,7 @@ mod tests {
         assert_eq!(rtu.broadcast(&[0x06, 0, 1, 0, 2]).await, Ok(()));
         assert_eq!(rtu.io.tx, frame(0, &[0x06, 0, 1, 0, 2]));
     }
+    // {%- endif %}
 
     proptest::proptest! {
         /// Что бы ни пришло по линии — slave не паникует и кончается только
@@ -451,11 +474,13 @@ mod tests {
             rt.block_on(requests(&input));
         }
 
+        // {%- if modbus_master == "true" %}
         /// Какой бы ответ ни пришёл — master не паникует.
         #[test]
         fn client_never_panics(reply in proptest::collection::vec(proptest::num::u8::ANY, 0..300)) {
             let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
             let _ignored = rt.block_on(exchange(1, &[0x03, 0, 0, 0, 4], Duplex::replying(&reply)));
         }
+        // {%- endif %}
     }
 }
