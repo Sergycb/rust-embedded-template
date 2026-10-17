@@ -19,7 +19,8 @@ paths: crates-cross/**
   такой документации место в `docs/`.
 - `app` про `embassy-stm32` не знает — ни `use`, ни строки в манифесте.
 - `bsp` зависит от `ports` и `adapters`, а не от `domain`: типы домена из полей
-  `Board` собирает `app`.
+  `Board` собирает `app`. `boot` зовёт `domain` только при `signed` или
+  `ota=external` и только `domain::ota::boot::{boot_plan, screen_update}`.
 - Логирование только `defmt`; `log` в прошивке не используется.
 - **Если вы в репозитории самого шаблона** (признак — каталог `chip-data-gen/`
   в корне): файлы здесь содержат Liquid и до генерации не являются валидным

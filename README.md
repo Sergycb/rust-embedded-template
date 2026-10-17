@@ -155,7 +155,7 @@ supervisor-графы, watchdog). Вся остальная логика — в 
 Драйвер переезжает из `adapters` в `bsp` только тогда, когда ему перестаёт хватать
 трейтов `embedded-hal`: понадобились `embassy_stm32::peripherals` или статический
 DMA-буфер. До этого момента его место — в `domain`, где он тестируется без железа.
-В `ports` объявлено {% if protocol == "modbus" %}семь трейтов{% elsif protocol == "none" %}три трейта{% else %}пять трейтов{% endif %}. `FirmwareUpdate` и `SettingsStorage`
+В `ports` объявлено {% if protocol == "modbus" %}{% if modbus_master == "true" %}семь{% else %}шесть{% endif %} трейтов{% elsif protocol == "none" %}три трейта{% else %}пять трейтов{% endif %}. `FirmwareUpdate` и `SettingsStorage`
 реализованы в `adapters`, а `Board` отдаёт их готовыми объектами, когда при
 генерации выбраны OTA и раздел настроек. `ImageSource` под свой канал доставки
 образа реализует сам проект.
@@ -165,7 +165,7 @@ UDP-сокет `adapters::net::UdpLink`{% elsif protocol == "protobuf" %}: ег�
 {%- endif %}
 {%- if protocol == "modbus" %} `Registers` — данные устройства, видимые по
 Modbus: его реализует приложение, а обслуживает узел `domain::MODBUS_SLAVE_FRAG`.
-`ModbusServer` и `ModbusClient` — транспорт Modbus под slave'ом и master'ом:
+{% if modbus_master == "true" %}`ModbusServer` и `ModbusClient` — транспорт Modbus под slave'ом и master'ом{% else %}`ModbusServer` — транспорт Modbus под slave'ом{% endif %}:
 {% if interface == "tcp" %}`adapters::modbus::Tcp` — MBAP поверх потока TCP{% elsif interface == "udp" %}`adapters::modbus::Udp` — MBAP в датаграмме UDP{% else %}`adapters::modbus::Rtu` — RTU поверх потока {% if interface == "usb" %}USB CDC{% else %}UART{% endif %}{% endif %}.
 {%- endif %}
 {%- if protocol == "protobuf" %}
@@ -196,8 +196,7 @@ Modbus: его реализует приложение, а обслуживае�
 |---|---|---|
 | `supervisor` | Весь граф embassy-задач одним макросом `supervisor_graph!`: упорядоченный старт по `deps:`, рестарты с backoff, graceful shutdown, передача периферии через `resources:` (переживает перезапуск задачи), почтовые ящики `inbox:`, broadcast `publish:`/`subscribe:`, RPC `request:`/`calls:` и общий watchdog. Заменил связку `embassy-supervisor` + `embassy-task-watchdog` + `ector`, где один и тот же граф описывался тремя независимыми DSL. | `crates-cross/app/src/graph.rs` |
 | `watchdog` | `no_std`-ядро мультиплексора: несколько программных watchdog'ов задач, каждый со своим таймаутом, поверх одного аппаратного. Привязку к железу задаёт единственный трейт `HardwareWatchdog`, и она в шаблоне не только написана (`bsp::wdg::Iwdg` поверх IWDG), но и подключена: имя блока подставлено под ваш чип, объект собирает `Board::new`, а запускает его блок `watchdog:` графа (инициализатор `= board.watchdog.arm()`), он же и кормит. Незапущенный сторож — отдельный тип, и `HardwareWatchdog` реализован только у запущенного, так что забыть `arm()` нельзя. Таймаут — параметр типа, а не аргумент конструктора, поэтому `HARDWARE_TIMEOUT` объявлен честно, и `check_every` короче него проверяет компилятор. Узлы шаблона при этом объявлены наблюдаемыми (`observe`) — их просрочка попадает в лог, а не сбрасывает плату; уберёте слово, получите аппаратную подстраховку. | `crates-cross/bsp/src/wdg.rs` |
-| `bbqueue` | Zero-copy DMA-буфер: grant/commit API, DMA пишет напрямую в backing storage. Не дублирует `embassy_sync::Pipe` (тот copy-based, для обычного межзадачного обмена без DMA). | `docs/buffers.md` |
-| свой `#[global_logger]` над `bbqueue` | UART/любой другой транспорт для `release` без пробника — turnkey-крейта нет: `defmt-bbq` и `defmt-serial` держат `defmt@0.3.x` при `defmt@1.x` у нас (`symbol multiply defined` при реальной проверке), а `defmt-embassy-usbserial` требует `embassy-usb ^0.5` вместо версии, парной к текущей `embassy-stm32`. | `crates-cross/app/src/graph.rs` |
+| свой `#[global_logger]` (например, над `bbqueue` — рецепт в `docs/buffers.md`, зависимости в шаблоне нет) | UART/любой другой транспорт для `release` без пробника — turnkey-крейта нет: `defmt-bbq` и `defmt-serial` держат `defmt@0.3.x` при `defmt@1.x` у нас (`symbol multiply defined` при реальной проверке), а `defmt-embassy-usbserial` требует `embassy-usb ^0.5` вместо версии, парной к текущей `embassy-stm32`. | `crates-cross/app/src/graph.rs` |
 
 Шаблон собирается на обычном исполнителе, который между задачами уходит в `WFE`:
 ядро стоит, тактирование и регуляторы работают. Устройству от батареи нужен режим
@@ -221,10 +220,13 @@ flash и безусловно прыгает в него (`unsafe { bl.load(entr
 автоматически по выбранному чипу — см. «Генерация проекта» выше. На чипах, куда схема не
 помещается, `crates-cross/boot` в проект не входит вовсе — см. там же.
 
-В release-сборке проекта с графом задач bootloader первым делом запускает сторож и
-кормит его на каждом стирании и записи флеша, пока меняет разделы местами. Образ, который
-после прыжка зависнет раньше графа задач, сторож сбросит, не дав ему подтвердить себя, —
-и bootloader откатит его на прежний (`docs/watchdog.md`).
+В release-сборке проекта с графом задач bootloader запускает сторож последним, прямо
+перед прыжком в образ. Образ, который после прыжка зависнет раньше графа задач, сторож
+сбросит, не дав ему подтвердить себя, — и bootloader откатит его на прежний
+(`docs/watchdog.md`). Обмен разделов идёт без сторожа и может длиться сколько нужно.
+Без графа задач сторожа нет ни в bootloader'е, ни в приложении: образ, повисший до
+`mark_booted`, сам не откатится, пока не сбросят питание — откат зависшего образа
+в таком проекте ручной.
 
 ### Обновление прошивки
 
@@ -400,7 +402,7 @@ git tag v1.2.3 && git push origin v1.2.3
 активным. Цена: о не сошедшейся подписи отправитель узнаёт только по тому, что после
 перезагрузки версия осталась прежней, — кода отказа у bootloader'а нет. Логику проверки
 (запись о подписи, отличие нового запроса на обмен от отката) стерегут host-тесты
-`adapters::ota` — с настоящими ключами и настоящим обменом `embassy-boot`; подробности —
+`domain::ota::boot` — с настоящими ключами и настоящим обменом `embassy-boot`; подробности —
 docs/ota.md.
 
 #### Защита от отката
@@ -516,6 +518,10 @@ ST-Link захваченным до переподключения кабеля 
 кода, которому нужны регистры, `host-target` — для сценариев поверх канала связи
 устройства (USB CDC, UART-протокол, сеть).
 
+Подсказка: пока `EXPECTED_SYS_HZ` в `crates-cross/target-tests/tests/test.rs` равна
+`None`, проверка тактирования (`clocks_match_intent`) отключена — тест зелёный без
+проверки; задайте частоту ядра, и он начнёт её стеречь (раздел «Тактирование: дамп при старте и контракт платы»).
+
 Отдельно стоит знать про один host-target тест: `ota_swaps_partitions_and_reverts_unconfirmed_image`
 прогоняет полный цикл обновления — заливает в `DFU` заведомо инертный образ (таблица
 векторов и бесконечный цикл), просит bootloader поменять разделы, проверяет, что тот их
@@ -550,9 +556,12 @@ CDC ACM: устройство `embassy-usb`, узел `USB` в графе{% else
 {%- if interface == "can" %} Прослойка `bsp::can::Bus` — порт `CanBus` поверх
 контроллера — уже там; не хватает только выводов.
 {%- endif %}
-{%- if protocol == "modbus" %} Master Modbus — не узел, а функции
-`domain::modbus::master` поверх `ports::ModbusClient`: что и как часто
-опрашивать, решает узел приложения.
+{%- if modbus_master == "true" %} Master Modbus (вопрос `--define modbus_master=yes`) —
+не узел, а функции `domain::modbus::master` поверх `ports::ModbusClient`: что и как
+часто опрашивать, решает узел приложения.
+{%- elsif protocol == "modbus" %} Master Modbus в проект не входит: он включается ответом
+`--define modbus_master=yes` при генерации (порт `ports::ModbusClient`, функции
+`domain::modbus::master`, клиентская часть транспортов `adapters::modbus`).
 {%- endif %}
 {%- endif %}
 
@@ -576,7 +585,7 @@ USB 47.5 МГц вместо 48, стартует без единой жалоб
 
 ```
 cargo xtask setup                  # тулчейн, probe-rs-tools, flip-link, cargo-плагины из CI
-cargo xtask build                  # cross: debug + release, app.bin, размер, подпись
+cargo xtask build                  # cross: debug + release, app.bin, размер (в т.ч. зона bootloader), подпись
 cargo xtask lint [cross]           # fmt --check + clippy -D warnings (host или cross)
 cargo xtask test [host|target|host-target|all]
 cargo xtask pins [БЛОК|ПИН]        # справочник по чипу
@@ -769,7 +778,10 @@ panicked at crates-cross/app/src/main.rs:194:5:
 
 Основной прогон — то же, что вы запускаете локально: `cargo xtask lint` и
 `test host` на хосте, `lint cross` и `build` для прошивки. Этапы с платой в CI не
-идут: пробника у раннера нет.
+идут: пробника у раннера нет. Сгенерированный проект тянет приватный `rust-lib`, поэтому
+без доступа к нему CI будет красным (`docs/conventions.md`, «Известные, осознанные
+ограничения»). Состав самих джобов — `.github/workflows/*.yml` / `.gitlab-ci.yml`;
+в `AGENTS.md` перечень дан одной строкой.
 
 К host-прогону добавлено покрытие — `cargo llvm-cov`. На GitHub таблица попадает в
 сводку прогона, на GitLab процент показывается рядом с пайплайном, а cobertura-отчёт
@@ -779,11 +791,11 @@ panicked at crates-cross/app/src/main.rs:194:5:
 ```sh
 cargo install cargo-llvm-cov --locked
 cargo llvm-cov nextest --workspace --exclude host-target-tests \
-  --features domain/log,domain/std,adapters/signed --release \
+  --features domain/log,domain/signed --release \
   --ignore-filename-regex 'xtask' --summary-only
 ```
 
-`adapters/signed`, `--release` и `--ignore-filename-regex` — не украшение: без них
+`domain/signed`, `--release` и `--ignore-filename-regex` — не украшение: без них
 локальный прогон считает не то же, что CI, и сравнивать проценты бессмысленно.
 `--release` обязателен ещё и потому, что `llvm-cov` ищет объектные файлы в каталоге
 своего профиля: `cargo-llvm-cov report` без него смотрел бы в `debug/`.
@@ -821,7 +833,7 @@ protection: PR, не трогающий распиновку, его не зап
 
 ### Тесты на плате в CI
 
-Два из четырёх этапов тестирования требуют железа, поэтому на обычных раннерах не
+Два из трёх этапов тестирования требуют железа, поэтому на обычных раннерах не
 идут. Но плата, подключённая к машине с раннером, снимает это ограничение — и джоб
 `Board` (`board:test` на GitLab) прогоняет `test target` и `test host-target` на каждом
 пуше.

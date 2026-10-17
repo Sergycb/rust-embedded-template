@@ -21,6 +21,7 @@
 - `chip-data/` — сгенерированные таблицы, которые хук подключает через `import`
   (каталог в `ignore`; `import` находит его и так): `chips.rhai`, `packages.rhai`,
   `bank_mode.rhai`, `bank_switch.rhai`, `watchdog.rhai`, `cpu_freq_boost.rhai`,
+  `rng.rhai` (линия и клок блока `RNG`: `rng_irq`, `rng_clock`, `rng_source`),
   `interfaces.rhai` (интерфейсы связи, выведенные в корпусе: `usart`, `fdcan`,
   `bxcan`, `eth`, `usb`, `otg` — по ним хук проверит ответ об интерфейсе) и
   `layout/<семейство>.rhai` — раскладка памяти, разложенная по первым двум символам
@@ -57,7 +58,7 @@
 `{{shared_flash}}`, `{{dual_core}}`, `{{bank_mode}}`, `{{erase_zero}}`,
 `{{watchdog_peripheral}}`, `{{cpu_freq_boost}}`, `{{dfu_bank}}`, `{{bank_switch}}`, `{{dual_bank_bit}}` — плейсхолдеры, подставляемые
 Liquid-рендером cargo-generate. Из них в `[placeholders]` объявлены только `ci`, `ota`, `graph`,
-`config` и `signed`; все остальные выставляет `variable::set` в `[hooks].pre`-скрипте
+`config`, `signed` и `modbus_master`; все остальные выставляет `variable::set` в `[hooks].pre`-скрипте
 `chip-select.rhai` — каскадный посимвольный выбор STM32 (семейство → линейка → дальше по
 символу) по списку чипов, одновременно валидных и для `embassy-stm32`, и для
 установленного локально `probe-rs`. Не `init`-хук: init-хуки выполняются ДО резолвинга
@@ -110,12 +111,28 @@ bootloader и `STATE`. Отсюда и второй набор цифр в `MEMO
 Третий такой плейсхолдер — `signed` (подпись OTA-образа). Он ничего не считает, а
 только выключается сам: без OTA подписывать нечего, и «да» приводится к «нет» ещё до
 разбора раскладки; если схема не поместилась во flash — тоже, уже после. В шаблоне он
-управляет фичей `signed` у `adapters` в `boot`, ключом в `crates-cross/boot`
+управляет фичей `signed` у `domain` (проверка подписи — `domain::ota::boot`, ею пользуется `boot`), ключом в `crates-cross/boot`
 (`boot/build.rs`, `OTA_PUBLIC_KEY_IN_IMAGE`, вызов `screen_update`), выбором
 `Updater::signed` в `bsp::ota` и файлом `crates-cross/app/src/image.rs`
 (`FW_VERSION` для `Mode::Signed`; без подписи его удаляет `post-script.rhai`). Подпись проверяет bootloader
-(`adapters::ota::screen_update`), приложение — только длину, занятость и версию
+(`domain::ota::boot::screen_update`), приложение — только длину, занятость и версию
 (`domain::ota::update::apply_signed`), см. docs/ota.md.
+
+`modbus_master` (Modbus master, клиентская половина; по умолчанию `no`) — той же формы:
+строка `yes`/`no` в `[placeholders]`, хук приводит ответ к `"true"`/`"false"`. Смысл он
+имеет только при `protocol=modbus`: с другим протоколом (в том числе `none`) «yes»
+молча становится `"false"`, и master не получают ни protobuf, ни CANopen. Вопрос
+задаётся всегда — `[placeholders]` не умеют условных вопросов (то же у `signed` без OTA
+и `interface` без протокола). «true» оставляет `ports::ModbusClient`/`MasterError`,
+`domain::modbus::master`, клиентские impl'ы транспортов `Rtu`/`Tcp`/`Udp` (в них же
+слив `MAX_DRAIN` RTU и `master_error`) и их тесты; «false» вырезает всё это
+Liquid-блоками `// {%- if modbus_master == "true" %}` … `// {%- endif %}` (в
+комментариях, как и остальные условия в `crates-host`), а `domain/src/modbus/master.rs`
+хук удаляет `file::delete` — только при `protocol=modbus` и «false» (без modbus каталог
+`modbus` уходит целиком). `MAX_LOST_IN_A_ROW` в UDP master'у не принадлежит — им пользуется
+и приём slave'а, поэтому остаётся в обоих вариантах. Тесты —
+`modbus_master_*` в `chip-data-gen/tests/cascade.rs`, конфигурации
+`modbus-master`/`modbus-uart` в `template-check`.
 
 Четвёртый — `graph` (граф задач `supervisor`). Он выключается по размеру: раздел, в
 который линкуется приложение (`ACTIVE` при OTA, иначе весь flash за вычетом настроек),
@@ -252,8 +269,9 @@ feature is not supported on this dual bank chip»).
 (`g4:22`; у L4+/L5 бит зависит от объёма — `bank_switch_bits`) — блок
 `BANK_SWITCH`: версия блока FLASH из метаданных через таблицу `FACTORY_DUAL_BANK` в
 `chip-data-gen` — заводское значение option byte в метаданных нет, оно из документации. Каждый
-вариант собран `template-check` до коммита (`stm32g474re`, `stm32g0b1rc`, `stm32l4r5zi`,
-`stm32l552ze`), на плате — не проверен. В наборе по умолчанию стоит `stm32g474re`.
+вариант входит в набор `default_cases()` в `template-check` (`stm32g474re`,
+`stm32g0b1rc`, `stm32l4r5zi`, `stm32l552ze`; список актуален на момент записи —
+сверяйте с файлом), на плате — не проверен.
 
 Второй банк за разрывом в адресах (`bank2_of` + проверка «вне цепочки» в
 `compute_memory_layout`) — у 36 чипов с фиксированным dual: H742/743/745/747 и H7A3 с
@@ -349,8 +367,8 @@ STM32WB10CC/WB15CC (`erase_value: 0` при другом префиксе, об�
 
 **Файлы у `app` и `boot` разные.** У `app` `FLASH` = `ACTIVE` (приложение линкуется
 именно туда), у `boot` `FLASH` = его собственная зона до `BOOTLOADER_STATE`. Раньше
-писался один и тот же текст с `FLASH` от базы flash — и `cargo xtask flash` (сначала
-boot, потом app) затирал bootloader образом приложения; OTA не работал ни на одном чипе.
+писался один и тот же текст с `FLASH` от базы flash — и прошивка руками (`cargo flash -p boot`, затем
+`cargo run -p app`) затирала бы bootloader образом приложения; OTA не работал ни на одном чипе.
 Смещения `__bootloader_*` в обоих файлах считаются от литерала базы flash, а НЕ от
 `ORIGIN(FLASH)`: их читает `embassy-boot`, работающий с флешем целиком, а `ORIGIN(FLASH)`
 у `app` теперь означает начало `ACTIVE`.
@@ -496,6 +514,24 @@ release-образ не линкуется. Размер — доля RAM (`PANI
 
 ## Проверка изменений в шаблоне
 
+Полный набор перед коммитом в репозитории шаблона — один список. CI шаблона
+(`.github/workflows/template.yml`) гоняет из него подмножество, см. «Что из этого
+делает CI»:
+
+```
+cargo xtask lint          # корневой workspace: fmt --check + clippy -D warnings
+cargo xtask test host     # domain: cargo nextest
+
+cargo fmt    --manifest-path chip-data-gen/Cargo.toml --check
+cargo clippy --manifest-path chip-data-gen/Cargo.toml --all-targets -- -D warnings
+cargo test   --manifest-path chip-data-gen/Cargo.toml --release
+
+cargo run --manifest-path chip-data-gen/Cargo.toml --bin template-check
+```
+
+Последняя строка — полная генерация и сборка проектов (минуты; `--quick` — только
+генерация), единственная проверка `crates-cross` и `chip-info`: ниже о ней.
+
 Репозиторий шаблона нельзя собрать как обычный проект: `crates-cross/Cargo.toml`,
 `crates-cross/.cargo/config.toml`, `crates-cross/bsp/src/board.rs` и `crates-cross/boot/src/main.rs` содержат
 Liquid (`{{...}}` и `{% if %}`), а до рендера это ни валидный TOML, ни валидный Rust —
@@ -505,29 +541,21 @@ rust-analyzer ругается на них прямо в репозитории,
 руками значения, выбрать по одной ветке каждого `{% if %}`, собрать, вернуть всё
 обратно, не забыть проверить `git diff`. Теперь это делает инструмент:
 
-```
-cargo run --manifest-path chip-data-gen/Cargo.toml --bin template-check
-```
-
-Он генерирует проект во временный каталог (`%TEMP%/rust-embedded-template-check/`,
+Команда `template-check` — последняя строка списка выше. Он генерирует проект во временный каталог (`%TEMP%/rust-embedded-template-check/`,
 там же общий кеш сборки — вторая конфигурация не пересобирает то, что от чипа не
-зависит) под каждую из двадцати пяти конфигураций, задевающих разные ветки генерации:
-обычный одноядерный, он же с `ota=no`, чип с выбором банковой схемы, чип, куда OTA не
-помещается (он же — единственный с `IWDG1` вместо `IWDG`), двухъядерный
-(`init_primary` вместо `init`, он же — единственный с `IWDG2`), чип с 2 KiB RAM на
-Cortex-M0+, раздел настроек с OTA на равных секторах и без OTA (оба — в хвосте flash),
-с OTA на неравных (в мелких секторах перед ACTIVE), во внутренней EEPROM (L0/L1) и на
-внешней флеши (слот с заглушкой, на H7 без OTA), подпись образа — с графом задач и без него, и чип, где стёртый флеш
-читается нулями (`flash-erase-zero` у embassy-boot, включает хук на L0/L1), и три с
-`DFU`/`STATE` на внешней флеши (`ota=external`): H7, куда внутренняя схема не
-помещается, — с подписью и настройками на той же микросхеме; F4 с настройками в
-мелких секторах зоны bootloader'а и без графа; L0, где `flash-erase-zero` при этом
-обязан выключиться; и два протокола поверх UART (`protocol`/`interface`): Modbus на G4
-и protobuf на F4 — узел в графе, заглушка `bsp::serial` и транспорт из `adapters`; и
-CANopen на FDCAN (G4) и bxCAN (F4) — `bsp::can::Bus` различается по контроллеру; и
-Modbus TCP на H7 и protobuf UDP на F4 — стек `embassy-net`, узел NET и сокет из
-`adapters::net`; и protobuf по USB CDC на G4 и Modbus RTU по USB CDC на F4 (OTG) — устройство
-`embassy-usb` и узел USB. Дальше
+зависит) под каждую конфигурацию набора `default_cases()` в
+`chip-data-gen/src/bin/template-check.rs` — они задевают разные ветки генерации.
+Список там и есть источник истины (число конфигураций растёт вместе с ветками, здесь
+его не повторяем); для ориентира, что в него входит: одноядерный чип, он же с
+`ota=no`; чип с выбором банковой схемы и чипы с переключением банков; чип, куда
+OTA не помещается (единственный с `IWDG1` вместо `IWDG`); двухъядерный (`init_primary`
+вместо `init`, единственный с `IWDG2`); чип с 2 KiB RAM на Cortex-M0+; раздел
+настроек с OTA на равных и неравных секторах, без OTA, во внутренней EEPROM (L0/L1) и
+на внешней флеши; подпись образа с графом задач и без него; чип, где стёртый флеш
+читается нулями (`flash-erase-zero`); `ota=external` (H7, F4, L0); протоколы и
+интерфейсы (`protocol`/`interface`): Modbus и protobuf поверх UART, CANopen на FDCAN
+и bxCAN, Modbus TCP и protobuf UDP (стек `embassy-net`, узел NET), USB CDC
+(устройство `embassy-usb` и узел USB). Дальше
 проверяет, что не осталось ни одного
 неподставленного плейсхолдера, что состав CI-файлов проекта совпадает с выбранным
 `ci` (см. ниже про `--ci`), и прогоняет в сгенерированном проекте `cargo xtask
@@ -581,7 +609,10 @@ git-зависимостями, которых этому джобу не нуж
 ожидании навсегда.
 
 Флаги: `--quick` — только генерация и проверка плейсхолдеров (секунды вместо минут на
-чип), `--ci gitlab|none` — другой CI-провайдер, `--keep` — не удалять проекты после
+чип), `--ci gitlab|none` — другой CI-провайдер, `--define ключ=значение` (можно
+несколько раз) — дополнительный ответ ко всем проверяемым конфигурациям, например
+`--ci gitlab --define signed=yes stm32f407ve` рендерит ветки `signed` в release-джобах
+GitLab, `--keep` — не удалять проекты после
 успеха, позиционные аргументы — свой список чип-фич.
 
 `--ci` проверяет не только подстановку, но и состав: при `ci=github` в проекте есть
@@ -618,7 +649,7 @@ git-зависимостей (`rust-lib`) видны только так: у с�
   не утяжеляли репозиторий;
 - сам `template-check` генерирует не из репозитория, а из его копии, куда не
   попадают `target/` (на любом уровне), `.git/` и `chip-data-gen/`. Копия — около
-  двух мегабайт, полный `--quick` по двенадцати конфигурациям укладывается в полминуты
+  двух мегабайт, полный `--quick` по набору конфигураций укладывается в полминуты
   вместо пяти минут;
 - руками шаблон удобнее брать через `--git` даже локально: `cargo generate --git
   "d:/Projects/rust embedded template"` клонирует только отслеживаемое в git, то есть
@@ -715,19 +746,10 @@ true   # чтобы статус не зависел от последнего �
 бывает: semver-диапазон допускает патчи, и cargo подтягивает их сам). Бот сравнивает
 манифест, а не lock, и отставший манифест молча прячет от него обновления.
 
-Остальное проверяется так:
-
-```
-cargo xtask lint          # корневой workspace: fmt --check + clippy -D warnings
-cargo xtask test host     # domain: cargo nextest
-
-cargo fmt   --manifest-path chip-data-gen/Cargo.toml --check
-cargo clippy --manifest-path chip-data-gen/Cargo.toml --all-targets -- -D warnings
-cargo test  --manifest-path chip-data-gen/Cargo.toml --release
-```
+Остальное проверяется командами из списка в начале раздела.
 
 `chip-data-gen` не член ни одного `[workspace]`, поэтому в `cargo xtask lint` он не
-попадает — его команды идут отдельными строками выше. `chip-info` тоже не член, но с
+попадает — его команды идут отдельными строками в том списке. `chip-info` тоже не член, но с
 ним так не выйдет: до генерации его манифест не резолвится вовсе, и локально проверить
 его нечем — только `template-check` (см. выше).
 
@@ -736,7 +758,7 @@ cargo test  --manifest-path chip-data-gen/Cargo.toml --release
 `.github/workflows/template.yml` — CI самого репозитория (в проекты не копируется,
 см. `[template].ignore`). Он гоняет на каждом пуше всё, что обходится без доступа к
 приватному `rust-lib`: `cargo fmt --check` обоих манифестов, clippy и тесты
-`chip-data-gen` (включая 24 теста каскада по всем чипам и проверку штампа версий) и
+`chip-data-gen` (включая тесты каскада по всем чипам и проверку штампа версий) и
 `template-check --quick` — генерацию под каждый чип набора с проверкой остаточных
 плейсхолдеров.
 
@@ -773,7 +795,8 @@ Rust-код генератора: гоняет реальный скрипт ч�
 `--release` — секунды на оба полных прогона (в dev-профиле
 — единицы минут, интерпретация Rhai). Не в `cargo xtask lint`/CI (`chip-data-gen` не
 член workspace, см. выше), гонять вручную при правке `chip-select.rhai`/`chip-data-gen`:
-`cargo test --manifest-path chip-data-gen/Cargo.toml --release` (там же юнит-тесты на
+`cargo test --manifest-path chip-data-gen/Cargo.toml --release` (та же команда
+запускает и юнит-тесты генератора из `chip-data-gen/src/main.rs`).
 
 ### Когда перегенерировать данные
 

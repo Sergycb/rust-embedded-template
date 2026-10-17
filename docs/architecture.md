@@ -15,6 +15,16 @@ hardware-объектов (буферы, DMA, периферия) и оркес�
 supervisor-графы, watchdog). Вся остальная логика — в `domain`, даже если она
 асинхронная и типа выглядит «системной» (стейтчарты, RPC, синхронизация задач).
 
+**Единственное исключение — `boot`.** `app` подключает `domain` целиком, а bootloader
+(`crates-cross/boot`) — только при `signed` или `ota=external` и ради двух свободных
+функций над блокирующими разделами: `domain::ota::boot::boot_plan` (обменивать ли
+разделы или грузить текущий образ) и `domain::ota::boot::screen_update` (проверка
+подписи перед обменом). В образ попадают только они: `lto = "fat"` и `--gc-sections`
+выбрасывают всё, на что нет ссылок (узлы, `supervisor`, `embassy-executor`). Типы
+решения bootloader'а — `BootPlan`, `Screening`, `ScreenFailure` — живут там же, в
+`domain::ota::boot`; логика решения остаётся в `domain` и тестируется на хосте, а не
+копируется в `boot`. `bsp` по-прежнему `domain` не зависит (см. ниже).
+
 Как решить, куда класть новую зависимость/код:
 - Требует `Spawner`, создаёт `static` hardware-объект (DMA-буфер, периферия), знает имя
   чипа или блока → `cross`.
@@ -50,11 +60,11 @@ supervisor-графы, watchdog). Вся остальная логика — в 
 
 **Логика — функции над портами; типы, которыми она с ними говорит, — в `ports`.**
 Приём образа (`download::receive`), применение обновления (`update::apply_signed`),
-версия (`ota::version::*`) — функции над портами, а действия автоматов зовут их. Всё,
+версия (`ota::version::*`), решение bootloader'а (`ota::boot::*`) — функции над портами, а действия автоматов зовут их. Всё,
 чем они разговаривают с портами — ошибки, — объявлено в `ports`: тот стал словарём
 домена, а не только набором трейтов. Своё в `domain` — только контексты узлов
 (их эмитит фрагмент), состояния автоматов и входы фрагментов (`OtaWiring`, `IdleMeter`, `Mode`){% if protocol != "none" %},
-включая обработчик протокола на этом входе: {% if protocol == "protobuf" %}`host::Service` (порт `HostService`){% elsif protocol == "modbus" %}`modbus::Registers` (порт `Registers`){% else %}`canopen::dictionary` (словарь объектов){% endif %} — логика приложения,
+включая обработчик протокола на этом входе: {% if protocol == "protobuf" %}`host::Service` (порт `HostService`){% elsif protocol == "modbus" %}`modbus::EmptyRegisters` (порт `Registers`){% else %}`canopen::dictionary` (словарь объектов){% endif %} — логика приложения,
 которую проект правит под себя, поэтому живёт в `domain`, а не в `app`{% endif %}.
 Состояние внутри одного вызова функции (хвост до слова флеша при приёме) живёт в
 её локальных переменных, а не в структуре.
@@ -252,7 +262,7 @@ bootloader'е (`crates-cross/boot`), который подпись и прове
 `write` в запасную страницу `DFU`, отдельного трейта под подпись нет. Порядок
 проверок перед вызовом — `domain::ota::update::apply_signed`, и он
 host-тестируем. Саму подпись
-проверяет bootloader (`adapters::ota::screen_update`) — `docs/ota.md`.
+проверяет bootloader (`domain::ota::boot::screen_update`) — `docs/ota.md`.
 
 **Дублировать методы портов собственными нельзя.** У `adapters::ota::Updater` и
 `adapters::settings::Settings` inherent-методы `write`/`read`/`mark_booted` были

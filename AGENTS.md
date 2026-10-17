@@ -28,6 +28,12 @@ skill'ом `rust-engineering` и не дублируются здесь. Это�
 `embassy-stm32` и ни про какое железо, тестируется на host (`cargo xtask test host`).
 `crates-cross/` — аппаратная прошивка (`bsp`, `app`, `boot`), собирается под `{{target}}`,
 подключает `domain` как обычную path-зависимость.
+**Исключение — `boot`:** bootloader зависит от `domain` (при `signed` или `ota=external`)
+ради двух свободных функций над блокирующими разделами,
+`domain::ota::boot::{boot_plan, screen_update}`; в образ попадают только они
+(`lto` + `--gc-sections` выбрасывают остальное). Их типы — `BootPlan`, `Screening`,
+`ScreenFailure` — тоже в `domain::ota::boot`. Больше `cross` в `domain` ходит только
+через `app`; `bsp` от `domain` не зависит — `docs/architecture.md`.
 `cross` остаётся минимальным: только создание `static` hardware-объектов (буферы, DMA,
 периферия) и оркестрация задач (`Spawner`, supervisor-графы, watchdog).
 Всё остальное — даже асинхронное и «системное» на вид (стейтчарты, RPC, синхронизация
@@ -100,8 +106,11 @@ cargo xtask build         # cross: debug + release
 параллельно и с раздельными кешами. Сверх этих четырёх CI гоняет `cargo deny
 check`, `cargo hack --feature-powerset` и покрытие (`cargo llvm-cov`): все три
 ставит `cargo xtask setup`, и при правке зависимостей или фич их стоит
-прогнать и локально. Добавили шаг в CI — допишите его сюда, компилятор такого
-расхождения не увидит.
+прогнать и локально. Отдельно от `ci.yml` (GitHub): `pins.yml` (Pins) —
+`chip-info --check` по фильтру путей (распиновка и справочник), `release.yml`
+(Release; только при `ota`) — `cargo xtask build` и подпись по тегу `v*`. Полный
+перечень и что нужно для зелёного CI — README, «Что проверяет CI». Добавили шаг
+в CI — допишите его сюда, компилятор такого расхождения не увидит.
 
 Lock-файлы проект считает сам: корневой `Cargo.lock` создаёт первая
 host-сборка, `crates-cross/Cargo.lock` — первая cross-сборка,
@@ -182,9 +191,9 @@ read`: руками пришлось бы сначала найти адрес �
   стирание драйвера обязано его делить (`const`-assert в обоих); драйвер —
   два слота одной микросхемы (блокирующий в `boot`, асинхронный в `bsp`).
   Bootloader загружает текущий образ без обмена, только если `STATE` не
-  читается, обмен не запрошен или (с подписью) новый образ не удалось
-  проверить; при `Swap` — строгий `prepare`, прыжок в
-  наполовину переписанный `ACTIVE` недопустим — `docs/flash.md`, `docs/ota.md`.
+  читается (`BootPlan::BootCurrent`) или (с подписью) новый образ отвергнут; при
+  читаемом `STATE` (`BootPlan::Prepare`) — строгий `prepare`, `try_prepare` не
+  используется, прыжок в наполовину переписанный `ACTIVE` недопустим — `docs/flash.md`, `docs/ota.md`.
 - `BOOTLOADER_STATE` строится над `adapters::flash::Paged` со страницей своего
   сектора (`STATE_ERASE_SIZE` в `crates-cross/boot` и в `bsp::ota` — одно число
   из генерации). Над цельным `Flash` на F2/F4/F7 раздел не кратен его странице,
@@ -206,12 +215,16 @@ read`: руками пришлось бы сначала найти адрес �
   пишется один раз на кристалл, побочно отключает ECC на ITCM/DTCM —
   `docs/clocks.md`.
 {%- endif %}
+{%- if interface == "tcp" or interface == "udp" %}
 {%- if rng_irq != "" %}
 - Клок блока `RNG` даёт `config()` в `crates-cross/bsp/src/board.rs` — у
   каждой линии свой источник (PLL Q, HSI48, `RNGSEL`). Меняете тактирование —
   сохраните его: без клока `Rng::new` в `Board::new` паникует (линии с
   мультиплексором RNG) или виснет до первой строки лога (F2/F4/F7, L0, L4,
-  U0) — `docs/modules/bsp-rng.md`.
+  U0) — `docs/modules/bsp-rng.md`. `Board::rng` и клок заводятся только при
+  `interface` = tcp/udp (сетевому стеку нужно зерно); в остальных проектах
+  `bsp/src/rng.rs` и `docs/modules/bsp-rng.md` хук удаляет.
+{%- endif %}
 {%- endif %}
 {%- if protocol == "canopen" %}
 - Буфер сохранённых объектов CANopen и колбэки стека над ним — локальные
@@ -245,9 +258,12 @@ read`: руками пришлось бы сначала найти адрес �
   `watchdog:` обязан встать в его список — `docs/watchdog.md`.
 - Сторож запускается в прологе `spawn_all` (`= board.watchdog.arm()`), а не в
   `Board::new`: с этого момента железо тикает, а кормит его только тикер графа.
-  В release с OTA его раньше запускает bootloader — с тем же `HW_TIMEOUT_US`
-  (число в `[env]` crates-cross/.cargo/config.toml у обоих общее), и путь от прыжка до
-  `spawn_all` обязан в него уложиться — `docs/watchdog.md`.
+  В release с OTA его раньше запускает bootloader — только перед самым прыжком в
+  образ (обмен разделов и проверка подписи идут без сторожа), с
+  тем же `HW_TIMEOUT_US` (число в `[env]` crates-cross/.cargo/config.toml у
+  обоих общее), и путь от прыжка до
+  `spawn_all` обязан в него уложиться — `docs/watchdog.md`. Без графа сторожа нет
+  ни в `boot`, ни в приложении: зависший до `mark_booted` образ сам не откатится.
 {%- endif %}
 - Цикл исполнителя в `crates-cross/app/src/main.rs` поднят руками, а не
   `#[embassy_executor::main]`: только так измеряется сон задач, на котором стоит

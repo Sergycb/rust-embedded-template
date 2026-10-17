@@ -40,8 +40,11 @@ paths: crates-host/domain/**
 - Своих типов в `domain` — только контексты узлов (их эмитит фрагмент), состояния
   автоматов, входы фрагментов (`OtaWiring`, `IdleMeter`, `Mode`), буферы кадра
   задачи, которые автомат получает аргументами стартового действия (`canopen::Persisted`){% if protocol != "none" %} и обработчик протокола,
-  который фрагмент получает на входе ({% if protocol == "protobuf" %}`host::Service` (порт `HostService`){% elsif protocol == "modbus" %}`modbus::Registers` (порт `Registers`){% else %}`canopen::dictionary` (словарь объектов){% endif %}): это логика
-  приложения, и проект правит его здесь{% endif %}. Всё, чем логика разговаривает
+  который фрагмент получает на входе ({% if protocol == "protobuf" %}`host::Service` (порт `HostService`){% elsif protocol == "modbus" %}`modbus::EmptyRegisters` (порт `Registers`){% else %}`canopen::dictionary` (словарь объектов){% endif %}): это логика
+  приложения, и проект правит его здесь{% endif %}. Исключение — решение
+  bootloader'а в `domain::ota::boot`: `BootPlan`, `Screening`, `ScreenFailure` (бывший
+  `Rejection`) — типы результата двух свободных функций над блокирующими
+  разделами, которые зовёт `crates-cross/boot`. Всё, чем логика разговаривает
   с портами (ошибки), лежит в `ports`; логика вне автоматов — функции над портами,
   её состояние — локальные переменные вызова. Данные, которые должны пережить
   рестарт, — `resources:` узла, сброс — в стартовом действии.

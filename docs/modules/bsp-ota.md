@@ -44,9 +44,9 @@ impl ImageSource for Link {
 Всё остальное — сверка длины до стирания, `prepare` один раз, буферизация до
 слова флеша, порядок проверок подписи, коды отказа — уже в узле
 `domain::ota`{% if graph == "true" %}, который граф спавнит из `fragments:`
-(`crates-cross/app/src/graph.rs`){% else %}. Без графа зовите узел сами, собрав
-его контекст руками:
-`domain::ota::run(domain::ota::OtaCtx { link: &mut board.ota.link, flash: &mut board.ota.flash, mode: &mut domain::ota::Mode::{% if signed == "true" %}Signed { running_version: image::FW_VERSION }{% else %}Plain{% endif %}, confirmed: &mut false, index: 0 }).await`{% endif %}. Во фрагменте
+(`crates-cross/app/src/graph.rs`){% else %}. Без графа его спавнит `main`
+(`ota_task` над `domain::ota::task_standalone`), отдав задаче `link` и `flash`
+владением{% endif %}. Во фрагменте
 `domain::ota` слоты канала и адаптера помечены `local`: [`Updater`] — `!Send` (внутри ссылка на {% if ota_store == "external" %}`crate::external::ExternalMutex`{% else %}`FlashMutex`{% endif %} с
 `NoopRawMutex`), и граф держит его на своём исполнителе, не требуя `Send`, —
 то же допущение «один исполнитель», что у самого `NoopRawMutex`; захотите
