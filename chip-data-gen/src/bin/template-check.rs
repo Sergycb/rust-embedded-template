@@ -29,10 +29,9 @@
 //! CANopen на FDCAN и bxCAN, Modbus TCP (с master), protobuf UDP, protobuf и
 //! Modbus по USB (Modbus без master — по UART и по USB); чипы с клоком RNG через мультиплексор (G0, WL, WBA, L4) и по одному
 //! чипу на каждый вариант регистров `banks.rs` (`g0`, `g4`, `l4`, `l5`).
-//! Итого тридцать четыре — точный список в `default_cases()`. Свой набор чипов —
+//! Итого тридцать три — точный список в `default_cases()`. Свой набор чипов —
 //! позиционными аргументами; `--define k=v` (многократно) добавляет определение
-//! к каждой конфигурации, например `--ci gitlab --define signed=yes stm32f407ve`
-//! проверяет ветку `signed` в `.gitlab-ci.yml`.
+//! к каждой конфигурации, например `--ci gitlab --define config=internal stm32f407ve`.
 
 use std::{
     env, fs,
@@ -50,7 +49,11 @@ use anyhow::{Context, bail};
 /// Третье — дополнительные `--define`.
 fn default_cases() -> Vec<Case> {
     vec![
-        // Одноядерный с OTA, одна карта памяти — самый обычный случай.
+        // Одноядерный с OTA и подписью образа (она всегда идёт вместе с OTA:
+        // проверка в bootloader'е `screen_update`, ключ через `boot/build.rs`,
+        // `salty` со своей `slow-motion` и профилем dev, в `app/src/image.rs`
+        // — `FW_VERSION` для `Mode::Signed`), одна карта памяти — самый
+        // обычный случай.
         Case::new("stm32f407ve"),
         // Тот же чип, но от OTA отказались при генерации: ветка «один образ на
         // весь flash» на чипе, куда схема прекрасно помещается.
@@ -60,9 +63,11 @@ fn default_cases() -> Vec<Case> {
         Case::new("stm32f429zg"),
         // Банк 2 за разрывом (H743ZG: банк 2 с 0x0810_0000): `boot` и `bsp`
         // разбирают флеш на `Bank1Region`/`Bank2Region`, `DFU` пишется через
-        // второй, настройки — в хвосте банка 1, подпись проверяется над обоими
-        // банками (`screen` со своей веткой).
-        Case::new("stm32h743zg").variant("dfu-bank", &["config=internal", "signed=yes"]),
+        // второй, подпись проверяется над обоими банками (`screen` со своей
+        // веткой). Без `config=internal`: с настройками во flash на этом чипе
+        // OTA не помещается (`config_ota = false`), `boot` в проект не входит,
+        // и ветка `dfu_bank` не собиралась бы вовсе.
+        Case::new("stm32h743zg").variant("dfu-bank", &[]),
         // С завода двухбанковый флеш при одобанковой раскладке: `bsp/src/banks.rs`
         // (вариант `g4`) в `bsp` и в `boot` по `#[path]`, `unstable-pac` у обоих.
         Case::new("stm32g474re"),
@@ -103,12 +108,6 @@ fn default_cases() -> Vec<Case> {
         // раздела — над `Paged`. В проект попадают разом bootloader, ota.rs и
         // config.rs.
         Case::new("stm32f407ve").variant("config", &["config=internal"]),
-        // Подпись образа: проверка в bootloader'е (`screen_update`, ключ через
-        // `boot/build.rs`, `salty` со своей `slow-motion` и профилем dev), а в
-        // `app/src/image.rs` — `FW_VERSION` для режима `Mode::Signed`, а
-        // `Updater` платы собран `Updater::signed`.
-        // Проверяется на чипе с OTA — без него подпись хук выключает.
-        Case::new("stm32f407ve").variant("signed", &["signed=yes"]),
         // OTA с `STATE`/`DFU` на внешней флеши (`ota=external`) — на чипе, куда
         // внутренняя схема не помещается вовсе. Разом: слот драйвера в `boot`
         // (блокирующий, с запасным выходом `BootCurrent`) и в `bsp::external`
@@ -116,10 +115,7 @@ fn default_cases() -> Vec<Case> {
         // разделами, настройки на той же
         // микросхеме за `DFU` (`__config_*` — смещения от её начала), и
         // `shared_flash = false` при OTA.
-        Case::new("stm32h723ve").variant(
-            "ota-external",
-            &["ota=external", "config=external", "signed=yes"],
-        ),
+        Case::new("stm32h723ve").variant("ota-external", &["ota=external", "config=external"]),
         // Внешняя OTA и настройки во внутреннем флеше: на F4 — в секторах 2–3
         // зоны bootloader'а, которые без них пропадали бы. Без графа — `boot`
         // без сторожа, а `embedded-storage` ему нужен только ради геометрии
@@ -132,13 +128,13 @@ fn default_cases() -> Vec<Case> {
         // `embassy-boot` выключен — `STATE` на внешней NOR, а она стирается в
         // единицы.
         Case::new("stm32l073rz").variant("ota-external", &["ota=external"]),
-        // Подпись без графа: узел OTA зовёт сам `main` (`app/src/image.rs`
-        // есть, `graph.rs` нет), а bootloader — без сторожа и без
-        // `embedded-storage`, потому что кормить сторож в приложении некому.
-        // Чип — Cortex-M0+: проверка подписи живёт в bootloader'е, и код
-        // `salty` под Thumb-1 заметно толще, чем под M4; влезает ли debug-
-        // bootloader в свою зону на M0+, проверяет только эта конфигурация.
-        Case::new("stm32g071rb").variant("signed-no-graph", &["signed=yes", "graph=no"]),
+        // OTA без графа: узел OTA запускает сам `main` (`ota_task`;
+        // `app/src/image.rs` есть, `graph.rs` нет), а bootloader — без сторожа.
+        // Чип — Cortex-M0+: проверка подписи (она есть всегда, когда есть OTA)
+        // живёт в bootloader'е, и код `salty` под Thumb-1 заметно толще, чем
+        // под M4; влезает ли release-bootloader в свою зону на M0+, проверяет эта
+        // конфигурация.
+        Case::new("stm32g071rb").variant("no-graph", &["graph=no"]),
         // Единственная ветка, где стёртый флеш читается нулями: у L0/L1 хук
         // включает `flash-erase-zero` у embassy-boot, иначе bootloader читает
         // признак «стёрто» наоборот. Взят чип с запасом flash — на 64 KiB

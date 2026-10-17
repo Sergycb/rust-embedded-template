@@ -2032,3 +2032,120 @@ fn every_chip_has_interfaces() {
         .collect();
     assert!(missing.is_empty(), "INTERFACES: нет записи для {missing:?}");
 }
+
+/// Страница обмена (`page_size`) и признак `swap_paged`: расширенная страница
+/// есть только у внутренней OTA на чипе с равными секторами, и тогда
+/// `page_size` — именно она. L073RZ (страница 128 байт) расширяется, F407VE
+/// (неравные сектора), H743ZG (DFU в банке 2) — нет; без OTA, с внешней OTA и
+/// в ручной раскладке `swap_paged` = "false".
+#[test]
+fn swap_page_follows_the_layout() {
+    let ast = compile_script();
+    let var = |result: &CascadeResult, name: &str| result.vars.get(name).cloned();
+
+    let wide = run_cascade_to(&ast, "l073rz").expect("каскад не должен падать");
+    assert_eq!(var(&wide, "ota").as_deref(), Some("true"));
+    assert_eq!(var(&wide, "swap_paged").as_deref(), Some("true"));
+    let page: u64 = var(&wide, "page_size")
+        .and_then(|v| v.parse().ok())
+        .expect("page_size — число");
+    assert!(page > 128 && page <= 8192, "страница обмена {page}");
+    let boot = written(&wide, "crates-cross/boot/memory.x");
+    // ACTIVE и DFU кратны странице обмена, DFU не меньше чем на страницу длиннее.
+    let (active, dfu) = (
+        region_length(&boot, "ACTIVE").expect("ACTIVE"),
+        region_length(&written(&wide, "crates-cross/app/memory.x"), "DFU").expect("DFU"),
+    );
+    assert!(active.is_multiple_of(page), "{boot}");
+    assert!(dfu >= active + page && dfu.is_multiple_of(page), "{boot}");
+    // STATE — по-прежнему в физических секторах (128 байт).
+    assert_eq!(var(&wide, "state_erase_size").as_deref(), Some("128"));
+    assert!(
+        region_length(&boot, "FLASH").expect("FLASH") >= 26 * 1024,
+        "{boot}"
+    );
+
+    for (chip, preset) in [
+        ("f407ve", &[][..]),
+        ("h743zg", &[][..]),
+        ("l073rz", &[("ota", "no")][..]),
+        ("l073rz", &[("ota", "external")][..]),
+        ("l073rz", &[("write_size", "4")][..]),
+    ] {
+        let result = run_cascade_with(&ast, chip, preset).expect("каскад не должен падать");
+        assert_eq!(
+            var(&result, "swap_paged").as_deref(),
+            Some("false"),
+            "{chip} {preset:?}"
+        );
+    }
+    let f4 = run_cascade_to(&ast, "f407ve").expect("каскад не должен падать");
+    assert_eq!(var(&f4, "page_size").as_deref(), Some("131072"));
+    let ext = run_cascade_with(&ast, "l073rz", &[("ota", "external")]).expect("каскад");
+    assert_eq!(var(&ext, "page_size").as_deref(), Some(""));
+}
+
+/// У каждого чипа с OTA — с настройками и без — зона bootloader'а не меньше 26
+/// KiB (подписанный `boot` ≈23 KiB), страница обмена делит `ACTIVE`/`DFU` и
+/// кратна физической, а `swap_paged` ровно тогда, когда она крупнее.
+#[test]
+fn bootloader_zone_and_swap_page_hold_for_every_chip() {
+    let ast = compile_script();
+    let mut failures = Vec::new();
+    let mut paged = 0;
+    for suffix in all_chip_suffixes() {
+        for preset in [&[][..], &[("config", "internal")][..]] {
+            let Ok(result) = run_cascade_with(&ast, &suffix, preset) else {
+                continue; // падения каскада ловят соседние тесты
+            };
+            if result.vars.get("ota").map(String::as_str) != Some("true") {
+                continue;
+            }
+            let boot = written(&result, "crates-cross/boot/memory.x");
+            let app = written(&result, "crates-cross/app/memory.x");
+            let zone = region_length(&boot, "FLASH").unwrap_or(0);
+            let page: u64 = result
+                .vars
+                .get("page_size")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+            let (active, dfu) = (
+                region_length(&boot, "ACTIVE").unwrap_or(1),
+                region_length(&app, "DFU").unwrap_or(0),
+            );
+            let swap_paged = result.vars.get("swap_paged").map(String::as_str) == Some("true");
+            let mut fail = |what: String| failures.push(format!("{suffix} {preset:?}: {what}"));
+            if zone < 26 * 1024 {
+                fail(format!("зона bootloader'а {zone} < 26 KiB"));
+            }
+            if page == 0
+                || !active.is_multiple_of(page)
+                || !dfu.is_multiple_of(page)
+                || dfu < active + page
+            {
+                fail(format!(
+                    "ACTIVE {active} / DFU {dfu} не по странице обмена {page}"
+                ));
+            }
+            if swap_paged {
+                paged += 1;
+                if page > 8192 {
+                    fail(format!("страница обмена {page} крупнее SWAP_PAGE_MAX"));
+                }
+                if result.vars.get("dfu_bank").map(String::as_str) == Some("true") {
+                    fail("расширенная страница при DFU в банке 2".to_string());
+                }
+            }
+        }
+    }
+    assert!(
+        paged > 300,
+        "подозрительно мало расширенных страниц: {paged}"
+    );
+    assert!(
+        failures.is_empty(),
+        "нарушено у {} раскладок:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}

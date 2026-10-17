@@ -1101,6 +1101,11 @@ struct OtaPartitions {
     /// объявляет `adapters::flash::Paged` (см. `compute_ota_partitions`, пятая
     /// проверка). Меньше `PAGE_SIZE` на чипах с неравными секторами.
     bootloader_state_erase_size: u64,
+    /// Страница обмена embassy-boot (`PAGE_SIZE`): `ACTIVE`/`DFU` кратны ей, а
+    /// `DFU` длиннее `ACTIVE` ровно на неё. Больше физической страницы чипа
+    /// (`MemoryLayout::page_size`), когда прошивка оборачивает `ACTIVE`/`DFU` в
+    /// `adapters::flash::Paged<_, SWAP_PAGE_SIZE>` — см. [`compute_ota_partitions`].
+    swap_page_size: u64,
     active_origin: u64,
     active_length: u64,
     dfu_origin: u64,
@@ -1142,10 +1147,12 @@ struct MemoryLayout {
     /// Имя плейсхолдера в шаблоне (`write_size`) осталось прежним ради
     /// совместимости с проектами, задающими его через `--define`.
     write_size: u64,
-    /// `PAGE_SIZE` в терминах `embassy-boot` — максимальный сектор стирания
-    /// по цепочке flash. По нему bootloader переносит разделы, а host-target
-    /// тест ищет, куда уехал прежний образ: при обмене `ACTIVE[i]`
-    /// оказывается в `DFU[i + 1]`, то есть со сдвигом ровно на страницу.
+    /// Физическая страница чипа: максимальный сектор стирания по цепочке
+    /// flash. Страница обмена `embassy-boot` (`PAGE_SIZE`) — она же, пока
+    /// прошивка не расширила её (`OtaPartitions::swap_page_size`, плейсхолдер
+    /// `{{page_size}}`): по ней bootloader переносит разделы, а host-target
+    /// тест ищет, куда уехал прежний образ — `ACTIVE[i]` оказывается в
+    /// `DFU[i + 1]`, то есть со сдвигом ровно на страницу обмена.
     page_size: u64,
     /// Стёртая страница читается нулями, а не `0xFF`.
     ///
@@ -1268,14 +1275,29 @@ const ALIAS_SUFFIX: &str = "_ICODE";
 const BOOTLOADER_TARGET: u64 = 32 * 1024;
 /// Сколько от зарезервированного блока обязано остаться под сам бинарник
 /// после того, как из него вычли `BOOTLOADER_STATE`. Меньше — резерв растёт
-/// ещё на страницу.
-const BOOTLOADER_MIN: u64 = 16 * 1024;
+/// ещё на страницу. 26 KiB: подписанный release-`boot` весит ≈23 KiB (подпись
+/// обязательна при OTA), остальное — запас на рост.
+const BOOTLOADER_MIN: u64 = 26 * 1024;
 /// На сколько страниц резерв может вырасти СВЕРХ исходного (`BOOTLOADER_TARGET`,
 /// округлённого вверх до страницы). Именно сверх, а не всего: у чипа с мелкими
 /// секторами исходный резерв сам по себе занимает десятки страниц (32 KiB при
 /// секторе 256 байт у L0/L1 — 128 штук), и абсолютный предел отрезал бы от OTA
-/// всю мелкосекторную половину линейки.
+/// всю мелкосекторную половину линейки. У крупных страниц предел — эти 16
+/// страниц, у мелких его поднимает [`MAX_EXTRA_RESERVED_BYTES`].
 const MAX_EXTRA_RESERVED_PAGES: u64 = 16;
+/// Рост резерва не меньше этого объёма независимо от размера страницы: 16
+/// страниц по 128 байт — всего 2 KiB, а `STATE` на такой странице может занять
+/// и больше.
+const MAX_EXTRA_RESERVED_BYTES: u64 = 8 * 1024;
+/// Бюджет `BOOTLOADER_STATE` под журнал обмена: пока он не больше, страницу
+/// обмена не расширяют. Журнал — `(2 + 4*N) * WRITE_SIZE` байт при N страницах
+/// обмена в `ACTIVE` (`assert_partitions`), то есть растёт с flash и убывает с
+/// размером страницы: L0 (страница 128 байт, ~640 страниц) без расширения
+/// отдавал под `STATE` 10 KiB из 32 KiB, и подписанный bootloader не влезал.
+const STATE_BUDGET: u64 = 2 * 1024;
+/// Самая крупная страница обмена, до которой её расширяют ради `STATE_BUDGET`.
+/// Больше — крупнее разменная страница `DFU` и грубее потери на хвосте flash.
+const SWAP_PAGE_MAX: u64 = 8 * 1024;
 /// От конца RAM отрезается регион `PANIC` под дамп `panic-persist` —
 /// паникёр release-профиля пишет туда по голым адресам
 /// `_panic_dump_start.._panic_dump_end`, ничего не зная о секциях (секция у
@@ -1773,7 +1795,82 @@ fn extra_region_lines(regions: &[RawRegion], flash_end: u64, ram_end: u64) -> Ve
         .collect()
 }
 
-/// Подбирает `BOOTLOADER`/`BOOTLOADER_STATE`/`ACTIVE`/`DFU` под все четыре
+/// Раскладка OTA со страницей обмена, при необходимости крупнее физической.
+///
+/// Журнал `STATE` — `(2 + 4*N) * WRITE_SIZE` байт при N страницах обмена в
+/// `ACTIVE`, и на чипе с мелкой страницей и крупным flash он съедает зону
+/// bootloader'а (L0: страница 128 байт, ~640 страниц — 10 KiB из 32 KiB, и
+/// подписанный `boot` не влезает). Поэтому, когда журнал при физической
+/// странице `page_size` больше [`STATE_BUDGET`], страница обмена удваивается
+/// (`page_size * 2^k`, не больше [`SWAP_PAGE_MAX`]) до первой, при которой он
+/// укладывается; прошивка оборачивает `ACTIVE`/`DFU` в `Paged<_, SWAP_PAGE_SIZE>`.
+/// Не укладывается и на максимуме — остаётся физическая страница, а запас под
+/// код держит [`BOOTLOADER_MIN`].
+///
+/// Расширяется только чип с равными секторами и без `DFU` в банке 2 за
+/// разрывом: на F2/F4/F7 страница обмена и так крупнейший сектор, а банк 2 за
+/// разрывом лежит в другом регионе `Flash`, и единая страница на оба раздела
+/// не получилась бы.
+fn compute_ota_partitions(
+    chip: &str,
+    chain: &[&RawRegion],
+    flash_total: u64,
+    page_size: u64,
+    write_size: u64,
+    with_settings: bool,
+    bank_gap: Option<Bank2>,
+) -> Result<OtaPartitions, String> {
+    let at = |swap| {
+        compute_ota_at(
+            chip,
+            chain,
+            flash_total,
+            swap,
+            write_size,
+            with_settings,
+            bank_gap,
+        )
+    };
+    let fits = |p: &OtaPartitions| journal_bytes(p, write_size) <= STATE_BUDGET;
+    let base = at(page_size);
+    let uniform = bank_gap.is_none()
+        && chain
+            .iter()
+            .all(|r| r.flash.is_some_and(|f| f.erase_size == page_size));
+    if !uniform || base.as_ref().is_ok_and(fits) {
+        return base;
+    }
+    let mut swap = page_size;
+    while swap < SWAP_PAGE_MAX {
+        swap *= 2;
+        if let Ok(partitions) = at(swap)
+            && fits(&partitions)
+        {
+            return Ok(partitions);
+        }
+    }
+    base
+}
+
+/// Крупнейший сектор стирания по цепочке flash: страница цельного `Flash`.
+fn chain_page(chain: &[&RawRegion]) -> u64 {
+    chain
+        .iter()
+        .filter_map(|r| r.flash)
+        .map(|f| f.erase_size)
+        .max()
+        .unwrap_or(1)
+}
+
+/// Журнал обмена `embassy-boot` в байтах: слово записи на страницу `ACTIVE` в
+/// каждом из четырёх проходов плюс два служебных (проверка 4).
+fn journal_bytes(p: &OtaPartitions, write_size: u64) -> u64 {
+    (2 + 4 * (p.active_length / p.swap_page_size)) * write_size
+}
+
+/// Подбирает `BOOTLOADER`/`BOOTLOADER_STATE`/`ACTIVE`/`DFU` для страницы обмена
+/// `page_size` (физической или расширенной, см. [`compute_ota_partitions`]; вся
+/// арифметика ниже — в её единицах) под все четыре
 /// проверки `assert_partitions` (`embassy-boot`, `boot_loader.rs`) — это
 /// runtime-assert'ы, а не документация: не выполнены — bootloader паникует
 /// на старте, а не отказывается собираться.
@@ -1817,7 +1914,7 @@ fn extra_region_lines(regions: &[RawRegion], flash_end: u64, ram_end: u64) -> Ve
 ///
 /// `Err` — схема не помещается; текст объясняет, чего именно не хватило, и
 /// доходит до пользователя при генерации.
-fn compute_ota_partitions(
+fn compute_ota_at(
     chip: &str,
     chain: &[&RawRegion],
     flash_total: u64,
@@ -1848,11 +1945,13 @@ fn compute_ota_partitions(
     };
 
     let initial_pages = BOOTLOADER_TARGET.div_ceil(page_size).max(1);
+    let max_extra_pages =
+        MAX_EXTRA_RESERVED_PAGES.max(MAX_EXTRA_RESERVED_BYTES.div_ceil(page_size));
     let mut reserved_pages = initial_pages;
     loop {
-        if reserved_pages > initial_pages + MAX_EXTRA_RESERVED_PAGES {
+        if reserved_pages > initial_pages + max_extra_pages {
             return Err(format!(
-                "резерв под bootloader не подобрался, дорастив его на {MAX_EXTRA_RESERVED_PAGES} страниц по {}",
+                "резерв под bootloader не подобрался, дорастив его на {max_extra_pages} страниц по {}",
                 size(page_size)
             ));
         }
@@ -1940,13 +2039,14 @@ fn compute_ota_partitions(
             bootloader_state_origin: FLASH_BASE + state_offset,
             bootloader_state_length: state_length,
             bootloader_state_erase_size: state_erase,
+            swap_page_size: page_size,
             active_origin,
             active_length,
             dfu_origin,
             dfu_length: dfu_pages * page_size,
             settings,
         };
-        assert_embassy_boot_invariants(chip, &partitions, page_size, write_size);
+        assert_embassy_boot_invariants(chip, &partitions, chain_page(chain), write_size);
         return Ok(partitions);
     }
 }
@@ -2046,11 +2146,19 @@ fn place_settings_and_state(
 
 /// Те же четыре проверки, что `assert_partitions` делает в рантайме на плате, и
 /// пятая — от `Partition::new` (кратность смещения и размера раздела странице
-/// флеша под ним), — но здесь, на этапе генерации. Паника вместо `Err`: `compute_ota_partitions`
+/// флеша под ним), — но здесь, на этапе генерации. Страница обмена —
+/// `p.swap_page_size`: кратна `chip_page` (крупнейший сектор чипа), и по ней
+/// же сверяются `ACTIVE`/`DFU` (при расширенной странице прошивка строит их
+/// поверх `Paged` с этой страницей). Паника вместо `Err`: `compute_ota_partitions`
 /// обязан выдавать только валидные раскладки, невалидная — баг в нём самом, а
 /// не «чип не подошёл». Ровно этой проверки не хватало: 279 из 972 прежних
 /// раскладок нарушали четвёртую и роняли bootloader на первом же старте.
-fn assert_embassy_boot_invariants(chip: &str, p: &OtaPartitions, page_size: u64, write_size: u64) {
+fn assert_embassy_boot_invariants(chip: &str, p: &OtaPartitions, chip_page: u64, write_size: u64) {
+    let page_size = p.swap_page_size;
+    assert!(
+        page_size.is_multiple_of(chip_page),
+        "{chip}: страница обмена {page_size} не кратна странице чипа {chip_page}"
+    );
     assert!(
         p.active_length.is_multiple_of(page_size),
         "{chip}: ACTIVE {} не кратен PAGE_SIZE {page_size}",
@@ -2102,8 +2210,8 @@ fn assert_embassy_boot_invariants(chip: &str, p: &OtaPartitions, page_size: u64,
             s.erase_size
         );
     }
-    // `ACTIVE`/`DFU` строятся поверх цельного `Flash` (страница — `PAGE_SIZE`),
-    // `STATE` — поверх `Paged` со страницей своего сектора.
+    // `ACTIVE`/`DFU` строятся поверх цельного `Flash` либо `Paged` со страницей
+    // обмена, `STATE` — поверх `Paged` со страницей своего сектора.
     let state_offset = p.bootloader_state_origin - FLASH_BASE;
     for (name, offset, length, page) in [
         (
@@ -2234,6 +2342,16 @@ fn format_memory_layouts(layouts: &BTreeMap<&str, MemoryLayout>) -> BTreeMap<Str
                     "bootloader_state_erase_size",
                     &rust_literal(p.bootloader_state_erase_size),
                 );
+                push_field(&mut out, "swap_page_size", &p.swap_page_size.to_string());
+                push_field(
+                    &mut out,
+                    "swap_paged",
+                    if p.swap_page_size > m.page_size {
+                        "true"
+                    } else {
+                        "false"
+                    },
+                );
                 push_field(&mut out, "active_origin", &format_addr(p.active_origin));
                 push_field(&mut out, "active_length", &format_size(p.active_length));
                 push_field(&mut out, "dfu_origin", &format_addr(p.dfu_origin));
@@ -2286,6 +2404,20 @@ fn format_memory_layouts(layouts: &BTreeMap<&str, MemoryLayout>) -> BTreeMap<Str
                             &mut out,
                             "config_bootloader_state_erase_size",
                             &rust_literal(p.bootloader_state_erase_size),
+                        );
+                        push_field(
+                            &mut out,
+                            "config_swap_page_size",
+                            &p.swap_page_size.to_string(),
+                        );
+                        push_field(
+                            &mut out,
+                            "config_swap_paged",
+                            if p.swap_page_size > m.page_size {
+                                "true"
+                            } else {
+                                "false"
+                            },
                         );
                         push_field(
                             &mut out,
@@ -3116,20 +3248,81 @@ pub static METADATA: Metadata = Metadata {
 
     #[test]
     fn state_grows_with_active_to_fit_the_swap_journal() {
-        // L476RG: 1 MiB при секторе 2 KiB. Одного сектора под STATE не хватает
-        // (журналу нужно (2 + 4*247) слов по 8 байт) — раньше здесь стоял
-        // ровно один сектор, и bootloader падал в панику на старте.
-        let layout = compute_memory_layout("test", &uniform_flash(1024 * 1024, 2048, 8))
+        // Страница обмена, не расширенная (физическая): журнал растёт с ACTIVE.
+        // L476RG: 1 MiB при секторе 2 KiB, журналу нужно (2 + 4*247) слов по
+        // 8 байт — одного сектора не хватает (раньше стоял ровно один, и
+        // bootloader падал в панику на старте).
+        let chain = uniform_flash(1024 * 1024, 2048, 8);
+        let chain: Vec<&RawRegion> = chain
+            .iter()
+            .filter(|r| r.kind == RegionKind::Flash)
+            .collect();
+        let ota = compute_ota_at("test", &chain, 1024 * 1024, 2048, 8, false, None)
+            .expect("OTA должна помещаться");
+        assert!(ota.bootloader_state_length > 2048);
+        assert_eq!(ota.bootloader_state_length, 8192);
+    }
+
+    /// Журнал не умещается в `STATE_BUDGET` — страница обмена вырастает, и
+    /// `STATE` сжимается до сотен байт. 512 KiB при странице 2 KiB: 2 -> 4 KiB
+    /// (на 2 KiB журналу нужно 3792 байта); L476RG с 1 MiB упирается в 8 KiB.
+    #[test]
+    fn swap_page_grows_until_the_journal_fits_the_budget() {
+        let big = compute_memory_layout("test", &uniform_flash(1024 * 1024, 2048, 8))
+            .expect("раскладка должна посчитаться");
+        assert_eq!(big.ota.expect("OTA должна помещаться").swap_page_size, 8192);
+
+        let layout = compute_memory_layout("test", &uniform_flash(512 * 1024, 2048, 8))
+            .expect("раскладка должна посчитаться");
+        assert_eq!(layout.page_size, 2048);
+        let ota = layout.ota.expect("OTA должна помещаться");
+        assert_eq!(ota.swap_page_size, 4096);
+        assert!(journal_bytes(&ota, 8) <= STATE_BUDGET);
+        assert!(ota.bootloader_state_length <= STATE_BUDGET);
+        assert!(ota.bootloader_length >= BOOTLOADER_MIN);
+        assert!(ota.active_origin.is_multiple_of(4096));
+        assert!(ota.dfu_length >= ota.active_length + 4096 && ota.dfu_length.is_multiple_of(4096));
+    }
+
+    /// L073RZ: страница 128 байт, 192 KiB flash — без расширения `STATE` 10 KiB.
+    #[test]
+    fn tiny_pages_get_a_wide_swap_page_and_a_big_bootloader_zone() {
+        let layout = compute_memory_layout("test", &flash_erasing_to_zero(192 * 1024, 128, 4))
             .expect("раскладка должна посчитаться");
         let ota = layout.ota.expect("OTA должна помещаться");
-        assert!(
-            ota.bootloader_state_length > 2048,
-            "STATE {} — одного сектора мало",
-            ota.bootloader_state_length
+        assert!(ota.swap_page_size > 128 && ota.swap_page_size <= SWAP_PAGE_MAX);
+        assert!(ota.bootloader_length >= BOOTLOADER_MIN);
+        assert!(ota.bootloader_state_length <= STATE_BUDGET);
+        assert_eq!(ota.bootloader_state_erase_size, 128);
+    }
+
+    /// Небольшой flash: журнал и так в бюджете, страница не трогается.
+    #[test]
+    fn swap_page_stays_physical_when_the_journal_already_fits() {
+        let layout =
+            compute_memory_layout("test", &uniform_flash(128 * 1024, 2048, 8)).expect("раскладка");
+        let ota = layout.ota.expect("OTA помещается");
+        assert_eq!(ota.swap_page_size, 2048);
+        assert!(ota.bootloader_length >= BOOTLOADER_MIN);
+    }
+
+    /// F4 (неравные сектора) и банк 2 за разрывом страницу не расширяют.
+    #[test]
+    fn swap_page_is_not_widened_on_unequal_sectors_or_behind_a_bank_gap() {
+        let f4 = compute_memory_layout("test", &f407ve()).expect("раскладка");
+        assert_eq!(f4.ota.expect("OTA").swap_page_size, f4.page_size);
+        assert_eq!(
+            f4.config
+                .expect("настройки")
+                .ota
+                .expect("OTA")
+                .swap_page_size,
+            f4.page_size
         );
-        // Сам инвариант проверяет assert_embassy_boot_invariants внутри
-        // compute_ota_partitions; здесь фиксируем, что он не обошёлся малым.
-        assert_eq!(ota.bootloader_state_length, 8192);
+
+        let gap = compute_memory_layout("test", &two_banks(64 * 1024, FLASH_BASE + 0x4_0000))
+            .expect("раскладка");
+        assert_eq!(gap.ota.expect("OTA").swap_page_size, gap.page_size);
     }
 
     /// Карта F407VE: 4×16 KiB, 64 KiB, дальше по 128 KiB. `STATE` — в
@@ -3215,6 +3408,7 @@ pub static METADATA: Metadata = Metadata {
             bootloader_state_origin: FLASH_BASE + 0x1_0000,
             bootloader_state_length: 64 * 1024,
             bootloader_state_erase_size: 128 * 1024,
+            swap_page_size: 128 * 1024,
             active_origin: FLASH_BASE + 0x2_0000,
             active_length: 128 * 1024,
             dfu_origin: FLASH_BASE + 0x4_0000,
@@ -3648,6 +3842,7 @@ pub static METADATA: Metadata = Metadata {
             bootloader_state_origin: FLASH_BASE,
             bootloader_state_length: 2048,
             bootloader_state_erase_size: 2048,
+            swap_page_size: 2048,
             active_origin: FLASH_BASE + 2048,
             active_length: 3000,
             dfu_origin: FLASH_BASE + 2048 + 3000,

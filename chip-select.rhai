@@ -415,6 +415,9 @@ variable::set("rng_source", rng[2]);
 //             сборки исключается.
 // "write_size" — const generic BootLoader::prepare::<_,_,_,N>, размер буфера
 // подкачки (НЕ PAGE_SIZE: тот embassy-boot вычисляет сам из ERASE_SIZE флеша).
+// "page_size" — физическая страница чипа; страница обмена (PAGE_SIZE embassy-boot)
+// лежит в "swap_page_size" и бывает крупнее — "swap_paged" = "true": тогда ACTIVE
+// и DFU прошивка оборачивает в Paged ради малого журнала STATE.
 // Имя плейсхолдера осталось прежним ради совместимости с проектами, которые
 // задают его через --define.
 //
@@ -516,19 +519,6 @@ if variable::is_set("config") {
     wants_config = answer != "no";
 }
 
-// Подпись образа. Смысл имеет только вместе с OTA — подписывается то, что
-// приезжает в раздел DFU, — поэтому «да» без OTA приводится к «нет» здесь же,
-// до всех расчётов раскладки: ниже переменная только раздаётся в Liquid.
-let wants_signed = false;
-if variable::is_set("signed") {
-    let answer = variable::get("signed");
-    wants_signed = answer == "yes" || answer == "true";
-}
-if wants_signed && !wants_ota {
-    print("Подпись образа отключена: подписывать нечего, OTA не используется");
-    wants_signed = false;
-}
-
 // Граф задач. «Да» и здесь означает «не возражаю»: помещается ли он, решает
 // размер раздела, в который линкуется приложение (см. GRAPH_MIN_PARTITION).
 let wants_graph = true;
@@ -600,14 +590,17 @@ if variable::is_set("write_size") {
     // Общий объект `Flash` в bsp нужен OTA во внутреннем flash и настройкам во
     // флеше или EEPROM; внешней флеши он не нужен (см. ту же переменную ниже).
     variable::set("shared_flash", if (wants_ota && !wants_ext_ota) || (wants_config && store == "eeprom") { "true" } else { "false" });
-    variable::set("signed", if wants_signed { "true" } else { "false" });
-    // Размер страницы стирания знает только раскладка, а её тут пишет
-    // пользователь — угадывать нельзя. Пустая строка означает «неизвестен»:
+    variable::set("signed", if wants_ota { "true" } else { "false" });
+    // Страницу обмена знает только раскладка, а её тут пишет пользователь —
+    // угадывать нельзя. Пустая строка означает «неизвестна»:
     // xtask по ней не отдаёт host-target тесту адреса разделов, и тест
     // обмена сам себя пропускает. Подставить сюда правдоподобное число было
     // бы хуже молчания: на чипе с другим сектором тест искал бы прежний
     // образ не по тому адресу и падал бы, обвиняя bootloader.
     variable::set("page_size", "");
+    // `ACTIVE`/`DFU` без раскладки не оборачиваются в `Paged`: страница обмена
+    // здесь — страница цельного `Flash` (как было до расширения страницы).
+    variable::set("swap_paged", "false");
     // Страница раздела `BOOTLOADER_STATE` (`adapters::flash::Paged` в
     // crates-cross/boot и bsp::ota) — тоже знание раскладки. Её здесь нет,
     // поэтому — страница цельного `Flash`, как было до `Paged`: верно на
@@ -710,13 +703,10 @@ if variable::is_set("write_size") {
         print("  (пока там заглушка adapters::flash::Unconnected — проект собирается, настройки не сохраняются)");
     }
 
-    // Подпись живёт и умирает вместе с OTA: если схема не поместилась,
-    // подписывать становится нечего, а проверка подписи (`salty`) только
-    // раздула бы образы.
-    let signed = wants_signed && ota;
-    if wants_signed && !signed {
-        print("Подпись образа отключена вместе с OTA (см. причину выше)");
-    }
+    // Подпись есть всегда, когда есть OTA, и только тогда: подписывается то,
+    // что приезжает в раздел DFU, и отдельного вопроса нет. Если схема не
+    // поместилась, нет ни OTA, ни подписи.
+    let signed = ota;
 
     // Граф задач меряется по разделу, в который линкуется приложение: при OTA
     // это ACTIVE, без неё — весь flash за вычетом того, что забрали настройки.
@@ -731,13 +721,28 @@ if variable::is_set("write_size") {
     }
 
     variable::set("write_size", m["write_size"]);
+    // `page_size` — страница обмена embassy-boot (`PAGE_SIZE`): по ней xtask
+    // и host-target тест ищут прежний образ (он уезжает в `DFU[i + 1]`). С
+    // внутренней OTA это `swap_page_size` её набора цифр — она крупнее
+    // физической страницы чипа там, где chip-data-gen расширил её ради
+    // журнала `STATE` (`swap_paged`): прошивка тогда оборачивает ACTIVE и DFU в
+    // `adapters::flash::Paged<_, SWAP_PAGE_SIZE>` (= page_size). Без OTA страницы обмена нет —
+    // остаётся физическая, и `swap_paged` = "false".
     // С внешними разделами страница обмена зависит от стирания драйвера, а
     // DFU в адресном пространстве МК нет вовсе — host-target тест обмена
     // (он читает DFU пробником) здесь не к чему применить. Пусто — «размер
-    // неизвестен», тест сам себя пропускает.
-    variable::set("page_size", if ext_ota { "" } else { m["page_size"] });
+    // неизвестен», тест сам себя пропускает; `swap_paged` = "false" (у внешней
+    // OTA своя `ext_page_size`).
+    let swap_page = m["page_size"];
+    let swap_paged = false;
+    if ota && !ext_ota {
+        swap_page = m[ota_key + "swap_page_size"];
+        swap_paged = m[ota_key + "swap_paged"] == "true";
+    }
+    variable::set("page_size", if ext_ota { "" } else { swap_page });
+    variable::set("swap_paged", if swap_paged { "true" } else { "false" });
     // Сектор, в котором лежит `BOOTLOADER_STATE`: на F2/F4/F7 он мельче
-    // `page_size`, и раздел над цельным `Flash` не строился бы вовсе (см.
+    // страницы обмена, и раздел над цельным `Flash` не строился бы вовсе (см.
     // `compute_ota_partitions` в chip-data-gen). Без OTA его нет, как и
     // файлов, которые его читают; с внешней — его страницу несёт драйвер.
     if ota && !ext_ota {
