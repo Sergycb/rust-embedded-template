@@ -84,7 +84,7 @@ skill'ом `rust-engineering` и не дублируются здесь. Это�
 | Команда | Что делает |
 |---|---|
 | `cargo xtask setup` | ставит `rustup target` и компоненты, `probe-rs`, `flip-link`, `cargo-nextest`, `cargo-deny`, `cargo-hack`, `cargo-llvm-cov`, `cargo-insta` — меняет систему |
-| {% if ota == "true" %}`cargo flash -p boot --chip {{chip}}`, затем {% endif %}`cargo run -p app` (исключение из правила выше: запускать в `crates-cross/`) | прошивка руками — необратимо; отдельной команды в `xtask` нет, и начало образа с `memory.x` здесь не сверяется — это делает `cargo xtask build` |
+| {% if ota == "true" %}`cargo flash -p boot --release --chip {{chip}}`, затем {% endif %}`cargo run -p app` (исключение из правила выше: запускать в `crates-cross/`) | прошивка руками — необратимо; отдельной команды в `xtask` нет, и начало образа с `memory.x` здесь не сверяется — это делает `cargo xtask build` |
 | `cargo xtask test target` | тесты внутри МК (`embedded-test` + `probe-rs run`); сам заливает bootloader |
 | `cargo xtask test host-target` | хост управляет прошитым устройством; сам заливает release-образы, сверив начало приложения с `ORIGIN` раздела из `memory.x` |
 | `cargo xtask test all` | обе строки выше |
@@ -160,8 +160,9 @@ read`: руками пришлось бы сначала найти адрес �
   получает от `bsp` псевдоним (`pub type X = ...`) — `docs/architecture.md`.
 - Ровно один `#[panic_handler]` и один активный `#[global_logger]` на бинарник: логгер
   резолвится линковкой по имени символа и даёт `multiply defined!` при нарушении;
-  паникёр выбирается `#[cfg(debug_assertions)]` в `crates-cross/app/src/panic.rs` (у
-  `boot` — его копия `crates-cross/boot/src/panic.rs`, правятся вместе): dev — `use panic_probe as _;`, release — свой
+  паникёр выбирается `#[cfg(debug_assertions)]` в `crates-cross/app/src/panic.rs` (`boot`
+  собирается только в release, его `crates-cross/boot/src/panic.rs` — копия release-ветки, правятся
+  вместе): dev — `use panic_probe as _;`, release — свой
   `#[panic_handler]` поверх `panic_persist::report_panic_info` (фича
   `custom-panic-handler`) — `docs/diagnostics.md`, `docs/conventions.md`.
 - `prepare(len)` порта `FirmwareUpdate` зовётся один раз перед приёмом образа
@@ -194,6 +195,13 @@ read`: руками пришлось бы сначала найти адрес �
   читается (`BootPlan::BootCurrent`) или (с подписью) новый образ отвергнут; при
   читаемом `STATE` (`BootPlan::Prepare`) — строгий `prepare`, `try_prepare` не
   используется, прыжок в наполовину переписанный `ACTIVE` недопустим — `docs/flash.md`, `docs/ota.md`.
+{%- if swap_paged == "true" %}
+- `SWAP_PAGE_SIZE` в `crates-cross/boot` и `bsp::ota` — одно число из генерации
+  ({{page_size}}): страница обмена крупнее физической, `ACTIVE` и `DFU`
+  оборачиваются в `Paged<_, SWAP_PAGE_SIZE>` ради малого журнала `STATE`
+  (подписанному `boot` нужна зона ≥ 26 KiB). Менять вместе; `STATE_ERASE_SIZE` —
+  другое число (страница сектора `STATE`) — `docs/flash.md`.
+{%- endif %}
 - `BOOTLOADER_STATE` строится над `adapters::flash::Paged` со страницей своего
   сектора (`STATE_ERASE_SIZE` в `crates-cross/boot` и в `bsp::ota` — одно число
   из генерации). Над цельным `Flash` на F2/F4/F7 раздел не кратен его странице,

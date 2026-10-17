@@ -27,7 +27,7 @@ cargo xtask test host    # тесты domain — железо не нужно
 
 # дальше нужна плата, подключённая через отладочный пробник:
 cd crates-cross
-cargo flash -p boot --chip <CHIP>   # bootloader — только в проекте с OTA, и первым
+cargo flash -p boot --release --chip <CHIP>   # bootloader (всегда release) — только в проекте с OTA, и первым
 cargo run -p app                    # прошить приложение и смотреть defmt-лог
 ```
 
@@ -321,8 +321,8 @@ host-тестами на кусках по одному байту, обрыве
 
 #### Подпись образа
 
-Четвёртый вопрос при генерации (`--define signed=yes`, требует OTA). С ним
-граф кормит узел OTA режимом с подписью (`domain::ota::Mode::Signed` во входе `OTA_FRAG`):
+Подпись идёт вместе с OTA: отдельного вопроса нет, при `ota` она всегда включена. Граф
+кормит узел OTA режимом с подписью (`domain::ota::Mode::Signed` во входе `OTA_FRAG`):
 вместо `mark_updated()` принятый образ применяет `domain::ota::update::apply_signed` с
 подписью из заголовка (`Announce::signature`): она проверяет длину, занятость раздела и
 версию образа (защита от отката — ниже) и оставляет подпись bootloader'у в запасной
@@ -708,7 +708,7 @@ probe-rs erase --chip <CHIP> --connect-under-reset              # см. ниже
 ## Что происходит при падении
 
 Паникёр выбирает профиль (`#[cfg(debug_assertions)]` в `crates-cross/app/src/panic.rs`,
-его копия — у bootloader'а):
+у bootloader'а — копия release-ветки: он собирается только в release):
 
 | Профиль | Паникёр | После падения | Почему |
 |---|---|---|---|

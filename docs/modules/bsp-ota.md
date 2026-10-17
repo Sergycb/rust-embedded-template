@@ -14,7 +14,13 @@
 (`STATE_ERASE_SIZE`) — почему, см. docs/flash.md. Оба раздела асинхронные:
 общий блокирующий `Flash` виден им через мост `adapters::flash::Shared`, а
 порт `FirmwareUpdate` — асинхронный, чтобы за ним могла стоять и внешняя
-флеш.{% endif %}{% if signed == "true" %} Адаптер собран `Updater::signed` — его
+флеш.{% if swap_paged == "true" %} Раздел `DFU` строится тоже не над цельным `Flash`, а над
+`Paged` со страницей обмена `SWAP_PAGE_SIZE` — она крупнее физической страницы
+флеша этого чипа: так журнал `BOOTLOADER_STATE` (запись на страницу `ACTIVE`)
+короче, и коду bootloader'а остаётся почти весь его блок. `ACTIVE` с той же
+страницей собирает bootloader; число одно из генерации (`page_size`) и стоит
+и здесь, и в `crates-cross/boot` — менять только вместе, и кратно оно странице
+стирания флеша (проверка при компиляции).{% endif %}{% endif %}{% if signed == "true" %} Адаптер собран `Updater::signed` — его
 `prepare` стирает и запасную страницу `DFU` под запись о подписи; версию
 образа задаёт приложение (`crates-cross/app/src/image.rs`), ключ —
 bootloader.{% endif %}

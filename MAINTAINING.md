@@ -54,7 +54,7 @@
 ## Плейсхолдеры шаблона (`cargo-generate.toml`)
 
 `{{chip}}`, `{{chip_feature}}`, `{{cpu}}`, `{{target}}`, `{{write_size}}`,
-`{{page_size}}`, `{{state_erase_size}}`, `{{config_erase_size}}`, `{{config_store}}`,
+`{{page_size}}`, `{{swap_paged}}`, `{{state_erase_size}}`, `{{config_erase_size}}`, `{{config_store}}`,
 `{{shared_flash}}`, `{{dual_core}}`, `{{bank_mode}}`, `{{erase_zero}}`,
 `{{watchdog_peripheral}}`, `{{cpu_freq_boost}}`, `{{dfu_bank}}`, `{{bank_switch}}`, `{{dual_bank_bit}}` — плейсхолдеры, подставляемые
 Liquid-рендером cargo-generate. Из них в `[placeholders]` объявлены только `ci`, `ota`, `graph`,
@@ -108,10 +108,9 @@ bootloader и `STATE`. Отсюда и второй набор цифр в `MEMO
 резерв перед `ACTIVE`, нет ни у одного чипа, и отдельного совета про неё хук больше не
 печатает: не помещается схема с настройками — причина та же, что и без них.
 
-Третий такой плейсхолдер — `signed` (подпись OTA-образа). Он ничего не считает, а
-только выключается сам: без OTA подписывать нечего, и «да» приводится к «нет» ещё до
-разбора раскладки; если схема не поместилась во flash — тоже, уже после. В шаблоне он
-управляет фичей `signed` у `domain` (проверка подписи — `domain::ota::boot`, ею пользуется `boot`), ключом в `crates-cross/boot`
+`signed` (подпись OTA-образа) — не вопрос, а производная от итогового `ota`: есть OTA —
+есть подпись, нет OTA (в том числе если схема не поместилась во flash) — нет и подписи.
+`--define signed=...` на него не влияет. В шаблоне он управляет фичей `signed` у `domain` (проверка подписи — `domain::ota::boot`, ею пользуется `boot`), ключом в `crates-cross/boot`
 (`boot/build.rs`, `OTA_PUBLIC_KEY_IN_IMAGE`, вызов `screen_update`), выбором
 `Updater::signed` в `bsp::ota` и файлом `crates-cross/app/src/image.rs`
 (`FW_VERSION` для `Mode::Signed`; без подписи его удаляет `post-script.rhai`). Подпись проверяет bootloader
@@ -341,8 +340,11 @@ STM32WB10CC/WB15CC (`erase_value: 0` при другом префиксе, об�
 и вариант «всё семейство WB стирается в ноль».
 
 **`page_size` в записи есть, а в `memory.x` его нет** — и это не забытая строка.
-`PAGE_SIZE` в терминах `embassy-boot` (максимальный сектор стирания чипа) нужен не
-линкеру, а host-target тесту обмена разделов: `swap()` кладёт `ACTIVE[i]` в `DFU[i + 1]`,
+`page_size` записи — физическая страница чипа (максимальный сектор стирания), а
+плейсхолдер `{{page_size}}` — **страница обмена** `embassy-boot` (`PAGE_SIZE`), поле
+`swap_page_size` набора цифр (`config_swap_page_size` во втором): она больше физической,
+когда `swap_paged` = "true" (см. ниже). Нужна она не линкеру, а host-target тесту обмена
+разделов: `swap()` кладёт `ACTIVE[i]` в `DFU[i + 1]`,
 то есть прежний образ уезжает ровно на страницу, и без этого числа его негде искать.
 Поэтому хук раздаёт его отдельной переменной, а `xtask` передаёт тесту. В ветках, где
 раскладку пишет человек, переменная пустая — «неизвестен»; тест тогда сам себя
@@ -369,7 +371,7 @@ STM32WB10CC/WB15CC (`erase_value: 0` при другом префиксе, об�
 
 **Файлы у `app` и `boot` разные.** У `app` `FLASH` = `ACTIVE` (приложение линкуется
 именно туда), у `boot` `FLASH` = его собственная зона до `BOOTLOADER_STATE`. Раньше
-писался один и тот же текст с `FLASH` от базы flash — и прошивка руками (`cargo flash -p boot`, затем
+писался один и тот же текст с `FLASH` от базы flash — и прошивка руками (`cargo flash -p boot --release`, затем
 `cargo run -p app`) затирала бы bootloader образом приложения; OTA не работал ни на одном чипе.
 Смещения `__bootloader_*` в обоих файлах считаются от литерала базы flash, а НЕ от
 `ORIGIN(FLASH)`: их читает `embassy-boot`, работающий с флешем целиком, а `ORIGIN(FLASH)`
@@ -404,7 +406,8 @@ STM32WB10CC/WB15CC (`erase_value: 0` при другом префиксе, об�
 `PAGE_SIZE` здесь — **не** плейсхолдер `write_size`, а `max(ACTIVE::ERASE_SIZE,
 DFU::ERASE_SIZE)`, который `embassy-boot` вычисляет сам; обе партиции живут поверх
 цельного `Flash` (`crates-cross/boot/src/main.rs`), у которого `NorFlash::ERASE_SIZE =
-MAX_ERASE_SIZE` всего чипа. Плейсхолдер `write_size` — это const generic
+MAX_ERASE_SIZE` всего чипа, — либо поверх `Paged<_, SWAP_PAGE_SIZE>`, если страницу
+обмена расширили (абзац про `swap_paged` ниже). Плейсхолдер `write_size` — это const generic
 `BootLoader::prepare::<_,_,_,N>`, размер буфера подкачки: обязан делить `PAGE_SIZE`, быть
 кратным `NorFlash::WRITE_SIZE` и не меньше него — `NorFlash::WRITE_SIZE` чипа (4/8/32)
 удовлетворяет всем трём, его и подставляем. Имя плейсхолдера осталось прежним ради
@@ -438,6 +441,26 @@ l476rg — Nucleo-L476RG). Теперь размер `BOOTLOADER_STATE` подб
 Краевой случай, ради которого `reserved_pages` растёт в цикле, — чипы, где уже первый
 регион занимает целый `PAGE_SIZE` (H7 — 128 KiB с адреса 0, без мелких секторов в начале,
 в отличие от F4): иначе `BOOTLOADER_STATE` съедал бы весь резерв.
+
+**Страница обмена крупнее физической (`swap_paged`).** Подписанный `boot` весит ≈23 KiB,
+а журнал из проверки 4 на чипе с мелкой страницей огромен: у L0 (страница 128 байт, ~640
+страниц, слово 4) `STATE` — 10 KiB из блока в 32 KiB (`BOOTLOADER_TARGET`). Поэтому
+`compute_ota_partitions` — обёртка над `compute_ota_at`, которая считает раскладку для
+страницы обмена `S = p·2^k` (p — физическая, `S <= SWAP_PAGE_MAX` = 8 KiB) и берёт первую,
+при которой журнал `(2 + 4*N) * WRITE_SIZE <= STATE_BUDGET` (2 KiB); `compute_ota_at`
+считает всё — резерв, `ACTIVE`, `DFU`, сдвиг `ACTIVE` — в единицах `S`, а `STATE` по-прежнему
+кладёт в физические сектора (`bootloader_state_erase_size`, отдельное число). Расширяется
+только чип с равными секторами и без `DFU` в банке 2 за разрывом (`dfu_bank`): на
+F2/F4/F7/H7 страница обмена и так крупнейший сектор, а банк 2 лежит в другом регионе
+`Flash`. Не уложились на 8 KiB — остаётся физическая страница, а запас под код держит
+`BOOTLOADER_MIN` (26 KiB; резерв растёт не менее чем на `MAX_EXTRA_RESERVED_BYTES` = 8 KiB
+независимо от размера страницы). Запись несёт `swap_page_size` и `swap_paged` (и `config_…`
+во втором наборе); хук выставляет `page_size` = `swap_page_size` и `swap_paged`; для `ota=no`,
+`ota=external`, `dfu_bank` и ручной раскладки `swap_paged` = "false". Прошивка (`boot`,
+`bsp::ota`) при "true" оборачивает `ACTIVE` и `DFU` в `adapters::flash::Paged<_, SWAP_PAGE_SIZE>`,
+число — то же `{{page_size}}` (менять только вместе). `DFU` не короче `ACTIVE` + `S` и кратен
+`S` (бывает на страницу длиннее, если остаток чётный). Инвариант «у каждого чипа с OTA зона
+bootloader'а не меньше `BOOTLOADER_MIN`» стережёт `bootloader_zone_and_swap_page_hold_for_every_chip`.
 
 ### OTA на внешней флеши (`ota=external`, наборы `ext_*` и `ext_cfg_*`)
 
@@ -613,8 +636,7 @@ git-зависимостями, которых этому джобу не нуж
 Флаги: `--quick` — только генерация и проверка плейсхолдеров (секунды вместо минут на
 чип), `--ci gitlab|none` — другой CI-провайдер, `--define ключ=значение` (можно
 несколько раз) — дополнительный ответ ко всем проверяемым конфигурациям, например
-`--ci gitlab --define signed=yes stm32f407ve` рендерит ветки `signed` в release-джобах
-GitLab, `--keep` — не удалять проекты после
+`--ci gitlab --define config=internal stm32f407ve`, `--keep` — не удалять проекты после
 успеха, позиционные аргументы — свой список чип-фич.
 
 `--ci` проверяет не только подстановку, но и состав: при `ci=github` в проекте есть
@@ -666,7 +688,7 @@ git-зависимостей (`rust-lib`) видны только так: у с�
 host`, `crates-cross/Cargo.lock` — `cargo xtask build`, `crates-host/chip-info/` —
 первым `cargo xtask pins`. Состав пакетов зависит от ответов при генерации: при
 `ota=no` уходят `embassy-boot*`, при `config=internal` добавляются
-`sequential-storage` и `embedded-storage-async`, при `signed=yes` — `salty`, а
+`sequential-storage` и `embedded-storage-async`, при OTA — `salty`, а
 протокол уносит или приносит целые крейты корневого workspace (`crates-host/proto`,
 `crates-host/canopen`). Шаблонный lock подходил бы одному сочетанию, а остальным ронял
 бы `cargo fetch --locked` (проверено вживую: проект без `crates-host/proto` на
