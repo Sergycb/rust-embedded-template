@@ -34,7 +34,10 @@
 //! к каждой конфигурации, например `--ci gitlab --define config=internal stm32f407ve`.
 
 use std::{
+    collections::HashSet,
+    collections::hash_map::DefaultHasher,
     env, fs,
+    hash::{Hash, Hasher},
     path::{Path, PathBuf},
     process::Command,
     time::Instant,
@@ -312,9 +315,17 @@ fn main() -> anyhow::Result<()> {
         labels.join(", "),
     );
 
+    let mut seen = Seen::default();
     for case in &options.cases {
         let started = Instant::now();
-        check_one(&template, &work_dir, &cargo_target_dir, case, &options)?;
+        check_one(
+            &template,
+            &work_dir,
+            &cargo_target_dir,
+            case,
+            &options,
+            &mut seen,
+        )?;
         println!(
             "[время] {:>7.1}s  ИТОГО {}",
             started.elapsed().as_secs_f64(),
@@ -334,6 +345,49 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Отпечатки уже проверенного в этом прогоне: см. комментарий в `check_one`.
+#[derive(Default)]
+struct Seen {
+    host: HashSet<u64>,
+    chip: HashSet<u64>,
+}
+
+/// Хеш содержимого файлов проекта, для которых `include` (по относительному
+/// пути с `/`) вернул `true`. Файлы сортируются: порядок обхода каталога не
+/// гарантирован, а отпечаток от него зависеть не должен.
+///
+/// `names` — подстановки `(что, на что)` над текстом файлов: имя проекта и
+/// чипа попадают в README, docs и манифесты, и без этого отпечатки двух
+/// конфигураций различались бы всегда. Значимые различия (размеры flash и т.п.)
+/// остаются и отпечатки по-прежнему разводят.
+fn fingerprint(
+    project: &Path,
+    names: &[(String, &str)],
+    include: impl Fn(&str) -> bool,
+) -> anyhow::Result<u64> {
+    let mut files: Vec<(String, String)> = Vec::new();
+    visit_files(project, &mut |path| {
+        let relative = path
+            .strip_prefix(project)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        if include(&relative) {
+            let bytes = fs::read(path).with_context(|| format!("прочитать {}", path.display()))?;
+            let mut text = String::from_utf8_lossy(&bytes).into_owned();
+            for (from, to) in names {
+                text = text.replace(from.as_str(), to);
+            }
+            files.push((relative, text));
+        }
+        Ok(())
+    })?;
+    files.sort();
+    let mut hasher = DefaultHasher::new();
+    files.hash(&mut hasher);
+    Ok(hasher.finish())
+}
+
 /// `template` — облегчённая копия, из которой генерируем.
 fn check_one(
     template: &Path,
@@ -341,6 +395,7 @@ fn check_one(
     cargo_target_dir: &Path,
     case: &Case,
     options: &Options,
+    seen: &mut Seen,
 ) -> anyhow::Result<()> {
     // Имя проекта = имя каталога, в который cargo-generate его положит.
     let name = case.name();
@@ -377,62 +432,36 @@ fn check_one(
 
     if !options.quick {
         // Ровно те команды, которые README обещает пользователю шаблона.
-        //
-        // `xtask pins` — единственный способ вообще проверить `chip-info`:
-        // его манифест до генерации не резолвится (Liquid в чип-фиче), так что
-        // ни `cargo xtask lint`, ни CI самого шаблона его не трогают. Оба
-        // вызова не случайны: без аргумента идёт перечисление блоков, с `RCC` —
-        // ветка с таблицей выводов, DMA и тактированием, а `RCC` есть на любом
-        // STM32 (в отличие от, например, `SPI4`).
-        //
-        // fmt/clippy для chip-info — здесь же и по той же причине; в
-        // сгенерированном проекте манифест уже подставлен, и обе команды
-        // работают. `cargo xtask lint` их намеренно не зовёт: тогда каждый
-        // пользовательский CI тянул бы stm32-metapac ради инструмента, который
-        // на сборку прошивки никак не влияет.
-        let commands: [&[&str]; 12] = [
-            &["xtask", "lint"],
-            &["xtask", "test", "host"],
-            &["xtask", "lint", "cross"],
-            &["xtask", "build"],
-            // Лицензии, источники, уязвимости: и хостовый workspace, и
-            // прошивка (у неё свой `Cargo.lock`, он появляется после `build`).
-            &["deny", "check"],
-            &[
-                "deny",
-                "--manifest-path",
-                "crates-cross/Cargo.toml",
-                "check",
-            ],
-            &["xtask", "pins"],
-            &["xtask", "pins", "RCC"],
-            // Заготовка — на I2C1, и это не произвольный выбор: он есть на
-            // всех чипах набора (у stm32l011f4, например, USART1 нет вовсе —
-            // только USART2 и LPUART1), а обработчиков прерывания у него два
-            // и они разные, то есть проверяется самая ошибкоопасная ветка
-            // таблицы. `--check` на нетронутом `bsp` обязан проходить:
-            // шаблон не занимает ни одного вывода.
-            &["xtask", "pins", "I2C1", "--snippet"],
-            &["xtask", "pins", "--check"],
-            &[
-                "fmt",
-                "--manifest-path",
-                "crates-host/chip-info/Cargo.toml",
-                "--check",
-            ],
-            &[
-                "clippy",
-                "--manifest-path",
-                "crates-host/chip-info/Cargo.toml",
-                "--all-targets",
-                "--",
-                "-D",
-                "warnings",
-            ],
+        // Считается до первой команды: сборка кладёт в проект `Cargo.lock`.
+        // Имя проекта нормализуется в обоих отпечатках, имя чипа — только в
+        // хостовом: в `chip-info` чип выбирает фича манифеста, и там он обязан
+        // различать.
+        let project_names = [
+            (name.clone(), "PROJECT"),
+            (name.replace('-', "_"), "PROJECT"),
         ];
-        check_snippets_compile(&project, cargo_target_dir)?;
-
-        for args in commands {
+        let host_names = [
+            project_names[0].clone(),
+            project_names[1].clone(),
+            (case.chip.clone(), "CHIP"),
+            (case.chip.to_uppercase(), "CHIP"),
+        ];
+        // Документация, `.vscode` и CI-файлы на lint, тесты и deny корневого
+        // workspace не влияют (`include_str!` на `.md` в `crates-host` нет), а
+        // README и docs называют чипы примерами и мешали бы совпадению.
+        let host_fingerprint = fingerprint(&project, &host_names, |rel| {
+            !rel.starts_with("crates-cross/")
+                && !rel.starts_with("crates-host/chip-info/")
+                && !rel.starts_with(".vscode/")
+                && !rel.starts_with(".github/")
+                && !rel.ends_with(".md")
+                && rel != ".gitlab-ci.yml"
+                && rel != "renovate.json"
+        })?;
+        let chip_fingerprint = fingerprint(&project, &project_names, |rel| {
+            rel.starts_with("crates-host/chip-info/")
+        })?;
+        let cargo = |args: &[&str]| -> anyhow::Result<()> {
             run(
                 Command::new("cargo").args(args),
                 &project,
@@ -444,7 +473,76 @@ fn check_one(
                     args.join(" "),
                     project.display(),
                 )
-            })?;
+            })
+        };
+
+        // Хостовые проверки зависят только от корневого workspace, чиповые — только
+        // от `chip-info`. Если отрендеренные файлы совпали с уже проверенными в
+        // этом прогоне, результат тот же, и повторять шаг незачем: на 33
+        // конфигурациях это десятки минут. Сравнивается содержимое, а не
+        // `--define`: часть ответов выводится из чипа (например, помещается ли
+        // OTA), и по ответам совпадение не угадать.
+        if seen.host.insert(host_fingerprint) {
+            cargo(&["xtask", "lint"])?;
+            cargo(&["xtask", "test", "host"])?;
+            // Лицензии, источники, уязвимости хостового workspace.
+            cargo(&["deny", "check"])?;
+        } else {
+            println!("[пропуск] lint, test host, deny: корневой workspace уже проверен");
+        }
+
+        cargo(&["xtask", "lint", "cross"])?;
+        cargo(&["xtask", "build"])?;
+        // У прошивки свой `Cargo.lock`, он появляется после `build`.
+        cargo(&[
+            "deny",
+            "--manifest-path",
+            "crates-cross/Cargo.toml",
+            "check",
+        ])?;
+        // `--check` на нетронутом `bsp` обязан проходить: шаблон не занимает ни
+        // одного вывода. Читает `resources.rs` проекта, поэтому не дедуплицируется.
+        cargo(&["xtask", "pins", "--check"])?;
+
+        if seen.chip.insert(chip_fingerprint) {
+            // `xtask pins` — единственный способ вообще проверить `chip-info`:
+            // его манифест до генерации не резолвится (Liquid в чип-фиче), так что
+            // ни `cargo xtask lint`, ни CI самого шаблона его не трогают. Оба
+            // вызова не случайны: без аргумента идёт перечисление блоков, с `RCC` —
+            // ветка с таблицей выводов, DMA и тактированием, а `RCC` есть на любом
+            // STM32 (в отличие от, например, `SPI4`).
+            //
+            // fmt/clippy для chip-info — здесь же и по той же причине; в
+            // сгенерированном проекте манифест уже подставлен, и обе команды
+            // работают. `cargo xtask lint` их намеренно не зовёт: тогда каждый
+            // пользовательский CI тянул бы stm32-metapac ради инструмента, который
+            // на сборку прошивки никак не влияет.
+            check_snippets_compile(&project, cargo_target_dir)?;
+            cargo(&["xtask", "pins"])?;
+            cargo(&["xtask", "pins", "RCC"])?;
+            // Заготовка — на I2C1, и это не произвольный выбор: он есть на
+            // всех чипах набора (у stm32l011f4, например, USART1 нет вовсе —
+            // только USART2 и LPUART1), а обработчиков прерывания у него два
+            // и они разные, то есть проверяется самая ошибкоопасная ветка
+            // таблицы.
+            cargo(&["xtask", "pins", "I2C1", "--snippet"])?;
+            cargo(&[
+                "fmt",
+                "--manifest-path",
+                "crates-host/chip-info/Cargo.toml",
+                "--check",
+            ])?;
+            cargo(&[
+                "clippy",
+                "--manifest-path",
+                "crates-host/chip-info/Cargo.toml",
+                "--all-targets",
+                "--",
+                "-D",
+                "warnings",
+            ])?;
+        } else {
+            println!("[пропуск] pins, заготовки, chip-info: этот чип уже проверен");
         }
     }
 
