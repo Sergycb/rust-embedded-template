@@ -1413,7 +1413,7 @@ if variable::get("ota") != "true" {
 	file::delete("crates-host/domain/src/ota");
 }
 // То же для хранилища настроек.
-if variable::get("ota") != "true" && variable::get("settings_port") != "true" {
+if variable::get("ota") != "true" && protocol != "canopen" {
 	file::delete("crates-host/ports/src/word.rs");
 }
 if variable::get("settings_port") != "true" {

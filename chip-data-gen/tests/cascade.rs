@@ -2039,10 +2039,11 @@ fn ota_and_settings_code_is_kept_only_when_selected() {
             assert_eq!(gone(path), no_settings, "{chip} {answers:?}: {path}");
         }
         assert_eq!(gone(FLASH), no_flash, "{chip} {answers:?}: {FLASH}");
-        // Слово записи нужно, пока есть OTA или порт настроек.
+        // Слово записи читают OTA и узел CANopen; одни настройки — нет.
+        let canopen = answers.contains(&("protocol", "canopen"));
         assert_eq!(
             gone(WORD),
-            no_ota && no_settings,
+            no_ota && !canopen,
             "{chip} {answers:?}: {WORD}"
         );
     }

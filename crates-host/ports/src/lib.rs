@@ -78,8 +78,8 @@ pub mod link;
 pub mod modbus;
 
 // {%- endif %}
-// {%- if ota == "true" or settings_port == "true" %}
-/// Слово записи флеша — общий предел буферов OTA и хранилища настроек.
+// {%- if ota == "true" or protocol == "canopen" %}
+/// Слово записи флеша — общий предел буферов OTA и хранилища CANopen.
 mod word;
 
 // {%- endif %}
@@ -119,6 +119,6 @@ pub use ota::update::{FirmwareUpdate, PendingImage, UpdateError};
 // {%- if settings_port == "true" %}
 pub use settings::SettingsStorage;
 // {%- endif %}
-// {%- if ota == "true" or settings_port == "true" %}
+// {%- if ota == "true" or protocol == "canopen" %}
 pub use word::MAX_WRITE_SIZE;
 // {%- endif %}
