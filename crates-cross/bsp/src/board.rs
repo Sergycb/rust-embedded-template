@@ -69,28 +69,36 @@ pub struct Board {
     pub settings: crate::settings::Settings,
 {%- endif %}
 {%- if interface == "uart" %}
-    /// UART под узлом протокола ({{protocol}}) — заглушка `bsp::serial::Serial`,
+    /// UART{% if protocol != "none" %} под узлом протокола ({{protocol}}){% endif %} — заглушка `bsp::serial::Serial`,
     /// пока проект не подставит драйвер своей платы (`docs/modules/bsp-serial.md`).
+{%- if protocol != "none" %}
     /// Уезжает в узел `{% if protocol == "modbus" %}MODBUS{% else %}HOST{% endif %}`: в граф (`fragments:` в
     /// `crates-cross/app/src/graph.rs`) или, при `graph=no`, в задачу, которую спавнит
     /// `main` (`protocol::spawn`).
+{%- else %}
+    /// Протокола в проекте нет: поле ждёт ваш узел.
+{%- endif %}
     pub serial: crate::serial::Serial,
 {%- endif %}
 {%- if interface == "can" %}
-    /// Шина CAN под узлом `CANOPEN` — заглушка `bsp::can::Can`, пока проект не
-    /// подставит контроллер своей платы (`docs/modules/bsp-can.md`). Уезжает в
-    /// узел `CANOPEN`: в граф (`fragments:` в `crates-cross/app/src/graph.rs`) или,
+    /// Шина CAN{% if protocol == "canopen" %} под узлом `CANOPEN`{% endif %} — заглушка `bsp::can::Can`, пока проект не
+    /// подставит контроллер своей платы (`docs/modules/bsp-can.md`).
+{%- if protocol == "canopen" %}
+    /// Уезжает в узел `CANOPEN`: в граф (`fragments:` в `crates-cross/app/src/graph.rs`) или,
     /// при `graph=no`, в задачу, которую спавнит `main` (`protocol::spawn`).
+{%- else %}
+    /// Протокола в проекте нет: поле ждёт ваш узел.
+{%- endif %}
     pub can: crate::can::Can,
 {%- endif %}
 {%- if interface == "tcp" or interface == "udp" %}
-    /// Сеть под протоколом: фоновая работа стека для узла `NET` и сам стек, на
-    /// котором приложение открывает сокет протокола (`bsp::net`). Устройство — заглушка, пока проект не подставит
+    /// Сеть{% if protocol != "none" %} под протоколом{% endif %}: фоновая работа стека для узла `NET` и сам стек, на
+    /// котором приложение открывает сокет{% if protocol != "none" %} протокола{% endif %} (`bsp::net`). Устройство — заглушка, пока проект не подставит
     /// Ethernet своей платы (`docs/modules/bsp-net.md`).
     pub net: crate::net::Net,
 {%- endif %}
 {%- if interface == "usb" %}
-    /// USB под протоколом: устройство для узла `USB` и поток CDC (`bsp::usb`).
+    /// USB{% if protocol != "none" %} под протоколом{% endif %}: устройство для узла `USB` и поток CDC (`bsp::usb`).
     /// Драйвер — заглушка, пока проект не подставит USB-блок своей платы
     /// (`docs/modules/bsp-usb.md`).
     pub usb: crate::usb::Usb,

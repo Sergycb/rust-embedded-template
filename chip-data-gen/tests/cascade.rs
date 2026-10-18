@@ -1452,7 +1452,7 @@ fn impossible_protocol_answers_are_rejected() {
     /// Чип, ответы, часть ожидаемого сообщения об ошибке.
     type Rejected<'a> = (&'a str, &'a [(&'a str, &'a str)], &'a str);
     let script = compile_script();
-    let cases: [Rejected; 7] = [
+    let cases: [Rejected; 6] = [
         // У G071 USB нет.
         (
             "g071rb",
@@ -1482,7 +1482,6 @@ fn impossible_protocol_answers_are_rejected() {
             &[("protocol", "modbus")],
             "работает поверх uart, tcp, udp, usb, а не",
         ),
-        ("f407ve", &[("interface", "uart")], "без протокола"),
         (
             "f407ve",
             &[("protocol", "opcua"), ("interface", "uart")],
@@ -1543,6 +1542,42 @@ fn protocol_does_not_need_the_graph() {
             .any(|path| path == "crates-cross/app/src/protocol.rs"),
         "без протокола protocol.rs должен удаляться"
     );
+}
+
+/// Транспорт без протокола — рабочий выбор: заглушка интерфейса и его фоновый
+/// узел (`NET`, `USB`) в проекте есть, а протокол — ваш (например, свой).
+#[test]
+fn a_transport_without_a_protocol_is_a_valid_project() {
+    let ast = compile_script();
+    for (chip, interface) in [
+        ("g474re", "uart"),
+        ("g474re", "can"),
+        ("h743zg", "tcp"),
+        ("h743zg", "udp"),
+        ("g474re", "usb"),
+    ] {
+        let result = run_cascade_with(&ast, chip, &[("interface", interface)])
+            .unwrap_or_else(|err| panic!("{chip} interface={interface}: каскад упал: {err}"));
+        let var = |name: &str| result.vars.get(name).map(String::as_str);
+        assert_eq!(var("interface"), Some(interface), "{chip}");
+        assert_eq!(var("protocol"), Some("none"), "{chip} {interface}");
+        // Кадровый канал нужен шине CAN и UDP, но не потоку.
+        let link_gone = result
+            .deleted
+            .iter()
+            .any(|d| d == "crates-host/ports/src/link.rs");
+        assert_eq!(
+            link_gone,
+            !matches!(interface, "can" | "udp"),
+            "{chip} {interface}"
+        );
+        // Заглушка шины CAN реализует порт `CanBus`, поэтому `ports::can` остаётся.
+        let can_gone = result
+            .deleted
+            .iter()
+            .any(|d| d == "crates-host/ports/src/can.rs");
+        assert_eq!(can_gone, interface != "can", "{chip} {interface}");
+    }
 }
 
 /// Ответ «нет» на вопрос про граф окончателен и на просторном чипе.
@@ -2041,11 +2076,7 @@ fn ota_and_settings_code_is_kept_only_when_selected() {
         assert_eq!(gone(FLASH), no_flash, "{chip} {answers:?}: {FLASH}");
         // Слово записи читают OTA и узел CANopen; одни настройки — нет.
         let canopen = answers.contains(&("protocol", "canopen"));
-        assert_eq!(
-            gone(WORD),
-            no_ota && !canopen,
-            "{chip} {answers:?}: {WORD}"
-        );
+        assert_eq!(gone(WORD), no_ota && !canopen, "{chip} {answers:?}: {WORD}");
     }
 }
 

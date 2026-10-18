@@ -1,14 +1,16 @@
-//! Протокол связи проекта: транспорт вокруг интерфейса платы, буферы и вход
+//! {% if protocol != "none" %}Протокол связи проекта: транспорт вокруг интерфейса платы, буферы и вход
 //! узла (`*_wiring`).
 //!
 //! Общее для обоих способов запустить узел: граф (`graph.rs`) подставляет вход
 //! в `fragments:`, а проект без графа (`graph=no`) спавнит узел из `main`
-//! (`spawn` ниже) — вход в обоих случаях собирает одна и та же функция.
+//! (`spawn` ниже) — вход в обоих случаях собирает одна и та же функция.{% else %}Фоновые узлы транспорта проекта без графа (`graph=no`): `main` спавнит их
+//! отсюда (`spawn` ниже). Протокола в проекте нет — он ваш, а транспорт и его
+//! узел уже работают.{% endif %}
 {%- if graph != "true" %}
 
 use embassy_executor::Spawner;
 {%- endif %}
-{%- if protocol == "protobuf" or interface == "tcp" or interface == "udp" %}
+{%- if protocol == "protobuf" or protocol_socket == "true" %}
 use static_cell::ConstStaticCell;
 {%- endif %}
 {%- if protocol == "modbus" %}
@@ -51,7 +53,7 @@ static HOST_RX: ConstStaticCell<[u8; ::adapters::cobs::rx_len(HOST_MESSAGE)]> =
 static HOST_TX: ConstStaticCell<[u8; HOST_MESSAGE]> = ConstStaticCell::new([0; HOST_MESSAGE]);
 {%- endif %}
 
-{%- if interface == "tcp" or interface == "udp" %}
+{%- if protocol_socket == "true" %}
 
 /// Порт, на котором протокол ждёт хост: {% if protocol == "modbus" %}502 — стандартный порт Modbus
 /// TCP и UDP{% else %}5000 — выбран шаблоном, у protobuf стандартного нет{% endif %}. Порт задаёт протокол, а не
@@ -157,7 +159,7 @@ pub fn canopen_wiring(
     }
 }
 {%- endif %}
-{%- if graph != "true" and protocol != "none" %}
+{%- if graph != "true" %}
 
 // Задачи проекта без графа. `Spawner::spawn` берёт токен, а не функцию, а
 // задача не может быть generic — поэтому каждая типизирована псевдонимами выше
@@ -205,8 +207,8 @@ async fn canopen_task(bus: bsp::can::Can, settings: Settings) {
 }
 {%- endif %}
 
-/// Спавнит узлы протокола: то, что в проекте с графом делает `fragments:`.
-/// Берёт объект платы, который лежит под протоколом{% if interface == "tcp" or interface == "udp" %}, — сеть целиком: из неё
+/// Спавнит узлы {% if protocol != "none" %}протокола и транспорта{% else %}транспорта{% endif %}: то, что в проекте с графом делает `fragments:`.
+/// Берёт объект платы, который лежит под {% if protocol != "none" %}протоколом{% else %}транспортом{% endif %}{% if interface == "tcp" or interface == "udp" %}, — сеть целиком: из неё
 /// узел `NET` забирает `runner`, протокол — `stack`{% elsif interface == "usb" %}, — USB целиком: из него узел `USB`
 /// забирает `device`, протокол — `cdc`{% endif %}.
 pub fn spawn(spawner: Spawner, {% if interface == "uart" %}serial: bsp::serial::Serial{% elsif interface == "can" %}can: bsp::can::Can, settings: Settings{% elsif interface == "usb" %}usb: bsp::usb::Usb{% else %}net: bsp::net::Net{% endif %}) {
@@ -220,7 +222,7 @@ pub fn spawn(spawner: Spawner, {% if interface == "uart" %}serial: bsp::serial::
     spawner.spawn(modbus_task({% if interface == "uart" %}serial{% elsif interface == "usb" %}usb.cdc{% else %}net.stack{% endif %}).expect("задача MODBUS свежая: спавнится один раз"));
 {%- elsif protocol == "protobuf" %}
     spawner.spawn(host_task({% if interface == "uart" %}serial{% elsif interface == "usb" %}usb.cdc{% else %}net.stack{% endif %}).expect("задача HOST свежая: спавнится один раз"));
-{%- else %}
+{%- elsif protocol == "canopen" %}
     spawner.spawn(canopen_task(can, settings).expect("задача CANOPEN свежая: спавнится один раз"));
 {%- endif %}
 }

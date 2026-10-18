@@ -1,5 +1,5 @@
 #![cfg_attr(not(test), no_std)]
-// {%- if ota == "true" or settings_port == "true" or protocol != "none" %}
+// {%- if ports_async == "true" %}
 // `async fn` в публичном трейте: rustc предупреждает (`async_fn_in_trait`), что
 // у возвращаемого future нет границы `Send` и потребовать её вызывающий не
 // сможет. Для однопоточного исполнителя embassy это ровно то, что нужно, а с
@@ -56,8 +56,8 @@
 //! касается (`docs/conventions.md`, «`lib.rs` только объявляет модули»).
 // {%- endif %}
 
-// {%- if protocol == "canopen" %}
-/// Шина CAN: кадры для узла CANopen.
+// {%- if interface == "can" %}
+/// Шина CAN: кадры для узла CANopen или вашего протокола.
 pub mod can;
 
 // {%- endif %}
@@ -94,7 +94,7 @@ pub mod ota;
 pub mod settings;
 // {%- endif %}
 
-// {%- if protocol == "canopen" %}
+// {%- if interface == "can" %}
 pub use can::CanBus;
 // {%- endif %}
 // {%- if protocol == "protobuf" %}

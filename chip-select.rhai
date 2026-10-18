@@ -1241,7 +1241,9 @@ if variable::get("graph") != "true" {
 // Какие интерфейсы годятся протоколу и какой блок чипа каждый требует —
 // таблицами; новый интерфейс добавляется строкой в обе.
 const PROTOCOL_INTERFACES = #{
-    "none": ["none"],
+    // Без протокола интерфейс всё равно возможен: проект получает заглушку
+    // транспорта и его фоновый узел (`NET`, `USB`), а протокол — ваш.
+    "none": ["none", "uart", "can", "tcp", "udp", "usb"],
     "modbus": ["uart", "tcp", "udp", "usb"],
     "protobuf": ["uart", "tcp", "udp", "usb"],
     "canopen": ["can"],
@@ -1264,12 +1266,9 @@ if !PROTOCOL_INTERFACES.contains(protocol) {
 }
 let fits = PROTOCOL_INTERFACES[protocol];
 if !fits.contains(iface) {
-    if protocol == "none" {
-        throw "interface: интерфейс «" + iface + "» выбран без протокола — его не обслуживал бы ни один узел; выберите протокол или interface=none";
-    }
     throw "interface: протокол " + protocol + " работает поверх " + listed(fits) + ", а не «" + iface + "»";
 }
-if protocol != "none" {
+if iface != "none" {
     let blocks = INTERFACE_BLOCKS[iface];
     let found = [];
     for tag in INTERFACES[suffix] {
@@ -1298,7 +1297,10 @@ variable::set("erase_page", if variable::get("state_paged") == "true" || variabl
 variable::set("external_flash", if (variable::get("ota") == "true" && variable::get("ota_store") == "external") || variable::get("config_store") == "external" { "true" } else { "false" });
 variable::set("protocol", protocol);
 variable::set("interface", iface);
-variable::set("link_port", if protocol == "protobuf" || protocol == "canopen" || (protocol == "modbus" && iface == "udp") { "true" } else { "false" });
+// Кадровый канал (`ports::FrameLink`, `LinkError`) нужен protobuf (канал хоста),
+// шине CAN (ошибка `CanBus`) и UDP-каналу (`adapters::net::UdpLink` реализует
+// `FrameLink`) — с протоколом и без него.
+variable::set("link_port", if protocol == "protobuf" || iface == "can" || iface == "udp" { "true" } else { "false" });
 // Порт хранилища настроек (`ports::SettingsStorage`) нужен, пока есть что в него
 // класть: раздел, EEPROM или внешняя флеш (`config`) либо заглушка `Unavailable`
 // у узла CANopen без хранилища. Иначе порта и адаптера в проекте нет.
@@ -1306,7 +1308,21 @@ variable::set("settings_port", if variable::get("config") == "true" || protocol 
 // Транспорт поверх потока байтов (UART, USB CDC, TCP), а не датаграммы: ему нужны
 // `embedded-io-async`, `crc` и, под protobuf, COBS. UDP границу кадра получает
 // от самой датаграммы, CAN — это вообще не поток.
-variable::set("stream_io", if (protocol == "modbus" || protocol == "protobuf") && (iface == "uart" || iface == "usb" || iface == "tcp") { "true" } else { "false" });
+let stream = iface == "uart" || iface == "usb" || iface == "tcp";
+variable::set("stream_io", if stream { "true" } else { "false" });
+// CRC кадра: RTU (Modbus по UART и USB) и COBS (protobuf по потоку).
+variable::set("crc_used", if (protocol == "modbus" && (iface == "uart" || iface == "usb")) || (protocol == "protobuf" && stream) { "true" } else { "false" });
+// Property-тесты кадрирования есть у Modbus (RTU, TCP, UDP) и у COBS.
+variable::set("framing_tests", if protocol == "modbus" || (protocol == "protobuf" && stream) { "true" } else { "false" });
+// Асинхронные трейты в `ports`: без них `#![expect(async_fn_in_trait)]` не
+// срабатывает, и сборка падает.
+variable::set("ports_async", if variable::get("ota") == "true" || variable::get("settings_port") == "true" || protocol != "none" || iface == "can" || iface == "udp" { "true" } else { "false" });
+// Сокет протокола на стеке `embassy-net` (порт, буферы): нужен, только когда
+// протокол работает по сети. Транспорт без протокола сокета не открывает.
+variable::set("protocol_socket", if (protocol == "modbus" || protocol == "protobuf") && (iface == "tcp" || iface == "udp") { "true" } else { "false" });
+// Модуль `protocol.rs` в `app`: вход узла протокола и, без графа, спавн узлов
+// `NET`/`USB`. Без протокола и с графом файлу нечего содержать.
+variable::set("app_protocol_rs", if protocol != "none" || (variable::get("graph") != "true" && (iface == "tcp" || iface == "udp" || iface == "usb")) { "true" } else { "false" });
 // Группы `resources.rs` нужны, пока есть что в них класть: общий флеш, сторож
 // графа или блок выбранного интерфейса. Иначе в файле остаётся пустая группа.
 variable::set("has_resources", if iface != "none" || variable::get("shared_flash") == "true" || variable::get("graph") == "true" { "true" } else { "false" });
@@ -1387,19 +1403,18 @@ if protocol != "protobuf" {
 	file::delete("crates-host/domain/src/host");
 	file::delete("crates-host/proto");
 }
-if protocol != "canopen" {
+if iface != "can" {
 	file::delete("crates-host/ports/src/can.rs");
+}
+if protocol != "canopen" {
 	file::delete("crates-host/domain/src/canopen.rs");
 	file::delete("crates-host/domain/src/canopen");
 	file::delete("crates-host/canopen");
 }
-if protocol == "none" {
+if variable::get("app_protocol_rs") != "true" {
 	file::delete("crates-cross/app/src/protocol.rs");
 }
-// Кадровый канал (`ports::FrameLink`, `LinkError`) нужен protobuf (канал хоста),
-// CANopen (ошибка шины) и Modbus по UDP (датаграмма); Modbus по потоку им не
-// пользуется.
-if !(protocol == "protobuf" || protocol == "canopen" || (protocol == "modbus" && iface == "udp")) {
+if variable::get("link_port") != "true" {
 	file::delete("crates-host/ports/src/link.rs");
 }
 // OTA — порты, адаптер и узел `domain::ota` — только в проекте с OTA: без неё это

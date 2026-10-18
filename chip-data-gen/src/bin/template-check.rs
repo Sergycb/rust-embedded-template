@@ -182,6 +182,13 @@ fn default_cases() -> Vec<Case> {
             &["protocol=modbus", "interface=tcp", "modbus_master=yes"],
         ),
         Case::new("stm32f407ve").variant("protobuf-udp", &["protocol=protobuf", "interface=udp"]),
+        // Транспорт без протокола (свой протокол пишет проект): заглушка интерфейса
+        // и его фоновый узел есть, узла протокола — нет. Граф и его отсутствие, по
+        // одному интерфейсу на вид: поток (UART), шина (CAN), сеть, USB.
+        Case::new("stm32g474re").variant("uart-only", &["interface=uart"]),
+        Case::new("stm32g474re").variant("can-only-no-graph", &["interface=can", "graph=no"]),
+        Case::new("stm32h743zg").variant("tcp-only", &["interface=tcp"]),
+        Case::new("stm32g474re").variant("usb-only-no-graph", &["interface=usb", "graph=no"]),
         // Остальные транспорты по сети: Modbus UDP (MBAP в датаграмме, без потока
         // и CRC) и protobuf по TCP (COBS поверх сокета) — у каждого свой набор
         // файлов в `adapters`, остальные при генерации вырезаются.

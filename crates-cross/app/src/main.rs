@@ -15,7 +15,7 @@ mod graph;
 mod image;
 {%- endif %}
 mod panic;
-{%- if protocol != "none" %}
+{%- if app_protocol_rs == "true" %}
 mod protocol;
 {%- endif %}
 
@@ -160,13 +160,15 @@ fn main() -> ! {
         .expect("задача OTA свежая: спавнится один раз");
     spawner.spawn(token);
 {%- endif %}
-{%- if protocol != "none" %}
+{%- if app_protocol_rs == "true" %}
 
-    // Узлы протокола без графа спавнятся так же: сам узел{% if interface == "tcp" or interface == "udp" %} и `NET`, который
-    // гоняет сетевой стек{% elsif interface == "usb" %} и `USB`, который ведёт устройство{% endif %} (`protocol::spawn`).
+    // Узлы без графа спавнятся так же: {% if protocol != "none" %}узел протокола{% if interface == "tcp" or interface == "udp" %} и `NET`, который
+    // гоняет сетевой стек{% elsif interface == "usb" %} и `USB`, который ведёт устройство{% endif %}{% elsif interface == "usb" %}`USB`, который ведёт устройство{% else %}`NET`, который гоняет сетевой стек{% endif %} (`protocol::spawn`).
+{%- if protocol != "none" %}
     // Вход собирает та же функция, что в проекте с графом (`protocol::*_wiring`).
-    // Без графа нет ни сторожа, ни `restart:`: узлы протокола не падают, а
-    // зависший остаётся зависшим — сторожить исполнитель вам.
+{%- endif %}
+    // Без графа нет ни сторожа, ни `restart:`: узлы не падают, а зависший
+    // остаётся зависшим — сторожить исполнитель вам.
     protocol::spawn(spawner, {% if interface == "uart" %}board.serial{% elsif interface == "can" %}board.can, {% if config == "true" %}board.settings{% else %}::adapters::settings::Unavailable{% endif %}{% elsif interface == "usb" %}board.usb{% else %}board.net{% endif %});
 {%- endif %}
 {%- endif %}
