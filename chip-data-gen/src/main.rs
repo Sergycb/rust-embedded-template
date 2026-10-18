@@ -1147,13 +1147,13 @@ struct OtaPartitions {
     bootloader_state_origin: u64,
     bootloader_state_length: u64,
     /// Сектор, в котором лежит `BOOTLOADER_STATE`, — страница, которую ему
-    /// объявляет `adapters::flash::Paged` (см. `compute_ota_partitions`, пятая
+    /// объявляет `adapters::flash::ErasePage` (см. `compute_ota_partitions`, пятая
     /// проверка). Меньше `PAGE_SIZE` на чипах с неравными секторами.
     bootloader_state_erase_size: u64,
     /// Страница обмена embassy-boot (`PAGE_SIZE`): `ACTIVE`/`DFU` кратны ей, а
     /// `DFU` длиннее `ACTIVE` ровно на неё. Больше физической страницы чипа
     /// (`MemoryLayout::page_size`), когда прошивка оборачивает `ACTIVE`/`DFU` в
-    /// `adapters::flash::Paged<_, SWAP_PAGE_SIZE>` — см. [`compute_ota_partitions`].
+    /// `adapters::flash::ErasePage<_, SWAP_PAGE_SIZE>` — см. [`compute_ota_partitions`].
     swap_page_size: u64,
     active_origin: u64,
     active_length: u64,
@@ -1165,7 +1165,7 @@ struct OtaPartitions {
     settings: Option<SettingsPartition>,
 }
 
-/// Где лежит раздел настроек и какая у него страница (`adapters::flash::Paged`
+/// Где лежит раздел настроек и какая у него страница (`adapters::flash::ErasePage`
 /// в `bsp::config`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct SettingsPartition {
@@ -1852,7 +1852,7 @@ fn extra_region_lines(regions: &[RawRegion], flash_end: u64, ram_end: u64) -> Ve
 /// подписанный `boot` не влезает). Поэтому, когда журнал при физической
 /// странице `page_size` больше [`STATE_BUDGET`], страница обмена удваивается
 /// (`page_size * 2^k`, не больше [`SWAP_PAGE_MAX`]) до первой, при которой он
-/// укладывается; прошивка оборачивает `ACTIVE`/`DFU` в `Paged<_, SWAP_PAGE_SIZE>`.
+/// укладывается; прошивка оборачивает `ACTIVE`/`DFU` в `ErasePage<_, SWAP_PAGE_SIZE>`.
 /// Не укладывается и на максимуме — остаётся физическая страница, а запас под
 /// код держит [`BOOTLOADER_MIN`].
 ///
@@ -1948,7 +1948,7 @@ fn journal_bytes(p: &OtaPartitions, write_size: u64) -> u64 {
 /// `Flash` это самый крупный сектор, и на F2/F4/F7 `STATE` в мелком секторе
 /// (0x10000 при странице 128 KiB у F4) ронял и bootloader, и приложение на
 /// первом же старте — у всех 223 таких чипов с OTA. Поэтому `STATE` строится
-/// поверх `adapters::flash::Paged` со страницей своего сектора, и размер этого
+/// поверх `adapters::flash::ErasePage` со страницей своего сектора, и размер этого
 /// сектора — `bootloader_state_erase_size` — уходит в шаблон вместе с адресами.
 /// Сам сектор — самый мелкий в резерве, см. `place_state`.
 ///
@@ -2198,7 +2198,7 @@ fn place_settings_and_state(
 /// флеша под ним), — но здесь, на этапе генерации. Страница обмена —
 /// `p.swap_page_size`: кратна `chip_page` (крупнейший сектор чипа), и по ней
 /// же сверяются `ACTIVE`/`DFU` (при расширенной странице прошивка строит их
-/// поверх `Paged` с этой страницей). Паника вместо `Err`: `compute_ota_partitions`
+/// поверх `ErasePage` с этой страницей). Паника вместо `Err`: `compute_ota_partitions`
 /// обязан выдавать только валидные раскладки, невалидная — баг в нём самом, а
 /// не «чип не подошёл». Ровно этой проверки не хватало: 279 из 972 прежних
 /// раскладок нарушали четвёртую и роняли bootloader на первом же старте.
@@ -2259,8 +2259,8 @@ fn assert_embassy_boot_invariants(chip: &str, p: &OtaPartitions, chip_page: u64,
             s.erase_size
         );
     }
-    // `ACTIVE`/`DFU` строятся поверх цельного `Flash` либо `Paged` со страницей
-    // обмена, `STATE` — поверх `Paged` со страницей своего сектора.
+    // `ACTIVE`/`DFU` строятся поверх цельного `Flash` либо `ErasePage` со страницей
+    // обмена, `STATE` — поверх `ErasePage` со страницей своего сектора.
     let state_offset = p.bootloader_state_origin - FLASH_BASE;
     for (name, offset, length, page) in [
         (

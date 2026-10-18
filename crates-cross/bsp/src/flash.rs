@@ -1,6 +1,6 @@
 #![doc = include_str!("../../../docs/modules/bsp-flash.md")]
 {%- if ota == "true" and ota_store != "external" %}
-use adapters::flash::{Paged, whole};
+use adapters::flash::{ErasePage, whole};
 {%- endif %}
 {%- if shared_flash == "true" %}
 use core::cell::RefCell;
@@ -127,10 +127,10 @@ type DfuFlash = BlockingAsync<DfuBank>;
 {%- elsif swap_paged == "true" %}
 ///
 /// Но со страницей обмена [`SWAP_PAGE_SIZE`], крупнее физической страницы
-/// флеша (`adapters::flash::Paged`): `DFU` обязан видеть ту же страницу, что
+/// флеша (`adapters::flash::ErasePage`): `DFU` обязан видеть ту же страницу, что
 /// `ACTIVE` и `DFU` в bootloader'е, иначе размеры и смещения разделов у них
 /// разойдутся.
-type DfuFlash = BlockingAsync<Paged<Whole, SWAP_PAGE_SIZE>>;
+type DfuFlash = BlockingAsync<ErasePage<Whole, SWAP_PAGE_SIZE>>;
 {%- else %}
 type DfuFlash = BlockingAsync<Whole>;
 {%- endif %}
@@ -156,7 +156,7 @@ const STATE_ERASE_SIZE: usize = adapters::flash::size_from_env(
 /// Генерация берёт её больше физической, чтобы журнал `BOOTLOADER_STATE`
 /// (запись на каждую страницу `ACTIVE`) стал короче и коду bootloader'а
 /// остался почти весь его блок. Раздел `DFU` строится над
-/// `Paged<_, SWAP_PAGE_SIZE>`; `ACTIVE` с той же страницей собирает
+/// `ErasePage<_, SWAP_PAGE_SIZE>`; `ACTIVE` с той же страницей собирает
 /// bootloader. Число — `page_size` из генерации, переменная среды
 /// `SWAP_PAGE_SIZE` (общая с bootloader'ом); кратно оно странице стирания
 /// флеша (проверка ниже).
@@ -171,7 +171,7 @@ const _: () = assert!(
 
 /// Флеш под разделом `BOOTLOADER_STATE`: тот же общий `Flash`, но со
 /// страницей [`STATE_ERASE_SIZE`].
-type StateFlash = BlockingAsync<Paged<Whole, STATE_ERASE_SIZE>>;
+type StateFlash = BlockingAsync<ErasePage<Whole, STATE_ERASE_SIZE>>;
 
 /// Раздел `DFU` — то, из чего собирается адаптер обновления.
 pub type Dfu = embassy_embedded_hal::flash::partition::Partition<'static, NoopRawMutex, DfuFlash>;
@@ -240,13 +240,13 @@ pub(crate) fn partitions(chip: Chip) -> Partitions {
     let dfu = DFU_FLASH.init(AsyncMutex::new(BlockingAsync::new(whole(chip.dfu_bank))));
 {%- elsif swap_paged == "true" %}
 pub(crate) fn partitions(chip: Chip) -> Partitions {
-    let dfu = BlockingAsync::new(Paged::new(whole(chip.shared)));
+    let dfu = BlockingAsync::new(ErasePage::new(whole(chip.shared)));
     let dfu = DFU_FLASH.init(AsyncMutex::new(dfu));
 {%- else %}
 pub(crate) fn partitions(chip: Chip) -> Partitions {
     let dfu = DFU_FLASH.init(AsyncMutex::new(BlockingAsync::new(whole(chip.shared))));
 {%- endif %}
-    let state = BlockingAsync::new(Paged::new(whole(chip.shared)));
+    let state = BlockingAsync::new(ErasePage::new(whole(chip.shared)));
     let state = STATE_FLASH.init(AsyncMutex::new(state));
     let config = FirmwareUpdaterConfig::from_linkerfile(dfu, state);
 {%- endif %}

@@ -406,7 +406,7 @@ STM32WB10CC/WB15CC (`erase_value: 0` при другом префиксе, об�
 `PAGE_SIZE` здесь — **не** плейсхолдер `write_size`, а `max(ACTIVE::ERASE_SIZE,
 DFU::ERASE_SIZE)`, который `embassy-boot` вычисляет сам; обе партиции живут поверх
 цельного `Flash` (`crates-cross/boot/src/main.rs`), у которого `NorFlash::ERASE_SIZE =
-MAX_ERASE_SIZE` всего чипа, — либо поверх `Paged<_, SWAP_PAGE_SIZE>`, если страницу
+MAX_ERASE_SIZE` всего чипа, — либо поверх `ErasePage<_, SWAP_PAGE_SIZE>`, если страницу
 обмена расширили (абзац про `swap_paged` ниже). Плейсхолдер `write_size` — это const generic
 `BootLoader::prepare::<_,_,_,N>`, размер буфера подкачки: обязан делить `PAGE_SIZE`, быть
 кратным `NorFlash::WRITE_SIZE` и не меньше него — `NorFlash::WRITE_SIZE` чипа (4/8/32)
@@ -431,7 +431,7 @@ l476rg — Nucleo-L476RG). Теперь размер `BOOTLOADER_STATE` подб
 (`embassy-embedded-hal`): смещение и размер раздела кратны `ERASE_SIZE` флеша под ним,
 иначе паника при построении раздела. Над цельным `Flash` (страница — `MAX_ERASE_SIZE`)
 `STATE` в мелком секторе её не проходил, и у всех 223 чипов F2/F4/F7 с OTA и bootloader,
-и приложение падали на первом старте. Теперь `STATE` живёт над `adapters::flash::Paged`
+и приложение падали на первом старте. Теперь `STATE` живёт над `adapters::flash::ErasePage`
 со страницей своего сектора — она лежит в записи полем `bootloader_state_erase_size`
 (и `config_…` во втором наборе), хук раздаёт её плейсхолдером `state_erase_size`, а
 `assert_embassy_boot_invariants` проверяет кратность всех трёх разделов своей странице.
@@ -457,7 +457,7 @@ F2/F4/F7/H7 страница обмена и так крупнейший сек�
 независимо от размера страницы). Запись несёт `swap_page_size` и `swap_paged` (и `config_…`
 во втором наборе); хук выставляет `page_size` = `swap_page_size` и `swap_paged`; для `ota=no`,
 `ota=external`, `dfu_bank` и ручной раскладки `swap_paged` = "false". Прошивка (`boot`,
-`bsp::flash`) при "true" оборачивает `ACTIVE` и `DFU` в `adapters::flash::Paged<_, SWAP_PAGE_SIZE>`,
+`bsp::flash`) при "true" оборачивает `ACTIVE` и `DFU` в `adapters::flash::ErasePage<_, SWAP_PAGE_SIZE>`,
 число — то же `{{page_size}}` (менять только вместе). `DFU` не короче `ACTIVE` + `S` и кратен
 `S` (бывает на страницу длиннее, если остаток чётный). Инвариант «у каждого чипа с OTA зона
 bootloader'а не меньше `BOOTLOADER_MIN`» стережёт `bootloader_zone_and_swap_page_hold_for_every_chip`.

@@ -74,7 +74,7 @@ EXT_PAGE_SIZE = "{{ext_page_size}}"
 STATE_ERASE_SIZE = "{{state_erase_size}}"
 {%- endunless %}
 {%- if swap_paged == "true" %}
-# Страница обмена `ACTIVE` и `DFU`, крупнее физической (`Paged`).
+# Страница обмена `ACTIVE` и `DFU`, крупнее физической (`ErasePage`).
 SWAP_PAGE_SIZE = "{{page_size}}"
 {%- endif %}
 {%- endif %}

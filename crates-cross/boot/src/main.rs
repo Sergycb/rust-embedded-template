@@ -3,7 +3,7 @@
 
 use core::cell::RefCell;
 {% if ota_store != "external" %}
-use adapters::flash::{Paged, whole};
+use adapters::flash::{ErasePage, whole};
 {%- endif %}
 use defmt::info;
 // RTT — дефолтный транспорт в обоих профилях (см. crates-cross/app/src/main.rs);
@@ -125,7 +125,7 @@ fn main() -> ! {
     // `BOOTLOADER_STATE` — со страницей своего сектора, а не всего чипа (см.
     // `STATE_ERASE_SIZE`), но над тем же `Flash`: свой мьютекс, а не второй
     // объект контроллера.
-    let state = Mutex::new(RefCell::new(Paged::<_, STATE_ERASE_SIZE>::new(whole(
+    let state = Mutex::new(RefCell::new(ErasePage::<_, STATE_ERASE_SIZE>::new(whole(
         &flash,
     ))));
 {%- if dfu_bank == "true" %}
@@ -136,7 +136,7 @@ fn main() -> ! {
     // `ACTIVE` и `DFU` — со страницей обмена `SWAP_PAGE_SIZE`, крупнее физической
     // страницы флеша (см. её описание): один мьютекс на оба раздела, как и
     // раньше у цельного `Flash`.
-    let swap = Mutex::new(RefCell::new(Paged::<_, SWAP_PAGE_SIZE>::new(whole(&flash))));
+    let swap = Mutex::new(RefCell::new(ErasePage::<_, SWAP_PAGE_SIZE>::new(whole(&flash))));
 
     let config = BootLoaderConfig::from_linkerfile_blocking(&swap, &swap, &state);
 {%- else %}
@@ -218,7 +218,7 @@ const STATE_ERASE_SIZE: usize = adapters::flash::size_from_env(
 /// страница, тем короче журнал и тем больше блока bootloader'а остаётся его
 /// коду (подписанный release-образ на мелких страницах, как у L0, иначе не
 /// влезает в зону). Разделы поэтому строятся над
-/// `Paged<_, SWAP_PAGE_SIZE>`, а не над цельным `Flash` с его физической
+/// `ErasePage<_, SWAP_PAGE_SIZE>`, а не над цельным `Flash` с его физической
 /// страницей. Число — переменная среды `SWAP_PAGE_SIZE` (`page_size` из
 /// генерации), та же, что читает приложение (`bsp::flash`).
 const SWAP_PAGE_SIZE: usize = adapters::flash::size_from_env(option_env!("SWAP_PAGE_SIZE"), 0);

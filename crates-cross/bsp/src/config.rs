@@ -21,7 +21,7 @@
 
 use core::ops::Range;
 
-use adapters::flash::{Paged, whole};
+use adapters::flash::{ErasePage, whole};
 use embassy_embedded_hal::adapter::BlockingAsync;
 
 use crate::flash::FlashMutex;
@@ -31,7 +31,7 @@ use crate::flash::FlashMutex;
 /// `sequential-storage` делит раздел на страницы по `ERASE_SIZE` флеша, а
 /// цельный `Flash` объявляет им самый крупный сектор чипа. Раздел в мелких
 /// секторах (F2/F4/F7 с OTA) со страницей всего чипа не делится на две, поэтому
-/// страница своя (`Paged`); в хвосте flash она совпадает со страницей чипа.
+/// страница своя (`ErasePage`); в хвосте flash она совпадает со страницей чипа.
 /// Число посчитано при генерации тем же расчётом, что адреса в `memory.x`.
 const CONFIG_ERASE_SIZE: usize = {{config_erase_size}};
 
@@ -39,7 +39,7 @@ const CONFIG_ERASE_SIZE: usize = {{config_erase_size}};
 /// задачи. Псевдоним по общему правилу шаблона: тип в сигнатуре
 /// `#[embassy_executor::task]` должен быть конкретным.
 pub type Settings =
-    adapters::settings::Settings<BlockingAsync<Paged<crate::flash::Whole, CONFIG_ERASE_SIZE>>>;
+    adapters::settings::Settings<BlockingAsync<ErasePage<crate::flash::Whole, CONFIG_ERASE_SIZE>>>;
 
 // Ещё один `#[expect(unsafe_code)]` в `crates-cross` (есть только при `config=internal`):
 // причина та же, что у блока в `flash.rs` — адрес линкерного символа иначе не взять.
@@ -59,7 +59,7 @@ unsafe extern "C" {
 /// Если раздел не годится под `sequential-storage` — см.
 /// `adapters::settings::Settings::new`.
 pub(crate) fn new(flash: &'static FlashMutex) -> Settings {
-    adapters::settings::Settings::new(BlockingAsync::new(Paged::new(whole(flash))), flash_range())
+    adapters::settings::Settings::new(BlockingAsync::new(ErasePage::new(whole(flash))), flash_range())
 }
 
 /// Границы раздела по символам линкера.

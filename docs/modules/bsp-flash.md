@@ -28,13 +28,13 @@
 {%- else %}
 
 `BOOTLOADER_STATE` строится не над цельным `Flash`, как `DFU`, а над
-`adapters::flash::Paged` со страницей своего сектора (`STATE_ERASE_SIZE`) —
+`adapters::flash::ErasePage` со страницей своего сектора (`STATE_ERASE_SIZE`) —
 почему, см. docs/flash.md. Число приезжает переменной среды `STATE_ERASE_SIZE`
 из `[env]` `crates-cross/.cargo/config.toml` — тем же значением её читает
 bootloader (он от `bsp` не зависит), и разделам в приложении и в нём расходиться
 нельзя. Нет переменной — страница цельного `Flash`.
 {%- if swap_paged == "true" %} Раздел `DFU` строится тоже не над цельным `Flash`, а над
-`Paged` со страницей обмена `SWAP_PAGE_SIZE` (переменная среды, та же, что у
+`ErasePage` со страницей обмена `SWAP_PAGE_SIZE` (переменная среды, та же, что у
 bootloader'а) — она крупнее физической страницы флеша этого чипа: так журнал
 `BOOTLOADER_STATE` (запись на страницу `ACTIVE`) короче, и коду bootloader'а
 остаётся почти весь его блок. `ACTIVE` с той же страницей собирает bootloader.

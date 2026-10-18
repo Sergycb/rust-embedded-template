@@ -2,7 +2,7 @@
 
 use core::cell::RefCell;
 {% if ota_store != "external" %}
-use adapters::flash::{Paged, whole};
+use adapters::flash::{ErasePage, whole};
 {%- endif %}
 use defmt::info;
 use domain::ota::boot::{ScreenFailure, Screening, screen_update};
@@ -80,7 +80,7 @@ pub(crate) fn screen(flash: Bank1, dfu: Bank2) -> (Bank1, Bank2) {
     let flash = Mutex::<NoopRawMutex, _>::new(RefCell::new(flash));
     let dfu = Mutex::<NoopRawMutex, _>::new(RefCell::new(dfu));
     {
-        let state = Mutex::<NoopRawMutex, _>::new(RefCell::new(Paged::<_, STATE_ERASE_SIZE>::new(
+        let state = Mutex::<NoopRawMutex, _>::new(RefCell::new(ErasePage::<_, STATE_ERASE_SIZE>::new(
             whole(&flash),
         )));
         let mut config = BootLoaderConfig::from_linkerfile_blocking(&flash, &dfu, &state);
@@ -106,12 +106,12 @@ pub(crate) fn screen(flash: Bank1, dfu: Bank2) -> (Bank1, Bank2) {
 pub(crate) fn screen(flash: Flash<'static, Blocking>) -> Flash<'static, Blocking> {
     let flash = Mutex::<NoopRawMutex, _>::new(RefCell::new(flash));
     {
-        let state = Mutex::<NoopRawMutex, _>::new(RefCell::new(Paged::<_, STATE_ERASE_SIZE>::new(
+        let state = Mutex::<NoopRawMutex, _>::new(RefCell::new(ErasePage::<_, STATE_ERASE_SIZE>::new(
             whole(&flash),
         )));
 {%- if swap_paged == "true" %}
         // `ACTIVE` и `DFU` — со страницей обмена, как в `main` (`SWAP_PAGE_SIZE`).
-        let swap = Mutex::<NoopRawMutex, _>::new(RefCell::new(Paged::<_, SWAP_PAGE_SIZE>::new(
+        let swap = Mutex::<NoopRawMutex, _>::new(RefCell::new(ErasePage::<_, SWAP_PAGE_SIZE>::new(
             whole(&flash),
         )));
         let mut config = BootLoaderConfig::from_linkerfile_blocking(&swap, &swap, &state);

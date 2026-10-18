@@ -105,7 +105,7 @@ fn default_cases() -> Vec<Case> {
         // Раздел настроек вместе с OTA на неравных секторах: у F407 он ложится
         // в сектора 2–3 по 16 KiB перед ACTIVE, `STATE` — в сектор 4 (64 KiB);
         // `CONFIG_ERASE_SIZE` и `STATE_ERASE_SIZE` меньше страницы чипа, оба
-        // раздела — над `Paged`. В проект попадают разом bootloader, ota.rs и
+        // раздела — над `ErasePage`. В проект попадают разом bootloader, ota.rs и
         // config.rs.
         Case::new("stm32f407ve").variant("config", &["config=internal"]),
         // OTA с `STATE`/`DFU` на внешней флеши (`ota=external`) — на чипе, куда

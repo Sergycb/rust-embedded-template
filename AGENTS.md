@@ -200,11 +200,11 @@ read`: руками пришлось бы сначала найти адрес �
 - `SWAP_PAGE_SIZE` — число из генерации ({{page_size}}), переменная среды
   `[env]` в `crates-cross/.cargo/config.toml`, общая у `bsp::flash` и `boot`:
   страница обмена крупнее физической, `ACTIVE` и `DFU`
-  оборачиваются в `Paged<_, SWAP_PAGE_SIZE>` ради малого журнала `STATE`
+  оборачиваются в `ErasePage<_, SWAP_PAGE_SIZE>` ради малого журнала `STATE`
   (подписанному `boot` нужна зона ≥ 26 KiB). `STATE_ERASE_SIZE` — другое число
   (страница сектора `STATE`) — `docs/flash.md`.
 {%- endif %}
-- `BOOTLOADER_STATE` строится над `adapters::flash::Paged` со страницей своего
+- `BOOTLOADER_STATE` строится над `adapters::flash::ErasePage` со страницей своего
   сектора (`STATE_ERASE_SIZE` — число из генерации, одно на `boot` и `bsp::flash`:
   переменная среды в `crates-cross/.cargo/config.toml`). Над цельным `Flash` на F2/F4/F7 раздел не кратен его странице,
   и `Partition::new` паникует на старте. Так же и `CONFIG` (`CONFIG_ERASE_SIZE`

@@ -74,7 +74,7 @@ supervisor-графы, watchdog). Вся остальная логика — в 
 параметром), лежит в `crates-host/adapters` и тестируется на хосте на фейке:
 `adapters::ota` (поверх `embassy-boot`), `adapters::settings` (поверх
 `sequential-storage`) и `adapters::flash` (общий блокирующий `Flash` под замком —
-`whole` и `Paged`; раздел на весь флеш (`BlockingPartition`) и async-вид
+`whole` и `ErasePage`; раздел на весь флеш (`BlockingPartition`) и async-вид
 (`BlockingAsync`) даёт `embassy-embedded-hal`,
 ради асинхронного API того же `sequential-storage`). Та, которой
 нужны `embassy_stm32::peripherals`,

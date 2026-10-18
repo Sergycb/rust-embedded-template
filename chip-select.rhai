@@ -235,7 +235,7 @@ fn plan(m, erase_zero, wants, limits) {
     // начале стоит таблица векторов приложения. С OTA — там, где его положил
     // chip-data-gen (`config_ota_settings_*`): в мелких секторах перед ACTIVE,
     // если так ACTIVE больше (F2/F4/F7), иначе тоже в хвосте. Страница — сектор
-    // под разделом (`adapters::flash::Paged` в bsp::config).
+    // под разделом (`adapters::flash::ErasePage` в bsp::config).
     let settings_key = if ext_ota {
         "ext_cfg_settings_"
     } else if ota {
@@ -685,7 +685,7 @@ variable::set("rng_source", rng[2]);
 // подкачки (НЕ PAGE_SIZE: тот embassy-boot вычисляет сам из ERASE_SIZE флеша).
 // "page_size" — физическая страница чипа; страница обмена (PAGE_SIZE embassy-boot)
 // лежит в "swap_page_size" и бывает крупнее — "swap_paged" = "true": тогда ACTIVE
-// и DFU прошивка оборачивает в Paged ради малого журнала STATE.
+// и DFU прошивка оборачивает в ErasePage ради малого журнала STATE.
 // Имя плейсхолдера осталось прежним ради совместимости с проектами, которые
 // задают его через --define.
 //
@@ -780,13 +780,13 @@ if variable::is_set("write_size") {
     // бы хуже молчания: на чипе с другим сектором тест искал бы прежний
     // образ не по тому адресу и падал бы, обвиняя bootloader.
     variable::set("page_size", "");
-    // `ACTIVE`/`DFU` без раскладки не оборачиваются в `Paged`: страница обмена
+    // `ACTIVE`/`DFU` без раскладки не оборачиваются в `ErasePage`: страница обмена
     // здесь — страница цельного `Flash` (как было до расширения страницы).
     variable::set("swap_paged", "false");
-    // Страница раздела `BOOTLOADER_STATE` (`adapters::flash::Paged`; число
+    // Страница раздела `BOOTLOADER_STATE` (`adapters::flash::ErasePage`; число
     // уезжает переменной среды в crates-cross/.cargo/config.toml, её читают
     // bsp::flash и boot) — тоже знание раскладки. Её здесь нет,
-    // поэтому — страница цельного `Flash`, как было до `Paged`: верно на
+    // поэтому — страница цельного `Flash`, как было до `ErasePage`: верно на
     // чипах с равными секторами, а на F2/F4/F7 `STATE` в мелком секторе
     // приведёт к панике `Partition::new` при старте — об этом печатается
     // предупреждение ниже.
@@ -872,7 +872,7 @@ if variable::is_set("write_size") {
     // внутренней OTA это `swap_page_size` её набора цифр — она крупнее
     // физической страницы чипа там, где chip-data-gen расширил её ради
     // журнала `STATE` (`swap_paged`): прошивка тогда оборачивает ACTIVE и DFU в
-    // `adapters::flash::Paged<_, SWAP_PAGE_SIZE>` (= page_size). Без OTA страницы обмена нет —
+    // `adapters::flash::ErasePage<_, SWAP_PAGE_SIZE>` (= page_size). Без OTA страницы обмена нет —
     // остаётся физическая, и `swap_paged` = "false".
     // С внешними разделами страница обмена зависит от стирания драйвера, а
     // DFU в адресном пространстве МК нет вовсе — host-target тест обмена
