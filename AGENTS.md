@@ -204,12 +204,15 @@ read`: руками пришлось бы сначала найти адрес �
   (подписанному `boot` нужна зона ≥ 26 KiB). `STATE_ERASE_SIZE` — другое число
   (страница сектора `STATE`) — `docs/flash.md`.
 {%- endif %}
-- `BOOTLOADER_STATE` строится над `adapters::flash::ErasePage` со страницей своего
-  сектора (`STATE_ERASE_SIZE` — число из генерации, одно на `boot` и `bsp::flash`:
-  переменная среды в `crates-cross/.cargo/config.toml`). Над цельным `Flash` на F2/F4/F7 раздел не кратен его странице,
-  и `Partition::new` паникует на старте. Так же и `CONFIG` (`CONFIG_ERASE_SIZE`
-  в `bsp::settings`): с OTA он может лежать в мелких секторах перед `ACTIVE` —
-  `docs/flash.md`.
+- `STATE_ERASE_SIZE` — число из генерации, одно на `boot` и `bsp::flash` (переменная
+  среды в `crates-cross/.cargo/config.toml`). {% if state_paged == "true" %}Здесь `BOOTLOADER_STATE` строится над
+  `adapters::flash::ErasePage` со страницей своего сектора: над цельным `Flash` на F2/F4/F7 раздел не
+  кратен его странице, и `Partition::new` паникует на старте.{% else %}Здесь сектор `STATE` равен
+  странице цельного `Flash`, поэтому раздел строится прямо над ним, без `ErasePage`, а равенство
+  держит `const`-assert рядом с константой (`boot`, `bsp::ota`).{% endif %} Так же и `CONFIG`
+  (`CONFIG_ERASE_SIZE` в `bsp::settings`): с OTA он может лежать в мелких секторах перед
+  `ACTIVE` — `docs/flash.md`. Обёртка нужна только там, где сектор мельче страницы чипа
+  (плейсхолдеры `state_paged`, `config_paged`).
 {%- if bank_switch != "" %}
 - Флеш этого чипа с завода двухбанковый, а раскладка одобанковая:
   `bsp::banks::ensure_single_bank()` стоит первой строкой и в `boot`, и в

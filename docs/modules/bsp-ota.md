@@ -11,9 +11,11 @@
 generic.
 {%- if ota_store == "external" %} Здесь `DFU` и `BOOTLOADER_STATE` — на внешней флеши:
 оба раздела строятся над одним драйвером из `crate::external`, символы в
-`memory.x` — смещения от её начала (docs/flash.md).{% else %} `BOOTLOADER_STATE` строится не над цельным `Flash`, как
+`memory.x` — смещения от её начала (docs/flash.md).{% else %}{% if state_paged == "true" %} `BOOTLOADER_STATE` строится не над цельным `Flash`, как
 `DFU`, а над `adapters::flash::ErasePage` со страницей своего сектора
-(`STATE_ERASE_SIZE`) — почему, см. docs/flash.md. Число приезжает переменной
+(`STATE_ERASE_SIZE`) — почему, см. docs/flash.md.{% else %} Сектор `BOOTLOADER_STATE` равен странице
+цельного `Flash`, поэтому раздел строится прямо над ним, как `DFU` (равенство
+проверяет `const`-assert).{% endif %} Число приезжает переменной
 среды `STATE_ERASE_SIZE` из `[env]` `crates-cross/.cargo/config.toml` — тем же
 значением её читает bootloader (он от `bsp` не зависит), и разделам в
 приложении и в нём расходиться нельзя.{% if swap_paged == "true" %} Раздел `DFU` строится тоже не над цельным `Flash`, а над

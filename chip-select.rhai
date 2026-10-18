@@ -165,6 +165,14 @@ fn size_in_bytes(text) {
     parse_int(raw)
 }
 
+/// Число из таблицы раскладки с разделителями, как в Rust: `"131_072"`; без них
+/// (`"131072"`) тоже годится. `parse_int` подчёркиваний не знает.
+fn plain_number(text) {
+    let raw = text;
+    raw.replace("_", "");
+    parse_int(raw)
+}
+
 /// Где лежат настройки (`config_store`): `"flash"` — раздел во внутреннем
 /// флеше, `"eeprom"` — внутренняя EEPROM (объёмом не меньше `EEPROM_MIN`,
 /// регионы `EEPROM`/`EEPROM_BANK_n`; закомментированные строки — окна внешних
@@ -747,6 +755,16 @@ variable::set("active_len", "");
 variable::set("config_start", "");
 variable::set("config_end", "");
 variable::set("state_erase_size", "");
+// Нужна ли `STATE` и `CONFIG` своя страница (`adapters::flash::ErasePage`): только
+// когда сектор раздела мельче страницы цельного `Flash` — F2/F4/F7. Иначе раздел
+// строится прямо над `Whole`, а равенство страниц держит `const`-assert в `bsp`.
+variable::set("state_paged", "false");
+variable::set("config_paged", "false");
+// Строит ли bootloader хоть один раздел над `BlockingPartition` + `ErasePage`
+// (`STATE` со своей страницей или `ACTIVE`/`DFU` со страницей обмена): только
+// тогда ему нужны `FLASH_BYTES` и обёртки; иначе все три раздела — прямо
+// над `Flash`.
+variable::set("boot_partitioned", "false");
 if variable::is_set("write_size") {
     variable::set("ota", if wants_ota { "true" } else { "false" });
     variable::set("ota_store", if wants_ext_ota { "external" } else { "internal" });
@@ -806,6 +824,10 @@ if variable::is_set("write_size") {
     // приведёт к панике `Partition::new` при старте — об этом печатается
     // предупреждение ниже.
     variable::set("state_erase_size", "");
+    // Страницы сектора `STATE` здесь никто не знает — раздел остаётся под
+    // `ErasePage` с числом, которое впишет человек.
+    variable::set("state_paged", if wants_ota && !wants_ext_ota { "true" } else { "false" });
+    variable::set("boot_partitioned", if wants_ota && !wants_ext_ota { "true" } else { "false" });
     if wants_ota && !wants_ext_ota {
         print("OTA с ручной раскладкой: впишите в [env] crates-cross/.cargo/config.toml числа, которые");
         print("  генерация считает сама: STATE_ERASE_SIZE (страница сектора STATE) и ACTIVE_LEN (размер ACTIVE");
@@ -914,6 +936,9 @@ if variable::is_set("write_size") {
     // файлов, которые его читают; с внешней — его страницу несёт драйвер.
     if ota && !ext_ota {
         variable::set("state_erase_size", m[ota_key + "bootloader_state_erase_size"]);
+        let state_paged = plain_number(m[ota_key + "bootloader_state_erase_size"]) != plain_number(m["page_size"]);
+        variable::set("state_paged", if state_paged { "true" } else { "false" });
+        variable::set("boot_partitioned", if state_paged || (swap_paged && !dfu_bank) { "true" } else { "false" });
     }
     // Шаг внешних разделов и страница обмена, которую раскладка ждёт от
     // драйвера: его `ERASE_SIZE` обязан её делить (const-assert рядом с ним).
@@ -946,6 +971,7 @@ if variable::is_set("write_size") {
     variable::set("config_store", if config { store } else { "none" });
     if in_flash {
         variable::set("config_erase_size", m[settings_key + "erase_size"]);
+        variable::set("config_paged", if plain_number(m[settings_key + "erase_size"]) != plain_number(m["page_size"]) { "true" } else { "false" });
     }
     // Общий объект `Flash` в bsp: его делят OTA во внутреннем flash и настройки
     // во флеше или EEPROM (EEPROM пишется через тот же контроллер). Внешней

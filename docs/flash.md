@@ -70,7 +70,12 @@ F2/F4/F7 (у F4 16, 64 и 128 KiB): в мелких секторах можно 
   разделу в bootloader'е и в приложении расходиться нельзя. Так же едут
   `ACTIVE_LEN` (размер `ACTIVE` — вместо чтения линкерных символов через
   `unsafe extern`), `SWAP_PAGE_SIZE`, `EXT_PAGE_SIZE` и границы раздела настроек
-  `CONFIG_START`/`CONFIG_END`. При ручной раскладке (`--define write_size=...`) хук
+  `CONFIG_START`/`CONFIG_END`. **`ErasePage` над `STATE` нужен не всегда**:
+  плейсхолдер `state_paged` = "true" только там, где сектор `STATE` мельче страницы
+  цельного `Flash` (F2/F4/F7). На чипах с равными секторами раздел строится прямо
+  над `Whole`, а `const`-assert (`STATE_ERASE_SIZE == MAX_ERASE_SIZE`) в `boot` и
+  `bsp::ota` ловит расхождение генерации с реальным чипом. Так же и `CONFIG`
+  (`config_paged`). При ручной раскладке (`--define write_size=...`) хук
   подставляет страницу цельного `Flash` — на F2/F4/F7 туда надо вписать размер
   сектора `STATE` руками.
 - **Страница обмена `ACTIVE`/`DFU` бывает крупнее физической — ради `STATE`.**
@@ -164,7 +169,8 @@ GD25, MX25, IS25, SST26…), шаблон не знает и не гадает: 
   `BOOTLOADER_TARGET` (32 KiB). Выходит это на F2/F4/F7: на F4 это
   сектора 2–3 по 16 KiB вместо 2×128 KiB, `STATE` уезжает в сектор 4,
   bootloader — 32 KiB. Страница раздела — `CONFIG_ERASE_SIZE` в
-  `bsp::settings`, над `adapters::flash::ErasePage`, как и у `STATE`. Полезного
+  `bsp::settings`, над `adapters::flash::ErasePage`, как и у `STATE` — когда его
+  сектор мельче страницы чипа (`config_paged`), иначе прямо над `Whole`. Полезного
   места в разделе — около одной страницы (вторая держится свободной под
   перенос), то есть ~16 KiB на F4 с OTA; нужно больше — это уже внешняя флеш.
 - **OTA-раскладка при включённом разделе своя.** В `MEMORY_LAYOUT` лежат два
