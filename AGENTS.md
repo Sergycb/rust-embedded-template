@@ -208,11 +208,10 @@ read`: руками пришлось бы сначала найти адрес �
   среды в `crates-cross/.cargo/config.toml`). {% if state_paged == "true" %}Здесь `BOOTLOADER_STATE` строится над
   `adapters::flash::ErasePage` со страницей своего сектора: над цельным `Flash` на F2/F4/F7 раздел не
   кратен его странице, и `Partition::new` паникует на старте.{% else %}Здесь сектор `STATE` равен
-  странице цельного `Flash`, поэтому раздел строится прямо над ним, без `ErasePage`, а равенство
-  держит `const`-assert рядом с константой (`boot`, `bsp::ota`).{% endif %} Так же и `CONFIG`
+  странице цельного `Flash`, поэтому раздел строится прямо над ним, а равенство держит
+  `const`-assert рядом с константой (`boot`, `bsp::ota`).{% endif %} Так же и `CONFIG`
   (`CONFIG_ERASE_SIZE` в `bsp::settings`): с OTA он может лежать в мелких секторах перед
-  `ACTIVE` — `docs/flash.md`. Обёртка нужна только там, где сектор мельче страницы чипа
-  (плейсхолдеры `state_paged`, `config_paged`).
+  `ACTIVE` — `docs/flash.md`.
 {%- if bank_switch != "" %}
 - Флеш этого чипа с завода двухбанковый, а раскладка одобанковая:
   `bsp::banks::ensure_single_bank()` стоит первой строкой и в `boot`, и в

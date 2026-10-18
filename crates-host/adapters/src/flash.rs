@@ -1,5 +1,5 @@
-//! Обёртка `ErasePage` с переопределённой страницей стирания и вспомогательные
-//! функции над `NorFlash`; при внешней флеши — ещё и заглушка её драйвера.
+//! {% if erase_page == "true" %}Обёртка `ErasePage` с переопределённой страницей стирания и вспомогательные
+//! функции{% else %}Вспомогательные функции{% endif %} над `NorFlash`; при внешней флеши — ещё и заглушка её драйвера.
 //!
 //! Флеш на чипе один, а `embassy-boot` и `sequential-storage` хотят каждый свой
 //! `NorFlash` по значению. Общий флеш лежит под блокирующим мьютексом, а
@@ -7,13 +7,17 @@
 //! ссылку на него: блокировка берётся на каждую
 //! операцию отдельно. Асинхронный вид (для `Partition`, `FirmwareUpdater`,
 //! `sequential-storage`) даёт `embassy_embedded_hal::adapter::BlockingAsync`;
-//! операции блокирующие, ни одна не ждёт внутри. Свой раздел с нестандартной
+//! операции блокирующие, ни одна не ждёт внутри.{% if erase_page == "true" %} Свой раздел с нестандартной
 //! страницей — [`ErasePage`](crate::flash::ErasePage) поверх него.
 //!
 //! Generic по флешу, а не привязан к `embassy_stm32::flash::Flash`: обёртке
-//! всё равно, что под ней, — а тестируется она на хосте с флешем в памяти.
+//! всё равно, что под ней, — а тестируется она на хосте с флешем в памяти.{% endif %}
 
+// {%- if erase_page == "true" or external_flash == "true" %}
 use embedded_storage::nor_flash::{ErrorType, NorFlash, ReadNorFlash};
+// {%- endif %}
+
+// {%- if erase_page == "true" %}
 
 /// Обёртка, а не драйвер: тот же флеш, но со страницей стирания `ERASE_SIZE`
 /// вместо его собственной.
@@ -92,6 +96,8 @@ impl<F: NorFlash, const ERASE_SIZE: usize> NorFlash for ErasePage<F, ERASE_SIZE>
         self.flash.write(offset, bytes)
     }
 }
+
+// {%- endif %}
 
 /// `ERASE_SIZE` асинхронного флеша — для проверок при компиляции там, где
 /// трейт не в зависимостях (`bsp::external` проверяет им, что стирание
@@ -208,7 +214,9 @@ mod tests {
 
     use embassy_embedded_hal::flash::partition::BlockingPartition;
 
+    // {%- if erase_page == "true" %}
     use super::ErasePage;
+    // {%- endif %}
     // {%- if external_flash == "true" %}
     use super::Unconnected;
     // {%- endif %}
@@ -292,6 +300,7 @@ mod tests {
     }
     // {%- endif %}
 
+    // {%- if erase_page == "true" %}
     /// `ErasePage` меняет только объявленную страницу: операции доходят до флеша
     /// с теми же границами (блокирующие трейты — их берут разделы `embassy-boot`
     /// и, через `BlockingAsync`, `sequential-storage`).
@@ -608,4 +617,5 @@ mod tests {
             );
         }
     }
+    // {%- endif %}
 }

@@ -73,8 +73,8 @@ supervisor-графы, watchdog). Вся остальная логика — в 
 хватает трейтов `embedded-storage`/`embedded-hal` (раздел флеша или шина приходят
 параметром), лежит в `crates-host/adapters` и тестируется на хосте на фейке:
 `adapters::ota` (поверх `embassy-boot`), `adapters::settings` (поверх
-`sequential-storage`) и `adapters::flash` (общий блокирующий `Flash` под замком —
-`ErasePage`; раздел на весь флеш (`BlockingPartition`) и async-вид
+`sequential-storage`) и `adapters::flash` (общий блокирующий `Flash` под замком{% if erase_page == "true" %} —
+`ErasePage`{% endif %}; раздел на весь флеш (`BlockingPartition`) и async-вид
 (`BlockingAsync`) даёт `embassy-embedded-hal`,
 ради асинхронного API того же `sequential-storage`). Та, которой
 нужны `embassy_stm32::peripherals`,

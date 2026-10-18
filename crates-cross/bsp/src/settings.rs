@@ -32,7 +32,7 @@ use crate::flash::{FlashMutex, SIZE, Whole};
 /// `sequential-storage` делит раздел на страницы по `ERASE_SIZE` флеша, а
 /// цельный `Flash` объявляет им самый крупный сектор чипа. Раздел в мелких
 /// секторах (F2/F4/F7 с OTA) со страницей всего чипа не делится на две, поэтому
-/// страница своя (`ErasePage`); в хвосте flash она совпадает со страницей чипа{% if config_paged != "true" %} — как у
+/// страница своя{% if config_paged == "true" %} (`ErasePage`){% endif %}; в хвосте flash она совпадает со страницей чипа{% if config_paged != "true" %} — как у
 /// этого чипа: раздел строится прямо над `Whole`, а равенство держит
 /// `const`-assert ниже{% endif %}.
 /// Число посчитано при генерации тем же расчётом, что адреса в `memory.x`.
@@ -42,7 +42,7 @@ const CONFIG_ERASE_SIZE: usize = {{config_erase_size}};
 const _: () = assert!(
     CONFIG_ERASE_SIZE == embassy_stm32::flash::MAX_ERASE_SIZE,
     "CONFIG_ERASE_SIZE из генерации не равен странице цельного `Flash` \
-     (embassy_stm32::flash::MAX_ERASE_SIZE): `CONFIG` нужна своя страница (`ErasePage`)"
+     (embassy_stm32::flash::MAX_ERASE_SIZE): `CONFIG` нужна своя страница"
 );
 {%- endif %}
 

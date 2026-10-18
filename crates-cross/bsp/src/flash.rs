@@ -80,8 +80,8 @@ pub type ChipFlash = embassy_stm32::flash::Flash<'static, Blocking>;
 {%- endif %}
 
 /// Весь флеш как один раздел: смещения те же, что у самого флеша, а операции
-/// идут под замком, по одной. Из него строятся разделы OTA и настроек
-/// (поверх — `adapters::flash::ErasePage` со своей страницей стирания).
+/// идут под замком, по одной. Из него строятся разделы OTA и настроек{% if erase_page == "true" %}
+/// (поверх — `adapters::flash::ErasePage` со своей страницей стирания){% endif %}.
 ///
 /// Строится на месте: `BlockingPartition::new(flash, 0, flash::SIZE)`.
 pub type Whole = BlockingPartition<'static, NoopRawMutex, ChipFlash>;

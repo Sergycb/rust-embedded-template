@@ -1285,6 +1285,10 @@ if protocol != "none" {
         variable::set("usb_kind", found[0]);
     }
 }
+// `adapters::flash::ErasePage` и всё, что о нём сказано, нужны проекту только когда
+// хоть один раздел его использует: `STATE`/`CONFIG` с секторами мельче страницы
+// чипа или `ACTIVE`/`DFU` со страницей обмена. Иначе типа в проекте нет вовсе.
+variable::set("erase_page", if variable::get("state_paged") == "true" || variable::get("config_paged") == "true" || variable::get("swap_paged") == "true" { "true" } else { "false" });
 // Заглушка драйвера внешней флеши (`adapters::flash::Unconnected`) нужна, пока
 // на внешней флеши лежит хоть что-то: разделы OTA или настройки.
 variable::set("external_flash", if (variable::get("ota") == "true" && variable::get("ota_store") == "external") || variable::get("config_store") == "external" { "true" } else { "false" });

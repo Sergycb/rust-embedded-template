@@ -1880,6 +1880,13 @@ fn erase_page_wrapper_only_where_the_sector_is_smaller_than_the_chip_page() {
             Some(boot),
             "{chip} {answers:?}: boot_partitioned"
         );
+        // Тип `ErasePage` есть в проекте, только пока им пользуется хоть один раздел.
+        let wrapped = state == "true" || config == "true" || var("swap_paged") == Some("true");
+        assert_eq!(
+            var("erase_page"),
+            Some(if wrapped { "true" } else { "false" }),
+            "{chip} {answers:?}: erase_page"
+        );
     }
 }
 

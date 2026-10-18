@@ -138,15 +138,17 @@ waker'а, — с внешней флешью это не работает: др�
 
 ## Страница обмена во внутреннем flash
 
+{%- if swap_paged == "true" %}
 Во внутренней OTA страница обмена `embassy-boot` (плейсхолдер `page_size`, `SWAP_PAGE_SIZE`
 в `boot` и `bsp::flash`) может быть крупнее физической страницы чипа: на чипе с
 мелкой страницей журнал `STATE` (`(2 + 4*N) * WRITE_SIZE`) иначе разрастается и
-съедает зону bootloader'а, а подписанный `boot` весит ≈23 KiB. При `swap_paged` =
-"true" `ACTIVE` и `DFU` строятся над `ErasePage<_, SWAP_PAGE_SIZE>`; обмен, `prepare`
+съедает зону bootloader'а, а подписанный `boot` весит ≈23 KiB. У этого чипа
+`ACTIVE` и `DFU` строятся над `ErasePage<_, SWAP_PAGE_SIZE>`; обмен, `prepare`
 порта `FirmwareUpdate` и подпись работают в этих страницах. Прежний образ
 после обмена лежит в `DFU[i + 1]` — со сдвигом на страницу обмена, а не
 физическую (так его и ищет `cargo xtask test host-target`). Подробности и
 границы — `docs/flash.md`, «Страница раздела».
+{%- endif %}
 
 ## Подпись OTA-образа
 

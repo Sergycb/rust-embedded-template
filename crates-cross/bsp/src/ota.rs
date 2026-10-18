@@ -63,7 +63,7 @@ const STATE_ERASE_SIZE: usize = match usize::from_str_radix(env!("STATE_ERASE_SI
 const _: () = assert!(
     STATE_ERASE_SIZE == embassy_stm32::flash::MAX_ERASE_SIZE,
     "STATE_ERASE_SIZE из генерации не равен странице цельного `Flash` \
-     (embassy_stm32::flash::MAX_ERASE_SIZE): `STATE` нужна своя страница (`ErasePage`)"
+     (embassy_stm32::flash::MAX_ERASE_SIZE): `STATE` нужна своя страница"
 );
 {%- endif %}
 {%- if swap_paged == "true" %}

@@ -36,6 +36,8 @@
 - В `template-check` для этой ветки заведена отдельная конфигурация
   (`stm32l073rz`) — без неё ветка не проверялась бы вообще.
 
+{%- if erase_page == "true" %}
+
 ## Страница раздела — не всегда страница чипа
 
 Цельный `embassy_stm32::flash::Flash` объявляет `NorFlash::ERASE_SIZE` самым
@@ -99,6 +101,16 @@ F2/F4/F7 (у F4 16, 64 и 128 KiB): в мелких секторах можно 
   физической, и запас под код держит `BOOTLOADER_MIN` (26 KiB): резерв просто
   растёт. Без расширения `ACTIVE` над цельным `Flash` не имеет смысла делить
   мельче сектора: стирание «половины сектора» снесло бы и вторую половину.
+{%- else %}
+
+## Страница раздела — страница чипа
+
+У этого чипа сектора, в которых лежат `STATE` и `CONFIG`, не мельче страницы
+цельного `embassy_stm32::flash::Flash` (`MAX_ERASE_SIZE`), поэтому разделы
+строятся прямо над `Whole`, без обёрток. Число из генерации (`STATE_ERASE_SIZE`,
+`CONFIG_ERASE_SIZE`) равно этой странице, и `const`-assert в `boot` и `bsp`
+ловит расхождение при сборке, а не на плате.
+{%- endif %}
 
 ## Хранилище настроек и общий `Flash`
 
@@ -111,7 +123,7 @@ F2/F4/F7 (у F4 16, 64 и 128 KiB): в мелких секторах можно 
 | Ответ | Где лежат настройки | Что в слоте |
 |---|---|---|
 | `internal`, у чипа есть EEPROM (L0/L1) | внутренняя EEPROM, вся | `adapters::eeprom::Eeprom` над `Flash::eeprom_*` |
-| `internal`, EEPROM нет | раздел `CONFIG` во внутреннем флеше | `BlockingAsync<ErasePage<Whole>>` |
+| `internal`, EEPROM нет | раздел `CONFIG` во внутреннем флеше | `BlockingAsync<{% if config_paged == "true" %}ErasePage<Whole>{% else %}Whole{% endif %}>` |
 | `external` | внешняя флеш на плате | **ваш драйвер**; в шаблоне — заглушка `adapters::flash::Unconnected` |
 
 `Board` отдаёт поле `settings`; `no` — файла `settings.rs` нет вовсе, как и
@@ -169,8 +181,7 @@ GD25, MX25, IS25, SST26…), шаблон не знает и не гадает: 
   `BOOTLOADER_TARGET` (32 KiB). Выходит это на F2/F4/F7: на F4 это
   сектора 2–3 по 16 KiB вместо 2×128 KiB, `STATE` уезжает в сектор 4,
   bootloader — 32 KiB. Страница раздела — `CONFIG_ERASE_SIZE` в
-  `bsp::settings`, над `adapters::flash::ErasePage`, как и у `STATE` — когда его
-  сектор мельче страницы чипа (`config_paged`), иначе прямо над `Whole`. Полезного
+  `bsp::settings`{% if config_paged == "true" %}, над `adapters::flash::ErasePage`, как и у `STATE`{% else %}, прямо над `Whole`: сектор раздела равен странице чипа{% endif %}. Полезного
   места в разделе — около одной страницы (вторая держится свободной под
   перенос), то есть ~16 KiB на F4 с OTA; нужно больше — это уже внешняя флеш.
 - **OTA-раскладка при включённом разделе своя.** В `MEMORY_LAYOUT` лежат два
