@@ -21,7 +21,7 @@
 
 use core::ops::Range;
 
-use adapters::flash::{Paged, Shared};
+use adapters::flash::{Paged, whole};
 use embassy_embedded_hal::adapter::BlockingAsync;
 
 use crate::flash::FlashMutex;
@@ -38,9 +38,8 @@ const CONFIG_ERASE_SIZE: usize = {{config_erase_size}};
 /// Хранилище настроек этой платы — то, что лежит полем `Board` и уезжает в
 /// задачи. Псевдоним по общему правилу шаблона: тип в сигнатуре
 /// `#[embassy_executor::task]` должен быть конкретным.
-pub type Settings = adapters::settings::Settings<
-    BlockingAsync<Paged<Shared<'static, FlashMutex>, CONFIG_ERASE_SIZE>>,
->;
+pub type Settings =
+    adapters::settings::Settings<BlockingAsync<Paged<crate::flash::Whole, CONFIG_ERASE_SIZE>>>;
 
 // Ещё один `#[expect(unsafe_code)]` в `crates-cross` (есть только при `config=internal`):
 // причина та же, что у блока в `flash.rs` — адрес линкерного символа иначе не взять.
@@ -60,10 +59,7 @@ unsafe extern "C" {
 /// Если раздел не годится под `sequential-storage` — см.
 /// `adapters::settings::Settings::new`.
 pub(crate) fn new(flash: &'static FlashMutex) -> Settings {
-    adapters::settings::Settings::new(
-        BlockingAsync::new(Paged::new(Shared::new(flash))),
-        flash_range(),
-    )
+    adapters::settings::Settings::new(BlockingAsync::new(Paged::new(whole(flash))), flash_range())
 }
 
 /// Границы раздела по символам линкера.
@@ -83,7 +79,6 @@ fn flash_range() -> Range<u32> {
 //! обёртки (`adapters::eeprom::Eeprom::PAGE`).
 
 use adapters::eeprom::{Eeprom, EepromAccess};
-use adapters::flash::FlashLock;
 use static_cell::StaticCell;
 
 use crate::flash::FlashMutex;
@@ -118,11 +113,13 @@ impl EepromAccess for EepromFlash {
     }
 
     fn read(&self, offset: u32, buf: &mut [u8]) -> Result<(), Self::Error> {
-        self.0.with(|flash| flash.eeprom_read_slice(offset, buf))
+        self.0
+            .lock(|flash| flash.borrow_mut().eeprom_read_slice(offset, buf))
     }
 
     fn write(&self, offset: u32, data: &[u8]) -> Result<(), Self::Error> {
-        self.0.with(|flash| flash.eeprom_write_slice(offset, data))
+        self.0
+            .lock(|flash| flash.borrow_mut().eeprom_write_slice(offset, data))
     }
 }
 

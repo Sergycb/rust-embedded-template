@@ -106,7 +106,7 @@ F2/F4/F7 (у F4 16, 64 и 128 KiB): в мелких секторах можно 
 | Ответ | Где лежат настройки | Что в слоте |
 |---|---|---|
 | `internal`, у чипа есть EEPROM (L0/L1) | внутренняя EEPROM, вся | `adapters::eeprom::Eeprom` над `Flash::eeprom_*` |
-| `internal`, EEPROM нет | раздел `CONFIG` во внутреннем флеше | `BlockingAsync<Paged<Shared<FlashMutex>>>` |
+| `internal`, EEPROM нет | раздел `CONFIG` во внутреннем флеше | `BlockingAsync<Paged<Whole>>` |
 | `external` | внешняя флеш на плате | **ваш драйвер**; в шаблоне — заглушка `adapters::flash::Unconnected` |
 
 `Board` отдаёт поле `settings`; `no` — файла `config.rs` нет вовсе, как и
@@ -131,12 +131,15 @@ GD25, MX25, IS25, SST26…), шаблон не знает и не гадает: 
   `bsp/src/flash.rs`. И разделы OTA, и `Settings` получают `&'static FlashMutex`, а не
   свой объект: контроллер физически один. Ссылка `'static`, потому что обе
   половины отдаются в задачи, а аргументы задач embassy обязаны быть `'static`.
-- **К общему флешу ходят через `Shared`.** `bsp::flash::FlashMutex` — псевдоним на
-  `Mutex<NoopRawMutex, RefCell<…>>` (`RefCell` нужен блокирующему `Mutex`
-  embassy), а `adapters::flash::Shared` принимает любой `FlashLock` (трейт
-  «выполни операцию под замком», реализован для самого такого мьютекса).
-  Потребители — разделы OTA и настройки — асинхронные и стоят на
-  `BlockingAsync` поверх `Shared`; `boot` строит разделы над тем же
+- **К общему флешу ходят через раздел на весь флеш.** `bsp::flash::FlashMutex` —
+  псевдоним на `Mutex<NoopRawMutex, RefCell<…>>` (`RefCell` нужен блокирующему
+  `Mutex` embassy), а `adapters::flash::whole` даёт над ним
+  `embassy_embedded_hal::flash::partition::BlockingPartition` с нулевым смещением
+  (`bsp::flash::Whole`): операции идут под замком, по одной. `BlockingPartition::new`
+  паникует, если объём флеша не кратен `ERASE_SIZE`; у STM32 он всегда кратен
+  самому крупному сектору, и `const`-assert в `bsp::flash` и `boot` проверяет это
+  при сборке (банк 2 на чипе с `dfu_bank` — отдельный раздел). Потребители —
+  разделы OTA и настройки — асинхронные и стоят на `BlockingAsync` поверх `Whole`; `boot` строит разделы над тем же
   `Mutex<_, RefCell<_>>` блокирующе. Свой тип поверх мьютекса есть только в
   ветке EEPROM (`bsp::config::EepromFlash`): `EepromAccess` и `Mutex` чужие
   для `bsp`.

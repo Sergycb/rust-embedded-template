@@ -3,7 +3,7 @@
 
 use core::cell::RefCell;
 {% if ota_store != "external" %}
-use adapters::flash::{Paged, Shared};
+use adapters::flash::{Paged, whole};
 {%- endif %}
 use defmt::info;
 // RTT — дефолтный транспорт в обоих профилях (см. crates-cross/app/src/main.rs);
@@ -125,9 +125,9 @@ fn main() -> ! {
     // `BOOTLOADER_STATE` — со страницей своего сектора, а не всего чипа (см.
     // `STATE_ERASE_SIZE`), но над тем же `Flash`: свой мьютекс, а не второй
     // объект контроллера.
-    let state = Mutex::new(RefCell::new(Paged::<_, STATE_ERASE_SIZE>::new(
-        Shared::new(&flash),
-    )));
+    let state = Mutex::new(RefCell::new(Paged::<_, STATE_ERASE_SIZE>::new(whole(
+        &flash,
+    ))));
 {%- if dfu_bank == "true" %}
     let dfu = Mutex::new(RefCell::new(dfu));
 
@@ -136,9 +136,7 @@ fn main() -> ! {
     // `ACTIVE` и `DFU` — со страницей обмена `SWAP_PAGE_SIZE`, крупнее физической
     // страницы флеша (см. её описание): один мьютекс на оба раздела, как и
     // раньше у цельного `Flash`.
-    let swap = Mutex::new(RefCell::new(Paged::<_, SWAP_PAGE_SIZE>::new(Shared::new(
-        &flash,
-    ))));
+    let swap = Mutex::new(RefCell::new(Paged::<_, SWAP_PAGE_SIZE>::new(whole(&flash))));
 
     let config = BootLoaderConfig::from_linkerfile_blocking(&swap, &swap, &state);
 {%- else %}
@@ -237,6 +235,17 @@ const _: () = assert!(
 /// чтобы буфер был кратен слову записи реального флеша; несовпадение — ошибка
 /// сборки, а не паника на старте bootloader'а.
 const SWAP_BUFFER_SIZE: usize = {{write_size}};
+
+{%- if dfu_bank != "true" %}
+
+// `adapters::flash::whole` паникует на объёме, не кратном `ERASE_SIZE`; у STM32
+// объём всегда кратен самому крупному сектору, и сборка это проверяет, а не
+// первый запуск на плате.
+const _: () = assert!(
+    embassy_stm32::flash::FLASH_SIZE.is_multiple_of(embassy_stm32::flash::MAX_ERASE_SIZE),
+    "объём flash не кратен самому крупному сектору: `adapters::flash::whole` паникует на старте"
+);
+{%- endif %}
 
 const _: () = assert!(
     SWAP_BUFFER_SIZE.is_multiple_of(embassy_stm32::flash::WRITE_SIZE),

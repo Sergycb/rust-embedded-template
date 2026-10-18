@@ -4,7 +4,7 @@
 `DFU` и `BOOTLOADER_STATE` обновления{% endif %}{% if config == "true" and config_store == "flash" %}, разделу `CONFIG` настроек{% elsif config == "true" and config_store == "eeprom" %}, EEPROM настроек (она пишется через тот же контроллер){% endif %}. Поэтому объект
 создаётся ровно один раз (`flash::chip`), лежит в `static` под блокирующим
 замком (`FlashMutex`), а потребители получают на него ссылки через
-`adapters::flash::Shared`; асинхронный вид для `embassy-boot` и
+`Whole` (`adapters::flash::whole` — раздел `embassy-embedded-hal` на весь флеш); асинхронный вид для `embassy-boot` и
 `sequential-storage` даёт `embassy_embedded_hal::adapter::BlockingAsync`.
 `NoopRawMutex` подразумевает один исполнитель — подробности в `docs/flash.md`.
 {%- if ota == "true" %}

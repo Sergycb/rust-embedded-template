@@ -1,6 +1,6 @@
 #![doc = include_str!("../../../docs/modules/bsp-flash.md")]
 {%- if ota == "true" and ota_store != "external" %}
-use adapters::flash::{Paged, Shared};
+use adapters::flash::{Paged, whole};
 {%- endif %}
 {%- if shared_flash == "true" %}
 use core::cell::RefCell;
@@ -12,6 +12,7 @@ use embassy_boot::FirmwareUpdaterConfig;
 use embassy_embedded_hal::adapter::BlockingAsync;
 {%- endif %}
 {%- if shared_flash == "true" %}
+use embassy_embedded_hal::flash::partition::BlockingPartition;
 {%- if dfu_bank == "true" %}
 use embassy_stm32::flash::{Bank1Region, Bank2Region};
 {%- endif %}
@@ -36,8 +37,8 @@ use crate::external::{ExternalMutex, ExternalPartition};
 /// работать с ним нужно и OTA (разделы `DFU`/`BOOTLOADER_STATE`), и настройкам
 /// (раздел `CONFIG` во флеше или внутренняя EEPROM — она пишется через тот же
 /// контроллер), — поэтому объект создаётся ровно один и раздаётся ссылками;
-/// к нему обращается [`adapters::flash::Shared`] (трейт `FlashLock` реализован
-/// для самого `Mutex<_, RefCell<_>>`).
+/// к нему обращается [`Whole`] — раздел `embassy-embedded-hal` на весь флеш
+/// (`adapters::flash::whole`).
 ///
 /// `NoopRawMutex`, а не `CriticalSectionRawMutex`: обе половины работают из
 /// задач одного исполнителя, то есть без вытеснения. Появится второй
@@ -55,12 +56,28 @@ pub type ChipFlash = Bank1Region<'static, Blocking>;
 /// начала, и символы `memory.x` у `DFU` посчитаны так же.
 pub type DfuBankMutex = Mutex<NoopRawMutex, RefCell<Bank2Region<'static, Blocking>>>;
 
+/// Весь банк 2 как раздел под замком — под него строится `DFU`.
+type DfuBank = BlockingPartition<'static, NoopRawMutex, Bank2Region<'static, Blocking>>;
+
 /// `&'static` — по той же причине, что [`FLASH`].
 static DFU_BANK: StaticCell<DfuBankMutex> = StaticCell::new();
 {%- else %}
 
 /// Флеш под [`FlashMutex`] — весь чип одним объектом.
 pub type ChipFlash = Flash<'static, Blocking>;
+{%- endif %}
+
+/// Весь флеш как раздел под замком: из него строятся разделы OTA и настроек.
+pub type Whole = BlockingPartition<'static, NoopRawMutex, ChipFlash>;
+{%- if dfu_bank != "true" %}
+
+// `BlockingPartition::new` паникует на объёме, не кратном `ERASE_SIZE`; у STM32
+// объём всегда кратен самому крупному сектору, и сборка это проверяет, а не
+// первый запуск на плате.
+const _: () = assert!(
+    embassy_stm32::flash::FLASH_SIZE.is_multiple_of(embassy_stm32::flash::MAX_ERASE_SIZE),
+    "объём flash не кратен самому крупному сектору: `adapters::flash::whole` паникует на старте"
+);
 {%- endif %}
 
 /// `&'static` он не для красоты: разделы OTA и `Settings` отдаются в задачи, а
@@ -96,7 +113,7 @@ pub(crate) fn chip(flash: Peri<'static, peripherals::FLASH>) -> Chip {
 {%- if ota_store != "external" %}
 
 /// Флеш под разделом `DFU`: общий `Flash` чипа, видимый асинхронно
-/// (`BlockingAsync` поверх `Shared`) — порт OTA асинхронный, за ним может
+/// (`BlockingAsync` поверх [`Whole`]) — порт OTA асинхронный, за ним может
 /// стоять и внешняя флеш.
 ///
 /// Тот же цельный `Flash`, что и в `crates-cross/boot`: он сам знает реальные
@@ -106,16 +123,16 @@ pub(crate) fn chip(flash: Peri<'static, peripherals::FLASH>) -> Chip {
 ///
 /// Кроме этого чипа: банк 2 у него стоит за разрывом, цельный `Flash` туда не
 /// дотягивается, и `DFU` лежит в регионе банка 2 ([`DfuBankMutex`]).
-type DfuFlash = BlockingAsync<Shared<'static, DfuBankMutex>>;
+type DfuFlash = BlockingAsync<DfuBank>;
 {%- elsif swap_paged == "true" %}
 ///
 /// Но со страницей обмена [`SWAP_PAGE_SIZE`], крупнее физической страницы
 /// флеша (`adapters::flash::Paged`): `DFU` обязан видеть ту же страницу, что
 /// `ACTIVE` и `DFU` в bootloader'е, иначе размеры и смещения разделов у них
 /// разойдутся.
-type DfuFlash = BlockingAsync<Paged<Shared<'static, FlashMutex>, SWAP_PAGE_SIZE>>;
+type DfuFlash = BlockingAsync<Paged<Whole, SWAP_PAGE_SIZE>>;
 {%- else %}
-type DfuFlash = BlockingAsync<Shared<'static, FlashMutex>>;
+type DfuFlash = BlockingAsync<Whole>;
 {%- endif %}
 
 /// Страница раздела `BOOTLOADER_STATE` — размер сектора, в котором он лежит.
@@ -154,7 +171,7 @@ const _: () = assert!(
 
 /// Флеш под разделом `BOOTLOADER_STATE`: тот же общий `Flash`, но со
 /// страницей [`STATE_ERASE_SIZE`].
-type StateFlash = BlockingAsync<Paged<Shared<'static, FlashMutex>, STATE_ERASE_SIZE>>;
+type StateFlash = BlockingAsync<Paged<Whole, STATE_ERASE_SIZE>>;
 
 /// Раздел `DFU` — то, из чего собирается адаптер обновления.
 pub type Dfu = embassy_embedded_hal::flash::partition::Partition<'static, NoopRawMutex, DfuFlash>;
@@ -220,20 +237,16 @@ pub(crate) fn partitions(external: &'static ExternalMutex) -> Partitions {
 ///
 /// `DFU` — в банке 2 (`dfu_bank`), `STATE` — в банке 1 (`shared`).
 pub(crate) fn partitions(chip: Chip) -> Partitions {
-    let dfu = DFU_FLASH.init(AsyncMutex::new(BlockingAsync::new(Shared::new(
-        chip.dfu_bank,
-    ))));
+    let dfu = DFU_FLASH.init(AsyncMutex::new(BlockingAsync::new(whole(chip.dfu_bank))));
 {%- elsif swap_paged == "true" %}
 pub(crate) fn partitions(chip: Chip) -> Partitions {
-    let dfu = BlockingAsync::new(Paged::new(Shared::new(chip.shared)));
+    let dfu = BlockingAsync::new(Paged::new(whole(chip.shared)));
     let dfu = DFU_FLASH.init(AsyncMutex::new(dfu));
 {%- else %}
 pub(crate) fn partitions(chip: Chip) -> Partitions {
-    let dfu = DFU_FLASH.init(AsyncMutex::new(BlockingAsync::new(Shared::new(
-        chip.shared,
-    ))));
+    let dfu = DFU_FLASH.init(AsyncMutex::new(BlockingAsync::new(whole(chip.shared))));
 {%- endif %}
-    let state = BlockingAsync::new(Paged::new(Shared::new(chip.shared)));
+    let state = BlockingAsync::new(Paged::new(whole(chip.shared)));
     let state = STATE_FLASH.init(AsyncMutex::new(state));
     let config = FirmwareUpdaterConfig::from_linkerfile(dfu, state);
 {%- endif %}

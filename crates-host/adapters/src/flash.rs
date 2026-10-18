@@ -2,90 +2,47 @@
 //!
 //! Флеш на чипе один, а `embassy-boot` и `sequential-storage` хотят каждый свой
 //! `NorFlash` по значению. Взять `&mut F` из мьютекса и держать его нельзя
-//! (`lock` даёт доступ только внутри замыкания), поэтому [`Shared`](crate::flash::Shared) — это
-//! ссылка на флеш под замком, а блокировка берётся на каждую операцию отдельно.
+//! (`lock` даёт доступ только внутри замыкания), поэтому каждый потребитель
+//! получает [`BlockingPartition`](embassy_embedded_hal::flash::partition::BlockingPartition) из `embassy-embedded-hal` — ссылку на флеш под
+//! замком, а блокировка берётся на каждую операцию отдельно. [`whole`](crate::flash::whole) — такой
+//! раздел на весь флеш.
 //!
 //! Асинхронный вид (для `Partition`, `FirmwareUpdater`, `sequential-storage`)
 //! здесь не реализован: его даёт `embassy_embedded_hal::adapter::BlockingAsync`
-//! поверх [`Shared`](crate::flash::Shared) или [`Paged`](crate::flash::Paged). Операции блокирующие, ни одна не ждёт внутри.
+//! поверх [`whole`](crate::flash::whole) или [`Paged`](crate::flash::Paged). Операции блокирующие, ни одна не ждёт внутри.
 //!
 //! Generic по мьютексу и флешу, а не привязан к `embassy_stm32::flash::Flash`:
 //! мосту всё равно, что под ним, — а тестируется он на хосте с флешем в памяти.
 //!
 //! `embassy-boot` строит каждый раздел из `&Mutex<_, RefCell<T>>` своего типа,
 //! поэтому раздел со своей страницей ([`Paged`](crate::flash::Paged)) получает
-//! свой мьютекс над [`Shared`](crate::flash::Shared), а не второй объект `Flash`.
+//! свой мьютекс над [`whole`](crate::flash::whole), а не второй объект `Flash`.
 
 use core::cell::RefCell;
 
+use embassy_embedded_hal::flash::partition::BlockingPartition;
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embedded_storage::nor_flash::{ErrorType, NorFlash, ReadNorFlash};
 
-/// Флеш, к которому доступ идёт только под замком, по одной операции.
+/// Весь общий флеш как один раздел: смещения те же, что у самого флеша, а
+/// операции идут под замком, по одной.
 ///
-/// Трейт, а не `&Mutex<M, RefCell<F>>` в сигнатуре [`Shared`]: `RefCell`
-/// нужен блокирующему `Mutex` embassy (его API другого не принимает), но это
-/// деталь реализации, которая не должна расползаться по публичным типам.
-/// Для самого `Mutex<M, RefCell<F>>` трейт реализован ниже; владелец общего
-/// флеша может реализовать его на своём типе и спрятать ячейку.
-pub trait FlashLock {
-    /// Флеш под замком.
-    type Flash: NorFlash;
-
-    /// Выполняет `op` с исключительным доступом к флешу.
-    fn with<R>(&self, op: impl FnOnce(&mut Self::Flash) -> R) -> R;
-}
-
-impl<M: RawMutex, F: NorFlash> FlashLock for Mutex<M, RefCell<F>> {
-    type Flash = F;
-
-    fn with<R>(&self, op: impl FnOnce(&mut F) -> R) -> R {
-        self.lock(|flash| op(&mut flash.borrow_mut()))
-    }
-}
-
-/// Ссылка на общий флеш; операции — под его замком, по одной.
-#[derive(Debug)]
-pub struct Shared<'a, L: FlashLock> {
-    flash: &'a L,
-}
-
-impl<'a, L: FlashLock> Shared<'a, L> {
-    /// Оборачивает общий флеш.
-    #[must_use]
-    pub const fn new(flash: &'a L) -> Self {
-        Self { flash }
-    }
-}
-
-impl<L: FlashLock> ErrorType for Shared<'_, L> {
-    type Error = <L::Flash as ErrorType>::Error;
-}
-
-impl<L: FlashLock> ReadNorFlash for Shared<'_, L> {
-    const READ_SIZE: usize = <L::Flash as ReadNorFlash>::READ_SIZE;
-
-    fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), Self::Error> {
-        self.flash.with(|flash| flash.read(offset, bytes))
-    }
-
-    fn capacity(&self) -> usize {
-        self.flash.with(|flash| flash.capacity())
-    }
-}
-
-impl<L: FlashLock> NorFlash for Shared<'_, L> {
-    const WRITE_SIZE: usize = <L::Flash as NorFlash>::WRITE_SIZE;
-    const ERASE_SIZE: usize = <L::Flash as NorFlash>::ERASE_SIZE;
-
-    fn erase(&mut self, from: u32, to: u32) -> Result<(), Self::Error> {
-        self.flash.with(|flash| flash.erase(from, to))
-    }
-
-    fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), Self::Error> {
-        self.flash.with(|flash| flash.write(offset, bytes))
-    }
+/// # Panics
+///
+/// Паникует, если объём флеша не кратен его же `ERASE_SIZE` (так проверяет
+/// `BlockingPartition::new`) или не помещается в `u32`. У STM32 объём всегда
+/// кратен самому крупному сектору; `bsp` проверяет это ещё и при компиляции.
+#[must_use]
+pub fn whole<M: RawMutex, F: NorFlash>(
+    flash: &Mutex<M, RefCell<F>>,
+) -> BlockingPartition<'_, M, F> {
+    let size = flash.lock(|flash| flash.borrow().capacity());
+    BlockingPartition::new(
+        flash,
+        0,
+        u32::try_from(size).expect("объём флеша не влезает в u32"),
+    )
 }
 
 /// Тот же флеш, но со страницей стирания `ERASE_SIZE` вместо его собственной.
@@ -313,7 +270,9 @@ mod tests {
     use embedded_storage::nor_flash::{ErrorType, NorFlashErrorKind};
     use embedded_storage_async::nor_flash::{NorFlash, ReadNorFlash};
 
-    use super::{Paged, Shared, Unconnected, size_from_env};
+    use embassy_embedded_hal::flash::partition::BlockingPartition;
+
+    use super::{Paged, Unconnected, size_from_env, whole};
 
     /// Блокирующий флеш в памяти: 64 байта, страница 16, слово 4. Мосту
     /// неважно, что под ним, — проверяется только, что каждая операция дошла
@@ -360,11 +319,11 @@ mod tests {
     #[tokio::test]
     async fn forwards_every_operation_to_the_flash_under_the_mutex() {
         let flash: Mutex<NoopRawMutex, _> = Mutex::new(RefCell::new(MemFlash { mem: [0; 64] }));
-        let mut shared = BlockingAsync::new(Shared::new(&flash));
+        let mut shared = BlockingAsync::new(whole(&flash));
 
         assert_eq!(shared.capacity(), 64);
         assert_eq!(
-            <BlockingAsync<Shared<'_, Mutex<NoopRawMutex, RefCell<MemFlash>>>> as NorFlash>::WRITE_SIZE,
+            <BlockingAsync<BlockingPartition<'_, NoopRawMutex, MemFlash>> as NorFlash>::WRITE_SIZE,
             4
         );
 
@@ -408,13 +367,13 @@ mod tests {
         use embedded_storage::nor_flash::{NorFlash, ReadNorFlash};
 
         type Flash = Mutex<NoopRawMutex, RefCell<MemFlash>>;
-        type Page32<'a> = Paged<Shared<'a, Flash>, 32>;
+        type Page32<'a> = Paged<BlockingPartition<'a, NoopRawMutex, MemFlash>, 32>;
         let flash: Flash = Mutex::new(RefCell::new(MemFlash { mem: [0; 64] }));
 
         assert_eq!(<Page32<'_> as NorFlash>::ERASE_SIZE, 32);
         assert_eq!(<Page32<'_> as NorFlash>::WRITE_SIZE, 4);
 
-        let mut paged = Page32::new(Shared::new(&flash));
+        let mut paged = Page32::new(whole(&flash));
         paged.erase(32, 64).expect("стирание");
         paged.write(32, &[0xA5; 4]).expect("запись");
         paged.write(36, &[0x5A; 4]).expect("запись");
@@ -441,12 +400,12 @@ mod tests {
         use core::cell::RefCell;
 
         use embassy_boot::{BlockingFirmwareState, BootError, BootLoader, BootLoaderConfig, State};
-        use embassy_embedded_hal::flash::partition::BlockingPartition;
+        use embassy_embedded_hal::flash::partition::{BlockingPartition, Error as PartitionError};
         use embassy_sync::blocking_mutex::Mutex;
         use embassy_sync::blocking_mutex::raw::NoopRawMutex;
         use embedded_storage::nor_flash::{ErrorType, NorFlash, NorFlashErrorKind, ReadNorFlash};
 
-        use crate::flash::{Paged, Shared};
+        use crate::flash::{Paged, whole};
 
         /// Страница обмена и раскладка: ACTIVE — 3 страницы, DFU — 4 (запасная).
         const SWAP: usize = 1024;
@@ -558,7 +517,7 @@ mod tests {
                     .copy_from_slice(&image());
             });
             let cell =
-                Mutex::<NoopRawMutex, _>::new(RefCell::new(Paged::<_, SP>::new(Shared::new(chip))));
+                Mutex::<NoopRawMutex, _>::new(RefCell::new(Paged::<_, SP>::new(whole(chip))));
             let mut state = BlockingPartition::new(&cell, STATE_OFFSET, state_len);
             BlockingFirmwareState::new(&mut state, &mut [0; WORD])
                 .mark_updated()
@@ -571,14 +530,12 @@ mod tests {
             chip: &Chip<PHYS>,
             state_len: u32,
         ) -> Result<State, BootError> {
-            let active = Mutex::<NoopRawMutex, _>::new(RefCell::new(Paged::<_, SWAP>::new(
-                Shared::new(chip),
-            )));
-            let dfu = Mutex::<NoopRawMutex, _>::new(RefCell::new(Paged::<_, SWAP>::new(
-                Shared::new(chip),
-            )));
+            let active =
+                Mutex::<NoopRawMutex, _>::new(RefCell::new(Paged::<_, SWAP>::new(whole(chip))));
+            let dfu =
+                Mutex::<NoopRawMutex, _>::new(RefCell::new(Paged::<_, SWAP>::new(whole(chip))));
             let state =
-                Mutex::<NoopRawMutex, _>::new(RefCell::new(Paged::<_, SP>::new(Shared::new(chip))));
+                Mutex::<NoopRawMutex, _>::new(RefCell::new(Paged::<_, SP>::new(whole(chip))));
             BootLoader::new(BootLoaderConfig {
                 active: BlockingPartition::new(&active, 0, ACTIVE_LEN),
                 dfu: BlockingPartition::new(&dfu, DFU_OFFSET, DFU_LEN),
@@ -686,9 +643,8 @@ mod tests {
         #[should_panic(expected = "must be a multiple")]
         fn a_partition_off_the_wrapper_page_is_refused() {
             let chip = chip::<128>();
-            let cell = Mutex::<NoopRawMutex, _>::new(RefCell::new(Paged::<_, SWAP>::new(
-                Shared::new(&chip),
-            )));
+            let cell =
+                Mutex::<NoopRawMutex, _>::new(RefCell::new(Paged::<_, SWAP>::new(whole(&chip))));
             let _ = BlockingPartition::new(&cell, 0, 128);
         }
 
@@ -699,14 +655,17 @@ mod tests {
         fn paged_erase_checks_only_the_physical_alignment() {
             let chip = chip::<128>();
             chip.lock(|f| f.borrow_mut().mem.fill(0));
-            let mut paged = Paged::<_, SWAP>::new(Shared::new(&chip));
+            let mut paged = Paged::<_, SWAP>::new(whole(&chip));
 
             paged.erase(128, 256).expect("кратно физической странице");
             assert!(dump(&chip, 128, 128).iter().all(|b| *b == 0xFF));
             assert!(dump(&chip, 0, 128).iter().all(|b| *b == 0));
             assert!(dump(&chip, 256, 128).iter().all(|b| *b == 0));
 
-            assert_eq!(paged.erase(64, 192), Err(NorFlashErrorKind::NotAligned));
+            assert_eq!(
+                paged.erase(64, 192),
+                Err(PartitionError::Flash(NorFlashErrorKind::NotAligned))
+            );
         }
     }
 }

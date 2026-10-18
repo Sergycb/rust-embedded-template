@@ -49,7 +49,7 @@ embassy-boot = { workspace = true, features = ["flash-erase-zero"] }
 embassy-stm32 = { workspace = true, features = ["defmt"{% if bank_switch != "" %}, "unstable-pac"{% endif %}] }
 embassy-sync = { workspace = true }
 # Раздел BOOTLOADER_STATE со страницей своего сектора, а не всего чипа
-# (`adapters::flash::Paged` поверх `Shared`, src/main.rs). Тот же код, что
+# (`adapters::flash::Paged` поверх `whole`, src/main.rs). Тот же код, что
 # строит этот раздел в приложении (bsp::flash), — расходиться им нельзя.
 adapters = { workspace = true }
 {%- if signed == "true" or ota_store == "external" %}
