@@ -30,6 +30,17 @@ pub fn setup(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     install_if_missing(sh, &["cargo-hack"], "cargo-hack")?;
     install_if_missing(sh, &["cargo-llvm-cov"], "cargo-llvm-cov")?;
     install_if_missing(sh, &["cargo-insta"], "cargo-insta")?;
+    // Текстовые проверки, которые тоже гоняет CI: неиспользуемые зависимости
+    // (`cargo machete`), опечатки (`typos`) и формат манифестов (`taplo fmt
+    // --check`). У двух последних пакет и бинарник называются по-разному.
+    install_if_missing(sh, &["cargo-machete"], "cargo-machete")?;
+    install_if_missing(sh, &["typos"], "typos-cli")?;
+    install_if_missing(sh, &["taplo"], "taplo-cli")?;
+    // Вручную, в CI их нет: мутационное тестирование (`cargo mutants`) идёт
+    // часами, а `cargo bloat` отвечает на вопрос «из чего состоит образ», а не
+    // «прошла ли проверка».
+    install_if_missing(sh, &["cargo-mutants"], "cargo-mutants")?;
+    install_if_missing(sh, &["cargo-bloat"], "cargo-bloat")?;
     Ok(())
 }
 

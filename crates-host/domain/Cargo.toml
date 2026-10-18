@@ -49,6 +49,12 @@ log = [
 	# {%- endif %}
 ]
 
+# `log` и `defmt` — необязательные зависимости, которые нужны только фичам
+# (`dep:log`, `dep:defmt`): код зовёт их через `defmt_or_log`, и `cargo machete`
+# по тексту исходников видит их неиспользуемыми.
+[package.metadata.cargo-machete]
+ignored = ["log", "defmt"]
+
 [dependencies]
 # Порты — границы самого домена: логика вызывает их, а реализации приходят из
 # `adapters` (хост) и `crates-cross/bsp` (железо). Зависимость нужна, чтобы

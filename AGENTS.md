@@ -75,6 +75,7 @@ skill'ом `rust-engineering` и не дублируются здесь. Это�
 | `cargo xtask test host` | `domain`: `cargo nextest` + doc-тесты |
 | `cargo xtask lint cross` | `crates-cross`: `fmt --check` + `clippy -D warnings` |
 | `cargo xtask build` | `crates-cross`: debug + release,{% if ota == "true" %} `app.bin`,{% endif %} размер образа, подпись (если включена) |
+| `typos` | опечатки в коде и документации; исключения — `.typos.toml`. Нужен `typos-cli` (ставит `cargo xtask setup`), гоняется в CI отдельным джобом |
 | `cargo deny check` | лицензии (только пермиссивные), источники, уязвимости зависимостей по `deny.toml`; для прошивки — с `--manifest-path crates-cross/Cargo.toml`. Нужен `cargo-deny` (ставит `cargo xtask setup`), гоняется в CI |
 | `cargo xtask pins [БЛОК\|ПИН]` | справочник по чипу `{{chip}}`: выводы, альтернативные функции, DMA, тактирование |
 | `cargo xtask pins --check` | не занят ли отладочный порт в `resources.rs` |
@@ -83,7 +84,7 @@ skill'ом `rust-engineering` и не дублируются здесь. Это�
 
 | Команда | Что делает |
 |---|---|
-| `cargo xtask setup` | ставит `rustup target` и компоненты, `probe-rs`, `flip-link`, `cargo-nextest`, `cargo-deny`, `cargo-hack`, `cargo-llvm-cov`, `cargo-insta` — меняет систему |
+| `cargo xtask setup` | ставит `rustup target` и компоненты, `probe-rs`, `flip-link`, `cargo-nextest`, `cargo-deny`, `cargo-hack`, `cargo-llvm-cov`, `cargo-insta`, `typos-cli`, а для ручного запуска — `cargo-mutants`, `cargo-bloat`, `cargo-machete`, `taplo-cli` — меняет систему |
 | {% if ota == "true" %}`cargo flash -p boot --release --chip {{chip}}`, затем {% endif %}`cargo run -p app` (исключение из правила выше: запускать в `crates-cross/`) | прошивка руками — необратимо; отдельной команды в `xtask` нет, и начало образа с `memory.x` здесь не сверяется — это делает `cargo xtask build` |
 | `cargo xtask test target` | тесты внутри МК (`embedded-test` + `probe-rs run`); сам заливает bootloader |
 | `cargo xtask test host-target` | хост управляет прошитым устройством; сам заливает release-образы, сверив начало приложения с `ORIGIN` раздела из `memory.x` |
@@ -104,9 +105,9 @@ cargo xtask build         # cross: debug + release
 
 Это основа CI — там host и cross разнесены по разным джобам, которые идут
 параллельно и с раздельными кешами. Сверх этих четырёх CI гоняет `cargo deny
-check`, `cargo hack --feature-powerset` и покрытие (`cargo llvm-cov`): все три
-ставит `cargo xtask setup`, и при правке зависимостей или фич их стоит
-прогнать и локально. Отдельно от `ci.yml` (GitHub): `pins.yml` (Pins) —
+check`, `cargo hack --feature-powerset`, покрытие (`cargo llvm-cov`) и `typos`:
+все четыре ставит `cargo xtask setup`, и при правке зависимостей или фич первые
+три стоит прогнать и локально. Отдельно от `ci.yml` (GitHub): `pins.yml` (Pins) —
 `chip-info --check` по фильтру путей (распиновка и справочник), `release.yml`
 (Release; только при `ota`) — `cargo xtask build` и подпись по тегу `v*`. Полный
 перечень и что нужно для зелёного CI — README, «Что проверяет CI». Добавили шаг
