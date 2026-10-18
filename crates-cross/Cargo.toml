@@ -207,22 +207,24 @@ assign-resources = { version = "0.5.0" }
 #   `embassy_executor::Metadata`, то есть в defmt-виды задач и в дампы, где
 #   иначе стоял бы непрозрачный идентификатор. Занимает flash: по
 #   `&'static str` на узел.
-{%- if ota == "true" %}
 #
-# Третья, `local-resources`, — ради узла `OTA`: его слоты (`LINK`, `FLASH` во
-# фрагменте `domain::ota`) помечены `local`, потому что держат `!Send`-объекты
-# платы — `adapters::ota::Updater` над разделами `bsp::flash` ссылается на `Mutex<NoopRawMutex, …>`, а обычный
-# слот графа это `static`, которому нужен `Send`. Фича включает
-# `LocalResourceSlot` и снимает у `supervisor` `forbid(unsafe_code)` до `deny`
-# (у слота один документированный `unsafe impl Sync`), а макрос эмитит по
-# `unsafe`-блоку на каждый такой `static` (`LocalResourceSlot::empty()`, здесь
-# два) в `app`: обязательство «значение живёт на исполнителе, спавнящем граф»
-# лежит в крейте графа, а не в библиотеке. Это то же допущение, что у
-# `NoopRawMutex` в `bsp::FlashMutex`; менять их вместе.
-{%- endif %}
+# * `local-resources` — ради узлов со слотами `local`: `OTA` (`LINK`, `FLASH`
+#   во фрагменте `domain::ota`), `NET` (`RUNNER`), `USB` (`DEVICE`), протокольных
+#   узлов (`MODBUS_LINK`...). Эти слоты помечены `local`, потому что держат
+#   `!Send`-объекты платы — например, `adapters::ota::Updater` над разделами
+#   `bsp::flash` ссылается на `Mutex<NoopRawMutex, …>`, — а обычный
+#   слот графа это `static`, которому нужен `Send`. Включена всегда, а не только
+#   с OTA: без неё узлы `NET`/`USB`/`MODBUS` не собирались на чипе без OTA.
+#   Фича включает `LocalResourceSlot` и снимает у `supervisor`
+#   `forbid(unsafe_code)` до `deny` (у слота один документированный
+#   `unsafe impl Sync`), а макрос эмитит по `unsafe`-блоку на каждый такой
+#   `static` (`LocalResourceSlot::empty()`) в `app`: обязательство «значение
+#   живёт на исполнителе, спавнящем граф» лежит в крейте графа, а не в
+#   библиотеке. Это то же допущение, что у `NoopRawMutex` в
+#   `bsp::flash::FlashMutex`; менять их вместе.
 supervisor       = { git = "https://github.com/Sergycb/rust-lib.git", features = [
-	"metadata-name",{% if ota == "true" %}
-	"local-resources",{% endif %}
+	"metadata-name",
+	"local-resources",
 ] }
 watchdog         = { git = "https://github.com/Sergycb/rust-lib.git" }
 
