@@ -66,7 +66,7 @@ pub mod can;
 pub mod host;
 
 // {%- endif %}
-// {%- if protocol != "none" %}
+// {%- if link_port == "true" %}
 /// Кадровый канал связи: сообщения целиком, поверх датаграмм или адаптера
 /// кадрирования потока.
 pub mod link;
@@ -100,7 +100,7 @@ pub use can::CanBus;
 // {%- if protocol == "protobuf" %}
 pub use host::HostService;
 // {%- endif %}
-// {%- if protocol != "none" %}
+// {%- if link_port == "true" %}
 pub use link::{FrameLink, LinkError};
 // {%- endif %}
 // {%- if protocol == "modbus" %}

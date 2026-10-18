@@ -2047,6 +2047,61 @@ fn ota_and_settings_code_is_kept_only_when_selected() {
     }
 }
 
+/// Сторож платы (`bsp::wdg`) нужен только графу, а кадровый канал
+/// (`ports::link`) — только протоколам, которые им пользуются.
+#[test]
+fn watchdog_and_link_port_follow_the_choices() {
+    let ast = compile_script();
+    const WDG: [&str; 2] = ["crates-cross/bsp/src/wdg.rs", "docs/modules/bsp-wdg.md"];
+    const LINK: &str = "crates-host/ports/src/link.rs";
+    // (чип, ответы, сторож удалён, канал удалён)
+    type Case<'a> = (&'a str, &'a [(&'a str, &'a str)], bool, bool);
+    let cases: [Case; 7] = [
+        ("g474re", &[], false, true),
+        ("g474re", &[("graph", "no")], true, true),
+        // Modbus по потоку кадровый канал не использует, по UDP — использует.
+        (
+            "g474re",
+            &[("protocol", "modbus"), ("interface", "uart")],
+            false,
+            true,
+        ),
+        (
+            "h743zg",
+            &[("protocol", "modbus"), ("interface", "tcp")],
+            false,
+            true,
+        ),
+        (
+            "h743zg",
+            &[("protocol", "modbus"), ("interface", "udp")],
+            false,
+            false,
+        ),
+        (
+            "f407ve",
+            &[("protocol", "protobuf"), ("interface", "uart")],
+            false,
+            false,
+        ),
+        (
+            "g474re",
+            &[("protocol", "canopen"), ("interface", "can")],
+            false,
+            false,
+        ),
+    ];
+    for (chip, answers, no_wdg, no_link) in cases {
+        let result = run_cascade_with(&ast, chip, answers)
+            .unwrap_or_else(|err| panic!("{chip} {answers:?}: каскад упал: {err}"));
+        let gone = |path: &str| result.deleted.iter().any(|d| d == path);
+        for path in WDG {
+            assert_eq!(gone(path), no_wdg, "{chip} {answers:?}: {path}");
+        }
+        assert_eq!(gone(LINK), no_link, "{chip} {answers:?}: {LINK}");
+    }
+}
+
 /// Значение `watchdog_peripheral`, которое хук выбирает для чипа. У двухъядерных
 /// H745 у каждого ядра свой сторож (`IWDG1` у CM7, `IWDG2` у CM4) — перепутанный
 /// блок собрался бы, но сторож не кормился бы никогда.

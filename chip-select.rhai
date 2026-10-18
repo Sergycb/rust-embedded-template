@@ -1227,6 +1227,10 @@ if variable::is_set("write_size") {
 // закрыто тем же `{% if %}`, поэтому удаление файла ничего не ломает.
 if variable::get("graph") != "true" {
 	file::delete("crates-cross/app/src/graph.rs");
+	// Сторож запускает блок `watchdog:` графа; без графа его некому взводить, а
+	// `Board` поля сторожа не имеет.
+	file::delete("crates-cross/bsp/src/wdg.rs");
+	file::delete("docs/modules/bsp-wdg.md");
 }
 
 // Протокол связи и интерфейс под ним. Проверяются здесь, в конце, а не при
@@ -1294,6 +1298,7 @@ variable::set("erase_page", if variable::get("state_paged") == "true" || variabl
 variable::set("external_flash", if (variable::get("ota") == "true" && variable::get("ota_store") == "external") || variable::get("config_store") == "external" { "true" } else { "false" });
 variable::set("protocol", protocol);
 variable::set("interface", iface);
+variable::set("link_port", if protocol == "protobuf" || protocol == "canopen" || (protocol == "modbus" && iface == "udp") { "true" } else { "false" });
 // Порт хранилища настроек (`ports::SettingsStorage`) нужен, пока есть что в него
 // класть: раздел, EEPROM или внешняя флеш (`config`) либо заглушка `Unavailable`
 // у узла CANopen без хранилища. Иначе порта и адаптера в проекте нет.
@@ -1389,8 +1394,13 @@ if protocol != "canopen" {
 	file::delete("crates-host/canopen");
 }
 if protocol == "none" {
-	file::delete("crates-host/ports/src/link.rs");
 	file::delete("crates-cross/app/src/protocol.rs");
+}
+// Кадровый канал (`ports::FrameLink`, `LinkError`) нужен protobuf (канал хоста),
+// CANopen (ошибка шины) и Modbus по UDP (датаграмма); Modbus по потоку им не
+// пользуется.
+if !(protocol == "protobuf" || protocol == "canopen" || (protocol == "modbus" && iface == "udp")) {
+	file::delete("crates-host/ports/src/link.rs");
 }
 // OTA — порты, адаптер и узел `domain::ota` — только в проекте с OTA: без неё это
 // код, до которого не дотянуться от `main` и графа. `mod`, `pub use` и зависимости

@@ -26,7 +26,7 @@ embassy-stm32 = { workspace = true, features = ["time-driver-any"{% if cpu_freq_
 # проверяет bootloader (crates-cross/boot), версию задаёт приложение.
 adapters = { workspace = true }
 assign-resources = { workspace = true }
-# Регистры ядра напрямую: `wfi` в ожидании сброса от сторожа (src/wdg.rs) и
+# Регистры ядра напрямую:{% if graph == "true" %} `wfi` в ожидании сброса от сторожа (src/wdg.rs) и{% endif %}
 # impl critical-section (фича в crates-cross/Cargo.toml). Периферию ядра
 # (`Peripherals`) `bsp` не забирает: она никому здесь не нужна, а забрав её, он
 # лишил бы её приложение — `take()` отдаёт её ровно один раз за запуск.
@@ -62,6 +62,7 @@ embassy-net = { workspace = true }
 {%- if ota == "true" %}
 embassy-boot = { workspace = true, features = ["defmt"{% if erase_zero == "true" and ota_store != "external" %}, "flash-erase-zero"{% endif %}] }
 {%- endif %}
+{%- if graph == "true" %}
 # Аппаратный сторож под трейт `HardwareWatchdog` (см. src/wdg.rs). Крейт
 # объявлен здесь, а не у `app`, потому что реализация трейта — это железо:
 # сам `watchdog` про HAL не знает и знать не должен.
@@ -71,6 +72,7 @@ watchdog = { workspace = true }
 # раздел про supervisor: `core::time::Duration` стоил бы вызова
 # `__aeabi_uldivmod` на каждой конверсии).
 embassy-time = { workspace = true }
+{%- endif %}
 # Безусловно, не за фичей: `log` в прошивке не используется вовсе, поэтому
 # фичам `defmt`/`log` у bsp (и мосту `defmt-or-log`) выбирать больше не из
 # чего — defmt включён в обоих профилях, как в `app` и `boot`.
