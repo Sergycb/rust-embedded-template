@@ -1294,6 +1294,10 @@ variable::set("erase_page", if variable::get("state_paged") == "true" || variabl
 variable::set("external_flash", if (variable::get("ota") == "true" && variable::get("ota_store") == "external") || variable::get("config_store") == "external" { "true" } else { "false" });
 variable::set("protocol", protocol);
 variable::set("interface", iface);
+// Порт хранилища настроек (`ports::SettingsStorage`) нужен, пока есть что в него
+// класть: раздел, EEPROM или внешняя флеш (`config`) либо заглушка `Unavailable`
+// у узла CANopen без хранилища. Иначе порта и адаптера в проекте нет.
+variable::set("settings_port", if variable::get("config") == "true" || protocol == "canopen" { "true" } else { "false" });
 // Транспорт поверх потока байтов (UART, USB CDC, TCP), а не датаграммы: ему нужны
 // `embedded-io-async`, `crc` и, под protobuf, COBS. UDP границу кадра получает
 // от самой датаграммы, CAN — это вообще не поток.
@@ -1387,6 +1391,29 @@ if protocol != "canopen" {
 if protocol == "none" {
 	file::delete("crates-host/ports/src/link.rs");
 	file::delete("crates-cross/app/src/protocol.rs");
+}
+// OTA — порты, адаптер и узел `domain::ota` — только в проекте с OTA: без неё это
+// код, до которого не дотянуться от `main` и графа. `mod`, `pub use` и зависимости
+// вырезает Liquid.
+if variable::get("ota") != "true" {
+	file::delete("crates-host/ports/src/ota.rs");
+	file::delete("crates-host/ports/src/ota");
+	file::delete("crates-host/adapters/src/ota.rs");
+	file::delete("crates-host/domain/src/ota.rs");
+	file::delete("crates-host/domain/src/ota");
+}
+// То же для хранилища настроек.
+if variable::get("ota") != "true" && variable::get("settings_port") != "true" {
+	file::delete("crates-host/ports/src/word.rs");
+}
+if variable::get("settings_port") != "true" {
+	file::delete("crates-host/ports/src/settings.rs");
+	file::delete("crates-host/adapters/src/settings.rs");
+}
+// Мост blocking → async и заглушка внешней флеши — только когда ими кто-то
+// пользуется: обёртка страницы (`erase_page`) или внешняя флеш.
+if variable::get("erase_page") != "true" && variable::get("external_flash") != "true" {
+	file::delete("crates-host/adapters/src/flash.rs");
 }
 if iface != "uart" {
 	file::delete("crates-host/adapters/src/serial.rs");

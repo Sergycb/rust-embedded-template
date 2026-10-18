@@ -4,7 +4,9 @@ use xshell::cmd;
 
 use crate::flash::{flash_all, flash_boot};
 use crate::memory::{Region, app_memory_regions, app_region, region};
-use crate::project::{CHIP, PAGE_SIZE, WRITE_SIZE, external_partitions, has_bootloader, root_dir};
+use crate::project::{
+    CHIP, PAGE_SIZE, WRITE_SIZE, external_partitions, has_bootloader, host_features, root_dir,
+};
 
 type Stage = fn(&xshell::Shell) -> Result<(), anyhow::Error>;
 
@@ -52,15 +54,16 @@ fn test_all(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
 
 fn test_host(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     let _p = sh.push_dir(root_dir());
+    let features = host_features();
     cmd!(
         sh,
-        "cargo nextest run --workspace --exclude host-target-tests --release --features domain/log,domain/signed"
+        "cargo nextest run --workspace --exclude host-target-tests --release --features {features}"
     )
     .run()?;
     // nextest doc-тесты не запускает.
     cmd!(
         sh,
-        "cargo test --doc --workspace --exclude host-target-tests --release --features domain/log,domain/signed"
+        "cargo test --doc --workspace --exclude host-target-tests --release --features {features}"
     )
     .run()?;
     Ok(())

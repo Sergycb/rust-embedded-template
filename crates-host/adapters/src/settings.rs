@@ -1,3 +1,7 @@
+// {%- if config != "true" %}
+//! Заглушка хранилища настроек для узла CANopen, у которого раздела настроек нет.
+// {%- endif %}
+// {%- if config == "true" %}
 //! Настройки во flash: пары «ключ — значение», переживающие и перезапуск, и
 //! обновление прошивки, — поверх `sequential-storage`.
 //!
@@ -75,17 +79,21 @@
 //! а раздел переживает перезапуск и обновление прошивки, то есть «в точности
 //! соответствующий» гарантировать нечем. Настройки читаются на старте и
 //! пишутся редко, экономить здесь нечего.
+// {%- endif %}
 
+// {%- if config == "true" %}
 use core::ops::Range;
 
 use embedded_storage_async::nor_flash::NorFlash;
 use sequential_storage::cache::{Cache, Uncached};
 use sequential_storage::map::{MapConfig, MapStorage};
+// {%- endif %}
 
 /// Ключ настройки. `u32`, а не строка: строковый ключ пишется во flash целиком
 /// при каждом сохранении, а раздел здесь — две страницы.
 pub type Key = u32;
 
+// {%- if config == "true" %}
 /// Ошибка хранилища. Включает и ошибки флеша, и повреждение данных в разделе.
 pub type Error<E> = sequential_storage::Error<E>;
 
@@ -137,6 +145,9 @@ impl<F: NorFlash> Settings<F> {
     }
 }
 
+// {%- endif %}
+
+// {%- if protocol == "canopen" and config != "true" %}
 /// Хранилища нет — у проекта нет раздела настроек.
 ///
 /// Для узлов, которым хранилище нужно по сигнатуре, но не обязательно для
@@ -161,7 +172,9 @@ impl ports::SettingsStorage for Unavailable {
         core::future::ready(Ok(()))
     }
 }
+// {%- endif %}
 
+// {%- if config == "true" %}
 /// Порт домена. Собственных `read`/`write` у `Settings` нет намеренно: они
 /// перекрыли бы трейтовые при вызове, и приложение работало бы с конкретным
 /// типом мимо порта.
@@ -334,6 +347,7 @@ mod tests {
         );
     }
 
+    // {%- if protocol == "canopen" and config != "true" %}
     /// `Unavailable` читается пустым, а запись «успешна» и ничего не хранит —
     /// как заявлено в документации.
     #[tokio::test]
@@ -345,4 +359,6 @@ mod tests {
 
         assert_eq!(settings.read(1, &mut scratch).await.expect("чтение"), None);
     }
+    // {%- endif %}
 }
+// {%- endif %}

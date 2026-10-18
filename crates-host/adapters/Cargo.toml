@@ -15,8 +15,12 @@ workspace = true
 defmt = [
 	"dep:defmt",
 	"ports/defmt",
+	# {%- if ota == "true" %}
 	"embassy-boot/defmt",
+	# {%- endif %}
+	# {%- if config == "true" %}
 	"sequential-storage/defmt",
+	# {%- endif %}
 	# {%- if interface == "tcp" or interface == "udp" %}
 	"embassy-net/defmt",
 	# {%- endif %}
@@ -27,12 +31,18 @@ defmt = [
 
 [dependencies]
 ports = { workspace = true }
+# {%- if ota == "true" %}
 # Обновление прошивки поверх разделов `NorFlash` — сам крейт от чипа не зависит.
 embassy-boot = { workspace = true }
+# {%- endif %}
+# {%- if ota == "true" or config == "true" %}
 embedded-storage = { workspace = true }
 embedded-storage-async = { workspace = true }
+# {%- endif %}
+# {%- if config == "true" %}
 # Хранилище настроек (settings.rs) — async API, отсюда и мост в flash.rs.
 sequential-storage = { workspace = true }
+# {%- endif %}
 embassy-sync = { workspace = true }
 # {%- if stream_io == "true" %}
 # Транспорты поверх потока байтов `embedded_io_async::{Read, Write}` —
@@ -65,15 +75,19 @@ embedded-can = { workspace = true }
 defmt = { workspace = true, optional = true }
 
 [dev-dependencies]
+# {%- if ota == "true" %}
 # Сквозной тест `ota`: то, что пишет `Updater<_, _, true>`, находит проверка
 # bootloader'а (`domain::ota::boot::screen_update`). Подписывает `salty`, как
 # `cargo xtask build`. Циклическая dev-зависимость (у `domain` она на `adapters`)
 # cargo разрешена: в обычную сборку ни та ни другая не попадает.
 domain = { path = "../domain", features = ["signed"] }
 salty = { workspace = true }
+# {%- endif %}
+# {%- if erase_page == "true" or external_flash == "true" %}
 # `BlockingAsync` (async-вид флеша) и `BlockingPartition` (раздел под замком) —
 # как их собирают `bsp` и bootloader; свои копии в тестах не нужны.
 embassy-embedded-hal = { workspace = true }
+# {%- endif %}
 # Исполнитель для async-тестов над флешем в памяти (`#[tokio::test]`); фичи —
 # в корневом Cargo.toml.
 tokio = { workspace = true }

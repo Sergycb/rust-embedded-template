@@ -1965,6 +1965,88 @@ fn transports_are_kept_only_for_the_selected_interface() {
     }
 }
 
+/// OTA и хранилище настроек в `ports`, `adapters` и `domain` остаются только там,
+/// где они выбраны: без них это код, до которого не дотянуться от `main` и графа.
+/// Заглушка `Unavailable` нужна и узлу CANopen без хранилища, а `flash.rs` —
+/// только обёртке страницы или внешней флеши.
+#[test]
+fn ota_and_settings_code_is_kept_only_when_selected() {
+    let ast = compile_script();
+    const OTA: [&str; 5] = [
+        "crates-host/ports/src/ota.rs",
+        "crates-host/ports/src/ota",
+        "crates-host/adapters/src/ota.rs",
+        "crates-host/domain/src/ota.rs",
+        "crates-host/domain/src/ota",
+    ];
+    const SETTINGS: [&str; 2] = [
+        "crates-host/ports/src/settings.rs",
+        "crates-host/adapters/src/settings.rs",
+    ];
+    const FLASH: &str = "crates-host/adapters/src/flash.rs";
+    const WORD: &str = "crates-host/ports/src/word.rs";
+    // (чип, ответы, OTA вырезана, настройки вырезаны, flash.rs вырезан)
+    type Case<'a> = (&'a str, &'a [(&'a str, &'a str)], bool, bool, bool);
+    let cases: [Case; 5] = [
+        (
+            "g474re",
+            &[("ota", "no"), ("config", "no")],
+            true,
+            true,
+            true,
+        ),
+        (
+            "g474re",
+            &[("ota", "internal"), ("config", "no")],
+            false,
+            true,
+            true,
+        ),
+        // CANopen без хранилища: порт и заглушка остаются, OTA — нет.
+        (
+            "g474re",
+            &[("ota", "no"), ("protocol", "canopen"), ("interface", "can")],
+            true,
+            false,
+            true,
+        ),
+        // Настройки в хвосте flash на равных секторах: обёртки страницы нет.
+        (
+            "g071rb",
+            &[("ota", "no"), ("config", "internal")],
+            true,
+            false,
+            true,
+        ),
+        // Внешняя флеш: заглушка драйвера живёт в `flash.rs`.
+        (
+            "l073rz",
+            &[("ota", "no"), ("config", "external")],
+            true,
+            false,
+            false,
+        ),
+    ];
+    for (chip, answers, no_ota, no_settings, no_flash) in cases {
+        let result = run_cascade_with(&ast, chip, answers)
+            .unwrap_or_else(|err| panic!("{chip} {answers:?}: каскад упал: {err}"));
+        let gone = |path: &str| result.deleted.iter().any(|d| d == path);
+        for path in OTA {
+            assert_eq!(gone(path), no_ota, "{chip} {answers:?}: {path}");
+        }
+        for path in SETTINGS {
+            assert_eq!(gone(path), no_settings, "{chip} {answers:?}: {path}");
+        }
+        assert_eq!(gone(FLASH), no_flash, "{chip} {answers:?}: {FLASH}");
+        // Слово записи нужно, пока есть OTA или порт настроек.
+        assert_eq!(
+            gone(WORD),
+            no_ota && no_settings,
+            "{chip} {answers:?}: {WORD}"
+        );
+    }
+}
+
 /// Значение `watchdog_peripheral`, которое хук выбирает для чипа. У двухъядерных
 /// H745 у каждого ядра свой сторож (`IWDG1` у CM7, `IWDG2` у CM4) — перепутанный
 /// блок собрался бы, но сторож не кормился бы никогда.

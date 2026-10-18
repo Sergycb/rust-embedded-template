@@ -53,6 +53,17 @@ pub fn has_bootloader() -> bool {
     OTA != "false"
 }
 
+/// Фичи `domain` для проверок на хосте. Подпись образа (`domain/signed`) есть
+/// только в проекте с OTA; в неподставленном шаблоне она включена — её код
+/// надо проверять и там (см. [`has_bootloader`]).
+pub fn host_features() -> &'static str {
+    if has_bootloader() {
+        "domain/log,domain/signed"
+    } else {
+        "domain/log"
+    }
+}
+
 /// Где лежат `DFU` и `STATE`: `"internal"` или `"external"` (на внешней
 /// флеши, `ota=external`). Строкой — по той же причине, что [`OTA`].
 pub const OTA_STORE: &str = "{{ota_store}}";

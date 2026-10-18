@@ -10,18 +10,24 @@
 //! `bsp` при этом остаётся обвязкой: строит разделы из символов `memory.x`,
 //! отдаёт им псевдонимы (задачи embassy не generic) и кладёт в `Board`.
 
+// {%- if ota == "true" %}
 /// Обновление прошивки поверх `embassy-boot`: разделы `DFU`/`BOOTLOADER_STATE`
 /// как два `NorFlash`.
 pub mod ota;
 
-/// Мост blocking → async над общим `Flash` под `blocking_mutex` — то, чего
-/// ждёт `sequential-storage` от флеша, который делится с OTA.
+// {%- endif %}
+// {%- if erase_page == "true" or external_flash == "true" %}
+/// Вспомогательные типы над `NorFlash`: обёртка со своей страницей стирания и
+/// заглушка внешней флеши.
 pub mod flash;
 
+// {%- endif %}
+// {%- if settings_port == "true" %}
 /// Настройки во flash поверх `sequential-storage`: пары «ключ — значение»,
 /// переживающие перезапуск и обновление прошивки.
 pub mod settings;
 
+// {%- endif %}
 // {%- if stream_io == "true" and protocol == "protobuf" %}
 /// Кадрирование потока байтов (UART, USB CDC, TCP) в кадры `ports::FrameLink`:
 /// COBS и CRC.

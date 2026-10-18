@@ -24,7 +24,7 @@ pub async fn run<D: Driver<'static>>(mut ctx: UsbCtx<'_, UsbDevice<'static, D>>)
 // {%- if graph != "true" %}
 /// Тот же узел для проекта без графа: спавнится из `main.rs`, а слот, который
 /// в графе держит `static`, — локальная переменная кадра, как у
-/// [`ota::task`](crate::ota::task).
+/// [`cpu_load::task`](crate::cpu_load::task).
 pub async fn task<D: Driver<'static>>(mut device: UsbDevice<'static, D>) -> TaskExit {
     run(UsbCtx {
         device: &mut device,
