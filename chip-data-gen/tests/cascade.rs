@@ -1443,15 +1443,15 @@ fn protocol_over_usb_picks_the_usb_block_of_the_chip() {
     }
 }
 
-/// Сочетания, при которых узел протокола не встал бы в граф или обслуживать
-/// интерфейс было бы некому, генерацию останавливают — с объяснением, а не
-/// проектом, который молча делает не то.
+/// Сочетания, при которых обслуживать интерфейс было бы некому или у чипа нет
+/// нужного блока, генерацию останавливают — с объяснением, а не проектом, который
+/// молча делает не то.
 #[test]
 fn impossible_protocol_answers_are_rejected() {
     /// Чип, ответы, часть ожидаемого сообщения об ошибке.
     type Rejected<'a> = (&'a str, &'a [(&'a str, &'a str)], &'a str);
     let script = compile_script();
-    let cases: [Rejected; 9] = [
+    let cases: [Rejected; 7] = [
         // У G071 USB нет.
         (
             "g071rb",
@@ -1487,21 +1487,6 @@ fn impossible_protocol_answers_are_rejected() {
             &[("protocol", "opcua"), ("interface", "uart")],
             "protocol: ожидается canopen, modbus, none, protobuf, а не",
         ),
-        (
-            "f407ve",
-            &[
-                ("protocol", "protobuf"),
-                ("interface", "uart"),
-                ("graph", "no"),
-            ],
-            "нужен граф",
-        ),
-        // Граф здесь снимает размер раздела, а не ответ.
-        (
-            "l011f4",
-            &[("protocol", "modbus"), ("interface", "uart")],
-            "нужен граф",
-        ),
     ];
     for (chip, preset, reason) in cases {
         let err = run_chip_with(&script, chip, preset)
@@ -1512,6 +1497,51 @@ fn impossible_protocol_answers_are_rejected() {
             "{chip} {preset:?}: ждали «{reason}», а получили: {err}"
         );
     }
+}
+
+/// Протоколу граф не нужен: без него узел спавнит `main`, и ни ответ `graph=no`,
+/// ни размер раздела (здесь — 16 KiB у `l011f4`) генерацию не останавливают. Файл
+/// `protocol.rs` остаётся, пока протокол выбран.
+#[test]
+fn protocol_does_not_need_the_graph() {
+    let script = compile_script();
+    for (chip, preset) in [
+        (
+            "f407ve",
+            &[
+                ("protocol", "protobuf"),
+                ("interface", "uart"),
+                ("graph", "no"),
+            ][..],
+        ),
+        (
+            "l011f4",
+            &[("protocol", "modbus"), ("interface", "uart")][..],
+        ),
+    ] {
+        let result = run_cascade_with(&script, chip, preset)
+            .unwrap_or_else(|err| panic!("{chip} {preset:?}: каскад упал: {err}"));
+        assert_eq!(
+            result.vars.get("graph").map(String::as_str),
+            Some("false"),
+            "{chip} {preset:?}"
+        );
+        assert!(
+            !result
+                .deleted
+                .iter()
+                .any(|path| path == "crates-cross/app/src/protocol.rs"),
+            "{chip} {preset:?}: protocol.rs удалён при выбранном протоколе"
+        );
+    }
+
+    let none = run_cascade_with(&script, "f407ve", &[]).expect("каскад не должен падать");
+    assert!(
+        none.deleted
+            .iter()
+            .any(|path| path == "crates-cross/app/src/protocol.rs"),
+        "без протокола protocol.rs должен удаляться"
+    );
 }
 
 /// Ответ «нет» на вопрос про граф окончателен и на просторном чипе.

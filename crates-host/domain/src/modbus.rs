@@ -90,6 +90,30 @@ where
     match ctx.run().await {}
 }
 
+// {%- if graph != "true" %}
+/// Тот же узел для проекта без графа: спавнится из `main.rs`, а слоты, которые
+/// в графе держит `static`, — локальные переменные кадра, как у
+/// [`ota::task`](crate::ota::task).
+///
+/// # Panics
+///
+/// Если `unit` не 1..=247 — как у [`run`].
+pub async fn task<L, R>(mut link: L, mut regs: R, mut unit: u8) -> TaskExit
+where
+    L: ModbusServer,
+    L::Error: FormatOrDebug,
+    R: ports::Registers,
+{
+    run(ModbusSlaveCtx {
+        link: &mut link,
+        regs: &mut regs,
+        unit: &mut unit,
+        index: 0,
+    })
+    .await
+}
+// {%- endif %}
+
 #[fsm::typestate]
 impl<L, R> ModbusSlaveCtx<'_, L, R>
 where

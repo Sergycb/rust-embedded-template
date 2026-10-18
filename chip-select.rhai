@@ -1205,8 +1205,8 @@ if variable::get("graph") != "true" {
 
 // Протокол связи и интерфейс под ним. Проверяются здесь, в конце, а не при
 // ответе: вопросы задаются до каскада, а допустимость зависит и от чипа (есть
-// ли у него блок), и от графа (узлу протокола без него некуда встать — граф
-// мог снять и размер раздела выше).
+// ли у него блок). Граф протоколу не нужен: без него узел спавнит `main`
+// (`crates-cross/app/src/protocol.rs`, как узел OTA).
 //
 // Какие интерфейсы годятся протоколу и какой блок чипа каждый требует —
 // таблицами; новый интерфейс добавляется строкой в обе.
@@ -1240,9 +1240,6 @@ if !fits.contains(iface) {
     throw "interface: протокол " + protocol + " работает поверх " + listed(fits) + ", а не «" + iface + "»";
 }
 if protocol != "none" {
-    if variable::get("graph") != "true" {
-        throw "protocol: узлу " + protocol + " нужен граф задач, а он отключён (ответом graph=no или потому, что не помещается во flash " + chip_name + ")";
-    }
     let blocks = INTERFACE_BLOCKS[iface];
     let found = [];
     for tag in INTERFACES[suffix] {
@@ -1329,6 +1326,7 @@ if protocol != "canopen" {
 }
 if protocol == "none" {
 	file::delete("crates-host/ports/src/link.rs");
+	file::delete("crates-cross/app/src/protocol.rs");
 }
 if iface != "uart" {
 	file::delete("crates-host/adapters/src/serial.rs");

@@ -70,6 +70,34 @@ where
     match ctx.run().await {}
 }
 
+// {%- if graph != "true" %}
+/// Тот же узел для проекта без графа: спавнится из `main.rs`, а слоты, которые
+/// в графе держит `static`, — локальные переменные кадра, как у
+/// [`ota::task`](crate::ota::task).
+pub async fn task<L, S>(
+    mut link: L,
+    mut service: S,
+    rx: &'static mut [u8],
+    tx: &'static mut [u8],
+) -> TaskExit
+where
+    L: FrameLink,
+    L::Error: FormatOrDebug,
+    S: HostService,
+    S::Request: MessageDecode + Default,
+    S::Response: MessageEncode,
+{
+    run(HostCtx {
+        link: &mut link,
+        service: &mut service,
+        rx,
+        tx,
+        index: 0,
+    })
+    .await
+}
+// {%- endif %}
+
 #[fsm::typestate]
 impl<L, S> HostCtx<'_, L, S>
 where

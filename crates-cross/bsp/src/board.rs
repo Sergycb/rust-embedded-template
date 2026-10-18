@@ -71,14 +71,16 @@ pub struct Board {
 {%- if interface == "uart" %}
     /// UART под узлом протокола ({{protocol}}) — заглушка `bsp::serial::Serial`,
     /// пока проект не подставит драйвер своей платы (`docs/modules/bsp-serial.md`).
-    /// Уезжает в узел `{% if protocol == "modbus" %}MODBUS{% else %}HOST{% endif %}` графа (`fragments:` в
-    /// `crates-cross/app/src/graph.rs`).
+    /// Уезжает в узел `{% if protocol == "modbus" %}MODBUS{% else %}HOST{% endif %}`: в граф (`fragments:` в
+    /// `crates-cross/app/src/graph.rs`) или, при `graph=no`, в задачу, которую спавнит
+    /// `main` (`protocol::spawn`).
     pub serial: crate::serial::Serial,
 {%- endif %}
 {%- if interface == "can" %}
     /// Шина CAN под узлом `CANOPEN` — заглушка `bsp::can::Can`, пока проект не
     /// подставит контроллер своей платы (`docs/modules/bsp-can.md`). Уезжает в
-    /// узел `CANOPEN` графа (`fragments:` в `crates-cross/app/src/graph.rs`).
+    /// узел `CANOPEN`: в граф (`fragments:` в `crates-cross/app/src/graph.rs`) или,
+    /// при `graph=no`, в задачу, которую спавнит `main` (`protocol::spawn`).
     pub can: crate::can::Can,
 {%- endif %}
 {%- if interface == "tcp" or interface == "udp" %}

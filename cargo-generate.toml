@@ -181,7 +181,8 @@ graph = { type = "string", prompt = "Граф задач supervisor (поряд�
 # отвергает chip-select.rhai. Вопросы задаются до каскада, и чип здесь ещё
 # неизвестен, но интерфейс уже сужает каскад: сеть оставляет чипы с Ethernet,
 # USB — с USB, CAN — с CAN, UART — с USART. Протокол встаёт в граф узлом (`domain::MODBUS_SLAVE_FRAG`,
-# `domain::HOST_FRAG`), поэтому без графа он невозможен. Выводы интерфейса
+# `domain::HOST_FRAG`), а при `graph=no` его спавнит `main` (`app/src/protocol.rs`,
+# как узел OTA): граф протоколу не нужен. Выводы интерфейса
 # шаблон не выбирает: в `bsp` встаёт заглушка, которую проект меняет на
 # драйвер своей платы (`cargo xtask pins USARTn --snippet`).
 #

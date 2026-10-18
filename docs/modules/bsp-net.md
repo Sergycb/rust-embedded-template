@@ -4,7 +4,7 @@
 устройство `Device` пока — заглушка `adapters::net::Unconnected`: линк
 всегда опущен, кадров нет. Всё остальное настоящее: стек `embassy-net` с
 DHCP, его фоновая работа в узле `NET` графа (`domain::net`) и сокет протокола
-(`adapters::net::{% if interface == "tcp" %}TcpServer{% else %}UdpLink{% endif %}` на порту `PORT`; сокет и порт — в `crates-cross/app/src/graph.rs`, `bsp` отдаёт
+(`adapters::net::{% if interface == "tcp" %}TcpServer{% else %}UdpLink{% endif %}` на порту `PORT`; сокет и порт — в `crates-cross/app/src/protocol.rs`, `bsp` отдаёт
 стек). Проект собирается и
 запускается, протокол ждёт {% if interface == "tcp" %}клиента{% else %}датаграмм{% endif %} вечно. Подставить Ethernet — заменить
 устройство: стек, сокет и граф не меняются.
@@ -55,7 +55,7 @@ DHCP, его фоновая работа в узле `NET` графа (`domain::
   `Config::ipv4_static(StaticConfigV4 { address: Ipv4Cidr::new(Ipv4Address::new(192, 168, 1, 50), 24), gateway: None, dns_servers: Default::default() })`.
 * MAC — из заводского номера чипа (`adapters::net::mac_from_uid`), локально администрируемый.
   Свой, выданный производителем, — подставьте там же.
-* Порт протокола — `PORT` в `crates-cross/app/src/graph.rs`: его задаёт протокол,
+* Порт протокола — `PORT` в `crates-cross/app/src/protocol.rs`: его задаёт протокол,
   а не плата.
 {%- if interface == "tcp" %}
 * Клиент один: `TcpServer` принимает следующего, когда текущий отключился.

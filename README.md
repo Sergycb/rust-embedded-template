@@ -55,7 +55,9 @@ cargo run -p app                    # прошить приложение и с�
 `supervisor` стоит порядка полутора килобайт на Cortex-M4 и до пяти на Cortex-M0+, и в
 16-килобайтный flash он просто не помещается. Генерация скажет об этом отдельной
 строкой, а `main` тогда спавнит только `CPU_LOAD` — он от графа не зависит и
-помещается везде.
+помещается везде. То же при ответе `graph=no`. Узлы OTA и протокола связи без графа
+спавнит `main` сам (`domain::*::task`, `crates-cross/app/src/protocol.rs`), но без
+сторожа и без `restart:`/`deps:`: узлы не падают, а зависший остаётся зависшим.
 
 Наполнять проект — в таком порядке:
 
@@ -540,7 +542,7 @@ CDC ACM: устройство `embassy-usb`, узел `USB` в графе{% else
 `embassy-net`, узел `NET` в графе{% endif %}. Стек других протоколов и интерфейсов в
 проект не попал.
 
-| Узел в графе | Что править проекту |
+| Узел (в графе, а при `graph=no` — задача `main`) | Что править проекту |
 |---|---|
 {%- if protocol == "modbus" %}
 | `MODBUS` — Modbus slave, транспорт {% if interface == "tcp" %}Modbus TCP (`adapters::modbus::Tcp`){% elsif interface == "udp" %}Modbus UDP (`adapters::modbus::Udp`){% else %}RTU (`adapters::modbus::Rtu`){% endif %} | карта регистров `crates-host/domain/src/modbus/registers.rs` |

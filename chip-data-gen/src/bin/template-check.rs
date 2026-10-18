@@ -188,6 +188,22 @@ fn default_cases() -> Vec<Case> {
         // Modbus RTU по USB CDC — на F4, у которого USB — блок OTG: второй
         // драйвер в рецепте и `Rtu` поверх потока CDC вместо UART.
         Case::new("stm32f407ve").variant("modbus-usb", &["protocol=modbus", "interface=usb"]),
+        // Протоколы без графа: узел спавнит `main` (`app/src/protocol.rs`,
+        // `spawn`), а `NET`/`USB` — рядом с ним. По одной конфигурации на вид
+        // интерфейса: UART, TCP, UDP, USB CDC и CAN (с настройками — слот
+        // хранилища узла CANopen).
+        Case::new("stm32g474re")
+            .variant("modbus-uart-no-graph", &["protocol=modbus", "interface=uart", "graph=no"]),
+        Case::new("stm32h743zg")
+            .variant("modbus-tcp-no-graph", &["protocol=modbus", "interface=tcp", "graph=no"]),
+        Case::new("stm32f407ve")
+            .variant("protobuf-udp-no-graph", &["protocol=protobuf", "interface=udp", "graph=no"]),
+        Case::new("stm32g474re")
+            .variant("protobuf-usb-no-graph", &["protocol=protobuf", "interface=usb", "graph=no"]),
+        Case::new("stm32g474re").variant(
+            "canopen-no-graph",
+            &["protocol=canopen", "interface=can", "config=internal", "graph=no"],
+        ),
         // Клок RNG, которого умолчания HAL не дают, — мультиплексор на своём
         // источнике (`config()` в `bsp::board`): `RNGSEL` у G0 (SYS), WL
         // (MSI) и WBA (HSI), `CLK48SEL` у L476 без HSI48 (MSI). PLL48 и HSI48

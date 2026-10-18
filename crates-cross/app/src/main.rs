@@ -15,6 +15,9 @@ mod graph;
 mod image;
 {%- endif %}
 mod panic;
+{%- if protocol != "none" %}
+mod protocol;
+{%- endif %}
 
 use defmt::info;
 // RTT остаётся дефолтным транспортом в обоих профилях — сырой шаблон не знает,
@@ -156,6 +159,15 @@ fn main() -> ! {
     let token = ota_task(board.ota_link, board.updater, mode)
         .expect("задача OTA свежая: спавнится один раз");
     spawner.spawn(token);
+{%- endif %}
+{%- if protocol != "none" %}
+
+    // Узлы протокола без графа спавнятся так же: сам узел{% if interface == "tcp" or interface == "udp" %} и `NET`, который
+    // гоняет сетевой стек{% elsif interface == "usb" %} и `USB`, который ведёт устройство{% endif %} (`protocol::spawn`).
+    // Вход собирает та же функция, что в проекте с графом (`protocol::*_wiring`).
+    // Без графа нет ни сторожа, ни `restart:`: узлы протокола не падают, а
+    // зависший остаётся зависшим — сторожить исполнитель вам.
+    protocol::spawn(spawner, {% if interface == "uart" %}board.serial{% elsif interface == "can" %}board.can, {% if config == "true" %}board.settings{% else %}::adapters::settings::Unavailable{% endif %}{% elsif interface == "usb" %}board.usb{% else %}board.net{% endif %});
 {%- endif %}
 {%- endif %}
 

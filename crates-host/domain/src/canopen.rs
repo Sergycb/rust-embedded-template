@@ -174,6 +174,39 @@ where
     match ctx.run(&persisted, &mut callbacks, &mut node).await {}
 }
 
+// {%- if graph != "true" %}
+/// Тот же узел для проекта без графа: спавнится из `main.rs`, а слоты, которые
+/// в графе держит `static`, — локальные переменные кадра, как у
+/// [`ota::task`](crate::ota::task).
+///
+/// # Panics
+///
+/// Как у [`run`]: если `node_id` не 1..=127, а сохранённого адреса нет.
+pub async fn task<C, S>(
+    mut bus: C,
+    mut node_id: u8,
+    mut dictionary: Dictionary,
+    mut settings: S,
+    mut persist: bool,
+) -> TaskExit
+where
+    C: CanBus,
+    C::Error: FormatOrDebug,
+    S: SettingsStorage,
+    S::Error: FormatOrDebug,
+{
+    run(CanOpenCtx {
+        bus: &mut bus,
+        node_id: &mut node_id,
+        dictionary: &mut dictionary,
+        settings: &mut settings,
+        persist: &mut persist,
+        index: 0,
+    })
+    .await
+}
+// {%- endif %}
+
 #[fsm::typestate]
 impl<'f, C, S> CanOpenCtx<'_, C, S>
 where

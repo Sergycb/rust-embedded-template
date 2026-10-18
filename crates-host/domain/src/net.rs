@@ -22,6 +22,19 @@ pub async fn run<D: Driver>(mut ctx: NetCtx<'_, Runner<'static, D>>) -> TaskExit
     ctx.run().await.result
 }
 
+// {%- if graph != "true" %}
+/// Тот же узел для проекта без графа: спавнится из `main.rs`, а слот, который
+/// в графе держит `static`, — локальная переменная кадра, как у
+/// [`ota::task`](crate::ota::task).
+pub async fn task<D: Driver>(mut runner: Runner<'static, D>) -> TaskExit {
+    run(NetCtx {
+        runner: &mut runner,
+        index: 0,
+    })
+    .await
+}
+// {%- endif %}
+
 #[fsm::typestate]
 impl<D: Driver> NetCtx<'_, Runner<'static, D>> {
     fsm::machine! {

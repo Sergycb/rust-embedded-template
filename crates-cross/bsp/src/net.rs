@@ -28,7 +28,7 @@ pub type Device = Unconnected;
 pub type Stack = embassy_net::Stack<'static>;
 
 /// Сеть платы: фоновая работа стека для узла `NET` и сам стек. Сокет
-/// протокола и его порт — дело приложения (`crates-cross/app/src/graph.rs`):
+/// протокола и его порт — дело приложения (`crates-cross/app/src/protocol.rs`):
 /// порт задаёт протокол, а не плата.
 pub type Net = adapters::net::Net<Device>;
 

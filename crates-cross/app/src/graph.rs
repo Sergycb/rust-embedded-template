@@ -13,86 +13,15 @@
 )]
 
 {%- if graph == "true" %}
-use defmt::{info, warn};
-{%- if protocol == "protobuf" or interface == "tcp" or interface == "udp" %}
-use static_cell::ConstStaticCell;
-{%- endif %}
-use supervisor::{Duration, Liveness, supervisor_graph};
 {%- if protocol == "modbus" %}
-
-/// Транспорт узла `MODBUS` поверх {% if interface == "uart" %}UART{% elsif interface == "tcp" %}TCP{% elsif interface == "usb" %}USB CDC{% else %}UDP{% endif %} платы: {% if interface == "uart" or interface == "usb" %}кадр RTU с CRC{% else %}заголовок MBAP{% endif %}.
-type ModbusLink = ::adapters::modbus::{% if interface == "uart" %}Rtu<bsp::serial::Serial>{% elsif interface == "usb" %}Rtu<::adapters::usb::CdcStream<'static, bsp::usb::UsbDriver>>{% elsif interface == "tcp" %}Tcp<::adapters::net::TcpServer>{% else %}Udp<::adapters::net::UdpLink>{% endif %};
+use crate::protocol::{ModbusLink, modbus_wiring};
+{%- elsif protocol == "protobuf" %}
+use crate::protocol::{HostLink, host_wiring};
+{%- elsif protocol == "canopen" %}
+use crate::protocol::{Settings, canopen_wiring};
 {%- endif %}
-{%- if protocol == "protobuf" %}
-
-/// Канал узла `HOST` поверх {% if interface == "uart" %}UART{% elsif interface == "tcp" %}TCP{% elsif interface == "usb" %}USB CDC{% else %}UDP{% endif %} платы: {% if interface == "udp" %}датаграмма — уже кадр{% else %}кадры COBS + CRC{% endif %}.
-{%- if interface == "usb" %}
-type HostLink =
-    ::adapters::cobs::Cobs<'static, ::adapters::usb::CdcStream<'static, bsp::usb::UsbDriver>>;
-{%- else %}
-type HostLink = {% if interface == "udp" %}::adapters::net::UdpLink{% else %}::adapters::cobs::Cobs<'static, {% if interface == "uart" %}bsp::serial::Serial{% else %}::adapters::net::TcpServer{% endif %}>{% endif %};
-{%- endif %}
-
-/// Самое длинное сообщение схемы, под которое заведены буферы узла `HOST`.
-/// Схема с сообщениями длиннее — меняйте здесь; узел предупредит при старте,
-/// если самый длинный ответ схемы не помещается.
-const HOST_MESSAGE: usize = 256;
-
-// Буферы узла `HOST`{% if interface != "udp" %}: приёму нужно место ещё под CRC (`rx_len`), кадру
-// передачи — под худший случай COBS (`tx_len`){% endif %}. `ConstStaticCell`, а не
-// `StaticCell`: значения известны при компиляции и лежат в `.bss`, а не
-// собираются на стеке при старте.
-{%- if interface == "udp" %}
-static HOST_RX: ConstStaticCell<[u8; HOST_MESSAGE]> = ConstStaticCell::new([0; HOST_MESSAGE]);
-{%- else %}
-static HOST_FRAME: ConstStaticCell<[u8; ::adapters::cobs::tx_len(HOST_MESSAGE)]> =
-    ConstStaticCell::new([0; ::adapters::cobs::tx_len(HOST_MESSAGE)]);
-static HOST_RX: ConstStaticCell<[u8; ::adapters::cobs::rx_len(HOST_MESSAGE)]> =
-    ConstStaticCell::new([0; ::adapters::cobs::rx_len(HOST_MESSAGE)]);
-{%- endif %}
-static HOST_TX: ConstStaticCell<[u8; HOST_MESSAGE]> = ConstStaticCell::new([0; HOST_MESSAGE]);
-{%- endif %}
-
-{%- if interface == "tcp" or interface == "udp" %}
-
-/// Порт, на котором протокол ждёт хост: {% if protocol == "modbus" %}502 — стандартный порт Modbus
-/// TCP и UDP{% else %}5000 — выбран шаблоном, у protobuf стандартного нет{% endif %}. Порт задаёт протокол, а не
-/// плата, поэтому он здесь, а не в `bsp::net`.
-const PORT: u16 = {% if protocol == "modbus" %}502{% else %}5000{% endif %};
-
-/// Буфер сокета протокола — с запасом на самый длинный кадр Modbus TCP
-/// (260 байт) и сообщение protobuf (`HOST_MESSAGE`).
-const SOCKET_BUFFER: usize = 1024;
-
-// Память сокета протокола: он держит её `&'static mut`. `ConstStaticCell` —
-// значения известны при компиляции и лежат в `.bss`.
-static SOCKET_RX: ConstStaticCell<[u8; SOCKET_BUFFER]> = ConstStaticCell::new([0; SOCKET_BUFFER]);
-static SOCKET_TX: ConstStaticCell<[u8; SOCKET_BUFFER]> = ConstStaticCell::new([0; SOCKET_BUFFER]);
-{%- if interface == "udp" %}
-static SOCKET_RX_META: ConstStaticCell<[bsp::net::PacketMetadata; 4]> =
-    ConstStaticCell::new([bsp::net::PacketMetadata::EMPTY; 4]);
-static SOCKET_TX_META: ConstStaticCell<[bsp::net::PacketMetadata; 4]> =
-    ConstStaticCell::new([bsp::net::PacketMetadata::EMPTY; 4]);
-{%- endif %}
-
-/// Сокет протокола на стеке платы: {% if interface == "tcp" %}TCP-сервер — поток байтов под транспортом{% else %}UDP-канал — датаграммы{% endif %} протокола.
-{%- if interface == "tcp" %}
-fn socket(stack: bsp::net::Stack) -> ::adapters::net::TcpServer {
-    ::adapters::net::TcpServer::new(stack, PORT, SOCKET_RX.take(), SOCKET_TX.take())
-}
-{%- else %}
-fn socket(stack: bsp::net::Stack) -> ::adapters::net::UdpLink {
-    ::adapters::net::UdpLink::new(
-        stack,
-        PORT,
-        SOCKET_RX_META.take(),
-        SOCKET_RX.take(),
-        SOCKET_TX_META.take(),
-        SOCKET_TX.take(),
-    )
-}
-{%- endif %}
-{%- endif %}
+use defmt::{info, warn};
+use supervisor::{Duration, Liveness, supervisor_graph};
 
 /// Как часто тикер графа опрашивает сторожей узлов и кормит железо.
 ///
@@ -205,55 +134,24 @@ supervisor_graph! {
 {%- endif %}
 {%- if protocol == "modbus" %}
 
-        // Узел `MODBUS` — Modbus slave поверх {% if interface == "uart" %}UART{% elsif interface == "tcp" %}TCP{% elsif interface == "usb" %}USB CDC{% else %}UDP{% endif %} платы: транспорт `ModbusLink`
-        // вокруг `{% if interface == "uart" %}board.serial{% elsif interface == "tcp" %}socket(board.net.stack){% elsif interface == "usb" %}board.usb.cdc{% else %}socket(board.net.stack){% endif %}` ({% if interface == "uart" %}заглушка, пока проект не подставит свой UART —
-        // docs/modules/bsp-serial.md{% elsif interface == "usb" %}поток CDC над заглушкой драйвера, пока проект не
-        // подставит свой USB — docs/modules/bsp-usb.md{% else %}сокет стека над заглушкой устройства, пока проект не подставит
-        // Ethernet — docs/modules/bsp-net.md{% endif %}) и карта регистров
-        // `domain::modbus::EmptyRegisters` — пустая, её проект описывает в `domain`.
-        // Адрес slave'а — `unit`{% if interface == "tcp" or interface == "udp" %}: по сети устройство адресуется по IP, и slave
-        // отвечает на любой адрес в MBAP{% endif %}.
+        // Узел `MODBUS` — Modbus slave: вход (транспорт `ModbusLink` вокруг
+        // интерфейса платы, карта регистров, адрес) собирает `protocol::modbus_wiring`
+        // — одна функция на граф и на проект без графа.
         ::domain::MODBUS_SLAVE_FRAG<ModbusLink, ::domain::modbus::EmptyRegisters> as MODBUS =
-            ::domain::modbus::ModbusSlaveWiring {
-                link: ModbusLink::new({% if interface == "uart" %}board.serial{% elsif interface == "tcp" %}socket(board.net.stack){% elsif interface == "usb" %}board.usb.cdc{% else %}socket(board.net.stack){% endif %}),
-                regs: ::domain::modbus::EmptyRegisters,
-                unit: 1,
-            },
+            modbus_wiring({% if interface == "uart" %}board.serial{% elsif interface == "usb" %}board.usb.cdc{% else %}board.net.stack{% endif %}),
 {%- elsif protocol == "canopen" %}
 
-        // Узел `CANOPEN` — узел CANopen (стек `zencan`) на шине CAN платы:
-        // `board.can` (заглушка, пока проект не подставит свой контроллер —
-        // docs/modules/bsp-can.md) и словарь объектов из `crates-host/canopen`
-        // (`device.toml`). Адрес узла в сети — `node_id`, 1..=127.{% if config == "true" %} Хранилище —
-        // `board.settings`: в нём узел сохраняет объекты по команде `save` и адрес,
-        // назначенный по LSS (ключи `domain::canopen::{OBJECTS_KEY, NODE_ID_KEY}`).{% else %} Раздела
-        // настроек нет — объекты и адрес не сохраняются.{% endif %}
-        ::domain::CANOPEN_FRAG<bsp::can::Can, {% if config == "true" %}bsp::settings::Settings{% else %}::adapters::settings::Unavailable{% endif %}> as CANOPEN =
-            ::domain::canopen::CanOpenWiring {
-                bus: board.can,
-                node_id: 1,
-                dictionary: ::domain::canopen::dictionary(),
-                settings: {% if config == "true" %}board.settings{% else %}::adapters::settings::Unavailable{% endif %},
-                persist: {{config}},
-            },
+        // Узел `CANOPEN` — узел CANopen (стек `zencan`) на шине CAN платы: вход
+        // (словарь, адрес, хранилище) собирает `protocol::canopen_wiring` — одна
+        // функция на граф и на проект без графа.{% if config == "true" %} Хранилище — `board.settings`.{% endif %}
+        ::domain::CANOPEN_FRAG<bsp::can::Can, Settings> as CANOPEN =
+            canopen_wiring(board.can, {% if config == "true" %}board.settings{% else %}::adapters::settings::Unavailable{% endif %}),
 {%- elsif protocol == "protobuf" %}
 
-        // Узел `HOST` — сообщения protobuf от хоста поверх {% if interface == "uart" %}UART{% elsif interface == "tcp" %}TCP{% elsif interface == "usb" %}USB CDC{% else %}UDP{% endif %} платы: канал
-        // `HostLink` вокруг `{% if interface == "uart" %}board.serial{% elsif interface == "tcp" %}socket(board.net.stack){% elsif interface == "usb" %}board.usb.cdc{% else %}socket(board.net.stack){% endif %}` ({% if interface == "uart" %}заглушка, пока проект не подставит свой
-        // UART — docs/modules/bsp-serial.md{% elsif interface == "usb" %}поток CDC над заглушкой драйвера, пока
-        // проект не подставит свой USB — docs/modules/bsp-usb.md{% else %}сокет стека над заглушкой устройства, пока проект не
-        // подставит Ethernet — docs/modules/bsp-net.md{% endif %}) и обработчик `domain::host::Service` над
-        // схемой `crates-host/proto`. Буферы — статики `HOST_*` выше.
-        ::domain::HOST_FRAG<HostLink, ::domain::host::Service> as HOST = ::domain::host::HostWiring {
-{%- if interface == "udp" %}
-            link: socket(board.net.stack),
-{%- else %}
-            link: HostLink::new({% if interface == "uart" %}board.serial{% elsif interface == "tcp" %}socket(board.net.stack){% elsif interface == "usb" %}board.usb.cdc{% else %}socket(board.net.stack){% endif %}, HOST_FRAME.take()),
-{%- endif %}
-            service: ::domain::host::Service::new(crate::build::PKG_VERSION),
-            rx: HOST_RX.take(),
-            tx: HOST_TX.take(),
-        },
+        // Узел `HOST` — сообщения protobuf от хоста: вход (канал `HostLink` вокруг
+        // интерфейса платы, обработчик, буферы) собирает `protocol::host_wiring` —
+        // одна функция на граф и на проект без графа.
+        ::domain::HOST_FRAG<HostLink, ::domain::host::Service> as HOST = host_wiring({% if interface == "uart" %}board.serial{% elsif interface == "usb" %}board.usb.cdc{% else %}board.net.stack{% endif %}),
 {%- endif %}
     ];
 }
