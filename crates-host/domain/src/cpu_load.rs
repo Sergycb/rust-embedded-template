@@ -16,14 +16,13 @@
 //! снаружи их не видно. А именно там проходит всё время, когда задач нет.
 //! Считать сон как «всё, что не сон», — значит получить 100% на пустой плате.
 //!
-//! Два входа — `task` для проекта с графом и `task_standalone` для проекта
-//! без него. Различаются они не вычислением (оно одно, `CpuLoad::sample`
+//! Два входа — `run` для проекта с графом и `task` для проекта
+//! без него (в проекте остаётся только нужный: лишний вырезает генерация). Различаются они не вычислением (оно одно, `CpuLoad::sample`
 //! над `snapshot`), а тем, куда уходит результат: в графе он публикуется в
 //! `Watch`, без графа публиковать некому, и значение уходит в лог. Узел графа
 //! — автомат `#[fsm::typestate]` на контексте `CpuLoadCtx`, который эмитит
-//! фрагмент ниже; `task_standalone` — не узел, контекста у него нет, и он
-//! остаётся простым циклом. Выбор между ними делает
-//! `crates-cross/app/src/main.rs`, потому что Liquid в `domain` запрещён.
+//! фрагмент ниже; `task` — не узел, контекста у него нет, и он
+//! остаётся простым циклом.
 //!
 //! Публикация — только половина задачи. Кто и зачем читает загрузку, решает
 //! проект: узел объявляет поле `PERCENT`, а подписчика добавляют в графе
@@ -35,8 +34,7 @@ pub mod load;
 
 use core::sync::atomic::Ordering;
 
-use defmt_or_log::info;
-use embassy_time::{Duration, Instant, Timer};
+use embassy_time::{Duration, Instant};
 use portable_atomic::AtomicU32;
 
 use supervisor::runtime::TaskExit;
@@ -120,7 +118,7 @@ fn snapshot(sleep_ticks: &SleepTicks) -> Sample {
 ///
 /// У автомата нет выходного состояния, поэтому [`TaskExit`] недостижим: узел
 /// не падает (`restart: Never`).
-pub async fn task(mut ctx: CpuLoadCtx<'_>) -> TaskExit {
+pub async fn run(mut ctx: CpuLoadCtx<'_>) -> TaskExit {
     match ctx.run().await {}
 }
 
@@ -176,6 +174,7 @@ impl CpuLoadCtx<'_> {
     }
 }
 
+// {%- if graph != "true" %}
 /// Тот же замер для проекта без графа задач: спавнится из `main.rs` (через
 /// `#[embassy_executor::task]`, потому что `Spawner::spawn` берёт токен, а не
 /// функцию), а значение уходит в лог — публиковать ему некуда.
@@ -186,15 +185,16 @@ impl CpuLoadCtx<'_> {
 /// Строка на каждом интервале — сознательное исключение из правила «пустой узел
 /// молчит»: здесь она и есть результат измерения, и в проекте без графа иначе
 /// негде его увидеть. Подпишетесь на узел и сможете убрать.
-pub async fn task_standalone(sleep_ticks: &SleepTicks) {
+pub async fn task(sleep_ticks: &SleepTicks) {
     let mut cpu_load = CpuLoad::new();
     loop {
-        Timer::after(SAMPLE_INTERVAL).await;
+        embassy_time::Timer::after(SAMPLE_INTERVAL).await;
         if let Some(percent) = cpu_load.sample(snapshot(sleep_ticks)) {
-            info!("domain: узел CPU_LOAD: загрузка {}%", percent);
+            defmt_or_log::info!("domain: узел CPU_LOAD: загрузка {}%", percent);
         }
     }
 }
+// {%- endif %}
 
 // Узел объявлен здесь же, где лежит его задача, — как `HEARTBEAT_FRAG` в
 // `domain::heartbeat`; compose-site (`crates-cross/app/src/graph.rs`) только
@@ -238,5 +238,5 @@ supervisor::supervisor_fragment! {
         publish: [PERCENT: u8; 1],
         watchdog: $crate::cpu_load::WATCHDOG observe,
         ctx: $crate::cpu_load::CpuLoadCtx,
-        task: $crate::cpu_load::task;
+        task: $crate::cpu_load::run;
 }

@@ -1262,6 +1262,9 @@ if protocol != "none" {
         variable::set("usb_kind", found[0]);
     }
 }
+// Заглушка драйвера внешней флеши (`adapters::flash::Unconnected`) нужна, пока
+// на внешней флеши лежит хоть что-то: разделы OTA или настройки.
+variable::set("external_flash", if (variable::get("ota") == "true" && variable::get("ota_store") == "external") || variable::get("config_store") == "external" { "true" } else { "false" });
 variable::set("protocol", protocol);
 variable::set("interface", iface);
 // Группы `resources.rs` нужны, пока есть что в них класть: общий флеш, сторож
@@ -1352,6 +1355,12 @@ if iface != "tcp" && iface != "udp" {
 if rng[0] == "" || (iface != "tcp" && iface != "udp") {
 	file::delete("crates-cross/bsp/src/rng.rs");
 	file::delete("docs/modules/bsp-rng.md");
+}
+
+// Обёртка EEPROM — только когда настройки лежат в ней; без неё файл с
+// тестами и `pub mod eeprom;` (закрыт тем же условием в lib.rs) — мусор.
+if variable::get("config_store") != "eeprom" {
+	file::delete("crates-host/adapters/src/eeprom.rs");
 }
 
 // Слот драйвера внешней флеши в bsp — только у OTA с разделами на ней. Без

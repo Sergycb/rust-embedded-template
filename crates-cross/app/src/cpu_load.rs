@@ -42,7 +42,7 @@ pub fn sleep_ticks() -> &'static SleepTicks {
 // читателя — это `Watch` вхолостую, и держать ради него `embassy-sync` в
 // приложении незачем. Свою подписку заводите сами, когда появится читатель.
 #[embassy_executor::task]
-pub async fn standalone_task() {
-    domain::cpu_load::task_standalone(sleep_ticks()).await;
+pub async fn task() {
+    domain::cpu_load::task(sleep_ticks()).await;
 }
 {%- endif %}

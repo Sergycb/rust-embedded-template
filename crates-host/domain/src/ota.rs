@@ -148,6 +148,7 @@ where
     match ctx.run().await {}
 }
 
+// {%- if graph != "true" %}
 /// Тот же узел для проекта без графа: спавнится из `main.rs` (через
 /// `#[embassy_executor::task]`, потому что `Spawner::spawn` берёт токен, а не
 /// функцию), а слоты, которые в графе держит `static`, — локальные переменные
@@ -157,7 +158,7 @@ where
 /// Нужен, чтобы подтверждение образа (`mark_booted`, действие `begin`) не
 /// зависело от того, вспомнил ли проект позвать узел: без него bootloader
 /// откатывает любое обновление на следующем сбросе.
-pub async fn task_standalone<S, F>(mut link: S, mut flash: F, mut mode: Mode) -> TaskExit
+pub async fn task<S, F>(mut link: S, mut flash: F, mut mode: Mode) -> TaskExit
 where
     S: ImageSource,
     S::Error: FormatOrDebug,
@@ -174,6 +175,7 @@ where
     })
     .await
 }
+// {%- endif %}
 
 #[fsm::typestate]
 impl<S, F> OtaCtx<'_, S, F>

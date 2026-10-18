@@ -1,5 +1,5 @@
-//! Обёртка `ErasePage` с переопределённой страницей стирания, заглушка
-//! внешней флеши и вспомогательные функции над `NorFlash`.
+//! Обёртка `ErasePage` с переопределённой страницей стирания и вспомогательные
+//! функции над `NorFlash`; при внешней флеши — ещё и заглушка её драйвера.
 //!
 //! Флеш на чипе один, а `embassy-boot` и `sequential-storage` хотят каждый свой
 //! `NorFlash` по значению. Общий флеш лежит под блокирующим мьютексом, а
@@ -101,6 +101,7 @@ pub const fn erase_size<F: embedded_storage_async::nor_flash::NorFlash>() -> usi
     F::ERASE_SIZE
 }
 
+// {%- if external_flash == "true" %}
 /// Внешняя флеш, которую ещё не подключили, — место под ваш драйвер.
 ///
 /// Шаблон не знает, какая микросхема будет на плате (W25Q, GD25, MX25, IS25,
@@ -193,6 +194,7 @@ impl NorFlash for Unconnected {
         Err(NotConnected)
     }
 }
+// {%- endif %}
 
 #[cfg(test)]
 mod tests {
@@ -206,7 +208,10 @@ mod tests {
 
     use embassy_embedded_hal::flash::partition::BlockingPartition;
 
-    use super::{ErasePage, Unconnected};
+    use super::ErasePage;
+    // {%- if external_flash == "true" %}
+    use super::Unconnected;
+    // {%- endif %}
 
     /// Блокирующий флеш в памяти: 64 байта, страница 16, слово 4. Мосту
     /// неважно, что под ним, — проверяется только, что каждая операция дошла
@@ -273,6 +278,7 @@ mod tests {
         );
     }
 
+    // {%- if external_flash == "true" %}
     /// С заглушкой хранилище собирается, а операции честно отказывают, а не
     /// паникуют: проект без подключённой флеши работает, просто без настроек.
     #[tokio::test]
@@ -284,6 +290,7 @@ mod tests {
         assert!(settings.write(1, b"x").await.is_err());
         assert!(settings.read(1, &mut [0; 8]).await.is_err());
     }
+    // {%- endif %}
 
     /// `ErasePage` меняет только объявленную страницу: операции доходят до флеша
     /// с теми же границами (блокирующие трейты — их берут разделы `embassy-boot`

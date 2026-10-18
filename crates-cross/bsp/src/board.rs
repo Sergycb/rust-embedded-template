@@ -56,7 +56,7 @@ pub struct Board {
     /// Адаптер обновления прошивки — порт `FirmwareUpdate` поверх разделов
     /// `DFU`/`BOOTLOADER_STATE`, собранных из символов `memory.x`
     /// (`bsp::ota`). Алгоритм обновления над портом — в `domain::ota`.
-    /// {% if graph == "true" %}Уезжает в узел `OTA` графа (`fragments:` в `crates-cross/app/src/graph.rs`){% else %}Уезжает в задачу узла, которую спавнит `main` (`domain::ota::task_standalone`){% endif %}.
+    /// {% if graph == "true" %}Уезжает в узел `OTA` графа (`fragments:` в `crates-cross/app/src/graph.rs`){% else %}Уезжает в задачу узла, которую спавнит `main` (`domain::ota::task`){% endif %}.
     pub updater: crate::ota::Updater,
     /// Канал доставки образа — реализация `ports::ImageSource`; заглушка
     /// (`bsp::ota::Link`), пока проект не подставит свой транспорт.

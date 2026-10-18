@@ -34,11 +34,11 @@ static EXECUTOR: StaticCell<Executor> = StaticCell::new();
 {%- if ota == "true" and graph != "true" %}
 
 /// Узел OTA проекта без графа. Обёртка нужна по той же причине, что и
-/// `cpu_load::standalone_task`: `Spawner::spawn` берёт токен, а задача не может
+/// `cpu_load::task`: `Spawner::spawn` берёт токен, а задача не может
 /// быть generic — поэтому типы слотов названы псевдонимами из `bsp::ota`.
 #[embassy_executor::task]
 async fn ota_task(link: bsp::ota::Link, flash: bsp::ota::Updater, mode: domain::ota::Mode) {
-    domain::ota::task_standalone(link, flash, mode).await;
+    domain::ota::task(link, flash, mode).await;
 }
 {%- endif %}
 
@@ -136,7 +136,7 @@ fn main() -> ! {
     // выдаёт она же, и `expect` — на нём: `Spawner::spawn` отказ не вернёт,
     // а проглоченный `SpawnError::Busy` означал бы, что загрузку не меряет
     // никто, и это молча.
-    let token = cpu_load::standalone_task().expect("задача CPU_LOAD свежая: спавнится один раз");
+    let token = cpu_load::task().expect("задача CPU_LOAD свежая: спавнится один раз");
     spawner.spawn(token);
 {%- if ota == "true" %}
 

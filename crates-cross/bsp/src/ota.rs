@@ -137,7 +137,7 @@ pub type Link = adapters::ota::Unconnected;
 /// Адаптер обновления этой платы — порт `FirmwareUpdate` поверх разделов
 /// `DFU`/`BOOTLOADER_STATE`. Псевдоним по общему правилу шаблона: тип слота
 /// узла OTA должен быть конкретным, а адаптер приходит из `adapters` generic.
-pub type Updater = adapters::ota::Updater<Dfu, State>;
+pub type Updater = adapters::ota::Updater<Dfu, State, {{signed}}>;
 
 /// Канал доставки образа. Пока в слоте заглушка, об этом говорит одна строка
 /// в лог при старте.
@@ -172,5 +172,5 @@ pub(crate) fn updater(flash: &'static FlashMutex) -> Updater {
     let state = STATE_FLASH.init(Mutex::new(state));
     let config = FirmwareUpdaterConfig::from_linkerfile(dfu, state);
 {%- endif %}
-    Updater::{% if signed == "true" %}signed{% else %}new{% endif %}(config.dfu, config.state, ACTIVE_LEN)
+    Updater::new(config.dfu, config.state, ACTIVE_LEN)
 }

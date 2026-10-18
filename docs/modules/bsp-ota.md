@@ -21,7 +21,7 @@ generic.
 bootloader'а) — она крупнее физической страницы флеша этого чипа: так журнал
 `BOOTLOADER_STATE` (запись на страницу `ACTIVE`) короче, и коду bootloader'а
 остаётся почти весь его блок. `ACTIVE` с той же страницей собирает bootloader.
-Кратность странице стирания флеша проверяется при компиляции.{% endif %}{% endif %}{% if signed == "true" %} Адаптер собран `Updater::signed` — его
+Кратность странице стирания флеша проверяется при компиляции.{% endif %}{% endif %}{% if signed == "true" %} Адаптер собран с `SIGNED = true` — его
 `prepare` стирает и запасную страницу `DFU` под запись о подписи; версию
 образа задаёт приложение (`crates-cross/app/src/image.rs`), ключ —
 bootloader.{% endif %}
@@ -65,7 +65,7 @@ impl ImageSource for MyLink {
 слова флеша, порядок проверок подписи, коды отказа — уже в узле
 `domain::ota`{% if graph == "true" %}, который граф спавнит из `fragments:`
 (`crates-cross/app/src/graph.rs`){% else %}. Без графа его спавнит `main`
-(`ota_task` над `domain::ota::task_standalone`), отдав задаче `ota_link` и `updater`
+(`ota_task` над `domain::ota::task`), отдав задаче `ota_link` и `updater`
 владением{% endif %}. Во фрагменте
 `domain::ota` слоты канала и адаптера помечены `local`: `Updater` — `!Send` (внутри ссылка на {% if ota_store == "external" %}`crate::external::ExternalMutex`{% else %}`FlashMutex`{% endif %} с
 `NoopRawMutex`), и граф держит его на своём исполнителе, не требуя `Send`, —

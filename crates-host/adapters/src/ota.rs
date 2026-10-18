@@ -36,7 +36,13 @@ use embassy_boot::FirmwareUpdaterError as Error;
 pub use ports::MAX_WRITE_SIZE;
 
 /// Доступ к разделам обновления.
-pub struct Updater<DFU: NorFlash, STATE: NorFlash> {
+///
+/// `SIGNED` — проект с подписью образа: `prepare` стирает и запасную страницу
+/// `DFU` за `capacity` — туда `domain::ota::update::apply_signed` кладёт запись
+/// для bootloader'а (`ports::PendingImage`). Обычная подготовка её не трогает,
+/// а оставь её нестёртой — запись легла бы поверх остатков прошлого обмена.
+/// Цена — ещё одно стирание страницы на обновление (на F4 — сектор 128 KiB).
+pub struct Updater<DFU: NorFlash, STATE: NorFlash, const SIGNED: bool> {
     dfu: DFU,
     state: STATE,
     /// Буфер под одно слово записи во flash: `embassy-boot` пишет через него
@@ -47,25 +53,49 @@ pub struct Updater<DFU: NorFlash, STATE: NorFlash> {
     /// (`assert_partitions` в embassy-boot), а обмен копирует ровно `ACTIVE`;
     /// образ между ними прошёл бы все проверки и приехал обрезанным.
     capacity: u32,
-    /// Проект с подписью: `prepare` стирает и запасную страницу за `capacity`
-    /// — туда ляжет запись для bootloader'а (`ports::PendingImage`).
-    signed: bool,
 }
 
-impl<DFU: NorFlash, STATE: NorFlash> core::fmt::Debug for Updater<DFU, STATE> {
+impl<DFU: NorFlash, STATE: NorFlash, const SIGNED: bool> core::fmt::Debug
+    for Updater<DFU, STATE, SIGNED>
+{
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Updater").finish_non_exhaustive()
     }
 }
 
-impl<DFU: NorFlash, STATE: NorFlash> Updater<DFU, STATE> {
-    /// Проект без подписи. `capacity` — размер раздела, в который образ будет
-    /// исполняться (`ACTIVE`), см. поле.
+impl<DFU: NorFlash, STATE: NorFlash, const SIGNED: bool> Updater<DFU, STATE, SIGNED> {
+    /// `capacity` — размер раздела, в который образ будет исполняться
+    /// (`ACTIVE`), см. поле.
+    ///
+    /// # Panics
+    ///
+    /// С `SIGNED` паникует, если `capacity` не кратна странице стирания `DFU`
+    /// или за ней не помещается запасная страница: запись для bootloader'а
+    /// легла бы мимо раздела. Раскладку считает генерация, поэтому падение
+    /// случится на первом же запуске.
     pub fn new(dfu: DFU, state: STATE, capacity: u32) -> Self {
         const {
             assert!(
                 STATE::WRITE_SIZE <= MAX_WRITE_SIZE,
                 "слово записи раздела состояния шире буфера адаптера (MAX_WRITE_SIZE)"
+            );
+            if SIGNED {
+                assert!(
+                    ports::PendingImage::LEN.is_multiple_of(DFU::WRITE_SIZE),
+                    "запись для bootloader'а не кратна слову записи DFU"
+                );
+            }
+        }
+        if SIGNED {
+            let page = DFU::ERASE_SIZE as u64;
+            assert!(
+                u64::from(capacity).is_multiple_of(page),
+                "размер ACTIVE ({capacity}) не кратен странице стирания DFU ({page}) — проверьте memory.x"
+            );
+            assert!(
+                u64::from(capacity) + page <= dfu.capacity() as u64,
+                "в DFU ({}) не помещается ACTIVE ({capacity}) и запасная страница ({page}) — проверьте memory.x",
+                dfu.capacity()
             );
         }
         Self {
@@ -73,42 +103,6 @@ impl<DFU: NorFlash, STATE: NorFlash> Updater<DFU, STATE> {
             state,
             aligned: AlignedBuffer([0; MAX_WRITE_SIZE]),
             capacity,
-            signed: false,
-        }
-    }
-
-    /// Проект с подписью: то же, но `prepare` стирает и запасную страницу
-    /// `DFU` за `capacity`. Туда `domain::ota::update::apply_signed` кладёт
-    /// запись для bootloader'а; обычная подготовка её не трогает, а оставь её
-    /// нестёртой — запись легла бы поверх остатков прошлого обмена. Цена —
-    /// ещё одно стирание страницы на обновление (на F4 — сектор 128 KiB).
-    ///
-    /// # Panics
-    ///
-    /// Паникует, если `capacity` не кратна странице стирания `DFU` или за ней
-    /// не помещается запасная страница: запись для bootloader'а легла бы мимо
-    /// раздела. Раскладку считает генерация, поэтому падение случится на
-    /// первом же запуске.
-    pub fn signed(dfu: DFU, state: STATE, capacity: u32) -> Self {
-        const {
-            assert!(
-                ports::PendingImage::LEN.is_multiple_of(DFU::WRITE_SIZE),
-                "запись для bootloader'а не кратна слову записи DFU"
-            );
-        }
-        let page = DFU::ERASE_SIZE as u64;
-        assert!(
-            u64::from(capacity).is_multiple_of(page),
-            "размер ACTIVE ({capacity}) не кратен странице стирания DFU ({page}) — проверьте memory.x"
-        );
-        assert!(
-            u64::from(capacity) + page <= dfu.capacity() as u64,
-            "в DFU ({}) не помещается ACTIVE ({capacity}) и запасная страница ({page}) — проверьте memory.x",
-            dfu.capacity()
-        );
-        Self {
-            signed: true,
-            ..Self::new(dfu, state, capacity)
         }
     }
 
@@ -165,7 +159,9 @@ impl<DFU: NorFlash, STATE: NorFlash> Updater<DFU, STATE> {
 /// намеренно: они перекрыли бы трейтовые при вызове, и приложение работало бы
 /// с конкретным типом мимо порта — то есть мимо той границы, ради которой
 /// порт заведён.
-impl<DFU: NorFlash, STATE: NorFlash> FirmwareUpdate for Updater<DFU, STATE> {
+impl<DFU: NorFlash, STATE: NorFlash, const SIGNED: bool> FirmwareUpdate
+    for Updater<DFU, STATE, SIGNED>
+{
     type Error = Error;
 
     fn write_granularity(&mut self) -> u32 {
@@ -203,7 +199,7 @@ impl<DFU: NorFlash, STATE: NorFlash> FirmwareUpdate for Updater<DFU, STATE> {
         let page = self.erase_size();
         let end = len.div_ceil(page).saturating_mul(page);
         self.dfu.erase(0, end).await?;
-        if self.signed {
+        if SIGNED {
             let spare = self.capacity;
             self.dfu.erase(spare, spare + page).await?;
         }
@@ -302,17 +298,17 @@ mod tests {
     use super::{Error, Updater};
     use crate::ota::fakes::{Dfu, State};
 
-    fn updater() -> Updater<Dfu, State> {
+    fn updater() -> Updater<Dfu, State, false> {
         Updater::new(Dfu::erased(), State::erased(), 768)
     }
 
-    fn with_state(magic: u8) -> Updater<Dfu, State> {
+    fn with_state(magic: u8) -> Updater<Dfu, State, false> {
         let mut state = State::erased();
         state.mem[..8].fill(magic);
         Updater::new(Dfu::erased(), state, 768)
     }
 
-    /// Сквозной путь через порт: `Updater::signed` готовит раздел, образ и
+    /// Сквозной путь через порт: `Updater<_, _, true>` готовит раздел, образ и
     /// запись ложатся туда, куда пишет `domain::ota::update::apply_signed`
     /// (смещение `capacity`), — и bootloader находит их там же.
     #[tokio::test]
@@ -329,7 +325,7 @@ mod tests {
             len,
             signature: keys.sign(&digest).to_bytes(),
         };
-        let mut u = Updater::signed(Dfu::filled(0x00), State::erased(), 768);
+        let mut u = Updater::<_, _, true>::new(Dfu::filled(0x00), State::erased(), 768);
         u.prepare(len).await.expect("подготовка");
         let mut padded = image.clone();
         padded.resize(image.len().next_multiple_of(8), 0xFF);
@@ -347,19 +343,19 @@ mod tests {
     #[test]
     #[should_panic(expected = "не кратен странице")]
     fn signed_refuses_a_capacity_off_the_erase_page() {
-        let _ = Updater::signed(Dfu::erased(), State::erased(), 700);
+        let _ = Updater::<_, _, true>::new(Dfu::erased(), State::erased(), 700);
     }
 
     #[test]
     #[should_panic(expected = "запасная страница")]
     fn signed_refuses_a_dfu_without_room_for_the_spare_page() {
         // Вместимость DFU равна `capacity`: за образом страницы под запись нет.
-        let _ = Updater::signed(Dfu::erased(), State::erased(), 1024);
+        let _ = Updater::<_, _, true>::new(Dfu::erased(), State::erased(), 1024);
     }
 
     #[tokio::test]
     async fn prepare_erases_only_the_pages_the_image_needs() {
-        let mut u = Updater::new(Dfu::filled(0x00), State::erased(), 768);
+        let mut u = Updater::<_, _, false>::new(Dfu::filled(0x00), State::erased(), 768);
 
         u.prepare(257).await.expect("стереть под образ");
 
@@ -377,7 +373,7 @@ mod tests {
     /// bootloader'а; остальное — как без подписи.
     #[tokio::test]
     async fn signed_prepare_also_erases_the_spare_page() {
-        let mut u = Updater::signed(Dfu::filled(0x00), State::erased(), 768);
+        let mut u = Updater::<_, _, true>::new(Dfu::filled(0x00), State::erased(), 768);
 
         u.prepare(257).await.expect("стереть под образ и запись");
 
@@ -395,7 +391,7 @@ mod tests {
     #[tokio::test]
     async fn prepare_refuses_zero_and_oversized_lengths_before_erasing() {
         for len in [0, 769] {
-            let mut u = Updater::new(Dfu::filled(0x00), State::erased(), 768);
+            let mut u = Updater::<_, _, false>::new(Dfu::filled(0x00), State::erased(), 768);
 
             let refused = u.prepare(len).await;
 

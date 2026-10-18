@@ -56,6 +56,8 @@ pub mod can;
 pub mod modbus;
 
 // {%- endif %}
+// {%- if config_store == "eeprom" %}
 /// Внутренняя EEPROM (STM32L0/L1) как флеш с семантикой NOR — чтобы поверх
 /// неё работало то же хранилище настроек.
 pub mod eeprom;
+// {%- endif %}

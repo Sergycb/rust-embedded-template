@@ -112,7 +112,7 @@ bootloader и `STATE`. Отсюда и второй набор цифр в `MEMO
 есть подпись, нет OTA (в том числе если схема не поместилась во flash) — нет и подписи.
 `--define signed=...` на него не влияет. В шаблоне он управляет фичей `signed` у `domain` (проверка подписи — `domain::ota::boot`, ею пользуется `boot`), ключом в `crates-cross/boot`
 (`boot/build.rs`, `OTA_PUBLIC_KEY_IN_IMAGE`, вызов `screen_update`), выбором
-`Updater::signed` в `bsp::ota` и файлом `crates-cross/app/src/image.rs`
+`Updater<_, _, true>` в `bsp::ota` и файлом `crates-cross/app/src/image.rs`
 (`FW_VERSION` для `Mode::Signed`; без подписи его удаляет `post-script.rhai`). Подпись проверяет bootloader
 (`domain::ota::boot::screen_update`), приложение — только длину, занятость и версию
 (`domain::ota::update::apply_signed`), см. docs/ota.md.
