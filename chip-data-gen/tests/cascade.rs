@@ -1228,7 +1228,8 @@ fn protocol_over_uart_keeps_the_serial_module() {
             ("crates-host/domain/src/modbus.rs", protocol == "modbus"),
             ("crates-host/ports/src/modbus.rs", protocol == "modbus"),
             ("crates-host/ports/src/modbus", protocol == "modbus"),
-            ("crates-host/ports/src/link.rs", true),
+            // Кадровый канал нужен protobuf; Modbus по потоку им не пользуется.
+            ("crates-host/ports/src/link.rs", protocol == "protobuf"),
             ("crates-host/canopen", false),
             ("crates-host/ports/src/can.rs", false),
             ("crates-host/adapters/src/can.rs", false),
@@ -1887,6 +1888,219 @@ fn erase_page_wrapper_only_where_the_sector_is_smaller_than_the_chip_page() {
             Some(if wrapped { "true" } else { "false" }),
             "{chip} {answers:?}: erase_page"
         );
+    }
+}
+
+/// Транспорты в `adapters` остаются только под выбранный интерфейс: Modbus RTU,
+/// TCP и UDP, сокеты сети и COBS — каждый лишь там, где ему есть кого обслуживать.
+#[test]
+fn transports_are_kept_only_for_the_selected_interface() {
+    let ast = compile_script();
+    // (чип, ответы, файлы, которые должны быть удалены, файлы, которые остаются)
+    type Case<'a> = (
+        &'a str,
+        &'a [(&'a str, &'a str)],
+        &'a [&'a str],
+        &'a [&'a str],
+    );
+    const M: &str = "crates-host/adapters/src/modbus/";
+    const N: &str = "crates-host/adapters/src/net/";
+    const COBS: &str = "crates-host/adapters/src/cobs.rs";
+    let cases: [Case; 5] = [
+        (
+            "g474re",
+            &[("protocol", "modbus"), ("interface", "uart")],
+            &["modbus/tcp.rs", "modbus/udp.rs", "modbus/mbap.rs"],
+            &["modbus/rtu.rs"],
+        ),
+        (
+            "h743zg",
+            &[("protocol", "modbus"), ("interface", "udp")],
+            &["modbus/rtu.rs", "modbus/tcp.rs", "net/tcp.rs"],
+            &["modbus/udp.rs", "modbus/mbap.rs", "net/udp.rs"],
+        ),
+        (
+            "h743zg",
+            &[("protocol", "modbus"), ("interface", "tcp")],
+            &["modbus/rtu.rs", "modbus/udp.rs", "net/udp.rs"],
+            &["modbus/tcp.rs", "modbus/mbap.rs", "net/tcp.rs"],
+        ),
+        // COBS нужен потоку (UART, USB, TCP), а UDP кадр даёт сама датаграмма.
+        (
+            "f407ve",
+            &[("protocol", "protobuf"), ("interface", "udp")],
+            &["cobs.rs"],
+            &[],
+        ),
+        (
+            "f407ve",
+            &[("protocol", "protobuf"), ("interface", "uart")],
+            &[],
+            &["cobs.rs"],
+        ),
+    ];
+    for (chip, answers, gone, kept) in cases {
+        let result = run_cascade_with(&ast, chip, answers)
+            .unwrap_or_else(|err| panic!("{chip} {answers:?}: каскад упал: {err}"));
+        let full = |short: &str| {
+            if short == "cobs.rs" {
+                COBS.to_owned()
+            } else if let Some(rest) = short.strip_prefix("net/") {
+                format!("{N}{rest}")
+            } else {
+                format!("{M}{}", short.trim_start_matches("modbus/"))
+            }
+        };
+        for file in gone {
+            assert!(
+                result.deleted.iter().any(|d| *d == full(file)),
+                "{chip} {answers:?}: {file} должен быть удалён"
+            );
+        }
+        for file in kept {
+            assert!(
+                !result.deleted.iter().any(|d| *d == full(file)),
+                "{chip} {answers:?}: {file} удалён, а нужен"
+            );
+        }
+    }
+}
+
+/// OTA и хранилище настроек в `ports`, `adapters` и `domain` остаются только там,
+/// где они выбраны: без них это код, до которого не дотянуться от `main` и графа.
+/// Заглушка `Unavailable` нужна и узлу CANopen без хранилища, а `flash.rs` —
+/// только обёртке страницы или внешней флеши.
+#[test]
+fn ota_and_settings_code_is_kept_only_when_selected() {
+    let ast = compile_script();
+    const OTA: [&str; 5] = [
+        "crates-host/ports/src/ota.rs",
+        "crates-host/ports/src/ota",
+        "crates-host/adapters/src/ota.rs",
+        "crates-host/domain/src/ota.rs",
+        "crates-host/domain/src/ota",
+    ];
+    const SETTINGS: [&str; 2] = [
+        "crates-host/ports/src/settings.rs",
+        "crates-host/adapters/src/settings.rs",
+    ];
+    const FLASH: &str = "crates-host/adapters/src/flash.rs";
+    const WORD: &str = "crates-host/ports/src/word.rs";
+    // (чип, ответы, OTA вырезана, настройки вырезаны, flash.rs вырезан)
+    type Case<'a> = (&'a str, &'a [(&'a str, &'a str)], bool, bool, bool);
+    let cases: [Case; 5] = [
+        (
+            "g474re",
+            &[("ota", "no"), ("config", "no")],
+            true,
+            true,
+            true,
+        ),
+        (
+            "g474re",
+            &[("ota", "internal"), ("config", "no")],
+            false,
+            true,
+            true,
+        ),
+        // CANopen без хранилища: порт и заглушка остаются, OTA — нет.
+        (
+            "g474re",
+            &[("ota", "no"), ("protocol", "canopen"), ("interface", "can")],
+            true,
+            false,
+            true,
+        ),
+        // Настройки в хвосте flash на равных секторах: обёртки страницы нет.
+        (
+            "g071rb",
+            &[("ota", "no"), ("config", "internal")],
+            true,
+            false,
+            true,
+        ),
+        // Внешняя флеш: заглушка драйвера живёт в `flash.rs`.
+        (
+            "l073rz",
+            &[("ota", "no"), ("config", "external")],
+            true,
+            false,
+            false,
+        ),
+    ];
+    for (chip, answers, no_ota, no_settings, no_flash) in cases {
+        let result = run_cascade_with(&ast, chip, answers)
+            .unwrap_or_else(|err| panic!("{chip} {answers:?}: каскад упал: {err}"));
+        let gone = |path: &str| result.deleted.iter().any(|d| d == path);
+        for path in OTA {
+            assert_eq!(gone(path), no_ota, "{chip} {answers:?}: {path}");
+        }
+        for path in SETTINGS {
+            assert_eq!(gone(path), no_settings, "{chip} {answers:?}: {path}");
+        }
+        assert_eq!(gone(FLASH), no_flash, "{chip} {answers:?}: {FLASH}");
+        // Слово записи читают OTA и узел CANopen; одни настройки — нет.
+        let canopen = answers.contains(&("protocol", "canopen"));
+        assert_eq!(
+            gone(WORD),
+            no_ota && !canopen,
+            "{chip} {answers:?}: {WORD}"
+        );
+    }
+}
+
+/// Сторож платы (`bsp::wdg`) нужен только графу, а кадровый канал
+/// (`ports::link`) — только протоколам, которые им пользуются.
+#[test]
+fn watchdog_and_link_port_follow_the_choices() {
+    let ast = compile_script();
+    const WDG: [&str; 2] = ["crates-cross/bsp/src/wdg.rs", "docs/modules/bsp-wdg.md"];
+    const LINK: &str = "crates-host/ports/src/link.rs";
+    // (чип, ответы, сторож удалён, канал удалён)
+    type Case<'a> = (&'a str, &'a [(&'a str, &'a str)], bool, bool);
+    let cases: [Case; 7] = [
+        ("g474re", &[], false, true),
+        ("g474re", &[("graph", "no")], true, true),
+        // Modbus по потоку кадровый канал не использует, по UDP — использует.
+        (
+            "g474re",
+            &[("protocol", "modbus"), ("interface", "uart")],
+            false,
+            true,
+        ),
+        (
+            "h743zg",
+            &[("protocol", "modbus"), ("interface", "tcp")],
+            false,
+            true,
+        ),
+        (
+            "h743zg",
+            &[("protocol", "modbus"), ("interface", "udp")],
+            false,
+            false,
+        ),
+        (
+            "f407ve",
+            &[("protocol", "protobuf"), ("interface", "uart")],
+            false,
+            false,
+        ),
+        (
+            "g474re",
+            &[("protocol", "canopen"), ("interface", "can")],
+            false,
+            false,
+        ),
+    ];
+    for (chip, answers, no_wdg, no_link) in cases {
+        let result = run_cascade_with(&ast, chip, answers)
+            .unwrap_or_else(|err| panic!("{chip} {answers:?}: каскад упал: {err}"));
+        let gone = |path: &str| result.deleted.iter().any(|d| d == path);
+        for path in WDG {
+            assert_eq!(gone(path), no_wdg, "{chip} {answers:?}: {path}");
+        }
+        assert_eq!(gone(LINK), no_link, "{chip} {answers:?}: {LINK}");
     }
 }
 

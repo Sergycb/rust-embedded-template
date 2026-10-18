@@ -41,6 +41,8 @@ pub mod settings;
 {%- if interface == "usb" %}
 pub mod usb;
 {%- endif %}
+{%- if graph == "true" %}
 pub mod wdg;
+{%- endif %}
 
 pub use board::{Board, ChipSpec};

@@ -791,11 +791,11 @@ panicked at crates-cross/app/src/main.rs:194:5:
 ```sh
 cargo install cargo-llvm-cov --locked
 cargo llvm-cov nextest --workspace --exclude host-target-tests \
-  --features domain/log,domain/signed --release \
+  --features domain/log{% if ota == "true" %},domain/signed{% endif %} --release \
   --ignore-filename-regex 'xtask' --summary-only
 ```
 
-`domain/signed`, `--release` и `--ignore-filename-regex` — не украшение: без них
+{% if ota == "true" %}`domain/signed`, {% endif %}`--release` и `--ignore-filename-regex` — не украшение: без них
 локальный прогон считает не то же, что CI, и сравнивать проценты бессмысленно.
 `--release` обязателен ещё и потому, что `llvm-cov` ищет объектные файлы в каталоге
 своего профиля: `cargo-llvm-cov report` без него смотрел бы в `debug/`.

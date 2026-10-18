@@ -99,6 +99,7 @@ impl<F: NorFlash, const ERASE_SIZE: usize> NorFlash for ErasePage<F, ERASE_SIZE>
 
 // {%- endif %}
 
+// {%- if ota_store == "external" %}
 /// `ERASE_SIZE` асинхронного флеша — для проверок при компиляции там, где
 /// трейт не в зависимостях (`bsp::external` проверяет им, что стирание
 /// драйвера делит страницу обмена раскладки).
@@ -106,6 +107,7 @@ impl<F: NorFlash, const ERASE_SIZE: usize> NorFlash for ErasePage<F, ERASE_SIZE>
 pub const fn erase_size<F: embedded_storage_async::nor_flash::NorFlash>() -> usize {
     F::ERASE_SIZE
 }
+// {%- endif %}
 
 // {%- if external_flash == "true" %}
 /// Внешняя флеш, которую ещё не подключили, — место под ваш драйвер.
@@ -330,6 +332,7 @@ mod tests {
         );
     }
 
+    // {%- if ota == "true" %}
     /// Обмен `embassy-boot` над страницей, более крупной физической (L0:
     /// физическая 128 Б, страница обмена 1 KiB), — настоящий `BootLoader` над
     /// разделами, как собирает их прошивка: `ACTIVE`/`DFU` — окна в `ErasePage<_, 1024>`,
@@ -617,5 +620,6 @@ mod tests {
             );
         }
     }
+    // {%- endif %}
     // {%- endif %}
 }

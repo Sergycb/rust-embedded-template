@@ -25,7 +25,7 @@ pub async fn run<D: Driver>(mut ctx: NetCtx<'_, Runner<'static, D>>) -> TaskExit
 // {%- if graph != "true" %}
 /// Тот же узел для проекта без графа: спавнится из `main.rs`, а слот, который
 /// в графе держит `static`, — локальная переменная кадра, как у
-/// [`ota::task`](crate::ota::task).
+/// [`cpu_load::task`](crate::cpu_load::task).
 pub async fn task<D: Driver>(mut runner: Runner<'static, D>) -> TaskExit {
     run(NetCtx {
         runner: &mut runner,
@@ -74,7 +74,7 @@ impl<D: Driver> NetCtx<'_, Runner<'static, D>> {
 // сам `Runner`, а не устройство, потому что DSL не принимает у параметра
 // trait-границу, а `Runner<'_, D>` требует `D: Driver`; граница живёт в
 // сигнатуре задачи. `local` — устройство вправе быть `!Send` (DMA,
-// периферия). Без `watchdog:` — по правилу `ota::run`: узлу нечем отметиться,
+// периферия). Без `watchdog:` — по правилу `heartbeat::run`: узлу нечем отметиться,
 // `Runner::run` не отдаёт управление наружу.
 //
 // Вход — `NetWiring { runner }`: структуру эмитит фрагмент.

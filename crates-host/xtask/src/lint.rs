@@ -3,27 +3,31 @@
 use anyhow::Context;
 use xshell::cmd;
 
-use crate::project::{has_bootloader, root_dir};
+use crate::project::{has_bootloader, host_features, root_dir};
 
 pub fn lint_host(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     let _p = sh.push_dir(root_dir());
+    let features = host_features();
     cmd!(sh, "cargo fmt --check").run()?;
     cmd!(
         sh,
-        "cargo clippy --workspace --all-targets --features domain/log,domain/signed -- -D warnings"
+        "cargo clippy --workspace --all-targets --features {features} -- -D warnings"
     )
     .run()?;
-    // Ветка без подписи (`ota=no`): иначе её код нигде не собирался бы.
-    // Только clippy — тесты и doc без `signed` время не стоят.
-    cmd!(
-        sh,
-        "cargo clippy --workspace --all-targets --features domain/log -- -D warnings"
-    )
-    .run()?;
+    // Ветка без подписи: иначе её код нигде не собирался бы. В проекте без OTA
+    // `signed` нет вовсе, и первый прогон уже без неё. Только clippy — тесты и
+    // doc без `signed` время не стоят.
+    if has_bootloader() {
+        cmd!(
+            sh,
+            "cargo clippy --workspace --all-targets --features domain/log -- -D warnings"
+        )
+        .run()?;
+    }
     // Битые ссылки в документации ломали бы `cargo doc` у пользователя крейта.
     cmd!(
         sh,
-        "cargo doc --no-deps --workspace --exclude host-target-tests --features domain/log,domain/signed"
+        "cargo doc --no-deps --workspace --exclude host-target-tests --features {features}"
     )
     .env("RUSTDOCFLAGS", "-D warnings")
     .run()?;

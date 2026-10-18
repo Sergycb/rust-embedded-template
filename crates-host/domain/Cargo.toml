@@ -19,7 +19,9 @@ defmt = [
 	"dep:defmt",
 	"defmt-or-log/defmt",
 	"ports/defmt",
+	# {%- if ota == "true" %}
 	"embassy-boot/defmt",
+	# {%- endif %}
 	# {%- if protocol == "canopen" %}
 	"zencan-node/defmt",
 	# {%- endif %}
@@ -36,7 +38,9 @@ defmt = [
 # проверялось и на хосте. Проверяет `salty` напрямую, а не
 # `verify_and_mark_updated` из embassy-boot: тот живёт в апдейтере приложения,
 # а проверка — в bootloader'е.
+# {%- if ota == "true" %}
 signed = ["dep:salty"]
+# {%- endif %}
 log = [
 	"dep:log",
 	"defmt-or-log/log",
@@ -68,11 +72,13 @@ supervisor = { workspace = true }
 embassy-time = { workspace = true }
 # Задачи узлов — автоматы `#[fsm::typestate]` на контексте фрагмента.
 fsm = { workspace = true }
+# {%- if ota == "true" %}
 # Решение bootloader'а (`ota::boot`): состояние `embassy-boot` над блокирующими
 # разделами `NorFlash`. Сам крейт от чипа не зависит.
 embassy-boot = { workspace = true }
 embedded-storage = { workspace = true }
 salty = { workspace = true, optional = true }
+# {%- endif %}
 # Прямо, а не транзитивно: тип счётчика в `cpu_load::SleepTicks` —
 # `portable_atomic::AtomicU32`, потому что на Cortex-M0/M0+ у `core`
 # атомика нет `fetch_add`.
@@ -110,8 +116,10 @@ embassy-usb        = { workspace = true }
 # Исполнитель для async-тестов над фейками портов (`#[tokio::test]`); фичи —
 # в корневом Cargo.toml.
 tokio = { workspace = true }
+# {%- if ota == "true" %}
 # Property-тесты `download::receive` (любое разбиение образа на куски).
 proptest = { workspace = true }
+# {%- endif %}
 # Обе строки — ради линковки хостового тестового бинарника, а не ради самих
 # тестов: он тянет `supervisor`, тот `embassy-executor` и `embassy-time`, а у
 # обоих реализация выбирается фичей. Без `platform-std` линкер не находит

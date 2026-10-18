@@ -57,7 +57,7 @@ use supervisor::runtime::TaskExit;
 /// Не выходит никогда: закрытый или отказавший канал — строка в лог, и
 /// узел ждёт следующий кадр.
 ///
-/// Без `watchdog:` намеренно — по правилу [`ota::run`](crate::ota::run):
+/// Без `watchdog:` намеренно — по правилу `heartbeat::run`:
 /// узел законно ждёт запрос сколько угодно.
 pub async fn run<L, S>(mut ctx: HostCtx<'_, L, S>) -> TaskExit
 where
@@ -73,7 +73,7 @@ where
 // {%- if graph != "true" %}
 /// Тот же узел для проекта без графа: спавнится из `main.rs`, а слоты, которые
 /// в графе держит `static`, — локальные переменные кадра, как у
-/// [`ota::task`](crate::ota::task).
+/// [`cpu_load::task`](crate::cpu_load::task).
 pub async fn task<L, S>(
     mut link: L,
     mut service: S,
@@ -198,8 +198,8 @@ fn encode(message: &impl MessageEncode, buf: &mut [u8]) -> Option<usize> {
     Some(capacity - encoder.into_writer().len())
 }
 
-// Узел объявлен рядом со своей задачей — как `OTA_FRAG` и `MODBUS_SLAVE_FRAG`;
-// в граф шаблона попадёт по выбору протокола при генерации проекта.
+// Узел объявлен рядом со своей задачей — как `CPU_LOAD_FRAG`; в граф шаблона
+// попадёт по выбору протокола при генерации проекта.
 //
 // `<L, S>` — параметры фрагмента: канал платы и обработчик приложения
 // `domain` не видит. `local` на обоих — канал и обработчик вправе быть

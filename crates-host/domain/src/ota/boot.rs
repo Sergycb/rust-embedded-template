@@ -4,15 +4,32 @@
 
 #[cfg(feature = "signed")]
 use embassy_boot::AlignedBuffer;
+// Нужны `boot_plan` (внешняя OTA) и `screen_update` (подпись): в проекте без
+// того и другого их нет, а ветка без `signed` собирается всё равно.
+#[cfg_attr(
+    not(feature = "signed"),
+    allow(
+        unused_imports,
+        reason = "нужны boot_plan (внешняя OTA) или screen_update"
+    )
+)]
 use embassy_boot::BlockingFirmwareState;
 #[cfg(feature = "signed")]
 use embassy_boot::FirmwareUpdaterError as Error;
 #[cfg(feature = "signed")]
 use embassy_boot::State;
+#[cfg_attr(
+    not(feature = "signed"),
+    allow(
+        unused_imports,
+        reason = "нужны boot_plan (внешняя OTA) или screen_update"
+    )
+)]
 use ports::MAX_WRITE_SIZE;
 #[cfg(feature = "signed")]
 use ports::PendingImage;
 
+// {%- if ota_store == "external" %}
 /// Что bootloader'у делать при старте — см. [`boot_plan`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BootPlan {
@@ -56,6 +73,7 @@ pub fn boot_plan<STATE: embedded_storage::nor_flash::NorFlash>(state: &mut STATE
         Err(_) => BootPlan::BootCurrent,
     }
 }
+// {%- endif %}
 
 /// Что решил bootloader об обновлении — см. [`screen_update`].
 #[cfg(feature = "signed")]
@@ -362,6 +380,7 @@ mod tests {
         }
     }
 
+    // {%- if ota_store == "external" %}
     /// Решение bootloader'а с внешней флешью (`boot_plan`) — над настоящим
     /// обменом `embassy-boot`.
     mod plan {
@@ -430,6 +449,7 @@ mod tests {
             assert_eq!(&active.mem[..], &image[..], "обмен доведён до конца");
         }
     }
+    // {%- endif %}
 
     /// Проверка нового образа bootloader'ом (`screen_update`): настоящие ключи
     /// `salty` и — для отката — настоящий обмен `embassy-boot` над теми же

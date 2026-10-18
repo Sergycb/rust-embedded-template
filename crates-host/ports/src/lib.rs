@@ -1,4 +1,5 @@
 #![cfg_attr(not(test), no_std)]
+// {%- if ota == "true" or settings_port == "true" or protocol != "none" %}
 // `async fn` в публичном трейте: rustc предупреждает (`async_fn_in_trait`), что
 // у возвращаемого future нет границы `Send` и потребовать её вызывающий не
 // сможет. Для однопоточного исполнителя embassy это ровно то, что нужно, а с
@@ -11,6 +12,7 @@
     async_fn_in_trait,
     reason = "Embassy tasks require async fn in trait; supervisor fragments call them on a single executor"
 )]
+// {%- endif %}
 
 //! Порты — границы `domain`: трейты, которые логика вызывает, не зная, что за
 //! ними стоит, и типы, которыми она с ними разговаривает. Реализации живут в
@@ -30,18 +32,29 @@
 //! Типы ошибок тоже здесь, а не в `domain`: домен — только функции над портами,
 //! а всё, что он возвращает, объявлено в его словаре.
 //!
-//! [`FirmwareUpdate`] и [`SettingsStorage`] реализованы, когда при генерации
-//! выбраны OTA и хранилище настроек; канал доставки образа ([`ImageSource`])
-//! — сам проект. Порты протоколов связи (`FrameLink`, `Registers`,
+// {%- if ota == "true" %}
+//! [`FirmwareUpdate`] реализован, когда при генерации выбрана OTA; канал
+//! доставки образа ([`ImageSource`]) — сам проект.
+// {%- endif %}
+// {%- if settings_port == "true" %}
+//! [`SettingsStorage`] — хранилище настроек: его реализует раздел, EEPROM или
+//! внешняя флеш, выбранные при генерации.
+// {%- endif %}
+//! Порты протоколов связи (`FrameLink`, `Registers`,
 //! `ModbusServer`, `HostService`, `CanBus`) есть только в
 //! проекте, где протокол выбран при генерации.
 //!
+// {%- if ota == "true" %}
 //! Модули названы по операции домена, которая ими пользуется, а не по трейту:
 //! ошибка операции (`DownloadError` у `domain::ota::download::receive`) лежит
 //! рядом с портом, через который операция идёт. Наружу всё реэкспортируется в
 //! корень — путь `ports::FirmwareUpdate` короче, а внутреннее деление
 //! пользователя не касается (`docs/conventions.md`, «`lib.rs` только объявляет
 //! модули»).
+// {%- else %}
+//! Наружу всё реэкспортируется в корень, а внутреннее деление пользователя не
+//! касается (`docs/conventions.md`, «`lib.rs` только объявляет модули»).
+// {%- endif %}
 
 // {%- if protocol == "canopen" %}
 /// Шина CAN: кадры для узла CANopen.
@@ -53,7 +66,7 @@ pub mod can;
 pub mod host;
 
 // {%- endif %}
-// {%- if protocol != "none" %}
+// {%- if link_port == "true" %}
 /// Кадровый канал связи: сообщения целиком, поверх датаграмм или адаптера
 /// кадрирования потока.
 pub mod link;
@@ -65,12 +78,21 @@ pub mod link;
 pub mod modbus;
 
 // {%- endif %}
+// {%- if ota == "true" or protocol == "canopen" %}
+/// Слово записи флеша — общий предел буферов OTA и хранилища CANopen.
+mod word;
+
+// {%- endif %}
+// {%- if ota == "true" %}
 /// OTA: канал доставки образа, запись во флеш, проверка подписи и ошибки
 /// приёма и применения.
 pub mod ota;
 
+// {%- endif %}
+// {%- if settings_port == "true" %}
 /// Хранилище настроек.
 pub mod settings;
+// {%- endif %}
 
 // {%- if protocol == "canopen" %}
 pub use can::CanBus;
@@ -78,7 +100,7 @@ pub use can::CanBus;
 // {%- if protocol == "protobuf" %}
 pub use host::HostService;
 // {%- endif %}
-// {%- if protocol != "none" %}
+// {%- if link_port == "true" %}
 pub use link::{FrameLink, LinkError};
 // {%- endif %}
 // {%- if protocol == "modbus" %}
@@ -90,6 +112,13 @@ pub use modbus::{
 pub use modbus::{MasterError, ModbusClient};
 // {%- endif %}
 // {%- endif %}
+// {%- if ota == "true" %}
 pub use ota::download::{Announce, DownloadError, ImageSource, Rejection};
-pub use ota::update::{FirmwareUpdate, MAX_WRITE_SIZE, PendingImage, UpdateError};
+pub use ota::update::{FirmwareUpdate, PendingImage, UpdateError};
+// {%- endif %}
+// {%- if settings_port == "true" %}
 pub use settings::SettingsStorage;
+// {%- endif %}
+// {%- if ota == "true" or protocol == "canopen" %}
+pub use word::MAX_WRITE_SIZE;
+// {%- endif %}

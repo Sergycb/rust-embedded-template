@@ -223,7 +223,9 @@ pub type Settings = adapters::settings::Settings<ExternalFlash>;
 /// Собирает хранилище над внешней флешью. Сейчас — над заглушкой: о том, что
 /// драйвер не подставлен, говорит одна строка в лог при старте.
 pub(crate) fn new() -> Settings {
-    defmt::warn!("bsp: внешняя флеш не подключена — настройки не сохраняются (bsp/src/settings.rs)");
+    defmt::warn!(
+        "bsp: внешняя флеш не подключена — настройки не сохраняются (bsp/src/settings.rs)"
+    );
     adapters::settings::Settings::new(
         adapters::flash::Unconnected,
         0..adapters::flash::Unconnected::CAPACITY,

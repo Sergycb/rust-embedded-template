@@ -1227,6 +1227,10 @@ if variable::is_set("write_size") {
 // закрыто тем же `{% if %}`, поэтому удаление файла ничего не ломает.
 if variable::get("graph") != "true" {
 	file::delete("crates-cross/app/src/graph.rs");
+	// Сторож запускает блок `watchdog:` графа; без графа его некому взводить, а
+	// `Board` поля сторожа не имеет.
+	file::delete("crates-cross/bsp/src/wdg.rs");
+	file::delete("docs/modules/bsp-wdg.md");
 }
 
 // Протокол связи и интерфейс под ним. Проверяются здесь, в конце, а не при
@@ -1294,6 +1298,15 @@ variable::set("erase_page", if variable::get("state_paged") == "true" || variabl
 variable::set("external_flash", if (variable::get("ota") == "true" && variable::get("ota_store") == "external") || variable::get("config_store") == "external" { "true" } else { "false" });
 variable::set("protocol", protocol);
 variable::set("interface", iface);
+variable::set("link_port", if protocol == "protobuf" || protocol == "canopen" || (protocol == "modbus" && iface == "udp") { "true" } else { "false" });
+// Порт хранилища настроек (`ports::SettingsStorage`) нужен, пока есть что в него
+// класть: раздел, EEPROM или внешняя флеш (`config`) либо заглушка `Unavailable`
+// у узла CANopen без хранилища. Иначе порта и адаптера в проекте нет.
+variable::set("settings_port", if variable::get("config") == "true" || protocol == "canopen" { "true" } else { "false" });
+// Транспорт поверх потока байтов (UART, USB CDC, TCP), а не датаграммы: ему нужны
+// `embedded-io-async`, `crc` и, под protobuf, COBS. UDP границу кадра получает
+// от самой датаграммы, CAN — это вообще не поток.
+variable::set("stream_io", if (protocol == "modbus" || protocol == "protobuf") && (iface == "uart" || iface == "usb" || iface == "tcp") { "true" } else { "false" });
 // Группы `resources.rs` нужны, пока есть что в них класть: общий флеш, сторож
 // графа или блок выбранного интерфейса. Иначе в файле остаётся пустая группа.
 variable::set("has_resources", if iface != "none" || variable::get("shared_flash") == "true" || variable::get("graph") == "true" { "true" } else { "false" });
@@ -1341,6 +1354,32 @@ if protocol != "modbus" {
 	file::delete("crates-host/domain/src/modbus.rs");
 	file::delete("crates-host/domain/src/modbus");
 }
+// Транспорт Modbus и сокет сети — только под выбранный интерфейс: остальные
+// файлы адаптеров были бы кодом, до которого не дотянуться. `mod`, `pub use` и
+// тесты в `modbus.rs`/`net.rs` вырезает Liquid в комментариях.
+if protocol == "modbus" {
+	if iface != "uart" && iface != "usb" {
+		file::delete("crates-host/adapters/src/modbus/rtu.rs");
+	}
+	if iface != "tcp" {
+		file::delete("crates-host/adapters/src/modbus/tcp.rs");
+	}
+	if iface != "udp" {
+		file::delete("crates-host/adapters/src/modbus/udp.rs");
+	}
+	if iface != "tcp" && iface != "udp" {
+		file::delete("crates-host/adapters/src/modbus/mbap.rs");
+	}
+}
+if iface != "tcp" {
+	file::delete("crates-host/adapters/src/net/tcp.rs");
+}
+if iface != "udp" {
+	file::delete("crates-host/adapters/src/net/udp.rs");
+}
+if protocol == "protobuf" && iface == "udp" {
+	file::delete("crates-host/adapters/src/cobs.rs");
+}
 if protocol != "protobuf" {
 	file::delete("crates-host/ports/src/host.rs");
 	file::delete("crates-host/adapters/src/cobs.rs");
@@ -1355,8 +1394,36 @@ if protocol != "canopen" {
 	file::delete("crates-host/canopen");
 }
 if protocol == "none" {
-	file::delete("crates-host/ports/src/link.rs");
 	file::delete("crates-cross/app/src/protocol.rs");
+}
+// Кадровый канал (`ports::FrameLink`, `LinkError`) нужен protobuf (канал хоста),
+// CANopen (ошибка шины) и Modbus по UDP (датаграмма); Modbus по потоку им не
+// пользуется.
+if !(protocol == "protobuf" || protocol == "canopen" || (protocol == "modbus" && iface == "udp")) {
+	file::delete("crates-host/ports/src/link.rs");
+}
+// OTA — порты, адаптер и узел `domain::ota` — только в проекте с OTA: без неё это
+// код, до которого не дотянуться от `main` и графа. `mod`, `pub use` и зависимости
+// вырезает Liquid.
+if variable::get("ota") != "true" {
+	file::delete("crates-host/ports/src/ota.rs");
+	file::delete("crates-host/ports/src/ota");
+	file::delete("crates-host/adapters/src/ota.rs");
+	file::delete("crates-host/domain/src/ota.rs");
+	file::delete("crates-host/domain/src/ota");
+}
+// То же для хранилища настроек.
+if variable::get("ota") != "true" && protocol != "canopen" {
+	file::delete("crates-host/ports/src/word.rs");
+}
+if variable::get("settings_port") != "true" {
+	file::delete("crates-host/ports/src/settings.rs");
+	file::delete("crates-host/adapters/src/settings.rs");
+}
+// Мост blocking → async и заглушка внешней флеши — только когда ими кто-то
+// пользуется: обёртка страницы (`erase_page`) или внешняя флеш.
+if variable::get("erase_page") != "true" && variable::get("external_flash") != "true" {
+	file::delete("crates-host/adapters/src/flash.rs");
 }
 if iface != "uart" {
 	file::delete("crates-host/adapters/src/serial.rs");
