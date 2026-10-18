@@ -1228,7 +1228,8 @@ fn protocol_over_uart_keeps_the_serial_module() {
             ("crates-host/domain/src/modbus.rs", protocol == "modbus"),
             ("crates-host/ports/src/modbus.rs", protocol == "modbus"),
             ("crates-host/ports/src/modbus", protocol == "modbus"),
-            ("crates-host/ports/src/link.rs", true),
+            // Кадровый канал нужен protobuf; Modbus по потоку им не пользуется.
+            ("crates-host/ports/src/link.rs", protocol == "protobuf"),
             ("crates-host/canopen", false),
             ("crates-host/ports/src/can.rs", false),
             ("crates-host/adapters/src/can.rs", false),
