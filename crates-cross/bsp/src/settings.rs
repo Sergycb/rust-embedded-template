@@ -19,7 +19,9 @@
 //! дешевле: с OTA на F2/F4/F7 — в мелкие сектора перед `ACTIVE` (у F4 —
 //! 2×16 KiB), иначе в хвост flash.
 
+{%- if config_paged == "true" %}
 use adapters::flash::ErasePage;
+{%- endif %}
 use embassy_embedded_hal::adapter::BlockingAsync;
 use embassy_embedded_hal::flash::partition::BlockingPartition;
 
@@ -30,9 +32,19 @@ use crate::flash::{FlashMutex, SIZE, Whole};
 /// `sequential-storage` делит раздел на страницы по `ERASE_SIZE` флеша, а
 /// цельный `Flash` объявляет им самый крупный сектор чипа. Раздел в мелких
 /// секторах (F2/F4/F7 с OTA) со страницей всего чипа не делится на две, поэтому
-/// страница своя (`ErasePage`); в хвосте flash она совпадает со страницей чипа.
+/// страница своя (`ErasePage`); в хвосте flash она совпадает со страницей чипа{% if config_paged != "true" %} — как у
+/// этого чипа: раздел строится прямо над `Whole`, а равенство держит
+/// `const`-assert ниже{% endif %}.
 /// Число посчитано при генерации тем же расчётом, что адреса в `memory.x`.
 const CONFIG_ERASE_SIZE: usize = {{config_erase_size}};
+{%- if config_paged != "true" %}
+
+const _: () = assert!(
+    CONFIG_ERASE_SIZE == embassy_stm32::flash::MAX_ERASE_SIZE,
+    "CONFIG_ERASE_SIZE из генерации не равен странице цельного `Flash` \
+     (embassy_stm32::flash::MAX_ERASE_SIZE): `CONFIG` нужна своя страница (`ErasePage`)"
+);
+{%- endif %}
 
 /// Начало раздела `CONFIG`: смещение от базы flash, `memory.x` считает его тем
 /// же расчётом. Приезжает переменной среды `CONFIG_START` из `[env]`
@@ -51,8 +63,12 @@ const CONFIG_END: u32 = match u32::from_str_radix(env!("CONFIG_END"), 10) {
 /// Хранилище настроек этой платы — то, что лежит полем `Board` и уезжает в
 /// задачи. Псевдоним по общему правилу шаблона: тип в сигнатуре
 /// `#[embassy_executor::task]` должен быть конкретным.
+{%- if config_paged == "true" %}
 pub type Settings =
     adapters::settings::Settings<BlockingAsync<ErasePage<Whole, CONFIG_ERASE_SIZE>>>;
+{%- else %}
+pub type Settings = adapters::settings::Settings<BlockingAsync<Whole>>;
+{%- endif %}
 
 /// Собирает хранилище над разделом `CONFIG`.
 ///
@@ -62,7 +78,11 @@ pub type Settings =
 /// `adapters::settings::Settings::new`.
 pub(crate) fn new(flash: &'static FlashMutex) -> Settings {
     adapters::settings::Settings::new(
+{%- if config_paged == "true" %}
         BlockingAsync::new(ErasePage::new(BlockingPartition::new(flash, 0, SIZE))),
+{%- else %}
+        BlockingAsync::new(BlockingPartition::new(flash, 0, SIZE)),
+{%- endif %}
         CONFIG_START..CONFIG_END,
     )
 }

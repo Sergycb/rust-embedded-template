@@ -5,7 +5,9 @@ use embassy_boot::FirmwareUpdaterConfig;
 
 use crate::external::{ExternalMutex, ExternalPartition};
 {%- else %}
+{%- if state_paged == "true" or swap_paged == "true" and dfu_bank != "true" %}
 use adapters::flash::ErasePage;
+{%- endif %}
 use embassy_boot::FirmwareUpdaterConfig;
 use embassy_embedded_hal::adapter::BlockingAsync;
 use embassy_embedded_hal::flash::partition::BlockingPartition;
@@ -45,7 +47,9 @@ const ACTIVE_LEN: u32 = match u32::from_str_radix(env!("ACTIVE_LEN"), 10) {
 /// Цельный `Flash` объявляет страницей самый крупный сектор чипа, а
 /// `Partition::new` паникует на разделе, не кратном странице. На F2/F4/F7
 /// `STATE` лежит в мелком секторе (у F4 — 16 KiB, а с разделом настроек
-/// 64 KiB при странице 128 KiB), поэтому его страница своя. Число посчитано при
+/// 64 KiB при странице 128 KiB), поэтому его страница своя{% if state_paged != "true" %}; у этого чипа
+/// она равна странице цельного `Flash`, и раздел строится прямо над ним, а
+/// равенство держит `const`-assert ниже{% endif %}. Число посчитано при
 /// генерации тем же расчётом, что адреса в `memory.x`, и приезжает переменной
 /// среды `STATE_ERASE_SIZE` из `[env]` `crates-cross/.cargo/config.toml` — её же
 /// читает bootloader (он от `bsp` не зависит), и разделу в приложении и в нём
@@ -54,6 +58,14 @@ const STATE_ERASE_SIZE: usize = match usize::from_str_radix(env!("STATE_ERASE_SI
     Ok(size) => size,
     Err(_) => panic!("STATE_ERASE_SIZE в [env] crates-cross/.cargo/config.toml — не число"),
 };
+{%- if state_paged != "true" %}
+
+const _: () = assert!(
+    STATE_ERASE_SIZE == embassy_stm32::flash::MAX_ERASE_SIZE,
+    "STATE_ERASE_SIZE из генерации не равен странице цельного `Flash` \
+     (embassy_stm32::flash::MAX_ERASE_SIZE): `STATE` нужна своя страница (`ErasePage`)"
+);
+{%- endif %}
 {%- if swap_paged == "true" %}
 
 /// Страница обмена `ACTIVE` и `DFU` — крупнее физической страницы флеша.
@@ -106,9 +118,15 @@ type DfuFlash = BlockingAsync<ErasePage<crate::flash::Whole, SWAP_PAGE_SIZE>>;
 type DfuFlash = BlockingAsync<crate::flash::Whole>;
 {%- endif %}
 
+{%- if state_paged == "true" %}
 /// Флеш под разделом `BOOTLOADER_STATE`: тот же общий `Flash`, но со
 /// страницей [`STATE_ERASE_SIZE`].
 type StateFlash = BlockingAsync<ErasePage<crate::flash::Whole, STATE_ERASE_SIZE>>;
+{%- else %}
+/// Флеш под разделом `BOOTLOADER_STATE`: тот же общий `Flash` — страница сектора
+/// `STATE` совпадает с его страницей.
+type StateFlash = BlockingAsync<crate::flash::Whole>;
+{%- endif %}
 
 /// Раздел `DFU` — то, из чего собирается адаптер обновления.
 type Dfu = embassy_embedded_hal::flash::partition::Partition<'static, NoopRawMutex, DfuFlash>;
@@ -168,7 +186,11 @@ pub(crate) fn updater(flash: &'static FlashMutex) -> Updater {
     let dfu = BlockingAsync::new(BlockingPartition::new(flash, 0, SIZE));
 {%- endif %}
     let dfu = DFU_FLASH.init(Mutex::new(dfu));
+{%- if state_paged == "true" %}
     let state = BlockingAsync::new(ErasePage::new(BlockingPartition::new(flash, 0, SIZE)));
+{%- else %}
+    let state = BlockingAsync::new(BlockingPartition::new(flash, 0, SIZE));
+{%- endif %}
     let state = STATE_FLASH.init(Mutex::new(state));
     let config = FirmwareUpdaterConfig::from_linkerfile(dfu, state);
 {%- endif %}

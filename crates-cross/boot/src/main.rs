@@ -2,7 +2,7 @@
 #![no_main]
 
 use core::cell::RefCell;
-{% if ota_store != "external" %}
+{% if boot_partitioned == "true" %}
 use adapters::flash::ErasePage;
 {%- endif %}
 use defmt::info;
@@ -19,7 +19,7 @@ use embassy_boot_stm32::BootLoaderConfig;
 {%- else %}
 use embassy_boot_stm32::{BootLoader, BootLoaderConfig};
 {%- endif %}
-{%- if ota_store != "external" %}
+{%- if boot_partitioned == "true" %}
 use embassy_embedded_hal::flash::partition::BlockingPartition;
 {%- endif %}
 use embassy_stm32::flash::{FLASH_BASE, Flash};
@@ -125,16 +125,18 @@ fn main() -> ! {
     let bl = external::prepare(config);
 {%- endif %}
 {%- else %}
+{%- if state_paged == "true" %}
     // `BOOTLOADER_STATE` — со страницей своего сектора, а не всего чипа (см.
     // `STATE_ERASE_SIZE`), но над тем же `Flash`: свой мьютекс, а не второй
     // объект контроллера.
     let state = Mutex::new(RefCell::new(ErasePage::<_, STATE_ERASE_SIZE>::new(
         BlockingPartition::new(&flash, 0, FLASH_BYTES),
     )));
+{%- endif %}
 {%- if dfu_bank == "true" %}
     let dfu = Mutex::new(RefCell::new(dfu));
 
-    let config = BootLoaderConfig::from_linkerfile_blocking(&flash, &dfu, &state);
+    let config = BootLoaderConfig::from_linkerfile_blocking(&flash, &dfu, {% if state_paged == "true" %}&state{% else %}&flash{% endif %});
 {%- elsif swap_paged == "true" %}
     // `ACTIVE` и `DFU` — со страницей обмена `SWAP_PAGE_SIZE`, крупнее физической
     // страницы флеша (см. её описание): один мьютекс на оба раздела, как и
@@ -143,10 +145,10 @@ fn main() -> ! {
         BlockingPartition::new(&flash, 0, FLASH_BYTES),
     )));
 
-    let config = BootLoaderConfig::from_linkerfile_blocking(&swap, &swap, &state);
+    let config = BootLoaderConfig::from_linkerfile_blocking(&swap, &swap, {% if state_paged == "true" %}&state{% else %}&flash{% endif %});
 {%- else %}
 
-    let config = BootLoaderConfig::from_linkerfile_blocking(&flash, &flash, &state);
+    let config = BootLoaderConfig::from_linkerfile_blocking(&flash, &flash, {% if state_paged == "true" %}&state{% else %}&flash{% endif %});
 {%- endif %}
     let active_offset = config.active.offset();
     let bl = BootLoader::prepare::<_, _, _, SWAP_BUFFER_SIZE>(config);
@@ -206,7 +208,9 @@ fn main() -> ! {
 /// Цельный `Flash` объявляет страницей самый крупный сектор чипа, а
 /// `Partition::new` паникует на разделе, не кратном странице. На F2/F4/F7
 /// `STATE` лежит в мелком секторе (у F4 — 16 KiB, а с разделом настроек
-/// 64 KiB при странице 128 KiB), поэтому его страница своя. Число посчитано при
+/// 64 KiB при странице 128 KiB), поэтому его страница своя{% if state_paged != "true" %}; у этого чипа
+/// она равна странице цельного `Flash`, и раздел строится прямо над ним, а
+/// равенство держит `const`-assert ниже{% endif %}. Число посчитано при
 /// генерации тем же расчётом, что адреса в `memory.x`, и приезжает переменной
 /// среды `STATE_ERASE_SIZE` из `crates-cross/.cargo/config.toml` — той же, что
 /// читает приложение (`bsp::ota`).
@@ -214,6 +218,14 @@ const STATE_ERASE_SIZE: usize = match usize::from_str_radix(env!("STATE_ERASE_SI
     Ok(size) => size,
     Err(_) => panic!("STATE_ERASE_SIZE в [env] crates-cross/.cargo/config.toml — не число"),
 };
+{%- if state_paged != "true" %}
+
+const _: () = assert!(
+    STATE_ERASE_SIZE == embassy_stm32::flash::MAX_ERASE_SIZE,
+    "STATE_ERASE_SIZE из генерации не равен странице цельного `Flash` \
+     (embassy_stm32::flash::MAX_ERASE_SIZE): `STATE` нужна своя страница (`ErasePage`)"
+);
+{%- endif %}
 {%- if swap_paged == "true" %}
 
 /// Страница обмена `ACTIVE` и `DFU` — крупнее физической страницы флеша.
@@ -244,12 +256,12 @@ const _: () = assert!(
 /// сборки, а не паника на старте bootloader'а.
 const SWAP_BUFFER_SIZE: usize = {{write_size}};
 
-{%- if dfu_bank == "true" %}
+{%- if boot_partitioned == "true" and dfu_bank == "true" %}
 
 /// Размер банка 1 в байтах — столько занимает раздел на весь флеш, из
 /// которого строятся `STATE` и `ACTIVE`.
 const FLASH_BYTES: u32 = embassy_stm32::flash::BANK1_REGION.size;
-{%- else %}
+{%- elsif boot_partitioned == "true" %}
 
 /// Размер всего флеша в байтах — столько занимает раздел на весь флеш, из
 /// которого строятся `STATE`, `ACTIVE` и `DFU`.

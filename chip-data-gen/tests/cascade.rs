@@ -1827,6 +1827,62 @@ fn settings_go_to_small_sectors_with_ota_and_to_the_tail_without() {
     );
 }
 
+/// Своя страница (`ErasePage`) у `STATE` и `CONFIG` нужна, только когда сектор
+/// раздела мельче страницы цельного `Flash`: F2/F4/F7. На чипах с равными
+/// секторами и при разделе настроек в хвосте flash обёртки нет.
+#[test]
+fn erase_page_wrapper_only_where_the_sector_is_smaller_than_the_chip_page() {
+    let ast = compile_script();
+    // (чип, ответы, state_paged, config_paged, boot_partitioned)
+    type Case<'a> = (&'a str, &'a [(&'a str, &'a str)], &'a str, &'a str, &'a str);
+    let cases: [Case; 6] = [
+        // F4: `STATE` в секторе 16 KiB при странице 128 KiB.
+        ("f407ve", &[], "true", "false", "true"),
+        // С разделом настроек: `STATE` в секторе 4 (64 KiB), `CONFIG` — в 16 KiB.
+        ("f407ve", &[("config", "internal")], "true", "true", "true"),
+        // Без OTA `CONFIG` — в хвосте, в секторе 128 KiB, как страница чипа.
+        (
+            "f407ve",
+            &[("config", "internal"), ("ota", "no")],
+            "false",
+            "false",
+            "false",
+        ),
+        // Равные секторы: раздел строится прямо над `Whole`.
+        (
+            "g071rb",
+            &[("config", "internal")],
+            "false",
+            "false",
+            "false",
+        ),
+        // `DFU` в банке 2: `STATE` по-прежнему равен странице чипа.
+        ("h743zg", &[], "false", "false", "false"),
+        // Страница обмена расширена: `ACTIVE`/`DFU` в `ErasePage`, а `STATE` — нет.
+        ("l073rz", &[], "false", "false", "true"),
+    ];
+    for (chip, answers, state, config, boot) in cases {
+        let result = run_cascade_with(&ast, chip, answers)
+            .unwrap_or_else(|err| panic!("{chip} {answers:?}: каскад упал: {err}"));
+        let var = |name: &str| result.vars.get(name).map(String::as_str);
+        assert_eq!(
+            var("state_paged"),
+            Some(state),
+            "{chip} {answers:?}: state_paged"
+        );
+        assert_eq!(
+            var("config_paged"),
+            Some(config),
+            "{chip} {answers:?}: config_paged"
+        );
+        assert_eq!(
+            var("boot_partitioned"),
+            Some(boot),
+            "{chip} {answers:?}: boot_partitioned"
+        );
+    }
+}
+
 /// Значение `watchdog_peripheral`, которое хук выбирает для чипа. У двухъядерных
 /// H745 у каждого ядра свой сторож (`IWDG1` у CM7, `IWDG2` у CM4) — перепутанный
 /// блок собрался бы, но сторож не кормился бы никогда.

@@ -54,7 +54,7 @@
 ## Плейсхолдеры шаблона (`cargo-generate.toml`)
 
 `{{chip}}`, `{{chip_feature}}`, `{{cpu}}`, `{{target}}`, `{{write_size}}`,
-`{{page_size}}`, `{{swap_paged}}`, `{{state_erase_size}}`, `{{config_erase_size}}`, `{{config_store}}`,
+`{{page_size}}`, `{{swap_paged}}`, `{{state_erase_size}}`, `{{state_paged}}`, `{{config_erase_size}}`, `{{config_paged}}`, `{{boot_partitioned}}`, `{{config_store}}`,
 `{{shared_flash}}`, `{{dual_core}}`, `{{bank_mode}}`, `{{erase_zero}}`,
 `{{watchdog_peripheral}}`, `{{cpu_freq_boost}}`, `{{dfu_bank}}`, `{{bank_switch}}`, `{{dual_bank_bit}}` — плейсхолдеры, подставляемые
 Liquid-рендером cargo-generate. Из них в `[placeholders]` объявлены только `ci`, `ota`, `graph`,
@@ -442,6 +442,11 @@ l476rg — Nucleo-L476RG). Теперь размер `BOOTLOADER_STATE` подб
 со страницей своего сектора — она лежит в записи полем `bootloader_state_erase_size`
 (и `config_…` во втором наборе), хук раздаёт её плейсхолдером `state_erase_size`, а
 `assert_embassy_boot_invariants` проверяет кратность всех трёх разделов своей странице.
+`state_paged`/`config_paged` = "true", только если эта страница не равна физической
+(`page_size`): тогда раздел оборачивается в `ErasePage`, иначе строится прямо над `Whole`, а
+`const`-assert (`… == MAX_ERASE_SIZE`) держит равенство. `boot_partitioned` — строит ли
+bootloader хоть один раздел над `BlockingPartition` (`STATE` со своей страницей или `ACTIVE`/`DFU`
+со страницей обмена): только тогда ему нужны `FLASH_BYTES` и обёртки.
 Сам сектор выбирает `place_state` — самый мелкий в резерве, как можно ближе к `ACTIVE`;
 на чипах с равными секторами раскладка от этого не изменилась, на F4 `STATE` — 16 KiB в
 секторе 3 вместо 64 KiB в секторе 4.
