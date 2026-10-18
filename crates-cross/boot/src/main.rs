@@ -136,7 +136,9 @@ fn main() -> ! {
     // `ACTIVE` и `DFU` — со страницей обмена `SWAP_PAGE_SIZE`, крупнее физической
     // страницы флеша (см. её описание): один мьютекс на оба раздела, как и
     // раньше у цельного `Flash`.
-    let swap = Mutex::new(RefCell::new(ErasePage::<_, SWAP_PAGE_SIZE>::new(whole(&flash))));
+    let swap = Mutex::new(RefCell::new(ErasePage::<_, SWAP_PAGE_SIZE>::new(whole(
+        &flash,
+    ))));
 
     let config = BootLoaderConfig::from_linkerfile_blocking(&swap, &swap, &state);
 {%- else %}

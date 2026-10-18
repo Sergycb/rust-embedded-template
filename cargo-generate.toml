@@ -152,7 +152,7 @@ ota = { type = "string", prompt = "OTA (bootloader + разделы ACTIVE/DFU):
 #
 # `external` — настройки на внешней флеши: шаблон кладёт в слот хранилища
 # заглушку (`adapters::flash::Unconnected`), драйвер своей микросхемы
-# подставляете вы (bsp/src/config.rs). `internal` сам выбирает внутреннюю
+# подставляете вы (bsp/src/settings.rs). `internal` сам выбирает внутреннюю
 # EEPROM, если она у чипа есть (L0/L1), иначе раздел во flash. Варианты те же,
 # что у `ota`, — `internal`/`external`/`no`.
 config = { type = "string", prompt = "Хранилище настроек (sequential-storage): internal — EEPROM или flash чипа, external — внешняя флеш", choices = [

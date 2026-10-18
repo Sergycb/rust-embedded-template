@@ -208,7 +208,7 @@ read`: руками пришлось бы сначала найти адрес �
   сектора (`STATE_ERASE_SIZE` — число из генерации, одно на `boot` и `bsp::flash`:
   переменная среды в `crates-cross/.cargo/config.toml`). Над цельным `Flash` на F2/F4/F7 раздел не кратен его странице,
   и `Partition::new` паникует на старте. Так же и `CONFIG` (`CONFIG_ERASE_SIZE`
-  в `bsp::config`): с OTA он может лежать в мелких секторах перед `ACTIVE` —
+  в `bsp::settings`): с OTA он может лежать в мелких секторах перед `ACTIVE` —
   `docs/flash.md`.
 {%- if bank_switch != "" %}
 - Флеш этого чипа с завода двухбанковый, а раскладка одобанковая:
@@ -255,7 +255,7 @@ read`: руками пришлось бы сначала найти адрес �
   вместе; цельный `Flash` туда не дотягивается (`FLASH_SIZE` — сумма банков) —
   `docs/flash.md`.
 {%- endif %}
-- Хранилище настроек — слот под любой async `NorFlash` (`bsp::config`):
+- Хранилище настроек — слот под любой async `NorFlash` (`bsp::settings`):
   внутренний флеш, EEPROM L0/L1 (`adapters::eeprom::Eeprom`) или внешняя флеш
   (драйвер подставляет проект, в шаблоне — заглушка
   `adapters::flash::Unconnected`). EEPROM под хранилищем инвертирована: без

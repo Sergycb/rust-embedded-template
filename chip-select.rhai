@@ -235,7 +235,7 @@ fn plan(m, erase_zero, wants, limits) {
     // начале стоит таблица векторов приложения. С OTA — там, где его положил
     // chip-data-gen (`config_ota_settings_*`): в мелких секторах перед ACTIVE,
     // если так ACTIVE больше (F2/F4/F7), иначе тоже в хвосте. Страница — сектор
-    // под разделом (`adapters::flash::ErasePage` в bsp::config).
+    // под разделом (`adapters::flash::ErasePage` в bsp::settings).
     let settings_key = if ext_ota {
         "ext_cfg_settings_"
     } else if ota {
@@ -410,7 +410,7 @@ if !wants_ota {
 // F4/F7/H7 — 256 KiB. Поэтому по умолчанию «нет», а цена печатается ниже — до
 // того, как пользователь увидит собранный проект.
 //
-// Где лежат настройки (`config_store`, на него смотрит bsp::config):
+// Где лежат настройки (`config_store`, на него смотрит bsp::settings):
 //   "flash"    — раздел во внутреннем флеше (как описано выше);
 //   "eeprom"   — внутренняя EEPROM, если она у чипа есть (L0/L1): флеш не
 //                тратится вовсе, и это единственное место под настройки на
@@ -760,7 +760,7 @@ if variable::is_set("write_size") {
             print("Раздел настроек не выделен: memory.x вы заполняете сами (задан write_size)");
             print("  добавьте регион CONFIG и символы __config_start/__config_end вручную");
         }
-        file::delete("crates-cross/bsp/src/config.rs");
+        file::delete("crates-cross/bsp/src/settings.rs");
     }
     // Общий объект `Flash` в bsp нужен OTA во внутреннем flash и настройкам во
     // флеше или EEPROM; внешней флеши он не нужен (см. ту же переменную ниже).
@@ -858,7 +858,7 @@ if variable::is_set("write_size") {
     } else if config && store == "eeprom" {
         print("Настройки — во внутренней EEPROM чипа: флеш под них не тратится");
     } else if config && store == "external" {
-        print("Настройки — на внешней флеши: подставьте свой драйвер в crates-cross/bsp/src/config.rs");
+        print("Настройки — на внешней флеши: подставьте свой драйвер в crates-cross/bsp/src/settings.rs");
         print("  (пока там заглушка adapters::flash::Unconnected — проект собирается, настройки не сохраняются)");
     }
     if wants_graph && !graph {
@@ -922,7 +922,7 @@ if variable::is_set("write_size") {
     variable::set("signed", if signed { "true" } else { "false" });
     variable::set("graph", if graph { "true" } else { "false" });
     if !config {
-        file::delete("crates-cross/bsp/src/config.rs");
+        file::delete("crates-cross/bsp/src/settings.rs");
     }
 
     // База flash одна на оба режима: и `__bootloader_*`, и `__config_*`
@@ -935,7 +935,7 @@ if variable::is_set("write_size") {
         config_region.push("    CONFIG            (rx)  : ORIGIN = " + m[settings_key + "origin"] + ", LENGTH = " + m[settings_key + "length"]);
         config_section = [
             "",
-            "/* Раздел настроек (crates-cross/bsp/src/config.rs, sequential-storage). */",
+            "/* Раздел настроек (crates-cross/bsp/src/settings.rs, sequential-storage). */",
             "/* Смещения от базы flash: embassy-stm32 адресует flash от неё. */",
             "__config_start = ORIGIN(CONFIG) - " + flash_base + ";",
             "__config_end   = ORIGIN(CONFIG) + LENGTH(CONFIG) - " + flash_base + ";",

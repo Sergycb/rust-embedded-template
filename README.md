@@ -460,7 +460,7 @@ docs/ota.md.
 Выбрали хранилище — `Board` отдаёт поле `settings`: `adapters::settings::Settings`
 (тестируется на хосте) поверх `sequential-storage`, пары «ключ — значение»,
 переживающие и перезапуск, и обновление прошивки. В проект также попадает
-`crates-cross/bsp/src/config.rs` — тонкая обвязка, которая приносит хранилищу
+`crates-cross/bsp/src/settings.rs` — тонкая обвязка, которая приносит хранилищу
 границы раздела `CONFIG` из `memory.x` и даёт ему псевдоним типа для задачи.
 
 ```rust
@@ -478,7 +478,7 @@ if let Some(raw) = board.settings.read(KEY_CALIBRATION, &mut scratch).await? {
 
 Кроме `yes` есть `external` — настройки на внешней флеши: в шаблоне на месте её
 драйвера заглушка (`adapters::flash::Unconnected`), а свою микросхему вы подставляете в
-`crates-cross/bsp/src/config.rs` — годится любой драйвер с `NorFlash`. А на L0/L1 `yes`
+`crates-cross/bsp/src/settings.rs` — годится любой драйвер с `NorFlash`. А на L0/L1 `yes`
 сам кладёт настройки во внутреннюю EEPROM, не тратя флеш. Подробности — docs/flash.md.
 
 По умолчанию раздел выключен, и это не случайность: во флеше он стоит **две страницы стирания**.

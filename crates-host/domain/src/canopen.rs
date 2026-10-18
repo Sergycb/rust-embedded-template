@@ -120,7 +120,7 @@ pub fn dictionary() -> Dictionary {
 // struct`). Строит её compose-site:
 //
 // ```ignore
-// fragments: [::domain::CANOPEN_FRAG<bsp::can::Can, bsp::config::Settings> as CANOPEN
+// fragments: [::domain::CANOPEN_FRAG<bsp::can::Can, bsp::settings::Settings> as CANOPEN
 //                 = ::domain::canopen::CanOpenWiring { bus: board.can, node_id: 1,
 //                       dictionary: ::domain::canopen::dictionary(),
 //                       settings: board.settings, persist: true }];

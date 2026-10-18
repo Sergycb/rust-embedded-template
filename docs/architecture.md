@@ -79,7 +79,7 @@ supervisor-графы, watchdog). Вся остальная логика — в 
 ради асинхронного API того же `sequential-storage`). Та, которой
 нужны `embassy_stm32::peripherals`,
 линкерный символ или регистр, — в `crates-cross/bsp`: сторож над IWDG (`bsp::wdg`) и
-обвязка, строящая разделы флеша из символов `memory.x` (`bsp::flash`, `bsp::config`) и
+обвязка, строящая разделы флеша из символов `memory.x` (`bsp::flash`, `bsp::settings`) и
 дающая им псевдонимы для задач.
 
 Цифры узла — тоже в `domain`: `domain::heartbeat::WATCHDOG` фрагмент называет

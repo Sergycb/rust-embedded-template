@@ -36,7 +36,7 @@ cortex-m = { workspace = true }
 {%- if shared_flash == "true" or ota == "true" %}
 embassy-sync = { workspace = true }
 # `BlockingAsync` — асинхронный вид блокирующего флеша под `Partition`,
-# `FirmwareUpdater` и `sequential-storage` (src/ota.rs, src/config.rs); с OTA —
+# `FirmwareUpdater` и `sequential-storage` (src/ota.rs, src/settings.rs); с OTA —
 # ещё и имя типа раздела в псевдониме `Ota`.
 embassy-embedded-hal = { workspace = true }
 {%- endif %}

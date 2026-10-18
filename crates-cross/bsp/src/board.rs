@@ -63,7 +63,7 @@ pub struct Board {
     /// Настройки, переживающие перезапуск и обновление прошивки:
     /// `adapters::settings` поверх {% if config_store == "eeprom" %}внутренней EEPROM{% elsif config_store == "external" %}внешней флеши (драйвер — `bsp/src/{% if ota == "true" and ota_store == "external" %}external{% else %}config{% endif %}.rs`){% else %}раздела `CONFIG` во флеше{% endif %}.
     /// Формат значений выбирает проект.
-    pub settings: crate::config::Settings,
+    pub settings: crate::settings::Settings,
 {%- endif %}
 {%- if interface == "uart" %}
     /// UART под узлом протокола ({{protocol}}) — заглушка `bsp::serial::Serial`,
@@ -202,7 +202,7 @@ impl Board {
             partitions: crate::flash::partitions({% if ota_store == "external" %}external{% else %}flash{% endif %}),
 {%- endif %}
 {%- if config == "true" %}
-            settings: crate::config::new({% if config_store != "external" %}flash.shared{% elsif ota == "true" and ota_store == "external" %}external{% endif %}),
+            settings: crate::settings::new({% if config_store != "external" %}flash.shared{% elsif ota == "true" and ota_store == "external" %}external{% endif %}),
 {%- endif %}
 {%- if interface == "uart" %}
             serial: crate::serial::new(r.serial),

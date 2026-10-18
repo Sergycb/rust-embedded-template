@@ -15,9 +15,6 @@ pub mod can;
 {%- if cpu_freq_boost == "true" %}
 pub mod clocks;
 {%- endif %}
-{%- if config == "true" %}
-pub mod config;
-{%- endif %}
 {%- if ota == "true" and ota_store == "external" %}
 pub mod external;
 {%- endif %}
@@ -34,6 +31,9 @@ pub mod rng;
 {%- endif %}
 {%- if interface == "uart" %}
 pub mod serial;
+{%- endif %}
+{%- if config == "true" %}
+pub mod settings;
 {%- endif %}
 {%- if interface == "usb" %}
 pub mod usb;

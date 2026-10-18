@@ -59,7 +59,10 @@ unsafe extern "C" {
 /// Если раздел не годится под `sequential-storage` — см.
 /// `adapters::settings::Settings::new`.
 pub(crate) fn new(flash: &'static FlashMutex) -> Settings {
-    adapters::settings::Settings::new(BlockingAsync::new(ErasePage::new(whole(flash))), flash_range())
+    adapters::settings::Settings::new(
+        BlockingAsync::new(ErasePage::new(whole(flash))),
+        flash_range(),
+    )
 }
 
 /// Границы раздела по символам линкера.
@@ -213,7 +216,7 @@ pub type Settings = adapters::settings::Settings<ExternalFlash>;
 /// Собирает хранилище над внешней флешью. Сейчас — над заглушкой: о том, что
 /// драйвер не подставлен, говорит одна строка в лог при старте.
 pub(crate) fn new() -> Settings {
-    defmt::warn!("bsp: внешняя флеш не подключена — настройки не сохраняются (bsp/src/config.rs)");
+    defmt::warn!("bsp: внешняя флеш не подключена — настройки не сохраняются (bsp/src/settings.rs)");
     adapters::settings::Settings::new(
         adapters::flash::Unconnected,
         0..adapters::flash::Unconnected::CAPACITY,

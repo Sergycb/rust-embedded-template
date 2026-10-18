@@ -229,7 +229,7 @@ supervisor_graph! {
         // `board.settings`: в нём узел сохраняет объекты по команде `save` и адрес,
         // назначенный по LSS (ключи `domain::canopen::{OBJECTS_KEY, NODE_ID_KEY}`).{% else %} Раздела
         // настроек нет — объекты и адрес не сохраняются.{% endif %}
-        ::domain::CANOPEN_FRAG<bsp::can::Can, {% if config == "true" %}bsp::config::Settings{% else %}::adapters::settings::Unavailable{% endif %}> as CANOPEN =
+        ::domain::CANOPEN_FRAG<bsp::can::Can, {% if config == "true" %}bsp::settings::Settings{% else %}::adapters::settings::Unavailable{% endif %}> as CANOPEN =
             ::domain::canopen::CanOpenWiring {
                 bus: board.can,
                 node_id: 1,

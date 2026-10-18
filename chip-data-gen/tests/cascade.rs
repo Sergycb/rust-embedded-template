@@ -1653,7 +1653,7 @@ fn settings_avoid_flash_that_erases_to_zero() {
         assert!(
             result
                 .deleted
-                .contains(&"crates-cross/bsp/src/config.rs".to_string()),
+                .contains(&"crates-cross/bsp/src/settings.rs".to_string()),
             "{suffix}: модуль настроек должен быть удалён, а удалено: {:?}",
             result.deleted
         );
