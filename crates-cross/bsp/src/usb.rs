@@ -5,9 +5,6 @@ use embassy_usb::Config;
 use embassy_usb::class::cdc_acm::State;
 use static_cell::{ConstStaticCell, StaticCell};
 
-/// USB-драйвер платы — пока заглушка, до USB-блока чипа (см. модуль).
-pub type UsbDriver = Unconnected;
-
 /// Идентификаторы устройства, которые увидит хост. `0xC0DE:0xCAFE` — пара из
 /// примеров `embassy-usb`, не зарегистрированная: для своего изделия нужны
 /// свои VID/PID.
@@ -21,6 +18,9 @@ const PID: u16 = 0xCAFE;
 // не реализует (внутри ссылка на `RefCell`).
 static BUFFERS: ConstStaticCell<CdcBuffers> = ConstStaticCell::new(CdcBuffers::new());
 static CDC_STATE: StaticCell<State<'static>> = StaticCell::new();
+
+/// USB-драйвер платы — пока заглушка, до USB-блока чипа (см. модуль).
+pub type UsbDriver = Unconnected;
 
 /// USB платы: устройство для узла `USB` и поток CDC под протоколом.
 pub type Usb = adapters::usb::Usb<UsbDriver>;

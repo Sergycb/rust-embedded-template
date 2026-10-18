@@ -6,7 +6,7 @@
 //! «`Board` отдаёт объекты, а не периферию»).
 
 use defmt::info;
-{%- if interface != "none" %}
+{%- if has_resources == "true" %}
 
 // Типы групп `resources.rs`: `split_resources!` раскрывается в них по именам, а
 // перечислять группы поимённо — значит править этот список с каждой новой.
@@ -53,11 +53,14 @@ pub struct Board {
     /// Сведения о чипе: имя, заводской номер, объём flash, частота `sys`.
     pub spec: ChipSpec,
 {%- if ota == "true" %}
-    /// Разделы обновления прошивки: `DFU`, `BOOTLOADER_STATE` и размер
-    /// `ACTIVE`, собранные из символов `memory.x` (`bsp::flash`). Алгоритм
-    /// обновления над ними — не железо: адаптер и узел OTA собирает `app`
-    /// ({% if graph == "true" %}`fragments:` в `crates-cross/app/src/graph.rs`{% else %}задача `ota_task` в `main.rs`{% endif %}).
-    pub partitions: crate::flash::Partitions,
+    /// Адаптер обновления прошивки — порт `FirmwareUpdate` поверх разделов
+    /// `DFU`/`BOOTLOADER_STATE`, собранных из символов `memory.x`
+    /// (`bsp::ota`). Алгоритм обновления над портом — в `domain::ota`.
+    /// {% if graph == "true" %}Уезжает в узел `OTA` графа (`fragments:` в `crates-cross/app/src/graph.rs`){% else %}Уезжает в задачу узла, которую спавнит `main` (`domain::ota::task_standalone`){% endif %}.
+    pub updater: crate::ota::Updater,
+    /// Канал доставки образа — реализация `ports::ImageSource`; заглушка
+    /// (`bsp::ota::Link`), пока проект не подставит свой транспорт.
+    pub ota_link: crate::ota::Link,
 {%- endif %}
 {%- if config == "true" %}
     /// Настройки, переживающие перезапуск и обновление прошивки:
@@ -150,18 +153,16 @@ impl Board {
         let clocks = embassy_stm32::rcc::clocks(&p.RCC);
         info!("bsp: board initialized, clocks {}", clocks);
 
-{%- if shared_flash == "true" %}
-        // Периферия разбирается здесь: `FLASH` уходит в общий замок (его
-        // делят OTA и настройки), остальное — в группы `resources.rs`.
-        let flash = crate::flash::chip(p.FLASH);
-{%- endif %}
-{%- if interface != "none" %}
-        // Блоки выбранного интерфейса{% if rng_irq != "" and interface == "tcp" or rng_irq != "" and interface == "udp" %} и RNG{% endif %}, разложенные по группам `resources.rs`
-        // (docs/resources.md): каждая группа уходит в конструктор своего
+{%- if has_resources == "true" %}
+        // Вся периферия разбирается здесь, по группам `resources.rs`
+        // (docs/resources.md), и каждая группа уходит в конструктор своего
         // модуля. Выводы и DMA-каналы платы добавляются в группы — наружу из
         // `bsp` по-прежнему уходит не периферия, а готовый объект, поле
         // `Board`, реализующее порт из `ports`.
         let r = split_resources!(p);
+{%- if shared_flash == "true" %}
+        let {% if dfu_bank == "true" %}(flash, dfu_bank){% else %}flash{% endif %} = crate::flash::new(r.flash.flash);
+{%- endif %}
 {%- else %}
         // Место для распиновки платы: заполните группы в `resources.rs`
         // (docs/resources.md), добавьте `use crate::resources::*;` и `let r =
@@ -199,10 +200,11 @@ impl Board {
                 sys_hz,
             },
 {%- if ota == "true" %}
-            partitions: crate::flash::partitions({% if ota_store == "external" %}external{% else %}flash{% endif %}),
+            updater: crate::ota::updater({% if ota_store == "external" %}external{% elsif dfu_bank == "true" %}flash, dfu_bank{% else %}flash{% endif %}),
+            ota_link: crate::ota::link(),
 {%- endif %}
 {%- if config == "true" %}
-            settings: crate::settings::new({% if config_store != "external" %}flash.shared{% elsif ota == "true" and ota_store == "external" %}external{% endif %}),
+            settings: crate::settings::new({% if config_store != "external" %}flash{% elsif ota == "true" and ota_store == "external" %}external{% endif %}),
 {%- endif %}
 {%- if interface == "uart" %}
             serial: crate::serial::new(r.serial),
@@ -217,7 +219,7 @@ impl Board {
             usb: crate::usb::new(r.usb),
 {%- endif %}
 {%- if graph == "true" %}
-            watchdog: crate::wdg::UnarmedBoardWatchdog::new(p.{{watchdog_peripheral}}),
+            watchdog: crate::wdg::UnarmedBoardWatchdog::new(r.watchdog.iwdg),
 {%- endif %}
         }
     }

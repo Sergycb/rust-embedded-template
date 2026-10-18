@@ -60,24 +60,6 @@ pub const HW_TIMEOUT_US: u32 = match u32::from_str_radix(env!("WATCHDOG_TIMEOUT_
     Ok(us) => us,
     Err(_) => panic!("WATCHDOG_TIMEOUT_US в .cargo/config.toml — не число"),
 };
-
-/// Сторож этой платы, уже взведённый: блок IWDG выбранного чипа и таймаут
-/// [`HW_TIMEOUT_US`] — то, что граф задач называет в блоке `watchdog:`.
-///
-/// Псевдоним, а не голый [`Iwdg`] в графе, по общему правилу шаблона: тип,
-/// уезжающий в `#[embassy_executor::task]`, приходит из `bsp` под именем —
-/// иначе имя блока (`IWDG`, `IWDG1`, `IWDG2` — зависит от чипа) пришлось бы
-/// писать в `app`, где про чип не знают.
-pub type BoardWatchdog = Iwdg<embassy_stm32::peripherals::{{watchdog_peripheral}}, HW_TIMEOUT_US, Armed>;
-
-/// Он же до взвода — то, что лежит полем [`crate::Board`] и что
-/// [`Iwdg::arm`] превращает в [`BoardWatchdog`].
-///
-/// Разными типами, а не флагом внутри одного, потому что разница здесь
-/// смысловая: [`HardwareWatchdog`] реализован только у взведённого, значит
-/// невзведённый графу не отдать — «сторож есть, а система не защищена»
-/// перестаёт быть достижимым состоянием.
-pub type UnarmedBoardWatchdog = Iwdg<embassy_stm32::peripherals::{{watchdog_peripheral}}, HW_TIMEOUT_US, Disarmed>;
 {%- endif %}
 
 /// Нижняя граница: короче этого `IndependentWatchdog` считает окно
@@ -106,6 +88,27 @@ const MAX_RELOAD: u32 = 0xFFF;
 /// 40 кГц предел 26.2 с, то есть таймаут 28 с проходил проверку и падал
 /// внутри embassy.
 const MAX_TIMEOUT_US: u32 = 1_000_000 * (MAX_RELOAD + 1) / (LSI_FREQ.0 / MAX_PRESCALER);
+
+{%- if graph == "true" %}
+
+/// Сторож этой платы, уже взведённый: блок IWDG выбранного чипа и таймаут
+/// [`HW_TIMEOUT_US`] — то, что граф задач называет в блоке `watchdog:`.
+///
+/// Псевдоним, а не голый [`Iwdg`] в графе, по общему правилу шаблона: тип,
+/// уезжающий в `#[embassy_executor::task]`, приходит из `bsp` под именем —
+/// иначе имя блока (`IWDG`, `IWDG1`, `IWDG2` — зависит от чипа) пришлось бы
+/// писать в `app`, где про чип не знают.
+pub type BoardWatchdog = Iwdg<embassy_stm32::peripherals::{{watchdog_peripheral}}, HW_TIMEOUT_US, Armed>;
+
+/// Он же до взвода — то, что лежит полем [`crate::Board`] и что
+/// [`Iwdg::arm`] превращает в [`BoardWatchdog`].
+///
+/// Разными типами, а не флагом внутри одного, потому что разница здесь
+/// смысловая: [`HardwareWatchdog`] реализован только у взведённого, значит
+/// невзведённый графу не отдать — «сторож есть, а система не защищена»
+/// перестаёт быть достижимым состоянием.
+pub type UnarmedBoardWatchdog = Iwdg<embassy_stm32::peripherals::{{watchdog_peripheral}}, HW_TIMEOUT_US, Disarmed>;
+{%- endif %}
 
 /// Сторож заряжен, но не запущен: регистры заполнены, счётчик стоит.
 #[derive(Debug)]

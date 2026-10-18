@@ -1062,7 +1062,38 @@ fn external_ota_places_settings_where_the_project_asked() {
     );
     let app = written(&outside, "crates-cross/app/memory.x");
     assert!(region_origin(&app, "CONFIG").is_none(), "{app}");
-    assert!(app.contains("__config_start = 0x000A0000;"), "{app}");
+    // Границы раздела уезжают числами в `[env]`, а не символами линкера.
+    assert!(!app.contains("__config_start"), "{app}");
+    assert_eq!(
+        outside.vars.get("config_start").map(String::as_str),
+        Some("655360"),
+        "0x000A0000"
+    );
+    assert_eq!(
+        outside.vars.get("config_end").map(String::as_str),
+        Some("917504"),
+        "0x000A0000 + 256K"
+    );
+}
+
+/// Размеры разделов уезжают в `[env]` числами, и `ACTIVE_LEN` совпадает с
+/// `ACTIVE` в `memory.x`: читать их через `unsafe extern` незачем.
+#[test]
+fn partition_bounds_travel_as_numbers() {
+    let result = run_chip_with(&compile_script(), "f407ve", &[("config", "internal")])
+        .expect("каскад не должен падать");
+    let boot = written(&result, "crates-cross/boot/memory.x");
+    let active = region_length(&boot, "ACTIVE").expect("ACTIVE в memory.x");
+    assert_eq!(
+        result.vars.get("active_len").map(String::as_str),
+        Some(active.to_string().as_str())
+    );
+    let app = written(&result, "crates-cross/app/memory.x");
+    let config = region_origin(&app, "CONFIG").expect("CONFIG в memory.x");
+    let start: u64 = result.vars["config_start"].parse().expect("число");
+    let config = u64::from_str_radix(config.trim_start_matches("0x"), 16).expect("адрес");
+    assert_eq!(start, config - 0x0800_0000);
+    assert!(!app.contains("__config_start"), "{app}");
 }
 
 /// Внутренняя схема не помещается, внешняя — да: хук подсказывает

@@ -74,7 +74,7 @@ supervisor-графы, watchdog). Вся остальная логика — в 
 параметром), лежит в `crates-host/adapters` и тестируется на хосте на фейке:
 `adapters::ota` (поверх `embassy-boot`), `adapters::settings` (поверх
 `sequential-storage`) и `adapters::flash` (общий блокирующий `Flash` под замком —
-`whole` и `ErasePage`; раздел на весь флеш (`BlockingPartition`) и async-вид
+`ErasePage`; раздел на весь флеш (`BlockingPartition`) и async-вид
 (`BlockingAsync`) даёт `embassy-embedded-hal`,
 ради асинхронного API того же `sequential-storage`). Та, которой
 нужны `embassy_stm32::peripherals`,
@@ -94,7 +94,7 @@ compose-site остаётся правое: таймаут узла плюс `WA
 
 **Типы ресурсных слотов** узла OTA — параметры фрагмента: `name: OTA_FRAG<S, F>`,
 а compose-site подставляет их в `fragments:` угловыми скобками
-(`::domain::OTA_FRAG<crate::Link, crate::Updater>`). Слот — `static`, тип ему
+(`::domain::OTA_FRAG<bsp::ota::Link, bsp::ota::Updater>`). Слот — `static`, тип ему
 нужен, а конкретный тип знает только `cross`; generic-`static` не бывает, и
 параметр — единственный способ фрагмента назвать тип, которого он не видит.
 Bound'ов у параметров нет намеренно: их держит сигнатура `ota::run`, и rustc
@@ -222,15 +222,15 @@ let board = bsp::Board::new();
 теста. Забыть `arm()` нельзя: `HardwareWatchdog` реализован только у
 запущенного типа, а блок `watchdog:` требует именно его (`docs/watchdog.md`).
 
-Кроме сторожа в граф уезжает поле `partitions` (`bsp::flash::Partitions`: разделы
-`DFU` и `BOOTLOADER_STATE` и размер `ACTIVE`) — единственное, что про OTA знает
-плата: алгоритм обновления железа не касается. Compose-site собирает из него вход
-узла, `domain::ota::OtaWiring`, прямо в `fragments:`: адаптер обновления
-`adapters::ota::Updater` (`updater()` в `main.rs`) и канал доставки образа
-(`link()`, в шаблоне — заглушка `adapters::ota::Unconnected`, ждёт заголовок
-вечно). Оба по общему правилу — адаптеры, реализующие порты (`FirmwareUpdate`,
-`ImageSource`); вместимость раздела адаптер отдаёт через порт же
-(`FirmwareUpdate::capacity`). Версия образа — свойство прошивки, а не
+Кроме сторожа в граф уезжают поля `updater` (`bsp::ota::Updater`) и `ota_link`
+(`bsp::ota::Link`), и compose-site собирает из них вход узла,
+`domain::ota::OtaWiring`, прямо в `fragments:` — сам `bsp` про `domain` не знает.
+Оба по общему правилу — адаптеры, реализующие порты (`FirmwareUpdate`,
+`ImageSource`): `bsp` строит `Updater` из своих разделов флеша (границы — из
+линкерных символов и `[env]`), логика приёма и применения образа живёт в
+`domain::ota` и видит только порты. Канал в шаблоне — заглушка
+`adapters::ota::Unconnected`, ждёт заголовок вечно. Вместимость раздела адаптер
+отдаёт через порт же (`FirmwareUpdate::capacity`). Версия образа — свойство прошивки, а не
 платы: её задаёт приложение (`crates-cross/app/src/image.rs`) режимом
 узла `Mode::Signed` прямо в `fragments:`; ключ подписи — в
 bootloader'е (`crates-cross/boot`), который подпись и проверяет. Заглушка

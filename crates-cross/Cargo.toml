@@ -25,8 +25,8 @@ rust-version = "1.96"
 # `-D warnings` в `cargo xtask lint cross` превращал бы предупреждение в ошибку.
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(rust_analyzer)"] }
 # `warn`, а не `deny`, как в корневом workspace: unsafe в `crates-cross` есть
-# и оправдан — прыжок в образ в `boot`, поллинг исполнителя в `app`, блок
-# линкерных символов в `bsp/src/flash.rs`, регистры option bytes, которых нет
+# и оправдан — прыжок в образ в `boot`, поллинг исполнителя в `app`,
+# `app/src/image.rs` (имя символа), регистры option bytes, которых нет
 # в `stm32-metapac` (`bsp/src/clocks.rs`, только H723/725/730/733/735). Ровно на
 # этих местах стоит `#[expect(unsafe_code)]` с объяснением, и это весь
 # unsafe этого воркспейса, который видит clippy (проверено прогоном с
@@ -115,7 +115,7 @@ embassy-executor = { version = "0.10.0", features = [
 ] }
 embassy-boot         = { version = "0.7.0" }
 embassy-boot-stm32 = { version = "0.8.0" }
-# Имя типа раздела (`Partition`) для псевдонима `bsp::flash::Dfu`:
+# Имя типа раздела (`Partition`) для псевдонима раздела `DFU` в `bsp::ota`:
 # embassy-boot его не реэкспортирует. Версия та же, что тянет embassy-boot.
 embassy-embedded-hal = { version = "0.6.0" }
 # Один `Flash` на весь чип делится между OTA и настройками, а обеим нужен

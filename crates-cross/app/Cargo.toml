@@ -38,12 +38,10 @@ panic-probe = { workspace = true, features = ["print-defmt"] }
 panic-persist = { workspace = true }
 bsp = { workspace = true }
 domain = { workspace = true }
-{%- if protocol != "none" or ota == "true" %}
+{%- if protocol != "none" %}
 # Транспорты протоколов (`adapters::modbus::Rtu`, `adapters::cobs::Cobs`) вокруг
 # интерфейса платы — их собирает граф: `bsp` отдаёт поток байтов, а какой
-# протокол поверх него, решает приложение. И адаптер обновления прошивки
-# (`adapters::ota::Updater`) над разделами платы: алгоритм обновления — не
-# железо, `bsp` отдаёт только разделы.
+# протокол поверх него, решает приложение.
 adapters = { workspace = true }
 {%- endif %}
 shadow-rs = { workspace = true }

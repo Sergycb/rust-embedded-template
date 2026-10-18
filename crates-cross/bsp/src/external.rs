@@ -33,30 +33,27 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::mutex::Mutex;
 use static_cell::StaticCell;
 
-/// Драйвер внешней флеши — замените на свой.
-pub type ExternalFlash = adapters::flash::Unconnected;
-
 /// Страница обмена, под которую посчитана раскладка; то же число, что в
 /// bootloader'е, — переменная среды `EXT_PAGE_SIZE` из `[env]`
 /// `crates-cross/.cargo/config.toml`. С драйвером, чьё стирание её не делит,
 /// страница обмена `embassy-boot` выросла бы, `ACTIVE` перестал бы быть ей
 /// кратен, и bootloader паниковал бы в `assert_partitions` на каждом старте.
-const EXT_PAGE_SIZE: usize = adapters::flash::size_from_env(option_env!("EXT_PAGE_SIZE"), 0);
+const EXT_PAGE_SIZE: usize = match usize::from_str_radix(env!("EXT_PAGE_SIZE"), 10) {
+    Ok(size) => size,
+    Err(_) => panic!("EXT_PAGE_SIZE в [env] crates-cross/.cargo/config.toml — не число"),
+};
 
 // Вдобавок к проверке в bootloader'е: у приложения свой тип драйвера
 // (асинхронный), и расходиться они могут.
 const _: () = assert!(
-    EXT_PAGE_SIZE != 0
-        && EXT_PAGE_SIZE.is_multiple_of(adapters::flash::erase_size::<ExternalFlash>()),
+    EXT_PAGE_SIZE.is_multiple_of(adapters::flash::erase_size::<ExternalFlash>()),
     "стирание драйвера внешней флеши не делит страницу обмена (EXT_PAGE_SIZE)"
 );
 
-/// Подставлен ли драйвер вместо заглушки — для target-тестов, которым без
-/// микросхемы проверять нечего.
-#[must_use]
-pub fn connected() -> bool {
-    TypeId::of::<ExternalFlash>() != TypeId::of::<adapters::flash::Unconnected>()
-}
+static EXTERNAL: StaticCell<ExternalMutex> = StaticCell::new();
+
+/// Драйвер внешней флеши — замените на свой.
+pub type ExternalFlash = adapters::flash::Unconnected;
 
 /// Внешняя флеш под замком — то, над чем строятся её разделы.
 ///
@@ -68,7 +65,12 @@ pub type ExternalMutex = Mutex<NoopRawMutex, ExternalFlash>;
 pub type ExternalPartition =
     embassy_embedded_hal::flash::partition::Partition<'static, NoopRawMutex, ExternalFlash>;
 
-static EXTERNAL: StaticCell<ExternalMutex> = StaticCell::new();
+/// Подставлен ли драйвер вместо заглушки — для target-тестов, которым без
+/// микросхемы проверять нечего.
+#[must_use]
+pub fn connected() -> bool {
+    TypeId::of::<ExternalFlash>() != TypeId::of::<adapters::flash::Unconnected>()
+}
 
 /// Собирает драйвер. Сейчас — заглушку: о том, что драйвер не подставлен,
 /// говорит одна строка в лог при старте.

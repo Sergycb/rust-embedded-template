@@ -52,7 +52,7 @@ F2/F4/F7 (у F4 16, 64 и 128 KiB): в мелких секторах можно 
   `Partition::new` из `embassy-embedded-hal` паникует, если смещение или размер
   не кратны `ERASE_SIZE`. Ровно так был сломан `BOOTLOADER_STATE` у всех 223
   чипов F2/F4/F7 с OTA: он лежал в мелком секторе над цельным `Flash` со
-  страницей 128 KiB — и bootloader, и приложение (`bsp::flash::partitions`) падали при
+  страницей 128 KiB — и bootloader, и приложение (`bsp::ota::updater`) падали при
   первом запуске. `template-check` этого не видит (он собирает, а не
   запускает), поэтому та же проверка стоит в `chip-data-gen`
   (`assert_embassy_boot_invariants`) — при генерации, а не на плате.
@@ -66,11 +66,11 @@ F2/F4/F7 (у F4 16, 64 и 128 KiB): в мелких секторах можно 
   в сектор 4 — см. раздел про `CONFIG` ниже.
 - **`STATE_ERASE_SIZE` — одно число на `boot` и `bsp::flash`** из плейсхолдера
   `state_erase_size`: оно едет переменной среды в `[env]`
-  `crates-cross/.cargo/config.toml`, и оба крейта читают её своим `option_env!`
-  (`adapters::flash::size_from_env`) — разделу в bootloader'е и в приложении
-  расходиться нельзя. Плейсхолдер бывает не числом, а выражением
-  (`embassy_stm32::flash::MAX_ERASE_SIZE`, страница цельного `Flash`) — тогда
-  переменной нет, и оба крейта берут это умолчание. При ручной раскладке (`--define write_size=...`) хук
+  `crates-cross/.cargo/config.toml`, и оба крейта читают её через `env!` —
+  разделу в bootloader'е и в приложении расходиться нельзя. Так же едут
+  `ACTIVE_LEN` (размер `ACTIVE` — вместо чтения линкерных символов через
+  `unsafe extern`), `SWAP_PAGE_SIZE`, `EXT_PAGE_SIZE` и границы раздела настроек
+  `CONFIG_START`/`CONFIG_END`. При ручной раскладке (`--define write_size=...`) хук
   подставляет страницу цельного `Flash` — на F2/F4/F7 туда надо вписать размер
   сектора `STATE` руками.
 - **Страница обмена `ACTIVE`/`DFU` бывает крупнее физической — ради `STATE`.**
@@ -133,9 +133,9 @@ GD25, MX25, IS25, SST26…), шаблон не знает и не гадает: 
   половины отдаются в задачи, а аргументы задач embassy обязаны быть `'static`.
 - **К общему флешу ходят через раздел на весь флеш.** `bsp::flash::FlashMutex` —
   псевдоним на `Mutex<NoopRawMutex, RefCell<…>>` (`RefCell` нужен блокирующему
-  `Mutex` embassy), а `adapters::flash::whole` даёт над ним
-  `embassy_embedded_hal::flash::partition::BlockingPartition` с нулевым смещением
-  (`bsp::flash::Whole`): операции идут под замком, по одной. `BlockingPartition::new`
+  `Mutex` embassy), а над ним потребитель строит на месте
+  `embassy_embedded_hal::flash::partition::BlockingPartition::new(flash, 0, flash::SIZE)`
+  (`bsp::flash::Whole`) — раздел с нулевым смещением: операции идут под замком, по одной. `BlockingPartition::new`
   паникует, если объём флеша не кратен `ERASE_SIZE`; у STM32 он всегда кратен
   самому крупному сектору, и `const`-assert в `bsp::flash` и `boot` проверяет это
   при сборке (банк 2 на чипе с `dfu_bank` — отдельный раздел). Потребители —
@@ -273,8 +273,7 @@ NOR. Во внутреннем флеше остаются bootloader и `ACTIVE
   `ACTIVE` не начинается посреди 128-килобайтного сектора.
 - **Снаружи:** `STATE`, `DFU` и место под настройки — подряд с нуля, каждый
   кратен `ext_align` = max(страница обмена, 64 KiB). Символы
-  `__bootloader_state_*`/`__bootloader_dfu_*` (и `__config_*` при
-  `config=external`) в `memory.x` — смещения от начала внешней флеши, без
+  `__bootloader_state_*`/`__bootloader_dfu_*` в `memory.x` — смещения от начала внешней флеши, без
   регионов в `MEMORY`: в адресном пространстве МК её нет.
 - **Страница обмена** (`ext_page_size`, переменная среды `EXT_PAGE_SIZE` в
   `[env]` `crates-cross/.cargo/config.toml`, общая у `boot` и `bsp::external`) — max(крупнейший сектор чипа, 4 KiB). `embassy-boot`

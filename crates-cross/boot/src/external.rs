@@ -12,7 +12,10 @@ use embedded_storage::nor_flash::NorFlash;
 /// старте. Поэтому стирание драйвера обязано эту страницу делить. Число —
 /// переменная среды `EXT_PAGE_SIZE` из `[env]` `crates-cross/.cargo/config.toml`,
 /// та же, что читает приложение (`bsp::external`).
-const EXT_PAGE_SIZE: usize = adapters::flash::size_from_env(option_env!("EXT_PAGE_SIZE"), 0);
+const EXT_PAGE_SIZE: usize = match usize::from_str_radix(env!("EXT_PAGE_SIZE"), 10) {
+    Ok(size) => size,
+    Err(_) => panic!("EXT_PAGE_SIZE в [env] crates-cross/.cargo/config.toml — не число"),
+};
 
 /// Драйвер внешней флеши, на которой лежат `STATE` и `DFU`, — замените на
 /// свой: любой блокирующий `embedded_storage::nor_flash::NorFlash`. Та же
@@ -21,7 +24,7 @@ const EXT_PAGE_SIZE: usize = adapters::flash::size_from_env(option_env!("EXT_PAG
 pub(crate) type ExternalFlash = adapters::flash::Unconnected;
 
 const _: () = assert!(
-    EXT_PAGE_SIZE != 0 && EXT_PAGE_SIZE.is_multiple_of(<ExternalFlash as NorFlash>::ERASE_SIZE),
+    EXT_PAGE_SIZE.is_multiple_of(<ExternalFlash as NorFlash>::ERASE_SIZE),
     "стирание драйвера внешней флеши не делит страницу обмена (EXT_PAGE_SIZE): \
      перегенерируйте раскладку или возьмите стирание мельче (сектор 4 KiB)"
 );

@@ -34,10 +34,6 @@ embedded-storage-async = { workspace = true }
 # Хранилище настроек (settings.rs) — async API, отсюда и мост в flash.rs.
 sequential-storage = { workspace = true }
 embassy-sync = { workspace = true }
-# `BlockingPartition` — весь общий флеш как раздел под замком (`flash::whole`),
-# `BlockingAsync` — async-вид для `embassy-boot` и `sequential-storage`: свои
-# копии не нужны, их же собирают `bsp` и bootloader.
-embassy-embedded-hal = { workspace = true }
 # {%- if protocol == "modbus" or protocol == "protobuf" %}
 # Транспорты поверх потока байтов `embedded_io_async::{Read, Write}` —
 # `modbus::{Rtu, Tcp}` и `cobs::Cobs`; CRC кадра — у обоих.
@@ -74,6 +70,9 @@ defmt = { workspace = true, optional = true }
 # cargo разрешена: в обычную сборку ни та ни другая не попадает.
 domain = { path = "../domain", features = ["signed"] }
 salty = { workspace = true }
+# `BlockingAsync` (async-вид флеша) и `BlockingPartition` (раздел под замком) —
+# как их собирают `bsp` и bootloader; свои копии в тестах не нужны.
+embassy-embedded-hal = { workspace = true }
 # Исполнитель для async-тестов над флешем в памяти (`#[tokio::test]`); фичи —
 # в корневом Cargo.toml.
 tokio = { workspace = true }

@@ -60,22 +60,34 @@ DEFMT_LOG = "info"
 WATCHDOG_TIMEOUT_US = "10000000"
 {%- endif %}
 {%- if ota == "true" %}
-# Страницы разделов, посчитанные при генерации (`memory.x` считается теми же
-# цифрами). Их читают двое — приложение (`bsp::flash`) и bootloader
-# (`crates-cross/boot`), который от `bsp` не зависит, — и расходиться им
-# нельзя: размеры и смещения разделов у них разойдутся (docs/flash.md).
+# Раскладка flash, посчитанная при генерации (`memory.x` считается теми же
+# цифрами). Часть чисел читают двое — приложение (`bsp::ota`, `bsp::flash`) и
+# bootloader (`crates-cross/boot`), который от `bsp` не зависит, — и
+# расходиться им нельзя: размеры и смещения разделов у них разойдутся
+# (docs/flash.md). Числа лежат здесь, а не линкерными символами: читать
+# собственные константы через `unsafe extern` незачем.
+{%- if active_len != "" %}
+# Размер раздела `ACTIVE` в байтах — самый длинный образ, который доедет до
+# устройства (`bsp::ota`).
+ACTIVE_LEN = "{{active_len}}"
+{%- endif %}
 {%- if ota_store == "external" %}
 # Страница обмена с внешней флешью: стирание драйвера обязано её делить.
-EXT_PAGE_SIZE = "{{ext_page_size}}"
+EXT_PAGE_SIZE = "{{ext_page_size | remove: '_'}}"
 {%- else %}
-{%- unless state_erase_size contains "embassy" %}
-# Страница `BOOTLOADER_STATE` — размер сектора, в котором он лежит. Нет
-# переменной — страница цельного `Flash` (`MAX_ERASE_SIZE`).
-STATE_ERASE_SIZE = "{{state_erase_size}}"
-{%- endunless %}
+{%- if state_erase_size != "" %}
+# Страница `BOOTLOADER_STATE` — размер сектора, в котором он лежит.
+STATE_ERASE_SIZE = "{{state_erase_size | remove: '_'}}"
+{%- endif %}
 {%- if swap_paged == "true" %}
 # Страница обмена `ACTIVE` и `DFU`, крупнее физической (`ErasePage`).
-SWAP_PAGE_SIZE = "{{page_size}}"
+SWAP_PAGE_SIZE = "{{page_size | remove: '_'}}"
 {%- endif %}
 {%- endif %}
+{%- endif %}
+{%- if config_start != "" %}
+# Границы раздела настроек (`bsp::settings`): смещения от базы flash — так их
+# ждёт `embassy_stm32::flash::Flash` — или от начала внешней флеши.
+CONFIG_START = "{{config_start}}"
+CONFIG_END = "{{config_end}}"
 {%- endif %}

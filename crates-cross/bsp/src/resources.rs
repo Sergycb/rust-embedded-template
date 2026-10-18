@@ -1,22 +1,23 @@
 //! Распиновка платы: выводы, периферия и DMA-каналы, разложенные по
 //! именованным группам (docs/resources.md).
 //!
-//! Группы нужны самому `bsp` — из них `Board::new` собирает драйверы
-//! (`let r = split_resources!(p);`), — и наружу не выходят.
-{%- if interface == "none" %} Заготовку группы
+//! Вся периферия чипа разбирается здесь, а не в `Board::new` вразнобой:
+//! `let r = split_resources!(p);` раскладывает `Peripherals` по группам, и
+//! каждая группа уходит в конструктор своего модуля. Наружу из `bsp` группы не
+//! выходят.
+{%- if has_resources != "true" %} Заготовку группы
 //! под блок с реальными именами выводов печатает
 //! `cargo xtask pins <БЛОК> --snippet`; переносится в макрос ниже только сама
 //! группа.
-{%- else %} Шаблон кладёт сюда блоки того, что выбрано при генерации{% if rng_irq != "" and interface == "tcp" or rng_irq != "" and interface == "udp" %} (интерфейс и RNG){% else %} (интерфейс){% endif %}, —
+{%- else %} Шаблон кладёт сюда блоки того, что нужно ему самому:
+//! флеш{% if graph == "true" %}, сторожевой таймер{% endif %}{% if interface == "tcp" or interface == "udp" %}{% if rng_irq != "" %}, RNG{% endif %}{% endif %}{% if interface != "none" %} и блок выбранного интерфейса{% endif %}, —
 //! без выводов: их выбирает плата. Заготовку с выводами и DMA-каналами печатает
 //! `cargo xtask pins <БЛОК> --snippet`; из неё в группу переносятся поля.
 {%- endif %} Занят ли отладочный порт —
 //! `cargo xtask pins --check`.
-//!
-//! `FLASH`{% if graph == "true" %} и `{{watchdog_peripheral}}`{% endif %} в группы не включайте: их забирает `Board::new`.
 
 use assign_resources::assign_resources;
-{%- if interface == "none" %}
+{%- if has_resources != "true" %}
 // Макрос раскрывается в `Peri<'static, peripherals::X>` и оба имени берёт
 // отсюда. Пока группа пустая, они не нужны — `expect` сам напомнит снять его,
 // когда в группе появится первый вывод.
@@ -25,10 +26,16 @@ use assign_resources::assign_resources;
 use embassy_stm32::{Peri, peripherals};
 
 assign_resources! {
-{%- if interface == "none" %}
+{%- if has_resources != "true" %}
     // Пример: `sensor: SensorResources { i2c: I2C1, scl: PB6, sda: PB7 },`
     board: BoardResources {}
 {%- else %}
+{%- if shared_flash == "true" %}
+    flash: FlashResources { flash: FLASH },
+{%- endif %}
+{%- if graph == "true" %}
+    watchdog: WatchdogResources { iwdg: {{watchdog_peripheral}} },
+{%- endif %}
 {%- if interface == "tcp" or interface == "udp" %}
 {%- if rng_irq != "" %}
     rng: RngResources { rng: RNG },

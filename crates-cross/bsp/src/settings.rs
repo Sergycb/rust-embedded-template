@@ -7,8 +7,8 @@
 //! генерации выбрано одно из трёх (`config` в cargo-generate, см.
 //! docs/flash.md):
 //!
-//! - раздел во внутреннем флеше — границы `CONFIG` приезжают символами
-//!   `memory.x`, страница — [`CONFIG_ERASE_SIZE`];
+//! - раздел во внутреннем флеше — границы `CONFIG` приезжают переменными
+//!   среды (`CONFIG_START`/`CONFIG_END`), страница — [`CONFIG_ERASE_SIZE`];
 //! - внутренняя EEPROM (STM32L0/L1) — через `adapters::eeprom::Eeprom`;
 //! - внешняя флеш — ваш драйвер; пока на его месте заглушка
 //!   `adapters::flash::Unconnected`.
@@ -19,12 +19,11 @@
 //! дешевле: с OTA на F2/F4/F7 — в мелкие сектора перед `ACTIVE` (у F4 —
 //! 2×16 KiB), иначе в хвост flash.
 
-use core::ops::Range;
-
-use adapters::flash::{ErasePage, whole};
+use adapters::flash::ErasePage;
 use embassy_embedded_hal::adapter::BlockingAsync;
+use embassy_embedded_hal::flash::partition::BlockingPartition;
 
-use crate::flash::FlashMutex;
+use crate::flash::{FlashMutex, SIZE, Whole};
 
 /// Страница раздела `CONFIG` — размер сектора, в котором он лежит.
 ///
@@ -35,22 +34,25 @@ use crate::flash::FlashMutex;
 /// Число посчитано при генерации тем же расчётом, что адреса в `memory.x`.
 const CONFIG_ERASE_SIZE: usize = {{config_erase_size}};
 
+/// Начало раздела `CONFIG`: смещение от базы flash, `memory.x` считает его тем
+/// же расчётом. Приезжает переменной среды `CONFIG_START` из `[env]`
+/// `crates-cross/.cargo/config.toml`, а не линкерным символом (`unsafe extern`).
+const CONFIG_START: u32 = match u32::from_str_radix(env!("CONFIG_START"), 10) {
+    Ok(start) => start,
+    Err(_) => panic!("CONFIG_START в [env] crates-cross/.cargo/config.toml — не число"),
+};
+
+/// Конец раздела `CONFIG` — см. [`CONFIG_START`].
+const CONFIG_END: u32 = match u32::from_str_radix(env!("CONFIG_END"), 10) {
+    Ok(end) => end,
+    Err(_) => panic!("CONFIG_END в [env] crates-cross/.cargo/config.toml — не число"),
+};
+
 /// Хранилище настроек этой платы — то, что лежит полем `Board` и уезжает в
 /// задачи. Псевдоним по общему правилу шаблона: тип в сигнатуре
 /// `#[embassy_executor::task]` должен быть конкретным.
 pub type Settings =
-    adapters::settings::Settings<BlockingAsync<ErasePage<crate::flash::Whole, CONFIG_ERASE_SIZE>>>;
-
-// Ещё один `#[expect(unsafe_code)]` в `crates-cross` (есть только при `config=internal`):
-// причина та же, что у блока в `flash.rs` — адрес линкерного символа иначе не взять.
-#[expect(unsafe_code, reason = "обоснование — в комментарии выше")]
-unsafe extern "C" {
-    /// Границы раздела `CONFIG` из `memory.x`, отсчитанные от базы flash —
-    /// именно так их ждёт `embassy_stm32::flash::Flash` (у него нулевое
-    /// смещение это база, а не адрес в адресном пространстве).
-    static __config_start: u32;
-    static __config_end: u32;
-}
+    adapters::settings::Settings<BlockingAsync<ErasePage<Whole, CONFIG_ERASE_SIZE>>>;
 
 /// Собирает хранилище над разделом `CONFIG`.
 ///
@@ -60,18 +62,9 @@ unsafe extern "C" {
 /// `adapters::settings::Settings::new`.
 pub(crate) fn new(flash: &'static FlashMutex) -> Settings {
     adapters::settings::Settings::new(
-        BlockingAsync::new(ErasePage::new(whole(flash))),
-        flash_range(),
+        BlockingAsync::new(ErasePage::new(BlockingPartition::new(flash, 0, SIZE))),
+        CONFIG_START..CONFIG_END,
     )
-}
-
-/// Границы раздела по символам линкера.
-fn flash_range() -> Range<u32> {
-    // SAFETY: символы объявлены линкерным скриптом как абсолютные адреса;
-    // читается их адрес, а не содержимое (памяти за ними нет).
-    let start = &raw const __config_start as u32;
-    let end = &raw const __config_end as u32;
-    start..end
 }
 {%- elsif config_store == "eeprom" %}
 //!
@@ -85,6 +78,10 @@ use adapters::eeprom::{Eeprom, EepromAccess};
 use static_cell::StaticCell;
 
 use crate::flash::FlashMutex;
+
+/// `&'static` — `Eeprom` держит доступ к EEPROM ссылкой, а хранилище уезжает в
+/// задачу.
+static ACCESS: StaticCell<EepromFlash> = StaticCell::new();
 
 /// Хранилище настроек этой платы — то, что лежит полем `Board` и уезжает в
 /// задачи. Псевдоним по общему правилу шаблона: тип в сигнатуре
@@ -126,10 +123,6 @@ impl EepromAccess for EepromFlash {
     }
 }
 
-/// `&'static` — `Eeprom` держит доступ к EEPROM ссылкой, а хранилище уезжает в
-/// задачу.
-static ACCESS: StaticCell<EepromFlash> = StaticCell::new();
-
 /// Собирает хранилище над всей внутренней EEPROM.
 ///
 /// # Паника
@@ -144,27 +137,30 @@ pub(crate) fn new(flash: &'static FlashMutex) -> Settings {
 {%- elsif config_store == "external" and ota == "true" and ota_store == "external" %}
 //!
 //! Здесь — внешняя флеш, та же, что у OTA (`crate::external`): раздел под
-//! настройки лежит на ней за `DFU`, границы — символами `__config_*` в
-//! `memory.x` (смещения от начала микросхемы). Драйвер подставляется там же,
+//! настройки лежит на ней за `DFU`, границы — переменные среды
+//! `CONFIG_START`/`CONFIG_END` (смещения от начала микросхемы). Драйвер подставляется там же,
 //! в `crate::external`.
 
-use core::ops::Range;
-
 use crate::external::{ExternalMutex, ExternalPartition};
+
+/// Начало раздела `CONFIG`: смещение от базы flash, `memory.x` считает его тем
+/// же расчётом. Приезжает переменной среды `CONFIG_START` из `[env]`
+/// `crates-cross/.cargo/config.toml`, а не линкерным символом (`unsafe extern`).
+const CONFIG_START: u32 = match u32::from_str_radix(env!("CONFIG_START"), 10) {
+    Ok(start) => start,
+    Err(_) => panic!("CONFIG_START в [env] crates-cross/.cargo/config.toml — не число"),
+};
+
+/// Конец раздела `CONFIG` — см. [`CONFIG_START`].
+const CONFIG_END: u32 = match u32::from_str_radix(env!("CONFIG_END"), 10) {
+    Ok(end) => end,
+    Err(_) => panic!("CONFIG_END в [env] crates-cross/.cargo/config.toml — не число"),
+};
 
 /// Хранилище настроек этой платы — то, что лежит полем `Board` и уезжает в
 /// задачи. Псевдоним по общему правилу шаблона: тип в сигнатуре
 /// `#[embassy_executor::task]` должен быть конкретным.
 pub type Settings = adapters::settings::Settings<ExternalPartition>;
-
-// Ещё один `#[expect(unsafe_code)]` в `crates-cross`: причина та же, что у
-// блока в `flash.rs` — адрес линкерного символа иначе не взять.
-#[expect(unsafe_code, reason = "обоснование — в комментарии выше")]
-unsafe extern "C" {
-    /// Границы раздела настроек на внешней флеши, от её начала.
-    static __config_start: u32;
-    static __config_end: u32;
-}
 
 /// Собирает хранилище над разделом внешней флеши.
 ///
@@ -173,18 +169,9 @@ unsafe extern "C" {
 /// Если раздел не годится под `sequential-storage` — см.
 /// `adapters::settings::Settings::new`.
 pub(crate) fn new(external: &'static ExternalMutex) -> Settings {
-    let range = flash_range();
-    let partition = ExternalPartition::new(external, range.start, range.end - range.start);
-    adapters::settings::Settings::new(partition, 0..range.end - range.start)
-}
-
-/// Границы раздела по символам линкера.
-fn flash_range() -> Range<u32> {
-    // SAFETY: символы объявлены линкерным скриптом как абсолютные значения;
-    // читается их адрес, а не содержимое (памяти за ними нет).
-    let start = &raw const __config_start as u32;
-    let end = &raw const __config_end as u32;
-    start..end
+    let size = CONFIG_END - CONFIG_START;
+    let partition = ExternalPartition::new(external, CONFIG_START, size);
+    adapters::settings::Settings::new(partition, 0..size)
 }
 {%- elsif config_store == "external" %}
 //!

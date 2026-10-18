@@ -113,7 +113,7 @@ fn default_cases() -> Vec<Case> {
         // (блокирующий, с запасным выходом `BootCurrent`) и в `bsp::external`
         // (асинхронный, общий мьютекс), проверка подписи над внешними
         // разделами, настройки на той же
-        // микросхеме за `DFU` (`__config_*` — смещения от её начала), и
+        // микросхеме за `DFU` (`CONFIG_START`/`CONFIG_END` — смещения от её начала), и
         // `shared_flash = false` при OTA.
         Case::new("stm32h723ve").variant("ota-external", &["ota=external", "config=external"]),
         // Внешняя OTA и настройки во внутреннем флеше: на F4 — в секторах 2–3

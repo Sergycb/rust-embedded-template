@@ -279,6 +279,12 @@ fn fits_answers(m, erase_zero, wants, need, limits) {
         && (!need.config || p.config) && (!need.graph || p.graph)
 }
 
+/// Адрес из таблицы раскладки: `"0x08008000"`. `parse_int` в rhai понимает
+/// только десятичные числа без префикса, поэтому шестнадцатеричный разбор свой.
+fn hex_value(text) {
+    parse_int(text.sub_string(2), 16)
+}
+
 fn is_dual_core(suffix) {
     // Тот же признак, что различает ветки в cpu_and_target(): суффикс после
     // дефиса — это конкретное ядро (core_override() узнаёт его), а не
@@ -734,6 +740,13 @@ let store = config_store(MEMORY_LAYOUT[suffix], wants_config, wants_external, EE
 // write_size), оставляем всё как есть — ручное заполнение, как раньше.
 // Тогда же остаётся и ota = "true": bootloader из проекта не исчезает,
 // раскладку под него пользователь пишет сам.
+// Числа раскладки для `[env]` (crates-cross/.cargo/config.toml): пустые, пока
+// их не посчитала раскладка ниже. При ручной раскладке (`write_size`) их пишет
+// человек, а в `[env]` пустая строка не выводится.
+variable::set("active_len", "");
+variable::set("config_start", "");
+variable::set("config_end", "");
+variable::set("state_erase_size", "");
 if variable::is_set("write_size") {
     variable::set("ota", if wants_ota { "true" } else { "false" });
     variable::set("ota_store", if wants_ext_ota { "external" } else { "internal" });
@@ -741,6 +754,8 @@ if variable::is_set("write_size") {
     variable::set("dfu_bank", "false");
     if !wants_ota {
         file::delete("crates-cross/boot");
+        file::delete("crates-cross/bsp/src/ota.rs");
+        file::delete("docs/modules/bsp-ota.md");
         // Релизу по тегу без OTA нечего выкладывать: `app.bin` делается
         // только там, где есть раздел DFU. Тело workflow и так под
         // Liquid-условием, но пустой файл в .github/workflows сбивал бы с
@@ -758,17 +773,17 @@ if variable::is_set("write_size") {
         variable::set("config_store", "none");
         if wants_config {
             print("Раздел настроек не выделен: memory.x вы заполняете сами (задан write_size)");
-            print("  добавьте регион CONFIG и символы __config_start/__config_end вручную");
+            print("  добавьте регион CONFIG вручную и впишите CONFIG_START/CONFIG_END в [env]");
         }
         file::delete("crates-cross/bsp/src/settings.rs");
     }
     // Общий объект `Flash` в bsp нужен OTA во внутреннем flash и настройкам во
     // флеше или EEPROM; внешней флеши он не нужен (см. ту же переменную ниже).
     variable::set("shared_flash", if (wants_ota && !wants_ext_ota) || (wants_config && store == "eeprom") { "true" } else { "false" });
-    // Модуль флеша в bsp нужен, пока есть общий замок или разделы OTA; без обоих
+    // Модуль флеша в bsp нужен, пока есть общий замок; без него
     // файла и его документации быть не должно (`pub mod flash;` закрыт тем же
     // условием в lib.rs).
-    if !wants_ota && !(wants_config && store == "eeprom") {
+    if !(wants_ota && !wants_ext_ota) && !(wants_config && store == "eeprom") {
         file::delete("crates-cross/bsp/src/flash.rs");
         file::delete("docs/modules/bsp-flash.md");
     }
@@ -790,11 +805,17 @@ if variable::is_set("write_size") {
     // чипах с равными секторами, а на F2/F4/F7 `STATE` в мелком секторе
     // приведёт к панике `Partition::new` при старте — об этом печатается
     // предупреждение ниже.
-    variable::set("state_erase_size", "embassy_stm32::flash::MAX_ERASE_SIZE");
+    variable::set("state_erase_size", "");
     if wants_ota && !wants_ext_ota {
-        print("BOOTLOADER_STATE: страница раздела — сектор всего чипа (MAX_ERASE_SIZE); если STATE");
-        print("  лежит в более мелком секторе (F2/F4/F7), впишите его размер в STATE_ERASE_SIZE");
-        print("  в [env] crates-cross/.cargo/config.toml (STATE_ERASE_SIZE; общая у приложения и bootloader'а), иначе паника при старте");
+        print("OTA с ручной раскладкой: впишите в [env] crates-cross/.cargo/config.toml числа, которые");
+        print("  генерация считает сама: STATE_ERASE_SIZE (страница сектора STATE) и ACTIVE_LEN (размер ACTIVE");
+        print("  в байтах) — без них проект не соберётся");
+    }
+    if wants_ota && wants_ext_ota {
+        print("OTA с ручной раскладкой: впишите в [env] crates-cross/.cargo/config.toml ACTIVE_LEN (размер ACTIVE в байтах)");
+    }
+    if wants_config && store != "eeprom" {
+        print("Хранилище настроек с ручной раскладкой: впишите в [env] CONFIG_START и CONFIG_END (границы раздела в байтах)");
     }
     // Страница обмена с внешними разделами — тоже знание раскладки. Сектор
     // внешней NOR (4 KiB) — нижняя граница: верна, если ACTIVE в memory.x
@@ -901,6 +922,23 @@ if variable::is_set("write_size") {
     }
     variable::set("ota", if ota { "true" } else { "false" });
     variable::set("ota_store", if ext_ota { "external" } else { "internal" });
+    // Границы разделов приложению нужны числами, а не символами линкера:
+    // `memory.x` считается этим же расчётом, и `unsafe extern` ради чтения
+    // собственных констант ни к чему. Уезжают в `[env]` (crates-cross/.cargo/config.toml).
+    if ota {
+        variable::set("active_len", size_in_bytes(m[ota_key + "active_length"]).to_string());
+    }
+    if in_flash {
+        // Смещения от базы flash: именно так их ждёт embassy-stm32::flash::Flash.
+        let config_start = hex_value(m[settings_key + "origin"]) - hex_value(m["flash_origin"]);
+        variable::set("config_start", config_start.to_string());
+        variable::set("config_end", (config_start + size_in_bytes(m[settings_key + "length"])).to_string());
+    } else if config && store == "external" && ext_ota {
+        // Смещения от начала внешней флеши.
+        let config_start = hex_value(m[ota_key + "config_offset"]);
+        variable::set("config_start", config_start.to_string());
+        variable::set("config_end", (config_start + size_in_bytes(m[ota_key + "config_length"])).to_string());
+    }
     // DFU в банке 2 за разрывом: прошивка пишет его через `Bank2Region`, а не через
     // цельный `Flash` (см. `dfu_bank_origin` в chip-data-gen).
     variable::set("dfu_bank", if ota && !ext_ota && dfu_bank { "true" } else { "false" });
@@ -915,7 +953,7 @@ if variable::is_set("write_size") {
     // пишет вовсе (`ACTIVE` пишет bootloader), — и без OTA создавать его
     // незачем: был бы неиспользуемый код.
     variable::set("shared_flash", if (ota && !ext_ota) || (config && store != "external") { "true" } else { "false" });
-    if !ota && !(config && store != "external") {
+    if !((ota && !ext_ota) || (config && store != "external")) {
         file::delete("crates-cross/bsp/src/flash.rs");
         file::delete("docs/modules/bsp-flash.md");
     }
@@ -925,21 +963,12 @@ if variable::is_set("write_size") {
         file::delete("crates-cross/bsp/src/settings.rs");
     }
 
-    // База flash одна на оба режима: и `__bootloader_*`, и `__config_*`
-    // отсчитываются от неё, а не от ORIGIN(FLASH) конкретного крейта — так их
-    // читают embassy-boot и embassy-stm32::flash.
+    // База flash одна на оба режима: `__bootloader_*` отсчитываются от неё, а не
+    // от ORIGIN(FLASH) конкретного крейта — так их читает embassy-boot.
     let flash_base = m["flash_origin"];
     let config_region = [];
-    let config_section = [];
     if in_flash {
         config_region.push("    CONFIG            (rx)  : ORIGIN = " + m[settings_key + "origin"] + ", LENGTH = " + m[settings_key + "length"]);
-        config_section = [
-            "",
-            "/* Раздел настроек (crates-cross/bsp/src/settings.rs, sequential-storage). */",
-            "/* Смещения от базы flash: embassy-stm32 адресует flash от неё. */",
-            "__config_start = ORIGIN(CONFIG) - " + flash_base + ";",
-            "__config_end   = ORIGIN(CONFIG) + LENGTH(CONFIG) - " + flash_base + ";",
-        ];
     }
 
     // RAM одинаков в обоих крейтах и в обоих режимах. Следом — все остальные
@@ -991,14 +1020,6 @@ if variable::is_set("write_size") {
             "__bootloader_dfu_start   = " + m[ota_key + "dfu_offset"] + ";",
             "__bootloader_dfu_end     = " + m[ota_key + "dfu_offset"] + " + " + m[ota_key + "dfu_length"] + ";",
         ];
-        if config && store == "external" {
-            ext_symbols += [
-                "",
-                "/* Раздел настроек — на той же внешней флеши, за DFU. */",
-                "__config_start = " + m[ota_key + "config_offset"] + ";",
-                "__config_end   = " + m[ota_key + "config_offset"] + " + " + m[ota_key + "config_length"] + ";",
-            ];
-        }
         let app = [
             "/* Сгенерировано chip-select.rhai: приложение линкуется в ACTIVE, */",
             "/* с базы flash стартует bootloader (crates-cross/boot). */",
@@ -1014,7 +1035,6 @@ if variable::is_set("write_size") {
         app.push("__bootloader_active_start = ORIGIN(FLASH) - " + base + ";");
         app.push("__bootloader_active_end   = ORIGIN(FLASH) + LENGTH(FLASH) - " + base + ";");
         app += ext_symbols;
-        app += config_section;
         app += panic_section;
         file::write("crates-cross/app/memory.x", app);
         file::write("crates-cross/target-tests/memory.x", app);
@@ -1070,7 +1090,6 @@ if variable::is_set("write_size") {
         app.push("");
         app.push("__bootloader_dfu_start = ORIGIN(DFU) - " + dfu_base + ";");
         app.push("__bootloader_dfu_end   = ORIGIN(DFU) + LENGTH(DFU) - " + dfu_base + ";");
-        app += config_section;
         app += panic_section;
         file::write("crates-cross/app/memory.x", app);
         // Тесты на устройстве (crates-cross/target-tests) линкуются туда же, куда
@@ -1144,6 +1163,8 @@ if variable::is_set("write_size") {
         // оставался на месте, а то же условие по `ci` работало). Удаление
         // идёт по временной копии шаблона, до рендера — как и file::write.
         file::delete("crates-cross/boot");
+        file::delete("crates-cross/bsp/src/ota.rs");
+        file::delete("docs/modules/bsp-ota.md");
         // Вместе с bootloader'ом уходит и работа с разделом DFU: без OTA
         // раздела нет, а символы `__bootloader_dfu_*`, на которые опирается
         // embassy-boot, некому определить.
@@ -1163,7 +1184,6 @@ if variable::is_set("write_size") {
         single += config_region;
         single += ram;
         single.push("}");
-        single += config_section;
         single += panic_section;
         // Boot удалён строкой выше, писать в него нечего; target-tests получают
         // ту же раскладку, что и app (см. ветку с OTA выше).
@@ -1244,6 +1264,9 @@ if protocol != "none" {
 }
 variable::set("protocol", protocol);
 variable::set("interface", iface);
+// Группы `resources.rs` нужны, пока есть что в них класть: общий флеш, сторож
+// графа или блок выбранного интерфейса. Иначе в файле остаётся пустая группа.
+variable::set("has_resources", if iface != "none" || variable::get("shared_flash") == "true" || variable::get("graph") == "true" { "true" } else { "false" });
 // Master Modbus. Вопрос условный (`[conditional]` в cargo-generate.toml) и
 // задаётся только при protocol=modbus; с другим протоколом переменной нет.
 // Но `--define modbus_master=yes` при другом протоколе возможен — такое

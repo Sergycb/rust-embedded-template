@@ -247,18 +247,17 @@ flash и безусловно прыгает в него (`unsafe { bl.load(entr
 (`domain::ota::download::receive`), применяет (`mark_updated` или, с подписью,
 `domain::ota::update::apply_signed`) и сообщает исход отправителю. Адаптер
 `adapters::ota` (поверх `embassy-boot`) пишет образ и хранит состояние
-bootloader'а. Плата отдаёт только разделы флеша (`crates-cross/bsp/src/flash.rs`
-находит их по линкерным символам `memory.x`, поле `Board::partitions`): алгоритм
-обновления — не железо, и адаптер над разделами собирает приложение
-(`updater()` в `crates-cross/app/src/main.rs`), а граф забирает одной строкой
-(`fragments:` в `crates-cross/app/src/graph.rs`). Версию образа
+bootloader'а. `crates-cross/bsp/src/ota.rs` собирает его из линкерных символов
+`memory.x` и чисел раскладки в `[env]`, `Board` отдаёт его вместе с каналом
+полями `updater` и `ota_link`, а граф забирает одной строкой (`fragments:` в
+`crates-cross/app/src/graph.rs`). Версию образа
 задаёт приложение (`crates-cross/app/src/image.rs`), а не плата; ключ подписи
 зашит в bootloader (`crates-cross/boot`).
 
 Канал остаётся за вами — USB CDC, UART, сеть, SD-карта: формат пакета и
-проверка целостности у каждого свои, и шаблон их не выбирает. Он живёт в
-приложении (`Link` и `link()` в `crates-cross/app/src/main.rs`), в шаблоне это
-заглушка `adapters::ota::Unconnected`, которая ждёт заголовок вечно. Заменить её — значит реализовать три метода
+проверка целостности у каждого свои, и шаблон их не выбирает. В `Board` он
+лежит в `ota_link`, в шаблоне это заглушка `adapters::ota::Unconnected` (псевдоним
+`bsp::ota::Link`), которая ждёт заголовок вечно. Заменить её — значит реализовать три метода
 `ports::ImageSource`:
 
 ```rust

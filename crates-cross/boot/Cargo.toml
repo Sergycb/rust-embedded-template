@@ -49,9 +49,12 @@ embassy-boot = { workspace = true, features = ["flash-erase-zero"] }
 embassy-stm32 = { workspace = true, features = ["defmt"{% if bank_switch != "" %}, "unstable-pac"{% endif %}] }
 embassy-sync = { workspace = true }
 # Раздел BOOTLOADER_STATE со страницей своего сектора, а не всего чипа
-# (`adapters::flash::ErasePage` поверх `whole`, src/main.rs). Тот же код, что
-# строит этот раздел в приложении (bsp::flash), — расходиться им нельзя.
+# (`adapters::flash::ErasePage` поверх `BlockingPartition`, src/main.rs). Тот же
+# код, что строит этот раздел в приложении (bsp::ota), — расходиться им нельзя.
 adapters = { workspace = true }
+# Раздел на весь флеш под замком (`BlockingPartition`), из которого строятся
+# `STATE`, `ACTIVE` и `DFU`: те же разделы, что собирает приложение (`bsp`).
+embassy-embedded-hal = { workspace = true }
 {%- if signed == "true" or ota_store == "external" %}
 # Решение bootloader'а — обмен или текущий образ (`domain::ota::boot::boot_plan`,
 # с `ota=external`){% if signed == "true" %} и проверка нового образа перед обменом

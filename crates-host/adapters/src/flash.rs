@@ -1,49 +1,19 @@
-//! Блокирующий `Flash` под `blocking_mutex`, разделённый между потребителями.
+//! Обёртка `ErasePage` с переопределённой страницей стирания, заглушка
+//! внешней флеши и вспомогательные функции над `NorFlash`.
 //!
 //! Флеш на чипе один, а `embassy-boot` и `sequential-storage` хотят каждый свой
-//! `NorFlash` по значению. Взять `&mut F` из мьютекса и держать его нельзя
-//! (`lock` даёт доступ только внутри замыкания), поэтому каждый потребитель
-//! получает [`BlockingPartition`](embassy_embedded_hal::flash::partition::BlockingPartition) из `embassy-embedded-hal` — ссылку на флеш под
-//! замком, а блокировка берётся на каждую операцию отдельно. [`whole`](crate::flash::whole) — такой
-//! раздел на весь флеш.
+//! `NorFlash` по значению. Общий флеш лежит под блокирующим мьютексом, а
+//! каждый потребитель получает `BlockingPartition` из `embassy-embedded-hal` —
+//! ссылку на него: блокировка берётся на каждую
+//! операцию отдельно. Асинхронный вид (для `Partition`, `FirmwareUpdater`,
+//! `sequential-storage`) даёт `embassy_embedded_hal::adapter::BlockingAsync`;
+//! операции блокирующие, ни одна не ждёт внутри. Свой раздел с нестандартной
+//! страницей — [`ErasePage`](crate::flash::ErasePage) поверх него.
 //!
-//! Асинхронный вид (для `Partition`, `FirmwareUpdater`, `sequential-storage`)
-//! здесь не реализован: его даёт `embassy_embedded_hal::adapter::BlockingAsync`
-//! поверх [`whole`](crate::flash::whole) или [`ErasePage`](crate::flash::ErasePage). Операции блокирующие, ни одна не ждёт внутри.
-//!
-//! Generic по мьютексу и флешу, а не привязан к `embassy_stm32::flash::Flash`:
-//! мосту всё равно, что под ним, — а тестируется он на хосте с флешем в памяти.
-//!
-//! `embassy-boot` строит каждый раздел из `&Mutex<_, RefCell<T>>` своего типа,
-//! поэтому раздел со своей страницей ([`ErasePage`](crate::flash::ErasePage)) получает
-//! свой мьютекс над [`whole`](crate::flash::whole), а не второй объект `Flash`.
+//! Generic по флешу, а не привязан к `embassy_stm32::flash::Flash`: обёртке
+//! всё равно, что под ней, — а тестируется она на хосте с флешем в памяти.
 
-use core::cell::RefCell;
-
-use embassy_embedded_hal::flash::partition::BlockingPartition;
-use embassy_sync::blocking_mutex::Mutex;
-use embassy_sync::blocking_mutex::raw::RawMutex;
 use embedded_storage::nor_flash::{ErrorType, NorFlash, ReadNorFlash};
-
-/// Весь общий флеш как один раздел: смещения те же, что у самого флеша, а
-/// операции идут под замком, по одной.
-///
-/// # Panics
-///
-/// Паникует, если объём флеша не кратен его же `ERASE_SIZE` (так проверяет
-/// `BlockingPartition::new`) или не помещается в `u32`. У STM32 объём всегда
-/// кратен самому крупному сектору; `bsp` проверяет это ещё и при компиляции.
-#[must_use]
-pub fn whole<M: RawMutex, F: NorFlash>(
-    flash: &Mutex<M, RefCell<F>>,
-) -> BlockingPartition<'_, M, F> {
-    let size = flash.lock(|flash| flash.borrow().capacity());
-    BlockingPartition::new(
-        flash,
-        0,
-        u32::try_from(size).expect("объём флеша не влезает в u32"),
-    )
-}
 
 /// Обёртка, а не драйвер: тот же флеш, но со страницей стирания `ERASE_SIZE`
 /// вместо его собственной.
@@ -131,48 +101,11 @@ pub const fn erase_size<F: embedded_storage_async::nor_flash::NorFlash>() -> usi
     F::ERASE_SIZE
 }
 
-/// Размер из переменной среды сборки: десятичное число, `_` пропускаются.
-///
-/// Раскладку flash считает генерация проекта, а читают её два крейта,
-/// которые друг от друга не зависят, — приложение и bootloader, — и страницы
-/// разделов у них обязаны совпадать. Число поэтому лежит один раз, в `[env]`
-/// `crates-cross/.cargo/config.toml`, а каждый крейт читает его своим
-/// `option_env!` (макрос раскрывается в том крейте, который его вызвал, —
-/// отсюда параметр, а не `env!` внутри). `None` — переменной нет — даёт
-/// `default`.
-///
-/// # Panics
-///
-/// В `const`-контексте — ошибка сборки, если в значении не цифра.
-#[must_use]
-pub const fn size_from_env(value: Option<&str>, default: usize) -> usize {
-    let Some(text) = value else {
-        return default;
-    };
-    let bytes = text.as_bytes();
-    let mut size = 0usize;
-    let mut digits = 0usize;
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'0'..=b'9' => {
-                size = size * 10 + (bytes[i] - b'0') as usize;
-                digits += 1;
-            }
-            b'_' => {}
-            _ => panic!("в переменной среды размера не цифра"),
-        }
-        i += 1;
-    }
-    assert!(digits > 0, "переменная среды размера пуста");
-    size
-}
-
 /// Внешняя флеш, которую ещё не подключили, — место под ваш драйвер.
 ///
 /// Шаблон не знает, какая микросхема будет на плате (W25Q, GD25, MX25, IS25,
 /// SST26…), и не гадает: хранилище настроек принимает любой асинхронный
-/// `NorFlash`, а это — заглушка в его слоте, как `app::Link` в слоте
+/// `NorFlash`, а это — заглушка в его слоте, как `bsp::ota::Link` в слоте
 /// канала OTA. Проект с ней собирается и запускается, а каждая операция
 /// отвечает [`NotConnected`] — настройки не сохраняются, но и ничего не
 /// падает. Заменить её — значит подставить в `bsp::settings` свой драйвер:
@@ -273,7 +206,7 @@ mod tests {
 
     use embassy_embedded_hal::flash::partition::BlockingPartition;
 
-    use super::{ErasePage, Unconnected, size_from_env, whole};
+    use super::{ErasePage, Unconnected};
 
     /// Блокирующий флеш в памяти: 64 байта, страница 16, слово 4. Мосту
     /// неважно, что под ним, — проверяется только, что каждая операция дошла
@@ -320,7 +253,7 @@ mod tests {
     #[tokio::test]
     async fn forwards_every_operation_to_the_flash_under_the_mutex() {
         let flash: Mutex<NoopRawMutex, _> = Mutex::new(RefCell::new(MemFlash { mem: [0; 64] }));
-        let mut shared = BlockingAsync::new(whole(&flash));
+        let mut shared = BlockingAsync::new(BlockingPartition::new(&flash, 0, 64));
 
         assert_eq!(shared.capacity(), 64);
         assert_eq!(
@@ -338,14 +271,6 @@ mod tests {
             flash.lock(|f| f.borrow().mem[..16].iter().all(|b| *b == 0)),
             "соседняя страница не тронута"
         );
-    }
-
-    /// Размер читается из десятичной строки с `_`; без переменной — умолчание.
-    #[test]
-    fn size_from_env_reads_digits_and_falls_back() {
-        assert_eq!(size_from_env(None, 7), 7);
-        assert_eq!(size_from_env(Some("16384"), 7), 16_384);
-        assert_eq!(size_from_env(Some("1_024"), 7), 1_024);
     }
 
     /// С заглушкой хранилище собирается, а операции честно отказывают, а не
@@ -374,7 +299,7 @@ mod tests {
         assert_eq!(<Page32<'_> as NorFlash>::ERASE_SIZE, 32);
         assert_eq!(<Page32<'_> as NorFlash>::WRITE_SIZE, 4);
 
-        let mut paged = Page32::new(whole(&flash));
+        let mut paged = Page32::new(BlockingPartition::new(&flash, 0, 64));
         paged.erase(32, 64).expect("стирание");
         paged.write(32, &[0xA5; 4]).expect("запись");
         paged.write(36, &[0x5A; 4]).expect("запись");
@@ -406,7 +331,7 @@ mod tests {
         use embassy_sync::blocking_mutex::raw::NoopRawMutex;
         use embedded_storage::nor_flash::{ErrorType, NorFlash, NorFlashErrorKind, ReadNorFlash};
 
-        use crate::flash::{ErasePage, whole};
+        use crate::flash::ErasePage;
 
         /// Страница обмена и раскладка: ACTIVE — 3 страницы, DFU — 4 (запасная).
         const SWAP: usize = 1024;
@@ -494,6 +419,13 @@ mod tests {
 
         type Chip<const PHYS: usize> = Mutex<NoopRawMutex, RefCell<Sim<PHYS>>>;
 
+        /// Весь флеш как раздел: смещения флеша, операции под замком.
+        fn full<const PHYS: usize>(
+            chip: &Chip<PHYS>,
+        ) -> BlockingPartition<'_, NoopRawMutex, Sim<PHYS>> {
+            BlockingPartition::new(chip, 0, TOTAL as u32)
+        }
+
         fn chip<const PHYS: usize>() -> Chip<PHYS> {
             Mutex::new(RefCell::new(Sim {
                 mem: vec![0xFF; TOTAL],
@@ -518,7 +450,7 @@ mod tests {
                     .copy_from_slice(&image());
             });
             let cell =
-                Mutex::<NoopRawMutex, _>::new(RefCell::new(ErasePage::<_, SP>::new(whole(chip))));
+                Mutex::<NoopRawMutex, _>::new(RefCell::new(ErasePage::<_, SP>::new(full(chip))));
             let mut state = BlockingPartition::new(&cell, STATE_OFFSET, state_len);
             BlockingFirmwareState::new(&mut state, &mut [0; WORD])
                 .mark_updated()
@@ -532,11 +464,11 @@ mod tests {
             state_len: u32,
         ) -> Result<State, BootError> {
             let active =
-                Mutex::<NoopRawMutex, _>::new(RefCell::new(ErasePage::<_, SWAP>::new(whole(chip))));
+                Mutex::<NoopRawMutex, _>::new(RefCell::new(ErasePage::<_, SWAP>::new(full(chip))));
             let dfu =
-                Mutex::<NoopRawMutex, _>::new(RefCell::new(ErasePage::<_, SWAP>::new(whole(chip))));
+                Mutex::<NoopRawMutex, _>::new(RefCell::new(ErasePage::<_, SWAP>::new(full(chip))));
             let state =
-                Mutex::<NoopRawMutex, _>::new(RefCell::new(ErasePage::<_, SP>::new(whole(chip))));
+                Mutex::<NoopRawMutex, _>::new(RefCell::new(ErasePage::<_, SP>::new(full(chip))));
             BootLoader::new(BootLoaderConfig {
                 active: BlockingPartition::new(&active, 0, ACTIVE_LEN),
                 dfu: BlockingPartition::new(&dfu, DFU_OFFSET, DFU_LEN),
@@ -644,9 +576,8 @@ mod tests {
         #[should_panic(expected = "must be a multiple")]
         fn a_partition_off_the_wrapper_page_is_refused() {
             let chip = chip::<128>();
-            let cell = Mutex::<NoopRawMutex, _>::new(RefCell::new(ErasePage::<_, SWAP>::new(
-                whole(&chip),
-            )));
+            let cell =
+                Mutex::<NoopRawMutex, _>::new(RefCell::new(ErasePage::<_, SWAP>::new(full(&chip))));
             let _ = BlockingPartition::new(&cell, 0, 128);
         }
 
@@ -657,7 +588,7 @@ mod tests {
         fn paged_erase_checks_only_the_physical_alignment() {
             let chip = chip::<128>();
             chip.lock(|f| f.borrow_mut().mem.fill(0));
-            let mut paged = ErasePage::<_, SWAP>::new(whole(&chip));
+            let mut paged = ErasePage::<_, SWAP>::new(full(&chip));
 
             paged.erase(128, 256).expect("кратно физической странице");
             assert!(dump(&chip, 128, 128).iter().all(|b| *b == 0xFF));

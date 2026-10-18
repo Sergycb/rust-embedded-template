@@ -2,11 +2,14 @@
 
 use core::cell::RefCell;
 {% if ota_store != "external" %}
-use adapters::flash::{ErasePage, whole};
+use adapters::flash::ErasePage;
 {%- endif %}
 use defmt::info;
 use domain::ota::boot::{ScreenFailure, Screening, screen_update};
 use embassy_boot_stm32::BootLoaderConfig;
+{%- if ota_store != "external" %}
+use embassy_embedded_hal::flash::partition::BlockingPartition;
+{%- endif %}
 {%- if dfu_bank != "true" %}
 use embassy_stm32::flash::{Blocking, Flash};
 {%- endif %}
@@ -15,12 +18,12 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 {% if ota_store == "external" %}
 use crate::external::ExternalFlash;
 {%- elsif dfu_bank == "true" %}
-use crate::{Bank1, Bank2, STATE_ERASE_SIZE};
+use crate::{Bank1, Bank2, FLASH_BYTES, STATE_ERASE_SIZE};
 {%- else %}
 {%- if swap_paged == "true" %}
-use crate::{STATE_ERASE_SIZE, SWAP_PAGE_SIZE};
+use crate::{FLASH_BYTES, STATE_ERASE_SIZE, SWAP_PAGE_SIZE};
 {%- else %}
-use crate::STATE_ERASE_SIZE;
+use crate::{FLASH_BYTES, STATE_ERASE_SIZE};
 {%- endif %}
 {%- endif %}
 
@@ -81,7 +84,7 @@ pub(crate) fn screen(flash: Bank1, dfu: Bank2) -> (Bank1, Bank2) {
     let dfu = Mutex::<NoopRawMutex, _>::new(RefCell::new(dfu));
     {
         let state = Mutex::<NoopRawMutex, _>::new(RefCell::new(
-            ErasePage::<_, STATE_ERASE_SIZE>::new(whole(&flash)),
+            ErasePage::<_, STATE_ERASE_SIZE>::new(BlockingPartition::new(&flash, 0, FLASH_BYTES)),
         ));
         let mut config = BootLoaderConfig::from_linkerfile_blocking(&flash, &dfu, &state);
         let capacity = config.active.size();
@@ -107,12 +110,12 @@ pub(crate) fn screen(flash: Flash<'static, Blocking>) -> Flash<'static, Blocking
     let flash = Mutex::<NoopRawMutex, _>::new(RefCell::new(flash));
     {
         let state = Mutex::<NoopRawMutex, _>::new(RefCell::new(
-            ErasePage::<_, STATE_ERASE_SIZE>::new(whole(&flash)),
+            ErasePage::<_, STATE_ERASE_SIZE>::new(BlockingPartition::new(&flash, 0, FLASH_BYTES)),
         ));
 {%- if swap_paged == "true" %}
         // `ACTIVE` и `DFU` — со страницей обмена, как в `main` (`SWAP_PAGE_SIZE`).
         let swap = Mutex::<NoopRawMutex, _>::new(RefCell::new(
-            ErasePage::<_, SWAP_PAGE_SIZE>::new(whole(&flash)),
+            ErasePage::<_, SWAP_PAGE_SIZE>::new(BlockingPartition::new(&flash, 0, FLASH_BYTES)),
         ));
         let mut config = BootLoaderConfig::from_linkerfile_blocking(&swap, &swap, &state);
 {%- else %}

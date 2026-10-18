@@ -3,7 +3,7 @@
 
 use core::cell::RefCell;
 {% if ota_store != "external" %}
-use adapters::flash::{ErasePage, whole};
+use adapters::flash::ErasePage;
 {%- endif %}
 use defmt::info;
 // RTT — дефолтный транспорт в обоих профилях (см. crates-cross/app/src/main.rs);
@@ -18,6 +18,9 @@ use embassy_boot_stm32::{BootLoader, BootLoaderConfig, State};
 use embassy_boot_stm32::BootLoaderConfig;
 {%- else %}
 use embassy_boot_stm32::{BootLoader, BootLoaderConfig};
+{%- endif %}
+{%- if ota_store != "external" %}
+use embassy_embedded_hal::flash::partition::BlockingPartition;
 {%- endif %}
 use embassy_stm32::flash::{FLASH_BASE, Flash};
 {%- if graph == "true" %}
@@ -125,9 +128,9 @@ fn main() -> ! {
     // `BOOTLOADER_STATE` — со страницей своего сектора, а не всего чипа (см.
     // `STATE_ERASE_SIZE`), но над тем же `Flash`: свой мьютекс, а не второй
     // объект контроллера.
-    let state = Mutex::new(RefCell::new(ErasePage::<_, STATE_ERASE_SIZE>::new(whole(
-        &flash,
-    ))));
+    let state = Mutex::new(RefCell::new(ErasePage::<_, STATE_ERASE_SIZE>::new(
+        BlockingPartition::new(&flash, 0, FLASH_BYTES),
+    )));
 {%- if dfu_bank == "true" %}
     let dfu = Mutex::new(RefCell::new(dfu));
 
@@ -136,9 +139,9 @@ fn main() -> ! {
     // `ACTIVE` и `DFU` — со страницей обмена `SWAP_PAGE_SIZE`, крупнее физической
     // страницы флеша (см. её описание): один мьютекс на оба раздела, как и
     // раньше у цельного `Flash`.
-    let swap = Mutex::new(RefCell::new(ErasePage::<_, SWAP_PAGE_SIZE>::new(whole(
-        &flash,
-    ))));
+    let swap = Mutex::new(RefCell::new(ErasePage::<_, SWAP_PAGE_SIZE>::new(
+        BlockingPartition::new(&flash, 0, FLASH_BYTES),
+    )));
 
     let config = BootLoaderConfig::from_linkerfile_blocking(&swap, &swap, &state);
 {%- else %}
@@ -189,7 +192,7 @@ fn main() -> ! {
     //   проверяет — оговорка выше, про повреждённый образ.
     //
     // `#[expect(unsafe_code)]` — как и остальные unsafe в `crates-cross` (см. `crates-cross/Cargo.toml`)
-    // (`app/src/main.rs`, блок линкерных символов в `bsp/src/flash.rs`): линт требует, чтобы каждое такое место
+    // (`app/src/main.rs`, `app/src/image.rs`): линт требует, чтобы каждое такое место
     // было перечислено явно.
     #[expect(unsafe_code, reason = "обоснование — в комментарии выше")]
     unsafe {
@@ -206,11 +209,11 @@ fn main() -> ! {
 /// 64 KiB при странице 128 KiB), поэтому его страница своя. Число посчитано при
 /// генерации тем же расчётом, что адреса в `memory.x`, и приезжает переменной
 /// среды `STATE_ERASE_SIZE` из `crates-cross/.cargo/config.toml` — той же, что
-/// читает приложение (`bsp::flash`). Нет переменной — страница цельного `Flash`.
-const STATE_ERASE_SIZE: usize = adapters::flash::size_from_env(
-    option_env!("STATE_ERASE_SIZE"),
-    embassy_stm32::flash::MAX_ERASE_SIZE,
-);
+/// читает приложение (`bsp::ota`).
+const STATE_ERASE_SIZE: usize = match usize::from_str_radix(env!("STATE_ERASE_SIZE"), 10) {
+    Ok(size) => size,
+    Err(_) => panic!("STATE_ERASE_SIZE в [env] crates-cross/.cargo/config.toml — не число"),
+};
 {%- if swap_paged == "true" %}
 
 /// Страница обмена `ACTIVE` и `DFU` — крупнее физической страницы флеша.
@@ -223,11 +226,14 @@ const STATE_ERASE_SIZE: usize = adapters::flash::size_from_env(
 /// `ErasePage<_, SWAP_PAGE_SIZE>`, а не над цельным `Flash` с его физической
 /// страницей. Число — переменная среды `SWAP_PAGE_SIZE` (`page_size` из
 /// генерации), та же, что читает приложение (`bsp::flash`).
-const SWAP_PAGE_SIZE: usize = adapters::flash::size_from_env(option_env!("SWAP_PAGE_SIZE"), 0);
+const SWAP_PAGE_SIZE: usize = match usize::from_str_radix(env!("SWAP_PAGE_SIZE"), 10) {
+    Ok(size) => size,
+    Err(_) => panic!("SWAP_PAGE_SIZE в [env] crates-cross/.cargo/config.toml — не число"),
+};
 
 const _: () = assert!(
-    SWAP_PAGE_SIZE != 0 && SWAP_PAGE_SIZE.is_multiple_of(embassy_stm32::flash::MAX_ERASE_SIZE),
-    "SWAP_PAGE_SIZE из генерации не задан или не кратен странице стирания флеша чипа \
+    SWAP_PAGE_SIZE.is_multiple_of(embassy_stm32::flash::MAX_ERASE_SIZE),
+    "SWAP_PAGE_SIZE из генерации не кратен странице стирания флеша чипа \
      (embassy_stm32::flash::MAX_ERASE_SIZE): стирание раздела заденет чужие секторы"
 );
 {%- endif %}
@@ -238,14 +244,29 @@ const _: () = assert!(
 /// сборки, а не паника на старте bootloader'а.
 const SWAP_BUFFER_SIZE: usize = {{write_size}};
 
-{%- if dfu_bank != "true" %}
+{%- if dfu_bank == "true" %}
 
-// `adapters::flash::whole` паникует на объёме, не кратном `ERASE_SIZE`; у STM32
+/// Размер банка 1 в байтах — столько занимает раздел на весь флеш, из
+/// которого строятся `STATE` и `ACTIVE`.
+const FLASH_BYTES: u32 = embassy_stm32::flash::BANK1_REGION.size;
+{%- else %}
+
+/// Размер всего флеша в байтах — столько занимает раздел на весь флеш, из
+/// которого строятся `STATE`, `ACTIVE` и `DFU`.
+///
+/// `usize` на Cortex-M — 32 бита, усечения нет.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "`usize` на Cortex-M — 32 бита"
+)]
+const FLASH_BYTES: u32 = embassy_stm32::flash::FLASH_SIZE as u32;
+
+// `BlockingPartition::new` паникует на объёме, не кратном `ERASE_SIZE`; у STM32
 // объём всегда кратен самому крупному сектору, и сборка это проверяет, а не
 // первый запуск на плате.
 const _: () = assert!(
     embassy_stm32::flash::FLASH_SIZE.is_multiple_of(embassy_stm32::flash::MAX_ERASE_SIZE),
-    "объём flash не кратен самому крупному сектору: `adapters::flash::whole` паникует на старте"
+    "объём flash не кратен самому крупному сектору: `BlockingPartition::new` паникует на старте"
 );
 {%- endif %}
 

@@ -47,14 +47,15 @@ use ports::{Announce, DownloadError, FirmwareUpdate, ImageSource, Rejection, Upd
 use supervisor::runtime::TaskExit;
 
 // Вход узла — `OtaWiring`: структуру эмитит сам фрагмент (`boot: …
-// struct`). Строит её compose-site (`app`) из канала доставки и адаптера
-// `adapters::ota::Updater` над разделами платы (`board.partitions`),
-// подставляя типы порта и адаптера аргументами фрагмента:
+// struct`). Строит её compose-site (`app`) из полей платы: канала доставки
+// `Board::ota_link` и адаптера обновления `Board::updater` (оба реализуют
+// порты; `bsp` про `domain` не знает), подставляя типы порта и адаптера
+// аргументами фрагмента:
 //
 // ```ignore
-// fragments: [::domain::OTA_FRAG<crate::Link, crate::Updater> as OTA
-//                 = ::domain::ota::OtaWiring { link: crate::link(),
-//                                           flash: crate::updater(board.partitions),
+// fragments: [::domain::OTA_FRAG<bsp::ota::Link, bsp::ota::Updater> as OTA
+//                 = ::domain::ota::OtaWiring { link: board.ota_link,
+//                                           flash: board.updater,
 //                                           mode: ::domain::ota::Mode::Plain }];
 // ```
 //
@@ -367,7 +368,7 @@ fn update_rejection<E>(err: &UpdateError<E>) -> Rejection {
 // стоит на нём (см. `domain::heartbeat`).
 //
 // `<S, F>` — параметры фрагмента: тип ресурсного слота — `static`, назвать
-// его фрагмент обязан, а конкретный тип (`app::Updater`, транспорт проекта)
+// его фрагмент обязан, а конкретный тип (`bsp::ota::Updater`, транспорт проекта)
 // `domain` не видит и видеть не должен. Compose-site подставляет их в
 // `fragments:` угловыми скобками, по позиции; bound'ов у параметров нет
 // намеренно — их держит сигнатура `run`, и rustc проверяет её, а не копию в

@@ -136,13 +136,6 @@ mod tests {
     }
 {%- endif %}
 
-    /// Адаптер обновления над разделами платы — тот, что собирает `app`.
-    type Updater = adapters::ota::Updater<bsp::flash::Dfu, bsp::flash::State>;
-
-    fn updater(partitions: bsp::flash::Partitions) -> Updater {
-        Updater::{% if signed == "true" %}signed{% else %}new{% endif %}(partitions.dfu, partitions.state, partitions.active_len)
-    }
-
     /// `prepare(len)` стирает раздел так, как ждёт `embassy-boot`, и ровно
     /// столько страниц, сколько занимает образ.
     ///
@@ -172,7 +165,7 @@ mod tests {
         }
 {%- endif %}
 
-        let mut ota = updater(board.partitions);
+        let mut ota = board.updater;
 
         // Пачкаем раздел перед стиранием: иначе тест зелёный и в случае, когда
         // `prepare` не сделал ничего, а байты остались стёртыми с прошлого
@@ -260,7 +253,7 @@ mod tests {
         }
 {%- endif %}
 
-        let mut ota = updater(board.partitions);
+        let mut ota = board.updater;
 
         let first = [0xA1u8; 32];
         let second = [0xB2u8; 32];
@@ -317,7 +310,7 @@ mod tests {
         }
 {%- endif %}
 
-        let mut ota = updater(board.partitions);
+        let mut ota = board.updater;
 
         // Кратно WRITE_SIZE флеша. Хвост — версия
         // `0.0.0`, заведомо не новее любой проставленной в проекте.

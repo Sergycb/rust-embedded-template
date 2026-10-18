@@ -133,8 +133,8 @@ impl HeartbeatCtx<'_> {
   указывает в крейт фрагмента и переживает переименование зависимости в чужом
   манифесте, а `crate::` означал бы крейт, который фрагмент вызывает. Типы,
   которых фрагмент назвать не может (адаптер платы в слоте), — его параметры:
-  `name: OTA_FRAG<S, F>` во фрагменте, `::domain::OTA_FRAG<crate::Link,
-  crate::Updater>` здесь.
+  `name: OTA_FRAG<S, F>` во фрагменте, `::domain::OTA_FRAG<bsp::ota::Link,
+  bsp::ota::Updater>` здесь.
 * **Порядок items фиксирован**: `name:` → `boot:` → `watchdog:` →
   `cloned:`/`shared:` → `executor` → `fragments:` последним. `fragments:`
   раньше `boot:` — ошибка разбора; блок `watchdog:` внутри фрагмента — тоже
@@ -409,14 +409,14 @@ SD-карта, у каждого свой формат пакета и своя 
 делать с исходом — ответить хосту, сбросить МК, и то и другое — решает
 ваш `finish`; узел этого не знает.
 
-Плата отдаёт для узла только разделы флеша — `board.partitions`
-(`bsp::flash::Partitions`), а вход фрагмента собирает эта сторона: канал `link()` и
-адаптер `updater()` из `main.rs` (`= ::domain::ota::OtaWiring
-{ link: crate::link(), flash: crate::updater(board.partitions), mode:
+Плата отдаёт для узла адаптер и канал — `board.updater` и `board.ota_link`
+(`bsp::ota`), а вход фрагмента собирает эта сторона: `bsp` зависит
+только от `ports` и `adapters`, про `domain` он не знает (`= ::domain::ota::OtaWiring
+{ link: board.ota_link, flash: board.updater, mode:
 ::domain::ota::Mode::Signed { running_version: crate::image::FW_VERSION } }`). Типы
-слотов — аргументы фрагмента (`OTA_FRAG<crate::Link, crate::Updater>`):
+слотов — аргументы фрагмента (`OTA_FRAG<bsp::ota::Link, bsp::ota::Updater>`):
 слот — `static`, тип ему нужен, а знает его только эта сторона. Подставили
-свой транспорт — поправьте первый аргумент. Слоты канала и адаптера — `local` (фича
+свой транспорт — поправьте псевдоним `Link` в `bsp::ota`. Слоты канала и адаптера — `local` (фича
 `supervisor/local-resources` в
 `crates-cross/Cargo.toml`): объекты платы `!Send`, и граф держит их на своём
 исполнителе, не требуя `Send`. Узел, чей `local`-слот заполняется
