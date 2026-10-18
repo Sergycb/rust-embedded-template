@@ -1,20 +1,28 @@
-//! Сеть поверх `embassy-net`: заглушка сетевого устройства и транспорты
-//! протоколов — TCP-сервер и UDP-канал.
+//! Сеть поверх `embassy-net`: заглушка сетевого устройства и транспорт
+//! протокола — {% if interface == "tcp" %}TCP-сервер{% else %}UDP-канал{% endif %}.
 //!
 //! Ничего из этого не знает чипа: устройство — любой
 //! [`Driver`](embassy_net::driver::Driver), сокеты — стек `embassy-net`.
 //! Поэтому здесь, а не в `bsp`: `bsp` только собирает стек над своим
 //! Ethernet и отдаёт эти объекты в `Board`.
 
+// {%- if interface == "tcp" %}
 mod tcp;
+// {%- endif %}
+// {%- if interface == "udp" %}
 mod udp;
+// {%- endif %}
 
 use core::task::Context;
 
 use embassy_net::driver::{Capabilities, Driver, HardwareAddress, LinkState, RxToken, TxToken};
 
+// {%- if interface == "tcp" %}
 pub use tcp::{TcpError, TcpServer};
+// {%- endif %}
+// {%- if interface == "udp" %}
 pub use udp::{UdpError, UdpLink};
+// {%- endif %}
 
 /// Сетевое устройство, которого ещё нет на плате, — место под Ethernet.
 ///
@@ -54,6 +62,7 @@ pub const fn mac_from_uid(uid: [u8; 12]) -> [u8; 6] {
     ]
 }
 
+// {%- if rng_irq == "" %}
 /// Затравка стека (порты, номера последовательностей TCP) из заводского
 /// номера — для чипов без RNG. Не случайна: у одной платы она одна и та же
 /// после каждого сброса.
@@ -63,6 +72,7 @@ pub fn seed_from_uid(uid: [u8; 12]) -> u64 {
     bytes.copy_from_slice(&uid[..8]);
     u64::from_le_bytes(bytes) ^ u64::from(u32::from_le_bytes([uid[8], uid[9], uid[10], uid[11]]))
 }
+// {%- endif %}
 
 /// Сеть платы: фоновая работа стека для узла `NET` и сам стек, на котором
 /// приложение открывает сокет протокола.
@@ -131,7 +141,10 @@ impl Driver for Unconnected {
 
 #[cfg(test)]
 mod uid_tests {
-    use super::{mac_from_uid, seed_from_uid};
+    use super::mac_from_uid;
+    // {%- if rng_irq == "" %}
+    use super::seed_from_uid;
+    // {%- endif %}
 
     const UID: [u8; 12] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 
@@ -148,6 +161,7 @@ mod uid_tests {
         }
     }
 
+    // {%- if rng_irq == "" %}
     /// Затравка зависит от всех 12 байт номера.
     #[test]
     fn seed_depends_on_every_uid_byte() {
@@ -158,6 +172,7 @@ mod uid_tests {
             assert_ne!(seed_from_uid(other), seed, "байт {i} выброшен");
         }
     }
+    // {%- endif %}
 }
 
 #[cfg(test)]
@@ -183,8 +198,8 @@ mod tests {
 
 #[cfg(test)]
 mod fakes {
-    //! Кабель в памяти между двумя стеками `embassy-net` — общий для тестов
-    //! `net::tcp` и `net::udp`.
+    //! Кабель в памяти между двумя стеками `embassy-net` — для тестов
+    //! `net::{% if interface == "tcp" %}tcp{% else %}udp{% endif %}`.
 
     use core::task::{Context, Waker};
     use std::cell::RefCell;

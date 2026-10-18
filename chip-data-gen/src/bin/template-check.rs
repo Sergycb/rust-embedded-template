@@ -182,6 +182,11 @@ fn default_cases() -> Vec<Case> {
             &["protocol=modbus", "interface=tcp", "modbus_master=yes"],
         ),
         Case::new("stm32f407ve").variant("protobuf-udp", &["protocol=protobuf", "interface=udp"]),
+        // Остальные транспорты по сети: Modbus UDP (MBAP в датаграмме, без потока
+        // и CRC) и protobuf по TCP (COBS поверх сокета) — у каждого свой набор
+        // файлов в `adapters`, остальные при генерации вырезаются.
+        Case::new("stm32h743zg").variant("modbus-udp", &["protocol=modbus", "interface=udp"]),
+        Case::new("stm32h743zg").variant("protobuf-tcp", &["protocol=protobuf", "interface=tcp"]),
         // protobuf по USB CDC: устройство `embassy-usb`, узел USB и поток CDC
         // под COBS. G4 — блок USB device (у F4/H7 — OTG, драйвер тот же).
         Case::new("stm32g474re").variant("protobuf-usb", &["protocol=protobuf", "interface=usb"]),

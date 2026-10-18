@@ -34,13 +34,14 @@ embedded-storage-async = { workspace = true }
 # Хранилище настроек (settings.rs) — async API, отсюда и мост в flash.rs.
 sequential-storage = { workspace = true }
 embassy-sync = { workspace = true }
-# {%- if protocol == "modbus" or protocol == "protobuf" %}
+# {%- if stream_io == "true" %}
 # Транспорты поверх потока байтов `embedded_io_async::{Read, Write}` —
-# `modbus::{Rtu, Tcp}` и `cobs::Cobs`; CRC кадра — у обоих.
+# `modbus::{Rtu, Tcp}` и `cobs::Cobs`; CRC кадра — у обоих. UDP-канал им не
+# нужен: границу кадра даёт датаграмма.
 embedded-io-async = { workspace = true }
 crc = { workspace = true }
 # {%- endif %}
-# {%- if protocol == "protobuf" %}
+# {%- if stream_io == "true" and protocol == "protobuf" %}
 # Кадрирование COBS под `cobs::Cobs`.
 cobs = { workspace = true }
 # {%- endif %}
@@ -76,7 +77,7 @@ embassy-embedded-hal = { workspace = true }
 # Исполнитель для async-тестов над флешем в памяти (`#[tokio::test]`); фичи —
 # в корневом Cargo.toml.
 tokio = { workspace = true }
-# {%- if protocol == "modbus" or protocol == "protobuf" %}
+# {%- if protocol == "modbus" or stream_io == "true" %}
 # Property-тесты кадрирования: любое дробление потока и любой мусор.
 proptest = { workspace = true }
 # {%- endif %}

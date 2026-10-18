@@ -1,67 +1,91 @@
-//! Транспорты Modbus: RTU поверх потока байтов, TCP поверх потока, UDP
-//! поверх датаграмм. Каждый реализует порт slave'а
-//! [`ports::ModbusServer`].
+//! Транспорт Modbus {% if interface == "uart" or interface == "usb" %}— RTU поверх потока байтов{% elsif interface == "tcp" %}— TCP поверх потока{% else %}— UDP поверх датаграмм{% endif %}.
+//! Он реализует порт slave'а [`ports::ModbusServer`].
 // {%- if modbus_master == "true" %}
 //! Они же реализуют порт master'а [`ports::ModbusClient`].
 // {%- endif %}
 //! Логика `domain::modbus` работает с PDU, не зная, какой транспорт под ней.
 //!
-//! Чем транспорты отличаются, и почему каждый устроен так:
+// {%- if interface == "uart" or interface == "usb" %}
+//! [`Rtu`](crate::modbus::Rtu) — кадр «адрес, PDU, CRC» поверх
+//! `embedded_io_async::{Read, Write}`. Пауза между кадрами в потоке не
+//! видна, поэтому граница кадра выводится из содержимого: длина — из
+//! кода функции и счётчика байт, CRC подтверждает, что кадр найден верно;
+//! после битого кадра slave сдвигается на байт, пока CRC не сойдётся
+//! снова.
 //!
-//! * [`Rtu`](crate::modbus::Rtu) — кадр «адрес, PDU, CRC» поверх
-//!   `embedded_io_async::{Read, Write}`. Пауза между кадрами в потоке не
-//!   видна, поэтому граница кадра выводится из содержимого: длина — из
-//!   кода функции и счётчика байт, CRC подтверждает, что кадр найден верно;
-//!   после битого кадра slave сдвигается на байт, пока CRC не сойдётся
-//!   снова.
-//! * [`Tcp`](crate::modbus::Tcp) — заголовок MBAP (номер транзакции,
-//!   протокол 0, длина, адрес) и PDU поверх потока. CRC нет — целостность
-//!   обеспечивает TCP, границу — длина в заголовке. Длина вне допустимой —
-//!   граница потеряна, и поток не выровнять: slave кончается
-//!   [`ServeError::Framing`](ports::ServeError::Framing).
-// {%- if modbus_master == "true" %}
-//!   Master в этом случае получает
-//!   [`MasterError::Unexpected`](ports::MasterError::Unexpected).
 // {%- endif %}
-//! * [`Udp`](crate::modbus::Udp) — тот же MBAP, по запросу или ответу в
-//!   датаграмме (`ports::FrameLink`): границу даёт датаграмма, и битая
-//!   просто пропускается.
-//!
+// {%- if interface == "tcp" %}
+//! [`Tcp`](crate::modbus::Tcp) — заголовок MBAP (номер транзакции,
+//! протокол 0, длина, адрес) и PDU поверх потока. CRC нет — целостность
+//! обеспечивает TCP, границу — длина в заголовке. Длина вне допустимой —
+//! граница потеряна, и поток не выровнять: slave кончается
+//! [`ServeError::Framing`](ports::ServeError::Framing).
 // {%- if modbus_master == "true" %}
+//! Master в этом случае получает
+//! [`MasterError::Unexpected`](ports::MasterError::Unexpected).
+// {%- endif %}
+//!
+// {%- endif %}
+// {%- if interface == "udp" %}
+//! [`Udp`](crate::modbus::Udp) — заголовок MBAP, по запросу или ответу в
+//! датаграмме (`ports::FrameLink`): границу даёт датаграмма, и битая
+//! просто пропускается.
+//!
+// {%- endif %}
+// {%- if modbus_master == "true" %}
+// {%- if interface == "tcp" or interface == "udp" %}
 //! Номер транзакции master'а растёт с каждым запросом, ответ с чужим
 //! номером — опоздавший ответ на брошенный по таймауту запрос — пропускается.
+// {%- endif %}
+// {%- if interface == "uart" or interface == "usb" %}
 //! В RTU номера нет, и там то же делает слив входного буфера перед запросом.
 //!
 // {%- endif %}
+// {%- endif %}
+// {%- if interface == "tcp" or interface == "udp" %}
 //! TCP и UDP адресуют устройство по IP, и адрес в MBAP нужен только шлюзу
-//! на шину RS-485. Поэтому slave получает любой запрос по TCP и UDP как
-//! адресованный ему (0xFF), а ответ несёт адрес из запроса.
+//! на шину RS-485. Поэтому slave получает любой запрос как адресованный
+//! ему (0xFF), а ответ несёт адрес из запроса.
 // {%- if modbus_master == "true" %}
 //! Master по-прежнему шлёт адресу 0 без ожидания ответа
 //! ([`ports::ModbusClient::broadcast`]): ответ, если он придёт, будет
-//! пропущен по номеру транзакции; к самому устройству за TCP master
+//! пропущен по номеру транзакции; к самому устройству master
 //! обращается адресом 0xFF.
 // {%- endif %}
+// {%- endif %}
 
+// {%- if interface == "tcp" or interface == "udp" %}
 /// Заголовок MBAP — общий для TCP и UDP.
 mod mbap;
 
+// {%- endif %}
+// {%- if interface == "uart" or interface == "usb" %}
 /// Modbus RTU: кадр с CRC поверх потока байтов.
 mod rtu;
 
+pub use rtu::Rtu;
+
+// {%- endif %}
+// {%- if interface == "tcp" %}
 /// Modbus TCP: MBAP поверх потока байтов.
 mod tcp;
 
+pub use tcp::Tcp;
+
+// {%- endif %}
+// {%- if interface == "udp" %}
 /// Modbus UDP: MBAP в датаграмме.
 mod udp;
 
-pub use rtu::Rtu;
-pub use tcp::Tcp;
 pub use udp::Udp;
+// {%- endif %}
 
+// {%- if interface != "udp" %}
 use embedded_io_async::{Read, ReadExactError};
 use ports::ServeError;
+// {%- endif %}
 
+// {%- if interface != "udp" %}
 /// Дочитывает `rx` из `io` до `want` байт. Каждый прочитанный кусок сразу
 /// учтён в `have`, поэтому брошенное чтение ничего не теряет: следующий
 /// вызов продолжит с того же места.
@@ -96,6 +120,7 @@ fn master_error<E>(e: ReadExactError<E>) -> ports::MasterError<E> {
     }
 }
 // {%- endif %}
+// {%- endif %}
 
 #[cfg(test)]
 mod fakes {
@@ -104,13 +129,24 @@ mod fakes {
     //! Ни один не ждёт по-настоящему — их future готовы с первого `poll`, —
     //! поэтому тестам хватает однопоточного `#[tokio::test]`.
 
+    // {%- if interface != "udp" %}
     use core::convert::Infallible;
+    // {%- endif %}
+    // {%- if interface == "udp" %}
     use std::collections::VecDeque;
+    // {%- endif %}
 
+    // {%- if interface != "udp" %}
     use embedded_io_async::{ErrorType, Read, ReadReady, Write};
+    // {%- endif %}
+    // {%- if interface == "udp" %}
     use ports::{FrameLink, LinkError};
+    // {%- endif %}
 
+    // {%- if interface == "tcp" or interface == "udp" %}
     use super::mbap;
+    // {%- endif %}
+    // {%- if interface == "uart" or interface == "usb" %}
     use super::rtu::seal;
 
     /// Кадр RTU: адрес `unit`, `pdu` и CRC.
@@ -120,14 +156,18 @@ mod fakes {
         seal(&mut buf, len);
         buf
     }
+    // {%- endif %}
 
+    // {%- if interface == "tcp" or interface == "udp" %}
     /// Кадр MBAP: транзакция `tid`, протокол `protocol`, адрес `unit`, `pdu`.
     pub(super) fn mbap_frame(tid: u16, protocol: u16, unit: u8, pdu: &[u8]) -> Vec<u8> {
         let mut head = mbap::head(tid, unit, pdu.len());
         head[2..4].copy_from_slice(&protocol.to_be_bytes());
         [&head[..], pdu].concat()
     }
+    // {%- endif %}
 
+    // {%- if interface != "udp" %}
     /// Поток: читает заранее записанные байты, пишет в `tx`. Когда читать
     /// нечего, `read` отдаёт 0 — конец потока.
     pub(super) struct Duplex {
@@ -164,12 +204,15 @@ mod fakes {
             }
         }
 
+        // {%- if interface == "uart" or interface == "usb" %}
         /// До запроса во входном буфере уже лежит `stale` — опоздавший ответ;
         /// ответ на запрос придёт после него.
         pub(super) fn with_stale(mut self, stale: &[u8]) -> Self {
             self.rx = stale.to_vec();
             self
         }
+        // {%- endif %}
+        // {%- if interface == "tcp" %}
 
         /// Пустой вход — ожидание, а не конец потока.
         pub(super) fn waiting(mut self) -> Self {
@@ -177,11 +220,14 @@ mod fakes {
             self
         }
         // {%- endif %}
+        // {%- endif %}
+        // {%- if interface == "tcp" %}
 
         /// Дописывает `bytes` ко входу — пришли позже.
         pub(super) fn push(&mut self, bytes: &[u8]) {
             self.rx.extend_from_slice(bytes);
         }
+        // {%- endif %}
     }
 
     impl ErrorType for Duplex {
@@ -222,6 +268,9 @@ mod fakes {
         }
     }
 
+    // {%- endif %}
+
+    // {%- if interface == "udp" %}
     /// Канал датаграмм: отдаёт заранее заданные исходы приёма, затем — `Down`;
     /// отправленное копит в `sent`.
     pub(super) struct Datagrams {
@@ -274,4 +323,5 @@ mod fakes {
             std::future::ready(self.send)
         }
     }
+    // {%- endif %}
 }

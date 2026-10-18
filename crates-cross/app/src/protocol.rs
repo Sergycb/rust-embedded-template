@@ -14,7 +14,12 @@ use static_cell::ConstStaticCell;
 {%- if protocol == "modbus" %}
 
 /// Транспорт узла `MODBUS` поверх {% if interface == "uart" %}UART{% elsif interface == "tcp" %}TCP{% elsif interface == "usb" %}USB CDC{% else %}UDP{% endif %} платы: {% if interface == "uart" or interface == "usb" %}кадр RTU с CRC{% else %}заголовок MBAP{% endif %}.
-pub type ModbusLink = ::adapters::modbus::{% if interface == "uart" %}Rtu<bsp::serial::Serial>{% elsif interface == "usb" %}Rtu<::adapters::usb::CdcStream<'static, bsp::usb::UsbDriver>>{% elsif interface == "tcp" %}Tcp<::adapters::net::TcpServer>{% else %}Udp<::adapters::net::UdpLink>{% endif %};
+{%- if interface == "usb" %}
+pub type ModbusLink =
+    ::adapters::modbus::Rtu<::adapters::usb::CdcStream<'static, bsp::usb::UsbDriver>>;
+{%- else %}
+pub type ModbusLink = ::adapters::modbus::{% if interface == "uart" %}Rtu<bsp::serial::Serial>{% elsif interface == "tcp" %}Tcp<::adapters::net::TcpServer>{% else %}Udp<::adapters::net::UdpLink>{% endif %};
+{%- endif %}
 {%- endif %}
 {%- if protocol == "protobuf" %}
 

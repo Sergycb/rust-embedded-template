@@ -1294,6 +1294,10 @@ variable::set("erase_page", if variable::get("state_paged") == "true" || variabl
 variable::set("external_flash", if (variable::get("ota") == "true" && variable::get("ota_store") == "external") || variable::get("config_store") == "external" { "true" } else { "false" });
 variable::set("protocol", protocol);
 variable::set("interface", iface);
+// Транспорт поверх потока байтов (UART, USB CDC, TCP), а не датаграммы: ему нужны
+// `embedded-io-async`, `crc` и, под protobuf, COBS. UDP границу кадра получает
+// от самой датаграммы, CAN — это вообще не поток.
+variable::set("stream_io", if (protocol == "modbus" || protocol == "protobuf") && (iface == "uart" || iface == "usb" || iface == "tcp") { "true" } else { "false" });
 // Группы `resources.rs` нужны, пока есть что в них класть: общий флеш, сторож
 // графа или блок выбранного интерфейса. Иначе в файле остаётся пустая группа.
 variable::set("has_resources", if iface != "none" || variable::get("shared_flash") == "true" || variable::get("graph") == "true" { "true" } else { "false" });
@@ -1340,6 +1344,32 @@ if protocol != "modbus" {
 	file::delete("crates-host/adapters/src/modbus");
 	file::delete("crates-host/domain/src/modbus.rs");
 	file::delete("crates-host/domain/src/modbus");
+}
+// Транспорт Modbus и сокет сети — только под выбранный интерфейс: остальные
+// файлы адаптеров были бы кодом, до которого не дотянуться. `mod`, `pub use` и
+// тесты в `modbus.rs`/`net.rs` вырезает Liquid в комментариях.
+if protocol == "modbus" {
+	if iface != "uart" && iface != "usb" {
+		file::delete("crates-host/adapters/src/modbus/rtu.rs");
+	}
+	if iface != "tcp" {
+		file::delete("crates-host/adapters/src/modbus/tcp.rs");
+	}
+	if iface != "udp" {
+		file::delete("crates-host/adapters/src/modbus/udp.rs");
+	}
+	if iface != "tcp" && iface != "udp" {
+		file::delete("crates-host/adapters/src/modbus/mbap.rs");
+	}
+}
+if iface != "tcp" {
+	file::delete("crates-host/adapters/src/net/tcp.rs");
+}
+if iface != "udp" {
+	file::delete("crates-host/adapters/src/net/udp.rs");
+}
+if protocol == "protobuf" && iface == "udp" {
+	file::delete("crates-host/adapters/src/cobs.rs");
 }
 if protocol != "protobuf" {
 	file::delete("crates-host/ports/src/host.rs");

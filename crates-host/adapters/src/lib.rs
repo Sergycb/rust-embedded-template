@@ -22,7 +22,7 @@ pub mod flash;
 /// переживающие перезапуск и обновление прошивки.
 pub mod settings;
 
-// {%- if protocol == "protobuf" %}
+// {%- if stream_io == "true" and protocol == "protobuf" %}
 /// Кадрирование потока байтов (UART, USB CDC, TCP) в кадры `ports::FrameLink`:
 /// COBS и CRC.
 pub mod cobs;
