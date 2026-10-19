@@ -5,6 +5,7 @@
 //! `protoc` не нужен нигде. Код ложится в `OUT_DIR`, в git его нет: схема и
 //! код не могут разойтись.
 
+use std::fmt::Write as _;
 use std::path::PathBuf;
 
 use micropb_gen::{Config, Generator};
@@ -12,12 +13,16 @@ use micropb_gen::{Config, Generator};
 /// Схемы, из которых генерируется код.
 const PROTOS: &[&str] = &["proto/host.proto"];
 
-/// Ёмкость `Info.version`, байт: строки — `heapless::String`, и длину надо
-/// знать заранее. Длиннее на проводе — сообщение не разберётся.
-const VERSION_BYTES: u32 = 32;
-
-/// Ёмкость `Error.text`, байт.
-const ERROR_TEXT_BYTES: u32 = 64;
+/// Ёмкости полей переменной длины, байт: строки и `bytes` —
+/// `heapless`-контейнеры, и длину надо знать заранее. Длиннее на проводе —
+/// сообщение не разберётся. Имя константы крейта, поле схемы, ёмкость.
+const LIMITS: &[(&str, &str, u32)] = &[
+    ("VERSION_BYTES", ".host.Info.version", 32),
+    ("COMMIT_BYTES", ".host.Info.commit", 16),
+    ("CHIP_BYTES", ".host.Info.chip", 24),
+    ("UID_BYTES", ".host.Info.uid", 12),
+    ("ERROR_TEXT_BYTES", ".host.Error.text", 64),
+];
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let out = PathBuf::from(std::env::var("OUT_DIR")?);
@@ -34,25 +39,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut generator = Generator::new();
     generator.use_container_heapless();
-    generator.configure(".host.Info.version", Config::new().max_bytes(VERSION_BYTES));
-    generator.configure(
-        ".host.Error.text",
-        Config::new().max_bytes(ERROR_TEXT_BYTES),
-    );
+    for (_, field, bytes) in LIMITS {
+        generator.configure(field, Config::new().max_bytes(*bytes));
+    }
     generator.compile_fdset_file(&descriptor_path, out.join("host.rs"))?;
 
     // Те же ёмкости — константами крейта: тот, кто кладёт в поле строку своей
-    // длины (`domain::host::Service` — версию), сверяет её на этапе компиляции
-    // с `proto::VERSION_BYTES`, а не узнаёт об обрезке на проводе.
-    std::fs::write(
-        out.join("limits.rs"),
-        format!(
-            "/// Ёмкость `Info.version`, байт (`build.rs`).
-             pub const VERSION_BYTES: usize = {VERSION_BYTES};
-             /// Ёмкость `Error.text`, байт (`build.rs`).
-             pub const ERROR_TEXT_BYTES: usize = {ERROR_TEXT_BYTES};
-"
-        ),
-    )?;
+    // длины (`domain::host::Service` — сведения об устройстве), сверяет её на
+    // этапе компиляции, а не узнаёт об обрезке на проводе.
+    let mut limits = String::new();
+    for (name, field, bytes) in LIMITS {
+        writeln!(
+            limits,
+            "/// Ёмкость `{field}`, байт (`build.rs`).\npub const {name}: usize = {bytes};"
+        )?;
+    }
+    std::fs::write(out.join("limits.rs"), limits)?;
     Ok(())
 }

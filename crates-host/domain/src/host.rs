@@ -30,7 +30,7 @@
 /// Обработчик по умолчанию над примером схемы `crates-host/proto`.
 mod service;
 
-pub use service::Service;
+pub use service::{DeviceInfo, Service};
 
 use defmt_or_log::{FormatOrDebug, info, warn};
 use micropb::{DecodeError, MessageDecode, MessageEncode, PbEncoder};
@@ -45,7 +45,7 @@ use supervisor::runtime::TaskExit;
 // ```ignore
 // fragments: [::domain::HOST_FRAG<HostLink, ::domain::host::Service> as HOST
 //                 = ::domain::host::HostWiring { link: HostLink::new(board.serial, FRAME.init([0; 262])),
-//                                                service: ::domain::host::Service::new("1.0.0"),
+//                                                service: ::domain::host::Service::new(crate::device_info(board.spec)),
 //                                                rx: RX.init([0; 258]), tx: TX.init([0; 256]) }];
 // ```
 //
@@ -207,8 +207,9 @@ mod tests {
     use core::task::{Context, Waker};
     use micropb::{MessageDecode, MessageEncode, PbEncoder};
     use ports::{FrameLink, LinkError};
-    use proto::{GetInfo, Ping, Request, Request_, Response, Response_, heapless};
+    use proto::{Get, Ping, Request, Request_, Response, Response_, heapless};
 
+    use super::service::tests::INFO;
     use super::{HostCtx, Service, task};
 
     /// Канал: отдаёт заранее заготовленные исходы `recv`, когда они кончаются,
@@ -276,7 +277,7 @@ mod tests {
         let mut tx = vec![0; tx_len];
         let ctx = HostCtx {
             link,
-            service: &mut Service::new("1.2.3"),
+            service: &mut Service::new(INFO),
             rx: &mut rx,
             tx: &mut tx,
             index: 0,
@@ -291,7 +292,7 @@ mod tests {
         let mut link = Link {
             incoming: VecDeque::from([
                 Ok(request(7, Request_::Command::Ping(Ping::default()))),
-                Ok(request(8, Request_::Command::GetInfo(GetInfo::default()))),
+                Ok(request(8, Request_::Command::Info(Get::default()))),
             ]),
             sent: Vec::new(),
             send: Ok(()),
@@ -367,7 +368,7 @@ mod tests {
     fn reply_that_does_not_fit_is_dropped_not_truncated() {
         let mut link = Link {
             incoming: VecDeque::from([
-                Ok(request(1, Request_::Command::GetInfo(GetInfo::default()))),
+                Ok(request(1, Request_::Command::Info(Get::default()))),
                 Ok(request(2, Request_::Command::Ping(Ping::default()))),
             ]),
             sent: Vec::new(),

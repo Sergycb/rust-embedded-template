@@ -107,8 +107,13 @@ mod modbus {
 /// Узел `HOST`: сообщения protobuf от хоста.
 mod host {
     #[embassy_executor::task]
-    pub async fn task(mut link: bsp::link::Link, rx: &'static mut [u8], tx: &'static mut [u8]) {
-        let mut service = domain::host::Service::new(crate::build::PKG_VERSION);
+    pub async fn task(
+        mut link: bsp::link::Link,
+        info: domain::host::DeviceInfo,
+        rx: &'static mut [u8],
+        tx: &'static mut [u8],
+    ) {
+        let mut service = domain::host::Service::new(info);
         domain::host::task(domain::host::HostCtx {
             link: &mut link,
             service: &mut service,
@@ -140,6 +145,21 @@ mod canopen {
     }
 }
 {%- endif %}
+{%- endif %}
+{%- if protocol == "protobuf" %}
+
+/// Сведения об устройстве для ответа хосту на `info`: версия и коммит — из
+/// `shadow-rs` (те же, что в баннере старта), остальное — с платы.
+fn device_info(spec: bsp::ChipSpec) -> domain::host::DeviceInfo {
+    domain::host::DeviceInfo {
+        version: build::PKG_VERSION,
+        commit: build::SHORT_COMMIT,
+        chip: spec.chip,
+        uid: spec.uid,
+        flash_size: spec.flash_size,
+        sys_hz: spec.sys_hz,
+    }
+}
 {%- endif %}
 
 #[bsp::cpu::entry]
@@ -274,8 +294,13 @@ fn main() -> ! {
     let token = modbus::task(board.link).expect("задача MODBUS свежая: спавнится один раз");
     spawner.spawn(token);
 {%- elsif protocol == "protobuf" %}
-    let token = host::task(board.link, board.host_buffers.rx, board.host_buffers.tx)
-        .expect("задача HOST свежая: спавнится один раз");
+    let token = host::task(
+        board.link,
+        device_info(board.spec),
+        board.host_buffers.rx,
+        board.host_buffers.tx,
+    )
+    .expect("задача HOST свежая: спавнится один раз");
     spawner.spawn(token);
 {%- elsif protocol == "canopen" %}
     let token = canopen::task(board.can, {% if config == "true" %}board.settings{% else %}::adapters::settings::Unavailable{% endif %})
