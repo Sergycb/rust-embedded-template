@@ -2844,8 +2844,9 @@ fn caches_follow_the_metadata_and_the_core() {
         ("l552ze", "icache"),
         ("u575zi", "icache"),
         ("f746ng", "scb"),
-        ("h743zi", "scb"),
-        ("h745zi-cm7", "scb"),
+        ("h743zi", "scb scb_d"),
+        ("h745zi-cm7", "scb scb_d"),
+        ("h7s7l8", "scb"),
         ("h745zi-cm4", ""),
         ("f103c8", ""),
         ("l053r8", ""),
@@ -2865,6 +2866,87 @@ fn caches_follow_the_metadata_and_the_core() {
             "{suffix}: cache.rs"
         );
     }
+}
+
+/// `DMA_NC` — хвост `AXISRAM` под буферы DMA: он есть у каждого чипа с `AXISRAM` (кроме
+/// ядра CM4), лежит на границе своего размера (требование региона MPU), вплотную
+/// за укороченной `AXISRAM`, и только с ним кэш данных ядра M7 включается
+/// (`scb_d`); у F7 и H7R/S, где `AXISRAM` нет, остаётся кэш инструкций.
+#[test]
+fn every_axisram_chip_gets_a_dma_region() {
+    fn region(memory_x: &str, name: &str) -> Option<(u64, u64)> {
+        let line = memory_x
+            .lines()
+            .find(|line| line.trim_start().starts_with(name) && line.contains("ORIGIN"))?;
+        let origin = line.split("ORIGIN = ").nth(1)?.split(',').next()?;
+        let length = line.split("LENGTH = ").nth(1)?.trim();
+        let origin = u64::from_str_radix(origin.trim_start_matches("0x"), 16).ok()?;
+        let length = match length.strip_suffix('K') {
+            Some(kib) => kib.parse::<u64>().ok()? * 1024,
+            None => length.parse().ok()?,
+        };
+        Some((origin, length))
+    }
+
+    let ast = compile_script();
+    let mut with_region = 0;
+    let mut failures = Vec::new();
+    for suffix in all_chip_suffixes() {
+        let Ok(result) = run_cascade_to(&ast, &suffix) else {
+            continue;
+        };
+        let Some(app) = result.files.get("crates-cross/app/memory.x") else {
+            continue;
+        };
+        let memory_x = app.join(
+            "
+",
+        );
+        let cache = result.vars.get("cache").map_or("", String::as_str);
+        let m7 = result.vars.get("cpu").is_some_and(|cpu| cpu == "cortex-m7");
+        let dma = region(&memory_x, "DMA_NC");
+        let start = result.vars.get("dma_nc_start").map_or("", String::as_str);
+
+        if suffix.ends_with("-cm4") {
+            if dma.is_some() || cache.contains("scb") {
+                failures.push(format!(
+                    "{suffix}: у ядра CM4 нет ни региона, ни кэша ядра M7"
+                ));
+            }
+            continue;
+        }
+        let Some((axi_origin, axi_length)) = region(&memory_x, "AXISRAM") else {
+            // Без AXISRAM региона быть не может, а кэш данных ядра — тем более.
+            if dma.is_some() || cache.contains("scb_d") || !start.is_empty() {
+                failures.push(format!("{suffix}: DMA_NC без AXISRAM"));
+            }
+            continue;
+        };
+        let Some((origin, length)) = dma else {
+            failures.push(format!("{suffix}: у чипа с AXISRAM нет региона DMA_NC"));
+            continue;
+        };
+        with_region += 1;
+        if origin != axi_origin + axi_length || length != 32 * 1024 || origin % length != 0 {
+            failures.push(format!(
+                "{suffix}: DMA_NC {origin:#x}+{length} не вплотную за AXISRAM или не по границе размера"
+            ));
+        }
+        if start != origin.to_string() || !(cache.contains("scb_d") == m7) {
+            failures.push(format!(
+                "{suffix}: переменные dma_nc_start/cache не сходятся с memory.x ({cache:?})"
+            ));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{}",
+        failures.join(
+            "
+"
+        )
+    );
+    assert!(with_region > 100, "регионов DMA_NC всего {with_region}");
 }
 
 /// `core_baseline` — ядра без `DWT.CYCCNT`, `CFSR` и ловушки деления (M0, M0+,

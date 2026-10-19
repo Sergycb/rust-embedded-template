@@ -85,6 +85,12 @@ SWAP_PAGE_SIZE = "{{page_size | remove: '_'}}"
 {%- endif %}
 {%- endif %}
 {%- endif %}
+{%- if dma_nc_start != "" %}
+# Регион `DMA_NC` — хвост AXISRAM, который `bsp::dma_nc` держит non-cacheable в
+# MPU (адрес и размер в байтах, как в `memory.x`).
+DMA_NC_START = "{{dma_nc_start}}"
+DMA_NC_LEN = "{{dma_nc_len}}"
+{%- endif %}
 {%- if config_start != "" %}
 # Границы раздела настроек (`bsp::settings`): смещения от базы flash — так их
 # ждёт `embassy_stm32::flash::Flash` — или от начала внешней флеши.

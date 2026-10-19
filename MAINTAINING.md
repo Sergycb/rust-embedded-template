@@ -316,7 +316,15 @@ H723/725/730/733/735. Им `bsp` получает `src/clocks.rs`, осталь�
 семейств нет. Кэши ядра M7 в блок не входят: хук добавляет тег `scb`, когда выбранное каскадом
 `cpu` — `cortex-m7` (так двухъядерный H745 получает его только в `-cm7`). Чипу без тегов хук
 удаляет `crates-cross/bsp/src/cache.rs`; `board.rs`, `lib.rs` и `unstable-pac` в манифесте `bsp`
-смотрят на ту же переменную. Тест — `caches_follow_the_metadata_and_the_core`. `DCACHE` (U5/H5)
+смотрят на ту же переменную. Тест — `caches_follow_the_metadata_and_the_core`.
+
+Кэш данных ядра M7 (тег `scb_d`) включается только вместе с регионом `DMA_NC`: `chip-data-gen`
+(`dma_nc_region`) отрезает 32 KiB от конца `AXISRAM` у чипов, где она есть (H7; у F7 и H7R/S
+блока нет, у `-cm4` кэша данных нет), и кладёт в запись раскладки `dma_nc_origin`/`dma_nc_length`.
+Хук выставляет `dma_nc_start`/`dma_nc_len` (в `[env]` `crates-cross/.cargo/config.toml`),
+удаляет `bsp/src/dma_nc.rs` там, где региона нет, и дописывает `scb_d` в `cache`. Секции в
+`memory.x` у региона нет намеренно (`flip-link`): место выдаёт `bsp::dma_nc::alloc_uninit`.
+Тест — `every_axisram_chip_gets_a_dma_region`. `DCACHE` (U5/H5)
 и предвыборка намеренно не включаются — `docs/clocks.md`, «Кэши».
 
 `core_baseline` ("true" для Cortex-M0/M0+/M23 по `cpu`) — ядра без `DWT.CYCCNT`, `CFSR` и

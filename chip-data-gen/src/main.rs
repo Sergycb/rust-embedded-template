@@ -1261,6 +1261,9 @@ struct MemoryLayout {
     /// сумме банков, а смещение банка 2 больше неё, — и `DFU` берётся через
     /// регион банка (`Bank2Region`), со смещениями от этого адреса.
     dfu_bank_origin: Option<u64>,
+    /// Хвост `AXISRAM` под буферы DMA (`origin`, `length`) — см. [`dma_nc_region`];
+    /// из `extra_regions` он уже вычтен.
+    dma_nc: Option<(u64, u64)>,
     /// `Ok` — OTA-схема помещается в flash; `Err` — не помещается, и текст
     /// объясняет почему (печатается при генерации и попадает комментарием в
     /// `memory.x`). Во втором случае проект собирается одним образом на весь
@@ -1407,6 +1410,32 @@ const PANIC_MIN: u64 = 128;
 /// Больше полукилобайта отдавать незачем: сообщение всё равно обрезается по
 /// размеру региона.
 const PANIC_MAX: u64 = 512;
+
+/// Размер региона `DMA_NC`, который `bsp::dma_nc` держит non-cacheable в MPU под
+/// буферы DMA при включённом кэше данных Cortex-M7. Степень двойки не меньше
+/// 32 байт и адрес по своему размеру — требование региона MPU Armv7-M; 32 KiB
+/// хватает на очереди Ethernet и буферы SDMMC. Берётся от конца `AXISRAM`.
+const DMA_NC_SIZE: u64 = 32 * 1024;
+
+/// Регион `DMA_NC` — хвост `AXISRAM` (H7: 512/320 KiB, H7A3: 1 MiB) под буферы
+/// DMA, невидимые кэшу данных ядра (`(origin, length)`).
+///
+/// Только у чипов с `AXISRAM`: у F7 и H7R/S такого блока нет, и им кэш данных
+/// ядра не включается вовсе. Второе ядро CM4 двухъядерных H7 кэша данных не
+/// имеет, ему регион не нужен. Если конец `AXISRAM` не лежит на границе
+/// `DMA_NC_SIZE`, региона нет — тест `every_axisram_chip_gets_a_dma_region`
+/// ловит такой чип.
+fn dma_nc_region(chip: &str, regions: &[RawRegion]) -> Option<(u64, u64)> {
+    if chip.ends_with("-cm4") {
+        return None;
+    }
+    let axi = regions
+        .iter()
+        .find(|r| r.name == "AXISRAM" && r.kind == RegionKind::Ram)?;
+    let origin = (axi.address + axi.size).checked_sub(DMA_NC_SIZE)?;
+    (axi.size >= 4 * DMA_NC_SIZE && origin.is_multiple_of(DMA_NC_SIZE))
+        .then_some((origin, DMA_NC_SIZE))
+}
 /// Чип, у которого RAM меньше двух минимальных резервов, автораскладки не
 /// получает вовсе (и генератор на нём падает). Среди STM32 таких нет
 /// — самый скромный вариант это 2 KiB, — но инвариант «есть раскладка →
@@ -1540,11 +1569,17 @@ fn compute_memory_layout(chip: &str, regions: &[RawRegion]) -> Option<MemoryLayo
         panic,
         // Границы цепочек, а не ram_length: PANIC отрезан от RAM, но лежит
         // внутри той же цепочки — регионом его дублировать не надо.
-        extra_regions: extra_region_lines(regions, FLASH_BASE + flash_total, ram_end),
+        extra_regions: extra_region_lines(
+            regions,
+            FLASH_BASE + flash_total,
+            ram_end,
+            dma_nc_region(chip, regions),
+        ),
         write_size,
         page_size,
         erase_zero,
         dfu_bank_origin: bank_gap.map(|b| b.origin),
+        dma_nc: dma_nc_region(chip, regions),
         ota: compute_ota_partitions(
             chip,
             &chain,
@@ -1835,7 +1870,12 @@ fn region_line(name: &str, attrs: &str, origin: u64, length: u64) -> String {
 ///
 /// Часть регионов выводится закомментированной (см. `EXTERNAL_BUS_PREFIXES` и
 /// `ALIAS_SUFFIX`): перечислить их надо, но объявлять рабочей памятью нельзя.
-fn extra_region_lines(regions: &[RawRegion], flash_end: u64, ram_end: u64) -> Vec<String> {
+fn extra_region_lines(
+    regions: &[RawRegion],
+    flash_end: u64,
+    ram_end: u64,
+    dma_nc: Option<(u64, u64)>,
+) -> Vec<String> {
     let names: BTreeSet<&str> = regions.iter().map(|r| r.name.as_str()).collect();
     let covered = |r: &RawRegion| {
         let end = r.address + r.size;
@@ -1848,7 +1888,7 @@ fn extra_region_lines(regions: &[RawRegion], flash_end: u64, ram_end: u64) -> Ve
         .collect();
     sorted.sort_by_key(|r| (r.address, r.name.clone()));
 
-    sorted
+    let mut lines: Vec<String> = sorted
         .iter()
         .map(|r| {
             let attrs = match r.kind {
@@ -1884,7 +1924,19 @@ fn extra_region_lines(regions: &[RawRegion], flash_end: u64, ram_end: u64) -> Ve
                 None => line,
             }
         })
-        .collect()
+        .collect();
+
+    // `DMA_NC` — хвост `AXISRAM`: сам блок становится короче на его длину.
+    if let Some((origin, length)) = dma_nc
+        && let Some(axi) = regions.iter().find(|r| r.name == "AXISRAM")
+        && let Some(i) = lines
+            .iter()
+            .position(|line| line.trim_start().starts_with("AXISRAM"))
+    {
+        lines[i] = region_line("AXISRAM", "xrw", axi.address, axi.size - length);
+        lines.insert(i + 1, region_line("DMA_NC", "xrw", origin, length));
+    }
+    lines
 }
 
 /// Раскладка OTA со страницей обмена, при необходимости крупнее физической.
@@ -2408,6 +2460,10 @@ fn format_memory_layouts(layouts: &BTreeMap<&str, MemoryLayout>) -> BTreeMap<Str
         );
         // Только у чипов с разрывом между банками — по наличию ключа хук и
         // решает, что DFU пишется через регион банка.
+        if let Some((origin, length)) = m.dma_nc {
+            push_field(&mut out, "dma_nc_origin", &format_addr(origin));
+            push_field(&mut out, "dma_nc_length", &format_size(length));
+        }
         if let Some(origin) = m.dfu_bank_origin {
             push_field(&mut out, "dfu_bank_origin", &format_addr(origin));
         }
@@ -4001,7 +4057,12 @@ pub static METADATA: Metadata = Metadata {
             region("EEPROM", RegionKind::Eeprom, 0x0808_0000, 2048),
         ];
         // SRAM (основная RAM) покрыта хуком, EMPTY нулевого размера пропущен.
-        let lines = extra_region_lines(&regions, FLASH_BASE + 512 * 1024, RAM_BASE + 64 * 1024);
+        let lines = extra_region_lines(
+            &regions,
+            FLASH_BASE + 512 * 1024,
+            RAM_BASE + 64 * 1024,
+            None,
+        );
         let joined = lines.join("\n");
         assert_eq!(lines.len(), 5, "{joined}");
         assert!(!joined.contains("EMPTY"), "{joined}");

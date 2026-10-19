@@ -232,9 +232,14 @@ read`: руками пришлось бы сначала найти адрес �
 {%- if cache != "" %}
 - `bsp::cache::enable()` — в `Board::new` сразу за `embassy_stm32::init`: кэши
   с завода выключены, HAL их не включает. Что именно включается, решает
-  генерация по метаданным чипа; кэш данных ядра M7 (F7/H7) не знает про DMA —
-  буфер периферии надо вынести в non-cacheable область `MPU` или чистить кэш
-  вручную — `docs/clocks.md`, «Кэши».
+  генерация по метаданным чипа (`docs/clocks.md`, «Кэши»).
+{%- if cache contains "scb_d" %}
+  Кэш данных ядра M7 DMA не видит, поэтому он включён только вместе с регионом
+  `DMA_NC` — хвостом `AXISRAM` (`memory.x`, `DMA_NC_START`/`DMA_NC_LEN` в `[env]`), который
+  `bsp::dma_nc` держит в MPU non-cacheable: буферы DMA берите из
+  `bsp::dma_nc::alloc_uninit`, не из `static`. Секцию под регион в `memory.x`
+  не заводить — она сбивает `flip-link`.
+{%- endif %}
 {%- endif %}
 {%- if cpu_freq_boost == "true" %}
 - `bsp::clocks::ensure_cpu_freq_boost()` — первой строкой `Board::new`, до
