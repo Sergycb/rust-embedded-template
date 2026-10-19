@@ -123,7 +123,7 @@ embassy-usb        = { workspace = true }
 # в корневом Cargo.toml.
 tokio = { workspace = true }
 # {%- if ota == "true" %}
-# Property-тесты `download::receive` (любое разбиение образа на куски).
+# Property-тесты `download::Transfer` (любое разбиение образа на куски).
 proptest = { workspace = true }
 # {%- endif %}
 # Обе строки — ради линковки хостового тестового бинарника, а не ради самих

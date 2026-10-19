@@ -85,21 +85,21 @@ supervisor_graph! {
         },
 {%- if ota == "true" %}
 
-        // Фрагмент OTA — с параметром и своей привязкой. Параметр
-        // (`<Ota>`) — тип его слота: слот — `static`, тип ему нужен, а знает
-        // его только эта сторона; подставили свой транспорт вместо заглушки —
-        // он уже внутри `bsp::ota::Ota`, здесь ничего не меняется. Привязка
-        // (`= …`) — вход узла (`domain::ota::OtaWiring`): объект `board.ota`
-        // (канал доставки образа и адаптер обновления вместе) и режим
-        // применения (`Mode::{% if signed == "true" %}Signed` с версией этого образа
-        // из `crate::image`{% else %}Plain`{% endif %}). Объект реализует порт и приходит
-        // из `bsp`; алгоритм обновления — в `domain::ota`. Вычисляется
-        // привязка в прологе `spawn_all` первой строкой — раньше инициализатора
-        // блока `watchdog:`, как бы они ни стояли в тексте, — частичным move:
-        // `ota` уезжает в слот узла, `watchdog` следом забирает сторож, остаток
-        // `board` дропается в конце пролога.
-        ::domain::OTA_FRAG<bsp::ota::Ota> as OTA = ::domain::ota::OtaWiring {
-            device: board.ota,
+        // Фрагмент OTA — с параметрами и своей привязкой. Параметры
+        // (`<Updater, Reboot>`) — типы его слотов: слот — `static`, тип ему
+        // нужен, а знает его только эта сторона. Привязка (`= …`) — вход узла
+        // (`domain::ota::OtaWiring`): адаптер обновления `board.ota`, сброс МК
+        // `bsp::cpu::Reboot` и режим применения (`Mode::{% if signed == "true" %}Signed` с версией этого образа
+        // из `crate::image`{% else %}Plain`{% endif %}). Образ узел принимает командами на свой вход
+        // `CMD`{% if protocol == "protobuf" %} — их шлёт узел `HOST` ниже{% else %}: клиента отдаёт `ota_cmd_requester()`, и шлёт их ваш
+        // протокол — без него узел только подтверждает образ{% endif %}; алгоритм обновления — в
+        // `domain::ota`. Вычисляется привязка в прологе `spawn_all` первой
+        // строкой — раньше инициализатора блока `watchdog:`, как бы они ни стояли
+        // в тексте, — частичным move: `ota` уезжает в слот узла, `watchdog`
+        // следом забирает сторож, остаток `board` дропается в конце пролога.
+        ::domain::OTA_FRAG<bsp::ota::Updater, bsp::cpu::Reboot> as OTA = ::domain::ota::OtaWiring {
+            flash: board.ota,
+            reboot: bsp::cpu::Reboot,
 {%- if signed == "true" %}
             mode: ::domain::ota::Mode::Signed {
                 running_version: crate::image::FW_VERSION,
@@ -159,11 +159,17 @@ supervisor_graph! {
         // Узел `HOST` — сообщения protobuf от хоста: канал (`board.link`) и буферы
         // сообщений (`board.host_buffers`) плата отдаёт готовыми (`bsp::link`);
         // обработчик `domain::host::Service` над схемой `crates-host/proto` —
-        // логика приложения, проект правит его в `domain`.
+        // логика приложения, проект правит его в `domain`.{% if ota == "true" %} Команды обновления
+        // он отдаёт узлу `OTA` клиентом его входа `CMD` (`ota_cmd_requester()`).{% endif %}
         ::domain::HOST_FRAG<bsp::link::Link, ::domain::host::Service> as HOST =
             ::domain::host::HostWiring {
                 link: board.link,
-                service: ::domain::host::Service::new(crate::device_info(board.spec)),
+                service: ::domain::host::Service::new(
+                    crate::device_info(board.spec),
+{%- if ota == "true" %}
+                    ota_cmd_requester(),
+{%- endif %}
+                ),
                 rx: board.host_buffers.rx,
                 tx: board.host_buffers.tx,
             },

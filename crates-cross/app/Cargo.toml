@@ -55,5 +55,13 @@ supervisor = { workspace = true }
 # (`time-driver-any`) включает фича `bsp/time-driver` — см. `bsp/Cargo.toml`,
 # почему она не в воркспейсе и не безусловная.
 
+{%- if ota == "true" and graph != "true" %}
+# Вход команд узла OTA без графа (`ota::CMD` в src/main.rs): с графом его
+# заводит `request:` фрагмента, а здесь `main` объявляет `static` сам — с тем же
+# мьютексом, что у `supervisor`, иначе тип поля `cmd` контекста узла не сойдётся.
+sync-request = { workspace = true }
+embassy-sync = { workspace = true }
+{%- endif %}
+
 [build-dependencies]
 shadow-rs = { workspace = true, features = ["build", "no_std"] }

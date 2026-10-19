@@ -33,8 +33,8 @@
 //! а всё, что он возвращает, объявлено в его словаре.
 //!
 // {%- if ota == "true" %}
-//! [`FirmwareUpdate`] реализован, когда при генерации выбрана OTA; канал
-//! доставки образа ([`ImageSource`]) — сам проект.
+//! [`FirmwareUpdate`] реализован, когда при генерации выбрана OTA; образ
+//! приходит командами [`OtaCommand`] от узла протокола.
 // {%- endif %}
 // {%- if settings_port == "true" %}
 //! [`SettingsStorage`] — хранилище настроек: его реализует раздел, EEPROM или
@@ -46,7 +46,7 @@
 //!
 // {%- if ota == "true" %}
 //! Модули названы по операции домена, которая ими пользуется, а не по трейту:
-//! ошибка операции (`DownloadError` у `domain::ota::download::receive`) лежит
+//! ошибка операции (`DownloadError` у `domain::ota::download`) лежит
 //! рядом с портом, через который операция идёт. Наружу всё реэкспортируется в
 //! корень — путь `ports::FirmwareUpdate` короче, а внутреннее деление
 //! пользователя не касается (`docs/conventions.md`, «`lib.rs` только объявляет
@@ -89,7 +89,7 @@ pub mod cycles;
 
 // {%- endif %}
 // {%- if ota == "true" %}
-/// OTA: канал доставки образа, запись во флеш, проверка подписи и ошибки
+/// OTA: команды узлу, запись во флеш, проверка подписи, перезагрузка и ошибки
 /// приёма и применения.
 pub mod ota;
 
@@ -121,8 +121,11 @@ pub use modbus::{MasterError, ModbusClient};
 pub use cycles::CycleCounter;
 // {%- endif %}
 // {%- if ota == "true" %}
-pub use ota::device::OtaDevice;
-pub use ota::download::{Announce, DownloadError, ImageSource, Rejection};
+pub use ota::command::{
+    CHUNK_BYTES, Chunk, Command as OtaCommand, Progress, Reboot, Rejection, Reply as OtaReply,
+    SIGNATURE_BYTES,
+};
+pub use ota::download::DownloadError;
 pub use ota::update::{FirmwareUpdate, PendingImage, UpdateError};
 // {%- endif %}
 // {%- if settings_port == "true" %}

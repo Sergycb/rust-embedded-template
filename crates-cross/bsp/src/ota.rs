@@ -143,49 +143,30 @@ type Dfu = ExternalPartition;
 type State = ExternalPartition;
 {%- endif %}
 
-/// Канал доставки образа этой платы — заглушка, которую проект заменяет
-/// своим транспортом (как реализовать — `adapters::ota::Unconnected`).
-///
-/// Псевдоним, а не голый тип в графе и в задаче: конкретный тип слота приходит
-/// под именем, и подставить свой транспорт — значит поменять эту строку и
-/// [`link`].
-pub type Link = adapters::ota::Unconnected;
-
 /// Адаптер обновления этой платы — порт `FirmwareUpdate` поверх разделов
 /// `DFU`/`BOOTLOADER_STATE`. Псевдоним по общему правилу шаблона: тип слота
 /// узла OTA должен быть конкретным, а адаптер приходит из `adapters` generic.
 pub type Updater = adapters::ota::Updater<Dfu, State, {{signed}}>;
 
-/// OTA платы одним объектом: канал доставки образа и адаптер обновления
-/// (`Board::ota`). Узел `OTA` берёт его целиком.
-pub type Ota = adapters::ota::Ota<Link, Updater>;
-
-/// Канал доставки образа. Пока в слоте заглушка, об этом говорит одна строка
-/// в лог при старте.
-pub(crate) fn link() -> Link {
-    defmt::warn!("bsp: транспорт OTA не реализован — узел OTA ждёт впустую");
-    Link::default()
-}
-
-/// Собирает OTA платы: канал доставки ([`link`]) и адаптер обновления из
-/// разделов `DFU` и `BOOTLOADER_STATE`, найденных по символам `memory.x`.
+/// Собирает адаптер обновления из разделов `DFU` и `BOOTLOADER_STATE`,
+/// найденных по символам `memory.x`.
 {%- if ota_store == "external" %}
 ///
 /// Оба раздела — над одной внешней флешью: символы в `memory.x` для них —
 /// смещения от её начала.
-pub(crate) fn new(external: &'static ExternalMutex) -> Ota {
+pub(crate) fn new(external: &'static ExternalMutex) -> Updater {
     let config = FirmwareUpdaterConfig::from_linkerfile(external, external);
 {%- else %}
 {%- if dfu_bank == "true" %}
 ///
 /// `DFU` — в банке 2, `STATE` — в банке 1.
-pub(crate) fn new(flash: &'static FlashMutex, dfu_bank: &'static DfuBankMutex) -> Ota {
+pub(crate) fn new(flash: &'static FlashMutex, dfu_bank: &'static DfuBankMutex) -> Updater {
     let dfu = BlockingAsync::new(BlockingPartition::new(dfu_bank, 0, DFU_BANK_SIZE));
 {%- elsif swap_paged == "true" %}
-pub(crate) fn new(flash: &'static FlashMutex) -> Ota {
+pub(crate) fn new(flash: &'static FlashMutex) -> Updater {
     let dfu = BlockingAsync::new(ErasePage::new(BlockingPartition::new(flash, 0, SIZE)));
 {%- else %}
-pub(crate) fn new(flash: &'static FlashMutex) -> Ota {
+pub(crate) fn new(flash: &'static FlashMutex) -> Updater {
     let dfu = BlockingAsync::new(BlockingPartition::new(flash, 0, SIZE));
 {%- endif %}
     let dfu = DFU_FLASH.init(Mutex::new(dfu));
@@ -197,5 +178,5 @@ pub(crate) fn new(flash: &'static FlashMutex) -> Ota {
     let state = STATE_FLASH.init(Mutex::new(state));
     let config = FirmwareUpdaterConfig::from_linkerfile(dfu, state);
 {%- endif %}
-    Ota::new(link(), Updater::new(config.dfu, config.state, ACTIVE_LEN))
+    Updater::new(config.dfu, config.state, ACTIVE_LEN)
 }

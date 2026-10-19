@@ -133,7 +133,7 @@ impl HeartbeatCtx<'_> {
   указывает в крейт фрагмента и переживает переименование зависимости в чужом
   манифесте, а `crate::` означал бы крейт, который фрагмент вызывает. Типы,
   которых фрагмент назвать не может (адаптер платы в слоте), — его параметры:
-  `name: OTA_FRAG<D>` во фрагменте, `::domain::OTA_FRAG<bsp::ota::Ota>` здесь.
+  `name: OTA_FRAG<F, R>` во фрагменте, `::domain::OTA_FRAG<bsp::ota::Updater, bsp::cpu::Reboot>` здесь.
 * **Порядок items фиксирован**: `name:` → `boot:` → `watchdog:` →
   `cloned:`/`shared:` → `executor` → `fragments:` последним. `fragments:`
   раньше `boot:` — ошибка разбора; блок `watchdog:` внутри фрагмента — тоже
@@ -395,38 +395,35 @@ async fn uart_drain_task(mut uart: embassy_stm32::usart::UartTx<'static, embassy
 Узел `OTA` объявлен в `domain::ota` (`OTA_FRAG`; режим применения —
 `Mode::Signed` — подставила генерация во вход) и спавнится отсюда записью в
 `fragments:` — она же даёт ему имя (`as OTA`) и типы двух его слотов
-аргументами. Его автомат по кругу ждёт заголовок, принимает образ
-(`domain::ota::download::receive` — сверка длины до стирания, буферизация до
-слова флеша), применяет его (`mark_updated` или `domain::ota::update::apply_signed`)
-и сообщает исход отправителю кодом `ports::Rejection`. Всё это — host-тесты
-в `crates-host/domain/src/ota.rs`.
+аргументами. Образ он принимает командами (`ports::OtaCommand`) на свой вход
+`CMD` — `request:` фрагмента, запрос с ответом: `Start` (сверка длины до
+стирания), `Chunk` (буферизация до слова флеша — `domain::ota::download::Transfer`),
+`Finish` (`mark_updated` или `domain::ota::update::apply_signed`), `Reboot`, — и на
+каждую отвечает исходом `ports::OtaReply`. Всё это — host-тесты в
+`crates-host/domain/src/ota.rs`.
 
-Вам остаётся канал — то, чего шаблон знать не может: USB CDC, UART, сеть,
-SD-карта, у каждого свой формат пакета и своя проверка целостности. Это
-реализация `ports::ImageSource` на месте заглушки `Link` в `main.rs`
-(`docs/modules/bsp-flash.md`, «Свой транспорт»): три метода — `begin`, `next`, `finish`. Что
-делать с исходом — ответить хосту, сбросить МК, и то и другое — решает
-ваш `finish`; узел этого не знает.
+Команды шлёт узел протокола: клиента входа отдаёт аксессор графа
+`ota_cmd_requester()` — с protobuf его получает `domain::host::Service` прямо
+во входе узла `HOST`. Своего канала у образа нет: он идёт по протоколу,
+которым хост и так говорит с устройством (`docs/ota.md`).
 
-Плата отдаёт для узла один объект — `board.ota` (`bsp::ota::Ota`: адаптер и канал
-вместе), а вход фрагмента собирает эта сторона: `bsp` зависит
-только от `ports` и `adapters`, про `domain` он не знает (`= ::domain::ota::OtaWiring
-{ device: board.ota, mode:
-::domain::ota::Mode::Signed { running_version: crate::image::FW_VERSION } }`). Тип
-слота — аргумент фрагмента (`OTA_FRAG<bsp::ota::Ota>`):
-слот — `static`, тип ему нужен, а знает его только эта сторона. Подставили
-свой транспорт — поправьте псевдоним `Link` в `bsp::ota`. Слот — `local` (фича
+Плата отдаёт для узла адаптер обновления `board.ota` (`bsp::ota::Updater`) и
+порт перезагрузки `bsp::cpu::Reboot`, а вход фрагмента собирает эта сторона:
+`bsp` зависит только от `ports` и `adapters`, про `domain` он не знает
+(`= ::domain::ota::OtaWiring { flash: board.ota, reboot: bsp::cpu::Reboot, mode:
+::domain::ota::Mode::Signed { running_version: crate::image::FW_VERSION } }`). Типы
+слотов — аргументы фрагмента (`OTA_FRAG<bsp::ota::Updater, bsp::cpu::Reboot>`):
+слот — `static`, тип ему нужен, а знает его только эта сторона. Слот адаптера — `local` (фича
 `supervisor/local-resources` в
 `crates-cross/Cargo.toml`): объекты платы `!Send`, и граф держит их на своём
 исполнителе, не требуя `Send`. Узел, чей `local`-слот заполняется
-инициализатором (здесь — оба, из `inputs`), нельзя перевести на другой
+инициализатором (здесь — из `inputs`), нельзя перевести на другой
 исполнитель (`executor:`); захотите вынести OTA туда — менять `local` во
 фрагменте `domain::ota` и `NoopRawMutex` у `bsp::flash::FlashMutex` вместе.
 
-У узла нет `watchdog:`, и это не забывчивость: он законно висит в `begin()`
-сколько угодно, а опрашивать его с таймаутом нельзя — отмена future
-уронила бы полупрочитанный заголовок. Аппаратный сторож кормит тикер графа,
-а не какой-то узел.
+У узла нет `watchdog:`, и это не забывчивость: команды может не быть всю
+жизнь платы, и прогресса, о котором можно отметиться, у узла нет. Аппаратный
+сторож кормит тикер графа, а не какой-то узел.
 
 {%- endif %}
 

@@ -1,4 +1,5 @@
-//! Ядро Cortex-M для `app`: точка входа, сон исполнителя, сброс.
+//! Ядро Cortex-M для `app`: точка входа, сон исполнителя, сброс{% if ota == "true" %} — и порт
+//! перезагрузки для узла OTA{% endif %}.
 //!
 //! `app` не зависит ни от `cortex-m`, ни от `cortex-m-rt`: всё, что ему нужно
 //! от ядра, проходит здесь.
@@ -28,6 +29,19 @@ pub fn reset() -> ! {
 {%- endif %}
     cortex_m::peripheral::SCB::sys_reset()
 }
+{%- if ota == "true" %}
+
+/// Перезагрузка МК для узла OTA — порт `ports::Reboot`: узел выполняет им
+/// команду `Reboot` после принятого образа, и bootloader меняет разделы.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct Reboot;
+
+impl ports::Reboot for Reboot {
+    fn reboot(&mut self) -> ! {
+        reset()
+    }
+}
+{%- endif %}
 {%- if cache contains "scb_d" %}
 
 #[expect(

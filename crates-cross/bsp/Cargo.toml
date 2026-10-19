@@ -35,8 +35,9 @@ embassy-stm32 = { workspace = true, features = [{% if cpu_freq_boost == "true" o
 # и кладёт полями. Проверку подписи (`signed`) плата не включает: подпись
 # проверяет bootloader (crates-cross/boot), версию задаёт приложение.
 adapters = { workspace = true }
-{%- if core_baseline != "true" %}
-# Порт счётчика тактов, который реализует `Cycles` (src/cycles.rs).
+{%- if core_baseline != "true" or ota == "true" %}
+# Порты, которые плата реализует сама:{% if core_baseline != "true" %} счётчик тактов (`Cycles`, src/cycles.rs){% endif %}{% if core_baseline != "true" and ota == "true" %} и{% endif %}{% if ota == "true" %}
+# перезагрузка для узла OTA (`Reboot`, src/cpu.rs){% endif %}.
 ports = { workspace = true }
 {%- endif %}
 assign-resources = { workspace = true }

@@ -15,6 +15,16 @@
 // Ответ на обе — то же значение (`Channel channel` в `Response`): после
 // записи хост видит, что устройство приняло.
 //
+// {%- if ota == "true" %}
+// Обновление прошивки — четыре команды по порядку: `ota_start` (длина и
+// подпись), `ota_chunk` сколько нужно (кусок до 128 байт со смещением),
+// `ota_finish`,
+// затем `reboot`. Ответ на каждую — `OtaReply`: исход именно этой команды,
+// опрашивать статус не нужно. Отказ (`STATUS_LENGTH` и дальше) обрывает приём —
+// начинать снова с `ota_start`. Хост молчит посреди образа дольше 30 с — приём
+// брошен, следующий кусок получит `STATUS_NO_SESSION`.
+//
+// {%- endif %}
 // Ёмкости строк и повторяющихся полей (контейнеры `heapless`) заданы в
 // `build.rs`: в `.proto` их не выразить.
 syntax = "proto3";
@@ -26,6 +36,12 @@ message Request {
   oneof command {
     Ping ping = 2;
     Get info = 3;
+    // {%- if ota == "true" %}
+    OtaStart ota_start = 4;
+    OtaChunk ota_chunk = 5;
+    OtaFinish ota_finish = 6;
+    Reboot reboot = 7;
+    // {%- endif %}
   }
 }
 
@@ -35,6 +51,9 @@ message Response {
     Pong pong = 2;
     Info info = 3;
     Error error = 4;
+    // {%- if ota == "true" %}
+    OtaReply ota = 5;
+    // {%- endif %}
   }
 }
 
@@ -68,3 +87,62 @@ message Info {
 message Error {
   string text = 1;
 }
+// {%- if ota == "true" %}
+
+// Начать приём образа. Новый `ota_start` бросает незаконченный приём.
+message OtaStart {
+  // Длина образа, байт.
+  uint32 len = 1;
+  // Подпись образа (Ed25519, 64 байта) или пусто. Прошивка с подписью
+  // отвергает образ без неё до стирания раздела (`STATUS_SIGNATURE`).
+  bytes signature = 2;
+}
+
+// Кусок образа до 128 байт по своему смещению. Повтор уже принятого куска
+// (ответ потерялся) подтверждается без записи; разрыв или наложение —
+// `STATUS_TRANSFER`.
+message OtaChunk {
+  bytes data = 1;
+  // Смещение куска в образе, байт.
+  uint32 offset = 2;
+}
+
+// Образ передан целиком: сверить длину и применить.
+message OtaFinish {}
+
+// Перезагрузить устройство: после `STATUS_READY` — чтобы bootloader обменял
+// разделы. Ответ `STATUS_REBOOTING` уходит до сброса.
+message Reboot {}
+
+// Исход команды обновления.
+message OtaReply {
+  enum Status {
+    STATUS_UNSPECIFIED = 0;
+    // `ota_start` принят: раздел стёрт под образ.
+    STATUS_STARTED = 1;
+    // Кусок записан; `received` — сколько байт принято всего.
+    STATUS_RECEIVED = 2;
+    // Образ применён, обмен разделов — после `reboot`.
+    STATUS_READY = 3;
+    // Устройство сбрасывается.
+    STATUS_REBOOTING = 4;
+    // Длина негодная: ноль, больше раздела, короче хвоста с версией.
+    STATUS_LENGTH = 10;
+    // Принято больше или меньше заявленной длины.
+    STATUS_TRANSFER = 11;
+    // Образ ждёт обмена или ещё не подтверждён — сначала `reboot`.
+    STATUS_BUSY = 12;
+    // Версия образа не новее текущей.
+    STATUS_ROLLBACK = 13;
+    // Прошивка требует подпись, а её нет.
+    STATUS_SIGNATURE = 14;
+    // Отказ флеша на устройстве.
+    STATUS_DEVICE = 15;
+    // Кусок или `ota_finish` без `ota_start`.
+    STATUS_NO_SESSION = 16;
+  }
+  Status status = 1;
+  // Для `STATUS_RECEIVED`: сколько байт образа принято.
+  uint32 received = 2;
+}
+// {%- endif %}

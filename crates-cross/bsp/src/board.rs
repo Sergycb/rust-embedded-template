@@ -56,13 +56,12 @@ pub struct Board {
     pub cycles: crate::cycles::Cycles,
 {%- endif %}
 {%- if ota == "true" %}
-    /// OTA одним объектом (`bsp::ota`): канал доставки образа — реализация
-    /// `ports::ImageSource`, заглушка (`bsp::ota::Link`), пока проект не
-    /// подставит свой транспорт, — и адаптер обновления — порт `FirmwareUpdate`
-    /// поверх разделов `DFU`/`BOOTLOADER_STATE`, собранных из символов
-    /// `memory.x`. Алгоритм обновления над портами — в `domain::ota`.
+    /// Адаптер обновления (`bsp::ota`) — порт `FirmwareUpdate` поверх разделов
+    /// `DFU`/`BOOTLOADER_STATE`, собранных из символов `memory.x`. Образ
+    /// приходит командами от узла протокола; алгоритм обновления над портами —
+    /// в `domain::ota`.
     /// {% if graph == "true" %}Уезжает в узел `OTA` графа (`fragments:` в `crates-cross/app/src/graph.rs`){% else %}Уезжает в задачу узла, которую спавнит `main` (`domain::ota::task`){% endif %}.
-    pub ota: crate::ota::Ota,
+    pub ota: crate::ota::Updater,
 {%- endif %}
 {%- if config == "true" %}
     /// Настройки, переживающие перезапуск и обновление прошивки:

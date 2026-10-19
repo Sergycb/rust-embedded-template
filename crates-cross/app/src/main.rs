@@ -41,15 +41,32 @@ static EXECUTOR: StaticCell<Executor> = StaticCell::new();
 {%- if ota == "true" %}
 
 /// Узел `OTA`: подтверждает образ (`mark_booted`) в стартовом действии, а без
-/// него bootloader откатит обновление на следующем сбросе.
+/// него bootloader откатит обновление на следующем сбросе; образ принимает
+/// командами на вход [`CMD`](ota::CMD).
 mod ota {
+    use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+    use sync_request::RpcService;
+
+    /// Вход команд узла — то, что с графом заводит `request:` фрагмента
+    /// `OTA_FRAG`, той же ёмкости (`domain::ota::CMD_BYTES`). Клиента{% if protocol == "protobuf" %} получает задача `HOST`{% else %} получает ваш протокол
+    /// (`CMD.requester()`); без него узел только подтверждает образ{% endif %}.
+    pub static CMD: RpcService<
+        CriticalSectionRawMutex,
+        domain::ota::OtaCommand,
+        domain::ota::OtaReply,
+        { domain::ota::CMD_BYTES },
+    > = RpcService::new();
+
     #[embassy_executor::task]
-    pub async fn task(mut device: bsp::ota::Ota, mut mode: domain::ota::Mode) {
+    pub async fn task(mut flash: bsp::ota::Updater, mut mode: domain::ota::Mode) {
+        let mut reboot = bsp::cpu::Reboot;
         let mut confirmed = false;
         domain::ota::task(domain::ota::OtaCtx {
-            device: &mut device,
+            flash: &mut flash,
+            reboot: &mut reboot,
             mode: &mut mode,
             confirmed: &mut confirmed,
+            cmd: CMD.server().expect("сервер входа CMD один — у этой задачи"),
             index: 0,
         })
         .await;
@@ -112,7 +129,7 @@ mod host {
         rx: &'static mut [u8],
         tx: &'static mut [u8],
     ) {
-        let mut service = domain::host::Service::new(info);
+        let mut service = domain::host::Service::new(info{% if ota == "true" %}, crate::ota::CMD.requester(){% endif %});
         domain::host::task(domain::host::HostCtx {
             link: &mut link,
             service: &mut service,
@@ -261,10 +278,9 @@ fn main() -> ! {
 
     // Узел OTA без графа спавнится так же: он подтверждает образ
     // (`mark_booted`) в стартовом действии, а без него bootloader откатит
-    // обновление на следующем сбросе. Объект OTA уезжает в задачу
+    // обновление на следующем сбросе. Адаптер обновления уезжает в задачу
     // владением{% if signed == "true" %}; режим — `Signed` с версией этого образа
-    // (`image::FW_VERSION`){% else %}; режим — `Plain`{% endif %}.
-    // Применяете образ своим кодом — уберите этот спавн и подтверждайте сами.
+    // (`image::FW_VERSION`){% else %}; режим — `Plain`{% endif %}; команды — через `ota::CMD`.
 {%- if signed == "true" %}
     let mode = domain::ota::Mode::Signed {
         running_version: image::FW_VERSION,

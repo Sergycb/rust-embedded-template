@@ -209,8 +209,8 @@ mod tests {
     use ports::{FrameLink, LinkError};
     use proto::{Get, Ping, Request, Request_, Response, Response_, heapless};
 
-    use super::service::tests::INFO;
-    use super::{HostCtx, Service, task};
+    use super::service::tests::{INFO, service};
+    use super::{HostCtx, task};
 
     /// Канал: отдаёт заранее заготовленные исходы `recv`, когда они кончаются,
     /// ждёт следующего кадра вечно — как настоящий канал. Отправленные кадры
@@ -277,7 +277,7 @@ mod tests {
         let mut tx = vec![0; tx_len];
         let ctx = HostCtx {
             link,
-            service: &mut Service::new(INFO),
+            service: &mut service(INFO),
             rx: &mut rx,
             tx: &mut tx,
             index: 0,

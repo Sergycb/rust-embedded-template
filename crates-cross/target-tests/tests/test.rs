@@ -165,7 +165,7 @@ mod tests {
         }
 {%- endif %}
 
-        let (_, mut ota) = board.ota.into_parts();
+        let mut ota = board.ota;
 
         // Пачкаем раздел перед стиранием: иначе тест зелёный и в случае, когда
         // `prepare` не сделал ничего, а байты остались стёртыми с прошлого
@@ -253,7 +253,7 @@ mod tests {
         }
 {%- endif %}
 
-        let (_, mut ota) = board.ota.into_parts();
+        let mut ota = board.ota;
 
         let first = [0xA1u8; 32];
         let second = [0xB2u8; 32];
@@ -310,7 +310,7 @@ mod tests {
         }
 {%- endif %}
 
-        let (_, mut ota) = board.ota.into_parts();
+        let mut ota = board.ota;
 
         // Кратно WRITE_SIZE флеша. Хвост — версия
         // `0.0.0`, заведомо не новее любой проставленной в проекте.

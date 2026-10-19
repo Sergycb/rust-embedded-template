@@ -40,8 +40,8 @@ pub fn sign_image(image_path: &Path, image: &[u8], seed: &[u8; 32]) -> Result<()
 
     println!("подпись: {} (64 байта)", path.display());
     println!(
-        "устройству нужны обе величины: подпись и длина образа ({} байт) — их несёт заголовок \
-         Announce из ImageSource::begin, применяет узел domain::ota через apply_signed",
+        "устройству нужны обе величины: подпись и длина образа ({} байт) — их несёт первая \
+         команда обновления (Start), применяет узел domain::ota через apply_signed",
         image.len(),
     );
     Ok(())

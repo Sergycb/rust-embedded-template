@@ -27,7 +27,7 @@
 use embassy_boot::{AlignedBuffer, FirmwareState, FirmwareUpdater, FirmwareUpdaterConfig, State};
 use embedded_storage::nor_flash::NorFlashErrorKind;
 use embedded_storage_async::nor_flash::NorFlash;
-use ports::{Announce, FirmwareUpdate, ImageSource, OtaDevice, Rejection};
+use ports::FirmwareUpdate;
 // Тип возвращается портом, поэтому называть его должно быть чем — иначе
 // пользователю пришлось бы объявлять прямую зависимость на `embassy-boot`
 // только ради имени в сигнатуре своей функции.
@@ -234,91 +234,6 @@ impl<DFU: NorFlash, STATE: NorFlash, const SIGNED: bool> FirmwareUpdate
 
     async fn mark_updated(&mut self) -> Result<(), Self::Error> {
         self.state().mark_updated().await
-    }
-}
-
-/// OTA платы одним объектом: канал доставки образа и запись во флеш.
-///
-/// Плата собирает обе половины ([`Unconnected`] или транспорт проекта и
-/// [`Updater`] над разделами) и отдаёт приложению этот объект: узел
-/// `domain::ota` берёт его одним входом (порт [`OtaDevice`]).
-#[derive(Debug)]
-pub struct Ota<L, F> {
-    link: L,
-    flash: F,
-}
-
-impl<L, F> Ota<L, F> {
-    /// Собирает объект из канала и записи во флеш.
-    pub const fn new(link: L, flash: F) -> Self {
-        Self { link, flash }
-    }
-
-    /// Разбирает объект обратно: тесты на плате проверяют запись во флеш без канала.
-    pub fn into_parts(self) -> (L, F) {
-        (self.link, self.flash)
-    }
-}
-
-impl<L: ImageSource, F: FirmwareUpdate> OtaDevice for Ota<L, F> {
-    type Link = L;
-    type Flash = F;
-
-    fn parts(&mut self) -> (&mut L, &mut F) {
-        (&mut self.link, &mut self.flash)
-    }
-}
-
-/// Канал доставки образа, которого ещё нет, — место под транспорт проекта.
-///
-/// Каркас, как `serial::Unconnected` у UART: узел `OTA` уже собран, а как
-/// приходит образ — USB CDC, UART, сеть, SD-карта — шаблон не знает. Заглушка
-/// ждёт заголовок вечно, то есть узел висит в `begin()` и ничего не принимает.
-///
-/// Заменить — значит реализовать три метода [`ImageSource`] на объекте, собранном
-/// из вашей периферии: `begin` — дождаться и разобрать заголовок (длина,
-/// подпись), `next` — отдавать куски образа, `finish` — сообщить исход
-/// отправителю и решить, перезапускать ли МК
-/// (`cortex_m::peripheral::SCB::sys_reset()`). Формат пакетов и проверка
-/// целостности — ваши; всё, что не зависит от канала (сверка длины до стирания,
-/// буферизация до слова флеша, порядок проверок), уже в `domain::ota`.
-#[derive(Debug, Default)]
-pub struct Unconnected;
-
-impl ImageSource for Unconnected {
-    type Error = core::convert::Infallible;
-
-    async fn begin(&mut self) -> Result<Announce, Self::Error> {
-        core::future::pending().await
-    }
-
-    fn next(&mut self) -> impl Future<Output = Result<Option<&[u8]>, Self::Error>> {
-        core::future::ready(Ok(None))
-    }
-
-    fn finish(
-        &mut self,
-        _outcome: Result<(), Rejection>,
-    ) -> impl Future<Output = Result<(), Self::Error>> {
-        core::future::ready(Ok(()))
-    }
-}
-
-#[cfg(test)]
-mod unconnected_tests {
-    use core::pin::pin;
-    use core::task::{Context, Waker};
-
-    use ports::ImageSource;
-
-    use super::Unconnected;
-
-    /// Заглушка ждёт заголовок вечно и ничего не принимает.
-    #[test]
-    fn waits_for_a_header_forever() {
-        let mut link = Unconnected;
-        let mut cx = Context::from_waker(Waker::noop());
-        assert!(pin!(link.begin()).poll(&mut cx).is_pending());
     }
 }
 

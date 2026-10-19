@@ -220,7 +220,7 @@ embedded-can           = { version = "0.4.1" }
 # любом ядре ценой скорости — ~100 млн тактов на проверку, меньше секунды, и
 # случается это один раз перед перезагрузкой.
 salty                  = { version = "0.3.0", default-features = false, features = ["slow-motion"] }
-# Property-based testing: `domain::ota::download::receive` проверяется на любом
+# Property-based testing: `domain::ota::download::Transfer` проверяется на любом
 # разбиении образа на куски и любой ширине слова, а не на нескольких
 # выбранных руками. Только `[dev-dependencies]` `domain`.
 proptest               = { version = "1.0.0" }

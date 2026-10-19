@@ -3,6 +3,12 @@
 
 use embassy_time::Instant;
 use ports::HostService;
+// {%- if ota == "true" %}
+use core::array::TryFromSliceError;
+use ports::{Chunk, OtaCommand, OtaReply, Progress, Rejection, SIGNATURE_BYTES};
+use proto::OtaReply_::Status;
+use supervisor::Requester;
+// {%- endif %}
 use proto::{Error, Info, Pong, Request, Request_, Response, Response_, heapless};
 
 /// Сведения об устройстве, которыми обработчик отвечает на `info`.
@@ -26,18 +32,33 @@ pub struct DeviceInfo {
 }
 
 /// Обработчик, с которым узел `HOST` стоит в графе шаблона: на `ping` —
-/// `pong`, на `info` — сведения об устройстве, `request_id` — обратно.
+/// `pong`, на `info` — сведения об устройстве{% if ota == "true" %}, команды обновления — узлу
+/// OTA{% endif %}, `request_id` — обратно.
 ///
 /// Это отправная точка, а не готовая логика: проект меняет схему в
 /// `crates-host/proto` и команды здесь — перевод сообщений схемы в свои
 /// проверенные типы и ответы на них.
-#[derive(Debug)]
 pub struct Service {
     info: DeviceInfo,
+    // {%- if ota == "true" %}
+    /// Клиент узла OTA: команда обновления уходит туда, исход — хосту.
+    ota: Requester<'static, OtaCommand, OtaReply>,
+    // {%- endif %}
+}
+
+// Вручную: у клиента узла OTA нет `Debug`.
+impl core::fmt::Debug for Service {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Service")
+            .field("info", &self.info)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Service {
-    /// Обработчик, отвечающий на `info` сведениями `info`.
+    /// Обработчик, отвечающий на `info` сведениями `info`{% if ota == "true" %}; команды обновления
+    /// уходят узлу OTA через `ota` — клиента его входа `CMD` (`ota_cmd_requester()`
+    /// графа){% endif %}.
     ///
     /// # Panics
     ///
@@ -45,7 +66,12 @@ impl Service {
     /// обрезанная выглядела бы как настоящая, а пустую ответ не заслуживает. В
     /// `const`-контексте — ошибка компиляции.
     #[must_use]
-    pub const fn new(info: DeviceInfo) -> Self {
+    pub const fn new(
+        info: DeviceInfo,
+        // {%- if ota == "true" %}
+        ota: Requester<'static, OtaCommand, OtaReply>,
+        // {%- endif %}
+    ) -> Self {
         assert!(
             info.version.len() <= proto::VERSION_BYTES,
             "версия не помещается в Info.version"
@@ -58,7 +84,12 @@ impl Service {
             info.chip.len() <= proto::CHIP_BYTES,
             "имя чипа не помещается в Info.chip"
         );
-        Self { info }
+        Self {
+            info,
+            // {%- if ota == "true" %}
+            ota,
+            // {%- endif %}
+        }
     }
 
     fn info(&self) -> Info {
@@ -83,28 +114,100 @@ impl HostService for Service {
     type Request = Request;
     type Response = Response;
 
-    fn handle(&mut self, request: Request) -> impl Future<Output = Response> {
+    async fn handle(&mut self, request: Request) -> Response {
         let result = match request.command {
             Some(Request_::Command::Ping(_)) => Response_::Result::Pong(Pong::default()),
             Some(Request_::Command::Info(_)) => Response_::Result::Info(self.info()),
-            None => Response_::Result::Error(Error {
-                text: text("unknown command"),
-            }),
+            // {%- if ota == "true" %}
+            Some(Request_::Command::OtaStart(start)) => match signature(&start.signature) {
+                Ok(signature) => {
+                    self.ota(OtaCommand::Start {
+                        len: start.len,
+                        signature,
+                    })
+                    .await
+                }
+                Err(_) => error("signature must be 64 bytes"),
+            },
+            Some(Request_::Command::OtaChunk(chunk)) => match Chunk::new(chunk.offset, &chunk.data)
+            {
+                Some(chunk) => self.ota(OtaCommand::Chunk(chunk)).await,
+                // Ёмкость поля в схеме та же, что у куска: сюда не доходит.
+                None => error("chunk too long"),
+            },
+            Some(Request_::Command::OtaFinish(_)) => self.ota(OtaCommand::Finish).await,
+            Some(Request_::Command::Reboot(_)) => self.ota(OtaCommand::Reboot).await,
+            // {%- endif %}
+            None => error("unknown command"),
         };
-        core::future::ready(Response {
+        Response {
             request_id: request.request_id,
             result: Some(result),
-        })
+        }
     }
 
     fn malformed(&mut self) -> Response {
         Response {
             request_id: 0,
-            result: Some(Response_::Result::Error(Error {
-                text: text("bad frame"),
-            })),
+            result: Some(error("bad frame")),
         }
     }
+}
+// {%- if ota == "true" %}
+
+impl Service {
+    /// Команда узлу OTA и её исход — ответом хосту.
+    async fn ota(&self, command: OtaCommand) -> Response_::Result {
+        match self.ota.request(command).await {
+            Ok(reply) => Response_::Result::Ota(ota_reply(reply)),
+            // Узел OTA не ответил — граф его потерял; хосту текстом, как
+            // любой другой отказ.
+            Err(_) => error("ota node lost"),
+        }
+    }
+}
+
+// Пределы полей схемы (`proto/build.rs`) — те же, что у команды узлу OTA:
+// разойдутся — кусок или подпись, прошедшие разбор, не дойдут до узла.
+const _: () = assert!(
+    proto::OTA_CHUNK_BYTES == ports::CHUNK_BYTES && proto::OTA_SIGNATURE_BYTES == SIGNATURE_BYTES,
+    "пределы OtaChunk.data/OtaStart.signature в proto/build.rs разошлись с ports"
+);
+
+/// Подпись из `ota_start`: пусто — без подписи, 64 байта — подпись, иначе
+/// отказ: обрезанную подпись принять за целую нельзя.
+fn signature(bytes: &[u8]) -> Result<Option<[u8; SIGNATURE_BYTES]>, TryFromSliceError> {
+    if bytes.is_empty() {
+        return Ok(None);
+    }
+    bytes.try_into().map(Some)
+}
+
+/// Исход команды обновления — сообщением схемы.
+fn ota_reply(reply: OtaReply) -> proto::OtaReply {
+    let (status, received) = match reply {
+        Ok(Progress::Started) => (Status::Started, 0),
+        Ok(Progress::Received(received)) => (Status::Received, received),
+        Ok(Progress::Ready) => (Status::Ready, 0),
+        Ok(Progress::Rebooting) => (Status::Rebooting, 0),
+        Err(Rejection::Length) => (Status::Length, 0),
+        Err(Rejection::Transfer) => (Status::Transfer, 0),
+        Err(Rejection::Busy) => (Status::Busy, 0),
+        Err(Rejection::Rollback) => (Status::Rollback, 0),
+        Err(Rejection::Signature) => (Status::Signature, 0),
+        Err(Rejection::NoSession) => (Status::NoSession, 0),
+        // `Device` и незнакомые коды (перечисление `non_exhaustive`).
+        Err(_) => (Status::Device, 0),
+    };
+    proto::OtaReply { status, received }
+}
+// {%- endif %}
+
+/// Ответ-отказ с текстом для человека.
+fn error(message: &str) -> Response_::Result {
+    Response_::Result::Error(Error {
+        text: text(message),
+    })
 }
 
 /// Строка схемы из `s`; не помещается в предел поля (`build.rs` крейта
@@ -119,6 +222,17 @@ fn text<const N: usize>(s: &str) -> heapless::String<N> {
 pub(crate) mod tests {
     use super::*;
 
+    /// Обработчик со сведениями `info`{% if ota == "true" %} и клиентом узла OTA, которого
+    /// никто не обслуживает: тесты, которым узел нужен, берут `crate::ota::tests::live`{% endif %}.
+    pub(crate) fn service(info: DeviceInfo) -> Service {
+        Service::new(
+            info,
+            // {%- if ota == "true" %}
+            crate::ota::tests::live().0,
+            // {%- endif %}
+        )
+    }
+
     /// Сведения, которыми тесты собирают обработчик.
     pub(crate) const INFO: DeviceInfo = DeviceInfo {
         version: "1.2.3",
@@ -131,7 +245,7 @@ pub(crate) mod tests {
 
     #[test]
     fn info_carries_every_field() {
-        let info = Service::new(INFO).info();
+        let info = service(INFO).info();
         assert_eq!(info.version, "1.2.3");
         assert_eq!(info.commit, "abcdef12");
         assert_eq!(info.chip, "stm32f407ve");
@@ -142,28 +256,121 @@ pub(crate) mod tests {
 
     #[test]
     fn info_reports_uptime() {
-        let before = Service::new(INFO).info().uptime_s;
+        let before = service(INFO).info().uptime_s;
         embassy_time::MockDriver::get().advance(embassy_time::Duration::from_secs(2));
-        assert!(Service::new(INFO).info().uptime_s >= before + 2);
+        assert!(service(INFO).info().uptime_s >= before + 2);
     }
 
     #[test]
     fn a_version_of_exactly_the_limit_is_accepted() {
         let version: &'static str = "v".repeat(proto::VERSION_BYTES).leak();
-        drop(Service::new(DeviceInfo { version, ..INFO }));
+        let _service = service(DeviceInfo { version, ..INFO });
     }
 
     #[test]
     #[should_panic(expected = "не помещается")]
     fn a_version_over_the_limit_is_refused() {
         let version: &'static str = "v".repeat(proto::VERSION_BYTES + 1).leak();
-        drop(Service::new(DeviceInfo { version, ..INFO }));
+        let _service = service(DeviceInfo { version, ..INFO });
     }
+
+    // {%- if ota == "true" %}
+    /// Запрос к обработчику, пока рядом крутится узел OTA: оба future по
+    /// очереди, пока обработчик не ответит.
+    fn ask(
+        service: &mut Service,
+        node: &mut crate::ota::tests::Node,
+        command: Request_::Command,
+    ) -> Response_::Result {
+        use core::task::{Context, Poll, Waker};
+        let mut cx = Context::from_waker(Waker::noop());
+        let request = Request {
+            request_id: 7,
+            command: Some(command),
+        };
+        let mut reply = core::pin::pin!(service.handle(request));
+        for _ in 0..16 {
+            if let Poll::Ready(response) = reply.as_mut().poll(&mut cx) {
+                assert_eq!(response.request_id, 7, "request_id — обратно");
+                return response.result.expect("ответ с результатом");
+            }
+            assert!(
+                node.as_mut().poll(&mut cx).is_pending(),
+                "узел OTA не выходит"
+            );
+        }
+        panic!("обработчик не ответил");
+    }
+
+    fn status(result: &Response_::Result) -> (Status, u32) {
+        match result {
+            Response_::Result::Ota(reply) => (reply.status, reply.received),
+            other => panic!("ожидался OtaReply, пришло {other:?}"),
+        }
+    }
+
+    /// Команды обновления доходят до узла OTA, исход каждой — до хоста.
+    #[test]
+    fn ota_commands_reach_the_node_and_each_reply_reaches_the_host() {
+        let (ota, mut node) = crate::ota::tests::live();
+        let mut service = Service::new(INFO, ota);
+
+        let start = ask(
+            &mut service,
+            &mut node,
+            Request_::Command::OtaStart(proto::OtaStart {
+                len: 8,
+                signature: heapless::Vec::new(),
+            }),
+        );
+        let chunk = ask(
+            &mut service,
+            &mut node,
+            Request_::Command::OtaChunk(proto::OtaChunk {
+                data: heapless::Vec::from_slice(&[1; 8]).unwrap(),
+                offset: 0,
+            }),
+        );
+        let finish = ask(
+            &mut service,
+            &mut node,
+            Request_::Command::OtaFinish(proto::OtaFinish {}),
+        );
+        let again = ask(
+            &mut service,
+            &mut node,
+            Request_::Command::OtaFinish(proto::OtaFinish {}),
+        );
+
+        assert_eq!(status(&start), (Status::Started, 0));
+        assert_eq!(status(&chunk), (Status::Received, 8));
+        assert_eq!(status(&finish), (Status::Ready, 0));
+        assert_eq!(status(&again), (Status::NoSession, 0));
+    }
+
+    /// Подпись не той длины — отказ текстом, до узла OTA он не доходит.
+    #[test]
+    fn a_signature_of_the_wrong_length_is_refused() {
+        let (ota, mut node) = crate::ota::tests::live();
+        let mut service = Service::new(INFO, ota);
+
+        let result = ask(
+            &mut service,
+            &mut node,
+            Request_::Command::OtaStart(proto::OtaStart {
+                len: 8,
+                signature: heapless::Vec::from_slice(&[0; 8]).unwrap(),
+            }),
+        );
+
+        assert!(matches!(result, Response_::Result::Error(_)), "{result:?}");
+    }
+    // {%- endif %}
 
     #[test]
     #[should_panic(expected = "не помещается")]
     fn a_chip_name_over_the_limit_is_refused() {
         let chip: &'static str = "c".repeat(proto::CHIP_BYTES + 1).leak();
-        drop(Service::new(DeviceInfo { chip, ..INFO }));
+        let _service = service(DeviceInfo { chip, ..INFO });
     }
 }

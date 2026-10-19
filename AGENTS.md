@@ -167,14 +167,18 @@ read`: руками пришлось бы сначала найти адрес �
   `#[panic_handler]` поверх `panic_persist::report_panic_info` (фича
   `custom-panic-handler`) — `docs/diagnostics.md`, `docs/conventions.md`.
 - `prepare(len)` порта `FirmwareUpdate` зовётся один раз перед приёмом образа
-  (внутри `domain::ota::download::receive`), `write()` сектор больше не стирает —
-  `docs/ota.md`.
+  (внутри `domain::ota::download::Transfer::start`), `write()` сектор больше не
+  стирает — `docs/ota.md`.
 - `lib.rs` только объявляет: атрибуты, `//!`, `mod`, `pub use` — определения
   живут в модулях — `docs/conventions.md`.
-- Узел OTA не сбрасывает МК и не решает, что делать с исходом: это
-  `ImageSource::finish` в `bsp`; отказы до стирания обязаны оставаться
-  такими: `Busy` и отсутствие подписи — до `receive`, длина — внутри него,
-  до `prepare` — `docs/ota.md`.
+- Образ приходит командами (`ports::OtaCommand`) на вход `CMD` узла OTA —
+  запрос с ответом, и каждая команда получает исход (`ports::OtaReply`), который
+  протокол отдаёт хосту как есть. Своего канала у OTA нет: узел протокола
+  только переводит сообщения в команды. МК узел сбрасывает только по команде
+  `Reboot` (порт `ports::Reboot`, `bsp::cpu::Reboot`), не по `Finish`: хост
+  узнаёт исход до сброса. Отказы до стирания обязаны оставаться такими:
+  `Busy` и отсутствие подписи — до `Transfer::start`, длина — внутри него, до
+  `prepare` — `docs/ota.md`.
 - `NoopRawMutex` у `bsp::flash::FlashMutex`, у мьютексов разделов `DFU` и `STATE`
   (`bsp::flash::DFU_FLASH`, `bsp::flash::STATE_FLASH`; с `ota=external` —
   `bsp::external::ExternalMutex`{% if dfu_bank == "true" %}; `DFU` во втором банке —
@@ -182,8 +186,8 @@ read`: руками пришлось бы сначала найти адрес �
   (`domain::ota`) — одно допущение «один исполнитель», менять вместе —
   `docs/flash.md`, `docs/architecture.md`.
 - Подтверждение образа (`mark_booted`) — в стартовом действии узла OTA
-  (`domain::ota`, `begin`, не удалось — ещё раз на следующем заголовке,
-  `screen`) и один раз за запуск (слот `CONFIRMED`). Не
+  (`domain::ota`, `begin`, не удалось — ещё раз на следующем `Start`) и один
+  раз за запуск (слот `CONFIRMED`). Не
   возвращать его в `main` до исполнителя: драйвер внешней флеши может ждать
   таймер. Не звать после принятого образа (`mark_updated` ставит тот же
   флаг): после обмена и до него `STATE` одинаково `Swap`, и повтор снял бы

@@ -22,6 +22,12 @@ const LIMITS: &[(&str, &str, u32)] = &[
     ("CHIP_BYTES", ".host.Info.chip", 24),
     ("UID_BYTES", ".host.Info.uid", 12),
     ("ERROR_TEXT_BYTES", ".host.Error.text", 64),
+    // {%- if ota == "true" %}
+    // Те же пределы, что у команды узлу OTA (`ports::SIGNATURE_BYTES`,
+    // `ports::CHUNK_BYTES`): длиннее не дойдёт до узла.
+    ("OTA_SIGNATURE_BYTES", ".host.OtaStart.signature", 64),
+    ("OTA_CHUNK_BYTES", ".host.OtaChunk.data", 128),
+    // {%- endif %}
 ];
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

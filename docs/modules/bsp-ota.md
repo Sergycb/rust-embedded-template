@@ -1,8 +1,8 @@
-Обновление прошивки платы: адаптер разделов и канал доставки образа —
-одним полем `Board::ota` ([`Ota`]): канал и адаптер обновления в одном объекте
-(`adapters::ota::Ota`, порт `OtaDevice`).
+Обновление прошивки платы: адаптер разделов — поле `Board::ota`
+([`Updater`]). Образ приходит не по каналу платы, а командами от узла протокола
+на вход узла `domain::ota` (docs/ota.md).
 
-Адаптер обновления ([`Updater`]) — `adapters::ota::Updater` `adapters::ota::Updater` (generic по
+Адаптер обновления ([`Updater`]) — `adapters::ota::Updater` (generic по
 `NorFlash`, тестируется на хосте), реализация порта `FirmwareUpdate` поверх
 разделов `DFU` и `BOOTLOADER_STATE`. Разделы `bsp` находит по линкерным
 символам `memory.x` (`FirmwareUpdaterConfig::from_linkerfile`) — это и есть то,
@@ -34,43 +34,15 @@ bootloader.{% endif %}
 не `DFU`: образ принимается в `DFU`, но обмен копирует ровно `ACTIVE`, и образ
 длиннее него приехал бы обрезанным.
 
-## Свой транспорт
+## Приём образа
 
-Канал доставки образа — первая половина `Board::ota`, тип [`Link`]. В шаблоне там заглушка
-`adapters::ota::Unconnected`, которая ждёт заголовок вечно. Заменить её —
-значит реализовать три метода `ports::ImageSource` на объекте, собранном из
-вашей периферии (`bsp` зависит от `ports` не по умолчанию: добавьте
-`ports = { workspace = true }` в `crates-cross/bsp/Cargo.toml`), и поменять
-псевдоним `Link` и функцию `link()`:
-
-```ignore
-impl ImageSource for MyLink {
-    type Error = LinkError;
-    // Дождаться и разобрать заголовок: длина{% if signed == "true" %} и подпись{% endif %}.
-    async fn begin(&mut self) -> Result<Announce, LinkError> { .. }
-    // Куски образа любой длины; `None` — конец.
-    async fn next(&mut self) -> Result<Option<&[u8]>, LinkError> { .. }
-    // Исход — отправителю; здесь же решается, перезапускать ли МК.
-    async fn finish(&mut self, outcome: Result<(), Rejection>) -> Result<(), LinkError> {
-        self.send_ack(outcome).await?;
-        if outcome.is_ok() {
-            cortex_m::peripheral::SCB::sys_reset();
-        }
-        Ok(())
-    }
-}
-```
-
-Транспорт собирается из периферии платы: возьмите блок в группу
-`resources.rs` (docs/resources.md) и соберите объект в `link()`.
-
-Всё остальное — сверка длины до стирания, `prepare` один раз, буферизация до
+Сверка длины до стирания, `prepare` один раз, буферизация до
 слова флеша, порядок проверок подписи, коды отказа — уже в узле
 `domain::ota`{% if graph == "true" %}, который граф спавнит из `fragments:`
 (`crates-cross/app/src/graph.rs`){% else %}. Без графа его спавнит `main`
 (`ota::task` над `domain::ota::task` в `main.rs`), отдав задаче `ota`
 владением{% endif %}. Во фрагменте
-`domain::ota` слоты канала и адаптера помечены `local`: `Updater` — `!Send` (внутри ссылка на {% if ota_store == "external" %}`crate::external::ExternalMutex`{% else %}`FlashMutex`{% endif %} с
+`domain::ota` слот адаптера помечен `local`: `Updater` — `!Send` (внутри ссылка на {% if ota_store == "external" %}`crate::external::ExternalMutex`{% else %}`FlashMutex`{% endif %} с
 `NoopRawMutex`), и граф держит его на своём исполнителе, не требуя `Send`, —
 то же допущение «один исполнитель», что у самого `NoopRawMutex`; захотите
 вынести OTA на другой исполнитель — меняйте `local` во фрагменте

@@ -232,6 +232,9 @@ supervisor       = { git = "https://github.com/Sergycb/rust-lib.git", features =
 	"local-resources",
 ] }
 watchdog         = { git = "https://github.com/Sergycb/rust-lib.git" }
+# Вход команд узла OTA в проекте без графа (`app`, src/main.rs): с графом его
+# заводит `supervisor` сам. Тот же git, что у `supervisor`, — один крейт в дереве.
+sync-request     = { git = "https://github.com/Sergycb/rust-lib.git" }
 
 # Причина паники, переживающая сброс: release-паникёр `app` и `boot`
 # (`bsp/src/panic.rs`) пишет её `report_panic_info` в регион PANIC (посчитан при
