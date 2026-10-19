@@ -8,19 +8,29 @@ rust-version.workspace = true
 [lints]
 workspace = true
 
+[features]
+# Драйвер времени — фичей, которую включает `app` (`target-tests` просит его у
+# `embassy-stm32` сам): приложение про чип не знает, а `bsp` — единственный, кто
+# с ним работает. Не безусловно, потому что от `bsp` зависит и `boot`: драйвер
+# там запускал бы TIM и оставлял его прерывание размаскированным на момент
+# прыжка в приложение (см. комментарий в crates-cross/Cargo.toml). Фичи
+# сливаются по всем крейтам одного вызова cargo, поэтому `boot` собирается
+# отдельным (`cargo build -p boot --release`, crates-host/xtask/src/firmware.rs).
+time-driver = ["embassy-stm32/time-driver-any"]
+# Паникёр прошивки (src/panic.rs) — у `app` и `boot`. Фичей, а не безусловно:
+# `target-tests` тоже зависит от `bsp`, а паникёр у него свой (`embedded-test`),
+# и два `#[panic_handler]` в одном бинарнике не линкуются.
+panic-handler = ["dep:panic-probe", "dep:panic-persist"]
+# Обработчик `HardFault` с причиной (src/fault.rs) — у `app` и `target-tests`.
+# Фичей по той же причине, что и драйвер времени: с LTO он попадает в образ
+# всякого, кто линкует `bsp`, и в `boot` занял бы около 14 KiB зоны.
+fault-handler = []
+
 [dependencies]
-# Драйвер времени (`time-driver-any`) просит `bsp`, а не `app`: приложение про
-# чип не знает вовсе, а этот крейт — единственный, кто с ним работает. В
-# воркспейсе фичи нет намеренно: оттуда она доставалась и бутлоадеру, который
-# запускал TIM и оставлял его прерывание размаскированным на момент прыжка в
-# приложение (см. комментарий в crates-cross/Cargo.toml). `boot` от `bsp` не
-# зависит и собирается отдельным вызовом cargo, так что отсюда фича до него не
-# доходит.
-#
 # `unstable-pac` — только там, где `bsp` пишет регистры сам (src/clocks.rs, src/banks.rs —
 # option bytes; src/cache.rs — `FLASH_ACR` и `ICACHE`): их нет в API HAL, а сырой адрес
 # вместо типизированного регистра `stm32-metapac` ничем не проверялся бы.
-embassy-stm32 = { workspace = true, features = ["time-driver-any"{% if cpu_freq_boost == "true" or bank_switch != "" or cache contains "icen" or cache contains "icache" %}, "unstable-pac"{% endif %}] }
+embassy-stm32 = { workspace = true, features = [{% if cpu_freq_boost == "true" or bank_switch != "" or cache contains "icen" or cache contains "icache" %}"unstable-pac"{% endif %}] }
 # Адаптеры поверх generic-флеша и шин: `Board::new` собирает их из периферии
 # и кладёт полями. Проверку подписи (`signed`) плата не включает: подпись
 # проверяет bootloader (crates-cross/boot), версию задаёт приложение.
@@ -31,11 +41,20 @@ ports = { workspace = true }
 {%- endif %}
 assign-resources = { workspace = true }
 # Регистры ядра напрямую:{% if graph == "true" %} `wfi` в ожидании сброса от сторожа (src/wdg.rs),{% endif %}
-# `wfe`, запрет прерываний и сброс для `app` (src/cpu.rs) и impl critical-section
-# (фича в crates-cross/Cargo.toml).
+# `wfe`, запрет прерываний и сброс для `app` и `boot` (src/cpu.rs) и impl
+# critical-section (фича в crates-cross/Cargo.toml).
 cortex-m = { workspace = true }
-# Рантайм и точка входа: `app` берёт `#[entry]` отсюда (src/cpu.rs), а не сам.
+# Рантайм и точка входа: `app` и `boot` берут `#[entry]` отсюда (src/cpu.rs).
 cortex-m-rt = { workspace = true }
+# Паникёр по профилю (src/panic.rs, фича `panic-handler`) — обе обычные
+# зависимости, выбор делает `#[cfg(debug_assertions)]` (Cargo гейтить
+# зависимости по профилю не умеет, см. docs/conventions.md). dev: `panic-probe`
+# печатает причину через defmt и останавливает ядро `udf()`; release: свой
+# `#[panic_handler]` сохраняет причину через `panic-persist` в регион PANIC,
+# печатает её и перезапускает МК. `panic-probe` без `use` не линкуется, а
+# `panic-persist` собран с `custom-panic-handler` — своего обработчика у него нет.
+panic-probe = { workspace = true, features = ["print-defmt"], optional = true }
+panic-persist = { workspace = true, optional = true }
 # Общий `Flash` всего чипа: и OTA, и раздел настроек работают через один
 # объект под `blocking_mutex` (см. `FlashMutex` в src/board.rs).
 {%- if shared_flash == "true" or ota == "true" %}

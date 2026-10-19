@@ -5,6 +5,12 @@ use core::cell::RefCell;
 {% if boot_partitioned == "true" %}
 use adapters::flash::ErasePage;
 {%- endif %}
+{%- if state_paged == "true" %}
+use bsp::ota::STATE_ERASE_SIZE;
+{%- endif %}
+{%- if swap_paged == "true" and dfu_bank != "true" %}
+use bsp::ota::SWAP_PAGE_SIZE;
+{%- endif %}
 use defmt::info;
 // RTT — дефолтный транспорт в обоих профилях (см. crates-cross/app/src/main.rs);
 // boot вдобавок не спавнит embassy-задач, поэтому очередь+drain-таск под
@@ -29,43 +35,27 @@ use embassy_stm32::wdg::IndependentWatchdog;
 {%- endif %}
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-{% if bank_switch != "" %}
-// Переключение флеша в одобанковый режим — тот же исходник, что у `bsp`:
-// bootloader не зависит от `bsp`.
-#[path = "../../bsp/src/banks.rs"]
-mod banks;
-{%- endif %}
 {%- if ota_store == "external" %}
 mod external;
 {%- endif %}
-// Паникёр по профилю — копия паникёра `app` (boot намеренно не зависит ни от
-// `bsp`, ни от `app`). Дамп bootloader никогда не читает (это делает `app` при
-// старте), так что причина падения bootloader'а в release лежит в PANIC до
-// первого удачного старта приложения или до `cargo xtask panic-info`.
-mod panic;
 {%- if signed == "true" %}
 mod signature;
 {%- endif %}
-{%- if graph == "true" %}
+// Паникёр — `bsp::panic` (фича `panic-handler`), release-ветка: bootloader
+// собирается только в release. Дамп bootloader никогда не читает (это делает
+// `app` при старте), так что причина падения bootloader'а лежит в PANIC до
+// первого удачного старта приложения или до `cargo xtask panic-info`.
 
-/// Таймаут сторожа, который bootloader запускает перед прыжком, — то же число
-/// из `[env]` crates-cross/.cargo/config.toml, что у приложения
-/// (`bsp::wdg::HW_TIMEOUT_US`, там же и почему одно).
-#[cfg(not(feature = "no-watchdog"))]
-const WATCHDOG_TIMEOUT_US: u32 = match u32::from_str_radix(env!("WATCHDOG_TIMEOUT_US"), 10) {
-    Ok(us) => us,
-    Err(_) => panic!("WATCHDOG_TIMEOUT_US в .cargo/config.toml — не число"),
-};
-{%- endif %}
-
-#[cortex_m_rt::entry]
+#[bsp::cpu::entry]
 fn main() -> ! {
 {%- if bank_switch != "" %}
     // Первым делом: `Flash::new` ниже паникует на двухбанковом флеше при
-    // одобанковой раскладке (см. `banks`).
-    banks::ensure_single_bank();
+    // одобанковой раскладке (см. `bsp::banks`).
+    bsp::banks::ensure_single_bank();
 {%- endif %}
-    let p = init_peripherals();
+    // На умолчаниях HAL, а не на конфиге платы: тактирование настраивает
+    // приложение, bootloader'у хватает HSI.
+    let p = bsp::board::init_peripherals(embassy_stm32::Config::default());
 {%- if dfu_bank == "true" %}
     // Банк 2 стоит за разрывом, и цельный `Flash` туда не дотягивается (его
     // `FLASH_SIZE` — сумма банков, меньше смещения банка 2): флеш разбирается на
@@ -176,7 +166,7 @@ fn main() -> ! {
     // xtask test target` собирает bootloader под тесты на плате, где кормить
     // сторож некому.
     #[cfg(not(feature = "no-watchdog"))]
-    IndependentWatchdog::new(p.{{watchdog_peripheral}}, WATCHDOG_TIMEOUT_US).unleash();
+    IndependentWatchdog::new(p.{{watchdog_peripheral}}, bsp::wdg::HW_TIMEOUT_US).unleash();
 {%- endif %}
     // SAFETY: `load` ставит VTOR на этот адрес, читает из образа по нему
     // начальный MSP (первое слово) и reset-вектор (второе) и прыгает — за этой
@@ -202,53 +192,6 @@ fn main() -> ! {
     }
 }
 {%- if ota_store != "external" %}
-
-/// Страница раздела `BOOTLOADER_STATE` — размер сектора, в котором он лежит.
-///
-/// Цельный `Flash` объявляет страницей самый крупный сектор чипа, а
-/// `Partition::new` паникует на разделе, не кратном странице. На F2/F4/F7
-/// `STATE` лежит в мелком секторе (у F4 — 16 KiB, а с разделом настроек
-/// 64 KiB при странице 128 KiB), поэтому его страница своя{% if state_paged != "true" %}; у этого чипа
-/// она равна странице цельного `Flash`, и раздел строится прямо над ним, а
-/// равенство держит `const`-assert ниже{% endif %}. Число посчитано при
-/// генерации тем же расчётом, что адреса в `memory.x`, и приезжает переменной
-/// среды `STATE_ERASE_SIZE` из `crates-cross/.cargo/config.toml` — той же, что
-/// читает приложение (`bsp::ota`).
-const STATE_ERASE_SIZE: usize = match usize::from_str_radix(env!("STATE_ERASE_SIZE"), 10) {
-    Ok(size) => size,
-    Err(_) => panic!("STATE_ERASE_SIZE в [env] crates-cross/.cargo/config.toml — не число"),
-};
-{%- if state_paged != "true" %}
-
-const _: () = assert!(
-    STATE_ERASE_SIZE == embassy_stm32::flash::MAX_ERASE_SIZE,
-    "STATE_ERASE_SIZE из генерации не равен странице цельного `Flash` \
-     (embassy_stm32::flash::MAX_ERASE_SIZE): `STATE` нужна своя страница"
-);
-{%- endif %}
-{%- if swap_paged == "true" %}
-
-/// Страница обмена `ACTIVE` и `DFU` — крупнее физической страницы флеша.
-///
-/// `embassy-boot` берёт страницу обмена из `ERASE_SIZE` разделов, а журнал
-/// `BOOTLOADER_STATE` ведёт запись на каждую страницу `ACTIVE`: чем крупнее
-/// страница, тем короче журнал и тем больше блока bootloader'а остаётся его
-/// коду (подписанный release-образ на мелких страницах, как у L0, иначе не
-/// влезает в зону). Разделы поэтому строятся над
-/// `ErasePage<_, SWAP_PAGE_SIZE>`, а не над цельным `Flash` с его физической
-/// страницей. Число — переменная среды `SWAP_PAGE_SIZE` (`page_size` из
-/// генерации), та же, что читает приложение (`bsp::flash`).
-const SWAP_PAGE_SIZE: usize = match usize::from_str_radix(env!("SWAP_PAGE_SIZE"), 10) {
-    Ok(size) => size,
-    Err(_) => panic!("SWAP_PAGE_SIZE в [env] crates-cross/.cargo/config.toml — не число"),
-};
-
-const _: () = assert!(
-    SWAP_PAGE_SIZE.is_multiple_of(embassy_stm32::flash::MAX_ERASE_SIZE),
-    "SWAP_PAGE_SIZE из генерации не кратен странице стирания флеша чипа \
-     (embassy_stm32::flash::MAX_ERASE_SIZE): стирание раздела заденет чужие секторы"
-);
-{%- endif %}
 
 /// Буфер обмена `BootLoader::prepare` — слово записи флеша из генерации
 /// (`write_size`, его можно переопределить `--define`). `prepare` требует,
@@ -297,20 +240,4 @@ type Bank1 = embassy_stm32::flash::Bank1Region<'static, embassy_stm32::flash::Bl
 /// посчитаны так же).
 type Bank2 = embassy_stm32::flash::Bank2Region<'static, embassy_stm32::flash::Blocking>;
 {%- endif %}
-{%- endif %}
-
-{%- if dual_core == "true" %}
-
-// См. тот же приём и обоснование в crates-cross/bsp/src/board.rs — здесь дублируется,
-// а не выносится в общий крейт: boot намеренно не зависит от bsp.
-fn init_peripherals() -> embassy_stm32::Peripherals {
-    static SHARED_DATA: core::mem::MaybeUninit<embassy_stm32::SharedData> =
-        core::mem::MaybeUninit::uninit();
-    embassy_stm32::init_primary(embassy_stm32::Config::default(), &SHARED_DATA)
-}
-{%- else %}
-
-fn init_peripherals() -> embassy_stm32::Peripherals {
-    embassy_stm32::init(embassy_stm32::Config::default())
-}
 {%- endif %}

@@ -51,10 +51,9 @@ const ACTIVE_LEN: u32 = match u32::from_str_radix(env!("ACTIVE_LEN"), 10) {
 /// она равна странице цельного `Flash`, и раздел строится прямо над ним, а
 /// равенство держит `const`-assert ниже{% endif %}. Число посчитано при
 /// генерации тем же расчётом, что адреса в `memory.x`, и приезжает переменной
-/// среды `STATE_ERASE_SIZE` из `[env]` `crates-cross/.cargo/config.toml` — её же
-/// читает bootloader (он от `bsp` не зависит), и разделу в приложении и в нём
-/// расходиться нельзя.
-const STATE_ERASE_SIZE: usize = match usize::from_str_radix(env!("STATE_ERASE_SIZE"), 10) {
+/// среды `STATE_ERASE_SIZE` из `[env]` `crates-cross/.cargo/config.toml`. Её
+/// же берёт bootloader — отсюда, и разделу в приложении и в нём расходиться нельзя.
+pub const STATE_ERASE_SIZE: usize = match usize::from_str_radix(env!("STATE_ERASE_SIZE"), 10) {
     Ok(size) => size,
     Err(_) => panic!("STATE_ERASE_SIZE в [env] crates-cross/.cargo/config.toml — не число"),
 };
@@ -74,10 +73,10 @@ const _: () = assert!(
 /// (запись на каждую страницу `ACTIVE`) стал короче и коду bootloader'а
 /// остался почти весь его блок. Раздел `DFU` строится над
 /// `ErasePage<_, SWAP_PAGE_SIZE>`; `ACTIVE` с той же страницей собирает
-/// bootloader. Число — `page_size` из генерации, переменная среды
-/// `SWAP_PAGE_SIZE` (общая с bootloader'ом); кратно оно странице стирания
-/// флеша (проверка ниже).
-const SWAP_PAGE_SIZE: usize = match usize::from_str_radix(env!("SWAP_PAGE_SIZE"), 10) {
+/// bootloader (отсюда же берёт и число). Число — `page_size` из генерации,
+/// переменная среды `SWAP_PAGE_SIZE`; кратно оно странице стирания флеша
+/// (проверка ниже).
+pub const SWAP_PAGE_SIZE: usize = match usize::from_str_radix(env!("SWAP_PAGE_SIZE"), 10) {
     Ok(size) => size,
     Err(_) => panic!("SWAP_PAGE_SIZE в [env] crates-cross/.cargo/config.toml — не число"),
 };

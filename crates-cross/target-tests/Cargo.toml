@@ -26,8 +26,9 @@ workspace = true
 # `panic-probe` вместо этого делает `udf()`, то есть HardFault, и один
 # провалившийся assert обрушил бы весь прогон. Ограничение «ровно один
 # `#[panic_handler]`» — на бинарник, а не на workspace, поэтому у `app` и
-# `boot` паникёр: у `app` выбирается профилем (`panic-probe` в dev, свой поверх
-# `panic-persist` в release, см. `app/src/panic.rs`), у `boot` — один release-вариант, а здесь третий.
+# `boot` паникёр общий из `bsp` (фича `panic-handler`: `panic-probe` в dev, свой
+# поверх `panic-persist` в release, см. `bsp/src/panic.rs`), а здесь — другой, и
+# `bsp` подключён без этой фичи.
 # Не для собственного использования, а ради impl'а `critical-section`: его
 # даёт `cortex-m` с фичей `critical-section-single-core` (см. crates-cross/Cargo.toml),
 # и без прямой зависимости фича в графе этой цели не включается. Ошибка при
@@ -42,13 +43,15 @@ defmt-rtt = { workspace = true }
 # зависимость нужна прямая, транзитивной через embassy-stm32 не хватает.
 embassy-executor = { workspace = true }
 embedded-test = { workspace = true, features = ["panic-handler"] }
-embassy-time = { workspace = true }
+# Отметка времени у строк лога — как у `app` (см. crates-cross/Cargo.toml).
+embassy-time = { workspace = true, features = ["defmt-timestamp-uptime-ms"] }
 # Только ради драйвера времени — по той же причине, что и у `app`: в
 # воркспейсе фичи нет, чтобы она не досталась бутлоадеру (см. комментарий в
 # crates-cross/Cargo.toml), а тестовый образ линкуется с `embassy-time` и без
 # драйвера не соберётся.
 embassy-stm32 = { workspace = true, features = ["time-driver-any"] }
-bsp = { workspace = true }
+# `HardFault` с причиной — как у `app`; паникёр у тестов свой (`embedded-test`).
+bsp = { workspace = true, features = ["fault-handler"] }
 {%- if ota == "true" or config == "true" %}
 # Трейты портов: тесты дёргают объекты `Board` тем же способом, что и `app`
 # (`FirmwareUpdate` — тесты OTA, `SettingsStorage` — тест настроек).

@@ -14,7 +14,6 @@ mod graph;
 {%- if signed == "true" %}
 mod image;
 {%- endif %}
-mod panic;
 
 use defmt::info;
 // RTT остаётся дефолтным транспортом в обоих профилях — сырой шаблон не знает,
@@ -166,9 +165,9 @@ fn main() -> ! {
     // `new`, крутилось бы в цикле перезагрузок молча.
     //
     // Только release: в dev паникёр — `panic-probe`, дамп никто не пишет, и
-    // читать было бы нечего (см. `panic.rs`).
+    // читать было бы нечего (см. `bsp::panic`).
     #[cfg(not(debug_assertions))]
-    if let Some(reason) = panic_persist::get_panic_message_utf8() {
+    if let Some(reason) = bsp::panic::previous() {
         defmt::error!("app: предыдущий запуск упал: {}", reason);
     }
 

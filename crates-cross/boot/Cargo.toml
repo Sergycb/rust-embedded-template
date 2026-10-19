@@ -20,8 +20,6 @@ name = "boot"
 harness = false
 
 [dependencies]
-cortex-m = { workspace = true }
-cortex-m-rt = { workspace = true }
 # Boot намеренно не получает release-транспорт defmt (UART без пробника,
 # см. crates-cross/app/src/graph.rs): у него нет embassy-executor и
 # Spawner'а под фоновую drain-задачу, а единственная диагностическая строка
@@ -29,24 +27,23 @@ cortex-m-rt = { workspace = true }
 # целый UART-стек. Здесь только RTT.
 defmt-rtt = { workspace = true }
 defmt = { workspace = true }
-# Паникёр — src/panic.rs поверх `panic-persist`: bootloader собирается только в
-# release, `panic-probe` ему не нужен. Это единственный способ узнать, почему
-# bootloader не прыгнул: причина лежит в PANIC и читается `cargo xtask
-# panic-info`.
-panic-persist = { workspace = true }
+# Точка входа, ядро, переключение банков, HAL, общие с приложением константы
+# раскладки и паникёр (`bsp::panic`, фича `panic-handler`) — из `bsp`, а не
+# копиями. Паникёр — единственный способ узнать, почему bootloader не прыгнул:
+# причина лежит в PANIC и читается `cargo xtask panic-info`. Фичи `time-driver`
+# здесь нет и быть не должно (см. `bsp/Cargo.toml`).
+bsp = { workspace = true, features = ["panic-handler"] }
 embassy-boot-stm32 = { workspace = true, features = ["defmt"] }
 {%- if erase_zero == "true" and ota_store != "external" %}
 # Прямая зависимость только ради фичи: у этого чипа стёртая страница читается
 # нулями, и `embassy-boot` должен ждать 0x00 вместо 0xFF, иначе признак
 # «стёрто» читается наоборот. Только при STATE во внутреннем flash: внешняя
-# NOR стирается в 0xFF. `embassy-boot-stm32` фичу не пробрасывает, а
-# полагаться на объединение фич с `bsp` нельзя: bootloader собирается своей
-# командой (`cargo build -p boot`), где соседних крейтов в графе нет.
+# NOR стирается в 0xFF. `embassy-boot-stm32` фичу не пробрасывает; `bsp` её
+# тоже включает, но признак, от которого зависит обмен разделов, bootloader
+# просит сам, а не через соседа.
 embassy-boot = { workspace = true, features = ["flash-erase-zero"] }
 {%- endif %}
-# `unstable-pac` — ради регистров option bytes в `bsp/src/banks.rs`, который bootloader
-# подключает по пути: режим банков обязан быть выставлен до его `Flash::new`.
-embassy-stm32 = { workspace = true, features = ["defmt"{% if bank_switch != "" %}, "unstable-pac"{% endif %}] }
+embassy-stm32 = { workspace = true, features = ["defmt"] }
 embassy-sync = { workspace = true }
 {%- if boot_partitioned == "true" or ota_store == "external" %}
 {%- if boot_partitioned == "true" %}

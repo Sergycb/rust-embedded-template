@@ -70,14 +70,20 @@ pub fn lint_cross(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
         "cargo clippy -p target-tests --test test -- -D warnings"
     )
     .run()?;
-    // Second pass, release only, scoped to app+boot: the release profile turns
+    // Second pass, release only: the release profile turns
     // `debug-assertions`/`overflow-checks` off, so anything behind `debug_assert!`
-    // (or a future `#[cfg(not(debug_assertions))]` branch — see the release defmt
-    // transport pattern in graph.rs) is only type-checked here.
-    // bsp/target-tests carry no such code, so re-linting them would just repeat
-    // the first pass.
+    // or `#[cfg(not(debug_assertions))]` (the release panic handler in
+    // `bsp::panic`, the release defmt transport pattern in graph.rs) is only
+    // type-checked here. `bsp` is linted alongside `app`: in the same call it gets
+    // `app`'s features (`panic-handler`), so its release branch is checked.
+    // target-tests carry no such code, so re-linting it would just repeat the
+    // first pass.
     if has_bootloader() {
-        cmd!(sh, "cargo clippy -p app -p boot --release -- -D warnings").run()?;
+        cmd!(
+            sh,
+            "cargo clippy -p app -p boot -p bsp --release -- -D warnings"
+        )
+        .run()?;
         // Bootloader под тесты на плате (`cargo xtask test target`) собирается с
         // фичей `no-watchdog`: эта ветка нигде больше не компилируется.
         cmd!(
@@ -86,7 +92,7 @@ pub fn lint_cross(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
         )
         .run()?;
     } else {
-        cmd!(sh, "cargo clippy -p app --release -- -D warnings").run()?;
+        cmd!(sh, "cargo clippy -p app -p bsp --release -- -D warnings").run()?;
     }
     Ok(())
 }

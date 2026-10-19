@@ -38,6 +38,8 @@ pub mod net;
 {%- if ota == "true" %}
 pub mod ota;
 {%- endif %}
+#[cfg(feature = "panic-handler")]
+pub mod panic;
 {%- if interface == "tcp" or interface == "udp" %}
 {%- if rng_irq != "" %}
 pub mod rng;

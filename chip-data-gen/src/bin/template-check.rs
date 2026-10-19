@@ -69,7 +69,7 @@ fn default_cases() -> Vec<Case> {
         // и ветка `dfu_bank` не собиралась бы вовсе.
         Case::new("stm32h743zg").variant("dfu-bank", &[]),
         // С завода двухбанковый флеш при одобанковой раскладке: `bsp/src/banks.rs`
-        // (вариант `g4`) в `bsp` и в `boot` по `#[path]`, `unstable-pac` у обоих.
+        // (вариант `g4`) в `bsp`, его зовут и `Board::new`, и `boot`; `unstable-pac` — у `bsp`.
         Case::new("stm32g474re"),
         // OTA не помещается: crates-cross/boot удаляется из проекта, members и xtask
         // должны это пережить.

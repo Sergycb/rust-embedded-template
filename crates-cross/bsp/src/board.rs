@@ -170,7 +170,7 @@ impl Board {
         // бит вступает в силу только сбросом (см. `crate::clocks`).
         crate::clocks::ensure_cpu_freq_boost();
 {%- endif %}
-        let p = init_peripherals();
+        let p = init_peripherals(config());
 {%- if cache != "" %}
         // Сразу за HAL (латентность флеша и тактирование выставлены) и до всего
         // остального: кэши с завода выключены (см. `crate::cache`).
@@ -303,15 +303,27 @@ impl Board {
 // нужна ручная проверка/настройка option bytes (BCM4) перед прошивкой, см.
 // README, раздел про dual-core. Полноценная AMP-поддержка — осознанно не
 // входит в шаблон.
-fn init_peripherals() -> embassy_stm32::Peripherals {
+/// Поднимает HAL — то, с чего начинают `Board::new` и bootloader.
+///
+/// Отдельной функцией ради `boot`: тот поднимает HAL на
+/// `embassy_stm32::Config::default()`, а не на конфиге платы, и `Board` ему не
+/// нужен. Приложению — только через [`Board::new`].
+#[must_use]
+pub fn init_peripherals(config: embassy_stm32::Config) -> embassy_stm32::Peripherals {
     static SHARED_DATA: core::mem::MaybeUninit<embassy_stm32::SharedData> =
         core::mem::MaybeUninit::uninit();
-    embassy_stm32::init_primary(config(), &SHARED_DATA)
+    embassy_stm32::init_primary(config, &SHARED_DATA)
 }
 {%- else %}
 
-fn init_peripherals() -> embassy_stm32::Peripherals {
-    embassy_stm32::init(config())
+/// Поднимает HAL — то, с чего начинают `Board::new` и bootloader.
+///
+/// Отдельной функцией ради `boot`: тот поднимает HAL на
+/// `embassy_stm32::Config::default()`, а не на конфиге платы, и `Board` ему не
+/// нужен. Приложению — только через [`Board::new`].
+#[must_use]
+pub fn init_peripherals(config: embassy_stm32::Config) -> embassy_stm32::Peripherals {
+    embassy_stm32::init(config)
 }
 {%- endif %}
 

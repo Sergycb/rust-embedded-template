@@ -712,8 +712,8 @@ probe-rs erase --chip <CHIP> --connect-under-reset              # см. ниже
 
 ## Что происходит при падении
 
-Паникёр выбирает профиль (`#[cfg(debug_assertions)]` в `crates-cross/app/src/panic.rs`,
-у bootloader'а — копия release-ветки: он собирается только в release):
+Паникёр выбирает профиль (`#[cfg(debug_assertions)]` в `crates-cross/bsp/src/panic.rs`,
+общий у приложения и bootloader'а; тот собирается только в release):
 
 | Профиль | Паникёр | После падения | Почему |
 |---|---|---|---|

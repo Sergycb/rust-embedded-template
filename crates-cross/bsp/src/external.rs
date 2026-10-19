@@ -33,12 +33,12 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::mutex::Mutex;
 use static_cell::StaticCell;
 
-/// Страница обмена, под которую посчитана раскладка; то же число, что в
-/// bootloader'е, — переменная среды `EXT_PAGE_SIZE` из `[env]`
+/// Страница обмена, под которую посчитана раскладка; bootloader берёт её
+/// отсюда — переменная среды `EXT_PAGE_SIZE` из `[env]`
 /// `crates-cross/.cargo/config.toml`. С драйвером, чьё стирание её не делит,
 /// страница обмена `embassy-boot` выросла бы, `ACTIVE` перестал бы быть ей
 /// кратен, и bootloader паниковал бы в `assert_partitions` на каждом старте.
-const EXT_PAGE_SIZE: usize = match usize::from_str_radix(env!("EXT_PAGE_SIZE"), 10) {
+pub const EXT_PAGE_SIZE: usize = match usize::from_str_radix(env!("EXT_PAGE_SIZE"), 10) {
     Ok(size) => size,
     Err(_) => panic!("EXT_PAGE_SIZE в [env] crates-cross/.cargo/config.toml — не число"),
 };

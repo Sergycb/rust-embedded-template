@@ -19,19 +19,15 @@ embassy-executor = { workspace = true, features = ["defmt"] }
 # тиков исполнитель стоял (docs/modules/app-cpu-load.md).
 static_cell = { workspace = true }
 # Прямо, а не транзитивно: тем же временем цикл исполнителя меряет свой сон.
-embassy-time = { workspace = true }
+# Отметка времени у строк лога — здесь, а не в воркспейсе (см.
+# crates-cross/Cargo.toml).
+embassy-time = { workspace = true, features = ["defmt-timestamp-uptime-ms"] }
 defmt = { workspace = true }
 defmt-rtt = { workspace = true }
-# Паникёр по профилю — оба крейта обычные зависимости, выбор делает
-# `#[cfg(debug_assertions)]` в src/panic.rs (Cargo гейтить зависимости по
-# профилю не умеет, см. docs/conventions.md). dev: `panic-probe` печатает
-# причину через defmt и останавливает ядро `udf()`; release: собственный
-# `#[panic_handler]` сохраняет причину через `panic-persist` в регион PANIC,
-# печатает её и перезапускает МК. `panic-probe` без `use` не линкуется, а
-# `panic-persist` собран с `custom-panic-handler` — своего обработчика у него нет.
-panic-probe = { workspace = true, features = ["print-defmt"] }
-panic-persist = { workspace = true }
-bsp = { workspace = true }
+# Драйвер времени, паникёр и обработчик `HardFault` — фичами `bsp` (там же
+# почему): от него зависит и `boot`, которому драйвер времени нельзя, а
+# обработчик не по карману.
+bsp = { workspace = true, features = ["time-driver", "panic-handler", "fault-handler"] }
 domain = { workspace = true }
 {%- if protocol != "none" %}
 # Транспорты протоколов (`adapters::modbus::Rtu`, `adapters::cobs::Cobs`) вокруг
@@ -56,8 +52,8 @@ supervisor = { workspace = true }
 #
 # `embassy-stm32` здесь нет и быть не должно: про чип знает `bsp`, а
 # приложение — только про объекты, которые тот отдаёт. Драйвер времени
-# (`time-driver-any`) просит оттуда же — см. `bsp/Cargo.toml`, где разобрано,
-# почему фича не в воркспейсе.
+# (`time-driver-any`) включает фича `bsp/time-driver` — см. `bsp/Cargo.toml`,
+# почему она не в воркспейсе и не безусловная.
 
 [build-dependencies]
 shadow-rs = { workspace = true, features = ["build", "no_std"] }

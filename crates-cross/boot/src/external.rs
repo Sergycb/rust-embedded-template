@@ -1,21 +1,16 @@
 //! `STATE` и `DFU` на внешней флеши: драйвер, страница обмена и решение,
 //! менять ли разделы местами.
 
+// Страница обмена, под которую посчитана раскладка (`memory.x`): `ACTIVE`
+// кратен ей. Обмен идёт страницами `max(ACTIVE::ERASE_SIZE,
+// DFU::ERASE_SIZE)`, и драйвер с более крупным стиранием потребовал бы
+// `ACTIVE`, кратного уже его странице, — `assert_partitions` паниковал бы на
+// старте. Поэтому стирание драйвера обязано эту страницу делить. Число — то
+// же, что у приложения (`bsp::external`).
+use bsp::external::EXT_PAGE_SIZE;
 use domain::ota::boot::{BootPlan, boot_plan};
 use embassy_boot_stm32::{BootLoader, BootLoaderConfig, State};
 use embedded_storage::nor_flash::NorFlash;
-
-/// Страница обмена, под которую посчитана раскладка (`memory.x`): `ACTIVE`
-/// кратен ей. Обмен идёт страницами `max(ACTIVE::ERASE_SIZE,
-/// DFU::ERASE_SIZE)`, и драйвер с более крупным стиранием потребовал бы
-/// `ACTIVE`, кратного уже его странице, — `assert_partitions` паниковал бы на
-/// старте. Поэтому стирание драйвера обязано эту страницу делить. Число —
-/// переменная среды `EXT_PAGE_SIZE` из `[env]` `crates-cross/.cargo/config.toml`,
-/// та же, что читает приложение (`bsp::external`).
-const EXT_PAGE_SIZE: usize = match usize::from_str_radix(env!("EXT_PAGE_SIZE"), 10) {
-    Ok(size) => size,
-    Err(_) => panic!("EXT_PAGE_SIZE в [env] crates-cross/.cargo/config.toml — не число"),
-};
 
 /// Драйвер внешней флеши, на которой лежат `STATE` и `DFU`, — замените на
 /// свой: любой блокирующий `embedded_storage::nor_flash::NorFlash`. Та же

@@ -270,7 +270,7 @@ configuration. No Cargo feature to select one is enabled»), то есть сг�
 feature is not supported on this dual bank chip»).
 
 Предпочтение одобанковой стоит одного шага в прошивке: у G4 cat3, L4+, L5 и G0B/G0C с завода стоит
-двухбанковый режим, и `bsp/src/banks.rs` (его же `boot` подключает через `#[path]`) переключает
+двухбанковый режим, и `bsp/src/banks.rs` (его же зовёт `boot` — `bsp::banks`) переключает
 его при первом старте. Каким чипам, какой вариант регистров (`g0`/`g4`/`l4`/`l5`) и какой бит режима
 (`g4:22`; у L4+/L5 бит зависит от объёма — `bank_switch_bits`) — блок
 `BANK_SWITCH`: версия блока FLASH из метаданных через таблицу `FACTORY_DUAL_BANK` в

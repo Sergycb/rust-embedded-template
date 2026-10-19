@@ -28,7 +28,9 @@ skill'ом `rust-engineering` и не дублируются здесь. Это�
 `embassy-stm32` и ни про какое железо, тестируется на host (`cargo xtask test host`).
 `crates-cross/` — аппаратная прошивка (`bsp`, `app`, `boot`), собирается под `{{target}}`,
 подключает `domain` как обычную path-зависимость.
-**Исключение — `boot`:** bootloader зависит от `domain` (при `signed` или `ota=external`)
+**Исключение — `boot`:** bootloader зависит от `bsp` (точка входа, ядро, банки, HAL,
+константы раскладки, паникёр; фичи `time-driver` и `fault-handler` ему не включаются —
+`docs/architecture.md`) и от `domain` (при `signed` или `ota=external`)
 ради двух свободных функций над блокирующими разделами,
 `domain::ota::boot::{boot_plan, screen_update}`; в образ попадают только они
 (`lto` + `--gc-sections` выбрасывают остальное). Их типы — `BootPlan`, `Screening`,
@@ -159,9 +161,9 @@ read`: руками пришлось бы сначала найти адрес �
   получает от `bsp` псевдоним (`pub type X = ...`) — `docs/architecture.md`.
 - Ровно один `#[panic_handler]` и один активный `#[global_logger]` на бинарник: логгер
   резолвится линковкой по имени символа и даёт `multiply defined!` при нарушении;
-  паникёр выбирается `#[cfg(debug_assertions)]` в `crates-cross/app/src/panic.rs` (`boot`
-  собирается только в release, его `crates-cross/boot/src/panic.rs` — копия release-ветки, правятся
-  вместе): dev — `use panic_probe as _;`, release — свой
+  паникёр один на `app` и `boot` — `crates-cross/bsp/src/panic.rs` за фичей
+  `panic-handler` (у `target-tests` свой), выбирается `#[cfg(debug_assertions)]`
+  (`boot` собирается только в release): dev — `use panic_probe as _;`, release — свой
   `#[panic_handler]` поверх `panic_persist::report_panic_info` (фича
   `custom-panic-handler`) — `docs/diagnostics.md`, `docs/conventions.md`.
 - `prepare(len)` порта `FirmwareUpdate` зовётся один раз перед приёмом образа
@@ -197,18 +199,19 @@ read`: руками пришлось бы сначала найти адрес �
   используется, прыжок в наполовину переписанный `ACTIVE` недопустим — `docs/flash.md`, `docs/ota.md`.
 {%- if swap_paged == "true" %}
 - `SWAP_PAGE_SIZE` — число из генерации ({{page_size}}), переменная среды
-  `[env]` в `crates-cross/.cargo/config.toml`, общая у `bsp::flash` и `boot`:
+  `[env]` в `crates-cross/.cargo/config.toml`; константа — `bsp::ota::SWAP_PAGE_SIZE`,
+  её берёт и `boot`:
   страница обмена крупнее физической, `ACTIVE` и `DFU`
   оборачиваются в `ErasePage<_, SWAP_PAGE_SIZE>` ради малого журнала `STATE`
   (подписанному `boot` нужна зона ≥ 26 KiB). `STATE_ERASE_SIZE` — другое число
   (страница сектора `STATE`) — `docs/flash.md`.
 {%- endif %}
-- `STATE_ERASE_SIZE` — число из генерации, одно на `boot` и `bsp::flash` (переменная
-  среды в `crates-cross/.cargo/config.toml`). {% if state_paged == "true" %}Здесь `BOOTLOADER_STATE` строится над
+- `STATE_ERASE_SIZE` — число из генерации, одно на `boot` и приложение (переменная
+  среды в `crates-cross/.cargo/config.toml`, константа — `bsp::ota::STATE_ERASE_SIZE`). {% if state_paged == "true" %}Здесь `BOOTLOADER_STATE` строится над
   `adapters::flash::ErasePage` со страницей своего сектора: над цельным `Flash` на F2/F4/F7 раздел не
   кратен его странице, и `Partition::new` паникует на старте.{% else %}Здесь сектор `STATE` равен
   странице цельного `Flash`, поэтому раздел строится прямо над ним, а равенство держит
-  `const`-assert рядом с константой (`boot`, `bsp::ota`).{% endif %} Так же и `CONFIG`
+  `const`-assert рядом с константой (`bsp::ota`).{% endif %} Так же и `CONFIG`
   (`CONFIG_ERASE_SIZE` в `bsp::settings`): с OTA он может лежать в мелких секторах перед
   `ACTIVE` — `docs/flash.md`.
 {%- if bank_switch != "" %}
@@ -219,11 +222,13 @@ read`: руками пришлось бы сначала найти адрес �
   страницы (L4+). Новая плата прошивается дважды: первая прошивка
   переключает режим и перезагружает МК — `docs/flash.md`.
 {%- endif %}
-- `bsp::fault::enable()` — в `Board::new` сразу за `embassy_stm32::init`. Это
-  не только ловушка деления: вызов держит в образе обработчик `HardFault`,
-  объявленный в `bsp::fault`, — линкер берёт объект библиотеки только ради
-  символа, на который что-то ссылается. Убрали вызов — фолт снова молчит
-  (`docs/clocks.md`, «Ядро»).
+- `bsp::fault::enable()` (ловушка деления) — в `Board::new` сразу за
+  `embassy_stm32::init`. Обработчик `HardFault` с причиной держит в образе не
+  вызов, а фича `bsp/fault-handler` (её включают `app` и `target-tests`): у
+  `#[exception]` экспортируемое имя, и с LTO он попадает в любой бинарник,
+  линкующий `bsp`. Убрали фичу у `app` — фолт снова молчит; включили у `boot` —
+  около 14 KiB зоны bootloader'а (`docs/clocks.md`, «Ядро»,
+  `docs/architecture.md`).
 {%- if core_baseline != "true" %}
 - `Board::cycles` (`bsp::cycles::Cycles`, порт `ports::CycleCounter`) включает
   `DWT.CYCCNT`; `DWT` и `DCB` `bsp` берёт через `steal()` и пишет только в
