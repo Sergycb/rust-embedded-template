@@ -132,12 +132,30 @@ supervisor_graph! {
         // `domain::modbus::EmptyRegisters` пуста, её проект описывает в `domain`.
         // Адрес slave'а — `unit`{% if interface == "tcp" or interface == "udp" %}: по сети устройство адресуется по IP, и
         // slave отвечает на любой адрес в MBAP{% endif %}.
+{%- if ota == "true" %}
+        // Карта обёрнута окном OTA (`domain::modbus::OtaRegisters`): записи FC16
+        // по `OTA_BASE` уходят узлу `OTA` командами — клиентом его входа `CMD`
+        // (`ota_cmd_requester()`), остальное — карте проекта.
+        ::domain::MODBUS_SLAVE_FRAG<
+            bsp::link::Link,
+            ::domain::modbus::OtaRegisters<::domain::modbus::EmptyRegisters>,
+        > as MODBUS =
+            ::domain::modbus::ModbusSlaveWiring {
+                link: board.link,
+                regs: ::domain::modbus::OtaRegisters::new(
+                    ::domain::modbus::EmptyRegisters,
+                    ota_cmd_requester(),
+                ),
+                unit: 1,
+            },
+{%- else %}
         ::domain::MODBUS_SLAVE_FRAG<bsp::link::Link, ::domain::modbus::EmptyRegisters> as MODBUS =
             ::domain::modbus::ModbusSlaveWiring {
                 link: board.link,
                 regs: ::domain::modbus::EmptyRegisters,
                 unit: 1,
             },
+{%- endif %}
 {%- elsif protocol == "canopen" %}
 
         // Узел `CANOPEN` — узел CANopen (стек `zencan`) на шине CAN платы `board.can`

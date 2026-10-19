@@ -154,6 +154,28 @@ pub enum Rejection {
     NoSession,
 }
 
+/// Код исхода числом — общий для протоколов, которые передают его хосту
+/// полем (protobuf `OtaReply.status`, входной регистр окна OTA Modbus): `1`
+/// `Started`, `2` `Received`, `3` `Ready`, `4` `Rebooting`; отказы с `10`:
+/// `Length`, `Transfer`, `Busy`, `Rollback`, `Signature`, `Device`,
+/// `NoSession` — по порядку.
+#[must_use]
+pub const fn reply_code(reply: &Reply) -> u16 {
+    match reply {
+        Ok(Progress::Started) => 1,
+        Ok(Progress::Received(_)) => 2,
+        Ok(Progress::Ready) => 3,
+        Ok(Progress::Rebooting) => 4,
+        Err(Rejection::Length) => 10,
+        Err(Rejection::Transfer) => 11,
+        Err(Rejection::Busy) => 12,
+        Err(Rejection::Rollback) => 13,
+        Err(Rejection::Signature) => 14,
+        Err(Rejection::Device) => 15,
+        Err(Rejection::NoSession) => 16,
+    }
+}
+
 /// Перезагрузка МК — то, чем узел OTA выполняет [`Command::Reboot`].
 ///
 /// Порт, а не прямой сброс в `domain`: сбросить ядро умеет только плата

@@ -48,6 +48,13 @@ pub mod master;
 mod registers;
 
 pub use registers::EmptyRegisters;
+// {%- if ota == "true" %}
+
+/// Окно OTA в карте регистров: команды обновления записями FC16.
+mod ota;
+
+pub use ota::{OTA_BASE, OTA_REGISTERS, OtaRegisters, STATUS_REGISTERS};
+// {%- endif %}
 
 use defmt_or_log::{FormatOrDebug, info, warn};
 use ports::{ModbusServer, ServeError};

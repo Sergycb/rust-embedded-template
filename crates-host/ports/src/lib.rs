@@ -123,7 +123,7 @@ pub use cycles::CycleCounter;
 // {%- if ota == "true" %}
 pub use ota::command::{
     CHUNK_BYTES, Chunk, Command as OtaCommand, Progress, Reboot, Rejection, Reply as OtaReply,
-    SIGNATURE_BYTES,
+    SIGNATURE_BYTES, reply_code,
 };
 pub use ota::download::DownloadError;
 pub use ota::update::{FirmwareUpdate, PendingImage, UpdateError};

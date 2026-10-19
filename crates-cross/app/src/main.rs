@@ -107,7 +107,14 @@ mod usb {
 mod modbus {
     #[embassy_executor::task]
     pub async fn task(mut link: bsp::link::Link) {
+{%- if ota == "true" %}
+        let mut regs = domain::modbus::OtaRegisters::new(
+            domain::modbus::EmptyRegisters,
+            crate::ota::CMD.requester(),
+        );
+{%- else %}
         let mut regs = domain::modbus::EmptyRegisters;
+{%- endif %}
         let mut unit = 1;
         domain::modbus::task(domain::modbus::ModbusSlaveCtx {
             link: &mut link,

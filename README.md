@@ -275,7 +275,11 @@ flash и безусловно прыгает в него (`unsafe { bl.load(entr
 
 {% if protocol == "protobuf" %}В этом проекте команды — сообщения схемы `crates-host/proto/proto/host.proto`
 (`ota_start`, `ota_chunk`, `ota_finish`, `reboot`, ответ `OtaReply`), перевод — в
-`domain::host::Service`.{% elsif protocol == "none" %}Протокола в этом проекте нет, и узел только подтверждает образ: команды
+`domain::host::Service`.{% elsif protocol == "modbus" %}В этом проекте команды — записи FC16 в окно holding-регистров с `0xF000`
+(`domain::modbus::OtaRegisters` вокруг карты проекта): одна запись — одна команда,
+ответ на запись — её исход, точный код и принятая длина — во входных регистрах
+(FC04) с той же базы. Карта окна — `crates-host/domain/src/modbus/ota.rs`, тайм-аут
+master'а на `Start` должен быть длиннее стирания раздела.{% elsif protocol == "none" %}Протокола в этом проекте нет, и узел только подтверждает образ: команды
 шлёт ваш протокол — клиент `ota_cmd_requester()`{% if graph != "true" %} (без графа — `ota::CMD.requester()`
 в `main.rs`){% endif %}.{% else %}Перевод своих сообщений в команды OTA для этого протокола появится следующим
 этапом шаблона; до тех пор клиент — `ota_cmd_requester()`.{% endif %}

@@ -5,7 +5,7 @@ use embassy_time::Instant;
 use ports::HostService;
 // {%- if ota == "true" %}
 use core::array::TryFromSliceError;
-use ports::{Chunk, OtaCommand, OtaReply, Progress, Rejection, SIGNATURE_BYTES};
+use ports::{Chunk, OtaCommand, OtaReply, Progress, SIGNATURE_BYTES, reply_code};
 use proto::OtaReply_::Status;
 use supervisor::Requester;
 // {%- endif %}
@@ -183,23 +183,16 @@ fn signature(bytes: &[u8]) -> Result<Option<[u8; SIGNATURE_BYTES]>, TryFromSlice
     bytes.try_into().map(Some)
 }
 
-/// Исход команды обновления — сообщением схемы.
+/// Исход команды обновления — сообщением схемы. Номера `Status` в схеме — те
+/// же коды, что `ports::reply_code`, общие с окном OTA Modbus.
 fn ota_reply(reply: OtaReply) -> proto::OtaReply {
-    let (status, received) = match reply {
-        Ok(Progress::Started) => (Status::Started, 0),
-        Ok(Progress::Received(received)) => (Status::Received, received),
-        Ok(Progress::Ready) => (Status::Ready, 0),
-        Ok(Progress::Rebooting) => (Status::Rebooting, 0),
-        Err(Rejection::Length) => (Status::Length, 0),
-        Err(Rejection::Transfer) => (Status::Transfer, 0),
-        Err(Rejection::Busy) => (Status::Busy, 0),
-        Err(Rejection::Rollback) => (Status::Rollback, 0),
-        Err(Rejection::Signature) => (Status::Signature, 0),
-        Err(Rejection::NoSession) => (Status::NoSession, 0),
-        // `Device` и незнакомые коды (перечисление `non_exhaustive`).
-        Err(_) => (Status::Device, 0),
-    };
-    proto::OtaReply { status, received }
+    proto::OtaReply {
+        status: Status(i32::from(reply_code(&reply))),
+        received: match reply {
+            Ok(Progress::Received(received)) => received,
+            _ => 0,
+        },
+    }
 }
 // {%- endif %}
 
@@ -300,6 +293,29 @@ pub(crate) mod tests {
             );
         }
         panic!("обработчик не ответил");
+    }
+
+    /// Номера `Status` в схеме совпадают с `ports::reply_code` — иначе
+    /// перевод исхода в схему соврал бы молча.
+    #[test]
+    fn schema_status_numbers_are_the_shared_reply_codes() {
+        use ports::{Progress, Rejection};
+        let pairs = [
+            (Ok(Progress::Started), Status::Started),
+            (Ok(Progress::Received(5)), Status::Received),
+            (Ok(Progress::Ready), Status::Ready),
+            (Ok(Progress::Rebooting), Status::Rebooting),
+            (Err(Rejection::Length), Status::Length),
+            (Err(Rejection::Transfer), Status::Transfer),
+            (Err(Rejection::Busy), Status::Busy),
+            (Err(Rejection::Rollback), Status::Rollback),
+            (Err(Rejection::Signature), Status::Signature),
+            (Err(Rejection::Device), Status::Device),
+            (Err(Rejection::NoSession), Status::NoSession),
+        ];
+        for (reply, status) in pairs {
+            assert_eq!(ota_reply(reply).status, status, "{reply:?}");
+        }
     }
 
     fn status(result: &Response_::Result) -> (Status, u32) {
