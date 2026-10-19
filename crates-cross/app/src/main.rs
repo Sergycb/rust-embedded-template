@@ -142,7 +142,7 @@ mod canopen {
 {%- endif %}
 {%- endif %}
 
-#[cortex_m_rt::entry]
+#[bsp::cpu::entry]
 fn main() -> ! {
     // Первая же строка лога отвечает на вопрос «а что вообще залито в плату»:
     // версия пакета и коммит, из которого собран образ (их подставляет
@@ -292,7 +292,7 @@ fn main() -> ! {
     // исполнитель можно только из единственного места, а оно здесь.
     loop {
         let before = Instant::now().as_ticks();
-        cortex_m::asm::wfe();
+        bsp::cpu::wait_for_event();
         cpu_load::record_sleep_ticks(Instant::now().as_ticks().saturating_sub(before));
         // SAFETY: поллить исполнитель можно только из единственного места, а
         // оно здесь — цикл ниже единственный, кто его крутит, и `spawn_all` к

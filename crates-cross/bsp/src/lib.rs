@@ -15,6 +15,7 @@ pub mod can;
 {%- if cpu_freq_boost == "true" %}
 pub mod clocks;
 {%- endif %}
+pub mod cpu;
 {%- if ota == "true" and ota_store == "external" %}
 pub mod external;
 {%- endif %}

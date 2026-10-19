@@ -26,11 +26,12 @@ embassy-stm32 = { workspace = true, features = ["time-driver-any"{% if cpu_freq_
 # проверяет bootloader (crates-cross/boot), версию задаёт приложение.
 adapters = { workspace = true }
 assign-resources = { workspace = true }
-# Регистры ядра напрямую:{% if graph == "true" %} `wfi` в ожидании сброса от сторожа (src/wdg.rs) и{% endif %}
-# impl critical-section (фича в crates-cross/Cargo.toml). Периферию ядра
-# (`Peripherals`) `bsp` не забирает: она никому здесь не нужна, а забрав её, он
-# лишил бы её приложение — `take()` отдаёт её ровно один раз за запуск.
+# Регистры ядра напрямую:{% if graph == "true" %} `wfi` в ожидании сброса от сторожа (src/wdg.rs),{% endif %}
+# `wfe`, запрет прерываний и сброс для `app` (src/cpu.rs) и impl critical-section
+# (фича в crates-cross/Cargo.toml).
 cortex-m = { workspace = true }
+# Рантайм и точка входа: `app` берёт `#[entry]` отсюда (src/cpu.rs), а не сам.
+cortex-m-rt = { workspace = true }
 # Общий `Flash` всего чипа: и OTA, и раздел настроек работают через один
 # объект под `blocking_mutex` (см. `FlashMutex` в src/board.rs).
 {%- if shared_flash == "true" or ota == "true" %}

@@ -23,12 +23,12 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
 
     static PANICKING: AtomicBool = AtomicBool::new(false);
 
-    cortex_m::interrupt::disable();
+    bsp::cpu::disable_interrupts();
     // load/store, а не swap: на thumbv6m нет CAS, а прерывания уже выключены.
     if !PANICKING.load(Ordering::Relaxed) {
         PANICKING.store(true, Ordering::Relaxed);
         panic_persist::report_panic_info(info);
         defmt::error!("panic: {}", defmt::Display2Format(info));
     }
-    cortex_m::peripheral::SCB::sys_reset()
+    bsp::cpu::reset()
 }

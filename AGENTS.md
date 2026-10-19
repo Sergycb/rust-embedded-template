@@ -150,8 +150,6 @@ read`: руками пришлось бы сначала найти адрес �
 - Не прошивать плату (`cargo flash`, `cargo run` в `crates-cross`, `test target`,
   `test host-target`, `panic-info`, `probe-rs`) без явного разрешения
   пользователя — необратимо и требует железа.
-- Не править `memory.x` и линкер-скрипты (`.cargo/config.toml`, `link.x`) — раскладка
-  памяти считается генерацией шаблона, вручную не трогается.
 - Не добавлять зависимости без разрешения пользователя — правила см. `docs/conventions.md`.
 - Не пинить тулчейн — `rust-toolchain.toml` в шаблоне намеренно нет, см. `docs/conventions.md`.
 
@@ -300,9 +298,6 @@ read`: руками пришлось бы сначала найти адрес �
 - `Board` отдаёт адаптеры — объекты, реализующие трейты (`ports`, `HardwareWatchdog`), —
   данные о чипе (`bsp::ChipSpec`), — и ничего не настраивает: ни
   периферии ядра, ни `Peripherals`, ни `Clocks` в полях нет — `docs/architecture.md`.
-- `cortex_m::Peripherals` (`DWT`, `MPU`, `SYST`) `bsp` не забирает; нужны — берите
-  `take()` ДО `Board::new()`, иначе на части семейств `embassy_stm32::init` уже сделал
-  `steal()` и вернётся `None` — `docs/architecture.md`.
 - `bsp` зависит только от `ports` и `adapters` (и HAL), не от `domain`: типы
   домена — например вход узла OTA — собирает из полей `Board` compose-site в
   `app` — `docs/architecture.md`.
