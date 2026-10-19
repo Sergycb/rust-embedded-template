@@ -15,13 +15,14 @@
 
 - `chip-select.rhai` — pre-хук: каскадный выбор чипа, `memory.x`, `write_size`,
   `ota`, `dual_core`, `bank_mode`, `erase_zero`, `watchdog_peripheral`,
-  `cpu_freq_boost`, `bank_switch`, `dual_bank_bit`, `dfu_bank`. Хуки
+  `cpu_freq_boost`, `cache`, `core_baseline`, `bank_switch`, `dual_bank_bit`, `dfu_bank`. Хуки
   cargo-generate в результат
   не копируются.
 - `chip-data/` — сгенерированные таблицы, которые хук подключает через `import`
   (каталог в `ignore`; `import` находит его и так): `chips.rhai`, `packages.rhai`,
   `bank_mode.rhai`, `bank_switch.rhai`, `watchdog.rhai`, `cpu_freq_boost.rhai`,
   `rng.rhai` (линия и клок блока `RNG`: `rng_irq`, `rng_clock`, `rng_source`),
+  `cache.rhai` (кэши чипа, теги через пробел: `icen`/`dcen` — биты `FLASH_ACR`, `icache` — блок `ICACHE`),
   `interfaces.rhai` (интерфейсы связи, выведенные в корпусе: `usart`, `fdcan`,
   `bxcan`, `eth`, `usb`, `otg` — по ним хук проверит ответ об интерфейсе) и
   `layout/<семейство>.rhai` — раскладка памяти, разложенная по первым двум символам
@@ -308,6 +309,20 @@ feature is not supported on this dual bank chip»).
 H723/725/730/733/735. Им `bsp` получает `src/clocks.rs`, остальным хук его удаляет
 (docs/clocks.md). Поэтому кеш хранит не список имён, а `SharedMetadata` — оба факта
 файла разом.
+
+Кэши (блок `CACHE`, переменная `cache`) выводятся так же, из метаданных: `icache` — есть блок
+`ICACHE` в общем файле; `icen`/`dcen` — есть ли `set_icen`/`set_dcen` в файле регистров
+`FLASH` его версии (`stm32-metapac/src/peripherals/flash_<версия>.rs`, `chip_caches`) — таблицы
+семейств нет. Кэши ядра M7 в блок не входят: хук добавляет тег `scb`, когда выбранное каскадом
+`cpu` — `cortex-m7` (так двухъядерный H745 получает его только в `-cm7`). Чипу без тегов хук
+удаляет `crates-cross/bsp/src/cache.rs`; `board.rs`, `lib.rs` и `unstable-pac` в манифесте `bsp`
+смотрят на ту же переменную. Тест — `caches_follow_the_metadata_and_the_core`. `DCACHE` (U5/H5)
+и предвыборка намеренно не включаются — `docs/clocks.md`, «Кэши».
+
+`core_baseline` ("true" для Cortex-M0/M0+/M23 по `cpu`) — ядра без `DWT.CYCCNT`, `CFSR` и
+`DIV_0_TRP`: им нет `bsp::cycles` с `Board::cycles` и `ports::cycles`, а `bsp::fault` собирается
+короче (`pc`/`lr`). Тест — `baseline_cores_are_marked`. `bsp::fault` остаётся у всех: обработчик
+`HardFault` в нём ссылкой из `Board::new` держится в образе (в ELF есть `bsp::fault::__cortex_m_rt_HardFault`, `rust-nm`); на плате фолт не вызывался.
 
 Когда блоков два, метаданные обоих ядер перечисляют оба — различить их там нечем, и
 выбор делается по суффиксу ядра (`-cm4`), который каскад **уже** выбрал. Это не

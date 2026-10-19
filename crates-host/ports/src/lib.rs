@@ -83,6 +83,11 @@ pub mod modbus;
 mod word;
 
 // {%- endif %}
+// {%- if core_baseline != "true" %}
+/// Счётчик тактов ядра.
+pub mod cycles;
+
+// {%- endif %}
 // {%- if ota == "true" %}
 /// OTA: канал доставки образа, запись во флеш, проверка подписи и ошибки
 /// приёма и применения.
@@ -111,6 +116,9 @@ pub use modbus::{
 // {%- if modbus_master == "true" %}
 pub use modbus::{MasterError, ModbusClient};
 // {%- endif %}
+// {%- endif %}
+// {%- if core_baseline != "true" %}
+pub use cycles::CycleCounter;
 // {%- endif %}
 // {%- if ota == "true" %}
 pub use ota::device::OtaDevice;

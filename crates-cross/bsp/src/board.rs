@@ -51,6 +51,10 @@ pub struct ChipSpec {
 pub struct Board {
     /// Сведения о чипе: имя, заводской номер, объём flash, частота `sys`.
     pub spec: ChipSpec,
+{%- if core_baseline != "true" %}
+    /// Счётчик тактов ядра (`bsp::cycles`) — реализация `ports::CycleCounter`.
+    pub cycles: crate::cycles::Cycles,
+{%- endif %}
 {%- if ota == "true" %}
     /// OTA одним объектом (`bsp::ota`): канал доставки образа — реализация
     /// `ports::ImageSource`, заглушка (`bsp::ota::Link`), пока проект не
@@ -167,6 +171,13 @@ impl Board {
         crate::clocks::ensure_cpu_freq_boost();
 {%- endif %}
         let p = init_peripherals();
+{%- if cache != "" %}
+        // Сразу за HAL (латентность флеша и тактирование выставлены) и до всего
+        // остального: кэши с завода выключены (см. `crate::cache`).
+        crate::cache::enable();
+{%- endif %}
+        // Тоже сразу за HAL: ловушка деления, и обработчик `HardFault` попадает в образ.
+        crate::fault::enable();
         // Единственный способ узнать фактическое тактирование: `Clocks`
         // заполняется внутри `init_peripherals`, наружу отдаётся только так.
         // Дамп в лог — не отладочный мусор, а штатная сводка старта: по нему
@@ -239,6 +250,9 @@ impl Board {
                 flash_size,
                 sys_hz,
             },
+{%- if core_baseline != "true" %}
+            cycles: crate::cycles::Cycles::new(sys_hz),
+{%- endif %}
 {%- if ota == "true" %}
             ota: crate::ota::new({% if ota_store == "external" %}external{% elsif dfu_bank == "true" %}flash, dfu_bank{% else %}flash{% endif %}),
 {%- endif %}

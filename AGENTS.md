@@ -219,6 +219,23 @@ read`: руками пришлось бы сначала найти адрес �
   страницы (L4+). Новая плата прошивается дважды: первая прошивка
   переключает режим и перезагружает МК — `docs/flash.md`.
 {%- endif %}
+- `bsp::fault::enable()` — в `Board::new` сразу за `embassy_stm32::init`. Это
+  не только ловушка деления: вызов держит в образе обработчик `HardFault`,
+  объявленный в `bsp::fault`, — линкер берёт объект библиотеки только ради
+  символа, на который что-то ссылается. Убрали вызов — фолт снова молчит
+  (`docs/clocks.md`, «Ядро»).
+{%- if core_baseline != "true" %}
+- `Board::cycles` (`bsp::cycles::Cycles`, порт `ports::CycleCounter`) включает
+  `DWT.CYCCNT`; `DWT` и `DCB` `bsp` берёт через `steal()` и пишет только в
+  `Cycles::new` — приложение берёт свой `take()` как раньше.
+{%- endif %}
+{%- if cache != "" %}
+- `bsp::cache::enable()` — в `Board::new` сразу за `embassy_stm32::init`: кэши
+  с завода выключены, HAL их не включает. Что именно включается, решает
+  генерация по метаданным чипа; кэш данных ядра M7 (F7/H7) не знает про DMA —
+  буфер периферии надо вынести в non-cacheable область `MPU` или чистить кэш
+  вручную — `docs/clocks.md`, «Кэши».
+{%- endif %}
 {%- if cpu_freq_boost == "true" %}
 - `bsp::clocks::ensure_cpu_freq_boost()` — первой строкой `Board::new`, до
   `embassy_stm32::init`: option byte `CPU_FREQ_BOOST` (потолок ядра 550 МГц

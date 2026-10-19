@@ -2831,6 +2831,64 @@ fn cpu_freq_boost_only_on_the_rm0468_line() {
     }
 }
 
+/// Кэши (`cache`): теги из метаданных — `icen`/`dcen` по полям `FLASH_ACR`,
+/// `icache` по блоку `ICACHE`, — а `scb` добавляет ядро Cortex-M7. Где кэша нет
+/// (F1, L0), `bsp/src/cache.rs` удаляется.
+#[test]
+fn caches_follow_the_metadata_and_the_core() {
+    let ast = compile_script();
+    for (suffix, expected) in [
+        ("f407ve", "icen dcen"),
+        ("g474re", "icen dcen"),
+        ("g071rb", "icen"),
+        ("l552ze", "icache"),
+        ("u575zi", "icache"),
+        ("f746ng", "scb"),
+        ("h743zi", "scb"),
+        ("h745zi-cm7", "scb"),
+        ("h745zi-cm4", ""),
+        ("f103c8", ""),
+        ("l053r8", ""),
+    ] {
+        let result = run_cascade_to(&ast, suffix).expect("каскад не должен падать");
+        assert_eq!(
+            result.vars.get("cache").map(String::as_str),
+            Some(expected),
+            "{suffix}"
+        );
+        assert_eq!(
+            result
+                .deleted
+                .iter()
+                .any(|path| path == "crates-cross/bsp/src/cache.rs"),
+            expected.is_empty(),
+            "{suffix}: cache.rs"
+        );
+    }
+}
+
+/// `core_baseline` — ядра без `DWT.CYCCNT`, `CFSR` и ловушки деления (M0, M0+,
+/// M23): им `bsp` не собирает `cycles`, а `ports` — `CycleCounter`.
+#[test]
+fn baseline_cores_are_marked() {
+    let ast = compile_script();
+    for (suffix, expected) in [
+        ("g071rb", true),  // Cortex-M0+
+        ("f030c8", true),  // Cortex-M0
+        ("f103c8", false), // Cortex-M3
+        ("f407ve", false), // Cortex-M4
+        ("h743zi", false), // Cortex-M7
+        ("l552ze", false), // Cortex-M33
+    ] {
+        let result = run_cascade_to(&ast, suffix).expect("каскад не должен падать");
+        assert_eq!(
+            result.vars.get("core_baseline").map(String::as_str),
+            Some(if expected { "true" } else { "false" }),
+            "{suffix}"
+        );
+    }
+}
+
 /// Ключи первого уровня таблицы `export const NAME = #{ ... };` из файла в
 /// `chip-data/`: строки с отступом ровно в четыре пробела, начинающиеся с
 /// `"ключ":`.

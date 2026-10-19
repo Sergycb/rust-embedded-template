@@ -9,6 +9,9 @@ mod resources;
 pub mod banks;
 {%- endif %}
 pub mod board;
+{%- if cache != "" %}
+pub mod cache;
+{%- endif %}
 {%- if interface == "can" %}
 pub mod can;
 {%- endif %}
@@ -16,9 +19,13 @@ pub mod can;
 pub mod clocks;
 {%- endif %}
 pub mod cpu;
+{%- if core_baseline != "true" %}
+pub mod cycles;
+{%- endif %}
 {%- if ota == "true" and ota_store == "external" %}
 pub mod external;
 {%- endif %}
+pub mod fault;
 {%- if shared_flash == "true" %}
 pub mod flash;
 {%- endif %}

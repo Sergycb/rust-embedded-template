@@ -66,6 +66,7 @@ fn main() -> anyhow::Result<()> {
     let mut interfaces: BTreeMap<&str, Vec<&'static str>> = BTreeMap::new();
     let mut instances: BTreeMap<&str, BTreeMap<&'static str, String>> = BTreeMap::new();
     let mut rngs: BTreeMap<&str, (String, RngClock)> = BTreeMap::new();
+    let mut caches: BTreeMap<&str, Vec<&'static str>> = BTreeMap::new();
     let mut switch_variants: BTreeMap<&str, &'static str> = BTreeMap::new();
     let mut shared_metadata_cache: BTreeMap<PathBuf, SharedMetadata> = BTreeMap::new();
     for suffix in &suffixes {
@@ -96,6 +97,11 @@ fn main() -> anyhow::Result<()> {
         }
         if shared.cpu_freq_boost {
             cpu_freq_boost.push(suffix);
+        }
+        let cache = chip_caches(&cargo_metadata.stm32_metapac_chips_dir, shared)
+            .with_context(|| format!("чип {suffix}"))?;
+        if !cache.is_empty() {
+            caches.insert(suffix, cache);
         }
         interfaces.insert(suffix, shared.interfaces.clone());
         instances.insert(suffix, shared.instances.clone());
@@ -169,7 +175,7 @@ fn main() -> anyhow::Result<()> {
         "embassy-stm32: {} чип-фич; probe-rs: {} целей; итоговый список: {} (отброшено {}, \
          нет цели probe-rs); более точная цель probe-rs, чем базовая, найдена для {} чипов; \
          выбор банковой схемы нужен {} чипам; сторож зовётся не {} у {} чипов; option byte \
-         CPU_FREQ_BOOST есть у {} чипов; RNG подключается у {} чипов; режим банков переключает прошивка у {} чипов; memory.x \
+         CPU_FREQ_BOOST есть у {} чипов; кэш включается у {} чипов (без кэша ядра M7); RNG подключается у {} чипов; режим банков переключает прошивка у {} чипов; memory.x \
          посчитан для {} из {} чипов, из них \
          с OTA {} (остальные — один образ на весь flash, без crates-cross/boot); раздел настроек \
          возможен на {} чипах, из них с сохранением OTA — {}; OTA с DFU на внешней флеши \
@@ -183,6 +189,7 @@ fn main() -> anyhow::Result<()> {
         DEFAULT_WATCHDOG,
         watchdogs.len(),
         cpu_freq_boost.len(),
+        caches.len(),
         rngs.len(),
         bank_switch.len(),
         memory_layouts.len(),
@@ -213,6 +220,7 @@ fn main() -> anyhow::Result<()> {
         ("interfaces.rhai".to_owned(), format_interfaces(&interfaces)),
         ("instances.rhai".to_owned(), format_instances(&instances)),
         ("rng.rhai".to_owned(), format_rngs(&rngs)),
+        ("cache.rhai".to_owned(), format_caches(&caches)),
     ];
     files.extend(
         format_memory_layouts(&memory_layouts)
@@ -691,6 +699,9 @@ struct SharedMetadata {
     rng_interrupt: Option<String>,
     /// Есть блок `CRS` — по нему `embassy-stm32` включает HSI48 (см. [`rng_clock`]).
     has_crs: bool,
+    /// Есть блок `ICACHE` (L5, U3/U5, H5, WBA, H7R/S) — кэш инструкций вне ядра,
+    /// включается битом `ICACHE_CR.EN`.
+    has_icache: bool,
 }
 
 /// Путь к общему файлу метаданных чипа и разобранные из него факты. Общий файл
@@ -723,11 +734,43 @@ fn shared_metadata<'c>(
                 instances: parse_instances(&shared_text),
                 rng_interrupt: parse_rng_interrupt(&shared_text),
                 has_crs: shared_text.contains("kind: \"crs\""),
+                has_icache: shared_text.contains("kind: \"icache\""),
             },
         );
     }
     let facts = &cache[&shared_path];
     Ok((shared_path, facts))
+}
+
+/// Кэши чипа, которые включает `bsp::cache` (кроме кэшей ядра Cortex-M7 — их
+/// шаблон выбирает по `cpu`): `icen`/`dcen` — кэши инструкций и данных
+/// акселератора флеша (биты `FLASH_ACR`), `icache` — блок `ICACHE`.
+///
+/// Биты `FLASH_ACR` берутся из файла регистров версии блока `FLASH` в
+/// `stm32-metapac`, а не из таблицы семейств: метаданные чипа перечисляют блоки
+/// и их версии, поля регистров лежат только там. Кэш данных `DCACHE` (U5, H5)
+/// не включается: он стоит перед внешней памятью (`OCTOSPI`/`FMC`), а её у
+/// шаблона нет.
+fn chip_caches(chips_dir: &Path, shared: &SharedMetadata) -> anyhow::Result<Vec<&'static str>> {
+    let mut found = Vec::new();
+    if let Some(version) = &shared.flash_version {
+        let path = chips_dir
+            .parent()
+            .context("у каталога chips нет родителя")?
+            .join("peripherals")
+            .join(format!("flash_{version}.rs"));
+        let registers = fs::read_to_string(&path)
+            .with_context(|| format!("не удалось прочитать {}", path.display()))?;
+        for (token, setter) in [("icen", "pub fn set_icen("), ("dcen", "pub fn set_dcen(")] {
+            if registers.contains(setter) {
+                found.push(token);
+            }
+        }
+    }
+    if shared.has_icache {
+        found.push("icache");
+    }
+    Ok(found)
 }
 
 /// Версия регистров блока вида `kind` — строка за `kind: "<kind>",` и
@@ -2672,6 +2715,34 @@ fn format_cpu_freq_boost(chips: &[&str]) -> String {
         out.push_str(&format!("    \"{suffix}\",\n"));
     }
     out.push_str("];\n");
+    out
+}
+
+/// Кэши чипов (см. [`chip_caches`]) — теги через пробел, как их читает Liquid
+/// (`cache contains "icen"`); чипам без кэша записи нет.
+fn format_caches(chips: &BTreeMap<&str, Vec<&'static str>>) -> String {
+    let mut out = String::new();
+    out.push_str(DATA_HEADER);
+    out.push_str(&format!(
+        "// {} шт.
+",
+        chips.len()
+    ));
+    out.push_str(
+        "export const CACHE = #{
+",
+    );
+    for (suffix, tokens) in chips {
+        out.push_str(&format!(
+            "    \"{suffix}\": \"{}\",
+",
+            tokens.join(" ")
+        ));
+    }
+    out.push_str(
+        "};
+",
+    );
     out
 }
 

@@ -409,6 +409,13 @@ const WATCHDOG = watchdog_data::WATCHDOG;
 import "chip-data/cpu_freq_boost" as boost_data;
 const CPU_FREQ_BOOST = boost_data::CPU_FREQ_BOOST;
 
+// Кэши, которые bsp включает сам (`bsp::cache::enable()`, docs/clocks.md):
+// теги через пробел — `icen`/`dcen` (кэши акселератора флеша, биты FLASH_ACR),
+// `icache` (блок ICACHE). Из метаданных stm32-metapac, не из имени чипа. Кэши
+// ядра Cortex-M7 (`scb`) добавляются ниже по `cpu`: ядро уже выбрано каскадом.
+import "chip-data/cache" as cache_data;
+const CACHE = cache_data::CACHE;
+
 // Интерфейсы связи, выведенные в корпусе чипа (`usart`, `fdcan`, `bxcan`,
 // `eth`, `usb`, `otg`) — по ним проверяется ответ об интерфейсе в конце хука.
 import "chip-data/interfaces" as interfaces_data;
@@ -745,6 +752,24 @@ variable::set("watchdog_peripheral", if WATCHDOG.contains(suffix) { WATCHDOG[suf
 variable::set("cpu_freq_boost", if CPU_FREQ_BOOST.contains(suffix) { "true" } else { "false" });
 if !CPU_FREQ_BOOST.contains(suffix) {
     file::delete("crates-cross/bsp/src/clocks.rs");
+}
+
+// Ядра Armv6-M/Armv8-M Baseline (Cortex-M0, M0+, M23): без счётчика циклов `DWT`,
+// без регистров причины фолта (`CFSR`/`HFSR`) и без ловушки деления `CCR.DIV_0_TRP`.
+// По этому признаку `bsp` собирает `cycles` и ветки `fault`, а `ports` — `CycleCounter`.
+let cpu_core = variable::get("cpu");
+variable::set("core_baseline", if cpu_core == "cortex-m0" || cpu_core == "cortex-m0plus" || cpu_core == "cortex-m23" { "true" } else { "false" });
+
+// Кэши (см. CACHE выше). Без переопределения через --define: значение целиком
+// выводится из chip_feature и cpu. Пустая строка — кэша нет, модуль не нужен.
+let cache = if CACHE.contains(suffix) { CACHE[suffix] } else { "" };
+if variable::get("cpu") == "cortex-m7" {
+    // M7 с кэшем флеша не бывает, но склейка не должна на этом держаться.
+    cache += if cache == "" { "scb" } else { " scb" };
+}
+variable::set("cache", cache);
+if cache == "" {
+    file::delete("crates-cross/bsp/src/cache.rs");
 }
 
 // RNG (см. RNG выше). Без переопределения через --define: значение целиком
