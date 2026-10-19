@@ -89,7 +89,7 @@ supervisor::supervisor_fragment! {
     node deps: [], restart: Never,
         watchdog: $crate::heartbeat::WATCHDOG observe,
         ctx: $crate::heartbeat::HeartbeatCtx,
-        task: $crate::heartbeat::run;
+        task: $crate::heartbeat::task;
 }
 
 pub async fn run(mut ctx: HeartbeatCtx<'_>) -> TaskExit {
@@ -123,18 +123,17 @@ impl HeartbeatCtx<'_> {
 * **Имя узлу даёт запись `fragments:`, а не фрагмент.** `as HEARTBEAT` — узел
   `HEARTBEAT`; без `as` узел зовётся как фрагмент (`HEARTBEAT_FRAG`). Всё, что фрагмент
   объявляет сверх узла (слоты, `provide_*`, `publish:`-приёмники), получает
-  префикс этого имени: `resources: [LINK: …]` у `… as OTA` — это слот
-  `OTA_LINK` и `provide_ota_link`.
+  префикс этого имени: `resources: [DEVICE: …]` у `… as OTA` — это слот
+  `OTA_DEVICE` и `provide_ota_device`.
 * **Токены фрагмента резолвятся на compose-site**, а не в крейте, где он
   написан: `macro_rules!` подставляет их в место вызова. Поэтому всё, что
   фрагмент называет, пишется полным путём — `$crate::heartbeat::WATCHDOG`,
-  `$crate::heartbeat::run` — и от этого файла ничего не требует;
+  `$crate::heartbeat::task` — и от этого файла ничего не требует;
   голое имя искалось бы здесь и падало бы с `E0425`. `$crate::` при этом
   указывает в крейт фрагмента и переживает переименование зависимости в чужом
   манифесте, а `crate::` означал бы крейт, который фрагмент вызывает. Типы,
   которых фрагмент назвать не может (адаптер платы в слоте), — его параметры:
-  `name: OTA_FRAG<S, F>` во фрагменте, `::domain::OTA_FRAG<bsp::ota::Link,
-  bsp::ota::Updater>` здесь.
+  `name: OTA_FRAG<D>` во фрагменте, `::domain::OTA_FRAG<bsp::ota::Ota>` здесь.
 * **Порядок items фиксирован**: `name:` → `boot:` → `watchdog:` →
   `cloned:`/`shared:` → `executor` → `fragments:` последним. `fragments:`
   раньше `boot:` — ошибка разбора; блок `watchdog:` внутри фрагмента — тоже
@@ -409,14 +408,14 @@ SD-карта, у каждого свой формат пакета и своя 
 делать с исходом — ответить хосту, сбросить МК, и то и другое — решает
 ваш `finish`; узел этого не знает.
 
-Плата отдаёт для узла адаптер и канал — `board.updater` и `board.ota_link`
-(`bsp::ota`), а вход фрагмента собирает эта сторона: `bsp` зависит
+Плата отдаёт для узла один объект — `board.ota` (`bsp::ota::Ota`: адаптер и канал
+вместе), а вход фрагмента собирает эта сторона: `bsp` зависит
 только от `ports` и `adapters`, про `domain` он не знает (`= ::domain::ota::OtaWiring
-{ link: board.ota_link, flash: board.updater, mode:
-::domain::ota::Mode::Signed { running_version: crate::image::FW_VERSION } }`). Типы
-слотов — аргументы фрагмента (`OTA_FRAG<bsp::ota::Link, bsp::ota::Updater>`):
+{ device: board.ota, mode:
+::domain::ota::Mode::Signed { running_version: crate::image::FW_VERSION } }`). Тип
+слота — аргумент фрагмента (`OTA_FRAG<bsp::ota::Ota>`):
 слот — `static`, тип ему нужен, а знает его только эта сторона. Подставили
-свой транспорт — поправьте псевдоним `Link` в `bsp::ota`. Слоты канала и адаптера — `local` (фича
+свой транспорт — поправьте псевдоним `Link` в `bsp::ota`. Слот — `local` (фича
 `supervisor/local-resources` в
 `crates-cross/Cargo.toml`): объекты платы `!Send`, и граф держит их на своём
 исполнителе, не требуя `Send`. Узел, чей `local`-слот заполняется

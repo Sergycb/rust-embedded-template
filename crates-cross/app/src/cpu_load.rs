@@ -43,6 +43,6 @@ pub fn sleep_ticks() -> &'static SleepTicks {
 // приложении незачем. Свою подписку заводите сами, когда появится читатель.
 #[embassy_executor::task]
 pub async fn task() {
-    domain::cpu_load::task(sleep_ticks()).await;
+    domain::cpu_load::log_load(sleep_ticks()).await;
 }
 {%- endif %}

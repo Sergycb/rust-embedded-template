@@ -54,7 +54,7 @@ F2/F4/F7 (у F4 16, 64 и 128 KiB): в мелких секторах можно 
   `Partition::new` из `embassy-embedded-hal` паникует, если смещение или размер
   не кратны `ERASE_SIZE`. Ровно так был сломан `BOOTLOADER_STATE` у всех 223
   чипов F2/F4/F7 с OTA: он лежал в мелком секторе над цельным `Flash` со
-  страницей 128 KiB — и bootloader, и приложение (`bsp::ota::updater`) падали при
+  страницей 128 KiB — и bootloader, и приложение (`bsp::ota::new`) падали при
   первом запуске. `template-check` этого не видит (он собирает, а не
   запускает), поэтому та же проверка стоит в `chip-data-gen`
   (`assert_embassy_boot_invariants`) — при генерации, а не на плате.

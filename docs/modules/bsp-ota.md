@@ -1,7 +1,8 @@
 Обновление прошивки платы: адаптер разделов и канал доставки образа —
-полями `Board::updater` и `Board::ota_link`.
+одним полем `Board::ota` ([`Ota`]): канал и адаптер обновления в одном объекте
+(`adapters::ota::Ota`, порт `OtaDevice`).
 
-`Board::updater` ([`Updater`]) — адаптер `adapters::ota::Updater` (generic по
+Адаптер обновления ([`Updater`]) — `adapters::ota::Updater` `adapters::ota::Updater` (generic по
 `NorFlash`, тестируется на хосте), реализация порта `FirmwareUpdate` поверх
 разделов `DFU` и `BOOTLOADER_STATE`. Разделы `bsp` находит по линкерным
 символам `memory.x` (`FirmwareUpdaterConfig::from_linkerfile`) — это и есть то,
@@ -35,7 +36,7 @@ bootloader.{% endif %}
 
 ## Свой транспорт
 
-Канал доставки образа — `Board::ota_link`, тип [`Link`]. В шаблоне там заглушка
+Канал доставки образа — первая половина `Board::ota`, тип [`Link`]. В шаблоне там заглушка
 `adapters::ota::Unconnected`, которая ждёт заголовок вечно. Заменить её —
 значит реализовать три метода `ports::ImageSource` на объекте, собранном из
 вашей периферии (`bsp` зависит от `ports` не по умолчанию: добавьте
@@ -67,7 +68,7 @@ impl ImageSource for MyLink {
 слова флеша, порядок проверок подписи, коды отказа — уже в узле
 `domain::ota`{% if graph == "true" %}, который граф спавнит из `fragments:`
 (`crates-cross/app/src/graph.rs`){% else %}. Без графа его спавнит `main`
-(`ota_task` над `domain::ota::task`), отдав задаче `ota_link` и `updater`
+(`ota::task` над `domain::ota::task` в `main.rs`), отдав задаче `ota`
 владением{% endif %}. Во фрагменте
 `domain::ota` слоты канала и адаптера помечены `local`: `Updater` — `!Send` (внутри ссылка на {% if ota_store == "external" %}`crate::external::ExternalMutex`{% else %}`FlashMutex`{% endif %} с
 `NoopRawMutex`), и граф держит его на своём исполнителе, не требуя `Send`, —

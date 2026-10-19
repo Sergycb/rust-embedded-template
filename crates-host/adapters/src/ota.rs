@@ -27,7 +27,7 @@
 use embassy_boot::{AlignedBuffer, FirmwareState, FirmwareUpdater, FirmwareUpdaterConfig, State};
 use embedded_storage::nor_flash::NorFlashErrorKind;
 use embedded_storage_async::nor_flash::NorFlash;
-use ports::{Announce, FirmwareUpdate, ImageSource, Rejection};
+use ports::{Announce, FirmwareUpdate, ImageSource, OtaDevice, Rejection};
 // Тип возвращается портом, поэтому называть его должно быть чем — иначе
 // пользователю пришлось бы объявлять прямую зависимость на `embassy-boot`
 // только ради имени в сигнатуре своей функции.
@@ -234,6 +234,38 @@ impl<DFU: NorFlash, STATE: NorFlash, const SIGNED: bool> FirmwareUpdate
 
     async fn mark_updated(&mut self) -> Result<(), Self::Error> {
         self.state().mark_updated().await
+    }
+}
+
+/// OTA платы одним объектом: канал доставки образа и запись во флеш.
+///
+/// Плата собирает обе половины ([`Unconnected`] или транспорт проекта и
+/// [`Updater`] над разделами) и отдаёт приложению этот объект: узел
+/// `domain::ota` берёт его одним входом (порт [`OtaDevice`]).
+#[derive(Debug)]
+pub struct Ota<L, F> {
+    link: L,
+    flash: F,
+}
+
+impl<L, F> Ota<L, F> {
+    /// Собирает объект из канала и записи во флеш.
+    pub const fn new(link: L, flash: F) -> Self {
+        Self { link, flash }
+    }
+
+    /// Разбирает объект обратно: тесты на плате проверяют запись во флеш без канала.
+    pub fn into_parts(self) -> (L, F) {
+        (self.link, self.flash)
+    }
+}
+
+impl<L: ImageSource, F: FirmwareUpdate> OtaDevice for Ota<L, F> {
+    type Link = L;
+    type Flash = F;
+
+    fn parts(&mut self) -> (&mut L, &mut F) {
+        (&mut self.link, &mut self.flash)
     }
 }
 

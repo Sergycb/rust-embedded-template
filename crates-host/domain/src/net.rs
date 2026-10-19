@@ -18,22 +18,9 @@ use embassy_net::driver::Driver;
 use supervisor::runtime::TaskExit;
 
 /// Узел `NET`: исполняет стек, пока жива прошивка; не возвращается.
-pub async fn run<D: Driver>(mut ctx: NetCtx<'_, Runner<'static, D>>) -> TaskExit {
+pub async fn task<D: Driver>(mut ctx: NetCtx<'_, Runner<'static, D>>) -> TaskExit {
     ctx.run().await.result
 }
-
-// {%- if graph != "true" %}
-/// Тот же узел для проекта без графа: спавнится из `main.rs`, а слот, который
-/// в графе держит `static`, — локальная переменная кадра, как у
-/// [`cpu_load::task`](crate::cpu_load::task).
-pub async fn task<D: Driver>(mut runner: Runner<'static, D>) -> TaskExit {
-    run(NetCtx {
-        runner: &mut runner,
-        index: 0,
-    })
-    .await
-}
-// {%- endif %}
 
 #[fsm::typestate]
 impl<D: Driver> NetCtx<'_, Runner<'static, D>> {
@@ -74,7 +61,7 @@ impl<D: Driver> NetCtx<'_, Runner<'static, D>> {
 // сам `Runner`, а не устройство, потому что DSL не принимает у параметра
 // trait-границу, а `Runner<'_, D>` требует `D: Driver`; граница живёт в
 // сигнатуре задачи. `local` — устройство вправе быть `!Send` (DMA,
-// периферия). Без `watchdog:` — по правилу `heartbeat::run`: узлу нечем отметиться,
+// периферия). Без `watchdog:` — по правилу `heartbeat::task`: узлу нечем отметиться,
 // `Runner::run` не отдаёт управление наружу.
 //
 // Вход — `NetWiring { runner }`: структуру эмитит фрагмент.
@@ -88,7 +75,7 @@ supervisor::supervisor_fragment! {
             RUNNER: local R = inputs.runner
         ],
         ctx: $crate::net::NetCtx,
-        task: $crate::net::run;
+        task: $crate::net::task;
 }
 
 #[cfg(test)]
@@ -98,7 +85,7 @@ mod tests {
 
     use embassy_net::{Config, StackResources};
 
-    use super::{NetCtx, run};
+    use super::{NetCtx, task};
 
     /// Узел гоняет стек и не возвращается: над устройством без линка он
     /// ждёт.
@@ -112,7 +99,7 @@ mod tests {
             index: 0,
         };
         let mut cx = Context::from_waker(Waker::noop());
-        let mut task = pin!(run(ctx));
+        let mut task = pin!(task(ctx));
         assert!(task.as_mut().poll(&mut cx).is_pending());
         assert!(task.poll(&mut cx).is_pending());
     }

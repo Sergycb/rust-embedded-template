@@ -13,13 +13,6 @@
 )]
 
 {%- if graph == "true" %}
-{%- if protocol == "modbus" %}
-use crate::protocol::{ModbusLink, modbus_wiring};
-{%- elsif protocol == "protobuf" %}
-use crate::protocol::{HostLink, host_wiring};
-{%- elsif protocol == "canopen" %}
-use crate::protocol::{Settings, canopen_wiring};
-{%- endif %}
 use defmt::{info, warn};
 use supervisor::{Duration, Liveness, supervisor_graph};
 
@@ -92,21 +85,21 @@ supervisor_graph! {
         },
 {%- if ota == "true" %}
 
-        // Фрагмент OTA — с параметрами и своей привязкой. Параметры
-        // (`<Link, Updater>`) — типы двух его слотов: слот — `static`, тип ему
-        // нужен, а знает его только эта сторона; подставили свой транспорт
-        // вместо заглушки — меняйте первый аргумент. Привязка (`= …`) — вход
-        // узла (`domain::ota::OtaWiring`): канал `board.ota_link`, адаптер
-        // обновления `board.updater` и режим применения (`Mode::{% if signed == "true" %}Signed` с версией этого образа
-        // из `crate::image`{% else %}Plain`{% endif %}). Оба объекта реализуют порты и приходят
+        // Фрагмент OTA — с параметром и своей привязкой. Параметр
+        // (`<Ota>`) — тип его слота: слот — `static`, тип ему нужен, а знает
+        // его только эта сторона; подставили свой транспорт вместо заглушки —
+        // он уже внутри `bsp::ota::Ota`, здесь ничего не меняется. Привязка
+        // (`= …`) — вход узла (`domain::ota::OtaWiring`): объект `board.ota`
+        // (канал доставки образа и адаптер обновления вместе) и режим
+        // применения (`Mode::{% if signed == "true" %}Signed` с версией этого образа
+        // из `crate::image`{% else %}Plain`{% endif %}). Объект реализует порт и приходит
         // из `bsp`; алгоритм обновления — в `domain::ota`. Вычисляется
         // привязка в прологе `spawn_all` первой строкой — раньше инициализатора
         // блока `watchdog:`, как бы они ни стояли в тексте, — частичным move:
-        // `ota_link` и `updater` уезжают в слоты узла, `watchdog` следом забирает
-        // сторож, остаток `board` дропается в конце пролога.
-        ::domain::OTA_FRAG<bsp::ota::Link, bsp::ota::Updater> as OTA = ::domain::ota::OtaWiring {
-            link: board.ota_link,
-            flash: board.updater,
+        // `ota` уезжает в слот узла, `watchdog` следом забирает сторож, остаток
+        // `board` дропается в конце пролога.
+        ::domain::OTA_FRAG<bsp::ota::Ota> as OTA = ::domain::ota::OtaWiring {
+            device: board.ota,
 {%- if signed == "true" %}
             mode: ::domain::ota::Mode::Signed {
                 running_version: crate::image::FW_VERSION,
@@ -121,8 +114,8 @@ supervisor_graph! {
         // Узел `USB` — фоновая работа устройства `embassy-usb` (`domain::usb`) над
         // драйвером платы `bsp::usb::UsbDriver`: без него хост не видит
         // устройства, а поток CDC — ни одного пакета.
-        ::domain::USB_FRAG<::domain::usb::UsbDevice<'static, bsp::usb::UsbDriver>> as USB =
-            ::domain::usb::UsbWiring { device: board.usb.device },
+        ::domain::USB_FRAG<bsp::usb::Device> as USB =
+            ::domain::usb::UsbWiring { device: board.{% if protocol_link == "true" %}usb_device{% else %}usb.device{% endif %} },
 {%- endif %}
 {%- if interface == "tcp" or interface == "udp" %}
 
@@ -134,24 +127,46 @@ supervisor_graph! {
 {%- endif %}
 {%- if protocol == "modbus" %}
 
-        // Узел `MODBUS` — Modbus slave: вход (транспорт `ModbusLink` вокруг
-        // интерфейса платы, карта регистров, адрес) собирает `protocol::modbus_wiring`
-        // — одна функция на граф и на проект без графа.
-        ::domain::MODBUS_SLAVE_FRAG<ModbusLink, ::domain::modbus::EmptyRegisters> as MODBUS =
-            modbus_wiring({% if interface == "uart" %}board.serial{% elsif interface == "usb" %}board.usb.cdc{% else %}board.net.stack{% endif %}),
+        // Узел `MODBUS` — Modbus slave: транспорт (`board.link`) плата отдаёт
+        // готовым — кадрирование и буферы в `bsp::link`; карта регистров
+        // `domain::modbus::EmptyRegisters` пуста, её проект описывает в `domain`.
+        // Адрес slave'а — `unit`{% if interface == "tcp" or interface == "udp" %}: по сети устройство адресуется по IP, и
+        // slave отвечает на любой адрес в MBAP{% endif %}.
+        ::domain::MODBUS_SLAVE_FRAG<bsp::link::Link, ::domain::modbus::EmptyRegisters> as MODBUS =
+            ::domain::modbus::ModbusSlaveWiring {
+                link: board.link,
+                regs: ::domain::modbus::EmptyRegisters,
+                unit: 1,
+            },
 {%- elsif protocol == "canopen" %}
 
-        // Узел `CANOPEN` — узел CANopen (стек `zencan`) на шине CAN платы: вход
-        // (словарь, адрес, хранилище) собирает `protocol::canopen_wiring` — одна
-        // функция на граф и на проект без графа.{% if config == "true" %} Хранилище — `board.settings`.{% endif %}
-        ::domain::CANOPEN_FRAG<bsp::can::Can, Settings> as CANOPEN =
-            canopen_wiring(board.can, {% if config == "true" %}board.settings{% else %}::adapters::settings::Unavailable{% endif %}),
+        // Узел `CANOPEN` — узел CANopen (стек `zencan`) на шине CAN платы `board.can`
+        // (заглушка, пока проект не подставит свой контроллер — docs/modules/bsp-can.md)
+        // и словаре объектов из `crates-host/canopen` (`device.toml`). Адрес узла в
+        // сети — `node_id`, 1..=127. Хранилище — {% if config == "true" %}раздел настроек платы: в нём узел сохраняет
+        // объекты по команде `save` и адрес, назначенный по LSS (ключи
+        // `domain::canopen::{OBJECTS_KEY, NODE_ID_KEY}`){% else %}раздела настроек нет — объекты и адрес не сохраняются{% endif %}.
+        ::domain::CANOPEN_FRAG<bsp::can::Can, {% if config == "true" %}bsp::settings::Settings{% else %}::adapters::settings::Unavailable{% endif %}> as CANOPEN =
+            ::domain::canopen::CanOpenWiring {
+                bus: board.can,
+                node_id: 1,
+                dictionary: ::domain::canopen::dictionary(),
+                settings: {% if config == "true" %}board.settings{% else %}::adapters::settings::Unavailable{% endif %},
+                persist: {{config}},
+            },
 {%- elsif protocol == "protobuf" %}
 
-        // Узел `HOST` — сообщения protobuf от хоста: вход (канал `HostLink` вокруг
-        // интерфейса платы, обработчик, буферы) собирает `protocol::host_wiring` —
-        // одна функция на граф и на проект без графа.
-        ::domain::HOST_FRAG<HostLink, ::domain::host::Service> as HOST = host_wiring({% if interface == "uart" %}board.serial{% elsif interface == "usb" %}board.usb.cdc{% else %}board.net.stack{% endif %}),
+        // Узел `HOST` — сообщения protobuf от хоста: канал (`board.link`) и буферы
+        // сообщений (`board.host_buffers`) плата отдаёт готовыми (`bsp::link`);
+        // обработчик `domain::host::Service` над схемой `crates-host/proto` —
+        // логика приложения, проект правит его в `domain`.
+        ::domain::HOST_FRAG<bsp::link::Link, ::domain::host::Service> as HOST =
+            ::domain::host::HostWiring {
+                link: board.link,
+                service: ::domain::host::Service::new(crate::build::PKG_VERSION),
+                rx: board.host_buffers.rx,
+                tx: board.host_buffers.tx,
+            },
 {%- endif %}
     ];
 }

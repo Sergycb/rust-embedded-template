@@ -113,6 +113,7 @@ pub use modbus::{MasterError, ModbusClient};
 // {%- endif %}
 // {%- endif %}
 // {%- if ota == "true" %}
+pub use ota::device::OtaDevice;
 pub use ota::download::{Announce, DownloadError, ImageSource, Rejection};
 pub use ota::update::{FirmwareUpdate, PendingImage, UpdateError};
 // {%- endif %}

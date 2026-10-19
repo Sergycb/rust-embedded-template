@@ -48,5 +48,5 @@
 
 Скорость шины — одна на всю сеть CANopen (обычно 125, 250, 500 или
 1000 кбит/с); адрес узла — `node_id` во входе узла в
-`crates-cross/app/src/protocol.rs` (`canopen_wiring`), словарь объектов — `device.toml` в
+`crates-cross/app/src/graph.rs` (`CanOpenWiring`; без графа — `main.rs`), словарь объектов — `device.toml` в
 `crates-host/canopen`.

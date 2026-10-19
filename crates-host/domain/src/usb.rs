@@ -17,22 +17,9 @@ use embassy_usb::driver::Driver;
 use supervisor::runtime::TaskExit;
 
 /// Узел `USB`: исполняет устройство, пока жива прошивка; не возвращается.
-pub async fn run<D: Driver<'static>>(mut ctx: UsbCtx<'_, UsbDevice<'static, D>>) -> TaskExit {
+pub async fn task<D: Driver<'static>>(mut ctx: UsbCtx<'_, UsbDevice<'static, D>>) -> TaskExit {
     ctx.run().await.result
 }
-
-// {%- if graph != "true" %}
-/// Тот же узел для проекта без графа: спавнится из `main.rs`, а слот, который
-/// в графе держит `static`, — локальная переменная кадра, как у
-/// [`cpu_load::task`](crate::cpu_load::task).
-pub async fn task<D: Driver<'static>>(mut device: UsbDevice<'static, D>) -> TaskExit {
-    run(UsbCtx {
-        device: &mut device,
-        index: 0,
-    })
-    .await
-}
-// {%- endif %}
 
 #[fsm::typestate]
 impl<D: Driver<'static>> UsbCtx<'_, UsbDevice<'static, D>> {
@@ -85,7 +72,7 @@ supervisor::supervisor_fragment! {
             DEVICE: local U = inputs.device
         ],
         ctx: $crate::usb::UsbCtx,
-        task: $crate::usb::run;
+        task: $crate::usb::task;
 }
 
 #[cfg(test)]
@@ -95,7 +82,7 @@ mod tests {
 
     use embassy_usb::{Builder, Config};
 
-    use super::{UsbCtx, run};
+    use super::{UsbCtx, task};
 
     fn leak<T>(value: T) -> &'static mut T {
         Box::leak(Box::new(value))
@@ -119,7 +106,7 @@ mod tests {
             index: 0,
         };
         let mut cx = Context::from_waker(Waker::noop());
-        let mut task = pin!(run(ctx));
+        let mut task = pin!(task(ctx));
         assert!(task.as_mut().poll(&mut cx).is_pending());
         assert!(task.poll(&mut cx).is_pending());
     }

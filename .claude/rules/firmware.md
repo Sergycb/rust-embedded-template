@@ -9,7 +9,7 @@ paths: crates-cross/**
   `#[cfg(debug_assertions)]` (паникёр — `app/src/panic.rs`; `boot` собирается только в release, у него
   `boot/src/panic.rs` — одна release-ветка), не Cargo-фичей.
 - `Board` отдаёт адаптеры, реализующие порты, данные о чипе (`bsp::ChipSpec`) и
-  адаптер обновления прошивки (`bsp::ota::Updater`; логика OTA — в `domain`),
+  OTA одним объектом (`bsp::ota::Ota`: канал и адаптер обновления; логика OTA — в `domain`),
   а не `Peripherals`, не пины, не периферию ядра и не `Clocks`.
   Исключение (сторож) и его причина — в `docs/architecture.md`; новых не заводить.
 - `bsp` ничего не инициализирует сверх подъёма HAL: конструкторы зовутся `new`

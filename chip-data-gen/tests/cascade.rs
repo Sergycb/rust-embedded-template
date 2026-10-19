@@ -1583,8 +1583,8 @@ fn impossible_protocol_answers_are_rejected() {
 }
 
 /// Протоколу граф не нужен: без него узел спавнит `main`, и ни ответ `graph=no`,
-/// ни размер раздела (здесь — 16 KiB у `l011f4`) генерацию не останавливают. Файл
-/// `protocol.rs` остаётся, пока протокол выбран.
+/// ни размер раздела (здесь — 16 KiB у `l011f4`) генерацию не останавливают. Готовый
+/// транспорт `bsp/src/link.rs` остаётся, пока выбран Modbus или protobuf.
 #[test]
 fn protocol_does_not_need_the_graph() {
     let script = compile_script();
@@ -1613,8 +1613,8 @@ fn protocol_does_not_need_the_graph() {
             !result
                 .deleted
                 .iter()
-                .any(|path| path == "crates-cross/app/src/protocol.rs"),
-            "{chip} {preset:?}: protocol.rs удалён при выбранном протоколе"
+                .any(|path| path == "crates-cross/bsp/src/link.rs"),
+            "{chip} {preset:?}: link.rs удалён при выбранном протоколе"
         );
     }
 
@@ -1622,8 +1622,8 @@ fn protocol_does_not_need_the_graph() {
     assert!(
         none.deleted
             .iter()
-            .any(|path| path == "crates-cross/app/src/protocol.rs"),
-        "без протокола protocol.rs должен удаляться"
+            .any(|path| path == "crates-cross/bsp/src/link.rs"),
+        "без протокола link.rs должен удаляться"
     );
 }
 

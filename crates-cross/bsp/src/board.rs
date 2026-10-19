@@ -48,19 +48,17 @@ pub struct ChipSpec {
 /// `spec`). Периферии в полях нет вовсе: разбирать её на объекты — работа
 /// `bsp`, а `Peripherals`, пины и группы `assign_resources!` остаются внутри
 /// [`Board::new`].
-#[derive(Debug)]
 pub struct Board {
     /// Сведения о чипе: имя, заводской номер, объём flash, частота `sys`.
     pub spec: ChipSpec,
 {%- if ota == "true" %}
-    /// Адаптер обновления прошивки — порт `FirmwareUpdate` поверх разделов
-    /// `DFU`/`BOOTLOADER_STATE`, собранных из символов `memory.x`
-    /// (`bsp::ota`). Алгоритм обновления над портом — в `domain::ota`.
+    /// OTA одним объектом (`bsp::ota`): канал доставки образа — реализация
+    /// `ports::ImageSource`, заглушка (`bsp::ota::Link`), пока проект не
+    /// подставит свой транспорт, — и адаптер обновления — порт `FirmwareUpdate`
+    /// поверх разделов `DFU`/`BOOTLOADER_STATE`, собранных из символов
+    /// `memory.x`. Алгоритм обновления над портами — в `domain::ota`.
     /// {% if graph == "true" %}Уезжает в узел `OTA` графа (`fragments:` в `crates-cross/app/src/graph.rs`){% else %}Уезжает в задачу узла, которую спавнит `main` (`domain::ota::task`){% endif %}.
-    pub updater: crate::ota::Updater,
-    /// Канал доставки образа — реализация `ports::ImageSource`; заглушка
-    /// (`bsp::ota::Link`), пока проект не подставит свой транспорт.
-    pub ota_link: crate::ota::Link,
+    pub ota: crate::ota::Ota,
 {%- endif %}
 {%- if config == "true" %}
     /// Настройки, переживающие перезапуск и обновление прошивки:
@@ -68,16 +66,21 @@ pub struct Board {
     /// Формат значений выбирает проект.
     pub settings: crate::settings::Settings,
 {%- endif %}
-{%- if interface == "uart" %}
-    /// UART{% if protocol != "none" %} под узлом протокола ({{protocol}}){% endif %} — заглушка `bsp::serial::Serial`,
-    /// пока проект не подставит драйвер своей платы (`docs/modules/bsp-serial.md`).
-{%- if protocol != "none" %}
-    /// Уезжает в узел `{% if protocol == "modbus" %}MODBUS{% else %}HOST{% endif %}`: в граф (`fragments:` в
-    /// `crates-cross/app/src/graph.rs`) или, при `graph=no`, в задачу, которую спавнит
-    /// `main` (`protocol::spawn`).
-{%- else %}
-    /// Протокола в проекте нет: поле ждёт ваш узел.
+{%- if protocol_link == "true" %}
+    /// Транспорт протокола ({{protocol}}) поверх {% if interface == "uart" %}UART{% elsif interface == "tcp" %}TCP{% elsif interface == "usb" %}USB CDC{% else %}UDP{% endif %} платы, готовый к работе:
+    /// кадрирование, буферы и сокет заведены в `bsp::link`. Уезжает в узел
+    /// `{% if protocol == "modbus" %}MODBUS{% else %}HOST{% endif %}`: в граф (`fragments:` в `crates-cross/app/src/graph.rs`) или, при
+    /// `graph=no`, в задачу, которую спавнит `main`.
+    pub link: crate::link::Link,
 {%- endif %}
+{%- if protocol == "protobuf" %}
+    /// Буферы сообщений узла `HOST` (`bsp::link`).
+    pub host_buffers: crate::link::HostBuffers,
+{%- endif %}
+{%- if interface == "uart" and protocol_link != "true" %}
+    /// UART — заглушка `bsp::serial::Serial`, пока проект не подставит драйвер
+    /// своей платы (`docs/modules/bsp-serial.md`). Протокола в проекте нет: поле
+    /// ждёт ваш узел.
     pub serial: crate::serial::Serial,
 {%- endif %}
 {%- if interface == "can" %}
@@ -85,22 +88,27 @@ pub struct Board {
     /// подставит контроллер своей платы (`docs/modules/bsp-can.md`).
 {%- if protocol == "canopen" %}
     /// Уезжает в узел `CANOPEN`: в граф (`fragments:` в `crates-cross/app/src/graph.rs`) или,
-    /// при `graph=no`, в задачу, которую спавнит `main` (`protocol::spawn`).
+    /// при `graph=no`, в задачу, которую спавнит `main`.
 {%- else %}
     /// Протокола в проекте нет: поле ждёт ваш узел.
 {%- endif %}
     pub can: crate::can::Can,
 {%- endif %}
 {%- if interface == "tcp" or interface == "udp" %}
-    /// Сеть{% if protocol != "none" %} под протоколом{% endif %}: фоновая работа стека для узла `NET` и сам стек, на
-    /// котором приложение открывает сокет{% if protocol != "none" %} протокола{% endif %} (`bsp::net`). Устройство — заглушка, пока проект не подставит
-    /// Ethernet своей платы (`docs/modules/bsp-net.md`).
+    /// Сеть: фоновая работа стека для узла `NET` и сам стек{% if protocol_link != "true" %}, на котором
+    /// приложение открывает сокет{% endif %} (`bsp::net`). Устройство — заглушка, пока проект не подставит
+    /// Ethernet своей платы (`docs/modules/bsp-net.md`){% if protocol_link == "true" %}. Сокет протокола на стеке уже открыт
+    /// (`link`){% endif %}.
     pub net: crate::net::Net,
 {%- endif %}
-{%- if interface == "usb" %}
-    /// USB{% if protocol != "none" %} под протоколом{% endif %}: устройство для узла `USB` и поток CDC (`bsp::usb`).
-    /// Драйвер — заглушка, пока проект не подставит USB-блок своей платы
-    /// (`docs/modules/bsp-usb.md`).
+{%- if interface == "usb" and protocol_link == "true" %}
+    /// Устройство `embassy-usb` для узла `USB` (`bsp::usb`). Драйвер — заглушка,
+    /// пока проект не подставит USB-блок своей платы (`docs/modules/bsp-usb.md`).
+    /// Поток CDC уже под транспортом протокола (`link`).
+    pub usb_device: crate::usb::Device,
+{%- elsif interface == "usb" %}
+    /// USB: устройство для узла `USB` и поток CDC (`bsp::usb`). Драйвер — заглушка,
+    /// пока проект не подставит USB-блок своей платы (`docs/modules/bsp-usb.md`).
     pub usb: crate::usb::Usb,
 {%- endif %}
 {%- if graph == "true" %}
@@ -116,6 +124,16 @@ pub struct Board {
     /// только у запущенного (`bsp::wdg`).
     pub watchdog: crate::wdg::UnarmedBoardWatchdog,
 {%- endif %}
+}
+
+// Вручную: у части объектов платы (`UsbDevice` из `embassy-usb`) `Debug` нет, а
+// печатать целую плату незачем — сведения о чипе лежат в `spec`.
+impl core::fmt::Debug for Board {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Board")
+            .field("spec", &self.spec)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Board {
@@ -193,6 +211,18 @@ impl Board {
 {%- endif %}
 {%- endif %}
 
+{%- if interface == "tcp" or interface == "udp" %}
+        let net = crate::net::new(embassy_stm32::uid::uid(), seed, r.eth);
+{%- endif %}
+{%- if interface == "usb" and protocol_link == "true" %}
+        let adapters::usb::Usb {
+            device: usb_device,
+            cdc: usb_cdc,
+        } = crate::usb::new(r.usb);
+{%- elsif interface == "usb" %}
+        let usb = crate::usb::new(r.usb);
+{%- endif %}
+
         let sys_hz = clocks.sys.to_hertz().map(|hz| hz.0);
 
         // `usize` на Cortex-M — 32 бита, усечения нет.
@@ -210,23 +240,33 @@ impl Board {
                 sys_hz,
             },
 {%- if ota == "true" %}
-            updater: crate::ota::updater({% if ota_store == "external" %}external{% elsif dfu_bank == "true" %}flash, dfu_bank{% else %}flash{% endif %}),
-            ota_link: crate::ota::link(),
+            ota: crate::ota::new({% if ota_store == "external" %}external{% elsif dfu_bank == "true" %}flash, dfu_bank{% else %}flash{% endif %}),
 {%- endif %}
 {%- if config == "true" %}
             settings: crate::settings::new({% if config_store != "external" %}flash{% elsif ota == "true" and ota_store == "external" %}external{% endif %}),
 {%- endif %}
-{%- if interface == "uart" %}
+{%- if interface == "uart" and protocol_link == "true" %}
+            link: crate::link::new(crate::serial::new(r.serial)),
+{%- elsif interface == "uart" %}
             serial: crate::serial::new(r.serial),
 {%- endif %}
 {%- if interface == "can" %}
             can: crate::can::new(r.can),
 {%- endif %}
 {%- if interface == "tcp" or interface == "udp" %}
-            net: crate::net::new(embassy_stm32::uid::uid(), seed, r.eth),
+{%- if protocol_link == "true" %}
+            link: crate::link::new(net.stack),
 {%- endif %}
-{%- if interface == "usb" %}
-            usb: crate::usb::new(r.usb),
+            net,
+{%- endif %}
+{%- if protocol == "protobuf" %}
+            host_buffers: crate::link::host_buffers(),
+{%- endif %}
+{%- if interface == "usb" and protocol_link == "true" %}
+            usb_device,
+            link: crate::link::new(usb_cdc),
+{%- elsif interface == "usb" %}
+            usb,
 {%- endif %}
 {%- if graph == "true" %}
             watchdog: crate::wdg::UnarmedBoardWatchdog::new(r.watchdog.iwdg),
