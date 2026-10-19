@@ -234,11 +234,12 @@ read`: руками пришлось бы сначала найти адрес �
   с завода выключены, HAL их не включает. Что именно включается, решает
   генерация по метаданным чипа (`docs/clocks.md`, «Кэши»).
 {%- if cache contains "scb_d" %}
-  Кэш данных ядра M7 DMA не видит, поэтому он включён только вместе с регионом
-  `DMA_NC` — хвостом `AXISRAM` (`memory.x`, `DMA_NC_START`/`DMA_NC_LEN` в `[env]`), который
-  `bsp::dma_nc` держит в MPU non-cacheable: буферы DMA берите из
-  `bsp::dma_nc::alloc_uninit`, не из `static`. Секцию под регион в `memory.x`
-  не заводить — она сбивает `flip-link`.
+  Кэш данных ядра M7 DMA не видит, поэтому он включён только вместе с
+  non-cacheable регионом `DMA_NC` (`memory.x`, `DMA_NC_START`/`DMA_NC_LEN` в
+  `[env]`){% if bdma_nc_start != "" %} и `SRAM4` под BDMA{% endif %}, который
+  `bsp::dma_nc` размечает в MPU: буфер DMA кладите в `#[link_section = ".dma_nc"]`{% if bdma_nc_start != "" %} (BDMA — `".bdma_nc"`){% endif %}, не в обычный `static`. Секции в
+  `memory.x` вставлены `INSERT AFTER .gnu.sgstubs` — за `.uninit` они ломают
+  `cortex-m-rt` под `flip-link`.
 {%- endif %}
 {%- endif %}
 {%- if cpu_freq_boost == "true" %}

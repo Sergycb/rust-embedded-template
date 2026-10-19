@@ -86,10 +86,15 @@ SWAP_PAGE_SIZE = "{{page_size | remove: '_'}}"
 {%- endif %}
 {%- endif %}
 {%- if dma_nc_start != "" %}
-# Регион `DMA_NC` — хвост AXISRAM, который `bsp::dma_nc` держит non-cacheable в
-# MPU (адрес и размер в байтах, как в `memory.x`).
+# Регион `DMA_NC` (non-cacheable память под буферы DMA, `bsp::dma_nc`): адрес и
+# размер в байтах, как в `memory.x`.
 DMA_NC_START = "{{dma_nc_start}}"
 DMA_NC_LEN = "{{dma_nc_len}}"
+{%- if bdma_nc_start != "" %}
+# `SRAM4` целиком — память BDMA (H7).
+BDMA_NC_START = "{{bdma_nc_start}}"
+BDMA_NC_LEN = "{{bdma_nc_len}}"
+{%- endif %}
 {%- endif %}
 {%- if config_start != "" %}
 # Границы раздела настроек (`bsp::settings`): смещения от базы flash — так их

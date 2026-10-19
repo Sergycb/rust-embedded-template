@@ -319,13 +319,17 @@ H723/725/730/733/735. Им `bsp` получает `src/clocks.rs`, осталь�
 смотрят на ту же переменную. Тест — `caches_follow_the_metadata_and_the_core`.
 
 Кэш данных ядра M7 (тег `scb_d`) включается только вместе с регионом `DMA_NC`: `chip-data-gen`
-(`dma_nc_region`) отрезает 32 KiB от конца `AXISRAM` у чипов, где она есть (H7; у F7 и H7R/S
-блока нет, у `-cm4` кэша данных нет), и кладёт в запись раскладки `dma_nc_origin`/`dma_nc_length`.
-Хук выставляет `dma_nc_start`/`dma_nc_len` (в `[env]` `crates-cross/.cargo/config.toml`),
-удаляет `bsp/src/dma_nc.rs` там, где региона нет, и дописывает `scb_d` в `cache`. Секции в
-`memory.x` у региона нет намеренно (`flip-link`): место выдаёт `bsp::dma_nc::alloc_uninit`.
-Тест — `every_axisram_chip_gets_a_dma_region`. `DCACHE` (U5/H5)
-и предвыборка намеренно не включаются — `docs/clocks.md`, «Кэши».
+(`dma_nc_region`) отрезает до 32 KiB от конца `AXISRAM` (H7), `SRAM1` в окне `0x24000000`
+(H7R/S) или основной цепочки RAM (F7; `PANIC` уходит под регион) и кладёт в запись раскладки
+`dma_nc_origin`/`dma_nc_length`; у H7 `SRAM4` в `0x38000000` целиком — `bdma_nc_*` (память BDMA).
+Ядро M7 генератор берёт по семейству (`f7`/`h7`, не `-cm4`) — как `family_table` в хуке.
+Хук выставляет `dma_nc_start`/`dma_nc_len` и `bdma_nc_*` (в `[env]` `crates-cross/.cargo/config.toml`),
+удаляет `bsp/src/dma_nc.rs` там, где региона нет, дописывает `scb_d` в `cache` и вставляет в
+`memory.x` приложения `SECTIONS { .dma_nc, .bdma_nc } INSERT AFTER .gnu.sgstubs;` (`INSERT AFTER
+.uninit` не собирается под `flip-link`: проверено сборкой; инвариант «в `memory.x` нет SECTIONS»
+в `memory_layout_invariants_hold_for_every_chip` сделан исключением для этих секций).
+Тест — `every_m7_chip_gets_a_dma_region`. `DCACHE` (U5/H5) и предвыборка намеренно не включаются —
+`docs/clocks.md`, «Кэши».
 
 `core_baseline` ("true" для Cortex-M0/M0+/M23 по `cpu`) — ядра без `DWT.CYCCNT`, `CFSR` и
 `DIV_0_TRP`: им нет `bsp::cycles` с `Board::cycles` и `ports::cycles`, а `bsp::fault` собирается
