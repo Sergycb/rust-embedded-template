@@ -120,7 +120,8 @@ const SWAP_MAGIC: u8 = 0xF0;
 /// Магия «откат сделан» (`REVERT_MAGIC` там же). Её пишет только `revert()`,
 /// а зовётся он, только если обмен уже состоялся (`is_swapped`), — поэтому
 /// она в разделе состояния доказывает весь цикл «обмен → откат» сама, как бы
-/// ни легли по времени сбросы.
+/// ни легли по времени сбросы. Живёт недолго: прошивка, к которой откатились,
+/// подтверждает себя при старте и пишет поверх `BOOT_MAGIC`.
 const REVERT_MAGIC: u8 = 0xC0;
 
 /// Магия «обновления нет, запускай что лежит» (`BOOT_MAGIC` там же). Ею тест
@@ -318,11 +319,17 @@ fn ota_swaps_partitions_and_reverts_unconfirmed_image() {
     // bootloader просто запускает прежний образ. Здесь сдвига уже нет —
     // `revert()` переносит `ACTIVE[i]` в `DFU[i]` и читает новый образ для
     // `ACTIVE` из `DFU[i + 1]`, то есть оттуда, куда его положил обмен.
+    //
+    // Состояние — `REVERT` ИЛИ `BOOT`: вернувшаяся прошивка при старте
+    // подтверждает себя (`mark_booted` в `begin` узла OTA) и за миллисекунды
+    // меняет `REVERT` на `BOOT` — опрос раз в полсекунды `REVERT` почти не
+    // застаёт. Откат доказывают разделы, а состояние — лишь то, что нового
+    // обмена не запрошено (не `SWAP`).
     reset(chip);
     let reverted = wait_for(timeout, || {
         Ok(try_read_words(chip, &active_hex, HEAD_WORDS)? == original
             && try_read_words(chip, &dfu_hex, HEAD_WORDS)?[..2] == expected_head
-            && ota.state_is(REVERT_MAGIC)?)
+            && (ota.state_is(REVERT_MAGIC)? || ota.state_is(BOOT_MAGIC)?))
     });
     if let Err(why) = reverted {
         panic!(
