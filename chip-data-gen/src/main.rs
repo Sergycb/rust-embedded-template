@@ -1261,6 +1261,11 @@ struct MemoryLayout {
     /// сумме банков, а смещение банка 2 больше неё, — и `DFU` берётся через
     /// регион банка (`Bank2Region`), со смещениями от этого адреса.
     dfu_bank_origin: Option<u64>,
+    /// Non-cacheable память под буферы DMA — см. [`dma_nc_region`]; из блока-донора
+    /// в `extra_regions` (или из `ram_length`) она уже вычтена.
+    dma_nc: Option<DmaNc>,
+    /// `SRAM4` целиком под буферы BDMA (`origin`, `length`) — см. [`bdma_nc_region`].
+    bdma_nc: Option<(u64, u64)>,
     /// `Ok` — OTA-схема помещается в flash; `Err` — не помещается, и текст
     /// объясняет почему (печатается при генерации и попадает комментарием в
     /// `memory.x`). Во втором случае проект собирается одним образом на весь
@@ -1407,6 +1412,88 @@ const PANIC_MIN: u64 = 128;
 /// Больше полукилобайта отдавать незачем: сообщение всё равно обрезается по
 /// размеру региона.
 const PANIC_MAX: u64 = 512;
+
+/// Размеры региона `DMA_NC` по убыванию. Регион MPU Armv7-M — степень двойки не
+/// меньше 32 байт, адрес кратен размеру; берётся наибольший, при котором конец
+/// блока-донора даёт такой адрес. 32 KiB хватает на очереди Ethernet и буферы
+/// SDMMC, меньшие — запасной вариант для блоков с «кривым» концом.
+const DMA_NC_SIZES: [u64; 4] = [32 * 1024, 16 * 1024, 8 * 1024, 4 * 1024];
+
+/// Адрес `SRAM4` домена D3 у H7 — память, до которой дотягивается только BDMA.
+const H7_SRAM4: u64 = 0x3800_0000;
+
+/// Регион `DMA_NC`: non-cacheable память под буферы DMA, которую `bsp::dma_nc`
+/// размечает в MPU. Без неё кэш данных ядра M7 DMA не видит.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DmaNc {
+    origin: u64,
+    length: u64,
+    /// Блок, от конца которого отрезан регион (`AXISRAM`, `SRAM1`); `None` —
+    /// хвост основной цепочки RAM (F7: `DTCM` + `SRAM`).
+    donor: Option<String>,
+}
+
+/// Ядро Cortex-M7 в этом шаблоне — семейства F7 и H7 (`family_table` в
+/// `chip-select.rhai`), кроме ядра CM4 двухъядерных H7 (суффикс `-cm4`).
+fn is_cortex_m7(chip: &str) -> bool {
+    (chip.starts_with("f7") || chip.starts_with("h7")) && !chip.ends_with("-cm4")
+}
+
+/// Наибольший размер из [`DMA_NC_SIZES`], при котором конец блока `end` кратен
+/// размеру, а сам блок длиной `block` не меньше четырёх таких.
+fn dma_nc_size(end: u64, block: u64) -> Option<u64> {
+    DMA_NC_SIZES
+        .into_iter()
+        .find(|&size| block >= 4 * size && end.is_multiple_of(size))
+}
+
+/// Где взять регион `DMA_NC` у чипа с кэшем данных ядра (M7).
+///
+/// По порядку: `AXISRAM` (H7), `SRAM1` в окне AXI-RAM `0x24000000` (H7R/S), хвост
+/// основной цепочки RAM (F7: `DTCM` + `SRAM`; PANIC уходит под него). Донор
+/// становится короче на длину региона. У ядра CM4 двухъядерных H7 и у
+/// не-M7 чипов региона нет. Тест `every_m7_chip_gets_a_dma_region` ловит M7-чип,
+/// которому не нашлось блока.
+fn dma_nc_region(chip: &str, regions: &[RawRegion], ram_end: u64) -> Option<DmaNc> {
+    if !is_cortex_m7(chip) {
+        return None;
+    }
+    let donors = regions.iter().filter(|r| {
+        r.kind == RegionKind::Ram
+            && (r.name == "AXISRAM"
+                || (r.name == "SRAM1" && (0x2400_0000..0x2500_0000).contains(&r.address)))
+    });
+    for donor in donors {
+        let end = donor.address + donor.size;
+        if let Some(length) = dma_nc_size(end, donor.size) {
+            return Some(DmaNc {
+                origin: end - length,
+                length,
+                donor: Some(donor.name.clone()),
+            });
+        }
+    }
+    let length = dma_nc_size(ram_end, ram_end - RAM_BASE)?;
+    Some(DmaNc {
+        origin: ram_end - length,
+        length,
+        donor: None,
+    })
+}
+
+/// `SRAM4` домена D3 у H7 целиком — память BDMA (SPI6, I2C4, LPUART1, ADC3):
+/// остальные блоки ей недоступны. Кэш данных её не видит так же, как DMA1/2, поэтому
+/// блок тоже non-cacheable (`bsp::dma_nc`, регион MPU по границам блока).
+fn bdma_nc_region(chip: &str, regions: &[RawRegion]) -> Option<(u64, u64)> {
+    if !chip.starts_with("h7") || !is_cortex_m7(chip) {
+        return None;
+    }
+    let sram4 = regions
+        .iter()
+        .find(|r| r.name == "SRAM4" && r.kind == RegionKind::Ram && r.address == H7_SRAM4)?;
+    (sram4.size.is_power_of_two() && sram4.size >= 32 && sram4.address.is_multiple_of(sram4.size))
+        .then_some((sram4.address, sram4.size))
+}
 /// Чип, у которого RAM меньше двух минимальных резервов, автораскладки не
 /// получает вовсе (и генератор на нём падает). Среди STM32 таких нет
 /// — самый скромный вариант это 2 KiB, — но инвариант «есть раскладка →
@@ -1527,9 +1614,16 @@ fn compute_memory_layout(chip: &str, regions: &[RawRegion]) -> Option<MemoryLayo
     if ram_total < MIN_RAM_FOR_LAYOUT {
         return None;
     }
-    // Резерв отрезается от самого конца RAM — до её верхней границы.
+    // Резерв отрезается от самого конца RAM — до её верхней границы; если
+    // `DMA_NC` берётся из хвоста цепочки (F7), он занимает самый конец, а PANIC —
+    // место под ним.
+    let dma_nc = dma_nc_region(chip, regions, ram_end);
+    let chain_tail = dma_nc
+        .as_ref()
+        .filter(|d| d.donor.is_none())
+        .map_or(0, |d| d.length);
     let reserved = (ram_total / PANIC_FRACTION).clamp(PANIC_MIN, PANIC_MAX);
-    let ram_length = ram_total - reserved;
+    let ram_length = ram_total - reserved - chain_tail;
     let panic = (RAM_BASE + ram_length, reserved);
 
     Some(MemoryLayout {
@@ -1540,11 +1634,18 @@ fn compute_memory_layout(chip: &str, regions: &[RawRegion]) -> Option<MemoryLayo
         panic,
         // Границы цепочек, а не ram_length: PANIC отрезан от RAM, но лежит
         // внутри той же цепочки — регионом его дублировать не надо.
-        extra_regions: extra_region_lines(regions, FLASH_BASE + flash_total, ram_end),
+        extra_regions: extra_region_lines(
+            regions,
+            FLASH_BASE + flash_total,
+            ram_end,
+            dma_nc.as_ref(),
+        ),
         write_size,
         page_size,
         erase_zero,
         dfu_bank_origin: bank_gap.map(|b| b.origin),
+        dma_nc,
+        bdma_nc: bdma_nc_region(chip, regions),
         ota: compute_ota_partitions(
             chip,
             &chain,
@@ -1835,7 +1936,12 @@ fn region_line(name: &str, attrs: &str, origin: u64, length: u64) -> String {
 ///
 /// Часть регионов выводится закомментированной (см. `EXTERNAL_BUS_PREFIXES` и
 /// `ALIAS_SUFFIX`): перечислить их надо, но объявлять рабочей памятью нельзя.
-fn extra_region_lines(regions: &[RawRegion], flash_end: u64, ram_end: u64) -> Vec<String> {
+fn extra_region_lines(
+    regions: &[RawRegion],
+    flash_end: u64,
+    ram_end: u64,
+    dma_nc: Option<&DmaNc>,
+) -> Vec<String> {
     let names: BTreeSet<&str> = regions.iter().map(|r| r.name.as_str()).collect();
     let covered = |r: &RawRegion| {
         let end = r.address + r.size;
@@ -1848,7 +1954,7 @@ fn extra_region_lines(regions: &[RawRegion], flash_end: u64, ram_end: u64) -> Ve
         .collect();
     sorted.sort_by_key(|r| (r.address, r.name.clone()));
 
-    sorted
+    let mut lines: Vec<String> = sorted
         .iter()
         .map(|r| {
             let attrs = match r.kind {
@@ -1884,7 +1990,26 @@ fn extra_region_lines(regions: &[RawRegion], flash_end: u64, ram_end: u64) -> Ve
                 None => line,
             }
         })
-        .collect()
+        .collect();
+
+    // `DMA_NC`: донор становится короче на его длину; хвост основной цепочки
+    // RAM в `extra_regions` не лежит, и строка добавляется первой (адреса ниже).
+    if let Some(dma) = dma_nc {
+        match &dma.donor {
+            Some(donor) => {
+                if let Some(block) = regions.iter().find(|r| &r.name == donor)
+                    && let Some(i) = lines
+                        .iter()
+                        .position(|line| line.trim_start().starts_with(donor.as_str()))
+                {
+                    lines[i] = region_line(donor, "xrw", block.address, block.size - dma.length);
+                    lines.insert(i + 1, region_line("DMA_NC", "xrw", dma.origin, dma.length));
+                }
+            }
+            None => lines.insert(0, region_line("DMA_NC", "xrw", dma.origin, dma.length)),
+        }
+    }
+    lines
 }
 
 /// Раскладка OTA со страницей обмена, при необходимости крупнее физической.
@@ -2408,6 +2533,14 @@ fn format_memory_layouts(layouts: &BTreeMap<&str, MemoryLayout>) -> BTreeMap<Str
         );
         // Только у чипов с разрывом между банками — по наличию ключа хук и
         // решает, что DFU пишется через регион банка.
+        if let Some(dma) = &m.dma_nc {
+            push_field(&mut out, "dma_nc_origin", &format_addr(dma.origin));
+            push_field(&mut out, "dma_nc_length", &format_size(dma.length));
+        }
+        if let Some((origin, length)) = m.bdma_nc {
+            push_field(&mut out, "bdma_nc_origin", &format_addr(origin));
+            push_field(&mut out, "bdma_nc_length", &format_size(length));
+        }
         if let Some(origin) = m.dfu_bank_origin {
             push_field(&mut out, "dfu_bank_origin", &format_addr(origin));
         }
@@ -4001,7 +4134,12 @@ pub static METADATA: Metadata = Metadata {
             region("EEPROM", RegionKind::Eeprom, 0x0808_0000, 2048),
         ];
         // SRAM (основная RAM) покрыта хуком, EMPTY нулевого размера пропущен.
-        let lines = extra_region_lines(&regions, FLASH_BASE + 512 * 1024, RAM_BASE + 64 * 1024);
+        let lines = extra_region_lines(
+            &regions,
+            FLASH_BASE + 512 * 1024,
+            RAM_BASE + 64 * 1024,
+            None,
+        );
         let joined = lines.join("\n");
         assert_eq!(lines.len(), 5, "{joined}");
         assert!(!joined.contains("EMPTY"), "{joined}");

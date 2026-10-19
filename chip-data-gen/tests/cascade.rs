@@ -755,7 +755,15 @@ fn memory_layout_invariants_hold_for_every_chip() {
         // `_stack_start` в её начале. Прошивка тогда уходит в HardFault на
         // первом же push — поймано на STM32F3Discovery, когда генерация
         // выдавала `.persist (NOLOAD) ... > PERSIST`.
-        if app.contains("SECTIONS") {
+        //
+        // Исключение одно — секции под буферы DMA (`.dma_nc`, `.bdma_nc`): они лежат
+        // в своих регионах вне `RAM`, вставлены за `.gnu.sgstubs` (за `.uninit`
+        // cortex-m-rt под flip-link не собирается) и проверены сборкой.
+        let dma_sections = app.matches("SECTIONS").count() == 1
+            && app.contains(".dma_nc (NOLOAD)")
+            && app.contains("} INSERT AFTER .gnu.sgstubs;")
+            && !app.contains("> RAM");
+        if app.contains("SECTIONS") && !dma_sections {
             fail("в memory.x появилась SECTIONS-директива — она ломает flip-link");
         }
 
@@ -2843,9 +2851,10 @@ fn caches_follow_the_metadata_and_the_core() {
         ("g071rb", "icen"),
         ("l552ze", "icache"),
         ("u575zi", "icache"),
-        ("f746ng", "scb"),
-        ("h743zi", "scb"),
-        ("h745zi-cm7", "scb"),
+        ("f746ng", "scb scb_d"),
+        ("h743zi", "scb scb_d"),
+        ("h745zi-cm7", "scb scb_d"),
+        ("h7s7l8", "scb scb_d"),
         ("h745zi-cm4", ""),
         ("f103c8", ""),
         ("l053r8", ""),
@@ -2865,6 +2874,100 @@ fn caches_follow_the_metadata_and_the_core() {
             "{suffix}: cache.rs"
         );
     }
+}
+
+/// `DMA_NC` — non-cacheable память под буферы DMA: она есть у каждого чипа с ядром
+/// Cortex-M7 (F7, H7, H7R/S; у CM4 двухъядерных H7 ядра M7 нет), лежит на границе
+/// своего размера (требование региона MPU), не пересекается с `RAM` и `PANIC`, и только с
+/// ней кэш данных ядра включается (`scb_d`). У H7 `SRAM4` целиком размечается под
+/// BDMA. Секции под оба региона — в `memory.x` приложения.
+#[test]
+fn every_m7_chip_gets_a_dma_region() {
+    fn region(memory_x: &str, name: &str) -> Option<(u64, u64)> {
+        let line = memory_x
+            .lines()
+            .find(|line| line.trim_start().starts_with(name) && line.contains("ORIGIN"))?;
+        let origin = line.split("ORIGIN = ").nth(1)?.split(',').next()?;
+        let length = line.split("LENGTH = ").nth(1)?.trim();
+        let origin = u64::from_str_radix(origin.trim_start_matches("0x"), 16).ok()?;
+        let length = match length.strip_suffix('K') {
+            Some(kib) => kib.parse::<u64>().ok()? * 1024,
+            None => length.parse().ok()?,
+        };
+        Some((origin, length))
+    }
+
+    let ast = compile_script();
+    let mut m7_chips = 0;
+    let mut failures = Vec::new();
+    for suffix in all_chip_suffixes() {
+        let Ok(result) = run_cascade_to(&ast, &suffix) else {
+            continue;
+        };
+        let Some(app) = result.files.get("crates-cross/app/memory.x") else {
+            continue;
+        };
+        let memory_x = app.join("\n");
+        let var = |name: &str| result.vars.get(name).map_or("", String::as_str);
+        let m7 = var("cpu") == "cortex-m7";
+        let dma = region(&memory_x, "DMA_NC");
+
+        if !m7 {
+            if dma.is_some() || var("cache").contains("scb") || !var("dma_nc_start").is_empty() {
+                failures.push(format!(
+                    "{suffix}: не M7, а регион DMA_NC или кэш ядра есть"
+                ));
+            }
+            continue;
+        }
+        m7_chips += 1;
+        let Some((origin, length)) = dma else {
+            failures.push(format!("{suffix}: у M7 нет региона DMA_NC"));
+            continue;
+        };
+        if !length.is_power_of_two() || length < 4096 || origin % length != 0 {
+            failures.push(format!(
+                "{suffix}: DMA_NC {origin:#x}+{length} не по границе размера"
+            ));
+        }
+        if var("dma_nc_start") != origin.to_string() || var("dma_nc_len") != length.to_string() {
+            failures.push(format!("{suffix}: dma_nc_start/len не сходятся с memory.x"));
+        }
+        if !var("cache").contains("scb_d") {
+            failures.push(format!(
+                "{suffix}: M7 с DMA_NC без кэша данных ({:?})",
+                var("cache")
+            ));
+        }
+        // Не пересекается с RAM и PANIC.
+        for other in ["RAM", "PANIC"] {
+            if let Some((o_origin, o_length)) = region(&memory_x, other)
+                && o_origin < origin + length
+                && origin < o_origin + o_length
+            {
+                failures.push(format!("{suffix}: DMA_NC пересекается с {other}"));
+            }
+        }
+        if !memory_x.contains(".dma_nc (NOLOAD)") || !memory_x.contains("} > DMA_NC") {
+            failures.push(format!("{suffix}: в memory.x нет секции .dma_nc"));
+        }
+        // SRAM4 под BDMA: только у H7 с SRAM4 в D3 (0x38000000).
+        let bdma = region(&memory_x, "SRAM4").filter(|&(o, _)| o == 0x3800_0000);
+        let h7_with_sram4 = suffix.starts_with("h7") && bdma.is_some();
+        if h7_with_sram4 != !var("bdma_nc_start").is_empty()
+            || h7_with_sram4 != memory_x.contains(".bdma_nc (NOLOAD)")
+        {
+            failures.push(format!("{suffix}: SRAM4 под BDMA и memory.x не сходятся"));
+        }
+        if let Some((o, l)) = bdma
+            && h7_with_sram4
+            && (var("bdma_nc_start") != o.to_string() || var("bdma_nc_len") != l.to_string())
+        {
+            failures.push(format!("{suffix}: bdma_nc_start/len не сходятся с SRAM4"));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+    assert!(m7_chips > 200, "чипов с ядром M7 всего {m7_chips}");
 }
 
 /// `core_baseline` — ядра без `DWT.CYCCNT`, `CFSR` и ловушки деления (M0, M0+,

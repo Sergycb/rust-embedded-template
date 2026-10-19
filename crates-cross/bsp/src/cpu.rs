@@ -17,6 +17,26 @@ pub fn disable_interrupts() {
 }
 
 /// Программный сброс МК.
+{%- if cache contains "scb_d" %}
+///
+/// Перед сбросом кэш данных ядра M7 сбрасывается в RAM (`clean`): иначе дамп паники
+/// в регионе `PANIC` (F7: он лежит в кэшируемой RAM) остался бы в кэше и пропал.
+{%- endif %}
 pub fn reset() -> ! {
+{%- if cache contains "scb_d" %}
+    clean_dcache();
+{%- endif %}
     cortex_m::peripheral::SCB::sys_reset()
 }
+{%- if cache contains "scb_d" %}
+
+#[expect(
+    unsafe_code,
+    reason = "периферия ядра берётся через `steal()`: сброс — последнее, что выполняет прошивка"
+)]
+fn clean_dcache() {
+    // SAFETY: зовётся только из `reset`, после него ничего не выполняется.
+    let mut core = unsafe { cortex_m::Peripherals::steal() };
+    core.SCB.clean_dcache(&mut core.CPUID);
+}
+{%- endif %}

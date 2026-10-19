@@ -22,6 +22,9 @@ pub mod cpu;
 {%- if core_baseline != "true" %}
 pub mod cycles;
 {%- endif %}
+{%- if cache contains "scb_d" %}
+pub mod dma_nc;
+{%- endif %}
 {%- if ota == "true" and ota_store == "external" %}
 pub mod external;
 {%- endif %}

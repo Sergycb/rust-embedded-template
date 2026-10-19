@@ -761,15 +761,13 @@ let cpu_core = variable::get("cpu");
 variable::set("core_baseline", if cpu_core == "cortex-m0" || cpu_core == "cortex-m0plus" || cpu_core == "cortex-m23" { "true" } else { "false" });
 
 // Кэши (см. CACHE выше). Без переопределения через --define: значение целиком
-// выводится из chip_feature и cpu. Пустая строка — кэша нет, модуль не нужен.
+// выводится из chip_feature и cpu. Теги `scb` (кэш инструкций ядра M7) и `scb_d`
+// (кэш данных ядра M7 вместе с регионом `DMA_NC`, см. ниже) добавляются тут и
+// после раскладки; в плейсхолдер `cache` итог уходит там же, после неё.
 let cache = if CACHE.contains(suffix) { CACHE[suffix] } else { "" };
 if variable::get("cpu") == "cortex-m7" {
     // M7 с кэшем флеша не бывает, но склейка не должна на этом держаться.
     cache += if cache == "" { "scb" } else { " scb" };
-}
-variable::set("cache", cache);
-if cache == "" {
-    file::delete("crates-cross/bsp/src/cache.rs");
 }
 
 // RNG (см. RNG выше). Без переопределения через --define: значение целиком
@@ -1061,6 +1059,13 @@ variable::set("state_erase_size", "");
 variable::set("config_erase_size", "");
 variable::set("ext_page_size", "");
 variable::set("iface_periph", "");
+// Регион `DMA_NC` (хвост AXISRAM) под буферы DMA: границы числами, для `[env]`.
+// Пусто — региона нет (раскладка ручная, чип без AXISRAM, ядро не M7).
+variable::set("dma_nc_start", "");
+variable::set("dma_nc_len", "");
+// То же для `SRAM4` целиком под буферы BDMA (H7).
+variable::set("bdma_nc_start", "");
+variable::set("bdma_nc_len", "");
 variable::set("can_kind", "");
 variable::set("usb_kind", "");
 // Нужна ли `STATE` и `CONFIG` своя страница (`adapters::flash::ErasePage`): только
@@ -1161,6 +1166,21 @@ if variable::is_set("write_size") {
     variable::set("graph", if wants_graph { "true" } else { "false" });
 } else {
     let m = MEMORY_LAYOUT[suffix];
+
+    // Кэш данных ядра M7 включается только вместе с non-cacheable регионом под DMA
+    // (`bsp::dma_nc`): без него буфер периферии читался бы из кэша устаревшим.
+    // Регион есть у каждого M7 (F7, H7, H7R/S), кроме ядра CM4 двухъядерных H7;
+    // откуда он взят — решает chip-data-gen. `SRAM4` под BDMA — только у H7.
+    if variable::get("cpu") == "cortex-m7" {
+        if m.contains("dma_nc_origin") {
+            variable::set("dma_nc_start", hex_value(m["dma_nc_origin"]).to_string());
+            variable::set("dma_nc_len", size_in_bytes(m["dma_nc_length"]).to_string());
+        }
+        if m.contains("bdma_nc_origin") {
+            variable::set("bdma_nc_start", hex_value(m["bdma_nc_origin"]).to_string());
+            variable::set("bdma_nc_len", size_in_bytes(m["bdma_nc_length"]).to_string());
+        }
+    }
 
     // Второй банк flash за разрывом (H743 с 1 MiB и т.п.): с внутренней OTA
     // DFU лежит в нём, и прошивка пишет его через регион банка.
@@ -1333,8 +1353,39 @@ if variable::is_set("write_size") {
             "_panic_dump_end   = ORIGIN(PANIC) + LENGTH(PANIC);",
         ];
     }
+    // Секции под буферы DMA (`bsp::dma_nc`): статика с `#[link_section = ".dma_nc"]`
+    // (`.bdma_nc` — для BDMA) ложится в non-cacheable регион и размечается в MPU.
+    // Только в memory.x приложения — у bootloader'а кэшей нет. `INSERT AFTER
+    // .gnu.sgstubs`, а не `.uninit`: вставка сразу за `.uninit` ломает проверку
+    // стека в cortex-m-rt под flip-link (проверено сборкой).
+    let dma_sections = [];
+    if variable::get("dma_nc_start") != "" {
+        dma_sections = [
+            "",
+            "/* Буферы DMA при включённом кэше данных ядра: bsp::dma_nc, docs/clocks.md. */",
+            "SECTIONS",
+            "{",
+            "    .dma_nc (NOLOAD) : ALIGN(4)",
+            "    {",
+            "        *(.dma_nc .dma_nc.*);",
+            "    } > DMA_NC",
+        ];
+        if variable::get("bdma_nc_start") != "" {
+            dma_sections += [
+                "",
+                "    .bdma_nc (NOLOAD) : ALIGN(4)",
+                "    {",
+                "        *(.bdma_nc .bdma_nc.*);",
+                "    } > SRAM4",
+            ];
+        }
+        dma_sections += ["} INSERT AFTER .gnu.sgstubs;"];
+    }
     if m.contains("extra_regions") {
         ram += m["extra_regions"];
+    }
+    if variable::get("dma_nc_start") != "" {
+        ram.push("    /* DMA_NC - bsp::dma_nc держит его non-cacheable в MPU, из него берутся буферы DMA. */");
     }
 
     if ext_ota {
@@ -1370,6 +1421,7 @@ if variable::is_set("write_size") {
         app.push("__bootloader_active_end   = ORIGIN(FLASH) + LENGTH(FLASH) - " + base + ";");
         app += ext_symbols;
         app += panic_section;
+        app += dma_sections;
         file::write("crates-cross/app/memory.x", app);
         file::write("crates-cross/target-tests/memory.x", app);
 
@@ -1425,6 +1477,7 @@ if variable::is_set("write_size") {
         app.push("__bootloader_dfu_start = ORIGIN(DFU) - " + dfu_base + ";");
         app.push("__bootloader_dfu_end   = ORIGIN(DFU) + LENGTH(DFU) - " + dfu_base + ";");
         app += panic_section;
+        app += dma_sections;
         file::write("crates-cross/app/memory.x", app);
         // Тесты на устройстве (crates-cross/target-tests) линкуются туда же, куда
         // приложение: probe-rs заливает тестовый образ на место app, и после
@@ -1519,6 +1572,7 @@ if variable::is_set("write_size") {
         single += ram;
         single.push("}");
         single += panic_section;
+        single += dma_sections;
         // Boot удалён строкой выше, писать в него нечего; target-tests получают
         // ту же раскладку, что и app (см. ветку с OTA выше).
         file::write("crates-cross/app/memory.x", single);
@@ -1570,6 +1624,18 @@ variable::set("erase_page", if variable::get("state_paged") == "true" || variabl
 variable::set("external_flash", if (variable::get("ota") == "true" && variable::get("ota_store") == "external") || variable::get("config_store") == "external" { "true" } else { "false" });
 variable::set("protocol", protocol);
 variable::set("interface", iface);
+// Итог по кэшам: тег `scb_d` — кэш данных ядра M7 — только там, где есть регион
+// `DMA_NC`. Файлы модулей, которых в проекте нет, уходят тут же.
+if variable::get("dma_nc_start") != "" {
+    cache += " scb_d";
+} else {
+    file::delete("crates-cross/bsp/src/dma_nc.rs");
+}
+variable::set("cache", cache);
+if cache == "" {
+    file::delete("crates-cross/bsp/src/cache.rs");
+}
+
 // Кадровый канал (`ports::FrameLink`, `LinkError`) нужен protobuf (канал хоста),
 // шине CAN (ошибка `CanBus`) и UDP-каналу (`adapters::net::UdpLink` реализует
 // `FrameLink`) — с протоколом и без него.

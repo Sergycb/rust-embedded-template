@@ -65,7 +65,11 @@ mod tests {
     /// Константы ёмкости — те самые, что стоят в сгенерированных типах.
     #[test]
     fn capacity_constants_match_the_generated_types() {
-        assert_eq!(Info::default().version.capacity(), crate::VERSION_BYTES);
+        let info = Info::default();
+        assert_eq!(info.version.capacity(), crate::VERSION_BYTES);
+        assert_eq!(info.commit.capacity(), crate::COMMIT_BYTES);
+        assert_eq!(info.chip.capacity(), crate::CHIP_BYTES);
+        assert_eq!(info.uid.capacity(), crate::UID_BYTES);
         assert_eq!(Error::default().text.capacity(), crate::ERROR_TEXT_BYTES);
     }
 

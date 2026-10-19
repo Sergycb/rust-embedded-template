@@ -8,14 +8,11 @@
 //!
 //! - `icen`/`dcen` — кэши инструкций и данных акселератора флеша (`FLASH_ACR`:
 //!   F2/F4, G0/G4, L4, C0, U0, WB, WL); кэш данных видит только чтение флеша;
-//! - `icache` — блок `ICACHE` (L5, U3/U5, H5, WBA, H7R/S);
-//! - `scb` — кэши ядра Cortex-M7 (F7, H7, H7R/S): инструкций и данных.
-//!
-//! Кэш данных ядра M7 стоит перед всей RAM, а DMA его не видит: буфер, в
-//! который пишет периферия (Ethernet, USB, SDMMC, DMA-приёмник), читается из
-//! кэша устаревшим, и наоборот. Заведёте такой буфер — положите его в область
-//! `MPU` с атрибутом non-cacheable или чистите и сбрасывайте кэш вручную; до
-//! этого места (`docs/clocks.md`) шаблон не доходит: драйверов с DMA в нём нет.
+//! - `icache` — блок `ICACHE` (L5, U3/U5, H5, WBA);
+//! - `scb` — кэш инструкций ядра Cortex-M7 (F7, H7, H7R/S);
+//! - `scb_d` — и кэш данных ядра: он стоит перед всей RAM, а DMA его не видит,
+//!   поэтому сначала `bsp::dma_nc` помечает в MPU non-cacheable регион под
+//!   буферы DMA (у каждого M7, кроме ядра CM4 двухъядерных H7).
 
 {%- if cache contains "icen" or cache contains "icache" %}
 use embassy_stm32::pac;
@@ -51,6 +48,10 @@ fn enable_core_caches() {
     // ядре; `SCB` и `CPUID` здесь только читаются и пишутся регистры кэшей.
     let mut core = unsafe { cortex_m::Peripherals::steal() };
     core.SCB.enable_icache();
+{%- if cache contains "scb_d" %}
+    // Кэш данных — только после того, как буферы DMA ушли из-под него.
+    crate::dma_nc::protect(&mut core.MPU);
     core.SCB.enable_dcache(&mut core.CPUID);
+{%- endif %}
 }
 {%- endif %}

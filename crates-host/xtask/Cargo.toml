@@ -26,6 +26,12 @@ xshell = "0.2.7"
 # ради трейтов signature-совместимости, а здесь нужны только `Keypair`,
 # `Sha512` и `to_bytes`.
 salty = { version = "0.3.0", default-features = false }
+# Запись о подписи (`PendingImage`) для host-target теста подписанного OTA:
+# формат берётся у bootloader'а, а не повторяется здесь руками. Только с OTA:
+# без неё модуля `ports::ota` в проекте нет.
+# {%- if ota == "true" %}
+ports = { workspace = true }
+# {%- endif %}
 getrandom = "0.4.3"
 # Сырой образ из ELF. Раньше здесь советовался `cargo objcopy`, но он требует
 # cargo-binutils, которого `cargo xtask setup` не ставит — то есть

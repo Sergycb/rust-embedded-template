@@ -163,7 +163,7 @@ supervisor_graph! {
         ::domain::HOST_FRAG<bsp::link::Link, ::domain::host::Service> as HOST =
             ::domain::host::HostWiring {
                 link: board.link,
-                service: ::domain::host::Service::new(crate::build::PKG_VERSION),
+                service: ::domain::host::Service::new(crate::device_info(board.spec)),
                 rx: board.host_buffers.rx,
                 tx: board.host_buffers.tx,
             },
