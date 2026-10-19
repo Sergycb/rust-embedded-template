@@ -293,6 +293,8 @@ fn read_words(chip: &str, address: &str, words: usize) -> Vec<u32> {
     let count = words.to_string();
     probe_rs(&["read", "--chip", chip, "b32", address, &count])
         .split_whitespace()
+        // probe-rs 0.32 печатает таблицу: адрес строки `08040000:` перед словами.
+        .filter(|word| !word.ends_with(':'))
         .map(|word| {
             u32::from_str_radix(word, 16)
                 .unwrap_or_else(|_| panic!("`probe-rs read` вернул не hex-слово: {word:?}"))
