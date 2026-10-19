@@ -116,7 +116,13 @@ fn test_host_target(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
         // В один поток: пробник у платы один, а nextest по умолчанию гоняет
         // тесты параллельно — два `probe-rs` на одной цели дерутся за неё и
         // падают с невнятной ошибкой захвата.
-        cmd!(sh, "cargo nextest run --test-threads 1").run()?;
+        let tests = cmd!(sh, "cargo nextest run --test-threads 1").run();
+        // Сброс в конце — и при упавших тестах тоже: после их остановок ядра
+        // и сбросов пробником USB-устройство ОС заново не видит, пока МК не
+        // сброшен ещё раз. Провал тестов важнее провала сброса — он первым.
+        let reset = cmd!(sh, "probe-rs reset --chip {CHIP}").run();
+        tests?;
+        reset?;
     }
     Ok(())
 }
