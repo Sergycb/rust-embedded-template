@@ -505,7 +505,7 @@ pub(crate) mod tests {
 
     use embassy_time::{Duration, MockDriver};
     use ports::{Chunk, OtaCommand, OtaReply, Progress, Reboot, Rejection};
-    // {%- if protocol == "protobuf" or protocol == "modbus" %}
+    // {%- if protocol != "none" %}
     use supervisor::Requester;
     use supervisor::runtime::TaskExit;
     // {%- endif %}
@@ -525,7 +525,7 @@ pub(crate) mod tests {
         }
     }
 
-    // {%- if protocol == "protobuf" or protocol == "modbus" %}
+    // {%- if protocol != "none" %}
     /// Узел OTA, который тест крутит сам: `poll` по очереди с запросом.
     pub(crate) type Node = Pin<Box<dyn Future<Output = TaskExit>>>;
 

@@ -91,8 +91,8 @@ supervisor_graph! {
         // (`domain::ota::OtaWiring`): адаптер обновления `board.ota`, сброс МК
         // `bsp::cpu::Reboot` и режим применения (`Mode::{% if signed == "true" %}Signed` с версией этого образа
         // из `crate::image`{% else %}Plain`{% endif %}). Образ узел принимает командами на свой вход
-        // `CMD`{% if protocol == "protobuf" %} — их шлёт узел `HOST` ниже{% else %}: клиента отдаёт `ota_cmd_requester()`, и шлёт их ваш
-        // протокол — без него узел только подтверждает образ{% endif %}; алгоритм обновления — в
+        // `CMD`{% if protocol == "none" %}: клиента отдаёт `ota_cmd_requester()`, и шлёт их ваш
+        // протокол — без него узел только подтверждает образ{% else %} — их шлёт узел протокола ниже{% endif %}; алгоритм обновления — в
         // `domain::ota`. Вычисляется привязка в прологе `spawn_all` первой
         // строкой — раньше инициализатора блока `watchdog:`, как бы они ни стояли
         // в тексте, — частичным move: `ota` уезжает в слот узла, `watchdog`
@@ -171,6 +171,11 @@ supervisor_graph! {
                 dictionary: ::domain::canopen::dictionary(),
                 settings: {% if config == "true" %}board.settings{% else %}::adapters::settings::Unavailable{% endif %},
                 persist: {{config}},
+{%- if ota == "true" %}
+                // Команды объекта OTA словаря (0x4F00) узел отдаёт узлу `OTA`
+                // клиентом входа `CMD`.
+                ota_cmd: ota_cmd_requester(),
+{%- endif %}
             },
 {%- elsif protocol == "protobuf" %}
 

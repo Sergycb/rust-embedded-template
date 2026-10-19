@@ -32,6 +32,47 @@ default_value = 0
 pdo_mapping = "rpdo"
 persist = true
 
+# {%- if ota == "true" %}
+# Объект OTA — команды обновления записями SDO (`domain::canopen::OtaObject`,
+# там же таблица подобъектов). `application_callback`: хранения в словаре у
+# него нет, обработчик узел регистрирует при старте.
+[[objects]]
+index = 0x4F00
+parameter_name = "Firmware update"
+object_type = "record"
+application_callback = true
+[[objects.subs]]
+sub_index = 1
+parameter_name = "Start"
+data_type = "domain"
+access_type = "wo"
+[[objects.subs]]
+sub_index = 2
+parameter_name = "Chunk"
+data_type = "domain"
+access_type = "wo"
+[[objects.subs]]
+sub_index = 3
+parameter_name = "Finish"
+data_type = "uint32"
+access_type = "wo"
+[[objects.subs]]
+sub_index = 4
+parameter_name = "Reboot"
+data_type = "uint32"
+access_type = "wo"
+[[objects.subs]]
+sub_index = 5
+parameter_name = "Status"
+data_type = "uint16"
+access_type = "ro"
+[[objects.subs]]
+sub_index = 6
+parameter_name = "Received"
+data_type = "uint32"
+access_type = "ro"
+# {%- endif %}
+
 # Измерение, которое устройство отдаёт по SDO или TPDO.
 [[objects]]
 index = 0x2001

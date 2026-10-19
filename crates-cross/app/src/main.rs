@@ -30,6 +30,7 @@ use static_cell::StaticCell;
 /// Исполнитель задач — свой, а не из `#[embassy_executor::main]` (почему — в
 /// `main`). `StaticCell`, а не `ConstStaticCell`: `Executor::new` не `const`.
 static EXECUTOR: StaticCell<Executor> = StaticCell::new();
+
 {%- if graph != "true" %}
 
 // Задачи узлов проекта без графа — то, что с графом делает `fragments:` в
@@ -48,8 +49,8 @@ mod ota {
     use sync_request::RpcService;
 
     /// Вход команд узла — то, что с графом заводит `request:` фрагмента
-    /// `OTA_FRAG`, той же ёмкости (`domain::ota::CMD_BYTES`). Клиента{% if protocol == "protobuf" %} получает задача `HOST`{% else %} получает ваш протокол
-    /// (`CMD.requester()`); без него узел только подтверждает образ{% endif %}.
+    /// `OTA_FRAG`, той же ёмкости (`domain::ota::CMD_BYTES`). Клиента{% if protocol == "none" %} получает ваш протокол
+    /// (`CMD.requester()`); без него узел только подтверждает образ{% else %} получает задача протокола{% endif %}.
     pub static CMD: RpcService<
         CriticalSectionRawMutex,
         domain::ota::OtaCommand,
@@ -162,6 +163,9 @@ mod canopen {
             dictionary: &mut dictionary,
             settings: &mut settings,
             persist: &mut persist,
+{%- if ota == "true" %}
+            ota_cmd: &mut crate::ota::CMD.requester(),
+{%- endif %}
             index: 0,
         })
         .await;

@@ -43,6 +43,9 @@
 //!   `industrial-protocols-canopen` — требуют `std`.
 
 mod frame;
+// {%- if ota == "true" %}
+mod ota;
+// {%- endif %}
 mod persisted;
 
 use core::cell::RefCell;
@@ -63,6 +66,9 @@ use zencan_node::{Callbacks, Node, NodeMbox, NodeState};
 use crate::canopen::frame::{fix_save_signature, is_heartbeat, to_frame, to_message};
 
 pub use persisted::{NODE_ID_KEY, OBJECTS_KEY, Persisted, STORE_CAPACITY};
+// {%- if ota == "true" %}
+pub use ota::{OTA, OTA_INDEX, OtaObject};
+// {%- endif %}
 
 /// Такт обработки: как часто узел зовёт `Node::process`, даже если кадров нет.
 ///
@@ -101,6 +107,11 @@ pub struct Dictionary {
     pub state: &'static NodeState<'static>,
     /// `canopen::OD_TABLE` — словарь объектов.
     pub od: &'static [ODEntry<'static>],
+    // {%- if ota == "true" %}
+    /// Место объекта OTA ([`OTA_INDEX`]) в словаре — `application_callback`:
+    /// обработчик [`OtaObject`] узел регистрирует при старте.
+    pub ota: &'static zencan_node::object_dict::CallbackObject<'static>,
+    // {%- endif %}
 }
 
 // Словарь примера `crates-host/canopen` — только в проекте с CANopen: без него
@@ -113,6 +124,9 @@ pub fn dictionary() -> Dictionary {
         mbox: &::canopen::NODE_MBOX,
         state: &::canopen::NODE_STATE,
         od: &::canopen::OD_TABLE,
+        // {%- if ota == "true" %}
+        ota: &::canopen::OBJECT4F00,
+        // {%- endif %}
     }
 }
 
@@ -123,7 +137,8 @@ pub fn dictionary() -> Dictionary {
 // fragments: [::domain::CANOPEN_FRAG<bsp::can::Can, bsp::settings::Settings> as CANOPEN
 //                 = ::domain::canopen::CanOpenWiring { bus: board.can, node_id: 1,
 //                       dictionary: ::domain::canopen::dictionary(),
-//                       settings: board.settings, persist: true }];
+//                       settings: board.settings, persist: true,
+//                       ota_cmd: ota_cmd_requester() }];   // только с OTA
 // ```
 
 /// Узел `CANOPEN`: ведёт стек CANopen, пока жива шина.
@@ -219,6 +234,11 @@ where
         node: &'f mut Option<Node<'f>>,
     ) -> Booting<'f> {
         let d = *self.dictionary;
+        // {%- if ota == "true" %}
+        // Объект OTA в словаре — место под обработчик: без регистрации стек
+        // отвечает на его SDO отказом `ResourceNotAvailable`.
+        d.ota.register_handler(&OTA);
+        // {%- endif %}
         let node_id = self.restore(persisted).await;
         info!("domain: узел CANOPEN запущен, адрес {}", node_id.raw());
         // `Node::new` сам зовёт `reset_app` — тот восстанавливает объекты из
@@ -315,6 +335,12 @@ where
         // После ответов: запись во флеш долгая, а мастер ждёт подтверждения
         // `save` по SDO. Хранилищу шина не нужна: `save` уже принят стеком.
         persisted::save(s.stack.persisted, self.settings).await;
+        // {%- if ota == "true" %}
+        // Команда OTA, поставленная записью SDO, — узлу OTA, исход — в объект.
+        // Тоже после ответов: стирание раздела идёт секунды, а SDO стека
+        // ответить синхронно уже успел (`canopen::ota`).
+        OTA.forward(self.ota_cmd).await;
+        // {%- endif %}
     }
 
     /// Адрес узла и сохранённые объекты — из хранилища, до создания стека.
@@ -372,7 +398,13 @@ supervisor::supervisor_fragment! {
             /// Хранилище сохранённых объектов и адреса узла.
             SETTINGS: local S = inputs.settings,
             /// Сохранять ли объекты и адрес: `false` — хранилища у проекта нет.
-            PERSIST: bool = inputs.persist
+            PERSIST: bool = inputs.persist,
+            // {%- if ota == "true" %}
+            /// Клиент входа `CMD` узла OTA: команды объекта OTA словаря
+            /// ([`OTA`]) уходят им.
+            OTA_CMD: ::supervisor::Requester<'static, $crate::ota::OtaCommand, $crate::ota::OtaReply> =
+                inputs.ota_cmd
+            // {%- endif %}
         ],
         ctx: $crate::canopen::CanOpenCtx,
         task: $crate::canopen::task;
@@ -389,7 +421,7 @@ mod tests {
     use embedded_can::{Frame, Id, StandardId};
     use ports::{CanBus, LinkError, SettingsStorage};
 
-    use super::{CanOpenCtx, Dictionary, NODE_ID_KEY, task};
+    use super::{CanOpenCtx, NODE_ID_KEY, task};
 
     /// Адрес узла в тестах: SDO-запросы — на `0x605`, ответы — с `0x585`.
     const NODE: u8 = 5;
@@ -544,23 +576,87 @@ mod tests {
         // Почтовый ящик — `static`: очередь передачи после прошлого прогона к
         // этому не относится.
         while canopen::NODE_MBOX.next_transmit_message().is_some() {}
-        let mut dictionary = Dictionary {
-            mbox: &canopen::NODE_MBOX,
-            state: &canopen::NODE_STATE,
-            od: &canopen::OD_TABLE,
-        };
+        let mut dictionary = super::dictionary();
+        // {%- if ota == "true" %}
+        let (mut ota_cmd, _ota_node) = crate::ota::tests::live();
+        // {%- endif %}
         let ctx = CanOpenCtx {
             bus,
             node_id: &mut NODE.clone(),
             dictionary: &mut dictionary,
             settings,
             persist: &mut persist,
+            // {%- if ota == "true" %}
+            ota_cmd: &mut ota_cmd,
+            // {%- endif %}
             index: 0,
         };
         let mut task = pin!(task(ctx));
         let mut cx = Context::from_waker(Waker::noop());
         assert!(task.as_mut().poll(&mut cx).is_pending(), "ждёт кадр");
     }
+
+    // {%- if ota == "true" %}
+    /// Команда OTA записью SDO доходит до узла OTA, исход — в sub 5 объекта.
+    /// Узел OTA крутится рядом: оба future по очереди.
+    #[test]
+    fn an_ota_command_over_sdo_reaches_the_ota_node() {
+        let _only_one = DICTIONARY.lock().unwrap_or_else(PoisonError::into_inner);
+        while canopen::NODE_MBOX.next_transmit_message().is_some() {}
+        let mut bus = Bus::with([
+            // `Finish` — 0x4F00:03, expedited на 4 байта (cs 0x23).
+            Ok(frame(0x605, &[0x23, 0x00, 0x4F, 0x03, 0, 0, 0, 0])),
+            // Чтение исхода — 0x4F00:05.
+            Ok(frame(0x605, &[0x40, 0x00, 0x4F, 0x05, 0, 0, 0, 0])),
+        ]);
+        {
+            let mut dictionary = super::dictionary();
+            let (mut ota_cmd, mut ota_node) = crate::ota::tests::live();
+            let ctx = CanOpenCtx {
+                bus: &mut bus,
+                node_id: &mut NODE.clone(),
+                dictionary: &mut dictionary,
+                settings: &mut Memory::default(),
+                persist: &mut false,
+                ota_cmd: &mut ota_cmd,
+                index: 0,
+            };
+            let mut node = pin!(task(ctx));
+            let mut cx = Context::from_waker(Waker::noop());
+            for _ in 0..16 {
+                assert!(
+                    node.as_mut().poll(&mut cx).is_pending(),
+                    "узел CANopen не выходит"
+                );
+                assert!(
+                    ota_node.as_mut().poll(&mut cx).is_pending(),
+                    "узел OTA не выходит"
+                );
+            }
+        }
+
+        let sdo: Vec<_> = bus
+            .sent
+            .iter()
+            .filter(|f| f.id == Id::Standard(StandardId::new(0x585).unwrap()))
+            .collect();
+        assert_eq!(sdo[0].data[0], 0x60, "запись принята: {:?}", sdo[0]);
+        // Ответ на чтение — expedited на 2 байта (cs 0x4B): `NoSession` = 16.
+        assert_eq!(sdo[1].data, [0x4B, 0x00, 0x4F, 0x05, 16, 0, 0, 0]);
+    }
+    /// Объект OTA в `device.toml` стоит по индексу [`super::OTA_INDEX`]:
+    /// разойдись они — хост писал бы в несуществующий объект.
+    #[test]
+    fn the_dictionary_has_the_ota_object_at_its_index() {
+        assert!(
+            canopen::OD_TABLE
+                .iter()
+                .any(|entry| entry.index == super::OTA_INDEX),
+            "нет объекта {:#06x} в словаре",
+            super::OTA_INDEX
+        );
+    }
+    // {%- endif %}
 
     /// SDO-запись `save` (`0x73 0x61 0x76 0x65`) в `0x1010:01`.
     const SAVE: [u8; 8] = [0x23, 0x10, 0x10, 0x01, 0x73, 0x61, 0x76, 0x65];

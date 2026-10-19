@@ -1758,6 +1758,14 @@ if variable::get("ota") != "true" {
 	file::delete("crates-host/adapters/src/ota.rs");
 	file::delete("crates-host/domain/src/ota.rs");
 	file::delete("crates-host/domain/src/ota");
+	// Перевод команд OTA у протокола: каталог протокола есть, только если он
+	// выбран, — чужой хук уже удалил выше.
+	if protocol == "modbus" {
+		file::delete("crates-host/domain/src/modbus/ota.rs");
+	}
+	if protocol == "canopen" {
+		file::delete("crates-host/domain/src/canopen/ota.rs");
+	}
 }
 // То же для хранилища настроек.
 if variable::get("ota") != "true" && protocol != "canopen" {

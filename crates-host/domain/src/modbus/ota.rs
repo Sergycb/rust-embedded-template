@@ -85,8 +85,9 @@ impl<R> OtaRegisters<R> {
         self.status = reply_code(&reply);
         match reply {
             Ok(Progress::Received(received)) => self.received = received,
-            Ok(Progress::Started) => self.received = 0,
-            _ => {}
+            // Отказ обрывает приём: длина прошлого приёма больше ни к чему.
+            Ok(Progress::Started) | Err(_) => self.received = 0,
+            Ok(Progress::Ready | Progress::Rebooting) => {}
         }
         // Код отказа — во входном регистре окна, исключение одно на все.
         match reply {
