@@ -15,9 +15,6 @@ mod graph;
 mod image;
 {%- endif %}
 mod panic;
-{%- if app_protocol_rs == "true" %}
-mod protocol;
-{%- endif %}
 
 use defmt::info;
 // RTT остаётся дефолтным транспортом в обоих профилях — сырой шаблон не знает,
@@ -34,15 +31,115 @@ use static_cell::StaticCell;
 /// Исполнитель задач — свой, а не из `#[embassy_executor::main]` (почему — в
 /// `main`). `StaticCell`, а не `ConstStaticCell`: `Executor::new` не `const`.
 static EXECUTOR: StaticCell<Executor> = StaticCell::new();
-{%- if ota == "true" and graph != "true" %}
+{%- if graph != "true" %}
 
-/// Узел OTA проекта без графа. Обёртка нужна по той же причине, что и
-/// `cpu_load::task`: `Spawner::spawn` берёт токен, а задача не может
-/// быть generic — поэтому типы слотов названы псевдонимами из `bsp::ota`.
-#[embassy_executor::task]
-async fn ota_task(link: bsp::ota::Link, flash: bsp::ota::Updater, mode: domain::ota::Mode) {
-    domain::ota::task(link, flash, mode).await;
+// Задачи узлов проекта без графа — то, что с графом делает `fragments:` в
+// `graph.rs`. `Spawner::spawn` берёт токен, а не функцию, а embassy-задача не
+// может быть generic, поэтому каждая типизирована объектом платы (`bsp`).
+// Контекст узла собирается здесь из локальных переменных кадра: то, что в графе
+// держит `static`-слот, без графа живёт в задаче. Сама задача — `task` узла из
+// `domain`, та же, что гоняет граф.
+{%- if ota == "true" %}
+
+/// Узел `OTA`: подтверждает образ (`mark_booted`) в стартовом действии, а без
+/// него bootloader откатит обновление на следующем сбросе.
+mod ota {
+    #[embassy_executor::task]
+    pub async fn task(mut device: bsp::ota::Ota, mut mode: domain::ota::Mode) {
+        let mut confirmed = false;
+        domain::ota::task(domain::ota::OtaCtx {
+            device: &mut device,
+            mode: &mut mode,
+            confirmed: &mut confirmed,
+            index: 0,
+        })
+        .await;
+    }
 }
+{%- endif %}
+{%- if interface == "tcp" or interface == "udp" %}
+
+/// Узел `NET`: фоновая работа стека `embassy-net`.
+mod net {
+    #[embassy_executor::task]
+    pub async fn task(mut runner: domain::net::Runner<'static, bsp::net::Device>) {
+        domain::net::task(domain::net::NetCtx {
+            runner: &mut runner,
+            index: 0,
+        })
+        .await;
+    }
+}
+{%- endif %}
+{%- if interface == "usb" %}
+
+/// Узел `USB`: фоновая работа устройства `embassy-usb`.
+mod usb {
+    #[embassy_executor::task]
+    pub async fn task(mut device: bsp::usb::Device) {
+        domain::usb::task(domain::usb::UsbCtx {
+            device: &mut device,
+            index: 0,
+        })
+        .await;
+    }
+}
+{%- endif %}
+{%- if protocol == "modbus" %}
+
+/// Узел `MODBUS`: Modbus slave с пустой картой регистров, адрес 1.
+mod modbus {
+    #[embassy_executor::task]
+    pub async fn task(mut link: bsp::link::Link) {
+        let mut regs = domain::modbus::EmptyRegisters;
+        let mut unit = 1;
+        domain::modbus::task(domain::modbus::ModbusSlaveCtx {
+            link: &mut link,
+            regs: &mut regs,
+            unit: &mut unit,
+            index: 0,
+        })
+        .await;
+    }
+}
+{%- elsif protocol == "protobuf" %}
+
+/// Узел `HOST`: сообщения protobuf от хоста.
+mod host {
+    #[embassy_executor::task]
+    pub async fn task(mut link: bsp::link::Link, rx: &'static mut [u8], tx: &'static mut [u8]) {
+        let mut service = domain::host::Service::new(crate::build::PKG_VERSION);
+        domain::host::task(domain::host::HostCtx {
+            link: &mut link,
+            service: &mut service,
+            rx,
+            tx,
+            index: 0,
+        })
+        .await;
+    }
+}
+{%- elsif protocol == "canopen" %}
+
+/// Узел `CANOPEN`: узел CANopen, адрес 1.
+mod canopen {
+    #[embassy_executor::task]
+    pub async fn task(mut bus: bsp::can::Can, mut settings: {% if config == "true" %}bsp::settings::Settings{% else %}adapters::settings::Unavailable{% endif %}) {
+        let mut node_id = 1;
+        let mut dictionary = domain::canopen::dictionary();
+        let mut persist = {{config}};
+        domain::canopen::task(domain::canopen::CanOpenCtx {
+            bus: &mut bus,
+            node_id: &mut node_id,
+            dictionary: &mut dictionary,
+            settings: &mut settings,
+            persist: &mut persist,
+            index: 0,
+        })
+        .await;
+    }
+}
+{%- endif %}
 {%- endif %}
 
 #[cortex_m_rt::entry]
@@ -104,7 +201,7 @@ fn main() -> ! {
     // `board` уезжает сюда целиком — это объявленный графом `boot:`-объект,
     // из которого его инициализаторы забирают объекты частичными move.
     // Такие заборы уже есть — сторож в блоке `watchdog:`{% if ota == "true" %}, вход узла
-    // OTA в `fragments:` (`board.updater`){% endif %} — и здесь же
+    // OTA в `fragments:` (`board.ota`){% endif %} — и здесь же
     // окажутся ваши: `resources: [SLOT: T = board.<поле>]` вместо
     // `provide_<slot>(..)` перед этой строкой. Оттого и последняя строка
     // `spawn_all`: после неё `board` принадлежит прологу.
@@ -145,7 +242,7 @@ fn main() -> ! {
 
     // Узел OTA без графа спавнится так же: он подтверждает образ
     // (`mark_booted`) в стартовом действии, а без него bootloader откатит
-    // обновление на следующем сбросе. Канал и адаптер уезжают в задачу
+    // обновление на следующем сбросе. Объект OTA уезжает в задачу
     // владением{% if signed == "true" %}; режим — `Signed` с версией этого образа
     // (`image::FW_VERSION`){% else %}; режим — `Plain`{% endif %}.
     // Применяете образ своим кодом — уберите этот спавн и подтверждайте сами.
@@ -156,20 +253,34 @@ fn main() -> ! {
 {%- else %}
     let mode = domain::ota::Mode::Plain;
 {%- endif %}
-    let token = ota_task(board.ota_link, board.updater, mode)
-        .expect("задача OTA свежая: спавнится один раз");
+    let token = ota::task(board.ota, mode).expect("задача OTA свежая: спавнится один раз");
     spawner.spawn(token);
 {%- endif %}
-{%- if app_protocol_rs == "true" %}
+{%- if interface == "tcp" or interface == "udp" or interface == "usb" or protocol != "none" %}
 
-    // Узлы без графа спавнятся так же: {% if protocol != "none" %}узел протокола{% if interface == "tcp" or interface == "udp" %} и `NET`, который
-    // гоняет сетевой стек{% elsif interface == "usb" %} и `USB`, который ведёт устройство{% endif %}{% elsif interface == "usb" %}`USB`, который ведёт устройство{% else %}`NET`, который гоняет сетевой стек{% endif %} (`protocol::spawn`).
-{%- if protocol != "none" %}
-    // Вход собирает та же функция, что в проекте с графом (`protocol::*_wiring`).
+    // Узлы транспорта и протокола без графа спавнятся так же. Без графа нет ни
+    // сторожа, ни `restart:`: узлы не падают, а зависший остаётся зависшим —
+    // сторожить исполнитель вам.
 {%- endif %}
-    // Без графа нет ни сторожа, ни `restart:`: узлы не падают, а зависший
-    // остаётся зависшим — сторожить исполнитель вам.
-    protocol::spawn(spawner, {% if interface == "uart" %}board.serial{% elsif interface == "can" %}board.can, {% if config == "true" %}board.settings{% else %}::adapters::settings::Unavailable{% endif %}{% elsif interface == "usb" %}board.usb{% else %}board.net{% endif %});
+{%- if interface == "tcp" or interface == "udp" %}
+    let token = net::task(board.net.runner).expect("задача NET свежая: спавнится один раз");
+    spawner.spawn(token);
+{%- endif %}
+{%- if interface == "usb" %}
+    let token = usb::task(board.{% if protocol_link == "true" %}usb_device{% else %}usb.device{% endif %}).expect("задача USB свежая: спавнится один раз");
+    spawner.spawn(token);
+{%- endif %}
+{%- if protocol == "modbus" %}
+    let token = modbus::task(board.link).expect("задача MODBUS свежая: спавнится один раз");
+    spawner.spawn(token);
+{%- elsif protocol == "protobuf" %}
+    let token = host::task(board.link, board.host_buffers.rx, board.host_buffers.tx)
+        .expect("задача HOST свежая: спавнится один раз");
+    spawner.spawn(token);
+{%- elsif protocol == "canopen" %}
+    let token = canopen::task(board.can, {% if config == "true" %}board.settings{% else %}::adapters::settings::Unavailable{% endif %})
+        .expect("задача CANOPEN свежая: спавнится один раз");
+    spawner.spawn(token);
 {%- endif %}
 {%- endif %}
 

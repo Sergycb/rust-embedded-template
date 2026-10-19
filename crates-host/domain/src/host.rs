@@ -57,9 +57,9 @@ use supervisor::runtime::TaskExit;
 /// Не выходит никогда: закрытый или отказавший канал — строка в лог, и
 /// узел ждёт следующий кадр.
 ///
-/// Без `watchdog:` намеренно — по правилу `heartbeat::run`:
+/// Без `watchdog:` намеренно — по правилу `heartbeat::task`:
 /// узел законно ждёт запрос сколько угодно.
-pub async fn run<L, S>(mut ctx: HostCtx<'_, L, S>) -> TaskExit
+pub async fn task<L, S>(mut ctx: HostCtx<'_, L, S>) -> TaskExit
 where
     L: FrameLink,
     L::Error: FormatOrDebug,
@@ -69,34 +69,6 @@ where
 {
     match ctx.run().await {}
 }
-
-// {%- if graph != "true" %}
-/// Тот же узел для проекта без графа: спавнится из `main.rs`, а слоты, которые
-/// в графе держит `static`, — локальные переменные кадра, как у
-/// [`cpu_load::task`](crate::cpu_load::task).
-pub async fn task<L, S>(
-    mut link: L,
-    mut service: S,
-    rx: &'static mut [u8],
-    tx: &'static mut [u8],
-) -> TaskExit
-where
-    L: FrameLink,
-    L::Error: FormatOrDebug,
-    S: HostService,
-    S::Request: MessageDecode + Default,
-    S::Response: MessageEncode,
-{
-    run(HostCtx {
-        link: &mut link,
-        service: &mut service,
-        rx,
-        tx,
-        index: 0,
-    })
-    .await
-}
-// {%- endif %}
 
 #[fsm::typestate]
 impl<L, S> HostCtx<'_, L, S>
@@ -223,7 +195,7 @@ supervisor::supervisor_fragment! {
             TX: &'static mut [u8] = inputs.tx
         ],
         ctx: $crate::host::HostCtx,
-        task: $crate::host::run;
+        task: $crate::host::task;
 }
 
 // Тесты гоняют узел с обработчиком над схемой `crates-host/proto`.
@@ -237,7 +209,7 @@ mod tests {
     use ports::{FrameLink, LinkError};
     use proto::{GetInfo, Ping, Request, Request_, Response, Response_, heapless};
 
-    use super::{HostCtx, Service, run};
+    use super::{HostCtx, Service, task};
 
     /// Канал: отдаёт заранее заготовленные исходы `recv`, когда они кончаются,
     /// ждёт следующего кадра вечно — как настоящий канал. Отправленные кадры
@@ -309,7 +281,7 @@ mod tests {
             tx: &mut tx,
             index: 0,
         };
-        let mut task = pin!(run(ctx));
+        let mut task = pin!(task(ctx));
         let mut cx = Context::from_waker(Waker::noop());
         assert!(task.as_mut().poll(&mut cx).is_pending(), "ждёт кадр");
     }

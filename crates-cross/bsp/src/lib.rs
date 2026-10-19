@@ -21,6 +21,9 @@ pub mod external;
 {%- if shared_flash == "true" %}
 pub mod flash;
 {%- endif %}
+{%- if protocol_link == "true" %}
+pub mod link;
+{%- endif %}
 {%- if interface == "tcp" or interface == "udp" %}
 pub mod net;
 {%- endif %}

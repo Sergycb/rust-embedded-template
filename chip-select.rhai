@@ -1518,8 +1518,7 @@ if variable::get("graph") != "true" {
 
 // Протокол и транспорт выбраны и проверены выше (вопросы после выбора чипа), а
 // здесь остаётся подставить блок интерфейса для групп `resources.rs`. Граф
-// протоколу не нужен: без него узел спавнит `main`
-// (`crates-cross/app/src/protocol.rs`, как узел OTA).
+// протоколу не нужен: без него узел спавнит `main` (как узел OTA).
 if iface != "none" {
     let blocks = INTERFACE_BLOCKS[iface];
     let found = [];
@@ -1569,9 +1568,10 @@ variable::set("ports_async", if variable::get("ota") == "true" || variable::get(
 // Сокет протокола на стеке `embassy-net` (порт, буферы): нужен, только когда
 // протокол работает по сети. Транспорт без протокола сокета не открывает.
 variable::set("protocol_socket", if (protocol == "modbus" || protocol == "protobuf") && (iface == "tcp" || iface == "udp") { "true" } else { "false" });
-// Модуль `protocol.rs` в `app`: вход узла протокола и, без графа, спавн узлов
-// `NET`/`USB`. Без протокола и с графом файлу нечего содержать.
-variable::set("app_protocol_rs", if protocol != "none" || (variable::get("graph") != "true" && (iface == "tcp" || iface == "udp" || iface == "usb")) { "true" } else { "false" });
+// Модуль `link.rs` в `bsp`: готовый транспорт протокола (`Board::link`) — кадрирование,
+// буферы и сокет. Без Modbus и protobuf транспорту нечего оборачивать (CANopen берёт
+// шину CAN как есть).
+variable::set("protocol_link", if protocol == "modbus" || protocol == "protobuf" { "true" } else { "false" });
 // Группы `resources.rs` нужны, пока есть что в них класть: общий флеш, сторож
 // графа или блок выбранного интерфейса. Иначе в файле остаётся пустая группа.
 variable::set("has_resources", if iface != "none" || variable::get("shared_flash") == "true" || variable::get("graph") == "true" { "true" } else { "false" });
@@ -1652,8 +1652,8 @@ if protocol != "canopen" {
 	file::delete("crates-host/domain/src/canopen");
 	file::delete("crates-host/canopen");
 }
-if variable::get("app_protocol_rs") != "true" {
-	file::delete("crates-cross/app/src/protocol.rs");
+if variable::get("protocol_link") != "true" {
+	file::delete("crates-cross/bsp/src/link.rs");
 }
 if variable::get("link_port") != "true" {
 	file::delete("crates-host/ports/src/link.rs");

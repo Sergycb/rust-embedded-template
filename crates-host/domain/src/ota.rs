@@ -43,19 +43,20 @@ pub mod update;
 pub mod version;
 
 use defmt_or_log::{FormatOrDebug, info, warn};
-use ports::{Announce, DownloadError, FirmwareUpdate, ImageSource, Rejection, UpdateError};
+use ports::{
+    Announce, DownloadError, FirmwareUpdate, ImageSource, OtaDevice, Rejection, UpdateError,
+};
 use supervisor::runtime::TaskExit;
 
 // Вход узла — `OtaWiring`: структуру эмитит сам фрагмент (`boot: …
-// struct`). Строит её compose-site (`app`) из полей платы: канала доставки
-// `Board::ota_link` и адаптера обновления `Board::updater` (оба реализуют
-// порты; `bsp` про `domain` не знает), подставляя типы порта и адаптера
-// аргументами фрагмента:
+// struct`). Строит её compose-site (`app`) из поля платы `Board::ota` — одного
+// объекта, в котором канал доставки образа и адаптер обновления (порт
+// `OtaDevice`; `bsp` про `domain` не знает), подставляя его тип аргументом
+// фрагмента:
 //
 // ```ignore
-// fragments: [::domain::OTA_FRAG<bsp::ota::Link, bsp::ota::Updater> as OTA
-//                 = ::domain::ota::OtaWiring { link: board.ota_link,
-//                                           flash: board.updater,
+// fragments: [::domain::OTA_FRAG<bsp::ota::Ota> as OTA
+//                 = ::domain::ota::OtaWiring { device: board.ota,
 //                                           mode: ::domain::ota::Mode::Plain }];
 // ```
 //
@@ -134,56 +135,25 @@ impl Mode {
 /// лог, и снова ждёт заголовок; переждать отказ — дело `ImageSource`.
 ///
 /// Без `watchdog:` намеренно — по тому же правилу, что у
-/// [`heartbeat::run`](crate::heartbeat::run): отметка ставится после
+/// [`heartbeat::task`](crate::heartbeat::task): отметка ставится после
 /// реального прогресса, а пока узел ждёт заголовок в `begin()`, прогресса у
 /// него нет, и отметка по таймеру сторожила бы исполнитель, а не работу.
 /// Аппаратный сторож кормит тикер графа, а не какой-то узел.
-pub async fn run<S, F>(mut ctx: OtaCtx<'_, S, F>) -> TaskExit
+pub async fn task<D>(mut ctx: OtaCtx<'_, D>) -> TaskExit
 where
-    S: ImageSource,
-    S::Error: FormatOrDebug,
-    F: FirmwareUpdate,
-    F::Error: FormatOrDebug,
+    D: OtaDevice,
+    <D::Link as ImageSource>::Error: FormatOrDebug,
+    <D::Flash as FirmwareUpdate>::Error: FormatOrDebug,
 {
     match ctx.run().await {}
 }
 
-// {%- if graph != "true" %}
-/// Тот же узел для проекта без графа: спавнится из `main.rs` (через
-/// `#[embassy_executor::task]`, потому что `Spawner::spawn` берёт токен, а не
-/// функцию), а слоты, которые в графе держит `static`, — локальные переменные
-/// кадра: канал и адаптер приходят владением, `CONFIRMED` начинается с
-/// `false`, как слот графа.
-///
-/// Нужен, чтобы подтверждение образа (`mark_booted`, действие `begin`) не
-/// зависело от того, вспомнил ли проект позвать узел: без него bootloader
-/// откатывает любое обновление на следующем сбросе.
-pub async fn task<S, F>(mut link: S, mut flash: F, mut mode: Mode) -> TaskExit
-where
-    S: ImageSource,
-    S::Error: FormatOrDebug,
-    F: FirmwareUpdate,
-    F::Error: FormatOrDebug,
-{
-    let mut confirmed = false;
-    run(OtaCtx {
-        link: &mut link,
-        flash: &mut flash,
-        mode: &mut mode,
-        confirmed: &mut confirmed,
-        index: 0,
-    })
-    .await
-}
-// {%- endif %}
-
 #[fsm::typestate]
-impl<S, F> OtaCtx<'_, S, F>
+impl<D> OtaCtx<'_, D>
 where
-    S: ImageSource,
-    S::Error: FormatOrDebug,
-    F: FirmwareUpdate,
-    F::Error: FormatOrDebug,
+    D: OtaDevice,
+    <D::Link as ImageSource>::Error: FormatOrDebug,
+    <D::Flash as FirmwareUpdate>::Error: FormatOrDebug,
 {
     fsm::machine! {
         machine Ota mod edges {
@@ -199,7 +169,7 @@ where
             }
             start => begin -> Waiting;
             listen {
-                Waiting => announce: self.link.begin(),
+                Waiting => announce: self.device.parts().0.begin(),
             }
             transitions {
                 Waiting + announce(Ok(a))  => screen  -> Accepted | Verdict,
@@ -242,7 +212,7 @@ where
     /// Подтверждение образа, если его ещё не было (см. `begin`).
     async fn confirm(&mut self) {
         if !*self.confirmed {
-            match self.flash.mark_booted().await {
+            match self.device.parts().1.mark_booted().await {
                 Ok(()) => *self.confirmed = true,
                 Err(err) => warn!("ota: не удалось подтвердить образ: {:?}", &err),
             }
@@ -257,7 +227,7 @@ where
         self.confirm().await;
         // Занятость — до всего: адаптер и так откажет в `prepare`, но тогда
         // отправитель услышал бы `Device` вместо «сначала перезагрузи».
-        let outcome = match self.flash.is_busy().await {
+        let outcome = match self.device.parts().1.is_busy().await {
             Ok(false) => self.mode.check(&announce),
             Ok(true) => Err(Rejection::Busy),
             Err(err) => {
@@ -276,7 +246,8 @@ where
 
     /// Приём образа; длину сверяет `receive` до `prepare`.
     async fn receive(&mut self, s: Accepted) -> edges::Receive {
-        match download::receive(self.link, self.flash, s.announce.len).await {
+        let (link, flash) = self.device.parts();
+        match download::receive(link, flash, s.announce.len).await {
             Ok(len) => Received {
                 announce: s.announce,
                 len,
@@ -297,7 +268,10 @@ where
 
     /// Применяет принятый образ через режим (plain или signed).
     async fn apply(&mut self, s: &Received) -> Verdict {
-        let outcome = self.mode.apply(self.flash, &s.announce, s.len).await;
+        let outcome = self
+            .mode
+            .apply(self.device.parts().1, &s.announce, s.len)
+            .await;
         if outcome.is_ok() {
             // Обмен запрошен (`STATE = Swap`): подтверждение текущего образа
             // теперь сняло бы запрос — и раз не вышло при старте, больше его не
@@ -313,7 +287,7 @@ where
             Ok(()) => info!("ota: образ принят, обмен разделов на следующем сбросе"),
             Err(rejection) => warn!("ota: образ отвергнут: {:?}", rejection),
         }
-        match self.link.finish(s.outcome).await {
+        match self.device.parts().0.finish(s.outcome).await {
             Ok(()) => Waiting,
             Err(err) => self.lost(err),
         }
@@ -322,7 +296,7 @@ where
     /// Отказ канала: сообщать отправителю некому — в лог, и снова ждём
     /// заголовок; ждать, пока канал вернётся, — дело `ImageSource`.
     #[expect(clippy::unused_self, reason = "действие автомата")]
-    fn lost(&mut self, err: S::Error) -> Waiting {
+    fn lost(&mut self, err: <D::Link as ImageSource>::Error) -> Waiting {
         warn!("ota: отказ канала: {:?}", &err);
         Waiting
     }
@@ -359,7 +333,7 @@ fn update_rejection<E>(err: &UpdateError<E>) -> Rejection {
 // одинаковые таблицы автомата. Какой режим подставить — решает `graph.rs`.
 //
 // `boot: inputs: …` — собственная привязка фрагмента: compose-site пишет
-// `fragments: [::domain::OTA_FRAG<…> as OTA = ::domain::ota::OtaWiring { link: …, flash: …, mode: … }]`,
+// `fragments: [::domain::OTA_FRAG<…> as OTA = ::domain::ota::OtaWiring { device: …, mode: … }]`,
 // а `spawn_all` связывает её первой строкой пролога, и инициализаторы слотов
 // ниже читают её поля. Так фрагмент не видит `Board` вовсе — только то, что
 // ему дали. `MODE` — обычный слот, не `local`: перечисление из данных
@@ -369,48 +343,47 @@ fn update_rejection<E>(err: &UpdateError<E>) -> Rejection {
 // `ctx:` — контекст [`OtaCtx`] эмитит фрагмент здесь, в `domain`; автомат
 // стоит на нём (см. `domain::heartbeat`).
 //
-// `<S, F>` — параметры фрагмента: тип ресурсного слота — `static`, назвать
-// его фрагмент обязан, а конкретный тип (`bsp::ota::Updater`, транспорт проекта)
-// `domain` не видит и видеть не должен. Compose-site подставляет их в
+// `<D>` — параметр фрагмента: тип ресурсного слота — `static`, назвать
+// его фрагмент обязан, а конкретный тип (`bsp::ota::Ota`: адаптер обновления и
+// транспорт проекта) `domain` не видит и видеть не должен. Compose-site подставляет их в
 // `fragments:` угловыми скобками, по позиции; bound'ов у параметров нет
-// намеренно — их держит сигнатура `run`, и rustc проверяет её, а не копию в
+// намеренно — их держит сигнатура `task`, и rustc проверяет её, а не копию в
 // DSL. Всё остальное, что фрагмент называет, написано полным путём
 // (`$crate::ota::Mode`, `::supervisor::…`) — от `graph.rs` он не требует
 // ни одного объявления, см. `HEARTBEAT_FRAG`.
 //
-// `local` на обоих слотах: разделы платы — `!Send` (`adapters::ota::Updater` над ними держит
+// `local` на слоте: разделы платы — `!Send` (`adapters::ota::Updater` над ними держит
 // `&'static Mutex<NoopRawMutex, …>`, а `NoopRawMutex` намеренно не `Sync`),
 // тогда как обычный слот — `static`, которому нужен `Send`. `local` меняет
 // слот на `LocalResourceSlot` и снимает это требование, взамен обязывая
 // держать значение на одном исполнителе — том, что спавнит граф. Это то же
 // допущение, на котором держится `NoopRawMutex` у `FlashMutex`: один
-// исполнитель, без вытеснения. `LINK` помечен тоже, хотя заглушка шаблона
-// `Send`: транспорт проекта вправе быть `!Send` (DMA-буферы, периферия), и
-// править ради этого фрагмент здесь не придётся. Compose-site платит фичей
-// `supervisor/local-resources` и `unsafe`-блоком на каждый `local`-`static`
-// (здесь два), которые макрос эмитит в `app`. Узел, чей `local`-слот
+// исполнитель, без вытеснения. Транспорт проекта внутри тоже вправе быть
+// `!Send` (DMA-буферы, периферия), и править ради этого фрагмент здесь не
+// придётся. Compose-site платит фичей `supervisor/local-resources` и
+// `unsafe`-блоком на каждый `local`-`static` (здесь один), которые макрос
+// эмитит в `app`. Узел, чей `local`-слот
 // заполняется инициализатором (`= inputs.…`, как здесь), нельзя перевести на
 // другой исполнитель (`executor:`): значение строится в прологе `spawn_all`
 // на исполнителе графа, а забирать его с другого запрещено; `local` без
 // инициализатора такого ограничения не несёт.
 //
-// Без `watchdog:` намеренно — см. `run`.
+// Без `watchdog:` намеренно — см. `task`.
 supervisor::supervisor_fragment! {
-    name: OTA_FRAG<S, F>;
+    name: OTA_FRAG<D>;
     boot: inputs: struct $crate::ota::OtaWiring;
 
     node deps: [], restart: Never,
         resources: [
-            /// Канал доставки образа — реализация `ImageSource` из `bsp`.
-            LINK: local S = inputs.link,
-            /// Адаптер обновления — реализация `FirmwareUpdate` поверх разделов флеша.
-            FLASH: local F = inputs.flash,
+            /// OTA платы: канал доставки образа (`ImageSource`) и адаптер
+            /// обновления поверх разделов флеша (`FirmwareUpdate`) в одном объекте.
+            DEVICE: local D = inputs.device,
             /// Режим применения: `Mode::Plain` или `Mode::Signed`.
             MODE: $crate::ota::Mode = inputs.mode,
             CONFIRMED: bool = false
         ],
         ctx: $crate::ota::OtaCtx,
-        task: $crate::ota::run;
+        task: $crate::ota::task;
 }
 
 #[cfg(test)]
@@ -418,11 +391,28 @@ mod tests {
     use core::pin::pin;
     use core::task::{Context, Waker};
 
-    use super::{Mode, OtaCtx, run};
+    use super::{Mode, OtaCtx, task};
     use crate::ota::fakes::{FakeFlash, FakeLink, SIGNATURE};
     use crate::ota::update::VERSION_BYTES;
     use crate::ota::version::pack;
+    use ports::OtaDevice;
     use ports::{Announce, Rejection};
+
+    /// Пара фейков под одним владельцем, как `adapters::ota::Ota` на плате.
+    /// Заимствует их, чтобы тест после прогона видел, что сделал узел.
+    struct Pair<'a> {
+        link: &'a mut FakeLink,
+        flash: &'a mut FakeFlash,
+    }
+
+    impl OtaDevice for Pair<'_> {
+        type Link = FakeLink;
+        type Flash = FakeFlash;
+
+        fn parts(&mut self) -> (&mut FakeLink, &mut FakeFlash) {
+            (&mut *self.link, &mut *self.flash)
+        }
+    }
 
     /// Гоняет узел, пока он не станет ждать следующий заголовок: заголовки
     /// кончились — `begin` у `FakeLink` ждёт вечно, как настоящий канал.
@@ -434,14 +424,14 @@ mod tests {
         mut mode: Mode,
         confirmed: &mut bool,
     ) {
+        let mut device = Pair { link, flash };
         let ctx = OtaCtx {
-            link,
-            flash,
+            device: &mut device,
             mode: &mut mode,
             confirmed,
             index: 0,
         };
-        let mut task = pin!(run(ctx));
+        let mut task = pin!(task(ctx));
         let mut cx = Context::from_waker(Waker::noop());
         assert!(task.as_mut().poll(&mut cx).is_pending(), "ждёт заголовок");
     }

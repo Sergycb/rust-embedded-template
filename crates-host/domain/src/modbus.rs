@@ -74,14 +74,14 @@ use supervisor::runtime::TaskExit;
 /// узел не падает, и графу перезапускать нечего. Ждать после отказа —
 /// забота транспорта (`ports::ModbusServer`).
 ///
-/// Без `watchdog:` намеренно — по правилу `heartbeat::run`:
+/// Без `watchdog:` намеренно — по правилу `heartbeat::task`:
 /// slave законно ждёт запрос сколько угодно, и отметка по таймеру сторожила
 /// бы исполнитель, а не работу.
 ///
 /// # Panics
 ///
 /// Если адрес во входе не 1..=247 — ошибка конфигурации, а не линии.
-pub async fn run<L, R>(mut ctx: ModbusSlaveCtx<'_, L, R>) -> TaskExit
+pub async fn task<L, R>(mut ctx: ModbusSlaveCtx<'_, L, R>) -> TaskExit
 where
     L: ModbusServer,
     L::Error: FormatOrDebug,
@@ -89,30 +89,6 @@ where
 {
     match ctx.run().await {}
 }
-
-// {%- if graph != "true" %}
-/// Тот же узел для проекта без графа: спавнится из `main.rs`, а слоты, которые
-/// в графе держит `static`, — локальные переменные кадра, как у
-/// [`cpu_load::task`](crate::cpu_load::task).
-///
-/// # Panics
-///
-/// Если `unit` не 1..=247 — как у [`run`].
-pub async fn task<L, R>(mut link: L, mut regs: R, mut unit: u8) -> TaskExit
-where
-    L: ModbusServer,
-    L::Error: FormatOrDebug,
-    R: ports::Registers,
-{
-    run(ModbusSlaveCtx {
-        link: &mut link,
-        regs: &mut regs,
-        unit: &mut unit,
-        index: 0,
-    })
-    .await
-}
-// {%- endif %}
 
 #[fsm::typestate]
 impl<L, R> ModbusSlaveCtx<'_, L, R>
@@ -188,7 +164,7 @@ supervisor::supervisor_fragment! {
             UNIT: u8 = inputs.unit
         ],
         ctx: $crate::modbus::ModbusSlaveCtx,
-        task: $crate::modbus::run;
+        task: $crate::modbus::task;
 }
 
 #[cfg(test)]
@@ -196,7 +172,7 @@ mod tests {
     use core::pin::pin;
     use core::task::{Context, Waker};
 
-    use super::{ModbusSlaveCtx, run};
+    use super::{ModbusSlaveCtx, task};
     use crate::modbus::fakes::{Map, Server};
 
     /// Узел отвечает на запросы, а конец потока переживает как конец сессии:
@@ -212,7 +188,7 @@ mod tests {
                 unit: &mut 7,
                 index: 0,
             };
-            let mut task = pin!(run(ctx));
+            let mut task = pin!(task(ctx));
             let mut cx = Context::from_waker(Waker::noop());
             assert!(
                 task.as_mut().poll(&mut cx).is_pending(),

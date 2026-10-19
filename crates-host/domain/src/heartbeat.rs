@@ -58,7 +58,7 @@ const _: () = assert!(
 /// исполнитель, а не полезную работу.
 ///
 /// Возвращаемый `TaskExit` — то, что граф сообщает о закончившемся прогоне.
-/// У автомата нет выходного состояния, `run` не возвращается никогда, так
+/// У автомата нет выходного состояния, `task` не возвращается никогда, так
 /// что значение недостижимо: узлы шаблона не падают (`restart: Never`), а
 /// на отказ связи пишут в лог и продолжают.
 ///
@@ -66,7 +66,7 @@ const _: () = assert!(
 /// `deps:` (порядок старта), `inbox:` (очередь событий — источник в
 /// `listen`), `resources:` (ручка периферии, переживающая перезапуск задачи)
 /// — всё это описано в `docs/modules/app-graph.md`.
-pub async fn run(mut ctx: HeartbeatCtx<'_>) -> TaskExit {
+pub async fn task(mut ctx: HeartbeatCtx<'_>) -> TaskExit {
     match ctx.run().await {}
 }
 
@@ -129,7 +129,7 @@ impl HeartbeatCtx<'_> {
 //   HEARTBEAT» в этом файле — про то, как его зовёт граф шаблона.
 // * Токены ниже резолвятся НЕ здесь, а на compose-site: так работает
 //   `macro_rules!`. Поэтому всё, что фрагмент называет, написано полным путём
-//   — `$crate::heartbeat::WATCHDOG`, `$crate::heartbeat::run` — и от
+//   — `$crate::heartbeat::WATCHDOG`, `$crate::heartbeat::task` — и от
 //   compose-site ничего не требует: голое имя (`WATCHDOG`) искалось бы в
 //   `graph.rs` и падало бы там с `E0425`. `$crate::` при этом указывает сюда
 //   и переживает переименование зависимости в чужом манифесте
@@ -146,5 +146,5 @@ supervisor::supervisor_fragment! {
     node deps: [], restart: Never,
         watchdog: $crate::heartbeat::WATCHDOG observe,
         ctx: $crate::heartbeat::HeartbeatCtx,
-        task: $crate::heartbeat::run;
+        task: $crate::heartbeat::task;
 }

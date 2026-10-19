@@ -79,7 +79,7 @@ pub const TICK: Duration = Duration::from_millis(10);
     reason = "типы zencan-node не реализуют Debug"
 )]
 pub struct Stack<'f> {
-    /// Сам стек — в кадре задачи ([`run`]): состояния держат ссылку, и
+    /// Сам стек — в кадре задачи ([`task`]): состояния держат ссылку, и
     /// переход не копирует его.
     node: &'f mut Node<'f>,
     /// Момент создания стека — начало его отсчёта времени.
@@ -139,7 +139,7 @@ pub fn dictionary() -> Dictionary {
 /// (`persist` во входе — `false`) колбэков нет: стек отвечает на `save` и на
 /// LSS «Store configuration» отказом.
 ///
-/// Без `watchdog:` намеренно — по правилу `heartbeat::run`:
+/// Без `watchdog:` намеренно — по правилу `heartbeat::task`:
 /// узлу нечем отметиться, кроме собственного такта, а он сторожил бы
 /// исполнитель, а не работу.
 ///
@@ -147,7 +147,7 @@ pub fn dictionary() -> Dictionary {
 ///
 /// Если `node_id` во входе не 1..=127, а сохранённого адреса нет, — ошибка
 /// конфигурации.
-pub async fn run<C, S>(mut ctx: CanOpenCtx<'_, C, S>) -> TaskExit
+pub async fn task<C, S>(mut ctx: CanOpenCtx<'_, C, S>) -> TaskExit
 where
     C: CanBus,
     C::Error: FormatOrDebug,
@@ -173,39 +173,6 @@ where
     });
     match ctx.run(&persisted, &mut callbacks, &mut node).await {}
 }
-
-// {%- if graph != "true" %}
-/// Тот же узел для проекта без графа: спавнится из `main.rs`, а слоты, которые
-/// в графе держит `static`, — локальные переменные кадра, как у
-/// [`cpu_load::task`](crate::cpu_load::task).
-///
-/// # Panics
-///
-/// Как у [`run`]: если `node_id` не 1..=127, а сохранённого адреса нет.
-pub async fn task<C, S>(
-    mut bus: C,
-    mut node_id: u8,
-    mut dictionary: Dictionary,
-    mut settings: S,
-    mut persist: bool,
-) -> TaskExit
-where
-    C: CanBus,
-    C::Error: FormatOrDebug,
-    S: SettingsStorage,
-    S::Error: FormatOrDebug,
-{
-    run(CanOpenCtx {
-        bus: &mut bus,
-        node_id: &mut node_id,
-        dictionary: &mut dictionary,
-        settings: &mut settings,
-        persist: &mut persist,
-        index: 0,
-    })
-    .await
-}
-// {%- endif %}
 
 #[fsm::typestate]
 impl<'f, C, S> CanOpenCtx<'_, C, S>
@@ -389,7 +356,7 @@ where
 // `<C>` и `<S>` — параметры фрагмента: шину и хранилище настроек платы
 // `domain` не видит. `local` — шина и хранилище вправе быть `!Send`
 // (периферия). Словарь — обычный слот: ссылки на `static` — `Send`. Стек и
-// его колбэки слотов не занимают: они в кадре задачи (`run`).
+// его колбэки слотов не занимают: они в кадре задачи (`task`).
 supervisor::supervisor_fragment! {
     name: CANOPEN_FRAG<C, S>;
     boot: inputs: struct $crate::canopen::CanOpenWiring;
@@ -408,7 +375,7 @@ supervisor::supervisor_fragment! {
             PERSIST: bool = inputs.persist
         ],
         ctx: $crate::canopen::CanOpenCtx,
-        task: $crate::canopen::run;
+        task: $crate::canopen::task;
 }
 
 // Тесты гоняют узел на словаре примера `crates-host/canopen`.
@@ -422,7 +389,7 @@ mod tests {
     use embedded_can::{Frame, Id, StandardId};
     use ports::{CanBus, LinkError, SettingsStorage};
 
-    use super::{CanOpenCtx, Dictionary, NODE_ID_KEY, run};
+    use super::{CanOpenCtx, Dictionary, NODE_ID_KEY, task};
 
     /// Адрес узла в тестах: SDO-запросы — на `0x605`, ответы — с `0x585`.
     const NODE: u8 = 5;
@@ -590,7 +557,7 @@ mod tests {
             persist: &mut persist,
             index: 0,
         };
-        let mut task = pin!(run(ctx));
+        let mut task = pin!(task(ctx));
         let mut cx = Context::from_waker(Waker::noop());
         assert!(task.as_mut().poll(&mut cx).is_pending(), "ждёт кадр");
     }

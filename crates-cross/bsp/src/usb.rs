@@ -25,6 +25,13 @@ pub type UsbDriver = Unconnected;
 /// USB платы: устройство для узла `USB` и поток CDC под протоколом.
 pub type Usb = adapters::usb::Usb<UsbDriver>;
 
+/// Поток CDC платы — то, на чём стоит транспорт протокола.
+pub type Cdc = adapters::usb::CdcStream<'static, UsbDriver>;
+
+/// Устройство `embassy-usb` платы — то, что исполняет узел `USB`. Псевдоним,
+/// чтобы `app` не называл `embassy-usb`.
+pub type Device = embassy_usb::UsbDevice<'static, UsbDriver>;
+
 /// Собирает USB-устройство с одним классом CDC ACM над драйвером платы
 /// (`adapters::usb::cdc`). Серийный номер устройства — заводской номер чипа.
 /// Блок приходит группой `resources.rs` — заглушка его не трогает, драйвер

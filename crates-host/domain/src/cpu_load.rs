@@ -16,12 +16,12 @@
 //! снаружи их не видно. А именно там проходит всё время, когда задач нет.
 //! Считать сон как «всё, что не сон», — значит получить 100% на пустой плате.
 //!
-//! Два входа — `run` для проекта с графом и `task` для проекта
+//! Два входа — `task` для проекта с графом и `log_load` для проекта
 //! без него (в проекте остаётся только нужный: лишний вырезает генерация). Различаются они не вычислением (оно одно, `CpuLoad::sample`
 //! над `snapshot`), а тем, куда уходит результат: в графе он публикуется в
 //! `Watch`, без графа публиковать некому, и значение уходит в лог. Узел графа
 //! — автомат `#[fsm::typestate]` на контексте `CpuLoadCtx`, который эмитит
-//! фрагмент ниже; `task` — не узел, контекста у него нет, и он
+//! фрагмент ниже; `log_load` — не узел, контекста у него нет, и он
 //! остаётся простым циклом.
 //!
 //! Публикация — только половина задачи. Кто и зачем читает загрузку, решает
@@ -118,7 +118,7 @@ fn snapshot(sleep_ticks: &SleepTicks) -> Sample {
 ///
 /// У автомата нет выходного состояния, поэтому [`TaskExit`] недостижим: узел
 /// не падает (`restart: Never`).
-pub async fn run(mut ctx: CpuLoadCtx<'_>) -> TaskExit {
+pub async fn task(mut ctx: CpuLoadCtx<'_>) -> TaskExit {
     match ctx.run().await {}
 }
 
@@ -185,7 +185,7 @@ impl CpuLoadCtx<'_> {
 /// Строка на каждом интервале — сознательное исключение из правила «пустой узел
 /// молчит»: здесь она и есть результат измерения, и в проекте без графа иначе
 /// негде его увидеть. Подпишетесь на узел и сможете убрать.
-pub async fn task(sleep_ticks: &SleepTicks) {
+pub async fn log_load(sleep_ticks: &SleepTicks) {
     let mut cpu_load = CpuLoad::new();
     loop {
         embassy_time::Timer::after(SAMPLE_INTERVAL).await;
@@ -238,5 +238,5 @@ supervisor::supervisor_fragment! {
         publish: [PERCENT: u8; 1],
         watchdog: $crate::cpu_load::WATCHDOG observe,
         ctx: $crate::cpu_load::CpuLoadCtx,
-        task: $crate::cpu_load::run;
+        task: $crate::cpu_load::task;
 }
