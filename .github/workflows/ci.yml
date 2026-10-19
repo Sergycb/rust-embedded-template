@@ -5,7 +5,7 @@ on:
     branches: [main, master]
   pull_request:
 
-# Все три джобы этого workflow только читают репозиторий, поэтому права
+# Все джобы этого workflow только читают репозиторий, поэтому права
 # объявлены явно и минимально: по умолчанию они зависят от настроек
 # организации, и без этой строки прогон получил бы ровно столько, сколько
 # надумает владелец. Право на запись есть только у release.yml — там оно
@@ -97,6 +97,20 @@ jobs:
 
   # Джоба kani нет намеренно — Kani убран из шаблона целиком, причины в
   # docs/conventions.md («Известные, осознанные ограничения»).
+
+  # Опечатки в коде и документации. Отдельным джобом и без Rust: проверка по
+  # тексту, сборки ей не нужно, а параллельный запуск ничего не удлиняет.
+  # Исключения — `.typos.toml`.
+  typos:
+    name: Typos
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2 (2.87.22)
+        with:
+          tool: typos
+      - run: typos
 
   cross:
     name: Cross (fmt, clippy, build)
