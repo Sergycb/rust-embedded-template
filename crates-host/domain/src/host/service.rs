@@ -1,6 +1,7 @@
 //! Обработчик сообщений хоста по умолчанию — над примером схемы
 //! `crates-host/proto`.
 
+use embassy_time::Instant;
 use ports::HostService;
 use proto::{Error, Info, Pong, Request, Request_, Response, Response_, heapless};
 
@@ -70,6 +71,10 @@ impl Service {
             uid: heapless::Vec::from_slice(&info.uid).unwrap_or_default(),
             flash_size: info.flash_size,
             sys_hz: info.sys_hz.unwrap_or(0),
+            // Часы `embassy-time` идут с запуска: их отсчёт и есть время работы.
+            // Секунды в `u32` — 136 лет; 64-битные поля `micropb` кодирует
+            // только с фичей `enable-64bit`.
+            uptime_s: u32::try_from(Instant::now().as_secs()).unwrap_or(u32::MAX),
         }
     }
 }
@@ -133,6 +138,13 @@ pub(crate) mod tests {
         assert_eq!(info.uid.as_slice(), &INFO.uid);
         assert_eq!(info.flash_size, 512 * 1024);
         assert_eq!(info.sys_hz, 0, "неизвестная частота — 0");
+    }
+
+    #[test]
+    fn info_reports_uptime() {
+        let before = Service::new(INFO).info().uptime_s;
+        embassy_time::MockDriver::get().advance(embassy_time::Duration::from_secs(2));
+        assert!(Service::new(INFO).info().uptime_s >= before + 2);
     }
 
     #[test]
