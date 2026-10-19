@@ -57,8 +57,9 @@
 `{{page_size}}`, `{{swap_paged}}`, `{{state_erase_size}}`, `{{state_paged}}`, `{{config_erase_size}}`, `{{config_paged}}`, `{{boot_partitioned}}`, `{{config_store}}`,
 `{{shared_flash}}`, `{{dual_core}}`, `{{bank_mode}}`, `{{erase_zero}}`,
 `{{watchdog_peripheral}}`, `{{cpu_freq_boost}}`, `{{dfu_bank}}`, `{{bank_switch}}`, `{{dual_bank_bit}}` — плейсхолдеры, подставляемые
-Liquid-рендером cargo-generate. Из них в `[placeholders]` объявлены только `ci`, `ota`, `graph`,
-`config`, `signed` (и условный `modbus_master`, см. ниже); все остальные выставляет `variable::set` в `[hooks].pre`-скрипте
+Liquid-рендером cargo-generate. Из них в `[placeholders]` объявлен только `ci`; вопросы про OTA, настройки,
+граф, транспорт и протокол задаёт сам хук после выбора чипа (см. «Вопросы в хуке» ниже), а все остальные
+выставляет `variable::set` в `[hooks].pre`-скрипте
 `chip-select.rhai` — каскадный посимвольный выбор STM32 (семейство → линейка → дальше по
 символу) по списку чипов, одновременно валидных и для `embassy-stm32`, и для
 установленного локально `probe-rs`. Не `init`-хук: init-хуки выполняются ДО резолвинга
@@ -119,12 +120,8 @@ bootloader и `STATE`. Отсюда и второй набор цифр в `MEMO
 
 `modbus_master` (Modbus master, клиентская половина; по умолчанию `no`) — той же формы:
 строка `yes`/`no`, хук приводит ответ к `"true"`/`"false"`. Смысл он имеет только при
-`protocol=modbus`, поэтому вопрос объявлен условным —
-`[conditional.'protocol == "modbus"'.placeholders]` в `cargo-generate.toml`: при другом
-протоколе (в том числе `none`) его не задают, а переменная не заводится вовсе (хук
-читает её через `variable::is_set`). `--define modbus_master=yes` при другом протоколе
-всё равно возможен — такой «yes» молча становится `"false"`, и master не получают ни
-protobuf, ни CANopen. «true» оставляет `ports::ModbusClient`/`MasterError`,
+`protocol=modbus`: меню спрашивает его только тогда, а `--define modbus_master=yes` при другом
+протоколе — ошибка (`no` принимается). Master не получают ни protobuf, ни CANopen. «true» оставляет `ports::ModbusClient`/`MasterError`,
 `domain::modbus::master`, клиентские impl'ы транспортов `Rtu`/`Tcp`/`Udp` (в них же
 слив `MAX_DRAIN` RTU и `master_error`) и их тесты; «false» вырезает всё это
 Liquid-блоками `// {%- if modbus_master == "true" %}` … `// {%- endif %}` (в
@@ -486,15 +483,28 @@ bootloader'а не меньше `BOOTLOADER_MIN`» стережёт `bootloader_
 Хук выбирает набор по ответу `ota` (`internal`/`external`/`no`; незнакомый ответ —
 ошибка генерации) и `config`, пишет `memory.x` с символами-смещениями внешней флеши и
 выставляет `ota_store` (на него смотрят `boot`, `bsp::flash`, `bsp::settings`,
-`target-tests`, `xtask`) и `ext_page_size`. Вопросы задаются до каскада, и ответы
-отсекают чипы из списка (`plan()` и `fits_answers()` в `chip-select.rhai` — одно
-решение и для списка, и для выбранного чипа): сетевой интерфейс оставляет чипы с
-Ethernet, `usb`/`can`/`uart` — с нужным блоком, `ota` — чипы, где схема помещается,
-`config` — где есть место или EEPROM под настройки, `graph` — где граф влезает в
-раздел приложения. Каскад по символам предлагает только оставшиеся и говорит,
-сколько их. Чип, заданный напрямую (`--define chip_feature=...`), не фильтруется:
-для него остаются прежние отказы с подсказкой. Тесты, которые проверяют именно эти
-отказы, задают чип так же (`run_chip_with` в `tests/cascade.rs`). В
+`target-tests`, `xtask`) и `ext_page_size`.
+
+**Вопросы в хуке.** Чип выбирается первым (каскад по символам или `--define chip_feature=...`),
+а OTA, настройки, граф, транспорт и протокол спрашивает сам хук — в таком порядке, и
+`variable::prompt` показывает только допустимое для чипа (`ask()`, блок «Вопросы» в
+`chip-select.rhai`): граф, который не влезает в раздел приложения, и интерфейс без блока
+у чипа не предлагаются, протоколы берутся из `PROTOCOL_INTERFACES` для выбранного
+транспорта; OTA и настройки, не помещающиеся на чип, остаются в меню с пометкой «НЕ
+ПОМЕЩАЕТСЯ» — их выбор включает ручную раскладку (хук ставит `write_size`, как при
+`--define write_size=...`). Объявить эти вопросы в `[placeholders]` нельзя: `cargo-generate`
+задал бы их сам до выбора чипа (и требует `prompt` у любого объявленного).
+Без терминала `variable::prompt` отвечает «not a terminal», и `ask()` берёт умолчание:
+OTA — `internal`, если схема помещается, иначе `no`; остальные — `no`/`none`/`yes`.
+`--define` — режим для скриптов и **строгий**: опечатка и значение, невозможное для
+чипа, — `throw` с объяснением, а не подстановка (иначе молча снятая защита, вроде
+bootloader'а, всплыла бы на первом обновлении). Чип, заданный напрямую, не фильтруется
+ответами; если же чип не задан, а через `--define` пришли ответы, список чипов в каскаде
+сужается ими (`plan()` и `fits_answers()` — одно решение и для списка, и для выбранного
+чипа). Тесты: `the_menus_come_in_order_and_offer_only_what_is_possible`, обход всех
+путей по меню на характерных чипах (`every_path_through_the_menus_generates`; на каждом
+пути заданы все переменные шаблона) и умолчания для каждого чипа
+(`every_chip_generates_with_the_defaults`) в `tests/cascade.rs`. В
 ветках с ручной раскладкой (`write_size` через `--define`, чип без раскладки)
 `ext_page_size` — 4 KiB с предупреждением, как `state_erase_size` там же.
 

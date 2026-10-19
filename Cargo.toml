@@ -136,9 +136,10 @@ embassy-sync           = { version = "0.8.0" }
 embedded-storage       = { version = "0.3.1" }
 embedded-storage-async = { version = "0.4.1" }
 sequential-storage     = { version = "8.0.1", default-features = false }
-# {%- if protocol == "modbus" or protocol == "protobuf" %}
-# Транспорт протоколов `domain` (`domain::modbus`): поток байтов, который уже
-# реализуют `BufferedUart` из `embassy-stm32`, USB CDC и сокет `embassy-net`.
+# {%- if stream_io == "true" %}
+# Транспорт поверх потока байтов (`adapters::serial`, `usb`, `net::TcpServer` и
+# протоколы над ними): поток, который уже реализуют `BufferedUart` из
+# `embassy-stm32`, USB CDC и сокет `embassy-net`.
 # Версия та же, что у `embassy-stm32` 0.6, — иначе в прошивке были бы две копии
 # трейта, и UART его бы не реализовывал.
 embedded-io-async      = { version = "0.7.0" }
@@ -157,7 +158,7 @@ rusty-modbus-types     = { version = "0.1.1", default-features = false }
 # и CRC. Тот же крейт стоит под `postcard` и `ergot`. Без `std` (он в default).
 cobs                   = { version = "0.5.1", default-features = false }
 # {%- endif %}
-# {%- if protocol == "modbus" or protocol == "protobuf" %}
+# {%- if crc_used == "true" %}
 # CRC кадров: CRC-16/IBM-SDLC (X.25, FCS у HDLC/PPP) в `adapters::cobs`,
 # CRC-16/MODBUS в `domain::modbus` — одна реализация вместо своих.
 crc                    = { version = "3.4.0" }
@@ -205,6 +206,8 @@ embassy-usb            = { version = "0.6.0", default-features = false }
 # исключение в `deny.toml`. Без `std`/`log` в default — их выбирают крейты.
 zencan-node            = { version = "0.0.5", default-features = false }
 zencan-build           = { version = "0.0.5" }
+# {%- endif %}
+# {%- if interface == "can" %}
 # Кадр CAN в порту `ports::CanBus`: трейт `Frame`, который реализует кадр
 # `embassy-stm32` — та же версия 0.4.
 embedded-can           = { version = "0.4.1" }

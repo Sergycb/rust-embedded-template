@@ -287,6 +287,49 @@ fn fits_answers(m, erase_zero, wants, need, limits) {
         && (!need.config || p.config) && (!need.graph || p.graph)
 }
 
+/// Меню из нескольких вариантов: `texts` показываются как есть, а значение —
+/// первое слово текста, поэтому `values[i]` соответствует `texts[i]`. Без
+/// терминала (`--silent`, CI) `variable::prompt` отвечает ошибкой «not a
+/// terminal», и тогда берётся `default_value`: вопрос, который некому задать, не
+/// должен ронять генерацию. Любая другая ошибка (прерванный выбор) пробрасывается.
+fn ask(label, values, texts, default_value) {
+    let default_text = texts[0];
+    for i in 0..values.len() {
+        if values[i] == default_value { default_text = texts[i]; }
+    }
+    let pick = default_text;
+    try {
+        pick = variable::prompt(label, default_text, texts);
+    } catch (err) {
+        if !err.to_string().contains("not a terminal") {
+            throw err;
+        }
+    }
+    for i in 0..texts.len() {
+        if texts[i] == pick { return values[i]; }
+    }
+    default_value
+}
+
+/// Есть ли у чипа блок интерфейса: `have` — метки чипа, `blocks` — метки интерфейса.
+fn has_block(have, blocks) {
+    for tag in have {
+        if blocks.contains(tag) { return true; }
+    }
+    false
+}
+
+/// Значения через запятую — для сообщений об ошибке. `reduce` без начального
+/// значения начинает с `()`, и список получил бы ведущую запятую.
+fn listed(values) {
+    let out = "";
+    for v in values {
+        if out != "" { out += ", "; }
+        out += v;
+    }
+    out
+}
+
 /// Адрес из таблицы раскладки: `"0x08008000"`. `parse_int` в rhai понимает
 /// только десятичные числа без префикса, поэтому шестнадцатеричный разбор свой.
 fn hex_value(text) {
@@ -450,6 +493,9 @@ if variable::is_set("config") {
 let wants_graph = true;
 if variable::is_set("graph") {
     let answer = variable::get("graph");
+    if answer != "yes" && answer != "true" && answer != "no" && answer != "false" {
+        throw "graph: ожидается yes или no, а не «" + answer + "»";
+    }
     wants_graph = answer == "yes" || answer == "true";
 }
 if !wants_graph {
@@ -485,6 +531,29 @@ const INTERFACE_BLOCKS = #{
     "tcp": ["eth"],
     "udp": ["eth"],
     "usb": ["usb", "otg"],
+};
+
+// Какие интерфейсы годятся протоколу. Без протокола («none») годится любой: проект
+// получает заглушку транспорта и его фоновый узел (`NET`, `USB`), а протокол —
+// ваш. Новый интерфейс добавляется строкой здесь и в `INTERFACE_BLOCKS`.
+const PROTOCOL_INTERFACES = #{
+    "none": ["uart", "can", "tcp", "udp", "usb"],
+    "modbus": ["uart", "tcp", "udp", "usb"],
+    "protobuf": ["uart", "tcp", "udp", "usb"],
+    "canopen": ["can"],
+};
+// Строки меню. Первое слово — значение ответа (то же, что `--define interface=...`).
+const INTERFACE_TEXT = #{
+    "uart": "uart — UART (RS-485 — тот же UART с выводом DE)",
+    "can": "can — шина CAN",
+    "tcp": "tcp — Ethernet, TCP-сервер",
+    "udp": "udp — Ethernet, UDP-канал",
+    "usb": "usb — USB CDC ACM (виртуальный COM-порт)",
+};
+const PROTOCOL_TEXT = #{
+    "modbus": "modbus — Modbus slave",
+    "protobuf": "protobuf — сообщения protobuf от хоста",
+    "canopen": "canopen — узел CANopen (стек zencan)",
 };
 
 // Ответы отсекают чипы ещё до каскада: сетевой стек просит чип с Ethernet,
@@ -738,6 +807,213 @@ if !MEMORY_LAYOUT.contains(suffix) {
 let erase_zero = MEMORY_LAYOUT[suffix]["erase_zero"] == "true";
 variable::set("erase_zero", if erase_zero { "true" } else { "false" });
 
+// ============================================================================
+// Вопросы про OTA, настройки, граф, транспорт и протокол — после выбора чипа.
+//
+// Чип уже известен, поэтому каждое меню предлагает только то, что для него
+// возможно, а невозможного выбрать нельзя вовсе:
+//   * граф, который не влезает в раздел приложения, не предлагается;
+//   * интерфейс, блока которого у чипа нет, не предлагается;
+//   * протоколы показываются только те, что работают поверх выбранного транспорта;
+//   * OTA и настройки, которые на чип не помещаются, остаются в меню с
+//     пометкой «НЕ ПОМЕЩАЕТСЯ»: выбрав их, пользователь получает ручную
+//     раскладку памяти (как при `--define write_size=...`) и сам решает, что
+//     менять.
+// Ответ, пришедший через `--define`, — режим для скриптов, и проверяется строго:
+// опечатка и невозможное для чипа значение остаются ошибкой с объяснением.
+// Без терминала и без `--define` вопрос получает умолчание.
+// ============================================================================
+let layout = MEMORY_LAYOUT[suffix];
+let chip_name = variable::get("chip");
+let protocol = "none";
+let iface = "none";
+let wants_master = false;
+
+// --- OTA
+if !variable::is_set("ota") {
+    // Настройки, заданные через `--define`, уже известны и меняют размер `ACTIVE`;
+    // заданные в меню спрашиваются ниже, и тогда их цену покажет их собственный пункт.
+    let plan_int = plan(layout, erase_zero, #{ ota: true, ext_ota: false, config: wants_config, external: wants_external, graph: false }, LIMITS);
+    let plan_ext = plan(layout, erase_zero, #{ ota: true, ext_ota: true, config: wants_config, external: wants_external, graph: false }, LIMITS);
+    let text_int = if plan_int.ota {
+        "internal — DFU во flash чипа, ACTIVE " + layout[plan_int.ota_key + "active_length"]
+    } else {
+        "internal — НЕ ПОМЕЩАЕТСЯ на этом чипе: раскладку памяти придётся писать вручную"
+    };
+    let text_ext = if plan_ext.ext_ota {
+        "external — DFU и STATE на внешней флеши, ACTIVE " + layout[plan_ext.ota_key + "active_length"]
+    } else {
+        "external — НЕ ПОМЕЩАЕТСЯ на этом чипе: раскладку памяти придётся писать вручную"
+    };
+    let answer = ask(
+        "ota: OTA (bootloader и разделы ACTIVE/DFU)",
+        ["internal", "external", "no"],
+        [text_int, text_ext, "no — без OTA: один образ на весь flash"],
+        if plan_int.ota { "internal" } else { "no" }
+    );
+    wants_ext_ota = answer == "external";
+    wants_ota = answer != "no";
+    if !wants_ota {
+        print("OTA отключён по вашему выбору: один образ на весь flash, crates-cross/boot в проект не входит");
+    }
+}
+
+// --- Настройки
+if !variable::is_set("config") {
+    let plan_cfg = plan(layout, erase_zero, #{ ota: wants_ota, ext_ota: wants_ext_ota, config: true, external: false, graph: false }, LIMITS);
+    let kind = config_store(layout, true, false, EEPROM_MIN);
+    let values = ["no"];
+    let texts = ["no — без хранилища настроек"];
+    // Флеш чипа, стирающийся в ноль, `sequential-storage` не годится (он считает
+    // стёртым 0xFF), а EEPROM его обходит; внутреннего варианта без неё нет.
+    if kind == "eeprom" || !erase_zero {
+        values.push("internal");
+        if kind == "eeprom" {
+            texts.push("internal — внутренняя EEPROM чипа: flash под настройки не тратится");
+        } else if plan_cfg.config {
+            let note = if wants_ota && !plan_cfg.ota {
+                " (но тогда OTA не поместится: раскладку памяти придётся писать вручную)"
+            } else {
+                ""
+            };
+            texts.push("internal — раздел " + layout[plan_cfg.settings_key + "length"] + " во flash" + note);
+        } else {
+            texts.push("internal — НЕ ПОМЕЩАЕТСЯ на этом чипе: раскладку памяти придётся писать вручную");
+        }
+    }
+    values.push("external");
+    texts.push("external — внешняя флеш: драйвер своей микросхемы подставляете вы");
+    let answer = ask("config: хранилище настроек (sequential-storage)", values, texts, "no");
+    wants_external = answer == "external";
+    wants_config = answer != "no";
+} else if wants_config && !wants_external && config_store(layout, true, false, EEPROM_MIN) == "flash" && erase_zero {
+    throw "config: у " + chip_name + " флеш стирается в ноль, а sequential-storage считает стёртым 0xFF — хранилище молча не заработало бы; выберите config=external или config=no";
+}
+
+// --- Граф. Помещается ли он, зависит от выбранных OTA и настроек.
+let wants_now = #{ ota: wants_ota, ext_ota: wants_ext_ota, config: wants_config, external: wants_external, graph: true };
+let plan_now = plan(layout, erase_zero, wants_now, LIMITS);
+// Выбор, который на чип не помещается: размер раздела приложения тогда знает
+// только человек, поэтому граф не отсекается (как в ручной раскладке ниже).
+let manual_now = variable::is_set("write_size") || (wants_ota && !plan_now.ota) || (wants_config && !plan_now.config);
+if variable::is_set("graph") {
+    if wants_graph && !manual_now && !plan_now.graph {
+        throw "graph: у " + chip_name + " под приложение отведено " + layout[plan_now.app_length_key] + ", а граф задач (supervisor) туда не помещается; выберите graph=no";
+    }
+} else if manual_now || plan_now.graph {
+    let answer = ask(
+        "graph: граф задач supervisor (порядок старта, рестарты, watchdog)",
+        ["yes", "no"],
+        ["yes — граф задач и сторож", "no — без графа: main заканчивается после инициализации"],
+        "yes"
+    );
+    wants_graph = answer == "yes";
+    if !wants_graph {
+        print("Граф задач отключён по вашему выбору: main заканчивается после инициализации");
+    }
+} else {
+    wants_graph = false;
+    print("Граф задач не предлагается: у " + chip_name + " под приложение отведено " + layout[plan_now.app_length_key]
+        + ", а supervisor туда не помещается");
+}
+
+// --- Транспорт. Предлагается то, чьи блоки у чипа выведены в корпус.
+let have = INTERFACES[suffix];
+let available = [];
+for name in ["uart", "can", "tcp", "udp", "usb"] {
+    if has_block(have, INTERFACE_BLOCKS[name]) { available.push(name); }
+}
+let wanted_protocol = if variable::is_set("protocol") { variable::get("protocol") } else { "" };
+if wanted_protocol != "" && !PROTOCOL_INTERFACES.contains(wanted_protocol) {
+    throw "protocol: ожидается " + listed(PROTOCOL_INTERFACES.keys()) + ", а не «" + wanted_protocol + "»";
+}
+if variable::is_set("interface") {
+    iface = variable::get("interface");
+    if iface != "none" && !INTERFACE_BLOCKS.contains(iface) {
+        throw "interface: ожидается none, " + listed(INTERFACE_BLOCKS.keys()) + ", а не «" + iface + "»";
+    }
+    if iface != "none" && !available.contains(iface) {
+        throw "interface: у " + chip_name + " нет выведенного блока " + listed(INTERFACE_BLOCKS[iface]).to_upper() + " — интерфейс " + iface + " недоступен";
+    }
+} else if wanted_protocol != "" && wanted_protocol != "none" {
+    // Протокол задан `--define`, а транспорт нет: аппаратную часть молча не
+    // выбирают — `--define` строгий, транспорт задаётся тоже.
+    let usable = [];
+    for name in available {
+        if PROTOCOL_INTERFACES[wanted_protocol].contains(name) { usable.push(name); }
+    }
+    if usable.len() == 0 {
+        throw "protocol: у " + chip_name + " нет транспорта для протокола " + wanted_protocol + " (нужен " + listed(PROTOCOL_INTERFACES[wanted_protocol]) + ")";
+    }
+    throw "protocol: протокол " + wanted_protocol + " нужен транспорт — задайте interface (" + listed(usable) + ")";
+} else {
+    let values = ["none"];
+    let texts = ["none — без транспорта"];
+    for name in available {
+        values.push(name);
+        texts.push(INTERFACE_TEXT[name]);
+    }
+    iface = ask("interface: транспорт под протоколом (интерфейс платы)", values, texts, "none");
+}
+
+// --- Протокол. Только те, что работают поверх выбранного транспорта.
+if iface != "none" {
+    if wanted_protocol != "" {
+        protocol = wanted_protocol;
+        if !PROTOCOL_INTERFACES[protocol].contains(iface) {
+            throw "interface: протокол " + protocol + " работает поверх " + listed(PROTOCOL_INTERFACES[protocol]) + ", а не «" + iface + "»";
+        }
+    } else {
+        let values = ["none"];
+        let texts = ["none — без протокола: заглушка транспорта и его узел есть, протокол пишете вы"];
+        for name in ["modbus", "protobuf", "canopen"] {
+            if PROTOCOL_INTERFACES[name].contains(iface) {
+                values.push(name);
+                texts.push(PROTOCOL_TEXT[name]);
+            }
+        }
+        if values.len() > 1 {
+            protocol = ask("protocol: протокол связи (узел в графе)", values, texts, "none");
+        }
+    }
+} else if wanted_protocol != "" && wanted_protocol != "none" {
+    throw "protocol: протокол " + wanted_protocol + " нужен транспорт — задайте interface (" + listed(PROTOCOL_INTERFACES[wanted_protocol]) + ")";
+}
+
+// --- Master Modbus: только у Modbus.
+if protocol == "modbus" {
+    if variable::is_set("modbus_master") {
+        let answer = variable::get("modbus_master");
+        if answer != "yes" && answer != "true" && answer != "no" && answer != "false" {
+            throw "modbus_master: ожидается yes или no, а не «" + answer + "»";
+        }
+        wants_master = answer == "yes" || answer == "true";
+    } else {
+        let answer = ask(
+            "modbus_master: Modbus master (клиент) в дополнение к slave",
+            ["no", "yes"],
+            ["no — только slave", "yes — ещё и master (клиентские функции и транспорты)"],
+            "no"
+        );
+        wants_master = answer == "yes";
+    }
+} else if variable::is_set("modbus_master") {
+    let answer = variable::get("modbus_master");
+    if answer == "yes" || answer == "true" {
+        throw "modbus_master: master есть только у протокола modbus, а выбран " + protocol;
+    }
+}
+
+// Итог ответов: по нему считается раскладка. Если выбранное на чип не
+// помещается, память остаётся человеку — как при `--define write_size=...`.
+const WANTS_FINAL = #{ ota: wants_ota, ext_ota: wants_ext_ota, config: wants_config, external: wants_external, graph: wants_graph };
+let plan_final = plan(layout, erase_zero, WANTS_FINAL, LIMITS);
+if !variable::is_set("write_size") && ((wants_ota && !plan_final.ota) || (wants_config && !plan_final.config)) {
+    variable::set("write_size", layout["write_size"]);
+    print("Выбранное не помещается на " + chip_name + ": раскладку памяти (memory.x и числа в [env]");
+    print("  crates-cross/.cargo/config.toml) вы заполняете сами — так же, как при --define write_size=...");
+}
+
 // Где лежат настройки (`config_store`) — одним решением для всех трёх веток
 // ниже (см. `config_store()` выше).
 let store = config_store(MEMORY_LAYOUT[suffix], wants_config, wants_external, EEPROM_MIN);
@@ -755,6 +1031,13 @@ variable::set("active_len", "");
 variable::set("config_start", "");
 variable::set("config_end", "");
 variable::set("state_erase_size", "");
+// Переменные, которые ниже задаются только в части веток: Liquid не должен
+// встречать неопределённую, даже если ветку с её чтением он не рисует.
+variable::set("config_erase_size", "");
+variable::set("ext_page_size", "");
+variable::set("iface_periph", "");
+variable::set("can_kind", "");
+variable::set("usb_kind", "");
 // Нужна ли `STATE` и `CONFIG` своя страница (`adapters::flash::ErasePage`): только
 // когда сектор раздела мельче страницы цельного `Flash` — F2/F4/F7. Иначе раздел
 // строится прямо над `Whole`, а равенство страниц держит `const`-assert в `bsp`.
@@ -858,7 +1141,7 @@ if variable::is_set("write_size") {
     // DFU лежит в нём, и прошивка пишет его через регион банка.
     let dfu_bank = m.contains("dfu_bank_origin");
 
-    let pl = plan(m, erase_zero, WANTS, LIMITS);
+    let pl = plan(m, erase_zero, WANTS_FINAL, LIMITS);
     let in_flash = pl.in_flash;
     let config = pl.config;
     let key = pl.key;
@@ -1233,50 +1516,15 @@ if variable::get("graph") != "true" {
 	file::delete("docs/modules/bsp-wdg.md");
 }
 
-// Протокол связи и интерфейс под ним. Проверяются здесь, в конце, а не при
-// ответе: вопросы задаются до каскада, а допустимость зависит и от чипа (есть
-// ли у него блок). Граф протоколу не нужен: без него узел спавнит `main`
+// Протокол и транспорт выбраны и проверены выше (вопросы после выбора чипа), а
+// здесь остаётся подставить блок интерфейса для групп `resources.rs`. Граф
+// протоколу не нужен: без него узел спавнит `main`
 // (`crates-cross/app/src/protocol.rs`, как узел OTA).
-//
-// Какие интерфейсы годятся протоколу и какой блок чипа каждый требует —
-// таблицами; новый интерфейс добавляется строкой в обе.
-const PROTOCOL_INTERFACES = #{
-    "none": ["none"],
-    "modbus": ["uart", "tcp", "udp", "usb"],
-    "protobuf": ["uart", "tcp", "udp", "usb"],
-    "canopen": ["can"],
-};
-// Значения через запятую — для сообщений об ошибке. `reduce` без начального
-// значения начинает с `()`, и список получил бы ведущую запятую.
-fn listed(values) {
-    let out = "";
-    for v in values {
-        if out != "" { out += ", "; }
-        out += v;
-    }
-    out
-}
-let chip_name = variable::get("chip");
-let protocol = if variable::is_set("protocol") { variable::get("protocol") } else { "none" };
-let iface = if variable::is_set("interface") { variable::get("interface") } else { "none" };
-if !PROTOCOL_INTERFACES.contains(protocol) {
-    throw "protocol: ожидается " + listed(PROTOCOL_INTERFACES.keys()) + ", а не «" + protocol + "»";
-}
-let fits = PROTOCOL_INTERFACES[protocol];
-if !fits.contains(iface) {
-    if protocol == "none" {
-        throw "interface: интерфейс «" + iface + "» выбран без протокола — его не обслуживал бы ни один узел; выберите протокол или interface=none";
-    }
-    throw "interface: протокол " + protocol + " работает поверх " + listed(fits) + ", а не «" + iface + "»";
-}
-if protocol != "none" {
+if iface != "none" {
     let blocks = INTERFACE_BLOCKS[iface];
     let found = [];
     for tag in INTERFACES[suffix] {
         if blocks.contains(tag) { found.push(tag); }
-    }
-    if found.is_empty() {
-        throw "interface: у " + chip_name + " нет выведенного блока " + listed(blocks).to_upper() + " — интерфейс " + iface + " недоступен";
     }
     if !INSTANCES.contains(suffix) || !INSTANCES[suffix].contains(found[0]) {
         throw "interface: в chip-data/instances.rhai нет имени блока " + found[0] + " у " + chip_name + " — перегенерируйте таблицы (chip-data-gen)";
@@ -1298,7 +1546,10 @@ variable::set("erase_page", if variable::get("state_paged") == "true" || variabl
 variable::set("external_flash", if (variable::get("ota") == "true" && variable::get("ota_store") == "external") || variable::get("config_store") == "external" { "true" } else { "false" });
 variable::set("protocol", protocol);
 variable::set("interface", iface);
-variable::set("link_port", if protocol == "protobuf" || protocol == "canopen" || (protocol == "modbus" && iface == "udp") { "true" } else { "false" });
+// Кадровый канал (`ports::FrameLink`, `LinkError`) нужен protobuf (канал хоста),
+// шине CAN (ошибка `CanBus`) и UDP-каналу (`adapters::net::UdpLink` реализует
+// `FrameLink`) — с протоколом и без него.
+variable::set("link_port", if protocol == "protobuf" || iface == "can" || iface == "udp" { "true" } else { "false" });
 // Порт хранилища настроек (`ports::SettingsStorage`) нужен, пока есть что в него
 // класть: раздел, EEPROM или внешняя флеш (`config`) либо заглушка `Unavailable`
 // у узла CANopen без хранилища. Иначе порта и адаптера в проекте нет.
@@ -1306,19 +1557,25 @@ variable::set("settings_port", if variable::get("config") == "true" || protocol 
 // Транспорт поверх потока байтов (UART, USB CDC, TCP), а не датаграммы: ему нужны
 // `embedded-io-async`, `crc` и, под protobuf, COBS. UDP границу кадра получает
 // от самой датаграммы, CAN — это вообще не поток.
-variable::set("stream_io", if (protocol == "modbus" || protocol == "protobuf") && (iface == "uart" || iface == "usb" || iface == "tcp") { "true" } else { "false" });
+let stream = iface == "uart" || iface == "usb" || iface == "tcp";
+variable::set("stream_io", if stream { "true" } else { "false" });
+// CRC кадра: RTU (Modbus по UART и USB) и COBS (protobuf по потоку).
+variable::set("crc_used", if (protocol == "modbus" && (iface == "uart" || iface == "usb")) || (protocol == "protobuf" && stream) { "true" } else { "false" });
+// Property-тесты кадрирования есть у Modbus (RTU, TCP, UDP) и у COBS.
+variable::set("framing_tests", if protocol == "modbus" || (protocol == "protobuf" && stream) { "true" } else { "false" });
+// Асинхронные трейты в `ports`: без них `#![expect(async_fn_in_trait)]` не
+// срабатывает, и сборка падает.
+variable::set("ports_async", if variable::get("ota") == "true" || variable::get("settings_port") == "true" || protocol != "none" || iface == "can" || iface == "udp" { "true" } else { "false" });
+// Сокет протокола на стеке `embassy-net` (порт, буферы): нужен, только когда
+// протокол работает по сети. Транспорт без протокола сокета не открывает.
+variable::set("protocol_socket", if (protocol == "modbus" || protocol == "protobuf") && (iface == "tcp" || iface == "udp") { "true" } else { "false" });
+// Модуль `protocol.rs` в `app`: вход узла протокола и, без графа, спавн узлов
+// `NET`/`USB`. Без протокола и с графом файлу нечего содержать.
+variable::set("app_protocol_rs", if protocol != "none" || (variable::get("graph") != "true" && (iface == "tcp" || iface == "udp" || iface == "usb")) { "true" } else { "false" });
 // Группы `resources.rs` нужны, пока есть что в них класть: общий флеш, сторож
 // графа или блок выбранного интерфейса. Иначе в файле остаётся пустая группа.
 variable::set("has_resources", if iface != "none" || variable::get("shared_flash") == "true" || variable::get("graph") == "true" { "true" } else { "false" });
-// Master Modbus. Вопрос условный (`[conditional]` в cargo-generate.toml) и
-// задаётся только при protocol=modbus; с другим протоколом переменной нет.
-// Но `--define modbus_master=yes` при другом протоколе возможен — такое
-// сочетание приводится к «нет» молча (как `signed` без OTA).
-let wants_master = false;
-if variable::is_set("modbus_master") {
-    let answer = variable::get("modbus_master");
-    wants_master = answer == "yes" || answer == "true";
-}
+// Master Modbus: ответ на вопрос выше (только при protocol=modbus).
 let master = protocol == "modbus" && wants_master;
 variable::set("modbus_master", if master { "true" } else { "false" });
 // Файл master'а — только там, где он выбран; `pub mod master;`, порт и
@@ -1387,19 +1644,18 @@ if protocol != "protobuf" {
 	file::delete("crates-host/domain/src/host");
 	file::delete("crates-host/proto");
 }
-if protocol != "canopen" {
+if iface != "can" {
 	file::delete("crates-host/ports/src/can.rs");
+}
+if protocol != "canopen" {
 	file::delete("crates-host/domain/src/canopen.rs");
 	file::delete("crates-host/domain/src/canopen");
 	file::delete("crates-host/canopen");
 }
-if protocol == "none" {
+if variable::get("app_protocol_rs") != "true" {
 	file::delete("crates-cross/app/src/protocol.rs");
 }
-// Кадровый канал (`ports::FrameLink`, `LinkError`) нужен protobuf (канал хоста),
-// CANopen (ошибка шины) и Modbus по UDP (датаграмма); Modbus по потоку им не
-// пользуется.
-if !(protocol == "protobuf" || protocol == "canopen" || (protocol == "modbus" && iface == "udp")) {
+if variable::get("link_port") != "true" {
 	file::delete("crates-host/ports/src/link.rs");
 }
 // OTA — порты, адаптер и узел `domain::ota` — только в проекте с OTA: без неё это
