@@ -62,11 +62,21 @@ impl<D: Driver<'static>> UsbCtx<'_, UsbDevice<'static, D>> {
 // управление наружу, отметиться нечем.
 //
 // Вход — `UsbWiring { device }`: структуру эмитит фрагмент.
+//
+// С OTA устройство встаёт на шину после подтверждения образа (`OTA ready`):
+// первая загрузка нового или откаченного образа стирает `STATE`, ядро на это
+// время может стоять на выборке инструкций, и перечисление, попавшее на
+// стирание, хост бракует до переподключения (`domain::ota`, `begin`).
 supervisor::supervisor_fragment! {
     name: USB_FRAG<U>;
     boot: inputs: struct $crate::usb::UsbWiring;
 
-    node deps: [], restart: Never,
+    node deps: [
+            // {%- if ota == "true" %}
+            OTA ready
+            // {%- endif %}
+        ],
+        restart: Never,
         resources: [
             /// USB-устройство с классами протокола над драйвером платы.
             DEVICE: local U = inputs.device

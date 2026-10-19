@@ -46,6 +46,9 @@ static EXECUTOR: StaticCell<Executor> = StaticCell::new();
 /// командами на вход [`CMD`](ota::CMD).
 mod ota {
     use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+{%- if interface == "usb" %}
+    use embassy_sync::signal::Signal;
+{%- endif %}
     use sync_request::RpcService;
 
     /// Вход команд узла — то, что с графом заводит `request:` фрагмента
@@ -58,6 +61,13 @@ mod ota {
         { domain::ota::CMD_BYTES },
     > = RpcService::new();
 
+{%- if interface == "usb" %}
+    /// Образ подтверждён (или попытка была) — то, что с графом заводит `ready`
+    /// фрагмента `OTA_FRAG`. Ждёт его задача `USB`: перечисление, попавшее на
+    /// стирание `STATE` при подтверждении, хост бракует (`domain::ota`, `begin`).
+    pub static READY: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+{%- endif %}
+
     #[embassy_executor::task]
     pub async fn task(mut flash: bsp::ota::Updater, mut mode: domain::ota::Mode) {
         let mut reboot = bsp::cpu::Reboot;
@@ -68,6 +78,11 @@ mod ota {
             mode: &mut mode,
             confirmed: &mut confirmed,
             cmd: CMD.server().expect("сервер входа CMD один — у этой задачи"),
+            // Без графа `Readiness` строит не макрос, а этот вызов{% if interface == "usb" %} — над своим
+            // сигналом, как макрос над своим.
+            ready: supervisor::Readiness::new(|| READY.signal(())),{% else %}; готовности
+            // OTA здесь никто не ждёт.
+            ready: supervisor::Readiness::new(|| {}),{% endif %}
             index: 0,
         })
         .await;
@@ -94,6 +109,11 @@ mod net {
 mod usb {
     #[embassy_executor::task]
     pub async fn task(mut device: bsp::usb::Device) {
+{%- if ota == "true" %}
+        // На шину — после подтверждения образа: с графом это `deps: [OTA ready]`
+        // фрагмента `USB_FRAG`.
+        crate::ota::READY.wait().await;
+{%- endif %}
         domain::usb::task(domain::usb::UsbCtx {
             device: &mut device,
             index: 0,

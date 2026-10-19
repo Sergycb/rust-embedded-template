@@ -264,9 +264,18 @@ where
     /// (`Swap`), и подтверждение после `mark_updated` молча сняло бы запрос на
     /// обмен, о котором хост уже услышал `Ready`. Не удалось — флаг не
     /// ставится, и узел пробует ещё раз на следующем `Start`.
+    ///
+    /// Готовность (`ready`) — после подтверждения, удачного или нет.
+    /// Первая загрузка нового или откаченного образа стирает здесь `STATE`,
+    /// и на чипе, где `STATE` в одном банке с кодом, ядро на это время (~1 с
+    /// на секторе 128K у H7) стоит на выборке инструкций; узлу, которому это
+    /// мешает, хватит `deps: [OTA ready]`{% if interface == "usb" %}. Так ждёт узел `USB`: перечисление,
+    /// попавшее на стирание, хост бракует до переподключения (`docs/ota.md`).
+    /// Переносите подтверждение позже — переносите и это{% endif %}.
     async fn begin(&mut self) -> Idle {
         info!("domain: узел OTA запущен");
         self.confirm().await;
+        self.ready.set();
         Idle
     }
 
@@ -478,6 +487,9 @@ fn update_rejection<E>(err: &UpdateError<E>) -> Rejection {
 // `supervisor/local-resources` и `unsafe`-блоком на каждый `local`-`static`.
 //
 // Без `watchdog:` намеренно — см. `task`.
+//
+// `ready` — образ подтверждён (или попытка была), `STATE` больше не стирается
+// при старте (см. `begin`){% if interface == "usb" %}; ждёт этого узел `USB`{% endif %}.
 supervisor::supervisor_fragment! {
     name: OTA_FRAG<F, R>;
     boot: inputs: struct $crate::ota::OtaWiring;
@@ -494,6 +506,7 @@ supervisor::supervisor_fragment! {
         ],
         // Литерал, а не `CMD_BYTES`: макрос принимает здесь только число. Равен ему.
         request: [CMD: $crate::ota::OtaCommand -> $crate::ota::OtaReply; 144],
+        ready,
         ctx: $crate::ota::OtaCtx,
         task: $crate::ota::task;
 }
@@ -681,6 +694,50 @@ pub(crate) mod tests {
 
         assert_eq!(flash.booted, 1);
         assert_eq!(flash.prepared, None, "раздел не тронут");
+    }
+
+    /// Готовность — только когда подтверждение закончилось: узлу, который её
+    /// ждёт, нельзя стартовать, пока подтверждение стирает `STATE`.
+    #[test]
+    fn is_ready_only_after_the_confirmation() {
+        MockDriver::get().reset();
+        let mut flash = FakeFlash::new(64, 8);
+        flash.confirm_takes = Some(Duration::from_millis(1000));
+        // Свой `stand!` на тест: готовность — `static` на месте вызова.
+        let stand = supervisor::stand!(OTA_FRAG<FakeFlash, FakeReboot>);
+        let (mut reboot, mut mode, mut confirmed) = (FakeReboot, Mode::Plain, false);
+        let mut node = pin!(task(stand.ctx(
+            &mut flash,
+            &mut reboot,
+            &mut mode,
+            &mut confirmed
+        )));
+
+        assert!(poll(node.as_mut()).is_pending());
+        assert!(!stand.is_ready(), "подтверждение ещё идёт");
+
+        MockDriver::get().advance(Duration::from_millis(1000));
+        assert!(poll(node.as_mut()).is_pending());
+        assert!(stand.is_ready());
+    }
+
+    /// И после неудачного: иначе отказ флеша навсегда задержал бы узлы,
+    /// которые ждут готовности.
+    #[test]
+    fn is_ready_after_a_failed_confirmation() {
+        let mut flash = FakeFlash::new(64, 8);
+        flash.mark_booted = Err("флеш не отвечает");
+        let stand = supervisor::stand!(OTA_FRAG<FakeFlash, FakeReboot>);
+        let (mut reboot, mut mode, mut confirmed) = (FakeReboot, Mode::Plain, false);
+        let mut node = pin!(task(stand.ctx(
+            &mut flash,
+            &mut reboot,
+            &mut mode,
+            &mut confirmed
+        )));
+
+        assert!(poll(node.as_mut()).is_pending());
+        assert!(stand.is_ready());
     }
 
     /// Рестарт узла после принятого образа не подтверждает снова: иначе
@@ -1165,8 +1222,10 @@ mod fakes {
     //! трёх копиях значило бы проверять три разных флеша.
     //!
     //! Ни один фейк не ждёт по-настоящему — их future готовы с первого `poll`, —
-    //! поэтому тестам хватает однопоточного `#[tokio::test]`.
+    //! поэтому тестам хватает однопоточного `#[tokio::test]`. Исключение —
+    //! `FakeFlash::confirm_takes`: подтверждение ждёт таймер `MockDriver`.
 
+    use embassy_time::{Duration, Timer};
     use ports::{FirmwareUpdate, PendingImage};
 
     use crate::ota::update::VERSION_BYTES;
@@ -1207,6 +1266,9 @@ mod fakes {
         pub(super) booted: usize,
         /// Сколько раз звали `mark_booted` — удачно или нет.
         pub(super) confirm_attempts: usize,
+        /// Сколько длится `mark_booted` — как стирание `STATE` на плате;
+        /// `None` — мгновенно.
+        pub(super) confirm_takes: Option<Duration>,
     }
 
     impl FakeFlash {
@@ -1228,6 +1290,7 @@ mod fakes {
                 mark_booted: Ok(()),
                 booted: 0,
                 confirm_attempts: 0,
+                confirm_takes: None,
             }
         }
 
@@ -1333,7 +1396,13 @@ mod fakes {
             if self.mark_booted.is_ok() {
                 self.booted += 1;
             }
-            std::future::ready(self.mark_booted)
+            let (result, takes) = (self.mark_booted, self.confirm_takes);
+            async move {
+                if let Some(takes) = takes {
+                    Timer::after(takes).await;
+                }
+                result
+            }
         }
 
         fn mark_updated(&mut self) -> impl Future<Output = Result<(), Self::Error>> {
