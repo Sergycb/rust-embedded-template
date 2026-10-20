@@ -34,6 +34,9 @@ pub struct ChipSpec {
     pub chip: &'static str,
     /// Уникальный 96-битный номер экземпляра чипа — заводской, не меняется.
     pub uid: [u8; 12],
+    /// Тот же номер строкой из 24 шестнадцатеричных цифр — серийный номер
+    /// устройства для хоста (USB).
+    pub uid_hex: &'static str,
     /// Объём flash чипа в байтах — весь, а не раздел приложения.
     pub flash_size: u32,
     /// Частота ядра (`sys`), Гц; `None`, если HAL её не посчитал.
@@ -88,12 +91,6 @@ pub struct Board {
     /// Протокола у транспорта нет: поле ждёт ваш узел.
 {%- endif %}
     pub {{ f[4] }}: crate::can::{{ f[4] }}::Can,
-{%- elsif f[0] == "usb" %}
-    /// USB `{{ f[2] }}`: устройство для узла `USB_{{ f[4] | upcase }}` и поток CDC (`bsp::usb::{{ f[4] }}`).
-    /// Драйвер — заглушка, пока проект не подставит USB-блок своей платы
-    /// (`docs/modules/bsp-usb.md`). {% if f[3] == "none" %}Протокола у транспорта нет: поток ждёт ваш узел.{% else %}Транспорт протокола {{ f[3] }} над потоком собирает
-    /// приложение (`crates-cross/app/src/link.rs`).{% endif %}
-    pub {{ f[4] }}: crate::usb::{{ f[4] }}::Usb,
 {%- endif %}
 {%- endfor %}
 {%- if has_net == "true" %}
@@ -118,8 +115,8 @@ pub struct Board {
 {%- endif %}
 }
 
-// Вручную: у части объектов платы (`UsbDevice` из `embassy-usb`) `Debug` нет, а
-// печатать целую плату незачем — сведения о чипе лежат в `spec`.
+// Вручную: у драйверов `embassy-stm32` `Debug` есть не у всех, а печатать
+// целую плату незачем — сведения о чипе лежат в `spec`.
 impl core::fmt::Debug for Board {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Board")
@@ -128,9 +125,36 @@ impl core::fmt::Debug for Board {
     }
 }
 
+/// Драйверы, над которыми приложение собирает стек, отдающий объекты
+/// нескольким узлам сразу.
+///
+/// Отдельно от [`Board`], потому что собранная пара — это уже два объекта
+/// приложения (`crate::parts` в `app`), а плата остаётся целой и уезжает в
+/// граф как есть.{% if has_usb == "true" %} USB-драйвер — это и устройство `embassy-usb` (узел `USB_*`),
+/// и поток CDC (транспорт протокола): оба рождаются одним `Builder`.
+pub struct Drivers {
+{%- for l in xs %}
+{%- assign f = l | split: ":" %}
+{%- if f[0] == "usb" %}
+    /// USB `{{ f[2] }}` — транспорт `{{ f[4] }}`; драйвер — заглушка, пока проект не подставит
+    /// USB-блок своей платы (`docs/modules/bsp-usb.md`).
+    pub {{ f[4] }}: crate::usb::{{ f[4] }}::UsbDriver,
+{%- endif %}
+{%- endfor %}
+}{% else %} В этом проекте таких драйверов нет.
+pub struct Drivers {}{% endif %}
+
+// Вручную — по той же причине, что у [`Board`].
+impl core::fmt::Debug for Drivers {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Drivers").finish_non_exhaustive()
+    }
+}
+
 impl Board {
     /// Собирает объекты платы: поднимает HAL, разбирает периферию и отдаёт то,
-    /// что за ней стоит.
+    /// что за ней стоит, — объекты ([`Board`]) и драйверы под стеки
+    /// приложения ([`Drivers`]).
     ///
     /// Больше здесь ничего не происходит — ни сторож не запускается, ни
     /// периферия не настраивается «на будущее»: `bsp` объекты создаёт, а
@@ -139,14 +163,8 @@ impl Board {
     /// Зовётся ровно один раз за запуск, и это не соглашение, а свойство:
     /// внутри `embassy_stm32::init`, который паникует «init called more than
     /// once!» при втором вызове.
-    // `Default` тут был бы ложью: конструктор не только не дёшев, он ещё и
-    // одноразовый — `Default::default()` на второй вызов уронил бы прошивку.
-    #[expect(
-        clippy::new_without_default,
-        reason = "конструктор одноразовый: `Default` на второй вызов уронил бы прошивку"
-    )]
     #[must_use]
-    pub fn new() -> Self {
+    pub fn new() -> (Self, Drivers) {
 {%- if bank_switch != "" %}
         // До HAL и до любой работы с флешем: раскладка одобанковая, а с завода
         // чип двухбанковый (см. `crate::banks`). На новом кристалле сюда доходит
@@ -220,10 +238,11 @@ impl Board {
         )]
         let flash_size = embassy_stm32::flash::FLASH_SIZE as u32;
 
-        Self {
+        let board = Self {
             spec: ChipSpec {
                 chip: "{{chip}}",
                 uid: embassy_stm32::uid::uid(),
+                uid_hex: embassy_stm32::uid::uid_hex(),
                 flash_size,
                 sys_hz,
             },
@@ -242,8 +261,6 @@ impl Board {
             {{ f[4] }}: crate::serial::{{ f[4] }}::new(r.{{ f[4] }}),
 {%- elsif f[0] == "can" %}
             {{ f[4] }}: crate::can::{{ f[4] }}::new(r.{{ f[4] }}),
-{%- elsif f[0] == "usb" %}
-            {{ f[4] }}: crate::usb::{{ f[4] }}::new(r.{{ f[4] }}),
 {%- endif %}
 {%- endfor %}
 {%- if has_net == "true" %}
@@ -252,7 +269,20 @@ impl Board {
 {%- if graph == "true" %}
             watchdog: crate::wdg::UnarmedBoardWatchdog::new(r.watchdog.iwdg),
 {%- endif %}
-        }
+        };
+{%- if has_usb == "true" %}
+        let drivers = Drivers {
+{%- for l in xs %}
+{%- assign f = l | split: ":" %}
+{%- if f[0] == "usb" %}
+            {{ f[4] }}: crate::usb::{{ f[4] }}::new(r.{{ f[4] }}),
+{%- endif %}
+{%- endfor %}
+        };
+{%- else %}
+        let drivers = Drivers {};
+{%- endif %}
+        (board, drivers)
     }
 }
 

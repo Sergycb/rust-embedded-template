@@ -32,16 +32,16 @@ pub mod {{ f[4] }} {
 {% endif %}
     /// Транспорт узла `{% if f[3] == "modbus" %}MODBUS{% else %}HOST{% endif %}_{{ f[4] | upcase }}`.
 {%- if f[3] == "modbus" %}
-    pub type Link = ::adapters::modbus::{% if f[0] == "uart" %}Rtu<bsp::serial::{{ f[4] }}::Serial>{% elsif f[0] == "usb" %}Rtu<bsp::usb::{{ f[4] }}::Cdc>{% elsif f[0] == "tcp" %}Tcp<::adapters::net::TcpServer>{% else %}Udp<::adapters::net::UdpLink>{% endif %};
+    pub type Link = ::adapters::modbus::{% if f[0] == "uart" %}Rtu<bsp::serial::{{ f[4] }}::Serial>{% elsif f[0] == "usb" %}Rtu<crate::usb::{{ f[4] }}::Cdc>{% elsif f[0] == "tcp" %}Tcp<::adapters::net::TcpServer>{% else %}Udp<::adapters::net::UdpLink>{% endif %};
 {%- else %}
-    pub type Link = {% if f[0] == "udp" %}::adapters::net::UdpLink{% else %}::adapters::cobs::Cobs<'static, {% if f[0] == "uart" %}bsp::serial::{{ f[4] }}::Serial{% elsif f[0] == "usb" %}bsp::usb::{{ f[4] }}::Cdc{% else %}::adapters::net::TcpServer{% endif %}>{% endif %};
+    pub type Link = {% if f[0] == "udp" %}::adapters::net::UdpLink{% else %}::adapters::cobs::Cobs<'static, {% if f[0] == "uart" %}bsp::serial::{{ f[4] }}::Serial{% elsif f[0] == "usb" %}crate::usb::{{ f[4] }}::Cdc{% else %}::adapters::net::TcpServer{% endif %}>{% endif %};
 {%- endif %}
 
     /// Что плата отдаёт под транспорт: {% if f[0] == "uart" %}UART (заглушка, пока проект не подставит свой —
     /// docs/modules/bsp-serial.md){% elsif f[0] == "usb" %}поток CDC (над заглушкой драйвера, пока проект не подставит
     /// свой USB — docs/modules/bsp-usb.md){% else %}стек `embassy-net`, на котором открывается сокет (над заглушкой
     /// устройства, пока проект не подставит Ethernet — docs/modules/bsp-net.md){% endif %}.
-    pub type Source = {% if f[0] == "uart" %}bsp::serial::{{ f[4] }}::Serial{% elsif f[0] == "usb" %}bsp::usb::{{ f[4] }}::Cdc{% else %}bsp::net::Stack{% endif %};
+    pub type Source = {% if f[0] == "uart" %}bsp::serial::{{ f[4] }}::Serial{% elsif f[0] == "usb" %}crate::usb::{{ f[4] }}::Cdc{% else %}bsp::net::Stack{% endif %};
 {%- if f[3] == "protobuf" %}
 
     // Буферы узла{% if f[0] != "udp" %}: приёму нужно место ещё под CRC (`rx_len`), кадру

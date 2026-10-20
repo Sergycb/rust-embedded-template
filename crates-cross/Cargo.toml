@@ -124,6 +124,9 @@ static_cell            = { version = "2.1.1" }
 {%- if has_usb == "true" %}
 # USB-устройство (`bsp::usb`): та же версия, что в корневом Cargo.toml.
 embassy-usb            = { version = "0.6.0", default-features = false, features = ["defmt"] }
+# Трейт драйвера под `embassy-usb` — им заглушка платы (`bsp::stub`) встаёт в
+# слот USB-блока; версия — та, на которой стоят `embassy-usb` 0.6 и `embassy-stm32` 0.6.
+embassy-usb-driver     = { version = "0.2.2" }
 {%- endif %}
 {%- if has_net == "true" %}
 # Сетевой стек (`bsp::net`): та же версия и фичи, что в корневом Cargo.toml.

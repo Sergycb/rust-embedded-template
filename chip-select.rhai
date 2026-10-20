@@ -2037,6 +2037,7 @@ if !has.usb && !has.tcp && !has.udp {
 // USB — устройство `embassy-usb`, узел USB и поток CDC — только с транспортом usb.
 if !has.usb {
 	file::delete("crates-cross/bsp/src/usb.rs");
+	file::delete("crates-cross/app/src/usb.rs");
 	file::delete("docs/modules/bsp-usb.md");
 	file::delete("crates-host/adapters/src/usb.rs");
 	file::delete("crates-host/domain/src/usb.rs");

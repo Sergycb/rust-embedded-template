@@ -90,9 +90,9 @@ embassy-embedded-hal = { workspace = true }
 static_cell = { workspace = true }
 {%- endif %}
 {%- if has_usb == "true" %}
-# USB-устройство над USB-блоком платы (`bsp::usb`); заглушка и поток CDC — в
-# `adapters::usb`.
-embassy-usb = { workspace = true }
+# Трейт USB-драйвера — его реализует заглушка (`bsp::stub::UsbDriver`) и
+# драйвер `embassy-stm32`; устройство и классы над ним собирает `app`.
+embassy-usb-driver = { workspace = true }
 {%- endif %}
 {%- if has_net == "true" %}
 # Стек над Ethernet платы (`bsp::net`); сокеты и заглушка — в `adapters::net`.

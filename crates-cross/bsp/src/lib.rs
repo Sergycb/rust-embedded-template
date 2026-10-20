@@ -61,4 +61,4 @@ pub mod usb;
 pub mod wdg;
 {%- endif %}
 
-pub use board::{Board, ChipSpec};
+pub use board::{Board, ChipSpec, Drivers};

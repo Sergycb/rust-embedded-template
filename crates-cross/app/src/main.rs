@@ -17,8 +17,12 @@ mod image;
 {%- if protocol_link == "true" %}
 mod link;
 {%- endif %}
+mod parts;
 {%- if graph != "true" %}
 mod tasks;
+{%- endif %}
+{%- if has_usb == "true" %}
+mod usb;
 {%- endif %}
 
 use defmt::info;
@@ -83,10 +87,11 @@ fn main() -> ! {
         defmt::error!("app: предыдущий запуск упал: {}", reason);
     }
 
-    let board = bsp::Board::new();
+    // Плата и пары объектов, собранные над её драйверами (`crate::parts`).
+    let parts = parts::Parts::new(bsp::Board::new());
     // Следом — на чём именно: чип и его заводской номер, по которому
     // экземпляр платы отличается от соседнего.
-    info!("app: {}", board.spec);
+    info!("app: {}", parts.board.spec);
 
     // Исполнитель — свой, а не `#[embassy_executor::main]`, и это единственная
     // причина, по которой `main` здесь синхронный. У макроса `WFE` живёт
@@ -109,13 +114,13 @@ fn main() -> ! {
     // Голый `spawner.spawn(..)` рядом с ним завёл бы вторую, неуправляемую
     // ветку: без `restart:`, `deps:` и `watchdog:` (см. graph.rs).
     //
-    // `board` уезжает сюда целиком — это объявленный графом `boot:`-объект,
+    // `parts` уезжает сюда целиком — это объявленный графом `boot:`-объект,
     // из которого его инициализаторы забирают объекты частичными move.
     // Такие заборы уже есть — сторож в блоке `watchdog:`{% if ota == "true" %}, вход узла
-    // OTA в `fragments:` (`board.ota`){% endif %} — и здесь же
-    // окажутся ваши: `resources: [SLOT: T = board.<поле>]` вместо
+    // OTA в `fragments:` (`parts.board.ota`){% endif %} — и здесь же
+    // окажутся ваши: `resources: [SLOT: T = parts.board.<поле>]` вместо
     // `provide_<slot>(..)` перед этой строкой. Оттого и последняя строка
-    // `spawn_all`: после неё `board` принадлежит прологу.
+    // `spawn_all`: после неё `parts` принадлежит прологу.
     //
     // Аппаратный сторож запускается ВНУТРИ этого вызова — инициализатором
     // блока `watchdog:`, — а не в `Board::new` и не строкой выше: с этого
@@ -135,14 +140,14 @@ fn main() -> ! {
     // бы в сброс через `bsp::wdg::HW_TIMEOUT_US` без единой строки о причине.
     // Через `Display2Format`, а не `expect`: `Debug` у ошибки графа нет —
     // `supervisor` убрал его ради флеша, имя узла и вид отказа даёт `Display`.
-    if let Err(err) = graph::spawn_all(&spawner, board) {
+    if let Err(err) = graph::spawn_all(&spawner, parts) {
         defmt::panic!("app: spawn_all: {}", defmt::Display2Format(&err));
     }
 {%- else %}
 
     // Графа нет: узлы спавнит `tasks::spawn_all` — по модулю на задачу, как
-    // фрагменты графа, — а `board` уезжает туда целиком.
-    tasks::spawn_all(spawner, board);
+    // фрагменты графа, — а `parts` уезжает туда целиком.
+    tasks::spawn_all(spawner, parts);
 {%- endif %}
 
     // Цикл исполнителя: спим, пока нечего делать, и отмечаем в счётчике, сколько

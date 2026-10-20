@@ -76,7 +76,7 @@ pub struct UsbDriver {
 
 /// Конечная точка, по которой ничего не приходит и не уходит.
 #[derive(Debug)]
-pub struct NoEndpoint(embassy_usb::driver::EndpointInfo);
+pub struct NoEndpoint(embassy_usb_driver::EndpointInfo);
 
 /// Шина и управляющий канал, на которых не происходит ничего.
 #[derive(Debug)]
@@ -88,14 +88,14 @@ const CONTROL_PACKET: usize = 64;
 impl UsbDriver {
     fn endpoint(
         &mut self,
-        dir: embassy_usb::driver::Direction,
-        ep_type: embassy_usb::driver::EndpointType,
+        dir: embassy_usb_driver::Direction,
+        ep_type: embassy_usb_driver::EndpointType,
         max_packet_size: u16,
         interval_ms: u8,
     ) -> NoEndpoint {
         self.endpoints += 1;
-        NoEndpoint(embassy_usb::driver::EndpointInfo {
-            addr: embassy_usb::driver::EndpointAddress::from_parts(self.endpoints, dir),
+        NoEndpoint(embassy_usb_driver::EndpointInfo {
+            addr: embassy_usb_driver::EndpointAddress::from_parts(self.endpoints, dir),
             ep_type,
             max_packet_size,
             interval_ms,
@@ -103,7 +103,7 @@ impl UsbDriver {
     }
 }
 
-impl embassy_usb::driver::Driver<'_> for UsbDriver {
+impl embassy_usb_driver::Driver<'_> for UsbDriver {
     type EndpointOut = NoEndpoint;
     type EndpointIn = NoEndpoint;
     type ControlPipe = NoBus;
@@ -111,13 +111,13 @@ impl embassy_usb::driver::Driver<'_> for UsbDriver {
 
     fn alloc_endpoint_out(
         &mut self,
-        ep_type: embassy_usb::driver::EndpointType,
-        _: Option<embassy_usb::driver::EndpointAddress>,
+        ep_type: embassy_usb_driver::EndpointType,
+        _: Option<embassy_usb_driver::EndpointAddress>,
         max_packet_size: u16,
         interval_ms: u8,
-    ) -> Result<NoEndpoint, embassy_usb::driver::EndpointAllocError> {
+    ) -> Result<NoEndpoint, embassy_usb_driver::EndpointAllocError> {
         Ok(self.endpoint(
-            embassy_usb::driver::Direction::Out,
+            embassy_usb_driver::Direction::Out,
             ep_type,
             max_packet_size,
             interval_ms,
@@ -126,13 +126,13 @@ impl embassy_usb::driver::Driver<'_> for UsbDriver {
 
     fn alloc_endpoint_in(
         &mut self,
-        ep_type: embassy_usb::driver::EndpointType,
-        _: Option<embassy_usb::driver::EndpointAddress>,
+        ep_type: embassy_usb_driver::EndpointType,
+        _: Option<embassy_usb_driver::EndpointAddress>,
         max_packet_size: u16,
         interval_ms: u8,
-    ) -> Result<NoEndpoint, embassy_usb::driver::EndpointAllocError> {
+    ) -> Result<NoEndpoint, embassy_usb_driver::EndpointAllocError> {
         Ok(self.endpoint(
-            embassy_usb::driver::Direction::In,
+            embassy_usb_driver::Direction::In,
             ep_type,
             max_packet_size,
             interval_ms,
@@ -144,8 +144,8 @@ impl embassy_usb::driver::Driver<'_> for UsbDriver {
     }
 }
 
-impl embassy_usb::driver::Endpoint for NoEndpoint {
-    fn info(&self) -> &embassy_usb::driver::EndpointInfo {
+impl embassy_usb_driver::Endpoint for NoEndpoint {
+    fn info(&self) -> &embassy_usb_driver::EndpointInfo {
         &self.0
     }
 
@@ -154,19 +154,19 @@ impl embassy_usb::driver::Endpoint for NoEndpoint {
     }
 }
 
-impl embassy_usb::driver::EndpointOut for NoEndpoint {
-    async fn read(&mut self, _: &mut [u8]) -> Result<usize, embassy_usb::driver::EndpointError> {
+impl embassy_usb_driver::EndpointOut for NoEndpoint {
+    async fn read(&mut self, _: &mut [u8]) -> Result<usize, embassy_usb_driver::EndpointError> {
         core::future::pending().await
     }
 }
 
-impl embassy_usb::driver::EndpointIn for NoEndpoint {
-    async fn write(&mut self, _: &[u8]) -> Result<(), embassy_usb::driver::EndpointError> {
+impl embassy_usb_driver::EndpointIn for NoEndpoint {
+    async fn write(&mut self, _: &[u8]) -> Result<(), embassy_usb_driver::EndpointError> {
         core::future::pending().await
     }
 }
 
-impl embassy_usb::driver::Bus for NoBus {
+impl embassy_usb_driver::Bus for NoBus {
     fn enable(&mut self) -> impl Future<Output = ()> {
         core::future::ready(())
     }
@@ -175,26 +175,26 @@ impl embassy_usb::driver::Bus for NoBus {
         core::future::ready(())
     }
 
-    async fn poll(&mut self) -> embassy_usb::driver::Event {
+    async fn poll(&mut self) -> embassy_usb_driver::Event {
         core::future::pending().await
     }
 
-    fn endpoint_set_enabled(&mut self, _: embassy_usb::driver::EndpointAddress, _: bool) {}
+    fn endpoint_set_enabled(&mut self, _: embassy_usb_driver::EndpointAddress, _: bool) {}
 
-    fn endpoint_set_stalled(&mut self, _: embassy_usb::driver::EndpointAddress, _: bool) {}
+    fn endpoint_set_stalled(&mut self, _: embassy_usb_driver::EndpointAddress, _: bool) {}
 
-    fn endpoint_is_stalled(&mut self, _: embassy_usb::driver::EndpointAddress) -> bool {
+    fn endpoint_is_stalled(&mut self, _: embassy_usb_driver::EndpointAddress) -> bool {
         false
     }
 
     fn remote_wakeup(
         &mut self,
-    ) -> impl Future<Output = Result<(), embassy_usb::driver::Unsupported>> {
-        core::future::ready(Err(embassy_usb::driver::Unsupported))
+    ) -> impl Future<Output = Result<(), embassy_usb_driver::Unsupported>> {
+        core::future::ready(Err(embassy_usb_driver::Unsupported))
     }
 }
 
-impl embassy_usb::driver::ControlPipe for NoBus {
+impl embassy_usb_driver::ControlPipe for NoBus {
     fn max_packet_size(&self) -> usize {
         CONTROL_PACKET
     }
@@ -208,7 +208,7 @@ impl embassy_usb::driver::ControlPipe for NoBus {
         _: &mut [u8],
         _: bool,
         _: bool,
-    ) -> Result<usize, embassy_usb::driver::EndpointError> {
+    ) -> Result<usize, embassy_usb_driver::EndpointError> {
         core::future::pending().await
     }
 
@@ -217,7 +217,7 @@ impl embassy_usb::driver::ControlPipe for NoBus {
         _: &[u8],
         _: bool,
         _: bool,
-    ) -> Result<(), embassy_usb::driver::EndpointError> {
+    ) -> Result<(), embassy_usb_driver::EndpointError> {
         core::future::pending().await
     }
 

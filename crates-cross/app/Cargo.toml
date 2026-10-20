@@ -29,11 +29,17 @@ defmt-rtt = { workspace = true }
 # обработчик не по карману.
 bsp = { workspace = true, features = ["time-driver", "panic-handler", "fault-handler"] }
 domain = { workspace = true }
-{%- if has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" %}
-# Транспорты протоколов (`adapters::modbus::Rtu`, `adapters::cobs::Cobs`) вокруг
-# интерфейса платы — их собирает граф: `bsp` отдаёт поток байтов, а какой
-# протокол поверх него, решает приложение.
+{%- if has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" or has_usb == "true" %}
+# Адаптеры над объектами платы собирает приложение: транспорты протоколов
+# (`adapters::modbus::Rtu`, `adapters::cobs::Cobs`) вокруг интерфейса платы{% if has_usb == "true" %},
+# USB-устройство с классом CDC (`adapters::usb`, src/usb.rs){% endif %} — `bsp` отдаёт
+# поток байтов и драйверы, а что поверх них, решает приложение.
 adapters = { workspace = true }
+{%- endif %}
+{%- if has_usb == "true" %}
+# Конфигурация и память USB-устройства (`Config`, состояние класса CDC) —
+# src/usb.rs: идентификаторы и классы — решение приложения, а не платы.
+embassy-usb = { workspace = true }
 {%- endif %}
 shadow-rs = { workspace = true }
 # Граф задач в graph.rs — настоящий код, а не пример: compose-site фрагментов

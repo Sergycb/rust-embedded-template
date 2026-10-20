@@ -3,7 +3,7 @@
 //!
 //! По модулю на задачу (или пул задач): в нём задача-обёртка
 //! `#[embassy_executor::task]`, сборка адаптеров узла над объектами платы и
-//! `spawn`. `main` отдаёт `Board` в [`spawn_all`] целиком, как графу, и сам
+//! `spawn`. `main` отдаёт объекты узлов (`crate::parts::Parts`) в [`spawn_all`] целиком, как графу, и сам
 //! задачами не занимается. Embassy-задача не может быть generic, поэтому
 //! каждая типизирована объектом платы (`bsp`) или транспортом
 //! (`crate::link`). Контекст узла собирается из локальных переменных кадра:
@@ -38,30 +38,31 @@ mod usb;
 ///
 /// Если задачу уже спавнили: `spawn_all` зовётся один раз за запуск, а
 /// проглоченный `SpawnError::Busy` означал бы, что узел молча не работает.
-pub fn spawn_all(spawner: embassy_executor::Spawner, {% if ota == "true" or has_net == "true" or has_usb == "true" or has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" %}board{% else %}_board{% endif %}: bsp::Board) {
+pub fn spawn_all(spawner: embassy_executor::Spawner, {% if ota == "true" or has_net == "true" or has_usb == "true" or has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" %}parts{% else %}_parts{% endif %}: crate::parts::Parts) {
     // Загрузку процессора меряет задача из `cpu_load.rs`: в домене
     // executor-обвязки быть не может, а там ровно место для неё.
     spawner.spawn(crate::cpu_load::task().expect("задача CPU_LOAD свежая: спавнится один раз"));
 {%- if ota == "true" %}
-    ota::spawn(spawner, board.ota);
+    ota::spawn(spawner, parts.board.ota);
 {%- endif %}
 {%- if has_net == "true" %}
-    net::spawn(spawner, board.net.runner);
+    net::spawn(spawner, parts.board.net.runner);
 {%- endif %}
 {%- for l in xs %}
 {%- assign f = l | split: ":" %}
 {%- if f[0] == "usb" %}
-    usb::{{ f[4] }}::spawn(spawner, board.{{ f[4] }}.device);
+    usb::{{ f[4] }}::spawn(spawner, parts.{{ f[4] }}.device);
 {%- endif %}
 {%- endfor %}
 {%- for l in xs %}
 {%- assign f = l | split: ":" %}
 {%- if f[3] == "modbus" %}
-    modbus::{{ f[4] }}::spawn(spawner, {% if f[0] == "uart" %}board.{{ f[4] }}{% elsif f[0] == "usb" %}board.{{ f[4] }}.cdc{% else %}board.net.stack{% endif %});
+    modbus::{{ f[4] }}::spawn(spawner, {% if f[0] == "uart" %}parts.board.{{ f[4] }}{% elsif f[0] == "usb" %}parts.{{ f[4] }}.cdc{% else %}parts.board.net.stack{% endif %});
 {%- elsif f[3] == "protobuf" %}
-    host::{{ f[4] }}::spawn(spawner, {% if f[0] == "uart" %}board.{{ f[4] }}{% elsif f[0] == "usb" %}board.{{ f[4] }}.cdc{% else %}board.net.stack{% endif %}, crate::device_info(board.spec));
+    let info = crate::device_info(parts.board.spec);
+    host::{{ f[4] }}::spawn(spawner, {% if f[0] == "uart" %}parts.board.{{ f[4] }}{% elsif f[0] == "usb" %}parts.{{ f[4] }}.cdc{% else %}parts.board.net.stack{% endif %}, info);
 {%- elsif f[3] == "canopen" %}
-    canopen::{{ f[4] }}::spawn(spawner, board.{{ f[4] }}, {% if config == "true" %}board.settings{% else %}adapters::settings::Unavailable{% endif %});
+    canopen::{{ f[4] }}::spawn(spawner, parts.board.{{ f[4] }}, {% if config == "true" %}parts.board.settings{% else %}adapters::settings::Unavailable{% endif %});
 {%- endif %}
 {%- endfor %}
 }
