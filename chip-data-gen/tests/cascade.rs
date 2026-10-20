@@ -2736,14 +2736,31 @@ fn template_variables_in(root: &std::path::Path) -> std::collections::BTreeSet<S
                 let after = &rest[start + 2..];
                 let Some(end) = after.find("%}") else { break };
                 let tag = after[..end].trim().trim_start_matches('-').trim();
-                for keyword in ["for ", "assign ", "capture "] {
-                    if let Some(name) = tag.strip_prefix(keyword) {
-                        let name: String = name
+                for (keyword, sep) in [("for ", " in "), ("assign ", "="), ("capture ", "")] {
+                    if let Some(body) = tag.strip_prefix(keyword) {
+                        let name: String = body
                             .trim_start()
                             .chars()
                             .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
                             .collect();
                         declared.insert(name);
+                        // Первое имя правой части (`links` в `assign xs = links | split`,
+                        // `net_sockets` в `for i in (1..net_sockets)`) — переменная
+                        // хука, если файл не объявил его сам; строковый литерал — нет.
+                        let Some((_, expr)) = body.split_once(sep).filter(|_| !sep.is_empty())
+                        else {
+                            continue;
+                        };
+                        let head = expr.split('|').next().unwrap_or_default().trim();
+                        if head.starts_with(['"', '\'']) {
+                            continue;
+                        }
+                        if let Some(first) = head
+                            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                            .find(|w| !w.is_empty() && !w.starts_with(|c: char| c.is_ascii_digit()))
+                        {
+                            local.insert(first.to_string());
+                        }
                     }
                 }
                 if let Some(cond) = tag
@@ -2779,7 +2796,9 @@ fn template_variables_in(root: &std::path::Path) -> std::collections::BTreeSet<S
 }
 
 /// Переменные циклов (`{% for l in xs %}`, `{% assign f = … %}`) объявляет сам
-/// файл шаблона, а не хук: искать их среди переменных хука незачем.
+/// файл шаблона, а не хук: искать их среди переменных хука незачем. А вот
+/// первое имя правой части (`links` в `assign xs = links | split`) хук задать
+/// обязан, если файл не объявил его сам.
 #[test]
 fn loop_variables_are_not_hook_variables() {
     let dir = std::env::temp_dir().join(format!("loop-vars-{}", std::process::id()));
@@ -2791,7 +2810,7 @@ fn loop_variables_are_not_hook_variables() {
     .expect("временный файл");
     let found = template_variables_in(&dir);
     std::fs::remove_dir_all(&dir).ok();
-    assert_eq!(found.into_iter().collect::<Vec<_>>(), ["chip"]);
+    assert_eq!(found.into_iter().collect::<Vec<_>>(), ["chip", "links"]);
 }
 
 /// Значение варианта меню — его первое слово.

@@ -51,25 +51,46 @@ if config == "true" {
 }
 if variable::get("graph") == "true" {
 	print("Граф задач: узел HEARTBEAT в crates-cross/app/src/graph.rs, его работа — в crates-host/domain/src/heartbeat.rs.");
-	let protocol = variable::get("protocol");
-	if protocol == "modbus" {
-		print("Modbus slave: узел MODBUS поверх " + variable::get("interface").to_upper() + "; карта регистров — crates-host/domain/src/modbus/registers.rs.");
-	} else if protocol == "canopen" {
-		print("CANopen: узел CANOPEN поверх CAN; словарь объектов — crates-host/canopen/device.toml.");
-	} else if protocol == "protobuf" {
-		print("protobuf: узел HOST поверх " + variable::get("interface").to_upper() + "; схема — crates-host/proto, обработчик — crates-host/domain/src/host/service.rs.");
+	// По транспорту на строку (`вид:метка:блок:протокол:имя` из `links`): узел
+	// протокола и заглушка, которую подставить. Сеть — один стек (узел NET) и один
+	// блок Ethernet на все сокеты, поэтому о нём — одной строкой после цикла.
+	let links = variable::get("links");
+	let net_block = "";
+	if links != "" {
+		for l in links.split(",") {
+			let f = l.split(":");
+			let kind = f[0];
+			let block = f[2];
+			let proto = f[3];
+			let name = f[4];
+			let node = if proto == "modbus" { "MODBUS_" } else if proto == "protobuf" { "HOST_" } else if proto == "canopen" { "CANOPEN_" } else { "" };
+			let nodes = [];
+			if node != "" { nodes.push("узел " + node + name.to_upper()); }
+			if kind == "usb" { nodes.push("фоновый узел USB_" + name.to_upper()); }
+			let line = "Транспорт " + name + " (" + kind.to_upper() + ", " + block + ", "
+				+ (if proto == "none" { "без протокола" } else { proto }) + ")";
+			if nodes.len() > 0 { line += ": " + nodes[0]; }
+			if nodes.len() > 1 { line += ", " + nodes[1]; }
+			if kind == "tcp" || kind == "udp" {
+				net_block = block;
+				print(line + ".");
+			} else {
+				let file = if kind == "uart" { "serial" } else { kind };
+				print(line + "; заглушка — crates-cross/bsp/src/" + file + ".rs (cargo xtask pins " + block + " --snippet).");
+			}
+		}
 	}
-	let iface = variable::get("interface");
-	if iface == "uart" {
-		print("UART — заглушка: подставьте свой USART в crates-cross/bsp/src/serial.rs (cargo xtask pins " + variable::get("iface_periph") + " --snippet).");
-	} else if iface == "usb" {
-		let block = variable::get("iface_periph");
-		print("USB — устройство embassy-usb над заглушкой драйвера: подставьте USB-блок в crates-cross/bsp/src/usb.rs (cargo xtask pins " + block + " --snippet).");
-	} else if iface == "tcp" || iface == "udp" {
-		print("Сеть — стек embassy-net над заглушкой устройства: подставьте Ethernet в crates-cross/bsp/src/net.rs (cargo xtask pins " + variable::get("iface_periph") + " --snippet).");
-	} else if iface == "can" {
-		let block = variable::get("iface_periph");
-		print("CAN — заглушка: подставьте свой контроллер в crates-cross/bsp/src/can.rs (cargo xtask pins " + block + " --snippet).");
+	if net_block != "" {
+		print("Сеть: фоновый узел NET — стек embassy-net над заглушкой устройства в crates-cross/bsp/src/net.rs (cargo xtask pins " + net_block + " --snippet).");
+	}
+	if variable::get("has_modbus") == "true" {
+		print("Modbus: карта регистров — crates-host/domain/src/modbus/registers.rs.");
+	}
+	if variable::get("has_canopen") == "true" {
+		print("CANopen: словарь объектов — crates-host/canopen/device.toml.");
+	}
+	if variable::get("has_protobuf") == "true" {
+		print("protobuf: схема — crates-host/proto, обработчик — crates-host/domain/src/host/service.rs.");
 	}
 } else {
 	print("Без графа задач: main заканчивается после инициализации (причина — выше).");
