@@ -32,9 +32,6 @@ pub mod fault;
 {%- if shared_flash == "true" %}
 pub mod flash;
 {%- endif %}
-{%- if has_modbus == "true" or has_protobuf == "true" %}
-pub mod link;
-{%- endif %}
 {%- if has_net == "true" %}
 pub mod net;
 {%- endif %}

@@ -1772,6 +1772,10 @@ if variable::get("graph") != "true" {
 	// `Board` поля сторожа не имеет.
 	file::delete("crates-cross/bsp/src/wdg.rs");
 	file::delete("docs/modules/bsp-wdg.md");
+} else {
+	// С графом узлы спавнит он (`fragments:`), модули задач без графа не нужны.
+	file::delete("crates-cross/app/src/tasks.rs");
+	file::delete("crates-cross/app/src/tasks");
 }
 
 // Протокол и транспорт выбраны и проверены выше (вопросы после выбора чипа), а
@@ -1883,8 +1887,8 @@ variable::set("framing_tests", if on.modbus || cobs_used { "true" } else { "fals
 // Асинхронные трейты в `ports`: без них `#![expect(async_fn_in_trait)]` не
 // срабатывает, и сборка падает.
 variable::set("ports_async", if variable::get("ota") == "true" || variable::get("settings_port") == "true" || on.modbus || on.protobuf || on.canopen || has.can || has.udp { "true" } else { "false" });
-// Модуль `link.rs` в `bsp`: готовые транспорты протоколов (`bsp::link::<имя>`) — кадрирование,
-// буферы и сокет. Без Modbus и protobuf транспорту нечего оборачивать (CANopen берёт
+// Модуль `link.rs` в `app`: транспорты протоколов (`app::link::<имя>`) — кадрирование,
+// буферы и сокет над объектами платы. Без Modbus и protobuf транспорту нечего оборачивать (CANopen берёт
 // шину CAN как есть).
 variable::set("protocol_link", if on.modbus || on.protobuf { "true" } else { "false" });
 // Группы `resources.rs` нужны, пока есть что в них класть: общий флеш, сторож
@@ -1967,7 +1971,7 @@ if !on.canopen {
 	file::delete("crates-host/canopen");
 }
 if variable::get("protocol_link") != "true" {
-	file::delete("crates-cross/bsp/src/link.rs");
+	file::delete("crates-cross/app/src/link.rs");
 }
 if variable::get("link_port") != "true" {
 	file::delete("crates-host/ports/src/link.rs");
@@ -2002,6 +2006,27 @@ if variable::get("settings_port") != "true" {
 // пользуется: обёртка страницы (`erase_page`) или внешняя флеш.
 if variable::get("flash_page") != "true" {
 	file::delete("crates-host/flash-page");
+}
+// Модули задач без графа (`app/src/tasks/`) — по узлу, только выбранные.
+if variable::get("graph") != "true" {
+	if variable::get("ota") != "true" {
+		file::delete("crates-cross/app/src/tasks/ota.rs");
+	}
+	if !has.tcp && !has.udp {
+		file::delete("crates-cross/app/src/tasks/net.rs");
+	}
+	if !has.usb {
+		file::delete("crates-cross/app/src/tasks/usb.rs");
+	}
+	if !on.modbus {
+		file::delete("crates-cross/app/src/tasks/modbus.rs");
+	}
+	if !on.protobuf {
+		file::delete("crates-cross/app/src/tasks/host.rs");
+	}
+	if !on.canopen {
+		file::delete("crates-cross/app/src/tasks/canopen.rs");
+	}
 }
 if variable::get("has_stub") != "true" {
 	file::delete("crates-cross/bsp/src/stub.rs");

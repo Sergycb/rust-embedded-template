@@ -2018,7 +2018,7 @@ fn tcp_and_udp_share_one_eth() {
 
 /// Протоколу граф не нужен: без него узел спавнит `main`, и ни ответ `graph=no`,
 /// ни размер раздела (здесь — 16 KiB у `l011f4`) генерацию не останавливают. Готовый
-/// транспорт `bsp/src/link.rs` остаётся, пока выбран Modbus или protobuf.
+/// транспорт `app/src/link.rs` остаётся, пока выбран Modbus или protobuf.
 #[test]
 fn protocol_does_not_need_the_graph() {
     let script = compile_script();
@@ -2047,7 +2047,7 @@ fn protocol_does_not_need_the_graph() {
             !result
                 .deleted
                 .iter()
-                .any(|path| path == "crates-cross/bsp/src/link.rs"),
+                .any(|path| path == "crates-cross/app/src/link.rs"),
             "{chip} {preset:?}: link.rs удалён при выбранном протоколе"
         );
     }
@@ -2056,7 +2056,7 @@ fn protocol_does_not_need_the_graph() {
     assert!(
         none.deleted
             .iter()
-            .any(|path| path == "crates-cross/bsp/src/link.rs"),
+            .any(|path| path == "crates-cross/app/src/link.rs"),
         "без протокола link.rs должен удаляться"
     );
 }

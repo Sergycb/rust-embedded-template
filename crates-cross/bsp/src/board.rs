@@ -72,26 +72,11 @@ pub struct Board {
 {%- assign xs = links | split: "," %}
 {%- for l in xs %}
 {%- assign f = l | split: ":" %}
-{%- if f[3] == "modbus" or f[3] == "protobuf" %}
-    /// Транспорт `{{ f[4] }}` протокола {{ f[3] }} поверх {% if f[0] == "uart" %}UART `{{ f[2] }}`{% elsif f[0] == "tcp" %}TCP{% elsif f[0] == "usb" %}USB CDC `{{ f[2] }}`{% else %}UDP{% endif %} платы, готовый к
-    /// работе: кадрирование, буферы и сокет заведены в `bsp::link::{{ f[4] }}`. Уезжает в узел
-    /// `{% if f[3] == "modbus" %}MODBUS{% else %}HOST{% endif %}_{{ f[4] | upcase }}`: в граф (`fragments:` в `crates-cross/app/src/graph.rs`) или, при
-    /// `graph=no`, в задачу, которую спавнит `main`.
-    pub {{ f[4] }}: crate::link::{{ f[4] }}::Link,
-{%- if f[3] == "protobuf" %}
-    /// Буферы сообщений узла `HOST_{{ f[4] | upcase }}` (`bsp::link::{{ f[4] }}`).
-    pub {{ f[4] }}_buffers: crate::link::HostBuffers,
-{%- endif %}
-{%- if f[0] == "usb" %}
-    /// Устройство `embassy-usb` `{{ f[2] }}` для узла `USB_{{ f[4] | upcase }}` (`bsp::usb::{{ f[4] }}`). Драйвер —
-    /// заглушка, пока проект не подставит USB-блок своей платы
-    /// (`docs/modules/bsp-usb.md`). Поток CDC уже под транспортом протокола (`{{ f[4] }}`).
-    pub {{ f[4] }}_device: crate::usb::{{ f[4] }}::Device,
-{%- endif %}
-{%- elsif f[0] == "uart" %}
-    /// UART `{{ f[2] }}` — заглушка `bsp::serial::{{ f[4] }}::Serial`, пока проект не подставит
-    /// драйвер своей платы (`docs/modules/bsp-serial.md`). Протокола у транспорта
-    /// нет: поле ждёт ваш узел.
+{%- if f[0] == "uart" %}
+    /// UART `{{ f[2] }}` — поток байтов; пока заглушка `bsp::serial::{{ f[4] }}::Serial`, до
+    /// драйвера платы (`docs/modules/bsp-serial.md`). {% if f[3] == "none" %}Протокола у транспорта
+    /// нет: поле ждёт ваш узел.{% else %}Транспорт протокола {{ f[3] }} над ним собирает приложение
+    /// (`crates-cross/app/src/link.rs`).{% endif %}
     pub {{ f[4] }}: crate::serial::{{ f[4] }}::Serial,
 {%- elsif f[0] == "can" %}
     /// Шина CAN `{{ f[2] }}`{% if f[3] == "canopen" %} под узлом `CANOPEN_{{ f[4] | upcase }}`{% endif %} — заглушка `bsp::can::{{ f[4] }}::Can`, пока проект не
@@ -106,15 +91,16 @@ pub struct Board {
 {%- elsif f[0] == "usb" %}
     /// USB `{{ f[2] }}`: устройство для узла `USB_{{ f[4] | upcase }}` и поток CDC (`bsp::usb::{{ f[4] }}`).
     /// Драйвер — заглушка, пока проект не подставит USB-блок своей платы
-    /// (`docs/modules/bsp-usb.md`). Протокола у транспорта нет: поток ждёт ваш узел.
+    /// (`docs/modules/bsp-usb.md`). {% if f[3] == "none" %}Протокола у транспорта нет: поток ждёт ваш узел.{% else %}Транспорт протокола {{ f[3] }} над потоком собирает
+    /// приложение (`crates-cross/app/src/link.rs`).{% endif %}
     pub {{ f[4] }}: crate::usb::{{ f[4] }}::Usb,
 {%- endif %}
 {%- endfor %}
 {%- if has_net == "true" %}
     /// Сеть: фоновая работа стека для узла `NET` и сам стек{% if protocol_sockets == "0" %}, на котором
     /// приложение открывает сокет{% endif %} (`bsp::net`). Устройство — заглушка, пока проект не подставит
-    /// Ethernet своей платы (`docs/modules/bsp-net.md`){% if protocol_sockets != "0" %}. Сокеты протоколов на стеке уже
-    /// открыты (`bsp::link`){% endif %}.
+    /// Ethernet своей платы (`docs/modules/bsp-net.md`){% if protocol_sockets != "0" %}. Сокеты протоколов на стеке
+    /// открывает приложение (`crates-cross/app/src/link.rs`){% endif %}.
     pub net: crate::net::Net,
 {%- endif %}
 {%- if graph == "true" %}
@@ -159,17 +145,6 @@ impl Board {
         clippy::new_without_default,
         reason = "конструктор одноразовый: `Default` на второй вызов уронил бы прошивку"
     )]
-{%- assign usb_links = 0 %}
-{%- for l in xs %}
-{%- assign f = l | split: ":" %}
-{%- if f[0] == "usb" and f[3] != "none" %}{% assign usb_links = usb_links | plus: 1 %}{% endif %}
-{%- endfor %}
-{%- if usb_links > 1 %}
-    #[expect(
-        clippy::similar_names,
-        reason = "имена транспортов — имена блоков USB, они различаются буквой (`usb_otg_fs`, `usb_otg_hs`)"
-    )]
-{%- endif %}
     #[must_use]
     pub fn new() -> Self {
 {%- if bank_switch != "" %}
@@ -235,15 +210,6 @@ impl Board {
 {%- endif %}
         let net = crate::net::new(embassy_stm32::uid::uid(), seed, r.eth);
 {%- endif %}
-{%- for l in xs %}
-{%- assign f = l | split: ":" %}
-{%- if f[0] == "usb" and f[3] != "none" %}
-        let adapters::usb::Usb {
-            device: {{ f[4] }}_device,
-            cdc: {{ f[4] }}_cdc,
-        } = crate::usb::{{ f[4] }}::new(r.{{ f[4] }});
-{%- endif %}
-{%- endfor %}
 
         let sys_hz = clocks.sys.to_hertz().map(|hz| hz.0);
 
@@ -272,19 +238,7 @@ impl Board {
 {%- endif %}
 {%- for l in xs %}
 {%- assign f = l | split: ":" %}
-{%- if f[3] == "modbus" or f[3] == "protobuf" %}
 {%- if f[0] == "uart" %}
-            {{ f[4] }}: crate::link::{{ f[4] }}::new(crate::serial::{{ f[4] }}::new(r.{{ f[4] }})),
-{%- elsif f[0] == "usb" %}
-            {{ f[4] }}_device,
-            {{ f[4] }}: crate::link::{{ f[4] }}::new({{ f[4] }}_cdc),
-{%- else %}
-            {{ f[4] }}: crate::link::{{ f[4] }}::new(net.stack),
-{%- endif %}
-{%- if f[3] == "protobuf" %}
-            {{ f[4] }}_buffers: crate::link::{{ f[4] }}::host_buffers(),
-{%- endif %}
-{%- elsif f[0] == "uart" %}
             {{ f[4] }}: crate::serial::{{ f[4] }}::new(r.{{ f[4] }}),
 {%- elsif f[0] == "can" %}
             {{ f[4] }}: crate::can::{{ f[4] }}::new(r.{{ f[4] }}),
@@ -293,7 +247,6 @@ impl Board {
 {%- endif %}
 {%- endfor %}
 {%- if has_net == "true" %}
-            // Последним из сетевых: транспорты выше берут `net.stack` (`Copy`).
             net,
 {%- endif %}
 {%- if graph == "true" %}

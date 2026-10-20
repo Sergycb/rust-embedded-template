@@ -14,6 +14,12 @@ mod graph;
 {%- if signed == "true" %}
 mod image;
 {%- endif %}
+{%- if protocol_link == "true" %}
+mod link;
+{%- endif %}
+{%- if graph != "true" %}
+mod tasks;
+{%- endif %}
 
 use defmt::info;
 // RTT остаётся дефолтным транспортом в обоих профилях — сырой шаблон не знает,
@@ -31,186 +37,6 @@ use static_cell::StaticCell;
 /// `main`). `StaticCell`, а не `ConstStaticCell`: `Executor::new` не `const`.
 static EXECUTOR: StaticCell<Executor> = StaticCell::new();
 
-{%- if graph != "true" %}
-{%- assign xs = links | split: "," %}
-
-// Задачи узлов проекта без графа — то, что с графом делает `fragments:` в
-// `graph.rs`. `Spawner::spawn` берёт токен, а не функцию, а embassy-задача не
-// может быть generic, поэтому каждая типизирована объектом платы (`bsp`).
-// Контекст узла собирается здесь из локальных переменных кадра: то, что в графе
-// держит `static`-слот, без графа живёт в задаче. Сама задача — `task` узла из
-// `domain`, та же, что гоняет граф.
-{%- if ota == "true" %}
-
-/// Узел `OTA`: подтверждает образ (`mark_booted`) в стартовом действии, а без
-/// него bootloader откатит обновление на следующем сбросе; образ принимает
-/// командами на вход [`CMD`](ota::CMD).
-mod ota {
-    use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-{%- if has_usb == "true" %}
-    use embassy_sync::signal::Signal;
-{%- endif %}
-    use sync_request::RpcService;
-
-    /// Вход команд узла — то, что с графом заводит `request:` фрагмента
-    /// `OTA_FRAG`, той же ёмкости (`domain::ota::CMD_BYTES`). Клиента{% if has_modbus != "true" and has_protobuf != "true" and has_canopen != "true" %} получает ваш протокол
-    /// (`CMD.requester()`); без него узел только подтверждает образ{% else %} получает каждая задача протокола{% endif %}.
-    pub static CMD: RpcService<
-        CriticalSectionRawMutex,
-        domain::ota::OtaCommand,
-        domain::ota::OtaReply,
-        { domain::ota::CMD_BYTES },
-    > = RpcService::new();
-
-{%- for l in xs %}
-{%- assign f = l | split: ":" %}
-{%- if f[0] == "usb" %}
-    /// Образ подтверждён (или попытка была) — то, что с графом заводит `ready`
-    /// фрагмента `OTA_FRAG`. Ждёт его задача `USB_{{ f[4] | upcase }}`: перечисление, попавшее
-    /// на стирание `STATE` при подтверждении, хост бракует (`domain::ota`,
-    /// `begin`). Сигнал на задачу: у `Signal` один ждущий.
-    pub static READY_{{ f[4] | upcase }}: Signal<CriticalSectionRawMutex, ()> = Signal::new();
-{%- endif %}
-{%- endfor %}
-
-    #[embassy_executor::task]
-    pub async fn task(mut flash: bsp::ota::Updater, mut mode: domain::ota::Mode) {
-        let mut reboot = bsp::cpu::Reboot;
-        let mut confirmed = false;
-        domain::ota::task(domain::ota::OtaCtx {
-            flash: &mut flash,
-            reboot: &mut reboot,
-            mode: &mut mode,
-            confirmed: &mut confirmed,
-            cmd: CMD.server().expect("сервер входа CMD один — у этой задачи"),
-            // Без графа `Readiness` строит не макрос, а этот вызов{% if has_usb == "true" %} — над своим
-            // сигналом, как макрос над своим.
-            ready: supervisor::Readiness::new(|| {
-{%- for l in xs %}
-{%- assign f = l | split: ":" %}
-{%- if f[0] == "usb" %}
-                READY_{{ f[4] | upcase }}.signal(());
-{%- endif %}
-{%- endfor %}
-            }),{% else %}; готовности
-            // OTA здесь никто не ждёт.
-            ready: supervisor::Readiness::new(|| {}),{% endif %}
-            index: 0,
-        })
-        .await;
-    }
-}
-{%- endif %}
-{%- if has_net == "true" %}
-
-/// Узел `NET`: фоновая работа стека `embassy-net`.
-mod net {
-    #[embassy_executor::task]
-    pub async fn task(mut runner: domain::net::Runner<'static, bsp::net::Device>) {
-        domain::net::task(domain::net::NetCtx {
-            runner: &mut runner,
-            index: 0,
-        })
-        .await;
-    }
-}
-{%- endif %}
-{%- for l in xs %}
-{%- assign f = l | split: ":" %}
-{%- if f[0] == "usb" %}
-
-/// Узел `USB_{{ f[4] | upcase }}`: фоновая работа устройства `embassy-usb`.
-mod usb_{{ f[4] }} {
-    #[embassy_executor::task]
-    pub async fn task(mut device: bsp::usb::{{ f[4] }}::Device) {
-{%- if ota == "true" %}
-        // На шину — после подтверждения образа: с графом это `deps: [OTA ready]`
-        // фрагмента `USB_FRAG`.
-        crate::ota::READY_{{ f[4] | upcase }}.wait().await;
-{%- endif %}
-        domain::usb::task(domain::usb::UsbCtx {
-            device: &mut device,
-            index: 0,
-        })
-        .await;
-    }
-}
-{%- endif %}
-{%- endfor %}
-{%- for l in xs %}
-{%- assign f = l | split: ":" %}
-{%- if f[3] == "modbus" %}
-
-/// Узел `MODBUS_{{ f[4] | upcase }}`: Modbus slave с пустой картой регистров, адрес 1.
-mod modbus_{{ f[4] }} {
-    #[embassy_executor::task]
-    pub async fn task(mut link: bsp::link::{{ f[4] }}::Link) {
-{%- if ota == "true" %}
-        let mut regs = domain::modbus::OtaRegisters::new(
-            domain::modbus::EmptyRegisters,
-            crate::ota::CMD.requester(),
-        );
-{%- else %}
-        let mut regs = domain::modbus::EmptyRegisters;
-{%- endif %}
-        let mut unit = 1;
-        domain::modbus::task(domain::modbus::ModbusSlaveCtx {
-            link: &mut link,
-            regs: &mut regs,
-            unit: &mut unit,
-            index: 0,
-        })
-        .await;
-    }
-}
-{%- elsif f[3] == "protobuf" %}
-
-/// Узел `HOST_{{ f[4] | upcase }}`: сообщения protobuf от хоста.
-mod host_{{ f[4] }} {
-    #[embassy_executor::task]
-    pub async fn task(
-        mut link: bsp::link::{{ f[4] }}::Link,
-        info: domain::host::DeviceInfo,
-        rx: &'static mut [u8],
-        tx: &'static mut [u8],
-    ) {
-        let mut service = domain::host::Service::new(info{% if ota == "true" %}, crate::ota::CMD.requester(){% endif %});
-        domain::host::task(domain::host::HostCtx {
-            link: &mut link,
-            service: &mut service,
-            rx,
-            tx,
-            index: 0,
-        })
-        .await;
-    }
-}
-{%- elsif f[3] == "canopen" %}
-
-/// Узел `CANOPEN_{{ f[4] | upcase }}`: узел CANopen, адрес 1.
-mod canopen_{{ f[4] }} {
-    #[embassy_executor::task]
-    pub async fn task(mut bus: bsp::can::{{ f[4] }}::Can, mut store: {% if config == "true" %}bsp::settings::Settings{% else %}adapters::settings::Unavailable{% endif %}) {
-        let mut node_id = 1;
-        let mut dictionary = domain::canopen::dictionary();
-        let mut persist = {{config}};
-        domain::canopen::task(domain::canopen::CanOpenCtx {
-            bus: &mut bus,
-            node_id: &mut node_id,
-            dictionary: &mut dictionary,
-            settings: &mut store,
-            persist: &mut persist,
-{%- if ota == "true" %}
-            ota_cmd: &mut crate::ota::CMD.requester(),
-{%- endif %}
-            index: 0,
-        })
-        .await;
-    }
-}
-{%- endif %}
-{%- endfor %}
-{%- endif %}
 {%- if has_protobuf == "true" %}
 
 /// Сведения об устройстве для ответа хосту на `info`: версия и коммит — из
@@ -314,67 +140,9 @@ fn main() -> ! {
     }
 {%- else %}
 
-    // Графа нет, поэтому задачу, которая меряет загрузку, спавнит сам `main`.
-    // `Spawner::spawn` берёт `SpawnToken`, а не функцию, поэтому обёртка
-    // `#[embassy_executor::task]` объявлена в `cpu_load.rs`: в домене
-    // executor-обвязки быть не может, а здесь ровно место для неё. Токен
-    // выдаёт она же, и `expect` — на нём: `Spawner::spawn` отказ не вернёт,
-    // а проглоченный `SpawnError::Busy` означал бы, что загрузку не меряет
-    // никто, и это молча.
-    let token = cpu_load::task().expect("задача CPU_LOAD свежая: спавнится один раз");
-    spawner.spawn(token);
-{%- if ota == "true" %}
-
-    // Узел OTA без графа спавнится так же: он подтверждает образ
-    // (`mark_booted`) в стартовом действии, а без него bootloader откатит
-    // обновление на следующем сбросе. Адаптер обновления уезжает в задачу
-    // владением{% if signed == "true" %}; режим — `Signed` с версией этого образа
-    // (`image::FW_VERSION`){% else %}; режим — `Plain`{% endif %}; команды — через `ota::CMD`.
-{%- if signed == "true" %}
-    let mode = domain::ota::Mode::Signed {
-        running_version: image::FW_VERSION,
-    };
-{%- else %}
-    let mode = domain::ota::Mode::Plain;
-{%- endif %}
-    let token = ota::task(board.ota, mode).expect("задача OTA свежая: спавнится один раз");
-    spawner.spawn(token);
-{%- endif %}
-{%- if has_net == "true" or has_usb == "true" or has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" %}
-
-    // Узлы транспорта и протокола без графа спавнятся так же, по задаче на
-    // транспорт. Без графа нет ни сторожа, ни `restart:`: узлы не падают, а
-    // зависший остаётся зависшим — сторожить исполнитель вам.
-{%- endif %}
-{%- if has_net == "true" %}
-    let token = net::task(board.net.runner).expect("задача NET свежая: спавнится один раз");
-    spawner.spawn(token);
-{%- endif %}
-{%- for l in xs %}
-{%- assign f = l | split: ":" %}
-{%- if f[0] == "usb" %}
-    let token = usb_{{ f[4] }}::task(board.{% if f[3] != "none" %}{{ f[4] }}_device{% else %}{{ f[4] }}.device{% endif %});
-    spawner.spawn(token.expect("задача USB_{{ f[4] | upcase }} свежая: спавнится один раз"));
-{%- endif %}
-{%- endfor %}
-{%- for l in xs %}
-{%- assign f = l | split: ":" %}
-{%- if f[3] == "modbus" %}
-    let token = modbus_{{ f[4] }}::task(board.{{ f[4] }});
-    spawner.spawn(token.expect("задача MODBUS_{{ f[4] | upcase }} свежая: спавнится один раз"));
-{%- elsif f[3] == "protobuf" %}
-    let token = host_{{ f[4] }}::task(
-        board.{{ f[4] }},
-        device_info(board.spec),
-        board.{{ f[4] }}_buffers.rx,
-        board.{{ f[4] }}_buffers.tx,
-    );
-    spawner.spawn(token.expect("задача HOST_{{ f[4] | upcase }} свежая: спавнится один раз"));
-{%- elsif f[3] == "canopen" %}
-    let token = canopen_{{ f[4] }}::task(board.{{ f[4] }}, {% if config == "true" %}board.settings{% else %}::adapters::settings::Unavailable{% endif %});
-    spawner.spawn(token.expect("задача CANOPEN_{{ f[4] | upcase }} свежая: спавнится один раз"));
-{%- endif %}
-{%- endfor %}
+    // Графа нет: узлы спавнит `tasks::spawn_all` — по модулю на задачу, как
+    // фрагменты графа, — а `board` уезжает туда целиком.
+    tasks::spawn_all(spawner, board);
 {%- endif %}
 
     // Цикл исполнителя: спим, пока нечего делать, и отмечаем в счётчике, сколько

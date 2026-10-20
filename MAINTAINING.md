@@ -143,10 +143,10 @@ STM32C011D6 (32 KiB, то же ядро) проект занимает 12.6 KiB 
 `graph_is_dropped_when_the_app_partition_is_too_small`; менять порог — вместе с ним.
 
 Протоколу связи граф не нужен: при `graph=no` (и когда граф снят размером) узел
-протокола и его `NET`/`USB` спавнит `main` (задачи в `crates-cross/app/src/main.rs`
-над `domain::{modbus,host,canopen,net,usb}::task`, как `ota::task`). Транспорт
-протокола плата отдаёт готовым (`Board::link`, `crates-cross/bsp/src/link.rs`), так что
-`graph.rs` и `main.rs` принимают один и тот же объект. Тест каскада —
+протокола и его `NET`/`USB` спавнит `tasks::spawn_all` (модули задач в
+`crates-cross/app/src/tasks/` над `domain::{modbus,host,canopen,net,usb}::task`,
+как `ota::task`). Транспорт протокола собирает `crates-cross/app/src/link.rs`, так что
+`graph.rs` и модули задач строят один и тот же объект. Тест каскада —
 `protocol_does_not_need_the_graph`, конфигурации `*-no-graph` в `template-check`.
 
 В ветке ручной раскладки (`--define write_size=...`) размер раздела знает только

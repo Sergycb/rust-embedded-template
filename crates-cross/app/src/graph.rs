@@ -118,7 +118,7 @@ supervisor_graph! {
         // над драйвером `bsp::usb::{{ f[4] }}::UsbDriver`: без него хост не видит
         // устройства, а поток CDC — ни одного пакета.
         ::domain::USB_FRAG<bsp::usb::{{ f[4] }}::Device> as USB_{{ f[4] | upcase }} =
-            ::domain::usb::UsbWiring { device: board.{% if f[3] != "none" %}{{ f[4] }}_device{% else %}{{ f[4] }}.device{% endif %} },
+            ::domain::usb::UsbWiring { device: board.{{ f[4] }}.device },
 {%- endif %}
 {%- endfor %}
 {%- if has_net == "true" %}
@@ -133,8 +133,8 @@ supervisor_graph! {
 {%- assign f = l | split: ":" %}
 {%- if f[3] == "modbus" %}
 
-        // Узел `MODBUS_{{ f[4] | upcase }}` — Modbus slave: транспорт (`board.{{ f[4] }}`) плата отдаёт
-        // готовым — кадрирование и буферы в `bsp::link::{{ f[4] }}`; карта регистров
+        // Узел `MODBUS_{{ f[4] | upcase }}` — Modbus slave: транспорт собирает `crate::link::{{ f[4] }}`
+        // (кадрирование{% if f[0] == "tcp" or f[0] == "udp" %}, сокет{% endif %}) над тем, что отдала плата; карта регистров
         // `domain::modbus::EmptyRegisters` пуста, её проект описывает в `domain`.
         // Адрес slave'а — `unit`{% if f[0] == "tcp" or f[0] == "udp" %}: по сети устройство адресуется по IP, и
         // slave отвечает на любой адрес в MBAP{% endif %}.
@@ -143,11 +143,11 @@ supervisor_graph! {
         // по `OTA_BASE` уходят узлу `OTA` командами — клиентом его входа `CMD`
         // (`ota_cmd_requester()`), остальное — карте проекта.
         ::domain::MODBUS_SLAVE_FRAG<
-            bsp::link::{{ f[4] }}::Link,
+            crate::link::{{ f[4] }}::Link,
             ::domain::modbus::OtaRegisters<::domain::modbus::EmptyRegisters>,
         > as MODBUS_{{ f[4] | upcase }} =
             ::domain::modbus::ModbusSlaveWiring {
-                link: board.{{ f[4] }},
+                link: crate::link::{{ f[4] }}::new({% if f[0] == "uart" %}board.{{ f[4] }}{% elsif f[0] == "usb" %}board.{{ f[4] }}.cdc{% else %}board.net.stack{% endif %}),
                 regs: ::domain::modbus::OtaRegisters::new(
                     ::domain::modbus::EmptyRegisters,
                     ota_cmd_requester(),
@@ -155,9 +155,9 @@ supervisor_graph! {
                 unit: 1,
             },
 {%- else %}
-        ::domain::MODBUS_SLAVE_FRAG<bsp::link::{{ f[4] }}::Link, ::domain::modbus::EmptyRegisters> as MODBUS_{{ f[4] | upcase }} =
+        ::domain::MODBUS_SLAVE_FRAG<crate::link::{{ f[4] }}::Link, ::domain::modbus::EmptyRegisters> as MODBUS_{{ f[4] | upcase }} =
             ::domain::modbus::ModbusSlaveWiring {
-                link: board.{{ f[4] }},
+                link: crate::link::{{ f[4] }}::new({% if f[0] == "uart" %}board.{{ f[4] }}{% elsif f[0] == "usb" %}board.{{ f[4] }}.cdc{% else %}board.net.stack{% endif %}),
                 regs: ::domain::modbus::EmptyRegisters,
                 unit: 1,
             },
@@ -185,22 +185,22 @@ supervisor_graph! {
             },
 {%- elsif f[3] == "protobuf" %}
 
-        // Узел `HOST_{{ f[4] | upcase }}` — сообщения protobuf от хоста: канал (`board.{{ f[4] }}`) и буферы
-        // сообщений (`board.{{ f[4] }}_buffers`) плата отдаёт готовыми (`bsp::link::{{ f[4] }}`);
+        // Узел `HOST_{{ f[4] | upcase }}` — сообщения protobuf от хоста: канал и буферы сообщений
+        // заводит `crate::link::{{ f[4] }}` над тем, что отдала плата;
         // обработчик `domain::host::Service` над схемой `crates-host/proto` —
         // логика приложения, проект правит его в `domain`.{% if ota == "true" %} Команды обновления
         // он отдаёт узлу `OTA` клиентом его входа `CMD` (`ota_cmd_requester()`).{% endif %}
-        ::domain::HOST_FRAG<bsp::link::{{ f[4] }}::Link, ::domain::host::Service> as HOST_{{ f[4] | upcase }} =
+        ::domain::HOST_FRAG<crate::link::{{ f[4] }}::Link, ::domain::host::Service> as HOST_{{ f[4] | upcase }} =
             ::domain::host::HostWiring {
-                link: board.{{ f[4] }},
+                link: crate::link::{{ f[4] }}::new({% if f[0] == "uart" %}board.{{ f[4] }}{% elsif f[0] == "usb" %}board.{{ f[4] }}.cdc{% else %}board.net.stack{% endif %}),
                 service: ::domain::host::Service::new(
                     crate::device_info(board.spec),
 {%- if ota == "true" %}
                     ota_cmd_requester(),
 {%- endif %}
                 ),
-                rx: board.{{ f[4] }}_buffers.rx,
-                tx: board.{{ f[4] }}_buffers.tx,
+                rx: crate::link::{{ f[4] }}::rx(),
+                tx: crate::link::{{ f[4] }}::tx(),
             },
 {%- endif %}
 {%- endfor %}
