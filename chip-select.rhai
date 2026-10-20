@@ -364,6 +364,10 @@ fn parse_links(text, kinds, protocol_interfaces) {
             throw "links: протокол " + protocol + " работает поверх " + listed(protocol_interfaces[protocol]) + ", а не «" + kind + "»";
         }
         if protocol != "none" {
+            // Статики стека `zencan` — по одному на прошивку.
+            if protocol == "canopen" && chosen == "canopen" {
+                throw "links: CANopen пока только на одной шине CAN";
+            }
             if chosen != "none" && chosen != protocol {
                 throw "links: протокол в проекте пока один, а заданы " + chosen + " и " + protocol;
             }
@@ -1140,8 +1144,9 @@ if WANTED_LINKS.len() > 0 {
         } else {
             let values = ["none"];
             let texts = ["none — без протокола: заглушка транспорта и его узел есть, протокол пишете вы"];
+            // CANopen — не больше чем на одной шине: второй `can` получает только `none`.
             for name in ["modbus", "protobuf", "canopen"] {
-                if (protocol == "none" || protocol == name) && PROTOCOL_INTERFACES[name].contains(kind) {
+                if (protocol == "none" || (protocol == name && name != "canopen")) && PROTOCOL_INTERFACES[name].contains(kind) {
                     values.push(name);
                     texts.push(PROTOCOL_TEXT[name]);
                 }
@@ -1182,8 +1187,9 @@ if protocol != "modbus" && variable::is_set("modbus_master") {
     }
 }
 // Основной транспорт — первый с протоколом, а без протокола — первый. От него
-// пока считаются прежние `interface`, `iface_periph`, `can_kind`, `usb_kind` и
-// все производные ниже: файлы шаблона смотрят на один транспорт.
+// пока считаются прежние скаляры `interface`, `iface_periph`, `can_kind`,
+// `usb_kind`: часть файлов шаблона ещё смотрит на один транспорт. Производные
+// флаги и удаление файлов ниже считаются по всем транспортам.
 let primary = #{ kind: "none" };
 for link in links {
     if link.protocol != "none" {
@@ -1807,53 +1813,83 @@ if cache == "" {
     file::delete("crates-cross/bsp/src/cache.rs");
 }
 
+// Протоколы и их транспорты — по всем транспортам, а не по основному: «Modbus по
+// UART и по TCP» требует и RTU, и MBAP. Поток байтов (UART, USB CDC, TCP), а не
+// датаграмма: ему нужны `embedded-io-async`, `crc` и, под protobuf, COBS. UDP
+// границу кадра получает от самой датаграммы, CAN — это вообще не поток.
+let on = #{ modbus: false, protobuf: false, canopen: false };
+let modbus_rtu = false;
+let modbus_tcp = false;
+let modbus_udp = false;
+let cobs_used = false;
+let sockets = 0;
+for link in links {
+    if link.protocol == "none" { continue; }
+    on[link.protocol] = true;
+    if link.protocol == "modbus" {
+        if link.kind == "uart" || link.kind == "usb" { modbus_rtu = true; }
+        if link.kind == "tcp" { modbus_tcp = true; }
+        if link.kind == "udp" { modbus_udp = true; }
+    }
+    if link.protocol == "protobuf" && (link.kind == "uart" || link.kind == "usb" || link.kind == "tcp") {
+        cobs_used = true;
+    }
+    if link.kind == "tcp" || link.kind == "udp" { sockets += 1; }
+}
+for name in on.keys() {
+    variable::set("has_" + name, if on[name] { "true" } else { "false" });
+}
+let modbus_mbap = modbus_tcp || modbus_udp;
+variable::set("modbus_rtu", if modbus_rtu { "true" } else { "false" });
+variable::set("modbus_tcp", if modbus_tcp { "true" } else { "false" });
+variable::set("modbus_udp", if modbus_udp { "true" } else { "false" });
+variable::set("modbus_mbap", if modbus_mbap { "true" } else { "false" });
+variable::set("cobs_used", if cobs_used { "true" } else { "false" });
+// Сокеты протоколов на стеке `embassy-net` (порт, буферы): по одному на сетевой
+// транспорт с протоколом. Транспорт без протокола сокета не открывает.
+variable::set("protocol_sockets", sockets.to_string());
+variable::set("protocol_socket", if sockets > 0 { "true" } else { "false" });
+
 // Кадровый канал (`ports::FrameLink`, `LinkError`) нужен protobuf (канал хоста),
 // шине CAN (ошибка `CanBus`) и UDP-каналу (`adapters::net::UdpLink` реализует
 // `FrameLink`) — с протоколом и без него.
-variable::set("link_port", if protocol == "protobuf" || iface == "can" || iface == "udp" { "true" } else { "false" });
+variable::set("link_port", if on.protobuf || has.can || has.udp { "true" } else { "false" });
 // Порт хранилища настроек (`ports::SettingsStorage`) нужен, пока есть что в него
 // класть: раздел, EEPROM или внешняя флеш (`config`) либо заглушка `Unavailable`
 // у узла CANopen без хранилища. Иначе порта и адаптера в проекте нет.
-variable::set("settings_port", if variable::get("config") == "true" || protocol == "canopen" { "true" } else { "false" });
-// Транспорт поверх потока байтов (UART, USB CDC, TCP), а не датаграммы: ему нужны
-// `embedded-io-async`, `crc` и, под protobuf, COBS. UDP границу кадра получает
-// от самой датаграммы, CAN — это вообще не поток.
-let stream = iface == "uart" || iface == "usb" || iface == "tcp";
-variable::set("stream_io", if stream { "true" } else { "false" });
+variable::set("settings_port", if variable::get("config") == "true" || on.canopen { "true" } else { "false" });
+variable::set("stream_io", if has.uart || has.usb || has.tcp { "true" } else { "false" });
 // CRC кадра: RTU (Modbus по UART и USB) и COBS (protobuf по потоку).
-variable::set("crc_used", if (protocol == "modbus" && (iface == "uart" || iface == "usb")) || (protocol == "protobuf" && stream) { "true" } else { "false" });
+variable::set("crc_used", if modbus_rtu || cobs_used { "true" } else { "false" });
 // Property-тесты кадрирования есть у Modbus (RTU, TCP, UDP) и у COBS.
-variable::set("framing_tests", if protocol == "modbus" || (protocol == "protobuf" && stream) { "true" } else { "false" });
+variable::set("framing_tests", if on.modbus || cobs_used { "true" } else { "false" });
 // Асинхронные трейты в `ports`: без них `#![expect(async_fn_in_trait)]` не
 // срабатывает, и сборка падает.
-variable::set("ports_async", if variable::get("ota") == "true" || variable::get("settings_port") == "true" || protocol != "none" || iface == "can" || iface == "udp" { "true" } else { "false" });
-// Сокет протокола на стеке `embassy-net` (порт, буферы): нужен, только когда
-// протокол работает по сети. Транспорт без протокола сокета не открывает.
-variable::set("protocol_socket", if (protocol == "modbus" || protocol == "protobuf") && (iface == "tcp" || iface == "udp") { "true" } else { "false" });
+variable::set("ports_async", if variable::get("ota") == "true" || variable::get("settings_port") == "true" || protocol != "none" || has.can || has.udp { "true" } else { "false" });
 // Модуль `link.rs` в `bsp`: готовый транспорт протокола (`Board::link`) — кадрирование,
 // буферы и сокет. Без Modbus и protobuf транспорту нечего оборачивать (CANopen берёт
 // шину CAN как есть).
-variable::set("protocol_link", if protocol == "modbus" || protocol == "protobuf" { "true" } else { "false" });
+variable::set("protocol_link", if on.modbus || on.protobuf { "true" } else { "false" });
 // Группы `resources.rs` нужны, пока есть что в них класть: общий флеш, сторож
-// графа или блок выбранного интерфейса. Иначе в файле остаётся пустая группа.
-variable::set("has_resources", if iface != "none" || variable::get("shared_flash") == "true" || variable::get("graph") == "true" { "true" } else { "false" });
+// графа или блоки транспортов. Иначе в файле остаётся пустая группа.
+variable::set("has_resources", if links.len() > 0 || variable::get("shared_flash") == "true" || variable::get("graph") == "true" { "true" } else { "false" });
 // Master Modbus: ответ на вопрос выше (только при protocol=modbus).
-let master = protocol == "modbus" && wants_master;
+let master = on.modbus && wants_master;
 variable::set("modbus_master", if master { "true" } else { "false" });
 // Файл master'а — только там, где он выбран; `pub mod master;`, порт и
 // клиентские impl'ы вырезает Liquid в комментариях. Без modbus каталог
 // `domain/src/modbus` уже удалён ниже целиком, второй раз его не трогаем.
-if protocol == "modbus" && !master {
+if on.modbus && !master {
 	file::delete("crates-host/domain/src/modbus/master.rs");
 }
-// Модуль заглушки UART в bsp — только под интерфейс uart: без него
+// Модуль заглушки UART в bsp — только с транспортом uart: без него
 // `bsp::serial` не объявлен, и файл остался бы мусором с Liquid внутри.
-if iface != "uart" {
+if !has.uart {
 	file::delete("crates-cross/bsp/src/serial.rs");
 	file::delete("docs/modules/bsp-serial.md");
 }
-// То же для CAN: модуль шины и его документация — только под интерфейс can.
-if iface != "can" {
+// То же для CAN: модуль шины и его документация — только с транспортом can.
+if !has.can {
 	file::delete("crates-cross/bsp/src/can.rs");
 	file::delete("docs/modules/bsp-can.md");
 }
@@ -1865,7 +1901,7 @@ if iface != "can" {
 // проекте, где он выбран: «modbus поверх uart» не тянет ни protobuf, ни CAN,
 // а проект без протокола — ничего из них. Ссылки на удалённое (`mod`,
 // `pub use`, зависимости, фичи) вырезает Liquid в комментариях.
-if protocol != "modbus" {
+if !on.modbus {
 	file::delete("crates-host/ports/src/modbus.rs");
 	file::delete("crates-host/ports/src/modbus");
 	file::delete("crates-host/adapters/src/modbus.rs");
@@ -1873,43 +1909,42 @@ if protocol != "modbus" {
 	file::delete("crates-host/domain/src/modbus.rs");
 	file::delete("crates-host/domain/src/modbus");
 }
-// Транспорт Modbus и сокет сети — только под выбранный интерфейс: остальные
+// Транспорты Modbus и сокеты сети — только под выбранные транспорты: остальные
 // файлы адаптеров были бы кодом, до которого не дотянуться. `mod`, `pub use` и
 // тесты в `modbus.rs`/`net.rs` вырезает Liquid в комментариях.
-if protocol == "modbus" {
-	if iface != "uart" && iface != "usb" {
+if on.modbus {
+	if !modbus_rtu {
 		file::delete("crates-host/adapters/src/modbus/rtu.rs");
 	}
-	if iface != "tcp" {
+	if !modbus_tcp {
 		file::delete("crates-host/adapters/src/modbus/tcp.rs");
 	}
-	if iface != "udp" {
+	if !modbus_udp {
 		file::delete("crates-host/adapters/src/modbus/udp.rs");
 	}
-	if iface != "tcp" && iface != "udp" {
+	if !modbus_mbap {
 		file::delete("crates-host/adapters/src/modbus/mbap.rs");
 	}
 }
-if iface != "tcp" {
+if !has.tcp {
 	file::delete("crates-host/adapters/src/net/tcp.rs");
 }
-if iface != "udp" {
+if !has.udp {
 	file::delete("crates-host/adapters/src/net/udp.rs");
 }
-if protocol == "protobuf" && iface == "udp" {
+if !cobs_used {
 	file::delete("crates-host/adapters/src/cobs.rs");
 }
-if protocol != "protobuf" {
+if !on.protobuf {
 	file::delete("crates-host/ports/src/host.rs");
-	file::delete("crates-host/adapters/src/cobs.rs");
 	file::delete("crates-host/domain/src/host.rs");
 	file::delete("crates-host/domain/src/host");
 	file::delete("crates-host/proto");
 }
-if iface != "can" {
+if !has.can {
 	file::delete("crates-host/ports/src/can.rs");
 }
-if protocol != "canopen" {
+if !on.canopen {
 	file::delete("crates-host/domain/src/canopen.rs");
 	file::delete("crates-host/domain/src/canopen");
 	file::delete("crates-host/canopen");
@@ -1931,15 +1966,15 @@ if variable::get("ota") != "true" {
 	file::delete("crates-host/domain/src/ota");
 	// Перевод команд OTA у протокола: каталог протокола есть, только если он
 	// выбран, — чужой хук уже удалил выше.
-	if protocol == "modbus" {
+	if on.modbus {
 		file::delete("crates-host/domain/src/modbus/ota.rs");
 	}
-	if protocol == "canopen" {
+	if on.canopen {
 		file::delete("crates-host/domain/src/canopen/ota.rs");
 	}
 }
 // То же для хранилища настроек.
-if variable::get("ota") != "true" && protocol != "canopen" {
+if variable::get("ota") != "true" && !on.canopen {
 	file::delete("crates-host/ports/src/word.rs");
 }
 if variable::get("settings_port") != "true" {
@@ -1951,29 +1986,29 @@ if variable::get("settings_port") != "true" {
 if variable::get("erase_page") != "true" && variable::get("external_flash") != "true" {
 	file::delete("crates-host/adapters/src/flash.rs");
 }
-if iface != "uart" {
+if !has.uart {
 	file::delete("crates-host/adapters/src/serial.rs");
 }
-if iface != "can" {
+if !has.can {
 	file::delete("crates-host/adapters/src/can.rs");
 }
-// USB — устройство `embassy-usb`, узел USB и поток CDC — только под usb.
-if iface != "usb" {
+// USB — устройство `embassy-usb`, узел USB и поток CDC — только с транспортом usb.
+if !has.usb {
 	file::delete("crates-cross/bsp/src/usb.rs");
 	file::delete("docs/modules/bsp-usb.md");
 	file::delete("crates-host/adapters/src/usb.rs");
 	file::delete("crates-host/domain/src/usb.rs");
 }
-// Сеть — стек `embassy-net`, узел NET и их сокеты — только под tcp/udp.
-if iface != "tcp" && iface != "udp" {
+// Сеть — стек `embassy-net`, узел NET и их сокеты — только с tcp/udp.
+if !has.tcp && !has.udp {
 	file::delete("crates-cross/bsp/src/net.rs");
 	file::delete("docs/modules/bsp-net.md");
 	file::delete("crates-host/adapters/src/net.rs");
 	file::delete("crates-host/adapters/src/net");
 	file::delete("crates-host/domain/src/net.rs");
 }
-// RNG — только под tcp/udp и только если он есть у чипа (`rng_irq` не пуст).
-if rng[0] == "" || (iface != "tcp" && iface != "udp") {
+// RNG — только с tcp/udp и только если он есть у чипа (`rng_irq` не пуст).
+if rng[0] == "" || (!has.tcp && !has.udp) {
 	file::delete("crates-cross/bsp/src/rng.rs");
 	file::delete("docs/modules/bsp-rng.md");
 }

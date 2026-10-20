@@ -1828,6 +1828,108 @@ fn both_tags_of_a_kind_count_as_its_blocks() {
     );
 }
 
+/// Производные переменные и удаление файлов смотрят на все транспорты, а не на
+/// основной: RTU по `uart` и TCP по `tcp` в одном проекте, `can` без протокола.
+#[test]
+fn derived_flags_follow_every_link() {
+    let result = run_chip_with(
+        &compile_script(),
+        "f407ve",
+        &[("links", "uart:modbus,tcp:modbus,can")],
+    )
+    .expect("каскад не должен падать");
+    for name in [
+        "modbus_rtu",
+        "modbus_tcp",
+        "modbus_mbap",
+        "has_can",
+        "link_port",
+        "stream_io",
+    ] {
+        assert_eq!(var_of(&result, name), Some("true"), "{name}");
+    }
+    for name in ["modbus_udp", "cobs_used", "has_protobuf"] {
+        assert_eq!(var_of(&result, name), Some("false"), "{name}");
+    }
+    assert_eq!(var_of(&result, "protocol_sockets"), Some("1"));
+    let deleted = |path: &str| result.deleted.iter().any(|d| d == path);
+    for path in [
+        "crates-cross/bsp/src/serial.rs",
+        "crates-cross/bsp/src/can.rs",
+        "crates-host/adapters/src/modbus/rtu.rs",
+        "crates-host/adapters/src/modbus/tcp.rs",
+    ] {
+        assert!(!deleted(path), "{path} удалён: {:?}", result.deleted);
+    }
+    for path in [
+        "crates-host/adapters/src/modbus/udp.rs",
+        "crates-host/adapters/src/cobs.rs",
+    ] {
+        assert!(deleted(path), "{path} не удалён: {:?}", result.deleted);
+    }
+}
+
+/// protobuf по UDP рядом с protobuf по потоку: COBS нужен потоку, хотя основной
+/// транспорт — датаграммы.
+#[test]
+fn protobuf_over_udp_and_a_stream_keeps_cobs() {
+    let result = run_chip_with(
+        &compile_script(),
+        "f407ve",
+        &[("links", "udp:protobuf,uart:protobuf")],
+    )
+    .expect("каскад не должен падать");
+    assert_eq!(var_of(&result, "cobs_used"), Some("true"));
+    assert!(
+        !result
+            .deleted
+            .iter()
+            .any(|d| d == "crates-host/adapters/src/cobs.rs"),
+        "{:?}",
+        result.deleted
+    );
+}
+
+/// CANopen пока на одной шине: второй транспорт с ним — ошибка.
+#[test]
+fn a_second_canopen_bus_is_rejected() {
+    let err = run_chip_with(
+        &compile_script(),
+        "f407ve",
+        &[("links", "can:canopen,can:canopen")],
+    )
+    .err()
+    .expect("второй CANopen принят");
+    assert!(
+        err.to_string()
+            .contains("links: CANopen пока только на одной шине CAN"),
+        "{err}"
+    );
+}
+
+/// В проекте с CANopen второй `can` получает только `none`, и вопроса о
+/// протоколе для него нет.
+#[test]
+fn the_second_can_in_a_canopen_project_has_no_protocol_menu() {
+    let result = interview(
+        &compile_script(),
+        "f407ve",
+        &[],
+        &[
+            ("interface", "can"),
+            ("protocol", "canopen"),
+            ("more_links", "yes"),
+            ("interface", "can"),
+        ],
+    )
+    .expect("каскад не должен падать");
+    assert_eq!(all_menu_values(&result, "protocol").len(), 1);
+    assert_eq!(
+        var_of(&result, "links"),
+        Some("can:bxcan:CAN1:canopen:can1,can:bxcan:CAN2:none:can2")
+    );
+}
+
 /// Каскад не показывает чип, у которого блоков меньше, чем запрошено в `links`.
 #[test]
 fn chips_without_enough_blocks_are_filtered_before_the_cascade() {
