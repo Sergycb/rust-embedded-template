@@ -274,7 +274,7 @@ flash и безусловно прыгает в него (`unsafe { bl.load(entr
 | `Reboot` — сбросить МК, чтобы bootloader обменял разделы | `Rebooting` (до сброса) |
 
 {% if protocol == "protobuf" %}В этом проекте команды — сообщения схемы `crates-host/proto/proto/host.proto`
-(`ota_start`, `ota_chunk`, `ota_finish`, `reboot`, ответ `OtaReply`), перевод — в
+(`ota_start`, `ota_chunk`, `ota_finish`, `reboot`, ответ `Ok` или `Error`), перевод — в
 `domain::host::Service`.{% elsif protocol == "modbus" %}В этом проекте команды — записи FC16 в окно holding-регистров с `0xF000`
 (`domain::modbus::OtaRegisters` вокруг карты проекта): одна запись — одна команда,
 ответ на запись — её исход, точный код и принятая длина — во входных регистрах

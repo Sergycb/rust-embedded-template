@@ -34,10 +34,10 @@ mod tests {
     /// этим же кодеком: `08 07` — поле 1 varint 7, `12 00` — поле 2
     /// length-delimited длины 0.
     #[test]
-    fn ping_request_matches_the_wire_format() {
+    fn get_request_matches_the_wire_format() {
         let request = Request {
             request_id: 7,
-            command: Some(Request_::Command::Ping(Ping::default())),
+            command: Some(Request_::Command::Info(Get::default())),
         };
         assert_eq!(encode(&request), [0x08, 0x07, 0x12, 0x00]);
 

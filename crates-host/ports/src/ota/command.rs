@@ -154,8 +154,8 @@ pub enum Rejection {
     NoSession,
 }
 
-/// Код исхода числом — общий для протоколов, которые передают его хосту
-/// полем (protobuf `OtaReply.status`, входной регистр окна OTA Modbus): `1`
+/// Код исхода числом — для протоколов, которые передают его хосту полем
+/// (входной регистр окна OTA Modbus): `1`
 /// `Started`, `2` `Received`, `3` `Ready`, `4` `Rebooting`; отказы с `10`:
 /// `Length`, `Transfer`, `Busy`, `Rollback`, `Signature`, `Device`,
 /// `NoSession` — по порядку.

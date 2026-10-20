@@ -43,7 +43,7 @@ protobuf, Modbus, CANopen, того, что выбран при генераци
 Как команды ложатся на протоколы:
 
 - **protobuf** — сообщения `ota_start`, `ota_chunk`, `ota_finish`, `reboot`,
-  ответ `OtaReply` (`crates-host/proto/proto/host.proto`).
+  ответ `Ok` или `Error` с именем отказа (`crates-host/proto/proto/host.proto`).
 - **Modbus** — одна запись FC16 в окно holding-регистров с `0xF000` — одна
   команда (`domain::modbus::OtaRegisters` вокруг карты проекта). Успех —
   обычный ответ FC16, отказ — исключение 04; точный код и принятая длина — во

@@ -5,11 +5,11 @@ use embassy_time::Instant;
 use ports::HostService;
 // {%- if ota == "true" %}
 use core::array::TryFromSliceError;
-use ports::{Chunk, OtaCommand, OtaReply, Progress, SIGNATURE_BYTES, reply_code};
-use proto::OtaReply_::Status;
+use core::fmt::Write as _;
+use ports::{Chunk, OtaCommand, OtaReply, SIGNATURE_BYTES};
 use supervisor::Requester;
 // {%- endif %}
-use proto::{Error, Info, Pong, Request, Request_, Response, Response_, heapless};
+use proto::{Error, Info, Request, Request_, Response, Response_, heapless};
 
 /// Сведения об устройстве, которыми обработчик отвечает на `info`.
 ///
@@ -31,9 +31,9 @@ pub struct DeviceInfo {
     pub sys_hz: Option<u32>,
 }
 
-/// Обработчик, с которым узел `HOST` стоит в графе шаблона: на `ping` —
-/// `pong`, на `info` — сведения об устройстве{% if ota == "true" %}, команды обновления — узлу
-/// OTA{% endif %}, `request_id` — обратно.
+/// Обработчик, с которым узел `HOST` стоит в графе шаблона: на `info` —
+/// сведения об устройстве{% if ota == "true" %}, команды обновления — узлу OTA, их исход — `ok` или
+/// `error`{% endif %}, `request_id` — обратно.
 ///
 /// Это отправная точка, а не готовая логика: проект меняет схему в
 /// `crates-host/proto` и команды здесь — перевод сообщений схемы в свои
@@ -116,7 +116,6 @@ impl HostService for Service {
 
     async fn handle(&mut self, request: Request) -> Response {
         let result = match request.command {
-            Some(Request_::Command::Ping(_)) => Response_::Result::Pong(Pong::default()),
             Some(Request_::Command::Info(_)) => Response_::Result::Info(self.info()),
             // {%- if ota == "true" %}
             Some(Request_::Command::OtaStart(start)) => match signature(&start.signature) {
@@ -159,7 +158,7 @@ impl Service {
     /// Команда узлу OTA и её исход — ответом хосту.
     async fn ota(&self, command: OtaCommand) -> Response_::Result {
         match self.ota.request(command).await {
-            Ok(reply) => Response_::Result::Ota(ota_reply(reply)),
+            Ok(reply) => ota_reply(reply),
             // Узел OTA не ответил — граф его потерял; хосту текстом, как
             // любой другой отказ.
             Err(_) => error("ota node lost"),
@@ -183,15 +182,20 @@ fn signature(bytes: &[u8]) -> Result<Option<[u8; SIGNATURE_BYTES]>, TryFromSlice
     bytes.try_into().map(Some)
 }
 
-/// Исход команды обновления — сообщением схемы. Номера `Status` в схеме — те
-/// же коды, что `ports::reply_code`, общие с окном OTA Modbus.
-fn ota_reply(reply: OtaReply) -> proto::OtaReply {
-    proto::OtaReply {
-        status: Status(i32::from(reply_code(&reply))),
-        received: match reply {
-            Ok(Progress::Received(received)) => received,
-            _ => 0,
-        },
+/// Исход команды обновления — `ok` или `error` с именем отказа
+/// (`ports::Rejection`).
+fn ota_reply(reply: OtaReply) -> Response_::Result {
+    match reply {
+        Ok(_) => Response_::Result::Ok(proto::Ok {}),
+        Err(rejection) => {
+            let mut text = heapless::String::new();
+            // Имя варианта короче `ERROR_TEXT_BYTES`; не влезло бы — пустой
+            // текст, как у `text`.
+            if write!(text, "{rejection:?}").is_err() {
+                text.clear();
+            }
+            Response_::Result::Error(Error { text })
+        }
     }
 }
 // {%- endif %}
@@ -295,33 +299,12 @@ pub(crate) mod tests {
         panic!("обработчик не ответил");
     }
 
-    /// Номера `Status` в схеме совпадают с `ports::reply_code` — иначе
-    /// перевод исхода в схему соврал бы молча.
-    #[test]
-    fn schema_status_numbers_are_the_shared_reply_codes() {
-        use ports::{Progress, Rejection};
-        let pairs = [
-            (Ok(Progress::Started), Status::Started),
-            (Ok(Progress::Received(5)), Status::Received),
-            (Ok(Progress::Ready), Status::Ready),
-            (Ok(Progress::Rebooting), Status::Rebooting),
-            (Err(Rejection::Length), Status::Length),
-            (Err(Rejection::Transfer), Status::Transfer),
-            (Err(Rejection::Busy), Status::Busy),
-            (Err(Rejection::Rollback), Status::Rollback),
-            (Err(Rejection::Signature), Status::Signature),
-            (Err(Rejection::Device), Status::Device),
-            (Err(Rejection::NoSession), Status::NoSession),
-        ];
-        for (reply, status) in pairs {
-            assert_eq!(ota_reply(reply).status, status, "{reply:?}");
-        }
-    }
-
-    fn status(result: &Response_::Result) -> (Status, u32) {
+    /// Исход команды — `ok` или текст ошибки.
+    fn outcome(result: &Response_::Result) -> Result<(), &str> {
         match result {
-            Response_::Result::Ota(reply) => (reply.status, reply.received),
-            other => panic!("ожидался OtaReply, пришло {other:?}"),
+            Response_::Result::Ok(_) => Ok(()),
+            Response_::Result::Error(error) => Err(&error.text),
+            info @ Response_::Result::Info(_) => panic!("ожидался ok или error, пришло {info:?}"),
         }
     }
 
@@ -358,10 +341,10 @@ pub(crate) mod tests {
             Request_::Command::OtaFinish(proto::OtaFinish {}),
         );
 
-        assert_eq!(status(&start), (Status::Started, 0));
-        assert_eq!(status(&chunk), (Status::Received, 8));
-        assert_eq!(status(&finish), (Status::Ready, 0));
-        assert_eq!(status(&again), (Status::NoSession, 0));
+        assert_eq!(outcome(&start), Ok(()));
+        assert_eq!(outcome(&chunk), Ok(()));
+        assert_eq!(outcome(&finish), Ok(()));
+        assert_eq!(outcome(&again), Err("NoSession"));
     }
 
     /// Подпись не той длины — отказ текстом, до узла OTA он не доходит.
