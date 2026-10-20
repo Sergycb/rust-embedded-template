@@ -588,13 +588,18 @@ fn common_boards_keep_their_ota_layout() {
 fn memory_x_lists_every_region_of_the_chip() {
     let ast = compile_script();
 
-    // H723VE: кроме 128 KiB DTCM (это и есть RAM) у чипа есть ещё 416 KiB —
-    // раньше memory.x про них молчал, и пользователь видел только DTCM.
+    // H723VE: RAM — 320 KiB AXI-SRAM, самая большая область; DTCM, ITCM, SRAM
+    // шины AHB (здесь — `DMA_NC`) и SRAM4 выводятся своими строками.
     let app = written(
         &run_cascade_to(&ast, "h723ve").expect("каскад не должен падать"),
         "crates-cross/app/memory.x",
     );
-    for region in ["ITCM", "AXISRAM", "SRAM2", "SRAM3", "SRAM4"] {
+    assert_eq!(
+        region_origin(&app, "RAM").as_deref(),
+        Some("0x24000000"),
+        "{app}"
+    );
+    for region in ["ITCM", "DTCM", "DMA_NC", "SRAM4"] {
         assert!(
             region_origin(&app, region).is_some(),
             "{region} не выведен:\n{app}"

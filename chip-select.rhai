@@ -1234,8 +1234,8 @@ variable::set("state_erase_size", "");
 variable::set("config_erase_size", "");
 variable::set("ext_page_size", "");
 variable::set("iface_periph", "");
-// Регион `DMA_NC` (хвост AXISRAM) под буферы DMA: границы числами, для `[env]`.
-// Пусто — региона нет (раскладка ручная, чип без AXISRAM, ядро не M7).
+// Регион `DMA_NC` (хвост RAM) под буферы DMA: границы числами, для `[env]`.
+// Пусто — региона нет (раскладка ручная, ядро не M7).
 variable::set("dma_nc_start", "");
 variable::set("dma_nc_len", "");
 // То же для `SRAM4` целиком под буферы BDMA (H7).
@@ -1505,7 +1505,7 @@ if variable::is_set("write_size") {
     }
 
     // RAM одинаков в обоих крейтах и в обоих режимах. Следом — все остальные
-    // регионы чипа (ITCM, AXISRAM, CCMRAM, BKPSRAM, EEPROM, OTP, окна внешних
+    // регионы чипа (ITCM, DTCM, CCMRAM, BKPSRAM, EEPROM, OTP, окна внешних
     // шин...) готовыми строками из chip-data-gen: часть из них закомментирована,
     // причина указана прямо в строке.
     let ram = ["    RAM               (xrw) : ORIGIN = " + m["ram_origin"] + ", LENGTH = " + m["ram_length"]];

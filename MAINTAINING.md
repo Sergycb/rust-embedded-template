@@ -319,9 +319,12 @@ H723/725/730/733/735. Им `bsp` получает `src/clocks.rs`, осталь�
 смотрят на ту же переменную. Тест — `caches_follow_the_metadata_and_the_core`.
 
 Кэш данных ядра M7 (тег `scb_d`) включается только вместе с регионом `DMA_NC`: `chip-data-gen`
-(`dma_nc_region`) отрезает до 32 KiB от конца `AXISRAM` (H7), `SRAM1` в окне `0x24000000`
-(H7R/S) или основной цепочки RAM (F7; `PANIC` уходит под регион) и кладёт в запись раскладки
-`dma_nc_origin`/`dma_nc_length`; у H7 `SRAM4` в `0x38000000` целиком — `bdma_nc_*` (память BDMA).
+(`dma_nc_region`) отрезает до 32 KiB от конца RAM (`PANIC` уходит под регион) и кладёт в
+запись раскладки `dma_nc_origin`/`dma_nc_length`. RAM у H7 — самая большая непрерывная
+область (AXI-SRAM), а не DTCM с `0x20000000`; у остальных семейств — цепочка с `0x20000000`
+(у WB более крупная SRAM2 — память радиостека CPU2); у ядра CM4 двухъядерных H7 — SRAM домена
+D2 с `0x30000000`, мимо AXI-SRAM ядра CM7. `DMA_NC` не берётся из SRAM домена D2:
+до неё не дотягивается IDMA SDMMC1; у H7 `SRAM4` в `0x38000000` целиком — `bdma_nc_*` (память BDMA).
 Ядро M7 генератор берёт по семейству (`f7`/`h7`, не `-cm4`) — как `family_table` в хуке.
 Хук выставляет `dma_nc_start`/`dma_nc_len` и `bdma_nc_*` (в `[env]` `crates-cross/.cargo/config.toml`),
 удаляет `bsp/src/dma_nc.rs` там, где региона нет, дописывает `scb_d` в `cache` и вставляет в

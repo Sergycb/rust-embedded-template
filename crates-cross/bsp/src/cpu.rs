@@ -21,7 +21,7 @@ pub fn disable_interrupts() {
 {%- if cache contains "scb_d" %}
 ///
 /// Перед сбросом кэш данных ядра M7 сбрасывается в RAM (`clean`): иначе дамп паники
-/// в регионе `PANIC` (F7: он лежит в кэшируемой RAM) остался бы в кэше и пропал.
+/// в регионе `PANIC` (он лежит в кэшируемой RAM — на F7 и H7) остался бы в кэше и пропал.
 {%- endif %}
 pub fn reset() -> ! {
 {%- if cache contains "scb_d" %}

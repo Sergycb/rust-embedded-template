@@ -1240,7 +1240,7 @@ struct MemoryLayout {
     /// есть, если есть раскладка: без символов `_panic_dump_*` release-образ
     /// `app` не слинкуется (см. PANIC_MIN).
     panic: (u64, u64),
-    /// Готовые строки `MEMORY { }` для всех прочих регионов чипа (ITCM, AXISRAM,
+    /// Готовые строки `MEMORY { }` для всех прочих регионов чипа (ITCM, DTCM,
     /// CCMRAM, BKPSRAM, EEPROM, OTP, окна внешних шин...) — см.
     /// `extra_region_lines`. Одинаковы для `app` и `boot`.
     extra_regions: Vec<String>,
@@ -1425,14 +1425,16 @@ const PANIC_MIN: u64 = 128;
 /// размеру региона.
 const PANIC_MAX: u64 = 512;
 
-/// Размеры региона `DMA_NC` по убыванию. Регион MPU Armv7-M — степень двойки не
-/// меньше 32 байт, адрес кратен размеру; берётся наибольший, при котором конец
-/// блока-донора даёт такой адрес. 32 KiB хватает на очереди Ethernet и буферы
-/// SDMMC, меньшие — запасной вариант для блоков с «кривым» концом.
+/// Размеры региона `DMA_NC` в хвосте RAM по убыванию. Регион MPU Armv7-M —
+/// степень двойки не меньше 32 байт, адрес кратен размеру; берётся наибольший,
+/// при котором конец RAM даёт такой адрес. 32 KiB хватает на очереди Ethernet и
+/// буферы SDMMC, меньшие — запасной вариант для «кривого» конца.
 const DMA_NC_SIZES: [u64; 4] = [32 * 1024, 16 * 1024, 8 * 1024, 4 * 1024];
 
 /// Адрес `SRAM4` домена D3 у H7 — память, до которой дотягивается только BDMA.
 const H7_SRAM4: u64 = 0x3800_0000;
+/// Начало SRAM домена D2 у H7 (`SRAM1..3`) — RAM ядра CM4 двухъядерных чипов.
+const H7_D2_SRAM: u64 = 0x3000_0000;
 
 /// Регион `DMA_NC`: non-cacheable память под буферы DMA, которую `bsp::dma_nc`
 /// размечает в MPU. Без неё кэш данных ядра M7 DMA не видит.
@@ -1440,9 +1442,6 @@ const H7_SRAM4: u64 = 0x3800_0000;
 struct DmaNc {
     origin: u64,
     length: u64,
-    /// Блок, от конца которого отрезан регион (`AXISRAM`, `SRAM1`); `None` —
-    /// хвост основной цепочки RAM (F7: `DTCM` + `SRAM`).
-    donor: Option<String>,
 }
 
 /// Ядро Cortex-M7 в этом шаблоне — семейства F7 и H7 (`family_table` в
@@ -1459,37 +1458,44 @@ fn dma_nc_size(end: u64, block: u64) -> Option<u64> {
         .find(|&size| block >= 4 * size && end.is_multiple_of(size))
 }
 
-/// Где взять регион `DMA_NC` у чипа с кэшем данных ядра (M7).
-///
-/// По порядку: `AXISRAM` (H7), `SRAM1` в окне AXI-RAM `0x24000000` (H7R/S), хвост
-/// основной цепочки RAM (F7: `DTCM` + `SRAM`; PANIC уходит под него). Донор
-/// становится короче на длину региона. У ядра CM4 двухъядерных H7 и у
-/// не-M7 чипов региона нет. Тест `every_m7_chip_gets_a_dma_region` ловит M7-чип,
-/// которому не нашлось блока.
-fn dma_nc_region(chip: &str, regions: &[RawRegion], ram_end: u64) -> Option<DmaNc> {
+/// Непрерывные цепочки RAM-блоков `(начало, конец)` по возрастанию адреса.
+/// Окна внешних шин и второе (I-Code) окно блока — не память программы, в
+/// цепочки не входят; блок, налезающий на цепочку, пропускается.
+fn ram_chains(regions: &[RawRegion]) -> Vec<(u64, u64)> {
+    let mut ram: Vec<&RawRegion> = regions
+        .iter()
+        .filter(|r| {
+            r.kind == RegionKind::Ram
+                && r.size > 0
+                && !r.name.ends_with(ALIAS_SUFFIX)
+                && !EXTERNAL_BUS_PREFIXES.iter().any(|p| r.name.starts_with(p))
+        })
+        .collect();
+    ram.sort_by_key(|r| r.address);
+    let mut chains: Vec<(u64, u64)> = Vec::new();
+    for region in ram {
+        match chains.last_mut() {
+            Some((_, end)) if region.address == *end => *end += region.size,
+            Some((_, end)) if region.address < *end => {}
+            _ => chains.push((region.address, region.address + region.size)),
+        }
+    }
+    chains
+}
+
+/// Регион `DMA_NC` у чипа с кэшем данных ядра (M7): хвост RAM, PANIC уходит
+/// под него. У H7 RAM — AXI-SRAM, и регион в ней доступен всем DMA, в том
+/// числе IDMA SDMMC1 из домена D1, которому SRAM домена D2 недоступна. У ядра
+/// CM4 двухъядерных H7 и у не-M7 чипов региона нет. Тест
+/// `every_m7_chip_gets_a_dma_region` ловит M7-чип, которому не нашлось места.
+fn dma_nc_region(chip: &str, (start, end): (u64, u64)) -> Option<DmaNc> {
     if !is_cortex_m7(chip) {
         return None;
     }
-    let donors = regions.iter().filter(|r| {
-        r.kind == RegionKind::Ram
-            && (r.name == "AXISRAM"
-                || (r.name == "SRAM1" && (0x2400_0000..0x2500_0000).contains(&r.address)))
-    });
-    for donor in donors {
-        let end = donor.address + donor.size;
-        if let Some(length) = dma_nc_size(end, donor.size) {
-            return Some(DmaNc {
-                origin: end - length,
-                length,
-                donor: Some(donor.name.clone()),
-            });
-        }
-    }
-    let length = dma_nc_size(ram_end, ram_end - RAM_BASE)?;
+    let length = dma_nc_size(end, end - start)?;
     Some(DmaNc {
-        origin: ram_end - length,
+        origin: end - length,
         length,
-        donor: None,
     })
 }
 
@@ -1606,52 +1612,49 @@ fn compute_memory_layout(chip: &str, regions: &[RawRegion]) -> Option<MemoryLayo
     // состояние одно на весь контроллер флеша, а не своё у каждого банка.
     let erase_zero = chain[0].flash?.erase_value == 0;
 
-    let mut ram: Vec<&RawRegion> = regions
-        .iter()
-        .filter(|r| r.kind == RegionKind::Ram)
-        .collect();
-    ram.sort_by_key(|r| r.address);
-    let mut ram_end = RAM_BASE;
-    for region in ram {
-        if region.address == ram_end {
-            ram_end += region.size;
-        } else if region.address > ram_end {
-            break;
-        }
-    }
-    let ram_total = ram_end - RAM_BASE;
-    if ram_total == 0 {
-        return None;
-    }
+    // RAM — цепочка с `RAM_BASE`, а у H7 — самая большая непрерывная область:
+    // с `RAM_BASE` там DTCM, и в её 128 KiB статики и стек не помещаются. Кэш
+    // данных M7 отладчику не мешает: probe-rs ходит через AHB-AP ядра с HPROT
+    // Cacheable, и RTT из кэшируемой RAM читается верно. Остальным семействам
+    // самая большая область не годится: у WB это SRAM2 — память радиостека CPU2.
+    // Ядро CM4 двухъядерных H7 берёт SRAM домена D2: AXI-SRAM занята ядром
+    // CM7, а до DTCM ядро CM4 не дотягивается вовсе.
+    let chains = ram_chains(regions);
+    let ram = if chip.starts_with("h7") && chip.ends_with("-cm4") {
+        chains
+            .iter()
+            .copied()
+            .find(|&(start, _)| start == H7_D2_SRAM)
+    } else if chip.starts_with("h7") {
+        chains
+            .iter()
+            .copied()
+            .max_by_key(|&(start, end)| (end - start, start == RAM_BASE))
+    } else {
+        chains.iter().copied().find(|&(start, _)| start == RAM_BASE)
+    }?;
+    let (ram_origin, ram_end) = ram;
+    let ram_total = ram_end - ram_origin;
     if ram_total < MIN_RAM_FOR_LAYOUT {
         return None;
     }
-    // Резерв отрезается от самого конца RAM — до её верхней границы; если
-    // `DMA_NC` берётся из хвоста цепочки (F7), он занимает самый конец, а PANIC —
-    // место под ним.
-    let dma_nc = dma_nc_region(chip, regions, ram_end);
-    let chain_tail = dma_nc
-        .as_ref()
-        .filter(|d| d.donor.is_none())
-        .map_or(0, |d| d.length);
+    // Резерв отрезается от самого конца RAM — до её верхней границы; `DMA_NC`
+    // (M7) занимает самый конец, а PANIC — место под ним.
+    let dma_nc = dma_nc_region(chip, ram);
+    let ram_tail = dma_nc.as_ref().map_or(0, |d| d.length);
     let reserved = (ram_total / PANIC_FRACTION).clamp(PANIC_MIN, PANIC_MAX);
-    let ram_length = ram_total - reserved - chain_tail;
-    let panic = (RAM_BASE + ram_length, reserved);
+    let ram_length = ram_total - reserved - ram_tail;
+    let panic = (ram_origin + ram_length, reserved);
 
     Some(MemoryLayout {
         flash_origin: FLASH_BASE,
         flash_length: flash_total,
-        ram_origin: RAM_BASE,
+        ram_origin,
         ram_length,
         panic,
         // Границы цепочек, а не ram_length: PANIC отрезан от RAM, но лежит
         // внутри той же цепочки — регионом его дублировать не надо.
-        extra_regions: extra_region_lines(
-            regions,
-            FLASH_BASE + flash_total,
-            ram_end,
-            dma_nc.as_ref(),
-        ),
+        extra_regions: extra_region_lines(regions, FLASH_BASE + flash_total, ram, dma_nc.as_ref()),
         write_size,
         page_size,
         erase_zero,
@@ -1951,13 +1954,13 @@ fn region_line(name: &str, attrs: &str, origin: u64, length: u64) -> String {
 fn extra_region_lines(
     regions: &[RawRegion],
     flash_end: u64,
-    ram_end: u64,
+    (ram_start, ram_end): (u64, u64),
     dma_nc: Option<&DmaNc>,
 ) -> Vec<String> {
     let names: BTreeSet<&str> = regions.iter().map(|r| r.name.as_str()).collect();
     let covered = |r: &RawRegion| {
         let end = r.address + r.size;
-        (r.address >= FLASH_BASE && end <= flash_end) || (r.address >= RAM_BASE && end <= ram_end)
+        (r.address >= FLASH_BASE && end <= flash_end) || (r.address >= ram_start && end <= ram_end)
     };
 
     let mut sorted: Vec<&RawRegion> = regions
@@ -2004,22 +2007,10 @@ fn extra_region_lines(
         })
         .collect();
 
-    // `DMA_NC`: донор становится короче на его длину; хвост основной цепочки
-    // RAM в `extra_regions` не лежит, и строка добавляется первой (адреса ниже).
+    // `DMA_NC` — хвост RAM, в `extra_regions` её нет; строка идёт первой, как
+    // продолжение `RAM` и `PANIC`, которые хук выводит перед ними.
     if let Some(dma) = dma_nc {
-        match &dma.donor {
-            Some(donor) => {
-                if let Some(block) = regions.iter().find(|r| &r.name == donor)
-                    && let Some(i) = lines
-                        .iter()
-                        .position(|line| line.trim_start().starts_with(donor.as_str()))
-                {
-                    lines[i] = region_line(donor, "xrw", block.address, block.size - dma.length);
-                    lines.insert(i + 1, region_line("DMA_NC", "xrw", dma.origin, dma.length));
-                }
-            }
-            None => lines.insert(0, region_line("DMA_NC", "xrw", dma.origin, dma.length)),
-        }
+        lines.insert(0, region_line("DMA_NC", "xrw", dma.origin, dma.length));
     }
     lines
 }
@@ -4205,7 +4196,7 @@ pub static METADATA: Metadata = Metadata {
         let lines = extra_region_lines(
             &regions,
             FLASH_BASE + 512 * 1024,
-            RAM_BASE + 64 * 1024,
+            (RAM_BASE, RAM_BASE + 64 * 1024),
             None,
         );
         let joined = lines.join("\n");
@@ -4228,6 +4219,44 @@ pub static METADATA: Metadata = Metadata {
         assert!(find("FMC_BANK1").contains("внешняя шина"));
         // Сортировка по адресу: CCMRAM (0x1000_0000) раньше SRAM2_ICODE (0x1000_8000).
         assert!(joined.find("CCMRAM") < joined.find("SRAM2_ICODE"));
+    }
+
+    /// H743: RAM — AXI-SRAM (самая большая область), а не DTCM с `RAM_BASE`;
+    /// `DMA_NC` — её хвост (32 KiB), PANIC — под ним. DTCM и SRAM домена D2
+    /// остаются своими строками.
+    #[test]
+    fn h7_ram_is_the_largest_block_with_dma_nc_at_its_tail() {
+        let mut regions = flash_with_erase_value(2048 * 1024, 128 * 1024, 32, 0xFF);
+        regions.retain(|r| r.kind != RegionKind::Ram);
+        regions.extend([
+            region("DTCM", RegionKind::Ram, RAM_BASE, 128 * 1024),
+            region("AXISRAM", RegionKind::Ram, 0x2400_0000, 512 * 1024),
+            region("SRAM1", RegionKind::Ram, H7_D2_SRAM, 128 * 1024),
+            region("SRAM4", RegionKind::Ram, H7_SRAM4, 64 * 1024),
+        ]);
+        let layout = compute_memory_layout("h743zi", &regions).expect("раскладка");
+        assert_eq!(layout.ram_origin, 0x2400_0000);
+        assert_eq!(layout.ram_length + layout.panic.1, 480 * 1024);
+        assert_eq!(layout.panic.0 + layout.panic.1, 0x2407_8000);
+        assert_eq!(
+            layout.dma_nc,
+            Some(DmaNc {
+                origin: 0x2407_8000,
+                length: 32 * 1024
+            })
+        );
+        let joined = layout.extra_regions.join("\n");
+        assert!(joined.starts_with("    DMA_NC"), "{joined}");
+        assert!(!joined.contains("AXISRAM"), "{joined}");
+        for region in ["DTCM", "SRAM1", "SRAM4"] {
+            assert!(joined.contains(region), "{region} нет в:\n{joined}");
+        }
+
+        // Ядро CM4 того же кристалла — в SRAM домена D2, мимо AXI-SRAM ядра CM7.
+        let cm4 = compute_memory_layout("h745zi-cm4", &regions).expect("раскладка");
+        assert_eq!(cm4.ram_origin, H7_D2_SRAM);
+        assert_eq!(cm4.dma_nc, None);
+        assert!(cm4.extra_regions.iter().any(|l| l.contains("AXISRAM")));
     }
 
     /// Нарушенный инвариант называет чип — иначе по одной панике на 1479 чипов
