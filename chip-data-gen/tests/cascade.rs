@@ -92,6 +92,8 @@ type Deleted = Rc<RefCell<Vec<String>>>;
 /// настроек, не посчитали раскладку), и ошибиться в них так же легко, как в
 /// коде: одно из них уже врало (см. `ota_blamed_on_the_settings_partition`).
 type Prints = Rc<RefCell<Vec<String>>>;
+/// Показанные меню: заголовок и варианты (см. `CascadeResult::prompts`).
+type Prompts = Rc<RefCell<Vec<(String, Vec<String>)>>>;
 
 /// Итог одного прогона: переменные (chip/chip_feature/cpu/target/write_size/
 /// ota/bank_mode), файлы, записанные через `file::write` (memory.x), построчно,
@@ -142,8 +144,10 @@ fn run_cascade_with(
 
 /// Прогон с ответами «пользователя»: `preset` — то, что пришло через
 /// `--define`, `picks` — выбор в меню (`("ota", "no")` отвечает на вопрос
-/// `ota: ...` вариантом, начинающимся со слова `no`). Меню без ответа ведёт себя
-/// как запуск без терминала: `variable::prompt` отвечает ошибкой «not a
+/// `ota: ...` вариантом, начинающимся со слова `no`). Ответы одного id
+/// расходуются по порядку: `[("interface", "uart"), ("interface", "tcp")]`
+/// отвечает на первый и второй вопрос `interface:`. Меню без ответа (или когда
+/// ответы его id кончились) ведёт себя как запуск без терминала: `variable::prompt` отвечает ошибкой «not a
 /// terminal», и хук берёт умолчание.
 fn run_interview(
     script: &Script,
@@ -151,7 +155,7 @@ fn run_interview(
     preset: &[(&str, &str)],
     picks: &[(&str, &str)],
 ) -> Result<CascadeResult, Box<EvalAltResult>> {
-    let prompts: Rc<RefCell<Vec<(String, Vec<String>)>>> = Rc::new(RefCell::new(Vec::new()));
+    let prompts: Prompts = Rc::new(RefCell::new(Vec::new()));
     let picks: Vec<(String, String)> = picks
         .iter()
         .map(|(id, value)| ((*id).to_string(), (*value).to_string()))
@@ -216,6 +220,8 @@ fn run_interview(
     {
         let target = target_suffix.to_string();
         let prompts = prompts.clone();
+        // Сколько ответов каждого id уже израсходовано.
+        let used: RefCell<HashMap<String, usize>> = RefCell::new(HashMap::new());
         module.set_native_fn(
             "prompt",
             move |text: &str, _default: Dynamic, choices: Array| -> Result<Dynamic, Box<EvalAltResult>> {
@@ -226,7 +232,11 @@ fn run_interview(
                         .collect();
                     prompts.borrow_mut().push((text.to_string(), shown.clone()));
                     let id = text.split(':').next().unwrap_or_default();
-                    return match picks.iter().find(|(pick_id, _)| pick_id == id) {
+                    let mut used = used.borrow_mut();
+                    let nth = used.entry(id.to_string()).or_default();
+                    let pick = picks.iter().filter(|(pick_id, _)| pick_id == id).nth(*nth);
+                    *nth += 1;
+                    return match pick {
                         Some((_, value)) => shown
                             .iter()
                             .find(|choice| {
@@ -1590,6 +1600,250 @@ fn impossible_protocol_answers_are_rejected() {
     }
 }
 
+/// Значение переменной хука.
+fn var_of<'a>(result: &'a CascadeResult, name: &str) -> Option<&'a str> {
+    result.vars.get(name).map(String::as_str)
+}
+
+/// Значения вариантов каждого показанного меню `id` — по порядку показа.
+fn all_menu_values(result: &CascadeResult, id: &str) -> Vec<Vec<String>> {
+    result
+        .prompts
+        .iter()
+        .filter(|(label, _)| label.starts_with(&format!("{id}:")))
+        .map(|(_, choices)| choices.iter().map(|c| menu_value(c).to_string()).collect())
+        .collect()
+}
+
+/// Пара `interface` + `protocol` по-старому — один транспорт: список из одного
+/// элемента, а прежние переменные — те же, что до списка транспортов.
+#[test]
+fn single_answers_keep_the_old_variables() {
+    let result = run_cascade_with(
+        &compile_script(),
+        "c011d6",
+        &[("interface", "uart"), ("protocol", "modbus"), ("ota", "no")],
+    )
+    .expect("каскад не должен падать");
+    assert_eq!(var_of(&result, "links"), Some("uart:usart:USART1:modbus"));
+    assert_eq!(var_of(&result, "has_uart"), Some("true"));
+    assert_eq!(var_of(&result, "has_can"), Some("false"));
+    assert_eq!(var_of(&result, "iface_periph"), Some("USART1"));
+    assert_eq!(var_of(&result, "interface"), Some("uart"));
+}
+
+/// `--define links`: блоки назначаются по порядку списка чипа, сеть — на ETH.
+#[test]
+fn links_assign_blocks_in_order() {
+    let result = run_cascade_with(
+        &compile_script(),
+        "h743zg",
+        &[
+            ("links", "uart:modbus,uart:modbus,tcp:modbus"),
+            ("ota", "no"),
+        ],
+    )
+    .expect("каскад не должен падать");
+    assert_eq!(
+        var_of(&result, "links"),
+        Some("uart:usart:USART1:modbus,uart:usart:USART2:modbus,tcp:eth:ETH:modbus")
+    );
+    assert_eq!(var_of(&result, "has_net"), Some("true"));
+    assert_eq!(var_of(&result, "protocol"), Some("modbus"));
+}
+
+/// Невозможный `links` останавливает генерацию с объяснением.
+#[test]
+fn links_reject_impossible_answers() {
+    /// Чип, ответы, часть ожидаемого сообщения об ошибке.
+    type Rejected<'a> = (&'a str, &'a [(&'a str, &'a str)], &'a str);
+    let script = compile_script();
+    let cases: [Rejected; 8] = [
+        (
+            "f407ve",
+            &[("links", "uart"), ("interface", "uart")],
+            "links: задаётся вместо interface и protocol, а не вместе с ними",
+        ),
+        (
+            "f407ve",
+            &[("links", "uart"), ("protocol", "none")],
+            "links: задаётся вместо interface и protocol, а не вместе с ними",
+        ),
+        (
+            "f407ve",
+            &[("links", "uart,,tcp")],
+            "links: пустой элемент в «uart,,tcp»",
+        ),
+        (
+            "f407ve",
+            &[("links", "spi")],
+            "links: ожидается вид can, tcp, uart, udp, usb, а не «spi»",
+        ),
+        (
+            "f407ve",
+            &[("links", "uart:opcua")],
+            "links: ожидается протокол canopen, modbus, none, protobuf, а не «opcua»",
+        ),
+        (
+            "f407ve",
+            &[("links", "can:modbus")],
+            "links: протокол modbus работает поверх uart, tcp, udp, usb, а не «can»",
+        ),
+        (
+            "f407ve",
+            &[("links", "uart:modbus,tcp:protobuf")],
+            "links: протокол в проекте пока один, а заданы modbus и protobuf",
+        ),
+        // У F042 один bxCAN.
+        (
+            "f042c6",
+            &[("links", "can,can")],
+            "блоков вида can — 1 (CAN), а запрошено 2",
+        ),
+    ];
+    for (chip, preset, reason) in cases {
+        let err = run_chip_with(&script, chip, preset)
+            .err()
+            .unwrap_or_else(|| panic!("{chip} {preset:?}: каскад не остановился"));
+        assert!(
+            err.to_string().contains(reason),
+            "{chip} {preset:?}: ждали «{reason}», а получили: {err}"
+        );
+    }
+}
+
+/// Пробелы вокруг частей `links` допускаются, пустой элемент — нет.
+#[test]
+fn links_tolerate_spaces_but_not_empty_items() {
+    let script = compile_script();
+    let result = run_chip_with(&script, "f407ve", &[("links", "uart, tcp:modbus")])
+        .expect("пробелы в links должны приниматься");
+    assert_eq!(
+        var_of(&result, "links"),
+        Some("uart:usart:USART1:none,tcp:eth:ETH:modbus")
+    );
+    let err = run_chip_with(&script, "f407ve", &[("links", "uart,,tcp")])
+        .err()
+        .expect("пустой элемент принят");
+    assert!(err.to_string().contains("links: пустой элемент"), "{err}");
+}
+
+/// Вид остаётся в меню, пока у него есть свободный блок: у F407 два bxCAN.
+#[test]
+fn the_menu_offers_a_kind_only_while_blocks_remain() {
+    let result = interview(
+        &compile_script(),
+        "f407ve",
+        &[],
+        &[
+            ("interface", "can"),
+            ("protocol", "none"),
+            ("more_links", "yes"),
+            ("interface", "can"),
+            ("protocol", "none"),
+            ("more_links", "yes"),
+        ],
+    )
+    .expect("каскад не должен падать");
+    let menus = all_menu_values(&result, "interface");
+    assert_eq!(menus.len(), 3, "{menus:?}");
+    assert!(menus[1].contains(&"can".to_string()), "{menus:?}");
+    assert!(!menus[2].contains(&"can".to_string()), "{menus:?}");
+    // `none` — только в первом меню.
+    assert!(menus[0].contains(&"none".to_string()), "{menus:?}");
+    assert!(!menus[1].contains(&"none".to_string()), "{menus:?}");
+}
+
+/// Когда протокол проекта выбран, следующему транспорту предлагается только он.
+#[test]
+fn once_a_protocol_is_chosen_only_it_and_none_are_offered() {
+    let result = interview(
+        &compile_script(),
+        "f407ve",
+        &[],
+        &[
+            ("interface", "uart"),
+            ("protocol", "modbus"),
+            ("more_links", "yes"),
+            ("interface", "tcp"),
+        ],
+    )
+    .expect("каскад не должен падать");
+    let menus = all_menu_values(&result, "protocol");
+    assert_eq!(menus.len(), 2, "{menus:?}");
+    assert_eq!(menus[1], ["none", "modbus"]);
+    // Master спрашивается один раз — при первом выборе Modbus.
+    assert_eq!(all_menu_values(&result, "modbus_master").len(), 1);
+}
+
+/// Вид, поверх которого протокол проекта не работает, получает транспорт без
+/// протокола, и вопрос о протоколе не задаётся.
+#[test]
+fn a_kind_the_protocol_cannot_carry_gets_no_protocol_question() {
+    let result = interview(
+        &compile_script(),
+        "f407ve",
+        &[],
+        &[
+            ("interface", "uart"),
+            ("protocol", "modbus"),
+            ("more_links", "yes"),
+            ("interface", "can"),
+        ],
+    )
+    .expect("каскад не должен падать");
+    assert_eq!(all_menu_values(&result, "protocol").len(), 1);
+    assert_eq!(
+        var_of(&result, "links"),
+        Some("uart:usart:USART1:modbus,can:bxcan:CAN1:none")
+    );
+}
+
+/// Прежние переменные считаются от первого транспорта с протоколом.
+#[test]
+fn the_primary_link_is_the_first_with_a_protocol() {
+    let result = run_chip_with(&compile_script(), "f407ve", &[("links", "can,uart:modbus")])
+        .expect("каскад не должен падать");
+    assert_eq!(var_of(&result, "interface"), Some("uart"));
+    assert_eq!(var_of(&result, "iface_periph"), Some("USART1"));
+    assert_eq!(var_of(&result, "protocol"), Some("modbus"));
+    assert_eq!(var_of(&result, "has_can"), Some("true"));
+}
+
+/// Блоки вида — все блоки всех его меток. Чипа с обеими метками одного вида
+/// (`usb` и `otg`, `fdcan` и `bxcan`) в таблицах нет, поэтому проверяется
+/// метка с двумя блоками: у F407 — `USB_OTG_FS` и `USB_OTG_HS`.
+#[test]
+fn both_tags_of_a_kind_count_as_its_blocks() {
+    let result = run_chip_with(&compile_script(), "f407ve", &[("links", "usb,usb")])
+        .expect("каскад не должен падать");
+    assert_eq!(
+        var_of(&result, "links"),
+        Some("usb:otg:USB_OTG_FS:none,usb:otg:USB_OTG_HS:none")
+    );
+}
+
+/// Каскад не показывает чип, у которого блоков меньше, чем запрошено в `links`.
+#[test]
+fn chips_without_enough_blocks_are_filtered_before_the_cascade() {
+    let script = compile_script();
+    let err = run_cascade_with(&script, "f042c6", &[("links", "can,can")])
+        .err()
+        .expect("чип с одним CAN дошёл до конца каскада");
+    assert!(err.to_string().contains("не ведёт к цели"), "{err}");
+    run_cascade_with(&script, "f042c6", &[("links", "can")]).expect("один CAN у F042 есть");
+    run_cascade_with(&script, "f407ve", &[("links", "can,can")]).expect("у F407 два CAN");
+}
+
+/// Без терминала после первого транспорта ничего не добавляется.
+#[test]
+fn no_terminal_adds_no_extra_links() {
+    let result = interview(&compile_script(), "f407ve", &[], &[("interface", "uart")])
+        .expect("каскад не должен падать");
+    assert_eq!(var_of(&result, "links"), Some("uart:usart:USART1:none"));
+    assert_eq!(all_menu_values(&result, "more_links").len(), 1);
+}
+
 /// Протоколу граф не нужен: без него узел спавнит `main`, и ни ответ `graph=no`,
 /// ни размер раздела (здесь — 16 KiB у `l011f4`) генерацию не останавливают. Готовый
 /// транспорт `bsp/src/link.rs` остаётся, пока выбран Modbus или protobuf.
@@ -2384,7 +2638,8 @@ fn the_menus_come_in_order_and_offer_only_what_is_possible() {
             "graph",
             "interface",
             "protocol",
-            "modbus_master"
+            "modbus_master",
+            "more_links"
         ]
     );
 
