@@ -64,7 +64,7 @@ fn main() -> anyhow::Result<()> {
     let mut watchdogs: BTreeMap<&str, String> = BTreeMap::new();
     let mut cpu_freq_boost: Vec<&str> = Vec::new();
     let mut interfaces: BTreeMap<&str, Vec<&'static str>> = BTreeMap::new();
-    let mut instances: BTreeMap<&str, BTreeMap<&'static str, String>> = BTreeMap::new();
+    let mut instances: BTreeMap<&str, BTreeMap<&'static str, Vec<String>>> = BTreeMap::new();
     let mut rngs: BTreeMap<&str, (String, RngClock)> = BTreeMap::new();
     let mut caches: BTreeMap<&str, Vec<&'static str>> = BTreeMap::new();
     let mut switch_variants: BTreeMap<&str, &'static str> = BTreeMap::new();
@@ -692,9 +692,9 @@ struct SharedMetadata {
     flash_version: Option<String>,
     /// Интерфейсы связи, выведенные в корпусе, — см. [`parse_interfaces`].
     interfaces: Vec<&'static str>,
-    /// Имя блока, которым `resources.rs` называет каждый интерфейс, — см.
+    /// Имена блоков, которыми `resources.rs` называет каждый интерфейс, — см.
     /// [`parse_instances`].
-    instances: BTreeMap<&'static str, String>,
+    instances: BTreeMap<&'static str, Vec<String>>,
     /// Прерывание блока `RNG` — см. [`parse_rng_interrupt`].
     rng_interrupt: Option<String>,
     /// Есть блок `CRS` — по нему `embassy-stm32` включает HSI48 (см. [`rng_clock`]).
@@ -813,7 +813,8 @@ fn parse_interfaces(text: &str) -> Vec<&'static str> {
 }
 
 /// Метка интерфейса и имя блока, если блок — интерфейс связи с выводами в
-/// корпусе. Общая для [`parse_interfaces`] и [`parse_instances`]: метка и имя
+/// корпусе: у `usart`/`fdcan`/`bxcan` выведены `TX` и `RX`, у `usb`/`otg` —
+/// `DP` и `DM`, у `eth` — хоть один вывод. Общая для [`parse_interfaces`] и [`parse_instances`]: метка и имя
 /// не должны расходиться.
 fn interface_block(block: &str) -> Option<(&'static str, &str)> {
     let kind = field(block, "kind").map(|v| v.trim_matches('"'));
@@ -827,25 +828,32 @@ fn interface_block(block: &str) -> Option<(&'static str, &str)> {
         (Some("otg"), _) => "otg",
         _ => return None,
     };
-    let has_pins = block
-        .split_once("pins: &[")
-        .is_some_and(|(_, rest)| !rest.trim_start().starts_with(']'));
+    let pins = block.split_once("pins: &[").map_or("", |(_, rest)| {
+        rest.split_once(']').map_or(rest, |(p, _)| p)
+    });
+    let has = |signal: &str| pins.contains(&format!("signal: \"{signal}\""));
+    let wired = match tag {
+        "usart" | "fdcan" | "bxcan" => has("TX") && has("RX"),
+        "usb" | "otg" => has("DP") && has("DM"),
+        _ => !pins.trim().is_empty(),
+    };
     let name = field(block, "name").map(|v| v.trim_matches('"'))?;
-    has_pins.then_some((tag, name))
+    wired.then_some((tag, name))
 }
 
-/// Какой блок чипа называет `resources.rs` для каждой метки интерфейса.
+/// Какие блоки чипа называет `resources.rs` для каждой метки интерфейса.
 ///
 /// Метка говорит, что на чипе есть блок такого рода, но не как он зовётся:
 /// у STM32F030F4 нет `USART2` (только `USART1`), а у STM32H723 нет
 /// `USB_OTG_FS` (только `USB_OTG_HS`). Имя нужно проекту, чтобы положить блок
 /// в группу `assign_resources!`, — выбор по соглашению не собрался бы у
-/// десятков чипов. Берётся блок с выводами в корпусе (как в
-/// [`parse_interfaces`]); из нескольких — предпочтительный (`USART*` раньше
-/// `UART*`/`LPUART*`, `USB_OTG_FS` раньше `USB_OTG_HS`, `CAN1` раньше
-/// прочих), а дальше — с меньшим номером.
-fn parse_instances(text: &str) -> BTreeMap<&'static str, String> {
-    let mut best: BTreeMap<&'static str, (u8, usize, String)> = BTreeMap::new();
+/// десятков чипов. Берутся все блоки с выводами нужных сигналов в корпусе
+/// (как в [`parse_interfaces`]), в порядке выбора: предпочтительный
+/// (`USART*` раньше `UART*`/`LPUART*`, `USB_OTG_FS` раньше `USB_OTG_HS`,
+/// `CAN1` раньше прочих), а дальше — с меньшим номером. Первое имя — тот
+/// блок, который проект получает по умолчанию.
+fn parse_instances(text: &str) -> BTreeMap<&'static str, Vec<String>> {
+    let mut ranked: BTreeMap<&'static str, Vec<(u8, usize, String)>> = BTreeMap::new();
     for block in text.split("Peripheral {").skip(1) {
         let Some((tag, name)) = interface_block(block) else {
             continue;
@@ -856,13 +864,17 @@ fn parse_instances(text: &str) -> BTreeMap<&'static str, String> {
             "bxcan" => name == "CAN1" || name == "CAN",
             _ => true,
         };
-        let rank = (u8::from(!preferred), name.len(), name.to_owned());
-        if best.get(tag).is_none_or(|current| rank < *current) {
-            best.insert(tag, rank);
-        }
+        ranked
+            .entry(tag)
+            .or_default()
+            .push((u8::from(!preferred), name.len(), name.to_owned()));
     }
-    best.into_iter()
-        .map(|(tag, (_, _, name))| (tag, name))
+    ranked
+        .into_iter()
+        .map(|(tag, mut blocks)| {
+            blocks.sort();
+            (tag, blocks.into_iter().map(|(_, _, name)| name).collect())
+        })
         .collect()
 }
 
@@ -2806,11 +2818,11 @@ fn format_interfaces(chips: &BTreeMap<&str, Vec<&'static str>>) -> String {
 
 /// Имена блоков интерфейсов каждого чипа (см. [`parse_instances`]): по ним
 /// `resources.rs` кладёт блок выбранного интерфейса в свою группу.
-fn format_instances(chips: &BTreeMap<&str, BTreeMap<&'static str, String>>) -> String {
+fn format_instances(chips: &BTreeMap<&str, BTreeMap<&'static str, Vec<String>>>) -> String {
     let mut out = String::new();
     out.push_str(DATA_HEADER);
     out.push_str(&format!(
-        "// {} шт.; метка интерфейса: имя блока
+        "// {} шт.; метка интерфейса: имена блоков в порядке выбора
 ",
         chips.len()
     ));
@@ -2821,7 +2833,10 @@ fn format_instances(chips: &BTreeMap<&str, BTreeMap<&'static str, String>>) -> S
     for (suffix, names) in chips {
         let names: Vec<String> = names
             .iter()
-            .map(|(tag, name)| format!("\"{tag}\": \"{name}\""))
+            .map(|(tag, blocks)| {
+                let blocks: Vec<String> = blocks.iter().map(|b| format!("\"{b}\"")).collect();
+                format!("\"{tag}\": [{}]", blocks.join(", "))
+            })
             .collect();
         out.push_str(&format!(
             "    \"{suffix}\": #{{{}}},
@@ -3334,26 +3349,33 @@ pub static METADATA: Metadata = Metadata {
 "
             )
         };
-        let pin = "
-            PeripheralPin { pin: \"PA11\", signal: \"RX\", af: Some(9) },
-        ";
+        let pin = |signal: &str| {
+            format!(
+                "
+            PeripheralPin {{ pin: \"PA11\", signal: \"{signal}\", af: Some(9) }},
+        "
+            )
+        };
+        let rx_tx = [pin("RX"), pin("TX")].concat();
+        let dp_dm = [pin("DP"), pin("DM")].concat();
         let text = [
-            block("otg", "v1", pin),
-            block("can", "fdcan_h7", pin),
+            block("otg", "v1", &dp_dm),
+            block("can", "fdcan_h7", &rx_tx),
             block("eth", "v2", ""),
-            block("usart", "v4", pin),
-            block("usart", "v2", pin),
-            block("can", "bxcan", pin),
-            block("i2c", "v2", pin),
+            block("usart", "v4", &rx_tx),
+            block("usart", "v2", &rx_tx),
+            block("can", "bxcan", &rx_tx),
+            block("i2c", "v2", &rx_tx),
         ]
         .concat();
         assert_eq!(parse_interfaces(&text), ["usart", "fdcan", "bxcan", "otg"]);
     }
 
-    /// Имя блока — с выводами и предпочтительное: `USART*` раньше `LPUART*`,
-    /// `USB_OTG_FS` раньше `USB_OTG_HS`, блок без выводов не считается.
+    /// Блоки с выводами нужных сигналов — в порядке предпочтения: `USART*`
+    /// раньше `LPUART*`, `USB_OTG_FS` раньше `USB_OTG_HS`, блок без выводов не
+    /// считается.
     #[test]
-    fn instances_name_the_preferred_block_with_pins() {
+    fn instances_list_blocks_with_pins_in_preference_order() {
         let block = |name: &str, kind: &str, version: &str, pins: &str| {
             format!(
                 "    Peripheral {{
@@ -3367,27 +3389,73 @@ pub static METADATA: Metadata = Metadata {
 "
             )
         };
-        let pin = "
-            PeripheralPin { pin: \"PA11\", signal: \"RX\", af: Some(9) },
-        ";
+        let pin = |signal: &str| {
+            format!(
+                "
+            PeripheralPin {{ pin: \"PA11\", signal: \"{signal}\", af: Some(9) }},
+        "
+            )
+        };
+        let rx_tx = [pin("RX"), pin("TX")].concat();
+        let dp_dm = [pin("DP"), pin("DM")].concat();
         let text = [
-            block("LPUART1", "usart", "v4", pin),
-            block("USART3", "usart", "v4", pin),
-            block("USART10", "usart", "v4", pin),
-            block("USART2", "usart", "v4", pin),
-            block("USB_OTG_HS", "otg", "v1", pin),
+            block("LPUART1", "usart", "v4", &rx_tx),
+            block("USART3", "usart", "v4", &rx_tx),
+            block("USART10", "usart", "v4", &rx_tx),
+            block("USART2", "usart", "v4", &rx_tx),
+            block("USB_OTG_HS", "otg", "v1", &dp_dm),
             block("USB_OTG_FS", "otg", "v1", ""),
-            block("ETH", "eth", "v2", pin),
-            block("FDCAN2", "can", "fdcan_h7", pin),
-            block("FDCAN1", "can", "fdcan_h7", pin),
+            block("ETH", "eth", "v2", &pin("MDC")),
+            block("FDCAN2", "can", "fdcan_h7", &rx_tx),
+            block("FDCAN1", "can", "fdcan_h7", &rx_tx),
         ]
         .concat();
         let found = parse_instances(&text);
-        assert_eq!(found["usart"], "USART2");
-        assert_eq!(found["otg"], "USB_OTG_HS", "FS без выводов не годится");
-        assert_eq!(found["eth"], "ETH");
-        assert_eq!(found["fdcan"], "FDCAN1");
+        assert_eq!(found["usart"], ["USART2", "USART3", "USART10", "LPUART1"]);
+        assert_eq!(found["otg"], ["USB_OTG_HS"], "FS без выводов не годится");
+        assert_eq!(found["eth"], ["ETH"]);
+        assert_eq!(found["fdcan"], ["FDCAN1", "FDCAN2"]);
         assert!(!found.contains_key("usb"));
+    }
+
+    /// Блок годится, только если выведены оба сигнала интерфейса: `TX` и `RX`
+    /// у USART и CAN, `DP` и `DM` у USB; у Ethernet — хоть один вывод.
+    #[test]
+    fn a_block_needs_the_pins_of_its_signals() {
+        let block = |name: &str, kind: &str, version: &str, pins: &str| {
+            format!(
+                "    Peripheral {{
+        name: \"{name}\",
+        registers: Some(PeripheralRegisters {{
+                             kind: \"{kind}\",
+            version: \"{version}\",
+        }}),
+                         pins: &[{pins}],
+    }},
+"
+            )
+        };
+        let pin = |signal: &str| {
+            format!(
+                "
+            PeripheralPin {{ pin: \"PA11\", signal: \"{signal}\", af: Some(9) }},
+        "
+            )
+        };
+        let dp_dm = [pin("DP"), pin("DM")].concat();
+        let text = [
+            block("USART1", "usart", "v4", &pin("TX")),
+            block("CAN1", "can", "bxcan", &pin("RX")),
+            block("USB_OTG_FS", "otg", "v1", &dp_dm),
+            block("ETH", "eth", "v2", &pin("MDC")),
+        ]
+        .concat();
+        let found = parse_instances(&text);
+        assert!(!found.contains_key("usart"));
+        assert!(!found.contains_key("bxcan"));
+        assert_eq!(found["otg"], ["USB_OTG_FS"]);
+        assert_eq!(found["eth"], ["ETH"]);
+        assert_eq!(parse_interfaces(&text), ["eth", "otg"]);
     }
 
     /// Прерывание RNG — у блока `rng`, а не у соседнего блока.

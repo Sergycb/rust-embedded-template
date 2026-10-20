@@ -1604,10 +1604,10 @@ if iface != "none" {
     for tag in INTERFACES[suffix] {
         if blocks.contains(tag) { found.push(tag); }
     }
-    if !INSTANCES.contains(suffix) || !INSTANCES[suffix].contains(found[0]) {
+    if !INSTANCES.contains(suffix) || !INSTANCES[suffix].contains(found[0]) || INSTANCES[suffix][found[0]].len() == 0 {
         throw "interface: в chip-data/instances.rhai нет имени блока " + found[0] + " у " + chip_name + " — перегенерируйте таблицы (chip-data-gen)";
     }
-    variable::set("iface_periph", INSTANCES[suffix][found[0]]);
+    variable::set("iface_periph", INSTANCES[suffix][found[0]][0]);
     if iface == "can" {
         variable::set("can_kind", found[0]);
     }
