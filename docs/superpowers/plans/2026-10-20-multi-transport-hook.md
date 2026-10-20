@@ -115,7 +115,7 @@ git commit -m "feat(chip-data): все выведенные блоки инте�
 **Interfaces:**
 - Consumes: `INSTANCES[suffix][tag]` — массив (Task 1).
 - Produces (переменные Liquid для этапа 3):
-  - `links` — транспорты через запятую в порядке ответов, элемент `вид:метка:блок:протокол`: `uart:usart:USART1:modbus,tcp:eth:ETH:modbus,can:fdcan:FDCAN1:none`; пустая строка — транспорта нет.
+  - `links` — транспорты через запятую в порядке ответов, элемент `вид:метка:блок:протокол:имя` (имя транспорта в проекте — блок строчными, у `tcp`/`udp` — сам вид): `uart:usart:USART1:modbus:usart1,tcp:eth:ETH:modbus:tcp,can:fdcan:FDCAN1:none:fdcan1`; пустая строка — транспорта нет.
   - `has_uart`, `has_can`, `has_tcp`, `has_udp`, `has_usb`, `has_net` (`tcp` или `udp`) — `"true"`/`"false"`.
   - Прежние `interface`, `protocol`, `iface_periph`, `can_kind`, `usb_kind` и все производные (`link_port` … `has_resources`, `chip-select.rhai:1642-1668`) и `file::delete` (`:1675-1808`) — **от основного транспорта**: первого с протоколом, а если таких нет — первого. Их перевод на множество — этап 3, не здесь.
 - Produces (ответы):

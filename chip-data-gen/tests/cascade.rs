@@ -1625,7 +1625,10 @@ fn single_answers_keep_the_old_variables() {
         &[("interface", "uart"), ("protocol", "modbus"), ("ota", "no")],
     )
     .expect("каскад не должен падать");
-    assert_eq!(var_of(&result, "links"), Some("uart:usart:USART1:modbus"));
+    assert_eq!(
+        var_of(&result, "links"),
+        Some("uart:usart:USART1:modbus:usart1")
+    );
     assert_eq!(var_of(&result, "has_uart"), Some("true"));
     assert_eq!(var_of(&result, "has_can"), Some("false"));
     assert_eq!(var_of(&result, "iface_periph"), Some("USART1"));
@@ -1646,7 +1649,9 @@ fn links_assign_blocks_in_order() {
     .expect("каскад не должен падать");
     assert_eq!(
         var_of(&result, "links"),
-        Some("uart:usart:USART1:modbus,uart:usart:USART2:modbus,tcp:eth:ETH:modbus")
+        Some(
+            "uart:usart:USART1:modbus:usart1,uart:usart:USART2:modbus:usart2,tcp:eth:ETH:modbus:tcp"
+        )
     );
     assert_eq!(var_of(&result, "has_net"), Some("true"));
     assert_eq!(var_of(&result, "protocol"), Some("modbus"));
@@ -1720,7 +1725,7 @@ fn links_tolerate_spaces_but_not_empty_items() {
         .expect("пробелы в links должны приниматься");
     assert_eq!(
         var_of(&result, "links"),
-        Some("uart:usart:USART1:none,tcp:eth:ETH:modbus")
+        Some("uart:usart:USART1:none:usart1,tcp:eth:ETH:modbus:tcp")
     );
     let err = run_chip_with(&script, "f407ve", &[("links", "uart,,tcp")])
         .err()
@@ -1795,7 +1800,7 @@ fn a_kind_the_protocol_cannot_carry_gets_no_protocol_question() {
     assert_eq!(all_menu_values(&result, "protocol").len(), 1);
     assert_eq!(
         var_of(&result, "links"),
-        Some("uart:usart:USART1:modbus,can:bxcan:CAN1:none")
+        Some("uart:usart:USART1:modbus:usart1,can:bxcan:CAN1:none:can1")
     );
 }
 
@@ -1819,7 +1824,7 @@ fn both_tags_of_a_kind_count_as_its_blocks() {
         .expect("каскад не должен падать");
     assert_eq!(
         var_of(&result, "links"),
-        Some("usb:otg:USB_OTG_FS:none,usb:otg:USB_OTG_HS:none")
+        Some("usb:otg:USB_OTG_FS:none:usb_otg_fs,usb:otg:USB_OTG_HS:none:usb_otg_hs")
     );
 }
 
@@ -1840,8 +1845,44 @@ fn chips_without_enough_blocks_are_filtered_before_the_cascade() {
 fn no_terminal_adds_no_extra_links() {
     let result = interview(&compile_script(), "f407ve", &[], &[("interface", "uart")])
         .expect("каскад не должен падать");
-    assert_eq!(var_of(&result, "links"), Some("uart:usart:USART1:none"));
+    assert_eq!(
+        var_of(&result, "links"),
+        Some("uart:usart:USART1:none:usart1")
+    );
     assert_eq!(all_menu_values(&result, "more_links").len(), 1);
+}
+
+/// `tcp` и `udp` делят один ETH: каждый вид получает его по разу, второй
+/// транспорт того же вида — нет.
+#[test]
+fn tcp_and_udp_share_one_eth() {
+    let script = compile_script();
+    let result = run_chip_with(&script, "f407ve", &[("links", "tcp:modbus,udp:modbus")])
+        .expect("tcp и udp на одном ETH должны приниматься");
+    assert_eq!(
+        var_of(&result, "links"),
+        Some("tcp:eth:ETH:modbus:tcp,udp:eth:ETH:modbus:udp")
+    );
+    let err = run_chip_with(&script, "f407ve", &[("links", "tcp,tcp")])
+        .err()
+        .expect("второй tcp принят");
+    assert!(err.to_string().contains("блоков вида tcp — 1"), "{err}");
+    let result = interview(
+        &script,
+        "f407ve",
+        &[],
+        &[
+            ("interface", "tcp"),
+            ("protocol", "none"),
+            ("more_links", "yes"),
+            ("interface", "udp"),
+        ],
+    )
+    .expect("каскад не должен падать");
+    let menus = all_menu_values(&result, "interface");
+    assert_eq!(menus.len(), 2, "{menus:?}");
+    assert!(menus[1].contains(&"udp".to_string()), "{menus:?}");
+    assert!(!menus[1].contains(&"tcp".to_string()), "{menus:?}");
 }
 
 /// Протоколу граф не нужен: без него узел спавнит `main`, и ни ответ `graph=no`,
@@ -2520,6 +2561,7 @@ fn template_variables() -> std::collections::BTreeSet<String> {
                         | ".remember"
                         | ".claude"
                         | "superpowers"
+                        | ".superpowers"
                         | "node_modules"
                 ) {
                     continue;

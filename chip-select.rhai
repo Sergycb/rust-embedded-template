@@ -383,12 +383,15 @@ fn link_counts(links) {
     counts
 }
 
-/// Значение переменной `links`: `вид:метка:блок:протокол` через запятую.
+/// Значение переменной `links`: `вид:метка:блок:протокол:имя` через запятую.
+/// Имя — транспорта в проекте: блок строчными (`usart2`, `usb_otg_hs`), а у
+/// `tcp`/`udp`, которые делят один ETH, — сам вид.
 fn links_text(links) {
     let out = "";
     for link in links {
         if out != "" { out += ","; }
-        out += link.kind + ":" + link.tag + ":" + link.block + ":" + link.protocol;
+        let name = if link.kind == "tcp" || link.kind == "udp" { link.kind } else { link.block.to_lower() };
+        out += link.kind + ":" + link.tag + ":" + link.block + ":" + link.protocol + ":" + name;
     }
     out
 }
