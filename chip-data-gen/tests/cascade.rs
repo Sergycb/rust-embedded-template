@@ -1828,6 +1828,23 @@ fn both_tags_of_a_kind_count_as_its_blocks() {
     );
 }
 
+/// Слот сокета в стеке — у каждого сетевого транспорта, с протоколом и без: на
+/// `tcp` без протокола приложение открывает свой сокет на `Board::net`.
+#[test]
+fn every_net_link_gets_a_socket_slot() {
+    let ast = compile_script();
+    for (links, net, protocol) in [("tcp", "1", "0"), ("tcp:modbus,udp", "2", "1")] {
+        let result =
+            run_chip_with(&ast, "f407ve", &[("links", links)]).expect("каскад не должен падать");
+        assert_eq!(var_of(&result, "net_sockets"), Some(net), "{links}");
+        assert_eq!(
+            var_of(&result, "protocol_sockets"),
+            Some(protocol),
+            "{links}"
+        );
+    }
+}
+
 /// Производные переменные и удаление файлов смотрят на все транспорты, а не на
 /// основной: RTU по `uart` и TCP по `tcp` в одном проекте, `can` без протокола.
 #[test]

@@ -9,11 +9,12 @@ pub use embassy_net::udp::PacketMetadata;
 use embassy_net::{Config, DhcpConfig, StackResources};
 use static_cell::ConstStaticCell;
 
-/// Сокетов в стеке: DHCP-клиент{% if protocol_sockets != "0" %} и по сокету на сетевой транспорт протокола
-/// (`bsp::link`){% endif %}. Слот — около 500 байт оперативной памяти, поэтому без
-/// запаса: добавите свой сокет (или фичу `dns` у `embassy-net` — она тоже
+/// Сокетов в стеке: DHCP-клиент и по сокету на сетевой транспорт — у
+/// транспорта с протоколом его открывает `bsp::link`, без протокола — ваш код
+/// на `Board::net`. Слот — около 500 байт оперативной памяти, поэтому без
+/// запаса: добавите ещё сокет (или фичу `dns` у `embassy-net` — она тоже
 /// занимает слот) — прибавьте один здесь.
-const SOCKETS: usize = 1{% if protocol_sockets != "0" %} + {{protocol_sockets}}{% endif %};
+const SOCKETS: usize = {{ net_sockets | plus: 1 }};
 
 // Память стека: `embassy_net::new` держит её `&'static mut`. `ConstStaticCell`
 // — значения известны при компиляции и лежат в `.bss`, а не собираются на

@@ -1852,6 +1852,14 @@ variable::set("cobs_used", if cobs_used { "true" } else { "false" });
 // транспорт с протоколом. Транспорт без протокола сокета не открывает.
 variable::set("protocol_sockets", sockets.to_string());
 variable::set("protocol_socket", if sockets > 0 { "true" } else { "false" });
+// Слоты сокетов в стеке (`SOCKETS` в `bsp::net`): по одному на каждый сетевой
+// транспорт, с протоколом и без — на `tcp` без протокола сокет открывает
+// приложение, и без слота под него `embassy-net` паникует.
+let net_sockets = 0;
+for link in links {
+    if link.kind == "tcp" || link.kind == "udp" { net_sockets += 1; }
+}
+variable::set("net_sockets", net_sockets.to_string());
 
 // Кадровый канал (`ports::FrameLink`, `LinkError`) нужен protobuf (канал хоста),
 // шине CAN (ошибка `CanBus`) и UDP-каналу (`adapters::net::UdpLink` реализует
