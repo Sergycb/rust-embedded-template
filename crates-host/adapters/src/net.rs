@@ -1,15 +1,15 @@
 //! Сеть поверх `embassy-net`: заглушка сетевого устройства и транспорт
-//! протокола — {% if interface == "tcp" %}TCP-сервер{% else %}UDP-канал{% endif %}.
+//! протокола — {% if has_tcp == "true" %}TCP-сервер{% else %}UDP-канал{% endif %}.
 //!
 //! Ничего из этого не знает чипа: устройство — любой
 //! [`Driver`](embassy_net::driver::Driver), сокеты — стек `embassy-net`.
 //! Поэтому здесь, а не в `bsp`: `bsp` только собирает стек над своим
 //! Ethernet и отдаёт эти объекты в `Board`.
 
-// {%- if interface == "tcp" %}
+// {%- if has_tcp == "true" %}
 mod tcp;
 // {%- endif %}
-// {%- if interface == "udp" %}
+// {%- if has_udp == "true" %}
 mod udp;
 // {%- endif %}
 
@@ -17,10 +17,10 @@ use core::task::Context;
 
 use embassy_net::driver::{Capabilities, Driver, HardwareAddress, LinkState, RxToken, TxToken};
 
-// {%- if interface == "tcp" %}
+// {%- if has_tcp == "true" %}
 pub use tcp::{TcpError, TcpServer};
 // {%- endif %}
-// {%- if interface == "udp" %}
+// {%- if has_udp == "true" %}
 pub use udp::{UdpError, UdpLink};
 // {%- endif %}
 
@@ -199,7 +199,7 @@ mod tests {
 #[cfg(test)]
 mod fakes {
     //! Кабель в памяти между двумя стеками `embassy-net` — для тестов
-    //! `net::{% if interface == "tcp" %}tcp{% else %}udp{% endif %}`.
+    //! `net::{% if has_tcp == "true" %}tcp{% else %}udp{% endif %}`.
 
     use core::task::{Context, Waker};
     use std::cell::RefCell;

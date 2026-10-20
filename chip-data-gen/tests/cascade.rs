@@ -1842,6 +1842,7 @@ fn derived_flags_follow_every_link() {
         "modbus_rtu",
         "modbus_tcp",
         "modbus_mbap",
+        "modbus_stream",
         "has_can",
         "link_port",
         "stream_io",
@@ -1888,6 +1889,15 @@ fn protobuf_over_udp_and_a_stream_keeps_cobs() {
         "{:?}",
         result.deleted
     );
+}
+
+/// Modbus только по UDP — без потока: `modbus_stream` выключен.
+#[test]
+fn modbus_over_udp_alone_is_not_a_stream() {
+    let result = run_chip_with(&compile_script(), "f407ve", &[("links", "udp:modbus")])
+        .expect("каскад не должен падать");
+    assert_eq!(var_of(&result, "modbus_stream"), Some("false"));
+    assert_eq!(var_of(&result, "modbus_udp"), Some("true"));
 }
 
 /// CANopen пока на одной шине: второй транспорт с ним — ошибка.

@@ -269,9 +269,9 @@ where
     /// Первая загрузка нового или откаченного образа стирает здесь `STATE`,
     /// и на чипе, где `STATE` в одном банке с кодом, ядро на это время (~1 с
     /// на секторе 128K у H7) стоит на выборке инструкций; узлу, которому это
-    /// мешает, хватит `deps: [OTA ready]`{% if interface == "usb" %}. Так ждёт узел `USB`: перечисление,
+    /// мешает, хватит `deps: [OTA ready]{% if has_usb == "true" %}`. Так ждёт узел `USB`: перечисление,
     /// попавшее на стирание, хост бракует до переподключения (`docs/ota.md`).
-    /// Переносите подтверждение позже — переносите и это{% endif %}.
+    /// Переносите подтверждение позже — переносите и это{% else %}`{% endif %}{% comment %}`{% endcomment %}.
     async fn begin(&mut self) -> Idle {
         info!("domain: узел OTA запущен");
         self.confirm().await;
@@ -489,7 +489,7 @@ fn update_rejection<E>(err: &UpdateError<E>) -> Rejection {
 // Без `watchdog:` намеренно — см. `task`.
 //
 // `ready` — образ подтверждён (или попытка была), `STATE` больше не стирается
-// при старте (см. `begin`){% if interface == "usb" %}; ждёт этого узел `USB`{% endif %}.
+// при старте (см. `begin`){% if has_usb == "true" %}; ждёт этого узел `USB`{% endif %}.
 supervisor::supervisor_fragment! {
     name: OTA_FRAG<F, R>;
     boot: inputs: struct $crate::ota::OtaWiring;
@@ -518,7 +518,7 @@ pub(crate) mod tests {
 
     use embassy_time::{Duration, MockDriver};
     use ports::{Chunk, OtaCommand, OtaReply, Progress, Reboot, Rejection};
-    // {%- if protocol != "none" %}
+    // {%- if has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" %}
     use supervisor::Requester;
     use supervisor::runtime::TaskExit;
     // {%- endif %}
@@ -538,7 +538,7 @@ pub(crate) mod tests {
         }
     }
 
-    // {%- if protocol != "none" %}
+    // {%- if has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" %}
     /// Узел OTA, который тест крутит сам: `poll` по очереди с запросом.
     pub(crate) type Node = Pin<Box<dyn Future<Output = TaskExit>>>;
 

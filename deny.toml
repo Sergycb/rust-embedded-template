@@ -26,14 +26,14 @@ allow = [
 	"Zlib",
 	"Unicode-3.0",
 	"CC0-1.0",
-	# {%- if interface == "tcp" or interface == "udp" %}
+	# {%- if has_net == "true" %}
 	# `smoltcp` — TCP/IP-стек под `embassy-net`.
 	"0BSD",
 	# {%- endif %}
 ]
 confidence-threshold = 0.9
 
-# {%- if protocol == "canopen" %}
+# {%- if has_canopen == "true" %}
 # Исключение — стек CANopen `zencan` (MPL-2.0): копилефт на уровне файла. Он
 # обязывает публиковать изменения в файлах самого zencan, а на код проекта
 # (MIT), который им пользуется, не распространяется. Разрешено только этим

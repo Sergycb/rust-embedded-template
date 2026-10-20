@@ -39,8 +39,8 @@ paths: crates-host/domain/**
   вернуть ошибку снова без ожидания) — контракт порта, его держит реализация.
 - Своих типов в `domain` — только контексты узлов (их эмитит фрагмент), состояния
   автоматов, входы фрагментов (`OtaWiring`, `IdleMeter`, `Mode`), буферы кадра
-  задачи, которые автомат получает аргументами стартового действия (`canopen::Persisted`){% if protocol != "none" %} и обработчик протокола,
-  который фрагмент получает на входе ({% if protocol == "protobuf" %}`host::Service` (порт `HostService`){% elsif protocol == "modbus" %}`modbus::EmptyRegisters` (порт `Registers`){% else %}`canopen::dictionary` (словарь объектов){% endif %}): это логика
+  задачи, которые автомат получает аргументами стартового действия (`canopen::Persisted`){% if has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" %} и обработчик протокола,
+  который фрагмент получает на входе ({% if has_protobuf == "true" %}`host::Service` (порт `HostService`){% elsif has_modbus == "true" %}`modbus::EmptyRegisters` (порт `Registers`){% else %}`canopen::dictionary` (словарь объектов){% endif %}): это логика
   приложения, и проект правит его здесь{% endif %}. Исключение — решение
   bootloader'а в `domain::ota::boot`: `BootPlan`, `Screening`, `ScreenFailure` (бывший
   `Rejection`) — типы результата двух свободных функций над блокирующими

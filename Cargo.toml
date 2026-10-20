@@ -3,11 +3,11 @@ members = [
 	"crates-host/domain",
 	"crates-host/host-target-tests",
 	"crates-host/adapters",
-	# {%- if protocol == "canopen" %}
+	# {%- if has_canopen == "true" %}
 	"crates-host/canopen",
 	# {%- endif %}
 	"crates-host/ports",
-	# {%- if protocol == "protobuf" %}
+	# {%- if has_protobuf == "true" %}
 	"crates-host/proto",
 	# {%- endif %}
 	"crates-host/xtask",
@@ -74,11 +74,11 @@ map_err_ignore          = "warn"
 # и путь были в одном месте, как у внешних зависимостей.
 ports        = { path = "crates-host/ports" }
 adapters     = { path = "crates-host/adapters" }
-# {%- if protocol == "protobuf" %}
+# {%- if has_protobuf == "true" %}
 # Схема protobuf — крейт протокола, выбранного при генерации.
 proto        = { path = "crates-host/proto" }
 # {%- endif %}
-# {%- if protocol == "canopen" %}
+# {%- if has_canopen == "true" %}
 # Словарь CANopen — крейт протокола, выбранного при генерации.
 canopen      = { path = "crates-host/canopen" }
 # {%- endif %}
@@ -144,7 +144,7 @@ sequential-storage     = { version = "8.0.1", default-features = false }
 # трейта, и UART его бы не реализовывал.
 embedded-io-async      = { version = "0.7.0" }
 # {%- endif %}
-# {%- if protocol == "modbus" %}
+# {%- if has_modbus == "true" %}
 # Разбор PDU Modbus: запросы на стороне slave (и ответы на стороне master, если он выбран).
 # Выбран из десятка кандидатов прогоном одних и тех же проверок по спецификации
 # и фаззингом — обоснование в `//!` модуля `domain::modbus`. `-types` — его словарь
@@ -152,7 +152,7 @@ embedded-io-async      = { version = "0.7.0" }
 rusty-modbus-codec     = { version = "0.1.1", default-features = false }
 rusty-modbus-types     = { version = "0.1.1", default-features = false }
 # {%- endif %}
-# {%- if protocol == "protobuf" %}
+# {%- if has_protobuf == "true" %}
 # Кадрирование потока (`adapters::cobs`): COBS — синхронизация по 0x00 после
 # мусора или обрыва. Потоковый декодер берётся отсюда, своё — только транспорт
 # и CRC. Тот же крейт стоит под `postcard` и `ergot`. Без `std` (он в default).
@@ -163,7 +163,7 @@ cobs                   = { version = "0.5.1", default-features = false }
 # CRC-16/MODBUS в `domain::modbus` — одна реализация вместо своих.
 crc                    = { version = "3.4.0" }
 # {%- endif %}
-# {%- if protocol == "protobuf" %}
+# {%- if has_protobuf == "true" %}
 # Protobuf (`crates-host/proto` — схема и сгенерированные типы, `domain` —
 # узел HOST): без alloc, повторяющиеся поля и строки — в контейнерах
 # `heapless` 0.9, той же версии, что у остального дерева.
@@ -180,7 +180,7 @@ heapless               = { version = "0.9.3" }
 micropb-gen            = { version = "0.6.0" }
 protox                 = { version = "0.9.1" }
 # {%- endif %}
-# {%- if interface == "tcp" or interface == "udp" %}
+# {%- if has_net == "true" %}
 # Сетевой стек под интерфейсами tcp/udp (`adapters::net`, узел `domain::net`):
 # версия, парная к `embassy-stm32` 0.6 (те же `embassy-net-driver` 0.2,
 # `embassy-sync`, `embassy-time`, `embedded-io-async`). `smoltcp` под ним —
@@ -194,20 +194,20 @@ embassy-net            = { version = "0.9.1", features = [
 	"dhcpv4",
 ] }
 # {%- endif %}
-# {%- if interface == "usb" %}
+# {%- if has_usb == "true" %}
 # USB-устройство под интерфейсом usb (`adapters::usb`, узел `domain::usb`):
 # версия, парная к `embassy-stm32` 0.6 (те же `embassy-usb-driver` 0.2,
 # `embassy-sync`, `heapless`). Без default-фич: `usbd-hid` шаблону не нужен.
 embassy-usb            = { version = "0.6.0", default-features = false }
 # {%- endif %}
-# {%- if protocol == "canopen" %}
+# {%- if has_canopen == "true" %}
 # CANopen: стек узла (`zencan-node`) и генерация словаря объектов из TOML-описания
 # устройства (`zencan-build`, в `build.rs` крейта `canopen`). MPL-2.0 —
 # исключение в `deny.toml`. Без `std`/`log` в default — их выбирают крейты.
 zencan-node            = { version = "0.0.5", default-features = false }
 zencan-build           = { version = "0.0.5" }
 # {%- endif %}
-# {%- if interface == "can" %}
+# {%- if has_can == "true" %}
 # Кадр CAN в порту `ports::CanBus`: трейт `Frame`, который реализует кадр
 # `embassy-stm32` — та же версия 0.4.
 embedded-can           = { version = "0.4.1" }

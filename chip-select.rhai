@@ -1844,6 +1844,9 @@ variable::set("modbus_rtu", if modbus_rtu { "true" } else { "false" });
 variable::set("modbus_tcp", if modbus_tcp { "true" } else { "false" });
 variable::set("modbus_udp", if modbus_udp { "true" } else { "false" });
 variable::set("modbus_mbap", if modbus_mbap { "true" } else { "false" });
+// Modbus поверх потока (RTU или TCP): чтение `embedded-io-async` и фейк потока
+// в тестах адаптера; UDP-датаграммам они не нужны.
+variable::set("modbus_stream", if modbus_rtu || modbus_tcp { "true" } else { "false" });
 variable::set("cobs_used", if cobs_used { "true" } else { "false" });
 // Сокеты протоколов на стеке `embassy-net` (порт, буферы): по одному на сетевой
 // транспорт с протоколом. Транспорт без протокола сокета не открывает.
@@ -1865,7 +1868,7 @@ variable::set("crc_used", if modbus_rtu || cobs_used { "true" } else { "false" }
 variable::set("framing_tests", if on.modbus || cobs_used { "true" } else { "false" });
 // Асинхронные трейты в `ports`: без них `#![expect(async_fn_in_trait)]` не
 // срабатывает, и сборка падает.
-variable::set("ports_async", if variable::get("ota") == "true" || variable::get("settings_port") == "true" || protocol != "none" || has.can || has.udp { "true" } else { "false" });
+variable::set("ports_async", if variable::get("ota") == "true" || variable::get("settings_port") == "true" || on.modbus || on.protobuf || on.canopen || has.can || has.udp { "true" } else { "false" });
 // Модуль `link.rs` в `bsp`: готовый транспорт протокола (`Board::link`) — кадрирование,
 // буферы и сокет. Без Modbus и protobuf транспорту нечего оборачивать (CANopen берёт
 // шину CAN как есть).

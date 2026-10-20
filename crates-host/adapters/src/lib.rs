@@ -28,33 +28,33 @@ pub mod flash;
 pub mod settings;
 
 // {%- endif %}
-// {%- if stream_io == "true" and protocol == "protobuf" %}
+// {%- if cobs_used == "true" %}
 /// Кадрирование потока байтов (UART, USB CDC, TCP) в кадры `ports::FrameLink`:
 /// COBS и CRC.
 pub mod cobs;
 
 // {%- endif %}
-// {%- if interface == "uart" %}
+// {%- if has_uart == "true" %}
 /// Заглушка потока байтов в слоте UART — до драйвера платы.
 pub mod serial;
 
 // {%- endif %}
-// {%- if interface == "tcp" or interface == "udp" %}
+// {%- if has_net == "true" %}
 /// Сеть поверх `embassy-net`: заглушка устройства, TCP-сервер и UDP-канал.
 pub mod net;
 
 // {%- endif %}
-// {%- if interface == "usb" %}
+// {%- if has_usb == "true" %}
 /// USB поверх `embassy-usb`: заглушка драйвера и поток CDC ACM.
 pub mod usb;
 
 // {%- endif %}
-// {%- if interface == "can" %}
+// {%- if has_can == "true" %}
 /// Заглушка шины в слоте CAN — до контроллера платы.
 pub mod can;
 
 // {%- endif %}
-// {%- if protocol == "modbus" %}
+// {%- if has_modbus == "true" %}
 /// Транспорты Modbus — RTU, TCP, UDP — для порта slave'а `ports::ModbusServer`.
 // {%- if modbus_master == "true" %}
 /// Они же реализуют порт master'а `ports::ModbusClient`.

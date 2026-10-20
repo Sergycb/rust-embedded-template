@@ -147,7 +147,7 @@ impl<F: NorFlash> Settings<F> {
 
 // {%- endif %}
 
-// {%- if protocol == "canopen" and config != "true" %}
+// {%- if has_canopen == "true" and config != "true" %}
 /// Хранилища нет — у проекта нет раздела настроек.
 ///
 /// Для узлов, которым хранилище нужно по сигнатуре, но не обязательно для
@@ -347,7 +347,7 @@ mod tests {
         );
     }
 
-    // {%- if protocol == "canopen" and config != "true" %}
+    // {%- if has_canopen == "true" and config != "true" %}
     /// `Unavailable` читается пустым, а запись «успешна» и ничего не хранит —
     /// как заявлено в документации.
     #[tokio::test]

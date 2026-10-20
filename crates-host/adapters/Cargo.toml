@@ -21,10 +21,10 @@ defmt = [
 	# {%- if config == "true" %}
 	"sequential-storage/defmt",
 	# {%- endif %}
-	# {%- if interface == "tcp" or interface == "udp" %}
+	# {%- if has_net == "true" %}
 	"embassy-net/defmt",
 	# {%- endif %}
-	# {%- if interface == "usb" %}
+	# {%- if has_usb == "true" %}
 	"embassy-usb/defmt",
 	# {%- endif %}
 ]
@@ -54,23 +54,23 @@ embedded-io-async = { workspace = true }
 # CRC кадра: RTU (Modbus по UART и USB) и COBS (protobuf по потоку).
 crc = { workspace = true }
 # {%- endif %}
-# {%- if stream_io == "true" and protocol == "protobuf" %}
+# {%- if cobs_used == "true" %}
 # Кадрирование COBS под `cobs::Cobs`.
 cobs = { workspace = true }
 # {%- endif %}
-# {%- if interface == "tcp" or interface == "udp" %}
+# {%- if has_net == "true" %}
 # Сеть (`adapters::net`): заглушка устройства, TCP-сервер, UDP-канал.
 embassy-net = { workspace = true }
 # {%- endif %}
-# {%- if interface == "usb" %}
+# {%- if has_usb == "true" %}
 # USB (`adapters::usb`): заглушка драйвера и поток CDC ACM.
 embassy-usb = { workspace = true }
 # {%- endif %}
-# {%- if interface == "tcp" or interface == "udp" or interface == "usb" %}
+# {%- if has_net == "true" or has_usb == "true" %}
 # Таймауты: keep-alive сокета TCP (`net`), запись, которую хост не забирает (`usb`).
 embassy-time = { workspace = true }
 # {%- endif %}
-# {%- if interface == "can" %}
+# {%- if has_can == "true" %}
 # Кадр шины CAN — параметр заглушки `can::Unconnected`.
 embedded-can = { workspace = true }
 # {%- endif %}
@@ -98,7 +98,7 @@ tokio = { workspace = true }
 # Property-тесты кадрирования: любое дробление потока и любой мусор.
 proptest = { workspace = true }
 # {%- endif %}
-# {%- if interface == "tcp" or interface == "udp" or interface == "usb" %}
+# {%- if has_net == "true" or has_usb == "true" %}
 # Сетевые и USB-тесты: стеки `embassy-net`/`embassy-usb` ждут таймеров и
 # критической секции — на хосте их дают драйвер времени `mock-driver` и
 # `critical-section/std`, как в `domain`.
