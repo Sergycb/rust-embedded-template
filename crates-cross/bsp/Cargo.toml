@@ -83,10 +83,10 @@ embassy-sync = { workspace = true }
 # ещё и имя типа раздела в псевдониме `Ota`.
 embassy-embedded-hal = { workspace = true }
 {%- endif %}
-# `static-cell` — потому что общему флешу, сети и USB нужен `&'static`: иначе их
+# `static-cell` — потому что общему флешу нужен `&'static`: иначе его разделы
 # нельзя отдать в задачу, которую спавнит `Spawner` (аргументы задач обязаны
 # быть 'static).
-{%- if shared_flash == "true" or ota == "true" or has_net == "true" or has_usb == "true" %}
+{%- if shared_flash == "true" or ota == "true" %}
 static_cell = { workspace = true }
 {%- endif %}
 {%- if has_usb == "true" %}
@@ -95,8 +95,9 @@ static_cell = { workspace = true }
 embassy-usb-driver = { workspace = true }
 {%- endif %}
 {%- if has_net == "true" %}
-# Стек над Ethernet платы (`bsp::net`); сокеты и заглушка — в `adapters::net`.
-embassy-net = { workspace = true }
+# Трейт сетевого драйвера — его реализует заглушка (`bsp::stub::NetDevice`) и
+# драйвер Ethernet `embassy-stm32`; стек и сокеты над ним собирает `app`.
+embassy-net-driver = { workspace = true }
 {%- endif %}
 # Только ради `ota.rs`, которого в проектах без OTA нет вовсе — вместе с
 # `crates-cross/boot` его удаляет chip-select.rhai. Сам адаптер живёт в

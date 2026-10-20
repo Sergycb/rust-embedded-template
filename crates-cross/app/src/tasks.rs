@@ -46,7 +46,7 @@ pub fn spawn_all(spawner: embassy_executor::Spawner, {% if ota == "true" or has_
     ota::spawn(spawner, parts.board.ota);
 {%- endif %}
 {%- if has_net == "true" %}
-    net::spawn(spawner, parts.board.net.runner);
+    net::spawn(spawner, parts.net.runner);
 {%- endif %}
 {%- for l in xs %}
 {%- assign f = l | split: ":" %}
@@ -57,10 +57,10 @@ pub fn spawn_all(spawner: embassy_executor::Spawner, {% if ota == "true" or has_
 {%- for l in xs %}
 {%- assign f = l | split: ":" %}
 {%- if f[3] == "modbus" %}
-    modbus::{{ f[4] }}::spawn(spawner, {% if f[0] == "uart" %}parts.board.{{ f[4] }}{% elsif f[0] == "usb" %}parts.{{ f[4] }}.cdc{% else %}parts.board.net.stack{% endif %});
+    modbus::{{ f[4] }}::spawn(spawner, {% if f[0] == "uart" %}parts.board.{{ f[4] }}{% elsif f[0] == "usb" %}parts.{{ f[4] }}.cdc{% else %}parts.net.stack{% endif %});
 {%- elsif f[3] == "protobuf" %}
     let info = crate::device_info(parts.board.spec);
-    host::{{ f[4] }}::spawn(spawner, {% if f[0] == "uart" %}parts.board.{{ f[4] }}{% elsif f[0] == "usb" %}parts.{{ f[4] }}.cdc{% else %}parts.board.net.stack{% endif %}, info);
+    host::{{ f[4] }}::spawn(spawner, {% if f[0] == "uart" %}parts.board.{{ f[4] }}{% elsif f[0] == "usb" %}parts.{{ f[4] }}.cdc{% else %}parts.net.stack{% endif %}, info);
 {%- elsif f[3] == "canopen" %}
     canopen::{{ f[4] }}::spawn(spawner, parts.board.{{ f[4] }}, {% if config == "true" %}parts.board.settings{% else %}adapters::settings::Unavailable{% endif %});
 {%- endif %}

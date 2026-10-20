@@ -127,7 +127,7 @@ supervisor_graph! {
         // устройством платы `bsp::net::Device`: без него сокеты протоколов не
         // получают ни одного пакета. Один на `tcp` и `udp`: стек у них общий.
         ::domain::NET_FRAG<::domain::net::Runner<'static, bsp::net::Device>> as NET =
-            ::domain::net::NetWiring { runner: parts.board.net.runner },
+            ::domain::net::NetWiring { runner: parts.net.runner },
 {%- endif %}
 {%- for l in xs %}
 {%- assign f = l | split: ":" %}
@@ -147,7 +147,7 @@ supervisor_graph! {
             ::domain::modbus::OtaRegisters<::domain::modbus::EmptyRegisters>,
         > as MODBUS_{{ f[4] | upcase }} =
             ::domain::modbus::ModbusSlaveWiring {
-                link: crate::link::{{ f[4] }}::new({% if f[0] == "uart" %}parts.board.{{ f[4] }}{% elsif f[0] == "usb" %}parts.{{ f[4] }}.cdc{% else %}parts.board.net.stack{% endif %}),
+                link: crate::link::{{ f[4] }}::new({% if f[0] == "uart" %}parts.board.{{ f[4] }}{% elsif f[0] == "usb" %}parts.{{ f[4] }}.cdc{% else %}parts.net.stack{% endif %}),
                 regs: ::domain::modbus::OtaRegisters::new(
                     ::domain::modbus::EmptyRegisters,
                     ota_cmd_requester(),
@@ -157,7 +157,7 @@ supervisor_graph! {
 {%- else %}
         ::domain::MODBUS_SLAVE_FRAG<crate::link::{{ f[4] }}::Link, ::domain::modbus::EmptyRegisters> as MODBUS_{{ f[4] | upcase }} =
             ::domain::modbus::ModbusSlaveWiring {
-                link: crate::link::{{ f[4] }}::new({% if f[0] == "uart" %}parts.board.{{ f[4] }}{% elsif f[0] == "usb" %}parts.{{ f[4] }}.cdc{% else %}parts.board.net.stack{% endif %}),
+                link: crate::link::{{ f[4] }}::new({% if f[0] == "uart" %}parts.board.{{ f[4] }}{% elsif f[0] == "usb" %}parts.{{ f[4] }}.cdc{% else %}parts.net.stack{% endif %}),
                 regs: ::domain::modbus::EmptyRegisters,
                 unit: 1,
             },
@@ -192,7 +192,7 @@ supervisor_graph! {
         // он отдаёт узлу `OTA` клиентом его входа `CMD` (`ota_cmd_requester()`).{% endif %}
         ::domain::HOST_FRAG<crate::link::{{ f[4] }}::Link, ::domain::host::Service> as HOST_{{ f[4] | upcase }} =
             ::domain::host::HostWiring {
-                link: crate::link::{{ f[4] }}::new({% if f[0] == "uart" %}parts.board.{{ f[4] }}{% elsif f[0] == "usb" %}parts.{{ f[4] }}.cdc{% else %}parts.board.net.stack{% endif %}),
+                link: crate::link::{{ f[4] }}::new({% if f[0] == "uart" %}parts.board.{{ f[4] }}{% elsif f[0] == "usb" %}parts.{{ f[4] }}.cdc{% else %}parts.net.stack{% endif %}),
                 service: ::domain::host::Service::new(
                     crate::device_info(parts.board.spec),
 {%- if ota == "true" %}

@@ -129,8 +129,11 @@ embassy-usb            = { version = "0.6.0", default-features = false, features
 embassy-usb-driver     = { version = "0.2.2" }
 {%- endif %}
 {%- if has_net == "true" %}
-# Сетевой стек (`bsp::net`): та же версия и фичи, что в корневом Cargo.toml.
+# Сетевой стек (`app::net`): та же версия и фичи, что в корневом Cargo.toml.
 embassy-net            = { version = "0.9.1", features = ["tcp", "udp", "proto-ipv4", "medium-ethernet", "dhcpv4", "defmt"] }
+# Трейт драйвера под `embassy-net` — им заглушка платы (`bsp::stub`) встаёт в
+# слот Ethernet; версия — та, на которой стоят `embassy-net` 0.9 и `embassy-stm32` 0.6.
+embassy-net-driver     = { version = "0.2.0" }
 {%- endif %}
 embassy-sync       = { version = "0.8.0" }
 # Трейты `NorFlash` — нужны только `boot/src/external.rs` при `ota=external`

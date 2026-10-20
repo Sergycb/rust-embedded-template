@@ -2045,6 +2045,7 @@ if !has.usb {
 // Сеть — стек `embassy-net`, узел NET и их сокеты — только с tcp/udp.
 if !has.tcp && !has.udp {
 	file::delete("crates-cross/bsp/src/net.rs");
+	file::delete("crates-cross/app/src/net.rs");
 	file::delete("docs/modules/bsp-net.md");
 	file::delete("crates-host/adapters/src/net.rs");
 	file::delete("crates-host/adapters/src/net");

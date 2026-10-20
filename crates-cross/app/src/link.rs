@@ -41,7 +41,7 @@ pub mod {{ f[4] }} {
     /// docs/modules/bsp-serial.md){% elsif f[0] == "usb" %}поток CDC (над заглушкой драйвера, пока проект не подставит
     /// свой USB — docs/modules/bsp-usb.md){% else %}стек `embassy-net`, на котором открывается сокет (над заглушкой
     /// устройства, пока проект не подставит Ethernet — docs/modules/bsp-net.md){% endif %}.
-    pub type Source = {% if f[0] == "uart" %}bsp::serial::{{ f[4] }}::Serial{% elsif f[0] == "usb" %}crate::usb::{{ f[4] }}::Cdc{% else %}bsp::net::Stack{% endif %};
+    pub type Source = {% if f[0] == "uart" %}bsp::serial::{{ f[4] }}::Serial{% elsif f[0] == "usb" %}crate::usb::{{ f[4] }}::Cdc{% else %}crate::net::Stack{% endif %};
 {%- if f[3] == "protobuf" %}
 
     // Буферы узла{% if f[0] != "udp" %}: приёму нужно место ещё под CRC (`rx_len`), кадру
@@ -85,19 +85,19 @@ pub mod {{ f[4] }} {
     static SOCKET_TX: ConstStaticCell<[u8; super::SOCKET_BUFFER]> =
         ConstStaticCell::new([0; super::SOCKET_BUFFER]);
 {%- if f[0] == "udp" %}
-    static SOCKET_RX_META: ConstStaticCell<[bsp::net::PacketMetadata; 4]> =
-        ConstStaticCell::new([bsp::net::PacketMetadata::EMPTY; 4]);
-    static SOCKET_TX_META: ConstStaticCell<[bsp::net::PacketMetadata; 4]> =
-        ConstStaticCell::new([bsp::net::PacketMetadata::EMPTY; 4]);
+    static SOCKET_RX_META: ConstStaticCell<[crate::net::PacketMetadata; 4]> =
+        ConstStaticCell::new([crate::net::PacketMetadata::EMPTY; 4]);
+    static SOCKET_TX_META: ConstStaticCell<[crate::net::PacketMetadata; 4]> =
+        ConstStaticCell::new([crate::net::PacketMetadata::EMPTY; 4]);
 {%- endif %}
 
     /// Сокет протокола на стеке платы: {% if f[0] == "tcp" %}TCP-сервер — поток байтов под транспортом{% else %}UDP-канал — датаграммы{% endif %} протокола.
 {%- if f[0] == "tcp" %}
-    fn socket(stack: bsp::net::Stack) -> ::adapters::net::TcpServer {
+    fn socket(stack: crate::net::Stack) -> ::adapters::net::TcpServer {
         ::adapters::net::TcpServer::new(stack, PORT, SOCKET_RX.take(), SOCKET_TX.take())
     }
 {%- else %}
-    fn socket(stack: bsp::net::Stack) -> ::adapters::net::UdpLink {
+    fn socket(stack: crate::net::Stack) -> ::adapters::net::UdpLink {
         ::adapters::net::UdpLink::new(
             stack,
             PORT,

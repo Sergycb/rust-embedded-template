@@ -258,13 +258,13 @@ impl NetDevice {
 #[derive(Debug)]
 pub enum NoFrame {}
 
-impl embassy_net::driver::RxToken for NoFrame {
+impl embassy_net_driver::RxToken for NoFrame {
     fn consume<R, F: FnOnce(&mut [u8]) -> R>(self, _: F) -> R {
         match self {}
     }
 }
 
-impl embassy_net::driver::TxToken for NoFrame {
+impl embassy_net_driver::TxToken for NoFrame {
     fn consume<R, F: FnOnce(&mut [u8]) -> R>(self, _: usize, _: F) -> R {
         match self {}
     }
@@ -273,7 +273,7 @@ impl embassy_net::driver::TxToken for NoFrame {
 /// MTU Ethernet: 1500 байт IP и 14 байт заголовка.
 const ETHERNET_MTU: usize = 1514;
 
-impl embassy_net::driver::Driver for NetDevice {
+impl embassy_net_driver::Driver for NetDevice {
     type RxToken<'a> = NoFrame;
     type TxToken<'a> = NoFrame;
 
@@ -285,18 +285,18 @@ impl embassy_net::driver::Driver for NetDevice {
         None
     }
 
-    fn link_state(&mut self, _: &mut core::task::Context) -> embassy_net::driver::LinkState {
-        embassy_net::driver::LinkState::Down
+    fn link_state(&mut self, _: &mut core::task::Context) -> embassy_net_driver::LinkState {
+        embassy_net_driver::LinkState::Down
     }
 
-    fn capabilities(&self) -> embassy_net::driver::Capabilities {
-        let mut capabilities = embassy_net::driver::Capabilities::default();
+    fn capabilities(&self) -> embassy_net_driver::Capabilities {
+        let mut capabilities = embassy_net_driver::Capabilities::default();
         capabilities.max_transmission_unit = ETHERNET_MTU;
         capabilities
     }
 
-    fn hardware_address(&self) -> embassy_net::driver::HardwareAddress {
-        embassy_net::driver::HardwareAddress::Ethernet(self.mac)
+    fn hardware_address(&self) -> embassy_net_driver::HardwareAddress {
+        embassy_net_driver::HardwareAddress::Ethernet(self.mac)
     }
 }
 {%- endif %}

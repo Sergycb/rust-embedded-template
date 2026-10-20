@@ -17,6 +17,9 @@ mod image;
 {%- if protocol_link == "true" %}
 mod link;
 {%- endif %}
+{%- if has_net == "true" %}
+mod net;
+{%- endif %}
 mod parts;
 {%- if graph != "true" %}
 mod tasks;

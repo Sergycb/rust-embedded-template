@@ -93,13 +93,6 @@ pub struct Board {
     pub {{ f[4] }}: crate::can::{{ f[4] }}::Can,
 {%- endif %}
 {%- endfor %}
-{%- if has_net == "true" %}
-    /// Сеть: фоновая работа стека для узла `NET` и сам стек{% if protocol_sockets == "0" %}, на котором
-    /// приложение открывает сокет{% endif %} (`bsp::net`). Устройство — заглушка, пока проект не подставит
-    /// Ethernet своей платы (`docs/modules/bsp-net.md`){% if protocol_sockets != "0" %}. Сокеты протоколов на стеке
-    /// открывает приложение (`crates-cross/app/src/link.rs`){% endif %}.
-    pub net: crate::net::Net,
-{%- endif %}
 {%- if graph == "true" %}
     /// Сторож платы — заряженный, но ещё не запущенный: его забирает
     /// инициализатор блока `watchdog:` в графе задач
@@ -131,7 +124,9 @@ impl core::fmt::Debug for Board {
 /// Отдельно от [`Board`], потому что собранная пара — это уже два объекта
 /// приложения (`crate::parts` в `app`), а плата остаётся целой и уезжает в
 /// граф как есть.{% if has_usb == "true" %} USB-драйвер — это и устройство `embassy-usb` (узел `USB_*`),
-/// и поток CDC (транспорт протокола): оба рождаются одним `Builder`.
+/// и поток CDC (транспорт протокола): оба рождаются одним `Builder`.{% endif %}{% if has_net == "true" %}
+/// Ethernet — это и фоновая работа стека `embassy-net` (узел `NET`), и стек
+/// для сокетов: оба рождаются одним `embassy_net::new`.{% endif %}{% if has_usb == "true" or has_net == "true" %}
 pub struct Drivers {
 {%- for l in xs %}
 {%- assign f = l | split: ":" %}
@@ -141,6 +136,14 @@ pub struct Drivers {
     pub {{ f[4] }}: crate::usb::{{ f[4] }}::UsbDriver,
 {%- endif %}
 {%- endfor %}
+{%- if has_net == "true" %}
+    /// Ethernet — пока заглушка, до драйвера платы (`docs/modules/bsp-net.md`).
+    pub eth: crate::net::Device,
+{%- if rng_irq != "" %}
+    /// Генератор случайных чисел — затравка стека `embassy-net`.
+    pub rng: crate::rng::Rng,
+{%- endif %}
+{%- endif %}
 }{% else %} В этом проекте таких драйверов нет.
 pub struct Drivers {}{% endif %}
 
@@ -220,14 +223,6 @@ impl Board {
         // собирается здесь же, из периферии (см. `crate::external`).
         let external = crate::external::new();
 {%- endif %}
-{%- if has_net == "true" %}
-{%- if rng_irq != "" %}
-        let seed = crate::rng::seed(r.rng.rng);
-{%- else %}
-        let seed = crate::net::seed_from_uid(embassy_stm32::uid::uid());
-{%- endif %}
-        let net = crate::net::new(embassy_stm32::uid::uid(), seed, r.eth);
-{%- endif %}
 
         let sys_hz = clocks.sys.to_hertz().map(|hz| hz.0);
 
@@ -263,14 +258,11 @@ impl Board {
             {{ f[4] }}: crate::can::{{ f[4] }}::new(r.{{ f[4] }}),
 {%- endif %}
 {%- endfor %}
-{%- if has_net == "true" %}
-            net,
-{%- endif %}
 {%- if graph == "true" %}
             watchdog: crate::wdg::UnarmedBoardWatchdog::new(r.watchdog.iwdg),
 {%- endif %}
         };
-{%- if has_usb == "true" %}
+{%- if has_usb == "true" or has_net == "true" %}
         let drivers = Drivers {
 {%- for l in xs %}
 {%- assign f = l | split: ":" %}
@@ -278,6 +270,12 @@ impl Board {
             {{ f[4] }}: crate::usb::{{ f[4] }}::new(r.{{ f[4] }}),
 {%- endif %}
 {%- endfor %}
+{%- if has_net == "true" %}
+            eth: crate::net::new(embassy_stm32::uid::uid(), r.eth),
+{%- if rng_irq != "" %}
+            rng: crate::rng::new(r.rng.rng),
+{%- endif %}
+{%- endif %}
         };
 {%- else %}
         let drivers = Drivers {};
