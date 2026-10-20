@@ -2,7 +2,7 @@ USB платы — устройство `embassy-usb` с классом CDC ACM 
 COM-порт») под протоколом: {% if protocol == "modbus" %}Modbus RTU{% else %}protobuf с кадрами COBS{% endif %}.
 
 Шаблон выводы не выбирает (`docs/architecture.md`), поэтому USB-драйвер
-`UsbDriver` пока — заглушка `adapters::usb::Unconnected`: шина никогда не
+`UsbDriver` пока — заглушка `bsp::stub::UsbDriver`: шина никогда не
 просыпается, хост устройство не видит. Всё остальное настоящее: устройство
 `embassy-usb` с классом CDC, его фоновая работа в узле `USB` графа
 (`domain::usb`) и поток `adapters::usb::CdcStream` под {% if protocol == "modbus" %}кадрами RTU{% else %}кадрами COBS{% endif %}. Проект

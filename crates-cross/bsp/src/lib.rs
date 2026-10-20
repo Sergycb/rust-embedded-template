@@ -54,6 +54,9 @@ pub mod serial;
 {%- if config == "true" %}
 pub mod settings;
 {%- endif %}
+{%- if has_stub == "true" %}
+pub mod stub;
+{%- endif %}
 {%- if has_usb == "true" %}
 pub mod usb;
 {%- endif %}

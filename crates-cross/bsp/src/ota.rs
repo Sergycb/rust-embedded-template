@@ -5,14 +5,14 @@ use embassy_boot::FirmwareUpdaterConfig;
 
 use crate::external::{ExternalMutex, ExternalPartition};
 {%- else %}
-{%- if state_paged == "true" or swap_paged == "true" and dfu_bank != "true" %}
-use adapters::flash::ErasePage;
-{%- endif %}
 use embassy_boot::FirmwareUpdaterConfig;
 use embassy_embedded_hal::adapter::BlockingAsync;
 use embassy_embedded_hal::flash::partition::BlockingPartition;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::mutex::Mutex;
+{%- if state_paged == "true" or swap_paged == "true" and dfu_bank != "true" %}
+use flash_page::ErasePage;
+{%- endif %}
 use static_cell::StaticCell;
 
 {%- if dfu_bank == "true" %}
@@ -109,7 +109,7 @@ type DfuFlash = BlockingAsync<DfuBank>;
 {%- elsif swap_paged == "true" %}
 ///
 /// Но со страницей обмена [`SWAP_PAGE_SIZE`], крупнее физической страницы
-/// флеша (`adapters::flash::ErasePage`): `DFU` обязан видеть ту же страницу, что
+/// флеша (`flash_page::ErasePage`): `DFU` обязан видеть ту же страницу, что
 /// `ACTIVE` и `DFU` в bootloader'е, иначе размеры и смещения разделов у них
 /// разойдутся.
 type DfuFlash = BlockingAsync<ErasePage<crate::flash::Whole, SWAP_PAGE_SIZE>>;

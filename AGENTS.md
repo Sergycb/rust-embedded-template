@@ -216,7 +216,7 @@ read`: руками пришлось бы сначала найти адрес �
 {%- endif %}
 - `STATE_ERASE_SIZE` — число из генерации, одно на `boot` и приложение (переменная
   среды в `crates-cross/.cargo/config.toml`, константа — `bsp::ota::STATE_ERASE_SIZE`). {% if state_paged == "true" %}Здесь `BOOTLOADER_STATE` строится над
-  `adapters::flash::ErasePage` со страницей своего сектора: над цельным `Flash` на F2/F4/F7 раздел не
+  `flash_page::ErasePage` со страницей своего сектора: над цельным `Flash` на F2/F4/F7 раздел не
   кратен его странице, и `Partition::new` паникует на старте.{% else %}Здесь сектор `STATE` равен
   странице цельного `Flash`, поэтому раздел строится прямо над ним, а равенство держит
   `const`-assert рядом с константой (`bsp::ota`).{% endif %} Так же и `CONFIG`
@@ -295,7 +295,7 @@ read`: руками пришлось бы сначала найти адрес �
 - Хранилище настроек — слот под любой async `NorFlash` (`bsp::settings`):
   внутренний флеш, EEPROM L0/L1 (`adapters::eeprom::Eeprom`) или внешняя флеш
   (драйвер подставляет проект, в шаблоне — заглушка
-  `adapters::flash::Unconnected`). EEPROM под хранилищем инвертирована: без
+  `bsp::stub::Flash`). EEPROM под хранилищем инвертирована: без
   этого заводские нули выглядели бы для `sequential-storage` закрытыми
   страницами — `docs/flash.md`.
 {%- if graph == "true" %}

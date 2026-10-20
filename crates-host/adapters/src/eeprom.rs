@@ -18,39 +18,16 @@
 //!   (доступ идёт под блокирующим замком общего флеша). Стирание уже чистой
 //!   страницы не стоит ничего, грязной — по слову на каждое изменившееся.
 //!
-//! Доступ к самой EEPROM — трейт [`EepromAccess`](crate::eeprom::EepromAccess): его реализует `bsp` поверх
+//! Доступ к самой EEPROM — порт [`EepromAccess`](ports::EepromAccess): его реализует `bsp` поверх
 //! `embassy_stm32::flash::Flash::eeprom_*` (того же объекта, что делят OTA и
 //! настройки), host-тест — поверх памяти.
 
 use embedded_storage::nor_flash::{ErrorType, NorFlashError, NorFlashErrorKind};
+use ports::EepromAccess;
 
 /// Слово записи EEPROM: единица, кратность которой требует `write`, и шаг, которым
 /// `rewrite` сравнивает старое с новым.
 const WORD: u32 = 4;
-
-/// Побайтный доступ к EEPROM. Методы берут `&self`: реализация в `bsp` берёт
-/// общий флеш под замком на каждую операцию.
-pub trait EepromAccess {
-    /// Отказ контроллера.
-    type Error: core::fmt::Debug;
-
-    /// Объём EEPROM в байтах.
-    fn size(&self) -> u32;
-
-    /// Читает `buf.len()` байт со смещения `offset`.
-    ///
-    /// # Errors
-    ///
-    /// Отказ контроллера или выход за границы.
-    fn read(&self, offset: u32, buf: &mut [u8]) -> Result<(), Self::Error>;
-
-    /// Пишет `data` со смещения `offset`, байт в байт.
-    ///
-    /// # Errors
-    ///
-    /// Отказ контроллера или выход за границы.
-    fn write(&self, offset: u32, data: &[u8]) -> Result<(), Self::Error>;
-}
 
 /// Ошибка обёртки: выход за границы, невыровненный диапазон или отказ самой
 /// EEPROM.
@@ -227,7 +204,9 @@ mod tests {
 
     use embedded_storage_async::nor_flash::{NorFlash, ReadNorFlash};
 
-    use super::{Eeprom, EepromAccess};
+    use ports::EepromAccess;
+
+    use super::Eeprom;
     use crate::settings::Settings;
 
     /// EEPROM в памяти: с завода нули, как у L0/L1; считает записи.

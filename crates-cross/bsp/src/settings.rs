@@ -11,7 +11,7 @@
 //!   среды (`CONFIG_START`/`CONFIG_END`), страница — [`CONFIG_ERASE_SIZE`];
 //! - внутренняя EEPROM (STM32L0/L1) — через `adapters::eeprom::Eeprom`;
 //! - внешняя флеш — ваш драйвер; пока на его месте заглушка
-//!   `adapters::flash::Unconnected`.
+//!   `crate::stub::Flash`.
 {%- if config_store == "flash" %}
 //!
 //! Здесь — раздел во внутреннем флеше: две страницы стирания (меньше
@@ -19,11 +19,11 @@
 //! дешевле: с OTA на F2/F4/F7 — в мелкие сектора перед `ACTIVE` (у F4 —
 //! 2×16 KiB), иначе в хвост flash.
 
-{%- if config_paged == "true" %}
-use adapters::flash::ErasePage;
-{%- endif %}
 use embassy_embedded_hal::adapter::BlockingAsync;
 use embassy_embedded_hal::flash::partition::BlockingPartition;
+{%- if config_paged == "true" %}
+use flash_page::ErasePage;
+{%- endif %}
 
 use crate::flash::{FlashMutex, SIZE, Whole};
 
@@ -94,7 +94,8 @@ pub(crate) fn new(flash: &'static FlashMutex) -> Settings {
 //! под замком. Под хранилище отдана вся EEPROM, округлённая до страницы
 //! обёртки (`adapters::eeprom::Eeprom::PAGE`).
 
-use adapters::eeprom::{Eeprom, EepromAccess};
+use adapters::eeprom::Eeprom;
+use ports::EepromAccess;
 use static_cell::StaticCell;
 
 use crate::flash::FlashMutex;
@@ -197,7 +198,7 @@ pub(crate) fn new(external: &'static ExternalMutex) -> Settings {
 //!
 //! Здесь — внешняя флеш. Какая микросхема стоит на плате, шаблон не знает и не
 //! гадает: на месте драйвера заглушка [`ExternalFlash`] (=
-//! `adapters::flash::Unconnected`). С ней проект собирается и работает, но
+//! `crate::stub::Flash`). С ней проект собирается и работает, но
 //! каждая операция хранилища отвечает ошибкой — настройки не сохраняются.
 //!
 //! Подключить свою микросхему — две правки в этом файле:
@@ -213,7 +214,7 @@ pub(crate) fn new(external: &'static ExternalMutex) -> Settings {
 //! типом: `Settings` остаётся псевдонимом, как и сейчас.
 
 /// Драйвер внешней флеши — замените на свой.
-pub type ExternalFlash = adapters::flash::Unconnected;
+pub type ExternalFlash = crate::stub::Flash;
 
 /// Хранилище настроек этой платы — то, что лежит полем `Board` и уезжает в
 /// задачи. Псевдоним по общему правилу шаблона: тип в сигнатуре
@@ -226,9 +227,6 @@ pub(crate) fn new() -> Settings {
     defmt::warn!(
         "bsp: внешняя флеш не подключена — настройки не сохраняются (bsp/src/settings.rs)"
     );
-    adapters::settings::Settings::new(
-        adapters::flash::Unconnected,
-        0..adapters::flash::Unconnected::CAPACITY,
-    )
+    adapters::settings::Settings::new(crate::stub::Flash, 0..crate::stub::Flash::CAPACITY)
 }
 {%- endif %}

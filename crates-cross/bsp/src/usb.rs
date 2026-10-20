@@ -20,7 +20,7 @@ const PID: u16 = 0xCAFE;
 )]
 {%- endif %}
 pub mod {{ f[4] }} {
-    use adapters::usb::{CdcBuffers, Unconnected};
+    use adapters::usb::CdcBuffers;
     use embassy_usb::Config;
     use embassy_usb::class::cdc_acm::State;
     use static_cell::{ConstStaticCell, StaticCell};
@@ -34,7 +34,7 @@ pub mod {{ f[4] }} {
     static CDC_STATE: StaticCell<State<'static>> = StaticCell::new();
 
     /// USB-драйвер `{{ f[2] }}` — пока заглушка, до USB-блока чипа (см. модуль `bsp::usb`).
-    pub type UsbDriver = Unconnected;
+    pub type UsbDriver = crate::stub::UsbDriver;
 
     /// USB `{{ f[2] }}`: устройство для узла `USB_{{ f[4] | upcase }}` и поток CDC под протоколом.
     pub type Usb = adapters::usb::Usb<UsbDriver>;
@@ -58,7 +58,7 @@ pub mod {{ f[4] }} {
         config.serial_number = Some(embassy_stm32::uid::uid_hex());
 
         adapters::usb::cdc(
-            Unconnected::default(),
+            UsbDriver::default(),
             config,
             BUFFERS.take(),
             CDC_STATE.init(State::new()),

@@ -14,7 +14,7 @@
 {%- endif %}
 pub mod {{ f[4] }} {
     /// Шина `{{ f[2] }}` — пока заглушка, до контроллера (см. модуль `bsp::can`).
-    pub type Can = adapters::can::Unconnected<embassy_stm32::can::Frame>;
+    pub type Can = crate::stub::Can;
 
     /// Собирает шину `{{ f[2] }}`. Блок приходит группой `resources.rs` — заглушка
     /// его не трогает, контроллер платы соберётся из него и выводов.

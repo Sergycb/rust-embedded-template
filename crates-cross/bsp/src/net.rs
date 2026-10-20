@@ -1,6 +1,5 @@
 #![doc = include_str!("../../../docs/modules/bsp-net.md")]
 
-use adapters::net::Unconnected;
 {%- if has_udp == "true" %}
 /// Описание датаграммы в буфере UDP-сокета — для буферов, которые приложение
 /// отдаёт сокету.
@@ -23,7 +22,7 @@ static RESOURCES: ConstStaticCell<StackResources<SOCKETS>> =
     ConstStaticCell::new(StackResources::new());
 
 /// Сетевое устройство платы — пока заглушка, до Ethernet (см. модуль).
-pub type Device = Unconnected;
+pub type Device = crate::stub::NetDevice;
 
 /// Сетевой стек, на котором приложение открывает сокет протокола. Псевдоним —
 /// чтобы `app` не называл `embassy-net`.
@@ -40,10 +39,37 @@ pub type Net = adapters::net::Net<Device>;
 pub(crate) fn new(uid: [u8; 12], seed: u64, _resources: crate::resources::EthResources) -> Net {
     defmt::warn!("bsp: Ethernet не подключён — сеть без линка, протокол ждёт впустую");
     let (stack, runner) = embassy_net::new(
-        Unconnected::new(adapters::net::mac_from_uid(uid)),
+        Device::new(mac_from_uid(uid)),
         Config::dhcpv4(DhcpConfig::default()),
         RESOURCES.take(),
         seed,
     );
     Net { runner, stack }
 }
+
+/// MAC из заводского номера чипа: локально администрируемый (бит 1 первого
+/// байта), без группового (бит 0) — у каждой платы свой и постоянный. Все
+/// 12 байт номера свёрнуты в 5: выброшенный байт сделал бы MAC общим у
+/// чипов, которые различаются только им. Свой адрес от производителя —
+/// подставьте здесь.
+const fn mac_from_uid(uid: [u8; 12]) -> [u8; 6] {
+    [
+        0x02,
+        uid[0] ^ uid[5] ^ uid[10],
+        uid[1] ^ uid[6] ^ uid[11],
+        uid[2] ^ uid[7],
+        uid[3] ^ uid[8],
+        uid[4] ^ uid[9],
+    ]
+}
+{%- if rng_irq == "" %}
+
+/// Затравка стека (порты, номера последовательностей TCP) из заводского
+/// номера — для чипов без RNG. Не случайна: у одной платы она одна и та же
+/// после каждого сброса.
+pub(crate) fn seed_from_uid(uid: [u8; 12]) -> u64 {
+    let mut bytes = [0; 8];
+    bytes.copy_from_slice(&uid[..8]);
+    u64::from_le_bytes(bytes) ^ u64::from(u32::from_le_bytes([uid[8], uid[9], uid[10], uid[11]]))
+}
+{%- endif %}

@@ -1,10 +1,9 @@
-//! Сеть поверх `embassy-net`: заглушка сетевого устройства и транспорт
-//! протокола — {% if has_tcp == "true" %}TCP-сервер{% else %}UDP-канал{% endif %}.
+//! Сеть поверх `embassy-net`: транспорт протокола —
+//! {% if has_tcp == "true" %}TCP-сервер{% else %}UDP-канал{% endif %}.
 //!
 //! Ничего из этого не знает чипа: устройство — любой
 //! [`Driver`](embassy_net::driver::Driver), сокеты — стек `embassy-net`.
-//! Поэтому здесь, а не в `bsp`: `bsp` только собирает стек над своим
-//! Ethernet и отдаёт эти объекты в `Board`.
+//! Плата отдаёт устройство (Ethernet), стек и сокеты собирает приложение.
 
 // {%- if has_tcp == "true" %}
 mod tcp;
@@ -13,65 +12,13 @@ mod tcp;
 mod udp;
 // {%- endif %}
 
-use core::task::Context;
-
-use embassy_net::driver::{Capabilities, Driver, HardwareAddress, LinkState, RxToken, TxToken};
+use embassy_net::driver::Driver;
 
 // {%- if has_tcp == "true" %}
 pub use tcp::{TcpError, TcpServer};
 // {%- endif %}
 // {%- if has_udp == "true" %}
 pub use udp::{UdpError, UdpLink};
-// {%- endif %}
-
-/// Сетевое устройство, которого ещё нет на плате, — место под Ethernet.
-///
-/// Как `serial::Unconnected` в слоте UART, но на уровень ниже: стек
-/// `embassy-net`, сокеты и узел `NET` настоящие, а у устройства линк всегда
-/// опущен — кадров нет ни на приёме, ни на передаче. Проект с ним
-/// собирается и запускается, протокол ждёт соединения вечно. Заменить его —
-/// значит в `bsp::net` подставить `Ethernet` своей платы.
-#[derive(Debug)]
-pub struct Unconnected {
-    mac: [u8; 6],
-}
-
-impl Unconnected {
-    /// Устройство с адресом `mac` — его увидит стек, хотя в сеть ничего не
-    /// уходит.
-    #[must_use]
-    pub const fn new(mac: [u8; 6]) -> Self {
-        Self { mac }
-    }
-}
-
-/// MAC из заводского номера чипа: локально администрируемый (бит 1 первого
-/// байта), без группового (бит 0) — у каждой платы свой и постоянный. Все
-/// 12 байт номера свёрнуты в 5: выброшенный байт сделал бы MAC общим у
-/// чипов, которые различаются только им. Свой адрес от производителя —
-/// подставьте в `bsp::net`.
-#[must_use]
-pub const fn mac_from_uid(uid: [u8; 12]) -> [u8; 6] {
-    [
-        0x02,
-        uid[0] ^ uid[5] ^ uid[10],
-        uid[1] ^ uid[6] ^ uid[11],
-        uid[2] ^ uid[7],
-        uid[3] ^ uid[8],
-        uid[4] ^ uid[9],
-    ]
-}
-
-// {%- if rng_irq == "" %}
-/// Затравка стека (порты, номера последовательностей TCP) из заводского
-/// номера — для чипов без RNG. Не случайна: у одной платы она одна и та же
-/// после каждого сброса.
-#[must_use]
-pub fn seed_from_uid(uid: [u8; 12]) -> u64 {
-    let mut bytes = [0; 8];
-    bytes.copy_from_slice(&uid[..8]);
-    u64::from_le_bytes(bytes) ^ u64::from(u32::from_le_bytes([uid[8], uid[9], uid[10], uid[11]]))
-}
 // {%- endif %}
 
 /// Сеть платы: фоновая работа стека для узла `NET` и сам стек, на котором
@@ -93,109 +40,6 @@ impl<D: Driver + 'static> core::fmt::Debug for Net<D> {
     }
 }
 
-/// Кадр, которого не бывает: токены приёма и передачи [`Unconnected`].
-#[derive(Debug)]
-pub enum NoFrame {}
-
-impl RxToken for NoFrame {
-    fn consume<R, F: FnOnce(&mut [u8]) -> R>(self, _: F) -> R {
-        match self {}
-    }
-}
-
-impl TxToken for NoFrame {
-    fn consume<R, F: FnOnce(&mut [u8]) -> R>(self, _: usize, _: F) -> R {
-        match self {}
-    }
-}
-
-/// MTU Ethernet: 1500 байт IP и 14 байт заголовка.
-const ETHERNET_MTU: usize = 1514;
-
-impl Driver for Unconnected {
-    type RxToken<'a> = NoFrame;
-    type TxToken<'a> = NoFrame;
-
-    fn receive(&mut self, _: &mut Context) -> Option<(NoFrame, NoFrame)> {
-        None
-    }
-
-    fn transmit(&mut self, _: &mut Context) -> Option<NoFrame> {
-        None
-    }
-
-    fn link_state(&mut self, _: &mut Context) -> LinkState {
-        LinkState::Down
-    }
-
-    fn capabilities(&self) -> Capabilities {
-        let mut capabilities = Capabilities::default();
-        capabilities.max_transmission_unit = ETHERNET_MTU;
-        capabilities
-    }
-
-    fn hardware_address(&self) -> HardwareAddress {
-        HardwareAddress::Ethernet(self.mac)
-    }
-}
-
-#[cfg(test)]
-mod uid_tests {
-    use super::mac_from_uid;
-    // {%- if rng_irq == "" %}
-    use super::seed_from_uid;
-    // {%- endif %}
-
-    const UID: [u8; 12] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
-
-    /// Локально администрируемый, индивидуальный; каждый байт номера влияет
-    /// на результат — чипы, различающиеся одним байтом, получают разные MAC.
-    #[test]
-    fn mac_is_local_unicast_and_depends_on_every_uid_byte() {
-        let mac = mac_from_uid(UID);
-        assert_eq!(mac[0] & 0b11, 0b10);
-        for i in 0..UID.len() {
-            let mut other = UID;
-            other[i] ^= 0x40;
-            assert_ne!(mac_from_uid(other), mac, "байт {i} выброшен");
-        }
-    }
-
-    // {%- if rng_irq == "" %}
-    /// Затравка зависит от всех 12 байт номера.
-    #[test]
-    fn seed_depends_on_every_uid_byte() {
-        let seed = seed_from_uid(UID);
-        for i in 0..UID.len() {
-            let mut other = UID;
-            other[i] ^= 0x40;
-            assert_ne!(seed_from_uid(other), seed, "байт {i} выброшен");
-        }
-    }
-    // {%- endif %}
-}
-
-#[cfg(test)]
-mod tests {
-    use core::task::{Context, Waker};
-
-    use super::*;
-
-    #[test]
-    fn unconnected_device_has_no_link_and_no_frames() {
-        let mut device = Unconnected::new([2, 1, 2, 3, 4, 5]);
-        let mut cx = Context::from_waker(Waker::noop());
-        assert!(device.receive(&mut cx).is_none());
-        assert!(device.transmit(&mut cx).is_none());
-        assert!(matches!(device.link_state(&mut cx), LinkState::Down));
-        assert_eq!(device.capabilities().max_transmission_unit, ETHERNET_MTU);
-        assert_eq!(
-            device.hardware_address(),
-            HardwareAddress::Ethernet([2, 1, 2, 3, 4, 5])
-        );
-    }
-}
-
 #[cfg(test)]
 mod fakes {
     //! Кабель в памяти между двумя стеками `embassy-net` — для тестов
@@ -211,7 +55,7 @@ mod fakes {
         Config, Ipv4Address, Ipv4Cidr, Runner, Stack, StackResources, StaticConfigV4,
     };
 
-    use crate::net::ETHERNET_MTU;
+    use crate::fake::ETHERNET_MTU;
 
     /// Половина кабеля: кадры, ждущие приёма, и кто их ждёт.
     #[derive(Default)]

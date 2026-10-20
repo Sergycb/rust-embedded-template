@@ -134,6 +134,14 @@ embassy-sync       = { version = "0.8.0" }
 # (геометрия драйвера внешней флеши в проверках при компиляции). Та же версия,
 # что тянет embassy-boot.
 embedded-storage   = { version = "0.3.1" }
+{%- if external_flash == "true" %}
+# Заглушка внешней флеши (`bsp::stub::Flash`) — асинхронный `NorFlash` приложения.
+embedded-storage-async = { version = "0.4.1" }
+{%- endif %}
+{%- if has_uart == "true" %}
+# Заглушка UART (`bsp::stub::Serial`) — поток байтов, как у `BufferedUart`.
+embedded-io-async  = { version = "0.7.0" }
+{%- endif %}
 # `portable-atomic` здесь не объявлен намеренно: на Cortex-M0/M0+ ему нужно
 # сказать, чем эмулировать CAS, и это делает cfg в `.cargo/config.toml`
 # (`[target.thumbv6m-none-eabi] rustflags`), а не фича у членов workspace —
@@ -181,6 +189,9 @@ ports            = { path = "../crates-host/ports", features = ["defmt"] }
 # объектами. `defmt` — ради `Format` на ошибках в логе прошивки; на хосте
 # крейт собирается без фич вывода вовсе.
 adapters         = { path = "../crates-host/adapters", features = ["defmt"] }
+{%- if flash_page == "true" %}
+flash-page       = { path = "../crates-host/flash-page" }
+{%- endif %}
 bsp              = { path = "./bsp" }
 # `default-features = false` обязательно: дефолт domain — фича `log` (нужна
 # хост-сборке, см. её [features]), а в прошивке используется только defmt.

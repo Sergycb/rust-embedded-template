@@ -73,7 +73,7 @@ cargo run -p app                    # прошить приложение и с�
 | Распиновка платы | `crates-cross/bsp/src/resources.rs` | `assign_resources!` разложит `Peripherals` по именованным группам — из них `bsp` соберёт драйверы; наружу уходит не периферия, а готовый объект (`docs/resources.md`) |
 | Граф задач | `crates-cross/app/src/graph.rs` | `supervisor_graph!`: порядок старта, watchdog, обмен между задачами |
 | Логика и узлы графа | `crates-host/domain/` | всё, что не про регистры: автоматы, протоколы, конфигурация, а также объявления узлов (`supervisor_fragment!`) и их работа (`domain::heartbeat::run`, `domain::cpu_load::task` — автоматы `#[fsm::typestate]` на контексте узла) — тестируется на хосте; логика вне автоматов — функции над портами |
-| Адаптеры без чипа | `crates-host/adapters/` | реализации портов, которым хватает `embedded-storage`/`embedded-hal`/`embedded-io-async`: OTA поверх `embassy-boot` (`adapters::ota`), настройки поверх `sequential-storage` (`adapters::settings`, мост к общему флешу — `adapters::flash`){% if protocol == "protobuf" and interface != "udp" %}, кадрирование потока COBS + CRC (`adapters::cobs`){% endif %}{% if protocol == "modbus" %}, транспорт Modbus {% if interface == "tcp" %}TCP{% elsif interface == "udp" %}UDP{% else %}RTU{% endif %} (`adapters::modbus`){% endif %} — тестируется на хосте |
+| Адаптеры без чипа | `crates-host/adapters/` | реализации портов, которым хватает `embedded-storage`/`embedded-hal`/`embedded-io-async`: OTA поверх `embassy-boot` (`adapters::ota`), настройки поверх `sequential-storage` (`adapters::settings`){% if protocol == "protobuf" and interface != "udp" %}, кадрирование потока COBS + CRC (`adapters::cobs`){% endif %}{% if protocol == "modbus" %}, транспорт Modbus {% if interface == "tcp" %}TCP{% elsif interface == "udp" %}UDP{% else %}RTU{% endif %} (`adapters::modbus`){% endif %} — тестируется на хосте |
 {%- if protocol == "protobuf" %}
 | Схема protobuf | `crates-host/proto/` | `.proto` и типы, сгенерированные `micropb-gen` в `build.rs` (схему разбирает `protox`, системный `protoc` не нужен); пример — конверт `Request`/`Response` с `request_id`, проект заменяет своим. Обрабатывает узел `domain::HOST_FRAG` |
 {%- endif %}
@@ -488,7 +488,7 @@ if let Some(raw) = board.settings.read(KEY_CALIBRATION, &mut scratch).await? {
 раздела хранить настройки было просто негде.
 
 Кроме `yes` есть `external` — настройки на внешней флеши: в шаблоне на месте её
-драйвера заглушка (`adapters::flash::Unconnected`), а свою микросхему вы подставляете в
+драйвера заглушка (`bsp::stub::Flash`), а свою микросхему вы подставляете в
 `crates-cross/bsp/src/settings.rs` — годится любой драйвер с `NorFlash`. А на L0/L1 `yes`
 сам кладёт настройки во внутреннюю EEPROM, не тратя флеш. Подробности — docs/flash.md.
 

@@ -146,6 +146,6 @@ embassy-time = { workspace = true, features = ["mock-driver", "generic-queue-8"]
 # даёт `cortex-m` фичей `critical-section-single-core` (crates-cross/Cargo.toml).
 critical-section = { workspace = true, features = ["std"] }
 # {%- if has_net == "true" or has_usb == "true" %}
-# Узлы NET/USB тестируются над заглушками устройства из `adapters`.
-adapters = { workspace = true }
+# Узлы NET/USB тестируются над драйверами без шины из `adapters::fake`.
+adapters = { workspace = true, features = ["fake"] }
 # {%- endif %}

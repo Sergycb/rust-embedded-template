@@ -2,7 +2,7 @@
 //! настроек{% endif %} (`ota=external`).
 //!
 //! Какая микросхема стоит на плате, шаблон не знает и не гадает: на месте
-//! драйвера заглушка [`ExternalFlash`] (= `adapters::flash::Unconnected`). С
+//! драйвера заглушка [`ExternalFlash`] (= `crate::stub::Flash`). С
 //! ней проект собирается и работает, но каждая операция с внешней флешью
 //! отвечает ошибкой: образ не принимается, а bootloader, не дозвавшись до
 //! своего драйвера, загружает текущий образ.
@@ -46,14 +46,14 @@ pub const EXT_PAGE_SIZE: usize = match usize::from_str_radix(env!("EXT_PAGE_SIZE
 // Вдобавок к проверке в bootloader'е: у приложения свой тип драйвера
 // (асинхронный), и расходиться они могут.
 const _: () = assert!(
-    EXT_PAGE_SIZE.is_multiple_of(adapters::flash::erase_size::<ExternalFlash>()),
+    EXT_PAGE_SIZE.is_multiple_of(flash_page::erase_size::<ExternalFlash>()),
     "стирание драйвера внешней флеши не делит страницу обмена (EXT_PAGE_SIZE)"
 );
 
 static EXTERNAL: StaticCell<ExternalMutex> = StaticCell::new();
 
 /// Драйвер внешней флеши — замените на свой.
-pub type ExternalFlash = adapters::flash::Unconnected;
+pub type ExternalFlash = crate::stub::Flash;
 
 /// Внешняя флеш под замком — то, над чем строятся её разделы.
 ///
@@ -69,7 +69,7 @@ pub type ExternalPartition =
 /// микросхемы проверять нечего.
 #[must_use]
 pub fn connected() -> bool {
-    TypeId::of::<ExternalFlash>() != TypeId::of::<adapters::flash::Unconnected>()
+    TypeId::of::<ExternalFlash>() != TypeId::of::<crate::stub::Flash>()
 }
 
 /// Собирает драйвер. Сейчас — заглушку: о том, что драйвер не подставлен,
@@ -82,5 +82,5 @@ pub(crate) fn new() -> &'static ExternalMutex {
 {%- else %}
     defmt::warn!("bsp: внешняя флеш не подключена — OTA не работает (bsp/src/external.rs)");
 {%- endif %}
-    EXTERNAL.init(Mutex::new(adapters::flash::Unconnected))
+    EXTERNAL.init(Mutex::new(crate::stub::Flash))
 }

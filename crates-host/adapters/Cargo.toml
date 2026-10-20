@@ -12,6 +12,8 @@ workspace = true
 # Сами адаптеры ничего не пишут в лог, а у `embassy-boot` без фич `log`/`defmt`
 # его макросы вывода превращаются в пустые выражения — на хосте это ровно то,
 # что нужно. В прошивку `defmt` включает crates-cross/Cargo.toml.
+# Драйверы без шины и линка (`adapters::fake`) — для host-тестов `domain`.
+fake = []
 defmt = [
 	"dep:defmt",
 	"ports/defmt",
@@ -40,13 +42,13 @@ embedded-storage = { workspace = true }
 embedded-storage-async = { workspace = true }
 # {%- endif %}
 # {%- if config == "true" %}
-# Хранилище настроек (settings.rs) — async API, отсюда и мост в flash.rs.
+# Хранилище настроек (settings.rs) — async API.
 sequential-storage = { workspace = true }
 # {%- endif %}
 embassy-sync = { workspace = true }
 # {%- if stream_io == "true" %}
-# Заглушки и транспорты поверх потока байтов `embedded_io_async::{Read, Write}` —
-# `serial`, `usb::CdcStream`, `net::TcpServer`, `modbus::{Rtu, Tcp}` и
+# Транспорты поверх потока байтов `embedded_io_async::{Read, Write}` —
+# `usb::CdcStream`, `net::TcpServer`, `modbus::{Rtu, Tcp}` и
 # `cobs::Cobs`. UDP-каналу поток не нужен: границу кадра даёт датаграмма.
 embedded-io-async = { workspace = true }
 # {%- endif %}
@@ -70,10 +72,6 @@ embassy-usb = { workspace = true }
 # Таймауты: keep-alive сокета TCP (`net`), запись, которую хост не забирает (`usb`).
 embassy-time = { workspace = true }
 # {%- endif %}
-# {%- if has_can == "true" %}
-# Кадр шины CAN — параметр заглушки `can::Unconnected`.
-embedded-can = { workspace = true }
-# {%- endif %}
 # `defmt::Format` на ошибках адаптеров — в прошивке.
 defmt = { workspace = true, optional = true }
 
@@ -85,11 +83,6 @@ defmt = { workspace = true, optional = true }
 # cargo разрешена: в обычную сборку ни та ни другая не попадает.
 domain = { path = "../domain", features = ["signed"] }
 salty = { workspace = true }
-# {%- endif %}
-# {%- if erase_page == "true" or external_flash == "true" %}
-# `BlockingAsync` (async-вид флеша) и `BlockingPartition` (раздел под замком) —
-# как их собирают `bsp` и bootloader; свои копии в тестах не нужны.
-embassy-embedded-hal = { workspace = true }
 # {%- endif %}
 # Исполнитель для async-тестов над флешем в памяти (`#[tokio::test]`); фичи —
 # в корневом Cargo.toml.

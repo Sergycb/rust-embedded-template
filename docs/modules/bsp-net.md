@@ -1,7 +1,7 @@
 Сеть платы — стек `embassy-net` под протоколом поверх {% if interface == "tcp" %}TCP{% else %}UDP{% endif %}.
 
 Шаблон выводы не выбирает (`docs/architecture.md`), поэтому сетевое
-устройство `Device` пока — заглушка `adapters::net::Unconnected`: линк
+устройство `Device` пока — заглушка `bsp::stub::NetDevice`: линк
 всегда опущен, кадров нет. Всё остальное настоящее: стек `embassy-net` с
 DHCP, его фоновая работа в узле `NET` графа (`domain::net`) и сокет протокола
 (`adapters::net::{% if interface == "tcp" %}TcpServer{% else %}UdpLink{% endif %}` на порту `PORT`; сокет и порт — в `crates-cross/bsp/src/link.rs`). Проект собирается и
@@ -31,11 +31,11 @@ DHCP, его фоновая работа в узле `NET` графа (`domain::
    // Рядом с остальными статиками модуля:
    static QUEUE: ConstStaticCell<PacketQueue<4, 4>> = ConstStaticCell::new(PacketQueue::new());
 
-   // В `new`, вместо `Unconnected::new(adapters::net::mac_from_uid(uid))`:
+   // В `new`, вместо `Unconnected::new(mac_from_uid(uid))`:
    let device = Ethernet::new(
        QUEUE.take(), r.eth, Irqs,
        r.ref_clk, r.crs, r.rx_d0, r.rx_d1, r.tx_d0, r.tx_d1, r.tx_en,
-       adapters::net::mac_from_uid(uid), r.sma, r.mdio, r.mdc,
+       mac_from_uid(uid), r.sma, r.mdio, r.mdc,
    );
    ```
 
@@ -52,7 +52,7 @@ DHCP, его фоновая работа в узле `NET` графа (`domain::
 
 * Адрес — по DHCP (`Config::dhcpv4`). Статический — одной строкой:
   `Config::ipv4_static(StaticConfigV4 { address: Ipv4Cidr::new(Ipv4Address::new(192, 168, 1, 50), 24), gateway: None, dns_servers: Default::default() })`.
-* MAC — из заводского номера чипа (`adapters::net::mac_from_uid`), локально администрируемый.
+* MAC — из заводского номера чипа (`mac_from_uid`), локально администрируемый.
   Свой, выданный производителем, — подставьте там же.
 * Порт протокола — `PORT` в `crates-cross/bsp/src/link.rs`: его задаёт протокол,
   а не плата.

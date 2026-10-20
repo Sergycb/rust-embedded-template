@@ -231,7 +231,7 @@ impl Board {
 {%- if rng_irq != "" %}
         let seed = crate::rng::seed(r.rng.rng);
 {%- else %}
-        let seed = adapters::net::seed_from_uid(embassy_stm32::uid::uid());
+        let seed = crate::net::seed_from_uid(embassy_stm32::uid::uid());
 {%- endif %}
         let net = crate::net::new(embassy_stm32::uid::uid(), seed, r.eth);
 {%- endif %}

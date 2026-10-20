@@ -46,7 +46,7 @@ to)` проходит сектор за сектором и отказывает
 совпали с границами секторов. Разница видна там, где сектора неравные, — на
 F2/F4/F7 (у F4 16, 64 и 128 KiB): в мелких секторах можно держать мелкий
 раздел, но только объявив ему страницу этого сектора. Это делает
-`adapters::flash::ErasePage<F, ERASE_SIZE>`; само число считает `chip-data-gen`.
+`flash_page::ErasePage<F, ERASE_SIZE>`; само число считает `chip-data-gen`.
 
 Что здесь нельзя нарушать:
 
@@ -90,7 +90,7 @@ F2/F4/F7 (у F4 16, 64 и 128 KiB): в мелких секторах можно 
   (`STATE_BUDGET`), удваивает страницу обмена (`p·2^k`, не больше 8 KiB,
   `SWAP_PAGE_MAX`) до первой, при которой он укладывается; `STATE` сжимается до
   сотен байт, а bootloader получает почти весь блок в 32 KiB. Прошивка при этом
-  оборачивает `ACTIVE` и `DFU` в `adapters::flash::ErasePage<_, SWAP_PAGE_SIZE>`
+  оборачивает `ACTIVE` и `DFU` в `flash_page::ErasePage<_, SWAP_PAGE_SIZE>`
   (плейсхолдер `swap_paged` = "true", число — `page_size`): `ErasePage` лишь
   объявляет большую `ERASE_SIZE`, а стирание остаётся физическим. `STATE`
   по-прежнему строится над страницей своего сектора (`STATE_ERASE_SIZE`) — это
@@ -124,7 +124,7 @@ F2/F4/F7 (у F4 16, 64 и 128 KiB): в мелких секторах можно 
 |---|---|---|
 | `internal`, у чипа есть EEPROM (L0/L1) | внутренняя EEPROM, вся | `adapters::eeprom::Eeprom` над `Flash::eeprom_*` |
 | `internal`, EEPROM нет | раздел `CONFIG` во внутреннем флеше | `BlockingAsync<{% if config_paged == "true" %}ErasePage<Whole>{% else %}Whole{% endif %}>` |
-| `external` | внешняя флеш на плате | **ваш драйвер**; в шаблоне — заглушка `adapters::flash::Unconnected` |
+| `external` | внешняя флеш на плате | **ваш драйвер**; в шаблоне — заглушка `bsp::stub::Flash` |
 
 `Board` отдаёт поле `settings`; `no` — файла `settings.rs` нет вовсе, как и
 `ota.rs` в проектах без OTA.
@@ -181,7 +181,7 @@ GD25, MX25, IS25, SST26…), шаблон не знает и не гадает: 
   `BOOTLOADER_TARGET` (32 KiB). Выходит это на F2/F4/F7: на F4 это
   сектора 2–3 по 16 KiB вместо 2×128 KiB, `STATE` уезжает в сектор 4,
   bootloader — 32 KiB. Страница раздела — `CONFIG_ERASE_SIZE` в
-  `bsp::settings`{% if config_paged == "true" %}, над `adapters::flash::ErasePage`, как и у `STATE`{% else %}, прямо над `Whole`: сектор раздела равен странице чипа{% endif %}. Полезного
+  `bsp::settings`{% if config_paged == "true" %}, над `flash_page::ErasePage`, как и у `STATE`{% else %}, прямо над `Whole`: сектор раздела равен странице чипа{% endif %}. Полезного
   места в разделе — около одной страницы (вторая держится свободной под
   перенос), то есть ~16 KiB на F4 с OTA; нужно больше — это уже внешняя флеш.
 - **OTA-раскладка при включённом разделе своя.** В `MEMORY_LAYOUT` лежат два
@@ -319,7 +319,7 @@ NOR. Во внутреннем флеше остаются bootloader и `ACTIVE
 `DFU`, `STATE` и настройки — команды SPI разных разделов не должны
 перемежаться), bootloader — блокирующим драйвером (`ExternalFlash` в
 `crates-cross/boot/src/external.rs`: исполнителя там нет). В шаблоне в обоих
-заглушка `adapters::flash::Unconnected`: проект собирается и работает, OTA
+заглушка `bsp::stub::Flash`: проект собирается и работает, OTA
 не принимает образы, bootloader грузит текущий.
 
 **Стёртое состояние:** внешняя NOR стирается в `0xFF`, даже если внутренний

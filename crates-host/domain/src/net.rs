@@ -91,7 +91,7 @@ mod tests {
     /// ждёт.
     #[test]
     fn drives_the_stack_forever() {
-        let device = adapters::net::Unconnected::new([2, 0, 0, 0, 0, 1]);
+        let device = adapters::fake::NetDevice::new([2, 0, 0, 0, 0, 1]);
         let resources = Box::leak(Box::new(StackResources::<2>::new()));
         let (_stack, mut runner) = embassy_net::new(device, Config::default(), resources, 1);
         let ctx = NetCtx {
