@@ -219,7 +219,7 @@ mod tests {
     // {%- if erase_page == "true" %}
     use super::ErasePage;
     // {%- endif %}
-    // {%- if external_flash == "true" %}
+    // {%- if external_flash == "true" and settings_port == "true" %}
     use super::Unconnected;
     // {%- endif %}
 
@@ -288,7 +288,7 @@ mod tests {
         );
     }
 
-    // {%- if external_flash == "true" %}
+    // {%- if external_flash == "true" and settings_port == "true" %}
     /// С заглушкой хранилище собирается, а операции честно отказывают, а не
     /// паникуют: проект без подключённой флеши работает, просто без настроек.
     #[tokio::test]
