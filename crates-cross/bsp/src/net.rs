@@ -1,7 +1,7 @@
 #![doc = include_str!("../../../docs/modules/bsp-net.md")]
 
 use adapters::net::Unconnected;
-{%- if interface == "udp" %}
+{%- if has_udp == "true" %}
 /// Описание датаграммы в буфере UDP-сокета — для буферов, которые приложение
 /// отдаёт сокету.
 pub use embassy_net::udp::PacketMetadata;
@@ -9,10 +9,11 @@ pub use embassy_net::udp::PacketMetadata;
 use embassy_net::{Config, DhcpConfig, StackResources};
 use static_cell::ConstStaticCell;
 
-/// Сокетов в стеке: DHCP-клиент и сокет протокола. Слот — около 500 байт
-/// оперативной памяти, поэтому без запаса: добавите свой сокет (или фичу
-/// `dns` у `embassy-net` — она тоже занимает слот) — прибавьте один здесь.
-const SOCKETS: usize = 2;
+/// Сокетов в стеке: DHCP-клиент{% if protocol_sockets != "0" %} и по сокету на сетевой транспорт протокола
+/// (`bsp::link`){% endif %}. Слот — около 500 байт оперативной памяти, поэтому без
+/// запаса: добавите свой сокет (или фичу `dns` у `embassy-net` — она тоже
+/// занимает слот) — прибавьте один здесь.
+const SOCKETS: usize = 1{% if protocol_sockets != "0" %} + {{protocol_sockets}}{% endif %};
 
 // Память стека: `embassy_net::new` держит её `&'static mut`. `ConstStaticCell`
 // — значения известны при компиляции и лежат в `.bss`, а не собираются на
@@ -27,8 +28,8 @@ pub type Device = Unconnected;
 /// чтобы `app` не называл `embassy-net`.
 pub type Stack = embassy_net::Stack<'static>;
 
-/// Сеть платы: фоновая работа стека для узла `NET` и сам стек. Сокет
-/// протокола и его порт — дело `bsp::link`: порт задаёт протокол, а не плата.
+/// Сеть платы: фоновая работа стека для узла `NET` и сам стек. Сокеты
+/// протоколов и их порты — дело `bsp::link`: порт задаёт протокол, а не плата.
 pub type Net = adapters::net::Net<Device>;
 
 /// Собирает стек над устройством платы. Адрес — по DHCP; MAC — из

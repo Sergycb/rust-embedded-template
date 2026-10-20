@@ -2654,6 +2654,11 @@ fn watchdog_and_link_port_follow_the_choices() {
 /// Хук обязан задать каждую на любом пути по меню — иначе подстановка в
 /// `cargo generate` упадёт на неопределённой переменной.
 fn template_variables() -> std::collections::BTreeSet<String> {
+    template_variables_in(&repo_root())
+}
+
+/// То же по дереву `root`.
+fn template_variables_in(root: &std::path::Path) -> std::collections::BTreeSet<String> {
     use std::collections::BTreeSet;
 
     fn walk(dir: &std::path::Path, found: &mut BTreeSet<String>) {
@@ -2688,6 +2693,10 @@ fn template_variables() -> std::collections::BTreeSet<String> {
             let Ok(text) = std::fs::read_to_string(&path) else {
                 continue;
             };
+            // Переменные файла и имена, которые он объявляет сам (`for`, `assign`,
+            // `capture`): вторые — не переменные хука.
+            let mut local = BTreeSet::new();
+            let mut declared = BTreeSet::new();
             let mut rest = text.as_str();
             while let Some(start) = rest.find("{{") {
                 let after = &rest[start + 2..];
@@ -2698,7 +2707,7 @@ fn template_variables() -> std::collections::BTreeSet<String> {
                     .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
                     .collect();
                 if !ident.is_empty() && !ident.chars().next().is_some_and(|c| c.is_ascii_digit()) {
-                    found.insert(ident);
+                    local.insert(ident);
                 }
                 rest = &after[end + 2..];
             }
@@ -2707,6 +2716,16 @@ fn template_variables() -> std::collections::BTreeSet<String> {
                 let after = &rest[start + 2..];
                 let Some(end) = after.find("%}") else { break };
                 let tag = after[..end].trim().trim_start_matches('-').trim();
+                for keyword in ["for ", "assign ", "capture "] {
+                    if let Some(name) = tag.strip_prefix(keyword) {
+                        let name: String = name
+                            .trim_start()
+                            .chars()
+                            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                            .collect();
+                        declared.insert(name);
+                    }
+                }
                 if let Some(cond) = tag
                     .strip_prefix("if ")
                     .or_else(|| tag.strip_prefix("elsif "))
@@ -2724,18 +2743,35 @@ fn template_variables() -> std::collections::BTreeSet<String> {
                             && word.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
                             && !word.chars().next().is_some_and(|c| c.is_ascii_digit())
                         {
-                            found.insert((*word).to_string());
+                            local.insert((*word).to_string());
                         }
                     }
                 }
                 rest = &after[end + 2..];
             }
+            found.extend(local.difference(&declared).cloned());
         }
     }
 
     let mut found = BTreeSet::new();
-    walk(&repo_root(), &mut found);
+    walk(root, &mut found);
     found
+}
+
+/// Переменные циклов (`{% for l in xs %}`, `{% assign f = … %}`) объявляет сам
+/// файл шаблона, а не хук: искать их среди переменных хука незачем.
+#[test]
+fn loop_variables_are_not_hook_variables() {
+    let dir = std::env::temp_dir().join(format!("loop-vars-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("временный каталог");
+    std::fs::write(
+        dir.join("t.rs"),
+        "{%- assign xs = links | split: \",\" -%}{% for l in xs %}{{ l }}         {% assign f = l | split: \":\" %}{{ f[0] }}{% capture c %}x{% endcapture %}{{ c }}         {% endfor %}{{ chip }}",
+    )
+    .expect("временный файл");
+    let found = template_variables_in(&dir);
+    std::fs::remove_dir_all(&dir).ok();
+    assert_eq!(found.into_iter().collect::<Vec<_>>(), ["chip"]);
 }
 
 /// Значение варианта меню — его первое слово.

@@ -152,7 +152,7 @@ embedded-io-async      = { version = "0.7.0" }
 rusty-modbus-codec     = { version = "0.1.1", default-features = false }
 rusty-modbus-types     = { version = "0.1.1", default-features = false }
 # {%- endif %}
-# {%- if has_protobuf == "true" %}
+# {%- if cobs_used == "true" %}
 # Кадрирование потока (`adapters::cobs`): COBS — синхронизация по 0x00 после
 # мусора или обрыва. Потоковый декодер берётся отсюда, своё — только транспорт
 # и CRC. Тот же крейт стоит под `postcard` и `ergot`. Без `std` (он в default).

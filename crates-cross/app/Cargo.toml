@@ -29,7 +29,7 @@ defmt-rtt = { workspace = true }
 # обработчик не по карману.
 bsp = { workspace = true, features = ["time-driver", "panic-handler", "fault-handler"] }
 domain = { workspace = true }
-{%- if protocol != "none" %}
+{%- if has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" %}
 # Транспорты протоколов (`adapters::modbus::Rtu`, `adapters::cobs::Cobs`) вокруг
 # интерфейса платы — их собирает граф: `bsp` отдаёт поток байтов, а какой
 # протокол поверх него, решает приложение.

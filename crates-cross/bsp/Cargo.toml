@@ -68,15 +68,15 @@ embassy-embedded-hal = { workspace = true }
 # `static-cell` — потому что общему флешу, сети и USB нужен `&'static`: иначе их
 # нельзя отдать в задачу, которую спавнит `Spawner` (аргументы задач обязаны
 # быть 'static).
-{%- if shared_flash == "true" or ota == "true" or interface == "tcp" or interface == "udp" or interface == "usb" %}
+{%- if shared_flash == "true" or ota == "true" or has_net == "true" or has_usb == "true" %}
 static_cell = { workspace = true }
 {%- endif %}
-{%- if interface == "usb" %}
+{%- if has_usb == "true" %}
 # USB-устройство над USB-блоком платы (`bsp::usb`); заглушка и поток CDC — в
 # `adapters::usb`.
 embassy-usb = { workspace = true }
 {%- endif %}
-{%- if interface == "tcp" or interface == "udp" %}
+{%- if has_net == "true" %}
 # Стек над Ethernet платы (`bsp::net`); сокеты и заглушка — в `adapters::net`.
 embassy-net = { workspace = true }
 {%- endif %}

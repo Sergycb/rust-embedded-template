@@ -91,8 +91,8 @@ supervisor_graph! {
         // (`domain::ota::OtaWiring`): адаптер обновления `board.ota`, сброс МК
         // `bsp::cpu::Reboot` и режим применения (`Mode::{% if signed == "true" %}Signed` с версией этого образа
         // из `crate::image`{% else %}Plain`{% endif %}). Образ узел принимает командами на свой вход
-        // `CMD`{% if protocol == "none" %}: клиента отдаёт `ota_cmd_requester()`, и шлёт их ваш
-        // протокол — без него узел только подтверждает образ{% else %} — их шлёт узел протокола ниже{% endif %}; алгоритм обновления — в
+        // `CMD`{% if has_modbus != "true" and has_protobuf != "true" and has_canopen != "true" %}: клиента отдаёт `ota_cmd_requester()`, и шлёт их ваш
+        // протокол — без него узел только подтверждает образ{% else %} — их шлют узлы протоколов ниже, каждый своим клиентом{% endif %}; алгоритм обновления — в
         // `domain::ota`. Вычисляется привязка в прологе `spawn_all` первой
         // строкой — раньше инициализатора блока `watchdog:`, как бы они ни стояли
         // в тексте, — частичным move: `ota` уезжает в слот узла, `watchdog`
@@ -109,39 +109,45 @@ supervisor_graph! {
 {%- endif %}
         },
 {%- endif %}
-{%- if interface == "usb" %}
+{%- assign xs = links | split: "," %}
+{%- for l in xs %}
+{%- assign f = l | split: ":" %}
+{%- if f[0] == "usb" %}
 
-        // Узел `USB` — фоновая работа устройства `embassy-usb` (`domain::usb`) над
-        // драйвером платы `bsp::usb::UsbDriver`: без него хост не видит
+        // Узел `USB_{{ f[4] | upcase }}` — фоновая работа устройства `embassy-usb` (`domain::usb`)
+        // над драйвером `bsp::usb::{{ f[4] }}::UsbDriver`: без него хост не видит
         // устройства, а поток CDC — ни одного пакета.
-        ::domain::USB_FRAG<bsp::usb::Device> as USB =
-            ::domain::usb::UsbWiring { device: board.{% if protocol_link == "true" %}usb_device{% else %}usb.device{% endif %} },
+        ::domain::USB_FRAG<bsp::usb::{{ f[4] }}::Device> as USB_{{ f[4] | upcase }} =
+            ::domain::usb::UsbWiring { device: board.{% if f[3] != "none" %}{{ f[4] }}_device{% else %}{{ f[4] }}.device{% endif %} },
 {%- endif %}
-{%- if interface == "tcp" or interface == "udp" %}
+{%- endfor %}
+{%- if has_net == "true" %}
 
         // Узел `NET` — фоновая работа стека `embassy-net` (`domain::net`) над
-        // устройством платы `bsp::net::Device`: без него сокеты протокола не
-        // получают ни одного пакета.
+        // устройством платы `bsp::net::Device`: без него сокеты протоколов не
+        // получают ни одного пакета. Один на `tcp` и `udp`: стек у них общий.
         ::domain::NET_FRAG<::domain::net::Runner<'static, bsp::net::Device>> as NET =
             ::domain::net::NetWiring { runner: board.net.runner },
 {%- endif %}
-{%- if protocol == "modbus" %}
+{%- for l in xs %}
+{%- assign f = l | split: ":" %}
+{%- if f[3] == "modbus" %}
 
-        // Узел `MODBUS` — Modbus slave: транспорт (`board.link`) плата отдаёт
-        // готовым — кадрирование и буферы в `bsp::link`; карта регистров
+        // Узел `MODBUS_{{ f[4] | upcase }}` — Modbus slave: транспорт (`board.{{ f[4] }}`) плата отдаёт
+        // готовым — кадрирование и буферы в `bsp::link::{{ f[4] }}`; карта регистров
         // `domain::modbus::EmptyRegisters` пуста, её проект описывает в `domain`.
-        // Адрес slave'а — `unit`{% if interface == "tcp" or interface == "udp" %}: по сети устройство адресуется по IP, и
+        // Адрес slave'а — `unit`{% if f[0] == "tcp" or f[0] == "udp" %}: по сети устройство адресуется по IP, и
         // slave отвечает на любой адрес в MBAP{% endif %}.
 {%- if ota == "true" %}
         // Карта обёрнута окном OTA (`domain::modbus::OtaRegisters`): записи FC16
         // по `OTA_BASE` уходят узлу `OTA` командами — клиентом его входа `CMD`
         // (`ota_cmd_requester()`), остальное — карте проекта.
         ::domain::MODBUS_SLAVE_FRAG<
-            bsp::link::Link,
+            bsp::link::{{ f[4] }}::Link,
             ::domain::modbus::OtaRegisters<::domain::modbus::EmptyRegisters>,
-        > as MODBUS =
+        > as MODBUS_{{ f[4] | upcase }} =
             ::domain::modbus::ModbusSlaveWiring {
-                link: board.link,
+                link: board.{{ f[4] }},
                 regs: ::domain::modbus::OtaRegisters::new(
                     ::domain::modbus::EmptyRegisters,
                     ota_cmd_requester(),
@@ -149,24 +155,24 @@ supervisor_graph! {
                 unit: 1,
             },
 {%- else %}
-        ::domain::MODBUS_SLAVE_FRAG<bsp::link::Link, ::domain::modbus::EmptyRegisters> as MODBUS =
+        ::domain::MODBUS_SLAVE_FRAG<bsp::link::{{ f[4] }}::Link, ::domain::modbus::EmptyRegisters> as MODBUS_{{ f[4] | upcase }} =
             ::domain::modbus::ModbusSlaveWiring {
-                link: board.link,
+                link: board.{{ f[4] }},
                 regs: ::domain::modbus::EmptyRegisters,
                 unit: 1,
             },
 {%- endif %}
-{%- elsif protocol == "canopen" %}
+{%- elsif f[3] == "canopen" %}
 
-        // Узел `CANOPEN` — узел CANopen (стек `zencan`) на шине CAN платы `board.can`
+        // Узел `CANOPEN_{{ f[4] | upcase }}` — узел CANopen (стек `zencan`) на шине CAN платы `board.{{ f[4] }}`
         // (заглушка, пока проект не подставит свой контроллер — docs/modules/bsp-can.md)
         // и словаре объектов из `crates-host/canopen` (`device.toml`). Адрес узла в
         // сети — `node_id`, 1..=127. Хранилище — {% if config == "true" %}раздел настроек платы: в нём узел сохраняет
         // объекты по команде `save` и адрес, назначенный по LSS (ключи
         // `domain::canopen::{OBJECTS_KEY, NODE_ID_KEY}`){% else %}раздела настроек нет — объекты и адрес не сохраняются{% endif %}.
-        ::domain::CANOPEN_FRAG<bsp::can::Can, {% if config == "true" %}bsp::settings::Settings{% else %}::adapters::settings::Unavailable{% endif %}> as CANOPEN =
+        ::domain::CANOPEN_FRAG<bsp::can::{{ f[4] }}::Can, {% if config == "true" %}bsp::settings::Settings{% else %}::adapters::settings::Unavailable{% endif %}> as CANOPEN_{{ f[4] | upcase }} =
             ::domain::canopen::CanOpenWiring {
-                bus: board.can,
+                bus: board.{{ f[4] }},
                 node_id: 1,
                 dictionary: ::domain::canopen::dictionary(),
                 settings: {% if config == "true" %}board.settings{% else %}::adapters::settings::Unavailable{% endif %},
@@ -177,26 +183,27 @@ supervisor_graph! {
                 ota_cmd: ota_cmd_requester(),
 {%- endif %}
             },
-{%- elsif protocol == "protobuf" %}
+{%- elsif f[3] == "protobuf" %}
 
-        // Узел `HOST` — сообщения protobuf от хоста: канал (`board.link`) и буферы
-        // сообщений (`board.host_buffers`) плата отдаёт готовыми (`bsp::link`);
+        // Узел `HOST_{{ f[4] | upcase }}` — сообщения protobuf от хоста: канал (`board.{{ f[4] }}`) и буферы
+        // сообщений (`board.{{ f[4] }}_buffers`) плата отдаёт готовыми (`bsp::link::{{ f[4] }}`);
         // обработчик `domain::host::Service` над схемой `crates-host/proto` —
         // логика приложения, проект правит его в `domain`.{% if ota == "true" %} Команды обновления
         // он отдаёт узлу `OTA` клиентом его входа `CMD` (`ota_cmd_requester()`).{% endif %}
-        ::domain::HOST_FRAG<bsp::link::Link, ::domain::host::Service> as HOST =
+        ::domain::HOST_FRAG<bsp::link::{{ f[4] }}::Link, ::domain::host::Service> as HOST_{{ f[4] | upcase }} =
             ::domain::host::HostWiring {
-                link: board.link,
+                link: board.{{ f[4] }},
                 service: ::domain::host::Service::new(
                     crate::device_info(board.spec),
 {%- if ota == "true" %}
                     ota_cmd_requester(),
 {%- endif %}
                 ),
-                rx: board.host_buffers.rx,
-                tx: board.host_buffers.tx,
+                rx: board.{{ f[4] }}_buffers.rx,
+                tx: board.{{ f[4] }}_buffers.tx,
             },
 {%- endif %}
+{%- endfor %}
     ];
 }
 

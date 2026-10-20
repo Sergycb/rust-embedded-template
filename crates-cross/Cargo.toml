@@ -121,11 +121,11 @@ embassy-embedded-hal = { version = "0.6.0" }
 # Один `Flash` на весь чип делится между OTA и настройками, а обеим нужен
 # `&'static` (иначе их не отдать в спавнящиеся задачи — те требуют 'static).
 static_cell            = { version = "2.1.1" }
-{%- if interface == "usb" %}
+{%- if has_usb == "true" %}
 # USB-устройство (`bsp::usb`): та же версия, что в корневом Cargo.toml.
 embassy-usb            = { version = "0.6.0", default-features = false, features = ["defmt"] }
 {%- endif %}
-{%- if interface == "tcp" or interface == "udp" %}
+{%- if has_net == "true" %}
 # Сетевой стек (`bsp::net`): та же версия и фичи, что в корневом Cargo.toml.
 embassy-net            = { version = "0.9.1", features = ["tcp", "udp", "proto-ipv4", "medium-ethernet", "dhcpv4", "defmt"] }
 {%- endif %}
