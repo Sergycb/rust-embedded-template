@@ -1187,9 +1187,11 @@ if protocol != "modbus" && variable::is_set("modbus_master") {
     }
 }
 // Основной транспорт — первый с протоколом, а без протокола — первый. От него
-// пока считаются прежние скаляры `interface`, `iface_periph`, `can_kind`,
-// `usb_kind`: часть файлов шаблона ещё смотрит на один транспорт. Производные
-// флаги и удаление файлов ниже считаются по всем транспортам.
+// считаются прежние скаляры `interface`, `protocol`, `iface_periph`, `can_kind`,
+// `usb_kind`. Исходники шаблона и сводка `post-script.rhai` на них уже не
+// смотрят — идут циклом по `links` и признакам `has_*`; читает их только
+// документация (README.md, AGENTS.md, docs/**), описывающая один транспорт.
+// Производные флаги и удаление файлов ниже считаются по всем транспортам.
 let primary = #{ kind: "none" };
 for link in links {
     if link.protocol != "none" {
@@ -1793,7 +1795,7 @@ variable::set("erase_page", if variable::get("state_paged") == "true" || variabl
 variable::set("external_flash", if (variable::get("ota") == "true" && variable::get("ota_store") == "external") || variable::get("config_store") == "external" { "true" } else { "false" });
 variable::set("protocol", protocol);
 variable::set("interface", iface);
-// Все транспорты (этап 3 переведёт на них файлы шаблона): список и признаки видов.
+// Все транспорты — по ним идут файлы шаблона: список и признаки видов.
 variable::set("links", links_text(links));
 let has = #{ uart: false, can: false, tcp: false, udp: false, usb: false };
 for link in links { has[link.kind] = true; }
@@ -1851,7 +1853,6 @@ variable::set("cobs_used", if cobs_used { "true" } else { "false" });
 // Сокеты протоколов на стеке `embassy-net` (порт, буферы): по одному на сетевой
 // транспорт с протоколом. Транспорт без протокола сокета не открывает.
 variable::set("protocol_sockets", sockets.to_string());
-variable::set("protocol_socket", if sockets > 0 { "true" } else { "false" });
 // Слоты сокетов в стеке (`SOCKETS` в `bsp::net`): по одному на каждый сетевой
 // транспорт, с протоколом и без — на `tcp` без протокола сокет открывает
 // приложение, и без слота под него `embassy-net` паникует.
@@ -1877,7 +1878,7 @@ variable::set("framing_tests", if on.modbus || cobs_used { "true" } else { "fals
 // Асинхронные трейты в `ports`: без них `#![expect(async_fn_in_trait)]` не
 // срабатывает, и сборка падает.
 variable::set("ports_async", if variable::get("ota") == "true" || variable::get("settings_port") == "true" || on.modbus || on.protobuf || on.canopen || has.can || has.udp { "true" } else { "false" });
-// Модуль `link.rs` в `bsp`: готовый транспорт протокола (`Board::link`) — кадрирование,
+// Модуль `link.rs` в `bsp`: готовые транспорты протоколов (`bsp::link::<имя>`) — кадрирование,
 // буферы и сокет. Без Modbus и protobuf транспорту нечего оборачивать (CANopen берёт
 // шину CAN как есть).
 variable::set("protocol_link", if on.modbus || on.protobuf { "true" } else { "false" });
