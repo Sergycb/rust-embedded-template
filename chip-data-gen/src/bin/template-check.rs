@@ -28,8 +28,10 @@
 //! стёртый флеш читается нулями, два протокола поверх UART (Modbus и protobuf)
 //! CANopen на FDCAN и bxCAN, Modbus TCP (с master), protobuf UDP, protobuf и
 //! Modbus по USB (Modbus без master — по UART и по USB); чипы с клоком RNG через мультиплексор (G0, WL, WBA, L4) и по одному
-//! чипу на каждый вариант регистров `banks.rs` (`g0`, `g4`, `l4`, `l5`).
-//! Итого тридцать три — точный список в `default_cases()`. Свой набор чипов —
+//! чипу на каждый вариант регистров `banks.rs` (`g0`, `g4`, `l4`, `l5`), а
+//! также несколько транспортов разом (`links`: два UART и TCP, два USB, TCP и
+//! UDP, UART и CAN, UART и UDP без графа). Итого сорок девять — точный список
+//! в `default_cases()`. Свой набор чипов —
 //! позиционными аргументами; `--define k=v` (многократно) добавляет определение
 //! к каждой конфигурации, например `--ci gitlab --define config=internal stm32f407ve`.
 
@@ -228,6 +230,23 @@ fn default_cases() -> Vec<Case> {
                 "config=internal",
                 "graph=no",
             ],
+        ),
+        // Несколько транспортов (`links`): у каждого своя группа ресурсов,
+        // подмодуль драйвера и транспорта, поле `Board` и узел графа (без
+        // графа — модуль задачи). Два UART одного вида рядом с сетью (H7: три
+        // узла Modbus и один `NET`), два USB (два устройства и два сигнала
+        // готовности OTA), TCP и UDP на одном стеке (`SOCKETS` = 1 + 2), поток
+        // с протоколом рядом с шиной без протокола, и UART с UDP без графа.
+        Case::new("stm32h743zg").variant(
+            "modbus-uart-uart-tcp",
+            &["links=uart:modbus,uart:modbus,tcp:modbus"],
+        ),
+        Case::new("stm32f407ve").variant("protobuf-usb-usb", &["links=usb:protobuf,usb:protobuf"]),
+        Case::new("stm32f407ve").variant("modbus-tcp-udp", &["links=tcp:modbus,udp:modbus"]),
+        Case::new("stm32f407ve").variant("modbus-uart-can", &["links=uart:modbus,can"]),
+        Case::new("stm32f407ve").variant(
+            "protobuf-uart-udp-no-graph",
+            &["links=uart:protobuf,udp:protobuf", "graph=no"],
         ),
         // Клок RNG, которого умолчания HAL не дают, — мультиплексор на своём
         // источнике (`config()` в `bsp::board`): `RNGSEL` у G0 (SYS), WL
