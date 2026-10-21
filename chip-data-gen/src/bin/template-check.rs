@@ -31,17 +31,17 @@
 //! двухъядерный (`init_primary` вместо `init`), чип с 2 KiB RAM на
 //! Cortex-M0+, раздел настроек с OTA на равных секторах и без OTA (оба — в
 //! хвосте flash), с OTA на неравных (в мелких секторах перед ACTIVE), во
-//! внутренней EEPROM и на внешней флеши (слот с заглушкой), подпись образа (с графом и без) и чип, у которого
+//! внутренней EEPROM и на внешней флеши (драйвер W25Q над шиной-заглушкой — SPI, QUADSPI,
+//! OCTOSPI), подпись образа (с графом и без) и чип, у которого
 //! стёртый флеш читается нулями, два протокола поверх UART (Modbus и protobuf)
 //! CANopen на FDCAN и bxCAN, Modbus TCP (с master), protobuf UDP, protobuf и
 //! Modbus по USB (Modbus без master — по UART и по USB); чипы с клоком RNG через мультиплексор (G0, WL, WBA, L4) и по одному
 //! чипу на каждый вариант регистров `banks.rs` (`g0`, `g4`, `l4`, `l5`), а
 //! также несколько транспортов разом (`links`: два UART и TCP, два USB с графом
 //! и без, TCP и UDP, UART и CAN, UART и UDP без графа) и транспорты без протокола
-//! (UDP, USB с графом). Итого пятьдесят два — точный список
-//! в `default_cases()`. Свой набор чипов —
+//! (UDP, USB с графом). Точный список — в `default_cases()`. Свой набор чипов —
 //! позиционными аргументами; `--define k=v` (многократно) добавляет определение
-//! к каждой конфигурации, например `--ci gitlab --define config=internal stm32f407ve`.
+//! к каждой конфигурации, например `--ci gitlab --define config=yes stm32f407ve`.
 
 use std::{
     collections::{HashMap, HashSet, hash_map::DefaultHasher},
@@ -95,7 +95,7 @@ fn default_cases() -> Vec<Case> {
         // Банк 2 за разрывом (H743ZG: банк 2 с 0x0810_0000): `boot` и `bsp`
         // разбирают флеш на `Bank1Region`/`Bank2Region`, `DFU` пишется через
         // второй, подпись проверяется над обоими банками (`screen` со своей
-        // веткой). Без `config=internal`: с настройками во flash на этом чипе
+        // веткой). Без `config=yes`: с настройками во flash на этом чипе
         // OTA не помещается (`config_ota = false`), `boot` в проект не входит,
         // и ветка `dfu_bank` не собиралась бы вовсе.
         Case::new("stm32h743zg").variant("dfu-bank", &[]),
@@ -105,13 +105,16 @@ fn default_cases() -> Vec<Case> {
         // OTA не помещается: crates-cross/boot удаляется из проекта, members и xtask
         // должны это пережить.
         //
-        // Заодно — настройки на внешней флеши (`config=external`): слот
-        // хранилища с заглушкой `bsp::stub::Flash`. Без OTA общий
+        // Заодно — настройки на внешней флеши (`ext_flash=yes`, `ota=no`): драйвер
+        // W25Q над шиной-заглушкой, раздел с начала микросхемы. Без OTA общий
         // объект `Flash` при этом не нужен вовсе (`shared_flash = false`), и
         // это единственная конфигурация, где bsp собирается без него, а
         // `config::new` — без аргумента. H7 — потому что именно у него раздел
         // во внутреннем флеше дороже всего (2×128 KiB).
-        Case::new("stm32h723ve").variant("config-external", &["config=external"]),
+        Case::new("stm32h723ve").variant(
+            "config-external",
+            &["ext_flash=yes", "config=yes", "ota=no"],
+        ),
         // Двухъядерный: bsp/boot получают init_primary() с SharedData.
         //
         // Ядро именно CM4, а не CM7: у двухъядерных H7 блок сторожа зовётся
@@ -128,18 +131,18 @@ fn default_cases() -> Vec<Case> {
         // Раздел настроек вместе с OTA на равных секторах (2 KiB): в хвосте
         // flash, страница раздела — страница чипа, схема OTA после него всё ещё
         // помещается — в проект попадают разом bootloader, ota.rs и config.rs.
-        Case::new("stm32g071rb").variant("config", &["config=internal"]),
+        Case::new("stm32g071rb").variant("config", &["config=yes"]),
         // Он же без OTA: две последние страницы flash (таблица векторов
         // приложения стоит в начале). Ветка «config есть, bootloader и ota.rs
         // удалены» — только здесь.
-        Case::new("stm32g071rb").variant("config-no-ota", &["config=internal", "ota=no"]),
+        Case::new("stm32g071rb").variant("config-no-ota", &["config=yes", "ota=no"]),
         // Раздел настроек вместе с OTA на неравных секторах: у F407 он ложится
         // в сектора 2–3 по 16 KiB перед ACTIVE, `STATE` — в сектор 4 (64 KiB);
         // `CONFIG_ERASE_SIZE` и `STATE_ERASE_SIZE` меньше страницы чипа, оба
         // раздела — над `ErasePage`. В проект попадают разом bootloader, ota.rs и
         // config.rs.
-        Case::new("stm32f407ve").variant("config", &["config=internal"]),
-        // OTA с `STATE`/`DFU` на внешней флеши (`ota=external`) — на чипе, куда
+        Case::new("stm32f407ve").variant("config", &["config=yes"]),
+        // OTA с `STATE`/`DFU` на внешней флеши (`ext_flash=yes`) — на чипе, куда
         // внутренняя схема не помещается вовсе. Разом: слот драйвера в `boot`
         // (блокирующий, с запасным выходом `BootCurrent`) и в `bsp::external`
         // (асинхронный, общий мьютекс), проверка подписи над внешними
@@ -147,20 +150,21 @@ fn default_cases() -> Vec<Case> {
         // микросхеме за `DFU` (`CONFIG_START`/`CONFIG_END` — смещения от её начала), и
         // `shared_flash = false` при OTA.
         Case::new("stm32h723ve")
-            .variant("ota-external", &["ota=external", "config=external"])
+            .variant("ota-external", &["ext_flash=yes", "config=yes"])
             .smoke(),
-        // Внешняя OTA и настройки во внутреннем флеше: на F4 — в секторах 2–3
-        // зоны bootloader'а, которые без них пропадали бы. Без графа — `boot`
-        // без сторожа, а `embedded-storage` ему нужен только ради геометрии
-        // драйвера.
-        Case::new("stm32f407ve").variant(
-            "ota-external-config",
-            &["ota=external", "config=internal", "graph=no"],
-        ),
+        // Внешняя OTA без настроек и без графа: на F4 зона bootloader'а —
+        // 128 KiB сектор, `boot` без сторожа, а `embedded-storage` ему нужен
+        // только ради геометрии драйвера.
+        Case::new("stm32f407ve").variant("ota-external-no-graph", &["ext_flash=yes", "graph=no"]),
         // Флеш, стирающийся в ноль, с внешней OTA: `flash-erase-zero` у
         // `embassy-boot` выключен — `STATE` на внешней NOR, а она стирается в
         // единицы.
-        Case::new("stm32l073rz").variant("ota-external", &["ota=external"]),
+        Case::new("stm32l073rz").variant("ota-external", &["ext_flash=yes"]),
+        // Шина внешней флеши по чипу: у L073 — SPI (`SpiAdapter` в рецепте), у
+        // H723 выше — OCTOSPI за мультиплексором, у L476 — QUADSPI. Заглушка
+        // шины при этом объявляет четыре линии, и драйвер собирается с
+        // quad-командами.
+        Case::new("stm32l476rg").variant("ota-external", &["ext_flash=yes"]),
         // OTA без графа: узел OTA запускает сам `main` (`ota_task`;
         // `app/src/image.rs` есть, `graph.rs` нет), а bootloader — без сторожа.
         // Чип — Cortex-M0+: проверка подписи (она есть всегда, когда есть OTA)
@@ -174,10 +178,10 @@ fn default_cases() -> Vec<Case> {
         // раздел ACTIVE выходит меньше минимальной debug-прошивки (см. там же
         // известные ограничения).
         //
-        // Заодно — настройки во внутренней EEPROM (`config=internal` на L0/L1):
+        // Заодно — настройки во внутренней EEPROM (`config=yes` на L0/L1):
         // `adapters::eeprom::Eeprom` поверх `Flash::eeprom_*`, единственное место
         // под настройки на флеше, стирающемся в ноль.
-        Case::new("stm32l073rz").variant("config", &["config=internal"]),
+        Case::new("stm32l073rz").variant("config", &["config=yes"]),
         // Протоколы поверх UART: узел в графе, заглушка `bsp::serial` и
         // транспорт из `adapters` вокруг неё. Modbus — на USART v4 (G4, есть
         // аппаратный DE), protobuf — на F4 (USART v2, без него): оба
@@ -195,14 +199,19 @@ fn default_cases() -> Vec<Case> {
         // в графе.
         Case::new("stm32g474re").variant(
             "canopen-config",
-            &["protocol=canopen", "interface=can", "config=internal"],
+            &["protocol=canopen", "interface=can", "config=yes"],
         )
         .smoke(),
-        // То же над заглушкой внешней флеши (`config=external`): у её ошибки
-        // свой `defmt::Format`.
+        // То же на внешней флеши (`ext_flash=yes`, OTA там же): у ошибки её
+        // драйвера свой `defmt::Format`.
         Case::new("stm32f407ve").variant(
             "canopen-config-external",
-            &["protocol=canopen", "interface=can", "config=external"],
+            &[
+                "protocol=canopen",
+                "interface=can",
+                "ext_flash=yes",
+                "config=yes",
+            ],
         ),
         // Протоколы по сети: стек `embassy-net` над заглушкой устройства, узел
         // NET в графе и сокет из `adapters::net`. Modbus TCP — на H7 (Ethernet
@@ -262,7 +271,7 @@ fn default_cases() -> Vec<Case> {
             &[
                 "protocol=canopen",
                 "interface=can",
-                "config=internal",
+                "config=yes",
                 "graph=no",
             ],
         ),
@@ -310,10 +319,10 @@ fn default_cases() -> Vec<Case> {
         // вход по паролю и ключ хоста, созданный платой в разделе настроек
         // (`Stored`); без графа — вместе с REST (клиенты OTA 0 и 1), вход по
         // ключу и ключ хоста из файла (`Fixed`). Обе службы с OTA в 256K не
-        // влезают — там `ota=external` (`ACTIVE` 384K).
+        // влезают — там `ext_flash=yes` (`ACTIVE` 384K).
         Case::new("stm32h743zg").variant(
             "ssh-password-config",
-            &["links=tcp", "net_services=ssh", "ssh_auth=password", "config=internal"],
+            &["links=tcp", "net_services=ssh", "ssh_auth=password", "config=yes"],
         ),
         Case::new("stm32h743zg").variant(
             "rest-ssh-key-no-graph",
@@ -323,7 +332,7 @@ fn default_cases() -> Vec<Case> {
                 "ssh_auth=key",
                 "ssh_key=ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl",
                 "graph=no",
-                "ota=external",
+                "ext_flash=yes",
             ],
         ),
         // Клок RNG, которого умолчания HAL не дают, — мультиплексор на своём

@@ -1,37 +1,11 @@
-//! Внешняя флеш платы: на ней `STATE` и `DFU` обновления{% if config_store == "external" %} и раздел
-//! настроек{% endif %} (`ota=external`).
-//!
-//! Какая микросхема стоит на плате, шаблон не знает и не гадает: на месте
-//! драйвера заглушка [`ExternalFlash`] (= `crate::stub::Flash`). С
-//! ней проект собирается и работает, но каждая операция с внешней флешью
-//! отвечает ошибкой: образ не принимается, а bootloader, не дозвавшись до
-//! своего драйвера, загружает текущий образ.
-//!
-//! Подключить свою микросхему — две правки в этом файле и одна в
-//! bootloader'е (тип — `crates-cross/boot/src/external.rs`, сборка из
-//! периферии — `crates-cross/boot/src/main.rs`):
-//!
-//! 1. [`ExternalFlash`] — тип вашего драйвера. Годится любой, реализующий
-//!    `embedded_storage_async::nor_flash::NorFlash`: готовый крейт
-//!    (`spi-memory-async` для серии 25, `w25q32jv` и подобные) или свой.
-//! 2. [`new`] — собрать драйвер из периферии (SPI и вывод CS; какие выводы
-//!    умеет блок — `cargo xtask pins SPI1 --snippet`).
-//! 3. В bootloader'е — та же микросхема, но драйвер блокирующий
-//!    (`embedded_storage::nor_flash::NorFlash`): исполнителя там нет.
-//!
-//! Требование к драйверу одно: его страница стирания делит страницу обмена,
-//! под которую посчитана раскладка (`EXT_PAGE_SIZE` — здесь и в bootloader'е,
-//! оба проверяют это при компиляции). Сектор 4 KiB есть у всех
-//! распространённых SPI NOR.
-//!
-//! Разделы — одним объектом под одним мьютексом: микросхема одна, и операции
-//! разных разделов не должны перемежаться посреди команды SPI.
+#![doc = include_str!("../../../docs/modules/bsp-external.md")]
 
 use core::any::TypeId;
 
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::mutex::Mutex;
 use static_cell::StaticCell;
+{%- if ota == "true" and ota_store == "external" %}
 
 /// Страница обмена, под которую посчитана раскладка; bootloader берёт её
 /// отсюда — переменная среды `EXT_PAGE_SIZE` из `[env]`
@@ -49,11 +23,23 @@ const _: () = assert!(
     EXT_PAGE_SIZE.is_multiple_of(flash_page::erase_size::<ExternalFlash>()),
     "стирание драйвера внешней флеши не делит страницу обмена (EXT_PAGE_SIZE)"
 );
+{%- endif %}
 
-static EXTERNAL: StaticCell<ExternalMutex> = StaticCell::new();
+/// Конец последнего раздела на внешней флеши, байты: меньше микросхема не
+/// годится. Переменная среды `EXT_FLASH_END` из `[env]`
+/// `crates-cross/.cargo/config.toml` — тот же расчёт, что у раскладки.
+pub const EXT_FLASH_END: u32 = match u32::from_str_radix(env!("EXT_FLASH_END"), 10) {
+    Ok(end) => end,
+    Err(_) => panic!("EXT_FLASH_END в [env] crates-cross/.cargo/config.toml — не число"),
+};
 
-/// Драйвер внешней флеши — замените на свой.
-pub type ExternalFlash = crate::stub::Flash;
+/// Шина микросхемы — пока заглушка. Плата подставляет сюда {% if ext_flash_bus == "spi" %}`w25q::spi::SpiAdapter` над `SpiDevice` блока `{{ext_flash_block}}`{% else %}свою обёртку
+/// над `embassy_stm32::{% if ext_flash_bus == "quadspi" %}qspi::Qspi{% else %}ospi::Ospi{% endif %}` блока `{{ext_flash_block}}`{% endif %}
+/// (docs/modules/bsp-external.md).
+pub type Bus = crate::stub::FlashBus;
+
+/// Драйвер внешней флеши: асинхронный W25Q над [`Bus`].
+pub type ExternalFlash = w25q::device::W25qAsync<Bus, embassy_time::Delay>;
 
 /// Внешняя флеш под замком — то, над чем строятся её разделы.
 ///
@@ -65,22 +51,57 @@ pub type ExternalMutex = Mutex<NoopRawMutex, ExternalFlash>;
 pub type ExternalPartition =
     embassy_embedded_hal::flash::partition::Partition<'static, NoopRawMutex, ExternalFlash>;
 
-/// Подставлен ли драйвер вместо заглушки — для target-тестов, которым без
+static EXTERNAL: StaticCell<ExternalMutex> = StaticCell::new();
+
+/// Что не работает, пока флеш не отвечает, — для строки в лог.
+const LOST: &str = "{% if ota == "true" and ota_store == "external" %}OTA{% if config_store == "external" %} и настройки не работают{% else %} не работает{% endif %}{% else %}настройки не сохраняются{% endif %}";
+
+/// Подставлена ли шина вместо заглушки — для target-тестов, которым без
 /// микросхемы проверять нечего.
 #[must_use]
 pub fn connected() -> bool {
-    TypeId::of::<ExternalFlash>() != TypeId::of::<crate::stub::Flash>()
+    TypeId::of::<Bus>() != TypeId::of::<crate::stub::FlashBus>()
 }
 
-/// Собирает драйвер. Сейчас — заглушку: о том, что драйвер не подставлен,
-/// говорит одна строка в лог при старте.
-pub(crate) fn new() -> &'static ExternalMutex {
-{%- if config_store == "external" %}
-    defmt::warn!(
-        "bsp: внешняя флеш не подключена — OTA и настройки не работают (bsp/src/external.rs)"
-    );
-{%- else %}
-    defmt::warn!("bsp: внешняя флеш не подключена — OTA не работает (bsp/src/external.rs)");
-{%- endif %}
-    EXTERNAL.init(Mutex::new(crate::stub::Flash))
+/// Собирает драйвер и опознаёт микросхему (`init`: JEDEC ID, объём{% if ext_flash_bus != "spi" %}, бит QE{% endif %}).
+///
+/// Не прошёл `init` или микросхема меньше [`EXT_FLASH_END`] — одна строка в
+/// лог, и драйвер отказывает в любой операции ошибкой, а не паникой. Плата без
+/// флеши (или с заглушкой шины) работает, только без того, что на флеши лежит.
+pub(crate) async fn new(_resources: crate::resources::ExtFlashResources) -> &'static ExternalMutex {
+    let mut flash = ExternalFlash::new(crate::stub::FlashBus, embassy_time::Delay);
+    let flash = match flash.init().await {
+        Ok(_) if flash.capacity() >= EXT_FLASH_END => {
+            defmt::info!(
+                "bsp: внешняя флеш W25Q, {=u32} KiB",
+                flash.capacity() / 1024
+            );
+            flash
+        }
+        Ok(_) => {
+            defmt::error!(
+                "bsp: внешняя флеш {=u32} KiB, а разделам нужно {=u32} KiB — {=str}",
+                flash.capacity() / 1024,
+                EXT_FLASH_END / 1024,
+                LOST
+            );
+            // Не оставлять опознанный драйвер: с ним образ лёг бы в начало
+            // `DFU`, которого на микросхеме не хватает, а bootloader на обмене
+            // упёрся бы в её конец. Неопознанный отказывает во всём.
+            let (bus, delay) = flash.release();
+            ExternalFlash::new(bus, delay)
+        }
+        Err(_) if !connected() => {
+            defmt::warn!(
+                "bsp: внешняя флеш не подключена — {=str} (bsp/src/external.rs)",
+                LOST
+            );
+            flash
+        }
+        Err(err) => {
+            defmt::error!("bsp: внешняя флеш не отвечает: {} — {=str}", err, LOST);
+            flash
+        }
+    };
+    EXTERNAL.init(Mutex::new(flash))
 }

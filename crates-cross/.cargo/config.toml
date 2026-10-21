@@ -105,3 +105,8 @@ BDMA_NC_LEN = "{{bdma_nc_len}}"
 CONFIG_START = "{{config_start}}"
 CONFIG_END = "{{config_end}}"
 {%- endif %}
+{%- if ext_flash_end != "" %}
+# Конец последнего раздела на внешней флеши, байты: микросхема меньше — не
+# годится, `bsp::external` скажет это в лог при старте.
+EXT_FLASH_END = "{{ext_flash_end}}"
+{%- endif %}

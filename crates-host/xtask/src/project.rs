@@ -81,7 +81,7 @@ pub fn host_features() -> &'static str {
 }
 
 /// Где лежат `DFU` и `STATE`: `"internal"` или `"external"` (на внешней
-/// флеши, `ota=external`). Строкой — по той же причине, что [`OTA`].
+/// флеши, `ext_flash=yes`). Строкой — по той же причине, что [`OTA`].
 pub const OTA_STORE: &str = "{{ota_store}}";
 
 /// `DFU` и `STATE` на внешней флеши: пробнику их не прочитать и не записать —

@@ -21,7 +21,10 @@ paths: crates-cross/**
   делает тот, кто этим железом распоряжается. Исключения — `ensure_*` для
   option bytes, `bsp::cache::enable()` (кэши чипа), `bsp::fault::enable()`
   (ловушка деления, обработчик `HardFault`) и `Cycles::new` (счётчик тактов) —
-  `docs/clocks.md`.
+  `docs/clocks.md`{% if external_flash == "true" %}; и `init` внешней флеши в `bsp::external::new` (опознание
+  микросхемы — без него драйвер не годится ни для одной операции), из-за него
+  `Board::new` асинхронный и зовётся из `main` через `block_on` —
+  `docs/modules/bsp-external.md`{% endif %}.
 - `lib.rs` в `bsp` — только объявления модулей и реэкспорт; код живёт в
   модулях. Модуль без кода (одна `#![doc = include_str!(..)]`) не заводить:
   такой документации место в `docs/`.
@@ -29,7 +32,7 @@ paths: crates-cross/**
   строки в манифесте; ядро — через `bsp::cpu`.
 - `bsp` зависит от `ports` (и `flash-page`), а не от `adapters` и не от `domain`:
   адаптеры и типы домена из полей `Board` собирает `app`. `boot` зовёт `domain` только при `signed` или
-  `ota=external` и только `domain::ota::boot::{boot_plan, screen_update}`.
+  `ext_flash=yes` и только `domain::ota::boot::{boot_plan, screen_update}`.
 - Логирование только `defmt`; `log` в прошивке не используется.
 - **Если вы в репозитории самого шаблона** (признак — каталог `chip-data-gen/`
   в корне): файлы здесь содержат Liquid и до генерации не являются валидным

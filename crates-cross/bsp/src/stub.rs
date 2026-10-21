@@ -302,85 +302,47 @@ impl embassy_net_driver::Driver for NetDevice {
 {%- endif %}
 {%- if external_flash == "true" %}
 
-/// Внешняя флеш, которую ещё не подключили, — место под ваш драйвер.
+/// Шина внешней флеши, к которой ещё не подключили микросхему, — место под
+/// {% if ext_flash_bus == "spi" %}SPI{% else %}QSPI{% endif %} платы (`bsp::external::Bus`).
 ///
-/// Шаблон не знает, какая микросхема будет на плате (W25Q, GD25, MX25, IS25,
-/// SST26…), и не гадает. Каждая операция отвечает [`NotConnected`] —
-/// настройки не сохраняются, образ не принимается, но ничего не падает.
-/// Геометрия правдоподобная — две страницы по 4 KiB, сектор почти любой SPI
-/// NOR. Асинхронные трейты — для приложения, блокирующие — для bootloader'а;
-/// bootloader с заглушкой не обменивает разделы, а загружает текущий образ.
+/// Драйвер W25Q над ней настоящий, а каждая команда отвечает
+/// [`NotConnected`]: `init` не проходит, и драйвер отказывает в любой
+/// операции — настройки не сохраняются, образ не принимается, но ничего не
+/// падает. Асинхронная — для приложения, блокирующая — для bootloader'а: тот
+/// с ней не обменивает разделы, а загружает текущий образ.
 #[derive(Debug, Default)]
-pub struct Flash;
+pub struct FlashBus;
 
-impl Flash {
-    /// Объём, под который строится хранилище с заглушкой.
-    pub const CAPACITY: u32 = 2 * Self::PAGE;
-
-    /// Страница стирания.
-    const PAGE: u32 = 4096;
-}
-
-/// Ответ [`Flash`] на любую операцию.
+/// Ответ [`FlashBus`] на любую команду.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, defmt::Format)]
 pub struct NotConnected;
 
-impl embedded_storage::nor_flash::NorFlashError for NotConnected {
-    fn kind(&self) -> embedded_storage::nor_flash::NorFlashErrorKind {
-        embedded_storage::nor_flash::NorFlashErrorKind::Other
-    }
-}
-
-impl embedded_storage::nor_flash::ErrorType for Flash {
+impl w25q::bus::FlashBusAsync for FlashBus {
     type Error = NotConnected;
-}
 
-impl embedded_storage_async::nor_flash::ReadNorFlash for Flash {
-    const READ_SIZE: usize = 1;
+    /// Ширина настоящей шины: по ней драйвер выбирает команды{% if ext_flash_bus != "spi" %} (и ставит
+    /// бит QE){% endif %}.
+    const LANES: w25q::bus::Lanes = w25q::bus::Lanes::{% if ext_flash_bus == "spi" %}Single{% else %}Quad{% endif %};
 
-    fn read(&mut self, _: u32, _: &mut [u8]) -> impl Future<Output = Result<(), Self::Error>> {
-        core::future::ready(Err(NotConnected))
-    }
-
-    fn capacity(&self) -> usize {
-        Self::CAPACITY as usize
-    }
-}
-
-impl embedded_storage_async::nor_flash::NorFlash for Flash {
-    const WRITE_SIZE: usize = 1;
-    const ERASE_SIZE: usize = Self::PAGE as usize;
-
-    fn erase(&mut self, _: u32, _: u32) -> impl Future<Output = Result<(), Self::Error>> {
-        core::future::ready(Err(NotConnected))
-    }
-
-    fn write(&mut self, _: u32, _: &[u8]) -> impl Future<Output = Result<(), Self::Error>> {
+    fn transfer(
+        &mut self,
+        _: &w25q::bus::Command,
+        _: w25q::bus::Data<'_>,
+    ) -> impl Future<Output = Result<(), Self::Error>> {
         core::future::ready(Err(NotConnected))
     }
 }
 
-impl embedded_storage::nor_flash::ReadNorFlash for Flash {
-    const READ_SIZE: usize = 1;
+impl w25q::bus::FlashBusSync for FlashBus {
+    type Error = NotConnected;
 
-    fn read(&mut self, _: u32, _: &mut [u8]) -> Result<(), Self::Error> {
-        Err(NotConnected)
-    }
+    const LANES: w25q::bus::Lanes = <Self as w25q::bus::FlashBusAsync>::LANES;
 
-    fn capacity(&self) -> usize {
-        Self::CAPACITY as usize
-    }
-}
-
-impl embedded_storage::nor_flash::NorFlash for Flash {
-    const WRITE_SIZE: usize = 1;
-    const ERASE_SIZE: usize = Self::PAGE as usize;
-
-    fn erase(&mut self, _: u32, _: u32) -> Result<(), Self::Error> {
-        Err(NotConnected)
-    }
-
-    fn write(&mut self, _: u32, _: &[u8]) -> Result<(), Self::Error> {
+    fn transfer(
+        &mut self,
+        _: &w25q::bus::Command,
+        _: w25q::bus::Data<'_>,
+    ) -> Result<(), Self::Error> {
         Err(NotConnected)
     }
 }

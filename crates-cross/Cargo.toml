@@ -145,14 +145,10 @@ getrandom              = { version = "0.4.3" }
 {%- endif %}
 {%- endif %}
 embassy-sync       = { version = "0.8.0" }
-# Трейты `NorFlash` — нужны только `boot/src/external.rs` при `ota=external`
+# Трейты `NorFlash` — нужны только `boot/src/external.rs` при `ext_flash=yes`
 # (геометрия драйвера внешней флеши в проверках при компиляции). Та же версия,
 # что тянет embassy-boot.
 embedded-storage   = { version = "0.3.1" }
-{%- if external_flash == "true" %}
-# Заглушка внешней флеши (`bsp::stub::Flash`) — асинхронный `NorFlash` приложения.
-embedded-storage-async = { version = "0.4.1" }
-{%- endif %}
 {%- if has_uart == "true" %}
 # Заглушка UART (`bsp::stub::Serial`) — поток байтов, как у `BufferedUart`.
 embedded-io-async  = { version = "0.7.0" }
@@ -261,6 +257,21 @@ watchdog         = { git = "{{rust_lib}}.git" }
 # Вход команд узла OTA в проекте без графа (`app`, src/main.rs): с графом его
 # заводит `supervisor` сам. Тот же git, что у `supervisor`, — один крейт в дереве.
 sync-request     = { git = "{{rust_lib}}.git" }
+{%- if external_flash == "true" %}
+
+# Драйвер внешней флеши Winbond W25Q (W25Q10..W25Q128) по SPI или QSPI —
+# `bsp::external`: асинхронный у приложения (фича `async`), блокирующий у
+# bootloader'а (`sync`). Объём — по JEDEC ID при `init`. Своя библиотека
+# драйверов, по git; `rev` закреплён: драйвер стоит под данными OTA и
+# настройками, и чужое изменение команд микросхемы не должно приехать молча.
+w25q             = { git = "https://github.com/Sergycb/hw-drivers.git", rev = "4deb2e145fb5ed135f335b98c97b8bb12af98cc4", default-features = false, features = [
+	"nor-flash",
+	"defmt",
+] }
+# `block_on` в `main` приложения: `Board::new` асинхронный (ждёт `init`
+# внешней флеши), а исполнитель поднимается позже — вручную, ради `CPU_LOAD`.
+embassy-futures  = { version = "0.1.2" }
+{%- endif %}
 
 # Причина паники, переживающая сброс: release-паникёр `app` и `boot`
 # (`bsp/src/panic.rs`) пишет её `report_panic_info` в регион PANIC (посчитан при

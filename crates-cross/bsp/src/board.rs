@@ -70,7 +70,7 @@ pub struct Board {
 {%- endif %}
 {%- if config == "true" %}
     /// Носитель настроек, переживающих перезапуск и обновление прошивки:
-    /// {% if config_store == "eeprom" %}внутренняя EEPROM{% elsif config_store == "external" %}внешняя флеш (драйвер — `bsp/src/{% if ota == "true" and ota_store == "external" %}external{% else %}settings{% endif %}.rs`){% else %}раздел `CONFIG` во флеше{% endif %} (`bsp::settings`).
+    /// {% if config_store == "eeprom" %}внутренняя EEPROM{% elsif config_store == "external" %}раздел на внешней флеши (драйвер — `bsp/src/external.rs`){% else %}раздел `CONFIG` во флеше{% endif %} (`bsp::settings`).
     /// Хранилище над ним — `adapters::settings` — собирает приложение
     /// (`crates-cross/app/src/settings.rs`); формат значений выбирает проект.
     pub settings: crate::settings::ConfigFlash,
@@ -164,13 +164,22 @@ impl Board {
     ///
     /// Больше здесь ничего не происходит — ни сторож не запускается, ни
     /// периферия не настраивается «на будущее»: `bsp` объекты создаёт, а
-    /// распоряжается ими приложение.
+    /// распоряжается ими приложение.{% if external_flash == "true" %} Исключение — внешняя флеш: драйвер
+    /// опознаёт микросхему (`init`, `crate::external`) — без этого он не знает
+    /// её объёма и не годится ни для одной операции.
+    ///
+    /// Асинхронный ради этого `init`; исполнителя до `Board` ещё нет, поэтому
+    /// `app` зовёт его через `block_on`.{% endif %}
     ///
     /// Зовётся ровно один раз за запуск, и это не соглашение, а свойство:
     /// внутри `embassy_stm32::init`, который паникует «init called more than
     /// once!» при втором вызове.
+{%- if external_flash == "true" %}
+    pub async fn new() -> (Self, Drivers) {
+{%- else %}
     #[must_use]
     pub fn new() -> (Self, Drivers) {
+{%- endif %}
 {%- if bank_switch != "" %}
         // До HAL и до любой работы с флешем: раскладка одобанковая, а с завода
         // чип двухбанковый (см. `crate::banks`). На новом кристалле сюда доходит
@@ -224,10 +233,10 @@ impl Board {
         // периферия, а готовый объект — поле `Board`, реализующее порт из
         // `ports`.
 {%- endif %}
-{%- if ota == "true" and ota_store == "external" %}
-        // Внешняя флеш — одна на `STATE`/`DFU`{% if config_store == "external" %} и настройки{% endif %}: драйвер
-        // собирается здесь же, из периферии (см. `crate::external`).
-        let external = crate::external::new();
+{%- if external_flash == "true" %}
+        // Внешняя флеш — одна на {% if ota == "true" and ota_store == "external" %}`STATE`/`DFU`{% if config_store == "external" %} и настройки{% endif %}{% else %}настройки{% endif %}: драйвер
+        // собирается здесь же, из группы шины, и опознаёт микросхему (см. `crate::external`).
+        let external = crate::external::new(r.ext_flash).await;
 {%- endif %}
 
         let sys_hz = clocks.sys.to_hertz().map(|hz| hz.0);
@@ -254,7 +263,7 @@ impl Board {
             ota: crate::ota::new({% if ota_store == "external" %}external{% elsif dfu_bank == "true" %}flash, dfu_bank{% else %}flash{% endif %}),
 {%- endif %}
 {%- if config == "true" %}
-            settings: crate::settings::new({% if config_store != "external" %}flash{% elsif ota == "true" and ota_store == "external" %}external{% endif %}),
+            settings: crate::settings::new({% if config_store != "external" %}flash{% else %}external{% endif %}),
 {%- endif %}
 {%- for l in xs %}
 {%- assign f = l | split: ":" %}

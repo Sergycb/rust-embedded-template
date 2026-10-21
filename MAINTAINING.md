@@ -523,13 +523,13 @@ F2/F4/F7/H7 страница обмена и так крупнейший сек�
 `BOOTLOADER_MIN` (26 KiB; резерв растёт не менее чем на `MAX_EXTRA_RESERVED_BYTES` = 8 KiB
 независимо от размера страницы). Запись несёт `swap_page_size` и `swap_paged` (и `config_…`
 во втором наборе); хук выставляет `page_size` = `swap_page_size` и `swap_paged`; для `ota=no`,
-`ota=external`, `dfu_bank` и ручной раскладки `swap_paged` = "false". Прошивка (`boot`,
+`ext_flash=yes`, `dfu_bank` и ручной раскладки `swap_paged` = "false". Прошивка (`boot`,
 `bsp::flash`) при "true" оборачивает `ACTIVE` и `DFU` в `flash_page::ErasePage<_, SWAP_PAGE_SIZE>`,
 число — то же `{{page_size}}` (менять только вместе). `DFU` не короче `ACTIVE` + `S` и кратен
 `S` (бывает на страницу длиннее, если остаток чётный). Инвариант «у каждого чипа с OTA зона
 bootloader'а не меньше `BOOTLOADER_MIN`» стережёт `bootloader_zone_and_swap_page_hold_for_every_chip`.
 
-### OTA на внешней флеши (`ota=external`, наборы `ext_*` и `ext_cfg_*`)
+### OTA на внешней флеши (`ext_flash=yes`, наборы `ext_*` и `ext_cfg_*`)
 
 Третий и четвёртый наборы цифр в `MEMORY_LAYOUT` — `compute_external_ota`: внутри
 только bootloader и `ACTIVE`, снаружи `STATE`, `DFU` и место под настройки, всё по
@@ -538,13 +538,15 @@ bootloader'а не меньше `BOOTLOADER_MIN`» стережёт `bootloader_
 `assert_partitions` и `Partition::new` делают на плате, повторяет при генерации
 `assert_external_invariants`.
 
-Хук выбирает набор по ответу `ota` (`internal`/`external`/`no`; незнакомый ответ —
-ошибка генерации) и `config`, пишет `memory.x` с символами-смещениями внешней флеши и
+Хук выбирает набор по ответам `ext_flash` (`yes`/`no` — внешняя флеш на плате;
+есть — на неё уезжают и OTA, и настройки, поэтому `ext_cfg_*` он больше не
+выбирает), `ota` и `config` (`yes`/`no`; незнакомый ответ и прежние
+`internal`/`external` — ошибка генерации), пишет `memory.x` с символами-смещениями внешней флеши и
 выставляет `ota_store` (на него смотрят `boot`, `bsp::flash`, `bsp::settings`,
 `target-tests`, `xtask`) и `ext_page_size`.
 
 **Вопросы в хуке.** Чип выбирается первым (каскад по символам или `--define chip_feature=...`),
-а OTA, настройки, граф, транспорт и протокол спрашивает сам хук — в таком порядке, и
+а внешнюю флеш, OTA, настройки, граф, транспорт и протокол спрашивает сам хук — в таком порядке, и
 `variable::prompt` показывает только допустимое для чипа (`ask()`, блок «Вопросы» в
 `chip-select.rhai`): граф, который не влезает в раздел приложения, и интерфейс без блока
 у чипа не предлагаются, протоколы берутся из `PROTOCOL_INTERFACES` для выбранного
@@ -605,7 +607,7 @@ bootloader'а, всплыла бы на первом обновлении). Чи
 ветках с ручной раскладкой (`write_size` через `--define`, чип без раскладки)
 `ext_page_size` — 4 KiB с предупреждением, как `state_erase_size` там же.
 
-`bsp/src/external.rs` хук удаляет везде, кроме `ota=external`. Стерегут ветку тесты
+`bsp/src/external.rs` хук удаляет везде, кроме `ext_flash=yes`. Стерегут ветку тесты
 каскада `external_ota_*` и три конфигурации `template-check`.
 
 ### Чипы без OTA (`ota = "false"`)
@@ -757,7 +759,7 @@ OTA не помещается (единственный с `IWDG1` вместо 
 вместо `init`, единственный с `IWDG2`); чип с 2 KiB RAM на Cortex-M0+; раздел
 настроек с OTA на равных и неравных секторах, без OTA, во внутренней EEPROM (L0/L1) и
 на внешней флеши; подпись образа с графом задач и без него; чип, где стёртый флеш
-читается нулями (`flash-erase-zero`); `ota=external` (H7, F4, L0); протоколы и
+читается нулями (`flash-erase-zero`); `ext_flash=yes` на OCTOSPI (H7), QUADSPI (L4) и SPI (F4, L0); протоколы и
 интерфейсы (`protocol`/`interface`): Modbus и protobuf поверх UART, CANopen на FDCAN
 и bxCAN, Modbus TCP и protobuf UDP (стек `embassy-net`, узел NET), USB CDC
 (устройство `embassy-usb` и узел USB). Дальше
@@ -831,7 +833,7 @@ git-зависимостями, которых этому джобу не нуж
 Флаги: `--quick` — только генерация и проверка плейсхолдеров (секунды вместо минут на
 чип), `--ci gitlab|none` — другой CI-провайдер, `--define ключ=значение` (можно
 несколько раз) — дополнительный ответ ко всем проверяемым конфигурациям, например
-`--ci gitlab --define config=internal stm32f407ve`, `--keep` — не удалять проекты после
+`--ci gitlab --define config=yes stm32f407ve`, `--keep` — не удалять проекты после
 успеха, `--smoke`/`--only` — уровни выше, `--jobs N` — сколько конфигураций
 одновременно (по умолчанию 3), позиционные аргументы — свой список чип-фич.
 
@@ -901,7 +903,7 @@ git-зависимостей (`rust-lib`) видны только так: у с�
 каждый проект считает свои сам первой сборкой: корневой — `cargo xtask lint`/`test
 host`, `crates-cross/Cargo.lock` — `cargo xtask build`, `crates-host/chip-info/` —
 первым `cargo xtask pins`. Состав пакетов зависит от ответов при генерации: при
-`ota=no` уходят `embassy-boot*`, при `config=internal` добавляются
+`ota=no` уходят `embassy-boot*`, при `config=yes` добавляются
 `sequential-storage` и `embedded-storage-async`, при OTA — `salty`, а
 протокол уносит или приносит целые крейты корневого workspace (`crates-host/proto`,
 `crates-host/canopen`). Шаблонный lock подходил бы одному сочетанию, а остальным ронял

@@ -10,7 +10,7 @@
 //! `cargo xtask pins <БЛОК> --snippet`; переносится в макрос ниже только сама
 //! группа.
 {%- else %} Шаблон кладёт сюда блоки того, что нужно ему самому:
-//! флеш{% if graph == "true" %}, сторожевой таймер{% endif %}{% if has_net == "true" %}{% if rng_irq != "" %}, RNG{% endif %}{% endif %}{% if links != "" %} и блоки выбранных транспортов (группа на транспорт){% endif %}, —
+//! флеш{% if graph == "true" %}, сторожевой таймер{% endif %}{% if external_flash == "true" %}, шину внешней флеши{% endif %}{% if has_net == "true" %}{% if rng_irq != "" %}, RNG{% endif %}{% endif %}{% if links != "" %} и блоки выбранных транспортов (группа на транспорт){% endif %}, —
 //! без выводов: их выбирает плата. Заготовку с выводами и DMA-каналами печатает
 //! `cargo xtask pins <БЛОК> --snippet`; из неё в группу переносятся поля.
 {%- endif %} Занят ли отладочный порт —
@@ -35,6 +35,10 @@ assign_resources! {
 {%- endif %}
 {%- if graph == "true" %}
     watchdog: WatchdogResources { iwdg: {{watchdog_peripheral}} },
+{%- endif %}
+{%- if external_flash == "true" %}
+    // Шина внешней флеши (`bsp::external`): выводы и DMA — `cargo xtask pins {{ext_flash_block}} --snippet`.
+    ext_flash: ExtFlashResources { {% if ext_flash_bus == "spi" %}spi{% elsif ext_flash_bus == "quadspi" %}qspi{% else %}ospi{% endif %}: {{ext_flash_block}} },
 {%- endif %}
 {%- assign xs = links | split: "," %}
 {%- if has_net == "true" %}
