@@ -22,10 +22,25 @@ use static_cell::ConstStaticCell;
 
 /// Сокетов в стеке: DHCP-клиент и по сокету на сетевой транспорт — у
 /// транспорта с протоколом его открывает `crate::link`, без протокола — ваш
-/// код на `Parts::net`. Слот — около 500 байт оперативной памяти, поэтому без
+/// код на `Parts::net`{% if net_services contains "rest" %}, — и по сокету на соединение REST API
+/// (`domain::http::CONNECTIONS`){% endif %}. Слот — около 500 байт оперативной памяти, поэтому без
 /// запаса: добавите ещё сокет (или фичу `dns` у `embassy-net` — она тоже
 /// занимает слот) — прибавьте один здесь.
-const SOCKETS: usize = {{ net_sockets | plus: 1 }};
+const SOCKETS: usize = {{ net_sockets | plus: 1 }}{% if net_services contains "rest" %} + domain::http::CONNECTIONS{% endif %};
+{%- if net_services contains "rest" %}
+
+/// Токен `Authorization: Bearer` REST API (`domain::http`). Файл в корне
+/// проекта создаёт первая `cargo xtask build` (или `lint cross`), и он
+/// коммитится: токен всё равно лежит открыто в каждом образе.
+pub const REST_TOKEN: &str = include_str!("../../../rest-token.txt").trim_ascii();
+
+// Пустой файл — не «токена нет», а поломка: `domain::http` такой токен не
+// пустит никого, и лучше узнать это при сборке, чем по `401` на плате.
+const _: () = assert!(
+    !REST_TOKEN.is_empty(),
+    "rest-token.txt пуст: удалите файл, и `cargo xtask build` создаст новый токен"
+);
+{%- endif %}
 
 // Память стека: `embassy_net::new` держит её `&'static mut`. `ConstStaticCell`
 // — значения известны при компиляции и лежат в `.bss`, а не собираются на

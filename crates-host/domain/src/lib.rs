@@ -18,6 +18,11 @@ pub mod cpu_load;
 /// Узел `CANOPEN`: узел CANopen на шине CAN — стек `zencan` — см. модуль.
 pub mod canopen;
 // {%- endif %}
+// {%- if has_protobuf == "true" or net_services contains "rest" %}
+
+/// Сведения об устройстве — общие у узлов `HOST` и `HTTP`.
+pub mod device;
+// {%- endif %}
 // {%- if has_protobuf == "true" %}
 
 /// Узел `HOST`: сообщения protobuf от хоста по кадровому каналу — разбор,
@@ -37,6 +42,11 @@ pub mod modbus;
 // {%- if has_net == "true" %}
 /// Узел `NET`: ведёт сетевой стек `embassy-net` — см. модуль.
 pub mod net;
+// {%- endif %}
+
+// {%- if net_services contains "rest" %}
+/// Узлы `HTTP`: REST API на сокетах сетевого стека — см. модуль.
+pub mod http;
 // {%- endif %}
 
 // {%- if has_usb == "true" %}

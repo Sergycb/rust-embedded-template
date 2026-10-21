@@ -28,6 +28,9 @@ defmt = [
 	# {%- if has_net == "true" %}
 	"embassy-net/defmt",
 	# {%- endif %}
+	# {%- if net_services contains "rest" %}
+	"picoserve/defmt",
+	# {%- endif %}
 	# {%- if has_usb == "true" %}
 	"embassy-usb/defmt",
 	# {%- endif %}
@@ -115,6 +118,12 @@ canopen            = { workspace = true }
 # {%- if has_net == "true" %}
 # Узел NET (`domain::net`): ведёт стек `embassy-net` над устройством платы.
 embassy-net        = { workspace = true }
+# {%- endif %}
+# {%- if net_services contains "rest" %}
+# Узлы HTTP (`domain::http`): REST API на `picoserve` поверх сокетов стека,
+# тексты ответов — в `heapless::String`.
+picoserve          = { workspace = true }
+heapless           = { workspace = true }
 # {%- endif %}
 # {%- if has_usb == "true" %}
 # Узел USB (`domain::usb`): ведёт устройство `embassy-usb` над драйвером платы.

@@ -8,6 +8,7 @@ mod memory;
 mod panic_info;
 mod pins;
 mod project;
+mod secrets;
 mod setup;
 mod signing;
 mod size;

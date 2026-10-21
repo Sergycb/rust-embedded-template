@@ -594,6 +594,26 @@ ST-Link захваченным до переподключения кабеля 
 `domain::modbus::master`, клиентская часть транспортов `adapters::modbus`).
 {%- endif %}
 {%- endif %}
+{%- if net_services contains "rest" %}
+
+### REST API
+
+Узлы `HTTP` (`crates-host/domain/src/http.rs`) — HTTP-сервер `picoserve` на порту 80,
+по сокету стека на соединение (`domain::http::CONNECTIONS`, пул `HTTP[2]` в графе).
+`GET /api/info` — сведения об устройстве JSON{% if ota == "true" %}, `POST /api/reboot` — перезагрузка
+командой узлу OTA{% endif %}; свои маршруты — в `router()` того же модуля.
+
+```
+curl -H "Authorization: Bearer $(cat rest-token.txt)" http://<адрес платы>/api/info
+```
+
+Токен — `rest-token.txt` в корне проекта: его создаёт первая `cargo xtask build`
+(или `lint cross`), и он **коммитится**. Прятать его незачем: прошивка вшивает
+токен (`crate::net::REST_TOKEN`), и он лежит открыто в каждом образе, а по сети
+идёт открытым текстом — HTTP без TLS. От случайного доступа он защищает, от того,
+кто слушает сеть или держит в руках `app.bin`, — нет. Сменить токен — удалить файл
+и пересобрать.
+{%- endif %}
 
 ### Тактирование: дамп при старте и контракт платы
 

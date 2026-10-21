@@ -188,7 +188,6 @@ micropb                = { version = "0.6.0", default-features = false, features
 	"decode",
 	"container-heapless-0-9",
 ] }
-heapless               = { version = "0.9.3" }
 # Генерация кода из `.proto` в `build.rs` крейта `proto`. Схему разбирает
 # `protox` — компилятор protobuf на чистом Rust, — и `micropb-gen` строит код
 # из готового описания (`compile_fdset_file`): системный `protoc` не нужен ни
@@ -209,6 +208,18 @@ embassy-net            = { version = "0.9.1", features = [
 	"medium-ethernet",
 	"dhcpv4",
 ] }
+# {%- endif %}
+# {%- if has_protobuf == "true" or net_services contains "rest" %}
+# Строки и векторы без кучи: контейнеры полей protobuf (`micropb`) и тексты
+# ответов REST (`domain::http`). 0.9 — та же версия, что у остального дерева.
+heapless               = { version = "0.9.3" }
+# {%- endif %}
+# {%- if net_services contains "rest" %}
+# HTTP-сервер REST API (`domain::http`) поверх сокетов `embassy-net`: без
+# кучи, запрос разбирается в буфере соединения. Версия, парная к
+# `embassy-net` 0.9. Без фичи `json`: она тянет свой `serde-json-core`, а
+# ответы пишутся сами.
+picoserve              = { version = "0.20.1", features = ["embassy"] }
 # {%- endif %}
 # {%- if has_usb == "true" %}
 # USB-устройство под интерфейсом usb (`adapters::usb`, узел `domain::usb`):

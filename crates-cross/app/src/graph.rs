@@ -218,8 +218,37 @@ supervisor_graph! {
 {%- endif %}
 {%- if f[3] != "none" %}{% assign client = client | plus: 1 %}{% endif %}
 {%- endfor %}
+{%- if net_services contains "rest" %}
+
+        // Узлы `HTTP` — REST API (`domain::http`): пул, по копии на соединение
+        // (`domain::http::CONNECTIONS`), у каждой свой сокет на стеке
+        // `parts.net.stack` и свои буферы (слоты `= static` фрагмента).
+        // Токен — `crate::net::REST_TOKEN` (файл `rest-token.txt`).{% if ota == "true" %}
+        // Перезагрузку узлы просят у узла `OTA` одним клиентом на пул — номер
+        // следом за транспортами.{% endif %}
+        ::domain::HTTP_FRAG as HTTP[2] = core::array::from_fn(|_| ::domain::http::HttpWiring {
+            stack: parts.net.stack,
+            info: crate::device_info(parts.board.spec),
+            token: crate::net::REST_TOKEN,
+{%- if ota == "true" %}
+            ota: ::domain::ota::OtaClient::new(
+                ota_cmd_requester(),
+                ::domain::ota::ClientId({{ client }}),
+            ),
+{%- endif %}
+        }),
+{%- endif %}
     ];
 }
+{%- if net_services contains "rest" %}
+
+// Пул `HTTP[2]` в `fragments:` — литерал: DSL не берёт константу. Сокетов
+// под него стек заводит по `domain::http::CONNECTIONS` (`crate::net`).
+const _: () = assert!(
+    ::domain::http::CONNECTIONS == 2,
+    "копий HTTP в графе столько же, сколько сокетов REST у стека"
+);
+{%- endif %}
 
 /// Куда уходит просрочка наблюдаемого узла.
 ///

@@ -342,6 +342,16 @@ read`: руками пришлось бы сначала найти адрес �
   `spawn` модуля задачи (`crates-cross/app/src/tasks/`): по модулю на задачу,
   `main.rs` только зовёт `tasks::spawn_all`.
 {%- endif %}
+{%- if net_services contains "rest" %}
+- Токен REST API — `rest-token.txt` в корне проекта, его вшивает
+  `include_str!` (`crate::net::REST_TOKEN` в `crates-cross/app/src/net.rs`).
+  Файл создаёт `cargo xtask` (`secrets::ensure` — в `build`, `lint cross` и перед
+  прошивкой), и он **коммитится**, а не уходит в `.gitignore`: токен и так открыт
+  в каждом образе, а без файла не собрались бы свежий клон и CI. Пул `HTTP[2]` в
+  `graph.rs` — литерал, равный `domain::http::CONNECTIONS` (`const`-assert там
+  же), и сокеты стека (`SOCKETS` в `crate::net`) считаются от той же константы —
+  менять вместе.
+{%- endif %}
 - `#![allow(dead_code)]` в начале `crates-cross/app/src/graph.rs` — не
   украшение, а условие `-D warnings`: файл целиком генерируемый, а
   `*_receiver()`/`provide_*`/`*_take()` в сыром шаблоне никто не зовёт, потому

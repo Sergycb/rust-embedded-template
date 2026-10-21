@@ -9,6 +9,21 @@ fn main() {
     // тогда, когда `memory.x` правят руками: у `boot` и `target-tests` такая
     // строка есть с самого начала.
     println!("cargo::rerun-if-changed=memory.x");
+{%- if net_services contains "rest" %}
+
+    // Токен REST API вшивает `include_str!` (`src/net.rs`), и без файла
+    // компилятор сказал бы только «couldn't read». Файл создаёт `cargo xtask`
+    // (`build`, `lint cross`, прошивка), а голый `cargo build`/`cargo run`
+    // в свежем проекте — нет.
+    let token = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../rest-token.txt");
+    println!("cargo::rerun-if-changed={}", token.display());
+    assert!(
+        token.exists(),
+        "нет {} — токена REST API. Его создаёт `cargo xtask build` (или `cargo xtask lint cross`); \
+         запустите её один раз из корня проекта и закоммитьте файл",
+        token.display()
+    );
+{%- endif %}
 
     let manifest = PathBuf::from(
         std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR задаёт cargo"),

@@ -26,6 +26,15 @@ pub const PAGE_SIZE: &str = "{{page_size}}";
 /// Подписываются ли OTA-образы — ответ, данный при генерации.
 pub const SIGNED: &str = "{{signed}}";
 
+/// Сетевые службы, выбранные при генерации, через запятую (`ssh,rest`);
+/// пусто — служб нет.
+pub const NET_SERVICES: &str = "{{net_services}}";
+
+/// Выбрана ли сетевая служба `name` (`rest`, `ssh`).
+pub fn has_net_service(name: &str) -> bool {
+    NET_SERVICES.split(',').any(|service| service == name)
+}
+
 /// Имя файла ELF приложения в каталоге сборки — то, что [`crate::firmware::build`] читает.
 pub const APP_ARTIFACT: &str = "app";
 
