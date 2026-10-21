@@ -32,7 +32,7 @@ paths: crates-cross/**
   строки в манифесте; ядро — через `bsp::cpu`.
 - `bsp` зависит от `ports` (и `flash-page`), а не от `adapters` и не от `domain`:
   адаптеры и типы домена из полей `Board` собирает `app`. `boot` зовёт `domain` только при `signed` или
-  `ota=external` и только `domain::ota::boot::{boot_plan, screen_update}`.
+  `ext_flash=yes` и только `domain::ota::boot::{boot_plan, screen_update}`.
 - Логирование только `defmt`; `log` в прошивке не используется.
 - **Если вы в репозитории самого шаблона** (признак — каталог `chip-data-gen/`
   в корне): файлы здесь содержат Liquid и до генерации не являются валидным

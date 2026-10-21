@@ -121,14 +121,16 @@ ci = { type = "string", prompt = "CI provider", choices = [
 # с пометкой — тогда память заполняет человек). Объявленный здесь вопрос
 # `cargo-generate` задаёт сам и ДО выбора чипа, когда ничего подсказать нельзя.
 #
-# `--define` — режим для скриптов и CI, и он строгий: `ota`, `config` (`internal`,
-# `external`, `no`), `graph` (`yes`, `no`), `interface` (`none`, `uart`, `can`,
-# `tcp`, `udp`, `usb`), `protocol` (`none`, `modbus`, `protobuf`, `canopen`) и
+# `--define` — режим для скриптов и CI, и он строгий: `ext_flash` (`yes`, `no` —
+# внешняя флеш W25Q на плате; есть — OTA и настройки целиком на ней), `ota`,
+# `config`, `graph` (`yes`, `no`), `interface` (`none`, `uart`, `can`, `tcp`,
+# `udp`, `usb`), `protocol` (`none`, `modbus`, `protobuf`, `canopen`) и
 # `modbus_master` (`yes`, `no`) читаются хуком через `variable::is_set`; опечатка и
-# невозможное для чипа значение — ошибка с объяснением. Не заданное и без
-# терминала получает умолчание: `ota` — `internal`, если схема помещается, иначе
-# `no`; `config`, `protocol`, `interface` — `no`/`none`; `graph` — `yes`, если
-# влезает; `modbus_master` — `no`. Протокол без транспорта невозможен (транспорт
+# невозможное для чипа значение — ошибка с объяснением (прежние `internal`/
+# `external` у `ota` и `config` — тоже, с подсказкой про `ext_flash`). Не
+# заданное и без терминала получает умолчание: `ext_flash` — `no`; `ota` —
+# `yes`, если схема помещается, иначе `no`; `config`, `protocol`, `interface` —
+# `no`/`none`; `graph` — `yes`, если влезает; `modbus_master` — `no`. Протокол без транспорта невозможен (транспорт
 # выбирается первым), транспорт без протокола — рабочий проект: заглушка
 # интерфейса и его фоновый узел есть, протокол пишете вы.
 #

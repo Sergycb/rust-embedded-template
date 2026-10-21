@@ -337,6 +337,19 @@ fn fits_answers(m, erase_zero, wants, need, limits) {
         && (!need.config || p.config) && (!need.graph || p.graph)
 }
 
+/// Шина внешней флеши чипа — `[метка, блок]`: QSPI, где он выведен в корпусе
+/// (`QUADSPI`, иначе `OCTOSPI`) — по четырём линиям данные идут вчетверо
+/// быстрее, — иначе SPI; блок — первый из списка чипа (chip-data/instances.rhai),
+/// как у транспортов. Пусто — шины нет, и внешней флеши у чипа быть не может.
+fn flash_bus(instances) {
+    for tag in ["quadspi", "octospi", "spi"] {
+        if instances.contains(tag) {
+            return [tag, instances[tag][0]];
+        }
+    }
+    []
+}
+
 /// Меню из нескольких вариантов: `texts` показываются как есть, а ответ —
 /// значение с тем же индексом: `values[i]` соответствует `texts[i]`. Без
 /// терминала (`--silent`, CI) `variable::prompt` отвечает ошибкой «not a
@@ -657,68 +670,86 @@ const INSTANCES = instances_data::INSTANCES;
 import "chip-data/rng" as rng_data;
 const RNG = rng_data::RNG;
 
-// Ответ на вопрос про OTA из [placeholders] (или `--define ota=no`). Дальше по
-// коду `ota` перезаписывается уже вычисленной строкой `"true"`/`"false"`: на
-// неё смотрят Liquid-условия в шаблоне.
+// Внешняя флеш W25Q на плате (`ext_flash`: `yes`/`no`). Есть — на неё
+// уезжает всё, что прошивка хранит во флеше помимо себя: `STATE`/`DFU` OTA и
+// раздел настроек; во внутреннем flash остаются bootloader и `ACTIVE`, который
+// забирает почти весь чип. Нет — всё во flash чипа (настройки на L0/L1 — в
+// EEPROM). Смешанных вариантов («OTA внутри, настройки снаружи») нет: флеш на
+// плате либо есть, либо нет. Шину (QSPI или SPI) хук выбирает по чипу.
+//
+// Через `--define` — до каскада: чипы без выведенного SPI/QSPI тогда не
+// предлагаются. В меню — после выбора чипа, первым из вопросов о памяти.
+let wants_ext = false;
+if variable::is_set("ext_flash") {
+    let answer = variable::get("ext_flash");
+    if answer != "yes" && answer != "no" {
+        throw "ext_flash: ожидается yes или no, а не «" + answer + "»";
+    }
+    wants_ext = answer == "yes";
+}
+
+// Ответ на вопрос про OTA (`--define ota=yes|no`). Дальше по коду `ota`
+// перезаписывается уже вычисленной строкой `"true"`/`"false"`: на неё смотрят
+// Liquid-условия в шаблоне.
 //
 // «Да» здесь означает лишь «не возражаю»: помещается ли схема в flash, решает
-// раскладка ниже. А вот «нет» — окончательное, и проверять нечего.
-//
-// Где лежат `DFU` и `STATE` (`ota_store`, на него смотрят boot и bsp::flash):
-//   `internal` — во внутреннем flash, рядом с `ACTIVE`;
-//   `external` — на внешней флеши: внутри остаются bootloader и `ACTIVE`,
-//                который забирает почти весь flash; драйвер микросхемы
-//                подставляет проект (в шаблоне — заглушка).
-// Вопрос задаётся до каскада и сам сужает список чипов (см. `allowed` ниже);
-// для чипа, заданного напрямую, невозможный вариант отсекается с подсказкой.
+// раскладка ниже. А вот «нет» — окончательное, и проверять нечего. Где лежат
+// `DFU` и `STATE` (`ota_store`), решает `ext_flash`.
 //
 // Незнакомый ответ (опечатка в `--define`) — ошибка, а не «без OTA»: молча
-// снятый bootloader заметили бы только на первом обновлении.
+// снятый bootloader заметили бы только на первом обновлении. Прежние
+// `internal`/`external` — тоже ошибка, с подсказкой: место хранения теперь
+// задаёт `ext_flash`.
 let wants_ota = true;
-let wants_ext_ota = false;
 if variable::is_set("ota") {
     let answer = variable::get("ota");
-    if answer != "internal" && answer != "external" && answer != "no" {
-        throw "ota: ожидается internal, external или no, а не «" + answer + "»";
+    if answer == "internal" || answer == "external" {
+        throw "ota: ожидается yes или no; где лежат DFU и STATE, решает ext_flash (`" + answer + "` — это ext_flash="
+            + (if answer == "external" { "yes" } else { "no" }) + " и ota=yes)";
     }
-    wants_ext_ota = answer == "external";
-    wants_ota = answer != "no";
+    if answer != "yes" && answer != "no" {
+        throw "ota: ожидается yes или no, а не «" + answer + "»";
+    }
+    wants_ota = answer == "yes";
 }
+let wants_ext_ota = wants_ota && wants_ext;
 
 if !wants_ota {
     print("OTA отключён по вашему выбору: один образ на весь flash, crates-cross/boot в проект не входит");
 }
 
 // Раздел под настройки — вопрос того же рода, что и про OTA, и с той же
-// механикой ответа. «Да» здесь тоже означает «не возражаю»: хватит ли под него
-// места, решает раскладка ниже.
+// механикой ответа (`--define config=yes|no`). «Да» здесь тоже означает «не
+// возражаю»: хватит ли под него места, решает раскладка ниже.
 //
-// Стоит он дороже, чем кажется: две страницы стирания. С OTA chip-data-gen
-// кладёт их в мелкие сектора перед ACTIVE, где это выгоднее (на F4 — 2×16 KiB),
-// но без OTA это две последние страницы flash по максимальному сектору чипа: на
-// F4/F7/H7 — 256 KiB. Поэтому по умолчанию «нет», а цена печатается ниже — до
-// того, как пользователь увидит собранный проект.
+// Во flash чипа он стоит дороже, чем кажется: две страницы стирания. С OTA
+// chip-data-gen кладёт их в мелкие сектора перед ACTIVE, где это выгоднее (на
+// F4 — 2×16 KiB), но без OTA это две последние страницы flash по максимальному
+// сектору чипа: на F4/F7/H7 — 256 KiB. Поэтому по умолчанию «нет», а цена
+// печатается ниже — до того, как пользователь увидит собранный проект.
 //
 // Где лежат настройки (`config_store`, на него смотрит bsp::settings):
 //   "flash"    — раздел во внутреннем флеше (как описано выше);
 //   "eeprom"   — внутренняя EEPROM, если она у чипа есть (L0/L1): флеш не
 //                тратится вовсе, и это единственное место под настройки на
 //                чипах, чей флеш стирается в ноль;
-//   "external" — внешняя флеш W25Q: ответ `external`; драйвер `w25q` в
+//   "external" — внешняя флеш W25Q (`ext_flash=yes`): драйвер `w25q` в
 //                `bsp::external`, шину (выводы) подставляете вы;
 //   "none"     — настроек нет.
-// Ответ `internal` выбирает между первыми двумя сам, `external` — третий,
-// `no` — четвёртый. Незнакомый ответ — ошибка, как у `ota`.
+// Первые два различает сам чип, третий — `ext_flash`.
 let wants_config = false;
-let wants_external = false;
 if variable::is_set("config") {
     let answer = variable::get("config");
-    if answer != "internal" && answer != "external" && answer != "no" {
-        throw "config: ожидается internal, external или no, а не «" + answer + "»";
+    if answer == "internal" || answer == "external" {
+        throw "config: ожидается yes или no; где лежат настройки, решает ext_flash (`" + answer + "` — это ext_flash="
+            + (if answer == "external" { "yes" } else { "no" }) + " и config=yes)";
     }
-    wants_external = answer == "external";
-    wants_config = answer != "no";
+    if answer != "yes" && answer != "no" {
+        throw "config: ожидается yes или no, а не «" + answer + "»";
+    }
+    wants_config = answer == "yes";
 }
+let wants_external = wants_config && wants_ext;
 
 // Граф задач. «Да» и здесь означает «не возражаю»: помещается ли он, решает
 // размер раздела, в который линкуется приложение (см. GRAPH_MIN_PARTITION).
@@ -748,6 +779,7 @@ const WANTS = #{
 // вопросы (у них есть умолчания), а в прогоне без них «не спрашивали» не
 // должно отсекать чипы.
 const NEED = #{
+    ext_flash: variable::is_set("ext_flash") && wants_ext,
     ota: variable::is_set("ota") && wants_ota,
     ext_ota: variable::is_set("ota") && wants_ext_ota,
     config: variable::is_set("config") && wants_config,
@@ -813,7 +845,7 @@ const RAM_COST = #{
     // (stm32l011f4 — 1316).
     core: 1344,
     // stm32f407ve: 3880 с OTA против 1952 без неё; внешняя — stm32h723ve 3996
-    // (ota=external config=external) против 2012 (config=external), с драйвером
+    // (ext_flash=yes config=yes) против 2012 (то же с ota=no), с драйвером
     // W25Q над заглушкой шины.
     ota: #{ internal: 1928, external: 1984 },
     // По месту хранения (`config_store`): stm32f407ve 3912 против 3880,
@@ -929,13 +961,18 @@ if !variable::is_set("chip_feature")
                 return false;
             }
         }
+        // Внешней флеши нужна шина — SPI или QSPI, выведенный в корпусе.
+        if NEED.ext_flash && flash_bus(instances).len() == 0 {
+            return false;
+        }
         fits_answers(m, m["erase_zero"] == "true", WANTS, NEED, LIMITS)
     });
     if allowed.len() == 0 {
         throw "ни один из " + CHIPS.len() + " чипов не подходит под ответы ("
             + (if WANTED_LINKS.len() > 0 { "links=" + variable::get("links") } else { "interface=" + WANTED_INTERFACE })
-            + ", ota=" + (if wants_ext_ota { "external" } else if wants_ota { "internal" } else { "no" })
-            + ", config=" + (if wants_external { "external" } else if wants_config { "internal" } else { "no" })
+            + ", ext_flash=" + (if wants_ext { "yes" } else { "no" })
+            + ", ota=" + (if wants_ota { "yes" } else { "no" })
+            + ", config=" + (if wants_config { "yes" } else { "no" })
             + ", graph=" + (if wants_graph { "yes" } else { "no" })
             + ") — смягчите ответы: чип поменьше берёт ota=no и graph=no";
     }
@@ -1190,30 +1227,48 @@ let protocol = "none";
 let iface = "none";
 let wants_master = false;
 
+// --- Внешняя флеш. Первым из вопросов о памяти: от неё зависят размеры
+// `ACTIVE` и раздела настроек в меню ниже.
+let chip_bus = flash_bus(if INSTANCES.contains(suffix) { INSTANCES[suffix] } else { #{} });
+if !variable::is_set("ext_flash") {
+    if chip_bus.len() > 0 {
+        let answer = ask(
+            "ext_flash: внешняя флеш W25Q на плате",
+            ["no", "yes"],
+            [
+                "no — OTA и настройки во flash чипа",
+                "yes — W25Q на " + chip_bus[1] + ": OTA (STATE, DFU) и настройки — на ней",
+            ],
+            "no"
+        );
+        wants_ext = answer == "yes";
+    }
+} else if wants_ext && chip_bus.len() == 0 {
+    throw "ext_flash: у " + chip_name + " нет выведенного блока SPI или QSPI — внешнюю флеш не к чему подключить";
+}
+wants_ext_ota = wants_ota && wants_ext;
+wants_external = wants_config && wants_ext;
+
 // --- OTA
 if !variable::is_set("ota") {
     // Настройки, заданные через `--define`, уже известны и меняют размер `ACTIVE`;
     // заданные в меню спрашиваются ниже, и тогда их цену покажет их собственный пункт.
-    let plan_int = plan(layout, erase_zero, #{ ota: true, ext_ota: false, config: wants_config, external: wants_external, graph: false }, LIMITS);
-    let plan_ext = plan(layout, erase_zero, #{ ota: true, ext_ota: true, config: wants_config, external: wants_external, graph: false }, LIMITS);
-    let text_int = if plan_int.ota {
-        "internal — DFU во flash чипа, ACTIVE " + layout[plan_int.ota_key + "active_length"]
+    let plan_ota = plan(layout, erase_zero, #{ ota: true, ext_ota: wants_ext, config: wants_config, external: wants_external, graph: false }, LIMITS);
+    let fits = if wants_ext { plan_ota.ext_ota } else { plan_ota.ota };
+    let text_yes = if fits {
+        "yes — " + (if wants_ext { "DFU и STATE на внешней флеши" } else { "DFU во flash чипа" })
+            + ", ACTIVE " + layout[plan_ota.ota_key + "active_length"]
     } else {
-        "internal — НЕ ПОМЕЩАЕТСЯ на этом чипе: раскладку памяти придётся писать вручную"
-    };
-    let text_ext = if plan_ext.ext_ota {
-        "external — DFU и STATE на внешней флеши, ACTIVE " + layout[plan_ext.ota_key + "active_length"]
-    } else {
-        "external — НЕ ПОМЕЩАЕТСЯ на этом чипе: раскладку памяти придётся писать вручную"
+        "yes — НЕ ПОМЕЩАЕТСЯ на этом чипе: раскладку памяти придётся писать вручную"
     };
     let answer = ask(
         "ota: OTA (bootloader и разделы ACTIVE/DFU)",
-        ["internal", "external", "no"],
-        [text_int, text_ext, "no — без OTA: один образ на весь flash"],
-        if plan_int.ota { "internal" } else { "no" }
+        ["yes", "no"],
+        [text_yes, "no — без OTA: один образ на весь flash"],
+        if fits { "yes" } else { "no" }
     );
-    wants_ext_ota = answer == "external";
-    wants_ota = answer != "no";
+    wants_ota = answer == "yes";
+    wants_ext_ota = wants_ota && wants_ext;
     if !wants_ota {
         print("OTA отключён по вашему выбору: один образ на весь flash, crates-cross/boot в проект не входит");
     }
@@ -1221,34 +1276,41 @@ if !variable::is_set("ota") {
 
 // --- Настройки
 if !variable::is_set("config") {
-    let plan_cfg = plan(layout, erase_zero, #{ ota: wants_ota, ext_ota: wants_ext_ota, config: true, external: false, graph: false }, LIMITS);
-    let kind = config_store(layout, true, false, EEPROM_MIN);
     let values = ["no"];
     let texts = ["no — без хранилища настроек"];
-    // Флеш чипа, стирающийся в ноль, `sequential-storage` не годится (он считает
-    // стёртым 0xFF), а EEPROM его обходит; внутреннего варианта без неё нет.
-    if kind == "eeprom" || !erase_zero {
-        values.push("internal");
+    if wants_ext {
+        values.push("yes");
+        texts.push("yes — раздел на внешней флеши W25Q: flash чипа под настройки не тратится");
+    } else {
+        let plan_cfg = plan(layout, erase_zero, #{ ota: wants_ota, ext_ota: false, config: true, external: false, graph: false }, LIMITS);
+        let kind = config_store(layout, true, false, EEPROM_MIN);
+        // Флеш чипа, стирающийся в ноль, `sequential-storage` не годится (он
+        // считает стёртым 0xFF), а EEPROM его обходит; без неё и без внешней
+        // флеши настройкам на таком чипе места нет.
         if kind == "eeprom" {
-            texts.push("internal — внутренняя EEPROM чипа: flash под настройки не тратится");
-        } else if plan_cfg.config {
-            let note = if wants_ota && !plan_cfg.ota {
-                " (но тогда OTA не поместится: раскладку памяти придётся писать вручную)"
+            values.push("yes");
+            texts.push("yes — внутренняя EEPROM чипа: flash под настройки не тратится");
+        } else if !erase_zero {
+            values.push("yes");
+            if plan_cfg.config {
+                let note = if wants_ota && !plan_cfg.ota {
+                    " (но тогда OTA не поместится: раскладку памяти придётся писать вручную)"
+                } else {
+                    ""
+                };
+                texts.push("yes — раздел " + layout[plan_cfg.settings_key + "length"] + " во flash" + note);
             } else {
-                ""
-            };
-            texts.push("internal — раздел " + layout[plan_cfg.settings_key + "length"] + " во flash" + note);
+                texts.push("yes — НЕ ПОМЕЩАЕТСЯ на этом чипе: раскладку памяти придётся писать вручную");
+            }
         } else {
-            texts.push("internal — НЕ ПОМЕЩАЕТСЯ на этом чипе: раскладку памяти придётся писать вручную");
+            print("Настройки не предлагаются: у " + chip_name + " флеш стирается в ноль, а EEPROM нет — их место только на внешней флеши (ext_flash=yes)");
         }
     }
-    values.push("external");
-    texts.push("external — внешняя флеш W25Q: драйвер в шаблоне, выводы шины подставляете вы");
-    let answer = ask("config: хранилище настроек (sequential-storage)", values, texts, "no");
-    wants_external = answer == "external";
-    wants_config = answer != "no";
+    let answer = if values.len() > 1 { ask("config: хранилище настроек (sequential-storage)", values, texts, "no") } else { "no" };
+    wants_config = answer == "yes";
+    wants_external = wants_config && wants_ext;
 } else if wants_config && !wants_external && config_store(layout, true, false, EEPROM_MIN) == "flash" && erase_zero {
-    throw "config: у " + chip_name + " флеш стирается в ноль, а sequential-storage считает стёртым 0xFF — хранилище молча не заработало бы; выберите config=external или config=no";
+    throw "config: у " + chip_name + " флеш стирается в ноль, а sequential-storage считает стёртым 0xFF — хранилище молча не заработало бы; выберите ext_flash=yes или config=no";
 }
 
 // --- Граф. Помещается ли он, зависит от выбранных OTA и настроек.
@@ -1677,7 +1739,7 @@ if variable::is_set("write_size") {
     // кратен max(странице чипа, 4 KiB); иначе `assert_partitions` паникует.
     variable::set("ext_page_size", "4_096");
     if wants_ota && wants_ext_ota {
-        print("ota=external: страница обмена EXT_PAGE_SIZE в [env] crates-cross/.cargo/config.toml — 4 KiB;");
+        print("ext_flash=yes: страница обмена EXT_PAGE_SIZE в [env] crates-cross/.cargo/config.toml — 4 KiB;");
         print("  впишите max(сектор чипа, стирание драйвера) и сделайте ACTIVE кратным ей");
     }
     // Раздел приложения здесь задаёт человек, значит и помещается ли в него
@@ -1738,10 +1800,10 @@ if variable::is_set("write_size") {
     if wants_ota && !wants_ext_ota && ext_fits {
         if !ota_fits {
             print("OTA во внутреннем flash не помещается, а с DFU/STATE на внешней флеши — да:");
-            print("  ACTIVE " + m[ext_key + "active_length"] + "; сгенерируйте с --define ota=external");
+            print("  ACTIVE " + m[ext_key + "active_length"] + "; сгенерируйте с --define ext_flash=yes");
         } else if size_in_bytes(m[ext_key + "active_length"]) * 2 >= size_in_bytes(m[ota_key + "active_length"]) * 3 {
             print("Подсказка: с DFU/STATE на внешней флеши ACTIVE был бы " + m[ext_key + "active_length"]
-                + " вместо " + m[ota_key + "active_length"] + " (--define ota=external)");
+                + " вместо " + m[ota_key + "active_length"] + " (--define ext_flash=yes)");
         }
     }
     if in_flash {
@@ -1836,7 +1898,7 @@ if variable::is_set("write_size") {
     }
     // Общий объект `Flash` в bsp: его делят OTA во внутреннем flash и настройки
     // во флеше или EEPROM (EEPROM пишется через тот же контроллер). Внешней
-    // флеши он не нужен — с `ota=external` приложение во внутренний flash не
+    // флеши он не нужен — с `ext_flash=yes` приложение во внутренний flash не
     // пишет вовсе (`ACTIVE` пишет bootloader), — и без OTA создавать его
     // незачем: был бы неиспользуемый код.
     variable::set("shared_flash", if (ota && !ext_ota) || (config && store != "external") { "true" } else { "false" });
@@ -2153,24 +2215,14 @@ variable::set("erase_page", if variable::get("state_paged") == "true" || variabl
 // Драйвер внешней флеши (`bsp::external`, шина — заглушка `bsp::stub::FlashBus`) нужен, пока
 // на внешней флеши лежит хоть что-то: разделы OTA или настройки.
 variable::set("external_flash", if (variable::get("ota") == "true" && variable::get("ota_store") == "external") || variable::get("config_store") == "external" { "true" } else { "false" });
-// Шина внешней флеши — QSPI, где он выведен в корпусе (`QUADSPI`, иначе
-// `OCTOSPI`): по четырём линиям данные идут вчетверо быстрее, — иначе SPI.
-// Блок — первый из списка чипа (chip-data/instances.rhai), как у транспортов.
-let ext_flash_bus = "";
-let ext_flash_block = "";
-if variable::get("external_flash") == "true" {
-    for tag in ["quadspi", "octospi", "spi"] {
-        if ext_flash_bus == "" && instances.contains(tag) {
-            ext_flash_bus = tag;
-            ext_flash_block = instances[tag][0];
-        }
-    }
-    if ext_flash_bus == "" {
-        throw "внешняя флеш: у " + chip_name + " нет выведенного блока SPI или QSPI — выберите ota=internal и config=internal или no";
-    }
+if wants_ext && variable::get("external_flash") != "true" {
+    print("Внешняя флеш: хранить на ней нечего (ни OTA, ни настроек) — драйвер W25Q в проект не входит");
 }
-variable::set("ext_flash_bus", ext_flash_bus);
-variable::set("ext_flash_block", ext_flash_block);
+// Шина внешней флеши — `flash_bus`: QSPI, где он выведен, иначе SPI; что шина
+// у чипа есть, проверено при ответе `ext_flash`.
+let bus = if variable::get("external_flash") == "true" { flash_bus(instances) } else { ["", ""] };
+variable::set("ext_flash_bus", bus[0]);
+variable::set("ext_flash_block", bus[1]);
 // Крейт `flash-page` (crates-host): `ErasePage` — при своей странице у раздела,
 // `erase_size` — при OTA на внешней флеши (проверка раскладки в `bsp::external`).
 variable::set("flash_page", if variable::get("erase_page") == "true" || (variable::get("ota") == "true" && variable::get("ota_store") == "external") { "true" } else { "false" });

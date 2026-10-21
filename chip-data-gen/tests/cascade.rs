@@ -498,12 +498,8 @@ fn erase_zero_follows_the_metadata_not_the_chip_name() {
 #[test]
 fn ota_refusal_names_the_real_reason_with_settings() {
     let ast = compile_script();
-    let too_small = run_chip_with(
-        &ast,
-        "f030c8",
-        &[("config", "internal"), ("ota", "internal")],
-    )
-    .expect("каскад не должен падать");
+    let too_small = run_chip_with(&ast, "f030c8", &[("config", "yes"), ("ota", "yes")])
+        .expect("каскад не должен падать");
     let log = too_small.prints.join("\n");
     assert!(
         log.contains("Выбранное не помещается"),
@@ -882,7 +878,7 @@ fn state_and_config_lengths_are_multiples_of_their_erase_size() {
     let mut failures = Vec::new();
     let mut checked = 0;
     for suffix in all_chip_suffixes() {
-        for preset in [&[][..], &[("config", "internal")][..]] {
+        for preset in [&[][..], &[("config", "yes")][..]] {
             let Ok(result) = run_chip_with(&ast, &suffix, preset) else {
                 continue; // падения каскада ловят соседние тесты
             };
@@ -1004,34 +1000,28 @@ fn declining_ota_gives_a_single_image_even_when_it_would_fit() {
 }
 
 /// Незнакомый ответ — ошибка генерации, а не «без OTA»: опечатка в
-/// `--define` молча сняла бы bootloader. Старые `yes`/`true`/`false` тоже
-/// незнакомы — варианты вопроса теперь `internal`/`external`/`no`.
+/// `--define` молча сняла бы bootloader. Варианты — `yes`/`no`; `true`/`false`
+/// незнакомы.
 #[test]
 fn an_unknown_ota_answer_is_an_error() {
     let ast = compile_script();
-    for answer in ["yes", "true", "false", "interal"] {
+    for answer in ["true", "false", "ye"] {
         let err = run_cascade_with(&ast, "f407ve", &[("ota", answer)])
             .err()
             .unwrap_or_else(|| panic!("ota={answer} должен быть ошибкой"));
-        assert!(
-            err.to_string().contains("internal, external или no"),
-            "{err}"
-        );
+        assert!(err.to_string().contains("ожидается yes или no"), "{err}");
     }
 }
 
-/// То же для `config`: варианты те же, что у `ota`, и `yes` среди них нет.
+/// То же для `config`.
 #[test]
 fn an_unknown_config_answer_is_an_error() {
     let ast = compile_script();
-    for answer in ["yes", "true", "flash"] {
+    for answer in ["true", "flash"] {
         let err = run_cascade_with(&ast, "f407ve", &[("config", answer)])
             .err()
             .unwrap_or_else(|| panic!("config={answer} должен быть ошибкой"));
-        assert!(
-            err.to_string().contains("internal, external или no"),
-            "{err}"
-        );
+        assert!(err.to_string().contains("ожидается yes или no"), "{err}");
     }
 }
 
@@ -1039,7 +1029,7 @@ fn an_unknown_config_answer_is_an_error() {
 fn an_ota_answer_that_does_not_fit_keeps_ota_and_leaves_memory_to_the_user() {
     // Явный ответ уважается: h723ve схему не вмещает, но bootloader остаётся, а
     // раскладку памяти пользователь заполняет сам (как при `--define write_size`).
-    let result = run_chip_with(&compile_script(), "h723ve", &[("ota", "internal")])
+    let result = run_chip_with(&compile_script(), "h723ve", &[("ota", "yes")])
         .expect("каскад не должен падать");
     assert_eq!(result.vars.get("ota").map(String::as_str), Some("true"));
     assert!(!result.deleted.contains(&"crates-cross/boot".to_string()));
@@ -1054,14 +1044,14 @@ fn an_ota_answer_that_does_not_fit_keeps_ota_and_leaves_memory_to_the_user() {
     );
 }
 
-/// `ota=external`: внутри только bootloader и `ACTIVE`, а `STATE`/`DFU` —
+/// `ext_flash=yes`: внутри только bootloader и `ACTIVE`, а `STATE`/`DFU` —
 /// символами-смещениями на внешней флеши, без регионов в `MEMORY`. Там же,
 /// где внутренней схеме места нет (h723ve), внешняя помещается.
 #[test]
 fn external_ota_keeps_only_the_bootloader_and_active_inside() {
     let ast = compile_script();
     for chip in ["f407ve", "h723ve"] {
-        let result = run_cascade_with(&ast, chip, &[("ota", "external")])
+        let result = run_cascade_with(&ast, chip, &[("ext_flash", "yes")])
             .unwrap_or_else(|err| panic!("{chip}: каскад упал: {err}"));
         assert_eq!(
             result.vars.get("ota").map(String::as_str),
@@ -1116,45 +1106,14 @@ fn external_ota_keeps_only_the_bootloader_and_active_inside() {
     }
 }
 
-/// Настройки во внутреннем флеше при внешней OTA (`config=internal`): на F4 — в
-/// мелких секторах зоны bootloader'а, `ACTIVE` при этом не короче; настройки
-/// на внешней флеши (`config=external`) — символами за `DFU`.
+/// С внешней флешью настройки — на ней, символами за `DFU`: внутренний флеш
+/// под них не тратится, `ACTIVE` не короче.
 #[test]
 fn external_ota_places_settings_where_the_project_asked() {
     let ast = compile_script();
 
-    let inside = run_cascade_with(
-        &ast,
-        "f407ve",
-        &[("ota", "external"), ("config", "internal")],
-    )
-    .expect("каскад с config=internal");
-    assert_eq!(
-        inside.vars.get("config_store").map(String::as_str),
-        Some("flash")
-    );
-    assert_eq!(
-        inside.vars.get("config_erase_size").map(String::as_str),
-        Some("16_384")
-    );
-    let app = written(&inside, "crates-cross/app/memory.x");
-    assert!(
-        app.contains("CONFIG            (rx)  : ORIGIN = 0x08008000, LENGTH = 32K"),
-        "{app}"
-    );
-    assert!(app.contains("LENGTH = 384K"), "{app}");
-    let boot = written(&inside, "crates-cross/boot/memory.x");
-    assert!(
-        boot.contains("FLASH             (rx)  : ORIGIN = 0x08000000, LENGTH = 32K"),
-        "bootloader кончается там, где начинаются настройки:\n{boot}"
-    );
-
-    let outside = run_cascade_with(
-        &ast,
-        "f407ve",
-        &[("ota", "external"), ("config", "external")],
-    )
-    .expect("каскад с config=external");
+    let outside = run_cascade_with(&ast, "f407ve", &[("ext_flash", "yes"), ("config", "yes")])
+        .expect("каскад с ext_flash=yes, config=yes");
     assert_eq!(
         outside.vars.get("config_store").map(String::as_str),
         Some("external")
@@ -1179,7 +1138,7 @@ fn external_ota_places_settings_where_the_project_asked() {
 /// `ACTIVE` в `memory.x`: читать их через `unsafe extern` незачем.
 #[test]
 fn partition_bounds_travel_as_numbers() {
-    let result = run_chip_with(&compile_script(), "f407ve", &[("config", "internal")])
+    let result = run_chip_with(&compile_script(), "f407ve", &[("config", "yes")])
         .expect("каскад не должен падать");
     let boot = written(&result, "crates-cross/boot/memory.x");
     let active = region_length(&boot, "ACTIVE").expect("ACTIVE в memory.x");
@@ -1195,32 +1154,43 @@ fn partition_bounds_travel_as_numbers() {
     assert!(!app.contains("__config_start"), "{app}");
 }
 
-/// Внутренняя схема не помещается, внешняя — да: меню говорит об этом прямо в
-/// вариантах, а умолчание без терминала — не OTA, которая не соберётся.
+/// Внутренняя схема не помещается, внешняя — да: меню OTA говорит об этом прямо
+/// в варианте `yes` — по ответу про внешнюю флеш, заданному до него, — а
+/// умолчание без терминала — не OTA, которая не соберётся.
 #[test]
 fn the_ota_menu_marks_what_does_not_fit_and_defaults_to_what_does() {
-    let result = run_interview(
-        &compile_script(),
-        "h723ve",
-        &[("chip_feature", "stm32h723ve")],
-        &[],
-    )
-    .expect("каскад не должен падать");
-    let menu = result
-        .prompts
-        .iter()
-        .find(|(label, _)| label.starts_with("ota:"))
-        .expect("вопрос про OTA не задан");
-    let text = |value: &str| {
-        menu.1
+    let ast = compile_script();
+    let ota_menu = |picks: &[(&str, &str)]| {
+        let result = run_interview(&ast, "h723ve", &[("chip_feature", "stm32h723ve")], picks)
+            .expect("каскад не должен падать");
+        let menu = result
+            .prompts
             .iter()
-            .find(|choice| choice.starts_with(value))
-            .unwrap_or_else(|| panic!("нет варианта {value}: {:?}", menu.1))
+            .find(|(label, _)| label.starts_with("ota:"))
+            .expect("вопрос про OTA не задан")
+            .1
+            .clone();
+        let ota = result.vars.get("ota").cloned();
+        (menu, ota)
     };
-    assert!(text("internal").contains("НЕ ПОМЕЩАЕТСЯ"), "{:?}", menu.1);
-    assert!(!text("external").contains("НЕ ПОМЕЩАЕТСЯ"), "{:?}", menu.1);
+    let yes = |menu: &[String]| {
+        menu.iter()
+            .find(|choice| choice.starts_with("yes"))
+            .unwrap_or_else(|| panic!("нет варианта yes: {menu:?}"))
+            .clone()
+    };
+
+    // Внешней флеши нет: внутренняя схема не помещается.
+    let (menu, ota) = ota_menu(&[]);
+    assert!(yes(&menu).contains("НЕ ПОМЕЩАЕТСЯ"), "{menu:?}");
     // Умолчание без терминала — то, что не обещает невозможного.
-    assert_eq!(result.vars.get("ota").map(String::as_str), Some("false"));
+    assert_eq!(ota.as_deref(), Some("false"));
+
+    // Внешняя флеш есть: снаружи помещается, и умолчание — OTA.
+    let (menu, ota) = ota_menu(&[("ext_flash", "yes")]);
+    assert!(!yes(&menu).contains("НЕ ПОМЕЩАЕТСЯ"), "{menu:?}");
+    assert!(yes(&menu).contains("внешней флеши"), "{menu:?}");
+    assert_eq!(ota.as_deref(), Some("true"));
 }
 
 /// Граф задач снимается там, где раздел приложения слишком мал.
@@ -2635,7 +2605,7 @@ fn settings_avoid_flash_that_erases_to_zero() {
     let ast = compile_script();
 
     for suffix in ["l073rz", "l051c8"] {
-        let result = run_chip_with(&ast, suffix, &[("config", "internal")])
+        let result = run_chip_with(&ast, suffix, &[("config", "yes")])
             .unwrap_or_else(|err| panic!("каскад до {suffix} упал: {err}"));
 
         assert_eq!(
@@ -2658,9 +2628,9 @@ fn settings_avoid_flash_that_erases_to_zero() {
     // У L010F4 EEPROM есть, но 128 байт — меньше двух страниц хранилища.
     for suffix in ["wb10cc", "wb15cc", "l010f4"] {
         // `--define` такого не принимает: sequential-storage там молча не заработал бы.
-        let err = run_chip_with(&ast, suffix, &[("config", "internal")])
+        let err = run_chip_with(&ast, suffix, &[("config", "yes")])
             .err()
-            .unwrap_or_else(|| panic!("{suffix}: config=internal принят"));
+            .unwrap_or_else(|| panic!("{suffix}: config=yes без внешней флеши принят"));
         assert!(
             err.to_string().contains("флеш стирается в ноль"),
             "{suffix}: {err}"
@@ -2673,19 +2643,29 @@ fn settings_avoid_flash_that_erases_to_zero() {
             &[],
         )
         .expect("каскад не должен падать");
-        let menu = result
-            .prompts
-            .iter()
-            .find(|(label, _)| label.starts_with("config:"))
-            .expect("вопрос про настройки не задан");
         assert!(
-            !menu.1.iter().any(|choice| choice.starts_with("internal")),
-            "{suffix}: {:?}",
-            menu.1
+            !result
+                .prompts
+                .iter()
+                .any(|(label, _)| label.starts_with("config:")),
+            "{suffix}: настройкам там места нет, а вопрос задан"
         );
         assert_eq!(
             result.vars.get("config").map(String::as_str),
             Some("false"),
+            "{suffix}"
+        );
+        // С внешней флешью — предлагаются, на ней.
+        let result = run_interview(
+            &ast,
+            suffix,
+            &[("chip_feature", &format!("stm32{suffix}"))],
+            &[("ext_flash", "yes"), ("config", "yes")],
+        )
+        .expect("каскад не должен падать");
+        assert_eq!(
+            result.vars.get("config_store").map(String::as_str),
+            Some("external"),
             "{suffix}"
         );
     }
@@ -2698,7 +2678,7 @@ fn eeprom_settings_survive_a_manual_layout() {
     let result = run_cascade_with(
         &compile_script(),
         "l073rz",
-        &[("config", "internal"), ("write_size", "4")],
+        &[("config", "yes"), ("write_size", "4")],
     )
     .expect("каскад до l073rz");
 
@@ -2714,14 +2694,18 @@ fn eeprom_settings_survive_a_manual_layout() {
     );
 }
 
-/// `config=external` — слот под драйвер внешней флеши: внутренний флеш под
+/// Настройки на внешней флеши без OTA — драйвер W25Q: внутренний флеш под
 /// настройки не тратится, раздела `CONFIG` нет, общий `Flash` без OTA не
 /// создаётся вовсе.
 #[test]
 fn external_settings_take_no_internal_flash() {
     let ast = compile_script();
-    let result = run_cascade_with(&ast, "h743zi", &[("config", "external"), ("ota", "no")])
-        .expect("каскад до h743zi");
+    let result = run_cascade_with(
+        &ast,
+        "h743zi",
+        &[("ext_flash", "yes"), ("config", "yes"), ("ota", "no")],
+    )
+    .expect("каскад до h743zi");
 
     assert_eq!(result.vars.get("config").map(String::as_str), Some("true"));
     assert_eq!(
@@ -2753,6 +2737,27 @@ fn external_settings_take_no_internal_flash() {
     );
 }
 
+/// Место хранения задаёт `ext_flash`, а у `ota`/`config` — только «есть/нет»:
+/// прежние `internal`/`external` — ошибка с подсказкой, как их записать теперь.
+#[test]
+fn old_storage_answers_point_to_ext_flash() {
+    let ast = compile_script();
+    for (name, value, hint) in [
+        ("ota", "external", "ext_flash=yes и ota=yes"),
+        ("ota", "internal", "ext_flash=no и ota=yes"),
+        ("config", "external", "ext_flash=yes и config=yes"),
+    ] {
+        let err = run_cascade_with(&ast, "f407ve", &[(name, value)])
+            .err()
+            .unwrap_or_else(|| panic!("{name}={value} принят"));
+        assert!(err.to_string().contains(hint), "{name}={value}: {err}");
+    }
+    let err = run_cascade_with(&ast, "f407ve", &[("ext_flash", "maybe")])
+        .err()
+        .expect("ext_flash=maybe принят");
+    assert!(err.to_string().contains("ожидается yes или no"), "{err}");
+}
+
 /// Шина внешней флеши — по чипу: QSPI, где он выведен (`QUADSPI`, иначе
 /// `OCTOSPI` — у H723 он за мультиплексором `OCTOSPIM`), иначе первый SPI. Без
 /// внешней флеши шины нет.
@@ -2764,7 +2769,7 @@ fn external_flash_bus_follows_the_chip() {
         ("h723ve", "octospi", "OCTOSPI1"),
         ("l073rz", "spi", "SPI1"),
     ] {
-        let result = run_cascade_with(&ast, chip, &[("ota", "external")])
+        let result = run_cascade_with(&ast, chip, &[("ext_flash", "yes")])
             .unwrap_or_else(|e| panic!("каскад до {chip}: {e}"));
         assert_eq!(
             result.vars.get("ext_flash_bus").map(String::as_str),
@@ -2785,8 +2790,7 @@ fn external_flash_bus_follows_the_chip() {
             .unwrap_or_else(|| panic!("{chip}: ext_flash_end не число"));
         assert!(end > 0, "{chip}");
     }
-    let internal = run_cascade_with(&ast, "l476rg", &[("ota", "internal")])
-        .expect("каскад до l476rg");
+    let internal = run_cascade_with(&ast, "l476rg", &[("ota", "yes")]).expect("каскад до l476rg");
     assert_eq!(
         internal.vars.get("ext_flash_bus").map(String::as_str),
         Some("")
@@ -2798,7 +2802,7 @@ fn external_flash_bus_follows_the_chip() {
 /// снятом у всех подряд.
 #[test]
 fn the_settings_partition_survives_on_ordinary_flash() {
-    let result = run_cascade_with(&compile_script(), "g071rb", &[("config", "internal")])
+    let result = run_cascade_with(&compile_script(), "g071rb", &[("config", "yes")])
         .expect("каскад до g071rb");
 
     assert_eq!(
@@ -2816,7 +2820,7 @@ fn settings_go_to_small_sectors_with_ota_and_to_the_tail_without() {
     let ast = compile_script();
 
     let with_ota =
-        run_cascade_with(&ast, "f407ve", &[("config", "internal")]).expect("каскад до f407ve");
+        run_cascade_with(&ast, "f407ve", &[("config", "yes")]).expect("каскад до f407ve");
     assert_eq!(with_ota.vars.get("ota").map(String::as_str), Some("true"));
     assert_eq!(
         with_ota.vars.get("config_erase_size").map(String::as_str),
@@ -2837,7 +2841,7 @@ fn settings_go_to_small_sectors_with_ota_and_to_the_tail_without() {
         "{boot}"
     );
 
-    let without = run_cascade_with(&ast, "f407ve", &[("config", "internal"), ("ota", "no")])
+    let without = run_cascade_with(&ast, "f407ve", &[("config", "yes"), ("ota", "no")])
         .expect("каскад до f407ve");
     assert_eq!(
         without.vars.get("config_erase_size").map(String::as_str),
@@ -2862,23 +2866,17 @@ fn erase_page_wrapper_only_where_the_sector_is_smaller_than_the_chip_page() {
         // F4: `STATE` в секторе 16 KiB при странице 128 KiB.
         ("f407ve", &[], "true", "false", "true"),
         // С разделом настроек: `STATE` в секторе 4 (64 KiB), `CONFIG` — в 16 KiB.
-        ("f407ve", &[("config", "internal")], "true", "true", "true"),
+        ("f407ve", &[("config", "yes")], "true", "true", "true"),
         // Без OTA `CONFIG` — в хвосте, в секторе 128 KiB, как страница чипа.
         (
             "f407ve",
-            &[("config", "internal"), ("ota", "no")],
+            &[("config", "yes"), ("ota", "no")],
             "false",
             "false",
             "false",
         ),
         // Равные секторы: раздел строится прямо над `Whole`.
-        (
-            "g071rb",
-            &[("config", "internal")],
-            "false",
-            "false",
-            "false",
-        ),
+        ("g071rb", &[("config", "yes")], "false", "false", "false"),
         // `DFU` в банке 2: `STATE` по-прежнему равен странице чипа.
         ("h743zg", &[], "false", "false", "false"),
         // Страница обмена расширена: `ACTIVE`/`DFU` в `ErasePage`, а `STATE` — нет.
@@ -3020,7 +3018,7 @@ fn ota_and_settings_code_is_kept_only_when_selected() {
         ),
         (
             "g474re",
-            &[("ota", "internal"), ("config", "no")],
+            &[("ota", "yes"), ("config", "no")],
             false,
             true,
             true,
@@ -3036,7 +3034,7 @@ fn ota_and_settings_code_is_kept_only_when_selected() {
         // Настройки в хвосте flash на равных секторах: обёртки страницы нет.
         (
             "g071rb",
-            &[("ota", "no"), ("config", "internal")],
+            &[("ota", "no"), ("config", "yes")],
             true,
             false,
             true,
@@ -3045,7 +3043,7 @@ fn ota_and_settings_code_is_kept_only_when_selected() {
         // раздела своя не нужна.
         (
             "l073rz",
-            &[("ota", "no"), ("config", "external")],
+            &[("ext_flash", "yes"), ("ota", "no"), ("config", "yes")],
             true,
             false,
             true,
@@ -3305,8 +3303,9 @@ fn interview(
     run_interview(ast, suffix, &all, picks)
 }
 
-/// Вопросы идут в одном порядке и предлагают только допустимое: сначала OTA,
-/// настройки и граф, затем транспорт, и только потом — протоколы этого транспорта.
+/// Вопросы идут в одном порядке и предлагают только допустимое: сначала внешняя
+/// флеш, OTA, настройки и граф, затем транспорт, и только потом — протоколы
+/// этого транспорта.
 #[test]
 fn the_menus_come_in_order_and_offer_only_what_is_possible() {
     let ast = compile_script();
@@ -3331,6 +3330,7 @@ fn the_menus_come_in_order_and_offer_only_what_is_possible() {
     assert_eq!(
         order,
         [
+            "ext_flash",
             "ota",
             "config",
             "graph",
@@ -3393,7 +3393,7 @@ fn menu_picks_reach_the_template_variables() {
         "h743zg",
         &[],
         &[
-            ("ota", "internal"),
+            ("ota", "yes"),
             ("config", "no"),
             ("graph", "no"),
             ("transports", "ethernet"),
@@ -3645,7 +3645,7 @@ fn dfu_behind_a_bank_gap_is_addressed_from_the_bank() {
 /// флеши, и регион банка 2 прошивке не нужен (`dfu_bank = false`).
 #[test]
 fn external_ota_on_a_bank_gap_chip_leaves_bank_2_alone() {
-    let result = run_cascade_with(&compile_script(), "h743zg", &[("ota", "external")])
+    let result = run_cascade_with(&compile_script(), "h743zg", &[("ext_flash", "yes")])
         .expect("каскад не должен падать");
     assert_eq!(
         result.vars.get("ota_store").map(String::as_str),
@@ -4088,7 +4088,7 @@ fn swap_page_follows_the_layout() {
         ("f407ve", &[][..]),
         ("h743zg", &[][..]),
         ("l073rz", &[("ota", "no")][..]),
-        ("l073rz", &[("ota", "external")][..]),
+        ("l073rz", &[("ext_flash", "yes")][..]),
         ("l073rz", &[("write_size", "4")][..]),
     ] {
         let result = run_cascade_with(&ast, chip, preset).expect("каскад не должен падать");
@@ -4100,7 +4100,7 @@ fn swap_page_follows_the_layout() {
     }
     let f4 = run_cascade_to(&ast, "f407ve").expect("каскад не должен падать");
     assert_eq!(var(&f4, "page_size").as_deref(), Some("131072"));
-    let ext = run_cascade_with(&ast, "l073rz", &[("ota", "external")]).expect("каскад");
+    let ext = run_cascade_with(&ast, "l073rz", &[("ext_flash", "yes")]).expect("каскад");
     assert_eq!(var(&ext, "page_size").as_deref(), Some(""));
 }
 
@@ -4113,7 +4113,7 @@ fn bootloader_zone_and_swap_page_hold_for_every_chip() {
     let mut failures = Vec::new();
     let mut paged = 0;
     for suffix in all_chip_suffixes() {
-        for preset in [&[][..], &[("config", "internal")][..]] {
+        for preset in [&[][..], &[("config", "yes")][..]] {
             let Ok(result) = run_chip_with(&ast, &suffix, preset) else {
                 continue; // падения каскада ловят соседние тесты
             };
@@ -4199,7 +4199,7 @@ fn answers_cut_the_chip_list_before_the_cascade() {
     // либо не может привести к чипу, либо приводит к соседу, которому место
     // есть (у h723ve это h723vg — 1 MiB).
     for (chip, preset) in [
-        ("h723ve", [("ota", "internal"), ("graph", "no")]),
+        ("h723ve", [("ota", "yes"), ("graph", "no")]),
         ("l011f4", [("ota", "no"), ("graph", "yes")]),
     ] {
         let target = format!("stm32{chip}");
@@ -4536,8 +4536,8 @@ fn the_link_filter_does_not_assume_unasked_answers() {
             .contains("links: uart:protobuf не помещается в RAM STM32F100RB"),
         "{err}"
     );
-    // Заданные `ota=internal` и `graph=yes` в базе учитываются — чип не показывается.
-    let asked = [links, ("ota", "internal"), ("graph", "yes")];
+    // Заданные `ota=yes` и `graph=yes` в базе учитываются — чип не показывается.
+    let asked = [links, ("ota", "yes"), ("graph", "yes")];
     match run_cascade_with(&ast, "f100rb", &asked) {
         Err(err) => assert!(err.to_string().contains("не ведёт к цели"), "{err}"),
         Ok(result) => assert_ne!(var_of(&result, "chip"), Some("STM32F100RB")),
@@ -4546,12 +4546,7 @@ fn the_link_filter_does_not_assume_unasked_answers() {
     run_cascade_with(
         &ast,
         "f100rb",
-        &[
-            links,
-            ("ota", "internal"),
-            ("graph", "yes"),
-            ("write_size", "4"),
-        ],
+        &[links, ("ota", "yes"), ("graph", "yes"), ("write_size", "4")],
     )
     .expect("ручная раскладка не отсеивается по RAM");
 }

@@ -61,7 +61,7 @@ ports = { workspace = true }
 embassy-embedded-hal = { workspace = true }
 {%- if signed == "true" or ota_store == "external" %}
 # Решение bootloader'а — обмен или текущий образ (`domain::ota::boot::boot_plan`,
-# с `ota=external`){% if signed == "true" %} и проверка нового образа перед обменом
+# с `ext_flash=yes`){% if signed == "true" %} и проверка нового образа перед обменом
 # (`domain::ota::boot::screen_update`, фича `signed`){% endif %}. Зависит от `domain`
 # ради двух функций над блокирующими разделами; в образ попадают только они:
 # `lto = "fat"` и `--gc-sections` выбрасывают всё, на что нет ссылок

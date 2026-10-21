@@ -145,7 +145,7 @@ getrandom              = { version = "0.4.3" }
 {%- endif %}
 {%- endif %}
 embassy-sync       = { version = "0.8.0" }
-# Трейты `NorFlash` — нужны только `boot/src/external.rs` при `ota=external`
+# Трейты `NorFlash` — нужны только `boot/src/external.rs` при `ext_flash=yes`
 # (геометрия драйвера внешней флеши в проверках при компиляции). Та же версия,
 # что тянет embassy-boot.
 embedded-storage   = { version = "0.3.1" }

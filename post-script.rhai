@@ -107,7 +107,7 @@ if variable::get("graph") == "true" {
 }
 
 // Lock-файлов шаблон не раздаёт: состав зависимостей зависит от ответов выше —
-// при `ota=no` уходят `embassy-boot*`, при `config=internal` добавляются
+// при `ota=no` уходят `embassy-boot*`, при `config=yes` добавляются
 // `sequential-storage` с `embedded-storage-async`, при OTA — `salty`,
 // протокол приносит свои крейты. Один шаблонный lock подходил бы ровно одному
 // сочетанию, а остальным ломал бы `cargo fetch --locked` в CI. Поэтому их

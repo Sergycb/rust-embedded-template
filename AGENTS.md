@@ -30,7 +30,7 @@ skill'ом `rust-engineering` и не дублируются здесь. Это�
 подключает `domain` как обычную path-зависимость.
 **Исключение — `boot`:** bootloader зависит от `bsp` (точка входа, ядро, банки, HAL,
 константы раскладки, паникёр; фичи `time-driver` и `fault-handler` ему не включаются —
-`docs/architecture.md`) и от `domain` (при `signed` или `ota=external`)
+`docs/architecture.md`) и от `domain` (при `signed` или `ext_flash=yes`)
 ради двух свободных функций над блокирующими разделами,
 `domain::ota::boot::{boot_plan, screen_update}`; в образ попадают только они
 (`lto` + `--gc-sections` выбрасывают остальное). Их типы — `BootPlan`, `Screening`,
@@ -188,7 +188,7 @@ read`: руками пришлось бы сначала найти адрес �
   `prepare` — `docs/ota.md`.
 - `NoopRawMutex` у `bsp::flash::FlashMutex`, у мьютексов разделов `DFU` и `STATE`
   (`bsp::ota::DFU_FLASH`, `bsp::ota::STATE_FLASH`), `CONFIG`
-  (`bsp::settings::CONFIG_FLASH`; с `ota=external` —
+  (`bsp::settings::CONFIG_FLASH`; с `ext_flash=yes` —
   `bsp::external::ExternalMutex`{% if dfu_bank == "true" %}; `DFU` во втором банке —
   `bsp::flash::DfuBankMutex`{% endif %}){% if has_modbus == "true" %}, карты регистров
   Modbus (`domain::modbus::MapMutex`, `crate::modbus` в `app`; ручки
@@ -206,7 +206,7 @@ read`: руками пришлось бы сначала найти адрес �
   `READY_<транспорт>` в `crates-cross/app/src/tasks/ota.rs`): подтверждение после обновления или отката стирает
   `STATE`, ядро стоит на выборке, и перечисление, попавшее на это, хост
   бракует до переподключения — `docs/ota.md`.
-- С `ota=external` (`DFU`/`STATE` на внешней флеши): `EXT_PAGE_SIZE` — одно
+- С `ext_flash=yes` (`DFU`/`STATE` на внешней флеши): `EXT_PAGE_SIZE` — одно
   число из генерации — переменная среды `[env]` в
   `crates-cross/.cargo/config.toml`, общая у `boot` и `bsp::external`, — и стирание
   драйвера обязано его делить (`const`-assert в обоих); драйвер —
