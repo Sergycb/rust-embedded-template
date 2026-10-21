@@ -27,11 +27,12 @@
 
 use defmt_or_log::warn;
 use ports::{CHUNK_BYTES, Chunk, OtaCommand, OtaReply, Progress, SIGNATURE_BYTES, reply_code};
-use supervisor::Requester;
 use zencan_node::common::AtomicCell;
 use zencan_node::common::objects::{AccessType, DataType, ObjectCode, PdoMappable, SubInfo};
 use zencan_node::common::sdo::AbortCode;
 use zencan_node::object_dict::ObjectAccess;
+
+use crate::ota::OtaClient;
 
 /// Индекс объекта OTA — в области приложения `zencan` (0x2000–0x4FFF). Тот же,
 /// что в `device.toml`; разойтись им не даёт тест узла.
@@ -72,7 +73,7 @@ impl OtaObject {
 
     /// Ждущую команду — узлу OTA, исход — в объект. Зовёт узел CANopen после
     /// обработки кадра; нет команды — ничего.
-    pub(crate) async fn forward(&self, ota: &Requester<'static, OtaCommand, OtaReply>) {
+    pub(crate) async fn forward(&self, ota: &OtaClient) {
         let Some(command) = self.pending.take() else {
             return;
         };

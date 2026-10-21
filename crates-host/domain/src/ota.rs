@@ -18,10 +18,11 @@
 //!
 //! * `Idle` — приёма нет; `Start` проверяет занятость и подпись и, если всё
 //!   в порядке, стирает раздел под образ;
-//! * `Receiving` — идёт приём: куски пишутся во флеш шагами
-//!   [`Transfer`](crate::ota::download::Transfer), `Finish` применяет образ;
-//!   хост молчит дольше [`SESSION_TIMEOUT`](crate::ota::SESSION_TIMEOUT) — приём
-//!   брошен;
+//! * `Receiving` — идёт приём от одного клиента
+//!   ([`ClientId`](crate::ota::ClientId), транспорт): куски пишутся во флеш
+//!   шагами [`Transfer`](crate::ota::download::Transfer), `Finish` применяет образ;
+//!   `Start`/`Chunk`/`Finish` другого клиента получают `Busy`; владелец молчит
+//!   дольше [`SESSION_TIMEOUT`](crate::ota::SESSION_TIMEOUT) — приём брошен;
 //! * `Ready` — образ применён, обмен разделов ждёт сброса; новый `Start`
 //!   отвергается как `Busy`.
 //!
@@ -63,8 +64,9 @@ use embassy_time::{Duration, Instant, Timer};
 use ports::{
     Chunk, DownloadError, FirmwareUpdate, Progress, Reboot, Rejection, SIGNATURE_BYTES, UpdateError,
 };
-use supervisor::Served;
+use supervisor::__private::sync_request::RequestDroppedError;
 use supervisor::runtime::TaskExit;
+use supervisor::{Requester, Served};
 
 use crate::ota::download::Transfer;
 
@@ -86,15 +88,69 @@ pub const REBOOT_GRACE: Duration = Duration::from_millis(100);
 /// Подпись образа.
 type Signature = [u8; SIGNATURE_BYTES];
 
-/// Ёмкость входа `CMD`, байт: команда (кусок `ports::CHUNK_BYTES` со смещением и
-/// длиной, тег варианта) и ответ. Одно число на граф (`request:` в `OTA_FRAG`) и
-/// на `static` входа в проекте без графа (`crates-cross/app/src/main.rs`). В
+/// Номер клиента входа `CMD` — транспорта, с которого пришла команда.
+///
+/// Транспорт, а не удалённый хост: два хоста на одной шине для узла — один
+/// клиент. Номера раздаёт compose-site (`app`), по одному на узел протокола.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct ClientId(pub u8);
+
+/// Запрос на вход `CMD`: команда и клиент, от которого она пришла.
+///
+/// Клиент нужен автомату, чтобы приём образа принадлежал одному транспорту:
+/// пока идёт приём, `Start`/`Chunk`/`Finish` другого клиента получают
+/// `Busy`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct OtaRequest {
+    /// Кто прислал команду.
+    pub client: ClientId,
+    /// Сама команда.
+    pub command: OtaCommand,
+}
+
+/// Клиент узла OTA для узла протокола: requester входа `CMD` и свой номер.
+///
+/// Узел протокола зовёт [`request`](Self::request) с голой командой, как
+/// раньше `Requester::request`, а номер подставляется сам.
+#[derive(Debug, Clone, Copy)]
+pub struct OtaClient {
+    requester: Requester<'static, OtaRequest, OtaReply>,
+    id: ClientId,
+}
+
+impl OtaClient {
+    /// Клиент `id` над `requester` (`ota_cmd_requester()` графа).
+    #[must_use]
+    pub const fn new(requester: Requester<'static, OtaRequest, OtaReply>, id: ClientId) -> Self {
+        Self { requester, id }
+    }
+
+    /// Команда узлу OTA от этого клиента и её исход.
+    ///
+    /// # Errors
+    ///
+    /// [`RequestDroppedError`] — узел взял запрос, но не ответил.
+    pub async fn request(&self, command: OtaCommand) -> Result<OtaReply, RequestDroppedError> {
+        self.requester
+            .request(OtaRequest {
+                client: self.id,
+                command,
+            })
+            .await
+    }
+}
+
+/// Ёмкость входа `CMD`, байт: запрос (кусок `ports::CHUNK_BYTES` со смещением и
+/// длиной, тег варианта, номер клиента) и ответ. Одно число на граф (`request:`
+/// в `OTA_FRAG`) и на `static` входа в проекте без графа (`crates-cross/app/src/main.rs`). В
 /// `request:` фрагмента оно записано литералом — макрос не принимает путь, —
 /// так что меняется в двух местах.
 pub const CMD_BYTES: usize = 144;
 
 const _: () = assert!(
-    size_of::<OtaCommand>() <= CMD_BYTES && size_of::<OtaReply>() <= CMD_BYTES,
+    size_of::<OtaRequest>() <= CMD_BYTES && size_of::<OtaReply>() <= CMD_BYTES,
     "команда OTA не помещается во вход CMD: поднимите CMD_BYTES"
 );
 
@@ -214,9 +270,10 @@ where
             states {
                 /// Приёма нет.
                 Idle,
-                /// Идёт приём образа; `until` — когда бросить его, если хост
-                /// замолчал.
+                /// Идёт приём образа от клиента `owner`; `until` — когда бросить
+                /// его, если владелец замолчал.
                 Receiving {
+                    owner: ClientId,
                     transfer: Transfer,
                     signature: Option<Signature>,
                     until: Instant,
@@ -232,13 +289,14 @@ where
                 Receiving { until, .. } => expired: fsm::deadline(*until),
             }
             transitions {
-                *         + cmd((OtaCommand::Start { len, signature }, served)) => start      -> Receiving | Idle | Ready,
-                Receiving + cmd((OtaCommand::Chunk(ref chunk), served))        => chunk      -> Receiving | Idle,
-                Receiving + cmd((OtaCommand::Finish, served))                  => finish     -> Ready | Idle,
-                Idle      + cmd((OtaCommand::Chunk(_) | OtaCommand::Finish, served)) => no_session -> self,
-                Ready     + cmd((OtaCommand::Chunk(_) | OtaCommand::Finish, served)) => no_session -> self,
-                *         + cmd((OtaCommand::Reboot, served))                  => reboot     -> self,
-                Receiving + expired(())                                        => abandon    -> Idle,
+                // Чей приём — проверяют `start`/`chunk`/`finish`: чужому — `Busy`.
+                *         + cmd((OtaRequest { client, command: OtaCommand::Start { len, signature } }, served)) => start -> Receiving | Idle | Ready,
+                Receiving + cmd((OtaRequest { client, command: OtaCommand::Chunk(ref chunk) }, served))         => chunk -> Receiving | Idle,
+                Receiving + cmd((OtaRequest { client, command: OtaCommand::Finish }, served))                   => finish -> Ready | Idle | Receiving,
+                Idle      + cmd((OtaRequest { command: OtaCommand::Chunk(_) | OtaCommand::Finish, .. }, served)) => no_session -> self,
+                Ready     + cmd((OtaRequest { command: OtaCommand::Chunk(_) | OtaCommand::Finish, .. }, served)) => no_session -> self,
+                *         + cmd((OtaRequest { command: OtaCommand::Reboot, .. }, served))                       => reboot -> self,
+                Receiving + expired(())                                                                         => abandon -> Idle,
             }
         }
     }
@@ -290,16 +348,18 @@ where
         }
     }
 
-    /// `Start`: проверки до стирания — занятость, затем режим (подпись), —
-    /// и подготовка раздела. Незаконченный приём брошен.
+    /// `Start`: проверки до стирания — владелец приёма, занятость, затем режим
+    /// (подпись), — и подготовка раздела. Незаконченный приём того же клиента
+    /// брошен, чужой — `Busy`.
     async fn start(
         &mut self,
         from: edges::StartFrom,
+        client: ClientId,
         len: u32,
         signature: Option<Signature>,
-        served: Served<'_, OtaCommand, OtaReply>,
+        served: Served<'_, OtaRequest, OtaReply>,
     ) -> edges::Start {
-        info!("ota: Start: {} байт", len);
+        info!("ota: Start от клиента {}: {} байт", client.0, len);
         // Образ, ждущий обмена, затирать нельзя: `Busy`, и он ждёт дальше. Узел
         // знает это сам, не спрашивая адаптер, — и не зовёт подтверждение,
         // которое сняло бы запрос на обмен (см. `begin`).
@@ -308,6 +368,10 @@ where
                 warn!("ota: Start отвергнут: образ ждёт обмена, нужен Reboot");
                 served.respond(Err(Rejection::Busy));
                 return Ready.into();
+            }
+            // Приём другого клиента не трогаем — ни раздел, ни его срок.
+            edges::StartFrom::Receiving(s) if s.owner != client => {
+                return busy(s, client, served).into();
             }
             edges::StartFrom::Receiving(_) => {
                 warn!("ota: незаконченный приём брошен новым Start");
@@ -337,6 +401,7 @@ where
             Ok(transfer) => {
                 served.respond(Ok(Progress::Started));
                 Receiving {
+                    owner: client,
                     transfer,
                     signature,
                     until: Instant::now() + SESSION_TIMEOUT,
@@ -351,13 +416,18 @@ where
         }
     }
 
-    /// `Chunk`: кусок во флеш. Отказ — приём брошен, хост начинает заново.
+    /// `Chunk`: кусок во флеш. Отказ — приём брошен, хост начинает заново;
+    /// кусок не от владельца — `Busy`, не записан.
     async fn chunk(
         &mut self,
         mut s: Receiving,
+        client: ClientId,
         chunk: &Chunk,
-        served: Served<'_, OtaCommand, OtaReply>,
+        served: Served<'_, OtaRequest, OtaReply>,
     ) -> edges::Chunk {
+        if client != s.owner {
+            return busy(s, client, served).into();
+        }
         match s
             .transfer
             .chunk(&mut *self.flash, chunk.offset(), chunk.as_bytes())
@@ -377,12 +447,16 @@ where
     }
 
     /// `Finish`: сверка длины, затем применение через режим (plain или
-    /// signed).
+    /// signed); не от владельца — `Busy`, приём продолжается.
     async fn finish(
         &mut self,
         s: Receiving,
-        served: Served<'_, OtaCommand, OtaReply>,
+        client: ClientId,
+        served: Served<'_, OtaRequest, OtaReply>,
     ) -> edges::Finish {
+        if client != s.owner {
+            return busy(s, client, served).into();
+        }
         let outcome = match s.transfer.finish(&mut *self.flash).await {
             Ok(len) => {
                 self.mode
@@ -414,13 +488,13 @@ where
 
     /// `Chunk` или `Finish` без приёма: отказ, состояние то же.
     #[expect(clippy::unused_self, reason = "действие автомата")]
-    fn no_session(&mut self, served: Served<'_, OtaCommand, OtaReply>) {
+    fn no_session(&mut self, served: Served<'_, OtaRequest, OtaReply>) {
         warn!("ota: кусок или Finish без Start");
         served.respond(Err(Rejection::NoSession));
     }
 
     /// `Reboot`: ответ, пауза на его отправку, сброс.
-    async fn reboot(&mut self, served: Served<'_, OtaCommand, OtaReply>) {
+    async fn reboot(&mut self, served: Served<'_, OtaRequest, OtaReply>) {
         info!("ota: перезагрузка по команде хоста");
         served.respond(Ok(Progress::Rebooting));
         Timer::after(REBOOT_GRACE).await;
@@ -433,6 +507,17 @@ where
         warn!("ota: хост молчит дольше тайм-аута — приём брошен");
         Idle
     }
+}
+
+/// Команда приёма не от владельца: `Busy`, приём владельца — и его срок — как
+/// были.
+fn busy(s: Receiving, client: ClientId, served: Served<'_, OtaRequest, OtaReply>) -> Receiving {
+    warn!(
+        "ota: команда клиента {} отвергнута: идёт приём клиента {}",
+        client.0, s.owner.0
+    );
+    served.respond(Err(Rejection::Busy));
+    s
 }
 
 /// Код отказа для хоста по ошибке приёма.
@@ -474,7 +559,8 @@ fn update_rejection<E>(err: &UpdateError<E>) -> Rejection {
 //
 // `request: [CMD: …]` — вход команд: запрос с ответом (`sync-request`), а не
 // очередь, потому что протокол отвечает хосту исходом именно своей команды.
-// Узел протокола получает клиента аксессором графа `ota_cmd_requester()`.
+// Узел протокола держит `OtaClient` — requester из аксессора графа
+// `ota_cmd_requester()` и номер транспорта, который раздаёт compose-site.
 // Ёмкость — `CMD_BYTES` (литералом: макрос другого не принимает), её же берёт
 // `static` входа в проекте без графа; менять оба места вместе.
 //
@@ -506,7 +592,7 @@ supervisor::supervisor_fragment! {
             CONFIRMED: bool = false
         ],
         // Литерал, а не `CMD_BYTES`: макрос принимает здесь только число. Равен ему.
-        request: [CMD: $crate::ota::OtaCommand -> $crate::ota::OtaReply; 144],
+        request: [CMD: $crate::ota::OtaRequest -> $crate::ota::OtaReply; 144],
         ready,
         ctx: $crate::ota::OtaCtx,
         task: $crate::ota::task;
@@ -520,11 +606,12 @@ pub(crate) mod tests {
     use embassy_time::{Duration, MockDriver};
     use ports::{Chunk, OtaCommand, OtaReply, Progress, Reboot, Rejection};
     // {%- if has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" %}
-    use supervisor::Requester;
     use supervisor::runtime::TaskExit;
+
+    use super::OtaClient;
     // {%- endif %}
 
-    use super::{Mode, REBOOT_GRACE, SESSION_TIMEOUT, task};
+    use super::{ClientId, Mode, OtaRequest, REBOOT_GRACE, SESSION_TIMEOUT, task};
     use crate::ota::fakes::{FakeFlash, SIGNATURE};
     use crate::ota::update::VERSION_BYTES;
     use crate::ota::version::pack;
@@ -547,7 +634,7 @@ pub(crate) mod tests {
     /// протоколов (`host::service`). Стенд, флеш и слоты живут до конца
     /// процесса, как граф в прошивке: клиент — `'static`, как у
     /// `ota_cmd_requester()`.
-    pub(crate) fn live() -> (Requester<'static, OtaCommand, OtaReply>, Node) {
+    pub(crate) fn live() -> (OtaClient, Node) {
         let stand = Box::leak(Box::new(
             supervisor::stand!(OTA_FRAG<FakeFlash, FakeReboot>),
         ));
@@ -557,14 +644,26 @@ pub(crate) mod tests {
             Box::leak(Box::new(Mode::Plain)),
             Box::leak(Box::new(false)),
         ));
-        (stand.cmd.requester(), Box::pin(node))
+        (
+            OtaClient::new(stand.cmd.requester(), ClientId(0)),
+            Box::pin(node),
+        )
     }
     // {%- endif %}
 
-    /// Шаг сценария: команда узлу или пауза.
+    /// Шаг сценария: команда узлу (от клиента 0 или от другого) или пауза.
     enum Step {
         Send(OtaCommand),
+        From(ClientId, OtaCommand),
         Wait(Duration),
+    }
+
+    /// Та же команда от клиента `client`.
+    fn by(client: u8, step: Step) -> Step {
+        match step {
+            Step::Send(command) | Step::From(_, command) => Step::From(ClientId(client), command),
+            Step::Wait(_) => step,
+        }
     }
 
     fn poll<T>(fut: Pin<&mut impl Future<Output = T>>) -> Poll<T> {
@@ -589,25 +688,29 @@ pub(crate) mod tests {
 
         let mut replies = Vec::new();
         for step in steps {
-            match step {
-                Step::Send(cmd) => {
-                    let mut request = pin!(requester.request(cmd));
-                    let reply = (0..16)
-                        .find_map(|_| match poll(request.as_mut()) {
-                            Poll::Ready(reply) => Some(reply.expect("узел ответил")),
-                            Poll::Pending => {
-                                assert!(poll(node.as_mut()).is_pending(), "узел не выходит");
-                                None
-                            }
-                        })
-                        .expect("узел ответил за конечное число шагов");
-                    replies.push(reply);
-                }
+            let request = match step {
+                Step::Send(command) => OtaRequest {
+                    client: ClientId(0),
+                    command,
+                },
+                Step::From(client, command) => OtaRequest { client, command },
                 Step::Wait(pause) => {
                     MockDriver::get().advance(pause);
                     assert!(poll(node.as_mut()).is_pending(), "узел не выходит");
+                    continue;
                 }
-            }
+            };
+            let mut request = pin!(requester.request(request));
+            let reply = (0..16)
+                .find_map(|_| match poll(request.as_mut()) {
+                    Poll::Ready(reply) => Some(reply.expect("узел ответил")),
+                    Poll::Pending => {
+                        assert!(poll(node.as_mut()).is_pending(), "узел не выходит");
+                        None
+                    }
+                })
+                .expect("узел ответил за конечное число шагов");
+            replies.push(reply);
         }
         replies
     }
@@ -1088,6 +1191,162 @@ pub(crate) mod tests {
                 Ok(Progress::Received(16)),
                 Err(Rejection::NoSession),
             ]
+        );
+    }
+
+    /// Чужой `Start` посреди приёма — `Busy`, приём владельца не тронут.
+    #[test]
+    fn a_foreign_start_during_receiving_is_busy() {
+        let mut flash = FakeFlash::new(64, 8);
+        let image = image(16);
+
+        let replies = run(
+            &mut flash,
+            Mode::Plain,
+            vec![start(16), by(1, start(8)), chunk(0, &image), finish()],
+        );
+
+        assert_eq!(
+            replies,
+            vec![
+                Ok(Progress::Started),
+                Err(Rejection::Busy),
+                Ok(Progress::Received(16)),
+                Ok(Progress::Ready),
+            ]
+        );
+        assert_eq!(flash.prepared, Some(16), "чужой Start раздел не готовил");
+        assert_eq!(&flash.memory[..16], &image[..]);
+    }
+
+    /// Чужой кусок с тем смещением, что ждёт владелец, — `Busy` и не
+    /// записан; кусок владельца следом принят.
+    #[test]
+    fn a_foreign_chunk_is_busy_and_not_written() {
+        let mut flash = FakeFlash::new(64, 8);
+        let image = image(16);
+
+        let replies = run(
+            &mut flash,
+            Mode::Plain,
+            vec![
+                start(16),
+                by(1, chunk(0, &[0xAA; 16])),
+                chunk(0, &image),
+                finish(),
+            ],
+        );
+
+        assert_eq!(
+            replies,
+            vec![
+                Ok(Progress::Started),
+                Err(Rejection::Busy),
+                Ok(Progress::Received(16)),
+                Ok(Progress::Ready),
+            ]
+        );
+        assert_eq!(&flash.memory[..16], &image[..]);
+    }
+
+    /// Чужой `Finish` — `Busy`, приём продолжается.
+    #[test]
+    fn a_foreign_finish_is_busy() {
+        let mut flash = FakeFlash::new(64, 8);
+
+        let replies = run(
+            &mut flash,
+            Mode::Plain,
+            vec![start(8), by(1, finish()), chunk(0, &[0; 8]), finish()],
+        );
+
+        assert_eq!(
+            replies,
+            vec![
+                Ok(Progress::Started),
+                Err(Rejection::Busy),
+                Ok(Progress::Received(8)),
+                Ok(Progress::Ready),
+            ]
+        );
+        assert_eq!(flash.updated, 1, "обмен запрошен одним Finish владельца");
+    }
+
+    /// Владелец повторил `Start` (ответ потерялся) — приём с нуля, не `Busy`.
+    #[test]
+    fn the_owner_may_restart_its_session() {
+        let mut flash = FakeFlash::new(64, 8);
+        let image = image(16);
+
+        let replies = run(
+            &mut flash,
+            Mode::Plain,
+            vec![
+                start(32),
+                chunk(0, &[0xAA; 8]),
+                start(16),
+                chunk(0, &image),
+                finish(),
+            ],
+        );
+
+        assert_eq!(
+            replies,
+            vec![
+                Ok(Progress::Started),
+                Ok(Progress::Received(8)),
+                Ok(Progress::Started),
+                Ok(Progress::Received(16)),
+                Ok(Progress::Ready),
+            ]
+        );
+        assert_eq!(flash.prepared, Some(16));
+    }
+
+    /// Владелец замолчал — по сроку от его последней команды сессия свободна;
+    /// чужой `Start` посреди срока его не продлевает.
+    #[test]
+    fn a_silent_owner_releases_the_session() {
+        let mut flash = FakeFlash::new(64, 8);
+        let half = SESSION_TIMEOUT / 2;
+
+        let replies = run(
+            &mut flash,
+            Mode::Plain,
+            vec![
+                start(16),
+                Step::Wait(half),
+                by(1, start(8)),
+                Step::Wait(SESSION_TIMEOUT - half),
+                by(1, start(8)),
+            ],
+        );
+
+        assert_eq!(
+            replies,
+            vec![
+                Ok(Progress::Started),
+                Err(Rejection::Busy),
+                Ok(Progress::Started),
+            ]
+        );
+        assert_eq!(flash.prepared, Some(8), "сессия клиента 1");
+    }
+
+    /// `Reboot` обслуживается от любого клиента, и посреди чужого приёма тоже.
+    #[test]
+    fn reboot_is_served_for_any_client() {
+        let mut flash = FakeFlash::new(64, 8);
+
+        let replies = run(
+            &mut flash,
+            Mode::Plain,
+            vec![start(16), by(1, Step::Send(OtaCommand::Reboot))],
+        );
+
+        assert_eq!(
+            replies,
+            vec![Ok(Progress::Started), Ok(Progress::Rebooting)]
         );
     }
 

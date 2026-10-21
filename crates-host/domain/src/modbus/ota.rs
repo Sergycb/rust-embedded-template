@@ -25,10 +25,11 @@
 
 use defmt_or_log::warn;
 use ports::{
-    Bits, BitsMut, CHUNK_BYTES, Chunk, Exception, OtaCommand, OtaReply, Progress, Registers,
-    SIGNATURE_BYTES, Words, WordsMut, reply_code,
+    Bits, BitsMut, CHUNK_BYTES, Chunk, Exception, OtaCommand, Progress, Registers, SIGNATURE_BYTES,
+    Words, WordsMut, reply_code,
 };
-use supervisor::Requester;
+
+use crate::ota::OtaClient;
 
 /// Начало окна OTA — высоко в адресах, чтобы не мешать карте проекта.
 pub const OTA_BASE: u16 = 0xF000;
@@ -56,7 +57,7 @@ const SIGNATURE_REGISTERS: u16 = (SIGNATURE_BYTES / 2) as u16;
 pub struct OtaRegisters<R> {
     inner: R,
     /// Клиент входа `CMD` узла OTA.
-    ota: Requester<'static, OtaCommand, OtaReply>,
+    ota: OtaClient,
     /// Код последнего исхода — первый входной регистр окна.
     status: u16,
     /// Сколько байт образа принято — по последнему `Received`.
@@ -65,8 +66,8 @@ pub struct OtaRegisters<R> {
 
 impl<R> OtaRegisters<R> {
     /// Карта `inner` с окном OTA, команды из которого уходят `ota` — клиенту
-    /// входа `CMD` узла OTA (`ota_cmd_requester()` графа).
-    pub const fn new(inner: R, ota: Requester<'static, OtaCommand, OtaReply>) -> Self {
+    /// входа `CMD` узла OTA ([`OtaClient`] над `ota_cmd_requester()` графа).
+    pub const fn new(inner: R, ota: OtaClient) -> Self {
         Self {
             inner,
             ota,

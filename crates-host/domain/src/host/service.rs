@@ -7,7 +7,8 @@ use ports::HostService;
 use core::array::TryFromSliceError;
 use core::fmt::Write as _;
 use ports::{Chunk, OtaCommand, OtaReply, SIGNATURE_BYTES};
-use supervisor::Requester;
+
+use crate::ota::OtaClient;
 // {%- endif %}
 use proto::{Error, Info, Request, Request_, Response, Response_, heapless};
 
@@ -42,7 +43,7 @@ pub struct Service {
     info: DeviceInfo,
     // {%- if ota == "true" %}
     /// Клиент узла OTA: команда обновления уходит туда, исход — хосту.
-    ota: Requester<'static, OtaCommand, OtaReply>,
+    ota: OtaClient,
     // {%- endif %}
 }
 
@@ -57,8 +58,8 @@ impl core::fmt::Debug for Service {
 
 impl Service {
     /// Обработчик, отвечающий на `info` сведениями `info`{% if ota == "true" %}; команды обновления
-    /// уходят узлу OTA через `ota` — клиента его входа `CMD` (`ota_cmd_requester()`
-    /// графа){% endif %}.
+    /// уходят узлу OTA через `ota` — клиента его входа `CMD` ([`OtaClient`] над
+    /// `ota_cmd_requester()` графа){% endif %}.
     ///
     /// # Panics
     ///
@@ -69,7 +70,7 @@ impl Service {
     pub const fn new(
         info: DeviceInfo,
         // {%- if ota == "true" %}
-        ota: Requester<'static, OtaCommand, OtaReply>,
+        ota: OtaClient,
         // {%- endif %}
     ) -> Self {
         assert!(
