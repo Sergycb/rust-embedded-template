@@ -1,5 +1,7 @@
 //! Узлы `CANOPEN_*`: узел CANopen, адрес 1, по модулю на шину CAN.
 {%- assign xs = links | split: "," %}
+{%- comment %} Номер клиента OTA — порядковый номер транспорта с протоколом в `links`, как в графе (`crate::graph`). {% endcomment %}
+{%- assign client = 0 %}
 {%- for l in xs %}
 {%- assign f = l | split: ":" %}
 {%- if f[3] == "canopen" %}
@@ -26,7 +28,10 @@ pub mod {{ f[4] }} {
             settings: &mut store,
             persist: &mut persist,
 {%- if ota == "true" %}
-            ota_cmd: &mut crate::tasks::ota::CMD.requester(),
+            ota_cmd: &mut domain::ota::OtaClient::new(
+                crate::tasks::ota::CMD.requester(),
+                domain::ota::ClientId({{ client }}),
+            ),
 {%- endif %}
             index: 0,
         })
@@ -40,4 +45,5 @@ pub mod {{ f[4] }} {
     }
 }
 {%- endif %}
+{%- if f[3] != "none" %}{% assign client = client | plus: 1 %}{% endif %}
 {%- endfor %}

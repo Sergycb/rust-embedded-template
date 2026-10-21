@@ -222,6 +222,31 @@ provide_usart_uart(r.usart).expect("слот пуст до первого spawn_
 spawn_all(&spawner, parts).expect("узлы свежие");
 ```
 
+**Большой объект в слот по значению не кладут.** Слот `[X: T]` — `static`
+с `Option<T>`, и значение дважды проходит через стек: его строит пролог
+`spawn_all` (`= <expr>`, кадр `main`) или вызывающий `provide_*`, а задача забирает его `take()` в первом
+опросе — копией на стек и оттуда в future в `TaskStorage`. Живёт объект тоже
+дважды: в слоте и в future. Стек под `flip-link` — это остаток RAM после
+статиков, своего размера у него нет, поэтому то, что «влезло» в одном проекте,
+в другом с парой лишних буферов уходит ниже начала RAM (`HardFault`, SP вне
+памяти). Всё, что от килобайта и выше, — слот `&'static mut T` со статиком,
+который заводит сам граф:
+
+```ignore
+resources: [WS: &'static mut $crate::x::Workspace = static],
+// или с «заплаткой» для полей, которые не должны быть нулём:
+resources: [WS: &'static mut $crate::x::Workspace = static |w| w.gain = inputs.gain],
+```
+
+Статик — `ZeroedCell<T>` из `supervisor`, нули, то есть `.bss` без образа во
+флеше; `T` на стеке не строится ни разу. Цена: `T: supervisor::Zeroed`
+(`unsafe impl supervisor::Zeroed for Workspace {}` под `// SAFETY:` с полями;
+целые, `bool`, массивы из них уже реализуют), слот без пометок — не
+`consume`, не `shared`, не `local`. Свой `StaticCell` в `app` для этого не
+нужен: `StaticCell::init_with(|| T::new(..))` не обещает строить на месте, а
+`ConstStaticCell` с ненулевым `T` уводит статик в `.data` — во флеш.
+Подробности — `supervisor-macros/docs/dsl.md`, «A large object: `= static`».
+
 # `watchdog` — мультиплексор задач в один аппаратный watchdog
 
 `supervisor` пользуется им внутри (блок `watchdog:` выше), а реализовать
@@ -404,8 +429,12 @@ async fn uart_drain_task(mut uart: embassy_stm32::usart::UartTx<'static, embassy
 `crates-host/domain/src/ota.rs`.
 
 Команды шлёт узел протокола: клиента входа отдаёт аксессор графа
-`ota_cmd_requester()` — с protobuf его получает `domain::host::Service` прямо
-во входе узла `HOST`. Своего канала у образа нет: он идёт по протоколу,
+`ota_cmd_requester()`, а узел получает его обёрнутым в `domain::ota::OtaClient`
+с номером своего транспорта (`ClientId`, порядковый номер транспорта с
+протоколом в `links`, с 0; тот же у задачи без графа) — с protobuf его
+получает `domain::host::Service` прямо во входе узла `HOST`. Номер нужен
+владельцу сессии: чужой приём, пока идёт свой, получает `Busy`
+(`docs/ota.md`). Своего канала у образа нет: он идёт по протоколу,
 которым хост и так говорит с устройством (`docs/ota.md`).
 
 Плата отдаёт для узла разделы обновления `parts.board.ota`

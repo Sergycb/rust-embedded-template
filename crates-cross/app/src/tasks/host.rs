@@ -1,6 +1,8 @@
 //! Узлы `HOST_*`: сообщения protobuf от хоста, по модулю на транспорт.
 //! Транспорт и буферы сообщений заводит `crate::link` над объектом платы.
 {%- assign xs = links | split: "," %}
+{%- comment %} Номер клиента OTA — порядковый номер транспорта с протоколом в `links`, как в графе (`crate::graph`). {% endcomment %}
+{%- assign client = 0 %}
 {%- for l in xs %}
 {%- assign f = l | split: ":" %}
 {%- if f[3] == "protobuf" %}
@@ -16,7 +18,17 @@ pub mod {{ f[4] }} {
         rx: &'static mut [u8],
         tx: &'static mut [u8],
     ) {
-        let mut service = domain::host::Service::new(info{% if ota == "true" %}, crate::tasks::ota::CMD.requester(){% endif %});
+{%- if ota == "true" %}
+        let mut service = domain::host::Service::new(
+            info,
+            domain::ota::OtaClient::new(
+                crate::tasks::ota::CMD.requester(),
+                domain::ota::ClientId({{ client }}),
+            ),
+        );
+{%- else %}
+        let mut service = domain::host::Service::new(info);
+{%- endif %}
         domain::host::task(domain::host::HostCtx {
             link: &mut link,
             service: &mut service,
@@ -41,4 +53,5 @@ pub mod {{ f[4] }} {
     }
 }
 {%- endif %}
+{%- if f[3] != "none" %}{% assign client = client | plus: 1 %}{% endif %}
 {%- endfor %}

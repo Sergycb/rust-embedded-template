@@ -91,8 +91,9 @@ supervisor_graph! {
         // (`domain::ota::OtaWiring`): адаптер обновления `crate::ota::new(parts.board.ota)`, сброс МК
         // `bsp::cpu::Reboot` и режим применения (`Mode::{% if signed == "true" %}Signed` с версией этого образа
         // из `crate::image`{% else %}Plain`{% endif %}). Образ узел принимает командами на свой вход
-        // `CMD`{% if has_modbus != "true" and has_protobuf != "true" and has_canopen != "true" %}: клиента отдаёт `ota_cmd_requester()`, и шлёт их ваш
-        // протокол — без него узел только подтверждает образ{% else %} — их шлют узлы протоколов ниже, каждый своим клиентом{% endif %}; алгоритм обновления — в
+        // `CMD`{% if has_modbus != "true" and has_protobuf != "true" and has_canopen != "true" %}: клиента (`::domain::ota::OtaClient` над `ota_cmd_requester()`) получает ваш
+        // протокол — без него узел только подтверждает образ{% else %} — их шлют узлы протоколов ниже, каждый своим клиентом (`OtaClient`
+        // с номером транспорта: сессию приёма держит один клиент, остальным — `Busy`){% endif %}; алгоритм обновления — в
         // `domain::ota`. Вычисляется привязка в прологе `spawn_all` первой
         // строкой — раньше инициализатора блока `watchdog:`, как бы они ни стояли
         // в тексте, — частичным move: `ota` уезжает в слот узла, `watchdog`
@@ -129,6 +130,8 @@ supervisor_graph! {
         ::domain::NET_FRAG<::domain::net::Runner<'static, bsp::net::Device>> as NET =
             ::domain::net::NetWiring { runner: parts.net.runner },
 {%- endif %}
+{%- comment %} Номер клиента OTA — порядковый номер транспорта с протоколом в `links`, тот же, что у задачи без графа (`crate::tasks`). {% endcomment %}
+{%- assign client = 0 %}
 {%- for l in xs %}
 {%- assign f = l | split: ":" %}
 {%- if f[3] == "modbus" %}
@@ -141,7 +144,7 @@ supervisor_graph! {
 {%- if ota == "true" %}
         // Карта обёрнута окном OTA (`domain::modbus::OtaRegisters`): записи FC16
         // по `OTA_BASE` уходят узлу `OTA` командами — клиентом его входа `CMD`
-        // (`ota_cmd_requester()`), остальное — карте проекта.
+        // (`OtaClient` с номером этого транспорта), остальное — карте проекта.
         ::domain::MODBUS_SLAVE_FRAG<
             crate::link::{{ f[4] }}::Link,
             ::domain::modbus::OtaRegisters<::domain::modbus::EmptyRegisters>,
@@ -150,7 +153,10 @@ supervisor_graph! {
                 link: crate::link::{{ f[4] }}::new({% if f[0] == "uart" %}parts.board.{{ f[4] }}{% elsif f[0] == "usb" %}parts.{{ f[4] }}.cdc{% else %}parts.net.stack{% endif %}),
                 regs: ::domain::modbus::OtaRegisters::new(
                     ::domain::modbus::EmptyRegisters,
-                    ota_cmd_requester(),
+                    ::domain::ota::OtaClient::new(
+                        ota_cmd_requester(),
+                        ::domain::ota::ClientId({{ client }}),
+                    ),
                 ),
                 unit: 1,
             },
@@ -179,8 +185,11 @@ supervisor_graph! {
                 persist: {{config}},
 {%- if ota == "true" %}
                 // Команды объекта OTA словаря (0x4F00) узел отдаёт узлу `OTA`
-                // клиентом входа `CMD`.
-                ota_cmd: ota_cmd_requester(),
+                // клиентом входа `CMD` с номером этого транспорта.
+                ota_cmd: ::domain::ota::OtaClient::new(
+                    ota_cmd_requester(),
+                    ::domain::ota::ClientId({{ client }}),
+                ),
 {%- endif %}
             },
 {%- elsif f[3] == "protobuf" %}
@@ -189,20 +198,24 @@ supervisor_graph! {
         // заводит `crate::link::{{ f[4] }}` над тем, что отдала плата;
         // обработчик `domain::host::Service` над схемой `crates-host/proto` —
         // логика приложения, проект правит его в `domain`.{% if ota == "true" %} Команды обновления
-        // он отдаёт узлу `OTA` клиентом его входа `CMD` (`ota_cmd_requester()`).{% endif %}
+        // он отдаёт узлу `OTA` клиентом его входа `CMD` с номером этого транспорта.{% endif %}
         ::domain::HOST_FRAG<crate::link::{{ f[4] }}::Link, ::domain::host::Service> as HOST_{{ f[4] | upcase }} =
             ::domain::host::HostWiring {
                 link: crate::link::{{ f[4] }}::new({% if f[0] == "uart" %}parts.board.{{ f[4] }}{% elsif f[0] == "usb" %}parts.{{ f[4] }}.cdc{% else %}parts.net.stack{% endif %}),
                 service: ::domain::host::Service::new(
                     crate::device_info(parts.board.spec),
 {%- if ota == "true" %}
-                    ota_cmd_requester(),
+                    ::domain::ota::OtaClient::new(
+                        ota_cmd_requester(),
+                        ::domain::ota::ClientId({{ client }}),
+                    ),
 {%- endif %}
                 ),
                 rx: crate::link::{{ f[4] }}::rx(),
                 tx: crate::link::{{ f[4] }}::tx(),
             },
 {%- endif %}
+{%- if f[3] != "none" %}{% assign client = client | plus: 1 %}{% endif %}
 {%- endfor %}
     ];
 }

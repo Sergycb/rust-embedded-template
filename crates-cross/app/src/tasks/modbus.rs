@@ -1,6 +1,8 @@
 //! Узлы `MODBUS_*`: Modbus slave с пустой картой регистров, адрес 1, по
 //! модулю на транспорт. Транспорт собирает `crate::link` над объектом платы.
 {%- assign xs = links | split: "," %}
+{%- comment %} Номер клиента OTA — порядковый номер транспорта с протоколом в `links`, как в графе (`crate::graph`). {% endcomment %}
+{%- assign client = 0 %}
 {%- for l in xs %}
 {%- assign f = l | split: ":" %}
 {%- if f[3] == "modbus" %}
@@ -14,7 +16,10 @@ pub mod {{ f[4] }} {
 {%- if ota == "true" %}
         let mut regs = domain::modbus::OtaRegisters::new(
             domain::modbus::EmptyRegisters,
-            crate::tasks::ota::CMD.requester(),
+            domain::ota::OtaClient::new(
+                crate::tasks::ota::CMD.requester(),
+                domain::ota::ClientId({{ client }}),
+            ),
         );
 {%- else %}
         let mut regs = domain::modbus::EmptyRegisters;
@@ -37,4 +42,5 @@ pub mod {{ f[4] }} {
     }
 }
 {%- endif %}
+{%- if f[3] != "none" %}{% assign client = client | plus: 1 %}{% endif %}
 {%- endfor %}

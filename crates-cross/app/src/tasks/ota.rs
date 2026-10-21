@@ -11,10 +11,11 @@ use sync_request::RpcService;
 
 /// Вход команд узла — то, что с графом заводит `request:` фрагмента
 /// `OTA_FRAG`, той же ёмкости (`domain::ota::CMD_BYTES`). Клиента{% if has_modbus != "true" and has_protobuf != "true" and has_canopen != "true" %} получает ваш протокол
-/// (`CMD.requester()`); без него узел только подтверждает образ{% else %} получает каждая задача протокола{% endif %}.
+/// (`domain::ota::OtaClient` над `CMD.requester()`); без него узел только подтверждает образ{% else %} получает каждая задача протокола —
+/// `domain::ota::OtaClient` с номером своего транспорта{% endif %}.
 pub static CMD: RpcService<
     CriticalSectionRawMutex,
-    domain::ota::OtaCommand,
+    domain::ota::OtaRequest,
     domain::ota::OtaReply,
     { domain::ota::CMD_BYTES },
 > = RpcService::new();
