@@ -2417,7 +2417,8 @@ fn net_services_defines_are_strict() {
 }
 
 /// Протоколу граф не нужен: без него узел спавнит `tasks::spawn_all`, и ни ответ `graph=no`,
-/// ни размер раздела (здесь — 16 KiB у `l011f4`) генерацию не останавливают. Готовый
+/// ни размер раздела (здесь — 16 KiB у `l031f4`; у `l011f4` с тем же разделом Modbus не
+/// помещается в 2 KiB RAM) генерацию не останавливают. Готовый
 /// транспорт `app/src/link.rs` остаётся, пока выбран Modbus или protobuf.
 #[test]
 fn protocol_does_not_need_the_graph() {
@@ -2432,7 +2433,7 @@ fn protocol_does_not_need_the_graph() {
             ][..],
         ),
         (
-            "l011f4",
+            "l031f4",
             &[("protocol", "modbus"), ("interface", "uart")][..],
         ),
     ] {
@@ -4148,4 +4149,193 @@ fn answers_cut_the_chip_list_before_the_cascade() {
         run_cascade_with(&ast, chip, &preset)
             .unwrap_or_else(|err| panic!("{chip} {preset:?}: {err}"));
     }
+}
+
+/// Тексты пунктов списка транспортов в каждом показе — по порядку.
+fn transport_menus(result: &CascadeResult) -> Vec<&Vec<String>> {
+    result
+        .prompts
+        .iter()
+        .filter(|(label, _)| label.starts_with("transports:"))
+        .map(|(_, choices)| choices)
+        .collect()
+}
+
+/// Пункт `value` в показе меню `shown`.
+fn item<'a>(shown: &'a [String], value: &str) -> &'a str {
+    shown
+        .iter()
+        .find(|choice| menu_value(choice) == value)
+        .unwrap_or_else(|| panic!("в меню нет пункта {value}: {shown:?}"))
+}
+
+const NO_RAM: &str = "НЕ ПОМЕЩАЕТСЯ в RAM";
+
+/// `ram_estimate` — байты статической RAM, с транспортом их больше; хук печатает
+/// её строкой `ram_estimate:` (её читает `template-check`).
+#[test]
+fn the_estimate_is_exported() {
+    let ast = compile_script();
+    let estimate = |preset: &[(&str, &str)]| -> u64 {
+        let result = run_chip_with(&ast, "f407ve", preset).expect("каскад не должен падать");
+        assert!(
+            result
+                .prints
+                .iter()
+                .any(|line| line.starts_with("ram_estimate: ")),
+            "{:?}",
+            result.prints
+        );
+        var_of(&result, "ram_estimate")
+            .expect("ram_estimate не задан")
+            .parse()
+            .expect("ram_estimate — число")
+    };
+    let bare = estimate(&[]);
+    assert!(bare > 0);
+    assert!(estimate(&[("links", "uart:modbus")]) > bare);
+    assert!(
+        estimate(&[("links", "uart:modbus,tcp:modbus")]) > estimate(&[("links", "uart:modbus")])
+    );
+}
+
+/// `--define links` с тем, что не помещается в RAM чипа, — ошибка с оценкой; до
+/// каскада такой чип не показывается вовсе.
+#[test]
+fn define_links_that_do_not_fit_are_rejected() {
+    let ast = compile_script();
+    let err = run_chip_with(&ast, "f042f6", &[("links", "usb:protobuf")])
+        .err()
+        .expect("USB с protobuf в 5.6 KiB RAM принят");
+    let text = err.to_string();
+    assert!(
+        text.contains("links: usb:protobuf не помещается в RAM STM32F042F6 (оценка "),
+        "{text}"
+    );
+    let err = run_chip_with(
+        &ast,
+        "f042f6",
+        &[("interface", "usb"), ("protocol", "protobuf")],
+    )
+    .err()
+    .expect("interface=usb с protobuf в 5.6 KiB RAM принят");
+    assert!(err.to_string().contains("interface: usb"), "{err}");
+
+    match run_cascade_with(&ast, "f042f6", &[("links", "usb:protobuf")]) {
+        Err(err) => assert!(err.to_string().contains("не ведёт к цели"), "{err}"),
+        Ok(result) => assert_ne!(var_of(&result, "chip"), Some("STM32F042F6")),
+    }
+    run_cascade_with(&ast, "f072c8", &[("links", "usb:protobuf")])
+        .expect("f072c8 (15.5 KiB RAM) должен остаться в каскаде");
+    // Проект без транспортов не отвергается даже там, где база с запасом под
+    // стек больше RAM.
+    run_chip_with(&ast, "l011f4", &[]).expect("l011f4 без транспортов");
+}
+
+/// Ручная раскладка (`write_size`): регион RAM пишет человек — оценки нет,
+/// меню без пометок, `--define` не отвергается.
+#[test]
+fn manual_layout_skips_the_ram_estimate() {
+    let ast = compile_script();
+    let result = run_chip_with(
+        &ast,
+        "f042f6",
+        &[("write_size", "4"), ("links", "usb:protobuf")],
+    )
+    .expect("ручная раскладка не должна отвергаться по RAM");
+    assert_eq!(var_of(&result, "ram_estimate"), Some(""));
+    let result =
+        interview(&ast, "f042f6", &[("write_size", "4")], &[]).expect("каскад не должен падать");
+    for shown in transport_menus(&result) {
+        assert!(
+            shown.iter().all(|choice| !choice.contains(NO_RAM)),
+            "{shown:?}"
+        );
+    }
+}
+
+/// Маленькая RAM (F0, 5.6 KiB): USB помечен, но выбрать его можно — с
+/// предупреждением, если не поместился и выбранный протокол. У F407 пометок нет.
+#[test]
+fn a_transport_that_does_not_fit_is_marked() {
+    let ast = compile_script();
+    let result = interview(
+        &ast,
+        "f042f6",
+        &[],
+        &[
+            ("transports", "usb"),
+            ("transports", "готово"),
+            ("protocol", "protobuf"),
+        ],
+    )
+    .expect("помеченный пункт можно выбрать");
+    let menus = transport_menus(&result);
+    let usb = item(menus[0], "usb");
+    assert!(
+        usb.contains(&format!("{NO_RAM} (оценка ")) && usb.ends_with(" из 5.6 KiB)"),
+        "{usb}"
+    );
+    assert!(
+        result
+            .prints
+            .iter()
+            .any(|line| line.contains("не помещается в RAM STM32F042F6")),
+        "{:?}",
+        result.prints
+    );
+
+    let result = interview(&ast, "f407ve", &[], &[]).expect("каскад не должен падать");
+    for shown in transport_menus(&result) {
+        assert!(
+            shown.iter().all(|choice| !choice.contains(NO_RAM)),
+            "{shown:?}"
+        );
+    }
+}
+
+/// Пометки считаются заново при каждой перерисовке: у F072RB (15.5 KiB RAM) USB,
+/// UART и CAN по отдельности помещаются, а все три — нет; снятая отметка
+/// возвращает место.
+#[test]
+fn marks_are_recomputed_after_each_toggle() {
+    let result = interview(
+        &compile_script(),
+        "f072rb",
+        &[],
+        &[
+            ("transports", "usb"),
+            ("transports", "uart"),
+            ("transports", "can"),
+            ("transports", "uart"),
+            ("transports", "готово"),
+        ],
+    )
+    .expect("каскад не должен падать");
+    let menus = transport_menus(&result);
+    assert_eq!(menus.len(), 5, "{menus:?}");
+    let marked = |n: usize, value: &str| item(menus[n], value).contains(NO_RAM);
+    assert!(
+        !marked(0, "usb") && !marked(0, "uart") && !marked(0, "can"),
+        "{:?}",
+        menus[0]
+    );
+    // USB и UART отмечены — CAN к ним уже не помещается.
+    assert!(
+        !marked(2, "usb") && !marked(2, "uart") && marked(2, "can"),
+        "{:?}",
+        menus[2]
+    );
+    // Отмечены все три — помечены все.
+    assert!(
+        marked(3, "usb") && marked(3, "uart") && marked(3, "can"),
+        "{:?}",
+        menus[3]
+    );
+    // UART снят — USB и CAN снова помещаются, UART к ним — нет.
+    assert!(
+        !marked(4, "usb") && marked(4, "uart") && !marked(4, "can"),
+        "{:?}",
+        menus[4]
+    );
 }
