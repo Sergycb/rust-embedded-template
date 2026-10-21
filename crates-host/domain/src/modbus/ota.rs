@@ -54,6 +54,7 @@ const SIGNATURE_REGISTERS: u16 = (SIGNATURE_BYTES / 2) as u16;
 
 /// Карта регистров проекта с окном OTA: команды обновления по [`OTA_BASE`]
 /// уходят узлу OTA, остальное — карте `inner`.
+#[derive(Debug)]
 pub struct OtaRegisters<R> {
     inner: R,
     /// Клиент входа `CMD` узла OTA.
@@ -95,17 +96,6 @@ impl<R> OtaRegisters<R> {
             Ok(_) => Ok(()),
             Err(_) => Err(Exception::ServerDeviceFailure),
         }
-    }
-}
-
-// Вручную: у клиента узла OTA нет `Debug`.
-impl<R: core::fmt::Debug> core::fmt::Debug for OtaRegisters<R> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("OtaRegisters")
-            .field("inner", &self.inner)
-            .field("status", &self.status)
-            .field("received", &self.received)
-            .finish_non_exhaustive()
     }
 }
 

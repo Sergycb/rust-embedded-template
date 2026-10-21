@@ -64,7 +64,6 @@ use embassy_time::{Duration, Instant, Timer};
 use ports::{
     Chunk, DownloadError, FirmwareUpdate, Progress, Reboot, Rejection, SIGNATURE_BYTES, UpdateError,
 };
-use supervisor::__private::sync_request::RequestDroppedError;
 use supervisor::runtime::TaskExit;
 use supervisor::{Requester, Served};
 
@@ -131,16 +130,33 @@ impl OtaClient {
     ///
     /// # Errors
     ///
-    /// [`RequestDroppedError`] — узел взял запрос, но не ответил.
-    pub async fn request(&self, command: OtaCommand) -> Result<OtaReply, RequestDroppedError> {
+    /// [`NodeLost`] — узел взял запрос, но не ответил.
+    pub async fn request(&self, command: OtaCommand) -> Result<OtaReply, NodeLost> {
         self.requester
             .request(OtaRequest {
                 client: self.id,
                 command,
             })
             .await
+            // `RequestDroppedError` — единичный тип: причины, которую стоило бы
+            // хранить, в нём нет.
+            .map_err(|_dropped| NodeLost)
     }
 }
+
+/// Узел OTA взял команду, но ответа на неё не будет: задача узла
+/// прервалась посреди обработки.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct NodeLost;
+
+impl core::fmt::Display for NodeLost {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("узел OTA не ответил на команду")
+    }
+}
+
+impl core::error::Error for NodeLost {}
 
 /// Ёмкость входа `CMD`, байт: запрос (кусок `ports::CHUNK_BYTES` со смещением и
 /// длиной, тег варианта, номер клиента) и ответ. Одно число на граф (`request:`
@@ -284,7 +300,8 @@ where
             start => begin -> Idle;
             listen {
                 // Команда первой: срок — молчание хоста, и уже пришедшая
-                // команда его не нарушила.
+                // команда владельца его не нарушила. Чужой `Start`, выигравший
+                // гонку у просроченного срока, `start` сверяет с `until` сам.
                 *                       => cmd: self.cmd.serve(),
                 Receiving { until, .. } => expired: fsm::deadline(*until),
             }
@@ -369,8 +386,10 @@ where
                 served.respond(Err(Rejection::Busy));
                 return Ready.into();
             }
-            // Приём другого клиента не трогаем — ни раздел, ни его срок.
-            edges::StartFrom::Receiving(s) if s.owner != client => {
+            // Приём другого клиента не трогаем — ни раздел, ни его срок; но
+            // срок вышел (`expired` просто не успел) — приём брошен, как по
+            // `abandon`, и это обычный `Start`.
+            edges::StartFrom::Receiving(s) if s.owner != client && Instant::now() < s.until => {
                 return busy(s, client, served).into();
             }
             edges::StartFrom::Receiving(_) => {
@@ -651,19 +670,31 @@ pub(crate) mod tests {
     }
     // {%- endif %}
 
-    /// Шаг сценария: команда узлу (от клиента 0 или от другого) или пауза.
+    /// Шаг сценария: запрос узлу, пауза, которую узел видит, или пауза, которую
+    /// он не успел увидеть (время ушло, а узел не опрошен).
     enum Step {
-        Send(OtaCommand),
-        From(ClientId, OtaCommand),
+        Send(OtaRequest),
         Wait(Duration),
+        Skip(Duration),
+    }
+
+    /// Команда от клиента 0 — единственного транспорта.
+    fn send(command: OtaCommand) -> Step {
+        Step::Send(OtaRequest {
+            client: ClientId(0),
+            command,
+        })
     }
 
     /// Та же команда от клиента `client`.
     fn by(client: u8, step: Step) -> Step {
-        match step {
-            Step::Send(command) | Step::From(_, command) => Step::From(ClientId(client), command),
-            Step::Wait(_) => step,
-        }
+        let Step::Send(request) = step else {
+            panic!("by() — только для команды");
+        };
+        Step::Send(OtaRequest {
+            client: ClientId(client),
+            ..request
+        })
     }
 
     fn poll<T>(fut: Pin<&mut impl Future<Output = T>>) -> Poll<T> {
@@ -689,14 +720,14 @@ pub(crate) mod tests {
         let mut replies = Vec::new();
         for step in steps {
             let request = match step {
-                Step::Send(command) => OtaRequest {
-                    client: ClientId(0),
-                    command,
-                },
-                Step::From(client, command) => OtaRequest { client, command },
+                Step::Send(request) => request,
                 Step::Wait(pause) => {
                     MockDriver::get().advance(pause);
                     assert!(poll(node.as_mut()).is_pending(), "узел не выходит");
+                    continue;
+                }
+                Step::Skip(pause) => {
+                    MockDriver::get().advance(pause);
                     continue;
                 }
             };
@@ -721,7 +752,7 @@ pub(crate) mod tests {
 
     #[expect(clippy::cast_possible_truncation, reason = "размеры в тестах малы")]
     fn start(len: usize) -> Step {
-        Step::Send(OtaCommand::Start {
+        send(OtaCommand::Start {
             len: len as u32,
             signature: None,
         })
@@ -729,14 +760,14 @@ pub(crate) mod tests {
 
     #[expect(clippy::cast_possible_truncation, reason = "размеры в тестах малы")]
     fn signed_start(len: usize) -> Step {
-        Step::Send(OtaCommand::Start {
+        send(OtaCommand::Start {
             len: len as u32,
             signature: Some(SIGNATURE),
         })
     }
 
     fn chunk(offset: u32, data: &[u8]) -> Step {
-        Step::Send(OtaCommand::Chunk(
+        send(OtaCommand::Chunk(
             Chunk::new(offset, data).expect("кусок помещается"),
         ))
     }
@@ -751,7 +782,7 @@ pub(crate) mod tests {
     }
 
     fn finish() -> Step {
-        Step::Send(OtaCommand::Finish)
+        send(OtaCommand::Finish)
     }
 
     #[expect(clippy::cast_possible_truncation, reason = "размеры в тестах малы")]
@@ -1333,6 +1364,23 @@ pub(crate) mod tests {
         assert_eq!(flash.prepared, Some(8), "сессия клиента 1");
     }
 
+    /// Чужой `Start` после срока владельца, но раньше, чем узел заметил срок
+    /// (команда выиграла опрос у `expired`), — не `Busy`: приём владельца
+    /// брошен, начинается приём нового клиента.
+    #[test]
+    fn a_foreign_start_past_the_owners_deadline_takes_over() {
+        let mut flash = FakeFlash::new(64, 8);
+
+        let replies = run(
+            &mut flash,
+            Mode::Plain,
+            vec![start(16), Step::Skip(SESSION_TIMEOUT), by(1, start(8))],
+        );
+
+        assert_eq!(replies, vec![Ok(Progress::Started), Ok(Progress::Started)]);
+        assert_eq!(flash.prepared, Some(8), "сессия клиента 1");
+    }
+
     /// `Reboot` обслуживается от любого клиента, и посреди чужого приёма тоже.
     #[test]
     fn reboot_is_served_for_any_client() {
@@ -1341,7 +1389,7 @@ pub(crate) mod tests {
         let replies = run(
             &mut flash,
             Mode::Plain,
-            vec![start(16), by(1, Step::Send(OtaCommand::Reboot))],
+            vec![start(16), by(1, send(OtaCommand::Reboot))],
         );
 
         assert_eq!(
@@ -1360,7 +1408,7 @@ pub(crate) mod tests {
             &mut flash,
             Mode::Plain,
             vec![
-                Step::Send(OtaCommand::Reboot),
+                send(OtaCommand::Reboot),
                 Step::Wait(REBOOT_GRACE - Duration::from_millis(1)),
             ],
         );
@@ -1369,7 +1417,7 @@ pub(crate) mod tests {
         run(
             &mut flash,
             Mode::Plain,
-            vec![Step::Send(OtaCommand::Reboot), Step::Wait(REBOOT_GRACE)],
+            vec![send(OtaCommand::Reboot), Step::Wait(REBOOT_GRACE)],
         );
     }
 
