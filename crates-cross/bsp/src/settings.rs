@@ -10,8 +10,8 @@
 //! - раздел во внутреннем флеше — границы `CONFIG` приезжают переменными
 //!   среды (`CONFIG_START`/`CONFIG_END`), страница — [`CONFIG_ERASE_SIZE`];
 //! - внутренняя EEPROM (STM32L0/L1) — через `adapters::eeprom::Eeprom`;
-//! - внешняя флеш — ваш драйвер; пока на его месте заглушка
-//!   `crate::stub::Flash`.
+//! - внешняя флеш W25Q — драйвер `crate::external`, шина под ним — заглушка,
+//!   пока плата её не подставит.
 {%- if config_store == "flash" %}
 //!
 //! Здесь — раздел во внутреннем флеше: две страницы стирания (меньше
@@ -168,24 +168,25 @@ impl EepromAccess for EepromFlash {
 pub(crate) fn new(flash: &'static FlashMutex) -> ConfigFlash {
     ACCESS.init(EepromFlash(flash))
 }
-{%- elsif config_store == "external" and ota == "true" and ota_store == "external" %}
+{%- elsif config_store == "external" %}
 //!
-//! Здесь — внешняя флеш, та же, что у OTA (`crate::external`): раздел под
-//! настройки лежит на ней за `DFU`, границы — переменные среды
-//! `CONFIG_START`/`CONFIG_END` (смещения от начала микросхемы). Драйвер подставляется там же,
-//! в `crate::external`.
+//! Здесь — внешняя флеш W25Q (`crate::external`){% if ota == "true" and ota_store == "external" %}, та же, что у OTA: раздел под
+//! настройки лежит на ней за `DFU`{% else %}: раздел под настройки — с её
+//! начала{% endif %}. Границы — переменные среды `CONFIG_START`/`CONFIG_END`
+//! (смещения от начала микросхемы); шину микросхемы плата подставляет в
+//! `crate::external`.
 
 use crate::external::{ExternalMutex, ExternalPartition};
 
-/// Начало раздела `CONFIG`: смещение от базы flash, `memory.x` считает его тем
-/// же расчётом. Приезжает переменной среды `CONFIG_START` из `[env]`
-/// `crates-cross/.cargo/config.toml`, а не линкерным символом (`unsafe extern`).
+/// Начало раздела настроек — смещение от начала внешней флеши, посчитанное
+/// генерацией. Приезжает переменной среды `CONFIG_START` из `[env]`
+/// `crates-cross/.cargo/config.toml`.
 const CONFIG_START: u32 = match u32::from_str_radix(env!("CONFIG_START"), 10) {
     Ok(start) => start,
     Err(_) => panic!("CONFIG_START в [env] crates-cross/.cargo/config.toml — не число"),
 };
 
-/// Конец раздела `CONFIG` — см. [`CONFIG_START`].
+/// Конец раздела настроек — см. [`CONFIG_START`].
 const CONFIG_END: u32 = match u32::from_str_radix(env!("CONFIG_END"), 10) {
     Ok(end) => end,
     Err(_) => panic!("CONFIG_END в [env] crates-cross/.cargo/config.toml — не число"),
@@ -201,43 +202,5 @@ pub const RANGE: core::ops::Range<u32> = 0..CONFIG_END - CONFIG_START;
 /// Собирает раздел настроек на внешней флеши.
 pub(crate) fn new(external: &'static ExternalMutex) -> ConfigFlash {
     ExternalPartition::new(external, CONFIG_START, CONFIG_END - CONFIG_START)
-}
-{%- elsif config_store == "external" %}
-//!
-//! Здесь — внешняя флеш. Какая микросхема стоит на плате, шаблон не знает и не
-//! гадает: на месте драйвера заглушка [`ExternalFlash`] (=
-//! `crate::stub::Flash`). С ней проект собирается и работает, но
-//! каждая операция хранилища отвечает ошибкой — настройки не сохраняются.
-//!
-//! Подключить свою микросхему — две правки в этом файле:
-//!
-//! 1. `ExternalFlash` — тип вашего драйвера. Годится любой, реализующий
-//!    `embedded_storage_async::nor_flash::NorFlash`: готовый крейт
-//!    (`spi-memory-async` для серии 25, `w25q32jv` и подобные) или свой.
-//! 2. `new` — собрать драйвер из периферии (SPI и вывод CS; какие выводы умеет
-//!    блок — `cargo xtask pins SPI1 --snippet`), и `RANGE` — диапазон под
-//!    настройки: не меньше двух секторов стирания микросхемы.
-//!
-//! Аргументы задач embassy обязаны быть `'static`, а драйвер — конкретным
-//! типом: `ConfigFlash` остаётся псевдонимом, как и сейчас.
-
-/// Драйвер внешней флеши — замените на свой.
-pub type ExternalFlash = crate::stub::Flash;
-
-/// Внешняя флеш — то, что лежит полем `Board` и над чем приложение строит
-/// хранилище (`app::settings`).
-pub type ConfigFlash = ExternalFlash;
-
-/// Границы раздела настроек в [`ConfigFlash`] — вся заглушка; с вашим
-/// драйвером — не меньше двух секторов стирания микросхемы.
-pub const RANGE: core::ops::Range<u32> = 0..crate::stub::Flash::CAPACITY;
-
-/// Собирает драйвер внешней флеши. Сейчас — заглушку: о том, что драйвер не
-/// подставлен, говорит одна строка в лог при старте.
-pub(crate) fn new() -> ConfigFlash {
-    defmt::warn!(
-        "bsp: внешняя флеш не подключена — настройки не сохраняются (bsp/src/settings.rs)"
-    );
-    crate::stub::Flash
 }
 {%- endif %}

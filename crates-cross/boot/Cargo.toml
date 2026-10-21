@@ -72,4 +72,7 @@ domain = { workspace = true{% if signed == "true" %}, features = ["signed"]{% en
 {%- if ota_store == "external" %}
 # Геометрия драйвера внешней флеши в проверках при компиляции.
 embedded-storage = { workspace = true }
+# Блокирующий драйвер внешней флеши (src/external.rs) — тот же крейт, что у
+# `bsp::external`, с фичей `sync`.
+w25q = { workspace = true, features = ["sync"] }
 {%- endif %}

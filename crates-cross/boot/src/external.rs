@@ -12,11 +12,22 @@ use domain::ota::boot::{BootPlan, boot_plan};
 use embassy_boot_stm32::{BootLoader, BootLoaderConfig, State};
 use embedded_storage::nor_flash::NorFlash;
 
-/// Драйвер внешней флеши, на которой лежат `STATE` и `DFU`, — замените на
-/// свой: любой блокирующий `embedded_storage::nor_flash::NorFlash`. Та же
-/// микросхема, что у приложения (`bsp::external`), но драйвер блокирующий:
-/// bootloader не поднимает исполнитель.
-pub(crate) type ExternalFlash = bsp::stub::Flash;
+/// Драйвер внешней флеши, на которой лежат `STATE` и `DFU`: та же W25Q, что
+/// у приложения (`bsp::external`), но блокирующая — bootloader не поднимает
+/// исполнитель. Шина — пока заглушка; подключая микросхему, плата меняет её
+/// здесь и в `bsp::external` (docs/modules/bsp-external.md).
+pub(crate) type ExternalFlash = w25q::device::W25qSync<bsp::stub::FlashBus, bsp::cpu::Delay>;
+
+/// Собирает драйвер и опознаёт микросхему. Не прошёл `init` — строка в лог, и
+/// драйвер отказывает в любой операции: `STATE` не читается, и
+/// [`prepare`] загружает текущий образ без обмена.
+pub(crate) fn new(sys_hz: u32) -> ExternalFlash {
+    let mut flash = ExternalFlash::new(bsp::stub::FlashBus, bsp::cpu::delay(sys_hz));
+    if let Err(err) = flash.init() {
+        defmt::warn!("boot: внешняя флеш не отвечает: {}", err);
+    }
+    flash
+}
 
 const _: () = assert!(
     EXT_PAGE_SIZE.is_multiple_of(<ExternalFlash as NorFlash>::ERASE_SIZE),

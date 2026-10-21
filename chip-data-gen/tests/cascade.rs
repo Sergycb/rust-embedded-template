@@ -2738,6 +2738,59 @@ fn external_settings_take_no_internal_flash() {
         app.contains("FLASH             (rx)  : ORIGIN = 0x08000000, LENGTH = 2048K"),
         "весь флеш — приложению:\n{app}"
     );
+    // Раздел — с начала микросхемы, 128 KiB, как за `DFU` у внешней OTA.
+    assert_eq!(
+        result.vars.get("config_start").map(String::as_str),
+        Some("0")
+    );
+    assert_eq!(
+        result.vars.get("config_end").map(String::as_str),
+        Some("131072")
+    );
+    assert_eq!(
+        result.vars.get("ext_flash_end").map(String::as_str),
+        Some("131072")
+    );
+}
+
+/// Шина внешней флеши — по чипу: QSPI, где он выведен (`QUADSPI`, иначе
+/// `OCTOSPI` — у H723 он за мультиплексором `OCTOSPIM`), иначе первый SPI. Без
+/// внешней флеши шины нет.
+#[test]
+fn external_flash_bus_follows_the_chip() {
+    let ast = compile_script();
+    for (chip, bus, block) in [
+        ("l476rg", "quadspi", "QUADSPI"),
+        ("h723ve", "octospi", "OCTOSPI1"),
+        ("l073rz", "spi", "SPI1"),
+    ] {
+        let result = run_cascade_with(&ast, chip, &[("ota", "external")])
+            .unwrap_or_else(|e| panic!("каскад до {chip}: {e}"));
+        assert_eq!(
+            result.vars.get("ext_flash_bus").map(String::as_str),
+            Some(bus),
+            "{chip}"
+        );
+        assert_eq!(
+            result.vars.get("ext_flash_block").map(String::as_str),
+            Some(block),
+            "{chip}"
+        );
+        // Конец разделов — число для `[env]`: без него `bsp::external` не
+        // соберётся.
+        let end: u64 = result
+            .vars
+            .get("ext_flash_end")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or_else(|| panic!("{chip}: ext_flash_end не число"));
+        assert!(end > 0, "{chip}");
+    }
+    let internal = run_cascade_with(&ast, "l476rg", &[("ota", "internal")])
+        .expect("каскад до l476rg");
+    assert_eq!(
+        internal.vars.get("ext_flash_bus").map(String::as_str),
+        Some("")
+    );
 }
 
 /// Обратная сторона: там, где стирание обычное, раздел настроек по-прежнему

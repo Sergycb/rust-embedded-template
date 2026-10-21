@@ -49,10 +49,10 @@ flash-page = { workspace = true }
 embedded-io-async = { workspace = true }
 {%- endif %}
 {%- if external_flash == "true" %}
-# Трейты флеша у заглушки внешней флеши (src/stub.rs): асинхронный — для
-# приложения, блокирующий — для bootloader'а.
-embedded-storage = { workspace = true }
-embedded-storage-async = { workspace = true }
+# Драйвер внешней флеши W25Q (src/external.rs): асинхронный — приложению,
+# блокирующий — bootloader'у; шину-заглушку (src/stub.rs) оба видят своим
+# трейтом, поэтому обе фичи здесь, а не по одной у `app` и `boot`.
+w25q = { workspace = true, features = ["sync", "async"] }
 {%- endif %}
 assign-resources = { workspace = true }
 # Регистры ядра напрямую:{% if graph == "true" %} `wfi` в ожидании сброса от сторожа (src/wdg.rs),{% endif %}
@@ -72,7 +72,7 @@ panic-probe = { workspace = true, features = ["print-defmt"], optional = true }
 panic-persist = { workspace = true, optional = true }
 # Общий `Flash` всего чипа: и OTA, и раздел настроек работают через один
 # объект под `blocking_mutex` (см. `FlashMutex` в src/board.rs).
-{%- if shared_flash == "true" or ota == "true" %}
+{%- if shared_flash == "true" or ota == "true" or external_flash == "true" %}
 embassy-sync = { workspace = true }
 # `BlockingAsync` — асинхронный вид блокирующего флеша под `Partition`,
 # `FirmwareUpdater` и `sequential-storage` (src/ota.rs, src/settings.rs); с OTA —
@@ -82,7 +82,7 @@ embassy-embedded-hal = { workspace = true }
 # `static-cell` — потому что общему флешу нужен `&'static`: иначе его разделы
 # нельзя отдать в задачу, которую спавнит `Spawner` (аргументы задач обязаны
 # быть 'static).
-{%- if shared_flash == "true" or ota == "true" %}
+{%- if shared_flash == "true" or ota == "true" or external_flash == "true" %}
 static_cell = { workspace = true }
 {%- endif %}
 {%- if has_usb == "true" %}
@@ -107,10 +107,12 @@ embassy-boot = { workspace = true, features = ["defmt"{% if erase_zero == "true"
 # объявлен здесь, а не у `app`, потому что реализация трейта — это железо:
 # сам `watchdog` про HAL не знает и знать не должен.
 watchdog = { workspace = true }
-# Только ради `Duration` в сигнатуре того же модуля: время в проекте одно —
-# `embassy_time::Duration` (обоснование — в docs/modules/app-graph.md,
-# раздел про supervisor: `core::time::Duration` стоил бы вызова
-# `__aeabi_uldivmod` на каждой конверсии).
+{%- endif %}
+{%- if graph == "true" or external_flash == "true" %}
+# Время в проекте одно — `embassy_time`:{% if graph == "true" %} `Duration` в сигнатуре сторожа
+# (src/wdg.rs; `core::time::Duration` стоил бы вызова `__aeabi_uldivmod` на
+# каждой конверсии — docs/modules/app-graph.md, раздел про supervisor){% endif %}{% if graph == "true" and external_flash == "true" %};{% endif %}{% if external_flash == "true" %}
+# `Delay` асинхронного драйвера внешней флеши (src/external.rs){% endif %}.
 embassy-time = { workspace = true }
 {%- endif %}
 # Безусловно, не за фичей: `log` в прошивке не используется вовсе, поэтому

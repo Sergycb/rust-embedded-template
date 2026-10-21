@@ -25,7 +25,7 @@ pub mod cycles;
 {%- if cache contains "scb_d" %}
 pub mod dma_nc;
 {%- endif %}
-{%- if ota == "true" and ota_store == "external" %}
+{%- if external_flash == "true" %}
 pub mod external;
 {%- endif %}
 pub mod fault;

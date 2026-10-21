@@ -29,6 +29,26 @@ pub fn reset() -> ! {
 {%- endif %}
     cortex_m::peripheral::SCB::sys_reset()
 }
+{%- if ota == "true" and ota_store == "external" %}
+
+/// Блокирующая задержка на `SysTick` ядра — `DelayNs` драйвера внешней флеши в
+/// bootloader'е: исполнителя и драйвера времени там нет. Счётчик `SysTick`
+/// включается только на время задержки, и прыжок в приложение застаёт его
+/// выключенным.
+pub type Delay = cortex_m::delay::Delay;
+
+/// Задержка [`Delay`] на частоте ядра `sys_hz`.
+///
+/// # Panics
+///
+/// Если периферию ядра уже кто-то взял (`cortex_m::Peripherals::take`): `SysTick`
+/// у задержки один владелец, и зовётся она один раз — из bootloader'а.
+#[must_use]
+pub fn delay(sys_hz: u32) -> Delay {
+    let core = cortex_m::Peripherals::take().expect("bsp::cpu::delay: периферия ядра уже взята");
+    Delay::new(core.SYST, sys_hz)
+}
+{%- endif %}
 {%- if ota == "true" %}
 
 /// Перезагрузка МК для узла OTA — порт `ports::Reboot`: узел выполняет им

@@ -64,7 +64,8 @@ unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 # Собственная библиотека (supervisor, fsm, watchdog, sync-request) — по git;
-# адрес — `rust_lib` из генерации, без `.git`. Ещё один git-источник — ещё
+# адрес — `rust_lib` из генерации, без `.git`. С внешней флешью — ещё и
+# hw-drivers (драйвер `w25q`). Ещё один git-источник — ещё
 # строка списка:
 #   allow-git = [
 #       "{{rust_lib}}",
@@ -76,4 +77,4 @@ allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 # «Значение в корневом workspace»).
 allow-git = ["https://github.com/Sergycb/rust-lib"]
 # {%- endcomment %}
-#{{newline}}allow-git = ["{{rust_lib}}"]
+#{{newline}}allow-git = ["{{rust_lib}}"{% if external_flash == "true" %}, "https://github.com/Sergycb/hw-drivers"{% endif %}]

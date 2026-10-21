@@ -22,6 +22,11 @@ static_cell = { workspace = true }
 # Отметка времени у строк лога — здесь, а не в воркспейсе (см.
 # crates-cross/Cargo.toml).
 embassy-time = { workspace = true, features = ["defmt-timestamp-uptime-ms"] }
+{%- if external_flash == "true" %}
+# `block_on(bsp::Board::new())` в `main.rs`: плата собирается асинхронно (ждёт
+# `init` внешней флеши), а исполнитель поднимается после неё.
+embassy-futures = { workspace = true }
+{%- endif %}
 defmt = { workspace = true }
 defmt-rtt = { workspace = true }
 # Драйвер времени, паникёр и обработчик `HardFault` — фичами `bsp` (там же

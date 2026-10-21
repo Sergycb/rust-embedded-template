@@ -146,6 +146,11 @@ const OTA_MIN_ACTIVE = 24576;
 /// настройки предлагаются, как всем остальным, во флеше.
 const EEPROM_MIN = 256;
 
+/// Раздел настроек на внешней флеши без OTA на ней: два блока по 64 KiB
+/// (самое крупное стирание NOR) — столько же, сколько chip-data-gen кладёт
+/// за `DFU` (`config_length`), чтобы проект не зависел от того, с OTA он или нет.
+const EXT_CONFIG_LENGTH = 131072;
+
 /// Размер из таблицы раскладки в байтах: `"128K"`, `"1M"`, `"5376"`.
 ///
 /// Свой разбор, а не готовая функция: в rhai её нет, а формат здесь пишем мы
@@ -699,8 +704,8 @@ if !wants_ota {
 //   "eeprom"   — внутренняя EEPROM, если она у чипа есть (L0/L1): флеш не
 //                тратится вовсе, и это единственное место под настройки на
 //                чипах, чей флеш стирается в ноль;
-//   "external" — внешняя флеш: ответ `external`; шаблон кладёт заглушку
-//                (`bsp::stub::Flash`), драйвер подставляете вы;
+//   "external" — внешняя флеш W25Q: ответ `external`; драйвер `w25q` в
+//                `bsp::external`, шину (выводы) подставляете вы;
 //   "none"     — настроек нет.
 // Ответ `internal` выбирает между первыми двумя сам, `external` — третий,
 // `no` — четвёртый. Незнакомый ответ — ошибка, как у `ota`.
@@ -807,9 +812,10 @@ const RAM_COST = #{
     // Без OTA, настроек, графа и транспортов: stm32f407ve ota=no graph=no — 1344
     // (stm32l011f4 — 1316).
     core: 1344,
-    // stm32f407ve: 3880 с OTA против 1952 без неё; внешняя — stm32h723ve 3832
-    // (ota=external config=external) против 1988 (config=external).
-    ota: #{ internal: 1928, external: 1844 },
+    // stm32f407ve: 3880 с OTA против 1952 без неё; внешняя — stm32h723ve 3996
+    // (ota=external config=external) против 2012 (config=external), с драйвером
+    // W25Q над заглушкой шины.
+    ota: #{ internal: 1928, external: 1984 },
     // По месту хранения (`config_store`): stm32f407ve 3912 против 3880,
     // stm32l073rz (EEPROM) 3868 против 3860, stm32h723ve 1988 против 1988.
     config: #{ flash: 32, eeprom: 8, external: 0 },
@@ -1237,7 +1243,7 @@ if !variable::is_set("config") {
         }
     }
     values.push("external");
-    texts.push("external — внешняя флеш: драйвер своей микросхемы подставляете вы");
+    texts.push("external — внешняя флеш W25Q: драйвер в шаблоне, выводы шины подставляете вы");
     let answer = ask("config: хранилище настроек (sequential-storage)", values, texts, "no");
     wants_external = answer == "external";
     wants_config = answer != "no";
@@ -1560,6 +1566,9 @@ variable::set("state_erase_size", "");
 // встречать неопределённую, даже если ветку с её чтением он не рисует.
 variable::set("config_erase_size", "");
 variable::set("ext_page_size", "");
+// Конец разделов на внешней флеши в байтах: драйвер сверяет с ним объём
+// микросхемы (`bsp::external`).
+variable::set("ext_flash_end", "");
 variable::set("iface_periph", "");
 // Регион `DMA_NC` (хвост RAM) под буферы DMA: границы числами, для `[env]`.
 // Пусто — региона нет (раскладка ручная, ядро не M7).
@@ -1660,6 +1669,9 @@ if variable::is_set("write_size") {
     if wants_config && store != "eeprom" {
         print("Хранилище настроек с ручной раскладкой: впишите в [env] CONFIG_START и CONFIG_END (границы раздела в байтах)");
     }
+    if (wants_ota && wants_ext_ota) || (wants_config && store == "external") {
+        print("Внешняя флеш с ручной раскладкой: впишите в [env] EXT_FLASH_END (конец последнего раздела на ней, байты)");
+    }
     // Страница обмена с внешними разделами — тоже знание раскладки. Сектор
     // внешней NOR (4 KiB) — нижняя граница: верна, если ACTIVE в memory.x
     // кратен max(странице чипа, 4 KiB); иначе `assert_partitions` паникует.
@@ -1737,8 +1749,8 @@ if variable::is_set("write_size") {
     } else if config && store == "eeprom" {
         print("Настройки — во внутренней EEPROM чипа: флеш под них не тратится");
     } else if config && store == "external" {
-        print("Настройки — на внешней флеши: подставьте свой драйвер в crates-cross/bsp/src/settings.rs");
-        print("  (пока там заглушка bsp::stub::Flash — проект собирается, настройки не сохраняются)");
+        print("Настройки — на внешней флеши W25Q: подставьте шину с выводами платы в crates-cross/bsp/src/external.rs");
+        print("  (пока там заглушка bsp::stub::FlashBus — проект собирается, настройки не сохраняются; docs/modules/bsp-external.md)");
     }
     if wants_graph && !graph {
         print("Граф задач отключён для " + suffix + ": под приложение отведено " + m[app_length_key] + ", а supervisor туда не помещается");
@@ -1799,6 +1811,19 @@ if variable::is_set("write_size") {
         let config_start = hex_value(m[ota_key + "config_offset"]);
         variable::set("config_start", config_start.to_string());
         variable::set("config_end", (config_start + size_in_bytes(m[ota_key + "config_length"])).to_string());
+    } else if config && store == "external" {
+        // Внешняя флеш только под настройки: раздел с её начала, столько же,
+        // сколько рядом с OTA (`config_length` в chip-data-gen — два блока по
+        // 64 KiB, самому крупному стиранию NOR).
+        variable::set("config_start", "0");
+        variable::set("config_end", EXT_CONFIG_LENGTH.to_string());
+    }
+    // Конец того, что лежит на внешней флеши: настройки — последние, без них —
+    // `DFU` (за ним и начинался бы раздел настроек).
+    if config && store == "external" {
+        variable::set("ext_flash_end", variable::get("config_end"));
+    } else if ext_ota {
+        variable::set("ext_flash_end", hex_value(m[ota_key + "config_offset"]).to_string());
     }
     // DFU в банке 2 за разрывом: прошивка пишет его через `Bank2Region`, а не через
     // цельный `Flash` (см. `dfu_bank_origin` в chip-data-gen).
@@ -2125,9 +2150,27 @@ if iface != "none" {
 // хоть один раздел его использует: `STATE`/`CONFIG` с секторами мельче страницы
 // чипа или `ACTIVE`/`DFU` со страницей обмена. Иначе типа в проекте нет вовсе.
 variable::set("erase_page", if variable::get("state_paged") == "true" || variable::get("config_paged") == "true" || variable::get("swap_paged") == "true" { "true" } else { "false" });
-// Заглушка драйвера внешней флеши (`bsp::stub::Flash`) нужна, пока
+// Драйвер внешней флеши (`bsp::external`, шина — заглушка `bsp::stub::FlashBus`) нужен, пока
 // на внешней флеши лежит хоть что-то: разделы OTA или настройки.
 variable::set("external_flash", if (variable::get("ota") == "true" && variable::get("ota_store") == "external") || variable::get("config_store") == "external" { "true" } else { "false" });
+// Шина внешней флеши — QSPI, где он выведен в корпусе (`QUADSPI`, иначе
+// `OCTOSPI`): по четырём линиям данные идут вчетверо быстрее, — иначе SPI.
+// Блок — первый из списка чипа (chip-data/instances.rhai), как у транспортов.
+let ext_flash_bus = "";
+let ext_flash_block = "";
+if variable::get("external_flash") == "true" {
+    for tag in ["quadspi", "octospi", "spi"] {
+        if ext_flash_bus == "" && instances.contains(tag) {
+            ext_flash_bus = tag;
+            ext_flash_block = instances[tag][0];
+        }
+    }
+    if ext_flash_bus == "" {
+        throw "внешняя флеш: у " + chip_name + " нет выведенного блока SPI или QSPI — выберите ota=internal и config=internal или no";
+    }
+}
+variable::set("ext_flash_bus", ext_flash_bus);
+variable::set("ext_flash_block", ext_flash_block);
 // Крейт `flash-page` (crates-host): `ErasePage` — при своей странице у раздела,
 // `erase_size` — при OTA на внешней флеши (проверка раскладки в `bsp::external`).
 variable::set("flash_page", if variable::get("erase_page") == "true" || (variable::get("ota") == "true" && variable::get("ota_store") == "external") { "true" } else { "false" });
@@ -2223,8 +2266,8 @@ variable::set("ports_async", if variable::get("ota") == "true" || variable::get(
 // шину CAN как есть).
 variable::set("protocol_link", if on.modbus || on.protobuf { "true" } else { "false" });
 // Группы `resources.rs` нужны, пока есть что в них класть: общий флеш, сторож
-// графа или блоки транспортов. Иначе в файле остаётся пустая группа.
-variable::set("has_resources", if links.len() > 0 || variable::get("shared_flash") == "true" || variable::get("graph") == "true" { "true" } else { "false" });
+// графа, блоки транспортов или шина внешней флеши. Иначе в файле остаётся пустая группа.
+variable::set("has_resources", if links.len() > 0 || variable::get("shared_flash") == "true" || variable::get("graph") == "true" || variable::get("external_flash") == "true" { "true" } else { "false" });
 // Master Modbus: ответ на вопрос выше (только при protocol=modbus).
 let master = on.modbus && wants_master;
 variable::set("modbus_master", if master { "true" } else { "false" });
@@ -2401,10 +2444,12 @@ if variable::get("config_store") != "eeprom" {
 	file::delete("crates-host/ports/src/eeprom.rs");
 }
 
-// Слот драйвера внешней флеши в bsp — только у OTA с разделами на ней. Без
-// него `bsp::external` не объявлен, и файл остался бы мусором с Liquid внутри.
-if variable::get("ota") != "true" || variable::get("ota_store") != "external" {
+// Драйвер внешней флеши в bsp — только когда на ней что-то лежит: разделы
+// OTA или настройки. Без него `bsp::external` не объявлен, и файл остался бы
+// мусором с Liquid внутри; рецепт подключения — вместе с ним.
+if variable::get("external_flash") != "true" {
 	file::delete("crates-cross/bsp/src/external.rs");
+	file::delete("docs/modules/bsp-external.md");
 }
 
 // Подмодули bootloader'а под ответы — по той же причине: `mod` в

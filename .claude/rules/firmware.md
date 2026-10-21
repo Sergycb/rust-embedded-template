@@ -21,7 +21,10 @@ paths: crates-cross/**
   делает тот, кто этим железом распоряжается. Исключения — `ensure_*` для
   option bytes, `bsp::cache::enable()` (кэши чипа), `bsp::fault::enable()`
   (ловушка деления, обработчик `HardFault`) и `Cycles::new` (счётчик тактов) —
-  `docs/clocks.md`.
+  `docs/clocks.md`{% if external_flash == "true" %}; и `init` внешней флеши в `bsp::external::new` (опознание
+  микросхемы — без него драйвер не годится ни для одной операции), из-за него
+  `Board::new` асинхронный и зовётся из `main` через `block_on` —
+  `docs/modules/bsp-external.md`{% endif %}.
 - `lib.rs` в `bsp` — только объявления модулей и реэкспорт; код живёт в
   модулях. Модуль без кода (одна `#![doc = include_str!(..)]`) не заводить:
   такой документации место в `docs/`.

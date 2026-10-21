@@ -104,7 +104,14 @@ fn main() -> ! {
     }
 
     // Плата и пары объектов, собранные над её драйверами (`crate::parts`).
+{%- if external_flash == "true" %}
+    // `Board::new` асинхронный (ждёт `init` внешней флеши), а исполнителя ещё
+    // нет — он поднимается ниже, руками: `block_on` крутит future здесь же, на
+    // стеке `main`.
+    let parts = parts::Parts::new(embassy_futures::block_on(bsp::Board::new()));
+{%- else %}
     let parts = parts::Parts::new(bsp::Board::new());
+{%- endif %}
     // Следом — на чём именно: чип и его заводской номер, по которому
     // экземпляр платы отличается от соседнего.
     info!("app: {}", parts.board.spec);

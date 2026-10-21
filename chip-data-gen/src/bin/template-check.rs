@@ -77,8 +77,8 @@ fn default_cases() -> Vec<Case> {
         // OTA не помещается: crates-cross/boot удаляется из проекта, members и xtask
         // должны это пережить.
         //
-        // Заодно — настройки на внешней флеши (`config=external`): слот
-        // хранилища с заглушкой `bsp::stub::Flash`. Без OTA общий
+        // Заодно — настройки на внешней флеши (`config=external`): драйвер W25Q
+        // над шиной-заглушкой, раздел с начала микросхемы. Без OTA общий
         // объект `Flash` при этом не нужен вовсе (`shared_flash = false`), и
         // это единственная конфигурация, где bsp собирается без него, а
         // `config::new` — без аргумента. H7 — потому что именно у него раздел
@@ -131,6 +131,11 @@ fn default_cases() -> Vec<Case> {
         // `embassy-boot` выключен — `STATE` на внешней NOR, а она стирается в
         // единицы.
         Case::new("stm32l073rz").variant("ota-external", &["ota=external"]),
+        // Шина внешней флеши по чипу: у L073 — SPI (`SpiAdapter` в рецепте), у
+        // H723 выше — OCTOSPI за мультиплексором, у L476 — QUADSPI. Заглушка
+        // шины при этом объявляет четыре линии, и драйвер собирается с
+        // quad-командами.
+        Case::new("stm32l476rg").variant("ota-external", &["ota=external"]),
         // OTA без графа: узел OTA запускает сам `main` (`ota_task`;
         // `app/src/image.rs` есть, `graph.rs` нет), а bootloader — без сторожа.
         // Чип — Cortex-M0+: проверка подписи (она есть всегда, когда есть OTA)
