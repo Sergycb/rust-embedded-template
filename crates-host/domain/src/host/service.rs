@@ -39,6 +39,26 @@ pub struct DeviceInfo {
 /// Это отправная точка, а не готовая логика: проект меняет схему в
 /// `crates-host/proto` и команды здесь — перевод сообщений схемы в свои
 /// проверенные типы и ответы на них.
+///
+/// Команда, которой нужно что-то от платы, получает это параметром типа —
+/// портом (`ports::…`), а не железом: тогда её ответ проверяется на хосте
+/// заглушкой порта. Фрагмент `HOST_FRAG` уже generic по обработчику, менять
+/// его не нужно; конкретный тип подставляет граф. Набросок (`ports::Relay` —
+/// порт проекта, в шаблоне его нет):
+///
+/// ```ignore
+/// pub struct Service<R> {
+///     info: DeviceInfo,
+///     relay: R,
+/// }
+///
+/// impl<R: ports::Relay> HostService for Service<R> {
+///     // `Request_::Relay(on)` → `self.relay.set(on).await` → `Ok` или `Error`.
+/// }
+///
+/// // Граф: `HOST_FRAG<HostLink, ::domain::host::Service<bsp::relay::Relay>>`.
+/// // Тест: `Service::new(INFO, FakeRelay::default())` и ответ на запрос.
+/// ```
 #[derive(Debug)]
 pub struct Service {
     info: DeviceInfo,
