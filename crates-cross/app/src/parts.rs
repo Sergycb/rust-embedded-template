@@ -69,12 +69,14 @@ impl Parts {
     }
 {%- else %}
     pub fn new((board, _drivers): (bsp::Board, bsp::Drivers)) -> Self {
+{%- if has_modbus == "true" %}
         Self {
             board,
-{%- if has_modbus == "true" %}
             modbus: crate::modbus::new(),
-{%- endif %}
         }
+{%- else %}
+        Self { board }
+{%- endif %}
     }
 {%- endif %}
 }
