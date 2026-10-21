@@ -2067,6 +2067,18 @@ fn a_second_canopen_bus_is_rejected() {
     );
 }
 
+/// Второй `can` без протокола рядом с CANopen — через `--define links` он есть:
+/// CANopen на первой шине, вторая — без протокола.
+#[test]
+fn a_second_can_without_a_protocol_sits_next_to_canopen() {
+    let result = run_chip_with(&compile_script(), "f407ve", &[("links", "can:canopen,can")])
+        .expect("каскад не должен падать");
+    assert_eq!(
+        var_of(&result, "links"),
+        Some("can:bxcan:CAN1:canopen:can1,can:bxcan:CAN2:none:can2")
+    );
+}
+
 /// Каскад не показывает чип, у которого блоков меньше, чем запрошено в `links`.
 #[test]
 fn chips_without_enough_blocks_are_filtered_before_the_cascade() {
@@ -2128,6 +2140,15 @@ fn ethernet_item_becomes_tcp() {
     )
     .expect("каскад не должен падать");
     assert_eq!(var_of(&result, "links"), Some("tcp:eth:ETH:none:tcp"));
+    // Вопрос о протоколе называет пункт, который отметили, а не вид.
+    assert!(
+        result
+            .prompts
+            .iter()
+            .any(|(label, _)| label.starts_with("protocol: протокол связи поверх ethernet (TCP) ")),
+        "{:?}",
+        result.prompts
+    );
 }
 
 /// Протоколу граф не нужен: без него узел спавнит `tasks::spawn_all`, и ни ответ `graph=no`,
