@@ -762,7 +762,8 @@ fn parse_ram_estimate(generate_output: &str) -> Option<u64> {
 }
 
 /// То же, что [`run`], но отдаёт stdout: нужно там, где проверяется не код
-/// возврата, а напечатанное.
+/// возврата, а напечатанное. stderr успешной команды печатается сразу: прогресс
+/// и предупреждения cargo не теряются, как и у [`run`].
 fn capture(
     command: &mut Command,
     current_dir: &Path,
@@ -784,6 +785,7 @@ fn capture(
             String::from_utf8_lossy(&output.stderr),
         );
     }
+    eprint!("{}", String::from_utf8_lossy(&output.stderr));
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 

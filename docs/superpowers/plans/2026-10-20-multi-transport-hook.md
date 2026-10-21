@@ -1,5 +1,7 @@
 # Несколько транспортов: данные о чипах и хук — план реализации
 
+> 2026-10-21: цикл `more_links`, описанный ниже, позже заменён меню-списком (см. `2026-10-21-transport-checklist.md`).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** хук генерации умеет несколько транспортов (вопрос «Добавить ещё
@@ -149,8 +151,8 @@ git commit -m "feat(chip-data): все выведенные блоки инте�
 
 - [ ] **Step 2: Тесты хука** (в `cascade.rs`; чипы и блоки — сверить с `chip-data/instances.rhai` после Task 1)
 
-- `single_answers_keep_the_old_variables` — `c011d6`, `interface=uart`, `protocol=modbus`, `ota=no`: `links == "uart:usart:USART1:modbus"`, `has_uart == "true"`, `has_can == "false"`, `iface_periph == "USART1"`, `interface == "uart"`.
-- `links_assign_blocks_in_order` — `h743zg`, `links=uart:modbus,uart:modbus,tcp:modbus`, `ota=no`: `links == "uart:usart:<1-й>:modbus,uart:usart:<2-й>:modbus,tcp:eth:ETH:modbus"`, `has_net == "true"`, `protocol == "modbus"`.
+- `single_answers_keep_the_old_variables` — `c011d6`, `interface=uart`, `protocol=modbus`, `ota=no`: `links == "uart:usart:USART1:modbus:usart1"`, `has_uart == "true"`, `has_can == "false"`, `iface_periph == "USART1"`, `interface == "uart"`.
+- `links_assign_blocks_in_order` — `h743zg`, `links=uart:modbus,uart:modbus,tcp:modbus`, `ota=no`: `links == "uart:usart:<1-й>:modbus:<имя 1-го>,uart:usart:<2-й>:modbus:<имя 2-го>,tcp:eth:ETH:modbus:eth"`, `has_net == "true"`, `protocol == "modbus"`.
 - `links_reject_impossible_answers` — по строке на каждую ошибку таблицы выше (для «вида больше, чем блоков»: чип с одним CAN, `links=can,can`).
 - `links_tolerate_spaces_but_not_empty_items` — `links=uart, tcp:modbus` принимается; `links=uart,,tcp` — ошибка «пустой элемент».
 - `the_menu_offers_a_kind_only_while_blocks_remain` — интервью на `f407ve` (у него два bxCAN): `interface=can`, `protocol=none`, `more_links=yes`, `interface=can`, `protocol=none`, `more_links=yes`; в `prompts` второе меню `interface:` содержит пункт `can`, третье — нет.

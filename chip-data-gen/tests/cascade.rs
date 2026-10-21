@@ -3495,8 +3495,23 @@ fn every_path_through_the_menus_generates() {
     for chip in chips {
         // Ввод строки (`ssh_key:`) — не меню, перебирать в нём нечего: ответ
         // готов заранее и расходуется, только если вопрос задан.
-        let mut stack: Vec<Vec<(String, String)>> =
-            vec![vec![("ssh_key".to_string(), SSH_KEY.to_string())]];
+        let ssh = ("ssh_key".to_string(), SSH_KEY.to_string());
+        let mut stack: Vec<Vec<(String, String)>> = vec![vec![ssh.clone()]];
+        // Список транспортов в обходе отвечается одним пунктом, поэтому два
+        // отмеченных вида (UART и сетевой) заданы заранее, где чип их даёт.
+        if let Ok(first) = interview(&ast, chip, &[], &[("ssh_key", SSH_KEY)])
+            && let Some(kinds) = menu_values(&first, "transports")
+            && ["uart", "tcp"]
+                .iter()
+                .all(|kind| kinds.iter().any(|k| k == kind))
+        {
+            stack.push(vec![
+                ssh,
+                ("transports".to_string(), "uart".to_string()),
+                ("transports".to_string(), "tcp".to_string()),
+                ("transports".to_string(), "готово".to_string()),
+            ]);
+        }
         while let Some(picks) = stack.pop() {
             let refs: Vec<(&str, &str)> = picks
                 .iter()
@@ -3505,7 +3520,13 @@ fn every_path_through_the_menus_generates() {
             let result = match interview(&ast, chip, &[], &refs) {
                 Ok(result) => result,
                 Err(err) => {
-                    failures.push(format!("{chip} {picks:?}: {err}"));
+                    // Два отмеченных транспорта могут не влезть в RAM мелкого
+                    // чипа — это отказ хука, а не сбой обхода.
+                    let two_marked = picks.iter().filter(|(id, _)| id == "transports").count() > 1;
+                    if !(two_marked && err.to_string().contains("не помещается в RAM"))
+                    {
+                        failures.push(format!("{chip} {picks:?}: {err}"));
+                    }
                     continue;
                 }
             };
@@ -4375,17 +4396,98 @@ fn a_transport_that_does_not_fit_is_marked() {
     }
 }
 
-/// Пометки считаются заново при каждой перерисовке: у F072RB (15.5 KiB RAM) USB,
-/// UART и CAN по отдельности помещаются, а все три — нет; снятая отметка
-/// возвращает место. Запас — 144 байта сверх RAM у трёх пунктов и 3.4 KiB у двух:
-/// выросла таблица `RAM_COST` — нужен чип с OTA и графом, у которого
-/// `база + usb + uart + 1024 <= ram_length < то же + can` (худшие протоколы видов),
-/// перебором по `chip-data/layout/*.rhai` и `chip-data/interfaces.rhai`.
+/// Самый дорогой по RAM протокол каждого вида транспорта и запас под стек — из
+/// `RAM_COST` и `STACK_RESERVE` самого хука, а не числами в тесте.
+fn transport_ram_costs() -> (HashMap<String, i64>, i64) {
+    let script = read_script();
+    let begin = script
+        .find("const RAM_COST = ")
+        .expect("RAM_COST не найден")
+        + "const RAM_COST = ".len();
+    let end = script[begin..]
+        .find(
+            "
+};",
+        )
+        .expect("конец RAM_COST не найден")
+        + begin
+        + 2;
+    let costs = Engine::new()
+        .eval::<rhai::Map>(&script[begin..end])
+        .expect("RAM_COST не исполняется");
+    let links = costs["links"].clone().cast::<rhai::Map>();
+    let mut worst: HashMap<String, i64> = HashMap::new();
+    for (key, cost) in links {
+        let kind = key.split(':').next().unwrap_or_default().to_string();
+        let cost = cost.as_int().expect("стоимость — число");
+        let slot = worst.entry(kind).or_insert(0);
+        *slot = (*slot).max(cost);
+    }
+    let reserve = script
+        .split("const STACK_RESERVE = ")
+        .nth(1)
+        .and_then(|rest| rest.split(';').next())
+        .and_then(|number| number.trim().parse().ok())
+        .expect("STACK_RESERVE не найден");
+    (worst, reserve)
+}
+
+/// Чип, на котором USB и UART помещаются вместе, а с CAN — нет, и помещаются
+/// USB с CAN: `база + usb + uart + стек <= ram_length < то же + can` и
+/// `база + usb + can + стек <= ram_length`. Ищется перебором чипов по оценке
+/// самого хука, поэтому рост `RAM_COST` не ломает тест, а меняет чип.
+fn chip_where_the_third_transport_does_not_fit(ast: &Script) -> String {
+    let (worst, reserve) = transport_ram_costs();
+    let (usb, uart, can) = (worst["usb"], worst["uart"], worst["can"]);
+    for suffix in all_chip_suffixes() {
+        let Ok(result) = interview(ast, &suffix, &[], &[]) else {
+            continue;
+        };
+        let Some(base) = var_of(&result, "ram_estimate").and_then(|n| n.parse::<i64>().ok()) else {
+            continue;
+        };
+        let Some(limit) = result
+            .prints
+            .iter()
+            .find_map(|line| line.strip_prefix("ram_estimate: "))
+            .and_then(|line| {
+                line.split_once(" из ")?
+                    .1
+                    .split_whitespace()
+                    .next()?
+                    .parse::<i64>()
+                    .ok()
+            })
+        else {
+            continue;
+        };
+        let has_all = transport_menus(&result).first().is_some_and(|menu| {
+            ["usb", "uart", "can"]
+                .iter()
+                .all(|kind| menu.iter().any(|choice| menu_value(choice) == *kind))
+        });
+        if has_all
+            && base + usb + uart + reserve <= limit
+            && limit < base + usb + uart + can + reserve
+            && base + usb + can + reserve <= limit
+        {
+            return suffix;
+        }
+    }
+    panic!("ни один чип не подходит: нужна RAM между usb+uart и usb+uart+can");
+}
+
+/// Пометки считаются заново при каждой перерисовке: на чипе, где USB, UART и CAN
+/// по отдельности помещаются, а все три — нет, отмеченные USB и UART оставляют
+/// CAN без места; снятая отметка возвращает его. Чип подбирает
+/// `chip_where_the_third_transport_does_not_fit` по `RAM_COST` хука.
 #[test]
 fn marks_are_recomputed_after_each_toggle() {
+    let ast = compile_script();
+    let chip = chip_where_the_third_transport_does_not_fit(&ast);
     let result = interview(
-        &compile_script(),
-        "f072rb",
+        &ast,
+        &chip,
         &[],
         &[
             ("transports", "usb"),
