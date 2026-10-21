@@ -160,7 +160,7 @@ impl core::error::Error for NodeLost {}
 
 /// Ёмкость входа `CMD`, байт: запрос (кусок `ports::CHUNK_BYTES` со смещением и
 /// длиной, тег варианта, номер клиента) и ответ. Одно число на граф (`request:`
-/// в `OTA_FRAG`) и на `static` входа в проекте без графа (`crates-cross/app/src/main.rs`). В
+/// в `OTA_FRAG`) и на `static` входа в проекте без графа (`crates-cross/app/src/tasks/ota.rs`). В
 /// `request:` фрагмента оно записано литералом — макрос не принимает путь, —
 /// так что меняется в двух местах.
 pub const CMD_BYTES: usize = 144;

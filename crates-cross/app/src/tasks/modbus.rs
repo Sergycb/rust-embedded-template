@@ -17,7 +17,7 @@ pub mod {{ f[4] }} {
     use crate::link::{{ f[4] }}::{Link, Source};
 
     #[embassy_executor::task]
-    async fn task(mut link: Link, map: crate::modbus::Handle) {
+    async fn task(mut link: Link, {% if ota != "true" %}mut {% endif %}map: crate::modbus::Handle) {
 {%- if ota == "true" %}
         let mut regs = domain::modbus::OtaRegisters::new(
             map,
@@ -26,13 +26,11 @@ pub mod {{ f[4] }} {
                 domain::ota::ClientId({{ client }}),
             ),
         );
-{%- else %}
-        let mut regs = map;
 {%- endif %}
         let mut unit = 1;
         domain::modbus::task(domain::modbus::ModbusSlaveCtx {
             link: &mut link,
-            regs: &mut regs,
+            regs: &mut {% if ota == "true" %}regs{% else %}map{% endif %},
             unit: &mut unit,
             index: 0,
         })

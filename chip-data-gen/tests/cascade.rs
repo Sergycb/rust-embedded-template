@@ -4295,6 +4295,24 @@ fn define_links_that_do_not_fit_are_rejected() {
     run_chip_with(&ast, "l011f4", &[]).expect("l011f4 без транспортов");
 }
 
+/// Пара `interface` + `protocol` отсеивает чипы по RAM до каскада так же, как
+/// `links`: USB с protobuf STM32F042F6 не показывается, STM32F072C8 — остаётся.
+/// Без `protocol` оценка — по транспорту без протокола, и F042F6 USB берёт.
+#[test]
+fn define_interface_and_protocol_filter_by_ram_before_the_cascade() {
+    let ast = compile_script();
+    let pair = [("interface", "usb"), ("protocol", "protobuf")];
+    match run_cascade_with(&ast, "f042f6", &pair) {
+        Err(err) => assert!(err.to_string().contains("не ведёт к цели"), "{err}"),
+        Ok(result) => assert_ne!(var_of(&result, "chip"), Some("STM32F042F6")),
+    }
+    run_cascade_with(&ast, "f072c8", &pair)
+        .expect("f072c8 (15.5 KiB RAM) должен остаться в каскаде");
+    let result = run_cascade_with(&ast, "f042f6", &[("interface", "usb")])
+        .expect("USB без протокола у f042f6 помещается");
+    assert_eq!(var_of(&result, "chip"), Some("STM32F042F6"));
+}
+
 /// Ручная раскладка (`write_size`): регион RAM пишет человек — оценки нет,
 /// меню без пометок, `--define` не отвергается.
 #[test]

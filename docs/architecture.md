@@ -80,7 +80,10 @@
 чем они разговаривают с портами — ошибки, — объявлено в `ports`: тот стал словарём
 домена, а не только набором трейтов. Своё в `domain` — только контексты узлов
 (их эмитит фрагмент), состояния автоматов и входы фрагментов (`OtaWiring`, `IdleMeter`, `Mode`){% if protocol != "none" %},
-включая обработчик протокола на этом входе: {% if protocol == "protobuf" %}`host::Service` (порт `HostService`){% elsif protocol == "modbus" %}`modbus::EmptyRegisters` (порт `Registers`){% else %}`canopen::dictionary` (словарь объектов){% endif %} — логика приложения,
+включая обработчик протокола на этом входе: {% if protocol == "protobuf" %}`host::Service` (порт `HostService`){% elsif protocol == "modbus" %}`modbus::EmptyRegisters` (порт `Registers`; карта одна на проект —
+псевдоним `crate::modbus::Map`, ручка `crate::modbus::Handle` над
+`domain::modbus::MapMutex`, — все узлы `MODBUS_*` работают над ней{% if ota == "true" %}, а окно OTA
+`modbus::OtaRegisters` оборачивает ручку снаружи, вне блокировки{% endif %}){% else %}`canopen::dictionary` (словарь объектов){% endif %} — логика приложения,
 которую проект правит под себя, поэтому живёт в `domain`, а не в `app`{% endif %}.
 Состояние внутри одного вызова функции (хвост до слова флеша при приёме) живёт в
 её локальных переменных, а не в структуре.
@@ -125,7 +128,8 @@ Bound'ов у параметров нет намеренно: их держит 
 `supervisor/local-resources` в `crates-cross/Cargo.toml` и по `unsafe`-блоку
 на каждый такой `local`-`static`, который макрос эмитит в `app` (здесь —
 два). Это то же допущение «один исполнитель», что у `NoopRawMutex` в
-`bsp::flash::FlashMutex` — менять их вместе (`docs/flash.md`).
+`bsp::flash::FlashMutex` и в `domain::modbus::MapMutex` (общая карта узлов
+Modbus) — менять их вместе (`docs/flash.md`).
 
 **Большой объект — слот `&'static mut T = static`, а не по значению.** Слот по
 значению дважды проходит через стек (пролог `spawn_all` и первый опрос задачи)
