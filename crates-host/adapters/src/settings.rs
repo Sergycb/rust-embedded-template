@@ -99,12 +99,16 @@ pub type Key = u32;
 /// Ошибка хранилища. Включает и ошибки флеша, и повреждение данных в разделе.
 pub type Error<E> = sequential_storage::Error<E>;
 
-/// Рабочий буфер под сериализацию при записи.
+/// Рабочий буфер: в нём запись сериализуется и в нём же ищется при чтении.
 ///
 /// Ограничивает максимальный размер значения: `sequential-storage` требует
 /// буфер, в который поместятся ключ и значение вместе, с выравниванием по
 /// слову записи флеша. 128 байт — на калибровки и настройки хватает; нужно
 /// больше — правьте здесь, это не влияет ни на что, кроме RAM.
+///
+/// Поиск читает в этот буфер каждую запись раздела, поэтому уменьшать его
+/// нельзя, пока в разделе лежат записи прошивки с большим буфером: на первой
+/// такой записи любое чтение откажет с `BufferTooSmall`.
 const SCRATCH: usize = 128;
 
 /// Кеш, который ничего не кеширует (см. раздел «Чего здесь нет»).
@@ -185,14 +189,28 @@ impl<F: NorFlash> ports::SettingsStorage for Settings<F> {
 
     /// Читает значение по ключу; `None` — ключ ещё не записан.
     ///
-    /// Буфер отдаёт вызывающий, потому что результат ссылается прямо на него:
-    /// хранилище десериализует значение без копирования.
+    /// Ищет во внутреннем буфере, а не в буфере вызывающего: `sequential-storage`
+    /// читает в буфер поиска каждую запись раздела и на любой, что длиннее, —
+    /// даже с чужим ключом — отказывает с `BufferTooSmall`. Внутренний вмещает
+    /// любую запись этого хранилища, вызывающему копируется только значение;
+    /// не влезло — `BufferTooSmall(длина значения)`.
     async fn read<'a>(
         &mut self,
         key: Key,
         scratch: &'a mut [u8],
     ) -> Result<Option<&'a [u8]>, Self::Error> {
-        self.map.fetch_item::<&[u8]>(scratch, &key).await
+        let Some(value) = self
+            .map
+            .fetch_item::<&[u8]>(&mut self.scratch, &key)
+            .await?
+        else {
+            return Ok(None);
+        };
+        let out = scratch
+            .get_mut(..value.len())
+            .ok_or(sequential_storage::Error::BufferTooSmall(value.len()))?;
+        out.copy_from_slice(value);
+        Ok(Some(out))
     }
 
     /// Записывает значение, логически затирая предыдущее с тем же ключом.
@@ -329,6 +347,38 @@ mod tests {
 
         assert!(refused.is_err(), "{refused:?}");
         assert_eq!(settings.read(1, &mut scratch).await.expect("чтение"), None);
+    }
+
+    /// Буфера вызывающего хватает по размеру искомого значения: запись с чужим
+    /// ключом длиннее буфера чтению не мешает.
+    #[tokio::test]
+    async fn a_short_value_reads_past_a_longer_record() {
+        let mut settings = Settings::new(Flash::erased(), 0..512);
+        let mut scratch = [0u8; 8];
+
+        settings.write(1, b"ok").await.expect("короткая");
+        settings.write(2, &[0xAB; 100]).await.expect("длинная");
+
+        assert_eq!(
+            settings.read(1, &mut scratch).await.expect("чтение"),
+            Some(&b"ok"[..])
+        );
+    }
+
+    /// Значение длиннее буфера вызывающего — ошибка с длиной значения, а не
+    /// обрезанное значение.
+    #[tokio::test]
+    async fn a_value_longer_than_the_buffer_is_an_error() {
+        let mut settings = Settings::new(Flash::erased(), 0..512);
+        let mut scratch = [0u8; 8];
+
+        settings.write(1, &[0xAB; 20]).await.expect("запись");
+        let refused = settings.read(1, &mut scratch).await;
+
+        assert!(
+            matches!(refused, Err(sequential_storage::Error::BufferTooSmall(20))),
+            "{refused:?}"
+        );
     }
 
     /// Раздел переживает перезапуск: новое хранилище над тем же флешем видит
