@@ -138,7 +138,8 @@ supervisor_graph! {
 
         // Узел `MODBUS_{{ f[4] | upcase }}` — Modbus slave: транспорт собирает `crate::link::{{ f[4] }}`
         // (кадрирование{% if f[0] == "tcp" or f[0] == "udp" %}, сокет{% endif %}) над тем, что отдала плата; карта регистров
-        // `domain::modbus::EmptyRegisters` пуста, её проект описывает в `domain`.
+        // одна на все узлы Modbus: ручку `parts.modbus` (`Copy`) получает каждый, а
+        // тип карты проект меняет в одном месте — `crate::modbus::Map`.
         // Адрес slave'а — `unit`{% if f[0] == "tcp" or f[0] == "udp" %}: по сети устройство адресуется по IP, и
         // slave отвечает на любой адрес в MBAP{% endif %}.
 {%- if ota == "true" %}
@@ -147,12 +148,12 @@ supervisor_graph! {
         // (`OtaClient` с номером этого транспорта), остальное — карте проекта.
         ::domain::MODBUS_SLAVE_FRAG<
             crate::link::{{ f[4] }}::Link,
-            ::domain::modbus::OtaRegisters<::domain::modbus::EmptyRegisters>,
+            ::domain::modbus::OtaRegisters<crate::modbus::Registers>,
         > as MODBUS_{{ f[4] | upcase }} =
             ::domain::modbus::ModbusSlaveWiring {
                 link: crate::link::{{ f[4] }}::new({% if f[0] == "uart" %}parts.board.{{ f[4] }}{% elsif f[0] == "usb" %}parts.{{ f[4] }}.cdc{% else %}parts.net.stack{% endif %}),
                 regs: ::domain::modbus::OtaRegisters::new(
-                    ::domain::modbus::EmptyRegisters,
+                    parts.modbus,
                     ::domain::ota::OtaClient::new(
                         ota_cmd_requester(),
                         ::domain::ota::ClientId({{ client }}),
@@ -161,10 +162,10 @@ supervisor_graph! {
                 unit: 1,
             },
 {%- else %}
-        ::domain::MODBUS_SLAVE_FRAG<crate::link::{{ f[4] }}::Link, ::domain::modbus::EmptyRegisters> as MODBUS_{{ f[4] | upcase }} =
+        ::domain::MODBUS_SLAVE_FRAG<crate::link::{{ f[4] }}::Link, crate::modbus::Registers> as MODBUS_{{ f[4] | upcase }} =
             ::domain::modbus::ModbusSlaveWiring {
                 link: crate::link::{{ f[4] }}::new({% if f[0] == "uart" %}parts.board.{{ f[4] }}{% elsif f[0] == "usb" %}parts.{{ f[4] }}.cdc{% else %}parts.net.stack{% endif %}),
-                regs: ::domain::modbus::EmptyRegisters,
+                regs: parts.modbus,
                 unit: 1,
             },
 {%- endif %}

@@ -570,7 +570,10 @@ ST-Link захваченным до переподключения кабеля 
 
 {%- if protocol != "none" %}
 Что править проекту:
-{%- if protocol == "modbus" %} карту регистров `crates-host/domain/src/modbus/registers.rs`.
+{%- if protocol == "modbus" %} карту регистров `crates-host/domain/src/modbus/registers.rs` и её
+тип в `crates-cross/app/src/modbus.rs` (псевдоним `Map` и начальное значение): карта одна на
+все узлы `MODBUS_*`, каждый получает ручку к ней (`domain::modbus::SharedRegisters`), так
+что запись по одному транспорту видна чтению по другому.
 {%- elsif protocol == "protobuf" %} схему `crates-host/proto` и обработчик `crates-host/domain/src/host/service.rs`.
 {%- else %} словарь объектов `crates-host/canopen/device.toml`.
 {%- endif %}

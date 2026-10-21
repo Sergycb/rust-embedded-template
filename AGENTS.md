@@ -189,7 +189,9 @@ read`: руками пришлось бы сначала найти адрес �
   (`bsp::ota::DFU_FLASH`, `bsp::ota::STATE_FLASH`), `CONFIG`
   (`bsp::settings::CONFIG_FLASH`; с `ota=external` —
   `bsp::external::ExternalMutex`{% if dfu_bank == "true" %}; `DFU` во втором банке —
-  `bsp::flash::DfuBankMutex`{% endif %}) и `local` на слотах узла OTA
+  `bsp::flash::DfuBankMutex`{% endif %}){% if has_modbus == "true" %}, карты регистров
+  Modbus (`domain::modbus::MapMutex`, `crate::modbus` в `app`; ручки
+  `SharedRegisters` — в `local`-слотах `REGS` узлов `MODBUS_*`){% endif %} и `local` на слотах узла OTA
   (`domain::ota`) — одно допущение «один исполнитель», менять вместе —
   `docs/flash.md`, `docs/architecture.md`.
 - Подтверждение образа (`mark_booted`) — в стартовом действии узла OTA

@@ -165,7 +165,8 @@ GD25, MX25, IS25, SST26…), шаблон не знает и не гадает: 
   к флешу перестанет быть эксклюзивным. С этим же допущением связаны
   мьютексы разделов OTA (`bsp::ota::DFU_FLASH`, `STATE_FLASH`; с
   `ota=external` — `bsp::external::ExternalMutex`), раздела настроек
-  (`bsp::settings::CONFIG_FLASH`) и
+  (`bsp::settings::CONFIG_FLASH`){% if has_modbus == "true" %}, карты регистров Modbus
+  (`domain::modbus::MapMutex`, общая у узлов `MODBUS_*`; `crate::modbus` в `app`){% endif %} и
   `local`-слоты узла OTA (`domain::ota`, фрагмент `OTA_FRAG`) —
   менять их вместе с типом мьютекса.
 - **Раздел — ровно две страницы стирания одного размера.** Меньше двух

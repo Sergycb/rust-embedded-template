@@ -1933,6 +1933,7 @@ if !on.modbus {
 	file::delete("crates-host/adapters/src/modbus");
 	file::delete("crates-host/domain/src/modbus.rs");
 	file::delete("crates-host/domain/src/modbus");
+	file::delete("crates-cross/app/src/modbus.rs");
 }
 // Транспорты Modbus и сокеты сети — только под выбранные транспорты: остальные
 // файлы адаптеров были бы кодом, до которого не дотянуться. `mod`, `pub use` и

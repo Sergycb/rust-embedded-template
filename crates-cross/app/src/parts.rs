@@ -8,7 +8,9 @@
 //! `NET`) и стек для сокетов — одним `embassy_net::new`{% endif %}. Узлы получают их отдельно, а граф
 //! входы узлов собирает отдельными выражениями, поэтому пара собирается здесь,
 //! один раз, и в графе делится по полям (`parts.<транспорт>.device`,
-//! `parts.<транспорт>.cdc`). Граф берёт [`Parts`] `boot:`-объектом, без
+//! `parts.<транспорт>.cdc`).{% if has_modbus == "true" %} Здесь же один раз заводится карта регистров
+//! Modbus (`crate::modbus`): её ручку (`parts.modbus`, `Copy`) получает каждый
+//! узел `MODBUS_*`.{% endif %} Граф берёт [`Parts`] `boot:`-объектом, без
 //! графа — `tasks::spawn_all`.
 {%- assign xs = links | split: "," %}
 
@@ -27,6 +29,10 @@ pub struct Parts {
 {%- if has_net == "true" %}
     /// Сеть: фоновая работа стека для узла `NET` и стек для сокетов.
     pub net: crate::net::Net,
+{%- endif %}
+{%- if has_modbus == "true" %}
+    /// Ручка карты регистров Modbus, общей у всех узлов `MODBUS_*`.
+    pub modbus: crate::modbus::Registers,
 {%- endif %}
 }
 
@@ -55,12 +61,20 @@ impl Parts {
 {%- if has_net == "true" %}
             net: crate::net::new(drivers.eth, seed),
 {%- endif %}
+{%- if has_modbus == "true" %}
+            modbus: crate::modbus::new(),
+{%- endif %}
             board,
         }
     }
 {%- else %}
     pub fn new((board, _drivers): (bsp::Board, bsp::Drivers)) -> Self {
-        Self { board }
+        Self {
+            board,
+{%- if has_modbus == "true" %}
+            modbus: crate::modbus::new(),
+{%- endif %}
+        }
     }
 {%- endif %}
 }

@@ -1,5 +1,6 @@
-//! Узлы `MODBUS_*`: Modbus slave с пустой картой регистров, адрес 1, по
-//! модулю на транспорт. Транспорт собирает `crate::link` над объектом платы.
+//! Узлы `MODBUS_*`: Modbus slave, адрес 1, по модулю на транспорт. Транспорт
+//! собирает `crate::link` над объектом платы; карта регистров одна на все узлы
+//! (`crate::modbus`), каждый получает её ручку.
 {%- assign xs = links | split: "," %}
 {%- comment %} Номер клиента OTA — порядковый номер транспорта с протоколом в `links`, как в графе (`crate::graph`). {% endcomment %}
 {%- assign client = 0 %}
@@ -12,17 +13,17 @@ pub mod {{ f[4] }} {
     use embassy_executor::Spawner;
 
     #[embassy_executor::task]
-    async fn task(mut link: crate::link::{{ f[4] }}::Link) {
+    async fn task(mut link: crate::link::{{ f[4] }}::Link, map: crate::modbus::Registers) {
 {%- if ota == "true" %}
         let mut regs = domain::modbus::OtaRegisters::new(
-            domain::modbus::EmptyRegisters,
+            map,
             domain::ota::OtaClient::new(
                 crate::tasks::ota::CMD.requester(),
                 domain::ota::ClientId({{ client }}),
             ),
         );
 {%- else %}
-        let mut regs = domain::modbus::EmptyRegisters;
+        let mut regs = map;
 {%- endif %}
         let mut unit = 1;
         domain::modbus::task(domain::modbus::ModbusSlaveCtx {
@@ -34,10 +35,14 @@ pub mod {{ f[4] }} {
         .await;
     }
 
-    /// Собирает транспорт над `source` и спавнит узел.
-    pub fn spawn(spawner: Spawner, source: crate::link::{{ f[4] }}::Source) {
+    /// Собирает транспорт над `source` и спавнит узел над картой `map`.
+    pub fn spawn(
+        spawner: Spawner,
+        source: crate::link::{{ f[4] }}::Source,
+        map: crate::modbus::Registers,
+    ) {
         let link = crate::link::{{ f[4] }}::new(source);
-        let token = task(link);
+        let token = task(link, map);
         spawner.spawn(token.expect("задача MODBUS_{{ f[4] | upcase }} свежая: спавнится один раз"));
     }
 }
