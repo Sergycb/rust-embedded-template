@@ -382,8 +382,24 @@ fn main() -> anyhow::Result<()> {
         labels.join(", "),
     );
 
+    let mut static_ram = Vec::new();
     for case in &options.cases {
-        check_one(&template, &work_dir, &cargo_target_dir, case, &options)?;
+        if let Some(ram) = check_one(&template, &work_dir, &cargo_target_dir, case, &options)? {
+            static_ram.push((case.label(), ram));
+        }
+    }
+
+    // Факт статической RAM по случаям — из строки `ram:` вывода `build`.
+    if !static_ram.is_empty() {
+        println!("\nСтатическая RAM (.data + .bss + .uninit), байт:");
+        let width = static_ram
+            .iter()
+            .map(|(label, _)| label.chars().count())
+            .max()
+            .unwrap_or(0);
+        for (label, ram) in &static_ram {
+            println!("  {label:<width$}  {ram:>7}");
+        }
     }
 
     println!(
@@ -405,7 +421,7 @@ fn check_one(
     cargo_target_dir: &Path,
     case: &Case,
     options: &Options,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Option<u64>> {
     // Имя проекта = имя каталога, в который cargo-generate его положит.
     let name = case.name();
     let project = work_dir.join(&name);
@@ -439,6 +455,7 @@ fn check_one(
     check_no_raw_placeholders(&project)?;
     check_ci_files(&project, &options.ci)?;
 
+    let mut static_ram = None;
     if !options.quick {
         // Ровно те команды, которые README обещает пользователю шаблона.
         //
@@ -497,18 +514,32 @@ fn check_one(
         check_snippets_compile(&project, cargo_target_dir)?;
 
         for args in commands {
-            run(
-                Command::new("cargo").args(args),
-                &project,
-                Some(cargo_target_dir),
-            )
-            .with_context(|| {
+            let context = || {
                 format!(
                     "`cargo {}` в сгенерированном проекте (оставлен для разбора: {})",
                     args.join(" "),
                     project.display(),
                 )
+            };
+            let command = &mut Command::new("cargo");
+            command.args(args);
+            if args != ["xtask", "build"] {
+                run(command, &project, Some(cargo_target_dir)).with_context(context)?;
+                continue;
+            }
+            // Вывод `build` перехватывается ради строки `ram:` и печатается
+            // как есть, чтобы отчёт сборки в логе остался.
+            let output =
+                capture(command, &project, Some(cargo_target_dir)).with_context(context)?;
+            print!("{output}");
+            let ram = parse_static_ram(&output).with_context(|| {
+                format!(
+                    "в выводе `cargo xtask build` нет строки `ram: <N> байт статической RAM …` \
+                     (формат — ram_line в crates-host/xtask/src/size.rs) для {}",
+                    case.label(),
+                )
             })?;
+            static_ram = Some(ram);
         }
     }
 
@@ -517,7 +548,7 @@ fn check_one(
     } else {
         fs::remove_dir_all(&project).with_context(|| format!("удалить {}", project.display()))?;
     }
-    Ok(())
+    Ok(static_ram)
 }
 
 /// Ищет `{{ }}`/`{% %}`, пережившие генерацию. Мимо линта и сборки такое
@@ -650,6 +681,20 @@ fn visit_files(
         }
     }
     Ok(())
+}
+
+/// Статическая RAM образа из вывода `cargo xtask build` — строка
+/// `ram: <N> байт статической RAM из …`, которую печатает
+/// `crates-host/xtask/src/size.rs` (`ram_line`). Формат — общий контракт.
+fn parse_static_ram(build_output: &str) -> Option<u64> {
+    build_output.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("ram: ")?
+            .split_once(" байт статической RAM")?
+            .0
+            .parse()
+            .ok()
+    })
 }
 
 /// То же, что [`run`], но отдаёт stdout: нужно там, где проверяется не код
@@ -1033,7 +1078,18 @@ fn copy_dir(from: &Path, to: &Path) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::without_actions_expressions;
+    use super::{parse_static_ram, without_actions_expressions};
+
+    /// Строку печатает `crates-host/xtask/src/size.rs` (`ram_line`).
+    #[test]
+    fn parses_the_static_ram_line_of_a_build() {
+        let output = "app: 41.2 KiB из 128.0 KiB ACTIVE (32.2%)\n\
+                      ram: 3124 байт статической RAM из 131072 байт RAM (2.4%)\n\
+                      образ для OTA: app.bin\n";
+
+        assert_eq!(parse_static_ram(output), Some(3124));
+        assert_eq!(parse_static_ram("app: 41.2 KiB\n"), None);
+    }
 
     /// Главное свойство: послабление ради Actions не должно прятать настоящий
     /// плейсхолдер, стоящий в той же строке.
