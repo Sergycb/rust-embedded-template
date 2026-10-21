@@ -3,6 +3,9 @@ members = [
 	"crates-host/domain",
 	"crates-host/host-target-tests",
 	"crates-host/adapters",
+	# {%- if flash_page == "true" %}
+	"crates-host/flash-page",
+	# {%- endif %}
 	# {%- if has_canopen == "true" %}
 	"crates-host/canopen",
 	# {%- endif %}
@@ -74,6 +77,10 @@ map_err_ignore          = "warn"
 # и путь были в одном месте, как у внешних зависимостей.
 ports        = { path = "crates-host/ports" }
 adapters     = { path = "crates-host/adapters" }
+# {%- if flash_page == "true" %}
+# Страница стирания раздела (`ErasePage`) — общая у `bsp` и `boot`.
+flash-page   = { path = "crates-host/flash-page" }
+# {%- endif %}
 # {%- if has_protobuf == "true" %}
 # Схема protobuf — крейт протокола, выбранного при генерации.
 proto        = { path = "crates-host/proto" }

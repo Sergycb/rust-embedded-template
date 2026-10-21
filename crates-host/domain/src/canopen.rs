@@ -134,10 +134,10 @@ pub fn dictionary() -> Dictionary {
 // struct`). Строит её compose-site:
 //
 // ```ignore
-// fragments: [::domain::CANOPEN_FRAG<bsp::can::Can, bsp::settings::Settings> as CANOPEN
-//                 = ::domain::canopen::CanOpenWiring { bus: board.can, node_id: 1,
+// fragments: [::domain::CANOPEN_FRAG<bsp::can::can::Can, crate::settings::Settings> as CANOPEN
+//                 = ::domain::canopen::CanOpenWiring { bus: parts.board.can, node_id: 1,
 //                       dictionary: ::domain::canopen::dictionary(),
-//                       settings: board.settings, persist: true,
+//                       settings: crate::settings::new(parts.board.settings), persist: true,
 //                       ota_cmd: ota_cmd_requester() }];   // только с OTA
 // ```
 

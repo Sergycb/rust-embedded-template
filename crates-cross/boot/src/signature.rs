@@ -1,9 +1,7 @@
 //! Проверка подписи нового образа до обмена разделов.
 
 use core::cell::RefCell;
-{% if boot_partitioned == "true" %}
-use adapters::flash::ErasePage;
-{%- endif %}
+
 use defmt::info;
 use domain::ota::boot::{ScreenFailure, Screening, screen_update};
 use embassy_boot_stm32::BootLoaderConfig;
@@ -15,6 +13,9 @@ use embassy_stm32::flash::{Blocking, Flash};
 {%- endif %}
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+{%- if boot_partitioned == "true" %}
+use flash_page::ErasePage;
+{%- endif %}
 {%- if ota_store == "external" %}
 
 use crate::external::ExternalFlash;

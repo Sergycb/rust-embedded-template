@@ -10,7 +10,7 @@
 `BlockingPartition::new(flash, 0, flash::SIZE)` из `embassy-embedded-hal` — раздел
 на весь флеш с нулевым смещением ([`Whole`]). Операции идут под замком, по
 одной.{% if erase_page == "true" %} Если нужна другая страница стирания (`STATE`, `CONFIG`, страница
-обмена), поверх раздела ставится `adapters::flash::ErasePage`.{% endif %} Асинхронный
+обмена), поверх раздела ставится `flash_page::ErasePage`.{% endif %} Асинхронный
 вид для `embassy-boot` и `sequential-storage` даёт
 `embassy_embedded_hal::adapter::BlockingAsync`. `BlockingPartition::new`
 паникует, если объём не кратен `ERASE_SIZE`; у STM32 он всегда кратен самому

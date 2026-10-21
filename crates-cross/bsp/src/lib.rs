@@ -32,9 +32,6 @@ pub mod fault;
 {%- if shared_flash == "true" %}
 pub mod flash;
 {%- endif %}
-{%- if has_modbus == "true" or has_protobuf == "true" %}
-pub mod link;
-{%- endif %}
 {%- if has_net == "true" %}
 pub mod net;
 {%- endif %}
@@ -54,6 +51,9 @@ pub mod serial;
 {%- if config == "true" %}
 pub mod settings;
 {%- endif %}
+{%- if has_stub == "true" %}
+pub mod stub;
+{%- endif %}
 {%- if has_usb == "true" %}
 pub mod usb;
 {%- endif %}
@@ -61,4 +61,4 @@ pub mod usb;
 pub mod wdg;
 {%- endif %}
 
-pub use board::{Board, ChipSpec};
+pub use board::{Board, ChipSpec, Drivers};

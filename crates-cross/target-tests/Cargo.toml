@@ -56,6 +56,9 @@ bsp = { workspace = true, features = ["fault-handler"] }
 # Трейты портов: тесты дёргают объекты `Board` тем же способом, что и `app`
 # (`FirmwareUpdate` — тесты OTA, `SettingsStorage` — тест настроек).
 ports = { workspace = true }
+# Адаптер обновления и хранилище настроек над разделами платы — их собирает
+# приложение, а тест собирает так же (`updater`, `settings` в tests/test.rs).
+adapters = { workspace = true }
 {%- endif %}
 {%- if signed == "true" %}
 # Проверка версии образа в тесте отката (`domain::ota::update::apply_signed`).

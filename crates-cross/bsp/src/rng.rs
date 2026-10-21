@@ -7,9 +7,12 @@ bind_interrupts!(struct Irqs {
     {{rng_irq}} => rng::InterruptHandler<RNG>;
 });
 
-/// Первое случайное слово блока — затравка сетевого стека. Блок включается
-/// на время вызова и выключается, когда `Rng` дропается: клок ему уже дан
-/// конфигом HAL (`config()` в `bsp::board`).
-pub(crate) fn seed(rng: Peri<'static, RNG>) -> u64 {
-    rng::Rng::new(rng, Irqs).next_u64()
+/// Генератор случайных чисел платы. Блок включён, пока объект жив, и
+/// выключается, когда его дропают: клок ему дан конфигом HAL (`config()` в
+/// `bsp::board`).
+pub type Rng = rng::Rng<'static, RNG>;
+
+/// Собирает генератор.
+pub(crate) fn new(rng: Peri<'static, RNG>) -> Rng {
+    Rng::new(rng, Irqs)
 }

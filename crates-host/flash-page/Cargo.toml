@@ -1,0 +1,32 @@
+[package]
+name = "flash-page"
+version.workspace      = true
+edition.workspace      = true
+license.workspace      = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+embedded-storage = { workspace = true }
+# {%- if ota_store == "external" %}
+# `erase_size` — страница асинхронного драйвера внешней флеши.
+embedded-storage-async = { workspace = true }
+# {%- endif %}
+
+[dev-dependencies]
+# `BlockingAsync` (async-вид флеша) и `BlockingPartition` (раздел под замком) —
+# как их собирают `bsp` и bootloader; свои копии в тестах не нужны.
+embassy-embedded-hal = { workspace = true }
+embassy-sync = { workspace = true }
+# Замок `embassy-sync` на хосте — `critical-section/std`.
+critical-section = { workspace = true, features = ["std"] }
+embedded-storage-async = { workspace = true }
+# {%- if erase_page == "true" %}
+# `coarse_swap`: настоящий `BootLoader` над раскладкой со страницей обмена
+# крупнее физической.
+embassy-boot = { workspace = true }
+# {%- endif %}
+# Исполнитель для async-тестов над флешем в памяти; фичи — в корневом Cargo.toml.
+tokio = { workspace = true }

@@ -1202,13 +1202,13 @@ struct OtaPartitions {
     bootloader_state_origin: u64,
     bootloader_state_length: u64,
     /// Сектор, в котором лежит `BOOTLOADER_STATE`, — страница, которую ему
-    /// объявляет `adapters::flash::ErasePage` (см. `compute_ota_partitions`, пятая
+    /// объявляет `flash_page::ErasePage` (см. `compute_ota_partitions`, пятая
     /// проверка). Меньше `PAGE_SIZE` на чипах с неравными секторами.
     bootloader_state_erase_size: u64,
     /// Страница обмена embassy-boot (`PAGE_SIZE`): `ACTIVE`/`DFU` кратны ей, а
     /// `DFU` длиннее `ACTIVE` ровно на неё. Больше физической страницы чипа
     /// (`MemoryLayout::page_size`), когда прошивка оборачивает `ACTIVE`/`DFU` в
-    /// `adapters::flash::ErasePage<_, SWAP_PAGE_SIZE>` — см. [`compute_ota_partitions`].
+    /// `flash_page::ErasePage<_, SWAP_PAGE_SIZE>` — см. [`compute_ota_partitions`].
     swap_page_size: u64,
     active_origin: u64,
     active_length: u64,
@@ -1220,7 +1220,7 @@ struct OtaPartitions {
     settings: Option<SettingsPartition>,
 }
 
-/// Где лежит раздел настроек и какая у него страница (`adapters::flash::ErasePage`
+/// Где лежит раздел настроек и какая у него страница (`flash_page::ErasePage`
 /// в `bsp::settings`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct SettingsPartition {
@@ -2119,7 +2119,7 @@ fn journal_bytes(p: &OtaPartitions, write_size: u64) -> u64 {
 /// `Flash` это самый крупный сектор, и на F2/F4/F7 `STATE` в мелком секторе
 /// (0x10000 при странице 128 KiB у F4) ронял и bootloader, и приложение на
 /// первом же старте — у всех 223 таких чипов с OTA. Поэтому `STATE` строится
-/// поверх `adapters::flash::ErasePage` со страницей своего сектора, и размер этого
+/// поверх `flash_page::ErasePage` со страницей своего сектора, и размер этого
 /// сектора — `bootloader_state_erase_size` — уходит в шаблон вместе с адресами.
 /// Сам сектор — самый мелкий в резерве, см. `place_state`.
 ///

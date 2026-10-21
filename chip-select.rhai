@@ -243,7 +243,7 @@ fn plan(m, erase_zero, wants, limits) {
     // начале стоит таблица векторов приложения. С OTA — там, где его положил
     // chip-data-gen (`config_ota_settings_*`): в мелких секторах перед ACTIVE,
     // если так ACTIVE больше (F2/F4/F7), иначе тоже в хвосте. Страница — сектор
-    // под разделом (`adapters::flash::ErasePage` в bsp::settings).
+    // под разделом (`flash_page::ErasePage` в bsp::settings).
     let settings_key = if ext_ota {
         "ext_cfg_settings_"
     } else if ota {
@@ -579,7 +579,7 @@ if !wants_ota {
 //                тратится вовсе, и это единственное место под настройки на
 //                чипах, чей флеш стирается в ноль;
 //   "external" — внешняя флеш: ответ `external`; шаблон кладёт заглушку
-//                (`adapters::flash::Unconnected`), драйвер подставляете вы;
+//                (`bsp::stub::Flash`), драйвер подставляете вы;
 //   "none"     — настроек нет.
 // Ответ `internal` выбирает между первыми двумя сам, `external` — третий,
 // `no` — четвёртый. Незнакомый ответ — ошибка, как у `ota`.
@@ -1247,7 +1247,7 @@ variable::set("usb_kind", "");
 variable::set("links", "");
 for kind in LINK_KINDS { variable::set("has_" + kind, "false"); }
 variable::set("has_net", "false");
-// Нужна ли `STATE` и `CONFIG` своя страница (`adapters::flash::ErasePage`): только
+// Нужна ли `STATE` и `CONFIG` своя страница (`flash_page::ErasePage`): только
 // когда сектор раздела мельче страницы цельного `Flash` — F2/F4/F7. Иначе раздел
 // строится прямо над `Whole`, а равенство страниц держит `const`-assert в `bsp`.
 variable::set("state_paged", "false");
@@ -1265,6 +1265,7 @@ if variable::is_set("write_size") {
     if !wants_ota {
         file::delete("crates-cross/boot");
         file::delete("crates-cross/bsp/src/ota.rs");
+        file::delete("crates-cross/app/src/ota.rs");
         file::delete("docs/modules/bsp-ota.md");
         // Релизу по тегу без OTA нечего выкладывать: `app.bin` делается
         // только там, где есть раздел DFU. Тело workflow и так под
@@ -1286,6 +1287,7 @@ if variable::is_set("write_size") {
             print("  добавьте регион CONFIG вручную и впишите CONFIG_START/CONFIG_END в [env]");
         }
         file::delete("crates-cross/bsp/src/settings.rs");
+        file::delete("crates-cross/app/src/settings.rs");
     }
     // Общий объект `Flash` в bsp нужен OTA во внутреннем flash и настройкам во
     // флеше или EEPROM; внешней флеши он не нужен (см. ту же переменную ниже).
@@ -1308,7 +1310,7 @@ if variable::is_set("write_size") {
     // `ACTIVE`/`DFU` без раскладки не оборачиваются в `ErasePage`: страница обмена
     // здесь — страница цельного `Flash` (как было до расширения страницы).
     variable::set("swap_paged", "false");
-    // Страница раздела `BOOTLOADER_STATE` (`adapters::flash::ErasePage`; число
+    // Страница раздела `BOOTLOADER_STATE` (`flash_page::ErasePage`; число
     // уезжает переменной среды в crates-cross/.cargo/config.toml, её читают
     // bsp::flash и boot) — тоже знание раскладки. Её здесь нет,
     // поэтому — страница цельного `Flash`, как было до `ErasePage`: верно на
@@ -1409,7 +1411,7 @@ if variable::is_set("write_size") {
         print("Настройки — во внутренней EEPROM чипа: флеш под них не тратится");
     } else if config && store == "external" {
         print("Настройки — на внешней флеши: подставьте свой драйвер в crates-cross/bsp/src/settings.rs");
-        print("  (пока там заглушка adapters::flash::Unconnected — проект собирается, настройки не сохраняются)");
+        print("  (пока там заглушка bsp::stub::Flash — проект собирается, настройки не сохраняются)");
     }
     if wants_graph && !graph {
         print("Граф задач отключён для " + suffix + ": под приложение отведено " + m[app_length_key] + ", а supervisor туда не помещается");
@@ -1422,7 +1424,7 @@ if variable::is_set("write_size") {
     // внутренней OTA это `swap_page_size` её набора цифр — она крупнее
     // физической страницы чипа там, где chip-data-gen расширил её ради
     // журнала `STATE` (`swap_paged`): прошивка тогда оборачивает ACTIVE и DFU в
-    // `adapters::flash::ErasePage<_, SWAP_PAGE_SIZE>` (= page_size). Без OTA страницы обмена нет —
+    // `flash_page::ErasePage<_, SWAP_PAGE_SIZE>` (= page_size). Без OTA страницы обмена нет —
     // остаётся физическая, и `swap_paged` = "false".
     // С внешними разделами страница обмена зависит от стирания драйвера, а
     // DFU в адресном пространстве МК нет вовсе — host-target тест обмена
@@ -1494,6 +1496,7 @@ if variable::is_set("write_size") {
     variable::set("graph", if graph { "true" } else { "false" });
     if !config {
         file::delete("crates-cross/bsp/src/settings.rs");
+        file::delete("crates-cross/app/src/settings.rs");
     }
 
     // База flash одна на оба режима: `__bootloader_*` отсчитываются от неё, а не
@@ -1730,6 +1733,7 @@ if variable::is_set("write_size") {
         // идёт по временной копии шаблона, до рендера — как и file::write.
         file::delete("crates-cross/boot");
         file::delete("crates-cross/bsp/src/ota.rs");
+        file::delete("crates-cross/app/src/ota.rs");
         file::delete("docs/modules/bsp-ota.md");
         // Вместе с bootloader'ом уходит и работа с разделом DFU: без OTA
         // раздела нет, а символы `__bootloader_dfu_*`, на которые опирается
@@ -1772,6 +1776,10 @@ if variable::get("graph") != "true" {
 	// `Board` поля сторожа не имеет.
 	file::delete("crates-cross/bsp/src/wdg.rs");
 	file::delete("docs/modules/bsp-wdg.md");
+} else {
+	// С графом узлы спавнит он (`fragments:`), модули задач без графа не нужны.
+	file::delete("crates-cross/app/src/tasks.rs");
+	file::delete("crates-cross/app/src/tasks");
 }
 
 // Протокол и транспорт выбраны и проверены выше (вопросы после выбора чипа), а
@@ -1786,13 +1794,16 @@ if iface != "none" {
         variable::set("usb_kind", primary.tag);
     }
 }
-// `adapters::flash::ErasePage` и всё, что о нём сказано, нужны проекту только когда
+// `flash_page::ErasePage` и всё, что о нём сказано, нужны проекту только когда
 // хоть один раздел его использует: `STATE`/`CONFIG` с секторами мельче страницы
 // чипа или `ACTIVE`/`DFU` со страницей обмена. Иначе типа в проекте нет вовсе.
 variable::set("erase_page", if variable::get("state_paged") == "true" || variable::get("config_paged") == "true" || variable::get("swap_paged") == "true" { "true" } else { "false" });
-// Заглушка драйвера внешней флеши (`adapters::flash::Unconnected`) нужна, пока
+// Заглушка драйвера внешней флеши (`bsp::stub::Flash`) нужна, пока
 // на внешней флеши лежит хоть что-то: разделы OTA или настройки.
 variable::set("external_flash", if (variable::get("ota") == "true" && variable::get("ota_store") == "external") || variable::get("config_store") == "external" { "true" } else { "false" });
+// Крейт `flash-page` (crates-host): `ErasePage` — при своей странице у раздела,
+// `erase_size` — при OTA на внешней флеши (проверка раскладки в `bsp::external`).
+variable::set("flash_page", if variable::get("erase_page") == "true" || (variable::get("ota") == "true" && variable::get("ota_store") == "external") { "true" } else { "false" });
 variable::set("protocol", protocol);
 variable::set("interface", iface);
 // Все транспорты — по ним идут файлы шаблона: список и признаки видов.
@@ -1871,6 +1882,8 @@ variable::set("link_port", if on.protobuf || has.can || has.udp { "true" } else 
 // у узла CANopen без хранилища. Иначе порта и адаптера в проекте нет.
 variable::set("settings_port", if variable::get("config") == "true" || on.canopen { "true" } else { "false" });
 variable::set("stream_io", if has.uart || has.usb || has.tcp { "true" } else { "false" });
+// Заглушки периферии в `bsp/src/stub.rs`: UART, CAN, USB, Ethernet, внешняя флеш.
+variable::set("has_stub", if has.uart || has.can || has.usb || has.tcp || has.udp || variable::get("external_flash") == "true" { "true" } else { "false" });
 // CRC кадра: RTU (Modbus по UART и USB) и COBS (protobuf по потоку).
 variable::set("crc_used", if modbus_rtu || cobs_used { "true" } else { "false" });
 // Property-тесты кадрирования есть у Modbus (RTU, TCP, UDP) и у COBS.
@@ -1878,8 +1891,8 @@ variable::set("framing_tests", if on.modbus || cobs_used { "true" } else { "fals
 // Асинхронные трейты в `ports`: без них `#![expect(async_fn_in_trait)]` не
 // срабатывает, и сборка падает.
 variable::set("ports_async", if variable::get("ota") == "true" || variable::get("settings_port") == "true" || on.modbus || on.protobuf || on.canopen || has.can || has.udp { "true" } else { "false" });
-// Модуль `link.rs` в `bsp`: готовые транспорты протоколов (`bsp::link::<имя>`) — кадрирование,
-// буферы и сокет. Без Modbus и protobuf транспорту нечего оборачивать (CANopen берёт
+// Модуль `link.rs` в `app`: транспорты протоколов (`app::link::<имя>`) — кадрирование,
+// буферы и сокет над объектами платы. Без Modbus и protobuf транспорту нечего оборачивать (CANopen берёт
 // шину CAN как есть).
 variable::set("protocol_link", if on.modbus || on.protobuf { "true" } else { "false" });
 // Группы `resources.rs` нужны, пока есть что в них класть: общий флеш, сторож
@@ -1962,7 +1975,7 @@ if !on.canopen {
 	file::delete("crates-host/canopen");
 }
 if variable::get("protocol_link") != "true" {
-	file::delete("crates-cross/bsp/src/link.rs");
+	file::delete("crates-cross/app/src/link.rs");
 }
 if variable::get("link_port") != "true" {
 	file::delete("crates-host/ports/src/link.rs");
@@ -1995,18 +2008,40 @@ if variable::get("settings_port") != "true" {
 }
 // Мост blocking → async и заглушка внешней флеши — только когда ими кто-то
 // пользуется: обёртка страницы (`erase_page`) или внешняя флеш.
-if variable::get("erase_page") != "true" && variable::get("external_flash") != "true" {
-	file::delete("crates-host/adapters/src/flash.rs");
+if variable::get("flash_page") != "true" {
+	file::delete("crates-host/flash-page");
 }
-if !has.uart {
-	file::delete("crates-host/adapters/src/serial.rs");
+// Модули задач без графа (`app/src/tasks/`) — по узлу, только выбранные.
+if variable::get("graph") != "true" {
+	if variable::get("ota") != "true" {
+		file::delete("crates-cross/app/src/tasks/ota.rs");
+	}
+	if !has.tcp && !has.udp {
+		file::delete("crates-cross/app/src/tasks/net.rs");
+	}
+	if !has.usb {
+		file::delete("crates-cross/app/src/tasks/usb.rs");
+	}
+	if !on.modbus {
+		file::delete("crates-cross/app/src/tasks/modbus.rs");
+	}
+	if !on.protobuf {
+		file::delete("crates-cross/app/src/tasks/host.rs");
+	}
+	if !on.canopen {
+		file::delete("crates-cross/app/src/tasks/canopen.rs");
+	}
 }
-if !has.can {
-	file::delete("crates-host/adapters/src/can.rs");
+if variable::get("has_stub") != "true" {
+	file::delete("crates-cross/bsp/src/stub.rs");
+}
+if !has.usb && !has.tcp && !has.udp {
+	file::delete("crates-host/adapters/src/fake.rs");
 }
 // USB — устройство `embassy-usb`, узел USB и поток CDC — только с транспортом usb.
 if !has.usb {
 	file::delete("crates-cross/bsp/src/usb.rs");
+	file::delete("crates-cross/app/src/usb.rs");
 	file::delete("docs/modules/bsp-usb.md");
 	file::delete("crates-host/adapters/src/usb.rs");
 	file::delete("crates-host/domain/src/usb.rs");
@@ -2014,6 +2049,7 @@ if !has.usb {
 // Сеть — стек `embassy-net`, узел NET и их сокеты — только с tcp/udp.
 if !has.tcp && !has.udp {
 	file::delete("crates-cross/bsp/src/net.rs");
+	file::delete("crates-cross/app/src/net.rs");
 	file::delete("docs/modules/bsp-net.md");
 	file::delete("crates-host/adapters/src/net.rs");
 	file::delete("crates-host/adapters/src/net");
@@ -2029,6 +2065,7 @@ if rng[0] == "" || (!has.tcp && !has.udp) {
 // тестами и `pub mod eeprom;` (закрыт тем же условием в lib.rs) — мусор.
 if variable::get("config_store") != "eeprom" {
 	file::delete("crates-host/adapters/src/eeprom.rs");
+	file::delete("crates-host/ports/src/eeprom.rs");
 }
 
 // Слот драйвера внешней флеши в bsp — только у OTA с разделами на ней. Без

@@ -143,10 +143,10 @@ STM32C011D6 (32 KiB, то же ядро) проект занимает 12.6 KiB 
 `graph_is_dropped_when_the_app_partition_is_too_small`; менять порог — вместе с ним.
 
 Протоколу связи граф не нужен: при `graph=no` (и когда граф снят размером) узел
-протокола и его `NET`/`USB` спавнит `main` (задачи в `crates-cross/app/src/main.rs`
-над `domain::{modbus,host,canopen,net,usb}::task`, как `ota::task`). Транспорт
-протокола плата отдаёт готовым (`Board::link`, `crates-cross/bsp/src/link.rs`), так что
-`graph.rs` и `main.rs` принимают один и тот же объект. Тест каскада —
+протокола и его `NET`/`USB` спавнит `tasks::spawn_all` (модули задач в
+`crates-cross/app/src/tasks/` над `domain::{modbus,host,canopen,net,usb}::task`,
+как `ota::task`). Транспорт протокола собирает `crates-cross/app/src/link.rs`, так что
+`graph.rs` и модули задач строят один и тот же объект. Тест каскада —
 `protocol_does_not_need_the_graph`, конфигурации `*-no-graph` в `template-check`.
 
 В ветке ручной раскладки (`--define write_size=...`) размер раздела знает только
@@ -465,7 +465,7 @@ l476rg — Nucleo-L476RG). Теперь размер `BOOTLOADER_STATE` подб
 (`embassy-embedded-hal`): смещение и размер раздела кратны `ERASE_SIZE` флеша под ним,
 иначе паника при построении раздела. Над цельным `Flash` (страница — `MAX_ERASE_SIZE`)
 `STATE` в мелком секторе её не проходил, и у всех 223 чипов F2/F4/F7 с OTA и bootloader,
-и приложение падали на первом старте. Теперь `STATE` живёт над `adapters::flash::ErasePage`
+и приложение падали на первом старте. Теперь `STATE` живёт над `flash_page::ErasePage`
 со страницей своего сектора — она лежит в записи полем `bootloader_state_erase_size`
 (и `config_…` во втором наборе), хук раздаёт её плейсхолдером `state_erase_size`, а
 `assert_embassy_boot_invariants` проверяет кратность всех трёх разделов своей странице.
@@ -496,7 +496,7 @@ F2/F4/F7/H7 страница обмена и так крупнейший сек�
 независимо от размера страницы). Запись несёт `swap_page_size` и `swap_paged` (и `config_…`
 во втором наборе); хук выставляет `page_size` = `swap_page_size` и `swap_paged`; для `ota=no`,
 `ota=external`, `dfu_bank` и ручной раскладки `swap_paged` = "false". Прошивка (`boot`,
-`bsp::flash`) при "true" оборачивает `ACTIVE` и `DFU` в `adapters::flash::ErasePage<_, SWAP_PAGE_SIZE>`,
+`bsp::flash`) при "true" оборачивает `ACTIVE` и `DFU` в `flash_page::ErasePage<_, SWAP_PAGE_SIZE>`,
 число — то же `{{page_size}}` (менять только вместе). `DFU` не короче `ACTIVE` + `S` и кратен
 `S` (бывает на страницу длиннее, если остаток чётный). Инвариант «у каждого чипа с OTA зона
 bootloader'а не меньше `BOOTLOADER_MIN`» стережёт `bootloader_zone_and_swap_page_hold_for_every_chip`.
@@ -535,10 +535,14 @@ bootloader'а не меньше `BOOTLOADER_MIN`» стережёт `bootloader_
 Modbus. Через `--define` то же задаёт `links` (`parse_links()`, вместо пары
 `interface` + `protocol`), и отсев чипов до каскада тогда считает блоки каждого вида.
 Итог — переменная `links` (`вид:метка:блок:протокол:имя` через запятую; имя — блок
-строчными, у `tcp`/`udp` — сам вид) и `has_*`; файлы
-шаблона пока смотрят только на основной транспорт (первый с протоколом, иначе первый) —
-от него считаются `interface`, `protocol`, `iface_periph` и все производные; перевод
-на список — этап 3.
+строчными, у `tcp`/`udp` — сам вид) и `has_*`. Файлы шаблона идут по `links`
+циклом Liquid: у каждого транспорта своя группа в `resources.rs`, подмодуль драйвера
+в `bsp` (`bsp::serial::<имя>`, `bsp::can::<имя>`, `bsp::usb::<имя>`), подмодуль
+транспорта в `app` (`app::link::<имя>`, `app::usb::<имя>`), поле `Board` (или драйвер в
+`bsp::Drivers`) и узел графа или модуль задачи без графа. `interface`,
+`iface_periph` и производные от них считаются по основному транспорту (первый с
+протоколом, иначе первый) и остались там, где речь об одном блоке (подсказки
+`cargo xtask pins` в документации).
 Без терминала `variable::prompt` отвечает «not a terminal», и `ask()` берёт умолчание:
 OTA — `internal`, если схема помещается, иначе `no`; остальные — `no`/`none`/`yes`.
 `--define` — режим для скриптов и **строгий**: опечатка и значение, невозможное для

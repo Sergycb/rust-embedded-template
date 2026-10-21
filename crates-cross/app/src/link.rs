@@ -1,10 +1,11 @@
-//! Транспорты протоколов, готовые к работе: подмодуль на транспорт с
-//! протоколом, с именем транспорта (`bsp::link::usart1`, `bsp::link::tcp`).
+//! Транспорты протоколов: подмодуль на транспорт с протоколом, с именем
+//! транспорта (`crate::link::usart1`, `crate::link::tcp`).
 //!
-//! Поле `Board` с тем же именем — этот объект: буферы и сокет уже заведены
-//! здесь, узлу протокола остаётся принять его (поле `Board` → вход узла в
-//! `graph.rs`). Транспорты выбраны при генерации; своё кадрирование — правьте
-//! этот файл.
+//! Плата отдаёт сырьё — поток UART, поток CDC, сетевой стек (`bsp::Board`), —
+//! а кадрирование, буферы и сокет заводятся здесь: их размер и порт — решение
+//! приложения, а не платы. Граф (`graph.rs`) или задача без графа берёт
+//! транспорт `new(...)` и буферы `rx()`/`tx()`. Транспорты выбраны при
+//! генерации; своё кадрирование — правьте этот файл.
 {%- assign xs = links | split: "," %}
 {%- if has_protobuf == "true" %}
 
@@ -13,15 +14,6 @@
 /// если самый длинный ответ схемы не помещается.
 const HOST_MESSAGE: usize = 256;
 
-/// Буферы приёма и передачи сообщений узла `HOST_*` (поле `<транспорт>_buffers`
-/// у `Board`).
-#[derive(Debug)]
-pub struct HostBuffers {
-    /// Приём.
-    pub rx: &'static mut [u8],
-    /// Передача.
-    pub tx: &'static mut [u8],
-}
 {%- endif %}
 {%- if protocol_sockets != "0" %}
 
@@ -40,16 +32,16 @@ pub mod {{ f[4] }} {
 {% endif %}
     /// Транспорт узла `{% if f[3] == "modbus" %}MODBUS{% else %}HOST{% endif %}_{{ f[4] | upcase }}`.
 {%- if f[3] == "modbus" %}
-    pub type Link = ::adapters::modbus::{% if f[0] == "uart" %}Rtu<crate::serial::{{ f[4] }}::Serial>{% elsif f[0] == "usb" %}Rtu<crate::usb::{{ f[4] }}::Cdc>{% elsif f[0] == "tcp" %}Tcp<::adapters::net::TcpServer>{% else %}Udp<::adapters::net::UdpLink>{% endif %};
+    pub type Link = ::adapters::modbus::{% if f[0] == "uart" %}Rtu<bsp::serial::{{ f[4] }}::Serial>{% elsif f[0] == "usb" %}Rtu<crate::usb::{{ f[4] }}::Cdc>{% elsif f[0] == "tcp" %}Tcp<::adapters::net::TcpServer>{% else %}Udp<::adapters::net::UdpLink>{% endif %};
 {%- else %}
-    pub type Link = {% if f[0] == "udp" %}::adapters::net::UdpLink{% else %}::adapters::cobs::Cobs<'static, {% if f[0] == "uart" %}crate::serial::{{ f[4] }}::Serial{% elsif f[0] == "usb" %}crate::usb::{{ f[4] }}::Cdc{% else %}::adapters::net::TcpServer{% endif %}>{% endif %};
+    pub type Link = {% if f[0] == "udp" %}::adapters::net::UdpLink{% else %}::adapters::cobs::Cobs<'static, {% if f[0] == "uart" %}bsp::serial::{{ f[4] }}::Serial{% elsif f[0] == "usb" %}crate::usb::{{ f[4] }}::Cdc{% else %}::adapters::net::TcpServer{% endif %}>{% endif %};
 {%- endif %}
 
     /// Что плата отдаёт под транспорт: {% if f[0] == "uart" %}UART (заглушка, пока проект не подставит свой —
     /// docs/modules/bsp-serial.md){% elsif f[0] == "usb" %}поток CDC (над заглушкой драйвера, пока проект не подставит
     /// свой USB — docs/modules/bsp-usb.md){% else %}стек `embassy-net`, на котором открывается сокет (над заглушкой
     /// устройства, пока проект не подставит Ethernet — docs/modules/bsp-net.md){% endif %}.
-    pub(crate) type Source = {% if f[0] == "uart" %}crate::serial::{{ f[4] }}::Serial{% elsif f[0] == "usb" %}crate::usb::{{ f[4] }}::Cdc{% else %}crate::net::Stack{% endif %};
+    pub type Source = {% if f[0] == "uart" %}bsp::serial::{{ f[4] }}::Serial{% elsif f[0] == "usb" %}crate::usb::{{ f[4] }}::Cdc{% else %}crate::net::Stack{% endif %};
 {%- if f[3] == "protobuf" %}
 
     // Буферы узла{% if f[0] != "udp" %}: приёму нужно место ещё под CRC (`rx_len`), кадру
@@ -68,20 +60,22 @@ pub mod {{ f[4] }} {
     static HOST_TX: ConstStaticCell<[u8; super::HOST_MESSAGE]> =
         ConstStaticCell::new([0; super::HOST_MESSAGE]);
 
-    /// Забирает буферы узла. Статики берутся ровно один раз — `Board::new`
-    /// зовётся один раз за запуск.
-    pub(crate) fn host_buffers() -> super::HostBuffers {
-        super::HostBuffers {
-            rx: HOST_RX.take(),
-            tx: HOST_TX.take(),
-        }
+    /// Буфер приёма сообщений узла. Статик берётся ровно один раз — узел
+    /// собирается один раз за запуск.
+    pub fn rx() -> &'static mut [u8] {
+        HOST_RX.take()
+    }
+
+    /// Буфер передачи сообщений узла — см. [`rx`].
+    pub fn tx() -> &'static mut [u8] {
+        HOST_TX.take()
     }
 {%- endif %}
 {%- if f[0] == "tcp" or f[0] == "udp" %}
 
     /// Порт, на котором протокол ждёт хост: {% if f[3] == "modbus" %}502 — стандартный порт Modbus
     /// TCP и UDP{% else %}5000 — выбран шаблоном, у protobuf стандартного нет{% endif %}. Порт задаёт протокол, а не
-    /// плата, поэтому он здесь, а не в `bsp::net`.
+    /// плата.
     const PORT: u16 = {% if f[3] == "modbus" %}502{% else %}5000{% endif %};
 
     // Память сокета протокола: он держит её `&'static mut`. `ConstStaticCell` —
@@ -117,7 +111,7 @@ pub mod {{ f[4] }} {
 {%- endif %}
 
     /// Собирает транспорт протокола вокруг `source`.
-    pub(crate) fn new(source: Source) -> Link {
+    pub fn new(source: Source) -> Link {
 {%- if f[3] == "modbus" %}
         Link::new({% if f[0] == "tcp" or f[0] == "udp" %}socket(source){% else %}source{% endif %})
 {%- elsif f[0] == "udp" %}

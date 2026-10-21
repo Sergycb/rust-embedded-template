@@ -124,16 +124,30 @@ static_cell            = { version = "2.1.1" }
 {%- if has_usb == "true" %}
 # USB-устройство (`bsp::usb`): та же версия, что в корневом Cargo.toml.
 embassy-usb            = { version = "0.6.0", default-features = false, features = ["defmt"] }
+# Трейт драйвера под `embassy-usb` — им заглушка платы (`bsp::stub`) встаёт в
+# слот USB-блока; версия — та, на которой стоят `embassy-usb` 0.6 и `embassy-stm32` 0.6.
+embassy-usb-driver     = { version = "0.2.2" }
 {%- endif %}
 {%- if has_net == "true" %}
-# Сетевой стек (`bsp::net`): та же версия и фичи, что в корневом Cargo.toml.
+# Сетевой стек (`app::net`): та же версия и фичи, что в корневом Cargo.toml.
 embassy-net            = { version = "0.9.1", features = ["tcp", "udp", "proto-ipv4", "medium-ethernet", "dhcpv4", "defmt"] }
+# Трейт драйвера под `embassy-net` — им заглушка платы (`bsp::stub`) встаёт в
+# слот Ethernet; версия — та, на которой стоят `embassy-net` 0.9 и `embassy-stm32` 0.6.
+embassy-net-driver     = { version = "0.2.0" }
 {%- endif %}
 embassy-sync       = { version = "0.8.0" }
 # Трейты `NorFlash` — нужны только `boot/src/external.rs` при `ota=external`
 # (геометрия драйвера внешней флеши в проверках при компиляции). Та же версия,
 # что тянет embassy-boot.
 embedded-storage   = { version = "0.3.1" }
+{%- if external_flash == "true" %}
+# Заглушка внешней флеши (`bsp::stub::Flash`) — асинхронный `NorFlash` приложения.
+embedded-storage-async = { version = "0.4.1" }
+{%- endif %}
+{%- if has_uart == "true" %}
+# Заглушка UART (`bsp::stub::Serial`) — поток байтов, как у `BufferedUart`.
+embedded-io-async  = { version = "0.7.0" }
+{%- endif %}
 # `portable-atomic` здесь не объявлен намеренно: на Cortex-M0/M0+ ему нужно
 # сказать, чем эмулировать CAS, и это делает cfg в `.cargo/config.toml`
 # (`[target.thumbv6m-none-eabi] rustflags`), а не фича у членов workspace —
@@ -181,6 +195,9 @@ ports            = { path = "../crates-host/ports", features = ["defmt"] }
 # объектами. `defmt` — ради `Format` на ошибках в логе прошивки; на хосте
 # крейт собирается без фич вывода вовсе.
 adapters         = { path = "../crates-host/adapters", features = ["defmt"] }
+{%- if flash_page == "true" %}
+flash-page       = { path = "../crates-host/flash-page" }
+{%- endif %}
 bsp              = { path = "./bsp" }
 # `default-features = false` обязательно: дефолт domain — фича `log` (нужна
 # хост-сборке, см. её [features]), а в прошивке используется только defmt.

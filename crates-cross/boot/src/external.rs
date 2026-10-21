@@ -16,7 +16,7 @@ use embedded_storage::nor_flash::NorFlash;
 /// свой: любой блокирующий `embedded_storage::nor_flash::NorFlash`. Та же
 /// микросхема, что у приложения (`bsp::external`), но драйвер блокирующий:
 /// bootloader не поднимает исполнитель.
-pub(crate) type ExternalFlash = adapters::flash::Unconnected;
+pub(crate) type ExternalFlash = bsp::stub::Flash;
 
 const _: () = assert!(
     EXT_PAGE_SIZE.is_multiple_of(<ExternalFlash as NorFlash>::ERASE_SIZE),

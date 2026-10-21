@@ -1257,8 +1257,8 @@ fn no_protocol_by_default() {
         "crates-host/ports/src/can.rs",
         "crates-host/adapters/src/modbus",
         "crates-host/adapters/src/cobs.rs",
-        "crates-host/adapters/src/serial.rs",
-        "crates-host/adapters/src/can.rs",
+        "crates-cross/bsp/src/stub.rs",
+        "crates-host/adapters/src/fake.rs",
         "crates-host/domain/src/modbus",
         "crates-host/domain/src/host",
         "crates-host/domain/src/canopen.rs",
@@ -1320,7 +1320,9 @@ fn protocol_over_uart_keeps_the_serial_module() {
             ("crates-host/ports/src/link.rs", protocol == "protobuf"),
             ("crates-host/canopen", false),
             ("crates-host/ports/src/can.rs", false),
-            ("crates-host/adapters/src/can.rs", false),
+            // Заглушка UART в `bsp`; драйверов-фейков USB/сети нет.
+            ("crates-cross/bsp/src/stub.rs", true),
+            ("crates-host/adapters/src/fake.rs", false),
         ] {
             assert_eq!(kept(path), wanted, "{protocol}: {path}");
         }
@@ -1516,8 +1518,8 @@ fn protocol_over_network_keeps_the_net_stack() {
             result
                 .deleted
                 .iter()
-                .any(|path| path == "crates-host/adapters/src/serial.rs"),
-            "{iface}: заглушка UART осталась"
+                .any(|path| path == "crates-cross/bsp/src/serial.rs"),
+            "{iface}: модуль UART остался"
         );
     }
 }
@@ -2021,7 +2023,7 @@ fn tcp_and_udp_share_one_eth() {
 
 /// Протоколу граф не нужен: без него узел спавнит `main`, и ни ответ `graph=no`,
 /// ни размер раздела (здесь — 16 KiB у `l011f4`) генерацию не останавливают. Готовый
-/// транспорт `bsp/src/link.rs` остаётся, пока выбран Modbus или protobuf.
+/// транспорт `app/src/link.rs` остаётся, пока выбран Modbus или protobuf.
 #[test]
 fn protocol_does_not_need_the_graph() {
     let script = compile_script();
@@ -2050,7 +2052,7 @@ fn protocol_does_not_need_the_graph() {
             !result
                 .deleted
                 .iter()
-                .any(|path| path == "crates-cross/bsp/src/link.rs"),
+                .any(|path| path == "crates-cross/app/src/link.rs"),
             "{chip} {preset:?}: link.rs удалён при выбранном протоколе"
         );
     }
@@ -2059,7 +2061,7 @@ fn protocol_does_not_need_the_graph() {
     assert!(
         none.deleted
             .iter()
-            .any(|path| path == "crates-cross/bsp/src/link.rs"),
+            .any(|path| path == "crates-cross/app/src/link.rs"),
         "без протокола link.rs должен удаляться"
     );
 }
@@ -2555,9 +2557,9 @@ fn ota_and_settings_code_is_kept_only_when_selected() {
         "crates-host/ports/src/settings.rs",
         "crates-host/adapters/src/settings.rs",
     ];
-    const FLASH: &str = "crates-host/adapters/src/flash.rs";
+    const FLASH: &str = "crates-host/flash-page";
     const WORD: &str = "crates-host/ports/src/word.rs";
-    // (чип, ответы, OTA вырезана, настройки вырезаны, flash.rs вырезан)
+    // (чип, ответы, OTA вырезана, настройки вырезаны, flash-page вырезан)
     type Case<'a> = (&'a str, &'a [(&'a str, &'a str)], bool, bool, bool);
     let cases: [Case; 5] = [
         (
@@ -2590,13 +2592,14 @@ fn ota_and_settings_code_is_kept_only_when_selected() {
             false,
             true,
         ),
-        // Внешняя флеш: заглушка драйвера живёт в `flash.rs`.
+        // Внешняя флеш без OTA: заглушка драйвера — в `bsp::stub`, страница
+        // раздела своя не нужна.
         (
             "l073rz",
             &[("ota", "no"), ("config", "external")],
             true,
             false,
-            false,
+            true,
         ),
     ];
     for (chip, answers, no_ota, no_settings, no_flash) in cases {
