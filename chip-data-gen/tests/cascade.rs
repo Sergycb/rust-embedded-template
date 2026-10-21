@@ -144,9 +144,10 @@ fn run_cascade_with(
 
 /// Прогон с ответами «пользователя»: `preset` — то, что пришло через
 /// `--define`, `picks` — выбор в меню (`("ota", "no")` отвечает на вопрос
-/// `ota: ...` вариантом, начинающимся со слова `no`). Ответы одного id
-/// расходуются по порядку: `[("interface", "uart"), ("interface", "tcp")]`
-/// отвечает на первый и второй вопрос `interface:`. Меню без ответа (или когда
+/// `ota: ...` вариантом, начинающимся со слова `no`; у пункта списка с
+/// отметкой слово ищется после `[x] `/`[ ] `). Ответы одного id расходуются по
+/// порядку: `[("transports", "uart"), ("transports", "готово")]` отмечает
+/// пункт в первом показе меню `transports:` и закрывает его во втором. Меню без ответа (или когда
 /// ответы его id кончились) ведёт себя как запуск без терминала: `variable::prompt` отвечает ошибкой «not a
 /// terminal», и хук берёт умолчание.
 fn run_interview(
@@ -240,8 +241,8 @@ fn run_interview(
                         Some((_, value)) => shown
                             .iter()
                             .find(|choice| {
-                                choice.as_str() == value
-                                    || choice.starts_with(&format!("{value} "))
+                                let item = unmarked(choice);
+                                item == value || item.starts_with(&format!("{value} "))
                             })
                             .map(|choice| Dynamic::from(choice.clone()))
                             .ok_or_else(|| {
@@ -1740,30 +1741,30 @@ fn links_tolerate_spaces_but_not_empty_items() {
     assert!(err.to_string().contains("links: пустой элемент"), "{err}");
 }
 
-/// Вид остаётся в меню, пока у него есть свободный блок: у F407 два bxCAN.
+/// В списке каждый вид — одним пунктом, без имён блоков, в порядке `uart`,
+/// `can`, `ethernet`, `usb`; первый пункт — `готово`. У F407 шесть USART и
+/// ETH, а пункт `uart` один, и пунктов `tcp`/`udp` нет.
 #[test]
-fn the_menu_offers_a_kind_only_while_blocks_remain() {
-    let result = interview(
-        &compile_script(),
-        "f407ve",
-        &[],
-        &[
-            ("interface", "can"),
-            ("protocol", "none"),
-            ("more_links", "yes"),
-            ("interface", "can"),
-            ("protocol", "none"),
-            ("more_links", "yes"),
-        ],
-    )
-    .expect("каскад не должен падать");
-    let menus = all_menu_values(&result, "interface");
-    assert_eq!(menus.len(), 3, "{menus:?}");
-    assert!(menus[1].contains(&"can".to_string()), "{menus:?}");
-    assert!(!menus[2].contains(&"can".to_string()), "{menus:?}");
-    // `none` — только в первом меню.
-    assert!(menus[0].contains(&"none".to_string()), "{menus:?}");
-    assert!(!menus[1].contains(&"none".to_string()), "{menus:?}");
+fn each_kind_is_listed_once() {
+    let result = interview(&compile_script(), "f407ve", &[], &[]).expect("каскад не должен падать");
+    let menus = all_menu_values(&result, "transports");
+    assert_eq!(menus, [["готово", "uart", "can", "ethernet", "usb"]]);
+    let shown = &result
+        .prompts
+        .iter()
+        .find(|(label, _)| label.starts_with("transports:"))
+        .expect("список не показан")
+        .1;
+    assert_eq!(
+        shown[1],
+        "[ ] uart — UART (RS-485 — тот же UART с выводом DE)"
+    );
+    assert!(
+        shown
+            .iter()
+            .all(|item| !item.contains("USART") && !item.contains("ETH")),
+        "{shown:?}"
+    );
 }
 
 /// Когда протокол проекта выбран, следующему транспорту предлагается только он.
@@ -1774,10 +1775,10 @@ fn once_a_protocol_is_chosen_only_it_and_none_are_offered() {
         "f407ve",
         &[],
         &[
-            ("interface", "uart"),
+            ("transports", "uart"),
+            ("transports", "ethernet"),
+            ("transports", "готово"),
             ("protocol", "modbus"),
-            ("more_links", "yes"),
-            ("interface", "tcp"),
         ],
     )
     .expect("каскад не должен падать");
@@ -1797,10 +1798,10 @@ fn a_kind_the_protocol_cannot_carry_gets_no_protocol_question() {
         "f407ve",
         &[],
         &[
-            ("interface", "uart"),
+            ("transports", "uart"),
+            ("transports", "can"),
+            ("transports", "готово"),
             ("protocol", "modbus"),
-            ("more_links", "yes"),
-            ("interface", "can"),
         ],
     )
     .expect("каскад не должен падать");
@@ -1809,6 +1810,131 @@ fn a_kind_the_protocol_cannot_carry_gets_no_protocol_question() {
         var_of(&result, "links"),
         Some("uart:usart:USART1:modbus:usart1,can:bxcan:CAN1:none:can1")
     );
+}
+
+/// Вопросы о протоколе идут в порядке пунктов, а не отметок: `can` отмечен
+/// первым, но первым спрашивается `uart`, и после Modbus на нём у `can` вопроса
+/// нет; основной транспорт — `uart`.
+#[test]
+fn the_protocol_menu_follows_the_marked_order() {
+    let result = interview(
+        &compile_script(),
+        "f407ve",
+        &[],
+        &[
+            ("transports", "can"),
+            ("transports", "uart"),
+            ("transports", "готово"),
+            ("protocol", "modbus"),
+        ],
+    )
+    .expect("каскад не должен падать");
+    let menus = all_menu_values(&result, "protocol");
+    assert_eq!(menus, [["none", "modbus", "protobuf"]]);
+    assert_eq!(
+        var_of(&result, "links"),
+        Some("uart:usart:USART1:modbus:usart1,can:bxcan:CAN1:none:can1")
+    );
+    assert_eq!(var_of(&result, "interface"), Some("uart"));
+}
+
+/// Транспорты идут в проект в порядке пунктов меню, а не отметок.
+#[test]
+fn marked_transports_keep_the_menu_order() {
+    let result = interview(
+        &compile_script(),
+        "f407ve",
+        &[],
+        &[
+            ("transports", "ethernet"),
+            ("transports", "uart"),
+            ("transports", "готово"),
+        ],
+    )
+    .expect("каскад не должен падать");
+    let links = var_of(&result, "links").expect("links не задан");
+    assert!(links.starts_with("uart:usart:USART1:"), "{links}");
+    assert!(links.contains(",tcp:eth:ETH:"), "{links}");
+}
+
+/// Меню перерисовывается с отметкой выбранного пункта.
+#[test]
+fn marks_are_shown_in_the_redrawn_menu() {
+    let result = interview(
+        &compile_script(),
+        "f407ve",
+        &[],
+        &[("transports", "uart"), ("transports", "готово")],
+    )
+    .expect("каскад не должен падать");
+    let shown: Vec<&Vec<String>> = result
+        .prompts
+        .iter()
+        .filter(|(label, _)| label.starts_with("transports:"))
+        .map(|(_, choices)| choices)
+        .collect();
+    assert_eq!(shown.len(), 2, "{shown:?}");
+    assert!(shown[0][1].starts_with("[ ] uart "), "{shown:?}");
+    assert!(shown[1][1].starts_with("[x] uart "), "{shown:?}");
+    assert!(shown[1][2].starts_with("[ ] can "), "{shown:?}");
+}
+
+/// Отметить и снять тот же пункт — транспорта нет.
+#[test]
+fn toggling_twice_leaves_the_transport_out() {
+    let result = interview(
+        &compile_script(),
+        "f407ve",
+        &[],
+        &[
+            ("transports", "can"),
+            ("transports", "uart"),
+            ("transports", "can"),
+            ("transports", "готово"),
+        ],
+    )
+    .expect("каскад не должен падать");
+    assert_eq!(
+        var_of(&result, "links"),
+        Some("uart:usart:USART1:none:usart1")
+    );
+}
+
+/// `готово` без отметок — проект без транспортов, о протоколе не спрашивают.
+#[test]
+fn done_without_marks_gives_no_transports() {
+    let result = interview(
+        &compile_script(),
+        "f407ve",
+        &[],
+        &[("transports", "готово")],
+    )
+    .expect("каскад не должен падать");
+    assert_eq!(var_of(&result, "links"), Some(""));
+    assert_eq!(var_of(&result, "interface"), Some("none"));
+    assert!(all_menu_values(&result, "protocol").is_empty());
+}
+
+/// Вопроса «добавить ещё один транспорт?» больше нет — ни в одном прогоне.
+#[test]
+fn more_links_is_gone() {
+    let ast = compile_script();
+    for picks in [
+        &[][..],
+        &[("transports", "uart")][..],
+        &[
+            ("transports", "uart"),
+            ("transports", "can"),
+            ("transports", "готово"),
+            ("protocol", "modbus"),
+        ][..],
+    ] {
+        let result = interview(&ast, "f407ve", &[], picks).expect("каскад не должен падать");
+        assert!(
+            all_menu_values(&result, "more_links").is_empty(),
+            "{picks:?}"
+        );
+    }
 }
 
 /// Прежние переменные считаются от первого транспорта с протоколом.
@@ -1941,29 +2067,6 @@ fn a_second_canopen_bus_is_rejected() {
     );
 }
 
-/// В проекте с CANopen второй `can` получает только `none`, и вопроса о
-/// протоколе для него нет.
-#[test]
-fn the_second_can_in_a_canopen_project_has_no_protocol_menu() {
-    let result = interview(
-        &compile_script(),
-        "f407ve",
-        &[],
-        &[
-            ("interface", "can"),
-            ("protocol", "canopen"),
-            ("more_links", "yes"),
-            ("interface", "can"),
-        ],
-    )
-    .expect("каскад не должен падать");
-    assert_eq!(all_menu_values(&result, "protocol").len(), 1);
-    assert_eq!(
-        var_of(&result, "links"),
-        Some("can:bxcan:CAN1:canopen:can1,can:bxcan:CAN2:none:can2")
-    );
-}
-
 /// Каскад не показывает чип, у которого блоков меньше, чем запрошено в `links`.
 #[test]
 fn chips_without_enough_blocks_are_filtered_before_the_cascade() {
@@ -1976,16 +2079,25 @@ fn chips_without_enough_blocks_are_filtered_before_the_cascade() {
     run_cascade_with(&script, "f407ve", &[("links", "can,can")]).expect("у F407 два CAN");
 }
 
-/// Без терминала после первого транспорта ничего не добавляется.
+/// Ответы кончились — дальше как без терминала: `готово`, и отмеченное остаётся.
 #[test]
 fn no_terminal_adds_no_extra_links() {
-    let result = interview(&compile_script(), "f407ve", &[], &[("interface", "uart")])
+    let result = interview(&compile_script(), "f407ve", &[], &[("transports", "uart")])
         .expect("каскад не должен падать");
     assert_eq!(
         var_of(&result, "links"),
         Some("uart:usart:USART1:none:usart1")
     );
-    assert_eq!(all_menu_values(&result, "more_links").len(), 1);
+    assert_eq!(all_menu_values(&result, "transports").len(), 2);
+}
+
+/// Без терминала список показан один раз, и проект — без транспортов.
+#[test]
+fn no_terminal_leaves_the_list_empty() {
+    let result = interview(&compile_script(), "f407ve", &[], &[]).expect("каскад не должен падать");
+    assert_eq!(all_menu_values(&result, "transports").len(), 1);
+    assert_eq!(var_of(&result, "links"), Some(""));
+    assert_eq!(var_of(&result, "protocol"), Some("none"));
 }
 
 /// `tcp` и `udp` делят один ETH: каждый вид получает его по разу, второй
@@ -2003,22 +2115,19 @@ fn tcp_and_udp_share_one_eth() {
         .err()
         .expect("второй tcp принят");
     assert!(err.to_string().contains("блоков вида tcp — 1"), "{err}");
+}
+
+/// Отмеченный `ethernet` — транспорт `tcp` на ETH.
+#[test]
+fn ethernet_item_becomes_tcp() {
     let result = interview(
-        &script,
+        &compile_script(),
         "f407ve",
         &[],
-        &[
-            ("interface", "tcp"),
-            ("protocol", "none"),
-            ("more_links", "yes"),
-            ("interface", "udp"),
-        ],
+        &[("transports", "ethernet"), ("transports", "готово")],
     )
     .expect("каскад не должен падать");
-    let menus = all_menu_values(&result, "interface");
-    assert_eq!(menus.len(), 2, "{menus:?}");
-    assert!(menus[1].contains(&"udp".to_string()), "{menus:?}");
-    assert!(!menus[1].contains(&"tcp".to_string()), "{menus:?}");
+    assert_eq!(var_of(&result, "links"), Some("tcp:eth:ETH:none:tcp"));
 }
 
 /// Протоколу граф не нужен: без него узел спавнит `tasks::spawn_all`, и ни ответ `graph=no`,
@@ -2818,9 +2927,20 @@ fn loop_variables_are_not_hook_variables() {
     assert_eq!(found.into_iter().collect::<Vec<_>>(), ["chip", "links"]);
 }
 
-/// Значение варианта меню — его первое слово.
+/// Пункт меню без отметки `[x] `/`[ ] ` списка транспортов.
+fn unmarked(choice: &str) -> &str {
+    choice
+        .strip_prefix("[x] ")
+        .or_else(|| choice.strip_prefix("[ ] "))
+        .unwrap_or(choice)
+}
+
+/// Значение варианта меню — его первое слово (у пункта с отметкой — после неё).
 fn menu_value(choice: &str) -> &str {
-    choice.split_whitespace().next().unwrap_or_default()
+    unmarked(choice)
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
 }
 
 /// Значения вариантов меню `id` в том порядке, в каком их видит пользователь.
@@ -2856,7 +2976,11 @@ fn the_menus_come_in_order_and_offer_only_what_is_possible() {
         &ast,
         "g474re",
         &[],
-        &[("interface", "uart"), ("protocol", "modbus")],
+        &[
+            ("transports", "uart"),
+            ("transports", "готово"),
+            ("protocol", "modbus"),
+        ],
     )
     .expect("каскад не должен падать");
     let order: Vec<&str> = result
@@ -2870,23 +2994,17 @@ fn the_menus_come_in_order_and_offer_only_what_is_possible() {
             "ota",
             "config",
             "graph",
-            "interface",
+            "transports",
+            "transports",
             "protocol",
-            "modbus_master",
-            "more_links"
+            "modbus_master"
         ]
     );
 
     // Транспорт: только то, чьи блоки есть у чипа. У G071 нет ни Ethernet, ни USB.
     let g071 = interview(&ast, "g071rb", &[], &[]).expect("каскад не должен падать");
-    let interfaces = menu_values(&g071, "interface").expect("транспорт не предложен");
-    assert!(interfaces.contains(&"uart".to_string()), "{interfaces:?}");
-    for absent in ["tcp", "udp", "usb"] {
-        assert!(
-            !interfaces.contains(&absent.to_string()),
-            "g071rb: {absent}"
-        );
-    }
+    let interfaces = menu_values(&g071, "transports").expect("транспорт не предложен");
+    assert_eq!(interfaces, ["готово", "uart"]);
     // Без транспорта протокол не спрашивается вовсе.
     assert!(menu_values(&g071, "protocol").is_none());
 
@@ -2894,9 +3012,9 @@ fn the_menus_come_in_order_and_offer_only_what_is_possible() {
     for (chip, interface, expected) in [
         ("g474re", "uart", &["none", "modbus", "protobuf"][..]),
         ("g474re", "can", &["none", "canopen"][..]),
-        ("h743zg", "udp", &["none", "modbus", "protobuf"][..]),
+        ("h743zg", "ethernet", &["none", "modbus", "protobuf"][..]),
     ] {
-        let result = interview(&ast, chip, &[], &[("interface", interface)])
+        let result = interview(&ast, chip, &[], &[("transports", interface)])
             .expect("каскад не должен падать");
         assert_eq!(
             menu_values(&result, "protocol").expect("протокол не предложен"),
@@ -2910,7 +3028,7 @@ fn the_menus_come_in_order_and_offer_only_what_is_possible() {
         &ast,
         "g474re",
         &[],
-        &[("interface", "uart"), ("protocol", "protobuf")],
+        &[("transports", "uart"), ("protocol", "protobuf")],
     )
     .expect("каскад не должен падать");
     assert!(menu_values(&protobuf, "modbus_master").is_none());
@@ -2938,7 +3056,7 @@ fn menu_picks_reach_the_template_variables() {
             ("ota", "internal"),
             ("config", "no"),
             ("graph", "no"),
-            ("interface", "tcp"),
+            ("transports", "ethernet"),
             ("protocol", "modbus"),
             ("modbus_master", "yes"),
         ],
@@ -3084,7 +3202,6 @@ fn every_path_through_the_menus_generates() {
                     ("ota", "no") => Some(("ota", "false")),
                     ("config", "no") => Some(("config", "false")),
                     ("graph", "no") => Some(("graph", "false")),
-                    ("interface", v) => Some(("interface", v)),
                     ("protocol", v) => Some(("protocol", v)),
                     _ => None,
                 };

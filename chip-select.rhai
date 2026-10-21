@@ -648,16 +648,17 @@ const PROTOCOL_INTERFACES = #{
     "protobuf": ["uart", "tcp", "udp", "usb"],
     "canopen": ["can"],
 };
-// Виды транспорта в порядке меню.
+// Виды транспорта по порядку.
 const LINK_KINDS = ["uart", "can", "tcp", "udp", "usb"];
-// Строки меню. Первое слово — значение ответа (то же, что `--define interface=...`).
-const INTERFACE_TEXT = #{
-    "uart": "uart — UART (RS-485 — тот же UART с выводом DE)",
-    "can": "can — шина CAN",
-    "tcp": "tcp — Ethernet, TCP-сервер",
-    "udp": "udp — Ethernet, UDP-канал",
-    "usb": "usb — USB CDC ACM (виртуальный COM-порт)",
-};
+// Пункты списка транспортов по порядку: значение, вид транспорта и описание
+// (после `[ ] значение — `). Вид — по одному пункту: второй транспорт того же
+// вида и `udp` задаёт `--define links=...`. `ethernet` пока даёт `tcp`.
+const TRANSPORT_ITEMS = [
+    #{ value: "uart", kind: "uart", text: "UART (RS-485 — тот же UART с выводом DE)" },
+    #{ value: "can", kind: "can", text: "шина CAN" },
+    #{ value: "ethernet", kind: "tcp", text: "Ethernet (сеть)" },
+    #{ value: "usb", kind: "usb", text: "USB CDC ACM (виртуальный COM-порт)" },
+];
 const PROTOCOL_TEXT = #{
     "modbus": "modbus — Modbus slave",
     "protobuf": "protobuf — сообщения protobuf от хоста",
@@ -1062,7 +1063,7 @@ if variable::is_set("graph") {
 
 // --- Транспорты. Транспорт — `#{ kind, tag, block, protocol }`: вид, метка
 // блока (chip-data/interfaces.rhai), блок чипа и протокол поверх него. Блок
-// назначает генерация — первый свободный из списка чипа. Протокол в проекте
+// назначает генерация — первый свободный блок вида из списка чипа. Протокол в проекте
 // пока один (`protocol`): первый выбранный, следующие транспорты — с ним или
 // без протокола. Меню предлагают только виды, у которых остался свободный блок.
 let have = INTERFACES[suffix];
@@ -1091,47 +1092,57 @@ if WANTED_LINKS.len() > 0 {
     }
     if protocol == "modbus" { wants_master = modbus_master_answer(); }
 } else {
-    loop {
-        let first = links.len() == 0;
-        let free = #{};
-        for name in LINK_KINDS {
-            let blocks = free_blocks(name, INTERFACE_BLOCKS[name], links, have, instances);
-            if blocks.len() > 0 { free[name] = blocks; }
+    // Виды транспортов по порядку. Блоки им раздаются ниже, по одному правилу с
+    // `--define links=...`.
+    let wanted = [];
+    if variable::is_set("interface") {
+        // `interface` и `protocol` через `--define` — по-старому одна пара.
+        let kind = variable::get("interface");
+        if kind != "none" && !INTERFACE_BLOCKS.contains(kind) {
+            throw "interface: ожидается none, " + listed(INTERFACE_BLOCKS.keys()) + ", а не «" + kind + "»";
         }
-        let available = LINK_KINDS.filter(|name| free.contains(name));
-        let kind = "none";
-        if first && variable::is_set("interface") {
-            kind = variable::get("interface");
-            if kind != "none" && !INTERFACE_BLOCKS.contains(kind) {
-                throw "interface: ожидается none, " + listed(INTERFACE_BLOCKS.keys()) + ", а не «" + kind + "»";
-            }
-            if kind != "none" && !available.contains(kind) {
-                throw "interface: у " + chip_name + " нет выведенного блока " + listed(INTERFACE_BLOCKS[kind]).to_upper() + " — интерфейс " + kind + " недоступен";
-            }
-        } else if first && wanted_protocol != "" && wanted_protocol != "none" {
-            // Протокол задан `--define`, а транспорт нет: аппаратную часть молча не
-            // выбирают — `--define` строгий, транспорт задаётся тоже.
-            let usable = available.filter(|name| PROTOCOL_INTERFACES[wanted_protocol].contains(name));
-            if usable.len() == 0 {
-                throw "protocol: у " + chip_name + " нет транспорта для протокола " + wanted_protocol + " (нужен " + listed(PROTOCOL_INTERFACES[wanted_protocol]) + ")";
-            }
-            throw "protocol: протокол " + wanted_protocol + " нужен транспорт — задайте interface (" + listed(usable) + ")";
-        } else {
-            // `none` — только на первом шаге: отказ от следующего — это `no` на `more_links`.
-            let values = [];
-            let texts = [];
-            if first {
-                values.push("none");
-                texts.push("none — без транспорта");
-            }
-            for name in available {
-                values.push(name);
-                texts.push(INTERFACE_TEXT[name] + " — " + free[name][0].block);
-            }
-            kind = ask("interface: транспорт под протоколом (интерфейс платы)", values, texts, values[0]);
+        if kind != "none" && free_blocks(kind, INTERFACE_BLOCKS[kind], [], have, instances).len() == 0 {
+            throw "interface: у " + chip_name + " нет выведенного блока " + listed(INTERFACE_BLOCKS[kind]).to_upper() + " — интерфейс " + kind + " недоступен";
         }
-        if kind == "none" { break; }
+        if kind != "none" { wanted.push(kind); }
+    } else if wanted_protocol != "" && wanted_protocol != "none" {
+        // Протокол задан `--define`, а транспорт нет: аппаратную часть молча не
+        // выбирают — `--define` строгий, транспорт задаётся тоже.
+        let usable = LINK_KINDS.filter(|name| PROTOCOL_INTERFACES[wanted_protocol].contains(name)
+            && free_blocks(name, INTERFACE_BLOCKS[name], [], have, instances).len() > 0);
+        if usable.len() == 0 {
+            throw "protocol: у " + chip_name + " нет транспорта для протокола " + wanted_protocol + " (нужен " + listed(PROTOCOL_INTERFACES[wanted_protocol]) + ")";
+        }
+        throw "protocol: протокол " + wanted_protocol + " нужен транспорт — задайте interface (" + listed(usable) + ")";
+    } else {
+        // Список с отметками. В хуках `cargo-generate` есть только одиночный
+        // выбор, поэтому отметка нарисована в тексте пункта, а меню после
+        // каждого выбора показывается заново; `готово` (оно же умолчание и ответ
+        // без терминала) закрывает список. Пункт — вид, у которого есть блок;
+        // имени блока в пункте нет: транспорт получает первый блок вида, а
+        // сменить блок — дело `resources.rs`.
+        let items = TRANSPORT_ITEMS.filter(|item| free_blocks(item.kind, INTERFACE_BLOCKS[item.kind], [], have, instances).len() > 0);
+        let marked = items.map(|item| false);
+        loop {
+            let values = ["готово"];
+            let texts = ["готово"];
+            for i in 0..items.len() {
+                values.push(items[i].value);
+                texts.push((if marked[i] { "[x] " } else { "[ ] " }) + items[i].value + " — " + items[i].text);
+            }
+            let pick = ask("transports: отметьте транспорты (Enter — отметить или снять)", values, texts, "готово");
+            if pick == "готово" { break; }
+            for i in 0..items.len() {
+                if items[i].value == pick { marked[i] = !marked[i]; }
+            }
+        }
+        for i in 0..items.len() {
+            if marked[i] { wanted.push(items[i].kind); }
+        }
+    }
 
+    for kind in wanted {
+        let free = free_blocks(kind, INTERFACE_BLOCKS[kind], links, have, instances);
         // Протокол этого транспорта: пока протокол проекта не выбран — всё, что
         // работает поверх вида; когда выбран — он и `none`, а если поверх вида он
         // не работает, вопроса нет.
@@ -1152,29 +1163,14 @@ if WANTED_LINKS.len() > 0 {
                 }
             }
             if values.len() > 1 {
-                link_protocol = ask("protocol: протокол связи (узел в графе)", values, texts, "none");
+                link_protocol = ask("protocol: протокол связи поверх " + kind + " (узел в графе)", values, texts, "none");
             }
         }
-        links.push(#{ kind: kind, tag: free[kind][0].tag, block: free[kind][0].block, protocol: link_protocol });
+        links.push(#{ kind: kind, tag: free[0].tag, block: free[0].block, protocol: link_protocol });
         if protocol == "none" && link_protocol != "none" {
             protocol = link_protocol;
             if protocol == "modbus" { wants_master = modbus_master_answer(); }
         }
-
-        // `interface` и `protocol` через `--define` — по-старому одна пара.
-        if variable::is_set("interface") || variable::is_set("protocol") { break; }
-        let more = false;
-        for name in LINK_KINDS {
-            if free_blocks(name, INTERFACE_BLOCKS[name], links, have, instances).len() > 0 { more = true; }
-        }
-        if !more { break; }
-        let answer = ask(
-            "more_links: добавить ещё один транспорт?",
-            ["no", "yes"],
-            ["no — больше транспортов нет", "yes — ещё один транспорт"],
-            "no"
-        );
-        if answer != "yes" { break; }
     }
     if links.len() == 0 && wanted_protocol != "" && wanted_protocol != "none" {
         throw "protocol: протокол " + wanted_protocol + " нужен транспорт — задайте interface (" + listed(PROTOCOL_INTERFACES[wanted_protocol]) + ")";

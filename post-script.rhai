@@ -60,11 +60,16 @@ if variable::get("graph") == "true" {
 	// блок Ethernet на все сокеты, поэтому о нём — одной строкой после цикла.
 	let links = variable::get("links");
 	let net_block = "";
+	let blocks = "";
 	if links != "" {
 		for l in links.split(",") {
 			let f = l.split(":");
 			let kind = f[0];
 			let block = f[2];
+			// `tcp` и `udp` делят один ETH — в списке блоков он один раз.
+			if !(", " + blocks + ", ").contains(", " + block + ", ") {
+				blocks += (if blocks == "" { "" } else { ", " }) + block;
+			}
 			let proto = f[3];
 			let name = f[4];
 			let node = if proto == "modbus" { "MODBUS_" } else if proto == "protobuf" { "HOST_" } else if proto == "canopen" { "CANOPEN_" } else { "" };
@@ -86,6 +91,9 @@ if variable::get("graph") == "true" {
 	}
 	if net_block != "" {
 		print("Сеть: фоновый узел NET — стек embassy-net (crates-cross/app/src/net.rs) над заглушкой устройства в crates-cross/bsp/src/net.rs (cargo xtask pins " + net_block + " --snippet).");
+	}
+	if blocks != "" {
+		print("Блоки интерфейсов назначены по умолчанию: " + blocks + ". Сменить блок и задать выводы своей платы — crates-cross/bsp/src/resources.rs (cargo xtask pins <БЛОК> --snippet печатает готовую группу).");
 	}
 	if variable::get("has_modbus") == "true" {
 		print("Modbus: карта регистров — crates-host/domain/src/modbus/registers.rs.");
