@@ -865,6 +865,10 @@ const RAM_COST = #{
 // Ошибка в меньшую сторону не тихая: под flip-link переполнение стека — HardFault,
 // а не порча статиков. Больше — и Modbus по UART не взял бы STM32C011D6 (6 KiB).
 const STACK_RESERVE = 1024;
+// RAM, на которой незамеренный `STACK_RESERVE` уже решает, хватит ли стека: у
+// чипов до 8 KiB (L0, F0, C0, младшие F1/G0) хук предупреждает, сколько стеку
+// остаётся, и просит проверить прошивку на плате (`MAINTAINING.md`, «Оценка RAM»).
+const SMALL_RAM = 8192;
 
 // Ответы отсекают чипы ещё до каскада: сетевой стек просит чип с Ethernet,
 // OTA — чип, где схема помещается, граф — где он влезает в раздел
@@ -1538,6 +1542,11 @@ if ram_limit != () {
         if variable::is_set("links") { throw "links: " + variable::get("links") + " " + why; }
         if variable::is_set("interface") { throw "interface: " + variable::get("interface") + " с протоколом " + protocol + " " + why; }
         print("Внимание: выбранные транспорты " + why + " — прошивка может не собраться или упасть на переполнении стека");
+    }
+    if ram_limit <= SMALL_RAM {
+        let left = if ram_limit > need { ram_limit - need } else { 0 };
+        print("Внимание: у " + chip_name + " RAM " + kib(ram_limit) + ", стеку остаётся около " + left
+            + " байт, а глубина стека шаблона не замерена — проверьте прошивку на плате (MAINTAINING.md, «Оценка RAM»)");
     }
 }
 
