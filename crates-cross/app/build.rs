@@ -9,6 +9,15 @@ fn main() {
     // тогда, когда `memory.x` правят руками: у `boot` и `target-tests` такая
     // строка есть с самого начала.
     println!("cargo::rerun-if-changed=memory.x");
+{%- if net_services contains "rest" %}
+    require("rest-token.txt", "токена REST API");
+{%- endif %}
+{%- if ssh_auth == "password" %}
+    require("ssh-password.txt", "пароля консоли SSH");
+{%- endif %}
+{%- if ssh_host_key == "file" %}
+    require("ssh-host-key.bin", "ключа хоста SSH");
+{%- endif %}
 
     let manifest = PathBuf::from(
         std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR задаёт cargo"),
@@ -36,3 +45,22 @@ fn main() {
         .build()
         .expect("failed to generate shadow-rs build info");
 }
+{%- if net_services contains "rest" or ssh_auth == "password" or ssh_host_key == "file" %}
+
+/// Секрет сетевой службы из корня проекта, который `src/net.rs` вшивает
+/// `include_str!`/`include_bytes!`. Без файла компилятор сказал бы только
+/// «couldn't read»; файл создаёт `cargo xtask` (`build`, `lint cross`,
+/// прошивка), а голый `cargo build`/`cargo run` в свежем проекте — нет.
+fn require(file: &str, what: &str) {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(file);
+    println!("cargo::rerun-if-changed={}", path.display());
+    assert!(
+        path.exists(),
+        "нет {} — {what}. Его создаёт `cargo xtask build` (или `cargo xtask lint cross`); \
+         запустите её один раз из корня проекта и закоммитьте файл",
+        path.display()
+    );
+}
+{%- endif %}

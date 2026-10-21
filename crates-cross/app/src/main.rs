@@ -56,12 +56,12 @@ use static_cell::StaticCell;
 /// `main`). `StaticCell`, а не `ConstStaticCell`: `Executor::new` не `const`.
 static EXECUTOR: StaticCell<Executor> = StaticCell::new();
 
-{%- if has_protobuf == "true" %}
+{%- if has_protobuf == "true" or net_services != "" %}
 
-/// Сведения об устройстве для ответа хосту на `info`: версия и коммит — из
-/// `shadow-rs` (те же, что в баннере старта), остальное — с платы.
-fn device_info(spec: bsp::ChipSpec) -> domain::host::DeviceInfo {
-    domain::host::DeviceInfo {
+/// Сведения об устройстве для ответа хосту на `info`{% if net_services contains "rest" %} и REST `/api/info`{% endif %}: версия и
+/// коммит — из `shadow-rs` (те же, что в баннере старта), остальное — с платы.
+fn device_info(spec: bsp::ChipSpec) -> domain::device::DeviceInfo {
+    domain::device::DeviceInfo {
         version: build::PKG_VERSION,
         commit: build::SHORT_COMMIT,
         chip: spec.chip,

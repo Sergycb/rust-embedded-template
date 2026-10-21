@@ -55,6 +55,8 @@ fn ensure_test_memory_matches_app() -> Result<(), anyhow::Error> {
 
 pub fn lint_cross(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     ensure_test_memory_matches_app()?;
+    // clippy компилирует `app`, а тот вшивает секреты служб (`include_str!`).
+    crate::secrets::ensure(&root_dir())?;
     let _p = sh.push_dir(root_dir().join("crates-cross"));
     cmd!(sh, "cargo fmt --check").run()?;
     // Без `--all-targets`: он добавил бы `lib test` — цель, которую cargo

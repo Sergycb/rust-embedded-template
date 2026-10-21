@@ -24,6 +24,8 @@ pub fn flash_all(sh: &xshell::Shell, profile: &str) -> Result<(), anyhow::Error>
     // сборки, а `build` между ними может не стоять. Поэтому образ собираем
     // здесь и сразу сверяем его начало с началом раздела — той же проверкой,
     // что и в `build`, только без подписи и печати размера.
+    // Секреты вшиваются в прошивку (`include_str!`): к сборке файлы нужны.
+    crate::secrets::ensure(&root_dir())?;
     check_image_origin(sh, profile)?;
     flash_boot(sh, true)?;
     flash_package(sh, APP_ARTIFACT, profile)

@@ -218,8 +218,65 @@ supervisor_graph! {
 {%- endif %}
 {%- if f[3] != "none" %}{% assign client = client | plus: 1 %}{% endif %}
 {%- endfor %}
+{%- if net_services contains "rest" %}
+
+        // Узлы `HTTP` — REST API (`domain::http`): пул, по копии на соединение
+        // (`domain::http::CONNECTIONS`), у каждой свой сокет на стеке
+        // `parts.net.stack` и свои буферы (слоты `= static` фрагмента).
+        // Токен — `crate::net::REST_TOKEN` (файл `rest-token.txt`).{% if ota == "true" %}
+        // Перезагрузку узлы просят у узла `OTA` каждый своим клиентом — номера
+        // следом за транспортами: сессия приёма у OTA — одного клиента.{% endif %}
+        ::domain::HTTP_FRAG as HTTP[2] = core::array::from_fn(|{% if ota == "true" %}i{% else %}_{% endif %}| ::domain::http::HttpWiring {
+            stack: parts.net.stack,
+            info: crate::device_info(parts.board.spec),
+            token: crate::net::REST_TOKEN,
+{%- if ota == "true" %}
+            ota: ::domain::ota::OtaClient::new(
+                ota_cmd_requester(),
+                ::domain::ota::ClientId(
+                    {% if rest_ota_client != "0" %}{{ rest_ota_client }} + {% endif %}u8::try_from(i).expect("копий пула HTTP меньше 256"),
+                ),
+            ),
+{%- endif %}
+        }),
+{%- endif %}
+{%- if net_services contains "ssh" %}
+
+        // Узел `SSH` — консоль (`domain::ssh`): своё соединение на стеке
+        // `parts.net.stack`, буферы — слоты `= static` фрагмента. Вход —
+        // `crate::net::SSH_LOGIN`; ключ хоста — {% if ssh_host_key == "config" %}создаётся платой при первом старте и
+        // хранится в разделе настроек (`domain::ssh::Stored`){% else %}вшит из `ssh-host-key.bin`
+        // (`domain::ssh::Fixed`){% endif %}.{% if ota == "true" %} `reboot` — командой узлу `OTA` своим
+        // клиентом, номер следом за остальными.{% endif %}
+        ::domain::SSH_FRAG<{% if ssh_host_key == "config" %}::domain::ssh::Stored<crate::settings::Settings>{% else %}::domain::ssh::Fixed{% endif %}> as SSH =
+            ::domain::ssh::SshWiring {
+                stack: parts.net.stack,
+                info: crate::device_info(parts.board.spec),
+                login: crate::net::SSH_LOGIN,
+{%- if ssh_host_key == "config" %}
+                host_key: ::domain::ssh::Stored(crate::settings::new(parts.board.settings)),
+{%- else %}
+                host_key: ::domain::ssh::Fixed(&crate::net::SSH_HOST_KEY),
+{%- endif %}
+{%- if ota == "true" %}
+                ota: ::domain::ota::OtaClient::new(
+                    ota_cmd_requester(),
+                    ::domain::ota::ClientId({{ ssh_ota_client }}),
+                ),
+{%- endif %}
+            },
+{%- endif %}
     ];
 }
+{%- if net_services contains "rest" %}
+
+// Пул `HTTP[2]` в `fragments:` — литерал: DSL не берёт константу. Сокетов
+// под него стек заводит по `domain::http::CONNECTIONS` (`crate::net`).
+const _: () = assert!(
+    ::domain::http::CONNECTIONS == 2,
+    "копий HTTP в графе столько же, сколько сокетов REST у стека"
+);
+{%- endif %}
 
 /// Куда уходит просрочка наблюдаемого узла.
 ///

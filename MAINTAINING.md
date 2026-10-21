@@ -94,6 +94,12 @@ supervisor   = { git = "https://github.com/Sergycb/rust-lib.git" }
 становится рабочей. Адрес в `comment` и умолчание в хуке — одно и то же значение,
 меняются вместе.
 
+Удвоенная фигурная скобка в исходнике — тег Liquid, где бы она ни стояла: в
+строке формата Rust (экранированная скобка JSON в `write!`), в комментарии, в
+литерале. Генерация падает на ней с «Substitution skipped, found invalid
+syntax», а компилятор шаблона в репозитории ничего не замечает. Скобку пишут
+отдельно (`write_char('{')`, как `domain::http::write_info`).
+
 ### `${{ ... }}` в файлах GitHub Actions обязано быть в `{% raw %}`
 
 Выражения GitHub Actions начинаются с тех же двух скобок, что и Liquid, и
@@ -570,15 +576,21 @@ Modbus. Через `--define` то же задаёт `links` (`parse_links()`, �
 `cargo xtask pins` в документации).
 Сетевые службы — следом, только когда среди транспортов есть `tcp` или `udp`: список
 с отметками `net_services:` (`NET_SERVICE_ITEMS`, тот же `checklist()`, что у
-транспортов); `ssh` в нём только у чипа с RNG (`rng_irq`), иначе хук печатает, почему
-его нет. Отмечен `ssh` — `ssh_auth:` (`password` — умолчание, `key`), при `key` — ввод
+транспортов); `ssh` в нём только у чипа с RNG (`rng_irq`) и с разделом приложения не
+меньше `SSH_MIN_PARTITION` (256 KiB: `sunset` с криптографией — около 165 KiB кода),
+иначе хук печатает, почему его нет. Отмечен `ssh` — `ssh_auth:` (`password` — умолчание, `key`), при `key` — ввод
 строки `ssh_key:` (`variable::prompt` с regex; пустой ввод — вход по паролю). Ключ из
 ввода и из `--define` хук проверяет одинаково — `ssh_key_ok()`: тип, блоб ровно 68
 символов base64, без кавычек и `\` (строка уедет в исходники).
 Итог — `net_services` (`ssh,rest` в порядке пунктов, через `--define` — в порядке
-списка), `ssh_auth`, `ssh_key`; пустые строки, когда не выбрано. Шаблон их пока не
-читает: узлов служб ещё нет. Тесты — `net_services_*`, `ssh_*`,
-`password_login_asks_no_key` в `cascade.rs`; обход путей отвечает на `ssh_key` заранее.
+списка), `ssh_auth`, `ssh_key`, и `ssh_host_key`: `config` — ключ хоста плата создаёт
+сама в разделе настроек (`domain::ssh::Stored`), `file` — вшит из `ssh-host-key.bin`
+(`Fixed`; так и при `config` вместе с CANopen — раздел настроек целиком его). Пустые
+строки, когда не выбрано. Модули узлов невыбранных служб хук удаляет (`domain/src/http.rs`,
+`ssh.rs`, `app/src/tasks/{http,ssh}.rs`, `device.rs` без служб и protobuf); секреты
+(`rest-token.txt`, `ssh-password.txt`, `ssh-host-key.bin`) создаёт `cargo xtask`
+(`secrets.rs`). Тесты — `net_services_*`, `ssh_*`, `password_login_asks_no_key` в
+`cascade.rs`; обход путей отвечает на `ssh_key` заранее.
 Без терминала `variable::prompt` отвечает «not a terminal», и `ask()` берёт умолчание:
 OTA — `internal`, если схема помещается, иначе `no`; остальные — `no`/`none`/`yes`.
 `--define` — режим для скриптов и **строгий**: опечатка и значение, невозможное для
