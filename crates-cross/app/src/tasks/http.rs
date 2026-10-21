@@ -30,10 +30,11 @@ async fn task(
     let buffers = &BUFFERS[index];
     let mut token = crate::net::REST_TOKEN;
 {%- if ota == "true" %}
-    // Перезагрузку пул просит у узла OTA одним клиентом — номер следом за
+    // Перезагрузку копия просит у узла OTA своим клиентом — номера следом за
     // транспортами, как в графе.
     let cmd = crate::tasks::ota::CMD.requester();
-    let mut ota = domain::ota::OtaClient::new(cmd, domain::ota::ClientId({{ rest_ota_client }}));
+    let id = {% if rest_ota_client != "0" %}{{ rest_ota_client }} + {% endif %}u8::try_from(index).expect("копий пула HTTP меньше 256");
+    let mut ota = domain::ota::OtaClient::new(cmd, domain::ota::ClientId(id));
 {%- endif %}
     domain::http::task(domain::http::HttpCtx {
         stack: &mut stack,

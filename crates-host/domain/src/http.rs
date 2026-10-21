@@ -128,6 +128,22 @@ impl Content for Json {
     }
 }
 
+/// Строка JSON в кавычках: `"` и `\` экранируются, управляющие символы —
+/// `\u00XX`. Строки сведений задаёт сборка, но проект волен поставить свои —
+/// с кавычкой внутри ответ без экранирования был бы не JSON.
+fn write_json_string(out: &mut impl core::fmt::Write, s: &str) -> core::fmt::Result {
+    out.write_char('"')?;
+    for c in s.chars() {
+        match c {
+            '"' => out.write_str(r#"\""#)?,
+            '\\' => out.write_str(r"\\")?,
+            c if u32::from(c) < 0x20 => write!(out, r"\u{:04x}", u32::from(c))?,
+            c => out.write_char(c)?,
+        }
+    }
+    out.write_char('"')
+}
+
 /// Сведения об устройстве JSON-объектом: прошивка, чип, MAC, адрес и время
 /// работы.
 fn write_info(
@@ -141,11 +157,16 @@ fn write_info(
     // формата: это исходник шаблона, и пару скобок Liquid принял бы за свой
     // тег.
     out.write_char('{')?;
-    write!(
-        out,
-        r#""version":"{}","commit":"{}","chip":"{}","uid":""#,
-        info.version, info.commit, info.chip
-    )?;
+    for (name, value) in [
+        ("version", info.version),
+        ("commit", info.commit),
+        ("chip", info.chip),
+    ] {
+        write!(out, r#""{name}":"#)?;
+        write_json_string(out, value)?;
+        out.write_char(',')?;
+    }
+    out.write_str(r#""uid":""#)?;
     for b in info.uid {
         write!(out, "{b:02x}")?;
     }
@@ -357,6 +378,15 @@ mod tests {
         out.clear();
         write_info(&mut out, &info, mac, None, 0).unwrap();
         assert!(out.contains(r#""ip":null"#), "{out}");
+    }
+
+    /// Кавычки, обратная косая и управляющие символы в строках сведений не
+    /// ломают JSON.
+    #[test]
+    fn strings_are_escaped() {
+        let mut out = String::new();
+        write_json_string(&mut out, "a\"b\\c\nd").unwrap();
+        assert_eq!(out, r#""a\"b\\c\u000ad""#);
     }
 
     /// Самые длинные сведения, какие отдаёт плата, помещаются в буфер ответа.

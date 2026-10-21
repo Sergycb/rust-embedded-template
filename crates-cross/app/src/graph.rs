@@ -224,16 +224,18 @@ supervisor_graph! {
         // (`domain::http::CONNECTIONS`), у каждой свой сокет на стеке
         // `parts.net.stack` и свои буферы (слоты `= static` фрагмента).
         // Токен — `crate::net::REST_TOKEN` (файл `rest-token.txt`).{% if ota == "true" %}
-        // Перезагрузку узлы просят у узла `OTA` одним клиентом на пул — номер
-        // следом за транспортами.{% endif %}
-        ::domain::HTTP_FRAG as HTTP[2] = core::array::from_fn(|_| ::domain::http::HttpWiring {
+        // Перезагрузку узлы просят у узла `OTA` каждый своим клиентом — номера
+        // следом за транспортами: сессия приёма у OTA — одного клиента.{% endif %}
+        ::domain::HTTP_FRAG as HTTP[2] = core::array::from_fn(|{% if ota == "true" %}i{% else %}_{% endif %}| ::domain::http::HttpWiring {
             stack: parts.net.stack,
             info: crate::device_info(parts.board.spec),
             token: crate::net::REST_TOKEN,
 {%- if ota == "true" %}
             ota: ::domain::ota::OtaClient::new(
                 ota_cmd_requester(),
-                ::domain::ota::ClientId({{ rest_ota_client }}),
+                ::domain::ota::ClientId(
+                    {% if rest_ota_client != "0" %}{{ rest_ota_client }} + {% endif %}u8::try_from(i).expect("копий пула HTTP меньше 256"),
+                ),
             ),
 {%- endif %}
         }),

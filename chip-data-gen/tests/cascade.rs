@@ -2301,7 +2301,7 @@ fn the_ssh_host_key_lives_where_it_survives() {
     let some = |s: &str| Some(s.to_string());
     assert_eq!(
         host_key(&[("config", "internal")]),
-        (some("config"), some("1"), some("2"))
+        (some("config"), some("1"), some("3"))
     );
     assert_eq!(host_key(&[("config", "external")]).0, some("file"));
     assert_eq!(host_key(&[]).0, some("file"));

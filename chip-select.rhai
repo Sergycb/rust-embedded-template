@@ -2429,10 +2429,12 @@ variable::set("ssh_host_key", if !services.contains("ssh") { "" }
 	else if variable::get("config") == "true" && variable::get("config_store") != "external" && !on.canopen { "config" }
 	else { "file" });
 // Номера клиентов OTA у служб — следом за транспортами с протоколом: одно
-// число на граф и задачи без графа, а не счёт в каждом файле.
+// число на граф и задачи без графа, а не счёт в каждом файле. У REST — по
+// клиенту на копию пула (`rest_ota_client` и следующий: `CONNECTIONS` — 2,
+// его держит `const`-assert в `app/src/graph.rs`), SSH — за ними.
 let protocol_clients = links.filter(|link| link.protocol != "none").len();
 variable::set("rest_ota_client", protocol_clients.to_string());
-variable::set("ssh_ota_client", (protocol_clients + if services.contains("rest") { 1 } else { 0 }).to_string());
+variable::set("ssh_ota_client", (protocol_clients + if services.contains("rest") { 2 } else { 0 }).to_string());
 
 // Обёртка EEPROM — только когда настройки лежат в ней; без неё файл с
 // тестами и `pub mod eeprom;` (закрыт тем же условием в lib.rs) — мусор.

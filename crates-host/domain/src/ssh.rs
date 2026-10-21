@@ -22,7 +22,8 @@
 //! ed25519 даёт [`HostKey`](crate::ssh::HostKey): вшитый в прошивку ([`Fixed`](crate::ssh::Fixed)) или созданный
 //! платой при первом старте и хранимый в разделе настроек (`Stored`). Он не
 //! меняется от сброса к сбросу, и клиент один раз запоминает его в
-//! `known_hosts`. Попыток входа `sunset` не ограничивает.
+//! `known_hosts`. Попыток входа `sunset` не считает — их ограничивает узел: шесть
+//! неудач и 30 секунд на вход на соединение.
 //!
 //! Чего в `sunset` 0.6 нет: `exit-status` (OpenSSH выходит с кодом 255) и
 //! EOF/CLOSE канала по инициативе сервера — оба `sunset` шлёт только эхом на
@@ -76,6 +77,11 @@ const KEEP_ALIVE: Duration = Duration::from_secs(60);
 /// который открыл TCP и молчит или подбирает пароль медленно, не держит
 /// консоль дольше: соединение у узла одно.
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Неудачных попыток входа на соединение — как `MaxAuthTries` у OpenSSH.
+/// Меньше нельзя: клиент с несколькими ключами в агенте тратит попытку на
+/// каждый чужой.
+const MAX_AUTH_TRIES: u8 = 6;
 
 /// Сколько протокол ведётся после конца сессии: досылка EOF и закрытия
 /// канала.
@@ -427,7 +433,17 @@ async fn negotiate(
     started: bool,
 ) -> Result<Option<(ChanHandle, Start)>, sunset_async::sunset::Error> {
     let mut session = None;
+    let mut failures = 0;
     loop {
+        // `sunset` попыток не считает: перебору пароля мешает только это и
+        // `LOGIN_TIMEOUT`. Отказ — конец соединения, как у OpenSSH.
+        if failures >= MAX_AUTH_TRIES {
+            warn!(
+                "ssh: {} неудачных попыток входа — соединение закрыто",
+                failures
+            );
+            return Ok(None);
+        }
         let mut ph = ProgressHolder::new();
         // Запросы, которые не приняты явно, отклоняет их `Drop`.
         match server.progress(&mut ph).await? {
@@ -444,6 +460,7 @@ async fn negotiate(
                     a.allow()?;
                 } else {
                     warn!("ssh: неверный пользователь или пароль");
+                    failures += 1;
                 }
             }
             ServEvent::PubkeyAuth(a) => {
@@ -455,6 +472,7 @@ async fn negotiate(
                     a.allow()?;
                 } else {
                     warn!("ssh: чужой ключ или пользователь");
+                    failures += 1;
                 }
             }
             ServEvent::Authenticated => info!("ssh: вход выполнен"),
@@ -812,10 +830,15 @@ mod tests {
             _: u32,
             scratch: &'a mut [u8],
         ) -> impl Future<Output = Result<Option<&'a [u8]>, ()>> {
-            core::future::ready(Ok(self.0.as_ref().map(|v| {
-                scratch[..v.len()].copy_from_slice(v);
-                &scratch[..v.len()]
-            })))
+            // Как у порта: значение длиннее буфера — ошибка, а не обрезка.
+            core::future::ready(match &self.0 {
+                None => Ok(None),
+                Some(v) if v.len() > scratch.len() => Err(()),
+                Some(v) => {
+                    scratch[..v.len()].copy_from_slice(v);
+                    Ok(Some(&scratch[..v.len()]))
+                }
+            })
         }
 
         fn write(&mut self, _: u32, value: &[u8]) -> impl Future<Output = Result<(), ()>> {
@@ -832,6 +855,21 @@ mod tests {
         assert_ne!(first, [0; 32]);
         assert_eq!(stored.0.0.as_deref(), Some(&first[..]));
         assert_eq!(Stored(Memory(stored.0.0.clone())).seed().await, first);
+    }
+
+    /// Ключ не той длины заменяется новым и записывается; раздел, который не
+    /// прочитался (здесь — значение длиннее буфера), не перезаписывается:
+    /// сбой мог быть временным.
+    #[tokio::test]
+    async fn only_a_missing_key_is_overwritten() {
+        let mut short = Stored(Memory(Some(vec![1; 16])));
+        let seed = short.seed().await;
+        assert_eq!(short.0.0.as_deref(), Some(&seed[..]));
+
+        let unreadable = vec![2; 64];
+        let mut broken = Stored(Memory(Some(unreadable.clone())));
+        broken.seed().await;
+        assert_eq!(broken.0.0, Some(unreadable));
     }
     // {%- endif %}
 }
