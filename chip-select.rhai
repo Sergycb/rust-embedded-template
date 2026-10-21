@@ -1265,6 +1265,7 @@ if variable::is_set("write_size") {
     if !wants_ota {
         file::delete("crates-cross/boot");
         file::delete("crates-cross/bsp/src/ota.rs");
+        file::delete("crates-cross/app/src/ota.rs");
         file::delete("docs/modules/bsp-ota.md");
         // Релизу по тегу без OTA нечего выкладывать: `app.bin` делается
         // только там, где есть раздел DFU. Тело workflow и так под
@@ -1286,6 +1287,7 @@ if variable::is_set("write_size") {
             print("  добавьте регион CONFIG вручную и впишите CONFIG_START/CONFIG_END в [env]");
         }
         file::delete("crates-cross/bsp/src/settings.rs");
+        file::delete("crates-cross/app/src/settings.rs");
     }
     // Общий объект `Flash` в bsp нужен OTA во внутреннем flash и настройкам во
     // флеше или EEPROM; внешней флеши он не нужен (см. ту же переменную ниже).
@@ -1494,6 +1496,7 @@ if variable::is_set("write_size") {
     variable::set("graph", if graph { "true" } else { "false" });
     if !config {
         file::delete("crates-cross/bsp/src/settings.rs");
+        file::delete("crates-cross/app/src/settings.rs");
     }
 
     // База flash одна на оба режима: `__bootloader_*` отсчитываются от неё, а не
@@ -1730,6 +1733,7 @@ if variable::is_set("write_size") {
         // идёт по временной копии шаблона, до рендера — как и file::write.
         file::delete("crates-cross/boot");
         file::delete("crates-cross/bsp/src/ota.rs");
+        file::delete("crates-cross/app/src/ota.rs");
         file::delete("docs/modules/bsp-ota.md");
         // Вместе с bootloader'ом уходит и работа с разделом DFU: без OTA
         // раздела нет, а символы `__bootloader_dfu_*`, на которые опирается

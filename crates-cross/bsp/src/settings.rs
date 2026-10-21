@@ -1,9 +1,9 @@
-//! Обвязка хранилища настроек этой платы: на чём оно лежит и псевдоним типа
-//! для задач.
+//! Носитель хранилища настроек этой платы: на чём оно лежит.
 //!
 //! Само хранилище — `adapters::settings::Settings` (generic по флешу,
-//! тестируется на хосте); ему годится любой асинхронный `NorFlash`. Здесь
-//! остаётся то, что знает про плату: что именно в этот слот подставлено. При
+//! тестируется на хосте); ему годится любой асинхронный `NorFlash`, и строит
+//! его приложение (`app::settings`). Здесь остаётся то, что знает про плату:
+//! что именно в этот слот подставлено. При
 //! генерации выбрано одно из трёх (`config` в cargo-generate, см.
 //! docs/flash.md):
 //!
@@ -60,31 +60,26 @@ const CONFIG_END: u32 = match u32::from_str_radix(env!("CONFIG_END"), 10) {
     Err(_) => panic!("CONFIG_END в [env] crates-cross/.cargo/config.toml — не число"),
 };
 
-/// Хранилище настроек этой платы — то, что лежит полем `Board` и уезжает в
-/// задачи. Псевдоним по общему правилу шаблона: тип в сигнатуре
-/// `#[embassy_executor::task]` должен быть конкретным.
+/// Флеш под разделом настроек — то, что лежит полем `Board` и над чем
+/// приложение строит хранилище (`app::settings`). Весь флеш, а не раздел:
+/// `Partition::new` паникует на смещении, не кратном странице цельного
+/// `Flash`, а раздел `CONFIG` лежит в секторе мельче неё; его границы — [`RANGE`].
 {%- if config_paged == "true" %}
-pub type Settings =
-    adapters::settings::Settings<BlockingAsync<ErasePage<Whole, CONFIG_ERASE_SIZE>>>;
+pub type ConfigFlash = BlockingAsync<ErasePage<Whole, CONFIG_ERASE_SIZE>>;
 {%- else %}
-pub type Settings = adapters::settings::Settings<BlockingAsync<Whole>>;
+pub type ConfigFlash = BlockingAsync<Whole>;
 {%- endif %}
 
-/// Собирает хранилище над разделом `CONFIG`.
-///
-/// # Паника
-///
-/// Если раздел не годится под `sequential-storage` — см.
-/// `adapters::settings::Settings::new`.
-pub(crate) fn new(flash: &'static FlashMutex) -> Settings {
-    adapters::settings::Settings::new(
+/// Границы раздела `CONFIG` в [`ConfigFlash`].
+pub const RANGE: core::ops::Range<u32> = CONFIG_START..CONFIG_END;
+
+/// Собирает флеш под разделом `CONFIG`.
+pub(crate) fn new(flash: &'static FlashMutex) -> ConfigFlash {
 {%- if config_paged == "true" %}
-        BlockingAsync::new(ErasePage::new(BlockingPartition::new(flash, 0, SIZE))),
+    BlockingAsync::new(ErasePage::new(BlockingPartition::new(flash, 0, SIZE)))
 {%- else %}
-        BlockingAsync::new(BlockingPartition::new(flash, 0, SIZE)),
+    BlockingAsync::new(BlockingPartition::new(flash, 0, SIZE))
 {%- endif %}
-        CONFIG_START..CONFIG_END,
-    )
 }
 {%- elsif config_store == "eeprom" %}
 //!
@@ -92,22 +87,21 @@ pub(crate) fn new(flash: &'static FlashMutex) -> Settings {
 //! пишется через тот же контроллер, что и флеш, поэтому доступ к ней — через
 //! общий [`FlashMutex`] (`embassy_stm32::flash::Flash::eeprom_*`), по операции
 //! под замком. Под хранилище отдана вся EEPROM, округлённая до страницы
-//! обёртки (`adapters::eeprom::Eeprom::PAGE`).
+//! обёртки (`adapters::eeprom::Eeprom::PAGE`, её строит приложение).
 
-use adapters::eeprom::Eeprom;
 use ports::EepromAccess;
 use static_cell::StaticCell;
 
 use crate::flash::FlashMutex;
 
-/// `&'static` — `Eeprom` держит доступ к EEPROM ссылкой, а хранилище уезжает в
-/// задачу.
+/// `&'static` — обёртка `Eeprom` держит доступ к EEPROM ссылкой, а хранилище
+/// уезжает в задачу.
 static ACCESS: StaticCell<EepromFlash> = StaticCell::new();
 
-/// Хранилище настроек этой платы — то, что лежит полем `Board` и уезжает в
-/// задачи. Псевдоним по общему правилу шаблона: тип в сигнатуре
-/// `#[embassy_executor::task]` должен быть конкретным.
-pub type Settings = adapters::settings::Settings<Eeprom<'static, EepromFlash>>;
+/// Доступ к EEPROM — то, что лежит полем `Board` и над чем приложение строит
+/// хранилище (`app::settings`: `adapters::eeprom::Eeprom`, затем
+/// `adapters::settings::Settings`).
+pub type ConfigFlash = &'static EepromFlash;
 
 /// Общий [`FlashMutex`] как источник EEPROM. Свой тип, а не `impl` на самом
 /// мьютексе: и трейт `EepromAccess`, и `Mutex` чужие для `bsp`.
@@ -144,16 +138,9 @@ impl EepromAccess for EepromFlash {
     }
 }
 
-/// Собирает хранилище над всей внутренней EEPROM.
-///
-/// # Паника
-///
-/// Если EEPROM меньше двух страниц обёртки — см.
-/// `adapters::settings::Settings::new`; у STM32L0/L1 таких нет.
-pub(crate) fn new(flash: &'static FlashMutex) -> Settings {
-    let eeprom = Eeprom::new(ACCESS.init(EepromFlash(flash)));
-    let size = eeprom.usable();
-    adapters::settings::Settings::new(eeprom, 0..size)
+/// Собирает доступ к внутренней EEPROM.
+pub(crate) fn new(flash: &'static FlashMutex) -> ConfigFlash {
+    ACCESS.init(EepromFlash(flash))
 }
 {%- elsif config_store == "external" and ota == "true" and ota_store == "external" %}
 //!
@@ -178,21 +165,16 @@ const CONFIG_END: u32 = match u32::from_str_radix(env!("CONFIG_END"), 10) {
     Err(_) => panic!("CONFIG_END в [env] crates-cross/.cargo/config.toml — не число"),
 };
 
-/// Хранилище настроек этой платы — то, что лежит полем `Board` и уезжает в
-/// задачи. Псевдоним по общему правилу шаблона: тип в сигнатуре
-/// `#[embassy_executor::task]` должен быть конкретным.
-pub type Settings = adapters::settings::Settings<ExternalPartition>;
+/// Раздел настроек на внешней флеши — то, что лежит полем `Board` и над чем
+/// приложение строит хранилище (`app::settings`).
+pub type ConfigFlash = ExternalPartition;
 
-/// Собирает хранилище над разделом внешней флеши.
-///
-/// # Паника
-///
-/// Если раздел не годится под `sequential-storage` — см.
-/// `adapters::settings::Settings::new`.
-pub(crate) fn new(external: &'static ExternalMutex) -> Settings {
-    let size = CONFIG_END - CONFIG_START;
-    let partition = ExternalPartition::new(external, CONFIG_START, size);
-    adapters::settings::Settings::new(partition, 0..size)
+/// Границы раздела в [`ConfigFlash`] — весь раздел.
+pub const RANGE: core::ops::Range<u32> = 0..CONFIG_END - CONFIG_START;
+
+/// Собирает раздел настроек на внешней флеши.
+pub(crate) fn new(external: &'static ExternalMutex) -> ConfigFlash {
+    ExternalPartition::new(external, CONFIG_START, CONFIG_END - CONFIG_START)
 }
 {%- elsif config_store == "external" %}
 //!
@@ -207,26 +189,29 @@ pub(crate) fn new(external: &'static ExternalMutex) -> Settings {
 //!    `embedded_storage_async::nor_flash::NorFlash`: готовый крейт
 //!    (`spi-memory-async` для серии 25, `w25q32jv` и подобные) или свой.
 //! 2. `new` — собрать драйвер из периферии (SPI и вывод CS; какие выводы умеет
-//!    блок — `cargo xtask pins SPI1 --snippet`) и указать диапазон под
+//!    блок — `cargo xtask pins SPI1 --snippet`), и `RANGE` — диапазон под
 //!    настройки: не меньше двух секторов стирания микросхемы.
 //!
 //! Аргументы задач embassy обязаны быть `'static`, а драйвер — конкретным
-//! типом: `Settings` остаётся псевдонимом, как и сейчас.
+//! типом: `ConfigFlash` остаётся псевдонимом, как и сейчас.
 
 /// Драйвер внешней флеши — замените на свой.
 pub type ExternalFlash = crate::stub::Flash;
 
-/// Хранилище настроек этой платы — то, что лежит полем `Board` и уезжает в
-/// задачи. Псевдоним по общему правилу шаблона: тип в сигнатуре
-/// `#[embassy_executor::task]` должен быть конкретным.
-pub type Settings = adapters::settings::Settings<ExternalFlash>;
+/// Внешняя флеш — то, что лежит полем `Board` и над чем приложение строит
+/// хранилище (`app::settings`).
+pub type ConfigFlash = ExternalFlash;
 
-/// Собирает хранилище над внешней флешью. Сейчас — над заглушкой: о том, что
-/// драйвер не подставлен, говорит одна строка в лог при старте.
-pub(crate) fn new() -> Settings {
+/// Границы раздела настроек в [`ConfigFlash`] — вся заглушка; с вашим
+/// драйвером — не меньше двух секторов стирания микросхемы.
+pub const RANGE: core::ops::Range<u32> = 0..crate::stub::Flash::CAPACITY;
+
+/// Собирает драйвер внешней флеши. Сейчас — заглушку: о том, что драйвер не
+/// подставлен, говорит одна строка в лог при старте.
+pub(crate) fn new() -> ConfigFlash {
     defmt::warn!(
         "bsp: внешняя флеш не подключена — настройки не сохраняются (bsp/src/settings.rs)"
     );
-    adapters::settings::Settings::new(crate::stub::Flash, 0..crate::stub::Flash::CAPACITY)
+    crate::stub::Flash
 }
 {%- endif %}

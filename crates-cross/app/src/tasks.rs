@@ -62,7 +62,12 @@ pub fn spawn_all(spawner: embassy_executor::Spawner, {% if ota == "true" or has_
     let info = crate::device_info(parts.board.spec);
     host::{{ f[4] }}::spawn(spawner, {% if f[0] == "uart" %}parts.board.{{ f[4] }}{% elsif f[0] == "usb" %}parts.{{ f[4] }}.cdc{% else %}parts.net.stack{% endif %}, info);
 {%- elsif f[3] == "canopen" %}
-    canopen::{{ f[4] }}::spawn(spawner, parts.board.{{ f[4] }}, {% if config == "true" %}parts.board.settings{% else %}adapters::settings::Unavailable{% endif %});
+{%- if config == "true" %}
+    let store = crate::settings::new(parts.board.settings);
+{%- else %}
+    let store = adapters::settings::Unavailable;
+{%- endif %}
+    canopen::{{ f[4] }}::spawn(spawner, parts.board.{{ f[4] }}, store);
 {%- endif %}
 {%- endfor %}
 }

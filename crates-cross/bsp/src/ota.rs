@@ -36,7 +36,7 @@ use crate::flash::{FlashMutex, SIZE};
 /// Число — переменная среды `ACTIVE_LEN` из `[env]`
 /// `crates-cross/.cargo/config.toml`: тем же расчётом генерация пишет `ACTIVE` в
 /// `memory.x`, и читать размер из линкерных символов (`unsafe extern`) незачем.
-const ACTIVE_LEN: u32 = match u32::from_str_radix(env!("ACTIVE_LEN"), 10) {
+pub const ACTIVE_LEN: u32 = match u32::from_str_radix(env!("ACTIVE_LEN"), 10) {
     Ok(len) => len,
     Err(_) => panic!("ACTIVE_LEN в [env] crates-cross/.cargo/config.toml — не число"),
 };
@@ -127,46 +127,57 @@ type StateFlash = BlockingAsync<ErasePage<crate::flash::Whole, STATE_ERASE_SIZE>
 type StateFlash = BlockingAsync<crate::flash::Whole>;
 {%- endif %}
 
-/// Раздел `DFU` — то, из чего собирается адаптер обновления.
-type Dfu = embassy_embedded_hal::flash::partition::Partition<'static, NoopRawMutex, DfuFlash>;
+/// Раздел `DFU` — то, из чего приложение собирает адаптер обновления.
+pub type Dfu = embassy_embedded_hal::flash::partition::Partition<'static, NoopRawMutex, DfuFlash>;
 
 /// Раздел `BOOTLOADER_STATE` — над [`StateFlash`], а не над цельным `Flash`,
 /// как [`Dfu`].
-type State = embassy_embedded_hal::flash::partition::Partition<'static, NoopRawMutex, StateFlash>;
+pub type State =
+    embassy_embedded_hal::flash::partition::Partition<'static, NoopRawMutex, StateFlash>;
 {%- else %}
 
 /// Раздел `DFU` — на внешней флеши (`crate::external`).
-type Dfu = ExternalPartition;
+pub type Dfu = ExternalPartition;
 
 /// Раздел `BOOTLOADER_STATE` — на той же внешней флеши: его страницу несёт
 /// драйвер.
-type State = ExternalPartition;
+pub type State = ExternalPartition;
 {%- endif %}
 
-/// Адаптер обновления этой платы — порт `FirmwareUpdate` поверх разделов
-/// `DFU`/`BOOTLOADER_STATE`. Псевдоним по общему правилу шаблона: тип слота
-/// узла OTA должен быть конкретным, а адаптер приходит из `adapters` generic.
-pub type Updater = adapters::ota::Updater<Dfu, State, {{signed}}>;
+/// Разделы обновления этой платы: из них приложение собирает адаптер
+/// обновления — порт `FirmwareUpdate` (`adapters::ota::Updater`, `app::ota`).
+pub struct Partitions {
+    /// Раздел `DFU`, в который принимается образ.
+    pub dfu: Dfu,
+    /// Раздел `BOOTLOADER_STATE` — журнал обмена.
+    pub state: State,
+}
 
-/// Собирает адаптер обновления из разделов `DFU` и `BOOTLOADER_STATE`,
-/// найденных по символам `memory.x`.
+// Вручную: у разделов `embassy-embedded-hal` `Debug` нет.
+impl core::fmt::Debug for Partitions {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Partitions").finish_non_exhaustive()
+    }
+}
+
+/// Собирает разделы `DFU` и `BOOTLOADER_STATE`, найденные по символам `memory.x`.
 {%- if ota_store == "external" %}
 ///
 /// Оба раздела — над одной внешней флешью: символы в `memory.x` для них —
 /// смещения от её начала.
-pub(crate) fn new(external: &'static ExternalMutex) -> Updater {
+pub(crate) fn new(external: &'static ExternalMutex) -> Partitions {
     let config = FirmwareUpdaterConfig::from_linkerfile(external, external);
 {%- else %}
 {%- if dfu_bank == "true" %}
 ///
 /// `DFU` — в банке 2, `STATE` — в банке 1.
-pub(crate) fn new(flash: &'static FlashMutex, dfu_bank: &'static DfuBankMutex) -> Updater {
+pub(crate) fn new(flash: &'static FlashMutex, dfu_bank: &'static DfuBankMutex) -> Partitions {
     let dfu = BlockingAsync::new(BlockingPartition::new(dfu_bank, 0, DFU_BANK_SIZE));
 {%- elsif swap_paged == "true" %}
-pub(crate) fn new(flash: &'static FlashMutex) -> Updater {
+pub(crate) fn new(flash: &'static FlashMutex) -> Partitions {
     let dfu = BlockingAsync::new(ErasePage::new(BlockingPartition::new(flash, 0, SIZE)));
 {%- else %}
-pub(crate) fn new(flash: &'static FlashMutex) -> Updater {
+pub(crate) fn new(flash: &'static FlashMutex) -> Partitions {
     let dfu = BlockingAsync::new(BlockingPartition::new(flash, 0, SIZE));
 {%- endif %}
     let dfu = DFU_FLASH.init(Mutex::new(dfu));
@@ -178,5 +189,8 @@ pub(crate) fn new(flash: &'static FlashMutex) -> Updater {
     let state = STATE_FLASH.init(Mutex::new(state));
     let config = FirmwareUpdaterConfig::from_linkerfile(dfu, state);
 {%- endif %}
-    Updater::new(config.dfu, config.state, ACTIVE_LEN)
+    Partitions {
+        dfu: config.dfu,
+        state: config.state,
+    }
 }

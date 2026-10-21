@@ -9,7 +9,7 @@ pub mod {{ f[4] }} {
     use embassy_executor::Spawner;
 
     /// Хранилище узла: {% if config == "true" %}раздел настроек платы{% else %}раздела настроек нет — объекты и адрес не сохраняются{% endif %}.
-    type Store = {% if config == "true" %}bsp::settings::Settings{% else %}adapters::settings::Unavailable{% endif %};
+    type Store = {% if config == "true" %}crate::settings::Settings{% else %}adapters::settings::Unavailable{% endif %};
 
     /// Шина узла.
     type Bus = bsp::can::{{ f[4] }}::Can;

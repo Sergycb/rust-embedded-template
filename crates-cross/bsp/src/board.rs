@@ -59,18 +59,18 @@ pub struct Board {
     pub cycles: crate::cycles::Cycles,
 {%- endif %}
 {%- if ota == "true" %}
-    /// Адаптер обновления (`bsp::ota`) — порт `FirmwareUpdate` поверх разделов
-    /// `DFU`/`BOOTLOADER_STATE`, собранных из символов `memory.x`. Образ
-    /// приходит командами от узла протокола; алгоритм обновления над портами —
-    /// в `domain::ota`.
-    /// {% if graph == "true" %}Уезжает в узел `OTA` графа (`fragments:` в `crates-cross/app/src/graph.rs`){% else %}Уезжает в задачу узла, которую спавнит `main` (`domain::ota::task`){% endif %}.
-    pub ota: crate::ota::Updater,
+    /// Разделы обновления `DFU`/`BOOTLOADER_STATE`, собранные из символов
+    /// `memory.x` (`bsp::ota`). Адаптер обновления — порт `FirmwareUpdate` —
+    /// собирает над ними приложение (`crates-cross/app/src/ota.rs`); алгоритм
+    /// обновления над портами — в `domain::ota`.
+    pub ota: crate::ota::Partitions,
 {%- endif %}
 {%- if config == "true" %}
-    /// Настройки, переживающие перезапуск и обновление прошивки:
-    /// `adapters::settings` поверх {% if config_store == "eeprom" %}внутренней EEPROM{% elsif config_store == "external" %}внешней флеши (драйвер — `bsp/src/{% if ota == "true" and ota_store == "external" %}external{% else %}config{% endif %}.rs`){% else %}раздела `CONFIG` во флеше{% endif %}.
-    /// Формат значений выбирает проект.
-    pub settings: crate::settings::Settings,
+    /// Носитель настроек, переживающих перезапуск и обновление прошивки:
+    /// {% if config_store == "eeprom" %}внутренняя EEPROM{% elsif config_store == "external" %}внешняя флеш (драйвер — `bsp/src/{% if ota == "true" and ota_store == "external" %}external{% else %}settings{% endif %}.rs`){% else %}раздел `CONFIG` во флеше{% endif %} (`bsp::settings`).
+    /// Хранилище над ним — `adapters::settings` — собирает приложение
+    /// (`crates-cross/app/src/settings.rs`); формат значений выбирает проект.
+    pub settings: crate::settings::ConfigFlash,
 {%- endif %}
 {%- assign xs = links | split: "," %}
 {%- for l in xs %}

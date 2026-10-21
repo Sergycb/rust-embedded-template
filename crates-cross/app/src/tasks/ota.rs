@@ -32,7 +32,7 @@ pub static READY_{{ f[4] | upcase }}: Signal<CriticalSectionRawMutex, ()> = Sign
 {%- endfor %}
 
 #[embassy_executor::task]
-async fn task(mut flash: bsp::ota::Updater, mut mode: domain::ota::Mode) {
+async fn task(mut flash: crate::ota::Updater, mut mode: domain::ota::Mode) {
     let mut reboot = bsp::cpu::Reboot;
     let mut confirmed = false;
     domain::ota::task(domain::ota::OtaCtx {
@@ -58,9 +58,11 @@ async fn task(mut flash: bsp::ota::Updater, mut mode: domain::ota::Mode) {
     .await;
 }
 
-/// Спавнит узел. Адаптер обновления уезжает в задачу владением; режим —
+/// Собирает адаптер обновления над разделами платы и спавнит узел. Адаптер
+/// уезжает в задачу владением; режим —
 /// {% if signed == "true" %}`Signed` с версией этого образа (`crate::image::FW_VERSION`){% else %}`Plain`{% endif %}.
-pub fn spawn(spawner: embassy_executor::Spawner, flash: bsp::ota::Updater) {
+pub fn spawn(spawner: embassy_executor::Spawner, partitions: bsp::ota::Partitions) {
+    let flash = crate::ota::new(partitions);
 {%- if signed == "true" %}
     let mode = domain::ota::Mode::Signed {
         running_version: crate::image::FW_VERSION,

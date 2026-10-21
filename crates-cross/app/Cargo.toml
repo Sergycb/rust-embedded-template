@@ -29,11 +29,13 @@ defmt-rtt = { workspace = true }
 # обработчик не по карману.
 bsp = { workspace = true, features = ["time-driver", "panic-handler", "fault-handler"] }
 domain = { workspace = true }
-{%- if has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" or has_usb == "true" or has_net == "true" %}
+{%- if has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" or has_usb == "true" or has_net == "true" or ota == "true" or config == "true" %}
 # Адаптеры над объектами платы собирает приложение: транспорты протоколов
 # (`adapters::modbus::Rtu`, `adapters::cobs::Cobs`) вокруг интерфейса платы{% if has_usb == "true" %},
 # USB-устройство с классом CDC (`adapters::usb`, src/usb.rs){% endif %}{% if has_net == "true" %},
-# сетевой стек (`adapters::net::Net`, src/net.rs){% endif %} — `bsp` отдаёт
+# сетевой стек (`adapters::net::Net`, src/net.rs){% endif %}{% if ota == "true" %},
+# адаптер обновления (`adapters::ota`, src/ota.rs){% endif %}{% if config == "true" %}, хранилище настроек
+# (`adapters::settings`, src/settings.rs){% endif %} — `bsp` отдаёт
 # поток байтов и драйверы, а что поверх них, решает приложение.
 adapters = { workspace = true }
 {%- endif %}

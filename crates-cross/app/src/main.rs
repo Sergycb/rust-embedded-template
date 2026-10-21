@@ -20,7 +20,13 @@ mod link;
 {%- if has_net == "true" %}
 mod net;
 {%- endif %}
+{%- if ota == "true" %}
+mod ota;
+{%- endif %}
 mod parts;
+{%- if config == "true" %}
+mod settings;
+{%- endif %}
 {%- if graph != "true" %}
 mod tasks;
 {%- endif %}

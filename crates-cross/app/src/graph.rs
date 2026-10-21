@@ -88,7 +88,7 @@ supervisor_graph! {
         // Фрагмент OTA — с параметрами и своей привязкой. Параметры
         // (`<Updater, Reboot>`) — типы его слотов: слот — `static`, тип ему
         // нужен, а знает его только эта сторона. Привязка (`= …`) — вход узла
-        // (`domain::ota::OtaWiring`): адаптер обновления `parts.board.ota`, сброс МК
+        // (`domain::ota::OtaWiring`): адаптер обновления `crate::ota::new(parts.board.ota)`, сброс МК
         // `bsp::cpu::Reboot` и режим применения (`Mode::{% if signed == "true" %}Signed` с версией этого образа
         // из `crate::image`{% else %}Plain`{% endif %}). Образ узел принимает командами на свой вход
         // `CMD`{% if has_modbus != "true" and has_protobuf != "true" and has_canopen != "true" %}: клиента отдаёт `ota_cmd_requester()`, и шлёт их ваш
@@ -97,8 +97,8 @@ supervisor_graph! {
         // строкой — раньше инициализатора блока `watchdog:`, как бы они ни стояли
         // в тексте, — частичным move: `ota` уезжает в слот узла, `watchdog`
         // следом забирает сторож, остаток `parts` дропается в конце пролога.
-        ::domain::OTA_FRAG<bsp::ota::Updater, bsp::cpu::Reboot> as OTA = ::domain::ota::OtaWiring {
-            flash: parts.board.ota,
+        ::domain::OTA_FRAG<crate::ota::Updater, bsp::cpu::Reboot> as OTA = ::domain::ota::OtaWiring {
+            flash: crate::ota::new(parts.board.ota),
             reboot: bsp::cpu::Reboot,
 {%- if signed == "true" %}
             mode: ::domain::ota::Mode::Signed {
@@ -170,12 +170,12 @@ supervisor_graph! {
         // сети — `node_id`, 1..=127. Хранилище — {% if config == "true" %}раздел настроек платы: в нём узел сохраняет
         // объекты по команде `save` и адрес, назначенный по LSS (ключи
         // `domain::canopen::{OBJECTS_KEY, NODE_ID_KEY}`){% else %}раздела настроек нет — объекты и адрес не сохраняются{% endif %}.
-        ::domain::CANOPEN_FRAG<bsp::can::{{ f[4] }}::Can, {% if config == "true" %}bsp::settings::Settings{% else %}::adapters::settings::Unavailable{% endif %}> as CANOPEN_{{ f[4] | upcase }} =
+        ::domain::CANOPEN_FRAG<bsp::can::{{ f[4] }}::Can, {% if config == "true" %}crate::settings::Settings{% else %}::adapters::settings::Unavailable{% endif %}> as CANOPEN_{{ f[4] | upcase }} =
             ::domain::canopen::CanOpenWiring {
                 bus: parts.board.{{ f[4] }},
                 node_id: 1,
                 dictionary: ::domain::canopen::dictionary(),
-                settings: {% if config == "true" %}parts.board.settings{% else %}::adapters::settings::Unavailable{% endif %},
+                settings: {% if config == "true" %}crate::settings::new(parts.board.settings){% else %}::adapters::settings::Unavailable{% endif %},
                 persist: {{config}},
 {%- if ota == "true" %}
                 // Команды объекта OTA словаря (0x4F00) узел отдаёт узлу `OTA`

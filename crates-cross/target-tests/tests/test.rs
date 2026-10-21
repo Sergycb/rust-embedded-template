@@ -34,6 +34,31 @@ mod tests {
     use bsp::Board;
     use embassy_time::{Duration, Instant, Timer};
 
+{%- if ota == "true" %}
+    /// Адаптер обновления над разделами платы — так же, как его собирает
+    /// приложение (`crates-cross/app/src/ota.rs`).
+    fn updater(
+        partitions: bsp::ota::Partitions,
+    ) -> adapters::ota::Updater<bsp::ota::Dfu, bsp::ota::State, {{signed}}> {
+        adapters::ota::Updater::new(partitions.dfu, partitions.state, bsp::ota::ACTIVE_LEN)
+    }
+{%- endif %}
+{%- if config == "true" and config_store != "external" %}
+    /// Хранилище настроек над носителем платы — так же, как его собирает
+    /// приложение (`crates-cross/app/src/settings.rs`).
+    fn settings(
+        flash: bsp::settings::ConfigFlash,
+    ) -> impl ports::SettingsStorage<Error: core::fmt::Debug> {
+{%- if config_store == "eeprom" %}
+        let eeprom = adapters::eeprom::Eeprom::new(flash);
+        let size = eeprom.usable();
+        adapters::settings::Settings::new(eeprom, 0..size)
+{%- else %}
+        adapters::settings::Settings::new(flash, bsp::settings::RANGE)
+{%- endif %}
+    }
+{%- endif %}
+
     /// Выполняется перед каждым тестом (устройство между ними сброшено) и
     /// отдаёт результат тесту параметром.
     #[init]
@@ -166,7 +191,7 @@ mod tests {
         }
 {%- endif %}
 
-        let mut ota = board.ota;
+        let mut ota = updater(board.ota);
 
         // Пачкаем раздел перед стиранием: иначе тест зелёный и в случае, когда
         // `prepare` не сделал ничего, а байты остались стёртыми с прошлого
@@ -254,7 +279,7 @@ mod tests {
         }
 {%- endif %}
 
-        let mut ota = board.ota;
+        let mut ota = updater(board.ota);
 
         let first = [0xA1u8; 32];
         let second = [0xB2u8; 32];
@@ -311,7 +336,7 @@ mod tests {
         }
 {%- endif %}
 
-        let mut ota = board.ota;
+        let mut ota = updater(board.ota);
 
         // Кратно WRITE_SIZE флеша. Хвост — версия
         // `0.0.0`, заведомо не новее любой проставленной в проекте.
@@ -370,20 +395,19 @@ mod tests {
     /// дозаписью в конец страницы, стирание случается, только когда страница
     /// кончилась.
     #[test]
-    async fn settings_store_and_read_back(mut board: Board) {
+    async fn settings_store_and_read_back(board: Board) {
         use ports::SettingsStorage;
 
         const KEY: u32 = 0;
         let written = b"template";
         let mut scratch = [0u8; 32];
+        let mut settings = settings(board.settings);
 
-        board
-            .settings
+        settings
             .write(KEY, written)
             .await
             .expect("хранилище настроек должно принимать запись");
-        let read = board
-            .settings
+        let read = settings
             .read(KEY, &mut scratch)
             .await
             .expect("хранилище настроек должно читаться");
