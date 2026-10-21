@@ -744,9 +744,11 @@ fn capture(
         .output()
         .with_context(|| format!("запустить {:?}", command.get_program()))?;
     if !output.status.success() {
+        // stdout — тоже: перед ошибкой хук печатает то, что к ней привело.
         bail!(
-            "команда завершилась с {}:\n{}",
+            "команда завершилась с {}:\n{}{}",
             output.status,
+            String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr),
         );
     }
@@ -1127,7 +1129,7 @@ mod tests {
     #[test]
     fn parses_the_ram_estimate_line_of_the_hook() {
         let output = "OTA отключён по вашему выбору\n\
-                      ram_estimate: 3932 байт статической RAM (+ 2048 под стек) из 130560 байт RAM\n";
+                      ram_estimate: 3932 байт статической RAM (+ 1024 под стек) из 130560 байт RAM\n";
         assert_eq!(parse_ram_estimate(output), Some(3932));
         assert_eq!(parse_ram_estimate("ram: 3124 байт статической RAM\n"), None);
     }

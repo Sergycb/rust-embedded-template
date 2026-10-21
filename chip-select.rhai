@@ -897,10 +897,13 @@ if !variable::is_set("chip_feature")
             if !any_block { return false; }
         }
         let m = layouts[chip.sub_string(0, 2)][chip];
-        // И транспорты из `links` должны поместиться в RAM вместе с тем, что
-        // получится из остальных ответов.
-        if WANTED_LINKS.len() > 0 {
-            let base = ram_base(RAM_COST, plan(m, m["erase_zero"] == "true", WANTS, LIMITS));
+        // И транспорты из `links` должны поместиться в RAM. База — только из
+        // заданных ответов (`NEED`): умолчание «да» для OTA и графа чипов не
+        // отсекает, а невлезающее с итоговыми ответами отвергнет проверка после
+        // них. С ручной раскладкой (`write_size`) оценки нет.
+        if WANTED_LINKS.len() > 0 && !variable::is_set("write_size") {
+            let asked = #{ ota: NEED.ota, ext_ota: NEED.ext_ota, config: NEED.config, external: NEED.config && wants_external, graph: NEED.graph };
+            let base = ram_base(RAM_COST, plan(m, m["erase_zero"] == "true", asked, LIMITS));
             if ram_estimate(RAM_COST, base, WANTED_LINKS, []) + STACK_RESERVE > size_in_bytes(m["ram_length"]) {
                 return false;
             }
@@ -1266,6 +1269,13 @@ let instances = if INSTANCES.contains(suffix) { INSTANCES[suffix] } else { #{} }
 // (`ram_limit` = `()`), и ничего не помечается.
 let ram_base_now = ram_base(RAM_COST, plan(layout, erase_zero, #{ ota: wants_ota, ext_ota: wants_ext_ota, config: wants_config, external: wants_external, graph: wants_graph }, LIMITS));
 let ram_limit = if manual_now { () } else { size_in_bytes(layout["ram_length"]) };
+// Приписка к пункту меню, с которым транспорты `set` (`#{ kind, protocol }`) не
+// помещаются; помещаются или оценки нет — пусто.
+let ram_mark = |set| {
+    if ram_limit == () { return ""; }
+    let need = ram_estimate(RAM_COST, ram_base_now, set, []) + STACK_RESERVE;
+    if need > ram_limit { " — НЕ ПОМЕЩАЕТСЯ в RAM (оценка " + kib(need) + " из " + kib(ram_limit) + ")" } else { "" }
+};
 let links = [];
 let wanted_protocol = if variable::is_set("protocol") { variable::get("protocol") } else { "" };
 if wanted_protocol != "" && !PROTOCOL_INTERFACES.contains(wanted_protocol) {
@@ -1322,15 +1332,13 @@ if WANTED_LINKS.len() > 0 {
         // но выбрать его можно — тогда в конце печатается предупреждение.
         // Протокол ещё не спрошен, поэтому пункт стоит как его худший протокол.
         let ram_note = |value, chosen| {
-            if ram_limit == () { return ""; }
             let set = [];
             for item in items {
                 if item.value == value || chosen.contains(item.value) {
                     set.push(#{ kind: item.kind, protocol: worst_protocol(RAM_COST, item.kind, PROTOCOL_INTERFACES) });
                 }
             }
-            let need = ram_estimate(RAM_COST, ram_base_now, set, []) + STACK_RESERVE;
-            if need > ram_limit { " — НЕ ПОМЕЩАЕТСЯ в RAM (оценка " + kib(need) + " из " + kib(ram_limit) + ")" } else { "" }
+            ram_mark.call(set)
         };
         let marked = checklist("transports: отметьте транспорты (Enter — отметить или снять)",
             items.map(|item| item.value), items.map(|item| item.text), ram_note);
@@ -1361,6 +1369,11 @@ if WANTED_LINKS.len() > 0 {
                     values.push(name);
                     texts.push(PROTOCOL_TEXT[name]);
                 }
+            }
+            // Протокол, с которым этот транспорт к уже выбранным не помещается в
+            // RAM, помечен так же, как пункт списка транспортов.
+            for i in 0..values.len() {
+                texts[i] += ram_mark.call(links + [#{ kind: kind, protocol: values[i] }]);
             }
             if values.len() > 1 {
                 link_protocol = ask("protocol: протокол связи поверх " + item.name + " (узел в графе)", values, texts, "none");
@@ -1477,6 +1490,8 @@ if ram_limit != () {
     print("ram_estimate: " + need + " байт статической RAM (+ " + STACK_RESERVE + " под стек) из " + ram_limit + " байт RAM");
     if links.len() > 0 && need + STACK_RESERVE > ram_limit {
         let why = "не помещается в RAM " + chip_name + " (оценка " + kib(need + STACK_RESERVE) + " из " + kib(ram_limit) + ")";
+        // Стоимости транспортов замерены с графом: без него оценка завышена до
+        // ~750 байт (stm32f407ve protobuf-usb-usb-no-graph), отказ — с этим запасом.
         if variable::is_set("links") { throw "links: " + variable::get("links") + " " + why; }
         if variable::is_set("interface") { throw "interface: " + variable::get("interface") + " с протоколом " + protocol + " " + why; }
         print("Внимание: выбранные транспорты " + why + " — прошивка может не собраться или упасть на переполнении стека");

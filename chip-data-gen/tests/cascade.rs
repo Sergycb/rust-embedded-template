@@ -4296,7 +4296,10 @@ fn a_transport_that_does_not_fit_is_marked() {
 
 /// Пометки считаются заново при каждой перерисовке: у F072RB (15.5 KiB RAM) USB,
 /// UART и CAN по отдельности помещаются, а все три — нет; снятая отметка
-/// возвращает место.
+/// возвращает место. Запас — 144 байта сверх RAM у трёх пунктов и 3.4 KiB у двух:
+/// выросла таблица `RAM_COST` — нужен чип с OTA и графом, у которого
+/// `база + usb + uart + 1024 <= ram_length < то же + can` (худшие протоколы видов),
+/// перебором по `chip-data/layout/*.rhai` и `chip-data/interfaces.rhai`.
 #[test]
 fn marks_are_recomputed_after_each_toggle() {
     let result = interview(
@@ -4338,4 +4341,66 @@ fn marks_are_recomputed_after_each_toggle() {
         "{:?}",
         menus[4]
     );
+}
+
+/// Отсев до каскада по `links` считает базу только из заданных ответов: STM32F100RB
+/// (7.5 KiB RAM) с OTA и графом protobuf по UART не берёт, а без OTA — берёт, и
+/// умолчание «да» для незаданного `ota` чип не прячет. Невлезающее с итоговыми
+/// ответами отвергает проверка после них.
+#[test]
+fn the_link_filter_does_not_assume_unasked_answers() {
+    let ast = compile_script();
+    let links = ("links", "uart:protobuf");
+    let result = run_interview(&ast, "f100rb", &[links], &[("ota", "no")])
+        .expect("f100rb без OTA должен остаться в каскаде");
+    assert_eq!(var_of(&result, "chip"), Some("STM32F100RB"));
+    // Без терминала OTA по умолчанию есть — и тогда не помещается.
+    let err = run_cascade_with(&ast, "f100rb", &[links])
+        .err()
+        .expect("protobuf по UART с OTA в 7.5 KiB RAM принят");
+    assert!(
+        err.to_string()
+            .contains("links: uart:protobuf не помещается в RAM STM32F100RB"),
+        "{err}"
+    );
+    // Заданные `ota=internal` и `graph=yes` в базе учитываются — чип не показывается.
+    let asked = [links, ("ota", "internal"), ("graph", "yes")];
+    match run_cascade_with(&ast, "f100rb", &asked) {
+        Err(err) => assert!(err.to_string().contains("не ведёт к цели"), "{err}"),
+        Ok(result) => assert_ne!(var_of(&result, "chip"), Some("STM32F100RB")),
+    }
+    // С ручной раскладкой оценки нет и в отсеве.
+    run_cascade_with(
+        &ast,
+        "f100rb",
+        &[
+            links,
+            ("ota", "internal"),
+            ("graph", "yes"),
+            ("write_size", "4"),
+        ],
+    )
+    .expect("ручная раскладка не отсеивается по RAM");
+}
+
+/// Меню протокола помечает протоколы, с которыми транспорт не помещается: у
+/// STM32F042F6 (5.6 KiB) USB без протокола помещается, с Modbus и protobuf — нет.
+#[test]
+fn protocols_that_do_not_fit_are_marked() {
+    let result = interview(
+        &compile_script(),
+        "f042f6",
+        &[],
+        &[("transports", "usb"), ("transports", "готово")],
+    )
+    .expect("каскад не должен падать");
+    let shown = &result
+        .prompts
+        .iter()
+        .find(|(label, _)| label.starts_with("protocol:"))
+        .expect("меню протокола не показано")
+        .1;
+    assert!(!item(shown, "none").contains(NO_RAM), "{shown:?}");
+    assert!(item(shown, "modbus").contains(NO_RAM), "{shown:?}");
+    assert!(item(shown, "protobuf").contains(NO_RAM), "{shown:?}");
 }
