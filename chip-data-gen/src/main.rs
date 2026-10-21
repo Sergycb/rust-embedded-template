@@ -305,7 +305,7 @@ fn strip_liquid_from_manifests(dir: &Path) -> anyhow::Result<()> {
             strip_liquid_from_manifests(&path)?;
         } else if entry.file_name() == "Cargo.toml" {
             let original = fs::read_to_string(&path)?;
-            let stripped = strip_liquid(&original);
+            let stripped = strip_liquid(&original).replace("{{rust_lib}}", RUST_LIB);
             if stripped != original {
                 fs::write(&path, stripped)?;
             }
@@ -352,6 +352,12 @@ fn strip_liquid(text: &str) -> String {
     out.push_str(rest);
     out
 }
+
+/// Адрес rust-lib, которым заменяется плейсхолдер `{{rust_lib}}` в
+/// `crates-cross/Cargo.toml` (без `.git`, как его хранит хук): с ним как есть
+/// `cargo metadata` падает на «invalid url». То же значение — умолчание
+/// `rust_lib` в `chip-select.rhai`; меняются вместе.
+const RUST_LIB: &str = "https://github.com/Sergycb/rust-lib";
 
 /// Начало условного тега. Не `{% if %}` целиком: между `if` и `%}` стоит само
 /// условие.
@@ -841,6 +847,51 @@ fn interface_block(block: &str) -> Option<(&'static str, &str)> {
     wired.then_some((tag, name))
 }
 
+/// Метка и имя блока, если блок — шина внешней флеши с выводами одной
+/// микросхемы в корпусе: у `spi` — `SCK`, `MISO`, `MOSI`, у `quadspi` — `CLK`,
+/// `BK1_NCS` и `BK1_IO0..3` (первый банк), у `octospi` — `CLK`, `NCS` и
+/// `IO0..3`. У чипов с мультиплексором `OCTOSPIM` (H72x/H73x, L4+, U5) своих
+/// выводов у `OCTOSPI*` нет — они у мультиплексора, `mux_pins`, с приставкой
+/// порта (`P1_`, `P2_`), и годится любой порт целиком. Не интерфейс связи: в
+/// меню транспортов эти метки не попадают, только в [`parse_instances`] — по
+/// ним хук выбирает шину флеши.
+fn flash_bus_block<'b>(block: &'b str, mux_pins: &str) -> Option<(&'static str, &'b str)> {
+    let (tag, prefixes, signals): (&'static str, &[&str], &[&str]) =
+        match field(block, "kind").map(|v| v.trim_matches('"')) {
+            Some("spi") => ("spi", &[""], &["SCK", "MISO", "MOSI"]),
+            Some("quadspi") => ("quadspi", &["BK1_"], &["NCS", "IO0", "IO1", "IO2", "IO3"]),
+            Some("octospi") => (
+                "octospi",
+                &["", "P1_", "P2_"],
+                &["CLK", "NCS", "IO0", "IO1", "IO2", "IO3"],
+            ),
+            _ => return None,
+        };
+    let own = block_pins(block);
+    let pins = if tag == "octospi" && own.trim().is_empty() {
+        mux_pins
+    } else {
+        own
+    };
+    let has = |signal: &str| pins.contains(&format!("signal: \"{signal}\""));
+    // `CLK` у QUADSPI общий на оба банка — без приставки.
+    let wired = (tag != "quadspi" || has("CLK"))
+        && prefixes.iter().any(|prefix| {
+            signals
+                .iter()
+                .all(|signal| has(&format!("{prefix}{signal}")))
+        });
+    let name = field(block, "name").map(|v| v.trim_matches('"'))?;
+    wired.then_some((tag, name))
+}
+
+/// Список выводов блока метаданных — текст между `pins: &[` и `]`.
+fn block_pins(block: &str) -> &str {
+    block.split_once("pins: &[").map_or("", |(_, rest)| {
+        rest.split_once(']').map_or(rest, |(p, _)| p)
+    })
+}
+
 /// Какие блоки чипа называет `resources.rs` для каждой метки интерфейса.
 ///
 /// Метка говорит, что на чипе есть блок такого рода, но не как он зовётся:
@@ -851,11 +902,18 @@ fn interface_block(block: &str) -> Option<(&'static str, &str)> {
 /// (как в [`parse_interfaces`]), в порядке выбора: предпочтительный
 /// (`USART*` раньше `UART*`/`LPUART*`, `USB_OTG_FS` раньше `USB_OTG_HS`,
 /// `CAN1` раньше прочих), а дальше — с меньшим номером. Первое имя — тот
-/// блок, который проект получает по умолчанию.
+/// блок, который проект получает по умолчанию. Шины внешней флеши
+/// ([`flash_bus_block`]) — там же, под своими метками.
 fn parse_instances(text: &str) -> BTreeMap<&'static str, Vec<String>> {
     let mut ranked: BTreeMap<&'static str, Vec<(u8, usize, String)>> = BTreeMap::new();
+    let mux_pins = text
+        .split("Peripheral {")
+        .skip(1)
+        .find(|block| field(block, "kind").is_some_and(|v| v.trim_matches('"') == "octospim"))
+        .map_or("", block_pins);
     for block in text.split("Peripheral {").skip(1) {
-        let Some((tag, name)) = interface_block(block) else {
+        let Some((tag, name)) = interface_block(block).or_else(|| flash_bus_block(block, mux_pins))
+        else {
             continue;
         };
         let preferred = match tag {
@@ -3447,6 +3505,71 @@ pub static METADATA: Metadata = Metadata {
         assert_eq!(found["otg"], ["USB_OTG_FS"]);
         assert_eq!(found["eth"], ["ETH"]);
         assert_eq!(parse_interfaces(&text), ["eth", "otg"]);
+    }
+
+    /// Шины внешней флеши — в `INSTANCES` под своими метками, но не в
+    /// интерфейсах связи; годится блок со всеми выводами одной микросхемы.
+    #[test]
+    fn flash_buses_need_the_pins_of_one_chip() {
+        let block = |name: &str, kind: &str, pins: &str| {
+            format!(
+                "    Peripheral {{
+        name: \"{name}\",
+        registers: Some(PeripheralRegisters {{
+                             kind: \"{kind}\",
+            version: \"v1\",
+        }}),
+                         pins: &[{pins}],
+    }},
+"
+            )
+        };
+        let pins = |signals: &[&str]| {
+            signals
+                .iter()
+                .map(|signal| {
+                    format!(
+                        "
+            PeripheralPin {{ pin: \"PB1\", signal: \"{signal}\", af: Some(9) }},
+        "
+                    )
+                })
+                .collect::<String>()
+        };
+        let spi = pins(&["SCK", "MISO", "MOSI"]);
+        let quad = pins(&["CLK", "BK1_NCS", "BK1_IO0", "BK1_IO1", "BK1_IO2", "BK1_IO3"]);
+        let text = [
+            block("SPI2", "spi", &spi),
+            block("SPI1", "spi", &spi),
+            block("SPI3", "spi", &pins(&["SCK", "MOSI"])),
+            block("QUADSPI", "quadspi", &quad),
+            block("OCTOSPI1", "octospi", &pins(&["CLK", "NCS", "IO0", "IO1"])),
+        ]
+        .concat();
+        let found = parse_instances(&text);
+        assert_eq!(found["spi"], ["SPI1", "SPI2"], "SPI3 без MISO не годится");
+        assert_eq!(found["quadspi"], ["QUADSPI"]);
+        assert!(!found.contains_key("octospi"), "OCTOSPI1 без IO2/IO3");
+        assert!(parse_interfaces(&text).is_empty());
+
+        // С мультиплексором выводы у `OCTOSPIM`, с приставкой порта: годится
+        // порт целиком, а порты вперемешку — нет.
+        let port = |p: &str| ["CLK", "NCS", "IO0", "IO1", "IO2", "IO3"].map(|s| format!("{p}{s}"));
+        let with_mux = |mux: &[String]| {
+            let mux: Vec<&str> = mux.iter().map(String::as_str).collect();
+            [
+                block("OCTOSPI1", "octospi", ""),
+                block("OCTOSPIM", "octospim", &pins(&mux)),
+            ]
+            .concat()
+        };
+        assert_eq!(
+            parse_instances(&with_mux(&port("P2_")))["octospi"],
+            ["OCTOSPI1"]
+        );
+        let mut mixed = port("P1_");
+        mixed[5] = "P2_IO3".to_owned();
+        assert!(!parse_instances(&with_mux(&mixed)).contains_key("octospi"));
     }
 
     /// Прерывание RNG — у блока `rng`, а не у соседнего блока.
