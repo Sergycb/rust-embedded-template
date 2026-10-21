@@ -27,6 +27,9 @@ mod net;
 mod ota;
 {%- endif %}
 mod parts;
+{%- if net_services contains "ssh" %}
+mod rng;
+{%- endif %}
 {%- if config == "true" %}
 mod settings;
 {%- endif %}

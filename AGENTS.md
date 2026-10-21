@@ -280,8 +280,13 @@ read`: руками пришлось бы сначала найти адрес �
   или в затравке стека в `Parts::new` (F2/F4/F7, L0, L4, U0) —
   `docs/modules/bsp-rng.md`. Блок `RNG` берёт группа `rng` из
   `resources.rs`, а генератор плата отдаёт в `bsp::Drivers::rng`: им
-  `app::parts::Parts::new` засевает сетевой стек и дропает его, так что блок
-  включён только на время затравки. Блок и клок заводятся только с сетевым
+  `app::parts::Parts::new` засевает сетевой стек и {% if net_services contains "ssh" %}отдаёт его бэкенду
+  `getrandom` (`app::rng`, символ `__getrandom_v03_custom`; бэкенд выбирает
+  `--cfg getrandom_backend="custom"` в `crates-cross/.cargo/config.toml`) —
+  другого пути к генератору нет, SSH берёт байты через `getrandom`{% else %}дропает его, так что блок
+  включён только на время затравки (бэкенд `getrandom` над ним заводит
+  служба `ssh`){% endif %}.
+  Блок и клок заводятся только с сетевым
   транспортом (tcp/udp), в остальных проектах `bsp/src/rng.rs` и
   `docs/modules/bsp-rng.md` хук удаляет.
 {%- endif %}

@@ -43,10 +43,18 @@ impl Parts {
     pub fn new((board, drivers): (bsp::Board, bsp::Drivers)) -> Self {
 {%- if has_net == "true" %}
 {%- if rng_irq != "" %}
+{%- if net_services contains "ssh" %}
+        // Затравка стека — первое слово RNG; дальше генератор живёт бэкендом
+        // `getrandom` (`crate::rng`) — случайность для SSH.
+        let mut rng = drivers.rng;
+        let seed = rng.next_u64();
+        crate::rng::install(rng);
+{%- else %}
         // Затравка стека — первое слово RNG; блок выключится, когда генератор
         // дропнется в конце сборки.
         let mut rng = drivers.rng;
         let seed = rng.next_u64();
+{%- endif %}
 {%- else %}
         let seed = crate::net::seed_from_uid(board.spec.uid);
 {%- endif %}

@@ -2373,6 +2373,11 @@ if rng[0] == "" || (!has.tcp && !has.udp) {
 	file::delete("crates-cross/bsp/src/rng.rs");
 	file::delete("docs/modules/bsp-rng.md");
 }
+// Бэкенд `getrandom` над RNG — только с ssh: `sunset` берёт случайность через
+// `getrandom` сам, остальным сетевым проектам хватает затравки стека.
+if !variable::get("net_services").split(",").contains("ssh") {
+	file::delete("crates-cross/app/src/rng.rs");
+}
 
 // Обёртка EEPROM — только когда настройки лежат в ней; без неё файл с
 // тестами и `pub mod eeprom;` (закрыт тем же условием в lib.rs) — мусор.

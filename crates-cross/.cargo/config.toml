@@ -17,6 +17,12 @@ rustflags = [
 	"link-arg=-Tdefmt.x",
 	"-C",
 	"link-arg=--nmagic",
+{%- if net_services contains "ssh" %}
+	# Своего источника у `getrandom` на `target_os = "none"` нет: бэкенд —
+	# `__getrandom_v03_custom` в `app/src/rng.rs`, над RNG платы.
+	"--cfg",
+	'getrandom_backend="custom"',
+{%- endif %}
 ]
 
 # Cortex-M0/M0+ (ARMv6-M — STM32 C0/F0/G0/L0 и CM0+-ядра WB/WL) — единственная
