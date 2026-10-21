@@ -13,7 +13,7 @@ pub mod {{ f[4] }} {
     use embassy_executor::Spawner;
 
     #[embassy_executor::task]
-    async fn task(mut link: crate::link::{{ f[4] }}::Link, map: crate::modbus::Registers) {
+    async fn task(mut link: crate::link::{{ f[4] }}::Link, map: crate::modbus::Handle) {
 {%- if ota == "true" %}
         let mut regs = domain::modbus::OtaRegisters::new(
             map,
@@ -39,7 +39,7 @@ pub mod {{ f[4] }} {
     pub fn spawn(
         spawner: Spawner,
         source: crate::link::{{ f[4] }}::Source,
-        map: crate::modbus::Registers,
+        map: crate::modbus::Handle,
     ) {
         let link = crate::link::{{ f[4] }}::new(source);
         let token = task(link, map);

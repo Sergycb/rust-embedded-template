@@ -71,11 +71,12 @@ use supervisor::runtime::TaskExit;
 //
 // ```ignore
 // // `parts.board.usart1` — поток байтов UART платы; транспорт над ним собирает
-// // `crate::link::usart1` (`app`).
-// fragments: [::domain::MODBUS_SLAVE_FRAG<crate::link::usart1::Link, ::domain::modbus::EmptyRegisters> as MODBUS_USART1
+// // `crate::link::usart1` (`app`). `parts.modbus` — ручка карты, общей у всех
+// // узлов Modbus (`crate::modbus` в `app`; карта по умолчанию — `EmptyRegisters`).
+// fragments: [::domain::MODBUS_SLAVE_FRAG<crate::link::usart1::Link, crate::modbus::Handle> as MODBUS_USART1
 //                 = ::domain::modbus::ModbusSlaveWiring {
 //                     link: crate::link::usart1::new(parts.board.usart1),
-//                     regs: ::domain::modbus::EmptyRegisters,
+//                     regs: parts.modbus,
 //                     unit: 1,
 //                 }];
 // ```
@@ -170,8 +171,9 @@ supervisor::supervisor_fragment! {
         resources: [
             /// Транспорт — `adapters::modbus::{Rtu, Tcp, Udp}` над интерфейсом платы.
             LINK: local L = inputs.link,
-            /// Данные устройства — реализация `ports::Registers` (по умолчанию —
-            /// пустая карта `domain::modbus::EmptyRegisters`).
+            /// Данные устройства — реализация `ports::Registers`; в `app` —
+            /// ручка `SharedRegisters` карты, общей у всех узлов Modbus
+            /// (`crate::modbus`; карта по умолчанию — `EmptyRegisters`).
             REGS: local R = inputs.regs,
             /// Адрес slave'а на шине, 1..=247.
             UNIT: u8 = inputs.unit

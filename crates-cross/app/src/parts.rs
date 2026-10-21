@@ -32,7 +32,7 @@ pub struct Parts {
 {%- endif %}
 {%- if has_modbus == "true" %}
     /// Ручка карты регистров Modbus, общей у всех узлов `MODBUS_*`.
-    pub modbus: crate::modbus::Registers,
+    pub modbus: crate::modbus::Handle,
 {%- endif %}
 }
 

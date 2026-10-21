@@ -148,7 +148,7 @@ supervisor_graph! {
         // (`OtaClient` с номером этого транспорта), остальное — карте проекта.
         ::domain::MODBUS_SLAVE_FRAG<
             crate::link::{{ f[4] }}::Link,
-            ::domain::modbus::OtaRegisters<crate::modbus::Registers>,
+            ::domain::modbus::OtaRegisters<crate::modbus::Handle>,
         > as MODBUS_{{ f[4] | upcase }} =
             ::domain::modbus::ModbusSlaveWiring {
                 link: crate::link::{{ f[4] }}::new({% if f[0] == "uart" %}parts.board.{{ f[4] }}{% elsif f[0] == "usb" %}parts.{{ f[4] }}.cdc{% else %}parts.net.stack{% endif %}),
@@ -162,7 +162,7 @@ supervisor_graph! {
                 unit: 1,
             },
 {%- else %}
-        ::domain::MODBUS_SLAVE_FRAG<crate::link::{{ f[4] }}::Link, crate::modbus::Registers> as MODBUS_{{ f[4] | upcase }} =
+        ::domain::MODBUS_SLAVE_FRAG<crate::link::{{ f[4] }}::Link, crate::modbus::Handle> as MODBUS_{{ f[4] | upcase }} =
             ::domain::modbus::ModbusSlaveWiring {
                 link: crate::link::{{ f[4] }}::new({% if f[0] == "uart" %}parts.board.{{ f[4] }}{% elsif f[0] == "usb" %}parts.{{ f[4] }}.cdc{% else %}parts.net.stack{% endif %}),
                 regs: parts.modbus,
