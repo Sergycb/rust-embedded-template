@@ -152,12 +152,13 @@ embassy-sync           = { version = "0.8.0" }
 embedded-storage       = { version = "0.3.1" }
 embedded-storage-async = { version = "0.4.1" }
 sequential-storage     = { version = "8.0.1", default-features = false }
-# {%- if stream_io == "true" %}
+# {%- if stream_io == "true" or net_services contains "ssh" %}
 # Транспорт поверх потока байтов (`adapters::usb`, `net::TcpServer` и
 # протоколы над ними): поток, который уже реализуют `BufferedUart` из
 # `embassy-stm32`, USB CDC и сокет `embassy-net`.
 # Версия та же, что у `embassy-stm32` 0.6, — иначе в прошивке были бы две копии
-# трейта, и UART его бы не реализовывал.
+# трейта, и UART его бы не реализовывал. Канал сессии SSH (`domain::ssh`) —
+# тот же трейт.
 embedded-io-async      = { version = "0.7.0" }
 # {%- endif %}
 # {%- if has_modbus == "true" %}
@@ -188,7 +189,6 @@ micropb                = { version = "0.6.0", default-features = false, features
 	"decode",
 	"container-heapless-0-9",
 ] }
-heapless               = { version = "0.9.3" }
 # Генерация кода из `.proto` в `build.rs` крейта `proto`. Схему разбирает
 # `protox` — компилятор protobuf на чистом Rust, — и `micropb-gen` строит код
 # из готового описания (`compile_fdset_file`): системный `protoc` не нужен ни
@@ -209,6 +209,32 @@ embassy-net            = { version = "0.9.1", features = [
 	"medium-ethernet",
 	"dhcpv4",
 ] }
+# {%- endif %}
+# {%- if has_protobuf == "true" or net_services != "" %}
+# Строки и векторы без кучи: контейнеры полей protobuf (`micropb`), тексты
+# ответов REST (`domain::http`) и строки консоли SSH (`domain::ssh`). 0.9 — та же версия, что у остального дерева.
+heapless               = { version = "0.9.3" }
+# {%- endif %}
+# {%- if net_services contains "rest" %}
+# HTTP-сервер REST API (`domain::http`) поверх сокетов `embassy-net`: без
+# кучи, запрос разбирается в буфере соединения. Версия, парная к
+# `embassy-net` 0.9. Без фичи `json`: она тянет свой `serde-json-core`, а
+# ответы пишутся сами.
+picoserve              = { version = "0.20.1", features = ["embassy"] }
+# {%- endif %}
+# {%- if net_services contains "ssh" %}
+# SSH-сервер (`domain::ssh`) поверх сокета `embassy-net`: без кучи, буферы
+# соединения — слоты узла. 0BSD. Случайность криптографии `sunset` берёт через
+# `getrandom` — в прошивке над RNG платы (`crates-cross/app/src/rng.rs`).
+sunset-async           = { version = "0.6.0" }
+# `select` сессии SSH — та же версия, что тянет `sunset-async`.
+embassy-futures        = { version = "0.1.2" }
+# {%- endif %}
+# {%- if ssh_host_key == "config" %}
+# Ключ хоста SSH, который плата создаёт при первом старте
+# (`domain::ssh::Stored`): 32 случайных байта — тот же `getrandom`, что у
+# `sunset`.
+getrandom              = { version = "0.4.3", default-features = false }
 # {%- endif %}
 # {%- if has_usb == "true" %}
 # USB-устройство под интерфейсом usb (`adapters::usb`, узел `domain::usb`):

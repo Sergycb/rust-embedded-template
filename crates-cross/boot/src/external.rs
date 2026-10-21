@@ -18,15 +18,27 @@ use embedded_storage::nor_flash::NorFlash;
 /// здесь и в `bsp::external` (docs/modules/bsp-external.md).
 pub(crate) type ExternalFlash = w25q::device::W25qSync<bsp::stub::FlashBus, bsp::cpu::Delay>;
 
-/// Собирает драйвер и опознаёт микросхему. Не прошёл `init` — строка в лог, и
-/// драйвер отказывает в любой операции: `STATE` не читается, и
-/// [`prepare`] загружает текущий образ без обмена.
+/// Собирает драйвер и опознаёт микросхему. Не прошёл `init` или микросхема
+/// меньше разделов (`bsp::external::EXT_FLASH_END`) — строка в лог, и драйвер
+/// отказывает в любой операции: `STATE` не читается, и [`prepare`] загружает
+/// текущий образ без обмена, а не упирается посреди обмена в конец микросхемы.
 pub(crate) fn new(sys_hz: u32) -> ExternalFlash {
     let mut flash = ExternalFlash::new(bsp::stub::FlashBus, bsp::cpu::delay(sys_hz));
-    if let Err(err) = flash.init() {
-        defmt::warn!("boot: внешняя флеш не отвечает: {}", err);
+    match flash.init() {
+        Ok(_) if flash.capacity() >= bsp::external::EXT_FLASH_END => flash,
+        Ok(_) => {
+            defmt::error!(
+                "boot: внешняя флеш {=u32} KiB меньше разделов — загружается текущий образ",
+                flash.capacity() / 1024
+            );
+            let (bus, delay) = flash.release();
+            ExternalFlash::new(bus, delay)
+        }
+        Err(err) => {
+            defmt::warn!("boot: внешняя флеш не отвечает: {}", err);
+            flash
+        }
     }
-    flash
 }
 
 const _: () = assert!(

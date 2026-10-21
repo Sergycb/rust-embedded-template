@@ -349,6 +349,27 @@ read`: руками пришлось бы сначала найти адрес �
   `spawn` модуля задачи (`crates-cross/app/src/tasks/`): по модулю на задачу,
   `main.rs` только зовёт `tasks::spawn_all`.
 {%- endif %}
+{%- if net_services contains "rest" %}
+- Токен REST API — `rest-token.txt` в корне проекта, его вшивает
+  `include_str!` (`crate::net::REST_TOKEN` в `crates-cross/app/src/net.rs`).
+  Файл создаёт `cargo xtask` (`secrets::ensure` — в `build`, `lint cross` и перед
+  прошивкой), и он **коммитится**, а не уходит в `.gitignore`: токен и так открыт
+  в каждом образе, а без файла не собрались бы свежий клон и CI. Пул `HTTP[2]` в
+  `graph.rs` — литерал, равный `domain::http::CONNECTIONS` (`const`-assert там
+  же), и сокеты стека (`SOCKETS` в `crate::net`) считаются от той же константы —
+  менять вместе.
+{%- endif %}
+{%- if net_services contains "ssh" %}
+- Консоль SSH (`domain::ssh`, узел `SSH`): {% if ssh_auth == "password" %}пароль — `ssh-password.txt`{% else %}открытый ключ пользователя — строка `crate::net::SSH_LOGIN`{% endif %}{% if ssh_host_key == "file" %}, ключ хоста — `ssh-host-key.bin` (`crate::net::SSH_HOST_KEY`){% endif %}.
+  {% if ssh_auth == "password" or ssh_host_key == "file" %}Файлы в корне проекта создаёт `cargo xtask` (`secrets::ensure`) и они
+  **коммитятся**, как токен REST: они вшиты и открыты в образе. {% endif %}{% if ssh_host_key == "config" %}Ключ хоста плата
+  создаёт при первом старте (`domain::ssh::Stored`, ключ настроек
+  `domain::ssh::HOST_KEY_ID`) — хранилище настроек забирает узел `SSH`, своим
+  настройкам проекта нужен общий доступ через него. {% endif %}Случайность
+  `sunset` берёт через `getrandom` (`crates-cross/app/src/rng.rs`): без бэкенда
+  или с нулями вместо RNG ключи сессий предсказуемы. Код `sunset` — около
+  165 KiB, отсюда порог раздела приложения в генерации (`SSH_MIN_PARTITION`).
+{%- endif %}
 - `#![allow(dead_code)]` в начале `crates-cross/app/src/graph.rs` — не
   украшение, а условие `-D warnings`: файл целиком генерируемый, а
   `*_receiver()`/`provide_*`/`*_take()` в сыром шаблоне никто не зовёт, потому

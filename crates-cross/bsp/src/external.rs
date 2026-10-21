@@ -66,30 +66,42 @@ pub fn connected() -> bool {
 /// Собирает драйвер и опознаёт микросхему (`init`: JEDEC ID, объём{% if ext_flash_bus != "spi" %}, бит QE{% endif %}).
 ///
 /// Не прошёл `init` или микросхема меньше [`EXT_FLASH_END`] — одна строка в
-/// лог, и драйвер остаётся как есть: операции отвечают ошибкой, а не
-/// паникой. Плата без флеши (или с заглушкой шины) работает, только без того,
-/// что на флеши лежит.
+/// лог, и драйвер отказывает в любой операции ошибкой, а не паникой. Плата без
+/// флеши (или с заглушкой шины) работает, только без того, что на флеши лежит.
 pub(crate) async fn new(_resources: crate::resources::ExtFlashResources) -> &'static ExternalMutex {
     let mut flash = ExternalFlash::new(crate::stub::FlashBus, embassy_time::Delay);
-    match flash.init().await {
+    let flash = match flash.init().await {
         Ok(_) if flash.capacity() >= EXT_FLASH_END => {
             defmt::info!(
                 "bsp: внешняя флеш W25Q, {=u32} KiB",
                 flash.capacity() / 1024
             );
+            flash
         }
-        Ok(_) => defmt::error!(
-            "bsp: внешняя флеш {=u32} KiB, а разделам нужно {=u32} KiB — за её концом операции отказывают",
-            flash.capacity() / 1024,
-            EXT_FLASH_END / 1024
-        ),
+        Ok(_) => {
+            defmt::error!(
+                "bsp: внешняя флеш {=u32} KiB, а разделам нужно {=u32} KiB — {=str}",
+                flash.capacity() / 1024,
+                EXT_FLASH_END / 1024,
+                LOST
+            );
+            // Не оставлять опознанный драйвер: с ним образ лёг бы в начало
+            // `DFU`, которого на микросхеме не хватает, а bootloader на обмене
+            // упёрся бы в её конец. Неопознанный отказывает во всём.
+            let (bus, delay) = flash.release();
+            ExternalFlash::new(bus, delay)
+        }
         Err(_) if !connected() => {
             defmt::warn!(
                 "bsp: внешняя флеш не подключена — {=str} (bsp/src/external.rs)",
                 LOST
             );
+            flash
         }
-        Err(err) => defmt::error!("bsp: внешняя флеш не отвечает: {} — {=str}", err, LOST),
-    }
+        Err(err) => {
+            defmt::error!("bsp: внешняя флеш не отвечает: {} — {=str}", err, LOST);
+            flash
+        }
+    };
     EXTERNAL.init(Mutex::new(flash))
 }

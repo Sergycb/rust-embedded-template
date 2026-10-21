@@ -12,7 +12,8 @@ use sync_request::RpcService;
 /// Вход команд узла — то, что с графом заводит `request:` фрагмента
 /// `OTA_FRAG`, той же ёмкости (`domain::ota::CMD_BYTES`). Клиента{% if has_modbus != "true" and has_protobuf != "true" and has_canopen != "true" %} получает ваш протокол
 /// (`domain::ota::OtaClient` над `CMD.requester()`); без него узел только подтверждает образ{% else %} получает каждая задача протокола —
-/// `domain::ota::OtaClient` с номером своего транспорта{% endif %}.
+/// `domain::ota::OtaClient` с номером своего транспорта{% endif %}.{% if net_services contains "rest" %} Пул `HTTP`
+/// (REST, `crate::tasks::http`) просит перезагрузку своим клиентом — номер следом за транспортами.{% endif %}
 pub static CMD: RpcService<
     CriticalSectionRawMutex,
     domain::ota::OtaRequest,

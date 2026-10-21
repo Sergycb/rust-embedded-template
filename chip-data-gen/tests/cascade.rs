@@ -2152,7 +2152,7 @@ const SSH_KEY: &str =
 fn net_services_are_marked_after_ethernet() {
     let result = interview(
         &compile_script(),
-        "f407ve",
+        "h743zg",
         &[],
         &[
             ("transports", "ethernet"),
@@ -2179,7 +2179,7 @@ fn net_services_are_marked_after_ethernet() {
 fn no_net_services_without_ethernet() {
     let result = interview(
         &compile_script(),
-        "f407ve",
+        "h743zg",
         &[],
         &[("transports", "uart"), ("transports", "готово")],
     )
@@ -2214,12 +2214,78 @@ fn ssh_is_not_offered_without_rng() {
     );
 }
 
+/// SSH (~165 KiB кода) — только в разделе приложения не меньше
+/// `SSH_MIN_PARTITION`: у stm32f407ve с OTA `ACTIVE` 128K — нет, без OTA —
+/// есть; `--define` в тесный раздел — ошибка.
+#[test]
+fn ssh_needs_room_for_its_code() {
+    let ast = compile_script();
+    let picks = [("transports", "ethernet"), ("transports", "готово")];
+    let tight = interview(&ast, "f407ve", &[], &picks).expect("каскад не должен падать");
+    assert_eq!(
+        all_menu_values(&tight, "net_services"),
+        [["готово", "rest"]]
+    );
+    assert!(
+        tight
+            .prints
+            .iter()
+            .any(|line| line.starts_with("SSH не предлагается: под приложение отведено")),
+        "{:?}",
+        tight.prints
+    );
+    let roomy =
+        interview(&ast, "f407ve", &[("ota", "no")], &picks).expect("каскад не должен падать");
+    assert_eq!(
+        all_menu_values(&roomy, "net_services"),
+        [["готово", "ssh", "rest"]]
+    );
+    let Err(err) = interview(
+        &ast,
+        "f407ve",
+        &[("links", "tcp"), ("net_services", "ssh")],
+        &[],
+    ) else {
+        panic!("ssh в 128K должен падать");
+    };
+    assert!(err.to_string().contains("ssh не помещается"), "{err}");
+}
+
+/// Ключ хоста — в разделе настроек, только если тот настоящий и свободен:
+/// внешняя флеш до драйвера проекта — заглушка, а CANopen забирает раздел
+/// целиком; иначе — файл. Номера клиентов OTA служб — следом за транспортами.
+#[test]
+fn the_ssh_host_key_lives_where_it_survives() {
+    let ast = compile_script();
+    let host_key = |defines: &[(&str, &str)]| {
+        let mut all = vec![("links", "tcp:modbus"), ("net_services", "rest,ssh")];
+        all.extend_from_slice(defines);
+        let result = interview(&ast, "h743zg", &all, &[]).expect("каскад не должен падать");
+        let var = |name| var_of(&result, name).map(str::to_string);
+        (
+            var("ssh_host_key"),
+            var("rest_ota_client"),
+            var("ssh_ota_client"),
+        )
+    };
+    let some = |s: &str| Some(s.to_string());
+    assert_eq!(
+        host_key(&[("config", "yes")]),
+        (some("config"), some("1"), some("3"))
+    );
+    assert_eq!(
+        host_key(&[("ext_flash", "yes"), ("config", "yes")]).0,
+        some("file")
+    );
+    assert_eq!(host_key(&[]).0, some("file"));
+}
+
 /// Без терминала — без служб, о входе не спрашивают.
 #[test]
 fn no_terminal_gives_no_net_services() {
     let result = interview(
         &compile_script(),
-        "f407ve",
+        "h743zg",
         &[],
         &[("transports", "ethernet"), ("transports", "готово")],
     )
@@ -2234,7 +2300,7 @@ fn no_terminal_gives_no_net_services() {
 fn password_login_asks_no_key() {
     let result = interview(
         &compile_script(),
-        "f407ve",
+        "h743zg",
         &[("links", "tcp"), ("net_services", "ssh")],
         &[("ssh_auth", "password")],
     )
@@ -2254,7 +2320,7 @@ fn password_login_asks_no_key() {
 fn an_empty_key_falls_back_to_password() {
     let result = interview(
         &compile_script(),
-        "f407ve",
+        "h743zg",
         &[("links", "tcp"), ("net_services", "ssh")],
         &[("ssh_auth", "key"), ("ssh_key", "")],
     )
@@ -2269,12 +2335,12 @@ fn net_services_defines_are_strict() {
     let ast = compile_script();
     for (suffix, defines, expected) in [
         (
-            "f407ve",
+            "h743zg",
             &[("links", "tcp"), ("net_services", "telnet")][..],
             "net_services: ожидается",
         ),
         (
-            "f407ve",
+            "h743zg",
             &[("links", "uart"), ("net_services", "rest")][..],
             "работает поверх Ethernet",
         ),
@@ -2285,7 +2351,7 @@ fn net_services_defines_are_strict() {
         ),
         // Вход по ключу без ключа (без терминала) и с ключом не ed25519.
         (
-            "f407ve",
+            "h743zg",
             &[
                 ("links", "tcp"),
                 ("net_services", "ssh"),
@@ -2294,7 +2360,7 @@ fn net_services_defines_are_strict() {
             "ssh_key: вход по ключу",
         ),
         (
-            "f407ve",
+            "h743zg",
             &[
                 ("links", "tcp"),
                 ("net_services", "ssh"),
@@ -2305,7 +2371,7 @@ fn net_services_defines_are_strict() {
         ),
         // Одно начало без тела ключа и кавычка, которая сломала бы литерал.
         (
-            "f407ve",
+            "h743zg",
             &[
                 ("links", "tcp"),
                 ("net_services", "ssh"),
@@ -2315,7 +2381,7 @@ fn net_services_defines_are_strict() {
             "ssh_key: вход по ключу",
         ),
         (
-            "f407ve",
+            "h743zg",
             &[
                 ("links", "tcp"),
                 ("net_services", "ssh"),
@@ -2328,7 +2394,7 @@ fn net_services_defines_are_strict() {
             "ssh_key: вход по ключу",
         ),
         (
-            "f407ve",
+            "h743zg",
             &[
                 ("links", "tcp"),
                 ("net_services", "ssh"),
@@ -2337,7 +2403,7 @@ fn net_services_defines_are_strict() {
             "ssh_auth: ожидается",
         ),
         (
-            "f407ve",
+            "h743zg",
             &[
                 ("links", "tcp"),
                 ("net_services", "rest"),
@@ -2346,7 +2412,7 @@ fn net_services_defines_are_strict() {
             "ssh_auth: задаётся только",
         ),
         (
-            "f407ve",
+            "h743zg",
             &[
                 ("links", "tcp"),
                 ("net_services", "ssh"),
@@ -2363,7 +2429,7 @@ fn net_services_defines_are_strict() {
     }
     let ok = interview(
         &ast,
-        "f407ve",
+        "h743zg",
         &[
             ("links", "tcp"),
             ("net_services", "rest, ssh"),
@@ -2378,7 +2444,7 @@ fn net_services_defines_are_strict() {
     // Без терминала вход — по паролю.
     let silent = interview(
         &ast,
-        "f407ve",
+        "h743zg",
         &[("links", "tcp"), ("net_services", "ssh")],
         &[],
     )
@@ -4344,6 +4410,23 @@ fn manual_layout_skips_the_ram_estimate() {
             "{shown:?}"
         );
     }
+}
+
+/// Запас под стек не замерен, и на RAM до 8 KiB он уже решает: хук говорит,
+/// сколько стеку остаётся. У L011 (1.9 KiB) — даже без транспортов, у F407 — нет.
+#[test]
+fn small_ram_warns_that_the_stack_is_not_measured() {
+    let ast = compile_script();
+    let stack_warning = |result: &CascadeResult| {
+        result
+            .prints
+            .iter()
+            .any(|line| line.contains("стеку остаётся"))
+    };
+    let small = run_chip_with(&ast, "l011f4", &[]).expect("каскад не должен падать");
+    assert!(stack_warning(&small), "{:?}", small.prints);
+    let large = run_chip_with(&ast, "f407ve", &[]).expect("каскад не должен падать");
+    assert!(!stack_warning(&large), "{:?}", large.prints);
 }
 
 /// Маленькая RAM (F0, 5.6 KiB): USB помечен, но выбрать его можно — с

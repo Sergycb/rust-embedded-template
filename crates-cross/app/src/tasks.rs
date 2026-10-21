@@ -19,6 +19,9 @@ mod canopen;
 {%- if has_protobuf == "true" %}
 mod host;
 {%- endif %}
+{%- if net_services contains "rest" %}
+mod http;
+{%- endif %}
 {%- if has_modbus == "true" %}
 mod modbus;
 {%- endif %}
@@ -27,6 +30,9 @@ mod net;
 {%- endif %}
 {%- if ota == "true" %}
 pub mod ota;
+{%- endif %}
+{%- if net_services contains "ssh" %}
+mod ssh;
 {%- endif %}
 {%- if has_usb == "true" %}
 mod usb;
@@ -70,4 +76,23 @@ pub fn spawn_all(spawner: embassy_executor::Spawner, {% if ota == "true" or has_
     canopen::{{ f[4] }}::spawn(spawner, parts.board.{{ f[4] }}, store);
 {%- endif %}
 {%- endfor %}
+{%- if net_services contains "rest" %}
+    http::spawn(
+        spawner,
+        parts.net.stack,
+        crate::device_info(parts.board.spec),
+    );
+{%- endif %}
+{%- if net_services contains "ssh" %}
+    ssh::spawn(
+        spawner,
+        parts.net.stack,
+        crate::device_info(parts.board.spec),
+{%- if ssh_host_key == "config" %}
+        domain::ssh::Stored(crate::settings::new(parts.board.settings)),
+{%- else %}
+        domain::ssh::Fixed(&crate::net::SSH_HOST_KEY),
+{%- endif %}
+    );
+{%- endif %}
 }

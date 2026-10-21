@@ -25,6 +25,8 @@ pub fn build(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     } else {
         None
     };
+    // Секреты служб — тоже до сборки: прошивка вшивает их `include_str!`.
+    crate::secrets::ensure(&root_dir())?;
 
     {
         let _p = sh.push_dir(root_dir().join("crates-cross"));

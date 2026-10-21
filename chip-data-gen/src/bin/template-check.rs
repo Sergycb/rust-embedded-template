@@ -24,15 +24,15 @@
 //! двухъядерный (`init_primary` вместо `init`), чип с 2 KiB RAM на
 //! Cortex-M0+, раздел настроек с OTA на равных секторах и без OTA (оба — в
 //! хвосте flash), с OTA на неравных (в мелких секторах перед ACTIVE), во
-//! внутренней EEPROM и на внешней флеши (слот с заглушкой), подпись образа (с графом и без) и чип, у которого
+//! внутренней EEPROM и на внешней флеши (драйвер W25Q над шиной-заглушкой — SPI, QUADSPI,
+//! OCTOSPI), подпись образа (с графом и без) и чип, у которого
 //! стёртый флеш читается нулями, два протокола поверх UART (Modbus и protobuf)
 //! CANopen на FDCAN и bxCAN, Modbus TCP (с master), protobuf UDP, protobuf и
 //! Modbus по USB (Modbus без master — по UART и по USB); чипы с клоком RNG через мультиплексор (G0, WL, WBA, L4) и по одному
 //! чипу на каждый вариант регистров `banks.rs` (`g0`, `g4`, `l4`, `l5`), а
 //! также несколько транспортов разом (`links`: два UART и TCP, два USB с графом
 //! и без, TCP и UDP, UART и CAN, UART и UDP без графа) и транспорты без протокола
-//! (UDP, USB с графом). Итого пятьдесят два — точный список
-//! в `default_cases()`. Свой набор чипов —
+//! (UDP, USB с графом). Точный список — в `default_cases()`. Свой набор чипов —
 //! позиционными аргументами; `--define k=v` (многократно) добавляет определение
 //! к каждой конфигурации, например `--ci gitlab --define config=yes stm32f407ve`.
 
@@ -267,6 +267,38 @@ fn default_cases() -> Vec<Case> {
         Case::new("stm32f407ve").variant(
             "protobuf-uart-udp-no-graph",
             &["links=uart:protobuf,udp:protobuf", "graph=no"],
+        ),
+        // REST API (`domain::http`, пул `HTTP[2]`): с графом и OTA — рядом с
+        // Modbus по TCP, чтобы номер клиента OTA шёл следом за транспортом и
+        // сокетов стало три; без графа и без OTA — пул задач, сведения без
+        // protobuf и роутер без `/api/reboot`.
+        Case::new("stm32h743zg").variant(
+            "rest-modbus-tcp",
+            &["links=tcp:modbus", "net_services=rest"],
+        ),
+        Case::new("stm32f407ve").variant(
+            "rest-no-graph-no-ota",
+            &["links=tcp", "net_services=rest", "graph=no", "ota=no"],
+        ),
+        // Консоль SSH (`domain::ssh`, `getrandom` над RNG платы): с графом —
+        // вход по паролю и ключ хоста, созданный платой в разделе настроек
+        // (`Stored`); без графа — вместе с REST (клиенты OTA 0 и 1), вход по
+        // ключу и ключ хоста из файла (`Fixed`). Обе службы с OTA в 256K не
+        // влезают — там `ext_flash=yes` (`ACTIVE` 384K).
+        Case::new("stm32h743zg").variant(
+            "ssh-password-config",
+            &["links=tcp", "net_services=ssh", "ssh_auth=password", "config=yes"],
+        ),
+        Case::new("stm32h743zg").variant(
+            "rest-ssh-key-no-graph",
+            &[
+                "links=tcp",
+                "net_services=rest,ssh",
+                "ssh_auth=key",
+                "ssh_key=ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl",
+                "graph=no",
+                "ext_flash=yes",
+            ],
         ),
         // Клок RNG, которого умолчания HAL не дают, — мультиплексор на своём
         // источнике (`config()` в `bsp::board`): `RNGSEL` у G0 (SYS), WL

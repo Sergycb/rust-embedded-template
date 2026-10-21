@@ -88,7 +88,7 @@ Ethernet — заменить устройство: стек, сокеты и г
 3. В графе — тип устройства во фрагменте `NET`: он уже назван через
    `bsp::net::Device`, менять ничего не нужно.
 
-4. В `target-tests` — не ронять драйвер. `#[init]` там берёт `Board::new().0`
+4. В `target-tests` — не ронять драйвер. `#[init]` там берёт `Board::new(){% if external_flash == "true" %}.await{% endif %}.0`
    и выбрасывает `Drivers`, а с ними и `Ethernet`. `Drop` у него в блоке v2
    (H5/H7) ждёт, пока опустеет очередь приёма MTL (`embassy-stm32` 0.6,
    `src/eth/v2/mod.rs`, `impl Drop`), а без стека над устройством кадры после
@@ -96,7 +96,7 @@ Ethernet — заменить устройство: стек, сокеты и г
    без деструктора — МК сбрасывается перед каждым тестом, утечки нет:
 
    ```rust,ignore
-   let (board, drivers) = Board::new();
+   let (board, drivers) = Board::new(){% if external_flash == "true" %}.await{% endif %};
    core::mem::forget(drivers);
    board
    ```

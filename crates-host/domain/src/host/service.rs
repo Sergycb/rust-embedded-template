@@ -12,25 +12,10 @@ use crate::ota::OtaClient;
 // {%- endif %}
 use proto::{Error, Info, Request, Request_, Response, Response_, heapless};
 
-/// Сведения об устройстве, которыми обработчик отвечает на `info`.
-///
-/// Приходят снаружи: версию и коммит знает прошивка (`app`), чип — плата
-/// (`bsp::ChipSpec`), а не `domain`.
-#[derive(Debug, Clone, Copy)]
-pub struct DeviceInfo {
-    /// Версия прошивки, не длиннее `proto::VERSION_BYTES`.
-    pub version: &'static str,
-    /// Короткий хеш коммита, не длиннее `proto::COMMIT_BYTES`.
-    pub commit: &'static str,
-    /// Имя чипа, не длиннее `proto::CHIP_BYTES`.
-    pub chip: &'static str,
-    /// Заводской номер экземпляра чипа.
-    pub uid: [u8; proto::UID_BYTES],
-    /// Объём flash чипа, байт.
-    pub flash_size: u32,
-    /// Частота ядра, Гц; `None` — неизвестна.
-    pub sys_hz: Option<u32>,
-}
+pub use crate::device::DeviceInfo;
+
+// Поле `uid` схемы — ровно заводской номер: копируется без проверки длины.
+const _: () = assert!(proto::UID_BYTES == crate::device::UID_BYTES);
 
 /// Обработчик, с которым узел `HOST` стоит в графе шаблона: на `info` —
 /// сведения об устройстве{% if ota == "true" %}, команды обновления — узлу OTA, их исход — `ok` или
