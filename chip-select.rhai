@@ -277,6 +277,51 @@ fn plan(m, erase_zero, wants, limits) {
     }
 }
 
+/// Статическая RAM проекта без транспортов по плану `p` (см. `RAM_COST`):
+/// ядро, OTA, хранилище настроек и граф.
+fn ram_base(costs, p) {
+    let total = costs.core;
+    if p.ota { total += if p.ext_ota { costs.ota.external } else { costs.ota.internal }; }
+    if p.config { total += costs.config[p.store]; }
+    if p.graph { total += costs.graph; }
+    total
+}
+
+/// Оценка статической RAM: `base` (`ram_base`), транспорты `links`
+/// (`#{ kind, protocol }`) и сетевые службы `services`. Сетевой стек — один на
+/// проект, сколько бы ни было `tcp`/`udp`.
+fn ram_estimate(costs, base, links, services) {
+    let total = base;
+    let net = false;
+    for link in links {
+        total += costs.links[link.kind + ":" + link.protocol];
+        if link.kind == "tcp" || link.kind == "udp" { net = true; }
+    }
+    if net { total += costs.net_stack; }
+    for name in services { total += costs.services[name]; }
+    total
+}
+
+/// Самый дорогой по RAM протокол поверх вида `kind`: список транспортов
+/// показывается до вопроса о протоколе, и пункт оценивается по худшему.
+fn worst_protocol(costs, kind, protocol_interfaces) {
+    let worst = "none";
+    for name in protocol_interfaces.keys() {
+        if protocol_interfaces[name].contains(kind)
+            && costs.links[kind + ":" + name] > costs.links[kind + ":" + worst]
+        {
+            worst = name;
+        }
+    }
+    worst
+}
+
+/// Байты — в KiB с одним знаком после точки, для сообщений.
+fn kib(bytes) {
+    let tenths = (bytes * 10 + 512) / 1024;
+    (tenths / 10).to_string() + "." + (tenths % 10).to_string() + " KiB"
+}
+
 /// Выполняются ли ответы на чипе: каждое «хочу» из `need` должно получиться.
 /// План считается по `wants` (все ответы, с умолчаниями), а проверяется по
 /// `need` (только то, о чём спросили): так умолчание «да» для вопроса, который
@@ -317,13 +362,24 @@ fn ask(label, values, texts, default_value) {
 /// показывается заново; `готово` (оно же умолчание и ответ без терминала)
 /// закрывает список.
 fn checklist(label, values, texts) {
+    checklist(label, values, texts, |value, chosen| "")
+}
+
+/// То же с припиской к пункту, которая зависит от уже отмеченных:
+/// `note.call(value, chosen)` — строка после текста пункта `value` при
+/// отмеченных `chosen`; считается заново при каждой перерисовке.
+fn checklist(label, values, texts, note) {
     let marked = values.map(|value| false);
     loop {
+        let chosen = [];
+        for i in 0..values.len() {
+            if marked[i] { chosen.push(values[i]); }
+        }
         let shown_values = ["готово"];
         let shown_texts = ["готово"];
         for i in 0..values.len() {
             shown_values.push(values[i]);
-            shown_texts.push((if marked[i] { "[x] " } else { "[ ] " }) + values[i] + " — " + texts[i]);
+            shown_texts.push((if marked[i] { "[x] " } else { "[ ] " }) + values[i] + " — " + texts[i] + note.call(values[i], chosen));
         }
         let pick = ask(label, shown_values, shown_texts, "готово");
         if pick == "готово" { break; }
@@ -741,6 +797,59 @@ const PROTOCOL_TEXT = #{
     "canopen": "canopen — узел CANopen (стек zencan)",
 };
 
+// Статическая RAM (`.data` + `.bss` + `.uninit` release-образа `app`) по частям
+// проекта, байт. Числа замерены, а не выведены: строка `ram:` из `cargo xtask
+// build` по случаям `template-check`, стоимость части — разность пары сборок
+// «с ней / без неё» на одном чипе, из нескольких чипов — наибольшая. Как
+// перемерить — MAINTAINING.md, «Оценка RAM». Оценку проверяет `template-check`:
+// у каждого случая она не ниже факта.
+const RAM_COST = #{
+    // Без OTA, настроек, графа и транспортов: stm32f407ve ota=no graph=no — 1344
+    // (stm32l011f4 — 1316).
+    core: 1344,
+    // stm32f407ve: 3880 с OTA против 1952 без неё; внешняя — stm32h723ve 3832
+    // (ota=external config=external) против 1988 (config=external).
+    ota: #{ internal: 1928, external: 1844 },
+    // По месту хранения (`config_store`): stm32f407ve 3912 против 3880,
+    // stm32l073rz (EEPROM) 3868 против 3860, stm32h723ve 1988 против 1988.
+    config: #{ flash: 32, eeprom: 8, external: 0 },
+    // stm32g474re 3884 против 3084 без графа (stm32f407ve без OTA — 608).
+    graph: 800,
+    // Транспорт `вид:протокол` с его узлом, с графом (без графа — дешевле):
+    // разность с проектом без транспортов на том же чипе. Для tcp/udp — за
+    // вычетом `net_stack`.
+    links: #{
+        // stm32g474re uart-only 3884 против 3884; Modbus — stm32h743zg два UART и
+        // TCP 13940 (по одному — 2168); protobuf — stm32f407ve 6824 против 3880.
+        "uart:none": 0, "uart:modbus": 2200, "uart:protobuf": 2944,
+        // stm32f407ve modbus-uart-can 6048 = 3880 + 2168 (UART с Modbus);
+        // CANopen — stm32g474re canopen-config 7504 против 3884 + 32 (настройки).
+        "can:none": 0, "can:canopen": 3588,
+        // stm32h743zg против 3932: tcp-only 5308, modbus-tcp 9540 (с master и
+        // без — одинаково); protobuf — stm32f407ve UART и TCP 13216.
+        "tcp:none": 416, "tcp:modbus": 4648, "tcp:protobuf": 5432,
+        // stm32h743zg: udp-only 5308, modbus-udp 9700; protobuf — stm32f407ve
+        // protobuf-udp 9968 против 3880.
+        "udp:none": 416, "udp:modbus": 4808, "udp:protobuf": 5128,
+        // stm32g474re usb-only 5244 против 3884; Modbus — stm32f407ve 7464 против
+        // 3880; protobuf — stm32f407ve два USB 12656 (по 4388).
+        "usb:none": 1360, "usb:modbus": 3584, "usb:protobuf": 4388,
+    },
+    // Стек `embassy-net` и драйвер Ethernet — один раз на tcp/udp: stm32f407ve
+    // modbus-tcp-udp 14296 — на 960 меньше, чем TCP и UDP по отдельности.
+    net_stack: 960,
+    // Сетевые службы (`NET_SERVICE_ITEMS`): узлов в шаблоне пока нет — 0;
+    // появятся — замерить так же.
+    services: #{ ssh: 0, rest: 0 },
+};
+// Сверх статической RAM — под стек: он в `.data`/`.bss` не входит (flip-link
+// кладёт его под ними). Не замерен — без платы глубину стека не снять, — а
+// выбран: futures задач `embassy` и буферы транспортов лежат в `.bss`, так что на
+// стеке только цепочка `poll`, кадры прерываний и форматирование паники.
+// Ошибка в меньшую сторону не тихая: под flip-link переполнение стека — HardFault,
+// а не порча статиков. Больше — и Modbus по UART не взял бы STM32C011D6 (6 KiB).
+const STACK_RESERVE = 1024;
+
 // Ответы отсекают чипы ещё до каскада: сетевой стек просит чип с Ethernet,
 // OTA — чип, где схема помещается, граф — где он влезает в раздел
 // приложения. Каскад по символам тогда предлагает только то, с чем ответы
@@ -788,6 +897,17 @@ if !variable::is_set("chip_feature")
             if !any_block { return false; }
         }
         let m = layouts[chip.sub_string(0, 2)][chip];
+        // И транспорты из `links` должны поместиться в RAM. База — только из
+        // заданных ответов (`NEED`): умолчание «да» для OTA и графа чипов не
+        // отсекает, а невлезающее с итоговыми ответами отвергнет проверка после
+        // них. С ручной раскладкой (`write_size`) оценки нет.
+        if WANTED_LINKS.len() > 0 && !variable::is_set("write_size") {
+            let asked = #{ ota: NEED.ota, ext_ota: NEED.ext_ota, config: NEED.config, external: NEED.config && wants_external, graph: NEED.graph };
+            let base = ram_base(RAM_COST, plan(m, m["erase_zero"] == "true", asked, LIMITS));
+            if ram_estimate(RAM_COST, base, WANTED_LINKS, []) + STACK_RESERVE > size_in_bytes(m["ram_length"]) {
+                return false;
+            }
+        }
         fits_answers(m, m["erase_zero"] == "true", WANTS, NEED, LIMITS)
     });
     if allowed.len() == 0 {
@@ -1144,6 +1264,18 @@ if variable::is_set("graph") {
 // без протокола. Меню предлагают только виды, у которых есть блок.
 let have = INTERFACES[suffix];
 let instances = if INSTANCES.contains(suffix) { INSTANCES[suffix] } else { #{} };
+// RAM: статическая без транспортов по итоговым OTA, настройкам и графу, и
+// объём региона `RAM`. С ручной раскладкой регион пишет человек — оценки нет
+// (`ram_limit` = `()`), и ничего не помечается.
+let ram_base_now = ram_base(RAM_COST, plan(layout, erase_zero, #{ ota: wants_ota, ext_ota: wants_ext_ota, config: wants_config, external: wants_external, graph: wants_graph }, LIMITS));
+let ram_limit = if manual_now { () } else { size_in_bytes(layout["ram_length"]) };
+// Приписка к пункту меню, с которым транспорты `set` (`#{ kind, protocol }`) не
+// помещаются; помещаются или оценки нет — пусто.
+let ram_mark = |set| {
+    if ram_limit == () { return ""; }
+    let need = ram_estimate(RAM_COST, ram_base_now, set, []) + STACK_RESERVE;
+    if need > ram_limit { " — НЕ ПОМЕЩАЕТСЯ в RAM (оценка " + kib(need) + " из " + kib(ram_limit) + ")" } else { "" }
+};
 let links = [];
 let wanted_protocol = if variable::is_set("protocol") { variable::get("protocol") } else { "" };
 if wanted_protocol != "" && !PROTOCOL_INTERFACES.contains(wanted_protocol) {
@@ -1196,8 +1328,20 @@ if WANTED_LINKS.len() > 0 {
         // имени блока в пункте нет: транспорт получает первый блок вида, а
         // сменить блок — дело `resources.rs`.
         let items = TRANSPORT_ITEMS.filter(|item| free_blocks(item.kind, INTERFACE_BLOCKS[item.kind], [], have, instances).len() > 0);
+        // Пункт, с которым отмеченные (и он сам) не помещаются в RAM, помечен,
+        // но выбрать его можно — тогда в конце печатается предупреждение.
+        // Протокол ещё не спрошен, поэтому пункт стоит как его худший протокол.
+        let ram_note = |value, chosen| {
+            let set = [];
+            for item in items {
+                if item.value == value || chosen.contains(item.value) {
+                    set.push(#{ kind: item.kind, protocol: worst_protocol(RAM_COST, item.kind, PROTOCOL_INTERFACES) });
+                }
+            }
+            ram_mark.call(set)
+        };
         let marked = checklist("transports: отметьте транспорты (Enter — отметить или снять)",
-            items.map(|item| item.value), items.map(|item| item.text));
+            items.map(|item| item.value), items.map(|item| item.text), ram_note);
         for item in items {
             if !marked.contains(item.value) { continue; }
             let name = if item.value == item.kind { item.kind } else { item.value + " (" + item.kind.to_upper() + ")" };
@@ -1225,6 +1369,11 @@ if WANTED_LINKS.len() > 0 {
                     values.push(name);
                     texts.push(PROTOCOL_TEXT[name]);
                 }
+            }
+            // Протокол, с которым этот транспорт к уже выбранным не помещается в
+            // RAM, помечен так же, как пункт списка транспортов.
+            for i in 0..values.len() {
+                texts[i] += ram_mark.call(links + [#{ kind: kind, protocol: values[i] }]);
             }
             if values.len() > 1 {
                 link_protocol = ask("protocol: протокол связи поверх " + item.name + " (узел в графе)", values, texts, "none");
@@ -1329,6 +1478,25 @@ if ssh_auth == "password" && variable::is_set("ssh_key") {
 variable::set("net_services", services.reduce(|sum, name| if sum == "" { name } else { sum + "," + name }, ""));
 variable::set("ssh_auth", ssh_auth);
 variable::set("ssh_key", ssh_key);
+
+// --- RAM. Оценка (`ram_estimate`, байт статической RAM) — для сводки и для
+// `template-check`, который сверяет её с фактом сборки. Не помещается проект с
+// транспортами: из `--define` — ошибка, из меню — предупреждение (пункт был
+// помечен). Проект без транспортов не отвергается: базу не выбирают.
+variable::set("ram_estimate", "");
+if ram_limit != () {
+    let need = ram_estimate(RAM_COST, ram_base_now, links, services);
+    variable::set("ram_estimate", need.to_string());
+    print("ram_estimate: " + need + " байт статической RAM (+ " + STACK_RESERVE + " под стек) из " + ram_limit + " байт RAM");
+    if links.len() > 0 && need + STACK_RESERVE > ram_limit {
+        let why = "не помещается в RAM " + chip_name + " (оценка " + kib(need + STACK_RESERVE) + " из " + kib(ram_limit) + ")";
+        // Стоимости транспортов замерены с графом: без него оценка завышена до
+        // ~750 байт (stm32f407ve protobuf-usb-usb-no-graph), отказ — с этим запасом.
+        if variable::is_set("links") { throw "links: " + variable::get("links") + " " + why; }
+        if variable::is_set("interface") { throw "interface: " + variable::get("interface") + " с протоколом " + protocol + " " + why; }
+        print("Внимание: выбранные транспорты " + why + " — прошивка может не собраться или упасть на переполнении стека");
+    }
+}
 
 // Основной транспорт — первый с протоколом, а без протокола — первый. От него
 // считаются прежние скаляры `interface`, `protocol`, `iface_periph`, `can_kind`,
@@ -2204,6 +2372,11 @@ if !has.tcp && !has.udp {
 if rng[0] == "" || (!has.tcp && !has.udp) {
 	file::delete("crates-cross/bsp/src/rng.rs");
 	file::delete("docs/modules/bsp-rng.md");
+}
+// Бэкенд `getrandom` над RNG — только с ssh: `sunset` берёт случайность через
+// `getrandom` сам, остальным сетевым проектам хватает затравки стека.
+if !variable::get("net_services").split(",").contains("ssh") {
+	file::delete("crates-cross/app/src/rng.rs");
 }
 
 // Обёртка EEPROM — только когда настройки лежат в ней; без неё файл с

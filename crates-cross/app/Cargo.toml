@@ -76,6 +76,15 @@ supervisor = { workspace = true }
 sync-request = { workspace = true }
 embassy-sync = { workspace = true }
 {%- endif %}
+{%- if net_services contains "ssh" %}
+# Бэкенд `getrandom` над RNG платы (src/rng.rs): случайность для криптографии
+# проекта — и крейтов, что зовут `getrandom` сами, и тех, что берут генератор
+# параметром (`getrandom::SysRng`). Мьютекс генератора — `embassy-sync`.
+getrandom = { workspace = true }
+{%- if ota != "true" or graph == "true" %}
+embassy-sync = { workspace = true }
+{%- endif %}
+{%- endif %}
 
 [build-dependencies]
 shadow-rs = { workspace = true, features = ["build", "no_std"] }

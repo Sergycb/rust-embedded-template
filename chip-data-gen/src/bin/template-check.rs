@@ -403,14 +403,15 @@ fn main() -> anyhow::Result<()> {
 
     // Факт статической RAM по случаям — из строки `ram:` вывода `build`.
     if !static_ram.is_empty() {
-        println!("\nСтатическая RAM (.data + .bss + .uninit), байт:");
+        println!("\nСтатическая RAM (.data + .bss + .uninit), байт: факт и оценка хука");
         let width = static_ram
             .iter()
             .map(|(label, _)| label.chars().count())
             .max()
             .unwrap_or(0);
-        for (label, ram) in &static_ram {
-            println!("  {label:<width$}  {ram:>7}");
+        for (label, (ram, estimate)) in &static_ram {
+            let estimate = estimate.map_or_else(|| "—".to_owned(), |e| e.to_string());
+            println!("  {label:<width$}  {ram:>7}  {estimate:>7}");
         }
     }
 
@@ -426,14 +427,15 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `template` — облегчённая копия, из которой генерируем.
+/// `template` — облегчённая копия, из которой генерируем. Отдаёт статическую
+/// RAM сборки и оценку хука (без сборки — `None`).
 fn check_one(
     template: &Path,
     work_dir: &Path,
     cargo_target_dir: &Path,
     case: &Case,
     options: &Options,
-) -> anyhow::Result<Option<u64>> {
+) -> anyhow::Result<Option<(u64, Option<u64>)>> {
     // Имя проекта = имя каталога, в который cargo-generate его положит.
     let name = case.name();
     let project = work_dir.join(&name);
@@ -457,12 +459,16 @@ fn check_one(
     for define in case.defines.iter().chain(&options.defines) {
         command.arg("--define").arg(define);
     }
-    run(
+    // Вывод генерации перехватывается ради строки `ram_estimate:` хука.
+    let generated = capture(
         command.arg("--silent").arg("--destination").arg(work_dir),
         work_dir,
         None,
     )
     .with_context(|| format!("генерация проекта под {}", case.label()))?;
+    print!("{generated}");
+    // С ручной раскладкой оценки нет — и сверять нечего.
+    let estimate = parse_ram_estimate(&generated);
 
     check_no_raw_placeholders(&project)?;
     check_ci_files(&project, &options.ci)?;
@@ -551,7 +557,19 @@ fn check_one(
                     case.label(),
                 )
             })?;
-            static_ram = Some(ram);
+            // Оценка хука консервативна: ниже факта — таблица `RAM_COST`
+            // устарела.
+            if let Some(estimate) = estimate {
+                if estimate < ram {
+                    bail!(
+                        "{}: оценка RAM хука {estimate} байт ниже факта {ram} байт — \
+                         перемерьте RAM_COST в chip-select.rhai (MAINTAINING.md, «Оценка RAM»)",
+                        case.label(),
+                    );
+                }
+                println!("ram: оценка {estimate} байт не ниже факта {ram} байт");
+            }
+            static_ram = Some((ram, estimate));
         }
     }
 
@@ -709,6 +727,20 @@ fn parse_static_ram(build_output: &str) -> Option<u64> {
     })
 }
 
+/// Оценка статической RAM из вывода хука — строка `ram_estimate: <N> байт …`,
+/// которую печатает `chip-select.rhai` (раздел «RAM»). Нет строки — ручная
+/// раскладка, оценки нет.
+fn parse_ram_estimate(generate_output: &str) -> Option<u64> {
+    generate_output.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("ram_estimate: ")?
+            .split_once(" байт")?
+            .0
+            .parse()
+            .ok()
+    })
+}
+
 /// То же, что [`run`], но отдаёт stdout: нужно там, где проверяется не код
 /// возврата, а напечатанное.
 fn capture(
@@ -724,9 +756,11 @@ fn capture(
         .output()
         .with_context(|| format!("запустить {:?}", command.get_program()))?;
     if !output.status.success() {
+        // stdout — тоже: перед ошибкой хук печатает то, что к ней привело.
         bail!(
-            "команда завершилась с {}:\n{}",
+            "команда завершилась с {}:\n{}{}",
             output.status,
+            String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr),
         );
     }
@@ -1090,7 +1124,7 @@ fn copy_dir(from: &Path, to: &Path) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_static_ram, without_actions_expressions};
+    use super::{parse_ram_estimate, parse_static_ram, without_actions_expressions};
 
     /// Строку печатает `crates-host/xtask/src/size.rs` (`ram_line`).
     #[test]
@@ -1101,6 +1135,15 @@ mod tests {
 
         assert_eq!(parse_static_ram(output), Some(3124));
         assert_eq!(parse_static_ram("app: 41.2 KiB\n"), None);
+    }
+
+    /// Строку печатает `chip-select.rhai` (раздел «RAM»).
+    #[test]
+    fn parses_the_ram_estimate_line_of_the_hook() {
+        let output = "OTA отключён по вашему выбору\n\
+                      ram_estimate: 3932 байт статической RAM (+ 1024 под стек) из 130560 байт RAM\n";
+        assert_eq!(parse_ram_estimate(output), Some(3932));
+        assert_eq!(parse_ram_estimate("ram: 3124 байт статической RAM\n"), None);
     }
 
     /// Главное свойство: послабление ради Actions не должно прятать настоящий

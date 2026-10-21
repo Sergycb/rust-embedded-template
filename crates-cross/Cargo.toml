@@ -26,7 +26,8 @@ rust-version = "1.96"
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(rust_analyzer)"] }
 # `warn`, а не `deny`, как в корневом workspace: unsafe в `crates-cross` есть
 # и оправдан — прыжок в образ в `boot`, поллинг исполнителя в `app`,
-# `app/src/image.rs` (имя символа), регистры option bytes, которых нет
+# `app/src/image.rs` (имя символа), бэкенд `getrandom` в `app/src/rng.rs` (с ssh)
+# (внешний символ и запись по его указателю), регистры option bytes, которых нет
 # в `stm32-metapac` (`bsp/src/clocks.rs`, только H723/725/730/733/735). Ровно на
 # этих местах стоит `#[expect(unsafe_code)]` с объяснением, и это весь
 # unsafe этого воркспейса, который видит clippy (проверено прогоном с
@@ -134,6 +135,14 @@ embassy-net            = { version = "0.9.1", features = ["tcp", "udp", "proto-i
 # Трейт драйвера под `embassy-net` — им заглушка платы (`bsp::stub`) встаёт в
 # слот Ethernet; версия — та, на которой стоят `embassy-net` 0.9 и `embassy-stm32` 0.6.
 embassy-net-driver     = { version = "0.2.0" }
+{%- if net_services contains "ssh" %}
+# Случайность для криптографии (`app::rng` — бэкенд над RNG платы): через
+# `getrandom` её берут и крейты, что зовут его сами (`sunset`), и те, что берут
+# генератор параметром (`getrandom::SysRng`, фича `sys_rng`). Без фич: своего
+# источника на `target_os = "none"` у него нет, бэкенд — `--cfg` в
+# `.cargo/config.toml`.
+getrandom              = { version = "0.4.3" }
+{%- endif %}
 {%- endif %}
 embassy-sync       = { version = "0.8.0" }
 # Трейты `NorFlash` — нужны только `boot/src/external.rs` при `ota=external`
