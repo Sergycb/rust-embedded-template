@@ -8,8 +8,15 @@
 //! ```text
 //! cargo run --manifest-path chip-data-gen/Cargo.toml --bin template-check
 //! cargo run --manifest-path chip-data-gen/Cargo.toml --bin template-check -- --quick
+//! cargo run --manifest-path chip-data-gen/Cargo.toml --bin template-check -- --smoke
+//! cargo run --manifest-path chip-data-gen/Cargo.toml --bin template-check -- --only modbus,no-graph
 //! cargo run --manifest-path chip-data-gen/Cargo.toml --bin template-check -- stm32g071rb
 //! ```
+//!
+//! Уровни: `--quick` по всему набору — на каждую правку; `--only` по
+//! затронутой ветке и `--smoke` — по ходу работы; полный прогон — перед
+//! вливанием в master. Конфигурации идут параллельно (`--jobs`, по умолчанию
+//! [`DEFAULT_JOBS`]), вывод каждой — в свой лог, в консоли — строка на итог.
 //!
 //! Ловит ровно тот класс поломок, который не виден ни линтом, ни тестами
 //! репозитория шаблона: у самого шаблона `Cargo.lock` пинит ревизии
@@ -37,12 +44,29 @@
 //! к каждой конфигурации, например `--ci gitlab --define config=internal stm32f407ve`.
 
 use std::{
-    env, fs,
+    collections::{HashMap, HashSet, hash_map::DefaultHasher},
+    env,
+    fmt::Display,
+    fs::{self, File},
+    hash::{Hash, Hasher},
+    io::Write,
     path::{Path, PathBuf},
     process::Command,
+    sync::{
+        Mutex,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    },
+    thread,
+    time::Instant,
 };
 
 use anyhow::{Context, bail};
+
+/// Сколько конфигураций собирается одновременно. Сборка цепочки проектных
+/// крейтов (`domain` → `adapters` → `app`) ядра почти не загружает, поэтому
+/// параллельные конфигурации окупаются; каждая полоса — свой каталог сборки
+/// (гигабайты), так что больше трёх по умолчанию не берём.
+const DEFAULT_JOBS: usize = 3;
 
 /// Каждая запись здесь включает свою ветку генерации — см. doc-комментарий
 /// выше. Менять только вместе с пониманием, какую ветку теряем.
@@ -50,6 +74,10 @@ use anyhow::{Context, bail};
 /// Второе поле — суффикс имени каталога: он нужен там, где один и тот же чип
 /// проверяется в разных конфигурациях, иначе прогоны затирали бы друг друга.
 /// Третье — дополнительные `--define`.
+///
+/// `.smoke()` — набор `--smoke`: по конфигурации на ось генерации (OTA с
+/// подписью и графом, без графа на M0+, 2 KiB RAM, внешняя OTA, CANopen с
+/// настройками, сеть на H7, USB, несколько транспортов без графа).
 fn default_cases() -> Vec<Case> {
     vec![
         // Одноядерный с OTA и подписью образа (она всегда идёт вместе с OTA:
@@ -57,7 +85,7 @@ fn default_cases() -> Vec<Case> {
         // `salty` со своей `slow-motion` и профилем dev, в `app/src/image.rs`
         // — `FW_VERSION` для `Mode::Signed`), одна карта памяти — самый
         // обычный случай.
-        Case::new("stm32f407ve"),
+        Case::new("stm32f407ve").smoke(),
         // Тот же чип, но от OTA отказались при генерации: ветка «один образ на
         // весь flash» на чипе, куда схема прекрасно помещается.
         Case::new("stm32f407ve").variant("no-ota", &["ota=no"]),
@@ -96,7 +124,7 @@ fn default_cases() -> Vec<Case> {
         // Другой конец линейки: 2 KiB RAM и Cortex-M0+ (thumbv6m, без CAS в железе).
         // Резерв под PANIC здесь считается долей RAM, а не фиксированным килобайтом —
         // на таком чипе тот был бы половиной памяти.
-        Case::new("stm32l011f4"),
+        Case::new("stm32l011f4").smoke(),
         // Раздел настроек вместе с OTA на равных секторах (2 KiB): в хвосте
         // flash, страница раздела — страница чипа, схема OTA после него всё ещё
         // помещается — в проект попадают разом bootloader, ota.rs и config.rs.
@@ -118,7 +146,9 @@ fn default_cases() -> Vec<Case> {
         // разделами, настройки на той же
         // микросхеме за `DFU` (`CONFIG_START`/`CONFIG_END` — смещения от её начала), и
         // `shared_flash = false` при OTA.
-        Case::new("stm32h723ve").variant("ota-external", &["ota=external", "config=external"]),
+        Case::new("stm32h723ve")
+            .variant("ota-external", &["ota=external", "config=external"])
+            .smoke(),
         // Внешняя OTA и настройки во внутреннем флеше: на F4 — в секторах 2–3
         // зоны bootloader'а, которые без них пропадали бы. Без графа — `boot`
         // без сторожа, а `embedded-storage` ему нужен только ради геометрии
@@ -137,7 +167,7 @@ fn default_cases() -> Vec<Case> {
         // живёт в bootloader'е, и код `salty` под Thumb-1 заметно толще, чем
         // под M4; влезает ли release-bootloader в свою зону на M0+, проверяет эта
         // конфигурация.
-        Case::new("stm32g071rb").variant("no-graph", &["graph=no"]),
+        Case::new("stm32g071rb").variant("no-graph", &["graph=no"]).smoke(),
         // Единственная ветка, где стёртый флеш читается нулями: у L0/L1 хук
         // включает `flash-erase-zero` у embassy-boot, иначе bootloader читает
         // признак «стёрто» наоборот. Взят чип с запасом flash — на 64 KiB
@@ -166,7 +196,8 @@ fn default_cases() -> Vec<Case> {
         Case::new("stm32g474re").variant(
             "canopen-config",
             &["protocol=canopen", "interface=can", "config=internal"],
-        ),
+        )
+        .smoke(),
         // То же над заглушкой внешней флеши (`config=external`): у её ошибки
         // свой `defmt::Format`.
         Case::new("stm32f407ve").variant(
@@ -183,7 +214,8 @@ fn default_cases() -> Vec<Case> {
         Case::new("stm32h743zg").variant(
             "modbus-tcp-master",
             &["protocol=modbus", "interface=tcp", "modbus_master=yes"],
-        ),
+        )
+        .smoke(),
         Case::new("stm32f407ve").variant("protobuf-udp", &["protocol=protobuf", "interface=udp"]),
         // Транспорт без протокола (свой протокол пишет проект): заглушка интерфейса
         // и его фоновый узел есть, узла протокола — нет. Граф и его отсутствие, по
@@ -199,7 +231,9 @@ fn default_cases() -> Vec<Case> {
         Case::new("stm32h743zg").variant("protobuf-tcp", &["protocol=protobuf", "interface=tcp"]),
         // protobuf по USB CDC: устройство `embassy-usb`, узел USB и поток CDC
         // под COBS. G4 — блок USB device (у F4/H7 — OTG, драйвер тот же).
-        Case::new("stm32g474re").variant("protobuf-usb", &["protocol=protobuf", "interface=usb"]),
+        Case::new("stm32g474re")
+            .variant("protobuf-usb", &["protocol=protobuf", "interface=usb"])
+            .smoke(),
         // Modbus RTU по USB CDC — на F4, у которого USB — блок OTG: второй
         // драйвер в рецепте и `Rtu` поверх потока CDC вместо UART.
         Case::new("stm32f407ve").variant("modbus-usb", &["protocol=modbus", "interface=usb"]),
@@ -258,7 +292,8 @@ fn default_cases() -> Vec<Case> {
         Case::new("stm32f407ve").variant(
             "protobuf-uart-udp-no-graph",
             &["links=uart:protobuf,udp:protobuf", "graph=no"],
-        ),
+        )
+        .smoke(),
         // REST API (`domain::http`, пул `HTTP[2]`): с графом и OTA — рядом с
         // Modbus по TCP, чтобы номер клиента OTA шёл следом за транспортом и
         // сокетов стало три; без графа и без OTA — пул задач, сведения без
@@ -313,6 +348,8 @@ struct Case {
     chip: String,
     suffix: Option<String>,
     defines: Vec<String>,
+    /// Входит в набор `--smoke`.
+    smoke: bool,
 }
 
 impl Case {
@@ -321,6 +358,7 @@ impl Case {
             chip: chip.to_owned(),
             suffix: None,
             defines: Vec::new(),
+            smoke: false,
         }
     }
 
@@ -328,6 +366,13 @@ impl Case {
         Self {
             suffix: Some(suffix.to_owned()),
             defines: defines.iter().map(|d| (*d).to_owned()).collect(),
+            ..self
+        }
+    }
+
+    fn smoke(self) -> Self {
+        Self {
+            smoke: true,
             ..self
         }
     }
@@ -375,6 +420,25 @@ struct Options {
     quick: bool,
     /// Не удалять сгенерированные проекты после успеха.
     keep: bool,
+    /// Сколько конфигураций идёт одновременно (`--jobs`).
+    jobs: usize,
+}
+
+/// Статическая RAM сборки и оценка хука (у ручной раскладки её нет).
+type Ram = (u64, Option<u64>);
+
+/// Общее на весь прогон: что проверяем, где и что уже проверено.
+struct Run {
+    options: Options,
+    /// Облегчённая копия шаблона, из которой генерируем.
+    template: PathBuf,
+    work_dir: PathBuf,
+    /// Отпечаток хостового workspace ([`host_key`]) → конфигурация, на которой
+    /// он уже прошёл `xtask lint`, `test host` и `deny` корня.
+    host_checked: Mutex<HashMap<u64, String>>,
+    /// Упала хотя бы одна конфигурация — новых не начинаем.
+    failed: AtomicBool,
+    finished: AtomicUsize,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -385,15 +449,46 @@ fn main() -> anyhow::Result<()> {
     // каталог шаблона ЦЕЛИКОМ во временную папку, прежде чем прочитать
     // cargo-generate.toml, так что `ignore = ["target", ...]` от копирования
     // не спасает — он решает лишь, что попадёт в готовый проект. Кеш сборки
-    // здесь общий на все конфигурации (второй прогон не пересобирает то, что
-    // от чипа не зависит) и за десяток прогонов дорастает до гигабайтов;
+    // (каталог на полосу, `target-<N>`) дорастает до гигабайтов;
     // внутри `target/` он превращал каждую генерацию из локального пути в
     // копирование этих гигабайтов. Однажды это кончилось «Недостаточно места
     // на диске (os error 112)» на ровном месте.
-    let work_dir = env::temp_dir().join("rust-embedded-template-check");
+    let work_dir = work_dir(&repo_root);
     fs::create_dir_all(&work_dir)
         .with_context(|| format!("создать рабочий каталог {}", work_dir.display()))?;
-    let cargo_target_dir = work_dir.join("cargo-target");
+
+    // Каталог постоянный, чтобы кеш сборки оставался тёплым между прогонами, —
+    // значит, два прогона на одной рабочей копии затирали бы друг другу
+    // проекты. Блокировку ОС снимает и падение процесса, «зависшей» не бывает.
+    let lock_path = work_dir.join("lock");
+    // Без усечения: открытие на усечение файла, который держит другой процесс,
+    // на Windows может упасть раньше `try_lock` с невнятной ошибкой.
+    let lock = File::options()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&lock_path)
+        .with_context(|| format!("открыть {}", lock_path.display()))?;
+    match lock.try_lock() {
+        Ok(()) => {}
+        Err(fs::TryLockError::WouldBlock) => bail!(
+            "{} занят другим прогоном template-check на этой же рабочей копии. Дождитесь его \
+             или задайте свой каталог: TEMPLATE_CHECK_DIR=C:\\tc-<имя> (путь короткий — \
+             иначе генерация падает на `git init` с `path too long`)",
+            work_dir.display(),
+        ),
+        Err(fs::TryLockError::Error(err)) => {
+            return Err(err).with_context(|| format!("заблокировать {}", lock_path.display()));
+        }
+    }
+
+    // Логи прошлого прогона — прочь: у конфигураций, до которых этот не
+    // дойдёт, старый лог выдавал бы себя за нынешний.
+    let logs = work_dir.join("logs");
+    if logs.exists() {
+        fs::remove_dir_all(&logs).with_context(|| format!("очистить {}", logs.display()))?;
+    }
+    fs::create_dir_all(&logs).with_context(|| format!("создать {}", logs.display()))?;
 
     // Генерируем не из самого репозитория, а из его облегчённой копии — по той
     // же причине, что и work_dir выше: `--path` копирует каталог целиком, и
@@ -406,18 +501,63 @@ fn main() -> anyhow::Result<()> {
         .with_context(|| format!("скопировать шаблон в {}", template.display()))?;
 
     let labels: Vec<String> = options.cases.iter().map(Case::label).collect();
+    let lanes = lanes(&options.cases, options.jobs);
     println!(
-        "Проверяем шаблон на {} конфигурациях (ci={}{}): {}",
+        "Проверяем шаблон на {} конфигурациях (ci={}{}, полос: {}): {}\nлоги: {}",
         options.cases.len(),
         options.ci,
         if options.quick { ", --quick" } else { "" },
+        lanes.len(),
         labels.join(", "),
+        work_dir.join("logs").display(),
     );
 
+    let run = Run {
+        options,
+        template,
+        work_dir,
+        host_checked: Mutex::new(HashMap::new()),
+        failed: AtomicBool::new(false),
+        finished: AtomicUsize::new(0),
+    };
+    let mut outcomes: Vec<Option<anyhow::Result<Option<Ram>>>> =
+        run.options.cases.iter().map(|_| None).collect();
+    thread::scope(|scope| {
+        let run = &run;
+        let handles: Vec<_> = lanes
+            .into_iter()
+            .enumerate()
+            .map(|(lane, cases)| {
+                // Свой каталог сборки на полосу: cargo держит каталог под
+                // блокировкой всю сборку, общий выстроил бы полосы в очередь.
+                let target_dir = run.work_dir.join(format!("target-{lane}"));
+                scope.spawn(move || run_lane(run, &cases, &target_dir))
+            })
+            .collect();
+        for handle in handles {
+            for (index, outcome) in handle.join().expect("полоса проверки запаниковала")
+            {
+                outcomes[index] = Some(outcome);
+            }
+        }
+    });
+
+    let mut failed = 0;
     let mut static_ram = Vec::new();
-    for case in &options.cases {
-        if let Some(ram) = check_one(&template, &work_dir, &cargo_target_dir, case, &options)? {
-            static_ram.push((case.label(), ram));
+    for (case, outcome) in run.options.cases.iter().zip(outcomes) {
+        match outcome {
+            Some(Ok(Some(ram))) => static_ram.push((case.label(), ram)),
+            Some(Ok(None)) => {}
+            Some(Err(err)) => {
+                failed += 1;
+                let log = log_path(&run.work_dir, case);
+                eprintln!("\n=== {}: {err:#}", case.label());
+                eprintln!("--- хвост лога {} ---\n{}", log.display(), log_tail(&log));
+            }
+            None => println!(
+                "{}: не запускалась — прогон остановлен падением",
+                case.label()
+            ),
         }
     }
 
@@ -435,10 +575,13 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
+    if failed > 0 {
+        bail!("упало конфигураций: {failed} (причины и хвосты логов — выше)");
+    }
     println!(
         "\nГотово: {} конфигураций прошли {}.",
-        options.cases.len(),
-        if options.quick {
+        run.options.cases.len(),
+        if run.options.quick {
             "генерацию"
         } else {
             "генерацию, lint и сборку"
@@ -447,29 +590,186 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `template` — облегчённая копия, из которой генерируем. Отдаёт статическую
-/// RAM сборки и оценку хука (без сборки — `None`).
+/// Рабочий каталог: `TEMPLATE_CHECK_DIR`, если задан, иначе постоянный каталог
+/// во временной папке, свой у каждой рабочей копии (у worktree — свой шаблон).
+fn work_dir(repo_root: &Path) -> PathBuf {
+    if let Some(dir) = env::var_os("TEMPLATE_CHECK_DIR") {
+        return PathBuf::from(dir);
+    }
+    // Хешер меняется с тулчейном — тогда кеш один раз остынет, только и всего.
+    let mut hasher = DefaultHasher::new();
+    repo_root.hash(&mut hasher);
+    env::temp_dir().join(format!("rtc-{:016x}", hasher.finish()))
+}
+
+fn log_path(work_dir: &Path, case: &Case) -> PathBuf {
+    work_dir.join("logs").join(format!("{}.log", case.name()))
+}
+
+/// Последние строки лога упавшей конфигурации — чтобы причина была видна без
+/// открытия файла.
+fn log_tail(log: &Path) -> String {
+    const LINES: usize = 40;
+    let text = fs::read(log).map_or_else(
+        |err| format!("(не прочитать: {err})"),
+        |bytes| String::from_utf8_lossy(&bytes).into_owned(),
+    );
+    let lines: Vec<&str> = text.lines().collect();
+    lines[lines.len().saturating_sub(LINES)..].join("\n")
+}
+
+/// Раскладка конфигураций по полосам (индексы в `cases`). Конфигурации одного
+/// чипа — в одну полосу: `embassy-stm32` под чип собирается на её каталоге
+/// сборки один раз, а проверки `chip-info` и заготовок ([`ChipChecks`]) не
+/// повторяются. Крупные группы раскладываются первыми, каждая — в наименее
+/// загруженную полосу.
+fn lanes(cases: &[Case], jobs: usize) -> Vec<Vec<usize>> {
+    let mut groups: Vec<(&str, Vec<usize>)> = Vec::new();
+    for (index, case) in cases.iter().enumerate() {
+        match groups.iter_mut().find(|(chip, _)| *chip == case.chip) {
+            Some((_, group)) => group.push(index),
+            None => groups.push((&case.chip, vec![index])),
+        }
+    }
+    groups.sort_by_key(|(_, group)| std::cmp::Reverse(group.len()));
+    let mut lanes = vec![Vec::new(); jobs.clamp(1, groups.len().max(1))];
+    for (_, group) in groups {
+        lanes
+            .iter_mut()
+            .min_by_key(|lane| lane.len())
+            .expect("полос не меньше одной")
+            .extend(group);
+    }
+    lanes
+}
+
+/// Конфигурации полосы по очереди, на одном каталоге сборки.
+fn run_lane(
+    run: &Run,
+    cases: &[usize],
+    target_dir: &Path,
+) -> Vec<(usize, anyhow::Result<Option<Ram>>)> {
+    let mut chip_checks = ChipChecks::default();
+    let mut outcomes = Vec::new();
+    for &index in cases {
+        if run.failed.load(Ordering::Relaxed) {
+            break;
+        }
+        let case = &run.options.cases[index];
+        let log_path = log_path(&run.work_dir, case);
+        let started = Instant::now();
+        let outcome = File::create(&log_path)
+            .with_context(|| format!("создать лог {}", log_path.display()))
+            .and_then(|log| check_one(run, target_dir, case, &log, &mut chip_checks));
+        let finished = run.finished.fetch_add(1, Ordering::Relaxed) + 1;
+        let verdict = if outcome.is_ok() {
+            "ok  "
+        } else {
+            run.failed.store(true, Ordering::Relaxed);
+            "FAIL"
+        };
+        println!(
+            "[{finished}/{}] {verdict} {} — {} с",
+            run.options.cases.len(),
+            case.label(),
+            started.elapsed().as_secs(),
+        );
+        outcomes.push((index, outcome));
+    }
+    outcomes
+}
+
+/// Какие чипы полосы уже прошли проверки `chip-info` и заготовок. От проекта
+/// они не зависят — только от чипа; исключение — половина `assign_resources!`,
+/// которая проверяется лишь в проекте без интерфейса (см.
+/// [`check_snippets_compile`]), поэтому такой проект проверяет чип ещё раз.
+#[derive(Default)]
+struct ChipChecks {
+    any: HashSet<String>,
+    with_resources: HashSet<String>,
+}
+
+impl ChipChecks {
+    /// Нужны ли проверки чипа этому проекту; если да — считает их сделанными.
+    fn due(&mut self, chip: &str, placeholder_resources: bool) -> bool {
+        if self.with_resources.contains(chip) || (!placeholder_resources && self.any.contains(chip))
+        {
+            return false;
+        }
+        self.any.insert(chip.to_owned());
+        if placeholder_resources {
+            self.with_resources.insert(chip.to_owned());
+        }
+        true
+    }
+}
+
+/// Команды, которые зависят только от чипа (`chip-info`), — раз на чип полосы.
+///
+/// `xtask pins` — единственный способ вообще проверить `chip-info`: его
+/// манифест до генерации не резолвится (Liquid в чип-фиче), так что ни `cargo
+/// xtask lint`, ни CI самого шаблона его не трогают. Оба вызова не случайны:
+/// без аргумента идёт перечисление блоков, с `RCC` — ветка с таблицей выводов,
+/// DMA и тактированием, а `RCC` есть на любом STM32 (в отличие от, например,
+/// `SPI4`).
+///
+/// fmt/clippy для chip-info — здесь же и по той же причине; в сгенерированном
+/// проекте манифест уже подставлен, и обе команды работают. `cargo xtask lint`
+/// их намеренно не зовёт: тогда каждый пользовательский CI тянул бы
+/// stm32-metapac ради инструмента, который на сборку прошивки никак не влияет.
+const CHIP_COMMANDS: [&[&str]; 5] = [
+    &["xtask", "pins"],
+    &["xtask", "pins", "RCC"],
+    // Заготовка — на I2C1, и это не произвольный выбор: он есть на всех чипах
+    // набора (у stm32l011f4, например, USART1 нет вовсе — только USART2 и
+    // LPUART1), а обработчиков прерывания у него два и они разные, то есть
+    // проверяется самая ошибкоопасная ветка таблицы.
+    &["xtask", "pins", "I2C1", "--snippet"],
+    &[
+        "fmt",
+        "--manifest-path",
+        "crates-host/chip-info/Cargo.toml",
+        "--check",
+    ],
+    &[
+        "clippy",
+        "--manifest-path",
+        "crates-host/chip-info/Cargo.toml",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings",
+    ],
+];
+
+/// Строка в лог конфигурации.
+fn note(mut log: &File, line: impl Display) -> anyhow::Result<()> {
+    writeln!(log, "{line}").context("записать в лог")
+}
+
+/// Отдаёт статическую RAM сборки и оценку хука (без сборки — `None`).
 fn check_one(
-    template: &Path,
-    work_dir: &Path,
+    run: &Run,
     cargo_target_dir: &Path,
     case: &Case,
-    options: &Options,
-) -> anyhow::Result<Option<(u64, Option<u64>)>> {
+    log: &File,
+    chip_checks: &mut ChipChecks,
+) -> anyhow::Result<Option<Ram>> {
+    let options = &run.options;
     // Имя проекта = имя каталога, в который cargo-generate его положит.
     let name = case.name();
-    let project = work_dir.join(&name);
+    let project = run.work_dir.join(&name);
     if project.exists() {
         fs::remove_dir_all(&project)
             .with_context(|| format!("очистить прошлый прогон {}", project.display()))?;
     }
 
-    println!("\n=== {} ===", case.label());
+    note(log, format!("=== {} ===", case.label()))?;
     let mut command = Command::new("cargo");
     command
         .arg("generate")
         .arg("--path")
-        .arg(template)
+        .arg(&run.template)
         .arg("--name")
         .arg(&name)
         .arg("--define")
@@ -481,131 +781,221 @@ fn check_one(
     }
     // Вывод генерации перехватывается ради строки `ram_estimate:` хука.
     let generated = capture(
-        command.arg("--silent").arg("--destination").arg(work_dir),
-        work_dir,
+        command
+            .arg("--silent")
+            .arg("--destination")
+            .arg(&run.work_dir),
+        &run.work_dir,
         None,
+        log,
     )
     .with_context(|| format!("генерация проекта под {}", case.label()))?;
-    print!("{generated}");
+    note(log, &generated)?;
     // С ручной раскладкой оценки нет — и сверять нечего.
     let estimate = parse_ram_estimate(&generated);
 
-    check_no_raw_placeholders(&project)?;
-    check_ci_files(&project, &options.ci)?;
+    check_no_raw_placeholders(&project, log)?;
+    check_ci_files(&project, &options.ci, log)?;
 
     let mut static_ram = None;
     if !options.quick {
+        // До первой команды: дальше в проекте появляются `Cargo.lock` и секреты.
+        let host_key = host_key(&project, case)?;
         // Ровно те команды, которые README обещает пользователю шаблона.
-        //
-        // `xtask pins` — единственный способ вообще проверить `chip-info`:
-        // его манифест до генерации не резолвится (Liquid в чип-фиче), так что
-        // ни `cargo xtask lint`, ни CI самого шаблона его не трогают. Оба
-        // вызова не случайны: без аргумента идёт перечисление блоков, с `RCC` —
-        // ветка с таблицей выводов, DMA и тактированием, а `RCC` есть на любом
-        // STM32 (в отличие от, например, `SPI4`).
-        //
-        // fmt/clippy для chip-info — здесь же и по той же причине; в
-        // сгенерированном проекте манифест уже подставлен, и обе команды
-        // работают. `cargo xtask lint` их намеренно не зовёт: тогда каждый
-        // пользовательский CI тянул бы stm32-metapac ради инструмента, который
-        // на сборку прошивки никак не влияет.
-        let commands: [&[&str]; 12] = [
-            &["xtask", "lint"],
-            &["xtask", "test", "host"],
-            &["xtask", "lint", "cross"],
-            &["xtask", "build"],
-            // Лицензии, источники, уязвимости: и хостовый workspace, и
-            // прошивка (у неё свой `Cargo.lock`, он появляется после `build`).
-            &["deny", "check"],
-            &[
-                "deny",
-                "--manifest-path",
-                "crates-cross/Cargo.toml",
-                "check",
-            ],
-            &["xtask", "pins"],
-            &["xtask", "pins", "RCC"],
-            // Заготовка — на I2C1, и это не произвольный выбор: он есть на
-            // всех чипах набора (у stm32l011f4, например, USART1 нет вовсе —
-            // только USART2 и LPUART1), а обработчиков прерывания у него два
-            // и они разные, то есть проверяется самая ошибкоопасная ветка
-            // таблицы. `--check` на нетронутом `bsp` обязан проходить:
-            // шаблон не занимает ни одного вывода.
-            &["xtask", "pins", "I2C1", "--snippet"],
-            &["xtask", "pins", "--check"],
-            &[
-                "fmt",
-                "--manifest-path",
-                "crates-host/chip-info/Cargo.toml",
-                "--check",
-            ],
-            &[
-                "clippy",
-                "--manifest-path",
-                "crates-host/chip-info/Cargo.toml",
-                "--all-targets",
-                "--",
-                "-D",
-                "warnings",
-            ],
-        ];
-        check_snippets_compile(&project, cargo_target_dir)?;
-
-        for args in commands {
-            let context = || {
+        let cargo = |args: &[&str]| {
+            run_command(
+                Command::new("cargo").args(args),
+                &project,
+                Some(cargo_target_dir),
+                log,
+            )
+            .with_context(|| {
                 format!(
                     "`cargo {}` в сгенерированном проекте (оставлен для разбора: {})",
                     args.join(" "),
                     project.display(),
                 )
-            };
-            let command = &mut Command::new("cargo");
-            command.args(args);
-            if args != ["xtask", "build"] {
-                run(command, &project, Some(cargo_target_dir)).with_context(context)?;
-                continue;
+            })
+        };
+
+        let resources = project.join("crates-cross/bsp/src/resources.rs");
+        let placeholder_resources = is_placeholder_resources(
+            &fs::read_to_string(&resources)
+                .with_context(|| format!("прочитать {}", resources.display()))?,
+        );
+        if chip_checks.due(&case.chip, placeholder_resources) {
+            check_snippets_compile(&project, cargo_target_dir, log)?;
+            for args in CHIP_COMMANDS {
+                cargo(args)?;
             }
-            // Вывод `build` перехватывается ради строки `ram:` и печатается
-            // как есть, чтобы отчёт сборки в логе остался.
-            let output =
-                capture(command, &project, Some(cargo_target_dir)).with_context(context)?;
-            print!("{output}");
-            let ram = parse_static_ram(&output).with_context(|| {
-                format!(
-                    "в выводе `cargo xtask build` нет строки `ram: <N> байт статической RAM …` \
-                     (формат — ram_line в crates-host/xtask/src/size.rs) для {}",
-                    case.label(),
-                )
-            })?;
-            // Оценка хука консервативна: ниже факта — таблица `RAM_COST`
-            // устарела.
-            if let Some(estimate) = estimate {
-                if estimate < ram {
-                    bail!(
-                        "{}: оценка RAM хука {estimate} байт ниже факта {ram} байт — \
-                         перемерьте RAM_COST в chip-select.rhai (MAINTAINING.md, «Оценка RAM»)",
-                        case.label(),
-                    );
-                }
-                println!("ram: оценка {estimate} байт не ниже факта {ram} байт");
-            }
-            static_ram = Some((ram, estimate));
+        } else {
+            note(
+                log,
+                "chip-info и заготовки этого чипа уже проверены в полосе — пропуск",
+            )?;
         }
+
+        // Хостовый workspace от чипа и `crates-cross` не зависит: одинаковый
+        // по содержимому проверяется один раз на прогон.
+        // Отпечаток записывается, только когда проверки прошли (после `deny`
+        // ниже): иначе соседняя полоса пропустила бы их, пока они ещё идут, и
+        // отчиталась бы «ok» за непройденные. Цена — изредка повтор, если две
+        // полосы дошли до одного отпечатка одновременно.
+        let checked_on = run
+            .host_checked
+            .lock()
+            .expect("под мьютексом отпечатков не паникуют")
+            .get(&host_key)
+            .cloned();
+        if let Some(label) = &checked_on {
+            note(
+                log,
+                format!(
+                    "хостовый workspace совпадает с {label} — `xtask lint`, `test host` и \
+                     `deny` корня пропущены",
+                ),
+            )?;
+        }
+        let host_due = checked_on.is_none();
+        if host_due {
+            cargo(&["xtask", "lint"])?;
+            cargo(&["xtask", "test", "host"])?;
+        }
+        cargo(&["xtask", "lint", "cross"])?;
+
+        // Вывод `build` перехватывается ради строки `ram:` и пишется в лог
+        // как есть, чтобы отчёт сборки остался.
+        let output = capture(
+            Command::new("cargo").args(["xtask", "build"]),
+            &project,
+            Some(cargo_target_dir),
+            log,
+        )
+        .with_context(|| {
+            format!(
+                "`cargo xtask build` в сгенерированном проекте (оставлен для разбора: {})",
+                project.display(),
+            )
+        })?;
+        note(log, &output)?;
+        let ram = parse_static_ram(&output).with_context(|| {
+            format!(
+                "в выводе `cargo xtask build` нет строки `ram: <N> байт статической RAM …` \
+                 (формат — ram_line в crates-host/xtask/src/size.rs) для {}",
+                case.label(),
+            )
+        })?;
+        // Оценка хука консервативна: ниже факта — таблица `RAM_COST`
+        // устарела.
+        if let Some(estimate) = estimate {
+            if estimate < ram {
+                bail!(
+                    "{}: оценка RAM хука {estimate} байт ниже факта {ram} байт — \
+                     перемерьте RAM_COST в chip-select.rhai (MAINTAINING.md, «Оценка RAM»)",
+                    case.label(),
+                );
+            }
+            note(
+                log,
+                format!("ram: оценка {estimate} байт не ниже факта {ram} байт"),
+            )?;
+        }
+        static_ram = Some((ram, estimate));
+
+        // Лицензии, источники, уязвимости: и хостовый workspace, и прошивка (у
+        // неё свой `Cargo.lock`, он появляется после `build`).
+        if host_due {
+            cargo(&["deny", "check"])?;
+            run.host_checked
+                .lock()
+                .expect("под мьютексом отпечатков не паникуют")
+                .insert(host_key, case.label());
+        }
+        cargo(&[
+            "deny",
+            "--manifest-path",
+            "crates-cross/Cargo.toml",
+            "check",
+        ])?;
+        // От проекта зависит: `--check` на нетронутом `bsp` обязан проходить —
+        // шаблон не занимает ни одного вывода, а выбранный интерфейс — свои.
+        cargo(&["xtask", "pins", "--check"])?;
     }
 
     if options.keep {
-        println!("проект оставлен: {}", project.display());
+        note(log, format!("проект оставлен: {}", project.display()))?;
     } else {
         fs::remove_dir_all(&project).with_context(|| format!("удалить {}", project.display()))?;
     }
     Ok(static_ram)
 }
 
+/// `resources.rs` — заглушка без групп: проект без интерфейса.
+fn is_placeholder_resources(resources: &str) -> bool {
+    resources.contains("BoardResources {}")
+}
+
+/// Что хостовый workspace (`xtask lint`, `test host`, `deny` корня) не читает —
+/// пути от корня проекта. Список исключений, а не включений: забытое здесь
+/// стоит лишь лишнего прогона, а забытое во включениях — пропущенной проверки.
+const NOT_HOST: &[&str] = &[
+    ".git",
+    ".github",
+    ".vscode",
+    ".claude",
+    "target",
+    "docs",
+    "crates-cross",
+    "crates-host/chip-info",
+];
+
+/// Отпечаток хостового workspace проекта: все файлы, кроме [`NOT_HOST`] и
+/// `.md`, с именем проекта и чип-фичей, заменёнными на одно и то же. Они стоят
+/// в строковых литералах и на исход проверок не влияют, а без замены
+/// отпечатки разных проектов не совпадали бы никогда.
+fn host_key(project: &Path, case: &Case) -> anyhow::Result<u64> {
+    let mut files = Vec::new();
+    visit_files(project, &mut |path| {
+        let relative = path
+            .strip_prefix(project)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        let skipped = relative.ends_with(".md")
+            || NOT_HOST.iter().any(|dir| {
+                relative
+                    .strip_prefix(dir)
+                    .is_some_and(|rest| rest.starts_with('/'))
+            });
+        if !skipped {
+            files.push(relative);
+        }
+        Ok(())
+    })?;
+    files.sort();
+
+    // Имя — раньше чипа: оно его содержит.
+    let name = case.name();
+    let aliases = [name.replace('-', "_"), name, case.chip.clone()];
+    let mut hasher = DefaultHasher::new();
+    for relative in files {
+        let bytes =
+            fs::read(project.join(&relative)).with_context(|| format!("прочитать {relative}"))?;
+        let text = aliases.iter().fold(
+            String::from_utf8_lossy(&bytes).to_lowercase(),
+            |text, alias| text.replace(alias.as_str(), "\u{0}"),
+        );
+        relative.hash(&mut hasher);
+        text.hash(&mut hasher);
+    }
+    Ok(hasher.finish())
+}
+
 /// Ищет `{{ }}`/`{% %}`, пережившие генерацию. Мимо линта и сборки такое
 /// проходит незамеченным везде, кроме `.rs`/`.toml`: `.json`, `.yml` и
 /// `memory.x` никто не компилирует, и сломанный `launch.json` обнаружился бы
 /// только у пользователя.
-fn check_no_raw_placeholders(project: &Path) -> anyhow::Result<()> {
+fn check_no_raw_placeholders(project: &Path, log: &File) -> anyhow::Result<()> {
     let mut found = Vec::new();
     visit_files(project, &mut |path| {
         let relative = path.strip_prefix(project).unwrap_or(path);
@@ -632,8 +1022,7 @@ fn check_no_raw_placeholders(project: &Path) -> anyhow::Result<()> {
             found.join("\n  "),
         );
     }
-    println!("плейсхолдеры: не осталось ни одного");
-    Ok(())
+    note(log, "плейсхолдеры: не осталось ни одного")
 }
 
 /// Что должно быть в сгенерированном проекте при каждом `ci` — и чего там быть
@@ -651,7 +1040,7 @@ fn check_no_raw_placeholders(project: &Path) -> anyhow::Result<()> {
 /// Отдельная строка про `template.yml`: он исключён поимённо, и это единственный
 /// файл, который в проекте не должен появляться никогда, — CI шаблона в
 /// сгенерированном проекте запускал бы `template-check` без `rust-lib`.
-fn check_ci_files(project: &Path, ci: &str) -> anyhow::Result<()> {
+fn check_ci_files(project: &Path, ci: &str, log: &File) -> anyhow::Result<()> {
     // (должен быть, не должен быть) относительно корня проекта.
     let (present, absent): (&[&str], &[&str]) = match ci {
         "github" => (
@@ -680,8 +1069,7 @@ fn check_ci_files(project: &Path, ci: &str) -> anyhow::Result<()> {
             bail!("при ci={ci} в проекте остался лишний {relative}");
         }
     }
-    println!("файлы CI при ci={ci}: как ожидалось");
-    Ok(())
+    note(log, format!("файлы CI при ci={ci}: как ожидалось"))
 }
 
 /// Вырезает выражения GitHub Actions (`${{ secrets.X }}`) — в сгенерированном
@@ -761,13 +1149,14 @@ fn parse_ram_estimate(generate_output: &str) -> Option<u64> {
     })
 }
 
-/// То же, что [`run`], но отдаёт stdout: нужно там, где проверяется не код
-/// возврата, а напечатанное. stderr успешной команды печатается сразу: прогресс
-/// и предупреждения cargo не теряются, как и у [`run`].
+/// То же, что [`run_command`], но отдаёт stdout: нужно там, где проверяется не
+/// код возврата, а напечатанное. stderr успешной команды уходит в лог:
+/// прогресс и предупреждения cargo не теряются, как и у [`run_command`].
 fn capture(
     command: &mut Command,
     current_dir: &Path,
     cargo_target_dir: Option<&Path>,
+    mut log: &File,
 ) -> anyhow::Result<String> {
     command.current_dir(current_dir);
     if let Some(target_dir) = cargo_target_dir {
@@ -785,7 +1174,7 @@ fn capture(
             String::from_utf8_lossy(&output.stderr),
         );
     }
-    eprint!("{}", String::from_utf8_lossy(&output.stderr));
+    log.write_all(&output.stderr).context("записать в лог")?;
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
@@ -811,12 +1200,23 @@ fn capture(
 /// Irqs`, и без модулей второй же блок дал бы конфликт имён. Линковки нет,
 /// поэтому одинаковые `#[unsafe(no_mangle)]`-обработчики у блоков, делящих
 /// вектор, друг другу не мешают: `clippy` только проверяет.
-fn check_snippets_compile(project: &Path, cargo_target_dir: &Path) -> anyhow::Result<()> {
+fn check_snippets_compile(
+    project: &Path,
+    cargo_target_dir: &Path,
+    log: &File,
+) -> anyhow::Result<()> {
     let listing = capture(
         Command::new("cargo").args(["xtask", "pins"]),
         project,
         Some(cargo_target_dir),
+        log,
     )?;
+    // `cargo xtask pins` выше собрал `chip-info`; дальше — он сам, без двух
+    // вложенных `cargo run` на каждый блок (их набиралось больше сотни на
+    // проект). Обёртку `xtask pins` проверяют [`CHIP_COMMANDS`].
+    let chip_info = cargo_target_dir
+        .join("debug")
+        .join(format!("chip-info{}", env::consts::EXE_SUFFIX));
     let blocks = blocks_with_pins(&listing);
     anyhow::ensure!(
         !blocks.is_empty(),
@@ -847,7 +1247,7 @@ fn check_snippets_compile(project: &Path, cargo_target_dir: &Path) -> anyhow::Re
     let bsp = project.join("crates-cross").join("bsp").join("src");
     let resources_path = bsp.join("resources.rs");
     let original_resources = fs::read_to_string(&resources_path)?;
-    let placeholder_only = original_resources.contains("BoardResources {}");
+    let placeholder_only = is_placeholder_resources(&original_resources);
 
     let mut resources = String::new();
     let mut module = String::from(
@@ -858,9 +1258,10 @@ fn check_snippets_compile(project: &Path, cargo_target_dir: &Path) -> anyhow::Re
     );
     for block in &blocks {
         let snippet = capture(
-            Command::new("cargo").args(["xtask", "pins", block, "--snippet"]),
+            Command::new(&chip_info).args([block.as_str(), "--snippet"]),
             project,
-            Some(cargo_target_dir),
+            None,
+            log,
         )?;
         let bind = part_of(&snippet, "bind_interrupts!");
         if !bind.is_empty() {
@@ -898,10 +1299,11 @@ fn check_snippets_compile(project: &Path, cargo_target_dir: &Path) -> anyhow::Re
     fs::write(&module_path, &module)?;
     fs::write(&lib_path, format!("{lib}\nmod snippet_check;\n"))?;
 
-    let checked = run(
+    let checked = run_command(
         Command::new("cargo").args(["clippy", "-p", "bsp", "--", "-D", "warnings"]),
         &project.join("crates-cross"),
         Some(cargo_target_dir),
+        log,
     );
 
     // Проект возвращается в исходное состояние в любом случае: следом за этой
@@ -931,8 +1333,10 @@ fn check_snippets_compile(project: &Path, cargo_target_dir: &Path) -> anyhow::Re
             module_path.display(),
         )
     })?;
-    println!("заготовки: {} блоков компилируются", blocks.len());
-    Ok(())
+    note(
+        log,
+        format!("заготовки: {} блоков компилируются", blocks.len()),
+    )
 }
 
 /// Имена блоков из шапки `cargo xtask pins` без аргументов.
@@ -1007,17 +1411,22 @@ fn indent(code: &str) -> String {
         .join("\n")
 }
 
-fn run(
+/// Запускает команду с выводом в лог конфигурации.
+fn run_command(
     command: &mut Command,
     current_dir: &Path,
     cargo_target_dir: Option<&Path>,
+    log: &File,
 ) -> anyhow::Result<()> {
     command.current_dir(current_dir);
     if let Some(target_dir) = cargo_target_dir {
-        // Общий каталог сборки на все чипы: то, что от чипа не зависит
-        // (domain и весь host-граф), собирается один раз на весь прогон.
+        // Общий каталог сборки полосы: то, что от чипа не зависит (domain и
+        // весь host-граф), собирается в ней один раз на прогон.
         command.env("CARGO_TARGET_DIR", target_dir);
     }
+    command
+        .stdout(log.try_clone().context("открыть лог для команды")?)
+        .stderr(log.try_clone().context("открыть лог для команды")?);
     let status = command
         .status()
         .with_context(|| format!("запустить {:?}", command.get_program()))?;
@@ -1033,12 +1442,30 @@ fn parse_args() -> anyhow::Result<Options> {
     let mut defines: Vec<String> = Vec::new();
     let mut quick = false;
     let mut keep = false;
+    let mut smoke = false;
+    let mut only: Vec<String> = Vec::new();
+    let mut jobs = DEFAULT_JOBS;
 
     let mut args = env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--quick" => quick = true,
             "--keep" => keep = true,
+            "--smoke" => smoke = true,
+            "--only" => only.extend(
+                args.next()
+                    .context("--only требует значения (подстроки меток через запятую)")?
+                    .split(',')
+                    .filter(|part| !part.is_empty())
+                    .map(str::to_owned),
+            ),
+            "--jobs" => {
+                jobs = args
+                    .next()
+                    .context("--jobs требует числа")?
+                    .parse()
+                    .context("--jobs требует числа")?;
+            }
             "--ci" => {
                 ci = args
                     .next()
@@ -1052,8 +1479,11 @@ fn parse_args() -> anyhow::Result<Options> {
             }
             "-h" | "--help" => {
                 println!(
-                    "USAGE: template-check [--quick] [--keep] [--ci github|gitlab|none] \
-                     [--define k=v ...] [chip_feature ...]\n\n\
+                    "USAGE: template-check [--quick] [--smoke] [--only a,b] [--jobs N] [--keep] \
+                     [--ci github|gitlab|none] [--define k=v ...] [chip_feature ...]\n\n\
+                     --smoke — малый набор, --only — конфигурации, в метке которых есть одна \
+                     из подстрок (вместе — пересечение), --jobs — сколько одновременно \
+                     (по умолчанию {DEFAULT_JOBS}).\n\n\
                      Без чипов проверяются: {}",
                     default_cases()
                         .iter()
@@ -1069,7 +1499,24 @@ fn parse_args() -> anyhow::Result<Options> {
     }
 
     if cases.is_empty() {
-        cases = default_cases();
+        cases = default_cases()
+            .into_iter()
+            .filter(|case| !smoke || case.smoke)
+            .filter(|case| {
+                let label = case.label();
+                only.is_empty() || only.iter().any(|part| label.contains(part.as_str()))
+            })
+            .collect();
+        anyhow::ensure!(
+            !cases.is_empty(),
+            "под --smoke/--only {} не подошла ни одна конфигурация (`--help` — список меток)",
+            only.join(","),
+        );
+    } else {
+        anyhow::ensure!(
+            !smoke && only.is_empty(),
+            "--smoke и --only выбирают из набора по умолчанию, а не из перечисленных чипов",
+        );
     }
     Ok(Options {
         cases,
@@ -1077,6 +1524,7 @@ fn parse_args() -> anyhow::Result<Options> {
         defines,
         quick,
         keep,
+        jobs,
     })
 }
 
@@ -1146,7 +1594,37 @@ fn copy_dir(from: &Path, to: &Path) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_ram_estimate, parse_static_ram, without_actions_expressions};
+    use super::{
+        Case, ChipChecks, lanes, parse_ram_estimate, parse_static_ram, without_actions_expressions,
+    };
+
+    /// Чип целиком в одной полосе, крупные группы разнесены по разным.
+    #[test]
+    fn lanes_keep_a_chip_together_and_balance_by_size() {
+        let cases: Vec<Case> = ["a", "b", "a", "c", "a", "b"]
+            .into_iter()
+            .map(Case::new)
+            .collect();
+
+        assert_eq!(lanes(&cases, 2), vec![vec![0, 2, 4], vec![1, 5, 3]]);
+        assert_eq!(lanes(&cases, 10).len(), 3, "полос не больше, чем чипов");
+        assert_eq!(lanes(&cases, 0).len(), 1);
+    }
+
+    /// Проект без интерфейса проверяет чип ещё раз (ради `assign_resources!`),
+    /// дальше — никто.
+    #[test]
+    fn chip_checks_rerun_once_for_the_resources_half() {
+        let mut checks = ChipChecks::default();
+
+        assert!(checks.due("x", false));
+        assert!(!checks.due("x", false));
+        assert!(checks.due("x", true));
+        assert!(!checks.due("x", true));
+        assert!(!checks.due("x", false));
+        assert!(checks.due("y", true));
+        assert!(!checks.due("y", false));
+    }
 
     /// Строку печатает `crates-host/xtask/src/size.rs` (`ram_line`).
     #[test]
