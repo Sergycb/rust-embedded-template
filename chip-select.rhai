@@ -849,20 +849,14 @@ const RAM_COST = #{
     // Стек `embassy-net` и драйвер Ethernet — один раз на tcp/udp: stm32f407ve
     // modbus-tcp-udp 14296 — на 960 меньше, чем TCP и UDP по отдельности.
     net_stack: 960,
-<<<<<<< HEAD
     // Сетевые службы (`NET_SERVICE_ITEMS`), с графом. REST — stm32h743zg
     // rest-modbus-tcp 31028 при оценке без REST 9680 (буферы двух соединений,
     // сокеты, futures `picoserve`); SSH — stm32h743zg ssh-password-config 20100
-    // против tcp config=internal 3380 (буферы, ключи, futures `sunset`) — 16720,
+    // против tcp config=internal 3380 (буферы, ключи, futures `sunset`, статик RNG
+    // для `getrandom`) — 16720,
     // но stm32h743zg rest-ssh-key-no-graph (ota=external) 41904 на 300 больше
     // суммы частей: SSH взят с этим запасом.
     services: #{ ssh: 17020, rest: 21348 },
-=======
-    // Сетевые службы (`NET_SERVICE_ITEMS`). ssh — статик RNG для `getrandom`
-    // (узла ещё нет): stm32h743zg links=tcp:modbus 9572 против 9540 без службы.
-    // У rest узла и статиков нет — 0; появятся — замерить так же.
-    services: #{ ssh: 32, rest: 0 },
->>>>>>> feat/multi-transport
 };
 // Сверх статической RAM — под стек: он в `.data`/`.bss` не входит (flip-link
 // кладёт его под ними). Не замерен — без платы глубину стека не снять, — а
