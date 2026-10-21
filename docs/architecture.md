@@ -127,6 +127,13 @@ Bound'ов у параметров нет намеренно: их держит 
 два). Это то же допущение «один исполнитель», что у `NoopRawMutex` в
 `bsp::flash::FlashMutex` — менять их вместе (`docs/flash.md`).
 
+**Большой объект — слот `&'static mut T = static`, а не по значению.** Слот по
+значению дважды проходит через стек (пролог `spawn_all` и первый опрос задачи)
+и живёт дважды (в слоте и в future задачи), а стек под `flip-link` — остаток
+RAM. От килобайта и выше фрагмент пишет `resources: [X: &'static mut T = static]`:
+статик в `.bss` заводит граф, `T` реализует `supervisor::Zeroed` —
+`docs/modules/app-graph.md`.
+
 Цена решения «узлы — в `domain`» записана явно: `domain` зависит от `supervisor` ради двух типов в
 сигнатуре (`Heartbeat`, `TaskExit`), а вместе с ним транзитивно от `embassy-executor`,
 `embassy-time` и `embassy-sync`. Прежнее правило «в `domain` нет embassy» отменено

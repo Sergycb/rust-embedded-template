@@ -238,14 +238,22 @@ resources: [WS: &'static mut $crate::x::Workspace = static],
 resources: [WS: &'static mut $crate::x::Workspace = static |w| w.gain = inputs.gain],
 ```
 
-Статик — `ZeroedCell<T>` из `supervisor`, нули, то есть `.bss` без образа во
-флеше; `T` на стеке не строится ни разу. Цена: `T: supervisor::Zeroed`
+Статик — `cloned_cell::ZeroedCell<T>` (его заводит граф внутри `spawn_all`,
+своей зависимости не нужно), нули, то есть `.bss` без образа во флеше; `T` на
+стеке не строится ни разу. Цена: `T: supervisor::Zeroed`
 (`unsafe impl supervisor::Zeroed for Workspace {}` под `// SAFETY:` с полями;
-целые, `bool`, массивы из них уже реализуют), слот без пометок — не
-`consume`, не `shared`, не `local`. Свой `StaticCell` в `app` для этого не
-нужен: `StaticCell::init_with(|| T::new(..))` не обещает строить на месте, а
-`ConstStaticCell` с ненулевым `T` уводит статик в `.data` — во флеш.
-Подробности — `supervisor-macros/docs/dsl.md`, «A large object: `= static`».
+целые, `bool`, `()`, массивы из них и `Option<&T>` уже реализуют), слот без
+пометок — не `consume`, не `shared`, не `local`. Ссылка выдаётся один раз:
+второй `spawn_all` вернёт `GraphSpawnErrorKind::BaseClaimed`, а
+`respawn_all` объект не обнуляет — узел получает его с тем, что записал.
+
+Слот по значению стоит ещё и флеша: его образ — `None` у `Option<T>`, а при
+нише в `T` (один `bool` или enum без полей внутри) это не нули, и статик
+целиком уходит в `.data` — размером `T` во флеше сверх RAM. Свой `StaticCell`
+в `app` вместо `= static` не нужен: `StaticCell::init_with(|| T::new(..))` не
+обещает строить на месте, а `ConstStaticCell` с ненулевым `T` уводит статик в
+ту же `.data`. Подробности — `supervisor-macros/docs/dsl.md`, «A large object:
+`= static`» и «What those statics cost in flash».
 
 # `watchdog` — мультиплексор задач в один аппаратный watchdog
 
