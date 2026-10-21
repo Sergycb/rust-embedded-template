@@ -35,8 +35,35 @@ Ethernet — заменить устройство: стек, сокеты и г
    use embassy_stm32::peripherals::{ETH, ETH_SMA};
 
    pub type Device = Ethernet<'static, ETH, GenericPhy<Sma<'static, ETH_SMA>>>;
+{% if cache contains "scb_d" %}
+   // Рядом, статиком модуля: очередь кадров (дескрипторы и буферы, ~12 KiB) —
+   // память DMA блока, поэтому в некэшируемом регионе, а не в обычном `static`.
+   #[unsafe(link_section = ".dma_nc")]
+   static mut QUEUE: MaybeUninit<PacketQueue<4, 4>> = MaybeUninit::uninit();
 
-   // Рядом, статиком модуля: очередь кадров — память блока, а не стека.
+   // В `new`, вместо `Device::new(mac_from_uid(uid))`:
+   // SAFETY: `new` зовётся один раз, из `Board::new`; других ссылок на `QUEUE` нет.
+   let queue = unsafe { &mut *(&raw mut QUEUE) };
+   PacketQueue::init(queue);
+   // SAFETY: `init` обнулил очередь — по документации `PacketQueue::init` это
+   // допустимое значение.
+   let queue = unsafe { queue.assume_init_mut() };
+   Ethernet::new(
+       queue, r.eth, Irqs,
+       r.ref_clk, r.crs, r.rx_d0, r.rx_d1, r.tx_d0, r.tx_d1, r.tx_en,
+       mac_from_uid(uid), r.sma, r.mdio, r.mdc,
+   )
+   ```
+
+   Очередь — не `ConstStaticCell`: секция `.dma_nc` — `NOLOAD`, и флаг «уже
+   взят» внутри ячейки при старте был бы мусором. Обычный `static` здесь
+   ломается молча: дескрипторы и кадры, которые пишет DMA, ядро читает из кэша
+   данных устаревшими (`docs/clocks.md`, «Кэш данных ядра M7 и DMA»). Оба
+   `unsafe` — новые места: впишите их в список в комментарии к `unsafe_code` в
+   `crates-cross/Cargo.toml`, каждое — под `#[expect(unsafe_code, reason = …)]`.
+{% else %}
+   // Рядом, статиком модуля: очередь кадров (дескрипторы и буферы, ~12 KiB) —
+   // память блока, а не стека.
    static QUEUE: ConstStaticCell<PacketQueue<4, 4>> = ConstStaticCell::new(PacketQueue::new());
 
    // В `new`, вместо `Device::new(mac_from_uid(uid))`:
@@ -46,6 +73,12 @@ Ethernet — заменить устройство: стек, сокеты и г
        mac_from_uid(uid), r.sma, r.mdio, r.mdc,
    )
    ```
+{% endif %}
+   Адрес PHY на шине MDIO задавать не нужно: `Ethernet::new` строит
+   `GenericPhy::new_auto` и при старте перебирает адреса 0–31 (не ответил ни
+   один — паника «PHY did not respond»). Нестандартный PHY или фиксированный
+   адрес — `Ethernet::new_with_phy` с `GenericPhy::new(Sma::new(r.sma, r.mdio, r.mdc), адрес)`.
+   Выравнивание очереди задаёт сам тип (`#[repr(align(8))]` у буферов).
 
    Точные аргументы зависят от версии блока Ethernet чипа (v1 у F4/F7, v2 у
    H5/H7) — сверяйте с `embassy-stm32` 0.6 (`src/eth/v1`, `src/eth/v2`).
@@ -54,6 +87,19 @@ Ethernet — заменить устройство: стек, сокеты и г
 
 3. В графе — тип устройства во фрагменте `NET`: он уже назван через
    `bsp::net::Device`, менять ничего не нужно.
+
+4. В `target-tests` — не ронять драйвер. `#[init]` там берёт `Board::new().0`
+   и выбрасывает `Drivers`, а с ними и `Ethernet`. `Drop` у него в блоке v2
+   (H5/H7) ждёт, пока опустеет очередь приёма MTL (`embassy-stm32` 0.6,
+   `src/eth/v2/mod.rs`, `impl Drop`), а без стека над устройством кадры после
+   подъёма линка никто не забирает, и тест висит до таймаута. Отдайте драйверы
+   без деструктора — МК сбрасывается перед каждым тестом, утечки нет:
+
+   ```rust,ignore
+   let (board, drivers) = Board::new();
+   core::mem::forget(drivers);
+   board
+   ```
 
 ## Адрес, MAC и порты
 
