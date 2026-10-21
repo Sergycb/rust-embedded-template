@@ -311,6 +311,49 @@ fn ask(label, values, texts, default_value) {
     default_value
 }
 
+/// Список с отметками: отмеченные `values` в порядке пунктов. В хуках
+/// `cargo-generate` есть только одиночный выбор, поэтому отметка `[x] `/`[ ] `
+/// нарисована в тексте пункта (`value — text`), а меню после каждого выбора
+/// показывается заново; `готово` (оно же умолчание и ответ без терминала)
+/// закрывает список.
+fn checklist(label, values, texts) {
+    let marked = values.map(|value| false);
+    loop {
+        let shown_values = ["готово"];
+        let shown_texts = ["готово"];
+        for i in 0..values.len() {
+            shown_values.push(values[i]);
+            shown_texts.push((if marked[i] { "[x] " } else { "[ ] " }) + values[i] + " — " + texts[i]);
+        }
+        let pick = ask(label, shown_values, shown_texts, "готово");
+        if pick == "готово" { break; }
+        for i in 0..values.len() {
+            if values[i] == pick { marked[i] = !marked[i]; }
+        }
+    }
+    let out = [];
+    for i in 0..values.len() {
+        if marked[i] { out.push(values[i]); }
+    }
+    out
+}
+
+/// Строка открытого ключа ed25519 из `~/.ssh/id_ed25519.pub`: `ssh-ed25519`,
+/// блоб — 51 байт, то есть ровно 68 символов base64 без `=`, — и
+/// необязательный комментарий. Кавычек, `\` и переводов строк нет: строка
+/// уезжает в исходники шаблона.
+fn ssh_key_ok(key, blob_prefix, base64_chars) {
+    if key.contains("\"") || key.contains("\\") || key.contains("\n") || key.contains("\r") { return false; }
+    let parts = key.split(" ");
+    if parts.len() < 2 || parts[0] != "ssh-ed25519" { return false; }
+    let blob = parts[1];
+    if blob.len() != 68 || !blob.starts_with(blob_prefix) { return false; }
+    for c in blob.chars() {
+        if !base64_chars.contains(c) { return false; }
+    }
+    true
+}
+
 /// Свободные блоки вида `kind`: `#{ tag, block }` по меткам `tags` вида, какие
 /// есть у чипа в `have` (в порядке `have`, внутри метки — в порядке `instances`),
 /// без блоков, уже отданных транспортам `links` этого вида. `tcp` и `udp` делят
@@ -659,6 +702,17 @@ const TRANSPORT_ITEMS = [
     #{ value: "ethernet", kind: "tcp", text: "Ethernet (сеть)" },
     #{ value: "usb", kind: "usb", text: "USB CDC ACM (виртуальный COM-порт)" },
 ];
+// Сетевые службы поверх стека (`net_services`): не транспорты с протоколом, а
+// узлы на своих сокетах общего стека — спрашиваются, только когда отмечен
+// Ethernet. SSH — криптография, поэтому только у чипа с RNG.
+const NET_SERVICE_ITEMS = [
+    #{ value: "ssh", text: "консоль SSH (sunset)", needs_rng: true },
+    #{ value: "rest", text: "REST API по HTTP (picoserve)", needs_rng: false },
+];
+// Начало base64-блоба открытого ключа ed25519 (`ssh_key`): длина и имя типа,
+// затем длина ключа (32). Других ключей `sunset` без фич не проверяет.
+const SSH_KEY_BLOB_PREFIX = "AAAAC3NzaC1lZDI1NTE5AAAAI";
+const BASE64_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 const PROTOCOL_TEXT = #{
     "modbus": "modbus — Modbus slave",
     "protobuf": "protobuf — сообщения protobuf от хоста",
@@ -1116,30 +1170,14 @@ if WANTED_LINKS.len() > 0 {
         }
         throw "protocol: протокол " + wanted_protocol + " нужен транспорт — задайте interface (" + listed(usable) + ")";
     } else {
-        // Список с отметками. В хуках `cargo-generate` есть только одиночный
-        // выбор, поэтому отметка нарисована в тексте пункта, а меню после
-        // каждого выбора показывается заново; `готово` (оно же умолчание и ответ
-        // без терминала) закрывает список. Пункт — вид, у которого есть блок;
+        // Список с отметками (`checklist()`). Пункт — вид, у которого есть блок;
         // имени блока в пункте нет: транспорт получает первый блок вида, а
         // сменить блок — дело `resources.rs`.
         let items = TRANSPORT_ITEMS.filter(|item| free_blocks(item.kind, INTERFACE_BLOCKS[item.kind], [], have, instances).len() > 0);
-        let marked = items.map(|item| false);
-        loop {
-            let values = ["готово"];
-            let texts = ["готово"];
-            for i in 0..items.len() {
-                values.push(items[i].value);
-                texts.push((if marked[i] { "[x] " } else { "[ ] " }) + items[i].value + " — " + items[i].text);
-            }
-            let pick = ask("transports: отметьте транспорты (Enter — отметить или снять)", values, texts, "готово");
-            if pick == "готово" { break; }
-            for i in 0..items.len() {
-                if items[i].value == pick { marked[i] = !marked[i]; }
-            }
-        }
-        for i in 0..items.len() {
-            if !marked[i] { continue; }
-            let item = items[i];
+        let marked = checklist("transports: отметьте транспорты (Enter — отметить или снять)",
+            items.map(|item| item.value), items.map(|item| item.text));
+        for item in items {
+            if !marked.contains(item.value) { continue; }
             let name = if item.value == item.kind { item.kind } else { item.value + " (" + item.kind.to_upper() + ")" };
             wanted.push(#{ kind: item.kind, name: name });
         }
@@ -1186,6 +1224,90 @@ if protocol != "modbus" && variable::is_set("modbus_master") {
         throw "modbus_master: master есть только у протокола modbus, а выбран " + protocol;
     }
 }
+
+// --- Сетевые службы (`net_services`, `NET_SERVICE_ITEMS`): список с отметками,
+// когда среди транспортов есть Ethernet; `--define net_services=ssh,rest` —
+// строго, как `links`. Затем у SSH — способ входа (`ssh_auth`) и при входе по
+// ключу — открытый ключ (`ssh_key`).
+let has_eth = links.some(|link| link.kind == "tcp" || link.kind == "udp");
+let services = [];
+let service_items = NET_SERVICE_ITEMS.filter(|item| !item.needs_rng || rng[0] != "");
+if variable::is_set("net_services") {
+    for name in variable::get("net_services").split(",") {
+        name.trim();
+        if name == "" { continue; }
+        let known = NET_SERVICE_ITEMS.filter(|item| item.value == name);
+        if known.len() == 0 {
+            throw "net_services: ожидается " + listed(NET_SERVICE_ITEMS.map(|item| item.value)) + ", а не «" + name + "»";
+        }
+        if !has_eth {
+            throw "net_services: служба " + name + " работает поверх Ethernet — добавьте транспорт tcp или udp";
+        }
+        if known[0].needs_rng && rng[0] == "" {
+            throw "net_services: у " + chip_name + " нет RNG, а " + name + " без случайных чисел небезопасен";
+        }
+        if !services.contains(name) { services.push(name); }
+    }
+} else if has_eth {
+    if service_items.len() < NET_SERVICE_ITEMS.len() {
+        print("SSH не предлагается: у " + chip_name + " нет RNG, а криптографии SSH нужны случайные числа");
+    }
+    services = checklist("net_services: отметьте сетевые службы (Enter — отметить или снять)",
+        service_items.map(|item| item.value), service_items.map(|item| item.text));
+}
+let ssh_auth = "";
+let ssh_key = "";
+if services.contains("ssh") {
+    ssh_auth = if variable::is_set("ssh_auth") {
+        variable::get("ssh_auth")
+    } else {
+        // Умолчание (и ответ без терминала) — пароль: вход по ключу без
+        // терминала было бы нечем закончить, а вопрос, который некому задать,
+        // генерацию не роняет.
+        ask("ssh_auth: вход в консоль SSH", ["password", "key"],
+            ["password — по паролю", "key — по открытому ключу ed25519"], "password")
+    };
+    if ssh_auth != "key" && ssh_auth != "password" {
+        throw "ssh_auth: ожидается key или password, а не «" + ssh_auth + "»";
+    }
+    if ssh_auth == "key" {
+        // Пустой ввод — передумали: вход по паролю. Без терминала ввода нет
+        // вовсе, и `ssh_auth=key` из `--define` без ключа — ошибка ниже.
+        let declined = false;
+        if variable::is_set("ssh_key") {
+            ssh_key = variable::get("ssh_key");
+        } else {
+            try {
+                ssh_key = variable::prompt("ssh_key: открытый ключ — строка ssh-ed25519 AAAA… из ~/.ssh/id_ed25519.pub (пусто — вход по паролю)",
+                    "", "^$|^ssh-ed25519 " + SSH_KEY_BLOB_PREFIX + "[A-Za-z0-9+/]{43}( .*)?$");
+                ssh_key.trim();
+                declined = ssh_key == "";
+            } catch (err) {
+                if !err.to_string().contains("not a terminal") { throw err; }
+            }
+        }
+        ssh_key.trim();
+        if declined {
+            ssh_auth = "password";
+            print("Ключ не введён — вход в консоль SSH по паролю");
+        } else if !ssh_key_ok(ssh_key, SSH_KEY_BLOB_PREFIX, BASE64_CHARS) {
+            throw "ssh_key: вход по ключу — нужна строка открытого ключа ed25519 («ssh-ed25519 "
+                + SSH_KEY_BLOB_PREFIX + "…», без кавычек); задайте --define ssh_key=\"…\" или ssh_auth=password";
+        }
+    }
+}
+for name in ["ssh_auth", "ssh_key"] {
+    if !services.contains("ssh") && variable::is_set(name) {
+        throw name + ": задаётся только вместе со службой ssh (net_services)";
+    }
+}
+if ssh_auth == "password" && variable::is_set("ssh_key") {
+    throw "ssh_key: ключ нужен только при ssh_auth=key";
+}
+variable::set("net_services", services.reduce(|sum, name| if sum == "" { name } else { sum + "," + name }, ""));
+variable::set("ssh_auth", ssh_auth);
+variable::set("ssh_key", ssh_key);
+
 // Основной транспорт — первый с протоколом, а без протокола — первый. От него
 // считаются прежние скаляры `interface`, `protocol`, `iface_periph`, `can_kind`,
 // `usb_kind`. Исходники шаблона и сводка `post-script.rhai` на них уже не

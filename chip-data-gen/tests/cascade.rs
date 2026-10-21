@@ -219,6 +219,27 @@ fn run_interview(
         );
     }
     {
+        // Ввод строки по regex (`ssh_key:`): ответ — значение из `picks` как
+        // есть, без него — «not a terminal». Regex не проверяется: его держит
+        // cargo-generate, а хук проверяет ответ сам.
+        let picks = picks.clone();
+        let prompts = prompts.clone();
+        module.set_native_fn(
+            "prompt",
+            move |text: &str,
+                  _default: &str,
+                  _regex: &str|
+                  -> Result<Dynamic, Box<EvalAltResult>> {
+                prompts.borrow_mut().push((text.to_string(), Vec::new()));
+                let id = text.split(':').next().unwrap_or_default();
+                match picks.iter().find(|(pick_id, _)| pick_id == id) {
+                    Some((_, value)) => Ok(Dynamic::from(value.clone())),
+                    None => Err("IO error: not a terminal".into()),
+                }
+            },
+        );
+    }
+    {
         let target = target_suffix.to_string();
         let prompts = prompts.clone();
         // Сколько ответов каждого id уже израсходовано.
@@ -2151,6 +2172,250 @@ fn ethernet_item_becomes_tcp() {
     );
 }
 
+/// Ключ ed25519 для ответов `ssh_key`.
+const SSH_KEY: &str =
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl user@host";
+
+/// Сетевые службы — тем же списком с отметками, что и транспорты, и только
+/// при Ethernet; у SSH затем — способ входа и ключ.
+#[test]
+fn net_services_are_marked_after_ethernet() {
+    let result = interview(
+        &compile_script(),
+        "f407ve",
+        &[],
+        &[
+            ("transports", "ethernet"),
+            ("transports", "готово"),
+            ("net_services", "rest"),
+            ("net_services", "ssh"),
+            ("net_services", "готово"),
+            ("ssh_auth", "key"),
+            ("ssh_key", SSH_KEY),
+        ],
+    )
+    .expect("каскад не должен падать");
+    let menus = all_menu_values(&result, "net_services");
+    assert_eq!(menus.len(), 3, "{menus:?}");
+    assert_eq!(menus[0], ["готово", "ssh", "rest"]);
+    // Порядок — пунктов меню, а не отметок.
+    assert_eq!(var_of(&result, "net_services"), Some("ssh,rest"));
+    assert_eq!(var_of(&result, "ssh_auth"), Some("key"));
+    assert_eq!(var_of(&result, "ssh_key"), Some(SSH_KEY));
+}
+
+/// Без Ethernet служб не предлагают, переменные пустые.
+#[test]
+fn no_net_services_without_ethernet() {
+    let result = interview(
+        &compile_script(),
+        "f407ve",
+        &[],
+        &[("transports", "uart"), ("transports", "готово")],
+    )
+    .expect("каскад не должен падать");
+    assert!(all_menu_values(&result, "net_services").is_empty());
+    assert_eq!(var_of(&result, "net_services"), Some(""));
+    assert_eq!(var_of(&result, "ssh_auth"), Some(""));
+    assert_eq!(var_of(&result, "ssh_key"), Some(""));
+}
+
+/// Без RNG SSH в списке нет, и хук говорит почему.
+#[test]
+fn ssh_is_not_offered_without_rng() {
+    let result = interview(
+        &compile_script(),
+        "f107vc",
+        &[],
+        &[("transports", "ethernet"), ("transports", "готово")],
+    )
+    .expect("каскад не должен падать");
+    assert_eq!(
+        all_menu_values(&result, "net_services"),
+        [["готово", "rest"]]
+    );
+    assert!(
+        result
+            .prints
+            .iter()
+            .any(|line| line.starts_with("SSH не предлагается")),
+        "{:?}",
+        result.prints
+    );
+}
+
+/// Без терминала — без служб, о входе не спрашивают.
+#[test]
+fn no_terminal_gives_no_net_services() {
+    let result = interview(
+        &compile_script(),
+        "f407ve",
+        &[],
+        &[("transports", "ethernet"), ("transports", "готово")],
+    )
+    .expect("каскад не должен падать");
+    assert_eq!(all_menu_values(&result, "net_services").len(), 1);
+    assert_eq!(var_of(&result, "net_services"), Some(""));
+    assert!(all_menu_values(&result, "ssh_auth").is_empty());
+}
+
+/// Вход по паролю — ключ не спрашивают.
+#[test]
+fn password_login_asks_no_key() {
+    let result = interview(
+        &compile_script(),
+        "f407ve",
+        &[("links", "tcp"), ("net_services", "ssh")],
+        &[("ssh_auth", "password")],
+    )
+    .expect("каскад не должен падать");
+    assert_eq!(var_of(&result, "ssh_auth"), Some("password"));
+    assert_eq!(var_of(&result, "ssh_key"), Some(""));
+    assert!(
+        !result
+            .prompts
+            .iter()
+            .any(|(label, _)| label.starts_with("ssh_key:"))
+    );
+}
+
+/// Выбрали вход по ключу, а ключа под рукой нет: пустой ввод — вход по паролю.
+#[test]
+fn an_empty_key_falls_back_to_password() {
+    let result = interview(
+        &compile_script(),
+        "f407ve",
+        &[("links", "tcp"), ("net_services", "ssh")],
+        &[("ssh_auth", "key"), ("ssh_key", "")],
+    )
+    .expect("каскад не должен падать");
+    assert_eq!(var_of(&result, "ssh_auth"), Some("password"));
+    assert_eq!(var_of(&result, "ssh_key"), Some(""));
+}
+
+/// `--define` строгий: всё, что службы сделать не могут, — ошибка с причиной.
+#[test]
+fn net_services_defines_are_strict() {
+    let ast = compile_script();
+    for (suffix, defines, expected) in [
+        (
+            "f407ve",
+            &[("links", "tcp"), ("net_services", "telnet")][..],
+            "net_services: ожидается",
+        ),
+        (
+            "f407ve",
+            &[("links", "uart"), ("net_services", "rest")][..],
+            "работает поверх Ethernet",
+        ),
+        (
+            "f107vc",
+            &[("links", "tcp"), ("net_services", "ssh")][..],
+            "нет RNG",
+        ),
+        // Вход по ключу без ключа (без терминала) и с ключом не ed25519.
+        (
+            "f407ve",
+            &[
+                ("links", "tcp"),
+                ("net_services", "ssh"),
+                ("ssh_auth", "key"),
+            ][..],
+            "ssh_key: вход по ключу",
+        ),
+        (
+            "f407ve",
+            &[
+                ("links", "tcp"),
+                ("net_services", "ssh"),
+                ("ssh_auth", "key"),
+                ("ssh_key", "ssh-rsa AAAA"),
+            ][..],
+            "ssh_key: вход по ключу",
+        ),
+        // Одно начало без тела ключа и кавычка, которая сломала бы литерал.
+        (
+            "f407ve",
+            &[
+                ("links", "tcp"),
+                ("net_services", "ssh"),
+                ("ssh_auth", "key"),
+                ("ssh_key", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5"),
+            ][..],
+            "ssh_key: вход по ключу",
+        ),
+        (
+            "f407ve",
+            &[
+                ("links", "tcp"),
+                ("net_services", "ssh"),
+                ("ssh_auth", "key"),
+                (
+                    "ssh_key",
+                    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl a\"b",
+                ),
+            ][..],
+            "ssh_key: вход по ключу",
+        ),
+        (
+            "f407ve",
+            &[
+                ("links", "tcp"),
+                ("net_services", "ssh"),
+                ("ssh_auth", "otp"),
+            ][..],
+            "ssh_auth: ожидается",
+        ),
+        (
+            "f407ve",
+            &[
+                ("links", "tcp"),
+                ("net_services", "rest"),
+                ("ssh_auth", "key"),
+            ][..],
+            "ssh_auth: задаётся только",
+        ),
+        (
+            "f407ve",
+            &[
+                ("links", "tcp"),
+                ("net_services", "ssh"),
+                ("ssh_auth", "password"),
+                ("ssh_key", SSH_KEY),
+            ][..],
+            "ssh_key: ключ нужен только",
+        ),
+    ] {
+        let Err(err) = interview(&ast, suffix, defines, &[]) else {
+            panic!("{defines:?} должен падать");
+        };
+        assert!(err.to_string().contains(expected), "{defines:?}: {err}");
+    }
+    let ok = interview(
+        &ast,
+        "f407ve",
+        &[
+            ("links", "tcp"),
+            ("net_services", "rest, ssh"),
+            ("ssh_auth", "key"),
+            ("ssh_key", SSH_KEY),
+        ],
+        &[],
+    )
+    .expect("каскад не должен падать");
+    assert_eq!(var_of(&ok, "net_services"), Some("rest,ssh"));
+    assert_eq!(var_of(&ok, "ssh_key"), Some(SSH_KEY));
+    // Без терминала вход — по паролю.
+    let silent = interview(
+        &ast,
+        "f407ve",
+        &[("links", "tcp"), ("net_services", "ssh")],
+        &[],
+    )
+    .expect("каскад не должен падать");
+    assert_eq!(var_of(&silent, "ssh_auth"), Some("password"));
+}
+
 /// Протоколу граф не нужен: без него узел спавнит `tasks::spawn_all`, и ни ответ `graph=no`,
 /// ни размер раздела (здесь — 16 KiB у `l011f4`) генерацию не останавливают. Готовый
 /// транспорт `app/src/link.rs` остаётся, пока выбран Modbus или protobuf.
@@ -3164,7 +3429,10 @@ fn every_path_through_the_menus_generates() {
     let mut paths = 0;
     let mut failures = Vec::new();
     for chip in chips {
-        let mut stack: Vec<Vec<(String, String)>> = vec![Vec::new()];
+        // Ввод строки (`ssh_key:`) — не меню, перебирать в нём нечего: ответ
+        // готов заранее и расходуется, только если вопрос задан.
+        let mut stack: Vec<Vec<(String, String)>> =
+            vec![vec![("ssh_key".to_string(), SSH_KEY.to_string())]];
         while let Some(picks) = stack.pop() {
             let refs: Vec<(&str, &str)> = picks
                 .iter()
