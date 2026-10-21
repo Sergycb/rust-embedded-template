@@ -14,17 +14,17 @@ pub mod ota;
 /// подмодуль — см. модуль.
 pub mod cpu_load;
 
-// {%- if protocol == "canopen" %}
+// {%- if has_canopen == "true" %}
 /// Узел `CANOPEN`: узел CANopen на шине CAN — стек `zencan` — см. модуль.
 pub mod canopen;
 // {%- endif %}
-// {%- if protocol == "protobuf" %}
+// {%- if has_protobuf == "true" %}
 
 /// Узел `HOST`: сообщения protobuf от хоста по кадровому каналу — разбор,
 /// обработчик приложения, ответ — см. модуль.
 pub mod host;
 // {%- endif %}
-// {%- if protocol == "modbus" %}
+// {%- if has_modbus == "true" %}
 
 /// Modbus: slave над портом `ports::Registers` поверх транспорта
 /// `ports::ModbusServer` — см. модуль.
@@ -34,12 +34,12 @@ pub mod host;
 pub mod modbus;
 // {%- endif %}
 
-// {%- if interface == "tcp" or interface == "udp" %}
+// {%- if has_net == "true" %}
 /// Узел `NET`: ведёт сетевой стек `embassy-net` — см. модуль.
 pub mod net;
 // {%- endif %}
 
-// {%- if interface == "usb" %}
+// {%- if has_usb == "true" %}
 /// Узел `USB`: ведёт USB-устройство `embassy-usb` — см. модуль.
 pub mod usb;
 // {%- endif %}

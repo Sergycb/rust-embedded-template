@@ -56,12 +56,12 @@
 //! касается (`docs/conventions.md`, «`lib.rs` только объявляет модули»).
 // {%- endif %}
 
-// {%- if interface == "can" %}
+// {%- if has_can == "true" %}
 /// Шина CAN: кадры для узла CANopen или вашего протокола.
 pub mod can;
 
 // {%- endif %}
-// {%- if protocol == "protobuf" %}
+// {%- if has_protobuf == "true" %}
 /// Обработчик сообщений хоста: сообщения схемы → типы приложения.
 pub mod host;
 
@@ -72,13 +72,13 @@ pub mod host;
 pub mod link;
 
 // {%- endif %}
-// {%- if protocol == "modbus" %}
+// {%- if has_modbus == "true" %}
 /// Modbus: данные slave'а, представления битов и регистров кадра, транспорты,
 /// ошибки обмена.
 pub mod modbus;
 
 // {%- endif %}
-// {%- if ota == "true" or protocol == "canopen" %}
+// {%- if ota == "true" or has_canopen == "true" %}
 /// Слово записи флеша — общий предел буферов OTA и хранилища CANopen.
 mod word;
 
@@ -98,17 +98,22 @@ pub mod ota;
 /// Хранилище настроек.
 pub mod settings;
 // {%- endif %}
+// {%- if config_store == "eeprom" %}
 
-// {%- if interface == "can" %}
+/// Доступ к внутренней EEPROM — под хранилищем настроек на L0/L1.
+pub mod eeprom;
+// {%- endif %}
+
+// {%- if has_can == "true" %}
 pub use can::CanBus;
 // {%- endif %}
-// {%- if protocol == "protobuf" %}
+// {%- if has_protobuf == "true" %}
 pub use host::HostService;
 // {%- endif %}
 // {%- if link_port == "true" %}
 pub use link::{FrameLink, LinkError};
 // {%- endif %}
-// {%- if protocol == "modbus" %}
+// {%- if has_modbus == "true" %}
 pub use modbus::{
     Bits, BitsMut, Exception, MAX_PDU, ModbusServer, Received, Registers, ServeError, Words,
     WordsMut,
@@ -131,6 +136,9 @@ pub use ota::update::{FirmwareUpdate, PendingImage, UpdateError};
 // {%- if settings_port == "true" %}
 pub use settings::SettingsStorage;
 // {%- endif %}
-// {%- if ota == "true" or protocol == "canopen" %}
+// {%- if config_store == "eeprom" %}
+pub use eeprom::EepromAccess;
+// {%- endif %}
+// {%- if ota == "true" or has_canopen == "true" %}
 pub use word::MAX_WRITE_SIZE;
 // {%- endif %}

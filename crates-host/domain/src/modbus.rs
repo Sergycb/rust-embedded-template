@@ -48,6 +48,11 @@ pub mod master;
 mod registers;
 
 pub use registers::EmptyRegisters;
+
+/// Одна карта регистров на несколько узлов (по узлу на транспорт).
+mod shared;
+
+pub use shared::{MapMutex, SharedRegisters};
 // {%- if ota == "true" %}
 
 /// Окно OTA в карте регистров: команды обновления записями FC16.
@@ -65,11 +70,13 @@ use supervisor::runtime::TaskExit;
 // транспорта и данных аргументами фрагмента:
 //
 // ```ignore
-// // `bsp::serial::Serial` и `board.serial` — поток байтов UART платы.
-// fragments: [::domain::MODBUS_SLAVE_FRAG<::adapters::modbus::Rtu<bsp::serial::Serial>, ::domain::modbus::EmptyRegisters> as MODBUS
+// // `parts.board.usart1` — поток байтов UART платы; транспорт над ним собирает
+// // `crate::link::usart1` (`app`). `parts.modbus` — ручка карты, общей у всех
+// // узлов Modbus (`crate::modbus` в `app`; карта по умолчанию — `EmptyRegisters`).
+// fragments: [::domain::MODBUS_SLAVE_FRAG<crate::link::usart1::Link, crate::modbus::Handle> as MODBUS_USART1
 //                 = ::domain::modbus::ModbusSlaveWiring {
-//                     link: ::adapters::modbus::Rtu::new(board.serial),
-//                     regs: ::domain::modbus::EmptyRegisters,
+//                     link: crate::link::usart1::new(parts.board.usart1),
+//                     regs: parts.modbus,
 //                     unit: 1,
 //                 }];
 // ```
@@ -164,8 +171,9 @@ supervisor::supervisor_fragment! {
         resources: [
             /// Транспорт — `adapters::modbus::{Rtu, Tcp, Udp}` над интерфейсом платы.
             LINK: local L = inputs.link,
-            /// Данные устройства — реализация `ports::Registers` (по умолчанию —
-            /// пустая карта `domain::modbus::EmptyRegisters`).
+            /// Данные устройства — реализация `ports::Registers`; в `app` —
+            /// ручка `SharedRegisters` карты, общей у всех узлов Modbus
+            /// (`crate::modbus`; карта по умолчанию — `EmptyRegisters`).
             REGS: local R = inputs.regs,
             /// Адрес slave'а на шине, 1..=247.
             UNIT: u8 = inputs.unit

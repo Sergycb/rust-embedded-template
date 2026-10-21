@@ -1,7 +1,8 @@
-Шина CAN платы — под узлом CANopen.
+Шина CAN платы, по подмодулю на транспорт (`bsp::can::<транспорт>`) — под узлом
+CANopen или вашим протоколом.
 
 Шаблон выводы не выбирает (`docs/architecture.md`), поэтому в `Can` пока
-стоит заглушка `adapters::can::Unconnected`: проект собирается и
+стоит заглушка `bsp::stub::Can`: проект собирается и
 запускается, узел CANopen ждёт кадров вечно, а отправка уходит в никуда.
 
 ## Как подставить свой CAN
@@ -17,12 +18,11 @@
    добавьте их в готовую группу `can` в `resources.rs` — блок в ней уже есть.
 
 2. Свой тип — реализация `ports::CanBus` поверх контроллера `embassy-stm32`
-   (`bsp` зависит от `ports` не по умолчанию: добавьте
-   `ports = { workspace = true }` в `crates-cross/bsp/Cargo.toml`)
-   (`{% if can_kind == "fdcan" %}CanConfigurator::into_normal_mode{% else %}Can::new` + `set_bitrate{% endif %}`);
-   псевдоним `Can` — на него, `new` — на сборку контроллера из группы
-   `CanResources` (`Board::new` уже передаёт её: `crate::can::new(r.can)`,
-   `docs/resources.md`).
+   (`{% if can_kind == "fdcan" %}CanConfigurator::into_normal_mode{% else %}Can::new` + `set_bitrate{% endif %}`): у CAN нет асинхронного трейта в
+   `embedded-can`, поэтому порт свой, и `bsp` от `ports` уже зависит. Псевдоним
+   `Can` в подмодуле транспорта — на него, `new` — на сборку контроллера из
+   группы транспорта (`Board::new` уже передаёт её:
+   `crate::can::<транспорт>::new(r.<транспорт>)`, `docs/resources.md`).
 
 Контракт порта (`ports::CanBus`) требует двух вещей, которые драйвер
 `embassy-stm32` сам не даёт:
@@ -48,5 +48,6 @@
 
 Скорость шины — одна на всю сеть CANopen (обычно 125, 250, 500 или
 1000 кбит/с); адрес узла — `node_id` во входе узла в
-`crates-cross/app/src/graph.rs` (`CanOpenWiring`; без графа — `main.rs`), словарь объектов — `device.toml` в
+`crates-cross/app/src/graph.rs` (`CanOpenWiring`; без графа —
+`crates-cross/app/src/tasks/canopen.rs`), словарь объектов — `device.toml` в
 `crates-host/canopen`.

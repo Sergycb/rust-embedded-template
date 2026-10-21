@@ -81,6 +81,64 @@ pub fn report_image(base: u64, size: u64) -> Result<(), anyhow::Error> {
     check_image_budget(name, size, partition.length, IMAGE_BUDGET_PERCENT)
 }
 
+/// Секции, которые линкер кладёт в регион `RAM` из `memory.x` статически:
+/// `.data`, `.bss` и `.uninit` — `cortex-m-rt`, плюс статики с
+/// `#[link_section = ".uninit"]`. `.dma_nc`/`.bdma_nc` лежат в своих регионах
+/// и сюда не входят.
+const STATIC_RAM_SECTIONS: [&str; 3] = [".data", ".bss", ".uninit"];
+
+/// Сколько статической RAM занимает образ: сумма `.data`, `.bss`, `.uninit`.
+///
+/// Отсутствующая секция — 0, а не ошибка: `.uninit` нет у проекта без
+/// `#[link_section = ".uninit"]`-статиков.
+///
+/// # Errors
+///
+/// `elf` не разбирается как 32-битный ELF.
+pub fn static_ram(elf: &[u8]) -> Result<u64, anyhow::Error> {
+    use object::read::elf::ElfFile32;
+    use object::read::{Object, ObjectSection};
+
+    let file = ElfFile32::<object::Endianness>::parse(elf).context("разобрать ELF")?;
+    Ok(sum_static_ram(file.sections().filter_map(|section| {
+        Some((section.name().ok()?.to_owned(), section.size()))
+    })))
+}
+
+/// Ядро [`static_ram`] над списком `(имя, размер)` — тестируется без ELF:
+/// писать ELF в `object` у xtask выключено.
+fn sum_static_ram(sections: impl IntoIterator<Item = (String, u64)>) -> u64 {
+    sections
+        .into_iter()
+        .filter(|(name, _)| STATIC_RAM_SECTIONS.contains(&name.as_str()))
+        .map(|(_, size)| size)
+        .sum()
+}
+
+/// Печатает статическую RAM образа против региона `RAM` из `memory.x`.
+///
+/// Формат строки — контракт: его разбирает `template-check`
+/// (`parse_static_ram`), менять только вместе.
+pub fn report_ram(elf: &Path) -> Result<(), anyhow::Error> {
+    let bytes = fs::read(elf).with_context(|| format!("прочитать {}", elf.display()))?;
+    let used = static_ram(&bytes).with_context(|| format!("разобрать {}", elf.display()))?;
+    let regions = app_memory_regions()?;
+    let Some(ram) = region(&regions, "RAM") else {
+        anyhow::bail!("в crates-cross/app/memory.x нет региона RAM");
+    };
+    println!("{}", ram_line(used, ram.length));
+    Ok(())
+}
+
+fn ram_line(used: u64, total: u64) -> String {
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "размеры RAM на порядки меньше 2^52"
+    )]
+    let percent = used as f64 * 100.0 / total.max(1) as f64;
+    format!("ram: {used} байт статической RAM из {total} байт RAM ({percent:.1}%)")
+}
+
 /// Занятость зоны bootloader'а (`FLASH` его `memory.x`). Только предупреждение:
 /// переполнение поймает линкер, а близость к границе — повод подумать, не отказ.
 pub fn report_boot(size: u64) -> Result<(), anyhow::Error> {
@@ -344,5 +402,41 @@ mod tests {
     fn an_unchanged_image_says_so() {
         let same = super::size_delta(Some(13_000), 13_000, 131_072).expect("размер тот же");
         insta::assert_snapshot!(same, @"размер не изменился (12.7 KiB)");
+    }
+
+    fn sections(list: &[(&str, u64)]) -> Vec<(String, u64)> {
+        list.iter()
+            .map(|&(name, size)| (name.to_owned(), size))
+            .collect()
+    }
+
+    #[test]
+    fn static_ram_sums_data_bss_and_uninit() {
+        let elf = sections(&[
+            (".text", 10_000),
+            (".data", 100),
+            (".bss", 2_000),
+            (".uninit", 1_024),
+            (".dma_nc", 4_096),
+        ]);
+        assert_eq!(super::sum_static_ram(elf), 3_124);
+    }
+
+    #[test]
+    fn missing_sections_count_as_zero() {
+        assert_eq!(
+            super::sum_static_ram(sections(&[(".text", 10), (".bss", 64)])),
+            64
+        );
+        assert_eq!(super::sum_static_ram(Vec::new()), 0);
+    }
+
+    /// Формат читает `template-check` — снапшот держит контракт.
+    #[test]
+    fn the_ram_line_has_the_fixed_format() {
+        insta::assert_snapshot!(
+            super::ram_line(3_124, 131_072),
+            @"ram: 3124 байт статической RAM из 131072 байт RAM (2.4%)"
+        );
     }
 }

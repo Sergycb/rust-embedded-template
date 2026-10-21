@@ -243,7 +243,7 @@ fn plan(m, erase_zero, wants, limits) {
     // начале стоит таблица векторов приложения. С OTA — там, где его положил
     // chip-data-gen (`config_ota_settings_*`): в мелких секторах перед ACTIVE,
     // если так ACTIVE больше (F2/F4/F7), иначе тоже в хвосте. Страница — сектор
-    // под разделом (`adapters::flash::ErasePage` в bsp::settings).
+    // под разделом (`flash_page::ErasePage` в bsp::settings).
     let settings_key = if ext_ota {
         "ext_cfg_settings_"
     } else if ota {
@@ -277,6 +277,51 @@ fn plan(m, erase_zero, wants, limits) {
     }
 }
 
+/// Статическая RAM проекта без транспортов по плану `p` (см. `RAM_COST`):
+/// ядро, OTA, хранилище настроек и граф.
+fn ram_base(costs, p) {
+    let total = costs.core;
+    if p.ota { total += if p.ext_ota { costs.ota.external } else { costs.ota.internal }; }
+    if p.config { total += costs.config[p.store]; }
+    if p.graph { total += costs.graph; }
+    total
+}
+
+/// Оценка статической RAM: `base` (`ram_base`), транспорты `links`
+/// (`#{ kind, protocol }`) и сетевые службы `services`. Сетевой стек — один на
+/// проект, сколько бы ни было `tcp`/`udp`.
+fn ram_estimate(costs, base, links, services) {
+    let total = base;
+    let net = false;
+    for link in links {
+        total += costs.links[link.kind + ":" + link.protocol];
+        if link.kind == "tcp" || link.kind == "udp" { net = true; }
+    }
+    if net { total += costs.net_stack; }
+    for name in services { total += costs.services[name]; }
+    total
+}
+
+/// Самый дорогой по RAM протокол поверх вида `kind`: список транспортов
+/// показывается до вопроса о протоколе, и пункт оценивается по худшему.
+fn worst_protocol(costs, kind, protocol_interfaces) {
+    let worst = "none";
+    for name in protocol_interfaces.keys() {
+        if protocol_interfaces[name].contains(kind)
+            && costs.links[kind + ":" + name] > costs.links[kind + ":" + worst]
+        {
+            worst = name;
+        }
+    }
+    worst
+}
+
+/// Байты — в KiB с одним знаком после точки, для сообщений.
+fn kib(bytes) {
+    let tenths = (bytes * 10 + 512) / 1024;
+    (tenths / 10).to_string() + "." + (tenths % 10).to_string() + " KiB"
+}
+
 /// Выполняются ли ответы на чипе: каждое «хочу» из `need` должно получиться.
 /// План считается по `wants` (все ответы, с умолчаниями), а проверяется по
 /// `need` (только то, о чём спросили): так умолчание «да» для вопроса, который
@@ -287,8 +332,8 @@ fn fits_answers(m, erase_zero, wants, need, limits) {
         && (!need.config || p.config) && (!need.graph || p.graph)
 }
 
-/// Меню из нескольких вариантов: `texts` показываются как есть, а значение —
-/// первое слово текста, поэтому `values[i]` соответствует `texts[i]`. Без
+/// Меню из нескольких вариантов: `texts` показываются как есть, а ответ —
+/// значение с тем же индексом: `values[i]` соответствует `texts[i]`. Без
 /// терминала (`--silent`, CI) `variable::prompt` отвечает ошибкой «not a
 /// terminal», и тогда берётся `default_value`: вопрос, который некому задать, не
 /// должен ронять генерацию. Любая другая ошибка (прерванный выбор) пробрасывается.
@@ -311,12 +356,165 @@ fn ask(label, values, texts, default_value) {
     default_value
 }
 
-/// Есть ли у чипа блок интерфейса: `have` — метки чипа, `blocks` — метки интерфейса.
-fn has_block(have, blocks) {
-    for tag in have {
-        if blocks.contains(tag) { return true; }
+/// Список с отметками: отмеченные `values` в порядке пунктов. В хуках
+/// `cargo-generate` есть только одиночный выбор, поэтому отметка `[x] `/`[ ] `
+/// нарисована в тексте пункта (`value — text`), а меню после каждого выбора
+/// показывается заново; `готово` (оно же умолчание и ответ без терминала)
+/// закрывает список.
+fn checklist(label, values, texts) {
+    checklist(label, values, texts, |value, chosen| "")
+}
+
+/// То же с припиской к пункту, которая зависит от уже отмеченных:
+/// `note.call(value, chosen)` — строка после текста пункта `value` при
+/// отмеченных `chosen`; считается заново при каждой перерисовке.
+fn checklist(label, values, texts, note) {
+    let marked = values.map(|value| false);
+    loop {
+        let chosen = [];
+        for i in 0..values.len() {
+            if marked[i] { chosen.push(values[i]); }
+        }
+        let shown_values = ["готово"];
+        let shown_texts = ["готово"];
+        for i in 0..values.len() {
+            shown_values.push(values[i]);
+            shown_texts.push((if marked[i] { "[x] " } else { "[ ] " }) + values[i] + " — " + texts[i] + note.call(values[i], chosen));
+        }
+        let pick = ask(label, shown_values, shown_texts, "готово");
+        if pick == "готово" { break; }
+        for i in 0..values.len() {
+            if values[i] == pick { marked[i] = !marked[i]; }
+        }
     }
-    false
+    let out = [];
+    for i in 0..values.len() {
+        if marked[i] { out.push(values[i]); }
+    }
+    out
+}
+
+/// Строка открытого ключа ed25519 из `~/.ssh/id_ed25519.pub`: `ssh-ed25519`,
+/// блоб — 51 байт, то есть ровно 68 символов base64 без `=`, — и
+/// необязательный комментарий. Кавычек, `\` и переводов строк нет: строка
+/// уезжает в исходники шаблона.
+fn ssh_key_ok(key, blob_prefix, base64_chars) {
+    if key.contains("\"") || key.contains("\\") || key.contains("\n") || key.contains("\r") { return false; }
+    let parts = key.split(" ");
+    if parts.len() < 2 || parts[0] != "ssh-ed25519" { return false; }
+    let blob = parts[1];
+    if blob.len() != 68 || !blob.starts_with(blob_prefix) { return false; }
+    for c in blob.chars() {
+        if !base64_chars.contains(c) { return false; }
+    }
+    true
+}
+
+/// Свободные блоки вида `kind`: `#{ tag, block }` по меткам `tags` вида, какие
+/// есть у чипа в `have` (в порядке `have`, внутри метки — в порядке `instances`),
+/// без блоков, уже отданных транспортам `links` этого вида. `tcp` и `udp` делят
+/// один ETH, поэтому блок занят только транспортом того же вида: каждый из них
+/// свободен, пока сам не выбран.
+fn free_blocks(kind, tags, links, have, instances) {
+    let out = [];
+    for tag in have {
+        if !tags.contains(tag) { continue; }
+        if !instances.contains(tag) {
+            throw "interface: в chip-data/instances.rhai нет имён блоков " + tag + " — перегенерируйте таблицы (chip-data-gen)";
+        }
+        for block in instances[tag] {
+            let busy = false;
+            for link in links {
+                if link.kind == kind && link.block == block { busy = true; }
+            }
+            if !busy { out.push(#{ tag: tag, block: block }); }
+        }
+    }
+    out
+}
+
+/// Разбор `--define links=вид[:протокол],…`: `#{ kind, protocol }` в порядке
+/// ответа, без протокола — `none`. Пробелы вокруг частей допускаются, пустой
+/// элемент — нет. Хватает ли чипу блоков, здесь не проверяется: чип ещё не
+/// выбран, это проверяет назначение блоков (и отсев чипов до каскада).
+fn parse_links(text, kinds, protocol_interfaces) {
+    let out = [];
+    let chosen = "none";
+    for item in text.split(",") {
+        let kind = item;
+        let protocol = "none";
+        let colon = item.index_of(":");
+        if colon >= 0 {
+            kind = item.sub_string(0, colon);
+            protocol = item.sub_string(colon + 1);
+            protocol.trim();
+        }
+        kind.trim();
+        if kind == "" && colon < 0 {
+            throw "links: пустой элемент в «" + text + "»";
+        }
+        if !kinds.contains(kind) {
+            throw "links: ожидается вид " + listed(kinds) + ", а не «" + kind + "»";
+        }
+        if !protocol_interfaces.contains(protocol) {
+            throw "links: ожидается протокол " + listed(protocol_interfaces.keys()) + ", а не «" + protocol + "»";
+        }
+        if !protocol_interfaces[protocol].contains(kind) {
+            throw "links: протокол " + protocol + " работает поверх " + listed(protocol_interfaces[protocol]) + ", а не «" + kind + "»";
+        }
+        if protocol != "none" {
+            // Статики стека `zencan` — по одному на прошивку.
+            if protocol == "canopen" && chosen == "canopen" {
+                throw "links: CANopen пока только на одной шине CAN";
+            }
+            if chosen != "none" && chosen != protocol {
+                throw "links: протокол в проекте пока один, а заданы " + chosen + " и " + protocol;
+            }
+            chosen = protocol;
+        }
+        out.push(#{ kind: kind, protocol: protocol });
+    }
+    out
+}
+
+/// Сколько транспортов каждого вида запрошено: `#{ вид: число }`.
+fn link_counts(links) {
+    let counts = #{};
+    for link in links {
+        counts[link.kind] = if counts.contains(link.kind) { counts[link.kind] + 1 } else { 1 };
+    }
+    counts
+}
+
+/// Значение переменной `links`: `вид:метка:блок:протокол:имя` через запятую.
+/// Имя — транспорта в проекте: блок строчными (`usart2`, `usb_otg_hs`), а у
+/// `tcp`/`udp`, которые делят один ETH, — сам вид.
+fn links_text(links) {
+    let out = "";
+    for link in links {
+        if out != "" { out += ","; }
+        let name = if link.kind == "tcp" || link.kind == "udp" { link.kind } else { link.block.to_lower() };
+        out += link.kind + ":" + link.tag + ":" + link.block + ":" + link.protocol + ":" + name;
+    }
+    out
+}
+
+/// Ответ `modbus_master`: спрашивается один раз, когда в проекте впервые
+/// выбран Modbus; `--define` проверяется строго.
+fn modbus_master_answer() {
+    if variable::is_set("modbus_master") {
+        let answer = variable::get("modbus_master");
+        if answer != "yes" && answer != "true" && answer != "no" && answer != "false" {
+            throw "modbus_master: ожидается yes или no, а не «" + answer + "»";
+        }
+        return answer == "yes" || answer == "true";
+    }
+    ask(
+        "modbus_master: Modbus master (клиент) в дополнение к slave",
+        ["no", "yes"],
+        ["no — только slave", "yes — ещё и master (клиентские функции и транспорты)"],
+        "no"
+    ) == "yes"
 }
 
 /// Значения через запятую — для сообщений об ошибке. `reduce` без начального
@@ -347,6 +545,28 @@ fn is_dual_core(suffix) {
     }
     core_override(suffix.sub_string(dash + 1)) != ()
 }
+
+// Источник rust-lib (supervisor, fsm, watchdog, sync-request) — одна переменная
+// на все места: оба Cargo.toml, allow-git в deny.toml, ссылки в документации.
+// Форк подставляется `--define rust_lib=https://…/rust-lib`; меню нет — вопрос
+// до выбора чипа никому не нужен. Хранится без `.git` и завершающего `/`:
+// Cargo.toml дописывает `.git` сам, а allow-git сравнивает адрес без него.
+let rust_lib = if variable::is_set("rust_lib") { variable::get("rust_lib") } else { "https://github.com/Sergycb/rust-lib" };
+while rust_lib.ends_with("/") {
+    rust_lib.pop();
+}
+if rust_lib.ends_with(".git") {
+    rust_lib = rust_lib.sub_string(0, rust_lib.len() - 4);
+}
+if rust_lib == "" {
+    throw "rust_lib: пустой адрес репозитория rust-lib";
+}
+variable::set("rust_lib", rust_lib);
+// Перевод строки для корневого Cargo.toml: Liquid в корневом workspace живёт в
+// `#`-комментариях, и рабочую строку с `{{rust_lib}}` там иначе не получить —
+// `#{{newline}}строка` в шаблоне комментарий, а после рендера — `#` и строка
+// (MAINTAINING.md, «Значение в корневом workspace»).
+variable::set("newline", "\n");
 
 let suffix = "";
 
@@ -480,7 +700,7 @@ if !wants_ota {
 //                тратится вовсе, и это единственное место под настройки на
 //                чипах, чей флеш стирается в ноль;
 //   "external" — внешняя флеш: ответ `external`; шаблон кладёт заглушку
-//                (`adapters::flash::Unconnected`), драйвер подставляете вы;
+//                (`bsp::stub::Flash`), драйвер подставляете вы;
 //   "none"     — настроек нет.
 // Ответ `internal` выбирает между первыми двумя сам, `external` — третий,
 // `no` — четвёртый. Незнакомый ответ — ошибка, как у `ota`.
@@ -549,19 +769,87 @@ const PROTOCOL_INTERFACES = #{
     "protobuf": ["uart", "tcp", "udp", "usb"],
     "canopen": ["can"],
 };
-// Строки меню. Первое слово — значение ответа (то же, что `--define interface=...`).
-const INTERFACE_TEXT = #{
-    "uart": "uart — UART (RS-485 — тот же UART с выводом DE)",
-    "can": "can — шина CAN",
-    "tcp": "tcp — Ethernet, TCP-сервер",
-    "udp": "udp — Ethernet, UDP-канал",
-    "usb": "usb — USB CDC ACM (виртуальный COM-порт)",
-};
+// Виды транспорта по порядку.
+const LINK_KINDS = ["uart", "can", "tcp", "udp", "usb"];
+// Пункты списка транспортов по порядку: значение, вид транспорта и описание
+// (после `[ ] значение — `). Вид — по одному пункту: второй транспорт того же
+// вида и `udp` задаёт `--define links=...`. `ethernet` пока даёт `tcp`.
+const TRANSPORT_ITEMS = [
+    #{ value: "uart", kind: "uart", text: "UART (RS-485 — тот же UART с выводом DE)" },
+    #{ value: "can", kind: "can", text: "шина CAN" },
+    #{ value: "ethernet", kind: "tcp", text: "Ethernet (сеть)" },
+    #{ value: "usb", kind: "usb", text: "USB CDC ACM (виртуальный COM-порт)" },
+];
+// Сетевые службы поверх стека (`net_services`): не транспорты с протоколом, а
+// узлы на своих сокетах общего стека — спрашиваются, только когда отмечен
+// Ethernet. SSH — криптография, поэтому только у чипа с RNG.
+const NET_SERVICE_ITEMS = [
+    #{ value: "ssh", text: "консоль SSH (sunset)", needs_rng: true },
+    #{ value: "rest", text: "REST API по HTTP (picoserve)", needs_rng: false },
+];
+// Начало base64-блоба открытого ключа ed25519 (`ssh_key`): длина и имя типа,
+// затем длина ключа (32). Других ключей `sunset` без фич не проверяет.
+const SSH_KEY_BLOB_PREFIX = "AAAAC3NzaC1lZDI1NTE5AAAAI";
+const BASE64_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 const PROTOCOL_TEXT = #{
     "modbus": "modbus — Modbus slave",
     "protobuf": "protobuf — сообщения protobuf от хоста",
     "canopen": "canopen — узел CANopen (стек zencan)",
 };
+
+// Статическая RAM (`.data` + `.bss` + `.uninit` release-образа `app`) по частям
+// проекта, байт. Числа замерены, а не выведены: строка `ram:` из `cargo xtask
+// build` по случаям `template-check`, стоимость части — разность пары сборок
+// «с ней / без неё» на одном чипе, из нескольких чипов — наибольшая. Как
+// перемерить — MAINTAINING.md, «Оценка RAM». Оценку проверяет `template-check`:
+// у каждого случая она не ниже факта.
+const RAM_COST = #{
+    // Без OTA, настроек, графа и транспортов: stm32f407ve ota=no graph=no — 1344
+    // (stm32l011f4 — 1316).
+    core: 1344,
+    // stm32f407ve: 3880 с OTA против 1952 без неё; внешняя — stm32h723ve 3832
+    // (ota=external config=external) против 1988 (config=external).
+    ota: #{ internal: 1928, external: 1844 },
+    // По месту хранения (`config_store`): stm32f407ve 3912 против 3880,
+    // stm32l073rz (EEPROM) 3868 против 3860, stm32h723ve 1988 против 1988.
+    config: #{ flash: 32, eeprom: 8, external: 0 },
+    // stm32g474re 3884 против 3084 без графа (stm32f407ve без OTA — 608).
+    graph: 800,
+    // Транспорт `вид:протокол` с его узлом, с графом (без графа — дешевле):
+    // разность с проектом без транспортов на том же чипе. Для tcp/udp — за
+    // вычетом `net_stack`.
+    links: #{
+        // stm32g474re uart-only 3884 против 3884; Modbus — stm32h743zg два UART и
+        // TCP 13940 (по одному — 2168); protobuf — stm32f407ve 6824 против 3880.
+        "uart:none": 0, "uart:modbus": 2200, "uart:protobuf": 2944,
+        // stm32f407ve modbus-uart-can 6048 = 3880 + 2168 (UART с Modbus);
+        // CANopen — stm32g474re canopen-config 7504 против 3884 + 32 (настройки).
+        "can:none": 0, "can:canopen": 3588,
+        // stm32h743zg против 3932: tcp-only 5308, modbus-tcp 9540 (с master и
+        // без — одинаково); protobuf — stm32f407ve UART и TCP 13216.
+        "tcp:none": 416, "tcp:modbus": 4648, "tcp:protobuf": 5432,
+        // stm32h743zg: udp-only 5308, modbus-udp 9700; protobuf — stm32f407ve
+        // protobuf-udp 9968 против 3880.
+        "udp:none": 416, "udp:modbus": 4808, "udp:protobuf": 5128,
+        // stm32g474re usb-only 5244 против 3884; Modbus — stm32f407ve 7464 против
+        // 3880; protobuf — stm32f407ve два USB 12656 (по 4388).
+        "usb:none": 1360, "usb:modbus": 3584, "usb:protobuf": 4388,
+    },
+    // Стек `embassy-net` и драйвер Ethernet — один раз на tcp/udp: stm32f407ve
+    // modbus-tcp-udp 14296 — на 960 меньше, чем TCP и UDP по отдельности.
+    net_stack: 960,
+    // Сетевые службы (`NET_SERVICE_ITEMS`). ssh — статик RNG для `getrandom`
+    // (узла ещё нет): stm32h743zg links=tcp:modbus 9572 против 9540 без службы.
+    // У rest узла и статиков нет — 0; появятся — замерить так же.
+    services: #{ ssh: 32, rest: 0 },
+};
+// Сверх статической RAM — под стек: он в `.data`/`.bss` не входит (flip-link
+// кладёт его под ними). Не замерен — без платы глубину стека не снять, — а
+// выбран: futures задач `embassy` и буферы транспортов лежат в `.bss`, так что на
+// стеке только цепочка `poll`, кадры прерываний и форматирование паники.
+// Ошибка в меньшую сторону не тихая: под flip-link переполнение стека — HardFault,
+// а не порча статиков. Больше — и Modbus по UART не взял бы STM32C011D6 (6 KiB).
+const STACK_RESERVE = 1024;
 
 // Ответы отсекают чипы ещё до каскада: сетевой стек просит чип с Ethernet,
 // OTA — чип, где схема помещается, граф — где он влезает в раздел
@@ -570,9 +858,34 @@ const PROTOCOL_TEXT = #{
 // напрямую (`--define chip_feature=...`), не фильтруется: там остаются
 // прежние отказы с объяснением.
 const WANTED_INTERFACE = if variable::is_set("interface") { variable::get("interface") } else { "none" };
+// `--define links=...` — несколько транспортов одной строкой, вместо пары
+// `interface` + `protocol`. Разбирается до каскада: по нему же отсеиваются чипы.
+if variable::is_set("links") && (variable::is_set("interface") || variable::is_set("protocol")) {
+    throw "links: задаётся вместо interface и protocol, а не вместе с ними";
+}
+const WANTED_LINKS = if variable::is_set("links") {
+    parse_links(variable::get("links"), INTERFACE_BLOCKS.keys(), PROTOCOL_INTERFACES)
+} else {
+    []
+};
+const WANTED_COUNTS = link_counts(WANTED_LINKS);
+// Транспорты для отсева по RAM: `links` или пара `interface` + `protocol` — тот же
+// список. Без `protocol` — транспорт без протокола: нижняя оценка, чип не
+// отсекается по ответу, которого ещё нет. Негодную пару сюда не берём — её
+// отвергает проверка после выбора чипа, с объяснением.
+const RAM_LINKS = if WANTED_LINKS.len() > 0 {
+    WANTED_LINKS
+} else {
+    let protocol = if variable::is_set("protocol") { variable::get("protocol") } else { "none" };
+    if RAM_COST.links.contains(WANTED_INTERFACE + ":" + protocol) {
+        [#{ kind: WANTED_INTERFACE, protocol: protocol }]
+    } else {
+        []
+    }
+};
 let allowed = CHIPS;
 if !variable::is_set("chip_feature")
-    && (NEED.ota || NEED.config || NEED.graph || WANTED_INTERFACE != "none")
+    && (NEED.ota || NEED.config || NEED.graph || WANTED_INTERFACE != "none" || WANTED_LINKS.len() > 0)
 {
     let layouts = #{};
     for chip in CHIPS {
@@ -583,6 +896,13 @@ if !variable::is_set("chip_feature")
         }
     }
     allowed = CHIPS.filter(|chip| {
+        // Каждого вида из `links` у чипа должно быть не меньше блоков, чем запрошено.
+        let instances = if INSTANCES.contains(chip) { INSTANCES[chip] } else { #{} };
+        for kind in WANTED_COUNTS.keys() {
+            if free_blocks(kind, INTERFACE_BLOCKS[kind], [], INTERFACES[chip], instances).len() < WANTED_COUNTS[kind] {
+                return false;
+            }
+        }
         if WANTED_INTERFACE != "none" && INTERFACE_BLOCKS.contains(WANTED_INTERFACE) {
             let have = INTERFACES[chip];
             let any_block = false;
@@ -592,10 +912,22 @@ if !variable::is_set("chip_feature")
             if !any_block { return false; }
         }
         let m = layouts[chip.sub_string(0, 2)][chip];
+        // И транспорты (`RAM_LINKS`) должны поместиться в RAM. База — только из
+        // заданных ответов (`NEED`): умолчание «да» для OTA и графа чипов не
+        // отсекает, а невлезающее с итоговыми ответами отвергнет проверка после
+        // них. С ручной раскладкой (`write_size`) оценки нет.
+        if RAM_LINKS.len() > 0 && !variable::is_set("write_size") {
+            let asked = #{ ota: NEED.ota, ext_ota: NEED.ext_ota, config: NEED.config, external: NEED.config && wants_external, graph: NEED.graph };
+            let base = ram_base(RAM_COST, plan(m, m["erase_zero"] == "true", asked, LIMITS));
+            if ram_estimate(RAM_COST, base, RAM_LINKS, []) + STACK_RESERVE > size_in_bytes(m["ram_length"]) {
+                return false;
+            }
+        }
         fits_answers(m, m["erase_zero"] == "true", WANTS, NEED, LIMITS)
     });
     if allowed.len() == 0 {
-        throw "ни один из " + CHIPS.len() + " чипов не подходит под ответы (interface=" + WANTED_INTERFACE
+        throw "ни один из " + CHIPS.len() + " чипов не подходит под ответы ("
+            + (if WANTED_LINKS.len() > 0 { "links=" + variable::get("links") } else { "interface=" + WANTED_INTERFACE })
             + ", ota=" + (if wants_ext_ota { "external" } else if wants_ota { "internal" } else { "no" })
             + ", config=" + (if wants_external { "external" } else if wants_config { "internal" } else { "no" })
             + ", graph=" + (if wants_graph { "yes" } else { "no" })
@@ -940,92 +1272,262 @@ if variable::is_set("graph") {
         + ", а supervisor туда не помещается");
 }
 
-// --- Транспорт. Предлагается то, чьи блоки у чипа выведены в корпус.
+// --- Транспорты. Транспорт — `#{ kind, tag, block, protocol }`: вид, метка
+// блока (chip-data/interfaces.rhai), блок чипа и протокол поверх него. Блок
+// назначает генерация — первый свободный блок вида из списка чипа. Протокол в проекте
+// пока один (`protocol`): первый выбранный, следующие транспорты — с ним или
+// без протокола. Меню предлагают только виды, у которых есть блок.
 let have = INTERFACES[suffix];
-let available = [];
-for name in ["uart", "can", "tcp", "udp", "usb"] {
-    if has_block(have, INTERFACE_BLOCKS[name]) { available.push(name); }
-}
+let instances = if INSTANCES.contains(suffix) { INSTANCES[suffix] } else { #{} };
+// RAM: статическая без транспортов по итоговым OTA, настройкам и графу, и
+// объём региона `RAM`. С ручной раскладкой регион пишет человек — оценки нет
+// (`ram_limit` = `()`), и ничего не помечается.
+let ram_base_now = ram_base(RAM_COST, plan(layout, erase_zero, #{ ota: wants_ota, ext_ota: wants_ext_ota, config: wants_config, external: wants_external, graph: wants_graph }, LIMITS));
+let ram_limit = if manual_now { () } else { size_in_bytes(layout["ram_length"]) };
+// Приписка к пункту меню, с которым транспорты `set` (`#{ kind, protocol }`) не
+// помещаются; помещаются или оценки нет — пусто.
+let ram_mark = |set| {
+    if ram_limit == () { return ""; }
+    let need = ram_estimate(RAM_COST, ram_base_now, set, []) + STACK_RESERVE;
+    if need > ram_limit { " — НЕ ПОМЕЩАЕТСЯ в RAM (оценка " + kib(need) + " из " + kib(ram_limit) + ")" } else { "" }
+};
+let links = [];
 let wanted_protocol = if variable::is_set("protocol") { variable::get("protocol") } else { "" };
 if wanted_protocol != "" && !PROTOCOL_INTERFACES.contains(wanted_protocol) {
     throw "protocol: ожидается " + listed(PROTOCOL_INTERFACES.keys()) + ", а не «" + wanted_protocol + "»";
 }
-if variable::is_set("interface") {
-    iface = variable::get("interface");
-    if iface != "none" && !INTERFACE_BLOCKS.contains(iface) {
-        throw "interface: ожидается none, " + listed(INTERFACE_BLOCKS.keys()) + ", а не «" + iface + "»";
-    }
-    if iface != "none" && !available.contains(iface) {
-        throw "interface: у " + chip_name + " нет выведенного блока " + listed(INTERFACE_BLOCKS[iface]).to_upper() + " — интерфейс " + iface + " недоступен";
-    }
-} else if wanted_protocol != "" && wanted_protocol != "none" {
-    // Протокол задан `--define`, а транспорт нет: аппаратную часть молча не
-    // выбирают — `--define` строгий, транспорт задаётся тоже.
-    let usable = [];
-    for name in available {
-        if PROTOCOL_INTERFACES[wanted_protocol].contains(name) { usable.push(name); }
-    }
-    if usable.len() == 0 {
-        throw "protocol: у " + chip_name + " нет транспорта для протокола " + wanted_protocol + " (нужен " + listed(PROTOCOL_INTERFACES[wanted_protocol]) + ")";
-    }
-    throw "protocol: протокол " + wanted_protocol + " нужен транспорт — задайте interface (" + listed(usable) + ")";
-} else {
-    let values = ["none"];
-    let texts = ["none — без транспорта"];
-    for name in available {
-        values.push(name);
-        texts.push(INTERFACE_TEXT[name]);
-    }
-    iface = ask("interface: транспорт под протоколом (интерфейс платы)", values, texts, "none");
-}
-
-// --- Протокол. Только те, что работают поверх выбранного транспорта.
-if iface != "none" {
-    if wanted_protocol != "" {
-        protocol = wanted_protocol;
-        if !PROTOCOL_INTERFACES[protocol].contains(iface) {
-            throw "interface: протокол " + protocol + " работает поверх " + listed(PROTOCOL_INTERFACES[protocol]) + ", а не «" + iface + "»";
+if WANTED_LINKS.len() > 0 {
+    // `--define links=...`: блоков каждого вида должно хватить на все запрошенные.
+    for kind in WANTED_COUNTS.keys() {
+        let all = free_blocks(kind, INTERFACE_BLOCKS[kind], [], have, instances);
+        if all.len() < WANTED_COUNTS[kind] {
+            let names = [];
+            for b in all { names.push(b.block); }
+            throw "links: у " + chip_name + " блоков вида " + kind + " — " + all.len()
+                + (if names.len() > 0 { " (" + listed(names) + ")" } else { "" })
+                + ", а запрошено " + WANTED_COUNTS[kind];
         }
+    }
+    for wanted in WANTED_LINKS {
+        let free = free_blocks(wanted.kind, INTERFACE_BLOCKS[wanted.kind], links, have, instances);
+        links.push(#{ kind: wanted.kind, tag: free[0].tag, block: free[0].block, protocol: wanted.protocol });
+        if wanted.protocol != "none" { protocol = wanted.protocol; }
+    }
+    if protocol == "modbus" { wants_master = modbus_master_answer(); }
+} else {
+    // Транспорты по порядку: `#{ kind, name }` — вид и как его назвать в вопросе о
+    // протоколе (пункт списка, например `ethernet`). Блоки им раздаются ниже, по
+    // одному правилу с `--define links=...`.
+    let wanted = [];
+    if variable::is_set("interface") {
+        // `interface` и `protocol` через `--define` — по-старому одна пара.
+        let kind = variable::get("interface");
+        if kind != "none" && !INTERFACE_BLOCKS.contains(kind) {
+            throw "interface: ожидается none, " + listed(INTERFACE_BLOCKS.keys()) + ", а не «" + kind + "»";
+        }
+        if kind != "none" && free_blocks(kind, INTERFACE_BLOCKS[kind], [], have, instances).len() == 0 {
+            throw "interface: у " + chip_name + " нет выведенного блока " + listed(INTERFACE_BLOCKS[kind]).to_upper() + " — интерфейс " + kind + " недоступен";
+        }
+        if kind != "none" { wanted.push(#{ kind: kind, name: kind }); }
+    } else if wanted_protocol != "" && wanted_protocol != "none" {
+        // Протокол задан `--define`, а транспорт нет: аппаратную часть молча не
+        // выбирают — `--define` строгий, транспорт задаётся тоже.
+        let usable = LINK_KINDS.filter(|name| PROTOCOL_INTERFACES[wanted_protocol].contains(name)
+            && free_blocks(name, INTERFACE_BLOCKS[name], [], have, instances).len() > 0);
+        if usable.len() == 0 {
+            throw "protocol: у " + chip_name + " нет транспорта для протокола " + wanted_protocol + " (нужен " + listed(PROTOCOL_INTERFACES[wanted_protocol]) + ")";
+        }
+        throw "protocol: протокол " + wanted_protocol + " нужен транспорт — задайте interface (" + listed(usable) + ")";
     } else {
-        let values = ["none"];
-        let texts = ["none — без протокола: заглушка транспорта и его узел есть, протокол пишете вы"];
-        for name in ["modbus", "protobuf", "canopen"] {
-            if PROTOCOL_INTERFACES[name].contains(iface) {
-                values.push(name);
-                texts.push(PROTOCOL_TEXT[name]);
+        // Список с отметками (`checklist()`). Пункт — вид, у которого есть блок;
+        // имени блока в пункте нет: транспорт получает первый блок вида, а
+        // сменить блок — дело `resources.rs`.
+        let items = TRANSPORT_ITEMS.filter(|item| free_blocks(item.kind, INTERFACE_BLOCKS[item.kind], [], have, instances).len() > 0);
+        // Пункт, с которым отмеченные (и он сам) не помещаются в RAM, помечен,
+        // но выбрать его можно — тогда в конце печатается предупреждение.
+        // Протокол ещё не спрошен, поэтому пункт стоит как его худший протокол.
+        let ram_note = |value, chosen| {
+            let set = [];
+            for item in items {
+                if item.value == value || chosen.contains(item.value) {
+                    set.push(#{ kind: item.kind, protocol: worst_protocol(RAM_COST, item.kind, PROTOCOL_INTERFACES) });
+                }
+            }
+            ram_mark.call(set)
+        };
+        let marked = checklist("transports: отметьте транспорты (Enter — отметить или снять)",
+            items.map(|item| item.value), items.map(|item| item.text), ram_note);
+        for item in items {
+            if !marked.contains(item.value) { continue; }
+            let name = if item.value == item.kind { item.kind } else { item.value + " (" + item.kind.to_upper() + ")" };
+            wanted.push(#{ kind: item.kind, name: name });
+        }
+    }
+
+    for item in wanted {
+        let kind = item.kind;
+        let free = free_blocks(kind, INTERFACE_BLOCKS[kind], links, have, instances);
+        // Протокол этого транспорта: пока протокол проекта не выбран — всё, что
+        // работает поверх вида; когда выбран — он и `none`, а если поверх вида он
+        // не работает, вопроса нет.
+        let link_protocol = "none";
+        if wanted_protocol != "" {
+            link_protocol = wanted_protocol;
+            if !PROTOCOL_INTERFACES[link_protocol].contains(kind) {
+                throw "interface: протокол " + link_protocol + " работает поверх " + listed(PROTOCOL_INTERFACES[link_protocol]) + ", а не «" + kind + "»";
+            }
+        } else {
+            let values = ["none"];
+            let texts = ["none — без протокола: заглушка транспорта и его узел есть, протокол пишете вы"];
+            for name in ["modbus", "protobuf", "canopen"] {
+                if (protocol == "none" || protocol == name) && PROTOCOL_INTERFACES[name].contains(kind) {
+                    values.push(name);
+                    texts.push(PROTOCOL_TEXT[name]);
+                }
+            }
+            // Протокол, с которым этот транспорт к уже выбранным не помещается в
+            // RAM, помечен так же, как пункт списка транспортов.
+            for i in 0..values.len() {
+                texts[i] += ram_mark.call(links + [#{ kind: kind, protocol: values[i] }]);
+            }
+            if values.len() > 1 {
+                link_protocol = ask("protocol: протокол связи поверх " + item.name + " (узел в графе)", values, texts, "none");
             }
         }
-        if values.len() > 1 {
-            protocol = ask("protocol: протокол связи (узел в графе)", values, texts, "none");
+        links.push(#{ kind: kind, tag: free[0].tag, block: free[0].block, protocol: link_protocol });
+        if protocol == "none" && link_protocol != "none" {
+            protocol = link_protocol;
+            if protocol == "modbus" { wants_master = modbus_master_answer(); }
         }
     }
-} else if wanted_protocol != "" && wanted_protocol != "none" {
-    throw "protocol: протокол " + wanted_protocol + " нужен транспорт — задайте interface (" + listed(PROTOCOL_INTERFACES[wanted_protocol]) + ")";
+    if links.len() == 0 && wanted_protocol != "" && wanted_protocol != "none" {
+        throw "protocol: протокол " + wanted_protocol + " нужен транспорт — задайте interface (" + listed(PROTOCOL_INTERFACES[wanted_protocol]) + ")";
+    }
 }
-
-// --- Master Modbus: только у Modbus.
-if protocol == "modbus" {
-    if variable::is_set("modbus_master") {
-        let answer = variable::get("modbus_master");
-        if answer != "yes" && answer != "true" && answer != "no" && answer != "false" {
-            throw "modbus_master: ожидается yes или no, а не «" + answer + "»";
-        }
-        wants_master = answer == "yes" || answer == "true";
-    } else {
-        let answer = ask(
-            "modbus_master: Modbus master (клиент) в дополнение к slave",
-            ["no", "yes"],
-            ["no — только slave", "yes — ещё и master (клиентские функции и транспорты)"],
-            "no"
-        );
-        wants_master = answer == "yes";
-    }
-} else if variable::is_set("modbus_master") {
+if protocol != "modbus" && variable::is_set("modbus_master") {
     let answer = variable::get("modbus_master");
     if answer == "yes" || answer == "true" {
         throw "modbus_master: master есть только у протокола modbus, а выбран " + protocol;
     }
 }
+
+// --- Сетевые службы (`net_services`, `NET_SERVICE_ITEMS`): список с отметками,
+// когда среди транспортов есть Ethernet; `--define net_services=ssh,rest` —
+// строго, как `links`. Затем у SSH — способ входа (`ssh_auth`) и при входе по
+// ключу — открытый ключ (`ssh_key`).
+let has_eth = links.some(|link| link.kind == "tcp" || link.kind == "udp");
+let services = [];
+let service_items = NET_SERVICE_ITEMS.filter(|item| !item.needs_rng || rng[0] != "");
+if variable::is_set("net_services") {
+    for name in variable::get("net_services").split(",") {
+        name.trim();
+        if name == "" { continue; }
+        let known = NET_SERVICE_ITEMS.filter(|item| item.value == name);
+        if known.len() == 0 {
+            throw "net_services: ожидается " + listed(NET_SERVICE_ITEMS.map(|item| item.value)) + ", а не «" + name + "»";
+        }
+        if !has_eth {
+            throw "net_services: служба " + name + " работает поверх Ethernet — добавьте транспорт tcp или udp";
+        }
+        if known[0].needs_rng && rng[0] == "" {
+            throw "net_services: у " + chip_name + " нет RNG, а " + name + " без случайных чисел небезопасен";
+        }
+        if !services.contains(name) { services.push(name); }
+    }
+} else if has_eth {
+    if service_items.len() < NET_SERVICE_ITEMS.len() {
+        print("SSH не предлагается: у " + chip_name + " нет RNG, а криптографии SSH нужны случайные числа");
+    }
+    services = checklist("net_services: отметьте сетевые службы (Enter — отметить или снять)",
+        service_items.map(|item| item.value), service_items.map(|item| item.text));
+}
+let ssh_auth = "";
+let ssh_key = "";
+if services.contains("ssh") {
+    ssh_auth = if variable::is_set("ssh_auth") {
+        variable::get("ssh_auth")
+    } else {
+        // Умолчание (и ответ без терминала) — пароль: вход по ключу без
+        // терминала было бы нечем закончить, а вопрос, который некому задать,
+        // генерацию не роняет.
+        ask("ssh_auth: вход в консоль SSH", ["password", "key"],
+            ["password — по паролю", "key — по открытому ключу ed25519"], "password")
+    };
+    if ssh_auth != "key" && ssh_auth != "password" {
+        throw "ssh_auth: ожидается key или password, а не «" + ssh_auth + "»";
+    }
+    if ssh_auth == "key" {
+        // Пустой ввод — передумали: вход по паролю. Без терминала ввода нет
+        // вовсе, и `ssh_auth=key` из `--define` без ключа — ошибка ниже.
+        let declined = false;
+        if variable::is_set("ssh_key") {
+            ssh_key = variable::get("ssh_key");
+        } else {
+            try {
+                ssh_key = variable::prompt("ssh_key: открытый ключ — строка ssh-ed25519 AAAA… из ~/.ssh/id_ed25519.pub (пусто — вход по паролю)",
+                    "", "^$|^ssh-ed25519 " + SSH_KEY_BLOB_PREFIX + "[A-Za-z0-9+/]{43}( .*)?$");
+                ssh_key.trim();
+                declined = ssh_key == "";
+            } catch (err) {
+                if !err.to_string().contains("not a terminal") { throw err; }
+            }
+        }
+        ssh_key.trim();
+        if declined {
+            ssh_auth = "password";
+            print("Ключ не введён — вход в консоль SSH по паролю");
+        } else if !ssh_key_ok(ssh_key, SSH_KEY_BLOB_PREFIX, BASE64_CHARS) {
+            throw "ssh_key: вход по ключу — нужна строка открытого ключа ed25519 («ssh-ed25519 "
+                + SSH_KEY_BLOB_PREFIX + "…», без кавычек); задайте --define ssh_key=\"…\" или ssh_auth=password";
+        }
+    }
+}
+for name in ["ssh_auth", "ssh_key"] {
+    if !services.contains("ssh") && variable::is_set(name) {
+        throw name + ": задаётся только вместе со службой ssh (net_services)";
+    }
+}
+if ssh_auth == "password" && variable::is_set("ssh_key") {
+    throw "ssh_key: ключ нужен только при ssh_auth=key";
+}
+variable::set("net_services", services.reduce(|sum, name| if sum == "" { name } else { sum + "," + name }, ""));
+variable::set("ssh_auth", ssh_auth);
+variable::set("ssh_key", ssh_key);
+
+// --- RAM. Оценка (`ram_estimate`, байт статической RAM) — для сводки и для
+// `template-check`, который сверяет её с фактом сборки. Не помещается проект с
+// транспортами: из `--define` — ошибка, из меню — предупреждение (пункт был
+// помечен). Проект без транспортов не отвергается: базу не выбирают.
+variable::set("ram_estimate", "");
+if ram_limit != () {
+    let need = ram_estimate(RAM_COST, ram_base_now, links, services);
+    variable::set("ram_estimate", need.to_string());
+    print("ram_estimate: " + need + " байт статической RAM (+ " + STACK_RESERVE + " под стек) из " + ram_limit + " байт RAM");
+    if links.len() > 0 && need + STACK_RESERVE > ram_limit {
+        let why = "не помещается в RAM " + chip_name + " (оценка " + kib(need + STACK_RESERVE) + " из " + kib(ram_limit) + ")";
+        // Стоимости транспортов замерены с графом: без него оценка завышена до
+        // ~750 байт (stm32f407ve protobuf-usb-usb-no-graph), отказ — с этим запасом.
+        if variable::is_set("links") { throw "links: " + variable::get("links") + " " + why; }
+        if variable::is_set("interface") { throw "interface: " + variable::get("interface") + " с протоколом " + protocol + " " + why; }
+        print("Внимание: выбранные транспорты " + why + " — прошивка может не собраться или упасть на переполнении стека");
+    }
+}
+
+// Основной транспорт — первый с протоколом, а без протокола — первый. От него
+// считаются прежние скаляры `interface`, `protocol`, `iface_periph`, `can_kind`,
+// `usb_kind`. Исходники шаблона и сводка `post-script.rhai` на них уже не
+// смотрят — идут циклом по `links` и признакам `has_*`; читает их только
+// документация (README.md, AGENTS.md, docs/**), описывающая один транспорт.
+// Производные флаги и удаление файлов ниже считаются по всем транспортам.
+let primary = #{ kind: "none" };
+for link in links {
+    if link.protocol != "none" {
+        primary = link;
+        break;
+    }
+}
+if primary.kind == "none" && links.len() > 0 { primary = links[0]; }
+iface = primary.kind;
 
 // Итог ответов: по нему считается раскладка. Если выбранное на чип не
 // помещается, память остаётся человеку — как при `--define write_size=...`.
@@ -1059,8 +1561,8 @@ variable::set("state_erase_size", "");
 variable::set("config_erase_size", "");
 variable::set("ext_page_size", "");
 variable::set("iface_periph", "");
-// Регион `DMA_NC` (хвост AXISRAM) под буферы DMA: границы числами, для `[env]`.
-// Пусто — региона нет (раскладка ручная, чип без AXISRAM, ядро не M7).
+// Регион `DMA_NC` (хвост RAM) под буферы DMA: границы числами, для `[env]`.
+// Пусто — региона нет (раскладка ручная, ядро не M7).
 variable::set("dma_nc_start", "");
 variable::set("dma_nc_len", "");
 // То же для `SRAM4` целиком под буферы BDMA (H7).
@@ -1068,7 +1570,11 @@ variable::set("bdma_nc_start", "");
 variable::set("bdma_nc_len", "");
 variable::set("can_kind", "");
 variable::set("usb_kind", "");
-// Нужна ли `STATE` и `CONFIG` своя страница (`adapters::flash::ErasePage`): только
+// Список транспортов и признаки видов; итог — после ответов, рядом с `interface`.
+variable::set("links", "");
+for kind in LINK_KINDS { variable::set("has_" + kind, "false"); }
+variable::set("has_net", "false");
+// Нужна ли `STATE` и `CONFIG` своя страница (`flash_page::ErasePage`): только
 // когда сектор раздела мельче страницы цельного `Flash` — F2/F4/F7. Иначе раздел
 // строится прямо над `Whole`, а равенство страниц держит `const`-assert в `bsp`.
 variable::set("state_paged", "false");
@@ -1086,6 +1592,7 @@ if variable::is_set("write_size") {
     if !wants_ota {
         file::delete("crates-cross/boot");
         file::delete("crates-cross/bsp/src/ota.rs");
+        file::delete("crates-cross/app/src/ota.rs");
         file::delete("docs/modules/bsp-ota.md");
         // Релизу по тегу без OTA нечего выкладывать: `app.bin` делается
         // только там, где есть раздел DFU. Тело workflow и так под
@@ -1107,6 +1614,7 @@ if variable::is_set("write_size") {
             print("  добавьте регион CONFIG вручную и впишите CONFIG_START/CONFIG_END в [env]");
         }
         file::delete("crates-cross/bsp/src/settings.rs");
+        file::delete("crates-cross/app/src/settings.rs");
     }
     // Общий объект `Flash` в bsp нужен OTA во внутреннем flash и настройкам во
     // флеше или EEPROM; внешней флеши он не нужен (см. ту же переменную ниже).
@@ -1129,7 +1637,7 @@ if variable::is_set("write_size") {
     // `ACTIVE`/`DFU` без раскладки не оборачиваются в `ErasePage`: страница обмена
     // здесь — страница цельного `Flash` (как было до расширения страницы).
     variable::set("swap_paged", "false");
-    // Страница раздела `BOOTLOADER_STATE` (`adapters::flash::ErasePage`; число
+    // Страница раздела `BOOTLOADER_STATE` (`flash_page::ErasePage`; число
     // уезжает переменной среды в crates-cross/.cargo/config.toml, её читают
     // bsp::flash и boot) — тоже знание раскладки. Её здесь нет,
     // поэтому — страница цельного `Flash`, как было до `ErasePage`: верно на
@@ -1230,7 +1738,7 @@ if variable::is_set("write_size") {
         print("Настройки — во внутренней EEPROM чипа: флеш под них не тратится");
     } else if config && store == "external" {
         print("Настройки — на внешней флеши: подставьте свой драйвер в crates-cross/bsp/src/settings.rs");
-        print("  (пока там заглушка adapters::flash::Unconnected — проект собирается, настройки не сохраняются)");
+        print("  (пока там заглушка bsp::stub::Flash — проект собирается, настройки не сохраняются)");
     }
     if wants_graph && !graph {
         print("Граф задач отключён для " + suffix + ": под приложение отведено " + m[app_length_key] + ", а supervisor туда не помещается");
@@ -1243,7 +1751,7 @@ if variable::is_set("write_size") {
     // внутренней OTA это `swap_page_size` её набора цифр — она крупнее
     // физической страницы чипа там, где chip-data-gen расширил её ради
     // журнала `STATE` (`swap_paged`): прошивка тогда оборачивает ACTIVE и DFU в
-    // `adapters::flash::ErasePage<_, SWAP_PAGE_SIZE>` (= page_size). Без OTA страницы обмена нет —
+    // `flash_page::ErasePage<_, SWAP_PAGE_SIZE>` (= page_size). Без OTA страницы обмена нет —
     // остаётся физическая, и `swap_paged` = "false".
     // С внешними разделами страница обмена зависит от стирания драйвера, а
     // DFU в адресном пространстве МК нет вовсе — host-target тест обмена
@@ -1315,6 +1823,7 @@ if variable::is_set("write_size") {
     variable::set("graph", if graph { "true" } else { "false" });
     if !config {
         file::delete("crates-cross/bsp/src/settings.rs");
+        file::delete("crates-cross/app/src/settings.rs");
     }
 
     // База flash одна на оба режима: `__bootloader_*` отсчитываются от неё, а не
@@ -1326,7 +1835,7 @@ if variable::is_set("write_size") {
     }
 
     // RAM одинаков в обоих крейтах и в обоих режимах. Следом — все остальные
-    // регионы чипа (ITCM, AXISRAM, CCMRAM, BKPSRAM, EEPROM, OTP, окна внешних
+    // регионы чипа (ITCM, DTCM, CCMRAM, BKPSRAM, EEPROM, OTP, окна внешних
     // шин...) готовыми строками из chip-data-gen: часть из них закомментирована,
     // причина указана прямо в строке.
     let ram = ["    RAM               (xrw) : ORIGIN = " + m["ram_origin"] + ", LENGTH = " + m["ram_length"]];
@@ -1551,6 +2060,7 @@ if variable::is_set("write_size") {
         // идёт по временной копии шаблона, до рендера — как и file::write.
         file::delete("crates-cross/boot");
         file::delete("crates-cross/bsp/src/ota.rs");
+        file::delete("crates-cross/app/src/ota.rs");
         file::delete("docs/modules/bsp-ota.md");
         // Вместе с bootloader'ом уходит и работа с разделом DFU: без OTA
         // раздела нет, а символы `__bootloader_dfu_*`, на которые опирается
@@ -1593,37 +2103,44 @@ if variable::get("graph") != "true" {
 	// `Board` поля сторожа не имеет.
 	file::delete("crates-cross/bsp/src/wdg.rs");
 	file::delete("docs/modules/bsp-wdg.md");
+} else {
+	// С графом узлы спавнит он (`fragments:`), модули задач без графа не нужны.
+	file::delete("crates-cross/app/src/tasks.rs");
+	file::delete("crates-cross/app/src/tasks");
 }
 
 // Протокол и транспорт выбраны и проверены выше (вопросы после выбора чипа), а
-// здесь остаётся подставить блок интерфейса для групп `resources.rs`. Граф
-// протоколу не нужен: без него узел спавнит `main` (как узел OTA).
+// здесь остаётся подставить блок основного транспорта для групп `resources.rs`. Граф
+// протоколу не нужен: без него узел спавнит `tasks::spawn_all` в `app` (как узел OTA).
 if iface != "none" {
-    let blocks = INTERFACE_BLOCKS[iface];
-    let found = [];
-    for tag in INTERFACES[suffix] {
-        if blocks.contains(tag) { found.push(tag); }
-    }
-    if !INSTANCES.contains(suffix) || !INSTANCES[suffix].contains(found[0]) {
-        throw "interface: в chip-data/instances.rhai нет имени блока " + found[0] + " у " + chip_name + " — перегенерируйте таблицы (chip-data-gen)";
-    }
-    variable::set("iface_periph", INSTANCES[suffix][found[0]]);
+    variable::set("iface_periph", primary.block);
     if iface == "can" {
-        variable::set("can_kind", found[0]);
+        variable::set("can_kind", primary.tag);
     }
     if iface == "usb" {
-        variable::set("usb_kind", found[0]);
+        variable::set("usb_kind", primary.tag);
     }
 }
-// `adapters::flash::ErasePage` и всё, что о нём сказано, нужны проекту только когда
+// `flash_page::ErasePage` и всё, что о нём сказано, нужны проекту только когда
 // хоть один раздел его использует: `STATE`/`CONFIG` с секторами мельче страницы
 // чипа или `ACTIVE`/`DFU` со страницей обмена. Иначе типа в проекте нет вовсе.
 variable::set("erase_page", if variable::get("state_paged") == "true" || variable::get("config_paged") == "true" || variable::get("swap_paged") == "true" { "true" } else { "false" });
-// Заглушка драйвера внешней флеши (`adapters::flash::Unconnected`) нужна, пока
+// Заглушка драйвера внешней флеши (`bsp::stub::Flash`) нужна, пока
 // на внешней флеши лежит хоть что-то: разделы OTA или настройки.
 variable::set("external_flash", if (variable::get("ota") == "true" && variable::get("ota_store") == "external") || variable::get("config_store") == "external" { "true" } else { "false" });
+// Крейт `flash-page` (crates-host): `ErasePage` — при своей странице у раздела,
+// `erase_size` — при OTA на внешней флеши (проверка раскладки в `bsp::external`).
+variable::set("flash_page", if variable::get("erase_page") == "true" || (variable::get("ota") == "true" && variable::get("ota_store") == "external") { "true" } else { "false" });
 variable::set("protocol", protocol);
 variable::set("interface", iface);
+// Все транспорты — по ним идут файлы шаблона: список и признаки видов.
+variable::set("links", links_text(links));
+let has = #{ uart: false, can: false, tcp: false, udp: false, usb: false };
+for link in links { has[link.kind] = true; }
+for kind in has.keys() {
+    variable::set("has_" + kind, if has[kind] { "true" } else { "false" });
+}
+variable::set("has_net", if has.tcp || has.udp { "true" } else { "false" });
 // Итог по кэшам: тег `scb_d` — кэш данных ядра M7 — только там, где есть регион
 // `DMA_NC`. Файлы модулей, которых в проекте нет, уходят тут же.
 if variable::get("dma_nc_start") != "" {
@@ -1636,53 +2153,95 @@ if cache == "" {
     file::delete("crates-cross/bsp/src/cache.rs");
 }
 
+// Протоколы и их транспорты — по всем транспортам, а не по основному: «Modbus по
+// UART и по TCP» требует и RTU, и MBAP. Поток байтов (UART, USB CDC, TCP), а не
+// датаграмма: ему нужны `embedded-io-async`, `crc` и, под protobuf, COBS. UDP
+// границу кадра получает от самой датаграммы, CAN — это вообще не поток.
+let on = #{ modbus: false, protobuf: false, canopen: false };
+let modbus_rtu = false;
+let modbus_tcp = false;
+let modbus_udp = false;
+let cobs_used = false;
+let sockets = 0;
+for link in links {
+    if link.protocol == "none" { continue; }
+    on[link.protocol] = true;
+    if link.protocol == "modbus" {
+        if link.kind == "uart" || link.kind == "usb" { modbus_rtu = true; }
+        if link.kind == "tcp" { modbus_tcp = true; }
+        if link.kind == "udp" { modbus_udp = true; }
+    }
+    if link.protocol == "protobuf" && (link.kind == "uart" || link.kind == "usb" || link.kind == "tcp") {
+        cobs_used = true;
+    }
+    if link.kind == "tcp" || link.kind == "udp" { sockets += 1; }
+}
+for name in on.keys() {
+    variable::set("has_" + name, if on[name] { "true" } else { "false" });
+}
+let modbus_mbap = modbus_tcp || modbus_udp;
+variable::set("modbus_rtu", if modbus_rtu { "true" } else { "false" });
+variable::set("modbus_tcp", if modbus_tcp { "true" } else { "false" });
+variable::set("modbus_udp", if modbus_udp { "true" } else { "false" });
+variable::set("modbus_mbap", if modbus_mbap { "true" } else { "false" });
+// Modbus поверх потока (RTU или TCP): чтение `embedded-io-async` и фейк потока
+// в тестах адаптера; UDP-датаграммам они не нужны.
+variable::set("modbus_stream", if modbus_rtu || modbus_tcp { "true" } else { "false" });
+variable::set("cobs_used", if cobs_used { "true" } else { "false" });
+// Сокеты протоколов на стеке `embassy-net` (порт, буферы): по одному на сетевой
+// транспорт с протоколом. Транспорт без протокола сокета не открывает.
+variable::set("protocol_sockets", sockets.to_string());
+// Слоты сокетов в стеке (`SOCKETS` в `app::net`): по одному на каждый сетевой
+// транспорт, с протоколом и без — на `tcp` без протокола сокет открывает
+// приложение, и без слота под него `embassy-net` паникует.
+let net_sockets = 0;
+for link in links {
+    if link.kind == "tcp" || link.kind == "udp" { net_sockets += 1; }
+}
+variable::set("net_sockets", net_sockets.to_string());
+
 // Кадровый канал (`ports::FrameLink`, `LinkError`) нужен protobuf (канал хоста),
 // шине CAN (ошибка `CanBus`) и UDP-каналу (`adapters::net::UdpLink` реализует
 // `FrameLink`) — с протоколом и без него.
-variable::set("link_port", if protocol == "protobuf" || iface == "can" || iface == "udp" { "true" } else { "false" });
+variable::set("link_port", if on.protobuf || has.can || has.udp { "true" } else { "false" });
 // Порт хранилища настроек (`ports::SettingsStorage`) нужен, пока есть что в него
 // класть: раздел, EEPROM или внешняя флеш (`config`) либо заглушка `Unavailable`
 // у узла CANopen без хранилища. Иначе порта и адаптера в проекте нет.
-variable::set("settings_port", if variable::get("config") == "true" || protocol == "canopen" { "true" } else { "false" });
-// Транспорт поверх потока байтов (UART, USB CDC, TCP), а не датаграммы: ему нужны
-// `embedded-io-async`, `crc` и, под protobuf, COBS. UDP границу кадра получает
-// от самой датаграммы, CAN — это вообще не поток.
-let stream = iface == "uart" || iface == "usb" || iface == "tcp";
-variable::set("stream_io", if stream { "true" } else { "false" });
+variable::set("settings_port", if variable::get("config") == "true" || on.canopen { "true" } else { "false" });
+variable::set("stream_io", if has.uart || has.usb || has.tcp { "true" } else { "false" });
+// Заглушки периферии в `bsp/src/stub.rs`: UART, CAN, USB, Ethernet, внешняя флеш.
+variable::set("has_stub", if has.uart || has.can || has.usb || has.tcp || has.udp || variable::get("external_flash") == "true" { "true" } else { "false" });
 // CRC кадра: RTU (Modbus по UART и USB) и COBS (protobuf по потоку).
-variable::set("crc_used", if (protocol == "modbus" && (iface == "uart" || iface == "usb")) || (protocol == "protobuf" && stream) { "true" } else { "false" });
+variable::set("crc_used", if modbus_rtu || cobs_used { "true" } else { "false" });
 // Property-тесты кадрирования есть у Modbus (RTU, TCP, UDP) и у COBS.
-variable::set("framing_tests", if protocol == "modbus" || (protocol == "protobuf" && stream) { "true" } else { "false" });
+variable::set("framing_tests", if on.modbus || cobs_used { "true" } else { "false" });
 // Асинхронные трейты в `ports`: без них `#![expect(async_fn_in_trait)]` не
 // срабатывает, и сборка падает.
-variable::set("ports_async", if variable::get("ota") == "true" || variable::get("settings_port") == "true" || protocol != "none" || iface == "can" || iface == "udp" { "true" } else { "false" });
-// Сокет протокола на стеке `embassy-net` (порт, буферы): нужен, только когда
-// протокол работает по сети. Транспорт без протокола сокета не открывает.
-variable::set("protocol_socket", if (protocol == "modbus" || protocol == "protobuf") && (iface == "tcp" || iface == "udp") { "true" } else { "false" });
-// Модуль `link.rs` в `bsp`: готовый транспорт протокола (`Board::link`) — кадрирование,
-// буферы и сокет. Без Modbus и protobuf транспорту нечего оборачивать (CANopen берёт
+variable::set("ports_async", if variable::get("ota") == "true" || variable::get("settings_port") == "true" || on.modbus || on.protobuf || on.canopen || has.can || has.udp { "true" } else { "false" });
+// Модуль `link.rs` в `app`: транспорты протоколов (`app::link::<имя>`) — кадрирование,
+// буферы и сокет над объектами платы. Без Modbus и protobuf транспорту нечего оборачивать (CANopen берёт
 // шину CAN как есть).
-variable::set("protocol_link", if protocol == "modbus" || protocol == "protobuf" { "true" } else { "false" });
+variable::set("protocol_link", if on.modbus || on.protobuf { "true" } else { "false" });
 // Группы `resources.rs` нужны, пока есть что в них класть: общий флеш, сторож
-// графа или блок выбранного интерфейса. Иначе в файле остаётся пустая группа.
-variable::set("has_resources", if iface != "none" || variable::get("shared_flash") == "true" || variable::get("graph") == "true" { "true" } else { "false" });
+// графа или блоки транспортов. Иначе в файле остаётся пустая группа.
+variable::set("has_resources", if links.len() > 0 || variable::get("shared_flash") == "true" || variable::get("graph") == "true" { "true" } else { "false" });
 // Master Modbus: ответ на вопрос выше (только при protocol=modbus).
-let master = protocol == "modbus" && wants_master;
+let master = on.modbus && wants_master;
 variable::set("modbus_master", if master { "true" } else { "false" });
 // Файл master'а — только там, где он выбран; `pub mod master;`, порт и
 // клиентские impl'ы вырезает Liquid в комментариях. Без modbus каталог
 // `domain/src/modbus` уже удалён ниже целиком, второй раз его не трогаем.
-if protocol == "modbus" && !master {
+if on.modbus && !master {
 	file::delete("crates-host/domain/src/modbus/master.rs");
 }
-// Модуль заглушки UART в bsp — только под интерфейс uart: без него
+// Модуль заглушки UART в bsp — только с транспортом uart: без него
 // `bsp::serial` не объявлен, и файл остался бы мусором с Liquid внутри.
-if iface != "uart" {
+if !has.uart {
 	file::delete("crates-cross/bsp/src/serial.rs");
 	file::delete("docs/modules/bsp-serial.md");
 }
-// То же для CAN: модуль шины и его документация — только под интерфейс can.
-if iface != "can" {
+// То же для CAN: модуль шины и его документация — только с транспортом can.
+if !has.can {
 	file::delete("crates-cross/bsp/src/can.rs");
 	file::delete("docs/modules/bsp-can.md");
 }
@@ -1694,57 +2253,57 @@ if iface != "can" {
 // проекте, где он выбран: «modbus поверх uart» не тянет ни protobuf, ни CAN,
 // а проект без протокола — ничего из них. Ссылки на удалённое (`mod`,
 // `pub use`, зависимости, фичи) вырезает Liquid в комментариях.
-if protocol != "modbus" {
+if !on.modbus {
 	file::delete("crates-host/ports/src/modbus.rs");
 	file::delete("crates-host/ports/src/modbus");
 	file::delete("crates-host/adapters/src/modbus.rs");
 	file::delete("crates-host/adapters/src/modbus");
 	file::delete("crates-host/domain/src/modbus.rs");
 	file::delete("crates-host/domain/src/modbus");
+	file::delete("crates-cross/app/src/modbus.rs");
 }
-// Транспорт Modbus и сокет сети — только под выбранный интерфейс: остальные
+// Транспорты Modbus и сокеты сети — только под выбранные транспорты: остальные
 // файлы адаптеров были бы кодом, до которого не дотянуться. `mod`, `pub use` и
 // тесты в `modbus.rs`/`net.rs` вырезает Liquid в комментариях.
-if protocol == "modbus" {
-	if iface != "uart" && iface != "usb" {
+if on.modbus {
+	if !modbus_rtu {
 		file::delete("crates-host/adapters/src/modbus/rtu.rs");
 	}
-	if iface != "tcp" {
+	if !modbus_tcp {
 		file::delete("crates-host/adapters/src/modbus/tcp.rs");
 	}
-	if iface != "udp" {
+	if !modbus_udp {
 		file::delete("crates-host/adapters/src/modbus/udp.rs");
 	}
-	if iface != "tcp" && iface != "udp" {
+	if !modbus_mbap {
 		file::delete("crates-host/adapters/src/modbus/mbap.rs");
 	}
 }
-if iface != "tcp" {
+if !has.tcp {
 	file::delete("crates-host/adapters/src/net/tcp.rs");
 }
-if iface != "udp" {
+if !has.udp {
 	file::delete("crates-host/adapters/src/net/udp.rs");
 }
-if protocol == "protobuf" && iface == "udp" {
+if !cobs_used {
 	file::delete("crates-host/adapters/src/cobs.rs");
 }
-if protocol != "protobuf" {
+if !on.protobuf {
 	file::delete("crates-host/ports/src/host.rs");
-	file::delete("crates-host/adapters/src/cobs.rs");
 	file::delete("crates-host/domain/src/host.rs");
 	file::delete("crates-host/domain/src/host");
 	file::delete("crates-host/proto");
 }
-if iface != "can" {
+if !has.can {
 	file::delete("crates-host/ports/src/can.rs");
 }
-if protocol != "canopen" {
+if !on.canopen {
 	file::delete("crates-host/domain/src/canopen.rs");
 	file::delete("crates-host/domain/src/canopen");
 	file::delete("crates-host/canopen");
 }
 if variable::get("protocol_link") != "true" {
-	file::delete("crates-cross/bsp/src/link.rs");
+	file::delete("crates-cross/app/src/link.rs");
 }
 if variable::get("link_port") != "true" {
 	file::delete("crates-host/ports/src/link.rs");
@@ -1760,15 +2319,15 @@ if variable::get("ota") != "true" {
 	file::delete("crates-host/domain/src/ota");
 	// Перевод команд OTA у протокола: каталог протокола есть, только если он
 	// выбран, — чужой хук уже удалил выше.
-	if protocol == "modbus" {
+	if on.modbus {
 		file::delete("crates-host/domain/src/modbus/ota.rs");
 	}
-	if protocol == "canopen" {
+	if on.canopen {
 		file::delete("crates-host/domain/src/canopen/ota.rs");
 	}
 }
 // То же для хранилища настроек.
-if variable::get("ota") != "true" && protocol != "canopen" {
+if variable::get("ota") != "true" && !on.canopen {
 	file::delete("crates-host/ports/src/word.rs");
 }
 if variable::get("settings_port") != "true" {
@@ -1777,40 +2336,69 @@ if variable::get("settings_port") != "true" {
 }
 // Мост blocking → async и заглушка внешней флеши — только когда ими кто-то
 // пользуется: обёртка страницы (`erase_page`) или внешняя флеш.
-if variable::get("erase_page") != "true" && variable::get("external_flash") != "true" {
-	file::delete("crates-host/adapters/src/flash.rs");
+if variable::get("flash_page") != "true" {
+	file::delete("crates-host/flash-page");
 }
-if iface != "uart" {
-	file::delete("crates-host/adapters/src/serial.rs");
+// Модули задач без графа (`app/src/tasks/`) — по узлу, только выбранные.
+if variable::get("graph") != "true" {
+	if variable::get("ota") != "true" {
+		file::delete("crates-cross/app/src/tasks/ota.rs");
+	}
+	if !has.tcp && !has.udp {
+		file::delete("crates-cross/app/src/tasks/net.rs");
+	}
+	if !has.usb {
+		file::delete("crates-cross/app/src/tasks/usb.rs");
+	}
+	if !on.modbus {
+		file::delete("crates-cross/app/src/tasks/modbus.rs");
+	}
+	if !on.protobuf {
+		file::delete("crates-cross/app/src/tasks/host.rs");
+	}
+	if !on.canopen {
+		file::delete("crates-cross/app/src/tasks/canopen.rs");
+	}
 }
-if iface != "can" {
-	file::delete("crates-host/adapters/src/can.rs");
+if variable::get("has_stub") != "true" {
+	file::delete("crates-cross/bsp/src/stub.rs");
 }
-// USB — устройство `embassy-usb`, узел USB и поток CDC — только под usb.
-if iface != "usb" {
+if !has.usb && !has.tcp && !has.udp {
+	file::delete("crates-host/adapters/src/fake.rs");
+}
+// USB — устройство `embassy-usb`, узел USB и поток CDC — только с транспортом usb.
+if !has.usb {
 	file::delete("crates-cross/bsp/src/usb.rs");
+	file::delete("crates-cross/app/src/usb.rs");
 	file::delete("docs/modules/bsp-usb.md");
 	file::delete("crates-host/adapters/src/usb.rs");
 	file::delete("crates-host/domain/src/usb.rs");
 }
-// Сеть — стек `embassy-net`, узел NET и их сокеты — только под tcp/udp.
-if iface != "tcp" && iface != "udp" {
+// Сеть — стек `embassy-net`, узел NET и их сокеты — только с tcp/udp.
+if !has.tcp && !has.udp {
 	file::delete("crates-cross/bsp/src/net.rs");
+	file::delete("crates-cross/app/src/net.rs");
 	file::delete("docs/modules/bsp-net.md");
 	file::delete("crates-host/adapters/src/net.rs");
 	file::delete("crates-host/adapters/src/net");
 	file::delete("crates-host/domain/src/net.rs");
 }
-// RNG — только под tcp/udp и только если он есть у чипа (`rng_irq` не пуст).
-if rng[0] == "" || (iface != "tcp" && iface != "udp") {
+// RNG — только с tcp/udp и только если он есть у чипа (`rng_irq` не пуст).
+if rng[0] == "" || (!has.tcp && !has.udp) {
 	file::delete("crates-cross/bsp/src/rng.rs");
 	file::delete("docs/modules/bsp-rng.md");
+}
+// Бэкенд `getrandom` над RNG — только с ssh: `sunset` берёт случайность через
+// `getrandom` сам, остальным сетевым проектам хватает затравки стека.
+if !variable::get("net_services").split(",").contains("ssh") {
+	file::delete("crates-cross/app/src/rng.rs");
 }
 
 // Обёртка EEPROM — только когда настройки лежат в ней; без неё файл с
 // тестами и `pub mod eeprom;` (закрыт тем же условием в lib.rs) — мусор.
 if variable::get("config_store") != "eeprom" {
 	file::delete("crates-host/adapters/src/eeprom.rs");
+	file::delete("crates-host/ports/src/eeprom.rs");
 }
 
 // Слот драйвера внешней флеши в bsp — только у OTA с разделами на ней. Без

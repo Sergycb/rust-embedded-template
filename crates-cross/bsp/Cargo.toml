@@ -31,14 +31,28 @@ fault-handler = []
 # option bytes; src/cache.rs — `FLASH_ACR` и `ICACHE`): их нет в API HAL, а сырой адрес
 # вместо типизированного регистра `stm32-metapac` ничем не проверялся бы.
 embassy-stm32 = { workspace = true, features = [{% if cpu_freq_boost == "true" or bank_switch != "" or cache contains "icen" or cache contains "icache" %}"unstable-pac"{% endif %}] }
-# Адаптеры поверх generic-флеша и шин: `Board::new` собирает их из периферии
-# и кладёт полями. Проверку подписи (`signed`) плата не включает: подпись
-# проверяет bootloader (crates-cross/boot), версию задаёт приложение.
-adapters = { workspace = true }
-{%- if core_baseline != "true" or ota == "true" %}
-# Порты, которые плата реализует сама:{% if core_baseline != "true" %} счётчик тактов (`Cycles`, src/cycles.rs){% endif %}{% if core_baseline != "true" and ota == "true" %} и{% endif %}{% if ota == "true" %}
-# перезагрузка для узла OTA (`Reboot`, src/cpu.rs){% endif %}.
+{%- if core_baseline != "true" or ota == "true" or config_store == "eeprom" or has_can == "true" %}
+# Порты, которые плата реализует сама — у чего нет трейта в `embedded-hal`:{% if core_baseline != "true" %}
+# счётчик тактов (`Cycles`, src/cycles.rs);{% endif %}{% if ota == "true" %}
+# перезагрузка для узла OTA (`Reboot`, src/cpu.rs);{% endif %}{% if config_store == "eeprom" %}
+# доступ к EEPROM (`EepromAccess`, src/settings.rs);{% endif %}{% if has_can == "true" %}
+# шина CAN (`CanBus`, заглушка в src/stub.rs);{% endif %}
 ports = { workspace = true }
+{%- endif %}
+{%- if flash_page == "true" %}
+# Страница стирания раздела (`ErasePage`){% if ota == "true" and ota_store == "external" %} и страница драйвера внешней флеши
+# (`erase_size`, src/external.rs){% endif %} — общая с bootloader'ом.
+flash-page = { workspace = true }
+{%- endif %}
+{%- if has_uart == "true" %}
+# Поток байтов заглушки UART (src/stub.rs).
+embedded-io-async = { workspace = true }
+{%- endif %}
+{%- if external_flash == "true" %}
+# Трейты флеша у заглушки внешней флеши (src/stub.rs): асинхронный — для
+# приложения, блокирующий — для bootloader'а.
+embedded-storage = { workspace = true }
+embedded-storage-async = { workspace = true }
 {%- endif %}
 assign-resources = { workspace = true }
 # Регистры ядра напрямую:{% if graph == "true" %} `wfi` в ожидании сброса от сторожа (src/wdg.rs),{% endif %}
@@ -65,24 +79,25 @@ embassy-sync = { workspace = true }
 # ещё и имя типа раздела в псевдониме `Ota`.
 embassy-embedded-hal = { workspace = true }
 {%- endif %}
-# `static-cell` — потому что общему флешу, сети и USB нужен `&'static`: иначе их
+# `static-cell` — потому что общему флешу нужен `&'static`: иначе его разделы
 # нельзя отдать в задачу, которую спавнит `Spawner` (аргументы задач обязаны
 # быть 'static).
-{%- if shared_flash == "true" or ota == "true" or interface == "tcp" or interface == "udp" or interface == "usb" %}
+{%- if shared_flash == "true" or ota == "true" %}
 static_cell = { workspace = true }
 {%- endif %}
-{%- if interface == "usb" %}
-# USB-устройство над USB-блоком платы (`bsp::usb`); заглушка и поток CDC — в
-# `adapters::usb`.
-embassy-usb = { workspace = true }
+{%- if has_usb == "true" %}
+# Трейт USB-драйвера — его реализует заглушка (`bsp::stub::UsbDriver`) и
+# драйвер `embassy-stm32`; устройство и классы над ним собирает `app`.
+embassy-usb-driver = { workspace = true }
 {%- endif %}
-{%- if interface == "tcp" or interface == "udp" %}
-# Стек над Ethernet платы (`bsp::net`); сокеты и заглушка — в `adapters::net`.
-embassy-net = { workspace = true }
+{%- if has_net == "true" %}
+# Трейт сетевого драйвера — его реализует заглушка (`bsp::stub::NetDevice`) и
+# драйвер Ethernet `embassy-stm32`; стек и сокеты над ним собирает `app`.
+embassy-net-driver = { workspace = true }
 {%- endif %}
 # Только ради `ota.rs`, которого в проектах без OTA нет вовсе — вместе с
-# `crates-cross/boot` его удаляет chip-select.rhai. Сам адаптер живёт в
-# `adapters::ota`; здесь `embassy-boot` нужен ради `from_linkerfile`
+# `crates-cross/boot` его удаляет chip-select.rhai. Адаптер обновления над
+# разделами собирает `app`; здесь `embassy-boot` нужен ради `from_linkerfile`
 # (разделы из символов memory.x) и фичи `flash-erase-zero`.
 {%- if ota == "true" %}
 embassy-boot = { workspace = true, features = ["defmt"{% if erase_zero == "true" and ota_store != "external" %}, "flash-erase-zero"{% endif %}] }

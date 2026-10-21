@@ -1,19 +1,19 @@
-Обновление прошивки платы: адаптер разделов — поле `Board::ota`
-([`Updater`]). Образ приходит не по каналу платы, а командами от узла протокола
-на вход узла `domain::ota` (docs/ota.md).
+Обновление прошивки платы: разделы `DFU` и `BOOTLOADER_STATE` — поле
+`Board::ota` ([`Partitions`]). Образ приходит не по каналу платы, а командами от
+узла протокола на вход узла `domain::ota` (docs/ota.md).
 
-Адаптер обновления ([`Updater`]) — `adapters::ota::Updater` (generic по
-`NorFlash`, тестируется на хосте), реализация порта `FirmwareUpdate` поверх
-разделов `DFU` и `BOOTLOADER_STATE`. Разделы `bsp` находит по линкерным
-символам `memory.x` (`FirmwareUpdaterConfig::from_linkerfile`) — это и есть то,
-что привязано к чипу. Логика приёма и применения — `domain::ota::download` и
-`domain::ota::update` — работает только с портами, её зовёт узел
-`domain::ota`. Псевдонимы типов нужны, потому что задачи embassy не могут быть
-generic.
+Разделы `bsp` находит по линкерным символам `memory.x`
+(`FirmwareUpdaterConfig::from_linkerfile`) — это и есть то, что привязано к
+чипу. Адаптер обновления над ними — `adapters::ota::Updater` (generic по
+`NorFlash`, тестируется на хосте), реализация порта `FirmwareUpdate` — собирает
+приложение (`crates-cross/app/src/ota.rs`, `crate::ota::new`). Логика приёма и
+применения — `domain::ota::download` и `domain::ota::update` — работает только
+с портами, её зовёт узел `domain::ota`. Псевдонимы типов разделов ([`Dfu`],
+[`State`]) нужны, потому что задачи embassy не могут быть generic.
 {%- if ota_store == "external" %} Здесь `DFU` и `BOOTLOADER_STATE` — на внешней флеши:
 оба раздела строятся над одним драйвером из `crate::external`, символы в
 `memory.x` — смещения от её начала (docs/flash.md).{% else %}{% if state_paged == "true" %} `BOOTLOADER_STATE` строится не над цельным `Flash`, как
-`DFU`, а над `adapters::flash::ErasePage` со страницей своего сектора
+`DFU`, а над `flash_page::ErasePage` со страницей своего сектора
 (`STATE_ERASE_SIZE`) — почему, см. docs/flash.md.{% else %} Сектор `BOOTLOADER_STATE` равен странице
 цельного `Flash`, поэтому раздел строится прямо над ним, как `DFU` (равенство
 проверяет `const`-assert).{% endif %} Число приезжает переменной
@@ -29,7 +29,7 @@ bootloader'а) — она крупнее физической страницы �
 образа задаёт приложение (`crates-cross/app/src/image.rs`), ключ —
 bootloader.{% endif %}
 
-Размер `ACTIVE` адаптер получает числом — переменной среды `ACTIVE_LEN` из
+Размер `ACTIVE` адаптер получает числом — [`ACTIVE_LEN`], переменной среды из
 `[env]`: тем же расчётом генерация пишет `ACTIVE` в `memory.x`. Это `ACTIVE`, а
 не `DFU`: образ принимается в `DFU`, но обмен копирует ровно `ACTIVE`, и образ
 длиннее него приехал бы обрезанным.
@@ -39,9 +39,9 @@ bootloader.{% endif %}
 Сверка длины до стирания, `prepare` один раз, буферизация до
 слова флеша, порядок проверок подписи, коды отказа — уже в узле
 `domain::ota`{% if graph == "true" %}, который граф спавнит из `fragments:`
-(`crates-cross/app/src/graph.rs`){% else %}. Без графа его спавнит `main`
-(`ota::task` над `domain::ota::task` в `main.rs`), отдав задаче `ota`
-владением{% endif %}. Во фрагменте
+(`crates-cross/app/src/graph.rs`){% else %}. Без графа его спавнит
+`crates-cross/app/src/tasks/ota.rs` над `domain::ota::task`, отдав задаче
+адаптер владением{% endif %}. Во фрагменте
 `domain::ota` слот адаптера помечен `local`: `Updater` — `!Send` (внутри ссылка на {% if ota_store == "external" %}`crate::external::ExternalMutex`{% else %}`FlashMutex`{% endif %} с
 `NoopRawMutex`), и граф держит его на своём исполнителе, не требуя `Send`, —
 то же допущение «один исполнитель», что у самого `NoopRawMutex`; захотите

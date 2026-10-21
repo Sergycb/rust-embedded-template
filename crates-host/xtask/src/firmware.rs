@@ -10,7 +10,7 @@ use crate::project::{
     APP_ARTIFACT, TARGET, cross_target_dir, has_bootloader, root_dir, signing_enabled,
 };
 use crate::signing::{ensure_image_key, ensure_signing_key, sign_image};
-use crate::size::{report_boot, report_image, warn_boot_runtime_symbols};
+use crate::size::{report_boot, report_image, report_ram, warn_boot_runtime_symbols};
 
 pub fn build(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     // Ключ приводится в порядок ДО сборки, а не после: открытый попадает в
@@ -81,6 +81,7 @@ pub fn build(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     // приложению достаётся весь флеш. Заодно сверяется адрес, с которого образ
     // начинается.
     report_image(base, image.len() as u64)?;
+    report_ram(&elf)?;
 
     // А файл нужен только там, где есть куда его доставлять: `.bin` — это
     // ровно то, что уезжает в раздел `DFU`.

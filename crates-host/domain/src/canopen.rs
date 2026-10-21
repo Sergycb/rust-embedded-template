@@ -134,11 +134,12 @@ pub fn dictionary() -> Dictionary {
 // struct`). Строит её compose-site:
 //
 // ```ignore
-// fragments: [::domain::CANOPEN_FRAG<bsp::can::Can, bsp::settings::Settings> as CANOPEN
-//                 = ::domain::canopen::CanOpenWiring { bus: board.can, node_id: 1,
+// fragments: [::domain::CANOPEN_FRAG<bsp::can::can::Can, crate::settings::Settings> as CANOPEN
+//                 = ::domain::canopen::CanOpenWiring { bus: parts.board.can, node_id: 1,
 //                       dictionary: ::domain::canopen::dictionary(),
-//                       settings: board.settings, persist: true,
-//                       ota_cmd: ota_cmd_requester() }];   // только с OTA
+//                       settings: crate::settings::new(parts.board.settings), persist: true,
+//                       ota_cmd: ::domain::ota::OtaClient::new(ota_cmd_requester(),
+//                                    ::domain::ota::ClientId(0)) }];   // только с OTA
 // ```
 
 /// Узел `CANOPEN`: ведёт стек CANopen, пока жива шина.
@@ -402,7 +403,7 @@ supervisor::supervisor_fragment! {
             // {%- if ota == "true" %}
             /// Клиент входа `CMD` узла OTA: команды объекта OTA словаря
             /// ([`OTA`]) уходят им.
-            OTA_CMD: ::supervisor::Requester<'static, $crate::ota::OtaCommand, $crate::ota::OtaReply> =
+            OTA_CMD: $crate::ota::OtaClient =
                 inputs.ota_cmd
             // {%- endif %}
         ],

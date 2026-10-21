@@ -26,14 +26,14 @@ allow = [
 	"Zlib",
 	"Unicode-3.0",
 	"CC0-1.0",
-	# {%- if interface == "tcp" or interface == "udp" %}
+	# {%- if has_net == "true" %}
 	# `smoltcp` — TCP/IP-стек под `embassy-net`.
 	"0BSD",
 	# {%- endif %}
 ]
 confidence-threshold = 0.9
 
-# {%- if protocol == "canopen" %}
+# {%- if has_canopen == "true" %}
 # Исключение — стек CANopen `zencan` (MPL-2.0): копилефт на уровне файла. Он
 # обязывает публиковать изменения в файлах самого zencan, а на код проекта
 # (MIT), который им пользуется, не распространяется. Разрешено только этим
@@ -63,5 +63,17 @@ yanked = "deny"
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-# Собственная библиотека (supervisor, fsm, watchdog) — по git.
+# Собственная библиотека (supervisor, fsm, watchdog, sync-request) — по git;
+# адрес — `rust_lib` из генерации, без `.git`. Ещё один git-источник — ещё
+# строка списка:
+#   allow-git = [
+#       "{{rust_lib}}",
+#       "https://github.com/<владелец>/<репозиторий>",
+#   ]
+# {%- comment %}
+# В репозитории шаблона — настоящий адрес, чтобы `cargo deny check` работал и
+# здесь; в проекте строки нет, рабочую даёт следующая (MAINTAINING.md,
+# «Значение в корневом workspace»).
 allow-git = ["https://github.com/Sergycb/rust-lib"]
+# {%- endcomment %}
+#{{newline}}allow-git = ["{{rust_lib}}"]

@@ -16,7 +16,7 @@ use embedded_storage::nor_flash::NorFlash;
 /// свой: любой блокирующий `embedded_storage::nor_flash::NorFlash`. Та же
 /// микросхема, что у приложения (`bsp::external`), но драйвер блокирующий:
 /// bootloader не поднимает исполнитель.
-pub(crate) type ExternalFlash = adapters::flash::Unconnected;
+pub(crate) type ExternalFlash = bsp::stub::Flash;
 
 const _: () = assert!(
     EXT_PAGE_SIZE.is_multiple_of(<ExternalFlash as NorFlash>::ERASE_SIZE),
@@ -25,9 +25,9 @@ const _: () = assert!(
 );
 
 /// Журнал `STATE` в раскладке посчитан на слово не шире 32 байт — столько же
-/// держит буфер адаптера в приложении (`adapters::ota::MAX_WRITE_SIZE`).
+/// держит буфер адаптера в приложении (`ports::MAX_WRITE_SIZE`).
 const _: () = assert!(
-    <ExternalFlash as NorFlash>::WRITE_SIZE <= adapters::ota::MAX_WRITE_SIZE,
+    <ExternalFlash as NorFlash>::WRITE_SIZE <= ports::MAX_WRITE_SIZE,
     "слово записи драйвера внешней флеши шире 32 байт"
 );
 

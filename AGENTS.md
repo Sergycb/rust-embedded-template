@@ -36,8 +36,9 @@ skill'ом `rust-engineering` и не дублируются здесь. Это�
 (`lto` + `--gc-sections` выбрасывают остальное). Их типы — `BootPlan`, `Screening`,
 `ScreenFailure` — тоже в `domain::ota::boot`. Больше `cross` в `domain` ходит только
 через `app`; `bsp` от `domain` не зависит — `docs/architecture.md`.
-`cross` остаётся минимальным: только создание `static` hardware-объектов (буферы, DMA,
-периферия) и оркестрация задач (`Spawner`, supervisor-графы, watchdog).
+`cross` остаётся минимальным: `bsp` — объекты платы (периферия под трейтами, драйверы,
+разделы флеша, DMA-буферы под железо), `app` — сборка адаптеров над ними с их
+буферами и оркестрация задач (`Spawner`, supervisor-графы, watchdog).
 Всё остальное — даже асинхронное и «системное» на вид (стейтчарты, RPC, синхронизация
 задач) — живёт в `domain`, а не в `cross`. Узлы графа тоже: подсистема объявляет свой
 `supervisor_fragment!`-ом рядом со своей задачей — самодостаточным модулем с задачей,
@@ -56,6 +57,8 @@ skill'ом `rust-engineering` и не дублируются здесь. Это�
 `ctx.run().await.result`).
 Голый `loop` в задаче узла и проекция аргументов (`task: f(ctx.поле)`) не пишутся;
 единственное исключение — `cpu_load::task` (проект без графа, не узел).
+Объект от килобайта в слот по значению не кладётся (дважды проходит через стек
+под `flip-link`): слот `&'static mut T = static` — `docs/modules/app-graph.md`.
 **Узлы не падают:** у всех `restart: Never`, `TaskExit::Failed` не возвращает ни
 один. Отказ связи (канал, шина, транспорт) — запись в лог и возврат в
 начальное состояние автомата, а не выход и перезапуск графом; переждать отказ
@@ -173,16 +176,23 @@ read`: руками пришлось бы сначала найти адрес �
   живут в модулях — `docs/conventions.md`.
 - Образ приходит командами (`ports::OtaCommand`) на вход `CMD` узла OTA —
   запрос с ответом, и каждая команда получает исход (`ports::OtaReply`), который
-  протокол отдаёт хосту как есть. Своего канала у OTA нет: узел протокола
-  только переводит сообщения в команды. МК узел сбрасывает только по команде
+  протокол отдаёт хосту в своём виде (protobuf — `Ok`/`Error`, Modbus и
+  CANopen — код `ports::reply_code`, `docs/ota.md`). Своего канала у OTA нет: узел протокола
+  только переводит сообщения в команды. Запрос несёт номер клиента —
+  транспорта (`domain::ota::OtaClient`, номер из генерации): приём держит один
+  владелец, чужим `Start`/`Chunk`/`Finish` — `Busy` до `Finish`, отказа или
+  срока молчания. МК узел сбрасывает только по команде
   `Reboot` (порт `ports::Reboot`, `bsp::cpu::Reboot`), не по `Finish`: хост
   узнаёт исход до сброса. Отказы до стирания обязаны оставаться такими:
   `Busy` и отсутствие подписи — до `Transfer::start`, длина — внутри него, до
   `prepare` — `docs/ota.md`.
 - `NoopRawMutex` у `bsp::flash::FlashMutex`, у мьютексов разделов `DFU` и `STATE`
-  (`bsp::flash::DFU_FLASH`, `bsp::flash::STATE_FLASH`; с `ota=external` —
+  (`bsp::ota::DFU_FLASH`, `bsp::ota::STATE_FLASH`), `CONFIG`
+  (`bsp::settings::CONFIG_FLASH`; с `ota=external` —
   `bsp::external::ExternalMutex`{% if dfu_bank == "true" %}; `DFU` во втором банке —
-  `bsp::flash::DfuBankMutex`{% endif %}) и `local` на слотах узла OTA
+  `bsp::flash::DfuBankMutex`{% endif %}){% if has_modbus == "true" %}, карты регистров
+  Modbus (`domain::modbus::MapMutex`, `crate::modbus` в `app`; ручки
+  `SharedRegisters` — в `local`-слотах `REGS` узлов `MODBUS_*`){% endif %} и `local` на слотах узла OTA
   (`domain::ota`) — одно допущение «один исполнитель», менять вместе —
   `docs/flash.md`, `docs/architecture.md`.
 - Подтверждение образа (`mark_booted`) — в стартовом действии узла OTA
@@ -193,7 +203,7 @@ read`: руками пришлось бы сначала найти адрес �
   флаг): после обмена и до него `STATE` одинаково `Swap`, и повтор снял бы
   принятое обновление. Узел `USB` встаёт на шину только после этой попытки
   (`ready` узла OTA и `deps: [OTA ready]` у `USB_FRAG`, без графа — сигнал
-  `ota::READY` в `main.rs`): подтверждение после обновления или отката стирает
+  `READY_<транспорт>` в `crates-cross/app/src/tasks/ota.rs`): подтверждение после обновления или отката стирает
   `STATE`, ядро стоит на выборке, и перечисление, попавшее на это, хост
   бракует до переподключения — `docs/ota.md`.
 - С `ota=external` (`DFU`/`STATE` на внешней флеши): `EXT_PAGE_SIZE` — одно
@@ -216,7 +226,7 @@ read`: руками пришлось бы сначала найти адрес �
 {%- endif %}
 - `STATE_ERASE_SIZE` — число из генерации, одно на `boot` и приложение (переменная
   среды в `crates-cross/.cargo/config.toml`, константа — `bsp::ota::STATE_ERASE_SIZE`). {% if state_paged == "true" %}Здесь `BOOTLOADER_STATE` строится над
-  `adapters::flash::ErasePage` со страницей своего сектора: над цельным `Flash` на F2/F4/F7 раздел не
+  `flash_page::ErasePage` со страницей своего сектора: над цельным `Flash` на F2/F4/F7 раздел не
   кратен его странице, и `Partition::new` паникует на старте.{% else %}Здесь сектор `STATE` равен
   странице цельного `Flash`, поэтому раздел строится прямо над ним, а равенство держит
   `const`-assert рядом с константой (`bsp::ota`).{% endif %} Так же и `CONFIG`
@@ -262,17 +272,24 @@ read`: руками пришлось бы сначала найти адрес �
   пишется один раз на кристалл, побочно отключает ECC на ITCM/DTCM —
   `docs/clocks.md`.
 {%- endif %}
-{%- if interface == "tcp" or interface == "udp" %}
+{%- if has_net == "true" %}
 {%- if rng_irq != "" %}
 - Клок блока `RNG` даёт `config()` в `crates-cross/bsp/src/board.rs` — у
   каждой линии свой источник (PLL Q, HSI48, `RNGSEL`). Меняете тактирование —
   сохраните его: без клока `Rng::new` в `Board::new` паникует (линии с
-  мультиплексором RNG) или виснет до первой строки лога (F2/F4/F7, L0, L4,
-  U0) — `docs/modules/bsp-rng.md`. Блок `RNG` берёт группа `rng` из
-  `resources.rs` (`Board::new` снимает с него зерно сетевому стеку и поля в
-  `Board` не оставляет); блок и клок заводятся только при `interface` =
-  tcp/udp, в остальных проектах `bsp/src/rng.rs` и `docs/modules/bsp-rng.md`
-  хук удаляет.
+  мультиплексором RNG) или прошивка виснет в ожидании слова — в `Board::new`
+  или в затравке стека в `Parts::new` (F2/F4/F7, L0, L4, U0) —
+  `docs/modules/bsp-rng.md`. Блок `RNG` берёт группа `rng` из
+  `resources.rs`, а генератор плата отдаёт в `bsp::Drivers::rng`: им
+  `app::parts::Parts::new` засевает сетевой стек и {% if net_services contains "ssh" %}отдаёт его бэкенду
+  `getrandom` (`app::rng`, символ `__getrandom_v03_custom`; бэкенд выбирает
+  `--cfg getrandom_backend="custom"` в `crates-cross/.cargo/config.toml`) —
+  другого пути к генератору нет, SSH берёт байты через `getrandom`{% else %}дропает его, так что блок
+  включён только на время затравки (бэкенд `getrandom` над ним заводит
+  служба `ssh`){% endif %}.
+  Блок и клок заводятся только с сетевым
+  транспортом (tcp/udp), в остальных проектах `bsp/src/rng.rs` и
+  `docs/modules/bsp-rng.md` хук удаляет.
 {%- endif %}
 {%- endif %}
 {%- if protocol == "canopen" %}
@@ -281,8 +298,9 @@ read`: руками пришлось бы сначала найти адрес �
   (`start(..) => begin` в таблице, `ctx.run(&persisted, &mut callbacks)`), а
   `Node<'f>` живёт в состояниях. Не переносить их в `static` или слот: тип
   замыкания там не назвать, а колбэки `zencan` своих данных не получают.
-  Ключи `OBJECTS_KEY` и `NODE_ID_KEY` хранилища настроек заняты узлом{% if config == "true" %}, и `board.settings` забирает
-  он — своим настройкам проекта нужен общий доступ через него{% endif %} —
+  Ключи `OBJECTS_KEY` и `NODE_ID_KEY` хранилища настроек заняты узлом{% if config == "true" %}, и хранилище
+  (`crate::settings::new(parts.board.settings)`) забирает он — своим настройкам
+  проекта нужен общий доступ через него{% endif %} —
   `domain::canopen`.
 {%- endif %}
 {%- if dfu_bank == "true" %}
@@ -292,10 +310,12 @@ read`: руками пришлось бы сначала найти адрес �
   вместе; цельный `Flash` туда не дотягивается (`FLASH_SIZE` — сумма банков) —
   `docs/flash.md`.
 {%- endif %}
-- Хранилище настроек — слот под любой async `NorFlash` (`bsp::settings`):
-  внутренний флеш, EEPROM L0/L1 (`adapters::eeprom::Eeprom`) или внешняя флеш
-  (драйвер подставляет проект, в шаблоне — заглушка
-  `adapters::flash::Unconnected`). EEPROM под хранилищем инвертирована: без
+- Хранилище настроек — `adapters::settings` над любым async `NorFlash`. Носитель
+  отдаёт плата (`bsp::settings::ConfigFlash` и его `RANGE`): внутренний флеш,
+  EEPROM L0/L1 (доступ — порт `ports::EepromAccess`, обёртку
+  `adapters::eeprom::Eeprom` строит `app`) или внешняя флеш (драйвер подставляет
+  проект, в шаблоне — заглушка `bsp::stub::Flash`); само хранилище собирает
+  `crates-cross/app/src/settings.rs`. EEPROM под хранилищем инвертирована: без
   этого заводские нули выглядели бы для `sequential-storage` закрытыми
   страницами — `docs/flash.md`.
 {%- if graph == "true" %}
@@ -320,23 +340,39 @@ read`: руками пришлось бы сначала найти адрес �
   перестаёт расти, узел публикует 100%), и ничем, кроме линтера, это не
   ловится — `docs/modules/app-cpu-load.md`.
 {%- if protocol != "none" %}
-- Транспорт протокола (кадрирование, буферы, сокет) плата отдаёт готовым:
-  `Board::link` собирает `crates-cross/bsp/src/link.rs`, `app` его только принимает —
-  входом узла в `fragments:` графа или, без графа, аргументом задачи, которую
-  спавнит `main` (задачи `domain::*::task`, как `ota::task`). Буферы и сокет в
-  `app` не заводят: статики — дело `bsp`.
+- Транспорт протокола (кадрирование, буферы, сокет) собирает `app`
+  (`crates-cross/app/src/link.rs`) над тем, что отдала плата: потоком UART,
+  потоком CDC, сетевым стеком. Буфер заводится там, где создаётся объект,
+  который его держит: размер и порт — решение приложения, и `bsp` их не знает.
+  Сборка — в выражении входа узла в `fragments:` графа или, без графа, в
+  `spawn` модуля задачи (`crates-cross/app/src/tasks/`): по модулю на задачу,
+  `main.rs` только зовёт `tasks::spawn_all`.
 {%- endif %}
 - `#![allow(dead_code)]` в начале `crates-cross/app/src/graph.rs` — не
   украшение, а условие `-D warnings`: файл целиком генерируемый, а
   `*_receiver()`/`provide_*`/`*_take()` в сыром шаблоне никто не зовёт, потому
   что подписчиков нет. Снимать allow нельзя, пока у графа нет читателей; писать
   в `graph.rs` свою логику — тоже.
-- `Board` отдаёт адаптеры — объекты, реализующие трейты (`ports`, `HardwareWatchdog`), —
-  данные о чипе (`bsp::ChipSpec`), — и ничего не настраивает: ни
-  периферии ядра, ни `Peripherals`, ни `Clocks` в полях нет — `docs/architecture.md`.
-- `bsp` зависит только от `ports` и `adapters` (и HAL), не от `domain`: типы
-  домена — например вход узла OTA — собирает из полей `Board` compose-site в
-  `app` — `docs/architecture.md`.
+- `Board` отдаёт объекты платы — периферию под трейтами (`embedded-io-async`,
+  `embedded-storage`, драйверы `embassy-*-driver`, порты `ports` там, где
+  стандартного трейта нет, `HardwareWatchdog`), разделы флеша, данные о чипе
+  (`bsp::ChipSpec`), — и ничего не настраивает: ни периферии ядра, ни
+  `Peripherals`, ни `Clocks` в полях нет. Адаптеров (кадрирование, стек, USB-классы,
+  адаптер обновления, хранилище), их буферов и статиков в `bsp` нет: их собирает
+  `app` (`link`, `usb`, `net`, `ota`, `settings`), буфер — там, где создаётся
+  объект, который его держит. Заглушка периферии до драйвера — `bsp::stub` —
+  `docs/architecture.md`.
+- `Board::new()` отдаёт `(Board, Drivers)`: в `Drivers` — драйверы, над которыми
+  стек отдаёт объекты сразу нескольким узлам (USB: устройство и поток CDC;
+  Ethernet: фоновая работа и стек). Пару собирает один раз
+  `crates-cross/app/src/parts.rs` (`Parts { board, пары }`), граф берёт `Parts`
+  `boot:`-объектом и делит по полям, без графа — `tasks::spawn_all`. Не
+  передавать половину пары через `static` (поток CDC не `Send`) и не делать
+  поля `Board` `Option` — `docs/architecture.md`.
+- `bsp` зависит только от `ports`, `flash-page` (страница раздела, общая с `boot`)
+  и HAL с трейтами драйверов — не от `adapters`, `embassy-net`, `embassy-usb` и
+  не от `domain`: адаптеры и типы домена — например вход узла OTA — собирает
+  из полей `Parts` compose-site в `app` — `docs/architecture.md`.
 - Liquid в корневом workspace (`domain`, `ports`, `adapters`{% if protocol == "protobuf" %}, `proto`{% elsif protocol == "canopen" %}, `canopen`{% endif %},
   корневой `Cargo.toml`) пишется внутри комментариев (строки `//` и `#` с тегами `if`/`endif`): в
   репозитории шаблона эти крейты компилируются целиком, в проекте Liquid вырезает

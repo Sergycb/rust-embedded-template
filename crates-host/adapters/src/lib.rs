@@ -16,45 +16,35 @@
 pub mod ota;
 
 // {%- endif %}
-// {%- if erase_page == "true" or external_flash == "true" %}
-/// Вспомогательные типы над `NorFlash`: обёртка со своей страницей стирания и
-/// заглушка внешней флеши.
-pub mod flash;
-
-// {%- endif %}
 // {%- if settings_port == "true" %}
 /// Настройки во flash поверх `sequential-storage`: пары «ключ — значение»,
 /// переживающие перезапуск и обновление прошивки.
 pub mod settings;
 
 // {%- endif %}
-// {%- if stream_io == "true" and protocol == "protobuf" %}
+// {%- if cobs_used == "true" %}
 /// Кадрирование потока байтов (UART, USB CDC, TCP) в кадры `ports::FrameLink`:
 /// COBS и CRC.
 pub mod cobs;
 
 // {%- endif %}
-// {%- if interface == "uart" %}
-/// Заглушка потока байтов в слоте UART — до драйвера платы.
-pub mod serial;
-
-// {%- endif %}
-// {%- if interface == "tcp" or interface == "udp" %}
-/// Сеть поверх `embassy-net`: заглушка устройства, TCP-сервер и UDP-канал.
+// {%- if has_net == "true" %}
+/// Сеть поверх `embassy-net`: TCP-сервер и UDP-канал.
 pub mod net;
 
 // {%- endif %}
-// {%- if interface == "usb" %}
-/// USB поверх `embassy-usb`: заглушка драйвера и поток CDC ACM.
+// {%- if has_usb == "true" %}
+/// USB поверх `embassy-usb`: поток CDC ACM.
 pub mod usb;
 
 // {%- endif %}
-// {%- if interface == "can" %}
-/// Заглушка шины в слоте CAN — до контроллера платы.
-pub mod can;
+// {%- if has_usb == "true" or has_net == "true" %}
+/// Драйверы без шины и линка — для host-тестов (`adapters`, `domain`).
+#[cfg(any(test, feature = "fake"))]
+pub mod fake;
 
 // {%- endif %}
-// {%- if protocol == "modbus" %}
+// {%- if has_modbus == "true" %}
 /// Транспорты Modbus — RTU, TCP, UDP — для порта slave'а `ports::ModbusServer`.
 // {%- if modbus_master == "true" %}
 /// Они же реализуют порт master'а `ports::ModbusClient`.

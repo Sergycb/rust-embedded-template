@@ -12,7 +12,7 @@ pub mod board;
 {%- if cache != "" %}
 pub mod cache;
 {%- endif %}
-{%- if interface == "can" %}
+{%- if has_can == "true" %}
 pub mod can;
 {%- endif %}
 {%- if cpu_freq_boost == "true" %}
@@ -32,10 +32,7 @@ pub mod fault;
 {%- if shared_flash == "true" %}
 pub mod flash;
 {%- endif %}
-{%- if protocol_link == "true" %}
-pub mod link;
-{%- endif %}
-{%- if interface == "tcp" or interface == "udp" %}
+{%- if has_net == "true" %}
 pub mod net;
 {%- endif %}
 {%- if ota == "true" %}
@@ -43,22 +40,25 @@ pub mod ota;
 {%- endif %}
 #[cfg(feature = "panic-handler")]
 pub mod panic;
-{%- if interface == "tcp" or interface == "udp" %}
+{%- if has_net == "true" %}
 {%- if rng_irq != "" %}
 pub mod rng;
 {%- endif %}
 {%- endif %}
-{%- if interface == "uart" %}
+{%- if has_uart == "true" %}
 pub mod serial;
 {%- endif %}
 {%- if config == "true" %}
 pub mod settings;
 {%- endif %}
-{%- if interface == "usb" %}
+{%- if has_stub == "true" %}
+pub mod stub;
+{%- endif %}
+{%- if has_usb == "true" %}
 pub mod usb;
 {%- endif %}
 {%- if graph == "true" %}
 pub mod wdg;
 {%- endif %}
 
-pub use board::{Board, ChipSpec};
+pub use board::{Board, ChipSpec, Drivers};

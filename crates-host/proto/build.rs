@@ -30,6 +30,13 @@ const LIMITS: &[(&str, &str, u32)] = &[
     // {%- endif %}
 ];
 
+/// Ёмкости повторяющихся полей (`repeated`), элементов: `heapless::Vec` с
+/// ёмкостью в типе. Без строки здесь micropb-gen не соберёт схему с таким полем
+/// (`Missing max_len`). Имя константы крейта, поле схемы, ёмкость.
+const LENGTHS: &[(&str, &str, u32)] = &[
+    // ("READINGS_LEN", ".host.Telemetry.readings", 8),
+];
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let out = PathBuf::from(std::env::var("OUT_DIR")?);
     for proto in PROTOS {
@@ -48,6 +55,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for (_, field, bytes) in LIMITS {
         generator.configure(field, Config::new().max_bytes(*bytes));
     }
+    for (_, field, len) in LENGTHS {
+        generator.configure(field, Config::new().max_len(*len));
+    }
     generator.compile_fdset_file(&descriptor_path, out.join("host.rs"))?;
 
     // Те же ёмкости — константами крейта: тот, кто кладёт в поле строку своей
@@ -58,6 +68,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         writeln!(
             limits,
             "/// Ёмкость `{field}`, байт (`build.rs`).\npub const {name}: usize = {bytes};"
+        )?;
+    }
+    for (name, field, len) in LENGTHS {
+        writeln!(
+            limits,
+            "/// Ёмкость `{field}`, элементов (`build.rs`).\npub const {name}: usize = {len};"
         )?;
     }
     std::fs::write(out.join("limits.rs"), limits)?;

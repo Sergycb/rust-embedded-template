@@ -1,47 +1,29 @@
 #![doc = include_str!("../../../docs/modules/bsp-net.md")]
 
-use adapters::net::Unconnected;
-{%- if interface == "udp" %}
-/// Описание датаграммы в буфере UDP-сокета — для буферов, которые приложение
-/// отдаёт сокету.
-pub use embassy_net::udp::PacketMetadata;
-{%- endif %}
-use embassy_net::{Config, DhcpConfig, StackResources};
-use static_cell::ConstStaticCell;
+/// Сетевое устройство платы — пока заглушка, до Ethernet (см. модуль). Стек
+/// `embassy-net` над ним и сокеты собирает приложение (`crates-cross/app/src/net.rs`).
+pub type Device = crate::stub::NetDevice;
 
-/// Сокетов в стеке: DHCP-клиент и сокет протокола. Слот — около 500 байт
-/// оперативной памяти, поэтому без запаса: добавите свой сокет (или фичу
-/// `dns` у `embassy-net` — она тоже занимает слот) — прибавьте один здесь.
-const SOCKETS: usize = 2;
-
-// Память стека: `embassy_net::new` держит её `&'static mut`. `ConstStaticCell`
-// — значения известны при компиляции и лежат в `.bss`, а не собираются на
-// стеке и копируются при старте.
-static RESOURCES: ConstStaticCell<StackResources<SOCKETS>> =
-    ConstStaticCell::new(StackResources::new());
-
-/// Сетевое устройство платы — пока заглушка, до Ethernet (см. модуль).
-pub type Device = Unconnected;
-
-/// Сетевой стек, на котором приложение открывает сокет протокола. Псевдоним —
-/// чтобы `app` не называл `embassy-net`.
-pub type Stack = embassy_net::Stack<'static>;
-
-/// Сеть платы: фоновая работа стека для узла `NET` и сам стек. Сокет
-/// протокола и его порт — дело `bsp::link`: порт задаёт протокол, а не плата.
-pub type Net = adapters::net::Net<Device>;
-
-/// Собирает стек над устройством платы. Адрес — по DHCP; MAC — из
-/// заводского номера чипа `uid`, затравка случайных чисел стека — `seed`.
-/// Блок Ethernet приходит группой `resources.rs` — заглушка его не трогает,
-/// драйвер платы соберётся из него и выводов.
-pub(crate) fn new(uid: [u8; 12], seed: u64, _resources: crate::resources::EthResources) -> Net {
+/// Собирает устройство: MAC — из заводского номера чипа `uid`. Блок Ethernet
+/// приходит группой `resources.rs` — заглушка его не трогает, драйвер платы
+/// соберётся из него и выводов.
+pub(crate) fn new(uid: [u8; 12], _resources: crate::resources::EthResources) -> Device {
     defmt::warn!("bsp: Ethernet не подключён — сеть без линка, протокол ждёт впустую");
-    let (stack, runner) = embassy_net::new(
-        Unconnected::new(adapters::net::mac_from_uid(uid)),
-        Config::dhcpv4(DhcpConfig::default()),
-        RESOURCES.take(),
-        seed,
-    );
-    Net { runner, stack }
+    Device::new(mac_from_uid(uid))
+}
+
+/// MAC из заводского номера чипа: локально администрируемый (бит 1 первого
+/// байта), без группового (бит 0) — у каждой платы свой и постоянный. Все
+/// 12 байт номера свёрнуты в 5: выброшенный байт сделал бы MAC общим у
+/// чипов, которые различаются только им. Свой адрес от производителя —
+/// подставьте здесь.
+const fn mac_from_uid(uid: [u8; 12]) -> [u8; 6] {
+    [
+        0x02,
+        uid[0] ^ uid[5] ^ uid[10],
+        uid[1] ^ uid[6] ^ uid[11],
+        uid[2] ^ uid[7],
+        uid[3] ^ uid[8],
+        uid[4] ^ uid[9],
+    ]
 }

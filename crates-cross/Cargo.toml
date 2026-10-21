@@ -26,7 +26,8 @@ rust-version = "1.96"
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(rust_analyzer)"] }
 # `warn`, а не `deny`, как в корневом workspace: unsafe в `crates-cross` есть
 # и оправдан — прыжок в образ в `boot`, поллинг исполнителя в `app`,
-# `app/src/image.rs` (имя символа), регистры option bytes, которых нет
+# `app/src/image.rs` (имя символа), бэкенд `getrandom` в `app/src/rng.rs` (с ssh)
+# (внешний символ и запись по его указателю), регистры option bytes, которых нет
 # в `stm32-metapac` (`bsp/src/clocks.rs`, только H723/725/730/733/735). Ровно на
 # этих местах стоит `#[expect(unsafe_code)]` с объяснением, и это весь
 # unsafe этого воркспейса, который видит clippy (проверено прогоном с
@@ -121,19 +122,41 @@ embassy-embedded-hal = { version = "0.6.0" }
 # Один `Flash` на весь чип делится между OTA и настройками, а обеим нужен
 # `&'static` (иначе их не отдать в спавнящиеся задачи — те требуют 'static).
 static_cell            = { version = "2.1.1" }
-{%- if interface == "usb" %}
+{%- if has_usb == "true" %}
 # USB-устройство (`bsp::usb`): та же версия, что в корневом Cargo.toml.
 embassy-usb            = { version = "0.6.0", default-features = false, features = ["defmt"] }
+# Трейт драйвера под `embassy-usb` — им заглушка платы (`bsp::stub`) встаёт в
+# слот USB-блока; версия — та, на которой стоят `embassy-usb` 0.6 и `embassy-stm32` 0.6.
+embassy-usb-driver     = { version = "0.2.2" }
 {%- endif %}
-{%- if interface == "tcp" or interface == "udp" %}
-# Сетевой стек (`bsp::net`): та же версия и фичи, что в корневом Cargo.toml.
+{%- if has_net == "true" %}
+# Сетевой стек (`app::net`): та же версия и фичи, что в корневом Cargo.toml.
 embassy-net            = { version = "0.9.1", features = ["tcp", "udp", "proto-ipv4", "medium-ethernet", "dhcpv4", "defmt"] }
+# Трейт драйвера под `embassy-net` — им заглушка платы (`bsp::stub`) встаёт в
+# слот Ethernet; версия — та, на которой стоят `embassy-net` 0.9 и `embassy-stm32` 0.6.
+embassy-net-driver     = { version = "0.2.0" }
+{%- if net_services contains "ssh" %}
+# Случайность для криптографии (`app::rng` — бэкенд над RNG платы): через
+# `getrandom` её берут и крейты, что зовут его сами (`sunset`), и те, что берут
+# генератор параметром (`getrandom::SysRng`, фича `sys_rng`). Без фич: своего
+# источника на `target_os = "none"` у него нет, бэкенд — `--cfg` в
+# `.cargo/config.toml`.
+getrandom              = { version = "0.4.3" }
+{%- endif %}
 {%- endif %}
 embassy-sync       = { version = "0.8.0" }
 # Трейты `NorFlash` — нужны только `boot/src/external.rs` при `ota=external`
 # (геометрия драйвера внешней флеши в проверках при компиляции). Та же версия,
 # что тянет embassy-boot.
 embedded-storage   = { version = "0.3.1" }
+{%- if external_flash == "true" %}
+# Заглушка внешней флеши (`bsp::stub::Flash`) — асинхронный `NorFlash` приложения.
+embedded-storage-async = { version = "0.4.1" }
+{%- endif %}
+{%- if has_uart == "true" %}
+# Заглушка UART (`bsp::stub::Serial`) — поток байтов, как у `BufferedUart`.
+embedded-io-async  = { version = "0.7.0" }
+{%- endif %}
 # `portable-atomic` здесь не объявлен намеренно: на Cortex-M0/M0+ ему нужно
 # сказать, чем эмулировать CAS, и это делает cfg в `.cargo/config.toml`
 # (`[target.thumbv6m-none-eabi] rustflags`), а не фича у членов workspace —
@@ -181,6 +204,9 @@ ports            = { path = "../crates-host/ports", features = ["defmt"] }
 # объектами. `defmt` — ради `Format` на ошибках в логе прошивки; на хосте
 # крейт собирается без фич вывода вовсе.
 adapters         = { path = "../crates-host/adapters", features = ["defmt"] }
+{%- if flash_page == "true" %}
+flash-page       = { path = "../crates-host/flash-page" }
+{%- endif %}
 bsp              = { path = "./bsp" }
 # `default-features = false` обязательно: дефолт domain — фича `log` (нужна
 # хост-сборке, см. её [features]), а в прошивке используется только defmt.
@@ -190,7 +216,7 @@ domain           = { path = "../crates-host/domain", default-features = false, f
 shadow-rs        = { version = "2.0.0", default-features = false }
 assign-resources = { version = "0.5.0" }
 
-# Крейты из личной библиотеки (github.com/Sergycb/rust-lib) — оба про железо
+# Крейты из личной библиотеки ({{rust_lib}}) — оба про железо
 # и оркестрацию, поэтому объявлены здесь, а не в корневом workspace'е (для
 # `domain`).
 #
@@ -227,14 +253,14 @@ assign-resources = { version = "0.5.0" }
 #   живёт на исполнителе, спавнящем граф» лежит в крейте графа, а не в
 #   библиотеке. Это то же допущение, что у `NoopRawMutex` в
 #   `bsp::flash::FlashMutex`; менять их вместе.
-supervisor       = { git = "https://github.com/Sergycb/rust-lib.git", features = [
+supervisor       = { git = "{{rust_lib}}.git", features = [
 	"metadata-name",
 	"local-resources",
 ] }
-watchdog         = { git = "https://github.com/Sergycb/rust-lib.git" }
+watchdog         = { git = "{{rust_lib}}.git" }
 # Вход команд узла OTA в проекте без графа (`app`, src/main.rs): с графом его
 # заводит `supervisor` сам. Тот же git, что у `supervisor`, — один крейт в дереве.
-sync-request     = { git = "https://github.com/Sergycb/rust-lib.git" }
+sync-request     = { git = "{{rust_lib}}.git" }
 
 # Причина паники, переживающая сброс: release-паникёр `app` и `boot`
 # (`bsp/src/panic.rs`) пишет её `report_panic_info` в регион PANIC (посчитан при

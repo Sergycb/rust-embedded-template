@@ -25,10 +25,11 @@
 
 use defmt_or_log::warn;
 use ports::{
-    Bits, BitsMut, CHUNK_BYTES, Chunk, Exception, OtaCommand, OtaReply, Progress, Registers,
-    SIGNATURE_BYTES, Words, WordsMut, reply_code,
+    Bits, BitsMut, CHUNK_BYTES, Chunk, Exception, OtaCommand, Progress, Registers, SIGNATURE_BYTES,
+    Words, WordsMut, reply_code,
 };
-use supervisor::Requester;
+
+use crate::ota::OtaClient;
 
 /// Начало окна OTA — высоко в адресах, чтобы не мешать карте проекта.
 pub const OTA_BASE: u16 = 0xF000;
@@ -53,10 +54,11 @@ const SIGNATURE_REGISTERS: u16 = (SIGNATURE_BYTES / 2) as u16;
 
 /// Карта регистров проекта с окном OTA: команды обновления по [`OTA_BASE`]
 /// уходят узлу OTA, остальное — карте `inner`.
+#[derive(Debug)]
 pub struct OtaRegisters<R> {
     inner: R,
     /// Клиент входа `CMD` узла OTA.
-    ota: Requester<'static, OtaCommand, OtaReply>,
+    ota: OtaClient,
     /// Код последнего исхода — первый входной регистр окна.
     status: u16,
     /// Сколько байт образа принято — по последнему `Received`.
@@ -65,8 +67,8 @@ pub struct OtaRegisters<R> {
 
 impl<R> OtaRegisters<R> {
     /// Карта `inner` с окном OTA, команды из которого уходят `ota` — клиенту
-    /// входа `CMD` узла OTA (`ota_cmd_requester()` графа).
-    pub const fn new(inner: R, ota: Requester<'static, OtaCommand, OtaReply>) -> Self {
+    /// входа `CMD` узла OTA ([`OtaClient`] над `ota_cmd_requester()` графа).
+    pub const fn new(inner: R, ota: OtaClient) -> Self {
         Self {
             inner,
             ota,
@@ -94,17 +96,6 @@ impl<R> OtaRegisters<R> {
             Ok(_) => Ok(()),
             Err(_) => Err(Exception::ServerDeviceFailure),
         }
-    }
-}
-
-// Вручную: у клиента узла OTA нет `Debug`.
-impl<R: core::fmt::Debug> core::fmt::Debug for OtaRegisters<R> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("OtaRegisters")
-            .field("inner", &self.inner)
-            .field("status", &self.status)
-            .field("received", &self.received)
-            .finish_non_exhaustive()
     }
 }
 

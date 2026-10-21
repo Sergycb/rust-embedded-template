@@ -1,9 +1,9 @@
-//! Обвязка хранилища настроек этой платы: на чём оно лежит и псевдоним типа
-//! для задач.
+//! Носитель хранилища настроек этой платы: на чём оно лежит.
 //!
 //! Само хранилище — `adapters::settings::Settings` (generic по флешу,
-//! тестируется на хосте); ему годится любой асинхронный `NorFlash`. Здесь
-//! остаётся то, что знает про плату: что именно в этот слот подставлено. При
+//! тестируется на хосте); ему годится любой асинхронный `NorFlash`, и строит
+//! его приложение (`app::settings`). Здесь остаётся то, что знает про плату:
+//! что именно в этот слот подставлено. При
 //! генерации выбрано одно из трёх (`config` в cargo-generate, см.
 //! docs/flash.md):
 //!
@@ -11,7 +11,7 @@
 //!   среды (`CONFIG_START`/`CONFIG_END`), страница — [`CONFIG_ERASE_SIZE`];
 //! - внутренняя EEPROM (STM32L0/L1) — через `adapters::eeprom::Eeprom`;
 //! - внешняя флеш — ваш драйвер; пока на его месте заглушка
-//!   `adapters::flash::Unconnected`.
+//!   `crate::stub::Flash`.
 {%- if config_store == "flash" %}
 //!
 //! Здесь — раздел во внутреннем флеше: две страницы стирания (меньше
@@ -19,11 +19,14 @@
 //! дешевле: с OTA на F2/F4/F7 — в мелкие сектора перед `ACTIVE` (у F4 —
 //! 2×16 KiB), иначе в хвост flash.
 
-{%- if config_paged == "true" %}
-use adapters::flash::ErasePage;
-{%- endif %}
 use embassy_embedded_hal::adapter::BlockingAsync;
-use embassy_embedded_hal::flash::partition::BlockingPartition;
+use embassy_embedded_hal::flash::partition::{BlockingPartition, Partition};
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::mutex::Mutex;
+{%- if config_paged == "true" %}
+use flash_page::ErasePage;
+{%- endif %}
+use static_cell::StaticCell;
 
 use crate::flash::{FlashMutex, SIZE, Whole};
 
@@ -60,31 +63,49 @@ const CONFIG_END: u32 = match u32::from_str_radix(env!("CONFIG_END"), 10) {
     Err(_) => panic!("CONFIG_END в [env] crates-cross/.cargo/config.toml — не число"),
 };
 
-/// Хранилище настроек этой платы — то, что лежит полем `Board` и уезжает в
-/// задачи. Псевдоним по общему правилу шаблона: тип в сигнатуре
-/// `#[embassy_executor::task]` должен быть конкретным.
+// Раздел строится как `Partition` над страницей [`CONFIG_ERASE_SIZE`], и
+// `Partition::new` паникует на старте, если его границы не кратны ей. Расчёт
+// раскладки в генерации держит их на границах, а это — проверка при компиляции,
+// чтобы ручная правка `[env]` не превратилась в панику на плате.
+const _: () = assert!(
+    (CONFIG_START as usize).is_multiple_of(CONFIG_ERASE_SIZE)
+        && (CONFIG_END as usize).is_multiple_of(CONFIG_ERASE_SIZE),
+    "раздел CONFIG не на границах своей страницы (CONFIG_ERASE_SIZE): Partition::new паникует"
+);
+
+/// Общий `Flash` чипа, видимый асинхронно{% if config_paged == "true" %}, со страницей сектора `CONFIG`
+/// ([`CONFIG_ERASE_SIZE`], `ErasePage`){% endif %} — то, над чем строится раздел.
 {%- if config_paged == "true" %}
-pub type Settings =
-    adapters::settings::Settings<BlockingAsync<ErasePage<Whole, CONFIG_ERASE_SIZE>>>;
+type ConfigBacking = BlockingAsync<ErasePage<Whole, CONFIG_ERASE_SIZE>>;
 {%- else %}
-pub type Settings = adapters::settings::Settings<BlockingAsync<Whole>>;
+type ConfigBacking = BlockingAsync<Whole>;
 {%- endif %}
 
-/// Собирает хранилище над разделом `CONFIG`.
-///
-/// # Паника
-///
-/// Если раздел не годится под `sequential-storage` — см.
-/// `adapters::settings::Settings::new`.
-pub(crate) fn new(flash: &'static FlashMutex) -> Settings {
-    adapters::settings::Settings::new(
+/// Свой асинхронный мьютекс разделу: `Partition` строится из `&Mutex<_, T>`.
+/// Внутри — ссылка на общий [`FlashMutex`], а не второй `Flash`: контроллер на
+/// чипе один. `NoopRawMutex` — то же допущение «один исполнитель», что у
+/// `FlashMutex` и разделов OTA; менять вместе.
+static CONFIG_FLASH: StaticCell<Mutex<NoopRawMutex, ConfigBacking>> = StaticCell::new();
+
+/// Раздел `CONFIG` — то, что лежит полем `Board` и над чем приложение строит
+/// хранилище (`app::settings`). Именно раздел, а не весь флеш: запись за его
+/// границы отказывает, а не стирает `ACTIVE` или bootloader.
+pub type ConfigFlash = Partition<'static, NoopRawMutex, ConfigBacking>;
+
+/// Границы хранилища в [`ConfigFlash`] — весь раздел.
+pub const RANGE: core::ops::Range<u32> = 0..CONFIG_END - CONFIG_START;
+
+/// Собирает раздел `CONFIG`. Его начало кратно странице [`ConfigBacking`]{% if config_paged != "true" %}
+/// (`CONFIG_ERASE_SIZE` равен странице цельного `Flash` — `const`-assert выше){% endif %}:
+/// иначе `Partition::new` паникует.
+pub(crate) fn new(flash: &'static FlashMutex) -> ConfigFlash {
 {%- if config_paged == "true" %}
-        BlockingAsync::new(ErasePage::new(BlockingPartition::new(flash, 0, SIZE))),
+    let backing = BlockingAsync::new(ErasePage::new(BlockingPartition::new(flash, 0, SIZE)));
 {%- else %}
-        BlockingAsync::new(BlockingPartition::new(flash, 0, SIZE)),
+    let backing = BlockingAsync::new(BlockingPartition::new(flash, 0, SIZE));
 {%- endif %}
-        CONFIG_START..CONFIG_END,
-    )
+    let backing = CONFIG_FLASH.init(Mutex::new(backing));
+    Partition::new(backing, CONFIG_START, CONFIG_END - CONFIG_START)
 }
 {%- elsif config_store == "eeprom" %}
 //!
@@ -92,21 +113,21 @@ pub(crate) fn new(flash: &'static FlashMutex) -> Settings {
 //! пишется через тот же контроллер, что и флеш, поэтому доступ к ней — через
 //! общий [`FlashMutex`] (`embassy_stm32::flash::Flash::eeprom_*`), по операции
 //! под замком. Под хранилище отдана вся EEPROM, округлённая до страницы
-//! обёртки (`adapters::eeprom::Eeprom::PAGE`).
+//! обёртки (`adapters::eeprom::Eeprom::PAGE`, её строит приложение).
 
-use adapters::eeprom::{Eeprom, EepromAccess};
+use ports::EepromAccess;
 use static_cell::StaticCell;
 
 use crate::flash::FlashMutex;
 
-/// `&'static` — `Eeprom` держит доступ к EEPROM ссылкой, а хранилище уезжает в
-/// задачу.
+/// `&'static` — обёртка `Eeprom` держит доступ к EEPROM ссылкой, а хранилище
+/// уезжает в задачу.
 static ACCESS: StaticCell<EepromFlash> = StaticCell::new();
 
-/// Хранилище настроек этой платы — то, что лежит полем `Board` и уезжает в
-/// задачи. Псевдоним по общему правилу шаблона: тип в сигнатуре
-/// `#[embassy_executor::task]` должен быть конкретным.
-pub type Settings = adapters::settings::Settings<Eeprom<'static, EepromFlash>>;
+/// Доступ к EEPROM — то, что лежит полем `Board` и над чем приложение строит
+/// хранилище (`app::settings`: `adapters::eeprom::Eeprom`, затем
+/// `adapters::settings::Settings`).
+pub type ConfigFlash = &'static EepromFlash;
 
 /// Общий [`FlashMutex`] как источник EEPROM. Свой тип, а не `impl` на самом
 /// мьютексе: и трейт `EepromAccess`, и `Mutex` чужие для `bsp`.
@@ -143,16 +164,9 @@ impl EepromAccess for EepromFlash {
     }
 }
 
-/// Собирает хранилище над всей внутренней EEPROM.
-///
-/// # Паника
-///
-/// Если EEPROM меньше двух страниц обёртки — см.
-/// `adapters::settings::Settings::new`; у STM32L0/L1 таких нет.
-pub(crate) fn new(flash: &'static FlashMutex) -> Settings {
-    let eeprom = Eeprom::new(ACCESS.init(EepromFlash(flash)));
-    let size = eeprom.usable();
-    adapters::settings::Settings::new(eeprom, 0..size)
+/// Собирает доступ к внутренней EEPROM.
+pub(crate) fn new(flash: &'static FlashMutex) -> ConfigFlash {
+    ACCESS.init(EepromFlash(flash))
 }
 {%- elsif config_store == "external" and ota == "true" and ota_store == "external" %}
 //!
@@ -177,27 +191,22 @@ const CONFIG_END: u32 = match u32::from_str_radix(env!("CONFIG_END"), 10) {
     Err(_) => panic!("CONFIG_END в [env] crates-cross/.cargo/config.toml — не число"),
 };
 
-/// Хранилище настроек этой платы — то, что лежит полем `Board` и уезжает в
-/// задачи. Псевдоним по общему правилу шаблона: тип в сигнатуре
-/// `#[embassy_executor::task]` должен быть конкретным.
-pub type Settings = adapters::settings::Settings<ExternalPartition>;
+/// Раздел настроек на внешней флеши — то, что лежит полем `Board` и над чем
+/// приложение строит хранилище (`app::settings`).
+pub type ConfigFlash = ExternalPartition;
 
-/// Собирает хранилище над разделом внешней флеши.
-///
-/// # Паника
-///
-/// Если раздел не годится под `sequential-storage` — см.
-/// `adapters::settings::Settings::new`.
-pub(crate) fn new(external: &'static ExternalMutex) -> Settings {
-    let size = CONFIG_END - CONFIG_START;
-    let partition = ExternalPartition::new(external, CONFIG_START, size);
-    adapters::settings::Settings::new(partition, 0..size)
+/// Границы раздела в [`ConfigFlash`] — весь раздел.
+pub const RANGE: core::ops::Range<u32> = 0..CONFIG_END - CONFIG_START;
+
+/// Собирает раздел настроек на внешней флеши.
+pub(crate) fn new(external: &'static ExternalMutex) -> ConfigFlash {
+    ExternalPartition::new(external, CONFIG_START, CONFIG_END - CONFIG_START)
 }
 {%- elsif config_store == "external" %}
 //!
 //! Здесь — внешняя флеш. Какая микросхема стоит на плате, шаблон не знает и не
 //! гадает: на месте драйвера заглушка [`ExternalFlash`] (=
-//! `adapters::flash::Unconnected`). С ней проект собирается и работает, но
+//! `crate::stub::Flash`). С ней проект собирается и работает, но
 //! каждая операция хранилища отвечает ошибкой — настройки не сохраняются.
 //!
 //! Подключить свою микросхему — две правки в этом файле:
@@ -206,29 +215,29 @@ pub(crate) fn new(external: &'static ExternalMutex) -> Settings {
 //!    `embedded_storage_async::nor_flash::NorFlash`: готовый крейт
 //!    (`spi-memory-async` для серии 25, `w25q32jv` и подобные) или свой.
 //! 2. `new` — собрать драйвер из периферии (SPI и вывод CS; какие выводы умеет
-//!    блок — `cargo xtask pins SPI1 --snippet`) и указать диапазон под
+//!    блок — `cargo xtask pins SPI1 --snippet`), и `RANGE` — диапазон под
 //!    настройки: не меньше двух секторов стирания микросхемы.
 //!
 //! Аргументы задач embassy обязаны быть `'static`, а драйвер — конкретным
-//! типом: `Settings` остаётся псевдонимом, как и сейчас.
+//! типом: `ConfigFlash` остаётся псевдонимом, как и сейчас.
 
 /// Драйвер внешней флеши — замените на свой.
-pub type ExternalFlash = adapters::flash::Unconnected;
+pub type ExternalFlash = crate::stub::Flash;
 
-/// Хранилище настроек этой платы — то, что лежит полем `Board` и уезжает в
-/// задачи. Псевдоним по общему правилу шаблона: тип в сигнатуре
-/// `#[embassy_executor::task]` должен быть конкретным.
-pub type Settings = adapters::settings::Settings<ExternalFlash>;
+/// Внешняя флеш — то, что лежит полем `Board` и над чем приложение строит
+/// хранилище (`app::settings`).
+pub type ConfigFlash = ExternalFlash;
 
-/// Собирает хранилище над внешней флешью. Сейчас — над заглушкой: о том, что
-/// драйвер не подставлен, говорит одна строка в лог при старте.
-pub(crate) fn new() -> Settings {
+/// Границы раздела настроек в [`ConfigFlash`] — вся заглушка; с вашим
+/// драйвером — не меньше двух секторов стирания микросхемы.
+pub const RANGE: core::ops::Range<u32> = 0..crate::stub::Flash::CAPACITY;
+
+/// Собирает драйвер внешней флеши. Сейчас — заглушку: о том, что драйвер не
+/// подставлен, говорит одна строка в лог при старте.
+pub(crate) fn new() -> ConfigFlash {
     defmt::warn!(
         "bsp: внешняя флеш не подключена — настройки не сохраняются (bsp/src/settings.rs)"
     );
-    adapters::settings::Settings::new(
-        adapters::flash::Unconnected,
-        0..adapters::flash::Unconnected::CAPACITY,
-    )
+    crate::stub::Flash
 }
 {%- endif %}

@@ -10,7 +10,7 @@
 //! `cargo xtask pins <БЛОК> --snippet`; переносится в макрос ниже только сама
 //! группа.
 {%- else %} Шаблон кладёт сюда блоки того, что нужно ему самому:
-//! флеш{% if graph == "true" %}, сторожевой таймер{% endif %}{% if interface == "tcp" or interface == "udp" %}{% if rng_irq != "" %}, RNG{% endif %}{% endif %}{% if interface != "none" %} и блок выбранного интерфейса{% endif %}, —
+//! флеш{% if graph == "true" %}, сторожевой таймер{% endif %}{% if has_net == "true" %}{% if rng_irq != "" %}, RNG{% endif %}{% endif %}{% if links != "" %} и блоки выбранных транспортов (группа на транспорт){% endif %}, —
 //! без выводов: их выбирает плата. Заготовку с выводами и DMA-каналами печатает
 //! `cargo xtask pins <БЛОК> --snippet`; из неё в группу переносятся поля.
 {%- endif %} Занят ли отладочный порт —
@@ -36,17 +36,20 @@ assign_resources! {
 {%- if graph == "true" %}
     watchdog: WatchdogResources { iwdg: {{watchdog_peripheral}} },
 {%- endif %}
-{%- if interface == "tcp" or interface == "udp" %}
+{%- assign xs = links | split: "," %}
+{%- if has_net == "true" %}
 {%- if rng_irq != "" %}
     rng: RngResources { rng: RNG },
 {%- endif %}
-    eth: EthResources { eth: {{iface_periph}} },
-{%- elsif interface == "uart" %}
-    serial: SerialResources { usart: {{iface_periph}} },
-{%- elsif interface == "can" %}
-    can: CanResources { can: {{iface_periph}} },
-{%- elsif interface == "usb" %}
-    usb: UsbResources { usb: {{iface_periph}} },
+    // Один блок на `tcp` и `udp`: оба транспорта — сокеты одного стека.
+    eth: EthResources { eth: ETH },
 {%- endif %}
+{%- for l in xs %}
+{%- assign f = l | split: ":" %}
+{%- if f[0] != "tcp" and f[0] != "udp" %}
+{%- assign parts = f[4] | split: "_" %}
+    {{ f[4] }}: {% for part in parts %}{{ part | capitalize }}{% endfor %}Resources { {% if f[0] == "uart" %}usart{% elsif f[0] == "can" %}can{% else %}usb{% endif %}: {{ f[2] }} },
+{%- endif %}
+{%- endfor %}
 {%- endif %}
 }

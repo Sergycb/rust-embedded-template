@@ -2,10 +2,7 @@
 #![no_main]
 
 use core::cell::RefCell;
-{% if boot_partitioned == "true" %}
-use adapters::flash::ErasePage;
-{%- endif %}
-{%- if state_paged == "true" %}
+{% if state_paged == "true" %}
 use bsp::ota::STATE_ERASE_SIZE;
 {%- endif %}
 {%- if swap_paged == "true" and dfu_bank != "true" %}
@@ -35,6 +32,9 @@ use embassy_stm32::wdg::IndependentWatchdog;
 {%- endif %}
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+{%- if boot_partitioned == "true" %}
+use flash_page::ErasePage;
+{%- endif %}
 {%- if ota_store == "external" %}
 mod external;
 {%- endif %}
@@ -71,7 +71,7 @@ fn main() -> ! {
     // асинхронный, `bsp::external`), собирается здесь из периферии `p` (SPI и
     // вывод CS). В шаблоне на его месте заглушка: каждая операция отвечает
     // ошибкой, и bootloader загружает текущий образ, не обменивая разделы.
-    let external: external::ExternalFlash = adapters::flash::Unconnected;
+    let external: external::ExternalFlash = bsp::stub::Flash;
 {%- endif %}
 {%- if signed == "true" %}
     // Новый образ проверяется до обмена разделов: см. `signature::screen`.

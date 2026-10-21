@@ -8,7 +8,7 @@
 //! Раздел под них режет генерация (`CONFIG`, две страницы стирания — меньше
 //! `sequential-storage` не берёт; в хвосте flash или, с OTA на F2/F4/F7, в
 //! мелких секторах перед `ACTIVE`), а границы приносит `bsp::settings`
-//! диапазоном{% if erase_page == "true" %}, страницу — `adapters::flash::ErasePage` вокруг флеша{% endif %}; самому хранилищу всё равно, что за флеш под ним, — оттого оно
+//! диапазоном{% if erase_page == "true" %}, страницу — `flash_page::ErasePage` вокруг флеша{% endif %}; самому хранилищу всё равно, что за флеш под ним, — оттого оно
 //! здесь и тестируется на хосте с флешем в памяти. Чем сериализовать значение
 //! (postcard, `miniconf`, свой формат), решает проект.
 //!
@@ -16,10 +16,12 @@
 //! // Чтение и запись живут в порту домена — без импорта методов не видно.
 //! use ports::SettingsStorage;
 //!
+//! // Хранилище собирает приложение над носителем платы (`app::settings`).
+//! let mut settings = crate::settings::new(parts.board.settings);
 //! let mut scratch = [0u8; 64];
 //! let mut buf = [0u8; 64];
-//! board.settings.write(KEY_CALIBRATION, &postcard::to_slice(&cal, &mut buf)?).await?;
-//! if let Some(raw) = board.settings.read(KEY_CALIBRATION, &mut scratch).await? {
+//! settings.write(KEY_CALIBRATION, &postcard::to_slice(&cal, &mut buf)?).await?;
+//! if let Some(raw) = settings.read(KEY_CALIBRATION, &mut scratch).await? {
 //!     let cal: Calibration = postcard::from_bytes(raw)?;
 //! }
 //! ```
@@ -53,7 +55,7 @@
 //! for node in Config::nodes::<Path<String<32>, '/'>, 2>() {
 //!     let (path, _node) = node?;
 //!     let key: u32 = yafnv::fnv1a(path.as_str().as_bytes());
-//!     if let Some(raw) = board.settings.read(key, &mut scratch).await? {
+//!     if let Some(raw) = settings.read(key, &mut scratch).await? {
 //!         miniconf::postcard::set_by_key(&mut config, &path, postcard::de_flavors::Slice::new(raw))?;
 //!     }
 //! }
@@ -62,7 +64,7 @@
 //! let path = Path::<String<32>, '/'>::from("/gain/1");
 //! let mut buf = [0u8; 64];
 //! let raw = miniconf::postcard::get_by_key(&config, &path, postcard::ser_flavors::Slice::new(&mut buf))?;
-//! board.settings.write(yafnv::fnv1a(path.as_str().as_bytes()), raw).await?;
+//! settings.write(yafnv::fnv1a(path.as_str().as_bytes()), raw).await?;
 //! ```
 //!
 //! # Чего здесь нет
@@ -97,12 +99,16 @@ pub type Key = u32;
 /// Ошибка хранилища. Включает и ошибки флеша, и повреждение данных в разделе.
 pub type Error<E> = sequential_storage::Error<E>;
 
-/// Рабочий буфер под сериализацию при записи.
+/// Рабочий буфер: в нём запись сериализуется и в нём же ищется при чтении.
 ///
 /// Ограничивает максимальный размер значения: `sequential-storage` требует
 /// буфер, в который поместятся ключ и значение вместе, с выравниванием по
 /// слову записи флеша. 128 байт — на калибровки и настройки хватает; нужно
 /// больше — правьте здесь, это не влияет ни на что, кроме RAM.
+///
+/// Поиск читает в этот буфер каждую запись раздела, поэтому уменьшать его
+/// нельзя, пока в разделе лежат записи прошивки с большим буфером: на первой
+/// такой записи любое чтение откажет с `BufferTooSmall`.
 const SCRATCH: usize = 128;
 
 /// Кеш, который ничего не кеширует (см. раздел «Чего здесь нет»).
@@ -147,7 +153,7 @@ impl<F: NorFlash> Settings<F> {
 
 // {%- endif %}
 
-// {%- if protocol == "canopen" and config != "true" %}
+// {%- if has_canopen == "true" and config != "true" %}
 /// Хранилища нет — у проекта нет раздела настроек.
 ///
 /// Для узлов, которым хранилище нужно по сигнатуре, но не обязательно для
@@ -183,14 +189,28 @@ impl<F: NorFlash> ports::SettingsStorage for Settings<F> {
 
     /// Читает значение по ключу; `None` — ключ ещё не записан.
     ///
-    /// Буфер отдаёт вызывающий, потому что результат ссылается прямо на него:
-    /// хранилище десериализует значение без копирования.
+    /// Ищет во внутреннем буфере, а не в буфере вызывающего: `sequential-storage`
+    /// читает в буфер поиска каждую запись раздела и на любой, что длиннее, —
+    /// даже с чужим ключом — отказывает с `BufferTooSmall`. Внутренний вмещает
+    /// любую запись этого хранилища, вызывающему копируется только значение;
+    /// не влезло — `BufferTooSmall(длина значения)`.
     async fn read<'a>(
         &mut self,
         key: Key,
         scratch: &'a mut [u8],
     ) -> Result<Option<&'a [u8]>, Self::Error> {
-        self.map.fetch_item::<&[u8]>(scratch, &key).await
+        let Some(value) = self
+            .map
+            .fetch_item::<&[u8]>(&mut self.scratch, &key)
+            .await?
+        else {
+            return Ok(None);
+        };
+        let out = scratch
+            .get_mut(..value.len())
+            .ok_or(sequential_storage::Error::BufferTooSmall(value.len()))?;
+        out.copy_from_slice(value);
+        Ok(Some(out))
     }
 
     /// Записывает значение, логически затирая предыдущее с тем же ключом.
@@ -329,6 +349,38 @@ mod tests {
         assert_eq!(settings.read(1, &mut scratch).await.expect("чтение"), None);
     }
 
+    /// Буфера вызывающего хватает по размеру искомого значения: запись с чужим
+    /// ключом длиннее буфера чтению не мешает.
+    #[tokio::test]
+    async fn a_short_value_reads_past_a_longer_record() {
+        let mut settings = Settings::new(Flash::erased(), 0..512);
+        let mut scratch = [0u8; 8];
+
+        settings.write(1, b"ok").await.expect("короткая");
+        settings.write(2, &[0xAB; 100]).await.expect("длинная");
+
+        assert_eq!(
+            settings.read(1, &mut scratch).await.expect("чтение"),
+            Some(&b"ok"[..])
+        );
+    }
+
+    /// Значение длиннее буфера вызывающего — ошибка с длиной значения, а не
+    /// обрезанное значение.
+    #[tokio::test]
+    async fn a_value_longer_than_the_buffer_is_an_error() {
+        let mut settings = Settings::new(Flash::erased(), 0..512);
+        let mut scratch = [0u8; 8];
+
+        settings.write(1, &[0xAB; 20]).await.expect("запись");
+        let refused = settings.read(1, &mut scratch).await;
+
+        assert!(
+            matches!(refused, Err(sequential_storage::Error::BufferTooSmall(20))),
+            "{refused:?}"
+        );
+    }
+
     /// Раздел переживает перезапуск: новое хранилище над тем же флешем видит
     /// записанное прежним.
     #[tokio::test]
@@ -347,7 +399,7 @@ mod tests {
         );
     }
 
-    // {%- if protocol == "canopen" and config != "true" %}
+    // {%- if has_canopen == "true" and config != "true" %}
     /// `Unavailable` читается пустым, а запись «успешна» и ничего не хранит —
     /// как заявлено в документации.
     #[tokio::test]

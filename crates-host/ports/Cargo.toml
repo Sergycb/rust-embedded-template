@@ -19,6 +19,6 @@ defmt = ["dep:defmt"]
 thiserror = { workspace = true }
 defmt = { workspace = true, optional = true }
 # Кадр в порту `CanBus` — трейт, который реализует кадр `embassy-stm32`.
-# {%- if interface == "can" %}
+# {%- if has_can == "true" %}
 embedded-can = { workspace = true }
 # {%- endif %}

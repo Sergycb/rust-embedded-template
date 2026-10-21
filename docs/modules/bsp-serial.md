@@ -1,16 +1,18 @@
-UART платы — поток байтов под узлом протокола (Modbus RTU, protobuf с
-кадрами COBS).
+UART платы — поток байтов, по подмодулю на транспорт (`bsp::serial::<транспорт>`).
+Транспорт протокола над ним (Modbus RTU, protobuf с кадрами COBS) и его буферы
+собирает приложение (`crates-cross/app/src/link.rs`).
 
 Шаблон выводы не выбирает (`docs/architecture.md`), поэтому в `Serial` пока
-стоит заглушка `adapters::serial::Unconnected`: проект собирается и
+стоит заглушка `bsp::stub::Serial`: проект собирается и
 запускается, узел протокола ждёт байтов вечно, а запись уходит в никуда.
-Узел получает поток через `Board::serial`, а какой это USART и на каких
-ножках — решает только этот модуль, поэтому заменить заглушку на драйвер —
+Поток лежит полем `Board::<транспорт>` (например `usart1`), а какой это USART и на
+каких ножках — решает только этот модуль, поэтому заменить заглушку на драйвер —
 правка в одном месте.
 
 ## Как подставить свой UART
 
-1. Блоки для своего USART — из справочника по чипу:
+1. Блоки для своего USART — из справочника по чипу (блок транспорта, например
+   `{{iface_periph}}`):
 
    ```text
    cargo xtask pins {{iface_periph}} --snippet
@@ -19,12 +21,14 @@ UART платы — поток байтов под узлом протокола
    Он печатает `bind_interrupts!` и группу `assign_resources!` со свободными
    выводами; выберите те, что разведены на плате.
 
-2. Псевдоним — на драйвер `embassy-stm32` (задачи embassy не generic, и
-   узлу нужен именованный тип), конструктор — на сборку драйвера:
+2. В подмодуле транспорта — псевдоним на драйвер `embassy-stm32` (задачи
+   embassy не generic, и узлу нужен именованный тип), конструктор — на сборку
+   драйвера. Буферы `BufferedUart` — память драйвера, а не протокола, поэтому
+   они здесь, в плате:
 
    ```rust,ignore
    use embassy_stm32::usart::{BufferedUart, Config};
-   use crate::resources::SerialResources;
+   use crate::resources::Usart1Resources;
    use static_cell::ConstStaticCell;
 
    pub type Serial = BufferedUart<'static>;
@@ -32,7 +36,7 @@ UART платы — поток байтов под узлом протокола
    static TX: ConstStaticCell<[u8; 256]> = ConstStaticCell::new([0; 256]);
    static RX: ConstStaticCell<[u8; 256]> = ConstStaticCell::new([0; 256]);
 
-   pub(crate) fn new(r: SerialResources) -> Serial {
+   pub(crate) fn new(r: Usart1Resources) -> Serial {
        let mut config = Config::default();
        config.baudrate = 115_200;
        BufferedUart::new(r.usart, r.rx, r.tx, TX.take(), RX.take(), Irqs, config)
@@ -40,8 +44,9 @@ UART платы — поток байтов под узлом протокола
    }
    ```
 
-   `Board::new` уже передаёт группу `serial` из `resources.rs`:
-   `crate::serial::new(r.serial)` (`docs/resources.md`); выводы добавляются в неё.
+   `Board::new` уже передаёт группу транспорта из `resources.rs`:
+   `crate::serial::<транспорт>::new(r.<транспорт>)` (`docs/resources.md`); выводы
+   добавляются в неё.
 
 `BufferedUart` реализует `embedded_io_async::{Read, ReadReady, Write}` сам —
 ровно то, что ждут транспорты `adapters::modbus::Rtu` и `adapters::cobs::Cobs`,

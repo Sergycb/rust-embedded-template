@@ -44,8 +44,8 @@ use supervisor::runtime::TaskExit;
 //
 // ```ignore
 // fragments: [::domain::HOST_FRAG<HostLink, ::domain::host::Service> as HOST
-//                 = ::domain::host::HostWiring { link: HostLink::new(board.serial, FRAME.init([0; 262])),
-//                                                service: ::domain::host::Service::new(crate::device_info(board.spec)),
+//                 = ::domain::host::HostWiring { link: HostLink::new(parts.board.usart1, FRAME.init([0; 262])),
+//                                                service: ::domain::host::Service::new(crate::device_info(parts.board.spec)),
 //                                                rx: RX.init([0; 258]), tx: TX.init([0; 256]) }];
 // ```
 //
@@ -207,7 +207,7 @@ mod tests {
     use core::task::{Context, Waker};
     use micropb::{MessageDecode, MessageEncode, PbEncoder};
     use ports::{FrameLink, LinkError};
-    use proto::{Get, Ping, Request, Request_, Response, Response_, heapless};
+    use proto::{Get, Request, Request_, Response, Response_, heapless};
 
     use super::service::tests::{INFO, service};
     use super::{HostCtx, task};
@@ -291,7 +291,7 @@ mod tests {
     fn answers_requests_with_their_request_id() {
         let mut link = Link {
             incoming: VecDeque::from([
-                Ok(request(7, Request_::Command::Ping(Ping::default()))),
+                Ok(request(7, Request_::Command::Info(Get::default()))),
                 Ok(request(8, Request_::Command::Info(Get::default()))),
             ]),
             sent: Vec::new(),
@@ -300,10 +300,6 @@ mod tests {
         serve(&mut link, 64);
         let replies: Vec<Response> = link.sent.iter().map(|f| decode(f)).collect();
         assert_eq!(replies[0].request_id, 7);
-        assert!(matches!(
-            replies[0].result,
-            Some(Response_::Result::Pong(_))
-        ));
         assert_eq!(replies[1].request_id, 8);
         assert!(
             matches!(&replies[1].result, Some(Response_::Result::Info(i)) if i.version == "1.2.3")
@@ -316,7 +312,7 @@ mod tests {
             incoming: VecDeque::from([
                 Ok(vec![0xFF, 0xFF, 0xFF]),
                 Err(LinkError::Lost("помеха")),
-                Ok(request(9, Request_::Command::Ping(Ping::default()))),
+                Ok(request(9, Request_::Command::Info(Get::default()))),
             ]),
             sent: Vec::new(),
             send: Ok(()),
@@ -338,8 +334,8 @@ mod tests {
     fn failed_send_does_not_stop_the_node() {
         let mut link = Link {
             incoming: VecDeque::from([
-                Ok(request(1, Request_::Command::Ping(Ping::default()))),
-                Ok(request(2, Request_::Command::Ping(Ping::default()))),
+                Ok(request(1, Request_::Command::Info(Get::default()))),
+                Ok(request(2, Request_::Command::Info(Get::default()))),
             ]),
             sent: Vec::new(),
             send: Err(LinkError::Down("обрыв")),
@@ -354,8 +350,8 @@ mod tests {
     fn lost_send_keeps_the_node_listening() {
         let mut link = Link {
             incoming: VecDeque::from([
-                Ok(request(1, Request_::Command::Ping(Ping::default()))),
-                Ok(request(2, Request_::Command::Ping(Ping::default()))),
+                Ok(request(1, Request_::Command::Info(Get::default()))),
+                Ok(request(2, Request_::Command::Info(Get::default()))),
             ]),
             sent: Vec::new(),
             send: Err(LinkError::Lost("не влез")),
@@ -369,13 +365,16 @@ mod tests {
         let mut link = Link {
             incoming: VecDeque::from([
                 Ok(request(1, Request_::Command::Info(Get::default()))),
-                Ok(request(2, Request_::Command::Ping(Ping::default()))),
+                Ok(encode(&Request {
+                    request_id: 2,
+                    command: None,
+                })),
             ]),
             sent: Vec::new(),
             send: Ok(()),
         };
-        // `pong` с id влезает в 4 байта, `info` с версией — нет.
-        serve(&mut link, 4);
+        // Ошибка «unknown command» с id влезает в 32 байта, `info` — нет.
+        serve(&mut link, 32);
         assert_eq!(link.sent.len(), 1);
         assert_eq!(decode(&link.sent[0]).request_id, 2);
     }
@@ -404,7 +403,7 @@ mod tests {
         let mut link = Link {
             incoming: VecDeque::from([
                 Err(LinkError::Down("кабель вынут")),
-                Ok(request(5, Request_::Command::Ping(Ping::default()))),
+                Ok(request(5, Request_::Command::Info(Get::default()))),
             ]),
             sent: Vec::new(),
             send: Ok(()),

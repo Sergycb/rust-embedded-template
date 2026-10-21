@@ -22,13 +22,13 @@ defmt = [
 	# {%- if ota == "true" %}
 	"embassy-boot/defmt",
 	# {%- endif %}
-	# {%- if protocol == "canopen" %}
+	# {%- if has_canopen == "true" %}
 	"zencan-node/defmt",
 	# {%- endif %}
-	# {%- if interface == "tcp" or interface == "udp" %}
+	# {%- if has_net == "true" %}
 	"embassy-net/defmt",
 	# {%- endif %}
-	# {%- if interface == "usb" %}
+	# {%- if has_usb == "true" %}
 	"embassy-usb/defmt",
 	# {%- endif %}
 ]
@@ -44,7 +44,7 @@ signed = ["dep:salty"]
 log = [
 	"dep:log",
 	"defmt-or-log/log",
-	# {%- if protocol == "canopen" %}
+	# {%- if has_canopen == "true" %}
 	"zencan-node/log",
 	# {%- endif %}
 ]
@@ -89,31 +89,34 @@ salty = { workspace = true, optional = true }
 # `portable_atomic::AtomicU32`, потому что на Cortex-M0/M0+ у `core`
 # атомика нет `fetch_add`.
 portable-atomic = { workspace = true }
-# {%- if protocol == "modbus" %}
+# {%- if has_modbus == "true" %}
 # Modbus (`domain::modbus`): разбор PDU — кодек; транспорты — в `adapters`.
 # Обоснование выбора — `//!` модуля `domain::modbus`.
 rusty-modbus-codec = { workspace = true }
 rusty-modbus-types = { workspace = true }
+# Мьютекс карты регистров, общей у нескольких узлов Modbus
+# (`modbus::SharedRegisters`).
+embassy-sync = { workspace = true }
 # {%- endif %}
-# {%- if protocol == "protobuf" %}
+# {%- if has_protobuf == "true" %}
 # Узел HOST (`domain::host`): разбор и кодирование сообщений protobuf. Схему
 # узел не знает — её знает обработчик приложения.
 micropb            = { workspace = true }
 # Схема `crates-host/proto` — для обработчика `domain::host::Service`.
 proto              = { workspace = true }
 # {%- endif %}
-# {%- if protocol == "canopen" %}
+# {%- if has_canopen == "true" %}
 # Узел CANOPEN (`domain::canopen`): стек CANopen и кадр шины.
 zencan-node        = { workspace = true }
 embedded-can       = { workspace = true }
 # Словарь объектов устройства — для `domain::canopen::dictionary`.
 canopen            = { workspace = true }
 # {%- endif %}
-# {%- if interface == "tcp" or interface == "udp" %}
+# {%- if has_net == "true" %}
 # Узел NET (`domain::net`): ведёт стек `embassy-net` над устройством платы.
 embassy-net        = { workspace = true }
 # {%- endif %}
-# {%- if interface == "usb" %}
+# {%- if has_usb == "true" %}
 # Узел USB (`domain::usb`): ведёт устройство `embassy-usb` над драйвером платы.
 embassy-usb        = { workspace = true }
 # {%- endif %}
@@ -122,7 +125,7 @@ embassy-usb        = { workspace = true }
 # Исполнитель для async-тестов над фейками портов (`#[tokio::test]`); фичи —
 # в корневом Cargo.toml.
 tokio = { workspace = true }
-# {%- if ota == "true" or protocol == "modbus" %}
+# {%- if ota == "true" or has_modbus == "true" %}
 # Property-тесты `download::Transfer` (любое разбиение образа на куски) и
 # Modbus slave (любой кадр не роняет разбор).
 proptest = { workspace = true }
@@ -145,7 +148,7 @@ embassy-time = { workspace = true, features = ["mock-driver", "generic-queue-8"]
 # Реализация критической секции для хоста: её просит `MockDriver`. На плате её
 # даёт `cortex-m` фичей `critical-section-single-core` (crates-cross/Cargo.toml).
 critical-section = { workspace = true, features = ["std"] }
-# {%- if interface == "tcp" or interface == "udp" or interface == "usb" %}
-# Узлы NET/USB тестируются над заглушками устройства из `adapters`.
-adapters = { workspace = true }
+# {%- if has_net == "true" or has_usb == "true" %}
+# Узлы NET/USB тестируются над драйверами без шины из `adapters::fake`.
+adapters = { workspace = true, features = ["fake"] }
 # {%- endif %}

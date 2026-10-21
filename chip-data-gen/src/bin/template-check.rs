@@ -28,8 +28,11 @@
 //! стёртый флеш читается нулями, два протокола поверх UART (Modbus и protobuf)
 //! CANopen на FDCAN и bxCAN, Modbus TCP (с master), protobuf UDP, protobuf и
 //! Modbus по USB (Modbus без master — по UART и по USB); чипы с клоком RNG через мультиплексор (G0, WL, WBA, L4) и по одному
-//! чипу на каждый вариант регистров `banks.rs` (`g0`, `g4`, `l4`, `l5`).
-//! Итого тридцать три — точный список в `default_cases()`. Свой набор чипов —
+//! чипу на каждый вариант регистров `banks.rs` (`g0`, `g4`, `l4`, `l5`), а
+//! также несколько транспортов разом (`links`: два UART и TCP, два USB с графом
+//! и без, TCP и UDP, UART и CAN, UART и UDP без графа) и транспорты без протокола
+//! (UDP, USB с графом). Итого пятьдесят два — точный список
+//! в `default_cases()`. Свой набор чипов —
 //! позиционными аргументами; `--define k=v` (многократно) добавляет определение
 //! к каждой конфигурации, например `--ci gitlab --define config=internal stm32f407ve`.
 
@@ -75,7 +78,7 @@ fn default_cases() -> Vec<Case> {
         // должны это пережить.
         //
         // Заодно — настройки на внешней флеши (`config=external`): слот
-        // хранилища с заглушкой `adapters::flash::Unconnected`. Без OTA общий
+        // хранилища с заглушкой `bsp::stub::Flash`. Без OTA общий
         // объект `Flash` при этом не нужен вовсе (`shared_flash = false`), и
         // это единственная конфигурация, где bsp собирается без него, а
         // `config::new` — без аргумента. H7 — потому что именно у него раздел
@@ -158,7 +161,7 @@ fn default_cases() -> Vec<Case> {
         Case::new("stm32g474re").variant("canopen-fdcan", &["protocol=canopen", "interface=can"]),
         Case::new("stm32f407ve").variant("canopen-bxcan", &["protocol=canopen", "interface=can"]),
         // CANopen с разделом настроек: объекты по `save` и адрес по LSS — в
-        // `board.settings` (`domain::canopen`), колбэки стека — `StaticCell`
+        // хранилище настроек (`domain::canopen`), колбэки стека — `StaticCell`
         // в графе.
         Case::new("stm32g474re").variant(
             "canopen-config",
@@ -200,7 +203,7 @@ fn default_cases() -> Vec<Case> {
         // Modbus RTU по USB CDC — на F4, у которого USB — блок OTG: второй
         // драйвер в рецепте и `Rtu` поверх потока CDC вместо UART.
         Case::new("stm32f407ve").variant("modbus-usb", &["protocol=modbus", "interface=usb"]),
-        // Протоколы без графа: узел спавнит `main` (задачи `app/src/main.rs`),
+        // Протоколы без графа: узел спавнит `tasks::spawn_all` (`app/src/tasks/`),
         // а `NET`/`USB` — рядом с ним. По одной конфигурации на вид
         // интерфейса: UART, TCP, UDP, USB CDC и CAN (с настройками — слот
         // хранилища узла CANopen).
@@ -228,6 +231,33 @@ fn default_cases() -> Vec<Case> {
                 "config=internal",
                 "graph=no",
             ],
+        ),
+        // Несколько транспортов (`links`): у каждого своя группа ресурсов,
+        // подмодуль драйвера в `bsp` и транспорта в `app`, поле `Board` (или
+        // драйвер в `Drivers`) и узел графа (без графа — модуль задачи). Два UART
+        // одного вида рядом с сетью (H7: три узла Modbus и один `NET`), два USB
+        // (два устройства с разными серийными номерами; без графа — и по
+        // сигналу готовности OTA на каждое), TCP и UDP на одном стеке
+        // (`SOCKETS` = 1 + 2), поток с протоколом рядом с шиной без протокола,
+        // UART с UDP без графа. Транспорты без протокола: UDP (сокет и
+        // `PacketMetadata` ждут ваш узел) и USB с графом (поток CDC в
+        // `Parts` никто не забирает).
+        Case::new("stm32h743zg").variant(
+            "modbus-uart-uart-tcp",
+            &["links=uart:modbus,uart:modbus,tcp:modbus"],
+        ),
+        Case::new("stm32f407ve").variant("protobuf-usb-usb", &["links=usb:protobuf,usb:protobuf"]),
+        Case::new("stm32f407ve").variant(
+            "protobuf-usb-usb-no-graph",
+            &["links=usb:protobuf,usb:protobuf", "graph=no"],
+        ),
+        Case::new("stm32h743zg").variant("udp-only", &["links=udp"]),
+        Case::new("stm32g474re").variant("usb-only", &["interface=usb"]),
+        Case::new("stm32f407ve").variant("modbus-tcp-udp", &["links=tcp:modbus,udp:modbus"]),
+        Case::new("stm32f407ve").variant("modbus-uart-can", &["links=uart:modbus,can"]),
+        Case::new("stm32f407ve").variant(
+            "protobuf-uart-udp-no-graph",
+            &["links=uart:protobuf,udp:protobuf", "graph=no"],
         ),
         // Клок RNG, которого умолчания HAL не дают, — мультиплексор на своём
         // источнике (`config()` в `bsp::board`): `RNGSEL` у G0 (SYS), WL
@@ -352,8 +382,25 @@ fn main() -> anyhow::Result<()> {
         labels.join(", "),
     );
 
+    let mut static_ram = Vec::new();
     for case in &options.cases {
-        check_one(&template, &work_dir, &cargo_target_dir, case, &options)?;
+        if let Some(ram) = check_one(&template, &work_dir, &cargo_target_dir, case, &options)? {
+            static_ram.push((case.label(), ram));
+        }
+    }
+
+    // Факт статической RAM по случаям — из строки `ram:` вывода `build`.
+    if !static_ram.is_empty() {
+        println!("\nСтатическая RAM (.data + .bss + .uninit), байт: факт и оценка хука");
+        let width = static_ram
+            .iter()
+            .map(|(label, _)| label.chars().count())
+            .max()
+            .unwrap_or(0);
+        for (label, (ram, estimate)) in &static_ram {
+            let estimate = estimate.map_or_else(|| "—".to_owned(), |e| e.to_string());
+            println!("  {label:<width$}  {ram:>7}  {estimate:>7}");
+        }
     }
 
     println!(
@@ -368,14 +415,15 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `template` — облегчённая копия, из которой генерируем.
+/// `template` — облегчённая копия, из которой генерируем. Отдаёт статическую
+/// RAM сборки и оценку хука (без сборки — `None`).
 fn check_one(
     template: &Path,
     work_dir: &Path,
     cargo_target_dir: &Path,
     case: &Case,
     options: &Options,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Option<(u64, Option<u64>)>> {
     // Имя проекта = имя каталога, в который cargo-generate его положит.
     let name = case.name();
     let project = work_dir.join(&name);
@@ -399,16 +447,21 @@ fn check_one(
     for define in case.defines.iter().chain(&options.defines) {
         command.arg("--define").arg(define);
     }
-    run(
+    // Вывод генерации перехватывается ради строки `ram_estimate:` хука.
+    let generated = capture(
         command.arg("--silent").arg("--destination").arg(work_dir),
         work_dir,
         None,
     )
     .with_context(|| format!("генерация проекта под {}", case.label()))?;
+    print!("{generated}");
+    // С ручной раскладкой оценки нет — и сверять нечего.
+    let estimate = parse_ram_estimate(&generated);
 
     check_no_raw_placeholders(&project)?;
     check_ci_files(&project, &options.ci)?;
 
+    let mut static_ram = None;
     if !options.quick {
         // Ровно те команды, которые README обещает пользователю шаблона.
         //
@@ -467,18 +520,44 @@ fn check_one(
         check_snippets_compile(&project, cargo_target_dir)?;
 
         for args in commands {
-            run(
-                Command::new("cargo").args(args),
-                &project,
-                Some(cargo_target_dir),
-            )
-            .with_context(|| {
+            let context = || {
                 format!(
                     "`cargo {}` в сгенерированном проекте (оставлен для разбора: {})",
                     args.join(" "),
                     project.display(),
                 )
+            };
+            let command = &mut Command::new("cargo");
+            command.args(args);
+            if args != ["xtask", "build"] {
+                run(command, &project, Some(cargo_target_dir)).with_context(context)?;
+                continue;
+            }
+            // Вывод `build` перехватывается ради строки `ram:` и печатается
+            // как есть, чтобы отчёт сборки в логе остался.
+            let output =
+                capture(command, &project, Some(cargo_target_dir)).with_context(context)?;
+            print!("{output}");
+            let ram = parse_static_ram(&output).with_context(|| {
+                format!(
+                    "в выводе `cargo xtask build` нет строки `ram: <N> байт статической RAM …` \
+                     (формат — ram_line в crates-host/xtask/src/size.rs) для {}",
+                    case.label(),
+                )
             })?;
+            // Оценка хука консервативна: ниже факта — таблица `RAM_COST`
+            // устарела.
+            if let Some(estimate) = estimate {
+                if estimate < ram {
+                    bail!(
+                        "{}: оценка RAM хука {estimate} байт ниже факта {ram} байт — \
+                         перемерьте RAM_COST в chip-select.rhai (MAINTAINING.md, «Оценка RAM»)",
+                        case.label(),
+                    );
+                }
+                println!("ram: оценка {estimate} байт не ниже факта {ram} байт");
+            }
+            static_ram = Some((ram, estimate));
         }
     }
 
@@ -487,7 +566,7 @@ fn check_one(
     } else {
         fs::remove_dir_all(&project).with_context(|| format!("удалить {}", project.display()))?;
     }
-    Ok(())
+    Ok(static_ram)
 }
 
 /// Ищет `{{ }}`/`{% %}`, пережившие генерацию. Мимо линта и сборки такое
@@ -622,8 +701,37 @@ fn visit_files(
     Ok(())
 }
 
+/// Статическая RAM образа из вывода `cargo xtask build` — строка
+/// `ram: <N> байт статической RAM из …`, которую печатает
+/// `crates-host/xtask/src/size.rs` (`ram_line`). Формат — общий контракт.
+fn parse_static_ram(build_output: &str) -> Option<u64> {
+    build_output.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("ram: ")?
+            .split_once(" байт статической RAM")?
+            .0
+            .parse()
+            .ok()
+    })
+}
+
+/// Оценка статической RAM из вывода хука — строка `ram_estimate: <N> байт …`,
+/// которую печатает `chip-select.rhai` (раздел «RAM»). Нет строки — ручная
+/// раскладка, оценки нет.
+fn parse_ram_estimate(generate_output: &str) -> Option<u64> {
+    generate_output.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("ram_estimate: ")?
+            .split_once(" байт")?
+            .0
+            .parse()
+            .ok()
+    })
+}
+
 /// То же, что [`run`], но отдаёт stdout: нужно там, где проверяется не код
-/// возврата, а напечатанное.
+/// возврата, а напечатанное. stderr успешной команды печатается сразу: прогресс
+/// и предупреждения cargo не теряются, как и у [`run`].
 fn capture(
     command: &mut Command,
     current_dir: &Path,
@@ -637,12 +745,15 @@ fn capture(
         .output()
         .with_context(|| format!("запустить {:?}", command.get_program()))?;
     if !output.status.success() {
+        // stdout — тоже: перед ошибкой хук печатает то, что к ней привело.
         bail!(
-            "команда завершилась с {}:\n{}",
+            "команда завершилась с {}:\n{}{}",
             output.status,
+            String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr),
         );
     }
+    eprint!("{}", String::from_utf8_lossy(&output.stderr));
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
@@ -1003,7 +1114,27 @@ fn copy_dir(from: &Path, to: &Path) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::without_actions_expressions;
+    use super::{parse_ram_estimate, parse_static_ram, without_actions_expressions};
+
+    /// Строку печатает `crates-host/xtask/src/size.rs` (`ram_line`).
+    #[test]
+    fn parses_the_static_ram_line_of_a_build() {
+        let output = "app: 41.2 KiB из 128.0 KiB ACTIVE (32.2%)\n\
+                      ram: 3124 байт статической RAM из 131072 байт RAM (2.4%)\n\
+                      образ для OTA: app.bin\n";
+
+        assert_eq!(parse_static_ram(output), Some(3124));
+        assert_eq!(parse_static_ram("app: 41.2 KiB\n"), None);
+    }
+
+    /// Строку печатает `chip-select.rhai` (раздел «RAM»).
+    #[test]
+    fn parses_the_ram_estimate_line_of_the_hook() {
+        let output = "OTA отключён по вашему выбору\n\
+                      ram_estimate: 3932 байт статической RAM (+ 1024 под стек) из 130560 байт RAM\n";
+        assert_eq!(parse_ram_estimate(output), Some(3932));
+        assert_eq!(parse_ram_estimate("ram: 3124 байт статической RAM\n"), None);
+    }
 
     /// Главное свойство: послабление ради Actions не должно прятать настоящий
     /// плейсхолдер, стоящий в той же строке.

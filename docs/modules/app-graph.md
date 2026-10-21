@@ -133,7 +133,7 @@ impl HeartbeatCtx<'_> {
   указывает в крейт фрагмента и переживает переименование зависимости в чужом
   манифесте, а `crate::` означал бы крейт, который фрагмент вызывает. Типы,
   которых фрагмент назвать не может (адаптер платы в слоте), — его параметры:
-  `name: OTA_FRAG<F, R>` во фрагменте, `::domain::OTA_FRAG<bsp::ota::Updater, bsp::cpu::Reboot>` здесь.
+  `name: OTA_FRAG<F, R>` во фрагменте, `::domain::OTA_FRAG<crate::ota::Updater, bsp::cpu::Reboot>` здесь.
 * **Порядок items фиксирован**: `name:` → `boot:` → `watchdog:` →
   `cloned:`/`shared:` → `executor` → `fragments:` последним. `fragments:`
   раньше `boot:` — ошибка разбора; блок `watchdog:` внутри фрагмента — тоже
@@ -209,17 +209,51 @@ fragments: [::domain::HEARTBEAT_FRAG as HEARTBEAT,
 
 // в main(), после инициализации HAL: слот назван по узлу и по слоту.
 provide_usart_uart(r.usart).expect("слот пуст до первого spawn_all");
-// Второй параметр — `boot:`-объект графа; в шаблоне это `board`, и объявлен
-// он ради блока `watchdog:`. Слот, написанный с инициализатором — во
-// фрагменте `resources: [UART: R = hw.usart]` при его собственной
-// `boot: hw: …;`, а здесь `… as USART = board.usart`, — заполняет сам граф:
+// Второй параметр — `boot:`-объект графа; в шаблоне это `parts`
+// (`crate::parts::Parts`: плата и собранные над её драйверами пары). Слот,
+// написанный с инициализатором — во фрагменте `resources: [UART: R = hw.usart]`
+// при его собственной `boot: hw: …;`, а здесь `… as USART = parts.board.usart`, —
+// заполняет сам граф:
 // строки `provide_usart_uart` тогда нет вовсе, а значит её нельзя и забыть
 // (так устроен узел OTA ниже). Формой не обслуживаются слоты
 // `consume`/`shared` (их переиздаёт `respawn_all`, а boot-объект к тому
 // моменту потреблён) и всё, что требует `await` или повтора, — для этого
 // остаётся узел-инициализатор.
-spawn_all(&spawner, board).expect("узлы свежие");
+spawn_all(&spawner, parts).expect("узлы свежие");
 ```
+
+**Большой объект в слот по значению не кладут.** Слот `[X: T]` — `static`
+с `Option<T>`, и значение дважды проходит через стек: его строит пролог
+`spawn_all` (`= <expr>`, кадр `main`) или вызывающий `provide_*`, а задача забирает его `take()` в первом
+опросе — копией на стек и оттуда в future в `TaskStorage`. Живёт объект тоже
+дважды: в слоте и в future. Стек под `flip-link` — это остаток RAM после
+статиков, своего размера у него нет, поэтому то, что «влезло» в одном проекте,
+в другом с парой лишних буферов уходит ниже начала RAM (`HardFault`, SP вне
+памяти). Всё, что от килобайта и выше, — слот `&'static mut T` со статиком,
+который заводит сам граф:
+
+```ignore
+resources: [WS: &'static mut $crate::x::Workspace = static],
+// или с «заплаткой» для полей, которые не должны быть нулём:
+resources: [WS: &'static mut $crate::x::Workspace = static |w| w.gain = inputs.gain],
+```
+
+Статик — `cloned_cell::ZeroedCell<T>` (его заводит граф внутри `spawn_all`,
+своей зависимости не нужно), нули, то есть `.bss` без образа во флеше; `T` на
+стеке не строится ни разу. Цена: `T: supervisor::Zeroed`
+(`unsafe impl supervisor::Zeroed for Workspace {}` под `// SAFETY:` с полями;
+целые, `bool`, `()`, массивы из них и `Option<&T>` уже реализуют), слот без
+пометок — не `consume`, не `shared`, не `local`. Ссылка выдаётся один раз:
+второй `spawn_all` вернёт `GraphSpawnErrorKind::BaseClaimed`, а
+`respawn_all` объект не обнуляет — узел получает его с тем, что записал.
+
+Слот по значению стоит ещё и флеша: его образ — `None` у `Option<T>`, а при
+нише в `T` (один `bool` или enum без полей внутри) это не нули, и статик
+целиком уходит в `.data` — размером `T` во флеше сверх RAM. Свой `StaticCell`
+в `app` вместо `= static` не нужен: `StaticCell::init_with(|| T::new(..))` не
+обещает строить на месте, а `ConstStaticCell` с ненулевым `T` уводит статик в
+ту же `.data`. Подробности — `supervisor-macros/docs/dsl.md`, «A large object:
+`= static`» и «What those statics cost in flash».
 
 # `watchdog` — мультиплексор задач в один аппаратный watchdog
 
@@ -244,8 +278,8 @@ spawn_all(&spawner, board).expect("узлы свежие");
 Писать её руками не нужно, и подключать тоже: имя блока подставлено при
 генерации из метаданных чипа (`IWDG`, на H7 `IWDG1`, на двухъядерных H7 у
 ядра CM4 `IWDG2`), объект собирает `Board::new`, а запускает его блок
-`watchdog:` графа — инициализатором `= board.watchdog.arm()`, где
-`board` это объявленный выше `boot:`-объект, который `main` передаёт в
+`watchdog:` графа — инициализатором `= parts.board.watchdog.arm()`, где
+`parts` это объявленный выше `boot:`-объект, который `main` передаёт в
 `spawn_all`. Всё, что осталось на вас, — цифры, и живут они там, о чём
 каждая: `WATCHDOG_CHECK_EVERY` здесь (про один сторож на всех), таймаут узла
 во фрагменте (про этот узел, вместе с периодом его отметок — и их соотношение
@@ -283,7 +317,7 @@ spawn_all(&spawner, board).expect("узлы свежие");
 занимает тот, кто первым позовёт `cpu_load_percent_receiver()`. Либо разово,
 либо постоянно — объявив у себя `subscribe: [CPU_LOAD_PERCENT: u8]`.
 {%- if graph != "true" %}
-Графа в этом проекте нет, и узел спавнит `main` сам — через
+Графа в этом проекте нет, и узел спавнит `tasks::spawn_all` — через
 `#[embassy_executor::task]` в `app/src/cpu_load.rs`, потому что
 `Spawner::spawn` берёт `SpawnToken`, а не функцию. Публиковать некому, и
 значение уходит в лог.
@@ -303,7 +337,7 @@ spawn_all(&spawner, board).expect("узлы свежие");
 # Стейтчарты сюда не входят
 
 Понадобится автомат состояний (например, крейты `fsm`/`fsm-async` из
-[rust-lib](https://github.com/Sergycb/rust-lib)) — его место в `domain`, а
+[rust-lib]({{rust_lib}})) — его место в `domain`, а
 не здесь, даже если он владеет своей задачей целиком и ждёт события из
 `embassy_sync`-канала: сама модель состояний остаётся чистой логикой без
 привязки к железу, а `cross` лишь спавнит задачу, гоняющую `run().await`,
@@ -403,16 +437,22 @@ async fn uart_drain_task(mut uart: embassy_stm32::usart::UartTx<'static, embassy
 `crates-host/domain/src/ota.rs`.
 
 Команды шлёт узел протокола: клиента входа отдаёт аксессор графа
-`ota_cmd_requester()` — с protobuf его получает `domain::host::Service` прямо
-во входе узла `HOST`. Своего канала у образа нет: он идёт по протоколу,
+`ota_cmd_requester()`, а узел получает его обёрнутым в `domain::ota::OtaClient`
+с номером своего транспорта (`ClientId`, порядковый номер транспорта с
+протоколом в `links`, с 0; тот же у задачи без графа) — с protobuf его
+получает `domain::host::Service` прямо во входе узла `HOST`. Номер нужен
+владельцу сессии: чужой приём, пока идёт свой, получает `Busy`
+(`docs/ota.md`). Своего канала у образа нет: он идёт по протоколу,
 которым хост и так говорит с устройством (`docs/ota.md`).
 
-Плата отдаёт для узла адаптер обновления `board.ota` (`bsp::ota::Updater`) и
-порт перезагрузки `bsp::cpu::Reboot`, а вход фрагмента собирает эта сторона:
-`bsp` зависит только от `ports` и `adapters`, про `domain` он не знает
-(`= ::domain::ota::OtaWiring { flash: board.ota, reboot: bsp::cpu::Reboot, mode:
-::domain::ota::Mode::Signed { running_version: crate::image::FW_VERSION } }`). Типы
-слотов — аргументы фрагмента (`OTA_FRAG<bsp::ota::Updater, bsp::cpu::Reboot>`):
+Плата отдаёт для узла разделы обновления `parts.board.ota`
+(`bsp::ota::Partitions`) и порт перезагрузки `bsp::cpu::Reboot`, а адаптер
+обновления над разделами (`crate::ota::new`) и вход фрагмента собирает эта
+сторона: `bsp` про `adapters` и `domain` не знает
+(`= ::domain::ota::OtaWiring { flash: crate::ota::new(parts.board.ota), reboot:
+bsp::cpu::Reboot, mode: ::domain::ota::Mode::Signed { running_version:
+crate::image::FW_VERSION } }`). Типы слотов — аргументы фрагмента
+(`OTA_FRAG<crate::ota::Updater, bsp::cpu::Reboot>`):
 слот — `static`, тип ему нужен, а знает его только эта сторона. Слот адаптера — `local` (фича
 `supervisor/local-resources` в
 `crates-cross/Cargo.toml`): объекты платы `!Send`, и граф держит их на своём
@@ -425,6 +465,33 @@ async fn uart_drain_task(mut uart: embassy_stm32::usart::UartTx<'static, embassy
 жизнь платы, и прогресса, о котором можно отметиться, у узла нет. Аппаратный
 сторож кормит тикер графа, а не какой-то узел.
 
+{%- endif %}
+{%- if has_modbus == "true" %}
+
+# Modbus: одна карта на все узлы `MODBUS_*`
+
+Узел `MODBUS_<ТРАНСПОРТ>` — по одному на транспорт с Modbus в `links`.{% if graph == "true" %}
+Фрагмент — `domain::MODBUS_SLAVE_FRAG`, вход узла —
+`domain::modbus::ModbusSlaveWiring`: транспорт
+(`crate::link::<транспорт>::Link`), карта регистров и адрес slave'а (`unit`).{% else %}
+Без графа это задача в `crates-cross/app/src/tasks/modbus.rs`: транспорт
+(`crate::link::<транспорт>::Link`), карта регистров и адрес slave'а — в
+контексте `domain::modbus::ModbusSlaveCtx`.{% endif %} Карта одна на проект: `crate::parts::Parts::new` один раз заводит её в
+`crates-cross/app/src/modbus.rs` и кладёт ручку в `parts.modbus`
+(`crate::modbus::Handle` = `domain::modbus::SharedRegisters<Map>`, `Copy`), а
+каждый узел получает её копию — запись через один транспорт видна чтению через
+другой. Ручка берёт мьютекс карты (`domain::modbus::MapMutex`, `NoopRawMutex`)
+на время одного вызова порта, так что запросы с разных транспортов идут по
+очереди.{% if ota == "true" %} Окно OTA (`domain::modbus::OtaRegisters`) каждый узел оборачивает вокруг
+своей копии ручки снаружи, вне блокировки: `Start` ждёт стирания секундами, а
+карту в это время обслуживают остальные транспорты. Номер клиента OTA у окна —
+порядковый номер транспорта (`docs/ota.md`).{% endif %}
+
+Свою карту проект подставляет в одном месте — псевдоним `Map` в
+`crates-cross/app/src/modbus.rs` (по умолчанию `domain::modbus::EmptyRegisters`):
+тип реализует `ports::Registers` и живёт в `domain`. Карта строится через
+`Map::default()`; без `Default` замените эту одну строку в `crate::modbus::new`
+своим конструктором. Узлы и граф тип берут оттуда и правок не требуют.
 {%- endif %}
 
 # Питание от батареи: STOP между задачами

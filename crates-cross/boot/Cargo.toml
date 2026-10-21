@@ -45,15 +45,16 @@ embassy-boot = { workspace = true, features = ["flash-erase-zero"] }
 {%- endif %}
 embassy-stm32 = { workspace = true, features = ["defmt"] }
 embassy-sync = { workspace = true }
-{%- if boot_partitioned == "true" or ota_store == "external" %}
 {%- if boot_partitioned == "true" %}
 # Разделы со своей страницей, а не страницей всего чипа
-# (`adapters::flash::ErasePage` поверх `BlockingPartition`, src/main.rs). Тот же
+# (`flash_page::ErasePage` поверх `BlockingPartition`, src/main.rs). Тот же
 # код, что строит их в приложении (bsp), — расходиться им нельзя.
-{%- else %}
-# Заглушка драйвера внешней флеши (`adapters::flash::Unconnected`, src/external.rs).
+flash-page = { workspace = true }
 {%- endif %}
-adapters = { workspace = true }
+{%- if ota_store == "external" %}
+# Слово записи адаптера OTA приложения (`ports::MAX_WRITE_SIZE`,
+# src/external.rs) — предел, под который посчитан журнал `STATE`.
+ports = { workspace = true }
 {%- endif %}
 # Раздел на весь флеш под замком (`BlockingPartition`), из которого строятся
 # `STATE`, `ACTIVE` и `DFU`: те же разделы, что собирает приложение (`bsp`).

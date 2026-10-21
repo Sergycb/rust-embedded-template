@@ -12,6 +12,8 @@ workspace = true
 # Сами адаптеры ничего не пишут в лог, а у `embassy-boot` без фич `log`/`defmt`
 # его макросы вывода превращаются в пустые выражения — на хосте это ровно то,
 # что нужно. В прошивку `defmt` включает crates-cross/Cargo.toml.
+# Драйверы без шины и линка (`adapters::fake`) — для host-тестов `domain`.
+fake = []
 defmt = [
 	"dep:defmt",
 	"ports/defmt",
@@ -21,10 +23,10 @@ defmt = [
 	# {%- if config == "true" %}
 	"sequential-storage/defmt",
 	# {%- endif %}
-	# {%- if interface == "tcp" or interface == "udp" %}
+	# {%- if has_net == "true" %}
 	"embassy-net/defmt",
 	# {%- endif %}
-	# {%- if interface == "usb" %}
+	# {%- if has_usb == "true" %}
 	"embassy-usb/defmt",
 	# {%- endif %}
 ]
@@ -40,13 +42,13 @@ embedded-storage = { workspace = true }
 embedded-storage-async = { workspace = true }
 # {%- endif %}
 # {%- if config == "true" %}
-# Хранилище настроек (settings.rs) — async API, отсюда и мост в flash.rs.
+# Хранилище настроек (settings.rs) — async API.
 sequential-storage = { workspace = true }
 # {%- endif %}
 embassy-sync = { workspace = true }
 # {%- if stream_io == "true" %}
-# Заглушки и транспорты поверх потока байтов `embedded_io_async::{Read, Write}` —
-# `serial`, `usb::CdcStream`, `net::TcpServer`, `modbus::{Rtu, Tcp}` и
+# Транспорты поверх потока байтов `embedded_io_async::{Read, Write}` —
+# `usb::CdcStream`, `net::TcpServer`, `modbus::{Rtu, Tcp}` и
 # `cobs::Cobs`. UDP-каналу поток не нужен: границу кадра даёт датаграмма.
 embedded-io-async = { workspace = true }
 # {%- endif %}
@@ -54,25 +56,21 @@ embedded-io-async = { workspace = true }
 # CRC кадра: RTU (Modbus по UART и USB) и COBS (protobuf по потоку).
 crc = { workspace = true }
 # {%- endif %}
-# {%- if stream_io == "true" and protocol == "protobuf" %}
+# {%- if cobs_used == "true" %}
 # Кадрирование COBS под `cobs::Cobs`.
 cobs = { workspace = true }
 # {%- endif %}
-# {%- if interface == "tcp" or interface == "udp" %}
+# {%- if has_net == "true" %}
 # Сеть (`adapters::net`): заглушка устройства, TCP-сервер, UDP-канал.
 embassy-net = { workspace = true }
 # {%- endif %}
-# {%- if interface == "usb" %}
+# {%- if has_usb == "true" %}
 # USB (`adapters::usb`): заглушка драйвера и поток CDC ACM.
 embassy-usb = { workspace = true }
 # {%- endif %}
-# {%- if interface == "tcp" or interface == "udp" or interface == "usb" %}
+# {%- if has_net == "true" or has_usb == "true" %}
 # Таймауты: keep-alive сокета TCP (`net`), запись, которую хост не забирает (`usb`).
 embassy-time = { workspace = true }
-# {%- endif %}
-# {%- if interface == "can" %}
-# Кадр шины CAN — параметр заглушки `can::Unconnected`.
-embedded-can = { workspace = true }
 # {%- endif %}
 # `defmt::Format` на ошибках адаптеров — в прошивке.
 defmt = { workspace = true, optional = true }
@@ -85,11 +83,12 @@ defmt = { workspace = true, optional = true }
 # cargo разрешена: в обычную сборку ни та ни другая не попадает.
 domain = { path = "../domain", features = ["signed"] }
 salty = { workspace = true }
-# {%- endif %}
-# {%- if erase_page == "true" or external_flash == "true" %}
-# `BlockingAsync` (async-вид флеша) и `BlockingPartition` (раздел под замком) —
-# как их собирают `bsp` и bootloader; свои копии в тестах не нужны.
-embassy-embedded-hal = { workspace = true }
+# `domain` тянет `supervisor`, а с ним `embassy-executor`, которому без
+# платформенной фичи не хватает `__pender`. Фичу включает dev-зависимость
+# самого `domain`, но cargo учитывает dev-зависимости только тестируемого
+# пакета: без этой строки `cargo test -p adapters` не линкуется, хотя тест
+# всего workspace проходит.
+embassy-executor = { workspace = true, features = ["platform-std", "executor-thread"] }
 # {%- endif %}
 # Исполнитель для async-тестов над флешем в памяти (`#[tokio::test]`); фичи —
 # в корневом Cargo.toml.
@@ -98,10 +97,11 @@ tokio = { workspace = true }
 # Property-тесты кадрирования: любое дробление потока и любой мусор.
 proptest = { workspace = true }
 # {%- endif %}
-# {%- if interface == "tcp" or interface == "udp" or interface == "usb" %}
+# {%- if has_net == "true" or has_usb == "true" or ota == "true" %}
 # Сетевые и USB-тесты: стеки `embassy-net`/`embassy-usb` ждут таймеров и
 # критической секции — на хосте их дают драйвер времени `mock-driver` и
-# `critical-section/std`, как в `domain`.
+# `critical-section/std`, как в `domain`. С OTA драйвер времени нужен и
+# `supervisor` из dev-зависимости `domain` — по той же причине, что выше.
 embassy-time = { workspace = true, features = ["mock-driver", "generic-queue-8"] }
 critical-section = { workspace = true, features = ["std"] }
 # {%- endif %}

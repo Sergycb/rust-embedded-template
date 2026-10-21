@@ -1,19 +1,28 @@
-//! {% if erase_page == "true" %}Обёртка `ErasePage` с переопределённой страницей стирания и вспомогательные
-//! функции{% else %}Вспомогательные функции{% endif %} над `NorFlash`; при внешней флеши — ещё и заглушка её драйвера.
+#![cfg_attr(not(test), no_std)]
+
+//! Геометрия флеша под разделами.
+// {%- if erase_page == "true" %}
+//! [`ErasePage`] — обёртка со своей страницей стирания.
+// {%- endif %}
+// {%- if ota_store == "external" %}
+//! [`erase_size`] — для проверок раскладки при компиляции.
+// {%- endif %}
+//!
+//! Это не адаптер порта, а свойство раскладки: страницу раздела знает генерация
+//! (`chip-data-gen`), а пользуются обёрткой `bsp` (разделы приложения) и
+//! `boot` (те же разделы в bootloader'е). Отдельным крейтом, а не модулем `bsp`,
+//! потому что `bsp` собирается только под target, а обмен `embassy-boot` над
+//! страницей крупнее физической проверяется здесь, на хосте (`coarse_swap`).
 //!
 //! Флеш на чипе один, а `embassy-boot` и `sequential-storage` хотят каждый свой
 //! `NorFlash` по значению. Общий флеш лежит под блокирующим мьютексом, а
 //! каждый потребитель получает `BlockingPartition` из `embassy-embedded-hal` —
-//! ссылку на него: блокировка берётся на каждую
-//! операцию отдельно. Асинхронный вид (для `Partition`, `FirmwareUpdater`,
-//! `sequential-storage`) даёт `embassy_embedded_hal::adapter::BlockingAsync`;
-//! операции блокирующие, ни одна не ждёт внутри.{% if erase_page == "true" %} Свой раздел с нестандартной
-//! страницей — [`ErasePage`](crate::flash::ErasePage) поверх него.
-//!
-//! Generic по флешу, а не привязан к `embassy_stm32::flash::Flash`: обёртке
-//! всё равно, что под ней, — а тестируется она на хосте с флешем в памяти.{% endif %}
+//! ссылку на него: блокировка берётся на каждую операцию отдельно. Асинхронный
+//! вид даёт `embassy_embedded_hal::adapter::BlockingAsync`; операции
+//! блокирующие, ни одна не ждёт внутри. Обёртка generic по флешу, а не
+//! привязана к `embassy_stm32::flash::Flash`: ей всё равно, что под ней.
 
-// {%- if erase_page == "true" or external_flash == "true" %}
+// {%- if erase_page == "true" %}
 use embedded_storage::nor_flash::{ErrorType, NorFlash, ReadNorFlash};
 // {%- endif %}
 
@@ -109,101 +118,6 @@ pub const fn erase_size<F: embedded_storage_async::nor_flash::NorFlash>() -> usi
 }
 // {%- endif %}
 
-// {%- if external_flash == "true" %}
-/// Внешняя флеш, которую ещё не подключили, — место под ваш драйвер.
-///
-/// Шаблон не знает, какая микросхема будет на плате (W25Q, GD25, MX25, IS25,
-/// SST26…), и не гадает: хранилище настроек принимает любой асинхронный
-/// `NorFlash`, а это — заглушка в его слоте, как `serial::Unconnected` в слоте
-/// UART. Проект с ней собирается и запускается, а каждая операция
-/// отвечает [`NotConnected`] — настройки не сохраняются, но и ничего не
-/// падает. Заменить её — значит подставить в `bsp::settings` свой драйвер:
-/// готовый крейт (`spi-memory-async`, `w25q32jv`…) или собственный.
-///
-/// Геометрия правдоподобная — две страницы по 4 KiB, сектор почти любой
-/// SPI NOR, — ровно столько, сколько нужно хранилищу, чтобы собраться.
-///
-/// Тот же слот и у OTA с разделами на внешней флеши (`ota=external`): в
-/// приложении — асинхронные трейты, в bootloader'е — блокирующие, поэтому
-/// заглушка реализует оба. Bootloader с ней не обменивает разделы, а
-/// загружает текущий образ.
-#[derive(Debug, Default)]
-pub struct Unconnected;
-
-impl Unconnected {
-    /// Объём, под который строится хранилище с заглушкой.
-    pub const CAPACITY: u32 = 2 * Self::PAGE;
-
-    /// Страница стирания.
-    const PAGE: u32 = 4096;
-}
-
-/// Ответ [`Unconnected`] на любую операцию.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct NotConnected;
-
-impl embedded_storage::nor_flash::NorFlashError for NotConnected {
-    fn kind(&self) -> embedded_storage::nor_flash::NorFlashErrorKind {
-        embedded_storage::nor_flash::NorFlashErrorKind::Other
-    }
-}
-
-impl ErrorType for Unconnected {
-    type Error = NotConnected;
-}
-
-impl embedded_storage_async::nor_flash::ReadNorFlash for Unconnected {
-    const READ_SIZE: usize = 1;
-
-    fn read(&mut self, _: u32, _: &mut [u8]) -> impl Future<Output = Result<(), Self::Error>> {
-        core::future::ready(Err(NotConnected))
-    }
-
-    fn capacity(&self) -> usize {
-        Self::CAPACITY as usize
-    }
-}
-
-impl embedded_storage_async::nor_flash::NorFlash for Unconnected {
-    const WRITE_SIZE: usize = 1;
-    const ERASE_SIZE: usize = Self::PAGE as usize;
-
-    fn erase(&mut self, _: u32, _: u32) -> impl Future<Output = Result<(), Self::Error>> {
-        core::future::ready(Err(NotConnected))
-    }
-
-    fn write(&mut self, _: u32, _: &[u8]) -> impl Future<Output = Result<(), Self::Error>> {
-        core::future::ready(Err(NotConnected))
-    }
-}
-
-impl ReadNorFlash for Unconnected {
-    const READ_SIZE: usize = 1;
-
-    fn read(&mut self, _: u32, _: &mut [u8]) -> Result<(), Self::Error> {
-        Err(NotConnected)
-    }
-
-    fn capacity(&self) -> usize {
-        Self::CAPACITY as usize
-    }
-}
-
-impl NorFlash for Unconnected {
-    const WRITE_SIZE: usize = 1;
-    const ERASE_SIZE: usize = Self::PAGE as usize;
-
-    fn erase(&mut self, _: u32, _: u32) -> Result<(), Self::Error> {
-        Err(NotConnected)
-    }
-
-    fn write(&mut self, _: u32, _: &[u8]) -> Result<(), Self::Error> {
-        Err(NotConnected)
-    }
-}
-// {%- endif %}
-
 #[cfg(test)]
 mod tests {
     use core::cell::RefCell;
@@ -218,9 +132,6 @@ mod tests {
 
     // {%- if erase_page == "true" %}
     use super::ErasePage;
-    // {%- endif %}
-    // {%- if external_flash == "true" %}
-    use super::Unconnected;
     // {%- endif %}
 
     /// Блокирующий флеш в памяти: 64 байта, страница 16, слово 4. Мосту
@@ -288,20 +199,6 @@ mod tests {
         );
     }
 
-    // {%- if external_flash == "true" %}
-    /// С заглушкой хранилище собирается, а операции честно отказывают, а не
-    /// паникуют: проект без подключённой флеши работает, просто без настроек.
-    #[tokio::test]
-    async fn settings_over_an_unconnected_flash_refuse_without_panicking() {
-        use ports::SettingsStorage;
-
-        let mut settings = crate::settings::Settings::new(Unconnected, 0..Unconnected::CAPACITY);
-
-        assert!(settings.write(1, b"x").await.is_err());
-        assert!(settings.read(1, &mut [0; 8]).await.is_err());
-    }
-    // {%- endif %}
-
     // {%- if erase_page == "true" %}
     /// `ErasePage` меняет только объявленную страницу: операции доходят до флеша
     /// с теми же границами (блокирующие трейты — их берут разделы `embassy-boot`
@@ -350,7 +247,7 @@ mod tests {
         use embassy_sync::blocking_mutex::raw::NoopRawMutex;
         use embedded_storage::nor_flash::{ErrorType, NorFlash, NorFlashErrorKind, ReadNorFlash};
 
-        use crate::flash::ErasePage;
+        use crate::ErasePage;
 
         /// Страница обмена и раскладка: ACTIVE — 3 страницы, DFU — 4 (запасная).
         const SWAP: usize = 1024;

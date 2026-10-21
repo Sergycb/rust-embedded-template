@@ -44,15 +44,9 @@ pub fn panic_info(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     // ответами, а при `_ => 0` они были одним.
     let header = format!("{:#x}", panic.origin);
     let header = cmd!(sh, "probe-rs read --chip {CHIP} b32 {header} 2").read()?;
-    let words = header
-        .split_whitespace()
-        .map(parse_hex)
-        .collect::<Option<Vec<_>>>()
-        .with_context(|| {
-            format!(
-                "не разобрал вывод `probe-rs read` ({header:?}) — ожидался голый hex-список слов"
-            )
-        })?;
+    let words = parse_words(&header).with_context(|| {
+        format!("не разобрал вывод `probe-rs read` ({header:?}) — ожидался голый hex-список слов")
+    })?;
     let [magic, length] = words[..] else {
         anyhow::bail!(
             "из `probe-rs read` вернулось {} слов, а ожидались магия и длина ({:?})",
@@ -92,10 +86,7 @@ pub fn panic_info(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     // Строго, как заголовок: молчаливый `0x00` вместо непрочитанного слова дал бы
     // обрезанное сообщение паники с ВЫГЛЯДЯЩИМ выводом, а это худший вид
     // ответа — читатель поверит ему и ищет не ту причину.
-    let bytes = body
-        .split_whitespace()
-        .map(parse_hex)
-        .collect::<Option<Vec<_>>>()
+    let bytes = parse_words(&body)
         .with_context(|| {
             format!("не разобрал вывод `probe-rs read` ({body:?}) — ожидался голый hex-список байт")
         })?
@@ -119,6 +110,24 @@ pub fn panic_info(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
+/// Слова из вывода `probe-rs read`; `None` — вывод не разобран.
+///
+/// probe-rs 0.31 печатает голый hex-список, 0.32 по умолчанию — таблицу
+/// (`HexTable`): каждая строка начинается адресом `{address:08x}: `, ASCII-колонки
+/// нет. Пропускается только такой адрес — hex-цифры с двоеточием; любое другое
+/// слово по-прежнему разбирается строго ([`parse_hex`]). Так же читает
+/// `host-target-tests` (`try_read_words`).
+fn parse_words(output: &str) -> Option<Vec<u32>> {
+    output
+        .split_whitespace()
+        .filter(|word| {
+            word.strip_suffix(':')
+                .is_none_or(|address| parse_hex(address).is_none())
+        })
+        .map(parse_hex)
+        .collect()
+}
+
 /// Слово из вывода `probe-rs read`: hex без префикса.
 ///
 /// `Option`, а не число с запасным нулём. При разборе дампа паники ноль —
@@ -126,11 +135,6 @@ pub fn panic_info(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
 /// бы два разных ответа («плата не падала» и «я не понял вывод `probe-rs`»)
 /// одним и тем же `println!` с кодом выхода 0. Второй ответ при отладке нужен
 /// не меньше первого.
-///
-/// Формат сверен с probe-rs 0.31: `read_to_console` печатает голый
-/// hex-список слов. На `master` формат по умолчанию другой — `HexTable` с
-/// префиксом `{address:08x}: `, — и такой вывод разбор принимать не должен,
-/// а переписывать разбор под него надо вместе с проверкой на реальной плате.
 fn parse_hex(word: &str) -> Option<u32> {
     // `from_str_radix` принимает ведущий `+`, а слово из `probe-rs read` — только цифры.
     if word.is_empty() || !word.bytes().all(|byte| byte.is_ascii_hexdigit()) {
@@ -155,10 +159,30 @@ mod tests {
         assert_eq!(super::parse_hex("0facade0"), Some(0x0FAC_ADE0));
         assert_eq!(super::parse_hex("0"), Some(0));
 
-        // Префикс таблицы, который печатает probe-rs на `master`, и обрезок
-        // слова — обе подстановки молча дали бы «нули» вместо ошибки.
-        assert_eq!(super::parse_hex("0800_0000:"), None);
+        // Адрес строки таблицы — не слово, и обрезок слова тоже не ноль.
+        assert_eq!(super::parse_hex("08000000:"), None);
         assert_eq!(super::parse_hex("0100"), Some(0x0100));
         assert_eq!(super::parse_hex(""), None);
+    }
+
+    /// Оба формата `probe-rs read`: голый список (0.31) и таблица с адресом
+    /// строки (0.32) дают одни и те же слова.
+    #[test]
+    fn parses_both_probe_rs_output_formats() {
+        let words = Some(vec![0x0FAC_ADE0, 0x10]);
+        assert_eq!(super::parse_words("0facade0 00000010\n"), words);
+        assert_eq!(super::parse_words("24077e00: 0facade0 00000010\n"), words);
+        assert_eq!(
+            super::parse_words("24077e08: 70 61\n24077e10: 6e\n"),
+            Some(vec![0x70, 0x61, 0x6e])
+        );
+    }
+
+    /// Пропускается только адрес строки: любое другое слово с двоеточием или
+    /// мусор — отказ разбора, а не молча выброшенное слово.
+    #[test]
+    fn rejects_anything_but_an_address_prefix() {
+        assert_eq!(super::parse_words("Error: 0facade0"), None);
+        assert_eq!(super::parse_words("0facade0 xx"), None);
     }
 }

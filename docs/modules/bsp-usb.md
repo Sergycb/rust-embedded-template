@@ -1,17 +1,25 @@
-USB платы — устройство `embassy-usb` с классом CDC ACM («виртуальный
-COM-порт») под протоколом: {% if protocol == "modbus" %}Modbus RTU{% else %}protobuf с кадрами COBS{% endif %}.
+USB платы — драйвер USB-блока, по подмодулю на транспорт (`bsp::usb::<транспорт>`).
+Устройство `embassy-usb` с классом CDC ACM («виртуальный COM-порт») над ним
+собирает приложение (`crates-cross/app/src/usb.rs`): идентификаторы, классы и
+их память — решение приложения, а не платы.
 
-Шаблон выводы не выбирает (`docs/architecture.md`), поэтому USB-драйвер
-`UsbDriver` пока — заглушка `adapters::usb::Unconnected`: шина никогда не
-просыпается, хост устройство не видит. Всё остальное настоящее: устройство
-`embassy-usb` с классом CDC, его фоновая работа в узле `USB` графа
-(`domain::usb`) и поток `adapters::usb::CdcStream` под {% if protocol == "modbus" %}кадрами RTU{% else %}кадрами COBS{% endif %}. Проект
-собирается и запускается, протокол ждёт хоста вечно. Подставить USB-блок —
-заменить драйвер: устройство, класс и граф не меняются.
+Шаблон выводы не выбирает (`docs/architecture.md`), поэтому `UsbDriver` пока —
+заглушка `bsp::stub::UsbDriver`: шина никогда не просыпается, хост устройство не
+видит. Всё остальное настоящее: устройство `embassy-usb` с классом CDC, его
+фоновая работа в узле `USB_<транспорт>` (`domain::usb`) и поток
+`adapters::usb::CdcStream` под протоколом или вашим узлом. Проект собирается и
+запускается, протокол ждёт хоста вечно. Подставить USB-блок — заменить драйвер:
+устройство, класс и граф не меняются.
+
+Драйвер плата отдаёт в `bsp::Drivers`, а не в `Board`: устройство и поток CDC
+рождаются одним `Builder` и уходят разным узлам, поэтому пару один раз собирает
+`crates-cross/app/src/parts.rs`, а граф делит её по полям
+(`parts.<транспорт>.device`, `parts.<транспорт>.cdc`).
 
 ## Как подставить свой USB
 
-1. Выводы и прерывание — из справочника по чипу:
+1. Выводы и прерывание — из справочника по чипу (блок транспорта, например
+   `{{iface_periph}}`):
 
    ```text
    cargo xtask pins {{iface_periph}} --snippet
@@ -25,9 +33,11 @@ COM-порт») под протоколом: {% if protocol == "modbus" %}Modbus
 
    Он печатает `bind_interrupts!` и группу `assign_resources!` с выводами
    `DP`/`DM`. USB тактируется частотой 48 мегагерц (`HSI48` или PLL): без неё хост
-   устройство не увидит (`docs/clocks.md`).
+   устройство не увидит. На H7 мультиплексор `usbsel` по сбросу выключен —
+   рецепт с `HSI48` и CRS в `docs/clocks.md`, «H7: ядра периферии и USB».
 
-2. Псевдоним — на драйвер `embassy-stm32`, сборка — вместо заглушки:
+2. В подмодуле транспорта — псевдоним на драйвер `embassy-stm32` и сборка
+   вместо заглушки:
 
    ```rust,ignore
    use embassy_stm32::usb::Driver;
@@ -36,25 +46,30 @@ COM-порт») под протоколом: {% if protocol == "modbus" %}Modbus
    pub type UsbDriver = Driver<'static, {{iface_periph}}>;
 
 {%- if usb_kind == "otg" %}
-   // Рядом с остальными статиками модуля:
+   // Рядом, статиком модуля: буфер приёма драйвера — память блока, а не класса.
+   // Обычный static, не `.dma_nc`: драйвер OTG читает FIFO процессором, DMA
+   // не использует, и кэш данных ему не помеха.
    static EP_OUT: ConstStaticCell<[u8; 256]> = ConstStaticCell::new([0; 256]);
 
-   // В `new`, вместо `Unconnected::default()`:
+   // В `new`, вместо `UsbDriver::default()`:
    let mut otg = embassy_stm32::usb::Config::default();
    otg.vbus_detection = false; // VBUS не разведён — иначе true
-   let driver = Driver::new_fs(r.usb, Irqs, r.dp, r.dm, EP_OUT.take(), otg);
+   Driver::new_fs(r.usb, Irqs, r.dp, r.dm, EP_OUT.take(), otg)
 {%- else %}
 
-   // В `new`, вместо `Unconnected::default()`:
-   let driver = Driver::new(r.usb, Irqs, r.dp, r.dm);
+   // В `new`, вместо `UsbDriver::default()`:
+   Driver::new(r.usb, Irqs, r.dp, r.dm)
 {%- endif %}
    ```
 
-   `new` получает свою группу ресурсов, `usb` в `resources.rs`: `Board::new` уже
-   зовёт `crate::usb::new(r.usb)` (`docs/resources.md`); выводы добавляются в группу.
+   `new` получает группу ресурсов транспорта из `resources.rs`: `Board::new` уже
+   зовёт `crate::usb::<транспорт>::new(r.<транспорт>)` (`docs/resources.md`);
+   выводы добавляются в группу.
 
 ## Идентификаторы
 
-`VID`/`PID` — пара из примеров `embassy-usb` (`0xC0DE:0xCAFE`), не
-зарегистрированная: для изделия нужны свои. Серийный номер — заводской
-номер чипа, у каждой платы свой.
+`VID`/`PID` — в `crates-cross/app/src/usb.rs`: пара из примеров `embassy-usb`
+(`0xC0DE:0xCAFE`), не зарегистрированная, для изделия нужны свои. Серийный
+номер — заводской номер чипа (`ChipSpec::uid_hex`), у второго и следующих
+устройств одной платы — с суффиксом номера: при общих VID/PID хост различает
+устройства по нему.
