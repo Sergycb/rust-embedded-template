@@ -207,7 +207,7 @@ domain           = { path = "../crates-host/domain", default-features = false, f
 shadow-rs        = { version = "2.0.0", default-features = false }
 assign-resources = { version = "0.5.0" }
 
-# Крейты из личной библиотеки (github.com/Sergycb/rust-lib) — оба про железо
+# Крейты из личной библиотеки ({{rust_lib}}) — оба про железо
 # и оркестрацию, поэтому объявлены здесь, а не в корневом workspace'е (для
 # `domain`).
 #
@@ -244,14 +244,14 @@ assign-resources = { version = "0.5.0" }
 #   живёт на исполнителе, спавнящем граф» лежит в крейте графа, а не в
 #   библиотеке. Это то же допущение, что у `NoopRawMutex` в
 #   `bsp::flash::FlashMutex`; менять их вместе.
-supervisor       = { git = "https://github.com/Sergycb/rust-lib.git", features = [
+supervisor       = { git = "{{rust_lib}}.git", features = [
 	"metadata-name",
 	"local-resources",
 ] }
-watchdog         = { git = "https://github.com/Sergycb/rust-lib.git" }
+watchdog         = { git = "{{rust_lib}}.git" }
 # Вход команд узла OTA в проекте без графа (`app`, src/main.rs): с графом его
 # заводит `supervisor` сам. Тот же git, что у `supervisor`, — один крейт в дереве.
-sync-request     = { git = "https://github.com/Sergycb/rust-lib.git" }
+sync-request     = { git = "{{rust_lib}}.git" }
 
 # Причина паники, переживающая сброс: release-паникёр `app` и `boot`
 # (`bsp/src/panic.rs`) пишет её `report_panic_info` в регион PANIC (посчитан при

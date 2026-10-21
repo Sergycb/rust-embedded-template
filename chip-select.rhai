@@ -490,6 +490,28 @@ fn is_dual_core(suffix) {
     core_override(suffix.sub_string(dash + 1)) != ()
 }
 
+// Источник rust-lib (supervisor, fsm, watchdog, sync-request) — одна переменная
+// на все места: оба Cargo.toml, allow-git в deny.toml, ссылки в документации.
+// Форк подставляется `--define rust_lib=https://…/rust-lib`; меню нет — вопрос
+// до выбора чипа никому не нужен. Хранится без `.git` и завершающего `/`:
+// Cargo.toml дописывает `.git` сам, а allow-git сравнивает адрес без него.
+let rust_lib = if variable::is_set("rust_lib") { variable::get("rust_lib") } else { "https://github.com/Sergycb/rust-lib" };
+while rust_lib.ends_with("/") {
+    rust_lib.pop();
+}
+if rust_lib.ends_with(".git") {
+    rust_lib = rust_lib.sub_string(0, rust_lib.len() - 4);
+}
+if rust_lib == "" {
+    throw "rust_lib: пустой адрес репозитория rust-lib";
+}
+variable::set("rust_lib", rust_lib);
+// Перевод строки для корневого Cargo.toml: Liquid в корневом workspace живёт в
+// `#`-комментариях, и рабочую строку с `{{rust_lib}}` там иначе не получить —
+// `#{{newline}}строка` в шаблоне комментарий, а после рендера — `#` и строка
+// (MAINTAINING.md, «Значение в корневом workspace»).
+variable::set("newline", "\n");
+
 let suffix = "";
 
 // Массив нужен и ветке `--define chip_feature=...` (для валидации), и

@@ -108,7 +108,13 @@ tokio        = { version = "1.53.1", default-features = false, features = ["rt",
 # разговаривает: `Heartbeat`, `TaskExit` и хэндлы каналов приходят отсюда. Фичи не объявлены намеренно —
 # `defmt`/`metadata-name` просит `crates-cross/Cargo.toml`, и в прошивке они
 # складываются с этой строкой; хостовой сборке domain они не нужны.
+# {%- comment %}
+# В репозитории шаблона — настоящий адрес, иначе workspace не собрать; в
+# проекте строки ниже нет, рабочую даёт `#{{newline}}…` с `rust_lib` из хука
+# (MAINTAINING.md, «Значение в корневом workspace»).
 supervisor   = { git = "https://github.com/Sergycb/rust-lib.git" }
+# {%- endcomment %}
+#{{newline}}supervisor   = { git = "{{rust_lib}}.git" }
 # Время в проекте одно — `embassy_time::Duration`: тем же типом граф задаёт
 # свои таймауты, а `core::time::Duration` стоил бы вызова `__aeabi_uldivmod`
 # на каждой конверсии. Версия та же, что в `crates-cross/Cargo.toml`, — иначе
@@ -117,7 +123,10 @@ embassy-time = { version = "0.5.1" }
 # Каждая задача графа — автомат `#[fsm::typestate]` на своём контексте
 # (`ctx:` фрагмента): таблица переходов проверяется компилятором. Тот же
 # репозиторий, что у `supervisor`.
+# {%- comment %}
 fsm          = { git = "https://github.com/Sergycb/rust-lib.git" }
+# {%- endcomment %}
+#{{newline}}fsm          = { git = "{{rust_lib}}.git" }
 # Тип счётчика тиков сна в `domain::cpu_load::SleepTicks`. Не
 # `core::sync::atomic::AtomicU64`: на Cortex-M0/M0+ его нет вовсе. Про то, чем
 # там эмулируется CAS, — `docs/conventions.md` и

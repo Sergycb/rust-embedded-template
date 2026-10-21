@@ -57,7 +57,8 @@
 `{{chip}}`, `{{chip_feature}}`, `{{cpu}}`, `{{target}}`, `{{write_size}}`,
 `{{page_size}}`, `{{swap_paged}}`, `{{state_erase_size}}`, `{{state_paged}}`, `{{config_erase_size}}`, `{{config_paged}}`, `{{boot_partitioned}}`, `{{config_store}}`,
 `{{shared_flash}}`, `{{dual_core}}`, `{{bank_mode}}`, `{{erase_zero}}`,
-`{{watchdog_peripheral}}`, `{{cpu_freq_boost}}`, `{{dfu_bank}}`, `{{bank_switch}}`, `{{dual_bank_bit}}` — плейсхолдеры, подставляемые
+`{{watchdog_peripheral}}`, `{{cpu_freq_boost}}`, `{{dfu_bank}}`, `{{bank_switch}}`, `{{dual_bank_bit}}`,
+`{{rust_lib}}`, `{{newline}}` — плейсхолдеры, подставляемые
 Liquid-рендером cargo-generate. Из них в `[placeholders]` объявлен только `ci`; вопросы про OTA, настройки,
 граф, транспорт и протокол задаёт сам хук после выбора чипа (см. «Вопросы в хуке» ниже), а все остальные
 выставляет `variable::set` в `[hooks].pre`-скрипте
@@ -71,6 +72,27 @@ Liquid-рендером cargo-generate. Из них в `[placeholders]` объя
 `[placeholders]` тоже не нужно: `variable::set` работает независимо от декларации, а
 `--define` по-прежнему читается через `variable::is_set`/`variable::get` внутри самого
 hook.
+
+### Значение в корневом workspace (`rust_lib`, `newline`)
+
+Адрес rust-lib — одна переменная `rust_lib` (хук; умолчание —
+`https://github.com/Sergycb/rust-lib`, форк — `--define rust_lib=…`, хранится
+без `.git`). В `crates-cross/Cargo.toml` и документации она подставляется
+обычным `{{rust_lib}}`. Корневой `Cargo.toml` и `deny.toml` так не могут: в
+репозитории шаблона они рабочие (`cargo xtask lint`, `cargo deny check`), а
+Liquid в корневом workspace живёт только в `#`-комментариях. Поэтому там пара:
+
+```toml
+# {%- comment %}
+supervisor   = { git = "https://github.com/Sergycb/rust-lib.git" }
+# {%- endcomment %}
+#{{newline}}supervisor   = { git = "{{rust_lib}}.git" }
+```
+
+В шаблоне первая строка рабочая, вторая — комментарий; в проекте первой нет, а
+`{{newline}}` (хук задаёт его как `"\n"`) отрывает строку от `#`, и она
+становится рабочей. Адрес в `comment` и умолчание в хуке — одно и то же значение,
+меняются вместе.
 
 ### `${{ ... }}` в файлах GitHub Actions обязано быть в `{% raw %}`
 

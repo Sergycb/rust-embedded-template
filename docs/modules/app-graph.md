@@ -337,7 +337,7 @@ resources: [WS: &'static mut $crate::x::Workspace = static |w| w.gain = inputs.g
 # Стейтчарты сюда не входят
 
 Понадобится автомат состояний (например, крейты `fsm`/`fsm-async` из
-[rust-lib](https://github.com/Sergycb/rust-lib)) — его место в `domain`, а
+[rust-lib]({{rust_lib}})) — его место в `domain`, а
 не здесь, даже если он владеет своей задачей целиком и ждёт события из
 `embassy_sync`-канала: сама модель состояний остаётся чистой логикой без
 привязки к железу, а `cross` лишь спавнит задачу, гоняющую `run().await`,

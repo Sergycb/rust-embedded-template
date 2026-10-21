@@ -203,7 +203,7 @@ Modbus: его реализует приложение, а обслуживае�
 
 ### `cross` — железо и оркестрация
 
-`supervisor` и `watchdog` берутся из [rust-lib](https://github.com/Sergycb/rust-lib)
+`supervisor` и `watchdog` берутся из [rust-lib]({{rust_lib}})
 как git-зависимость; они заменили сторонние аналоги (`embassy-supervisor`,
 `embassy-task-watchdog`, `ector`) — чем именно лучше, написано в столбце ниже.
 
