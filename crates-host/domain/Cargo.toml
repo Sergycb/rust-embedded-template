@@ -94,6 +94,9 @@ portable-atomic = { workspace = true }
 # Обоснование выбора — `//!` модуля `domain::modbus`.
 rusty-modbus-codec = { workspace = true }
 rusty-modbus-types = { workspace = true }
+# Мьютекс карты регистров, общей у нескольких узлов Modbus
+# (`modbus::SharedRegisters`).
+embassy-sync = { workspace = true }
 # {%- endif %}
 # {%- if has_protobuf == "true" %}
 # Узел HOST (`domain::host`): разбор и кодирование сообщений protobuf. Схему

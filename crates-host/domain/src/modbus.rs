@@ -48,6 +48,11 @@ pub mod master;
 mod registers;
 
 pub use registers::EmptyRegisters;
+
+/// Одна карта регистров на несколько узлов (по узлу на транспорт).
+mod shared;
+
+pub use shared::{MapMutex, SharedRegisters};
 // {%- if ota == "true" %}
 
 /// Окно OTA в карте регистров: команды обновления записями FC16.
