@@ -838,9 +838,10 @@ const RAM_COST = #{
     // Стек `embassy-net` и драйвер Ethernet — один раз на tcp/udp: stm32f407ve
     // modbus-tcp-udp 14296 — на 960 меньше, чем TCP и UDP по отдельности.
     net_stack: 960,
-    // Сетевые службы (`NET_SERVICE_ITEMS`): узлов в шаблоне пока нет — 0;
-    // появятся — замерить так же.
-    services: #{ ssh: 0, rest: 0 },
+    // Сетевые службы (`NET_SERVICE_ITEMS`). ssh — статик RNG для `getrandom`
+    // (узла ещё нет): stm32h743zg links=tcp:modbus 9572 против 9540 без службы.
+    // У rest узла и статиков нет — 0; появятся — замерить так же.
+    services: #{ ssh: 32, rest: 0 },
 };
 // Сверх статической RAM — под стек: он в `.data`/`.bss` не входит (flip-link
 // кладёт его под ними). Не замерен — без платы глубину стека не снять, — а
@@ -868,6 +869,20 @@ const WANTED_LINKS = if variable::is_set("links") {
     []
 };
 const WANTED_COUNTS = link_counts(WANTED_LINKS);
+// Транспорты для отсева по RAM: `links` или пара `interface` + `protocol` — тот же
+// список. Без `protocol` — транспорт без протокола: нижняя оценка, чип не
+// отсекается по ответу, которого ещё нет. Негодную пару сюда не берём — её
+// отвергает проверка после выбора чипа, с объяснением.
+const RAM_LINKS = if WANTED_LINKS.len() > 0 {
+    WANTED_LINKS
+} else {
+    let protocol = if variable::is_set("protocol") { variable::get("protocol") } else { "none" };
+    if RAM_COST.links.contains(WANTED_INTERFACE + ":" + protocol) {
+        [#{ kind: WANTED_INTERFACE, protocol: protocol }]
+    } else {
+        []
+    }
+};
 let allowed = CHIPS;
 if !variable::is_set("chip_feature")
     && (NEED.ota || NEED.config || NEED.graph || WANTED_INTERFACE != "none" || WANTED_LINKS.len() > 0)
@@ -897,14 +912,14 @@ if !variable::is_set("chip_feature")
             if !any_block { return false; }
         }
         let m = layouts[chip.sub_string(0, 2)][chip];
-        // И транспорты из `links` должны поместиться в RAM. База — только из
+        // И транспорты (`RAM_LINKS`) должны поместиться в RAM. База — только из
         // заданных ответов (`NEED`): умолчание «да» для OTA и графа чипов не
         // отсекает, а невлезающее с итоговыми ответами отвергнет проверка после
         // них. С ручной раскладкой (`write_size`) оценки нет.
-        if WANTED_LINKS.len() > 0 && !variable::is_set("write_size") {
+        if RAM_LINKS.len() > 0 && !variable::is_set("write_size") {
             let asked = #{ ota: NEED.ota, ext_ota: NEED.ext_ota, config: NEED.config, external: NEED.config && wants_external, graph: NEED.graph };
             let base = ram_base(RAM_COST, plan(m, m["erase_zero"] == "true", asked, LIMITS));
-            if ram_estimate(RAM_COST, base, WANTED_LINKS, []) + STACK_RESERVE > size_in_bytes(m["ram_length"]) {
+            if ram_estimate(RAM_COST, base, RAM_LINKS, []) + STACK_RESERVE > size_in_bytes(m["ram_length"]) {
                 return false;
             }
         }

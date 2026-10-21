@@ -466,6 +466,33 @@ crate::image::FW_VERSION } }`). Типы слотов — аргументы ф�
 сторож кормит тикер графа, а не какой-то узел.
 
 {%- endif %}
+{%- if has_modbus == "true" %}
+
+# Modbus: одна карта на все узлы `MODBUS_*`
+
+Узел `MODBUS_<ТРАНСПОРТ>` — по одному на транспорт с Modbus в `links`.{% if graph == "true" %}
+Фрагмент — `domain::MODBUS_SLAVE_FRAG`, вход узла —
+`domain::modbus::ModbusSlaveWiring`: транспорт
+(`crate::link::<транспорт>::Link`), карта регистров и адрес slave'а (`unit`).{% else %}
+Без графа это задача в `crates-cross/app/src/tasks/modbus.rs`: транспорт
+(`crate::link::<транспорт>::Link`), карта регистров и адрес slave'а — в
+контексте `domain::modbus::ModbusSlaveCtx`.{% endif %} Карта одна на проект: `crate::parts::Parts::new` один раз заводит её в
+`crates-cross/app/src/modbus.rs` и кладёт ручку в `parts.modbus`
+(`crate::modbus::Handle` = `domain::modbus::SharedRegisters<Map>`, `Copy`), а
+каждый узел получает её копию — запись через один транспорт видна чтению через
+другой. Ручка берёт мьютекс карты (`domain::modbus::MapMutex`, `NoopRawMutex`)
+на время одного вызова порта, так что запросы с разных транспортов идут по
+очереди.{% if ota == "true" %} Окно OTA (`domain::modbus::OtaRegisters`) каждый узел оборачивает вокруг
+своей копии ручки снаружи, вне блокировки: `Start` ждёт стирания секундами, а
+карту в это время обслуживают остальные транспорты. Номер клиента OTA у окна —
+порядковый номер транспорта (`docs/ota.md`).{% endif %}
+
+Свою карту проект подставляет в одном месте — псевдоним `Map` в
+`crates-cross/app/src/modbus.rs` (по умолчанию `domain::modbus::EmptyRegisters`):
+тип реализует `ports::Registers` и живёт в `domain`. Карта строится через
+`Map::default()`; без `Default` замените эту одну строку в `crate::modbus::new`
+своим конструктором. Узлы и граф тип берут оттуда и правок не требуют.
+{%- endif %}
 
 # Питание от батареи: STOP между задачами
 
