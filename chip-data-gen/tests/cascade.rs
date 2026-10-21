@@ -4293,6 +4293,23 @@ fn manual_layout_skips_the_ram_estimate() {
     }
 }
 
+/// Запас под стек не замерен, и на RAM до 8 KiB он уже решает: хук говорит,
+/// сколько стеку остаётся. У L011 (1.9 KiB) — даже без транспортов, у F407 — нет.
+#[test]
+fn small_ram_warns_that_the_stack_is_not_measured() {
+    let ast = compile_script();
+    let stack_warning = |result: &CascadeResult| {
+        result
+            .prints
+            .iter()
+            .any(|line| line.contains("стеку остаётся"))
+    };
+    let small = run_chip_with(&ast, "l011f4", &[]).expect("каскад не должен падать");
+    assert!(stack_warning(&small), "{:?}", small.prints);
+    let large = run_chip_with(&ast, "f407ve", &[]).expect("каскад не должен падать");
+    assert!(!stack_warning(&large), "{:?}", large.prints);
+}
+
 /// Маленькая RAM (F0, 5.6 KiB): USB помечен, но выбрать его можно — с
 /// предупреждением, если не поместился и выбранный протокол. У F407 пометок нет.
 #[test]
