@@ -83,6 +83,12 @@ defmt = { workspace = true, optional = true }
 # cargo разрешена: в обычную сборку ни та ни другая не попадает.
 domain = { path = "../domain", features = ["signed"] }
 salty = { workspace = true }
+# `domain` тянет `supervisor`, а с ним `embassy-executor`, которому без
+# платформенной фичи не хватает `__pender`. Фичу включает dev-зависимость
+# самого `domain`, но cargo учитывает dev-зависимости только тестируемого
+# пакета: без этой строки `cargo test -p adapters` не линкуется, хотя тест
+# всего workspace проходит.
+embassy-executor = { workspace = true, features = ["platform-std", "executor-thread"] }
 # {%- endif %}
 # Исполнитель для async-тестов над флешем в памяти (`#[tokio::test]`); фичи —
 # в корневом Cargo.toml.
@@ -91,10 +97,11 @@ tokio = { workspace = true }
 # Property-тесты кадрирования: любое дробление потока и любой мусор.
 proptest = { workspace = true }
 # {%- endif %}
-# {%- if has_net == "true" or has_usb == "true" %}
+# {%- if has_net == "true" or has_usb == "true" or ota == "true" %}
 # Сетевые и USB-тесты: стеки `embassy-net`/`embassy-usb` ждут таймеров и
 # критической секции — на хосте их дают драйвер времени `mock-driver` и
-# `critical-section/std`, как в `domain`.
+# `critical-section/std`, как в `domain`. С OTA драйвер времени нужен и
+# `supervisor` из dev-зависимости `domain` — по той же причине, что выше.
 embassy-time = { workspace = true, features = ["mock-driver", "generic-queue-8"] }
 critical-section = { workspace = true, features = ["std"] }
 # {%- endif %}

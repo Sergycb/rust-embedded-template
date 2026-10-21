@@ -12,6 +12,15 @@ workspace = true
 # Сгенерированный словарь объектов называет типы `zencan_node` полными путями.
 zencan-node = { workspace = true }
 
+[dev-dependencies]
+# `cargo test -p canopen` собирает крейт один, без dev-зависимостей `domain`,
+# которые в тесте всего workspace закрывают оба пробела: `zencan-node` в
+# workspace — без фич, а вывод (`defmt-or-log`) требует `log` или `defmt`
+# (иначе `compile_error!`), и стек берёт критическую секцию, реализации
+# которой на хосте нет без `critical-section/std` (иначе не линкуется).
+zencan-node = { workspace = true, features = ["log"] }
+critical-section = { workspace = true, features = ["std"] }
+
 [build-dependencies]
 # Описание устройства (TOML) → словарь объектов, почтовый ящик кадров и
 # состояние узла — `static` в `OUT_DIR`.

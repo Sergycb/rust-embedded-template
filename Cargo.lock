@@ -12,6 +12,7 @@ dependencies = [
  "defmt 1.1.1",
  "domain",
  "embassy-boot",
+ "embassy-executor",
  "embassy-net",
  "embassy-sync",
  "embassy-time",
@@ -139,6 +140,7 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 name = "canopen"
 version = "0.1.0"
 dependencies = [
+ "critical-section",
  "zencan-build",
  "zencan-node",
 ]
