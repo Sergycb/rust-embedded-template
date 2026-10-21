@@ -2021,7 +2021,7 @@ fn tcp_and_udp_share_one_eth() {
     assert!(!menus[1].contains(&"tcp".to_string()), "{menus:?}");
 }
 
-/// Протоколу граф не нужен: без него узел спавнит `main`, и ни ответ `graph=no`,
+/// Протоколу граф не нужен: без него узел спавнит `tasks::spawn_all`, и ни ответ `graph=no`,
 /// ни размер раздела (здесь — 16 KiB у `l011f4`) генерацию не останавливают. Готовый
 /// транспорт `app/src/link.rs` остаётся, пока выбран Modbus или protobuf.
 #[test]

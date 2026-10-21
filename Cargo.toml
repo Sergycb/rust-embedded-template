@@ -144,7 +144,7 @@ embedded-storage       = { version = "0.3.1" }
 embedded-storage-async = { version = "0.4.1" }
 sequential-storage     = { version = "8.0.1", default-features = false }
 # {%- if stream_io == "true" %}
-# Транспорт поверх потока байтов (`adapters::serial`, `usb`, `net::TcpServer` и
+# Транспорт поверх потока байтов (`adapters::usb`, `net::TcpServer` и
 # протоколы над ними): поток, который уже реализуют `BufferedUart` из
 # `embassy-stm32`, USB CDC и сокет `embassy-net`.
 # Версия та же, что у `embassy-stm32` 0.6, — иначе в прошивке были бы две копии

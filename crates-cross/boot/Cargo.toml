@@ -52,9 +52,9 @@ embassy-sync = { workspace = true }
 flash-page = { workspace = true }
 {%- endif %}
 {%- if ota_store == "external" %}
-# Слово записи адаптера OTA приложения (`adapters::ota::MAX_WRITE_SIZE`,
+# Слово записи адаптера OTA приложения (`ports::MAX_WRITE_SIZE`,
 # src/external.rs) — предел, под который посчитан журнал `STATE`.
-adapters = { workspace = true }
+ports = { workspace = true }
 {%- endif %}
 # Раздел на весь флеш под замком (`BlockingPartition`), из которого строятся
 # `STATE`, `ACTIVE` и `DFU`: те же разделы, что собирает приложение (`bsp`).

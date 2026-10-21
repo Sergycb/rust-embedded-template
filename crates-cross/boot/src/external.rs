@@ -25,9 +25,9 @@ const _: () = assert!(
 );
 
 /// Журнал `STATE` в раскладке посчитан на слово не шире 32 байт — столько же
-/// держит буфер адаптера в приложении (`adapters::ota::MAX_WRITE_SIZE`).
+/// держит буфер адаптера в приложении (`ports::MAX_WRITE_SIZE`).
 const _: () = assert!(
-    <ExternalFlash as NorFlash>::WRITE_SIZE <= adapters::ota::MAX_WRITE_SIZE,
+    <ExternalFlash as NorFlash>::WRITE_SIZE <= ports::MAX_WRITE_SIZE,
     "слово записи драйвера внешней флеши шире 32 байт"
 );
 

@@ -63,7 +63,8 @@ cargo run -p app                    # прошить приложение и с�
 16-килобайтный flash он просто не помещается. Генерация скажет об этом отдельной
 строкой, а `main` тогда спавнит только `CPU_LOAD` — он от графа не зависит и
 помещается везде. То же при ответе `graph=no`. Узлы OTA и протокола связи без графа
-спавнит `main` сам (`domain::*::task`), но без
+спавнит `tasks::spawn_all` (`crates-cross/app/src/tasks/`, модуль на задачу над
+`domain::*::task`), но без
 сторожа и без `restart:`/`deps:`: узлы не падают, а зависший остаётся зависшим.
 
 Наполнять проект — в таком порядке:
@@ -551,13 +552,13 @@ ST-Link захваченным до переподключения кабеля 
 настоящий, именно поэтому: настоящий подтверждает сам себя, и откат стало бы нечем
 проверять. Плата после теста остаётся на исходном образе.
 
-{%- if protocol != "none" %}
+{%- if interface != "none" %}
 
 ### Протокол связи и транспорты
 
-При генерации выбраны протокол `{{protocol}}` и транспорты — по узлу на каждый,
-все работают параллельно над одними данными. Стек других протоколов и
-интерфейсов в проект не попал.
+При генерации выбраны {% if protocol != "none" %}протокол `{{protocol}}` и {% endif %}транспорты{% if protocol != "none" %} — по узлу на каждый
+транспорт с протоколом, все работают параллельно над одними данными{% endif %}. Стек
+других протоколов и интерфейсов в проект не попал.
 
 | Транспорт | Узел (в графе, а при `graph=no` — модуль в `crates-cross/app/src/tasks/`) | Заглушка до драйвера |
 |---|---|---|
@@ -567,15 +568,19 @@ ST-Link захваченным до переподключения кабеля 
 | `{{ f[4] }}` — {% if f[0] == "uart" %}UART{% elsif f[0] == "can" %}CAN{% elsif f[0] == "usb" %}USB CDC ACM{% elsif f[0] == "tcp" %}TCP{% else %}UDP{% endif %} `{{ f[2] }}` | {% if f[3] == "modbus" %}`MODBUS_{{ f[4] | upcase }}`{% elsif f[3] == "protobuf" %}`HOST_{{ f[4] | upcase }}`{% elsif f[3] == "canopen" %}`CANOPEN_{{ f[4] | upcase }}`{% else %}протокола нет — объект ждёт ваш узел{% endif %}{% if f[0] == "usb" %}, `USB_{{ f[4] | upcase }}`{% endif %}{% if f[0] == "tcp" or f[0] == "udp" %}, `NET`{% endif %} | `crates-cross/bsp/src/{% if f[0] == "uart" %}serial{% elsif f[0] == "can" %}can{% elsif f[0] == "usb" %}usb{% else %}net{% endif %}.rs` (`docs/modules/bsp-{% if f[0] == "uart" %}serial{% elsif f[0] == "can" %}can{% elsif f[0] == "usb" %}usb{% else %}net{% endif %}.md`) |
 {%- endfor %}
 
+{%- if protocol != "none" %}
 Что править проекту:
 {%- if protocol == "modbus" %} карту регистров `crates-host/domain/src/modbus/registers.rs`.
 {%- elsif protocol == "protobuf" %} схему `crates-host/proto` и обработчик `crates-host/domain/src/host/service.rs`.
 {%- else %} словарь объектов `crates-host/canopen/device.toml`.
-{%- endif %} Транспорт протокола (кадрирование, буферы, сокет и порт) собирает
-`crates-cross/app/src/link.rs` над объектом платы.
+{%- endif %}
+{%- if protocol_link == "true" %} Транспорт протокола (кадрирование, буферы, сокет и порт) собирает
+`crates-cross/app/src/link.rs` над объектом платы.{% else %} Шину CAN узел берёт как есть, без адаптера.{% endif %}
+{%- endif %}
 
-Выводы шаблон не выбирает: в поле `Board` встаёт заглушка (`bsp::stub`), с которой
-проект собирается и запускается, но узел ждёт впустую. Подставить своё железо —
+Выводы шаблон не выбирает: в поле `Board`{% if has_usb == "true" or has_net == "true" %} (USB и Ethernet — в `bsp::Drivers`, под
+сборку стека в `app::parts`){% endif %} встаёт заглушка (`bsp::stub`), с которой проект
+собирается и запускается, но узел ждёт впустую. Подставить своё железо —
 правка в модуле `bsp` транспорта по рецепту из таблицы
 (`cargo xtask pins <БЛОК> --snippet`).
 {%- if modbus_master == "true" %} Master Modbus (вопрос `--define modbus_master=yes`) —

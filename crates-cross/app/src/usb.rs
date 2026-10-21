@@ -54,11 +54,12 @@ pub mod {{ f[4] }} {
     /// Устройство `embassy-usb` — то, что исполняет узел `USB_{{ f[4] | upcase }}`.
     pub type Device = embassy_usb::UsbDevice<'static, Driver>;
 
-{%- if f[3] != "none" %}
-
-    /// Поток CDC — то, на чём стоит транспорт протокола.
-    pub type Cdc = adapters::usb::CdcStream<'static, Driver>;
+    /// Поток CDC — то, на чём стоит {% if f[3] != "none" %}транспорт протокола{% else %}ваш узел: в сигнатуре его задачи тип нужен
+    /// по имени (задачи embassy не generic){% endif %}.
+{%- if f[3] == "none" %}
+    #[expect(dead_code, reason = "поток ждёт ваш узел — псевдоним для его задачи")]
 {%- endif %}
+    pub type Cdc = adapters::usb::CdcStream<'static, Driver>;
 
     /// Собирает устройство с одним классом CDC ACM над драйвером платы
     /// (`adapters::usb::cdc`). Серийный номер — заводской номер чипа `uid_hex`{% if usb_index > 1 %}

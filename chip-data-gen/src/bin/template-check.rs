@@ -203,7 +203,7 @@ fn default_cases() -> Vec<Case> {
         // Modbus RTU по USB CDC — на F4, у которого USB — блок OTG: второй
         // драйвер в рецепте и `Rtu` поверх потока CDC вместо UART.
         Case::new("stm32f407ve").variant("modbus-usb", &["protocol=modbus", "interface=usb"]),
-        // Протоколы без графа: узел спавнит `main` (задачи `app/src/main.rs`),
+        // Протоколы без графа: узел спавнит `tasks::spawn_all` (`app/src/tasks/`),
         // а `NET`/`USB` — рядом с ним. По одной конфигурации на вид
         // интерфейса: UART, TCP, UDP, USB CDC и CAN (с настройками — слот
         // хранилища узла CANopen).

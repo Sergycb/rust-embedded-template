@@ -42,15 +42,19 @@ if ota == "true" {
 if config == "true" {
 	let store = variable::get("config_store");
 	if store == "eeprom" {
-		print("Настройки: внутренняя EEPROM чипа, crates-cross/bsp/src/settings.rs, Board::settings.");
+		print("Настройки: внутренняя EEPROM чипа (crates-cross/bsp/src/settings.rs), хранилище — crates-cross/app/src/settings.rs.");
 	} else if store == "external" {
-		print("Настройки: внешняя флеш — подставьте драйвер в crates-cross/bsp/src/settings.rs, Board::settings.");
+		print("Настройки: внешняя флеш — подставьте драйвер в crates-cross/bsp/src/settings.rs; хранилище — crates-cross/app/src/settings.rs.");
 	} else {
-		print("Настройки: раздел CONFIG во flash, crates-cross/bsp/src/settings.rs, Board::settings.");
+		print("Настройки: раздел CONFIG во flash (crates-cross/bsp/src/settings.rs), хранилище — crates-cross/app/src/settings.rs.");
 	}
 }
 if variable::get("graph") == "true" {
 	print("Граф задач: узел HEARTBEAT в crates-cross/app/src/graph.rs, его работа — в crates-host/domain/src/heartbeat.rs.");
+} else {
+	print("Без графа задач: узлы спавнит tasks::spawn_all (crates-cross/app/src/tasks/, модуль на задачу) — без сторожа и restart: (причина — выше).");
+}
+{
 	// По транспорту на строку (`вид:метка:блок:протокол:имя` из `links`): узел
 	// протокола и заглушка, которую подставить. Сеть — один стек (узел NET) и один
 	// блок Ethernet на все сокеты, поэтому о нём — одной строкой после цикла.
@@ -81,7 +85,7 @@ if variable::get("graph") == "true" {
 		}
 	}
 	if net_block != "" {
-		print("Сеть: фоновый узел NET — стек embassy-net над заглушкой устройства в crates-cross/bsp/src/net.rs (cargo xtask pins " + net_block + " --snippet).");
+		print("Сеть: фоновый узел NET — стек embassy-net (crates-cross/app/src/net.rs) над заглушкой устройства в crates-cross/bsp/src/net.rs (cargo xtask pins " + net_block + " --snippet).");
 	}
 	if variable::get("has_modbus") == "true" {
 		print("Modbus: карта регистров — crates-host/domain/src/modbus/registers.rs.");
@@ -92,8 +96,6 @@ if variable::get("graph") == "true" {
 	if variable::get("has_protobuf") == "true" {
 		print("protobuf: схема — crates-host/proto, обработчик — crates-host/domain/src/host/service.rs.");
 	}
-} else {
-	print("Без графа задач: main заканчивается после инициализации (причина — выше).");
 }
 
 // Lock-файлов шаблон не раздаёт: состав зависимостей зависит от ответов выше —

@@ -284,7 +284,7 @@ spawn_all(&spawner, parts).expect("узлы свежие");
 занимает тот, кто первым позовёт `cpu_load_percent_receiver()`. Либо разово,
 либо постоянно — объявив у себя `subscribe: [CPU_LOAD_PERCENT: u8]`.
 {%- if graph != "true" %}
-Графа в этом проекте нет, и узел спавнит `main` сам — через
+Графа в этом проекте нет, и узел спавнит `tasks::spawn_all` — через
 `#[embassy_executor::task]` в `app/src/cpu_load.rs`, потому что
 `Spawner::spawn` берёт `SpawnToken`, а не функцию. Публиковать некому, и
 значение уходит в лог.
