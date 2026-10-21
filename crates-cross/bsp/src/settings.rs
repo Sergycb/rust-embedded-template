@@ -20,10 +20,13 @@
 //! 2×16 KiB), иначе в хвост flash.
 
 use embassy_embedded_hal::adapter::BlockingAsync;
-use embassy_embedded_hal::flash::partition::BlockingPartition;
+use embassy_embedded_hal::flash::partition::{BlockingPartition, Partition};
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::mutex::Mutex;
 {%- if config_paged == "true" %}
 use flash_page::ErasePage;
 {%- endif %}
+use static_cell::StaticCell;
 
 use crate::flash::{FlashMutex, SIZE, Whole};
 
@@ -60,26 +63,49 @@ const CONFIG_END: u32 = match u32::from_str_radix(env!("CONFIG_END"), 10) {
     Err(_) => panic!("CONFIG_END в [env] crates-cross/.cargo/config.toml — не число"),
 };
 
-/// Флеш под разделом настроек — то, что лежит полем `Board` и над чем
-/// приложение строит хранилище (`app::settings`). Весь флеш, а не раздел:
-/// `Partition::new` паникует на смещении, не кратном странице цельного
-/// `Flash`, а раздел `CONFIG` лежит в секторе мельче неё; его границы — [`RANGE`].
+// Раздел строится как `Partition` над страницей [`CONFIG_ERASE_SIZE`], и
+// `Partition::new` паникует на старте, если его границы не кратны ей. Расчёт
+// раскладки в генерации держит их на границах, а это — проверка при компиляции,
+// чтобы ручная правка `[env]` не превратилась в панику на плате.
+const _: () = assert!(
+    (CONFIG_START as usize).is_multiple_of(CONFIG_ERASE_SIZE)
+        && (CONFIG_END as usize).is_multiple_of(CONFIG_ERASE_SIZE),
+    "раздел CONFIG не на границах своей страницы (CONFIG_ERASE_SIZE): Partition::new паникует"
+);
+
+/// Общий `Flash` чипа, видимый асинхронно{% if config_paged == "true" %}, со страницей сектора `CONFIG`
+/// ([`CONFIG_ERASE_SIZE`], `ErasePage`){% endif %} — то, над чем строится раздел.
 {%- if config_paged == "true" %}
-pub type ConfigFlash = BlockingAsync<ErasePage<Whole, CONFIG_ERASE_SIZE>>;
+type ConfigBacking = BlockingAsync<ErasePage<Whole, CONFIG_ERASE_SIZE>>;
 {%- else %}
-pub type ConfigFlash = BlockingAsync<Whole>;
+type ConfigBacking = BlockingAsync<Whole>;
 {%- endif %}
 
-/// Границы раздела `CONFIG` в [`ConfigFlash`].
-pub const RANGE: core::ops::Range<u32> = CONFIG_START..CONFIG_END;
+/// Свой асинхронный мьютекс разделу: `Partition` строится из `&Mutex<_, T>`.
+/// Внутри — ссылка на общий [`FlashMutex`], а не второй `Flash`: контроллер на
+/// чипе один. `NoopRawMutex` — то же допущение «один исполнитель», что у
+/// `FlashMutex` и разделов OTA; менять вместе.
+static CONFIG_FLASH: StaticCell<Mutex<NoopRawMutex, ConfigBacking>> = StaticCell::new();
 
-/// Собирает флеш под разделом `CONFIG`.
+/// Раздел `CONFIG` — то, что лежит полем `Board` и над чем приложение строит
+/// хранилище (`app::settings`). Именно раздел, а не весь флеш: запись за его
+/// границы отказывает, а не стирает `ACTIVE` или bootloader.
+pub type ConfigFlash = Partition<'static, NoopRawMutex, ConfigBacking>;
+
+/// Границы хранилища в [`ConfigFlash`] — весь раздел.
+pub const RANGE: core::ops::Range<u32> = 0..CONFIG_END - CONFIG_START;
+
+/// Собирает раздел `CONFIG`. Его начало кратно странице [`ConfigBacking`]{% if config_paged != "true" %}
+/// (`CONFIG_ERASE_SIZE` равен странице цельного `Flash` — `const`-assert выше){% endif %}:
+/// иначе `Partition::new` паникует.
 pub(crate) fn new(flash: &'static FlashMutex) -> ConfigFlash {
 {%- if config_paged == "true" %}
-    BlockingAsync::new(ErasePage::new(BlockingPartition::new(flash, 0, SIZE)))
+    let backing = BlockingAsync::new(ErasePage::new(BlockingPartition::new(flash, 0, SIZE)));
 {%- else %}
-    BlockingAsync::new(BlockingPartition::new(flash, 0, SIZE))
+    let backing = BlockingAsync::new(BlockingPartition::new(flash, 0, SIZE));
 {%- endif %}
+    let backing = CONFIG_FLASH.init(Mutex::new(backing));
+    Partition::new(backing, CONFIG_START, CONFIG_END - CONFIG_START)
 }
 {%- elsif config_store == "eeprom" %}
 //!

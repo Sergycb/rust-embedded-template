@@ -6,9 +6,15 @@
 //! рождаются одним `embassy_net::new` и расходятся по разным узлам: фон — в
 //! узел `NET`, стек — сокетам протоколов (`crate::link`) или вашему коду.
 
-{%- if has_udp == "true" %}
+{%- assign xs = links | split: "," %}
+{%- assign udp_protocol = "false" %}
+{%- for l in xs %}
+{%- assign f = l | split: ":" %}
+{%- if f[0] == "udp" and f[3] != "none" %}{% assign udp_protocol = "true" %}{% endif %}
+{%- endfor %}
+{%- if udp_protocol == "true" %}
 /// Описание датаграммы в буфере UDP-сокета — для буферов, которые приложение
-/// отдаёт сокету.
+/// отдаёт сокету протокола (`crate::link`).
 pub use embassy_net::udp::PacketMetadata;
 {%- endif %}
 use embassy_net::{Config, DhcpConfig, StackResources};

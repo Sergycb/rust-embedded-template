@@ -29,8 +29,9 @@
 //! CANopen на FDCAN и bxCAN, Modbus TCP (с master), protobuf UDP, protobuf и
 //! Modbus по USB (Modbus без master — по UART и по USB); чипы с клоком RNG через мультиплексор (G0, WL, WBA, L4) и по одному
 //! чипу на каждый вариант регистров `banks.rs` (`g0`, `g4`, `l4`, `l5`), а
-//! также несколько транспортов разом (`links`: два UART и TCP, два USB, TCP и
-//! UDP, UART и CAN, UART и UDP без графа). Итого сорок девять — точный список
+//! также несколько транспортов разом (`links`: два UART и TCP, два USB с графом
+//! и без, TCP и UDP, UART и CAN, UART и UDP без графа) и транспорты без протокола
+//! (UDP, USB с графом). Итого пятьдесят два — точный список
 //! в `default_cases()`. Свой набор чипов —
 //! позиционными аргументами; `--define k=v` (многократно) добавляет определение
 //! к каждой конфигурации, например `--ci gitlab --define config=internal stm32f407ve`.
@@ -235,14 +236,23 @@ fn default_cases() -> Vec<Case> {
         // подмодуль драйвера в `bsp` и транспорта в `app`, поле `Board` (или
         // драйвер в `Drivers`) и узел графа (без графа — модуль задачи). Два UART
         // одного вида рядом с сетью (H7: три узла Modbus и один `NET`), два USB
-        // (два устройства с разными серийными номерами; без графа — и два
-        // сигнала готовности OTA), TCP и UDP на одном стеке (`SOCKETS` = 1 + 2),
-        // поток с протоколом рядом с шиной без протокола, и UART с UDP без графа.
+        // (два устройства с разными серийными номерами; без графа — и по
+        // сигналу готовности OTA на каждое), TCP и UDP на одном стеке
+        // (`SOCKETS` = 1 + 2), поток с протоколом рядом с шиной без протокола,
+        // UART с UDP без графа. Транспорты без протокола: UDP (сокет и
+        // `PacketMetadata` ждут ваш узел) и USB с графом (поток CDC в
+        // `Parts` никто не забирает).
         Case::new("stm32h743zg").variant(
             "modbus-uart-uart-tcp",
             &["links=uart:modbus,uart:modbus,tcp:modbus"],
         ),
         Case::new("stm32f407ve").variant("protobuf-usb-usb", &["links=usb:protobuf,usb:protobuf"]),
+        Case::new("stm32f407ve").variant(
+            "protobuf-usb-usb-no-graph",
+            &["links=usb:protobuf,usb:protobuf", "graph=no"],
+        ),
+        Case::new("stm32h743zg").variant("udp-only", &["links=udp"]),
+        Case::new("stm32g474re").variant("usb-only", &["interface=usb"]),
         Case::new("stm32f407ve").variant("modbus-tcp-udp", &["links=tcp:modbus,udp:modbus"]),
         Case::new("stm32f407ve").variant("modbus-uart-can", &["links=uart:modbus,can"]),
         Case::new("stm32f407ve").variant(

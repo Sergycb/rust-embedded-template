@@ -181,7 +181,8 @@ read`: руками пришлось бы сначала найти адрес �
   `Busy` и отсутствие подписи — до `Transfer::start`, длина — внутри него, до
   `prepare` — `docs/ota.md`.
 - `NoopRawMutex` у `bsp::flash::FlashMutex`, у мьютексов разделов `DFU` и `STATE`
-  (`bsp::flash::DFU_FLASH`, `bsp::flash::STATE_FLASH`; с `ota=external` —
+  (`bsp::ota::DFU_FLASH`, `bsp::ota::STATE_FLASH`), `CONFIG`
+  (`bsp::settings::CONFIG_FLASH`; с `ota=external` —
   `bsp::external::ExternalMutex`{% if dfu_bank == "true" %}; `DFU` во втором банке —
   `bsp::flash::DfuBankMutex`{% endif %}) и `local` на слотах узла OTA
   (`domain::ota`) — одно допущение «один исполнитель», менять вместе —
