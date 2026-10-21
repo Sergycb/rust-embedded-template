@@ -271,6 +271,26 @@ fn default_cases() -> Vec<Case> {
             "rest-no-graph-no-ota",
             &["links=tcp", "net_services=rest", "graph=no", "ota=no"],
         ),
+        // Консоль SSH (`domain::ssh`, `getrandom` над RNG платы): с графом —
+        // вход по паролю и ключ хоста, созданный платой в разделе настроек
+        // (`Stored`); без графа — вместе с REST (клиенты OTA 0 и 1), вход по
+        // ключу и ключ хоста из файла (`Fixed`). Обе службы с OTA в 256K не
+        // влезают — там `ota=external` (`ACTIVE` 384K).
+        Case::new("stm32h743zg").variant(
+            "ssh-password-config",
+            &["links=tcp", "net_services=ssh", "ssh_auth=password", "config=internal"],
+        ),
+        Case::new("stm32h743zg").variant(
+            "rest-ssh-key-no-graph",
+            &[
+                "links=tcp",
+                "net_services=rest,ssh",
+                "ssh_auth=key",
+                "ssh_key=ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl",
+                "graph=no",
+                "ota=external",
+            ],
+        ),
         // Клок RNG, которого умолчания HAL не дают, — мультиплексор на своём
         // источнике (`config()` в `bsp::board`): `RNGSEL` у G0 (SYS), WL
         // (MSI) и WBA (HSI), `CLK48SEL` у L476 без HSI48 (MSI). PLL48 и HSI48

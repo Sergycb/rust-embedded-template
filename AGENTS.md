@@ -357,6 +357,17 @@ read`: руками пришлось бы сначала найти адрес �
   же), и сокеты стека (`SOCKETS` в `crate::net`) считаются от той же константы —
   менять вместе.
 {%- endif %}
+{%- if net_services contains "ssh" %}
+- Консоль SSH (`domain::ssh`, узел `SSH`): {% if ssh_auth == "password" %}пароль — `ssh-password.txt`{% else %}открытый ключ пользователя — строка `crate::net::SSH_LOGIN`{% endif %}{% if ssh_host_key == "file" %}, ключ хоста — `ssh-host-key.bin` (`crate::net::SSH_HOST_KEY`){% endif %}.
+  {% if ssh_auth == "password" or ssh_host_key == "file" %}Файлы в корне проекта создаёт `cargo xtask` (`secrets::ensure`) и они
+  **коммитятся**, как токен REST: они вшиты и открыты в образе. {% endif %}{% if ssh_host_key == "config" %}Ключ хоста плата
+  создаёт при первом старте (`domain::ssh::Stored`, ключ настроек
+  `domain::ssh::HOST_KEY_ID`) — хранилище настроек забирает узел `SSH`, своим
+  настройкам проекта нужен общий доступ через него. {% endif %}Случайность
+  `sunset` берёт через `getrandom` (`crates-cross/app/src/rng.rs`): без бэкенда
+  или с нулями вместо RNG ключи сессий предсказуемы. Код `sunset` — около
+  165 KiB, отсюда порог раздела приложения в генерации (`SSH_MIN_PARTITION`).
+{%- endif %}
 - `#![allow(dead_code)]` в начале `crates-cross/app/src/graph.rs` — не
   украшение, а условие `-D warnings`: файл целиком генерируемый, а
   `*_receiver()`/`provide_*`/`*_take()` в сыром шаблоне никто не зовёт, потому

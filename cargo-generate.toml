@@ -147,11 +147,11 @@ ci = { type = "string", prompt = "CI provider", choices = [
 # ним его поле `Board`, подмодуль `bsp` и узел графа.
 #
 # Сетевые службы — когда среди транспортов есть Ethernet, тем же списком с
-# отметками (`ssh` — только у чипа с RNG, `rest`), через `--define` —
-# `net_services=ssh,rest`; у SSH затем `ssh_auth` (`password` — умолчание и
-# ответ без терминала, `key`) и при `key` — `ssh_key` (строка открытого ключа
-# `ssh-ed25519 …`). Без Ethernet и `ssh_auth`/`ssh_key` без ssh — ошибка. Пока
-# это только ответы: узлов служб в шаблоне ещё нет.
+# отметками (`ssh` — только у чипа с RNG и разделом приложения от 256 KiB,
+# `rest`), через `--define` — `net_services=ssh,rest`; у SSH затем `ssh_auth`
+# (`password` — умолчание и ответ без терминала, `key`) и при `key` — `ssh_key`
+# (строка открытого ключа `ssh-ed25519 …`). Без Ethernet и `ssh_auth`/`ssh_key`
+# без ssh — ошибка. Службы — узлы `domain::http` и `domain::ssh`.
 #
 # Хук приводит ответы к строкам `"true"`/`"false"` через `variable::set` — на них
 # смотрят Liquid-условия в шаблоне; тип строковый, а не `bool`, потому что

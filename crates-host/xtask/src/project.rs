@@ -30,6 +30,13 @@ pub const SIGNED: &str = "{{signed}}";
 /// пусто — служб нет.
 pub const NET_SERVICES: &str = "{{net_services}}";
 
+/// Вход в консоль SSH: `password` или `key`; пусто — SSH нет.
+pub const SSH_AUTH: &str = "{{ssh_auth}}";
+
+/// Где ключ хоста SSH: `file` — вшит из корня проекта, `config` — плата
+/// создаёт его сама; пусто — SSH нет.
+pub const SSH_HOST_KEY: &str = "{{ssh_host_key}}";
+
 /// Выбрана ли сетевая служба `name` (`rest`, `ssh`).
 pub fn has_net_service(name: &str) -> bool {
     NET_SERVICES.split(',').any(|service| service == name)

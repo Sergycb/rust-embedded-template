@@ -120,10 +120,24 @@ canopen            = { workspace = true }
 embassy-net        = { workspace = true }
 # {%- endif %}
 # {%- if net_services contains "rest" %}
-# Узлы HTTP (`domain::http`): REST API на `picoserve` поверх сокетов стека,
-# тексты ответов — в `heapless::String`.
+# Узлы HTTP (`domain::http`): REST API на `picoserve` поверх сокетов стека.
 picoserve          = { workspace = true }
+# {%- endif %}
+# {%- if net_services != "" %}
+# Тексты ответов REST и строки консоли SSH — в `heapless::String`.
 heapless           = { workspace = true }
+# {%- endif %}
+# {%- if net_services contains "ssh" %}
+# Узел SSH (`domain::ssh`): протокол `sunset` над сокетом — `sunset-async`
+# (реэкспортирует `sunset`), канал сессии — `embedded-io-async`, `select`
+# сессии — `embassy-futures`.
+sunset-async       = { workspace = true }
+embassy-futures    = { workspace = true }
+embedded-io-async  = { workspace = true }
+# {%- endif %}
+# {%- if ssh_host_key == "config" %}
+# Ключ хоста SSH, созданный на плате (`domain::ssh::Stored`).
+getrandom          = { workspace = true }
 # {%- endif %}
 # {%- if has_usb == "true" %}
 # Узел USB (`domain::usb`): ведёт устройство `embassy-usb` над драйвером платы.

@@ -1,13 +1,6 @@
 //! Узлы `HTTP`: REST API, пул по задаче на соединение
 //! (`domain::http::CONNECTIONS`). То, что в графе держат слоты `= static`, —
 //! буферы соединения — здесь статики, по одному набору на копию.
-{%- comment %} Номер клиента OTA — следом за транспортами с протоколом в `links`, как в графе (`crate::graph`). {% endcomment %}
-{%- assign xs = links | split: "," %}
-{%- assign ota_clients = 0 %}
-{%- for l in xs %}
-{%- assign f = l | split: ":" %}
-{%- if f[3] != "none" %}{% assign ota_clients = ota_clients | plus: 1 %}{% endif %}
-{%- endfor %}
 
 use domain::http::{CONNECTIONS, HTTP_BUFFER, TCP_RX, TCP_TX};
 use static_cell::ConstStaticCell;
@@ -40,7 +33,7 @@ async fn task(
     // Перезагрузку пул просит у узла OTA одним клиентом — номер следом за
     // транспортами, как в графе.
     let cmd = crate::tasks::ota::CMD.requester();
-    let mut ota = domain::ota::OtaClient::new(cmd, domain::ota::ClientId({{ ota_clients }}));
+    let mut ota = domain::ota::OtaClient::new(cmd, domain::ota::ClientId({{ rest_ota_client }}));
 {%- endif %}
     domain::http::task(domain::http::HttpCtx {
         stack: &mut stack,

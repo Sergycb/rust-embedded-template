@@ -56,7 +56,7 @@ use static_cell::StaticCell;
 /// `main`). `StaticCell`, а не `ConstStaticCell`: `Executor::new` не `const`.
 static EXECUTOR: StaticCell<Executor> = StaticCell::new();
 
-{%- if has_protobuf == "true" or net_services contains "rest" %}
+{%- if has_protobuf == "true" or net_services != "" %}
 
 /// Сведения об устройстве для ответа хосту на `info`{% if net_services contains "rest" %} и REST `/api/info`{% endif %}: версия и
 /// коммит — из `shadow-rs` (те же, что в баннере старта), остальное — с платы.

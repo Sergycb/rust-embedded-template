@@ -233,10 +233,36 @@ supervisor_graph! {
 {%- if ota == "true" %}
             ota: ::domain::ota::OtaClient::new(
                 ota_cmd_requester(),
-                ::domain::ota::ClientId({{ client }}),
+                ::domain::ota::ClientId({{ rest_ota_client }}),
             ),
 {%- endif %}
         }),
+{%- endif %}
+{%- if net_services contains "ssh" %}
+
+        // Узел `SSH` — консоль (`domain::ssh`): своё соединение на стеке
+        // `parts.net.stack`, буферы — слоты `= static` фрагмента. Вход —
+        // `crate::net::SSH_LOGIN`; ключ хоста — {% if ssh_host_key == "config" %}создаётся платой при первом старте и
+        // хранится в разделе настроек (`domain::ssh::Stored`){% else %}вшит из `ssh-host-key.bin`
+        // (`domain::ssh::Fixed`){% endif %}.{% if ota == "true" %} `reboot` — командой узлу `OTA` своим
+        // клиентом, номер следом за остальными.{% endif %}
+        ::domain::SSH_FRAG<{% if ssh_host_key == "config" %}::domain::ssh::Stored<crate::settings::Settings>{% else %}::domain::ssh::Fixed{% endif %}> as SSH =
+            ::domain::ssh::SshWiring {
+                stack: parts.net.stack,
+                info: crate::device_info(parts.board.spec),
+                login: crate::net::SSH_LOGIN,
+{%- if ssh_host_key == "config" %}
+                host_key: ::domain::ssh::Stored(crate::settings::new(parts.board.settings)),
+{%- else %}
+                host_key: ::domain::ssh::Fixed(&crate::net::SSH_HOST_KEY),
+{%- endif %}
+{%- if ota == "true" %}
+                ota: ::domain::ota::OtaClient::new(
+                    ota_cmd_requester(),
+                    ::domain::ota::ClientId({{ ssh_ota_client }}),
+                ),
+{%- endif %}
+            },
 {%- endif %}
     ];
 }

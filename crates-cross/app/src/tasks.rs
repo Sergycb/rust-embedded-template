@@ -31,6 +31,9 @@ mod net;
 {%- if ota == "true" %}
 pub mod ota;
 {%- endif %}
+{%- if net_services contains "ssh" %}
+mod ssh;
+{%- endif %}
 {%- if has_usb == "true" %}
 mod usb;
 {%- endif %}
@@ -78,6 +81,18 @@ pub fn spawn_all(spawner: embassy_executor::Spawner, {% if ota == "true" or has_
         spawner,
         parts.net.stack,
         crate::device_info(parts.board.spec),
+    );
+{%- endif %}
+{%- if net_services contains "ssh" %}
+    ssh::spawn(
+        spawner,
+        parts.net.stack,
+        crate::device_info(parts.board.spec),
+{%- if ssh_host_key == "config" %}
+        domain::ssh::Stored(crate::settings::new(parts.board.settings)),
+{%- else %}
+        domain::ssh::Fixed(&crate::net::SSH_HOST_KEY),
+{%- endif %}
     );
 {%- endif %}
 }

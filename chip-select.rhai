@@ -125,6 +125,16 @@ fn cpu_and_target(suffix) {
 /// пользовательской задачи.
 const GRAPH_MIN_PARTITION = 32768;
 
+/// Ниже какого размера раздела приложения консоль SSH не предлагается.
+///
+/// `sunset` с криптографией (ed25519, x25519, ML-KEM, ChaCha20-Poly1305) —
+/// около 165 KiB кода: stm32h743zg ssh-password-config — 202.4 KiB против 37.4
+/// без SSH, и он же влезает в 256 KiB в обоих профилях (`cargo xtask build`
+/// собирает и debug). В 128 KiB (`ACTIVE` stm32f407ve с OTA) не влезает и сам.
+/// Замерено, как и `RAM_COST`; вместе с REST и протоколами нужно больше — это
+/// покажет сборка.
+const SSH_MIN_PARTITION = 262144;
+
 /// Ниже какого размера раздела `ACTIVE` OTA-схему предлагать нельзя.
 ///
 /// Дело не в самой схеме — её раскладка сходится и на 8 KiB, — а в том, что в
@@ -782,10 +792,11 @@ const TRANSPORT_ITEMS = [
 ];
 // Сетевые службы поверх стека (`net_services`): не транспорты с протоколом, а
 // узлы на своих сокетах общего стека — спрашиваются, только когда отмечен
-// Ethernet. SSH — криптография, поэтому только у чипа с RNG.
+// Ethernet. SSH — криптография, поэтому только у чипа с RNG и с разделом
+// приложения не меньше `min_partition`.
 const NET_SERVICE_ITEMS = [
-    #{ value: "ssh", text: "консоль SSH (sunset)", needs_rng: true },
-    #{ value: "rest", text: "REST API по HTTP (picoserve)", needs_rng: false },
+    #{ value: "ssh", text: "консоль SSH (sunset)", needs_rng: true, min_partition: SSH_MIN_PARTITION },
+    #{ value: "rest", text: "REST API по HTTP (picoserve)", needs_rng: false, min_partition: 0 },
 ];
 // Начало base64-блоба открытого ключа ed25519 (`ssh_key`): длина и имя типа,
 // затем длина ключа (32). Других ключей `sunset` без фич не проверяет.
@@ -838,9 +849,13 @@ const RAM_COST = #{
     // Стек `embassy-net` и драйвер Ethernet — один раз на tcp/udp: stm32f407ve
     // modbus-tcp-udp 14296 — на 960 меньше, чем TCP и UDP по отдельности.
     net_stack: 960,
-    // Сетевые службы (`NET_SERVICE_ITEMS`): узлов в шаблоне пока нет — 0;
-    // появятся — замерить так же.
-    services: #{ ssh: 0, rest: 0 },
+    // Сетевые службы (`NET_SERVICE_ITEMS`), с графом. REST — stm32h743zg
+    // rest-modbus-tcp 31028 при оценке без REST 9680 (буферы двух соединений,
+    // сокеты, futures `picoserve`); SSH — stm32h743zg ssh-password-config 20100
+    // против tcp config=internal 3380 (буферы, ключи, futures `sunset`) — 16720,
+    // но stm32h743zg rest-ssh-key-no-graph (ota=external) 41904 на 300 больше
+    // суммы частей: SSH взят с этим запасом.
+    services: #{ ssh: 17020, rest: 21348 },
 };
 // Сверх статической RAM — под стек: он в `.data`/`.bss` не входит (flip-link
 // кладёт его под ними). Не замерен — без платы глубину стека не снять, — а
@@ -1402,7 +1417,11 @@ if protocol != "modbus" && variable::is_set("modbus_master") {
 // ключу — открытый ключ (`ssh_key`).
 let has_eth = links.some(|link| link.kind == "tcp" || link.kind == "udp");
 let services = [];
-let service_items = NET_SERVICE_ITEMS.filter(|item| !item.needs_rng || rng[0] != "");
+// Раздел приложения по нынешним ответам; раскладку пишет человек
+// (`manual_now`) или её нет — места не знаем и не отсекаем, как граф.
+let app_room = if !manual_now && layout.contains(plan_now.app_length_key) { size_in_bytes(layout[plan_now.app_length_key]) } else { () };
+let room_for = |item| app_room == () || app_room >= item.min_partition;
+let service_items = NET_SERVICE_ITEMS.filter(|item| (!item.needs_rng || rng[0] != "") && room_for.call(item));
 if variable::is_set("net_services") {
     for name in variable::get("net_services").split(",") {
         name.trim();
@@ -1417,11 +1436,20 @@ if variable::is_set("net_services") {
         if known[0].needs_rng && rng[0] == "" {
             throw "net_services: у " + chip_name + " нет RNG, а " + name + " без случайных чисел небезопасен";
         }
+        if !room_for.call(known[0]) {
+            throw "net_services: " + name + " не помещается — под приложение отведено " + layout[plan_now.app_length_key]
+                + ", а нужно не меньше " + kib(known[0].min_partition);
+        }
         if !services.contains(name) { services.push(name); }
     }
 } else if has_eth {
-    if service_items.len() < NET_SERVICE_ITEMS.len() {
-        print("SSH не предлагается: у " + chip_name + " нет RNG, а криптографии SSH нужны случайные числа");
+    for item in NET_SERVICE_ITEMS {
+        if item.needs_rng && rng[0] == "" {
+            print(item.value.to_upper() + " не предлагается: у " + chip_name + " нет RNG, а криптографии нужны случайные числа");
+        } else if !room_for.call(item) {
+            print(item.value.to_upper() + " не предлагается: под приложение отведено " + layout[plan_now.app_length_key]
+                + ", а нужно не меньше " + kib(item.min_partition));
+        }
     }
     services = checklist("net_services: отметьте сетевые службы (Enter — отметить или снять)",
         service_items.map(|item| item.value), service_items.map(|item| item.text));
@@ -2378,6 +2406,33 @@ if rng[0] == "" || (!has.tcp && !has.udp) {
 if !variable::get("net_services").split(",").contains("ssh") {
 	file::delete("crates-cross/app/src/rng.rs");
 }
+// Узлы сетевых служб — только выбранных. Сведения об устройстве
+// (`domain::device`) читают HOST, HTTP и SSH.
+if !services.contains("rest") {
+	file::delete("crates-host/domain/src/http.rs");
+	file::delete("crates-cross/app/src/tasks/http.rs");
+}
+if !services.contains("ssh") {
+	file::delete("crates-host/domain/src/ssh.rs");
+	file::delete("crates-cross/app/src/tasks/ssh.rs");
+}
+if !on.protobuf && services.len() == 0 {
+	file::delete("crates-host/domain/src/device.rs");
+}
+// Ключ хоста SSH (`ssh_host_key`): `config` — плата создаёт его при первом
+// старте и хранит в разделе настроек; `file` — `ssh-host-key.bin` из корня
+// проекта (его создаёт `cargo xtask`), вшитый в прошивку. Раздел настроек
+// целиком забирает узел CANopen, поэтому с ним ключ — тоже файлом; на внешней
+// флеши (`config_store` `external`) до драйвера проекта стоит заглушка, и
+// ключ менялся бы при каждом старте — тоже файлом.
+variable::set("ssh_host_key", if !services.contains("ssh") { "" }
+	else if variable::get("config") == "true" && variable::get("config_store") != "external" && !on.canopen { "config" }
+	else { "file" });
+// Номера клиентов OTA у служб — следом за транспортами с протоколом: одно
+// число на граф и задачи без графа, а не счёт в каждом файле.
+let protocol_clients = links.filter(|link| link.protocol != "none").len();
+variable::set("rest_ota_client", protocol_clients.to_string());
+variable::set("ssh_ota_client", (protocol_clients + if services.contains("rest") { 1 } else { 0 }).to_string());
 
 // Обёртка EEPROM — только когда настройки лежат в ней; без неё файл с
 // тестами и `pub mod eeprom;` (закрыт тем же условием в lib.rs) — мусор.

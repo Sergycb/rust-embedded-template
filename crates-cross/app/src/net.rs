@@ -23,10 +23,10 @@ use static_cell::ConstStaticCell;
 /// Сокетов в стеке: DHCP-клиент и по сокету на сетевой транспорт — у
 /// транспорта с протоколом его открывает `crate::link`, без протокола — ваш
 /// код на `Parts::net`{% if net_services contains "rest" %}, — и по сокету на соединение REST API
-/// (`domain::http::CONNECTIONS`){% endif %}. Слот — около 500 байт оперативной памяти, поэтому без
+/// (`domain::http::CONNECTIONS`){% endif %}{% if net_services contains "ssh" %}, — и один на консоль SSH{% endif %}. Слот — около 500 байт оперативной памяти, поэтому без
 /// запаса: добавите ещё сокет (или фичу `dns` у `embassy-net` — она тоже
 /// занимает слот) — прибавьте один здесь.
-const SOCKETS: usize = {{ net_sockets | plus: 1 }}{% if net_services contains "rest" %} + domain::http::CONNECTIONS{% endif %};
+const SOCKETS: usize = {{ net_sockets | plus: 1 }}{% if net_services contains "rest" %} + domain::http::CONNECTIONS{% endif %}{% if net_services contains "ssh" %} + 1{% endif %};
 {%- if net_services contains "rest" %}
 
 /// Токен `Authorization: Bearer` REST API (`domain::http`). Файл в корне
@@ -40,6 +40,40 @@ const _: () = assert!(
     !REST_TOKEN.is_empty(),
     "rest-token.txt пуст: удалите файл, и `cargo xtask build` создаст новый токен"
 );
+{%- endif %}
+{%- if net_services contains "ssh" %}
+{%- if ssh_auth == "password" %}
+
+/// Пароль консоли SSH (`domain::ssh::USER`). Файл `ssh-password.txt` в корне
+/// проекта создаёт первая `cargo xtask build`, и он коммитится — как токен
+/// REST: пароль всё равно лежит открыто в каждом образе.
+const SSH_PASSWORD: &str = include_str!("../../../ssh-password.txt").trim_ascii();
+
+// Пустой пароль впустил бы любого с пустым паролем.
+const _: () = assert!(
+    !SSH_PASSWORD.is_empty(),
+    "ssh-password.txt пуст: удалите файл, и `cargo xtask build` создаст новый пароль"
+);
+
+/// Как консоль SSH пускает пользователя.
+pub const SSH_LOGIN: domain::ssh::Login = domain::ssh::Login::Password(SSH_PASSWORD);
+{%- else %}
+
+/// Как консоль SSH пускает пользователя: по открытому ключу, данному при
+/// генерации (`--define ssh_key=…`). Ключ открытый — его не страшно держать
+/// в коде; сменить — поправить строку.
+pub const SSH_LOGIN: domain::ssh::Login = domain::ssh::Login::Key(
+    "{{ssh_key}}",
+);
+{%- endif %}
+{%- if ssh_host_key == "file" %}
+
+/// Зерно ключа хоста SSH (ed25519): `ssh-host-key.bin` в корне проекта создаёт
+/// первая `cargo xtask build`, и он коммитится. Один ключ на все платы с этой
+/// прошивкой, и лежит он открыто в образе — защита уровня стенда.{% if config == "true" %} Плата
+/// не хранит его сама: раздел настроек забирает узел CANopen.{% endif %}
+pub static SSH_HOST_KEY: [u8; 32] = *include_bytes!("../../../ssh-host-key.bin");
+{%- endif %}
 {%- endif %}
 
 // Память стека: `embassy_net::new` держит её `&'static mut`. `ConstStaticCell`
