@@ -99,13 +99,14 @@ const _: () = assert!(
 );
 
 // Вход узла — `OtaWiring`: структуру эмитит сам фрагмент (`boot: …
-// struct`). Строит её compose-site (`app`) из поля платы `Board::ota` —
-// адаптера обновления (порт `FirmwareUpdate`; `bsp` про `domain` не знает) —
-// и порта перезагрузки, подставляя их типы аргументами фрагмента:
+// struct`). Строит её compose-site (`app`): адаптер обновления (порт
+// `FirmwareUpdate`, `crate::ota::new` над разделами платы `Board::ota`; `bsp` про
+// `domain` не знает) и порт перезагрузки, подставляя их типы аргументами
+// фрагмента:
 //
 // ```ignore
-// fragments: [::domain::OTA_FRAG<bsp::ota::Updater, bsp::cpu::Reboot> as OTA
-//                 = ::domain::ota::OtaWiring { flash: board.ota,
+// fragments: [::domain::OTA_FRAG<crate::ota::Updater, bsp::cpu::Reboot> as OTA
+//                 = ::domain::ota::OtaWiring { flash: crate::ota::new(parts.board.ota),
 //                                           reboot: bsp::cpu::Reboot,
 //                                           mode: ::domain::ota::Mode::Plain }];
 // ```

@@ -133,7 +133,7 @@ impl HeartbeatCtx<'_> {
   указывает в крейт фрагмента и переживает переименование зависимости в чужом
   манифесте, а `crate::` означал бы крейт, который фрагмент вызывает. Типы,
   которых фрагмент назвать не может (адаптер платы в слоте), — его параметры:
-  `name: OTA_FRAG<F, R>` во фрагменте, `::domain::OTA_FRAG<bsp::ota::Updater, bsp::cpu::Reboot>` здесь.
+  `name: OTA_FRAG<F, R>` во фрагменте, `::domain::OTA_FRAG<crate::ota::Updater, bsp::cpu::Reboot>` здесь.
 * **Порядок items фиксирован**: `name:` → `boot:` → `watchdog:` →
   `cloned:`/`shared:` → `executor` → `fragments:` последним. `fragments:`
   раньше `boot:` — ошибка разбора; блок `watchdog:` внутри фрагмента — тоже
@@ -209,16 +209,17 @@ fragments: [::domain::HEARTBEAT_FRAG as HEARTBEAT,
 
 // в main(), после инициализации HAL: слот назван по узлу и по слоту.
 provide_usart_uart(r.usart).expect("слот пуст до первого spawn_all");
-// Второй параметр — `boot:`-объект графа; в шаблоне это `board`, и объявлен
-// он ради блока `watchdog:`. Слот, написанный с инициализатором — во
-// фрагменте `resources: [UART: R = hw.usart]` при его собственной
-// `boot: hw: …;`, а здесь `… as USART = board.usart`, — заполняет сам граф:
+// Второй параметр — `boot:`-объект графа; в шаблоне это `parts`
+// (`crate::parts::Parts`: плата и собранные над её драйверами пары). Слот,
+// написанный с инициализатором — во фрагменте `resources: [UART: R = hw.usart]`
+// при его собственной `boot: hw: …;`, а здесь `… as USART = parts.board.usart`, —
+// заполняет сам граф:
 // строки `provide_usart_uart` тогда нет вовсе, а значит её нельзя и забыть
 // (так устроен узел OTA ниже). Формой не обслуживаются слоты
 // `consume`/`shared` (их переиздаёт `respawn_all`, а boot-объект к тому
 // моменту потреблён) и всё, что требует `await` или повтора, — для этого
 // остаётся узел-инициализатор.
-spawn_all(&spawner, board).expect("узлы свежие");
+spawn_all(&spawner, parts).expect("узлы свежие");
 ```
 
 # `watchdog` — мультиплексор задач в один аппаратный watchdog
@@ -244,8 +245,8 @@ spawn_all(&spawner, board).expect("узлы свежие");
 Писать её руками не нужно, и подключать тоже: имя блока подставлено при
 генерации из метаданных чипа (`IWDG`, на H7 `IWDG1`, на двухъядерных H7 у
 ядра CM4 `IWDG2`), объект собирает `Board::new`, а запускает его блок
-`watchdog:` графа — инициализатором `= board.watchdog.arm()`, где
-`board` это объявленный выше `boot:`-объект, который `main` передаёт в
+`watchdog:` графа — инициализатором `= parts.board.watchdog.arm()`, где
+`parts` это объявленный выше `boot:`-объект, который `main` передаёт в
 `spawn_all`. Всё, что осталось на вас, — цифры, и живут они там, о чём
 каждая: `WATCHDOG_CHECK_EVERY` здесь (про один сторож на всех), таймаут узла
 во фрагменте (про этот узел, вместе с периодом его отметок — и их соотношение
@@ -407,12 +408,14 @@ async fn uart_drain_task(mut uart: embassy_stm32::usart::UartTx<'static, embassy
 во входе узла `HOST`. Своего канала у образа нет: он идёт по протоколу,
 которым хост и так говорит с устройством (`docs/ota.md`).
 
-Плата отдаёт для узла адаптер обновления `board.ota` (`bsp::ota::Updater`) и
-порт перезагрузки `bsp::cpu::Reboot`, а вход фрагмента собирает эта сторона:
-`bsp` зависит только от `ports` и `adapters`, про `domain` он не знает
-(`= ::domain::ota::OtaWiring { flash: board.ota, reboot: bsp::cpu::Reboot, mode:
-::domain::ota::Mode::Signed { running_version: crate::image::FW_VERSION } }`). Типы
-слотов — аргументы фрагмента (`OTA_FRAG<bsp::ota::Updater, bsp::cpu::Reboot>`):
+Плата отдаёт для узла разделы обновления `parts.board.ota`
+(`bsp::ota::Partitions`) и порт перезагрузки `bsp::cpu::Reboot`, а адаптер
+обновления над разделами (`crate::ota::new`) и вход фрагмента собирает эта
+сторона: `bsp` про `adapters` и `domain` не знает
+(`= ::domain::ota::OtaWiring { flash: crate::ota::new(parts.board.ota), reboot:
+bsp::cpu::Reboot, mode: ::domain::ota::Mode::Signed { running_version:
+crate::image::FW_VERSION } }`). Типы слотов — аргументы фрагмента
+(`OTA_FRAG<crate::ota::Updater, bsp::cpu::Reboot>`):
 слот — `static`, тип ему нужен, а знает его только эта сторона. Слот адаптера — `local` (фича
 `supervisor/local-resources` в
 `crates-cross/Cargo.toml`): объекты платы `!Send`, и граф держит их на своём

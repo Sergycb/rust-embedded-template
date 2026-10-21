@@ -65,10 +65,11 @@ use supervisor::runtime::TaskExit;
 // транспорта и данных аргументами фрагмента:
 //
 // ```ignore
-// // `bsp::serial::Serial` и `board.serial` — поток байтов UART платы.
-// fragments: [::domain::MODBUS_SLAVE_FRAG<::adapters::modbus::Rtu<bsp::serial::Serial>, ::domain::modbus::EmptyRegisters> as MODBUS
+// // `parts.board.usart1` — поток байтов UART платы; транспорт над ним собирает
+// // `crate::link::usart1` (`app`).
+// fragments: [::domain::MODBUS_SLAVE_FRAG<crate::link::usart1::Link, ::domain::modbus::EmptyRegisters> as MODBUS_USART1
 //                 = ::domain::modbus::ModbusSlaveWiring {
-//                     link: ::adapters::modbus::Rtu::new(board.serial),
+//                     link: crate::link::usart1::new(parts.board.usart1),
 //                     regs: ::domain::modbus::EmptyRegisters,
 //                     unit: 1,
 //                 }];

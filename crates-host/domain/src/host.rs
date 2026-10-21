@@ -44,8 +44,8 @@ use supervisor::runtime::TaskExit;
 //
 // ```ignore
 // fragments: [::domain::HOST_FRAG<HostLink, ::domain::host::Service> as HOST
-//                 = ::domain::host::HostWiring { link: HostLink::new(board.serial, FRAME.init([0; 262])),
-//                                                service: ::domain::host::Service::new(crate::device_info(board.spec)),
+//                 = ::domain::host::HostWiring { link: HostLink::new(parts.board.usart1, FRAME.init([0; 262])),
+//                                                service: ::domain::host::Service::new(crate::device_info(parts.board.spec)),
 //                                                rx: RX.init([0; 258]), tx: TX.init([0; 256]) }];
 // ```
 //

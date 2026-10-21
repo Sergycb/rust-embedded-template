@@ -16,10 +16,12 @@
 //! // Чтение и запись живут в порту домена — без импорта методов не видно.
 //! use ports::SettingsStorage;
 //!
+//! // Хранилище собирает приложение над носителем платы (`app::settings`).
+//! let mut settings = crate::settings::new(parts.board.settings);
 //! let mut scratch = [0u8; 64];
 //! let mut buf = [0u8; 64];
-//! board.settings.write(KEY_CALIBRATION, &postcard::to_slice(&cal, &mut buf)?).await?;
-//! if let Some(raw) = board.settings.read(KEY_CALIBRATION, &mut scratch).await? {
+//! settings.write(KEY_CALIBRATION, &postcard::to_slice(&cal, &mut buf)?).await?;
+//! if let Some(raw) = settings.read(KEY_CALIBRATION, &mut scratch).await? {
 //!     let cal: Calibration = postcard::from_bytes(raw)?;
 //! }
 //! ```
@@ -53,7 +55,7 @@
 //! for node in Config::nodes::<Path<String<32>, '/'>, 2>() {
 //!     let (path, _node) = node?;
 //!     let key: u32 = yafnv::fnv1a(path.as_str().as_bytes());
-//!     if let Some(raw) = board.settings.read(key, &mut scratch).await? {
+//!     if let Some(raw) = settings.read(key, &mut scratch).await? {
 //!         miniconf::postcard::set_by_key(&mut config, &path, postcard::de_flavors::Slice::new(raw))?;
 //!     }
 //! }
@@ -62,7 +64,7 @@
 //! let path = Path::<String<32>, '/'>::from("/gain/1");
 //! let mut buf = [0u8; 64];
 //! let raw = miniconf::postcard::get_by_key(&config, &path, postcard::ser_flavors::Slice::new(&mut buf))?;
-//! board.settings.write(yafnv::fnv1a(path.as_str().as_bytes()), raw).await?;
+//! settings.write(yafnv::fnv1a(path.as_str().as_bytes()), raw).await?;
 //! ```
 //!
 //! # Чего здесь нет

@@ -160,7 +160,7 @@ fn default_cases() -> Vec<Case> {
         Case::new("stm32g474re").variant("canopen-fdcan", &["protocol=canopen", "interface=can"]),
         Case::new("stm32f407ve").variant("canopen-bxcan", &["protocol=canopen", "interface=can"]),
         // CANopen с разделом настроек: объекты по `save` и адрес по LSS — в
-        // `board.settings` (`domain::canopen`), колбэки стека — `StaticCell`
+        // хранилище настроек (`domain::canopen`), колбэки стека — `StaticCell`
         // в графе.
         Case::new("stm32g474re").variant(
             "canopen-config",
@@ -232,11 +232,12 @@ fn default_cases() -> Vec<Case> {
             ],
         ),
         // Несколько транспортов (`links`): у каждого своя группа ресурсов,
-        // подмодуль драйвера и транспорта, поле `Board` и узел графа (без
-        // графа — модуль задачи). Два UART одного вида рядом с сетью (H7: три
-        // узла Modbus и один `NET`), два USB (два устройства и два сигнала
-        // готовности OTA), TCP и UDP на одном стеке (`SOCKETS` = 1 + 2), поток
-        // с протоколом рядом с шиной без протокола, и UART с UDP без графа.
+        // подмодуль драйвера в `bsp` и транспорта в `app`, поле `Board` (или
+        // драйвер в `Drivers`) и узел графа (без графа — модуль задачи). Два UART
+        // одного вида рядом с сетью (H7: три узла Modbus и один `NET`), два USB
+        // (два устройства с разными серийными номерами; без графа — и два
+        // сигнала готовности OTA), TCP и UDP на одном стеке (`SOCKETS` = 1 + 2),
+        // поток с протоколом рядом с шиной без протокола, и UART с UDP без графа.
         Case::new("stm32h743zg").variant(
             "modbus-uart-uart-tcp",
             &["links=uart:modbus,uart:modbus,tcp:modbus"],
