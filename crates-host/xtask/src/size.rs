@@ -82,7 +82,7 @@ pub fn report_image(base: u64, size: u64) -> Result<(), anyhow::Error> {
 }
 
 /// Секции, которые линкер кладёт в регион `RAM` из `memory.x` статически:
-/// `.data` и `.bss` — `cortex-m-rt`, `.uninit` — `panic-persist` и прочие
+/// `.data`, `.bss` и `.uninit` — `cortex-m-rt`, плюс статики с
 /// `#[link_section = ".uninit"]`. `.dma_nc`/`.bdma_nc` лежат в своих регионах
 /// и сюда не входят.
 const STATIC_RAM_SECTIONS: [&str; 3] = [".data", ".bss", ".uninit"];
@@ -90,7 +90,7 @@ const STATIC_RAM_SECTIONS: [&str; 3] = [".data", ".bss", ".uninit"];
 /// Сколько статической RAM занимает образ: сумма `.data`, `.bss`, `.uninit`.
 ///
 /// Отсутствующая секция — 0, а не ошибка: `.uninit` нет у проекта без
-/// `panic-persist`.
+/// `#[link_section = ".uninit"]`-статиков.
 ///
 /// # Errors
 ///
