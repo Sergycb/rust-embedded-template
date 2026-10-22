@@ -16,6 +16,9 @@ use embassy_net::driver::Driver;
 
 // {%- if has_tcp == "true" %}
 pub use tcp::{TcpError, TcpServer};
+// {%- if net_services contains "mqtt" %}
+pub use tcp::TcpClient;
+// {%- endif %}
 // {%- endif %}
 // {%- if has_udp == "true" %}
 pub use udp::{UdpError, UdpLink};
@@ -130,7 +133,7 @@ mod fakes {
     pub(super) type Node = (Stack<'static>, Runner<'static, Loopback>);
 
     pub(super) const DEVICE: Ipv4Address = Ipv4Address::new(10, 0, 0, 1);
-    const HOST: Ipv4Address = Ipv4Address::new(10, 0, 0, 2);
+    pub(super) const HOST: Ipv4Address = Ipv4Address::new(10, 0, 0, 2);
     pub(super) const PORT: u16 = 502;
 
     pub(super) fn leak<T>(value: T) -> &'static mut T {

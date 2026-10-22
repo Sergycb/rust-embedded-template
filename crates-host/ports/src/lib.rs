@@ -1,5 +1,5 @@
 #![cfg_attr(not(test), no_std)]
-// {%- if ports_async == "true" %}
+// {%- if ports_async == "true" or net_services contains "mqtt" %}
 // `async fn` в публичном трейте: rustc предупреждает (`async_fn_in_trait`), что
 // у возвращаемого future нет границы `Send` и потребовать её вызывающий не
 // сможет. Для однопоточного исполнителя embassy это ровно то, что нужно, а с
@@ -42,7 +42,8 @@
 // {%- endif %}
 //! Порты протоколов связи (`FrameLink`, `Registers`,
 //! `ModbusServer`, `HostService`, `CanBus`) есть только в
-//! проекте, где протокол выбран при генерации.
+//! проекте, где протокол выбран при генерации, а `Dial` — где выбран
+//! клиент MQTT.
 //!
 // {%- if ota == "true" %}
 //! Модули названы по операции домена, которая ими пользуется, а не по трейту:
@@ -70,6 +71,11 @@ pub mod host;
 /// Кадровый канал связи: сообщения целиком, поверх датаграмм или адаптера
 /// кадрирования потока.
 pub mod link;
+
+// {%- endif %}
+// {%- if net_services contains "mqtt" %}
+/// Исходящее соединение: клиент подключается к серверу и пережидает отказы.
+pub mod dial;
 
 // {%- endif %}
 // {%- if has_modbus == "true" %}
@@ -112,6 +118,9 @@ pub use host::HostService;
 // {%- endif %}
 // {%- if link_port == "true" %}
 pub use link::{FrameLink, LinkError};
+// {%- endif %}
+// {%- if net_services contains "mqtt" %}
+pub use dial::Dial;
 // {%- endif %}
 // {%- if has_modbus == "true" %}
 pub use modbus::{
