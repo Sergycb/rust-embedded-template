@@ -223,12 +223,12 @@ supervisor_graph! {
 {%- if net_services contains "rest" %}
 
         // Узлы `HTTP` — REST API (`domain::http`): пул, по копии на соединение
-        // (`domain::http::CONNECTIONS`), у каждой свой сокет на стеке
+        // (`crate::net::HTTP_CONNECTIONS`), у каждой свой сокет на стеке
         // `board.net.stack` и свои буферы (слоты `= static` фрагмента).
         // Токен — `crate::net::REST_TOKEN` (файл `rest-token.txt`).{% if ota == "true" %}
         // Перезагрузку узлы просят у узла `OTA` каждый своим клиентом — номера
         // следом за транспортами: сессия приёма у OTA — одного клиента.{% endif %}
-        ::domain::HTTP_FRAG as HTTP[2] = core::array::from_fn(|{% if ota == "true" %}i{% else %}_{% endif %}| ::domain::http::HttpWiring {
+        ::domain::HTTP_FRAG as HTTP[{{ http_connections }}] = core::array::from_fn(|{% if ota == "true" %}i{% else %}_{% endif %}| ::domain::http::HttpWiring {
             stack: board.net.stack,
             info: crate::device_info(board.spec),
             token: crate::net::REST_TOKEN,
@@ -295,11 +295,12 @@ supervisor_graph! {
 }
 {%- if net_services contains "rest" %}
 
-// Пул `HTTP[2]` в `fragments:` — литерал: DSL не берёт константу. Сокетов
-// под него стек заводит по `domain::http::CONNECTIONS` (`crate::net`).
+// Пул `HTTP[N]` в `fragments:` — литерал: DSL не берёт константу. Генерация
+// пишет его тем же числом, что `HTTP_CONNECTIONS` в `[env]`; ручная правка
+// одного без другого — ошибка здесь, а не нехватка сокетов на плате.
 const _: () = assert!(
-    ::domain::http::CONNECTIONS == 2,
-    "копий HTTP в графе столько же, сколько сокетов REST у стека"
+    crate::net::HTTP_CONNECTIONS == {{ http_connections }},
+    "копий HTTP в графе столько же, сколько HTTP_CONNECTIONS в [env]"
 );
 {%- endif %}
 

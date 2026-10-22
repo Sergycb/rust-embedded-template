@@ -2343,8 +2343,11 @@ variable::set("net_sockets", net_sockets.to_string());
 // транспорты и соединения сетевых служб — по сокету на копию пула REST, на
 // консоль SSH и на клиент MQTT. Плата строит стек под это число, а сокеты
 // открывает приложение.
-let net_stack_sockets = net_sockets + 1;
-if services.contains("rest") { net_stack_sockets += 2; }
+// Соединений REST разом — копий пула узлов `HTTP` (`HTTP_CONNECTIONS` в `[env]`,
+// литерал пула в `app/src/graph.rs`): решение приложения, а не узла.
+let http_connections = if services.contains("rest") { 2 } else { 0 };
+variable::set("http_connections", http_connections.to_string());
+let net_stack_sockets = net_sockets + 1 + http_connections;
 if services.contains("ssh") { net_stack_sockets += 1; }
 if services.contains("mqtt") { net_stack_sockets += 1; }
 variable::set("net_stack_sockets", net_stack_sockets.to_string());
@@ -2578,12 +2581,12 @@ variable::set("ssh_host_key", if !services.contains("ssh") { "" }
 	else { "file" });
 // Номера клиентов OTA у служб — следом за транспортами с протоколом: одно
 // число на граф и задачи без графа, а не счёт в каждом файле. У REST — по
-// клиенту на копию пула (`rest_ota_client` и следующий: `CONNECTIONS` — 2,
-// его держит `const`-assert в `app/src/graph.rs`), SSH — за ними, MQTT — за SSH.
+// клиенту на копию пула (`rest_ota_client` и следующие, `http_connections`
+// штук), SSH — за ними, MQTT — за SSH.
 let protocol_clients = links.filter(|link| link.protocol != "none").len();
 variable::set("rest_ota_client", protocol_clients.to_string());
-variable::set("ssh_ota_client", (protocol_clients + if services.contains("rest") { 2 } else { 0 }).to_string());
-variable::set("mqtt_ota_client", (protocol_clients + (if services.contains("rest") { 2 } else { 0 })
+variable::set("ssh_ota_client", (protocol_clients + http_connections).to_string());
+variable::set("mqtt_ota_client", (protocol_clients + http_connections
 	+ (if services.contains("ssh") { 1 } else { 0 })).to_string());
 
 // Обёртка EEPROM — только когда настройки лежат в ней; без неё файл с

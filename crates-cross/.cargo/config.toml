@@ -94,6 +94,12 @@ SWAP_PAGE_SIZE = "{{page_size | remove: '_'}}"
 # фичу `dns` у `embassy-net` — она тоже занимает слот) — прибавьте один.
 NET_SOCKETS = "{{net_stack_sockets}}"
 {%- endif %}
+{%- if net_services contains "rest" %}
+# Соединений REST API разом — копий пула узлов `HTTP` (`app::net`, пул в
+# `app/src/graph.rs`): у каждой свой сокет и свои буферы. Меняете — меняйте и
+# литерал пула в графе (DSL не берёт константу) и `NET_SOCKETS` выше.
+HTTP_CONNECTIONS = "{{http_connections}}"
+{%- endif %}
 {%- if dma_nc_start != "" %}
 # Регион `DMA_NC` (non-cacheable память под буферы DMA, `bsp::dma_nc`): адрес и
 # размер в байтах, как в `memory.x`.

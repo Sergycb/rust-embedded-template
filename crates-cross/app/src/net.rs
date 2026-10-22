@@ -19,6 +19,14 @@ const _: () = assert!(
     !REST_TOKEN.is_empty(),
     "rest-token.txt пуст: удалите файл, и `cargo xtask build` создаст новый токен"
 );
+
+/// Соединений REST API разом — копий пула узлов `HTTP`: переменная среды
+/// `HTTP_CONNECTIONS` из `[env]` `crates-cross/.cargo/config.toml`. Решает
+/// приложение, а не узел: копия узла — одно соединение.
+pub const HTTP_CONNECTIONS: usize = match usize::from_str_radix(env!("HTTP_CONNECTIONS"), 10) {
+    Ok(connections) => connections,
+    Err(_) => panic!("HTTP_CONNECTIONS в [env] crates-cross/.cargo/config.toml — не число"),
+};
 {%- endif %}
 {%- if net_services contains "ssh" %}
 {%- if ssh_auth == "password" %}
