@@ -146,27 +146,28 @@ supervisor_graph! {
         // Карта обёрнута окном OTA (`domain::modbus::OtaRegisters`): записи FC16
         // по `OTA_BASE` уходят узлу `OTA` командами — клиентом его входа `CMD`
         // (`OtaClient` с номером этого транспорта), остальное — карте проекта.
-        ::domain::MODBUS_SLAVE_FRAG<
+        ::domain::SERVER_FRAG<
             crate::link::{{ f[4] }}::Link,
-            ::domain::modbus::OtaRegisters<crate::modbus::Handle>,
+            ::domain::modbus::Slave<::domain::modbus::OtaRegisters<crate::modbus::Handle>>,
         > as MODBUS_{{ f[4] | upcase }} =
-            ::domain::modbus::ModbusSlaveWiring {
+            ::domain::server::ServerWiring {
                 link: crate::link::{{ f[4] }}::new({% if f[0] == "uart" %}parts.board.{{ f[4] }}{% elsif f[0] == "usb" %}parts.{{ f[4] }}.cdc{% else %}parts.net.stack{% endif %}),
-                regs: ::domain::modbus::OtaRegisters::new(
-                    parts.modbus,
-                    ::domain::ota::OtaClient::new(
-                        ota_cmd_requester(),
-                        ::domain::ota::ClientId({{ client }}),
+                handler: ::domain::modbus::Slave::new(
+                    1,
+                    ::domain::modbus::OtaRegisters::new(
+                        parts.modbus,
+                        ::domain::ota::OtaClient::new(
+                            ota_cmd_requester(),
+                            ::domain::ota::ClientId({{ client }}),
+                        ),
                     ),
                 ),
-                unit: 1,
             },
 {%- else %}
-        ::domain::MODBUS_SLAVE_FRAG<crate::link::{{ f[4] }}::Link, crate::modbus::Handle> as MODBUS_{{ f[4] | upcase }} =
-            ::domain::modbus::ModbusSlaveWiring {
+        ::domain::SERVER_FRAG<crate::link::{{ f[4] }}::Link, ::domain::modbus::Slave<crate::modbus::Handle>> as MODBUS_{{ f[4] | upcase }} =
+            ::domain::server::ServerWiring {
                 link: crate::link::{{ f[4] }}::new({% if f[0] == "uart" %}parts.board.{{ f[4] }}{% elsif f[0] == "usb" %}parts.{{ f[4] }}.cdc{% else %}parts.net.stack{% endif %}),
-                regs: parts.modbus,
-                unit: 1,
+                handler: ::domain::modbus::Slave::new(1, parts.modbus),
             },
 {%- endif %}
 {%- elsif f[3] == "canopen" %}
@@ -200,10 +201,10 @@ supervisor_graph! {
         // обработчик `domain::host::Service` над схемой `crates-host/proto` —
         // логика приложения, проект правит его в `domain`.{% if ota == "true" %} Команды обновления
         // он отдаёт узлу `OTA` клиентом его входа `CMD` с номером этого транспорта.{% endif %}
-        ::domain::HOST_FRAG<crate::link::{{ f[4] }}::Link, ::domain::host::Service> as HOST_{{ f[4] | upcase }} =
-            ::domain::host::HostWiring {
+        ::domain::SERVER_FRAG<crate::link::{{ f[4] }}::Link, ::domain::host::Protobuf<::domain::host::Service>> as HOST_{{ f[4] | upcase }} =
+            ::domain::server::ServerWiring {
                 link: crate::link::{{ f[4] }}::new({% if f[0] == "uart" %}parts.board.{{ f[4] }}{% elsif f[0] == "usb" %}parts.{{ f[4] }}.cdc{% else %}parts.net.stack{% endif %}),
-                service: ::domain::host::Service::new(
+                handler: ::domain::host::Protobuf(::domain::host::Service::new(
                     crate::device_info(parts.board.spec),
 {%- if ota == "true" %}
                     ::domain::ota::OtaClient::new(
@@ -211,7 +212,7 @@ supervisor_graph! {
                         ::domain::ota::ClientId({{ client }}),
                     ),
 {%- endif %}
-                ),
+                )),
             },
 {%- endif %}
 {%- if f[3] != "none" %}{% assign client = client | plus: 1 %}{% endif %}

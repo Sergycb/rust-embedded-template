@@ -19,7 +19,7 @@ pub mod {{ f[4] }} {
     #[embassy_executor::task]
     async fn task(mut link: Link, info: DeviceInfo) {
 {%- if ota == "true" %}
-        let mut service = domain::host::Service::new(
+        let service = domain::host::Service::new(
             info,
             domain::ota::OtaClient::new(
                 crate::tasks::ota::CMD.requester(),
@@ -27,11 +27,11 @@ pub mod {{ f[4] }} {
             ),
         );
 {%- else %}
-        let mut service = domain::host::Service::new(info);
+        let service = domain::host::Service::new(info);
 {%- endif %}
-        domain::host::task(domain::host::HostCtx {
+        domain::server::task(domain::server::ServerCtx {
             link: &mut link,
-            service: &mut service,
+            handler: &mut domain::host::Protobuf(service),
             index: 0,
         })
         .await;

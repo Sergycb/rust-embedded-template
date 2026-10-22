@@ -25,18 +25,24 @@ pub mod device;
 // {%- endif %}
 // {%- if has_protobuf == "true" %}
 
-/// Узел `HOST`: сообщения protobuf от хоста по кадровому каналу — разбор,
-/// обработчик приложения, ответ — см. модуль.
+/// Сообщения protobuf от хоста: обработчик кадра для узла протокола —
+/// разбор, обработчик приложения, ответ — см. модуль.
 pub mod host;
 // {%- endif %}
 // {%- if has_modbus == "true" %}
 
-/// Modbus: slave над портом `ports::Registers` поверх транспорта
-/// `ports::ModbusServer` — см. модуль.
+/// Modbus: slave над портом `ports::Registers` — обработчик кадра для узла
+/// протокола — см. модуль.
 // {%- if modbus_master == "true" %}
 /// Master — функции поверх `ports::ModbusClient`.
 // {%- endif %}
 pub mod modbus;
+// {%- endif %}
+
+// {%- if protocol_link == "true" %}
+/// Узел протокола «запрос — ответ» над кадровым каналом: Modbus slave и
+/// protobuf хоста — см. модуль.
+pub mod server;
 // {%- endif %}
 
 // {%- if has_net == "true" %}

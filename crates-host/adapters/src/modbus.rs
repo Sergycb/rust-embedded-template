@@ -1,5 +1,7 @@
 //! Транспорт Modbus {% if modbus_rtu == "true" %}— RTU поверх потока байтов{% elsif modbus_tcp == "true" %}— TCP поверх потока{% else %}— UDP поверх датаграмм{% endif %}.
-//! Он реализует порт slave'а [`ports::ModbusServer`].
+//! Для slave'а он — кадровый канал [`ports::FrameLink`] с кадром «адрес и PDU»:
+//! кадр разбирает обработчик `domain::modbus::Slave`, а обслуживает канал узел
+//! `domain::server`, тот же, что у protobuf.
 // {%- if modbus_master == "true" %}
 //! Они же реализуют порт master'а [`ports::ModbusClient`].
 // {%- endif %}
@@ -18,8 +20,8 @@
 //! [`Tcp`](crate::modbus::Tcp) — заголовок MBAP (номер транзакции,
 //! протокол 0, длина, адрес) и PDU поверх потока. CRC нет — целостность
 //! обеспечивает TCP, границу — длина в заголовке. Длина вне допустимой —
-//! граница потеряна, и поток не выровнять: slave кончается
-//! [`ServeError::Framing`](ports::ServeError::Framing).
+//! граница потеряна, и поток не выровнять: канал отказывает
+//! ([`LinkError::Down`](ports::LinkError::Down) с [`FrameError::Framing`](crate::modbus::FrameError::Framing)).
 // {%- if modbus_master == "true" %}
 //! Master в этом случае получает
 //! [`MasterError::Unexpected`](ports::MasterError::Unexpected).
@@ -81,8 +83,8 @@ pub use udp::{DATAGRAM, Udp};
 // {%- endif %}
 
 // {%- if modbus_stream == "true" %}
-use embedded_io_async::{Read, ReadExactError};
-use ports::ServeError;
+use embedded_io_async::{Error, ErrorKind, Read, ReadExactError};
+use ports::LinkError;
 // {%- endif %}
 
 // {%- if modbus_stream == "true" %}
@@ -105,10 +107,42 @@ async fn fill<T: Read>(
     Ok(())
 }
 
-fn serve_error<E>(e: ReadExactError<E>) -> ServeError<E> {
+/// Почему поток Modbus (RTU, TCP) не принял или не отправил кадр.
+#[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum FrameError<E> {
+    /// Отказ потока.
+    Io(E),
+    /// Поток кончился: соединение закрыто. Потеря, а не отказ канала: над
+    /// TCP-сервером (`net::TcpServer`) следующий `recv` примет нового клиента.
+    Eof,
+    /// Длина в заголовке MBAP вне допустимой: граница кадра в потоке потеряна,
+    /// и соединение стоит переоткрыть.
+    Framing,
+}
+
+/// Отказ потока как исход канала: разорванное соединение — отказ, шум на
+/// UART (переполнение, чётность; `embassy-stm32` отдаёт их как
+/// `ErrorKind::Other`) — потеря кадра.
+fn io_error<E: Error>(e: E) -> LinkError<FrameError<E>> {
+    if matches!(
+        e.kind(),
+        ErrorKind::ConnectionReset
+            | ErrorKind::ConnectionAborted
+            | ErrorKind::ConnectionRefused
+            | ErrorKind::NotConnected
+            | ErrorKind::BrokenPipe
+    ) {
+        LinkError::Down(FrameError::Io(e))
+    } else {
+        LinkError::Lost(FrameError::Io(e))
+    }
+}
+
+fn read_error<E: Error>(e: ReadExactError<E>) -> LinkError<FrameError<E>> {
     match e {
-        ReadExactError::UnexpectedEof => ServeError::Eof,
-        ReadExactError::Other(e) => ServeError::Io(e),
+        ReadExactError::UnexpectedEof => LinkError::Lost(FrameError::Eof),
+        ReadExactError::Other(e) => io_error(e),
     }
 }
 

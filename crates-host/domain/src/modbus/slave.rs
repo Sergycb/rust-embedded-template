@@ -1,11 +1,7 @@
-//! Modbus slave поверх транспорта [`ports::ModbusServer`].
+//! Modbus slave — обработчик кадра «адрес и PDU» для узла протокола
+//! `domain::server`.
 
-use core::convert::Infallible;
-
-use ports::{
-    Bits, BitsMut, Exception, MAX_PDU, ModbusServer, Received, Registers, ServeError, Words,
-    WordsMut,
-};
+use ports::{Bits, BitsMut, Exception, Handler, MAX_PDU, Registers, Words, WordsMut};
 use rusty_modbus_codec::error::DecodeError;
 use rusty_modbus_codec::validate::{
     validate_read_coils, validate_read_discrete_inputs, validate_read_registers,
@@ -14,8 +10,9 @@ use rusty_modbus_codec::validate::{
 use rusty_modbus_codec::{RequestPdu, decode_request};
 use rusty_modbus_types::ExceptionCode;
 
-/// Обслуживает транспорт `link` как slave с адресом `unit`: принимает
-/// запросы, отдаёт их `regs` и отвечает — до отказа транспорта.
+/// Slave с адресом `unit` над данными `regs`: кадр «адрес и PDU» из канала
+/// (`adapters::modbus::{Rtu, Tcp, Udp}`) — в запрос к `regs`, ответ — в тот
+/// же кадр.
 ///
 /// Отвечает на запрос с адресом `unit` и с 0xFF — так TCP и UDP
 /// обращаются к самому устройству. На чужой адрес и на широковещательный
@@ -25,46 +22,60 @@ use rusty_modbus_types::ExceptionCode;
 /// Недопустимый запрос — количество вне диапазона спецификации, счётчик
 /// байт не сходится, coil не 0x0000/0xFF00 — получает исключение до вызова
 /// `regs`, неизвестная функция — Illegal Function. Битые кадры отбрасывает
-/// транспорт.
-///
-/// # Errors
-///
-/// Возвращает отказ транспорта; ошибкой не кончается ничего, что приходит
-/// по линии.
-///
-/// # Panics
-///
-/// Если `unit` не 1..=247 — адреса slave'а по спецификации.
-pub async fn serve<L, R>(
-    link: &mut L,
+/// канал.
+#[derive(Debug)]
+pub struct Slave<R> {
     unit: u8,
-    regs: &mut R,
-) -> Result<Infallible, ServeError<L::Error>>
-where
-    L: ModbusServer,
-    R: Registers,
-{
-    assert!(
-        (1..=247).contains(&unit),
-        "адрес slave'а {unit} вне 1..=247"
-    );
-    let mut rx = [0_u8; MAX_PDU];
-    let mut tx = [0_u8; MAX_PDU];
-    loop {
-        let Received { unit: to, len } = link.recv(&mut rx).await?;
-        let pdu = &rx[..len];
-        let Some(&fc) = pdu.first() else {
-            continue;
-        };
-        if to == unit || to == 0xFF {
-            let reply = respond(pdu, regs, &mut tx).await;
-            link.reply(&tx[..reply]).await?;
-        } else if to == 0 && !matches!(fc, 0x01..=0x04) {
-            // Широковещательное чтение не выполняется вовсе: ответа на него
-            // нет, а у чтения бывают побочные эффекты (сброс счётчика при
-            // чтении).
-            respond(pdu, regs, &mut tx).await;
+    regs: R,
+}
+
+impl<R> Slave<R> {
+    /// Slave с адресом `unit` над данными `regs`.
+    ///
+    /// # Panics
+    ///
+    /// Если `unit` не 1..=247 — адреса slave'а по спецификации.
+    pub fn new(unit: u8, regs: R) -> Self {
+        assert!(
+            (1..=247).contains(&unit),
+            "адрес slave'а {unit} вне 1..=247"
+        );
+        Self { unit, regs }
+    }
+
+    /// Данные обратно — тестам, которые смотрят карту после запросов.
+    #[cfg(test)]
+    pub(crate) fn into_regs(self) -> R {
+        self.regs
+    }
+}
+
+impl<R: Registers> Handler for Slave<R> {
+    fn begin(&mut self, capacity: usize) {
+        assert!(
+            capacity > MAX_PDU,
+            "буфер кадра {capacity} не вмещает адрес и PDU ({} байт)",
+            MAX_PDU + 1
+        );
+        defmt_or_log::info!("modbus: slave, адрес {}", self.unit);
+    }
+
+    async fn handle(&mut self, frame: &mut [u8], len: usize) -> Option<usize> {
+        let (&to, pdu) = frame[..len].split_first()?;
+        let &fc = pdu.first()?;
+        let answer = to == self.unit || to == 0xFF;
+        // Широковещательное чтение не выполняется вовсе: ответа на него нет, а
+        // у чтения бывают побочные эффекты (сброс счётчика при чтении).
+        let broadcast_write = to == 0 && !matches!(fc, 0x01..=0x04);
+        if !answer && !broadcast_write {
+            return None;
         }
+        // Ответ пишется поверх запроса, а запрос нужен до конца исполнения.
+        let mut request = [0_u8; MAX_PDU];
+        let request = &mut request[..pdu.len()];
+        request.copy_from_slice(pdu);
+        let reply = respond(request, &mut self.regs, &mut frame[1..]).await;
+        answer.then_some(1 + reply)
     }
 }
 
@@ -192,15 +203,24 @@ fn exception(code: ExceptionCode) -> Exception {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modbus::fakes::{Map, Server};
+    use crate::modbus::fakes::Map;
 
     /// Прогоняет запросы `(адрес, PDU)` через slave с адресом 1; возвращает
     /// ответы.
     async fn run(requests: &[(u8, &[u8])], map: &mut Map) -> Vec<Vec<u8>> {
-        let mut link = Server::new(requests);
-        let end = serve(&mut link, 1, map).await;
-        assert_eq!(end, Err(ServeError::Eof), "slave кончился не концом потока");
-        link.replies
+        let mut slave = Slave::new(1, core::mem::take(map));
+        let mut replies = Vec::new();
+        for &(unit, pdu) in requests {
+            let mut frame = [0; MAX_PDU + 1];
+            frame[0] = unit;
+            frame[1..=pdu.len()].copy_from_slice(pdu);
+            if let Some(len) = slave.handle(&mut frame, 1 + pdu.len()).await {
+                assert_eq!(frame[0], unit, "адрес ответа — адрес запроса");
+                replies.push(frame[1..len].to_vec());
+            }
+        }
+        *map = slave.into_regs();
+        replies
     }
 
     #[tokio::test]
@@ -318,18 +338,27 @@ mod tests {
     /// Пустая карта шаблона на любой запрос отвечает Illegal Function.
     #[tokio::test]
     async fn the_empty_map_answers_illegal_function() {
-        let mut link = Server::new(&[
-            (1, &[0x01, 0, 0, 0, 1]),
-            (1, &[0x02, 0, 0, 0, 1]),
-            (1, &[0x03, 0, 0, 0, 1]),
-            (1, &[0x04, 0, 0, 0, 1]),
-            (1, &[0x05, 0, 0, 0xFF, 0x00]),
-            (1, &[0x06, 0, 0, 0, 1]),
-        ]);
-        let end = serve(&mut link, 1, &mut crate::modbus::EmptyRegisters).await;
-        assert_eq!(end, Err(ServeError::Eof));
+        let mut slave = Slave::new(1, crate::modbus::EmptyRegisters);
+        let mut replies = Vec::new();
+        for pdu in [
+            &[0x01, 0, 0, 0, 1][..],
+            &[0x02, 0, 0, 0, 1],
+            &[0x03, 0, 0, 0, 1],
+            &[0x04, 0, 0, 0, 1],
+            &[0x05, 0, 0, 0xFF, 0x00],
+            &[0x06, 0, 0, 0, 1],
+        ] {
+            let mut frame = [0; MAX_PDU + 1];
+            frame[0] = 1;
+            frame[1..=pdu.len()].copy_from_slice(pdu);
+            let len = slave
+                .handle(&mut frame, 1 + pdu.len())
+                .await
+                .expect("ответ");
+            replies.push(frame[1..len].to_vec());
+        }
         let expected: Vec<Vec<u8>> = (1..=6_u8).map(|fc| vec![fc | 0x80, 0x01]).collect();
-        assert_eq!(link.replies, expected);
+        assert_eq!(replies, expected);
     }
 
     proptest::proptest! {

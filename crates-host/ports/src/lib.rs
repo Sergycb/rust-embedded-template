@@ -40,8 +40,8 @@
 //! [`SettingsStorage`] — хранилище настроек: его реализует раздел, EEPROM или
 //! внешняя флеш, выбранные при генерации.
 // {%- endif %}
-//! Порты протоколов связи (`FrameLink`, `Registers`,
-//! `ModbusServer`, `HostService`, `CanBus`) есть только в
+//! Порты протоколов связи (`FrameLink`, `Handler`, `Registers`,
+//! `HostService`, `CanBus`) есть только в
 //! проекте, где протокол выбран при генерации, а `Dial` — где выбран
 //! клиент MQTT.
 //!
@@ -117,16 +117,13 @@ pub use can::CanBus;
 pub use host::HostService;
 // {%- endif %}
 // {%- if link_port == "true" %}
-pub use link::{FrameLink, LinkError};
+pub use link::{FrameLink, Handler, LinkError};
 // {%- endif %}
 // {%- if net_services contains "mqtt" %}
 pub use dial::Dial;
 // {%- endif %}
 // {%- if has_modbus == "true" %}
-pub use modbus::{
-    Bits, BitsMut, Exception, MAX_PDU, ModbusServer, Received, Registers, ServeError, Words,
-    WordsMut,
-};
+pub use modbus::{Bits, BitsMut, Exception, MAX_PDU, Registers, Words, WordsMut};
 // {%- if modbus_master == "true" %}
 pub use modbus::{MasterError, ModbusClient};
 // {%- endif %}

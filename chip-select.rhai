@@ -872,8 +872,9 @@ const RAM_COST = #{
     links: #{
         // stm32g474re uart-only 3884 против 3884; Modbus — stm32h743zg два UART и
         // TCP 13940 (по одному — 2168); protobuf — stm32f407ve 6824 против 3880.
-        "uart:none": 0, "uart:modbus": 2200, "uart:protobuf": 2944,
-        // stm32f407ve modbus-uart-can 6048 = 3880 + 2168 (UART с Modbus);
+        // Modbus RTU держит свой буфер кадра (`adapters::modbus::Rtu`, 256 байт):
+        // stm32f407ve modbus-uart-can 6320 = 3880 + 2440 (UART с Modbus).
+        "uart:none": 0, "uart:modbus": 2472, "uart:protobuf": 2944,
         // CANopen — stm32g474re canopen-config 7504 против 3884 + 32 (настройки).
         "can:none": 0, "can:canopen": 3588,
         // stm32h743zg против 3932: tcp-only 5308, modbus-tcp 9540 (с master и
@@ -884,7 +885,8 @@ const RAM_COST = #{
         "udp:none": 416, "udp:modbus": 4808, "udp:protobuf": 5128,
         // stm32g474re usb-only 5244 против 3884; Modbus — stm32f407ve 7464 против
         // 3880; protobuf — stm32f407ve два USB 12656 (по 4388).
-        "usb:none": 1360, "usb:modbus": 3584, "usb:protobuf": 4388,
+        // Modbus по USB — тот же RTU: +272 к замеру до буфера кадра в `Rtu`.
+        "usb:none": 1360, "usb:modbus": 3856, "usb:protobuf": 4388,
     },
     // Стек `embassy-net` и драйвер Ethernet — один раз на tcp/udp: stm32f407ve
     // modbus-tcp-udp 14296 — на 960 меньше, чем TCP и UDP по отдельности.
@@ -2338,10 +2340,10 @@ for link in links {
 }
 variable::set("net_sockets", net_sockets.to_string());
 
-// Кадровый канал (`ports::FrameLink`, `LinkError`) нужен protobuf (канал хоста),
-// шине CAN (ошибка `CanBus`) и UDP-каналу (`adapters::net::UdpLink` реализует
-// `FrameLink`) — с протоколом и без него.
-variable::set("link_port", if on.protobuf || has.can || has.udp { "true" } else { "false" });
+// Кадровый канал (`ports::FrameLink`, `LinkError`, `Handler`) нужен протоколам
+// узла `domain::server` (protobuf и Modbus slave), шине CAN (ошибка `CanBus`) и
+// UDP-каналу (`adapters::net::UdpLink` реализует `FrameLink`) — с протоколом и без него.
+variable::set("link_port", if on.protobuf || on.modbus || has.can || has.udp { "true" } else { "false" });
 // Порт хранилища настроек (`ports::SettingsStorage`) нужен, пока есть что в него
 // класть: раздел, EEPROM или внешняя флеш (`config`) либо заглушка `Unavailable`
 // у узла CANopen без хранилища. Иначе порта и адаптера в проекте нет.
@@ -2444,6 +2446,9 @@ if !on.canopen {
 }
 if variable::get("protocol_link") != "true" {
 	file::delete("crates-cross/app/src/link.rs");
+	// Узел протокола «запрос — ответ» (`domain::server`) обслуживает только
+	// Modbus slave и protobuf.
+	file::delete("crates-host/domain/src/server.rs");
 }
 if variable::get("link_port") != "true" {
 	file::delete("crates-host/ports/src/link.rs");

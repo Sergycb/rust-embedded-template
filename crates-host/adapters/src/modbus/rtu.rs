@@ -2,14 +2,14 @@
 
 use crc::{CRC_16_MODBUS, Crc, NoTable};
 use embedded_io_async::{Read, ReadExactError, Write};
-use ports::{MAX_PDU, ModbusServer, Received, ServeError};
+use ports::{FrameLink, LinkError, MAX_PDU};
 
 // {%- if modbus_master == "true" %}
 use ports::{MasterError, ModbusClient};
 
 use super::master_error;
 // {%- endif %}
-use super::serve_error;
+use super::{FrameError, io_error, read_error};
 
 /// Наибольший кадр RTU: адрес, PDU до 253 байт, CRC.
 const MAX_ADU: usize = MAX_PDU + 3;
@@ -23,7 +23,7 @@ const MAX_DRAIN: usize = 2 * MAX_ADU;
 
 /// Modbus RTU поверх потока байтов `io` (`BufferedUart` с DE для RS-485).
 ///
-/// Slave ([`ModbusServer`]) не отвечает на кадр с неверной CRC и на кадр с
+/// Slave ([`FrameLink`], кадр «адрес и PDU») не принимает кадр с неверной CRC и кадр с
 /// функцией, кроме FC01–06, 15, 16: длину её кадра по коду функции не
 /// вывести, а отвечать, не проверив CRC, нельзя — master получит таймаут, а
 /// не Illegal Function. Кадры на зарезервированные адреса 248–255
@@ -47,8 +47,10 @@ pub struct Rtu<T> {
     /// Принятые, но ещё не разобранные байты — `rx[..have]`.
     rx: [u8; MAX_ADU],
     have: usize,
-    /// Адрес последнего принятого запроса — им подписан ответ.
-    unit: u8,
+    /// Буфер канала: принятый кадр «адрес и PDU», затем ответ — и место под
+    /// CRC за ним. Отдельно от `rx`: там за кадром могут лежать уже принятые
+    /// байты следующего, и ответ поверх них их бы затёр.
+    frame: [u8; MAX_ADU],
 }
 
 impl<T> Rtu<T> {
@@ -58,38 +60,41 @@ impl<T> Rtu<T> {
             io,
             rx: [0; MAX_ADU],
             have: 0,
-            unit: 0,
+            frame: [0; MAX_ADU],
         }
     }
 }
 
-impl<T: Read + Write> ModbusServer for Rtu<T> {
-    type Error = T::Error;
+impl<T: Read + Write> FrameLink for Rtu<T> {
+    type Error = FrameError<T::Error>;
 
-    async fn recv(&mut self, buf: &mut [u8]) -> Result<Received, ServeError<T::Error>> {
-        assert!(buf.len() >= MAX_PDU, "буфер PDU {} < {MAX_PDU}", buf.len());
-        let len = loop {
-            let len = self.next_request().await.map_err(serve_error)?;
-            if self.rx[0] <= 247 {
-                break len;
+    async fn recv(&mut self) -> Result<usize, LinkError<Self::Error>> {
+        loop {
+            let len = self.next_request().await.map_err(read_error)?;
+            let body = len - 2;
+            let reserved = self.rx[0] > 247;
+            if !reserved {
+                self.frame[..body].copy_from_slice(&self.rx[..body]);
             }
             self.consume(len);
-        };
-        let (unit, pdu) = (self.rx[0], len - 3);
-        buf[..pdu].copy_from_slice(&self.rx[1..len - 2]);
-        self.unit = unit;
-        self.consume(len);
-        Ok(Received { unit, len: pdu })
+            if !reserved {
+                return Ok(body);
+            }
+        }
     }
 
-    async fn reply(&mut self, response: &[u8]) -> Result<(), ServeError<T::Error>> {
-        let mut tx = [0; MAX_ADU];
-        let total = frame(&mut tx, self.unit, response);
+    fn buffer(&mut self) -> &mut [u8] {
+        &mut self.frame[..MAX_ADU - 2]
+    }
+
+    /// Ответ — с адресом, который обработчик оставил в начале кадра.
+    async fn send(&mut self, len: usize) -> Result<(), LinkError<Self::Error>> {
+        let total = seal(&mut self.frame, len);
         self.io
-            .write_all(&tx[..total])
+            .write_all(&self.frame[..total])
             .await
-            .map_err(ServeError::Io)?;
-        self.io.flush().await.map_err(ServeError::Io)
+            .map_err(io_error)?;
+        self.io.flush().await.map_err(io_error)
     }
 }
 
@@ -112,7 +117,7 @@ impl<T: Read + embedded_io_async::ReadReady + Write> ModbusClient for Rtu<T> {
             "буфер PDU {} < {MAX_PDU}",
             response.len()
         );
-        self.send(unit, request).await?;
+        self.send_request(unit, request).await?;
         let len = self.receive().await?;
         if self.rx[0] != unit {
             return Err(MasterError::Unexpected);
@@ -123,7 +128,7 @@ impl<T: Read + embedded_io_async::ReadReady + Write> ModbusClient for Rtu<T> {
     }
 
     async fn broadcast(&mut self, request: &[u8]) -> Result<(), MasterError<T::Error>> {
-        self.send(0, request).await
+        self.send_request(0, request).await
     }
 }
 // {%- endif %}
@@ -195,7 +200,11 @@ impl<T: Read> Rtu<T> {
 // {%- if modbus_master == "true" %}
 impl<T: Read + embedded_io_async::ReadReady + Write> Rtu<T> {
     /// Сливает входной буфер и отправляет кадр запроса.
-    async fn send(&mut self, unit: u8, request: &[u8]) -> Result<(), MasterError<T::Error>> {
+    async fn send_request(
+        &mut self,
+        unit: u8,
+        request: &[u8],
+    ) -> Result<(), MasterError<T::Error>> {
         self.drain().await?;
         let mut tx = [0; MAX_ADU];
         let total = frame(&mut tx, unit, request);
@@ -226,6 +235,7 @@ impl<T: Read + embedded_io_async::ReadReady + Write> Rtu<T> {
 }
 // {%- endif %}
 
+// {%- if modbus_master == "true" %}
 /// Собирает в `tx` кадр «`unit`, `pdu`, CRC»; возвращает его длину.
 fn frame(tx: &mut [u8; MAX_ADU], unit: u8, pdu: &[u8]) -> usize {
     assert!(pdu.len() <= MAX_PDU, "PDU {} > {MAX_PDU} байт", pdu.len());
@@ -233,6 +243,7 @@ fn frame(tx: &mut [u8; MAX_ADU], unit: u8, pdu: &[u8]) -> usize {
     tx[1..=pdu.len()].copy_from_slice(pdu);
     seal(tx, 1 + pdu.len())
 }
+// {%- endif %}
 
 /// Сколько первых байт запроса нужно, чтобы узнать длину кадра; `None` —
 /// функция, длину кадра которой по одному коду функции не вывести.
@@ -364,13 +375,15 @@ mod tests {
     /// Все запросы из `input` до конца потока: адрес и PDU.
     async fn requests(input: &[u8]) -> Vec<(u8, Vec<u8>)> {
         let mut rtu = Rtu::new(Duplex::new(input));
-        let mut buf = [0; MAX_PDU];
         let mut got = Vec::new();
         loop {
-            match rtu.recv(&mut buf).await {
-                Ok(r) => got.push((r.unit, buf[..r.len].to_vec())),
+            match rtu.recv().await {
+                Ok(len) => {
+                    let frame = &rtu.buffer()[..len];
+                    got.push((frame[0], frame[1..].to_vec()));
+                }
                 Err(e) => {
-                    assert_eq!(e, ServeError::Eof);
+                    assert_eq!(e, LinkError::Lost(FrameError::Eof));
                     return got;
                 }
             }
@@ -380,10 +393,10 @@ mod tests {
     #[tokio::test]
     async fn server_receives_and_replies() {
         let mut rtu = Rtu::new(Duplex::new(&frame(7, &[0x03, 0, 1, 0, 1])));
-        let mut buf = [0; MAX_PDU];
-        let r = rtu.recv(&mut buf).await.unwrap();
-        assert_eq!((r.unit, &buf[..r.len]), (7, &[0x03, 0, 1, 0, 1][..]));
-        rtu.reply(&[0x03, 2, 0, 5]).await.unwrap();
+        let len = rtu.recv().await.unwrap();
+        assert_eq!(&rtu.buffer()[..len], &[7, 0x03, 0, 1, 0, 1]);
+        rtu.buffer()[1..5].copy_from_slice(&[0x03, 2, 0, 5]);
+        rtu.send(5).await.unwrap();
         assert_eq!(rtu.io.tx, frame(7, &[0x03, 2, 0, 5]));
     }
 

@@ -1,26 +1,24 @@
-//! Узел `HOST` графа задач: принимает сообщения protobuf от хоста по
-//! кадровому каналу и отвечает на них.
+//! Сообщения protobuf от хоста: обработчик кадра [`Protobuf`](crate::host::Protobuf) для узла
+//! протокола `domain::server` (в графе — узел `HOST_<транспорт>`).
 //!
 //! Единственное место, где сообщения схемы превращаются в типы приложения,
 //! — обработчик [`HostService`](ports::HostService) приложения: в задачи
-//! уходят проверенные значения своих типов. Узел только принимает кадр,
-//! разбирает запрос, кодирует ответ и отправляет его. Схему узел не знает:
-//! сообщения — параметры (`micropb::MessageDecode`/`MessageEncode`), пример
-//! схемы — крейт `crates-host/proto`.
+//! уходят проверенные значения своих типов. [`Protobuf`](crate::host::Protobuf) только разбирает
+//! запрос из кадра и кодирует ответ в него же. Схему он не знает: сообщения —
+//! параметры (`micropb::MessageDecode`/`MessageEncode`), пример схемы — крейт
+//! `crates-host/proto`.
 //!
-//! Канал — [`FrameLink`](ports::FrameLink): кадр — одно сообщение целиком.
-//! Датаграммы (UDP) дают его сами, поток (UART, USB CDC, TCP) — через
-//! `adapters::cobs::Cobs`.
+//! Канал под ним — любой [`FrameLink`](ports::FrameLink), кадр — одно
+//! сообщение целиком: датаграммы (UDP) дают его сами, поток (UART, USB CDC,
+//! TCP) — через `adapters::cobs::Cobs`.
 //!
-//! Что узел делает с тем, что пришло:
+//! Что обработчик делает с кадром:
 //!
 //! * кадр не разобрался как запрос — ответ
 //!   [`HostService::malformed`](ports::HostService::malformed);
-//! * кадр потерян или канал отказал — на приёме или на отправке — в лог, и
-//!   узел ждёт следующий кадр: восстановить канал и подождать, пока он
-//!   вернётся, — дело реализации `FrameLink` на следующем `recv`;
-//! * ответ не помещается в буфер — в лог, хост получит таймаут; что буфер
-//!   мал для какого-то ответа схемы, узел предупреждает уже при старте.
+//! * ответ не помещается в буфер — в лог и без ответа, хост получит таймаут;
+//!   что буфер мал для какого-то ответа схемы, обработчик предупреждает уже
+//!   при старте узла.
 //!
 //! Сообщения по инициативе устройства (события, телеметрия) — второй вход
 //! узла; появятся по вопросу при генерации проекта.
@@ -32,72 +30,26 @@ mod service;
 
 pub use service::{DeviceInfo, Service};
 
-use defmt_or_log::{FormatOrDebug, info, warn};
+use defmt_or_log::warn;
 use micropb::{DecodeError, MessageDecode, MessageEncode, PbEncoder};
-use ports::{FrameLink, HostService, LinkError};
-use supervisor::runtime::TaskExit;
+use ports::{Handler, HostService};
 
-// Вход узла — `HostWiring`: структуру эмитит сам фрагмент (`boot: …
-// struct`), по полю на каждый слот, читающий `inputs.<поле>`. Строит её
-// compose-site из полей платы и обработчика, подставляя их типы
-// аргументами фрагмента:
-//
-// ```ignore
-// fragments: [::domain::HOST_FRAG<crate::link::usart1::Link, ::domain::host::Service> as HOST
-//                 = ::domain::host::HostWiring { link: crate::link::usart1::new(parts.board.usart1),
-//                                                service: ::domain::host::Service::new(crate::device_info(parts.board.spec)) }];
-// ```
-//
-// Буфер сообщения — у канала (`FrameLink::buffer`), а не у узла: размер
-// сообщения задаёт схема проекта, и канал собирается вместе с буфером.
+/// Обработчик кадров protobuf над обработчиком сообщений приложения `S`:
+/// разбирает запрос, отдаёт его `S`, кодирует ответ.
+///
+/// Обёртка, а не реализация [`Handler`] для всякого [`HostService`]: оба
+/// трейта чужие для `domain`, и общая реализация была бы возможна только в
+/// `ports`, которому `micropb` знать незачем.
+#[derive(Debug)]
+pub struct Protobuf<S>(pub S);
 
-/// Узел `HOST`: отвечает хосту, пока жив канал.
-///
-/// Не выходит никогда: закрытый или отказавший канал — строка в лог, и
-/// узел ждёт следующий кадр.
-///
-/// Без `watchdog:` намеренно — по правилу `heartbeat::task`:
-/// узел законно ждёт запрос сколько угодно.
-pub async fn task<L, S>(mut ctx: HostCtx<'_, L, S>) -> TaskExit
+impl<S> Handler for Protobuf<S>
 where
-    L: FrameLink,
-    L::Error: FormatOrDebug,
     S: HostService,
     S::Request: MessageDecode + Default,
     S::Response: MessageEncode,
 {
-    match ctx.run().await {}
-}
-
-#[fsm::typestate]
-impl<L, S> HostCtx<'_, L, S>
-where
-    L: FrameLink,
-    L::Error: FormatOrDebug,
-    S: HostService,
-    S::Request: MessageDecode + Default,
-    S::Response: MessageEncode,
-{
-    fsm::machine! {
-        machine Host mod edges {
-            states {
-                /// Ждёт кадр от хоста.
-                Listening,
-            }
-            start => begin -> Listening;
-            listen {
-                Listening => frame: self.link.recv(),
-            }
-            transitions {
-                Listening + frame(Ok(len))  => serve  -> self,
-                Listening + frame(Err(ref err)) => failed -> self,
-            }
-        }
-    }
-
-    fn begin(&mut self) -> Listening {
-        info!("domain: узел HOST запущен");
-        let capacity = self.link.buffer().len();
+    fn begin(&mut self, capacity: usize) {
         if let Ok(max) = S::Response::MAX_SIZE
             && capacity < max
         {
@@ -106,36 +58,22 @@ where
                 capacity, max
             );
         }
-        Listening
     }
 
-    /// Разбирает запрос, отдаёт обработчику, отправляет ответ.
-    async fn serve(&mut self, len: usize) {
+    async fn handle(&mut self, frame: &mut [u8], len: usize) -> Option<usize> {
         let mut request = S::Request::default();
-        let response = match request.decode_from_bytes(&self.link.buffer()[..len]) {
-            Ok(()) => self.service.handle(request).await,
+        let response = match request.decode_from_bytes(&frame[..len]) {
+            Ok(()) => self.0.handle(request).await,
             Err(err) => {
                 warn!("host: кадр не разобрался: {}", decode_reason(&err));
-                self.service.malformed()
+                self.0.malformed()
             }
         };
-        let buffer = self.link.buffer();
-        let Some(len) = encode(&response, buffer) else {
-            warn!("host: ответ не помещается в буфер на {} байт", buffer.len());
-            return;
-        };
-        if let Err(err) = self.link.send(len).await {
-            warn!("host: ответ не ушёл: {:?}", &err);
+        let reply = encode(&response, frame);
+        if reply.is_none() {
+            warn!("host: ответ не помещается в буфер на {} байт", frame.len());
         }
-    }
-
-    /// Кадр потерян или канал отказал — в лог; узел ждёт следующий кадр.
-    #[expect(
-        clippy::unused_self,
-        reason = "сигнатуру действия задаёт таблица `#[fsm::typestate]`"
-    )]
-    fn failed(&mut self, err: &LinkError<L::Error>) {
-        warn!("host: кадр не принят: {:?}", err);
+        reply
     }
 }
 
@@ -167,82 +105,16 @@ fn encode(message: &impl MessageEncode, buf: &mut [u8]) -> Option<usize> {
     Some(capacity - encoder.into_writer().len())
 }
 
-// Узел объявлен рядом со своей задачей — как `CPU_LOAD_FRAG`; в граф шаблона
-// попадёт по выбору протокола при генерации проекта.
-//
-// `<L, S>` — параметры фрагмента: канал платы и обработчик приложения
-// `domain` не видит. `local` на обоих — канал и обработчик вправе быть
-// `!Send` (периферия, ссылки на каналы задач). Буфера своего нет: он у
-// канала.
-supervisor::supervisor_fragment! {
-    name: HOST_FRAG<L, S>;
-    boot: inputs: struct $crate::host::HostWiring;
-
-    node deps: [], restart: Never,
-        resources: [
-            /// Кадровый канал к хосту — с буфером сообщения: не меньше самого
-            /// длинного запроса и ответа (`MAX_SIZE` сообщения ответа, если
-            /// схема его ограничивает).
-            LINK: local L = inputs.link,
-            /// Обработчик сообщений приложения.
-            SERVICE: local S = inputs.service
-        ],
-        ctx: $crate::host::HostCtx,
-        task: $crate::host::task;
-}
-
-// Тесты гоняют узел с обработчиком над схемой `crates-host/proto`.
+// Тесты гоняют обработчик над схемой `crates-host/proto` через узел протокола.
 #[cfg(test)]
 mod tests {
-    use std::collections::VecDeque;
-
-    use core::pin::pin;
-    use core::task::{Context, Waker};
     use micropb::{MessageDecode, MessageEncode, PbEncoder};
-    use ports::{FrameLink, LinkError};
+    use ports::LinkError;
     use proto::{Get, Request, Request_, Response, Response_, heapless};
 
+    use super::Protobuf;
     use super::service::tests::{INFO, service};
-    use super::{HostCtx, task};
-
-    /// Канал: отдаёт заранее заготовленные исходы `recv`, когда они кончаются,
-    /// ждёт следующего кадра вечно — как настоящий канал. Отправленные кадры
-    /// складывает в `sent`.
-    struct Link {
-        incoming: VecDeque<Result<Vec<u8>, LinkError<&'static str>>>,
-        sent: Vec<Vec<u8>>,
-        send: Result<(), LinkError<&'static str>>,
-        buffer: Vec<u8>,
-    }
-
-    impl FrameLink for Link {
-        type Error = &'static str;
-
-        fn recv(&mut self) -> impl Future<Output = Result<usize, LinkError<Self::Error>>> {
-            let buf = &mut self.buffer;
-            let next = self.incoming.pop_front().map(|next| {
-                next.map(|frame| {
-                    buf[..frame.len()].copy_from_slice(&frame);
-                    frame.len()
-                })
-            });
-            async move {
-                match next {
-                    Some(next) => next,
-                    None => std::future::pending().await,
-                }
-            }
-        }
-
-        fn buffer(&mut self) -> &mut [u8] {
-            &mut self.buffer
-        }
-
-        fn send(&mut self, len: usize) -> impl Future<Output = Result<(), LinkError<Self::Error>>> {
-            self.sent.push(self.buffer[..len].to_vec());
-            std::future::ready(self.send)
-        }
-    }
+    use crate::server::fakes::Link;
 
     fn encode(message: &impl MessageEncode) -> Vec<u8> {
         let mut encoder = PbEncoder::new(heapless::Vec::<u8, 128>::new());
@@ -263,30 +135,21 @@ mod tests {
         })
     }
 
-    /// Гоняет узел по всем заготовленным кадрам, пока он не станет ждать
-    /// следующий.
+    /// Гоняет узел протокола с обработчиком protobuf по всем заготовленным
+    /// кадрам, пока он не станет ждать следующий.
     fn serve(link: &mut Link) {
-        let ctx = HostCtx {
-            link,
-            service: &mut service(INFO),
-            index: 0,
-        };
-        let mut task = pin!(task(ctx));
-        let mut cx = Context::from_waker(Waker::noop());
-        assert!(task.as_mut().poll(&mut cx).is_pending(), "ждёт кадр");
+        crate::server::fakes::serve(link, &mut Protobuf(service(INFO)));
     }
 
     #[test]
     fn answers_requests_with_their_request_id() {
-        let mut link = Link {
-            incoming: VecDeque::from([
+        let mut link = Link::with(
+            [
                 Ok(request(7, Request_::Command::Info(Get::default()))),
                 Ok(request(8, Request_::Command::Info(Get::default()))),
-            ]),
-            sent: Vec::new(),
-            send: Ok(()),
-            buffer: vec![0; 64],
-        };
+            ],
+            64,
+        );
         serve(&mut link);
         let replies: Vec<Response> = link.sent.iter().map(|f| decode(f)).collect();
         assert_eq!(replies[0].request_id, 7);
@@ -298,16 +161,14 @@ mod tests {
 
     #[test]
     fn malformed_frame_gets_an_error_and_lost_frame_is_skipped() {
-        let mut link = Link {
-            incoming: VecDeque::from([
+        let mut link = Link::with(
+            [
                 Ok(vec![0xFF, 0xFF, 0xFF]),
                 Err(LinkError::Lost("помеха")),
                 Ok(request(9, Request_::Command::Info(Get::default()))),
-            ]),
-            sent: Vec::new(),
-            send: Ok(()),
-            buffer: vec![0; 64],
-        };
+            ],
+            64,
+        );
         serve(&mut link);
         assert_eq!(link.sent.len(), 2, "на потерянный кадр ответа нет");
         let malformed = decode(&link.sent[0]);
@@ -319,54 +180,18 @@ mod tests {
         assert_eq!(decode(&link.sent[1]).request_id, 9);
     }
 
-    /// Канал, отказавший на отправке, узел не останавливает: он ждёт
-    /// следующий кадр и отвечает на него.
-    #[test]
-    fn failed_send_does_not_stop_the_node() {
-        let mut link = Link {
-            incoming: VecDeque::from([
-                Ok(request(1, Request_::Command::Info(Get::default()))),
-                Ok(request(2, Request_::Command::Info(Get::default()))),
-            ]),
-            sent: Vec::new(),
-            send: Err(LinkError::Down("обрыв")),
-            buffer: vec![0; 64],
-        };
-        serve(&mut link);
-        assert_eq!(link.sent.len(), 2, "оба запроса обработаны");
-    }
-
-    /// Ответ, не принятый каналом (не влез в кадр транспорта), — потеря
-    /// кадра, а не отказ канала: узел читает дальше.
-    #[test]
-    fn lost_send_keeps_the_node_listening() {
-        let mut link = Link {
-            incoming: VecDeque::from([
-                Ok(request(1, Request_::Command::Info(Get::default()))),
-                Ok(request(2, Request_::Command::Info(Get::default()))),
-            ]),
-            sent: Vec::new(),
-            send: Err(LinkError::Lost("не влез")),
-            buffer: vec![0; 64],
-        };
-        serve(&mut link);
-        assert_eq!(link.sent.len(), 2, "оба запроса обработаны");
-    }
-
     #[test]
     fn reply_that_does_not_fit_is_dropped_not_truncated() {
-        let mut link = Link {
-            incoming: VecDeque::from([
+        let mut link = Link::with(
+            [
                 Ok(request(1, Request_::Command::Info(Get::default()))),
                 Ok(encode(&Request {
                     request_id: 2,
                     command: None,
                 })),
-            ]),
-            sent: Vec::new(),
-            send: Ok(()),
-            buffer: vec![0; 32],
-        };
+            ],
+            32,
+        );
         // Ошибка «unknown command» с id влезает в 32 байта, `info` — нет.
         serve(&mut link);
         assert_eq!(link.sent.len(), 1);
@@ -376,36 +201,17 @@ mod tests {
     /// Запрос без команды — тоже запрос: ответ-ошибка с тем же `request_id`.
     #[test]
     fn a_request_without_a_command_gets_an_error_reply() {
-        let mut link = Link {
-            incoming: VecDeque::from([Ok(encode(&Request {
+        let mut link = Link::with(
+            [Ok(encode(&Request {
                 request_id: 4,
                 command: None,
-            }))]),
-            sent: Vec::new(),
-            send: Ok(()),
-            buffer: vec![0; 64],
-        };
+            }))],
+            64,
+        );
         serve(&mut link);
         assert_eq!(link.sent.len(), 1);
         let reply = decode(&link.sent[0]);
         assert_eq!(reply.request_id, 4);
         assert!(matches!(reply.result, Some(Response_::Result::Error(_))));
-    }
-
-    /// Закрытый канал узел не останавливает: следующий кадр — ответ.
-    #[test]
-    fn a_closed_link_does_not_stop_the_node() {
-        let mut link = Link {
-            incoming: VecDeque::from([
-                Err(LinkError::Down("кабель вынут")),
-                Ok(request(5, Request_::Command::Info(Get::default()))),
-            ]),
-            sent: Vec::new(),
-            send: Ok(()),
-            buffer: vec![0; 64],
-        };
-        serve(&mut link);
-        assert_eq!(link.sent.len(), 1, "ответ после отказа");
-        assert_eq!(decode(&link.sent[0]).request_id, 5);
     }
 }

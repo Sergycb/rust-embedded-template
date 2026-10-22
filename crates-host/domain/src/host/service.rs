@@ -27,8 +27,8 @@ const _: () = assert!(proto::UID_BYTES == crate::device::UID_BYTES);
 ///
 /// Команда, которой нужно что-то от платы, получает это параметром типа —
 /// портом (`ports::…`), а не железом: тогда её ответ проверяется на хосте
-/// заглушкой порта. Фрагмент `HOST_FRAG` уже generic по обработчику, менять
-/// его не нужно; конкретный тип подставляет граф. Набросок (`ports::Relay` —
+/// заглушкой порта. Узел протокола (`SERVER_FRAG`) уже generic по
+/// обработчику, менять его не нужно; конкретный тип подставляет граф. Набросок (`ports::Relay` —
 /// порт проекта, в шаблоне его нет):
 ///
 /// ```ignore
@@ -41,7 +41,7 @@ const _: () = assert!(proto::UID_BYTES == crate::device::UID_BYTES);
 ///     // `Request_::Relay(on)` → `self.relay.set(on).await` → `Ok` или `Error`.
 /// }
 ///
-/// // Граф: `HOST_FRAG<HostLink, ::domain::host::Service<bsp::relay::Relay>>`.
+/// // Граф: `SERVER_FRAG<HostLink, ::domain::host::Protobuf<::domain::host::Service<bsp::relay::Relay>>>`.
 /// // Тест: `Service::new(INFO, FakeRelay::default())` и ответ на запрос.
 /// ```
 #[derive(Debug)]
