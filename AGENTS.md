@@ -382,7 +382,7 @@ read`: руками пришлось бы сначала найти адрес �
   {%- if ota == "true" %} Клиент входа `CMD` узла OTA для `cmd/reboot` — номер
   `{{ mqtt_ota_client }}` (`domain::ota::ClientId`).{%- endif %} Сокет клиента — слот в `SOCKETS`
   (`crate::net`), буферы TCP — у `crate::net::mqtt_link`. Доступ к `cmd/` токеном в
-  теле не защищён — только ACL брокера (при пустом `user` `build.rs` предупреждает) —
+  теле не защищён — только ACL брокера{% if ota == "true" %} (при пустом `user` `build.rs` предупреждает){% endif %} —
   `docs/modules/app-mqtt.md`.
 {%- endif %}
 - `#![allow(dead_code)]` в начале `crates-cross/app/src/graph.rs` — не

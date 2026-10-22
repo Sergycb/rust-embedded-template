@@ -1,5 +1,6 @@
 //! Сеть поверх `embassy-net`: транспорт протокола —
-//! {% if has_tcp == "true" %}TCP-сервер{% else %}UDP-канал{% endif %}.
+//! {% if has_tcp == "true" %}TCP-сервер{% else %}UDP-канал{% endif %}{% if net_services contains "mqtt" %}, и TCP-клиент
+//! брокера MQTT{% endif %}.
 //!
 //! Ничего из этого не знает чипа: устройство — любой
 //! [`Driver`](embassy_net::driver::Driver), сокеты — стек `embassy-net`.
