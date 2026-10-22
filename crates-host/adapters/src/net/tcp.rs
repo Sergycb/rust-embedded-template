@@ -508,6 +508,31 @@ mod tests {
         assert_eq!(client.failures, 1, "один отказ до подключения");
     }
 
+    /// Сервер молчит (адрес в сети, но на SYN не отвечает никто) — `dial` не
+    /// висит вечно: через `IDLE_TIMEOUT` это отказ, как и RST.
+    #[tokio::test]
+    async fn dial_to_a_silent_address_times_out() {
+        const SILENT: SocketAddrV4 = SocketAddrV4::new(core::net::Ipv4Addr::new(10, 0, 0, 3), PORT);
+        let ((device, device_runner), (_host, host_runner)) = pair();
+        let mut client = TcpClient::new(device, leak([0; 64]), leak([0; 64]));
+        let failed = Cell::new(false);
+        with_network(device_runner, host_runner, async {
+            let device_side = async {
+                assert!(client.dial(SILENT).await.is_err(), "молчание — отказ");
+                failed.set(true);
+            };
+            let wait_out = async {
+                settle().await;
+                assert!(!failed.get(), "отказ раньше срока");
+                MockDriver::get().advance(IDLE_TIMEOUT + Duration::from_secs(1));
+            };
+            tokio::join!(device_side, wait_out);
+        })
+        .await;
+        assert!(failed.get());
+        assert_eq!(client.failures, 1);
+    }
+
     /// Соединение, положенное сразу после подключения, — отказ: новый `dial`
     /// выдерживает паузу `backoff(1)`, хотя сервер на месте.
     #[tokio::test]

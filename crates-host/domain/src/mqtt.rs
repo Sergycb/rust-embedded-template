@@ -956,17 +956,26 @@ pub(crate) mod tests {
         assert_eq!(result.payload, b"accepted");
     }
 
-    /// Худший случай [`TX_BUDGET`] влезает ровно в него: самые длинные префикс,
-    /// вход и `info`, и ни одного подтверждения от брокера до исхода `reboot`.
+    /// Худший случай [`TX_BUDGET`] влезает ровно в него: на байт меньше — и
+    /// исход `reboot` уже не уходит. Так ловится и формула, которая занижает
+    /// бюджет, и формула, которая его раздувает.
     #[test]
-    fn tx_budget_covers_the_worst_session() {
+    fn tx_budget_is_exactly_the_worst_session() {
+        assert_eq!(worst_session(TX_BUDGET).as_deref(), Some(&b"accepted"[..]));
+        assert_eq!(worst_session(TX_BUDGET - 1), None);
+    }
+
+    /// Самые длинные префикс, вход и `info`, ни одного подтверждения от
+    /// брокера до исхода `reboot`, буфер передачи `tx` байт. Исход `reboot`,
+    /// если он ушёл брокеру.
+    fn worst_session(tx: usize) -> Option<Vec<u8>> {
         fn leak(s: std::string::String) -> &'static str {
             Box::leak(s.into_boxed_str())
         }
         let (ota, mut node) = crate::ota::tests::live();
         let env = env();
         env.ota = Box::leak(Box::new(ota));
-        env.tx = Box::leak(vec![0; TX_BUDGET].into_boxed_slice());
+        env.tx = Box::leak(vec![0; tx].into_boxed_slice());
         let topics = Topics::new(&"p".repeat(PREFIX_MAX), &UID);
         // `info` длиной ровно `INFO_MAX`: версия добирает недостающее.
         let mut info = *env.info;
@@ -986,16 +995,23 @@ pub(crate) mod tests {
         let broker = FakeBroker::default();
         broker.push(&connack(0));
         let mut session: Running = Box::pin(serve(broker.clone(), endpoint, env));
-        assert!(poll(session.as_mut()).is_pending(), "сессия в сети");
+        // Буфера не хватило — сессия кончается раньше, чем дойдёт до исхода.
+        if poll(session.as_mut()).is_ready() {
+            return None;
+        }
         broker.push(&publish(&reboot, b"", false));
-        assert!(poll(session.as_mut()).is_pending(), "запрос узлу OTA");
+        if poll(session.as_mut()).is_ready() {
+            return None;
+        }
         assert!(poll(node.as_mut()).is_pending(), "узел ответил");
-        assert!(poll(session.as_mut()).is_pending(), "исход опубликован");
+        if poll(session.as_mut()).is_ready() {
+            return None;
+        }
         let sent = sent(&broker.output());
-        let info = sent.iter().find(|p| p.topic.ends_with("/info")).unwrap();
+        let info = sent.iter().find(|p| p.topic.ends_with("/info"))?;
         assert_eq!(info.payload.len(), INFO_MAX);
-        let result = sent.iter().find(|p| p.topic == result.as_str()).unwrap();
-        assert_eq!(result.payload, b"accepted");
+        let result = sent.iter().find(|p| p.topic == result.as_str())?;
+        Some(result.payload.clone())
     }
     // {%- endif %}
 
