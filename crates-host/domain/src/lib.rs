@@ -52,6 +52,10 @@ pub mod http;
 /// Узел `SSH`: консоль платы по SSH — см. модуль.
 pub mod ssh;
 // {%- endif %}
+// {%- if net_services contains "mqtt" %}
+/// Узел `MQTT`: клиент брокера — см. модуль.
+pub mod mqtt;
+// {%- endif %}
 
 // {%- if has_usb == "true" %}
 /// Узел `USB`: ведёт USB-устройство `embassy-usb` — см. модуль.

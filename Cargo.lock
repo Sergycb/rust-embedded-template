@@ -572,6 +572,7 @@ dependencies = [
  "heapless 0.9.3",
  "log",
  "micropb",
+ "minimq",
  "picoserve",
  "portable-atomic",
  "ports",
@@ -1472,6 +1473,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "minimq"
+version = "0.13.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "593368fcf9a07acc76d406154774b6ab23747966b501ce8a7cc6a92c36f217f9"
+dependencies = [
+ "embassy-time",
+ "embedded-io-async 0.7.0",
+ "heapless 0.9.3",
+ "num_enum",
+ "serde",
+ "thiserror",
+]
+
+[[package]]
 name = "ml-kem"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1529,6 +1544,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
 dependencies = [
  "autocfg",
+]
+
+[[package]]
+name = "num_enum"
+version = "0.7.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d0bca838442ec211fa11de3a8b0e0e8f3a4522575b5c4c06ed722e005036f26"
+dependencies = [
+ "num_enum_derive",
+ "rustversion",
+]
+
+[[package]]
+name = "num_enum_derive"
+version = "0.7.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "680998035259dcfcafe653688bf2aa6d3e2dc05e98be6ab46afb089dc84f1df8"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]

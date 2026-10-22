@@ -135,6 +135,10 @@ sunset-async       = { workspace = true }
 embassy-futures    = { workspace = true }
 embedded-io-async  = { workspace = true }
 # {%- endif %}
+# {%- if net_services contains "mqtt" %}
+# Узел MQTT (`domain::mqtt`): клиент `minimq`.
+minimq             = { workspace = true }
+# {%- endif %}
 # {%- if ssh_host_key == "config" %}
 # Ключ хоста SSH, созданный на плате (`domain::ssh::Stored`).
 getrandom          = { workspace = true }

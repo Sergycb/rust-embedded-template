@@ -230,6 +230,13 @@ sunset-async           = { version = "0.6.0" }
 # `select` сессии SSH — та же версия, что тянет `sunset-async`.
 embassy-futures        = { version = "0.1.2" }
 # {%- endif %}
+# {%- if net_services contains "mqtt" %}
+# MQTT 5 клиент (`domain::mqtt`): без кучи, keep-alive, QoS и повторы
+# пакетов внутри — узлу остаются подписки и публикации. `rust-mqtt` оставляет
+# keep-alive и повторы приложению. Без `defmt` в default: его включает фича
+# `defmt` крейта `domain`.
+minimq                 = { version = "0.13.5", default-features = false }
+# {%- endif %}
 # {%- if ssh_host_key == "config" %}
 # Ключ хоста SSH, который плата создаёт при первом старте
 # (`domain::ssh::Stored`): 32 случайных байта — тот же `getrandom`, что у
