@@ -115,9 +115,9 @@ supervisor_graph! {
 {%- assign f = l | split: ":" %}
 {%- if f[0] == "usb" %}
 
-        // Узел `USB_{{ f[4] | upcase }}` — фоновая работа устройства `embassy-usb` (`domain::usb`)
-        // над драйвером `bsp::usb::{{ f[4] }}::UsbDriver`: без него хост не видит
-        // устройства, а поток CDC — ни одного пакета.
+        // Узел `USB_{{ f[4] | upcase }}` — фоновая работа устройства `embassy-usb` (`domain::usb`),
+        // которое собрала плата (`board.{{ f[4] }}.device`, `bsp::usb::{{ f[4] }}`): без него хост
+        // не видит устройства, а поток CDC — ни одного пакета.
         ::domain::USB_FRAG<bsp::usb::{{ f[4] }}::Device> as USB_{{ f[4] | upcase }} =
             ::domain::usb::UsbWiring { device: board.{{ f[4] }}.device },
 {%- endif %}
@@ -136,8 +136,9 @@ supervisor_graph! {
 {%- assign f = l | split: ":" %}
 {%- if f[3] == "modbus" %}
 
-        // Узел `MODBUS_{{ f[4] | upcase }}` — Modbus slave: транспорт собирает `crate::link::{{ f[4] }}`
-        // (кадрирование{% if f[0] == "tcp" or f[0] == "udp" %}, сокет{% endif %}) над тем, что отдала плата; карта регистров
+        // Узел `MODBUS_{{ f[4] | upcase }}` — Modbus slave (`domain::server` с обработчиком
+        // `domain::modbus::Slave`): канал (кадрирование{% if f[0] == "tcp" or f[0] == "udp" %}, сокет{% endif %}) собирает узел над рычагом
+        // платы, тип и буферы — `crate::link::{{ f[4] }}`; карта регистров
         // одна на все узлы Modbus: ручку `crate::modbus::handle()` (`Copy`) получает каждый, а
         // тип карты проект меняет в одном месте — `crate::modbus::Map`.
         // Адрес slave'а — `unit`{% if f[0] == "tcp" or f[0] == "udp" %}: по сети устройство адресуется по IP, и
@@ -198,8 +199,9 @@ supervisor_graph! {
             },
 {%- elsif f[3] == "protobuf" %}
 
-        // Узел `HOST_{{ f[4] | upcase }}` — сообщения protobuf от хоста: канал и буферы сообщений
-        // заводит `crate::link::{{ f[4] }}` над тем, что отдала плата;
+        // Узел `HOST_{{ f[4] | upcase }}` — сообщения protobuf от хоста (`domain::server` с
+        // обработчиком `domain::host::Protobuf`): канал собирает узел над рычагом платы, тип
+        // и буферы — `crate::link::{{ f[4] }}`;
         // обработчик `domain::host::Service` над схемой `crates-host/proto` —
         // логика приложения, проект правит его в `domain`.{% if ota == "true" %} Команды обновления
         // он отдаёт узлу `OTA` клиентом его входа `CMD` с номером этого транспорта.{% endif %}
