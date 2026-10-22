@@ -357,6 +357,11 @@ fn default_cases() -> Vec<Case> {
                 "ext_flash=yes",
             ],
         ),
+        // Без графа, но с OTA: ветка `tasks/mqtt.rs` с клиентом OTA.
+        Case::new("stm32f407ve").variant(
+            "mqtt-no-graph",
+            &["links=tcp", "net_services=mqtt", "graph=no"],
+        ),
         Case::new("stm32f407ve").variant("mqtt-udp", &["links=udp", "net_services=mqtt"]),
         // Клок RNG, которого умолчания HAL не дают, — мультиплексор на своём
         // источнике (`config()` в `bsp::board`): `RNGSEL` у G0 (SYS), WL
