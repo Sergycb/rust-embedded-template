@@ -1478,6 +1478,7 @@ version = "0.13.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "593368fcf9a07acc76d406154774b6ab23747966b501ce8a7cc6a92c36f217f9"
 dependencies = [
+ "defmt 1.1.1",
  "embassy-time",
  "embedded-io-async 0.7.0",
  "heapless 0.9.3",
