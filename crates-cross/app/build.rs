@@ -18,6 +18,9 @@ fn main() {
 {%- if ssh_host_key == "file" %}
     require("ssh-host-key.bin", "ключа хоста SSH");
 {%- endif %}
+{%- if net_services contains "mqtt" %}
+    mqtt_config();
+{%- endif %}
 
     let manifest = PathBuf::from(
         std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR задаёт cargo"),
@@ -45,7 +48,7 @@ fn main() {
         .build()
         .expect("failed to generate shadow-rs build info");
 }
-{%- if net_services contains "rest" or ssh_auth == "password" or ssh_host_key == "file" %}
+{%- if net_services contains "rest" or ssh_auth == "password" or ssh_host_key == "file" or net_services contains "mqtt" %}
 
 /// Секрет сетевой службы из корня проекта, который `src/net.rs` вшивает
 /// `include_str!`/`include_bytes!`. Без файла компилятор сказал бы только
@@ -62,5 +65,39 @@ fn require(file: &str, what: &str) {
          запустите её один раз из корня проекта и закоммитьте файл",
         path.display()
     );
+}
+{%- endif %}
+{%- if net_services contains "mqtt" %}
+
+#[path = "build/mqtt.rs"]
+mod mqtt;
+
+/// Брокер MQTT из `mqtt.toml` в корне проекта — переменными окружения
+/// компиляции, из которых `src/net.rs` собирает `MQTT_BROKER` и `MQTT_PREFIX`.
+/// Битый файл роняет сборку с именем поля, а не плату на старте.
+fn mqtt_config() {
+    require("mqtt.toml", "настроек брокера MQTT");
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../mqtt.toml");
+    let config = std::fs::read_to_string(&path)
+        .map_err(|err| err.to_string())
+        .and_then(|text| mqtt::parse_mqtt_toml(&text))
+        .unwrap_or_else(|err| panic!("{}: {err}", path.display()));
+    for (i, octet) in config.host.octets().iter().enumerate() {
+        println!("cargo::rustc-env=MQTT_HOST_{i}={octet}");
+    }
+    println!("cargo::rustc-env=MQTT_PORT={}", config.port);
+    println!("cargo::rustc-env=MQTT_USER={}", config.user);
+    println!("cargo::rustc-env=MQTT_PASSWORD={}", config.password);
+    println!("cargo::rustc-env=MQTT_PREFIX={}", config.prefix);
+{%- if ota == "true" %}
+    // `cmd/reboot` перезагружает плату: без входа на брокере его может
+    // прислать кто угодно, кто до брокера дотянулся.
+    if config.user.is_empty() {
+        println!(
+            "cargo::warning=mqtt.toml: user пуст — cmd/reboot примет любой клиент брокера; \
+             ограничьте доступ ACL (docs/modules/app-mqtt.md)"
+        );
+    }
+{%- endif %}
 }
 {%- endif %}
