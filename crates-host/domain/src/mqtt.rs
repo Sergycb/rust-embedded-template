@@ -16,13 +16,18 @@
 //! Здесь — имена тем, разбор команд, тексты сообщений, адрес брокера и одна
 //! сессия с брокером над готовым потоком байтов (`serve`).
 
+use core::net::SocketAddrV4;
+
 use defmt_or_log::{info, warn};
 use embassy_time::{Duration, Instant, with_deadline};
+use embedded_io_async::{Read, Write};
 use heapless::String;
 use minimq::{
     Buffers, ConfigBuilder, ConfigError, Connection, Publication, QoS, RetainHandling, Session,
     SubscriptionOptions, TopicFilter, Will,
 };
+use ports::dial::Dial;
+use supervisor::runtime::TaskExit;
 // {%- if ota == "true" %}
 use ports::{OtaCommand, Progress};
 // {%- endif %}
@@ -196,9 +201,9 @@ pub fn write_telemetry(out: &mut impl core::fmt::Write, uptime_s: u64) -> core::
     out.write_char('}')
 }
 
-/// Чем кончилась сессия — для строки лога узла.
+/// Чем кончилась сессия. Строку лога об этом пишет сама [`serve`]: узлу
+/// после любого исхода — положить трубку и подключиться снова.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(not(test), expect(dead_code, reason = "сессию зовёт узел MQTT"))]
 pub(crate) enum Ended {
     /// Брокер не принял подключение.
     Refused,
@@ -207,7 +212,6 @@ pub(crate) enum Ended {
 }
 
 /// Что нужно сессии, кроме потока и адреса брокера.
-#[cfg_attr(not(test), expect(dead_code, reason = "сессию зовёт узел MQTT"))]
 pub(crate) struct Env<'a> {
     /// Темы этой платы.
     pub topics: &'a Topics,
@@ -232,6 +236,7 @@ pub(crate) struct Env<'a> {
 fn config<'a>(
     endpoint: &Endpoint,
     topics: &Topics,
+    status: &str,
     rx: &'a mut [u8],
     tx: &'a mut [u8],
 ) -> Result<ConfigBuilder<'a>, ConfigError> {
@@ -240,7 +245,7 @@ fn config<'a>(
         config = config.auth(endpoint.user, endpoint.password.as_bytes())?;
     }
     config.will(
-        Will::new(&topics.status(), b"offline", &[])?
+        Will::new(status, b"offline", &[])?
             .retained()
             .qos(QoS::AtLeastOnce),
     )
@@ -250,6 +255,7 @@ fn config<'a>(
 async fn announce<IO: minimq::Io>(
     conn: &mut Connection<'_, '_, IO>,
     topics: &Topics,
+    status: &str,
     info: &DeviceInfo,
     mac: [u8; 6],
     ip: Option<embassy_net::Ipv4Address>,
@@ -264,9 +270,8 @@ async fn announce<IO: minimq::Io>(
         .await
         .map_err(drop)?;
     // `online` — каждый раз: брокер мог уже разослать Will `offline`.
-    let status = topics.status();
     conn.publish(
-        Publication::text(&status, "online")
+        Publication::text(status, "online")
             .qos(QoS::AtLeastOnce)
             .retain(),
     )
@@ -291,7 +296,6 @@ async fn announce<IO: minimq::Io>(
 /// Одна сессия с брокером над установленным соединением `io`: подключение с
 /// Will, подписка на команды, `status` и `info`, дальше телеметрия и команды,
 /// пока связь жива. Паузы между сессиями — не здесь: их держит транспорт.
-#[cfg_attr(not(test), expect(dead_code, reason = "сессию зовёт узел MQTT"))]
 pub(crate) async fn serve<IO: minimq::Io>(io: IO, endpoint: &Endpoint, env: &mut Env<'_>) -> Ended {
     let [a, b, c, d] = endpoint.addr;
     let port = endpoint.port;
@@ -306,7 +310,8 @@ pub(crate) async fn serve<IO: minimq::Io>(io: IO, endpoint: &Endpoint, env: &mut
         ota,
         // {%- endif %}
     } = env;
-    let Ok(config) = config(endpoint, topics, rx, tx) else {
+    let status = topics.status();
+    let Ok(config) = config(endpoint, topics, &status, rx, tx) else {
         warn!("mqtt: настройки клиента не приняты");
         return Ended::Refused;
     };
@@ -323,7 +328,7 @@ pub(crate) async fn serve<IO: minimq::Io>(io: IO, endpoint: &Endpoint, env: &mut
     // Любая ошибка `minimq` после подключения — связь потеряна: соединение
     // больше не годится, следующая сессия — с новым.
     let online = async {
-        announce(&mut conn, topics, info, *mac, *ip).await?;
+        announce(&mut conn, topics, &status, info, *mac, *ip).await?;
         let mut next = Instant::now() + TELEMETRY_INTERVAL;
         loop {
             let command = match with_deadline(next, conn.recv()).await {
@@ -380,6 +385,112 @@ pub(crate) async fn serve<IO: minimq::Io>(io: IO, endpoint: &Endpoint, env: &mut
         a, b, c, d, port
     );
     Ended::Lost
+}
+
+/// Узел `MQTT`: подключается к брокеру, ведёт сессию, после её конца
+/// подключается снова — пока жива прошивка; не возвращается.
+///
+/// У автомата нет выходного состояния, поэтому [`TaskExit`] недостижим: узел
+/// не падает (`restart: Never`).
+pub async fn task<B: Broker, D: Dial + Read + Write>(mut ctx: MqttCtx<'_, B, D>) -> TaskExit {
+    match ctx.run().await {}
+}
+
+#[fsm::typestate]
+impl<B: Broker, D: Dial + Read + Write> MqttCtx<'_, B, D> {
+    fsm::machine! {
+        machine Mqtt mod edges {
+            states {
+                /// Без сессии: ждёт соединения с брокером.
+                Offline { topics: Topics },
+            }
+            start => begin -> Offline;
+            listen {
+                Offline => linked: self.dial(),
+            }
+            transitions {
+                Offline + linked(endpoint) => session -> self,
+            }
+        }
+    }
+
+    /// Темы платы; первое подключение — после того, как стек получил адрес
+    /// (статический или от DHCP).
+    async fn begin(&mut self) -> Offline {
+        info!("domain: узел MQTT запущен");
+        self.stack.wait_config_up().await;
+        Offline {
+            topics: Topics::new(self.prefix, &self.info.uid),
+        }
+    }
+
+    /// Адрес брокера и соединение с ним. Отказы и паузы между попытками —
+    /// забота `Dial`: возвращается он только с соединением.
+    async fn dial(&mut self) -> Endpoint {
+        let endpoint = self.broker.endpoint().await;
+        self.link
+            .dial(SocketAddrV4::new(endpoint.addr.into(), endpoint.port))
+            .await;
+        endpoint
+    }
+
+    /// Одна сессия над открытым соединением. Чем бы она ни кончилась (строку
+    /// лога пишет `serve`), трубка кладётся, и узел сразу подключается снова.
+    async fn session(&mut self, s: &mut Offline, endpoint: Endpoint) {
+        // Среда в стеке одна — Ethernet (`medium-ethernet`).
+        let embassy_net::HardwareAddress::Ethernet(mac) = self.stack.hardware_address();
+        let mut env = Env {
+            topics: &s.topics,
+            info: self.info,
+            mac: mac.0,
+            ip: self
+                .stack
+                .config_v4()
+                .map(|config| config.address.address()),
+            rx: &mut self.mqtt_rx[..],
+            tx: &mut self.mqtt_tx[..],
+            // {%- if ota == "true" %}
+            ota: self.ota,
+            // {%- endif %}
+        };
+        serve(&mut *self.link, &endpoint, &mut env).await;
+        self.link.hang_up();
+    }
+}
+
+// Узел объявлен рядом со своей задачей — как `SSH`. `<B>` — откуда адрес
+// брокера (`Fixed` или свой тип проекта), `<D>` — соединение (`Dial` +
+// поток байтов; `adapters::net::TcpClient` над сокетом стека, его и буферы
+// TCP собирает `app`); `local` у них и у стека — все вправе быть `!Send`.
+// Буферы `minimq` — слоты `= static`: через стек они не идут. Без
+// `watchdog:`: брокера может не быть всю жизнь платы.
+supervisor::supervisor_fragment! {
+    name: MQTT_FRAG<B, D>;
+    boot: inputs: struct $crate::mqtt::MqttWiring;
+
+    node deps: [], restart: Never,
+        resources: [
+            /// Сетевой стек — ради адреса платы и MAC в `info`.
+            STACK: local ::embassy_net::Stack<'static> = inputs.stack,
+            /// Сведения для `info`.
+            INFO: $crate::device::DeviceInfo = inputs.info,
+            /// Префикс тем, не длиннее `PREFIX_MAX`.
+            PREFIX: &'static str = inputs.prefix,
+            /// Откуда адрес брокера.
+            BROKER: local B = inputs.broker,
+            /// Соединение с брокером.
+            LINK: local D = inputs.link,
+            // {%- if ota == "true" %}
+            /// Клиент входа `CMD` узла OTA — для `cmd/reboot`.
+            OTA: $crate::ota::OtaClient = inputs.ota,
+            // {%- endif %}
+            /// Входящие пакеты `minimq`.
+            MQTT_RX: &'static mut [u8; $crate::mqtt::RX_BUFFER] = static,
+            /// Исходящие пакеты `minimq`.
+            MQTT_TX: &'static mut [u8; $crate::mqtt::TX_BUFFER] = static
+        ],
+        ctx: $crate::mqtt::MqttCtx,
+        task: $crate::mqtt::task;
 }
 
 #[cfg(test)]
@@ -629,14 +740,14 @@ pub(crate) mod tests {
         )
     }
 
-    type Session = Pin<Box<dyn Future<Output = Ended>>>;
+    type Running = Pin<Box<dyn Future<Output = Ended>>>;
 
     /// Сессия, которую брокер принял: CONNACK и SUBACK уже во входе.
-    fn online(env: &'static mut Env<'static>) -> (FakeBroker, Session) {
+    fn online(env: &'static mut Env<'static>) -> (FakeBroker, Running) {
         let broker = FakeBroker::default();
         broker.push(&connack(0));
         broker.push(&suback(1));
-        let mut session: Session = Box::pin(serve(broker.clone(), &ENDPOINT, env));
+        let mut session: Running = Box::pin(serve(broker.clone(), &ENDPOINT, env));
         assert!(poll(session.as_mut()).is_pending(), "сессия в сети");
         (broker, session)
     }
@@ -717,7 +828,7 @@ pub(crate) mod tests {
 
     // {%- if ota == "true" %}
     /// Сессия и узел OTA по очереди, пока оба не встанут.
-    fn spin(session: &mut Session, node: &mut crate::ota::tests::Node) {
+    fn spin(session: &mut Running, node: &mut crate::ota::tests::Node) {
         for _ in 0..4 {
             assert!(poll(session.as_mut()).is_pending(), "сессия жива");
             assert!(poll(node.as_mut()).is_pending(), "узел OTA не выходит");
@@ -756,4 +867,177 @@ pub(crate) mod tests {
         assert_eq!(result.payload, b"accepted");
     }
     // {%- endif %}
+
+    /// Соединение узла: [`FakeBroker`] на каждый `dial` — следующий из
+    /// заготовленных сценариев. Сценарии кончились — `dial` ждёт вечно, как
+    /// реализация, которая не может подключиться.
+    #[derive(Clone, Default)]
+    struct FakeLink(Rc<RefCell<Calls>>);
+
+    #[derive(Default)]
+    struct Calls {
+        scenarios: VecDeque<FakeBroker>,
+        current: Option<FakeBroker>,
+        dials: usize,
+        hang_ups: usize,
+    }
+
+    impl FakeLink {
+        fn new(scenarios: impl IntoIterator<Item = FakeBroker>) -> Self {
+            let link = Self::default();
+            link.0.borrow_mut().scenarios.extend(scenarios);
+            link
+        }
+
+        fn dials(&self) -> usize {
+            self.0.borrow().dials
+        }
+
+        fn hang_ups(&self) -> usize {
+            self.0.borrow().hang_ups
+        }
+
+        fn current(&self) -> FakeBroker {
+            self.0.borrow().current.clone().expect("соединение открыто")
+        }
+    }
+
+    impl Dial for FakeLink {
+        async fn dial(&mut self, to: SocketAddrV4) {
+            assert_eq!(to, SocketAddrV4::new(ENDPOINT.addr.into(), ENDPOINT.port));
+            core::future::poll_fn(|_| {
+                let mut calls = self.0.borrow_mut();
+                let Some(next) = calls.scenarios.pop_front() else {
+                    return Poll::Pending;
+                };
+                calls.current = Some(next);
+                calls.dials += 1;
+                Poll::Ready(())
+            })
+            .await;
+        }
+
+        fn hang_up(&mut self) {
+            self.0.borrow_mut().hang_ups += 1;
+        }
+    }
+
+    impl ErrorType for FakeLink {
+        type Error = ErrorKind;
+    }
+
+    impl Read for FakeLink {
+        async fn read(&mut self, buf: &mut [u8]) -> Result<usize, ErrorKind> {
+            self.current().read(buf).await
+        }
+    }
+
+    impl Write for FakeLink {
+        async fn write(&mut self, buf: &[u8]) -> Result<usize, ErrorKind> {
+            self.current().write(buf).await
+        }
+
+        async fn flush(&mut self) -> Result<(), ErrorKind> {
+            self.current().flush().await
+        }
+    }
+
+    /// Брокер, который примет подключение и подписку.
+    fn accepting() -> FakeBroker {
+        let broker = FakeBroker::default();
+        broker.push(&connack(0));
+        broker.push(&suback(1));
+        broker
+    }
+
+    /// Задача узла над `link`: стек с готовым адресом, остальное — на всё
+    /// время теста.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "`ctx()` стенда берёт по аргументу на ресурс узла"
+    )]
+    fn node(link: FakeLink) -> Pin<Box<dyn Future<Output = TaskExit>>> {
+        fn leak<T>(value: T) -> &'static mut T {
+            Box::leak(Box::new(value))
+        }
+        #[expect(
+            clippy::default_trait_access,
+            reason = "тип списка DNS — heapless из embassy-net, по имени не назван"
+        )]
+        let config = embassy_net::Config::ipv4_static(embassy_net::StaticConfigV4 {
+            address: embassy_net::Ipv4Cidr::new(embassy_net::Ipv4Address::new(10, 0, 0, 2), 24),
+            gateway: None,
+            dns_servers: Default::default(),
+        });
+        let (stack, _runner) = embassy_net::new(
+            adapters::fake::NetDevice::new([2, 0, 0, 0, 0, 1]),
+            config,
+            leak(embassy_net::StackResources::<2>::new()),
+            1,
+        );
+        let stand = leak(supervisor::stand!(super::MQTT_FRAG<Fixed, FakeLink>));
+        Box::pin(task(stand.ctx(
+            leak(stack),
+            leak(DeviceInfo {
+                version: "1.2.3",
+                commit: "abcdef12",
+                chip: "stm32f407ve",
+                uid: UID,
+                flash_size: 512 * 1024,
+                sys_hz: None,
+            }),
+            leak("devices"),
+            leak(Fixed(ENDPOINT)),
+            leak(link),
+            // {%- if ota == "true" %}
+            leak(crate::ota::tests::live().0),
+            // {%- endif %}
+            leak([0; RX_BUFFER]),
+            leak([0; TX_BUFFER]),
+        )))
+    }
+
+    fn spin_node(node: &mut Pin<Box<dyn Future<Output = TaskExit>>>) {
+        for _ in 0..8 {
+            assert!(poll(node.as_mut()).is_pending(), "узел не выходит");
+        }
+    }
+
+    #[test]
+    fn node_redials_after_refusal() {
+        let refusing = FakeBroker::default();
+        refusing.push(&connack(0x86));
+        let second = accepting();
+        let link = FakeLink::new([refusing, second.clone()]);
+        let mut node = node(link.clone());
+        spin_node(&mut node);
+        assert_eq!(link.dials(), 2);
+        assert_eq!(link.hang_ups(), 1);
+        let sent = sent(&second.output());
+        let status = sent.iter().find(|p| p.topic == topic("/status")).unwrap();
+        assert_eq!(status.payload, b"online");
+    }
+
+    #[test]
+    fn node_redials_after_loss() {
+        let (first, second) = (accepting(), accepting());
+        let link = FakeLink::new([first.clone(), second.clone()]);
+        let mut node = node(link.clone());
+        spin_node(&mut node);
+        assert_eq!(link.dials(), 1, "первая сессия в сети");
+        first.fail_reads();
+        spin_node(&mut node);
+        assert_eq!(link.dials(), 2);
+        assert_eq!(link.hang_ups(), 1);
+        assert!(contains(&second.output(), topic("/cmd/#").as_bytes()));
+    }
+
+    #[test]
+    fn node_never_returns() {
+        let link = FakeLink::new([accepting()]);
+        let mut node = node(link);
+        spin_node(&mut node);
+        MockDriver::get().advance(Duration::from_secs(60));
+        spin_node(&mut node);
+    }
 }
