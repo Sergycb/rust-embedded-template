@@ -1861,6 +1861,25 @@ fn marked_transports_keep_the_menu_order() {
     assert!(links.contains(",tcp:eth:ETH:"), "{links}");
 }
 
+/// Отмеченный `ethernet` спрашивает вид: TCP (умолчание) или UDP.
+#[test]
+fn ethernet_asks_tcp_or_udp() {
+    let result = interview(
+        &compile_script(),
+        "f407ve",
+        &[],
+        &[
+            ("transports", "ethernet"),
+            ("transports", "done"),
+            ("ethernet", "udp"),
+            ("protocol", "modbus"),
+        ],
+    )
+    .expect("каскад не должен падать");
+    assert_eq!(all_menu_values(&result, "ethernet"), [["tcp", "udp"]]);
+    assert_eq!(var_of(&result, "links"), Some("udp:eth:ETH:modbus:udp"));
+}
+
 /// Меню перерисовывается с отметкой выбранного пункта.
 #[test]
 fn marks_are_shown_in_the_redrawn_menu() {

@@ -822,13 +822,20 @@ const PROTOCOL_INTERFACES = #{
 const LINK_KINDS = ["uart", "can", "tcp", "udp", "usb"];
 // Пункты списка транспортов по порядку: значение, вид транспорта и описание
 // (после `[ ] значение — `). Вид — по одному пункту: второй транспорт того же
-// вида и `udp` задаёт `--define links=...`. `ethernet` пока даёт `tcp`.
+// вида задаёт `--define links=...`. У `ethernet` вид — умолчание: TCP или UDP
+// спрашивает `ETHERNET_KINDS`.
 const TRANSPORT_ITEMS = [
     #{ value: "uart", kind: "uart", text: "UART (RS-485 is the same UART with a DE pin)" },
     #{ value: "can", kind: "can", text: "CAN bus" },
     #{ value: "ethernet", kind: "tcp", text: "Ethernet (network)" },
     #{ value: "usb", kind: "usb", text: "USB CDC ACM (virtual COM port)" },
 ];
+// Вид транспорта под отмеченным `ethernet`: первый — умолчание и ответ без
+// терминала. Оба сразу — `--define links=...`.
+const ETHERNET_KINDS = #{
+    values: ["tcp", "udp"],
+    texts: ["tcp - TCP server (connection per client)", "udp - UDP datagrams"],
+};
 // Сетевые службы поверх стека (`net_services`): не транспорты с протоколом, а
 // узлы на своих сокетах общего стека — спрашиваются, только когда отмечен
 // Ethernet. SSH — криптография, поэтому только у чипа с RNG и с разделом
@@ -1457,8 +1464,11 @@ if WANTED_LINKS.len() > 0 {
             items.map(|item| item.value), items.map(|item| item.text), ram_note);
         for item in items {
             if !marked.contains(item.value) { continue; }
-            let name = if item.value == item.kind { item.kind } else { item.value + " (" + item.kind.to_upper() + ")" };
-            wanted.push(#{ kind: item.kind, name: name });
+            let kind = if item.value == "ethernet" {
+                ask("ethernet: TCP or UDP", ETHERNET_KINDS.values, ETHERNET_KINDS.texts, ETHERNET_KINDS.values[0])
+            } else { item.kind };
+            let name = if item.value == kind { kind } else { item.value + " (" + kind.to_upper() + ")" };
+            wanted.push(#{ kind: kind, name: name });
         }
     }
 
