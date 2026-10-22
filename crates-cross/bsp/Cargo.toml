@@ -31,6 +31,14 @@ fault-handler = []
 # option bytes; src/cache.rs — `FLASH_ACR` и `ICACHE`): их нет в API HAL, а сырой адрес
 # вместо типизированного регистра `stm32-metapac` ничем не проверялся бы.
 embassy-stm32 = { workspace = true, features = [{% if cpu_freq_boost == "true" or bank_switch != "" or cache contains "icen" or cache contains "icache" %}"unstable-pac"{% endif %}] }
+{%- if has_usb == "true" or has_net == "true" or config_store == "eeprom" %}
+# Обёртки, из которых плата собирает свои рычаги:{% if config_store == "eeprom" %} EEPROM как `NorFlash`
+# (`adapters::eeprom::Eeprom`, src/settings.rs);{% endif %}{% if has_usb == "true" %} USB-устройство с потоком CDC
+# (`adapters::usb`, src/usb.rs){% endif %}{% if has_net == "true" %}{% if has_usb == "true" %},{% endif %} стек с фоновой работой (`adapters::net::Net`,
+# src/net.rs){% endif %} — классы регистрируются до постройки устройства, а стек и
+# его фон рождает один `embassy_net::new`, поэтому эти пары собирает плата.
+adapters = { workspace = true }
+{%- endif %}
 {%- if core_baseline != "true" or ota == "true" or config_store == "eeprom" or has_can == "true" %}
 # Порты, которые плата реализует сама — у чего нет трейта в `embedded-hal`:{% if core_baseline != "true" %}
 # счётчик тактов (`Cycles`, src/cycles.rs);{% endif %}{% if ota == "true" %}
@@ -79,25 +87,38 @@ embassy-sync = { workspace = true }
 # ещё и имя типа раздела в псевдониме `Ota`.
 embassy-embedded-hal = { workspace = true }
 {%- endif %}
-# `static-cell` — потому что общему флешу нужен `&'static`: иначе его разделы
-# нельзя отдать в задачу, которую спавнит `Spawner` (аргументы задач обязаны
-# быть 'static).
-{%- if shared_flash == "true" or ota == "true" or external_flash == "true" %}
+# `static-cell` — потому что объектам платы нужна память `&'static`: общему
+# флешу и его разделам, USB-устройству и стеку — иначе их нельзя отдать в
+# задачу, которую спавнит `Spawner` (аргументы задач обязаны быть 'static).
+{%- if shared_flash == "true" or ota == "true" or external_flash == "true" or has_usb == "true" or has_net == "true" %}
 static_cell = { workspace = true }
 {%- endif %}
 {%- if has_usb == "true" %}
 # Трейт USB-драйвера — его реализует заглушка (`bsp::stub::UsbDriver`) и
-# драйвер `embassy-stm32`; устройство и классы над ним собирает `app`.
+# драйвер `embassy-stm32`; устройство с классом CDC над ним — `embassy-usb`
+# (src/usb.rs).
 embassy-usb-driver = { workspace = true }
+embassy-usb = { workspace = true }
 {%- endif %}
 {%- if has_net == "true" %}
 # Трейт сетевого драйвера — его реализует заглушка (`bsp::stub::NetDevice`) и
-# драйвер Ethernet `embassy-stm32`; стек и сокеты над ним собирает `app`.
+# драйвер Ethernet `embassy-stm32`; стек над ним — `embassy-net` (src/net.rs),
+# сокеты на стеке открывают узлы.
 embassy-net-driver = { workspace = true }
+embassy-net = { workspace = true }
+{%- endif %}
+{%- if net_services contains "ssh" %}
+# Бэкенд `getrandom` над RNG платы (src/rng.rs): случайность для криптографии
+# проекта — и крейтов, что зовут `getrandom` сами, и тех, что берут генератор
+# параметром (`getrandom::SysRng`). Мьютекс генератора — `embassy-sync`.
+getrandom = { workspace = true }
+{%- if shared_flash != "true" and ota != "true" and external_flash != "true" %}
+embassy-sync = { workspace = true }
+{%- endif %}
 {%- endif %}
 # Только ради `ota.rs`, которого в проектах без OTA нет вовсе — вместе с
 # `crates-cross/boot` его удаляет chip-select.rhai. Адаптер обновления над
-# разделами собирает `app`; здесь `embassy-boot` нужен ради `from_linkerfile`
+# разделами собирает узел OTA; здесь `embassy-boot` нужен ради `from_linkerfile`
 # (разделы из символов memory.x) и фичи `flash-erase-zero`.
 {%- if ota == "true" %}
 embassy-boot = { workspace = true, features = ["defmt"{% if erase_zero == "true" and ota_store != "external" %}, "flash-erase-zero"{% endif %}] }

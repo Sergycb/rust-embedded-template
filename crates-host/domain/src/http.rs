@@ -1,9 +1,9 @@
 //! Узлы `HTTP` графа задач: REST API платы по сети.
 //!
 //! Каждый узел — одно TCP-соединение на порту [`PORT`](crate::http::PORT):
-//! граф ставит их пулом (`HTTP_FRAG as HTTP[N]`, `N` —
-//! [`CONNECTIONS`](crate::http::CONNECTIONS)), и столько клиентов сервер
-//! держит разом. Сервер — `picoserve` поверх сокета стека `embassy-net`.
+//! граф ставит их пулом (`HTTP_FRAG as HTTP[N]`), и сколько копий — столько
+//! клиентов сервер держит разом. Число — решение приложения (`HTTP_CONNECTIONS`
+//! в `[env]`), узел о нём не знает: копия — одно соединение. Сервер — `picoserve` поверх сокета стека `embassy-net`.
 //!
 //! | Запрос | Ответ |
 //! |---|---|
@@ -40,10 +40,6 @@ use crate::ota::OtaClient;
 
 /// Порт HTTP.
 pub const PORT: u16 = 80;
-
-/// Соединений разом — копий пула `HTTP` в графе: у каждой свой сокет на
-/// стеке.
-pub const CONNECTIONS: usize = 2;
 
 /// Буфер приёма сокета, байт: полный сегмент Ethernet.
 pub const TCP_RX: usize = 1536;
@@ -245,7 +241,7 @@ supervisor::supervisor_fragment! {
     node deps: [], restart: Never,
         resources: [
             /// Сетевой стек, на котором узел открывает свой сокет.
-            STACK: local ::embassy_net::Stack<'static> = inputs.stack,
+            STACK: local $crate::net::Stack<'static> = inputs.stack,
             /// Сведения для `/api/info`.
             INFO: $crate::device::DeviceInfo = inputs.info,
             /// Токен `Authorization: Bearer`.

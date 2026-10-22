@@ -172,9 +172,10 @@ STM32C011D6 (32 KiB, то же ядро) проект занимает 12.6 KiB 
 
 Протоколу связи граф не нужен: при `graph=no` (и когда граф снят размером) узел
 протокола и его `NET`/`USB` спавнит `tasks::spawn_all` (модули задач в
-`crates-cross/app/src/tasks/` над `domain::{modbus,host,canopen,net,usb}::task`,
-как `ota::task`). Транспорт протокола собирает `crates-cross/app/src/link.rs`, так что
-`graph.rs` и модули задач строят один и тот же объект. Тест каскада —
+`crates-cross/app/src/tasks/` над `domain::server::serve` и
+`domain::{canopen,net,usb}::task`, как `ota::task`). Тип канала протокола и его
+буферы даёт `crates-cross/app/src/link.rs`, а собирает канал сам узел
+(`ports::Assemble`), так что граф и модули задач получают один и тот же объект. Тест каскада —
 `protocol_does_not_need_the_graph`, конфигурации `*-no-graph` в `template-check`.
 
 В ветке ручной раскладки (`--define write_size=...`) размер раздела знает только
@@ -571,8 +572,8 @@ Modbus. Через `--define` то же задаёт `links` (`parse_links()`, �
 строчными, у `tcp`/`udp` — сам вид) и `has_*`. Файлы шаблона идут по `links`
 циклом Liquid: у каждого транспорта своя группа в `resources.rs`, подмодуль драйвера
 в `bsp` (`bsp::serial::<имя>`, `bsp::can::<имя>`, `bsp::usb::<имя>`), подмодуль
-транспорта в `app` (`app::link::<имя>`, `app::usb::<имя>`), поле `Board` (или драйвер в
-`bsp::Drivers`) и узел графа или модуль задачи без графа. `interface`,
+транспорта с протоколом в `app` (`app::link::<имя>`: тип канала и его буферы), поле
+`Board` и узел графа или модуль задачи без графа. `interface`,
 `iface_periph` и производные от них считаются по основному транспорту (первый с
 протоколом, иначе первый) и остались там, где речь об одном блоке (подсказки
 `cargo xtask pins` в документации).
@@ -589,7 +590,11 @@ Modbus. Через `--define` то же задаёт `links` (`parse_links()`, �
 сама в разделе настроек (`domain::ssh::Stored`), `file` — вшит из `ssh-host-key.bin`
 (`Fixed`; так и при `config` вместе с CANopen — раздел настроек целиком его). Пустые
 строки, когда не выбрано. Модули узлов невыбранных служб хук удаляет (`domain/src/http.rs`,
-`ssh.rs`, `mqtt.rs`, `app/src/tasks/{http,ssh,mqtt}.rs`, `device.rs` без служб и protobuf); секреты
+`ssh.rs`, `mqtt.rs`, `app/src/tasks/{http,ssh,mqtt}.rs`, `app/src/net.rs` без служб вовсе,
+`device.rs` без служб и protobuf); узел протокола `domain/src/server.rs` — без Modbus и
+protobuf. Сокетов в стеке хук считает сам (`net_stack_sockets` → `NET_SOCKETS` в `[env]`:
+DHCP-клиент, сетевые транспорты, по сокету на копию пула REST — `http_connections` →
+`HTTP_CONNECTIONS`, — на SSH и на MQTT): плата строит стек под это число. Секреты
 (`rest-token.txt`, `ssh-password.txt`, `ssh-host-key.bin`, заготовка `mqtt.toml`) создаёт `cargo xtask`
 (`secrets.rs`). Тесты — `net_services_*`, `ssh_*`, `password_login_asks_no_key` в
 `cascade.rs`; обход путей отвечает на `ssh_key` заранее.

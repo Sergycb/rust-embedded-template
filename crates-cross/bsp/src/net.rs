@@ -1,15 +1,48 @@
 #![doc = include_str!("../../../docs/modules/bsp-net.md")]
 
-/// Сетевое устройство платы — пока заглушка, до Ethernet (см. модуль). Стек
-/// `embassy-net` над ним и сокеты собирает приложение (`crates-cross/app/src/net.rs`).
+use embassy_net::{Config, DhcpConfig, StackResources};
+use static_cell::ConstStaticCell;
+
+/// Сетевое устройство платы — пока заглушка, до Ethernet (см. модуль).
 pub type Device = crate::stub::NetDevice;
 
-/// Собирает устройство: MAC — из заводского номера чипа `uid`. Блок Ethernet
-/// приходит группой `resources.rs` — заглушка его не трогает, драйвер платы
-/// соберётся из него и выводов.
-pub(crate) fn new(uid: [u8; 12], _resources: crate::resources::EthResources) -> Device {
+/// Сетевой стек платы — на нём открывают свои сокеты транспорты протоколов
+/// и сетевые службы приложения.
+pub type Stack = embassy_net::Stack<'static>;
+
+/// Фоновая работа стека (узел `NET`) и сам стек — их рождает один
+/// `embassy_net::new`.
+pub type Net = adapters::net::Net<Device>;
+
+/// Сокетов в стеке — переменная среды `NET_SOCKETS` из `[env]`
+/// `crates-cross/.cargo/config.toml`. Считает её генерация: DHCP-клиент, по
+/// сокету на сетевой транспорт и на каждое соединение сетевых служб
+/// приложения (пул REST, консоль SSH, клиент MQTT). Сколько сокетов откроет
+/// приложение, плата не знает и знать не должна; слот — около 500 байт
+/// оперативной памяти, поэтому без запаса: добавите сокет (или фичу `dns` у
+/// `embassy-net` — она тоже занимает слот) — прибавьте один в `[env]`.
+const SOCKETS: usize = match usize::from_str_radix(env!("NET_SOCKETS"), 10) {
+    Ok(sockets) => sockets,
+    Err(_) => panic!("NET_SOCKETS в [env] crates-cross/.cargo/config.toml — не число"),
+};
+
+// Память стека: `embassy_net::new` держит её `&'static mut`. `ConstStaticCell`
+// — значения известны при компиляции и лежат в `.bss`, а не собираются на
+// стеке и копируются при старте.
+static RESOURCES: ConstStaticCell<StackResources<SOCKETS>> =
+    ConstStaticCell::new(StackResources::new());
+
+/// Собирает стек над устройством платы: MAC — из заводского номера чипа
+/// `uid`, адрес — по DHCP, затравка случайных чисел стека (порты, номера
+/// последовательностей TCP) — `seed`. Блок Ethernet приходит группой
+/// `resources.rs` — заглушка его не трогает, драйвер платы соберётся из него и
+/// выводов.
+pub(crate) fn new(uid: [u8; 12], seed: u64, _resources: crate::resources::EthResources) -> Net {
     defmt::warn!("bsp: Ethernet не подключён — сеть без линка, протокол ждёт впустую");
-    Device::new(mac_from_uid(uid))
+    let device = Device::new(mac_from_uid(uid));
+    let config = Config::dhcpv4(DhcpConfig::default());
+    let (stack, runner) = embassy_net::new(device, config, RESOURCES.take(), seed);
+    Net { runner, stack }
 }
 
 /// MAC из заводского номера чипа: локально администрируемый (бит 1 первого
@@ -27,3 +60,13 @@ const fn mac_from_uid(uid: [u8; 12]) -> [u8; 6] {
         uid[4] ^ uid[9],
     ]
 }
+{%- if rng_irq == "" %}
+
+/// Затравка стека из заводского номера — для чипов без RNG. Не случайна: у
+/// одной платы она одна и та же после каждого сброса.
+pub(crate) fn seed_from_uid(uid: [u8; 12]) -> u64 {
+    let mut bytes = [0; 8];
+    bytes.copy_from_slice(&uid[..8]);
+    u64::from_le_bytes(bytes) ^ u64::from(u32::from_le_bytes([uid[8], uid[9], uid[10], uid[11]]))
+}
+{%- endif %}

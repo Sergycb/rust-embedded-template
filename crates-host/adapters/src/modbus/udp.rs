@@ -1,12 +1,16 @@
 //! Modbus UDP: заголовок MBAP и PDU, по кадру в датаграмме.
 
-use ports::{FrameLink, LinkError, MAX_PDU, ModbusServer, Received, ServeError};
+use ports::{Assemble, FrameLink, LinkError};
 
 // {%- if modbus_master == "true" %}
-use ports::{MasterError, ModbusClient};
+use ports::{MAX_PDU, MasterError, ModbusClient};
 
 // {%- endif %}
 use super::mbap::{self, HEADER, Header, MAX_ADU};
+
+/// Сколько байт нужно буферу канала под [`Udp`]: самая длинная датаграмма
+/// Modbus — заголовок MBAP и PDU.
+pub const DATAGRAM: usize = MAX_ADU;
 
 /// Сколько потерянных датаграмм подряд терпит приём, прежде чем объявить
 /// канал отказавшим: серия потерь — уже не помеха, и узлу о ней стоит знать.
@@ -14,7 +18,8 @@ use super::mbap::{self, HEADER, Header, MAX_ADU};
 const MAX_LOST_IN_A_ROW: u8 = 32;
 
 /// Modbus UDP поверх датаграмм `link` (UDP-сокет `embassy-net` за
-/// [`FrameLink`]).
+/// [`FrameLink`]). Датаграмма — принятая и собираемая к отправке — лежит в
+/// буфере канала: ему нужно не меньше [`DATAGRAM`] байт.
 ///
 /// Отвечать slave'у некуда, кроме как отправителю последнего запроса: этот
 /// адрес помнит реализация `link`, порт его не передаёт.
@@ -24,18 +29,16 @@ const MAX_LOST_IN_A_ROW: u8 = 32;
 // {%- if modbus_master == "true" %}
 /// Master пропускает и ответ с чужим номером транзакции.
 // {%- endif %}
-/// Потерянный ответ slave'а ([`LinkError::Lost`] на отправке) — как помеха на
-/// линии, не отказ.
 // {%- if modbus_master == "true" %}
-/// Master повторит запрос.
+/// Потерянный ответ ([`LinkError::Lost`]) master переживает повтором запроса.
 // {%- endif %}
-/// Slave получает любой запрос как адресованный ему, 0xFF (см.
-/// [модуль](super)).
+/// Для slave'а — сам канал [`FrameLink`] с кадром «адрес и PDU» в той же
+/// датаграмме, за заголовком: любой запрос приходит как адресованный самому
+/// устройству, 0xFF (см. [модуль](super)), а ответ несёт адрес и номер
+/// транзакции запроса.
 #[derive(Debug)]
 pub struct Udp<L> {
     link: L,
-    /// Датаграмма — принятая или собираемая к отправке.
-    buf: [u8; MAX_ADU],
     /// Номер транзакции последнего принятого запроса — им подписан ответ.
     // {%- if modbus_master == "true" %}
     /// У master — последнего отправленного: по нему ищется ответ.
@@ -45,26 +48,30 @@ pub struct Udp<L> {
     unit: u8,
 }
 
-impl<L> Udp<L> {
+impl<L: FrameLink> Udp<L> {
     /// Транспорт поверх датаграмм `link`.
-    pub const fn new(link: L) -> Self {
+    ///
+    /// # Panics
+    ///
+    /// Если буфер канала меньше [`DATAGRAM`]: самая длинная датаграмма Modbus
+    /// в него не влезет.
+    pub fn new(mut link: L) -> Self {
+        let len = link.buffer().len();
+        assert!(len >= DATAGRAM, "буфер канала {len} < {DATAGRAM}");
         Self {
             link,
-            buf: [0; MAX_ADU],
             tid: 0,
             unit: 0,
         }
     }
-}
 
-impl<L: FrameLink> Udp<L> {
     /// Ждёт целую датаграмму Modbus в `buf`; возвращает заголовок и длину.
     async fn datagram(&mut self) -> Result<(Header, usize), LinkError<L::Error>> {
         let mut lost = 0_u8;
         loop {
-            match self.link.recv(&mut self.buf).await {
+            match self.link.recv().await {
                 Ok(len) if len >= HEADER => {
-                    let header = Header::parse(&self.buf);
+                    let header = Header::parse(self.link.buffer());
                     if header.protocol == 0 && header.total() == Some(len) {
                         return Ok((header, len));
                     }
@@ -81,35 +88,55 @@ impl<L: FrameLink> Udp<L> {
         }
     }
 
+    // {%- if modbus_master == "true" %}
     /// Собирает датаграмму и отправляет.
-    async fn send(&mut self, tid: u16, unit: u8, pdu: &[u8]) -> Result<(), LinkError<L::Error>> {
-        self.buf[..HEADER].copy_from_slice(&mbap::head(tid, unit, pdu.len()));
-        self.buf[HEADER..HEADER + pdu.len()].copy_from_slice(pdu);
-        self.link.send(&self.buf[..HEADER + pdu.len()]).await
+    async fn send_pdu(
+        &mut self,
+        tid: u16,
+        unit: u8,
+        pdu: &[u8],
+    ) -> Result<(), LinkError<L::Error>> {
+        let buf = self.link.buffer();
+        buf[..HEADER].copy_from_slice(&mbap::head(tid, unit, pdu.len()));
+        buf[HEADER..HEADER + pdu.len()].copy_from_slice(pdu);
+        self.link.send(HEADER + pdu.len()).await
+    }
+    // {%- endif %}
+}
+
+/// Собирается вокруг собранного канала датаграмм: `Udp<UdpLink>` — над
+/// стеком платы.
+impl<L: Assemble + FrameLink> Assemble for Udp<L> {
+    type Source = L::Source;
+    type Buffers = L::Buffers;
+
+    fn assemble(source: L::Source, buffers: L::Buffers) -> Self {
+        Self::new(L::assemble(source, buffers))
     }
 }
 
-impl<L: FrameLink> ModbusServer for Udp<L> {
-    type Error = LinkError<L::Error>;
+impl<L: FrameLink> FrameLink for Udp<L> {
+    type Error = L::Error;
 
-    async fn recv(&mut self, buf: &mut [u8]) -> Result<Received, ServeError<Self::Error>> {
-        assert!(buf.len() >= MAX_PDU, "буфер PDU {} < {MAX_PDU}", buf.len());
-        let (header, len) = self.datagram().await.map_err(ServeError::Io)?;
-        let pdu = &self.buf[HEADER..len];
-        buf[..pdu.len()].copy_from_slice(pdu);
+    async fn recv(&mut self) -> Result<usize, LinkError<L::Error>> {
+        let (header, len) = self.datagram().await?;
         self.tid = header.tid;
         self.unit = header.unit;
-        Ok(Received {
-            unit: 0xFF,
-            len: pdu.len(),
-        })
+        self.link.buffer()[HEADER - 1] = 0xFF;
+        Ok(len - (HEADER - 1))
     }
 
-    async fn reply(&mut self, response: &[u8]) -> Result<(), ServeError<Self::Error>> {
-        match self.send(self.tid, self.unit, response).await {
-            Ok(()) | Err(LinkError::Lost(_)) => Ok(()),
-            Err(down) => Err(ServeError::Io(down)),
-        }
+    fn buffer(&mut self) -> &mut [u8] {
+        &mut self.link.buffer()[HEADER - 1..]
+    }
+
+    /// Ответ — с номером транзакции и адресом запроса: заголовок пишется
+    /// перед кадром в той же датаграмме.
+    async fn send(&mut self, len: usize) -> Result<(), LinkError<L::Error>> {
+        let pdu = len.checked_sub(1).expect("кадр ответа — адрес и PDU");
+        let head = mbap::head(self.tid, self.unit, pdu);
+        self.link.buffer()[..HEADER].copy_from_slice(&head);
+        self.link.send(HEADER + pdu).await
     }
 }
 
@@ -129,7 +156,7 @@ impl<L: FrameLink> ModbusClient for Udp<L> {
             response.len()
         );
         self.tid = self.tid.wrapping_add(1);
-        self.send(self.tid, unit, request)
+        self.send_pdu(self.tid, unit, request)
             .await
             .map_err(MasterError::Io)?;
         loop {
@@ -141,7 +168,7 @@ impl<L: FrameLink> ModbusClient for Udp<L> {
             if header.unit != unit {
                 return Err(MasterError::Unexpected);
             }
-            let pdu = &self.buf[HEADER..len];
+            let pdu = &self.link.buffer()[HEADER..len];
             response[..pdu.len()].copy_from_slice(pdu);
             return Ok(pdu.len());
         }
@@ -149,7 +176,7 @@ impl<L: FrameLink> ModbusClient for Udp<L> {
 
     async fn broadcast(&mut self, request: &[u8]) -> Result<(), MasterError<Self::Error>> {
         self.tid = self.tid.wrapping_add(1);
-        self.send(self.tid, 0, request)
+        self.send_pdu(self.tid, 0, request)
             .await
             .map_err(MasterError::Io)
     }
@@ -172,18 +199,14 @@ mod tests {
             Err(LinkError::Lost("обрезана")),
             Ok(frame(4, 0, 0, &[0x06, 0, 1, 0, 2])),
         ]));
-        let mut buf = [0; MAX_PDU];
-        let r = udp.recv(&mut buf).await.unwrap();
-        assert_eq!((r.unit, &buf[..r.len]), (0xFF, &[0x06, 0, 1, 0, 2][..]));
+        let len = udp.recv().await.unwrap();
+        assert_eq!(&udp.buffer()[..len], &[0xFF, 0x06, 0, 1, 0, 2]);
         udp.link.send = Err(LinkError::Lost("нет буфера"));
-        assert_eq!(udp.reply(&[0x06, 0, 1, 0, 2]).await, Ok(()));
+        assert_eq!(udp.send(len).await, Err(LinkError::Lost("нет буфера")));
         udp.link.send = Ok(());
-        udp.reply(&[0x06, 0, 1, 0, 2]).await.unwrap();
+        udp.send(len).await.unwrap();
         assert_eq!(udp.link.sent, [frame(4, 0, 0, &[0x06, 0, 1, 0, 2])]);
-        assert!(matches!(
-            udp.recv(&mut buf).await,
-            Err(ServeError::Io(LinkError::Down(_)))
-        ));
+        assert!(matches!(udp.recv().await, Err(LinkError::Down(_))));
     }
 
     // {%- if modbus_master == "true" %}
@@ -233,10 +256,10 @@ mod tests {
         fn never_panics(datagram in proptest::collection::vec(proptest::num::u8::ANY, 0..300)) {
             let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
             rt.block_on(async {
-                let mut buf = [0; MAX_PDU];
                 let mut udp = Udp::new(Datagrams::with([Ok(datagram.clone())]));
-                let _ignored = udp.recv(&mut buf).await;
+                let _ignored = udp.recv().await;
                 // {%- if modbus_master == "true" %}
+                let mut buf = [0; MAX_PDU];
                 let mut udp = Udp::new(Datagrams::with([Ok(datagram)]));
                 let _ignored = udp.exchange(1, &[0x03, 0, 0, 0, 1], &mut buf).await;
                 // {%- endif %}

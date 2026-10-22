@@ -1,10 +1,9 @@
-//! Порты Modbus: данные slave'а, транспорты, ошибки обмена.
+//! Порты Modbus: данные slave'а и коды исключений.
 //!
 //! [`Registers`](crate::Registers) реализует приложение — это его данные,
-//! которые видны по шине; пользуется им `domain::modbus::slave::serve`.
-//! Транспорт slave'а — [`ModbusServer`](crate::ModbusServer) — реализует
-//! `adapters::modbus` (RTU, TCP, UDP); ошибка обмена — у
-//! `domain::modbus::slave` ([`ServeError`](crate::modbus::ServeError)).
+//! которые видны по шине; пользуется им обработчик `domain::modbus::Slave`.
+//! Транспорт slave'а — канал [`FrameLink`](crate::FrameLink) с кадром «адрес
+//! и PDU», его реализует `adapters::modbus` (RTU, TCP, UDP).
 // {%- if modbus_master == "true" %}
 //! Транспорт master'а — [`ModbusClient`](crate::ModbusClient) — реализуют они
 //! же; его ошибка — [`MasterError`](crate::modbus::MasterError)
@@ -17,7 +16,7 @@ pub use registers::{Bits, BitsMut, Registers, Words, WordsMut};
 
 /// Наибольший PDU Modbus — функция и данные: 253 байта. Предел пришёл из
 /// кадра RTU (256 байт с адресом и CRC) и одинаков для всех транспортов.
-/// Буферы PDU транспортов ([`ModbusServer`]) — не короче.
+/// Буферы PDU транспортов — не короче.
 pub const MAX_PDU: usize = 253;
 
 /// Код исключения Modbus — ответ slave'а вместо данных.
@@ -140,83 +139,6 @@ pub trait ModbusClient {
     async fn broadcast(&mut self, request: &[u8]) -> Result<(), MasterError<Self::Error>>;
 }
 // {%- endif %}
-/// Принятый slave'ом запрос: кому он и сколько байт PDU.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct Received {
-    /// Адрес устройства: 0 — широковещательный, 0xFF — «этому устройству,
-    /// каким бы ни был его адрес» (так отдают любой запрос TCP и UDP: они
-    /// адресуют устройство по IP).
-    pub unit: u8,
-    /// Длина PDU запроса в буфере `recv`, не меньше 1.
-    pub len: usize,
-}
-
-/// Транспорт Modbus-slave'а: принимает кадры запросов, отправляет кадры
-/// ответов.
-///
-/// Реализуют `adapters::modbus::{Rtu, Tcp, Udp}`.
-/// Битые кадры (CRC, MBAP с чужим протоколом, длина не сходится) транспорт
-/// отбрасывает сам и ждёт следующий: до логики slave'а доходят только целые
-/// PDU.
-///
-/// Ответ — на последний принятый запрос: транспорт помнит, что нужно, чтобы
-/// его адресовать (номер транзакции MBAP, отправитель датаграммы). Slave
-/// обслуживает запросы по одному, так что этого достаточно.
-///
-/// После отказа узел сразу начинает новую сессию: переждать отказ (новое
-/// соединение, пауза — но не ошибка снова без ожидания) дело транспорта и
-/// канала под ним.
-#[must_use]
-pub trait ModbusServer {
-    /// Отказ транспорта.
-    type Error;
-
-    /// Ждёт следующий целый запрос; кладёт его PDU в начало `buf`.
-    ///
-    /// # Errors
-    ///
-    /// Отказ транспорта, конец потока, потерянная граница кадра —
-    /// [`ServeError`].
-    ///
-    /// # Panics
-    ///
-    /// Если `buf` короче [`MAX_PDU`].
-    async fn recv(&mut self, buf: &mut [u8]) -> Result<Received, ServeError<Self::Error>>;
-
-    /// Отправляет PDU ответа на последний принятый запрос.
-    ///
-    /// # Errors
-    ///
-    /// Отказ транспорта — [`ServeError`].
-    ///
-    /// # Panics
-    ///
-    /// Если `response` длиннее [`MAX_PDU`].
-    async fn reply(&mut self, response: &[u8]) -> Result<(), ServeError<Self::Error>>;
-}
-
-/// Почему slave перестал обслуживать линию (`domain::modbus::slave::serve`).
-///
-/// Только отказы транспорта: битый кадр, чужой адрес, недопустимый запрос
-/// slave переживает сам — пропускает или отвечает исключением.
-#[derive(Debug, PartialEq, Eq, thiserror::Error)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[non_exhaustive]
-pub enum ServeError<E> {
-    /// Отказ транспорта. `{0:?}`, а не `{0}`: транспорт не обещает `Display`.
-    #[error("отказ транспорта: {0:?}")]
-    Io(E),
-    /// Поток закончился: соединение закрыто.
-    #[error("поток закончился")]
-    Eof,
-    /// Кадр не по протоколу там, где границу следующего не найти (длина в
-    /// заголовке MBAP вне допустимой): поток не выровнять, соединение стоит
-    /// переоткрыть.
-    #[error("граница кадра в потоке потеряна")]
-    Framing,
-}
-
 // {%- if modbus_master == "true" %}
 /// Что может пойти не так в запросе master'а (`domain::modbus::master`).
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]

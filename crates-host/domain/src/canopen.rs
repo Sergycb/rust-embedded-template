@@ -130,17 +130,46 @@ pub fn dictionary() -> Dictionary {
     }
 }
 
-// Вход узла — `CanOpenWiring`: структуру эмитит сам фрагмент (`boot: …
-// struct`). Строит её compose-site:
-//
-// ```ignore
-// fragments: [::domain::CANOPEN_FRAG<bsp::can::can::Can, crate::settings::Settings> as CANOPEN
-//                 = ::domain::canopen::CanOpenWiring { bus: parts.board.can, node_id: 1,
-//                       dictionary: ::domain::canopen::dictionary(),
-//                       settings: crate::settings::new(parts.board.settings), persist: true,
-//                       ota_cmd: ::domain::ota::OtaClient::new(ota_cmd_requester(),
-//                                    ::domain::ota::ClientId(0)) }];   // только с OTA
-// ```
+/// Вход узла `CANOPEN`: шина, адрес, словарь и из чего собрать хранилище
+/// настроек `S`. Строит его compose-site:
+///
+/// ```ignore
+/// fragments: [::domain::CANOPEN_FRAG<bsp::can::can::Can, crate::settings::Settings> as CANOPEN
+///                 = ::domain::canopen::CanOpenWiring { bus: board.can, node_id: 1,
+///                       dictionary: ::domain::canopen::dictionary(),
+///                       settings: board.settings, persist: true,
+///                       ota_cmd: ::domain::ota::OtaClient::new(ota_cmd_requester(),
+///                                    ::domain::ota::ClientId(0)) }];   // только с OTA
+/// ```
+///
+/// Написан руками, а не выведен фрагментом: слот хранилища инициализируется
+/// сборкой (порт [`Assemble`](ports::Assemble)) над рычагом платы, а не
+/// чтением поля.
+pub struct CanOpenWiring<C, S: ports::Assemble> {
+    /// Шина CAN платы.
+    pub bus: C,
+    /// Адрес узла на шине, 1..=127.
+    pub node_id: u8,
+    /// Словарь объектов устройства.
+    pub dictionary: Dictionary,
+    /// Из чего собрать хранилище: раздел настроек платы или `()` без него.
+    pub settings: S::Source,
+    /// Сохранять ли объекты и адрес: `false` — хранилища у проекта нет.
+    pub persist: bool,
+    // {%- if ota == "true" %}
+    /// Клиент входа `CMD` узла OTA: команды объекта OTA словаря уходят им.
+    pub ota_cmd: crate::ota::OtaClient,
+    // {%- endif %}
+}
+
+// Вручную: печатать шину и словарь незачем, а `Debug` есть не у всех.
+impl<C, S: ports::Assemble> core::fmt::Debug for CanOpenWiring<C, S> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("CanOpenWiring")
+            .field("node_id", &self.node_id)
+            .finish_non_exhaustive()
+    }
+}
 
 /// Узел `CANOPEN`: ведёт стек CANopen, пока жива шина.
 ///
@@ -386,7 +415,7 @@ where
 // его колбэки слотов не занимают: они в кадре задачи (`task`).
 supervisor::supervisor_fragment! {
     name: CANOPEN_FRAG<C, S>;
-    boot: inputs: struct $crate::canopen::CanOpenWiring;
+    boot: inputs: $crate::canopen::CanOpenWiring<C, S>;
 
     node deps: [], restart: Never,
         resources: [
@@ -396,8 +425,9 @@ supervisor::supervisor_fragment! {
             NODE_ID: u8 = inputs.node_id,
             /// Словарь объектов устройства.
             DICTIONARY: $crate::canopen::Dictionary = inputs.dictionary,
-            /// Хранилище сохранённых объектов и адреса узла.
-            SETTINGS: local S = inputs.settings,
+            /// Хранилище сохранённых объектов и адреса узла — собирает его
+            /// узел над рычагом платы.
+            SETTINGS: local S = <S as $crate::Assemble>::assemble(inputs.settings, ()),
             /// Сохранять ли объекты и адрес: `false` — хранилища у проекта нет.
             PERSIST: bool = inputs.persist,
             // {%- if ota == "true" %}

@@ -872,8 +872,9 @@ const RAM_COST = #{
     links: #{
         // stm32g474re uart-only 3884 против 3884; Modbus — stm32h743zg два UART и
         // TCP 13940 (по одному — 2168); protobuf — stm32f407ve 6824 против 3880.
-        "uart:none": 0, "uart:modbus": 2200, "uart:protobuf": 2944,
-        // stm32f407ve modbus-uart-can 6048 = 3880 + 2168 (UART с Modbus);
+        // Modbus RTU держит свой буфер кадра (`adapters::modbus::Rtu`, 256 байт):
+        // stm32f407ve modbus-uart-can 6320 = 3880 + 2440 (UART с Modbus).
+        "uart:none": 0, "uart:modbus": 2472, "uart:protobuf": 2944,
         // CANopen — stm32g474re canopen-config 7504 против 3884 + 32 (настройки).
         "can:none": 0, "can:canopen": 3588,
         // stm32h743zg против 3932: tcp-only 5308, modbus-tcp 9540 (с master и
@@ -884,7 +885,8 @@ const RAM_COST = #{
         "udp:none": 416, "udp:modbus": 4808, "udp:protobuf": 5128,
         // stm32g474re usb-only 5244 против 3884; Modbus — stm32f407ve 7464 против
         // 3880; protobuf — stm32f407ve два USB 12656 (по 4388).
-        "usb:none": 1360, "usb:modbus": 3584, "usb:protobuf": 4388,
+        // Modbus по USB — тот же RTU: +272 к замеру до буфера кадра в `Rtu`.
+        "usb:none": 1360, "usb:modbus": 3856, "usb:protobuf": 4388,
     },
     // Стек `embassy-net` и драйвер Ethernet — один раз на tcp/udp: stm32f407ve
     // modbus-tcp-udp 14296 — на 960 меньше, чем TCP и UDP по отдельности.
@@ -2330,19 +2332,31 @@ variable::set("cobs_used", if cobs_used { "true" } else { "false" });
 // Сокеты протоколов на стеке `embassy-net` (порт, буферы): по одному на сетевой
 // транспорт с протоколом. Транспорт без протокола сокета не открывает.
 variable::set("protocol_sockets", sockets.to_string());
-// Слоты сокетов в стеке (`SOCKETS` в `app::net`): по одному на каждый сетевой
-// транспорт, с протоколом и без — на `tcp` без протокола сокет открывает
-// приложение, и без слота под него `embassy-net` паникует.
+// Слоты сокетов в стеке: по одному на каждый сетевой транспорт, с протоколом и
+// без — на `tcp` без протокола сокет открывает приложение, и без слота под него
+// `embassy-net` паникует.
 let net_sockets = 0;
 for link in links {
     if link.kind == "tcp" || link.kind == "udp" { net_sockets += 1; }
 }
 variable::set("net_sockets", net_sockets.to_string());
+// Все сокеты стека (`NET_SOCKETS` в `[env]`, `bsp::net`): DHCP-клиент, сетевые
+// транспорты и соединения сетевых служб — по сокету на копию пула REST, на
+// консоль SSH и на клиент MQTT. Плата строит стек под это число, а сокеты
+// открывают узлы.
+// Соединений REST разом — копий пула узлов `HTTP` (`HTTP_CONNECTIONS` в `[env]`,
+// литерал пула в `app/src/graph.rs`): решение приложения, а не узла.
+let http_connections = if services.contains("rest") { 2 } else { 0 };
+variable::set("http_connections", http_connections.to_string());
+let net_stack_sockets = net_sockets + 1 + http_connections;
+if services.contains("ssh") { net_stack_sockets += 1; }
+if services.contains("mqtt") { net_stack_sockets += 1; }
+variable::set("net_stack_sockets", net_stack_sockets.to_string());
 
-// Кадровый канал (`ports::FrameLink`, `LinkError`) нужен protobuf (канал хоста),
-// шине CAN (ошибка `CanBus`) и UDP-каналу (`adapters::net::UdpLink` реализует
-// `FrameLink`) — с протоколом и без него.
-variable::set("link_port", if on.protobuf || has.can || has.udp { "true" } else { "false" });
+// Кадровый канал (`ports::FrameLink`, `LinkError`, `Handler`) нужен протоколам
+// узла `domain::server` (protobuf и Modbus slave), шине CAN (ошибка `CanBus`) и
+// UDP-каналу (`adapters::net::UdpLink` реализует `FrameLink`) — с протоколом и без него.
+variable::set("link_port", if on.protobuf || on.modbus || has.can || has.udp { "true" } else { "false" });
 // Порт хранилища настроек (`ports::SettingsStorage`) нужен, пока есть что в него
 // класть: раздел, EEPROM или внешняя флеш (`config`) либо заглушка `Unavailable`
 // у узла CANopen без хранилища. Иначе порта и адаптера в проекте нет.
@@ -2445,6 +2459,9 @@ if !on.canopen {
 }
 if variable::get("protocol_link") != "true" {
 	file::delete("crates-cross/app/src/link.rs");
+	// Узел протокола «запрос — ответ» (`domain::server`) обслуживает только
+	// Modbus slave и protobuf.
+	file::delete("crates-host/domain/src/server.rs");
 }
 if variable::get("link_port") != "true" {
 	file::delete("crates-host/ports/src/link.rs");
@@ -2510,7 +2527,6 @@ if !has.usb && !has.tcp && !has.udp {
 // USB — устройство `embassy-usb`, узел USB и поток CDC — только с транспортом usb.
 if !has.usb {
 	file::delete("crates-cross/bsp/src/usb.rs");
-	file::delete("crates-cross/app/src/usb.rs");
 	file::delete("docs/modules/bsp-usb.md");
 	file::delete("crates-host/adapters/src/usb.rs");
 	file::delete("crates-host/domain/src/usb.rs");
@@ -2518,7 +2534,6 @@ if !has.usb {
 // Сеть — стек `embassy-net`, узел NET и их сокеты — только с tcp/udp.
 if !has.tcp && !has.udp {
 	file::delete("crates-cross/bsp/src/net.rs");
-	file::delete("crates-cross/app/src/net.rs");
 	file::delete("docs/modules/bsp-net.md");
 	file::delete("crates-host/adapters/src/net.rs");
 	file::delete("crates-host/adapters/src/net");
@@ -2529,10 +2544,10 @@ if rng[0] == "" || (!has.tcp && !has.udp) {
 	file::delete("crates-cross/bsp/src/rng.rs");
 	file::delete("docs/modules/bsp-rng.md");
 }
-// Бэкенд `getrandom` над RNG — только с ssh: `sunset` берёт случайность через
-// `getrandom` сам, остальным сетевым проектам хватает затравки стека.
-if !variable::get("net_services").split(",").contains("ssh") {
-	file::delete("crates-cross/app/src/rng.rs");
+// Сетевые службы приложения (`app::net`: секреты, брокер MQTT) — только с
+// выбранной службой.
+if services.len() == 0 {
+	file::delete("crates-cross/app/src/net.rs");
 }
 // Узлы сетевых служб — только выбранных. Сведения об устройстве
 // (`domain::device`) читают HOST, HTTP, SSH и MQTT.
@@ -2567,12 +2582,12 @@ variable::set("ssh_host_key", if !services.contains("ssh") { "" }
 	else { "file" });
 // Номера клиентов OTA у служб — следом за транспортами с протоколом: одно
 // число на граф и задачи без графа, а не счёт в каждом файле. У REST — по
-// клиенту на копию пула (`rest_ota_client` и следующий: `CONNECTIONS` — 2,
-// его держит `const`-assert в `app/src/graph.rs`), SSH — за ними, MQTT — за SSH.
+// клиенту на копию пула (`rest_ota_client` и следующие, `http_connections`
+// штук), SSH — за ними, MQTT — за SSH.
 let protocol_clients = links.filter(|link| link.protocol != "none").len();
 variable::set("rest_ota_client", protocol_clients.to_string());
-variable::set("ssh_ota_client", (protocol_clients + if services.contains("rest") { 2 } else { 0 }).to_string());
-variable::set("mqtt_ota_client", (protocol_clients + (if services.contains("rest") { 2 } else { 0 })
+variable::set("ssh_ota_client", (protocol_clients + http_connections).to_string());
+variable::set("mqtt_ota_client", (protocol_clients + http_connections
 	+ (if services.contains("ssh") { 1 } else { 0 })).to_string());
 
 // Обёртка EEPROM — только когда настройки лежат в ней; без неё файл с

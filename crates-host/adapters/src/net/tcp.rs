@@ -14,6 +14,7 @@ use embassy_time::Duration;
 use embassy_time::{Instant, Timer};
 // {%- endif %}
 use embedded_io_async::{ErrorKind, ErrorType, Read, Write};
+use ports::Assemble;
 // {%- if net_services contains "mqtt" %}
 use ports::dial::Dial;
 // {%- endif %}
@@ -48,6 +49,27 @@ const KEEP_ALIVE: Duration = Duration::from_secs(10);
 /// Через сколько без ответа на keep-alive и данные соединение считается
 /// пропавшим: три проверки подряд.
 const IDLE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Память и порт TCP-сервера от приложения: на каком порту ждать клиента и
+/// буферы сокета.
+#[derive(Debug)]
+pub struct TcpServerBuffers {
+    /// Порт, на котором сервер ждёт клиента.
+    pub port: u16,
+    /// Буфер приёма сокета.
+    pub rx: &'static mut [u8],
+    /// Буфер передачи сокета.
+    pub tx: &'static mut [u8],
+}
+
+impl Assemble for TcpServer {
+    type Source = Stack<'static>;
+    type Buffers = TcpServerBuffers;
+
+    fn assemble(stack: Stack<'static>, buffers: TcpServerBuffers) -> Self {
+        Self::new(stack, buffers.port, buffers.rx, buffers.tx)
+    }
+}
 
 impl TcpServer {
     /// Сервер на порту `port` стека `stack` с буферами сокета `rx` и `tx`.
@@ -237,6 +259,24 @@ pub(crate) fn backoff(failures: u32) -> Duration {
         0 => Duration::from_secs(0),
         // Сдвиг ограничен: дальше 2⁵ с пауза всё равно упирается в потолок.
         n => Duration::from_secs(1 << (n - 1).min(5)).min(MAX_BACKOFF),
+    }
+}
+
+/// Буферы сокета TCP-клиента от приложения.
+#[derive(Debug)]
+pub struct TcpClientBuffers {
+    /// Буфер приёма сокета.
+    pub rx: &'static mut [u8],
+    /// Буфер передачи сокета.
+    pub tx: &'static mut [u8],
+}
+
+impl Assemble for TcpClient {
+    type Source = Stack<'static>;
+    type Buffers = TcpClientBuffers;
+
+    fn assemble(stack: Stack<'static>, buffers: TcpClientBuffers) -> Self {
+        Self::new(stack, buffers.rx, buffers.tx)
     }
 }
 

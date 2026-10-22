@@ -13,16 +13,18 @@
 
 use core::fmt;
 
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::mutex::Mutex;
 use ports::{Bits, BitsMut, Exception, Registers, Words, WordsMut};
 
 /// Мьютекс карты регистров, общей у нескольких узлов.
 ///
-/// `NoopRawMutex` — допущение «один исполнитель», то же, что у
-/// `bsp::flash::FlashMutex` и разделов OTA: все узлы Modbus крутятся на
-/// одном исполнителе, и мьютекс сериализует только их `await`.
-pub type MapMutex<R> = Mutex<NoopRawMutex, R>;
+/// `CriticalSectionRawMutex`, а не `NoopRawMutex` флеша и разделов OTA: с
+/// ним мьютекс `Sync` и ложится в обычный `static` (`OnceLock` compose-site),
+/// откуда ручку берёт каждый узел сам, без общего объекта, который граф
+/// раздавал бы по узлам. Критическая секция — только на захват и отпуск,
+/// а не на весь вызов карты: `await` внутри идут при открытых прерываниях.
+pub type MapMutex<R> = Mutex<CriticalSectionRawMutex, R>;
 
 /// Ручка карты регистров `R`, общей у нескольких узлов: каждый вызов порта
 /// берёт мьютекс карты и отдаёт вызов ей.

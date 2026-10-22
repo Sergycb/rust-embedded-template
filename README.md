@@ -77,7 +77,7 @@ cargo run -p app                    # прошить приложение и с�
 | Логика и узлы графа | `crates-host/domain/` | всё, что не про регистры: автоматы, протоколы, конфигурация, а также объявления узлов (`supervisor_fragment!`) и их работа (`domain::heartbeat::run`, `domain::cpu_load::task` — автоматы `#[fsm::typestate]` на контексте узла) — тестируется на хосте; логика вне автоматов — функции над портами |
 | Адаптеры без чипа | `crates-host/adapters/` | реализации портов, которым хватает `embedded-storage`/`embedded-hal`/`embedded-io-async`: OTA поверх `embassy-boot` (`adapters::ota`), настройки поверх `sequential-storage` (`adapters::settings`){% if cobs_used == "true" %}, кадрирование потока COBS + CRC (`adapters::cobs`){% endif %}{% if protocol == "modbus" %}, транспорты Modbus (`adapters::modbus`){% endif %} — тестируется на хосте |
 {%- if protocol == "protobuf" %}
-| Схема protobuf | `crates-host/proto/` | `.proto` и типы, сгенерированные `micropb-gen` в `build.rs` (схему разбирает `protox`, системный `protoc` не нужен); пример — конверт `Request`/`Response` с `request_id`, проект заменяет своим. Обрабатывает узел `domain::HOST_FRAG` |
+| Схема protobuf | `crates-host/proto/` | `.proto` и типы, сгенерированные `micropb-gen` в `build.rs` (схему разбирает `protox`, системный `protoc` не нужен); пример — конверт `Request`/`Response` с `request_id`, проект заменяет своим. Обрабатывает узел протокола `domain::SERVER_FRAG` с обработчиком `domain::host::Protobuf` |
 {%- endif %}
 {%- if protocol == "canopen" %}
 | Описание устройства CANopen | `crates-host/canopen/` | `device.toml` — идентичность, PDO, объекты приложения; `build.rs` (`zencan-build`) генерирует из него словарь объектов и `static`-объекты узла (`NODE_MBOX`, `NODE_STATE`, `OD_TABLE`), которые compose-site передаёт узлу `domain::CANOPEN_FRAG`; пример — проект заменяет своим |
@@ -87,11 +87,14 @@ cargo run -p app                    # прошить приложение и с�
 объяснением, почему выбрана именно эта библиотека, а не соседняя.
 
 `Board::new()` — единственное место, где начинается владение железом, и единственное
-место, где оно заканчивается: наружу он отдаёт не периферию, а объекты платы под
-трейтами (`Board`) и драйверы, над которыми приложение собирает стеки (`Drivers`:
-USB, Ethernet). Адаптеры над ними — транспорт протокола, сетевой стек, адаптер
-обновления, хранилище — собирает `app` вместе с их буферами
-(`crates-cross/app/src/parts.rs` и соседи): размер буфера и порт — решение
+место, где оно заканчивается: наружу он отдаёт не периферию, а рычаги платы —
+объекты под трейтами, которыми можно управлять: потоки, шины, разделы флеша,
+сторож, драйверы микросхем платы. Пары, которые порознь не собрать, плата отдаёт
+собранными: USB-устройство с потоком CDC и сетевой стек с его фоновой работой.
+Протоколы над рычагами — канал протокола, сокеты служб, адаптер обновления,
+хранилище — собирает узел `domain`, которому они нужны (порт `ports::Assemble`), а
+`app` выбирает тип адаптера и заводит статики с его буферами
+(`crates-cross/app/src/link.rs`, `net.rs`): размер буфера и порт — решение
 приложения, а не платы. Приложение и домен работают с объектами через порт (узел
 OTA, например, зовёт `flash.mark_booted()`) и про регистры не знают — ни
 `embassy-stm32`, ни `cortex-m` нет даже в манифесте `app`. Ни `Peripherals`, ни
@@ -144,8 +147,8 @@ path-зависимость. Версии зависимостей у `root` и 
 
 ## Архитектура и когда что применять
 
-**Главный принцип**: `cross` остаётся минимальным — только создание статических
-hardware-объектов (буферы, DMA, периферия) и оркестрация задач (`Spawner`,
+**Главный принцип**: `cross` остаётся минимальным — рычаги платы (`bsp`), статики,
+которые домен получает ссылками (буферы, DMA), и оркестрация задач (`Spawner`,
 supervisor-графы, watchdog). Вся остальная логика — в `domain`, даже асинхронная и
 «системная» на вид (стейтчарты, RPC, конкурентные примитивы). Подробное правило
 «куда класть что» и разбор пограничных случаев — в docs/architecture.md.
@@ -162,31 +165,37 @@ supervisor-графы, watchdog). Вся остальная логика — в 
              и проверяется на хосте моком — до тех пор, пока ему не понадобится
              периферия конкретного чипа
            → готовый объект становится полем Board
-           → app зовёт его методы через порт из ports
+           → узел domain получает его во входе и зовёт через порт из ports
 ```
 
 Драйвер переезжает из `adapters` в `bsp` только тогда, когда ему перестаёт хватать
 трейтов `embedded-hal`: понадобились `embassy_stm32::peripherals` или статический
 DMA-буфер. До этого момента его место — в `domain`, где он тестируется без железа.
-В `ports` объявлено {% if protocol == "modbus" %}{% if modbus_master == "true" %}семь{% else %}шесть{% endif %} трейтов{% elsif protocol == "none" %}три трейта{% else %}пять трейтов{% endif %}. `FirmwareUpdate` и `SettingsStorage`
-реализованы в `adapters`, а собирает их `app` над разделами флеша, которые отдаёт
-`Board`, когда при генерации выбраны OTA и раздел настроек; порт перезагрузки
-`Reboot` для узла OTA реализует `bsp::cpu`.
-{%- if link_port == "true" %} `FrameLink` — канал целых сообщений: его реализуют{% if cobs_used == "true" %} адаптер
-кадрирования `adapters::cobs::Cobs` поверх потока (UART, USB CDC, TCP){% endif %}{% if cobs_used == "true" and has_udp == "true" %} и{% endif %}{% if has_udp == "true" %} UDP-сокет
-`adapters::net::UdpLink`{% endif %}{% if has_can == "true" %}{% if cobs_used == "true" or has_udp == "true" %}, а{% endif %} шина CAN — свой порт `CanBus`{% endif %}.
+В `ports` — трейты, которыми домен говорит с миром, и `Assemble`: как адаптер
+собирается из рычага платы и памяти приложения — так узел собирает свой адаптер
+сам. `FirmwareUpdate` и `SettingsStorage` реализованы в `adapters`, а собирают их
+узлы OTA и потребитель настроек над разделами флеша, которые отдаёт `Board`, когда
+при генерации выбраны OTA и раздел настроек; порт перезагрузки `Reboot` для узла
+OTA реализует `bsp::cpu`.
+{%- if link_port == "true" %} `FrameLink` — канал целых кадров, который держит свой буфер (один на
+приём и ответ), а `Handler` — протокол над ним: что ответить на кадр. Обоих
+обслуживает один узел протокола `domain::SERVER_FRAG`; граф называет его по
+протоколу и транспорту (`MODBUS_USART1`, `HOST_TCP`).{% if has_protobuf == "true" %} Канал protobuf — адаптер
+кадрирования `adapters::cobs::Cobs` поверх потока (UART, USB CDC), `TcpCobs`
+поверх TCP или UDP-сокет `adapters::net::UdpLink`.{% endif %}{% if has_can == "true" %} Шина CAN — свой порт `CanBus`.{% endif %}
 {%- endif %}
 {%- if protocol == "modbus" %} `Registers` — данные устройства, видимые по
-Modbus: его реализует приложение, а обслуживает узел `domain::MODBUS_SLAVE_FRAG`.
-{% if modbus_master == "true" %}`ModbusServer` и `ModbusClient` — транспорт Modbus под slave'ом и master'ом{% else %}`ModbusServer` — транспорт Modbus под slave'ом{% endif %}:
-`adapters::modbus::Rtu` (RTU поверх потока UART или USB CDC), `Tcp` (MBAP поверх
-потока TCP) и `Udp` (MBAP в датаграмме) — в проекте те, что нужны выбранным
-транспортам.
+Modbus: его реализует приложение, а кадры к нему переводит обработчик
+`domain::modbus::Slave` (адрес, широковещание, исключения). Канал slave'а —
+`FrameLink` с кадром «адрес и PDU»: `adapters::modbus::Rtu` (RTU поверх потока
+UART или USB CDC), `Tcp` (MBAP поверх потока TCP) и `Udp` (MBAP в датаграмме) — в
+проекте те, что нужны выбранным транспортам.{% if modbus_master == "true" %} Они же реализуют порт
+master'а `ModbusClient`.{% endif %}
 {%- endif %}
 {%- if protocol == "protobuf" %}
 `HostService` — обработчик сообщений protobuf от хоста: его реализует приложение
-(перевод сообщений схемы в свои проверенные типы), а принимает и отвечает узел
-`domain::HOST_FRAG`.
+(перевод сообщений схемы в свои проверенные типы), а кадры к нему переводит
+обработчик `domain::host::Protobuf` узла протокола `domain::SERVER_FRAG`.
 {%- endif %}
 {%- if protocol == "canopen" %} `CanBus` — шина CAN под узлом CANopen `domain::CANOPEN_FRAG`
 (стек `zencan`): его реализует плата поверх CAN-контроллера чипа (`bsp::can`), а
@@ -484,16 +493,19 @@ docs/ota.md.
 (`ext_flash`, первый из вопросов о памяти): есть она — раздел на ней, нет —
 внутренняя EEPROM, если она есть у чипа, иначе раздел `CONFIG` во flash.
 Выбрали хранилище — `Board` отдаёт поле `settings`, носитель: раздел `CONFIG`,
-EEPROM или внешнюю флеш (`crates-cross/bsp/src/settings.rs` приносит границы раздела
-из `memory.x`). Само хранилище — `adapters::settings::Settings` (тестируется на
-хосте) поверх `sequential-storage`, пары «ключ — значение», переживающие и
-перезапуск, и обновление прошивки, — собирает приложение
-(`crates-cross/app/src/settings.rs`).
+EEPROM или внешнюю флеш (`crates-cross/bsp/src/settings.rs`: раздел — от границ
+`CONFIG` из генерации, EEPROM — обёрнутая платой в `NorFlash`). Само хранилище —
+`adapters::settings::Settings` (тестируется на хосте) поверх `sequential-storage`
+на весь объём носителя, пары «ключ — значение», переживающие и перезапуск, и
+обновление прошивки, — собирает узел, которому оно нужно (порт `Assemble`, тип —
+псевдоним `crate::settings::Settings` в `crates-cross/app/src/settings.rs`).
 
 ```rust
-use ports::SettingsStorage;        // чтение и запись живут в порту
+use ports::{Assemble, SettingsStorage}; // чтение и запись живут в порту
 
-let mut settings = crate::settings::new(parts.board.settings);
+// Узел в `domain`, обобщённый по хранилищу `S` (граф подставит
+// `crate::settings::Settings`), собирает его над носителем `board.settings`.
+let mut settings = S::assemble(store, ());
 settings.write(KEY_CALIBRATION, &encoded).await?;
 if let Some(raw) = settings.read(KEY_CALIBRATION, &mut scratch).await? {
     // раскодировать тем же, чем кодировали: postcard, miniconf, свой формат
@@ -585,12 +597,12 @@ ST-Link захваченным до переподключения кабеля 
 {%- elsif protocol == "protobuf" %} схему `crates-host/proto` и обработчик `crates-host/domain/src/host/service.rs`.
 {%- else %} словарь объектов `crates-host/canopen/device.toml`.
 {%- endif %}
-{%- if protocol_link == "true" %} Транспорт протокола (кадрирование, буферы, сокет и порт) собирает
-`crates-cross/app/src/link.rs` над объектом платы.{% else %} Шину CAN узел берёт как есть, без адаптера.{% endif %}
+{%- if protocol_link == "true" %} Канал протокола (кадрирование, сокет) собирает узел над рычагом
+платы, а тип канала, его буферы и порт — `crates-cross/app/src/link.rs`.{% else %} Шину CAN узел берёт как есть, без адаптера.{% endif %}
 {%- endif %}
 
-Выводы шаблон не выбирает: в поле `Board`{% if has_usb == "true" or has_net == "true" %} (USB и Ethernet — в `bsp::Drivers`, под
-сборку стека в `app::parts`){% endif %} встаёт заглушка (`bsp::stub`), с которой проект
+Выводы шаблон не выбирает: в поле `Board`{% if has_usb == "true" or has_net == "true" %} (у USB и Ethernet — под устройство
+`embassy-usb` и стек `embassy-net`, которые собирает плата){% endif %} встаёт заглушка (`bsp::stub`), с которой проект
 собирается и запускается, но узел ждёт впустую. Подставить своё железо —
 правка в модуле `bsp` транспорта по рецепту из таблицы
 (`cargo xtask pins <БЛОК> --snippet`).
@@ -607,7 +619,7 @@ ST-Link захваченным до переподключения кабеля 
 ### REST API
 
 Узлы `HTTP` (`crates-host/domain/src/http.rs`) — HTTP-сервер `picoserve` на порту 80,
-по сокету стека на соединение (`domain::http::CONNECTIONS`, пул `HTTP[2]` в графе).
+по сокету стека на соединение (`HTTP_CONNECTIONS` в `[env]` `crates-cross/.cargo/config.toml`, пул `HTTP[{{ http_connections }}]` в графе).
 `GET /api/info` — сведения об устройстве JSON{% if ota == "true" %}, `POST /api/reboot` — перезагрузка
 командой узлу OTA{% endif %}; свои маршруты — в `router()` того же модуля.
 
@@ -660,7 +672,7 @@ ssh_key="ssh-ed25519 …"` при генерации): в прошивке то�
 SSH тяжёлый: около 165 KiB флеша и 17 KiB RAM (`sunset` с ed25519, x25519,
 ML-KEM и ChaCha20-Poly1305), поэтому генерация предлагает его только с разделом
 приложения от 256 KiB. Случайность криптографии — аппаратный RNG через `getrandom`
-(`crates-cross/app/src/rng.rs`). Попыток входа на соединение — не больше шести
+(`crates-cross/bsp/src/rng.rs`). Попыток входа на соединение — не больше шести
 и 30 секунд на вход: `sunset` их не считает, ограничивает узел.
 {%- endif %}
 {%- if net_services contains "mqtt" %}

@@ -45,7 +45,8 @@ pub mod fake;
 
 // {%- endif %}
 // {%- if has_modbus == "true" %}
-/// Транспорты Modbus — RTU, TCP, UDP — для порта slave'а `ports::ModbusServer`.
+/// Транспорты Modbus — RTU, TCP, UDP — каналы slave'а (`ports::FrameLink` с
+/// кадром «адрес и PDU») для узла протокола `domain::server`.
 // {%- if modbus_master == "true" %}
 /// Они же реализуют порт master'а `ports::ModbusClient`.
 // {%- endif %}

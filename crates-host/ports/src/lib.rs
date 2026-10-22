@@ -40,8 +40,8 @@
 //! [`SettingsStorage`] — хранилище настроек: его реализует раздел, EEPROM или
 //! внешняя флеш, выбранные при генерации.
 // {%- endif %}
-//! Порты протоколов связи (`FrameLink`, `Registers`,
-//! `ModbusServer`, `HostService`, `CanBus`) есть только в
+//! Порты протоколов связи (`FrameLink`, `Handler`, `Registers`,
+//! `HostService`, `CanBus`) есть только в
 //! проекте, где протокол выбран при генерации, а `Dial` — где выбран
 //! клиент MQTT.
 //!
@@ -56,6 +56,9 @@
 //! Наружу всё реэкспортируется в корень, а внутреннее деление пользователя не
 //! касается (`docs/conventions.md`, «`lib.rs` только объявляет модули»).
 // {%- endif %}
+
+/// Сборка адаптера из рычага платы и памяти приложения.
+pub mod assemble;
 
 // {%- if has_can == "true" %}
 /// Шина CAN: кадры для узла CANopen или вашего протокола.
@@ -110,6 +113,7 @@ pub mod settings;
 pub mod eeprom;
 // {%- endif %}
 
+pub use assemble::Assemble;
 // {%- if has_can == "true" %}
 pub use can::CanBus;
 // {%- endif %}
@@ -117,16 +121,13 @@ pub use can::CanBus;
 pub use host::HostService;
 // {%- endif %}
 // {%- if link_port == "true" %}
-pub use link::{FrameLink, LinkError};
+pub use link::{FrameLink, Handler, LinkError};
 // {%- endif %}
 // {%- if net_services contains "mqtt" %}
 pub use dial::Dial;
 // {%- endif %}
 // {%- if has_modbus == "true" %}
-pub use modbus::{
-    Bits, BitsMut, Exception, MAX_PDU, ModbusServer, Received, Registers, ServeError, Words,
-    WordsMut,
-};
+pub use modbus::{Bits, BitsMut, Exception, MAX_PDU, Registers, Words, WordsMut};
 // {%- if modbus_master == "true" %}
 pub use modbus::{MasterError, ModbusClient};
 // {%- endif %}
@@ -140,7 +141,7 @@ pub use ota::command::{
     SIGNATURE_BYTES, reply_code,
 };
 pub use ota::download::DownloadError;
-pub use ota::update::{FirmwareUpdate, PendingImage, UpdateError};
+pub use ota::update::{FirmwarePartitions, FirmwareUpdate, PendingImage, UpdateError};
 // {%- endif %}
 // {%- if settings_port == "true" %}
 pub use settings::SettingsStorage;

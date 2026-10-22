@@ -2,7 +2,7 @@
 
 use embassy_net::Stack;
 use embassy_net::udp::{PacketMetadata, RecvError, SendError, UdpMetadata, UdpSocket};
-use ports::{FrameLink, LinkError};
+use ports::{Assemble, FrameLink, LinkError};
 
 /// UDP-канал на одном порту — [`FrameLink`] для протоколов, которым
 /// датаграмма и есть кадр (`modbus::Udp`, узел HOST).
@@ -12,6 +12,8 @@ use ports::{FrameLink, LinkError};
 pub struct UdpLink {
     socket: UdpSocket<'static>,
     peer: Option<UdpMetadata>,
+    /// Буфер канала: принятая датаграмма и собираемая к отправке.
+    buf: &'static mut [u8],
 }
 
 // Вручную: у сокетов `embassy-net` нет `Debug`.
@@ -21,9 +23,37 @@ impl core::fmt::Debug for UdpLink {
     }
 }
 
+/// Память и порт UDP-канала от приложения: порт, буферы сокета с метаданными
+/// датаграмм и буфер канала (`FrameLink::buffer`).
+#[derive(Debug)]
+pub struct UdpBuffers {
+    /// Порт, на котором канал ждёт датаграммы.
+    pub port: u16,
+    /// Метаданные принятых датаграмм сокета.
+    pub rx_meta: &'static mut [PacketMetadata],
+    /// Буфер приёма сокета.
+    pub rx: &'static mut [u8],
+    /// Метаданные датаграмм к отправке.
+    pub tx_meta: &'static mut [PacketMetadata],
+    /// Буфер передачи сокета.
+    pub tx: &'static mut [u8],
+    /// Буфер канала — не короче самой длинной датаграммы протокола.
+    pub frame: &'static mut [u8],
+}
+
+impl Assemble for UdpLink {
+    type Source = Stack<'static>;
+    type Buffers = UdpBuffers;
+
+    fn assemble(stack: Stack<'static>, b: UdpBuffers) -> Self {
+        Self::new(stack, b.port, b.rx_meta, b.rx, b.tx_meta, b.tx, b.frame)
+    }
+}
+
 impl UdpLink {
-    /// Канал на порту `port` стека `stack`: буферы приёма и передачи и их
-    /// метаданные — по датаграмме на запись.
+    /// Канал на порту `port` стека `stack`: буферы приёма и передачи сокета и
+    /// их метаданные — по датаграмме на запись; `buf` — буфер канала
+    /// (`FrameLink::buffer`), не короче самой длинной датаграммы протокола.
     ///
     /// # Panics
     ///
@@ -36,13 +66,18 @@ impl UdpLink {
         rx: &'static mut [u8],
         tx_meta: &'static mut [PacketMetadata],
         tx: &'static mut [u8],
+        buf: &'static mut [u8],
     ) -> Self {
         assert!(port != 0, "UDP-канал на порту 0");
         let mut socket = UdpSocket::new(stack, rx_meta, rx, tx_meta, tx);
         // Свежий сокет с ненулевым портом привязывается всегда.
         let bound = socket.bind(port);
         assert!(bound.is_ok(), "привязка UDP к порту {port}: {bound:?}");
-        Self { socket, peer: None }
+        Self {
+            socket,
+            peer: None,
+            buf,
+        }
     }
 }
 
@@ -61,8 +96,8 @@ pub enum UdpError {
 impl FrameLink for UdpLink {
     type Error = UdpError;
 
-    async fn recv(&mut self, buf: &mut [u8]) -> Result<usize, LinkError<UdpError>> {
-        match self.socket.recv_from(buf).await {
+    async fn recv(&mut self) -> Result<usize, LinkError<UdpError>> {
+        match self.socket.recv_from(self.buf).await {
             Ok((len, meta)) => {
                 self.peer = Some(meta);
                 Ok(len)
@@ -71,12 +106,16 @@ impl FrameLink for UdpLink {
         }
     }
 
-    async fn send(&mut self, frame: &[u8]) -> Result<(), LinkError<UdpError>> {
+    fn buffer(&mut self) -> &mut [u8] {
+        self.buf
+    }
+
+    async fn send(&mut self, len: usize) -> Result<(), LinkError<UdpError>> {
         let Some(peer) = self.peer else {
             return Err(LinkError::Lost(UdpError::NoPeer));
         };
         self.socket
-            .send_to(frame, peer)
+            .send_to(&self.buf[..len], peer)
             .await
             .map_err(|err| LinkError::Lost(UdpError::Send(err)))
     }
@@ -95,6 +134,7 @@ mod tests {
             leak([0; 16]),
             leak([PacketMetadata::EMPTY; 4]),
             leak([0; 64]),
+            leak([0; 8]),
         )
     }
 
@@ -107,7 +147,7 @@ mod tests {
         let peer = udp(host, 4000);
         with_network(device_runner, host_runner, async {
             assert!(matches!(
-                link.send(b"x").await,
+                link.send(1).await,
                 Err(LinkError::Lost(UdpError::NoPeer))
             ));
 
@@ -115,18 +155,18 @@ mod tests {
                 .send_to(&[1, 2, 3], (DEVICE, PORT))
                 .await
                 .unwrap();
-            let mut buf = [0; 8];
-            assert_eq!(link.recv(&mut buf).await.unwrap(), 3);
-            assert_eq!(buf[..3], [1, 2, 3]);
-            link.send(&[9, 8]).await.unwrap();
+            assert_eq!(link.recv().await.unwrap(), 3);
+            assert_eq!(link.buffer()[..3], [1, 2, 3]);
+            link.buffer()[..2].copy_from_slice(&[9, 8]);
+            link.send(2).await.unwrap();
             let mut reply = [0; 16];
             let (n, from) = peer.socket.recv_from(&mut reply).await.unwrap();
             assert_eq!((&reply[..n], from.endpoint.port), (&[9, 8][..], PORT));
 
             peer.socket.send_to(&[0; 12], (DEVICE, PORT)).await.unwrap();
-            let mut short = [0; 4];
+            // Датаграмма длиннее буфера канала (8 байт).
             assert!(matches!(
-                link.recv(&mut short).await,
+                link.recv().await,
                 Err(LinkError::Lost(UdpError::Truncated))
             ));
         })

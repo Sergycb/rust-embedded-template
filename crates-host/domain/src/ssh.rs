@@ -121,6 +121,16 @@ pub trait HostKey {
 #[derive(Debug, Clone, Copy)]
 pub struct Fixed(pub &'static [u8; 32]);
 
+/// Собирать нечего: зерно вшито в образ, compose-site отдаёт ссылку на него.
+impl ports::Assemble for Fixed {
+    type Source = &'static [u8; 32];
+    type Buffers = ();
+
+    fn assemble(seed: &'static [u8; 32], (): ()) -> Self {
+        Self(seed)
+    }
+}
+
 impl HostKey for Fixed {
     #[expect(
         clippy::unused_async_trait_impl,
@@ -139,6 +149,16 @@ pub const HOST_KEY_ID: u32 = 0x0055_0001;
 /// и записывает под [`HOST_KEY_ID`], следующие — читают.
 #[derive(Debug)]
 pub struct Stored<S>(pub S);
+
+/// Собирается вместе с хранилищем — над тем же рычагом платы.
+impl<S: ports::Assemble> ports::Assemble for Stored<S> {
+    type Source = S::Source;
+    type Buffers = S::Buffers;
+
+    fn assemble(source: S::Source, buffers: S::Buffers) -> Self {
+        Self(S::assemble(source, buffers))
+    }
+}
 
 impl<S: ports::SettingsStorage> HostKey for Stored<S> {
     async fn seed(&mut self) -> [u8; 32] {
@@ -713,6 +733,33 @@ impl<K: HostKey> SshCtx<'_, K> {
     }
 }
 
+/// Вход узла `SSH`: стек, сведения, вход пользователя и из чего собрать ключ
+/// хоста `K` (`Fixed` — вшитый ключ, `Stored` — над хранилищем настроек).
+///
+/// Написан руками, а не выведен фрагментом: слот ключа инициализируется
+/// сборкой (порт [`Assemble`](ports::Assemble)), а не чтением поля.
+pub struct SshWiring<K: ports::Assemble> {
+    /// Сетевой стек, на котором узел открывает свой сокет.
+    pub stack: crate::net::Stack<'static>,
+    /// Сведения для `info`.
+    pub info: crate::device::DeviceInfo,
+    /// Как пускать пользователя.
+    pub login: Login,
+    /// Из чего собрать ключ хоста.
+    pub host_key: K::Source,
+    // {%- if ota == "true" %}
+    /// Клиент входа `CMD` узла OTA — для `reboot`.
+    pub ota: crate::ota::OtaClient,
+    // {%- endif %}
+}
+
+// Вручную: у стека `embassy-net` нет `Debug`.
+impl<K: ports::Assemble> core::fmt::Debug for SshWiring<K> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("SshWiring").finish_non_exhaustive()
+    }
+}
+
 // Узел объявлен рядом со своей задачей — как `HTTP`. `<K>` — ключ хоста
 // (`Fixed` или `Stored` над хранилищем платы, которого `domain` не видит);
 // `local` у него и у стека — оба вправе быть `!Send`. Буферы (~7 KiB) — слоты
@@ -720,18 +767,18 @@ impl<K: HostKey> SshCtx<'_, K> {
 // которого может не быть всю жизнь платы.
 supervisor::supervisor_fragment! {
     name: SSH_FRAG<K>;
-    boot: inputs: struct $crate::ssh::SshWiring;
+    boot: inputs: $crate::ssh::SshWiring<K>;
 
     node deps: [], restart: Never,
         resources: [
             /// Сетевой стек, на котором узел открывает свой сокет.
-            STACK: local ::embassy_net::Stack<'static> = inputs.stack,
+            STACK: local $crate::net::Stack<'static> = inputs.stack,
             /// Сведения для `info`.
             INFO: $crate::device::DeviceInfo = inputs.info,
             /// Как пускать пользователя.
             LOGIN: $crate::ssh::Login = inputs.login,
-            /// Ключ хоста.
-            HOST_KEY: local K = inputs.host_key,
+            /// Ключ хоста — собирает его узел из того, что раздал compose-site.
+            HOST_KEY: local K = <K as $crate::Assemble>::assemble(inputs.host_key, ()),
             // {%- if ota == "true" %}
             /// Клиент входа `CMD` узла OTA — для `reboot`.
             OTA: $crate::ota::OtaClient = inputs.ota,

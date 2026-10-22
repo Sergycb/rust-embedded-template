@@ -1,6 +1,6 @@
-//! Узлы `MODBUS_*`: Modbus slave, адрес 1, по модулю на транспорт. Транспорт
-//! собирает `crate::link` над объектом платы; карта регистров одна на все узлы
-//! (`crate::modbus`), каждый получает её ручку.
+//! Узлы `MODBUS_*`: Modbus slave, адрес 1, по модулю на транспорт. Канал узел
+//! собирает сам над рычагом платы (тип и буферы — `crate::link`); карта
+//! регистров одна на все узлы (`crate::modbus`), каждый получает её ручку.
 {%- assign xs = links | split: "," %}
 {%- comment %} Номер клиента OTA — порядковый номер транспорта с протоколом в `links`, как в графе (`crate::graph`). {% endcomment %}
 {%- assign client = 0 %}
@@ -17,30 +17,30 @@ pub mod {{ f[4] }} {
     use crate::link::{{ f[4] }}::{Link, Source};
 
     #[embassy_executor::task]
-    async fn task(mut link: Link, {% if ota != "true" %}mut {% endif %}map: crate::modbus::Handle) {
+    async fn task(source: Source, map: crate::modbus::Handle) {
 {%- if ota == "true" %}
-        let mut regs = domain::modbus::OtaRegisters::new(
+        let regs = domain::modbus::OtaRegisters::new(
             map,
             domain::ota::OtaClient::new(
                 crate::tasks::ota::CMD.requester(),
                 domain::ota::ClientId({{ client }}),
             ),
         );
+{%- else %}
+        let regs = map;
 {%- endif %}
-        let mut unit = 1;
-        domain::modbus::task(domain::modbus::ModbusSlaveCtx {
-            link: &mut link,
-            regs: &mut {% if ota == "true" %}regs{% else %}map{% endif %},
-            unit: &mut unit,
-            index: 0,
+        domain::server::serve::<Link, _>(domain::server::ServerWiring {
+            source,
+            buffers: crate::link::{{ f[4] }}::buffers(),
+            handler: domain::modbus::Slave::new(1, regs),
         })
         .await;
     }
 
-    /// Собирает транспорт над `source` и спавнит узел над картой `map`.
+    /// Спавнит узел над рычагом платы `source` и картой `map`; канал
+    /// собирает узел.
     pub fn spawn(spawner: Spawner, source: Source, map: crate::modbus::Handle) {
-        let link = crate::link::{{ f[4] }}::new(source);
-        let token = task(link, map);
+        let token = task(source, map);
         spawner.spawn(token.expect("задача MODBUS_{{ f[4] | upcase }} свежая: спавнится один раз"));
     }
 }

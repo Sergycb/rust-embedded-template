@@ -1,5 +1,11 @@
 #![cfg_attr(not(test), no_std)]
 
+/// Сборка адаптера из рычага платы — порт, через который узлы собирают свои
+/// адаптеры. Реэкспорт, потому что инициализаторы слотов фрагментов
+/// разворачиваются в `app` и называют его `$crate::Assemble`, а `app` от
+/// `ports` не зависит; задачи без графа зовут его так же.
+pub use ports::Assemble;
+
 /// Узел `HEARTBEAT`: то, что граф из `crates-cross/app` спавнит, а делает —
 /// домен. Каркас под работу вашего устройства, см. модуль.
 pub mod heartbeat;
@@ -25,18 +31,24 @@ pub mod device;
 // {%- endif %}
 // {%- if has_protobuf == "true" %}
 
-/// Узел `HOST`: сообщения protobuf от хоста по кадровому каналу — разбор,
-/// обработчик приложения, ответ — см. модуль.
+/// Сообщения protobuf от хоста: обработчик кадра для узла протокола —
+/// разбор, обработчик приложения, ответ — см. модуль.
 pub mod host;
 // {%- endif %}
 // {%- if has_modbus == "true" %}
 
-/// Modbus: slave над портом `ports::Registers` поверх транспорта
-/// `ports::ModbusServer` — см. модуль.
+/// Modbus: slave над портом `ports::Registers` — обработчик кадра для узла
+/// протокола — см. модуль.
 // {%- if modbus_master == "true" %}
 /// Master — функции поверх `ports::ModbusClient`.
 // {%- endif %}
 pub mod modbus;
+// {%- endif %}
+
+// {%- if protocol_link == "true" %}
+/// Узел протокола «запрос — ответ» над кадровым каналом: Modbus slave и
+/// protobuf хоста — см. модуль.
+pub mod server;
 // {%- endif %}
 
 // {%- if has_net == "true" %}

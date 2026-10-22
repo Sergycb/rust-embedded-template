@@ -1,7 +1,10 @@
 //! Modbus TCP: заголовок MBAP и PDU поверх потока байтов.
 
 use embedded_io_async::{Read, ReadExactError, Write};
-use ports::{MAX_PDU, ModbusServer, Received, ServeError};
+use ports::{Assemble, FrameLink, LinkError};
+// {%- if modbus_master == "true" %}
+use ports::MAX_PDU;
+// {%- endif %}
 
 // {%- if modbus_master == "true" %}
 use ports::{MasterError, ModbusClient};
@@ -11,7 +14,7 @@ use super::mbap::{self, HEADER, Header, MAX_ADU};
 // {%- if modbus_master == "true" %}
 use super::master_error;
 // {%- endif %}
-use super::serve_error;
+use super::{FrameError, io_error, read_error};
 
 /// Modbus TCP поверх потока `io` (сокет `embassy-net`).
 ///
@@ -22,21 +25,23 @@ use super::serve_error;
 /// записи оставляет на линии полкадра, после чего соединение стоит
 /// переоткрыть.
 ///
-/// Slave получает любой запрос как адресованный ему, 0xFF (см.
-/// [модуль](super)).
+/// Для slave'а — канал [`FrameLink`] с кадром «адрес и PDU» прямо в приёмном
+/// буфере, за заголовком: любой запрос приходит как адресованный самому
+/// устройству, 0xFF (см. [модуль](super)), а ответ несёт адрес и номер
+/// транзакции запроса.
 // {%- if modbus_master == "true" %}
 /// Master ждёт ответ с тем же номером транзакции, что у запроса, и
 /// устройство, которое его не повторяет, так и не ответит.
 // {%- endif %}
 ///
-/// Соединение — забота потока `io`: закрытое клиентом кончается для slave'а
-/// [`ServeError::Eof`] — концом сессии, а не отказом: узел обслуживает
-/// дальше, и реализация потока обязана на следующем чтении принять новое
-/// соединение — как `ports::FrameLink` после `Down`.
+/// Соединение — забота потока `io`: закрытое клиентом — потеря кадра
+/// ([`FrameError::Eof`]), а не отказ: узел обслуживает дальше, и реализация
+/// потока обязана на следующем чтении принять новое соединение.
 #[derive(Debug)]
 pub struct Tcp<T> {
     io: T,
-    /// Принятые байты текущего кадра — `rx[..have]`.
+    /// Принятые байты текущего кадра — `rx[..have]`; для slave'а с
+    /// адреса (`rx[HEADER - 1..]`) это и буфер канала.
     rx: [u8; MAX_ADU],
     have: usize,
     /// Номер транзакции последнего принятого запроса — им подписан ответ.
@@ -101,42 +106,59 @@ impl<T: Read + Write> Tcp<T> {
         result
     }
 
-    async fn send(&mut self, tid: u16, unit: u8, pdu: &[u8]) -> Result<(), T::Error> {
+    // {%- if modbus_master == "true" %}
+    async fn send_pdu(&mut self, tid: u16, unit: u8, pdu: &[u8]) -> Result<(), T::Error> {
         self.io.write_all(&mbap::head(tid, unit, pdu.len())).await?;
         self.io.write_all(pdu).await?;
         self.io.flush().await
     }
+    // {%- endif %}
 }
 
-impl<T: Read + Write> ModbusServer for Tcp<T> {
-    type Error = T::Error;
+/// Собирается вокруг собранного потока: `Tcp<TcpServer>` — над стеком платы.
+impl<T: Assemble> Assemble for Tcp<T> {
+    type Source = T::Source;
+    type Buffers = T::Buffers;
 
-    async fn recv(&mut self, buf: &mut [u8]) -> Result<Received, ServeError<T::Error>> {
-        assert!(buf.len() >= MAX_PDU, "буфер PDU {} < {MAX_PDU}", buf.len());
+    fn assemble(source: T::Source, buffers: T::Buffers) -> Self {
+        Self::new(T::assemble(source, buffers))
+    }
+}
+
+impl<T: Read + Write> FrameLink for Tcp<T> {
+    type Error = FrameError<T::Error>;
+
+    async fn recv(&mut self) -> Result<usize, LinkError<Self::Error>> {
         loop {
             let (header, total) = self.frame().await.map_err(|e| match e {
-                Recv::Read(e) => serve_error(e),
-                Recv::Framing => ServeError::Framing,
+                Recv::Read(e) => read_error(e),
+                Recv::Framing => LinkError::Down(FrameError::Framing),
             })?;
             if header.protocol != 0 {
                 // Чужой протокол поверх MBAP: спецификация велит его пропустить.
                 continue;
             }
-            let pdu = &self.rx[HEADER..total];
-            buf[..pdu.len()].copy_from_slice(pdu);
             self.tid = header.tid;
             self.unit = header.unit;
-            return Ok(Received {
-                unit: 0xFF,
-                len: pdu.len(),
-            });
+            self.rx[HEADER - 1] = 0xFF;
+            return Ok(total - (HEADER - 1));
         }
     }
 
-    async fn reply(&mut self, response: &[u8]) -> Result<(), ServeError<T::Error>> {
-        self.send(self.tid, self.unit, response)
+    fn buffer(&mut self) -> &mut [u8] {
+        &mut self.rx[HEADER - 1..]
+    }
+
+    /// Ответ — с номером транзакции и адресом запроса: заголовок пишется
+    /// перед кадром в том же буфере.
+    async fn send(&mut self, len: usize) -> Result<(), LinkError<Self::Error>> {
+        let pdu = len.checked_sub(1).expect("кадр ответа — адрес и PDU");
+        self.rx[..HEADER].copy_from_slice(&mbap::head(self.tid, self.unit, pdu));
+        self.io
+            .write_all(&self.rx[..HEADER + pdu])
             .await
-            .map_err(ServeError::Io)
+            .map_err(io_error)?;
+        self.io.flush().await.map_err(io_error)
     }
 }
 
@@ -156,7 +178,7 @@ impl<T: Read + Write> ModbusClient for Tcp<T> {
             response.len()
         );
         self.tid = self.tid.wrapping_add(1);
-        self.send(self.tid, unit, request)
+        self.send_pdu(self.tid, unit, request)
             .await
             .map_err(MasterError::Io)?;
         loop {
@@ -179,7 +201,7 @@ impl<T: Read + Write> ModbusClient for Tcp<T> {
 
     async fn broadcast(&mut self, request: &[u8]) -> Result<(), MasterError<T::Error>> {
         self.tid = self.tid.wrapping_add(1);
-        self.send(self.tid, 0, request)
+        self.send_pdu(self.tid, 0, request)
             .await
             .map_err(MasterError::Io)
     }
@@ -203,21 +225,21 @@ mod tests {
         ]
         .concat();
         let mut tcp = Tcp::new(Duplex::new(&input));
-        let mut buf = [0; MAX_PDU];
         // Любой адрес в MBAP — само устройство, и 0 — не широковещание.
-        let r = tcp.recv(&mut buf).await.unwrap();
-        assert_eq!((r.unit, &buf[..r.len]), (0xFF, &[0x03, 0, 1, 0, 1][..]));
-        tcp.reply(&[0x03, 2, 0, 7]).await.unwrap();
-        let r = tcp.recv(&mut buf).await.unwrap();
-        assert_eq!(r.unit, 0xFF);
-        tcp.reply(&[0x06, 0, 0, 0, 1]).await.unwrap();
+        let len = tcp.recv().await.unwrap();
+        assert_eq!(&tcp.buffer()[..len], &[0xFF, 0x03, 0, 1, 0, 1]);
+        tcp.buffer()[1..5].copy_from_slice(&[0x03, 2, 0, 7]);
+        tcp.send(5).await.unwrap();
+        let len = tcp.recv().await.unwrap();
+        assert_eq!(tcp.buffer()[0], 0xFF);
+        tcp.send(len).await.unwrap();
         let expected = [
             frame(0x0102, 0, 0, &[0x03, 2, 0, 7]),
             frame(9, 0, 5, &[0x06, 0, 0, 0, 1]),
         ]
         .concat();
         assert_eq!(tcp.io.tx, expected);
-        assert_eq!(tcp.recv(&mut buf).await, Err(ServeError::Eof));
+        assert_eq!(tcp.recv().await, Err(LinkError::Lost(FrameError::Eof)));
     }
 
     #[tokio::test]
@@ -231,14 +253,9 @@ mod tests {
         ]
         .concat();
         let mut tcp = Tcp::new(Duplex::new(&input));
-        let mut buf = [0; MAX_PDU];
-        assert_eq!(
-            tcp.recv(&mut buf)
-                .await
-                .map(|r| buf[0] == 0x06 && r.len == 5),
-            Ok(true)
-        );
-        assert_eq!(tcp.recv(&mut buf).await, Err(ServeError::Framing));
+        assert_eq!(tcp.recv().await, Ok(6));
+        assert_eq!(tcp.buffer()[1], 0x06);
+        assert_eq!(tcp.recv().await, Err(LinkError::Down(FrameError::Framing)));
     }
 
     // {%- if modbus_master == "true" %}
@@ -311,11 +328,10 @@ mod tests {
     async fn ended_stream_drops_the_partial_frame() {
         let fresh = frame(1, 0, 7, &[0x03, 0, 1, 0, 1]);
         let mut tcp = Tcp::new(Duplex::new(&fresh[..4]));
-        let mut buf = [0; MAX_PDU];
-        assert_eq!(tcp.recv(&mut buf).await, Err(ServeError::Eof));
+        assert_eq!(tcp.recv().await, Err(LinkError::Lost(FrameError::Eof)));
         tcp.io.push(&fresh);
-        let r = tcp.recv(&mut buf).await.unwrap();
-        assert_eq!(&buf[..r.len], &[0x03, 0, 1, 0, 1]);
+        let len = tcp.recv().await.unwrap();
+        assert_eq!(&tcp.buffer()[1..len], &[0x03, 0, 1, 0, 1]);
     }
 
     proptest::proptest! {
@@ -325,8 +341,7 @@ mod tests {
             let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
             rt.block_on(async {
                 let mut tcp = Tcp::new(Duplex::new(&input));
-                let mut buf = [0; MAX_PDU];
-                while tcp.recv(&mut buf).await.is_ok() {}
+                while tcp.recv().await.is_ok() {}
                 // {%- if modbus_master == "true" %}
                 let _ignored = exchange(1, Duplex::replying(&input)).await;
                 // {%- endif %}

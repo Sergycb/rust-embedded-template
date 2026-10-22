@@ -353,9 +353,9 @@ mod tests {
     use core::convert::Infallible;
 
     use super::*;
-    use crate::modbus::fakes::{Client, Map, Server};
-    use crate::modbus::slave::serve;
-    use ports::ServeError;
+    use crate::modbus::Slave;
+    use crate::modbus::fakes::{Client, Map};
+    use ports::Handler;
 
     /// Запрос master'а → наш slave → ответ обратно master'у: две реализации
     /// проверяют друг друга, и ни одна не знает, как устроена другая.
@@ -368,10 +368,17 @@ mod tests {
         // конец потока.
         let (first, client) = call(Client::default()).await;
         assert_eq!(first, Err(MasterError::Eof));
-        let requests: Vec<_> = client.sent.iter().map(|(u, p)| (*u, &p[..])).collect();
-        let mut server = Server::new(&requests);
-        assert_eq!(serve(&mut server, 1, map).await, Err(ServeError::Eof));
-        call(Client::replying(&server.replies[0])).await.0
+        let (unit, request) = &client.sent[0];
+        let mut frame = [0; MAX_PDU + 1];
+        frame[0] = *unit;
+        frame[1..=request.len()].copy_from_slice(request);
+        let mut slave = Slave::new(1, core::mem::take(map));
+        let len = slave
+            .handle(&mut frame, 1 + request.len())
+            .await
+            .expect("slave ответил");
+        *map = slave.into_regs();
+        call(Client::replying(&frame[1..len])).await.0
     }
 
     #[tokio::test]

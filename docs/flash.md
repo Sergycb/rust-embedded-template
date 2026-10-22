@@ -165,10 +165,10 @@ QSPI, где он выведен (`QUADSPI`, иначе `OCTOSPI`), иначе S
   к флешу перестанет быть эксклюзивным. С этим же допущением связаны
   мьютексы разделов OTA (`bsp::ota::DFU_FLASH`, `STATE_FLASH`; с
   `ext_flash=yes` — `bsp::external::ExternalMutex`), раздела настроек
-  (`bsp::settings::CONFIG_FLASH`){% if has_modbus == "true" %}, карты регистров Modbus
-  (`domain::modbus::MapMutex`, общая у узлов `MODBUS_*`; `crate::modbus` в `app`){% endif %} и
-  `local`-слоты узла OTA (`domain::ota`, фрагмент `OTA_FRAG`) —
-  менять их вместе с типом мьютекса.
+  (`bsp::settings::CONFIG_FLASH`) и `local`-слоты узла OTA (`domain::ota`,
+  фрагмент `OTA_FRAG`) — менять их вместе с типом мьютекса.{% if has_modbus == "true" %} Карта регистров
+  Modbus (`domain::modbus::MapMutex`) сюда не входит: она лежит в `OnceLock` в
+  `static` (`crate::modbus` в `app`), и мьютекс у неё — `CriticalSectionRawMutex`.{% endif %}
 - **Раздел — ровно две страницы стирания одного размера.** Меньше двух
   `sequential-storage` не берёт, и одной не хватило бы по сути: перед стиранием
   старой страницы живые записи переносятся на свободную. Поэтому в одиночный

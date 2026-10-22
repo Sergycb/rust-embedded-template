@@ -46,8 +46,20 @@ struct Script {
 /// `cascade_reaches_every_chip_without_hanging` — 1479 раз). Модули ложатся
 /// в резолвер под теми же путями, что пишет `import` (`chip-data/layout/f4`),
 /// так что выбор файла семейства проверяется тем же кодом хука.
+/// Движок rhai с пределами, как у `cargo-generate`: тот собран в release, и
+/// `Engine::new()` там даёт глубину выражения 64 (в функции — 32) и 64 уровня
+/// вызовов. Тесты собраны в debug, где у rhai по умолчанию 32, 16 и 8 (rhai,
+/// `api/limits.rs`): со своими умолчаниями тест отвергал бы скрипт, который
+/// генерация разбирает и исполняет без ошибок.
+fn hook_engine() -> Engine {
+    let mut engine = Engine::new();
+    engine.set_max_expr_depths(64, 32);
+    engine.set_max_call_levels(64);
+    engine
+}
+
 fn compile_script() -> Script {
-    let engine = Engine::new();
+    let engine = hook_engine();
     let ast = engine
         .compile(read_script())
         .expect("chip-select.rhai не парсится");
@@ -170,7 +182,7 @@ fn run_interview(
     let files: Files = Rc::new(RefCell::new(HashMap::new()));
     let deleted: Deleted = Rc::new(RefCell::new(Vec::new()));
     let prints: Prints = Rc::new(RefCell::new(Vec::new()));
-    let mut engine = Engine::new();
+    let mut engine = hook_engine();
     // Предел операций обязателен: без него `Engine::new()` считает регрессию с
     // бесконечным циклом не ошибкой, а зависанием, и подвешивает пайплайн
     // вместо того, чтобы упасть на тесте. С запасом выше нынешнего расхода на
@@ -1308,8 +1320,9 @@ fn protocol_over_uart_keeps_the_serial_module() {
             ("crates-host/domain/src/modbus.rs", protocol == "modbus"),
             ("crates-host/ports/src/modbus.rs", protocol == "modbus"),
             ("crates-host/ports/src/modbus", protocol == "modbus"),
-            // Кадровый канал нужен protobuf; Modbus по потоку им не пользуется.
-            ("crates-host/ports/src/link.rs", protocol == "protobuf"),
+            // Кадровый канал нужен обоим: узел протокола `domain::server` —
+            // над `FrameLink` и у protobuf, и у Modbus slave.
+            ("crates-host/ports/src/link.rs", true),
             ("crates-host/canopen", false),
             ("crates-host/ports/src/can.rs", false),
             // Заглушка UART в `bsp`; драйверов-фейков USB/сети нет.
@@ -3229,18 +3242,19 @@ fn watchdog_and_link_port_follow_the_choices() {
     let cases: [Case; 7] = [
         ("g474re", &[], false, true),
         ("g474re", &[("graph", "no")], true, true),
-        // Modbus по потоку кадровый канал не использует, по UDP — использует.
+        // Modbus slave — канал узла протокола `domain::server` по любому
+        // транспорту: по потоку, как и по UDP.
         (
             "g474re",
             &[("protocol", "modbus"), ("interface", "uart")],
             false,
-            true,
+            false,
         ),
         (
             "h743zg",
             &[("protocol", "modbus"), ("interface", "tcp")],
             false,
-            true,
+            false,
         ),
         (
             "h743zg",
@@ -4570,7 +4584,7 @@ fn transport_ram_costs() -> (HashMap<String, i64>, i64) {
         .expect("конец RAM_COST не найден")
         + begin
         + 2;
-    let costs = Engine::new()
+    let costs = hook_engine()
         .eval::<rhai::Map>(&script[begin..end])
         .expect("RAM_COST не исполняется");
     let links = costs["links"].clone().cast::<rhai::Map>();

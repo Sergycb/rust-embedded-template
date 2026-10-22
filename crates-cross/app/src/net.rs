@@ -1,32 +1,11 @@
-//! Сетевой стек приложения: `embassy-net` над Ethernet платы
-//! (`bsp::Drivers::eth`).
-//!
-//! Число сокетов, адресация и память стека — решение приложения, а не
-//! платы: `bsp` отдаёт только устройство. Стек и фоновая работа над ним
-//! рождаются одним `embassy_net::new` и расходятся по разным узлам: фон — в
-//! узел `NET`, стек — сокетам протоколов (`crate::link`) или вашему коду.
+//! Сетевые службы приложения: то, что `domain` получает входом узла, а знает
+//! только этот проект, — {% if net_services contains "rest" %}токен REST API{% endif %}{% if net_services contains "rest" and net_services contains "ssh" %}, {% endif %}{% if net_services contains "ssh" %}вход и ключ консоли SSH{% endif %}{% if net_services contains "mqtt" %}{% if net_services contains "rest" or net_services contains "ssh" %}, {% endif %}брокер MQTT и буферы сокета его клиента{% endif %}.
+//! Стек, на котором службы открывают сокеты, собирает плата (`bsp::net`), и
+//! сокеты под них он заводит по числу из генерации (`NET_SOCKETS`).
+{%- if net_services contains "mqtt" %}
 
-{%- assign xs = links | split: "," %}
-{%- assign udp_protocol = "false" %}
-{%- for l in xs %}
-{%- assign f = l | split: ":" %}
-{%- if f[0] == "udp" and f[3] != "none" %}{% assign udp_protocol = "true" %}{% endif %}
-{%- endfor %}
-{%- if udp_protocol == "true" %}
-/// Описание датаграммы в буфере UDP-сокета — для буферов, которые приложение
-/// отдаёт сокету протокола (`crate::link`).
-pub use embassy_net::udp::PacketMetadata;
-{%- endif %}
-use embassy_net::{Config, DhcpConfig, StackResources};
 use static_cell::ConstStaticCell;
-
-/// Сокетов в стеке: DHCP-клиент и по сокету на сетевой транспорт — у
-/// транспорта с протоколом его открывает `crate::link`, без протокола — ваш
-/// код на `Parts::net`{% if net_services contains "rest" %}, — и по сокету на соединение REST API
-/// (`domain::http::CONNECTIONS`){% endif %}{% if net_services contains "ssh" %}, — и один на консоль SSH{% endif %}{% if net_services contains "mqtt" %}, — и один на клиент MQTT{% endif %}. Слот — около 500 байт оперативной памяти, поэтому без
-/// запаса: добавите ещё сокет (или фичу `dns` у `embassy-net` — она тоже
-/// занимает слот) — прибавьте один здесь.
-const SOCKETS: usize = {{ net_sockets | plus: 1 }}{% if net_services contains "rest" %} + domain::http::CONNECTIONS{% endif %}{% if net_services contains "ssh" %} + 1{% endif %}{% if net_services contains "mqtt" %} + 1{% endif %};
+{%- endif %}
 {%- if net_services contains "rest" %}
 
 /// Токен `Authorization: Bearer` REST API (`domain::http`). Файл в корне
@@ -40,6 +19,14 @@ const _: () = assert!(
     !REST_TOKEN.is_empty(),
     "rest-token.txt пуст: удалите файл, и `cargo xtask build` создаст новый токен"
 );
+
+/// Соединений REST API разом — копий пула узлов `HTTP`: переменная среды
+/// `HTTP_CONNECTIONS` из `[env]` `crates-cross/.cargo/config.toml`. Решает
+/// приложение, а не узел: копия узла — одно соединение.
+pub const HTTP_CONNECTIONS: usize = match usize::from_str_radix(env!("HTTP_CONNECTIONS"), 10) {
+    Ok(connections) => connections,
+    Err(_) => panic!("HTTP_CONNECTIONS в [env] crates-cross/.cargo/config.toml — не число"),
+};
 {%- endif %}
 {%- if net_services contains "ssh" %}
 {%- if ssh_auth == "password" %}
@@ -130,45 +117,16 @@ static MQTT_TCP_RX: ConstStaticCell<[u8; MQTT_TCP_BUFFER]> =
 static MQTT_TCP_TX: ConstStaticCell<[u8; MQTT_TCP_BUFFER]> =
     ConstStaticCell::new([0; MQTT_TCP_BUFFER]);
 
-/// Соединение узла MQTT с брокером: TCP-клиент на стеке со своими буферами.
+/// Память соединения узла MQTT с брокером — буферы сокета TCP-клиента;
+/// собирает клиент сам узел.
 ///
 /// # Panics
 ///
 /// При втором вызове: буферы у клиента одни, а узел MQTT — один.
-pub fn mqtt_link(stack: embassy_net::Stack<'static>) -> adapters::net::TcpClient {
-    adapters::net::TcpClient::new(stack, MQTT_TCP_RX.take(), MQTT_TCP_TX.take())
-}
-{%- endif %}
-
-// Память стека: `embassy_net::new` держит её `&'static mut`. `ConstStaticCell`
-// — значения известны при компиляции и лежат в `.bss`, а не собираются на
-// стеке и копируются при старте.
-static RESOURCES: ConstStaticCell<StackResources<SOCKETS>> =
-    ConstStaticCell::new(StackResources::new());
-
-{%- if protocol_sockets != "0" %}
-
-/// Сетевой стек, на котором открываются сокеты протоколов (`crate::link`).
-pub type Stack = embassy_net::Stack<'static>;
-{%- endif %}
-
-/// Фоновая работа стека (узел `NET`) и сам стек.
-pub type Net = adapters::net::Net<bsp::net::Device>;
-
-/// Собирает стек над устройством платы. Адрес — по DHCP; затравка случайных
-/// чисел стека (порты, номера последовательностей TCP) — `seed`.
-pub fn new(device: bsp::net::Device, seed: u64) -> Net {
-    let config = Config::dhcpv4(DhcpConfig::default());
-    let (stack, runner) = embassy_net::new(device, config, RESOURCES.take(), seed);
-    Net { runner, stack }
-}
-{%- if rng_irq == "" %}
-
-/// Затравка стека из заводского номера — для чипов без RNG. Не случайна: у
-/// одной платы она одна и та же после каждого сброса.
-pub fn seed_from_uid(uid: [u8; 12]) -> u64 {
-    let mut bytes = [0; 8];
-    bytes.copy_from_slice(&uid[..8]);
-    u64::from_le_bytes(bytes) ^ u64::from(u32::from_le_bytes([uid[8], uid[9], uid[10], uid[11]]))
+pub fn mqtt_buffers() -> adapters::net::TcpClientBuffers {
+    adapters::net::TcpClientBuffers {
+        rx: MQTT_TCP_RX.take(),
+        tx: MQTT_TCP_TX.take(),
+    }
 }
 {%- endif %}

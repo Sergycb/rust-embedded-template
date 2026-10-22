@@ -4,7 +4,8 @@
 //!
 //! Ничего из этого не знает чипа: устройство — любой
 //! [`Driver`](embassy_net::driver::Driver), сокеты — стек `embassy-net`.
-//! Плата отдаёт устройство (Ethernet), стек и сокеты собирает приложение.
+//! Плата собирает стек над своим устройством (Ethernet) и отдаёт его вместе с
+//! фоновой работой (`Net`); сокеты на стеке собирают узлы (`ports::Assemble`).
 
 // {%- if has_tcp == "true" or net_services contains "mqtt" %}
 mod tcp;
@@ -16,24 +17,24 @@ mod udp;
 use embassy_net::driver::Driver;
 
 // {%- if has_tcp == "true" or net_services contains "mqtt" %}
-pub use tcp::{TcpError, TcpServer};
+pub use tcp::{TcpError, TcpServer, TcpServerBuffers};
 // {%- if net_services contains "mqtt" %}
-pub use tcp::TcpClient;
+pub use tcp::{TcpClient, TcpClientBuffers};
 // {%- endif %}
 // {%- endif %}
 // {%- if has_udp == "true" %}
-pub use udp::{UdpError, UdpLink};
+pub use udp::{UdpBuffers, UdpError, UdpLink};
 // {%- endif %}
 
 /// Сеть платы: фоновая работа стека для узла `NET` и сам стек, на котором
-/// приложение открывает сокет протокола.
+/// узлы открывают свои сокеты.
 ///
 /// Пара, потому что их даёт один `embassy_net::new`; чипа она не знает —
 /// устройство `D` подставляет плата.
 pub struct Net<D: Driver + 'static> {
     /// Фоновая работа стека — уезжает в узел `NET` графа.
     pub runner: embassy_net::Runner<'static, D>,
-    /// Стек — на нём приложение открывает сокет протокола.
+    /// Стек — на нём узлы открывают свои сокеты.
     pub stack: embassy_net::Stack<'static>,
 }
 

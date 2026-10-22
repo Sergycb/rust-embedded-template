@@ -1,5 +1,5 @@
 //! Узлы `HOST_*`: сообщения protobuf от хоста, по модулю на транспорт.
-//! Транспорт и буферы сообщений заводит `crate::link` над объектом платы.
+//! Канал узел собирает сам над рычагом платы; тип и буферы — `crate::link`.
 {%- assign xs = links | split: "," %}
 {%- comment %} Номер клиента OTA — порядковый номер транспорта с протоколом в `links`, как в графе (`crate::graph`). {% endcomment %}
 {%- assign client = 0 %}
@@ -9,17 +9,17 @@
 
 /// Узел `HOST_{{ f[4] | upcase }}`.
 pub mod {{ f[4] }} {
+    use domain::host::DeviceInfo;
     use embassy_executor::Spawner;
 
+    // Импорт, а не полный путь в сигнатурах: длина строки не зависит от
+    // имени транспорта, и rustfmt не переносит её ни при каком имени.
+    use crate::link::{{ f[4] }}::{Link, Source};
+
     #[embassy_executor::task]
-    async fn task(
-        mut link: crate::link::{{ f[4] }}::Link,
-        info: domain::host::DeviceInfo,
-        rx: &'static mut [u8],
-        tx: &'static mut [u8],
-    ) {
+    async fn task(source: Source, info: DeviceInfo) {
 {%- if ota == "true" %}
-        let mut service = domain::host::Service::new(
+        let service = domain::host::Service::new(
             info,
             domain::ota::OtaClient::new(
                 crate::tasks::ota::CMD.requester(),
@@ -27,28 +27,19 @@ pub mod {{ f[4] }} {
             ),
         );
 {%- else %}
-        let mut service = domain::host::Service::new(info);
+        let service = domain::host::Service::new(info);
 {%- endif %}
-        domain::host::task(domain::host::HostCtx {
-            link: &mut link,
-            service: &mut service,
-            rx,
-            tx,
-            index: 0,
+        domain::server::serve::<Link, _>(domain::server::ServerWiring {
+            source,
+            buffers: crate::link::{{ f[4] }}::buffers(),
+            handler: domain::host::Protobuf(service),
         })
         .await;
     }
 
-    /// Собирает транспорт над `source` и спавнит узел.
-    pub fn spawn(
-        spawner: Spawner,
-        source: crate::link::{{ f[4] }}::Source,
-        info: domain::host::DeviceInfo,
-    ) {
-        let link = crate::link::{{ f[4] }}::new(source);
-        let rx = crate::link::{{ f[4] }}::rx();
-        let tx = crate::link::{{ f[4] }}::tx();
-        let token = task(link, info, rx, tx);
+    /// Спавнит узел над рычагом платы `source`; канал собирает узел.
+    pub fn spawn(spawner: Spawner, source: Source, info: DeviceInfo) {
+        let token = task(source, info);
         spawner.spawn(token.expect("задача HOST_{{ f[4] | upcase }} свежая: спавнится один раз"));
     }
 }

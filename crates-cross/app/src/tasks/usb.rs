@@ -16,7 +16,7 @@ pub mod {{ f[4] }} {
     use embassy_executor::Spawner;
 
     #[embassy_executor::task]
-    async fn task(mut device: crate::usb::{{ f[4] }}::Device) {
+    async fn task(mut device: bsp::usb::{{ f[4] }}::Device) {
 {%- if ota == "true" %}
         // На шину — после подтверждения образа: с графом это `deps: [OTA ready]`
         // фрагмента `USB_FRAG`.
@@ -30,7 +30,7 @@ pub mod {{ f[4] }} {
     }
 
     /// Спавнит узел.
-    pub fn spawn(spawner: Spawner, device: crate::usb::{{ f[4] }}::Device) {
+    pub fn spawn(spawner: Spawner, device: bsp::usb::{{ f[4] }}::Device) {
         let token = task(device);
         spawner.spawn(token.expect("задача USB_{{ f[4] | upcase }} свежая: спавнится один раз"));
     }

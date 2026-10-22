@@ -36,9 +36,19 @@ skill'ом `rust-engineering` и не дублируются здесь. Это�
 (`lto` + `--gc-sections` выбрасывают остальное). Их типы — `BootPlan`, `Screening`,
 `ScreenFailure` — тоже в `domain::ota::boot`. Больше `cross` в `domain` ходит только
 через `app`; `bsp` от `domain` не зависит — `docs/architecture.md`.
-`cross` остаётся минимальным: `bsp` — объекты платы (периферия под трейтами, драйверы,
-разделы флеша, DMA-буферы под железо), `app` — сборка адаптеров над ними с их
-буферами и оркестрация задач (`Spawner`, supervisor-графы, watchdog).
+`cross` остаётся минимальным: `bsp` — рычаги платы (объекты под трейтами и
+портами: потоки, шины, разделы флеша, сторож, драйверы микросхем платы; DMA-буферы
+под железо), `app` — оркестрация задач (`Spawner`, supervisor-графы, watchdog) и
+статики, которые домен получает ссылками (буферы узлов и транспортов, карта
+Modbus, секреты служб). Объектов `app` не строит: **адаптер над рычагом собирает
+узел** через порт `ports::Assemble` (`type Source` — рычаг платы, `type Buffers`
+— память и параметры от `app`; реэкспорт `domain::Assemble`) — инициализатором
+слота во фрагменте или, без графа, в задаче; `app` называет тип адаптера
+параметром фрагмента и раздаёт поля платы и ссылки на статики. Входы с такой
+сборкой (`ServerWiring`, `OtaWiring`, `CanOpenWiring`, `SshWiring`,
+`MqttWiring`) пишутся руками, а не `boot: … struct`: выведенная структура
+допускает в инициализаторе только чтение поля. Порт с адаптером или библиотека
+прямо в `domain` — критерий в `docs/architecture.md`.
 Всё остальное — даже асинхронное и «системное» на вид (стейтчарты, RPC, синхронизация
 задач) — живёт в `domain`, а не в `cross`. Узлы графа тоже: подсистема объявляет свой
 `supervisor_fragment!`-ом рядом со своей задачей — самодостаточным модулем с задачей,
@@ -161,7 +171,8 @@ read`: руками пришлось бы сначала найти адрес �
 ## Инварианты, которые не ловит компилятор
 
 - Задачи `embassy` не могут быть generic: тип, уезжающий в `#[embassy_executor::task]`,
-  получает от `bsp` псевдоним (`pub type X = ...`) — `docs/architecture.md`.
+  получает псевдоним (`pub type X = ...`): рычаг — от `bsp`, адаптер — от `app`
+  (`crate::link::<транспорт>::Link`, `crate::ota::Updater`) — `docs/architecture.md`.
 - Ровно один `#[panic_handler]` и один активный `#[global_logger]` на бинарник: логгер
   резолвится линковкой по имени символа и даёт `multiply defined!` при нарушении;
   паникёр один на `app` и `boot` — `crates-cross/bsp/src/panic.rs` за фичей
@@ -190,11 +201,11 @@ read`: руками пришлось бы сначала найти адрес �
   (`bsp::ota::DFU_FLASH`, `bsp::ota::STATE_FLASH`), `CONFIG`
   (`bsp::settings::CONFIG_FLASH`; с `ext_flash=yes` —
   `bsp::external::ExternalMutex`{% if dfu_bank == "true" %}; `DFU` во втором банке —
-  `bsp::flash::DfuBankMutex`{% endif %}){% if has_modbus == "true" %}, карты регистров
-  Modbus (`domain::modbus::MapMutex`, `crate::modbus` в `app`; ручки
-  `SharedRegisters` — в `local`-слотах `REGS` узлов `MODBUS_*`){% endif %} и `local` на слотах узла OTA
+  `bsp::flash::DfuBankMutex`{% endif %}) и `local` на слотах узла OTA
   (`domain::ota`) — одно допущение «один исполнитель», менять вместе —
-  `docs/flash.md`, `docs/architecture.md`.
+  `docs/flash.md`, `docs/architecture.md`.{% if has_modbus == "true" %} Карта регистров Modbus
+  (`domain::modbus::MapMutex`) в него не входит: она в `OnceLock` в `static`
+  (`crate::modbus::handle()`), и мьютекс — `CriticalSectionRawMutex` ради `Sync`.{% endif %}
 - Подтверждение образа (`mark_booted`) — в стартовом действии узла OTA
   (`domain::ota`, `begin`, не удалось — ещё раз на следующем `Start`) и один
   раз за запуск (слот `CONFIRMED`). Не
@@ -277,12 +288,12 @@ read`: руками пришлось бы сначала найти адрес �
 - Клок блока `RNG` даёт `config()` в `crates-cross/bsp/src/board.rs` — у
   каждой линии свой источник (PLL Q, HSI48, `RNGSEL`). Меняете тактирование —
   сохраните его: без клока `Rng::new` в `Board::new` паникует (линии с
-  мультиплексором RNG) или прошивка виснет в ожидании слова — в `Board::new`
-  или в затравке стека в `Parts::new` (F2/F4/F7, L0, L4, U0) —
+  мультиплексором RNG) или прошивка виснет в ожидании слова там же, в
+  `Board::new` (F2/F4/F7, L0, L4, U0) —
   `docs/modules/bsp-rng.md`. Блок `RNG` берёт группа `rng` из
-  `resources.rs`, а генератор плата отдаёт в `bsp::Drivers::rng`: им
-  `app::parts::Parts::new` засевает сетевой стек и {% if net_services contains "ssh" %}отдаёт его бэкенду
-  `getrandom` (`app::rng`, символ `__getrandom_v03_custom`; бэкенд выбирает
+  `resources.rs`, и генератор наружу не выходит: `bsp::rng::seed` в
+  `Board::new` засевает им сетевой стек и {% if net_services contains "ssh" %}оставляет его бэкенду
+  `getrandom` (`bsp::rng`, символ `__getrandom_v03_custom`; бэкенд выбирает
   `--cfg getrandom_backend="custom"` в `crates-cross/.cargo/config.toml`) —
   другого пути к генератору нет, SSH берёт байты через `getrandom`{% else %}дропает его, так что блок
   включён только на время затравки (бэкенд `getrandom` над ним заводит
@@ -298,9 +309,9 @@ read`: руками пришлось бы сначала найти адрес �
   (`start(..) => begin` в таблице, `ctx.run(&persisted, &mut callbacks)`), а
   `Node<'f>` живёт в состояниях. Не переносить их в `static` или слот: тип
   замыкания там не назвать, а колбэки `zencan` своих данных не получают.
-  Ключи `OBJECTS_KEY` и `NODE_ID_KEY` хранилища настроек заняты узлом{% if config == "true" %}, и хранилище
-  (`crate::settings::new(parts.board.settings)`) забирает он — своим настройкам
-  проекта нужен общий доступ через него{% endif %} —
+  Ключи `OBJECTS_KEY` и `NODE_ID_KEY` хранилища настроек заняты узлом{% if config == "true" %}, и носитель
+  (`board.settings`) забирает он — хранилище над ним собирает сам узел
+  (`Assemble`), и своим настройкам проекта нужен общий доступ через него{% endif %} —
   `domain::canopen`.
 {%- endif %}
 {%- if dfu_bank == "true" %}
@@ -310,13 +321,15 @@ read`: руками пришлось бы сначала найти адрес �
   вместе; цельный `Flash` туда не дотягивается (`FLASH_SIZE` — сумма банков) —
   `docs/flash.md`.
 {%- endif %}
-- Хранилище настроек — `adapters::settings` над любым async `NorFlash`. Носитель
-  отдаёт плата (`bsp::settings::ConfigFlash` и его `RANGE`): внутренний флеш,
-  EEPROM L0/L1 (доступ — порт `ports::EepromAccess`, обёртку
-  `adapters::eeprom::Eeprom` строит `app`) или внешняя флеш W25Q (драйвер `w25q`
-  в `bsp::external`, шина — заглушка `bsp::stub::FlashBus`, пока проект не
-  подставит выводы); само хранилище собирает
-  `crates-cross/app/src/settings.rs`. EEPROM под хранилищем инвертирована: без
+- Хранилище настроек — `adapters::settings` над любым async `NorFlash`, на весь
+  его объём. Носитель отдаёт плата рычагом `NorFlash`
+  (`board.settings: bsp::settings::ConfigFlash`): раздел `CONFIG` внутреннего
+  флеша, EEPROM L0/L1 (доступ — порт `ports::EepromAccess`, обёртку
+  `adapters::eeprom::Eeprom` собирает сама плата) или внешняя флеш W25Q (драйвер
+  `w25q` в `bsp::external`, шина — заглушка `bsp::stub::FlashBus`, пока проект не
+  подставит выводы). Само хранилище собирает узел-потребитель (`Assemble`) над
+  `board.settings`; `crates-cross/app/src/settings.rs` — только псевдоним
+  `crate::settings::Settings`. EEPROM под хранилищем инвертирована: без
   этого заводские нули выглядели бы для `sequential-storage` закрытыми
   страницами — `docs/flash.md`.
 {%- if graph == "true" %}
@@ -341,12 +354,17 @@ read`: руками пришлось бы сначала найти адрес �
   перестаёт расти, узел публикует 100%), и ничем, кроме линтера, это не
   ловится — `docs/modules/app-cpu-load.md`.
 {%- if protocol != "none" %}
-- Транспорт протокола (кадрирование, буферы, сокет) собирает `app`
-  (`crates-cross/app/src/link.rs`) над тем, что отдала плата: потоком UART,
-  потоком CDC, сетевым стеком. Буфер заводится там, где создаётся объект,
-  который его держит: размер и порт — решение приложения, и `bsp` их не знает.
-  Сборка — в выражении входа узла в `fragments:` графа или, без графа, в
-  `spawn` модуля задачи (`crates-cross/app/src/tasks/`): по модулю на задачу,
+- Канал протокола (кадрирование, сокет) собирает узел протокола
+  `domain::server::SERVER_FRAG<L, H>` (один на Modbus slave и protobuf хоста;
+  граф называет узлы `MODBUS_<транспорт>`/`HOST_<транспорт>`) через `Assemble`
+  над тем, что отдала плата: потоком UART, потоком CDC, сетевым стеком. Тип
+  канала (`Link`), его статики и `buffers()` — `crates-cross/app/src/link.rs`,
+  по модулю на транспорт: размер буфера и порт — решение приложения, и `bsp` их
+  не знает. Буфер кадра держит сам канал (`ports::FrameLink::buffer`, один на
+  приём и передачу), протокол — обработчик (`ports::Handler`:
+  `domain::modbus::Slave`, `domain::host::Protobuf`). Вход узла — выражение в
+  `fragments:` графа или, без графа, `spawn` модуля задачи
+  (`crates-cross/app/src/tasks/`, `domain::server::serve`): по модулю на задачу,
   `main.rs` только зовёт `tasks::spawn_all`.
 {%- endif %}
 {%- if net_services contains "rest" %}
@@ -354,10 +372,12 @@ read`: руками пришлось бы сначала найти адрес �
   `include_str!` (`crate::net::REST_TOKEN` в `crates-cross/app/src/net.rs`).
   Файл создаёт `cargo xtask` (`secrets::ensure` — в `build`, `lint cross` и перед
   прошивкой), и он **коммитится**, а не уходит в `.gitignore`: токен и так открыт
-  в каждом образе, а без файла не собрались бы свежий клон и CI. Пул `HTTP[2]` в
-  `graph.rs` — литерал, равный `domain::http::CONNECTIONS` (`const`-assert там
-  же), и сокеты стека (`SOCKETS` в `crate::net`) считаются от той же константы —
-  менять вместе.
+  в каждом образе, а без файла не собрались бы свежий клон и CI. Число
+  соединений — `HTTP_CONNECTIONS` в `[env]` `crates-cross/.cargo/config.toml`
+  (`crate::net::HTTP_CONNECTIONS`); пул `HTTP[{{ http_connections }}]` в `graph.rs` —
+  литерал, который генерация пишет тем же числом (`const`-assert там же), и
+  сокеты стека (`NET_SOCKETS` в том же `[env]`, `bsp::net`) генерация считает с ним —
+  правите руками одно — правьте и остальные.
 {%- endif %}
 {%- if net_services contains "ssh" %}
 - Консоль SSH (`domain::ssh`, узел `SSH`): {% if ssh_auth == "password" %}пароль — `ssh-password.txt`{% else %}открытый ключ пользователя — строка `crate::net::SSH_LOGIN`{% endif %}{% if ssh_host_key == "file" %}, ключ хоста — `ssh-host-key.bin` (`crate::net::SSH_HOST_KEY`){% endif %}.
@@ -366,7 +386,7 @@ read`: руками пришлось бы сначала найти адрес �
   создаёт при первом старте (`domain::ssh::Stored`, ключ настроек
   `domain::ssh::HOST_KEY_ID`) — хранилище настроек забирает узел `SSH`, своим
   настройкам проекта нужен общий доступ через него. {% endif %}Случайность
-  `sunset` берёт через `getrandom` (`crates-cross/app/src/rng.rs`): без бэкенда
+  `sunset` берёт через `getrandom` (`crates-cross/bsp/src/rng.rs`): без бэкенда
   или с нулями вместо RNG ключи сессий предсказуемы. Код `sunset` — около
   165 KiB, отсюда порог раздела приложения в генерации (`SSH_MIN_PARTITION`).
 {%- endif %}
@@ -380,8 +400,9 @@ read`: руками пришлось бы сначала найти адрес �
   зовёт `dial` снова; паузы перед попытками (1 → 30 с) — контракт порта
   `ports::dial::Dial`, их держит `adapters::net::TcpClient`, а не `domain`.
   {%- if ota == "true" %} Клиент входа `CMD` узла OTA для `cmd/reboot` — номер
-  `{{ mqtt_ota_client }}` (`domain::ota::ClientId`).{%- endif %} Сокет клиента — слот в `SOCKETS`
-  (`crate::net`), буферы TCP — у `crate::net::mqtt_link`. Доступ к `cmd/` токеном в
+  `{{ mqtt_ota_client }}` (`domain::ota::ClientId`).{%- endif %} Сокет клиента — слот в `NET_SOCKETS`
+  (`[env]`, считает генерация); клиента собирает узел (`Assemble`) на стеке платы,
+  буферы TCP — статики `crate::net::mqtt_buffers()`. Доступ к `cmd/` токеном в
   теле не защищён — только ACL брокера{% if ota == "true" %} (при пустом `user` `build.rs` предупреждает){% endif %} —
   `docs/modules/app-mqtt.md`.
 {%- endif %}
@@ -390,15 +411,14 @@ read`: руками пришлось бы сначала найти адрес �
   `*_receiver()`/`provide_*`/`*_take()` в сыром шаблоне никто не зовёт, потому
   что подписчиков нет. Снимать allow нельзя, пока у графа нет читателей; писать
   в `graph.rs` свою логику — тоже.
-- `Board` отдаёт объекты платы — периферию под трейтами (`embedded-io-async`,
-  `embedded-storage`, драйверы `embassy-*-driver`, порты `ports` там, где
-  стандартного трейта нет, `HardwareWatchdog`), разделы флеша, данные о чипе
-  (`bsp::ChipSpec`), — и ничего не настраивает: ни периферии ядра, ни
-  `Peripherals`, ни `Clocks` в полях нет. Адаптеров (кадрирование, стек, USB-классы,
-  адаптер обновления, хранилище), их буферов и статиков в `bsp` нет: их собирает
-  `app` (`link`, `usb`, `net`, `ota`, `settings`), буфер — там, где создаётся
-  объект, который его держит. Заглушка периферии до драйвера — `bsp::stub` —
-  `docs/architecture.md`.
+- `Board` отдаёт рычаги платы — объекты под трейтами (`embedded-io-async`,
+  `embedded-storage`, порты `ports` там, где стандартного трейта нет,
+  `HardwareWatchdog`): потоки, шины, разделы флеша (`ota`, `settings`), драйверы
+  микросхем платы, данные о чипе (`bsp::ChipSpec`), — и ничего не настраивает:
+  ни периферии ядра, ни `Peripherals`, ни `Clocks` в полях нет. Протоколов над
+  рычагами (кадрирование, сокеты, адаптер обновления, хранилище) и их буферов в
+  `bsp` нет: тип и статики — в `app` (`link`, `net`, `ota`, `settings`), собирает
+  узел. Заглушка периферии до драйвера — `bsp::stub` — `docs/architecture.md`.
 {%- if external_flash == "true" %}
 - Внешняя флеш — W25Q, драйвер `w25q` (hw-drivers, `rev` закреплён) в
   `bsp::external`; шина под ним — заглушка `bsp::stub::FlashBus`, пока плата
@@ -409,17 +429,19 @@ read`: руками пришлось бы сначала найти адрес �
   Не прошёл `init` или микросхема меньше `EXT_FLASH_END` — строка в лог, флеш
   отказывает, а не паникует.
 {%- endif %}
-- `Board::new()` отдаёт `(Board, Drivers)`: в `Drivers` — драйверы, над которыми
-  стек отдаёт объекты сразу нескольким узлам (USB: устройство и поток CDC;
-  Ethernet: фоновая работа и стек). Пару собирает один раз
-  `crates-cross/app/src/parts.rs` (`Parts { board, пары }`), граф берёт `Parts`
-  `boot:`-объектом и делит по полям, без графа — `tasks::spawn_all`. Не
-  передавать половину пары через `static` (поток CDC не `Send`) и не делать
+- `Board::new()` отдаёт один `Board`. Пары, которые нельзя собрать порознь,
+  собирает плата: USB — `board.<транспорт>: bsp::usb::<транспорт>::Usb { device,
+  cdc }` (классы регистрируются до постройки устройства), сеть — `board.net:
+  bsp::net::Net { runner, stack }` (один `embassy_net::new`; сокетов —
+  `NET_SOCKETS` в `[env]`, считает генерация). Граф берёт `boot: board:
+  bsp::Board;` и делит по полям, без графа — `tasks::spawn_all(spawner, board)`.
+  Не передавать половину пары через `static` (поток CDC не `Send`) и не делать
   поля `Board` `Option` — `docs/architecture.md`.
-- `bsp` зависит только от `ports`, `flash-page` (страница раздела, общая с `boot`)
-  и HAL с трейтами драйверов — не от `adapters`, `embassy-net`, `embassy-usb` и
-  не от `domain`: адаптеры и типы домена — например вход узла OTA — собирает
-  из полей `Parts` compose-site в `app` — `docs/architecture.md`.
+- `bsp` зависит от `ports`, `flash-page` (страница раздела, общая с `boot`), HAL
+  с трейтами драйверов и того, из чего собирает свои рычаги: `adapters`
+  (обёртки USB CDC, `adapters::net::Net`, EEPROM), `embassy-usb`, `embassy-net`,
+  `getrandom` (с `ssh`). От `domain` — нет: типы домена — например вход узла
+  OTA — заполняет из полей `Board` compose-site в `app` — `docs/architecture.md`.
 - Liquid в корневом workspace (`domain`, `ports`, `adapters`{% if protocol == "protobuf" %}, `proto`{% elsif protocol == "canopen" %}, `canopen`{% endif %},
   корневой `Cargo.toml`) пишется внутри комментариев (строки `//` и `#` с тегами `if`/`endif`): в
   репозитории шаблона эти крейты компилируются целиком, в проекте Liquid вырезает

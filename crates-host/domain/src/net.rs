@@ -11,7 +11,7 @@
 //! (`restart: Never`): перезапускать нечего, а упасть он может только
 //! паникой.
 
-pub use embassy_net::Runner;
+pub use embassy_net::{Runner, Stack};
 
 use defmt_or_log::info;
 use embassy_net::driver::Driver;

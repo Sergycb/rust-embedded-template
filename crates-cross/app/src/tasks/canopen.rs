@@ -16,8 +16,13 @@ pub mod {{ f[4] }} {
     /// Шина узла.
     type Bus = bsp::can::{{ f[4] }}::Can;
 
+    /// Из чего собрать хранилище: {% if config == "true" %}раздел настроек платы{% else %}не из чего{% endif %}.
+    type StoreSource = {% if config == "true" %}bsp::settings::ConfigFlash{% else %}(){% endif %};
+
     #[embassy_executor::task]
-    async fn task(mut bus: Bus, mut store: Store) {
+    async fn task(mut bus: Bus, store: StoreSource) {
+        // Хранилище — над рычагом платы, как в слоте фрагмента `CANOPEN_FRAG`.
+        let mut store = <Store as domain::Assemble>::assemble(store, ());
         let mut node_id = 1;
         let mut dictionary = domain::canopen::dictionary();
         let mut persist = {{config}};
@@ -39,7 +44,7 @@ pub mod {{ f[4] }} {
     }
 
     /// Спавнит узел.
-    pub fn spawn(spawner: Spawner, bus: Bus, store: Store) {
+    pub fn spawn(spawner: Spawner, bus: Bus, store: StoreSource) {
         let token = task(bus, store);
         spawner.spawn(token.expect("задача CANOPEN_{{ f[4] | upcase }} свежая: спавнится один раз"));
     }

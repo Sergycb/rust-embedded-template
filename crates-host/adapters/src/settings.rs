@@ -7,8 +7,8 @@
 //!
 //! Раздел под них режет генерация (`CONFIG`, две страницы стирания — меньше
 //! `sequential-storage` не берёт; в хвосте flash или, с OTA на F2/F4/F7, в
-//! мелких секторах перед `ACTIVE`), а границы приносит `bsp::settings`
-//! диапазоном{% if erase_page == "true" %}, страницу — `flash_page::ErasePage` вокруг флеша{% endif %}; самому хранилищу всё равно, что за флеш под ним, — оттого оно
+//! мелких секторах перед `ACTIVE`), а приносит его `bsp::settings` готовым
+//! `NorFlash`{% if erase_page == "true" %} (страница — `flash_page::ErasePage` вокруг флеша){% endif %}, и хранилище берёт весь его объём; самому хранилищу всё равно, что за флеш под ним, — оттого оно
 //! здесь и тестируется на хосте с флешем в памяти. Чем сериализовать значение
 //! (postcard, `miniconf`, свой формат), решает проект.
 //!
@@ -16,8 +16,9 @@
 //! // Чтение и запись живут в порту домена — без импорта методов не видно.
 //! use ports::SettingsStorage;
 //!
-//! // Хранилище собирает приложение над носителем платы (`app::settings`).
-//! let mut settings = crate::settings::new(parts.board.settings);
+//! // Хранилище собирает узел над носителем платы (`board.settings`), который
+//! // ему отдал граф; `S` — `crate::settings::Settings` из `app`.
+//! let mut settings = S::assemble(store, ());
 //! let mut scratch = [0u8; 64];
 //! let mut buf = [0u8; 64];
 //! settings.write(KEY_CALIBRATION, &postcard::to_slice(&cal, &mut buf)?).await?;
@@ -153,6 +154,23 @@ impl<F: NorFlash> Settings<F> {
 
 // {%- endif %}
 
+// {%- if config == "true" %}
+/// Собирается над носителем платы (раздел флеша, EEPROM, внешняя флеш) — на
+/// весь его объём.
+impl<F: NorFlash> ports::Assemble for Settings<F> {
+    type Source = F;
+    type Buffers = ();
+
+    /// # Panics
+    ///
+    /// Как [`Settings::new`]: носитель не годится под `sequential-storage`.
+    fn assemble(flash: F, (): ()) -> Self {
+        let end = u32::try_from(flash.capacity()).expect("носитель настроек больше 4 GiB");
+        Self::new(flash, 0..end)
+    }
+}
+// {%- endif %}
+
 // {%- if has_canopen == "true" and config != "true" %}
 /// Хранилища нет — у проекта нет раздела настроек.
 ///
@@ -162,6 +180,16 @@ impl<F: NorFlash> Settings<F> {
 /// который всё же в неё пишет, она не годится.
 #[derive(Debug, Default)]
 pub struct Unavailable;
+
+/// Собирать не из чего: раздела настроек у платы нет.
+impl ports::Assemble for Unavailable {
+    type Source = ();
+    type Buffers = ();
+
+    fn assemble((): (), (): ()) -> Self {
+        Self
+    }
+}
 
 impl ports::SettingsStorage for Unavailable {
     type Error = core::convert::Infallible;
