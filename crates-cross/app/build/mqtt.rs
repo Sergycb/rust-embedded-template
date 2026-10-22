@@ -11,6 +11,10 @@ use std::net::Ipv4Addr;
 /// не видит, равенство держит `const`-assert в `crate::net`.
 const PREFIX_MAX: usize = 39;
 
+/// Самые длинные `user` и `password` вместе — `domain::mqtt::AUTH_MAX`; равенство
+/// держит `const`-assert в `crate::net`.
+const AUTH_MAX: usize = 256;
+
 /// Настройки брокера.
 #[derive(Debug)]
 pub struct MqttConfig {
@@ -20,9 +24,11 @@ pub struct MqttConfig {
     pub port: u16,
     /// Имя на брокере; пустое — вход без имени и пароля.
     pub user: String,
-    /// Пароль на брокере.
+    /// Пароль на брокере: без `user` — пустой; вместе с ним не длиннее
+    /// [`AUTH_MAX`].
     pub password: String,
-    /// Префикс тем: непустой, не длиннее [`PREFIX_MAX`], без `/`, `+`, `#`.
+    /// Префикс тем: непустой, не длиннее [`PREFIX_MAX`], без `/`, `+`, `#` и
+    /// без `$` в начале.
     pub prefix: String,
 }
 
@@ -63,6 +69,17 @@ pub fn parse_mqtt_toml(text: &str) -> Result<MqttConfig, String> {
         .ok_or_else(|| format!("port: «{port}» — ожидается число от 1 до 65535"))?;
     let user = string("user", user)?.to_string();
     let password = string("password", password)?.to_string();
+    if user.is_empty() && !password.is_empty() {
+        return Err(
+            "password без user брокеру не уходит — впишите user или очистите password".into(),
+        );
+    }
+    if user.len() + password.len() > AUTH_MAX {
+        return Err(format!(
+            "user и password вместе длиннее {AUTH_MAX} байт — CONNECT с ними не оставит места \
+             в буфере передачи"
+        ));
+    }
     let prefix = string("prefix", prefix)?;
     if prefix.is_empty() || prefix.len() > PREFIX_MAX {
         return Err(format!(
@@ -72,6 +89,11 @@ pub fn parse_mqtt_toml(text: &str) -> Result<MqttConfig, String> {
     if prefix.contains(['/', '+', '#']) {
         return Err(format!(
             "prefix: «{prefix}» — `/`, `+` и `#` в префиксе темы недопустимы"
+        ));
+    }
+    if prefix.starts_with('$') {
+        return Err(format!(
+            "prefix: «{prefix}» — темы на `$` брокер держит для себя (`$SYS`)"
         ));
     }
     Ok(MqttConfig {

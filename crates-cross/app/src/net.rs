@@ -99,6 +99,11 @@ const _: () = assert!(
     MQTT_PREFIX.len() <= domain::mqtt::PREFIX_MAX,
     "prefix в mqtt.toml длиннее domain::mqtt::PREFIX_MAX — поправьте предел в build/mqtt.rs"
 );
+// Так же — предел входа: `CONNECT` с ним держит место в `domain::mqtt::TX_BUFFER`.
+const _: () = assert!(
+    MQTT_BROKER.user.len() + MQTT_BROKER.password.len() <= domain::mqtt::AUTH_MAX,
+    "user и password в mqtt.toml длиннее domain::mqtt::AUTH_MAX — поправьте предел в build/mqtt.rs"
+);
 
 /// Октет адреса брокера из строки `build.rs`.
 const fn octet(text: &str) -> u8 {

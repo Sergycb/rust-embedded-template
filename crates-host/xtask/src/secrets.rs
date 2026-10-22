@@ -41,10 +41,11 @@ const MQTT_CONFIG_TEMPLATE: &str = r#"# Брокер MQTT, к которому �
 # Адрес брокера — IPv4: DNS у платы нет.
 host = "192.168.1.10"
 port = 1883
-# Вход на брокер; пустой `user` — без имени и пароля.
+# Вход на брокер; пустой `user` — без имени и пароля. Вместе до 256 байт.
 user = ""
 password = ""
-# Темы платы — `<prefix>/<uid>/…`: непустой, до 39 байт, без `/`, `+`, `#`.
+# Темы платы — `<prefix>/<uid>/…`: непустой, до 39 байт, без `/`, `+`, `#`,
+# не с `$`.
 prefix = "devices"
 "#;
 
@@ -197,8 +198,9 @@ mod tests {
         assert_eq!(config.prefix, "devices");
     }
 
-    /// Битый адрес, порт 0, недопустимый префикс, лишний или пропущенный ключ —
-    /// ошибка, и в её тексте имя поля.
+    /// Битый адрес, порт 0, недопустимый префикс, пароль без имени, слишком
+    /// длинный вход, лишний или пропущенный ключ — ошибка, и в её тексте имя
+    /// поля.
     #[test]
     fn bad_mqtt_toml_is_rejected() {
         use std::fmt::Write as _;
@@ -224,6 +226,8 @@ mod tests {
             text
         };
         let long = format!("\"{}\"", "p".repeat(40));
+        // Имя и пароль вместе длиннее `AUTH_MAX` (256).
+        let long_user = format!("\"{}\"", "u".repeat(257));
         for (key, value) in [
             ("host", Some("\"300.1.1.1\"")),
             ("host", Some("\"broker.local\"")),
@@ -237,6 +241,9 @@ mod tests {
             ("prefix", Some("\"a+\"")),
             ("prefix", Some("\"#\"")),
             ("prefix", Some(long.as_str())),
+            ("prefix", Some("\"$SYS\"")),
+            ("password", Some("\"secret\"")),
+            ("user", Some(long_user.as_str())),
         ] {
             let err = parse_mqtt_toml(&with(key, value)).unwrap_err();
             assert!(err.contains(key), "{key} = {value:?}: {err}");
@@ -249,8 +256,12 @@ mod tests {
         let config = parse_mqtt_toml(&with("prefix", Some(&longest))).unwrap();
         assert_eq!(config.prefix.len(), 39);
         // `#` в кавычках — часть значения, а не комментарий.
-        let hash = parse_mqtt_toml(&with("password", Some("\"a#b\""))).unwrap();
-        assert_eq!(hash.password, "a#b");
+        let hash = parse_mqtt_toml(&with("user", Some("\"a#b\""))).unwrap();
+        assert_eq!(hash.user, "a#b");
+        // Ровно `AUTH_MAX` — можно.
+        let auth = format!("\"{}\"", "u".repeat(256));
+        let auth = parse_mqtt_toml(&with("user", Some(&auth))).unwrap();
+        assert_eq!(auth.user.len(), 256);
     }
     // {%- endif %}
 }

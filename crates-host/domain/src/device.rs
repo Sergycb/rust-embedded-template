@@ -47,6 +47,10 @@ pub fn write_json_string(out: &mut impl core::fmt::Write, s: &str) -> core::fmt:
 }
 // {%- if net_services != "" %}
 
+/// Самый длинный объект [`write_info`], байт: буфер ответа REST и тело `info`
+/// MQTT.
+pub const INFO_MAX: usize = 256;
+
 /// Сведения об устройстве JSON-объектом: прошивка, чип, MAC, адрес и время
 /// работы.
 ///
@@ -123,6 +127,28 @@ mod tests {
         out.clear();
         write_info(&mut out, &info, mac, None, 0).unwrap();
         assert!(out.contains(r#""ip":null"#), "{out}");
+    }
+
+    /// Самые длинные сведения, какие отдаёт плата, помещаются в [`INFO_MAX`].
+    #[test]
+    fn the_longest_info_fits_the_buffer() {
+        let info = DeviceInfo {
+            version: "65535.65535.65535-rc.65535",
+            commit: "0123456789ab",
+            chip: "STM32H7R7L8HXH",
+            uid: [0xff; UID_BYTES],
+            flash_size: u32::MAX,
+            sys_hz: None,
+        };
+        let mut out = heapless::String::<INFO_MAX>::new();
+        write_info(
+            &mut out,
+            &info,
+            [0xff; 6],
+            Some(embassy_net::Ipv4Address::BROADCAST),
+            u64::MAX,
+        )
+        .unwrap();
     }
     // {%- endif %}
 

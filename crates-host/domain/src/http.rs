@@ -112,7 +112,7 @@ impl<'r> FromRequestParts<'r, Api> for Auth {
 }
 
 /// Тело ответа JSON, собранное в буфере.
-struct Json(heapless::String<256>);
+struct Json(heapless::String<{ crate::device::INFO_MAX }>);
 
 impl Content for Json {
     fn content_type(&self) -> &'static str {
@@ -294,27 +294,5 @@ mod tests {
         for header in [&b"Bearer "[..], b"Bearer", b""] {
             assert!(!authorized(Some(header), ""), "{header:?}");
         }
-    }
-
-    /// Самые длинные сведения, какие отдаёт плата, помещаются в буфер ответа.
-    #[test]
-    fn the_longest_info_fits_the_buffer() {
-        let info = DeviceInfo {
-            version: "65535.65535.65535-rc.65535",
-            commit: "0123456789ab",
-            chip: "STM32H7R7L8HXH",
-            uid: [0xff; crate::device::UID_BYTES],
-            flash_size: u32::MAX,
-            sys_hz: None,
-        };
-        let mut out = heapless::String::<256>::new();
-        crate::device::write_info(
-            &mut out,
-            &info,
-            [0xff; 6],
-            Some(embassy_net::Ipv4Address::BROADCAST),
-            u64::MAX,
-        )
-        .unwrap();
     }
 }

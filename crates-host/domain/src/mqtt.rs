@@ -32,16 +32,22 @@ use supervisor::runtime::TaskExit;
 use ports::{OtaCommand, Progress};
 // {%- endif %}
 
-use crate::device::{DeviceInfo, UID_BYTES};
+use crate::device::{DeviceInfo, INFO_MAX, UID_BYTES};
 // {%- if ota == "true" %}
 use crate::ota::OtaClient;
 // {%- endif %}
 
 /// Буфер входящих пакетов `minimq`: самая длинная команда с темой.
 pub const RX_BUFFER: usize = 512;
-/// Буфер исходящих пакетов `minimq`: `CONNECT` с Will и неподтверждённые
-/// публикации `QoS` 1 (подписка, `status`, `info`).
-pub const TX_BUFFER: usize = 1024;
+/// Буфер исходящих пакетов `minimq`: `CONNECT` с Will и входом (его место
+/// `minimq` держит всю сессию) и неподтверждённые пакеты `QoS` 1 — подписка,
+/// `status`, `info`, исход `reboot`. Сумму держит `const`-assert у `TX_BUDGET`.
+pub const TX_BUFFER: usize = 1152;
+
+/// Самые длинные имя и пароль на брокере вместе, байт: они едут в `CONNECT`,
+/// а его место занято в [`TX_BUFFER`] всю сессию. Тот же предел держит разбор
+/// `mqtt.toml`.
+pub const AUTH_MAX: usize = 256;
 
 /// Самый длинный префикс тем: вместе с `-` и номером чипа (24 hex) он даёт
 /// 64 байта — предел идентификатора клиента.
@@ -62,6 +68,44 @@ const CLIENT_ID_LEN: usize = PREFIX_MAX + 1 + UID_HEX;
 const TOPIC_LEN: usize = CLIENT_ID_LEN + "/cmd/reboot/result".len();
 
 const REBOOT: &str = "/cmd/reboot";
+
+/// Длина пакета с оставшейся частью `rest` байт (меньше 16384): тип и длина
+/// varint.
+const fn packet_len(rest: usize) -> usize {
+    1 + if rest < 128 { 1 } else { 2 } + rest
+}
+
+/// Оставшаяся часть PUBLISH `QoS` 1 без свойств: тема, номер пакета, пустые
+/// свойства, тело.
+const fn publish_rest(topic: usize, payload: usize) -> usize {
+    2 + topic + 2 + 1 + payload
+}
+
+/// Сколько `minimq` держит в [`TX_BUFFER`] в худший момент сессии (кодирование —
+/// `minimq` 0.13: `handshake.rs`, `outbound.rs`). `CONNECT`: запас под заголовок
+/// (5), имя протокола, версия, флаги, keep-alive, три свойства (13 байт и
+/// длина), идентификатор, Will `offline` на `status` и вход. Дальше — всё, что
+/// может разом ждать подтверждения: подписка, `status`, `info` и исход `reboot`;
+/// последний `minimq` кодирует с запасом в 5 байт под заголовок, а не с его
+/// длиной.
+const TX_BUDGET: usize = 5
+    + (2 + "MQTT".len() + 1 + 1 + 2)
+    + (1 + 13)
+    + (2 + CLIENT_ID_LEN)
+    + (1 + 2 + CLIENT_ID_LEN + "/status".len() + 2 + "offline".len())
+    + (2 + 2 + AUTH_MAX)
+    + packet_len(2 + 1 + 2 + CLIENT_ID_LEN + "/cmd/#".len() + 1)
+    + packet_len(publish_rest(
+        CLIENT_ID_LEN + "/status".len(),
+        "online".len(),
+    ))
+    + packet_len(publish_rest(CLIENT_ID_LEN + "/info".len(), INFO_MAX))
+    + 5
+    + publish_rest(TOPIC_LEN, "accepted".len());
+const _: () = assert!(
+    TX_BUDGET <= TX_BUFFER,
+    "CONNECT и неподтверждённые пакеты не влезают в TX_BUFFER"
+);
 
 /// Куда подключаться.
 #[derive(Debug, Clone, Copy)]
@@ -269,6 +313,8 @@ async fn announce<IO: minimq::Io>(
         // Команда, оставленная с retain, иначе приходила бы при каждом
         // подключении.
         .retain_behavior(RetainHandling::Never)
+        // Свой `cmd/reboot/result` не возвращается «неизвестной командой».
+        .ignore_local_messages()
         .maximum_qos(QoS::AtLeastOnce);
     conn.subscribe(&[TopicFilter::new(&filter).options(options)], &[])
         .await
@@ -281,7 +327,7 @@ async fn announce<IO: minimq::Io>(
     )
     .await
     .map_err(drop)?;
-    let mut json = String::<256>::new();
+    let mut json = String::<INFO_MAX>::new();
     if crate::device::write_info(&mut json, info, mac, ip, Instant::now().as_secs()).is_err() {
         warn!("mqtt: сведения об устройстве не влезли в буфер");
         return Ok(());
@@ -907,6 +953,48 @@ pub(crate) mod tests {
             .iter()
             .find(|p| p.topic == topic("/cmd/reboot/result"))
             .expect("исход команды опубликован");
+        assert_eq!(result.payload, b"accepted");
+    }
+
+    /// Худший случай [`TX_BUDGET`] влезает ровно в него: самые длинные префикс,
+    /// вход и `info`, и ни одного подтверждения от брокера до исхода `reboot`.
+    #[test]
+    fn tx_budget_covers_the_worst_session() {
+        fn leak(s: std::string::String) -> &'static str {
+            Box::leak(s.into_boxed_str())
+        }
+        let (ota, mut node) = crate::ota::tests::live();
+        let env = env();
+        env.ota = Box::leak(Box::new(ota));
+        env.tx = Box::leak(vec![0; TX_BUDGET].into_boxed_slice());
+        let topics = Topics::new(&"p".repeat(PREFIX_MAX), &UID);
+        // `info` длиной ровно `INFO_MAX`: версия добирает недостающее.
+        let mut info = *env.info;
+        let mut json = std::string::String::new();
+        crate::device::write_info(&mut json, &info, env.mac, env.ip, Instant::now().as_secs())
+            .unwrap();
+        info.version = leak("v".repeat(INFO_MAX - json.len() + info.version.len()));
+        env.info = Box::leak(Box::new(info));
+        let endpoint = Box::leak(Box::new(Endpoint {
+            user: leak("u".repeat(AUTH_MAX / 2)),
+            password: leak("p".repeat(AUTH_MAX / 2)),
+            ..ENDPOINT
+        }));
+        let reboot = topics.topic::<TOPIC_LEN>(REBOOT);
+        let result = topics.reboot_result();
+        env.topics = Box::leak(Box::new(topics));
+        let broker = FakeBroker::default();
+        broker.push(&connack(0));
+        let mut session: Running = Box::pin(serve(broker.clone(), endpoint, env));
+        assert!(poll(session.as_mut()).is_pending(), "сессия в сети");
+        broker.push(&publish(&reboot, b"", false));
+        assert!(poll(session.as_mut()).is_pending(), "запрос узлу OTA");
+        assert!(poll(node.as_mut()).is_pending(), "узел ответил");
+        assert!(poll(session.as_mut()).is_pending(), "исход опубликован");
+        let sent = sent(&broker.output());
+        let info = sent.iter().find(|p| p.topic.ends_with("/info")).unwrap();
+        assert_eq!(info.payload.len(), INFO_MAX);
+        let result = sent.iter().find(|p| p.topic == result.as_str()).unwrap();
         assert_eq!(result.payload, b"accepted");
     }
     // {%- endif %}
