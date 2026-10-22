@@ -57,8 +57,10 @@
   (`ctx: $crate::mqtt::MqttCtx, task: $crate::mqtt::task;`), `restart: Never`,
   `TaskExit::Failed` не возвращает. Отказ связи — лог, пауза, начальное
   состояние.
-- Буферы сокета и `minimq` — слоты фрагмента `= static` (как у SSH); в
-  задаче без графа — `ConstStaticCell` (как `tasks/http.rs`).
+- Буферы `minimq` — слоты фрагмента `= static` (как у SSH); в
+  задаче без графа — `ConstStaticCell` (как `tasks/http.rs`). Буферы сокета —
+  статики `app` (`crate::net::mqtt_buffers()`), клиента над ними и стеком платы
+  собирает сам узел (`ports::Assemble`, после `refactor/bsp-levers`).
 - Liquid в корневом workspace — только в комментариях (`// {%- if … %}`).
 - `#![allow(dead_code)]` в `graph.rs` не трогать.
 - Новая зависимость для `cross` проверяется холодной сборкой
@@ -231,7 +233,8 @@ SSH/REST), проверяется `template-check` и на плате. Ново�
 
 ### Ресурсы
 
-- Сокет: `SOCKETS` в `crate::net` — `+ 1` при `mqtt`; комментарий там же.
+- Сокет: слот в `NET_SOCKETS` (`[env]`, `bsp::net`) — генерация прибавляет
+  `+ 1` при `mqtt` (после `refactor/bsp-levers`; было — `SOCKETS` в `crate::net`).
 - Буферы (константы в `domain::mqtt`): TCP rx/tx, `minimq` rx (наибольшая
   входящая публикация — команды короткие, 512 Б хватит) и tx (in-flight + CONNECT
   с Will — ориентир 1 КиБ). Итог сверить с `RAM_COST`.

@@ -127,7 +127,7 @@ type StateFlash = BlockingAsync<ErasePage<crate::flash::Whole, STATE_ERASE_SIZE>
 type StateFlash = BlockingAsync<crate::flash::Whole>;
 {%- endif %}
 
-/// Раздел `DFU` — то, из чего приложение собирает адаптер обновления.
+/// Раздел `DFU` — то, над чем узел OTA собирает адаптер обновления.
 pub type Dfu = embassy_embedded_hal::flash::partition::Partition<'static, NoopRawMutex, DfuFlash>;
 
 /// Раздел `BOOTLOADER_STATE` — над [`StateFlash`], а не над цельным `Flash`,

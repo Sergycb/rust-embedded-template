@@ -42,11 +42,11 @@ if ota == "true" {
 if config == "true" {
 	let store = variable::get("config_store");
 	if store == "eeprom" {
-		print("Настройки: внутренняя EEPROM чипа (crates-cross/bsp/src/settings.rs), хранилище — crates-cross/app/src/settings.rs.");
+		print("Настройки: внутренняя EEPROM чипа (crates-cross/bsp/src/settings.rs, поле Board::settings); хранилище над ней собирает узел-потребитель, тип — crates-cross/app/src/settings.rs.");
 	} else if store == "external" {
-		print("Настройки: внешняя флеш — подставьте драйвер в crates-cross/bsp/src/settings.rs; хранилище — crates-cross/app/src/settings.rs.");
+		print("Настройки: внешняя флеш — подставьте шину драйвера в crates-cross/bsp/src/external.rs; хранилище над ней собирает узел-потребитель, тип — crates-cross/app/src/settings.rs.");
 	} else {
-		print("Настройки: раздел CONFIG во flash (crates-cross/bsp/src/settings.rs), хранилище — crates-cross/app/src/settings.rs.");
+		print("Настройки: раздел CONFIG во flash (crates-cross/bsp/src/settings.rs, поле Board::settings); хранилище над ним собирает узел-потребитель, тип — crates-cross/app/src/settings.rs.");
 	}
 }
 if variable::get("graph") == "true" {
@@ -90,7 +90,7 @@ if variable::get("graph") == "true" {
 		}
 	}
 	if net_block != "" {
-		print("Сеть: фоновый узел NET — стек embassy-net (crates-cross/app/src/net.rs) над заглушкой устройства в crates-cross/bsp/src/net.rs (cargo xtask pins " + net_block + " --snippet).");
+		print("Сеть: фоновый узел NET — стек embassy-net над заглушкой устройства, оба в crates-cross/bsp/src/net.rs (cargo xtask pins " + net_block + " --snippet).");
 	}
 	if blocks != "" {
 		print("Блоки интерфейсов назначены по умолчанию: " + blocks + ". Сменить блок и задать выводы своей платы — crates-cross/bsp/src/resources.rs (cargo xtask pins <БЛОК> --snippet печатает готовую группу); имена транспортов (поле Board, модули bsp и app, имена узлов) остаются от блока по умолчанию.");

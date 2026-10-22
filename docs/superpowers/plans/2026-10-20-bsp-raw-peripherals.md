@@ -1,3 +1,5 @@
+> **Заменено 2026-10-22:** ветка `refactor/bsp-levers` — `bsp` отдаёт рычаги платы, узлы собирают адаптеры через `ports::Assemble`.
+
 # Плата отдаёт периферию — план реализации
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

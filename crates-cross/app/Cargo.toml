@@ -35,10 +35,11 @@ defmt-rtt = { workspace = true }
 bsp = { workspace = true, features = ["time-driver", "panic-handler", "fault-handler"] }
 domain = { workspace = true }
 {%- if has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" or ota == "true" or config == "true" or net_services contains "mqtt" %}
-# Адаптеры над рычагами платы собирает приложение: транспорты протоколов
+# Адаптеры над рычагами платы собирают узлы (`ports::Assemble`), а приложение
+# называет их типы и заводит их буферы: каналы протоколов
 # (`adapters::modbus::Rtu`, `adapters::cobs::Cobs`) вокруг потока, CDC или стека{% if ota == "true" %},
 # адаптер обновления (`adapters::ota`, src/ota.rs){% endif %}{% if config == "true" %}, хранилище настроек
-# (`adapters::settings`, src/settings.rs){% endif %}{% if net_services contains "mqtt" %}, сокет клиента MQTT (src/net.rs){% endif %}.
+# (`adapters::settings`, src/settings.rs){% endif %}{% if net_services contains "mqtt" %}, буферы клиента MQTT (src/net.rs){% endif %}.
 adapters = { workspace = true }
 {%- endif %}
 {%- if has_net == "true" %}

@@ -103,7 +103,7 @@ embassy-usb = { workspace = true }
 {%- if has_net == "true" %}
 # Трейт сетевого драйвера — его реализует заглушка (`bsp::stub::NetDevice`) и
 # драйвер Ethernet `embassy-stm32`; стек над ним — `embassy-net` (src/net.rs),
-# сокеты на стеке открывает приложение.
+# сокеты на стеке открывают узлы.
 embassy-net-driver = { workspace = true }
 embassy-net = { workspace = true }
 {%- endif %}
@@ -118,7 +118,7 @@ embassy-sync = { workspace = true }
 {%- endif %}
 # Только ради `ota.rs`, которого в проектах без OTA нет вовсе — вместе с
 # `crates-cross/boot` его удаляет chip-select.rhai. Адаптер обновления над
-# разделами собирает `app`; здесь `embassy-boot` нужен ради `from_linkerfile`
+# разделами собирает узел OTA; здесь `embassy-boot` нужен ради `from_linkerfile`
 # (разделы из символов memory.x) и фичи `flash-erase-zero`.
 {%- if ota == "true" %}
 embassy-boot = { workspace = true, features = ["defmt"{% if erase_zero == "true" and ota_store != "external" %}, "flash-erase-zero"{% endif %}] }

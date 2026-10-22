@@ -2342,7 +2342,7 @@ variable::set("net_sockets", net_sockets.to_string());
 // Все сокеты стека (`NET_SOCKETS` в `[env]`, `bsp::net`): DHCP-клиент, сетевые
 // транспорты и соединения сетевых служб — по сокету на копию пула REST, на
 // консоль SSH и на клиент MQTT. Плата строит стек под это число, а сокеты
-// открывает приложение.
+// открывают узлы.
 // Соединений REST разом — копий пула узлов `HTTP` (`HTTP_CONNECTIONS` в `[env]`,
 // литерал пула в `app/src/graph.rs`): решение приложения, а не узла.
 let http_connections = if services.contains("rest") { 2 } else { 0 };

@@ -1,6 +1,7 @@
 UART платы — поток байтов, по подмодулю на транспорт (`bsp::serial::<транспорт>`).
-Транспорт протокола над ним (Modbus RTU, protobuf с кадрами COBS) и его буферы
-собирает приложение (`crates-cross/app/src/link.rs`).
+Канал протокола над ним (Modbus RTU, protobuf с кадрами COBS) собирает узел
+протокола (`ports::Assemble`), а тип канала и его буферы задаёт приложение
+(`crates-cross/app/src/link.rs`).
 
 Шаблон выводы не выбирает (`docs/architecture.md`), поэтому в `Serial` пока
 стоит заглушка `bsp::stub::Serial`: проект собирается и

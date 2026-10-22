@@ -583,8 +583,9 @@ impl<B, D: ports::Assemble<Source = crate::net::Stack<'static>>> core::fmt::Debu
 
 // Узел объявлен рядом со своей задачей — как `SSH`. `<B>` — откуда адрес
 // брокера (`Fixed` или свой тип проекта), `<D>` — соединение (`Dial` +
-// поток байтов; `adapters::net::TcpClient` над сокетом стека, его и буферы
-// TCP собирает `app`); `local` у них и у стека — все вправе быть `!Send`.
+// поток байтов; `adapters::net::TcpClient` над сокетом стека — собирает его
+// слот `LINK` из стека и буферов TCP от `app`); `local` у них и у стека — все
+// вправе быть `!Send`.
 // Буферы `minimq` — слоты `= static`: через стек они не идут. Без
 // `watchdog:`: брокера может не быть всю жизнь платы.
 supervisor::supervisor_fragment! {

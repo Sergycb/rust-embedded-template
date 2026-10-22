@@ -209,17 +209,17 @@ fragments: [::domain::HEARTBEAT_FRAG as HEARTBEAT,
 
 // в main(), после инициализации HAL: слот назван по узлу и по слоту.
 provide_usart_uart(r.usart).expect("слот пуст до первого spawn_all");
-// Второй параметр — `boot:`-объект графа; в шаблоне это `parts`
-// (`crate::parts::Parts`: плата и собранные над её драйверами пары). Слот,
+// Второй параметр — `boot:`-объект графа; в шаблоне это `board`
+// (`bsp::Board`: рычаги платы). Слот,
 // написанный с инициализатором — во фрагменте `resources: [UART: R = hw.usart]`
-// при его собственной `boot: hw: …;`, а здесь `… as USART = parts.board.usart`, —
+// при его собственной `boot: hw: …;`, а здесь `… as USART = board.usart`, —
 // заполняет сам граф:
 // строки `provide_usart_uart` тогда нет вовсе, а значит её нельзя и забыть
 // (так устроен узел OTA ниже). Формой не обслуживаются слоты
 // `consume`/`shared` (их переиздаёт `respawn_all`, а boot-объект к тому
 // моменту потреблён) и всё, что требует `await` или повтора, — для этого
 // остаётся узел-инициализатор.
-spawn_all(&spawner, parts).expect("узлы свежие");
+spawn_all(&spawner, board).expect("узлы свежие");
 ```
 
 **Большой объект в слот по значению не кладут.** Слот `[X: T]` — `static`
@@ -278,8 +278,8 @@ resources: [WS: &'static mut $crate::x::Workspace = static |w| w.gain = inputs.g
 Писать её руками не нужно, и подключать тоже: имя блока подставлено при
 генерации из метаданных чипа (`IWDG`, на H7 `IWDG1`, на двухъядерных H7 у
 ядра CM4 `IWDG2`), объект собирает `Board::new`, а запускает его блок
-`watchdog:` графа — инициализатором `= parts.board.watchdog.arm()`, где
-`parts` это объявленный выше `boot:`-объект, который `main` передаёт в
+`watchdog:` графа — инициализатором `= board.watchdog.arm()`, где
+`board` это объявленный выше `boot:`-объект, который `main` передаёт в
 `spawn_all`. Всё, что осталось на вас, — цифры, и живут они там, о чём
 каждая: `WATCHDOG_CHECK_EVERY` здесь (про один сторож на всех), таймаут узла
 во фрагменте (про этот узел, вместе с периодом его отметок — и их соотношение
@@ -440,16 +440,16 @@ async fn uart_drain_task(mut uart: embassy_stm32::usart::UartTx<'static, embassy
 `ota_cmd_requester()`, а узел получает его обёрнутым в `domain::ota::OtaClient`
 с номером своего транспорта (`ClientId`, порядковый номер транспорта с
 протоколом в `links`, с 0; тот же у задачи без графа) — с protobuf его
-получает `domain::host::Service` прямо во входе узла `HOST`. Номер нужен
+получает `domain::host::Service` прямо во входе узла `HOST_*`. Номер нужен
 владельцу сессии: чужой приём, пока идёт свой, получает `Busy`
 (`docs/ota.md`). Своего канала у образа нет: он идёт по протоколу,
 которым хост и так говорит с устройством (`docs/ota.md`).
 
-Плата отдаёт для узла разделы обновления `parts.board.ota`
-(`bsp::ota::Partitions`) и порт перезагрузки `bsp::cpu::Reboot`, а адаптер
-обновления над разделами (`crate::ota::new`) и вход фрагмента собирает эта
-сторона: `bsp` про `adapters` и `domain` не знает
-(`= ::domain::ota::OtaWiring { flash: crate::ota::new(parts.board.ota), reboot:
+Плата отдаёт для узла разделы обновления `board.ota`
+(`bsp::ota::Partitions` — `ports::FirmwarePartitions`) и порт перезагрузки
+`bsp::cpu::Reboot`; эта сторона кладёт их во вход фрагмента, а адаптер
+обновления над разделами собирает сам узел (`ports::Assemble`): `bsp` про
+`domain` не знает (`= ::domain::ota::OtaWiring { source: board.ota, reboot:
 bsp::cpu::Reboot, mode: ::domain::ota::Mode::Signed { running_version:
 crate::image::FW_VERSION } }`). Типы слотов — аргументы фрагмента
 (`OTA_FRAG<crate::ota::Updater, bsp::cpu::Reboot>`):
@@ -471,17 +471,21 @@ crate::image::FW_VERSION } }`). Типы слотов — аргументы ф�
 # Modbus: одна карта на все узлы `MODBUS_*`
 
 Узел `MODBUS_<ТРАНСПОРТ>` — по одному на транспорт с Modbus в `links`.{% if graph == "true" %}
-Фрагмент — `domain::MODBUS_SLAVE_FRAG`, вход узла —
-`domain::modbus::ModbusSlaveWiring`: транспорт
-(`crate::link::<транспорт>::Link`), карта регистров и адрес slave'а (`unit`).{% else %}
-Без графа это задача в `crates-cross/app/src/tasks/modbus.rs`: транспорт
-(`crate::link::<транспорт>::Link`), карта регистров и адрес slave'а — в
-контексте `domain::modbus::ModbusSlaveCtx`.{% endif %} Карта одна на проект: `crate::parts::Parts::new` один раз заводит её в
-`crates-cross/app/src/modbus.rs` и кладёт ручку в `parts.modbus`
-(`crate::modbus::Handle` = `domain::modbus::SharedRegisters<Map>`, `Copy`), а
-каждый узел получает её копию — запись через один транспорт видна чтению через
-другой. Ручка берёт мьютекс карты (`domain::modbus::MapMutex`, `NoopRawMutex`)
-на время одного вызова порта, так что запросы с разных транспортов идут по
+Фрагмент — узел протокола `domain::SERVER_FRAG<L, H>`, общий с protobuf: канал
+`L` (`crate::link::<транспорт>::Link`) узел собирает сам из рычага платы и
+буферов `crate::link::<транспорт>::buffers()`, обработчик `H` —
+`domain::modbus::Slave` над картой регистров с адресом slave'а (вход
+`domain::server::ServerWiring`).{% else %}
+Без графа это задача в `crates-cross/app/src/tasks/modbus.rs`: она зовёт
+`domain::server::serve` с каналом `crate::link::<транспорт>::Link`, который
+узел собирает из рычага платы, и обработчиком `domain::modbus::Slave` над
+картой регистров с адресом slave'а.{% endif %} Карта одна на проект: её
+заводит `crates-cross/app/src/modbus.rs` в `static` (`OnceLock`) при первом
+`crate::modbus::handle()`, и каждый узел берёт свою копию ручки
+(`crate::modbus::Handle` = `domain::modbus::SharedRegisters<Map>`, `Copy`) — запись через один транспорт видна чтению через
+другой. Ручка берёт мьютекс карты (`domain::modbus::MapMutex`,
+`CriticalSectionRawMutex` — `OnceLock` в `static` требует `Sync`) на время
+одного вызова порта, так что запросы с разных транспортов идут по
 очереди.{% if ota == "true" %} Окно OTA (`domain::modbus::OtaRegisters`) каждый узел оборачивает вокруг
 своей копии ручки снаружи, вне блокировки: `Start` ждёт стирания секундами, а
 карту в это время обслуживают остальные транспорты. Номер клиента OTA у окна —
@@ -490,7 +494,7 @@ crate::image::FW_VERSION } }`). Типы слотов — аргументы ф�
 Свою карту проект подставляет в одном месте — псевдоним `Map` в
 `crates-cross/app/src/modbus.rs` (по умолчанию `domain::modbus::EmptyRegisters`):
 тип реализует `ports::Registers` и живёт в `domain`. Карта строится через
-`Map::default()`; без `Default` замените эту одну строку в `crate::modbus::new`
+`Map::default()`; без `Default` замените эту одну строку в `crate::modbus::handle`
 своим конструктором. Узлы и граф тип берут оттуда и правок не требуют.
 {%- endif %}
 

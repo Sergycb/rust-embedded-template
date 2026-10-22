@@ -3,8 +3,11 @@
 Узел `MQTT` — клиент брокера (MQTT 5, `minimq`) поверх TCP-сокета стека. Плата
 сама подключается к брокеру и держит соединение: публикует состояние и
 телеметрию, принимает команды. Логика — в `crates-host/domain/src/mqtt.rs`;
-`app` только собирает соединение (`crate::net::mqtt_link`), буферы `minimq`
-и вход узла (`crates-cross/app/src/tasks/mqtt.rs`, в графе — `fragments:`).
+соединение (`adapters::net::TcpClient`) узел собирает сам (`ports::Assemble`) на
+стеке платы `board.net.stack` в памяти от `app` (`crate::net::mqtt_buffers()`);
+`app` заводит эти буферы, буферы `minimq` и вход узла
+(`crates-cross/app/src/tasks/mqtt.rs`, в графе — `fragments:`). Сокет клиента —
+слот стека, его генерация учитывает в `NET_SOCKETS` (`[env]`).
 
 ## Темы и содержимое
 

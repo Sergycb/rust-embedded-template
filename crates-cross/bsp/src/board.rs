@@ -61,16 +61,18 @@ pub struct Board {
 {%- endif %}
 {%- if ota == "true" %}
     /// Разделы обновления `DFU`/`BOOTLOADER_STATE`, собранные из символов
-    /// `memory.x` (`bsp::ota`). Адаптер обновления — порт `FirmwareUpdate` —
-    /// собирает над ними приложение (`crates-cross/app/src/ota.rs`); алгоритм
-    /// обновления над портами — в `domain::ota`.
+    /// `memory.x`, и предел образа (`bsp::ota`). Адаптер обновления — порт
+    /// `FirmwareUpdate` — собирает над ними узел OTA (`ports::Assemble`, тип —
+    /// `crates-cross/app/src/ota.rs`); алгоритм обновления над портами — в
+    /// `domain::ota`.
     pub ota: crate::ota::Partitions,
 {%- endif %}
 {%- if config == "true" %}
     /// Носитель настроек, переживающих перезапуск и обновление прошивки:
     /// {% if config_store == "eeprom" %}внутренняя EEPROM{% elsif config_store == "external" %}раздел на внешней флеши (драйвер — `bsp/src/external.rs`){% else %}раздел `CONFIG` во флеше{% endif %} (`bsp::settings`).
-    /// Хранилище над ним — `adapters::settings` — собирает приложение
-    /// (`crates-cross/app/src/settings.rs`); формат значений выбирает проект.
+    /// Хранилище над ним — `adapters::settings` — собирает узел-потребитель
+    /// (`ports::Assemble`, тип — `crates-cross/app/src/settings.rs`); формат
+    /// значений выбирает проект.
     pub settings: crate::settings::ConfigFlash,
 {%- endif %}
 {%- assign xs = links | split: "," %}
@@ -79,8 +81,8 @@ pub struct Board {
 {%- if f[0] == "uart" %}
     /// UART `{{ f[2] }}` — поток байтов; пока заглушка `bsp::serial::{{ f[4] }}::Serial`, до
     /// драйвера платы (`docs/modules/bsp-serial.md`). {% if f[3] == "none" %}Протокола у транспорта
-    /// нет: поле ждёт ваш узел.{% else %}Транспорт протокола {{ f[3] }} над ним собирает приложение
-    /// (`crates-cross/app/src/link.rs`).{% endif %}
+    /// нет: поле ждёт ваш узел.{% else %}Канал протокола {{ f[3] }} над ним собирает узел протокола
+    /// (тип и буферы — `crates-cross/app/src/link.rs`).{% endif %}
     pub {{ f[4] }}: crate::serial::{{ f[4] }}::Serial,
 {%- elsif f[0] == "can" %}
     /// Шина CAN `{{ f[2] }}`{% if f[3] == "canopen" %} под узлом `CANOPEN_{{ f[4] | upcase }}`{% endif %} — заглушка `bsp::can::{{ f[4] }}::Can`, пока проект не

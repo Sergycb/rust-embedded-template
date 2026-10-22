@@ -1,5 +1,5 @@
 //! Сетевые службы приложения: то, что `domain` получает входом узла, а знает
-//! только этот проект, — {% if net_services contains "rest" %}токен REST API{% endif %}{% if net_services contains "rest" and net_services contains "ssh" %}, {% endif %}{% if net_services contains "ssh" %}вход и ключ консоли SSH{% endif %}{% if net_services contains "mqtt" %}{% if net_services contains "rest" or net_services contains "ssh" %}, {% endif %}брокер MQTT и сокет его клиента{% endif %}.
+//! только этот проект, — {% if net_services contains "rest" %}токен REST API{% endif %}{% if net_services contains "rest" and net_services contains "ssh" %}, {% endif %}{% if net_services contains "ssh" %}вход и ключ консоли SSH{% endif %}{% if net_services contains "mqtt" %}{% if net_services contains "rest" or net_services contains "ssh" %}, {% endif %}брокер MQTT и буферы сокета его клиента{% endif %}.
 //! Стек, на котором службы открывают сокеты, собирает плата (`bsp::net`), и
 //! сокеты под них он заводит по числу из генерации (`NET_SOCKETS`).
 {%- if net_services contains "mqtt" %}
