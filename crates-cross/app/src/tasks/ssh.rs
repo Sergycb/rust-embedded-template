@@ -18,7 +18,7 @@ static SSH_TX: ConstStaticCell<[u8; SSH_BUFFER]> = ConstStaticCell::new([0; SSH_
 
 #[embassy_executor::task]
 async fn task(
-    mut stack: embassy_net::Stack<'static>,
+    mut stack: bsp::net::Stack,
     mut info: domain::device::DeviceInfo,
     mut host_key: HostKey,
 ) {
@@ -47,7 +47,7 @@ async fn task(
 /// Спавнит узел.
 pub fn spawn(
     spawner: embassy_executor::Spawner,
-    stack: embassy_net::Stack<'static>,
+    stack: bsp::net::Stack,
     info: domain::device::DeviceInfo,
     host_key: HostKey,
 ) {

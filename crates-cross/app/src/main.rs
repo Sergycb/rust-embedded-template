@@ -20,24 +20,17 @@ mod link;
 {%- if has_modbus == "true" %}
 mod modbus;
 {%- endif %}
-{%- if has_net == "true" %}
+{%- if net_services != "" %}
 mod net;
 {%- endif %}
 {%- if ota == "true" %}
 mod ota;
-{%- endif %}
-mod parts;
-{%- if net_services contains "ssh" %}
-mod rng;
 {%- endif %}
 {%- if config == "true" %}
 mod settings;
 {%- endif %}
 {%- if graph != "true" %}
 mod tasks;
-{%- endif %}
-{%- if has_usb == "true" %}
-mod usb;
 {%- endif %}
 
 use defmt::info;
@@ -90,7 +83,7 @@ fn main() -> ! {
     // `panic-persist` стирает свою магию, — поэтому печатать надо сразу и до
     // всего остального: следующий сброс эту строку уже не покажет.
     //
-    // ДО `Board::new` и `Parts::new`, и это важно: они умеют паниковать сами
+    // ДО `Board::new`, и это важно: он умеет паниковать сам
     // (негодная конфигурация тактирования, раздел `CONFIG` не на границах
     // страниц, нет клока у RNG), а в release паника это сброс. Печатай мы после
     // них — устройство, падающее внутри `new`, крутилось бы в цикле
@@ -103,18 +96,18 @@ fn main() -> ! {
         defmt::error!("app: предыдущий запуск упал: {}", reason);
     }
 
-    // Плата и пары объектов, собранные над её драйверами (`crate::parts`).
+    // Плата — рычаги для узлов.
 {%- if external_flash == "true" %}
     // `Board::new` асинхронный (ждёт `init` внешней флеши), а исполнителя ещё
     // нет — он поднимается ниже, руками: `block_on` крутит future здесь же, на
     // стеке `main`.
-    let parts = parts::Parts::new(embassy_futures::block_on(bsp::Board::new()));
+    let board = embassy_futures::block_on(bsp::Board::new());
 {%- else %}
-    let parts = parts::Parts::new(bsp::Board::new());
+    let board = bsp::Board::new();
 {%- endif %}
     // Следом — на чём именно: чип и его заводской номер, по которому
     // экземпляр платы отличается от соседнего.
-    info!("app: {}", parts.board.spec);
+    info!("app: {}", board.spec);
 
     // Исполнитель — свой, а не `#[embassy_executor::main]`, и это единственная
     // причина, по которой `main` здесь синхронный. У макроса `WFE` живёт
@@ -137,13 +130,13 @@ fn main() -> ! {
     // Голый `spawner.spawn(..)` рядом с ним завёл бы вторую, неуправляемую
     // ветку: без `restart:`, `deps:` и `watchdog:` (см. graph.rs).
     //
-    // `parts` уезжает сюда целиком — это объявленный графом `boot:`-объект,
+    // `board` уезжает сюда целиком — это объявленный графом `boot:`-объект,
     // из которого его инициализаторы забирают объекты частичными move.
     // Такие заборы уже есть — сторож в блоке `watchdog:`{% if ota == "true" %}, вход узла
-    // OTA в `fragments:` (`parts.board.ota`){% endif %} — и здесь же
-    // окажутся ваши: `resources: [SLOT: T = parts.board.<поле>]` вместо
+    // OTA в `fragments:` (`board.ota`){% endif %} — и здесь же
+    // окажутся ваши: `resources: [SLOT: T = board.<поле>]` вместо
     // `provide_<slot>(..)` перед этой строкой. Оттого и последняя строка
-    // `spawn_all`: после неё `parts` принадлежит прологу.
+    // `spawn_all`: после неё `board` принадлежит прологу.
     //
     // Аппаратный сторож запускается ВНУТРИ этого вызова — инициализатором
     // блока `watchdog:`, — а не в `Board::new` и не строкой выше: с этого
@@ -163,14 +156,14 @@ fn main() -> ! {
     // бы в сброс через `bsp::wdg::HW_TIMEOUT_US` без единой строки о причине.
     // Через `Display2Format`, а не `expect`: `Debug` у ошибки графа нет —
     // `supervisor` убрал его ради флеша, имя узла и вид отказа даёт `Display`.
-    if let Err(err) = graph::spawn_all(&spawner, parts) {
+    if let Err(err) = graph::spawn_all(&spawner, board) {
         defmt::panic!("app: spawn_all: {}", defmt::Display2Format(&err));
     }
 {%- else %}
 
     // Графа нет: узлы спавнит `tasks::spawn_all` — по модулю на задачу, как
-    // фрагменты графа, — а `parts` уезжает туда целиком.
-    tasks::spawn_all(spawner, parts);
+    // фрагменты графа, — а `board` уезжает туда целиком.
+    tasks::spawn_all(spawner, board);
 {%- endif %}
 
     // Цикл исполнителя: спим, пока нечего делать, и отмечаем в счётчике, сколько

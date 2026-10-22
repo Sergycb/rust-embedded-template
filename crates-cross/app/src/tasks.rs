@@ -3,7 +3,7 @@
 //!
 //! По модулю на задачу (или пул задач): в нём задача-обёртка
 //! `#[embassy_executor::task]`, сборка адаптеров узла над объектами платы и
-//! `spawn`. `main` отдаёт объекты узлов (`crate::parts::Parts`) в [`spawn_all`] целиком, как графу, и сам
+//! `spawn`. `main` отдаёт плату (`bsp::Board`) в [`spawn_all`] целиком, как графу, и сам
 //! задачами не занимается. Embassy-задача не может быть generic, поэтому
 //! каждая типизирована объектом платы (`bsp`) или транспортом
 //! (`crate::link`). Контекст узла собирается из локальных переменных кадра:
@@ -47,62 +47,54 @@ mod usb;
 ///
 /// Если задачу уже спавнили: `spawn_all` зовётся один раз за запуск, а
 /// проглоченный `SpawnError::Busy` означал бы, что узел молча не работает.
-pub fn spawn_all(spawner: embassy_executor::Spawner, {% if ota == "true" or has_net == "true" or has_usb == "true" or has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" %}parts{% else %}_parts{% endif %}: crate::parts::Parts) {
+pub fn spawn_all(spawner: embassy_executor::Spawner, {% if ota == "true" or has_net == "true" or has_usb == "true" or has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" %}board{% else %}_board{% endif %}: bsp::Board) {
     // Загрузку процессора меряет задача из `cpu_load.rs`: в домене
     // executor-обвязки быть не может, а там ровно место для неё.
     spawner.spawn(crate::cpu_load::task().expect("задача CPU_LOAD свежая: спавнится один раз"));
 {%- if ota == "true" %}
-    ota::spawn(spawner, parts.board.ota);
+    ota::spawn(spawner, board.ota);
 {%- endif %}
 {%- if has_net == "true" %}
-    net::spawn(spawner, parts.net.runner);
+    net::spawn(spawner, board.net.runner);
 {%- endif %}
 {%- for l in xs %}
 {%- assign f = l | split: ":" %}
 {%- if f[0] == "usb" %}
-    usb::{{ f[4] }}::spawn(spawner, parts.{{ f[4] }}.device);
+    usb::{{ f[4] }}::spawn(spawner, board.{{ f[4] }}.device);
 {%- endif %}
 {%- endfor %}
 {%- for l in xs %}
 {%- assign f = l | split: ":" %}
 {%- if f[3] == "modbus" %}
-    modbus::{{ f[4] }}::spawn(spawner, {% if f[0] == "uart" %}parts.board.{{ f[4] }}{% elsif f[0] == "usb" %}parts.{{ f[4] }}.cdc{% else %}parts.net.stack{% endif %}, parts.modbus);
+    modbus::{{ f[4] }}::spawn(spawner, {% if f[0] == "uart" %}board.{{ f[4] }}{% elsif f[0] == "usb" %}board.{{ f[4] }}.cdc{% else %}board.net.stack{% endif %}, crate::modbus::handle());
 {%- elsif f[3] == "protobuf" %}
-    let info = crate::device_info(parts.board.spec);
-    host::{{ f[4] }}::spawn(spawner, {% if f[0] == "uart" %}parts.board.{{ f[4] }}{% elsif f[0] == "usb" %}parts.{{ f[4] }}.cdc{% else %}parts.net.stack{% endif %}, info);
+    let info = crate::device_info(board.spec);
+    host::{{ f[4] }}::spawn(spawner, {% if f[0] == "uart" %}board.{{ f[4] }}{% elsif f[0] == "usb" %}board.{{ f[4] }}.cdc{% else %}board.net.stack{% endif %}, info);
 {%- elsif f[3] == "canopen" %}
 {%- if config == "true" %}
-    let store = crate::settings::new(parts.board.settings);
+    let store = crate::settings::new(board.settings);
 {%- else %}
     let store = adapters::settings::Unavailable;
 {%- endif %}
-    canopen::{{ f[4] }}::spawn(spawner, parts.board.{{ f[4] }}, store);
+    canopen::{{ f[4] }}::spawn(spawner, board.{{ f[4] }}, store);
 {%- endif %}
 {%- endfor %}
 {%- if net_services contains "rest" %}
-    http::spawn(
-        spawner,
-        parts.net.stack,
-        crate::device_info(parts.board.spec),
-    );
+    http::spawn(spawner, board.net.stack, crate::device_info(board.spec));
 {%- endif %}
 {%- if net_services contains "ssh" %}
     ssh::spawn(
         spawner,
-        parts.net.stack,
-        crate::device_info(parts.board.spec),
+        board.net.stack,
+        crate::device_info(board.spec),
 {%- if ssh_host_key == "config" %}
-        domain::ssh::Stored(crate::settings::new(parts.board.settings)),
+        domain::ssh::Stored(crate::settings::new(board.settings)),
 {%- else %}
         domain::ssh::Fixed(&crate::net::SSH_HOST_KEY),
 {%- endif %}
     );
 {%- endif %}
 {%- if net_services contains "mqtt" %}
-    mqtt::spawn(
-        spawner,
-        parts.net.stack,
-        crate::device_info(parts.board.spec),
-    );
+    mqtt::spawn(spawner, board.net.stack, crate::device_info(board.spec));
 {%- endif %}
 }

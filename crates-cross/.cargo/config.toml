@@ -19,7 +19,7 @@ rustflags = [
 	"link-arg=--nmagic",
 {%- if net_services contains "ssh" %}
 	# Своего источника у `getrandom` на `target_os = "none"` нет: бэкенд —
-	# `__getrandom_v03_custom` в `app/src/rng.rs`, над RNG платы.
+	# `__getrandom_v03_custom` в `bsp/src/rng.rs`, над RNG платы.
 	"--cfg",
 	'getrandom_backend="custom"',
 {%- endif %}
@@ -87,6 +87,12 @@ STATE_ERASE_SIZE = "{{state_erase_size | remove: '_'}}"
 SWAP_PAGE_SIZE = "{{page_size | remove: '_'}}"
 {%- endif %}
 {%- endif %}
+{%- endif %}
+{%- if has_net == "true" %}
+# Сокетов в стеке `embassy-net` (`bsp::net`): DHCP-клиент, сетевые транспорты и
+# соединения сетевых служб — счёт генерации. Откроете ещё сокет (или включите
+# фичу `dns` у `embassy-net` — она тоже занимает слот) — прибавьте один.
+NET_SOCKETS = "{{net_stack_sockets}}"
 {%- endif %}
 {%- if dma_nc_start != "" %}
 # Регион `DMA_NC` (non-cacheable память под буферы DMA, `bsp::dma_nc`): адрес и

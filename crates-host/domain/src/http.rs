@@ -245,7 +245,7 @@ supervisor::supervisor_fragment! {
     node deps: [], restart: Never,
         resources: [
             /// Сетевой стек, на котором узел открывает свой сокет.
-            STACK: local ::embassy_net::Stack<'static> = inputs.stack,
+            STACK: local $crate::net::Stack<'static> = inputs.stack,
             /// Сведения для `/api/info`.
             INFO: $crate::device::DeviceInfo = inputs.info,
             /// Токен `Authorization: Bearer`.

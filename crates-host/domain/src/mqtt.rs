@@ -559,7 +559,7 @@ supervisor::supervisor_fragment! {
     node deps: [], restart: Never,
         resources: [
             /// Сетевой стек — ради адреса платы и MAC в `info`.
-            STACK: local ::embassy_net::Stack<'static> = inputs.stack,
+            STACK: local $crate::net::Stack<'static> = inputs.stack,
             /// Сведения для `info`.
             INFO: $crate::device::DeviceInfo = inputs.info,
             /// Префикс тем, не длиннее `PREFIX_MAX`.

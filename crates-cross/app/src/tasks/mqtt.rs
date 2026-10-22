@@ -8,7 +8,7 @@ static MQTT_RX: ConstStaticCell<[u8; RX_BUFFER]> = ConstStaticCell::new([0; RX_B
 static MQTT_TX: ConstStaticCell<[u8; TX_BUFFER]> = ConstStaticCell::new([0; TX_BUFFER]);
 
 #[embassy_executor::task]
-async fn task(mut stack: embassy_net::Stack<'static>, mut info: domain::device::DeviceInfo) {
+async fn task(mut stack: bsp::net::Stack, mut info: domain::device::DeviceInfo) {
     let mut prefix = crate::net::MQTT_PREFIX;
     let mut broker = domain::mqtt::Fixed(crate::net::MQTT_BROKER);
     let mut link = crate::net::mqtt_link(stack);
@@ -35,7 +35,7 @@ async fn task(mut stack: embassy_net::Stack<'static>, mut info: domain::device::
 /// Спавнит узел.
 pub fn spawn(
     spawner: embassy_executor::Spawner,
-    stack: embassy_net::Stack<'static>,
+    stack: bsp::net::Stack,
     info: domain::device::DeviceInfo,
 ) {
     spawner.spawn(task(stack, info).expect("задача MQTT свежая: спавнится один раз"));

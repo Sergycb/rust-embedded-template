@@ -22,11 +22,7 @@ static BUFFERS: [Buffers; CONNECTIONS] = [const {
 }; CONNECTIONS];
 
 #[embassy_executor::task(pool_size = CONNECTIONS)]
-async fn task(
-    index: usize,
-    mut stack: embassy_net::Stack<'static>,
-    mut info: domain::device::DeviceInfo,
-) {
+async fn task(index: usize, mut stack: bsp::net::Stack, mut info: domain::device::DeviceInfo) {
     let buffers = &BUFFERS[index];
     let mut token = crate::net::REST_TOKEN;
 {%- if ota == "true" %}
@@ -54,7 +50,7 @@ async fn task(
 /// Спавнит пул.
 pub fn spawn(
     spawner: embassy_executor::Spawner,
-    stack: embassy_net::Stack<'static>,
+    stack: bsp::net::Stack,
     info: domain::device::DeviceInfo,
 ) {
     for index in 0..CONNECTIONS {

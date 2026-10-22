@@ -64,13 +64,11 @@ mod tests {
     #[init]
 {%- if external_flash == "true" %}
     async fn init() -> Board {
-        // Драйверы под стеки приложения (`bsp::Drivers`) тестам не нужны.
-        Board::new().await.0
+        Board::new().await
     }
 {%- else %}
     fn init() -> Board {
-        // Драйверы под стеки приложения (`bsp::Drivers`) тестам не нужны.
-        Board::new().0
+        Board::new()
     }
 {%- endif %}
 

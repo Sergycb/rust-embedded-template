@@ -2331,14 +2331,23 @@ variable::set("cobs_used", if cobs_used { "true" } else { "false" });
 // Сокеты протоколов на стеке `embassy-net` (порт, буферы): по одному на сетевой
 // транспорт с протоколом. Транспорт без протокола сокета не открывает.
 variable::set("protocol_sockets", sockets.to_string());
-// Слоты сокетов в стеке (`SOCKETS` в `app::net`): по одному на каждый сетевой
-// транспорт, с протоколом и без — на `tcp` без протокола сокет открывает
-// приложение, и без слота под него `embassy-net` паникует.
+// Слоты сокетов в стеке: по одному на каждый сетевой транспорт, с протоколом и
+// без — на `tcp` без протокола сокет открывает приложение, и без слота под него
+// `embassy-net` паникует.
 let net_sockets = 0;
 for link in links {
     if link.kind == "tcp" || link.kind == "udp" { net_sockets += 1; }
 }
 variable::set("net_sockets", net_sockets.to_string());
+// Все сокеты стека (`NET_SOCKETS` в `[env]`, `bsp::net`): DHCP-клиент, сетевые
+// транспорты и соединения сетевых служб — по сокету на копию пула REST, на
+// консоль SSH и на клиент MQTT. Плата строит стек под это число, а сокеты
+// открывает приложение.
+let net_stack_sockets = net_sockets + 1;
+if services.contains("rest") { net_stack_sockets += 2; }
+if services.contains("ssh") { net_stack_sockets += 1; }
+if services.contains("mqtt") { net_stack_sockets += 1; }
+variable::set("net_stack_sockets", net_stack_sockets.to_string());
 
 // Кадровый канал (`ports::FrameLink`, `LinkError`, `Handler`) нужен протоколам
 // узла `domain::server` (protobuf и Modbus slave), шине CAN (ошибка `CanBus`) и
@@ -2514,7 +2523,6 @@ if !has.usb && !has.tcp && !has.udp {
 // USB — устройство `embassy-usb`, узел USB и поток CDC — только с транспортом usb.
 if !has.usb {
 	file::delete("crates-cross/bsp/src/usb.rs");
-	file::delete("crates-cross/app/src/usb.rs");
 	file::delete("docs/modules/bsp-usb.md");
 	file::delete("crates-host/adapters/src/usb.rs");
 	file::delete("crates-host/domain/src/usb.rs");
@@ -2522,7 +2530,6 @@ if !has.usb {
 // Сеть — стек `embassy-net`, узел NET и их сокеты — только с tcp/udp.
 if !has.tcp && !has.udp {
 	file::delete("crates-cross/bsp/src/net.rs");
-	file::delete("crates-cross/app/src/net.rs");
 	file::delete("docs/modules/bsp-net.md");
 	file::delete("crates-host/adapters/src/net.rs");
 	file::delete("crates-host/adapters/src/net");
@@ -2533,10 +2540,10 @@ if rng[0] == "" || (!has.tcp && !has.udp) {
 	file::delete("crates-cross/bsp/src/rng.rs");
 	file::delete("docs/modules/bsp-rng.md");
 }
-// Бэкенд `getrandom` над RNG — только с ssh: `sunset` берёт случайность через
-// `getrandom` сам, остальным сетевым проектам хватает затравки стека.
-if !variable::get("net_services").split(",").contains("ssh") {
-	file::delete("crates-cross/app/src/rng.rs");
+// Сетевые службы приложения (`app::net`: секреты, брокер MQTT) — только с
+// выбранной службой.
+if services.len() == 0 {
+	file::delete("crates-cross/app/src/net.rs");
 }
 // Узлы сетевых служб — только выбранных. Сведения об устройстве
 // (`domain::device`) читают HOST, HTTP, SSH и MQTT.
