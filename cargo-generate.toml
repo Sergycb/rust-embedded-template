@@ -150,10 +150,11 @@ ci = { type = "string", prompt = "CI provider", choices = [
 #
 # Сетевые службы — когда среди транспортов есть Ethernet, тем же списком с
 # отметками (`ssh` — только у чипа с RNG и разделом приложения от 256 KiB,
-# `rest`), через `--define` — `net_services=ssh,rest`; у SSH затем `ssh_auth`
+# `rest`, `mqtt`), через `--define` — `net_services=ssh,rest,mqtt`; у SSH затем `ssh_auth`
 # (`password` — умолчание и ответ без терминала, `key`) и при `key` — `ssh_key`
 # (строка открытого ключа `ssh-ed25519 …`). Без Ethernet и `ssh_auth`/`ssh_key`
-# без ssh — ошибка. Службы — узлы `domain::http` и `domain::ssh`.
+# без ssh — ошибка. Службы — узлы `domain::http`, `domain::ssh` и `domain::mqtt`
+# (брокер — `mqtt.toml` в корне проекта, заготовку создаёт `cargo xtask`).
 #
 # Хук приводит ответы к строкам `"true"`/`"false"` через `variable::set` — на них
 # смотрят Liquid-условия в шаблоне; тип строковый, а не `bool`, потому что

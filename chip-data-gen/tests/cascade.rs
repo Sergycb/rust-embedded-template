@@ -2167,7 +2167,7 @@ fn net_services_are_marked_after_ethernet() {
     .expect("каскад не должен падать");
     let menus = all_menu_values(&result, "net_services");
     assert_eq!(menus.len(), 3, "{menus:?}");
-    assert_eq!(menus[0], ["готово", "ssh", "rest"]);
+    assert_eq!(menus[0], ["готово", "ssh", "rest", "mqtt"]);
     // Порядок — пунктов меню, а не отметок.
     assert_eq!(var_of(&result, "net_services"), Some("ssh,rest"));
     assert_eq!(var_of(&result, "ssh_auth"), Some("key"));
@@ -2202,7 +2202,7 @@ fn ssh_is_not_offered_without_rng() {
     .expect("каскад не должен падать");
     assert_eq!(
         all_menu_values(&result, "net_services"),
-        [["готово", "rest"]]
+        [["готово", "rest", "mqtt"]]
     );
     assert!(
         result
@@ -2224,7 +2224,7 @@ fn ssh_needs_room_for_its_code() {
     let tight = interview(&ast, "f407ve", &[], &picks).expect("каскад не должен падать");
     assert_eq!(
         all_menu_values(&tight, "net_services"),
-        [["готово", "rest"]]
+        [["готово", "rest", "mqtt"]]
     );
     assert!(
         tight
@@ -2238,7 +2238,7 @@ fn ssh_needs_room_for_its_code() {
         interview(&ast, "f407ve", &[("ota", "no")], &picks).expect("каскад не должен падать");
     assert_eq!(
         all_menu_values(&roomy, "net_services"),
-        [["готово", "ssh", "rest"]]
+        [["готово", "ssh", "rest", "mqtt"]]
     );
     let Err(err) = interview(
         &ast,
@@ -2278,6 +2278,91 @@ fn the_ssh_host_key_lives_where_it_survives() {
         some("file")
     );
     assert_eq!(host_key(&[]).0, some("file"));
+}
+
+/// MQTT предлагается с Ethernet (RNG ему не нужен); без Ethernet `--define` —
+/// ошибка. Порт `Dial`, узел и разбор `mqtt.toml` — только с ним, а TCP-клиент
+/// остаётся и поверх одного UDP.
+#[test]
+fn mqtt_is_offered_with_ethernet() {
+    let ast = compile_script();
+    let result = interview(
+        &ast,
+        "f107vc",
+        &[],
+        &[
+            ("transports", "ethernet"),
+            ("transports", "готово"),
+            ("net_services", "mqtt"),
+            ("net_services", "готово"),
+        ],
+    )
+    .expect("каскад не должен падать");
+    assert!(
+        all_menu_values(&result, "net_services")[0].contains(&"mqtt".to_string()),
+        "{:?}",
+        all_menu_values(&result, "net_services")
+    );
+    assert_eq!(var_of(&result, "net_services"), Some("mqtt"));
+    let Err(err) = interview(
+        &ast,
+        "h743zg",
+        &[("links", "uart"), ("net_services", "mqtt")],
+        &[],
+    ) else {
+        panic!("mqtt без Ethernet должен падать");
+    };
+    assert!(
+        err.to_string().contains("работает поверх Ethernet"),
+        "{err}"
+    );
+
+    let mqtt_files = [
+        "crates-host/domain/src/mqtt.rs",
+        "crates-host/ports/src/dial.rs",
+        "crates-cross/app/build",
+    ];
+    let udp = interview(
+        &ast,
+        "h743zg",
+        &[("links", "udp"), ("net_services", "mqtt")],
+        &[],
+    )
+    .expect("каскад не должен падать");
+    let deleted = |result: &CascadeResult, path: &str| result.deleted.iter().any(|d| d == path);
+    assert!(!deleted(&udp, "crates-host/adapters/src/net/tcp.rs"));
+    for path in mqtt_files {
+        assert!(!deleted(&udp, path), "{path} удалён: {:?}", udp.deleted);
+    }
+    let rest = interview(
+        &ast,
+        "h743zg",
+        &[("links", "udp"), ("net_services", "rest")],
+        &[],
+    )
+    .expect("каскад не должен падать");
+    assert!(deleted(&rest, "crates-host/adapters/src/net/tcp.rs"));
+    for path in mqtt_files {
+        assert!(deleted(&rest, path), "{path} не удалён: {:?}", rest.deleted);
+    }
+}
+
+/// Номер клиента OTA у MQTT — следом за транспортами, двумя копиями REST и SSH.
+#[test]
+fn mqtt_ota_client_follows_rest_and_ssh() {
+    let ast = compile_script();
+    let client = |defines: &[(&str, &str)]| {
+        let result = interview(&ast, "h743zg", defines, &[]).expect("каскад не должен падать");
+        var_of(&result, "mqtt_ota_client").map(str::to_string)
+    };
+    assert_eq!(
+        client(&[("links", "tcp:modbus"), ("net_services", "rest,ssh,mqtt")]),
+        Some("4".to_string())
+    );
+    assert_eq!(
+        client(&[("links", "tcp"), ("net_services", "mqtt")]),
+        Some("0".to_string())
+    );
 }
 
 /// Без терминала — без служб, о входе не спрашивают.

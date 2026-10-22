@@ -830,10 +830,12 @@ const TRANSPORT_ITEMS = [
 // Сетевые службы поверх стека (`net_services`): не транспорты с протоколом, а
 // узлы на своих сокетах общего стека — спрашиваются, только когда отмечен
 // Ethernet. SSH — криптография, поэтому только у чипа с RNG и с разделом
-// приложения не меньше `min_partition`.
+// приложения не меньше `min_partition`. MQTT — клиент: сам подключается к
+// брокеру (адрес — `mqtt.toml` в корне проекта).
 const NET_SERVICE_ITEMS = [
     #{ value: "ssh", text: "консоль SSH (sunset)", needs_rng: true, min_partition: SSH_MIN_PARTITION },
     #{ value: "rest", text: "REST API по HTTP (picoserve)", needs_rng: false, min_partition: 0 },
+    #{ value: "mqtt", text: "MQTT-клиент (minimq)", needs_rng: false, min_partition: 0 },
 ];
 // Начало base64-блоба открытого ключа ed25519 (`ssh_key`): длина и имя типа,
 // затем длина ключа (32). Других ключей `sunset` без фич не проверяет.
@@ -894,7 +896,11 @@ const RAM_COST = #{
     // для `getrandom`) — 16720,
     // но stm32h743zg rest-ssh-key-no-graph (ext_flash=yes) 41904 на 300 больше
     // суммы частей: SSH взят с этим запасом.
-    services: #{ ssh: 17020, rest: 21348 },
+    // MQTT — stm32h743zg mqtt-modbus-tcp 16080 при оценке без MQTT 9680
+    // (буферы `minimq` и сокета, сокет, future узла) — 6400, но
+    // rest-ssh-mqtt (ext_flash=yes) 50436 на 164 больше суммы частей: взят
+    // с запасом.
+    services: #{ ssh: 17020, rest: 21348, mqtt: 6600 },
 };
 // Сверх статической RAM — под стек: он в `.data`/`.bss` не входит (flip-link
 // кладёт его под ними). Не замерен — без платы глубину стека не снять, — а
@@ -2411,7 +2417,9 @@ if on.modbus {
 		file::delete("crates-host/adapters/src/modbus/mbap.rs");
 	}
 }
-if !has.tcp {
+// TCP-клиент MQTT (`adapters::net::TcpClient`) живёт рядом с сервером — файл
+// нужен и при mqtt поверх одного UDP.
+if !has.tcp && !services.contains("mqtt") {
 	file::delete("crates-host/adapters/src/net/tcp.rs");
 }
 if !has.udp {
@@ -2526,7 +2534,7 @@ if !variable::get("net_services").split(",").contains("ssh") {
 	file::delete("crates-cross/app/src/rng.rs");
 }
 // Узлы сетевых служб — только выбранных. Сведения об устройстве
-// (`domain::device`) читают HOST, HTTP и SSH.
+// (`domain::device`) читают HOST, HTTP, SSH и MQTT.
 if !services.contains("rest") {
 	file::delete("crates-host/domain/src/http.rs");
 	file::delete("crates-cross/app/src/tasks/http.rs");
@@ -2534,6 +2542,15 @@ if !services.contains("rest") {
 if !services.contains("ssh") {
 	file::delete("crates-host/domain/src/ssh.rs");
 	file::delete("crates-cross/app/src/tasks/ssh.rs");
+}
+// MQTT — узел, задача без графа, разбор `mqtt.toml` в build-скрипте `app`,
+// порт `Dial` и описание.
+if !services.contains("mqtt") {
+	file::delete("crates-host/domain/src/mqtt.rs");
+	file::delete("crates-cross/app/src/tasks/mqtt.rs");
+	file::delete("crates-cross/app/build");
+	file::delete("crates-host/ports/src/dial.rs");
+	file::delete("docs/modules/app-mqtt.md");
 }
 if !on.protobuf && services.len() == 0 {
 	file::delete("crates-host/domain/src/device.rs");
@@ -2550,10 +2567,12 @@ variable::set("ssh_host_key", if !services.contains("ssh") { "" }
 // Номера клиентов OTA у служб — следом за транспортами с протоколом: одно
 // число на граф и задачи без графа, а не счёт в каждом файле. У REST — по
 // клиенту на копию пула (`rest_ota_client` и следующий: `CONNECTIONS` — 2,
-// его держит `const`-assert в `app/src/graph.rs`), SSH — за ними.
+// его держит `const`-assert в `app/src/graph.rs`), SSH — за ними, MQTT — за SSH.
 let protocol_clients = links.filter(|link| link.protocol != "none").len();
 variable::set("rest_ota_client", protocol_clients.to_string());
 variable::set("ssh_ota_client", (protocol_clients + if services.contains("rest") { 2 } else { 0 }).to_string());
+variable::set("mqtt_ota_client", (protocol_clients + (if services.contains("rest") { 2 } else { 0 })
+	+ (if services.contains("ssh") { 1 } else { 0 })).to_string());
 
 // Обёртка EEPROM — только когда настройки лежат в ней; без неё файл с
 // тестами и `pub mod eeprom;` (закрыт тем же условием в lib.rs) — мусор.
