@@ -31,6 +31,9 @@ defmt = [
 	# {%- if net_services contains "rest" %}
 	"picoserve/defmt",
 	# {%- endif %}
+	# {%- if net_services contains "mqtt" %}
+	"minimq/defmt",
+	# {%- endif %}
 	# {%- if has_usb == "true" %}
 	"embassy-usb/defmt",
 	# {%- endif %}
