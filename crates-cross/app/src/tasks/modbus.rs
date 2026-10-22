@@ -17,7 +17,7 @@ pub mod {{ f[4] }} {
     use crate::link::{{ f[4] }}::{Link, Source};
 
     #[embassy_executor::task]
-    async fn task(mut link: Link, map: crate::modbus::Handle) {
+    async fn task(source: Source, map: crate::modbus::Handle) {
 {%- if ota == "true" %}
         let regs = domain::modbus::OtaRegisters::new(
             map,
@@ -29,18 +29,18 @@ pub mod {{ f[4] }} {
 {%- else %}
         let regs = map;
 {%- endif %}
-        domain::server::task(domain::server::ServerCtx {
-            link: &mut link,
-            handler: &mut domain::modbus::Slave::new(1, regs),
-            index: 0,
+        domain::server::serve::<Link, _>(domain::server::ServerWiring {
+            source,
+            buffers: crate::link::{{ f[4] }}::buffers(),
+            handler: domain::modbus::Slave::new(1, regs),
         })
         .await;
     }
 
-    /// Собирает транспорт над `source` и спавнит узел над картой `map`.
+    /// Спавнит узел над рычагом платы `source` и картой `map`; канал
+    /// собирает узел.
     pub fn spawn(spawner: Spawner, source: Source, map: crate::modbus::Handle) {
-        let link = crate::link::{{ f[4] }}::new(source);
-        let token = task(link, map);
+        let token = task(source, map);
         spawner.spawn(token.expect("задача MODBUS_{{ f[4] | upcase }} свежая: спавнится один раз"));
     }
 }

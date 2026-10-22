@@ -4,11 +4,13 @@
 use domain::ssh::{SSH_BUFFER, TCP_BUFFER};
 use static_cell::ConstStaticCell;
 
-/// Ключ хоста узла.
+/// Ключ хоста узла и то, из чего он собирается.
 {%- if ssh_host_key == "config" %}
 type HostKey = domain::ssh::Stored<crate::settings::Settings>;
+type HostKeySource = bsp::settings::ConfigFlash;
 {%- else %}
 type HostKey = domain::ssh::Fixed;
+type HostKeySource = &'static [u8; 32];
 {%- endif %}
 
 static TCP_RX: ConstStaticCell<[u8; TCP_BUFFER]> = ConstStaticCell::new([0; TCP_BUFFER]);
@@ -20,8 +22,10 @@ static SSH_TX: ConstStaticCell<[u8; SSH_BUFFER]> = ConstStaticCell::new([0; SSH_
 async fn task(
     mut stack: bsp::net::Stack,
     mut info: domain::device::DeviceInfo,
-    mut host_key: HostKey,
+    host_key: HostKeySource,
 ) {
+    // Ключ хоста — как в слоте фрагмента `SSH_FRAG`.
+    let mut host_key = <HostKey as domain::Assemble>::assemble(host_key, ());
     let mut login = crate::net::SSH_LOGIN;
 {%- if ota == "true" %}
     let cmd = crate::tasks::ota::CMD.requester();
@@ -49,7 +53,7 @@ pub fn spawn(
     spawner: embassy_executor::Spawner,
     stack: bsp::net::Stack,
     info: domain::device::DeviceInfo,
-    host_key: HostKey,
+    host_key: HostKeySource,
 ) {
     spawner.spawn(task(stack, info, host_key).expect("задача SSH свежая: спавнится один раз"));
 }

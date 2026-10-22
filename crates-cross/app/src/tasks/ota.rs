@@ -34,7 +34,9 @@ pub static READY_{{ f[4] | upcase }}: Signal<CriticalSectionRawMutex, ()> = Sign
 {%- endfor %}
 
 #[embassy_executor::task]
-async fn task(mut flash: crate::ota::Updater, mut mode: domain::ota::Mode) {
+async fn task(partitions: bsp::ota::Partitions, mut mode: domain::ota::Mode) {
+    // Адаптер обновления — над разделами платы, как в слоте фрагмента `OTA_FRAG`.
+    let mut flash = <crate::ota::Updater as domain::Assemble>::assemble(partitions, ());
     let mut reboot = bsp::cpu::Reboot;
     let mut confirmed = false;
     domain::ota::task(domain::ota::OtaCtx {
@@ -60,11 +62,10 @@ async fn task(mut flash: crate::ota::Updater, mut mode: domain::ota::Mode) {
     .await;
 }
 
-/// Собирает адаптер обновления над разделами платы и спавнит узел. Адаптер
-/// уезжает в задачу владением; режим —
+/// Спавнит узел над разделами платы — адаптер обновления собирается в задаче;
+/// режим —
 /// {% if signed == "true" %}`Signed` с версией этого образа (`crate::image::FW_VERSION`){% else %}`Plain`{% endif %}.
 pub fn spawn(spawner: embassy_executor::Spawner, partitions: bsp::ota::Partitions) {
-    let flash = crate::ota::new(partitions);
 {%- if signed == "true" %}
     let mode = domain::ota::Mode::Signed {
         running_version: crate::image::FW_VERSION,
@@ -72,5 +73,5 @@ pub fn spawn(spawner: embassy_executor::Spawner, partitions: bsp::ota::Partition
 {%- else %}
     let mode = domain::ota::Mode::Plain;
 {%- endif %}
-    spawner.spawn(task(flash, mode).expect("задача OTA свежая: спавнится один раз"));
+    spawner.spawn(task(partitions, mode).expect("задача OTA свежая: спавнится один раз"));
 }

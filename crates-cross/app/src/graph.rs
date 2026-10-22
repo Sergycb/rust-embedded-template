@@ -88,7 +88,7 @@ supervisor_graph! {
         // Фрагмент OTA — с параметрами и своей привязкой. Параметры
         // (`<Updater, Reboot>`) — типы его слотов: слот — `static`, тип ему
         // нужен, а знает его только эта сторона. Привязка (`= …`) — вход узла
-        // (`domain::ota::OtaWiring`): адаптер обновления `crate::ota::new(board.ota)`, сброс МК
+        // (`domain::ota::OtaWiring`): адаптер обновления — его собирает узел над разделами `board.ota`, сброс МК
         // `bsp::cpu::Reboot` и режим применения (`Mode::{% if signed == "true" %}Signed` с версией этого образа
         // из `crate::image`{% else %}Plain`{% endif %}). Образ узел принимает командами на свой вход
         // `CMD`{% if has_modbus != "true" and has_protobuf != "true" and has_canopen != "true" %}: клиента (`::domain::ota::OtaClient` над `ota_cmd_requester()`) получает ваш
@@ -99,7 +99,7 @@ supervisor_graph! {
         // в тексте, — частичным move: `ota` уезжает в слот узла, `watchdog`
         // следом забирает сторож, остаток `board` дропается в конце пролога.
         ::domain::OTA_FRAG<crate::ota::Updater, bsp::cpu::Reboot> as OTA = ::domain::ota::OtaWiring {
-            flash: crate::ota::new(board.ota),
+            source: board.ota,
             reboot: bsp::cpu::Reboot,
 {%- if signed == "true" %}
             mode: ::domain::ota::Mode::Signed {
@@ -151,7 +151,8 @@ supervisor_graph! {
             ::domain::modbus::Slave<::domain::modbus::OtaRegisters<crate::modbus::Handle>>,
         > as MODBUS_{{ f[4] | upcase }} =
             ::domain::server::ServerWiring {
-                link: crate::link::{{ f[4] }}::new({% if f[0] == "uart" %}board.{{ f[4] }}{% elsif f[0] == "usb" %}board.{{ f[4] }}.cdc{% else %}board.net.stack{% endif %}),
+                source: {% if f[0] == "uart" %}board.{{ f[4] }}{% elsif f[0] == "usb" %}board.{{ f[4] }}.cdc{% else %}board.net.stack{% endif %},
+                buffers: crate::link::{{ f[4] }}::buffers(),
                 handler: ::domain::modbus::Slave::new(
                     1,
                     ::domain::modbus::OtaRegisters::new(
@@ -166,7 +167,8 @@ supervisor_graph! {
 {%- else %}
         ::domain::SERVER_FRAG<crate::link::{{ f[4] }}::Link, ::domain::modbus::Slave<crate::modbus::Handle>> as MODBUS_{{ f[4] | upcase }} =
             ::domain::server::ServerWiring {
-                link: crate::link::{{ f[4] }}::new({% if f[0] == "uart" %}board.{{ f[4] }}{% elsif f[0] == "usb" %}board.{{ f[4] }}.cdc{% else %}board.net.stack{% endif %}),
+                source: {% if f[0] == "uart" %}board.{{ f[4] }}{% elsif f[0] == "usb" %}board.{{ f[4] }}.cdc{% else %}board.net.stack{% endif %},
+                buffers: crate::link::{{ f[4] }}::buffers(),
                 handler: ::domain::modbus::Slave::new(1, crate::modbus::handle()),
             },
 {%- endif %}
@@ -183,7 +185,7 @@ supervisor_graph! {
                 bus: board.{{ f[4] }},
                 node_id: 1,
                 dictionary: ::domain::canopen::dictionary(),
-                settings: {% if config == "true" %}crate::settings::new(board.settings){% else %}::adapters::settings::Unavailable{% endif %},
+                settings: {% if config == "true" %}board.settings{% else %}(){% endif %},
                 persist: {{config}},
 {%- if ota == "true" %}
                 // Команды объекта OTA словаря (0x4F00) узел отдаёт узлу `OTA`
@@ -203,7 +205,8 @@ supervisor_graph! {
         // он отдаёт узлу `OTA` клиентом его входа `CMD` с номером этого транспорта.{% endif %}
         ::domain::SERVER_FRAG<crate::link::{{ f[4] }}::Link, ::domain::host::Protobuf<::domain::host::Service>> as HOST_{{ f[4] | upcase }} =
             ::domain::server::ServerWiring {
-                link: crate::link::{{ f[4] }}::new({% if f[0] == "uart" %}board.{{ f[4] }}{% elsif f[0] == "usb" %}board.{{ f[4] }}.cdc{% else %}board.net.stack{% endif %}),
+                source: {% if f[0] == "uart" %}board.{{ f[4] }}{% elsif f[0] == "usb" %}board.{{ f[4] }}.cdc{% else %}board.net.stack{% endif %},
+                buffers: crate::link::{{ f[4] }}::buffers(),
                 handler: ::domain::host::Protobuf(::domain::host::Service::new(
                     crate::device_info(board.spec),
 {%- if ota == "true" %}
@@ -253,9 +256,9 @@ supervisor_graph! {
                 info: crate::device_info(board.spec),
                 login: crate::net::SSH_LOGIN,
 {%- if ssh_host_key == "config" %}
-                host_key: ::domain::ssh::Stored(crate::settings::new(board.settings)),
+                host_key: board.settings,
 {%- else %}
-                host_key: ::domain::ssh::Fixed(&crate::net::SSH_HOST_KEY),
+                host_key: &crate::net::SSH_HOST_KEY,
 {%- endif %}
 {%- if ota == "true" %}
                 ota: ::domain::ota::OtaClient::new(
@@ -279,7 +282,7 @@ supervisor_graph! {
                 info: crate::device_info(board.spec),
                 prefix: crate::net::MQTT_PREFIX,
                 broker: ::domain::mqtt::Fixed(crate::net::MQTT_BROKER),
-                link: crate::net::mqtt_link(board.net.stack),
+                link: crate::net::mqtt_buffers(),
 {%- if ota == "true" %}
                 ota: ::domain::ota::OtaClient::new(
                     ota_cmd_requester(),

@@ -16,13 +16,13 @@ mod udp;
 use embassy_net::driver::Driver;
 
 // {%- if has_tcp == "true" or net_services contains "mqtt" %}
-pub use tcp::{TcpError, TcpServer};
+pub use tcp::{TcpError, TcpServer, TcpServerBuffers};
 // {%- if net_services contains "mqtt" %}
-pub use tcp::TcpClient;
+pub use tcp::{TcpClient, TcpClientBuffers};
 // {%- endif %}
 // {%- endif %}
 // {%- if has_udp == "true" %}
-pub use udp::{UdpError, UdpLink};
+pub use udp::{UdpBuffers, UdpError, UdpLink};
 // {%- endif %}
 
 /// Сеть платы: фоновая работа стека для узла `NET` и сам стек, на котором

@@ -170,23 +170,34 @@ const _: () = assert!(
     "команда OTA не помещается во вход CMD: поднимите CMD_BYTES"
 );
 
-// Вход узла — `OtaWiring`: структуру эмитит сам фрагмент (`boot: …
-// struct`). Строит её compose-site (`app`): адаптер обновления (порт
-// `FirmwareUpdate`, `crate::ota::new` над разделами платы `Board::ota`; `bsp` про
-// `domain` не знает) и порт перезагрузки, подставляя их типы аргументами
-// фрагмента:
-//
-// ```ignore
-// fragments: [::domain::OTA_FRAG<crate::ota::Updater, bsp::cpu::Reboot> as OTA
-//                 = ::domain::ota::OtaWiring { flash: crate::ota::new(parts.board.ota),
-//                                           reboot: bsp::cpu::Reboot,
-//                                           mode: ::domain::ota::Mode::Plain }];
-// ```
-//
-// Тип объявлен здесь, а не назван графом, по правилу фрагментов
-// `supervisor`: подсистема говорит, что ей нужно, приложение это
-// конструирует — зависимость направлена от приложения к подсистеме и никогда
-// обратно.
+/// Вход узла OTA: из чего собрать адаптер обновления `F`, чем перезагружать
+/// МК и как применять образ.
+///
+/// Адаптер собирает узел (`F::assemble(source, ())` — порт
+/// [`Assemble`](ports::Assemble)) над разделами платы; compose-site только
+/// раздаёт:
+///
+/// ```ignore
+/// fragments: [::domain::OTA_FRAG<crate::ota::Updater, bsp::cpu::Reboot> as OTA
+///                 = ::domain::ota::OtaWiring { source: board.ota,
+///                                              reboot: bsp::cpu::Reboot,
+///                                              mode: ::domain::ota::Mode::Plain }];
+/// ```
+///
+/// Тип объявлен здесь, а не назван графом, по правилу фрагментов
+/// `supervisor`: подсистема говорит, что ей нужно, приложение это раздаёт —
+/// зависимость направлена от приложения к подсистеме и никогда обратно.
+/// Написан руками, а не выведен фрагментом: слот адаптера инициализируется
+/// сборкой, а не чтением поля.
+#[derive(Debug)]
+pub struct OtaWiring<F: ports::Assemble, R> {
+    /// Разделы обновления платы, над которыми собирается адаптер.
+    pub source: F::Source,
+    /// Перезагрузка МК — для команды `Reboot`.
+    pub reboot: R,
+    /// Режим применения: `Mode::Plain` или `Mode::Signed`.
+    pub mode: Mode,
+}
 
 /// Чем режимы отличаются: проверка `Start` до стирания и применение.
 ///
@@ -598,12 +609,13 @@ fn update_rejection<E>(err: &UpdateError<E>) -> Rejection {
 // при старте (см. `begin`){% if has_usb == "true" %}; ждёт этого узел `USB`{% endif %}.
 supervisor::supervisor_fragment! {
     name: OTA_FRAG<F, R>;
-    boot: inputs: struct $crate::ota::OtaWiring;
+    boot: inputs: $crate::ota::OtaWiring<F, R>;
 
     node deps: [], restart: Never,
         resources: [
-            /// Адаптер обновления поверх разделов флеша (`FirmwareUpdate`).
-            FLASH: local F = inputs.flash,
+            /// Адаптер обновления поверх разделов флеша (`FirmwareUpdate`) —
+            /// собирает его узел над разделами платы.
+            FLASH: local F = <F as $crate::Assemble>::assemble(inputs.source, ()),
             /// Перезагрузка МК (`Reboot`) — для команды `Reboot`.
             REBOOT: R = inputs.reboot,
             /// Режим применения: `Mode::Plain` или `Mode::Signed`.

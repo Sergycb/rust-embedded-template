@@ -1,7 +1,7 @@
 //! Modbus TCP: заголовок MBAP и PDU поверх потока байтов.
 
 use embedded_io_async::{Read, ReadExactError, Write};
-use ports::{FrameLink, LinkError};
+use ports::{Assemble, FrameLink, LinkError};
 // {%- if modbus_master == "true" %}
 use ports::MAX_PDU;
 // {%- endif %}
@@ -113,6 +113,16 @@ impl<T: Read + Write> Tcp<T> {
         self.io.flush().await
     }
     // {%- endif %}
+}
+
+/// Собирается вокруг собранного потока: `Tcp<TcpServer>` — над стеком платы.
+impl<T: Assemble> Assemble for Tcp<T> {
+    type Source = T::Source;
+    type Buffers = T::Buffers;
+
+    fn assemble(source: T::Source, buffers: T::Buffers) -> Self {
+        Self::new(T::assemble(source, buffers))
+    }
 }
 
 impl<T: Read + Write> FrameLink for Tcp<T> {

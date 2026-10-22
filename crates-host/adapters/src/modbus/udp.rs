@@ -1,6 +1,6 @@
 //! Modbus UDP: заголовок MBAP и PDU, по кадру в датаграмме.
 
-use ports::{FrameLink, LinkError};
+use ports::{Assemble, FrameLink, LinkError};
 
 // {%- if modbus_master == "true" %}
 use ports::{MAX_PDU, MasterError, ModbusClient};
@@ -102,6 +102,17 @@ impl<L: FrameLink> Udp<L> {
         self.link.send(HEADER + pdu.len()).await
     }
     // {%- endif %}
+}
+
+/// Собирается вокруг собранного канала датаграмм: `Udp<UdpLink>` — над
+/// стеком платы.
+impl<L: Assemble + FrameLink> Assemble for Udp<L> {
+    type Source = L::Source;
+    type Buffers = L::Buffers;
+
+    fn assemble(source: L::Source, buffers: L::Buffers) -> Self {
+        Self::new(L::assemble(source, buffers))
+    }
 }
 
 impl<L: FrameLink> FrameLink for Udp<L> {

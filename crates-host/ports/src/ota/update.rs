@@ -14,6 +14,24 @@
 
 use crate::word::MAX_WRITE_SIZE;
 
+/// Разделы обновления платы — рычаг, над которым собирается адаптер
+/// [`FirmwareUpdate`]: раздел `DFU`, куда принимается образ, журнал обмена
+/// `BOOTLOADER_STATE` и самый длинный образ, который доедет до устройства.
+///
+/// Заполняет плата (`bsp::ota`, раскладка из `memory.x`), собирает над ним
+/// адаптер узел OTA (`adapters::ota::Updater`, порт `Assemble`). Здесь, в
+/// словаре, потому что его называют обе стороны, а друг друга они не видят.
+#[derive(Debug)]
+pub struct FirmwarePartitions<D, S> {
+    /// Раздел `DFU`.
+    pub dfu: D,
+    /// Раздел `BOOTLOADER_STATE`.
+    pub state: S,
+    /// Самый длинный принимаемый образ — размер `ACTIVE`, а не `DFU`
+    /// (см. [`FirmwareUpdate::capacity`]).
+    pub capacity: u32,
+}
+
 /// Обновление прошивки: то, что нужно логике приёма и применения образа.
 #[must_use]
 pub trait FirmwareUpdate {

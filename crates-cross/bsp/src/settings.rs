@@ -1,9 +1,10 @@
-//! Носитель хранилища настроек этой платы: на чём оно лежит.
+//! Носитель хранилища настроек этой платы — рычаг `NorFlash`: на чём лежат
+//! настройки.
 //!
 //! Само хранилище — `adapters::settings::Settings` (generic по флешу,
-//! тестируется на хосте); ему годится любой асинхронный `NorFlash`, и строит
-//! его приложение (`app::settings`). Здесь остаётся то, что знает про плату:
-//! что именно в этот слот подставлено. При
+//! тестируется на хосте); ему годится любой асинхронный `NorFlash` на весь
+//! его объём, и собирает его узел-потребитель (порт `Assemble`). Здесь
+//! остаётся то, что знает про плату: что именно в этот слот подставлено. При
 //! генерации выбрано одно из трёх (`config` в cargo-generate, см.
 //! docs/flash.md):
 //!
@@ -87,13 +88,10 @@ type ConfigBacking = BlockingAsync<Whole>;
 /// `FlashMutex` и разделов OTA; менять вместе.
 static CONFIG_FLASH: StaticCell<Mutex<NoopRawMutex, ConfigBacking>> = StaticCell::new();
 
-/// Раздел `CONFIG` — то, что лежит полем `Board` и над чем приложение строит
-/// хранилище (`app::settings`). Именно раздел, а не весь флеш: запись за его
-/// границы отказывает, а не стирает `ACTIVE` или bootloader.
+/// Раздел `CONFIG` — то, что лежит полем `Board` и над чем узел собирает
+/// хранилище. Именно раздел, а не весь флеш: запись за его границы
+/// отказывает, а не стирает `ACTIVE` или bootloader.
 pub type ConfigFlash = Partition<'static, NoopRawMutex, ConfigBacking>;
-
-/// Границы хранилища в [`ConfigFlash`] — весь раздел.
-pub const RANGE: core::ops::Range<u32> = 0..CONFIG_END - CONFIG_START;
 
 /// Собирает раздел `CONFIG`. Его начало кратно странице [`ConfigBacking`]{% if config_paged != "true" %}
 /// (`CONFIG_ERASE_SIZE` равен странице цельного `Flash` — `const`-assert выше){% endif %}:
@@ -112,8 +110,9 @@ pub(crate) fn new(flash: &'static FlashMutex) -> ConfigFlash {
 //! Здесь — внутренняя EEPROM: флеш под настройки не тратится вовсе. EEPROM
 //! пишется через тот же контроллер, что и флеш, поэтому доступ к ней — через
 //! общий [`FlashMutex`] (`embassy_stm32::flash::Flash::eeprom_*`), по операции
-//! под замком. Под хранилище отдана вся EEPROM, округлённая до страницы
-//! обёртки (`adapters::eeprom::Eeprom::PAGE`, её строит приложение).
+//! под замком. Наружу EEPROM уходит тем же рычагом, что и флеш, — `NorFlash`:
+//! обёртку `adapters::eeprom::Eeprom` (инверсия байтов, страница) собирает
+//! плата, и под хранилище отдана вся EEPROM, округлённая до её страницы.
 
 use ports::EepromAccess;
 use static_cell::StaticCell;
@@ -124,10 +123,9 @@ use crate::flash::FlashMutex;
 /// уезжает в задачу.
 static ACCESS: StaticCell<EepromFlash> = StaticCell::new();
 
-/// Доступ к EEPROM — то, что лежит полем `Board` и над чем приложение строит
-/// хранилище (`app::settings`: `adapters::eeprom::Eeprom`, затем
-/// `adapters::settings::Settings`).
-pub type ConfigFlash = &'static EepromFlash;
+/// EEPROM как `NorFlash` — то, что лежит полем `Board` и над чем узел
+/// собирает хранилище.
+pub type ConfigFlash = adapters::eeprom::Eeprom<'static, EepromFlash>;
 
 /// Общий [`FlashMutex`] как источник EEPROM. Свой тип, а не `impl` на самом
 /// мьютексе: и трейт `EepromAccess`, и `Mutex` чужие для `bsp`.
@@ -164,9 +162,9 @@ impl EepromAccess for EepromFlash {
     }
 }
 
-/// Собирает доступ к внутренней EEPROM.
+/// Собирает внутреннюю EEPROM как `NorFlash`.
 pub(crate) fn new(flash: &'static FlashMutex) -> ConfigFlash {
-    ACCESS.init(EepromFlash(flash))
+    adapters::eeprom::Eeprom::new(ACCESS.init(EepromFlash(flash)))
 }
 {%- elsif config_store == "external" %}
 //!
@@ -193,11 +191,8 @@ const CONFIG_END: u32 = match u32::from_str_radix(env!("CONFIG_END"), 10) {
 };
 
 /// Раздел настроек на внешней флеши — то, что лежит полем `Board` и над чем
-/// приложение строит хранилище (`app::settings`).
+/// узел собирает хранилище.
 pub type ConfigFlash = ExternalPartition;
-
-/// Границы раздела в [`ConfigFlash`] — весь раздел.
-pub const RANGE: core::ops::Range<u32> = 0..CONFIG_END - CONFIG_START;
 
 /// Собирает раздел настроек на внешней флеши.
 pub(crate) fn new(external: &'static ExternalMutex) -> ConfigFlash {

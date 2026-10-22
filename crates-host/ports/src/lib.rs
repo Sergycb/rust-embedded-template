@@ -57,6 +57,9 @@
 //! касается (`docs/conventions.md`, «`lib.rs` только объявляет модули»).
 // {%- endif %}
 
+/// Сборка адаптера из рычага платы и памяти приложения.
+pub mod assemble;
+
 // {%- if has_can == "true" %}
 /// Шина CAN: кадры для узла CANopen или вашего протокола.
 pub mod can;
@@ -110,6 +113,7 @@ pub mod settings;
 pub mod eeprom;
 // {%- endif %}
 
+pub use assemble::Assemble;
 // {%- if has_can == "true" %}
 pub use can::CanBus;
 // {%- endif %}
@@ -137,7 +141,7 @@ pub use ota::command::{
     SIGNATURE_BYTES, reply_code,
 };
 pub use ota::download::DownloadError;
-pub use ota::update::{FirmwareUpdate, PendingImage, UpdateError};
+pub use ota::update::{FirmwarePartitions, FirmwareUpdate, PendingImage, UpdateError};
 // {%- endif %}
 // {%- if settings_port == "true" %}
 pub use settings::SettingsStorage;

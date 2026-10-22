@@ -17,23 +17,57 @@
 //!   вернётся, — дело реализации `FrameLink` на следующем `recv`.
 
 use defmt_or_log::{FormatOrDebug, info, warn};
-use ports::{FrameLink, Handler, LinkError};
+use ports::{Assemble, FrameLink, Handler, LinkError};
 use supervisor::runtime::TaskExit;
 
-// Вход узла — `ServerWiring`: структуру эмитит сам фрагмент (`boot: …
-// struct`), по полю на каждый слот, читающий `inputs.<поле>`. Строит её
-// compose-site, подставляя типы канала и обработчика аргументами фрагмента:
-//
-// ```ignore
-// fragments: [::domain::SERVER_FRAG<crate::link::usart1::Link, ::domain::modbus::Slave<crate::modbus::Handle>>
-//                 as MODBUS_USART1 = ::domain::server::ServerWiring {
-//                     link: crate::link::usart1::new(parts.board.usart1),
-//                     handler: ::domain::modbus::Slave::new(1, parts.modbus),
-//                 }];
-// ```
-//
-// Буфер кадра — у канала (`FrameLink::buffer`), а не у узла: его размер
-// задаёт протокол над каналом, и канал собирается вместе с буфером.
+/// Вход узла: из чего собрать канал `L` и чем отвечать.
+///
+/// Канал собирает узел (`L::assemble(source, buffers)` — порт
+/// [`Assemble`]), а compose-site только раздаёт: рычаг платы, ссылки на
+/// статики приложения и обработчик. Какой канал под каким рычагом — тип `L`,
+/// его выбирает генерация параметром фрагмента:
+///
+/// ```ignore
+/// fragments: [::domain::SERVER_FRAG<crate::link::usart1::Link, ::domain::modbus::Slave<crate::modbus::Handle>>
+///                 as MODBUS_USART1 = ::domain::server::ServerWiring {
+///                     source: board.usart1,
+///                     buffers: crate::link::usart1::buffers(),
+///                     handler: ::domain::modbus::Slave::new(1, crate::modbus::handle()),
+///                 }];
+/// ```
+///
+/// Буфер кадра — у канала (`FrameLink::buffer`), а не у узла: его размер
+/// задаёт протокол над каналом, и канал собирается вместе с ним.
+///
+/// Написана руками, а не выведена фрагментом (`boot: … struct`): слот
+/// канала инициализируется сборкой из двух полей, а не чтением одного.
+#[derive(Debug)]
+pub struct ServerWiring<L: Assemble, H> {
+    /// Рычаг платы, над которым собирается канал.
+    pub source: L::Source,
+    /// Память канала от приложения.
+    pub buffers: L::Buffers,
+    /// Протокол над каналом: что ответить на кадр.
+    pub handler: H,
+}
+
+/// Узел протокола без графа: собирает канал из `wiring` и обслуживает его,
+/// не выходя никогда, — то, что с графом делают слоты фрагмента и [`task`].
+pub async fn serve<L, H>(wiring: ServerWiring<L, H>) -> TaskExit
+where
+    L: Assemble + FrameLink,
+    L::Error: FormatOrDebug,
+    H: Handler,
+{
+    let mut link = L::assemble(wiring.source, wiring.buffers);
+    let mut handler = wiring.handler;
+    task(ServerCtx {
+        link: &mut link,
+        handler: &mut handler,
+        index: 0,
+    })
+    .await
+}
 
 /// Узел протокола: обслуживает канал, пока жив, и не выходит никогда.
 ///
@@ -112,13 +146,14 @@ where
 // других узлов).
 supervisor::supervisor_fragment! {
     name: SERVER_FRAG<L, H>;
-    boot: inputs: struct $crate::server::ServerWiring;
+    boot: inputs: $crate::server::ServerWiring<L, H>;
 
     node deps: [], restart: Never,
         resources: [
             /// Кадровый канал — с буфером кадра: не меньше самого длинного
-            /// запроса и ответа протокола.
-            LINK: local L = inputs.link,
+            /// запроса и ответа протокола. Собирает его узел — из рычага
+            /// платы и памяти приложения.
+            LINK: local L = <L as $crate::Assemble>::assemble(inputs.source, inputs.buffers),
             /// Протокол над каналом: что ответить на кадр.
             HANDLER: local H = inputs.handler
         ],

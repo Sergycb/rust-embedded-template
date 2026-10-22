@@ -35,27 +35,21 @@ mod tests {
     use embassy_time::{Duration, Instant, Timer};
 
 {%- if ota == "true" %}
-    /// Адаптер обновления над разделами платы — так же, как его собирает
-    /// приложение (`crates-cross/app/src/ota.rs`).
+    /// Адаптер обновления над разделами платы — так же, как его собирает узел
+    /// OTA (порт `Assemble`).
     fn updater(
         partitions: bsp::ota::Partitions,
     ) -> adapters::ota::Updater<bsp::ota::Dfu, bsp::ota::State, {{signed}}> {
-        adapters::ota::Updater::new(partitions.dfu, partitions.state, bsp::ota::ACTIVE_LEN)
+        ports::Assemble::assemble(partitions, ())
     }
 {%- endif %}
 {%- if config == "true" and config_store != "external" %}
     /// Хранилище настроек над носителем платы — так же, как его собирает
-    /// приложение (`crates-cross/app/src/settings.rs`).
+    /// узел-потребитель (порт `Assemble`).
     fn settings(
         flash: bsp::settings::ConfigFlash,
     ) -> impl ports::SettingsStorage<Error: core::fmt::Debug> {
-{%- if config_store == "eeprom" %}
-        let eeprom = adapters::eeprom::Eeprom::new(flash);
-        let size = eeprom.usable();
-        adapters::settings::Settings::new(eeprom, 0..size)
-{%- else %}
-        adapters::settings::Settings::new(flash, bsp::settings::RANGE)
-{%- endif %}
+        <adapters::settings::Settings<_> as ports::Assemble>::assemble(flash, ())
     }
 {%- endif %}
 

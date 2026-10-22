@@ -153,6 +153,23 @@ impl<F: NorFlash> Settings<F> {
 
 // {%- endif %}
 
+// {%- if config == "true" %}
+/// Собирается над носителем платы (раздел флеша, EEPROM, внешняя флеш) — на
+/// весь его объём.
+impl<F: NorFlash> ports::Assemble for Settings<F> {
+    type Source = F;
+    type Buffers = ();
+
+    /// # Panics
+    ///
+    /// Как [`Settings::new`]: носитель не годится под `sequential-storage`.
+    fn assemble(flash: F, (): ()) -> Self {
+        let end = u32::try_from(flash.capacity()).expect("носитель настроек больше 4 GiB");
+        Self::new(flash, 0..end)
+    }
+}
+// {%- endif %}
+
 // {%- if has_canopen == "true" and config != "true" %}
 /// Хранилища нет — у проекта нет раздела настроек.
 ///
@@ -162,6 +179,16 @@ impl<F: NorFlash> Settings<F> {
 /// который всё же в неё пишет, она не годится.
 #[derive(Debug, Default)]
 pub struct Unavailable;
+
+/// Собирать не из чего: раздела настроек у платы нет.
+impl ports::Assemble for Unavailable {
+    type Source = ();
+    type Buffers = ();
+
+    fn assemble((): (), (): ()) -> Self {
+        Self
+    }
+}
 
 impl ports::SettingsStorage for Unavailable {
     type Error = core::convert::Infallible;

@@ -144,21 +144,9 @@ pub type Dfu = ExternalPartition;
 pub type State = ExternalPartition;
 {%- endif %}
 
-/// Разделы обновления этой платы: из них приложение собирает адаптер
-/// обновления — порт `FirmwareUpdate` (`adapters::ota::Updater`, `app::ota`).
-pub struct Partitions {
-    /// Раздел `DFU`, в который принимается образ.
-    pub dfu: Dfu,
-    /// Раздел `BOOTLOADER_STATE` — журнал обмена.
-    pub state: State,
-}
-
-// Вручную: у разделов `embassy-embedded-hal` `Debug` нет.
-impl core::fmt::Debug for Partitions {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("Partitions").finish_non_exhaustive()
-    }
-}
+/// Разделы обновления этой платы и самый длинный образ ([`ACTIVE_LEN`]) — рычаг,
+/// над которым узел OTA собирает адаптер обновления (`adapters::ota::Updater`).
+pub type Partitions = ports::FirmwarePartitions<Dfu, State>;
 
 /// Собирает разделы `DFU` и `BOOTLOADER_STATE`, найденные по символам `memory.x`.
 {%- if ota_store == "external" %}
@@ -192,5 +180,6 @@ pub(crate) fn new(flash: &'static FlashMutex) -> Partitions {
     Partitions {
         dfu: config.dfu,
         state: config.state,
+        capacity: ACTIVE_LEN,
     }
 }

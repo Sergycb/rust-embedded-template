@@ -546,6 +546,41 @@ where
     }
 }
 
+/// Вход узла `MQTT`: стек, сведения, префикс тем, откуда адрес брокера и
+/// память соединения `D` с ним.
+///
+/// Соединение собирает узел (`D::assemble(stack, link)` — порт
+/// [`Assemble`](ports::Assemble)) на том же стеке; compose-site раздаёт только
+/// стек платы и ссылки на свои статики. Написан руками, а не выведен
+/// фрагментом: слот соединения инициализируется сборкой, а не чтением поля.
+pub struct MqttWiring<B, D: ports::Assemble<Source = crate::net::Stack<'static>>> {
+    /// Сетевой стек — ради адреса платы и MAC в `info` и под соединение.
+    pub stack: crate::net::Stack<'static>,
+    /// Сведения для `info`.
+    pub info: crate::device::DeviceInfo,
+    /// Префикс тем, не длиннее `PREFIX_MAX`.
+    pub prefix: &'static str,
+    /// Откуда адрес брокера.
+    pub broker: B,
+    /// Память соединения с брокером.
+    pub link: D::Buffers,
+    // {%- if ota == "true" %}
+    /// Клиент входа `CMD` узла OTA — для `cmd/reboot`.
+    pub ota: crate::ota::OtaClient,
+    // {%- endif %}
+}
+
+// Вручную: у стека `embassy-net` нет `Debug`.
+impl<B, D: ports::Assemble<Source = crate::net::Stack<'static>>> core::fmt::Debug
+    for MqttWiring<B, D>
+{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("MqttWiring")
+            .field("prefix", &self.prefix)
+            .finish_non_exhaustive()
+    }
+}
+
 // Узел объявлен рядом со своей задачей — как `SSH`. `<B>` — откуда адрес
 // брокера (`Fixed` или свой тип проекта), `<D>` — соединение (`Dial` +
 // поток байтов; `adapters::net::TcpClient` над сокетом стека, его и буферы
@@ -554,7 +589,7 @@ where
 // `watchdog:`: брокера может не быть всю жизнь платы.
 supervisor::supervisor_fragment! {
     name: MQTT_FRAG<B, D>;
-    boot: inputs: struct $crate::mqtt::MqttWiring;
+    boot: inputs: $crate::mqtt::MqttWiring<B, D>;
 
     node deps: [], restart: Never,
         resources: [
@@ -566,8 +601,8 @@ supervisor::supervisor_fragment! {
             PREFIX: &'static str = inputs.prefix,
             /// Откуда адрес брокера.
             BROKER: local B = inputs.broker,
-            /// Соединение с брокером.
-            LINK: local D = inputs.link,
+            /// Соединение с брокером — собирает его узел на стеке платы.
+            LINK: local D = <D as $crate::Assemble>::assemble(inputs.stack, inputs.link),
             // {%- if ota == "true" %}
             /// Клиент входа `CMD` узла OTA — для `cmd/reboot`.
             OTA: $crate::ota::OtaClient = inputs.ota,

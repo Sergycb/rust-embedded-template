@@ -71,12 +71,7 @@ pub fn spawn_all(spawner: embassy_executor::Spawner, {% if ota == "true" or has_
     let info = crate::device_info(board.spec);
     host::{{ f[4] }}::spawn(spawner, {% if f[0] == "uart" %}board.{{ f[4] }}{% elsif f[0] == "usb" %}board.{{ f[4] }}.cdc{% else %}board.net.stack{% endif %}, info);
 {%- elsif f[3] == "canopen" %}
-{%- if config == "true" %}
-    let store = crate::settings::new(board.settings);
-{%- else %}
-    let store = adapters::settings::Unavailable;
-{%- endif %}
-    canopen::{{ f[4] }}::spawn(spawner, board.{{ f[4] }}, store);
+    canopen::{{ f[4] }}::spawn(spawner, board.{{ f[4] }}, {% if config == "true" %}board.settings{% else %}(){% endif %});
 {%- endif %}
 {%- endfor %}
 {%- if net_services contains "rest" %}
@@ -88,9 +83,9 @@ pub fn spawn_all(spawner: embassy_executor::Spawner, {% if ota == "true" or has_
         board.net.stack,
         crate::device_info(board.spec),
 {%- if ssh_host_key == "config" %}
-        domain::ssh::Stored(crate::settings::new(board.settings)),
+        board.settings,
 {%- else %}
-        domain::ssh::Fixed(&crate::net::SSH_HOST_KEY),
+        &crate::net::SSH_HOST_KEY,
 {%- endif %}
     );
 {%- endif %}

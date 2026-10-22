@@ -109,12 +109,16 @@ static MQTT_TCP_RX: ConstStaticCell<[u8; MQTT_TCP_BUFFER]> =
 static MQTT_TCP_TX: ConstStaticCell<[u8; MQTT_TCP_BUFFER]> =
     ConstStaticCell::new([0; MQTT_TCP_BUFFER]);
 
-/// Соединение узла MQTT с брокером: TCP-клиент на стеке со своими буферами.
+/// Память соединения узла MQTT с брокером — буферы сокета TCP-клиента;
+/// собирает клиент сам узел.
 ///
 /// # Panics
 ///
 /// При втором вызове: буферы у клиента одни, а узел MQTT — один.
-pub fn mqtt_link(stack: bsp::net::Stack) -> adapters::net::TcpClient {
-    adapters::net::TcpClient::new(stack, MQTT_TCP_RX.take(), MQTT_TCP_TX.take())
+pub fn mqtt_buffers() -> adapters::net::TcpClientBuffers {
+    adapters::net::TcpClientBuffers {
+        rx: MQTT_TCP_RX.take(),
+        tx: MQTT_TCP_TX.take(),
+    }
 }
 {%- endif %}

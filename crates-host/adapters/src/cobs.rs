@@ -21,7 +21,7 @@
 use ::cobs::{CobsDecoder, CobsEncoder, DecodeError, max_encoding_length};
 use crc::{CRC_16_IBM_SDLC, Crc, NoTable};
 use embedded_io_async::{Error, ErrorKind, Read, Write};
-use ports::{FrameLink, LinkError};
+use ports::{Assemble, FrameLink, LinkError};
 
 /// CRC кадра. Без таблицы: 512 байт флеша не стоят выигрыша в скорости на
 /// кадрах в сотни байт.
@@ -90,6 +90,71 @@ pub struct Cobs<'b, T> {
     /// прочитанным `0x00`.
     inside: bool,
 }
+
+/// Память канала COBS от приложения: буфер канала ([`rx_len`] от самого
+/// длинного сообщения) и буфер кадра отправки ([`tx_len`] от буфера канала).
+#[derive(Debug)]
+pub struct CobsBuffers {
+    /// Буфер канала (`FrameLink::buffer`).
+    pub buf: &'static mut [u8],
+    /// Закодированный кадр отправки.
+    pub frame: &'static mut [u8],
+}
+
+/// Собирается над готовым потоком платы (UART, поток USB CDC).
+impl<T> Assemble for Cobs<'static, T> {
+    type Source = T;
+    type Buffers = CobsBuffers;
+
+    fn assemble(io: T, buffers: CobsBuffers) -> Self {
+        Self::new(io, buffers.buf, buffers.frame)
+    }
+}
+// {%- if has_tcp == "true" %}
+
+/// COBS над TCP-сервером, который собирается над стеком платы.
+///
+/// Свой тип, а не ещё одна реализация [`Assemble`] у [`Cobs`]: у `Cobs`
+/// источник — готовый поток, а `TcpServer` — тоже поток, и две реализации
+/// пересеклись бы.
+#[derive(Debug)]
+pub struct TcpCobs(Cobs<'static, crate::net::TcpServer>);
+
+/// Память [`TcpCobs`]: порт и буферы сокета, буферы канала COBS.
+#[derive(Debug)]
+pub struct TcpCobsBuffers {
+    /// Сокет сервера.
+    pub socket: crate::net::TcpServerBuffers,
+    /// Канал COBS над ним.
+    pub cobs: CobsBuffers,
+}
+
+impl Assemble for TcpCobs {
+    type Source = embassy_net::Stack<'static>;
+    type Buffers = TcpCobsBuffers;
+
+    fn assemble(stack: embassy_net::Stack<'static>, buffers: TcpCobsBuffers) -> Self {
+        let server = crate::net::TcpServer::assemble(stack, buffers.socket);
+        Self(Cobs::assemble(server, buffers.cobs))
+    }
+}
+
+impl FrameLink for TcpCobs {
+    type Error = CobsError<crate::net::TcpError>;
+
+    async fn recv(&mut self) -> Result<usize, LinkError<Self::Error>> {
+        self.0.recv().await
+    }
+
+    fn buffer(&mut self) -> &mut [u8] {
+        self.0.buffer()
+    }
+
+    async fn send(&mut self, len: usize) -> Result<(), LinkError<Self::Error>> {
+        self.0.send(len).await
+    }
+}
+// {%- endif %}
 
 /// Поток и то, что из него прочитано, но ещё не разобрано: `chunk[start..end]`.
 ///

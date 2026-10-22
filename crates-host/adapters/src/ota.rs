@@ -63,6 +63,18 @@ impl<DFU: NorFlash, STATE: NorFlash, const SIGNED: bool> core::fmt::Debug
     }
 }
 
+/// Собирается над разделами обновления платы (`bsp::ota`).
+impl<DFU: NorFlash, STATE: NorFlash, const SIGNED: bool> ports::Assemble
+    for Updater<DFU, STATE, SIGNED>
+{
+    type Source = ports::FirmwarePartitions<DFU, STATE>;
+    type Buffers = ();
+
+    fn assemble(partitions: Self::Source, (): ()) -> Self {
+        Self::new(partitions.dfu, partitions.state, partitions.capacity)
+    }
+}
+
 impl<DFU: NorFlash, STATE: NorFlash, const SIGNED: bool> Updater<DFU, STATE, SIGNED> {
     /// `capacity` — размер раздела, в который образ будет исполняться
     /// (`ACTIVE`), см. поле.

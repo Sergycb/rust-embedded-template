@@ -2,7 +2,7 @@
 
 use crc::{CRC_16_MODBUS, Crc, NoTable};
 use embedded_io_async::{Read, ReadExactError, Write};
-use ports::{FrameLink, LinkError, MAX_PDU};
+use ports::{Assemble, FrameLink, LinkError, MAX_PDU};
 
 // {%- if modbus_master == "true" %}
 use ports::{MasterError, ModbusClient};
@@ -62,6 +62,15 @@ impl<T> Rtu<T> {
             have: 0,
             frame: [0; MAX_ADU],
         }
+    }
+}
+
+impl<T> Assemble for Rtu<T> {
+    type Source = T;
+    type Buffers = ();
+
+    fn assemble(io: T, (): ()) -> Self {
+        Self::new(io)
     }
 }
 

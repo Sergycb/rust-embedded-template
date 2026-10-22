@@ -2,7 +2,7 @@
 
 use embassy_net::Stack;
 use embassy_net::udp::{PacketMetadata, RecvError, SendError, UdpMetadata, UdpSocket};
-use ports::{FrameLink, LinkError};
+use ports::{Assemble, FrameLink, LinkError};
 
 /// UDP-канал на одном порту — [`FrameLink`] для протоколов, которым
 /// датаграмма и есть кадр (`modbus::Udp`, узел HOST).
@@ -20,6 +20,33 @@ pub struct UdpLink {
 impl core::fmt::Debug for UdpLink {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("UdpLink").finish_non_exhaustive()
+    }
+}
+
+/// Память и порт UDP-канала от приложения: порт, буферы сокета с метаданными
+/// датаграмм и буфер канала (`FrameLink::buffer`).
+#[derive(Debug)]
+pub struct UdpBuffers {
+    /// Порт, на котором канал ждёт датаграммы.
+    pub port: u16,
+    /// Метаданные принятых датаграмм сокета.
+    pub rx_meta: &'static mut [PacketMetadata],
+    /// Буфер приёма сокета.
+    pub rx: &'static mut [u8],
+    /// Метаданные датаграмм к отправке.
+    pub tx_meta: &'static mut [PacketMetadata],
+    /// Буфер передачи сокета.
+    pub tx: &'static mut [u8],
+    /// Буфер канала — не короче самой длинной датаграммы протокола.
+    pub frame: &'static mut [u8],
+}
+
+impl Assemble for UdpLink {
+    type Source = Stack<'static>;
+    type Buffers = UdpBuffers;
+
+    fn assemble(stack: Stack<'static>, b: UdpBuffers) -> Self {
+        Self::new(stack, b.port, b.rx_meta, b.rx, b.tx_meta, b.tx, b.frame)
     }
 }
 
