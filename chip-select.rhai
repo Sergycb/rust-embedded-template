@@ -365,6 +365,8 @@ fn flash_bus(instances) {
 /// терминала (`--silent`, CI) `variable::prompt` отвечает ошибкой «not a
 /// terminal», и тогда берётся `default_value`: вопрос, который некому задать, не
 /// должен ронять генерацию. Любая другая ошибка (прерванный выбор) пробрасывается.
+/// `texts` — только ASCII: `dialoguer` меряет ширину пункта в байтах, и лишний
+/// по его счёту перенос стирает строки терминала над меню при перерисовке.
 fn ask(label, values, texts, default_value) {
     let default_text = texts[0];
     for i in 0..values.len() {
@@ -387,7 +389,7 @@ fn ask(label, values, texts, default_value) {
 /// Список с отметками: отмеченные `values` в порядке пунктов. В хуках
 /// `cargo-generate` есть только одиночный выбор, поэтому отметка `[x] `/`[ ] `
 /// нарисована в тексте пункта (`value — text`), а меню после каждого выбора
-/// показывается заново; `готово` (оно же умолчание и ответ без терминала)
+/// показывается заново; `done` (оно же умолчание и ответ без терминала)
 /// закрывает список.
 fn checklist(label, values, texts) {
     checklist(label, values, texts, |value, chosen| "")
@@ -403,14 +405,14 @@ fn checklist(label, values, texts, note) {
         for i in 0..values.len() {
             if marked[i] { chosen.push(values[i]); }
         }
-        let shown_values = ["готово"];
-        let shown_texts = ["готово"];
+        let shown_values = ["done"];
+        let shown_texts = ["done"];
         for i in 0..values.len() {
             shown_values.push(values[i]);
-            shown_texts.push((if marked[i] { "[x] " } else { "[ ] " }) + values[i] + " — " + texts[i] + note.call(values[i], chosen));
+            shown_texts.push((if marked[i] { "[x] " } else { "[ ] " }) + values[i] + " - " + texts[i] + note.call(values[i], chosen));
         }
-        let pick = ask(label, shown_values, shown_texts, "готово");
-        if pick == "готово" { break; }
+        let pick = ask(label, shown_values, shown_texts, "done");
+        if pick == "done" { break; }
         for i in 0..values.len() {
             if values[i] == pick { marked[i] = !marked[i]; }
         }
@@ -540,7 +542,7 @@ fn modbus_master_answer() {
     ask(
         "modbus_master: Modbus master (клиент) в дополнение к slave",
         ["no", "yes"],
-        ["no — только slave", "yes — ещё и master (клиентские функции и транспорты)"],
+        ["no - slave only", "yes - also master (client functions and transports)"],
         "no"
     ) == "yes"
 }
@@ -822,10 +824,10 @@ const LINK_KINDS = ["uart", "can", "tcp", "udp", "usb"];
 // (после `[ ] значение — `). Вид — по одному пункту: второй транспорт того же
 // вида и `udp` задаёт `--define links=...`. `ethernet` пока даёт `tcp`.
 const TRANSPORT_ITEMS = [
-    #{ value: "uart", kind: "uart", text: "UART (RS-485 — тот же UART с выводом DE)" },
-    #{ value: "can", kind: "can", text: "шина CAN" },
-    #{ value: "ethernet", kind: "tcp", text: "Ethernet (сеть)" },
-    #{ value: "usb", kind: "usb", text: "USB CDC ACM (виртуальный COM-порт)" },
+    #{ value: "uart", kind: "uart", text: "UART (RS-485 is the same UART with a DE pin)" },
+    #{ value: "can", kind: "can", text: "CAN bus" },
+    #{ value: "ethernet", kind: "tcp", text: "Ethernet (network)" },
+    #{ value: "usb", kind: "usb", text: "USB CDC ACM (virtual COM port)" },
 ];
 // Сетевые службы поверх стека (`net_services`): не транспорты с протоколом, а
 // узлы на своих сокетах общего стека — спрашиваются, только когда отмечен
@@ -833,18 +835,18 @@ const TRANSPORT_ITEMS = [
 // приложения не меньше `min_partition`. MQTT — клиент: сам подключается к
 // брокеру (адрес — `mqtt.toml` в корне проекта).
 const NET_SERVICE_ITEMS = [
-    #{ value: "ssh", text: "консоль SSH (sunset)", needs_rng: true, min_partition: SSH_MIN_PARTITION },
-    #{ value: "rest", text: "REST API по HTTP (picoserve)", needs_rng: false, min_partition: 0 },
-    #{ value: "mqtt", text: "MQTT-клиент (minimq)", needs_rng: false, min_partition: 0 },
+    #{ value: "ssh", text: "SSH console (sunset)", needs_rng: true, min_partition: SSH_MIN_PARTITION },
+    #{ value: "rest", text: "REST API over HTTP (picoserve)", needs_rng: false, min_partition: 0 },
+    #{ value: "mqtt", text: "MQTT client (minimq)", needs_rng: false, min_partition: 0 },
 ];
 // Начало base64-блоба открытого ключа ed25519 (`ssh_key`): длина и имя типа,
 // затем длина ключа (32). Других ключей `sunset` без фич не проверяет.
 const SSH_KEY_BLOB_PREFIX = "AAAAC3NzaC1lZDI1NTE5AAAAI";
 const BASE64_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 const PROTOCOL_TEXT = #{
-    "modbus": "modbus — Modbus slave",
-    "protobuf": "protobuf — сообщения protobuf от хоста",
-    "canopen": "canopen — узел CANopen (стек zencan)",
+    "modbus": "modbus - Modbus slave",
+    "protobuf": "protobuf - protobuf messages from the host",
+    "canopen": "canopen - CANopen node (zencan stack)",
 };
 
 // Статическая RAM (`.data` + `.bss` + `.uninit` release-образа `app`) по частям
@@ -1242,7 +1244,7 @@ variable::set("erase_zero", if erase_zero { "true" } else { "false" });
 //   * интерфейс, блока которого у чипа нет, не предлагается;
 //   * протоколы показываются только те, что работают поверх выбранного транспорта;
 //   * OTA и настройки, которые на чип не помещаются, остаются в меню с
-//     пометкой «НЕ ПОМЕЩАЕТСЯ»: выбрав их, пользователь получает ручную
+//     пометкой «DOES NOT FIT»: выбрав их, пользователь получает ручную
 //     раскладку памяти (как при `--define write_size=...`) и сам решает, что
 //     менять.
 // Ответ, пришедший через `--define`, — режим для скриптов, и проверяется строго:
@@ -1264,8 +1266,8 @@ if !variable::is_set("ext_flash") {
             "ext_flash: внешняя флеш W25Q на плате",
             ["no", "yes"],
             [
-                "no — OTA и настройки во flash чипа",
-                "yes — W25Q на " + chip_bus[1] + ": OTA (STATE, DFU) и настройки — на ней",
+                "no - OTA and settings in chip flash",
+                "yes - W25Q on " + chip_bus[1] + ": OTA (STATE, DFU) and settings on it",
             ],
             "no"
         );
@@ -1284,15 +1286,15 @@ if !variable::is_set("ota") {
     let plan_ota = plan(layout, erase_zero, #{ ota: true, ext_ota: wants_ext, config: wants_config, external: wants_external, graph: false }, LIMITS);
     let fits = if wants_ext { plan_ota.ext_ota } else { plan_ota.ota };
     let text_yes = if fits {
-        "yes — " + (if wants_ext { "DFU и STATE на внешней флеши" } else { "DFU во flash чипа" })
+        "yes - " + (if wants_ext { "DFU and STATE on external flash" } else { "DFU in chip flash" })
             + ", ACTIVE " + layout[plan_ota.ota_key + "active_length"]
     } else {
-        "yes — НЕ ПОМЕЩАЕТСЯ на этом чипе: раскладку памяти придётся писать вручную"
+        "yes - DOES NOT FIT on this chip: manual memory layout"
     };
     let answer = ask(
         "ota: OTA (bootloader и разделы ACTIVE/DFU)",
         ["yes", "no"],
-        [text_yes, "no — без OTA: один образ на весь flash"],
+        [text_yes, "no - no OTA: one image over the whole flash"],
         if fits { "yes" } else { "no" }
     );
     wants_ota = answer == "yes";
@@ -1305,10 +1307,10 @@ if !variable::is_set("ota") {
 // --- Настройки
 if !variable::is_set("config") {
     let values = ["no"];
-    let texts = ["no — без хранилища настроек"];
+    let texts = ["no - no settings storage"];
     if wants_ext {
         values.push("yes");
-        texts.push("yes — раздел на внешней флеши W25Q: flash чипа под настройки не тратится");
+        texts.push("yes - partition on external W25Q, no chip flash used");
     } else {
         let plan_cfg = plan(layout, erase_zero, #{ ota: wants_ota, ext_ota: false, config: true, external: false, graph: false }, LIMITS);
         let kind = config_store(layout, true, false, EEPROM_MIN);
@@ -1317,18 +1319,18 @@ if !variable::is_set("config") {
         // флеши настройкам на таком чипе места нет.
         if kind == "eeprom" {
             values.push("yes");
-            texts.push("yes — внутренняя EEPROM чипа: flash под настройки не тратится");
+            texts.push("yes - internal chip EEPROM, no chip flash used");
         } else if !erase_zero {
             values.push("yes");
             if plan_cfg.config {
                 let note = if wants_ota && !plan_cfg.ota {
-                    " (но тогда OTA не поместится: раскладку памяти придётся писать вручную)"
+                    " (but then OTA will not fit: manual memory layout)"
                 } else {
                     ""
                 };
-                texts.push("yes — раздел " + layout[plan_cfg.settings_key + "length"] + " во flash" + note);
+                texts.push("yes - " + layout[plan_cfg.settings_key + "length"] + " partition in flash" + note);
             } else {
-                texts.push("yes — НЕ ПОМЕЩАЕТСЯ на этом чипе: раскладку памяти придётся писать вручную");
+                texts.push("yes - DOES NOT FIT on this chip: manual memory layout");
             }
         } else {
             print("Настройки не предлагаются: у " + chip_name + " флеш стирается в ноль, а EEPROM нет — их место только на внешней флеши (ext_flash=yes)");
@@ -1355,7 +1357,7 @@ if variable::is_set("graph") {
     let answer = ask(
         "graph: граф задач supervisor (порядок старта, рестарты, watchdog)",
         ["yes", "no"],
-        ["yes — граф задач и сторож", "no — без графа: main заканчивается после инициализации"],
+        ["yes - task graph and watchdog", "no - no graph: main ends after init"],
         "yes"
     );
     wants_graph = answer == "yes";
@@ -1385,7 +1387,7 @@ let ram_limit = if manual_now { () } else { size_in_bytes(layout["ram_length"]) 
 let ram_mark = |set| {
     if ram_limit == () { return ""; }
     let need = ram_estimate(RAM_COST, ram_base_now, set, []) + STACK_RESERVE;
-    if need > ram_limit { " — НЕ ПОМЕЩАЕТСЯ в RAM (оценка " + kib(need) + " из " + kib(ram_limit) + ")" } else { "" }
+    if need > ram_limit { " - DOES NOT FIT in RAM (est. " + kib(need) + " of " + kib(ram_limit) + ")" } else { "" }
 };
 let links = [];
 let wanted_protocol = if variable::is_set("protocol") { variable::get("protocol") } else { "" };
@@ -1474,7 +1476,7 @@ if WANTED_LINKS.len() > 0 {
             }
         } else {
             let values = ["none"];
-            let texts = ["none — без протокола: заглушка транспорта и его узел есть, протокол пишете вы"];
+            let texts = ["none - no protocol: transport stub and its node, protocol is yours"];
             for name in ["modbus", "protobuf", "canopen"] {
                 if (protocol == "none" || protocol == name) && PROTOCOL_INTERFACES[name].contains(kind) {
                     values.push(name);
@@ -1560,7 +1562,7 @@ if services.contains("ssh") {
         // терминала было бы нечем закончить, а вопрос, который некому задать,
         // генерацию не роняет.
         ask("ssh_auth: вход в консоль SSH", ["password", "key"],
-            ["password — по паролю", "key — по открытому ключу ed25519"], "password")
+            ["password - by password", "key - by ed25519 public key"], "password")
     };
     if ssh_auth != "key" && ssh_auth != "password" {
         throw "ssh_auth: ожидается key или password, а не «" + ssh_auth + "»";

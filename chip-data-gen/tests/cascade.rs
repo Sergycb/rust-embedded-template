@@ -158,7 +158,7 @@ fn run_cascade_with(
 /// `--define`, `picks` — выбор в меню (`("ota", "no")` отвечает на вопрос
 /// `ota: ...` вариантом, начинающимся со слова `no`; у пункта списка с
 /// отметкой слово ищется после `[x] `/`[ ] `). Ответы одного id расходуются по
-/// порядку: `[("transports", "uart"), ("transports", "готово")]` отмечает
+/// порядку: `[("transports", "uart"), ("transports", "done")]` отмечает
 /// пункт в первом показе меню `transports:` и закрывает его во втором. Меню без ответа (или когда
 /// ответы его id кончились) ведёт себя как запуск без терминала: `variable::prompt` отвечает ошибкой «not a
 /// terminal», и хук берёт умолчание.
@@ -1194,14 +1194,14 @@ fn the_ota_menu_marks_what_does_not_fit_and_defaults_to_what_does() {
 
     // Внешней флеши нет: внутренняя схема не помещается.
     let (menu, ota) = ota_menu(&[]);
-    assert!(yes(&menu).contains("НЕ ПОМЕЩАЕТСЯ"), "{menu:?}");
+    assert!(yes(&menu).contains("DOES NOT FIT"), "{menu:?}");
     // Умолчание без терминала — то, что не обещает невозможного.
     assert_eq!(ota.as_deref(), Some("false"));
 
     // Внешняя флеш есть: снаружи помещается, и умолчание — OTA.
     let (menu, ota) = ota_menu(&[("ext_flash", "yes")]);
-    assert!(!yes(&menu).contains("НЕ ПОМЕЩАЕТСЯ"), "{menu:?}");
-    assert!(yes(&menu).contains("внешней флеши"), "{menu:?}");
+    assert!(!yes(&menu).contains("DOES NOT FIT"), "{menu:?}");
+    assert!(yes(&menu).contains("external flash"), "{menu:?}");
     assert_eq!(ota.as_deref(), Some("true"));
 }
 
@@ -1746,13 +1746,13 @@ fn links_tolerate_spaces_but_not_empty_items() {
 }
 
 /// В списке каждый вид — одним пунктом, без имён блоков, в порядке `uart`,
-/// `can`, `ethernet`, `usb`; первый пункт — `готово`. У F407 шесть USART и
+/// `can`, `ethernet`, `usb`; первый пункт — `done`. У F407 шесть USART и
 /// ETH, а пункт `uart` один, и пунктов `tcp`/`udp` нет.
 #[test]
 fn each_kind_is_listed_once() {
     let result = interview(&compile_script(), "f407ve", &[], &[]).expect("каскад не должен падать");
     let menus = all_menu_values(&result, "transports");
-    assert_eq!(menus, [["готово", "uart", "can", "ethernet", "usb"]]);
+    assert_eq!(menus, [["done", "uart", "can", "ethernet", "usb"]]);
     let shown = &result
         .prompts
         .iter()
@@ -1761,7 +1761,7 @@ fn each_kind_is_listed_once() {
         .1;
     assert_eq!(
         shown[1],
-        "[ ] uart — UART (RS-485 — тот же UART с выводом DE)"
+        "[ ] uart - UART (RS-485 is the same UART with a DE pin)"
     );
     assert!(
         shown
@@ -1781,7 +1781,7 @@ fn once_a_protocol_is_chosen_only_it_and_none_are_offered() {
         &[
             ("transports", "uart"),
             ("transports", "ethernet"),
-            ("transports", "готово"),
+            ("transports", "done"),
             ("protocol", "modbus"),
         ],
     )
@@ -1804,7 +1804,7 @@ fn a_kind_the_protocol_cannot_carry_gets_no_protocol_question() {
         &[
             ("transports", "uart"),
             ("transports", "can"),
-            ("transports", "готово"),
+            ("transports", "done"),
             ("protocol", "modbus"),
         ],
     )
@@ -1828,7 +1828,7 @@ fn the_protocol_menu_follows_the_marked_order() {
         &[
             ("transports", "can"),
             ("transports", "uart"),
-            ("transports", "готово"),
+            ("transports", "done"),
             ("protocol", "modbus"),
         ],
     )
@@ -1852,7 +1852,7 @@ fn marked_transports_keep_the_menu_order() {
         &[
             ("transports", "ethernet"),
             ("transports", "uart"),
-            ("transports", "готово"),
+            ("transports", "done"),
         ],
     )
     .expect("каскад не должен падать");
@@ -1868,7 +1868,7 @@ fn marks_are_shown_in_the_redrawn_menu() {
         &compile_script(),
         "f407ve",
         &[],
-        &[("transports", "uart"), ("transports", "готово")],
+        &[("transports", "uart"), ("transports", "done")],
     )
     .expect("каскад не должен падать");
     let shown: Vec<&Vec<String>> = result
@@ -1894,7 +1894,7 @@ fn toggling_twice_leaves_the_transport_out() {
             ("transports", "can"),
             ("transports", "uart"),
             ("transports", "can"),
-            ("transports", "готово"),
+            ("transports", "done"),
         ],
     )
     .expect("каскад не должен падать");
@@ -1904,14 +1904,14 @@ fn toggling_twice_leaves_the_transport_out() {
     );
 }
 
-/// `готово` без отметок — проект без транспортов, о протоколе не спрашивают.
+/// `done` без отметок — проект без транспортов, о протоколе не спрашивают.
 #[test]
 fn done_without_marks_gives_no_transports() {
     let result = interview(
         &compile_script(),
         "f407ve",
         &[],
-        &[("transports", "готово")],
+        &[("transports", "done")],
     )
     .expect("каскад не должен падать");
     assert_eq!(var_of(&result, "links"), Some(""));
@@ -1929,7 +1929,7 @@ fn more_links_is_gone() {
         &[
             ("transports", "uart"),
             ("transports", "can"),
-            ("transports", "готово"),
+            ("transports", "done"),
             ("protocol", "modbus"),
         ][..],
     ] {
@@ -2095,7 +2095,7 @@ fn chips_without_enough_blocks_are_filtered_before_the_cascade() {
     run_cascade_with(&script, "f407ve", &[("links", "can,can")]).expect("у F407 два CAN");
 }
 
-/// Ответы кончились — дальше как без терминала: `готово`, и отмеченное остаётся.
+/// Ответы кончились — дальше как без терминала: `done`, и отмеченное остаётся.
 #[test]
 fn no_terminal_adds_no_extra_links() {
     let result = interview(&compile_script(), "f407ve", &[], &[("transports", "uart")])
@@ -2140,7 +2140,7 @@ fn ethernet_item_becomes_tcp() {
         &compile_script(),
         "f407ve",
         &[],
-        &[("transports", "ethernet"), ("transports", "готово")],
+        &[("transports", "ethernet"), ("transports", "done")],
     )
     .expect("каскад не должен падать");
     assert_eq!(var_of(&result, "links"), Some("tcp:eth:ETH:none:tcp"));
@@ -2169,10 +2169,10 @@ fn net_services_are_marked_after_ethernet() {
         &[],
         &[
             ("transports", "ethernet"),
-            ("transports", "готово"),
+            ("transports", "done"),
             ("net_services", "rest"),
             ("net_services", "ssh"),
-            ("net_services", "готово"),
+            ("net_services", "done"),
             ("ssh_auth", "key"),
             ("ssh_key", SSH_KEY),
         ],
@@ -2180,7 +2180,7 @@ fn net_services_are_marked_after_ethernet() {
     .expect("каскад не должен падать");
     let menus = all_menu_values(&result, "net_services");
     assert_eq!(menus.len(), 3, "{menus:?}");
-    assert_eq!(menus[0], ["готово", "ssh", "rest", "mqtt"]);
+    assert_eq!(menus[0], ["done", "ssh", "rest", "mqtt"]);
     // Порядок — пунктов меню, а не отметок.
     assert_eq!(var_of(&result, "net_services"), Some("ssh,rest"));
     assert_eq!(var_of(&result, "ssh_auth"), Some("key"));
@@ -2194,7 +2194,7 @@ fn no_net_services_without_ethernet() {
         &compile_script(),
         "h743zg",
         &[],
-        &[("transports", "uart"), ("transports", "готово")],
+        &[("transports", "uart"), ("transports", "done")],
     )
     .expect("каскад не должен падать");
     assert!(all_menu_values(&result, "net_services").is_empty());
@@ -2210,12 +2210,12 @@ fn ssh_is_not_offered_without_rng() {
         &compile_script(),
         "f107vc",
         &[],
-        &[("transports", "ethernet"), ("transports", "готово")],
+        &[("transports", "ethernet"), ("transports", "done")],
     )
     .expect("каскад не должен падать");
     assert_eq!(
         all_menu_values(&result, "net_services"),
-        [["готово", "rest", "mqtt"]]
+        [["done", "rest", "mqtt"]]
     );
     assert!(
         result
@@ -2233,11 +2233,11 @@ fn ssh_is_not_offered_without_rng() {
 #[test]
 fn ssh_needs_room_for_its_code() {
     let ast = compile_script();
-    let picks = [("transports", "ethernet"), ("transports", "готово")];
+    let picks = [("transports", "ethernet"), ("transports", "done")];
     let tight = interview(&ast, "f407ve", &[], &picks).expect("каскад не должен падать");
     assert_eq!(
         all_menu_values(&tight, "net_services"),
-        [["готово", "rest", "mqtt"]]
+        [["done", "rest", "mqtt"]]
     );
     assert!(
         tight
@@ -2251,7 +2251,7 @@ fn ssh_needs_room_for_its_code() {
         interview(&ast, "f407ve", &[("ota", "no")], &picks).expect("каскад не должен падать");
     assert_eq!(
         all_menu_values(&roomy, "net_services"),
-        [["готово", "ssh", "rest", "mqtt"]]
+        [["done", "ssh", "rest", "mqtt"]]
     );
     let Err(err) = interview(
         &ast,
@@ -2305,9 +2305,9 @@ fn mqtt_is_offered_with_ethernet() {
         &[],
         &[
             ("transports", "ethernet"),
-            ("transports", "готово"),
+            ("transports", "done"),
             ("net_services", "mqtt"),
-            ("net_services", "готово"),
+            ("net_services", "done"),
         ],
     )
     .expect("каскад не должен падать");
@@ -2385,7 +2385,7 @@ fn no_terminal_gives_no_net_services() {
         &compile_script(),
         "h743zg",
         &[],
-        &[("transports", "ethernet"), ("transports", "готово")],
+        &[("transports", "ethernet"), ("transports", "done")],
     )
     .expect("каскад не должен падать");
     assert_eq!(all_menu_values(&result, "net_services").len(), 1);
@@ -3482,7 +3482,7 @@ fn the_menus_come_in_order_and_offer_only_what_is_possible() {
         &[],
         &[
             ("transports", "uart"),
-            ("transports", "готово"),
+            ("transports", "done"),
             ("protocol", "modbus"),
         ],
     )
@@ -3509,7 +3509,7 @@ fn the_menus_come_in_order_and_offer_only_what_is_possible() {
     // Транспорт: только то, чьи блоки есть у чипа. У G071 нет ни Ethernet, ни USB.
     let g071 = interview(&ast, "g071rb", &[], &[]).expect("каскад не должен падать");
     let interfaces = menu_values(&g071, "transports").expect("транспорт не предложен");
-    assert_eq!(interfaces, ["готово", "uart"]);
+    assert_eq!(interfaces, ["done", "uart"]);
     // Без транспорта протокол не спрашивается вовсе.
     assert!(menu_values(&g071, "protocol").is_none());
 
@@ -3664,7 +3664,7 @@ fn every_path_through_the_menus_generates() {
                 ssh,
                 ("transports".to_string(), "uart".to_string()),
                 ("transports".to_string(), "tcp".to_string()),
-                ("transports".to_string(), "готово".to_string()),
+                ("transports".to_string(), "done".to_string()),
             ]);
         }
         while let Some(picks) = stack.pop() {
@@ -4408,7 +4408,7 @@ fn item<'a>(shown: &'a [String], value: &str) -> &'a str {
         .unwrap_or_else(|| panic!("в меню нет пункта {value}: {shown:?}"))
 }
 
-const NO_RAM: &str = "НЕ ПОМЕЩАЕТСЯ в RAM";
+const NO_RAM: &str = "DOES NOT FIT in RAM";
 
 /// `ram_estimate` — байты статической RAM, с транспортом их больше; хук печатает
 /// её строкой `ram_estimate:` (её читает `template-check`).
@@ -4539,7 +4539,7 @@ fn a_transport_that_does_not_fit_is_marked() {
         &[],
         &[
             ("transports", "usb"),
-            ("transports", "готово"),
+            ("transports", "done"),
             ("protocol", "protobuf"),
         ],
     )
@@ -4547,7 +4547,7 @@ fn a_transport_that_does_not_fit_is_marked() {
     let menus = transport_menus(&result);
     let usb = item(menus[0], "usb");
     assert!(
-        usb.contains(&format!("{NO_RAM} (оценка ")) && usb.ends_with(" из 5.6 KiB)"),
+        usb.contains(&format!("{NO_RAM} (est. ")) && usb.ends_with(" of 5.6 KiB)"),
         "{usb}"
     );
     assert!(
@@ -4666,7 +4666,7 @@ fn marks_are_recomputed_after_each_toggle() {
             ("transports", "uart"),
             ("transports", "can"),
             ("transports", "uart"),
-            ("transports", "готово"),
+            ("transports", "done"),
         ],
     )
     .expect("каскад не должен падать");
@@ -4741,7 +4741,7 @@ fn protocols_that_do_not_fit_are_marked() {
         &compile_script(),
         "f042f6",
         &[],
-        &[("transports", "usb"), ("transports", "готово")],
+        &[("transports", "usb"), ("transports", "done")],
     )
     .expect("каскад не должен падать");
     let shown = &result
