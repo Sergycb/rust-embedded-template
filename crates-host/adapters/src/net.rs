@@ -5,7 +5,7 @@
 //! [`Driver`](embassy_net::driver::Driver), сокеты — стек `embassy-net`.
 //! Плата отдаёт устройство (Ethernet), стек и сокеты собирает приложение.
 
-// {%- if has_tcp == "true" %}
+// {%- if has_tcp == "true" or net_services contains "mqtt" %}
 mod tcp;
 // {%- endif %}
 // {%- if has_udp == "true" %}
@@ -14,7 +14,7 @@ mod udp;
 
 use embassy_net::driver::Driver;
 
-// {%- if has_tcp == "true" %}
+// {%- if has_tcp == "true" or net_services contains "mqtt" %}
 pub use tcp::{TcpError, TcpServer};
 // {%- if net_services contains "mqtt" %}
 pub use tcp::TcpClient;

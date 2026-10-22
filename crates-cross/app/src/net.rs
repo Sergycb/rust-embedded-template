@@ -23,10 +23,10 @@ use static_cell::ConstStaticCell;
 /// Сокетов в стеке: DHCP-клиент и по сокету на сетевой транспорт — у
 /// транспорта с протоколом его открывает `crate::link`, без протокола — ваш
 /// код на `Parts::net`{% if net_services contains "rest" %}, — и по сокету на соединение REST API
-/// (`domain::http::CONNECTIONS`){% endif %}{% if net_services contains "ssh" %}, — и один на консоль SSH{% endif %}. Слот — около 500 байт оперативной памяти, поэтому без
+/// (`domain::http::CONNECTIONS`){% endif %}{% if net_services contains "ssh" %}, — и один на консоль SSH{% endif %}{% if net_services contains "mqtt" %}, — и один на клиент MQTT{% endif %}. Слот — около 500 байт оперативной памяти, поэтому без
 /// запаса: добавите ещё сокет (или фичу `dns` у `embassy-net` — она тоже
 /// занимает слот) — прибавьте один здесь.
-const SOCKETS: usize = {{ net_sockets | plus: 1 }}{% if net_services contains "rest" %} + domain::http::CONNECTIONS{% endif %}{% if net_services contains "ssh" %} + 1{% endif %};
+const SOCKETS: usize = {{ net_sockets | plus: 1 }}{% if net_services contains "rest" %} + domain::http::CONNECTIONS{% endif %}{% if net_services contains "ssh" %} + 1{% endif %}{% if net_services contains "mqtt" %} + 1{% endif %};
 {%- if net_services contains "rest" %}
 
 /// Токен `Authorization: Bearer` REST API (`domain::http`). Файл в корне
@@ -74,6 +74,65 @@ pub const SSH_LOGIN: domain::ssh::Login = domain::ssh::Login::Key(
 /// не хранит его сама: раздел настроек забирает узел CANopen.{% endif %}
 pub static SSH_HOST_KEY: [u8; 32] = *include_bytes!("../../../ssh-host-key.bin");
 {%- endif %}
+{%- endif %}
+{%- if net_services contains "mqtt" %}
+
+/// Брокер MQTT (`domain::mqtt`) из `mqtt.toml` в корне проекта: файл разбирает
+/// и проверяет `build.rs`, сюда он приходит переменными окружения компиляции.
+pub const MQTT_BROKER: domain::mqtt::Endpoint = domain::mqtt::Endpoint {
+    addr: [
+        octet(env!("MQTT_HOST_0")),
+        octet(env!("MQTT_HOST_1")),
+        octet(env!("MQTT_HOST_2")),
+        octet(env!("MQTT_HOST_3")),
+    ],
+    port: port(env!("MQTT_PORT")),
+    user: env!("MQTT_USER"),
+    password: env!("MQTT_PASSWORD"),
+};
+
+/// Префикс тем MQTT (`<prefix>/<uid>/…`) из `mqtt.toml`.
+pub const MQTT_PREFIX: &str = env!("MQTT_PREFIX");
+
+// Предел префикса `build.rs` держит своим числом: `domain` он не видит.
+const _: () = assert!(
+    MQTT_PREFIX.len() <= domain::mqtt::PREFIX_MAX,
+    "prefix в mqtt.toml длиннее domain::mqtt::PREFIX_MAX — поправьте предел в build/mqtt.rs"
+);
+
+/// Октет адреса брокера из строки `build.rs`.
+const fn octet(text: &str) -> u8 {
+    let Ok(octet) = u8::from_str_radix(text, 10) else {
+        panic!("MQTT_HOST_* — октеты от build.rs");
+    };
+    octet
+}
+
+/// Порт брокера из строки `build.rs`.
+const fn port(text: &str) -> u16 {
+    let Ok(port) = u16::from_str_radix(text, 10) else {
+        panic!("MQTT_PORT — число от build.rs");
+    };
+    port
+}
+
+/// Буферы приёма и передачи сокета MQTT, байт: пакеты `minimq` ограничены
+/// его буферами (`domain::mqtt::RX_BUFFER`, `TX_BUFFER`), сокету хватает окна.
+pub const MQTT_TCP_BUFFER: usize = 1024;
+
+static MQTT_TCP_RX: ConstStaticCell<[u8; MQTT_TCP_BUFFER]> =
+    ConstStaticCell::new([0; MQTT_TCP_BUFFER]);
+static MQTT_TCP_TX: ConstStaticCell<[u8; MQTT_TCP_BUFFER]> =
+    ConstStaticCell::new([0; MQTT_TCP_BUFFER]);
+
+/// Соединение узла MQTT с брокером: TCP-клиент на стеке со своими буферами.
+///
+/// # Panics
+///
+/// При втором вызове: буферы у клиента одни, а узел MQTT — один.
+pub fn mqtt_link(stack: embassy_net::Stack<'static>) -> adapters::net::TcpClient {
+    adapters::net::TcpClient::new(stack, MQTT_TCP_RX.take(), MQTT_TCP_TX.take())
+}
 {%- endif %}
 
 // Память стека: `embassy_net::new` держит её `&'static mut`. `ConstStaticCell`

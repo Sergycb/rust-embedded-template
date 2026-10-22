@@ -152,13 +152,13 @@ embassy-sync           = { version = "0.8.0" }
 embedded-storage       = { version = "0.3.1" }
 embedded-storage-async = { version = "0.4.1" }
 sequential-storage     = { version = "8.0.1", default-features = false }
-# {%- if stream_io == "true" or net_services contains "ssh" %}
+# {%- if stream_io == "true" or net_services contains "ssh" or net_services contains "mqtt" %}
 # Транспорт поверх потока байтов (`adapters::usb`, `net::TcpServer` и
 # протоколы над ними): поток, который уже реализуют `BufferedUart` из
 # `embassy-stm32`, USB CDC и сокет `embassy-net`.
 # Версия та же, что у `embassy-stm32` 0.6, — иначе в прошивке были бы две копии
-# трейта, и UART его бы не реализовывал. Канал сессии SSH (`domain::ssh`) —
-# тот же трейт.
+# трейта, и UART его бы не реализовывал. Канал сессии SSH (`domain::ssh`) и
+# соединение MQTT (`domain::mqtt`, `adapters::net::TcpClient`) — тот же трейт.
 embedded-io-async      = { version = "0.7.0" }
 # {%- endif %}
 # {%- if has_modbus == "true" %}

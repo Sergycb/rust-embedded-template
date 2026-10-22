@@ -58,7 +58,7 @@ static EXECUTOR: StaticCell<Executor> = StaticCell::new();
 
 {%- if has_protobuf == "true" or net_services != "" %}
 
-/// Сведения об устройстве для ответа хосту на `info`{% if net_services contains "rest" %} и REST `/api/info`{% endif %}: версия и
+/// Сведения об устройстве для ответа хосту на `info`{% if net_services contains "rest" %} и REST `/api/info`{% endif %}{% if net_services contains "mqtt" %} и темы MQTT `info`{% endif %}: версия и
 /// коммит — из `shadow-rs` (те же, что в баннере старта), остальное — с платы.
 fn device_info(spec: bsp::ChipSpec) -> domain::device::DeviceInfo {
     domain::device::DeviceInfo {

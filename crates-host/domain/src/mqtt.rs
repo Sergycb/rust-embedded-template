@@ -705,12 +705,9 @@ pub(crate) mod tests {
     const UID: [u8; UID_BYTES] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
     const UID_TEXT: &str = "0102030405060708090a0b0c";
 
-    /// Окружение сессии на всё время теста: буферы и темы — `'static`.
-    fn env(
-        // {%- if ota == "true" %}
-        ota: crate::ota::OtaClient,
-        // {%- endif %}
-    ) -> &'static mut Env<'static> {
+    /// Окружение сессии на всё время теста: буферы и темы — `'static`{% if ota == "true" %};
+    /// клиент OTA — того узла, которого никто не обслуживает{% endif %}.
+    fn env() -> &'static mut Env<'static> {
         Box::leak(Box::new(Env {
             topics: Box::leak(Box::new(Topics::new("devices", &UID))),
             info: Box::leak(Box::new(DeviceInfo {
@@ -726,18 +723,9 @@ pub(crate) mod tests {
             rx: Box::leak(Box::new([0; RX_BUFFER])),
             tx: Box::leak(Box::new([0; TX_BUFFER])),
             // {%- if ota == "true" %}
-            ota: Box::leak(Box::new(ota)),
+            ota: Box::leak(Box::new(crate::ota::tests::live().0)),
             // {%- endif %}
         }))
-    }
-
-    /// Окружение{% if ota == "true" %} с клиентом OTA, которого никто не обслуживает{% endif %}.
-    fn idle_env() -> &'static mut Env<'static> {
-        env(
-            // {%- if ota == "true" %}
-            crate::ota::tests::live().0,
-            // {%- endif %}
-        )
     }
 
     type Running = Pin<Box<dyn Future<Output = Ended>>>;
@@ -763,7 +751,7 @@ pub(crate) mod tests {
     #[test]
     fn connect_carries_will_and_client_id() {
         let broker = FakeBroker::default();
-        let mut session = Box::pin(serve(broker.clone(), &ENDPOINT, idle_env()));
+        let mut session = Box::pin(serve(broker.clone(), &ENDPOINT, env()));
         assert!(poll(session.as_mut()).is_pending(), "ждёт CONNACK");
         let out = broker.output();
         assert_eq!(out[0], 0x10, "первым — CONNECT");
@@ -774,7 +762,7 @@ pub(crate) mod tests {
 
     #[test]
     fn online_publishes_status_and_info_retained() {
-        let (broker, _session) = online(idle_env());
+        let (broker, _session) = online(env());
         let sent = sent(&broker.output());
         let status = sent.iter().find(|p| p.topic == topic("/status")).unwrap();
         assert_eq!(status.payload, b"online");
@@ -786,7 +774,7 @@ pub(crate) mod tests {
 
     #[test]
     fn telemetry_after_interval() {
-        let (broker, mut session) = online(idle_env());
+        let (broker, mut session) = online(env());
         MockDriver::get().advance(TELEMETRY_INTERVAL);
         assert!(poll(session.as_mut()).is_pending());
         let sent = sent(&broker.output());
@@ -802,20 +790,20 @@ pub(crate) mod tests {
     fn refused_connect_reports_refused() {
         let broker = FakeBroker::default();
         broker.push(&connack(0x86));
-        let mut session = Box::pin(serve(broker, &ENDPOINT, idle_env()));
+        let mut session = Box::pin(serve(broker, &ENDPOINT, env()));
         assert_eq!(poll(session.as_mut()), Poll::Ready(Ended::Refused));
     }
 
     #[test]
     fn transport_error_ends_session() {
-        let (broker, mut session) = online(idle_env());
+        let (broker, mut session) = online(env());
         broker.fail_reads();
         assert_eq!(poll(session.as_mut()), Poll::Ready(Ended::Lost));
     }
 
     #[test]
     fn unknown_command_keeps_session() {
-        let (broker, mut session) = online(idle_env());
+        let (broker, mut session) = online(env());
         broker.push(&puback(2));
         broker.push(&puback(3));
         broker.push(&publish(&topic("/cmd/foo"), b"", false));
@@ -838,7 +826,9 @@ pub(crate) mod tests {
     #[test]
     fn retained_reboot_is_ignored() {
         let (ota, mut node) = crate::ota::tests::live();
-        let (broker, mut session) = online(env(ota));
+        let env = env();
+        env.ota = Box::leak(Box::new(ota));
+        let (broker, mut session) = online(env);
         broker.push(&publish(&topic("/cmd/reboot"), b"", true));
         spin(&mut session, &mut node);
         // Узел, принявший `Reboot`, через `REBOOT_GRACE` сбросил бы МК —
@@ -853,7 +843,9 @@ pub(crate) mod tests {
     #[test]
     fn reboot_command_reaches_ota() {
         let (ota, mut node) = crate::ota::tests::live();
-        let (broker, mut session) = online(env(ota));
+        let env = env();
+        env.ota = Box::leak(Box::new(ota));
+        let (broker, mut session) = online(env);
         broker.push(&publish(&topic("/cmd/reboot"), b"", false));
         assert!(poll(session.as_mut()).is_pending(), "запрос узлу OTA");
         assert!(poll(node.as_mut()).is_pending(), "узел ответил");

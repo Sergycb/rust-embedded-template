@@ -25,6 +25,9 @@ mod http;
 {%- if has_modbus == "true" %}
 mod modbus;
 {%- endif %}
+{%- if net_services contains "mqtt" %}
+mod mqtt;
+{%- endif %}
 {%- if has_net == "true" %}
 mod net;
 {%- endif %}
@@ -93,6 +96,13 @@ pub fn spawn_all(spawner: embassy_executor::Spawner, {% if ota == "true" or has_
 {%- else %}
         domain::ssh::Fixed(&crate::net::SSH_HOST_KEY),
 {%- endif %}
+    );
+{%- endif %}
+{%- if net_services contains "mqtt" %}
+    mqtt::spawn(
+        spawner,
+        parts.net.stack,
+        crate::device_info(parts.board.spec),
     );
 {%- endif %}
 }

@@ -266,6 +266,29 @@ supervisor_graph! {
 {%- endif %}
             },
 {%- endif %}
+{%- if net_services contains "mqtt" %}
+
+        // Узел `MQTT` — клиент брокера (`domain::mqtt`): адрес и префикс тем
+        // — из `mqtt.toml` (`crate::net::MQTT_BROKER`, `MQTT_PREFIX`),
+        // соединение — TCP-клиент на стеке `parts.net.stack` со своими
+        // буферами (`crate::net::mqtt_link`), буферы `minimq` — слоты
+        // `= static` фрагмента.{% if ota == "true" %} `cmd/reboot` — командой узлу `OTA` своим
+        // клиентом, номер следом за остальными.{% endif %}
+        ::domain::MQTT_FRAG<::domain::mqtt::Fixed, ::adapters::net::TcpClient> as MQTT =
+            ::domain::mqtt::MqttWiring {
+                stack: parts.net.stack,
+                info: crate::device_info(parts.board.spec),
+                prefix: crate::net::MQTT_PREFIX,
+                broker: ::domain::mqtt::Fixed(crate::net::MQTT_BROKER),
+                link: crate::net::mqtt_link(parts.net.stack),
+{%- if ota == "true" %}
+                ota: ::domain::ota::OtaClient::new(
+                    ota_cmd_requester(),
+                    ::domain::ota::ClientId({{ mqtt_ota_client }}),
+                ),
+{%- endif %}
+            },
+{%- endif %}
     ];
 }
 {%- if net_services contains "rest" %}

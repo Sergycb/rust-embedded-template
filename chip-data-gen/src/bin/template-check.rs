@@ -335,6 +335,29 @@ fn default_cases() -> Vec<Case> {
                 "ext_flash=yes",
             ],
         ),
+        // Клиент MQTT (`domain::mqtt`, `adapters::net::TcpClient`): с графом и
+        // OTA — рядом с Modbus по TCP (клиент OTA 1, третий сокет); без графа и
+        // без OTA — задача из `tasks/mqtt.rs`; со всеми службами — номера OTA
+        // REST 0–1, SSH 2, MQTT 3 и сокеты каждой; поверх одного UDP —
+        // TCP-клиент без TCP-транспорта.
+        Case::new("stm32h743zg").variant(
+            "mqtt-modbus-tcp",
+            &["links=tcp:modbus", "net_services=mqtt"],
+        ),
+        Case::new("stm32f407ve").variant(
+            "mqtt-no-graph-no-ota",
+            &["links=tcp", "net_services=mqtt", "graph=no", "ota=no"],
+        ),
+        Case::new("stm32h743zg").variant(
+            "rest-ssh-mqtt",
+            &[
+                "links=tcp",
+                "net_services=rest,ssh,mqtt",
+                "ssh_auth=password",
+                "ext_flash=yes",
+            ],
+        ),
+        Case::new("stm32f407ve").variant("mqtt-udp", &["links=udp", "net_services=mqtt"]),
         // Клок RNG, которого умолчания HAL не дают, — мультиплексор на своём
         // источнике (`config()` в `bsp::board`): `RNGSEL` у G0 (SYS), WL
         // (MSI) и WBA (HSI), `CLK48SEL` у L476 без HSI48 (MSI). PLL48 и HSI48

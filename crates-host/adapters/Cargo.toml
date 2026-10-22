@@ -46,10 +46,11 @@ embedded-storage-async = { workspace = true }
 sequential-storage = { workspace = true }
 # {%- endif %}
 embassy-sync = { workspace = true }
-# {%- if stream_io == "true" %}
+# {%- if stream_io == "true" or net_services contains "mqtt" %}
 # Транспорты поверх потока байтов `embedded_io_async::{Read, Write}` —
 # `usb::CdcStream`, `net::TcpServer`, `modbus::{Rtu, Tcp}` и
-# `cobs::Cobs`. UDP-каналу поток не нужен: границу кадра даёт датаграмма.
+# `cobs::Cobs`, — и `net::TcpClient` клиента MQTT. UDP-каналу поток не нужен:
+# границу кадра даёт датаграмма.
 embedded-io-async = { workspace = true }
 # {%- endif %}
 # {%- if crc_used == "true" %}
