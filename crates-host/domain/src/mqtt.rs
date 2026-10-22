@@ -13,13 +13,30 @@
 //! | `cmd/reboot` | брокер → плата | перезагрузка |
 //! | `cmd/reboot/result` | плата → брокер | исход команды |
 //!
-//! Здесь — чистая часть без ввода-вывода: имена тем, разбор команд, тексты
-//! сообщений и адрес брокера.
+//! Здесь — имена тем, разбор команд, тексты сообщений, адрес брокера и одна
+//! сессия с брокером над готовым потоком байтов (`serve`).
 
-use embassy_time::Duration;
+use defmt_or_log::{info, warn};
+use embassy_time::{Duration, Instant, with_deadline};
 use heapless::String;
+use minimq::{
+    Buffers, ConfigBuilder, ConfigError, Connection, Publication, QoS, RetainHandling, Session,
+    SubscriptionOptions, TopicFilter, Will,
+};
+// {%- if ota == "true" %}
+use ports::{OtaCommand, Progress};
+// {%- endif %}
 
-use crate::device::UID_BYTES;
+use crate::device::{DeviceInfo, UID_BYTES};
+// {%- if ota == "true" %}
+use crate::ota::OtaClient;
+// {%- endif %}
+
+/// Буфер входящих пакетов `minimq`: самая длинная команда с темой.
+pub const RX_BUFFER: usize = 512;
+/// Буфер исходящих пакетов `minimq`: `CONNECT` с Will и неподтверждённые
+/// публикации `QoS` 1 (подписка, `status`, `info`).
+pub const TX_BUFFER: usize = 1024;
 
 /// Самый длинный префикс тем: вместе с `-` и номером чипа (24 hex) он даёт
 /// 64 байта — предел идентификатора клиента.
@@ -179,8 +196,204 @@ pub fn write_telemetry(out: &mut impl core::fmt::Write, uptime_s: u64) -> core::
     out.write_char('}')
 }
 
+/// Чем кончилась сессия — для строки лога узла.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(test), expect(dead_code, reason = "сессию зовёт узел MQTT"))]
+pub(crate) enum Ended {
+    /// Брокер не принял подключение.
+    Refused,
+    /// Плата была в сети, и связь пропала.
+    Lost,
+}
+
+/// Что нужно сессии, кроме потока и адреса брокера.
+#[cfg_attr(not(test), expect(dead_code, reason = "сессию зовёт узел MQTT"))]
+pub(crate) struct Env<'a> {
+    /// Темы этой платы.
+    pub topics: &'a Topics,
+    /// Сведения для `info`.
+    pub info: &'a DeviceInfo,
+    /// MAC для `info`.
+    pub mac: [u8; 6],
+    /// Адрес платы для `info`; `None` — ещё не получен.
+    pub ip: Option<embassy_net::Ipv4Address>,
+    /// Буфер входящих пакетов, [`RX_BUFFER`].
+    pub rx: &'a mut [u8],
+    /// Буфер исходящих пакетов, [`TX_BUFFER`].
+    pub tx: &'a mut [u8],
+    // {%- if ota == "true" %}
+    /// Клиент входа `CMD` узла OTA — для `cmd/reboot`.
+    pub ota: &'a OtaClient,
+    // {%- endif %}
+}
+
+/// Настройки клиента: идентификатор, вход (при непустом `user`) и Will
+/// `offline` на `status`.
+fn config<'a>(
+    endpoint: &Endpoint,
+    topics: &Topics,
+    rx: &'a mut [u8],
+    tx: &'a mut [u8],
+) -> Result<ConfigBuilder<'a>, ConfigError> {
+    let mut config = ConfigBuilder::new(Buffers::new(rx, tx)).client_id(&topics.client_id())?;
+    if !endpoint.user.is_empty() {
+        config = config.auth(endpoint.user, endpoint.password.as_bytes())?;
+    }
+    config.will(
+        Will::new(&topics.status(), b"offline", &[])?
+            .retained()
+            .qos(QoS::AtLeastOnce),
+    )
+}
+
+/// Начало сессии: подписка на команды, `status` = `online` и `info`.
+async fn announce<IO: minimq::Io>(
+    conn: &mut Connection<'_, '_, IO>,
+    topics: &Topics,
+    info: &DeviceInfo,
+    mac: [u8; 6],
+    ip: Option<embassy_net::Ipv4Address>,
+) -> Result<(), ()> {
+    let filter = topics.cmd_filter();
+    let options = SubscriptionOptions::default()
+        // Команда, оставленная с retain, иначе приходила бы при каждом
+        // подключении.
+        .retain_behavior(RetainHandling::Never)
+        .maximum_qos(QoS::AtLeastOnce);
+    conn.subscribe(&[TopicFilter::new(&filter).options(options)], &[])
+        .await
+        .map_err(drop)?;
+    // `online` — каждый раз: брокер мог уже разослать Will `offline`.
+    let status = topics.status();
+    conn.publish(
+        Publication::text(&status, "online")
+            .qos(QoS::AtLeastOnce)
+            .retain(),
+    )
+    .await
+    .map_err(drop)?;
+    let mut json = String::<256>::new();
+    if crate::device::write_info(&mut json, info, mac, ip, Instant::now().as_secs()).is_err() {
+        warn!("mqtt: сведения об устройстве не влезли в буфер");
+        return Ok(());
+    }
+    let topic = topics.info();
+    conn.publish(
+        Publication::text(&topic, &json)
+            .qos(QoS::AtLeastOnce)
+            .retain(),
+    )
+    .await
+    .map_err(drop)?;
+    Ok(())
+}
+
+/// Одна сессия с брокером над установленным соединением `io`: подключение с
+/// Will, подписка на команды, `status` и `info`, дальше телеметрия и команды,
+/// пока связь жива. Паузы между сессиями — не здесь: их держит транспорт.
+#[cfg_attr(not(test), expect(dead_code, reason = "сессию зовёт узел MQTT"))]
+pub(crate) async fn serve<IO: minimq::Io>(io: IO, endpoint: &Endpoint, env: &mut Env<'_>) -> Ended {
+    let [a, b, c, d] = endpoint.addr;
+    let port = endpoint.port;
+    let Env {
+        topics,
+        info,
+        mac,
+        ip,
+        rx,
+        tx,
+        // {%- if ota == "true" %}
+        ota,
+        // {%- endif %}
+    } = env;
+    let Ok(config) = config(endpoint, topics, rx, tx) else {
+        warn!("mqtt: настройки клиента не приняты");
+        return Ended::Refused;
+    };
+    let mut session = Session::new(config);
+    let Ok(mut conn) = session.connect(io).await else {
+        warn!(
+            "mqtt: брокер {}.{}.{}.{}:{} не принял подключение — проверьте mqtt.toml",
+            a, b, c, d, port
+        );
+        return Ended::Refused;
+    };
+    info!("mqtt: подключён к брокеру {}.{}.{}.{}:{}", a, b, c, d, port);
+
+    // Любая ошибка `minimq` после подключения — связь потеряна: соединение
+    // больше не годится, следующая сессия — с новым.
+    let online = async {
+        announce(&mut conn, topics, info, *mac, *ip).await?;
+        let mut next = Instant::now() + TELEMETRY_INTERVAL;
+        loop {
+            let command = match with_deadline(next, conn.recv()).await {
+                // `recv` отменяется без потерь; публикация `QoS` 0 — нет, она
+                // вне таймаута.
+                Err(_) => {
+                    let mut json = String::<40>::new();
+                    write_telemetry(&mut json, Instant::now().as_secs())
+                        .expect("u64 в объекте влезает в 40 байт");
+                    let topic = topics.telemetry();
+                    conn.publish(Publication::text(&topic, &json))
+                        .await
+                        .map_err(drop)?;
+                    next = fsm::next_tick(next, TELEMETRY_INTERVAL, Instant::now());
+                    continue;
+                }
+                Ok(Err(_)) => return Err(()),
+                Ok(Ok(message)) if message.retained() => {
+                    warn!("mqtt: команда {} с retain пропущена", message.topic());
+                    continue;
+                }
+                Ok(Ok(message)) => {
+                    let Some(command) = parse_command(topics, message.topic()) else {
+                        info!("mqtt: неизвестная команда {}", message.topic());
+                        continue;
+                    };
+                    command
+                }
+            };
+            match command {
+                Command::Reboot => {
+                    // {%- if ota == "true" %}
+                    let reply = ota.request(OtaCommand::Reboot).await;
+                    let text = if matches!(reply, Ok(Ok(Progress::Rebooting))) {
+                        "accepted"
+                    } else {
+                        "refused"
+                    };
+                    let topic = topics.reboot_result();
+                    conn.publish(Publication::text(&topic, text).qos(QoS::AtLeastOnce))
+                        .await
+                        .map_err(drop)?;
+                    // {%- endif %}
+                    // {%- if ota != "true" %}
+                    warn!("mqtt: перезагрузка без OTA недоступна");
+                    // {%- endif %}
+                }
+            }
+        }
+    };
+    let Err(()): Result<core::convert::Infallible, ()> = online.await;
+    warn!(
+        "mqtt: связь с брокером {}.{}.{}.{}:{} пропала",
+        a, b, c, d, port
+    );
+    Ended::Lost
+}
+
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
+    use core::pin::Pin;
+    use core::task::{Context, Poll, Waker};
+    use std::cell::RefCell;
+    use std::collections::VecDeque;
+    use std::rc::Rc;
+    use std::vec::Vec;
+
+    use embassy_time::MockDriver;
+    use embedded_io_async::{ErrorKind, ErrorType, Read, Write};
+
     use super::*;
 
     #[test]
@@ -223,4 +436,324 @@ mod tests {
         write_telemetry(&mut s, 42).unwrap();
         assert_eq!(s, r#"{"uptime_s":42}"#);
     }
+
+    /// Брокер в памяти — поток байтов для [`serve`]: вход — то, что «прислал»
+    /// брокер ([`FakeBroker::push`]), выход — всё, что записала плата.
+    /// Клоны делят одно состояние: один уходит в `serve`, другим тест
+    /// подкладывает пакеты и читает выход. Пустой вход — `read` в `Pending`
+    /// без пробуждения (так `minimq` ждёт данных; `TimedOut` он счёл бы
+    /// обрывом), поэтому future опрашивают вручную, как в [`poll`].
+    #[derive(Clone, Default)]
+    pub(crate) struct FakeBroker(Rc<RefCell<Wire>>);
+
+    #[derive(Default)]
+    struct Wire {
+        input: VecDeque<u8>,
+        output: Vec<u8>,
+        fail_reads: bool,
+    }
+
+    impl FakeBroker {
+        /// Пакет от брокера.
+        pub(crate) fn push(&self, bytes: &[u8]) {
+            self.0.borrow_mut().input.extend(bytes);
+        }
+
+        /// Всё, что плата записала с начала.
+        pub(crate) fn output(&self) -> Vec<u8> {
+            self.0.borrow().output.clone()
+        }
+
+        /// Дальше `read` возвращает ошибку: связь оборвалась.
+        pub(crate) fn fail_reads(&self) {
+            self.0.borrow_mut().fail_reads = true;
+        }
+    }
+
+    impl ErrorType for FakeBroker {
+        type Error = ErrorKind;
+    }
+
+    impl Read for FakeBroker {
+        async fn read(&mut self, buf: &mut [u8]) -> Result<usize, ErrorKind> {
+            core::future::poll_fn(|_| {
+                let mut wire = self.0.borrow_mut();
+                if wire.fail_reads {
+                    return Poll::Ready(Err(ErrorKind::ConnectionReset));
+                }
+                if wire.input.is_empty() {
+                    return Poll::Pending;
+                }
+                let n = buf.len().min(wire.input.len());
+                for (dst, src) in buf.iter_mut().zip(wire.input.drain(..n)) {
+                    *dst = src;
+                }
+                Poll::Ready(Ok(n))
+            })
+            .await
+        }
+    }
+
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "сигнатуру задаёт трейт; запись в память не ждёт"
+    )]
+    impl Write for FakeBroker {
+        async fn write(&mut self, buf: &[u8]) -> Result<usize, ErrorKind> {
+            self.0.borrow_mut().output.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        async fn flush(&mut self) -> Result<(), ErrorKind> {
+            Ok(())
+        }
+    }
+
+    /// CONNACK с кодом причины `code` (`0` — принято).
+    pub(crate) fn connack(code: u8) -> [u8; 5] {
+        [0x20, 0x03, 0x00, code, 0x00]
+    }
+
+    /// SUBACK на подписку `id` с выданным `QoS` 1.
+    pub(crate) fn suback(id: u16) -> [u8; 6] {
+        let [hi, lo] = id.to_be_bytes();
+        [0x90, 0x04, hi, lo, 0x00, 0x01]
+    }
+
+    /// PUBACK на публикацию `id`.
+    pub(crate) fn puback(id: u16) -> [u8; 4] {
+        let [hi, lo] = id.to_be_bytes();
+        [0x40, 0x02, hi, lo]
+    }
+
+    /// Входящий PUBLISH `QoS` 0 без свойств.
+    pub(crate) fn publish(topic: &str, payload: &[u8], retain: bool) -> Vec<u8> {
+        let remaining = 2 + topic.len() + 1 + payload.len();
+        let mut packet = vec![0x30 | u8::from(retain), u8::try_from(remaining).unwrap()];
+        packet.extend_from_slice(&u16::try_from(topic.len()).unwrap().to_be_bytes());
+        packet.extend_from_slice(topic.as_bytes());
+        packet.push(0x00);
+        packet.extend_from_slice(payload);
+        packet
+    }
+
+    /// Исходящая публикация, разобранная из байтов платы.
+    #[derive(Debug)]
+    pub(crate) struct Sent {
+        pub(crate) retain: bool,
+        pub(crate) topic: std::string::String,
+        pub(crate) payload: Vec<u8>,
+    }
+
+    /// Все PUBLISH в `out`. Длина свойств — один байт: исходящим публикациям
+    /// свойства не нужны.
+    pub(crate) fn sent(out: &[u8]) -> Vec<Sent> {
+        let mut found = Vec::new();
+        let mut rest = out;
+        while let [header, tail @ ..] = rest {
+            // Оставшаяся длина — varint: по 7 бит, старший — «дальше ещё».
+            let (mut len, mut shift, mut at) = (0, 0, 0);
+            loop {
+                len |= usize::from(tail[at] & 0x7F) << shift;
+                at += 1;
+                shift += 7;
+                if tail[at - 1] & 0x80 == 0 {
+                    break;
+                }
+            }
+            let (body, next) = tail[at..].split_at(len);
+            rest = next;
+            if header & 0xF0 != 0x30 {
+                continue;
+            }
+            let topic_len = usize::from(u16::from_be_bytes([body[0], body[1]]));
+            let topic = std::str::from_utf8(&body[2..2 + topic_len]).unwrap().into();
+            let qos = (header >> 1) & 0x03;
+            let props = 2 + topic_len + if qos > 0 { 2 } else { 0 };
+            found.push(Sent {
+                retain: header & 0x01 != 0,
+                topic,
+                payload: body[props + 1 + usize::from(body[props])..].to_vec(),
+            });
+        }
+        found
+    }
+
+    /// Один опрос future с пустым waker'ом.
+    pub(crate) fn poll<F: Future + ?Sized>(future: Pin<&mut F>) -> Poll<F::Output> {
+        future.poll(&mut Context::from_waker(Waker::noop()))
+    }
+
+    const ENDPOINT: Endpoint = Endpoint {
+        addr: [10, 0, 0, 1],
+        port: 1883,
+        user: "",
+        password: "",
+    };
+
+    const UID: [u8; UID_BYTES] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+    const UID_TEXT: &str = "0102030405060708090a0b0c";
+
+    /// Окружение сессии на всё время теста: буферы и темы — `'static`.
+    fn env(
+        // {%- if ota == "true" %}
+        ota: crate::ota::OtaClient,
+        // {%- endif %}
+    ) -> &'static mut Env<'static> {
+        Box::leak(Box::new(Env {
+            topics: Box::leak(Box::new(Topics::new("devices", &UID))),
+            info: Box::leak(Box::new(DeviceInfo {
+                version: "1.2.3",
+                commit: "abcdef12",
+                chip: "stm32f407ve",
+                uid: UID,
+                flash_size: 512 * 1024,
+                sys_hz: None,
+            })),
+            mac: [2, 0, 0, 0, 0, 1],
+            ip: None,
+            rx: Box::leak(Box::new([0; RX_BUFFER])),
+            tx: Box::leak(Box::new([0; TX_BUFFER])),
+            // {%- if ota == "true" %}
+            ota: Box::leak(Box::new(ota)),
+            // {%- endif %}
+        }))
+    }
+
+    /// Окружение{% if ota == "true" %} с клиентом OTA, которого никто не обслуживает{% endif %}.
+    fn idle_env() -> &'static mut Env<'static> {
+        env(
+            // {%- if ota == "true" %}
+            crate::ota::tests::live().0,
+            // {%- endif %}
+        )
+    }
+
+    type Session = Pin<Box<dyn Future<Output = Ended>>>;
+
+    /// Сессия, которую брокер принял: CONNACK и SUBACK уже во входе.
+    fn online(env: &'static mut Env<'static>) -> (FakeBroker, Session) {
+        let broker = FakeBroker::default();
+        broker.push(&connack(0));
+        broker.push(&suback(1));
+        let mut session: Session = Box::pin(serve(broker.clone(), &ENDPOINT, env));
+        assert!(poll(session.as_mut()).is_pending(), "сессия в сети");
+        (broker, session)
+    }
+
+    fn topic(suffix: &str) -> std::string::String {
+        format!("devices/{UID_TEXT}{suffix}")
+    }
+
+    fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+        haystack.windows(needle.len()).any(|w| w == needle)
+    }
+
+    #[test]
+    fn connect_carries_will_and_client_id() {
+        let broker = FakeBroker::default();
+        let mut session = Box::pin(serve(broker.clone(), &ENDPOINT, idle_env()));
+        assert!(poll(session.as_mut()).is_pending(), "ждёт CONNACK");
+        let out = broker.output();
+        assert_eq!(out[0], 0x10, "первым — CONNECT");
+        assert!(contains(&out, format!("devices-{UID_TEXT}").as_bytes()));
+        assert!(contains(&out, topic("/status").as_bytes()));
+        assert!(contains(&out, b"offline"));
+    }
+
+    #[test]
+    fn online_publishes_status_and_info_retained() {
+        let (broker, _session) = online(idle_env());
+        let sent = sent(&broker.output());
+        let status = sent.iter().find(|p| p.topic == topic("/status")).unwrap();
+        assert_eq!(status.payload, b"online");
+        assert!(status.retain);
+        let info = sent.iter().find(|p| p.topic == topic("/info")).unwrap();
+        assert!(contains(&info.payload, br#""chip":"#));
+        assert!(info.retain);
+    }
+
+    #[test]
+    fn telemetry_after_interval() {
+        let (broker, mut session) = online(idle_env());
+        MockDriver::get().advance(TELEMETRY_INTERVAL);
+        assert!(poll(session.as_mut()).is_pending());
+        let sent = sent(&broker.output());
+        let telemetry = sent
+            .iter()
+            .find(|p| p.topic == topic("/telemetry"))
+            .expect("телеметрия опубликована");
+        assert!(telemetry.payload.starts_with(br#"{"uptime_s":"#));
+        assert!(!telemetry.retain);
+    }
+
+    #[test]
+    fn refused_connect_reports_refused() {
+        let broker = FakeBroker::default();
+        broker.push(&connack(0x86));
+        let mut session = Box::pin(serve(broker, &ENDPOINT, idle_env()));
+        assert_eq!(poll(session.as_mut()), Poll::Ready(Ended::Refused));
+    }
+
+    #[test]
+    fn transport_error_ends_session() {
+        let (broker, mut session) = online(idle_env());
+        broker.fail_reads();
+        assert_eq!(poll(session.as_mut()), Poll::Ready(Ended::Lost));
+    }
+
+    #[test]
+    fn unknown_command_keeps_session() {
+        let (broker, mut session) = online(idle_env());
+        broker.push(&puback(2));
+        broker.push(&puback(3));
+        broker.push(&publish(&topic("/cmd/foo"), b"", false));
+        assert!(poll(session.as_mut()).is_pending());
+        MockDriver::get().advance(TELEMETRY_INTERVAL);
+        assert!(poll(session.as_mut()).is_pending());
+        let sent = sent(&broker.output());
+        assert!(sent.iter().any(|p| p.topic == topic("/telemetry")));
+    }
+
+    // {%- if ota == "true" %}
+    /// Сессия и узел OTA по очереди, пока оба не встанут.
+    fn spin(session: &mut Session, node: &mut crate::ota::tests::Node) {
+        for _ in 0..4 {
+            assert!(poll(session.as_mut()).is_pending(), "сессия жива");
+            assert!(poll(node.as_mut()).is_pending(), "узел OTA не выходит");
+        }
+    }
+
+    #[test]
+    fn retained_reboot_is_ignored() {
+        let (ota, mut node) = crate::ota::tests::live();
+        let (broker, mut session) = online(env(ota));
+        broker.push(&publish(&topic("/cmd/reboot"), b"", true));
+        spin(&mut session, &mut node);
+        // Узел, принявший `Reboot`, через `REBOOT_GRACE` сбросил бы МК —
+        // фейк паникует; интервал телеметрии длиннее.
+        MockDriver::get().advance(TELEMETRY_INTERVAL);
+        spin(&mut session, &mut node);
+        let sent = sent(&broker.output());
+        assert!(!sent.iter().any(|p| p.topic == topic("/cmd/reboot/result")));
+        assert!(sent.iter().any(|p| p.topic == topic("/telemetry")));
+    }
+
+    #[test]
+    fn reboot_command_reaches_ota() {
+        let (ota, mut node) = crate::ota::tests::live();
+        let (broker, mut session) = online(env(ota));
+        broker.push(&publish(&topic("/cmd/reboot"), b"", false));
+        assert!(poll(session.as_mut()).is_pending(), "запрос узлу OTA");
+        assert!(poll(node.as_mut()).is_pending(), "узел ответил");
+        // Дальше узел не опрашивается: через `REBOOT_GRACE` он сбросил бы МК.
+        assert!(poll(session.as_mut()).is_pending(), "исход опубликован");
+        let sent = sent(&broker.output());
+        let result = sent
+            .iter()
+            .find(|p| p.topic == topic("/cmd/reboot/result"))
+            .expect("исход команды опубликован");
+        assert_eq!(result.payload, b"accepted");
+    }
+    // {%- endif %}
 }

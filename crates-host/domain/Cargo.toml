@@ -136,6 +136,9 @@ heapless           = { workspace = true }
 # сессии — `embassy-futures`.
 sunset-async       = { workspace = true }
 embassy-futures    = { workspace = true }
+# {%- endif %}
+# {%- if net_services contains "ssh" or net_services contains "mqtt" %}
+# Поток байтов сокета: канал сессии SSH, транспорт `minimq` (`minimq::Io`).
 embedded-io-async  = { workspace = true }
 # {%- endif %}
 # {%- if net_services contains "mqtt" %}

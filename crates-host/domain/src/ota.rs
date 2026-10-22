@@ -624,7 +624,7 @@ pub(crate) mod tests {
 
     use embassy_time::{Duration, MockDriver};
     use ports::{Chunk, OtaCommand, OtaReply, Progress, Reboot, Rejection};
-    // {%- if has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" %}
+    // {%- if has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" or net_services contains "mqtt" %}
     use supervisor::runtime::TaskExit;
 
     use super::OtaClient;
@@ -645,14 +645,14 @@ pub(crate) mod tests {
         }
     }
 
-    // {%- if has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" %}
+    // {%- if has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" or net_services contains "mqtt" %}
     /// Узел OTA, который тест крутит сам: `poll` по очереди с запросом.
     pub(crate) type Node = Pin<Box<dyn Future<Output = TaskExit>>>;
 
     /// Узел OTA на фейке флеша и его клиент — для тестов обработчиков
-    /// протоколов (`host::service`). Стенд, флеш и слоты живут до конца
-    /// процесса, как граф в прошивке: клиент — `'static`, как у
-    /// `ota_cmd_requester()`.
+    /// протоколов (`host::service`) и сессии MQTT (`mqtt::serve`). Стенд,
+    /// флеш и слоты живут до конца процесса, как граф в прошивке: клиент —
+    /// `'static`, как у `ota_cmd_requester()`.
     pub(crate) fn live() -> (OtaClient, Node) {
         let stand = Box::leak(Box::new(
             supervisor::stand!(OTA_FRAG<FakeFlash, FakeReboot>),
