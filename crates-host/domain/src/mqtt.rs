@@ -19,7 +19,7 @@
 use core::net::SocketAddrV4;
 
 use defmt_or_log::{FormatOrDebug, info, warn};
-use embassy_time::{Duration, Instant, with_deadline};
+use embassy_time::{Duration, Instant, with_deadline, with_timeout};
 use embedded_io_async::{Read, Write};
 use heapless::String;
 use minimq::{
@@ -49,6 +49,10 @@ pub const PREFIX_MAX: usize = 39;
 
 /// Как часто плата публикует `telemetry`.
 pub const TELEMETRY_INTERVAL: Duration = Duration::from_secs(10);
+
+/// Сколько ждать CONNACK: брокер, который принял TCP, но молчит на `CONNECT`,
+/// иначе держал бы узел вечно и без строки в логе.
+pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Hex-знаков в номере чипа.
 const UID_HEX: usize = 2 * UID_BYTES;
@@ -205,7 +209,7 @@ pub fn write_telemetry(out: &mut impl core::fmt::Write, uptime_s: u64) -> core::
 /// после любого исхода — положить трубку и подключиться снова.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Ended {
-    /// Брокер не принял подключение.
+    /// Брокер не принял подключение или не ответил на него за [`CONNECT_TIMEOUT`].
     Refused,
     /// Плата была в сети, и связь пропала.
     Lost,
@@ -316,12 +320,24 @@ pub(crate) async fn serve<IO: minimq::Io>(io: IO, endpoint: &Endpoint, env: &mut
         return Ended::Refused;
     };
     let mut session = Session::new(config);
-    let Ok(mut conn) = session.connect(io).await else {
-        warn!(
-            "mqtt: брокер {}.{}.{}.{}:{} не принял подключение — проверьте mqtt.toml",
-            a, b, c, d, port
-        );
-        return Ended::Refused;
+    // Отмена по таймауту безопасна: сессия после неё выбрасывается, сокет
+    // закрывает `hang_up` узла.
+    let mut conn = match with_timeout(CONNECT_TIMEOUT, session.connect(io)).await {
+        Ok(Ok(conn)) => conn,
+        Ok(Err(_)) => {
+            warn!(
+                "mqtt: брокер {}.{}.{}.{}:{} не принял подключение — проверьте mqtt.toml",
+                a, b, c, d, port
+            );
+            return Ended::Refused;
+        }
+        Err(_) => {
+            warn!(
+                "mqtt: брокер {}.{}.{}.{}:{} не ответил на CONNECT — проверьте mqtt.toml",
+                a, b, c, d, port
+            );
+            return Ended::Refused;
+        }
     };
     info!("mqtt: подключён к брокеру {}.{}.{}.{}:{}", a, b, c, d, port);
 
@@ -821,6 +837,15 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn silent_broker_times_out_connect() {
+        let broker = FakeBroker::default();
+        let mut session = Box::pin(serve(broker, &ENDPOINT, env()));
+        assert!(poll(session.as_mut()).is_pending(), "ждёт CONNACK");
+        MockDriver::get().advance(CONNECT_TIMEOUT);
+        assert_eq!(poll(session.as_mut()), Poll::Ready(Ended::Refused));
+    }
+
+    #[test]
     fn transport_error_ends_session() {
         let (broker, mut session) = online(env());
         broker.fail_reads();
@@ -1067,9 +1092,10 @@ pub(crate) mod tests {
     #[test]
     fn node_never_returns() {
         let link = FakeLink::new([Some(accepting())]);
-        let mut node = node(link);
+        let mut node = node(link.clone());
         spin_node(&mut node);
         MockDriver::get().advance(Duration::from_secs(60));
         spin_node(&mut node);
+        assert_eq!(link.dials(), 1, "живая сессия не переподключается");
     }
 }
