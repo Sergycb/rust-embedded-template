@@ -4,12 +4,13 @@
 //! Плата отдаёт сырьё — поток UART, поток CDC, сетевой стек (`bsp::Board`), —
 //! а кадрирование, буферы и сокет заводятся здесь: их размер и порт — решение
 //! приложения, а не платы. Граф (`graph.rs`) или задача без графа берёт
-//! транспорт `new(...)` и буферы `rx()`/`tx()`. Транспорты выбраны при
-//! генерации; своё кадрирование — правьте этот файл.
+//! транспорт `new(...)` — буфер сообщения у него внутри. Транспорты выбраны
+//! при генерации; своё кадрирование — правьте этот файл.
 {%- assign xs = links | split: "," %}
 {%- if has_protobuf == "true" %}
 
-/// Самое длинное сообщение схемы, под которое заведены буферы узлов `HOST_*`.
+/// Самое длинное сообщение схемы, под которое заведены буферы каналов узлов
+/// `HOST_*`.
 /// Схема с сообщениями длиннее — меняйте здесь; узел предупредит при старте,
 /// если самый длинный ответ схемы не помещается.
 const HOST_MESSAGE: usize = 256;
@@ -44,32 +45,19 @@ pub mod {{ f[4] }} {
     pub type Source = {% if f[0] == "uart" %}bsp::serial::{{ f[4] }}::Serial{% elsif f[0] == "usb" %}crate::usb::{{ f[4] }}::Cdc{% else %}crate::net::Stack{% endif %};
 {%- if f[3] == "protobuf" %}
 
-    // Буферы узла{% if f[0] != "udp" %}: приёму нужно место ещё под CRC (`rx_len`), кадру
-    // передачи — под худший случай COBS (`tx_len`){% endif %}. `ConstStaticCell`, а не
-    // `StaticCell`: значения известны при компиляции и лежат в `.bss`, а не
+    // Буфер канала — сообщение{% if f[0] != "udp" %} и CRC (`rx_len`); кадру передачи — место под
+    // худший случай COBS от всего буфера канала (`tx_len`){% endif %}. `ConstStaticCell`, а
+    // не `StaticCell`: значения известны при компиляции и лежат в `.bss`, а не
     // собираются на стеке при старте.
 {%- if f[0] == "udp" %}
-    static HOST_RX: ConstStaticCell<[u8; super::HOST_MESSAGE]> =
+    static HOST_BUFFER: ConstStaticCell<[u8; super::HOST_MESSAGE]> =
         ConstStaticCell::new([0; super::HOST_MESSAGE]);
 {%- else %}
-    static HOST_FRAME: ConstStaticCell<[u8; ::adapters::cobs::tx_len(super::HOST_MESSAGE)]> =
-        ConstStaticCell::new([0; ::adapters::cobs::tx_len(super::HOST_MESSAGE)]);
-    static HOST_RX: ConstStaticCell<[u8; ::adapters::cobs::rx_len(super::HOST_MESSAGE)]> =
-        ConstStaticCell::new([0; ::adapters::cobs::rx_len(super::HOST_MESSAGE)]);
+    const BUFFER: usize = ::adapters::cobs::rx_len(super::HOST_MESSAGE);
+    static HOST_BUFFER: ConstStaticCell<[u8; BUFFER]> = ConstStaticCell::new([0; BUFFER]);
+    static HOST_FRAME: ConstStaticCell<[u8; ::adapters::cobs::tx_len(BUFFER)]> =
+        ConstStaticCell::new([0; ::adapters::cobs::tx_len(BUFFER)]);
 {%- endif %}
-    static HOST_TX: ConstStaticCell<[u8; super::HOST_MESSAGE]> =
-        ConstStaticCell::new([0; super::HOST_MESSAGE]);
-
-    /// Буфер приёма сообщений узла. Статик берётся ровно один раз — узел
-    /// собирается один раз за запуск.
-    pub fn rx() -> &'static mut [u8] {
-        HOST_RX.take()
-    }
-
-    /// Буфер передачи сообщений узла — см. [`rx`].
-    pub fn tx() -> &'static mut [u8] {
-        HOST_TX.take()
-    }
 {%- endif %}
 {%- if f[0] == "tcp" or f[0] == "udp" %}
 
@@ -89,6 +77,11 @@ pub mod {{ f[4] }} {
         ConstStaticCell::new([crate::net::PacketMetadata::EMPTY; 4]);
     static SOCKET_TX_META: ConstStaticCell<[crate::net::PacketMetadata; 4]> =
         ConstStaticCell::new([crate::net::PacketMetadata::EMPTY; 4]);
+{%- if f[3] == "modbus" %}
+    // Буфер канала — самая длинная датаграмма Modbus.
+    static MODBUS_BUFFER: ConstStaticCell<[u8; ::adapters::modbus::DATAGRAM]> =
+        ConstStaticCell::new([0; ::adapters::modbus::DATAGRAM]);
+{%- endif %}
 {%- endif %}
 
     /// Сокет протокола на стеке платы: {% if f[0] == "tcp" %}TCP-сервер — поток байтов под транспортом{% else %}UDP-канал — датаграммы{% endif %} протокола.
@@ -105,6 +98,7 @@ pub mod {{ f[4] }} {
             SOCKET_RX.take(),
             SOCKET_TX_META.take(),
             SOCKET_TX.take(),
+            {% if f[3] == "modbus" %}MODBUS_BUFFER{% else %}HOST_BUFFER{% endif %}.take(),
         )
     }
 {%- endif %}
@@ -117,7 +111,7 @@ pub mod {{ f[4] }} {
 {%- elsif f[0] == "udp" %}
         socket(source)
 {%- else %}
-        Link::new({% if f[0] == "tcp" %}socket(source){% else %}source{% endif %}, HOST_FRAME.take())
+        Link::new({% if f[0] == "tcp" %}socket(source){% else %}source{% endif %}, HOST_BUFFER.take(), HOST_FRAME.take())
 {%- endif %}
     }
 }

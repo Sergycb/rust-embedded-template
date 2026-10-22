@@ -49,8 +49,8 @@ pub enum CobsError<E> {
     Corrupt,
     /// CRC кадра не сошлась.
     Crc,
-    /// Кадр длиннее буфера: при приёме — буфера `recv` (ему нужно
-    /// [`rx_len`]), при отправке — буфера передачи ([`tx_len`]).
+    /// Кадр длиннее буфера: при приёме — буфера канала (ему нужно
+    /// [`rx_len`]), при отправке — буфера кадра ([`tx_len`]).
     TooLong,
 }
 
@@ -70,23 +70,19 @@ pub const fn rx_len(message: usize) -> usize {
 
 /// Кадрированный канал поверх потока `io`.
 ///
-/// `tx` — буфер под закодированный кадр отправки: на сообщение длиной `n`
-/// нужно [`tx_len`]`(n)` байт. Свой, а не общий с приёмом: ответ
-/// кодируется, пока принятый запрос ещё может быть нужен вызывающему.
-/// Буферу приёма, который передают в `recv`, нужно [`rx_len`]`(n)`:
-/// CRC декодируется туда же, следом за сообщением.
+/// Два буфера. `buf` — буфер канала (`FrameLink::buffer`): на сообщение
+/// длиной `n` нужно [`rx_len`]`(n)` байт — CRC декодируется туда же, следом
+/// за сообщением. `frame` — закодированный кадр отправки: на сообщение
+/// длиной `n` нужно [`tx_len`]`(n)`.
 ///
 /// Разорванное соединение (TCP) поток не восстанавливает: конец потока —
 /// [`LinkError::Lost`] с [`CobsError::Eof`], а принять новое соединение — дело
 /// потока под ним (`net::TcpServer` делает это на следующем чтении).
 #[derive(Debug)]
 pub struct Cobs<'b, T> {
-    io: T,
-    tx: &'b mut [u8],
-    /// Прочитано из потока, но ещё не разобрано: `chunk[start..end]`.
-    chunk: [u8; CHUNK],
-    start: usize,
-    end: usize,
+    reader: Reader<T>,
+    buf: &'b mut [u8],
+    frame: &'b mut [u8],
     /// Кадр в потоке начат и не дочитан до `0x00`. Пока флаг стоит,
     /// очередной `recv` сначала отбрасывает хвост до `0x00`: если прошлый
     /// `recv` бросили на середине — даже на середине такого же пропуска, —
@@ -95,22 +91,38 @@ pub struct Cobs<'b, T> {
     inside: bool,
 }
 
+/// Поток и то, что из него прочитано, но ещё не разобрано: `chunk[start..end]`.
+///
+/// Отдельно от буферов канала: `recv` декодирует в буфер канала и тем
+/// временем читает поток, и заимствования двух полей не пересекаются.
+#[derive(Debug)]
+struct Reader<T> {
+    io: T,
+    chunk: [u8; CHUNK],
+    start: usize,
+    end: usize,
+}
+
 impl<'b, T> Cobs<'b, T> {
-    /// Канал поверх потока `io` с буфером отправки `tx`.
-    pub fn new(io: T, tx: &'b mut [u8]) -> Self {
+    /// Канал поверх потока `io` с буфером канала `buf` и буфером кадра
+    /// отправки `frame`.
+    pub fn new(io: T, buf: &'b mut [u8], frame: &'b mut [u8]) -> Self {
         Self {
-            io,
-            tx,
-            chunk: [0; CHUNK],
-            start: 0,
-            end: 0,
+            reader: Reader {
+                io,
+                chunk: [0; CHUNK],
+                start: 0,
+                end: 0,
+            },
+            buf,
+            frame,
             inside: false,
         }
     }
 
     /// Поток обратно — например, чтобы закрыть сокет.
     pub fn into_inner(self) -> T {
-        self.io
+        self.reader.io
     }
 }
 
@@ -132,7 +144,7 @@ fn io_error<E: Error>(e: E) -> LinkError<CobsError<E>> {
     }
 }
 
-impl<T: Read + Write> Cobs<'_, T> {
+impl<T: Read> Reader<T> {
     /// Следующий байт потока.
     async fn next_byte(&mut self) -> Result<u8, LinkError<CobsError<T::Error>>> {
         if self.start == self.end {
@@ -152,14 +164,14 @@ impl<T: Read + Write> Cobs<'_, T> {
 impl<T: Read + Write> FrameLink for Cobs<'_, T> {
     type Error = CobsError<T::Error>;
 
-    async fn recv(&mut self, buf: &mut [u8]) -> Result<usize, LinkError<Self::Error>> {
+    async fn recv(&mut self) -> Result<usize, LinkError<Self::Error>> {
         // Хвост кадра, начатого до этого вызова, — не наш: до `0x00`.
         while self.inside {
-            self.inside = self.next_byte().await? != 0;
+            self.inside = self.reader.next_byte().await? != 0;
         }
-        let mut decoder = CobsDecoder::new(&mut *buf);
+        let mut decoder = CobsDecoder::new(&mut *self.buf);
         let len = loop {
-            let byte = self.next_byte().await?;
+            let byte = self.reader.next_byte().await?;
             self.inside = byte != 0;
             match decoder.feed(byte) {
                 Ok(None) => {}
@@ -177,34 +189,37 @@ impl<T: Read + Write> FrameLink for Cobs<'_, T> {
         let Some(message) = len.checked_sub(CRC_LEN) else {
             return Err(LinkError::Lost(CobsError::Corrupt));
         };
-        let (body, crc) = buf[..len].split_at(message);
+        let (body, crc) = self.buf[..len].split_at(message);
         if CRC.checksum(body).to_le_bytes() != *crc {
             return Err(LinkError::Lost(CobsError::Crc));
         }
         Ok(message)
     }
 
-    async fn send(&mut self, frame: &[u8]) -> Result<(), LinkError<Self::Error>> {
-        if tx_len(frame.len()) > self.tx.len() {
+    fn buffer(&mut self) -> &mut [u8] {
+        self.buf
+    }
+
+    async fn send(&mut self, len: usize) -> Result<(), LinkError<Self::Error>> {
+        let message = &self.buf[..len];
+        if tx_len(len) > self.frame.len() {
             return Err(LinkError::Lost(CobsError::TooLong));
         }
-        let crc = CRC.checksum(frame).to_le_bytes();
-        self.tx[0] = 0;
-        let mut encoder = CobsEncoder::new(&mut self.tx[1..]);
+        let crc = CRC.checksum(message).to_le_bytes();
+        self.frame[0] = 0;
+        let mut encoder = CobsEncoder::new(&mut self.frame[1..]);
         // Размер проверен выше — места хватит на худший случай.
         encoder
-            .push(frame)
+            .push(message)
             .map_err(|_too_small| LinkError::Lost(CobsError::TooLong))?;
         encoder
             .push(&crc)
             .map_err(|_too_small| LinkError::Lost(CobsError::TooLong))?;
         let end = 1 + encoder.finalize();
-        self.tx[end] = 0;
-        self.io
-            .write_all(&self.tx[..=end])
-            .await
-            .map_err(io_error)?;
-        self.io.flush().await.map_err(io_error)
+        self.frame[end] = 0;
+        let io = &mut self.reader.io;
+        io.write_all(&self.frame[..=end]).await.map_err(io_error)?;
+        io.flush().await.map_err(io_error)
     }
 }
 
@@ -289,10 +304,11 @@ mod tests {
 
     /// Кадры сообщений так, как их отправляет `Cobs`.
     async fn frames(messages: &[&[u8]]) -> Vec<u8> {
-        let mut tx = [0; 600];
-        let mut link = Cobs::new(Stream::new(Vec::new(), 1), &mut tx);
+        let (mut buf, mut frame) = ([0; 128], [0; 256]);
+        let mut link = Cobs::new(Stream::new(Vec::new(), 1), &mut buf, &mut frame);
         for message in messages {
-            link.send(message).await.unwrap();
+            link.buffer()[..message.len()].copy_from_slice(message);
+            link.send(message.len()).await.unwrap();
         }
         link.into_inner().tx
     }
@@ -301,10 +317,9 @@ mod tests {
     async fn recv_all(link: &mut Cobs<'_, Stream>) -> Vec<Received> {
         let mut out = Vec::new();
         loop {
-            let mut buf = [0; 64];
-            match link.recv(&mut buf).await {
+            match link.recv().await {
                 Err(LinkError::Lost(CobsError::Eof)) => return out,
-                other => out.push(other.map(|len| buf[..len].to_vec())),
+                other => out.push(other.map(|len| link.buffer()[..len].to_vec())),
             }
         }
     }
@@ -320,8 +335,8 @@ mod tests {
     async fn split_and_glued_frames_come_out_whole() {
         let wire = frames(&[b"first", b"", b"third message"]).await;
         for max in [1, 3, 64] {
-            let mut tx = [0; 16];
-            let mut link = Cobs::new(Stream::new(wire.clone(), max), &mut tx);
+            let (mut buf, mut frame) = ([0; 64], [0; 16]);
+            let mut link = Cobs::new(Stream::new(wire.clone(), max), &mut buf, &mut frame);
             let got = recv_all(&mut link).await;
             let want: Vec<Received> = vec![
                 Ok(b"first".to_vec()),
@@ -338,8 +353,8 @@ mod tests {
         let mut corrupted = good.clone();
         corrupted[1] ^= 0x40;
         let wire = [&[0x31, 0x32][..], &[0], &corrupted, &[0, 0], &good].concat();
-        let mut tx = [0; 16];
-        let mut link = Cobs::new(Stream::new(wire, 64), &mut tx);
+        let (mut buf, mut frame) = ([0; 64], [0; 16]);
+        let mut link = Cobs::new(Stream::new(wire, 64), &mut buf, &mut frame);
         let got = recv_all(&mut link).await;
         assert_eq!(got.last(), Some(&Ok(b"ok".to_vec())), "все {got:?}");
         assert!(
@@ -353,8 +368,8 @@ mod tests {
     #[tokio::test]
     async fn too_long_frame_is_lost_and_the_next_is_received() {
         let wire = frames(&[&[7; 100], b"next"]).await;
-        let mut tx = [0; 16];
-        let mut link = Cobs::new(Stream::new(wire, 64), &mut tx);
+        let (mut buf, mut frame) = ([0; 64], [0; 16]);
+        let mut link = Cobs::new(Stream::new(wire, 64), &mut buf, &mut frame);
         let got = recv_all(&mut link).await;
         let want: Vec<Received> = vec![
             Err(LinkError::Lost(CobsError::TooLong)),
@@ -369,18 +384,16 @@ mod tests {
         let wire = [first.clone(), frames(&[b"whole"]).await].concat();
         let mut stream = Stream::new(wire, 64);
         stream.block_at = Some(first.len() / 2);
-        let mut tx = [0; 16];
-        let mut link = Cobs::new(stream, &mut tx);
+        let (mut buf, mut frame) = ([0; 64], [0; 16]);
+        let mut link = Cobs::new(stream, &mut buf, &mut frame);
         {
-            let mut buf = [0; 64];
-            let mut recv = pin!(link.recv(&mut buf));
+            let mut recv = pin!(link.recv());
             let mut cx = Context::from_waker(Waker::noop());
             assert!(recv.as_mut().poll(&mut cx).is_pending());
         }
-        link.io.block_at = None;
-        let mut buf = [0; 64];
-        let len = link.recv(&mut buf).await.unwrap();
-        assert_eq!(&buf[..len], b"whole");
+        link.reader.io.block_at = None;
+        let len = link.recv().await.unwrap();
+        assert_eq!(&link.buffer()[..len], b"whole");
     }
 
     /// Второй брошенный `recv` — посреди пропуска хвоста первого — не
@@ -389,19 +402,17 @@ mod tests {
     async fn recv_dropped_while_skipping_keeps_skipping() {
         let first = frames(&[b"a fairly long interrupted frame"]).await;
         let wire = [first.clone(), frames(&[b"whole"]).await].concat();
-        let mut tx = [0; 16];
-        let mut link = Cobs::new(Stream::new(wire, 64), &mut tx);
+        let (mut buf, mut frame) = ([0; 64], [0; 16]);
+        let mut link = Cobs::new(Stream::new(wire, 64), &mut buf, &mut frame);
         for at in [first.len() / 3, 2 * first.len() / 3] {
-            link.io.block_at = Some(at);
-            let mut buf = [0; 64];
-            let mut recv = pin!(link.recv(&mut buf));
+            link.reader.io.block_at = Some(at);
+            let mut recv = pin!(link.recv());
             let mut cx = Context::from_waker(Waker::noop());
             assert!(recv.as_mut().poll(&mut cx).is_pending());
         }
-        link.io.block_at = None;
-        let mut buf = [0; 64];
-        let len = link.recv(&mut buf).await.unwrap();
-        assert_eq!(&buf[..len], b"whole");
+        link.reader.io.block_at = None;
+        let len = link.recv().await.unwrap();
+        assert_eq!(&link.buffer()[..len], b"whole");
     }
 
     #[tokio::test]
@@ -414,33 +425,25 @@ mod tests {
         ] {
             let mut stream = Stream::new(Vec::new(), 64);
             stream.fail = Some(kind);
-            let mut tx = [0; 16];
-            let mut link = Cobs::new(stream, &mut tx);
-            let mut buf = [0; 16];
-            let err = link.recv(&mut buf).await.unwrap_err();
+            let (mut buf, mut frame) = ([0; 64], [0; 16]);
+            let mut link = Cobs::new(stream, &mut buf, &mut frame);
+            let err = link.recv().await.unwrap_err();
             assert_eq!(
                 matches!(err, LinkError::Down(_)),
                 down,
                 "{kind:?} → {err:?}"
             );
         }
-        let mut tx = [0; 16];
-        let mut link = Cobs::new(Stream::new(Vec::new(), 64), &mut tx);
-        let mut buf = [0; 16];
-        assert_eq!(
-            link.recv(&mut buf).await,
-            Err(LinkError::Lost(CobsError::Eof))
-        );
+        let (mut buf, mut frame) = ([0; 64], [0; 16]);
+        let mut link = Cobs::new(Stream::new(Vec::new(), 64), &mut buf, &mut frame);
+        assert_eq!(link.recv().await, Err(LinkError::Lost(CobsError::Eof)));
     }
 
     #[tokio::test]
     async fn send_refuses_what_does_not_fit_the_tx_buffer() {
-        let mut tx = [0; 8];
-        let mut link = Cobs::new(Stream::new(Vec::new(), 64), &mut tx);
-        assert_eq!(
-            link.send(&[1; 8]).await,
-            Err(LinkError::Lost(CobsError::TooLong))
-        );
+        let (mut buf, mut frame) = ([1; 8], [0; 8]);
+        let mut link = Cobs::new(Stream::new(Vec::new(), 64), &mut buf, &mut frame);
+        assert_eq!(link.send(8).await, Err(LinkError::Lost(CobsError::TooLong)));
         assert!(link.into_inner().tx.is_empty(), "ничего не отправлено");
     }
 
@@ -458,8 +461,8 @@ mod tests {
             let got = rt.block_on(async {
                 let refs: Vec<&[u8]> = messages.iter().map(Vec::as_slice).collect();
                 let wire = frames(&refs).await;
-                let mut tx = [0; 16];
-                let mut link = Cobs::new(Stream::new(wire, max), &mut tx);
+                let (mut buf, mut frame) = ([0; 64], [0; 16]);
+                let mut link = Cobs::new(Stream::new(wire, max), &mut buf, &mut frame);
                 recv_all(&mut link).await
             });
             let want: Vec<Received> = messages.into_iter().map(Ok).collect();
@@ -471,8 +474,8 @@ mod tests {
         fn garbage_never_panics(wire in proptest::collection::vec(proptest::num::u8::ANY, 0..500)) {
             let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
             rt.block_on(async {
-                let mut tx = [0; 16];
-                let mut link = Cobs::new(Stream::new(wire, 7), &mut tx);
+                let (mut buf, mut frame) = ([0; 64], [0; 16]);
+                let mut link = Cobs::new(Stream::new(wire, 7), &mut buf, &mut frame);
                 recv_all(&mut link).await
             });
         }

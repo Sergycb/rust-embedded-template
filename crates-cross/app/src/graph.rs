@@ -212,8 +212,6 @@ supervisor_graph! {
                     ),
 {%- endif %}
                 ),
-                rx: crate::link::{{ f[4] }}::rx(),
-                tx: crate::link::{{ f[4] }}::tx(),
             },
 {%- endif %}
 {%- if f[3] != "none" %}{% assign client = client | plus: 1 %}{% endif %}

@@ -43,14 +43,13 @@ use supervisor::runtime::TaskExit;
 // аргументами фрагмента:
 //
 // ```ignore
-// fragments: [::domain::HOST_FRAG<HostLink, ::domain::host::Service> as HOST
-//                 = ::domain::host::HostWiring { link: HostLink::new(parts.board.usart1, FRAME.init([0; 262])),
-//                                                service: ::domain::host::Service::new(crate::device_info(parts.board.spec)),
-//                                                rx: RX.init([0; 258]), tx: TX.init([0; 256]) }];
+// fragments: [::domain::HOST_FRAG<crate::link::usart1::Link, ::domain::host::Service> as HOST
+//                 = ::domain::host::HostWiring { link: crate::link::usart1::new(parts.board.usart1),
+//                                                service: ::domain::host::Service::new(crate::device_info(parts.board.spec)) }];
 // ```
 //
-// Буферы — `&'static mut`, а не массивы в узле: размер сообщения задаёт
-// схема проекта, а не узел.
+// Буфер сообщения — у канала (`FrameLink::buffer`), а не у узла: размер
+// сообщения задаёт схема проекта, и канал собирается вместе с буфером.
 
 /// Узел `HOST`: отвечает хосту, пока жив канал.
 ///
@@ -87,7 +86,7 @@ where
             }
             start => begin -> Listening;
             listen {
-                Listening => frame: self.link.recv(self.rx),
+                Listening => frame: self.link.recv(),
             }
             transitions {
                 Listening + frame(Ok(len))  => serve  -> self,
@@ -98,13 +97,13 @@ where
 
     fn begin(&mut self) -> Listening {
         info!("domain: узел HOST запущен");
+        let capacity = self.link.buffer().len();
         if let Ok(max) = S::Response::MAX_SIZE
-            && self.tx.len() < max
+            && capacity < max
         {
             warn!(
-                "host: буфер ответа {} байт, а самый длинный ответ схемы — {}: такие ответы не уйдут",
-                self.tx.len(),
-                max
+                "host: буфер канала {} байт, а самый длинный ответ схемы — {}: такие ответы не уйдут",
+                capacity, max
             );
         }
         Listening
@@ -113,21 +112,19 @@ where
     /// Разбирает запрос, отдаёт обработчику, отправляет ответ.
     async fn serve(&mut self, len: usize) {
         let mut request = S::Request::default();
-        let response = match request.decode_from_bytes(&self.rx[..len]) {
+        let response = match request.decode_from_bytes(&self.link.buffer()[..len]) {
             Ok(()) => self.service.handle(request).await,
             Err(err) => {
                 warn!("host: кадр не разобрался: {}", decode_reason(&err));
                 self.service.malformed()
             }
         };
-        let Some(len) = encode(&response, self.tx) else {
-            warn!(
-                "host: ответ не помещается в буфер на {} байт",
-                self.tx.len()
-            );
+        let buffer = self.link.buffer();
+        let Some(len) = encode(&response, buffer) else {
+            warn!("host: ответ не помещается в буфер на {} байт", buffer.len());
             return;
         };
-        if let Err(err) = self.link.send(&self.tx[..len]).await {
+        if let Err(err) = self.link.send(len).await {
             warn!("host: ответ не ушёл: {:?}", &err);
         }
     }
@@ -175,24 +172,20 @@ fn encode(message: &impl MessageEncode, buf: &mut [u8]) -> Option<usize> {
 //
 // `<L, S>` — параметры фрагмента: канал платы и обработчик приложения
 // `domain` не видит. `local` на обоих — канал и обработчик вправе быть
-// `!Send` (периферия, ссылки на каналы задач). Буферы — обычные слоты:
-// `&'static mut [u8]` — `Send`.
+// `!Send` (периферия, ссылки на каналы задач). Буфера своего нет: он у
+// канала.
 supervisor::supervisor_fragment! {
     name: HOST_FRAG<L, S>;
     boot: inputs: struct $crate::host::HostWiring;
 
     node deps: [], restart: Never,
         resources: [
-            /// Кадровый канал к хосту.
+            /// Кадровый канал к хосту — с буфером сообщения: не меньше самого
+            /// длинного запроса и ответа (`MAX_SIZE` сообщения ответа, если
+            /// схема его ограничивает).
             LINK: local L = inputs.link,
             /// Обработчик сообщений приложения.
-            SERVICE: local S = inputs.service,
-            /// Буфер приёма: самый длинный запрос и то, что канал кладёт туда
-            /// сверх него (`adapters::cobs::rx_len` — ещё 2 байта CRC).
-            RX: &'static mut [u8] = inputs.rx,
-            /// Буфер закодированного ответа: не меньше самого длинного ответа
-            /// (`MAX_SIZE` сообщения ответа, если схема его ограничивает).
-            TX: &'static mut [u8] = inputs.tx
+            SERVICE: local S = inputs.service
         ],
         ctx: $crate::host::HostCtx,
         task: $crate::host::task;
@@ -219,15 +212,14 @@ mod tests {
         incoming: VecDeque<Result<Vec<u8>, LinkError<&'static str>>>,
         sent: Vec<Vec<u8>>,
         send: Result<(), LinkError<&'static str>>,
+        buffer: Vec<u8>,
     }
 
     impl FrameLink for Link {
         type Error = &'static str;
 
-        fn recv(
-            &mut self,
-            buf: &mut [u8],
-        ) -> impl Future<Output = Result<usize, LinkError<Self::Error>>> {
+        fn recv(&mut self) -> impl Future<Output = Result<usize, LinkError<Self::Error>>> {
+            let buf = &mut self.buffer;
             let next = self.incoming.pop_front().map(|next| {
                 next.map(|frame| {
                     buf[..frame.len()].copy_from_slice(&frame);
@@ -242,11 +234,12 @@ mod tests {
             }
         }
 
-        fn send(
-            &mut self,
-            frame: &[u8],
-        ) -> impl Future<Output = Result<(), LinkError<Self::Error>>> {
-            self.sent.push(frame.to_vec());
+        fn buffer(&mut self) -> &mut [u8] {
+            &mut self.buffer
+        }
+
+        fn send(&mut self, len: usize) -> impl Future<Output = Result<(), LinkError<Self::Error>>> {
+            self.sent.push(self.buffer[..len].to_vec());
             std::future::ready(self.send)
         }
     }
@@ -272,14 +265,10 @@ mod tests {
 
     /// Гоняет узел по всем заготовленным кадрам, пока он не станет ждать
     /// следующий.
-    fn serve(link: &mut Link, tx_len: usize) {
-        let mut rx = vec![0; 64];
-        let mut tx = vec![0; tx_len];
+    fn serve(link: &mut Link) {
         let ctx = HostCtx {
             link,
             service: &mut service(INFO),
-            rx: &mut rx,
-            tx: &mut tx,
             index: 0,
         };
         let mut task = pin!(task(ctx));
@@ -296,8 +285,9 @@ mod tests {
             ]),
             sent: Vec::new(),
             send: Ok(()),
+            buffer: vec![0; 64],
         };
-        serve(&mut link, 64);
+        serve(&mut link);
         let replies: Vec<Response> = link.sent.iter().map(|f| decode(f)).collect();
         assert_eq!(replies[0].request_id, 7);
         assert_eq!(replies[1].request_id, 8);
@@ -316,8 +306,9 @@ mod tests {
             ]),
             sent: Vec::new(),
             send: Ok(()),
+            buffer: vec![0; 64],
         };
-        serve(&mut link, 64);
+        serve(&mut link);
         assert_eq!(link.sent.len(), 2, "на потерянный кадр ответа нет");
         let malformed = decode(&link.sent[0]);
         assert_eq!(malformed.request_id, 0);
@@ -339,8 +330,9 @@ mod tests {
             ]),
             sent: Vec::new(),
             send: Err(LinkError::Down("обрыв")),
+            buffer: vec![0; 64],
         };
-        serve(&mut link, 64);
+        serve(&mut link);
         assert_eq!(link.sent.len(), 2, "оба запроса обработаны");
     }
 
@@ -355,8 +347,9 @@ mod tests {
             ]),
             sent: Vec::new(),
             send: Err(LinkError::Lost("не влез")),
+            buffer: vec![0; 64],
         };
-        serve(&mut link, 64);
+        serve(&mut link);
         assert_eq!(link.sent.len(), 2, "оба запроса обработаны");
     }
 
@@ -372,9 +365,10 @@ mod tests {
             ]),
             sent: Vec::new(),
             send: Ok(()),
+            buffer: vec![0; 32],
         };
         // Ошибка «unknown command» с id влезает в 32 байта, `info` — нет.
-        serve(&mut link, 32);
+        serve(&mut link);
         assert_eq!(link.sent.len(), 1);
         assert_eq!(decode(&link.sent[0]).request_id, 2);
     }
@@ -389,8 +383,9 @@ mod tests {
             }))]),
             sent: Vec::new(),
             send: Ok(()),
+            buffer: vec![0; 64],
         };
-        serve(&mut link, 64);
+        serve(&mut link);
         assert_eq!(link.sent.len(), 1);
         let reply = decode(&link.sent[0]);
         assert_eq!(reply.request_id, 4);
@@ -407,8 +402,9 @@ mod tests {
             ]),
             sent: Vec::new(),
             send: Ok(()),
+            buffer: vec![0; 64],
         };
-        serve(&mut link, 64);
+        serve(&mut link);
         assert_eq!(link.sent.len(), 1, "ответ после отказа");
         assert_eq!(decode(&link.sent[0]).request_id, 5);
     }

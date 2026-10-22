@@ -8,13 +8,18 @@ use ports::{MasterError, ModbusClient};
 // {%- endif %}
 use super::mbap::{self, HEADER, Header, MAX_ADU};
 
+/// Сколько байт нужно буферу канала под [`Udp`]: самая длинная датаграмма
+/// Modbus — заголовок MBAP и PDU.
+pub const DATAGRAM: usize = MAX_ADU;
+
 /// Сколько потерянных датаграмм подряд терпит приём, прежде чем объявить
 /// канал отказавшим: серия потерь — уже не помеха, и узлу о ней стоит знать.
 /// Переждать отказ — дело канала под транспортом (`ports::FrameLink`).
 const MAX_LOST_IN_A_ROW: u8 = 32;
 
 /// Modbus UDP поверх датаграмм `link` (UDP-сокет `embassy-net` за
-/// [`FrameLink`]).
+/// [`FrameLink`]). Датаграмма — принятая и собираемая к отправке — лежит в
+/// буфере канала: ему нужно не меньше [`DATAGRAM`] байт.
 ///
 /// Отвечать slave'у некуда, кроме как отправителю последнего запроса: этот
 /// адрес помнит реализация `link`, порт его не передаёт.
@@ -34,8 +39,6 @@ const MAX_LOST_IN_A_ROW: u8 = 32;
 #[derive(Debug)]
 pub struct Udp<L> {
     link: L,
-    /// Датаграмма — принятая или собираемая к отправке.
-    buf: [u8; MAX_ADU],
     /// Номер транзакции последнего принятого запроса — им подписан ответ.
     // {%- if modbus_master == "true" %}
     /// У master — последнего отправленного: по нему ищется ответ.
@@ -45,26 +48,30 @@ pub struct Udp<L> {
     unit: u8,
 }
 
-impl<L> Udp<L> {
+impl<L: FrameLink> Udp<L> {
     /// Транспорт поверх датаграмм `link`.
-    pub const fn new(link: L) -> Self {
+    ///
+    /// # Panics
+    ///
+    /// Если буфер канала меньше [`DATAGRAM`]: самая длинная датаграмма Modbus
+    /// в него не влезет.
+    pub fn new(mut link: L) -> Self {
+        let len = link.buffer().len();
+        assert!(len >= DATAGRAM, "буфер канала {len} < {DATAGRAM}");
         Self {
             link,
-            buf: [0; MAX_ADU],
             tid: 0,
             unit: 0,
         }
     }
-}
 
-impl<L: FrameLink> Udp<L> {
     /// Ждёт целую датаграмму Modbus в `buf`; возвращает заголовок и длину.
     async fn datagram(&mut self) -> Result<(Header, usize), LinkError<L::Error>> {
         let mut lost = 0_u8;
         loop {
-            match self.link.recv(&mut self.buf).await {
+            match self.link.recv().await {
                 Ok(len) if len >= HEADER => {
-                    let header = Header::parse(&self.buf);
+                    let header = Header::parse(self.link.buffer());
                     if header.protocol == 0 && header.total() == Some(len) {
                         return Ok((header, len));
                     }
@@ -83,9 +90,10 @@ impl<L: FrameLink> Udp<L> {
 
     /// Собирает датаграмму и отправляет.
     async fn send(&mut self, tid: u16, unit: u8, pdu: &[u8]) -> Result<(), LinkError<L::Error>> {
-        self.buf[..HEADER].copy_from_slice(&mbap::head(tid, unit, pdu.len()));
-        self.buf[HEADER..HEADER + pdu.len()].copy_from_slice(pdu);
-        self.link.send(&self.buf[..HEADER + pdu.len()]).await
+        let buf = self.link.buffer();
+        buf[..HEADER].copy_from_slice(&mbap::head(tid, unit, pdu.len()));
+        buf[HEADER..HEADER + pdu.len()].copy_from_slice(pdu);
+        self.link.send(HEADER + pdu.len()).await
     }
 }
 
@@ -95,7 +103,7 @@ impl<L: FrameLink> ModbusServer for Udp<L> {
     async fn recv(&mut self, buf: &mut [u8]) -> Result<Received, ServeError<Self::Error>> {
         assert!(buf.len() >= MAX_PDU, "буфер PDU {} < {MAX_PDU}", buf.len());
         let (header, len) = self.datagram().await.map_err(ServeError::Io)?;
-        let pdu = &self.buf[HEADER..len];
+        let pdu = &self.link.buffer()[HEADER..len];
         buf[..pdu.len()].copy_from_slice(pdu);
         self.tid = header.tid;
         self.unit = header.unit;
@@ -141,7 +149,7 @@ impl<L: FrameLink> ModbusClient for Udp<L> {
             if header.unit != unit {
                 return Err(MasterError::Unexpected);
             }
-            let pdu = &self.buf[HEADER..len];
+            let pdu = &self.link.buffer()[HEADER..len];
             response[..pdu.len()].copy_from_slice(pdu);
             return Ok(pdu.len());
         }
