@@ -896,11 +896,11 @@ const RAM_COST = #{
     // для `getrandom`) — 16720,
     // но stm32h743zg rest-ssh-key-no-graph (ext_flash=yes) 41904 на 300 больше
     // суммы частей: SSH взят с этим запасом.
-    // MQTT — stm32h743zg mqtt-modbus-tcp 16080 при оценке без MQTT 9680
-    // (буферы `minimq` и сокета, сокет, future узла) — 6400, но
-    // rest-ssh-mqtt (ext_flash=yes) 50436 на 164 больше суммы частей: взят
-    // с запасом.
-    services: #{ ssh: 17020, rest: 21348, mqtt: 6600 },
+    // MQTT — stm32h743zg mqtt-modbus-tcp 16232 при оценке без MQTT 9680
+    // (буферы `minimq` и сокета, сокет, future узла) — 6552, но
+    // rest-ssh-mqtt (ext_flash=yes) 50588 на 164 больше суммы частей: взят
+    // с этим запасом.
+    services: #{ ssh: 17020, rest: 21348, mqtt: 6720 },
 };
 // Сверх статической RAM — под стек: он в `.data`/`.bss` не входит (flip-link
 // кладёт его под ними). Не замерен — без платы глубину стека не снять, — а
