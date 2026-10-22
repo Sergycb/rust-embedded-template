@@ -363,6 +363,12 @@ fn default_cases() -> Vec<Case> {
             &["links=tcp", "net_services=mqtt", "graph=no"],
         ),
         Case::new("stm32f407ve").variant("mqtt-udp", &["links=udp", "net_services=mqtt"]),
+        // С графом, но без OTA: узел MQTT без клиента OTA, `cmd/reboot` — строка
+        // в лог.
+        Case::new("stm32f407ve").variant(
+            "mqtt-no-ota",
+            &["links=tcp", "net_services=mqtt", "ota=no"],
+        ),
         // Клок RNG, которого умолчания HAL не дают, — мультиплексор на своём
         // источнике (`config()` в `bsp::board`): `RNGSEL` у G0 (SYS), WL
         // (MSI) и WBA (HSI), `CLK48SEL` у L476 без HSI48 (MSI). PLL48 и HSI48
