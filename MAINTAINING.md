@@ -584,13 +584,13 @@ Modbus. Через `--define` то же задаёт `links` (`parse_links()`, �
 строки `ssh_key:` (`variable::prompt` с regex; пустой ввод — вход по паролю). Ключ из
 ввода и из `--define` хук проверяет одинаково — `ssh_key_ok()`: тип, блоб ровно 68
 символов base64, без кавычек и `\` (строка уедет в исходники).
-Итог — `net_services` (`ssh,rest` в порядке пунктов, через `--define` — в порядке
+Итог — `net_services` (`ssh,rest,mqtt` в порядке пунктов, через `--define` — в порядке
 списка), `ssh_auth`, `ssh_key`, и `ssh_host_key`: `config` — ключ хоста плата создаёт
 сама в разделе настроек (`domain::ssh::Stored`), `file` — вшит из `ssh-host-key.bin`
 (`Fixed`; так и при `config` вместе с CANopen — раздел настроек целиком его). Пустые
 строки, когда не выбрано. Модули узлов невыбранных служб хук удаляет (`domain/src/http.rs`,
-`ssh.rs`, `app/src/tasks/{http,ssh}.rs`, `device.rs` без служб и protobuf); секреты
-(`rest-token.txt`, `ssh-password.txt`, `ssh-host-key.bin`) создаёт `cargo xtask`
+`ssh.rs`, `mqtt.rs`, `app/src/tasks/{http,ssh,mqtt}.rs`, `device.rs` без служб и protobuf); секреты
+(`rest-token.txt`, `ssh-password.txt`, `ssh-host-key.bin`, заготовка `mqtt.toml`) создаёт `cargo xtask`
 (`secrets.rs`). Тесты — `net_services_*`, `ssh_*`, `password_login_asks_no_key` в
 `cascade.rs`; обход путей отвечает на `ssh_key` заранее.
 Без терминала `variable::prompt` отвечает «not a terminal», и `ask()` берёт умолчание:

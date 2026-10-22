@@ -370,6 +370,20 @@ read`: руками пришлось бы сначала найти адрес �
   или с нулями вместо RNG ключи сессий предсказуемы. Код `sunset` — около
   165 KiB, отсюда порог раздела приложения в генерации (`SSH_MIN_PARTITION`).
 {%- endif %}
+{%- if net_services contains "mqtt" %}
+- Брокер MQTT (`domain::mqtt`, узел `MQTT`): адрес, вход и префикс тем — `mqtt.toml` в
+  корне проекта. Файл создаёт `cargo xtask` (`secrets::ensure`), он **коммитится**, а
+  читает и вшивает его `crates-cross/app/build.rs` (`crate::net::MQTT_BROKER`,
+  `MQTT_PREFIX`; пароль открыт в образе). Заготовку сборка не отвергает: адрес
+  вписывает человек. Узел подключается сам и после любого конца сессии сразу
+  зовёт `dial`; паузы между попытками (1 → 30 с) — контракт порта
+  `ports::dial::Dial`, их держит `adapters::net::TcpClient`, а не `domain`.
+  {%- if ota == "true" %} Клиент входа `CMD` узла OTA для `cmd/reboot` — номер
+  `{{ mqtt_ota_client }}` (`domain::ota::ClientId`).{%- endif %} Сокет клиента — слот в `SOCKETS`
+  (`crate::net`), буферы TCP — у `crate::net::mqtt_link`. Доступ к `cmd/` токеном в
+  теле не защищён — только ACL брокера (при пустом `user` `build.rs` предупреждает) —
+  `docs/modules/app-mqtt.md`.
+{%- endif %}
 - `#![allow(dead_code)]` в начале `crates-cross/app/src/graph.rs` — не
   украшение, а условие `-D warnings`: файл целиком генерируемый, а
   `*_receiver()`/`provide_*`/`*_take()` в сыром шаблоне никто не зовёт, потому

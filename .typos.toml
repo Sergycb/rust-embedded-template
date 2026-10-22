@@ -12,3 +12,5 @@ HSI = "HSI"
 # Неверный ответ на вопрос `ota`, на котором тест каскада проверяет отказ
 # (chip-data-gen/tests/cascade.rs).
 interal = "interal"
+# Mosquitto — брокер MQTT (docs/modules/app-mqtt.md), а не «mosquito».
+Mosquitto = "Mosquitto"
