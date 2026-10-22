@@ -200,9 +200,9 @@ impl Write for TcpServer {
 /// TCP-клиент — исходящее соединение для служб, которые сами подключаются к
 /// серверу (клиент MQTT).
 ///
-/// Отказ сервера ([`Dial`]) он пережидает сам: перед каждой попыткой —
-/// пауза по числу отказов подряд, 0, 1, 2, 4 … до 30 с. Отказ — неудачное
-/// подключение и соединение, прожившее меньше 30 с до следующего `dial`
+/// Отказ сервера ([`Dial`]) он пережидает сам: `dial` — одна попытка, и
+/// перед ней — пауза по числу отказов подряд, 0, 1, 2, 4 … до 30 с. Отказ —
+/// неудачная попытка и соединение, прожившее меньше 30 с до следующего `dial`
 /// (сервер оборвал его сразу — неверный пароль, — и бить в него без паузы
 /// нельзя); соединение, прожившее дольше, счёт сбрасывает. Чтение и запись без
 /// соединения — ошибка: поток принадлежит соединению, которое открыл `dial`.
@@ -253,7 +253,9 @@ impl TcpClient {
 }
 
 impl Dial for TcpClient {
-    async fn dial(&mut self, to: SocketAddrV4) {
+    type Error = tcp::ConnectError;
+
+    async fn dial(&mut self, to: SocketAddrV4) -> Result<(), tcp::ConnectError> {
         if let Some(since) = self.connected_at.take() {
             self.failures = if since.elapsed() >= STABLE {
                 0
@@ -261,18 +263,17 @@ impl Dial for TcpClient {
                 self.failures.saturating_add(1)
             };
         }
-        loop {
-            Timer::after(backoff(self.failures)).await;
-            // Прежнее соединение или брошенная попытка: сокет — в `Closed`.
-            reset(&mut self.socket).await;
-            self.socket.set_keep_alive(Some(KEEP_ALIVE));
-            self.socket.set_timeout(Some(IDLE_TIMEOUT));
-            if self.socket.connect(to).await.is_ok() {
-                self.connected_at = Some(Instant::now());
-                return;
-            }
-            self.failures = self.failures.saturating_add(1);
+        Timer::after(backoff(self.failures)).await;
+        // Прежнее соединение или брошенная попытка: сокет — в `Closed`.
+        reset(&mut self.socket).await;
+        self.socket.set_keep_alive(Some(KEEP_ALIVE));
+        self.socket.set_timeout(Some(IDLE_TIMEOUT));
+        let connected = self.socket.connect(to).await;
+        match connected {
+            Ok(()) => self.connected_at = Some(Instant::now()),
+            Err(_) => self.failures = self.failures.saturating_add(1),
         }
+        connected
     }
 
     fn hang_up(&mut self) {
@@ -449,7 +450,7 @@ mod tests {
         let mut client = TcpClient::new(device, leak([0; 64]), leak([0; 64]));
         with_network(device_runner, host_runner, async {
             let device_side = async {
-                client.dial(SERVER).await;
+                client.dial(SERVER).await.unwrap();
                 client.write_all(b"ping").await.unwrap();
             };
             let host_side = async {
@@ -472,20 +473,22 @@ mod tests {
         }
     }
 
-    /// Сервера нет — `dial` не возвращается и после отказа (RST) ждёт паузу;
-    /// сервер поднялся — следующая попытка после паузы подключается.
+    /// Сервера нет — `dial` возвращает ошибку (RST), и следующий выдерживает
+    /// паузу `backoff(1)`; сервер поднялся — он подключается, и байты доходят.
     #[tokio::test]
-    async fn dial_waits_out_a_missing_server() {
+    async fn dial_fails_without_server_and_paces_the_next() {
         let ((device, device_runner), (host, host_runner)) = pair();
         let mut client = TcpClient::new(device, leak([0; 64]), leak([0; 64]));
         let dialed = Cell::new(false);
         with_network(device_runner, host_runner, async {
+            assert!(client.dial(SERVER).await.is_err(), "сервера нет");
+            assert_eq!(client.failures, 1);
             let device_side = async {
-                client.dial(SERVER).await;
+                client.dial(SERVER).await.unwrap();
                 dialed.set(true);
+                client.write_all(b"ping").await.unwrap();
             };
             let host_side = async {
-                settle().await;
                 let mut server = TcpSocket::new(host, leak([0; 64]), leak([0; 64]));
                 let wait_out = async {
                     settle().await;
@@ -494,6 +497,9 @@ mod tests {
                 };
                 let (accepted, ()) = tokio::join!(server.accept(PORT), wait_out);
                 accepted.unwrap();
+                let mut buf = [0; 4];
+                server.read_exact(&mut buf).await.unwrap();
+                assert_eq!(&buf, b"ping");
             };
             tokio::join!(device_side, host_side);
         })
@@ -511,8 +517,9 @@ mod tests {
         let redialed = Cell::new(false);
         with_network(device_runner, host_runner, async {
             let mut server = TcpSocket::new(host, leak([0; 64]), leak([0; 64]));
-            let (accepted, ()) = tokio::join!(server.accept(PORT), client.dial(SERVER));
+            let (accepted, dialed) = tokio::join!(server.accept(PORT), client.dial(SERVER));
             accepted.unwrap();
+            dialed.unwrap();
             client.hang_up();
             // Сервер видит сброс и снова слушает.
             let mut buf = [0; 1];
@@ -521,7 +528,7 @@ mod tests {
             server.flush().await.ok();
 
             let device_side = async {
-                client.dial(SERVER).await;
+                client.dial(SERVER).await.unwrap();
                 redialed.set(true);
             };
             let host_side = async {

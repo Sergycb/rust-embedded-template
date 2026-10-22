@@ -18,7 +18,7 @@
 
 use core::net::SocketAddrV4;
 
-use defmt_or_log::{info, warn};
+use defmt_or_log::{FormatOrDebug, info, warn};
 use embassy_time::{Duration, Instant, with_deadline};
 use embedded_io_async::{Read, Write};
 use heapless::String;
@@ -295,7 +295,7 @@ async fn announce<IO: minimq::Io>(
 
 /// Одна сессия с брокером над установленным соединением `io`: подключение с
 /// Will, подписка на команды, `status` и `info`, дальше телеметрия и команды,
-/// пока связь жива. Паузы между сессиями — не здесь: их держит транспорт.
+/// пока связь жива. Паузы между попытками — не здесь: их держит транспорт.
 pub(crate) async fn serve<IO: minimq::Io>(io: IO, endpoint: &Endpoint, env: &mut Env<'_>) -> Ended {
     let [a, b, c, d] = endpoint.addr;
     let port = endpoint.port;
@@ -392,12 +392,18 @@ pub(crate) async fn serve<IO: minimq::Io>(io: IO, endpoint: &Endpoint, env: &mut
 ///
 /// У автомата нет выходного состояния, поэтому [`TaskExit`] недостижим: узел
 /// не падает (`restart: Never`).
-pub async fn task<B: Broker, D: Dial + Read + Write>(mut ctx: MqttCtx<'_, B, D>) -> TaskExit {
+pub async fn task<B: Broker, D: Dial + Read + Write>(mut ctx: MqttCtx<'_, B, D>) -> TaskExit
+where
+    <D as Dial>::Error: FormatOrDebug,
+{
     match ctx.run().await {}
 }
 
 #[fsm::typestate]
-impl<B: Broker, D: Dial + Read + Write> MqttCtx<'_, B, D> {
+impl<B: Broker, D: Dial + Read + Write> MqttCtx<'_, B, D>
+where
+    <D as Dial>::Error: FormatOrDebug,
+{
     fsm::machine! {
         machine Mqtt mod edges {
             states {
@@ -409,7 +415,8 @@ impl<B: Broker, D: Dial + Read + Write> MqttCtx<'_, B, D> {
                 Offline => linked: self.dial(),
             }
             transitions {
-                Offline + linked(endpoint) => session -> self,
+                Offline + linked(Ok(endpoint)) => session -> self,
+                Offline + linked(Err(ref failure)) => unreachable -> self,
             }
         }
     }
@@ -424,14 +431,33 @@ impl<B: Broker, D: Dial + Read + Write> MqttCtx<'_, B, D> {
         }
     }
 
-    /// Адрес брокера и соединение с ним. Отказы и паузы между попытками —
-    /// забота `Dial`: возвращается он только с соединением.
-    async fn dial(&mut self) -> Endpoint {
+    /// Адрес брокера и одна попытка подключиться к нему; паузу перед ней
+    /// выдерживает `Dial`.
+    async fn dial(&mut self) -> Result<Endpoint, (Endpoint, <D as Dial>::Error)> {
         let endpoint = self.broker.endpoint().await;
-        self.link
+        match self
+            .link
             .dial(SocketAddrV4::new(endpoint.addr.into(), endpoint.port))
-            .await;
-        endpoint
+            .await
+        {
+            Ok(()) => Ok(endpoint),
+            Err(err) => Err((endpoint, err)),
+        }
+    }
+
+    /// Брокер недоступен — строка в лог на каждую попытку, и узел сразу
+    /// зовёт `dial` снова: адрес-заглушка из `mqtt.toml` иначе молчал бы.
+    #[expect(
+        clippy::unused_self,
+        reason = "сигнатуру действия задаёт таблица `#[fsm::typestate]`"
+    )]
+    fn unreachable(&mut self, failure: &(Endpoint, <D as Dial>::Error)) {
+        let (endpoint, err) = failure;
+        let [a, b, c, d] = endpoint.addr;
+        warn!(
+            "mqtt: брокер {}.{}.{}.{}:{} недоступен ({:?}) — проверьте mqtt.toml",
+            a, b, c, d, endpoint.port, err
+        );
     }
 
     /// Одна сессия над открытым соединением. Чем бы она ни кончилась (строку
@@ -860,22 +886,22 @@ pub(crate) mod tests {
     }
     // {%- endif %}
 
-    /// Соединение узла: [`FakeBroker`] на каждый `dial` — следующий из
-    /// заготовленных сценариев. Сценарии кончились — `dial` ждёт вечно, как
-    /// реализация, которая не может подключиться.
+    /// Соединение узла: на каждый `dial` — следующий из заготовленных
+    /// сценариев, [`FakeBroker`] или `None` — отказ. Сценарии кончились —
+    /// `dial` ждёт вечно, как реализация в паузе перед попыткой.
     #[derive(Clone, Default)]
     struct FakeLink(Rc<RefCell<Calls>>);
 
     #[derive(Default)]
     struct Calls {
-        scenarios: VecDeque<FakeBroker>,
+        scenarios: VecDeque<Option<FakeBroker>>,
         current: Option<FakeBroker>,
         dials: usize,
         hang_ups: usize,
     }
 
     impl FakeLink {
-        fn new(scenarios: impl IntoIterator<Item = FakeBroker>) -> Self {
+        fn new(scenarios: impl IntoIterator<Item = Option<FakeBroker>>) -> Self {
             let link = Self::default();
             link.0.borrow_mut().scenarios.extend(scenarios);
             link
@@ -895,18 +921,20 @@ pub(crate) mod tests {
     }
 
     impl Dial for FakeLink {
-        async fn dial(&mut self, to: SocketAddrV4) {
+        type Error = ErrorKind;
+
+        async fn dial(&mut self, to: SocketAddrV4) -> Result<(), ErrorKind> {
             assert_eq!(to, SocketAddrV4::new(ENDPOINT.addr.into(), ENDPOINT.port));
             core::future::poll_fn(|_| {
                 let mut calls = self.0.borrow_mut();
                 let Some(next) = calls.scenarios.pop_front() else {
                     return Poll::Pending;
                 };
-                calls.current = Some(next);
                 calls.dials += 1;
-                Poll::Ready(())
+                calls.current.clone_from(&next);
+                Poll::Ready(next.map(drop).ok_or(ErrorKind::TimedOut))
             })
-            .await;
+            .await
         }
 
         fn hang_up(&mut self) {
@@ -1000,7 +1028,7 @@ pub(crate) mod tests {
         let refusing = FakeBroker::default();
         refusing.push(&connack(0x86));
         let second = accepting();
-        let link = FakeLink::new([refusing, second.clone()]);
+        let link = FakeLink::new([Some(refusing), Some(second.clone())]);
         let mut node = node(link.clone());
         spin_node(&mut node);
         assert_eq!(link.dials(), 2);
@@ -1011,9 +1039,21 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn node_logs_and_redials_on_dial_failure() {
+        let second = accepting();
+        let link = FakeLink::new([None, Some(second.clone())]);
+        let mut node = node(link.clone());
+        spin_node(&mut node);
+        assert_eq!(link.dials(), 2);
+        let sent = sent(&second.output());
+        let status = sent.iter().find(|p| p.topic == topic("/status")).unwrap();
+        assert_eq!(status.payload, b"online");
+    }
+
+    #[test]
     fn node_redials_after_loss() {
         let (first, second) = (accepting(), accepting());
-        let link = FakeLink::new([first.clone(), second.clone()]);
+        let link = FakeLink::new([Some(first.clone()), Some(second.clone())]);
         let mut node = node(link.clone());
         spin_node(&mut node);
         assert_eq!(link.dials(), 1, "первая сессия в сети");
@@ -1026,7 +1066,7 @@ pub(crate) mod tests {
 
     #[test]
     fn node_never_returns() {
-        let link = FakeLink::new([accepting()]);
+        let link = FakeLink::new([Some(accepting())]);
         let mut node = node(link);
         spin_node(&mut node);
         MockDriver::get().advance(Duration::from_secs(60));
