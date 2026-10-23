@@ -53,8 +53,13 @@ use embassy_stm32::flash::{Blocking, FLASH_SIZE, MAX_ERASE_SIZE};
 {%- else %}
 use embassy_stm32::flash::Blocking;
 {%- endif %}
+{%- if whole != "true" %}
+use embassy_sync::blocking_mutex;
+{%- endif %}
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-use embassy_sync::{blocking_mutex{% if whole == "true" %}, mutex{% endif %}};
+{%- if whole == "true" %}
+use embassy_sync::{blocking_mutex, mutex};
+{%- endif %}
 {%- if paged == "true" %}
 use flash_page::ErasePage;
 {%- endif %}

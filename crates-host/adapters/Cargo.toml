@@ -81,7 +81,7 @@ defmt = { workspace = true, optional = true }
 
 [dev-dependencies]
 # {%- if ota == "true" %}
-# Сквозной тест `ota`: то, что пишет `Updater<_, _, true>`, находит проверка
+# Сквозной тест `ota`: то, что пишет `Updater<_, true>`, находит проверка
 # bootloader'а (`domain::ota::boot::screen_update`). Подписывает `salty`, как
 # `cargo xtask build`. Циклическая dev-зависимость (у `domain` она на `adapters`)
 # cargo разрешена: в обычную сборку ни та ни другая не попадает.

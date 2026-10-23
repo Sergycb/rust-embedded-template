@@ -112,8 +112,8 @@ pub(crate) fn screen(flash: Bank1, dfu: Bank2) -> (Bank1, Bank2) {
             capacity,
             &OTA_PUBLIC_KEY_IN_IMAGE,
         ) else {
-            // Флеш не читается — дальше обмен всё равно упал бы; паника хотя
-            // бы оставляет причину в PANIC (`cargo xtask panic-info`).
+            // Флеш не читается — дальше обмен всё равно упал бы: паника, а что
+            // за ней — решает паникёр bootloader'а (`boot/src/main.rs`).
             panic!("boot: проверка нового образа: ошибка флеша");
         };
         report(screening);
@@ -148,8 +148,8 @@ pub(crate) fn screen(flash: Flash<'static, Blocking>) -> Flash<'static, Blocking
             capacity,
             &OTA_PUBLIC_KEY_IN_IMAGE,
         ) else {
-            // Флеш не читается — дальше обмен всё равно упал бы; паника хотя
-            // бы оставляет причину в PANIC (`cargo xtask panic-info`).
+            // Флеш не читается — дальше обмен всё равно упал бы: паника, а что
+            // за ней — решает паникёр bootloader'а (`boot/src/main.rs`).
             panic!("boot: проверка нового образа: ошибка флеша");
         };
         report(screening);
