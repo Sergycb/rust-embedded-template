@@ -2,7 +2,6 @@
 
 use core::marker::PhantomData;
 
-use embassy_stm32::Peri;
 use embassy_stm32::rcc::LSI_FREQ;
 use embassy_stm32::wdg::{IndependentWatchdog, Instance};
 use embassy_time::Duration;
@@ -107,6 +106,45 @@ pub type BoardWatchdog = Iwdg<embassy_stm32::peripherals::{{watchdog_peripheral}
 /// невзведённый графу не отдать — «сторож есть, а система не защищена»
 /// перестаёт быть достижимым состоянием.
 pub type UnarmedBoardWatchdog = Iwdg<embassy_stm32::peripherals::{{watchdog_peripheral}}, HW_TIMEOUT_US, Disarmed>;
+
+impl UnarmedBoardWatchdog {
+    /// Заряжает сторожевой таймер, не запуская его.
+    ///
+    /// Регистры прескалера и перезагрузки заполняются здесь, счётчик стоит:
+    /// IWDG начинает отсчёт только с [`arm`](Self::arm). Поэтому конструктор
+    /// зовётся там, где создаются все остальные объекты платы
+    /// (`Board::new`), и ничего этим не запускает.
+    ///
+    /// # Отказ на компиляции
+    ///
+    /// Если `HW_TIMEOUT_US` вне диапазона, который IWDG умеет отсчитать.
+    /// Проверка стоит здесь, а не оставлена embassy, по разным причинам с
+    /// двух краёв: сверху `IndependentWatchdog::new` паникует сам (а на
+    /// release паника — это сброс, то есть цикл перезагрузок из-за опечатки в
+    /// конфигурации), снизу же он молча вычисляет `0u16 - 1` и ставит
+    /// МАКСИМАЛЬНОЕ окно вместо запрошенного минимального — с
+    /// `overflow-checks = false` в release это не заметит никто.
+    ///
+    /// Раньше это был рантайм-`assert!`, то есть та самая паника, от которой
+    /// он защищает, только со своим текстом. Теперь таймаут — константа,
+    /// и та же проверка отвечает `error[E0080]` при сборке.
+    pub(crate) fn new(resources: crate::resources::WatchdogResources) -> Self {
+        // Сообщение без цифр: `assert!` в const-контексте берёт только
+        // литерал, форматировать ему нечем. Цифры вызывающий видит в спане
+        // ошибки — там стоит его собственный `HW_TIMEOUT_US`.
+        const {
+            assert!(
+                HW_TIMEOUT_US >= MIN_TIMEOUT_US && HW_TIMEOUT_US <= MAX_TIMEOUT_US,
+                "таймаут IWDG вне диапазона, который умеет отсчитать блок: см. MIN_TIMEOUT_US и \
+                 MAX_TIMEOUT_US в bsp/src/wdg.rs",
+            );
+        }
+        Self {
+            inner: IndependentWatchdog::new(resources.iwdg, HW_TIMEOUT_US),
+            state: PhantomData,
+        }
+    }
+}
 {%- endif %}
 
 /// Сторож заряжен, но не запущен: регистры заполнены, счётчик стоит.
@@ -131,43 +169,6 @@ impl<T: Instance + 'static, const TIMEOUT_US: u32, S> core::fmt::Debug for Iwdg<
 }
 
 impl<T: Instance + 'static, const TIMEOUT_US: u32> Iwdg<T, TIMEOUT_US, Disarmed> {
-    /// Заряжает сторожевой таймер, не запуская его.
-    ///
-    /// Регистры прескалера и перезагрузки заполняются здесь, счётчик стоит:
-    /// IWDG начинает отсчёт только с [`arm`](Self::arm). Поэтому конструктор
-    /// зовётся там, где создаются все остальные объекты платы
-    /// (`Board::new`), и ничего этим не запускает.
-    ///
-    /// # Отказ на компиляции
-    ///
-    /// Если `TIMEOUT_US` вне диапазона, который IWDG умеет отсчитать.
-    /// Проверка стоит здесь, а не оставлена embassy, по разным причинам с
-    /// двух краёв: сверху `IndependentWatchdog::new` паникует сам (а на
-    /// release паника — это сброс, то есть цикл перезагрузок из-за опечатки в
-    /// конфигурации), снизу же он молча вычисляет `0u16 - 1` и ставит
-    /// МАКСИМАЛЬНОЕ окно вместо запрошенного минимального — с
-    /// `overflow-checks = false` в release это не заметит никто.
-    ///
-    /// Раньше это был рантайм-`assert!`, то есть та самая паника, от которой
-    /// он защищает, только со своим текстом. Теперь таймаут — параметр типа,
-    /// и та же проверка отвечает `error[E0080]` при сборке.
-    pub fn new(peripheral: Peri<'static, T>) -> Self {
-        // Сообщение без цифр: `assert!` в const-контексте берёт только
-        // литерал, форматировать ему нечем. Цифры вызывающий видит в спане
-        // ошибки — там стоит его собственный `HW_TIMEOUT_US`.
-        const {
-            assert!(
-                TIMEOUT_US >= MIN_TIMEOUT_US && TIMEOUT_US <= MAX_TIMEOUT_US,
-                "таймаут IWDG вне диапазона, который умеет отсчитать блок: см. MIN_TIMEOUT_US и \
-                 MAX_TIMEOUT_US в bsp/src/wdg.rs",
-            );
-        }
-        Self {
-            inner: IndependentWatchdog::new(peripheral, TIMEOUT_US),
-            state: PhantomData,
-        }
-    }
-
     /// Запускает сторож. Выключить его после этого нельзя: IWDG
     /// останавливается только сбросом.
     ///
@@ -216,7 +217,7 @@ impl<T: Instance + 'static, const TIMEOUT_US: u32> Iwdg<T, TIMEOUT_US, Disarmed>
 }
 
 impl<T: Instance + 'static, const TIMEOUT_US: u32> HardwareWatchdog for Iwdg<T, TIMEOUT_US, Armed> {
-    /// Тот же `TIMEOUT_US`, которым [`Iwdg::new`] заряжает железо, — потому и
+    /// Тот же `TIMEOUT_US`, которым [`UnarmedBoardWatchdog::new`] заряжает железо, — потому и
     /// объявлен: константа связывает ровно настолько, насколько реализация
     /// заряжает железо той же цифрой, а здесь цифра одна на оба места по
     /// построению (см. `HW_TIMEOUT_US`).

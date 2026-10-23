@@ -182,6 +182,10 @@ fn default_cases() -> Vec<Case> {
         // `adapters::eeprom::Eeprom` поверх `Flash::eeprom_*`, единственное место
         // под настройки на флеше, стирающемся в ноль.
         Case::new("stm32l073rz").variant("config", &["config=yes"]),
+        // Та же EEPROM без OTA: в `bsp::flash` остаются только общий замок и
+        // EEPROM — без раздела на весь флеш и без асинхронных мьютексов
+        // (`whole = false`), и импорты у этой ветки свои.
+        Case::new("stm32l073rz").variant("eeprom-no-ota", &["config=yes", "ota=no"]),
         // Протоколы поверх UART: узел в графе, заглушка `bsp::serial` и
         // транспорт из `adapters` вокруг неё. Modbus — на USART v4 (G4, есть
         // аппаратный DE), protobuf — на F4 (USART v2, без него): оба

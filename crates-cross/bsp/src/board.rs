@@ -262,7 +262,7 @@ impl Board {
             net: crate::net::new(embassy_stm32::uid::uid(), seed, r.eth),
 {%- endif %}
 {%- if graph == "true" %}
-            watchdog: crate::wdg::UnarmedBoardWatchdog::new(r.watchdog.iwdg),
+            watchdog: crate::wdg::UnarmedBoardWatchdog::new(r.watchdog),
 {%- endif %}
         }
     }

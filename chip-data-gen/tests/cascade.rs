@@ -1926,13 +1926,8 @@ fn toggling_twice_leaves_the_transport_out() {
 /// `done` без отметок — проект без транспортов, о протоколе не спрашивают.
 #[test]
 fn done_without_marks_gives_no_transports() {
-    let result = interview(
-        &compile_script(),
-        "f407ve",
-        &[],
-        &[("transports", "done")],
-    )
-    .expect("каскад не должен падать");
+    let result = interview(&compile_script(), "f407ve", &[], &[("transports", "done")])
+        .expect("каскад не должен падать");
     assert_eq!(var_of(&result, "links"), Some(""));
     assert_eq!(var_of(&result, "interface"), Some("none"));
     assert!(all_menu_values(&result, "protocol").is_empty());

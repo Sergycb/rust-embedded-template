@@ -32,35 +32,6 @@ pub const EXT_FLASH_END: u32 = match u32::from_str_radix(env!("EXT_FLASH_END"), 
     Ok(end) => end,
     Err(_) => panic!("EXT_FLASH_END в [env] crates-cross/.cargo/config.toml — не число"),
 };
-{%- if ota == "true" and ota_store == "external" %}
-
-/// Размер `ACTIVE` в байтах — самый длинный образ, который доедет до
-/// устройства. `ACTIVE` во внутреннем флеше, а `DFU` здесь, и он больше
-/// `ACTIVE`: обмен копирует ровно `ACTIVE`, и образ между ними приехал бы
-/// обрезанным. Переменная среды `ACTIVE_LEN` из `[env]`
-/// `crates-cross/.cargo/config.toml` — тем же расчётом генерация пишет `ACTIVE` в
-/// `memory.x`.
-const ACTIVE_LEN: u32 = match u32::from_str_radix(env!("ACTIVE_LEN"), 10) {
-    Ok(len) => len,
-    Err(_) => panic!("ACTIVE_LEN в [env] crates-cross/.cargo/config.toml — не число"),
-};
-{%- endif %}
-{%- if config == "true" and config_store == "external" %}
-
-/// Начало раздела настроек — смещение от начала внешней флеши, посчитанное
-/// генерацией. Приезжает переменной среды `CONFIG_START` из `[env]`
-/// `crates-cross/.cargo/config.toml`.
-const CONFIG_START: u32 = match u32::from_str_radix(env!("CONFIG_START"), 10) {
-    Ok(start) => start,
-    Err(_) => panic!("CONFIG_START в [env] crates-cross/.cargo/config.toml — не число"),
-};
-
-/// Конец раздела настроек — см. [`CONFIG_START`].
-const CONFIG_END: u32 = match u32::from_str_radix(env!("CONFIG_END"), 10) {
-    Ok(end) => end,
-    Err(_) => panic!("CONFIG_END в [env] crates-cross/.cargo/config.toml — не число"),
-};
-{%- endif %}
 
 /// Что не работает, пока флеш не отвечает, — для строки в лог.
 const LOST: &str = "{% if ota == "true" and ota_store == "external" %}OTA{% if config_store == "external" %} и настройки не работают{% else %} не работает{% endif %}{% else %}настройки не сохраняются{% endif %}";
@@ -151,13 +122,17 @@ pub(crate) async fn new(_resources: crate::resources::ExtFlashResources) -> &'st
 
 /// Собирает флеш под обновлением над внешней флешью.
 pub(crate) fn firmware(external: &'static ExternalMutex) -> FirmwareFlash {
-    adapters::ota::Linked::new(external, external, ACTIVE_LEN)
+    adapters::ota::Linked::new(external, external, crate::layout::ACTIVE_LEN)
 }
 {%- endif %}
 {%- if config == "true" and config_store == "external" %}
 
 /// Собирает раздел настроек на внешней флеши.
 pub(crate) fn config(external: &'static ExternalMutex) -> ConfigFlash {
-    ConfigFlash::new(external, CONFIG_START, CONFIG_END - CONFIG_START)
+    ConfigFlash::new(
+        external,
+        crate::layout::CONFIG_START,
+        crate::layout::CONFIG_END - crate::layout::CONFIG_START,
+    )
 }
 {%- endif %}

@@ -29,11 +29,12 @@ defmt-rtt = { workspace = true }
 defmt = { workspace = true }
 # Точка входа (`#[entry]`).
 cortex-m-rt = { workspace = true }
-# Свободные функции ядра: `udf` в паникёре{% if ota_store == "external" %}, задержка на `SysTick` драйвера
-# внешней флеши (src/external.rs){% endif %}.
+{%- if ota_store == "external" %}
+# Задержка на `SysTick` драйвера внешней флеши (src/external.rs).
 cortex-m = { workspace = true }
-# Переключение банков, HAL и общие с приложением константы раскладки — из
-# `bsp`, а не копиями. Фичи `time-driver` здесь нет и быть не должно (см.
+{%- endif %}
+# Переключение банков, HAL, общие с приложением константы раскладки и сброс МК
+# в паникёре (`bsp::reset`) — из `bsp`, а не копиями. Фичи `time-driver` здесь нет и быть не должно (см.
 # `bsp/Cargo.toml`).
 bsp = { workspace = true }
 embassy-boot-stm32 = { workspace = true, features = ["defmt"] }

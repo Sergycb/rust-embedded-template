@@ -9,7 +9,7 @@ paths: crates-cross/**
   `adapters::ota::Updater<bsp::FirmwareFlash, _>`, `adapters::settings::Settings<bsp::ConfigFlash>`).
 - Ровно один `#[panic_handler]` и один `#[global_logger]` на бинарник — это
   ограничение линкера, а не Cargo. Развилка по профилю делается через
-  `#[cfg(debug_assertions)]` (паникёр — `app/src/panic.rs`; у `boot` свой, `udf()`
+  `#[cfg(debug_assertions)]` (паникёр — `app/src/panic.rs`; у `boot` свой, сброс
   без сообщения), не Cargo-фичей.
 - `Board` (один, `Board::new() -> Board`) отдаёт рычаги платы — объекты под
   трейтами (`embedded-io-async`, `embedded-storage`, порты `ports`): потоки, шины,

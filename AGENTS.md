@@ -180,7 +180,7 @@ read`: руками пришлось бы сначала найти адрес �
   паникёр у каждого бинарника свой: у `app` — `crates-cross/app/src/panic.rs`,
   выбирается `#[cfg(debug_assertions)]`: dev — `use panic_probe as _;`, release —
   свой `#[panic_handler]` поверх `panic_persist::report_panic_info` (фича
-  `custom-panic-handler`); у `boot` — `udf()` без сообщения (`boot/src/main.rs`); у
+  `custom-panic-handler`); у `boot` — сброс МК без сообщения (`boot/src/main.rs`: на сбросе держится продолжение прерванного обмена); у
   `target-tests` — `embedded-test` — `docs/diagnostics.md`, `docs/conventions.md`.
 - `prepare(len)` порта `FirmwareUpdate` зовётся один раз перед приёмом образа
   (внутри `domain::ota::download::Transfer::start`), `write()` сектор больше не

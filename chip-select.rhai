@@ -2399,6 +2399,12 @@ for kind in ["uart", "usb", "tcp", "udp"] {
         file::delete("crates-cross/app/src/link/" + kind + ".rs");
     }
 }
+// Числа раскладки кусков флеша (`bsp::layout`: `ACTIVE_LEN`, границы `CONFIG`) —
+// пока есть что раскладывать: OTA или раздел настроек во флеше.
+let layout_store = variable::get("config_store");
+if variable::get("ota") != "true" && layout_store != "flash" && layout_store != "external" {
+	file::delete("crates-cross/bsp/src/layout.rs");
+}
 // Группы `resources.rs` нужны, пока есть что в них класть: общий флеш, сторож
 // графа, блоки транспортов или шина внешней флеши. Иначе в файле остаётся пустая группа.
 variable::set("has_resources", if links.len() > 0 || variable::get("shared_flash") == "true" || variable::get("graph") == "true" || variable::get("external_flash") == "true" { "true" } else { "false" });

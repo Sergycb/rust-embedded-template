@@ -836,7 +836,7 @@ probe-rs erase --chip <CHIP> --connect-under-reset              # см. ниже
 ## Что происходит при падении
 
 Паникёр приложения выбирает профиль (`#[cfg(debug_assertions)]` в
-`crates-cross/app/src/panic.rs`; у bootloader'а свой — останов на `udf()` без
+`crates-cross/app/src/panic.rs`; у bootloader'а свой — сброс МК без
 сообщения):
 
 | Профиль | Паникёр | После падения | Почему |

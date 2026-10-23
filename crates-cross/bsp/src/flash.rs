@@ -99,23 +99,6 @@ const DFU_BANK_SIZE: u32 = BANK2_REGION.size;
 {%- endif %}
 {%- if firmware_here == "true" %}
 
-/// Размер `ACTIVE` в байтах: самый длинный образ, который доедет до
-/// устройства. Это `ACTIVE`, а НЕ `DFU`, хотя принимается образ в `DFU`.
-/// Раздел обновления по построению больше активного на одну-две страницы (этого
-/// требует `assert_partitions` в `embassy-boot`: обмену нужна запасная
-/// страница), а обмен копирует ровно `ACTIVE`. Образ размером между ними прошёл
-/// бы и проверку длины, и подпись, и пометку к обмену — а в `ACTIVE` приехал бы
-/// обрезанным: устройство отработало бы полный цикл обновления с перезагрузкой и
-/// молча откатилось.
-///
-/// Число — переменная среды `ACTIVE_LEN` из `[env]`
-/// `crates-cross/.cargo/config.toml`: тем же расчётом генерация пишет `ACTIVE` в
-/// `memory.x`, и читать размер из линкерных символов (`unsafe extern`) незачем.
-const ACTIVE_LEN: u32 = match u32::from_str_radix(env!("ACTIVE_LEN"), 10) {
-    Ok(len) => len,
-    Err(_) => panic!("ACTIVE_LEN в [env] crates-cross/.cargo/config.toml — не число"),
-};
-
 /// Страница раздела `BOOTLOADER_STATE` — размер сектора, в котором он лежит.
 ///
 /// Цельный `Flash` объявляет страницей самый крупный сектор чипа, а
@@ -182,27 +165,13 @@ const _: () = assert!(
 );
 {%- endif %}
 
-/// Начало раздела `CONFIG`: смещение от базы flash, `memory.x` считает его тем
-/// же расчётом. Приезжает переменной среды `CONFIG_START` из `[env]`
-/// `crates-cross/.cargo/config.toml`, а не линкерным символом (`unsafe extern`).
-const CONFIG_START: u32 = match u32::from_str_radix(env!("CONFIG_START"), 10) {
-    Ok(start) => start,
-    Err(_) => panic!("CONFIG_START в [env] crates-cross/.cargo/config.toml — не число"),
-};
-
-/// Конец раздела `CONFIG` — см. [`CONFIG_START`].
-const CONFIG_END: u32 = match u32::from_str_radix(env!("CONFIG_END"), 10) {
-    Ok(end) => end,
-    Err(_) => panic!("CONFIG_END в [env] crates-cross/.cargo/config.toml — не число"),
-};
-
 // Раздел строится как `Partition` над страницей [`CONFIG_ERASE_SIZE`], и
 // `Partition::new` паникует на старте, если его границы не кратны ей. Расчёт
 // раскладки в генерации держит их на границах, а это — проверка при компиляции,
 // чтобы ручная правка `[env]` не превратилась в панику на плате.
 const _: () = assert!(
-    (CONFIG_START as usize).is_multiple_of(CONFIG_ERASE_SIZE)
-        && (CONFIG_END as usize).is_multiple_of(CONFIG_ERASE_SIZE),
+    (crate::layout::CONFIG_START as usize).is_multiple_of(CONFIG_ERASE_SIZE)
+        && (crate::layout::CONFIG_END as usize).is_multiple_of(CONFIG_ERASE_SIZE),
     "раздел CONFIG не на границах своей страницы (CONFIG_ERASE_SIZE): Partition::new паникует"
 );
 {%- endif %}
@@ -428,7 +397,7 @@ pub(crate) fn firmware(flash: &'static FlashMutex) -> FirmwareFlash {
     adapters::ota::Linked::new(
         DFU_FLASH.init(mutex::Mutex::new(dfu)),
         STATE_FLASH.init(mutex::Mutex::new(state)),
-        ACTIVE_LEN,
+        crate::layout::ACTIVE_LEN,
     )
 }
 {%- endif %}
@@ -444,7 +413,11 @@ pub(crate) fn config(flash: &'static FlashMutex) -> ConfigFlash {
     let backing = BlockingAsync::new(BlockingPartition::new(flash, 0, SIZE));
 {%- endif %}
     let backing = CONFIG_FLASH.init(mutex::Mutex::new(backing));
-    Partition::new(backing, CONFIG_START, CONFIG_END - CONFIG_START)
+    Partition::new(
+        backing,
+        crate::layout::CONFIG_START,
+        crate::layout::CONFIG_END - crate::layout::CONFIG_START,
+    )
 }
 {%- endif %}
 {%- if eeprom_here == "true" %}

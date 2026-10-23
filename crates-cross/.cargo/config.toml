@@ -71,7 +71,7 @@ WATCHDOG_TIMEOUT_US = "10000000"
 # собственные константы через `unsafe extern` незачем.
 {%- if active_len != "" %}
 # Размер раздела `ACTIVE` в байтах — самый длинный образ, который доедет до
-# устройства (`bsp::flash`, `bsp::external`).
+# устройства (`bsp::layout`).
 ACTIVE_LEN = "{{active_len}}"
 {%- endif %}
 {%- if ota_store == "external" %}
@@ -112,7 +112,7 @@ BDMA_NC_LEN = "{{bdma_nc_len}}"
 {%- endif %}
 {%- endif %}
 {%- if config_start != "" %}
-# Границы раздела настроек (`bsp::flash`, `bsp::external`): смещения от базы flash — так их
+# Границы раздела настроек (`bsp::layout`): смещения от базы flash — так их
 # ждёт `embassy_stm32::flash::Flash` — или от начала внешней флеши.
 CONFIG_START = "{{config_start}}"
 CONFIG_END = "{{config_end}}"

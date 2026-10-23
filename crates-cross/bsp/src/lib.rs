@@ -30,6 +30,9 @@ pub mod external;
 {%- if shared_flash == "true" %}
 pub mod flash;
 {%- endif %}
+{%- if ota == "true" or config_store == "flash" or config_store == "external" %}
+mod layout;
+{%- endif %}
 {%- if has_net == "true" %}
 pub mod net;
 {%- endif %}

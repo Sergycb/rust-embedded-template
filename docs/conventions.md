@@ -79,7 +79,7 @@ nextest убивает, а не ждёт до таймаута CI.
   `#[cfg(debug_assertions)]` на `use panic_probe as _;`, `#[cfg(not(debug_assertions))]`
   на собственном `#[panic_handler]`, который пишет причину через `panic-persist`
   (фича `custom-panic-handler`, штатного обработчика у крейта нет). У `boot` —
-  останов на `udf()` без сообщения (`boot/src/main.rs`). У
+  сброс МК без сообщения (`boot/src/main.rs`). У
   `crates-cross/target-tests` — паникёр самого `embedded-test`, там паника это
   способ сообщить раннеру про упавший тест. Инвариант «ровно один
   `#[panic_handler]` на бинарник» — именно на бинарник, а не на workspace

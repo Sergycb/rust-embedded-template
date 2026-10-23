@@ -12,7 +12,7 @@
 
 - `firmware` (`FirmwareFlash` — `adapters::ota::Linked`) — флеш под
   обновлением, ещё не нарезанный: носители `DFU` и `BOOTLOADER_STATE` со своими
-  страницами и размер `ACTIVE` (`ACTIVE_LEN`, переменная среды из `[env]`). Где в
+  страницами и размер `ACTIVE` (`ACTIVE_LEN` из `[env]`, разбирает `bsp::layout`). Где в
   нём лежат разделы, знает алгоритм обновления, а не плата: их находит узел OTA
   по символам `memory.x` (`FirmwareUpdaterConfig::from_linkerfile`), когда
   собирает адаптер (`adapters::ota::Updater`, порт `ports::FirmwareLayout`).
