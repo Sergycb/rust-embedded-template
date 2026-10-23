@@ -3,10 +3,10 @@
 
 use core::cell::RefCell;
 {% if state_paged == "true" %}
-use bsp::ota::STATE_ERASE_SIZE;
+use bsp::flash::STATE_ERASE_SIZE;
 {%- endif %}
 {%- if swap_paged == "true" and dfu_bank != "true" %}
-use bsp::ota::SWAP_PAGE_SIZE;
+use bsp::flash::SWAP_PAGE_SIZE;
 {%- endif %}
 use defmt::info;
 // RTT — дефолтный транспорт в обоих профилях (см. crates-cross/app/src/main.rs);

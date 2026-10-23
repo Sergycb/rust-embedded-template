@@ -178,8 +178,9 @@ const _: () = assert!(
 /// раздаёт:
 ///
 /// ```ignore
-/// fragments: [::domain::OTA_FRAG<crate::ota::Updater, bsp::reset::Reboot> as OTA
-///                 = ::domain::ota::OtaWiring { source: board.ota,
+/// fragments: [::domain::OTA_FRAG<::adapters::ota::Updater<bsp::FirmwareFlash, false>,
+///                                bsp::reset::Reboot> as OTA
+///                 = ::domain::ota::OtaWiring { source: board.firmware,
 ///                                              reboot: bsp::reset::Reboot,
 ///                                              mode: ::domain::ota::Mode::Plain }];
 /// ```

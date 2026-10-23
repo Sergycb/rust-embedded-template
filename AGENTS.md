@@ -171,8 +171,10 @@ read`: руками пришлось бы сначала найти адрес �
 ## Инварианты, которые не ловит компилятор
 
 - Задачи `embassy` не могут быть generic: тип, уезжающий в `#[embassy_executor::task]`,
-  получает псевдоним (`pub type X = ...`): рычаг — от `bsp`, адаптер — от `app`
-  (`crate::link::<транспорт>::Link`, `crate::ota::Updater`) — `docs/architecture.md`.
+  получает псевдоним (`pub type X = ...`): рычаг — от `bsp` (`bsp::FirmwareFlash`,
+  `bsp::ConfigFlash`), адаптер — от `app` (`crate::link::<транспорт>::Link`) или
+  конкретным типом прямо в графе/задаче (`adapters::ota::Updater<bsp::FirmwareFlash, _>`)
+  — `docs/architecture.md`.
 - Ровно один `#[panic_handler]` и один активный `#[global_logger]` на бинарник: логгер
   резолвится линковкой по имени символа и даёт `multiply defined!` при нарушении;
   паникёр у каждого бинарника свой: у `app` — `crates-cross/app/src/panic.rs`,
@@ -197,9 +199,9 @@ read`: руками пришлось бы сначала найти адрес �
   узнаёт исход до сброса. Отказы до стирания обязаны оставаться такими:
   `Busy` и отсутствие подписи — до `Transfer::start`, длина — внутри него, до
   `prepare` — `docs/ota.md`.
-- `NoopRawMutex` у `bsp::flash::FlashMutex`, у мьютексов разделов `DFU` и `STATE`
-  (`bsp::ota::DFU_FLASH`, `bsp::ota::STATE_FLASH`), `CONFIG`
-  (`bsp::settings::CONFIG_FLASH`; с `ext_flash=yes` —
+- `NoopRawMutex` у `bsp::flash::FlashMutex`, у мьютексов носителей `DFU` и `STATE`
+  (`bsp::flash::DFU_FLASH`, `bsp::flash::STATE_FLASH`, их ждёт `adapters::ota::Linked`),
+  `CONFIG` (`bsp::flash::CONFIG_FLASH`; с `ext_flash=yes` —
   `bsp::external::ExternalMutex`{% if dfu_bank == "true" %}; `DFU` во втором банке —
   `bsp::flash::DfuBankMutex`{% endif %}) и `local` на слотах узла OTA
   (`domain::ota`) — одно допущение «один исполнитель», менять вместе —
@@ -228,7 +230,7 @@ read`: руками пришлось бы сначала найти адрес �
   используется, прыжок в наполовину переписанный `ACTIVE` недопустим — `docs/flash.md`, `docs/ota.md`.
 {%- if swap_paged == "true" %}
 - `SWAP_PAGE_SIZE` — число из генерации ({{page_size}}), переменная среды
-  `[env]` в `crates-cross/.cargo/config.toml`; константа — `bsp::ota::SWAP_PAGE_SIZE`,
+  `[env]` в `crates-cross/.cargo/config.toml`; константа — `bsp::flash::SWAP_PAGE_SIZE`,
   её берёт и `boot`:
   страница обмена крупнее физической, `ACTIVE` и `DFU`
   оборачиваются в `ErasePage<_, SWAP_PAGE_SIZE>` ради малого журнала `STATE`
@@ -236,13 +238,21 @@ read`: руками пришлось бы сначала найти адрес �
   (страница сектора `STATE`) — `docs/flash.md`.
 {%- endif %}
 - `STATE_ERASE_SIZE` — число из генерации, одно на `boot` и приложение (переменная
-  среды в `crates-cross/.cargo/config.toml`, константа — `bsp::ota::STATE_ERASE_SIZE`). {% if state_paged == "true" %}Здесь `BOOTLOADER_STATE` строится над
+  среды в `crates-cross/.cargo/config.toml`, константа — `bsp::flash::STATE_ERASE_SIZE`). {% if state_paged == "true" %}Здесь `BOOTLOADER_STATE` строится над
   `flash_page::ErasePage` со страницей своего сектора: над цельным `Flash` на F2/F4/F7 раздел не
   кратен его странице, и `Partition::new` паникует на старте.{% else %}Здесь сектор `STATE` равен
   странице цельного `Flash`, поэтому раздел строится прямо над ним, а равенство держит
-  `const`-assert рядом с константой (`bsp::ota`).{% endif %} Так же и `CONFIG`
-  (`CONFIG_ERASE_SIZE` в `bsp::settings`): с OTA он может лежать в мелких секторах перед
+  `const`-assert рядом с константой (`bsp::flash`).{% endif %} Так же и `CONFIG`
+  (`CONFIG_ERASE_SIZE` в `bsp::flash`): с OTA он может лежать в мелких секторах перед
   `ACTIVE` — `docs/flash.md`.
+- Флеш под обновлением плата отдаёт не нарезанным (`board.firmware:
+  bsp::FirmwareFlash` = `adapters::ota::Linked`: носители `DFU`/`STATE` со своими
+  страницами и размер `ACTIVE`); разделы по символам `memory.x`
+  (`FirmwareUpdaterConfig::from_linkerfile`) находит узел OTA, собирая адаптер
+  (порт `ports::FirmwareLayout`). Нарезка стоит под `cfg(target_os = "none")`:
+  host-lint и host-тесты её не видят (там вместо неё — готовые
+  `ports::FirmwarePartitions`), проверяет её только `cargo xtask lint cross`/`build` —
+  `docs/ota.md`.
 {%- if bank_switch != "" %}
 - Флеш этого чипа с завода двухбанковый, а раскладка одобанковая:
   `bsp::banks::ensure_single_bank()` стоит первой строкой и в `boot`, и в
@@ -311,7 +321,7 @@ read`: руками пришлось бы сначала найти адрес �
   `Node<'f>` живёт в состояниях. Не переносить их в `static` или слот: тип
   замыкания там не назвать, а колбэки `zencan` своих данных не получают.
   Ключи `OBJECTS_KEY` и `NODE_ID_KEY` хранилища настроек заняты узлом{% if config == "true" %}, и носитель
-  (`board.settings`) забирает он — хранилище над ним собирает сам узел
+  (`board.config`) забирает он — хранилище над ним собирает сам узел
   (`Assemble`), и своим настройкам проекта нужен общий доступ через него{% endif %} —
   `domain::canopen`.
 {%- endif %}
@@ -324,13 +334,13 @@ read`: руками пришлось бы сначала найти адрес �
 {%- endif %}
 - Хранилище настроек — `adapters::settings` над любым async `NorFlash`, на весь
   его объём. Носитель отдаёт плата рычагом `NorFlash`
-  (`board.settings: bsp::settings::ConfigFlash`): раздел `CONFIG` внутреннего
+  (`board.config: bsp::ConfigFlash`): раздел `CONFIG` внутреннего
   флеша, EEPROM L0/L1 (доступ — порт `ports::EepromAccess`, обёртку
   `adapters::eeprom::Eeprom` собирает сама плата) или внешняя флеш W25Q (драйвер
   `w25q` в `bsp::external`, шина — заглушка `bsp::stub::FlashBus`, пока проект не
   подставит выводы). Само хранилище собирает узел-потребитель (`Assemble`) над
-  `board.settings`; `crates-cross/app/src/settings.rs` — только псевдоним
-  `crate::settings::Settings`. EEPROM под хранилищем инвертирована: без
+  `board.config`; тип — `adapters::settings::Settings<bsp::ConfigFlash>` прямо в
+  графе/задаче. EEPROM под хранилищем инвертирована: без
   этого заводские нули выглядели бы для `sequential-storage` закрытыми
   страницами — `docs/flash.md`.
 {%- if graph == "true" %}
@@ -414,12 +424,12 @@ read`: руками пришлось бы сначала найти адрес �
   в `graph.rs` свою логику — тоже.
 - `Board` отдаёт рычаги платы — объекты под трейтами (`embedded-io-async`,
   `embedded-storage`, порты `ports` там, где стандартного трейта нет,
-  `HardwareWatchdog`): потоки, шины, разделы флеша (`ota`, `settings`), драйверы
+  `HardwareWatchdog`): потоки, шины, куски флеша (`firmware`, `config`), драйверы
   микросхем платы, данные о чипе (`bsp::ChipSpec`), — и ничего не настраивает:
   ни периферии ядра, ни `Peripherals`, ни `Clocks` в полях нет. Протоколов над
   рычагами (кадрирование, сокеты, адаптер обновления, хранилище) и их буферов в
-  `bsp` нет: тип и статики — в `app` (`link`, `net`, `ota`, `settings`), собирает
-  узел. Заглушка периферии до драйвера — `bsp::stub` — `docs/architecture.md`.
+  `bsp` нет: тип и статики — в `app` (`link`, `net`) или тип прямо в графе
+  (адаптер обновления, хранилище), собирает узел. Заглушка периферии до драйвера — `bsp::stub` — `docs/architecture.md`.
 {%- if external_flash == "true" %}
 - Внешняя флеш — W25Q, драйвер `w25q` (hw-drivers, `rev` закреплён) в
   `bsp::external`; шина под ним — заглушка `bsp::stub::FlashBus`, пока плата

@@ -11,13 +11,13 @@ pub mod {{ f[4] }} {
     use embassy_executor::Spawner;
 
     /// Хранилище узла: {% if config == "true" %}раздел настроек платы{% else %}раздела настроек нет — объекты и адрес не сохраняются{% endif %}.
-    type Store = {% if config == "true" %}crate::settings::Settings{% else %}adapters::settings::Unavailable{% endif %};
+    type Store = {% if config == "true" %}adapters::settings::Settings<bsp::ConfigFlash>{% else %}adapters::settings::Unavailable{% endif %};
 
     /// Шина узла.
     type Bus = bsp::can::{{ f[4] }}::Can;
 
     /// Из чего собрать хранилище: {% if config == "true" %}раздел настроек платы{% else %}не из чего{% endif %}.
-    type StoreSource = {% if config == "true" %}bsp::settings::ConfigFlash{% else %}(){% endif %};
+    type StoreSource = {% if config == "true" %}bsp::ConfigFlash{% else %}(){% endif %};
 
     #[embassy_executor::task]
     async fn task(mut bus: Bus, store: StoreSource) {

@@ -72,7 +72,7 @@ cargo run -p app                    # прошить приложение и с�
 | Что | Где | Зачем |
 |---|---|---|
 | Распиновка платы | `crates-cross/bsp/src/resources.rs` | `assign_resources!` разложит `Peripherals` по именованным группам — из них `bsp` соберёт драйверы; наружу уходит не периферия, а объект платы под трейтом (`docs/resources.md`) |
-| Сборка адаптеров | `crates-cross/app/src/` (`parts`, `link`, `usb`, `net`, `ota`, `settings`) | транспорты протоколов, сетевой стек, USB-устройство, адаптер обновления и хранилище настроек над объектами платы — с буферами и портами, которые нужны приложению |
+| Сборка адаптеров | `crates-cross/app/src/` (`link`, `net`, `graph.rs`/`tasks`) | типы и буферы каналов протоколов и служб; адаптер обновления и хранилище настроек над кусками флеша платы — их тип назван прямо во входе узла |
 | Граф задач | `crates-cross/app/src/graph.rs` | `supervisor_graph!`: порядок старта, watchdog, обмен между задачами |
 | Логика и узлы графа | `crates-host/domain/` | всё, что не про регистры: автоматы, протоколы, конфигурация, а также объявления узлов (`supervisor_fragment!`) и их работа (`domain::heartbeat::run`, `domain::cpu_load::task` — автоматы `#[fsm::typestate]` на контексте узла) — тестируется на хосте; логика вне автоматов — функции над портами |
 | Адаптеры без чипа | `crates-host/adapters/` | реализации портов, которым хватает `embedded-storage`/`embedded-hal`/`embedded-io-async`: OTA поверх `embassy-boot` (`adapters::ota`), настройки поверх `sequential-storage` (`adapters::settings`){% if cobs_used == "true" %}, кадрирование потока COBS + CRC (`adapters::cobs`){% endif %}{% if protocol == "modbus" %}, транспорты Modbus (`adapters::modbus`){% endif %} — тестируется на хосте |
@@ -271,9 +271,11 @@ flash и безусловно прыгает в него (`unsafe { bl.load(entr
 `OTA` (`domain::ota`) принимает образ командами в раздел `DFU`, применяет его
 (`mark_updated` или, с подписью, `domain::ota::update::apply_signed`) и отвечает
 исходом на каждую команду. Адаптер `adapters::ota` (поверх `embassy-boot`) пишет
-образ и хранит состояние bootloader'а. `crates-cross/bsp/src/ota.rs` собирает
-его из линкерных символов `memory.x` и чисел раскладки в `[env]`, `Board` отдаёт
-его полем `ota`, а граф забирает одной строкой (`fragments:` в
+образ и хранит состояние bootloader'а. Плата отдаёт ему только флеш —
+поле `firmware` (`bsp::FirmwareFlash`, `crates-cross/bsp/src/flash.rs`: носители
+со своими страницами из чисел раскладки в `[env]`); разделы `DFU` и
+`BOOTLOADER_STATE` по символам `memory.x` в нём находит узел, когда собирает
+адаптер. Граф забирает поле одной строкой (`fragments:` в
 `crates-cross/app/src/graph.rs`). Версию образа задаёт приложение
 (`crates-cross/app/src/image.rs`), а не плата; ключ подписи зашит в bootloader
 (`crates-cross/boot`).
@@ -493,19 +495,21 @@ docs/ota.md.
 (`--define config=yes`). Где они лягут, решает ответ про внешнюю флеш
 (`ext_flash`, первый из вопросов о памяти): есть она — раздел на ней, нет —
 внутренняя EEPROM, если она есть у чипа, иначе раздел `CONFIG` во flash.
-Выбрали хранилище — `Board` отдаёт поле `settings`, носитель: раздел `CONFIG`,
-EEPROM или внешнюю флеш (`crates-cross/bsp/src/settings.rs`: раздел — от границ
-`CONFIG` из генерации, EEPROM — обёрнутая платой в `NorFlash`). Само хранилище —
+Выбрали хранилище — `Board` отдаёт поле `config` (`bsp::ConfigFlash`), носитель:
+раздел `CONFIG`, EEPROM или внешнюю флеш (`crates-cross/bsp/src/flash.rs` или
+`external.rs`: раздел — от границ `CONFIG` из генерации, EEPROM — обёрнутая платой
+в `NorFlash`). Само хранилище —
 `adapters::settings::Settings` (тестируется на хосте) поверх `sequential-storage`
 на весь объём носителя, пары «ключ — значение», переживающие и перезапуск, и
 обновление прошивки, — собирает узел, которому оно нужно (порт `Assemble`, тип —
-псевдоним `crate::settings::Settings` в `crates-cross/app/src/settings.rs`).
+`adapters::settings::Settings<bsp::ConfigFlash>` во входе узла).
 
 ```rust
 use ports::{Assemble, SettingsStorage}; // чтение и запись живут в порту
 
 // Узел в `domain`, обобщённый по хранилищу `S` (граф подставит
-// `crate::settings::Settings`), собирает его над носителем `board.settings`.
+// `adapters::settings::Settings<bsp::ConfigFlash>`), собирает его над носителем
+// `board.config`.
 let mut settings = S::assemble(store, ());
 settings.write(KEY_CALIBRATION, &encoded).await?;
 if let Some(raw) = settings.read(KEY_CALIBRATION, &mut scratch).await? {

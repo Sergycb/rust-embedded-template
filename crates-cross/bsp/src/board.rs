@@ -60,20 +60,19 @@ pub struct Board {
     pub cycles: crate::cycles::Cycles,
 {%- endif %}
 {%- if ota == "true" %}
-    /// Разделы обновления `DFU`/`BOOTLOADER_STATE`, собранные из символов
-    /// `memory.x`, и предел образа (`bsp::ota`). Адаптер обновления — порт
-    /// `FirmwareUpdate` — собирает над ними узел OTA (`ports::Assemble`, тип —
-    /// `crates-cross/app/src/ota.rs`); алгоритм обновления над портами — в
-    /// `domain::ota`.
-    pub ota: crate::ota::Partitions,
+    /// Флеш под обновлением{% if ota_store == "external" %} — на внешней флеши{% endif %} ([`crate::FirmwareFlash`]): носители `DFU` и
+    /// `BOOTLOADER_STATE` со своими страницами и размер `ACTIVE`. Разделы в нём
+    /// по символам `memory.x` находит узел OTA, когда собирает над ним адаптер
+    /// обновления (`adapters::ota::Updater`, порт `Assemble`); алгоритм
+    /// обновления над портами — в `domain::ota`.
+    pub firmware: crate::FirmwareFlash,
 {%- endif %}
 {%- if config == "true" %}
-    /// Носитель настроек, переживающих перезапуск и обновление прошивки:
-    /// {% if config_store == "eeprom" %}внутренняя EEPROM{% elsif config_store == "external" %}раздел на внешней флеши (драйвер — `bsp/src/external.rs`){% else %}раздел `CONFIG` во флеше{% endif %} (`bsp::settings`).
+    /// Носитель настроек, переживающих перезапуск и обновление прошивки
+    /// ([`crate::ConfigFlash`]): {% if config_store == "eeprom" %}внутренняя EEPROM{% elsif config_store == "external" %}раздел на внешней флеши (драйвер — `bsp/src/external.rs`){% else %}раздел `CONFIG` во флеше{% endif %}.
     /// Хранилище над ним — `adapters::settings` — собирает узел-потребитель
-    /// (`ports::Assemble`, тип — `crates-cross/app/src/settings.rs`); формат
-    /// значений выбирает проект.
-    pub settings: crate::settings::ConfigFlash,
+    /// (`ports::Assemble`); формат значений выбирает проект.
+    pub config: crate::ConfigFlash,
 {%- endif %}
 {%- assign xs = links | split: "," %}
 {%- for l in xs %}
@@ -244,10 +243,10 @@ impl Board {
             cycles: crate::cycles::Cycles::new(sys_hz),
 {%- endif %}
 {%- if ota == "true" %}
-            ota: crate::ota::new({% if ota_store == "external" %}external{% elsif dfu_bank == "true" %}flash, dfu_bank{% else %}flash{% endif %}),
+            firmware: {% if ota_store == "external" %}crate::external::firmware(external){% elsif dfu_bank == "true" %}crate::flash::firmware(flash, dfu_bank){% else %}crate::flash::firmware(flash){% endif %},
 {%- endif %}
 {%- if config == "true" %}
-            settings: crate::settings::new({% if config_store != "external" %}flash{% else %}external{% endif %}),
+            config: {% if config_store != "external" %}crate::flash::config(flash){% else %}crate::external::config(external){% endif %},
 {%- endif %}
 {%- for l in xs %}
 {%- assign f = l | split: ":" %}

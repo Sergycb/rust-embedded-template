@@ -42,11 +42,11 @@ if ota == "true" {
 if config == "true" {
 	let store = variable::get("config_store");
 	if store == "eeprom" {
-		print("Настройки: внутренняя EEPROM чипа (crates-cross/bsp/src/settings.rs, поле Board::settings); хранилище над ней собирает узел-потребитель, тип — crates-cross/app/src/settings.rs.");
+		print("Настройки: внутренняя EEPROM чипа (crates-cross/bsp/src/flash.rs, поле Board::config); хранилище над ней (adapters::settings) собирает узел-потребитель.");
 	} else if store == "external" {
-		print("Настройки: внешняя флеш — подставьте шину драйвера в crates-cross/bsp/src/external.rs; хранилище над ней собирает узел-потребитель, тип — crates-cross/app/src/settings.rs.");
+		print("Настройки: внешняя флеш — подставьте шину драйвера в crates-cross/bsp/src/external.rs (поле Board::config); хранилище над ней (adapters::settings) собирает узел-потребитель.");
 	} else {
-		print("Настройки: раздел CONFIG во flash (crates-cross/bsp/src/settings.rs, поле Board::settings); хранилище над ним собирает узел-потребитель, тип — crates-cross/app/src/settings.rs.");
+		print("Настройки: раздел CONFIG во flash (crates-cross/bsp/src/flash.rs, поле Board::config); хранилище над ним (adapters::settings) собирает узел-потребитель.");
 	}
 }
 if variable::get("graph") == "true" {

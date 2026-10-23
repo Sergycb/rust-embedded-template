@@ -133,7 +133,7 @@ impl HeartbeatCtx<'_> {
   указывает в крейт фрагмента и переживает переименование зависимости в чужом
   манифесте, а `crate::` означал бы крейт, который фрагмент вызывает. Типы,
   которых фрагмент назвать не может (адаптер платы в слоте), — его параметры:
-  `name: OTA_FRAG<F, R>` во фрагменте, `::domain::OTA_FRAG<crate::ota::Updater, bsp::reset::Reboot>` здесь.
+  `name: OTA_FRAG<F, R>` во фрагменте, `::domain::OTA_FRAG<::adapters::ota::Updater<bsp::FirmwareFlash, true>, bsp::reset::Reboot>` здесь.
 * **Порядок items фиксирован**: `name:` → `boot:` → `watchdog:` →
   `cloned:`/`shared:` → `executor` → `fragments:` последним. `fragments:`
   раньше `boot:` — ошибка разбора; блок `watchdog:` внутри фрагмента — тоже
@@ -445,14 +445,15 @@ async fn uart_drain_task(mut uart: embassy_stm32::usart::UartTx<'static, embassy
 (`docs/ota.md`). Своего канала у образа нет: он идёт по протоколу,
 которым хост и так говорит с устройством (`docs/ota.md`).
 
-Плата отдаёт для узла разделы обновления `board.ota`
-(`bsp::ota::Partitions` — `ports::FirmwarePartitions`) и порт перезагрузки
-`bsp::reset::Reboot`; эта сторона кладёт их во вход фрагмента, а адаптер
-обновления над разделами собирает сам узел (`ports::Assemble`): `bsp` про
-`domain` не знает (`= ::domain::ota::OtaWiring { source: board.ota, reboot:
+Плата отдаёт для узла флеш под обновлением `board.firmware`
+(`bsp::FirmwareFlash` — `adapters::ota::Linked`, ещё не нарезанный) и порт
+перезагрузки `bsp::reset::Reboot`; эта сторона кладёт их во вход фрагмента, а
+адаптер обновления собирает сам узел (`ports::Assemble`), нарезая флеш на `DFU` и
+`STATE` по символам `memory.x`: `bsp` про `domain` не знает
+(`= ::domain::ota::OtaWiring { source: board.firmware, reboot:
 bsp::reset::Reboot, mode: ::domain::ota::Mode::Signed { running_version:
 crate::image::FW_VERSION } }`). Типы слотов — аргументы фрагмента
-(`OTA_FRAG<crate::ota::Updater, bsp::reset::Reboot>`):
+(`OTA_FRAG<::adapters::ota::Updater<bsp::FirmwareFlash, true>, bsp::reset::Reboot>`):
 слот — `static`, тип ему нужен, а знает его только эта сторона. Слот адаптера — `local` (фича
 `supervisor/local-resources` в
 `crates-cross/Cargo.toml`): объекты платы `!Send`, и граф держит их на своём

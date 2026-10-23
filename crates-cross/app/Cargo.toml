@@ -51,8 +51,8 @@ domain = { workspace = true }
 # Адаптеры над рычагами платы собирают узлы (`ports::Assemble`), а приложение
 # называет их типы и заводит их буферы: каналы протоколов
 # (`adapters::modbus::Rtu`, `adapters::cobs::Cobs`) вокруг потока, CDC или стека{% if ota == "true" %},
-# адаптер обновления (`adapters::ota`, src/ota.rs){% endif %}{% if config == "true" %}, хранилище настроек
-# (`adapters::settings`, src/settings.rs){% endif %}{% if net_services contains "mqtt" %}, буферы клиента MQTT (src/net.rs){% endif %}.
+# адаптер обновления (`adapters::ota::Updater`){% endif %}{% if config == "true" %}, хранилище настроек
+# (`adapters::settings::Settings`){% endif %}{% if net_services contains "mqtt" %}, буферы клиента MQTT (src/net.rs){% endif %}.
 adapters = { workspace = true }
 {%- endif %}
 {%- if has_net == "true" %}

@@ -33,9 +33,6 @@ pub mod flash;
 {%- if has_net == "true" %}
 pub mod net;
 {%- endif %}
-{%- if ota == "true" %}
-pub mod ota;
-{%- endif %}
 pub mod reset;
 {%- if has_net == "true" %}
 {%- if rng_irq != "" %}
@@ -44,9 +41,6 @@ pub mod rng;
 {%- endif %}
 {%- if has_uart == "true" %}
 pub mod serial;
-{%- endif %}
-{%- if config == "true" %}
-pub mod settings;
 {%- endif %}
 {%- if has_stub == "true" %}
 pub mod stub;
@@ -59,3 +53,17 @@ pub mod wdg;
 {%- endif %}
 
 pub use board::{Board, ChipSpec};
+{%- if config == "true" %}
+{%- if config_store == "external" %}
+pub use external::ConfigFlash;
+{%- else %}
+pub use flash::ConfigFlash;
+{%- endif %}
+{%- endif %}
+{%- if ota == "true" %}
+{%- if ota_store == "external" %}
+pub use external::FirmwareFlash;
+{%- else %}
+pub use flash::FirmwareFlash;
+{%- endif %}
+{%- endif %}

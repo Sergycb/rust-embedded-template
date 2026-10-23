@@ -4,8 +4,9 @@ paths: crates-cross/**
 
 - Задачи embassy не могут быть generic: объект, уезжающий в
   `#[embassy_executor::task]`, обязан иметь псевдоним типа (рычагу платы — в
-  `bsp`, адаптеру — в модуле `app`, который выбирает его тип: `crate::link`,
-  `crate::ota`, `crate::settings`).
+  `bsp`: `bsp::FirmwareFlash`, `bsp::ConfigFlash`; адаптеру — в модуле `app`,
+  который выбирает его тип, `crate::link`, или конкретный тип прямо во входе узла:
+  `adapters::ota::Updater<bsp::FirmwareFlash, _>`, `adapters::settings::Settings<bsp::ConfigFlash>`).
 - Ровно один `#[panic_handler]` и один `#[global_logger]` на бинарник — это
   ограничение линкера, а не Cargo. Развилка по профилю делается через
   `#[cfg(debug_assertions)]` (паникёр — `app/src/panic.rs`; у `boot` свой, `udf()`

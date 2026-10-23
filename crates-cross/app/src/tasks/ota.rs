@@ -9,6 +9,9 @@ use embassy_sync::signal::Signal;
 {%- endif %}
 use sync_request::RpcService;
 
+/// Адаптер обновления над флешем платы — тип слота `FLASH` фрагмента `OTA_FRAG`.
+type Updater = adapters::ota::Updater<bsp::FirmwareFlash, {{signed}}>;
+
 /// Вход команд узла — то, что с графом заводит `request:` фрагмента
 /// `OTA_FRAG`, той же ёмкости (`domain::ota::CMD_BYTES`). Клиента{% if has_modbus != "true" and has_protobuf != "true" and has_canopen != "true" %} получает ваш протокол
 /// (`domain::ota::OtaClient` над `CMD.requester()`); без него узел только подтверждает образ{% else %} получает каждая задача протокола —
@@ -34,9 +37,10 @@ pub static READY_{{ f[4] | upcase }}: Signal<CriticalSectionRawMutex, ()> = Sign
 {%- endfor %}
 
 #[embassy_executor::task]
-async fn task(partitions: bsp::ota::Partitions, mut mode: domain::ota::Mode) {
-    // Адаптер обновления — над разделами платы, как в слоте фрагмента `OTA_FRAG`.
-    let mut flash = <crate::ota::Updater as domain::Assemble>::assemble(partitions, ());
+async fn task(firmware: bsp::FirmwareFlash, mut mode: domain::ota::Mode) {
+    // Адаптер обновления — над флешем платы, как в слоте фрагмента `OTA_FRAG`:
+    // `assemble` и режет его на разделы.
+    let mut flash = <Updater as domain::Assemble>::assemble(firmware, ());
     let mut reboot = bsp::reset::Reboot;
     let mut confirmed = false;
     domain::ota::task(domain::ota::OtaCtx {
@@ -62,10 +66,10 @@ async fn task(partitions: bsp::ota::Partitions, mut mode: domain::ota::Mode) {
     .await;
 }
 
-/// Спавнит узел над разделами платы — адаптер обновления собирается в задаче;
+/// Спавнит узел над флешем платы под обновлением — адаптер обновления собирается в задаче;
 /// режим —
 /// {% if signed == "true" %}`Signed` с версией этого образа (`crate::image::FW_VERSION`){% else %}`Plain`{% endif %}.
-pub fn spawn(spawner: embassy_executor::Spawner, partitions: bsp::ota::Partitions) {
+pub fn spawn(spawner: embassy_executor::Spawner, firmware: bsp::FirmwareFlash) {
 {%- if signed == "true" %}
     let mode = domain::ota::Mode::Signed {
         running_version: crate::image::FW_VERSION,
@@ -73,5 +77,5 @@ pub fn spawn(spawner: embassy_executor::Spawner, partitions: bsp::ota::Partition
 {%- else %}
     let mode = domain::ota::Mode::Plain;
 {%- endif %}
-    spawner.spawn(task(partitions, mode).expect("задача OTA свежая: спавнится один раз"));
+    spawner.spawn(task(firmware, mode).expect("задача OTA свежая: спавнится один раз"));
 }

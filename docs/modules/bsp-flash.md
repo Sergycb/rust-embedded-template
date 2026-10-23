@@ -1,20 +1,51 @@
-Флеш платы: общий замок над контроллером.
+Флеш платы: общий замок над контроллером и куски флеша, которые плата отдаёт
+узлам.
 
-Контроллер флеша на чипе один, а работать с ним нужно всем сразу{% if ota == "true" and ota_store != "external" %}: разделам
-`DFU` и `BOOTLOADER_STATE` обновления{% endif %}{% if config == "true" and config_store == "flash" %}, разделу `CONFIG` настроек{% elsif config == "true" and config_store == "eeprom" %}, EEPROM настроек (она пишется через тот же контроллер){% endif %}. Поэтому объект
-создаётся ровно один раз (`flash::new`, ему отдаётся блок `FLASH` из группы
-`flash` в `resources.rs`), лежит в `static` под блокирующим замком
-(`FlashMutex`), а потребители получают на него ссылки.
+Контроллер флеша на чипе один, а работать с ним нужно всем сразу{% if ota == "true" and ota_store != "external" %}: флешу под
+обновлением (`DFU` и `BOOTLOADER_STATE`){% endif %}{% if config == "true" and config_store == "flash" %}, разделу `CONFIG` настроек{% elsif config == "true" and config_store == "eeprom" %}, EEPROM настроек (она пишется через тот же контроллер){% endif %}. Поэтому объект
+создаётся ровно один раз (`flash::new`, ему отдаётся группа `flash` из
+`resources.rs`), лежит в `static` под блокирующим замком (`FlashMutex`), а
+куски флеша получают на него ссылки.
 
-Каждый потребитель строит свой раздел на месте:
-`BlockingPartition::new(flash, 0, flash::SIZE)` из `embassy-embedded-hal` — раздел
-на весь флеш с нулевым смещением ([`Whole`]). Операции идут под замком, по
-одной.{% if erase_page == "true" %} Если нужна другая страница стирания (`STATE`, `CONFIG`, страница
-обмена), поверх раздела ставится `flash_page::ErasePage`.{% endif %} Асинхронный
-вид для `embassy-boot` и `sequential-storage` даёт
-`embassy_embedded_hal::adapter::BlockingAsync`. `BlockingPartition::new`
-паникует, если объём не кратен `ERASE_SIZE`; у STM32 он всегда кратен самому
-крупному сектору, и `const`-assert в `bsp::flash` и `boot` проверяет это при
-сборке{% if dfu_bank == "true" %} (банк 2 на этом чипе — отдельный раздел, `flash::DFU_BANK_SIZE`){% endif %}.
+Куски — рычаги платы, полями `Board`:
+{%- if ota == "true" and ota_store != "external" %}
+
+- `firmware` (`FirmwareFlash` — `adapters::ota::Linked`) — флеш под
+  обновлением, ещё не нарезанный: носители `DFU` и `BOOTLOADER_STATE` со своими
+  страницами и размер `ACTIVE` (`ACTIVE_LEN`, переменная среды из `[env]`). Где в
+  нём лежат разделы, знает алгоритм обновления, а не плата: их находит узел OTA
+  по символам `memory.x` (`FirmwareUpdaterConfig::from_linkerfile`), когда
+  собирает адаптер (`adapters::ota::Updater`, порт `ports::FirmwareLayout`).
+  Обмен копирует ровно `ACTIVE`, поэтому предел образа — он, а не `DFU`.
+{%- if state_paged == "true" %} Носитель
+  `BOOTLOADER_STATE` — `flash_page::ErasePage` со страницей своего сектора
+  (`STATE_ERASE_SIZE`): над цельным `Flash` раздел не кратен его странице.{% else %} Сектор `BOOTLOADER_STATE` равен странице
+  цельного `Flash`, и носитель — он сам (равенство проверяет `const`-assert).{% endif %}
+{%- if swap_paged == "true" %} Носитель `DFU` — `ErasePage` со страницей
+  обмена `SWAP_PAGE_SIZE`, крупнее физической: так журнал `BOOTLOADER_STATE`
+  короче, и коду bootloader'а остаётся почти весь его блок.{% endif %}{% if dfu_bank == "true" %} `DFU` — в банке 2 за разрывом
+  адресов (`DfuBankMutex`): цельный `Flash` туда не дотягивается.{% endif %} Те же
+  числа (`STATE_ERASE_SIZE`{% if swap_paged == "true" %}, `SWAP_PAGE_SIZE`{% endif %}) берёт отсюда bootloader — разделам в
+  приложении и в нём расходиться негде.
+{%- endif %}
+{%- if config == "true" and config_store == "flash" %}
+
+- `config` (`ConfigFlash`) — раздел `CONFIG` (границы — `CONFIG_START`/`CONFIG_END`
+  из `[env]`, страница — `CONFIG_ERASE_SIZE`{% if config_paged == "true" %}, над `ErasePage`{% endif %}), над которым
+  узел-потребитель собирает хранилище (`adapters::settings`). Именно раздел:
+  запись за его границы отказывает, а не стирает `ACTIVE` или bootloader.
+{%- elsif config == "true" and config_store == "eeprom" %}
+
+- `config` (`ConfigFlash` — `adapters::eeprom::Eeprom` над `EepromFlash`) —
+  внутренняя EEPROM как `NorFlash`, под замком того же контроллера; над ней
+  узел-потребитель собирает хранилище (`adapters::settings`).
+{%- endif %}
+
+Носители строятся над разделом на весь флеш (`Whole`,
+`BlockingPartition::new(flash, 0, SIZE)`): смещения те же, что у самого
+флеша, операции идут под замком, по одной; асинхронный вид для `embassy-boot` и
+`sequential-storage` даёт `BlockingAsync`. `BlockingPartition::new` паникует,
+если объём не кратен `ERASE_SIZE`; у STM32 он всегда кратен самому крупному
+сектору, и `const`-assert здесь и в `boot` проверяет это при сборке.
 
 `NoopRawMutex` подразумевает один исполнитель — подробности в `docs/flash.md`.

@@ -141,7 +141,9 @@ pub use ota::command::{
     SIGNATURE_BYTES, reply_code,
 };
 pub use ota::download::DownloadError;
-pub use ota::update::{FirmwarePartitions, FirmwareUpdate, PendingImage, UpdateError};
+pub use ota::update::{
+    FirmwareLayout, FirmwarePartitions, FirmwareUpdate, PendingImage, UpdateError,
+};
 // {%- endif %}
 // {%- if settings_port == "true" %}
 pub use settings::SettingsStorage;

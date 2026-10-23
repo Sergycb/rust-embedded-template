@@ -32,7 +32,7 @@ Modbus, секреты служб. Объектов `app` не строит: а�
 
 От `bsp` bootloader зависит всегда: переключение банков (`bsp::banks`), подъём
 HAL (`bsp::board::init_peripherals` — на умолчаниях `embassy-stm32`, не на конфиге
-платы), константы раскладки (`bsp::ota`, `bsp::external`,
+платы), константы раскладки (`bsp::flash`, `bsp::external`,
 `bsp::wdg::HW_TIMEOUT_US`). Копий у `boot` больше нет. Точка входа
 (`cortex-m-rt`) и паникёр у него свои: паника и фолт — решение прошивки, а не
 рычаг платы, и у `boot` это останов на `udf()` без сообщения, а у `app` — дамп в
@@ -112,12 +112,13 @@ HAL (`bsp::board::init_peripherals` — на умолчаниях `embassy-stm32
 `SshWiring`, `MqttWiring` — написаны руками: структура, которую выводит фрагмент
 (`boot: … struct`), допускает в инициализаторе слота только чтение поля. `app`
 выбирает тип (параметр фрагмента: `crate::link::<транспорт>::Link`,
-`crate::ota::Updater`, `crate::settings::Settings`) и раздаёт поля платы и
+`adapters::ota::Updater<bsp::FirmwareFlash, _>`,
+`adapters::settings::Settings<bsp::ConfigFlash>`) и раздаёт поля платы и
 ссылки на свои статики (`crate::link::<транспорт>::buffers()`,
 `crate::net::mqtt_buffers()`). Та реализация, которой
-нужны `embassy_stm32::peripherals`, линкерный символ или регистр, — в
-`crates-cross/bsp`: сторож над IWDG (`bsp::wdg`), разделы флеша из символов
-`memory.x` (`bsp::flash`, `bsp::ota`, `bsp::settings`), заглушки периферии, пока
+нужны `embassy_stm32::peripherals` или регистр, — в `crates-cross/bsp`: сторож
+над IWDG (`bsp::wdg`), куски флеша со своими страницами (`bsp::flash`,
+`bsp::external`), заглушки периферии, пока
 нет драйвера (`bsp::stub`){% if erase_page == "true" %}. Страница раздела
 (`flash_page::ErasePage`) — свой хостовый крейт, общий у `bsp` и `boot`: это
 геометрия флеша, а не адаптер, и обмен `embassy-boot` над ней проверяется на
@@ -168,12 +169,12 @@ compose-site остаётся правое: таймаут узла плюс `WA
 
 **Типы ресурсных слотов** узла OTA — параметры фрагмента: `name: OTA_FRAG<F, R>`,
 а compose-site подставляет их в `fragments:` угловыми скобками
-(`::domain::OTA_FRAG<crate::ota::Updater, bsp::reset::Reboot>`). Слот — `static`, тип ему
+(`::domain::OTA_FRAG<::adapters::ota::Updater<bsp::FirmwareFlash, true>, bsp::reset::Reboot>`). Слот — `static`, тип ему
 нужен, а конкретный тип знает только `cross`; generic-`static` не бывает, и
 параметр — единственный способ фрагмента назвать тип, которого он не видит.
 Bound'ов у параметров нет намеренно: их держит сигнатура `ota::task`, и rustc
 проверяет её, а не копию в DSL. Слот адаптера (`FLASH`) к тому же помечен `local`,
-потому что `Updater` над разделами `bsp::ota` — `!Send` (держит `&'static Mutex<NoopRawMutex,
+потому что `Updater` над флешем `bsp::FirmwareFlash` — `!Send` (держит `&'static Mutex<NoopRawMutex,
 …>`), а обычный слот — `static`, которому нужен `Send`; `local` снимает это
 требование, но взамен обязывает держать значение на одном исполнителе — том,
 что спавнит граф, и не даёт перевести узел, чей `local`-слот заполнен
@@ -260,7 +261,7 @@ RAM. От килобайта и выше фрагмент пишет `resources:
 управлять, под трейтами: `embedded-io-async` (поток UART, поток CDC),
 `embedded-storage(-async)` (разделы флеша, носитель настроек), порты из
 `crates-host/ports` там, где стандартного трейта нет (`CanBus`,
-`FirmwarePartitions`, `CycleCounter`, `Reboot`), — и драйверы микросхем платы
+`FirmwareLayout`, `CycleCounter`, `Reboot`), — и драйверы микросхем платы
 (внешняя флеш W25Q; так же лягут датчики и светодиоды). `Peripherals`,
 отдельные пины и группы `assign_resources!` наружу из `bsp` не выходят: их
 потребляет сам `Board::new`, собирая рычаги. Приложение работает через трейты
@@ -309,14 +310,18 @@ device, cdc }` (классы `embassy-usb` регистрируются до п�
 теста. Забыть `arm()` нельзя: `HardwareWatchdog` реализован только у
 запущенного типа, а блок `watchdog:` требует именно его (`docs/watchdog.md`).
 
-Кроме сторожа в граф уезжает поле `ota` (`bsp::ota::Partitions` —
-`ports::FirmwarePartitions`: разделы `dfu`/`state` и предел образа `capacity`,
-равный `ACTIVE`). Compose-site кладёт его во вход узла,
-`domain::ota::OtaWiring { source: board.ota, reboot: bsp::reset::Reboot, mode }`,
-прямо в `fragments:`, а адаптер обновления (`crate::ota::Updater`, порт
-`FirmwareUpdate`) над ним собирает узел. Сам `bsp` про `domain` не знает: он
-строит разделы флеша (границы — из линкерных символов и `[env]`), логика приёма
-и применения образа живёт в `domain::ota` и видит только порты. Образ приходит не по каналу,
+Кроме сторожа в граф уезжает поле `firmware` (`bsp::FirmwareFlash` —
+`adapters::ota::Linked`: флеш под `DFU` и `STATE` со своими страницами и предел
+образа, равный `ACTIVE`). Compose-site кладёт его во вход узла,
+`domain::ota::OtaWiring { source: board.firmware, reboot: bsp::reset::Reboot, mode }`,
+прямо в `fragments:`, а адаптер обновления (`adapters::ota::Updater`, порт
+`FirmwareUpdate`) над ним собирает узел — и в этот момент режет флеш на разделы
+по символам `memory.x` (порт `ports::FirmwareLayout`: где лежат `DFU` и `STATE` —
+знание алгоритма обновления, а не платы). Сам `bsp` про `domain` не знает: он
+отдаёт флеш со страницами из `[env]`, логика приёма и применения образа живёт в
+`domain::ota` и видит только порты. Нарезка по символам есть только на МК
+(`cfg(target_os = "none")`): host-тесты подают адаптеру готовые
+`ports::FirmwarePartitions`, а саму нарезку проверяет сборка `crates-cross`. Образ приходит не по каналу,
 а командами узла протокола на вход узла `CMD` (`request:` графа, клиент —
 `ota_cmd_requester()`; `docs/ota.md`). Вместимость раздела адаптер отдаёт через
 порт же (`FirmwareUpdate::capacity`). Версия образа — свойство прошивки, а не
@@ -392,7 +397,9 @@ host-тестируем. Саму подпись
 нужен псевдоним — в сигнатуре `#[embassy_executor::task]` и у слота узла нужен
 конкретный тип. Рычагу платы его даёт `bsp` (`pub type Serial = ...`,
 `bsp::usb::<транспорт>::Device`/`Cdc`, `bsp::net::Stack`), адаптеру — модуль
-`app`, который выбирает его тип (`crate::link::<транспорт>::Link` и `Source`,
-`crate::ota::Updater`, `crate::settings::Settings`). Приложение при этом всё
+`app`, который выбирает его тип (`crate::link::<транспорт>::Link` и `Source`),
+или конкретный тип прямо во входе узла (`adapters::ota::Updater<bsp::FirmwareFlash, _>`,
+`adapters::settings::Settings<bsp::ConfigFlash>` — модуля под одну строку `app`
+не заводит). Приложение при этом всё
 равно зовёт только методы порта.
 

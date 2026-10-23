@@ -35,20 +35,16 @@ mod tests {
     use embassy_time::{Duration, Instant, Timer};
 
 {%- if ota == "true" %}
-    /// Адаптер обновления над разделами платы — так же, как его собирает узел
-    /// OTA (порт `Assemble`).
-    fn updater(
-        partitions: bsp::ota::Partitions,
-    ) -> adapters::ota::Updater<bsp::ota::Dfu, bsp::ota::State, {{signed}}> {
-        ports::Assemble::assemble(partitions, ())
+    /// Адаптер обновления над флешем платы — так же, как его собирает узел
+    /// OTA (порт `Assemble`): `assemble` режет флеш на разделы по `memory.x`.
+    fn updater(firmware: bsp::FirmwareFlash) -> adapters::ota::Updater<bsp::FirmwareFlash, {{signed}}> {
+        ports::Assemble::assemble(firmware, ())
     }
 {%- endif %}
 {%- if config == "true" and config_store != "external" %}
     /// Хранилище настроек над носителем платы — так же, как его собирает
     /// узел-потребитель (порт `Assemble`).
-    fn settings(
-        flash: bsp::settings::ConfigFlash,
-    ) -> impl ports::SettingsStorage<Error: core::fmt::Debug> {
+    fn settings(flash: bsp::ConfigFlash) -> impl ports::SettingsStorage<Error: core::fmt::Debug> {
         <adapters::settings::Settings<_> as ports::Assemble>::assemble(flash, ())
     }
 {%- endif %}
@@ -190,7 +186,7 @@ mod tests {
         }
 {%- endif %}
 
-        let mut ota = updater(board.ota);
+        let mut ota = updater(board.firmware);
 
         // Пачкаем раздел перед стиранием: иначе тест зелёный и в случае, когда
         // `prepare` не сделал ничего, а байты остались стёртыми с прошлого
@@ -278,7 +274,7 @@ mod tests {
         }
 {%- endif %}
 
-        let mut ota = updater(board.ota);
+        let mut ota = updater(board.firmware);
 
         let first = [0xA1u8; 32];
         let second = [0xB2u8; 32];
@@ -335,7 +331,7 @@ mod tests {
         }
 {%- endif %}
 
-        let mut ota = updater(board.ota);
+        let mut ota = updater(board.firmware);
 
         // Кратно WRITE_SIZE флеша. Хвост — версия
         // `0.0.0`, заведомо не новее любой проставленной в проекте.
@@ -400,7 +396,7 @@ mod tests {
         const KEY: u32 = 0;
         let written = b"template";
         let mut scratch = [0u8; 32];
-        let mut settings = settings(board.settings);
+        let mut settings = settings(board.config);
 
         settings
             .write(KEY, written)

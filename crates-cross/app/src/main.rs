@@ -24,13 +24,7 @@ mod modbus;
 {%- if net_services != "" %}
 mod net;
 {%- endif %}
-{%- if ota == "true" %}
-mod ota;
-{%- endif %}
 mod panic;
-{%- if config == "true" %}
-mod settings;
-{%- endif %}
 {%- if graph != "true" %}
 mod tasks;
 {%- endif %}
@@ -141,7 +135,7 @@ fn main() -> ! {
     // `board` уезжает сюда целиком — это объявленный графом `boot:`-объект,
     // из которого его инициализаторы забирают объекты частичными move.
     // Такие заборы уже есть — сторож в блоке `watchdog:`{% if ota == "true" %}, вход узла
-    // OTA в `fragments:` (`board.ota`){% endif %} — и здесь же
+    // OTA в `fragments:` (`board.firmware`){% endif %} — и здесь же
     // окажутся ваши: `resources: [SLOT: T = board.<поле>]` вместо
     // `provide_<slot>(..)` перед этой строкой. Оттого и последняя строка
     // `spawn_all`: после неё `board` принадлежит прологу.

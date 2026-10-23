@@ -258,7 +258,7 @@ fn plan(m, erase_zero, wants, limits) {
     // начале стоит таблица векторов приложения. С OTA — там, где его положил
     // chip-data-gen (`config_ota_settings_*`): в мелких секторах перед ACTIVE,
     // если так ACTIVE больше (F2/F4/F7), иначе тоже в хвосте. Страница — сектор
-    // под разделом (`flash_page::ErasePage` в bsp::settings).
+    // под разделом (`flash_page::ErasePage` в bsp::flash).
     let settings_key = if ext_ota {
         "ext_cfg_settings_"
     } else if ota {
@@ -740,7 +740,7 @@ if !wants_ota {
 // сектору чипа: на F4/F7/H7 — 256 KiB. Поэтому по умолчанию «нет», а цена
 // печатается ниже — до того, как пользователь увидит собранный проект.
 //
-// Где лежат настройки (`config_store`, на него смотрит bsp::settings):
+// Где лежат настройки (`config_store`, на него смотрят bsp::flash и bsp::external):
 //   "flash"    — раздел во внутреннем флеше (как описано выше);
 //   "eeprom"   — внутренняя EEPROM, если она у чипа есть (L0/L1): флеш не
 //                тратится вовсе, и это единственное место под настройки на
@@ -1720,9 +1720,6 @@ if variable::is_set("write_size") {
     variable::set("dfu_bank", "false");
     if !wants_ota {
         file::delete("crates-cross/boot");
-        file::delete("crates-cross/bsp/src/ota.rs");
-        file::delete("crates-cross/app/src/ota.rs");
-        file::delete("docs/modules/bsp-ota.md");
         // Релизу по тегу без OTA нечего выкладывать: `app.bin` делается
         // только там, где есть раздел DFU. Тело workflow и так под
         // Liquid-условием, но пустой файл в .github/workflows сбивал бы с
@@ -1742,8 +1739,6 @@ if variable::is_set("write_size") {
             print("Раздел настроек не выделен: memory.x вы заполняете сами (задан write_size)");
             print("  добавьте регион CONFIG вручную и впишите CONFIG_START/CONFIG_END в [env]");
         }
-        file::delete("crates-cross/bsp/src/settings.rs");
-        file::delete("crates-cross/app/src/settings.rs");
     }
     // Общий объект `Flash` в bsp нужен OTA во внутреннем flash и настройкам во
     // флеше или EEPROM; внешней флеши он не нужен (см. ту же переменную ниже).
@@ -1966,10 +1961,6 @@ if variable::is_set("write_size") {
     }
     variable::set("signed", if signed { "true" } else { "false" });
     variable::set("graph", if graph { "true" } else { "false" });
-    if !config {
-        file::delete("crates-cross/bsp/src/settings.rs");
-        file::delete("crates-cross/app/src/settings.rs");
-    }
 
     // База flash одна на оба режима: `__bootloader_*` отсчитываются от неё, а не
     // от ORIGIN(FLASH) конкретного крейта — так их читает embassy-boot.
@@ -2210,9 +2201,6 @@ if variable::is_set("write_size") {
         // оставался на месте, а то же условие по `ci` работало). Удаление
         // идёт по временной копии шаблона, до рендера — как и file::write.
         file::delete("crates-cross/boot");
-        file::delete("crates-cross/bsp/src/ota.rs");
-        file::delete("crates-cross/app/src/ota.rs");
-        file::delete("docs/modules/bsp-ota.md");
         // Вместе с bootloader'ом уходит и работа с разделом DFU: без OTA
         // раздела нет, а символы `__bootloader_dfu_*`, на которые опирается
         // embassy-boot, некому определить.

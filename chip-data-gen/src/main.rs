@@ -1279,7 +1279,7 @@ struct OtaPartitions {
 }
 
 /// Где лежит раздел настроек и какая у него страница (`flash_page::ErasePage`
-/// в `bsp::settings`).
+/// в `bsp::flash`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct SettingsPartition {
     origin: u64,

@@ -14,13 +14,12 @@
 
 use crate::word::MAX_WRITE_SIZE;
 
-/// Разделы обновления платы — рычаг, над которым собирается адаптер
-/// [`FirmwareUpdate`]: раздел `DFU`, куда принимается образ, журнал обмена
-/// `BOOTLOADER_STATE` и самый длинный образ, который доедет до устройства.
+/// Разделы обновления — то, над чем работает адаптер [`FirmwareUpdate`]:
+/// раздел `DFU`, куда принимается образ, журнал обмена `BOOTLOADER_STATE` и
+/// самый длинный образ, который доедет до устройства.
 ///
-/// Заполняет плата (`bsp::ota`, раскладка из `memory.x`), собирает над ним
-/// адаптер узел OTA (`adapters::ota::Updater`, порт `Assemble`). Здесь, в
-/// словаре, потому что его называют обе стороны, а друг друга они не видят.
+/// Отдаёт их [`FirmwareLayout::split`]; сами они — тоже `FirmwareLayout`,
+/// уже нарезанный, — так host-тест подаёт адаптеру разделы в памяти.
 #[derive(Debug)]
 pub struct FirmwarePartitions<D, S> {
     /// Раздел `DFU`.
@@ -30,6 +29,32 @@ pub struct FirmwarePartitions<D, S> {
     /// Самый длинный принимаемый образ — размер `ACTIVE`, а не `DFU`
     /// (см. [`FirmwareUpdate::capacity`]).
     pub capacity: u32,
+}
+
+/// Флеш под обновлением, ещё не нарезанный на разделы, — рычаг платы, над
+/// которым узел OTA собирает адаптер [`FirmwareUpdate`] (порт `Assemble`).
+///
+/// Режет его узел, а не плата: где лежат `DFU` и `BOOTLOADER_STATE` — знание
+/// алгоритма обновления (символы `memory.x`, которые читает `embassy-boot`),
+/// а плата отдаёт только флеш (`adapters::ota::Linked`). Порт — чтобы на хосте
+/// нарезку подменяли готовые [`FirmwarePartitions`].
+pub trait FirmwareLayout {
+    /// Раздел `DFU`.
+    type Dfu;
+    /// Раздел `BOOTLOADER_STATE`.
+    type State;
+
+    /// Находит разделы обновления; зовётся один раз — при сборке адаптера.
+    fn split(self) -> FirmwarePartitions<Self::Dfu, Self::State>;
+}
+
+impl<D, S> FirmwareLayout for FirmwarePartitions<D, S> {
+    type Dfu = D;
+    type State = S;
+
+    fn split(self) -> Self {
+        self
+    }
 }
 
 /// Обновление прошивки: то, что нужно логике приёма и применения образа.

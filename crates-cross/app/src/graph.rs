@@ -88,7 +88,7 @@ supervisor_graph! {
         // Фрагмент OTA — с параметрами и своей привязкой. Параметры
         // (`<Updater, Reboot>`) — типы его слотов: слот — `static`, тип ему
         // нужен, а знает его только эта сторона. Привязка (`= …`) — вход узла
-        // (`domain::ota::OtaWiring`): адаптер обновления — его собирает узел над разделами `board.ota`, сброс МК
+        // (`domain::ota::OtaWiring`): адаптер обновления — его собирает узел над флешем `board.firmware`, нарезав его на разделы, сброс МК
         // `bsp::reset::Reboot` и режим применения (`Mode::{% if signed == "true" %}Signed` с версией этого образа
         // из `crate::image`{% else %}Plain`{% endif %}). Образ узел принимает командами на свой вход
         // `CMD`{% if has_modbus != "true" and has_protobuf != "true" and has_canopen != "true" %}: клиента (`::domain::ota::OtaClient` над `ota_cmd_requester()`) получает ваш
@@ -96,10 +96,10 @@ supervisor_graph! {
         // с номером транспорта: сессию приёма держит один клиент, остальным — `Busy`){% endif %}; алгоритм обновления — в
         // `domain::ota`. Вычисляется привязка в прологе `spawn_all` первой
         // строкой — раньше инициализатора блока `watchdog:`, как бы они ни стояли
-        // в тексте, — частичным move: `ota` уезжает в слот узла, `watchdog`
+        // в тексте, — частичным move: `firmware` уезжает в слот узла, `watchdog`
         // следом забирает сторож, остаток `board` дропается в конце пролога.
-        ::domain::OTA_FRAG<crate::ota::Updater, bsp::reset::Reboot> as OTA = ::domain::ota::OtaWiring {
-            source: board.ota,
+        ::domain::OTA_FRAG<::adapters::ota::Updater<bsp::FirmwareFlash, {{signed}}>, bsp::reset::Reboot> as OTA = ::domain::ota::OtaWiring {
+            source: board.firmware,
             reboot: bsp::reset::Reboot,
 {%- if signed == "true" %}
             mode: ::domain::ota::Mode::Signed {
@@ -181,12 +181,12 @@ supervisor_graph! {
         // сети — `node_id`, 1..=127. Хранилище — {% if config == "true" %}раздел настроек платы: в нём узел сохраняет
         // объекты по команде `save` и адрес, назначенный по LSS (ключи
         // `domain::canopen::{OBJECTS_KEY, NODE_ID_KEY}`){% else %}раздела настроек нет — объекты и адрес не сохраняются{% endif %}.
-        ::domain::CANOPEN_FRAG<bsp::can::{{ f[4] }}::Can, {% if config == "true" %}crate::settings::Settings{% else %}::adapters::settings::Unavailable{% endif %}> as CANOPEN_{{ f[4] | upcase }} =
+        ::domain::CANOPEN_FRAG<bsp::can::{{ f[4] }}::Can, {% if config == "true" %}::adapters::settings::Settings<bsp::ConfigFlash>{% else %}::adapters::settings::Unavailable{% endif %}> as CANOPEN_{{ f[4] | upcase }} =
             ::domain::canopen::CanOpenWiring {
                 bus: board.{{ f[4] }},
                 node_id: 1,
                 dictionary: ::domain::canopen::dictionary(),
-                settings: {% if config == "true" %}board.settings{% else %}(){% endif %},
+                settings: {% if config == "true" %}board.config{% else %}(){% endif %},
                 persist: {{config}},
 {%- if ota == "true" %}
                 // Команды объекта OTA словаря (0x4F00) узел отдаёт узлу `OTA`
@@ -252,13 +252,13 @@ supervisor_graph! {
         // хранится в разделе настроек (`domain::ssh::Stored`){% else %}вшит из `ssh-host-key.bin`
         // (`domain::ssh::Fixed`){% endif %}.{% if ota == "true" %} `reboot` — командой узлу `OTA` своим
         // клиентом, номер следом за остальными.{% endif %}
-        ::domain::SSH_FRAG<{% if ssh_host_key == "config" %}::domain::ssh::Stored<crate::settings::Settings>{% else %}::domain::ssh::Fixed{% endif %}> as SSH =
+        ::domain::SSH_FRAG<{% if ssh_host_key == "config" %}::domain::ssh::Stored<::adapters::settings::Settings<bsp::ConfigFlash>>{% else %}::domain::ssh::Fixed{% endif %}> as SSH =
             ::domain::ssh::SshWiring {
                 stack: board.net.stack,
                 info: crate::device_info(board.spec),
                 login: crate::net::SSH_LOGIN,
 {%- if ssh_host_key == "config" %}
-                host_key: board.settings,
+                host_key: board.config,
 {%- else %}
                 host_key: &crate::net::SSH_HOST_KEY,
 {%- endif %}

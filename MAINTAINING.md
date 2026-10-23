@@ -126,8 +126,8 @@ GH_TOKEN: {% raw %}${{ secrets.GITHUB_TOKEN }}{% endraw %}
 читает только строки и падает с «Variable ota not a String» — проверено), а хук
 приводит ответ к `"true"`/`"false"`, на которые смотрят Liquid-условия. «Нет» —
 окончательное: для `ota` это один образ на весь flash, `crates-cross/boot` и
-разделы OTA в `crates-cross/bsp/src/flash.rs` уходят (файл целиком — если нет и общего замка под настройки), даже если схема в чип помещается; для `config` —
-удаление `crates-cross/bsp/src/settings.rs`. «Да» в обоих случаях означает лишь «не возражаю»:
+флеш под обновлением в `crates-cross/bsp/src/flash.rs` уходит (файл целиком — если нет и общего замка под настройки), даже если схема в чип помещается; для `config` —
+носитель настроек (`ConfigFlash` в `bsp::flash` или `bsp::external`). «Да» в обоих случаях означает лишь «не возражаю»:
 решает всё равно раскладка, и на чипе с крупными секторами ответ будет тем же
 «нет», только с объяснением.
 
@@ -142,7 +142,7 @@ bootloader и `STATE`. Отсюда и второй набор цифр в `MEMO
 есть подпись, нет OTA (в том числе если схема не поместилась во flash) — нет и подписи.
 `--define signed=...` на него не влияет. В шаблоне он управляет фичей `signed` у `domain` (проверка подписи — `domain::ota::boot`, ею пользуется `boot`), ключом в `crates-cross/boot`
 (`boot/build.rs`, `OTA_PUBLIC_KEY_IN_IMAGE`, вызов `screen_update`), выбором
-`Updater<_, _, true>` в `bsp::ota` и файлом `crates-cross/app/src/image.rs`
+`Updater<_, true>` во входе узла OTA (`app/src/graph.rs`, `app/src/tasks/ota.rs`) и файлом `crates-cross/app/src/image.rs`
 (`FW_VERSION` для `Mode::Signed`; без подписи его удаляет `post-script.rhai`). Подпись проверяет bootloader
 (`domain::ota::boot::screen_update`), приложение — только длину, занятость и версию
 (`domain::ota::update::apply_signed`), см. docs/ota.md.
@@ -544,7 +544,7 @@ bootloader'а не меньше `BOOTLOADER_MIN`» стережёт `bootloader_
 есть — на неё уезжают и OTA, и настройки, поэтому `ext_cfg_*` он больше не
 выбирает), `ota` и `config` (`yes`/`no`; незнакомый ответ и прежние
 `internal`/`external` — ошибка генерации), пишет `memory.x` с символами-смещениями внешней флеши и
-выставляет `ota_store` (на него смотрят `boot`, `bsp::flash`, `bsp::settings`,
+выставляет `ota_store` (на него смотрят `boot`, `bsp::flash`, `bsp::external`,
 `target-tests`, `xtask`) и `ext_page_size`.
 
 **Вопросы в хуке.** Чип выбирается первым (каскад по символам или `--define chip_feature=...`),

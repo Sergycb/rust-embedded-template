@@ -6,8 +6,8 @@ use static_cell::ConstStaticCell;
 
 /// Ключ хоста узла и то, из чего он собирается.
 {%- if ssh_host_key == "config" %}
-type HostKey = domain::ssh::Stored<crate::settings::Settings>;
-type HostKeySource = bsp::settings::ConfigFlash;
+type HostKey = domain::ssh::Stored<adapters::settings::Settings<bsp::ConfigFlash>>;
+type HostKeySource = bsp::ConfigFlash;
 {%- else %}
 type HostKey = domain::ssh::Fixed;
 type HostKeySource = &'static [u8; 32];

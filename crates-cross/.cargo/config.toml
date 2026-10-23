@@ -67,11 +67,11 @@ WATCHDOG_TIMEOUT_US = "10000000"
 {%- if ota == "true" %}
 # Раскладка flash, посчитанная при генерации (`memory.x` считается теми же
 # цифрами). Часть чисел нужна и приложению, и bootloader'у — оба берут их из
-# `bsp` (`bsp::ota`, `bsp::external`), и расходиться им негде (docs/flash.md). Числа лежат здесь, а не линкерными символами: читать
+# `bsp` (`bsp::flash`, `bsp::external`), и расходиться им негде (docs/flash.md). Числа лежат здесь, а не линкерными символами: читать
 # собственные константы через `unsafe extern` незачем.
 {%- if active_len != "" %}
 # Размер раздела `ACTIVE` в байтах — самый длинный образ, который доедет до
-# устройства (`bsp::ota`).
+# устройства (`bsp::flash`, `bsp::external`).
 ACTIVE_LEN = "{{active_len}}"
 {%- endif %}
 {%- if ota_store == "external" %}
@@ -112,7 +112,7 @@ BDMA_NC_LEN = "{{bdma_nc_len}}"
 {%- endif %}
 {%- endif %}
 {%- if config_start != "" %}
-# Границы раздела настроек (`bsp::settings`): смещения от базы flash — так их
+# Границы раздела настроек (`bsp::flash`, `bsp::external`): смещения от базы flash — так их
 # ждёт `embassy_stm32::flash::Flash` — или от начала внешней флеши.
 CONFIG_START = "{{config_start}}"
 CONFIG_END = "{{config_end}}"

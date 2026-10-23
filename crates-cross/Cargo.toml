@@ -116,8 +116,8 @@ embassy-executor = { version = "0.10.0", features = [
 ] }
 embassy-boot         = { version = "0.7.0" }
 embassy-boot-stm32 = { version = "0.8.0" }
-# Имя типа раздела (`Partition`) для псевдонима раздела `DFU` в `bsp::ota`:
-# embassy-boot его не реэкспортирует. Версия та же, что тянет embassy-boot.
+# Разделы и асинхронный вид блокирующего флеша (`bsp::flash`, `boot`). Версия
+# та же, что тянет embassy-boot.
 embassy-embedded-hal = { version = "0.6.0" }
 # Один `Flash` на весь чип делится между OTA и настройками, а обеим нужен
 # `&'static` (иначе их не отдать в спавнящиеся задачи — те требуют 'static).
@@ -196,8 +196,8 @@ embedded-test      = { version = "0.7.2", default-features = false, features = [
 # работает только через них. `defmt` — ради `Format` на ошибках в логе.
 ports            = { path = "../crates-host/ports", features = ["defmt"] }
 # Адаптеры, generic по флешу/шине: OTA поверх embassy-boot, настройки поверх
-# sequential-storage. `bsp` строит их из своей периферии и отдаёт готовыми
-# объектами. `defmt` — ради `Format` на ошибках в логе прошивки; на хосте
+# sequential-storage. Собирают их узлы над рычагами `bsp`, а `bsp` берёт отсюда
+# обёртки, из которых строит рычаги сам (USB, сеть, EEPROM, флеш обновления). `defmt` — ради `Format` на ошибках в логе прошивки; на хосте
 # крейт собирается без фич вывода вовсе.
 adapters         = { path = "../crates-host/adapters", features = ["defmt"] }
 {%- if flash_page == "true" %}

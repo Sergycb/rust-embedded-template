@@ -52,7 +52,7 @@ pub fn spawn_all(spawner: embassy_executor::Spawner, {% if ota == "true" or has_
     // executor-обвязки быть не может, а там ровно место для неё.
     spawner.spawn(crate::cpu_load::task().expect("задача CPU_LOAD свежая: спавнится один раз"));
 {%- if ota == "true" %}
-    ota::spawn(spawner, board.ota);
+    ota::spawn(spawner, board.firmware);
 {%- endif %}
 {%- if has_net == "true" %}
     net::spawn(spawner, board.net.runner);
@@ -71,7 +71,7 @@ pub fn spawn_all(spawner: embassy_executor::Spawner, {% if ota == "true" or has_
     let info = crate::device_info(board.spec);
     host::{{ f[4] }}::spawn(spawner, {% if f[0] == "uart" %}board.{{ f[4] }}{% elsif f[0] == "usb" %}board.{{ f[4] }}.cdc{% else %}board.net.stack{% endif %}, info);
 {%- elsif f[3] == "canopen" %}
-    canopen::{{ f[4] }}::spawn(spawner, board.{{ f[4] }}, {% if config == "true" %}board.settings{% else %}(){% endif %});
+    canopen::{{ f[4] }}::spawn(spawner, board.{{ f[4] }}, {% if config == "true" %}board.config{% else %}(){% endif %});
 {%- endif %}
 {%- endfor %}
 {%- if net_services contains "rest" %}
@@ -83,7 +83,7 @@ pub fn spawn_all(spawner: embassy_executor::Spawner, {% if ota == "true" or has_
         board.net.stack,
         crate::device_info(board.spec),
 {%- if ssh_host_key == "config" %}
-        board.settings,
+        board.config,
 {%- else %}
         &crate::net::SSH_HOST_KEY,
 {%- endif %}

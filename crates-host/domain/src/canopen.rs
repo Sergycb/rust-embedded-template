@@ -134,10 +134,11 @@ pub fn dictionary() -> Dictionary {
 /// настроек `S`. Строит его compose-site:
 ///
 /// ```ignore
-/// fragments: [::domain::CANOPEN_FRAG<bsp::can::can::Can, crate::settings::Settings> as CANOPEN
+/// fragments: [::domain::CANOPEN_FRAG<bsp::can::can::Can,
+///                                    ::adapters::settings::Settings<bsp::ConfigFlash>> as CANOPEN
 ///                 = ::domain::canopen::CanOpenWiring { bus: board.can, node_id: 1,
 ///                       dictionary: ::domain::canopen::dictionary(),
-///                       settings: board.settings, persist: true,
+///                       settings: board.config, persist: true,
 ///                       ota_cmd: ::domain::ota::OtaClient::new(ota_cmd_requester(),
 ///                                    ::domain::ota::ClientId(0)) }];   // только с OTA
 /// ```

@@ -54,7 +54,7 @@ F2/F4/F7 (у F4 16, 64 и 128 KiB): в мелких секторах можно 
   `Partition::new` из `embassy-embedded-hal` паникует, если смещение или размер
   не кратны `ERASE_SIZE`. Ровно так был сломан `BOOTLOADER_STATE` у всех 223
   чипов F2/F4/F7 с OTA: он лежал в мелком секторе над цельным `Flash` со
-  страницей 128 KiB — и bootloader, и приложение (`bsp::ota::new`) падали при
+  страницей 128 KiB — и bootloader, и приложение (нарезка разделов) падали при
   первом запуске. `template-check` этого не видит (он собирает, а не
   запускает), поэтому та же проверка стоит в `chip-data-gen`
   (`assert_embassy_boot_invariants`) — при генерации, а не на плате.
@@ -76,7 +76,7 @@ F2/F4/F7 (у F4 16, 64 и 128 KiB): в мелких секторах можно 
   плейсхолдер `state_paged` = "true" только там, где сектор `STATE` мельче страницы
   цельного `Flash` (F2/F4/F7). На чипах с равными секторами раздел строится прямо
   над `Whole`, а `const`-assert (`STATE_ERASE_SIZE == MAX_ERASE_SIZE`) в `boot` и
-  `bsp::ota` ловит расхождение генерации с реальным чипом. Так же и `CONFIG`
+  `bsp::flash` ловит расхождение генерации с реальным чипом. Так же и `CONFIG`
   (`config_paged`). При ручной раскладке (`--define write_size=...`) хук
   подставляет страницу цельного `Flash` — на F2/F4/F7 туда надо вписать размер
   сектора `STATE` руками.
@@ -116,9 +116,9 @@ F2/F4/F7 (у F4 16, 64 и 128 KiB): в мелких секторах можно 
 
 Опциональное, спрашивается при генерации (`config` — вопрос после `ota`, в меню
 после выбора чипа). Хранилище — `adapters::settings` поверх `sequential-storage`
-— принимает любой асинхронный `NorFlash`, и обвязка
-`crates-cross/bsp/src/settings.rs` подставляет в этот слот одно из трёх
-(`config_store` в хуке):
+— принимает любой асинхронный `NorFlash`, и плата подставляет в этот слот одно
+из трёх (`config_store` в хуке; `ConfigFlash` в `crates-cross/bsp/src/flash.rs`
+или, на внешней флеши, в `external.rs`):
 
 | Ответ | Где лежат настройки | Что в слоте |
 |---|---|---|
@@ -126,8 +126,8 @@ F2/F4/F7 (у F4 16, 64 и 128 KiB): в мелких секторах можно 
 | `internal`, EEPROM нет | раздел `CONFIG` во внутреннем флеше | `BlockingAsync<{% if config_paged == "true" %}ErasePage<Whole>{% else %}Whole{% endif %}>` |
 | `external` | внешняя флеш W25Q на плате | раздел над драйвером `w25q` (`bsp::external`); шина — заглушка, пока плата её не подставит |
 
-`Board` отдаёт поле `settings`; `no` — файла `settings.rs` нет вовсе, как и
-`ota.rs` в проектах без OTA.
+`Board` отдаёт поле `config` (`bsp::ConfigFlash`); `no` — ни поля, ни носителя
+нет, как и флеша под обновлением (`firmware`) в проектах без OTA.
 
 **Внешняя флеш — W25Q, шина за платой.** Микросхема — Winbond W25Q
 (W25Q10..W25Q128): драйвер `w25q` из hw-drivers стоит в `bsp::external`
@@ -145,27 +145,27 @@ QSPI, где он выведен (`QUADSPI`, иначе `OCTOSPI`), иначе S
 Что здесь нельзя нарушать:
 
 - **`Flash` на чипе один и создаётся ровно один раз** — `FLASH: StaticCell` в
-  `bsp/src/flash.rs`. И разделы OTA, и `Settings` получают `&'static FlashMutex`, а не
+  `bsp/src/flash.rs`. И носители обновления, и настройки получают `&'static FlashMutex`, а не
   свой объект: контроллер физически один. Ссылка `'static`, потому что обе
   половины отдаются в задачи, а аргументы задач embassy обязаны быть `'static`.
 - **К общему флешу ходят через раздел на весь флеш.** `bsp::flash::FlashMutex` —
   псевдоним на `Mutex<NoopRawMutex, RefCell<…>>` (`RefCell` нужен блокирующему
   `Mutex` embassy), а над ним потребитель строит на месте
   `embassy_embedded_hal::flash::partition::BlockingPartition::new(flash, 0, flash::SIZE)`
-  (`bsp::flash::Whole`) — раздел с нулевым смещением: операции идут под замком, по одной. `BlockingPartition::new`
+  (`Whole` в `bsp::flash`) — раздел с нулевым смещением: операции идут под замком, по одной. `BlockingPartition::new`
   паникует, если объём флеша не кратен `ERASE_SIZE`; у STM32 он всегда кратен
   самому крупному сектору, и `const`-assert в `bsp::flash` и `boot` проверяет это
   при сборке (банк 2 на чипе с `dfu_bank` — отдельный раздел). Потребители —
   разделы OTA и настройки — асинхронные и стоят на `BlockingAsync` поверх `Whole`; `boot` строит разделы над тем же
   `Mutex<_, RefCell<_>>` блокирующе. Свой тип поверх мьютекса есть только в
-  ветке EEPROM (`bsp::settings::EepromFlash`): `EepromAccess` и `Mutex` чужие
+  ветке EEPROM (`bsp::flash::EepromFlash`): `EepromAccess` и `Mutex` чужие
   для `bsp`.
 - **`NoopRawMutex` подразумевает один исполнитель.** Появится второй
   (прерывательный приоритет, второе ядро) — менять тип мьютекса, иначе доступ
   к флешу перестанет быть эксклюзивным. С этим же допущением связаны
-  мьютексы разделов OTA (`bsp::ota::DFU_FLASH`, `STATE_FLASH`; с
+  мьютексы носителей обновления (`bsp::flash::DFU_FLASH`, `STATE_FLASH`; с
   `ext_flash=yes` — `bsp::external::ExternalMutex`), раздела настроек
-  (`bsp::settings::CONFIG_FLASH`) и `local`-слоты узла OTA (`domain::ota`,
+  (`bsp::flash::CONFIG_FLASH`) и `local`-слоты узла OTA (`domain::ota`,
   фрагмент `OTA_FRAG`) — менять их вместе с типом мьютекса.{% if has_modbus == "true" %} Карта регистров
   Modbus (`domain::modbus::MapMutex`) сюда не входит: она лежит в `OnceLock` в
   `static` (`crate::modbus` в `app`), и мьютекс у неё — `CriticalSectionRawMutex`.{% endif %}
@@ -183,7 +183,7 @@ QSPI, где он выведен (`QUADSPI`, иначе `OCTOSPI`), иначе S
   `BOOTLOADER_TARGET` (32 KiB). Выходит это на F2/F4/F7: на F4 это
   сектора 2–3 по 16 KiB вместо 2×128 KiB, `STATE` уезжает в сектор 4,
   bootloader — 32 KiB. Страница раздела — `CONFIG_ERASE_SIZE` в
-  `bsp::settings`{% if config_paged == "true" %}, над `flash_page::ErasePage`, как и у `STATE`{% else %}, прямо над `Whole`: сектор раздела равен странице чипа{% endif %}. Полезного
+  `bsp::flash`{% if config_paged == "true" %}, над `flash_page::ErasePage`, как и у `STATE`{% else %}, прямо над `Whole`: сектор раздела равен странице чипа{% endif %}. Полезного
   места в разделе — около одной страницы (вторая держится свободной под
   перенос), то есть ~16 KiB на F4 с OTA; нужно больше — это уже внешняя флеш.
 - **OTA-раскладка при включённом разделе своя.** В `MEMORY_LAYOUT` лежат два
