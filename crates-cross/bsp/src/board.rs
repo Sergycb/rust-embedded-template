@@ -204,7 +204,7 @@ impl Board {
         // `Board`, реализующее порт из `ports`.
         let r = split_resources!(p);
 {%- if shared_flash == "true" %}
-        let {% if dfu_bank == "true" %}(flash, dfu_bank){% else %}flash{% endif %} = crate::flash::new(r.flash.flash);
+        let {% if dfu_bank == "true" %}(flash, dfu_bank){% else %}flash{% endif %} = crate::flash::new(r.flash);
 {%- endif %}
 {%- else %}
         // Место для распиновки платы: заполните группы в `resources.rs`
@@ -220,7 +220,7 @@ impl Board {
 {%- endif %}
 {%- if has_net == "true" %}
 {%- if rng_irq != "" %}
-        let seed = crate::rng::seed(r.rng.rng);
+        let seed = crate::rng::seed(r.rng);
 {%- else %}
         let seed = crate::net::seed_from_uid(embassy_stm32::uid::uid());
 {%- endif %}

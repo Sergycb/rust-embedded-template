@@ -21,9 +21,23 @@ use embassy_stm32::pac;
 /// Включает кэши этого чипа. Зовётся один раз, из `Board::new`, после
 /// `embassy_stm32::init` (латентность флеша и тактирование уже выставлены) и до
 /// запуска задач.
+{%- if cache contains "scb" %}
+// `cortex_m::Peripherals::take()` отдаёт периферию ядра один раз за запуск и
+// после `embassy_stm32::init` на части семейств уже занят (STM32N6 зовёт
+// `steal()` в `rcc/n6.rs`), поэтому `steal()`; флаг `take()` он не трогает.
+#[expect(unsafe_code, reason = "обоснование — в комментарии выше")]
+{%- endif %}
 pub fn enable() {
 {%- if cache contains "scb" %}
-    enable_core_caches();
+    // SAFETY: зовётся из `Board::new` до запуска задач и прерываний, на одном
+    // ядре; `SCB` и `CPUID` здесь только читаются и пишутся регистры кэшей.
+    let mut core = unsafe { cortex_m::Peripherals::steal() };
+    core.SCB.enable_icache();
+{%- if cache contains "scb_d" %}
+    // Кэш данных — только после того, как буферы DMA ушли из-под него.
+    crate::dma_nc::protect(&mut core.MPU);
+    core.SCB.enable_dcache(&mut core.CPUID);
+{%- endif %}
 {%- endif %}
 {%- if cache contains "icen" %}
     pac::FLASH.acr().modify(|w| {
@@ -37,21 +51,3 @@ pub fn enable() {
     pac::ICACHE.cr().modify(|w| w.set_en(true));
 {%- endif %}
 }
-{%- if cache contains "scb" %}
-
-// `cortex_m::Peripherals::take()` отдаёт периферию ядра один раз за запуск и
-// после `embassy_stm32::init` на части семейств уже занят (STM32N6 зовёт
-// `steal()` в `rcc/n6.rs`), поэтому `steal()`; флаг `take()` он не трогает.
-#[expect(unsafe_code, reason = "обоснование — в комментарии выше")]
-fn enable_core_caches() {
-    // SAFETY: зовётся из `Board::new` до запуска задач и прерываний, на одном
-    // ядре; `SCB` и `CPUID` здесь только читаются и пишутся регистры кэшей.
-    let mut core = unsafe { cortex_m::Peripherals::steal() };
-    core.SCB.enable_icache();
-{%- if cache contains "scb_d" %}
-    // Кэш данных — только после того, как буферы DMA ушли из-под него.
-    crate::dma_nc::protect(&mut core.MPU);
-    core.SCB.enable_dcache(&mut core.CPUID);
-{%- endif %}
-}
-{%- endif %}

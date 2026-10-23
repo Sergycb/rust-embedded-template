@@ -8,7 +8,6 @@ use embassy_stm32::flash::{BANK1_REGION, BANK2_REGION, Bank1Region, Bank2Region,
 {%- else %}
 use embassy_stm32::flash::{Blocking, FLASH_SIZE, MAX_ERASE_SIZE};
 {%- endif %}
-use embassy_stm32::{Peri, peripherals};
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use static_cell::StaticCell;
@@ -91,18 +90,18 @@ pub type Whole = BlockingPartition<'static, NoopRawMutex, ChipFlash>;
 ///
 /// Вторым идёт банк 2 — под `DFU`.
 pub(crate) fn new(
-    flash: Peri<'static, peripherals::FLASH>,
+    resources: crate::resources::FlashResources,
 ) -> (&'static FlashMutex, &'static DfuBankMutex) {
-    let banks = embassy_stm32::flash::Flash::new_blocking(flash).into_blocking_regions();
+    let banks = embassy_stm32::flash::Flash::new_blocking(resources.flash).into_blocking_regions();
     (
         FLASH.init(Mutex::new(RefCell::new(banks.bank1_region))),
         DFU_BANK.init(Mutex::new(RefCell::new(banks.bank2_region))),
     )
 }
 {%- else %}
-pub(crate) fn new(flash: Peri<'static, peripherals::FLASH>) -> &'static FlashMutex {
+pub(crate) fn new(resources: crate::resources::FlashResources) -> &'static FlashMutex {
     FLASH.init(Mutex::new(RefCell::new(
-        embassy_stm32::flash::Flash::new_blocking(flash),
+        embassy_stm32::flash::Flash::new_blocking(resources.flash),
     )))
 }
 {%- endif %}

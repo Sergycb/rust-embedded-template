@@ -5,7 +5,7 @@ use core::cell::RefCell;
 {%- endif %}
 
 use embassy_stm32::peripherals::RNG;
-use embassy_stm32::{Peri, bind_interrupts, rng};
+use embassy_stm32::{bind_interrupts, rng};
 {%- if net_services contains "ssh" %}
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -36,8 +36,8 @@ const CHUNK: usize = 32;
 
 /// Затравка сетевого стека — первое слово генератора; сам генератор остаётся
 /// бэкендом `getrandom` — случайность для SSH. Зовёт `Board::new`, один раз.
-pub(crate) fn seed(rng: Peri<'static, RNG>) -> u64 {
-    let mut rng = Rng::new(rng, Irqs);
+pub(crate) fn seed(resources: crate::resources::RngResources) -> u64 {
+    let mut rng = Rng::new(resources.rng, Irqs);
     let seed = rng.next_u64();
     GENERATOR.lock(|cell| *cell.borrow_mut() = Some(rng));
     seed
@@ -83,7 +83,7 @@ unsafe extern "Rust" fn __getrandom_v03_custom(
 /// Затравка сетевого стека — первое слово генератора. Блок выключается, когда
 /// генератор дропается на выходе: больше он прошивке не нужен (бэкенд
 /// `getrandom` над ним заводит служба `ssh`).
-pub(crate) fn seed(rng: Peri<'static, RNG>) -> u64 {
-    Rng::new(rng, Irqs).next_u64()
+pub(crate) fn seed(resources: crate::resources::RngResources) -> u64 {
+    Rng::new(resources.rng, Irqs).next_u64()
 }
 {%- endif %}
