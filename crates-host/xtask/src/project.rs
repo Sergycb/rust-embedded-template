@@ -37,11 +37,6 @@ pub const SSH_AUTH: &str = "{{ssh_auth}}";
 /// создаёт его сама; пусто — SSH нет.
 pub const SSH_HOST_KEY: &str = "{{ssh_host_key}}";
 
-/// Выбрана ли сетевая служба `name` (`rest`, `ssh`).
-pub fn has_net_service(name: &str) -> bool {
-    NET_SERVICES.split(',').any(|service| service == name)
-}
-
 /// Имя файла ELF приложения в каталоге сборки — то, что [`crate::firmware::build`] читает.
 pub const APP_ARTIFACT: &str = "app";
 
@@ -55,6 +50,15 @@ pub const APP_ARTIFACT: &str = "app";
 /// linted there), and a template placeholder only survives that inside a
 /// string literal.
 pub const OTA: &str = "{{ota}}";
+
+/// Где лежат `DFU` и `STATE`: `"internal"` или `"external"` (на внешней
+/// флеши, `ext_flash=yes`). Строкой — по той же причине, что [`OTA`].
+pub const OTA_STORE: &str = "{{ota_store}}";
+
+/// Выбрана ли сетевая служба `name` (`rest`, `ssh`).
+pub fn has_net_service(name: &str) -> bool {
+    NET_SERVICES.split(',').any(|service| service == name)
+}
 
 /// Compared against `"false"` rather than `"true"` so that the un-rendered
 /// template (where `OTA` is still the literal placeholder) behaves like a
@@ -79,10 +83,6 @@ pub fn host_features() -> &'static str {
         "domain/log"
     }
 }
-
-/// Где лежат `DFU` и `STATE`: `"internal"` или `"external"` (на внешней
-/// флеши, `ext_flash=yes`). Строкой — по той же причине, что [`OTA`].
-pub const OTA_STORE: &str = "{{ota_store}}";
 
 /// `DFU` и `STATE` на внешней флеши: пробнику их не прочитать и не записать —
 /// в адресном пространстве МК их нет. Сравнение с `"external"`: в

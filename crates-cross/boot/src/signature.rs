@@ -27,6 +27,22 @@ use crate::{Bank1, Bank2{% if state_paged == "true" %}, FLASH_BYTES, STATE_ERASE
 use crate::{FLASH_BYTES{% if state_paged == "true" %}, STATE_ERASE_SIZE{% endif %}{% if swap_paged == "true" %}, SWAP_PAGE_SIZE{% endif %}};
 {%- endif %}
 
+/// Открытый ключ, которым проверяется подпись нового образа.
+///
+/// Не константа в исходнике, а файл `ota-public-key.bin` в корне проекта: его
+/// создаёт `cargo xtask build` вместе с закрытым и приносит сюда `build.rs`
+/// через `OUT_DIR`. Нули означают «ключ ещё не создан» (файла нет), и
+/// `screen_update` отвергает с ними любой образ.
+///
+/// Статик с именем, а не `const`: `cargo xtask build` находит его в ELF
+/// bootloader'а и сверяет с ключом, которым подписывает образ. `#[used]` и
+/// `no_mangle` вдвоём: первое просит оставить статик, второе — сохранить имя.
+#[used]
+#[expect(unsafe_code, reason = "обоснование — в комментарии выше")] // имя символа нужно xtask, см. выше
+#[unsafe(no_mangle)]
+pub static OTA_PUBLIC_KEY_IN_IMAGE: [u8; 32] =
+    *include_bytes!(concat!(env!("OUT_DIR"), "/ota-public-key.bin"));
+
 /// Проверяет новый образ в `DFU`, если обмен запрошен, и возвращает флеш
 /// дальше — в обмен и прыжок.
 ///
@@ -158,19 +174,3 @@ fn report(screening: Screening) {
         ),
     }
 }
-
-/// Открытый ключ, которым проверяется подпись нового образа.
-///
-/// Не константа в исходнике, а файл `ota-public-key.bin` в корне проекта: его
-/// создаёт `cargo xtask build` вместе с закрытым и приносит сюда `build.rs`
-/// через `OUT_DIR`. Нули означают «ключ ещё не создан» (файла нет), и
-/// `screen_update` отвергает с ними любой образ.
-///
-/// Статик с именем, а не `const`: `cargo xtask build` находит его в ELF
-/// bootloader'а и сверяет с ключом, которым подписывает образ. `#[used]` и
-/// `no_mangle` вдвоём: первое просит оставить статик, второе — сохранить имя.
-#[used]
-#[expect(unsafe_code, reason = "обоснование — в комментарии выше")] // имя символа нужно xtask, см. выше
-#[unsafe(no_mangle)]
-pub static OTA_PUBLIC_KEY_IN_IMAGE: [u8; 32] =
-    *include_bytes!(concat!(env!("OUT_DIR"), "/ota-public-key.bin"));

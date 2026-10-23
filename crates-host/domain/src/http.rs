@@ -65,28 +65,6 @@ struct Api {
 /// Запрос с верным токеном.
 struct Auth;
 
-/// `Authorization: Bearer <токен>` ровно с токеном прошивки.
-///
-/// Схема — без учёта регистра (RFC 7235, §2.1), токен — байт в байт, а не
-/// через `HeaderValue == &str`: тот регистра не различает. Сравнение — без
-/// выхода на первом несовпавшем байте, чтобы время ответа не подсказывало
-/// токен по байту. Пустой токен не пускает никого: иначе `Bearer ` без
-/// токена открывал бы API.
-fn authorized(header: Option<&[u8]>, token: &str) -> bool {
-    const SCHEME: &[u8] = b"Bearer ";
-    let Some(header) = header else { return false };
-    let (scheme, given) = header.split_at(header.len().min(SCHEME.len()));
-    let token = token.as_bytes();
-    !token.is_empty()
-        && scheme.eq_ignore_ascii_case(SCHEME)
-        && given.len() == token.len()
-        && given
-            .iter()
-            .zip(token)
-            .fold(0, |diff, (a, b)| diff | (a ^ b))
-            == 0
-}
-
 impl<'r> FromRequestParts<'r, Api> for Auth {
     type Rejection = (StatusCode, &'static str);
 
@@ -122,57 +100,6 @@ impl Content for Json {
     async fn write_content<W: Write>(self, mut w: W) -> Result<(), W::Error> {
         w.write_all(self.0.as_bytes()).await
     }
-}
-
-fn info(api: &Api) -> Result<Json, (StatusCode, &'static str)> {
-    let mut text = heapless::String::new();
-    // Среда в стеке одна — Ethernet (`medium-ethernet`).
-    let embassy_net::HardwareAddress::Ethernet(mac) = api.stack.hardware_address();
-    let ip = api.stack.config_v4().map(|config| config.address.address());
-    let uptime_s = embassy_time::Instant::now().as_secs();
-    // Строки сведений короткие (версия, хеш, имя чипа): объект короче буфера.
-    // Не влез бы (проект удлинил строки или добавил поля) — `500`, а не
-    // обрезанный JSON.
-    match crate::device::write_info(&mut text, &api.info, mac.0, ip, uptime_s) {
-        Ok(()) => Ok(Json(text)),
-        Err(core::fmt::Error) => Err((StatusCode::INTERNAL_SERVER_ERROR, "info too long\n")),
-    }
-}
-// {%- if ota == "true" %}
-
-/// `POST /api/reboot`: узел OTA сбрасывает МК, ответив раньше сброса.
-async fn reboot(api: &Api) -> (StatusCode, &'static str) {
-    match api.ota.request(OtaCommand::Reboot).await {
-        Ok(Ok(Progress::Rebooting)) => (StatusCode::ACCEPTED, "rebooting\n"),
-        Ok(_) => (StatusCode::CONFLICT, "reboot refused\n"),
-        Err(_) => (StatusCode::SERVICE_UNAVAILABLE, "ota node lost\n"),
-    }
-}
-// {%- endif %}
-
-/// Маршруты REST API.
-fn router() -> picoserve::Router<impl picoserve::routing::PathRouter<Api>, Api> {
-    // Маршрут — отдельным `let`, а не звеном одной цепочки: набор маршрутов
-    // зависит от ответов генерации, и цепочка из одного звена и из двух
-    // rustfmt раскладывает по-разному.
-    let router = picoserve::Router::new();
-    let router = router.route(
-        "/api/info",
-        get(async |_: Auth, State(api): State<Api>| info(&api)),
-    );
-    // {%- if ota == "true" %}
-    let router = router.route(
-        "/api/reboot",
-        post(async |_: Auth, State(api): State<Api>| reboot(&api).await),
-    );
-    // {%- endif %}
-    router
-}
-
-/// Узел `HTTP`: обслуживает соединение за соединением, пока жива прошивка;
-/// не возвращается.
-pub async fn task(mut ctx: HttpCtx<'_>) -> TaskExit {
-    ctx.run().await.result
 }
 
 #[fsm::typestate]
@@ -225,6 +152,79 @@ impl HttpCtx<'_> {
             .await
             .into_never()
     }
+}
+
+/// `Authorization: Bearer <токен>` ровно с токеном прошивки.
+///
+/// Схема — без учёта регистра (RFC 7235, §2.1), токен — байт в байт, а не
+/// через `HeaderValue == &str`: тот регистра не различает. Сравнение — без
+/// выхода на первом несовпавшем байте, чтобы время ответа не подсказывало
+/// токен по байту. Пустой токен не пускает никого: иначе `Bearer ` без
+/// токена открывал бы API.
+fn authorized(header: Option<&[u8]>, token: &str) -> bool {
+    const SCHEME: &[u8] = b"Bearer ";
+    let Some(header) = header else { return false };
+    let (scheme, given) = header.split_at(header.len().min(SCHEME.len()));
+    let token = token.as_bytes();
+    !token.is_empty()
+        && scheme.eq_ignore_ascii_case(SCHEME)
+        && given.len() == token.len()
+        && given
+            .iter()
+            .zip(token)
+            .fold(0, |diff, (a, b)| diff | (a ^ b))
+            == 0
+}
+
+fn info(api: &Api) -> Result<Json, (StatusCode, &'static str)> {
+    let mut text = heapless::String::new();
+    // Среда в стеке одна — Ethernet (`medium-ethernet`).
+    let embassy_net::HardwareAddress::Ethernet(mac) = api.stack.hardware_address();
+    let ip = api.stack.config_v4().map(|config| config.address.address());
+    let uptime_s = embassy_time::Instant::now().as_secs();
+    // Строки сведений короткие (версия, хеш, имя чипа): объект короче буфера.
+    // Не влез бы (проект удлинил строки или добавил поля) — `500`, а не
+    // обрезанный JSON.
+    match crate::device::write_info(&mut text, &api.info, mac.0, ip, uptime_s) {
+        Ok(()) => Ok(Json(text)),
+        Err(core::fmt::Error) => Err((StatusCode::INTERNAL_SERVER_ERROR, "info too long\n")),
+    }
+}
+// {%- if ota == "true" %}
+
+/// `POST /api/reboot`: узел OTA сбрасывает МК, ответив раньше сброса.
+async fn reboot(api: &Api) -> (StatusCode, &'static str) {
+    match api.ota.request(OtaCommand::Reboot).await {
+        Ok(Ok(Progress::Rebooting)) => (StatusCode::ACCEPTED, "rebooting\n"),
+        Ok(_) => (StatusCode::CONFLICT, "reboot refused\n"),
+        Err(_) => (StatusCode::SERVICE_UNAVAILABLE, "ota node lost\n"),
+    }
+}
+// {%- endif %}
+
+/// Маршруты REST API.
+fn router() -> picoserve::Router<impl picoserve::routing::PathRouter<Api>, Api> {
+    // Маршрут — отдельным `let`, а не звеном одной цепочки: набор маршрутов
+    // зависит от ответов генерации, и цепочка из одного звена и из двух
+    // rustfmt раскладывает по-разному.
+    let router = picoserve::Router::new();
+    let router = router.route(
+        "/api/info",
+        get(async |_: Auth, State(api): State<Api>| info(&api)),
+    );
+    // {%- if ota == "true" %}
+    let router = router.route(
+        "/api/reboot",
+        post(async |_: Auth, State(api): State<Api>| reboot(&api).await),
+    );
+    // {%- endif %}
+    router
+}
+
+/// Узел `HTTP`: обслуживает соединение за соединением, пока жива прошивка;
+/// не возвращается.
+pub async fn task(mut ctx: HttpCtx<'_>) -> TaskExit {
+    ctx.run().await.result
 }
 
 // Узел объявлен рядом со своей задачей — как остальные. Пул: граф ставит

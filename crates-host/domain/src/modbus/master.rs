@@ -23,6 +23,12 @@ use rusty_modbus_types::{
     MAX_WRITE_REGISTERS,
 };
 
+/// Длина PDU любого запроса FC01–06: функция и два 16-битных поля.
+const HEAD: usize = 5;
+
+/// Длина заголовка запроса FC15/16: [`HEAD`] и счётчик байт данных.
+const MULTIPLE_HEAD: usize = HEAD + 1;
+
 /// Читает coils `start..start + out.len()` slave'а `unit` в `out` (FC01).
 ///
 /// # Errors
@@ -279,12 +285,6 @@ async fn write_single<C: ModbusClient>(
         Err(MasterError::Unexpected)
     }
 }
-
-/// Длина PDU любого запроса FC01–06: функция и два 16-битных поля.
-const HEAD: usize = 5;
-
-/// Длина заголовка запроса FC15/16: [`HEAD`] и счётчик байт данных.
-const MULTIPLE_HEAD: usize = HEAD + 1;
 
 /// PDU из функции и двух 16-битных полей (адрес и количество или значение).
 fn head(fc: u8, first: u16, second: u16) -> [u8; HEAD] {

@@ -1,10 +1,5 @@
 #![doc = include_str!("../../../docs/modules/bsp-usb.md")]
 
-/// Идентификаторы устройства, которые увидит хост. `0xC0DE:0xCAFE` — пара из
-/// примеров `embassy-usb`, не зарегистрированная: для своего изделия нужны
-/// свои VID/PID.
-const VID: u16 = 0xC0DE;
-const PID: u16 = 0xCAFE;
 {%- assign xs = links | split: "," %}
 {%- assign usb_index = 0 %}
 {%- for l in xs %}
@@ -27,21 +22,6 @@ pub mod {{ f[4] }} {
     use embassy_usb::class::cdc_acm::State;
     use static_cell::{ConstStaticCell, StaticCell};
 
-    // Память устройства: `Builder` и класс держат её `&'static mut`.
-    // `ConstStaticCell`, а не `StaticCell`: значения известны при компиляции и
-    // лежат в `.bss`/`.data`, а не собираются на стеке и копируются при старте.
-    // Кроме `CDC_STATE`: `ConstStaticCell` требует `Send`, а состояние класса его
-    // не реализует (внутри ссылка на `RefCell`).
-    static BUFFERS: ConstStaticCell<CdcBuffers> = ConstStaticCell::new(CdcBuffers::new());
-    static CDC_STATE: StaticCell<State<'static>> = StaticCell::new();
-{%- if usb_index > 1 %}
-
-    // Серийный номер: заводской номер чипа и номер устройства через дефис — у
-    // двух устройств одной платы с общими VID/PID он обязан различаться, иначе
-    // хост путает их между подключениями.
-    static SERIAL: ConstStaticCell<[u8; 26]> = ConstStaticCell::new([0; 26]);
-{%- endif %}
-
     /// USB-драйвер `{{ f[2] }}` — пока заглушка, до USB-блока чипа (см. модуль `bsp::usb`).
     type Driver = crate::stub::UsbDriver;
 
@@ -60,6 +40,21 @@ pub mod {{ f[4] }} {
     /// того, как построено устройство, поэтому плата собирает их вместе.
     /// Поле `Board` — `device` уезжает в узел `USB_{{ f[4] | upcase }}`, `cdc` — под протокол.
     pub type Usb = adapters::usb::Usb<Driver>;
+
+    // Память устройства: `Builder` и класс держат её `&'static mut`.
+    // `ConstStaticCell`, а не `StaticCell`: значения известны при компиляции и
+    // лежат в `.bss`/`.data`, а не собираются на стеке и копируются при старте.
+    // Кроме `CDC_STATE`: `ConstStaticCell` требует `Send`, а состояние класса его
+    // не реализует (внутри ссылка на `RefCell`).
+    static BUFFERS: ConstStaticCell<CdcBuffers> = ConstStaticCell::new(CdcBuffers::new());
+    static CDC_STATE: StaticCell<State<'static>> = StaticCell::new();
+{%- if usb_index > 1 %}
+
+    // Серийный номер: заводской номер чипа и номер устройства через дефис — у
+    // двух устройств одной платы с общими VID/PID он обязан различаться, иначе
+    // хост путает их между подключениями.
+    static SERIAL: ConstStaticCell<[u8; 26]> = ConstStaticCell::new([0; 26]);
+{%- endif %}
 
     /// Собирает устройство с одним классом CDC ACM (`adapters::usb::cdc`).
     /// Серийный номер — заводской номер чипа{% if usb_index > 1 %} с номером устройства
@@ -91,3 +86,9 @@ pub mod {{ f[4] }} {
 }
 {%- endif %}
 {%- endfor %}
+
+/// Идентификаторы устройства, которые увидит хост. `0xC0DE:0xCAFE` — пара из
+/// примеров `embassy-usb`, не зарегистрированная: для своего изделия нужны
+/// свои VID/PID.
+const VID: u16 = 0xC0DE;
+const PID: u16 = 0xCAFE;

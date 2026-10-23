@@ -3,6 +3,12 @@
 
 /// Байт в заводском номере чипа STM32 (96 бит).
 pub const UID_BYTES: usize = 12;
+// {%- if net_services != "" %}
+
+/// Самый длинный объект [`write_info`], байт: буфер ответа REST и тело `info`
+/// MQTT.
+pub const INFO_MAX: usize = 256;
+// {%- endif %}
 
 /// Сведения об устройстве.
 ///
@@ -46,10 +52,6 @@ pub fn write_json_string(out: &mut impl core::fmt::Write, s: &str) -> core::fmt:
     out.write_char('"')
 }
 // {%- if net_services != "" %}
-
-/// Самый длинный объект [`write_info`], байт: буфер ответа REST и тело `info`
-/// MQTT.
-pub const INFO_MAX: usize = 256;
 
 /// Сведения об устройстве JSON-объектом: прошивка, чип, MAC, адрес и время
 /// работы.

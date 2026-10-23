@@ -10,6 +10,10 @@ use rusty_modbus_codec::validate::{
 use rusty_modbus_codec::{RequestPdu, decode_request};
 use rusty_modbus_types::ExceptionCode;
 
+/// Ответ на запись — первые пять байт запроса: функция, адрес и значение
+/// (FC05/06) или количество (FC15/16).
+const ECHO: usize = 5;
+
 /// Slave с адресом `unit` над данными `regs`: кадр «адрес и PDU» из канала
 /// (`adapters::modbus::{Rtu, Tcp, Udp}`) — в запрос к `regs`, ответ — в тот
 /// же кадр.
@@ -163,10 +167,6 @@ async fn execute<R: Registers>(
         _ => Err(Exception::IllegalFunction),
     }
 }
-
-/// Ответ на запись — первые пять байт запроса: функция, адрес и значение
-/// (FC05/06) или количество (FC15/16).
-const ECHO: usize = 5;
 
 /// Заголовок ответа на чтение `qty` бит; возвращает длину PDU ответа.
 fn bits_reply(out: &mut [u8], fc: u8, qty: u16) -> usize {

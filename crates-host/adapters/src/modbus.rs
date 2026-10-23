@@ -65,20 +65,24 @@ mod mbap;
 /// Modbus RTU: кадр с CRC поверх потока байтов.
 mod rtu;
 
-pub use rtu::Rtu;
-
 // {%- endif %}
 // {%- if modbus_tcp == "true" %}
 /// Modbus TCP: MBAP поверх потока байтов.
 mod tcp;
 
-pub use tcp::Tcp;
-
 // {%- endif %}
 // {%- if modbus_udp == "true" %}
 /// Modbus UDP: MBAP в датаграмме.
 mod udp;
+// {%- endif %}
 
+// {%- if modbus_rtu == "true" %}
+pub use rtu::Rtu;
+// {%- endif %}
+// {%- if modbus_tcp == "true" %}
+pub use tcp::Tcp;
+// {%- endif %}
+// {%- if modbus_udp == "true" %}
 pub use udp::{DATAGRAM, Udp};
 // {%- endif %}
 
@@ -88,6 +92,20 @@ use ports::LinkError;
 // {%- endif %}
 
 // {%- if modbus_stream == "true" %}
+/// Почему поток Modbus (RTU, TCP) не принял или не отправил кадр.
+#[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum FrameError<E> {
+    /// Отказ потока.
+    Io(E),
+    /// Поток кончился: соединение закрыто. Потеря, а не отказ канала: над
+    /// TCP-сервером (`net::TcpServer`) следующий `recv` примет нового клиента.
+    Eof,
+    /// Длина в заголовке MBAP вне допустимой: граница кадра в потоке потеряна,
+    /// и соединение стоит переоткрыть.
+    Framing,
+}
+
 /// Дочитывает `rx` из `io` до `want` байт. Каждый прочитанный кусок сразу
 /// учтён в `have`, поэтому брошенное чтение ничего не теряет: следующий
 /// вызов продолжит с того же места.
@@ -105,20 +123,6 @@ async fn fill<T: Read>(
         }
     }
     Ok(())
-}
-
-/// Почему поток Modbus (RTU, TCP) не принял или не отправил кадр.
-#[derive(Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum FrameError<E> {
-    /// Отказ потока.
-    Io(E),
-    /// Поток кончился: соединение закрыто. Потеря, а не отказ канала: над
-    /// TCP-сервером (`net::TcpServer`) следующий `recv` примет нового клиента.
-    Eof,
-    /// Длина в заголовке MBAP вне допустимой: граница кадра в потоке потеряна,
-    /// и соединение стоит переоткрыть.
-    Framing,
 }
 
 /// Отказ потока как исход канала: разорванное соединение — отказ, шум на
@@ -182,23 +186,6 @@ mod fakes {
     // {%- endif %}
     // {%- if modbus_rtu == "true" %}
     use super::rtu::seal;
-
-    /// Кадр RTU: адрес `unit`, `pdu` и CRC.
-    pub(super) fn rtu_frame(unit: u8, pdu: &[u8]) -> Vec<u8> {
-        let mut buf = [&[unit][..], pdu, &[0, 0]].concat();
-        let len = buf.len() - 2;
-        seal(&mut buf, len);
-        buf
-    }
-    // {%- endif %}
-
-    // {%- if modbus_mbap == "true" %}
-    /// Кадр MBAP: транзакция `tid`, протокол `protocol`, адрес `unit`, `pdu`.
-    pub(super) fn mbap_frame(tid: u16, protocol: u16, unit: u8, pdu: &[u8]) -> Vec<u8> {
-        let mut head = mbap::head(tid, unit, pdu.len());
-        head[2..4].copy_from_slice(&protocol.to_be_bytes());
-        [&head[..], pdu].concat()
-    }
     // {%- endif %}
 
     // {%- if modbus_stream == "true" %}
@@ -358,6 +345,25 @@ mod fakes {
             }
             std::future::ready(self.send)
         }
+    }
+    // {%- endif %}
+
+    // {%- if modbus_rtu == "true" %}
+    /// Кадр RTU: адрес `unit`, `pdu` и CRC.
+    pub(super) fn rtu_frame(unit: u8, pdu: &[u8]) -> Vec<u8> {
+        let mut buf = [&[unit][..], pdu, &[0, 0]].concat();
+        let len = buf.len() - 2;
+        seal(&mut buf, len);
+        buf
+    }
+    // {%- endif %}
+
+    // {%- if modbus_mbap == "true" %}
+    /// Кадр MBAP: транзакция `tid`, протокол `protocol`, адрес `unit`, `pdu`.
+    pub(super) fn mbap_frame(tid: u16, protocol: u16, unit: u8, pdu: &[u8]) -> Vec<u8> {
+        let mut head = mbap::head(tid, unit, pdu.len());
+        head[2..4].copy_from_slice(&protocol.to_be_bytes());
+        [&head[..], pdu].concat()
     }
     // {%- endif %}
 }

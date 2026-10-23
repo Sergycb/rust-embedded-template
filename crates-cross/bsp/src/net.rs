@@ -3,17 +3,6 @@
 use embassy_net::{Config, DhcpConfig, StackResources};
 use static_cell::ConstStaticCell;
 
-/// Сетевое устройство платы — пока заглушка, до Ethernet (см. модуль).
-pub type Device = crate::stub::NetDevice;
-
-/// Сетевой стек платы — на нём открывают свои сокеты транспорты протоколов
-/// и сетевые службы приложения.
-pub type Stack = embassy_net::Stack<'static>;
-
-/// Фоновая работа стека (узел `NET`) и сам стек — их рождает один
-/// `embassy_net::new`.
-pub type Net = adapters::net::Net<Device>;
-
 /// Сокетов в стеке — переменная среды `NET_SOCKETS` из `[env]`
 /// `crates-cross/.cargo/config.toml`. Считает её генерация: DHCP-клиент, по
 /// сокету на сетевой транспорт и на каждое соединение сетевых служб
@@ -25,6 +14,17 @@ const SOCKETS: usize = match usize::from_str_radix(env!("NET_SOCKETS"), 10) {
     Ok(sockets) => sockets,
     Err(_) => panic!("NET_SOCKETS в [env] crates-cross/.cargo/config.toml — не число"),
 };
+
+/// Сетевое устройство платы — пока заглушка, до Ethernet (см. модуль).
+pub type Device = crate::stub::NetDevice;
+
+/// Сетевой стек платы — на нём открывают свои сокеты транспорты протоколов
+/// и сетевые службы приложения.
+pub type Stack = embassy_net::Stack<'static>;
+
+/// Фоновая работа стека (узел `NET`) и сам стек — их рождает один
+/// `embassy_net::new`.
+pub type Net = adapters::net::Net<Device>;
 
 // Память стека: `embassy_net::new` держит её `&'static mut`. `ConstStaticCell`
 // — значения известны при компиляции и лежат в `.bss`, а не собираются на

@@ -1,5 +1,13 @@
 #![no_std]
 #![no_main]
+{%- if ota_store == "external" %}
+
+mod external;
+{%- endif %}
+{%- if signed == "true" %}
+
+mod signature;
+{%- endif %}
 
 use core::cell::RefCell;
 {% if state_paged == "true" %}
@@ -35,11 +43,56 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 {%- if boot_partitioned == "true" %}
 use flash_page::ErasePage;
 {%- endif %}
-{%- if ota_store == "external" %}
-mod external;
+
+{%- if ota_store != "external" %}
+
+/// Буфер обмена `BootLoader::prepare` — слово записи флеша из генерации
+/// (`write_size`, его можно переопределить `--define`). `prepare` требует,
+/// чтобы буфер был кратен слову записи реального флеша; несовпадение — ошибка
+/// сборки, а не паника на старте bootloader'а.
+const SWAP_BUFFER_SIZE: usize = {{write_size}};
+
+{%- if boot_partitioned == "true" and dfu_bank == "true" %}
+
+/// Размер банка 1 в байтах — столько занимает раздел на весь флеш, из
+/// которого строятся `STATE` и `ACTIVE`.
+const FLASH_BYTES: u32 = embassy_stm32::flash::BANK1_REGION.size;
+{%- elsif boot_partitioned == "true" %}
+
+/// Размер всего флеша в байтах — столько занимает раздел на весь флеш, из
+/// которого строятся `STATE`, `ACTIVE` и `DFU`.
+///
+/// `usize` на Cortex-M — 32 бита, усечения нет.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "`usize` на Cortex-M — 32 бита"
+)]
+const FLASH_BYTES: u32 = embassy_stm32::flash::FLASH_SIZE as u32;
+
+// `BlockingPartition::new` паникует на объёме, не кратном `ERASE_SIZE`; у STM32
+// объём всегда кратен самому крупному сектору, и сборка это проверяет, а не
+// первый запуск на плате.
+const _: () = assert!(
+    embassy_stm32::flash::FLASH_SIZE.is_multiple_of(embassy_stm32::flash::MAX_ERASE_SIZE),
+    "объём flash не кратен самому крупному сектору: `BlockingPartition::new` паникует на старте"
+);
 {%- endif %}
-{%- if signed == "true" %}
-mod signature;
+
+const _: () = assert!(
+    SWAP_BUFFER_SIZE.is_multiple_of(embassy_stm32::flash::WRITE_SIZE),
+    "write_size из генерации не кратен слову записи флеша чипа (embassy_stm32::flash::WRITE_SIZE): \
+     пересоберите проект без --define write_size или поправьте значение"
+);
+{%- if dfu_bank == "true" %}
+
+/// Банк 1 — bootloader, `STATE`, `ACTIVE` (смещения от базы flash, как у
+/// цельного `Flash`).
+type Bank1 = embassy_stm32::flash::Bank1Region<'static, embassy_stm32::flash::Blocking>;
+
+/// Банк 2 — `DFU`, со смещениями от своего начала (символы `memory.x`
+/// посчитаны так же).
+type Bank2 = embassy_stm32::flash::Bank2Region<'static, embassy_stm32::flash::Blocking>;
+{%- endif %}
 {%- endif %}
 
 #[cortex_m_rt::entry]
@@ -206,53 +259,3 @@ fn main() -> ! {
 fn panic(_: &core::panic::PanicInfo) -> ! {
     cortex_m::asm::udf()
 }
-{%- if ota_store != "external" %}
-
-/// Буфер обмена `BootLoader::prepare` — слово записи флеша из генерации
-/// (`write_size`, его можно переопределить `--define`). `prepare` требует,
-/// чтобы буфер был кратен слову записи реального флеша; несовпадение — ошибка
-/// сборки, а не паника на старте bootloader'а.
-const SWAP_BUFFER_SIZE: usize = {{write_size}};
-
-{%- if boot_partitioned == "true" and dfu_bank == "true" %}
-
-/// Размер банка 1 в байтах — столько занимает раздел на весь флеш, из
-/// которого строятся `STATE` и `ACTIVE`.
-const FLASH_BYTES: u32 = embassy_stm32::flash::BANK1_REGION.size;
-{%- elsif boot_partitioned == "true" %}
-
-/// Размер всего флеша в байтах — столько занимает раздел на весь флеш, из
-/// которого строятся `STATE`, `ACTIVE` и `DFU`.
-///
-/// `usize` на Cortex-M — 32 бита, усечения нет.
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "`usize` на Cortex-M — 32 бита"
-)]
-const FLASH_BYTES: u32 = embassy_stm32::flash::FLASH_SIZE as u32;
-
-// `BlockingPartition::new` паникует на объёме, не кратном `ERASE_SIZE`; у STM32
-// объём всегда кратен самому крупному сектору, и сборка это проверяет, а не
-// первый запуск на плате.
-const _: () = assert!(
-    embassy_stm32::flash::FLASH_SIZE.is_multiple_of(embassy_stm32::flash::MAX_ERASE_SIZE),
-    "объём flash не кратен самому крупному сектору: `BlockingPartition::new` паникует на старте"
-);
-{%- endif %}
-
-const _: () = assert!(
-    SWAP_BUFFER_SIZE.is_multiple_of(embassy_stm32::flash::WRITE_SIZE),
-    "write_size из генерации не кратен слову записи флеша чипа (embassy_stm32::flash::WRITE_SIZE): \
-     пересоберите проект без --define write_size или поправьте значение"
-);
-{%- if dfu_bank == "true" %}
-
-/// Банк 1 — bootloader, `STATE`, `ACTIVE` (смещения от базы flash, как у
-/// цельного `Flash`).
-type Bank1 = embassy_stm32::flash::Bank1Region<'static, embassy_stm32::flash::Blocking>;
-
-/// Банк 2 — `DFU`, со смещениями от своего начала (символы `memory.x`
-/// посчитаны так же).
-type Bank2 = embassy_stm32::flash::Bank2Region<'static, embassy_stm32::flash::Blocking>;
-{%- endif %}
-{%- endif %}

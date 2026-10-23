@@ -29,6 +29,38 @@ use ports::MAX_WRITE_SIZE;
 #[cfg(feature = "signed")]
 use ports::PendingImage;
 
+/// Что решил bootloader об обновлении — см. [`screen_update`].
+#[cfg(feature = "signed")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Screening {
+    /// Нового запроса на обмен нет: обычный старт, обмен, прерванный на
+    /// середине, или откат неподтверждённого образа. Проверять нечего —
+    /// `embassy-boot` делает своё.
+    NothingToCheck,
+    /// Образ в `DFU` подписан верно — обмен пусть идёт.
+    Approved,
+    /// Образ отвергнут, запрос на обмен снят (`STATE` → `Boot`): загрузится
+    /// прежний образ.
+    Rejected(ScreenFailure),
+}
+
+/// Почему образ в `DFU` отвергнут.
+#[cfg(feature = "signed")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScreenFailure {
+    /// Обмен запрошен, а записи о принятом образе нет — образ положили мимо
+    /// `domain::ota::update::apply_signed`, то есть без подписи.
+    NoRecord,
+    /// Длина в записи — ноль или больше `ACTIVE`.
+    Length,
+    /// Открытый ключ — нули, то есть не подставлен. Отдельной проверкой, а не
+    /// «с нулями всё равно не сойдётся»: нулевой ключ ed25519 — точка малого
+    /// порядка, подпись под него подделывается, и `salty` такие не отсеивает.
+    NoPublicKey,
+    /// Ключ не разбирается как точка кривой или подпись не сошлась.
+    Signature,
+}
+
 // {%- if ota_store == "external" %}
 /// Что bootloader'у делать при старте — см. [`boot_plan`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,38 +106,6 @@ pub fn boot_plan<STATE: embedded_storage::nor_flash::NorFlash>(state: &mut STATE
     }
 }
 // {%- endif %}
-
-/// Что решил bootloader об обновлении — см. [`screen_update`].
-#[cfg(feature = "signed")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Screening {
-    /// Нового запроса на обмен нет: обычный старт, обмен, прерванный на
-    /// середине, или откат неподтверждённого образа. Проверять нечего —
-    /// `embassy-boot` делает своё.
-    NothingToCheck,
-    /// Образ в `DFU` подписан верно — обмен пусть идёт.
-    Approved,
-    /// Образ отвергнут, запрос на обмен снят (`STATE` → `Boot`): загрузится
-    /// прежний образ.
-    Rejected(ScreenFailure),
-}
-
-/// Почему образ в `DFU` отвергнут.
-#[cfg(feature = "signed")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ScreenFailure {
-    /// Обмен запрошен, а записи о принятом образе нет — образ положили мимо
-    /// `domain::ota::update::apply_signed`, то есть без подписи.
-    NoRecord,
-    /// Длина в записи — ноль или больше `ACTIVE`.
-    Length,
-    /// Открытый ключ — нули, то есть не подставлен. Отдельной проверкой, а не
-    /// «с нулями всё равно не сойдётся»: нулевой ключ ed25519 — точка малого
-    /// порядка, подпись под него подделывается, и `salty` такие не отсеивает.
-    NoPublicKey,
-    /// Ключ не разбирается как точка кривой или подпись не сошлась.
-    Signature,
-}
 
 /// Проверка нового образа bootloader'ом — один раз, перед обменом.
 ///

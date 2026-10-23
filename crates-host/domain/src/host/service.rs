@@ -217,6 +217,16 @@ fn text<const N: usize>(s: &str) -> heapless::String<N> {
 pub(crate) mod tests {
     use super::*;
 
+    /// Сведения, которыми тесты собирают обработчик.
+    pub(crate) const INFO: DeviceInfo = DeviceInfo {
+        version: "1.2.3",
+        commit: "abcdef12",
+        chip: "stm32f407ve",
+        uid: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+        flash_size: 512 * 1024,
+        sys_hz: None,
+    };
+
     /// Обработчик со сведениями `info`{% if ota == "true" %} и клиентом узла OTA, которого
     /// никто не обслуживает: тесты, которым узел нужен, берут `crate::ota::tests::live`{% endif %}.
     pub(crate) fn service(info: DeviceInfo) -> Service {
@@ -227,16 +237,6 @@ pub(crate) mod tests {
             // {%- endif %}
         )
     }
-
-    /// Сведения, которыми тесты собирают обработчик.
-    pub(crate) const INFO: DeviceInfo = DeviceInfo {
-        version: "1.2.3",
-        commit: "abcdef12",
-        chip: "stm32f407ve",
-        uid: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
-        flash_size: 512 * 1024,
-        sys_hz: None,
-    };
 
     #[test]
     fn info_carries_every_field() {

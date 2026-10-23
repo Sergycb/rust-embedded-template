@@ -51,38 +51,6 @@ pub struct ServerWiring<L: Assemble, H> {
     pub handler: H,
 }
 
-/// Узел протокола без графа: собирает канал из `wiring` и обслуживает его,
-/// не выходя никогда, — то, что с графом делают слоты фрагмента и [`task`].
-pub async fn serve<L, H>(wiring: ServerWiring<L, H>) -> TaskExit
-where
-    L: Assemble + FrameLink,
-    L::Error: FormatOrDebug,
-    H: Handler,
-{
-    let mut link = L::assemble(wiring.source, wiring.buffers);
-    let mut handler = wiring.handler;
-    task(ServerCtx {
-        link: &mut link,
-        handler: &mut handler,
-        index: 0,
-    })
-    .await
-}
-
-/// Узел протокола: обслуживает канал, пока жив, и не выходит никогда.
-///
-/// Без `watchdog:` намеренно — по правилу `heartbeat::task`: узел законно
-/// ждёт запрос сколько угодно, и отметка по таймеру сторожила бы
-/// исполнитель, а не работу.
-pub async fn task<L, H>(mut ctx: ServerCtx<'_, L, H>) -> TaskExit
-where
-    L: FrameLink,
-    L::Error: FormatOrDebug,
-    H: Handler,
-{
-    match ctx.run().await {}
-}
-
 #[fsm::typestate]
 impl<L, H> ServerCtx<'_, L, H>
 where
@@ -135,6 +103,38 @@ where
     fn failed(&mut self, err: &LinkError<L::Error>) {
         warn!("server: кадр не принят: {:?}", err);
     }
+}
+
+/// Узел протокола без графа: собирает канал из `wiring` и обслуживает его,
+/// не выходя никогда, — то, что с графом делают слоты фрагмента и [`task`].
+pub async fn serve<L, H>(wiring: ServerWiring<L, H>) -> TaskExit
+where
+    L: Assemble + FrameLink,
+    L::Error: FormatOrDebug,
+    H: Handler,
+{
+    let mut link = L::assemble(wiring.source, wiring.buffers);
+    let mut handler = wiring.handler;
+    task(ServerCtx {
+        link: &mut link,
+        handler: &mut handler,
+        index: 0,
+    })
+    .await
+}
+
+/// Узел протокола: обслуживает канал, пока жив, и не выходит никогда.
+///
+/// Без `watchdog:` намеренно — по правилу `heartbeat::task`: узел законно
+/// ждёт запрос сколько угодно, и отметка по таймеру сторожила бы
+/// исполнитель, а не работу.
+pub async fn task<L, H>(mut ctx: ServerCtx<'_, L, H>) -> TaskExit
+where
+    L: FrameLink,
+    L::Error: FormatOrDebug,
+    H: Handler,
+{
+    match ctx.run().await {}
 }
 
 // Узел объявлен рядом со своей задачей — как `CPU_LOAD_FRAG`; в граф шаблона

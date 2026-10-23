@@ -1340,7 +1340,14 @@ fn check_snippets_compile(
         )?;
     }
     fs::write(&module_path, &module)?;
-    fs::write(&lib_path, format!("{lib}\nmod snippet_check;\n"))?;
+    // К остальным `mod`, до первого `pub use`: в конце файла модуль нарушил бы
+    // порядок элементов (`arbitrary_source_item_ordering`), и clippy упал бы
+    // не на заготовке, а на самой проверке.
+    let at = lib.find("\npub use ").map_or(lib.len(), |i| i + 1);
+    fs::write(
+        &lib_path,
+        format!("{}mod snippet_check;\n{}", &lib[..at], &lib[at..]),
+    )?;
 
     let checked = run_command(
         Command::new("cargo").args(["clippy", "-p", "bsp", "--", "-D", "warnings"]),

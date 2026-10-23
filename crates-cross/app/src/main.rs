@@ -5,8 +5,6 @@
     reason = "бинарник ничего не экспортирует, а shadow-rs генерирует pub-типы без Debug"
 )]
 
-use shadow_rs::shadow;
-shadow!(build);
 mod cpu_load;
 mod fault;
 {%- if graph == "true" %}
@@ -39,7 +37,12 @@ use defmt_rtt as _;
 
 use embassy_executor::raw::Executor;
 use embassy_time::Instant;
+use shadow_rs::shadow;
 use static_cell::StaticCell;
+
+// Версия пакета и коммит, из которого собран образ (`build::PKG_VERSION`,
+// `build::SHORT_COMMIT`), — их подставляет `shadow-rs` в build.rs.
+shadow!(build);
 
 /// Исполнитель задач — свой, а не из `#[embassy_executor::main]` (почему — в
 /// `main`). `StaticCell`, а не `ConstStaticCell`: `Executor::new` не `const`.

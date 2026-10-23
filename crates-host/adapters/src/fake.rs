@@ -16,8 +16,14 @@ use embassy_usb::driver::{
 use core::task::Context;
 
 use embassy_net::driver::{Capabilities, HardwareAddress, LinkState, RxToken, TxToken};
+
+/// MTU Ethernet: 1500 байт IP и 14 байт заголовка.
+pub const ETHERNET_MTU: usize = 1514;
 // {%- endif %}
 // {%- if has_usb == "true" %}
+
+/// Пакет управляющей точки по умолчанию — 64 байта (full-speed).
+const CONTROL_PACKET: usize = 64;
 
 /// USB-драйвер без шины: хост устройство не видит.
 #[derive(Debug, Default)]
@@ -33,9 +39,6 @@ pub struct NoEndpoint(EndpointInfo);
 /// Шина и управляющий канал, на которых не происходит ничего.
 #[derive(Debug)]
 pub struct NoBus;
-
-/// Пакет управляющей точки по умолчанию — 64 байта (full-speed).
-const CONTROL_PACKET: usize = 64;
 
 impl UsbDriver {
     fn endpoint(
@@ -203,9 +206,6 @@ mod usb_tests {
 }
 // {%- endif %}
 // {%- if has_net == "true" %}
-
-/// MTU Ethernet: 1500 байт IP и 14 байт заголовка.
-pub const ETHERNET_MTU: usize = 1514;
 
 /// Сетевое устройство без линка: кадров нет ни на приёме, ни на передаче.
 #[derive(Debug)]

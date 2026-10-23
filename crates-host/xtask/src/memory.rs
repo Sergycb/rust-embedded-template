@@ -6,6 +6,15 @@ use anyhow::Context;
 
 use crate::project::root_dir;
 
+/// Регион из `MEMORY {}`: `build` по нему меряет раздел приложения,
+/// `test host-target` передаёт тесту адреса разделов OTA, `panic-info` читает PANIC.
+pub struct Region {
+    pub origin: u64,
+    /// Нужна `panic-info`: по ней проверяется, что записанная в дампе длина
+    /// сообщения вообще помещается в регион.
+    pub length: u64,
+}
+
 /// Регионы из `memory.x` приложения.
 ///
 /// Один разбор на три места (`build`, `test host-target`, `panic-info`): путь и
@@ -41,15 +50,6 @@ pub fn app_region(regions: &[(String, Region)]) -> Option<(&'static str, &Region
             region(regions, "FLASH")
                 .map(|flash| (if partitioned { "ACTIVE" } else { "FLASH" }, flash))
         })
-}
-
-/// Регион из `MEMORY {}`: `build` по нему меряет раздел приложения,
-/// `test host-target` передаёт тесту адреса разделов OTA, `panic-info` читает PANIC.
-pub struct Region {
-    pub origin: u64,
-    /// Нужна `panic-info`: по ней проверяется, что записанная в дампе длина
-    /// сообщения вообще помещается в регион.
-    pub length: u64,
 }
 
 /// `MEMORY { NAME (attrs) : ORIGIN = 0x..., LENGTH = 128K }` из `memory.x`.

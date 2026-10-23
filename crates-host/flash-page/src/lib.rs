@@ -67,16 +67,6 @@ impl<F, const ERASE_SIZE: usize> ErasePage<F, ERASE_SIZE> {
     }
 }
 
-/// Страница [`ErasePage`], проверенная при компиляции: ненулевая и кратная слову
-/// записи.
-const fn page_size(erase_size: usize, write_size: usize) -> usize {
-    assert!(
-        erase_size > 0 && erase_size.is_multiple_of(write_size),
-        "страница должна быть ненулевой и кратной слову записи"
-    );
-    erase_size
-}
-
 impl<F: ErrorType, const ERASE_SIZE: usize> ErrorType for ErasePage<F, ERASE_SIZE> {
     type Error = F::Error;
 }
@@ -106,6 +96,16 @@ impl<F: NorFlash, const ERASE_SIZE: usize> NorFlash for ErasePage<F, ERASE_SIZE>
     }
 }
 
+/// Страница [`ErasePage`], проверенная при компиляции: ненулевая и кратная слову
+/// записи.
+const fn page_size(erase_size: usize, write_size: usize) -> usize {
+    assert!(
+        erase_size > 0 && erase_size.is_multiple_of(write_size),
+        "страница должна быть ненулевой и кратной слову записи"
+    );
+    erase_size
+}
+
 // {%- endif %}
 
 // {%- if ota_store == "external" %}
@@ -120,115 +120,7 @@ pub const fn erase_size<F: embedded_storage_async::nor_flash::NorFlash>() -> usi
 
 #[cfg(test)]
 mod tests {
-    use core::cell::RefCell;
-
-    use embassy_embedded_hal::adapter::BlockingAsync;
-    use embassy_sync::blocking_mutex::Mutex;
-    use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-    use embedded_storage::nor_flash::{ErrorType, NorFlashErrorKind};
-    use embedded_storage_async::nor_flash::{NorFlash, ReadNorFlash};
-
-    use embassy_embedded_hal::flash::partition::BlockingPartition;
-
     // {%- if erase_page == "true" %}
-    use super::ErasePage;
-    // {%- endif %}
-
-    /// Блокирующий флеш в памяти: 64 байта, страница 16, слово 4. Мосту
-    /// неважно, что под ним, — проверяется только, что каждая операция дошла
-    /// до флеша и задела ровно свой диапазон.
-    #[derive(Debug)]
-    struct MemFlash {
-        mem: [u8; 64],
-    }
-
-    impl ErrorType for MemFlash {
-        type Error = NorFlashErrorKind;
-    }
-
-    impl embedded_storage::nor_flash::ReadNorFlash for MemFlash {
-        const READ_SIZE: usize = 1;
-
-        fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), Self::Error> {
-            let start = offset as usize;
-            bytes.copy_from_slice(&self.mem[start..start + bytes.len()]);
-            Ok(())
-        }
-
-        fn capacity(&self) -> usize {
-            self.mem.len()
-        }
-    }
-
-    impl embedded_storage::nor_flash::NorFlash for MemFlash {
-        const WRITE_SIZE: usize = 4;
-        const ERASE_SIZE: usize = 16;
-
-        fn erase(&mut self, from: u32, to: u32) -> Result<(), Self::Error> {
-            self.mem[from as usize..to as usize].fill(0xFF);
-            Ok(())
-        }
-
-        fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), Self::Error> {
-            let start = offset as usize;
-            self.mem[start..start + bytes.len()].copy_from_slice(bytes);
-            Ok(())
-        }
-    }
-
-    #[tokio::test]
-    async fn forwards_every_operation_to_the_flash_under_the_mutex() {
-        let flash: Mutex<NoopRawMutex, _> = Mutex::new(RefCell::new(MemFlash { mem: [0; 64] }));
-        let mut shared = BlockingAsync::new(BlockingPartition::new(&flash, 0, 64));
-
-        assert_eq!(shared.capacity(), 64);
-        assert_eq!(
-            <BlockingAsync<BlockingPartition<'_, NoopRawMutex, MemFlash>> as NorFlash>::WRITE_SIZE,
-            4
-        );
-
-        shared.erase(16, 32).await.expect("стирание");
-        shared.write(16, &[0xA5; 4]).await.expect("запись");
-        let mut back = [0; 8];
-        shared.read(16, &mut back).await.expect("чтение");
-
-        assert_eq!(back, [0xA5, 0xA5, 0xA5, 0xA5, 0xFF, 0xFF, 0xFF, 0xFF]);
-        assert!(
-            flash.lock(|f| f.borrow().mem[..16].iter().all(|b| *b == 0)),
-            "соседняя страница не тронута"
-        );
-    }
-
-    // {%- if erase_page == "true" %}
-    /// `ErasePage` меняет только объявленную страницу: операции доходят до флеша
-    /// с теми же границами (блокирующие трейты — их берут разделы `embassy-boot`
-    /// и, через `BlockingAsync`, `sequential-storage`).
-    #[test]
-    fn paged_declares_its_own_page_and_forwards_the_rest() {
-        use embedded_storage::nor_flash::{NorFlash, ReadNorFlash};
-
-        type Flash = Mutex<NoopRawMutex, RefCell<MemFlash>>;
-        type Page32<'a> = ErasePage<BlockingPartition<'a, NoopRawMutex, MemFlash>, 32>;
-        let flash: Flash = Mutex::new(RefCell::new(MemFlash { mem: [0; 64] }));
-
-        assert_eq!(<Page32<'_> as NorFlash>::ERASE_SIZE, 32);
-        assert_eq!(<Page32<'_> as NorFlash>::WRITE_SIZE, 4);
-
-        let mut paged = Page32::new(BlockingPartition::new(&flash, 0, 64));
-        paged.erase(32, 64).expect("стирание");
-        paged.write(32, &[0xA5; 4]).expect("запись");
-        paged.write(36, &[0x5A; 4]).expect("запись");
-        let mut back = [0; 12];
-        paged.read(32, &mut back).expect("чтение");
-
-        assert_eq!(back[..8], [0xA5, 0xA5, 0xA5, 0xA5, 0x5A, 0x5A, 0x5A, 0x5A]);
-        assert!(back[8..].iter().all(|b| *b == 0xFF));
-        assert!(
-            flash.lock(|f| f.borrow().mem[..32].iter().all(|b| *b == 0)),
-            "стирание не вышло за свой диапазон"
-        );
-    }
-
     // {%- if ota == "true" %}
     /// Обмен `embassy-boot` над страницей, более крупной физической (L0:
     /// физическая 128 Б, страница обмена 1 KiB), — настоящий `BootLoader` над
@@ -518,5 +410,115 @@ mod tests {
         }
     }
     // {%- endif %}
+    // {%- endif %}
+
+    use core::cell::RefCell;
+
+    use embassy_embedded_hal::adapter::BlockingAsync;
+    use embassy_sync::blocking_mutex::Mutex;
+    use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+    use embedded_storage::nor_flash::{ErrorType, NorFlashErrorKind};
+    use embedded_storage_async::nor_flash::{NorFlash, ReadNorFlash};
+
+    use embassy_embedded_hal::flash::partition::BlockingPartition;
+
+    // {%- if erase_page == "true" %}
+    use super::ErasePage;
+    // {%- endif %}
+
+    /// Блокирующий флеш в памяти: 64 байта, страница 16, слово 4. Мосту
+    /// неважно, что под ним, — проверяется только, что каждая операция дошла
+    /// до флеша и задела ровно свой диапазон.
+    #[derive(Debug)]
+    struct MemFlash {
+        mem: [u8; 64],
+    }
+
+    impl ErrorType for MemFlash {
+        type Error = NorFlashErrorKind;
+    }
+
+    impl embedded_storage::nor_flash::ReadNorFlash for MemFlash {
+        const READ_SIZE: usize = 1;
+
+        fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), Self::Error> {
+            let start = offset as usize;
+            bytes.copy_from_slice(&self.mem[start..start + bytes.len()]);
+            Ok(())
+        }
+
+        fn capacity(&self) -> usize {
+            self.mem.len()
+        }
+    }
+
+    impl embedded_storage::nor_flash::NorFlash for MemFlash {
+        const WRITE_SIZE: usize = 4;
+        const ERASE_SIZE: usize = 16;
+
+        fn erase(&mut self, from: u32, to: u32) -> Result<(), Self::Error> {
+            self.mem[from as usize..to as usize].fill(0xFF);
+            Ok(())
+        }
+
+        fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), Self::Error> {
+            let start = offset as usize;
+            self.mem[start..start + bytes.len()].copy_from_slice(bytes);
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn forwards_every_operation_to_the_flash_under_the_mutex() {
+        let flash: Mutex<NoopRawMutex, _> = Mutex::new(RefCell::new(MemFlash { mem: [0; 64] }));
+        let mut shared = BlockingAsync::new(BlockingPartition::new(&flash, 0, 64));
+
+        assert_eq!(shared.capacity(), 64);
+        assert_eq!(
+            <BlockingAsync<BlockingPartition<'_, NoopRawMutex, MemFlash>> as NorFlash>::WRITE_SIZE,
+            4
+        );
+
+        shared.erase(16, 32).await.expect("стирание");
+        shared.write(16, &[0xA5; 4]).await.expect("запись");
+        let mut back = [0; 8];
+        shared.read(16, &mut back).await.expect("чтение");
+
+        assert_eq!(back, [0xA5, 0xA5, 0xA5, 0xA5, 0xFF, 0xFF, 0xFF, 0xFF]);
+        assert!(
+            flash.lock(|f| f.borrow().mem[..16].iter().all(|b| *b == 0)),
+            "соседняя страница не тронута"
+        );
+    }
+
+    // {%- if erase_page == "true" %}
+    /// `ErasePage` меняет только объявленную страницу: операции доходят до флеша
+    /// с теми же границами (блокирующие трейты — их берут разделы `embassy-boot`
+    /// и, через `BlockingAsync`, `sequential-storage`).
+    #[test]
+    fn paged_declares_its_own_page_and_forwards_the_rest() {
+        use embedded_storage::nor_flash::{NorFlash, ReadNorFlash};
+
+        type Flash = Mutex<NoopRawMutex, RefCell<MemFlash>>;
+        type Page32<'a> = ErasePage<BlockingPartition<'a, NoopRawMutex, MemFlash>, 32>;
+        let flash: Flash = Mutex::new(RefCell::new(MemFlash { mem: [0; 64] }));
+
+        assert_eq!(<Page32<'_> as NorFlash>::ERASE_SIZE, 32);
+        assert_eq!(<Page32<'_> as NorFlash>::WRITE_SIZE, 4);
+
+        let mut paged = Page32::new(BlockingPartition::new(&flash, 0, 64));
+        paged.erase(32, 64).expect("стирание");
+        paged.write(32, &[0xA5; 4]).expect("запись");
+        paged.write(36, &[0x5A; 4]).expect("запись");
+        let mut back = [0; 12];
+        paged.read(32, &mut back).expect("чтение");
+
+        assert_eq!(back[..8], [0xA5, 0xA5, 0xA5, 0xA5, 0x5A, 0x5A, 0x5A, 0x5A]);
+        assert!(back[8..].iter().all(|b| *b == 0xFF));
+        assert!(
+            flash.lock(|f| f.borrow().mem[..32].iter().all(|b| *b == 0)),
+            "стирание не вышло за свой диапазон"
+        );
+    }
     // {%- endif %}
 }

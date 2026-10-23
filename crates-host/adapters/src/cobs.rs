@@ -54,20 +54,6 @@ pub enum CobsError<E> {
     TooLong,
 }
 
-/// Сколько байт буфера отправки нужно на сообщение длиной `message`:
-/// худший случай COBS, CRC и два разделителя.
-#[must_use]
-pub const fn tx_len(message: usize) -> usize {
-    max_encoding_length(message + CRC_LEN) + 2
-}
-
-/// Сколько байт буфера приёма нужно на сообщение длиной `message`:
-/// сообщение и CRC.
-#[must_use]
-pub const fn rx_len(message: usize) -> usize {
-    message + CRC_LEN
-}
-
 /// Кадрированный канал поверх потока `io`.
 ///
 /// Два буфера. `buf` — буфер канала (`FrameLink::buffer`): на сообщение
@@ -191,24 +177,6 @@ impl<'b, T> Cobs<'b, T> {
     }
 }
 
-/// Отказ потока: разорванное соединение не вылечится следующим кадром, а
-/// шум на UART (переполнение, чётность) — вылечится. `embassy-stm32` отдаёт
-/// все ошибки UART как `ErrorKind::Other` — значит, «потерян кадр».
-fn io_error<E: Error>(e: E) -> LinkError<CobsError<E>> {
-    if matches!(
-        e.kind(),
-        ErrorKind::ConnectionReset
-            | ErrorKind::ConnectionAborted
-            | ErrorKind::ConnectionRefused
-            | ErrorKind::NotConnected
-            | ErrorKind::BrokenPipe
-    ) {
-        LinkError::Down(CobsError::Io(e))
-    } else {
-        LinkError::Lost(CobsError::Io(e))
-    }
-}
-
 impl<T: Read> Reader<T> {
     /// Следующий байт потока.
     async fn next_byte(&mut self) -> Result<u8, LinkError<CobsError<T::Error>>> {
@@ -285,6 +253,38 @@ impl<T: Read + Write> FrameLink for Cobs<'_, T> {
         let io = &mut self.reader.io;
         io.write_all(&self.frame[..=end]).await.map_err(io_error)?;
         io.flush().await.map_err(io_error)
+    }
+}
+
+/// Сколько байт буфера отправки нужно на сообщение длиной `message`:
+/// худший случай COBS, CRC и два разделителя.
+#[must_use]
+pub const fn tx_len(message: usize) -> usize {
+    max_encoding_length(message + CRC_LEN) + 2
+}
+
+/// Сколько байт буфера приёма нужно на сообщение длиной `message`:
+/// сообщение и CRC.
+#[must_use]
+pub const fn rx_len(message: usize) -> usize {
+    message + CRC_LEN
+}
+
+/// Отказ потока: разорванное соединение не вылечится следующим кадром, а
+/// шум на UART (переполнение, чётность) — вылечится. `embassy-stm32` отдаёт
+/// все ошибки UART как `ErrorKind::Other` — значит, «потерян кадр».
+fn io_error<E: Error>(e: E) -> LinkError<CobsError<E>> {
+    if matches!(
+        e.kind(),
+        ErrorKind::ConnectionReset
+            | ErrorKind::ConnectionAborted
+            | ErrorKind::ConnectionRefused
+            | ErrorKind::NotConnected
+            | ErrorKind::BrokenPipe
+    ) {
+        LinkError::Down(CobsError::Io(e))
+    } else {
+        LinkError::Lost(CobsError::Io(e))
     }
 }
 

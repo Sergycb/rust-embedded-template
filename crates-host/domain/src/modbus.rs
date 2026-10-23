@@ -40,8 +40,6 @@
 /// Slave: обработчик кадра, запросы — порту [`ports::Registers`].
 mod slave;
 
-pub use slave::Slave;
-
 // {%- if modbus_master == "true" %}
 /// Master: по функции на запрос, ответ сверяется с запросом.
 pub mod master;
@@ -51,17 +49,18 @@ pub mod master;
 /// Карта регистров по умолчанию — пустая, место под карту устройства.
 mod registers;
 
-pub use registers::EmptyRegisters;
-
 /// Одна карта регистров на несколько узлов (по узлу на транспорт).
 mod shared;
-
-pub use shared::{MapMutex, SharedRegisters};
 // {%- if ota == "true" %}
 
 /// Окно OTA в карте регистров: команды обновления записями FC16.
 mod ota;
+// {%- endif %}
 
+pub use registers::EmptyRegisters;
+pub use shared::{MapMutex, SharedRegisters};
+pub use slave::Slave;
+// {%- if ota == "true" %}
 pub use ota::{OTA_BASE, OTA_REGISTERS, OtaRegisters, STATUS_REGISTERS};
 // {%- endif %}
 
@@ -138,17 +137,6 @@ mod fakes {
         pub(super) reads: usize,
     }
 
-    /// Диапазон `start..start + len` внутри карты из 16 элементов.
-    fn range(start: u16, len: u16) -> Result<core::ops::Range<usize>, Exception> {
-        let start = usize::from(start);
-        let end = start + usize::from(len);
-        if end <= 16 {
-            Ok(start..end)
-        } else {
-            Err(Exception::IllegalDataAddress)
-        }
-    }
-
     impl Registers for Map {
         fn read_coils(
             &mut self,
@@ -199,6 +187,17 @@ mod fakes {
                 }
                 self.writes.push((start, values.iter().collect()));
             }))
+        }
+    }
+
+    /// Диапазон `start..start + len` внутри карты из 16 элементов.
+    fn range(start: u16, len: u16) -> Result<core::ops::Range<usize>, Exception> {
+        let start = usize::from(start);
+        let end = start + usize::from(len);
+        if end <= 16 {
+            Ok(start..end)
+        } else {
+            Err(Exception::IllegalDataAddress)
         }
     }
 }

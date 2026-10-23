@@ -14,6 +14,13 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 bind_interrupts!(struct Irqs {
     {{rng_irq}} => rng::InterruptHandler<RNG>;
 });
+{%- if net_services contains "ssh" %}
+
+/// Сколько байт выдаётся под одной критической секцией. Блок отдаёт слово
+/// за десятки тактов своего клока, и весь запрос под одной секцией держал бы
+/// прерывания (USB, Ethernet) выключенными, пока не заполнен буфер любой длины.
+const CHUNK: usize = 32;
+{%- endif %}
 
 /// Генератор случайных чисел платы. Блок включён, пока объект жив, и
 /// выключается, когда его дропают: клок ему дан конфигом HAL (`config()` в
@@ -28,11 +35,6 @@ type Rng = rng::Rng<'static, RNG>;
 /// входит в допущение «один исполнитель» (`docs/flash.md`).
 static GENERATOR: Mutex<CriticalSectionRawMutex, RefCell<Option<Rng>>> =
     Mutex::new(RefCell::new(None));
-
-/// Сколько байт выдаётся под одной критической секцией. Блок отдаёт слово
-/// за десятки тактов своего клока, и весь запрос под одной секцией держал бы
-/// прерывания (USB, Ethernet) выключенными, пока не заполнен буфер любой длины.
-const CHUNK: usize = 32;
 
 /// Затравка сетевого стека — первое слово генератора; сам генератор остаётся
 /// бэкендом `getrandom` — случайность для SSH. Зовёт `Board::new`, один раз.

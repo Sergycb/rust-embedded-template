@@ -12,6 +12,34 @@ use domain::ota::boot::{BootPlan, boot_plan};
 use embassy_boot_stm32::{BootLoader, BootLoaderConfig, State};
 use embedded_storage::nor_flash::NorFlash;
 
+const _: () = assert!(
+    EXT_PAGE_SIZE.is_multiple_of(<ExternalFlash as NorFlash>::ERASE_SIZE),
+    "стирание драйвера внешней флеши не делит страницу обмена (EXT_PAGE_SIZE): \
+     перегенерируйте раскладку или возьмите стирание мельче (сектор 4 KiB)"
+);
+
+/// Журнал `STATE` в раскладке посчитан на слово не шире 32 байт — столько же
+/// держит буфер адаптера в приложении (`ports::MAX_WRITE_SIZE`).
+const _: () = assert!(
+    <ExternalFlash as NorFlash>::WRITE_SIZE <= ports::MAX_WRITE_SIZE,
+    "слово записи драйвера внешней флеши шире 32 байт"
+);
+
+/// Буфер обмена: кратен слову записи и внутреннего флеша (`ACTIVE`), и
+/// внешнего (`DFU`), и не меньше слова `STATE` — требования `prepare_boot`.
+/// Оба слова — степени двойки, так что общее кратное — большее из них.
+const BUFFER_SIZE: usize = if <ExternalFlash as NorFlash>::WRITE_SIZE > {{write_size}} {
+    <ExternalFlash as NorFlash>::WRITE_SIZE
+} else {
+    {{write_size}}
+};
+
+const _: () = assert!(
+    BUFFER_SIZE.is_multiple_of(embassy_stm32::flash::WRITE_SIZE),
+    "буфер обмена не кратен слову записи внутреннего флеша (embassy_stm32::flash::WRITE_SIZE): \
+     проверьте write_size из генерации"
+);
+
 /// Драйвер внешней флеши, на которой лежат `STATE` и `DFU`: та же W25Q, что
 /// у приложения (`bsp::external`), но блокирующая — bootloader не поднимает
 /// исполнитель. Шина — пока заглушка; подключая микросхему, плата меняет её
@@ -51,34 +79,6 @@ pub(crate) fn new(sys_hz: u32) -> ExternalFlash {
         }
     }
 }
-
-const _: () = assert!(
-    EXT_PAGE_SIZE.is_multiple_of(<ExternalFlash as NorFlash>::ERASE_SIZE),
-    "стирание драйвера внешней флеши не делит страницу обмена (EXT_PAGE_SIZE): \
-     перегенерируйте раскладку или возьмите стирание мельче (сектор 4 KiB)"
-);
-
-/// Журнал `STATE` в раскладке посчитан на слово не шире 32 байт — столько же
-/// держит буфер адаптера в приложении (`ports::MAX_WRITE_SIZE`).
-const _: () = assert!(
-    <ExternalFlash as NorFlash>::WRITE_SIZE <= ports::MAX_WRITE_SIZE,
-    "слово записи драйвера внешней флеши шире 32 байт"
-);
-
-/// Буфер обмена: кратен слову записи и внутреннего флеша (`ACTIVE`), и
-/// внешнего (`DFU`), и не меньше слова `STATE` — требования `prepare_boot`.
-/// Оба слова — степени двойки, так что общее кратное — большее из них.
-const BUFFER_SIZE: usize = if <ExternalFlash as NorFlash>::WRITE_SIZE > {{write_size}} {
-    <ExternalFlash as NorFlash>::WRITE_SIZE
-} else {
-    {{write_size}}
-};
-
-const _: () = assert!(
-    BUFFER_SIZE.is_multiple_of(embassy_stm32::flash::WRITE_SIZE),
-    "буфер обмена не кратен слову записи внутреннего флеша (embassy_stm32::flash::WRITE_SIZE): \
-     проверьте write_size из генерации"
-);
 
 /// Подготовка к загрузке. Решает `domain::ota::boot::boot_plan` (там же почему
 /// и host-тест с прерванным обменом): `Prepare` — строгий

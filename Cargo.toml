@@ -71,6 +71,10 @@ allow_attributes_without_reason = "warn"
 mod_module_files        = "warn"
 # `map_err(|_| …)` теряет причину отказа.
 map_err_ignore          = "warn"
+# Порядок элементов модуля: `mod` → `use` → макросы → `const` → типы и `impl`
+# → `static` → `fn` (группы — `module-item-order-groupings` в clippy.toml;
+# внутри группы порядок свободный). Restriction-линт, поэтому включён явно.
+arbitrary_source_item_ordering = "warn"
 
 [workspace.dependencies]
 # Крейты самого проекта: порты/адаптеры domain объявлены здесь, чтобы версия

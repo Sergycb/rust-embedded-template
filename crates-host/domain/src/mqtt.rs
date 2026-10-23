@@ -69,18 +69,6 @@ const TOPIC_LEN: usize = CLIENT_ID_LEN + "/cmd/reboot/result".len();
 
 const REBOOT: &str = "/cmd/reboot";
 
-/// Длина пакета с оставшейся частью `rest` байт (меньше 16384): тип и длина
-/// varint.
-const fn packet_len(rest: usize) -> usize {
-    1 + if rest < 128 { 1 } else { 2 } + rest
-}
-
-/// Оставшаяся часть PUBLISH `QoS` 1 без свойств: тема, номер пакета, пустые
-/// свойства, тело.
-const fn publish_rest(topic: usize, payload: usize) -> usize {
-    2 + topic + 2 + 1 + payload
-}
-
 /// Сколько `minimq` держит в [`TX_BUFFER`] в худший момент сессии (кодирование —
 /// `minimq` 0.13: `handshake.rs`, `outbound.rs`). `CONNECT`: запас под заголовок
 /// (5), имя протокола, версия, флаги, keep-alive, три свойства (13 байт и
@@ -224,31 +212,6 @@ pub enum Command {
     Reboot,
 }
 
-/// Команда по теме сообщения; `None` — чужая или неизвестная тема.
-#[must_use]
-pub fn parse_command(topics: &Topics, topic: &str) -> Option<Command> {
-    let rest = topic
-        .strip_prefix(topics.prefix.as_str())?
-        .strip_prefix('/')?
-        .strip_prefix(topics.uid.as_str())?;
-    match rest {
-        REBOOT => Some(Command::Reboot),
-        _ => None,
-    }
-}
-
-/// Тело `telemetry`: JSON-объект со временем работы.
-///
-/// # Errors
-///
-/// Ошибка записи в `out`: объект не влез в буфер.
-pub fn write_telemetry(out: &mut impl core::fmt::Write, uptime_s: u64) -> core::fmt::Result {
-    // Скобки — `write_char`: это исходник шаблона, см. `device::write_info`.
-    out.write_char('{')?;
-    write!(out, r#""uptime_s":{uptime_s}"#)?;
-    out.write_char('}')
-}
-
 /// Чем кончилась сессия. Строку лога об этом пишет сама [`serve`]: узлу
 /// после любого исхода — положить трубку и подключиться снова.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -277,6 +240,163 @@ pub(crate) struct Env<'a> {
     /// Клиент входа `CMD` узла OTA — для `cmd/reboot`.
     pub ota: &'a OtaClient,
     // {%- endif %}
+}
+
+#[fsm::typestate]
+impl<B: Broker, D: Dial + Read + Write> MqttCtx<'_, B, D>
+where
+    <D as Dial>::Error: FormatOrDebug,
+{
+    fsm::machine! {
+        machine Mqtt mod edges {
+            states {
+                /// Без сессии: ждёт соединения с брокером.
+                Offline { topics: Topics },
+            }
+            start => begin -> Offline;
+            listen {
+                Offline => linked: self.dial(),
+            }
+            transitions {
+                Offline + linked(Ok(endpoint)) => session -> self,
+                Offline + linked(Err(ref failure)) => unreachable -> self,
+            }
+        }
+    }
+
+    /// Темы платы; первое подключение — после того, как стек получил адрес
+    /// (статический или от DHCP).
+    async fn begin(&mut self) -> Offline {
+        info!("domain: узел MQTT запущен");
+        self.stack.wait_config_up().await;
+        Offline {
+            topics: Topics::new(self.prefix, &self.info.uid),
+        }
+    }
+
+    /// Адрес брокера и одна попытка подключиться к нему; паузу перед ней
+    /// выдерживает `Dial`.
+    async fn dial(&mut self) -> Result<Endpoint, (Endpoint, <D as Dial>::Error)> {
+        let endpoint = self.broker.endpoint().await;
+        match self
+            .link
+            .dial(SocketAddrV4::new(endpoint.addr.into(), endpoint.port))
+            .await
+        {
+            Ok(()) => Ok(endpoint),
+            Err(err) => Err((endpoint, err)),
+        }
+    }
+
+    /// Брокер недоступен — строка в лог на каждую попытку, и узел сразу
+    /// зовёт `dial` снова: адрес-заглушка из `mqtt.toml` иначе молчал бы.
+    #[expect(
+        clippy::unused_self,
+        reason = "сигнатуру действия задаёт таблица `#[fsm::typestate]`"
+    )]
+    fn unreachable(&mut self, failure: &(Endpoint, <D as Dial>::Error)) {
+        let (endpoint, err) = failure;
+        let [a, b, c, d] = endpoint.addr;
+        warn!(
+            "mqtt: брокер {}.{}.{}.{}:{} недоступен ({:?}) — проверьте mqtt.toml",
+            a, b, c, d, endpoint.port, err
+        );
+    }
+
+    /// Одна сессия над открытым соединением. Чем бы она ни кончилась (строку
+    /// лога пишет `serve`), трубка кладётся, и узел сразу подключается снова.
+    async fn session(&mut self, s: &mut Offline, endpoint: Endpoint) {
+        // Среда в стеке одна — Ethernet (`medium-ethernet`).
+        let embassy_net::HardwareAddress::Ethernet(mac) = self.stack.hardware_address();
+        let mut env = Env {
+            topics: &s.topics,
+            info: self.info,
+            mac: mac.0,
+            ip: self
+                .stack
+                .config_v4()
+                .map(|config| config.address.address()),
+            rx: &mut self.mqtt_rx[..],
+            tx: &mut self.mqtt_tx[..],
+            // {%- if ota == "true" %}
+            ota: self.ota,
+            // {%- endif %}
+        };
+        serve(&mut *self.link, &endpoint, &mut env).await;
+        self.link.hang_up();
+    }
+}
+
+/// Вход узла `MQTT`: стек, сведения, префикс тем, откуда адрес брокера и
+/// память соединения `D` с ним.
+///
+/// Соединение собирает узел (`D::assemble(stack, link)` — порт
+/// [`Assemble`](ports::Assemble)) на том же стеке; compose-site раздаёт только
+/// стек платы и ссылки на свои статики. Написан руками, а не выведен
+/// фрагментом: слот соединения инициализируется сборкой, а не чтением поля.
+pub struct MqttWiring<B, D: ports::Assemble<Source = crate::net::Stack<'static>>> {
+    /// Сетевой стек — ради адреса платы и MAC в `info` и под соединение.
+    pub stack: crate::net::Stack<'static>,
+    /// Сведения для `info`.
+    pub info: crate::device::DeviceInfo,
+    /// Префикс тем, не длиннее `PREFIX_MAX`.
+    pub prefix: &'static str,
+    /// Откуда адрес брокера.
+    pub broker: B,
+    /// Память соединения с брокером.
+    pub link: D::Buffers,
+    // {%- if ota == "true" %}
+    /// Клиент входа `CMD` узла OTA — для `cmd/reboot`.
+    pub ota: crate::ota::OtaClient,
+    // {%- endif %}
+}
+
+// Вручную: у стека `embassy-net` нет `Debug`.
+impl<B, D: ports::Assemble<Source = crate::net::Stack<'static>>> core::fmt::Debug
+    for MqttWiring<B, D>
+{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("MqttWiring")
+            .field("prefix", &self.prefix)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Длина пакета с оставшейся частью `rest` байт (меньше 16384): тип и длина
+/// varint.
+const fn packet_len(rest: usize) -> usize {
+    1 + if rest < 128 { 1 } else { 2 } + rest
+}
+
+/// Оставшаяся часть PUBLISH `QoS` 1 без свойств: тема, номер пакета, пустые
+/// свойства, тело.
+const fn publish_rest(topic: usize, payload: usize) -> usize {
+    2 + topic + 2 + 1 + payload
+}
+
+/// Команда по теме сообщения; `None` — чужая или неизвестная тема.
+#[must_use]
+pub fn parse_command(topics: &Topics, topic: &str) -> Option<Command> {
+    let rest = topic
+        .strip_prefix(topics.prefix.as_str())?
+        .strip_prefix('/')?
+        .strip_prefix(topics.uid.as_str())?;
+    match rest {
+        REBOOT => Some(Command::Reboot),
+        _ => None,
+    }
+}
+
+/// Тело `telemetry`: JSON-объект со временем работы.
+///
+/// # Errors
+///
+/// Ошибка записи в `out`: объект не влез в буфер.
+pub fn write_telemetry(out: &mut impl core::fmt::Write, uptime_s: u64) -> core::fmt::Result {
+    // Скобки — `write_char`: это исходник шаблона, см. `device::write_info`.
+    out.write_char('{')?;
+    write!(out, r#""uptime_s":{uptime_s}"#)?;
+    out.write_char('}')
 }
 
 /// Настройки клиента: идентификатор, вход (при непустом `user`) и Will
@@ -461,126 +581,6 @@ where
     match ctx.run().await {}
 }
 
-#[fsm::typestate]
-impl<B: Broker, D: Dial + Read + Write> MqttCtx<'_, B, D>
-where
-    <D as Dial>::Error: FormatOrDebug,
-{
-    fsm::machine! {
-        machine Mqtt mod edges {
-            states {
-                /// Без сессии: ждёт соединения с брокером.
-                Offline { topics: Topics },
-            }
-            start => begin -> Offline;
-            listen {
-                Offline => linked: self.dial(),
-            }
-            transitions {
-                Offline + linked(Ok(endpoint)) => session -> self,
-                Offline + linked(Err(ref failure)) => unreachable -> self,
-            }
-        }
-    }
-
-    /// Темы платы; первое подключение — после того, как стек получил адрес
-    /// (статический или от DHCP).
-    async fn begin(&mut self) -> Offline {
-        info!("domain: узел MQTT запущен");
-        self.stack.wait_config_up().await;
-        Offline {
-            topics: Topics::new(self.prefix, &self.info.uid),
-        }
-    }
-
-    /// Адрес брокера и одна попытка подключиться к нему; паузу перед ней
-    /// выдерживает `Dial`.
-    async fn dial(&mut self) -> Result<Endpoint, (Endpoint, <D as Dial>::Error)> {
-        let endpoint = self.broker.endpoint().await;
-        match self
-            .link
-            .dial(SocketAddrV4::new(endpoint.addr.into(), endpoint.port))
-            .await
-        {
-            Ok(()) => Ok(endpoint),
-            Err(err) => Err((endpoint, err)),
-        }
-    }
-
-    /// Брокер недоступен — строка в лог на каждую попытку, и узел сразу
-    /// зовёт `dial` снова: адрес-заглушка из `mqtt.toml` иначе молчал бы.
-    #[expect(
-        clippy::unused_self,
-        reason = "сигнатуру действия задаёт таблица `#[fsm::typestate]`"
-    )]
-    fn unreachable(&mut self, failure: &(Endpoint, <D as Dial>::Error)) {
-        let (endpoint, err) = failure;
-        let [a, b, c, d] = endpoint.addr;
-        warn!(
-            "mqtt: брокер {}.{}.{}.{}:{} недоступен ({:?}) — проверьте mqtt.toml",
-            a, b, c, d, endpoint.port, err
-        );
-    }
-
-    /// Одна сессия над открытым соединением. Чем бы она ни кончилась (строку
-    /// лога пишет `serve`), трубка кладётся, и узел сразу подключается снова.
-    async fn session(&mut self, s: &mut Offline, endpoint: Endpoint) {
-        // Среда в стеке одна — Ethernet (`medium-ethernet`).
-        let embassy_net::HardwareAddress::Ethernet(mac) = self.stack.hardware_address();
-        let mut env = Env {
-            topics: &s.topics,
-            info: self.info,
-            mac: mac.0,
-            ip: self
-                .stack
-                .config_v4()
-                .map(|config| config.address.address()),
-            rx: &mut self.mqtt_rx[..],
-            tx: &mut self.mqtt_tx[..],
-            // {%- if ota == "true" %}
-            ota: self.ota,
-            // {%- endif %}
-        };
-        serve(&mut *self.link, &endpoint, &mut env).await;
-        self.link.hang_up();
-    }
-}
-
-/// Вход узла `MQTT`: стек, сведения, префикс тем, откуда адрес брокера и
-/// память соединения `D` с ним.
-///
-/// Соединение собирает узел (`D::assemble(stack, link)` — порт
-/// [`Assemble`](ports::Assemble)) на том же стеке; compose-site раздаёт только
-/// стек платы и ссылки на свои статики. Написан руками, а не выведен
-/// фрагментом: слот соединения инициализируется сборкой, а не чтением поля.
-pub struct MqttWiring<B, D: ports::Assemble<Source = crate::net::Stack<'static>>> {
-    /// Сетевой стек — ради адреса платы и MAC в `info` и под соединение.
-    pub stack: crate::net::Stack<'static>,
-    /// Сведения для `info`.
-    pub info: crate::device::DeviceInfo,
-    /// Префикс тем, не длиннее `PREFIX_MAX`.
-    pub prefix: &'static str,
-    /// Откуда адрес брокера.
-    pub broker: B,
-    /// Память соединения с брокером.
-    pub link: D::Buffers,
-    // {%- if ota == "true" %}
-    /// Клиент входа `CMD` узла OTA — для `cmd/reboot`.
-    pub ota: crate::ota::OtaClient,
-    // {%- endif %}
-}
-
-// Вручную: у стека `embassy-net` нет `Debug`.
-impl<B, D: ports::Assemble<Source = crate::net::Stack<'static>>> core::fmt::Debug
-    for MqttWiring<B, D>
-{
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("MqttWiring")
-            .field("prefix", &self.prefix)
-            .finish_non_exhaustive()
-    }
-}
-
 // Узел объявлен рядом со своей задачей — как `SSH`. `<B>` — откуда адрес
 // брокера (`Fixed` или свой тип проекта), `<D>` — соединение (`Dial` +
 // поток байтов; `adapters::net::TcpClient` над сокетом стека — собирает его
@@ -631,46 +631,15 @@ pub(crate) mod tests {
 
     use super::*;
 
-    #[test]
-    fn topics_are_prefix_uid_suffix() {
-        let t = Topics::new("devices", &[0xab; 12]);
-        let uid = "abababababababababababab";
-        assert_eq!(t.status().as_str(), format!("devices/{uid}/status"));
-        assert_eq!(t.info().as_str(), format!("devices/{uid}/info"));
-        assert_eq!(t.telemetry().as_str(), format!("devices/{uid}/telemetry"));
-        assert_eq!(t.cmd_filter().as_str(), format!("devices/{uid}/cmd/#"));
-        assert_eq!(
-            t.reboot_result().as_str(),
-            format!("devices/{uid}/cmd/reboot/result")
-        );
-        assert_eq!(t.client_id().as_str(), format!("devices-{uid}"));
-    }
+    const ENDPOINT: Endpoint = Endpoint {
+        addr: [10, 0, 0, 1],
+        port: 1883,
+        user: "",
+        password: "",
+    };
 
-    #[test]
-    fn longest_prefix_fits_client_id() {
-        let t = Topics::new(&"p".repeat(PREFIX_MAX), &[0; 12]);
-        assert_eq!(t.client_id().len(), 64);
-    }
-
-    #[test]
-    fn commands_are_parsed_by_topic() {
-        let t = Topics::new("d", &[1; 12]);
-        let base = "d/010101010101010101010101";
-        assert!(matches!(
-            parse_command(&t, &format!("{base}/cmd/reboot")),
-            Some(Command::Reboot)
-        ));
-        assert!(parse_command(&t, &format!("{base}/cmd/unknown")).is_none());
-        assert!(parse_command(&t, "other/cmd/reboot").is_none());
-        assert!(parse_command(&t, &format!("{base}/cmd/reboot/result")).is_none());
-    }
-
-    #[test]
-    fn telemetry_is_json() {
-        let mut s = std::string::String::new();
-        write_telemetry(&mut s, 42).unwrap();
-        assert_eq!(s, r#"{"uptime_s":42}"#);
-    }
+    const UID: [u8; UID_BYTES] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+    const UID_TEXT: &str = "0102030405060708090a0b0c";
 
     /// Брокер в памяти — поток байтов для [`serve`]: вход — то, что «прислал»
     /// брокер ([`FakeBroker::push`]), выход — всё, что записала плата.
@@ -744,6 +713,133 @@ pub(crate) mod tests {
         }
     }
 
+    /// Исходящая публикация, разобранная из байтов платы.
+    #[derive(Debug)]
+    pub(crate) struct Sent {
+        pub(crate) retain: bool,
+        pub(crate) topic: std::string::String,
+        pub(crate) payload: Vec<u8>,
+    }
+
+    type Running = Pin<Box<dyn Future<Output = Ended>>>;
+
+    /// Соединение узла: на каждый `dial` — следующий из заготовленных
+    /// сценариев, [`FakeBroker`] или `None` — отказ. Сценарии кончились —
+    /// `dial` ждёт вечно, как реализация в паузе перед попыткой.
+    #[derive(Clone, Default)]
+    struct FakeLink(Rc<RefCell<Calls>>);
+
+    #[derive(Default)]
+    struct Calls {
+        scenarios: VecDeque<Option<FakeBroker>>,
+        current: Option<FakeBroker>,
+        dials: usize,
+        hang_ups: usize,
+    }
+
+    impl FakeLink {
+        fn new(scenarios: impl IntoIterator<Item = Option<FakeBroker>>) -> Self {
+            let link = Self::default();
+            link.0.borrow_mut().scenarios.extend(scenarios);
+            link
+        }
+
+        fn dials(&self) -> usize {
+            self.0.borrow().dials
+        }
+
+        fn hang_ups(&self) -> usize {
+            self.0.borrow().hang_ups
+        }
+
+        fn current(&self) -> FakeBroker {
+            self.0.borrow().current.clone().expect("соединение открыто")
+        }
+    }
+
+    impl Dial for FakeLink {
+        type Error = ErrorKind;
+
+        async fn dial(&mut self, to: SocketAddrV4) -> Result<(), ErrorKind> {
+            assert_eq!(to, SocketAddrV4::new(ENDPOINT.addr.into(), ENDPOINT.port));
+            core::future::poll_fn(|_| {
+                let mut calls = self.0.borrow_mut();
+                let Some(next) = calls.scenarios.pop_front() else {
+                    return Poll::Pending;
+                };
+                calls.dials += 1;
+                calls.current.clone_from(&next);
+                Poll::Ready(next.map(drop).ok_or(ErrorKind::TimedOut))
+            })
+            .await
+        }
+
+        fn hang_up(&mut self) {
+            self.0.borrow_mut().hang_ups += 1;
+        }
+    }
+
+    impl ErrorType for FakeLink {
+        type Error = ErrorKind;
+    }
+
+    impl Read for FakeLink {
+        async fn read(&mut self, buf: &mut [u8]) -> Result<usize, ErrorKind> {
+            self.current().read(buf).await
+        }
+    }
+
+    impl Write for FakeLink {
+        async fn write(&mut self, buf: &[u8]) -> Result<usize, ErrorKind> {
+            self.current().write(buf).await
+        }
+
+        async fn flush(&mut self) -> Result<(), ErrorKind> {
+            self.current().flush().await
+        }
+    }
+
+    #[test]
+    fn topics_are_prefix_uid_suffix() {
+        let t = Topics::new("devices", &[0xab; 12]);
+        let uid = "abababababababababababab";
+        assert_eq!(t.status().as_str(), format!("devices/{uid}/status"));
+        assert_eq!(t.info().as_str(), format!("devices/{uid}/info"));
+        assert_eq!(t.telemetry().as_str(), format!("devices/{uid}/telemetry"));
+        assert_eq!(t.cmd_filter().as_str(), format!("devices/{uid}/cmd/#"));
+        assert_eq!(
+            t.reboot_result().as_str(),
+            format!("devices/{uid}/cmd/reboot/result")
+        );
+        assert_eq!(t.client_id().as_str(), format!("devices-{uid}"));
+    }
+
+    #[test]
+    fn longest_prefix_fits_client_id() {
+        let t = Topics::new(&"p".repeat(PREFIX_MAX), &[0; 12]);
+        assert_eq!(t.client_id().len(), 64);
+    }
+
+    #[test]
+    fn commands_are_parsed_by_topic() {
+        let t = Topics::new("d", &[1; 12]);
+        let base = "d/010101010101010101010101";
+        assert!(matches!(
+            parse_command(&t, &format!("{base}/cmd/reboot")),
+            Some(Command::Reboot)
+        ));
+        assert!(parse_command(&t, &format!("{base}/cmd/unknown")).is_none());
+        assert!(parse_command(&t, "other/cmd/reboot").is_none());
+        assert!(parse_command(&t, &format!("{base}/cmd/reboot/result")).is_none());
+    }
+
+    #[test]
+    fn telemetry_is_json() {
+        let mut s = std::string::String::new();
+        write_telemetry(&mut s, 42).unwrap();
+        assert_eq!(s, r#"{"uptime_s":42}"#);
+    }
+
     /// CONNACK с кодом причины `code` (`0` — принято).
     pub(crate) fn connack(code: u8) -> [u8; 5] {
         [0x20, 0x03, 0x00, code, 0x00]
@@ -770,14 +866,6 @@ pub(crate) mod tests {
         packet.push(0x00);
         packet.extend_from_slice(payload);
         packet
-    }
-
-    /// Исходящая публикация, разобранная из байтов платы.
-    #[derive(Debug)]
-    pub(crate) struct Sent {
-        pub(crate) retain: bool,
-        pub(crate) topic: std::string::String,
-        pub(crate) payload: Vec<u8>,
     }
 
     /// Все PUBLISH в `out`. Длина свойств — один байт: исходящим публикациям
@@ -819,16 +907,6 @@ pub(crate) mod tests {
         future.poll(&mut Context::from_waker(Waker::noop()))
     }
 
-    const ENDPOINT: Endpoint = Endpoint {
-        addr: [10, 0, 0, 1],
-        port: 1883,
-        user: "",
-        password: "",
-    };
-
-    const UID: [u8; UID_BYTES] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
-    const UID_TEXT: &str = "0102030405060708090a0b0c";
-
     /// Окружение сессии на всё время теста: буферы и темы — `'static`{% if ota == "true" %};
     /// клиент OTA — того узла, которого никто не обслуживает{% endif %}.
     fn env() -> &'static mut Env<'static> {
@@ -851,8 +929,6 @@ pub(crate) mod tests {
             // {%- endif %}
         }))
     }
-
-    type Running = Pin<Box<dyn Future<Output = Ended>>>;
 
     /// Сессия, которую брокер принял: CONNACK и SUBACK уже во входе.
     fn online(env: &'static mut Env<'static>) -> (FakeBroker, Running) {
@@ -1050,82 +1126,6 @@ pub(crate) mod tests {
         Some(result.payload.clone())
     }
     // {%- endif %}
-
-    /// Соединение узла: на каждый `dial` — следующий из заготовленных
-    /// сценариев, [`FakeBroker`] или `None` — отказ. Сценарии кончились —
-    /// `dial` ждёт вечно, как реализация в паузе перед попыткой.
-    #[derive(Clone, Default)]
-    struct FakeLink(Rc<RefCell<Calls>>);
-
-    #[derive(Default)]
-    struct Calls {
-        scenarios: VecDeque<Option<FakeBroker>>,
-        current: Option<FakeBroker>,
-        dials: usize,
-        hang_ups: usize,
-    }
-
-    impl FakeLink {
-        fn new(scenarios: impl IntoIterator<Item = Option<FakeBroker>>) -> Self {
-            let link = Self::default();
-            link.0.borrow_mut().scenarios.extend(scenarios);
-            link
-        }
-
-        fn dials(&self) -> usize {
-            self.0.borrow().dials
-        }
-
-        fn hang_ups(&self) -> usize {
-            self.0.borrow().hang_ups
-        }
-
-        fn current(&self) -> FakeBroker {
-            self.0.borrow().current.clone().expect("соединение открыто")
-        }
-    }
-
-    impl Dial for FakeLink {
-        type Error = ErrorKind;
-
-        async fn dial(&mut self, to: SocketAddrV4) -> Result<(), ErrorKind> {
-            assert_eq!(to, SocketAddrV4::new(ENDPOINT.addr.into(), ENDPOINT.port));
-            core::future::poll_fn(|_| {
-                let mut calls = self.0.borrow_mut();
-                let Some(next) = calls.scenarios.pop_front() else {
-                    return Poll::Pending;
-                };
-                calls.dials += 1;
-                calls.current.clone_from(&next);
-                Poll::Ready(next.map(drop).ok_or(ErrorKind::TimedOut))
-            })
-            .await
-        }
-
-        fn hang_up(&mut self) {
-            self.0.borrow_mut().hang_ups += 1;
-        }
-    }
-
-    impl ErrorType for FakeLink {
-        type Error = ErrorKind;
-    }
-
-    impl Read for FakeLink {
-        async fn read(&mut self, buf: &mut [u8]) -> Result<usize, ErrorKind> {
-            self.current().read(buf).await
-        }
-    }
-
-    impl Write for FakeLink {
-        async fn write(&mut self, buf: &[u8]) -> Result<usize, ErrorKind> {
-            self.current().write(buf).await
-        }
-
-        async fn flush(&mut self) -> Result<(), ErrorKind> {
-            self.current().flush().await
-        }
-    }
 
     /// Брокер, который примет подключение и подписку.
     fn accepting() -> FakeBroker {

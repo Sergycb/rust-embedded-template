@@ -155,6 +155,15 @@ pub enum Rejection {
     NoSession,
 }
 
+/// Перезагрузка МК — то, чем узел OTA выполняет [`Command::Reboot`].
+///
+/// Порт, а не прямой сброс в `domain`: сбросить ядро умеет только плата
+/// (`bsp::reset`), а на хосте узел проверяется с фейком.
+pub trait Reboot {
+    /// Сбрасывает МК; не возвращается.
+    fn reboot(&mut self) -> !;
+}
+
 /// Код исхода числом — для протоколов, которые передают его хосту полем
 /// (входной регистр окна OTA Modbus): `1`
 /// `Started`, `2` `Received`, `3` `Ready`, `4` `Rebooting`; отказы с `10`:
@@ -175,13 +184,4 @@ pub const fn reply_code(reply: &Reply) -> u16 {
         Err(Rejection::Device) => 15,
         Err(Rejection::NoSession) => 16,
     }
-}
-
-/// Перезагрузка МК — то, чем узел OTA выполняет [`Command::Reboot`].
-///
-/// Порт, а не прямой сброс в `domain`: сбросить ядро умеет только плата
-/// (`bsp::reset`), а на хосте узел проверяется с фейком.
-pub trait Reboot {
-    /// Сбрасывает МК; не возвращается.
-    fn reboot(&mut self) -> !;
 }

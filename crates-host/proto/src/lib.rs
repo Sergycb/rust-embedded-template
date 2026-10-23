@@ -15,12 +15,11 @@
 /// Сгенерированные типы пакета `host`.
 pub mod host;
 
+/// Контейнеры полей сообщений (`heapless::String`, `heapless::Vec`) — тем,
+/// кто строит сообщения, нужна ровно та версия, что у генератора.
+pub use heapless;
 pub use host::*;
 
 // `VERSION_BYTES`, `ERROR_TEXT_BYTES` и др.: ёмкости строк и `bytes` схемы,
 // заданные в `build.rs`.
 include!(concat!(env!("OUT_DIR"), "/limits.rs"));
-
-/// Контейнеры полей сообщений (`heapless::String`, `heapless::Vec`) — тем,
-/// кто строит сообщения, нужна ровно та версия, что у генератора.
-pub use heapless;

@@ -114,22 +114,6 @@ pub struct Dictionary {
     // {%- endif %}
 }
 
-// Словарь примера `crates-host/canopen` — только в проекте с CANopen: без него
-// крейта словаря в проекте нет вовсе.
-/// Словарь примера устройства `crates-host/canopen` — с ним узел стоит в
-/// графе шаблона. Проект меняет `device.toml` того крейта, а не эту функцию.
-#[must_use]
-pub fn dictionary() -> Dictionary {
-    Dictionary {
-        mbox: &::canopen::NODE_MBOX,
-        state: &::canopen::NODE_STATE,
-        od: &::canopen::OD_TABLE,
-        // {%- if ota == "true" %}
-        ota: &::canopen::OBJECT4F00,
-        // {%- endif %}
-    }
-}
-
 /// Вход узла `CANOPEN`: шина, адрес, словарь и из чего собрать хранилище
 /// настроек `S`. Строит его compose-site:
 ///
@@ -170,54 +154,6 @@ impl<C, S: ports::Assemble> core::fmt::Debug for CanOpenWiring<C, S> {
             .field("node_id", &self.node_id)
             .finish_non_exhaustive()
     }
-}
-
-/// Узел `CANOPEN`: ведёт стек CANopen, пока жива шина.
-///
-/// Не выходит никогда: отказ шины — в лог, и узел снова ждёт кадр тем же
-/// стеком. Переждать bus-off — дело реализации [`CanBus`].
-///
-/// Буфер сохранённых объектов и колбэки стека над ним — локальные этой
-/// функции: стек держит колбэки ссылками на всё время работы, и жить им,
-/// кроме кадра задачи, негде — тип замыкания не назвать в `static`, а поле
-/// контекста на время автомата не заимствовать. Автомат получает их
-/// аргументами стартового действия (`start(..)` в таблице). Без хранилища
-/// (`persist` во входе — `false`) колбэков нет: стек отвечает на `save` и на
-/// LSS «Store configuration» отказом.
-///
-/// Без `watchdog:` намеренно — по правилу `heartbeat::task`:
-/// узлу нечем отметиться, кроме собственного такта, а он сторожил бы
-/// исполнитель, а не работу.
-///
-/// # Panics
-///
-/// Если `node_id` во входе не 1..=127, а сохранённого адреса нет, — ошибка
-/// конфигурации.
-pub async fn task<C, S>(mut ctx: CanOpenCtx<'_, C, S>) -> TaskExit
-where
-    C: CanBus,
-    C::Error: FormatOrDebug,
-    S: SettingsStorage,
-    S::Error: FormatOrDebug,
-{
-    let persisted = RefCell::new(Persisted::new());
-    let mut store_objects = |reader: &mut dyn Read<Error = Infallible>, size: usize| {
-        persisted.borrow_mut().store(reader, size);
-    };
-    let mut store_node_config = |node_id: NodeId| {
-        persisted.borrow_mut().store_node_id(node_id);
-    };
-    let mut reset_app = |od: &[ODEntry<'_>]| persisted.borrow().restore(od, false);
-    let mut reset_comms = |od: &[ODEntry<'_>]| persisted.borrow().restore(od, true);
-    let mut node = None;
-    let mut callbacks = (*ctx.persist).then(|| Callbacks {
-        store_objects: Some(&mut store_objects),
-        store_node_config: Some(&mut store_node_config),
-        reset_app: Some(&mut reset_app),
-        reset_comms: Some(&mut reset_comms),
-        ..Callbacks::default()
-    });
-    match ctx.run(&persisted, &mut callbacks, &mut node).await {}
 }
 
 #[fsm::typestate]
@@ -407,6 +343,70 @@ where
     }
 }
 
+// Словарь примера `crates-host/canopen` — только в проекте с CANopen: без него
+// крейта словаря в проекте нет вовсе.
+/// Словарь примера устройства `crates-host/canopen` — с ним узел стоит в
+/// графе шаблона. Проект меняет `device.toml` того крейта, а не эту функцию.
+#[must_use]
+pub fn dictionary() -> Dictionary {
+    Dictionary {
+        mbox: &::canopen::NODE_MBOX,
+        state: &::canopen::NODE_STATE,
+        od: &::canopen::OD_TABLE,
+        // {%- if ota == "true" %}
+        ota: &::canopen::OBJECT4F00,
+        // {%- endif %}
+    }
+}
+
+/// Узел `CANOPEN`: ведёт стек CANopen, пока жива шина.
+///
+/// Не выходит никогда: отказ шины — в лог, и узел снова ждёт кадр тем же
+/// стеком. Переждать bus-off — дело реализации [`CanBus`].
+///
+/// Буфер сохранённых объектов и колбэки стека над ним — локальные этой
+/// функции: стек держит колбэки ссылками на всё время работы, и жить им,
+/// кроме кадра задачи, негде — тип замыкания не назвать в `static`, а поле
+/// контекста на время автомата не заимствовать. Автомат получает их
+/// аргументами стартового действия (`start(..)` в таблице). Без хранилища
+/// (`persist` во входе — `false`) колбэков нет: стек отвечает на `save` и на
+/// LSS «Store configuration» отказом.
+///
+/// Без `watchdog:` намеренно — по правилу `heartbeat::task`:
+/// узлу нечем отметиться, кроме собственного такта, а он сторожил бы
+/// исполнитель, а не работу.
+///
+/// # Panics
+///
+/// Если `node_id` во входе не 1..=127, а сохранённого адреса нет, — ошибка
+/// конфигурации.
+pub async fn task<C, S>(mut ctx: CanOpenCtx<'_, C, S>) -> TaskExit
+where
+    C: CanBus,
+    C::Error: FormatOrDebug,
+    S: SettingsStorage,
+    S::Error: FormatOrDebug,
+{
+    let persisted = RefCell::new(Persisted::new());
+    let mut store_objects = |reader: &mut dyn Read<Error = Infallible>, size: usize| {
+        persisted.borrow_mut().store(reader, size);
+    };
+    let mut store_node_config = |node_id: NodeId| {
+        persisted.borrow_mut().store_node_id(node_id);
+    };
+    let mut reset_app = |od: &[ODEntry<'_>]| persisted.borrow().restore(od, false);
+    let mut reset_comms = |od: &[ODEntry<'_>]| persisted.borrow().restore(od, true);
+    let mut node = None;
+    let mut callbacks = (*ctx.persist).then(|| Callbacks {
+        store_objects: Some(&mut store_objects),
+        store_node_config: Some(&mut store_node_config),
+        reset_app: Some(&mut reset_app),
+        reset_comms: Some(&mut reset_comms),
+        ..Callbacks::default()
+    });
+    match ctx.run(&persisted, &mut callbacks, &mut node).await {}
+}
+
 // Узел объявлен рядом со своей задачей — как `CPU_LOAD_FRAG`; в граф шаблона
 // попадёт по выбору протокола при генерации.
 //
@@ -457,6 +457,9 @@ mod tests {
 
     /// Адрес узла в тестах: SDO-запросы — на `0x605`, ответы — с `0x585`.
     const NODE: u8 = 5;
+
+    /// SDO-запись `save` (`0x73 0x61 0x76 0x65`) в `0x1010:01`.
+    const SAVE: [u8; 8] = [0x23, 0x10, 0x10, 0x01, 0x73, 0x61, 0x76, 0x65];
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     struct TestFrame {
@@ -581,14 +584,14 @@ mod tests {
         }
     }
 
-    fn frame(id: u16, data: &[u8]) -> TestFrame {
-        TestFrame::new(StandardId::new(id).unwrap(), data).unwrap()
-    }
-
     /// Словарь из примера — `static` на весь процесс: тесты, которые гоняют
     /// по нему узел, обязаны идти по одному, иначе один тест читает кадры
     /// другого (под `cargo test` они идут потоками одного процесса).
     static DICTIONARY: Mutex<()> = Mutex::new(());
+
+    fn frame(id: u16, data: &[u8]) -> TestFrame {
+        TestFrame::new(StandardId::new(id).unwrap(), data).unwrap()
+    }
 
     /// Гоняет узел на словаре из примера `crates-host/canopen`, пока кадры не
     /// кончатся: узел не выходит, а ждёт следующий.
@@ -689,9 +692,6 @@ mod tests {
         );
     }
     // {%- endif %}
-
-    /// SDO-запись `save` (`0x73 0x61 0x76 0x65`) в `0x1010:01`.
-    const SAVE: [u8; 8] = [0x23, 0x10, 0x10, 0x01, 0x73, 0x61, 0x76, 0x65];
 
     fn is_heartbeat(frame: &TestFrame, node: u8) -> bool {
         frame.id == Id::Standard(StandardId::new(0x700 + u16::from(node)).unwrap())

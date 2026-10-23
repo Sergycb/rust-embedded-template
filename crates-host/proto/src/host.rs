@@ -6,6 +6,7 @@
 #[allow(
     clippy::all,
     clippy::pedantic,
+    clippy::arbitrary_source_item_ordering,
     nonstandard_style,
     unused,
     missing_debug_implementations,

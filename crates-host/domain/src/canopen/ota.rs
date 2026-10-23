@@ -38,9 +38,6 @@ use crate::ota::OtaClient;
 /// что в `device.toml`; разойтись им не даёт тест узла.
 pub const OTA_INDEX: u16 = 0x4F00;
 
-/// Объект OTA словаря — регистрирует его узел при старте (`canopen::begin`).
-pub static OTA: OtaObject = OtaObject::new();
-
 /// Длина `Start` без подписи: длина образа.
 const START_BYTES: usize = 4;
 
@@ -193,6 +190,9 @@ impl ObjectAccess for OtaObject {
         }
     }
 }
+
+/// Объект OTA словаря — регистрирует его узел при старте (`canopen::begin`).
+pub static OTA: OtaObject = OtaObject::new();
 
 /// `Start` из записи sub 1: длина и, если есть, подпись.
 fn start(data: &[u8]) -> Result<OtaCommand, AbortCode> {

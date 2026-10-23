@@ -17,7 +17,20 @@ use embedded_io_async::{ErrorKind, ErrorType, Read, Write};
 use ports::Assemble;
 // {%- if net_services contains "mqtt" %}
 use ports::dial::Dial;
+
+/// Сколько должно прожить соединение, чтобы отказы до него забылись.
+const STABLE: Duration = Duration::from_secs(30);
+
+/// Потолок паузы между попытками.
+const MAX_BACKOFF: Duration = Duration::from_secs(30);
 // {%- endif %}
+
+/// Как часто проверять молчащего клиента (keep-alive TCP).
+const KEEP_ALIVE: Duration = Duration::from_secs(10);
+
+/// Через сколько без ответа на keep-alive и данные соединение считается
+/// пропавшим: три проверки подряд.
+const IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// TCP-сервер на одном порту — поток байтов для транспортов протоколов
 /// (`modbus::Tcp`, `cobs::Cobs`).
@@ -42,13 +55,6 @@ impl core::fmt::Debug for TcpServer {
             .finish_non_exhaustive()
     }
 }
-
-/// Как часто проверять молчащего клиента (keep-alive TCP).
-const KEEP_ALIVE: Duration = Duration::from_secs(10);
-
-/// Через сколько без ответа на keep-alive и данные соединение считается
-/// пропавшим: три проверки подряд.
-const IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Память и порт TCP-сервера от приложения: на каком порту ждать клиента и
 /// буферы сокета.
@@ -113,21 +119,6 @@ impl TcpServer {
     async fn drop_connection(&mut self) {
         reset(&mut self.socket).await;
     }
-}
-
-/// Есть ли у сокета соединение, по которому можно читать и писать.
-fn is_open(socket: &TcpSocket<'_>) -> bool {
-    matches!(
-        socket.state(),
-        State::Established | State::CloseWait | State::FinWait1 | State::FinWait2
-    )
-}
-
-/// Сбрасывает соединение сокета и дожидается ухода RST: сокет снова свободен.
-async fn reset(socket: &mut TcpSocket<'_>) {
-    socket.abort();
-    // Ошибка здесь — то же отсутствие соединения, которое и сбрасываем.
-    let _flushed = socket.flush().await;
 }
 
 /// Почему [`TcpServer`] или `TcpClient` не прочитал или не записал.
@@ -246,22 +237,6 @@ impl core::fmt::Debug for TcpClient {
     }
 }
 
-/// Сколько должно прожить соединение, чтобы отказы до него забылись.
-const STABLE: Duration = Duration::from_secs(30);
-
-/// Потолок паузы между попытками.
-const MAX_BACKOFF: Duration = Duration::from_secs(30);
-
-/// Пауза перед попыткой после `failures` отказов подряд: 0, 1, 2, 4 … с, не
-/// больше [`MAX_BACKOFF`].
-pub(crate) fn backoff(failures: u32) -> Duration {
-    match failures {
-        0 => Duration::from_secs(0),
-        // Сдвиг ограничен: дальше 2⁵ с пауза всё равно упирается в потолок.
-        n => Duration::from_secs(1 << (n - 1).min(5)).min(MAX_BACKOFF),
-    }
-}
-
 /// Буферы сокета TCP-клиента от приложения.
 #[derive(Debug)]
 pub struct TcpClientBuffers {
@@ -350,7 +325,32 @@ impl Write for TcpClient {
         self.socket.flush().await.map_err(TcpError::Io)
     }
 }
+
+/// Пауза перед попыткой после `failures` отказов подряд: 0, 1, 2, 4 … с, не
+/// больше [`MAX_BACKOFF`].
+pub(crate) fn backoff(failures: u32) -> Duration {
+    match failures {
+        0 => Duration::from_secs(0),
+        // Сдвиг ограничен: дальше 2⁵ с пауза всё равно упирается в потолок.
+        n => Duration::from_secs(1 << (n - 1).min(5)).min(MAX_BACKOFF),
+    }
+}
 // {%- endif %}
+
+/// Есть ли у сокета соединение, по которому можно читать и писать.
+fn is_open(socket: &TcpSocket<'_>) -> bool {
+    matches!(
+        socket.state(),
+        State::Established | State::CloseWait | State::FinWait1 | State::FinWait2
+    )
+}
+
+/// Сбрасывает соединение сокета и дожидается ухода RST: сокет снова свободен.
+async fn reset(socket: &mut TcpSocket<'_>) {
+    socket.abort();
+    // Ошибка здесь — то же отсутствие соединения, которое и сбрасываем.
+    let _flushed = socket.flush().await;
+}
 
 #[cfg(test)]
 mod tests {
@@ -366,6 +366,11 @@ mod tests {
     use crate::net::fakes::HOST;
     // {%- endif %}
     use crate::net::fakes::{DEVICE, PORT, leak, pair, with_network};
+
+    // {%- if net_services contains "mqtt" %}
+    /// Сервер на «хосте» пары, к которому подключается [`TcpClient`].
+    const SERVER: SocketAddrV4 = SocketAddrV4::new(HOST, PORT);
+    // {%- endif %}
 
     /// Сервер принимает клиента, отвечает ему, видит его отключение концом
     /// потока — и принимает следующего на том же сокете.
@@ -470,9 +475,6 @@ mod tests {
         );
     }
     // {%- if net_services contains "mqtt" %}
-
-    /// Сервер на «хосте» пары, к которому подключается [`TcpClient`].
-    const SERVER: SocketAddrV4 = SocketAddrV4::new(HOST, PORT);
 
     #[test]
     fn backoff_grows_to_cap() {

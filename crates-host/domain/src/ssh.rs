@@ -92,6 +92,11 @@ const CLOSE_WAIT: Duration = Duration::from_secs(2);
 
 /// Длина строки команды.
 const LINE: usize = 64;
+// {%- if ssh_host_key == "config" %}
+
+/// Ключ хоста в разделе настроек.
+pub const HOST_KEY_ID: u32 = 0x0055_0001;
+// {%- endif %}
 
 /// Как плата пускает пользователя [`USER`].
 #[derive(Debug, Clone, Copy)]
@@ -141,9 +146,6 @@ impl HostKey for Fixed {
     }
 }
 // {%- if ssh_host_key == "config" %}
-
-/// Ключ хоста в разделе настроек.
-pub const HOST_KEY_ID: u32 = 0x0055_0001;
 
 /// Ключ хоста в хранилище настроек: первый старт создаёт его из `getrandom`
 /// и записывает под [`HOST_KEY_ID`], следующие — читают.
@@ -199,6 +201,205 @@ impl<S: ports::SettingsStorage> HostKey for Stored<S> {
 }
 // {%- endif %}
 
+/// Кого пускать: проверенная форма [`Login`].
+#[derive(Clone, Copy)]
+enum Access {
+    Password(&'static str),
+    Key([u8; 32]),
+    /// Ключ из прошивки не разобрался — никого: пускать без проверки нельзя.
+    Nobody,
+}
+
+impl Access {
+    fn new(login: Login) -> Self {
+        match login {
+            Login::Password(password) => Self::Password(password),
+            Login::Key(line) => {
+                if let Some(key) = ed25519_public_key(line) {
+                    Self::Key(key)
+                } else {
+                    warn!("ssh: ключ пользователя в прошивке не ed25519 — вход закрыт");
+                    Self::Nobody
+                }
+            }
+        }
+    }
+}
+
+/// Команда консоли.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Command {
+    /// Пустая строка.
+    Empty,
+    /// Список команд.
+    Help,
+    /// Сведения об устройстве.
+    Info,
+    // {%- if ota == "true" %}
+    /// Перезагрузка; без подтверждения — только подсказка.
+    Reboot {
+        /// `reboot yes`.
+        confirmed: bool,
+    },
+    // {%- endif %}
+    /// Конец сессии.
+    Exit,
+    /// Такой команды нет.
+    Unknown,
+}
+
+/// Что команды знают об устройстве.
+struct Device<'a> {
+    info: &'a DeviceInfo,
+    stack: Stack<'static>,
+    // {%- if ota == "true" %}
+    ota: OtaClient,
+    // {%- endif %}
+}
+
+/// Вывод в канал: терминалу (`shell`) строки уходят с `\r\n`, `exec` — как
+/// есть.
+struct Out<W> {
+    io: W,
+    crlf: bool,
+}
+
+impl<W: Write> Out<W> {
+    async fn text(&mut self, text: &str) -> Result<(), W::Error> {
+        if !self.crlf {
+            return self.io.write_all(text.as_bytes()).await;
+        }
+        let mut lines = text.split('\n');
+        if let Some(first) = lines.next() {
+            self.io.write_all(first.as_bytes()).await?;
+        }
+        for line in lines {
+            self.io.write_all(b"\r\n").await?;
+            self.io.write_all(line.as_bytes()).await?;
+        }
+        Ok(())
+    }
+}
+
+/// Что клиент попросил на канале сессии.
+enum Start {
+    /// Интерактивная консоль.
+    Shell,
+    /// Одна команда.
+    Exec(heapless::String<LINE>),
+}
+
+#[fsm::typestate]
+impl<K: HostKey> SshCtx<'_, K> {
+    fsm::machine! {
+        machine Ssh mod edges {
+            states {
+                /// Ждёт соединения: ключ хоста и кого пускать.
+                Listening { key: SignKey, access: Access },
+                /// Недостижимо: сервер не возвращается. Состояние нужно
+                /// автомату — без выхода задача не вернула бы `TaskExit`.
+                exit Down { result: TaskExit },
+            }
+            start => begin -> Listening;
+            transitions {
+                Listening => serve -> Down,
+            }
+        }
+    }
+
+    async fn begin(&mut self) -> Listening {
+        info!("domain: узел SSH запущен");
+        let seed = self.host_key.seed().await;
+        Listening {
+            key: SignKey::Ed25519(SigningKey::from_bytes(&seed)),
+            access: Access::new(*self.login),
+        }
+    }
+
+    /// Принимает соединение, ведёт его до конца, ждёт следующее —
+    /// бесконечно.
+    async fn serve(&mut self, s: &Listening) -> Down {
+        loop {
+            self.connection(&s.key, s.access).await;
+        }
+    }
+
+    /// Одно соединение. Отказ соединения или протокола узел пишет в лог и
+    /// слушает дальше.
+    async fn connection(&mut self, key: &SignKey, access: Access) {
+        let stack = *self.stack;
+        let mut socket = TcpSocket::new(stack, &mut self.tcp_rx[..], &mut self.tcp_tx[..]);
+        socket.set_timeout(Some(IDLE));
+        socket.set_keep_alive(Some(KEEP_ALIVE));
+        if socket.accept(PORT).await.is_err() {
+            warn!("ssh: accept не удался");
+            return;
+        }
+        if let Some(peer) = socket.remote_endpoint() {
+            info!("ssh: соединение от {}", peer);
+        }
+        let device = Device {
+            info: self.info,
+            stack,
+            // {%- if ota == "true" %}
+            ota: *self.ota,
+            // {%- endif %}
+        };
+        session(
+            &mut socket,
+            SSHServer::new(&mut self.ssh_rx[..], &mut self.ssh_tx[..]),
+            key,
+            access,
+            &device,
+        )
+        .await;
+        // Соединение закрывает сервер: `sunset` закрывает канал, но не
+        // соединение, а клиент ждёт именно его. Сокет бросается только после
+        // FIN клиента: брошенный раньше ответит на него RST, и клиент под
+        // Windows теряет ещё не прочитанный вывод.
+        socket.close();
+        // Хвост вывода и наш FIN уходят раньше, чем ждётся FIN клиента:
+        // сокет, брошенный с неподтверждёнными данными, их не досылает.
+        let drained = with_timeout(CLOSE_WAIT, async {
+            socket.flush().await.ok();
+            let mut sink = [0; 64];
+            while let Ok(1..) = socket.read(&mut sink).await {}
+        })
+        .await;
+        if drained.is_err() {
+            socket.abort();
+        }
+        info!("ssh: соединение закрыто");
+    }
+}
+
+/// Вход узла `SSH`: стек, сведения, вход пользователя и из чего собрать ключ
+/// хоста `K` (`Fixed` — вшитый ключ, `Stored` — над хранилищем настроек).
+///
+/// Написан руками, а не выведен фрагментом: слот ключа инициализируется
+/// сборкой (порт [`Assemble`](ports::Assemble)), а не чтением поля.
+pub struct SshWiring<K: ports::Assemble> {
+    /// Сетевой стек, на котором узел открывает свой сокет.
+    pub stack: crate::net::Stack<'static>,
+    /// Сведения для `info`.
+    pub info: crate::device::DeviceInfo,
+    /// Как пускать пользователя.
+    pub login: Login,
+    /// Из чего собрать ключ хоста.
+    pub host_key: K::Source,
+    // {%- if ota == "true" %}
+    /// Клиент входа `CMD` узла OTA — для `reboot`.
+    pub ota: crate::ota::OtaClient,
+    // {%- endif %}
+}
+
+// Вручную: у стека `embassy-net` нет `Debug`.
+impl<K: ports::Assemble> core::fmt::Debug for SshWiring<K> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("SshWiring").finish_non_exhaustive()
+    }
+}
+
 /// Открытый ключ ed25519 из строки `ssh-ed25519 <base64> [комментарий]`: блоб
 /// — имя типа и 32 байта ключа, каждое с длиной впереди. `None` — строка не
 /// такая.
@@ -250,53 +451,6 @@ fn base64(text: &[u8], out: &mut [u8]) -> Option<usize> {
     Some(len)
 }
 
-/// Кого пускать: проверенная форма [`Login`].
-#[derive(Clone, Copy)]
-enum Access {
-    Password(&'static str),
-    Key([u8; 32]),
-    /// Ключ из прошивки не разобрался — никого: пускать без проверки нельзя.
-    Nobody,
-}
-
-impl Access {
-    fn new(login: Login) -> Self {
-        match login {
-            Login::Password(password) => Self::Password(password),
-            Login::Key(line) => {
-                if let Some(key) = ed25519_public_key(line) {
-                    Self::Key(key)
-                } else {
-                    warn!("ssh: ключ пользователя в прошивке не ed25519 — вход закрыт");
-                    Self::Nobody
-                }
-            }
-        }
-    }
-}
-
-/// Команда консоли.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Command {
-    /// Пустая строка.
-    Empty,
-    /// Список команд.
-    Help,
-    /// Сведения об устройстве.
-    Info,
-    // {%- if ota == "true" %}
-    /// Перезагрузка; без подтверждения — только подсказка.
-    Reboot {
-        /// `reboot yes`.
-        confirmed: bool,
-    },
-    // {%- endif %}
-    /// Конец сессии.
-    Exit,
-    /// Такой команды нет.
-    Unknown,
-}
-
 /// Команда из строки.
 fn parse(line: &str) -> Command {
     let mut words = line.split_ascii_whitespace();
@@ -315,39 +469,6 @@ fn parse(line: &str) -> Command {
         Command::Unknown
     } else {
         command
-    }
-}
-
-/// Что команды знают об устройстве.
-struct Device<'a> {
-    info: &'a DeviceInfo,
-    stack: Stack<'static>,
-    // {%- if ota == "true" %}
-    ota: OtaClient,
-    // {%- endif %}
-}
-
-/// Вывод в канал: терминалу (`shell`) строки уходят с `\r\n`, `exec` — как
-/// есть.
-struct Out<W> {
-    io: W,
-    crlf: bool,
-}
-
-impl<W: Write> Out<W> {
-    async fn text(&mut self, text: &str) -> Result<(), W::Error> {
-        if !self.crlf {
-            return self.io.write_all(text.as_bytes()).await;
-        }
-        let mut lines = text.split('\n');
-        if let Some(first) = lines.next() {
-            self.io.write_all(first.as_bytes()).await?;
-        }
-        for line in lines {
-            self.io.write_all(b"\r\n").await?;
-            self.io.write_all(line.as_bytes()).await?;
-        }
-        Ok(())
     }
 }
 
@@ -433,14 +554,6 @@ async fn run<W: Write>(
         Command::Unknown => out.text("unknown command, 'help' for the list\n").await?,
     }
     Ok(true)
-}
-
-/// Что клиент попросил на канале сессии.
-enum Start {
-    /// Интерактивная консоль.
-    Shell,
-    /// Одна команда.
-    Exec(heapless::String<LINE>),
 }
 
 /// Ведёт протокол: ключ хоста, вход, канал сессии. До старта сессии
@@ -649,117 +762,6 @@ pub async fn task<K: HostKey>(mut ctx: SshCtx<'_, K>) -> TaskExit {
     ctx.run().await.result
 }
 
-#[fsm::typestate]
-impl<K: HostKey> SshCtx<'_, K> {
-    fsm::machine! {
-        machine Ssh mod edges {
-            states {
-                /// Ждёт соединения: ключ хоста и кого пускать.
-                Listening { key: SignKey, access: Access },
-                /// Недостижимо: сервер не возвращается. Состояние нужно
-                /// автомату — без выхода задача не вернула бы `TaskExit`.
-                exit Down { result: TaskExit },
-            }
-            start => begin -> Listening;
-            transitions {
-                Listening => serve -> Down,
-            }
-        }
-    }
-
-    async fn begin(&mut self) -> Listening {
-        info!("domain: узел SSH запущен");
-        let seed = self.host_key.seed().await;
-        Listening {
-            key: SignKey::Ed25519(SigningKey::from_bytes(&seed)),
-            access: Access::new(*self.login),
-        }
-    }
-
-    /// Принимает соединение, ведёт его до конца, ждёт следующее —
-    /// бесконечно.
-    async fn serve(&mut self, s: &Listening) -> Down {
-        loop {
-            self.connection(&s.key, s.access).await;
-        }
-    }
-
-    /// Одно соединение. Отказ соединения или протокола узел пишет в лог и
-    /// слушает дальше.
-    async fn connection(&mut self, key: &SignKey, access: Access) {
-        let stack = *self.stack;
-        let mut socket = TcpSocket::new(stack, &mut self.tcp_rx[..], &mut self.tcp_tx[..]);
-        socket.set_timeout(Some(IDLE));
-        socket.set_keep_alive(Some(KEEP_ALIVE));
-        if socket.accept(PORT).await.is_err() {
-            warn!("ssh: accept не удался");
-            return;
-        }
-        if let Some(peer) = socket.remote_endpoint() {
-            info!("ssh: соединение от {}", peer);
-        }
-        let device = Device {
-            info: self.info,
-            stack,
-            // {%- if ota == "true" %}
-            ota: *self.ota,
-            // {%- endif %}
-        };
-        session(
-            &mut socket,
-            SSHServer::new(&mut self.ssh_rx[..], &mut self.ssh_tx[..]),
-            key,
-            access,
-            &device,
-        )
-        .await;
-        // Соединение закрывает сервер: `sunset` закрывает канал, но не
-        // соединение, а клиент ждёт именно его. Сокет бросается только после
-        // FIN клиента: брошенный раньше ответит на него RST, и клиент под
-        // Windows теряет ещё не прочитанный вывод.
-        socket.close();
-        // Хвост вывода и наш FIN уходят раньше, чем ждётся FIN клиента:
-        // сокет, брошенный с неподтверждёнными данными, их не досылает.
-        let drained = with_timeout(CLOSE_WAIT, async {
-            socket.flush().await.ok();
-            let mut sink = [0; 64];
-            while let Ok(1..) = socket.read(&mut sink).await {}
-        })
-        .await;
-        if drained.is_err() {
-            socket.abort();
-        }
-        info!("ssh: соединение закрыто");
-    }
-}
-
-/// Вход узла `SSH`: стек, сведения, вход пользователя и из чего собрать ключ
-/// хоста `K` (`Fixed` — вшитый ключ, `Stored` — над хранилищем настроек).
-///
-/// Написан руками, а не выведен фрагментом: слот ключа инициализируется
-/// сборкой (порт [`Assemble`](ports::Assemble)), а не чтением поля.
-pub struct SshWiring<K: ports::Assemble> {
-    /// Сетевой стек, на котором узел открывает свой сокет.
-    pub stack: crate::net::Stack<'static>,
-    /// Сведения для `info`.
-    pub info: crate::device::DeviceInfo,
-    /// Как пускать пользователя.
-    pub login: Login,
-    /// Из чего собрать ключ хоста.
-    pub host_key: K::Source,
-    // {%- if ota == "true" %}
-    /// Клиент входа `CMD` узла OTA — для `reboot`.
-    pub ota: crate::ota::OtaClient,
-    // {%- endif %}
-}
-
-// Вручную: у стека `embassy-net` нет `Debug`.
-impl<K: ports::Assemble> core::fmt::Debug for SshWiring<K> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("SshWiring").finish_non_exhaustive()
-    }
-}
-
 // Узел объявлен рядом со своей задачей — как `HTTP`. `<K>` — ключ хоста
 // (`Fixed` или `Stored` над хранилищем платы, которого `domain` не видит);
 // `local` у него и у стека — оба вправе быть `!Send`. Буферы (~7 KiB) — слоты
@@ -801,6 +803,37 @@ mod tests {
     use super::*;
 
     const KEY: &str = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl user@host";
+    // {%- if ssh_host_key == "config" %}
+
+    /// Хранилище в памяти: что записано, то и читается.
+    #[derive(Default)]
+    struct Memory(Option<Vec<u8>>);
+
+    impl ports::SettingsStorage for Memory {
+        type Error = ();
+
+        fn read<'a>(
+            &mut self,
+            _: u32,
+            scratch: &'a mut [u8],
+        ) -> impl Future<Output = Result<Option<&'a [u8]>, ()>> {
+            // Как у порта: значение длиннее буфера — ошибка, а не обрезка.
+            core::future::ready(match &self.0 {
+                None => Ok(None),
+                Some(v) if v.len() > scratch.len() => Err(()),
+                Some(v) => {
+                    scratch[..v.len()].copy_from_slice(v);
+                    Ok(Some(&scratch[..v.len()]))
+                }
+            })
+        }
+
+        fn write(&mut self, _: u32, value: &[u8]) -> impl Future<Output = Result<(), ()>> {
+            self.0 = Some(value.to_vec());
+            core::future::ready(Ok(()))
+        }
+    }
+    // {%- endif %}
 
     #[test]
     fn an_openssh_line_gives_the_raw_key() {
@@ -864,35 +897,6 @@ mod tests {
         assert!(out.starts_with("version 65535"), "{out}");
     }
     // {%- if ssh_host_key == "config" %}
-
-    /// Хранилище в памяти: что записано, то и читается.
-    #[derive(Default)]
-    struct Memory(Option<Vec<u8>>);
-
-    impl ports::SettingsStorage for Memory {
-        type Error = ();
-
-        fn read<'a>(
-            &mut self,
-            _: u32,
-            scratch: &'a mut [u8],
-        ) -> impl Future<Output = Result<Option<&'a [u8]>, ()>> {
-            // Как у порта: значение длиннее буфера — ошибка, а не обрезка.
-            core::future::ready(match &self.0 {
-                None => Ok(None),
-                Some(v) if v.len() > scratch.len() => Err(()),
-                Some(v) => {
-                    scratch[..v.len()].copy_from_slice(v);
-                    Ok(Some(&scratch[..v.len()]))
-                }
-            })
-        }
-
-        fn write(&mut self, _: u32, value: &[u8]) -> impl Future<Output = Result<(), ()>> {
-            self.0 = Some(value.to_vec());
-            core::future::ready(Ok(()))
-        }
-    }
 
     /// Первый старт создаёт ключ и записывает, следующий читает тот же.
     #[tokio::test]

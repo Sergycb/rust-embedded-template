@@ -7,6 +7,16 @@
 //! Заглушка — часть платы, а не приложения: «железо, которого пока нет».
 //! Заменить её — поменять псевдоним в модуле блока (`bsp::serial`, `bsp::can`,
 //! …) на драйвер `embassy-stm32`; рецепт — `docs/modules/bsp-*.md`.
+{%- if has_usb == "true" %}
+
+/// Пакет управляющей точки по умолчанию — 64 байта (full-speed).
+const CONTROL_PACKET: usize = 64;
+{%- endif %}
+{%- if has_net == "true" %}
+
+/// MTU Ethernet: 1500 байт IP и 14 байт заголовка.
+const ETHERNET_MTU: usize = 1514;
+{%- endif %}
 {%- if has_uart == "true" %}
 
 /// UART, который ещё не подключили, — место под `BufferedUart` платы.
@@ -81,9 +91,6 @@ pub struct NoEndpoint(embassy_usb_driver::EndpointInfo);
 /// Шина и управляющий канал, на которых не происходит ничего.
 #[derive(Debug)]
 pub struct NoBus;
-
-/// Пакет управляющей точки по умолчанию — 64 байта (full-speed).
-const CONTROL_PACKET: usize = 64;
 
 impl UsbDriver {
     fn endpoint(
@@ -269,9 +276,6 @@ impl embassy_net_driver::TxToken for NoFrame {
         match self {}
     }
 }
-
-/// MTU Ethernet: 1500 байт IP и 14 байт заголовка.
-const ETHERNET_MTU: usize = 1514;
 
 impl embassy_net_driver::Driver for NetDevice {
     type RxToken<'a> = NoFrame;

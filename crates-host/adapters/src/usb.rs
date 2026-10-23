@@ -12,6 +12,13 @@ use embassy_usb::driver::Driver;
 use embassy_usb::{Builder, Config, UsbDevice};
 use embedded_io_async::{ErrorType, Read, Write};
 
+/// Сколько пакет ждёт, пока хост его заберёт. Пакет 64 байта хост забирает
+/// за миллисекунду; не забрал за 100 — порт закрыт, и ждать нечего.
+pub const WRITE_TIMEOUT: Duration = Duration::from_millis(100);
+
+/// Пакет CDC — 64 байта: предел full-speed для bulk-точек.
+pub const PACKET: u16 = 64;
+
 /// Поток байтов поверх класса CDC ACM («виртуальный COM-порт») — для
 /// транспортов протоколов (`cobs::Cobs`).
 ///
@@ -32,10 +39,6 @@ pub struct CdcStream<'d, D: Driver<'d>> {
     /// нулевой длины, иначе хост ждёт продолжения и не отдаёт её приложению.
     unterminated: bool,
 }
-
-/// Сколько пакет ждёт, пока хост его заберёт. Пакет 64 байта хост забирает
-/// за миллисекунду; не забрал за 100 — порт закрыт, и ждать нечего.
-pub const WRITE_TIMEOUT: Duration = Duration::from_millis(100);
 
 impl<'d, D: Driver<'d>> CdcStream<'d, D> {
     /// Поток из двух половин класса: `CdcAcmClass::split` и
@@ -96,9 +99,6 @@ impl<'d, D: Driver<'d>> Write for CdcStream<'d, D> {
         Ok(())
     }
 }
-
-/// Пакет CDC — 64 байта: предел full-speed для bulk-точек.
-pub const PACKET: u16 = 64;
 
 /// Память под устройство CDC ACM: `Builder` и класс держат её `&'static mut`.
 ///

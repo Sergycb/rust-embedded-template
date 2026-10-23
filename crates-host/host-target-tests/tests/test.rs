@@ -46,45 +46,6 @@ use std::{
 /// теста.
 const BOOT_TIME: Duration = Duration::from_millis(300);
 
-fn reset(chip: &str) {
-    probe_rs(&["reset", "--chip", chip]);
-}
-
-/// Команда `probe-rs`, отказ которой — провал теста.
-fn probe_rs(args: &[&str]) -> String {
-    try_probe_rs(args).unwrap_or_else(|why| panic!("{why}"))
-}
-
-/// Команда `probe-rs`, отказ которой бывает временным: пока bootloader стирает
-/// сектор банка, из которого сам исполняется, ядро стоит на выборке
-/// инструкции, остановить его пробник не может, и `read` отвечает ошибкой
-/// (`Core is running, but we expected it to be halted`; ~1,2 с на сектор 128K
-/// у H7). Не запустился сам `probe-rs` — это не временно, паника.
-fn try_probe_rs(args: &[&str]) -> Result<String, String> {
-    let output = Command::new("probe-rs")
-        .args(args)
-        .output()
-        .expect("не удалось запустить probe-rs — установите его: cargo xtask setup");
-    if !output.status.success() {
-        return Err(format!(
-            "`probe-rs {}` завершилась с {}:\n{}",
-            args.join(" "),
-            output.status,
-            String::from_utf8_lossy(&output.stderr),
-        ));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-}
-
-fn required_var(name: &str) -> String {
-    env::var(name).unwrap_or_else(|_| {
-        panic!(
-            "{name} не задана: этот этап запускается через `cargo xtask test host-target`, \
-             который сам прошивает плату и передаёт сюда чип и адреса разделов"
-        )
-    })
-}
-
 /// Нижняя граница ожидания обмена — на чипах с мелкими страницами весь
 /// обмен укладывается в доли секунды, и время уходит на сброс и опрос.
 const SWAP_TIMEOUT_BASE: Duration = Duration::from_secs(20);
@@ -95,17 +56,6 @@ const SWAP_TIMEOUT_BASE: Duration = Duration::from_secs(20);
 /// стирание сектора 128K, программирование словами по 32 байта на этом фоне
 /// мало. Предел ограничивает только провал: успех ждёт содержимого, а не его.
 const COPY_PER_128K: Duration = Duration::from_secs(10);
-
-/// Сколько ждать смены разделов: [`SWAP_TIMEOUT_BASE`] плюс перенос страниц.
-///
-/// Обмен в `embassy-boot` стирает и переписывает каждую страницу `ACTIVE` и
-/// каждую страницу `DFU` по разу — вдвое больше байт, чем в `ACTIVE`; откат —
-/// столько же. Ждём не фиксированное время, а нужного содержимого (см.
-/// [`wait_for`]) — предел лишь ограничивает ожидание сверху. Постоянный предел
-/// на H7 (раздел из нескольких секторов по 128K) не уложил бы и один обмен.
-fn swap_timeout(active_len: u32) -> Duration {
-    SWAP_TIMEOUT_BASE + COPY_PER_128K * (2 * active_len).div_ceil(128 * 1024)
-}
 
 /// Сколько слов образа сравнивать. Первые два — начальный указатель стека и
 /// адрес обработчика сброса, дальше — таблица векторов: этого с запасом
@@ -219,6 +169,56 @@ impl Ota {
         [0, 4]
             .map(|at| u32::from_le_bytes(self.image[at..at + 4].try_into().expect("слово образа")))
     }
+}
+
+fn reset(chip: &str) {
+    probe_rs(&["reset", "--chip", chip]);
+}
+
+/// Команда `probe-rs`, отказ которой — провал теста.
+fn probe_rs(args: &[&str]) -> String {
+    try_probe_rs(args).unwrap_or_else(|why| panic!("{why}"))
+}
+
+/// Команда `probe-rs`, отказ которой бывает временным: пока bootloader стирает
+/// сектор банка, из которого сам исполняется, ядро стоит на выборке
+/// инструкции, остановить его пробник не может, и `read` отвечает ошибкой
+/// (`Core is running, but we expected it to be halted`; ~1,2 с на сектор 128K
+/// у H7). Не запустился сам `probe-rs` — это не временно, паника.
+fn try_probe_rs(args: &[&str]) -> Result<String, String> {
+    let output = Command::new("probe-rs")
+        .args(args)
+        .output()
+        .expect("не удалось запустить probe-rs — установите его: cargo xtask setup");
+    if !output.status.success() {
+        return Err(format!(
+            "`probe-rs {}` завершилась с {}:\n{}",
+            args.join(" "),
+            output.status,
+            String::from_utf8_lossy(&output.stderr),
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+fn required_var(name: &str) -> String {
+    env::var(name).unwrap_or_else(|_| {
+        panic!(
+            "{name} не задана: этот этап запускается через `cargo xtask test host-target`, \
+             который сам прошивает плату и передаёт сюда чип и адреса разделов"
+        )
+    })
+}
+
+/// Сколько ждать смены разделов: [`SWAP_TIMEOUT_BASE`] плюс перенос страниц.
+///
+/// Обмен в `embassy-boot` стирает и переписывает каждую страницу `ACTIVE` и
+/// каждую страницу `DFU` по разу — вдвое больше байт, чем в `ACTIVE`; откат —
+/// столько же. Ждём не фиксированное время, а нужного содержимого (см.
+/// [`wait_for`]) — предел лишь ограничивает ожидание сверху. Постоянный предел
+/// на H7 (раздел из нескольких секторов по 128K) не уложил бы и один обмен.
+fn swap_timeout(active_len: u32) -> Duration {
+    SWAP_TIMEOUT_BASE + COPY_PER_128K * (2 * active_len).div_ceil(128 * 1024)
 }
 
 fn number<T: std::str::FromStr>(name: &str) -> T {

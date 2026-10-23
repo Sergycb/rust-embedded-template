@@ -17,11 +17,6 @@ use defmt_or_log::info;
 use embassy_net::driver::Driver;
 use supervisor::runtime::TaskExit;
 
-/// Узел `NET`: исполняет стек, пока жива прошивка; не возвращается.
-pub async fn task<D: Driver>(mut ctx: NetCtx<'_, Runner<'static, D>>) -> TaskExit {
-    ctx.run().await.result
-}
-
 #[fsm::typestate]
 impl<D: Driver> NetCtx<'_, Runner<'static, D>> {
     fsm::machine! {
@@ -53,6 +48,11 @@ impl<D: Driver> NetCtx<'_, Runner<'static, D>> {
     async fn drive(&mut self, _: Running) -> Down {
         self.runner.run().await
     }
+}
+
+/// Узел `NET`: исполняет стек, пока жива прошивка; не возвращается.
+pub async fn task<D: Driver>(mut ctx: NetCtx<'_, Runner<'static, D>>) -> TaskExit {
+    ctx.run().await.result
 }
 
 // Узел объявлен рядом со своей задачей — как остальные. `<R>` — `Runner`

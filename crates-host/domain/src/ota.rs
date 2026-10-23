@@ -84,6 +84,18 @@ pub const SESSION_TIMEOUT: Duration = Duration::from_secs(30);
 /// покинул устройство.
 pub const REBOOT_GRACE: Duration = Duration::from_millis(100);
 
+/// Ёмкость входа `CMD`, байт: запрос (кусок `ports::CHUNK_BYTES` со смещением и
+/// длиной, тег варианта, номер клиента) и ответ. Одно число на граф (`request:`
+/// в `OTA_FRAG`) и на `static` входа в проекте без графа (`crates-cross/app/src/tasks/ota.rs`). В
+/// `request:` фрагмента оно записано литералом — макрос не принимает путь, —
+/// так что меняется в двух местах.
+pub const CMD_BYTES: usize = 144;
+
+const _: () = assert!(
+    size_of::<OtaRequest>() <= CMD_BYTES && size_of::<OtaReply>() <= CMD_BYTES,
+    "команда OTA не помещается во вход CMD: поднимите CMD_BYTES"
+);
+
 /// Подпись образа.
 type Signature = [u8; SIGNATURE_BYTES];
 
@@ -157,18 +169,6 @@ impl core::fmt::Display for NodeLost {
 }
 
 impl core::error::Error for NodeLost {}
-
-/// Ёмкость входа `CMD`, байт: запрос (кусок `ports::CHUNK_BYTES` со смещением и
-/// длиной, тег варианта, номер клиента) и ответ. Одно число на граф (`request:`
-/// в `OTA_FRAG`) и на `static` входа в проекте без графа (`crates-cross/app/src/tasks/ota.rs`). В
-/// `request:` фрагмента оно записано литералом — макрос не принимает путь, —
-/// так что меняется в двух местах.
-pub const CMD_BYTES: usize = 144;
-
-const _: () = assert!(
-    size_of::<OtaRequest>() <= CMD_BYTES && size_of::<OtaReply>() <= CMD_BYTES,
-    "команда OTA не помещается во вход CMD: поднимите CMD_BYTES"
-);
 
 /// Вход узла OTA: из чего собрать адаптер обновления `F`, чем перезагружать
 /// МК и как применять образ.
@@ -266,24 +266,6 @@ impl Mode {
             }
         }
     }
-}
-
-/// Узел `OTA`: отвечает на команды приёма образа, пока жив граф.
-///
-/// Не выходит никогда: каждая команда получает ответ — исход или код
-/// отказа, — и узел ждёт следующую.
-///
-/// Без `watchdog:` намеренно — по тому же правилу, что у
-/// [`heartbeat::task`](crate::heartbeat::task): отметка ставится после
-/// реального прогресса, а команды может не быть всю жизнь платы. Аппаратный
-/// сторож кормит тикер графа, а не какой-то узел.
-pub async fn task<F, R>(mut ctx: OtaCtx<'_, F, R>) -> TaskExit
-where
-    F: FirmwareUpdate,
-    F::Error: FormatOrDebug,
-    R: Reboot,
-{
-    match ctx.run().await {}
 }
 
 #[fsm::typestate]
@@ -540,6 +522,24 @@ where
     }
 }
 
+/// Узел `OTA`: отвечает на команды приёма образа, пока жив граф.
+///
+/// Не выходит никогда: каждая команда получает ответ — исход или код
+/// отказа, — и узел ждёт следующую.
+///
+/// Без `watchdog:` намеренно — по тому же правилу, что у
+/// [`heartbeat::task`](crate::heartbeat::task): отметка ставится после
+/// реального прогресса, а команды может не быть всю жизнь платы. Аппаратный
+/// сторож кормит тикер графа, а не какой-то узел.
+pub async fn task<F, R>(mut ctx: OtaCtx<'_, F, R>) -> TaskExit
+where
+    F: FirmwareUpdate,
+    F::Error: FormatOrDebug,
+    R: Reboot,
+{
+    match ctx.run().await {}
+}
+
 /// Команда приёма не от владельца: `Busy`, приём владельца — и его срок — как
 /// были.
 fn busy(s: Receiving, client: ClientId, served: Served<'_, OtaRequest, OtaReply>) -> Receiving {
@@ -658,6 +658,14 @@ pub(crate) mod tests {
         }
     }
 
+    /// Шаг сценария: запрос узлу, пауза, которую узел видит, или пауза, которую
+    /// он не успел увидеть (время ушло, а узел не опрошен).
+    enum Step {
+        Send(OtaRequest),
+        Wait(Duration),
+        Skip(Duration),
+    }
+
     // {%- if has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" or net_services contains "mqtt" %}
     /// Узел OTA, который тест крутит сам: `poll` по очереди с запросом.
     pub(crate) type Node = Pin<Box<dyn Future<Output = TaskExit>>>;
@@ -682,14 +690,6 @@ pub(crate) mod tests {
         )
     }
     // {%- endif %}
-
-    /// Шаг сценария: запрос узлу, пауза, которую узел видит, или пауза, которую
-    /// он не успел увидеть (время ушло, а узел не опрошен).
-    enum Step {
-        Send(OtaRequest),
-        Wait(Duration),
-        Skip(Duration),
-    }
 
     /// Команда от клиента 0 — единственного транспорта.
     fn send(command: OtaCommand) -> Step {

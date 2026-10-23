@@ -4,3 +4,21 @@ allow-dbg-in-tests = true
 # Имена протоколов в документации — не идентификаторы кода (`doc_markdown`);
 # `..` сохраняет встроенный список clippy.
 doc-valid-idents = ["CANopen", "CiA", ".."]
+
+# Порядок элементов модуля (`arbitrary_source_item_ordering` в
+# `[workspace.lints.clippy]`): только элементы модуля, не поля структур, не
+# варианты и не методы `impl`; внутри группы порядок свободный — по смыслу, а не
+# по алфавиту. `const` раньше типов, `static` после них: константы задают
+# размеры, которыми пользуются типы и статики, а статики — память под типы.
+source-item-ordering = ["module"]
+module-items-ordered-within-groupings = "none"
+module-item-order-groupings = [
+	["modules", ["extern_crate", "mod", "foreign_mod"]],
+	["use", ["use"]],
+	["macros", ["macro"]],
+	["global_asm", ["global_asm"]],
+	["const", ["const"]],
+	["types", ["ty_alias", "enum", "struct", "union", "trait", "trait_alias", "impl"]],
+	["static", ["static"]],
+	["fn", ["fn"]],
+]

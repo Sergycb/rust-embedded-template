@@ -1,5 +1,3 @@
-use std::env;
-
 mod firmware;
 mod flash;
 mod image;
@@ -13,6 +11,8 @@ mod setup;
 mod signing;
 mod size;
 mod test;
+
+use std::env;
 
 use project::{CHIP, signing_enabled};
 

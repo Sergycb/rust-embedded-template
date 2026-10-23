@@ -62,6 +62,10 @@ mod fakes {
 
     use crate::fake::ETHERNET_MTU;
 
+    pub(super) const DEVICE: Ipv4Address = Ipv4Address::new(10, 0, 0, 1);
+    pub(super) const HOST: Ipv4Address = Ipv4Address::new(10, 0, 0, 2);
+    pub(super) const PORT: u16 = 502;
+
     /// Половина кабеля: кадры, ждущие приёма, и кто их ждёт.
     #[derive(Default)]
     pub(super) struct Wire {
@@ -133,10 +137,6 @@ mod fakes {
     }
 
     pub(super) type Node = (Stack<'static>, Runner<'static, Loopback>);
-
-    pub(super) const DEVICE: Ipv4Address = Ipv4Address::new(10, 0, 0, 1);
-    pub(super) const HOST: Ipv4Address = Ipv4Address::new(10, 0, 0, 2);
-    pub(super) const PORT: u16 = 502;
 
     pub(super) fn leak<T>(value: T) -> &'static mut T {
         Box::leak(Box::new(value))

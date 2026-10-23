@@ -97,31 +97,6 @@ pub type SleepTicks = AtomicU32;
 // конструирует — зависимость направлена от приложения к подсистеме и никогда
 // наоборот.
 
-/// Снимок обоих счётчиков.
-///
-/// Оба читаются здесь, в одном месте и максимально близко друг к другу:
-/// разъехавшиеся на миллисекунду чтения дали бы загрузку, которой не было.
-fn snapshot(sleep_ticks: &SleepTicks) -> Sample {
-    Sample {
-        total_ticks: Instant::now().as_ticks(),
-        sleep_ticks: sleep_ticks.load(Ordering::Relaxed),
-    }
-}
-
-/// Узел `CPU_LOAD` графа: раз в `SAMPLE_INTERVAL` публикует занятость
-/// процессора в процентах.
-///
-/// `ctx.percent` — отправитель, который граф создал из
-/// `publish: [PERCENT: u8; 1]` во фрагменте ниже. `Watch` хранит последнее
-/// значение, так что подписчик получит и пропущенные интервалы, лишь показав
-/// последний из них: счётчик знает «сколько сейчас», а не «сколько было когда».
-///
-/// У автомата нет выходного состояния, поэтому [`TaskExit`] недостижим: узел
-/// не падает (`restart: Never`).
-pub async fn task(mut ctx: CpuLoadCtx<'_>) -> TaskExit {
-    match ctx.run().await {}
-}
-
 #[fsm::typestate]
 impl CpuLoadCtx<'_> {
     fsm::machine! {
@@ -172,6 +147,31 @@ impl CpuLoadCtx<'_> {
         }
         s.next = fsm::next_tick(s.next, SAMPLE_INTERVAL, Instant::now());
     }
+}
+
+/// Снимок обоих счётчиков.
+///
+/// Оба читаются здесь, в одном месте и максимально близко друг к другу:
+/// разъехавшиеся на миллисекунду чтения дали бы загрузку, которой не было.
+fn snapshot(sleep_ticks: &SleepTicks) -> Sample {
+    Sample {
+        total_ticks: Instant::now().as_ticks(),
+        sleep_ticks: sleep_ticks.load(Ordering::Relaxed),
+    }
+}
+
+/// Узел `CPU_LOAD` графа: раз в `SAMPLE_INTERVAL` публикует занятость
+/// процессора в процентах.
+///
+/// `ctx.percent` — отправитель, который граф создал из
+/// `publish: [PERCENT: u8; 1]` во фрагменте ниже. `Watch` хранит последнее
+/// значение, так что подписчик получит и пропущенные интервалы, лишь показав
+/// последний из них: счётчик знает «сколько сейчас», а не «сколько было когда».
+///
+/// У автомата нет выходного состояния, поэтому [`TaskExit`] недостижим: узел
+/// не падает (`restart: Never`).
+pub async fn task(mut ctx: CpuLoadCtx<'_>) -> TaskExit {
+    match ctx.run().await {}
 }
 
 // {%- if graph != "true" %}

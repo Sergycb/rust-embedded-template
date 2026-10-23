@@ -14,8 +14,6 @@ use crate::project::{
 };
 use crate::signing::{ensure_image_key, ensure_signing_key};
 
-type Stage = fn(&xshell::Shell) -> Result<(), anyhow::Error>;
-
 /// Этапы: имя, строка справки, запуск. Одна таблица и для справки, и для
 /// выбора — разъехаться им негде.
 const STAGES: [(&str, &str, Stage); 4] = [
@@ -32,6 +30,8 @@ const STAGES: [(&str, &str, Stage); 4] = [
     ),
     ("all", "все три подряд", test_all),
 ];
+
+type Stage = fn(&xshell::Shell) -> Result<(), anyhow::Error>;
 
 /// Без этапа — список этапов, а не запуск какого-то из них, и код выхода
 /// ненулевой: иначе `cargo xtask test` в скрипте давал бы зелёный прогон, в

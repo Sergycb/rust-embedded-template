@@ -97,6 +97,34 @@ mod tests {
     use super::{MapMutex, SharedRegisters};
     use crate::modbus::fakes::Map;
 
+    /// Карта, запись которой ждёт между двумя регистрами — как настоящая,
+    /// которая отдаёт уставку задаче или пишет во флеш.
+    #[derive(Default)]
+    struct Slow {
+        holding: [u16; 2],
+    }
+
+    impl Registers for Slow {
+        fn read_holding(
+            &mut self,
+            start: u16,
+            mut out: WordsMut<'_>,
+        ) -> impl Future<Output = Result<(), Exception>> {
+            for i in 0..out.len() {
+                out.set(i, self.holding[usize::from(start + i)]);
+            }
+            std::future::ready(Ok(()))
+        }
+
+        async fn write_holding(&mut self, start: u16, values: Words<'_>) -> Result<(), Exception> {
+            let start = usize::from(start);
+            self.holding[start] = values.get(0);
+            yield_once().await;
+            self.holding[start + 1] = values.get(1);
+            Ok(())
+        }
+    }
+
     /// Карта под мьютексом до конца процесса — как `static` compose-site.
     fn leak<R>(map: R) -> &'static MapMutex<R> {
         Box::leak(Box::new(MapMutex::new(map)))
@@ -134,13 +162,6 @@ mod tests {
         assert_eq!(read::<2>(&mut b, 2), [7, 8]);
     }
 
-    /// Карта, запись которой ждёт между двумя регистрами — как настоящая,
-    /// которая отдаёт уставку задаче или пишет во флеш.
-    #[derive(Default)]
-    struct Slow {
-        holding: [u16; 2],
-    }
-
     /// Один `Pending` — точка, где запись стоит наполовину.
     async fn yield_once() {
         let mut yielded = false;
@@ -153,27 +174,6 @@ mod tests {
             }
         })
         .await;
-    }
-
-    impl Registers for Slow {
-        fn read_holding(
-            &mut self,
-            start: u16,
-            mut out: WordsMut<'_>,
-        ) -> impl Future<Output = Result<(), Exception>> {
-            for i in 0..out.len() {
-                out.set(i, self.holding[usize::from(start + i)]);
-            }
-            std::future::ready(Ok(()))
-        }
-
-        async fn write_holding(&mut self, start: u16, values: Words<'_>) -> Result<(), Exception> {
-            let start = usize::from(start);
-            self.holding[start] = values.get(0);
-            yield_once().await;
-            self.holding[start + 1] = values.get(1);
-            Ok(())
-        }
     }
 
     /// Запрос с другой ручки, пришедший посреди записи, ждёт её конца и

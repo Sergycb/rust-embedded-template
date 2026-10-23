@@ -26,13 +26,6 @@
 
 use cortex_m::peripheral::MPU;
 
-const fn number(text: &str) -> u32 {
-    match u32::from_str_radix(text, 10) {
-        Ok(value) => value,
-        Err(_) => panic!("границы DMA_NC в [env] crates-cross/.cargo/config.toml — не число"),
-    }
-}
-
 /// Регионы MPU, по порядку: `(адрес, размер)`; первому достаётся [`FIRST_REGION`],
 /// каждому следующему — на единицу меньше.
 const REGIONS: &[(u32, u32)] = &[DMA_NC{% if bdma_nc_start != "" %}, BDMA_NC{% endif %}];
@@ -51,13 +44,6 @@ const CTRL_ENABLE: u32 = 1 << 0;
 /// Привилегированному коду без регионов остаётся карта по умолчанию.
 const CTRL_PRIVDEFENA: u32 = 1 << 2;
 const RBAR_VALID: u32 = 1 << 4;
-
-/// `RASR`: XN (без исполнения), AP = 0b011 (чтение и запись), TEX = 0b001 при
-/// C = B = 0 — normal non-cacheable, S — общий с DMA, SIZE = log2(размер) - 1,
-/// ENABLE.
-const fn rasr(len: u32) -> u32 {
-    (1 << 28) | (0b011 << 24) | (0b001 << 19) | (1 << 18) | ((len.trailing_zeros() - 1) << 1) | 1
-}
 
 // Требование региона MPU Armv7-M: размер — степень двойки не меньше 32 байт,
 // адрес кратен размеру; регионов в MPU хватает.
@@ -108,4 +94,18 @@ pub fn protect(mpu: &mut MPU) {
     }
     cortex_m::asm::dsb();
     cortex_m::asm::isb();
+}
+
+const fn number(text: &str) -> u32 {
+    match u32::from_str_radix(text, 10) {
+        Ok(value) => value,
+        Err(_) => panic!("границы DMA_NC в [env] crates-cross/.cargo/config.toml — не число"),
+    }
+}
+
+/// `RASR`: XN (без исполнения), AP = 0b011 (чтение и запись), TEX = 0b001 при
+/// C = B = 0 — normal non-cacheable, S — общий с DMA, SIZE = log2(размер) - 1,
+/// ENABLE.
+const fn rasr(len: u32) -> u32 {
+    (1 << 28) | (0b011 << 24) | (0b001 << 19) | (1 << 18) | ((len.trailing_zeros() - 1) << 1) | 1
 }

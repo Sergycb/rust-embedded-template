@@ -90,15 +90,6 @@ use core::ops::Range;
 use embedded_storage_async::nor_flash::NorFlash;
 use sequential_storage::cache::{Cache, Uncached};
 use sequential_storage::map::{MapConfig, MapStorage};
-// {%- endif %}
-
-/// Ключ настройки. `u32`, а не строка: строковый ключ пишется во flash целиком
-/// при каждом сохранении, а раздел здесь — две страницы.
-pub type Key = u32;
-
-// {%- if config == "true" %}
-/// Ошибка хранилища. Включает и ошибки флеша, и повреждение данных в разделе.
-pub type Error<E> = sequential_storage::Error<E>;
 
 /// Рабочий буфер: в нём запись сериализуется и в нём же ищется при чтении.
 ///
@@ -111,6 +102,15 @@ pub type Error<E> = sequential_storage::Error<E>;
 /// нельзя, пока в разделе лежат записи прошивки с большим буфером: на первой
 /// такой записи любое чтение откажет с `BufferTooSmall`.
 const SCRATCH: usize = 128;
+// {%- endif %}
+
+/// Ключ настройки. `u32`, а не строка: строковый ключ пишется во flash целиком
+/// при каждом сохранении, а раздел здесь — две страницы.
+pub type Key = u32;
+
+// {%- if config == "true" %}
+/// Ошибка хранилища. Включает и ошибки флеша, и повреждение данных в разделе.
+pub type Error<E> = sequential_storage::Error<E>;
 
 /// Кеш, который ничего не кеширует (см. раздел «Чего здесь нет»).
 type NoCache = Cache<Uncached, Uncached, Uncached, Key>;
