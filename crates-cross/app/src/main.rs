@@ -12,9 +12,6 @@ mod fault;
 {%- if graph == "true" %}
 mod graph;
 {%- endif %}
-{%- if signed == "true" %}
-mod image;
-{%- endif %}
 {%- if protocol_link == "true" %}
 mod link;
 {%- endif %}
@@ -27,6 +24,9 @@ mod net;
 mod panic;
 {%- if graph != "true" %}
 mod tasks;
+{%- endif %}
+{%- if signed == "true" %}
+mod version;
 {%- endif %}
 
 use defmt::info;
@@ -183,7 +183,7 @@ fn main() -> ! {
         // этому моменту уже отработал. Ровно то же обещание, что у `Executor::run`.
         //
         // `#[expect(unsafe_code)]` — вместе с остальными в `crates-cross` (см. `crates-cross/Cargo.toml`)
-        // (`boot/src/main.rs`, `app/src/image.rs`): unsafe в прошивке допустим, но каждое
+        // (`boot/src/main.rs`, `app/src/version.rs`): unsafe в прошивке допустим, но каждое
         // место обязано быть перечислено и объяснено, а линт `unsafe_code`
         // заставляет перечислять.
         #[expect(unsafe_code, reason = "обоснование — в комментарии выше")]

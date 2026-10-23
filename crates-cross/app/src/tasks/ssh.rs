@@ -26,7 +26,7 @@ async fn task(
 ) {
     // Ключ хоста — как в слоте фрагмента `SSH_FRAG`.
     let mut host_key = <HostKey as domain::Assemble>::assemble(host_key, ());
-    let mut login = crate::net::SSH_LOGIN;
+    let mut login = crate::net::ssh::LOGIN;
 {%- if ota == "true" %}
     let cmd = crate::tasks::ota::CMD.requester();
     let mut ota = domain::ota::OtaClient::new(cmd, domain::ota::ClientId({{ ssh_ota_client }}));

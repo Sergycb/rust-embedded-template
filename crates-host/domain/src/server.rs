@@ -28,10 +28,10 @@ use supervisor::runtime::TaskExit;
 /// его выбирает генерация параметром фрагмента:
 ///
 /// ```ignore
-/// fragments: [::domain::SERVER_FRAG<crate::link::usart1::Link, ::domain::modbus::Slave<crate::modbus::Handle>>
+/// fragments: [::domain::SERVER_FRAG<crate::link::uart::usart1::Link, ::domain::modbus::Slave<crate::modbus::Handle>>
 ///                 as MODBUS_USART1 = ::domain::server::ServerWiring {
 ///                     source: board.usart1,
-///                     buffers: crate::link::usart1::buffers(),
+///                     buffers: crate::link::uart::usart1::buffers(),
 ///                     handler: ::domain::modbus::Slave::new(1, crate::modbus::handle()),
 ///                 }];
 /// ```

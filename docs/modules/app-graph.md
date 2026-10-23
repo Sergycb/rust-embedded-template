@@ -452,7 +452,7 @@ async fn uart_drain_task(mut uart: embassy_stm32::usart::UartTx<'static, embassy
 `STATE` по символам `memory.x`: `bsp` про `domain` не знает
 (`= ::domain::ota::OtaWiring { source: board.firmware, reboot:
 bsp::reset::Reboot, mode: ::domain::ota::Mode::Signed { running_version:
-crate::image::FW_VERSION } }`). Типы слотов — аргументы фрагмента
+crate::version::FW_VERSION } }`). Типы слотов — аргументы фрагмента
 (`OTA_FRAG<::adapters::ota::Updater<bsp::FirmwareFlash, true>, bsp::reset::Reboot>`):
 слот — `static`, тип ему нужен, а знает его только эта сторона. Слот адаптера — `local` (фича
 `supervisor/local-resources` в
@@ -473,12 +473,12 @@ crate::image::FW_VERSION } }`). Типы слотов — аргументы ф�
 
 Узел `MODBUS_<ТРАНСПОРТ>` — по одному на транспорт с Modbus в `links`.{% if graph == "true" %}
 Фрагмент — узел протокола `domain::SERVER_FRAG<L, H>`, общий с protobuf: канал
-`L` (`crate::link::<транспорт>::Link`) узел собирает сам из рычага платы и
-буферов `crate::link::<транспорт>::buffers()`, обработчик `H` —
+`L` (`crate::link::<вид>::<транспорт>::Link`) узел собирает сам из рычага платы и
+буферов `crate::link::<вид>::<транспорт>::buffers()`, обработчик `H` —
 `domain::modbus::Slave` над картой регистров с адресом slave'а (вход
 `domain::server::ServerWiring`).{% else %}
 Без графа это задача в `crates-cross/app/src/tasks/modbus.rs`: она зовёт
-`domain::server::serve` с каналом `crate::link::<транспорт>::Link`, который
+`domain::server::serve` с каналом `crate::link::<вид>::<транспорт>::Link`, который
 узел собирает из рычага платы, и обработчиком `domain::modbus::Slave` над
 картой регистров с адресом slave'а.{% endif %} Карта одна на проект: её
 заводит `crates-cross/app/src/modbus.rs` в `static` (`OnceLock`) при первом

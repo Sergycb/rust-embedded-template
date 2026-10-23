@@ -1,5 +1,5 @@
 //! Разбор `mqtt.toml` — настроек брокера MQTT, которые `build.rs` вшивает в
-//! прошивку (`crate::net::MQTT_BROKER`, `MQTT_PREFIX`).
+//! прошивку (`crate::net::mqtt::BROKER`, `PREFIX`).
 //!
 //! Без Liquid: файл подключает и тест `xtask` (`crates-host/xtask/src/secrets.rs`),
 //! а корневой workspace компилируется и в репозитории шаблона. Разбор — свой, на

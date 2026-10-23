@@ -26,7 +26,7 @@ rust-version = "1.96"
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(rust_analyzer)"] }
 # `warn`, а не `deny`, как в корневом workspace: unsafe в `crates-cross` есть
 # и оправдан — прыжок в образ в `boot`, поллинг исполнителя в `app`,
-# `app/src/image.rs` (имя символа), бэкенд `getrandom` в `bsp/src/rng.rs` (с ssh)
+# `app/src/version.rs` (имя символа), бэкенд `getrandom` в `bsp/src/rng.rs` (с ssh)
 # (внешний символ и запись по его указателю), регистры option bytes, которых нет
 # в `stm32-metapac` (`bsp/src/clocks.rs`, только H723/725/730/733/735). Ровно на
 # этих местах стоит `#[expect(unsafe_code)]` с объяснением, и это весь

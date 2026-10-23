@@ -85,7 +85,7 @@ pub fn spawn_all(spawner: embassy_executor::Spawner, {% if ota == "true" or has_
 {%- if ssh_host_key == "config" %}
         board.config,
 {%- else %}
-        &crate::net::SSH_HOST_KEY,
+        &crate::net::ssh::HOST_KEY,
 {%- endif %}
     );
 {%- endif %}

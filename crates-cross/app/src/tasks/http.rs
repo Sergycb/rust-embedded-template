@@ -1,11 +1,11 @@
 //! Узлы `HTTP`: REST API, пул по задаче на соединение
-//! (`crate::net::HTTP_CONNECTIONS`). То, что в графе держат слоты `= static`, —
+//! (`crate::net::rest::CONNECTIONS`). То, что в графе держат слоты `= static`, —
 //! буферы соединения — здесь статики, по одному набору на копию.
 
 use domain::http::{HTTP_BUFFER, TCP_RX, TCP_TX};
 use static_cell::ConstStaticCell;
 
-use crate::net::HTTP_CONNECTIONS;
+use crate::net::rest::CONNECTIONS;
 
 /// Буферы одной копии: приём и передача сокета, разбор запроса. Нули —
 /// `.bss`, а не образ во флеше.
@@ -15,18 +15,18 @@ struct Buffers {
     http: ConstStaticCell<[u8; HTTP_BUFFER]>,
 }
 
-static BUFFERS: [Buffers; HTTP_CONNECTIONS] = [const {
+static BUFFERS: [Buffers; CONNECTIONS] = [const {
     Buffers {
         rx: ConstStaticCell::new([0; TCP_RX]),
         tx: ConstStaticCell::new([0; TCP_TX]),
         http: ConstStaticCell::new([0; HTTP_BUFFER]),
     }
-}; HTTP_CONNECTIONS];
+}; CONNECTIONS];
 
-#[embassy_executor::task(pool_size = HTTP_CONNECTIONS)]
+#[embassy_executor::task(pool_size = CONNECTIONS)]
 async fn task(index: usize, mut stack: bsp::net::Stack, mut info: domain::device::DeviceInfo) {
     let buffers = &BUFFERS[index];
-    let mut token = crate::net::REST_TOKEN;
+    let mut token = crate::net::rest::TOKEN;
 {%- if ota == "true" %}
     // Перезагрузку копия просит у узла OTA своим клиентом — номера следом за
     // транспортами, как в графе.
@@ -55,7 +55,7 @@ pub fn spawn(
     stack: bsp::net::Stack,
     info: domain::device::DeviceInfo,
 ) {
-    for index in 0..HTTP_CONNECTIONS {
+    for index in 0..CONNECTIONS {
         spawner
             .spawn(task(index, stack, info).expect("задача HTTP свежая: пул спавнится один раз"));
     }

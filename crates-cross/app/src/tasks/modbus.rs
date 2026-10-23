@@ -6,6 +6,10 @@
 {%- assign client = 0 %}
 {%- for l in xs %}
 {%- assign f = l | split: ":" %}
+{%- assign lm = "crate::link::" | append: f[0] %}
+{%- if f[0] == "uart" or f[0] == "usb" %}
+{%- assign lm = lm | append: "::" | append: f[4] %}
+{%- endif %}
 {%- if f[3] == "modbus" %}
 
 /// Узел `MODBUS_{{ f[4] | upcase }}`.
@@ -14,7 +18,7 @@ pub mod {{ f[4] }} {
 
     // Импорт, а не полный путь в сигнатурах: длина строки не зависит от
     // имени транспорта, и rustfmt не переносит её ни при каком имени.
-    use crate::link::{{ f[4] }}::{Link, Source};
+    use {{ lm }}::{Link, Source, buffers};
 
     #[embassy_executor::task]
     async fn task(source: Source, map: crate::modbus::Handle) {
@@ -31,7 +35,7 @@ pub mod {{ f[4] }} {
 {%- endif %}
         domain::server::serve::<Link, _>(domain::server::ServerWiring {
             source,
-            buffers: crate::link::{{ f[4] }}::buffers(),
+            buffers: buffers(),
             handler: domain::modbus::Slave::new(1, regs),
         })
         .await;

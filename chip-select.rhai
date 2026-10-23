@@ -2377,10 +2377,28 @@ variable::set("framing_tests", if on.modbus || cobs_used { "true" } else { "fals
 // Асинхронные трейты в `ports`: без них `#![expect(async_fn_in_trait)]` не
 // срабатывает, и сборка падает.
 variable::set("ports_async", if variable::get("ota") == "true" || variable::get("settings_port") == "true" || on.modbus || on.protobuf || on.canopen || has.can || has.udp { "true" } else { "false" });
-// Модуль `link.rs` в `app`: транспорты протоколов (`app::link::<имя>`) — кадрирование,
+// Модуль `link` в `app`: транспорты протоколов (`app::link::<вид>[::<имя>]`) — кадрирование,
 // буферы и сокет над объектами платы. Без Modbus и protobuf транспорту нечего оборачивать (CANopen берёт
 // шину CAN как есть).
 variable::set("protocol_link", if on.modbus || on.protobuf { "true" } else { "false" });
+// Файл на вид транспорта с каналом (`app/src/link/<вид>.rs`): виды через запятую
+// для объявлений в `link.rs`, файлы остальных видов уходят.
+let link_kinds = [];
+for link in links {
+    if (link.protocol == "modbus" || link.protocol == "protobuf") && !link_kinds.contains(link.kind) {
+        link_kinds.push(link.kind);
+    }
+}
+let link_kinds_text = "";
+for kind in link_kinds {
+    link_kinds_text += if link_kinds_text == "" { kind } else { "," + kind };
+}
+variable::set("link_kinds", link_kinds_text);
+for kind in ["uart", "usb", "tcp", "udp"] {
+    if !link_kinds.contains(kind) {
+        file::delete("crates-cross/app/src/link/" + kind + ".rs");
+    }
+}
 // Группы `resources.rs` нужны, пока есть что в них класть: общий флеш, сторож
 // графа, блоки транспортов или шина внешней флеши. Иначе в файле остаётся пустая группа.
 variable::set("has_resources", if links.len() > 0 || variable::get("shared_flash") == "true" || variable::get("graph") == "true" || variable::get("external_flash") == "true" { "true" } else { "false" });
@@ -2465,6 +2483,7 @@ if !on.canopen {
 }
 if variable::get("protocol_link") != "true" {
 	file::delete("crates-cross/app/src/link.rs");
+	file::delete("crates-cross/app/src/link");
 	// Узел протокола «запрос — ответ» (`domain::server`) обслуживает только
 	// Modbus slave и protobuf.
 	file::delete("crates-host/domain/src/server.rs");
@@ -2560,19 +2579,26 @@ if services.len() == 0 {
 if !services.contains("rest") {
 	file::delete("crates-host/domain/src/http.rs");
 	file::delete("crates-cross/app/src/tasks/http.rs");
+	file::delete("crates-cross/app/src/net/rest.rs");
 }
 if !services.contains("ssh") {
 	file::delete("crates-host/domain/src/ssh.rs");
 	file::delete("crates-cross/app/src/tasks/ssh.rs");
+	file::delete("crates-cross/app/src/net/ssh.rs");
 }
 // MQTT — узел, задача без графа, разбор `mqtt.toml` в build-скрипте `app`,
 // порт `Dial` и описание.
 if !services.contains("mqtt") {
 	file::delete("crates-host/domain/src/mqtt.rs");
 	file::delete("crates-cross/app/src/tasks/mqtt.rs");
+	file::delete("crates-cross/app/src/net/mqtt.rs");
 	file::delete("crates-cross/app/build");
 	file::delete("crates-host/ports/src/dial.rs");
 	file::delete("docs/modules/app-mqtt.md");
+}
+// Каталог модулей служб — последним: его файлы уходят по одному выше.
+if services.len() == 0 {
+	file::delete("crates-cross/app/src/net");
 }
 if !on.protobuf && services.len() == 0 {
 	file::delete("crates-host/domain/src/device.rs");

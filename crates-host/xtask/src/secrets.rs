@@ -16,15 +16,15 @@ use anyhow::Context;
 use crate::project::{SSH_AUTH, SSH_HOST_KEY, has_net_service};
 
 /// Токен `Authorization: Bearer` REST API (`domain::http`), 32 шестнадцатеричных
-/// знака; его вшивает `crates-cross/app/src/net.rs`.
+/// знака; его вшивает `crates-cross/app/src/net/rest.rs`.
 pub const REST_TOKEN_FILE: &str = "rest-token.txt";
 
 /// Пароль пользователя консоли SSH (`domain::ssh::USER`) при входе по паролю,
-/// 32 шестнадцатеричных знака; вшивает `crates-cross/app/src/net.rs`.
+/// 32 шестнадцатеричных знака; вшивает `crates-cross/app/src/net/ssh.rs`.
 pub const SSH_PASSWORD_FILE: &str = "ssh-password.txt";
 
 /// Зерно ключа хоста SSH (ed25519, 32 байта), когда ключ вшит в прошивку, а не
-/// создан платой; вшивает `crates-cross/app/src/net.rs`.
+/// создан платой; вшивает `crates-cross/app/src/net/ssh.rs`.
 pub const SSH_HOST_KEY_FILE: &str = "ssh-host-key.bin";
 
 /// Брокер MQTT (`domain::mqtt`): адрес, вход и префикс тем; разбирает и

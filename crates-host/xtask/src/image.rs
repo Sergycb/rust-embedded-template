@@ -8,7 +8,7 @@ use crate::memory::Region;
 
 /// Имя символа, в котором прошивка хранит собственную версию.
 ///
-/// Определён в `crates-cross/app/src/image.rs` под `#[unsafe(no_mangle)]` ровно
+/// Определён в `crates-cross/app/src/version.rs` под `#[unsafe(no_mangle)]` ровно
 /// ради этого чтения.
 const FW_VERSION_SYMBOL: &str = "FW_VERSION_IN_IMAGE";
 
@@ -52,7 +52,7 @@ pub fn image_symbol<'a>(
         .find(|symbol| symbol.name() == Ok(name))
         .with_context(|| {
             format!(
-                "в {} нет символа {name} (версию определяет crates-cross/app/src/image.rs, ключ — \
+                "в {} нет символа {name} (версию определяет crates-cross/app/src/version.rs, ключ — \
                  crates-cross/boot/src/signature.rs): либо прошивка собрана без него, либо статик \
                  выбросили при линковке (тогда верните ему #[used] и #[unsafe(no_mangle)])",
                 elf.display(),

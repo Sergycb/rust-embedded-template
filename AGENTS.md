@@ -172,7 +172,7 @@ read`: руками пришлось бы сначала найти адрес �
 
 - Задачи `embassy` не могут быть generic: тип, уезжающий в `#[embassy_executor::task]`,
   получает псевдоним (`pub type X = ...`): рычаг — от `bsp` (`bsp::FirmwareFlash`,
-  `bsp::ConfigFlash`), адаптер — от `app` (`crate::link::<транспорт>::Link`) или
+  `bsp::ConfigFlash`), адаптер — от `app` (`crate::link::<вид>::<транспорт>::Link`) или
   конкретным типом прямо в графе/задаче (`adapters::ota::Updater<bsp::FirmwareFlash, _>`)
   — `docs/architecture.md`.
 - Ровно один `#[panic_handler]` и один активный `#[global_logger]` на бинарник: логгер
@@ -369,7 +369,7 @@ read`: руками пришлось бы сначала найти адрес �
   `domain::server::SERVER_FRAG<L, H>` (один на Modbus slave и protobuf хоста;
   граф называет узлы `MODBUS_<транспорт>`/`HOST_<транспорт>`) через `Assemble`
   над тем, что отдала плата: потоком UART, потоком CDC, сетевым стеком. Тип
-  канала (`Link`), его статики и `buffers()` — `crates-cross/app/src/link.rs`,
+  канала (`Link`), его статики и `buffers()` — `crates-cross/app/src/link/<вид>.rs`,
   по модулю на транспорт: размер буфера и порт — решение приложения, и `bsp` их
   не знает. Буфер кадра держит сам канал (`ports::FrameLink::buffer`, один на
   приём и передачу), протокол — обработчик (`ports::Handler`:
@@ -380,18 +380,18 @@ read`: руками пришлось бы сначала найти адрес �
 {%- endif %}
 {%- if net_services contains "rest" %}
 - Токен REST API — `rest-token.txt` в корне проекта, его вшивает
-  `include_str!` (`crate::net::REST_TOKEN` в `crates-cross/app/src/net.rs`).
+  `include_str!` (`crate::net::rest::TOKEN` в `crates-cross/app/src/net/rest.rs`).
   Файл создаёт `cargo xtask` (`secrets::ensure` — в `build`, `lint cross` и перед
   прошивкой), и он **коммитится**, а не уходит в `.gitignore`: токен и так открыт
   в каждом образе, а без файла не собрались бы свежий клон и CI. Число
   соединений — `HTTP_CONNECTIONS` в `[env]` `crates-cross/.cargo/config.toml`
-  (`crate::net::HTTP_CONNECTIONS`); пул `HTTP[{{ http_connections }}]` в `graph.rs` —
+  (`crate::net::rest::CONNECTIONS`); пул `HTTP[{{ http_connections }}]` в `graph.rs` —
   литерал, который генерация пишет тем же числом (`const`-assert там же), и
   сокеты стека (`NET_SOCKETS` в том же `[env]`, `bsp::net`) генерация считает с ним —
   правите руками одно — правьте и остальные.
 {%- endif %}
 {%- if net_services contains "ssh" %}
-- Консоль SSH (`domain::ssh`, узел `SSH`): {% if ssh_auth == "password" %}пароль — `ssh-password.txt`{% else %}открытый ключ пользователя — строка `crate::net::SSH_LOGIN`{% endif %}{% if ssh_host_key == "file" %}, ключ хоста — `ssh-host-key.bin` (`crate::net::SSH_HOST_KEY`){% endif %}.
+- Консоль SSH (`domain::ssh`, узел `SSH`): {% if ssh_auth == "password" %}пароль — `ssh-password.txt`{% else %}открытый ключ пользователя — строка `crate::net::ssh::LOGIN`{% endif %}{% if ssh_host_key == "file" %}, ключ хоста — `ssh-host-key.bin` (`crate::net::ssh::HOST_KEY`){% endif %}.
   {% if ssh_auth == "password" or ssh_host_key == "file" %}Файлы в корне проекта создаёт `cargo xtask` (`secrets::ensure`) и они
   **коммитятся**, как токен REST: они вшиты и открыты в образе. {% endif %}{% if ssh_host_key == "config" %}Ключ хоста плата
   создаёт при первом старте (`domain::ssh::Stored`, ключ настроек
@@ -404,8 +404,8 @@ read`: руками пришлось бы сначала найти адрес �
 {%- if net_services contains "mqtt" %}
 - Брокер MQTT (`domain::mqtt`, узел `MQTT`): адрес, вход и префикс тем — `mqtt.toml` в
   корне проекта. Файл создаёт `cargo xtask` (`secrets::ensure`), он **коммитится**, а
-  читает и вшивает его `crates-cross/app/build.rs` (`crate::net::MQTT_BROKER`,
-  `MQTT_PREFIX`; пароль открыт в образе). Заготовку сборка не отвергает: адрес
+  читает и вшивает его `crates-cross/app/build.rs` (`crate::net::mqtt::BROKER`,
+  `PREFIX`; пароль открыт в образе). Заготовку сборка не отвергает: адрес
   вписывает человек. Узел подключается сам: `dial` — одна попытка, неудачная —
   строка в лог с адресом, и после неё и после любого конца сессии узел сразу
   зовёт `dial` снова; паузы перед попытками (1 → 30 с) — контракт порта
@@ -413,7 +413,7 @@ read`: руками пришлось бы сначала найти адрес �
   {%- if ota == "true" %} Клиент входа `CMD` узла OTA для `cmd/reboot` — номер
   `{{ mqtt_ota_client }}` (`domain::ota::ClientId`).{%- endif %} Сокет клиента — слот в `NET_SOCKETS`
   (`[env]`, считает генерация); клиента собирает узел (`Assemble`) на стеке платы,
-  буферы TCP — статики `crate::net::mqtt_buffers()`. Доступ к `cmd/` токеном в
+  буферы TCP — статики `crate::net::mqtt::buffers()`. Доступ к `cmd/` токеном в
   теле не защищён — только ACL брокера{% if ota == "true" %} (при пустом `user` `build.rs` предупреждает){% endif %} —
   `docs/modules/app-mqtt.md`.
 {%- endif %}

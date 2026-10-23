@@ -81,7 +81,7 @@ pub struct Board {
     /// UART `{{ f[2] }}` — поток байтов; пока заглушка `bsp::serial::{{ f[4] }}::Serial`, до
     /// драйвера платы (`docs/modules/bsp-serial.md`). {% if f[3] == "none" %}Протокола у транспорта
     /// нет: поле ждёт ваш узел.{% else %}Канал протокола {{ f[3] }} над ним собирает узел протокола
-    /// (тип и буферы — `crates-cross/app/src/link.rs`).{% endif %}
+    /// (тип и буферы — `crates-cross/app/src/link/uart.rs`).{% endif %}
     pub {{ f[4] }}: crate::serial::{{ f[4] }}::Serial,
 {%- elsif f[0] == "can" %}
     /// Шина CAN `{{ f[2] }}`{% if f[3] == "canopen" %} под узлом `CANOPEN_{{ f[4] | upcase }}`{% endif %} — заглушка `bsp::can::{{ f[4] }}::Can`, пока проект не

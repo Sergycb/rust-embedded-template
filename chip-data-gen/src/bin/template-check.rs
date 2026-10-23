@@ -82,7 +82,7 @@ fn default_cases() -> Vec<Case> {
     vec![
         // Одноядерный с OTA и подписью образа (она всегда идёт вместе с OTA:
         // проверка в bootloader'е `screen_update`, ключ через `boot/build.rs`,
-        // `salty` со своей `slow-motion` и профилем dev, в `app/src/image.rs`
+        // `salty` со своей `slow-motion` и профилем dev, в `app/src/version.rs`
         // — `FW_VERSION` для `Mode::Signed`), одна карта памяти — самый
         // обычный случай.
         Case::new("stm32f407ve").smoke(),
@@ -166,7 +166,7 @@ fn default_cases() -> Vec<Case> {
         // quad-командами.
         Case::new("stm32l476rg").variant("ota-external", &["ext_flash=yes"]),
         // OTA без графа: узел OTA запускает сам `main` (`ota_task`;
-        // `app/src/image.rs` есть, `graph.rs` нет), а bootloader — без сторожа.
+        // `app/src/version.rs` есть, `graph.rs` нет), а bootloader — без сторожа.
         // Чип — Cortex-M0+: проверка подписи (она есть всегда, когда есть OTA)
         // живёт в bootloader'е, и код `salty` под Thumb-1 заметно толще, чем
         // под M4; влезает ли release-bootloader в свою зону на M0+, проверяет эта

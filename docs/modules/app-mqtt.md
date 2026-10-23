@@ -4,7 +4,7 @@
 сама подключается к брокеру и держит соединение: публикует состояние и
 телеметрию, принимает команды. Логика — в `crates-host/domain/src/mqtt.rs`;
 соединение (`adapters::net::TcpClient`) узел собирает сам (`ports::Assemble`) на
-стеке платы `board.net.stack` в памяти от `app` (`crate::net::mqtt_buffers()`);
+стеке платы `board.net.stack` в памяти от `app` (`crate::net::mqtt::buffers()`);
 `app` заводит эти буферы, буферы `minimq` и вход узла
 (`crates-cross/app/src/tasks/mqtt.rs`, в графе — `fragments:`). Сокет клиента —
 слот стека, его генерация учитывает в `NET_SOCKETS` (`[env]`).
@@ -42,8 +42,8 @@
 
 Настройки брокера — файл в корне проекта. Заготовку создаёт `cargo xtask`
 (`build`, `lint cross`, как токен REST), файл **коммитится**, читает его
-`crates-cross/app/build.rs` и вшивает в прошивку (`crate::net::MQTT_BROKER`,
-`MQTT_PREFIX`). Разбор — `domain`-независимый, свой, в
+`crates-cross/app/build.rs` и вшивает в прошивку (`crate::net::mqtt::BROKER`,
+`PREFIX`). Разбор — `domain`-независимый, свой, в
 `crates-cross/app/build/mqtt.rs`.
 
 | Ключ | Что |

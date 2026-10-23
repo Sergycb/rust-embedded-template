@@ -68,11 +68,11 @@ async fn task(firmware: bsp::FirmwareFlash, mut mode: domain::ota::Mode) {
 
 /// Спавнит узел над флешем платы под обновлением — адаптер обновления собирается в задаче;
 /// режим —
-/// {% if signed == "true" %}`Signed` с версией этого образа (`crate::image::FW_VERSION`){% else %}`Plain`{% endif %}.
+/// {% if signed == "true" %}`Signed` с версией этого образа (`crate::version::FW_VERSION`){% else %}`Plain`{% endif %}.
 pub fn spawn(spawner: embassy_executor::Spawner, firmware: bsp::FirmwareFlash) {
 {%- if signed == "true" %}
     let mode = domain::ota::Mode::Signed {
-        running_version: crate::image::FW_VERSION,
+        running_version: crate::version::FW_VERSION,
     };
 {%- else %}
     let mode = domain::ota::Mode::Plain;

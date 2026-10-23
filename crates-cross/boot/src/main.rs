@@ -186,7 +186,7 @@ fn main() -> ! {
     //   проверяет — оговорка выше, про повреждённый образ.
     //
     // `#[expect(unsafe_code)]` — как и остальные unsafe в `crates-cross` (см. `crates-cross/Cargo.toml`)
-    // (`app/src/main.rs`, `app/src/image.rs`): линт требует, чтобы каждое такое место
+    // (`app/src/main.rs`, `app/src/version.rs`): линт требует, чтобы каждое такое место
     // было перечислено явно.
     #[expect(unsafe_code, reason = "обоснование — в комментарии выше")]
     unsafe {

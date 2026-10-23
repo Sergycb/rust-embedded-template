@@ -3,7 +3,7 @@
 (`stack`). Стек, его память и адресацию собирает плата; сокеты на нём открывают
 узлы — каналы протоколов и соединения служб собирает каждый узел сам
 (`ports::Assemble`), а память сокетов и порты заводит приложение
-(`crates-cross/app/src/link.rs`, `crates-cross/app/src/net.rs`): порты — решение
+(`crates-cross/app/src/link/`, `crates-cross/app/src/net/`): порты — решение
 протокола, а не платы.
 
 Шаблон выводы не выбирает (`docs/architecture.md`), поэтому `Device` пока —
@@ -112,7 +112,7 @@ Ethernet — заменить устройство: стек, сокеты и г
   `Config::ipv4_static(StaticConfigV4 { address: Ipv4Cidr::new(Ipv4Address::new(192, 168, 1, 50), 24), gateway: None, dns_servers: Default::default() })`.
 * MAC — из заводского номера чипа (`mac_from_uid` в `bsp/src/net.rs`), локально
   администрируемый. Свой, выданный производителем, — подставьте там же.
-* Порты протоколов — `PORT` в подмодулях `crates-cross/app/src/link.rs`: их
+* Порты протоколов — `PORT` в `crates-cross/app/src/link/tcp.rs` и `udp.rs`: их
   задаёт протокол, а не плата.
 * Сокетов в стеке — `NET_SOCKETS` в `[env]` `crates-cross/.cargo/config.toml`
   (`bsp::net`): его считает генерация — DHCP-клиент, по одному на сетевой

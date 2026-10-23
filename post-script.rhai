@@ -29,7 +29,7 @@ let config = variable::get("config");
 // а не в pre-хуке: окончательное `signed` pre-хук выставляет в трёх ветках
 // раскладки, а к этому моменту оно уже одно.
 if variable::get("signed") != "true" {
-	file::delete("crates-cross/app/src/image.rs");
+	file::delete("crates-cross/app/src/version.rs");
 }
 
 print("");

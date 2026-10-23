@@ -111,11 +111,11 @@ HAL (`bsp::board::init_peripherals` — на умолчаниях `embassy-stm32
 нет. Входы с такой сборкой — `ServerWiring`, `OtaWiring`, `CanOpenWiring`,
 `SshWiring`, `MqttWiring` — написаны руками: структура, которую выводит фрагмент
 (`boot: … struct`), допускает в инициализаторе слота только чтение поля. `app`
-выбирает тип (параметр фрагмента: `crate::link::<транспорт>::Link`,
+выбирает тип (параметр фрагмента: `crate::link::<вид>::<транспорт>::Link`,
 `adapters::ota::Updater<bsp::FirmwareFlash, _>`,
 `adapters::settings::Settings<bsp::ConfigFlash>`) и раздаёт поля платы и
-ссылки на свои статики (`crate::link::<транспорт>::buffers()`,
-`crate::net::mqtt_buffers()`). Та реализация, которой
+ссылки на свои статики (`crate::link::<вид>::<транспорт>::buffers()`,
+`crate::net::mqtt::buffers()`). Та реализация, которой
 нужны `embassy_stm32::peripherals` или регистр, — в `crates-cross/bsp`: сторож
 над IWDG (`bsp::wdg`), куски флеша со своими страницами (`bsp::flash`,
 `bsp::external`), заглушки периферии, пока
@@ -271,7 +271,7 @@ RAM. От килобайта и выше фрагмент пишет `resources:
 сообщений, сокеты протоколов и служб, адаптер обновления, хранилище настроек —
 решение проекта, а не свойство платы. Их собирает узел (`ports::Assemble`, выше)
 в памяти, которую заводит `app`: захотел проект другой буфер или порт — правится
-`app` (`crates-cross/app/src/link.rs`, `net.rs`), плата не меняется. Буфер
+`app` (`crates-cross/app/src/link/`, `net/`), плата не меняется. Буфер
 заводится там, где решают его размер, — статиком `app`, — а узел получает ссылку.
 
 `Board` один (`Board::new() -> Board`), и пары, которые нельзя собрать порознь,
@@ -325,7 +325,7 @@ device, cdc }` (классы `embassy-usb` регистрируются до п�
 а командами узла протокола на вход узла `CMD` (`request:` графа, клиент —
 `ota_cmd_requester()`; `docs/ota.md`). Вместимость раздела адаптер отдаёт через
 порт же (`FirmwareUpdate::capacity`). Версия образа — свойство прошивки, а не
-платы: её задаёт приложение (`crates-cross/app/src/image.rs`) режимом
+платы: её задаёт приложение (`crates-cross/app/src/version.rs`) режимом
 узла `Mode::Signed` прямо в `fragments:`; ключ подписи — в
 bootloader'е (`crates-cross/boot`), который подпись и проверяет.
 
@@ -397,7 +397,7 @@ host-тестируем. Саму подпись
 нужен псевдоним — в сигнатуре `#[embassy_executor::task]` и у слота узла нужен
 конкретный тип. Рычагу платы его даёт `bsp` (`pub type Serial = ...`,
 `bsp::usb::<транспорт>::Device`/`Cdc`, `bsp::net::Stack`), адаптеру — модуль
-`app`, который выбирает его тип (`crate::link::<транспорт>::Link` и `Source`),
+`app`, который выбирает его тип (`crate::link::<вид>::<транспорт>::Link` и `Source`),
 или конкретный тип прямо во входе узла (`adapters::ota::Updater<bsp::FirmwareFlash, _>`,
 `adapters::settings::Settings<bsp::ConfigFlash>` — модуля под одну строку `app`
 не заводит). Приложение при этом всё

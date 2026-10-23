@@ -142,7 +142,7 @@ bootloader и `STATE`. Отсюда и второй набор цифр в `MEMO
 есть подпись, нет OTA (в том числе если схема не поместилась во flash) — нет и подписи.
 `--define signed=...` на него не влияет. В шаблоне он управляет фичей `signed` у `domain` (проверка подписи — `domain::ota::boot`, ею пользуется `boot`), ключом в `crates-cross/boot`
 (`boot/build.rs`, `OTA_PUBLIC_KEY_IN_IMAGE`, вызов `screen_update`), выбором
-`Updater<_, true>` во входе узла OTA (`app/src/graph.rs`, `app/src/tasks/ota.rs`) и файлом `crates-cross/app/src/image.rs`
+`Updater<_, true>` во входе узла OTA (`app/src/graph.rs`, `app/src/tasks/ota.rs`) и файлом `crates-cross/app/src/version.rs`
 (`FW_VERSION` для `Mode::Signed`; без подписи его удаляет `post-script.rhai`). Подпись проверяет bootloader
 (`domain::ota::boot::screen_update`), приложение — только длину, занятость и версию
 (`domain::ota::update::apply_signed`), см. docs/ota.md.
@@ -174,7 +174,7 @@ STM32C011D6 (32 KiB, то же ядро) проект занимает 12.6 KiB 
 протокола и его `NET`/`USB` спавнит `tasks::spawn_all` (модули задач в
 `crates-cross/app/src/tasks/` над `domain::server::serve` и
 `domain::{canopen,net,usb}::task`, как `ota::task`). Тип канала протокола и его
-буферы даёт `crates-cross/app/src/link.rs`, а собирает канал сам узел
+буферы даёт `crates-cross/app/src/link/<вид>.rs`, а собирает канал сам узел
 (`ports::Assemble`), так что граф и модули задач получают один и тот же объект. Тест каскада —
 `protocol_does_not_need_the_graph`, конфигурации `*-no-graph` в `template-check`.
 
@@ -577,7 +577,7 @@ Modbus. Через `--define` то же задаёт `links` (`parse_links()`, �
 строчными, у `tcp`/`udp` — сам вид) и `has_*`. Файлы шаблона идут по `links`
 циклом Liquid: у каждого транспорта своя группа в `resources.rs`, подмодуль драйвера
 в `bsp` (`bsp::serial::<имя>`, `bsp::can::<имя>`, `bsp::usb::<имя>`), подмодуль
-транспорта с протоколом в `app` (`app::link::<имя>`: тип канала и его буферы), поле
+транспорта с протоколом в `app` (`app::link::<вид>[::<имя>]`: тип канала и его буферы, файл на вид — `link_kinds`), поле
 `Board` и узел графа или модуль задачи без графа. `interface`,
 `iface_periph` и производные от них считаются по основному транспорту (первый с
 протоколом, иначе первый) и остались там, где речь об одном блоке (подсказки
@@ -595,7 +595,7 @@ Modbus. Через `--define` то же задаёт `links` (`parse_links()`, �
 сама в разделе настроек (`domain::ssh::Stored`), `file` — вшит из `ssh-host-key.bin`
 (`Fixed`; так и при `config` вместе с CANopen — раздел настроек целиком его). Пустые
 строки, когда не выбрано. Модули узлов невыбранных служб хук удаляет (`domain/src/http.rs`,
-`ssh.rs`, `mqtt.rs`, `app/src/tasks/{http,ssh,mqtt}.rs`, `app/src/net.rs` без служб вовсе,
+`ssh.rs`, `mqtt.rs`, `app/src/tasks/{http,ssh,mqtt}.rs`, `app/src/net/{rest,ssh,mqtt}.rs` и `app/src/net.rs` без служб вовсе,
 `device.rs` без служб и protobuf); узел протокола `domain/src/server.rs` — без Modbus и
 protobuf. Сокетов в стеке хук считает сам (`net_stack_sockets` → `NET_SOCKETS` в `[env]`:
 DHCP-клиент, сетевые транспорты, по сокету на копию пула REST — `http_connections` →
