@@ -8,8 +8,8 @@ paths: crates-cross/**
   `crate::ota`, `crate::settings`).
 - Ровно один `#[panic_handler]` и один `#[global_logger]` на бинарник — это
   ограничение линкера, а не Cargo. Развилка по профилю делается через
-  `#[cfg(debug_assertions)]` (паникёр — `bsp/src/panic.rs`, общий у `app` и `boot`
-  за фичей `panic-handler`; `boot` собирается только в release), не Cargo-фичей.
+  `#[cfg(debug_assertions)]` (паникёр — `app/src/panic.rs`; у `boot` свой, `udf()`
+  без сообщения), не Cargo-фичей.
 - `Board` (один, `Board::new() -> Board`) отдаёт рычаги платы — объекты под
   трейтами (`embedded-io-async`, `embedded-storage`, порты `ports`): потоки, шины,
   разделы флеша, драйверы микросхем платы — и данные о чипе (`bsp::ChipSpec`), а не
@@ -23,8 +23,8 @@ paths: crates-cross/**
 - `bsp` ничего не инициализирует сверх подъёма HAL: конструкторы зовутся `new`
   и только создают объекты. Всё, что запускает железо (`arm()` у сторожа),
   делает тот, кто этим железом распоряжается. Исключения — `ensure_*` для
-  option bytes, `bsp::cache::enable()` (кэши чипа), `bsp::fault::enable()`
-  (ловушка деления, обработчик `HardFault`) и `Cycles::new` (счётчик тактов) —
+  option bytes, `bsp::cache::enable()` (кэши чипа) и `Cycles::new` (счётчик
+  тактов) —
   `docs/clocks.md`{% if external_flash == "true" %}; и `init` внешней флеши в `bsp::external::new` (опознание
   микросхемы — без него драйвер не годится ни для одной операции), из-за него
   `Board::new` асинхронный и зовётся из `main` через `block_on` —
@@ -32,8 +32,10 @@ paths: crates-cross/**
 - `lib.rs` в `bsp` — только объявления модулей и реэкспорт; код живёт в
   модулях. Модуль без кода (одна `#![doc = include_str!(..)]`) не заводить:
   такой документации место в `docs/`.
-- `app` про `embassy-stm32`, `cortex-m` и `cortex-m-rt` не знает — ни `use`, ни
-  строки в манифесте; ядро — через `bsp::cpu`.
+- `app` про `embassy-stm32` не знает — ни `use`, ни строки в манифесте. Ядро
+  `app` берёт напрямую (`cortex-m-rt` — точка входа и `HardFault`, `cortex-m` —
+  свободные функции ядра), без обёрток в `bsp`; паника и фолт — в `app`. Сброс МК —
+  рычаг `bsp::reset::Reboot` (на M7 он чистит кэш данных перед сбросом).
 - `bsp` зависит от `ports` (и `flash-page`) и от того, из чего собирает свои рычаги
   (`adapters`: обёртки USB CDC, `Net`, EEPROM; `embassy-usb`, `embassy-net`,
   `getrandom`), но не от `domain`: входы узлов из полей `Board` заполняет `app`. `boot` зовёт `domain` только при `signed` или

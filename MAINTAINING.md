@@ -364,9 +364,10 @@ D2 с `0x30000000`, мимо AXI-SRAM ядра CM7. `DMA_NC` не берётся
 `docs/clocks.md`, «Кэши».
 
 `core_baseline` ("true" для Cortex-M0/M0+/M23 по `cpu`) — ядра без `DWT.CYCCNT`, `CFSR` и
-`DIV_0_TRP`: им нет `bsp::cycles` с `Board::cycles` и `ports::cycles`, а `bsp::fault` собирается
-короче (`pc`/`lr`). Тест — `baseline_cores_are_marked`. `bsp::fault` остаётся у всех: обработчик
-`HardFault` в нём ссылкой из `Board::new` держится в образе (в ELF есть `bsp::fault::__cortex_m_rt_HardFault`, `rust-nm`); на плате фолт не вызывался.
+`DIV_0_TRP`: им нет `bsp::cycles` с `Board::cycles` и `ports::cycles`, ловушки деления в
+`app/src/fault.rs`, а обработчик `HardFault` там собирается короче (`pc`/`lr`). Тест —
+`baseline_cores_are_marked`. Обработчик остаётся у всех: `#[exception]` экспортирует имя, и
+`app` держит его в образе без ссылок; на плате фолт не вызывался.
 
 Когда блоков два, метаданные обоих ядер перечисляют оба — различить их там нечем, и
 выбор делается по суффиксу ядра (`-cm4`), который каскад **уже** выбрал. Это не

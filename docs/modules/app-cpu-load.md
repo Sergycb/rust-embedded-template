@@ -35,7 +35,7 @@
 ```rust
 loop {
     let before = Instant::now().as_ticks();
-    bsp::cpu::wait_for_event();
+    cortex_m::asm::wfe();
     cpu_load::record_sleep_ticks(Instant::now().as_ticks().saturating_sub(before));
     unsafe { executor.poll() };
 }

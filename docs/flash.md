@@ -321,7 +321,7 @@ NOR), а конец разделов уезжает в `[env]` (`EXT_FLASH_END`)
 `DFU`, `STATE` и настройки — команды разных разделов не должны
 перемежаться), bootloader — блокирующим `W25qSync` (`ExternalFlash` в
 `crates-cross/boot/src/external.rs`: исполнителя там нет, задержки — на
-`SysTick`, `bsp::cpu::delay`). Оба опознают микросхему (`init`) при старте:
+`SysTick`, `cortex_m::delay::Delay`). Оба опознают микросхему (`init`) при старте:
 `Board::new` поэтому асинхронный, и `main` зовёт его через `block_on`. Шина
 под обоими в шаблоне — заглушка `bsp::stub::FlashBus`: проект собирается и
 работает, OTA не принимает образы, bootloader грузит текущий

@@ -37,7 +37,7 @@ pub static READY_{{ f[4] | upcase }}: Signal<CriticalSectionRawMutex, ()> = Sign
 async fn task(partitions: bsp::ota::Partitions, mut mode: domain::ota::Mode) {
     // Адаптер обновления — над разделами платы, как в слоте фрагмента `OTA_FRAG`.
     let mut flash = <crate::ota::Updater as domain::Assemble>::assemble(partitions, ());
-    let mut reboot = bsp::cpu::Reboot;
+    let mut reboot = bsp::reset::Reboot;
     let mut confirmed = false;
     domain::ota::task(domain::ota::OtaCtx {
         flash: &mut flash,

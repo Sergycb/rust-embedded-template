@@ -273,8 +273,8 @@ w25q             = { git = "https://github.com/Sergycb/hw-drivers.git", rev = "4
 embassy-futures  = { version = "0.1.2" }
 {%- endif %}
 
-# Причина паники, переживающая сброс: release-паникёр `app` и `boot`
-# (`bsp/src/panic.rs`) пишет её `report_panic_info` в регион PANIC (посчитан при
+# Причина паники, переживающая сброс: release-паникёр `app`
+# (`app/src/panic.rs`) пишет её `report_panic_info` в регион PANIC (посчитан при
 # генерации, см. memory.x) и делает `sys_reset`; следующий старт `app` читает её
 # и печатает. `custom-panic-handler` снимает собственный `#[panic_handler]`
 # крейта — свой нужен, чтобы вдобавок напечатать причину в RTT. `utf8` добавляет

@@ -29,10 +29,23 @@ embassy-futures = { workspace = true }
 {%- endif %}
 defmt = { workspace = true }
 defmt-rtt = { workspace = true }
-# Драйвер времени, паникёр и обработчик `HardFault` — фичами `bsp` (там же
-# почему): от него зависит и `boot`, которому драйвер времени нельзя, а
-# обработчик не по карману.
-bsp = { workspace = true, features = ["time-driver", "panic-handler", "fault-handler"] }
+# Точка входа (`#[entry]`) и обработчик `HardFault` (src/fault.rs).
+cortex-m-rt = { workspace = true }
+# Свободные функции ядра: `wfe` в цикле исполнителя, запрет прерываний в
+# паникёре, ловушка деления и регистры фолта (src/fault.rs).
+cortex-m = { workspace = true }
+# Паникёр по профилю (src/panic.rs) — обе обычные зависимости, выбор делает
+# `#[cfg(debug_assertions)]` (Cargo гейтить зависимости по профилю не умеет, см.
+# docs/conventions.md). dev: `panic-probe` печатает причину через defmt и
+# останавливает ядро `udf()`; release: свой `#[panic_handler]` сохраняет причину
+# через `panic-persist` в регион PANIC, печатает её и перезапускает МК.
+# `panic-probe` без `use` не линкуется, а `panic-persist` собран с
+# `custom-panic-handler` — своего обработчика у него нет.
+panic-probe = { workspace = true, features = ["print-defmt"] }
+panic-persist = { workspace = true }
+# Драйвер времени — фичей `bsp` (там же почему): от него зависит и `boot`,
+# которому драйвер времени нельзя.
+bsp = { workspace = true, features = ["time-driver"] }
 domain = { workspace = true }
 {%- if has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" or ota == "true" or config == "true" or net_services contains "mqtt" %}
 # Адаптеры над рычагами платы собирают узлы (`ports::Assemble`), а приложение

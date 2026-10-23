@@ -84,12 +84,14 @@ cargo xtask pins {{ext_flash_block}} --snippet
    pub(crate) type Bus = w25q::spi::SpiAdapter<
        SpiDevice<'static, NoopRawMutex, Spi<'static, Blocking, Master>, Output<'static>>,
    >;
-   pub(crate) type ExternalFlash = w25q::device::W25qSync<Bus, bsp::cpu::Delay>;
+   pub(crate) type ExternalFlash = w25q::device::W25qSync<Bus, cortex_m::delay::Delay>;
 
    pub(crate) fn new(sys_hz: u32, spi: Spi<'static, Blocking, Master>, cs: Output<'static>) -> ExternalFlash {
        let spi = SPI.init(NoopMutex::new(RefCell::new(spi)));
        let bus = w25q::spi::SpiAdapter::new(SpiDevice::new(spi, cs));
-       let mut flash = ExternalFlash::new(bus, bsp::cpu::delay(sys_hz));
+       let core = cortex_m::Peripherals::take().expect("boot: периферия ядра уже взята");
+       let delay = cortex_m::delay::Delay::new(core.SYST, sys_hz);
+       let mut flash = ExternalFlash::new(bus, delay);
        // дальше — `init`, как в шаблоне
    }
    ```

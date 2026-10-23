@@ -16,14 +16,25 @@ use embedded_storage::nor_flash::NorFlash;
 /// у приложения (`bsp::external`), но блокирующая — bootloader не поднимает
 /// исполнитель. Шина — пока заглушка; подключая микросхему, плата меняет её
 /// здесь и в `bsp::external` (docs/modules/bsp-external.md).
-pub(crate) type ExternalFlash = w25q::device::W25qSync<bsp::stub::FlashBus, bsp::cpu::Delay>;
+///
+/// Задержки — на `SysTick` ядра: исполнителя и драйвера времени здесь нет.
+/// Счётчик `SysTick` включается только на время задержки, и прыжок в
+/// приложение застаёт его выключенным.
+pub(crate) type ExternalFlash = w25q::device::W25qSync<bsp::stub::FlashBus, cortex_m::delay::Delay>;
 
 /// Собирает драйвер и опознаёт микросхему. Не прошёл `init` или микросхема
 /// меньше разделов (`bsp::external::EXT_FLASH_END`) — строка в лог, и драйвер
 /// отказывает в любой операции: `STATE` не читается, и [`prepare`] загружает
 /// текущий образ без обмена, а не упирается посреди обмена в конец микросхемы.
+///
+/// # Panics
+///
+/// Если периферию ядра уже кто-то взял (`cortex_m::Peripherals::take`): у
+/// `SysTick` задержки один владелец, и зовётся `new` один раз.
 pub(crate) fn new(sys_hz: u32) -> ExternalFlash {
-    let mut flash = ExternalFlash::new(bsp::stub::FlashBus, bsp::cpu::delay(sys_hz));
+    let core = cortex_m::Peripherals::take().expect("boot: периферия ядра уже взята");
+    let delay = cortex_m::delay::Delay::new(core.SYST, sys_hz);
+    let mut flash = ExternalFlash::new(bsp::stub::FlashBus, delay);
     match flash.init() {
         Ok(_) if flash.capacity() >= bsp::external::EXT_FLASH_END => flash,
         Ok(_) => {

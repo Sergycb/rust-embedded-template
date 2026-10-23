@@ -133,7 +133,7 @@ impl HeartbeatCtx<'_> {
   указывает в крейт фрагмента и переживает переименование зависимости в чужом
   манифесте, а `crate::` означал бы крейт, который фрагмент вызывает. Типы,
   которых фрагмент назвать не может (адаптер платы в слоте), — его параметры:
-  `name: OTA_FRAG<F, R>` во фрагменте, `::domain::OTA_FRAG<crate::ota::Updater, bsp::cpu::Reboot>` здесь.
+  `name: OTA_FRAG<F, R>` во фрагменте, `::domain::OTA_FRAG<crate::ota::Updater, bsp::reset::Reboot>` здесь.
 * **Порядок items фиксирован**: `name:` → `boot:` → `watchdog:` →
   `cloned:`/`shared:` → `executor` → `fragments:` последним. `fragments:`
   раньше `boot:` — ошибка разбора; блок `watchdog:` внутри фрагмента — тоже
@@ -447,12 +447,12 @@ async fn uart_drain_task(mut uart: embassy_stm32::usart::UartTx<'static, embassy
 
 Плата отдаёт для узла разделы обновления `board.ota`
 (`bsp::ota::Partitions` — `ports::FirmwarePartitions`) и порт перезагрузки
-`bsp::cpu::Reboot`; эта сторона кладёт их во вход фрагмента, а адаптер
+`bsp::reset::Reboot`; эта сторона кладёт их во вход фрагмента, а адаптер
 обновления над разделами собирает сам узел (`ports::Assemble`): `bsp` про
 `domain` не знает (`= ::domain::ota::OtaWiring { source: board.ota, reboot:
-bsp::cpu::Reboot, mode: ::domain::ota::Mode::Signed { running_version:
+bsp::reset::Reboot, mode: ::domain::ota::Mode::Signed { running_version:
 crate::image::FW_VERSION } }`). Типы слотов — аргументы фрагмента
-(`OTA_FRAG<crate::ota::Updater, bsp::cpu::Reboot>`):
+(`OTA_FRAG<crate::ota::Updater, bsp::reset::Reboot>`):
 слот — `static`, тип ему нужен, а знает его только эта сторона. Слот адаптера — `local` (фича
 `supervisor/local-resources` в
 `crates-cross/Cargo.toml`): объекты платы `!Send`, и граф держит их на своём
@@ -518,7 +518,7 @@ crate::image::FW_VERSION } }`). Типы слотов — аргументы ф�
 // 3. main.rs: положить в `StaticCell` не `embassy_executor::raw::Executor`,
 //    а `embassy_stm32::executor::Executor` (свой `StaticCell` есть у него
 //    внутри). Его `__WFE` засыпает сам и уходит в STOP — ради чего всё и
-//    затевалось, — а наш `bsp::cpu::wait_for_event()` из цикла УБРАТЬ.
+//    затевалось, — а наш `cortex_m::asm::wfe()` из цикла УБРАТЬ.
 //    Плата замена: `__WFE` живёт внутри `poll()`, снаружи его не видно, то
 //    есть ровно то, от чего мы ушли. От измерения придётся отказаться:
 //    счётчик сна перестанет расти, и узел `CPU_LOAD` будет публиковать 100%.

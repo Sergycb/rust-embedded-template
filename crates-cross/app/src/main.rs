@@ -8,6 +8,7 @@
 use shadow_rs::shadow;
 shadow!(build);
 mod cpu_load;
+mod fault;
 {%- if graph == "true" %}
 mod graph;
 {%- endif %}
@@ -26,6 +27,7 @@ mod net;
 {%- if ota == "true" %}
 mod ota;
 {%- endif %}
+mod panic;
 {%- if config == "true" %}
 mod settings;
 {%- endif %}
@@ -65,8 +67,13 @@ fn device_info(spec: bsp::ChipSpec) -> domain::device::DeviceInfo {
 }
 {%- endif %}
 
-#[bsp::cpu::entry]
+#[cortex_m_rt::entry]
 fn main() -> ! {
+{%- if core_baseline != "true" %}
+    // Первым делом: ловушка деления действует на всё, что выполнится дальше,
+    // включая `Board::new` (см. `fault`).
+    fault::enable_div_0_trap();
+{%- endif %}
     // Первая же строка лога отвечает на вопрос «а что вообще залито в плату»:
     // версия пакета и коммит, из которого собран образ (их подставляет
     // `shadow-rs` в build.rs). Без этого build-info собиралась бы впустую, а по
@@ -90,9 +97,10 @@ fn main() -> ! {
     // перезагрузок молча.
     //
     // Только release: в dev паникёр — `panic-probe`, дамп никто не пишет, и
-    // читать было бы нечего (см. `bsp::panic`).
+    // читать было бы нечего (см. `panic`). Второй вызов вернул бы `None`:
+    // `panic-persist` стирает свою магию при чтении.
     #[cfg(not(debug_assertions))]
-    if let Some(reason) = bsp::panic::previous() {
+    if let Some(reason) = panic_persist::get_panic_message_utf8() {
         defmt::error!("app: предыдущий запуск упал: {}", reason);
     }
 
@@ -174,7 +182,7 @@ fn main() -> ! {
     // исполнитель можно только из единственного места, а оно здесь.
     loop {
         let before = Instant::now().as_ticks();
-        bsp::cpu::wait_for_event();
+        cortex_m::asm::wfe();
         cpu_load::record_sleep_ticks(Instant::now().as_ticks().saturating_sub(before));
         // SAFETY: поллить исполнитель можно только из единственного места, а
         // оно здесь — цикл ниже единственный, кто его крутит, и `spawn_all` к

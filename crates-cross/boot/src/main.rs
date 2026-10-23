@@ -41,12 +41,8 @@ mod external;
 {%- if signed == "true" %}
 mod signature;
 {%- endif %}
-// Паникёр — `bsp::panic` (фича `panic-handler`), release-ветка: bootloader
-// собирается только в release. Дамп bootloader никогда не читает (это делает
-// `app` при старте), так что причина падения bootloader'а лежит в PANIC до
-// первого удачного старта приложения или до `cargo xtask panic-info`.
 
-#[bsp::cpu::entry]
+#[cortex_m_rt::entry]
 fn main() -> ! {
 {%- if bank_switch != "" %}
     // Первым делом: `Flash::new` ниже паникует на двухбанковом флеше при
@@ -196,6 +192,19 @@ fn main() -> ! {
     unsafe {
         bl.load(entry)
     }
+}
+
+/// Паникёр bootloader'а — без сообщений и без дампа: ядро останавливается на
+/// `udf` (`HardFault` по умолчанию из `cortex-m-rt`).
+///
+/// Паника здесь детерминирована (раскладка, проверка при старте раздела) —
+/// сброс её не вылечил бы, а цикл сбросов без сторожа (он запускается только
+/// перед прыжком) шёл бы молча. Остановленное ядро показывает место под
+/// отладчиком. Ни сообщения, ни `panic-persist`: формат причины стоит зоны
+/// bootloader'а, а читать её некому — дамп разбирает только `app`.
+#[panic_handler]
+fn panic(_: &core::panic::PanicInfo) -> ! {
+    cortex_m::asm::udf()
 }
 {%- if ota_store != "external" %}
 

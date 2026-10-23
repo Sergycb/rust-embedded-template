@@ -8,9 +8,9 @@ MEMORY {
     ACTIVE            (rx)  : ORIGIN = /* 0xXXXXXXXX */, LENGTH = /* XXXK */
     DFU               (rx)  : ORIGIN = /* 0xXXXXXXXX */, LENGTH = /* XXXK */
     RAM               (xrw) : ORIGIN = /* 0xXXXXXXXX */, LENGTH = /* XXXK */
-    /* Хвост RAM, отрезанный от её конца: PANIC — под дамп panic-persist
-       (паникёр release-профиля). Обязателен: без символов _panic_dump_*
-       release-образ не слинкуется. */
+    /* Хвост RAM, отрезанный от её конца: PANIC — дамп паники приложения.
+       Bootloader в него не пишет, но и стеком своим не трогает: дамп
+       доживает до следующего старта `app`. */
     PANIC             (xrw) : ORIGIN = /* ADDR END RAM - LEN */, LENGTH = /* LEN */
 }
 
@@ -22,8 +22,3 @@ __bootloader_active_end   = ORIGIN(ACTIVE) + LENGTH(ACTIVE) - ORIGIN(FLASH);
 
 __bootloader_dfu_start = ORIGIN(DFU) - ORIGIN(FLASH);
 __bootloader_dfu_end   = ORIGIN(DFU) + LENGTH(DFU) - ORIGIN(FLASH);
-
-/* Сюда пишет panic-persist — по голым адресам, без секции: секция здесь
-   ломает flip-link, см. docs/diagnostics.md. */
-_panic_dump_start = ORIGIN(PANIC);
-_panic_dump_end   = ORIGIN(PANIC) + LENGTH(PANIC);

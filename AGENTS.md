@@ -28,9 +28,9 @@ skill'ом `rust-engineering` и не дублируются здесь. Это�
 `embassy-stm32` и ни про какое железо, тестируется на host (`cargo xtask test host`).
 `crates-cross/` — аппаратная прошивка (`bsp`, `app`, `boot`), собирается под `{{target}}`,
 подключает `domain` как обычную path-зависимость.
-**Исключение — `boot`:** bootloader зависит от `bsp` (точка входа, ядро, банки, HAL,
-константы раскладки, паникёр; фичи `time-driver` и `fault-handler` ему не включаются —
-`docs/architecture.md`) и от `domain` (при `signed` или `ext_flash=yes`)
+**Исключение — `boot`:** bootloader зависит от `bsp` (банки, HAL, константы
+раскладки; фича `time-driver` ему не включается — `docs/architecture.md`; точка
+входа и паникёр у него свои) и от `domain` (при `signed` или `ext_flash=yes`)
 ради двух свободных функций над блокирующими разделами,
 `domain::ota::boot::{boot_plan, screen_update}`; в образ попадают только они
 (`lto` + `--gc-sections` выбрасывают остальное). Их типы — `BootPlan`, `Screening`,
@@ -175,11 +175,11 @@ read`: руками пришлось бы сначала найти адрес �
   (`crate::link::<транспорт>::Link`, `crate::ota::Updater`) — `docs/architecture.md`.
 - Ровно один `#[panic_handler]` и один активный `#[global_logger]` на бинарник: логгер
   резолвится линковкой по имени символа и даёт `multiply defined!` при нарушении;
-  паникёр один на `app` и `boot` — `crates-cross/bsp/src/panic.rs` за фичей
-  `panic-handler` (у `target-tests` свой), выбирается `#[cfg(debug_assertions)]`
-  (`boot` собирается только в release): dev — `use panic_probe as _;`, release — свой
-  `#[panic_handler]` поверх `panic_persist::report_panic_info` (фича
-  `custom-panic-handler`) — `docs/diagnostics.md`, `docs/conventions.md`.
+  паникёр у каждого бинарника свой: у `app` — `crates-cross/app/src/panic.rs`,
+  выбирается `#[cfg(debug_assertions)]`: dev — `use panic_probe as _;`, release —
+  свой `#[panic_handler]` поверх `panic_persist::report_panic_info` (фича
+  `custom-panic-handler`); у `boot` — `udf()` без сообщения (`boot/src/main.rs`); у
+  `target-tests` — `embedded-test` — `docs/diagnostics.md`, `docs/conventions.md`.
 - `prepare(len)` порта `FirmwareUpdate` зовётся один раз перед приёмом образа
   (внутри `domain::ota::download::Transfer::start`), `write()` сектор больше не
   стирает — `docs/ota.md`.
@@ -193,7 +193,7 @@ read`: руками пришлось бы сначала найти адрес �
   транспорта (`domain::ota::OtaClient`, номер из генерации): приём держит один
   владелец, чужим `Start`/`Chunk`/`Finish` — `Busy` до `Finish`, отказа или
   срока молчания. МК узел сбрасывает только по команде
-  `Reboot` (порт `ports::Reboot`, `bsp::cpu::Reboot`), не по `Finish`: хост
+  `Reboot` (порт `ports::Reboot`, `bsp::reset::Reboot`), не по `Finish`: хост
   узнаёт исход до сброса. Отказы до стирания обязаны оставаться такими:
   `Busy` и отсутствие подписи — до `Transfer::start`, длина — внутри него, до
   `prepare` — `docs/ota.md`.
@@ -251,13 +251,14 @@ read`: руками пришлось бы сначала найти адрес �
   страницы (L4+). Новая плата прошивается дважды: первая прошивка
   переключает режим и перезагружает МК — `docs/flash.md`.
 {%- endif %}
-- `bsp::fault::enable()` (ловушка деления) — в `Board::new` сразу за
-  `embassy_stm32::init`. Обработчик `HardFault` с причиной держит в образе не
-  вызов, а фича `bsp/fault-handler` (её включают `app` и `target-tests`): у
-  `#[exception]` экспортируемое имя, и с LTO он попадает в любой бинарник,
-  линкующий `bsp`. Убрали фичу у `app` — фолт снова молчит; включили у `boot` —
-  около 14 KiB зоны bootloader'а (`docs/clocks.md`, «Ядро»,
-  `docs/architecture.md`).
+- Паника и фолт — решение прошивки, а не рычаг платы: паникёр, обработчик
+  `HardFault` с причиной и ловушка деления — в `app` (`crates-cross/app/src/panic.rs`,
+  `crates-cross/app/src/fault.rs`; ловушку `main` включает первой строкой). Не
+  переносить обработчик в `bsp`: у `#[exception]` экспортируемое имя, и с LTO он
+  попал бы в любой бинарник, линкующий `bsp`, — в `boot` это около 14 KiB зоны
+  (`docs/clocks.md`, «Ядро», `docs/architecture.md`). Сброс МК — рычаг
+  `bsp::reset::Reboot`: на M7 он сначала сбрасывает кэш данных в RAM, иначе дамп
+  паники пропадёт.
 {%- if core_baseline != "true" %}
 - `Board::cycles` (`bsp::cycles::Cycles`, порт `ports::CycleCounter`) включает
   `DWT.CYCCNT`; `DWT` и `DCB` `bsp` берёт через `steal()` и пишет только в

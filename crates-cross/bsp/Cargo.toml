@@ -17,14 +17,6 @@ workspace = true
 # сливаются по всем крейтам одного вызова cargo, поэтому `boot` собирается
 # отдельным (`cargo build -p boot --release`, crates-host/xtask/src/firmware.rs).
 time-driver = ["embassy-stm32/time-driver-any"]
-# Паникёр прошивки (src/panic.rs) — у `app` и `boot`. Фичей, а не безусловно:
-# `target-tests` тоже зависит от `bsp`, а паникёр у него свой (`embedded-test`),
-# и два `#[panic_handler]` в одном бинарнике не линкуются.
-panic-handler = ["dep:panic-probe", "dep:panic-persist"]
-# Обработчик `HardFault` с причиной (src/fault.rs) — у `app` и `target-tests`.
-# Фичей по той же причине, что и драйвер времени: с LTO он попадает в образ
-# всякого, кто линкует `bsp`, и в `boot` занял бы около 14 KiB зоны.
-fault-handler = []
 
 [dependencies]
 # `unstable-pac` — только там, где `bsp` пишет регистры сам (src/clocks.rs, src/banks.rs —
@@ -42,7 +34,7 @@ adapters = { workspace = true }
 {%- if core_baseline != "true" or ota == "true" or config_store == "eeprom" or has_can == "true" %}
 # Порты, которые плата реализует сама — у чего нет трейта в `embedded-hal`:{% if core_baseline != "true" %}
 # счётчик тактов (`Cycles`, src/cycles.rs);{% endif %}{% if ota == "true" %}
-# перезагрузка для узла OTA (`Reboot`, src/cpu.rs);{% endif %}{% if config_store == "eeprom" %}
+# перезагрузка для узла OTA (`Reboot`, src/reset.rs);{% endif %}{% if config_store == "eeprom" %}
 # доступ к EEPROM (`EepromAccess`, src/settings.rs);{% endif %}{% if has_can == "true" %}
 # шина CAN (`CanBus`, заглушка в src/stub.rs);{% endif %}
 ports = { workspace = true }
@@ -63,21 +55,10 @@ embedded-io-async = { workspace = true }
 w25q = { workspace = true, features = ["sync", "async"] }
 {%- endif %}
 assign-resources = { workspace = true }
-# Регистры ядра напрямую:{% if graph == "true" %} `wfi` в ожидании сброса от сторожа (src/wdg.rs),{% endif %}
-# `wfe`, запрет прерываний и сброс для `app` и `boot` (src/cpu.rs) и impl
-# critical-section (фича в crates-cross/Cargo.toml).
+# Регистры ядра, которые настраивает плата: кэши и MPU (src/cache.rs,
+# src/dma_nc.rs), сброс (src/reset.rs){% if graph == "true" %}, `wfi` в ожидании сброса от сторожа
+# (src/wdg.rs){% endif %}{% if core_baseline != "true" %}, счётчик тактов (src/cycles.rs){% endif %}.
 cortex-m = { workspace = true }
-# Рантайм и точка входа: `app` и `boot` берут `#[entry]` отсюда (src/cpu.rs).
-cortex-m-rt = { workspace = true }
-# Паникёр по профилю (src/panic.rs, фича `panic-handler`) — обе обычные
-# зависимости, выбор делает `#[cfg(debug_assertions)]` (Cargo гейтить
-# зависимости по профилю не умеет, см. docs/conventions.md). dev: `panic-probe`
-# печатает причину через defmt и останавливает ядро `udf()`; release: свой
-# `#[panic_handler]` сохраняет причину через `panic-persist` в регион PANIC,
-# печатает её и перезапускает МК. `panic-probe` без `use` не линкуется, а
-# `panic-persist` собран с `custom-panic-handler` — своего обработчика у него нет.
-panic-probe = { workspace = true, features = ["print-defmt"], optional = true }
-panic-persist = { workspace = true, optional = true }
 # Общий `Flash` всего чипа: и OTA, и раздел настроек работают через один
 # объект под `blocking_mutex` (см. `FlashMutex` в src/board.rs).
 {%- if shared_flash == "true" or ota == "true" or external_flash == "true" %}

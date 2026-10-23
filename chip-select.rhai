@@ -2092,7 +2092,10 @@ if variable::is_set("write_size") {
         boot.push("__bootloader_active_start = ORIGIN(ACTIVE) - " + base + ";");
         boot.push("__bootloader_active_end   = ORIGIN(ACTIVE) + LENGTH(ACTIVE) - " + base + ";");
         boot += ext_symbols;
-        boot += panic_section;
+        // Символов `_panic_dump_*` у bootloader'а нет: его паникёр ничего не
+        // пишет (`crates-cross/boot/src/main.rs`). Регион `PANIC` в `ram` остаётся —
+        // вырезанный из RAM bootloader'а, он не даёт его стеку затереть дамп
+        // приложения до того, как его прочтёт следующий старт `app`.
         file::write("crates-cross/boot/memory.x", boot);
     } else if ota {
         // Смещения __bootloader_* отсчитываются от БАЗЫ FLASH, а не от
@@ -2164,7 +2167,10 @@ if variable::is_set("write_size") {
         boot.push("");
         boot.push("__bootloader_dfu_start = ORIGIN(DFU) - " + dfu_base + ";");
         boot.push("__bootloader_dfu_end   = ORIGIN(DFU) + LENGTH(DFU) - " + dfu_base + ";");
-        boot += panic_section;
+        // Символов `_panic_dump_*` у bootloader'а нет: его паникёр ничего не
+        // пишет (`crates-cross/boot/src/main.rs`). Регион `PANIC` в `ram` остаётся —
+        // вырезанный из RAM bootloader'а, он не даёт его стеку затереть дамп
+        // приложения до того, как его прочтёт следующий старт `app`.
         file::write("crates-cross/boot/memory.x", boot);
     } else {
         // OTA-схема embassy-boot в этот чип не помещается — почему именно,

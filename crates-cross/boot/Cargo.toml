@@ -27,12 +27,15 @@ harness = false
 # целый UART-стек. Здесь только RTT.
 defmt-rtt = { workspace = true }
 defmt = { workspace = true }
-# Точка входа, ядро, переключение банков, HAL, общие с приложением константы
-# раскладки и паникёр (`bsp::panic`, фича `panic-handler`) — из `bsp`, а не
-# копиями. Паникёр — единственный способ узнать, почему bootloader не прыгнул:
-# причина лежит в PANIC и читается `cargo xtask panic-info`. Фичи `time-driver`
-# здесь нет и быть не должно (см. `bsp/Cargo.toml`).
-bsp = { workspace = true, features = ["panic-handler"] }
+# Точка входа (`#[entry]`).
+cortex-m-rt = { workspace = true }
+# Свободные функции ядра: `udf` в паникёре{% if ota_store == "external" %}, задержка на `SysTick` драйвера
+# внешней флеши (src/external.rs){% endif %}.
+cortex-m = { workspace = true }
+# Переключение банков, HAL и общие с приложением константы раскладки — из
+# `bsp`, а не копиями. Фичи `time-driver` здесь нет и быть не должно (см.
+# `bsp/Cargo.toml`).
+bsp = { workspace = true }
 embassy-boot-stm32 = { workspace = true, features = ["defmt"] }
 {%- if erase_zero == "true" and ota_store != "external" %}
 # Прямая зависимость только ради фичи: у этого чипа стёртая страница читается

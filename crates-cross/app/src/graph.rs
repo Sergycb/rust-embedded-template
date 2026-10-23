@@ -89,7 +89,7 @@ supervisor_graph! {
         // (`<Updater, Reboot>`) — типы его слотов: слот — `static`, тип ему
         // нужен, а знает его только эта сторона. Привязка (`= …`) — вход узла
         // (`domain::ota::OtaWiring`): адаптер обновления — его собирает узел над разделами `board.ota`, сброс МК
-        // `bsp::cpu::Reboot` и режим применения (`Mode::{% if signed == "true" %}Signed` с версией этого образа
+        // `bsp::reset::Reboot` и режим применения (`Mode::{% if signed == "true" %}Signed` с версией этого образа
         // из `crate::image`{% else %}Plain`{% endif %}). Образ узел принимает командами на свой вход
         // `CMD`{% if has_modbus != "true" and has_protobuf != "true" and has_canopen != "true" %}: клиента (`::domain::ota::OtaClient` над `ota_cmd_requester()`) получает ваш
         // протокол — без него узел только подтверждает образ{% else %} — их шлют узлы протоколов ниже, каждый своим клиентом (`OtaClient`
@@ -98,9 +98,9 @@ supervisor_graph! {
         // строкой — раньше инициализатора блока `watchdog:`, как бы они ни стояли
         // в тексте, — частичным move: `ota` уезжает в слот узла, `watchdog`
         // следом забирает сторож, остаток `board` дропается в конце пролога.
-        ::domain::OTA_FRAG<crate::ota::Updater, bsp::cpu::Reboot> as OTA = ::domain::ota::OtaWiring {
+        ::domain::OTA_FRAG<crate::ota::Updater, bsp::reset::Reboot> as OTA = ::domain::ota::OtaWiring {
             source: board.ota,
-            reboot: bsp::cpu::Reboot,
+            reboot: bsp::reset::Reboot,
 {%- if signed == "true" %}
             mode: ::domain::ota::Mode::Signed {
                 running_version: crate::image::FW_VERSION,

@@ -18,7 +18,6 @@ pub mod can;
 {%- if cpu_freq_boost == "true" %}
 pub mod clocks;
 {%- endif %}
-pub mod cpu;
 {%- if core_baseline != "true" %}
 pub mod cycles;
 {%- endif %}
@@ -28,7 +27,6 @@ pub mod dma_nc;
 {%- if external_flash == "true" %}
 pub mod external;
 {%- endif %}
-pub mod fault;
 {%- if shared_flash == "true" %}
 pub mod flash;
 {%- endif %}
@@ -38,8 +36,7 @@ pub mod net;
 {%- if ota == "true" %}
 pub mod ota;
 {%- endif %}
-#[cfg(feature = "panic-handler")]
-pub mod panic;
+pub mod reset;
 {%- if has_net == "true" %}
 {%- if rng_irq != "" %}
 pub mod rng;

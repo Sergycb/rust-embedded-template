@@ -75,11 +75,10 @@ pub fn lint_cross(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     // Second pass, release only: the release profile turns
     // `debug-assertions`/`overflow-checks` off, so anything behind `debug_assert!`
     // or `#[cfg(not(debug_assertions))]` (the release panic handler in
-    // `bsp::panic`, the release defmt transport pattern in graph.rs) is only
-    // type-checked here. `bsp` is linted alongside `app`: in the same call it gets
-    // `app`'s features (`panic-handler`), so its release branch is checked.
-    // target-tests carry no such code, so re-linting it would just repeat the
-    // first pass.
+    // `app/src/panic.rs`, the release defmt transport pattern in graph.rs) is only
+    // type-checked here. `bsp` is linted alongside `app` so that it gets `app`'s
+    // features. target-tests carry no such code, so re-linting it would just
+    // repeat the first pass.
     if has_bootloader() {
         cmd!(
             sh,
