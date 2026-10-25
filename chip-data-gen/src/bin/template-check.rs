@@ -452,10 +452,11 @@ const RAW_PLACEHOLDERS_ALLOWED: &[&str] = &["CLAUDE.md"];
 /// Каталоги, которые не обходим при поиске остаточных плейсхолдеров.
 const SKIP_DIRS: &[&str] = &[".git", "target"];
 
-/// Что не нужно копии шаблона, из которой идёт генерация: каталоги сборки (на
-/// любом уровне — их два, в корне и в `crates-cross/`), история и сам этот
-/// инструмент, у которого свой `target/` рядом с исходниками.
-const SKIP_IN_TEMPLATE: &[&str] = &[".git", "target", "chip-data-gen"];
+/// Каталоги верхнего уровня под git, которые не нужны копии шаблона, из которой
+/// идёт генерация: сам этот инструмент (в проекты он не попадает — `ignore` в
+/// cargo-generate.toml). Каталоги сборки и `.git` под git не лежат, отбор по
+/// `git ls-files` их уже не видит.
+const SKIP_IN_TEMPLATE: &[&str] = &["chip-data-gen"];
 
 struct Options {
     cases: Vec<Case>,
@@ -1588,9 +1589,12 @@ fn repo_root() -> PathBuf {
     dir
 }
 
-/// Копирует шаблон в отдельный каталог, пропуская то, что генерации не нужно:
-/// `target/` (гигабайты артефактов), `.git/` и `chip-data-gen/` — сам этот
-/// инструмент, у которого свой `target/` рядом с исходниками.
+/// Копирует шаблон в отдельный каталог — ровно то, что увидел бы
+/// `cargo generate --git`: файлы под git в их рабочем состоянии (незакоммиченные
+/// правки едут — проверка идёт до коммита), без неотслеживаемых. Обход дерева
+/// уносил и их: так в каждый проверяемый проект попадал чужой черновик из
+/// `docs/`. Каталоги сборки под git не лежат и отпадают сами;
+/// `chip-data-gen/` — сам этот инструмент — пропускается явно.
 ///
 /// Прошлая копия сносится целиком: правки шаблона должны доезжать до проверки,
 /// а не оставаться в устаревшем слепке.
@@ -1601,49 +1605,58 @@ fn copy_template(repo_root: &Path, dest: &Path) -> anyhow::Result<()> {
     }
     fs::create_dir_all(dest)?;
 
-    for entry in fs::read_dir(repo_root)? {
-        let entry = entry?;
-        let name = entry.file_name();
-        if SKIP_IN_TEMPLATE.contains(&name.to_string_lossy().as_ref()) {
+    for rel in git_files(repo_root, &["--cached"])? {
+        let first = rel.split('/').next().unwrap_or_default();
+        if SKIP_IN_TEMPLATE.contains(&first) {
             continue;
         }
-        let from = entry.path();
-        let to = dest.join(&name);
-        if entry.file_type()?.is_dir() {
-            copy_dir(&from, &to)?;
-        } else {
-            fs::copy(&from, &to)
-                .with_context(|| format!("скопировать {} в {}", from.display(), to.display()))?;
+        let from = repo_root.join(&rel);
+        // Удалён в рабочем дереве, но ещё не закоммичен — для генерации его нет.
+        if !from.exists() {
+            continue;
         }
+        let to = dest.join(&rel);
+        if let Some(parent) = to.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::copy(&from, &to)
+            .with_context(|| format!("скопировать {} в {}", from.display(), to.display()))?;
+    }
+
+    let untracked = git_files(repo_root, &["--others", "--exclude-standard"])?;
+    if !untracked.is_empty() {
+        eprintln!(
+            "Не под git — в проверку не попали (если это часть шаблона, `git add`):\n  {}",
+            untracked.join("\n  ")
+        );
     }
     Ok(())
 }
 
-fn copy_dir(from: &Path, to: &Path) -> anyhow::Result<()> {
-    fs::create_dir_all(to)?;
-    for entry in fs::read_dir(from)? {
-        let entry = entry?;
-        // Пропуск нужен на каждом уровне, а не только в корне: `crates-cross/target`
-        // — такой же каталог сборки, и без этой проверки копия весила 2.2 ГБ
-        // вместо десятка мегабайт, а генерация из неё занимала полминуты.
-        if SKIP_IN_TEMPLATE.contains(&entry.file_name().to_string_lossy().as_ref()) {
-            continue;
-        }
-        let source = entry.path();
-        let destination = to.join(entry.file_name());
-        if entry.file_type()?.is_dir() {
-            copy_dir(&source, &destination)?;
-        } else {
-            fs::copy(&source, &destination).with_context(|| {
-                format!(
-                    "скопировать {} в {}",
-                    source.display(),
-                    destination.display()
-                )
-            })?;
-        }
+/// Пути `git ls-files` (относительно корня, через `/`) с указанным отбором.
+fn git_files(repo_root: &Path, filter: &[&str]) -> anyhow::Result<Vec<String>> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["ls-files", "-z"])
+        .args(filter)
+        .output()
+        .context("запустить git ls-files")?;
+    if !output.status.success() {
+        bail!(
+            "git ls-files {}: {}",
+            filter.join(" "),
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
     }
-    Ok(())
+    String::from_utf8(output.stdout)
+        .context("git ls-files вернул не UTF-8")
+        .map(|list| {
+            list.split('\0')
+                .filter(|path| !path.is_empty())
+                .map(str::to_owned)
+                .collect()
+        })
 }
 
 #[cfg(test)]
