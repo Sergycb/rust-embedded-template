@@ -22,7 +22,7 @@
 3. **Каждая новая библиотека в `cross`, для которой ещё нет компилируемого
    примера** (обычно потому, что примеру нужна реальная периферия платы, а
    `Board` её пока не отдаёт) — документируется как doc-комментарий с ```` ```ignore ```` блоком
-   в `docs/modules/app-graph.md` (оркестрация) или
+   в `docs/modules/app.md` (крейт `app`) или
    `docs/buffers.md` (буферы/периферия), с обоснованием «почему
    именно эта библиотека».
 4. **Если библиотека не подошла** (не собирается на ARM/требует alloc без
@@ -124,7 +124,7 @@ nextest убивает, а не ждёт до таймаута CI.
   USART подключён к переходнику на вашей плате, знаете только вы.
   Паттерн и обоснование, почему {% if has_usb == "true" %}все три turnkey-крейта{% else %}оба turnkey-крейта{% endif %} отпали (`defmt-bbq` и
   `defmt-serial` держат `defmt@0.3.x` при `defmt@1.x` у нас{% if has_usb == "true" %},
-  `defmt-embassy-usbserial` требует `embassy-usb ^0.5`{% endif %}) — `docs/modules/app-graph.md`,
+  `defmt-embassy-usbserial` требует `embassy-usb ^0.5`{% endif %}) — `docs/modules/app.md`,
   «defmt-транспорт для `release` без пробника». Дефолт в обоих профилях реального
   `main.rs` — `defmt-rtt`; при подключении паттерна не забыть сделать
   существующий `use defmt_rtt as _;` тоже `#[cfg(debug_assertions)]`.

@@ -67,7 +67,7 @@ pub struct OtaRegisters<R> {
 
 impl<R> OtaRegisters<R> {
     /// Карта `inner` с окном OTA, команды из которого уходят `ota` — клиенту
-    /// входа `CMD` узла OTA ([`OtaClient`] над `ota_cmd_requester()` графа).
+    /// входа `CMD` узла OTA ([`OtaClient`]).
     pub const fn new(inner: R, ota: OtaClient) -> Self {
         Self {
             inner,

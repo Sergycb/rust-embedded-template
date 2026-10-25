@@ -21,7 +21,7 @@ harness = false
 
 [dependencies]
 # Boot намеренно не получает release-транспорт defmt (UART без пробника,
-# см. docs/modules/app-graph.md): у него нет embassy-executor и
+# см. docs/modules/app.md): у него нет embassy-executor и
 # Spawner'а под фоновую drain-задачу, а единственная диагностическая строка
 # перед прыжком в прошивку не стоит того, чтобы тянуть ради неё в bootloader
 # целый UART-стек. Здесь только RTT.

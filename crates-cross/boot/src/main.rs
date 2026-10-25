@@ -19,7 +19,7 @@ use bsp::flash::SWAP_PAGE_SIZE;
 use defmt::info;
 // RTT — дефолтный транспорт в обоих профилях (см. crates-cross/app/src/main.rs);
 // boot вдобавок не спавнит embassy-задач, поэтому очередь+drain-таск под
-// USB/UART (паттерн — docs/modules/app-graph.md) сюда в принципе не
+// USB/UART (паттерн — docs/modules/app.md) сюда в принципе не
 // встраивается — одну диагностическую строку перед прыжком не стоит того
 // усложнять.
 use defmt_rtt as _;

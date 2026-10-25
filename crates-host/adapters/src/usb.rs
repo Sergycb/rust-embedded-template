@@ -139,7 +139,7 @@ impl Default for CdcBuffers {
 /// Пара, потому что обе половины делает один `Builder`; чипа она не знает —
 /// `D` подставляет плата.
 pub struct Usb<D: Driver<'static>> {
-    /// USB-устройство — уезжает в узел `USB` графа.
+    /// USB-устройство — уезжает в узел `USB`.
     pub device: UsbDevice<'static, D>,
     /// Поток CDC ACM («виртуальный COM-порт») — под транспортом протокола.
     pub cdc: CdcStream<'static, D>,

@@ -16,8 +16,8 @@
 //! // Чтение и запись живут в порту домена — без импорта методов не видно.
 //! use ports::SettingsStorage;
 //!
-//! // Хранилище собирает узел над носителем платы (`board.config`), который
-//! // ему отдал граф; `S` — `adapters::settings::Settings<bsp::ConfigFlash>`.
+//! // Хранилище собирает узел над носителем платы (`board.config`) из своего
+//! // входа; `S` — `adapters::settings::Settings<bsp::ConfigFlash>`.
 //! let mut settings = S::assemble(store, ());
 //! let mut scratch = [0u8; 64];
 //! let mut buf = [0u8; 64];

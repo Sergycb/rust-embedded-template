@@ -32,7 +32,7 @@ pub use udp::{UdpBuffers, UdpError, UdpLink};
 /// Пара, потому что их даёт один `embassy_net::new`; чипа она не знает —
 /// устройство `D` подставляет плата.
 pub struct Net<D: Driver + 'static> {
-    /// Фоновая работа стека — уезжает в узел `NET` графа.
+    /// Фоновая работа стека — уезжает в узел `NET`.
     pub runner: embassy_net::Runner<'static, D>,
     /// Стек — на нём узлы открывают свои сокеты.
     pub stack: embassy_net::Stack<'static>,

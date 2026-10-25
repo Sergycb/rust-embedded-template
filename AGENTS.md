@@ -56,7 +56,7 @@ Modbus{% endif %}{% if net_services != "" %}, секреты служб{% endif 
 прямо в `domain` — критерий в `docs/architecture.md`.
 Всё остальное — даже асинхронное и «системное» на вид (стейтчарты, RPC, синхронизация
 задач) — живёт в `domain`, а не в `cross`. Узлы тоже: подсистема объявляет свой
-`supervisor_fragment!`-ом (`domain::cpu_load::CPU_LOAD_FRAG`) рядом со своей задачей — самодостаточным модулем с задачей,
+`supervisor_fragment!`-ом{% if graph == "true" %} (`domain::cpu_load::CPU_LOAD_FRAG`){% endif %} рядом со своей задачей — самодостаточным модулем с задачей,
 политикой и таймаутом, все имена внутри полным путём (`$crate::…`, `::supervisor::…`),
 типы, которых он не видит, — параметрами{% if ota == "true" %} (`domain::ota::OTA_FRAG<D>`){% endif %}.
 {%- if graph == "true" %} Граф собственных узлов не объявляет:

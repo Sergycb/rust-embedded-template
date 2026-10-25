@@ -4,7 +4,7 @@
 //! Стек ведёт себя так, как ждёт от него `zencan-node`: входящие кадры
 //! кладутся в почтовый ящик (`NodeMbox::store_message`), периодически
 //! вызывается `Node::process` — на нём heartbeat, таймауты SDO, PDO, — и всё,
-//! что узел поставил в очередь передачи, уходит на шину. Узел графа делает
+//! что узел поставил в очередь передачи, уходит на шину. Узел делает
 //! ровно это: ждёт кадр наперегонки с тактом
 //! [`TICK`](crate::canopen::TICK){% if ota == "true" %} и с исходом команды
 //! OTA, которую отправил, не дожидаясь (`canopen::ota`){% endif %}.
@@ -119,12 +119,26 @@ pub struct Dictionary {
 /// настроек `S`. Строит его compose-site:
 ///
 /// ```ignore
+// {%- if graph == "true" %}
 /// fragments: [::domain::CANOPEN_FRAG<bsp::can::can::Can,
 ///                                    ::adapters::settings::Settings<bsp::ConfigFlash>> as CANOPEN
 ///                 = ::domain::canopen::CanOpenWiring { bus: board.can, node_id: 1,
 ///                       dictionary: ::domain::canopen::dictionary(),
 ///                       settings: board.config, persist: true,
-///                       ota_client: ::domain::ota::ClientId(0) }];   // только с OTA
+// {%- if ota == "true" %}
+///                       ota_client: ::domain::ota::ClientId(0),
+// {%- endif %}
+///                 }];
+// {%- else %}
+/// // crates-cross/app/src/tasks/canopen.rs
+/// let inputs = ::domain::canopen::CanOpenWiring { bus: board.can, node_id: 1,
+///     dictionary: ::domain::canopen::dictionary(),
+///     settings: board.config, persist: true,
+// {%- if ota == "true" %}
+///     ota_client: ::domain::ota::ClientId(0),
+// {%- endif %}
+/// };
+// {%- endif %}
 /// ```
 ///
 /// Написан руками, а не выведен фрагментом: слот хранилища инициализируется
@@ -369,8 +383,8 @@ where
 
 // Словарь примера `crates-host/canopen` — только в проекте с CANopen: без него
 // крейта словаря в проекте нет вовсе.
-/// Словарь примера устройства `crates-host/canopen` — с ним узел стоит в
-/// графе шаблона. Проект меняет `device.toml` того крейта, а не эту функцию.
+/// Словарь примера устройства `crates-host/canopen` — с ним стартует узел
+/// шаблона. Проект меняет `device.toml` того крейта, а не эту функцию.
 #[must_use]
 pub fn dictionary() -> Dictionary {
     Dictionary {
@@ -431,8 +445,7 @@ where
     match ctx.run(&persisted, &mut callbacks, &mut node).await {}
 }
 
-// Узел объявлен рядом со своей задачей — как `CPU_LOAD_FRAG`; в граф шаблона
-// попадёт по выбору протокола при генерации.
+// Узел объявлен рядом со своей задачей.
 //
 // `<C>` и `<S>` — параметры фрагмента: шину и хранилище настроек платы
 // `domain` не видит. `local` — шина и хранилище вправе быть `!Send`
@@ -883,7 +896,7 @@ mod tests {
     // {%- endif %}
 
     /// Адрес, назначенный по LSS и сохранённый командой «Store
-    /// configuration», новый стек берёт вместо адреса из графа.
+    /// configuration», новый стек берёт вместо адреса из входа узла.
     #[test]
     fn lss_address_survives_a_new_stack() {
         const ASSIGNED: u8 = 9;

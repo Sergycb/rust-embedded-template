@@ -218,11 +218,18 @@ impl Answer<'_> {
 /// раздаёт:
 ///
 /// ```ignore
+// {%- if graph == "true" %}
 /// fragments: [::domain::OTA_FRAG<::adapters::ota::Updater<bsp::FirmwareFlash, false>,
 ///                                bsp::reset::Reboot> as OTA
 ///                 = ::domain::ota::OtaWiring { source: board.firmware,
 ///                                              reboot: bsp::reset::Reboot,
 ///                                              mode: ::domain::ota::Mode::Plain }];
+// {%- else %}
+/// // crates-cross/app/src/tasks/ota.rs
+/// let inputs = ::domain::ota::OtaWiring { source: board.firmware,
+///                                         reboot: bsp::reset::Reboot,
+///                                         mode: ::domain::ota::Mode::Plain };
+// {%- endif %}
 /// ```
 ///
 /// Тип объявлен здесь, а не назван compose-site, по правилу фрагментов
@@ -659,20 +666,30 @@ fn update_rejection<E>(err: &UpdateError<E>) -> Rejection {
 // {%- endif %}
 //
 // `boot: inputs: …` — собственная привязка фрагмента: compose-site пишет
+// {%- if graph == "true" %}
 // `fragments: [::domain::OTA_FRAG<…> as OTA = ::domain::ota::OtaWiring { … }]`,
 // а `spawn_all` связывает её первой строкой пролога, и инициализаторы слотов
+// {%- else %}
+// `::domain::ota::OtaWiring { … }` (`crates-cross/app/src/tasks/ota.rs`),
+// и инициализаторы слотов
+// {%- endif %}
 // ниже читают её поля. `CONFIRMED` — без входа: подтверждён ли уже образ в
 // этом запуске (см. действие `begin`).
 //
 // `request: [CMD: …]` — вход команд: запрос с ответом (`sync-request`), а не
 // очередь, потому что протокол отвечает хосту исходом именно своей команды.
+// {%- if graph == "true" %}
 // Узел протокола держит `OtaClient` — requester из аксессора графа
 // `ota_cmd_requester()` и номер транспорта, который раздаёт compose-site.
+// {%- else %}
+// Узел протокола держит `OtaClient` — requester входа и номер транспорта,
+// которые раздаёт `crates-cross/app/src/tasks/ota.rs`.
+// {%- endif %}
 // `serves: [ASK: …]` — тот же вход для клиента, которому нельзя ждать исхода в
 // вызове: узел протокола, который всё это время должен обслуживать свой
 // канал. Он объявляет ребро `asks: [OTA.ASK: …; квота tag …]`, отправляет
 // команду, не дожидаясь, и забирает исход из `reply()`. Очередь — сумма квот
-// рёбер, её считает граф; без спрашивающих она пустая, и `ASK` просто молчит.
+// рёбер, её считает `supervisor`; без спрашивающих она пустая, и `ASK` просто молчит.
 // Ёмкость обоих — `CMD_BYTES` (литералом: макрос другого не принимает).
 // {%- if graph != "true" %}
 // Её же берут `static` входов (`crates-cross/app/src/tasks/ota.rs`).
@@ -684,7 +701,7 @@ fn update_rejection<E>(err: &UpdateError<E>) -> Rejection {
 // (`adapters::ota::Updater` над ними держит `&'static Mutex<NoopRawMutex, …>`),
 // а обычный слот — `static`, которому нужен `Send`. `local` меняет слот на
 // `LocalResourceSlot` и снимает это требование, взамен обязывая держать
-// значение на одном исполнителе — том, что спавнит граф (то же допущение, что
+// значение на одном исполнителе — том, что спавнит задачи (то же допущение, что
 // `NoopRawMutex` у `FlashMutex`). Compose-site платит фичей
 // `supervisor/local-resources` и `unsafe`-блоком на каждый `local`-`static`.
 //
@@ -768,7 +785,7 @@ pub(crate) mod tests {
     /// сессии MQTT (`mqtt::serve`)
     // {%- endif %}
     /// — стенд,
-    /// флеш и слоты живут до конца процесса, как граф в прошивке: клиент —
+    /// флеш и слоты живут до конца процесса, как в прошивке: клиент —
     /// `'static`, как у `ota_cmd_requester()`.
     pub(crate) fn live() -> (OtaClient, Node) {
         let stand = Box::leak(Box::new(

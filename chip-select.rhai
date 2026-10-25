@@ -2244,6 +2244,8 @@ if variable::get("graph") != "true" {
 	// Узел `HEARTBEAT` спавнит только граф, и сторожа без графа нет.
 	file::delete("crates-host/domain/src/heartbeat.rs");
 	file::delete("docs/watchdog.md");
+	// Документация `graph.rs`; общее для крейта `app` — в `docs/modules/app.md`.
+	file::delete("docs/modules/app-graph.md");
 } else {
 	// С графом узлы спавнит он (`fragments:`), модули задач без графа не нужны.
 	file::delete("crates-cross/app/src/tasks.rs");
