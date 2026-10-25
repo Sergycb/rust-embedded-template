@@ -18,8 +18,7 @@ pub mod {{ f[4] }} {
     #[embassy_executor::task]
     async fn task(mut device: bsp::usb::{{ f[4] }}::Device) {
 {%- if ota == "true" %}
-        // На шину — после подтверждения образа: с графом это `deps: [OTA ready]`
-        // фрагмента `USB_FRAG`.
+        // На шину — после подтверждения образа (`crate::tasks::ota`).
         crate::tasks::ota::READY_{{ f[4] | upcase }}.wait().await;
 {%- endif %}
         domain::usb::task(domain::usb::UsbCtx {

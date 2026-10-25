@@ -24,7 +24,7 @@ pub mod {{ f[4] }} {
 {%- if graph != "true" %}
 
     /// Рычаг платы, над которым собирается канал, — тип по имени для задачи
-    /// без графа (задачи embassy не generic).
+    /// (задачи embassy не generic).
     pub type Source = bsp::serial::{{ f[4] }}::Serial;
 {%- endif %}
 {%- if f[3] == "protobuf" %}

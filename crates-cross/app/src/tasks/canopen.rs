@@ -32,7 +32,7 @@ pub mod {{ f[4] }} {
 
     #[embassy_executor::task]
     async fn task(mut bus: Bus, store: StoreSource) {
-        // Хранилище — над рычагом платы, как в слоте фрагмента `CANOPEN_FRAG`.
+        // Хранилище — над рычагом платы.
         let mut store = <Store as domain::Assemble>::assemble(store, ());
         let mut node_id = 1;
         let mut dictionary = domain::canopen::dictionary();

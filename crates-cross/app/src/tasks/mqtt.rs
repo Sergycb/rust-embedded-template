@@ -1,5 +1,5 @@
-//! Узел `MQTT`: клиент брокера. То, что в графе держат слоты `= static`, —
-//! буферы `minimq` — здесь статики; буферы сокета — у `crate::net::mqtt::buffers`.
+//! Узел `MQTT`: клиент брокера. Буферы `minimq` — статики; буферы сокета — у
+//! `crate::net::mqtt::buffers`.
 
 use domain::mqtt::{RX_BUFFER, TX_BUFFER};
 use static_cell::ConstStaticCell;
@@ -11,7 +11,7 @@ static MQTT_TX: ConstStaticCell<[u8; TX_BUFFER]> = ConstStaticCell::new([0; TX_B
 async fn task(mut stack: bsp::net::Stack, mut info: domain::device::DeviceInfo) {
     let mut prefix = crate::net::mqtt::PREFIX;
     let mut broker = domain::mqtt::Fixed(crate::net::mqtt::BROKER);
-    // Соединение — на стеке платы, как в слоте фрагмента `MQTT_FRAG`.
+    // Соединение — на стеке платы.
     let mut link = <adapters::net::TcpClient as domain::Assemble>::assemble(
         stack,
         crate::net::mqtt::buffers(),

@@ -68,7 +68,7 @@ pub struct Board {
     pub firmware: crate::FirmwareFlash,
 {%- endif %}
 {%- if config == "true" %}
-    /// Носитель настроек, переживающих перезапуск и обновление прошивки
+    /// Носитель настроек, переживающих перезапуск{% if ota == "true" %} и обновление прошивки{% endif %}
     /// ([`crate::ConfigFlash`]): {% if config_store == "eeprom" %}внутренняя EEPROM{% elsif config_store == "external" %}раздел на внешней флеши (драйвер — `bsp/src/external.rs`){% else %}раздел `CONFIG` во флеше{% endif %}.
     /// Хранилище над ним — `adapters::settings` — собирает узел-потребитель
     /// (`ports::Assemble`); формат значений выбирает проект.
@@ -87,8 +87,11 @@ pub struct Board {
     /// Шина CAN `{{ f[2] }}`{% if f[3] == "canopen" %} под узлом `CANOPEN_{{ f[4] | upcase }}`{% endif %} — заглушка `bsp::can::{{ f[4] }}::Can`, пока проект не
     /// подставит контроллер своей платы (`docs/modules/bsp-can.md`).
 {%- if f[3] == "canopen" %}
-    /// Уезжает в узел `CANOPEN_{{ f[4] | upcase }}`: в граф (`fragments:` в `crates-cross/app/src/graph.rs`) или,
-    /// при `graph=no`, в модуль задачи (`crates-cross/app/src/tasks/canopen.rs`).
+{%- if graph == "true" %}
+    /// Уезжает в узел `CANOPEN_{{ f[4] | upcase }}`: в граф (`fragments:` в `crates-cross/app/src/graph.rs`).
+{%- else %}
+    /// Уезжает в узел `CANOPEN_{{ f[4] | upcase }}`: в модуль задачи (`crates-cross/app/src/tasks/canopen.rs`).
+{%- endif %}
 {%- else %}
     /// Протокола у транспорта нет: поле ждёт ваш узел.
 {%- endif %}
@@ -161,8 +164,8 @@ impl Board {
 {%- endif %}
 {%- if bank_switch != "" %}
         // До HAL и до любой работы с флешем: раскладка одобанковая, а с завода
-        // чип двухбанковый (см. `crate::banks`). На новом кристалле сюда доходит
-        // приложение без bootloader'а (OTA нет) — иначе переключил бы он.
+        // чип двухбанковый (см. `crate::banks`).{% if ota == "true" %} На новом кристалле переключит
+        // bootloader: он стартует первым.{% endif %}
         crate::banks::ensure_single_bank();
 {%- endif %}
 {%- if cpu_freq_boost == "true" %}
@@ -181,8 +184,8 @@ impl Board {
         // Дамп в лог — не отладочный мусор, а штатная сводка старта: по нему
         // видно, что получили делители. Включите в `config()` кварц
         // (`rcc.hse`) и он не заведётся — до дампа не дойдёт: `embassy_stm32::init`
-        // ждёт `HSERDY` без таймаута и без отката на HSI, и плата висит молча
-        // (в release с OTA и графом её сбросит сторож, запущенный bootloader-ом).
+        // ждёт `HSERDY` без таймаута и без отката на HSI, и плата висит молча{% if ota == "true" and graph == "true" %}
+        // (в release её сбросит сторож, запущенный bootloader-ом){% endif %}.
         // В `ChipSpec` уходит только `sys` числом:
         // целый `Clocks` — тип HAL, генерируется под чип.
         //
@@ -282,11 +285,15 @@ impl Board {
 // нужна ручная проверка/настройка option bytes (BCM4) перед прошивкой, см.
 // README, раздел про dual-core. Полноценная AMP-поддержка — осознанно не
 // входит в шаблон.
+{%- if ota == "true" %}
 /// Поднимает HAL — то, с чего начинают `Board::new` и bootloader.
 ///
 /// Отдельной функцией ради `boot`: тот поднимает HAL на
 /// `embassy_stm32::Config::default()`, а не на конфиге платы, и `Board` ему не
 /// нужен. Приложению — только через [`Board::new`].
+{%- else %}
+/// Поднимает HAL — то, с чего начинает [`Board::new`].
+{%- endif %}
 #[must_use]
 pub fn init_peripherals(config: embassy_stm32::Config) -> embassy_stm32::Peripherals {
     static SHARED_DATA: core::mem::MaybeUninit<embassy_stm32::SharedData> =
@@ -294,12 +301,17 @@ pub fn init_peripherals(config: embassy_stm32::Config) -> embassy_stm32::Periphe
     embassy_stm32::init_primary(config, &SHARED_DATA)
 }
 {%- else %}
+{%- if ota == "true" %}
 
 /// Поднимает HAL — то, с чего начинают `Board::new` и bootloader.
 ///
 /// Отдельной функцией ради `boot`: тот поднимает HAL на
 /// `embassy_stm32::Config::default()`, а не на конфиге платы, и `Board` ему не
 /// нужен. Приложению — только через [`Board::new`].
+{%- else %}
+
+/// Поднимает HAL — то, с чего начинает [`Board::new`].
+{%- endif %}
 #[must_use]
 pub fn init_peripherals(config: embassy_stm32::Config) -> embassy_stm32::Peripherals {
     embassy_stm32::init(config)

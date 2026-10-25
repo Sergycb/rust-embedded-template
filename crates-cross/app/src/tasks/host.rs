@@ -35,7 +35,7 @@ pub mod {{ f[4] }} {
 
     #[embassy_executor::task]
     async fn task(source: Source, info: DeviceInfo) {
-        // Канал — над рычагом платы, как в слоте фрагмента `HOST_FRAG`.
+        // Канал — над рычагом платы.
         let mut link = Link::assemble(source, buffers());
         let mut service = domain::host::Service::new(info);
 {%- if ota == "true" %}

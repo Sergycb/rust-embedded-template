@@ -19,7 +19,7 @@ use sync_request::ask::{AskService, Edge};
 use sync_request::ask::AskService;
 {%- endif %}
 
-/// Адаптер обновления над флешем платы — тип слота `FLASH` фрагмента `OTA_FRAG`.
+/// Адаптер обновления над флешем платы.
 type Updater = adapters::ota::Updater<bsp::FirmwareFlash, {{signed}}>;
 {%- if askers > 0 %}
 
@@ -28,8 +28,7 @@ type OtaEdge =
     Edge<'static, CriticalSectionRawMutex, domain::ota::OtaRequest, domain::ota::OtaReply>;
 {%- endif %}
 
-/// Вход команд узла — то, что с графом заводит `request:` фрагмента
-/// `OTA_FRAG`, той же ёмкости (`domain::ota::CMD_BYTES`). Клиента{% if has_modbus != "true" and has_protobuf != "true" and has_canopen != "true" %} получает ваш протокол
+/// Вход команд узла — запрос с ответом, ёмкостью `domain::ota::CMD_BYTES`. Клиента{% if has_modbus != "true" and has_protobuf != "true" and has_canopen != "true" %} получает ваш протокол
 /// (`domain::ota::OtaClient` над `CMD.requester()`); без него узел только подтверждает образ{% else %} получает каждая задача протокола —
 /// `domain::ota::OtaClient` с номером своего транспорта{% endif %}.{% if net_services contains "rest" %} Пул `HTTP`
 /// (REST, `crate::tasks::http`) просит перезагрузку своим клиентом — номер следом за транспортами.{% endif %}
@@ -40,10 +39,9 @@ pub static CMD: RpcService<
     { domain::ota::CMD_BYTES },
 > = RpcService::new();
 
-/// Вход команд без ожидания исхода — то, что с графом заводит `serves:`
-/// фрагмента `OTA_FRAG`. Клиенты — задачи CANopen и `HOST`, по ребру на транспорт с квотой
-/// в одну команду: очередь (`Q`) — сумма квот, `E` — число рёбер. С графом
-/// это считает граф по `asks:` фрагментов.
+/// Вход команд без ожидания исхода.{% if askers > 0 %} Клиенты — {% if has_canopen == "true" %}задачи CANopen{% endif %}{% if has_canopen == "true" and has_protobuf == "true" %} и {% endif %}{% if has_protobuf == "true" %}`HOST`{% endif %}, по ребру на транспорт с квотой
+/// в одну команду: очередь (`Q`) — сумма квот, `E` — число рёбер.{% else %} Клиентов у него нет: очередь и
+/// рёбра нулевые.{% endif %}
 pub static ASK: AskService<
     CriticalSectionRawMutex,
     domain::ota::OtaRequest,
@@ -55,7 +53,7 @@ pub static ASK: AskService<
 
 {%- if askers > 0 %}
 
-/// Рёбра входа `ASK`: ребро `i` — `i`-го транспорта CANopen или protobuf в `links`, слот `i`.
+/// Рёбра входа `ASK`: ребро `i` — `i`-го транспорта {% if has_canopen == "true" and has_protobuf == "true" %}CANopen или protobuf{% elsif has_canopen == "true" %}CANopen{% else %}protobuf{% endif %} в `links`, слот `i`.
 {%- assign k = 0 %}
 pub static ASK_EDGES: [OtaEdge; {{ askers }}] = [
 {%- for l in xs %}{% assign f = l | split: ":" %}{% if f[3] == "canopen" or f[3] == "protobuf" %}{% if k > 0 %}, {% endif %}ASK.edge({{ k }}, {{ k }}, 1){% assign k = k | plus: 1 %}{% endif %}{% endfor -%}
@@ -66,8 +64,7 @@ pub static ASK_EDGES: [OtaEdge; {{ askers }}] = [
 {%- assign f = l | split: ":" %}
 {%- if f[0] == "usb" %}
 
-/// Образ подтверждён (или попытка была) — то, что с графом заводит `ready`
-/// фрагмента `OTA_FRAG`. Ждёт его задача `USB_{{ f[4] | upcase }}`: перечисление, попавшее
+/// Образ подтверждён (или попытка была). Ждёт его задача `USB_{{ f[4] | upcase }}`: перечисление, попавшее
 /// на стирание `STATE` при подтверждении, хост бракует (`domain::ota`,
 /// `begin`). Сигнал на задачу: у `Signal` один ждущий.
 pub static READY_{{ f[4] | upcase }}: Signal<CriticalSectionRawMutex, ()> = Signal::new();
@@ -76,8 +73,7 @@ pub static READY_{{ f[4] | upcase }}: Signal<CriticalSectionRawMutex, ()> = Sign
 
 #[embassy_executor::task]
 async fn task(firmware: bsp::FirmwareFlash, mut mode: domain::ota::Mode) {
-    // Адаптер обновления — над флешем платы, как в слоте фрагмента `OTA_FRAG`:
-    // `assemble` и режет его на разделы.
+    // Адаптер обновления — над флешем платы: `assemble` и режет его на разделы.
     let mut flash = <Updater as domain::Assemble>::assemble(firmware, ());
     let mut reboot = bsp::reset::Reboot;
     let mut confirmed = false;
@@ -88,8 +84,7 @@ async fn task(firmware: bsp::FirmwareFlash, mut mode: domain::ota::Mode) {
         confirmed: &mut confirmed,
         cmd: CMD.server().expect("сервер входа CMD один — у этой задачи"),
         ask: ASK.server().expect("сервер входа ASK один — у этой задачи"),
-        // Без графа `Readiness` строит не макрос, а этот вызов{% if has_usb == "true" %} — над своими
-        // сигналами, как макрос над своими.
+        // `Readiness` строит этот вызов{% if has_usb == "true" %} — над своими сигналами.
         ready: supervisor::Readiness::new(|| {
 {%- for l in xs %}
 {%- assign f = l | split: ":" %}

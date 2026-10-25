@@ -61,13 +61,13 @@ DEFMT_LOG = "info"
 {%- if graph == "true" %}
 # Аппаратный таймаут сторожа, мкс. Здесь, а не константой в коде, потому что
 # у неё есть обоснование и пара — `bsp::wdg::HW_TIMEOUT_US` (там же почему
-# цифра такая); bootloader берёт её оттуда же (docs/watchdog.md).
+# цифра такая){% if ota == "true" %}; bootloader берёт её оттуда же{% endif %} (docs/watchdog.md).
 WATCHDOG_TIMEOUT_US = "10000000"
 {%- endif %}
 {%- if ota == "true" %}
 # Раскладка flash, посчитанная при генерации (`memory.x` считается теми же
 # цифрами). Часть чисел нужна и приложению, и bootloader'у — оба берут их из
-# `bsp` (`bsp::flash`, `bsp::external`), и расходиться им негде (docs/flash.md). Числа лежат здесь, а не линкерными символами: читать
+# `bsp` (`bsp::flash`{% if ota_store == "external" %}, `bsp::external`{% endif %}), и расходиться им негде (docs/flash.md). Числа лежат здесь, а не линкерными символами: читать
 # собственные константы через `unsafe extern` незачем.
 {%- if active_len != "" %}
 # Размер раздела `ACTIVE` в байтах — самый длинный образ, который доедет до
@@ -95,9 +95,15 @@ SWAP_PAGE_SIZE = "{{page_size | remove: '_'}}"
 NET_SOCKETS = "{{net_stack_sockets}}"
 {%- endif %}
 {%- if net_services contains "rest" %}
+{%- if graph == "true" %}
 # Соединений REST API разом — копий пула узлов `HTTP` (`app::net`, пул в
 # `app/src/graph.rs`): у каждой свой сокет и свои буферы. Меняете — меняйте и
 # литерал пула в графе (DSL не берёт константу) и `NET_SOCKETS` выше.
+{%- else %}
+# Соединений REST API разом — копий пула задач `HTTP` (`app::net`, пул в
+# `app/src/tasks/http.rs`): у каждой свой сокет и свои буферы. Меняете — меняйте
+# и `NET_SOCKETS` выше.
+{%- endif %}
 HTTP_CONNECTIONS = "{{http_connections}}"
 {%- endif %}
 {%- if dma_nc_start != "" %}
@@ -112,8 +118,12 @@ BDMA_NC_LEN = "{{bdma_nc_len}}"
 {%- endif %}
 {%- endif %}
 {%- if config_start != "" %}
+{%- if config_store == "external" %}
+# Границы раздела настроек (`bsp::layout`): смещения от начала внешней флеши.
+{%- else %}
 # Границы раздела настроек (`bsp::layout`): смещения от базы flash — так их
-# ждёт `embassy_stm32::flash::Flash` — или от начала внешней флеши.
+# ждёт `embassy_stm32::flash::Flash`.
+{%- endif %}
 CONFIG_START = "{{config_start}}"
 CONFIG_END = "{{config_end}}"
 {%- endif %}

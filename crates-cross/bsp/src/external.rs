@@ -98,9 +98,14 @@ pub(crate) async fn new(_resources: crate::resources::ExtFlashResources) -> &'st
                 EXT_FLASH_END / 1024,
                 LOST
             );
+{%- if ota == "true" and ota_store == "external" %}
             // Не оставлять опознанный драйвер: с ним образ лёг бы в начало
             // `DFU`, которого на микросхеме не хватает, а bootloader на обмене
             // упёрся бы в её конец. Неопознанный отказывает во всём.
+{%- else %}
+            // Не оставлять опознанный драйвер: с ним раздел настроек упёрся бы
+            // в конец микросхемы. Неопознанный отказывает во всём.
+{%- endif %}
             let (bus, delay) = flash.release();
             ExternalFlash::new(bus, delay)
         }

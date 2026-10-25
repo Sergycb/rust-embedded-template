@@ -2,8 +2,8 @@
 //! сброс память и сброс МК.
 //!
 //! Здесь, а не в `bsp`: что делать с паникой — решение прошивки, а не плата.
-//! У bootloader'а паникёр свой, без сообщений (`crates-cross/boot`), у
-//! `target-tests` — свой от `embedded-test`.
+//! {% if ota == "true" %}У bootloader'а паникёр свой, без сообщений (`crates-cross/boot`), у
+//! `target-tests` — свой от `embedded-test`.{% else %}У `target-tests` паникёр свой — от `embedded-test`.{% endif %}
 
 /// В dev-сборке паника печатается в RTT и оставляет МК в `HardFault` — под отладчиком.
 #[cfg(debug_assertions)]

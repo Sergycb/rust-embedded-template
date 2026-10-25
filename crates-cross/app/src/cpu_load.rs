@@ -24,15 +24,19 @@ pub fn record_sleep_ticks(delta_ticks: u64) {
 
 /// Счётчик, который читает узел `CPU_LOAD`.
 ///
+{%- if graph == "true" %}
 /// `'static` — потому что узел берёт его ресурсным слотом графа, а слот
 /// живёт в `static`.
+{%- else %}
+/// `'static` — потому что ссылку уносит задача узла, а аргументы задач обязаны
+/// быть `'static`.
+{%- endif %}
 pub fn sleep_ticks() -> &'static SleepTicks {
     &SLEEP_TICKS
 }
 {%- if graph != "true" %}
 
-// Графа нет — узел `CPU_LOAD` не на что подписан, и спавнить его берётся
-// `main`. Обёртка нужна потому, что `Spawner::spawn` в `embassy-executor` 0.10
+// Узел `CPU_LOAD` спавнит `main`. Обёртка нужна потому, что `Spawner::spawn` в `embassy-executor` 0.10
 // берёт `SpawnToken`, а не функцию: `#[embassy_executor::task]` и есть тот
 // способ получить токен, не заводя executor-обвязку в домене, где ей не
 // место. Токен выдаёт она же, поэтому `expect` на её результате — в

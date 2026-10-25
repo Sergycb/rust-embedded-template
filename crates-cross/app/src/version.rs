@@ -1,7 +1,7 @@
 //! Свойства этого образа: его версия.
 //!
 //! Здесь, а не в `bsp`: это свойство прошивки, а не платы. Compose-site
-//! (`graph.rs`) отдаёт её узлу OTA режимом `Mode::Signed` — защита от отката.
+//! ({% if graph == "true" %}`graph.rs`{% else %}`tasks/ota.rs`{% endif %}) отдаёт её узлу OTA режимом `Mode::Signed` — защита от отката.
 //! Подпись приложение не проверяет: ключ зашит в bootloader, и проверяет он
 //! (`crates-cross/boot`, `domain::ota::boot::screen_update`).
 

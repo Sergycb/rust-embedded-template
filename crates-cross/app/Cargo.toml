@@ -43,28 +43,35 @@ cortex-m = { workspace = true }
 # `custom-panic-handler` — своего обработчика у него нет.
 panic-probe = { workspace = true, features = ["print-defmt"] }
 panic-persist = { workspace = true }
-# Драйвер времени — фичей `bsp` (там же почему): от него зависит и `boot`,
-# которому драйвер времени нельзя.
+# Драйвер времени — фичей `bsp` (там же почему){% if ota == "true" %}: от него зависит и `boot`,
+# которому драйвер времени нельзя{% endif %}.
 bsp = { workspace = true, features = ["time-driver"] }
 domain = { workspace = true }
 {%- if has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" or ota == "true" or config == "true" or net_services contains "mqtt" %}
 # Адаптеры над рычагами платы собирают узлы (`ports::Assemble`), а приложение
-# называет их типы и заводит их буферы: каналы протоколов
-# (`adapters::modbus::Rtu`, `adapters::cobs::Cobs`) вокруг потока, CDC или стека{% if ota == "true" %},
-# адаптер обновления (`adapters::ota::Updater`){% endif %}{% if config == "true" %}, хранилище настроек
-# (`adapters::settings::Settings`){% endif %}{% if net_services contains "mqtt" %}, буферы клиента MQTT (src/net.rs){% endif %}.
+# называет их типы и заводит их буферы — по строке на адаптер:
+{%- if protocol_link == "true" %}
+#   каналы протоколов над потоком, CDC или сокетом (src/link.rs)
+{%- endif %}
+{%- if ota == "true" %}
+#   адаптер обновления (`adapters::ota::Updater`)
+{%- endif %}
+{%- if config == "true" %}
+#   хранилище настроек (`adapters::settings::Settings`)
+{%- endif %}
+{%- if net_services contains "mqtt" %}
+#   клиент MQTT, его буферы — в src/net.rs
+{%- endif %}
 adapters = { workspace = true }
 {%- endif %}
-{%- if has_net == "true" %}
+{%- if has_udp == "true" %}
 # Метаданные датаграмм UDP-сокета протокола (src/link.rs).
 embassy-net = { workspace = true }
 {%- endif %}
 shadow-rs = { workspace = true }
+{%- if graph == "true" %}
 # Граф задач в graph.rs — настоящий код, а не пример: compose-site фрагментов
-# из `domain`, блок `watchdog:`, `spawn_all` в main.rs. На чипах, где граф не
-# помещается (см. GRAPH_MIN_PARTITION в chip-select.rhai), он вырезается при
-# генерации, но зависимость остаётся: так её версия проверяется сборкой на ARM
-# в любой конфигурации.
+# из `domain`, блок `watchdog:`, `spawn_all` в main.rs.
 #
 # И единственная зависимость графа — это обещание самого `supervisor`
 # (`supervisor-sole-dep-fixture` в rust-lib): всё, что compose-site называет
@@ -72,6 +79,9 @@ shadow-rs = { workspace = true }
 # (`observe:`), `HardwareWatchdog` — он реэкспортирует публичными путями.
 # Реализация трейта над IWDG живёт в `bsp` (bsp/src/wdg.rs), и там `watchdog`
 # стоит прямой зависимостью; граф получает оттуда готовый тип.
+{%- else %}
+# Типы контекста задач `domain` (`Readiness`, `TaskExit`) — из `supervisor`.
+{%- endif %}
 supervisor = { workspace = true }
 #
 # `embassy-stm32` здесь нет и быть не должно: про чип знает `bsp`, а
@@ -80,16 +90,19 @@ supervisor = { workspace = true }
 # почему она не в воркспейсе и не безусловная.
 
 {%- if ota == "true" and graph != "true" %}
-# Входы команд узла OTA без графа (`tasks::ota::CMD` и `ASK`): с графом их
-# заводят `request:` и `serves:` фрагмента, а здесь модуль задачи объявляет
-# `static` сам — с тем же мьютексом, что у `supervisor`, иначе типы полей `cmd`
+# Входы команд узла OTA (`tasks::ota::CMD` и `ASK`): модуль задачи объявляет
+# их `static` сам — с тем же мьютексом, что у `supervisor`, иначе типы полей `cmd`
 # и `ask` контекста узла не сойдутся.
 sync-request = { workspace = true }
 {%- endif %}
 {%- if has_modbus == "true" or ota == "true" and graph != "true" %}
-# {% if has_modbus == "true" %}`OnceLock` карты регистров Modbus (src/modbus.rs){% endif %}{% if has_modbus == "true" and ota == "true" and graph != "true" %};{% endif %}{% if ota == "true" and graph != "true" %} мьютекс и
-# сигналы узла OTA без графа (src/tasks/ota.rs){% if has_canopen == "true" %}, метки ребра `ASK` у задач CANopen
-# (src/tasks/canopen.rs){% endif %}{% endif %}.
+{%- if has_modbus == "true" %}
+# `OnceLock` карты регистров Modbus (src/modbus.rs).
+{%- endif %}
+{%- if ota == "true" and graph != "true" %}
+# Мьютекс и сигналы узла OTA (src/tasks/ota.rs){% if has_canopen == "true" %}, метки ребра `ASK` у задач CANopen
+# (src/tasks/canopen.rs){% endif %}.
+{%- endif %}
 embassy-sync = { workspace = true }
 {%- endif %}
 

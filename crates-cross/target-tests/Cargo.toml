@@ -18,7 +18,7 @@ workspace = true
 # Транспорт нужен здесь по той же причине, что и в `app`: тестовый бинарник —
 # это полноценная прошивка, которую заливают в плату целиком.
 #
-# А вот `panic-probe` здесь НЕ подключён, в отличие от app/boot, и это не
+# А вот `panic-probe` здесь НЕ подключён, в отличие от {% if ota == "true" %}app/boot{% else %}app{% endif %}, и это не
 # упущение: паникёр в тестовом бинарнике — это способ сообщить раннеру, что
 # тест провалился. `embedded-test` под фичей `panic-handler` (она в его
 # default) заканчивает панику через `semihosting::process::abort()`, который
@@ -27,10 +27,10 @@ workspace = true
 # провалившийся assert обрушил бы весь прогон. Ограничение «ровно один
 # `#[panic_handler]`» — на бинарник, а не на workspace: у `app` паникёр свой
 # (`panic-probe` в dev, свой поверх `panic-persist` в release, см.
-# `app/src/panic.rs`), у `boot` — свой, без сообщений, а здесь — третий.
+# `app/src/panic.rs`){% if ota == "true" %}, у `boot` — свой, без сообщений, а здесь — третий{% else %}, а здесь — второй{% endif %}.
 # Не для собственного использования, а ради impl'а `critical-section`: его
 # даёт `cortex-m` с фичей `critical-section-single-core` (см. crates-cross/Cargo.toml),
-# и без прямой зависимости фича в графе этой цели не включается. Ошибка при
+# и без прямой зависимости фича в дереве зависимостей этой цели не включается. Ошибка при
 # этом вылезает только на линковке — `undefined symbol:
 # _critical_section_1_0_acquire`, — а `cargo clippy` до неё не доходит, так что
 # поймать это можно лишь реальным `cargo xtask test target`.
@@ -45,7 +45,7 @@ embedded-test = { workspace = true, features = ["panic-handler"] }
 # Отметка времени у строк лога — как у `app` (см. crates-cross/Cargo.toml).
 embassy-time = { workspace = true, features = ["defmt-timestamp-uptime-ms"] }
 # Только ради драйвера времени — по той же причине, что и у `app`: в
-# воркспейсе фичи нет, чтобы она не досталась бутлоадеру (см. комментарий в
+# воркспейсе фичи нет{% if ota == "true" %}, чтобы она не досталась бутлоадеру{% endif %} (см. комментарий в
 # crates-cross/Cargo.toml), а тестовый образ линкуется с `embassy-time` и без
 # драйвера не соберётся.
 embassy-stm32 = { workspace = true, features = ["time-driver-any"] }
@@ -54,10 +54,10 @@ embassy-stm32 = { workspace = true, features = ["time-driver-any"] }
 bsp = { workspace = true }
 {%- if ota == "true" or config == "true" %}
 # Трейты портов: тесты дёргают объекты `Board` тем же способом, что и `app`
-# (`FirmwareUpdate` — тесты OTA, `SettingsStorage` — тест настроек).
+# ({% if ota == "true" %}`FirmwareUpdate` — тесты OTA{% endif %}{% if ota == "true" and config == "true" %}, {% endif %}{% if config == "true" %}`SettingsStorage` — тест настроек{% endif %}).
 ports = { workspace = true }
-# Адаптер обновления и хранилище настроек над разделами платы — их собирает
-# приложение, а тест собирает так же (`updater`, `settings` в tests/test.rs).
+# {% if ota == "true" %}Адаптер обновления{% endif %}{% if ota == "true" and config == "true" %} и хранилище настроек{% elsif config == "true" %}Хранилище настроек{% endif %} над разделами платы — {% if ota == "true" and config == "true" %}их{% else %}его{% endif %} собирает
+# приложение, а тест собирает так же ({% if ota == "true" %}`updater`{% endif %}{% if ota == "true" and config == "true" %}, {% endif %}{% if config == "true" %}`settings`{% endif %} в tests/test.rs).
 adapters = { workspace = true }
 {%- endif %}
 {%- if signed == "true" %}

@@ -1,5 +1,4 @@
-//! Узел `SSH`: консоль платы. То, что в графе держат слоты `= static`, —
-//! буферы соединения — здесь статики.
+//! Узел `SSH`: консоль платы. Буферы соединения — статики.
 
 use domain::ssh::{SSH_BUFFER, TCP_BUFFER};
 use static_cell::ConstStaticCell;
@@ -24,7 +23,7 @@ async fn task(
     mut info: domain::device::DeviceInfo,
     host_key: HostKeySource,
 ) {
-    // Ключ хоста — как в слоте фрагмента `SSH_FRAG`.
+    // Ключ хоста — над рычагом платы.
     let mut host_key = <HostKey as domain::Assemble>::assemble(host_key, ());
     let mut login = crate::net::ssh::LOGIN;
 {%- if ota == "true" %}

@@ -5,8 +5,8 @@ use static_cell::ConstStaticCell;
 
 /// Сокетов в стеке — переменная среды `NET_SOCKETS` из `[env]`
 /// `crates-cross/.cargo/config.toml`. Считает её генерация: DHCP-клиент, по
-/// сокету на сетевой транспорт и на каждое соединение сетевых служб
-/// приложения (пул REST, консоль SSH, клиент MQTT). Сколько сокетов откроет
+/// сокету на сетевой транспорт{% if net_services != "" %} и на каждое соединение сетевых служб
+/// приложения ({% if net_services contains "rest" %}пул REST{% endif %}{% if net_services contains "ssh" %}{% if net_services contains "rest" %}, {% endif %}консоль SSH{% endif %}{% if net_services contains "mqtt" %}{% if net_services contains "rest" or net_services contains "ssh" %}, {% endif %}клиент MQTT{% endif %}){% endif %}. Сколько сокетов откроет
 /// приложение, плата не знает и знать не должна; слот — около 500 байт
 /// оперативной памяти, поэтому без запаса: добавите сокет (или фичу `dns` у
 /// `embassy-net` — она тоже занимает слот) — прибавьте один в `[env]`.

@@ -11,8 +11,8 @@ workspace = true
 [features]
 # Не запускать сторож перед прыжком в образ. Нужна одному: `cargo xtask test
 # target` собирает bootloader с ней под тесты на плате (`target-tests`), которые
-# кормить сторож не умеют. В остальных сборках её нет. Без графа сторожа в
-# bootloader'е нет вовсе, и фича ничего не меняет.
+# кормить сторож не умеют. В остальных сборках её нет.{% if graph != "true" %} Сторожа в
+# bootloader'е этого проекта нет вовсе, и фича ничего не меняет.{% endif %}
 no-watchdog = []
 
 [[bin]]
@@ -21,7 +21,7 @@ harness = false
 
 [dependencies]
 # Boot намеренно не получает release-транспорт defmt (UART без пробника,
-# см. crates-cross/app/src/graph.rs): у него нет embassy-executor и
+# см. docs/modules/app-graph.md): у него нет embassy-executor и
 # Spawner'а под фоновую drain-задачу, а единственная диагностическая строка
 # перед прыжком в прошивку не стоит того, чтобы тянуть ради неё в bootloader
 # целый UART-стек. Здесь только RTT.
@@ -64,10 +64,10 @@ ports = { workspace = true }
 # `STATE`, `ACTIVE` и `DFU`: те же разделы, что собирает приложение (`bsp`).
 embassy-embedded-hal = { workspace = true }
 {%- if signed == "true" or ota_store == "external" %}
-# Решение bootloader'а — обмен или текущий образ (`domain::ota::boot::boot_plan`,
-# с `ext_flash=yes`){% if signed == "true" %} и проверка нового образа перед обменом
+# Решение bootloader'а —{% if ota_store == "external" %} обмен или текущий образ
+# (`domain::ota::boot::boot_plan`){% endif %}{% if ota_store == "external" and signed == "true" %} и{% endif %}{% if signed == "true" %} проверка нового образа перед обменом
 # (`domain::ota::boot::screen_update`, фича `signed`){% endif %}. Зависит от `domain`
-# ради двух функций над блокирующими разделами; в образ попадают только они:
+# ради {% if ota_store == "external" and signed == "true" %}двух функций{% else %}функции{% endif %} над блокирующими разделами; в образ попадают только {% if ota_store == "external" and signed == "true" %}они{% else %}она{% endif %}:
 # `lto = "fat"` и `--gc-sections` выбрасывают всё, на что нет ссылок
 # (узлы, `supervisor`, `embassy-executor`). Драйвер времени `domain` не
 # включает — см. комментарий к `embassy-stm32` в crates-cross/Cargo.toml.

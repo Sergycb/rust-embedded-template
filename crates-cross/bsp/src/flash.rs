@@ -150,7 +150,7 @@ const _: () = assert!(
 ///
 /// `sequential-storage` делит раздел на страницы по `ERASE_SIZE` флеша, а
 /// цельный `Flash` объявляет им самый крупный сектор чипа. Раздел в мелких
-/// секторах (F2/F4/F7 с OTA) со страницей всего чипа не делится на две, поэтому
+/// секторах (F2/F4/F7{% if ota == "true" %} с OTA{% endif %}) со страницей всего чипа не делится на две, поэтому
 /// страница своя{% if config_paged == "true" %} (`ErasePage`){% endif %}; в хвосте flash она совпадает со страницей чипа{% if config_paged != "true" %} — как у
 /// этого чипа: раздел строится прямо над [`Whole`], а равенство держит
 /// `const`-assert ниже{% endif %}.
@@ -175,14 +175,33 @@ const _: () = assert!(
     "раздел CONFIG не на границах своей страницы (CONFIG_ERASE_SIZE): Partition::new паникует"
 );
 {%- endif %}
+{%- if firmware_here == "true" and config_here == "true" %}
 
 /// Общий `Flash` всего чипа под блокирующим замком. Контроллер флеша один, а
 /// работать с ним нужно и обновлению (флеш под `DFU`/`BOOTLOADER_STATE`), и
-/// настройкам (раздел `CONFIG` во флеше или внутренняя EEPROM — она пишется
-/// через тот же контроллер), — поэтому объект создаётся ровно один и
+/// настройкам (раздел `CONFIG`), — поэтому объект создаётся ровно один и
 /// раздаётся ссылками.
+{%- elsif firmware_here == "true" and eeprom_here == "true" %}
+
+/// Общий `Flash` всего чипа под блокирующим замком. Контроллер флеша один, а
+/// работать с ним нужно и обновлению (флеш под `DFU`/`BOOTLOADER_STATE`), и
+/// настройкам (внутренняя EEPROM — она пишется через тот же контроллер), —
+/// поэтому объект создаётся ровно один и раздаётся ссылками.
+{%- elsif firmware_here == "true" %}
+
+/// Общий `Flash` всего чипа под блокирующим замком: флеш под
+/// `DFU`/`BOOTLOADER_STATE`. Объект создаётся ровно один и раздаётся ссылками.
+{%- elsif eeprom_here == "true" %}
+
+/// Общий `Flash` всего чипа под блокирующим замком: через него пишется
+/// внутренняя EEPROM настроек. Объект создаётся ровно один и раздаётся ссылками.
+{%- else %}
+
+/// Общий `Flash` всего чипа под блокирующим замком: раздел `CONFIG` настроек.
+/// Объект создаётся ровно один и раздаётся ссылками.
+{%- endif %}
 ///
-/// `NoopRawMutex`, а не `CriticalSectionRawMutex`: обе половины работают из
+/// `NoopRawMutex`, а не `CriticalSectionRawMutex`: все пользователи работают из
 /// задач одного исполнителя, то есть без вытеснения. Появится второй
 /// исполнитель (прерывательный приоритет, второе ядро) — менять здесь.
 pub type FlashMutex = blocking_mutex::Mutex<NoopRawMutex, RefCell<ChipFlash>>;
@@ -208,14 +227,14 @@ pub type ChipFlash = embassy_stm32::flash::Flash<'static, Blocking>;
 {%- if whole == "true" %}
 
 /// Весь флеш как один раздел: смещения те же, что у самого флеша, а операции
-/// идут под замком, по одной. Из него строятся носители обновления и настроек{% if paged == "true" %}
+/// идут под замком, по одной. Из него строятся носители {% if firmware_here == "true" and config_here == "true" %}обновления и настроек{% elsif firmware_here == "true" %}обновления{% elsif config_here == "true" %}настроек{% else %}настроек{% endif %}{% if paged == "true" %}
 /// (поверх — `flash_page::ErasePage` со своей страницей стирания){% endif %}.
 type Whole = BlockingPartition<'static, NoopRawMutex, ChipFlash>;
 {%- endif %}
 {%- if firmware_here == "true" %}
 
 /// Флеш под `DFU`: общий `Flash` чипа, видимый асинхронно (`BlockingAsync`) —
-/// порт OTA асинхронный, за ним может стоять и внешняя флеш.
+/// порт OTA асинхронный.
 ///
 /// Тот же цельный `Flash`, что и в `crates-cross/boot`: он сам знает реальные
 /// границы секторов чипа, в том числе неравномерные (F4/F7/H7), а банковые
@@ -267,7 +286,7 @@ type ConfigBacking = BlockingAsync<Whole>;
 
 /// Раздел `CONFIG` — носитель настроек, над которым узел-потребитель собирает
 /// хранилище (`adapters::settings`, порт `Assemble`). Именно раздел, а не весь
-/// флеш: запись за его границы отказывает, а не стирает `ACTIVE` или bootloader.
+/// флеш: запись за его границы отказывает, а не стирает {% if ota == "true" %}`ACTIVE` или bootloader{% else %}прошивку{% endif %}.
 pub type ConfigFlash = Partition<'static, NoopRawMutex, ConfigBacking>;
 {%- endif %}
 {%- if eeprom_here == "true" %}
@@ -317,7 +336,7 @@ impl EepromAccess for EepromFlash {
 }
 {%- endif %}
 
-/// `&'static` он не для красоты: носители обновления и настроек отдаются в
+/// `&'static` он не для красоты: носители {% if firmware_here == "true" and config_here == "true" %}обновления и настроек{% elsif firmware_here == "true" %}обновления{% elsif config_here == "true" %}настроек{% else %}настроек{% endif %} отдаются в
 /// задачи, а аргументы задач embassy обязаны быть `'static`. Обычное поле
 /// `Board` этого не даёт — `Board` живёт в `main`, а не вечно.
 static FLASH: StaticCell<FlashMutex> = StaticCell::new();
@@ -340,7 +359,7 @@ static STATE_FLASH: StaticCell<mutex::Mutex<NoopRawMutex, StateFlash>> = StaticC
 /// Свой асинхронный мьютекс разделу `CONFIG`: `Partition` строится из
 /// `&Mutex<_, T>`. Внутри — ссылка на общий [`FlashMutex`], а не второй
 /// `Flash`: контроллер на чипе один. `NoopRawMutex` — то же допущение «один
-/// исполнитель», что у `FlashMutex` и носителей обновления; менять вместе.
+/// исполнитель», что у `FlashMutex`{% if firmware_here == "true" %} и носителей обновления{% endif %}; менять вместе.
 static CONFIG_FLASH: StaticCell<mutex::Mutex<NoopRawMutex, ConfigBacking>> = StaticCell::new();
 {%- endif %}
 {%- if eeprom_here == "true" %}
