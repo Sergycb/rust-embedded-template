@@ -30,7 +30,7 @@ cargo xtask test host    # тесты domain — железо не нужно
 # дальше нужна плата, подключённая через отладочный пробник:
 cd crates-cross
 {%- if ota == "true" %}
-cargo flash -p boot --release --chip <CHIP>   # bootloader (всегда release), первым
+cargo flash -p boot --release --chip {{chip}}   # bootloader (всегда release), первым
 {%- endif %}
 cargo run -p app                    # прошить приложение и смотреть defmt-лог
 ```
@@ -850,9 +850,9 @@ bootloader){% endif %}, тесты, которым нужна залитая п�
 напрямую через `probe-rs`, он и так стоит:
 
 ```sh
-probe-rs attach --chip <CHIP> crates-cross/target/<TARGET>/debug/app   # defmt-лог живой платы
-probe-rs reset --chip <CHIP>
-probe-rs erase --chip <CHIP> --connect-under-reset              # см. ниже про цикл паник
+probe-rs attach --chip {{chip}} crates-cross/target/{{target}}/debug/app   # defmt-лог живой платы
+probe-rs reset --chip {{chip}}
+probe-rs erase --chip {{chip}} --connect-under-reset              # см. ниже про цикл паник
 ```
 
 ## Что происходит при падении
@@ -908,7 +908,7 @@ panicked at crates-cross/app/src/main.rs:194:5:
 У перезапуска есть оборотная сторона: если release-прошивка паникует прямо на старте,
 плата уходит в цикл «старт → паника → сброс», и подключиться к ней обычным способом уже
 не выходит — `cargo flash` не успевает захватить ядро и падает с таймаутом. На
-этот случай есть подключение с удержанным reset'ом — `probe-rs erase --chip <CHIP>
+этот случай есть подключение с удержанным reset'ом — `probe-rs erase --chip {{chip}}
 --connect-under-reset` захватывает ядро до того, как оно снова дойдёт до паники.
 Сотрите флеш этой командой, и плата снова станет доступной для прошивки.
 
