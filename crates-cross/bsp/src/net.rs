@@ -10,7 +10,8 @@ use static_cell::ConstStaticCell;
 /// приложение, плата не знает и знать не должна; слот — около 500 байт
 /// оперативной памяти, поэтому без запаса: добавите сокет (или фичу `dns` у
 /// `embassy-net` — она тоже занимает слот) — прибавьте один в `[env]`.
-const SOCKETS: usize = match usize::from_str_radix(env!("NET_SOCKETS"), 10) {
+/// Нижнюю границу по службам проверяет `const`-assert в `app::net`.
+pub const SOCKETS: usize = match usize::from_str_radix(env!("NET_SOCKETS"), 10) {
     Ok(sockets) => sockets,
     Err(_) => panic!("NET_SOCKETS в [env] crates-cross/.cargo/config.toml — не число"),
 };
