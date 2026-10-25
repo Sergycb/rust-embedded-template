@@ -1,12 +1,28 @@
-//! Сведения об устройстве — общие у узлов, которые отвечают на «кто ты»:
-//! `HOST` (protobuf), `HTTP` (REST), `MQTT`.
+//! Сведения об устройстве — общие у узлов, которые отвечают на «кто ты».
+// {%- if has_protobuf == "true" %}
+//! `HOST` (protobuf).
+// {%- endif %}
+// {%- if net_services contains "rest" %}
+//! `HTTP` (REST).
+// {%- endif %}
+// {%- if net_services contains "ssh" %}
+//! `SSH`.
+// {%- endif %}
+// {%- if net_services contains "mqtt" %}
+//! `MQTT`.
+// {%- endif %}
 
 /// Байт в заводском номере чипа STM32 (96 бит).
 pub const UID_BYTES: usize = 12;
 // {%- if net_services != "" %}
 
-/// Самый длинный объект [`write_info`], байт: буфер ответа REST и тело `info`
-/// MQTT.
+/// Самый длинный объект [`write_info`], байт.
+// {%- if net_services contains "rest" %}
+/// Под него — буфер ответа REST.
+// {%- endif %}
+// {%- if net_services contains "mqtt" %}
+/// Под него — тело `info` MQTT.
+// {%- endif %}
 pub const INFO_MAX: usize = 256;
 // {%- endif %}
 
@@ -14,8 +30,10 @@ pub const INFO_MAX: usize = 256;
 ///
 /// Приходят снаружи: версию и коммит знает прошивка (`app`), чип — плата
 /// (`bsp::ChipSpec`), а не `domain`. Пределы длины строк, если они есть, —
-/// у того, кто их отдаёт: схема protobuf проверяет свои в
-/// `host::Service::new`.
+/// у того, кто их отдаёт.
+// {%- if has_protobuf == "true" %}
+/// Схема protobuf проверяет свои в `host::Service::new`.
+// {%- endif %}
 #[derive(Debug, Clone, Copy)]
 pub struct DeviceInfo {
     /// Версия прошивки.

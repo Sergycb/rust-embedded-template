@@ -1,5 +1,7 @@
-//! Узел `HOST` графа задач: сообщения protobuf от хоста над кадровым каналом
-//! (в графе — узел `HOST_<транспорт>`).
+//! Узел `HOST`: сообщения protobuf от хоста над кадровым каналом.
+// {%- if graph == "true" %}
+//! В графе — узел `HOST_<транспорт>`.
+// {%- endif %}
 //!
 //! Единственное место, где сообщения схемы превращаются в типы приложения,
 //! — обработчик [`HostService`](ports::HostService) приложения: в задачи
@@ -9,8 +11,13 @@
 //! `crates-host/proto`.
 //!
 //! Канал под ним — [`FrameDuplex`](ports::FrameDuplex), кадр — одно
-//! сообщение целиком: датаграммы (UDP) дают его сами, поток (UART, USB CDC,
-//! TCP) — через `adapters::cobs::Cobs`.
+//! сообщение целиком.
+// {%- if has_udp == "true" %}
+//! Датаграммы дают его сами.
+// {%- endif %}
+// {%- if cobs_used == "true" %}
+//! Поток байтов — через `adapters::cobs::Cobs`.
+// {%- endif %}
 //!
 //! Что узел делает с кадром:
 //!
@@ -50,18 +57,26 @@ use supervisor::runtime::TaskExit;
 /// отвечать.
 ///
 /// Канал собирает узел (`L::assemble(source, buffers)` — порт
-/// [`Assemble`]), а compose-site только раздаёт:
+// {%- if graph == "true" %}
+/// [`Assemble`]), а compose-site только раздаёт
+/// (`<вид>`/`<транспорт>` — как в `crates-cross/app/src/graph.rs`):
 ///
 /// ```ignore
-/// fragments: [::domain::HOST_FRAG<crate::link::uart::usart1::Link, ::domain::host::Service>
-///                 as HOST_USART1 = ::domain::host::HostWiring {
-///                     source: board.usart1,
-///                     buffers: crate::link::uart::usart1::buffers(),
-///                     response: crate::link::uart::usart1::response(),
+/// fragments: [::domain::HOST_FRAG<crate::link::<вид>::<транспорт>::Link, ::domain::host::Service>
+///                 as HOST_<ТРАНСПОРТ> = ::domain::host::HostWiring {
+///                     source: board.<транспорт>,
+///                     buffers: crate::link::<вид>::<транспорт>::buffers(),
+///                     response: crate::link::<вид>::<транспорт>::response(),
 ///                     service: ::domain::host::Service::new(crate::device_info(board.spec)),
-///                     ota_client: ::domain::ota::ClientId(0),   // только с OTA
+// {%- if ota == "true" %}
+///                     ota_client: ::domain::ota::ClientId(0),
+// {%- endif %}
 ///                 }];
 /// ```
+// {%- else %}
+/// [`Assemble`]), а compose-site — задача `crates-cross/app/src/tasks/host.rs`
+/// — только раздаёт поля платы и ссылки на свои статики.
+// {%- endif %}
 ///
 /// Написан руками, а не выведен фрагментом: слот канала инициализируется
 /// сборкой из двух полей, а не чтением одного.
@@ -214,7 +229,7 @@ where
 
 /// Узел `HOST`: обслуживает канал, пока жив, и не выходит никогда.
 ///
-/// Без `watchdog:` намеренно — по правилу `heartbeat::task`: узел законно
+/// Без `watchdog:` намеренно: узел законно
 /// ждёт запрос сколько угодно, и отметка по таймеру сторожила бы
 /// исполнитель, а не работу.
 pub async fn task<L, S>(mut ctx: HostCtx<'_, L, S>) -> TaskExit
@@ -256,7 +271,7 @@ fn encode(message: &impl MessageEncode, buf: &mut [u8]) -> Option<usize> {
     Some(capacity - encoder.into_writer().len())
 }
 
-// Узел объявлен рядом со своей задачей — как `SERVER_FRAG`; в граф шаблона
+// Узел объявлен рядом со своей задачей — как `CPU_LOAD_FRAG`; в граф шаблона
 // попадёт по узлу на транспорт с протоколом protobuf.
 //
 // `<L, S>` — параметры фрагмента: канал платы и обработчик приложения

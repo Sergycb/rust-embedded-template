@@ -24,13 +24,13 @@ pub mod settings;
 
 // {%- endif %}
 // {%- if cobs_used == "true" %}
-/// Кадрирование потока байтов (UART, USB CDC, TCP) в кадры `ports::FrameLink`:
+/// Кадрирование потока байтов в кадры `ports::FrameLink`:
 /// COBS и CRC.
 pub mod cobs;
 
 // {%- endif %}
 // {%- if has_net == "true" %}
-/// Сеть поверх `embassy-net`: TCP-сервер и UDP-канал.
+/// Сеть поверх `embassy-net`: транспорты над сокетами стека.
 pub mod net;
 
 // {%- endif %}
@@ -46,7 +46,7 @@ pub mod fake;
 
 // {%- endif %}
 // {%- if has_modbus == "true" %}
-/// Транспорты Modbus — RTU, TCP, UDP — каналы slave'а (`ports::FrameLink` с
+/// Транспорты Modbus — каналы slave'а (`ports::FrameLink` с
 /// кадром «адрес и PDU») для узла протокола `domain::server`.
 // {%- if modbus_master == "true" %}
 /// Они же реализуют порт master'а `ports::ModbusClient`.

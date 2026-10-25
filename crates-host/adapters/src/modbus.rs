@@ -1,7 +1,7 @@
 //! Транспорт Modbus {% if modbus_rtu == "true" %}— RTU поверх потока байтов{% elsif modbus_tcp == "true" %}— TCP поверх потока{% else %}— UDP поверх датаграмм{% endif %}.
 //! Для slave'а он — кадровый канал [`ports::FrameLink`] с кадром «адрес и PDU»:
 //! кадр разбирает обработчик `domain::modbus::Slave`, а обслуживает канал узел
-//! `domain::server`, тот же, что у protobuf.
+//! `domain::server`.
 // {%- if modbus_master == "true" %}
 //! Они же реализуют порт master'а [`ports::ModbusClient`].
 // {%- endif %}
@@ -126,7 +126,7 @@ async fn fill<T: Read>(
 }
 
 /// Отказ потока как исход канала: разорванное соединение — отказ, шум на
-/// UART (переполнение, чётность; `embassy-stm32` отдаёт их как
+/// линии (переполнение, чётность; `embassy-stm32` отдаёт их как
 /// `ErrorKind::Other`) — потеря кадра.
 fn io_error<E: Error>(e: E) -> LinkError<FrameError<E>> {
     if matches!(

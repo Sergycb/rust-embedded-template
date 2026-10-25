@@ -26,7 +26,10 @@ const CRC: Crc<u16, NoTable> = Crc::<u16, NoTable>::new(&CRC_16_MODBUS);
 const MAX_DRAIN: usize = 2 * MAX_ADU;
 // {%- endif %}
 
-/// Modbus RTU поверх потока байтов `io` (`BufferedUart` с DE для RS-485).
+/// Modbus RTU поверх потока байтов `io`.
+// {%- if has_uart == "true" %}
+/// На UART это `BufferedUart` с DE для RS-485.
+// {%- endif %}
 ///
 /// Slave ([`FrameLink`], кадр «адрес и PDU») не принимает кадр с неверной CRC и кадр с
 /// функцией, кроме FC01–06, 15, 16: длину её кадра по коду функции не

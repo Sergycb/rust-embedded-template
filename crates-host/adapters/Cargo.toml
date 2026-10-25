@@ -9,9 +9,12 @@ rust-version.workspace = true
 workspace = true
 
 [features]
-# Сами адаптеры ничего не пишут в лог, а у `embassy-boot` без фич `log`/`defmt`
-# его макросы вывода превращаются в пустые выражения — на хосте это ровно то,
-# что нужно. В прошивку `defmt` включает crates-cross/Cargo.toml.
+# Сами адаптеры ничего не пишут в лог.
+# {%- if ota == "true" %}
+# У `embassy-boot` без фич `log`/`defmt` его макросы вывода превращаются в
+# пустые выражения — на хосте это ровно то, что нужно.
+# {%- endif %}
+# В прошивку `defmt` включает crates-cross/Cargo.toml.
 # Драйверы без шины и линка (`adapters::fake`) — для host-тестов `domain`.
 fake = []
 defmt = [
@@ -52,14 +55,38 @@ sequential-storage = { workspace = true }
 # {%- endif %}
 embassy-sync = { workspace = true }
 # {%- if stream_io == "true" or net_services contains "mqtt" %}
-# Транспорты поверх потока байтов `embedded_io_async::{Read, Write}` —
-# `usb::CdcStream`, `net::TcpServer`, `modbus::{Rtu, Tcp}` и
-# `cobs::Cobs`, — и `net::TcpClient` клиента MQTT. UDP-каналу поток не нужен:
-# границу кадра даёт датаграмма.
+# Поток байтов `embedded_io_async::{Read, Write}` — трейты транспортов платы.
+# {%- if has_usb == "true" %}
+# - `usb::CdcStream`
+# {%- endif %}
+# {%- if has_tcp == "true" %}
+# - `net::TcpServer`
+# {%- endif %}
+# {%- if modbus_rtu == "true" %}
+# - `modbus::Rtu`
+# {%- endif %}
+# {%- if modbus_tcp == "true" %}
+# - `modbus::Tcp`
+# {%- endif %}
+# {%- if cobs_used == "true" %}
+# - `cobs::Cobs`
+# {%- endif %}
+# {%- if net_services contains "mqtt" %}
+# - `net::TcpClient` клиента MQTT
+# {%- endif %}
+# {%- if has_udp == "true" %}
+# UDP-каналу поток не нужен: границу кадра даёт датаграмма.
+# {%- endif %}
 embedded-io-async = { workspace = true }
 # {%- endif %}
 # {%- if crc_used == "true" %}
-# CRC кадра: RTU (Modbus по UART и USB) и COBS (protobuf по потоку).
+# CRC кадра:
+# {%- if modbus_rtu == "true" %}
+# RTU (`modbus::Rtu`);
+# {%- endif %}
+# {%- if cobs_used == "true" %}
+# COBS (`cobs::Cobs`).
+# {%- endif %}
 crc = { workspace = true }
 # {%- endif %}
 # {%- if cobs_used == "true" %}
@@ -104,10 +131,21 @@ tokio = { workspace = true }
 proptest = { workspace = true }
 # {%- endif %}
 # {%- if has_net == "true" or has_usb == "true" or ota == "true" %}
-# Сетевые и USB-тесты: стеки `embassy-net`/`embassy-usb` ждут таймеров и
-# критической секции — на хосте их дают драйвер времени `mock-driver` и
-# `critical-section/std`, как в `domain`. С OTA драйвер времени нужен и
-# `supervisor` из dev-зависимости `domain` — по той же причине, что выше.
+# {%- if has_net == "true" or has_usb == "true" %}
+# Тесты над стеками
+# {%- if has_net == "true" %}
+# `embassy-net`
+# {%- endif %}
+# {%- if has_usb == "true" %}
+# `embassy-usb`
+# {%- endif %}
+# ждут таймеров и критической секции — на хосте их дают драйвер времени
+# `mock-driver` и `critical-section/std`, как в `domain`.
+# {%- endif %}
+# {%- if ota == "true" %}
+# С OTA драйвер времени нужен и `supervisor` из dev-зависимости `domain` — по
+# той же причине, что выше.
+# {%- endif %}
 embassy-time = { workspace = true, features = ["mock-driver", "generic-queue-8"] }
 critical-section = { workspace = true, features = ["std"] }
 # {%- endif %}

@@ -155,8 +155,13 @@ impl<F: NorFlash> Settings<F> {
 // {%- endif %}
 
 // {%- if config == "true" %}
-/// Собирается над носителем платы (раздел флеша, EEPROM, внешняя флеш) — на
-/// весь его объём.
+// {%- if config_store == "eeprom" %}
+/// Собирается над носителем платы (внутренняя EEPROM) — на весь его объём.
+// {%- elsif config_store == "external" %}
+/// Собирается над носителем платы (раздел внешней флеши) — на весь его объём.
+// {%- else %}
+/// Собирается над носителем платы (раздел флеша) — на весь его объём.
+// {%- endif %}
 impl<F: NorFlash> ports::Assemble for Settings<F> {
     type Source = F;
     type Buffers = ();

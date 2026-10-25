@@ -2,11 +2,15 @@
 //! отдаёт его обработчику и отправляет ответ.
 //!
 //! Что за протокол — решает обработчик ([`ports::Handler`]: Modbus slave
-//! `modbus::Slave`), что за транспорт — канал ([`ports::FrameLink`]:
-//! кадрирование RTU, MBAP, датаграмма UDP). Ни тот, ни другой про второго не
-//! знает, а граф даёт узлу имя по протоколу и транспорту (`MODBUS_USART1`).
+//! `modbus::Slave`), что за транспорт — канал ([`ports::FrameLink`]). Ни тот,
+//! ни другой про второго не знает.
+// {%- if graph == "true" %}
+//! Граф даёт узлу имя по протоколу и транспорту (`MODBUS_<транспорт>`).
+// {%- endif %}
+// {%- if has_protobuf == "true" %}
 //! У protobuf хоста свой узел, `domain::host`: он не ждёт исхода команд
 //! обновления на месте.
+// {%- endif %}
 //!
 //! Что узел делает с тем, что пришло:
 //!
@@ -24,17 +28,23 @@ use supervisor::runtime::TaskExit;
 ///
 /// Канал собирает узел (`L::assemble(source, buffers)` — порт
 /// [`Assemble`]), а compose-site только раздаёт: рычаг платы, ссылки на
+// {%- if graph == "true" %}
 /// статики приложения и обработчик. Какой канал под каким рычагом — тип `L`,
-/// его выбирает генерация параметром фрагмента:
+/// его выбирает генерация параметром фрагмента (`<вид>`/`<транспорт>` — как в
+/// `crates-cross/app/src/graph.rs`):
 ///
 /// ```ignore
-/// fragments: [::domain::SERVER_FRAG<crate::link::uart::usart1::Link, ::domain::modbus::Slave<crate::modbus::Handle>>
-///                 as MODBUS_USART1 = ::domain::server::ServerWiring {
-///                     source: board.usart1,
-///                     buffers: crate::link::uart::usart1::buffers(),
+/// fragments: [::domain::SERVER_FRAG<crate::link::<вид>::<транспорт>::Link, ::domain::modbus::Slave<crate::modbus::Handle>>
+///                 as MODBUS_<ТРАНСПОРТ> = ::domain::server::ServerWiring {
+///                     source: board.<транспорт>,
+///                     buffers: crate::link::<вид>::<транспорт>::buffers(),
 ///                     handler: ::domain::modbus::Slave::new(1, crate::modbus::handle()),
 ///                 }];
 /// ```
+// {%- else %}
+/// статики приложения и обработчик. Какой канал под каким рычагом — тип `L`,
+/// его выбирает генерация в задаче `crates-cross/app/src/tasks/modbus.rs`.
+// {%- endif %}
 ///
 /// Буфер кадра — у канала (`FrameLink::buffer`), а не у узла: его размер
 /// задаёт протокол над каналом, и канал собирается вместе с ним.
@@ -105,8 +115,9 @@ where
     }
 }
 
-/// Узел протокола без графа: собирает канал из `wiring` и обслуживает его,
-/// не выходя никогда, — то, что с графом делают слоты фрагмента и [`task`].
+// {%- if graph != "true" %}
+/// Узел протокола: собирает канал из `wiring` и обслуживает его автоматом
+/// [`task`], не выходя никогда.
 pub async fn serve<L, H>(wiring: ServerWiring<L, H>) -> TaskExit
 where
     L: Assemble + FrameLink,
@@ -122,10 +133,11 @@ where
     })
     .await
 }
+// {%- endif %}
 
 /// Узел протокола: обслуживает канал, пока жив, и не выходит никогда.
 ///
-/// Без `watchdog:` намеренно — по правилу `heartbeat::task`: узел законно
+/// Без `watchdog:` намеренно: узел законно
 /// ждёт запрос сколько угодно, и отметка по таймеру сторожила бы
 /// исполнитель, а не работу.
 pub async fn task<L, H>(mut ctx: ServerCtx<'_, L, H>) -> TaskExit

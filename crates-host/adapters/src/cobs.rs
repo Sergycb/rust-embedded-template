@@ -1,6 +1,6 @@
 //! Кадрирование потока байтов: [`Cobs`](crate::cobs::Cobs) реализует
 //! [`FrameLink`](ports::FrameLink) поверх любого
-//! `embedded_io_async::{Read, Write}` — UART, USB CDC, TCP-сокета.
+//! потока байтов `embedded_io_async::{Read, Write}`.
 //!
 //! Кадр на проводе: `0x00`, COBS от `[сообщение][CRC]`, `0x00`.
 //!
@@ -94,7 +94,7 @@ pub struct CobsBuffers {
     pub frame: &'static mut [u8],
 }
 
-/// Собирается над готовым потоком платы (UART, поток USB CDC).
+/// Собирается над готовым потоком платы.
 impl<T> Assemble for Cobs<'static, T> {
     type Source = T;
     type Buffers = CobsBuffers;
@@ -341,8 +341,8 @@ pub const fn rx_len(message: usize) -> usize {
 }
 
 /// Отказ потока: разорванное соединение не вылечится следующим кадром, а
-/// шум на UART (переполнение, чётность) — вылечится. `embassy-stm32` отдаёт
-/// все ошибки UART как `ErrorKind::Other` — значит, «потерян кадр».
+/// шум на линии (переполнение, чётность) — вылечится. `embassy-stm32` отдаёт
+/// все ошибки линии как `ErrorKind::Other` — значит, «потерян кадр».
 fn io_error<E: Error>(e: E) -> LinkError<CobsError<E>> {
     if matches!(
         e.kind(),

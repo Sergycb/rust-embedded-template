@@ -4,14 +4,16 @@
 
 #[cfg(feature = "signed")]
 use embassy_boot::AlignedBuffer;
+// {%- if ota_store == "external" %}
 // Нужны `boot_plan` (внешняя OTA) и `screen_update` (подпись): в проекте без
 // того и другого их нет, а ветка без `signed` собирается всё равно.
+// {%- else %}
+// Нужны `screen_update` (подпись): в проекте без неё его нет, а ветка без
+// `signed` собирается всё равно.
+// {%- endif %}
 #[cfg_attr(
     not(feature = "signed"),
-    allow(
-        unused_imports,
-        reason = "нужны boot_plan (внешняя OTA) или screen_update"
-    )
+    allow(unused_imports, reason = "нужен не в каждом варианте сборки")
 )]
 use embassy_boot::BlockingFirmwareState;
 #[cfg(feature = "signed")]
@@ -20,10 +22,7 @@ use embassy_boot::FirmwareUpdaterError as Error;
 use embassy_boot::State;
 #[cfg_attr(
     not(feature = "signed"),
-    allow(
-        unused_imports,
-        reason = "нужны boot_plan (внешняя OTA) или screen_update"
-    )
+    allow(unused_imports, reason = "нужен не в каждом варианте сборки")
 )]
 use ports::MAX_WRITE_SIZE;
 #[cfg(feature = "signed")]
@@ -296,7 +295,7 @@ mod tests {
         }
 
         /// `DFU`, который после `ops` удачных стираний и записей отказывает —
-        /// внешняя флеш, отвалившаяся посреди обмена.
+        /// носитель, отвалившийся посреди обмена.
         pub(super) struct Flaky {
             pub(super) flash: Dfu,
             pub(super) ops: usize,

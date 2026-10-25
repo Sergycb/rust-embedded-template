@@ -1,8 +1,10 @@
 //! Порт шины CAN.
 //!
 //! Реализует `crates-cross/bsp` поверх CAN-контроллера чипа (кадр
-//! `embassy-stm32` уже реализует `embedded_can::Frame`); пользуется им узел
-//! CANopen `domain::canopen`.
+//! `embassy-stm32` уже реализует `embedded_can::Frame`).
+// {%- if has_canopen == "true" %}
+//! Пользуется им узел CANopen `domain::canopen`.
+// {%- endif %}
 
 use crate::LinkError;
 

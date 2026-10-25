@@ -5,7 +5,13 @@ use embassy_net::udp::{PacketMetadata, RecvError, SendError, UdpMetadata, UdpSoc
 use ports::{Assemble, FrameDuplex, FrameLink, LinkError};
 
 /// UDP-канал на одном порту — [`FrameLink`] для протоколов, которым
-/// датаграмма и есть кадр (`modbus::Udp`, узел HOST).
+/// датаграмма и есть кадр.
+// {%- if modbus_udp == "true" %}
+/// Так работает `modbus::Udp`.
+// {%- endif %}
+// {%- if has_protobuf == "true" %}
+/// Так работает узел HOST.
+// {%- endif %}
 ///
 /// Отвечает тому, кто прислал последнюю датаграмму: адрес отправителя порт
 /// не передаёт, а протоколы отвечают на запрос.

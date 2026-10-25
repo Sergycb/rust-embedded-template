@@ -17,13 +17,16 @@ embedded-storage-async = { workspace = true }
 
 [dev-dependencies]
 # `BlockingAsync` (async-вид флеша) и `BlockingPartition` (раздел под замком) —
-# как их собирают `bsp` и bootloader; свои копии в тестах не нужны.
+# как их собирает `bsp`; свои копии в тестах не нужны.
+# {%- if ota == "true" %}
+# Так же их собирает и bootloader.
+# {%- endif %}
 embassy-embedded-hal = { workspace = true }
 embassy-sync = { workspace = true }
 # Замок `embassy-sync` на хосте — `critical-section/std`.
 critical-section = { workspace = true, features = ["std"] }
 embedded-storage-async = { workspace = true }
-# {%- if erase_page == "true" %}
+# {%- if erase_page == "true" and ota == "true" %}
 # `coarse_swap`: настоящий `BootLoader` над раскладкой со страницей обмена
 # крупнее физической.
 embassy-boot = { workspace = true }
