@@ -430,7 +430,8 @@ async fn uart_drain_task(mut uart: embassy_stm32::usart::UartTx<'static, embassy
 `Mode::Signed` — подставила генерация во вход) и спавнится отсюда записью в
 `fragments:` — она же даёт ему имя (`as OTA`) и типы двух его слотов
 аргументами. Образ он принимает командами (`ports::OtaCommand`) на свой вход
-`CMD` — `request:` фрагмента, запрос с ответом: `Start` (сверка длины до
+`CMD` — `request:` фрагмента, запрос с ответом (или на `ASK` — `serves:`, для
+клиента, который не ждёт исхода в вызове): `Start` (сверка длины до
 стирания), `Chunk` (буферизация до слова флеша — `domain::ota::download::Transfer`),
 `Finish` (`mark_updated` или `domain::ota::update::apply_signed`), `Reboot`, — и на
 каждую отвечает исходом `ports::OtaReply`. Всё это — host-тесты в

@@ -7,8 +7,11 @@
 //!
 //! Образ приходит не по своему каналу: узел протокола (protobuf, Modbus,
 //! CANopen — какой выбран при генерации) переводит свои сообщения в
-//! [`OtaCommand`](ports::OtaCommand) и отдаёт их узлу через вход `CMD` —
-//! `request:` графа, то есть запрос с ответом. На каждую команду узел отвечает
+//! [`OtaCommand`](ports::OtaCommand) и отдаёт их узлу через один из двух
+//! входов: `CMD` (`request:` графа — клиент ждёт исхода в вызове) или `ASK`
+//! (`serves:` — клиент отправляет команду, не дожидаясь, и забирает исход из
+//! `reply()`, обслуживая тем временем свой канал). Для узла входы одинаковы:
+//! команды обоих идут в один автомат. На каждую команду узел отвечает
 //! [`OtaReply`](ports::OtaReply) — её исходом, и протокол передаёт его хосту
 //! как есть: ни опрашивать статус, ни угадывать, дошёл ли кусок, хосту не
 //! нужно. Узел про протокол не знает, протокол — про флеш.
@@ -59,13 +62,17 @@ pub mod version;
 // compose-site (`app`) от `ports` не зависит.
 pub use ports::{OtaCommand, OtaReply};
 
+use core::future::poll_fn;
+use core::pin::pin;
+use core::task::Poll;
+
 use defmt_or_log::{FormatOrDebug, info, warn};
 use embassy_time::{Duration, Instant, Timer};
 use ports::{
     Chunk, DownloadError, FirmwareUpdate, Progress, Reboot, Rejection, SIGNATURE_BYTES, UpdateError,
 };
 use supervisor::runtime::TaskExit;
-use supervisor::{Requester, Served};
+use supervisor::{Asked, Requester, Served};
 
 use crate::ota::download::Transfer;
 
@@ -84,11 +91,11 @@ pub const SESSION_TIMEOUT: Duration = Duration::from_secs(30);
 /// покинул устройство.
 pub const REBOOT_GRACE: Duration = Duration::from_millis(100);
 
-/// Ёмкость входа `CMD`, байт: запрос (кусок `ports::CHUNK_BYTES` со смещением и
-/// длиной, тег варианта, номер клиента) и ответ. Одно число на граф (`request:`
-/// в `OTA_FRAG`) и на `static` входа в проекте без графа (`crates-cross/app/src/tasks/ota.rs`). В
-/// `request:` фрагмента оно записано литералом — макрос не принимает путь, —
-/// так что меняется в двух местах.
+/// Ёмкость входов `CMD` и `ASK`, байт: запрос (кусок `ports::CHUNK_BYTES` со
+/// смещением и длиной, тег варианта, номер клиента) и ответ. Одно число на
+/// граф (`request:` и `serves:` в `OTA_FRAG`) и на `static` входов в проекте без
+/// графа (`crates-cross/app/src/tasks/ota.rs`). Во фрагменте оно записано
+/// литералом — макрос не принимает путь, — так что меняется в трёх местах.
 pub const CMD_BYTES: usize = 144;
 
 const _: () = assert!(
@@ -169,6 +176,29 @@ impl core::fmt::Display for NodeLost {
 }
 
 impl core::error::Error for NodeLost {}
+
+/// Обязанность ответить на команду — тому входу, с которого она пришла.
+///
+/// Действиям автомата всё равно, ждёт ли клиент в вызове (`CMD`) или забирает
+/// исход позже (`ASK`): ответ один и тот же, дроп без ответа у обоих —
+/// «узел не ответил».
+#[derive(Debug)]
+enum Answer<'a> {
+    /// Команда с входа `CMD`.
+    Call(Served<'a, OtaRequest, OtaReply>),
+    /// Команда с входа `ASK`.
+    Ask(Asked<'a, OtaRequest, OtaReply>),
+}
+
+impl Answer<'_> {
+    /// Исход команды — клиенту.
+    fn respond(self, reply: OtaReply) {
+        match self {
+            Self::Call(served) => served.respond(reply),
+            Self::Ask(asked) => asked.respond(reply),
+        }
+    }
+}
 
 /// Вход узла OTA: из чего собрать адаптер обновления `F`, чем перезагружать
 /// МК и как применять образ.
@@ -269,7 +299,7 @@ impl Mode {
 }
 
 #[fsm::typestate]
-impl<F, R> OtaCtx<'_, F, R>
+impl<'a, F, R> OtaCtx<'a, F, R>
 where
     F: FirmwareUpdate,
     F::Error: FormatOrDebug,
@@ -296,7 +326,7 @@ where
                 // Команда первой: срок — молчание хоста, и уже пришедшая
                 // команда владельца его не нарушила. Чужой `Start`, выигравший
                 // гонку у просроченного срока, `start` сверяет с `until` сам.
-                *                       => cmd: self.cmd.serve(),
+                *                       => cmd: self.command(),
                 Receiving { until, .. } => expired: fsm::deadline(*until),
             }
             transitions {
@@ -310,6 +340,26 @@ where
                 Receiving + expired(())                                                                         => abandon -> Idle,
             }
         }
+    }
+
+    /// Следующая команда с любого из двух входов — источник `cmd` автомата.
+    ///
+    /// Без потерь при дропе, как требует `listen`: `serve()` обоих входов
+    /// забирает запрос только в том опросе, который его возвращает, а `CMD`
+    /// опрашивается первым и, готовый, `ASK` уже не трогает — запрос, который
+    /// не вернулся, остаётся в своей очереди.
+    async fn command(&mut self) -> (OtaRequest, Answer<'a>) {
+        let mut call = pin!(self.cmd.serve());
+        let mut ask = pin!(self.ask.serve());
+        poll_fn(|cx| {
+            if let Poll::Ready((request, served)) = call.as_mut().poll(cx) {
+                return Poll::Ready((request, Answer::Call(served)));
+            }
+            ask.as_mut()
+                .poll(cx)
+                .map(|(request, asked)| (request, Answer::Ask(asked)))
+        })
+        .await
     }
 
     /// Подтверждение образа, затем ожидание команд.
@@ -368,7 +418,7 @@ where
         client: ClientId,
         len: u32,
         signature: Option<Signature>,
-        served: Served<'_, OtaRequest, OtaReply>,
+        served: Answer<'_>,
     ) -> edges::Start {
         info!("ota: Start от клиента {}: {} байт", client.0, len);
         // Образ, ждущий обмена, затирать нельзя: `Busy`, и он ждёт дальше. Узел
@@ -436,7 +486,7 @@ where
         mut s: Receiving,
         client: ClientId,
         chunk: &Chunk,
-        served: Served<'_, OtaRequest, OtaReply>,
+        served: Answer<'_>,
     ) -> edges::Chunk {
         if client != s.owner {
             return busy(s, client, served).into();
@@ -465,7 +515,7 @@ where
         &mut self,
         s: Receiving,
         client: ClientId,
-        served: Served<'_, OtaRequest, OtaReply>,
+        served: Answer<'_>,
     ) -> edges::Finish {
         if client != s.owner {
             return busy(s, client, served).into();
@@ -501,13 +551,13 @@ where
 
     /// `Chunk` или `Finish` без приёма: отказ, состояние то же.
     #[expect(clippy::unused_self, reason = "действие автомата")]
-    fn no_session(&mut self, served: Served<'_, OtaRequest, OtaReply>) {
+    fn no_session(&mut self, served: Answer<'_>) {
         warn!("ota: кусок или Finish без Start");
         served.respond(Err(Rejection::NoSession));
     }
 
     /// `Reboot`: ответ, пауза на его отправку, сброс.
-    async fn reboot(&mut self, served: Served<'_, OtaRequest, OtaReply>) {
+    async fn reboot(&mut self, served: Answer<'_>) {
         info!("ota: перезагрузка по команде хоста");
         served.respond(Ok(Progress::Rebooting));
         Timer::after(REBOOT_GRACE).await;
@@ -542,7 +592,7 @@ where
 
 /// Команда приёма не от владельца: `Busy`, приём владельца — и его срок — как
 /// были.
-fn busy(s: Receiving, client: ClientId, served: Served<'_, OtaRequest, OtaReply>) -> Receiving {
+fn busy(s: Receiving, client: ClientId, served: Answer<'_>) -> Receiving {
     warn!(
         "ota: команда клиента {} отвергнута: идёт приём клиента {}",
         client.0, s.owner.0
@@ -592,8 +642,13 @@ fn update_rejection<E>(err: &UpdateError<E>) -> Rejection {
 // очередь, потому что протокол отвечает хосту исходом именно своей команды.
 // Узел протокола держит `OtaClient` — requester из аксессора графа
 // `ota_cmd_requester()` и номер транспорта, который раздаёт compose-site.
-// Ёмкость — `CMD_BYTES` (литералом: макрос другого не принимает), её же берёт
-// `static` входа в проекте без графа; менять оба места вместе.
+// `serves: [ASK: …]` — тот же вход для клиента, которому нельзя ждать исхода в
+// вызове: узел протокола, который всё это время должен обслуживать свой
+// канал. Он объявляет ребро `asks: [OTA.ASK: …; квота tag …]`, отправляет
+// команду, не дожидаясь, и забирает исход из `reply()`. Очередь — сумма квот
+// рёбер, её считает граф; без спрашивающих она пустая, и `ASK` просто молчит.
+// Ёмкость обоих — `CMD_BYTES` (литералом: макрос другого не принимает), её же
+// берут `static` входов в проекте без графа; менять все места вместе.
 //
 // `<F, R>` — параметры фрагмента: адаптер обновления и порт перезагрузки
 // платы `domain` не видит. `local` на `FLASH`: разделы платы — `!Send`
@@ -625,6 +680,7 @@ supervisor::supervisor_fragment! {
         ],
         // Литерал, а не `CMD_BYTES`: макрос принимает здесь только число. Равен ему.
         request: [CMD: $crate::ota::OtaRequest -> $crate::ota::OtaReply; 144],
+        serves: [ASK: $crate::ota::OtaRequest -> $crate::ota::OtaReply; 144],
         ready,
         ctx: $crate::ota::OtaCtx,
         task: $crate::ota::task;
@@ -637,8 +693,8 @@ pub(crate) mod tests {
 
     use embassy_time::{Duration, MockDriver};
     use ports::{Chunk, OtaCommand, OtaReply, Progress, Reboot, Rejection};
-    // {%- if has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" or net_services contains "mqtt" %}
     use supervisor::runtime::TaskExit;
+    // {%- if has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" or net_services contains "mqtt" %}
 
     use super::OtaClient;
     // {%- endif %}
@@ -662,6 +718,8 @@ pub(crate) mod tests {
     /// он не успел увидеть (время ушло, а узел не опрошен).
     enum Step {
         Send(OtaRequest),
+        /// Та же команда, но через вход `ASK`.
+        Ask(OtaRequest),
         Wait(Duration),
         Skip(Duration),
     }
@@ -676,7 +734,7 @@ pub(crate) mod tests {
     /// `'static`, как у `ota_cmd_requester()`.
     pub(crate) fn live() -> (OtaClient, Node) {
         let stand = Box::leak(Box::new(
-            supervisor::stand!(OTA_FRAG<FakeFlash, FakeReboot>),
+            supervisor::stand!(OTA_FRAG<FakeFlash, FakeReboot>; QUEUE_ASK = 1),
         ));
         let node = task(stand.ctx(
             Box::leak(Box::new(FakeFlash::new(1024, 8))),
@@ -710,6 +768,30 @@ pub(crate) mod tests {
         })
     }
 
+    /// Та же команда через вход `ASK`.
+    fn asked(step: Step) -> Step {
+        let Step::Send(request) = step else {
+            panic!("asked() — только для команды");
+        };
+        Step::Ask(request)
+    }
+
+    /// Опрашивает `reply` по очереди с узлом, пока исход не придёт.
+    fn await_reply<T>(
+        mut node: Pin<&mut impl Future<Output = TaskExit>>,
+        mut reply: Pin<&mut impl Future<Output = T>>,
+    ) -> T {
+        (0..16)
+            .find_map(|_| match poll(reply.as_mut()) {
+                Poll::Ready(reply) => Some(reply),
+                Poll::Pending => {
+                    assert!(poll(node.as_mut()).is_pending(), "узел не выходит");
+                    None
+                }
+            })
+            .expect("узел ответил за конечное число шагов")
+    }
+
     fn poll<T>(fut: Pin<&mut impl Future<Output = T>>) -> Poll<T> {
         fut.poll(&mut Context::from_waker(Waker::noop()))
     }
@@ -724,16 +806,24 @@ pub(crate) mod tests {
         steps: Vec<Step>,
     ) -> Vec<OtaReply> {
         MockDriver::get().reset();
-        let stand = supervisor::stand!(OTA_FRAG<FakeFlash, FakeReboot>);
+        let stand = supervisor::stand!(OTA_FRAG<FakeFlash, FakeReboot>; QUEUE_ASK = 1);
         let mut reboot = FakeReboot;
         let requester = stand.cmd.requester();
+        let mut asker = stand.ask();
         let mut node = pin!(task(stand.ctx(flash, &mut reboot, &mut mode, confirmed)));
         assert!(poll(node.as_mut()).is_pending(), "узел ждёт команду");
 
         let mut replies = Vec::new();
         for step in steps {
-            let request = match step {
-                Step::Send(request) => request,
+            let reply = match step {
+                Step::Send(request) => await_reply(node.as_mut(), pin!(requester.request(request)))
+                    .expect("узел ответил"),
+                Step::Ask(request) => {
+                    asker.try_call((), request).expect("очередь ASK свободна");
+                    await_reply(node.as_mut(), pin!(asker.reply()))
+                        .outcome
+                        .expect("узел ответил")
+                }
                 Step::Wait(pause) => {
                     MockDriver::get().advance(pause);
                     assert!(poll(node.as_mut()).is_pending(), "узел не выходит");
@@ -744,16 +834,6 @@ pub(crate) mod tests {
                     continue;
                 }
             };
-            let mut request = pin!(requester.request(request));
-            let reply = (0..16)
-                .find_map(|_| match poll(request.as_mut()) {
-                    Poll::Ready(reply) => Some(reply.expect("узел ответил")),
-                    Poll::Pending => {
-                        assert!(poll(node.as_mut()).is_pending(), "узел не выходит");
-                        None
-                    }
-                })
-                .expect("узел ответил за конечное число шагов");
             replies.push(reply);
         }
         replies
@@ -852,7 +932,7 @@ pub(crate) mod tests {
         let mut flash = FakeFlash::new(64, 8);
         flash.confirm_takes = Some(Duration::from_millis(1000));
         // Свой `stand!` на тест: готовность — `static` на месте вызова.
-        let stand = supervisor::stand!(OTA_FRAG<FakeFlash, FakeReboot>);
+        let stand = supervisor::stand!(OTA_FRAG<FakeFlash, FakeReboot>; QUEUE_ASK = 1);
         let (mut reboot, mut mode, mut confirmed) = (FakeReboot, Mode::Plain, false);
         let mut node = pin!(task(stand.ctx(
             &mut flash,
@@ -875,7 +955,7 @@ pub(crate) mod tests {
     fn is_ready_after_a_failed_confirmation() {
         let mut flash = FakeFlash::new(64, 8);
         flash.mark_booted = Err("флеш не отвечает");
-        let stand = supervisor::stand!(OTA_FRAG<FakeFlash, FakeReboot>);
+        let stand = supervisor::stand!(OTA_FRAG<FakeFlash, FakeReboot>; QUEUE_ASK = 1);
         let (mut reboot, mut mode, mut confirmed) = (FakeReboot, Mode::Plain, false);
         let mut node = pin!(task(stand.ctx(
             &mut flash,
@@ -1278,6 +1358,36 @@ pub(crate) mod tests {
                 by(1, chunk(0, &[0xAA; 16])),
                 chunk(0, &image),
                 finish(),
+            ],
+        );
+
+        assert_eq!(
+            replies,
+            vec![
+                Ok(Progress::Started),
+                Err(Rejection::Busy),
+                Ok(Progress::Received(16)),
+                Ok(Progress::Ready),
+            ]
+        );
+        assert_eq!(&flash.memory[..16], &image[..]);
+    }
+
+    /// Входы `CMD` и `ASK` — один автомат: приём, начатый через `ASK`,
+    /// идёт через него, а команда клиента с `CMD` получает `Busy`.
+    #[test]
+    fn both_inputs_drive_one_session() {
+        let mut flash = FakeFlash::new(64, 8);
+        let image = image(16);
+
+        let replies = run(
+            &mut flash,
+            Mode::Plain,
+            vec![
+                asked(by(1, start(16))),
+                chunk(0, &[0xAA; 16]),
+                asked(by(1, chunk(0, &image))),
+                asked(by(1, finish())),
             ],
         );
 

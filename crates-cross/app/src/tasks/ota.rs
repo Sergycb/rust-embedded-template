@@ -8,6 +8,7 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 {%- endif %}
 use sync_request::RpcService;
+use sync_request::ask::AskService;
 
 /// Адаптер обновления над флешем платы — тип слота `FLASH` фрагмента `OTA_FRAG`.
 type Updater = adapters::ota::Updater<bsp::FirmwareFlash, {{signed}}>;
@@ -23,6 +24,18 @@ pub static CMD: RpcService<
     domain::ota::OtaReply,
     { domain::ota::CMD_BYTES },
 > = RpcService::new();
+
+/// Вход команд без ожидания исхода — то, что с графом заводит `serves:`
+/// фрагмента `OTA_FRAG`. Очередь — сумма квот клиентов (`Q`) на их число
+/// рёбер (`E`); клиентов пока нет, и вход пуст.
+pub static ASK: AskService<
+    CriticalSectionRawMutex,
+    domain::ota::OtaRequest,
+    domain::ota::OtaReply,
+    0,
+    0,
+    { domain::ota::CMD_BYTES },
+> = AskService::new();
 
 {%- for l in xs %}
 {%- assign f = l | split: ":" %}
@@ -49,6 +62,7 @@ async fn task(firmware: bsp::FirmwareFlash, mut mode: domain::ota::Mode) {
         mode: &mut mode,
         confirmed: &mut confirmed,
         cmd: CMD.server().expect("сервер входа CMD один — у этой задачи"),
+        ask: ASK.server().expect("сервер входа ASK один — у этой задачи"),
         // Без графа `Readiness` строит не макрос, а этот вызов{% if has_usb == "true" %} — над своими
         // сигналами, как макрос над своими.
         ready: supervisor::Readiness::new(|| {
