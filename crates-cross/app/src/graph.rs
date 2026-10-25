@@ -93,8 +93,8 @@ supervisor_graph! {
         // из `crate::version`{% else %}Plain`{% endif %}). Образ узел принимает командами на свой вход
         // `CMD`{% if has_modbus != "true" and has_protobuf != "true" and has_canopen != "true" %}: клиента (`::domain::ota::OtaClient` над `ota_cmd_requester()`) получает ваш
         // протокол — без него узел только подтверждает образ{% else %} — их шлют узлы протоколов ниже, каждый со своим номером
-        // транспорта (сессию приёма держит один клиент, остальным — `Busy`){% endif %}{% if has_canopen == "true" %}; узлы
-        // CANopen — на вход `ASK`, не дожидаясь исхода (ребро `asks:` в их фрагменте){% endif %}; алгоритм обновления — в
+        // транспорта (сессию приёма держит один клиент, остальным — `Busy`){% endif %}{% if has_canopen == "true" or has_protobuf == "true" %}; узлы
+        // {% if has_canopen == "true" %}CANopen{% endif %}{% if has_canopen == "true" and has_protobuf == "true" %} и {% endif %}{% if has_protobuf == "true" %}HOST{% endif %} — на вход `ASK`, не дожидаясь исхода (ребро `asks:` в их фрагменте){% endif %}; алгоритм обновления — в
         // `domain::ota`. Вычисляется привязка в прологе `spawn_all` первой
         // строкой — раньше инициализатора блока `watchdog:`, как бы они ни стояли
         // в тексте, — частичным move: `firmware` уезжает в слот узла, `watchdog`
@@ -205,25 +205,21 @@ supervisor_graph! {
             },
 {%- elsif f[3] == "protobuf" %}
 
-        // Узел `HOST_{{ f[4] | upcase }}` — сообщения protobuf от хоста (`domain::server` с
-        // обработчиком `domain::host::Protobuf`): канал собирает узел над рычагом платы, тип
-        // и буферы — `{{ lm }}`;
+        // Узел `HOST_{{ f[4] | upcase }}` — сообщения protobuf от хоста (`domain::host`): канал собирает
+        // узел над рычагом платы, тип, буферы и буфер ответа — `{{ lm }}`;
         // обработчик `domain::host::Service` над схемой `crates-host/proto` —
         // логика приложения, проект правит его в `domain`.{% if ota == "true" %} Команды обновления
-        // он отдаёт узлу `OTA` клиентом его входа `CMD` с номером этого транспорта.{% endif %}
-        ::domain::SERVER_FRAG<{{ lm }}::Link, ::domain::host::Protobuf<::domain::host::Service>> as HOST_{{ f[4] | upcase }} =
-            ::domain::server::ServerWiring {
+        // узел шлёт на вход `ASK` узла `OTA` (ребро `asks:` фрагмента) с номером этого
+        // транспорта и не ждёт исхода: канал обслуживается, пока OTA стирает раздел.{% endif %}
+        ::domain::HOST_FRAG<{{ lm }}::Link, ::domain::host::Service> as HOST_{{ f[4] | upcase }} =
+            ::domain::host::HostWiring {
                 source: {% if f[0] == "uart" %}board.{{ f[4] }}{% elsif f[0] == "usb" %}board.{{ f[4] }}.cdc{% else %}board.net.stack{% endif %},
                 buffers: {{ lm }}::buffers(),
-                handler: ::domain::host::Protobuf(::domain::host::Service::new(
-                    crate::device_info(board.spec),
+                response: {{ lm }}::response(),
+                service: ::domain::host::Service::new(crate::device_info(board.spec)),
 {%- if ota == "true" %}
-                    ::domain::ota::OtaClient::new(
-                        ota_cmd_requester(),
-                        ::domain::ota::ClientId({{ client }}),
-                    ),
+                ota_client: ::domain::ota::ClientId({{ client }}),
 {%- endif %}
-                )),
             },
 {%- endif %}
 {%- if f[3] != "none" %}{% assign client = client | plus: 1 %}{% endif %}

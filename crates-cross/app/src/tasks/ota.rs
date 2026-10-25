@@ -5,7 +5,7 @@
 {%- assign askers = 0 %}
 {%- for l in xs %}
 {%- assign f = l | split: ":" %}
-{%- if f[3] == "canopen" %}{% assign askers = askers | plus: 1 %}{% endif %}
+{%- if f[3] == "canopen" or f[3] == "protobuf" %}{% assign askers = askers | plus: 1 %}{% endif %}
 {%- endfor %}
 
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -41,7 +41,7 @@ pub static CMD: RpcService<
 > = RpcService::new();
 
 /// Вход команд без ожидания исхода — то, что с графом заводит `serves:`
-/// фрагмента `OTA_FRAG`. Клиенты — задачи CANopen, по ребру на шину с квотой
+/// фрагмента `OTA_FRAG`. Клиенты — задачи CANopen и `HOST`, по ребру на транспорт с квотой
 /// в одну команду: очередь (`Q`) — сумма квот, `E` — число рёбер. С графом
 /// это считает граф по `asks:` фрагментов.
 pub static ASK: AskService<
@@ -55,10 +55,10 @@ pub static ASK: AskService<
 
 {%- if askers > 0 %}
 
-/// Рёбра входа `ASK`: ребро `i` — `i`-й шины CANopen в `links`, слот `i`.
+/// Рёбра входа `ASK`: ребро `i` — `i`-го транспорта CANopen или protobuf в `links`, слот `i`.
 {%- assign k = 0 %}
 pub static ASK_EDGES: [OtaEdge; {{ askers }}] = [
-{%- for l in xs %}{% assign f = l | split: ":" %}{% if f[3] == "canopen" %}{% if k > 0 %}, {% endif %}ASK.edge({{ k }}, {{ k }}, 1){% assign k = k | plus: 1 %}{% endif %}{% endfor -%}
+{%- for l in xs %}{% assign f = l | split: ":" %}{% if f[3] == "canopen" or f[3] == "protobuf" %}{% if k > 0 %}, {% endif %}ASK.edge({{ k }}, {{ k }}, 1){% assign k = k | plus: 1 %}{% endif %}{% endfor -%}
 ];
 {%- endif %}
 

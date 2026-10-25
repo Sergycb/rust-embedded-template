@@ -6,9 +6,7 @@ use ports::HostService;
 // {%- if ota == "true" %}
 use core::array::TryFromSliceError;
 use core::fmt::Write as _;
-use ports::{Chunk, OtaCommand, OtaReply, SIGNATURE_BYTES};
-
-use crate::ota::OtaClient;
+use ports::{Chunk, OtaCommand, OtaReply, Route, SIGNATURE_BYTES};
 // {%- endif %}
 use proto::{Error, Info, Request, Request_, Response, Response_, heapless};
 
@@ -18,8 +16,8 @@ pub use crate::device::DeviceInfo;
 const _: () = assert!(proto::UID_BYTES == crate::device::UID_BYTES);
 
 /// Обработчик, с которым узел `HOST` стоит в графе шаблона: на `info` —
-/// сведения об устройстве{% if ota == "true" %}, команды обновления — узлу OTA, их исход — `ok` или
-/// `error`{% endif %}, `request_id` — обратно.
+/// сведения об устройстве{% if ota == "true" %}, команды обновления — узлу OTA ([`route`](HostService::route)),
+/// их исход — `ok` или `error`{% endif %}, `request_id` — обратно.
 ///
 /// Это отправная точка, а не готовая логика: проект меняет схему в
 /// `crates-host/proto` и команды здесь — перевод сообщений схемы в свои
@@ -27,7 +25,7 @@ const _: () = assert!(proto::UID_BYTES == crate::device::UID_BYTES);
 ///
 /// Команда, которой нужно что-то от платы, получает это параметром типа —
 /// портом (`ports::…`), а не железом: тогда её ответ проверяется на хосте
-/// заглушкой порта. Узел протокола (`SERVER_FRAG`) уже generic по
+/// заглушкой порта. Узел `HOST` (`HOST_FRAG`) уже generic по
 /// обработчику, менять его не нужно; конкретный тип подставляет граф. Набросок (`ports::Relay` —
 /// порт проекта, в шаблоне его нет):
 ///
@@ -41,22 +39,16 @@ const _: () = assert!(proto::UID_BYTES == crate::device::UID_BYTES);
 ///     // `Request_::Relay(on)` → `self.relay.set(on).await` → `Ok` или `Error`.
 /// }
 ///
-/// // Граф: `SERVER_FRAG<HostLink, ::domain::host::Protobuf<::domain::host::Service<bsp::relay::Relay>>>`.
+/// // Граф: `HOST_FRAG<HostLink, ::domain::host::Service<bsp::relay::Relay>>`.
 /// // Тест: `Service::new(INFO, FakeRelay::default())` и ответ на запрос.
 /// ```
 #[derive(Debug)]
 pub struct Service {
     info: DeviceInfo,
-    // {%- if ota == "true" %}
-    /// Клиент узла OTA: команда обновления уходит туда, исход — хосту.
-    ota: OtaClient,
-    // {%- endif %}
 }
 
 impl Service {
-    /// Обработчик, отвечающий на `info` сведениями `info`{% if ota == "true" %}; команды обновления
-    /// уходят узлу OTA через `ota` — клиента его входа `CMD` ([`OtaClient`] над
-    /// `ota_cmd_requester()` графа){% endif %}.
+    /// Обработчик, отвечающий на `info` сведениями `info`.
     ///
     /// # Panics
     ///
@@ -64,12 +56,7 @@ impl Service {
     /// обрезанная выглядела бы как настоящая, а пустую ответ не заслуживает. В
     /// `const`-контексте — ошибка компиляции.
     #[must_use]
-    pub const fn new(
-        info: DeviceInfo,
-        // {%- if ota == "true" %}
-        ota: OtaClient,
-        // {%- endif %}
-    ) -> Self {
+    pub const fn new(info: DeviceInfo) -> Self {
         assert!(
             info.version.len() <= proto::VERSION_BYTES,
             "версия не помещается в Info.version"
@@ -82,12 +69,7 @@ impl Service {
             info.chip.len() <= proto::CHIP_BYTES,
             "имя чипа не помещается в Info.chip"
         );
-        Self {
-            info,
-            // {%- if ota == "true" %}
-            ota,
-            // {%- endif %}
-        }
+        Self { info }
     }
 
     fn info(&self) -> Info {
@@ -112,57 +94,65 @@ impl HostService for Service {
     type Request = Request;
     type Response = Response;
 
-    async fn handle(&mut self, request: Request) -> Response {
+    // `fn` с готовым future, а не `async fn`: шаблонным командам ждать нечего.
+    // Команда, которая ждёт задачу, делает его `async fn` с `.await`.
+    fn handle(&mut self, request: Request) -> impl Future<Output = Response> {
         let result = match request.command {
             Some(Request_::Command::Info(_)) => Response_::Result::Info(self.info()),
             // {%- if ota == "true" %}
-            Some(Request_::Command::OtaStart(start)) => match signature(&start.signature) {
-                Ok(signature) => {
-                    self.ota(OtaCommand::Start {
-                        len: start.len,
-                        signature,
-                    })
-                    .await
-                }
-                Err(_) => error("signature must be 64 bytes"),
-            },
-            Some(Request_::Command::OtaChunk(chunk)) => match Chunk::new(chunk.offset, &chunk.data)
-            {
-                Some(chunk) => self.ota(OtaCommand::Chunk(chunk)).await,
-                // Ёмкость поля в схеме та же, что у куска: сюда не доходит.
-                None => error("chunk too long"),
-            },
-            Some(Request_::Command::OtaFinish(_)) => self.ota(OtaCommand::Finish).await,
-            Some(Request_::Command::Reboot(_)) => self.ota(OtaCommand::Reboot).await,
+            // Команды обновления сюда не доходят: их забирает `route`.
+            Some(
+                Request_::Command::OtaStart(_)
+                | Request_::Command::OtaChunk(_)
+                | Request_::Command::OtaFinish(_)
+                | Request_::Command::Reboot(_),
+            ) => error("update command not routed"),
             // {%- endif %}
             None => error("unknown command"),
         };
-        Response {
-            request_id: request.request_id,
-            result: Some(result),
-        }
+        core::future::ready(response(request.request_id, result))
     }
 
     fn malformed(&mut self) -> Response {
-        Response {
-            request_id: 0,
-            result: Some(error("bad frame")),
+        response(0, error("bad frame"))
+    }
+    // {%- if ota == "true" %}
+
+    fn route(&mut self, request: Request) -> Route<Request, Response> {
+        let request_id = request.request_id;
+        let command = match &request.command {
+            Some(Request_::Command::OtaStart(start)) => match signature(&start.signature) {
+                Ok(signature) => OtaCommand::Start {
+                    len: start.len,
+                    signature,
+                },
+                Err(_) => {
+                    return Route::Reply(response(request_id, error("signature must be 64 bytes")));
+                }
+            },
+            Some(Request_::Command::OtaChunk(chunk)) => {
+                match Chunk::new(chunk.offset, &chunk.data) {
+                    Some(chunk) => OtaCommand::Chunk(chunk),
+                    // Ёмкость поля в схеме та же, что у куска: сюда не доходит.
+                    None => return Route::Reply(response(request_id, error("chunk too long"))),
+                }
+            }
+            Some(Request_::Command::OtaFinish(_)) => OtaCommand::Finish,
+            Some(Request_::Command::Reboot(_)) => OtaCommand::Reboot,
+            _ => return Route::Handle(request),
+        };
+        Route::Ota {
+            request_id,
+            command,
         }
     }
+
+    fn ota_outcome(&mut self, request_id: u32, reply: OtaReply) -> Response {
+        response(request_id, ota_reply(reply))
+    }
+    // {%- endif %}
 }
 // {%- if ota == "true" %}
-
-impl Service {
-    /// Команда узлу OTA и её исход — ответом хосту.
-    async fn ota(&self, command: OtaCommand) -> Response_::Result {
-        match self.ota.request(command).await {
-            Ok(reply) => ota_reply(reply),
-            // Узел OTA не ответил — граф его потерял; хосту текстом, как
-            // любой другой отказ.
-            Err(_) => error("ota node lost"),
-        }
-    }
-}
 
 // Пределы полей схемы (`proto/build.rs`) — те же, что у команды узлу OTA:
 // разойдутся — кусок или подпись, прошедшие разбор, не дойдут до узла.
@@ -198,6 +188,14 @@ fn ota_reply(reply: OtaReply) -> Response_::Result {
 }
 // {%- endif %}
 
+/// Ответ на запрос `request_id`.
+fn response(request_id: u32, result: Response_::Result) -> Response {
+    Response {
+        request_id,
+        result: Some(result),
+    }
+}
+
 /// Ответ-отказ с текстом для человека.
 fn error(message: &str) -> Response_::Result {
     Response_::Result::Error(Error {
@@ -227,15 +225,9 @@ pub(crate) mod tests {
         sys_hz: None,
     };
 
-    /// Обработчик со сведениями `info`{% if ota == "true" %} и клиентом узла OTA, которого
-    /// никто не обслуживает: тесты, которым узел нужен, берут `crate::ota::tests::live`{% endif %}.
+    /// Обработчик со сведениями `info`.
     pub(crate) fn service(info: DeviceInfo) -> Service {
-        Service::new(
-            info,
-            // {%- if ota == "true" %}
-            crate::ota::tests::live().0,
-            // {%- endif %}
-        )
+        Service::new(info)
     }
 
     #[test]
@@ -270,97 +262,70 @@ pub(crate) mod tests {
     }
 
     // {%- if ota == "true" %}
-    /// Запрос к обработчику, пока рядом крутится узел OTA: оба future по
-    /// очереди, пока обработчик не ответит.
-    fn ask(
-        service: &mut Service,
-        node: &mut crate::ota::tests::Node,
-        command: Request_::Command,
-    ) -> Response_::Result {
-        use core::task::{Context, Poll, Waker};
-        let mut cx = Context::from_waker(Waker::noop());
-        let request = Request {
+    fn request(command: Request_::Command) -> Request {
+        Request {
             request_id: 7,
             command: Some(command),
-        };
-        let mut reply = core::pin::pin!(service.handle(request));
-        for _ in 0..16 {
-            if let Poll::Ready(response) = reply.as_mut().poll(&mut cx) {
-                assert_eq!(response.request_id, 7, "request_id — обратно");
-                return response.result.expect("ответ с результатом");
-            }
-            assert!(
-                node.as_mut().poll(&mut cx).is_pending(),
-                "узел OTA не выходит"
-            );
-        }
-        panic!("обработчик не ответил");
-    }
-
-    /// Исход команды — `ok` или текст ошибки.
-    fn outcome(result: &Response_::Result) -> Result<(), &str> {
-        match result {
-            Response_::Result::Ok(_) => Ok(()),
-            Response_::Result::Error(error) => Err(&error.text),
-            info @ Response_::Result::Info(_) => panic!("ожидался ok или error, пришло {info:?}"),
         }
     }
 
-    /// Команды обновления доходят до узла OTA, исход каждой — до хоста.
+    /// Команды обновления уходят узлу OTA с номером запроса, остальное —
+    /// на месте.
     #[test]
-    fn ota_commands_reach_the_node_and_each_reply_reaches_the_host() {
-        let (ota, mut node) = crate::ota::tests::live();
-        let mut service = Service::new(INFO, ota);
-
-        let start = ask(
-            &mut service,
-            &mut node,
-            Request_::Command::OtaStart(proto::OtaStart {
-                len: 8,
-                signature: heapless::Vec::new(),
-            }),
-        );
-        let chunk = ask(
-            &mut service,
-            &mut node,
-            Request_::Command::OtaChunk(proto::OtaChunk {
-                data: heapless::Vec::from_slice(&[1; 8]).unwrap(),
-                offset: 0,
-            }),
-        );
-        let finish = ask(
-            &mut service,
-            &mut node,
-            Request_::Command::OtaFinish(proto::OtaFinish {}),
-        );
-        let again = ask(
-            &mut service,
-            &mut node,
-            Request_::Command::OtaFinish(proto::OtaFinish {}),
-        );
-
-        assert_eq!(outcome(&start), Ok(()));
-        assert_eq!(outcome(&chunk), Ok(()));
-        assert_eq!(outcome(&finish), Ok(()));
-        assert_eq!(outcome(&again), Err("NoSession"));
+    fn update_commands_are_routed_to_the_ota_node() {
+        let mut service = service(INFO);
+        let start = service.route(request(Request_::Command::OtaStart(proto::OtaStart {
+            len: 8,
+            signature: heapless::Vec::new(),
+        })));
+        assert!(matches!(
+            start,
+            Route::Ota {
+                request_id: 7,
+                command: OtaCommand::Start {
+                    len: 8,
+                    signature: None
+                }
+            }
+        ));
+        let finish = service.route(request(Request_::Command::OtaFinish(proto::OtaFinish {})));
+        assert!(matches!(
+            finish,
+            Route::Ota {
+                command: OtaCommand::Finish,
+                ..
+            }
+        ));
+        let info = service.route(request(Request_::Command::Info(proto::Get::default())));
+        assert!(matches!(info, Route::Handle(_)));
     }
 
-    /// Подпись не той длины — отказ текстом, до узла OTA он не доходит.
+    /// Подпись не той длины — ответ-отказ сразу, до узла OTA она не доходит.
     #[test]
     fn a_signature_of_the_wrong_length_is_refused() {
-        let (ota, mut node) = crate::ota::tests::live();
-        let mut service = Service::new(INFO, ota);
+        let route = service(INFO).route(request(Request_::Command::OtaStart(proto::OtaStart {
+            len: 8,
+            signature: heapless::Vec::from_slice(&[0; 8]).unwrap(),
+        })));
+        let Route::Reply(reply) = route else {
+            panic!("ожидался ответ сразу");
+        };
+        assert_eq!(reply.request_id, 7);
+        assert!(matches!(reply.result, Some(Response_::Result::Error(_))));
+    }
 
-        let result = ask(
-            &mut service,
-            &mut node,
-            Request_::Command::OtaStart(proto::OtaStart {
-                len: 8,
-                signature: heapless::Vec::from_slice(&[0; 8]).unwrap(),
-            }),
+    /// Исход — `ok` или имя отказа, с номером запроса.
+    #[test]
+    fn an_outcome_becomes_a_reply_with_its_request_id() {
+        let mut service = service(INFO);
+        let ok = service.ota_outcome(3, Ok(ports::Progress::Started));
+        assert_eq!(ok.request_id, 3);
+        assert!(matches!(ok.result, Some(Response_::Result::Ok(_))));
+        let refused = service.ota_outcome(4, Err(ports::Rejection::NoSession));
+        assert!(
+            matches!(&refused.result, Some(Response_::Result::Error(e)) if e.text == "NoSession"),
+            "{refused:?}"
         );
-
-        assert!(matches!(result, Response_::Result::Error(_)), "{result:?}");
     }
     // {%- endif %}
 

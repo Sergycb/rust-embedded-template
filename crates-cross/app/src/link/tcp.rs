@@ -42,6 +42,10 @@ static SOCKET_TX: ConstStaticCell<[u8; crate::link::SOCKET_BUFFER]> =
 static HOST_BUFFER: ConstStaticCell<[u8; BUFFER]> = ConstStaticCell::new([0; BUFFER]);
 static HOST_FRAME: ConstStaticCell<[u8; ::adapters::cobs::tx_len(BUFFER)]> =
     ConstStaticCell::new([0; ::adapters::cobs::tx_len(BUFFER)]);
+// Ответ узел кодирует сюда, а не в буфер канала: там может лежать
+// недочитанный кадр (`domain::host`).
+static HOST_RESPONSE: ConstStaticCell<[u8; crate::link::HOST_MESSAGE]> =
+    ConstStaticCell::new([0; crate::link::HOST_MESSAGE]);
 {%- endif %}
 
 /// Память канала — ссылки на статики выше. Статики берутся ровно один раз:
@@ -67,6 +71,11 @@ pub fn buffers() -> ::adapters::cobs::TcpCobsBuffers {
             frame: HOST_FRAME.take(),
         },
     }
+}
+
+/// Буфер ответа узла — ссылка на статик выше; берётся ровно один раз.
+pub fn response() -> &'static mut [u8] {
+    HOST_RESPONSE.take()
 }
 {%- endif %}
 {%- endif %}

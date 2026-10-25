@@ -173,7 +173,7 @@ STM32C011D6 (32 KiB, то же ядро) проект занимает 12.6 KiB 
 Протоколу связи граф не нужен: при `graph=no` (и когда граф снят размером) узел
 протокола и его `NET`/`USB` спавнит `tasks::spawn_all` (модули задач в
 `crates-cross/app/src/tasks/` над `domain::server::serve` и
-`domain::{canopen,net,usb}::task`, как `ota::task`). Тип канала протокола и его
+`domain::{canopen,host,net,usb}::task`, как `ota::task`). Тип канала протокола и его
 буферы даёт `crates-cross/app/src/link/<вид>.rs`, а собирает канал сам узел
 (`ports::Assemble`), так что граф и модули задач получают один и тот же объект. Тест каскада —
 `protocol_does_not_need_the_graph`, конфигурации `*-no-graph` в `template-check`.

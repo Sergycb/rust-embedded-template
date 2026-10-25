@@ -695,7 +695,7 @@ pub(crate) mod tests {
     use ports::{Chunk, OtaCommand, OtaReply, Progress, Reboot, Rejection};
     use supervisor::runtime::TaskExit;
 
-    // {%- if has_modbus == "true" or has_protobuf == "true" or net_services contains "mqtt" %}
+    // {%- if has_modbus == "true" or net_services contains "mqtt" %}
     use super::OtaClient;
     // {%- endif %}
 
@@ -724,12 +724,12 @@ pub(crate) mod tests {
         Skip(Duration),
     }
 
-    // {%- if has_modbus == "true" or has_protobuf == "true" or net_services contains "mqtt" %}
+    // {%- if has_modbus == "true" or net_services contains "mqtt" %}
     /// Узел OTA, который тест крутит сам: `poll` по очереди с запросом.
     pub(crate) type Node = Pin<Box<dyn Future<Output = TaskExit>>>;
 
     /// Узел OTA на фейке флеша и его клиент — для тестов обработчиков
-    /// протоколов (`host::service`) и сессии MQTT (`mqtt::serve`). Стенд,
+    /// протоколов (`modbus`) и сессии MQTT (`mqtt::serve`). Стенд,
     /// флеш и слоты живут до конца процесса, как граф в прошивке: клиент —
     /// `'static`, как у `ota_cmd_requester()`.
     pub(crate) fn live() -> (OtaClient, Node) {
@@ -749,7 +749,7 @@ pub(crate) mod tests {
     }
     // {%- endif %}
 
-    // {%- if has_canopen == "true" %}
+    // {%- if has_canopen == "true" or has_protobuf == "true" %}
     /// Узел OTA на фейке флеша, чей вход `ASK` — `ask`: сервер ребра из стенда
     /// узла-клиента (`stand.ota_ask` у фрагмента с `asks: [OTA.ASK ..]`).
     pub(crate) fn serving<'a>(

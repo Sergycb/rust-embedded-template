@@ -28,4 +28,37 @@ pub trait HostService {
     /// длиннее ёмкости, чужое сообщение. `request_id` взять неоткуда — обычно
     /// 0.
     fn malformed(&mut self) -> Self::Response;
+    // {%- if ota == "true" %}
+
+    /// Куда деть разобранный запрос: выполнить на месте ([`handle`](Self::handle)),
+    /// отдать команду обновления узлу OTA или сразу ответить.
+    ///
+    /// Команду обновления узел `HOST` не ждёт на месте: стирание раздела идёт
+    /// секунды, а канал всё это время обслуживается. Исход вернётся в
+    /// [`ota_outcome`](Self::ota_outcome) с тем же `request_id`.
+    fn route(&mut self, request: Self::Request) -> Route<Self::Request, Self::Response>;
+
+    /// Ответ хосту на исход команды обновления, отправленной по запросу
+    /// `request_id`.
+    fn ota_outcome(&mut self, request_id: u32, reply: crate::OtaReply) -> Self::Response;
+    // {%- endif %}
 }
+// {%- if ota == "true" %}
+
+/// Куда узлу `HOST` деть разобранный запрос — [`HostService::route`].
+#[derive(Debug)]
+pub enum Route<Q, R> {
+    /// Выполнить на месте: [`HostService::handle`].
+    Handle(Q),
+    /// Команда обновления — узлу OTA, не дожидаясь исхода.
+    Ota {
+        /// Номер запроса: с ним исход вернётся в
+        /// [`HostService::ota_outcome`].
+        request_id: u32,
+        /// Команда узлу OTA.
+        command: crate::OtaCommand,
+    },
+    /// Ответ готов сразу: запрос отвергнут ещё при переводе в команду.
+    Reply(R),
+}
+// {%- endif %}

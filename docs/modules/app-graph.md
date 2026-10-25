@@ -473,7 +473,7 @@ crate::version::FW_VERSION } }`). Типы слотов — аргументы �
 # Modbus: одна карта на все узлы `MODBUS_*`
 
 Узел `MODBUS_<ТРАНСПОРТ>` — по одному на транспорт с Modbus в `links`.{% if graph == "true" %}
-Фрагмент — узел протокола `domain::SERVER_FRAG<L, H>`, общий с protobuf: канал
+Фрагмент — узел протокола `domain::SERVER_FRAG<L, H>`: канал
 `L` (`crate::link::<вид>::<транспорт>::Link`) узел собирает сам из рычага платы и
 буферов `crate::link::<вид>::<транспорт>::buffers()`, обработчик `H` —
 `domain::modbus::Slave` над картой регистров с адресом slave'а (вход

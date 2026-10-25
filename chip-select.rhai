@@ -2491,8 +2491,10 @@ if !on.canopen {
 if variable::get("protocol_link") != "true" {
 	file::delete("crates-cross/app/src/link.rs");
 	file::delete("crates-cross/app/src/link");
-	// Узел протокола «запрос — ответ» (`domain::server`) обслуживает только
-	// Modbus slave и protobuf.
+}
+// Узел протокола «запрос — ответ» (`domain::server`) обслуживает только Modbus
+// slave: у protobuf свой узел (`domain::host`).
+if !on.modbus {
 	file::delete("crates-host/domain/src/server.rs");
 }
 if variable::get("link_port") != "true" {

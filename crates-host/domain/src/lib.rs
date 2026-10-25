@@ -25,8 +25,8 @@ pub mod device;
 // {%- endif %}
 // {%- if has_protobuf == "true" %}
 
-/// Сообщения protobuf от хоста: обработчик кадра для узла протокола —
-/// разбор, обработчик приложения, ответ — см. модуль.
+/// Узел `HOST`: сообщения protobuf от хоста — разбор, обработчик
+/// приложения, ответ — см. модуль.
 pub mod host;
 // {%- endif %}
 // {%- if has_modbus == "true" %}
@@ -39,9 +39,9 @@ pub mod host;
 pub mod modbus;
 // {%- endif %}
 
-// {%- if protocol_link == "true" %}
-/// Узел протокола «запрос — ответ» над кадровым каналом: Modbus slave и
-/// protobuf хоста — см. модуль.
+// {%- if has_modbus == "true" %}
+/// Узел протокола «запрос — ответ» над кадровым каналом: Modbus slave — см.
+/// модуль.
 pub mod server;
 // {%- endif %}
 

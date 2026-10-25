@@ -2,7 +2,7 @@
 
 use embassy_net::Stack;
 use embassy_net::udp::{PacketMetadata, RecvError, SendError, UdpMetadata, UdpSocket};
-use ports::{Assemble, FrameLink, LinkError};
+use ports::{Assemble, FrameDuplex, FrameLink, LinkError};
 
 /// UDP-канал на одном порту — [`FrameLink`] для протоколов, которым
 /// датаграмма и есть кадр (`modbus::Udp`, узел HOST).
@@ -111,14 +111,32 @@ impl FrameLink for UdpLink {
     }
 
     async fn send(&mut self, len: usize) -> Result<(), LinkError<UdpError>> {
-        let Some(peer) = self.peer else {
-            return Err(LinkError::Lost(UdpError::NoPeer));
-        };
-        self.socket
-            .send_to(&self.buf[..len], peer)
-            .await
-            .map_err(|err| LinkError::Lost(UdpError::Send(err)))
+        let Self { socket, peer, buf } = self;
+        send_to(socket, *peer, &buf[..len]).await
     }
+}
+
+/// Датаграмма снимается с сокета в том же опросе, что её возвращает
+/// (`UdpSocket::recv_from`), — брошенный `recv` её не теряет.
+impl FrameDuplex for UdpLink {
+    async fn send_from(&mut self, frame: &[u8]) -> Result<(), LinkError<UdpError>> {
+        send_to(&mut self.socket, self.peer, frame).await
+    }
+}
+
+/// Датаграмма `frame` — отправителю последней принятой.
+async fn send_to(
+    socket: &mut UdpSocket<'static>,
+    peer: Option<UdpMetadata>,
+    frame: &[u8],
+) -> Result<(), LinkError<UdpError>> {
+    let Some(peer) = peer else {
+        return Err(LinkError::Lost(UdpError::NoPeer));
+    };
+    socket
+        .send_to(frame, peer)
+        .await
+        .map_err(|err| LinkError::Lost(UdpError::Send(err)))
 }
 
 #[cfg(test)]

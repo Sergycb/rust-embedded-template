@@ -45,7 +45,7 @@ Modbus, секреты служб). Объектов `app` не строит: **
 — память и параметры от `app`; реэкспорт `domain::Assemble`) — инициализатором
 слота во фрагменте или, без графа, в задаче; `app` называет тип адаптера
 параметром фрагмента и раздаёт поля платы и ссылки на статики. Входы с такой
-сборкой (`ServerWiring`, `OtaWiring`, `CanOpenWiring`, `SshWiring`,
+сборкой (`ServerWiring`, `HostWiring`, `OtaWiring`, `CanOpenWiring`, `SshWiring`,
 `MqttWiring`) пишутся руками, а не `boot: … struct`: выведенная структура
 допускает в инициализаторе только чтение поля. Порт с адаптером или библиотека
 прямо в `domain` — критерий в `docs/architecture.md`.
@@ -366,18 +366,22 @@ read`: руками пришлось бы сначала найти адрес �
   перестаёт расти, узел публикует 100%), и ничем, кроме линтера, это не
   ловится — `docs/modules/app-cpu-load.md`.
 {%- if protocol != "none" %}
-- Канал протокола (кадрирование, сокет) собирает узел протокола
-  `domain::server::SERVER_FRAG<L, H>` (один на Modbus slave и protobuf хоста;
-  граф называет узлы `MODBUS_<транспорт>`/`HOST_<транспорт>`) через `Assemble`
-  над тем, что отдала плата: потоком UART, потоком CDC, сетевым стеком. Тип
-  канала (`Link`), его статики и `buffers()` — `crates-cross/app/src/link/<вид>.rs`,
-  по модулю на транспорт: размер буфера и порт — решение приложения, и `bsp` их
-  не знает. Буфер кадра держит сам канал (`ports::FrameLink::buffer`, один на
-  приём и передачу), протокол — обработчик (`ports::Handler`:
-  `domain::modbus::Slave`, `domain::host::Protobuf`). Вход узла — выражение в
+- Канал протокола (кадрирование, сокет) собирает узел протокола через
+  `Assemble` над тем, что отдала плата: потоком UART, потоком CDC, сетевым
+  стеком. Узел Modbus slave — `domain::server::SERVER_FRAG<L, H>` (граф называет
+  узлы `MODBUS_<транспорт>`), protobuf хоста — `domain::host::HOST_FRAG<L, S>`
+  (`HOST_<транспорт>`). Тип канала (`Link`), его статики и `buffers()` —
+  `crates-cross/app/src/link/<вид>.rs`, по модулю на транспорт: размер буфера и
+  порт — решение приложения, и `bsp` их не знает. Буфер кадра держит сам канал
+  (`ports::FrameLink::buffer`), протокол — обработчик (`ports::Handler`:
+  `domain::modbus::Slave`; `ports::HostService`: `domain::host::Service`). Узел
+  `HOST` ждёт кадр наперегонки с исходом команды OTA, поэтому его канал —
+  `ports::FrameDuplex`: брошенный `recv` не теряет кадр (у `adapters::cobs::Cobs`
+  декодер живёт в канале, а не в future), а ответ уходит из своего буфера узла
+  (`response()` модуля `link`) через `send_from`. Вход узла — выражение в
   `fragments:` графа или, без графа, `spawn` модуля задачи
-  (`crates-cross/app/src/tasks/`, `domain::server::serve`): по модулю на задачу,
-  `main.rs` только зовёт `tasks::spawn_all`.
+  (`crates-cross/app/src/tasks/`: `domain::server::serve`, `HostCtx` руками):
+  по модулю на задачу, `main.rs` только зовёт `tasks::spawn_all`.
 {%- endif %}
 {%- if net_services contains "rest" %}
 - Токен REST API — `rest-token.txt` в корне проекта, его вшивает

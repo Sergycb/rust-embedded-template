@@ -77,7 +77,7 @@ cargo run -p app                    # прошить приложение и с�
 | Логика и узлы графа | `crates-host/domain/` | всё, что не про регистры: автоматы, протоколы, конфигурация, а также объявления узлов (`supervisor_fragment!`) и их работа (`domain::heartbeat::run`, `domain::cpu_load::task` — автоматы `#[fsm::typestate]` на контексте узла) — тестируется на хосте; логика вне автоматов — функции над портами |
 | Адаптеры без чипа | `crates-host/adapters/` | реализации портов, которым хватает `embedded-storage`/`embedded-hal`/`embedded-io-async`: OTA поверх `embassy-boot` (`adapters::ota`), настройки поверх `sequential-storage` (`adapters::settings`){% if cobs_used == "true" %}, кадрирование потока COBS + CRC (`adapters::cobs`){% endif %}{% if protocol == "modbus" %}, транспорты Modbus (`adapters::modbus`){% endif %} — тестируется на хосте |
 {%- if protocol == "protobuf" %}
-| Схема protobuf | `crates-host/proto/` | `.proto` и типы, сгенерированные `micropb-gen` в `build.rs` (схему разбирает `protox`, системный `protoc` не нужен); пример — конверт `Request`/`Response` с `request_id`, проект заменяет своим. Обрабатывает узел протокола `domain::SERVER_FRAG` с обработчиком `domain::host::Protobuf` |
+| Схема protobuf | `crates-host/proto/` | `.proto` и типы, сгенерированные `micropb-gen` в `build.rs` (схему разбирает `protox`, системный `protoc` не нужен); пример — конверт `Request`/`Response` с `request_id`, проект заменяет своим. Обрабатывает узел `domain::HOST_FRAG` с обработчиком `domain::host::Service` |
 {%- endif %}
 {%- if protocol == "canopen" %}
 | Описание устройства CANopen | `crates-host/canopen/` | `device.toml` — идентичность, PDO, объекты приложения; `build.rs` (`zencan-build`) генерирует из него словарь объектов и `static`-объекты узла (`NODE_MBOX`, `NODE_STATE`, `OD_TABLE`), которые compose-site передаёт узлу `domain::CANOPEN_FRAG`; пример — проект заменяет своим |
@@ -179,11 +179,12 @@ DMA-буфер. До этого момента его место — в `domain`
 при генерации выбраны OTA и раздел настроек; порт перезагрузки `Reboot` для узла
 OTA реализует `bsp::reset`.
 {%- if link_port == "true" %} `FrameLink` — канал целых кадров, который держит свой буфер (один на
-приём и ответ), а `Handler` — протокол над ним: что ответить на кадр. Обоих
-обслуживает один узел протокола `domain::SERVER_FRAG`; граф называет его по
+приём и ответ).{% if has_modbus == "true" %} `Handler` — протокол над ним: что ответить на кадр; обоих
+обслуживает узел протокола `domain::SERVER_FRAG`.{% endif %} Граф называет узел по
 протоколу и транспорту (`MODBUS_USART1`, `HOST_TCP`).{% if has_protobuf == "true" %} Канал protobuf — адаптер
 кадрирования `adapters::cobs::Cobs` поверх потока (UART, USB CDC), `TcpCobs`
-поверх TCP или UDP-сокет `adapters::net::UdpLink`.{% endif %}{% if has_can == "true" %} Шина CAN — свой порт `CanBus`.{% endif %}
+поверх TCP или UDP-сокет `adapters::net::UdpLink`; все три — `FrameDuplex`:
+брошенный приём не теряет кадр, ответ уходит из чужого буфера.{% endif %}{% if has_can == "true" %} Шина CAN — свой порт `CanBus`.{% endif %}
 {%- endif %}
 {%- if protocol == "modbus" %} `Registers` — данные устройства, видимые по
 Modbus: его реализует приложение, а кадры к нему переводит обработчик
@@ -196,7 +197,9 @@ master'а `ModbusClient`.{% endif %}
 {%- if protocol == "protobuf" %}
 `HostService` — обработчик сообщений protobuf от хоста: его реализует приложение
 (перевод сообщений схемы в свои проверенные типы), а кадры к нему переводит
-обработчик `domain::host::Protobuf` узла протокола `domain::SERVER_FRAG`.
+узел `domain::HOST_FRAG`.{% if ota == "true" %} Команды обновления (`HostService::route`) узел отдаёт
+узлу OTA, не дожидаясь исхода, и обслуживает канал дальше; исход уходит хосту
+ответом с тем же `request_id`, и ответы на другие запросы могут его обогнать.{% endif %}
 {%- endif %}
 {%- if protocol == "canopen" %} `CanBus` — шина CAN под узлом CANopen `domain::CANOPEN_FRAG`
 (стек `zencan`): его реализует плата поверх CAN-контроллера чипа (`bsp::can`), а

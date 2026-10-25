@@ -106,9 +106,9 @@ HAL (`bsp::board::init_peripherals` — на умолчаниях `embassy-stm32
 протокол, например порт), — а узел обобщён по типу адаптера и зовёт
 `L::assemble(source, buffers)` инициализатором своего слота
 (`<L as $crate::Assemble>::assemble(inputs.source, inputs.buffers)`) или, без
-графа, в задаче (`domain::server::serve`). `domain` реэкспортирует трейт
+графа, в задаче (`domain::server::serve`, `HostCtx` в `tasks/host.rs`). `domain` реэкспортирует трейт
 (`domain::Assemble`): инициализаторы разворачиваются в `app`, а у него `ports`
-нет. Входы с такой сборкой — `ServerWiring`, `OtaWiring`, `CanOpenWiring`,
+нет. Входы с такой сборкой — `ServerWiring`, `HostWiring`, `OtaWiring`, `CanOpenWiring`,
 `SshWiring`, `MqttWiring` — написаны руками: структура, которую выводит фрагмент
 (`boot: … struct`), допускает в инициализаторе слота только чтение поля. `app`
 выбирает тип (параметр фрагмента: `crate::link::<вид>::<транспорт>::Link`,

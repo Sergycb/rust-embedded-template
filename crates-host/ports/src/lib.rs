@@ -119,9 +119,15 @@ pub use can::CanBus;
 // {%- endif %}
 // {%- if has_protobuf == "true" %}
 pub use host::HostService;
+// {%- if ota == "true" %}
+pub use host::Route;
+// {%- endif %}
 // {%- endif %}
 // {%- if link_port == "true" %}
-pub use link::{FrameLink, Handler, LinkError};
+pub use link::{FrameDuplex, FrameLink, LinkError};
+// {%- if has_modbus == "true" %}
+pub use link::Handler;
+// {%- endif %}
 // {%- endif %}
 // {%- if net_services contains "mqtt" %}
 pub use dial::Dial;

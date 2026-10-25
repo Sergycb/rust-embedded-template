@@ -6,8 +6,13 @@
 //!
 //! * **COBS** переписывает данные так, что в них нет `0x00`, поэтому `0x00`
 //!   однозначно отмечает границу кадра. Приёмник, потерявший синхронизацию
-//!   (помеха, включился посреди передачи, брошенный `recv`), ждёт следующий
-//!   `0x00` — и с него снова читает кадры. Накладные расходы — байт на 254.
+//!   (помеха, включился посреди передачи, слишком длинный кадр), ждёт
+//!   следующий `0x00` — и с него снова читает кадры. Накладные расходы — байт
+//!   на 254.
+//! * **Брошенный `recv` ничего не теряет**: состояние декодера и принятая
+//!   часть кадра живут в канале, а не в future, и следующий `recv`
+//!   продолжает с того же байта ([`FrameDuplex`](ports::FrameDuplex)). Так узел может ждать кадр
+//!   наперегонки с другими источниками.
 //! * **`0x00` и в начале кадра**: если отправку бросили на середине (таймаут
 //!   у вызывающего), обрывок без конца не склеится со следующим кадром — его
 //!   отрежет ведущий `0x00` следующего. Пустые кадры между `0x00` приёмник
@@ -18,10 +23,10 @@
 //!
 //! Хост собирает кадр так же: `b"\0" + cobs_encode(message + crc_le) + b"\0"`.
 
-use ::cobs::{CobsDecoder, CobsEncoder, DecodeError, max_encoding_length};
+use ::cobs::{CobsEncoder, DecodeResult, DecoderState, max_encoding_length};
 use crc::{CRC_16_IBM_SDLC, Crc, NoTable};
 use embedded_io_async::{Error, ErrorKind, Read, Write};
-use ports::{Assemble, FrameLink, LinkError};
+use ports::{Assemble, FrameDuplex, FrameLink, LinkError};
 
 /// CRC кадра. Без таблицы: 512 байт флеша не стоят выигрыша в скорости на
 /// кадрах в сотни байт.
@@ -69,12 +74,14 @@ pub struct Cobs<'b, T> {
     reader: Reader<T>,
     buf: &'b mut [u8],
     frame: &'b mut [u8],
-    /// Кадр в потоке начат и не дочитан до `0x00`. Пока флаг стоит,
-    /// очередной `recv` сначала отбрасывает хвост до `0x00`: если прошлый
-    /// `recv` бросили на середине — даже на середине такого же пропуска, —
-    /// хвост не примется за начало нового кадра. Снимается только
-    /// прочитанным `0x00`.
-    inside: bool,
+    /// Декодер COBS — между вызовами `recv`, а не в future: брошенный `recv`
+    /// не теряет начатый кадр.
+    state: DecoderState,
+    /// Сколько байт начатого кадра уже в `buf`.
+    pos: usize,
+    /// Остаток потерянного кадра отбрасывается до `0x00`: иначе он был бы
+    /// принят за начало нового.
+    skipping: bool,
 }
 
 /// Память канала COBS от приложения: буфер канала ([`rx_len`] от самого
@@ -140,6 +147,12 @@ impl FrameLink for TcpCobs {
         self.0.send(len).await
     }
 }
+
+impl FrameDuplex for TcpCobs {
+    async fn send_from(&mut self, message: &[u8]) -> Result<(), LinkError<Self::Error>> {
+        self.0.send_from(message).await
+    }
+}
 // {%- endif %}
 
 /// Поток и то, что из него прочитано, но ещё не разобрано: `chunk[start..end]`.
@@ -167,7 +180,51 @@ impl<'b, T> Cobs<'b, T> {
             },
             buf,
             frame,
-            inside: false,
+            state: DecoderState::Idle,
+            pos: 0,
+            skipping: false,
+        }
+    }
+
+    /// Начатый кадр потерян: декодер — к началу; остаток кадра в потоке, если
+    /// он там есть, отбрасывается до `0x00`.
+    fn drop_frame(&mut self, rest_in_stream: bool) {
+        self.skipping = rest_in_stream;
+        self.state = DecoderState::Idle;
+        self.pos = 0;
+    }
+
+    /// Байт потока — в декодер; `Some` — кадр собран (длина с CRC) или
+    /// потерян.
+    fn feed<E>(&mut self, byte: u8) -> Option<Result<usize, LinkError<CobsError<E>>>> {
+        if self.skipping {
+            self.skipping = byte != 0;
+            return None;
+        }
+        match self.state.feed(byte) {
+            Ok(DecodeResult::NoData) => None,
+            Ok(DecodeResult::DataStart) => {
+                self.pos = 0;
+                None
+            }
+            Ok(DecodeResult::DataContinue(data)) => {
+                if let Some(slot) = self.buf.get_mut(self.pos) {
+                    *slot = data;
+                    self.pos += 1;
+                    None
+                } else {
+                    // Байт данных — не `0x00`: кадр в потоке продолжается.
+                    self.drop_frame(true);
+                    Some(Err(LinkError::Lost(CobsError::TooLong)))
+                }
+            }
+            Ok(DecodeResult::DataComplete) => Some(Ok(core::mem::take(&mut self.pos))),
+            // Ошибку декодер даёт только на `0x00` посреди кадра — это уже
+            // граница, пропускать нечего; сам он уже в начале.
+            Err(_) => {
+                self.pos = 0;
+                Some(Err(LinkError::Lost(CobsError::Corrupt)))
+            }
         }
     }
 
@@ -198,25 +255,23 @@ impl<T: Read + Write> FrameLink for Cobs<'_, T> {
     type Error = CobsError<T::Error>;
 
     async fn recv(&mut self) -> Result<usize, LinkError<Self::Error>> {
-        // Хвост кадра, начатого до этого вызова, — не наш: до `0x00`.
-        while self.inside {
-            self.inside = self.reader.next_byte().await? != 0;
-        }
-        let mut decoder = CobsDecoder::new(&mut *self.buf);
         let len = loop {
-            let byte = self.reader.next_byte().await?;
-            self.inside = byte != 0;
-            match decoder.feed(byte) {
-                Ok(None) => {}
-                Ok(Some(len)) => break len,
-                Err(DecodeError::TargetBufTooSmall) => {
-                    return Err(LinkError::Lost(CobsError::TooLong));
+            // Байт уходит из `reader` только в опросе, который его вернул, а
+            // кадр копится в `self`: брошенный здесь `recv` не теряет ничего.
+            let byte = match self.reader.next_byte().await {
+                Ok(byte) => byte,
+                Err(err) => {
+                    // Конец потока — новое соединение (`net::TcpServer`), кадр
+                    // в нём с начала; отказ — остаток кадра ещё в линии.
+                    // Пропуск хвоста, начатый до отказа, тоже не снимается.
+                    let midframe = self.skipping || !matches!(self.state, DecoderState::Idle);
+                    let eof = matches!(err, LinkError::Lost(CobsError::Eof));
+                    self.drop_frame(midframe && !eof);
+                    return Err(err);
                 }
-                // `EmptyFrame` потоковый `feed` не возвращает (пустые кадры
-                // между `0x00` он пропускает сам) — ветка для полноты.
-                Err(DecodeError::InvalidFrame { .. } | DecodeError::EmptyFrame) => {
-                    return Err(LinkError::Lost(CobsError::Corrupt));
-                }
+            };
+            if let Some(outcome) = self.feed(byte) {
+                break outcome?;
             }
         };
         let Some(message) = len.checked_sub(CRC_LEN) else {
@@ -234,26 +289,41 @@ impl<T: Read + Write> FrameLink for Cobs<'_, T> {
     }
 
     async fn send(&mut self, len: usize) -> Result<(), LinkError<Self::Error>> {
-        let message = &self.buf[..len];
-        if tx_len(len) > self.frame.len() {
-            return Err(LinkError::Lost(CobsError::TooLong));
-        }
-        let crc = CRC.checksum(message).to_le_bytes();
-        self.frame[0] = 0;
-        let mut encoder = CobsEncoder::new(&mut self.frame[1..]);
-        // Размер проверен выше — места хватит на худший случай.
-        encoder
-            .push(message)
-            .map_err(|_too_small| LinkError::Lost(CobsError::TooLong))?;
-        encoder
-            .push(&crc)
-            .map_err(|_too_small| LinkError::Lost(CobsError::TooLong))?;
-        let end = 1 + encoder.finalize();
-        self.frame[end] = 0;
-        let io = &mut self.reader.io;
-        io.write_all(&self.frame[..=end]).await.map_err(io_error)?;
-        io.flush().await.map_err(io_error)
+        write_frame(&mut self.reader.io, self.frame, &self.buf[..len]).await
     }
+}
+
+/// Отправка не трогает буфер канала: начатый в нём кадр доживёт до
+/// следующего `recv`.
+impl<T: Read + Write> FrameDuplex for Cobs<'_, T> {
+    async fn send_from(&mut self, message: &[u8]) -> Result<(), LinkError<Self::Error>> {
+        write_frame(&mut self.reader.io, self.frame, message).await
+    }
+}
+
+/// Кодирует `message` с CRC в кадр COBS в `frame` и пишет его в `io`.
+async fn write_frame<T: Write>(
+    io: &mut T,
+    frame: &mut [u8],
+    message: &[u8],
+) -> Result<(), LinkError<CobsError<T::Error>>> {
+    if tx_len(message.len()) > frame.len() {
+        return Err(LinkError::Lost(CobsError::TooLong));
+    }
+    let crc = CRC.checksum(message).to_le_bytes();
+    frame[0] = 0;
+    let mut encoder = CobsEncoder::new(&mut frame[1..]);
+    // Размер проверен выше — места хватит на худший случай.
+    encoder
+        .push(message)
+        .map_err(|_too_small| LinkError::Lost(CobsError::TooLong))?;
+    encoder
+        .push(&crc)
+        .map_err(|_too_small| LinkError::Lost(CobsError::TooLong))?;
+    let end = 1 + encoder.finalize();
+    frame[end] = 0;
+    io.write_all(&frame[..=end]).await.map_err(io_error)?;
+    io.flush().await.map_err(io_error)
 }
 
 /// Сколько байт буфера отправки нужно на сообщение длиной `message`:
@@ -294,7 +364,7 @@ mod tests {
     use core::task::{Context, Poll, Waker};
 
     use embedded_io_async::{ErrorKind, ErrorType, Read, Write};
-    use ports::{FrameLink, LinkError};
+    use ports::{FrameDuplex, FrameLink, LinkError};
 
     use super::{Cobs, CobsError};
 
@@ -443,28 +513,10 @@ mod tests {
         assert_eq!(got, want);
     }
 
+    /// Брошенный посреди кадра `recv` не теряет его: следующий `recv`
+    /// продолжает с того же байта — сколько бы раз его ни бросали.
     #[tokio::test]
-    async fn dropped_recv_does_not_glue_the_tail_to_the_next_frame() {
-        let first = frames(&[b"interrupted frame"]).await;
-        let wire = [first.clone(), frames(&[b"whole"]).await].concat();
-        let mut stream = Stream::new(wire, 64);
-        stream.block_at = Some(first.len() / 2);
-        let (mut buf, mut frame) = ([0; 64], [0; 16]);
-        let mut link = Cobs::new(stream, &mut buf, &mut frame);
-        {
-            let mut recv = pin!(link.recv());
-            let mut cx = Context::from_waker(Waker::noop());
-            assert!(recv.as_mut().poll(&mut cx).is_pending());
-        }
-        link.reader.io.block_at = None;
-        let len = link.recv().await.unwrap();
-        assert_eq!(&link.buffer()[..len], b"whole");
-    }
-
-    /// Второй брошенный `recv` — посреди пропуска хвоста первого — не
-    /// снимает пропуск: остаток хвоста всё равно не примется за кадр.
-    #[tokio::test]
-    async fn recv_dropped_while_skipping_keeps_skipping() {
+    async fn dropped_recv_resumes_the_same_frame() {
         let first = frames(&[b"a fairly long interrupted frame"]).await;
         let wire = [first.clone(), frames(&[b"whole"]).await].concat();
         let (mut buf, mut frame) = ([0; 64], [0; 16]);
@@ -477,7 +529,30 @@ mod tests {
         }
         link.reader.io.block_at = None;
         let len = link.recv().await.unwrap();
+        assert_eq!(&link.buffer()[..len], b"a fairly long interrupted frame");
+        let len = link.recv().await.unwrap();
         assert_eq!(&link.buffer()[..len], b"whole");
+    }
+
+    /// `send_from` отправляет чужой буфер и не трогает начатый в буфере
+    /// канала кадр: брошенный `recv` после отправки дочитывает его целым.
+    #[tokio::test]
+    async fn send_from_keeps_a_frame_half_received() {
+        let first = frames(&[b"half received"]).await;
+        let mut stream = Stream::new(first.clone(), 64);
+        stream.block_at = Some(first.len() / 2);
+        let (mut buf, mut frame) = ([0; 64], [0; 32]);
+        let mut link = Cobs::new(stream, &mut buf, &mut frame);
+        {
+            let mut recv = pin!(link.recv());
+            let mut cx = Context::from_waker(Waker::noop());
+            assert!(recv.as_mut().poll(&mut cx).is_pending());
+        }
+        link.send_from(b"reply").await.unwrap();
+        link.reader.io.block_at = None;
+        let len = link.recv().await.unwrap();
+        assert_eq!(&link.buffer()[..len], b"half received");
+        assert_eq!(link.into_inner().tx, frames(&[b"reply"]).await);
     }
 
     #[tokio::test]

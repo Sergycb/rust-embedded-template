@@ -45,6 +45,10 @@ static FRAME: ConstStaticCell<[u8; ::adapters::modbus::DATAGRAM]> =
 // Буфер канала — сообщение.
 static FRAME: ConstStaticCell<[u8; crate::link::HOST_MESSAGE]> =
     ConstStaticCell::new([0; crate::link::HOST_MESSAGE]);
+// Ответ узел кодирует сюда, а не в буфер канала: там может лежать принятый,
+// но ещё не разобранный запрос (`domain::host`).
+static HOST_RESPONSE: ConstStaticCell<[u8; crate::link::HOST_MESSAGE]> =
+    ConstStaticCell::new([0; crate::link::HOST_MESSAGE]);
 {%- endif %}
 
 /// Память канала — ссылки на статики выше. Статики берутся ровно один раз:
@@ -59,6 +63,13 @@ pub fn buffers() -> ::adapters::net::UdpBuffers {
         frame: FRAME.take(),
     }
 }
+{%- if f[3] == "protobuf" %}
+
+/// Буфер ответа узла — ссылка на статик выше; берётся ровно один раз.
+pub fn response() -> &'static mut [u8] {
+    HOST_RESPONSE.take()
+}
+{%- endif %}
 {%- endif %}
 {%- endif %}
 {%- endfor %}

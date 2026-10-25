@@ -2,6 +2,7 @@
 {%- assign xs = links | split: "," %}
 {%- comment %} Номер клиента OTA — порядковый номер транспорта с протоколом в `links`, как в графе (`crate::graph`). {% endcomment %}
 {%- assign client = 0 %}
+{%- comment %} Номер ребра входа `ASK` узла OTA — порядковый среди транспортов CANopen и protobuf, как в `crate::tasks::ota::ASK_EDGES`. {% endcomment %}
 {%- assign asker = 0 %}
 {%- for l in xs %}
 {%- assign f = l | split: ":" %}
@@ -61,7 +62,7 @@ pub mod {{ f[4] }} {
         spawner.spawn(token.expect("задача CANOPEN_{{ f[4] | upcase }} свежая: спавнится один раз"));
     }
 }
-{%- assign asker = asker | plus: 1 %}
 {%- endif %}
+{%- if f[3] == "canopen" or f[3] == "protobuf" %}{% assign asker = asker | plus: 1 %}{% endif %}
 {%- if f[3] != "none" %}{% assign client = client | plus: 1 %}{% endif %}
 {%- endfor %}
