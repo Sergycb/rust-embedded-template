@@ -5,20 +5,20 @@ paths: crates-host/domain/**
 - `no_std`, но тестируется на хосте (`cargo xtask test host`). `embassy-stm32` и любое
   знание о железе здесь запрещены — всё, что их требует, живёт в `crates-cross`.
 - `supervisor` (и приезжающий с ним `embassy-executor`) — можно и нужно: здесь лежат
-  и объявления узлов (`supervisor_fragment!`), и их задачи (`domain::heartbeat::task`),
+  и объявления узлов (`supervisor_fragment!`), и их задачи (`domain::cpu_load::task`),
   сигнатуры которых называют контекст узла и `TaskExit`, и их политика с таймаутом
-  (`domain::heartbeat::WATCHDOG` — `const`). Фрагмент самодостаточен: один узел
-  без имени, всё, что он называет, — полным путём (`$crate::heartbeat::WATCHDOG`,
+  (`domain::cpu_load::WATCHDOG` — `const`). Фрагмент самодостаточен: один узел
+  без имени, всё, что он называет, — полным путём (`$crate::cpu_load::WATCHDOG`,
   `::supervisor::…`), потому что токены `macro_rules!` резолвятся
   на compose-site, а голое имя искалось бы там; тип, которого фрагмент не видит
-  (адаптер в слоте), — его параметр (`name: OTA_FRAG<F, R>`). Compose-site —
-  граф в `crates-cross/app` — перечисляет фрагменты в `fragments:`, даёт узлам имена
-  (`as HEARTBEAT`), подставляет типы и раздаёт поля платы.
+  (адаптер в слоте), — его параметр{% if ota == "true" %} (`name: OTA_FRAG<F, R>`){% endif %}. Compose-site —
+  {% if graph == "true" %}граф в `crates-cross/app` — перечисляет фрагменты в `fragments:`, даёт узлам имена
+  (`as HEARTBEAT`), подставляет типы и раздаёт поля платы{% else %}модули задач
+  `crates-cross/app/src/tasks/` — подставляют типы и раздают поля платы{% endif %}.
 - Адаптер над рычагом платы узел собирает сам: порт `ports::Assemble`
-  (`Source` — рычаг, `Buffers` — ссылки на статики `app`), инициализатором слота
-  (`<L as $crate::Assemble>::assemble(inputs.source, inputs.buffers)`) или, без
-  графа, в задаче. Вход с такой сборкой пишется руками (`ServerWiring`,
-  `OtaWiring`): выведенная фрагментом структура (`boot: … struct`) допускает в
+  (`Source` — рычаг, `Buffers` — ссылки на статики `app`), {% if graph == "true" %}инициализатором слота
+  (`<L as $crate::Assemble>::assemble(inputs.source, inputs.buffers)`){% else %}в задаче{% endif %}. Вход с такой сборкой пишется руками{% if has_modbus == "true" or ota == "true" %} ({% if has_modbus == "true" %}`ServerWiring`{% if ota == "true" %},
+  {% endif %}{% endif %}{% if ota == "true" %}`OtaWiring`{% endif %}){% endif %}: выведенная фрагментом структура (`boot: … struct`) допускает в
   инициализаторе только чтение поля.
 - Liquid разрешён везде, и в корневом workspace тоже: условное подключение (протокол,
   который выбран при генерации) — теги `if`/`endif` в строках-комментариях `//` в `.rs` и
@@ -35,7 +35,7 @@ paths: crates-host/domain/**
   на `impl <Узел>Ctx`, действия — его методы, задача — `match ctx.run().await {}`
   (с выходным состоянием — `ctx.run().await.result`; состоянию, которое
   заимствует данные кадра задачи, — аргументы стартового действия
-  `start(..) => begin`, как у `canopen::task`, а не `static`). Проекцию аргументов
+  `start(..) => begin`{% if has_canopen == "true" %}, как у `canopen::task`{% endif %}, а не `static`). Проекцию аргументов
   (`task: f(ctx.поле)`) и голые циклы в задачах узлов не писать; второй структуры
   вокруг контекста не заводить. Исключение — `cpu_load::log_load`: не
   узел, контекста нет.
@@ -44,13 +44,13 @@ paths: crates-host/domain/**
   отдельного состояния восстановления и пауз в `domain`: переждать отказ (не
   вернуть ошибку снова без ожидания) — контракт порта, его держит реализация.
 - Своих типов в `domain` — только контексты узлов (их эмитит фрагмент), состояния
-  автоматов, входы фрагментов (`OtaWiring`, `IdleMeter`, `Mode`), буферы кадра
-  задачи, которые автомат получает аргументами стартового действия (`canopen::Persisted`){% if has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" %} и обработчик протокола,
+  автоматов, входы фрагментов ({% if ota == "true" %}`OtaWiring`, {% endif %}`IdleMeter`{% if ota == "true" %}, `Mode`{% endif %}), буферы кадра
+  задачи, которые автомат получает аргументами стартового действия{% if has_canopen == "true" %} (`canopen::Persisted`){% endif %}{% if has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" %} и обработчик протокола,
   который фрагмент получает на входе ({% if has_protobuf == "true" %}`host::Service` (порт `HostService`){% elsif has_modbus == "true" %}карта регистров (порт `Registers`; по умолчанию `modbus::EmptyRegisters`, тип выбирает `crate::modbus::Map` в `app`, карта общая у всех узлов Modbus){% else %}`canopen::dictionary` (словарь объектов){% endif %}): это логика
-  приложения, и проект правит его здесь{% endif %}. Исключение — решение
+  приложения, и проект правит его здесь{% endif %}.{% if ota == "true" %} Исключение — решение
   bootloader'а в `domain::ota::boot`: `BootPlan`, `Screening`, `ScreenFailure` (бывший
   `Rejection`) — типы результата двух свободных функций над блокирующими
-  разделами, которые зовёт `crates-cross/boot`. Всё, чем логика разговаривает
+  разделами, которые зовёт `crates-cross/boot`.{% endif %} Всё, чем логика разговаривает
   с портами (ошибки), лежит в `ports`; логика вне автоматов — функции над портами,
   её состояние — локальные переменные вызова. Данные, которые должны пережить
   рестарт, — `resources:` узла, сброс — в стартовом действии.

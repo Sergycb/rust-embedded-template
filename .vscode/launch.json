@@ -22,13 +22,12 @@
 			"request": "launch",
 			"name": "Debug app (debug build)",
 			"cwd": "${workspaceFolder}",
-			"chip": "{{chip}}",
+			"chip": "{{chip}}",{% if ota == 'true' %}
 			// Не просто сборка: приложение линкуется в ACTIVE, а после сброса
 			// управление получает bootloader с базы flash. Задача ниже заливает
 			// его перед сборкой app — иначе на плате без bootloader'а F5
 			// приводит в HardFault вместо app::main. Само приложение прошивает
-			// отладчик (flashingConfig). У проектов без OTA bootloader'а нет, и
-			// перед запуском только собирается app.
+			// отладчик (flashingConfig).{% endif %}
 			"preLaunchTask": "{% if ota == 'true' %}debug: prepare (debug){% else %}build: app (debug){% endif %}",
 			"flashingConfig": {
 				"flashingEnabled": true,
@@ -47,8 +46,8 @@
 			"request": "launch",
 			"name": "Debug app (release build)",
 			"cwd": "${workspaceFolder}",
-			"chip": "{{chip}}",
-			// См. конфигурацию debug выше: заливаем bootloader, собираем app.
+			"chip": "{{chip}}",{% if ota == 'true' %}
+			// См. конфигурацию debug выше: заливаем bootloader, собираем app.{% endif %}
 			"preLaunchTask": "{% if ota == 'true' %}debug: prepare (release){% else %}build: app (release){% endif %}",
 			"flashingConfig": {
 				"flashingEnabled": true,
