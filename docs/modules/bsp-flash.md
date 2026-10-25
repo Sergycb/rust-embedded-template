@@ -33,7 +33,7 @@
 - `config` (`ConfigFlash`) — раздел `CONFIG` (границы — `CONFIG_START`/`CONFIG_END`
   из `[env]`, страница — `CONFIG_ERASE_SIZE`{% if config_paged == "true" %}, над `ErasePage`{% endif %}), над которым
   узел-потребитель собирает хранилище (`adapters::settings`). Именно раздел:
-  запись за его границы отказывает, а не стирает `ACTIVE` или bootloader.
+  запись за его границы отказывает, а не стирает {% if ota == "true" %}`ACTIVE` или bootloader{% else %}код приложения{% endif %}.
 {%- elsif config == "true" and config_store == "eeprom" %}
 
 - `config` (`ConfigFlash` — `adapters::eeprom::Eeprom` над `EepromFlash`) —
@@ -43,9 +43,11 @@
 
 Носители строятся над разделом на весь флеш (`Whole`,
 `BlockingPartition::new(flash, 0, SIZE)`): смещения те же, что у самого
-флеша, операции идут под замком, по одной; асинхронный вид для `embassy-boot` и
-`sequential-storage` даёт `BlockingAsync`. `BlockingPartition::new` паникует,
+{%- assign ota_in = "" %}{% if ota == "true" and ota_store != "external" %}{% assign ota_in = "1" %}{% endif %}
+{%- assign cfg_in = "" %}{% if config == "true" and config_store == "flash" %}{% assign cfg_in = "1" %}{% endif %}
+флеша, операции идут под замком, по одной{% if ota_in == "1" or cfg_in == "1" %}; асинхронный вид для {% if ota_in == "1" %}`embassy-boot`{% if cfg_in == "1" %} и
+{% endif %}{% endif %}{% if cfg_in == "1" %}`sequential-storage`{% endif %} даёт `BlockingAsync`{% endif %}. `BlockingPartition::new` паникует,
 если объём не кратен `ERASE_SIZE`; у STM32 он всегда кратен самому крупному
-сектору, и `const`-assert здесь и в `boot` проверяет это при сборке.
+сектору, и `const`-assert здесь{% if ota == "true" %} и в `boot`{% endif %} проверяет это при сборке.
 
 `NoopRawMutex` подразумевает один исполнитель — подробности в `docs/flash.md`.

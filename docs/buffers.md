@@ -33,10 +33,10 @@ use bbqueue::{
     traits::{coordination::cas::AtomicCoord, notifier::polling::Polling, storage::Inline},
 };
 
-static UART_TX: BBQueue<Inline<256>, AtomicCoord, Polling> = BBQueue::new();
+static DMA_TX: BBQueue<Inline<256>, AtomicCoord, Polling> = BBQueue::new();
 
-let producer = UART_TX.stream_producer();
-let consumer = UART_TX.stream_consumer();
+let producer = DMA_TX.stream_producer();
+let consumer = DMA_TX.stream_consumer();
 
 let mut grant = producer.grant_exact(64).unwrap();
 // DMA пишет прямо в grant — это `&mut [u8]`.

@@ -3,7 +3,10 @@
 (`stack`). Стек, его память и адресацию собирает плата; сокеты на нём открывают
 узлы — каналы протоколов и соединения служб собирает каждый узел сам
 (`ports::Assemble`), а память сокетов и порты заводит приложение
-(`crates-cross/app/src/link/`, `crates-cross/app/src/net/`): порты — решение
+{%- assign sep = " (" %}
+{%- if link_kinds contains "tcp" or link_kinds contains "udp" %}{{ sep }}`crates-cross/app/src/link/`{% assign sep = ", " %}{% endif %}
+{%- if net_services != "" %}{{ sep }}`crates-cross/app/src/net/`{% assign sep = ", " %}{% endif %}
+{%- if sep == ", " %}){% endif %}: порты — решение
 протокола, а не платы.
 
 Шаблон выводы не выбирает (`docs/architecture.md`), поэтому `Device` пока —
@@ -11,11 +14,11 @@
 настоящее: стек `embassy-net` с DHCP, его фоновая работа в узле `NET`
 (`domain::net`) и сокеты протоколов{% if has_tcp == "true" %} (`adapters::net::TcpServer`){% endif %}{% if has_udp == "true" %} (`adapters::net::UdpLink`){% endif %}.
 Проект собирается и запускается, протокол ждёт клиента вечно. Подставить
-Ethernet — заменить устройство: стек, сокеты и граф не меняются.
+Ethernet — заменить устройство: стек, сокеты и {% if graph == "true" %}граф{% else %}задачи{% endif %} не меняются.
 
 Пару собирает плата, а не приложение: фоновая работа стека и сам стек
 рождаются одним `embassy_net::new` и уходят разным узлам, поэтому `Board::new`
-строит её один раз, а граф делит по полям (`board.net.runner` — узлу `NET`,
+строит её один раз, а {% if graph == "true" %}граф{% else %}`tasks::spawn_all`{% endif %} делит по полям (`board.net.runner` — узлу `NET`,
 `board.net.stack` — узлам с сокетами). Затравка стека — {% if rng_irq != "" %}первое слово аппаратного
 генератора (`bsp::rng`){% else %}из заводского номера (`seed_from_uid`: RNG у чипа нет){% endif %}.
 
@@ -88,7 +91,7 @@ Ethernet — заменить устройство: стек, сокеты и г
    `new` получает группу `eth` из `resources.rs`: `Board::new` уже зовёт
    `crate::net::new(uid, seed, r.eth)` (`docs/resources.md`); выводы добавляются в группу.
 
-3. В графе — тип устройства во фрагменте `NET`: он уже назван через
+3. {% if graph == "true" %}В графе — тип устройства во фрагменте `NET`{% else %}В задаче `NET` (`crates-cross/app/src/tasks/net.rs`) — тип устройства{% endif %}: он уже назван через
    `bsp::net::Device`, менять ничего не нужно.
 
 4. В `target-tests` — не ронять драйвер. `#[init]` там отдаёт тесту `Board`
@@ -112,8 +115,10 @@ Ethernet — заменить устройство: стек, сокеты и г
   `Config::ipv4_static(StaticConfigV4 { address: Ipv4Cidr::new(Ipv4Address::new(192, 168, 1, 50), 24), gateway: None, dns_servers: Default::default() })`.
 * MAC — из заводского номера чипа (`mac_from_uid` в `bsp/src/net.rs`), локально
   администрируемый. Свой, выданный производителем, — подставьте там же.
-* Порты протоколов — `PORT` в `crates-cross/app/src/link/tcp.rs` и `udp.rs`: их
+{%- if link_kinds contains "tcp" or link_kinds contains "udp" %}
+* Порты протоколов — `PORT` в {% if link_kinds contains "tcp" %}`crates-cross/app/src/link/tcp.rs`{% if link_kinds contains "udp" %} и `udp.rs`{% endif %}{% else %}`crates-cross/app/src/link/udp.rs`{% endif %}: их
   задаёт протокол, а не плата.
+{%- endif %}
 * Сокетов в стеке — `NET_SOCKETS` в `[env]` `crates-cross/.cargo/config.toml`
   (`bsp::net`): его считает генерация — DHCP-клиент, по одному на сетевой
   транспорт и на каждое соединение служб. Свой сокет — плюс один.

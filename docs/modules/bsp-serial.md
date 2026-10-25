@@ -1,11 +1,13 @@
 UART платы — поток байтов, по подмодулю на транспорт (`bsp::serial::<транспорт>`).
-Канал протокола над ним (Modbus RTU, protobuf с кадрами COBS) собирает узел
+{%- if link_kinds contains "uart" %}
+Канал протокола над ним ({% if has_modbus == "true" %}Modbus RTU{% else %}protobuf с кадрами COBS{% endif %}) собирает узел
 протокола (`ports::Assemble`), а тип канала и его буферы задаёт приложение
 (`crates-cross/app/src/link/uart.rs`).
+{%- endif %}
 
 Шаблон выводы не выбирает (`docs/architecture.md`), поэтому в `Serial` пока
 стоит заглушка `bsp::stub::Serial`: проект собирается и
-запускается, узел протокола ждёт байтов вечно, а запись уходит в никуда.
+запускается, {% if link_kinds contains "uart" %}узел протокола{% else %}приём{% endif %} ждёт байтов вечно, а запись уходит в никуда.
 Поток лежит полем `Board::<транспорт>` (например `usart1`), а какой это USART и на
 каких ножках — решает только этот модуль, поэтому заменить заглушку на драйвер —
 правка в одном месте.
@@ -49,8 +51,8 @@ UART платы — поток байтов, по подмодулю на тра
    `crate::serial::<транспорт>::new(r.<транспорт>)` (`docs/resources.md`); выводы
    добавляются в неё.
 
-`BufferedUart` реализует `embedded_io_async::{Read, ReadReady, Write}` сам —
-ровно то, что ждут транспорты `adapters::modbus::Rtu` и `adapters::cobs::Cobs`,
+`BufferedUart` реализует `embedded_io_async::{Read, ReadReady, Write}` сам{% if link_kinds contains "uart" %} —
+ровно то, что ждёт транспорт {% if has_modbus == "true" %}`adapters::modbus::Rtu`{% else %}`adapters::cobs::Cobs`{% endif %}{% endif %},
 поэтому ни прослойки, ни трейтов в `bsp` не нужно.
 
 ## RS-485

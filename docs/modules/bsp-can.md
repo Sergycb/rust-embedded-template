@@ -1,9 +1,9 @@
-Шина CAN платы, по подмодулю на транспорт (`bsp::can::<транспорт>`) — под узлом
-CANopen или вашим протоколом.
+Шина CAN платы, по подмодулю на транспорт (`bsp::can::<транспорт>`) — под {% if has_canopen == "true" %}узлом
+CANopen{% else %}вашим протоколом{% endif %}.
 
 Шаблон выводы не выбирает (`docs/architecture.md`), поэтому в `Can` пока
 стоит заглушка `bsp::stub::Can`: проект собирается и
-запускается, узел CANopen ждёт кадров вечно, а отправка уходит в никуда.
+запускается, {% if has_canopen == "true" %}узел CANopen{% else %}приём{% endif %} ждёт кадров вечно, а отправка уходит в никуда.
 
 ## Как подставить свой CAN
 
@@ -45,9 +45,10 @@ CANopen или вашим протоколом.
   `with_timeout` в 5 мс превращает это в потерю кадра. `enable` — `async`, а
   `Board::new` синхронный, поэтому включать при первом обмене.
 {%- endif %}
+{%- if has_canopen == "true" %}
 
 Скорость шины — одна на всю сеть CANopen (обычно 125, 250, 500 или
 1000 кбит/с); адрес узла — `node_id` во входе узла в
-`crates-cross/app/src/graph.rs` (`CanOpenWiring`; без графа —
-`crates-cross/app/src/tasks/canopen.rs`), словарь объектов — `device.toml` в
+{% if graph == "true" %}`crates-cross/app/src/graph.rs` (`CanOpenWiring`){% else %}`crates-cross/app/src/tasks/canopen.rs`{% endif %}, словарь объектов — `device.toml` в
 `crates-host/canopen`.
+{%- endif %}
