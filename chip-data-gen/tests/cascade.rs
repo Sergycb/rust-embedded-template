@@ -1266,7 +1266,7 @@ fn no_protocol_by_default() {
         "crates-cross/bsp/src/stub.rs",
         "crates-host/adapters/src/fake.rs",
         "crates-host/domain/src/modbus",
-        "crates-host/domain/src/host",
+        "crates-host/domain/src/protobuf",
         "crates-host/domain/src/canopen.rs",
         "crates-host/domain/src/canopen",
         "crates-host/domain/src/net.rs",

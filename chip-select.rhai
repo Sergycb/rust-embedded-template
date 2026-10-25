@@ -2480,7 +2480,7 @@ if !cobs_used {
 if !on.protobuf {
 	file::delete("crates-host/ports/src/protobuf.rs");
 	file::delete("crates-host/domain/src/protobuf.rs");
-	file::delete("crates-host/domain/src/host");
+	file::delete("crates-host/domain/src/protobuf");
 	file::delete("crates-host/proto");
 }
 if !has.can {
@@ -2605,6 +2605,7 @@ if !services.contains("ssh") {
 // порт `Dial` и описание.
 if !services.contains("mqtt") {
 	file::delete("crates-host/domain/src/mqtt.rs");
+	file::delete("crates-host/domain/src/mqtt");
 	file::delete("crates-cross/app/src/tasks/mqtt.rs");
 	file::delete("crates-cross/app/src/net/mqtt.rs");
 	file::delete("crates-cross/app/build");
