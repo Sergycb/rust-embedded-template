@@ -2,16 +2,31 @@
 //! него bootloader откатит обновление на следующем сбросе; образ принимает
 //! командами на вход [`CMD`].
 {%- assign xs = links | split: "," %}
+{%- assign askers = 0 %}
+{%- for l in xs %}
+{%- assign f = l | split: ":" %}
+{%- if f[3] == "canopen" %}{% assign askers = askers | plus: 1 %}{% endif %}
+{%- endfor %}
 
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 {%- if has_usb == "true" %}
 use embassy_sync::signal::Signal;
 {%- endif %}
 use sync_request::RpcService;
+{%- if askers > 0 %}
+use sync_request::ask::{AskService, Edge};
+{%- else %}
 use sync_request::ask::AskService;
+{%- endif %}
 
 /// Адаптер обновления над флешем платы — тип слота `FLASH` фрагмента `OTA_FRAG`.
 type Updater = adapters::ota::Updater<bsp::FirmwareFlash, {{signed}}>;
+{%- if askers > 0 %}
+
+/// Ребро входа `ASK` — доля одного клиента в его очереди.
+type OtaEdge =
+    Edge<'static, CriticalSectionRawMutex, domain::ota::OtaRequest, domain::ota::OtaReply>;
+{%- endif %}
 
 /// Вход команд узла — то, что с графом заводит `request:` фрагмента
 /// `OTA_FRAG`, той же ёмкости (`domain::ota::CMD_BYTES`). Клиента{% if has_modbus != "true" and has_protobuf != "true" and has_canopen != "true" %} получает ваш протокол
@@ -26,16 +41,26 @@ pub static CMD: RpcService<
 > = RpcService::new();
 
 /// Вход команд без ожидания исхода — то, что с графом заводит `serves:`
-/// фрагмента `OTA_FRAG`. Очередь — сумма квот клиентов (`Q`) на их число
-/// рёбер (`E`); клиентов пока нет, и вход пуст.
+/// фрагмента `OTA_FRAG`. Клиенты — задачи CANopen, по ребру на шину с квотой
+/// в одну команду: очередь (`Q`) — сумма квот, `E` — число рёбер. С графом
+/// это считает граф по `asks:` фрагментов.
 pub static ASK: AskService<
     CriticalSectionRawMutex,
     domain::ota::OtaRequest,
     domain::ota::OtaReply,
-    0,
-    0,
+    {{ askers }},
+    {{ askers }},
     { domain::ota::CMD_BYTES },
 > = AskService::new();
+
+{%- if askers > 0 %}
+
+/// Рёбра входа `ASK`: ребро `i` — `i`-й шины CANopen в `links`, слот `i`.
+{%- assign k = 0 %}
+pub static ASK_EDGES: [OtaEdge; {{ askers }}] = [
+{%- for l in xs %}{% assign f = l | split: ":" %}{% if f[3] == "canopen" %}{% if k > 0 %}, {% endif %}ASK.edge({{ k }}, {{ k }}, 1){% assign k = k | plus: 1 %}{% endif %}{% endfor -%}
+];
+{%- endif %}
 
 {%- for l in xs %}
 {%- assign f = l | split: ":" %}

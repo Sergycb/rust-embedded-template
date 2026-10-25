@@ -15,11 +15,12 @@
 //!
 //! Запись SDO не ждёт исхода, в отличие от protobuf и Modbus: `zencan`
 //! отвечает на неё синхронно, внутри обработки кадра, и отложить ответ нельзя.
-//! Поэтому запись только ставит команду, а выполняет её узел CANopen после
-//! обработки кадра (`step`), отдавая узлу OTA, — и до исхода следующий кадр не
-//! обрабатывает. Хост после каждой команды читает sub 5: ответ на это чтение
-//! придёт уже с исходом, поэтому SDO-тайм-аут хоста на него — длиннее
-//! стирания раздела (секунды на F2/F4/F7).
+//! Поэтому запись только ставит команду, а узел CANopen после обработки кадра
+//! (`step`) отправляет её на вход `ASK` узла OTA, не дожидаясь исхода, и
+//! работает дальше: heartbeat, SDO и PDO идут и пока узел OTA стирает раздел.
+//! Исход узел забирает из `reply()` и кладёт в sub 5. Хост после каждой
+//! команды перечитывает sub 5, пока там 0. Новая команда до исхода прежней —
+//! отказ записи `CantStoreDeviceState`: квота узла — одна команда в полёте.
 //!
 //! Объект — [`OTA`], `static` здесь, а не у compose-site: стек держит
 //! обработчик ссылкой `'static`, а сам объект — логика, не железо. Он один на
@@ -32,7 +33,7 @@ use zencan_node::common::objects::{AccessType, DataType, ObjectCode, PdoMappable
 use zencan_node::common::sdo::AbortCode;
 use zencan_node::object_dict::ObjectAccess;
 
-use crate::ota::OtaClient;
+use crate::ota::{ClientId, OtaRequest};
 
 /// Индекс объекта OTA — в области приложения `zencan` (0x2000–0x4FFF). Тот же,
 /// что в `device.toml`; разойтись им не даёт тест узла.
@@ -44,6 +45,9 @@ const START_BYTES: usize = 4;
 /// Длина заголовка `Chunk`: смещение.
 const CHUNK_HEADER: usize = 4;
 
+/// Клиент входа `ASK` узла OTA — поле `ota_ask` контекста узла CANopen.
+pub(crate) type OtaAsker<'a> = supervisor::Asker<'a, OtaRequest, OtaReply, ()>;
+
 /// Объект OTA словаря: ставит команды и показывает исход последней.
 ///
 /// Состояние — под критической секцией (`AtomicCell`): объект — `static`, а
@@ -51,6 +55,8 @@ const CHUNK_HEADER: usize = 4;
 pub struct OtaObject {
     /// Команда, которую узел CANopen ещё не отдал узлу OTA.
     pending: AtomicCell<Option<OtaCommand>>,
+    /// Команда поставлена, а исхода ещё нет.
+    in_flight: AtomicCell<bool>,
     /// Код исхода последней команды; 0 — выполняется или команд не было.
     status: AtomicCell<u16>,
     /// Сколько байт образа принято — по последнему `Received`.
@@ -63,28 +69,38 @@ impl OtaObject {
     pub const fn new() -> Self {
         Self {
             pending: AtomicCell::new(None),
+            in_flight: AtomicCell::new(false),
             status: AtomicCell::new(0),
             received: AtomicCell::new(0),
         }
     }
 
-    /// Ждущую команду — узлу OTA, исход — в объект. Зовёт узел CANopen после
-    /// обработки кадра; нет команды — ничего.
-    pub(crate) async fn forward(&self, ota: &OtaClient) {
+    /// Новый запуск узла: команды прежнего забыты. Свежий `Asker` бросает
+    /// всё, что прежний оставил в полёте, и его исход сюда не придёт — без
+    /// сброса объект отвергал бы каждую новую команду.
+    pub(crate) fn reset(&self) {
+        self.pending.store(None);
+        self.in_flight.store(false);
+    }
+
+    /// Ждущую команду — на вход `ASK` узла OTA от клиента `client`, не
+    /// дожидаясь исхода: его узел CANopen заберёт из `ota.reply()` и отдаст
+    /// [`record`](Self::record). Зовёт узел после обработки кадра; нет
+    /// команды — ничего.
+    pub(crate) fn send(&self, ota: &mut OtaAsker<'_>, client: ClientId) {
         let Some(command) = self.pending.take() else {
             return;
         };
-        let reply = if let Ok(reply) = ota.request(command).await {
-            reply
-        } else {
-            warn!("canopen: узел OTA не ответил");
-            Err(ports::Rejection::Device)
-        };
-        self.record(reply);
+        if ota.try_call((), OtaRequest { client, command }).is_err() {
+            // Не бывает: запись не ставит команду, пока прежняя в полёте, а
+            // квота — одна команда.
+            warn!("canopen: вход ASK узла OTA занят");
+            self.record(Err(ports::Rejection::Busy));
+        }
     }
 
-    /// Исход — в sub 5 и 6.
-    fn record(&self, reply: OtaReply) {
+    /// Исход — в sub 5 и 6; следующая команда снова принимается.
+    pub(crate) fn record(&self, reply: OtaReply) {
         match reply {
             Ok(Progress::Received(received)) => self.received.store(received),
             // Отказ обрывает приём: длина прошлого приёма больше ни к чему.
@@ -92,13 +108,18 @@ impl OtaObject {
             Ok(Progress::Ready | Progress::Rebooting) => {}
         }
         self.status.store(reply_code(&reply));
+        self.in_flight.store(false);
     }
 
-    /// Ставит команду. Вторая до исхода первой не приходит: узел отдаёт
-    /// команду узлу OTA в той же обработке кадра, где её поставил.
-    fn post(&self, command: OtaCommand) {
+    /// Ставит команду; пока прежняя без исхода — отказ записи.
+    fn post(&self, command: OtaCommand) -> Result<(), AbortCode> {
+        if self.in_flight.load() {
+            return Err(AbortCode::CantStoreDeviceState);
+        }
+        self.in_flight.store(true);
         self.status.store(0);
         self.pending.store(Some(command));
+        Ok(())
     }
 }
 
@@ -163,8 +184,7 @@ impl ObjectAccess for OtaObject {
             0 | 5 | 6 => return Err(AbortCode::ReadOnly),
             _ => return Err(AbortCode::NoSuchSubIndex),
         };
-        self.post(command);
-        Ok(())
+        self.post(command)
     }
 
     fn object_code(&self) -> ObjectCode {
@@ -274,6 +294,22 @@ mod tests {
         object.pending.take();
         object.record(Err(Rejection::NoSession));
         assert_eq!(read(&object, 5), 16u16.to_le_bytes());
+    }
+
+    /// Команда до исхода прежней — отказ записи; после исхода — принимается.
+    #[test]
+    fn a_command_waits_for_the_outcome_of_the_previous_one() {
+        let object = OtaObject::new();
+        object.write(3, &[0; 4]).unwrap();
+        assert_eq!(
+            object.write(4, &[0; 4]),
+            Err(AbortCode::CantStoreDeviceState)
+        );
+        assert_eq!(object.pending.take(), Some(OtaCommand::Finish));
+
+        object.record(Ok(Progress::Ready));
+        object.write(4, &[0; 4]).unwrap();
+        assert_eq!(object.pending.take(), Some(OtaCommand::Reboot));
     }
 
     /// Записи не по форме — отказ до постановки команды.

@@ -305,8 +305,9 @@ flash и безусловно прыгает в него (`unsafe { bl.load(entr
 master'а на `Start` должен быть длиннее стирания раздела.{% elsif protocol == "canopen" %}В этом проекте команды — записи SDO в объект `0x4F00` (`domain::canopen::OtaObject`,
 описан в `crates-host/canopen/device.toml`): sub 1 — `Start`, 2 — `Chunk`, 3 — `Finish`,
 4 — `Reboot`. `zencan` отвечает на SDO синхронно, поэтому запись только ставит
-команду, а исход хост читает из sub 5 (0 — ещё выполняется) и принятую длину — из
-sub 6.{% elsif protocol == "none" %}Протокола в этом проекте нет, и узел только подтверждает образ: команды
+команду, а исход хост читает из sub 5, перечитывая, пока там 0 (ещё выполняется), и
+принятую длину — из sub 6. Узел CANopen всё это время обслуживает шину; команду до
+исхода прежней он отвергает отказом SDO `0x0800_0022`.{% elsif protocol == "none" %}Протокола в этом проекте нет, и узел только подтверждает образ: команды
 шлёт ваш протокол: клиент входа{% if graph == "true" %} `ota_cmd_requester()` графа{% else %} — `crate::tasks::ota::CMD.requester()`
 (`static` в `crates-cross/app/src/tasks/ota.rs`){% endif %}, обёрнутый в
 `domain::ota::OtaClient::new(.., domain::ota::ClientId(n))`; номер `n` — следующий

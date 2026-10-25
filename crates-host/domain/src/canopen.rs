@@ -6,7 +6,8 @@
 //! вызывается `Node::process` — на нём heartbeat, таймауты SDO, PDO, — и всё,
 //! что узел поставил в очередь передачи, уходит на шину. Узел графа делает
 //! ровно это: ждёт кадр наперегонки с тактом
-//! [`TICK`](crate::canopen::TICK).
+//! [`TICK`](crate::canopen::TICK){% if ota == "true" %} и с исходом команды
+//! OTA, которую отправил, не дожидаясь (`canopen::ota`){% endif %}.
 //!
 //! Словарь объектов — проектный: его `zencan-build` генерирует из
 //! `device.toml` крейта `crates-host/canopen`, а compose-site передаёт узлу
@@ -123,8 +124,7 @@ pub struct Dictionary {
 ///                 = ::domain::canopen::CanOpenWiring { bus: board.can, node_id: 1,
 ///                       dictionary: ::domain::canopen::dictionary(),
 ///                       settings: board.config, persist: true,
-///                       ota_cmd: ::domain::ota::OtaClient::new(ota_cmd_requester(),
-///                                    ::domain::ota::ClientId(0)) }];   // только с OTA
+///                       ota_client: ::domain::ota::ClientId(0) }];   // только с OTA
 /// ```
 ///
 /// Написан руками, а не выведен фрагментом: слот хранилища инициализируется
@@ -142,8 +142,9 @@ pub struct CanOpenWiring<C, S: ports::Assemble> {
     /// Сохранять ли объекты и адрес: `false` — хранилища у проекта нет.
     pub persist: bool,
     // {%- if ota == "true" %}
-    /// Клиент входа `CMD` узла OTA: команды объекта OTA словаря уходят им.
-    pub ota_cmd: crate::ota::OtaClient,
+    /// Номер клиента узла OTA — транспорта: с ним команды объекта OTA
+    /// словаря уходят на вход `ASK` (`asks:` фрагмента).
+    pub ota_client: crate::ota::ClientId,
     // {%- endif %}
 }
 
@@ -181,6 +182,10 @@ where
                 // Такт — первым: под потоком кадров heartbeat не должен
                 // откладываться.
                 Running { next, .. } => tick: fsm::deadline(*next),
+                // {%- if ota == "true" %}
+                // Исход команды OTA — до кадров: держит квоту, пока не забран.
+                Running             => ota: self.ota_ask.reply(),
+                // {%- endif %}
                 Running             => frame: self.bus.recv(),
             }
             transitions {
@@ -188,6 +193,9 @@ where
                 Running + tick(())         => tick     -> self,
                 Running + frame(Ok(frame)) => received -> self,
                 Running + frame(Err(err))  => failed   -> self,
+                // {%- if ota == "true" %}
+                Running + ota(reply)       => answered -> self,
+                // {%- endif %}
             }
         }
     }
@@ -205,6 +213,7 @@ where
         // Объект OTA в словаре — место под обработчик: без регистрации стек
         // отвечает на его SDO отказом `ResourceNotAvailable`.
         d.ota.register_handler(&OTA);
+        OTA.reset();
         // {%- endif %}
         let node_id = self.restore(persisted).await;
         info!("domain: узел CANOPEN запущен, адрес {}", node_id.raw());
@@ -271,6 +280,22 @@ where
         }
     }
 
+    // {%- if ota == "true" %}
+    /// Исход команды OTA — в объект словаря (sub 5 и 6).
+    #[expect(clippy::unused_self, reason = "действие автомата")]
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "событие `listen` автомат отдаёт действию по значению"
+    )]
+    fn answered(&mut self, reply: supervisor::AskReply<(), crate::ota::OtaReply>) {
+        let reply = reply.outcome.unwrap_or_else(|_dropped| {
+            warn!("canopen: узел OTA не ответил");
+            Err(ports::Rejection::Device)
+        });
+        OTA.record(reply);
+    }
+    // {%- endif %}
+
     /// `Node::process`, затем всё, что стек поставил в очередь, — на шину.
     async fn step(&mut self, s: &mut Running<'f>) {
         let node = &mut *s.stack.node;
@@ -303,10 +328,9 @@ where
         // `save` по SDO. Хранилищу шина не нужна: `save` уже принят стеком.
         persisted::save(s.stack.persisted, self.settings).await;
         // {%- if ota == "true" %}
-        // Команда OTA, поставленная записью SDO, — узлу OTA, исход — в объект.
-        // Тоже после ответов: стирание раздела идёт секунды, а SDO стека
-        // ответить синхронно уже успел (`canopen::ota`).
-        OTA.forward(self.ota_cmd).await;
+        // Команда OTA, поставленная записью SDO, — на вход `ASK` узла OTA, не
+        // дожидаясь исхода: его принесёт `reply()` (`answered`).
+        OTA.send(&mut self.ota_ask, *self.ota_client);
         // {%- endif %}
     }
 
@@ -432,12 +456,16 @@ supervisor::supervisor_fragment! {
             /// Сохранять ли объекты и адрес: `false` — хранилища у проекта нет.
             PERSIST: bool = inputs.persist,
             // {%- if ota == "true" %}
-            /// Клиент входа `CMD` узла OTA: команды объекта OTA словаря
-            /// ([`OTA`]) уходят им.
-            OTA_CMD: $crate::ota::OtaClient =
-                inputs.ota_cmd
+            /// Номер клиента узла OTA — транспорта.
+            OTA_CLIENT: $crate::ota::ClientId = inputs.ota_client
             // {%- endif %}
         ],
+        // {%- if ota == "true" %}
+        // Команды объекта OTA словаря ([`OTA`]) — на вход `ASK` узла OTA без
+        // ожидания исхода: узел обслуживает шину, пока OTA стирает раздел.
+        // Квота — одна команда: следующую объект не ставит до исхода.
+        asks: [OTA.ASK: $crate::ota::OtaRequest -> $crate::ota::OtaReply; 1 tag ()],
+        // {%- endif %}
         ctx: $crate::canopen::CanOpenCtx,
         task: $crate::canopen::task;
 }
@@ -445,15 +473,18 @@ supervisor::supervisor_fragment! {
 // Тесты гоняют узел на словаре примера `crates-host/canopen`.
 #[cfg(test)]
 mod tests {
+    use core::cell::RefCell;
+    use core::future::poll_fn;
     use core::pin::pin;
-    use core::task::{Context, Waker};
+    use core::task::{Context, Poll, Waker};
     use std::collections::{HashMap, VecDeque};
+    use std::rc::Rc;
     use std::sync::{Mutex, PoisonError};
 
     use embedded_can::{Frame, Id, StandardId};
     use ports::{CanBus, LinkError, SettingsStorage};
 
-    use super::{CanOpenCtx, NODE_ID_KEY, task};
+    use super::{NODE_ID_KEY, task};
 
     /// Адрес узла в тестах: SDO-запросы — на `0x605`, ответы — с `0x585`.
     const NODE: u8 = 5;
@@ -506,10 +537,14 @@ mod tests {
         }
     }
 
-    /// Шина: отдаёт заготовленные исходы `recv`, когда они кончаются, — ждёт
-    /// вечно, как тихая шина; отправленные кадры складывает в `sent`.
+    /// Входящие исходы `recv` шины — общие с тестом, который досылает кадры,
+    /// пока узел работает.
+    type Incoming = Rc<RefCell<VecDeque<Result<TestFrame, LinkError<&'static str>>>>>;
+
+    /// Шина: отдаёт заготовленные исходы `recv`, когда они кончаются, — ждёт,
+    /// как тихая шина; отправленные кадры складывает в `sent`.
     struct Bus {
-        incoming: VecDeque<Result<TestFrame, LinkError<&'static str>>>,
+        incoming: Incoming,
         sent: Vec<TestFrame>,
         send: Result<(), LinkError<&'static str>>,
     }
@@ -519,7 +554,7 @@ mod tests {
             incoming: impl IntoIterator<Item = Result<TestFrame, LinkError<&'static str>>>,
         ) -> Self {
             Self {
-                incoming: incoming.into_iter().collect(),
+                incoming: Rc::new(RefCell::new(incoming.into_iter().collect())),
                 sent: Vec::new(),
                 send: Ok(()),
             }
@@ -531,13 +566,14 @@ mod tests {
         type Error = &'static str;
 
         fn recv(&mut self) -> impl Future<Output = Result<TestFrame, LinkError<Self::Error>>> {
-            let next = self.incoming.pop_front();
-            async move {
-                match next {
-                    Some(outcome) => outcome,
-                    None => std::future::pending().await,
-                }
-            }
+            // Кадр снимается в том опросе, который его возвращает: брошенный
+            // `recv` кадр не теряет — контракт порта.
+            poll_fn(|_| {
+                self.incoming
+                    .borrow_mut()
+                    .pop_front()
+                    .map_or(Poll::Pending, Poll::Ready)
+            })
         }
 
         fn send(
@@ -612,62 +648,83 @@ mod tests {
         // этому не относится.
         while canopen::NODE_MBOX.next_transmit_message().is_some() {}
         let mut dictionary = super::dictionary();
+        let mut node_id = NODE;
         // {%- if ota == "true" %}
-        let (mut ota_cmd, _ota_node) = crate::ota::tests::live();
+        let mut ota_client = crate::ota::ClientId(0);
         // {%- endif %}
-        let ctx = CanOpenCtx {
+        let stand = supervisor::stand!(CANOPEN_FRAG<Bus, Memory>);
+        let ctx = stand.ctx(
             bus,
-            node_id: &mut NODE.clone(),
-            dictionary: &mut dictionary,
+            &mut node_id,
+            &mut dictionary,
             settings,
-            persist: &mut persist,
+            &mut persist,
             // {%- if ota == "true" %}
-            ota_cmd: &mut ota_cmd,
+            &mut ota_client,
             // {%- endif %}
-            index: 0,
-        };
+        );
         let mut task = pin!(task(ctx));
         let mut cx = Context::from_waker(Waker::noop());
         assert!(task.as_mut().poll(&mut cx).is_pending(), "ждёт кадр");
     }
 
     // {%- if ota == "true" %}
-    /// Команда OTA записью SDO доходит до узла OTA, исход — в sub 5 объекта.
-    /// Узел OTA крутится рядом: оба future по очереди.
+    /// Команда OTA записью SDO уходит узлу OTA без ожидания исхода: пока
+    /// узел OTA не ответил, узел CANopen обрабатывает кадры, и sub 5 читается
+    /// нулём; исход приходит из `reply()` и читается следующим чтением.
     #[test]
-    fn an_ota_command_over_sdo_reaches_the_ota_node() {
+    fn an_ota_command_over_sdo_does_not_stop_the_node() {
+        /// Чтение исхода — 0x4F00:05.
+        const READ_STATUS: [u8; 8] = [0x40, 0x00, 0x4F, 0x05, 0, 0, 0, 0];
+
         let _only_one = DICTIONARY.lock().unwrap_or_else(PoisonError::into_inner);
         while canopen::NODE_MBOX.next_transmit_message().is_some() {}
         let mut bus = Bus::with([
             // `Finish` — 0x4F00:03, expedited на 4 байта (cs 0x23).
             Ok(frame(0x605, &[0x23, 0x00, 0x4F, 0x03, 0, 0, 0, 0])),
-            // Чтение исхода — 0x4F00:05.
-            Ok(frame(0x605, &[0x40, 0x00, 0x4F, 0x05, 0, 0, 0, 0])),
+            Ok(frame(0x605, &READ_STATUS)),
         ]);
+        let incoming = Rc::clone(&bus.incoming);
         {
             let mut dictionary = super::dictionary();
-            let (mut ota_cmd, mut ota_node) = crate::ota::tests::live();
-            let ctx = CanOpenCtx {
-                bus: &mut bus,
-                node_id: &mut NODE.clone(),
-                dictionary: &mut dictionary,
-                settings: &mut Memory::default(),
-                persist: &mut false,
-                ota_cmd: &mut ota_cmd,
-                index: 0,
-            };
+            let (mut node_id, mut settings, mut persist) = (NODE, Memory::default(), false);
+            let mut ota_client = crate::ota::ClientId(0);
+            let stand = supervisor::stand!(CANOPEN_FRAG<Bus, Memory>);
+            let mut ota_node =
+                crate::ota::tests::serving(stand.ota_ask.server().expect("сервер ASK свободен"));
+            let ctx = stand.ctx(
+                &mut bus,
+                &mut node_id,
+                &mut dictionary,
+                &mut settings,
+                &mut persist,
+                &mut ota_client,
+            );
             let mut node = pin!(task(ctx));
             let mut cx = Context::from_waker(Waker::noop());
-            for _ in 0..16 {
+            let mut poll_node = || {
                 assert!(
                     node.as_mut().poll(&mut cx).is_pending(),
                     "узел CANopen не выходит"
                 );
+            };
+            // Узел OTA ещё не опрошен — исхода нет, а кадры обрабатываются.
+            (0..8).for_each(|_| poll_node());
+            // Узел OTA отвечает, узел CANopen забирает исход.
+            for _ in 0..8 {
+                poll_node();
                 assert!(
-                    ota_node.as_mut().poll(&mut cx).is_pending(),
+                    ota_node
+                        .as_mut()
+                        .poll(&mut Context::from_waker(Waker::noop()))
+                        .is_pending(),
                     "узел OTA не выходит"
                 );
             }
+            incoming
+                .borrow_mut()
+                .push_back(Ok(frame(0x605, &READ_STATUS)));
+            (0..8).for_each(|_| poll_node());
         }
 
         let sdo: Vec<_> = bus
@@ -676,8 +733,10 @@ mod tests {
             .filter(|f| f.id == Id::Standard(StandardId::new(0x585).unwrap()))
             .collect();
         assert_eq!(sdo[0].data[0], 0x60, "запись принята: {:?}", sdo[0]);
-        // Ответ на чтение — expedited на 2 байта (cs 0x4B): `NoSession` = 16.
-        assert_eq!(sdo[1].data, [0x4B, 0x00, 0x4F, 0x05, 16, 0, 0, 0]);
+        // Ответы на чтение — expedited на 2 байта (cs 0x4B): сначала 0 —
+        // выполняется, затем `NoSession` = 16.
+        assert_eq!(sdo[1].data, [0x4B, 0x00, 0x4F, 0x05, 0, 0, 0, 0]);
+        assert_eq!(sdo[2].data, [0x4B, 0x00, 0x4F, 0x05, 16, 0, 0, 0]);
     }
     /// Объект OTA в `device.toml` стоит по индексу [`super::OTA_INDEX`]:
     /// разойдись они — хост писал бы в несуществующий объект.
@@ -778,7 +837,7 @@ mod tests {
         let mut bus = Bus::with([request(), request()]);
         bus.send = Err(LinkError::Down("bus-off"));
         serve(&mut bus);
-        assert!(bus.incoming.is_empty(), "запросы прочитаны");
+        assert!(bus.incoming.borrow().is_empty(), "запросы прочитаны");
         assert!(
             bus.sent
                 .iter()

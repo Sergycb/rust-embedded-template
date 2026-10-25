@@ -694,8 +694,8 @@ pub(crate) mod tests {
     use embassy_time::{Duration, MockDriver};
     use ports::{Chunk, OtaCommand, OtaReply, Progress, Reboot, Rejection};
     use supervisor::runtime::TaskExit;
-    // {%- if has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" or net_services contains "mqtt" %}
 
+    // {%- if has_modbus == "true" or has_protobuf == "true" or net_services contains "mqtt" %}
     use super::OtaClient;
     // {%- endif %}
 
@@ -724,7 +724,7 @@ pub(crate) mod tests {
         Skip(Duration),
     }
 
-    // {%- if has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" or net_services contains "mqtt" %}
+    // {%- if has_modbus == "true" or has_protobuf == "true" or net_services contains "mqtt" %}
     /// Узел OTA, который тест крутит сам: `poll` по очереди с запросом.
     pub(crate) type Node = Pin<Box<dyn Future<Output = TaskExit>>>;
 
@@ -746,6 +746,28 @@ pub(crate) mod tests {
             OtaClient::new(stand.cmd.requester(), ClientId(0)),
             Box::pin(node),
         )
+    }
+    // {%- endif %}
+
+    // {%- if has_canopen == "true" %}
+    /// Узел OTA на фейке флеша, чей вход `ASK` — `ask`: сервер ребра из стенда
+    /// узла-клиента (`stand.ota_ask` у фрагмента с `asks: [OTA.ASK ..]`).
+    pub(crate) fn serving<'a>(
+        ask: supervisor::AskServer<'a, OtaRequest, OtaReply>,
+    ) -> Pin<Box<dyn Future<Output = TaskExit> + 'a>> {
+        let stand = Box::leak(Box::new(
+            supervisor::stand!(OTA_FRAG<FakeFlash, FakeReboot>; QUEUE_ASK = 1),
+        ));
+        Box::pin(task(super::OtaCtx {
+            flash: Box::leak(Box::new(FakeFlash::new(1024, 8))),
+            reboot: Box::leak(Box::new(FakeReboot)),
+            mode: Box::leak(Box::new(Mode::Plain)),
+            confirmed: Box::leak(Box::new(false)),
+            cmd: stand.cmd.server().expect("сервер CMD стенда свободен"),
+            ask,
+            ready: supervisor::Readiness::new(|| {}),
+            index: 0,
+        }))
     }
     // {%- endif %}
 

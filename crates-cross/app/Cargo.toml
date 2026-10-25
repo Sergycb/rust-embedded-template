@@ -80,14 +80,16 @@ supervisor = { workspace = true }
 # почему она не в воркспейсе и не безусловная.
 
 {%- if ota == "true" and graph != "true" %}
-# Вход команд узла OTA без графа (`tasks::ota::CMD`): с графом его заводит
-# `request:` фрагмента, а здесь модуль задачи объявляет `static` сам — с тем же
-# мьютексом, что у `supervisor`, иначе тип поля `cmd` контекста узла не сойдётся.
+# Входы команд узла OTA без графа (`tasks::ota::CMD` и `ASK`): с графом их
+# заводят `request:` и `serves:` фрагмента, а здесь модуль задачи объявляет
+# `static` сам — с тем же мьютексом, что у `supervisor`, иначе типы полей `cmd`
+# и `ask` контекста узла не сойдутся.
 sync-request = { workspace = true }
 {%- endif %}
 {%- if has_modbus == "true" or ota == "true" and graph != "true" %}
 # {% if has_modbus == "true" %}`OnceLock` карты регистров Modbus (src/modbus.rs){% endif %}{% if has_modbus == "true" and ota == "true" and graph != "true" %};{% endif %}{% if ota == "true" and graph != "true" %} мьютекс и
-# сигналы узла OTA без графа (src/tasks/ota.rs){% endif %}.
+# сигналы узла OTA без графа (src/tasks/ota.rs){% if has_canopen == "true" %}, метки ребра `ASK` у задач CANopen
+# (src/tasks/canopen.rs){% endif %}{% endif %}.
 embassy-sync = { workspace = true }
 {%- endif %}
 

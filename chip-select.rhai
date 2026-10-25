@@ -884,8 +884,9 @@ const RAM_COST = #{
         // Modbus RTU держит свой буфер кадра (`adapters::modbus::Rtu`, 256 байт):
         // stm32f407ve modbus-uart-can 6320 = 3880 + 2440 (UART с Modbus).
         "uart:none": 0, "uart:modbus": 2472, "uart:protobuf": 2944,
-        // CANopen — stm32g474re canopen-config 7504 против 3884 + 32 (настройки).
-        "can:none": 0, "can:canopen": 3588,
+        // CANopen — stm32g474re canopen-config 7620 против 3884 + 32 (настройки);
+        // с OTA сюда входят ребро и метка входа `ASK` узла OTA.
+        "can:none": 0, "can:canopen": 3704,
         // stm32h743zg против 3932: tcp-only 5308, modbus-tcp 9540 (с master и
         // без — одинаково); protobuf — stm32f407ve UART и TCP 13216.
         "tcp:none": 416, "tcp:modbus": 4648, "tcp:protobuf": 5432,

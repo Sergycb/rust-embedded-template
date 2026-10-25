@@ -92,8 +92,9 @@ supervisor_graph! {
         // `bsp::reset::Reboot` и режим применения (`Mode::{% if signed == "true" %}Signed` с версией этого образа
         // из `crate::version`{% else %}Plain`{% endif %}). Образ узел принимает командами на свой вход
         // `CMD`{% if has_modbus != "true" and has_protobuf != "true" and has_canopen != "true" %}: клиента (`::domain::ota::OtaClient` над `ota_cmd_requester()`) получает ваш
-        // протокол — без него узел только подтверждает образ{% else %} — их шлют узлы протоколов ниже, каждый своим клиентом (`OtaClient`
-        // с номером транспорта: сессию приёма держит один клиент, остальным — `Busy`){% endif %}; алгоритм обновления — в
+        // протокол — без него узел только подтверждает образ{% else %} — их шлют узлы протоколов ниже, каждый со своим номером
+        // транспорта (сессию приёма держит один клиент, остальным — `Busy`){% endif %}{% if has_canopen == "true" %}; узлы
+        // CANopen — на вход `ASK`, не дожидаясь исхода (ребро `asks:` в их фрагменте){% endif %}; алгоритм обновления — в
         // `domain::ota`. Вычисляется привязка в прологе `spawn_all` первой
         // строкой — раньше инициализатора блока `watchdog:`, как бы они ни стояли
         // в тексте, — частичным move: `firmware` уезжает в слот узла, `watchdog`
@@ -197,12 +198,9 @@ supervisor_graph! {
                 settings: {% if config == "true" %}board.config{% else %}(){% endif %},
                 persist: {{config}},
 {%- if ota == "true" %}
-                // Команды объекта OTA словаря (0x4F00) узел отдаёт узлу `OTA`
-                // клиентом входа `CMD` с номером этого транспорта.
-                ota_cmd: ::domain::ota::OtaClient::new(
-                    ota_cmd_requester(),
-                    ::domain::ota::ClientId({{ client }}),
-                ),
+                // Команды объекта OTA словаря (0x4F00) узел шлёт на вход `ASK`
+                // узла `OTA` (ребро `asks:` фрагмента) с номером этого транспорта.
+                ota_client: ::domain::ota::ClientId({{ client }}),
 {%- endif %}
             },
 {%- elsif f[3] == "protobuf" %}
