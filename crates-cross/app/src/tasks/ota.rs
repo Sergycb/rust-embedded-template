@@ -39,7 +39,7 @@ pub static CMD: RpcService<
     { domain::ota::CMD_BYTES },
 > = RpcService::new();
 
-/// Вход команд без ожидания исхода.{% if askers > 0 %} Клиенты — {% if has_canopen == "true" %}задачи CANopen{% endif %}{% if has_canopen == "true" and has_protobuf == "true" %} и {% endif %}{% if has_protobuf == "true" %}`HOST`{% endif %}, по ребру на транспорт с квотой
+/// Вход команд без ожидания исхода.{% if askers > 0 %} Клиенты — {% if has_canopen == "true" %}задачи CANopen{% endif %}{% if has_canopen == "true" and has_protobuf == "true" %} и {% endif %}{% if has_protobuf == "true" %}`PROTOBUF`{% endif %}, по ребру на транспорт с квотой
 /// в одну команду: очередь (`Q`) — сумма квот, `E` — число рёбер.{% else %} Клиентов у него нет: очередь и
 /// рёбра нулевые.{% endif %}
 pub static ASK: AskService<

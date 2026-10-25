@@ -2478,8 +2478,8 @@ if !cobs_used {
 	file::delete("crates-host/adapters/src/cobs.rs");
 }
 if !on.protobuf {
-	file::delete("crates-host/ports/src/host.rs");
-	file::delete("crates-host/domain/src/host.rs");
+	file::delete("crates-host/ports/src/protobuf.rs");
+	file::delete("crates-host/domain/src/protobuf.rs");
 	file::delete("crates-host/domain/src/host");
 	file::delete("crates-host/proto");
 }
@@ -2496,7 +2496,7 @@ if variable::get("protocol_link") != "true" {
 	file::delete("crates-cross/app/src/link");
 }
 // Узел протокола «запрос — ответ» (`domain::server`) обслуживает только Modbus
-// slave: у protobuf свой узел (`domain::host`).
+// slave: у protobuf свой узел (`domain::protobuf`).
 if !on.modbus {
 	file::delete("crates-host/domain/src/server.rs");
 }
@@ -2552,7 +2552,7 @@ if variable::get("graph") != "true" {
 		file::delete("crates-cross/app/src/tasks/modbus.rs");
 	}
 	if !on.protobuf {
-		file::delete("crates-cross/app/src/tasks/host.rs");
+		file::delete("crates-cross/app/src/tasks/protobuf.rs");
 	}
 	if !on.canopen {
 		file::delete("crates-cross/app/src/tasks/canopen.rs");
@@ -2590,7 +2590,7 @@ if services.len() == 0 {
 	file::delete("crates-cross/app/src/net.rs");
 }
 // Узлы сетевых служб — только выбранных. Сведения об устройстве
-// (`domain::device`) читают HOST, HTTP, SSH и MQTT.
+// (`domain::device`) читают PROTOBUF, HTTP, SSH и MQTT.
 if !services.contains("rest") {
 	file::delete("crates-host/domain/src/http.rs");
 	file::delete("crates-cross/app/src/tasks/http.rs");

@@ -1,4 +1,4 @@
-//! Узлы `HOST_*`: сообщения protobuf от хоста, по модулю на транспорт.
+//! Узлы `PROTOBUF_*`: сообщения protobuf от хоста, по модулю на транспорт.
 //! Канал узел собирает сам над рычагом платы; тип и буферы — `crate::link`.
 {%- assign xs = links | split: "," %}
 {%- comment %} Номер клиента OTA — порядковый номер транспорта с протоколом в `links`, как в графе (`crate::graph`). {% endcomment %}
@@ -13,10 +13,10 @@
 {%- endif %}
 {%- if f[3] == "protobuf" %}
 
-/// Узел `HOST_{{ f[4] | upcase }}`.
+/// Узел `PROTOBUF_{{ f[4] | upcase }}`.
 pub mod {{ f[4] }} {
     use domain::Assemble as _;
-    use domain::host::DeviceInfo;
+    use domain::protobuf::DeviceInfo;
     use embassy_executor::Spawner;
 {%- if ota == "true" %}
     use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -37,11 +37,11 @@ pub mod {{ f[4] }} {
     async fn task(source: Source, info: DeviceInfo) {
         // Канал — над рычагом платы.
         let mut link = Link::assemble(source, buffers());
-        let mut service = domain::host::Service::new(info);
+        let mut service = domain::protobuf::Service::new(info);
 {%- if ota == "true" %}
         let mut ota_client = domain::ota::ClientId({{ client }});
 {%- endif %}
-        domain::host::task(domain::host::HostCtx {
+        domain::protobuf::task(domain::protobuf::ProtobufCtx {
             link: &mut link,
             service: &mut service,
             response: response(),
@@ -61,7 +61,7 @@ pub mod {{ f[4] }} {
     /// Спавнит узел над рычагом платы `source`; канал собирает узел.
     pub fn spawn(spawner: Spawner, source: Source, info: DeviceInfo) {
         let token = task(source, info);
-        spawner.spawn(token.expect("задача HOST_{{ f[4] | upcase }} свежая: спавнится один раз"));
+        spawner.spawn(token.expect("задача PROTOBUF_{{ f[4] | upcase }} свежая: спавнится один раз"));
     }
 }
 {%- endif %}

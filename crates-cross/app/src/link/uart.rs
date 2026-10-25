@@ -13,9 +13,9 @@ pub mod {{ f[4] }} {
 
     // Буфер канала — сообщение и CRC (`rx_len`); кадру передачи — место под
     // худший случай COBS от всего буфера канала (`tx_len`).
-    const BUFFER: usize = ::adapters::cobs::rx_len(crate::link::HOST_MESSAGE);
+    const BUFFER: usize = ::adapters::cobs::rx_len(crate::link::PROTOBUF_MESSAGE);
 {% endif %}
-    /// Канал узла `{% if f[3] == "modbus" %}MODBUS{% else %}HOST{% endif %}_{{ f[4] | upcase }}`; собирается над UART платы (`board.{{ f[4] }}`).
+    /// Канал узла `{% if f[3] == "modbus" %}MODBUS{% else %}PROTOBUF{% endif %}_{{ f[4] | upcase }}`; собирается над UART платы (`board.{{ f[4] }}`).
 {%- if f[3] == "modbus" %}
     pub type Link = ::adapters::modbus::Rtu<bsp::serial::{{ f[4] }}::Serial>;
 {%- else %}
@@ -31,13 +31,13 @@ pub mod {{ f[4] }} {
 
     // `ConstStaticCell`, а не `StaticCell`: значения известны при компиляции и
     // лежат в `.bss`, а не собираются на стеке при старте.
-    static HOST_BUFFER: ConstStaticCell<[u8; BUFFER]> = ConstStaticCell::new([0; BUFFER]);
-    static HOST_FRAME: ConstStaticCell<[u8; ::adapters::cobs::tx_len(BUFFER)]> =
+    static PROTOBUF_BUFFER: ConstStaticCell<[u8; BUFFER]> = ConstStaticCell::new([0; BUFFER]);
+    static PROTOBUF_FRAME: ConstStaticCell<[u8; ::adapters::cobs::tx_len(BUFFER)]> =
         ConstStaticCell::new([0; ::adapters::cobs::tx_len(BUFFER)]);
     // Ответ узел кодирует сюда, а не в буфер канала: там может лежать
-    // недочитанный кадр (`domain::host`).
-    static HOST_RESPONSE: ConstStaticCell<[u8; crate::link::HOST_MESSAGE]> =
-        ConstStaticCell::new([0; crate::link::HOST_MESSAGE]);
+    // недочитанный кадр (`domain::protobuf`).
+    static PROTOBUF_RESPONSE: ConstStaticCell<[u8; crate::link::PROTOBUF_MESSAGE]> =
+        ConstStaticCell::new([0; crate::link::PROTOBUF_MESSAGE]);
 {%- endif %}
 
     /// Память канала — ссылки на статики выше. Статики берутся ровно один раз:
@@ -47,14 +47,14 @@ pub mod {{ f[4] }} {
 {%- else %}
     pub fn buffers() -> ::adapters::cobs::CobsBuffers {
         ::adapters::cobs::CobsBuffers {
-            buf: HOST_BUFFER.take(),
-            frame: HOST_FRAME.take(),
+            buf: PROTOBUF_BUFFER.take(),
+            frame: PROTOBUF_FRAME.take(),
         }
     }
 
     /// Буфер ответа узла — ссылка на статик выше; берётся ровно один раз.
     pub fn response() -> &'static mut [u8] {
-        HOST_RESPONSE.take()
+        PROTOBUF_RESPONSE.take()
     }
 {%- endif %}
 }

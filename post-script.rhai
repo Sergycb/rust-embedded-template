@@ -102,7 +102,7 @@ if variable::get("graph") == "true" {
 		print("CANopen: словарь объектов — crates-host/canopen/device.toml.");
 	}
 	if variable::get("has_protobuf") == "true" {
-		print("protobuf: схема — crates-host/proto, обработчик — crates-host/domain/src/host/service.rs.");
+		print("protobuf: схема — crates-host/proto, обработчик — crates-host/domain/src/protobuf/service.rs.");
 	}
 }
 

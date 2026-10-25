@@ -22,14 +22,14 @@ pub mod canopen;
 // {%- endif %}
 // {%- if has_protobuf == "true" or net_services != "" %}
 
-/// Сведения об устройстве — общие у узлов `HOST`, `HTTP` и `SSH`.
+/// Сведения об устройстве — общие у узлов `PROTOBUF`, `HTTP` и `SSH`.
 pub mod device;
 // {%- endif %}
 // {%- if has_protobuf == "true" %}
 
-/// Узел `HOST`: сообщения protobuf от хоста — разбор, обработчик
+/// Узел `PROTOBUF`: сообщения protobuf от хоста — разбор, обработчик
 /// приложения, ответ — см. модуль.
-pub mod host;
+pub mod protobuf;
 // {%- endif %}
 // {%- if has_modbus == "true" %}
 

@@ -4,7 +4,7 @@
 {%- assign f = l | split: ":" %}
 {%- if f[0] == "udp" %}
 {%- if f[3] == "modbus" or f[3] == "protobuf" %}
-//! Датаграмма — уже кадр, канал узла `{% if f[3] == "modbus" %}MODBUS{% else %}HOST{% endif %}_{{ f[4] | upcase }}`.
+//! Датаграмма — уже кадр, канал узла `{% if f[3] == "modbus" %}MODBUS{% else %}PROTOBUF{% endif %}_{{ f[4] | upcase }}`.
 
 use embassy_net::udp::PacketMetadata;
 use static_cell::ConstStaticCell;
@@ -14,7 +14,7 @@ use static_cell::ConstStaticCell;
 /// плата.
 const PORT: u16 = {% if f[3] == "modbus" %}502{% else %}5000{% endif %};
 
-/// Канал узла `{% if f[3] == "modbus" %}MODBUS{% else %}HOST{% endif %}_{{ f[4] | upcase }}`; собирается над стеком платы (`board.net.stack`).
+/// Канал узла `{% if f[3] == "modbus" %}MODBUS{% else %}PROTOBUF{% endif %}_{{ f[4] | upcase }}`; собирается над стеком платы (`board.net.stack`).
 {%- if f[3] == "modbus" %}
 pub type Link = ::adapters::modbus::Udp<::adapters::net::UdpLink>;
 {%- else %}
@@ -43,12 +43,12 @@ static FRAME: ConstStaticCell<[u8; ::adapters::modbus::DATAGRAM]> =
     ConstStaticCell::new([0; ::adapters::modbus::DATAGRAM]);
 {%- else %}
 // Буфер канала — сообщение.
-static FRAME: ConstStaticCell<[u8; crate::link::HOST_MESSAGE]> =
-    ConstStaticCell::new([0; crate::link::HOST_MESSAGE]);
+static FRAME: ConstStaticCell<[u8; crate::link::PROTOBUF_MESSAGE]> =
+    ConstStaticCell::new([0; crate::link::PROTOBUF_MESSAGE]);
 // Ответ узел кодирует сюда, а не в буфер канала: там может лежать принятый,
-// но ещё не разобранный запрос (`domain::host`).
-static HOST_RESPONSE: ConstStaticCell<[u8; crate::link::HOST_MESSAGE]> =
-    ConstStaticCell::new([0; crate::link::HOST_MESSAGE]);
+// но ещё не разобранный запрос (`domain::protobuf`).
+static PROTOBUF_RESPONSE: ConstStaticCell<[u8; crate::link::PROTOBUF_MESSAGE]> =
+    ConstStaticCell::new([0; crate::link::PROTOBUF_MESSAGE]);
 {%- endif %}
 
 /// Память канала — ссылки на статики выше. Статики берутся ровно один раз:
@@ -67,7 +67,7 @@ pub fn buffers() -> ::adapters::net::UdpBuffers {
 
 /// Буфер ответа узла — ссылка на статик выше; берётся ровно один раз.
 pub fn response() -> &'static mut [u8] {
-    HOST_RESPONSE.take()
+    PROTOBUF_RESPONSE.take()
 }
 {%- endif %}
 {%- endif %}

@@ -112,10 +112,10 @@ rusty-modbus-types = { workspace = true }
 embassy-sync = { workspace = true }
 # {%- endif %}
 # {%- if has_protobuf == "true" %}
-# Узел HOST (`domain::host`): разбор и кодирование сообщений protobuf. Схему
+# Узел PROTOBUF (`domain::protobuf`): разбор и кодирование сообщений protobuf. Схему
 # узел не знает — её знает обработчик приложения.
 micropb            = { workspace = true }
-# Схема `crates-host/proto` — для обработчика `domain::host::Service`.
+# Схема `crates-host/proto` — для обработчика `domain::protobuf::Service`.
 proto              = { workspace = true }
 # {%- endif %}
 # {%- if has_canopen == "true" %}

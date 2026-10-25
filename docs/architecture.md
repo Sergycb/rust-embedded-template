@@ -93,7 +93,7 @@ HAL (`bsp::board::init_peripherals` — на умолчаниях `embassy-stm32
 логика разговаривает с портами — ошибки, — объявлено в `ports`: тот стал словарём
 домена, а не только набором трейтов. Своё в `domain` — только контексты узлов{% if graph == "true" %}
 (их эмитит фрагмент), состояния автоматов и входы фрагментов ({% if ota == "true" %}`OtaWiring`, {% endif %}`IdleMeter`{% if ota == "true" %}, `Mode`{% endif %}){% else %} и состояния автоматов{% endif %}{% if protocol != "none" %},
-включая обработчик протокола{% if graph == "true" %} на этом входе{% endif %}: {% if protocol == "protobuf" %}`host::Service` (порт `HostService`){% elsif protocol == "modbus" %}`modbus::EmptyRegisters` (порт `Registers`; карта одна на проект —
+включая обработчик протокола{% if graph == "true" %} на этом входе{% endif %}: {% if protocol == "protobuf" %}`protobuf::Service` (порт `ProtobufService`){% elsif protocol == "modbus" %}`modbus::EmptyRegisters` (порт `Registers`; карта одна на проект —
 псевдоним `crate::modbus::Map`, ручка `crate::modbus::Handle` над
 `domain::modbus::MapMutex`, — все узлы `MODBUS_*` работают над ней{% if ota == "true" %}, а окно OTA
 `modbus::OtaRegisters` оборачивает ручку снаружи, вне блокировки{% endif %}){% else %}`canopen::dictionary` (словарь объектов){% endif %} — логика приложения,
@@ -124,7 +124,7 @@ HAL (`bsp::board::init_peripherals` — на умолчаниях `embassy-stm32
 (`<L as $crate::Assemble>::assemble(inputs.source, inputs.buffers)`){% else %}в своей задаче
 {%- assign sep = " (" %}
 {%- if has_modbus == "true" %}{{ sep }}`domain::server::serve`{% assign sep = ", " %}{% endif %}
-{%- if has_protobuf == "true" %}{{ sep }}`HostCtx` в `tasks/host.rs`{% assign sep = ", " %}{% endif %}
+{%- if has_protobuf == "true" %}{{ sep }}`ProtobufCtx` в `tasks/protobuf.rs`{% assign sep = ", " %}{% endif %}
 {%- if sep == ", " %}){% endif %}{% endif %}. `domain` реэкспортирует трейт
 (`domain::Assemble`): инициализаторы разворачиваются в `app`, а у него `ports`
 нет.
@@ -132,7 +132,7 @@ HAL (`bsp::board::init_peripherals` — на умолчаниях `embassy-stm32
 {%- assign sep = "" %}
 {%- capture wirings %}
 {%- if has_modbus == "true" %}{{ sep }}`ServerWiring`{% assign sep = ", " %}{% endif %}
-{%- if has_protobuf == "true" %}{{ sep }}`HostWiring`{% assign sep = ", " %}{% endif %}
+{%- if has_protobuf == "true" %}{{ sep }}`ProtobufWiring`{% assign sep = ", " %}{% endif %}
 {%- if ota == "true" %}{{ sep }}`OtaWiring`{% assign sep = ", " %}{% endif %}
 {%- if has_canopen == "true" %}{{ sep }}`CanOpenWiring`{% assign sep = ", " %}{% endif %}
 {%- if net_services contains "ssh" %}{{ sep }}`SshWiring`{% assign sep = ", " %}{% endif %}
@@ -191,7 +191,7 @@ HAL (`bsp::board::init_peripherals` — на умолчаниях `embassy-stm32
 {%- if modbus_rtu == "true" %}{{ sep }}RTU{% assign sep = ", " %}{% endif %}
 {%- if modbus_tcp == "true" %}{{ sep }}MBAP над TCP{% assign sep = ", " %}{% endif %}
 {%- if modbus_udp == "true" %}{{ sep }}MBAP в датаграммах UDP{% assign sep = ", " %}{% endif %})
-{%- elsif has_protobuf == "true" %}: канал `HOST` — {% if cobs_used == "true" %}над COBS{% if has_udp == "true" %} и {% endif %}{% endif %}{% if has_udp == "true" %}над датаграммой{% endif %}
+{%- elsif has_protobuf == "true" %}: канал `PROTOBUF` — {% if cobs_used == "true" %}над COBS{% if has_udp == "true" %} и {% endif %}{% endif %}{% if has_udp == "true" %}над датаграммой{% endif %}
 {%- endif %}.
 2. **Логике нужен фейк с отказами.** Алгоритм узла проверяется на хосте отказом
    в нужный момент{% if ota == "true" %} — «подтверждение образа не удалось, повторить на следующем

@@ -316,8 +316,8 @@ resources: [WS: &'static mut $crate::x::Workspace = static |w| w.gain = inputs.g
 Команды шлёт узел протокола: клиента входа отдаёт аксессор графа
 `ota_cmd_requester()`, а узел получает его обёрнутым в `domain::ota::OtaClient`
 с номером своего транспорта (`ClientId`, порядковый номер транспорта с
-протоколом в `links`, с 0){% if has_protobuf == "true" %} — его получает `domain::host::Service`
-прямо во входе узла `HOST_*`{% endif %}. Номер нужен
+протоколом в `links`, с 0){% if has_protobuf == "true" %} — его получает `domain::protobuf::Service`
+прямо во входе узла `PROTOBUF_*`{% endif %}. Номер нужен
 владельцу сессии: чужой приём, пока идёт свой, получает `Busy`
 (`docs/ota.md`). Своего канала у образа нет: он идёт по протоколу,
 которым хост и так говорит с устройством (`docs/ota.md`).

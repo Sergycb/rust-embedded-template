@@ -76,7 +76,7 @@ cargo run -p app                    # прошить приложение и с�
 {%- capture adapters_list %}{% if ota == "true" %}, OTA поверх `embassy-boot` (`adapters::ota`){% endif %}{% if settings_port == "true" %}, настройки поверх `sequential-storage` (`adapters::settings`){% endif %}{% if cobs_used == "true" %}, кадрирование потока COBS + CRC (`adapters::cobs`){% endif %}{% if protocol == "modbus" %}, транспорты Modbus (`adapters::modbus`){% endif %}{% if has_net == "true" %}, сокеты над `embassy-net` (`adapters::net`){% endif %}{% if has_usb == "true" %}, поток CDC ACM над `embassy-usb` (`adapters::usb`){% endif %}{% endcapture %}
 | Адаптеры без чипа | `crates-host/adapters/` | реализации портов, которым хватает `embedded-storage`/`embedded-hal`/`embedded-io-async`{% if adapters_list != "" %}: {{ adapters_list | remove_first: ", " }}{% endif %} — тестируется на хосте |
 {%- if protocol == "protobuf" %}
-| Схема protobuf | `crates-host/proto/` | `.proto` и типы, сгенерированные `micropb-gen` в `build.rs` (схему разбирает `protox`, системный `protoc` не нужен); пример — конверт `Request`/`Response` с `request_id`, проект заменяет своим. Обрабатывает узел `domain::HOST_FRAG` с обработчиком `domain::host::Service` |
+| Схема protobuf | `crates-host/proto/` | `.proto` и типы, сгенерированные `micropb-gen` в `build.rs` (схему разбирает `protox`, системный `protoc` не нужен); пример — конверт `Request`/`Response` с `request_id`, проект заменяет своим. Обрабатывает узел `domain::PROTOBUF_FRAG` с обработчиком `domain::protobuf::Service` |
 {%- endif %}
 {%- if protocol == "canopen" %}
 | Описание устройства CANopen | `crates-host/canopen/` | `device.toml` — идентичность, PDO, объекты приложения; `build.rs` (`zencan-build`) генерирует из него словарь объектов и `static`-объекты узла (`NODE_MBOX`, `NODE_STATE`, `OD_TABLE`), которые compose-site передаёт узлу `domain::CANOPEN_FRAG`; пример — проект заменяет своим |
@@ -190,7 +190,7 @@ DMA-буфер. До этого момента его место — в `domain`
 приём и ответ).{% if has_modbus == "true" %} `Handler` — протокол над ним: что ответить на кадр; обоих
 обслуживает узел протокола `domain::SERVER_FRAG`.{% endif %}
 {%- if has_modbus == "true" or has_protobuf == "true" %} {% if graph == "true" %}Граф называет{% else %}Модули задач называют{% endif %} узел по
-протоколу и транспорту ({% if has_modbus == "true" %}`MODBUS_<транспорт>`{% if has_protobuf == "true" %}, {% endif %}{% endif %}{% if has_protobuf == "true" %}`HOST_<транспорт>`{% endif %}).{% endif %}
+протоколу и транспорту ({% if has_modbus == "true" %}`MODBUS_<транспорт>`{% if has_protobuf == "true" %}, {% endif %}{% endif %}{% if has_protobuf == "true" %}`PROTOBUF_<транспорт>`{% endif %}).{% endif %}
 {%- if has_protobuf == "true" %}
 {%- capture pb_links %}{% if has_uart == "true" or has_usb == "true" %}, адаптер
 кадрирования `adapters::cobs::Cobs` поверх потока ({% if has_uart == "true" %}UART{% if has_usb == "true" %}, {% endif %}{% endif %}{% if has_usb == "true" %}USB CDC{% endif %}){% endif %}{% if has_tcp == "true" %}, `TcpCobs`
@@ -206,9 +206,9 @@ Modbus: его реализует приложение, а кадры к нем�
 master'а `ModbusClient`.{% endif %}
 {%- endif %}
 {%- if protocol == "protobuf" %}
-`HostService` — обработчик сообщений protobuf от хоста: его реализует приложение
+`ProtobufService` — обработчик сообщений protobuf от хоста: его реализует приложение
 (перевод сообщений схемы в свои проверенные типы), а кадры к нему переводит
-узел `domain::HOST_FRAG`.{% if ota == "true" %} Команды обновления (`HostService::route`) узел отдаёт
+узел `domain::PROTOBUF_FRAG`.{% if ota == "true" %} Команды обновления (`ProtobufService::route`) узел отдаёт
 узлу OTA, не дожидаясь исхода, и обслуживает канал дальше; исход уходит хосту
 ответом с тем же `request_id`, и ответы на другие запросы могут его обогнать.{% endif %}
 {%- endif %}
@@ -318,7 +318,7 @@ flash и безусловно прыгает в него (`unsafe { bl.load(entr
 
 {% if protocol == "protobuf" %}В этом проекте команды — сообщения схемы `crates-host/proto/proto/host.proto`
 (`ota_start`, `ota_chunk`, `ota_finish`, `reboot`, ответ `Ok` или `Error`), перевод — в
-`domain::host::Service`.{% elsif protocol == "modbus" %}В этом проекте команды — записи FC16 в окно holding-регистров с `0xF000`
+`domain::protobuf::Service`.{% elsif protocol == "modbus" %}В этом проекте команды — записи FC16 в окно holding-регистров с `0xF000`
 (`domain::modbus::OtaRegisters` вокруг карты проекта): одна запись — одна команда,
 ответ на запись — её исход, точный код и принятая длина — во входных регистрах
 (FC04) с той же базы. Карта окна — `crates-host/domain/src/modbus/ota.rs`, тайм-аут
@@ -614,7 +614,7 @@ ST-Link захваченным до переподключения кабеля 
 {%- assign xs = links | split: "," %}
 {%- for l in xs %}
 {%- assign f = l | split: ":" %}
-| `{{ f[4] }}` — {% if f[0] == "uart" %}UART{% elsif f[0] == "can" %}CAN{% elsif f[0] == "usb" %}USB CDC ACM{% elsif f[0] == "tcp" %}TCP{% else %}UDP{% endif %} `{{ f[2] }}` | {% if f[3] == "modbus" %}`MODBUS_{{ f[4] | upcase }}`{% elsif f[3] == "protobuf" %}`HOST_{{ f[4] | upcase }}`{% elsif f[3] == "canopen" %}`CANOPEN_{{ f[4] | upcase }}`{% else %}протокола нет — объект ждёт ваш узел{% endif %}{% if f[0] == "usb" %}, `USB_{{ f[4] | upcase }}`{% endif %}{% if f[0] == "tcp" or f[0] == "udp" %}, `NET`{% endif %} | `crates-cross/bsp/src/{% if f[0] == "uart" %}serial{% elsif f[0] == "can" %}can{% elsif f[0] == "usb" %}usb{% else %}net{% endif %}.rs` (`docs/modules/bsp-{% if f[0] == "uart" %}serial{% elsif f[0] == "can" %}can{% elsif f[0] == "usb" %}usb{% else %}net{% endif %}.md`) |
+| `{{ f[4] }}` — {% if f[0] == "uart" %}UART{% elsif f[0] == "can" %}CAN{% elsif f[0] == "usb" %}USB CDC ACM{% elsif f[0] == "tcp" %}TCP{% else %}UDP{% endif %} `{{ f[2] }}` | {% if f[3] == "modbus" %}`MODBUS_{{ f[4] | upcase }}`{% elsif f[3] == "protobuf" %}`PROTOBUF_{{ f[4] | upcase }}`{% elsif f[3] == "canopen" %}`CANOPEN_{{ f[4] | upcase }}`{% else %}протокола нет — объект ждёт ваш узел{% endif %}{% if f[0] == "usb" %}, `USB_{{ f[4] | upcase }}`{% endif %}{% if f[0] == "tcp" or f[0] == "udp" %}, `NET`{% endif %} | `crates-cross/bsp/src/{% if f[0] == "uart" %}serial{% elsif f[0] == "can" %}can{% elsif f[0] == "usb" %}usb{% else %}net{% endif %}.rs` (`docs/modules/bsp-{% if f[0] == "uart" %}serial{% elsif f[0] == "can" %}can{% elsif f[0] == "usb" %}usb{% else %}net{% endif %}.md`) |
 {%- endfor %}
 
 {%- if protocol != "none" %}
@@ -623,7 +623,7 @@ ST-Link захваченным до переподключения кабеля 
 тип в `crates-cross/app/src/modbus.rs` (псевдоним `Map` и начальное значение): карта одна на
 все узлы `MODBUS_*`, каждый получает ручку к ней (`domain::modbus::SharedRegisters`), так
 что запись по одному транспорту видна чтению по другому.
-{%- elsif protocol == "protobuf" %} схему `crates-host/proto` и обработчик `crates-host/domain/src/host/service.rs`.
+{%- elsif protocol == "protobuf" %} схему `crates-host/proto` и обработчик `crates-host/domain/src/protobuf/service.rs`.
 {%- else %} словарь объектов `crates-host/canopen/device.toml`.
 {%- endif %}
 {%- if protocol_link == "true" %} Канал протокола (кадрирование, сокет) собирает узел над рычагом

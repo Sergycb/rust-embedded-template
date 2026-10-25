@@ -1259,7 +1259,7 @@ fn no_protocol_by_default() {
         "crates-host/ports/src/link.rs",
         "crates-host/ports/src/modbus.rs",
         "crates-host/ports/src/modbus",
-        "crates-host/ports/src/host.rs",
+        "crates-host/ports/src/protobuf.rs",
         "crates-host/ports/src/can.rs",
         "crates-host/adapters/src/modbus",
         "crates-host/adapters/src/cobs.rs",
@@ -1317,7 +1317,7 @@ fn protocol_over_uart_keeps_the_serial_module() {
         let kept = |path: &str| !result.deleted.iter().any(|deleted| deleted == path);
         for (path, wanted) in [
             ("crates-host/proto", protocol == "protobuf"),
-            ("crates-host/domain/src/host.rs", protocol == "protobuf"),
+            ("crates-host/domain/src/protobuf.rs", protocol == "protobuf"),
             ("crates-host/adapters/src/cobs.rs", protocol == "protobuf"),
             ("crates-host/domain/src/modbus.rs", protocol == "modbus"),
             ("crates-host/ports/src/modbus.rs", protocol == "modbus"),

@@ -10,7 +10,7 @@ use ports::{Assemble, FrameDuplex, FrameLink, LinkError};
 /// Так работает `modbus::Udp`.
 // {%- endif %}
 // {%- if has_protobuf == "true" %}
-/// Так работает узел HOST.
+/// Так работает узел PROTOBUF.
 // {%- endif %}
 ///
 /// Отвечает тому, кто прислал последнюю датаграмму: адрес отправителя порт

@@ -77,7 +77,7 @@ pub mod can;
 // {%- endif %}
 // {%- if has_protobuf == "true" %}
 /// Обработчик сообщений хоста: сообщения схемы → типы приложения.
-pub mod host;
+pub mod protobuf;
 
 // {%- endif %}
 // {%- if link_port == "true" %}
@@ -134,9 +134,9 @@ pub use assemble::Assemble;
 pub use can::CanBus;
 // {%- endif %}
 // {%- if has_protobuf == "true" %}
-pub use host::HostService;
+pub use protobuf::ProtobufService;
 // {%- if ota == "true" %}
-pub use host::Route;
+pub use protobuf::Route;
 // {%- endif %}
 // {%- endif %}
 // {%- if link_port == "true" %}

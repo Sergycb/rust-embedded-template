@@ -4,8 +4,8 @@
 //!
 //! Здесь — тип канала (`Link`: какое кадрирование над каким рычагом платы,
 //! выбор генерации) и его память — статики приложения, которые `buffers()`
-//! отдаёт ссылками{% if has_protobuf == "true" %}, а у узлов `HOST_*` ещё и буфер ответа (`response()`){% endif %}. Собирает канал сам узел протокола
-//! ({% if has_modbus == "true" %}`domain::server`{% endif %}{% if has_modbus == "true" and has_protobuf == "true" %}, {% endif %}{% if has_protobuf == "true" %}`domain::host`{% endif %}; порт `ports::Assemble`) из рычага платы и этих буферов. Своё кадрирование —
+//! отдаёт ссылками{% if has_protobuf == "true" %}, а у узлов `PROTOBUF_*` ещё и буфер ответа (`response()`){% endif %}. Собирает канал сам узел протокола
+//! ({% if has_modbus == "true" %}`domain::server`{% endif %}{% if has_modbus == "true" and has_protobuf == "true" %}, {% endif %}{% if has_protobuf == "true" %}`domain::protobuf`{% endif %}; порт `ports::Assemble`) из рычага платы и этих буферов. Своё кадрирование —
 //! другой тип `Link`; свой размер буфера или порт — правьте статики там.
 {% if link_kinds contains "tcp" %}
 pub mod tcp;
@@ -22,13 +22,13 @@ pub mod usb;
 {%- if has_protobuf == "true" %}
 
 /// Самое длинное сообщение схемы, под которое заведены буферы каналов узлов
-/// `HOST_*`. Схема с сообщениями длиннее — меняйте здесь; узел предупредит
+/// `PROTOBUF_*`. Схема с сообщениями длиннее — меняйте здесь; узел предупредит
 /// при старте, если самый длинный ответ схемы не помещается.
-const HOST_MESSAGE: usize = 256;
+const PROTOBUF_MESSAGE: usize = 256;
 {%- endif %}
 {%- if protocol_sockets != "0" %}
 
 /// Буфер сокета протокола — с запасом на {% if modbus_mbap == "true" %}самый длинный кадр Modbus TCP
-/// (260 байт){% endif %}{% if modbus_mbap == "true" and has_protobuf == "true" %} и {% endif %}{% if has_protobuf == "true" %}сообщение protobuf (`HOST_MESSAGE`){% endif %}.
+/// (260 байт){% endif %}{% if modbus_mbap == "true" and has_protobuf == "true" %} и {% endif %}{% if has_protobuf == "true" %}сообщение protobuf (`PROTOBUF_MESSAGE`){% endif %}.
 const SOCKET_BUFFER: usize = 1024;
 {%- endif %}

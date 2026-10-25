@@ -1,10 +1,10 @@
-//! Узел `HOST`: сообщения protobuf от хоста над кадровым каналом.
+//! Узел `PROTOBUF`: сообщения protobuf от хоста над кадровым каналом.
 // {%- if graph == "true" %}
-//! В графе — узел `HOST_<транспорт>`.
+//! В графе — узел `PROTOBUF_<транспорт>`.
 // {%- endif %}
 //!
 //! Единственное место, где сообщения схемы превращаются в типы приложения,
-//! — обработчик [`HostService`](ports::HostService) приложения: в задачи
+//! — обработчик [`ProtobufService`](ports::ProtobufService) приложения: в задачи
 //! уходят проверенные значения своих типов. Узел только разбирает запрос из
 //! кадра и кодирует ответ. Схему он не знает: сообщения — параметры
 //! (`micropb::MessageDecode`/`MessageEncode`), пример схемы — крейт
@@ -22,12 +22,12 @@
 //! Что узел делает с кадром:
 //!
 //! * кадр не разобрался как запрос — ответ
-//!   [`HostService::malformed`](ports::HostService::malformed);
-//! * {% if ota == "true" %}команда обновления (`HostService::route`) — узлу OTA на вход `ASK`, не
+//!   [`ProtobufService::malformed`](ports::ProtobufService::malformed);
+//! * {% if ota == "true" %}команда обновления (`ProtobufService::route`) — узлу OTA на вход `ASK`, не
 //!   дожидаясь исхода: канал обслуживается дальше, а исход, когда придёт,
 //!   уходит хосту ответом с тем же `request_id` — ответы на другие запросы
 //!   могут его обогнать;
-//! * {% endif %}остальное — [`HostService::handle`](ports::HostService::handle) и ответ;
+//! * {% endif %}остальное — [`ProtobufService::handle`](ports::ProtobufService::handle) и ответ;
 //! * ответ не помещается в буфер — в лог и без ответа, хост получит таймаут;
 //!   что буфер мал для какого-то ответа схемы, узел предупреждает уже при
 //!   старте.
@@ -47,13 +47,13 @@ pub use service::{DeviceInfo, Service};
 
 use defmt_or_log::{FormatOrDebug, info, warn};
 use micropb::{DecodeError, MessageDecode, MessageEncode, PbEncoder};
-use ports::{Assemble, FrameDuplex, HostService, LinkError};
+use ports::{Assemble, FrameDuplex, LinkError, ProtobufService};
 // {%- if ota == "true" %}
 use ports::Route;
 // {%- endif %}
 use supervisor::runtime::TaskExit;
 
-/// Вход узла `HOST`: из чего собрать канал `L`, куда кодировать ответ и чем
+/// Вход узла `PROTOBUF`: из чего собрать канал `L`, куда кодировать ответ и чем
 /// отвечать.
 ///
 /// Канал собирает узел (`L::assemble(source, buffers)` — порт
@@ -62,26 +62,26 @@ use supervisor::runtime::TaskExit;
 /// (`<вид>`/`<транспорт>` — как в `crates-cross/app/src/graph.rs`):
 ///
 /// ```ignore
-/// fragments: [::domain::HOST_FRAG<crate::link::<вид>::<транспорт>::Link, ::domain::host::Service>
-///                 as HOST_<ТРАНСПОРТ> = ::domain::host::HostWiring {
+/// fragments: [::domain::PROTOBUF_FRAG<crate::link::<вид>::<транспорт>::Link, ::domain::protobuf::Service>
+///                 as PROTOBUF_<ТРАНСПОРТ> = ::domain::protobuf::ProtobufWiring {
 ///                     source: board.<транспорт>,
 ///                     buffers: crate::link::<вид>::<транспорт>::buffers(),
 ///                     response: crate::link::<вид>::<транспорт>::response(),
-///                     service: ::domain::host::Service::new(crate::device_info(board.spec)),
+///                     service: ::domain::protobuf::Service::new(crate::device_info(board.spec)),
 // {%- if ota == "true" %}
 ///                     ota_client: ::domain::ota::ClientId(0),
 // {%- endif %}
 ///                 }];
 /// ```
 // {%- else %}
-/// [`Assemble`]), а compose-site — задача `crates-cross/app/src/tasks/host.rs`
+/// [`Assemble`]), а compose-site — задача `crates-cross/app/src/tasks/protobuf.rs`
 /// — только раздаёт поля платы и ссылки на свои статики.
 // {%- endif %}
 ///
 /// Написан руками, а не выведен фрагментом: слот канала инициализируется
 /// сборкой из двух полей, а не чтением одного.
 #[derive(Debug)]
-pub struct HostWiring<L: Assemble, S> {
+pub struct ProtobufWiring<L: Assemble, S> {
     /// Рычаг платы, над которым собирается канал.
     pub source: L::Source,
     /// Память канала от приложения.
@@ -98,16 +98,16 @@ pub struct HostWiring<L: Assemble, S> {
 }
 
 #[fsm::typestate]
-impl<L, S> HostCtx<'_, L, S>
+impl<L, S> ProtobufCtx<'_, L, S>
 where
     L: FrameDuplex,
     L::Error: FormatOrDebug,
-    S: HostService,
+    S: ProtobufService,
     S::Request: MessageDecode + Default,
     S::Response: MessageEncode,
 {
     fsm::machine! {
-        machine Host mod edges {
+        machine Protobuf mod edges {
             states {
                 /// Ждёт кадр.
                 Listening,
@@ -133,12 +133,15 @@ where
 
     fn begin(&mut self) -> Listening {
         let capacity = self.response.len();
-        info!("domain: узел HOST запущен, буфер ответа {} байт", capacity);
+        info!(
+            "domain: узел PROTOBUF запущен, буфер ответа {} байт",
+            capacity
+        );
         if let Ok(max) = S::Response::MAX_SIZE
             && capacity < max
         {
             warn!(
-                "host: буфер ответа {} байт, а самый длинный ответ схемы — {}: такие ответы не уйдут",
+                "protobuf: буфер ответа {} байт, а самый длинный ответ схемы — {}: такие ответы не уйдут",
                 capacity, max
             );
         }
@@ -164,7 +167,7 @@ where
                 self.service.handle(request).await
             }
             Err(err) => {
-                warn!("host: кадр не разобрался: {}", decode_reason(&err));
+                warn!("protobuf: кадр не разобрался: {}", decode_reason(&err));
                 self.service.malformed()
             }
         };
@@ -182,7 +185,7 @@ where
         };
         if let Err(busy) = self.ota_ask.try_call(request_id, request) {
             warn!(
-                "host: команда обновления {} отвергнута: прежняя ещё выполняется",
+                "protobuf: команда обновления {} отвергнута: прежняя ещё выполняется",
                 request_id
             );
             let response = self
@@ -195,7 +198,7 @@ where
     /// Исход команды обновления — хосту ответом на её запрос.
     async fn answered(&mut self, reply: supervisor::AskReply<u32, crate::ota::OtaReply>) {
         let outcome = reply.outcome.unwrap_or_else(|_dropped| {
-            warn!("host: узел OTA не ответил");
+            warn!("protobuf: узел OTA не ответил");
             Err(ports::Rejection::Device)
         });
         let response = self.service.ota_outcome(reply.tag, outcome);
@@ -209,34 +212,34 @@ where
         reason = "сигнатуру действия задаёт таблица `#[fsm::typestate]`"
     )]
     fn failed(&mut self, err: &LinkError<L::Error>) {
-        warn!("host: кадр не принят: {:?}", err);
+        warn!("protobuf: кадр не принят: {:?}", err);
     }
 
     /// Ответ — в буфер ответа и в канал; не поместился или не ушёл — в лог.
     async fn respond(&mut self, response: &S::Response) {
         let Some(len) = encode(response, self.response) else {
             warn!(
-                "host: ответ не помещается в буфер на {} байт",
+                "protobuf: ответ не помещается в буфер на {} байт",
                 self.response.len()
             );
             return;
         };
         if let Err(err) = self.link.send_from(&self.response[..len]).await {
-            warn!("host: ответ не ушёл: {:?}", &err);
+            warn!("protobuf: ответ не ушёл: {:?}", &err);
         }
     }
 }
 
-/// Узел `HOST`: обслуживает канал, пока жив, и не выходит никогда.
+/// Узел `PROTOBUF`: обслуживает канал, пока жив, и не выходит никогда.
 ///
 /// Без `watchdog:` намеренно: узел законно
 /// ждёт запрос сколько угодно, и отметка по таймеру сторожила бы
 /// исполнитель, а не работу.
-pub async fn task<L, S>(mut ctx: HostCtx<'_, L, S>) -> TaskExit
+pub async fn task<L, S>(mut ctx: ProtobufCtx<'_, L, S>) -> TaskExit
 where
     L: FrameDuplex,
     L::Error: FormatOrDebug,
-    S: HostService,
+    S: ProtobufService,
     S::Request: MessageDecode + Default,
     S::Response: MessageEncode,
 {
@@ -278,8 +281,8 @@ fn encode(message: &impl MessageEncode, buf: &mut [u8]) -> Option<usize> {
 // (периферия, сокет), обработчик — тоже. Буфер ответа — ссылка на статик
 // приложения (`crate::link::<вид>`): его размер — решение приложения.
 supervisor::supervisor_fragment! {
-    name: HOST_FRAG<L, S>;
-    boot: inputs: $crate::host::HostWiring<L, S>;
+    name: PROTOBUF_FRAG<L, S>;
+    boot: inputs: $crate::protobuf::ProtobufWiring<L, S>;
 
     node deps: [], restart: Never,
         resources: [
@@ -301,8 +304,8 @@ supervisor::supervisor_fragment! {
         // запроса (`request_id`), квота — одна команда в полёте.
         asks: [OTA.ASK: $crate::ota::OtaRequest -> $crate::ota::OtaReply; 1 tag u32],
         // {%- endif %}
-        ctx: $crate::host::HostCtx,
-        task: $crate::host::task;
+        ctx: $crate::protobuf::ProtobufCtx,
+        task: $crate::protobuf::task;
 }
 
 // Тесты гоняют узел над схемой `crates-host/proto`.
@@ -402,7 +405,7 @@ mod tests {
     /// Гоняет узел над `link` с буфером ответа на `capacity` байт по всем
     /// заготовленным кадрам, пока он не станет ждать следующий.
     fn serve(link: &mut Link, capacity: usize) {
-        let stand = supervisor::stand!(HOST_FRAG<Link, Service>);
+        let stand = supervisor::stand!(PROTOBUF_FRAG<Link, Service>);
         let mut service = service(INFO);
         let response: &'static mut [u8] = vec![0; capacity].leak();
         // {%- if ota == "true" %}
@@ -498,7 +501,7 @@ mod tests {
             Ok(request(2, Request_::Command::Info(Get::default()))),
         ]);
         {
-            let stand = supervisor::stand!(HOST_FRAG<Link, Service>);
+            let stand = supervisor::stand!(PROTOBUF_FRAG<Link, Service>);
             let mut ota_node =
                 crate::ota::tests::serving(stand.ota_ask.server().expect("сервер ASK свободен"));
             let mut service = service(INFO);
@@ -527,7 +530,7 @@ mod tests {
         let finish = |id| request(id, Request_::Command::OtaFinish(proto::OtaFinish {}));
         let mut link = Link::with([Ok(finish(1)), Ok(finish(2))]);
         {
-            let stand = supervisor::stand!(HOST_FRAG<Link, Service>);
+            let stand = supervisor::stand!(PROTOBUF_FRAG<Link, Service>);
             let mut ota_node =
                 crate::ota::tests::serving(stand.ota_ask.server().expect("сервер ASK свободен"));
             let mut service = service(INFO);

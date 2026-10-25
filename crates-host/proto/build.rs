@@ -61,7 +61,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     generator.compile_fdset_file(&descriptor_path, out.join("host.rs"))?;
 
     // Те же ёмкости — константами крейта: тот, кто кладёт в поле строку своей
-    // длины (`domain::host::Service` — сведения об устройстве), сверяет её на
+    // длины (`domain::protobuf::Service` — сведения об устройстве), сверяет её на
     // этапе компиляции, а не узнаёт об обрезке на проводе.
     let mut limits = String::new();
     for (name, field, bytes) in LIMITS {

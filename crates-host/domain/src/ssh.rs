@@ -168,7 +168,7 @@ impl<S: ports::SettingsStorage> HostKey for Stored<S> {
         // Записывается новый ключ, только когда прежнего точно нет. Раздел не
         // прочитался — ключ на этот запуск, без записи: сбой мог быть
         // временным, а запись поверх сменила бы ключ навсегда, и клиенты
-        // увидели бы «REMOTE HOST IDENTIFICATION HAS CHANGED».
+        // увидели бы «REMOTE PROTOBUF IDENTIFICATION HAS CHANGED».
         let keep = match self.0.read(HOST_KEY_ID, &mut scratch).await {
             Ok(Some(stored)) => {
                 if let Ok(seed) = <[u8; 32]>::try_from(stored) {

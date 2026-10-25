@@ -2,7 +2,7 @@
 //! `crates-host/proto`.
 
 use embassy_time::Instant;
-use ports::HostService;
+use ports::ProtobufService;
 // {%- if ota == "true" %}
 use core::array::TryFromSliceError;
 use core::fmt::Write as _;
@@ -15,8 +15,8 @@ pub use crate::device::DeviceInfo;
 // Поле `uid` схемы — ровно заводской номер: копируется без проверки длины.
 const _: () = assert!(proto::UID_BYTES == crate::device::UID_BYTES);
 
-/// Обработчик, с которым стартует узел `HOST` шаблона: на `info` —
-/// сведения об устройстве{% if ota == "true" %}, команды обновления — узлу OTA ([`route`](HostService::route)),
+/// Обработчик, с которым стартует узел `PROTOBUF` шаблона: на `info` —
+/// сведения об устройстве{% if ota == "true" %}, команды обновления — узлу OTA ([`route`](ProtobufService::route)),
 /// их исход — `ok` или `error`{% endif %}, `request_id` — обратно.
 ///
 /// Это отправная точка, а не готовая логика: проект меняет схему в
@@ -25,7 +25,7 @@ const _: () = assert!(proto::UID_BYTES == crate::device::UID_BYTES);
 ///
 /// Команда, которой нужно что-то от платы, получает это параметром типа —
 /// портом (`ports::…`), а не железом: тогда её ответ проверяется на хосте
-/// заглушкой порта. Узел `HOST` (`HOST_FRAG`) уже generic по
+/// заглушкой порта. Узел `PROTOBUF` (`PROTOBUF_FRAG`) уже generic по
 /// обработчику, менять его не нужно; конкретный тип подставляет приложение. Набросок (`ports::Relay` —
 /// порт проекта, в шаблоне его нет):
 ///
@@ -35,11 +35,11 @@ const _: () = assert!(proto::UID_BYTES == crate::device::UID_BYTES);
 ///     relay: R,
 /// }
 ///
-/// impl<R: ports::Relay> HostService for Service<R> {
+/// impl<R: ports::Relay> ProtobufService for Service<R> {
 ///     // `Request_::Relay(on)` → `self.relay.set(on).await` → `Ok` или `Error`.
 /// }
 ///
-/// // Граф: `HOST_FRAG<HostLink, ::domain::host::Service<bsp::relay::Relay>>`.
+/// // Граф: `PROTOBUF_FRAG<ProtobufLink, ::domain::protobuf::Service<bsp::relay::Relay>>`.
 /// // Тест: `Service::new(INFO, FakeRelay::default())` и ответ на запрос.
 /// ```
 #[derive(Debug)]
@@ -90,7 +90,7 @@ impl Service {
     }
 }
 
-impl HostService for Service {
+impl ProtobufService for Service {
     type Request = Request;
     type Response = Response;
 

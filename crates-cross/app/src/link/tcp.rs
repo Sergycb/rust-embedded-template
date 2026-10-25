@@ -4,7 +4,7 @@
 {%- assign f = l | split: ":" %}
 {%- if f[0] == "tcp" %}
 {%- if f[3] == "modbus" or f[3] == "protobuf" %}
-//! {% if f[3] == "modbus" %}Заголовок MBAP{% else %}Кадры COBS + CRC{% endif %}, канал узла `{% if f[3] == "modbus" %}MODBUS{% else %}HOST{% endif %}_{{ f[4] | upcase }}`.
+//! {% if f[3] == "modbus" %}Заголовок MBAP{% else %}Кадры COBS + CRC{% endif %}, канал узла `{% if f[3] == "modbus" %}MODBUS{% else %}PROTOBUF{% endif %}_{{ f[4] | upcase }}`.
 
 use static_cell::ConstStaticCell;
 
@@ -16,10 +16,10 @@ const PORT: u16 = {% if f[3] == "modbus" %}502{% else %}5000{% endif %};
 
 // Буфер канала — сообщение и CRC (`rx_len`); кадру передачи — место под
 // худший случай COBS от всего буфера канала (`tx_len`).
-const BUFFER: usize = ::adapters::cobs::rx_len(crate::link::HOST_MESSAGE);
+const BUFFER: usize = ::adapters::cobs::rx_len(crate::link::PROTOBUF_MESSAGE);
 {%- endif %}
 
-/// Канал узла `{% if f[3] == "modbus" %}MODBUS{% else %}HOST{% endif %}_{{ f[4] | upcase }}`; собирается над стеком платы (`board.net.stack`).
+/// Канал узла `{% if f[3] == "modbus" %}MODBUS{% else %}PROTOBUF{% endif %}_{{ f[4] | upcase }}`; собирается над стеком платы (`board.net.stack`).
 {%- if f[3] == "modbus" %}
 pub type Link = ::adapters::modbus::Tcp<::adapters::net::TcpServer>;
 {%- else %}
@@ -39,13 +39,13 @@ static SOCKET_RX: ConstStaticCell<[u8; crate::link::SOCKET_BUFFER]> =
 static SOCKET_TX: ConstStaticCell<[u8; crate::link::SOCKET_BUFFER]> =
     ConstStaticCell::new([0; crate::link::SOCKET_BUFFER]);
 {%- if f[3] == "protobuf" %}
-static HOST_BUFFER: ConstStaticCell<[u8; BUFFER]> = ConstStaticCell::new([0; BUFFER]);
-static HOST_FRAME: ConstStaticCell<[u8; ::adapters::cobs::tx_len(BUFFER)]> =
+static PROTOBUF_BUFFER: ConstStaticCell<[u8; BUFFER]> = ConstStaticCell::new([0; BUFFER]);
+static PROTOBUF_FRAME: ConstStaticCell<[u8; ::adapters::cobs::tx_len(BUFFER)]> =
     ConstStaticCell::new([0; ::adapters::cobs::tx_len(BUFFER)]);
 // Ответ узел кодирует сюда, а не в буфер канала: там может лежать
-// недочитанный кадр (`domain::host`).
-static HOST_RESPONSE: ConstStaticCell<[u8; crate::link::HOST_MESSAGE]> =
-    ConstStaticCell::new([0; crate::link::HOST_MESSAGE]);
+// недочитанный кадр (`domain::protobuf`).
+static PROTOBUF_RESPONSE: ConstStaticCell<[u8; crate::link::PROTOBUF_MESSAGE]> =
+    ConstStaticCell::new([0; crate::link::PROTOBUF_MESSAGE]);
 {%- endif %}
 
 /// Память канала — ссылки на статики выше. Статики берутся ровно один раз:
@@ -67,15 +67,15 @@ pub fn buffers() -> ::adapters::cobs::TcpCobsBuffers {
             tx: SOCKET_TX.take(),
         },
         cobs: ::adapters::cobs::CobsBuffers {
-            buf: HOST_BUFFER.take(),
-            frame: HOST_FRAME.take(),
+            buf: PROTOBUF_BUFFER.take(),
+            frame: PROTOBUF_FRAME.take(),
         },
     }
 }
 
 /// Буфер ответа узла — ссылка на статик выше; берётся ровно один раз.
 pub fn response() -> &'static mut [u8] {
-    HOST_RESPONSE.take()
+    PROTOBUF_RESPONSE.take()
 }
 {%- endif %}
 {%- endif %}

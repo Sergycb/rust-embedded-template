@@ -50,7 +50,7 @@ Modbus{% endif %}{% if net_services != "" %}, секреты служб{% endif 
 — память и параметры от `app`; реэкспорт `domain::Assemble`) — {% if graph == "true" %}инициализатором
 слота во фрагменте{% else %}в задаче{% endif %}; `app` называет тип адаптера
 параметром фрагмента и раздаёт поля платы и ссылки на статики.
-{%- capture wirings %}{% if has_modbus == "true" %}, `ServerWiring`{% endif %}{% if has_protobuf == "true" %}, `HostWiring`{% endif %}{% if ota == "true" %}, `OtaWiring`{% endif %}{% if has_canopen == "true" %}, `CanOpenWiring`{% endif %}{% if net_services contains "ssh" %}, `SshWiring`{% endif %}{% if net_services contains "mqtt" %}, `MqttWiring`{% endif %}{% endcapture %} Входы с такой
+{%- capture wirings %}{% if has_modbus == "true" %}, `ServerWiring`{% endif %}{% if has_protobuf == "true" %}, `ProtobufWiring`{% endif %}{% if ota == "true" %}, `OtaWiring`{% endif %}{% if has_canopen == "true" %}, `CanOpenWiring`{% endif %}{% if net_services contains "ssh" %}, `SshWiring`{% endif %}{% if net_services contains "mqtt" %}, `MqttWiring`{% endif %}{% endcapture %} Входы с такой
 сборкой{% if wirings != "" %} ({{ wirings | remove_first: ", " }}){% endif %} пишутся руками, а не `boot: … struct`: выведенная структура
 допускает в инициализаторе только чтение поля. Порт с адаптером или библиотека
 прямо в `domain` — критерий в `docs/architecture.md`.
@@ -397,19 +397,19 @@ read`: руками пришлось бы сначала найти адрес �
   `Assemble` над тем, что отдала плата: {{ sources | remove_first: ", " }}.
   {%- if has_modbus == "true" %} Узел Modbus slave — `domain::server::SERVER_FRAG<L, H>` ({% if graph == "true" %}граф называет
   узлы{% else %}узлы{% endif %} `MODBUS_<транспорт>`).{% endif %}
-  {%- if has_protobuf == "true" %} Узел protobuf хоста — `domain::host::HOST_FRAG<L, S>`
-  (`HOST_<транспорт>`).{% endif %} Тип канала (`Link`), его статики и `buffers()` —
+  {%- if has_protobuf == "true" %} Узел protobuf хоста — `domain::protobuf::PROTOBUF_FRAG<L, S>`
+  (`PROTOBUF_<транспорт>`).{% endif %} Тип канала (`Link`), его статики и `buffers()` —
   `crates-cross/app/src/link/<вид>.rs`, по модулю на транспорт: размер буфера и
   порт — решение приложения, и `bsp` их не знает. Буфер кадра держит сам канал
   (`ports::FrameLink::buffer`), протокол — обработчик ({% if has_modbus == "true" %}`ports::Handler`:
-  `domain::modbus::Slave`{% if has_protobuf == "true" %}; {% endif %}{% endif %}{% if has_protobuf == "true" %}`ports::HostService`: `domain::host::Service`{% endif %}).
+  `domain::modbus::Slave`{% if has_protobuf == "true" %}; {% endif %}{% endif %}{% if has_protobuf == "true" %}`ports::ProtobufService`: `domain::protobuf::Service`{% endif %}).
   {%- if has_protobuf == "true" %} {% if ota == "true" %}Узел
-  `HOST` ждёт кадр наперегонки с исходом команды OTA, поэтому его канал{% else %}Канал узла `HOST`{% endif %} —
+  `PROTOBUF` ждёт кадр наперегонки с исходом команды OTA, поэтому его канал{% else %}Канал узла `PROTOBUF`{% endif %} —
   `ports::FrameDuplex`: брошенный `recv` не теряет кадр{% if cobs_used == "true" %} (у `adapters::cobs::Cobs`
   декодер живёт в канале, а не в future){% endif %}, а ответ уходит из своего буфера узла
   (`response()` модуля `link`) через `send_from`.{% endif %} Вход узла — {% if graph == "true" %}выражение в
   `fragments:` графа{% else %}`spawn` модуля задачи
-  (`crates-cross/app/src/tasks/`: {% if has_modbus == "true" %}`domain::server::serve`{% if has_protobuf == "true" %}, {% endif %}{% endif %}{% if has_protobuf == "true" %}`HostCtx` руками{% endif %}):
+  (`crates-cross/app/src/tasks/`: {% if has_modbus == "true" %}`domain::server::serve`{% if has_protobuf == "true" %}, {% endif %}{% endif %}{% if has_protobuf == "true" %}`ProtobufCtx` руками{% endif %}):
   по модулю на задачу, `main.rs` только зовёт `tasks::spawn_all`{% endif %}.
 {%- endif %}
 {%- if net_services contains "rest" %}

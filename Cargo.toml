@@ -227,7 +227,7 @@ crc                    = { version = "3.4.0" }
 # {%- endif %}
 # {%- if has_protobuf == "true" %}
 # Protobuf (`crates-host/proto` — схема и сгенерированные типы, `domain` —
-# узел HOST): без alloc, повторяющиеся поля и строки — в контейнерах
+# узел PROTOBUF): без alloc, повторяющиеся поля и строки — в контейнерах
 # `heapless` 0.9, той же версии, что у остального дерева.
 micropb                = { version = "0.6.0", default-features = false, features = [
 	"encode",

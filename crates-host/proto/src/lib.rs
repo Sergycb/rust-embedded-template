@@ -7,7 +7,7 @@
 //! зависимостями сборки живёт в одном месте. Узел HOST схему не знает — он
 //! работает с любыми сообщениями, реализующими
 //! `micropb::MessageDecode`/`MessageEncode`; знает её обработчик
-//! `domain::host::Service`.
+//! `domain::protobuf::Service`.
 //!
 //! Пример схемы — конверт `Request`/`Response` с `request_id`; проект
 //! заменяет его своим.

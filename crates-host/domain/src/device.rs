@@ -1,6 +1,6 @@
 //! Сведения об устройстве — общие у узлов, которые отвечают на «кто ты».
 // {%- if has_protobuf == "true" %}
-//! `HOST` (protobuf).
+//! `PROTOBUF` (protobuf).
 // {%- endif %}
 // {%- if net_services contains "rest" %}
 //! `HTTP` (REST).
@@ -32,7 +32,7 @@ pub const INFO_MAX: usize = 256;
 /// (`bsp::ChipSpec`), а не `domain`. Пределы длины строк, если они есть, —
 /// у того, кто их отдаёт.
 // {%- if has_protobuf == "true" %}
-/// Схема protobuf проверяет свои в `host::Service::new`.
+/// Схема protobuf проверяет свои в `protobuf::Service::new`.
 // {%- endif %}
 #[derive(Debug, Clone, Copy)]
 pub struct DeviceInfo {
