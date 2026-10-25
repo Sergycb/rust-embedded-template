@@ -75,15 +75,12 @@
 			"command": "cargo",
 			"args": ["xtask", "panic-info"],
 			"problemMatcher": []
-		},
+		},{% if ota == "true" %}
 		{
 			// Bootloader для отладки из launch.json: приложение линкуется в
 			// ACTIVE, а после сброса управление получает то, что лежит с базы
-			// flash. Только в проекте с OTA — без него каталога boot нет, и
-			// launch.json зовёт просто сборку app. Убрать задачи из проекта без
-			// OTA нельзя: Liquid-условие вне строки сломало бы этот JSON в
-			// самом репозитории шаблона.
-			"label": "flash: boot (debug, только с OTA)",
+			// flash.
+			"label": "flash: boot (debug)",
 			"type": "shell",
 			"command": "cargo",
 			"args": ["flash", "-p", "boot", "--chip", "{{chip}}"],
@@ -91,7 +88,7 @@
 			"problemMatcher": ["$rustc"]
 		},
 		{
-			"label": "flash: boot (release, только с OTA)",
+			"label": "flash: boot (release)",
 			"type": "shell",
 			"command": "cargo",
 			"args": ["flash", "-p", "boot", "--release", "--chip", "{{chip}}"],
@@ -101,15 +98,15 @@
 		{
 			"label": "debug: prepare (debug)",
 			"dependsOrder": "sequence",
-			"dependsOn": ["flash: boot (debug, только с OTA)", "build: app (debug)"],
+			"dependsOn": ["flash: boot (debug)", "build: app (debug)"],
 			"problemMatcher": []
 		},
 		{
 			"label": "debug: prepare (release)",
 			"dependsOrder": "sequence",
-			"dependsOn": ["flash: boot (release, только с OTA)", "build: app (release)"],
+			"dependsOn": ["flash: boot (release)", "build: app (release)"],
 			"problemMatcher": []
-		},
+		},{% endif %}
 		{
 			"label": "build: app (debug)",
 			"type": "shell",

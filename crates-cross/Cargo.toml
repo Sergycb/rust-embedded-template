@@ -1,15 +1,16 @@
 [workspace]
-# "boot" — только когда OTA-схема embassy-boot помещается в flash выбранного
-# чипа (переменная ota из chip-select.rhai). Если нет — каталог crates-cross/boot в
-# проект не копируется вовсе (см. [conditional] в cargo-generate.toml), и
-# членом workspace ему быть нельзя.
-members  = ["app", {% if ota == "true" %}"boot", {% endif %}"bsp", "target-tests"]
+{%- if ota == "true" %}
+# "boot" — bootloader схемы OTA (embassy-boot).
+members  = ["app", "boot", "bsp", "target-tests"]
 # Bootloader собирается только в release и только явно (`cargo build -p boot
 # --release`, `cargo flash -p boot --release`): debug-сборки у него нет, поэтому
 # голые `cargo build`/`cargo check` его не трогают. Размер зоны bootloader'а
 # (порядка 28–32 KiB) рассчитан на release — с подписью debug-сборка в неё не
 # влезает.
 default-members = ["app", "bsp", "target-tests"]
+{%- else %}
+members  = ["app", "bsp", "target-tests"]
+{%- endif %}
 resolver = "3"
 
 [workspace.package]
@@ -25,11 +26,9 @@ rust-version = "1.96"
 # `-D warnings` в `cargo xtask lint cross` превращал бы предупреждение в ошибку.
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(rust_analyzer)"] }
 # `warn`, а не `deny`, как в корневом workspace: unsafe в `crates-cross` есть
-# и оправдан — прыжок в образ в `boot`, поллинг исполнителя в `app`,
-# `app/src/version.rs` (имя символа), бэкенд `getrandom` в `bsp/src/rng.rs` (с ssh)
-# (внешний символ и запись по его указателю), регистры option bytes, которых нет
-# в `stm32-metapac` (`bsp/src/clocks.rs`, только H723/725/730/733/735). Ровно на
-# этих местах стоит `#[expect(unsafe_code)]` с объяснением, и это весь
+# и оправдан — {% if ota == "true" %}прыжок в образ в `boot`, {% endif %}поллинг исполнителя в `app`,
+# регистры ядра и линкерные символы в `bsp`. На каждом таком месте стоит
+# `#[expect(unsafe_code)]` с объяснением, и это весь
 # unsafe этого воркспейса, который видит clippy (проверено прогоном с
 # `-W unsafe_code`, а не перечислением файлов). Вместе с `-D warnings` в
 # `cargo xtask lint cross` линт делает новый unsafe ошибкой сборки — то есть
@@ -84,10 +83,11 @@ defmt         = { version = "1.1.1" }
 # `disable-blocking-mode`: запись в RTT никогда не ждёт хоста. `probe-rs`
 # при подключении переводит канал в «блокировать при заполнении», и после
 # отключения пробника первый же лог, не влезший в буфер, остановил бы
-# прошивку навсегда — в поле, под сторожем или без него. Цена — при потоке
+# прошивку навсегда — в поле, где пробника нет. Цена — при потоке
 # быстрее, чем пробник успевает вычитывать, кадры теряются, а не ждут.
 defmt-rtt     = { version = "1.3.0", features = ["disable-blocking-mode"] }
 panic-probe   = { version = "1.0.0" }
+{%- if ota == "true" %}
 # `time-driver-any` здесь НЕТ намеренно, и вернуть её сюда нельзя. Фичи
 # воркспейса складываются со всем, что просит крейт, а не заменяются им, —
 # значит отсюда драйвер времени доставался и `boot`. Тот запускал TIM и
@@ -100,6 +100,10 @@ panic-probe   = { version = "1.0.0" }
 # Просят его теперь те, кому он и правда нужен: `app` — фичей `bsp/time-driver`
 # (про `embassy-stm32` приложение не знает), `target-tests` — сам. `boot`
 # зависит от `bsp` без этой фичи и собирается отдельным вызовом cargo.
+{%- else %}
+# `time-driver-any` здесь нет: его просят те, кому он нужен, — `app` фичей
+# `bsp/time-driver` (про `embassy-stm32` приложение не знает), `target-tests` — сам.
+{%- endif %}
 embassy-stm32 = { version = "0.6.0", features = [
 	# Не «за компанию» с остальным defmt в проекте: без этой фичи `Clocks` не
 	# реализует `defmt::Format`, а перечислить её поля вручную шаблон не может
@@ -118,13 +122,21 @@ embassy-executor = { version = "0.10.0", features = [
 	"platform-cortex-m",
 	"executor-thread",
 ] }
+{%- if ota == "true" %}
+{%- if erase_zero == "true" and ota_store != "external" %}
+# Фича `flash-erase-zero` у `boot` и `bsp`: флеш этого чипа стирается нулями, а
+# `embassy-boot-stm32` её не пробрасывает.
 embassy-boot         = { version = "0.7.0" }
+{%- endif %}
 embassy-boot-stm32 = { version = "0.8.0" }
-# Разделы и асинхронный вид блокирующего флеша (`bsp::flash`, `boot`). Версия
-# та же, что тянет embassy-boot.
+{%- endif %}
+{%- if ota == "true" or shared_flash == "true" or external_flash == "true" %}
+# Разделы и асинхронный вид блокирующего флеша (`bsp`{% if ota == "true" %}, `boot`{% endif %}).{% if ota == "true" %} Версия
+# та же, что тянет embassy-boot.{% endif %}
 embassy-embedded-hal = { version = "0.6.0" }
-# Один `Flash` на весь чип делится между OTA и настройками, а обеим нужен
-# `&'static` (иначе их не отдать в спавнящиеся задачи — те требуют 'static).
+{%- endif %}
+# Память `&'static` для того, что уходит в спавнящиеся задачи (те требуют
+# 'static): исполнитель `app` и объекты платы.
 static_cell            = { version = "2.1.1" }
 {%- if has_usb == "true" %}
 # USB-устройство (`bsp::usb`): та же версия, что в корневом Cargo.toml.
@@ -148,11 +160,14 @@ embassy-net-driver     = { version = "0.2.0" }
 getrandom              = { version = "0.4.3" }
 {%- endif %}
 {%- endif %}
+{%- if ota == "true" or has_modbus == "true" or shared_flash == "true" or external_flash == "true" or net_services contains "ssh" %}
 embassy-sync       = { version = "0.8.0" }
-# Трейты `NorFlash` — нужны только `boot/src/external.rs` при `ext_flash=yes`
-# (геометрия драйвера внешней флеши в проверках при компиляции). Та же версия,
-# что тянет embassy-boot.
+{%- endif %}
+{%- if ota == "true" and ota_store == "external" %}
+# Трейты `NorFlash` — нужны `boot/src/external.rs` (геометрия драйвера внешней
+# флеши в проверках при компиляции). Та же версия, что тянет embassy-boot.
 embedded-storage   = { version = "0.3.1" }
+{%- endif %}
 {%- if has_uart == "true" %}
 # Заглушка UART (`bsp::stub::Serial`) — поток байтов, как у `BufferedUart`.
 embedded-io-async  = { version = "0.7.0" }
@@ -168,12 +183,17 @@ embedded-io-async  = { version = "0.7.0" }
 # что напишете вы. Без неё в логе видно, что произошло, но не когда: «упал» и
 # «упал через 40 мс после старта» — разные диагнозы.
 #
+{%- if ota == "true" %}
 # Фича — у бинарников с драйвером времени (`app`, `target-tests`), а не здесь,
 # по той же причине, что и `time-driver-any` выше: отметка зовёт
 # `Instant::now()`, а у `boot` драйвера нет. `bsp`, от которого он зависит,
 # использует `embassy-time`, крейт попадает в образ, и отметка из воркспейса
 # требовала бы `_embassy_time_now` — линковка `boot` падает. Без фичи его логи
 # идут без отметки (дефолт `defmt.x`), как и прежде.
+{%- else %}
+# Фича — у бинарников с драйвером времени (`app`, `target-tests`), а не здесь,
+# как и `time-driver-any` выше: отметка зовёт `Instant::now()`.
+{%- endif %}
 #
 # Крейт определяет `defmt::timestamp!` за нас (embassy-time/src/lib.rs), и
 # отсюда ограничение: макрос допускает ровно одно определение на бинарник.
@@ -196,14 +216,17 @@ embedded-test      = { version = "0.7.2", default-features = false, features = [
 	"semihosting",
 	"panic-handler",
 ] }
+{%- if core_baseline != "true" or ota == "true" or config == "true" or has_can == "true" %}
 # Трейты-границы домена и типы ошибок: их реализуют adapters и bsp, а app
 # работает только через них. `defmt` — ради `Format` на ошибках в логе.
 ports            = { path = "../crates-host/ports", features = ["defmt"] }
-# Адаптеры, generic по флешу/шине: OTA поверх embassy-boot, настройки поверх
-# sequential-storage. Собирают их узлы над рычагами `bsp`, а `bsp` берёт отсюда
-# обёртки, из которых строит рычаги сам (USB, сеть, EEPROM, флеш обновления). `defmt` — ради `Format` на ошибках в логе прошивки; на хосте
-# крейт собирается без фич вывода вовсе.
+{%- endif %}
+{%- if ota == "true" or config == "true" or has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" or has_usb == "true" or has_net == "true" %}
+# Адаптеры, generic по флешу/шине: собирают их узлы над рычагами `bsp`, а `bsp`
+# берёт отсюда обёртки, из которых строит рычаги сам. `defmt` — ради `Format`
+# на ошибках в логе прошивки; на хосте крейт собирается без фич вывода вовсе.
 adapters         = { path = "../crates-host/adapters", features = ["defmt"] }
+{%- endif %}
 {%- if flash_page == "true" %}
 flash-page       = { path = "../crates-host/flash-page" }
 {%- endif %}
@@ -216,10 +239,11 @@ domain           = { path = "../crates-host/domain", default-features = false, f
 shadow-rs        = { version = "2.0.0", default-features = false }
 assign-resources = { version = "0.5.0" }
 
-# Крейты из личной библиотеки ({{rust_lib}}) — оба про железо
+# Крейты из личной библиотеки ({{rust_lib}}) — про железо
 # и оркестрацию, поэтому объявлены здесь, а не в корневом workspace'е (для
 # `domain`).
 #
+{%- if graph == "true" %}
 # `supervisor` заменил сразу три сторонних крейта: `embassy-supervisor`
 # (упорядоченный старт по графу), `embassy-task-watchdog` (мультиплексор
 # watchdog'ов, теперь — блок `watchdog:` в том же макросе) и `ector`
@@ -233,41 +257,49 @@ assign-resources = { version = "0.5.0" }
 # `spawn_all` печатает `main.rs`, имя узла, переставшего кормить сторож, перед
 # аппаратным сбросом — `before_reset` в `bsp::wdg`, застой и восстановление
 # узла — наблюдатель `observe:` в `graph.rs`, исход прогона — тело задачи.
+{%- else %}
+# `supervisor` — контексты узлов из `domain`, `TaskExit` и
+# каналы между узлами; узлы спавнит `tasks::spawn_all` (`app/src/tasks/`).
+#
+# Фичи `defmt` у `supervisor` нет: библиотека сама ничего не печатает. Что
+# видно в логе, решает прошивка — исход прогона пишет тело задачи.
+{%- endif %}
 #
 # * `metadata-name` — имя узла из DSL попадает в
 #   `embassy_executor::Metadata`, то есть в defmt-виды задач и в дампы, где
 #   иначе стоял бы непрозрачный идентификатор. Занимает flash: по
 #   `&'static str` на узел.
 #
-# * `local-resources` — ради узлов со слотами `local`: `OTA` (`LINK`, `FLASH`
-#   во фрагменте `domain::ota`), `NET` (`RUNNER`), `USB` (`DEVICE`), протокольных
-#   узлов (`MODBUS_LINK`...). Эти слоты помечены `local`, потому что держат
-#   `!Send`-объекты платы — например, `adapters::ota::Updater` над разделами
-#   `bsp::flash` ссылается на `Mutex<NoopRawMutex, …>`, — а обычный
-#   слот графа это `static`, которому нужен `Send`. Включена всегда, а не только
-#   с OTA: без неё узлы `NET`/`USB`/`MODBUS` не собирались на чипе без OTA.
+# * `local-resources` — ради слотов `local`: они держат `!Send`-объекты
+#   платы{% if ota == "true" %} (например, `adapters::ota::Updater` над разделами `bsp::flash`
+#   ссылается на `Mutex<NoopRawMutex, …>`){% endif %}, а обычный слот — это `static`,
+#   которому нужен `Send`.
 #   Фича включает `LocalResourceSlot` и снимает у `supervisor`
 #   `forbid(unsafe_code)` до `deny` (у слота один документированный
 #   `unsafe impl Sync`), а макрос эмитит по `unsafe`-блоку на каждый такой
 #   `static` (`LocalResourceSlot::empty()`) в `app`: обязательство «значение
-#   живёт на исполнителе, спавнящем граф» лежит в крейте графа, а не в
-#   библиотеке. Это то же допущение, что у `NoopRawMutex` в
-#   `bsp::flash::FlashMutex`; менять их вместе.
+#   живёт на исполнителе, спавнящем узлы» лежит в `app`, а не в
+#   библиотеке.{% if shared_flash == "true" %} Это то же допущение, что у `NoopRawMutex` в
+#   `bsp::flash::FlashMutex`; менять их вместе.{% endif %}
 supervisor       = { git = "{{rust_lib}}.git", features = [
 	"metadata-name",
 	"local-resources",
 ] }
+{%- if graph == "true" %}
 watchdog         = { git = "{{rust_lib}}.git" }
-# Вход команд узла OTA в проекте без графа (`app`, src/main.rs): с графом его
-# заводит `supervisor` сам. Тот же git, что у `supervisor`, — один крейт в дереве.
+{%- endif %}
+{%- if ota == "true" and graph != "true" %}
+# Входы команд узла OTA (`app`, src/tasks/ota.rs) — `static` модуля задачи.
+# Тот же git, что у `supervisor`, — один крейт в дереве.
 sync-request     = { git = "{{rust_lib}}.git" }
+{%- endif %}
 {%- if external_flash == "true" %}
 
 # Драйвер внешней флеши Winbond W25Q (W25Q10..W25Q128) по SPI или QSPI —
-# `bsp::external`: асинхронный у приложения (фича `async`), блокирующий у
-# bootloader'а (`sync`). Объём — по JEDEC ID при `init`. Своя библиотека
-# драйверов, по git; `rev` закреплён: драйвер стоит под данными OTA и
-# настройками, и чужое изменение команд микросхемы не должно приехать молча.
+# `bsp::external`: асинхронный у приложения (фича `async`){% if ota == "true" and ota_store == "external" %}, блокирующий у
+# bootloader'а (`sync`){% endif %}. Объём — по JEDEC ID при `init`. Своя библиотека
+# драйверов, по git; `rev` закреплён: драйвер стоит под {% if ota == "true" and ota_store == "external" %}данными OTA{% if config_store == "external" %} и
+# настройками{% endif %}{% else %}настройками{% endif %}, и чужое изменение команд микросхемы не должно приехать молча.
 w25q             = { git = "https://github.com/Sergycb/hw-drivers.git", rev = "4deb2e145fb5ed135f335b98c97b8bb12af98cc4", default-features = false, features = [
 	"nor-flash",
 	"defmt",
@@ -284,11 +316,12 @@ embassy-futures  = { version = "0.1.2" }
 # крейта — свой нужен, чтобы вдобавок напечатать причину в RTT. `utf8` добавляет
 # `get_panic_message_utf8`, без него сообщение читается только байтами.
 panic-persist = { version = "0.3.0", features = ["utf8", "custom-panic-handler"] }
+{%- if has_usb == "true" %}
 
-# `embassy-usb` подключается выше, только под `interface=usb`, — версия 0.6,
-# парная к `embassy-stm32` 0.6. Прежде он стоял запиненным на 0.5 ради
-# `defmt-embassy-usbserial` (`#[global_logger]` над USB CDC-ACM), убранного
-# вместе с остальными заменёнными зависимостями: 0.5 больше не брать.
+# `embassy-usb` — версия 0.6, парная к `embassy-stm32` 0.6. Прежде он стоял
+# запиненным на 0.5 ради `#[global_logger]` над USB CDC-ACM, убранного вместе с
+# остальными заменёнными зависимостями: 0.5 больше не брать.
+{%- endif %}
 
 [profile.dev]
 codegen-units    = 1

@@ -1,32 +1,55 @@
-//! Секреты сетевых служб, которые прошивка берёт из корня проекта: токен
-//! REST API, пароль консоли SSH и вшиваемый ключ хоста SSH, — и настройки
-//! брокера MQTT (`mqtt.toml`).
+//! Файлы сетевых служб, которые прошивка берёт из корня проекта:
 //!
-//! Создаются случайными при первой сборке и коммитятся — как открытый ключ
-//! OTA, а не как закрытый: они уезжают в образ, и кто получил `app.bin`,
-//! получил и их. `.gitignore` не защитил бы ничего, а свежий клон и CI без
-//! файла не собрали бы прошивку. Защита — уровня стенда; для большего у SSH
-//! есть вход по ключу и ключ хоста, созданный самой платой (`config`).
+// {%- if net_services contains "rest" %}
+//! - токен REST API;
+// {%- endif %}
+// {%- if ssh_auth == "password" %}
+//! - пароль консоли SSH;
+// {%- endif %}
+// {%- if ssh_host_key == "file" %}
+//! - вшиваемый ключ хоста SSH;
+// {%- endif %}
+// {%- if net_services contains "mqtt" %}
+//! - адрес и вход брокера MQTT (`mqtt.toml`).
+// {%- endif %}
+//!
+//! Создаются при первой сборке и коммитятся: они уезжают в образ, и кто
+//! получил прошивку, получил и их. `.gitignore` не защитил бы ничего, а свежий
+//! клон и CI без файла не собрали бы прошивку.
+// {%- if net_services contains "rest" or ssh_auth == "password" or ssh_host_key == "file" %}
+//! Секреты — случайные; защита — уровня стенда.
+// {%- endif %}
+// {%- if net_services contains "ssh" %}
+//! Для большего у SSH есть вход по ключу и ключ хоста, созданный самой платой
+//! (`config`).
+// {%- endif %}
 
+// {%- if net_services contains "rest" or ssh_auth == "password" %}
 use std::fmt::Write as _;
+// {%- endif %}
 use std::{fs, path::Path};
 
 use anyhow::Context;
 
-use crate::project::{SSH_AUTH, SSH_HOST_KEY, has_net_service};
-
+// {%- if net_services contains "rest" %}
 /// Токен `Authorization: Bearer` REST API (`domain::http`), 32 шестнадцатеричных
 /// знака; его вшивает `crates-cross/app/src/net/rest.rs`.
 pub const REST_TOKEN_FILE: &str = "rest-token.txt";
+// {%- endif %}
 
+// {%- if ssh_auth == "password" %}
 /// Пароль пользователя консоли SSH (`domain::ssh::USER`) при входе по паролю,
 /// 32 шестнадцатеричных знака; вшивает `crates-cross/app/src/net/ssh.rs`.
 pub const SSH_PASSWORD_FILE: &str = "ssh-password.txt";
+// {%- endif %}
 
+// {%- if ssh_host_key == "file" %}
 /// Зерно ключа хоста SSH (ed25519, 32 байта), когда ключ вшит в прошивку, а не
 /// создан платой; вшивает `crates-cross/app/src/net/ssh.rs`.
 pub const SSH_HOST_KEY_FILE: &str = "ssh-host-key.bin";
+// {%- endif %}
 
+// {%- if net_services contains "mqtt" %}
 /// Брокер MQTT (`domain::mqtt`): адрес, вход и префикс тем; разбирает и
 /// вшивает `crates-cross/app/build.rs`.
 pub const MQTT_CONFIG_FILE: &str = "mqtt.toml";
@@ -48,25 +71,26 @@ password = ""
 # не с `$`.
 prefix = "devices"
 "#;
+// {%- endif %}
 
-/// Создаёт недостающие секреты выбранных служб. Существующие не трогает:
-/// новый токен или пароль отрезал бы клиентов, которые знают прежний, а новый
-/// ключ хоста — тех, у кого он в `known_hosts`.
+/// Создаёт недостающие файлы служб. Существующие не трогает: в них уже чьи-то
+/// значения, и прошивка с новыми отрезала бы тех, кто знает прежние.
 pub fn ensure(root: &Path) -> Result<(), anyhow::Error> {
-    if has_net_service("rest") {
-        ensure_text(&root.join(REST_TOKEN_FILE), "токен REST API")?;
-    }
-    if has_net_service("ssh") && SSH_AUTH == "password" {
-        ensure_text(&root.join(SSH_PASSWORD_FILE), "пароль консоли SSH")?;
-    }
-    if has_net_service("ssh") && SSH_HOST_KEY == "file" {
-        ensure_bytes(&root.join(SSH_HOST_KEY_FILE), "ключ хоста SSH")?;
-    }
-    if has_net_service("mqtt") {
-        ensure_mqtt_config(&root.join(MQTT_CONFIG_FILE))?;
-    }
+    // {%- if net_services contains "rest" %}
+    ensure_text(&root.join(REST_TOKEN_FILE), "токен REST API")?;
+    // {%- endif %}
+    // {%- if ssh_auth == "password" %}
+    ensure_text(&root.join(SSH_PASSWORD_FILE), "пароль консоли SSH")?;
+    // {%- endif %}
+    // {%- if ssh_host_key == "file" %}
+    ensure_bytes(&root.join(SSH_HOST_KEY_FILE), "ключ хоста SSH")?;
+    // {%- endif %}
+    // {%- if net_services contains "mqtt" %}
+    ensure_mqtt_config(&root.join(MQTT_CONFIG_FILE))?;
+    // {%- endif %}
     Ok(())
 }
+// {%- if net_services contains "rest" or ssh_auth == "password" %}
 
 /// 16 случайных байт шестнадцатеричной строкой — токен или пароль.
 fn ensure_text(path: &Path, what: &str) -> Result<(), anyhow::Error> {
@@ -81,6 +105,8 @@ fn ensure_text(path: &Path, what: &str) -> Result<(), anyhow::Error> {
     created(path, what);
     Ok(())
 }
+// {%- endif %}
+// {%- if ssh_host_key == "file" %}
 
 /// 32 случайных байта как есть — зерно ключа.
 fn ensure_bytes(path: &Path, what: &str) -> Result<(), anyhow::Error> {
@@ -91,9 +117,10 @@ fn ensure_bytes(path: &Path, what: &str) -> Result<(), anyhow::Error> {
     created(path, what);
     Ok(())
 }
+// {%- endif %}
+// {%- if net_services contains "mqtt" %}
 
-/// Заготовка настроек брокера MQTT; существующий файл — уже чьи-то настройки,
-/// его не трогает.
+/// Заготовка `mqtt.toml`; существующий файл — уже чей-то, его не трогает.
 fn ensure_mqtt_config(path: &Path) -> Result<(), anyhow::Error> {
     if path.exists() {
         return Ok(());
@@ -106,6 +133,8 @@ fn ensure_mqtt_config(path: &Path) -> Result<(), anyhow::Error> {
     );
     Ok(())
 }
+// {%- endif %}
+// {%- if net_services contains "rest" or ssh_auth == "password" or ssh_host_key == "file" %}
 
 fn random<const N: usize>() -> Result<[u8; N], anyhow::Error> {
     let mut bytes = [0u8; N];
@@ -120,6 +149,7 @@ fn created(path: &Path, what: &str) {
         path.display()
     );
 }
+// {%- endif %}
 
 // {%- if net_services contains "mqtt" %}
 /// Разбор `mqtt.toml` — тот же файл, что у build-скрипта прошивки: build-скрипт
@@ -133,8 +163,17 @@ mod mqtt_toml;
 mod tests {
     use std::fs;
 
-    use super::{MQTT_CONFIG_TEMPLATE, ensure_bytes, ensure_mqtt_config, ensure_text};
+    // {%- if net_services contains "rest" or ssh_auth == "password" %}
+    use super::ensure_text;
+    // {%- endif %}
+    // {%- if ssh_host_key == "file" %}
+    use super::ensure_bytes;
+    // {%- endif %}
+    // {%- if net_services contains "mqtt" %}
+    use super::{MQTT_CONFIG_TEMPLATE, ensure_mqtt_config};
+    // {%- endif %}
     use crate::memory::scratch::scratch;
+    // {%- if net_services contains "rest" or ssh_auth == "password" %}
 
     #[test]
     fn a_missing_text_is_created_random() {
@@ -148,6 +187,8 @@ mod tests {
         assert!(token.bytes().all(|c| c.is_ascii_hexdigit()), "{token}");
         assert_ne!(token, fs::read_to_string(&b).unwrap().trim_end());
     }
+    // {%- endif %}
+    // {%- if ssh_host_key == "file" %}
 
     #[test]
     fn a_missing_key_is_32_random_bytes() {
@@ -158,22 +199,31 @@ mod tests {
         assert_eq!(key.len(), 32);
         assert_ne!(key, [0; 32]);
     }
+    // {%- endif %}
 
     #[test]
-    fn existing_secrets_are_kept() {
+    fn existing_files_are_kept() {
         let dir = scratch("secrets-kept");
-        let (text, bytes) = (dir.path().join("t.txt"), dir.path().join("k.bin"));
-        let mqtt = dir.path().join("mqtt.toml");
+        // {%- if net_services contains "rest" or ssh_auth == "password" %}
+        let text = dir.path().join("t.txt");
         fs::write(&text, "mine\n").unwrap();
-        fs::write(&bytes, [7; 32]).unwrap();
-        fs::write(&mqtt, "host = \"10.0.0.1\"\n").unwrap();
         ensure_text(&text, "t").unwrap();
-        ensure_bytes(&bytes, "k").unwrap();
-        ensure_mqtt_config(&mqtt).unwrap();
         assert_eq!(fs::read_to_string(&text).unwrap(), "mine\n");
+        // {%- endif %}
+        // {%- if ssh_host_key == "file" %}
+        let bytes = dir.path().join("k.bin");
+        fs::write(&bytes, [7; 32]).unwrap();
+        ensure_bytes(&bytes, "k").unwrap();
         assert_eq!(fs::read(&bytes).unwrap(), [7; 32]);
+        // {%- endif %}
+        // {%- if net_services contains "mqtt" %}
+        let mqtt = dir.path().join("mqtt.toml");
+        fs::write(&mqtt, "host = \"10.0.0.1\"\n").unwrap();
+        ensure_mqtt_config(&mqtt).unwrap();
         assert_eq!(fs::read_to_string(&mqtt).unwrap(), "host = \"10.0.0.1\"\n");
+        // {%- endif %}
     }
+    // {%- if net_services contains "mqtt" %}
 
     #[test]
     fn a_missing_mqtt_config_is_a_template() {
@@ -185,7 +235,6 @@ mod tests {
         assert!(text.contains("host = \"192.168.1.10\""), "{text}");
         assert!(text.contains("prefix = \"devices\""), "{text}");
     }
-    // {%- if net_services contains "mqtt" %}
 
     /// Заготовка проходит разбор build-скрипта как есть.
     #[test]

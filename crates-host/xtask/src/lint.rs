@@ -3,7 +3,7 @@
 use anyhow::Context;
 use xshell::cmd;
 
-use crate::project::{has_bootloader, host_features, root_dir};
+use crate::project::{host_features, root_dir};
 
 pub fn lint_host(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     let _p = sh.push_dir(root_dir());
@@ -14,16 +14,15 @@ pub fn lint_host(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
         "cargo clippy --workspace --all-targets --features {features} -- -D warnings"
     )
     .run()?;
-    // Ветка без подписи: иначе её код нигде не собирался бы. В проекте без OTA
-    // `signed` нет вовсе, и первый прогон уже без неё. Только clippy — тесты и
-    // doc без `signed` время не стоят.
-    if has_bootloader() {
-        cmd!(
-            sh,
-            "cargo clippy --workspace --all-targets --features domain/log -- -D warnings"
-        )
-        .run()?;
-    }
+    // {%- if ota == "true" %}
+    // Ветка без подписи: иначе её код нигде не собирался бы. Только clippy —
+    // тесты и doc без `signed` время не стоят.
+    cmd!(
+        sh,
+        "cargo clippy --workspace --all-targets --features domain/log -- -D warnings"
+    )
+    .run()?;
+    // {%- endif %}
     // Битые ссылки в документации ломали бы `cargo doc` у пользователя крейта.
     cmd!(
         sh,
@@ -36,7 +35,11 @@ pub fn lint_host(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
 
 /// Тесты на устройстве прошиваются на место приложения, поэтому их `memory.x`
 /// обязан совпадать с `memory.x` приложения; разъехавшись, они линкуют тест не
+// {%- if ota == "true" %}
 /// туда, куда смотрит bootloader.
+// {%- else %}
+//{{newline}}/// туда, откуда стартует ядро.
+// {%- endif %}
 fn ensure_test_memory_matches_app() -> Result<(), anyhow::Error> {
     let cross = root_dir().join("crates-cross");
     let read = |crate_dir: &str| {
@@ -55,8 +58,10 @@ fn ensure_test_memory_matches_app() -> Result<(), anyhow::Error> {
 
 pub fn lint_cross(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     ensure_test_memory_matches_app()?;
+    // {%- if net_services contains "rest" or net_services contains "mqtt" or ssh_auth == "password" or ssh_host_key == "file" %}
     // clippy компилирует `app`, а тот вшивает секреты служб (`include_str!`).
     crate::secrets::ensure(&root_dir())?;
+    // {%- endif %}
     let _p = sh.push_dir(root_dir().join("crates-cross"));
     cmd!(sh, "cargo fmt --check").run()?;
     // Без `--all-targets`: он добавил бы `lib test` — цель, которую cargo
@@ -75,25 +80,24 @@ pub fn lint_cross(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     // Second pass, release only: the release profile turns
     // `debug-assertions`/`overflow-checks` off, so anything behind `debug_assert!`
     // or `#[cfg(not(debug_assertions))]` (the release panic handler in
-    // `app/src/panic.rs`, the release defmt transport pattern in graph.rs) is only
-    // type-checked here. `bsp` is linted alongside `app` so that it gets `app`'s
-    // features. target-tests carry no such code, so re-linting it would just
-    // repeat the first pass.
-    if has_bootloader() {
-        cmd!(
-            sh,
-            "cargo clippy -p app -p boot -p bsp --release -- -D warnings"
-        )
-        .run()?;
-        // Bootloader под тесты на плате (`cargo xtask test target`) собирается с
-        // фичей `no-watchdog`: эта ветка нигде больше не компилируется.
-        cmd!(
-            sh,
-            "cargo clippy -p boot --release --features no-watchdog -- -D warnings"
-        )
-        .run()?;
-    } else {
-        cmd!(sh, "cargo clippy -p app -p bsp --release -- -D warnings").run()?;
-    }
+    // `app/src/panic.rs`) is only type-checked here. `bsp` is linted alongside
+    // `app` so that it gets `app`'s features. target-tests carry no such code,
+    // so re-linting it would just repeat the first pass.
+    // {%- if ota == "true" %}
+    cmd!(
+        sh,
+        "cargo clippy -p app -p boot -p bsp --release -- -D warnings"
+    )
+    .run()?;
+    // Bootloader под тесты на плате (`cargo xtask test target`) собирается с
+    // фичей `no-watchdog`: эта ветка нигде больше не компилируется.
+    cmd!(
+        sh,
+        "cargo clippy -p boot --release --features no-watchdog -- -D warnings"
+    )
+    .run()?;
+    // {%- else %}
+    //{{newline}}    cmd!(sh, "cargo clippy -p app -p bsp --release -- -D warnings").run()?;
+    // {%- endif %}
     Ok(())
 }

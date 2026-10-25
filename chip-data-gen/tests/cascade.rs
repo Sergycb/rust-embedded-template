@@ -713,9 +713,11 @@ fn chip_without_room_for_ota_gets_single_image_layout() {
             "без OTA региона {region} быть не должно:\n{app}"
         );
     }
+    // Причина отказа от OTA печатается при генерации, а в memory.x проекта
+    // без OTA о ней ни слова: невыбранное в проект не попадает.
     assert!(
-        app.contains("OTA (crates-cross/boot) не подключён"),
-        "причина должна остаться в самом memory.x:\n{app}"
+        app.contains("один образ на весь flash") && !app.contains("OTA"),
+        "memory.x без OTA описывает один образ и не упоминает OTA:\n{app}"
     );
     // Каталог bootloader'а сносится самим хуком: [conditional] в
     // cargo-generate.toml переменных из хука не видит (проверено эмпирически).

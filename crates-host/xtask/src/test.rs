@@ -1,18 +1,23 @@
 //! `cargo xtask test <этап>` — три этапа тестирования и их сумма.
 
+// {%- if ota == "true" and ota_store != "external" %}
 use std::{env, fs};
 
 use anyhow::Context;
+// {%- endif %}
 use xshell::cmd;
 
-use crate::flash::{flash_all, flash_boot};
+use crate::flash::flash_all;
+// {%- if ota == "true" %}
+use crate::flash::flash_boot;
+// {%- endif %}
+// {%- if ota == "true" and ota_store != "external" %}
 use crate::image::raw_image;
 use crate::memory::{Region, app_memory_regions, app_region, region};
-use crate::project::{
-    CHIP, PAGE_SIZE, TARGET, WRITE_SIZE, cross_target_dir, external_partitions, has_bootloader,
-    host_features, root_dir, signing_enabled,
-};
+use crate::project::{PAGE_SIZE, TARGET, WRITE_SIZE, cross_target_dir, signing_enabled};
 use crate::signing::{ensure_image_key, ensure_signing_key};
+// {%- endif %}
+use crate::project::{CHIP, host_features, root_dir};
 
 /// Этапы: имя, строка справки, запуск. Одна таблица и для справки, и для
 /// выбора — разъехаться им негде.
@@ -76,18 +81,26 @@ fn test_host(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
 }
 
 /// Хост управляет уже прошитым устройством: сначала заливаем то, что тест
+// {%- if ota == "true" and ota_store != "external" %}
 /// будет проверять, потом запускаем сам тест. Чип и адреса разделов уходят к
 /// нему через окружение: первое подставляется при генерации в одном месте,
 /// вторые считаются по `memory.x` — знать это в двух местах незачем.
+// {%- else %}
+//{{newline}}/// будет проверять, потом запускаем сам тест. Чип уходит к нему через
+//{{newline}}/// окружение — он подставляется при генерации в одном месте.
+// {%- endif %}
 fn test_host_target(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
+    // {%- if ota == "true" and ota_store != "external" %}
     // Ключ — до прошивки, как и в `build`: открытый попадает в bootloader
     // через его build.rs, то есть должен существовать к моменту компиляции.
-    let seed = if signing_enabled() && has_bootloader() {
+    let seed = if signing_enabled() {
         ensure_signing_key(&root_dir())?
     } else {
         None
     };
+    // {%- endif %}
     flash_all(sh, "release")?;
+    // {%- if ota == "true" and ota_store != "external" %}
     // Как в `build`: ключ в залитом bootloader'е обязан быть тем, которым
     // подписывается инертный образ, — иначе тест обмена упал бы, обвиняя
     // bootloader в отказе, а не сборку в старом ключе.
@@ -108,25 +121,33 @@ fn test_host_target(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     let dfu = region(&regions, "DFU");
     let state = region(&regions, "BOOTLOADER_STATE");
     let ram = region(&regions, "RAM");
+    // {%- endif %}
 
-    {
-        let _env_chip = sh.push_env("HOST_TARGET_CHIP", CHIP);
-        let _env_ota = ota_env(sh, active, dfu, state, ram, seed.as_ref())?;
-        let _p = sh.push_dir(root_dir().join("crates-host").join("host-target-tests"));
-        // В один поток: пробник у платы один, а nextest по умолчанию гоняет
-        // тесты параллельно — два `probe-rs` на одной цели дерутся за неё и
-        // падают с невнятной ошибкой захвата.
-        cmd!(sh, "cargo nextest run --test-threads 1").run()?;
-    }
+    let _env_chip = sh.push_env("HOST_TARGET_CHIP", CHIP);
+    // {%- if ota == "true" and ota_store != "external" %}
+    let _env_ota = ota_env(sh, active, dfu, state, ram, seed.as_ref())?;
+    // {%- endif %}
+    let _p = sh.push_dir(root_dir().join("crates-host").join("host-target-tests"));
+    // В один поток: пробник у платы один, а nextest по умолчанию гоняет
+    // тесты параллельно — два `probe-rs` на одной цели дерутся за неё и
+    // падают с невнятной ошибкой захвата.
+    // {%- if ota == "true" and ota_store != "external" %}
+    cmd!(sh, "cargo nextest run --test-threads 1").run()?;
+    // {%- else %}
+    // Сценариев в шаблоне нет (`host-target-tests/tests/test.rs`) — пустой
+    // прогон не ошибка.
+    //{{newline}}    cmd!(sh, "cargo nextest run --test-threads 1 --no-tests warn").run()?;
+    // {%- endif %}
     Ok(())
 }
+// {%- if ota == "true" and ota_store != "external" %}
 
 /// Адреса разделов OTA и инертный образ в окружение теста — если разделы
 /// вообще есть.
 ///
 /// Возвращает guard'ы `xshell`: переменные живут, пока жив результат. Пустой
-/// вектор (нет bootloader'а или региона) означает, что тест полного цикла
-/// обновления сам себя пропустит — проверять там нечего.
+/// вектор (разделов нет в `memory.x` или неизвестна страница) означает, что
+/// тест полного цикла обновления сам себя пропустит.
 ///
 /// С подписью (`seed`) рядом с образом кладётся запись о ней
 /// (`ports::PendingImage`): без неё bootloader отвергает обмен до первого шага.
@@ -138,20 +159,11 @@ fn ota_env<'a>(
     ram: Option<&Region>,
     seed: Option<&[u8; 32]>,
 ) -> Result<Vec<xshell::PushEnv<'a>>, anyhow::Error> {
-    // Тест пишет образ в `DFU` и запрос в `STATE` пробником, по адресам из
-    // memory.x. На внешней флеши этих адресов нет, и регионов в memory.x тоже
-    // — это не ошибка раскладки, говорить о ней как об ошибке нельзя.
-    if external_partitions() {
-        println!("тест цикла OTA пропущен: DFU и STATE на внешней флеши, пробнику их не достать");
-        return Ok(Vec::new());
-    }
     let (Some(active), Some(dfu), Some(state), Some(ram)) = (active, dfu, state, ram) else {
-        if has_bootloader() {
-            println!(
-                "ВНИМАНИЕ: в memory.x не хватает регионов ACTIVE/DFU/BOOTLOADER_STATE/RAM — \
-                 тест цикла OTA пропущен"
-            );
-        }
+        println!(
+            "ВНИМАНИЕ: в memory.x не хватает регионов ACTIVE/DFU/BOOTLOADER_STATE/RAM — \
+             тест цикла OTA пропущен"
+        );
         return Ok(Vec::new());
     };
     // Пустой `page_size` означает, что раскладку считал не шаблон, а человек
@@ -181,9 +193,6 @@ fn ota_env<'a>(
              проверяются, только отказ неподписанному"
         );
     }
-    // Без OTA модуля `ports::ota` в проекте нет (его вырезает генерация), а
-    // `seed` там всегда `None`: подпись бывает только с bootloader'ом.
-    // {%- if ota == "true" %}
     if let Some(seed) = seed {
         let record = ports::PendingImage {
             len: u32::try_from(image.len()).context("длина инертного образа")?,
@@ -194,7 +203,6 @@ fn ota_env<'a>(
             .with_context(|| format!("записать {}", path.display()))?;
         vars.push(sh.push_env("HOST_TARGET_SIGNATURE_RECORD", path));
     }
-    // {%- endif %}
     vars.extend([
         sh.push_env("HOST_TARGET_SIGNED", signing_enabled().to_string()),
         sh.push_env("HOST_TARGET_INERT_IMAGE", image_path),
@@ -232,15 +240,22 @@ fn inert_image(active: u32, ram_end: u32) -> Vec<u8> {
     image.extend_from_slice(&0xE7FE_u16.to_le_bytes());
     image
 }
+// {%- endif %}
 
+// {%- if ota == "true" %}
 /// Тесты внутри МК. Bootloader заливается первым по той же причине, что и в
 /// `test_host_target`: тестовый образ линкуется в `ACTIVE` (его `memory.x` —
 /// копия app'ового), а `probe-rs run` после заливки сбрасывает чип, и
 /// управление получает не тест, а то, что лежит с базы flash. На плате, где
 /// bootloader'а нет — свежей или после `probe-rs erase`, — без этой строки
 /// не выполнился бы ни один тест.
+// {%- else %}
+//{{newline}}/// Тесты внутри МК.
+// {%- endif %}
 fn test_target(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
+    // {%- if ota == "true" %}
     flash_boot(sh, false)?;
+    // {%- endif %}
     let _p = sh.push_dir(root_dir().join("crates-cross/target-tests"));
     cmd!(sh, "cargo test").run()?;
     Ok(())

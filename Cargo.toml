@@ -54,7 +54,7 @@ unimplemented           = "warn"
 large_stack_arrays      = "warn"
 # Каждый `unsafe`-блок обязан объяснять, почему он корректен. Ловит ровно то,
 # что иначе ловить нечем: unsafe без комментария выглядит как обычная строка.
-# Таких мест в шаблоне четыре, все в `crates-cross` и все подписаны, а
+# Таких мест в шаблоне четыре, все в `crates-cross` и все с комментарием, а
 # `executor.poll()` в `app/src/main.rs` этому линту и обязан — до него он шёл
 # без `// SAFETY:` вовсе.
 undocumented_unsafe_blocks = "warn"
@@ -80,10 +80,8 @@ arbitrary_source_item_ordering = "warn"
 # Крейты самого проекта: порты/адаптеры domain объявлены здесь, чтобы версия
 # и путь были в одном месте, как у внешних зависимостей.
 ports        = { path = "crates-host/ports" }
+# {%- if has_net == "true" or has_usb == "true" %}
 adapters     = { path = "crates-host/adapters" }
-# {%- if flash_page == "true" %}
-# Страница стирания раздела (`ErasePage`) — общая у `bsp` и `boot`.
-flash-page   = { path = "crates-host/flash-page" }
 # {%- endif %}
 # {%- if has_protobuf == "true" %}
 # Схема protobuf — крейт протокола, выбранного при генерации.
@@ -106,10 +104,16 @@ thiserror    = { version = "2.0.20", default-features = false }
 # сеть, файлы и время сюда не приезжают. В прошивку не уезжает:
 # dev-зависимости path-зависимости cargo не собирает.
 tokio        = { version = "1.53.1", default-features = false, features = ["rt", "macros"] }
+# {%- if graph == "true" %}
 # Задачи графа живут в `domain` (`domain::heartbeat`), а граф, который их спавнит, —
 # в `crates-cross/app`. Контекст, который фрагмент эмитит в `domain` (`ctx:`),
 # снимает с задачи знание о графе, но не о типах, которыми граф с ней
-# разговаривает: `Heartbeat`, `TaskExit` и хэндлы каналов приходят отсюда. Фичи не объявлены намеренно —
+# разговаривает: `Heartbeat`, `TaskExit` и хэндлы каналов приходят отсюда.
+# {%- else %}
+# Задачи узлов живут в `domain`, а спавнит их `crates-cross/app`: контекст
+# задачи, `TaskExit` и хэндлы каналов приходят отсюда.
+# {%- endif %}
+# Фичи не объявлены намеренно —
 # `defmt`/`metadata-name` просит `crates-cross/Cargo.toml`, и в прошивке они
 # складываются с этой строкой; хостовой сборке domain они не нужны.
 # {%- comment %}
@@ -119,14 +123,19 @@ tokio        = { version = "1.53.1", default-features = false, features = ["rt",
 supervisor   = { git = "https://github.com/Sergycb/rust-lib.git" }
 # {%- endcomment %}
 #{{newline}}supervisor   = { git = "{{rust_lib}}.git" }
-# Время в проекте одно — `embassy_time::Duration`: тем же типом граф задаёт
-# свои таймауты, а `core::time::Duration` стоил бы вызова `__aeabi_uldivmod`
+# Время в проекте одно — `embassy_time::Duration`: тем же типом
+# {%- if graph == "true" %}
+# граф задаёт свои таймауты,
+# {%- else %}
+# узлы задают свои таймауты,
+# {%- endif %}
+# а `core::time::Duration` стоил бы вызова `__aeabi_uldivmod`
 # на каждой конверсии. Версия та же, что в `crates-cross/Cargo.toml`, — иначе
 # в прошивке оказалось бы две несовместимые копии крейта.
 embassy-time = { version = "0.5.1" }
-# Каждая задача графа — автомат `#[fsm::typestate]` на своём контексте
-# (`ctx:` фрагмента): таблица переходов проверяется компилятором. Тот же
-# репозиторий, что у `supervisor`.
+# Каждая задача узла — автомат `#[fsm::typestate]` на своём контексте:
+# таблица переходов проверяется компилятором. Тот же репозиторий, что у
+# `supervisor`.
 # {%- comment %}
 fsm          = { git = "https://github.com/Sergycb/rust-lib.git" }
 # {%- endcomment %}
@@ -142,27 +151,54 @@ portable-atomic = { version = "1.15.0" }
 # фичи не уезжают: dev-зависимости пути-зависимости не собираются вовсе.
 embassy-executor = { version = "0.10.0" }
 critical-section = { version = "1.2.0" }
-# Адаптеры OTA и настроек generic по флешу и потому живут в корневом workspace:
-# здесь те же версии, что в crates-cross/Cargo.toml (иначе в прошивке оказалось
-# бы две копии крейта). `embassy-boot` — без `-stm32`: сам он от чипа не зависит,
-# а `from_linkerfile` зовёт адаптер (`adapters::ota::Linked`) — только на МК.
+# Адаптеры generic по флешу и потому живут в корневом workspace: здесь те же
+# версии, что в crates-cross/Cargo.toml (иначе в прошивке оказалось бы две копии
+# крейта).
+# {%- if ota == "true" or erase_page == "true" %}
+# `embassy-boot` — без `-stm32`: сам он от чипа не зависит.
+# {%- if ota == "true" %}
+# `from_linkerfile` зовёт адаптер OTA (`adapters::ota::Linked`) — только на МК.
+# {%- endif %}
 embassy-boot           = { version = "0.7.0" }
-# `adapters`: тип раздела `Partition` в `ota::Linked`, а в тестах флеша —
-# `BlockingAsync` и `BlockingPartition`. Версия та же, что в `crates-cross/Cargo.toml`.
+# {%- endif %}
+# {%- if ota == "true" or flash_page == "true" %}
+# {%- if ota == "true" %}
+# `adapters`: тип раздела `Partition` в `ota::Linked`.
+# {%- endif %}
+# {%- if flash_page == "true" %}
+# Тесты `flash-page`: `BlockingAsync` и `BlockingPartition`.
+# {%- endif %}
 embassy-embedded-hal   = { version = "0.6.0" }
-# Мьютекс флеша адаптеров. Версия та же, что в `crates-cross/Cargo.toml` и у `supervisor`, — иначе в
-# прошивке оказалось бы две несовместимые копии крейта.
+# {%- endif %}
+# Мьютексы адаптеров. Версия та же и у `supervisor` — иначе в прошивке
+# оказалось бы две несовместимые копии крейта.
 embassy-sync           = { version = "0.8.0" }
+# {%- if ota == "true" or config == "true" or flash_page == "true" %}
 embedded-storage       = { version = "0.3.1" }
 embedded-storage-async = { version = "0.4.1" }
+# {%- endif %}
+# {%- if config == "true" %}
+# Хранилище настроек (`adapters::settings`).
 sequential-storage     = { version = "8.0.1", default-features = false }
+# {%- endif %}
 # {%- if stream_io == "true" or net_services contains "ssh" or net_services contains "mqtt" %}
-# Транспорт поверх потока байтов (`adapters::usb`, `net::TcpServer` и
-# протоколы над ними): поток, который уже реализуют `BufferedUart` из
-# `embassy-stm32`, USB CDC и сокет `embassy-net`.
-# Версия та же, что у `embassy-stm32` 0.6, — иначе в прошивке были бы две копии
-# трейта, и UART его бы не реализовывал. Канал сессии SSH (`domain::ssh`) и
-# соединение MQTT (`domain::mqtt`, `adapters::net::TcpClient`) — тот же трейт.
+# Поток байтов `embedded_io_async::{Read, Write}`. Версия та же, что у
+# `embassy-stm32` 0.6, — иначе в прошивке были бы две копии трейта.
+# {%- if has_uart == "true" %}
+# Его реализует `BufferedUart` из `embassy-stm32`.
+# {%- endif %}
+# {%- if has_usb == "true" %}
+# Его реализует поток USB CDC (`adapters::usb`).
+# {%- endif %}
+# {%- if has_tcp == "true" %}
+# Его реализует сокет TCP `embassy-net` (`adapters::net::TcpServer`).
+# {%- endif %}
+# {%- if net_services contains "ssh" %}
+# По нему идёт канал сессии SSH (`domain::ssh`).
+# {%- endif %}
+# {%- if net_services contains "mqtt" %}
+# По нему идёт соединение MQTT (`domain::mqtt`, `adapters::net::TcpClient`).
+# {%- endif %}
 embedded-io-async      = { version = "0.7.0" }
 # {%- endif %}
 # {%- if has_modbus == "true" %}
@@ -180,8 +216,13 @@ rusty-modbus-types     = { version = "0.1.1", default-features = false }
 cobs                   = { version = "0.5.1", default-features = false }
 # {%- endif %}
 # {%- if crc_used == "true" %}
-# CRC кадров: CRC-16/IBM-SDLC (X.25, FCS у HDLC/PPP) в `adapters::cobs`,
-# CRC-16/MODBUS в `domain::modbus` — одна реализация вместо своих.
+# CRC кадров — одна реализация вместо своих.
+# {%- if cobs_used == "true" %}
+# CRC-16/IBM-SDLC (X.25, FCS у HDLC/PPP) в `adapters::cobs`.
+# {%- endif %}
+# {%- if has_modbus == "true" %}
+# CRC-16/MODBUS в `domain::modbus`.
+# {%- endif %}
 crc                    = { version = "3.4.0" }
 # {%- endif %}
 # {%- if has_protobuf == "true" %}
@@ -215,8 +256,19 @@ embassy-net            = { version = "0.9.1", features = [
 ] }
 # {%- endif %}
 # {%- if has_protobuf == "true" or net_services != "" %}
-# Строки и векторы без кучи: контейнеры полей protobuf (`micropb`), тексты
-# ответов REST (`domain::http`) и строки консоли SSH (`domain::ssh`). 0.9 — та же версия, что у остального дерева.
+# Строки и векторы без кучи; 0.9 — та же версия, что у остального дерева.
+# {%- if has_protobuf == "true" %}
+# Контейнеры полей protobuf (`micropb`).
+# {%- endif %}
+# {%- if net_services contains "rest" %}
+# Тексты ответов REST (`domain::http`).
+# {%- endif %}
+# {%- if net_services contains "ssh" %}
+# Строки консоли SSH (`domain::ssh`).
+# {%- endif %}
+# {%- if net_services contains "mqtt" %}
+# Строки клиента MQTT (`domain::mqtt`).
+# {%- endif %}
 heapless               = { version = "0.9.3" }
 # {%- endif %}
 # {%- if net_services contains "rest" %}
@@ -233,8 +285,13 @@ picoserve              = { version = "0.20.1", features = ["embassy"] }
 sunset-async           = { version = "0.6.0" }
 # {%- endif %}
 # {%- if ota == "true" or net_services contains "ssh" %}
-# `select` сессии SSH и `yield_now` между страницами стирания OTA
-# (`adapters::ota`) — та же версия, что тянут `sunset-async` и `embassy-boot`.
+# {%- if net_services contains "ssh" %}
+# `select` сессии SSH — та же версия, что тянет `sunset-async`.
+# {%- endif %}
+# {%- if ota == "true" %}
+# `yield_now` между страницами стирания OTA (`adapters::ota`) — та же версия,
+# что тянет `embassy-boot`.
+# {%- endif %}
 embassy-futures        = { version = "0.1.2" }
 # {%- endif %}
 # {%- if net_services contains "mqtt" %}
@@ -268,6 +325,7 @@ zencan-build           = { version = "0.0.5" }
 # `embassy-stm32` — та же версия 0.4.
 embedded-can           = { version = "0.4.1" }
 # {%- endif %}
+# {%- if ota == "true" %}
 # Проверка подписи образа — под фичей `domain/signed`. Из двух реализаций,
 # которые понимает embassy-boot, взята меньшая: `ed25519-dalek` тянет
 # `curve25519-dalek` с `sha2`, salty самодостаточен и написан под
@@ -276,10 +334,16 @@ embedded-can           = { version = "0.4.1" }
 # любом ядре ценой скорости — ~100 млн тактов на проверку, меньше секунды, и
 # случается это один раз перед перезагрузкой.
 salty                  = { version = "0.3.0", default-features = false, features = ["slow-motion"] }
-# Property-based testing: `domain::ota::download::Transfer` проверяется на любом
-# разбиении образа на куски и любой ширине слова, а не на нескольких
-# выбранных руками. Только `[dev-dependencies]` `domain`.
+# {%- endif %}
+# {%- if ota == "true" or has_modbus == "true" or framing_tests == "true" %}
+# Property-based testing: свойства проверяются на любых входах, а не на
+# нескольких выбранных руками. Только `[dev-dependencies]`.
+# {%- if ota == "true" %}
+# `domain::ota::download::Transfer` — на любом разбиении образа на куски и
+# любой ширине слова.
+# {%- endif %}
 proptest               = { version = "1.0.0" }
+# {%- endif %}
 # Snapshot tests: точный вид строк отчёта `cargo xtask build` фиксируется
 # целиком, а не набором `contains`. Только `[dev-dependencies]` `xtask`.
 insta                  = { version = "1.34.0", default-features = false }

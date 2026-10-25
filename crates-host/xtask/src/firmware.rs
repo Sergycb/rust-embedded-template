@@ -1,37 +1,51 @@
+// {%- if ota == "true" %}
 //! `cargo xtask build` — обе сборки прошивки, сырой образ, его размер и подпись.
+// {%- else %}
+//{{newline}}//! `cargo xtask build` — обе сборки прошивки, сырой образ и его размер.
+// {%- endif %}
 
+// {%- if ota == "true" %}
 use std::fs;
 
 use anyhow::Context;
+// {%- endif %}
 use xshell::cmd;
 
-use crate::image::{image_version, raw_image, unpack_version};
-use crate::project::{
-    APP_ARTIFACT, TARGET, cross_target_dir, has_bootloader, root_dir, signing_enabled,
-};
+use crate::image::raw_image;
+// {%- if ota == "true" %}
+use crate::image::{image_version, unpack_version};
+// {%- endif %}
+use crate::project::{APP_ARTIFACT, TARGET, cross_target_dir, root_dir};
+// {%- if ota == "true" %}
+use crate::project::signing_enabled;
 use crate::signing::{ensure_image_key, ensure_signing_key, sign_image};
-use crate::size::{report_boot, report_image, report_ram, warn_boot_runtime_symbols};
+// {%- endif %}
+use crate::size::{report_image, report_ram};
+// {%- if ota == "true" %}
+use crate::size::{report_boot, warn_boot_runtime_symbols};
+// {%- endif %}
 
 pub fn build(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
+    // {%- if ota == "true" %}
     // Ключ приводится в порядок ДО сборки, а не после: открытый попадает в
     // bootloader через build.rs крейта boot, то есть должен существовать к
     // моменту компиляции.
-    //
-    // И только там, где есть что подписывать: без bootloader'а раздела `DFU` не
-    // существует, доставлять образ некуда, а пара ключей в корне проекта была
-    // бы вредна — открытый просился бы в коммит, закрытый охранял бы пустоту.
-    let seed = if signing_enabled() && has_bootloader() {
+    let seed = if signing_enabled() {
         ensure_signing_key(&root_dir())?
     } else {
         None
     };
+    // {%- endif %}
+    // {%- if net_services contains "rest" or net_services contains "mqtt" or ssh_auth == "password" or ssh_host_key == "file" %}
     // Секреты служб — тоже до сборки: прошивка вшивает их `include_str!`.
     crate::secrets::ensure(&root_dir())?;
+    // {%- endif %}
 
     {
         let _p = sh.push_dir(root_dir().join("crates-cross"));
         cmd!(sh, "cargo build").run()?;
         cmd!(sh, "cargo build --release").run()?;
+        // {%- if ota == "true" %}
 
         // Bootloader — только release и ОТДЕЛЬНЫМ вызовом, и это не про
         // удобство. Debug-сборки у него нет (зона рассчитана на release, с
@@ -47,9 +61,8 @@ pub fn build(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
         //
         // Уберёте эту строку — ELF бутлоадера в `target/` перестанет
         // совпадать с тем, что уезжает на плату, причём молча.
-        if has_bootloader() {
-            cmd!(sh, "cargo build -p boot --release").run()?;
-        }
+        cmd!(sh, "cargo build -p boot --release").run()?;
+        // {%- endif %}
     }
 
     let elf = cross_target_dir()
@@ -63,6 +76,7 @@ pub fn build(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
          xtask не читает",
         elf.display(),
     );
+    // {%- if ota == "true" %}
     let (base, mut image) = raw_image(&elf)?;
 
     // Версия — в хвост образа, и обязательно ДО подписи: устройство читает её
@@ -72,36 +86,37 @@ pub fn build(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     //
     // Значение берётся из символа в ELF, а не из Cargo.toml: так у версии
     // остаётся ровно один источник — то, что скомпилировано в прошивку.
-    if signing_enabled() && has_bootloader() {
+    if signing_enabled() {
         let version = image_version(&elf, base, &image)?;
         let (major, minor, patch) = unpack_version(version);
         println!("версия образа: {major}.{minor}.{patch}");
         image.extend_from_slice(&version.to_le_bytes());
     }
+    // {%- else %}
+    //{{newline}}    let (base, image) = raw_image(&elf)?;
+    // {%- endif %}
 
-    // Размер печатается всегда: он одинаково полезен и проекту без OTA, где
-    // приложению достаётся весь флеш. Заодно сверяется адрес, с которого образ
+    // Размер печатается всегда; заодно сверяется адрес, с которого образ
     // начинается.
     report_image(base, image.len() as u64)?;
     report_ram(&elf)?;
+    // {%- if ota == "true" %}
 
-    // А файл нужен только там, где есть куда его доставлять: `.bin` — это
-    // ровно то, что уезжает в раздел `DFU`.
-    if has_bootloader() {
-        let boot_elf = cross_target_dir().join(TARGET).join("release").join("boot");
-        let (boot_base, boot_image) = raw_image(&boot_elf)?;
-        report_boot(boot_image.len() as u64)?;
-        warn_boot_runtime_symbols(&boot_elf)?;
+    // `.bin` — ровно то, что уезжает в раздел `DFU`.
+    let boot_elf = cross_target_dir().join(TARGET).join("release").join("boot");
+    let (boot_base, boot_image) = raw_image(&boot_elf)?;
+    report_boot(boot_image.len() as u64)?;
+    warn_boot_runtime_symbols(&boot_elf)?;
 
-        let path = elf.with_extension("bin");
-        fs::write(&path, &image).with_context(|| format!("записать {}", path.display()))?;
-        println!("образ для OTA: {}", path.display());
+    let path = elf.with_extension("bin");
+    fs::write(&path, &image).with_context(|| format!("записать {}", path.display()))?;
+    println!("образ для OTA: {}", path.display());
 
-        if let Some(seed) = seed {
-            // Ключ проверяет bootloader — с его release-ELF и сверяем.
-            ensure_image_key(&boot_elf, boot_base, &boot_image, &seed)?;
-            sign_image(&path, &image, &seed)?;
-        }
+    if let Some(seed) = seed {
+        // Ключ проверяет bootloader — с его release-ELF и сверяем.
+        ensure_image_key(&boot_elf, boot_base, &boot_image, &seed)?;
+        sign_image(&path, &image, &seed)?;
     }
+    // {%- endif %}
     Ok(())
 }

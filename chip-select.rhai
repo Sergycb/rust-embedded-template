@@ -1870,7 +1870,7 @@ if variable::is_set("write_size") {
     }
     if wants_graph && !graph {
         print("Граф задач отключён для " + suffix + ": под приложение отведено " + m[app_length_key] + ", а supervisor туда не помещается");
-        print("  вернуть можно вручную — код графа лежит в docs/modules/app-graph.md");
+        print("  с графом проект генерируется под чип с большим разделом приложения");
     }
 
     variable::set("write_size", m["write_size"]);
@@ -2213,7 +2213,6 @@ if variable::is_set("write_size") {
         // достаётся не весь чип, а flash минус две последние страницы.
         let single = [
             "/* Сгенерировано chip-select.rhai: один образ на весь flash. */",
-            "/* OTA (crates-cross/boot) не подключён: " + reason + ". */",
             "",
             "MEMORY {",
             "    FLASH             (rx)  : ORIGIN = " + m["flash_origin"] + ", LENGTH = " + m[key + "flash_length"],
@@ -2233,9 +2232,8 @@ if variable::is_set("write_size") {
 // Модуля графа в проекте без графа нет вовсе: всё его содержимое закрыто
 // `{% if graph == "true" %}`, и остался бы файл с одной строкой
 // `#![doc = include_str!(..)]` — модуль без кода, только ради документации.
-// Сама документация никуда не девается (`docs/modules/app-graph.md`), по ней
-// граф и возвращают вручную; см. сообщение выше, где он отключается по
-// размеру раздела. Условие в `crates-cross/app/src/main.rs` (`mod graph;`)
+// Граф возвращают перегенерацией проекта (см. сообщение выше, где он
+// отключается по размеру раздела). Условие в `crates-cross/app/src/main.rs` (`mod graph;`)
 // закрыто тем же `{% if %}`, поэтому удаление файла ничего не ломает.
 if variable::get("graph") != "true" {
 	file::delete("crates-cross/app/src/graph.rs");
@@ -2243,6 +2241,9 @@ if variable::get("graph") != "true" {
 	// `Board` поля сторожа не имеет.
 	file::delete("crates-cross/bsp/src/wdg.rs");
 	file::delete("docs/modules/bsp-wdg.md");
+	// Узел `HEARTBEAT` спавнит только граф, и сторожа без графа нет.
+	file::delete("crates-host/domain/src/heartbeat.rs");
+	file::delete("docs/watchdog.md");
 } else {
 	// С графом узлы спавнит он (`fragments:`), модули задач без графа не нужны.
 	file::delete("crates-cross/app/src/tasks.rs");
@@ -2509,6 +2510,9 @@ if variable::get("ota") != "true" {
 	file::delete("crates-host/adapters/src/ota.rs");
 	file::delete("crates-host/domain/src/ota.rs");
 	file::delete("crates-host/domain/src/ota");
+	// Подпись образа в `xtask` и описание OTA.
+	file::delete("crates-host/xtask/src/signing.rs");
+	file::delete("docs/ota.md");
 	// Перевод команд OTA у протокола: каталог протокола есть, только если он
 	// выбран, — чужой хук уже удалил выше.
 	if on.modbus {
@@ -2621,6 +2625,12 @@ if !on.protobuf && services.len() == 0 {
 variable::set("ssh_host_key", if !services.contains("ssh") { "" }
 	else if variable::get("config") == "true" && variable::get("config_store") != "external" && !on.canopen { "config" }
 	else { "file" });
+// Файлы служб в корне проекта (`xtask::secrets`): токен REST, пароль и ключ
+// хоста SSH, настройки брокера MQTT — только если хоть один из них нужен.
+if !services.contains("rest") && !services.contains("mqtt") && ssh_auth != "password"
+	&& variable::get("ssh_host_key") != "file" {
+	file::delete("crates-host/xtask/src/secrets.rs");
+}
 // Номера клиентов OTA у служб — следом за транспортами с протоколом: одно
 // число на граф и задачи без графа, а не счёт в каждом файле. У REST — по
 // клиенту на копию пула (`rest_ota_client` и следующие, `http_connections`

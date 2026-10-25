@@ -6,8 +6,13 @@ use anyhow::Context;
 
 use crate::project::root_dir;
 
+// {%- if ota == "true" %}
 /// Регион из `MEMORY {}`: `build` по нему меряет раздел приложения,
 /// `test host-target` передаёт тесту адреса разделов OTA, `panic-info` читает PANIC.
+// {%- else %}
+//{{newline}}/// Регион из `MEMORY {}`: `build` по нему меряет флеш приложения,
+//{{newline}}/// `panic-info` читает PANIC.
+// {%- endif %}
 pub struct Region {
     pub origin: u64,
     /// Нужна `panic-info`: по ней проверяется, что записанная в дампе длина
@@ -25,8 +30,9 @@ pub fn app_memory_regions() -> Result<Vec<(String, Region)>, anyhow::Error> {
     parse_memory_regions(&memory_x).with_context(|| format!("разобрать {}", memory_x.display()))
 }
 
+// {%- if ota == "true" %}
 /// Регионы из `memory.x` bootloader'а: его `FLASH` — собственная зона до
-/// `BOOTLOADER_STATE`. Только при `has_bootloader()`: без OTA каталога нет.
+/// `BOOTLOADER_STATE`.
 pub fn boot_memory_regions() -> Result<Vec<(String, Region)>, anyhow::Error> {
     let memory_x = root_dir()
         .join("crates-cross")
@@ -34,15 +40,21 @@ pub fn boot_memory_regions() -> Result<Vec<(String, Region)>, anyhow::Error> {
         .join("memory.x");
     parse_memory_regions(&memory_x).with_context(|| format!("разобрать {}", memory_x.display()))
 }
+// {%- endif %}
 
 /// Раздел, в который линкуется приложение, и как его называть в выводе.
+// {%- if ota == "true" %}
 ///
 /// Приложение линкуется в `ACTIVE`, а если такого региона нет — в `FLASH`.
 /// Причём в посчитанном при генерации файле `FLASH` приложения это и ЕСТЬ
 /// раздел `ACTIVE`: линкеру он отдан под этим именем. Отсюда и второе имя в
 /// паре — по наличию `DFU` видно, раздел перед нами или весь флеш, а сказать
 /// «из 128 KiB FLASH» про чип с 512 KiB значило бы соврать.
+// {%- else %}
+//{{newline}}/// Без разделов это весь флеш, `FLASH`.
+// {%- endif %}
 pub fn app_region(regions: &[(String, Region)]) -> Option<(&'static str, &Region)> {
+    // {%- if ota == "true" %}
     let partitioned = region(regions, "DFU").is_some();
     region(regions, "ACTIVE")
         .map(|active| ("ACTIVE", active))
@@ -50,6 +62,9 @@ pub fn app_region(regions: &[(String, Region)]) -> Option<(&'static str, &Region
             region(regions, "FLASH")
                 .map(|flash| (if partitioned { "ACTIVE" } else { "FLASH" }, flash))
         })
+    // {%- else %}
+    //{{newline}}    region(regions, "FLASH").map(|flash| ("FLASH", flash))
+    // {%- endif %}
 }
 
 /// `MEMORY { NAME (attrs) : ORIGIN = 0x..., LENGTH = 128K }` из `memory.x`.
@@ -58,9 +73,14 @@ pub fn app_region(regions: &[(String, Region)]) -> Option<(&'static str, &Region
 ///
 /// **Нераспознанная строка региона — ошибка, а не пропуск.** Раньше здесь стояло
 /// пять `continue` подряд, и любая форма, которую парсер не знал, превращалась
+// {%- if ota == "true" %}
 /// в «региона нет»: `build` писал `.bin` и подписывал его, не сверив ни базу, ни
 /// размер, `test host-target` молча пропускал цикл OTA, а `panic-info` отвечал, что
-/// дампа нет. Такие формы линкер принимает — то есть отказ был не «сломан
+/// дампа нет.
+// {%- else %}
+//{{newline}}/// в «региона нет»: `build` не сверял ни базу, ни размер образа, а `panic-info`
+//{{newline}}/// отвечал, что дампа нет.
+// {%- endif %} Такие формы линкер принимает — то есть отказ был не «сломан
 /// файл», а «тихо потеряны все проверки». Разбирается ровно то, что пишет
 /// шаблон, всё прочее падает с текстом строки.
 ///
@@ -264,12 +284,12 @@ mod tests {
 
 MEMORY {
     FLASH             (rx)  : ORIGIN = 0x08020000, LENGTH = 128K
-    BOOTLOADER_STATE  (rx)  : ORIGIN = 0x08000000, LENGTH = 16K
-    RAM               (xrw) : ORIGIN = 0x20000000, LENGTH = 128K
+    PANIC             (rw)  : ORIGIN = 0x2001FC00, LENGTH = 1K
+    RAM               (xrw) : ORIGIN = 0x20000000, LENGTH = 127K
 }
 
 __flash_base = 0x08000000;
-__bootloader_state_start = ORIGIN(BOOTLOADER_STATE) - __flash_base;
+__flash_end = ORIGIN(FLASH) + LENGTH(FLASH);
 ",
         )
         .expect("записать memory.x");
@@ -280,11 +300,7 @@ __bootloader_state_start = ORIGIN(BOOTLOADER_STATE) - __flash_base;
             .iter()
             .map(|(name, _)| name.as_str())
             .collect::<Vec<_>>();
-        assert_eq!(
-            names,
-            ["FLASH", "BOOTLOADER_STATE", "RAM"],
-            "лишние строки в разборе"
-        );
+        assert_eq!(names, ["FLASH", "PANIC", "RAM"], "лишние строки в разборе");
         let (name, flash) = &regions[0];
         assert_eq!(name, "FLASH");
         assert_eq!((flash.origin, flash.length), (0x0802_0000, 128 * 1024));
@@ -309,7 +325,7 @@ __bootloader_state_start = ORIGIN(BOOTLOADER_STATE) - __flash_base;
     }
 
     /// Формы, которые линкер принимает, а парсер не знает. Раньше такой регион
-    /// просто исчезал: `build` подписывал образ, не сверив ни базу, ни размер, и
+    /// просто исчезал: `build` пропускал образ, не сверив ни базу, ни размер, и
     /// ошибка выглядела бы не как поломка, а как «всё в порядке».
     #[test]
     fn skips_regions_commented_out_by_the_generator() {

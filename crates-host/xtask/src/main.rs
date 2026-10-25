@@ -6,15 +6,22 @@ mod memory;
 mod panic_info;
 mod pins;
 mod project;
+// {%- if net_services contains "rest" or net_services contains "mqtt" or ssh_auth == "password" or ssh_host_key == "file" %}
 mod secrets;
+// {%- endif %}
 mod setup;
+// {%- if ota == "true" %}
 mod signing;
+// {%- endif %}
 mod size;
 mod test;
 
 use std::env;
 
-use project::{CHIP, signing_enabled};
+use project::CHIP;
+// {%- if ota == "true" %}
+use project::signing_enabled;
+// {%- endif %}
 
 fn main() -> Result<(), anyhow::Error> {
     let args = env::args().skip(1).collect::<Vec<_>>();
@@ -49,9 +56,13 @@ fn usage() {
     println!(
         "USAGE cargo xtask setup                      # тулчейн, probe-rs, flip-link, cargo-плагины"
     );
+    // {%- if ota == "true" %}
     println!(
         "      cargo xtask build                      # debug + release, app.bin, размер, подпись"
     );
+    // {%- else %}
+    //{{newline}}    println!("      cargo xtask build                      # debug + release, размер");
+    // {%- endif %}
     println!("      cargo xtask lint [cross]");
     println!("      cargo xtask test [host|target|host-target|all]");
     println!("      cargo xtask pins [БЛОК|ПИН]            # справочник по чипу: SPI1, PA9");
@@ -64,11 +75,13 @@ fn usage() {
     println!(
         "      cargo xtask panic-info                 # причина последнего падения с платы, с разбором"
     );
+    // {%- if ota == "true" %}
     if signing_enabled() {
         println!();
         println!("Отдельных команд для подписи нет: `build` сам создаёт ключевую пару при первой");
         println!("сборке, кладёт открытый ключ в прошивку и подписывает release-образ.");
     }
+    // {%- endif %}
     println!();
     println!("Всё остальное про плату — напрямую через probe-rs:");
     println!("      probe-rs attach --chip {CHIP} <elf>   # defmt-лог без перепрошивки");

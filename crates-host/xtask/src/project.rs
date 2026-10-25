@@ -9,6 +9,7 @@ pub const CHIP: &str = "{{chip}}";
 /// проект.
 pub const TARGET: &str = "{{target}}";
 
+// {%- if ota == "true" and ota_store != "external" %}
 /// Минимальная единица записи во flash этого чипа. Подставляется при
 /// генерации, как и всё остальное про раскладку. Нужна host-target тесту:
 /// состояние bootloader'а — это `WRITE_SIZE` байт одинаковой магии, короче
@@ -22,74 +23,31 @@ pub const WRITE_SIZE: &str = "{{write_size}}";
 /// переносит разделы, и на неё же смещается прежний образ при обмене —
 /// host-target тесту нужно знать, где его искать.
 pub const PAGE_SIZE: &str = "{{page_size}}";
+// {%- endif %}
+// {%- if ota == "true" %}
 
-/// Подписываются ли OTA-образы — ответ, данный при генерации.
+/// Подписываются ли OTA-образы — ответ, данный при генерации. Строкой:
+/// исходник шаблона обязан оставаться разбираемым Rust (`xtask` — член
+/// корневого workspace и линтуется там), а плейсхолдер переживает это только
+/// внутри строкового литерала.
 pub const SIGNED: &str = "{{signed}}";
-
-/// Сетевые службы, выбранные при генерации, через запятую (`ssh,rest`);
-/// пусто — служб нет.
-pub const NET_SERVICES: &str = "{{net_services}}";
-
-/// Вход в консоль SSH: `password` или `key`; пусто — SSH нет.
-pub const SSH_AUTH: &str = "{{ssh_auth}}";
-
-/// Где ключ хоста SSH: `file` — вшит из корня проекта, `config` — плата
-/// создаёт его сама; пусто — SSH нет.
-pub const SSH_HOST_KEY: &str = "{{ssh_host_key}}";
+// {%- endif %}
 
 /// Имя файла ELF приложения в каталоге сборки — то, что [`crate::firmware::build`] читает.
 pub const APP_ARTIFACT: &str = "app";
 
-/// Whether this project has a bootloader at all — substituted at generation
-/// time. `"false"` when the OTA layout does not fit the chip's flash: then
-/// `crates-cross/boot` is not part of the generated project (see `chip-select.rhai`),
-/// and the app is flashed straight to the start of flash.
-///
-/// A string rather than a `bool` literal on purpose: the template source has
-/// to stay parseable Rust (`xtask` is a member of the root workspace and is
-/// linted there), and a template placeholder only survives that inside a
-/// string literal.
-pub const OTA: &str = "{{ota}}";
-
-/// Где лежат `DFU` и `STATE`: `"internal"` или `"external"` (на внешней
-/// флеши, `ext_flash=yes`). Строкой — по той же причине, что [`OTA`].
-pub const OTA_STORE: &str = "{{ota_store}}";
-
-/// Выбрана ли сетевая служба `name` (`rest`, `ssh`).
-pub fn has_net_service(name: &str) -> bool {
-    NET_SERVICES.split(',').any(|service| service == name)
-}
-
-/// Compared against `"false"` rather than `"true"` so that the un-rendered
-/// template (where `OTA` is still the literal placeholder) behaves like a
-/// project *with* a bootloader — that is what the maintainer expects from
-/// every command that touches `crates-cross`. Note that
-/// `cargo xtask lint cross` in the template repo itself cannot be that
-/// command: `crates-cross/Cargo.toml` contains Liquid, so cargo refuses to
-/// parse the manifest there. It is `template-check` that renders a real
-/// project and lints its `crates-cross` (same reasoning as in [`crate::pins`]).
-/// Generated projects always get an exact `"true"`/`"false"`.
-pub fn has_bootloader() -> bool {
-    OTA != "false"
-}
-
-/// Фичи `domain` для проверок на хосте. Подпись образа (`domain/signed`) есть
-/// только в проекте с OTA; в неподставленном шаблоне она включена — её код
-/// надо проверять и там (см. [`has_bootloader`]).
+/// Фичи `domain` для проверок на хосте.
+// {%- if ota == "true" %}
+/// С подписью образа (`domain/signed`): без неё её код нигде не проверялся бы.
+// {%- endif %}
 pub fn host_features() -> &'static str {
-    if has_bootloader() {
-        "domain/log,domain/signed"
-    } else {
-        "domain/log"
-    }
+    // {%- if ota == "true" %}
+    "domain/log,domain/signed"
+    // {%- else %}
+    //{{newline}}    "domain/log"
+    // {%- endif %}
 }
-
-/// `DFU` и `STATE` на внешней флеши: пробнику их не прочитать и не записать —
-/// в адресном пространстве МК их нет. Сравнение с `"external"`: в
-/// неподставленном шаблоне разделы считаются внутренними, как раньше.
-pub fn external_partitions() -> bool {
-    OTA_STORE == "external"
-}
+// {%- if ota == "true" %}
 
 /// Сравнение с `"true"`, а не с `"false"`: в неподставленном шаблоне (где
 /// константа — сам плейсхолдер) команды должны отказывать, а не делать вид,
@@ -97,6 +55,7 @@ pub fn external_partitions() -> bool {
 pub fn signing_enabled() -> bool {
     SIGNED == "true"
 }
+// {%- endif %}
 
 /// Каталог сборки `cross`-воркспейса.
 ///
