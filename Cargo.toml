@@ -231,7 +231,10 @@ picoserve              = { version = "0.20.1", features = ["embassy"] }
 # соединения — слоты узла. 0BSD. Случайность криптографии `sunset` берёт через
 # `getrandom` — в прошивке над RNG платы (`crates-cross/bsp/src/rng.rs`).
 sunset-async           = { version = "0.6.0" }
-# `select` сессии SSH — та же версия, что тянет `sunset-async`.
+# {%- endif %}
+# {%- if ota == "true" or net_services contains "ssh" %}
+# `select` сессии SSH и `yield_now` между страницами стирания OTA
+# (`adapters::ota`) — та же версия, что тянут `sunset-async` и `embassy-boot`.
 embassy-futures        = { version = "0.1.2" }
 # {%- endif %}
 # {%- if net_services contains "mqtt" %}

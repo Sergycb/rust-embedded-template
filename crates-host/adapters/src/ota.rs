@@ -281,6 +281,11 @@ where
     /// `len` (и запасную, если проект с подписью). `prepare_update()` из
     /// `embassy-boot` здесь не годится: он стирает раздел целиком, а это и
     /// время (на крупных секторах — секунды), и лишний износ флеша.
+    ///
+    /// Стирает по странице и уступает исполнитель после каждой: флеш платы
+    /// блокирующий (`BlockingAsync`), и стирание всего диапазона одним вызовом
+    /// держало бы все задачи прошивки, пока идёт стирание. Короче одной страницы
+    /// пауза не станет — её стирание неделимо (сектор F4 — 128 KiB, до 2 с).
     async fn prepare(&mut self, len: u32) -> Result<(), Self::Error> {
         if self.dfu_is_busy().await? {
             return Err(Error::BadState);
@@ -299,7 +304,10 @@ where
         // случай, если проверку однажды ослабят.
         let page = self.erase_size();
         let end = len.div_ceil(page).saturating_mul(page);
-        self.dfu.erase(0, end).await?;
+        for from in (0..end).step_by(page as usize) {
+            self.dfu.erase(from, from + page).await?;
+            embassy_futures::yield_now().await;
+        }
         if SIGNED {
             let spare = self.capacity;
             self.dfu.erase(spare, spare + page).await?;
@@ -418,6 +426,24 @@ mod tests {
             u.dfu.mem[512..].iter().all(|b| *b == 0x00),
             "третья и запасная не тронуты"
         );
+    }
+
+    /// `prepare` уступает исполнитель после каждой страницы: две страницы —
+    /// два `Pending`, и только третий `poll` завершает подготовку.
+    #[test]
+    fn prepare_yields_after_each_page() {
+        use core::pin::pin;
+        use core::task::{Context, Waker};
+
+        let mut u = Mem::<false>::new(Dfu::filled(0x00), State::erased(), 768);
+        let mut cx = Context::from_waker(Waker::noop());
+        let mut prepare = pin!(u.prepare(512));
+
+        let pending = (0..8)
+            .take_while(|_| prepare.as_mut().poll(&mut cx).is_pending())
+            .count();
+
+        assert_eq!(pending, 2, "по уступке на каждую из двух страниц");
     }
 
     /// С подписью `prepare` стирает и запасную страницу — под запись для

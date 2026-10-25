@@ -14,6 +14,7 @@ dependencies = [
  "embassy-boot",
  "embassy-embedded-hal",
  "embassy-executor",
+ "embassy-futures",
  "embassy-net",
  "embassy-sync",
  "embassy-time",
