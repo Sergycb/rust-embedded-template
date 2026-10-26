@@ -34,71 +34,23 @@
 /// времени, железа и каналов — см. модуль.
 pub mod load;
 
-use core::sync::atomic::Ordering;
+/// Период замера, счётчик сна и его снимок — то, на чём стоит замер,
+/// см. модуль.
+mod sampling;
 
-use embassy_time::{Duration, Instant};
-use portable_atomic::AtomicU32;
-
+pub use sampling::SleepTicks;
 // {%- if graph == "true" %}
-use supervisor::runtime::TaskExit;
-// {%- endif %}
-
-use load::{CpuLoad, Sample};
-
-/// Как часто снимаются счётчики.
-///
-// {%- if graph == "true" %}
-/// Заодно период отметок у сторожа узла: замерение дольше, чем отметка, и
-/// узел выглядел бы зависшим. Второе следствие — разрешение самой оценки:
+pub use sampling::WATCHDOG;
 // {%- else %}
-/// Отсюда и разрешение самой оценки:
-// {%- endif %}
-/// усреднение идёт по `SAMPLE_INTERVAL`, и профиль с характерным временем
-/// меньше него в эти проценты не попадёт.
-const SAMPLE_INTERVAL: Duration = Duration::from_millis(500);
-// {%- if graph == "true" %}
-
-/// Сколько узлу позволено не отмечаться, прежде чем это будет замечено.
-///
-/// Узел не падает и не перезапускается (`restart: Never`): самый длинный
-/// законный промежуток между отметками — `SAMPLE_INTERVAL` плюс занятость
-/// исполнителя, и 7 с — тот же запас, что у
-/// [`heartbeat::WATCHDOG`](crate::heartbeat::WATCHDOG): стирание крупного
-/// сектора флеша при приёме образа блокирует исполнитель на секунды. Нижнюю
-/// границу — больше интервала — держит `const`-assert ниже. Второе звено, с
-/// другого конца, не здесь:
-/// `WATCHDOG + WATCHDOG_CHECK_EVERY < bsp::wdg::HW_TIMEOUT_US`
-/// (`docs/watchdog.md`) — его держит `const`-assert в `app/src/graph.rs`, где
-/// видны оба конца.
-pub const WATCHDOG: Duration = Duration::from_secs(7);
-
-// Левое звено цепочки таймаутов, проверенное компилятором: `<` на `Duration`
-// в `const` не работает (нет const-трейтов), поэтому сравниваются тики.
-const _: () = assert!(
-    SAMPLE_INTERVAL.as_ticks() < WATCHDOG.as_ticks(),
-    "таймаут узла CPU_LOAD обязан быть больше периода его отметок"
-);
+pub use sampling::log_load;
 // {%- endif %}
 
-/// Счётчик тиков, проведённых исполнителем во сне.
-///
-/// Тик — это тик `embassy-time` (его `Instant::as_ticks`), а не цикл CPU:
-/// на стендовом стенде разные частоты дают разные числа при одной и той же
-/// загрузке, и это не расходится, это разные единицы.
-///
-/// 32 бита, а не 64: 64-битных атомиков у Cortex-M нет, и `AtomicU64` там —
-/// эмуляция `portable-atomic` с глобальной таблицей блокировок (два килобайта
-/// оперативной памяти на M4/M7). Счётчику хватает и 32: загрузку дают не его значения, а прирост
-/// между двумя снимками, и он считается по модулю 2³² ([`load::CpuLoad`]) —
-/// верно, пока между снимками меньше 2³² тиков (71 минута при тике 1 мегагерц,
-/// а снимок — раз в полсекунды).
-///
-/// Не [`core::sync::atomic::AtomicU32`] потому, что на Cortex-M0/M0+ у него
-/// нет `fetch_add` (нет CAS), а [`portable_atomic`] — ровно про это (см.
-/// `docs/conventions.md`).
-pub type SleepTicks = AtomicU32;
-
 // {%- if graph == "true" %}
+use embassy_time::Instant;
+use supervisor::runtime::TaskExit;
+
+use load::CpuLoad;
+use sampling::{SAMPLE_INTERVAL, snapshot};
 
 // Вход узла — `IdleMeter`: структуру эмитит сам фрагмент (`boot: …
 // struct`). Собирает её compose-site из того, что знает
@@ -108,6 +60,51 @@ pub type SleepTicks = AtomicU32;
 // `supervisor`: подсистема говорит, что ей нужно, приложение это
 // конструирует — зависимость направлена от приложения к подсистеме и никогда
 // наоборот.
+//
+// Узел объявлен здесь же, где лежит его задача, — как `HEARTBEAT_FRAG` в
+// `domain::heartbeat`; compose-site (`crates-cross/app/src/graph.rs`) только
+// перечисляет фрагмент, называет узел (`as CPU_LOAD`) и кормит его входом.
+//
+// `ctx:` — по той же причине, что в `domain::heartbeat`: контекст [`CpuLoadCtx`]
+// эмитит фрагмент здесь, в `domain`, а не compose-site, и автомат стоит на нём
+// рядом с узлом. Поле слота в нём — `&mut &'static SleepTicks`, поле
+// публикации — `watch::Sender` из `sync-unsized`.
+//
+// `boot: inputs:` — собственная привязка фрагмента: compose-site пишет
+// `fragments: [::domain::CPU_LOAD_FRAG as CPU_LOAD = ::domain::cpu_load::IdleMeter { sleep_ticks: … }]`,
+// а `spawn_all` связывает её первой строкой пролога, и инициализатор слота ниже
+// читает её поле. Так фрагмент не видит `Board` вовсе — только то, что ему
+// дали, и счётчик не может «забыться» при заполнении: без него узел не
+// собрался бы.
+//
+// `SLEEP_TICKS` — ресурсный слот, а не `shared:`, потому что значение пришло
+// извне и принадлежит не узлу, а циклу исполнителя: слот отдаёт его на время
+// прогона и забирает назад, `shared` просто делил бы ссылку. `&'static` в
+// типе слота — ровно то, что нужно, чтобы ссылка пережила создание
+// статика.
+//
+// `PERCENT: u8; 1` — количество подписчиков задано явно, потому что в сыром
+// шаблоне их ноль, а без числа макрос такое объявление не принимает. Один
+// слот — это не «один подписчик», а «место для одного»: кто первым позовёт
+// `cpu_load_percent_receiver()` в `graph.rs`, тот и займёт его.
+//
+// `watchdog:` — с отметкой после измерения, поэтому узел наблюдаем (`observe`):
+// замерзающее измерение тише ненаблюдаемого, но не безопаснее, а сброса
+// жалко. Без `observe` просрочка ушла бы в аппаратный сброс здоровой платы.
+supervisor::supervisor_fragment! {
+    name: CPU_LOAD_FRAG;
+    boot: inputs: struct $crate::cpu_load::IdleMeter;
+
+    node deps: [], restart: Never,
+        resources: [
+            /// Счётчик тиков сна, который ведёт цикл исполнителя.
+            SLEEP_TICKS: &'static $crate::cpu_load::SleepTicks = inputs.sleep_ticks
+        ],
+        publish: [PERCENT: u8; 1],
+        watchdog: $crate::cpu_load::WATCHDOG observe,
+        ctx: $crate::cpu_load::CpuLoadCtx,
+        task: $crate::cpu_load::task;
+}
 
 #[fsm::typestate]
 impl CpuLoadCtx<'_> {
@@ -160,20 +157,6 @@ impl CpuLoadCtx<'_> {
         s.next = fsm::next_tick(s.next, SAMPLE_INTERVAL, Instant::now());
     }
 }
-// {%- endif %}
-
-/// Снимок обоих счётчиков.
-///
-/// Оба читаются здесь, в одном месте и максимально близко друг к другу:
-/// разъехавшиеся на миллисекунду чтения дали бы загрузку, которой не было.
-fn snapshot(sleep_ticks: &SleepTicks) -> Sample {
-    Sample {
-        total_ticks: Instant::now().as_ticks(),
-        sleep_ticks: sleep_ticks.load(Ordering::Relaxed),
-    }
-}
-
-// {%- if graph == "true" %}
 
 /// Узел `CPU_LOAD` графа: раз в `SAMPLE_INTERVAL` публикует занятость
 /// процессора в процентах.
@@ -187,74 +170,5 @@ fn snapshot(sleep_ticks: &SleepTicks) -> Sample {
 /// не падает (`restart: Never`).
 pub async fn task(mut ctx: CpuLoadCtx<'_>) -> TaskExit {
     match ctx.run().await {}
-}
-// {%- endif %}
-
-// {%- if graph != "true" %}
-/// Замер загрузки: спавнится из `main.rs` (через
-/// `#[embassy_executor::task]`, потому что `Spawner::spawn` берёт токен, а не
-/// функцию), а значение уходит в лог — публиковать ему некуда.
-///
-/// Не автомат: контекста у него нет, а одно состояние с тактом — ровно этот
-/// цикл.
-///
-/// Строка на каждом интервале — сознательное исключение из правила «пустой узел
-/// молчит»: здесь она и есть результат измерения, и иначе его негде увидеть.
-/// Понадобится значение в коде — уберёте.
-pub async fn log_load(sleep_ticks: &SleepTicks) {
-    let mut cpu_load = CpuLoad::new();
-    loop {
-        embassy_time::Timer::after(SAMPLE_INTERVAL).await;
-        if let Some(percent) = cpu_load.sample(snapshot(sleep_ticks)) {
-            defmt_or_log::info!("domain: узел CPU_LOAD: загрузка {}%", percent);
-        }
-    }
-}
-// {%- endif %}
-// {%- if graph == "true" %}
-
-// Узел объявлен здесь же, где лежит его задача, — как `HEARTBEAT_FRAG` в
-// `domain::heartbeat`; compose-site (`crates-cross/app/src/graph.rs`) только
-// перечисляет фрагмент, называет узел (`as CPU_LOAD`) и кормит его входом.
-//
-// `ctx:` — по той же причине, что в `domain::heartbeat`: контекст [`CpuLoadCtx`]
-// эмитит фрагмент здесь, в `domain`, а не compose-site, и автомат стоит на нём
-// рядом с узлом. Поле слота в нём — `&mut &'static SleepTicks`, поле
-// публикации — `watch::Sender` из `sync-unsized`.
-//
-// `boot: inputs:` — собственная привязка фрагмента: compose-site пишет
-// `fragments: [::domain::CPU_LOAD_FRAG as CPU_LOAD = ::domain::cpu_load::IdleMeter { sleep_ticks: … }]`,
-// а `spawn_all` связывает её первой строкой пролога, и инициализатор слота ниже
-// читает её поле. Так фрагмент не видит `Board` вовсе — только то, что ему
-// дали, и счётчик не может «забыться» при заполнении: без него узел не
-// собрался бы.
-//
-// `SLEEP_TICKS` — ресурсный слот, а не `shared:`, потому что значение пришло
-// извне и принадлежит не узлу, а циклу исполнителя: слот отдаёт его на время
-// прогона и забирает назад, `shared` просто делил бы ссылку. `&'static` в
-// типе слота — ровно то, что нужно, чтобы ссылка пережила создание
-// статика.
-//
-// `PERCENT: u8; 1` — количество подписчиков задано явно, потому что в сыром
-// шаблоне их ноль, а без числа макрос такое объявление не принимает. Один
-// слот — это не «один подписчик», а «место для одного»: кто первым позовёт
-// `cpu_load_percent_receiver()` в `graph.rs`, тот и займёт его.
-//
-// `watchdog:` — с отметкой после измерения, поэтому узел наблюдаем (`observe`):
-// замерзающее измерение тише ненаблюдаемого, но не безопаснее, а сброса
-// жалко. Без `observe` просрочка ушла бы в аппаратный сброс здоровой платы.
-supervisor::supervisor_fragment! {
-    name: CPU_LOAD_FRAG;
-    boot: inputs: struct $crate::cpu_load::IdleMeter;
-
-    node deps: [], restart: Never,
-        resources: [
-            /// Счётчик тиков сна, который ведёт цикл исполнителя.
-            SLEEP_TICKS: &'static $crate::cpu_load::SleepTicks = inputs.sleep_ticks
-        ],
-        publish: [PERCENT: u8; 1],
-        watchdog: $crate::cpu_load::WATCHDOG observe,
-        ctx: $crate::cpu_load::CpuLoadCtx,
-        task: $crate::cpu_load::task;
 }
 // {%- endif %}

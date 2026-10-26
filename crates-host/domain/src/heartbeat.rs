@@ -12,37 +12,53 @@
 //! рядом с узлом. Так же устроен и пример в самом `supervisor`
 //! (`supervisor-logic-fixture`).
 
+mod timing;
+
+pub use timing::WATCHDOG;
+
 use defmt_or_log::info;
-use embassy_time::{Duration, Instant};
+use embassy_time::Instant;
 use supervisor::runtime::TaskExit;
 
-/// Период холостого цикла — он же период отметок у сторожа.
-const IDLE_PERIOD: Duration = Duration::from_millis(500);
+use timing::IDLE_PERIOD;
 
-/// Сколько узлу позволено не отмечаться, прежде чем это будет замечено.
-///
-/// Узел не падает и не перезапускается (`restart: Never`), так что самый
-/// длинный законный промежуток между отметками — период холостого цикла плюс
-/// то, на сколько исполнитель могут занять другие: стирание крупного сектора
-/// флеша при приёме образа блокирует его на секунды (`docs/ota.md`), и 7 с
-/// переживают его без ложного «узел перестал отмечаться». Нижнюю границу —
-/// больше периода — держит `const`-assert ниже.
-///
-/// Второе звено — с другого конца, и оно не здесь: `bsp::wdg::HW_TIMEOUT_US`
-/// обязан быть больше этого значения плюс `WATCHDOG_CHECK_EVERY` графа
-/// (`crates-cross/app/src/graph.rs`). Из этой пары `check_every` против
-/// аппаратного таймаута проверяет сам `supervisor_graph!` (assert эмитит он,
-/// читая `HARDWARE_TIMEOUT` у типа сторожа), а сумму с таймаутом узла —
-/// `const`-assert в графе, потому что там видны оба конца; эта константа в
-/// проверку `supervisor` не входит намеренно — `docs/watchdog.md`.
-pub const WATCHDOG: Duration = Duration::from_secs(7);
+// Узел графа объявлен здесь же, где лежит его задача: фрагмент — законченный
+// модуль с одной задачей, её политикой и таймаутом, а граф в
+// `crates-cross/app/src/graph.rs` только перечисляет фрагменты и добавляет
+// то, что знает про железо (`boot:`, блок `watchdog:`).
+//
+// `supervisor_fragment!` объявляет СРЕЗ графа: раскрывается он в один
+// `#[macro_export] macro_rules!`-ретранслятор и больше ни во что — ни задач,
+// ни статиков, ни `spawn_all`. Отсюда три следствия:
+//
+// * Ретранслятор виден по пути от корня крейта — `::domain::HEARTBEAT_FRAG`,
+//   как бы глубоко ни лежал этот модуль. Имя `HEARTBEAT_FRAG` compose-site и
+//   называет в своём `fragments: [..]`.
+// * Узел не носит имени — его даёт запись `fragments:`
+//   (`HEARTBEAT_FRAG as HEARTBEAT`), и тот же фрагмент, названный дважды под
+//   разными `as`, — два узла. Поэтому ниже `node …` без имени, а «узел
+//   HEARTBEAT» в этом файле — про то, как его зовёт граф шаблона.
+// * Токены ниже резолвятся НЕ здесь, а на compose-site: так работает
+//   `macro_rules!`. Поэтому всё, что фрагмент называет, написано полным путём
+//   — `$crate::heartbeat::WATCHDOG`, `$crate::heartbeat::task` — и от
+//   compose-site ничего не требует: голое имя (`WATCHDOG`) искалось бы в
+//   `graph.rs` и падало бы там с `E0425`. `$crate::` при этом указывает сюда
+//   и переживает переименование зависимости в чужом манифесте
+//   (`logic = { package = "domain" }`), а `crate::` в теле `macro_rules!`
+//   означал бы крейт, который фрагмент ВЫЗЫВАЕТ.
+//
+// Единственное, что фрагмент требует от графа, — блок `watchdog:`: узел с
+// полем `watchdog:` без него не компилируется, а сам блок — решение на весь
+// граф (один аппаратный сторож, один `check_every`), и фрагменту его
+// объявлять нельзя.
+supervisor::supervisor_fragment! {
+    name: HEARTBEAT_FRAG;
 
-// Левое звено цепочки таймаутов, проверенное компилятором: `<` на `Duration`
-// в `const` не работает (нет const-трейтов), поэтому сравниваются тики.
-const _: () = assert!(
-    IDLE_PERIOD.as_ticks() < WATCHDOG.as_ticks(),
-    "таймаут узла HEARTBEAT обязан быть больше периода его отметок"
-);
+    node deps: [], restart: Never,
+        watchdog: $crate::heartbeat::WATCHDOG observe,
+        ctx: $crate::heartbeat::HeartbeatCtx,
+        task: $crate::heartbeat::task;
+}
 
 #[fsm::typestate]
 impl HeartbeatCtx<'_> {
@@ -109,42 +125,4 @@ impl HeartbeatCtx<'_> {
 /// — всё это описано в `docs/modules/app-graph.md`.
 pub async fn task(mut ctx: HeartbeatCtx<'_>) -> TaskExit {
     match ctx.run().await {}
-}
-
-// Узел графа объявлен здесь же, где лежит его задача: фрагмент — законченный
-// модуль с одной задачей, её политикой и таймаутом, а граф в
-// `crates-cross/app/src/graph.rs` только перечисляет фрагменты и добавляет
-// то, что знает про железо (`boot:`, блок `watchdog:`).
-//
-// `supervisor_fragment!` объявляет СРЕЗ графа: раскрывается он в один
-// `#[macro_export] macro_rules!`-ретранслятор и больше ни во что — ни задач,
-// ни статиков, ни `spawn_all`. Отсюда три следствия:
-//
-// * Ретранслятор виден по пути от корня крейта — `::domain::HEARTBEAT_FRAG`,
-//   как бы глубоко ни лежал этот модуль. Имя `HEARTBEAT_FRAG` compose-site и
-//   называет в своём `fragments: [..]`.
-// * Узел не носит имени — его даёт запись `fragments:`
-//   (`HEARTBEAT_FRAG as HEARTBEAT`), и тот же фрагмент, названный дважды под
-//   разными `as`, — два узла. Поэтому ниже `node …` без имени, а «узел
-//   HEARTBEAT» в этом файле — про то, как его зовёт граф шаблона.
-// * Токены ниже резолвятся НЕ здесь, а на compose-site: так работает
-//   `macro_rules!`. Поэтому всё, что фрагмент называет, написано полным путём
-//   — `$crate::heartbeat::WATCHDOG`, `$crate::heartbeat::task` — и от
-//   compose-site ничего не требует: голое имя (`WATCHDOG`) искалось бы в
-//   `graph.rs` и падало бы там с `E0425`. `$crate::` при этом указывает сюда
-//   и переживает переименование зависимости в чужом манифесте
-//   (`logic = { package = "domain" }`), а `crate::` в теле `macro_rules!`
-//   означал бы крейт, который фрагмент ВЫЗЫВАЕТ.
-//
-// Единственное, что фрагмент требует от графа, — блок `watchdog:`: узел с
-// полем `watchdog:` без него не компилируется, а сам блок — решение на весь
-// граф (один аппаратный сторож, один `check_every`), и фрагменту его
-// объявлять нельзя.
-supervisor::supervisor_fragment! {
-    name: HEARTBEAT_FRAG;
-
-    node deps: [], restart: Never,
-        watchdog: $crate::heartbeat::WATCHDOG observe,
-        ctx: $crate::heartbeat::HeartbeatCtx,
-        task: $crate::heartbeat::task;
 }

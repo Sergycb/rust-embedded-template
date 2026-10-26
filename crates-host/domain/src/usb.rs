@@ -21,6 +21,37 @@ use defmt_or_log::info;
 use embassy_usb::driver::Driver;
 use supervisor::runtime::TaskExit;
 
+// Узел объявлен рядом со своей задачей — как `NET_FRAG`. `<U>` — само
+// устройство `UsbDevice<'static, D>` над драйвером платы, которого `domain`
+// не видит: DSL не принимает у параметра trait-границу, а `UsbDevice<'_, D>`
+// требует `D: Driver`, поэтому граница — в сигнатуре задачи. `local` —
+// драйвер вправе быть `!Send` (периферия). Без `watchdog:`: `run` не отдаёт
+// управление наружу, отметиться нечем.
+//
+// Вход — `UsbWiring { device }`: структуру эмитит фрагмент.
+//
+// С OTA устройство встаёт на шину после подтверждения образа (`OTA ready`):
+// первая загрузка нового или откаченного образа стирает `STATE`, ядро на это
+// время может стоять на выборке инструкций, и перечисление, попавшее на
+// стирание, хост бракует до переподключения (`domain::ota`, `begin`).
+supervisor::supervisor_fragment! {
+    name: USB_FRAG<U>;
+    boot: inputs: struct $crate::usb::UsbWiring;
+
+    node deps: [
+            // {%- if ota == "true" %}
+            OTA ready
+            // {%- endif %}
+        ],
+        restart: Never,
+        resources: [
+            /// USB-устройство с классами протокола над драйвером платы.
+            DEVICE: local U = inputs.device
+        ],
+        ctx: $crate::usb::UsbCtx,
+        task: $crate::usb::task;
+}
+
 #[fsm::typestate]
 impl<D: Driver<'static>> UsbCtx<'_, UsbDevice<'static, D>> {
     fsm::machine! {
@@ -59,70 +90,5 @@ pub async fn task<D: Driver<'static>>(mut ctx: UsbCtx<'_, UsbDevice<'static, D>>
     ctx.run().await.result
 }
 
-// Узел объявлен рядом со своей задачей — как `NET_FRAG`. `<U>` — само
-// устройство `UsbDevice<'static, D>` над драйвером платы, которого `domain`
-// не видит: DSL не принимает у параметра trait-границу, а `UsbDevice<'_, D>`
-// требует `D: Driver`, поэтому граница — в сигнатуре задачи. `local` —
-// драйвер вправе быть `!Send` (периферия). Без `watchdog:`: `run` не отдаёт
-// управление наружу, отметиться нечем.
-//
-// Вход — `UsbWiring { device }`: структуру эмитит фрагмент.
-//
-// С OTA устройство встаёт на шину после подтверждения образа (`OTA ready`):
-// первая загрузка нового или откаченного образа стирает `STATE`, ядро на это
-// время может стоять на выборке инструкций, и перечисление, попавшее на
-// стирание, хост бракует до переподключения (`domain::ota`, `begin`).
-supervisor::supervisor_fragment! {
-    name: USB_FRAG<U>;
-    boot: inputs: struct $crate::usb::UsbWiring;
-
-    node deps: [
-            // {%- if ota == "true" %}
-            OTA ready
-            // {%- endif %}
-        ],
-        restart: Never,
-        resources: [
-            /// USB-устройство с классами протокола над драйвером платы.
-            DEVICE: local U = inputs.device
-        ],
-        ctx: $crate::usb::UsbCtx,
-        task: $crate::usb::task;
-}
-
 #[cfg(test)]
-mod tests {
-    use core::pin::pin;
-    use core::task::{Context, Waker};
-
-    use embassy_usb::{Builder, Config};
-
-    use super::{UsbCtx, task};
-
-    fn leak<T>(value: T) -> &'static mut T {
-        Box::leak(Box::new(value))
-    }
-
-    /// Узел исполняет устройство и не возвращается: над драйвером без шины
-    /// он ждёт.
-    #[test]
-    fn drives_the_device_forever() {
-        let mut device = Builder::new(
-            adapters::fake::UsbDriver::default(),
-            Config::new(0xC0DE, 0xCAFE),
-            leak([0; 64]),
-            leak([0; 64]),
-            &mut [],
-            leak([0; 64]),
-        )
-        .build();
-        let ctx = UsbCtx {
-            device: &mut device,
-            index: 0,
-        };
-        let mut cx = Context::from_waker(Waker::noop());
-        let mut task = pin!(task(ctx));
-        assert!(task.as_mut().poll(&mut cx).is_pending());
-        assert!(task.poll(&mut cx).is_pending());
-    }
-}
+mod tests;
