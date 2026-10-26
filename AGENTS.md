@@ -167,8 +167,8 @@ read`: руками пришлось бы сначала найти адрес �
 строку из hex-вывода. Команда делает ровно это — не удаляйте её как «ещё одну
 обёртку». То же и с `cargo xtask pins`: путь к манифесту `chip-info` относительный,
 прямой вызов работал бы только из корня проекта. Смотреть лог живой платы —
-`probe-rs attach --chip <CHIP> <elf>`, вытащить зациклившуюся на панике —
-`probe-rs erase --chip <CHIP> --connect-under-reset`.
+`probe-rs attach --chip {{chip}} <elf>`, вытащить зациклившуюся на панике —
+`probe-rs erase --chip {{chip}} --connect-under-reset`.
 
 ## Запреты
 
