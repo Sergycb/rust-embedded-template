@@ -75,7 +75,8 @@
 			"command": "cargo",
 			"args": ["xtask", "panic-info"],
 			"problemMatcher": []
-		},{% if ota == "true" %}
+		},
+		// {% if ota == "true" %}
 		{
 			// Bootloader для отладки из launch.json: приложение линкуется в
 			// ACTIVE, а после сброса управление получает то, что лежит с базы
@@ -106,7 +107,8 @@
 			"dependsOrder": "sequence",
 			"dependsOn": ["flash: boot (release)", "build: app (release)"],
 			"problemMatcher": []
-		},{% endif %}
+		},
+		// {% endif %}
 		{
 			"label": "build: app (debug)",
 			"type": "shell",

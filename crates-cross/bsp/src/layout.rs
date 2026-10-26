@@ -11,39 +11,39 @@
 
 #[expect(
     unsafe_code,
-    reason = "символы memory.x объявляются только в `unsafe extern`; читается лишь их адрес (`safe static`)"
+    reason = "символы memory.x объявляются только в `unsafe extern`; читается лишь их адрес (`&raw const`): многие из них — смещения, а не адреса памяти, и читать их как значение нельзя"
 )]
 unsafe extern "C" {
 {%- if ota == "true" %}
     /// Начало `ACTIVE` — смещение от базы flash; символ `memory.x`, его же
     /// читает `embassy-boot`.
-    safe static __bootloader_active_start: u8;
+    static __bootloader_active_start: u8;
     /// Конец `ACTIVE` — см. `__bootloader_active_start`.
-    safe static __bootloader_active_end: u8;
+    static __bootloader_active_end: u8;
 {%- endif %}
 {%- if config_store == "flash" or config_store == "external" %}
     /// Начало раздела настроек (`memory.x`): смещение {% if config_store == "flash" %}от базы flash — так
     /// его ждёт `embassy_stm32::flash::Flash`{% else %}от начала внешней флеши{% endif %}.
-    safe static __config_start: u8;
+    static __config_start: u8;
     /// Конец раздела настроек — см. `__config_start`.
-    safe static __config_end: u8;
+    static __config_end: u8;
 {%- endif %}
 {%- if external_flash == "true" %}
     /// Конец последнего раздела на внешней флеши (`memory.x`, `MAX` по концам
     /// разделов): смещение от её начала.
-    safe static __ext_flash_end: u8;
+    static __ext_flash_end: u8;
 {%- endif %}
 {%- if dma_nc == "true" %}
     /// Начало региона `DMA_NC` (`memory.x`, `ORIGIN(DMA_NC)`).
-    safe static __dma_nc_start: u8;
+    static __dma_nc_start: u8;
     /// Конец региона `DMA_NC` (`ORIGIN + LENGTH`).
-    safe static __dma_nc_end: u8;
+    static __dma_nc_end: u8;
 {%- endif %}
 {%- if bdma_nc == "true" %}
     /// Начало `SRAM4` — памяти BDMA (`memory.x`, `ORIGIN(SRAM4)`).
-    safe static __bdma_nc_start: u8;
+    static __bdma_nc_start: u8;
     /// Конец `SRAM4` (`ORIGIN + LENGTH`).
-    safe static __bdma_nc_end: u8;
+    static __bdma_nc_end: u8;
 {%- endif %}
 }
 {%- if external_flash == "true" %}

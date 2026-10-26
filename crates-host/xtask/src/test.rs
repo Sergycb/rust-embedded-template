@@ -134,6 +134,11 @@ fn test_host_target(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     // {%- if ota == "true" and ota_store != "external" %}
     cmd!(sh, "cargo nextest run --test-threads 1").run()?;
     // {%- else %}
+    // {%- if ota == "true" %}
+    // На внешней флеши `DFU` и `STATE` пробнику не достать — цикла OTA в
+    // сценариях нет, и пустой прогон говорит почему, а не проходит молча.
+    //{{newline}}    println!("тест цикла OTA пропущен: DFU и STATE на внешней флеши, пробнику их не достать");
+    // {%- endif %}
     // Сценариев в шаблоне нет (`host-target-tests/tests/test.rs`) — пустой
     // прогон не ошибка.
     //{{newline}}    cmd!(sh, "cargo nextest run --test-threads 1 --no-tests warn").run()?;

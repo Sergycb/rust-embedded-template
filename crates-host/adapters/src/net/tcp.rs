@@ -368,13 +368,13 @@ mod tests {
 
     use super::*;
     // {%- if net_services contains "mqtt" %}
-    use crate::net::fakes::PROTOBUF;
+    use crate::net::fakes::HOST;
     // {%- endif %}
     use crate::net::fakes::{DEVICE, PORT, leak, pair, with_network};
 
     // {%- if net_services contains "mqtt" %}
     /// Сервер на «хосте» пары, к которому подключается [`TcpClient`].
-    const SERVER: SocketAddrV4 = SocketAddrV4::new(PROTOBUF, PORT);
+    const SERVER: SocketAddrV4 = SocketAddrV4::new(HOST, PORT);
     // {%- endif %}
 
     /// Сервер принимает клиента, отвечает ему, видит его отключение концом
