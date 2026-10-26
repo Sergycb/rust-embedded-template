@@ -2275,6 +2275,7 @@ if variable::get("graph") != "true" {
 	file::delete("docs/modules/bsp-wdg.md");
 	// Узел `HEARTBEAT` спавнит только граф, и сторожа без графа нет.
 	file::delete("crates-host/domain/src/heartbeat.rs");
+	file::delete("crates-host/domain/src/heartbeat");
 	file::delete("docs/watchdog.md");
 	// Документация `graph.rs`; общее для крейта `app` — в `docs/modules/app.md`.
 	file::delete("docs/modules/app-graph.md");
@@ -2531,6 +2532,7 @@ if variable::get("protocol_link") != "true" {
 // slave: у protobuf свой узел (`domain::protobuf`).
 if !on.modbus {
 	file::delete("crates-host/domain/src/server.rs");
+	file::delete("crates-host/domain/src/server");
 }
 if variable::get("link_port") != "true" {
 	file::delete("crates-host/ports/src/link.rs");
@@ -2602,6 +2604,7 @@ if !has.usb {
 	file::delete("docs/modules/bsp-usb.md");
 	file::delete("crates-host/adapters/src/usb.rs");
 	file::delete("crates-host/domain/src/usb.rs");
+	file::delete("crates-host/domain/src/usb");
 }
 // Сеть — стек `embassy-net`, узел NET и их сокеты — только с tcp/udp.
 if !has.tcp && !has.udp {
@@ -2610,6 +2613,7 @@ if !has.tcp && !has.udp {
 	file::delete("crates-host/adapters/src/net.rs");
 	file::delete("crates-host/adapters/src/net");
 	file::delete("crates-host/domain/src/net.rs");
+	file::delete("crates-host/domain/src/net");
 }
 // RNG — только с tcp/udp и только если он есть у чипа (`rng_irq` не пуст).
 if rng[0] == "" || (!has.tcp && !has.udp) {
@@ -2625,11 +2629,13 @@ if services.len() == 0 {
 // (`domain::device`) читают PROTOBUF, HTTP, SSH и MQTT.
 if !services.contains("rest") {
 	file::delete("crates-host/domain/src/http.rs");
+	file::delete("crates-host/domain/src/http");
 	file::delete("crates-cross/app/src/tasks/http.rs");
 	file::delete("crates-cross/app/src/net/rest.rs");
 }
 if !services.contains("ssh") {
 	file::delete("crates-host/domain/src/ssh.rs");
+	file::delete("crates-host/domain/src/ssh");
 	file::delete("crates-cross/app/src/tasks/ssh.rs");
 	file::delete("crates-cross/app/src/net/ssh.rs");
 }
