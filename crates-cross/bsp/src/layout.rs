@@ -7,7 +7,9 @@
 //! которые раньше были `const`-assert'ами здесь (выравнивание `CONFIG`,
 //! пригодность регионов DMA для MPU): нарушение роняет линковку, до прошивки.
 //! Числами из `[env]` эти границы не ездят — раскладка живёт в одном месте, и
-//! ручная правка `memory.x` не разойдётся с кодом.
+//! ручная правка `memory.x` не разойдётся с кодом.{% if ota == "true" %} По тем же символам
+//! прошивка считает и отпечаток раскладки ([`fingerprint`]), который сверяет с
+//! хвостом образа узел OTA.{% endif %}
 
 #[expect(
     unsafe_code,
@@ -20,6 +22,15 @@ unsafe extern "C" {
     static __bootloader_active_start: u8;
     /// Конец `ACTIVE` — см. `__bootloader_active_start`.
     static __bootloader_active_end: u8;
+    /// Начало `STATE` — для отпечатка раскладки, как и остальные границы
+    /// `embassy-boot` ниже.
+    static __bootloader_state_start: u8;
+    /// Конец `STATE`.
+    static __bootloader_state_end: u8;
+    /// Начало `DFU`.
+    static __bootloader_dfu_start: u8;
+    /// Конец `DFU`.
+    static __bootloader_dfu_end: u8;
 {%- endif %}
 {%- if config_store == "flash" or config_store == "external" %}
     /// Начало раздела настроек (`memory.x`): смещение {% if config_store == "flash" %}от базы flash — так
@@ -67,6 +78,21 @@ pub fn ext_flash_end() -> u32 {
 /// молча откатилось.
 pub(crate) fn active_len() -> u32 {
     value(&raw const __bootloader_active_end) - value(&raw const __bootloader_active_start)
+}
+
+/// Отпечаток раскладки этой прошивки ([`ports::layout_fingerprint`]) — по
+/// символам `memory.x` в порядке [`ports::LAYOUT_SYMBOLS`]. Тот же отпечаток
+/// `cargo xtask build` считает по значениям символов в ELF и кладёт в хвост
+/// образа; узел OTA сверяет их перед пометкой образа к обмену.
+pub(crate) fn fingerprint() -> u32 {
+    ports::layout_fingerprint([
+        value(&raw const __bootloader_state_start),
+        value(&raw const __bootloader_state_end),
+        value(&raw const __bootloader_active_start),
+        value(&raw const __bootloader_active_end),
+        value(&raw const __bootloader_dfu_start),
+        value(&raw const __bootloader_dfu_end),
+    ])
 }
 {%- endif %}
 {%- if config_store == "flash" or config_store == "external" %}

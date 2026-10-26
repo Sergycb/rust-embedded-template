@@ -12,7 +12,11 @@
 use embassy_time::{Duration, Timer};
 use ports::{FirmwareUpdate, PendingImage};
 
-use crate::ota::update::VERSION_BYTES;
+use crate::ota::update::{LAYOUT_BYTES, VERSION_BYTES};
+
+/// Отпечаток раскладки фейка — его отдаёт `layout()`; образы тестов несут
+/// его в хвосте, кроме тех, что разыгрывают чужую раскладку.
+pub(crate) const LAYOUT: u32 = 0x5EED_1A70;
 
 /// Подпись, которую тесты кладут в `Start`; фейк её не проверяет, а
 /// записывает — важно, что до него доехала именно она.
@@ -78,13 +82,16 @@ impl FakeFlash {
         }
     }
 
-    /// Раздел, в котором уже лежит образ длиной `len` с версией `incoming` в
-    /// хвосте, и вместимость меньше раздела — как у настоящей схемы с обменом.
+    /// Раздел, в котором уже лежит образ длиной `len` с отпечатком
+    /// [`LAYOUT`] и версией `incoming` в хвосте, и вместимость меньше
+    /// раздела — как у настоящей схемы с обменом.
     pub(super) fn with_image(len: u32, incoming: u32) -> Self {
         let mut flash = Self::new(256, 8);
         flash.capacity = 128;
-        flash.memory[(len - VERSION_BYTES) as usize..len as usize]
-            .copy_from_slice(&incoming.to_le_bytes());
+        let version = (len - VERSION_BYTES) as usize;
+        flash.memory[version - LAYOUT_BYTES as usize..version]
+            .copy_from_slice(&LAYOUT.to_le_bytes());
+        flash.memory[version..len as usize].copy_from_slice(&incoming.to_le_bytes());
         flash
     }
 }
@@ -147,6 +154,10 @@ impl FirmwareUpdate for FakeFlash {
 
     fn capacity(&mut self) -> Result<u32, Self::Error> {
         Ok(self.capacity)
+    }
+
+    fn layout(&self) -> u32 {
+        LAYOUT
     }
 
     fn is_busy(&mut self) -> impl Future<Output = Result<bool, Self::Error>> {

@@ -120,7 +120,12 @@ pub(crate) async fn new(_resources: crate::resources::ExtFlashResources) -> &'st
 
 /// Собирает флеш под обновлением над внешней флешью.
 pub(crate) fn firmware(external: &'static ExternalMutex) -> FirmwareFlash {
-    adapters::ota::Linked::new(external, external, crate::layout::active_len())
+    adapters::ota::Linked::new(
+        external,
+        external,
+        crate::layout::active_len(),
+        crate::layout::fingerprint(),
+    )
 }
 {%- endif %}
 {%- if config == "true" and config_store == "external" %}

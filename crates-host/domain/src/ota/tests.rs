@@ -13,8 +13,11 @@ use super::OtaClient;
 // {%- endif %}
 
 use super::{ClientId, Mode, OtaRequest, REBOOT_GRACE, SESSION_TIMEOUT, task};
+/// Отпечаток раскладки фейка — образы тестов узла и протоколов несут его
+/// в хвосте.
+pub(crate) use crate::ota::fakes::LAYOUT;
 use crate::ota::fakes::{FakeFlash, SIGNATURE};
-use crate::ota::update::VERSION_BYTES;
+use crate::ota::update::{LAYOUT_BYTES, VERSION_BYTES};
 use crate::ota::version::pack;
 
 /// Сброс МК в тесте — паника с узнаваемым текстом: `reboot` не
@@ -223,9 +226,14 @@ fn finish() -> Step {
     send(OtaCommand::Finish)
 }
 
+/// Образ с отпечатком раскладки фейка ([`LAYOUT`]) перед местом версии —
+/// без него `Finish` отвергался бы в обоих режимах.
 #[expect(clippy::cast_possible_truncation, reason = "размеры в тестах малы")]
 fn image(len: usize) -> Vec<u8> {
-    (0..len).map(|i| (i * 3) as u8).collect()
+    let mut image: Vec<u8> = (0..len).map(|i| (i * 3) as u8).collect();
+    let layout = len - (LAYOUT_BYTES + VERSION_BYTES) as usize;
+    image[layout..layout + LAYOUT_BYTES as usize].copy_from_slice(&LAYOUT.to_le_bytes());
+    image
 }
 
 /// Счастливый путь: раздел подготовлен один раз, каждый кусок
@@ -380,7 +388,7 @@ fn a_failed_confirmation_does_not_block_an_update() {
     let replies = run(
         &mut flash,
         Mode::Plain,
-        vec![start(8), chunk(0, &[0; 8]), finish()],
+        vec![start(8), chunk(0, &image(8)), finish()],
     );
 
     assert_eq!(replies.last(), Some(&Ok(Progress::Ready)), "образ принят");
@@ -489,7 +497,7 @@ fn an_early_finish_is_a_transfer_failure() {
     let replies = run(
         &mut flash,
         Mode::Plain,
-        vec![start(16), chunk(0, &[0; 8]), finish()],
+        vec![start(16), chunk(0, &image(8)), finish()],
     );
 
     assert_eq!(replies.last(), Some(&Err(Rejection::Transfer)));
@@ -516,7 +524,7 @@ fn maps_a_flash_failure_on_apply_to_device() {
     let replies = run(
         &mut flash,
         Mode::Plain,
-        vec![start(8), chunk(0, &[0; 8]), finish()],
+        vec![start(8), chunk(0, &image(8)), finish()],
     );
 
     assert_eq!(replies.last(), Some(&Err(Rejection::Device)));
@@ -534,7 +542,7 @@ fn a_chunk_or_finish_without_start_is_no_session() {
             chunk(0, &[0; 8]),
             finish(),
             start(8),
-            chunk(0, &[0; 8]),
+            chunk(0, &image(8)),
             finish(),
         ],
     );
@@ -756,7 +764,7 @@ fn a_foreign_finish_is_busy() {
     let replies = run(
         &mut flash,
         Mode::Plain,
-        vec![start(8), by(1, finish()), chunk(0, &[0; 8]), finish()],
+        vec![start(8), by(1, finish()), chunk(0, &image(8)), finish()],
     );
 
     assert_eq!(
@@ -952,15 +960,63 @@ fn maps_a_rollback_to_rollback() {
     assert!(flash.recorded.is_empty(), "обмен не должен быть запрошен");
 }
 
-/// Образ короче хвоста с версией — `Length`, а не паника на вычитании.
+/// Образ короче хвоста (раскладка и версия) — `Length`, а не паника на
+/// вычитании.
 #[test]
-fn maps_a_signed_image_shorter_than_the_version_tail_to_length() {
+fn maps_a_signed_image_shorter_than_the_tail_to_length() {
     let mut flash = FakeFlash::new(1024, 8);
 
-    let replies = run(&mut flash, signed(), signed_update(&[0; 3]));
+    let replies = run(&mut flash, signed(), signed_update(&[0; 7]));
 
     assert_eq!(replies.last(), Some(&Err(Rejection::Length)));
     assert!(flash.recorded.is_empty());
+}
+
+/// Чужая раскладка с подписью — `Layout`, а не `Rollback`, хотя версия
+/// новее; обмен не запрошен.
+#[test]
+fn maps_a_signed_image_for_another_layout_to_layout() {
+    let mut image = versioned_image(64, pack(1, 2, 4));
+    image[56..60].copy_from_slice(&(!LAYOUT).to_le_bytes());
+    let mut flash = FakeFlash::new(1024, 8);
+
+    let replies = run(&mut flash, signed(), signed_update(&image));
+
+    assert_eq!(replies.last(), Some(&Err(Rejection::Layout)));
+    assert!(flash.recorded.is_empty());
+    assert_eq!(flash.updated, 0);
+}
+
+/// Без подписи раскладка сверяется тоже: чужая — `Layout`, обмен не
+/// запрошен, приём окончен.
+#[test]
+fn refuses_an_unsigned_image_for_another_layout_before_marking_the_swap() {
+    let mut image = image(64);
+    image[56..60].copy_from_slice(&(!LAYOUT).to_le_bytes());
+    let mut flash = FakeFlash::new(1024, 8);
+    let mut steps = vec![start(64)];
+    steps.extend(chunks(&image));
+    steps.extend([finish(), chunk(0, &[0; 8])]);
+
+    let replies = run(&mut flash, Mode::Plain, steps);
+
+    assert_eq!(
+        replies[replies.len() - 2..],
+        [Err(Rejection::Layout), Err(Rejection::NoSession)]
+    );
+    assert_eq!(flash.updated, 0, "обмен под чужую раскладку не помечается");
+}
+
+/// Без подписи образ короче хвоста — `Length`, обмен не запрошен.
+#[test]
+fn refuses_an_unsigned_image_shorter_than_the_tail() {
+    let mut flash = FakeFlash::new(1024, 8);
+    let steps = vec![start(7), chunk(0, &[0; 7]), finish()];
+
+    let replies = run(&mut flash, Mode::Plain, steps);
+
+    assert_eq!(replies.last(), Some(&Err(Rejection::Length)));
+    assert_eq!(flash.updated, 0);
 }
 
 /// Длина больше вместимости — `Length` ещё на `Start`, до стирания.

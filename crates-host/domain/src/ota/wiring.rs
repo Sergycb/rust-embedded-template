@@ -55,11 +55,12 @@ pub struct OtaWiring<F: ports::Assemble, R> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     /// Без подписи: принятый образ применяется
-    /// [`FirmwareUpdate::mark_updated`].
+    /// [`FirmwareUpdate::mark_updated`] — после сверки раскладки в хвосте
+    /// (`Truncated`, `Layout`).
     Plain,
     /// С подписью: принятый образ применяется
     /// [`apply_signed`](crate::ota::update::apply_signed) — длина, занятость,
-    /// версия, в этом порядке, и запись подписи для bootloader'а, который её и
+    /// раскладка, версия, в этом порядке, и запись подписи для bootloader'а, который её и
     /// проверит перед обменом.
     ///
     /// Отличие до приёма одно: `Start` без подписи отвергается ДО стирания
@@ -93,12 +94,19 @@ impl Mode {
         F::Error: FormatOrDebug,
     {
         match self {
-            // Без подписи применение — просьба об обмене разделов; проверок у
-            // неё нет намеренно (см. `FirmwareUpdate::mark_updated`).
-            Self::Plain => flash.mark_updated().await.map_err(|err| {
-                warn!("ota: пометить обмен не удалось: {:?}", &err);
-                Rejection::Device
-            }),
+            // Без подписи применение — просьба об обмене разделов; версию
+            // она не проверяет намеренно (см. `FirmwareUpdate::mark_updated`),
+            // а раскладку — да: это защита от ошибки сборки, а не от подделки.
+            Self::Plain => {
+                update::check_layout(flash, len).await.map_err(|err| {
+                    warn!("ota: образ отвергнут: {:?}", &err);
+                    update_rejection(&err)
+                })?;
+                flash.mark_updated().await.map_err(|err| {
+                    warn!("ota: пометить обмен не удалось: {:?}", &err);
+                    Rejection::Device
+                })
+            }
             Self::Signed { running_version } => {
                 // `check` уже отказал бы без подписи; `ok_or` — чтобы не
                 // паниковать, а не потому что отказ здесь достижим.

@@ -136,7 +136,7 @@ pub enum Progress {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Rejection {
     /// Заявленная длина негодная: ноль, больше раздела, короче хвоста с
-    /// версией.
+    /// раскладкой и версией.
     Length,
     /// Передача не сошлась с заявленной длиной: байт больше или меньше
     /// обещанного.
@@ -155,6 +155,10 @@ pub enum Rejection {
     /// `Chunk` или `Finish` без приёма: `Start` не было, приём уже окончен или
     /// брошен — хост молчал дольше тайм-аута узла.
     NoSession,
+    /// Образ собран под другую раскладку памяти (`memory.x`): отпечаток в
+    /// его хвосте не совпал с отпечатком прошивки. Изменилась раскладка —
+    /// bootloader перешивается по проводу, образом её не сменить.
+    Layout,
 }
 
 /// Перезагрузка МК — то, чем узел OTA выполняет [`Command::Reboot`].
@@ -172,7 +176,7 @@ pub trait Reboot {
 // {%- endif %}
 /// Коды: `1` `Started`, `2` `Received`, `3` `Ready`, `4` `Rebooting`; отказы с `10`:
 /// `Length`, `Transfer`, `Busy`, `Rollback`, `Signature`, `Device`,
-/// `NoSession` — по порядку.
+/// `NoSession`, `Layout` — по порядку (новые коды — только в конец).
 #[must_use]
 pub const fn reply_code(reply: &Reply) -> u16 {
     match reply {
@@ -187,5 +191,19 @@ pub const fn reply_code(reply: &Reply) -> u16 {
         Err(Rejection::Signature) => 14,
         Err(Rejection::Device) => 15,
         Err(Rejection::NoSession) => 16,
+        Err(Rejection::Layout) => 17,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Коды уходят хосту числом: перенумерация сломала бы уже выпущенные
+    /// клиенты, поэтому новый отказ встаёт в конец.
+    #[test]
+    fn layout_rejection_takes_the_next_free_code() {
+        assert_eq!(reply_code(&Err(Rejection::NoSession)), 16);
+        assert_eq!(reply_code(&Err(Rejection::Layout)), 17);
     }
 }

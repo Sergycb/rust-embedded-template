@@ -417,6 +417,7 @@ pub(crate) fn firmware(flash: &'static FlashMutex) -> FirmwareFlash {
         DFU_FLASH.init(mutex::Mutex::new(dfu)),
         STATE_FLASH.init(mutex::Mutex::new(state)),
         crate::layout::active_len(),
+        crate::layout::fingerprint(),
     )
 }
 {%- endif %}

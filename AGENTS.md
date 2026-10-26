@@ -212,6 +212,11 @@ read`: руками пришлось бы сначала найти адрес �
   узнаёт исход до сброса. Отказы до стирания обязаны оставаться такими:
   `Busy` и отсутствие подписи — до `Transfer::start`, длина — внутри него, до
   `prepare` — `docs/ota.md`.
+- Хвост образа — `[образ][раскладка u32 LE][версия u32 LE]` (`cargo xtask build`):
+  отпечаток раскладки (`ports::layout_fingerprint` над `ports::LAYOUT_SYMBOLS`)
+  узел OTA сверяет с `FirmwareUpdate::layout` на `Finish` в обоих режимах, до
+  `mark_updated`; не совпал — `Rejection::Layout`. Сменилась раскладка
+  `memory.x` — `boot` перешивается по проводу, а не образом — `docs/ota.md`.
 {%- endif %}
 {%- capture mutexes %}{% if shared_flash == "true" %}, `bsp::flash::FlashMutex`{% endif %}{% if ota == "true" and ota_store != "external" %}, мьютексов носителей `DFU` и `STATE`
   (`bsp::flash::DFU_FLASH`, `bsp::flash::STATE_FLASH`, их ждёт `adapters::ota::Linked`{% if dfu_bank == "true" %}; `DFU` во втором банке —

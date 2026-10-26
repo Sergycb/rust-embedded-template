@@ -1,5 +1,6 @@
 // {%- if ota == "true" %}
-//! Сырой образ из ELF и символы, которые из него читаются.
+//! Сырой образ из ELF, символы, которые из него читаются, и отпечаток
+//! раскладки памяти.
 // {%- else %}
 //{{newline}}//! Сырой образ из ELF.
 // {%- endif %}
@@ -9,6 +10,10 @@ use std::{fs, path::Path};
 use anyhow::Context;
 
 use crate::memory::Region;
+// {%- if ota == "true" %}
+use object::read::elf::ElfFile32;
+use object::read::{Object, ObjectSymbol};
+// {%- endif %}
 
 // {%- if ota == "true" %}
 /// Имя символа с открытым ключом, которым bootloader проверяет подпись.
@@ -52,6 +57,47 @@ pub fn image_version(elf: &Path, base: u64, image: &[u8]) -> Result<u32, anyhow:
     ))
 }
 
+/// Отпечаток раскладки памяти, под которую слинкован `elf`: значения символов
+/// [`ports::LAYOUT_SYMBOLS`] через [`ports::layout_fingerprint`] — как его
+/// считает прошивка в рантайме по адресам тех же символов.
+pub fn layout_fingerprint(elf: &Path) -> Result<u32, anyhow::Error> {
+    let bytes = read_elf(elf)?;
+    let file = parse_elf(elf, &bytes)?;
+    let mut bounds = [0; 6];
+    for (bound, name) in bounds.iter_mut().zip(ports::LAYOUT_SYMBOLS) {
+        let value = symbol_address(&file, name).with_context(|| {
+            format!(
+                "в {} нет символа {name}: его определяет memory.x (crates-cross/app, \
+                 crates-cross/boot), и embassy-boot без него не найдёт разделы",
+                elf.display(),
+            )
+        })?;
+        *bound = u32::try_from(value)
+            .with_context(|| format!("{name} = {value:#x} не помещается в u32"))?;
+    }
+    Ok(ports::layout_fingerprint(bounds))
+}
+
+/// Байты файла `elf`; разбирает их [`parse_elf`].
+fn read_elf(elf: &Path) -> Result<Vec<u8>, anyhow::Error> {
+    fs::read(elf).with_context(|| format!("прочитать {}", elf.display()))
+}
+
+/// ELF32 из байт, которые прочитал [`read_elf`].
+fn parse_elf<'a>(
+    elf: &Path,
+    bytes: &'a [u8],
+) -> Result<ElfFile32<'a, object::Endianness>, anyhow::Error> {
+    ElfFile32::parse(bytes).with_context(|| format!("разобрать {}", elf.display()))
+}
+
+/// Адрес (значение) символа `name` в таблице символов ELF.
+fn symbol_address(file: &ElfFile32<'_, object::Endianness>, name: &str) -> Option<u64> {
+    file.symbols()
+        .find(|symbol| symbol.name() == Ok(name))
+        .map(|symbol| symbol.address())
+}
+
 /// Байты статика `name` длиной `len` — такими, какими они лежат в образе.
 pub fn image_symbol<'a>(
     elf: &Path,
@@ -61,25 +107,19 @@ pub fn image_symbol<'a>(
     len: usize,
 ) -> Result<&'a [u8], anyhow::Error> {
     use object::elf::PT_LOAD;
-    use object::read::elf::{ElfFile32, FileHeader, ProgramHeader};
-    use object::read::{Object, ObjectSymbol};
+    use object::read::elf::{FileHeader, ProgramHeader};
 
-    let bytes = fs::read(elf).with_context(|| format!("прочитать {}", elf.display()))?;
-    let file = ElfFile32::<object::Endianness>::parse(&*bytes)
-        .with_context(|| format!("разобрать {}", elf.display()))?;
+    let bytes = read_elf(elf)?;
+    let file = parse_elf(elf, &bytes)?;
 
-    let symbol = file
-        .symbols()
-        .find(|symbol| symbol.name() == Ok(name))
-        .with_context(|| {
-            format!(
-                "в {} нет символа {name} (версию определяет crates-cross/app/src/version.rs, ключ — \
-                 crates-cross/boot/src/signature.rs): либо прошивка собрана без него, либо статик \
-                 выбросили при линковке (тогда верните ему #[used] и #[unsafe(no_mangle)])",
-                elf.display(),
-            )
-        })?;
-    let address = symbol.address();
+    let address = symbol_address(&file, name).with_context(|| {
+        format!(
+            "в {} нет символа {name} (версию определяет crates-cross/app/src/version.rs, ключ — \
+             crates-cross/boot/src/signature.rs): либо прошивка собрана без него, либо статик \
+             выбросили при линковке (тогда верните ему #[used] и #[unsafe(no_mangle)])",
+            elf.display(),
+        )
+    })?;
 
     // Символ адресуется виртуальным адресом, а образ собран по физическим (см.
     // `raw_image`). У `.rodata`, где живёт версия, они совпадают, но

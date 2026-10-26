@@ -31,12 +31,13 @@ pub(super) fn download_rejection<F>(err: &DownloadError<F>) -> Rejection {
     }
 }
 
-/// Код отказа для хоста по ошибке применения с подписью.
+/// Код отказа для хоста по ошибке применения (раскладка — в обоих режимах).
 pub(super) fn update_rejection<E>(err: &UpdateError<E>) -> Rejection {
     match err {
         UpdateError::TooLong { .. } | UpdateError::Truncated { .. } => Rejection::Length,
         UpdateError::Busy => Rejection::Busy,
         UpdateError::Rollback { .. } => Rejection::Rollback,
+        UpdateError::Layout { .. } => Rejection::Layout,
         // `Flash` и незнакомые варианты (перечисление `non_exhaustive`).
         _ => Rejection::Device,
     }

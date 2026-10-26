@@ -164,7 +164,8 @@ pub use ota::command::{
 };
 pub use ota::download::DownloadError;
 pub use ota::update::{
-    FirmwareLayout, FirmwarePartitions, FirmwareUpdate, PendingImage, UpdateError,
+    FirmwareLayout, FirmwarePartitions, FirmwareUpdate, LAYOUT_SYMBOLS, PendingImage, UpdateError,
+    layout_fingerprint,
 };
 // {%- endif %}
 // {%- if settings_port == "true" %}
