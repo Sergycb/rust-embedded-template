@@ -13,7 +13,7 @@ use xshell::cmd;
 
 use crate::image::raw_image;
 // {%- if ota == "true" %}
-use crate::image::{image_version, unpack_version};
+use crate::image::{image_version, layout_fingerprint, unpack_version};
 // {%- endif %}
 use crate::project::{APP_ARTIFACT, TARGET, cross_target_dir, root_dir};
 // {%- if ota == "true" %}
@@ -78,20 +78,39 @@ pub fn build(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     );
     // {%- if ota == "true" %}
     let (base, mut image) = raw_image(&elf)?;
+    let boot_elf = cross_target_dir().join(TARGET).join("release").join("boot");
 
-    // Версия — в хвост образа, и обязательно ДО подписи: устройство читает её
-    // из последних четырёх байт принятого образа и отказывается ставить
-    // прошивку не новее текущей (защита от атаки отката). Не будь версия
-    // подписана вместе с образом, соврать ею мог бы кто угодно.
+    // Хвост образа — `[раскладка u32 LE][версия u32 LE]`, и обязательно ДО
+    // подписи: устройство читает его из последних восьми байт принятого
+    // образа. Раскладку (отпечаток границ разделов из memory.x) оно сверяет
+    // со своей на `Finish` и образ под другую раскладку отвергает до обмена;
+    // версию — с подписью — сравнивает со своей и отказывается ставить
+    // прошивку не новее текущей (защита от атаки отката). Не будь хвост
+    // подписан вместе с образом, соврать им мог бы кто угодно.
     //
-    // Значение берётся из символа в ELF, а не из Cargo.toml: так у версии
+    // Оба значения берутся из ELF, а не из Cargo.toml и memory.x: так у них
     // остаётся ровно один источник — то, что скомпилировано в прошивку.
-    if signing_enabled() {
-        let version = image_version(&elf, base, &image)?;
+    let layout = layout_fingerprint(&elf)?;
+    // Раскладку bootloader и приложение обязаны понимать одинаково
+    // (`embassy-boot` в обоих ищет разделы по тем же символам), и образ под
+    // одну раскладку с bootloader'ом под другую испортил бы обмен.
+    let boot_layout = layout_fingerprint(&boot_elf)?;
+    anyhow::ensure!(
+        layout == boot_layout,
+        "раскладка памяти приложения ({layout:#010x}) и bootloader'а ({boot_layout:#010x}) \
+         разошлась: границы BOOTLOADER_STATE/ACTIVE/DFU в crates-cross/app/memory.x и \
+         crates-cross/boot/memory.x обязаны совпадать. Поправьте memory.x и пересоберите; \
+         если раскладка сменилась намеренно, новый bootloader прошивается по проводу — \
+         образом по OTA её не сменить (устройство отвергнет его на Finish)",
+    );
+    let version = image_version(&elf, base, &image)?;
+    println!("раскладка: {layout:#010x}");
+    {
         let (major, minor, patch) = unpack_version(version);
         println!("версия образа: {major}.{minor}.{patch}");
-        image.extend_from_slice(&version.to_le_bytes());
     }
+    image.extend_from_slice(&layout.to_le_bytes());
+    image.extend_from_slice(&version.to_le_bytes());
     // {%- else %}
     //{{newline}}    let (base, image) = raw_image(&elf)?;
     // {%- endif %}
@@ -103,7 +122,6 @@ pub fn build(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     // {%- if ota == "true" %}
 
     // `.bin` — ровно то, что уезжает в раздел `DFU`.
-    let boot_elf = cross_target_dir().join(TARGET).join("release").join("boot");
     let (boot_base, boot_image) = raw_image(&boot_elf)?;
     report_boot(boot_image.len() as u64)?;
     warn_boot_runtime_symbols(&boot_elf)?;

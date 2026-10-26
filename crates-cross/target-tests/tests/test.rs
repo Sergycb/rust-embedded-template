@@ -335,9 +335,12 @@ mod tests {
 
         let mut ota = updater(board.firmware);
 
-        // Кратно WRITE_SIZE флеша. Хвост — версия
-        // `0.0.0`, заведомо не новее любой проставленной в проекте.
+        // Кратно WRITE_SIZE флеша. Хвост — раскладка этой прошивки (иначе
+        // отказ `Layout` раньше версии) и версия `0.0.0`, заведомо не новее
+        // любой проставленной в проекте.
+        let layout = ota.layout().to_le_bytes();
         let mut image = [0xFFu8; LENGTH as usize];
+        image[LENGTH as usize - 8..LENGTH as usize - 4].copy_from_slice(&layout);
         image[LENGTH as usize - 4..].copy_from_slice(&0u32.to_le_bytes());
         ota.prepare(LENGTH * 2)
             .await
@@ -358,10 +361,11 @@ mod tests {
         // Подпись тут нули, и bootloader на следующем сбросе отверг бы образ,
         // но тест снимает пометку сам (`mark_booted`), чтобы не оставлять
         // запрос на обмен соседям по прогону. Второй образ кладётся
-        // РЯДОМ, а не поверх первого: версия читается по `length - 4`, так что
+        // РЯДОМ, а не поверх первого: хвост читается по `length - 8`, так что
         // достаточно попросить проверить кусок подлиннее, а перезаписать те же
-        // четыре байта нельзя (`0xFF` поверх `0x00` не ложится).
+        // восемь байт нельзя (`0xFF` поверх `0x00` не ложится).
         let mut newer = [0xFFu8; LONGER as usize];
+        newer[LONGER as usize - 8..LONGER as usize - 4].copy_from_slice(&layout);
         newer[LONGER as usize - 4..].copy_from_slice(&u32::MAX.to_le_bytes());
         ota.write(LENGTH, &newer[LENGTH as usize..])
             .await

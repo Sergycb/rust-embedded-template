@@ -3,7 +3,9 @@
 //!
 //! Приезжают переменными среды из `[env]` `crates-cross/.cargo/config.toml`:
 //! тем же расчётом генерация пишет `memory.x`, и читать их из линкерных символов
-//! (`unsafe extern`) незачем.
+//! (`unsafe extern`) незачем.{% if ota == "true" %} Исключение — отпечаток раскладки
+//! ([`fingerprint`]): он сверяет с образом именно то, с чем слинкована прошивка,
+//! и правка `memory.x` руками мимо `[env]` должна в нём отразиться.{% endif %}
 {%- if ota == "true" %}
 
 /// Размер `ACTIVE` в байтах: самый длинный образ, который доедет до
@@ -18,6 +20,37 @@ pub(crate) const ACTIVE_LEN: u32 = match u32::from_str_radix(env!("ACTIVE_LEN"),
     Ok(len) => len,
     Err(_) => panic!("ACTIVE_LEN в [env] crates-cross/.cargo/config.toml — не число"),
 };
+
+// Символы линкера без данных: важен только адрес (= значение символа), читать
+// по нему нельзя — как и у `from_linkerfile` в `embassy-boot`. Взятие адреса
+// (`&raw const`) чтения не делает.
+#[expect(unsafe_code, reason = "обоснование — в комментарии выше")]
+unsafe extern "C" {
+    static __bootloader_state_start: u8;
+    static __bootloader_state_end: u8;
+    static __bootloader_active_start: u8;
+    static __bootloader_active_end: u8;
+    static __bootloader_dfu_start: u8;
+    static __bootloader_dfu_end: u8;
+}
+
+/// Отпечаток раскладки этой прошивки ([`ports::layout_fingerprint`]) — по
+/// адресам символов `memory.x` в порядке [`ports::LAYOUT_SYMBOLS`]. Тот же
+/// отпечаток `cargo xtask build` считает по значениям символов в ELF и кладёт в
+/// хвост образа; узел OTA сверяет их перед пометкой образа к обмену.
+pub(crate) fn fingerprint() -> u32 {
+    let bounds = [
+        &raw const __bootloader_state_start,
+        &raw const __bootloader_state_end,
+        &raw const __bootloader_active_start,
+        &raw const __bootloader_active_end,
+        &raw const __bootloader_dfu_start,
+        &raw const __bootloader_dfu_end,
+    ]
+    // Адрес на 32-битной цели — ровно `u32`: отказа здесь не бывает.
+    .map(|symbol| u32::try_from(symbol.addr()).expect("адрес на 32-битной цели"));
+    ports::layout_fingerprint(bounds)
+}
 {%- endif %}
 {%- if config_store == "flash" or config_store == "external" %}
 

@@ -228,7 +228,7 @@ mod tests {
 
     use super::{OTA_BASE, OtaRegisters};
     use crate::modbus::EmptyRegisters;
-    use crate::ota::tests::{Node, live};
+    use crate::ota::tests::{LAYOUT, Node, live};
 
     /// Запись FC16 по `start`, пока рядом крутится узел OTA.
     fn write(
@@ -275,8 +275,20 @@ mod tests {
             "Start"
         );
         assert_eq!(status(&mut regs), [1, 0, 0]);
-        // 9 байт: четыре полных регистра и нечётный последний в старшем байте.
-        let chunk = [2, 0, 0, 9, 0x0102, 0x0304, 0x0506, 0x0708, 0x0900];
+        // 9 байт: четыре полных регистра и нечётный последний в старшем байте;
+        // байты 1..5 — отпечаток раскладки фейка, иначе `Finish` отвергнут.
+        let [l0, l1, l2, l3] = LAYOUT.to_le_bytes().map(u16::from);
+        let chunk = [
+            2,
+            0,
+            0,
+            9,
+            0x0100 | l0,
+            l1 << 8 | l2,
+            l3 << 8 | 0x06,
+            0x0708,
+            0x0900,
+        ];
         assert_eq!(
             write(&mut regs, &mut node, OTA_BASE, &chunk),
             Ok(()),

@@ -21,9 +21,10 @@ xshell = "0.2.7"
 # `Sha512` и `to_bytes`.
 salty = { version = "0.3.0", default-features = false }
 # {%- endif %}
-# {%- if ota == "true" and ota_store != "external" %}
-# Запись о подписи (`PendingImage`) для host-target теста подписанного OTA:
-# формат берётся у bootloader'а, а не повторяется здесь руками.
+# {%- if ota == "true" %}
+# Отпечаток раскладки в хвосте образа (`layout_fingerprint`) и запись о
+# подписи (`PendingImage`) для host-target теста подписанного OTA: формат
+# берётся у прошивки, а не повторяется здесь руками.
 ports = { workspace = true }
 # {%- endif %}
 # {%- if ota == "true" or net_services contains "rest" or ssh_auth == "password" or ssh_host_key == "file" %}

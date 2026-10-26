@@ -256,11 +256,12 @@ pub struct OtaWiring<F: ports::Assemble, R> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     /// Без подписи: принятый образ применяется
-    /// [`FirmwareUpdate::mark_updated`].
+    /// [`FirmwareUpdate::mark_updated`] — после сверки раскладки в хвосте
+    /// (`Truncated`, `Layout`).
     Plain,
     /// С подписью: принятый образ применяется
     /// [`apply_signed`](crate::ota::update::apply_signed) — длина, занятость,
-    /// версия, в этом порядке, и запись подписи для bootloader'а, который её и
+    /// раскладка, версия, в этом порядке, и запись подписи для bootloader'а, который её и
     /// проверит перед обменом.
     ///
     /// Отличие до приёма одно: `Start` без подписи отвергается ДО стирания
@@ -294,12 +295,19 @@ impl Mode {
         F::Error: FormatOrDebug,
     {
         match self {
-            // Без подписи применение — просьба об обмене разделов; проверок у
-            // неё нет намеренно (см. `FirmwareUpdate::mark_updated`).
-            Self::Plain => flash.mark_updated().await.map_err(|err| {
-                warn!("ota: пометить обмен не удалось: {:?}", &err);
-                Rejection::Device
-            }),
+            // Без подписи применение — просьба об обмене разделов; версию
+            // она не проверяет намеренно (см. `FirmwareUpdate::mark_updated`),
+            // а раскладку — да: это защита от ошибки сборки, а не от подделки.
+            Self::Plain => {
+                update::check_layout(flash, len).await.map_err(|err| {
+                    warn!("ota: образ отвергнут: {:?}", &err);
+                    update_rejection(&err)
+                })?;
+                flash.mark_updated().await.map_err(|err| {
+                    warn!("ota: пометить обмен не удалось: {:?}", &err);
+                    Rejection::Device
+                })
+            }
             Self::Signed { running_version } => {
                 // `check` уже отказал бы без подписи; `ok_or` — чтобы не
                 // паниковать, а не потому что отказ здесь достижим.
@@ -640,12 +648,13 @@ fn download_rejection<F>(err: &DownloadError<F>) -> Rejection {
     }
 }
 
-/// Код отказа для хоста по ошибке применения с подписью.
+/// Код отказа для хоста по ошибке применения (раскладка — в обоих режимах).
 fn update_rejection<E>(err: &UpdateError<E>) -> Rejection {
     match err {
         UpdateError::TooLong { .. } | UpdateError::Truncated { .. } => Rejection::Length,
         UpdateError::Busy => Rejection::Busy,
         UpdateError::Rollback { .. } => Rejection::Rollback,
+        UpdateError::Layout { .. } => Rejection::Layout,
         // `Flash` и незнакомые варианты (перечисление `non_exhaustive`).
         _ => Rejection::Device,
     }
@@ -746,8 +755,11 @@ pub(crate) mod tests {
     // {%- endif %}
 
     use super::{ClientId, Mode, OtaRequest, REBOOT_GRACE, SESSION_TIMEOUT, task};
+    /// Отпечаток раскладки фейка — образы тестов узла и протоколов несут его
+    /// в хвосте.
+    pub(crate) use crate::ota::fakes::LAYOUT;
     use crate::ota::fakes::{FakeFlash, SIGNATURE};
-    use crate::ota::update::VERSION_BYTES;
+    use crate::ota::update::{LAYOUT_BYTES, VERSION_BYTES};
     use crate::ota::version::pack;
 
     /// Сброс МК в тесте — паника с узнаваемым текстом: `reboot` не
@@ -955,9 +967,14 @@ pub(crate) mod tests {
         send(OtaCommand::Finish)
     }
 
+    /// Образ с отпечатком раскладки фейка ([`LAYOUT`]) перед местом версии —
+    /// без него `Finish` отвергался бы в обоих режимах.
     #[expect(clippy::cast_possible_truncation, reason = "размеры в тестах малы")]
     fn image(len: usize) -> Vec<u8> {
-        (0..len).map(|i| (i * 3) as u8).collect()
+        let mut image: Vec<u8> = (0..len).map(|i| (i * 3) as u8).collect();
+        let layout = len - (LAYOUT_BYTES + VERSION_BYTES) as usize;
+        image[layout..layout + LAYOUT_BYTES as usize].copy_from_slice(&LAYOUT.to_le_bytes());
+        image
     }
 
     /// Счастливый путь: раздел подготовлен один раз, каждый кусок
@@ -1112,7 +1129,7 @@ pub(crate) mod tests {
         let replies = run(
             &mut flash,
             Mode::Plain,
-            vec![start(8), chunk(0, &[0; 8]), finish()],
+            vec![start(8), chunk(0, &image(8)), finish()],
         );
 
         assert_eq!(replies.last(), Some(&Ok(Progress::Ready)), "образ принят");
@@ -1221,7 +1238,7 @@ pub(crate) mod tests {
         let replies = run(
             &mut flash,
             Mode::Plain,
-            vec![start(16), chunk(0, &[0; 8]), finish()],
+            vec![start(16), chunk(0, &image(8)), finish()],
         );
 
         assert_eq!(replies.last(), Some(&Err(Rejection::Transfer)));
@@ -1248,7 +1265,7 @@ pub(crate) mod tests {
         let replies = run(
             &mut flash,
             Mode::Plain,
-            vec![start(8), chunk(0, &[0; 8]), finish()],
+            vec![start(8), chunk(0, &image(8)), finish()],
         );
 
         assert_eq!(replies.last(), Some(&Err(Rejection::Device)));
@@ -1266,7 +1283,7 @@ pub(crate) mod tests {
                 chunk(0, &[0; 8]),
                 finish(),
                 start(8),
-                chunk(0, &[0; 8]),
+                chunk(0, &image(8)),
                 finish(),
             ],
         );
@@ -1488,7 +1505,7 @@ pub(crate) mod tests {
         let replies = run(
             &mut flash,
             Mode::Plain,
-            vec![start(8), by(1, finish()), chunk(0, &[0; 8]), finish()],
+            vec![start(8), by(1, finish()), chunk(0, &image(8)), finish()],
         );
 
         assert_eq!(
@@ -1684,15 +1701,63 @@ pub(crate) mod tests {
         assert!(flash.recorded.is_empty(), "обмен не должен быть запрошен");
     }
 
-    /// Образ короче хвоста с версией — `Length`, а не паника на вычитании.
+    /// Образ короче хвоста (раскладка и версия) — `Length`, а не паника на
+    /// вычитании.
     #[test]
-    fn maps_a_signed_image_shorter_than_the_version_tail_to_length() {
+    fn maps_a_signed_image_shorter_than_the_tail_to_length() {
         let mut flash = FakeFlash::new(1024, 8);
 
-        let replies = run(&mut flash, signed(), signed_update(&[0; 3]));
+        let replies = run(&mut flash, signed(), signed_update(&[0; 7]));
 
         assert_eq!(replies.last(), Some(&Err(Rejection::Length)));
         assert!(flash.recorded.is_empty());
+    }
+
+    /// Чужая раскладка с подписью — `Layout`, а не `Rollback`, хотя версия
+    /// новее; обмен не запрошен.
+    #[test]
+    fn maps_a_signed_image_for_another_layout_to_layout() {
+        let mut image = versioned_image(64, pack(1, 2, 4));
+        image[56..60].copy_from_slice(&(!LAYOUT).to_le_bytes());
+        let mut flash = FakeFlash::new(1024, 8);
+
+        let replies = run(&mut flash, signed(), signed_update(&image));
+
+        assert_eq!(replies.last(), Some(&Err(Rejection::Layout)));
+        assert!(flash.recorded.is_empty());
+        assert_eq!(flash.updated, 0);
+    }
+
+    /// Без подписи раскладка сверяется тоже: чужая — `Layout`, обмен не
+    /// запрошен, приём окончен.
+    #[test]
+    fn refuses_an_unsigned_image_for_another_layout_before_marking_the_swap() {
+        let mut image = image(64);
+        image[56..60].copy_from_slice(&(!LAYOUT).to_le_bytes());
+        let mut flash = FakeFlash::new(1024, 8);
+        let mut steps = vec![start(64)];
+        steps.extend(chunks(&image));
+        steps.extend([finish(), chunk(0, &[0; 8])]);
+
+        let replies = run(&mut flash, Mode::Plain, steps);
+
+        assert_eq!(
+            replies[replies.len() - 2..],
+            [Err(Rejection::Layout), Err(Rejection::NoSession)]
+        );
+        assert_eq!(flash.updated, 0, "обмен под чужую раскладку не помечается");
+    }
+
+    /// Без подписи образ короче хвоста — `Length`, обмен не запрошен.
+    #[test]
+    fn refuses_an_unsigned_image_shorter_than_the_tail() {
+        let mut flash = FakeFlash::new(1024, 8);
+        let steps = vec![start(7), chunk(0, &[0; 7]), finish()];
+
+        let replies = run(&mut flash, Mode::Plain, steps);
+
+        assert_eq!(replies.last(), Some(&Err(Rejection::Length)));
+        assert_eq!(flash.updated, 0);
     }
 
     /// Длина больше вместимости — `Length` ещё на `Start`, до стирания.
@@ -1736,7 +1801,11 @@ mod fakes {
     use embassy_time::{Duration, Timer};
     use ports::{FirmwareUpdate, PendingImage};
 
-    use crate::ota::update::VERSION_BYTES;
+    use crate::ota::update::{LAYOUT_BYTES, VERSION_BYTES};
+
+    /// Отпечаток раскладки фейка — его отдаёт `layout()`; образы тестов несут
+    /// его в хвосте, кроме тех, что разыгрывают чужую раскладку.
+    pub(crate) const LAYOUT: u32 = 0x5EED_1A70;
 
     /// Подпись, которую тесты кладут в `Start`; фейк её не проверяет, а
     /// записывает — важно, что до него доехала именно она.
@@ -1802,13 +1871,16 @@ mod fakes {
             }
         }
 
-        /// Раздел, в котором уже лежит образ длиной `len` с версией `incoming` в
-        /// хвосте, и вместимость меньше раздела — как у настоящей схемы с обменом.
+        /// Раздел, в котором уже лежит образ длиной `len` с отпечатком
+        /// [`LAYOUT`] и версией `incoming` в хвосте, и вместимость меньше
+        /// раздела — как у настоящей схемы с обменом.
         pub(super) fn with_image(len: u32, incoming: u32) -> Self {
             let mut flash = Self::new(256, 8);
             flash.capacity = 128;
-            flash.memory[(len - VERSION_BYTES) as usize..len as usize]
-                .copy_from_slice(&incoming.to_le_bytes());
+            let version = (len - VERSION_BYTES) as usize;
+            flash.memory[version - LAYOUT_BYTES as usize..version]
+                .copy_from_slice(&LAYOUT.to_le_bytes());
+            flash.memory[version..len as usize].copy_from_slice(&incoming.to_le_bytes());
             flash
         }
     }
@@ -1871,6 +1943,10 @@ mod fakes {
 
         fn capacity(&mut self) -> Result<u32, Self::Error> {
             Ok(self.capacity)
+        }
+
+        fn layout(&mut self) -> u32 {
+            LAYOUT
         }
 
         fn is_busy(&mut self) -> impl Future<Output = Result<bool, Self::Error>> {
