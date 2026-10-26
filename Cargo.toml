@@ -335,12 +335,15 @@ embedded-can           = { version = "0.4.1" }
 # случается это один раз перед перезагрузкой.
 salty                  = { version = "0.3.0", default-features = false, features = ["slow-motion"] }
 # {%- endif %}
-# {%- if ota == "true" or has_modbus == "true" or framing_tests == "true" %}
+# {%- if ota == "true" or has_modbus == "true" or has_protobuf == "true" or framing_tests == "true" %}
 # Property-based testing: свойства проверяются на любых входах, а не на
 # нескольких выбранных руками. Только `[dev-dependencies]`.
 # {%- if ota == "true" %}
 # `domain::ota::download::Transfer` — на любом разбиении образа на куски и
-# любой ширине слова.
+# любой ширине слова; узел OTA — на любой последовательности команд.
+# {%- endif %}
+# {%- if has_protobuf == "true" %}
+# Узел PROTOBUF — на любом входящем кадре.
 # {%- endif %}
 proptest               = { version = "1.12.0" }
 # {%- endif %}
