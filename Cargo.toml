@@ -93,17 +93,17 @@ canopen      = { path = "crates-host/canopen" }
 # {%- endif %}
 defmt-or-log = { version = "0.2.3" }
 log          = { version = "0.4.34" }
-defmt        = { version = "1.1.1" }
+defmt        = { version = "1.2.0" }
 # no_std: у thiserror `default-features` включают "std", а domain и cross
 # собираются без него (рабочий пример — `thiserror::Error` на
 # `ports::DownloadError` и `ports::UpdateError`).
-thiserror    = { version = "2.0.20", default-features = false }
+thiserror    = { version = "2.0.21", default-features = false }
 # Только для dev-зависимостей `domain` и `adapters`: исполнитель async-тестов
 # (`#[tokio::test]`) над фейками портов и флеша. Без `default-features` — из
 # всего tokio нужны ровно однопоточный рантайм (`rt`) и атрибут (`macros`);
 # сеть, файлы и время сюда не приезжают. В прошивку не уезжает:
 # dev-зависимости path-зависимости cargo не собирает.
-tokio        = { version = "1.53.1", default-features = false, features = ["rt", "macros"] }
+tokio        = { version = "1.54.1", default-features = false, features = ["rt", "macros"] }
 # {%- if graph == "true" %}
 # Задачи графа живут в `domain` (`domain::heartbeat`), а граф, который их спавнит, —
 # в `crates-cross/app`. Контекст, который фрагмент эмитит в `domain` (`ctx:`),
@@ -174,12 +174,12 @@ embassy-embedded-hal   = { version = "0.6.0" }
 # оказалось бы две несовместимые копии крейта.
 embassy-sync           = { version = "0.8.0" }
 # {%- if ota == "true" or config == "true" or flash_page == "true" %}
-embedded-storage       = { version = "0.3.1" }
-embedded-storage-async = { version = "0.4.1" }
+embedded-storage       = { version = "0.3.2" }
+embedded-storage-async = { version = "0.4.2" }
 # {%- endif %}
 # {%- if config == "true" %}
 # Хранилище настроек (`adapters::settings`).
-sequential-storage     = { version = "8.0.1", default-features = false }
+sequential-storage     = { version = "8.0.2", default-features = false }
 # {%- endif %}
 # {%- if stream_io == "true" or net_services contains "ssh" or net_services contains "mqtt" %}
 # Поток байтов `embedded_io_async::{Read, Write}`. Версия та же, что у
@@ -229,7 +229,7 @@ crc                    = { version = "3.4.0" }
 # Protobuf (`crates-host/proto` — схема и сгенерированные типы, `domain` —
 # узел PROTOBUF): без alloc, повторяющиеся поля и строки — в контейнерах
 # `heapless` 0.9, той же версии, что у остального дерева.
-micropb                = { version = "0.6.0", default-features = false, features = [
+micropb                = { version = "0.7.0", default-features = false, features = [
 	"encode",
 	"decode",
 	"container-heapless-0-9",
@@ -238,8 +238,8 @@ micropb                = { version = "0.6.0", default-features = false, features
 # `protox` — компилятор protobuf на чистом Rust, — и `micropb-gen` строит код
 # из готового описания (`compile_fdset_file`): системный `protoc` не нужен ни
 # разработчику, ни в CI.
-micropb-gen            = { version = "0.6.0" }
-protox                 = { version = "0.9.1" }
+micropb-gen            = { version = "0.7.0" }
+protox                 = { version = "0.10.0" }
 # {%- endif %}
 # {%- if has_net == "true" %}
 # Сетевой стек под интерфейсами tcp/udp (`adapters::net`, узел `domain::net`):
@@ -342,8 +342,8 @@ salty                  = { version = "0.3.0", default-features = false, features
 # `domain::ota::download::Transfer` — на любом разбиении образа на куски и
 # любой ширине слова.
 # {%- endif %}
-proptest               = { version = "1.0.0" }
+proptest               = { version = "1.12.0" }
 # {%- endif %}
 # Snapshot tests: точный вид строк отчёта `cargo xtask build` фиксируется
 # целиком, а не набором `contains`. Только `[dev-dependencies]` `xtask`.
-insta                  = { version = "1.34.0", default-features = false }
+insta                  = { version = "1.49.0", default-features = false }
