@@ -256,6 +256,33 @@ resources: [WS: &'static mut $crate::x::Workspace = static |w| w.gain = inputs.g
 ту же `.data`. Подробности — `supervisor-macros/docs/dsl.md`, «A large object:
 `= static`» и «What those statics cost in flash».
 
+# Первый свой узел
+
+Образец — `crates-host/domain/src/heartbeat.rs`: узел из одного состояния,
+который только отмечается у сторожа. Свой узел — тот же путь из пяти шагов.
+
+1. **Модуль в `domain`** — `crates-host/domain/src/<узел>.rs` и строка
+   `pub mod <узел>;` в `crates-host/domain/src/lib.rs`. В модуле — фрагмент
+   (`supervisor_fragment!` с `ctx: $crate::<узел>::<Узел>Ctx` и
+   `task: $crate::<узел>::task`, всё внутри полным путём), автомат
+   `#[fsm::typestate]` на `impl <Узел>Ctx` и задача
+   `match ctx.run().await {}`. Узлы шаблона не падают: `restart: Never`,
+   отказ связи — строка в лог и возврат в начальное состояние автомата.
+2. **Строка в графе** — в `fragments:` файла `crates-cross/app/src/graph.rs`:
+   `::domain::<УЗЕЛ>_FRAG as <УЗЕЛ>`. Имя узлу даёт эта запись, а не фрагмент.
+3. **Сторож — если узел обещает прогресс.** Поле `watchdog:` фрагмента и
+   `const WATCHDOG` рядом с узлом; новый узел обязан встать в список
+   `const`-assert'а в `graph.rs`, иначе цепочка таймаутов
+   (`docs/watchdog.md`) не проверяется. Узел, который ждёт событие, которого
+   может не быть всю жизнь платы, сторожем не отмечается — как `NET` и `HTTP`.
+4. **Железо — через рычаг платы.** Узел не берёт периферию сам: `bsp` отдаёт
+   рычаг полем `Board`, адаптер над ним узел собирает через `ports::Assemble`
+   во входе фрагмента, а `app` раздаёт поле платы в `fragments:`
+   (`docs/architecture.md`).
+5. **Тест на хосте** — по образцу `crates-host/domain/src/heartbeat/tests.rs`:
+   `supervisor::stand!` строит контекст и порты узла без графа, время
+   двигает `MockDriver`. Гоняется `cargo xtask test host`.
+
 # `watchdog` — мультиплексор задач в один аппаратный watchdog
 
 `supervisor` пользуется им внутри (блок `watchdog:` выше), а реализовать
