@@ -43,7 +43,7 @@
 /// Обработчик по умолчанию над примером схемы `crates-host/proto`.
 mod service;
 
-pub use service::{DeviceInfo, Service};
+pub use service::{DeviceInfo, RESPONSE_MAX, Service};
 
 use defmt_or_log::{FormatOrDebug, info, warn};
 use micropb::{DecodeError, MessageDecode, MessageEncode, PbEncoder};

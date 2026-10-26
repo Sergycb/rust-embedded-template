@@ -329,6 +329,14 @@ fn strip_liquid_from_manifests(dir: &Path) -> anyhow::Result<()> {
             strip_liquid_from_manifests(&path)?;
         } else if entry.file_name() == "Cargo.toml" {
             let original = fs::read_to_string(&path)?;
+            // `unless` стриппер не понимает: его теги остались бы в TOML, и
+            // `cargo metadata` упал бы на «invalid key-value pair» без намёка
+            // на причину. В манифестах его нет; появится — учить стриппер.
+            anyhow::ensure!(
+                !original.contains("{% unless") && !original.contains("{%- unless"),
+                "{}: `{{% unless %}}` в манифесте — strip_liquid его не понимает",
+                path.display(),
+            );
             let stripped = strip_liquid(&original).replace("{{rust_lib}}", RUST_LIB);
             if stripped != original {
                 fs::write(&path, stripped)?;
@@ -4449,6 +4457,16 @@ pub static METADATA: Metadata = Metadata {
         let text = "a\n{%- if x %}\nb\n{% if y %}c{% else %}d{% endif %}\n{%- else %}\n\
                     e{% if z %}f{% endif %}\n{%- endif %}\ng\n";
         assert_eq!(strip_liquid(text), "a\n\ne\n\ng\n");
+    }
+
+    /// `elsif` — часть ложной ветки: при всех ложных условиях Liquid берёт
+    /// `else`, и стриппер — тоже (как в `crates-cross/bsp/Cargo.toml`).
+    #[test]
+    fn an_elsif_falls_through_to_else() {
+        let text = "a\n{% if x %}b{% elsif y %}c{% else %}d{% endif %}\ne\n";
+        assert_eq!(strip_liquid(text), "a\nd\ne\n");
+        let text = "a\n{% if x %}b{% elsif y %}c{% endif %}\ne\n";
+        assert_eq!(strip_liquid(text), "a\n\ne\n");
     }
 
     /// Незакрытый тег оставляется как есть — падать должен `cargo metadata`

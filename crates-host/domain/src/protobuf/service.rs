@@ -17,6 +17,15 @@ const _: () = assert!(proto::UID_BYTES == crate::device::UID_BYTES);
 // Прошлую панику `app` сжимает до `PANIC_BRIEF` — она помещается в поле.
 const _: () = assert!(crate::device::PANIC_BRIEF <= proto::PANIC_BYTES);
 
+/// Самый длинный ответ схемы, байт: под него `app` заводит буфер ответа узла
+/// (`PROTOBUF_MESSAGE` в `crates-cross/app/src/link.rs`, `const`-assert там
+/// же). Не поместился бы — узел предупредил бы на старте, а такие ответы не
+/// ушли бы.
+pub const RESPONSE_MAX: usize = match <Response as micropb::MessageEncode>::MAX_SIZE {
+    Ok(max) => max,
+    Err(_) => panic!("у ответа схемы нет предела длины"),
+};
+
 /// Обработчик, с которым стартует узел `PROTOBUF` шаблона: на `info` —
 /// сведения об устройстве{% if ota == "true" %}, команды обновления — узлу OTA ([`route`](ProtobufService::route)),
 /// их исход — `ok` или `error`{% endif %}, `request_id` — обратно.
@@ -266,7 +275,19 @@ pub(crate) mod tests {
     #[test]
     fn every_reset_cause_fits_its_field() {
         use crate::device::ResetCause;
-        for cause in [
+        // Место варианта в списке — `match` без `_`: новый вариант не
+        // скомпилируется, пока ему не дадут место, а список сверяется с ним.
+        let place = |cause: ResetCause| match cause {
+            ResetCause::LowPower => 0,
+            ResetCause::WindowWatchdog => 1,
+            ResetCause::IndependentWatchdog => 2,
+            ResetCause::Software => 3,
+            ResetCause::OptionBytes => 4,
+            ResetCause::PowerOn => 5,
+            ResetCause::Pin => 6,
+            ResetCause::Unknown => 7,
+        };
+        let all = [
             ResetCause::LowPower,
             ResetCause::WindowWatchdog,
             ResetCause::IndependentWatchdog,
@@ -275,19 +296,11 @@ pub(crate) mod tests {
             ResetCause::PowerOn,
             ResetCause::Pin,
             ResetCause::Unknown,
-        ] {
+        ];
+        for (i, cause) in all.into_iter().enumerate() {
+            assert_eq!(place(cause), i, "{cause:?} не на своём месте в списке");
             assert!(cause.as_str().len() <= proto::RESET_BYTES, "{cause:?}");
         }
-    }
-
-    /// Самый длинный ответ схемы помещается в буфер ответа узла —
-    /// `PROTOBUF_MESSAGE` (256) в `crates-cross/app/src/link.rs`; иначе узел
-    /// предупредит на старте, а такие ответы не уйдут.
-    #[test]
-    fn the_longest_response_fits_the_node_buffer() {
-        use micropb::MessageEncode as _;
-        let max = Response::MAX_SIZE.expect("у ответа схемы есть предел");
-        assert!(max <= 256, "{max}");
     }
 
     #[test]

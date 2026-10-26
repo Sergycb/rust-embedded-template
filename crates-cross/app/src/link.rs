@@ -22,9 +22,14 @@ pub mod usb;
 {%- if has_protobuf == "true" %}
 
 /// Самое длинное сообщение схемы, под которое заведены буферы каналов узлов
-/// `PROTOBUF_*`. Схема с сообщениями длиннее — меняйте здесь; узел предупредит
-/// при старте, если самый длинный ответ схемы не помещается.
+/// `PROTOBUF_*`. Схема с сообщениями длиннее — меняйте здесь: самый длинный
+/// ответ схемы (`domain::protobuf::RESPONSE_MAX`) обязан поместиться, это
+/// держит `const`-assert ниже.
 const PROTOBUF_MESSAGE: usize = 256;
+const _: () = assert!(
+    ::domain::protobuf::RESPONSE_MAX <= PROTOBUF_MESSAGE,
+    "самый длинный ответ схемы protobuf не помещается в PROTOBUF_MESSAGE"
+);
 {%- endif %}
 {%- if protocol_sockets != "0" %}
 

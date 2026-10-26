@@ -510,9 +510,19 @@ fn write_info(
     }
     writeln!(out, "uptime {uptime_s} s")?;
     writeln!(out, "reset {}", info.reset.as_str())?;
-    // Место и текст паники разделяет её же перевод строки: текст — следующей
-    // строкой.
-    writeln!(out, "last panic {}", info.last_panic.unwrap_or("none"))
+    // Место и текст паники разделяет её же перевод строки, а консоль держит
+    // «ключ значение» по строке: текст идёт через пробел, а не второй строкой
+    // без ключа.
+    let (place, text) = match info.last_panic {
+        Some(panic) => panic.split_once('\n').unwrap_or((panic, "")),
+        None => ("none", ""),
+    };
+    out.write_str("last panic ")?;
+    out.write_str(place)?;
+    if !text.is_empty() {
+        write!(out, " {text}")?;
+    }
+    out.write_char('\n')
 }
 
 /// Выполняет команду; `false` — сессия кончилась (`exit`).
@@ -910,6 +920,27 @@ mod tests {
         assert!(out.starts_with("version 65535"), "{out}");
         assert!(
             out.contains("\nreset independent_watchdog\nlast panic ж"),
+            "{out}"
+        );
+    }
+
+    /// Место и текст паники — одна строка `last panic …`, а не две.
+    #[test]
+    fn the_panic_stays_on_its_line() {
+        let info = DeviceInfo {
+            version: "0.1.0",
+            commit: "abc",
+            chip: "STM32G071RB",
+            uid: [0; crate::device::UID_BYTES],
+            flash_size: 0,
+            sys_hz: None,
+            reset: crate::device::ResetCause::Software,
+            last_panic: Some("dhcp.rs:12:5:\nlease lost"),
+        };
+        let mut out = heapless::String::<INFO_TEXT>::new();
+        write_info(&mut out, &info, [0; 6], None, 0).unwrap();
+        assert!(
+            out.ends_with("\nlast panic dhcp.rs:12:5: lease lost\n"),
             "{out}"
         );
     }
