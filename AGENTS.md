@@ -134,7 +134,9 @@ cargo xtask build         # cross: debug + release
 check`, `cargo hack --feature-powerset`, покрытие (`cargo llvm-cov`) и `typos`:
 все четыре ставит `cargo xtask setup`, и при правке зависимостей или фич первые
 три стоит прогнать и локально. Отдельно от `ci.yml` (GitHub): `pins.yml` (Pins) —
-`chip-info --check` по фильтру путей (распиновка и справочник){% if ota == "true" %}, `release.yml`
+`chip-info --check` по фильтру путей (распиновка и справочник), `audit.yml` (Audit) —
+`cargo deny check advisories` по обоим lock-файлам каждую ночь (на GitLab — джоб `audit`
+по расписанию){% if ota == "true" %}, `release.yml`
 (Release) — `cargo xtask build` и подпись по тегу `v*`{% endif %}. Полный
 перечень и что нужно для зелёного CI — README, «Что проверяет CI». Добавили шаг
 в CI — допишите его сюда, компилятор такого расхождения не увидит.

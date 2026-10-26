@@ -1,0 +1,41 @@
+name: Audit
+
+# Уязвимость попадает в базу RustSec и тогда, когда в проекте ничего не
+# меняли, а ci.yml идёт только на push и PR: без расписания новая запись
+# всплыла бы при следующем коммите — через недели. Здесь — только
+# `advisories` по обоим lock-файлам; лицензии и источники от времени не
+# меняются, их проверяет ci.yml.
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  advisories:
+    name: cargo deny check advisories
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      # В репозитории самого шаблона манифесты с Liquid, и cargo их не
+      # резолвит: без заглушки расписание краснело бы у мейнтейнера каждую
+      # ночь (так же устроен pins.yml).
+      - id: guard
+        run: |
+          if grep -q 'chip_feature' crates-host/chip-info/Cargo.toml; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Репозиторий шаблона: проверять нечего."
+          fi
+
+      - if: steps.guard.outputs.skip != 'true'
+        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2 (2.87.22)
+        with:
+          tool: cargo-deny
+      - if: steps.guard.outputs.skip != 'true'
+        run: cargo deny check advisories
+      - if: steps.guard.outputs.skip != 'true'
+        run: cargo deny --manifest-path crates-cross/Cargo.toml check advisories

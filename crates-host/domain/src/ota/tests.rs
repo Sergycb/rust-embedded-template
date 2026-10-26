@@ -32,6 +32,7 @@ impl Reboot for FakeReboot {
 
 /// Шаг сценария: запрос узлу, пауза, которую узел видит, или пауза, которую
 /// он не успел увидеть (время ушло, а узел не опрошен).
+#[derive(Debug, Clone)]
 enum Step {
     Send(OtaRequest),
     /// Та же команда, но через вход `ASK`.
@@ -1041,4 +1042,40 @@ fn maps_a_flash_failure_on_the_signature_record_to_device() {
 
     assert_eq!(replies.last(), Some(&Err(Rejection::Device)));
     assert_eq!(flash.updated, 0);
+}
+
+/// Шаг случайного сценария: что прислать и от какого клиента.
+fn arbitrary_step() -> impl proptest::strategy::Strategy<Value = Step> {
+    use proptest::prelude::*;
+    let command = prop_oneof![
+        prop::sample::select(vec![8usize, 16, 64]).prop_map(start),
+        (0u32..72, 1usize..20).prop_map(|(offset, len)| {
+            let image = image(64);
+            let from = (offset as usize).min(image.len() - 1);
+            chunk(offset, &image[from..(from + len).min(image.len())])
+        }),
+        Just(finish()),
+    ];
+    prop_oneof![
+        4 => (command, 0u8..2).prop_map(|(step, client)| by(client, step)),
+        1 => Just(Step::Wait(SESSION_TIMEOUT + Duration::from_secs(1))),
+    ]
+}
+
+proptest::proptest! {
+    /// Какие бы команды ни пришли и в каком бы порядке — от двух клиентов, с
+    /// перерывами дольше срока сессии, — узел не падает, отвечает на каждую
+    /// ровно одним исходом и помечает обмен ровно тогда, когда ответил
+    /// `Ready`. Сценарии выше проверяют по одной истории, здесь их тысячи.
+    #[test]
+    fn any_command_sequence_gets_one_reply_each_and_swaps_only_on_ready(
+        steps in proptest::collection::vec(arbitrary_step(), 1..24)
+    ) {
+        let commands = steps.iter().filter(|step| !matches!(step, Step::Wait(_))).count();
+        let mut flash = FakeFlash::new(1024, 8);
+        let replies = run(&mut flash, Mode::Plain, steps);
+        proptest::prop_assert_eq!(replies.len(), commands);
+        let ready = replies.iter().filter(|reply| **reply == Ok(Progress::Ready)).count();
+        proptest::prop_assert_eq!(flash.updated, ready);
+    }
 }
