@@ -277,6 +277,17 @@ read`: руками пришлось бы сначала найти адрес �
   `ports::FirmwarePartitions`), проверяет её только `cargo xtask lint cross`/`build` —
   `docs/ota.md`.
 {%- endif %}
+{%- if ota == "true" or config_store == "flash" or config_store == "external" or dma_nc == "true" %}
+- Границы разделов и регионов памяти, нужные рычагам платы ({% if ota == "true" %}размер `ACTIVE`, {% endif %}{% if config_store == "flash" or config_store == "external" %}границы `CONFIG`, {% endif %}{% if external_flash == "true" %}конец
+  разделов внешней флеши, {% endif %}{% if dma_nc == "true" %}регионы `DMA_NC`{% if bdma_nc == "true" %}/`SRAM4`{% endif %}, {% endif %}— одно место), — символы `memory.x`,
+  которые линкер вычисляет из регионов; читает их только `bsp::layout`
+  (`unsafe extern` с `safe static`, значение — адрес символа). Проверки над ними —
+  `ASSERT` в `memory.x` (падает линковка, а не плата), не `const`-assert. В `[env]`
+  `crates-cross/.cargo/config.toml` остаются только числа, которые нужны
+  компилятору (параметр `ErasePage`, `const`-assert, размер пула). Символы
+  обязаны быть в `memory.x` каждого бинарника, который их читает: `app` и
+  `target-tests`{% if ota == "true" and ota_store == "external" %}, `boot` — символы внешней флеши{% endif %} — `docs/flash.md`.
+{%- endif %}
 {%- if bank_switch != "" %}
 - Флеш этого чипа с завода двухбанковый, а раскладка одобанковая:
   `bsp::banks::ensure_single_bank()` стоит первой строкой {% if ota == "true" %}и в `boot`, и в
@@ -304,9 +315,9 @@ read`: руками пришлось бы сначала найти адрес �
   генерация по метаданным чипа (`docs/clocks.md`, «Кэши»).
 {%- if cache contains "scb_d" %}
   Кэш данных ядра M7 DMA не видит, поэтому он включён только вместе с
-  non-cacheable регионом `DMA_NC` (`memory.x`, `DMA_NC_START`/`DMA_NC_LEN` в
-  `[env]`){% if bdma_nc_start != "" %} и `SRAM4` под BDMA{% endif %}, который
-  `bsp::dma_nc` размечает в MPU: буфер DMA кладите в `#[link_section = ".dma_nc"]`{% if bdma_nc_start != "" %} (BDMA — `".bdma_nc"`){% endif %}, не в обычный `static`. Секции в
+  non-cacheable регионом `DMA_NC` (`memory.x`; границы — символы
+  `__dma_nc_start`/`__dma_nc_end`, годность для MPU — `ASSERT` там же){% if bdma_nc == "true" %} и `SRAM4` под BDMA{% endif %}, который
+  `bsp::dma_nc` размечает в MPU: буфер DMA кладите в `#[link_section = ".dma_nc"]`{% if bdma_nc == "true" %} (BDMA — `".bdma_nc"`){% endif %}, не в обычный `static`. Секции в
   `memory.x` вставлены `INSERT AFTER .gnu.sgstubs` — за `.uninit` они ломают
   `cortex-m-rt` под `flip-link`.
 {%- endif %}
@@ -472,7 +483,8 @@ read`: руками пришлось бы сначала найти адрес �
   `Board::new` асинхронный: драйвер опознаёт микросхему (`init`, до 2 с, если
   она дотирает стирание), и `main` зовёт его через `embassy_futures::block_on`
   до исполнителя{% if graph == "true" %} — путь до `spawn_all` обязан уложиться в таймаут сторожа{% endif %}.
-  Не прошёл `init` или микросхема меньше `EXT_FLASH_END` — строка в лог, флеш
+  Не прошёл `init` или микросхема меньше конца разделов (символ `memory.x`
+  `__ext_flash_end`, `bsp::layout::ext_flash_end`) — строка в лог, флеш
   отказывает, а не паникует.
 {%- endif %}
 - `Board::new()` отдаёт один `Board`.

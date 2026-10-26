@@ -22,3 +22,15 @@ __bootloader_active_end   = ORIGIN(ACTIVE) + LENGTH(ACTIVE) - ORIGIN(FLASH);
 
 __bootloader_dfu_start = ORIGIN(DFU) - ORIGIN(FLASH);
 __bootloader_dfu_end   = ORIGIN(DFU) + LENGTH(DFU) - ORIGIN(FLASH);
+{%- if ota_store == "external" %}
+{%- if config_store == "external" %}
+
+/* Раздел настроек на внешней флеши — те же смещения, что в memory.x приложения. */
+__config_start = /* 0xXXXXXXXX */;
+__config_end   = /* 0xXXXXXXXX */;
+{%- endif %}
+
+/* Конец последнего раздела на внешней флеши (bsp::layout): микросхема меньше
+   не годится. */
+__ext_flash_end = {% if config_store == "external" %}MAX(MAX(__bootloader_state_end, __bootloader_dfu_end), __config_end){% else %}MAX(__bootloader_state_end, __bootloader_dfu_end){% endif %};
+{%- endif %}

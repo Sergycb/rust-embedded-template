@@ -1134,38 +1134,64 @@ fn external_ota_places_settings_where_the_project_asked() {
     );
     let app = written(&outside, "crates-cross/app/memory.x");
     assert!(region_origin(&app, "CONFIG").is_none(), "{app}");
-    // Границы раздела уезжают числами в `[env]`, а не символами линкера.
-    assert!(!app.contains("__config_start"), "{app}");
-    assert_eq!(
-        outside.vars.get("config_start").map(String::as_str),
-        Some("655360"),
-        "0x000A0000"
+    // Границы раздела — символы `memory.x` (смещения от начала внешней
+    // флеши, за `DFU`), а конец разделов — `MAX` по их концам.
+    assert!(app.contains("__config_start = 0x000A0000;"), "{app}");
+    assert!(app.contains("__config_end   = 0x000A0000 + 256K;"), "{app}");
+    let end =
+        "__ext_flash_end = MAX(MAX(__bootloader_state_end, __bootloader_dfu_end), __config_end);";
+    assert!(app.contains(end), "{app}");
+    // Bootloader сверяет объём микросхемы с тем же концом.
+    let boot = written(&outside, "crates-cross/boot/memory.x");
+    assert!(
+        boot.contains("__config_end   = 0x000A0000 + 256K;") && boot.contains(end),
+        "{boot}"
     );
-    assert_eq!(
-        outside.vars.get("config_end").map(String::as_str),
-        Some("917504"),
-        "0x000A0000 + 256K"
+    assert!(
+        !outside.vars.contains_key("config_start"),
+        "границы не ездят в [env]"
     );
 }
 
-/// Размеры разделов уезжают в `[env]` числами, и `ACTIVE_LEN` совпадает с
-/// `ACTIVE` в `memory.x`: читать их через `unsafe extern` незачем.
+/// Границы разделов — символы `memory.x`, которые считает линкер (`bsp::layout`
+/// читает их адресами), а не числа в `[env]`; кратность `CONFIG` его странице —
+/// `ASSERT` там же, литералом страницы из генерации.
 #[test]
-fn partition_bounds_travel_as_numbers() {
+fn partition_bounds_are_linker_symbols() {
     let result = run_chip_with(&compile_script(), "f407ve", &[("config", "yes")])
         .expect("каскад не должен падать");
-    let boot = written(&result, "crates-cross/boot/memory.x");
-    let active = region_length(&boot, "ACTIVE").expect("ACTIVE в memory.x");
-    assert_eq!(
-        result.vars.get("active_len").map(String::as_str),
-        Some(active.to_string().as_str())
-    );
+    for name in ["active_len", "config_start", "config_end", "ext_flash_end"] {
+        assert!(
+            !result.vars.contains_key(name),
+            "{name} больше не ездит в [env]"
+        );
+    }
     let app = written(&result, "crates-cross/app/memory.x");
-    let config = region_origin(&app, "CONFIG").expect("CONFIG в memory.x");
-    let start: u64 = result.vars["config_start"].parse().expect("число");
-    let config = u64::from_str_radix(config.trim_start_matches("0x"), 16).expect("адрес");
-    assert_eq!(start, config - 0x0800_0000);
-    assert!(!app.contains("__config_start"), "{app}");
+    assert!(region_origin(&app, "CONFIG").is_some(), "{app}");
+    assert!(
+        app.contains("__config_start = ORIGIN(CONFIG) - 0x08000000;"),
+        "{app}"
+    );
+    assert!(
+        app.contains("__config_end   = ORIGIN(CONFIG) + LENGTH(CONFIG) - 0x08000000;"),
+        "{app}"
+    );
+    // У F407 раздел — в секторах по 16 KiB.
+    let erase = result.vars["config_erase_size"].replace('_', "");
+    assert!(
+        app.contains(&format!(
+            "ASSERT(__config_start % {erase} == 0 && __config_end % {erase} == 0,"
+        )),
+        "{app}"
+    );
+    // Размер `ACTIVE` прошивка берёт из тех же символов, что `embassy-boot`.
+    assert!(
+        app.contains("__bootloader_active_end   = ORIGIN(FLASH) + LENGTH(FLASH)"),
+        "{app}"
+    );
+    // Bootloader раздел настроек не собирает — и символов его не получает.
+    let boot = written(&result, "crates-cross/boot/memory.x");
+    assert!(!boot.contains("__config_start"), "{boot}");
 }
 
 /// Внутренняя схема не помещается, внешняя — да: меню OTA говорит об этом прямо
@@ -2903,18 +2929,12 @@ fn external_settings_take_no_internal_flash() {
         "весь флеш — приложению:\n{app}"
     );
     // Раздел — с начала микросхемы, 128 KiB, как за `DFU` у внешней OTA.
-    assert_eq!(
-        result.vars.get("config_start").map(String::as_str),
-        Some("0")
+    assert!(app.contains("__config_start = 0x00000000;"), "{app}");
+    assert!(
+        app.contains("__config_end   = 0x00000000 + 131072;"),
+        "{app}"
     );
-    assert_eq!(
-        result.vars.get("config_end").map(String::as_str),
-        Some("131072")
-    );
-    assert_eq!(
-        result.vars.get("ext_flash_end").map(String::as_str),
-        Some("131072")
-    );
+    assert!(app.contains("__ext_flash_end = __config_end;"), "{app}");
 }
 
 /// Место хранения задаёт `ext_flash`, а у `ota`/`config` — только «есть/нет»:
@@ -2961,14 +2981,10 @@ fn external_flash_bus_follows_the_chip() {
             Some(block),
             "{chip}"
         );
-        // Конец разделов — число для `[env]`: без него `bsp::external` не
-        // соберётся.
-        let end: u64 = result
-            .vars
-            .get("ext_flash_end")
-            .and_then(|s| s.parse().ok())
-            .unwrap_or_else(|| panic!("{chip}: ext_flash_end не число"));
-        assert!(end > 0, "{chip}");
+        // Конец разделов — символ `memory.x`: без него `bsp::external` не
+        // слинкуется.
+        let app = written(&result, "crates-cross/app/memory.x");
+        assert!(app.contains("__ext_flash_end = "), "{chip}:\n{app}");
     }
     let internal = run_cascade_with(&ast, "l476rg", &[("ota", "yes")]).expect("каскад до l476rg");
     assert_eq!(
@@ -4064,7 +4080,7 @@ fn every_m7_chip_gets_a_dma_region() {
         let dma = region(&memory_x, "DMA_NC");
 
         if !m7 {
-            if dma.is_some() || var("cache").contains("scb") || !var("dma_nc_start").is_empty() {
+            if dma.is_some() || var("cache").contains("scb") || var("dma_nc") == "true" {
                 failures.push(format!(
                     "{suffix}: не M7, а регион DMA_NC или кэш ядра есть"
                 ));
@@ -4081,8 +4097,12 @@ fn every_m7_chip_gets_a_dma_region() {
                 "{suffix}: DMA_NC {origin:#x}+{length} не по границе размера"
             ));
         }
-        if var("dma_nc_start") != origin.to_string() || var("dma_nc_len") != length.to_string() {
-            failures.push(format!("{suffix}: dma_nc_start/len не сходятся с memory.x"));
+        // Границы — символами из региона, годность для MPU — `ASSERT` там же.
+        if var("dma_nc") != "true"
+            || !memory_x.contains("__dma_nc_start = ORIGIN(DMA_NC);")
+            || !memory_x.contains("ASSERT(LENGTH(DMA_NC) >= 32")
+        {
+            failures.push(format!("{suffix}: у DMA_NC нет символов или ASSERT"));
         }
         if !var("cache").contains("scb_d") {
             failures.push(format!(
@@ -4105,16 +4125,12 @@ fn every_m7_chip_gets_a_dma_region() {
         // SRAM4 под BDMA: только у H7 с SRAM4 в D3 (0x38000000).
         let bdma = region(&memory_x, "SRAM4").filter(|&(o, _)| o == 0x3800_0000);
         let h7_with_sram4 = suffix.starts_with("h7") && bdma.is_some();
-        if h7_with_sram4 != !var("bdma_nc_start").is_empty()
+        if h7_with_sram4 != (var("bdma_nc") == "true")
             || h7_with_sram4 != memory_x.contains(".bdma_nc (NOLOAD)")
+            || h7_with_sram4 != memory_x.contains("__bdma_nc_start = ORIGIN(SRAM4);")
+            || h7_with_sram4 != memory_x.contains("ASSERT(LENGTH(SRAM4) >= 32")
         {
             failures.push(format!("{suffix}: SRAM4 под BDMA и memory.x не сходятся"));
-        }
-        if let Some((o, l)) = bdma
-            && h7_with_sram4
-            && (var("bdma_nc_start") != o.to_string() || var("bdma_nc_len") != l.to_string())
-        {
-            failures.push(format!("{suffix}: bdma_nc_start/len не сходятся с SRAM4"));
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));

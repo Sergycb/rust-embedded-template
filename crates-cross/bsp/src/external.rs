@@ -25,14 +25,6 @@ const _: () = assert!(
 );
 {%- endif %}
 
-/// Конец последнего раздела на внешней флеши, байты: меньше микросхема не
-/// годится. Переменная среды `EXT_FLASH_END` из `[env]`
-/// `crates-cross/.cargo/config.toml` — тот же расчёт, что у раскладки.
-pub const EXT_FLASH_END: u32 = match u32::from_str_radix(env!("EXT_FLASH_END"), 10) {
-    Ok(end) => end,
-    Err(_) => panic!("EXT_FLASH_END в [env] crates-cross/.cargo/config.toml — не число"),
-};
-
 /// Что не работает, пока флеш не отвечает, — для строки в лог.
 const LOST: &str = "{% if ota == "true" and ota_store == "external" %}OTA{% if config_store == "external" %} и настройки не работают{% else %} не работает{% endif %}{% else %}настройки не сохраняются{% endif %}";
 
@@ -78,13 +70,14 @@ pub fn connected() -> bool {
 
 /// Собирает драйвер и опознаёт микросхему (`init`: JEDEC ID, объём{% if ext_flash_bus != "spi" %}, бит QE{% endif %}).
 ///
-/// Не прошёл `init` или микросхема меньше [`EXT_FLASH_END`] — одна строка в
+/// Не прошёл `init` или микросхема меньше разделов (`crate::layout::ext_flash_end`) — одна строка в
 /// лог, и драйвер отказывает в любой операции ошибкой, а не паникой. Плата без
 /// флеши (или с заглушкой шины) работает, только без того, что на флеши лежит.
 pub(crate) async fn new(_resources: crate::resources::ExtFlashResources) -> &'static ExternalMutex {
     let mut flash = ExternalFlash::new(crate::stub::FlashBus, embassy_time::Delay);
+    let end = crate::layout::ext_flash_end();
     let flash = match flash.init().await {
-        Ok(_) if flash.capacity() >= EXT_FLASH_END => {
+        Ok(_) if flash.capacity() >= end => {
             defmt::info!(
                 "bsp: внешняя флеш W25Q, {=u32} KiB",
                 flash.capacity() / 1024
@@ -95,7 +88,7 @@ pub(crate) async fn new(_resources: crate::resources::ExtFlashResources) -> &'st
             defmt::error!(
                 "bsp: внешняя флеш {=u32} KiB, а разделам нужно {=u32} KiB — {=str}",
                 flash.capacity() / 1024,
-                EXT_FLASH_END / 1024,
+                end / 1024,
                 LOST
             );
 {%- if ota == "true" and ota_store == "external" %}
@@ -127,17 +120,14 @@ pub(crate) async fn new(_resources: crate::resources::ExtFlashResources) -> &'st
 
 /// Собирает флеш под обновлением над внешней флешью.
 pub(crate) fn firmware(external: &'static ExternalMutex) -> FirmwareFlash {
-    adapters::ota::Linked::new(external, external, crate::layout::ACTIVE_LEN)
+    adapters::ota::Linked::new(external, external, crate::layout::active_len())
 }
 {%- endif %}
 {%- if config == "true" and config_store == "external" %}
 
 /// Собирает раздел настроек на внешней флеши.
 pub(crate) fn config(external: &'static ExternalMutex) -> ConfigFlash {
-    ConfigFlash::new(
-        external,
-        crate::layout::CONFIG_START,
-        crate::layout::CONFIG_END - crate::layout::CONFIG_START,
-    )
+    let (start, len) = crate::layout::config();
+    ConfigFlash::new(external, start, len)
 }
 {%- endif %}

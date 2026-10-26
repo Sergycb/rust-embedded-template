@@ -355,7 +355,8 @@ H723/725/730/733/735. Им `bsp` получает `src/clocks.rs`, осталь�
 D2 с `0x30000000`, мимо AXI-SRAM ядра CM7. `DMA_NC` не берётся из SRAM домена D2:
 до неё не дотягивается IDMA SDMMC1; у H7 `SRAM4` в `0x38000000` целиком — `bdma_nc_*` (память BDMA).
 Ядро M7 генератор берёт по семейству (`f7`/`h7`, не `-cm4`) — как `family_table` в хуке.
-Хук выставляет `dma_nc_start`/`dma_nc_len` и `bdma_nc_*` (в `[env]` `crates-cross/.cargo/config.toml`),
+Хук выставляет признаки `dma_nc`/`bdma_nc`, пишет в `memory.x` символы `__dma_nc_*`/`__bdma_nc_*`
+с `ASSERT` годности для MPU (их читает `bsp::layout`),
 удаляет `bsp/src/dma_nc.rs` там, где региона нет, дописывает `scb_d` в `cache` и вставляет в
 `memory.x` приложения `SECTIONS { .dma_nc, .bdma_nc } INSERT AFTER .gnu.sgstubs;` (`INSERT AFTER
 .uninit` не собирается под `flip-link`: проверено сборкой; инвариант «в `memory.x` нет SECTIONS»
@@ -392,6 +393,20 @@ MemoryRegion { address, size, settings: Some(FlashSettings { erase_size, write_s
 пишет `memory.x` через `file::write` (во временную копию шаблона ДО рендера — то самое
 "the template folder", о котором предупреждает документация `file::write`, не в
 `crates-cross/*/memory.x` этого репозитория).
+
+**Границы, нужные прошивке в рантайме, — символы `memory.x`, а не `[env]`.** Размер
+`ACTIVE` (из `__bootloader_active_*`), границы `CONFIG` (`__config_start`/`__config_end`:
+от `ORIGIN(CONFIG)` во внутреннем флеше, литералами на внешней), конец внешней флеши
+(`__ext_flash_end` = `MAX` по концам разделов) и регионы DMA (`__dma_nc_*`, `__bdma_nc_*`)
+хук пишет символами рядом с регионами, а `bsp::layout` читает их адресами одного блока
+`unsafe extern`. Проверки над ними — `ASSERT` в том же `memory.x` (кратность `CONFIG`
+его странице — литералом из генерации, MPU-годность регионов DMA): падает линковка. В
+`[env]` остаётся только то, что нужно компилятору (`STATE_ERASE_SIZE`, `SWAP_PAGE_SIZE`,
+`EXT_PAGE_SIZE`, `NET_SOCKETS`, `WATCHDOG_TIMEOUT_US`, `HTTP_CONNECTIONS`). Символы — в
+`memory.x` `app` и `target-tests`; у `boot` — только символы внешней флеши (он сверяет
+объём микросхемы), `CONFIG` и `DMA_NC` он не собирает. Ручные заготовки
+`crates-cross/*/memory.x` показывают, какие символы вписать. Тесты —
+`partition_bounds_are_linker_symbols` и соседние в `cascade.rs`.
 
 **`erase_zero` в записи — из `erase_value` того же `FlashSettings`**, а не из имени
 чипа. Раньше хук считал признак как «фича начинается на `l0`/`l1`» — и мимо проходили

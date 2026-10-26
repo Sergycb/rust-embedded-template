@@ -1,9 +1,51 @@
-//! Числа раскладки флеша, которые нужны кускам флеша платы (`bsp::flash`{% if external_flash == "true" %},
-//! `bsp::external`{% endif %}), — одно место разбора на все.
+//! Границы разделов и регионов памяти, которые нужны рычагам платы
+//! (`bsp::flash`{% if external_flash == "true" %}, `bsp::external`{% endif %}{% if dma_nc == "true" %}, `bsp::dma_nc`{% endif %}), — одно место чтения на все.
 //!
-//! Приезжают переменными среды из `[env]` `crates-cross/.cargo/config.toml`:
-//! тем же расчётом генерация пишет `memory.x`, и читать их из линкерных символов
-//! (`unsafe extern`) незачем.
+//! Числа — символы `memory.x`: линкер вычисляет их из регионов раскладки, и
+//! значение символа — его адрес. Задаёт их генерация (`chip-select.rhai`)
+//! в `memory.x` каждого бинарника, который линкует `bsp`; там же — `ASSERT`'ы,
+//! которые раньше были `const`-assert'ами здесь (выравнивание `CONFIG`,
+//! пригодность регионов DMA для MPU): нарушение роняет линковку, до прошивки.
+//! Числами из `[env]` эти границы не ездят — раскладка живёт в одном месте, и
+//! ручная правка `memory.x` не разойдётся с кодом.
+
+#[expect(
+    unsafe_code,
+    reason = "символы memory.x объявляются только в `unsafe extern`; читается лишь их адрес (`safe static`)"
+)]
+unsafe extern "C" {
+{%- if ota == "true" %}
+    /// Начало `ACTIVE` — смещение от базы flash; символ `memory.x`, его же
+    /// читает `embassy-boot`.
+    safe static __bootloader_active_start: u8;
+    /// Конец `ACTIVE` — см. `__bootloader_active_start`.
+    safe static __bootloader_active_end: u8;
+{%- endif %}
+{%- if config_store == "flash" or config_store == "external" %}
+    /// Начало раздела настроек (`memory.x`): смещение {% if config_store == "flash" %}от базы flash — так
+    /// его ждёт `embassy_stm32::flash::Flash`{% else %}от начала внешней флеши{% endif %}.
+    safe static __config_start: u8;
+    /// Конец раздела настроек — см. `__config_start`.
+    safe static __config_end: u8;
+{%- endif %}
+{%- if external_flash == "true" %}
+    /// Конец последнего раздела на внешней флеши (`memory.x`, `MAX` по концам
+    /// разделов): смещение от её начала.
+    safe static __ext_flash_end: u8;
+{%- endif %}
+{%- if dma_nc == "true" %}
+    /// Начало региона `DMA_NC` (`memory.x`, `ORIGIN(DMA_NC)`).
+    safe static __dma_nc_start: u8;
+    /// Конец региона `DMA_NC` (`ORIGIN + LENGTH`).
+    safe static __dma_nc_end: u8;
+{%- endif %}
+{%- if bdma_nc == "true" %}
+    /// Начало `SRAM4` — памяти BDMA (`memory.x`, `ORIGIN(SRAM4)`).
+    safe static __bdma_nc_start: u8;
+    /// Конец `SRAM4` (`ORIGIN + LENGTH`).
+    safe static __bdma_nc_end: u8;
+{%- endif %}
+}
 {%- if ota == "true" %}
 
 /// Размер `ACTIVE` в байтах: самый длинный образ, который доедет до
@@ -14,23 +56,48 @@
 /// бы и проверку длины, и подпись, и пометку к обмену — а в `ACTIVE` приехал бы
 /// обрезанным: устройство отработало бы полный цикл обновления с перезагрузкой и
 /// молча откатилось.
-pub(crate) const ACTIVE_LEN: u32 = match u32::from_str_radix(env!("ACTIVE_LEN"), 10) {
-    Ok(len) => len,
-    Err(_) => panic!("ACTIVE_LEN в [env] crates-cross/.cargo/config.toml — не число"),
-};
+pub(crate) fn active_len() -> u32 {
+    value(&raw const __bootloader_active_end) - value(&raw const __bootloader_active_start)
+}
 {%- endif %}
 {%- if config_store == "flash" or config_store == "external" %}
 
-/// Начало раздела настроек: смещение {% if config_store == "flash" %}от базы flash (так его ждёт
-/// `embassy_stm32::flash::Flash`){% else %}от начала внешней флеши{% endif %}.
-pub(crate) const CONFIG_START: u32 = match u32::from_str_radix(env!("CONFIG_START"), 10) {
-    Ok(start) => start,
-    Err(_) => panic!("CONFIG_START в [env] crates-cross/.cargo/config.toml — не число"),
-};
-
-/// Конец раздела настроек — см. [`CONFIG_START`].
-pub(crate) const CONFIG_END: u32 = match u32::from_str_radix(env!("CONFIG_END"), 10) {
-    Ok(end) => end,
-    Err(_) => panic!("CONFIG_END в [env] crates-cross/.cargo/config.toml — не число"),
-};
+/// Раздел настроек: `(начало, размер)` — смещение {% if config_store == "flash" %}от базы flash{% else %}от начала внешней флеши{% endif %} и длина.
+/// Границы кратны его странице — `ASSERT` в `memory.x`{% if config_store == "flash" %}: иначе `Partition::new`
+/// паникует на старте{% endif %}.
+pub(crate) fn config() -> (u32, u32) {
+    let start = value(&raw const __config_start);
+    (start, value(&raw const __config_end) - start)
+}
 {%- endif %}
+{%- if external_flash == "true" %}
+
+/// Конец последнего раздела на внешней флеши, байты: меньше микросхема не
+/// годится. Его сверяют с объёмом микросхемы `bsp::external` и `boot`.
+#[must_use]
+pub fn ext_flash_end() -> u32 {
+    value(&raw const __ext_flash_end)
+}
+{%- endif %}
+{%- if dma_nc == "true" %}
+
+/// Регион `DMA_NC`: `(адрес, размер)`. Годность для MPU (размер — степень двойки
+/// от 32 байт, адрес кратен размеру) держит `ASSERT` в `memory.x`.
+pub(crate) fn dma_nc() -> (u32, u32) {
+    let start = value(&raw const __dma_nc_start);
+    (start, value(&raw const __dma_nc_end) - start)
+}
+{%- endif %}
+{%- if bdma_nc == "true" %}
+
+/// `SRAM4` целиком — память BDMA: `(адрес, размер)`; `ASSERT` — как у `dma_nc`.
+pub(crate) fn bdma_nc() -> (u32, u32) {
+    let start = value(&raw const __bdma_nc_start);
+    (start, value(&raw const __bdma_nc_end) - start)
+}
+{%- endif %}
+
+/// Значение символа линкера — его адрес (адресное пространство МК 32-битное).
+fn value(symbol: *const u8) -> u32 {
+    symbol as u32
+}

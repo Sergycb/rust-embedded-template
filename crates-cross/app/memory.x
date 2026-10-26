@@ -38,6 +38,18 @@ __bootloader_active_end   = ORIGIN(FLASH) + LENGTH(FLASH) - __flash_base;
 
 __bootloader_dfu_start = ORIGIN(DFU) - __flash_base;
 __bootloader_dfu_end   = ORIGIN(DFU) + LENGTH(DFU) - __flash_base;
+{%- if config_store == "external" %}
+
+/* Раздел настроек на внешней флеши (bsp::layout): смещения от её начала. */
+__config_start = /* 0xXXXXXXXX */;
+__config_end   = /* 0xXXXXXXXX */;
+{%- endif %}
+{%- if external_flash == "true" %}
+
+/* Конец последнего раздела на внешней флеши (bsp::layout): микросхема меньше
+   не годится. */
+__ext_flash_end = {% if ota == "true" and ota_store == "external" and config_store == "external" %}MAX(MAX(__bootloader_state_end, __bootloader_dfu_end), __config_end){% elsif ota == "true" and ota_store == "external" %}MAX(__bootloader_state_end, __bootloader_dfu_end){% else %}__config_end{% endif %};
+{%- endif %}
 
 /* Сюда пишет panic-persist — по голым адресам, без секции: секция здесь
    ломает flip-link, см. docs/diagnostics.md. */

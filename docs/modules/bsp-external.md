@@ -5,7 +5,8 @@
 асинхронный (`ExternalFlash` здесь){% if ota == "true" and ota_store == "external" %}; у bootloader'а — блокирующий
 (`crates-cross/boot/src/external.rs`){% endif %}. Объём он узнаёт по JEDEC ID при
 `init`{% if ext_flash_bus != "spi" %}, там же ставит бит QE (четыре линии данных){% endif %}; разделы посчитаны при
-генерации, и микросхема меньше их конца (`EXT_FLASH_END`) не годится —
+генерации, и микросхема меньше их конца (символ `memory.x` `__ext_flash_end`,
+`bsp::layout::ext_flash_end`) не годится —
 `Board::new` говорит об этом в лог. Аналоги других производителей (GD25Q,
 XM25QH…) `init` не проходят: драйвер сверяет производителя.
 

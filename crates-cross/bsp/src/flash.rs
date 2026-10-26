@@ -154,7 +154,9 @@ const _: () = assert!(
 /// страница своя{% if config_paged == "true" %} (`ErasePage`){% endif %}; в хвосте flash она совпадает со страницей чипа{% if config_paged != "true" %} — как у
 /// этого чипа: раздел строится прямо над [`Whole`], а равенство держит
 /// `const`-assert ниже{% endif %}.
-/// Число посчитано при генерации тем же расчётом, что адреса в `memory.x`.
+/// Число посчитано при генерации тем же расчётом, что адреса в `memory.x`; тем же
+/// литералом там стоит `ASSERT` — границы `CONFIG` кратны ей, иначе
+/// `Partition::new` паниковал бы на старте, а так падает линковка.
 const CONFIG_ERASE_SIZE: usize = {{config_erase_size}};
 {%- if config_paged != "true" %}
 
@@ -165,15 +167,6 @@ const _: () = assert!(
 );
 {%- endif %}
 
-// Раздел строится как `Partition` над страницей [`CONFIG_ERASE_SIZE`], и
-// `Partition::new` паникует на старте, если его границы не кратны ей. Расчёт
-// раскладки в генерации держит их на границах, а это — проверка при компиляции,
-// чтобы ручная правка `[env]` не превратилась в панику на плате.
-const _: () = assert!(
-    (crate::layout::CONFIG_START as usize).is_multiple_of(CONFIG_ERASE_SIZE)
-        && (crate::layout::CONFIG_END as usize).is_multiple_of(CONFIG_ERASE_SIZE),
-    "раздел CONFIG не на границах своей страницы (CONFIG_ERASE_SIZE): Partition::new паникует"
-);
 {%- endif %}
 {%- if firmware_here == "true" and config_here == "true" %}
 
@@ -416,15 +409,15 @@ pub(crate) fn firmware(flash: &'static FlashMutex) -> FirmwareFlash {
     adapters::ota::Linked::new(
         DFU_FLASH.init(mutex::Mutex::new(dfu)),
         STATE_FLASH.init(mutex::Mutex::new(state)),
-        crate::layout::ACTIVE_LEN,
+        crate::layout::active_len(),
     )
 }
 {%- endif %}
 {%- if config_here == "true" %}
 
-/// Собирает раздел `CONFIG`. Его начало кратно странице [`ConfigBacking`]{% if config_paged != "true" %}
-/// (`CONFIG_ERASE_SIZE` равен странице цельного `Flash` — `const`-assert выше){% endif %}:
-/// иначе `Partition::new` паникует.
+/// Собирает раздел `CONFIG`. Его границы кратны странице [`ConfigBacking`]
+/// (`ASSERT` в `memory.x`{% if config_paged != "true" %}; `CONFIG_ERASE_SIZE` равен странице цельного `Flash` —
+/// `const`-assert выше{% endif %}): иначе `Partition::new` паникует.
 pub(crate) fn config(flash: &'static FlashMutex) -> ConfigFlash {
 {%- if config_paged == "true" %}
     let backing = BlockingAsync::new(ErasePage::new(BlockingPartition::new(flash, 0, SIZE)));
@@ -432,11 +425,8 @@ pub(crate) fn config(flash: &'static FlashMutex) -> ConfigFlash {
     let backing = BlockingAsync::new(BlockingPartition::new(flash, 0, SIZE));
 {%- endif %}
     let backing = CONFIG_FLASH.init(mutex::Mutex::new(backing));
-    Partition::new(
-        backing,
-        crate::layout::CONFIG_START,
-        crate::layout::CONFIG_END - crate::layout::CONFIG_START,
-    )
+    let (start, len) = crate::layout::config();
+    Partition::new(backing, start, len)
 }
 {%- endif %}
 {%- if eeprom_here == "true" %}

@@ -65,15 +65,12 @@ DEFMT_LOG = "info"
 WATCHDOG_TIMEOUT_US = "10000000"
 {%- endif %}
 {%- if ota == "true" %}
-# Раскладка flash, посчитанная при генерации (`memory.x` считается теми же
-# цифрами). Часть чисел нужна и приложению, и bootloader'у — оба берут их из
-# `bsp` (`bsp::flash`{% if ota_store == "external" %}, `bsp::external`{% endif %}), и расходиться им негде (docs/flash.md). Числа лежат здесь, а не линкерными символами: читать
-# собственные константы через `unsafe extern` незачем.
-{%- if active_len != "" %}
-# Размер раздела `ACTIVE` в байтах — самый длинный образ, который доедет до
-# устройства (`bsp::layout`).
-ACTIVE_LEN = "{{active_len}}"
-{%- endif %}
+# Страницы раздела, посчитанные при генерации (`memory.x` считается теми же
+# цифрами): их ждёт компилятор — параметром `ErasePage` и `const`-assert'ами, —
+# и приложение, и bootloader берут их из `bsp` (`bsp::flash`{% if ota_store == "external" %}, `bsp::external`{% endif %}; docs/flash.md).
+# Границы разделов и регионов (`ACTIVE`, `CONFIG`, конец внешней флеши, `DMA_NC`)
+# здесь не лежат: это символы `memory.x`, `bsp::layout` читает их линкерными
+# символами, а проверки над ними — `ASSERT` там же.
 {%- if ota_store == "external" %}
 # Страница обмена с внешней флешью: стирание драйвера обязано её делить.
 EXT_PAGE_SIZE = "{{ext_page_size | remove: '_'}}"
@@ -105,30 +102,4 @@ NET_SOCKETS = "{{net_stack_sockets}}"
 # и `NET_SOCKETS` выше.
 {%- endif %}
 HTTP_CONNECTIONS = "{{http_connections}}"
-{%- endif %}
-{%- if dma_nc_start != "" %}
-# Регион `DMA_NC` (non-cacheable память под буферы DMA, `bsp::dma_nc`): адрес и
-# размер в байтах, как в `memory.x`.
-DMA_NC_START = "{{dma_nc_start}}"
-DMA_NC_LEN = "{{dma_nc_len}}"
-{%- if bdma_nc_start != "" %}
-# `SRAM4` целиком — память BDMA (H7).
-BDMA_NC_START = "{{bdma_nc_start}}"
-BDMA_NC_LEN = "{{bdma_nc_len}}"
-{%- endif %}
-{%- endif %}
-{%- if config_start != "" %}
-{%- if config_store == "external" %}
-# Границы раздела настроек (`bsp::layout`): смещения от начала внешней флеши.
-{%- else %}
-# Границы раздела настроек (`bsp::layout`): смещения от базы flash — так их
-# ждёт `embassy_stm32::flash::Flash`.
-{%- endif %}
-CONFIG_START = "{{config_start}}"
-CONFIG_END = "{{config_end}}"
-{%- endif %}
-{%- if ext_flash_end != "" %}
-# Конец последнего раздела на внешней флеши, байты: микросхема меньше — не
-# годится, `bsp::external` скажет это в лог при старте.
-EXT_FLASH_END = "{{ext_flash_end}}"
 {%- endif %}

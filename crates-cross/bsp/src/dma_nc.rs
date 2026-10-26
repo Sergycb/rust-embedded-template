@@ -20,22 +20,14 @@
 //! `static_cell::StaticCell` это значит `StaticCell` вне региона: его флаг
 //! занятости без нуля не работает). Переполнение региона ловит линкер.
 //!
-//! Границы региона — числа из генерации (`DMA_NC_START`, `DMA_NC_LEN`,
-//! `BDMA_NC_START`, `BDMA_NC_LEN` в `[env]` `crates-cross/.cargo/config.toml`),
-//! а не символы линкера: `memory.x` считается теми же цифрами.
+//! Границы регионов — символы `memory.x` (`bsp::layout`), из регионов `DMA_NC`
+//! и `SRAM4`; требования MPU к ним (размер — степень двойки не меньше 32 байт,
+//! адрес кратен размеру) держат `ASSERT`'ы там же — на линковке, до прошивки.
 
 use cortex_m::peripheral::MPU;
 
-/// Регионы MPU, по порядку: `(адрес, размер)`; первому достаётся [`FIRST_REGION`],
-/// каждому следующему — на единицу меньше.
-const REGIONS: &[(u32, u32)] = &[DMA_NC{% if bdma_nc_start != "" %}, BDMA_NC{% endif %}];
-
-/// `DMA_NC` — буферы DMA1/DMA2, MDMA, Ethernet, SDMMC.
-const DMA_NC: (u32, u32) = (number(env!("DMA_NC_START")), number(env!("DMA_NC_LEN")));
-{%- if bdma_nc_start != "" %}
-/// `SRAM4` целиком — буферы BDMA.
-const BDMA_NC: (u32, u32) = (number(env!("BDMA_NC_START")), number(env!("BDMA_NC_LEN")));
-{%- endif %}
+/// Сколько регионов размечается: `DMA_NC`{% if bdma_nc == "true" %} и `SRAM4`{% endif %}.
+const REGIONS: usize = {% if bdma_nc == "true" %}2{% else %}1{% endif %};
 
 /// Номер региона MPU первого региона: старшие номера остаются проекту
 /// (выше номер — выше приоритет при перекрытии, но перекрытий здесь нет).
@@ -45,21 +37,8 @@ const CTRL_ENABLE: u32 = 1 << 0;
 const CTRL_PRIVDEFENA: u32 = 1 << 2;
 const RBAR_VALID: u32 = 1 << 4;
 
-// Требование региона MPU Armv7-M: размер — степень двойки не меньше 32 байт,
-// адрес кратен размеру; регионов в MPU хватает.
-const _: () = {
-    let mut i = 0;
-    while i < REGIONS.len() {
-        let (start, len) = REGIONS[i];
-        assert!(
-            len.is_power_of_two() && len >= 32 && start.is_multiple_of(len),
-            "регион DMA_NC из генерации не годится для MPU: размер — степень двойки, адрес кратен размеру"
-        );
-        i += 1;
-    }
-    // Номера идут от `FIRST_REGION` вниз до нуля: регионов не больше восьми.
-    assert!(REGIONS.len() <= 8);
-};
+// Номера идут от `FIRST_REGION` вниз до нуля: регионов не больше восьми.
+const _: () = assert!(REGIONS <= FIRST_REGION as usize + 1);
 
 /// Помечает регионы буферов DMA в MPU non-cacheable и включает MPU. Зовётся один
 /// раз, из `bsp::cache`, до включения кэша данных.
@@ -85,7 +64,7 @@ pub fn protect(mpu: &mut MPU) {
         mpu.ctrl.write(0);
         cortex_m::asm::dmb();
         let mut region = FIRST_REGION;
-        for &(start, len) in REGIONS {
+        for (start, len) in regions() {
             mpu.rbar.write(start | RBAR_VALID | region);
             mpu.rasr.write(rasr(len));
             region -= 1;
@@ -96,11 +75,11 @@ pub fn protect(mpu: &mut MPU) {
     cortex_m::asm::isb();
 }
 
-const fn number(text: &str) -> u32 {
-    match u32::from_str_radix(text, 10) {
-        Ok(value) => value,
-        Err(_) => panic!("границы DMA_NC в [env] crates-cross/.cargo/config.toml — не число"),
-    }
+/// Регионы MPU, по порядку: `(адрес, размер)`; первому достаётся [`FIRST_REGION`],
+/// каждому следующему — на единицу меньше. `DMA_NC` — буферы DMA1/DMA2, MDMA,
+/// Ethernet, SDMMC{% if bdma_nc == "true" %}; `SRAM4` целиком — буферы BDMA{% endif %}.
+fn regions() -> [(u32, u32); REGIONS] {
+    [crate::layout::dma_nc(){% if bdma_nc == "true" %}, crate::layout::bdma_nc(){% endif %}]
 }
 
 /// `RASR`: XN (без исполнения), AP = 0b011 (чтение и запись), TEX = 0b001 при

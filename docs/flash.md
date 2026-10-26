@@ -78,10 +78,12 @@ F2/F4/F7 (у F4 16, 64 и 128 KiB): в мелких секторах можно 
 - **`STATE_ERASE_SIZE` — одно число на `boot` и `bsp::flash`** из плейсхолдера
   `state_erase_size`: оно едет переменной среды в `[env]`
   `crates-cross/.cargo/config.toml`, и оба крейта читают её через `env!` —
-  разделу в bootloader'е и в приложении расходиться нельзя. Так же едут
-  `ACTIVE_LEN` (размер `ACTIVE` — вместо чтения линкерных символов через
-  `unsafe extern`){% if swap_paged == "true" %}, `SWAP_PAGE_SIZE`{% endif %}{% if ota_store == "external" %}, `EXT_PAGE_SIZE`{% endif %}{% if config == "true" %} и границы раздела настроек
-  `CONFIG_START`/`CONFIG_END`{% endif %}. **`ErasePage` над `STATE` нужен не всегда**:
+  разделу в bootloader'е и в приложении расходиться нельзя.{% if swap_paged == "true" or ota_store == "external" %} Так же едет{% if swap_paged == "true" %} `SWAP_PAGE_SIZE`{% endif %}{% if ota_store == "external" %} `EXT_PAGE_SIZE`{% endif %}.{% endif %}
+  В `[env]` — только числа, которые нужны компилятору (параметр `ErasePage`,
+  `const`-assert). Границы разделов — размер `ACTIVE`{% if config == "true" %}, границы раздела настроек{% endif %} —
+  туда не ездят: это символы `memory.x` (`__bootloader_active_*`{% if config == "true" %},
+  `__config_start`/`__config_end`{% endif %}), их вычисляет линкер, а читает `bsp::layout`
+  (подробнее — «Символы раскладки» ниже). **`ErasePage` над `STATE` нужен не всегда**:
   плейсхолдер `state_paged` = "true" только там, где сектор `STATE` мельче страницы
   цельного `Flash` (F2/F4/F7). На чипах с равными секторами раздел строится прямо
   над `Whole`, а `const`-assert (`STATE_ERASE_SIZE == MAX_ERASE_SIZE`) в `boot` и
@@ -111,9 +113,9 @@ F2/F4/F7 (у F4 16, 64 и 128 KiB): в мелких секторах можно 
   мельче сектора: стирание «половины сектора» снесло бы и вторую половину.
 {%- else %}
 - **`CONFIG_ERASE_SIZE` — число из генерации**: страница сектора раздела
-  настроек едет переменной среды в `[env]` `crates-cross/.cargo/config.toml`
-  вместе с границами раздела `CONFIG_START`/`CONFIG_END`, и `bsp::flash`
-  строит раздел над `ErasePage` с этой страницей. При ручной раскладке
+  настроек — литерал в `bsp::flash` (`bsp::flash` строит раздел над
+  `ErasePage` с этой страницей) и тот же литерал в `ASSERT` `memory.x`, который
+  держит границы раздела (символы `__config_start`/`__config_end`) кратными ей. При ручной раскладке
   (`--define write_size=...`) хук подставляет страницу цельного `Flash` — на
   F2/F4/F7 туда надо вписать размер сектора раздела руками.
 {%- endif %}
@@ -249,6 +251,61 @@ QSPI, где он выведен (`QUADSPI`, иначе `OCTOSPI`), иначе S
   предлагает ни для одного — одинаковое поведение важнее.
 {%- endif %}
 {%- endif %}
+{%- if ota == "true" or config_store == "flash" or config_store == "external" or dma_nc == "true" %}
+
+## Символы раскладки: границы — в `memory.x`, а не в `[env]`
+
+Границы, которые нужны рычагам платы в рантайме, — символы `memory.x`, и линкер
+вычисляет их из тех же регионов, по которым раскладывает образ:
+
+| Символ | Что | Чем задан |
+|---|---|---|
+{%- if ota == "true" %}
+| `__bootloader_active_start`/`_end` | `ACTIVE`; разность — самый длинный образ | от регионов, их же читает `embassy-boot` |
+{%- endif %}
+{%- if config_store == "flash" %}
+| `__config_start`/`__config_end` | раздел настроек, смещения от базы flash | `ORIGIN(CONFIG)`/`LENGTH(CONFIG)` |
+{%- elsif config_store == "external" %}
+| `__config_start`/`__config_end` | раздел настроек, смещения от начала внешней флеши | литералы генерации |
+{%- endif %}
+{%- if external_flash == "true" %}
+| `__ext_flash_end` | конец последнего раздела на внешней флеши | `MAX` по концам разделов |
+{%- endif %}
+{%- if dma_nc == "true" %}
+| `__dma_nc_start`/`_end` | регион `DMA_NC` под буферы DMA | `ORIGIN`/`LENGTH(DMA_NC)` |
+{%- endif %}
+{%- if bdma_nc == "true" %}
+| `__bdma_nc_start`/`_end` | `SRAM4` целиком — память BDMA | `ORIGIN`/`LENGTH(SRAM4)` |
+{%- endif %}
+
+- **Одно место чтения — `bsp::layout`.** Символы объявлены в одном блоке
+  `unsafe extern "C"` как `safe static … : u8`; значение символа — его адрес
+  (`&raw const`), содержимое не читается. Блок — единственный unsafe ради них
+  (`#[expect(unsafe_code)]`: `unsafe extern` линт считает unsafe и с
+  `safe static`). Символ со значением 0 (раздел с начала внешней флеши)
+  допустим так же, как у `embassy-boot`: адрес только переводится в число и ни
+  с чем не сравнивается.
+- **Проверки — `ASSERT` в `memory.x`, а не `const`-assert.** Значения символа
+  компилятор не знает, поэтому то, что раньше было `const`-assert'ом над числом
+  из `[env]`, — теперь `ASSERT(условие, "сообщение")` там же, где символ:
+  {% if config_store == "flash" %}границы `CONFIG` кратны его странице (иначе `Partition::new` паникует на старте),
+  {% endif %}{% if dma_nc == "true" %}регионы DMA годятся для MPU Armv7-M (размер — степень двойки от 32 байт, адрес
+  кратен размеру), {% endif %}— нарушение роняет линковку, до прошивки. Величину,
+  которой линкер не знает ({% if config_store == "flash" %}страница `CONFIG` — `CONFIG_ERASE_SIZE`{% else %}страницу раздела{% endif %}),
+  генерация знает сама и вписывает в `ASSERT` литералом — тем же, что в коде.
+  Символ из константы Rust линкеру не передать без `build.rs`, который читал бы
+  `memory.x`, а это второй разбор раскладки ради одного числа.
+- **`[env]` — только то, что нужно компилятору**: параметр `ErasePage`,
+  `const`-assert, размер пула (`STATE_ERASE_SIZE`, `SWAP_PAGE_SIZE`,
+  `EXT_PAGE_SIZE`, `NET_SOCKETS`, …). Граница раздела в `[env]` была бы вторым
+  экземпляром числа, который ручная правка `memory.x` молча обгоняет.
+- **Символы — в `memory.x` каждого бинарника, который их читает**: `app` и
+  `target-tests` (у них одна раскладка){% if ota == "true" and ota_store == "external" %}, `boot` — символы внешней флеши
+  (`boot` сверяет объём микросхемы){% endif %}. Чего бинарник не собирает{% if ota == "true" %} (bootloader —
+  `CONFIG`, `DMA_NC`){% endif %}, того в его `memory.x` нет: с `--gc-sections` ссылка из
+  выброшенного кода линкеру не нужна. Пишет их генерация (`chip-select.rhai`);
+  ручная заготовка `memory.x` (раскладку не посчитали) показывает, что вписать.
+{%- endif %}
 
 ## Банки flash
 
@@ -342,7 +399,8 @@ NOR. Во внутреннем флеше остаются bootloader и `ACTIVE
 
 Объём микросхемы генератор не знает — его узнаёт драйвер по JEDEC ID при
 `init`; поэтому выравнивание с запасом (64 KiB — самый крупный блок стирания
-NOR), а конец разделов уезжает в `[env]` (`EXT_FLASH_END`): микросхему меньше
+NOR), а конец разделов — символ `memory.x` `__ext_flash_end` (`MAX` по концам
+разделов, считает линкер): микросхему меньше
 `Board::new` называет в логе при старте, а операции за её концом отказывают.
 {%- if config == "true" %}
 

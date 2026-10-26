@@ -1676,28 +1676,21 @@ let store = config_store(MEMORY_LAYOUT[suffix], wants_config, wants_external, EE
 // write_size), оставляем всё как есть — ручное заполнение, как раньше.
 // Тогда же остаётся и ota = "true": bootloader из проекта не исчезает,
 // раскладку под него пользователь пишет сам.
-// Числа раскладки для `[env]` (crates-cross/.cargo/config.toml): пустые, пока
-// их не посчитала раскладка ниже. При ручной раскладке (`write_size`) их пишет
-// человек, а в `[env]` пустая строка не выводится.
-variable::set("active_len", "");
-variable::set("config_start", "");
-variable::set("config_end", "");
+// Страница `STATE` для `[env]` (crates-cross/.cargo/config.toml): пустая, пока
+// её не посчитала раскладка ниже. При ручной раскладке (`write_size`) её пишет
+// человек, а в `[env]` пустая строка не выводится. Границы разделов и регионов
+// в `[env]` не ездят: это символы `memory.x` (`bsp::layout`).
 variable::set("state_erase_size", "");
 // Переменные, которые ниже задаются только в части веток: Liquid не должен
 // встречать неопределённую, даже если ветку с её чтением он не рисует.
 variable::set("config_erase_size", "");
 variable::set("ext_page_size", "");
-// Конец разделов на внешней флеши в байтах: драйвер сверяет с ним объём
-// микросхемы (`bsp::external`).
-variable::set("ext_flash_end", "");
 variable::set("iface_periph", "");
-// Регион `DMA_NC` (хвост RAM) под буферы DMA: границы числами, для `[env]`.
-// Пусто — региона нет (раскладка ручная, ядро не M7).
-variable::set("dma_nc_start", "");
-variable::set("dma_nc_len", "");
+// Есть ли регион `DMA_NC` (хвост RAM) под буферы DMA; "false" — региона нет
+// (раскладка ручная, ядро не M7). Границы — символы `memory.x`.
+variable::set("dma_nc", "false");
 // То же для `SRAM4` целиком под буферы BDMA (H7).
-variable::set("bdma_nc_start", "");
-variable::set("bdma_nc_len", "");
+variable::set("bdma_nc", "false");
 variable::set("can_kind", "");
 variable::set("usb_kind", "");
 // Список транспортов и признаки видов; итог — после ответов, рядом с `interface`.
@@ -1738,7 +1731,7 @@ if variable::is_set("write_size") {
         variable::set("config_store", "none");
         if wants_config {
             print("Раздел настроек не выделен: memory.x вы заполняете сами (задан write_size)");
-            print("  добавьте регион CONFIG вручную и впишите CONFIG_START/CONFIG_END в [env]");
+            print("  добавьте регион CONFIG и символы __config_start/__config_end в memory.x вручную");
         }
     }
     // Общий объект `Flash` в bsp нужен OTA во внутреннем flash и настройкам во
@@ -1776,17 +1769,11 @@ if variable::is_set("write_size") {
     variable::set("boot_partitioned", if wants_ota && !wants_ext_ota { "true" } else { "false" });
     if wants_ota && !wants_ext_ota {
         print("OTA с ручной раскладкой: впишите в [env] crates-cross/.cargo/config.toml числа, которые");
-        print("  генерация считает сама: STATE_ERASE_SIZE (страница сектора STATE) и ACTIVE_LEN (размер ACTIVE");
-        print("  в байтах) — без них проект не соберётся");
+        print("  генерация считает сама: STATE_ERASE_SIZE (страница сектора STATE) — без него проект не соберётся");
     }
-    if wants_ota && wants_ext_ota {
-        print("OTA с ручной раскладкой: впишите в [env] crates-cross/.cargo/config.toml ACTIVE_LEN (размер ACTIVE в байтах)");
-    }
-    if wants_config && store != "eeprom" {
-        print("Хранилище настроек с ручной раскладкой: впишите в [env] CONFIG_START и CONFIG_END (границы раздела в байтах)");
-    }
-    if (wants_ota && wants_ext_ota) || (wants_config && store == "external") {
-        print("Внешняя флеш с ручной раскладкой: впишите в [env] EXT_FLASH_END (конец последнего раздела на ней, байты)");
+    if wants_config && store == "external" {
+        print("Хранилище настроек с ручной раскладкой: впишите в memory.x __config_start и __config_end");
+        print("  (смещения раздела от начала внешней флеши)");
     }
     // Страница обмена с внешними разделами — тоже знание раскладки. Сектор
     // внешней NOR (4 KiB) — нижняя граница: верна, если ACTIVE в memory.x
@@ -1809,12 +1796,10 @@ if variable::is_set("write_size") {
     // откуда он взят — решает chip-data-gen. `SRAM4` под BDMA — только у H7.
     if variable::get("cpu") == "cortex-m7" {
         if m.contains("dma_nc_origin") {
-            variable::set("dma_nc_start", hex_value(m["dma_nc_origin"]).to_string());
-            variable::set("dma_nc_len", size_in_bytes(m["dma_nc_length"]).to_string());
+            variable::set("dma_nc", "true");
         }
         if m.contains("bdma_nc_origin") {
-            variable::set("bdma_nc_start", hex_value(m["bdma_nc_origin"]).to_string());
-            variable::set("bdma_nc_len", size_in_bytes(m["bdma_nc_length"]).to_string());
+            variable::set("bdma_nc", "true");
         }
     }
 
@@ -1911,36 +1896,6 @@ if variable::is_set("write_size") {
     }
     variable::set("ota", if ota { "true" } else { "false" });
     variable::set("ota_store", if ext_ota { "external" } else { "internal" });
-    // Границы разделов приложению нужны числами, а не символами линкера:
-    // `memory.x` считается этим же расчётом, и `unsafe extern` ради чтения
-    // собственных констант ни к чему. Уезжают в `[env]` (crates-cross/.cargo/config.toml).
-    if ota {
-        variable::set("active_len", size_in_bytes(m[ota_key + "active_length"]).to_string());
-    }
-    if in_flash {
-        // Смещения от базы flash: именно так их ждёт embassy-stm32::flash::Flash.
-        let config_start = hex_value(m[settings_key + "origin"]) - hex_value(m["flash_origin"]);
-        variable::set("config_start", config_start.to_string());
-        variable::set("config_end", (config_start + size_in_bytes(m[settings_key + "length"])).to_string());
-    } else if config && store == "external" && ext_ota {
-        // Смещения от начала внешней флеши.
-        let config_start = hex_value(m[ota_key + "config_offset"]);
-        variable::set("config_start", config_start.to_string());
-        variable::set("config_end", (config_start + size_in_bytes(m[ota_key + "config_length"])).to_string());
-    } else if config && store == "external" {
-        // Внешняя флеш только под настройки: раздел с её начала, столько же,
-        // сколько рядом с OTA (`config_length` в chip-data-gen — два блока по
-        // 64 KiB, самому крупному стиранию NOR).
-        variable::set("config_start", "0");
-        variable::set("config_end", EXT_CONFIG_LENGTH.to_string());
-    }
-    // Конец того, что лежит на внешней флеши: настройки — последние, без них —
-    // `DFU` (за ним и начинался бы раздел настроек).
-    if config && store == "external" {
-        variable::set("ext_flash_end", variable::get("config_end"));
-    } else if ext_ota {
-        variable::set("ext_flash_end", hex_value(m[ota_key + "config_offset"]).to_string());
-    }
     // DFU в банке 2 за разрывом: прошивка пишет его через `Bank2Region`, а не через
     // цельный `Flash` (см. `dfu_bank_origin` в chip-data-gen).
     variable::set("dfu_bank", if ota && !ext_ota && dfu_bank { "true" } else { "false" });
@@ -2005,7 +1960,7 @@ if variable::is_set("write_size") {
     // .gnu.sgstubs`, а не `.uninit`: вставка сразу за `.uninit` ломает проверку
     // стека в cortex-m-rt под flip-link (проверено сборкой).
     let dma_sections = [];
-    if variable::get("dma_nc_start") != "" {
+    if variable::get("dma_nc") == "true" {
         dma_sections = [
             "",
             "/* Буферы DMA при включённом кэше данных ядра: bsp::dma_nc, docs/clocks.md. */",
@@ -2016,7 +1971,7 @@ if variable::is_set("write_size") {
             "        *(.dma_nc .dma_nc.*);",
             "    } > DMA_NC",
         ];
-        if variable::get("bdma_nc_start") != "" {
+        if variable::get("bdma_nc") == "true" {
             dma_sections += [
                 "",
                 "    .bdma_nc (NOLOAD) : ALIGN(4)",
@@ -2030,9 +1985,82 @@ if variable::is_set("write_size") {
     if m.contains("extra_regions") {
         ram += m["extra_regions"];
     }
-    if variable::get("dma_nc_start") != "" {
+    if variable::get("dma_nc") == "true" {
         ram.push("    /* DMA_NC - bsp::dma_nc держит его non-cacheable в MPU, из него берутся буферы DMA. */");
     }
+
+    // Символы раскладки, которые читает `bsp::layout` (значение символа — его
+    // адрес), и `ASSERT`'ы над ними: нарушение роняет линковку, а не плату.
+    // Величину, которой линкер не знает (страницу раздела `CONFIG`), генерация
+    // знает сама и вписывает литералом — тем же, что `CONFIG_ERASE_SIZE` в
+    // `bsp::flash`. В memory.x bootloader'а попадают только символы внешней
+    // флеши: прочие куски платы (`CONFIG`, `DMA_NC`) он не собирает.
+    let layout_symbols = [];
+    if in_flash {
+        let erase = plain_number(m[settings_key + "erase_size"]).to_string();
+        layout_symbols += [
+            "",
+            "/* Раздел настроек (bsp::layout): смещения от базы flash — так их ждёт */",
+            "/* embassy_stm32::flash::Flash. Границы кратны странице раздела (CONFIG_ERASE_SIZE */",
+            "/* в bsp::flash), иначе Partition::new паникует на старте. */",
+            "__config_start = ORIGIN(CONFIG) - " + flash_base + ";",
+            "__config_end   = ORIGIN(CONFIG) + LENGTH(CONFIG) - " + flash_base + ";",
+            "ASSERT(__config_start % " + erase + " == 0 && __config_end % " + erase + " == 0,",
+            "    \"CONFIG не на границах своей страницы (" + erase + " байт): Partition::new паникует\");",
+        ];
+    }
+    // Внешняя флеш: раздел настроек (смещения от её начала — за `DFU` или с
+    // начала, если OTA на ней нет) и конец последнего раздела — `MAX` по концам,
+    // с ним `bsp::external` и `boot` сверяют объём микросхемы.
+    let ext_layout = [];
+    if config && store == "external" {
+        let offset = if ext_ota { m[ota_key + "config_offset"] } else { "0x00000000" };
+        let length = if ext_ota { m[ota_key + "config_length"] } else { EXT_CONFIG_LENGTH.to_string() };
+        ext_layout += [
+            "",
+            "/* Раздел настроек на внешней флеши (bsp::layout): смещения от её начала. */",
+            "__config_start = " + offset + ";",
+            "__config_end   = " + offset + " + " + length + ";",
+        ];
+    }
+    if ext_ota || (config && store == "external") {
+        let ends = if !ext_ota {
+            "__config_end"
+        } else if config && store == "external" {
+            "MAX(MAX(__bootloader_state_end, __bootloader_dfu_end), __config_end)"
+        } else {
+            "MAX(__bootloader_state_end, __bootloader_dfu_end)"
+        };
+        ext_layout += [
+            "",
+            "/* Конец последнего раздела на внешней флеши: микросхема меньше не годится. */",
+            "__ext_flash_end = " + ends + ";",
+        ];
+    }
+    // Регионы под буферы DMA (`bsp::dma_nc` размечает их в MPU Armv7-M).
+    let dma_symbols = [];
+    if variable::get("dma_nc") == "true" {
+        let regions = [["DMA_NC", "__dma_nc"]];
+        if variable::get("bdma_nc") == "true" {
+            regions.push(["SRAM4", "__bdma_nc"]);
+        }
+        dma_symbols += [
+            "",
+            "/* Регионы под буферы DMA (bsp::layout, bsp::dma_nc — MPU): размер — степень */",
+            "/* двойки не меньше 32 байт, адрес кратен размеру. */",
+        ];
+        for r in regions {
+            let name = r[0];
+            dma_symbols += [
+                r[1] + "_start = ORIGIN(" + name + ");",
+                r[1] + "_end   = ORIGIN(" + name + ") + LENGTH(" + name + ");",
+                "ASSERT(LENGTH(" + name + ") >= 32 && (LENGTH(" + name + ") & (LENGTH(" + name + ") - 1)) == 0",
+                "    && ORIGIN(" + name + ") % LENGTH(" + name + ") == 0,",
+                "    \"" + name + " не годится для MPU: размер — степень двойки от 32 байт, адрес кратен размеру\");",
+            ];
+        }
+    }
+    let app_symbols = layout_symbols + ext_layout + dma_symbols;
 
     if ext_ota {
         // Внутри — только ACTIVE (и, если так решено, раздел настроек);
@@ -2066,6 +2094,7 @@ if variable::is_set("write_size") {
         app.push("__bootloader_active_start = ORIGIN(FLASH) - " + base + ";");
         app.push("__bootloader_active_end   = ORIGIN(FLASH) + LENGTH(FLASH) - " + base + ";");
         app += ext_symbols;
+        app += app_symbols;
         app += panic_section;
         app += dma_sections;
         file::write("crates-cross/app/memory.x", app);
@@ -2084,6 +2113,7 @@ if variable::is_set("write_size") {
         boot.push("__bootloader_active_start = ORIGIN(ACTIVE) - " + base + ";");
         boot.push("__bootloader_active_end   = ORIGIN(ACTIVE) + LENGTH(ACTIVE) - " + base + ";");
         boot += ext_symbols;
+        boot += ext_layout;
         // Символов `_panic_dump_*` у bootloader'а нет: его паникёр ничего не
         // пишет (`crates-cross/boot/src/main.rs`). Регион `PANIC` в `ram` остаётся —
         // вырезанный из RAM bootloader'а, он не даёт его стеку затереть дамп
@@ -2125,6 +2155,7 @@ if variable::is_set("write_size") {
         app.push("");
         app.push("__bootloader_dfu_start = ORIGIN(DFU) - " + dfu_base + ";");
         app.push("__bootloader_dfu_end   = ORIGIN(DFU) + LENGTH(DFU) - " + dfu_base + ";");
+        app += app_symbols;
         app += panic_section;
         app += dma_sections;
         file::write("crates-cross/app/memory.x", app);
@@ -2220,6 +2251,7 @@ if variable::is_set("write_size") {
         single += config_region;
         single += ram;
         single.push("}");
+        single += app_symbols;
         single += panic_section;
         single += dma_sections;
         // Boot удалён строкой выше, писать в него нечего; target-tests получают
@@ -2294,7 +2326,7 @@ for kind in has.keys() {
 variable::set("has_net", if has.tcp || has.udp { "true" } else { "false" });
 // Итог по кэшам: тег `scb_d` — кэш данных ядра M7 — только там, где есть регион
 // `DMA_NC`. Файлы модулей, которых в проекте нет, уходят тут же.
-if variable::get("dma_nc_start") != "" {
+if variable::get("dma_nc") == "true" {
     cache += " scb_d";
 } else {
     file::delete("crates-cross/bsp/src/dma_nc.rs");
@@ -2403,10 +2435,10 @@ for kind in ["uart", "usb", "tcp", "udp"] {
         file::delete("crates-cross/app/src/link/" + kind + ".rs");
     }
 }
-// Числа раскладки кусков флеша (`bsp::layout`: `ACTIVE_LEN`, границы `CONFIG`) —
-// пока есть что раскладывать: OTA или раздел настроек во флеше.
+// Символы раскладки `memory.x` (`bsp::layout`: `ACTIVE`, границы `CONFIG`, конец
+// внешней флеши, регионы DMA) — пока есть что из них читать.
 let layout_store = variable::get("config_store");
-if variable::get("ota") != "true" && layout_store != "flash" && layout_store != "external" {
+if variable::get("ota") != "true" && layout_store != "flash" && layout_store != "external" && variable::get("dma_nc") != "true" {
 	file::delete("crates-cross/bsp/src/layout.rs");
 }
 // Группы `resources.rs` нужны, пока есть что в них класть: общий флеш, сторож

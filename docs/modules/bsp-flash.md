@@ -12,7 +12,7 @@
 
 - `firmware` (`FirmwareFlash` — `adapters::ota::Linked`) — флеш под
   обновлением, ещё не нарезанный: носители `DFU` и `BOOTLOADER_STATE` со своими
-  страницами и размер `ACTIVE` (`ACTIVE_LEN` из `[env]`, разбирает `bsp::layout`). Где в
+  страницами и размер `ACTIVE` (из символов `memory.x` `__bootloader_active_*`, читает `bsp::layout`). Где в
   нём лежат разделы, знает алгоритм обновления, а не плата: их находит узел OTA
   по символам `memory.x` (`FirmwareUpdaterConfig::from_linkerfile`), когда
   собирает адаптер (`adapters::ota::Updater`, порт `ports::FirmwareLayout`).
@@ -30,8 +30,9 @@
 {%- endif %}
 {%- if config == "true" and config_store == "flash" %}
 
-- `config` (`ConfigFlash`) — раздел `CONFIG` (границы — `CONFIG_START`/`CONFIG_END`
-  из `[env]`, страница — `CONFIG_ERASE_SIZE`{% if config_paged == "true" %}, над `ErasePage`{% endif %}), над которым
+- `config` (`ConfigFlash`) — раздел `CONFIG` (границы — символы `memory.x`
+  `__config_start`/`__config_end`, читает `bsp::layout`; страница —
+  `CONFIG_ERASE_SIZE`{% if config_paged == "true" %}, над `ErasePage`{% endif %}, кратность ей — `ASSERT` в `memory.x`), над которым
   узел-потребитель собирает хранилище (`adapters::settings`). Именно раздел:
   запись за его границы отказывает, а не стирает {% if ota == "true" %}`ACTIVE` или bootloader{% else %}код приложения{% endif %}.
 {%- elsif config == "true" and config_store == "eeprom" %}
