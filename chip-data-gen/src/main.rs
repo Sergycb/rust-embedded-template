@@ -72,6 +72,7 @@ fn main() -> anyhow::Result<()> {
     let mut instances: BTreeMap<&str, BTreeMap<&'static str, Vec<String>>> = BTreeMap::new();
     let mut rngs: BTreeMap<&str, (String, RngClock)> = BTreeMap::new();
     let mut caches: BTreeMap<&str, Vec<&'static str>> = BTreeMap::new();
+    let mut resets: BTreeMap<&str, String> = BTreeMap::new();
     let mut switch_variants: BTreeMap<&str, &'static str> = BTreeMap::new();
     let mut shared_metadata_cache: BTreeMap<PathBuf, SharedMetadata> = BTreeMap::new();
     for suffix in &suffixes {
@@ -108,6 +109,13 @@ fn main() -> anyhow::Result<()> {
         if !cache.is_empty() {
             caches.insert(suffix, cache);
         }
+        // Причину сброса `bsp` читает у каждого чипа: нет блока `RCC` —
+        // сломанное предположение о метаданных, а не «чип без флагов».
+        let rcc = shared
+            .rcc_version
+            .clone()
+            .with_context(|| format!("чип {suffix}: в {} нет блока rcc", shared_path.display()))?;
+        resets.insert(suffix, rcc);
         interfaces.insert(suffix, shared.interfaces.clone());
         instances.insert(suffix, shared.instances.clone());
         // HSI48 `embassy-stm32` включает только при CRS (`#[cfg(crs)]` в
@@ -132,6 +140,21 @@ fn main() -> anyhow::Result<()> {
         }
     }
     let bank_switch = bank_switch_bits(&switch_variants, &memory_layouts);
+    let mut reset_regs: BTreeMap<&str, (String, String)> = BTreeMap::new();
+    for version in resets.values() {
+        if !reset_regs.contains_key(version.as_str()) {
+            let path = cargo_metadata
+                .stm32_metapac_chips_dir
+                .parent()
+                .context("у каталога chips нет родителя")?
+                .join("peripherals")
+                .join(format!("rcc_{version}.rs"));
+            let text = fs::read_to_string(&path)
+                .with_context(|| format!("не удалось прочитать {}", path.display()))?;
+            let register = reset_register(&text).with_context(|| format!("{}", path.display()))?;
+            reset_regs.insert(version, register);
+        }
+    }
     let with_ota = memory_layouts.values().filter(|m| m.ota.is_ok()).count();
     let with_config = memory_layouts
         .values()
@@ -226,6 +249,7 @@ fn main() -> anyhow::Result<()> {
         ("instances.rhai".to_owned(), format_instances(&instances)),
         ("rng.rhai".to_owned(), format_rngs(&rngs)),
         ("cache.rhai".to_owned(), format_caches(&caches)),
+        ("reset.rhai".to_owned(), format_resets(&resets, &reset_regs)),
     ];
     files.extend(
         format_memory_layouts(&memory_layouts)
@@ -310,6 +334,14 @@ fn strip_liquid_from_manifests(dir: &Path) -> anyhow::Result<()> {
             strip_liquid_from_manifests(&path)?;
         } else if entry.file_name() == "Cargo.toml" {
             let original = fs::read_to_string(&path)?;
+            // `unless` стриппер не понимает: его теги остались бы в TOML, и
+            // `cargo metadata` упал бы на «invalid key-value pair» без намёка
+            // на причину. В манифестах его нет; появится — учить стриппер.
+            anyhow::ensure!(
+                !original.contains("{% unless") && !original.contains("{%- unless"),
+                "{}: `{{% unless %}}` в манифесте — strip_liquid его не понимает",
+                path.display(),
+            );
             let stripped = strip_liquid(&original).replace("{{rust_lib}}", RUST_LIB);
             if stripped != original {
                 fs::write(&path, stripped)?;
@@ -352,10 +384,36 @@ fn strip_liquid(text: &str) -> String {
             break;
         };
         out.push_str(&rest[..start]);
+        // Ложная ветка — то, что за `{% else %}` этого уровня: без неё
+        // `members` в `crates-cross/Cargo.toml` (`boot` — только с OTA)
+        // пропадал целиком, и `cargo metadata` видел пустой workspace.
+        if let Some(otherwise) = top_level_else(&after[..end]) {
+            out.push_str(&strip_liquid(&after[otherwise..end - LIQUID_ENDIF.len()]));
+        }
         rest = &after[end..];
     }
     out.push_str(rest);
     out
+}
+
+/// Смещение сразу за `{% else %}` уровня `{% if %}` в начале `block` (блок —
+/// до парного `{% endif %}` включительно); `None` — ветки `else` нет.
+fn top_level_else(block: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut at = 0;
+    loop {
+        let next = [LIQUID_IF, LIQUID_ELSE, LIQUID_ENDIF]
+            .into_iter()
+            .filter_map(|tag| block[at..].find(tag).map(|offset| (at + offset, tag)))
+            .min_by_key(|&(offset, _)| offset)?;
+        match next {
+            (offset, LIQUID_ELSE) if depth == 1 => return Some(offset + LIQUID_ELSE.len()),
+            (_, LIQUID_IF) => depth += 1,
+            (_, LIQUID_ENDIF) => depth -= 1,
+            _ => {}
+        }
+        at = next.0 + next.1.len();
+    }
 }
 
 /// Адрес rust-lib, которым заменяется плейсхолдер `{{rust_lib}}` в
@@ -368,6 +426,7 @@ const RUST_LIB: &str = "https://github.com/Sergycb/rust-lib";
 /// условие.
 const LIQUID_IF: &str = "{% if";
 const LIQUID_ENDIF: &str = "{% endif %}";
+const LIQUID_ELSE: &str = "{% else %}";
 
 /// Смещение сразу за `{% endif %}`, парным к `{% if %}` в начале `text`.
 ///
@@ -701,6 +760,9 @@ struct SharedMetadata {
     cpu_freq_boost: bool,
     /// Версия регистров блока `FLASH` (`g4c3`, `f4`, `l5`...).
     flash_version: Option<String>,
+    /// Версия регистров блока `RCC` (`f4`, `h7`, `c0v2`...) — по ней
+    /// [`reset_register`] находит флаги сброса.
+    rcc_version: Option<String>,
     /// Интерфейсы связи, выведенные в корпусе, — см. [`parse_interfaces`].
     interfaces: Vec<&'static str>,
     /// Имена блоков, которыми `resources.rs` называет каждый интерфейс, — см.
@@ -741,6 +803,7 @@ fn shared_metadata<'c>(
                 watchdogs: parse_watchdog_names(&shared_text),
                 cpu_freq_boost: has_pwr_rm0468(&shared_text),
                 flash_version: registers_version(&shared_text, "flash"),
+                rcc_version: registers_version(&shared_text, "rcc"),
                 interfaces: parse_interfaces(&shared_text),
                 instances: parse_instances(&shared_text),
                 rng_interrupt: parse_rng_interrupt(&shared_text),
@@ -782,6 +845,84 @@ fn chip_caches(chips_dir: &Path, shared: &SharedMetadata) -> anyhow::Result<Vec<
         found.push("icache");
     }
     Ok(found)
+}
+
+/// Причины сброса в порядке проверки — как варианты `ports::ResetCause` — и
+/// поля флагов `RCC`, которые каждую означают. Флагов бывает несколько сразу,
+/// поэтому порядок — от самого конкретного: флаг вывода (`PINRSTF`, у F2/F4/F7
+/// `PADRSTF`) ставится при любом внутреннем сбросе и идёт последним, а питание
+/// (`PORRSTF`, `BORRSTF`, `PWRRSTF` у G0/U0/C0, `V18PWRRSTF` у F0/F3) — перед
+/// ним. Остальные флаги (`CPURSTF` и доменов у H7, `FWRSTF` у L0/L4, радио у
+/// WL) причиной не считаются: их сброс заканчивается одним из этих.
+const RESET_CAUSES: &[(&str, &[&str])] = &[
+    ("LowPower", &["lpwrrstf"]),
+    ("WindowWatchdog", &["wwdgrstf", "wwdg1rstf"]),
+    ("IndependentWatchdog", &["iwdgrstf", "iwdg1rstf", "wdgrstf"]),
+    ("Software", &["sftrstf"]),
+    ("OptionBytes", &["oblrstf"]),
+    ("PowerOn", &["porrstf", "pwrrstf", "borrstf", "v18pwrrstf"]),
+    ("Pin", &["pinrstf", "padrstf"]),
+];
+
+/// Регистр флагов сброса в файле регистров `RCC` (`rcc_<версия>.rs` в
+/// `stm32-metapac`) и его флаги парами `поле[,поле]:Причина` через пробел в
+/// порядке [`RESET_CAUSES`].
+///
+/// Регистр — тот, у которого есть `set_rmvf` (снять флаги), и имя его
+/// аксессора в блоке `Rcc`: `csr` у большинства, `csr2` у C0, `rsr` у H5/H7.
+/// Аксессоры ядер двухъядерных H7 (`c1_rsr`) отбрасываются — общий регистр
+/// тот же.
+///
+/// # Errors
+///
+/// Нет регистра с `set_rmvf`, их больше одного или ни один из известных
+/// флагов не нашёлся: формат `stm32-metapac` сменился, и тихо оставить чип
+/// без причины сброса было бы хуже, чем упасть.
+fn reset_register(text: &str) -> anyhow::Result<(String, String)> {
+    let mut found = Vec::new();
+    for chunk in text.split("pub struct ").skip(1) {
+        let Some((name, _)) = chunk.split_once('(') else {
+            continue;
+        };
+        // Тело структуры — до следующей; `impl Default` и `defmt::Format`
+        // идут за ним, полей там нет.
+        if !chunk.contains("pub fn set_rmvf(") {
+            continue;
+        }
+        let pattern = format!("-> crate::common::Reg<regs::{name}, ");
+        for line in text.lines().filter(|line| line.contains(&pattern)) {
+            let accessor = line
+                .trim_start()
+                .strip_prefix("pub const fn ")
+                .and_then(|rest| rest.split_once("(self)"))
+                .map(|(accessor, _)| accessor);
+            if let Some(accessor) = accessor
+                && !accessor.starts_with("c1_")
+                && !accessor.starts_with("c2_")
+            {
+                found.push((accessor.to_owned(), chunk));
+            }
+        }
+    }
+    let [(accessor, chunk)] = found.as_slice() else {
+        anyhow::bail!(
+            "ожидался один регистр RCC с set_rmvf, найдено: {:?}",
+            found.iter().map(|(a, _)| a).collect::<Vec<_>>()
+        );
+    };
+    let has = |field: &str| chunk.contains(&format!("pub const fn {field}(&self) -> bool"));
+    let pairs: Vec<String> = RESET_CAUSES
+        .iter()
+        .filter_map(|(cause, fields)| {
+            let present: Vec<&str> = fields.iter().copied().filter(|f| has(f)).collect();
+            (!present.is_empty()).then(|| format!("{}:{cause}", present.join(",")))
+        })
+        .collect();
+    anyhow::ensure!(
+        !pairs.is_empty(),
+        "в регистре {accessor} нет ни одного известного флага сброса"
+    );
+    Ok((accessor.clone(), pairs.join(" ")))
 }
 
 /// Версия регистров блока вида `kind` — строка за `kind: "<kind>",` и
@@ -2948,6 +3089,30 @@ fn format_caches(chips: &BTreeMap<&str, Vec<&'static str>>) -> String {
     out
 }
 
+/// Флаги сброса (см. [`reset_register`]): у чипа — версия `RCC`, у версии —
+/// аксессор регистра и пары флагов. Две таблицы, а не одна: версий четыре
+/// десятка, чипов — полторы тысячи.
+fn format_resets(
+    chips: &BTreeMap<&str, String>,
+    registers: &BTreeMap<&str, (String, String)>,
+) -> String {
+    let mut out = String::new();
+    out.push_str(DATA_HEADER);
+    out.push_str(&format!("// {} шт.\n", chips.len()));
+    out.push_str("export const RESET = #{\n");
+    for (suffix, version) in chips {
+        out.push_str(&format!("    \"{suffix}\": \"{version}\",\n"));
+    }
+    out.push_str("};\nexport const RESET_REGS = #{\n");
+    for (version, (register, flags)) in registers {
+        out.push_str(&format!(
+            "    \"{version}\": [\"{register}\", \"{flags}\"],\n"
+        ));
+    }
+    out.push_str("};\n");
+    out
+}
+
 /// Какой бит `FLASH_OPTR` у чипа включает двухбанковый режим.
 ///
 /// У G4 — `DBANK` (22), у G0 — `DUAL_BANK` (21) на любом объёме. У L4+ и L5
@@ -3361,6 +3526,151 @@ pub static METADATA: Metadata = Metadata {
         let text = "kind: \"rcc\",\n  version: \"g4\",\nkind: \"flash\",\n  version: \"g4c3\",\n";
         assert_eq!(registers_version(text, "flash").as_deref(), Some("g4c3"));
         assert_eq!(registers_version(text, "pwr"), None);
+    }
+
+    /// Кусок `rcc_<версия>.rs` из `stm32-metapac`: аксессоры блока `Rcc` и
+    /// структуры регистров с полями-флагами — как их пишет генератор PAC.
+    fn rcc_excerpt(accessors: &[(&str, &str)], registers: &[(&str, &[&str])]) -> String {
+        let mut text = String::from("pub struct Rcc {\n    ptr: *mut u8,\n}\nimpl Rcc {\n");
+        for (accessor, register) in accessors {
+            text.push_str(&format!(
+                "    pub const fn {accessor}(self) -> crate::common::Reg<regs::{register}, \
+                 crate::common::RW> {{\n    }}\n"
+            ));
+        }
+        text.push_str("}\npub mod regs {\n");
+        for (register, fields) in registers {
+            text.push_str(&format!(
+                "    pub struct {register}(pub u32);\n    impl {register} {{\n"
+            ));
+            for field in *fields {
+                text.push_str(&format!(
+                    "        pub const fn {field}(&self) -> bool {{\n        }}\n        \
+                     pub fn set_{field}(&mut self, val: bool) {{\n        }}\n"
+                ));
+            }
+            text.push_str("    }\n");
+        }
+        text.push_str("}\n");
+        text
+    }
+
+    /// F4: `CSR`, сторож — `WDGRSTF`, вывод — `PADRSTF`, питание — `POR`/`BOR`
+    /// одной причиной.
+    #[test]
+    fn reset_flags_of_f4() {
+        let text = rcc_excerpt(
+            &[("cr", "Cr"), ("csr", "Csr")],
+            &[
+                ("Cr", &["hsion"]),
+                (
+                    "Csr",
+                    &[
+                        "lsion", "rmvf", "borrstf", "padrstf", "porrstf", "sftrstf", "wdgrstf",
+                        "wwdgrstf", "lpwrrstf",
+                    ],
+                ),
+            ],
+        );
+        let (register, flags) = reset_register(&text).unwrap();
+        assert_eq!(register, "csr");
+        assert_eq!(
+            flags,
+            "lpwrrstf:LowPower wwdgrstf:WindowWatchdog wdgrstf:IndependentWatchdog sftrstf:Software porrstf,borrstf:PowerOn padrstf:Pin"
+        );
+    }
+
+    /// H743: `RSR`, а не регистр ядра `C1_RSR` той же структуры полей;
+    /// сторожа — `IWDG1`/`WWDG1`, флаги доменов причиной не считаются.
+    #[test]
+    fn reset_flags_of_h743_skip_the_core_alias() {
+        let fields: &[&str] = &[
+            "rmvf",
+            "cpurstf",
+            "d1rstf",
+            "d2rstf",
+            "borrstf",
+            "pinrstf",
+            "porrstf",
+            "sftrstf",
+            "iwdg1rstf",
+            "wwdg1rstf",
+            "lpwrrstf",
+        ];
+        let text = rcc_excerpt(
+            &[("rsr", "Rsr"), ("c1_rsr", "C1Rsr")],
+            &[("C1Rsr", fields), ("Rsr", fields)],
+        );
+        let (register, flags) = reset_register(&text).unwrap();
+        assert_eq!(register, "rsr");
+        assert_eq!(
+            flags,
+            "lpwrrstf:LowPower wwdg1rstf:WindowWatchdog iwdg1rstf:IndependentWatchdog sftrstf:Software porrstf,borrstf:PowerOn pinrstf:Pin"
+        );
+    }
+
+    /// C0: регистр `CSR2` (в `CSR1` — LSE), питание — `PWRRSTF`; `CSR2`
+    /// не путается с `CSR`-подобными именами.
+    #[test]
+    fn reset_flags_of_c0() {
+        let text = rcc_excerpt(
+            &[("csr1", "Csr1"), ("csr2", "Csr2")],
+            &[
+                ("Csr1", &["lseon"]),
+                (
+                    "Csr2",
+                    &[
+                        "lsion", "rmvf", "oblrstf", "pinrstf", "pwrrstf", "sftrstf", "iwdgrstf",
+                        "wwdgrstf", "lpwrrstf",
+                    ],
+                ),
+            ],
+        );
+        let (register, flags) = reset_register(&text).unwrap();
+        assert_eq!(register, "csr2");
+        assert_eq!(
+            flags,
+            "lpwrrstf:LowPower wwdgrstf:WindowWatchdog iwdgrstf:IndependentWatchdog sftrstf:Software oblrstf:OptionBytes pwrrstf:PowerOn pinrstf:Pin"
+        );
+    }
+
+    /// G0: `CSR` с `PWRRSTF` и `OBLRSTF`.
+    #[test]
+    fn reset_flags_of_g0() {
+        let text = rcc_excerpt(
+            &[("csr", "Csr")],
+            &[(
+                "Csr",
+                &[
+                    "lsion", "rmvf", "oblrstf", "pinrstf", "pwrrstf", "sftrstf", "iwdgrstf",
+                    "wwdgrstf", "lpwrrstf",
+                ],
+            )],
+        );
+        let (register, flags) = reset_register(&text).unwrap();
+        assert_eq!(register, "csr");
+        assert!(
+            flags.ends_with("oblrstf:OptionBytes pwrrstf:PowerOn pinrstf:Pin"),
+            "{flags}"
+        );
+    }
+
+    /// Регистра с `set_rmvf` нет или их два — громкая ошибка, а не чип без
+    /// причины сброса.
+    #[test]
+    fn reset_register_must_be_unique() {
+        let none = rcc_excerpt(&[("csr", "Csr")], &[("Csr", &["lsion", "porrstf"])]);
+        assert!(reset_register(&none).is_err());
+        let two = rcc_excerpt(
+            &[("hwrsr", "Hwrsr"), ("rsr", "Rsr")],
+            &[
+                ("Hwrsr", &["rmvf", "porrstf"]),
+                ("Rsr", &["rmvf", "porrstf"]),
+            ],
+        );
+        assert!(reset_register(&two).is_err());
+        let unknown = rcc_excerpt(&[("csr", "Csr")], &[("Csr", &["rmvf", "fwrstf"])]);
+        assert!(reset_register(&unknown).is_err());
     }
 
     /// Имена блоков — без повторов и в порядке появления: на этом порядке
@@ -4137,6 +4447,25 @@ pub static METADATA: Metadata = Metadata {
         );
 
         assert_eq!(strip_liquid(manifest), "a = 1\n\n\nb = 2\n");
+    }
+
+    /// Из `if`/`else` остаётся ветка `else` — со своими вложенными условиями,
+    /// выброшенными так же; `else` вложенного блока ветку не делит.
+    #[test]
+    fn the_else_branch_is_kept() {
+        let text = "a\n{%- if x %}\nb\n{% if y %}c{% else %}d{% endif %}\n{%- else %}\n\
+                    e{% if z %}f{% endif %}\n{%- endif %}\ng\n";
+        assert_eq!(strip_liquid(text), "a\n\ne\n\ng\n");
+    }
+
+    /// `elsif` — часть ложной ветки: при всех ложных условиях Liquid берёт
+    /// `else`, и стриппер — тоже (как в `crates-cross/bsp/Cargo.toml`).
+    #[test]
+    fn an_elsif_falls_through_to_else() {
+        let text = "a\n{% if x %}b{% elsif y %}c{% else %}d{% endif %}\ne\n";
+        assert_eq!(strip_liquid(text), "a\nd\ne\n");
+        let text = "a\n{% if x %}b{% elsif y %}c{% endif %}\ne\n";
+        assert_eq!(strip_liquid(text), "a\n\ne\n");
     }
 
     /// Незакрытый тег оставляется как есть — падать должен `cargo metadata`

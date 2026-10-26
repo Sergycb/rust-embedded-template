@@ -52,7 +52,8 @@ static EXECUTOR: StaticCell<Executor> = StaticCell::new();
 {%- if has_protobuf == "true" or net_services != "" %}
 
 /// Сведения об устройстве для ответа хосту на `info`{% if net_services contains "rest" %} и REST `/api/info`{% endif %}{% if net_services contains "mqtt" %} и темы MQTT `info`{% endif %}: версия и
-/// коммит — из `shadow-rs` (те же, что в баннере старта), остальное — с платы.
+/// коммит — из `shadow-rs` (те же, что в баннере старта), прошлая паника —
+/// из `panic::last`, остальное — с платы.
 fn device_info(spec: bsp::ChipSpec) -> domain::device::DeviceInfo {
     domain::device::DeviceInfo {
         version: build::PKG_VERSION,
@@ -61,6 +62,9 @@ fn device_info(spec: bsp::ChipSpec) -> domain::device::DeviceInfo {
         uid: spec.uid,
         flash_size: spec.flash_size,
         sys_hz: spec.sys_hz,
+        reset: spec.reset,
+        last_panic: panic::last()
+            .map(|m| domain::device::panic_brief(m, domain::device::PANIC_BRIEF)),
     }
 }
 {%- endif %}
@@ -94,11 +98,11 @@ fn main() -> ! {
     // них — устройство, падающее внутри `new`, крутилось бы в цикле
     // перезагрузок молча.
     //
-    // Только release: в dev паникёр — `panic-probe`, дамп никто не пишет, и
-    // читать было бы нечего (см. `panic`). Второй вызов вернул бы `None`:
-    // `panic-persist` стирает свою магию при чтении.
-    #[cfg(not(debug_assertions))]
-    if let Some(reason) = panic_persist::get_panic_message_utf8() {
+    // В dev паникёр — `panic-probe`, дамп никто не пишет, и `panic::take`
+    // всегда `None`. `panic-persist` стирает свою магию при чтении, поэтому
+    // `panic::take` запоминает прочитанное: сведения об устройстве берут ту
+    // же строку позже (`panic::last`).
+    if let Some(reason) = panic::take() {
         defmt::error!("app: предыдущий запуск упал: {}", reason);
     }
 

@@ -666,6 +666,14 @@ const CPU_FREQ_BOOST = boost_data::CPU_FREQ_BOOST;
 import "chip-data/cache" as cache_data;
 const CACHE = cache_data::CACHE;
 
+// Флаги сброса `RCC`: у чипа — версия регистров `RCC`, у версии — регистр с
+// `RMVF` (`csr`, `csr2` у C0, `rsr` у H5/H7) и пары `поле[,поле]:Причина` в
+// порядке проверки. По ним `bsp::reset::take_cause` читает причину сброса
+// (docs/diagnostics.md). Запись есть у каждого чипа: генератор без неё падает.
+import "chip-data/reset" as reset_data;
+const RESET = reset_data::RESET;
+const RESET_REGS = reset_data::RESET_REGS;
+
 // Интерфейсы связи, выведенные в корпусе чипа (`usart`, `fdcan`, `bxcan`,
 // `eth`, `usb`, `otg`) — по ним проверяется ответ об интерфейсе в конце хука.
 import "chip-data/interfaces" as interfaces_data;
@@ -902,18 +910,19 @@ const RAM_COST = #{
     // modbus-tcp-udp 14296 — на 960 меньше, чем TCP и UDP по отдельности.
     net_stack: 960,
     // Сетевые службы (`NET_SERVICE_ITEMS`), с графом. REST — stm32h743zg
-    // rest-modbus-tcp 31028 при оценке без REST 9680 (буферы двух соединений,
-    // сокеты, futures `picoserve`); SSH — stm32h743zg ssh-password-config 20100
+    // rest-modbus-tcp 28500 при оценке без REST 9680 (буферы двух соединений,
+    // сокеты, futures `picoserve`; тело `/api/info` собирается в последнем
+    // звене `write_content`, а не едет буфером `INFO_MAX` через десяток
+    // вложенных future — это сняло 7344 с прежних 26164); SSH — stm32h743zg ssh-password-config 20100
     // против tcp config=yes 3380 (буферы, ключи, futures `sunset`, статик RNG
     // для `getrandom`) — 16720,
     // но stm32h743zg rest-ssh-key-no-graph (ext_flash=yes) 41904 на 300 больше
     // суммы частей: SSH взят с этим запасом.
-    // MQTT — stm32h743zg mqtt-modbus-tcp 16232 при оценке без MQTT 9680
-    // (буферы `minimq` и сокета, сокет, future узла) — 6552, но
-    // rest-ssh-mqtt (ext_flash=yes) 50588 на 164 больше суммы частей: взят
-    // с этим запасом и округлён вверх до 6800 — с 6720 оценка того случая
-    // превышала факт всего на 4 байта, и любое выравнивание роняло проверку.
-    services: #{ ssh: 17020, rest: 21348, mqtt: 6800 },
+    // MQTT — stm32h743zg mqtt-modbus-tcp 16436 при оценке без MQTT 9680
+    // (буферы `minimq` и сокета, сокет, future узла) — 6756, но
+    // rest-ssh-mqtt (ext_flash=yes) 56148 на 676 больше оценки с прежними 6800:
+    // взят с этим запасом и округлён вверх до 7500.
+    services: #{ ssh: 17020, rest: 18820, mqtt: 7500 },
 };
 // Сверх статической RAM — под стек: он в `.data`/`.bss` не входит (flip-link
 // кладёт его под ними). Не замерен — без платы глубину стека не снять, — а
@@ -1182,6 +1191,14 @@ if variable::get("cpu") == "cortex-m7" {
     // M7 с кэшем флеша не бывает, но склейка не должна на этом держаться.
     cache += if cache == "" { "scb" } else { " scb" };
 }
+
+// Флаги сброса (см. RESET выше). Без переопределения через --define.
+if !RESET.contains(suffix) {
+    throw "chip-data/reset.rhai: нет флагов сброса для " + suffix + " — перегенерируйте chip-data";
+}
+let reset_reg = RESET_REGS[RESET[suffix]];
+variable::set("reset_reg", reset_reg[0]);
+variable::set("reset_flags", reset_reg[1]);
 
 // RNG (см. RNG выше). Без переопределения через --define: значение целиком
 // выводится из chip_feature.

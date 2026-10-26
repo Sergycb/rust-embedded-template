@@ -55,7 +55,7 @@ use supervisor::runtime::TaskExit;
 
 use crate::protobuf::codec::{decode_reason, encode};
 
-pub use service::{DeviceInfo, Service};
+pub use service::{DeviceInfo, RESPONSE_MAX, Service};
 pub use wiring::ProtobufWiring;
 
 // Узел объявлен рядом со своей задачей, по узлу на транспорт.

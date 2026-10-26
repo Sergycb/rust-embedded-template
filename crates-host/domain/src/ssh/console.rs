@@ -10,10 +10,15 @@ use ports::{OtaCommand, Progress};
 
 use crate::ota::OtaClient;
 // {%- endif %}
-use crate::device::DeviceInfo;
+use crate::device::{DeviceInfo, PANIC_BRIEF};
 
 /// Длина строки команды.
 pub(super) const LINE: usize = 64;
+
+/// Самый длинный ответ на `info`, байт: 256 — прошлые строки с запасом под
+/// длинную версию, 27 — `reset independent_watchdog`, остальное — строка
+/// `last panic` с [`PANIC_BRIEF`] байт.
+pub(super) const INFO_TEXT: usize = 256 + 27 + "last panic \n".len() + PANIC_BRIEF;
 
 /// Команда консоли.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,7 +106,9 @@ pub(super) async fn run<W: Write>(
         Command::Empty => {}
         Command::Help => {
             out.text("help            this list\n").await?;
-            out.text("info            firmware, chip, unique id, MAC, address, uptime\n")
+            out.text("info            firmware, chip, unique id, MAC, address, uptime,\n")
+                .await?;
+            out.text("                reset cause, last panic\n")
                 .await?;
             // {%- if ota == "true" %}
             out.text("reboot yes      reboot the board\n").await?;
@@ -110,7 +117,7 @@ pub(super) async fn run<W: Write>(
                 .await?;
         }
         Command::Info => {
-            let mut text = heapless::String::<256>::new();
+            let mut text = heapless::String::<INFO_TEXT>::new();
             // Среда в стеке одна — Ethernet (`medium-ethernet`).
             let embassy_net::HardwareAddress::Ethernet(mac) = device.stack.hardware_address();
             let ip = device
@@ -212,5 +219,19 @@ pub(super) fn write_info(
         Some(ip) => writeln!(out, "\nip {ip}")?,
         None => out.write_str("\nip none\n")?,
     }
-    writeln!(out, "uptime {uptime_s} s")
+    writeln!(out, "uptime {uptime_s} s")?;
+    writeln!(out, "reset {}", info.reset.as_str())?;
+    // Место и текст паники разделяет её же перевод строки, а консоль держит
+    // «ключ значение» по строке: текст идёт через пробел, а не второй строкой
+    // без ключа.
+    let (place, text) = match info.last_panic {
+        Some(panic) => panic.split_once('\n').unwrap_or((panic, "")),
+        None => ("none", ""),
+    };
+    out.write_str("last panic ")?;
+    out.write_str(place)?;
+    if !text.is_empty() {
+        write!(out, " {text}")?;
+    }
+    out.write_char('\n')
 }

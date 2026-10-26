@@ -1,7 +1,7 @@
 //! Тесты узла `SSH`: ключ пользователя, команды, `info`, ключ хоста.
 
-use crate::device::DeviceInfo;
-use crate::ssh::console::{parse, write_info};
+use crate::device::{DeviceInfo, PANIC_BRIEF};
+use crate::ssh::console::{INFO_TEXT, parse, write_info};
 use crate::ssh::{Command, ed25519_public_key};
 // {%- if ssh_host_key == "config" %}
 use crate::ssh::{HostKey, Stored};
@@ -90,8 +90,10 @@ fn info_fits_the_reply_buffer() {
         uid: [0xff; crate::device::UID_BYTES],
         flash_size: u32::MAX,
         sys_hz: Some(u32::MAX),
+        reset: crate::device::ResetCause::IndependentWatchdog,
+        last_panic: Some(String::leak("ж".repeat(PANIC_BRIEF / 2))),
     };
-    let mut out = heapless::String::<256>::new();
+    let mut out = heapless::String::<INFO_TEXT>::new();
     write_info(
         &mut out,
         &info,
@@ -101,6 +103,31 @@ fn info_fits_the_reply_buffer() {
     )
     .unwrap();
     assert!(out.starts_with("version 65535"), "{out}");
+    assert!(
+        out.contains("\nreset independent_watchdog\nlast panic ж"),
+        "{out}"
+    );
+}
+
+/// Место и текст паники — одна строка `last panic …`, а не две.
+#[test]
+fn the_panic_stays_on_its_line() {
+    let info = DeviceInfo {
+        version: "0.1.0",
+        commit: "abc",
+        chip: "STM32G071RB",
+        uid: [0; crate::device::UID_BYTES],
+        flash_size: 0,
+        sys_hz: None,
+        reset: crate::device::ResetCause::Software,
+        last_panic: Some("dhcp.rs:12:5:\nlease lost"),
+    };
+    let mut out = heapless::String::<INFO_TEXT>::new();
+    write_info(&mut out, &info, [0; 6], None, 0).unwrap();
+    assert!(
+        out.ends_with("\nlast panic dhcp.rs:12:5: lease lost\n"),
+        "{out}"
+    );
 }
 // {%- if ssh_host_key == "config" %}
 

@@ -885,6 +885,14 @@ probe-rs erase --chip {{chip}} --connect-under-reset              # см. ниж
 `предыдущий запуск упал: ...`. Читается оно ровно один раз: `panic-persist` стирает
 свою магию, чтобы одно и то же падение не всплывало после каждого сброса.
 
+Рядом — причина сброса: `Board::new` читает флаги `RCC` (сторож, программный сброс,
+питание, вывод `NRST`…) и снимает их, а строка старта `app: …` её показывает.
+{%- if has_protobuf == "true" or net_services != "" %}
+Без пробника обе вещи видны хосту в сведениях об устройстве — поля `reset` и
+`last_panic`{% if has_protobuf == "true" %} (protobuf `Info`){% endif %}{% if net_services contains "rest" %}, REST `/api/info`{% endif %}{% if net_services contains "mqtt" %}, MQTT `info`{% endif %}{% if net_services contains "ssh" %}, `info` в SSH{% endif %}; паника там коротко: файл, строка
+и первая строка сообщения.
+{%- endif %} Подробности — `docs/diagnostics.md`.
+
 Аппаратный отказ приложения (`HardFault`: мусорный указатель, прыжок по битому
 адресу) обработчик `crates-cross/app/src/fault.rs` превращает в панику с регистрами
 причины — дальше тот же путь, с записью в `PANIC`.{% if ota == "true" %} У bootloader'а обработчика нет:

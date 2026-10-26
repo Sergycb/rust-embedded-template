@@ -21,6 +21,10 @@ const LIMITS: &[(&str, &str, u32)] = &[
     ("COMMIT_BYTES", ".host.Info.commit", 16),
     ("CHIP_BYTES", ".host.Info.chip", 24),
     ("UID_BYTES", ".host.Info.uid", 12),
+    // Самое длинное имя `ports::ResetCause` — `independent_watchdog`, 20.
+    ("RESET_BYTES", ".host.Info.reset", 24),
+    // `domain::device::PANIC_BRIEF`.
+    ("PANIC_BYTES", ".host.Info.last_panic", 96),
     ("ERROR_TEXT_BYTES", ".host.Error.text", 64),
     // {%- if ota == "true" %}
     // Те же пределы, что у команды узлу OTA (`ports::SIGNATURE_BYTES`,

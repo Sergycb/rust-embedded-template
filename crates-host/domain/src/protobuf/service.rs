@@ -14,6 +14,17 @@ pub use crate::device::DeviceInfo;
 
 // Поле `uid` схемы — ровно заводской номер: копируется без проверки длины.
 const _: () = assert!(proto::UID_BYTES == crate::device::UID_BYTES);
+// Прошлую панику `app` сжимает до `PANIC_BRIEF` — она помещается в поле.
+const _: () = assert!(crate::device::PANIC_BRIEF <= proto::PANIC_BYTES);
+
+/// Самый длинный ответ схемы, байт: под него `app` заводит буфер ответа узла
+/// (`PROTOBUF_MESSAGE` в `crates-cross/app/src/link.rs`, `const`-assert там
+/// же). Не поместился бы — узел предупредил бы на старте, а такие ответы не
+/// ушли бы.
+pub const RESPONSE_MAX: usize = match <Response as micropb::MessageEncode>::MAX_SIZE {
+    Ok(max) => max,
+    Err(_) => panic!("у ответа схемы нет предела длины"),
+};
 
 /// Обработчик, с которым стартует узел `PROTOBUF` шаблона: на `info` —
 /// сведения об устройстве{% if ota == "true" %}, команды обновления — узлу OTA ([`route`](ProtobufService::route)),
@@ -69,6 +80,12 @@ impl Service {
             info.chip.len() <= proto::CHIP_BYTES,
             "имя чипа не помещается в Info.chip"
         );
+        if let Some(panic) = info.last_panic {
+            assert!(
+                panic.len() <= proto::PANIC_BYTES,
+                "паника не помещается в Info.last_panic"
+            );
+        }
         Self { info }
     }
 
@@ -86,6 +103,8 @@ impl Service {
             // Секунды в `u32` — 136 лет; 64-битные поля `micropb` кодирует
             // только с фичей `enable-64bit`.
             uptime_s: u32::try_from(Instant::now().as_secs()).unwrap_or(u32::MAX),
+            reset: text(info.reset.as_str()),
+            last_panic: text(info.last_panic.unwrap_or("")),
         }
     }
 }
@@ -223,6 +242,8 @@ pub(crate) mod tests {
         uid: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
         flash_size: 512 * 1024,
         sys_hz: None,
+        reset: crate::device::ResetCause::Pin,
+        last_panic: None,
     };
 
     /// Обработчик со сведениями `info`.
@@ -239,6 +260,57 @@ pub(crate) mod tests {
         assert_eq!(info.uid.as_slice(), &INFO.uid);
         assert_eq!(info.flash_size, 512 * 1024);
         assert_eq!(info.sys_hz, 0, "неизвестная частота — 0");
+        assert_eq!(info.reset, "pin");
+        assert_eq!(info.last_panic, "", "паники не было — пусто");
+        let info = service(DeviceInfo {
+            last_panic: Some("main.rs:7:1:\nboom"),
+            ..INFO
+        })
+        .info();
+        assert_eq!(info.last_panic, "main.rs:7:1:\nboom");
+    }
+
+    /// Имя любой причины сброса помещается в `Info.reset`: не поместилось бы —
+    /// ушла бы пустая строка.
+    #[test]
+    fn every_reset_cause_fits_its_field() {
+        use crate::device::ResetCause;
+        // Место варианта в списке — `match` без `_`: новый вариант не
+        // скомпилируется, пока ему не дадут место, а список сверяется с ним.
+        let place = |cause: ResetCause| match cause {
+            ResetCause::LowPower => 0,
+            ResetCause::WindowWatchdog => 1,
+            ResetCause::IndependentWatchdog => 2,
+            ResetCause::Software => 3,
+            ResetCause::OptionBytes => 4,
+            ResetCause::PowerOn => 5,
+            ResetCause::Pin => 6,
+            ResetCause::Unknown => 7,
+        };
+        let all = [
+            ResetCause::LowPower,
+            ResetCause::WindowWatchdog,
+            ResetCause::IndependentWatchdog,
+            ResetCause::Software,
+            ResetCause::OptionBytes,
+            ResetCause::PowerOn,
+            ResetCause::Pin,
+            ResetCause::Unknown,
+        ];
+        for (i, cause) in all.into_iter().enumerate() {
+            assert_eq!(place(cause), i, "{cause:?} не на своём месте в списке");
+            assert!(cause.as_str().len() <= proto::RESET_BYTES, "{cause:?}");
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "не помещается")]
+    fn a_panic_over_the_limit_is_refused() {
+        let panic: &'static str = "p".repeat(proto::PANIC_BYTES + 1).leak();
+        let _service = service(DeviceInfo {
+            last_panic: Some(panic),
+            ..INFO
+        });
     }
 
     #[test]

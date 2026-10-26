@@ -3924,6 +3924,30 @@ fn rng_follows_the_chip_table() {
     }
 }
 
+/// Флаги сброса — из `chip-data/reset.rhai`: регистр и пары по семейству
+/// (`csr` у F4/G0, `csr2` у C0, `rsr` у H7 — и у ядра CM4 двухъядерного).
+#[test]
+fn reset_flags_follow_the_chip_table() {
+    let ast = compile_script();
+    for (suffix, register, pin) in [
+        ("f407ve", "csr", "padrstf:Pin"),
+        ("h743zi", "rsr", "pinrstf:Pin"),
+        ("h745zi-cm4", "rsr", "pinrstf:Pin"),
+        ("c031c6", "csr2", "pinrstf:Pin"),
+        ("g071rb", "csr", "pinrstf:Pin"),
+    ] {
+        let result = run_cascade_to(&ast, suffix).expect("каскад не должен падать");
+        assert_eq!(
+            result.vars.get("reset_reg").map(String::as_str),
+            Some(register),
+            "{suffix}"
+        );
+        let flags = &result.vars["reset_flags"];
+        assert!(flags.starts_with("lpwrrstf:LowPower "), "{suffix}: {flags}");
+        assert!(flags.ends_with(pin), "{suffix}: {flags}");
+    }
+}
+
 /// Файлы `bsp::rng` остаются только под tcp/udp (сид стека `embassy-net`) и
 /// только у чипа с RNG; без интерфейса или на другом интерфейсе — удалены.
 #[test]
