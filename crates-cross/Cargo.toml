@@ -216,11 +216,9 @@ embedded-test      = { version = "0.7.2", default-features = false, features = [
 	"semihosting",
 	"panic-handler",
 ] }
-{%- if core_baseline != "true" or ota == "true" or config == "true" or has_can == "true" %}
 # Трейты-границы домена и типы ошибок: их реализуют adapters и bsp, а app
 # работает только через них. `defmt` — ради `Format` на ошибках в логе.
 ports            = { path = "../crates-host/ports", features = ["defmt"] }
-{%- endif %}
 {%- if ota == "true" or config == "true" or has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" or has_usb == "true" or has_net == "true" %}
 # Адаптеры, generic по флешу/шине: собирают их узлы над рычагами `bsp`, а `bsp`
 # берёт отсюда обёртки, из которых строит рычаги сам. `defmt` — ради `Format`

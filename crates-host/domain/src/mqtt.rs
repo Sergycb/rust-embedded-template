@@ -42,7 +42,7 @@ pub const RX_BUFFER: usize = 512;
 /// Буфер исходящих пакетов `minimq`: `CONNECT` с Will и входом (его место
 /// `minimq` держит всю сессию) и неподтверждённые пакеты `QoS` 1 — подписка,
 /// `status`, `info`, исход `reboot`. Сумму держит `const`-assert у `TX_BUDGET`.
-pub const TX_BUFFER: usize = 1152;
+pub const TX_BUFFER: usize = 1280;
 
 /// Самые длинные имя и пароль на брокере вместе, байт: они едут в `CONNECT`,
 /// а его место занято в [`TX_BUFFER`] всю сессию. Тот же предел держит разбор
@@ -919,6 +919,8 @@ pub(crate) mod tests {
                 uid: UID,
                 flash_size: 512 * 1024,
                 sys_hz: None,
+                reset: crate::device::ResetCause::Pin,
+                last_panic: None,
             })),
             mac: [2, 0, 0, 0, 0, 1],
             ip: None,
@@ -1170,6 +1172,8 @@ pub(crate) mod tests {
                 uid: UID,
                 flash_size: 512 * 1024,
                 sys_hz: None,
+                reset: crate::device::ResetCause::Pin,
+                last_panic: None,
             }),
             leak("devices"),
             leak(Fixed(ENDPOINT)),

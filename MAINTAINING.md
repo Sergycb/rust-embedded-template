@@ -15,7 +15,8 @@
 
 - `chip-select.rhai` — pre-хук: каскадный выбор чипа, `memory.x`, `write_size`,
   `ota`, `dual_core`, `bank_mode`, `erase_zero`, `watchdog_peripheral`,
-  `cpu_freq_boost`, `cache`, `core_baseline`, `bank_switch`, `dual_bank_bit`, `dfu_bank`. Хуки
+  `cpu_freq_boost`, `cache`, `core_baseline`, `bank_switch`, `dual_bank_bit`, `dfu_bank`,
+  `reset_reg`, `reset_flags`. Хуки
   cargo-generate в результат
   не копируются.
 - `chip-data/` — сгенерированные таблицы, которые хук подключает через `import`
@@ -23,6 +24,8 @@
   `bank_mode.rhai`, `bank_switch.rhai`, `watchdog.rhai`, `cpu_freq_boost.rhai`,
   `rng.rhai` (линия и клок блока `RNG`: `rng_irq`, `rng_clock`, `rng_source`),
   `cache.rhai` (кэши чипа, теги через пробел: `icen`/`dcen` — биты `FLASH_ACR`, `icache` — блок `ICACHE`),
+  `reset.rhai` (флаги сброса `RCC`: `RESET` — версия регистров `RCC` чипа, `RESET_REGS` — регистр
+  и пары `поле[,поле]:Причина` у версии),
   `interfaces.rhai` (интерфейсы связи, выведенные в корпусе: `usart`, `fdcan`,
   `bxcan`, `eth`, `usb`, `otg` — по ним хук проверит ответ об интерфейсе) и
   `layout/<семейство>.rhai` — раскладка памяти, разложенная по первым двум символам
@@ -344,8 +347,20 @@ H723/725/730/733/735. Им `bsp` получает `src/clocks.rs`, осталь�
 `FLASH` его версии (`stm32-metapac/src/peripherals/flash_<версия>.rs`, `chip_caches`) — таблицы
 семейств нет. Кэши ядра M7 в блок не входят: хук добавляет тег `scb`, когда выбранное каскадом
 `cpu` — `cortex-m7` (так двухъядерный H745 получает его только в `-cm7`). Чипу без тегов хук
-удаляет `crates-cross/bsp/src/cache.rs`; `board.rs`, `lib.rs` и `unstable-pac` в манифесте `bsp`
-смотрят на ту же переменную. Тест — `caches_follow_the_metadata_and_the_core`.
+удаляет `crates-cross/bsp/src/cache.rs`; `board.rs` и `lib.rs` смотрят на ту же переменную
+(`unstable-pac` у `bsp` включён всегда — его требует `src/reset.rs`). Тест —
+`caches_follow_the_metadata_and_the_core`.
+
+Флаги сброса (блоки `RESET`/`RESET_REGS`, переменные `reset_reg` и `reset_flags`) — тем же
+приёмом: версия блока `RCC` из общего файла метаданных, в
+`stm32-metapac/src/peripherals/rcc_<версия>.rs` — структура регистра с `set_rmvf` и её
+аксессор в блоке `Rcc` (`csr`, `csr2` у C0, `rsr` у H5/H7; аксессоры ядер `c1_`/`c2_`
+отбрасываются), а из её полей — пары по порядку причин `RESET_CAUSES` (`reset_register`).
+Причин несколько на один вариант (`porrstf,borrstf:PowerOn`), потому что одинаковые ветки
+подряд `clippy` не пропускает. Нет блока `RCC`, регистра с `set_rmvf` (или их два), ни одного
+известного флага — генератор падает, хук без записи — тоже. `bsp/src/reset.rs` разворачивает
+пары Liquid-циклом в цепочку `if`. Тесты — `reset_flags_of_*` (F4, H743, C0, G0) в
+`chip-data-gen/src/main.rs`.
 
 Кэш данных ядра M7 (тег `scb_d`) включается только вместе с регионом `DMA_NC`: `chip-data-gen`
 (`dma_nc_region`) отрезает до 32 KiB от конца RAM (`PANIC` уходит под регион) и кладёт в
@@ -1080,5 +1095,8 @@ metadata`, а для этого снимает из временной копи�
 Заметно это только при запуске самого генератора, то есть раз в обновление
 embassy-stm32, поэтому обе формы теперь под тестами
 (`liquid_whitespace_control_is_stripped_too`, `every_template_manifest_strips_clean`).
+Из `{% if %}…{% else %}…{% endif %}` остаётся ветка `else` (`the_else_branch_is_kept`):
+`members` в `crates-cross/Cargo.toml` записан так, и без неё `cargo metadata` видел пустой
+workspace — валидный TOML, поэтому тест манифестов этого не ловил.
 Добавляете в манифест шаблона новую Liquid-конструкцию — прогоните
 `cargo test --manifest-path chip-data-gen/Cargo.toml`.

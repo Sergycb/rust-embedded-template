@@ -48,7 +48,7 @@ use ports::{OtaCommand, Progress};
 
 use crate::ota::OtaClient;
 // {%- endif %}
-use crate::device::DeviceInfo;
+use crate::device::{DeviceInfo, PANIC_BRIEF};
 
 /// Порт SSH.
 pub const PORT: u16 = 22;
@@ -92,6 +92,11 @@ const CLOSE_WAIT: Duration = Duration::from_secs(2);
 
 /// Длина строки команды.
 const LINE: usize = 64;
+
+/// Самый длинный ответ на `info`, байт: 256 — прошлые строки с запасом под
+/// длинную версию, 27 — `reset independent_watchdog`, остальное — строка
+/// `last panic` с [`PANIC_BRIEF`] байт.
+const INFO_TEXT: usize = 256 + 27 + "last panic \n".len() + PANIC_BRIEF;
 // {%- if ssh_host_key == "config" %}
 
 /// Ключ хоста в разделе настроек.
@@ -503,7 +508,11 @@ fn write_info(
         Some(ip) => writeln!(out, "\nip {ip}")?,
         None => out.write_str("\nip none\n")?,
     }
-    writeln!(out, "uptime {uptime_s} s")
+    writeln!(out, "uptime {uptime_s} s")?;
+    writeln!(out, "reset {}", info.reset.as_str())?;
+    // Место и текст паники разделяет её же перевод строки: текст — следующей
+    // строкой.
+    writeln!(out, "last panic {}", info.last_panic.unwrap_or("none"))
 }
 
 /// Выполняет команду; `false` — сессия кончилась (`exit`).
@@ -516,7 +525,9 @@ async fn run<W: Write>(
         Command::Empty => {}
         Command::Help => {
             out.text("help            this list\n").await?;
-            out.text("info            firmware, chip, unique id, MAC, address, uptime\n")
+            out.text("info            firmware, chip, unique id, MAC, address, uptime,\n")
+                .await?;
+            out.text("                reset cause, last panic\n")
                 .await?;
             // {%- if ota == "true" %}
             out.text("reboot yes      reboot the board\n").await?;
@@ -525,7 +536,7 @@ async fn run<W: Write>(
                 .await?;
         }
         Command::Info => {
-            let mut text = heapless::String::<256>::new();
+            let mut text = heapless::String::<INFO_TEXT>::new();
             // Среда в стеке одна — Ethernet (`medium-ethernet`).
             let embassy_net::HardwareAddress::Ethernet(mac) = device.stack.hardware_address();
             let ip = device
@@ -884,8 +895,10 @@ mod tests {
             uid: [0xff; crate::device::UID_BYTES],
             flash_size: u32::MAX,
             sys_hz: Some(u32::MAX),
+            reset: crate::device::ResetCause::IndependentWatchdog,
+            last_panic: Some(String::leak("ж".repeat(PANIC_BRIEF / 2))),
         };
-        let mut out = heapless::String::<256>::new();
+        let mut out = heapless::String::<INFO_TEXT>::new();
         write_info(
             &mut out,
             &info,
@@ -895,6 +908,10 @@ mod tests {
         )
         .unwrap();
         assert!(out.starts_with("version 65535"), "{out}");
+        assert!(
+            out.contains("\nreset independent_watchdog\nlast panic ж"),
+            "{out}"
+        );
     }
     // {%- if ssh_host_key == "config" %}
 

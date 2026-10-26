@@ -19,10 +19,11 @@ workspace = true
 time-driver = ["embassy-stm32/time-driver-any"]
 
 [dependencies]
-# `unstable-pac` — только там, где `bsp` пишет регистры сам (src/clocks.rs, src/banks.rs —
-# option bytes; src/cache.rs — `FLASH_ACR` и `ICACHE`): их нет в API HAL, а сырой адрес
-# вместо типизированного регистра `stm32-metapac` ничем не проверялся бы.
-embassy-stm32 = { workspace = true, features = [{% if cpu_freq_boost == "true" or bank_switch != "" or cache contains "icen" or cache contains "icache" %}"unstable-pac"{% endif %}] }
+# `unstable-pac` — там, где `bsp` читает и пишет регистры сам (src/reset.rs — флаги
+# сброса `RCC`{% if bank_switch != "" or cpu_freq_boost == "true" %}; src/{% if cpu_freq_boost == "true" %}clocks.rs{% if bank_switch != "" %}, src/{% endif %}{% endif %}{% if bank_switch != "" %}banks.rs{% endif %} — option bytes{% endif %}{% if cache contains "icen" or cache contains "icache" %};
+# src/cache.rs — `FLASH_ACR` и `ICACHE`{% endif %}): их нет в API HAL, а сырой адрес вместо
+# типизированного регистра `stm32-metapac` ничем не проверялся бы.
+embassy-stm32 = { workspace = true, features = ["unstable-pac"] }
 {%- if has_usb == "true" or has_net == "true" or config_store == "eeprom" or ota == "true" %}
 # Обёртки, из которых плата собирает свои рычаги, — по строке на рычаг:
 {%- if ota == "true" %}
@@ -51,14 +52,13 @@ embassy-stm32 = { workspace = true, features = [{% if cpu_freq_boost == "true" o
 {%- endif %}
 adapters = { workspace = true }
 {%- endif %}
-{%- if core_baseline != "true" or ota == "true" or config_store == "eeprom" or has_can == "true" %}
-# Порты, которые плата реализует сама — у чего нет трейта в `embedded-hal`:{% if core_baseline != "true" %}
+# Порты, которые плата реализует сама — у чего нет трейта в `embedded-hal`:
+# причина сброса (`ResetCause` в `ChipSpec`, src/reset.rs);{% if core_baseline != "true" %}
 # счётчик тактов (`Cycles`, src/cycles.rs);{% endif %}{% if ota == "true" %}
 # перезагрузка для узла OTA (`Reboot`, src/reset.rs);{% endif %}{% if config_store == "eeprom" %}
 # доступ к EEPROM (`EepromAccess`, src/flash.rs);{% endif %}{% if has_can == "true" %}
 # шина CAN (`CanBus`, заглушка в src/stub.rs);{% endif %}
 ports = { workspace = true }
-{%- endif %}
 {%- if flash_page == "true" %}
 # Страница стирания раздела (`ErasePage`){% if ota == "true" and ota_store == "external" %} и страница драйвера внешней флеши
 # (`erase_size`, src/external.rs){% endif %}{% if ota == "true" %} — общая с bootloader'ом{% endif %}.

@@ -33,3 +33,35 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
     }
     bsp::reset::Reboot.reboot()
 }
+
+/// Сообщение паники прошлого запуска, если она была; в dev — всегда `None`.
+///
+/// `panic-persist` при чтении стирает свою магию, и второй вызов
+/// `get_panic_message_utf8` вернул бы `None`. Поэтому первое чтение
+/// запоминается: `main` печатает сообщение до `Board::new`, а сведения об
+/// устройстве берут его позже отсюда же. Строка живёт в регионе `PANIC`,
+/// который до следующей паники никто не пишет, — отсюда `'static`.
+#[must_use]
+pub fn last() -> Option<&'static str> {
+    use core::cell::Cell;
+    use cortex_m::interrupt::Mutex;
+
+    #[expect(
+        clippy::option_option,
+        reason = "внешний `Option` — «уже читали», внутренний — была ли паника"
+    )]
+    static LAST: Mutex<Cell<Option<Option<&'static str>>>> = Mutex::new(Cell::new(None));
+
+    // Паникёр dev-сборки — `panic-probe`: дамп никто не пишет, читать нечего.
+    if cfg!(debug_assertions) {
+        return None;
+    }
+    cortex_m::interrupt::free(|cs| {
+        let cell = LAST.borrow(cs);
+        let last = cell
+            .get()
+            .unwrap_or_else(panic_persist::get_panic_message_utf8);
+        cell.set(Some(last));
+        last
+    })
+}

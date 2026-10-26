@@ -1,4 +1,4 @@
-# Диагностика падений: паникёр по профилю и регион `PANIC`
+# Диагностика падений: паникёр по профилю, регион `PANIC`, причина сброса
 
 ## Два паникёра, один на сборку
 
@@ -40,6 +40,30 @@ VMA у верхней границы RAM убеждает `flip-link`, что д
 Читается сообщение ровно один раз: `get_panic_message_utf8` стирает магию, чтобы одно
 падение не всплывало после каждого сброса. Следствие для `cargo xtask panic-info`: если
 release-приложение успело стартовать, дамп уже вычитан и ушёл в defmt-лог того запуска.
+Вычитанную строку запоминает `panic::last()` (`crates-cross/app/src/panic.rs`): `main`
+печатает её до `Board::new`, а сведения об устройстве берут ту же строку позже. В dev
+`panic::last()` всегда `None`.
+
+## Причина сброса
+
+`Board::new` читает флаги сброса `RCC` (`bsp::reset::take_cause`) и снимает их битом
+`RMVF` — один раз за запуск и больше нигде{% if ota == "true" %}: bootloader флаги не трогает, и до
+приложения они доходят как есть{% endif %}. Регистр и поля у семейств свои (`CSR`, `CSR2` у C0,
+`RSR` у H5/H7; `WDGRSTF`/`PADRSTF` у F2/F4/F7, `IWDG1RSTF` у H7, `PWRRSTF` у G0/U0/C0) —
+их выписывает генерация из `stm32-metapac`. Флагов бывает несколько сразу (любой
+внутренний сброс ставит и флаг вывода `NRST`), поэтому причина — самая конкретная:
+выход из low-power, оконный сторож, независимый сторож, программный сброс, option
+bytes, питание, вывод; ни одного — `unknown`. Тип — `ports::ResetCause`
+(`domain::device::ResetCause`), он в `bsp::ChipSpec` и в строке старта `app: …`.
+{%- if has_protobuf == "true" or net_services != "" %}
+
+Обе вещи уходят наружу в сведениях об устройстве (`domain::device::DeviceInfo`:
+`reset`, `last_panic`){% if has_protobuf == "true" %} — protobuf `Info.reset`/`Info.last_panic`{% endif %}{% if net_services contains "rest" %}, REST `/api/info`{% endif %}{% if net_services contains "mqtt" %}, тема MQTT `info`{% endif %}{% if net_services contains "ssh" %}, `info` в консоли SSH{% endif %}.
+Паника — коротко (`domain::device::panic_brief`, до `PANIC_BRIEF` = 96 байт): файл без
+каталогов, строка, столбец и первая строка сообщения; нет паники — `null`{% if has_protobuf == "true" %} (в protobuf —
+пустая строка){% endif %}. Так хост видит, что плата перезагрузилась сторожем или паникой, без
+пробника и без `cargo xtask panic-info`.
+{%- endif %}
 
 ## Чего здесь нет
 {%- if ota == "true" %}
