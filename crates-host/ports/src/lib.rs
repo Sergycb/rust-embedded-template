@@ -97,17 +97,6 @@ pub mod dial;
 pub mod modbus;
 
 // {%- endif %}
-// {%- if ota == "true" or has_canopen == "true" %}
-// {%- if ota == "true" and has_canopen == "true" %}
-/// Слово записи флеша — общий предел буферов OTA и хранилища CANopen.
-// {%- elsif ota == "true" %}
-/// Слово записи флеша — предел буферов OTA.
-// {%- else %}
-/// Слово записи флеша — предел буферов хранилища CANopen.
-// {%- endif %}
-mod word;
-
-// {%- endif %}
 // {%- if core_baseline != "true" %}
 /// Счётчик тактов ядра.
 pub mod cycles;
@@ -127,6 +116,17 @@ pub mod settings;
 
 /// Доступ к внутренней EEPROM — под хранилищем настроек на L0/L1.
 pub mod eeprom;
+// {%- endif %}
+// {%- if ota == "true" or has_canopen == "true" %}
+
+// {%- if ota == "true" and has_canopen == "true" %}
+/// Слово записи флеша — общий предел буферов OTA и хранилища CANopen.
+// {%- elsif ota == "true" %}
+/// Слово записи флеша — предел буферов OTA.
+// {%- else %}
+/// Слово записи флеша — предел буферов хранилища CANopen.
+// {%- endif %}
+mod word;
 // {%- endif %}
 
 pub use assemble::Assemble;

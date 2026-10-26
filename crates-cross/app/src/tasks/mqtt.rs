@@ -7,6 +7,15 @@ use static_cell::ConstStaticCell;
 static MQTT_RX: ConstStaticCell<[u8; RX_BUFFER]> = ConstStaticCell::new([0; RX_BUFFER]);
 static MQTT_TX: ConstStaticCell<[u8; TX_BUFFER]> = ConstStaticCell::new([0; TX_BUFFER]);
 
+/// Спавнит узел.
+pub fn spawn(
+    spawner: embassy_executor::Spawner,
+    stack: bsp::net::Stack,
+    info: domain::device::DeviceInfo,
+) {
+    spawner.spawn(task(stack, info).expect("задача MQTT свежая: спавнится один раз"));
+}
+
 #[embassy_executor::task]
 async fn task(mut stack: bsp::net::Stack, mut info: domain::device::DeviceInfo) {
     let mut prefix = crate::net::mqtt::PREFIX;
@@ -34,13 +43,4 @@ async fn task(mut stack: bsp::net::Stack, mut info: domain::device::DeviceInfo) 
         index: 0,
     })
     .await;
-}
-
-/// Спавнит узел.
-pub fn spawn(
-    spawner: embassy_executor::Spawner,
-    stack: bsp::net::Stack,
-    info: domain::device::DeviceInfo,
-) {
-    spawner.spawn(task(stack, info).expect("задача MQTT свежая: спавнится один раз"));
 }

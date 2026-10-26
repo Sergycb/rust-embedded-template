@@ -7,6 +7,11 @@ use std::{
 
 use anyhow::{Context, bail};
 
+/// Строка-штамп с версиями источников данных. Её сверяет тест
+/// `generated_blocks_match_the_declared_embassy_version`: без штампа связь
+/// «подняли embassy-stm32 — перегенерируйте списки» держалась только на памяти
+/// мейнтейнера, а поднимает версию обычно бот, молча.
+pub const SOURCE_STAMP_PREFIX: &str = "// Источник: embassy-stm32 ";
 /// Каталог с таблицами, которые `chip-select.rhai` подключает через `import`.
 /// Пишется целиком при каждом прогоне — руками там ничего не правится.
 const DATA_DIR: &str = "chip-data";
@@ -3078,12 +3083,6 @@ fn probe_rs_chip_names() -> anyhow::Result<BTreeSet<String>> {
     }
     Ok(chips)
 }
-
-/// Строка-штамп с версиями источников данных. Её сверяет тест
-/// `generated_blocks_match_the_declared_embassy_version`: без штампа связь
-/// «подняли embassy-stm32 — перегенерируйте списки» держалась только на памяти
-/// мейнтейнера, а поднимает версию обычно бот, молча.
-pub const SOURCE_STAMP_PREFIX: &str = "// Источник: embassy-stm32 ";
 
 fn format_source_stamp(embassy_version: &str, probe_rs_version: &str) -> String {
     format!(

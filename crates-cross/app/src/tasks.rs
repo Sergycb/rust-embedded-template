@@ -11,6 +11,10 @@
 //! Сторожа и перезапусков нет: узлы не падают, а зависший остаётся зависшим —
 //! сторожить исполнитель вам.
 {%- assign xs = links | split: "," %}
+{%- if ota == "true" %}
+pub mod ota;
+// Остальные модули приватные: их задачи спавнит только `spawn_all`.
+{%- endif %}
 {%- if has_canopen == "true" %}
 mod canopen;
 {%- endif %}
@@ -25,9 +29,6 @@ mod mqtt;
 {%- endif %}
 {%- if has_net == "true" %}
 mod net;
-{%- endif %}
-{%- if ota == "true" %}
-pub mod ota;
 {%- endif %}
 {%- if has_protobuf == "true" %}
 mod protobuf;

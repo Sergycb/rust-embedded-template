@@ -301,6 +301,20 @@ impl<T: Read + Write> FrameDuplex for Cobs<'_, T> {
     }
 }
 
+/// Сколько байт буфера отправки нужно на сообщение длиной `message`:
+/// худший случай COBS, CRC и два разделителя.
+#[must_use]
+pub const fn tx_len(message: usize) -> usize {
+    max_encoding_length(message + CRC_LEN) + 2
+}
+
+/// Сколько байт буфера приёма нужно на сообщение длиной `message`:
+/// сообщение и CRC.
+#[must_use]
+pub const fn rx_len(message: usize) -> usize {
+    message + CRC_LEN
+}
+
 /// Кодирует `message` с CRC в кадр COBS в `frame` и пишет его в `io`.
 async fn write_frame<T: Write>(
     io: &mut T,
@@ -324,20 +338,6 @@ async fn write_frame<T: Write>(
     frame[end] = 0;
     io.write_all(&frame[..=end]).await.map_err(io_error)?;
     io.flush().await.map_err(io_error)
-}
-
-/// Сколько байт буфера отправки нужно на сообщение длиной `message`:
-/// худший случай COBS, CRC и два разделителя.
-#[must_use]
-pub const fn tx_len(message: usize) -> usize {
-    max_encoding_length(message + CRC_LEN) + 2
-}
-
-/// Сколько байт буфера приёма нужно на сообщение длиной `message`:
-/// сообщение и CRC.
-#[must_use]
-pub const fn rx_len(message: usize) -> usize {
-    message + CRC_LEN
 }
 
 /// Отказ потока: разорванное соединение не вылечится следующим кадром, а

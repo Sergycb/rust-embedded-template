@@ -67,36 +67,6 @@ use flash_page::ErasePage;
 use ports::EepromAccess;
 {%- endif %}
 use static_cell::StaticCell;
-{%- if whole == "true" %}
-{%- if dfu_bank != "true" %}
-
-/// Размер всего флеша в байтах — столько занимает раздел [`Whole`].
-///
-/// `usize` на Cortex-M — 32 бита, усечения нет.
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "`usize` на Cortex-M — 32 бита"
-)]
-const SIZE: u32 = FLASH_SIZE as u32;
-
-// `BlockingPartition::new` паникует на объёме, не кратном `ERASE_SIZE`; у STM32
-// объём всегда кратен самому крупному сектору, и сборка это проверяет, а не
-// первый запуск на плате.
-const _: () = assert!(
-    FLASH_SIZE.is_multiple_of(MAX_ERASE_SIZE),
-    "объём flash не кратен самому крупному сектору: `BlockingPartition::new` паникует на старте"
-);
-{%- else %}
-
-/// Размер банка 1 в байтах — столько занимает раздел [`Whole`]. Банк, а не
-/// весь чип: банк 2 стоит за разрывом, и цельный `Flash` туда не дотягивается
-/// (`FLASH_SIZE` у него — сумма банков, меньше смещения банка 2).
-const SIZE: u32 = BANK1_REGION.size;
-
-/// Размер банка 2 в байтах — столько занимает раздел под `DFU`.
-const DFU_BANK_SIZE: u32 = BANK2_REGION.size;
-{%- endif %}
-{%- endif %}
 {%- if firmware_here == "true" %}
 
 /// Страница раздела `BOOTLOADER_STATE` — размер сектора, в котором он лежит.
@@ -142,6 +112,36 @@ const _: () = assert!(
     "SWAP_PAGE_SIZE из генерации не кратен странице стирания флеша чипа \
      (embassy_stm32::flash::MAX_ERASE_SIZE): стирание раздела заденет чужие секторы"
 );
+{%- endif %}
+{%- endif %}
+{%- if whole == "true" %}
+{%- if dfu_bank != "true" %}
+
+/// Размер всего флеша в байтах — столько занимает раздел [`Whole`].
+///
+/// `usize` на Cortex-M — 32 бита, усечения нет.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "`usize` на Cortex-M — 32 бита"
+)]
+const SIZE: u32 = FLASH_SIZE as u32;
+
+// `BlockingPartition::new` паникует на объёме, не кратном `ERASE_SIZE`; у STM32
+// объём всегда кратен самому крупному сектору, и сборка это проверяет, а не
+// первый запуск на плате.
+const _: () = assert!(
+    FLASH_SIZE.is_multiple_of(MAX_ERASE_SIZE),
+    "объём flash не кратен самому крупному сектору: `BlockingPartition::new` паникует на старте"
+);
+{%- else %}
+
+/// Размер банка 1 в байтах — столько занимает раздел [`Whole`]. Банк, а не
+/// весь чип: банк 2 стоит за разрывом, и цельный `Flash` туда не дотягивается
+/// (`FLASH_SIZE` у него — сумма банков, меньше смещения банка 2).
+const SIZE: u32 = BANK1_REGION.size;
+
+/// Размер банка 2 в байтах — столько занимает раздел под `DFU`.
+const DFU_BANK_SIZE: u32 = BANK2_REGION.size;
 {%- endif %}
 {%- endif %}
 {%- if config_here == "true" %}
@@ -208,15 +208,43 @@ pub type ChipFlash = Bank1Region<'static, Blocking>;
 /// начала, и символы `memory.x` у `DFU` посчитаны так же.
 pub type DfuBankMutex =
     blocking_mutex::Mutex<NoopRawMutex, RefCell<Bank2Region<'static, Blocking>>>;
-
-/// Весь банк 2 как раздел под замком — под него строится `DFU`.
-type DfuBank = BlockingPartition<'static, NoopRawMutex, Bank2Region<'static, Blocking>>;
 {%- else %}
 
 /// Флеш под [`FlashMutex`] — весь чип одним объектом.
 pub type ChipFlash = embassy_stm32::flash::Flash<'static, Blocking>;
 {%- endif %}
+{%- if firmware_here == "true" %}
 
+/// Флеш под обновлением — рычаг, над которым узел OTA собирает адаптер
+/// (`adapters::ota::Updater`, порт `Assemble`). Разделы `DFU` и
+/// `BOOTLOADER_STATE` в нём находит сам узел, по символам `memory.x`
+/// (`adapters::ota::Linked`); плата отдаёт только флеш с нужной страницей и
+/// размер `ACTIVE`.
+pub type FirmwareFlash = adapters::ota::Linked<DfuFlash, StateFlash>;
+{%- endif %}
+{%- if config_here == "true" %}
+
+/// Раздел `CONFIG` — носитель настроек, над которым узел-потребитель собирает
+/// хранилище (`adapters::settings`, порт `Assemble`). Именно раздел, а не весь
+/// флеш: запись за его границы отказывает, а не стирает {% if ota == "true" %}`ACTIVE` или bootloader{% else %}прошивку{% endif %}.
+pub type ConfigFlash = Partition<'static, NoopRawMutex, ConfigBacking>;
+{%- endif %}
+{%- if eeprom_here == "true" %}
+
+/// Внутренняя EEPROM как `NorFlash` — носитель настроек, над которым
+/// узел-потребитель собирает хранилище (`adapters::settings`, порт `Assemble`).
+/// Флеш под настройки не тратится вовсе: EEPROM пишется через тот же
+/// контроллер, что и флеш, поэтому доступ к ней — через общий [`FlashMutex`]
+/// (`embassy_stm32::flash::Flash::eeprom_*`), по операции под замком. Обёртку
+/// `adapters::eeprom::Eeprom` (инверсия байтов, страница) собирает плата, и
+/// под хранилище отдана вся EEPROM, округлённая до её страницы.
+pub type ConfigFlash = adapters::eeprom::Eeprom<'static, EepromFlash>;
+{%- endif %}
+{%- if dfu_bank == "true" %}
+
+/// Весь банк 2 как раздел под замком — под него строится `DFU`.
+type DfuBank = BlockingPartition<'static, NoopRawMutex, Bank2Region<'static, Blocking>>;
+{%- endif %}
 {%- if whole == "true" %}
 
 /// Весь флеш как один раздел: смещения те же, что у самого флеша, а операции
@@ -259,13 +287,6 @@ type StateFlash = BlockingAsync<ErasePage<Whole, STATE_ERASE_SIZE>>;
 /// совпадает с его страницей.
 type StateFlash = BlockingAsync<Whole>;
 {%- endif %}
-
-/// Флеш под обновлением — рычаг, над которым узел OTA собирает адаптер
-/// (`adapters::ota::Updater`, порт `Assemble`). Разделы `DFU` и
-/// `BOOTLOADER_STATE` в нём находит сам узел, по символам `memory.x`
-/// (`adapters::ota::Linked`); плата отдаёт только флеш с нужной страницей и
-/// размер `ACTIVE`.
-pub type FirmwareFlash = adapters::ota::Linked<DfuFlash, StateFlash>;
 {%- endif %}
 {%- if config_here == "true" %}
 
@@ -276,22 +297,8 @@ type ConfigBacking = BlockingAsync<ErasePage<Whole, CONFIG_ERASE_SIZE>>;
 {%- else %}
 type ConfigBacking = BlockingAsync<Whole>;
 {%- endif %}
-
-/// Раздел `CONFIG` — носитель настроек, над которым узел-потребитель собирает
-/// хранилище (`adapters::settings`, порт `Assemble`). Именно раздел, а не весь
-/// флеш: запись за его границы отказывает, а не стирает {% if ota == "true" %}`ACTIVE` или bootloader{% else %}прошивку{% endif %}.
-pub type ConfigFlash = Partition<'static, NoopRawMutex, ConfigBacking>;
 {%- endif %}
 {%- if eeprom_here == "true" %}
-
-/// Внутренняя EEPROM как `NorFlash` — носитель настроек, над которым
-/// узел-потребитель собирает хранилище (`adapters::settings`, порт `Assemble`).
-/// Флеш под настройки не тратится вовсе: EEPROM пишется через тот же
-/// контроллер, что и флеш, поэтому доступ к ней — через общий [`FlashMutex`]
-/// (`embassy_stm32::flash::Flash::eeprom_*`), по операции под замком. Обёртку
-/// `adapters::eeprom::Eeprom` (инверсия байтов, страница) собирает плата, и
-/// под хранилище отдана вся EEPROM, округлённая до её страницы.
-pub type ConfigFlash = adapters::eeprom::Eeprom<'static, EepromFlash>;
 
 /// Общий [`FlashMutex`] как источник EEPROM. Свой тип, а не `impl` на самом
 /// мьютексе: и трейт `EepromAccess`, и `Mutex` чужие для `bsp`.

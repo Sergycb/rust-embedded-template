@@ -17,6 +17,16 @@ static TCP_TX: ConstStaticCell<[u8; TCP_BUFFER]> = ConstStaticCell::new([0; TCP_
 static SSH_RX: ConstStaticCell<[u8; SSH_BUFFER]> = ConstStaticCell::new([0; SSH_BUFFER]);
 static SSH_TX: ConstStaticCell<[u8; SSH_BUFFER]> = ConstStaticCell::new([0; SSH_BUFFER]);
 
+/// Спавнит узел.
+pub fn spawn(
+    spawner: embassy_executor::Spawner,
+    stack: bsp::net::Stack,
+    info: domain::device::DeviceInfo,
+    host_key: HostKeySource,
+) {
+    spawner.spawn(task(stack, info, host_key).expect("задача SSH свежая: спавнится один раз"));
+}
+
 #[embassy_executor::task]
 async fn task(
     mut stack: bsp::net::Stack,
@@ -45,14 +55,4 @@ async fn task(
         index: 0,
     })
     .await;
-}
-
-/// Спавнит узел.
-pub fn spawn(
-    spawner: embassy_executor::Spawner,
-    stack: bsp::net::Stack,
-    info: domain::device::DeviceInfo,
-    host_key: HostKeySource,
-) {
-    spawner.spawn(task(stack, info, host_key).expect("задача SSH свежая: спавнится один раз"));
 }

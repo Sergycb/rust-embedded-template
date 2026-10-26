@@ -23,6 +23,18 @@ static BUFFERS: [Buffers; CONNECTIONS] = [const {
     }
 }; CONNECTIONS];
 
+/// Спавнит пул.
+pub fn spawn(
+    spawner: embassy_executor::Spawner,
+    stack: bsp::net::Stack,
+    info: domain::device::DeviceInfo,
+) {
+    for index in 0..CONNECTIONS {
+        spawner
+            .spawn(task(index, stack, info).expect("задача HTTP свежая: пул спавнится один раз"));
+    }
+}
+
 #[embassy_executor::task(pool_size = CONNECTIONS)]
 async fn task(index: usize, mut stack: bsp::net::Stack, mut info: domain::device::DeviceInfo) {
     let buffers = &BUFFERS[index];
@@ -47,16 +59,4 @@ async fn task(index: usize, mut stack: bsp::net::Stack, mut info: domain::device
         index,
     })
     .await;
-}
-
-/// Спавнит пул.
-pub fn spawn(
-    spawner: embassy_executor::Spawner,
-    stack: bsp::net::Stack,
-    info: domain::device::DeviceInfo,
-) {
-    for index in 0..CONNECTIONS {
-        spawner
-            .spawn(task(index, stack, info).expect("задача HTTP свежая: пул спавнится один раз"));
-    }
 }

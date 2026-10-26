@@ -152,16 +152,6 @@ pub fn static_ram(elf: &[u8]) -> Result<u64, anyhow::Error> {
     })))
 }
 
-/// Ядро [`static_ram`] над списком `(имя, размер)` — тестируется без ELF:
-/// писать ELF в `object` у xtask выключено.
-fn sum_static_ram(sections: impl IntoIterator<Item = (String, u64)>) -> u64 {
-    sections
-        .into_iter()
-        .filter(|(name, _)| STATIC_RAM_SECTIONS.contains(&name.as_str()))
-        .map(|(_, size)| size)
-        .sum()
-}
-
 /// Печатает статическую RAM образа против региона `RAM` из `memory.x`.
 ///
 /// Формат строки — контракт: его разбирает `template-check`
@@ -175,15 +165,6 @@ pub fn report_ram(elf: &Path) -> Result<(), anyhow::Error> {
     };
     println!("{}", ram_line(used, ram.length));
     Ok(())
-}
-
-fn ram_line(used: u64, total: u64) -> String {
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "размеры RAM на порядки меньше 2^52"
-    )]
-    let percent = used as f64 * 100.0 / total.max(1) as f64;
-    format!("ram: {used} байт статической RAM из {total} байт RAM ({percent:.1}%)")
 }
 // {%- if ota == "true" %}
 
@@ -235,6 +216,25 @@ pub fn warn_boot_runtime_symbols(elf: &Path) -> Result<(), anyhow::Error> {
     Ok(())
 }
 // {%- endif %}
+
+/// Ядро [`static_ram`] над списком `(имя, размер)` — тестируется без ELF:
+/// писать ELF в `object` у xtask выключено.
+fn sum_static_ram(sections: impl IntoIterator<Item = (String, u64)>) -> u64 {
+    sections
+        .into_iter()
+        .filter(|(name, _)| STATIC_RAM_SECTIONS.contains(&name.as_str()))
+        .map(|(_, size)| size)
+        .sum()
+}
+
+fn ram_line(used: u64, total: u64) -> String {
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "размеры RAM на порядки меньше 2^52"
+    )]
+    let percent = used as f64 * 100.0 / total.max(1) as f64;
+    format!("ram: {used} байт статической RAM из {total} байт RAM ({percent:.1}%)")
+}
 
 /// Размер образа на ветке по умолчанию, если CI его передал.
 ///

@@ -36,14 +36,13 @@
 //! * `modbus-rs`/`mbus-*` — GPLv3 или коммерческая лицензия; `rs-modbus`,
 //!   `rusty-modbus` целиком — требуют `std` (tokio).
 
-/// Slave: обработчик кадра, запросы — порту [`ports::Registers`].
-mod slave;
-
 // {%- if modbus_master == "true" %}
 /// Master: по функции на запрос, ответ сверяется с запросом.
 pub mod master;
 
 // {%- endif %}
+/// Slave: обработчик кадра, запросы — порту [`ports::Registers`].
+mod slave;
 
 /// Карта регистров по умолчанию — пустая, место под карту устройства.
 mod registers;

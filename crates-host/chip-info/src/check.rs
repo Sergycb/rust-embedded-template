@@ -24,6 +24,81 @@ pub(crate) fn project_root() -> Option<PathBuf> {
         .map(Path::to_path_buf)
 }
 
+/// Проверяет распиновку проекта на то, чего компилятор не видит: занятый
+/// отладочный порт и выводы кварца.
+///
+/// Всё остальное про распиновку он и так ловит — чужой сигнал на выводе
+/// (трейт не реализован), один вывод в двух задачах (`Peri` не `Copy`), вывод
+/// не из корпуса (чип-фича пакетная). А вот что вы отрезали себе `probe-rs`,
+/// заняв `PA13`, компилятор сказать не может: с точки зрения типов это
+/// обычный GPIO.
+///
+/// Разбор текстовый, без `syn`: `assign_resources!` — макрос, и его содержимое
+/// до раскрытия не дерево, а токены; выискивать в них имена выводов сложнее,
+/// чем прочитать файл построчно. Цена — комментарии приходится пропускать
+/// вручную (иначе примеры из doc-комментария считались бы занятыми выводами).
+pub(crate) fn check_resources() -> Result<(), anyhow::Error> {
+    let root = project_root().context("не найден корень проекта рядом с chip-info")?;
+    let src = root.join("crates-cross").join("bsp").join("src");
+    let sources = resource_sources(&src)?;
+
+    print_header(Some("проверка распиновки"));
+    println!("файлы: {}", src.display());
+
+    let mut used: Vec<(String, usize, String)> = Vec::new();
+    for path in &sources {
+        let text =
+            fs::read_to_string(path).with_context(|| format!("не читается {}", path.display()))?;
+        // Путь от `bsp/src`, а не одно имя файла: с рекурсивным обходом
+        // `board/pins.rs` и `pins.rs` иначе выглядели бы одинаково.
+        let name = path
+            .strip_prefix(&src)
+            .unwrap_or(path.as_path())
+            .display()
+            .to_string();
+        for (number, line) in assigned_lines(&text) {
+            for pin in pins_in(&line) {
+                if METADATA.pins.iter().any(|known| known.name == pin) {
+                    used.push((name.clone(), number, pin));
+                }
+            }
+        }
+    }
+
+    if used.is_empty() {
+        println!();
+        println!("выводов не назначено — распиновка ещё не заполнена");
+        return Ok(());
+    }
+
+    println!("назначено выводов: {}", used.len());
+    println!();
+
+    let mut conflicts = 0;
+    for (file, number, pin) in &used {
+        let Some((severity, note)) = pin_note(pin) else {
+            continue;
+        };
+        let label = match severity {
+            Severity::Conflict => {
+                conflicts += 1;
+                "КОНФЛИКТ"
+            }
+            Severity::Warning => "внимание",
+        };
+        println!("{label}: {pin} ({file}, строка {number}) — {note}");
+    }
+
+    if conflicts == 0 {
+        println!("отладочный порт не занят");
+        return Ok(());
+    }
+    bail!(
+        "занято выводов отладочного порта: {conflicts} — после прошивки плата перестанет \
+         отвечать пробнику, вытаскивать придётся через `probe-rs erase --connect-under-reset`"
+    )
+}
+
 /// Строки тела `assign_resources!` без комментариев — то есть ровно то, что
 /// действительно назначает выводы, с номерами строк исходного файла.
 ///
@@ -130,81 +205,6 @@ fn resource_sources(src: &Path) -> Result<Vec<PathBuf>, anyhow::Error> {
     }
     files.sort();
     Ok(files)
-}
-
-/// Проверяет распиновку проекта на то, чего компилятор не видит: занятый
-/// отладочный порт и выводы кварца.
-///
-/// Всё остальное про распиновку он и так ловит — чужой сигнал на выводе
-/// (трейт не реализован), один вывод в двух задачах (`Peri` не `Copy`), вывод
-/// не из корпуса (чип-фича пакетная). А вот что вы отрезали себе `probe-rs`,
-/// заняв `PA13`, компилятор сказать не может: с точки зрения типов это
-/// обычный GPIO.
-///
-/// Разбор текстовый, без `syn`: `assign_resources!` — макрос, и его содержимое
-/// до раскрытия не дерево, а токены; выискивать в них имена выводов сложнее,
-/// чем прочитать файл построчно. Цена — комментарии приходится пропускать
-/// вручную (иначе примеры из doc-комментария считались бы занятыми выводами).
-pub(crate) fn check_resources() -> Result<(), anyhow::Error> {
-    let root = project_root().context("не найден корень проекта рядом с chip-info")?;
-    let src = root.join("crates-cross").join("bsp").join("src");
-    let sources = resource_sources(&src)?;
-
-    print_header(Some("проверка распиновки"));
-    println!("файлы: {}", src.display());
-
-    let mut used: Vec<(String, usize, String)> = Vec::new();
-    for path in &sources {
-        let text =
-            fs::read_to_string(path).with_context(|| format!("не читается {}", path.display()))?;
-        // Путь от `bsp/src`, а не одно имя файла: с рекурсивным обходом
-        // `board/pins.rs` и `pins.rs` иначе выглядели бы одинаково.
-        let name = path
-            .strip_prefix(&src)
-            .unwrap_or(path.as_path())
-            .display()
-            .to_string();
-        for (number, line) in assigned_lines(&text) {
-            for pin in pins_in(&line) {
-                if METADATA.pins.iter().any(|known| known.name == pin) {
-                    used.push((name.clone(), number, pin));
-                }
-            }
-        }
-    }
-
-    if used.is_empty() {
-        println!();
-        println!("выводов не назначено — распиновка ещё не заполнена");
-        return Ok(());
-    }
-
-    println!("назначено выводов: {}", used.len());
-    println!();
-
-    let mut conflicts = 0;
-    for (file, number, pin) in &used {
-        let Some((severity, note)) = pin_note(pin) else {
-            continue;
-        };
-        let label = match severity {
-            Severity::Conflict => {
-                conflicts += 1;
-                "КОНФЛИКТ"
-            }
-            Severity::Warning => "внимание",
-        };
-        println!("{label}: {pin} ({file}, строка {number}) — {note}");
-    }
-
-    if conflicts == 0 {
-        println!("отладочный порт не занят");
-        return Ok(());
-    }
-    bail!(
-        "занято выводов отладочного порта: {conflicts} — после прошивки плата перестанет \
-         отвечать пробнику, вытаскивать придётся через `probe-rs erase --connect-under-reset`"
-    )
 }
 
 /// Имена выводов в строке кода: `P` + буква порта + цифры, не внутри другого

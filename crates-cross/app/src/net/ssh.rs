@@ -1,6 +1,9 @@
 //! Консоль SSH (`domain::ssh`, узел `SSH`): вход пользователя{% if ssh_host_key == "file" %} и ключ хоста{% endif %}.
 {%- if ssh_auth == "password" %}
 
+/// Как консоль SSH пускает пользователя: по паролю [`PASSWORD`].
+pub const LOGIN: domain::ssh::Login = domain::ssh::Login::Password(PASSWORD);
+
 /// Пароль консоли SSH (`domain::ssh::USER`). Файл `ssh-password.txt` в корне
 /// проекта создаёт первая `cargo xtask build`, и он коммитится — как токен
 /// REST: пароль всё равно лежит открыто в каждом образе.
@@ -11,9 +14,6 @@ const _: () = assert!(
     !PASSWORD.is_empty(),
     "ssh-password.txt пуст: удалите файл, и `cargo xtask build` создаст новый пароль"
 );
-
-/// Как консоль SSH пускает пользователя.
-pub const LOGIN: domain::ssh::Login = domain::ssh::Login::Password(PASSWORD);
 {%- else %}
 
 /// Как консоль SSH пускает пользователя: по открытому ключу, данному при

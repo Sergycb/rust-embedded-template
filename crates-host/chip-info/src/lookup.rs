@@ -55,6 +55,42 @@ pub(crate) fn looks_like_pin(query: &str) -> bool {
         && chars.next().is_some_and(|digit| digit.is_ascii_digit())
 }
 
+/// Всё, что метаданные знают о привязке канала: на одних семействах это
+/// фиксированный канал/поток, на других — номер запроса через DMAMUX, на
+/// третьих есть ещё и ремап. Поэтому не разбор по семействам, а перечисление
+/// того, что заполнено.
+pub(crate) fn format_dma(channel: &PeripheralDmaChannel) -> String {
+    let mut parts = Vec::new();
+    if let Some(dma) = channel.dma {
+        parts.push(format!("контроллер {dma}"));
+    }
+    if let Some(name) = channel.channel {
+        parts.push(format!("канал {name}"));
+    }
+    if let Some(dmamux) = channel.dmamux {
+        parts.push(format!("через {dmamux}"));
+    }
+    if let Some(request) = channel.request {
+        parts.push(format!("запрос {request}"));
+    }
+    for remap in channel.remap {
+        parts.push(format!("ремап {}.{}", remap.register, remap.field));
+    }
+    if parts.is_empty() {
+        "—".to_owned()
+    } else {
+        parts.join(", ")
+    }
+}
+
+pub(crate) fn print_header(subject: Option<&str>) {
+    match subject {
+        Some(subject) => println!("{} ({}) — {subject}", METADATA.name, METADATA.family),
+        None => println!("{} ({})", METADATA.name, METADATA.family),
+    }
+    println!();
+}
+
 fn describe_peripheral(name: &str) -> Result<(), anyhow::Error> {
     let peripheral = METADATA
         .peripherals
@@ -217,34 +253,6 @@ fn print_clocks(peripheral: &Peripheral) {
     }
 }
 
-/// Всё, что метаданные знают о привязке канала: на одних семействах это
-/// фиксированный канал/поток, на других — номер запроса через DMAMUX, на
-/// третьих есть ещё и ремап. Поэтому не разбор по семействам, а перечисление
-/// того, что заполнено.
-pub(crate) fn format_dma(channel: &PeripheralDmaChannel) -> String {
-    let mut parts = Vec::new();
-    if let Some(dma) = channel.dma {
-        parts.push(format!("контроллер {dma}"));
-    }
-    if let Some(name) = channel.channel {
-        parts.push(format!("канал {name}"));
-    }
-    if let Some(dmamux) = channel.dmamux {
-        parts.push(format!("через {dmamux}"));
-    }
-    if let Some(request) = channel.request {
-        parts.push(format!("запрос {request}"));
-    }
-    for remap in channel.remap {
-        parts.push(format!("ремап {}.{}", remap.register, remap.field));
-    }
-    if parts.is_empty() {
-        "—".to_owned()
-    } else {
-        parts.join(", ")
-    }
-}
-
 /// `TIM10` → `("TIM", 10)`. По той же причине, что и [`pin_sort_key`]:
 /// лексикографически `TIM10` встаёт между `TIM1` и `TIM2`, и список блоков
 /// читается как случайный.
@@ -278,14 +286,6 @@ fn pin_sort_key(pin: &str) -> (char, u32, &str) {
         .map_or(rest.len(), |(index, _)| index);
     let number = rest[1..digits_end].parse().unwrap_or(0);
     (port, number, &rest[digits_end..])
-}
-
-pub(crate) fn print_header(subject: Option<&str>) {
-    match subject {
-        Some(subject) => println!("{} ({}) — {subject}", METADATA.name, METADATA.family),
-        None => println!("{} ({})", METADATA.name, METADATA.family),
-    }
-    println!();
 }
 
 /// Складывает имена в строки не длиннее `width`, чтобы список блоков читался

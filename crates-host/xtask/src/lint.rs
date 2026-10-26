@@ -33,29 +33,6 @@ pub fn lint_host(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-/// Тесты на устройстве прошиваются на место приложения, поэтому их `memory.x`
-/// обязан совпадать с `memory.x` приложения; разъехавшись, они линкуют тест не
-// {%- if ota == "true" %}
-/// туда, куда смотрит bootloader.
-// {%- else %}
-//{{newline}}/// туда, откуда стартует ядро.
-// {%- endif %}
-fn ensure_test_memory_matches_app() -> Result<(), anyhow::Error> {
-    let cross = root_dir().join("crates-cross");
-    let read = |crate_dir: &str| {
-        let path = cross.join(crate_dir).join("memory.x");
-        std::fs::read_to_string(&path)
-            .map(|text| text.replace("\r\n", "\n"))
-            .with_context(|| format!("прочитать {}", path.display()))
-    };
-    anyhow::ensure!(
-        read("app")? == read("target-tests")?,
-        "crates-cross/target-tests/memory.x расходится с crates-cross/app/memory.x — \
-         файлы обязаны совпадать (их пишет chip-select.rhai одним текстом)",
-    );
-    Ok(())
-}
-
 pub fn lint_cross(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     ensure_test_memory_matches_app()?;
     // {%- if net_services contains "rest" or net_services contains "mqtt" or ssh_auth == "password" or ssh_host_key == "file" %}
@@ -99,5 +76,28 @@ pub fn lint_cross(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     // {%- else %}
     //{{newline}}    cmd!(sh, "cargo clippy -p app -p bsp --release -- -D warnings").run()?;
     // {%- endif %}
+    Ok(())
+}
+
+/// Тесты на устройстве прошиваются на место приложения, поэтому их `memory.x`
+/// обязан совпадать с `memory.x` приложения; разъехавшись, они линкуют тест не
+// {%- if ota == "true" %}
+/// туда, куда смотрит bootloader.
+// {%- else %}
+//{{newline}}/// туда, откуда стартует ядро.
+// {%- endif %}
+fn ensure_test_memory_matches_app() -> Result<(), anyhow::Error> {
+    let cross = root_dir().join("crates-cross");
+    let read = |crate_dir: &str| {
+        let path = cross.join(crate_dir).join("memory.x");
+        std::fs::read_to_string(&path)
+            .map(|text| text.replace("\r\n", "\n"))
+            .with_context(|| format!("прочитать {}", path.display()))
+    };
+    anyhow::ensure!(
+        read("app")? == read("target-tests")?,
+        "crates-cross/target-tests/memory.x расходится с crates-cross/app/memory.x — \
+         файлы обязаны совпадать (их пишет chip-select.rhai одним текстом)",
+    );
     Ok(())
 }

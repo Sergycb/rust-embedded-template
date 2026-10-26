@@ -11,16 +11,16 @@ use anyhow::Context;
 use crate::memory::Region;
 
 // {%- if ota == "true" %}
+/// Имя символа с открытым ключом, которым bootloader проверяет подпись.
+/// Определён в `crates-cross/boot/src/signature.rs` так же, как
+/// [`FW_VERSION_SYMBOL`] в приложении.
+pub const PUBLIC_KEY_SYMBOL: &str = "OTA_PUBLIC_KEY_IN_IMAGE";
+
 /// Имя символа, в котором прошивка хранит собственную версию.
 ///
 /// Определён в `crates-cross/app/src/version.rs` под `#[unsafe(no_mangle)]` ровно
 /// ради этого чтения.
 const FW_VERSION_SYMBOL: &str = "FW_VERSION_IN_IMAGE";
-
-/// Имя символа с открытым ключом, которым bootloader проверяет подпись.
-/// Определён в `crates-cross/boot/src/signature.rs` так же, как
-/// [`FW_VERSION_SYMBOL`] в приложении.
-pub const PUBLIC_KEY_SYMBOL: &str = "OTA_PUBLIC_KEY_IN_IMAGE";
 
 /// Байты, которыми заполняются пропуски между сегментами: стёртое состояние
 /// NOR-флеша. Значение существенно — содержимое пропусков уезжает в раздел
@@ -163,6 +163,41 @@ pub fn ensure_image_base(base: u64, name: &str, partition: &Region) -> Result<()
     Ok(())
 }
 
+/// Сырой образ: то, что уезжает во флеш, без секций и символов ELF.
+///
+/// Разбор идёт через `ElfFile32` и заголовки программы, а не через общий
+/// `object::File`: тому доступен только виртуальный адрес сегмента
+/// (`ObjectSegment::address`), а нужен физический. Для `.data` они разные —
+/// секция исполняется из RAM, но лежит во флеше, откуда её копирует
+/// `cortex-m-rt` при старте. Возьми мы виртуальный, в образе появилась бы
+/// дыра в сотни мегабайт между флешем и RAM.
+pub fn raw_image(elf: &Path) -> Result<(u64, Vec<u8>), anyhow::Error> {
+    use object::elf::PT_LOAD;
+    use object::read::elf::{ElfFile32, FileHeader, ProgramHeader};
+
+    let bytes = fs::read(elf).with_context(|| format!("прочитать {}", elf.display()))?;
+    let file = ElfFile32::<object::Endianness>::parse(&*bytes)
+        .with_context(|| format!("разобрать {}", elf.display()))?;
+    let endian = file.endian();
+
+    let mut segments = Vec::new();
+    for header in file.elf_header().program_headers(endian, &*bytes)? {
+        if header.p_type(endian) != PT_LOAD {
+            continue;
+        }
+        // `p_filesz`, а не `p_memsz`: разница между ними — `.bss`, которого в
+        // файле нет и во флеш писать нечего (его обнуляет cortex-m-rt).
+        let data = header
+            .data(endian, &*bytes)
+            .map_err(|()| anyhow::anyhow!("сегмент ELF выходит за границы файла"))?;
+        if data.is_empty() {
+            continue;
+        }
+        segments.push((u64::from(header.p_paddr(endian)), data.to_vec()));
+    }
+    image_from_segments(&segments)
+}
+
 /// Укладывает сегменты в непрерывный образ, начиная с самого младшего адреса.
 ///
 /// Отдельная функция от чтения ELF, потому что здесь единственное, чему есть
@@ -206,41 +241,6 @@ fn image_from_segments(segments: &[(u64, Vec<u8>)]) -> Result<(u64, Vec<u8>), an
         }
     }
     Ok((base, image))
-}
-
-/// Сырой образ: то, что уезжает во флеш, без секций и символов ELF.
-///
-/// Разбор идёт через `ElfFile32` и заголовки программы, а не через общий
-/// `object::File`: тому доступен только виртуальный адрес сегмента
-/// (`ObjectSegment::address`), а нужен физический. Для `.data` они разные —
-/// секция исполняется из RAM, но лежит во флеше, откуда её копирует
-/// `cortex-m-rt` при старте. Возьми мы виртуальный, в образе появилась бы
-/// дыра в сотни мегабайт между флешем и RAM.
-pub fn raw_image(elf: &Path) -> Result<(u64, Vec<u8>), anyhow::Error> {
-    use object::elf::PT_LOAD;
-    use object::read::elf::{ElfFile32, FileHeader, ProgramHeader};
-
-    let bytes = fs::read(elf).with_context(|| format!("прочитать {}", elf.display()))?;
-    let file = ElfFile32::<object::Endianness>::parse(&*bytes)
-        .with_context(|| format!("разобрать {}", elf.display()))?;
-    let endian = file.endian();
-
-    let mut segments = Vec::new();
-    for header in file.elf_header().program_headers(endian, &*bytes)? {
-        if header.p_type(endian) != PT_LOAD {
-            continue;
-        }
-        // `p_filesz`, а не `p_memsz`: разница между ними — `.bss`, которого в
-        // файле нет и во флеш писать нечего (его обнуляет cortex-m-rt).
-        let data = header
-            .data(endian, &*bytes)
-            .map_err(|()| anyhow::anyhow!("сегмент ELF выходит за границы файла"))?;
-        if data.is_empty() {
-            continue;
-        }
-        segments.push((u64::from(header.p_paddr(endian)), data.to_vec()));
-    }
-    image_from_segments(&segments)
 }
 
 #[cfg(test)]

@@ -107,6 +107,13 @@ pub fn parse_memory_regions(memory_x: &Path) -> Result<Vec<(String, Region)>, an
     Ok(regions)
 }
 
+pub fn region<'a>(regions: &'a [(String, Region)], name: &str) -> Option<&'a Region> {
+    regions
+        .iter()
+        .find(|(region_name, _)| region_name == name)
+        .map(|(_, region)| region)
+}
+
 /// Строка региона — это `NAME (attrs) : …`, и больше ничего: скобка с
 /// атрибутами и двоеточие сразу за ней.
 ///
@@ -222,13 +229,6 @@ fn parse_size(raw: &str) -> Option<u64> {
         .parse::<u64>()
         .ok()
         .and_then(|n| n.checked_mul(multiplier))
-}
-
-pub fn region<'a>(regions: &'a [(String, Region)], name: &str) -> Option<&'a Region> {
-    regions
-        .iter()
-        .find(|(region_name, _)| region_name == name)
-        .map(|(_, region)| region)
 }
 
 #[cfg(test)]

@@ -71,6 +71,20 @@ pub static READY_{{ f[4] | upcase }}: Signal<CriticalSectionRawMutex, ()> = Sign
 {%- endif %}
 {%- endfor %}
 
+/// Спавнит узел над флешем платы под обновлением — адаптер обновления собирается в задаче;
+/// режим —
+/// {% if signed == "true" %}`Signed` с версией этого образа (`crate::version::FW_VERSION`){% else %}`Plain`{% endif %}.
+pub fn spawn(spawner: embassy_executor::Spawner, firmware: bsp::FirmwareFlash) {
+{%- if signed == "true" %}
+    let mode = domain::ota::Mode::Signed {
+        running_version: crate::version::FW_VERSION,
+    };
+{%- else %}
+    let mode = domain::ota::Mode::Plain;
+{%- endif %}
+    spawner.spawn(task(firmware, mode).expect("задача OTA свежая: спавнится один раз"));
+}
+
 #[embassy_executor::task]
 async fn task(firmware: bsp::FirmwareFlash, mut mode: domain::ota::Mode) {
     // Адаптер обновления — над флешем платы: `assemble` и режет его на разделы.
@@ -98,18 +112,4 @@ async fn task(firmware: bsp::FirmwareFlash, mut mode: domain::ota::Mode) {
         index: 0,
     })
     .await;
-}
-
-/// Спавнит узел над флешем платы под обновлением — адаптер обновления собирается в задаче;
-/// режим —
-/// {% if signed == "true" %}`Signed` с версией этого образа (`crate::version::FW_VERSION`){% else %}`Plain`{% endif %}.
-pub fn spawn(spawner: embassy_executor::Spawner, firmware: bsp::FirmwareFlash) {
-{%- if signed == "true" %}
-    let mode = domain::ota::Mode::Signed {
-        running_version: crate::version::FW_VERSION,
-    };
-{%- else %}
-    let mode = domain::ota::Mode::Plain;
-{%- endif %}
-    spawner.spawn(task(firmware, mode).expect("задача OTA свежая: спавнится один раз"));
 }

@@ -46,6 +46,15 @@ unsafe extern "C" {
     safe static __bdma_nc_end: u8;
 {%- endif %}
 }
+{%- if external_flash == "true" %}
+
+/// Конец последнего раздела на внешней флеши, байты: меньше микросхема не
+/// годится. Его сверяют с объёмом микросхемы `bsp::external` и `boot`.
+#[must_use]
+pub fn ext_flash_end() -> u32 {
+    value(&raw const __ext_flash_end)
+}
+{%- endif %}
 {%- if ota == "true" %}
 
 /// Размер `ACTIVE` в байтах: самый длинный образ, который доедет до
@@ -68,15 +77,6 @@ pub(crate) fn active_len() -> u32 {
 pub(crate) fn config() -> (u32, u32) {
     let start = value(&raw const __config_start);
     (start, value(&raw const __config_end) - start)
-}
-{%- endif %}
-{%- if external_flash == "true" %}
-
-/// Конец последнего раздела на внешней флеши, байты: меньше микросхема не
-/// годится. Его сверяют с объёмом микросхемы `bsp::external` и `boot`.
-#[must_use]
-pub fn ext_flash_end() -> u32 {
-    value(&raw const __ext_flash_end)
 }
 {%- endif %}
 {%- if dma_nc == "true" %}

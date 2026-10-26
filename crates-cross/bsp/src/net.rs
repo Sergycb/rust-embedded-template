@@ -44,6 +44,16 @@ pub(crate) fn new(uid: [u8; 12], seed: u64, _resources: crate::resources::EthRes
     let (stack, runner) = embassy_net::new(device, config, RESOURCES.take(), seed);
     Net { runner, stack }
 }
+{%- if rng_irq == "" %}
+
+/// Затравка стека из заводского номера — для чипов без RNG. Не случайна: у
+/// одной платы она одна и та же после каждого сброса.
+pub(crate) fn seed_from_uid(uid: [u8; 12]) -> u64 {
+    let mut bytes = [0; 8];
+    bytes.copy_from_slice(&uid[..8]);
+    u64::from_le_bytes(bytes) ^ u64::from(u32::from_le_bytes([uid[8], uid[9], uid[10], uid[11]]))
+}
+{%- endif %}
 
 /// MAC из заводского номера чипа: локально администрируемый (бит 1 первого
 /// байта), без группового (бит 0) — у каждой платы свой и постоянный. Все
@@ -60,13 +70,3 @@ const fn mac_from_uid(uid: [u8; 12]) -> [u8; 6] {
         uid[4] ^ uid[9],
     ]
 }
-{%- if rng_irq == "" %}
-
-/// Затравка стека из заводского номера — для чипов без RNG. Не случайна: у
-/// одной платы она одна и та же после каждого сброса.
-pub(crate) fn seed_from_uid(uid: [u8; 12]) -> u64 {
-    let mut bytes = [0; 8];
-    bytes.copy_from_slice(&uid[..8]);
-    u64::from_le_bytes(bytes) ^ u64::from(u32::from_le_bytes([uid[8], uid[9], uid[10], uid[11]]))
-}
-{%- endif %}

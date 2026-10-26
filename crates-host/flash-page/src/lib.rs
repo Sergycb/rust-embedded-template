@@ -113,16 +113,6 @@ impl<F: NorFlash, const ERASE_SIZE: usize> NorFlash for ErasePage<F, ERASE_SIZE>
     }
 }
 
-/// Страница [`ErasePage`], проверенная при компиляции: ненулевая и кратная слову
-/// записи.
-const fn page_size(erase_size: usize, write_size: usize) -> usize {
-    assert!(
-        erase_size > 0 && erase_size.is_multiple_of(write_size),
-        "страница должна быть ненулевой и кратной слову записи"
-    );
-    erase_size
-}
-
 // {%- endif %}
 
 // {%- if ota_store == "external" %}
@@ -132,6 +122,18 @@ const fn page_size(erase_size: usize, write_size: usize) -> usize {
 #[must_use]
 pub const fn erase_size<F: embedded_storage_async::nor_flash::NorFlash>() -> usize {
     F::ERASE_SIZE
+}
+// {%- endif %}
+// {%- if erase_page == "true" %}
+
+/// Страница [`ErasePage`], проверенная при компиляции: ненулевая и кратная слову
+/// записи.
+const fn page_size(erase_size: usize, write_size: usize) -> usize {
+    assert!(
+        erase_size > 0 && erase_size.is_multiple_of(write_size),
+        "страница должна быть ненулевой и кратной слову записи"
+    );
+    erase_size
 }
 // {%- endif %}
 

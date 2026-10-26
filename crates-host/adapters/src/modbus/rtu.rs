@@ -252,6 +252,13 @@ impl<T: Read + embedded_io_async::ReadReady + Write> Rtu<T> {
 }
 // {%- endif %}
 
+/// Приписывает CRC к первым `len` байтам `buf`; возвращает длину кадра.
+pub(super) fn seal(buf: &mut [u8], len: usize) -> usize {
+    let crc = CRC.checksum(&buf[..len]).to_le_bytes();
+    buf[len..len + 2].copy_from_slice(&crc);
+    len + 2
+}
+
 // {%- if modbus_master == "true" %}
 /// Собирает в `tx` кадр «`unit`, `pdu`, CRC»; возвращает его длину.
 fn frame(tx: &mut [u8; MAX_ADU], unit: u8, pdu: &[u8]) -> usize {
@@ -316,13 +323,6 @@ fn crc_ok(frame: &[u8]) -> bool {
         }
         _ => false,
     }
-}
-
-/// Приписывает CRC к первым `len` байтам `buf`; возвращает длину кадра.
-pub(super) fn seal(buf: &mut [u8], len: usize) -> usize {
-    let crc = CRC.checksum(&buf[..len]).to_le_bytes();
-    buf[len..len + 2].copy_from_slice(&crc);
-    len + 2
 }
 
 #[cfg(test)]
