@@ -100,12 +100,20 @@ jobs:
           GH_TOKEN: {% raw %}${{ secrets.GITHUB_TOKEN }}{% endraw %}
         run: |
           dir="crates-cross/target/{{target}}/release"
-          files="$dir/app.bin"
+          # ELF рядом с образом: по нему `probe-rs` и `defmt` расшифровывают лог
+          # и стек платы с этим релизом — без него строки defmt не прочитать.
+          cp "$dir/app" "$dir/app.elf"
+          names="app.bin app.elf"
           if [ -f "$dir/app.bin.sig" ]; then
-            files="$files $dir/app.bin.sig"
+            names="$names app.bin.sig"
           else
             echo "::warning::подписи рядом с образом нет — релиз выйдет неподписанным"
           fi
+          # Суммы — тем, кто качает образ мимо gh: сверка `sha256sum -c SHA256SUMS`.
+          # shellcheck disable=SC2086
+          (cd "$dir" && sha256sum $names > SHA256SUMS)
+          files=""
+          for name in $names SHA256SUMS; do files="$files $dir/$name"; done
           # shellcheck disable=SC2086
           gh release create "$GITHUB_REF_NAME" --generate-notes $files
 {%- endif %}

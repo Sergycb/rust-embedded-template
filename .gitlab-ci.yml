@@ -309,11 +309,17 @@ release:build:
     # `artifacts:` подстановки переменных нет.
     - cp "crates-cross/target/{{target}}/release/app.bin" app.bin
     - if [ -f "crates-cross/target/{{target}}/release/app.bin.sig" ]; then cp "crates-cross/target/{{target}}/release/app.bin.sig" app.bin.sig; fi
+    # ELF рядом с образом: по нему `probe-rs` и `defmt` расшифровывают лог и
+    # стек платы с этим релизом. Суммы — для сверки `sha256sum -c SHA256SUMS`.
+    - cp "crates-cross/target/{{target}}/release/app" app.elf
+    - sha256sum app.bin app.elf $(ls app.bin.sig 2>/dev/null) > SHA256SUMS
     - echo "BUILD_JOB_ID=$CI_JOB_ID" > build.env
   artifacts:
     paths:
       - app.bin
       - app.bin.sig
+      - app.elf
+      - SHA256SUMS
     reports:
       dotenv: build.env
     expire_in: never
@@ -336,6 +342,10 @@ release:publish:
       links:
         - name: app.bin
           url: "$CI_PROJECT_URL/-/jobs/$BUILD_JOB_ID/artifacts/file/app.bin"
+        - name: app.elf
+          url: "$CI_PROJECT_URL/-/jobs/$BUILD_JOB_ID/artifacts/file/app.elf"
+        - name: SHA256SUMS
+          url: "$CI_PROJECT_URL/-/jobs/$BUILD_JOB_ID/artifacts/file/SHA256SUMS"
 {%- if signed == "true" %}
         - name: app.bin.sig
           url: "$CI_PROJECT_URL/-/jobs/$BUILD_JOB_ID/artifacts/file/app.bin.sig"
