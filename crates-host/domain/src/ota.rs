@@ -1945,7 +1945,7 @@ mod fakes {
             Ok(self.capacity)
         }
 
-        fn layout(&mut self) -> u32 {
+        fn layout(&self) -> u32 {
             LAYOUT
         }
 

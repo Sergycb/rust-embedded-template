@@ -288,7 +288,7 @@ where
         Ok(self.capacity)
     }
 
-    fn layout(&mut self) -> u32 {
+    fn layout(&self) -> u32 {
         self.layout
     }
 
@@ -568,7 +568,7 @@ mod tests {
     /// отдавать вместо него что-то своё.
     #[test]
     fn reports_the_layout_from_its_partitions() {
-        let mut u: Mem<false> = ports::Assemble::assemble(
+        let u: Mem<false> = ports::Assemble::assemble(
             ports::FirmwarePartitions {
                 dfu: Dfu::erased(),
                 state: State::erased(),

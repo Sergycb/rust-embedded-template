@@ -559,7 +559,7 @@ mod tests {
             fn capacity(&mut self) -> Result<u32, Self::Error> {
                 self.0.capacity()
             }
-            fn layout(&mut self) -> u32 {
+            fn layout(&self) -> u32 {
                 self.0.layout()
             }
             async fn is_busy(&mut self) -> Result<bool, Self::Error> {

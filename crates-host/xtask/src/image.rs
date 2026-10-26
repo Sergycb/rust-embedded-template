@@ -61,9 +61,8 @@ pub fn image_version(elf: &Path, base: u64, image: &[u8]) -> Result<u32, anyhow:
 /// [`ports::LAYOUT_SYMBOLS`] через [`ports::layout_fingerprint`] — как его
 /// считает прошивка в рантайме по адресам тех же символов.
 pub fn layout_fingerprint(elf: &Path) -> Result<u32, anyhow::Error> {
-    let bytes = fs::read(elf).with_context(|| format!("прочитать {}", elf.display()))?;
-    let file = ElfFile32::<object::Endianness>::parse(&*bytes)
-        .with_context(|| format!("разобрать {}", elf.display()))?;
+    let bytes = read_elf(elf)?;
+    let file = parse_elf(elf, &bytes)?;
     let mut bounds = [0; 6];
     for (bound, name) in bounds.iter_mut().zip(ports::LAYOUT_SYMBOLS) {
         let value = symbol_address(&file, name).with_context(|| {
@@ -77,6 +76,19 @@ pub fn layout_fingerprint(elf: &Path) -> Result<u32, anyhow::Error> {
             .with_context(|| format!("{name} = {value:#x} не помещается в u32"))?;
     }
     Ok(ports::layout_fingerprint(bounds))
+}
+
+/// Байты файла `elf`; разбирает их [`parse_elf`].
+fn read_elf(elf: &Path) -> Result<Vec<u8>, anyhow::Error> {
+    fs::read(elf).with_context(|| format!("прочитать {}", elf.display()))
+}
+
+/// ELF32 из байт, которые прочитал [`read_elf`].
+fn parse_elf<'a>(
+    elf: &Path,
+    bytes: &'a [u8],
+) -> Result<ElfFile32<'a, object::Endianness>, anyhow::Error> {
+    ElfFile32::parse(bytes).with_context(|| format!("разобрать {}", elf.display()))
 }
 
 /// Адрес (значение) символа `name` в таблице символов ELF.
@@ -97,9 +109,8 @@ pub fn image_symbol<'a>(
     use object::elf::PT_LOAD;
     use object::read::elf::{FileHeader, ProgramHeader};
 
-    let bytes = fs::read(elf).with_context(|| format!("прочитать {}", elf.display()))?;
-    let file = ElfFile32::<object::Endianness>::parse(&*bytes)
-        .with_context(|| format!("разобрать {}", elf.display()))?;
+    let bytes = read_elf(elf)?;
+    let file = parse_elf(elf, &bytes)?;
 
     let address = symbol_address(&file, name).with_context(|| {
         format!(
