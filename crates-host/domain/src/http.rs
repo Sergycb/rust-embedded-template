@@ -89,20 +89,52 @@ impl<'r> FromRequestParts<'r, Api> for Auth {
     }
 }
 
-/// Тело ответа JSON, собранное в буфере.
-struct Json(heapless::String<{ crate::device::INFO_MAX }>);
+/// Тело `/api/info`: данные объекта и его длина, а не готовый JSON.
+///
+/// `picoserve` передаёт тело по значению через десяток вложенных future
+/// (обработчик, `write_to`, `write_response`, …), и каждая держит свою копию:
+/// собранный заранее буфер на [`INFO_MAX`](crate::device::INFO_MAX) байт лёг
+/// бы в задачу узла столько же раз. Буфер заводит только `write_content` —
+/// последнее звено цепочки.
+struct InfoBody {
+    info: DeviceInfo,
+    mac: [u8; 6],
+    ip: Option<embassy_net::Ipv4Address>,
+    uptime_s: u64,
+    len: usize,
+}
 
-impl Content for Json {
+impl InfoBody {
+    fn write(&self, out: &mut impl core::fmt::Write) -> core::fmt::Result {
+        crate::device::write_info(out, &self.info, self.mac, self.ip, self.uptime_s)
+    }
+}
+
+impl Content for InfoBody {
     fn content_type(&self) -> &'static str {
         "application/json"
     }
 
     fn content_length(&self) -> usize {
-        self.0.len()
+        self.len
     }
 
     async fn write_content<W: Write>(self, mut w: W) -> Result<(), W::Error> {
-        w.write_all(self.0.as_bytes()).await
+        let mut text = heapless::String::<{ crate::device::INFO_MAX }>::new();
+        // Влезает: `info` измерил этот же объект и длиннее буфера не пропустил.
+        let written = self.write(&mut text);
+        debug_assert!(written.is_ok(), "сведения длиннее измеренного");
+        w.write_all(text.as_bytes()).await
+    }
+}
+
+/// `fmt::Write`, который только считает байты.
+struct Measure(usize);
+
+impl core::fmt::Write for Measure {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        self.0 += s.len();
+        Ok(())
     }
 }
 
@@ -180,18 +212,26 @@ fn authorized(header: Option<&[u8]>, token: &str) -> bool {
             == 0
 }
 
-fn info(api: &Api) -> Result<Json, (StatusCode, &'static str)> {
-    let mut text = heapless::String::new();
+fn info(api: &Api) -> Result<InfoBody, (StatusCode, &'static str)> {
     // Среда в стеке одна — Ethernet (`medium-ethernet`).
     let embassy_net::HardwareAddress::Ethernet(mac) = api.stack.hardware_address();
-    let ip = api.stack.config_v4().map(|config| config.address.address());
-    let uptime_s = embassy_time::Instant::now().as_secs();
+    let mut body = InfoBody {
+        info: api.info,
+        mac: mac.0,
+        ip: api.stack.config_v4().map(|config| config.address.address()),
+        uptime_s: embassy_time::Instant::now().as_secs(),
+        len: 0,
+    };
+    let mut measure = Measure(0);
     // Строки сведений короткие (версия, хеш, имя чипа): объект короче буфера.
     // Не влез бы (проект удлинил строки или добавил поля) — `500`, а не
     // обрезанный JSON.
-    match crate::device::write_info(&mut text, &api.info, mac.0, ip, uptime_s) {
-        Ok(()) => Ok(Json(text)),
-        Err(core::fmt::Error) => Err((StatusCode::INTERNAL_SERVER_ERROR, "info too long\n")),
+    match body.write(&mut measure) {
+        Ok(()) if measure.0 <= crate::device::INFO_MAX => {
+            body.len = measure.0;
+            Ok(body)
+        }
+        _ => Err((StatusCode::INTERNAL_SERVER_ERROR, "info too long\n")),
     }
 }
 // {%- if ota == "true" %}
