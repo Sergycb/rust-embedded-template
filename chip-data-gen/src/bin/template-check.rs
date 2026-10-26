@@ -844,6 +844,7 @@ fn check_one(
 
     check_no_raw_placeholders(&project, log)?;
     check_ci_files(&project, &options.ci, log)?;
+    check_doc_paths(&project, log)?;
 
     let mut static_ram = None;
     if !options.quick {
@@ -1145,6 +1146,82 @@ fn without_actions_expressions(line: &str) -> String {
     }
     out.push_str(rest);
     out
+}
+
+/// Начала путей проекта, которые доки и комментарии называют: по ним ссылка
+/// отличается от имени типа или команды в обратных кавычках.
+const DOC_PATH_ROOTS: &[&str] = &["crates-cross/", "crates-host/", "docs/", ".github/"];
+
+/// Пути, которых в свежем проекте нет по построению: их создаёт первая сборка.
+const DOC_PATHS_BUILT_LATER: &[&str] = &[
+    "crates-cross/Cargo.lock",
+    "crates-cross/target",
+    "crates-host/chip-info/Cargo.lock",
+];
+
+/// Пути проекта, названные в тексте: в обратных кавычках (`` `docs/flash.md` ``)
+/// и целью ссылки Markdown (`](docs/flash.md)`). Хвост `:строка`, `#якорь` и
+/// закрывающая пунктуация отрезаются; шаблоны (`<вид>`, `*`, `{…}`) —
+/// не пути, а описание множества, их нечем проверить.
+fn doc_paths(text: &str) -> Vec<&str> {
+    let mut found = Vec::new();
+    for (open, close) in [("`", '`'), ("](", ')')] {
+        let mut rest = text;
+        while let Some(start) = rest.find(open) {
+            let after = &rest[start + open.len()..];
+            let Some(end) = after.find(close) else { break };
+            let raw = &after[..end];
+            rest = &after[end + close.len_utf8()..];
+            if !DOC_PATH_ROOTS.iter().any(|root| raw.starts_with(root)) {
+                continue;
+            }
+            let path = raw
+                .split([':', '#', ',', ' ', '`'])
+                .next()
+                .unwrap_or_default()
+                .trim_end_matches(['/', '.', ')']);
+            if !path.contains(['<', '>', '*', '{', '}']) {
+                found.push(path);
+            }
+        }
+    }
+    found
+}
+
+/// Каждый путь проекта, который называют `.md` и исходники (`.rs`, `.toml`),
+/// в сгенерированном проекте существует.
+///
+/// Ссылки рвутся тихо: файл переехал (раздел в другой модуль доков) или
+/// генерация убрала его вместе с невыбранной частью, а текст остался. Ни линт,
+/// ни сборка этого не видят — видит пользователь, который пошёл по ссылке.
+fn check_doc_paths(project: &Path, log: &File) -> anyhow::Result<()> {
+    let mut missing = Vec::new();
+    visit_files(project, &mut |path| {
+        let is_text = path
+            .extension()
+            .is_some_and(|ext| ext == "md" || ext == "rs" || ext == "toml");
+        if !is_text {
+            return Ok(());
+        }
+        let text =
+            fs::read_to_string(path).with_context(|| format!("прочитать {}", path.display()))?;
+        let relative = path.strip_prefix(project).unwrap_or(path);
+        for named in doc_paths(&text) {
+            if !DOC_PATHS_BUILT_LATER.contains(&named) && !project.join(named).exists() {
+                missing.push(format!("{}: {named}", relative.display()));
+            }
+        }
+        Ok(())
+    })?;
+    if !missing.is_empty() {
+        missing.sort();
+        missing.dedup();
+        bail!(
+            "доки и комментарии называют пути, которых в проекте нет:\n  {}",
+            missing.join("\n  "),
+        );
+    }
+    note(log, "пути в доках: все на месте")
 }
 
 fn visit_files(
@@ -1662,8 +1739,27 @@ fn git_files(repo_root: &Path, filter: &[&str]) -> anyhow::Result<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        Case, ChipChecks, lanes, parse_ram_estimate, parse_static_ram, without_actions_expressions,
+        Case, ChipChecks, doc_paths, lanes, parse_ram_estimate, parse_static_ram,
+        without_actions_expressions,
     };
+
+    /// Путь — из обратных кавычек и цели ссылки, без строки, якоря и точки;
+    /// имя типа и шаблон пути — не путь.
+    #[test]
+    fn doc_paths_are_named_paths_only() {
+        let text = "см. `docs/flash.md`, `crates-cross/app/src/main.rs:42` и \
+                    [ота](docs/ota.md#откат); `bsp::Board`, `crates-cross/app/src/link/<вид>.rs`, \
+                    `docs/modules/`.";
+        assert_eq!(
+            doc_paths(text),
+            [
+                "docs/flash.md",
+                "crates-cross/app/src/main.rs",
+                "docs/modules",
+                "docs/ota.md"
+            ]
+        );
+    }
 
     /// Чип целиком в одной полосе, крупные группы разнесены по разным.
     #[test]
