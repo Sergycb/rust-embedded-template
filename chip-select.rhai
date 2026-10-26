@@ -910,7 +910,7 @@ const RAM_COST = #{
     // modbus-tcp-udp 14296 — на 960 меньше, чем TCP и UDP по отдельности.
     net_stack: 960,
     // Сетевые службы (`NET_SERVICE_ITEMS`), с графом. REST — stm32h743zg
-    // rest-modbus-tcp 35828 при оценке без REST 9680 (буферы двух соединений,
+    // rest-modbus-tcp 35844 при оценке без REST 9680 (буферы двух соединений,
     // сокеты, futures `picoserve`; ответ `/api/info` с причиной сброса и
     // паникой — `INFO_MAX` 499 — прибавил 4800 к прежним 31028); SSH — stm32h743zg ssh-password-config 20100
     // против tcp config=yes 3380 (буферы, ключи, futures `sunset`, статик RNG
@@ -921,7 +921,7 @@ const RAM_COST = #{
     // (буферы `minimq` и сокета, сокет, future узла) — 6756, но
     // rest-ssh-mqtt (ext_flash=yes) 56148 на 676 больше оценки с прежними 6800:
     // взят с этим запасом и округлён вверх до 7500.
-    services: #{ ssh: 17020, rest: 26148, mqtt: 7500 },
+    services: #{ ssh: 17020, rest: 26164, mqtt: 7500 },
 };
 // Сверх статической RAM — под стек: он в `.data`/`.bss` не входит (flip-link
 // кладёт его под ними). Не замерен — без платы глубину стека не снять, — а

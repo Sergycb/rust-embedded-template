@@ -71,13 +71,16 @@ pub struct DeviceInfo {
 /// `dhcp.rs:12:5:\nmessage` — срез исходной строки, поэтому место и текст
 /// разделяет её же перевод строки. Текст обрезается на первом управляющем
 /// символе, а не только на `\n`: в JSON каждый такой символ стоит шести байт.
+/// Так же и место: управляющий символ в нём (сообщение не в формате
+/// паникёра) кончает строку, текст тогда не берётся.
 #[must_use]
 pub fn panic_brief(m: &str, max: usize) -> &str {
     let m = m.strip_prefix("panicked at ").unwrap_or(m);
     let (location, text) = m.split_once('\n').unwrap_or((m, ""));
-    let start = location.rfind(['/', '\\']).map_or(0, |i| i + 1);
-    let end = if m.len() == location.len() {
-        m.len()
+    let clean = location.find(char::is_control).unwrap_or(location.len());
+    let start = location[..clean].rfind(['/', '\\']).map_or(0, |i| i + 1);
+    let end = if clean < location.len() || m.len() == location.len() {
+        clean
     } else {
         location.len() + 1 + text.find(char::is_control).unwrap_or(text.len())
     };
@@ -251,6 +254,13 @@ mod tests {
             panic_brief("x.rs:1:1:\nab\tcd", PANIC_BRIEF),
             "x.rs:1:1:\nab"
         );
+        // И в месте, если перевода строки нет: каталог до символа отрезан,
+        // за ним — ничего.
+        assert_eq!(
+            panic_brief("a/x.rs:1:1: ab\tcd", PANIC_BRIEF),
+            "x.rs:1:1: ab"
+        );
+        assert_eq!(panic_brief("a\tb/x.rs\n", PANIC_BRIEF), "a");
         assert_eq!(panic_brief("", PANIC_BRIEF), "");
         assert_eq!(panic_brief("panicked at ", PANIC_BRIEF), "");
     }

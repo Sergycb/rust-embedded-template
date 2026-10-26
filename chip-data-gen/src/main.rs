@@ -4442,8 +4442,6 @@ pub static METADATA: Metadata = Metadata {
         assert_eq!(strip_liquid(manifest), "a = 1\n\n\nb = 2\n");
     }
 
-    /// Незакрытый тег оставляется как есть — падать должен `cargo metadata`
-    /// с понятной ошибкой, а не разбор здесь с невнятной.
     /// Из `if`/`else` остаётся ветка `else` — со своими вложенными условиями,
     /// выброшенными так же; `else` вложенного блока ветку не делит.
     #[test]
@@ -4453,6 +4451,8 @@ pub static METADATA: Metadata = Metadata {
         assert_eq!(strip_liquid(text), "a\n\ne\n\ng\n");
     }
 
+    /// Незакрытый тег оставляется как есть — падать должен `cargo metadata`
+    /// с понятной ошибкой, а не разбор здесь с невнятной.
     #[test]
     fn an_unclosed_tag_is_left_alone() {
         let manifest = "a = 1\n{% if x %}\nb = 2\n";

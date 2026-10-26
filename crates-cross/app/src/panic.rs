@@ -9,6 +9,13 @@
 #[cfg(debug_assertions)]
 use panic_probe as _;
 
+use core::cell::Cell;
+
+use cortex_m::interrupt::Mutex;
+
+/// Сообщение паники прошлого запуска: пишет [`take`], читает [`last`].
+static LAST: Mutex<Cell<Option<&'static str>>> = Mutex::new(Cell::new(None));
+
 /// Пишет панику в переживающий сброс регион `PANIC` и в RTT, затем сбрасывает МК.
 ///
 /// Сначала дамп, потом лог: дамп — то, ради чего обработчик существует, и
@@ -34,34 +41,28 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
     bsp::reset::Reboot.reboot()
 }
 
-/// Сообщение паники прошлого запуска, если она была; в dev — всегда `None`.
+/// Читает сообщение паники прошлого запуска и запоминает его для [`last`];
+/// зовёт один раз `main`, до `Board::new`. В dev — всегда `None`.
 ///
-/// `panic-persist` при чтении стирает свою магию, и второй вызов
-/// `get_panic_message_utf8` вернул бы `None`. Поэтому первое чтение
-/// запоминается: `main` печатает сообщение до `Board::new`, а сведения об
-/// устройстве берут его позже отсюда же. Строка живёт в регионе `PANIC`,
+/// Один раз: `panic-persist` при чтении стирает свою магию, и второй вызов
+/// `get_panic_message_utf8` вернул бы `None`. Строка живёт в регионе `PANIC`,
 /// который до следующей паники никто не пишет, — отсюда `'static`.
+pub fn take() -> Option<&'static str> {
+    // Паникёр dev-сборки — `panic-probe`: дамп никто не пишет, читать нечего.
+    let last = if cfg!(debug_assertions) {
+        None
+    } else {
+        panic_persist::get_panic_message_utf8()
+    };
+    cortex_m::interrupt::free(|cs| LAST.borrow(cs).set(last));
+    last
+}
+{%- if has_protobuf == "true" or net_services != "" %}
+
+/// Сообщение, которое прочитал [`take`], — для сведений об устройстве; до
+/// него — `None`.
 #[must_use]
 pub fn last() -> Option<&'static str> {
-    use core::cell::Cell;
-    use cortex_m::interrupt::Mutex;
-
-    #[expect(
-        clippy::option_option,
-        reason = "внешний `Option` — «уже читали», внутренний — была ли паника"
-    )]
-    static LAST: Mutex<Cell<Option<Option<&'static str>>>> = Mutex::new(Cell::new(None));
-
-    // Паникёр dev-сборки — `panic-probe`: дамп никто не пишет, читать нечего.
-    if cfg!(debug_assertions) {
-        return None;
-    }
-    cortex_m::interrupt::free(|cs| {
-        let cell = LAST.borrow(cs);
-        let last = cell
-            .get()
-            .unwrap_or_else(panic_persist::get_panic_message_utf8);
-        cell.set(Some(last));
-        last
-    })
+    cortex_m::interrupt::free(|cs| LAST.borrow(cs).get())
 }
+{%- endif %}

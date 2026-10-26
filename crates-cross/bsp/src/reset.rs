@@ -52,6 +52,25 @@ pub(crate) fn take_cause() -> ports::ResetCause {
     let rcc = embassy_stm32::pac::RCC;
     let flags = rcc.{{ reset_reg }}().read();
     rcc.{{ reset_reg }}().modify(|w| w.set_rmvf(true));
+{%- if watchdog_peripheral == "IWDG2" %}
+    // Прошивка второго ядра (CM4) двухъядерного H7: его сброс отмечают
+    // свои флаги (RM0399, `RCC_RSR`: `LPWR2RSTF` 31, `WWDG2RSTF` 29,
+    // `IWDG2RSTF` 27, `SFT2RSTF` 25), а без них сторож и `sys_reset` этого
+    // ядра читались бы как вывод. У `stm32-metapac` полей для них нет —
+    // сырые биты; проверяются первыми, раз ядро — своё.
+    let core2 = [
+        (31, ports::ResetCause::LowPower),
+        (29, ports::ResetCause::WindowWatchdog),
+        (27, ports::ResetCause::IndependentWatchdog),
+        (25, ports::ResetCause::Software),
+    ];
+    if let Some((_, cause)) = core2
+        .into_iter()
+        .find(|&(bit, _)| flags.0 & (1 << bit) != 0)
+    {
+        return cause;
+    }
+{%- endif %}
 {%- assign pairs = reset_flags | split: " " %}
 {%- for pair in pairs %}
 {%- assign p = pair | split: ":" %}
