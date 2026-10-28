@@ -31,7 +31,7 @@ pub mod {{ f[4] }} {
 {%- endif %}
 
     #[embassy_executor::task]
-    async fn task(mut bus: Bus, store: StoreSource) {
+    async fn task(mut bus: Bus, store: StoreSource, mut serial: u32) {
         // Хранилище — над рычагом платы.
         let mut store = <Store as domain::Assemble>::assemble(store, ());
         let mut node_id = 1;
@@ -43,6 +43,7 @@ pub mod {{ f[4] }} {
             dictionary: &mut dictionary,
             settings: &mut store,
             persist: &mut persist,
+            serial: &mut serial,
 {%- if ota == "true" %}
             ota_client: &mut domain::ota::ClientId({{ client }}),
             // Ребро этой шины к входу `ASK` узла OTA (`crate::tasks::ota`).
@@ -56,9 +57,9 @@ pub mod {{ f[4] }} {
         .await;
     }
 
-    /// Спавнит узел.
-    pub fn spawn(spawner: Spawner, bus: Bus, store: StoreSource) {
-        let token = task(bus, store);
+    /// Спавнит узел; `serial` — серийный номер идентичности (0x1018:04).
+    pub fn spawn(spawner: Spawner, bus: Bus, store: StoreSource, serial: u32) {
+        let token = task(bus, store, serial);
         spawner.spawn(token.expect("задача CANOPEN_{{ f[4] | upcase }} свежая: спавнится один раз"));
     }
 }

@@ -1,5 +1,12 @@
 //! Тесты узла `CANOPEN`: гоняют узел на словаре примера `crates-host/canopen`.
 
+// `ctx(..)` стенда (`supervisor::stand!`) берёт по аргументу на ресурс узла —
+// их восемь с OTA; `allow`, а не `expect`: без OTA их семь, и линт молчит.
+#![allow(
+    clippy::too_many_arguments,
+    reason = "ctx(..) стенда: аргумент на каждый ресурс узла CANOPEN"
+)]
+
 use core::cell::RefCell;
 use core::future::poll_fn;
 use core::pin::pin;
@@ -15,6 +22,9 @@ use super::{NODE_ID_KEY, task};
 
 /// Адрес узла в тестах: SDO-запросы — на `0x605`, ответы — с `0x585`.
 const NODE: u8 = 5;
+
+/// Серийный номер узла в тестах — то, что отдаёт `0x1018:04`.
+const SERIAL: u32 = 0x1234_5678;
 
 /// SDO-запись `save` (`0x73 0x61 0x76 0x65`) в `0x1010:01`.
 const SAVE: [u8; 8] = [0x23, 0x10, 0x10, 0x01, 0x73, 0x61, 0x76, 0x65];
@@ -172,6 +182,7 @@ fn serve_persist(bus: &mut Bus, settings: &mut Memory, mut persist: bool) {
     while canopen::NODE_MBOX.next_transmit_message().is_some() {}
     let mut dictionary = super::dictionary();
     let mut node_id = NODE;
+    let mut serial = SERIAL;
     // {%- if ota == "true" %}
     let mut ota_client = crate::ota::ClientId(0);
     // {%- endif %}
@@ -182,6 +193,7 @@ fn serve_persist(bus: &mut Bus, settings: &mut Memory, mut persist: bool) {
         &mut dictionary,
         settings,
         &mut persist,
+        &mut serial,
         // {%- if ota == "true" %}
         &mut ota_client,
         // {%- endif %}
@@ -211,6 +223,7 @@ fn an_ota_command_over_sdo_does_not_stop_the_node() {
     {
         let mut dictionary = super::dictionary();
         let (mut node_id, mut settings, mut persist) = (NODE, Memory::default(), false);
+        let mut serial = SERIAL;
         let mut ota_client = crate::ota::ClientId(0);
         let stand = supervisor::stand!(CANOPEN_FRAG<Bus, Memory>);
         let mut ota_node =
@@ -221,6 +234,7 @@ fn an_ota_command_over_sdo_does_not_stop_the_node() {
             &mut dictionary,
             &mut settings,
             &mut persist,
+            &mut serial,
             &mut ota_client,
         );
         let mut node = pin!(task(ctx));
@@ -294,6 +308,22 @@ fn boots_up_and_answers_an_sdo_upload() {
         .expect("ответ SDO");
     // Ответ expedited на 4 байта: cs 0x43, тот же индекс, vendor id = 0.
     assert_eq!(reply.data, [0x43, 0x18, 0x10, 0x01, 0, 0, 0, 0]);
+}
+
+/// Серийный номер из входа узла — в объекте идентичности: хост читает его
+/// по SDO из `0x1018:04`.
+#[test]
+fn the_serial_reaches_the_identity_object() {
+    let mut bus = Bus::with([Ok(frame(0x605, &[0x40, 0x18, 0x10, 0x04, 0, 0, 0, 0]))]);
+    serve(&mut bus);
+    let reply = bus
+        .sent
+        .iter()
+        .find(|f| f.id == Id::Standard(StandardId::new(0x585).unwrap()))
+        .expect("ответ SDO");
+    let mut expected = vec![0x43, 0x18, 0x10, 0x04];
+    expected.extend_from_slice(&SERIAL.to_le_bytes());
+    assert_eq!(reply.data, expected[..]);
 }
 
 /// Запись по SDO доходит до объекта словаря — того, что читает логика
@@ -481,4 +511,11 @@ fn a_bus_failure_does_not_stop_the_node() {
         "ответ SDO после отказа: {:?}",
         bus.sent
     );
+}
+
+/// Серийный номер — XOR трёх слов заводского номера (little-endian).
+#[test]
+fn the_serial_folds_the_three_uid_words() {
+    let uid = [1, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0x80];
+    assert_eq!(super::serial(uid), 0x8000_0003);
 }

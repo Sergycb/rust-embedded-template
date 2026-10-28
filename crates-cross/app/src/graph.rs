@@ -172,6 +172,7 @@ supervisor_graph! {
                             ::domain::ota::ClientId({{ client }}),
                         ),
                     ),
+                    crate::build::PKG_VERSION,
                 ),
             },
 {%- else %}
@@ -179,7 +180,7 @@ supervisor_graph! {
             ::domain::server::ServerWiring {
                 source: {% if f[0] == "uart" %}board.{{ f[4] }}{% elsif f[0] == "usb" %}board.{{ f[4] }}.cdc{% else %}board.net.stack{% endif %},
                 buffers: {{ lm }}::buffers(),
-                handler: ::domain::modbus::Slave::new(1, crate::modbus::handle()),
+                handler: ::domain::modbus::Slave::new(1, crate::modbus::handle(), crate::build::PKG_VERSION),
             },
 {%- endif %}
 {%- elsif f[3] == "canopen" %}
@@ -197,6 +198,8 @@ supervisor_graph! {
                 dictionary: ::domain::canopen::dictionary(),
                 settings: {% if config == "true" %}board.config{% else %}(){% endif %},
                 persist: {{config}},
+                // Серийный номер идентичности (0x1018:04) — из заводского номера чипа.
+                serial: ::domain::canopen::serial(board.spec.uid),
 {%- if ota == "true" %}
                 // Команды объекта OTA словаря (0x4F00) узел шлёт на вход `ASK`
                 // узла `OTA` (ребро `asks:` фрагмента) с номером этого транспорта.

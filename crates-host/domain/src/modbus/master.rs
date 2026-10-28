@@ -372,7 +372,7 @@ mod tests {
         let mut frame = [0; MAX_PDU + 1];
         frame[0] = *unit;
         frame[1..=request.len()].copy_from_slice(request);
-        let mut slave = Slave::new(1, core::mem::take(map));
+        let mut slave = Slave::new(1, core::mem::take(map), "1.2.3");
         let len = slave
             .handle(&mut frame, 1 + request.len())
             .await

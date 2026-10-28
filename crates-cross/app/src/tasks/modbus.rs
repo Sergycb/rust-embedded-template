@@ -36,7 +36,7 @@ pub mod {{ f[4] }} {
         domain::server::serve::<Link, _>(domain::server::ServerWiring {
             source,
             buffers: buffers(),
-            handler: domain::modbus::Slave::new(1, regs),
+            handler: domain::modbus::Slave::new(1, regs, crate::build::PKG_VERSION),
         })
         .await;
     }
