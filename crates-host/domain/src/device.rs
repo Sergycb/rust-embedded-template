@@ -12,8 +12,6 @@
 //! `MQTT`.
 // {%- endif %}
 
-pub use ports::ResetCause;
-
 /// Байт в заводском номере чипа STM32 (96 бит).
 pub const UID_BYTES: usize = 12;
 
@@ -57,8 +55,9 @@ pub struct DeviceInfo {
     pub flash_size: u32,
     /// Частота ядра, Гц; `None` — неизвестна.
     pub sys_hz: Option<u32>,
-    /// Причина последнего сброса.
-    pub reset: ResetCause,
+    /// Причина последнего сброса в `snake_case` (`pin`, `software`,
+    /// `independent_watchdog`…) — как её называет `bsp::reset::take_cause`.
+    pub reset: &'static str,
     /// Прошлая паника, сжатая [`panic_brief`] до [`PANIC_BRIEF`] байт;
     /// `None` — её не было или сборка отладочная (там дамп никто не пишет).
     pub last_panic: Option<&'static str>,
@@ -148,11 +147,7 @@ pub fn write_info(
         Some(ip) => write!(out, r#""{ip}""#)?,
         None => out.write_str("null")?,
     }
-    write!(
-        out,
-        r#","uptime_s":{uptime_s},"reset":"{}","#,
-        info.reset.as_str()
-    )?;
+    write!(out, r#","uptime_s":{uptime_s},"reset":"{}","#, info.reset)?;
     out.write_str(r#""last_panic":"#)?;
     match info.last_panic {
         Some(m) => write_json_string(out, m)?,
@@ -176,7 +171,7 @@ mod tests {
             uid: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 0xff],
             flash_size: 512 * 1024,
             sys_hz: Some(168_000_000),
-            reset: ResetCause::Pin,
+            reset: "pin",
             last_panic: None,
         };
         let mut out = String::new();
@@ -198,7 +193,7 @@ mod tests {
         assert!(out.contains(r#""ip":null"#), "{out}");
         out.clear();
         let info = DeviceInfo {
-            reset: ResetCause::Software,
+            reset: "software",
             last_panic: Some("main.rs:7:1:\nboom \"x\""),
             ..info
         };
@@ -225,7 +220,7 @@ mod tests {
             uid: [0xff; UID_BYTES],
             flash_size: u32::MAX,
             sys_hz: None,
-            reset: ResetCause::IndependentWatchdog,
+            reset: "independent_watchdog",
             last_panic: Some(String::leak(brief.to_owned())),
         };
         let mut out = String::new();

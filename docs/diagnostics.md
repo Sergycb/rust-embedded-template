@@ -46,8 +46,8 @@ release-приложение успело стартовать, дамп уже 
 
 ## Причина сброса
 
-`Board::new` читает флаги сброса `RCC` (`bsp::reset::take_cause`) и снимает их битом
-`RMVF` — один раз за запуск и больше нигде{% if ota == "true" %}: bootloader флаги не трогает, и до
+`main` приложения первым делом, до `Board::new`, читает флаги сброса `RCC`
+(`bsp::reset::take_cause`) и снимает их битом `RMVF` — один раз за запуск и больше нигде{% if ota == "true" %}: bootloader флаги не трогает, и до
 приложения они доходят как есть{% endif %}. Регистр и поля у семейств свои (`CSR`, `CSR2` у C0,
 `RSR` у H5/H7; `WDGRSTF`/`PADRSTF` у F2/F4/F7, `IWDG1RSTF` у H7, `PWRRSTF` у G0/U0/C0) —
 их выписывает генерация из `stm32-metapac`.{% if watchdog_peripheral == "IWDG2" %} У ядра CM4 двухъядерного H7 свои флаги
@@ -55,8 +55,9 @@ release-приложение успело стартовать, дамп уже 
 `take_cause` читает их сырыми битами — первыми.{% endif %} Флагов бывает несколько сразу (любой
 внутренний сброс ставит и флаг вывода `NRST`), поэтому причина — самая конкретная:
 выход из low-power, оконный сторож, независимый сторож, программный сброс, option
-bytes, питание, вывод; ни одного — `unknown`. Тип — `ports::ResetCause`
-(`domain::device::ResetCause`), он в `bsp::ChipSpec` и в строке старта `app: …`.
+bytes, питание, вывод; ни одного — `unknown`. Причина — строка в `snake_case`
+(`low_power`, `window_watchdog`, `independent_watchdog`, `software`, `option_bytes`,
+`power_on`, `pin`, `unknown`), её печатает строка старта `app: причина сброса …`.
 {%- if has_protobuf == "true" or net_services != "" %}
 
 Обе вещи уходят наружу в сведениях об устройстве (`domain::device::DeviceInfo`:

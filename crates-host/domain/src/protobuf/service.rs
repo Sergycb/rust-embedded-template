@@ -86,6 +86,10 @@ impl Service {
             info.chip.len() <= proto::CHIP_BYTES,
             "имя чипа не помещается в Info.chip"
         );
+        assert!(
+            info.reset.len() <= proto::RESET_BYTES,
+            "причина сброса не помещается в Info.reset"
+        );
         if let Some(panic) = info.last_panic {
             assert!(
                 panic.len() <= proto::PANIC_BYTES,
@@ -109,7 +113,7 @@ impl Service {
             // Секунды в `u32` — 136 лет; 64-битные поля `micropb` кодирует
             // только с фичей `enable-64bit`.
             uptime_s: u32::try_from(Instant::now().as_secs()).unwrap_or(u32::MAX),
-            reset: text(info.reset.as_str()),
+            reset: text(info.reset),
             last_panic: text(info.last_panic.unwrap_or("")),
         }
     }
@@ -248,7 +252,7 @@ pub(crate) mod tests {
         uid: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
         flash_size: 512 * 1024,
         sys_hz: None,
-        reset: crate::device::ResetCause::Pin,
+        reset: "pin",
         last_panic: None,
     };
 
@@ -276,37 +280,11 @@ pub(crate) mod tests {
         assert_eq!(info.last_panic, "main.rs:7:1:\nboom");
     }
 
-    /// Имя любой причины сброса помещается в `Info.reset`: не поместилось бы —
-    /// ушла бы пустая строка.
     #[test]
-    fn every_reset_cause_fits_its_field() {
-        use crate::device::ResetCause;
-        // Место варианта в списке — `match` без `_`: новый вариант не
-        // скомпилируется, пока ему не дадут место, а список сверяется с ним.
-        let place = |cause: ResetCause| match cause {
-            ResetCause::LowPower => 0,
-            ResetCause::WindowWatchdog => 1,
-            ResetCause::IndependentWatchdog => 2,
-            ResetCause::Software => 3,
-            ResetCause::OptionBytes => 4,
-            ResetCause::PowerOn => 5,
-            ResetCause::Pin => 6,
-            ResetCause::Unknown => 7,
-        };
-        let all = [
-            ResetCause::LowPower,
-            ResetCause::WindowWatchdog,
-            ResetCause::IndependentWatchdog,
-            ResetCause::Software,
-            ResetCause::OptionBytes,
-            ResetCause::PowerOn,
-            ResetCause::Pin,
-            ResetCause::Unknown,
-        ];
-        for (i, cause) in all.into_iter().enumerate() {
-            assert_eq!(place(cause), i, "{cause:?} не на своём месте в списке");
-            assert!(cause.as_str().len() <= proto::RESET_BYTES, "{cause:?}");
-        }
+    #[should_panic(expected = "не помещается")]
+    fn a_reset_cause_over_the_limit_is_refused() {
+        let reset: &'static str = "r".repeat(proto::RESET_BYTES + 1).leak();
+        let _service = service(DeviceInfo { reset, ..INFO });
     }
 
     #[test]

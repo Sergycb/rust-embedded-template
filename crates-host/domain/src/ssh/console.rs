@@ -220,7 +220,7 @@ pub(super) fn write_info(
         None => out.write_str("\nip none\n")?,
     }
     writeln!(out, "uptime {uptime_s} s")?;
-    writeln!(out, "reset {}", info.reset.as_str())?;
+    writeln!(out, "reset {}", info.reset)?;
     // Место и текст паники разделяет её же перевод строки, а консоль держит
     // «ключ значение» по строке: текст идёт через пробел, а не второй строкой
     // без ключа.

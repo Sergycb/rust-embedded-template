@@ -21,7 +21,8 @@ const LIMITS: &[(&str, &str, u32)] = &[
     ("COMMIT_BYTES", ".host.Info.commit", 16),
     ("CHIP_BYTES", ".host.Info.chip", 24),
     ("UID_BYTES", ".host.Info.uid", 12),
-    // Самое длинное имя `ports::ResetCause` — `independent_watchdog`, 20.
+    // Самое длинное имя причины сброса (`bsp::reset::take_cause`) —
+    // `independent_watchdog`, 20.
     ("RESET_BYTES", ".host.Info.reset", 24),
     // `domain::device::PANIC_BRIEF`.
     ("PANIC_BYTES", ".host.Info.last_panic", 96),
