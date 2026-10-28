@@ -51,9 +51,14 @@ static EXECUTOR: StaticCell<Executor> = StaticCell::new();
 
 {%- if has_protobuf == "true" or net_services != "" %}
 
+/// Причина сброса этого запуска (`bsp::reset::take_cause`): пишет `main` до
+/// `Board::new`, читает [`device_info`].
+static RESET: cortex_m::interrupt::Mutex<core::cell::Cell<&'static str>> =
+    cortex_m::interrupt::Mutex::new(core::cell::Cell::new("unknown"));
+
 /// Сведения об устройстве для ответа хосту на `info`{% if net_services contains "rest" %} и REST `/api/info`{% endif %}{% if net_services contains "mqtt" %} и темы MQTT `info`{% endif %}: версия и
 /// коммит — из `shadow-rs` (те же, что в баннере старта), прошлая паника —
-/// из `panic::last`, остальное — с платы.
+/// из `panic::last`, причина сброса — из [`RESET`], остальное — с платы.
 fn device_info(spec: bsp::ChipSpec) -> domain::device::DeviceInfo {
     domain::device::DeviceInfo {
         version: build::PKG_VERSION,
@@ -62,7 +67,7 @@ fn device_info(spec: bsp::ChipSpec) -> domain::device::DeviceInfo {
         uid: spec.uid,
         flash_size: spec.flash_size,
         sys_hz: spec.sys_hz,
-        reset: spec.reset,
+        reset: cortex_m::interrupt::free(|cs| RESET.borrow(cs).get()),
         last_panic: panic::last()
             .map(|m| domain::device::panic_brief(m, domain::device::PANIC_BRIEF)),
     }
@@ -85,6 +90,17 @@ fn main() -> ! {
         build::PKG_VERSION,
         build::SHORT_COMMIT,
     );
+
+    // Причина сброса — до `Board::new` и до всего, что может повиснуть или
+    // упасть: чтение снимает флаги `RCC` (`bsp::reset::take_cause`), а не
+    // снятые они копились бы от сброса к сбросу — после цикла сбросов по
+    // сторожу и кнопки плата назвала бы причиной сторож. Сброс из `ensure_*`
+    // в `Board::new` ставит свой флаг заново — его прочитает следующий старт.
+    let reset = bsp::reset::take_cause();
+    info!("app: причина сброса {}", reset);
+{%- if has_protobuf == "true" or net_services != "" %}
+    cortex_m::interrupt::free(|cs| RESET.borrow(cs).set(reset));
+{%- endif %}
 
     // Причина прошлого падения, если оно было: паникёр release-профиля успел
     // записать её в регион PANIC, а тот пережил сброс (RAM, но вне секций,

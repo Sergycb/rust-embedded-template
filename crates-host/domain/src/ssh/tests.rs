@@ -90,7 +90,7 @@ fn info_fits_the_reply_buffer() {
         uid: [0xff; crate::device::UID_BYTES],
         flash_size: u32::MAX,
         sys_hz: Some(u32::MAX),
-        reset: crate::device::ResetCause::IndependentWatchdog,
+        reset: "independent_watchdog",
         last_panic: Some(String::leak("ж".repeat(PANIC_BRIEF / 2))),
     };
     let mut out = heapless::String::<INFO_TEXT>::new();
@@ -119,7 +119,7 @@ fn the_panic_stays_on_its_line() {
         uid: [0; crate::device::UID_BYTES],
         flash_size: 0,
         sys_hz: None,
-        reset: crate::device::ResetCause::Software,
+        reset: "software",
         last_panic: Some("dhcp.rs:12:5:\nlease lost"),
     };
     let mut out = heapless::String::<INFO_TEXT>::new();
