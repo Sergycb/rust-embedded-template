@@ -70,7 +70,7 @@ use crate::canopen::frame::{fix_save_signature, is_heartbeat, to_frame, to_messa
 
 pub use persisted::{NODE_ID_KEY, OBJECTS_KEY, Persisted, STORE_CAPACITY};
 pub use stack::{Stack, TICK};
-pub use wiring::{CanOpenWiring, Dictionary, dictionary};
+pub use wiring::{CanOpenWiring, Dictionary, dictionary, serial};
 // {%- if ota == "true" %}
 pub use ota::{OTA, OTA_INDEX, OtaObject};
 // {%- endif %}
@@ -98,6 +98,8 @@ supervisor::supervisor_fragment! {
             SETTINGS: local S = <S as $crate::Assemble>::assemble(inputs.settings, ()),
             /// Сохранять ли объекты и адрес: `false` — хранилища у проекта нет.
             PERSIST: bool = inputs.persist,
+            /// Серийный номер объекта идентичности (0x1018:04).
+            SERIAL: u32 = inputs.serial,
             // {%- if ota == "true" %}
             /// Номер клиента узла OTA — транспорта.
             OTA_CLIENT: $crate::ota::ClientId = inputs.ota_client
@@ -171,6 +173,9 @@ where
         d.ota.register_handler(&OTA);
         OTA.reset();
         // {%- endif %}
+        // Серийный номер — до `Node::new`: стек и LSS читают идентичность из
+        // словаря уже при старте.
+        d.identity.set_serial(*self.serial);
         let node_id = self.restore(persisted).await;
         info!("domain: узел CANOPEN запущен, адрес {}", node_id.raw());
         // `Node::new` сам зовёт `reset_app` — тот восстанавливает объекты из

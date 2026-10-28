@@ -8,8 +8,12 @@
 # Формат — `zencan_common::device_config` (документация `zencan-build`).
 
 device_name = "Template node"
+# Ревизия платы (0x1009) — её знает только проект.
 hardware_version = "v1"
-software_version = "v1"
+# Версия ПО (0x100A) подставляется при сборке из `version` прошивки
+# (crates-cross/Cargo.toml) — `build.rs`; значение здесь — на случай сборки
+# крейта отдельно от проекта.
+software_version = "0.0.0"
 
 [identity]
 vendor_id = 0

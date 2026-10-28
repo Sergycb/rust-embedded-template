@@ -29,7 +29,7 @@ use super::{ServerCtx, task};
 ///                 as MODBUS_<ТРАНСПОРТ> = ::domain::server::ServerWiring {
 ///                     source: board.<транспорт>,
 ///                     buffers: crate::link::<вид>::<транспорт>::buffers(),
-///                     handler: ::domain::modbus::Slave::new(1, crate::modbus::handle()),
+///                     handler: ::domain::modbus::Slave::new(1, crate::modbus::handle(), crate::build::PKG_VERSION),
 ///                 }];
 /// ```
 // {%- else %}

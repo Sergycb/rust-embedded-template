@@ -44,6 +44,9 @@ pub mod master;
 /// Slave: обработчик кадра, запросы — порту [`ports::Registers`].
 mod slave;
 
+/// Идентификация устройства (FC43): производитель, модель, прошивка.
+mod identity;
+
 /// Карта регистров по умолчанию — пустая, место под карту устройства.
 mod registers;
 
@@ -55,6 +58,7 @@ mod shared;
 mod ota;
 // {%- endif %}
 
+pub use identity::{PRODUCT, VENDOR};
 pub use registers::EmptyRegisters;
 pub use shared::{MapMutex, SharedRegisters};
 pub use slave::Slave;

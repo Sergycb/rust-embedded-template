@@ -10,6 +10,8 @@ use rusty_modbus_codec::validate::{
 use rusty_modbus_codec::{RequestPdu, decode_request};
 use rusty_modbus_types::ExceptionCode;
 
+use crate::modbus::identity;
+
 /// Ответ на запись — первые пять байт запроса: функция, адрес и значение
 /// (FC05/06) или количество (FC15/16).
 const ECHO: usize = 5;
@@ -27,24 +29,34 @@ const ECHO: usize = 5;
 /// байт не сходится, coil не 0x0000/0xFF00 — получает исключение до вызова
 /// `regs`, неизвестная функция — Illegal Function. Битые кадры отбрасывает
 /// канал.
+///
+/// На FC43/14 (Read Device Identification) отвечает сам, без `regs`:
+/// производитель и модель — константы [`VENDOR`](crate::modbus::VENDOR) и
+/// [`PRODUCT`](crate::modbus::PRODUCT), ревизия — `revision`.
 #[derive(Debug)]
 pub struct Slave<R> {
     unit: u8,
     regs: R,
+    revision: &'static str,
 }
 
 impl<R> Slave<R> {
-    /// Slave с адресом `unit` над данными `regs`.
+    /// Slave с адресом `unit` над данными `regs`; `revision` — версия
+    /// прошивки для FC43 (её знает `app`, `build::PKG_VERSION`).
     ///
     /// # Panics
     ///
     /// Если `unit` не 1..=247 — адреса slave'а по спецификации.
-    pub fn new(unit: u8, regs: R) -> Self {
+    pub fn new(unit: u8, regs: R, revision: &'static str) -> Self {
         assert!(
             (1..=247).contains(&unit),
             "адрес slave'а {unit} вне 1..=247"
         );
-        Self { unit, regs }
+        Self {
+            unit,
+            regs,
+            revision,
+        }
     }
 
     /// Данные обратно — тестам, которые смотрят карту после запросов.
@@ -70,7 +82,7 @@ impl<R: Registers> Handler for Slave<R> {
         let answer = to == self.unit || to == 0xFF;
         // Широковещательное чтение не выполняется вовсе: ответа на него нет, а
         // у чтения бывают побочные эффекты (сброс счётчика при чтении).
-        let broadcast_write = to == 0 && !matches!(fc, 0x01..=0x04);
+        let broadcast_write = to == 0 && !matches!(fc, 0x01..=0x04 | identity::FUNCTION);
         if !answer && !broadcast_write {
             return None;
         }
@@ -78,18 +90,23 @@ impl<R: Registers> Handler for Slave<R> {
         let mut request = [0_u8; MAX_PDU];
         let request = &mut request[..pdu.len()];
         request.copy_from_slice(pdu);
-        let reply = respond(request, &mut self.regs, &mut frame[1..]).await;
+        let reply = respond(request, &mut self.regs, self.revision, &mut frame[1..]).await;
         answer.then_some(1 + reply)
     }
 }
 
 /// Выполняет запрос `pdu` и кладёт PDU ответа в `out`; возвращает его длину.
-async fn respond<R: Registers>(pdu: &[u8], regs: &mut R, out: &mut [u8]) -> usize {
+async fn respond<R: Registers>(pdu: &[u8], regs: &mut R, revision: &str, out: &mut [u8]) -> usize {
     let fc = pdu[0];
-    let result = match decode_request(pdu) {
-        Ok(request) => execute(&request, pdu, regs, out).await,
-        Err(DecodeError::UnknownFunctionCode(_)) => Err(Exception::IllegalFunction),
-        Err(_) => Err(Exception::IllegalDataValue),
+    // Кодек FC43 не знает: идентификация отвечается до разбора.
+    let result = if fc == identity::FUNCTION {
+        identity::read_device_id(pdu, revision, out)
+    } else {
+        match decode_request(pdu) {
+            Ok(request) => execute(&request, pdu, regs, out).await,
+            Err(DecodeError::UnknownFunctionCode(_)) => Err(Exception::IllegalFunction),
+            Err(_) => Err(Exception::IllegalDataValue),
+        }
     };
     match result {
         Ok(len) => len,
@@ -208,7 +225,7 @@ mod tests {
     /// Прогоняет запросы `(адрес, PDU)` через slave с адресом 1; возвращает
     /// ответы.
     async fn run(requests: &[(u8, &[u8])], map: &mut Map) -> Vec<Vec<u8>> {
-        let mut slave = Slave::new(1, core::mem::take(map));
+        let mut slave = Slave::new(1, core::mem::take(map), "1.2.3");
         let mut replies = Vec::new();
         for &(unit, pdu) in requests {
             let mut frame = [0; MAX_PDU + 1];
@@ -263,7 +280,7 @@ mod tests {
 
     #[tokio::test]
     async fn invalid_requests_get_exceptions() {
-        let cases: [(&[u8], &[u8]); 7] = [
+        let cases: [(&[u8], &[u8]); 8] = [
             // qty=0 и qty>125 — Illegal Data Value
             (&[0x03, 0, 0, 0, 0], &[0x83, 0x03]),
             (&[0x03, 0, 0, 0, 200], &[0x83, 0x03]),
@@ -274,7 +291,9 @@ mod tests {
             // вне карты устройства — отвечает само приложение
             (&[0x03, 0, 15, 0, 2], &[0x83, 0x02]),
             // функция, которой slave не знает, — TCP и UDP доносят её
-            (&[0x2B, 0x0E, 0x01, 0x00], &[0xAB, 0x01]),
+            (&[0x41, 0x00, 0x00], &[0xC1, 0x01]),
+            // FC43 — не той категории: идентификация только базовая
+            (&[0x2B, 0x0E, 0x02, 0x00], &[0xAB, 0x03]),
             // запрос обрезан
             (&[0x03, 0, 0], &[0x83, 0x03]),
         ];
@@ -338,7 +357,7 @@ mod tests {
     /// Пустая карта шаблона на любой запрос отвечает Illegal Function.
     #[tokio::test]
     async fn the_empty_map_answers_illegal_function() {
-        let mut slave = Slave::new(1, crate::modbus::EmptyRegisters);
+        let mut slave = Slave::new(1, crate::modbus::EmptyRegisters, "1.2.3");
         let mut replies = Vec::new();
         for pdu in [
             &[0x01, 0, 0, 0, 1][..],

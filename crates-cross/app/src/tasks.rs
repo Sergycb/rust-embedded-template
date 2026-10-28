@@ -70,7 +70,12 @@ pub fn spawn_all(spawner: embassy_executor::Spawner, {% if ota == "true" or has_
     let info = crate::device_info(board.spec);
     protobuf::{{ f[4] }}::spawn(spawner, {% if f[0] == "uart" %}board.{{ f[4] }}{% elsif f[0] == "usb" %}board.{{ f[4] }}.cdc{% else %}board.net.stack{% endif %}, info);
 {%- elsif f[3] == "canopen" %}
-    canopen::{{ f[4] }}::spawn(spawner, board.{{ f[4] }}, {% if config == "true" %}board.config{% else %}(){% endif %});
+    canopen::{{ f[4] }}::spawn(
+        spawner,
+        board.{{ f[4] }},
+        {% if config == "true" %}board.config{% else %}(){% endif %},
+        domain::canopen::serial(board.spec.uid),
+    );
 {%- endif %}
 {%- endfor %}
 {%- if net_services contains "rest" %}

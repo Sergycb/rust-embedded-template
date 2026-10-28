@@ -17,6 +17,9 @@ pub struct Dictionary {
     pub state: &'static NodeState<'static>,
     /// `canopen::OD_TABLE` — словарь объектов.
     pub od: &'static [ODEntry<'static>],
+    /// `canopen::OBJECT1018` — идентичность: серийный номер узел ставит при
+    /// старте.
+    pub identity: &'static ::canopen::Object1018,
     // {%- if ota == "true" %}
     /// Место объекта OTA ([`OTA_INDEX`](super::OTA_INDEX)) в словаре —
     /// `application_callback`: обработчик [`OtaObject`](super::OtaObject) узел
@@ -35,6 +38,7 @@ pub struct Dictionary {
 ///                 = ::domain::canopen::CanOpenWiring { bus: board.can, node_id: 1,
 ///                       dictionary: ::domain::canopen::dictionary(),
 ///                       settings: board.config, persist: true,
+///                       serial: ::domain::canopen::serial(board.spec.uid),
 // {%- if ota == "true" %}
 ///                       ota_client: ::domain::ota::ClientId(0),
 // {%- endif %}
@@ -44,6 +48,7 @@ pub struct Dictionary {
 /// let inputs = ::domain::canopen::CanOpenWiring { bus: board.can, node_id: 1,
 ///     dictionary: ::domain::canopen::dictionary(),
 ///     settings: board.config, persist: true,
+///     serial: ::domain::canopen::serial(board.spec.uid),
 // {%- if ota == "true" %}
 ///     ota_client: ::domain::ota::ClientId(0),
 // {%- endif %}
@@ -65,6 +70,9 @@ pub struct CanOpenWiring<C, S: ports::Assemble> {
     pub settings: S::Source,
     /// Сохранять ли объекты и адрес: `false` — хранилища у проекта нет.
     pub persist: bool,
+    /// Серийный номер для объекта идентичности (0x1018:04) — свёртка
+    /// заводского номера чипа, [`serial`].
+    pub serial: u32,
     // {%- if ota == "true" %}
     /// Номер клиента узла OTA — транспорта: с ним команды объекта OTA
     /// словаря уходят на вход `ASK` (`asks:` фрагмента).
@@ -91,8 +99,24 @@ pub fn dictionary() -> Dictionary {
         mbox: &::canopen::NODE_MBOX,
         state: &::canopen::NODE_STATE,
         od: &::canopen::OD_TABLE,
+        identity: &::canopen::OBJECT1018,
         // {%- if ota == "true" %}
         ota: &::canopen::OBJECT4F00,
         // {%- endif %}
     }
+}
+
+/// Серийный номер для объекта идентичности (0x1018:04) — 32 бита из
+/// заводского номера чипа (`bsp::ChipSpec::uid`): XOR трёх его слов.
+///
+/// Заводской номер STM32 — 96 бит (координаты кристалла на пластине, номер
+/// пластины и партии), и единственен он только целиком. Свёртка этого не
+/// гарантирует: у двух кристаллов XOR слов может совпасть, — но на одной
+/// шине такое маловероятно.
+#[must_use]
+pub fn serial(uid: [u8; 12]) -> u32 {
+    let (words, _) = uid.as_chunks::<4>();
+    words
+        .iter()
+        .fold(0, |acc, word| acc ^ u32::from_le_bytes(*word))
 }
