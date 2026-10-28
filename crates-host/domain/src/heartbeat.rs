@@ -14,6 +14,9 @@
 
 mod timing;
 
+#[cfg(test)]
+mod tests;
+
 pub use timing::WATCHDOG;
 
 use defmt_or_log::info;
