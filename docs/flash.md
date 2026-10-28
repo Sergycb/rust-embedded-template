@@ -297,7 +297,7 @@ QSPI, где он выведен (`QUADSPI`, иначе `OCTOSPI`), иначе S
   `memory.x`, а это второй разбор раскладки ради одного числа.
 - **`[env]` — только то, что нужно компилятору**: параметр `ErasePage`,
   `const`-assert, размер пула (`STATE_ERASE_SIZE`, `SWAP_PAGE_SIZE`,
-  `EXT_PAGE_SIZE`, `NET_SOCKETS`, …). Граница раздела в `[env]` была бы вторым
+  `EXT_PAGE_SIZE`, `HTTP_CONNECTIONS`, …). Граница раздела в `[env]` была бы вторым
   экземпляром числа, который ручная правка `memory.x` молча обгоняет.
 - **Символы — в `memory.x` каждого бинарника, который их читает**: `app` и
   `target-tests` (у них одна раскладка){% if ota == "true" and ota_store == "external" %}, `boot` — символы внешней флеши

@@ -119,9 +119,8 @@ Ethernet — заменить устройство: стек, сокеты и г
 * Порты протоколов — `PORT` в {% if link_kinds contains "tcp" %}`crates-cross/app/src/link/tcp.rs`{% if link_kinds contains "udp" %} и `udp.rs`{% endif %}{% else %}`crates-cross/app/src/link/udp.rs`{% endif %}: их
   задаёт протокол, а не плата.
 {%- endif %}
-* Сокетов в стеке — `NET_SOCKETS` в `[env]` `crates-cross/.cargo/config.toml`
-  (`bsp::net`): его считает генерация — DHCP-клиент, по одному на сетевой
-  транспорт и на каждое соединение служб. Свой сокет — плюс один.
+* Сокетов в стеке — `bsp::net::SOCKETS`: DHCP-клиент, по одному на сетевой
+  транспорт и на каждое соединение служб. Свой сокет — плюс один там же.
 {%- if has_tcp == "true" %}
 * TCP: клиент один, `TcpServer` принимает следующего, когда текущий отключился.
 {%- endif %}

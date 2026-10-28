@@ -85,15 +85,10 @@ SWAP_PAGE_SIZE = "{{page_size | remove: '_'}}"
 {%- endif %}
 {%- endif %}
 {%- endif %}
-{%- if has_net == "true" %}
-# Сокетов в стеке `embassy-net` (`bsp::net`): DHCP-клиент, сетевые транспорты и
-# соединения сетевых служб — счёт генерации. Откроете ещё сокет (или включите
-# фичу `dns` у `embassy-net` — она тоже занимает слот) — прибавьте один.
-NET_SOCKETS = "{{net_stack_sockets}}"
-{%- endif %}
 {%- if net_services contains "rest" %}
 # Соединений REST API разом — копий пула узлов `HTTP` (`app::net`, пул в
 # `app/src/graph.rs`): у каждой свой сокет и свои буферы. Меняете — меняйте и
-# литерал пула в графе (DSL не берёт константу) и `NET_SOCKETS` выше.
+# литерал пула в графе (DSL не берёт константу); сокеты под пул считает
+# `bsp::net` по этому же числу.
 HTTP_CONNECTIONS = "{{http_connections}}"
 {%- endif %}

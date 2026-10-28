@@ -3,18 +3,32 @@
 use embassy_net::{Config, DhcpConfig, StackResources};
 use static_cell::ConstStaticCell;
 
-/// Сокетов в стеке — переменная среды `NET_SOCKETS` из `[env]`
-/// `crates-cross/.cargo/config.toml`. Считает её генерация: DHCP-клиент, по
-/// сокету на сетевой транспорт{% if net_services != "" %} и на каждое соединение сетевых служб
-/// приложения ({% if net_services contains "rest" %}пул REST{% endif %}{% if net_services contains "ssh" %}{% if net_services contains "rest" %}, {% endif %}консоль SSH{% endif %}{% if net_services contains "mqtt" %}{% if net_services contains "rest" or net_services contains "ssh" %}, {% endif %}клиент MQTT{% endif %}){% endif %}. Сколько сокетов откроет
-/// приложение, плата не знает и знать не должна; слот — около 500 байт
-/// оперативной памяти, поэтому без запаса: добавите сокет (или фичу `dns` у
-/// `embassy-net` — она тоже занимает слот) — прибавьте один в `[env]`.
-/// Нижнюю границу по службам проверяет `const`-assert в `app::net`.
-pub const SOCKETS: usize = match usize::from_str_radix(env!("NET_SOCKETS"), 10) {
-    Ok(sockets) => sockets,
-    Err(_) => panic!("NET_SOCKETS в [env] crates-cross/.cargo/config.toml — не число"),
+/// Сокетов в стеке: DHCP-клиент, по сокету на сетевой транспорт и на каждое
+/// соединение сетевых служб приложения{% if net_services != "" %} ({% if net_services contains "rest" %}пул REST{% endif %}{% if net_services contains "ssh" %}{% if net_services contains "rest" %}, {% endif %}консоль SSH{% endif %}{% if net_services contains "mqtt" %}{% if net_services contains "rest" or net_services contains "ssh" %}, {% endif %}клиент MQTT{% endif %}){% endif %}. Стек
+/// строит плата, поэтому и счёт здесь: число слотов сходится с тем, кто их
+/// открывает, без отдельной проверки. Слот — около 500 байт оперативной
+/// памяти, поэтому без запаса: откроете ещё сокет (или включите фичу `dns` у
+/// `embassy-net` — она тоже занимает слот) — прибавьте его здесь.
+pub const SOCKETS: usize = DHCP + LINKS + SERVICES;
+{%- assign single = 0 %}
+{%- if net_services contains "ssh" %}{% assign single = single | plus: 1 %}{% endif %}
+{%- if net_services contains "mqtt" %}{% assign single = single | plus: 1 %}{% endif %}
+
+/// Слот DHCP-клиента.
+const DHCP: usize = 1;
+/// Сетевых транспортов (`tcp`, `udp`) — число из генерации; транспорт без
+/// протокола тоже держит слот — сокет под него открывает приложение.
+const LINKS: usize = {{net_sockets}};
+/// Соединений сетевых служб: {% if net_services contains "ssh" or net_services contains "mqtt" %}по одному у {% if net_services contains "ssh" %}консоли SSH{% endif %}{% if net_services contains "ssh" and net_services contains "mqtt" %} и {% endif %}{% if net_services contains "mqtt" %}клиента MQTT{% endif %}{% if net_services contains "rest" %}, {% endif %}{% endif %}{% if net_services contains "rest" %}копия пула REST — соединение{% endif %}{% if net_services == "" %}служб нет{% endif %}.
+const SERVICES: usize = {% if net_services contains "rest" %}{% if single > 0 %}{{single}} + {% endif %}HTTP_CONNECTIONS{% else %}{{single}}{% endif %};
+{%- if net_services contains "rest" %}
+/// Копий пула узлов `HTTP` — `HTTP_CONNECTIONS` в `[env]`
+/// `crates-cross/.cargo/config.toml`, то же число читает `app::net::rest`.
+const HTTP_CONNECTIONS: usize = match usize::from_str_radix(env!("HTTP_CONNECTIONS"), 10) {
+    Ok(connections) => connections,
+    Err(_) => panic!("HTTP_CONNECTIONS в [env] crates-cross/.cargo/config.toml — не число"),
 };
+{%- endif %}
 
 /// Сетевое устройство платы — пока заглушка, до Ethernet (см. модуль).
 pub type Device = crate::stub::NetDevice;

@@ -430,7 +430,7 @@ MemoryRegion { address, size, settings: Some(FlashSettings { erase_size, write_s
 `unsafe extern`. Проверки над ними — `ASSERT` в том же `memory.x` (кратность `CONFIG`
 его странице — литералом из генерации, MPU-годность регионов DMA): падает линковка. В
 `[env]` остаётся только то, что нужно компилятору (`STATE_ERASE_SIZE`, `SWAP_PAGE_SIZE`,
-`EXT_PAGE_SIZE`, `NET_SOCKETS`, `WATCHDOG_TIMEOUT_US`, `HTTP_CONNECTIONS`). Символы — в
+`EXT_PAGE_SIZE`, `WATCHDOG_TIMEOUT_US`, `HTTP_CONNECTIONS`). Символы — в
 `memory.x` `app` и `target-tests`; у `boot` — только символы внешней флеши (он сверяет
 объём микросхемы), `CONFIG` и `DMA_NC` он не собирает. Ручные заготовки
 `crates-cross/*/memory.x` показывают, какие символы вписать. Тесты —
@@ -640,9 +640,9 @@ Modbus. Через `--define` то же задаёт `links` (`parse_links()`, �
 строки, когда не выбрано. Модули узлов невыбранных служб хук удаляет (`domain/src/http.rs`,
 `ssh.rs`, `mqtt.rs`, `app/src/tasks/{http,ssh,mqtt}.rs`, `app/src/net/{rest,ssh,mqtt}.rs` и `app/src/net.rs` без служб вовсе,
 `device.rs` без служб и protobuf); узел протокола `domain/src/server.rs` — без Modbus и
-protobuf. Сокетов в стеке хук считает сам (`net_stack_sockets` → `NET_SOCKETS` в `[env]`:
-DHCP-клиент, сетевые транспорты, по сокету на копию пула REST — `http_connections` →
-`HTTP_CONNECTIONS`, — на SSH и на MQTT): плата строит стек под это число. Секреты
+protobuf. Сокеты стека считает `bsp::net::SOCKETS` из чисел генерации: DHCP-клиент,
+сетевые транспорты (`net_sockets`), по сокету на копию пула REST (`http_connections` →
+`HTTP_CONNECTIONS`), на SSH и на MQTT. Секреты
 (`rest-token.txt`, `ssh-password.txt`, `ssh-host-key.bin`, заготовка `mqtt.toml`) создаёт `cargo xtask`
 (`secrets.rs`). Тесты — `net_services_*`, `ssh_*`, `password_login_asks_no_key` в
 `cascade.rs`; обход путей отвечает на `ssh_key` заранее.
