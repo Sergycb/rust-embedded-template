@@ -2,11 +2,14 @@
 
 // Сгенерированный код линтам проекта не следует и править его нельзя;
 // `allow`, а не `expect`: какие именно линты сработают, зависит от схемы и
-// версии генератора.
+// версии генератора. `irrefutable_let_patterns` — когда у `oneof` один
+// вариант: так у `Request` без OTA (одна команда `info`), и `if let` в
+// разборе становится безальтернативным.
 #[allow(
     clippy::all,
     clippy::pedantic,
     clippy::arbitrary_source_item_ordering,
+    irrefutable_let_patterns,
     nonstandard_style,
     unused,
     missing_debug_implementations,

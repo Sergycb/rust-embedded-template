@@ -192,6 +192,10 @@ fn default_cases() -> Vec<Case> {
         // интерфейса из таблицы chip-data/interfaces.rhai.
         Case::new("stm32g474re").variant("modbus-uart", &["protocol=modbus", "interface=uart"]),
         Case::new("stm32f407ve").variant("protobuf-uart", &["protocol=protobuf", "interface=uart"]),
+        // Без OTA у `Request` схемы одна команда (`info`), и код `micropb-gen`
+        // меняет форму: `if let` разбора `oneof` становится безальтернативным.
+        Case::new("stm32f407ve")
+            .variant("protobuf-uart-no-ota", &["protocol=protobuf", "interface=uart", "ota=no"]),
         // CANopen на обоих CAN-контроллерах: `can_kind` — FDCAN (G4) и bxCAN
         // (F4) — различает документацию и имя блока в справочнике. Заодно —
         // крейт словаря `crates-host/canopen`, который в остальных
