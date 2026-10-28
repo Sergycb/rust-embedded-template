@@ -2,6 +2,9 @@
 
 use core::any::TypeId;
 
+{%- if ota == "true" and ota_store == "external" %}
+use embassy_embedded_hal::flash::partition::Partition;
+{%- endif %}
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::mutex::Mutex;
 use static_cell::StaticCell;
@@ -44,12 +47,15 @@ pub type ExternalMutex = Mutex<NoopRawMutex, ExternalFlash>;
 
 {%- if ota == "true" and ota_store == "external" %}
 
-/// Флеш под обновлением — рычаг, над которым узел OTA собирает адаптер
-/// (`adapters::ota::Updater`, порт `Assemble`). `DFU` и `BOOTLOADER_STATE`
-/// находит в нём сам узел по символам `memory.x` (`adapters::ota::Linked`) —
-/// смещениям от начала микросхемы; оба над одним драйвером: команды разных
+/// Разделы обновления на внешней флеши — рычаг, над которым узел OTA собирает
+/// адаптер (`adapters::ota::Updater`, порт `Assemble`). `DFU` и
+/// `BOOTLOADER_STATE` нарезает плата по символам `memory.x` (`crate::layout`)
+/// — смещениям от начала микросхемы; оба над одним драйвером: команды разных
 /// разделов не должны перемежаться.
-pub type FirmwareFlash = adapters::ota::Linked<ExternalFlash, ExternalFlash>;
+pub type FirmwareFlash = adapters::ota::Partitions<
+    Partition<'static, NoopRawMutex, ExternalFlash>,
+    Partition<'static, NoopRawMutex, ExternalFlash>,
+>;
 {%- endif %}
 {%- if config == "true" and config_store == "external" %}
 
@@ -118,14 +124,17 @@ pub(crate) async fn new(_resources: crate::resources::ExtFlashResources) -> &'st
 }
 {%- if ota == "true" and ota_store == "external" %}
 
-/// Собирает флеш под обновлением над внешней флешью.
+/// Нарезает разделы обновления на внешней флеши — по символам `memory.x`, как
+/// их режет bootloader.
 pub(crate) fn firmware(external: &'static ExternalMutex) -> FirmwareFlash {
-    adapters::ota::Linked::new(
-        external,
-        external,
-        crate::layout::active_len(),
-        crate::layout::fingerprint(),
-    )
+    let (dfu_start, dfu_len) = crate::layout::dfu();
+    let (state_start, state_len) = crate::layout::state();
+    adapters::ota::Partitions {
+        dfu: Partition::new(external, dfu_start, dfu_len),
+        state: Partition::new(external, state_start, state_len),
+        capacity: crate::layout::active_len(),
+        layout: crate::layout::fingerprint(),
+    }
 }
 {%- endif %}
 {%- if config == "true" and config_store == "external" %}

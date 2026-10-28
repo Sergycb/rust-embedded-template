@@ -10,7 +10,7 @@
 {%- if ota == "true" %}
 | `ota.md` | приём образа, подпись, защита от отката, тест полного цикла | трогаете `adapters::ota`, {% if shared_flash == "true" %}`bsp::flash`, {% endif %}`domain::ota`, `domain::ota::download` или `domain::ota::update` |
 {%- endif %}
-| `flash.md` | {% if ota == "true" %}стёртое состояние (`0xFF` против `0x00`), {% endif %}{% if config == "true" %}раздел настроек, {% endif %}{% if shared_flash == "true" %}один `Flash` на всех, {% endif %}банки flash{% if ota_store == "external" %}, OTA с разделами на внешней флеши{% endif %} | трогаете {% if config == "true" %}`adapters::settings`, {% endif %}{% if erase_page == "true" %}`flash_page`, {% endif %}{% if shared_flash == "true" %}`bsp::flash`, {% endif %}{% if ota == "true" %}`adapters::ota::Linked`, `domain::ota` (его `local`-слоты связаны с типом мьютекса) или {% endif %}раскладку памяти |
+| `flash.md` | {% if ota == "true" %}стёртое состояние (`0xFF` против `0x00`), {% endif %}{% if config == "true" %}раздел настроек, {% endif %}{% if shared_flash == "true" %}один `Flash` на всех, {% endif %}банки flash{% if ota_store == "external" %}, OTA с разделами на внешней флеши{% endif %} | трогаете {% if config == "true" %}`adapters::settings`, {% endif %}{% if erase_page == "true" %}`flash_page`, {% endif %}{% if shared_flash == "true" %}`bsp::flash`, {% endif %}{% if ota == "true" %}`bsp::flash`, `domain::ota` (его `local`-слоты связаны с типом мьютекса) или {% endif %}раскладку памяти |
 {%- if graph == "true" %}
 | `watchdog.md` | связанные цепочкой таймауты узлов, почему узел `observe`, почему взводится не в `init` | трогаете сторож или тайминги графа задач |
 {%- endif %}

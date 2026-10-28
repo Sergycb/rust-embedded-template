@@ -1562,7 +1562,7 @@ const EXT_ERASE_MIN: u64 = 4 * 1024;
 /// блока.
 const EXT_ALIGN: u64 = 64 * 1024;
 /// Самое широкое слово записи, на которое считается журнал `STATE`: то же,
-/// что `adapters::ota::MAX_WRITE_SIZE`, — буфер шире адаптер всё равно не
+/// что `ports::MAX_WRITE_SIZE`, — буфер шире адаптер всё равно не
 /// держит.
 const EXT_WRITE_MAX: u64 = 32;
 

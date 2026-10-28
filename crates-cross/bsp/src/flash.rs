@@ -43,7 +43,7 @@ use core::cell::RefCell;
 use embassy_embedded_hal::adapter::BlockingAsync;
 use embassy_embedded_hal::flash::partition::BlockingPartition;
 {%- endif %}
-{%- if config_here == "true" %}
+{%- if config_here == "true" or firmware_here == "true" %}
 use embassy_embedded_hal::flash::partition::Partition;
 {%- endif %}
 {%- if dfu_bank == "true" %}
@@ -215,12 +215,14 @@ pub type ChipFlash = embassy_stm32::flash::Flash<'static, Blocking>;
 {%- endif %}
 {%- if firmware_here == "true" %}
 
-/// Флеш под обновлением — рычаг, над которым узел OTA собирает адаптер
-/// (`adapters::ota::Updater`, порт `Assemble`). Разделы `DFU` и
-/// `BOOTLOADER_STATE` в нём находит сам узел, по символам `memory.x`
-/// (`adapters::ota::Linked`); плата отдаёт только флеш с нужной страницей и
-/// размер `ACTIVE`.
-pub type FirmwareFlash = adapters::ota::Linked<DfuFlash, StateFlash>;
+/// Разделы обновления — рычаг, над которым узел OTA собирает адаптер
+/// (`adapters::ota::Updater`, порт `Assemble`): `DFU` и `BOOTLOADER_STATE`,
+/// нарезанные платой по символам `memory.x` (`crate::layout`), со своими
+/// страницами, размер `ACTIVE` и отпечаток раскладки.
+pub type FirmwareFlash = adapters::ota::Partitions<
+    Partition<'static, NoopRawMutex, DfuFlash>,
+    Partition<'static, NoopRawMutex, StateFlash>,
+>;
 {%- endif %}
 {%- if config_here == "true" %}
 
@@ -391,8 +393,10 @@ pub(crate) fn new(resources: crate::resources::FlashResources) -> &'static Flash
 {%- endif %}
 {%- if firmware_here == "true" %}
 
-/// Собирает флеш под обновлением: носители `DFU` и `BOOTLOADER_STATE` над общим
-/// [`FlashMutex`] со своими страницами и размер `ACTIVE`.
+/// Нарезает разделы обновления: `DFU` и `BOOTLOADER_STATE` над общим
+/// [`FlashMutex`] со своими страницами — по символам `memory.x`, как их
+/// режет bootloader. Границы кратны страницам (`ASSERT` в `memory.x`): иначе
+/// `Partition::new` паникует на старте.
 {%- if dfu_bank == "true" %}
 ///
 /// `DFU` — в банке 2, `STATE` — в банке 1.
@@ -413,12 +417,18 @@ pub(crate) fn firmware(flash: &'static FlashMutex) -> FirmwareFlash {
 {%- else %}
     let state = BlockingAsync::new(BlockingPartition::new(flash, 0, SIZE));
 {%- endif %}
-    adapters::ota::Linked::new(
-        DFU_FLASH.init(mutex::Mutex::new(dfu)),
-        STATE_FLASH.init(mutex::Mutex::new(state)),
-        crate::layout::active_len(),
-        crate::layout::fingerprint(),
-    )
+    let (dfu_start, dfu_len) = crate::layout::dfu();
+    let (state_start, state_len) = crate::layout::state();
+    adapters::ota::Partitions {
+        dfu: Partition::new(DFU_FLASH.init(mutex::Mutex::new(dfu)), dfu_start, dfu_len),
+        state: Partition::new(
+            STATE_FLASH.init(mutex::Mutex::new(state)),
+            state_start,
+            state_len,
+        ),
+        capacity: crate::layout::active_len(),
+        layout: crate::layout::fingerprint(),
+    }
 }
 {%- endif %}
 {%- if config_here == "true" %}

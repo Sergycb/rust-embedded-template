@@ -39,9 +39,6 @@ ports = { workspace = true }
 # {%- if ota == "true" %}
 # Обновление прошивки поверх разделов `NorFlash` — сам крейт от чипа не зависит.
 embassy-boot = { workspace = true }
-# Имя типа раздела, который режет `from_linkerfile` (`ota::Linked`): `embassy-boot`
-# его не реэкспортирует.
-embassy-embedded-hal = { workspace = true }
 # `yield_now` между страницами стирания в `ota::Updater::prepare`.
 embassy-futures = { workspace = true }
 # {%- endif %}

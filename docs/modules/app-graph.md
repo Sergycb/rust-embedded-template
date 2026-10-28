@@ -349,11 +349,11 @@ resources: [WS: &'static mut $crate::x::Workspace = static |w| w.gain = inputs.g
 (`docs/ota.md`). Своего канала у образа нет: он идёт по протоколу,
 которым хост и так говорит с устройством (`docs/ota.md`).
 
-Плата отдаёт для узла флеш под обновлением `board.firmware`
-(`bsp::FirmwareFlash` — `adapters::ota::Linked`, ещё не нарезанный) и порт
-перезагрузки `bsp::reset::Reboot`; эта сторона кладёт их во вход фрагмента, а
-адаптер обновления собирает сам узел (`ports::Assemble`), нарезая флеш на `DFU` и
-`STATE` по символам `memory.x`: `bsp` про `domain` не знает
+Плата отдаёт для узла разделы обновления `board.firmware`
+(`bsp::FirmwareFlash` — `adapters::ota::Partitions`, нарезанные по символам
+`memory.x`) и порт перезагрузки `bsp::reset::Reboot`; эта сторона кладёт их во
+вход фрагмента, а адаптер обновления собирает сам узел (`ports::Assemble`):
+`bsp` про `domain` не знает
 (`= ::domain::ota::OtaWiring { source: board.firmware, reboot:
 bsp::reset::Reboot, mode: ::domain::ota::Mode::Signed { running_version:
 crate::version::FW_VERSION } }`). Типы слотов — аргументы фрагмента

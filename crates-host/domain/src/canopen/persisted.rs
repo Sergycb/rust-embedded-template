@@ -49,18 +49,16 @@ pub const NODE_ID_KEY: u32 = 0x00C0_0002;
 /// лог, повторит его следующий `save`.
 pub const STORE_CAPACITY: usize = 96;
 
-/// Буфер чтения хранилища: `sequential-storage` кладёт туда весь элемент —
-/// ключ (4 байта) и значение, с выравниванием по слову флеша, — и отдаёт
-/// значение срезом после ключа. Размер — как у рабочего буфера
-/// `adapters::settings`.
+/// Буфер чтения хранилища: оно копирует сюда только значение. Запас сверх
+/// [`STORE_CAPACITY`] — чтобы прочитать и назвать в логе длину сохранённого
+/// прошивкой с большим `STORE_CAPACITY`, а не отказать на чтении.
 const READ_SCRATCH: usize = 128;
 
-// Элемент хранилища — 4 байта ключа и значение до `STORE_CAPACITY`, дополненные
-// до слова флеша (не шире `MAX_WRITE_SIZE`): иначе сохранённые объекты
-// записываются, а прочитать их при старте нечем.
+// Предел самого хранилища (`SettingsStorage::MAX_VALUE`) зависит от носителя
+// и проверяется в `save`.
 const _: () = assert!(
-    READ_SCRATCH >= (4 + STORE_CAPACITY).next_multiple_of(ports::MAX_WRITE_SIZE),
-    "READ_SCRATCH не вмещает самый большой элемент STORE_CAPACITY"
+    READ_SCRATCH >= STORE_CAPACITY,
+    "READ_SCRATCH не вмещает STORE_CAPACITY"
 );
 
 /// Сохранённые объекты и то, что колбэки стека передали узлу на запись.
@@ -189,6 +187,13 @@ where
     S: SettingsStorage,
     S::Error: FormatOrDebug,
 {
+    // Иначе объекты записывались бы с отказом на каждом `save`.
+    const {
+        assert!(
+            STORE_CAPACITY <= S::MAX_VALUE,
+            "хранилище настроек не вмещает STORE_CAPACITY байт объектов CANopen"
+        );
+    }
     let (objects, node_id) = {
         let mut persisted = persisted.borrow_mut();
         let len = persisted.len;
@@ -225,6 +230,7 @@ mod tests {
 
     impl SettingsStorage for Memory {
         type Error = &'static str;
+        const MAX_VALUE: usize = usize::MAX;
 
         fn read<'a>(
             &mut self,

@@ -122,17 +122,6 @@ pub mod settings;
 /// Доступ к внутренней EEPROM — под хранилищем настроек на L0/L1.
 pub mod eeprom;
 // {%- endif %}
-// {%- if ota == "true" or has_canopen == "true" %}
-
-// {%- if ota == "true" and has_canopen == "true" %}
-/// Слово записи флеша — общий предел буферов OTA и хранилища CANopen.
-// {%- elsif ota == "true" %}
-/// Слово записи флеша — предел буферов OTA.
-// {%- else %}
-/// Слово записи флеша — предел буферов хранилища CANopen.
-// {%- endif %}
-mod word;
-// {%- endif %}
 
 pub use assemble::Assemble;
 pub use reset::ResetCause;
@@ -170,8 +159,7 @@ pub use ota::command::{
 };
 pub use ota::download::DownloadError;
 pub use ota::update::{
-    FirmwareLayout, FirmwarePartitions, FirmwareUpdate, LAYOUT_SYMBOLS, PendingImage, UpdateError,
-    layout_fingerprint,
+    FirmwareUpdate, LAYOUT_SYMBOLS, MAX_WRITE_SIZE, PendingImage, UpdateError, layout_fingerprint,
 };
 // {%- endif %}
 // {%- if settings_port == "true" %}
@@ -179,7 +167,4 @@ pub use settings::SettingsStorage;
 // {%- endif %}
 // {%- if config_store == "eeprom" %}
 pub use eeprom::EepromAccess;
-// {%- endif %}
-// {%- if ota == "true" or has_canopen == "true" %}
-pub use word::MAX_WRITE_SIZE;
 // {%- endif %}

@@ -333,8 +333,7 @@ RAM. От килобайта и выше фрагмент пишет `resources:
 {%- if has_uart == "true" or has_usb == "true" %} `embedded-io-async` ({% if has_uart == "true" %}поток UART{% if has_usb == "true" %}, {% endif %}{% endif %}{% if has_usb == "true" %}поток CDC{% endif %}),{% endif %}
 {%- if ota == "true" or config == "true" %}
 `embedded-storage(-async)` ({% if ota == "true" %}флеш под обновлением{% if config == "true" %}, {% endif %}{% endif %}{% if config == "true" %}носитель настроек{% endif %}),{% endif %} порты из
-`crates-host/ports` там, где стандартного трейта нет ({% if has_can == "true" %}`CanBus`, {% endif %}{% if ota == "true" %}`FirmwareLayout`,
-{% endif %}`CycleCounter`{% if ota == "true" %}, `Reboot`{% endif %}), — и драйверы микросхем платы
+`crates-host/ports` там, где стандартного трейта нет ({% if has_can == "true" %}`CanBus`, {% endif %}`CycleCounter`{% if ota == "true" %}, `Reboot`{% endif %}), — и драйверы микросхем платы
 ({% if external_flash == "true" %}внешняя флеш W25Q; так же лягут{% else %}так лягут{% endif %} датчики и светодиоды). `Peripherals`,
 отдельные пины и группы `assign_resources!` наружу из `bsp` не выходят: их
 потребляет сам `Board::new`, собирая рычаги. Приложение работает через трейты
@@ -390,17 +389,15 @@ device, cdc }` (классы `embassy-usb` регистрируются до п�
 {%- if ota == "true" %}
 
 {% if graph == "true" %}Кроме сторожа в граф уезжает поле `firmware`{% else %}В задачу узла OTA уезжает поле `firmware`{% endif %} (`bsp::FirmwareFlash` —
-`adapters::ota::Linked`: флеш под `DFU` и `STATE` со своими страницами и предел
-образа, равный `ACTIVE`). {% if graph == "true" %}Compose-site кладёт его во вход узла,
+`adapters::ota::Partitions`: разделы `DFU` и `STATE` со своими страницами, предел
+образа, равный `ACTIVE`, и отпечаток раскладки). {% if graph == "true" %}Compose-site кладёт его во вход узла,
 `domain::ota::OtaWiring { source: board.firmware, reboot: bsp::reset::Reboot, mode }`,
 прямо в `fragments:`, а адаптер{% else %}Адаптер{% endif %} обновления (`adapters::ota::Updater`, порт
-`FirmwareUpdate`) над ним собирает узел — и в этот момент режет флеш на разделы
-по символам `memory.x` (порт `ports::FirmwareLayout`: где лежат `DFU` и `STATE` —
-знание алгоритма обновления, а не платы). Сам `bsp` про `domain` не знает: он
-отдаёт флеш со страницами из `[env]`, логика приёма и применения образа живёт в
-`domain::ota` и видит только порты. Нарезка по символам есть только на МК
-(`cfg(target_os = "none")`): host-тесты подают адаптеру готовые
-`ports::FirmwarePartitions`, а саму нарезку проверяет сборка `crates-cross`. Образ приходит не по каналу,
+`FirmwareUpdate`) над ним собирает узел. Режет разделы плата — по символам
+`memory.x` (`bsp::layout`), тем же, что читает bootloader: где они лежат, знает
+раскладка, а она — дело платы. Сам `bsp` про `domain` не знает: логика приёма и
+применения образа живёт в `domain::ota` и видит только порты; host-тесты подают
+адаптеру разделы в памяти, а саму нарезку проверяет сборка `crates-cross`. Образ приходит не по каналу,
 а командами узла протокола на вход узла `CMD` ({% if graph == "true" %}`request:` графа, клиент —
 `ota_cmd_requester()`{% else %}`static` в `crate::tasks::ota`{% endif %}; `docs/ota.md`). Вместимость раздела адаптер отдаёт через
 порт же (`FirmwareUpdate::capacity`). Версия образа — свойство прошивки, а не

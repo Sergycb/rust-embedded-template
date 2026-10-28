@@ -1,9 +1,8 @@
 //! Обновление прошивки поверх `embassy-boot`: разделы `DFU` (куда пишется
 //! новый образ) и `BOOTLOADER_STATE` (где лежит решение bootloader'а) — два
-//! `NorFlash`, откуда они взялись, адаптеру всё равно. Режет их порт
-//! `ports::FirmwareLayout`, когда узел собирает адаптер: на МК — [`Linked`](crate::ota::Linked) по
-//! символам `memory.x` над флешем платы, в host-тесте — готовые разделы в памяти
-//! (`ports::FirmwarePartitions`).
+//! `NorFlash`, откуда они взялись, адаптеру всё равно. Режет их плата
+//! (`bsp::flash`) по символам `memory.x` и отдаёт готовыми — [`Partitions`](crate::ota::Partitions);
+//! в host-тесте это разделы в памяти.
 //!
 //! Что здесь есть: подготовка раздела под образ, запись и чтение кусков,
 //! состояние bootloader'а, подтверждение образа, пометка обмена — это
@@ -27,11 +26,9 @@
 //! `write`: в `DFU` тогда лежит образ, куда откатываться, и затирать его нельзя.
 
 use embassy_boot::{AlignedBuffer, FirmwareState, FirmwareUpdater, FirmwareUpdaterConfig, State};
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-use embassy_sync::mutex::Mutex;
 use embedded_storage::nor_flash::NorFlashErrorKind;
-use embedded_storage_async::nor_flash::{NorFlash, ReadNorFlash};
-use ports::{FirmwareLayout, FirmwareUpdate};
+use embedded_storage_async::nor_flash::NorFlash;
+use ports::FirmwareUpdate;
 // Тип возвращается портом, поэтому называть его должно быть чем — иначе
 // пользователю пришлось бы объявлять прямую зависимость на `embassy-boot`
 // только ради имени в сигнатуре своей функции.
@@ -39,139 +36,65 @@ use embassy_boot::FirmwareUpdaterError as Error;
 
 pub use ports::MAX_WRITE_SIZE;
 
-/// Раздел над флешем под замком — то, что отдаёт `from_linkerfile`.
-#[cfg(target_os = "none")]
-type Partition<T> = embassy_embedded_hal::flash::partition::Partition<'static, NoopRawMutex, T>;
-
-/// Флеш платы под разделами обновления, ещё не нарезанный: `DFU` и
-/// `BOOTLOADER_STATE` находит в нём [`FirmwareLayout::split`] по символам
-/// `memory.x` (`FirmwareUpdaterConfig::from_linkerfile`).
+/// Разделы обновления — то, над чем работает [`Updater`]: раздел `DFU`, куда
+/// принимается образ, журнал обмена `BOOTLOADER_STATE`, самый длинный образ и
+/// отпечаток раскладки.
 ///
-/// Плата отдаёт его полем `Board`, режет — узел OTA, собирая [`Updater`].
-/// Мьютексы — свои у каждого носителя: `embassy-boot` строит раздел из
-/// `&Mutex<_, T>` его типа (а под ними может стоять один и тот же флеш).
-/// Нарезка — только на МК (`target_os = "none"`): символов `memory.x` на хосте
-/// нет, и host-тесты отдают адаптеру готовые [`ports::FirmwarePartitions`].
-#[cfg_attr(
-    not(target_os = "none"),
-    expect(
-        dead_code,
-        reason = "мьютексы читает только нарезка, а она — только на МК"
-    )
-)]
-pub struct Linked<DFU: 'static, STATE: 'static> {
-    dfu: &'static Mutex<NoopRawMutex, DFU>,
-    state: &'static Mutex<NoopRawMutex, STATE>,
-    capacity: u32,
-    layout: u32,
+/// Нарезает их плата по символам `memory.x` (`bsp::flash::firmware`) и
+/// отдаёт полем `Board`; узел OTA собирает над ними [`Updater`].
+#[derive(Debug)]
+pub struct Partitions<D, S> {
+    /// Раздел `DFU`.
+    pub dfu: D,
+    /// Раздел `BOOTLOADER_STATE`.
+    pub state: S,
+    /// Самый длинный принимаемый образ — размер `ACTIVE`, а не `DFU`
+    /// (см. `FirmwareUpdate::capacity`).
+    pub capacity: u32,
+    /// Отпечаток раскладки, под которую собрана эта прошивка
+    /// (`ports::layout_fingerprint`, см. `FirmwareUpdate::layout`).
+    pub layout: u32,
 }
 
-impl<DFU, STATE> core::fmt::Debug for Linked<DFU, STATE> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("Linked")
-            .field("capacity", &self.capacity)
-            .field("layout", &self.layout)
-            .finish_non_exhaustive()
-    }
-}
-
-impl<DFU, STATE> Linked<DFU, STATE> {
-    /// Флеш под `DFU` и под `BOOTLOADER_STATE`; `capacity` — размер `ACTIVE`,
-    /// самый длинный образ, который доедет до устройства (см. [`Updater`]);
-    /// `layout` — отпечаток раскладки этой прошивки ([`ports::layout_fingerprint`]
-    /// по символам [`ports::LAYOUT_SYMBOLS`]): символы линкера читает плата.
-    #[must_use]
-    pub const fn new(
-        dfu: &'static Mutex<NoopRawMutex, DFU>,
-        state: &'static Mutex<NoopRawMutex, STATE>,
-        capacity: u32,
-        layout: u32,
-    ) -> Self {
-        Self {
-            dfu,
-            state,
-            capacity,
-            layout,
-        }
-    }
-}
-
-#[cfg(target_os = "none")]
-impl<DFU: NorFlash, STATE: NorFlash> FirmwareLayout for Linked<DFU, STATE> {
-    type Dfu = Partition<DFU>;
-    type State = Partition<STATE>;
-
-    fn split(self) -> ports::FirmwarePartitions<Self::Dfu, Self::State> {
-        let config = FirmwareUpdaterConfig::from_linkerfile(self.dfu, self.state);
-        ports::FirmwarePartitions {
-            dfu: config.dfu,
-            state: config.state,
-            capacity: self.capacity,
-            layout: self.layout,
-        }
-    }
-}
-
-/// Доступ к разделам обновления, которые режет `L` (порт `FirmwareLayout`).
+/// Доступ к разделам обновления `P` — [`Partitions`] платы.
 ///
 /// `SIGNED` — проект с подписью образа: `prepare` стирает и запасную страницу
 /// `DFU` за `capacity` — туда `domain::ota::update::apply_signed` кладёт запись
 /// для bootloader'а (`ports::PendingImage`). Обычная подготовка её не трогает,
 /// а оставь её нестёртой — запись легла бы поверх остатков прошлого обмена.
 /// Цена — ещё одно стирание страницы на обновление (на F4 — сектор 128 KiB).
-pub struct Updater<L, const SIGNED: bool>
-where
-    L: FirmwareLayout<Dfu: NorFlash, State: NorFlash>,
-{
-    dfu: L::Dfu,
-    state: L::State,
+///
+/// `capacity` разделов — самый длинный образ, который доедет до устройства:
+/// размер `ACTIVE`, а не `DFU`. Приёмник по построению больше активного на
+/// страницу-две (`assert_partitions` в embassy-boot), а обмен копирует ровно
+/// `ACTIVE`; образ между ними прошёл бы все проверки и приехал обрезанным.
+pub struct Updater<P, const SIGNED: bool> {
+    parts: P,
     /// Буфер под одно слово записи во flash: `embassy-boot` пишет через него
     /// состояние, и выравнивание должно быть флешевым (`AlignedBuffer` — 32).
     aligned: AlignedBuffer<MAX_WRITE_SIZE>,
-    /// Самый длинный образ, который доедет до устройства: размер `ACTIVE`, а
-    /// не `DFU`. Приёмник по построению больше активного на страницу-две
-    /// (`assert_partitions` в embassy-boot), а обмен копирует ровно `ACTIVE`;
-    /// образ между ними прошёл бы все проверки и приехал обрезанным.
-    capacity: u32,
-    /// Отпечаток раскладки этой прошивки (см. `FirmwareUpdate::layout`).
-    layout: u32,
 }
 
-impl<L, const SIGNED: bool> core::fmt::Debug for Updater<L, SIGNED>
-where
-    L: FirmwareLayout<Dfu: NorFlash, State: NorFlash>,
-{
+impl<P, const SIGNED: bool> core::fmt::Debug for Updater<P, SIGNED> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Updater").finish_non_exhaustive()
     }
 }
 
-/// Собирается над флешем платы под обновлением (поле `Board`): здесь, в узле,
-/// он и режется на разделы.
-impl<L, const SIGNED: bool> ports::Assemble for Updater<L, SIGNED>
-where
-    L: FirmwareLayout<Dfu: NorFlash, State: NorFlash>,
+/// Собирается над разделами обновления платы (поле `Board`).
+impl<D: NorFlash, S: NorFlash, const SIGNED: bool> ports::Assemble
+    for Updater<Partitions<D, S>, SIGNED>
 {
-    type Source = L;
+    type Source = Partitions<D, S>;
     type Buffers = ();
 
-    fn assemble(layout: L, (): ()) -> Self {
-        let partitions = layout.split();
-        Self::new(
-            partitions.dfu,
-            partitions.state,
-            partitions.capacity,
-            partitions.layout,
-        )
+    fn assemble(parts: Partitions<D, S>, (): ()) -> Self {
+        Self::new(parts)
     }
 }
 
-impl<L, const SIGNED: bool> Updater<L, SIGNED>
-where
-    L: FirmwareLayout<Dfu: NorFlash, State: NorFlash>,
-{
-    /// `capacity` — размер раздела, в который образ будет исполняться
-    /// (`ACTIVE`), `layout` — отпечаток раскладки этой прошивки; см. поля.
+impl<D: NorFlash, S: NorFlash, const SIGNED: bool> Updater<Partitions<D, S>, SIGNED> {
+    /// Адаптер над разделами `parts`.
     ///
     /// # Panics
     ///
@@ -179,37 +102,35 @@ where
     /// или за ней не помещается запасная страница: запись для bootloader'а
     /// легла бы мимо раздела. Раскладку считает генерация, поэтому падение
     /// случится на первом же запуске.
-    pub fn new(dfu: L::Dfu, state: L::State, capacity: u32, layout: u32) -> Self {
+    pub fn new(parts: Partitions<D, S>) -> Self {
         const {
             assert!(
-                <L::State as NorFlash>::WRITE_SIZE <= MAX_WRITE_SIZE,
+                S::WRITE_SIZE <= MAX_WRITE_SIZE,
                 "слово записи раздела состояния шире буфера адаптера (MAX_WRITE_SIZE)"
             );
             if SIGNED {
                 assert!(
-                    ports::PendingImage::LEN.is_multiple_of(<L::Dfu as NorFlash>::WRITE_SIZE),
+                    ports::PendingImage::LEN.is_multiple_of(D::WRITE_SIZE),
                     "запись для bootloader'а не кратна слову записи DFU"
                 );
             }
         }
+        let capacity = parts.capacity;
         if SIGNED {
-            let page = <L::Dfu as NorFlash>::ERASE_SIZE as u64;
+            let page = D::ERASE_SIZE as u64;
             assert!(
                 u64::from(capacity).is_multiple_of(page),
                 "размер ACTIVE ({capacity}) не кратен странице стирания DFU ({page}) — проверьте memory.x"
             );
             assert!(
-                u64::from(capacity) + page <= dfu.capacity() as u64,
+                u64::from(capacity) + page <= parts.dfu.capacity() as u64,
                 "в DFU ({}) не помещается ACTIVE ({capacity}) и запасная страница ({page}) — проверьте memory.x",
-                dfu.capacity()
+                parts.dfu.capacity()
             );
         }
         Self {
-            dfu,
-            state,
+            parts,
             aligned: AlignedBuffer([0; MAX_WRITE_SIZE]),
-            capacity,
-            layout,
         }
     }
 
@@ -224,22 +145,18 @@ where
     /// сектора ограничен аппаратными пределами (максимум 256 Кбайт), поэтому
     /// на практике это невозможно.
     pub fn erase_size(&self) -> u32 {
-        u32::try_from(<L::Dfu as NorFlash>::ERASE_SIZE)
-            .expect("ERASE_SIZE не должен превышать u32::MAX")
+        u32::try_from(D::ERASE_SIZE).expect("ERASE_SIZE не должен превышать u32::MAX")
     }
 
     /// Апдейтер держит ссылки и на разделы, и на буфер, поэтому хранить его
     /// полем нельзя — структура вышла бы самоссылающейся. Собирается он
     /// дёшево (две ссылки и срез), так что каждая операция делает себе свой.
-    fn updater(&mut self) -> FirmwareUpdater<'_, &mut L::Dfu, &mut L::State> {
+    fn updater(&mut self) -> FirmwareUpdater<'_, &mut D, &mut S> {
         let config = FirmwareUpdaterConfig {
-            dfu: &mut self.dfu,
-            state: &mut self.state,
+            dfu: &mut self.parts.dfu,
+            state: &mut self.parts.state,
         };
-        FirmwareUpdater::new(
-            config,
-            &mut self.aligned.0[..<L::State as NorFlash>::WRITE_SIZE],
-        )
+        FirmwareUpdater::new(config, &mut self.aligned.0[..S::WRITE_SIZE])
     }
 
     /// Пометка обмена — через `FirmwareState`, а не апдейтер: тот прячет
@@ -247,11 +164,8 @@ where
     /// и делает ровно то же (`set_magic(SWAP_MAGIC)`). Защита от
     /// неподписанного образа в проекте с подписью — bootloader
     /// (`screen_update`): без записи о подписи он обмен не пропустит.
-    fn state(&mut self) -> FirmwareState<'_, &mut L::State> {
-        FirmwareState::new(
-            &mut self.state,
-            &mut self.aligned.0[..<L::State as NorFlash>::WRITE_SIZE],
-        )
+    fn state(&mut self) -> FirmwareState<'_, &mut S> {
+        FirmwareState::new(&mut self.parts.state, &mut self.aligned.0[..S::WRITE_SIZE])
     }
 
     /// Занят ли раздел `DFU` тем, что терять нельзя — см.
@@ -273,23 +187,21 @@ where
 /// намеренно: они перекрыли бы трейтовые при вызове, и приложение работало бы
 /// с конкретным типом мимо порта — то есть мимо той границы, ради которой
 /// порт заведён.
-impl<L, const SIGNED: bool> FirmwareUpdate for Updater<L, SIGNED>
-where
-    L: FirmwareLayout<Dfu: NorFlash, State: NorFlash>,
+impl<D: NorFlash, S: NorFlash, const SIGNED: bool> FirmwareUpdate
+    for Updater<Partitions<D, S>, SIGNED>
 {
     type Error = Error;
 
     fn write_granularity(&mut self) -> u32 {
-        u32::try_from(<L::Dfu as NorFlash>::WRITE_SIZE)
-            .expect("WRITE_SIZE не должен превышать u32::MAX")
+        u32::try_from(D::WRITE_SIZE).expect("WRITE_SIZE не должен превышать u32::MAX")
     }
 
     fn capacity(&mut self) -> Result<u32, Self::Error> {
-        Ok(self.capacity)
+        Ok(self.parts.capacity)
     }
 
     fn layout(&self) -> u32 {
-        self.layout
+        self.parts.layout
     }
 
     async fn is_busy(&mut self) -> Result<bool, Self::Error> {
@@ -313,7 +225,7 @@ where
         // образ, в который bootloader откатывается. Ноль отвергается по той же
         // причине: стирать нечего, а следующая запись легла бы в нестёртую
         // память.
-        if len == 0 || len > self.capacity {
+        if len == 0 || len > self.parts.capacity {
             return Err(Error::Flash(NorFlashErrorKind::OutOfBounds));
         }
         // Длина округляется ВВЕРХ до страницы: стереть половину страницы флеш
@@ -324,12 +236,12 @@ where
         let page = self.erase_size();
         let end = len.div_ceil(page).saturating_mul(page);
         for from in (0..end).step_by(page as usize) {
-            self.dfu.erase(from, from + page).await?;
+            self.parts.dfu.erase(from, from + page).await?;
             embassy_futures::yield_now().await;
         }
         if SIGNED {
-            let spare = self.capacity;
-            self.dfu.erase(spare, spare + page).await?;
+            let spare = self.parts.capacity;
+            self.parts.dfu.erase(spare, spare + page).await?;
         }
         Ok(())
     }
@@ -348,7 +260,7 @@ where
         if self.dfu_is_busy().await? {
             return Err(Error::BadState);
         }
-        self.dfu.write(offset, data).await?;
+        self.parts.dfu.write(offset, data).await?;
         Ok(())
     }
 
@@ -376,17 +288,27 @@ mod tests {
     /// Отпечаток раскладки в тестах — адаптер отдаёт его как получил.
     const LAYOUT: u32 = 0x5EED_1A70;
 
-    /// Адаптер над разделами в памяти: их порт `FirmwareLayout` отдаёт как есть.
-    type Mem<const SIGNED: bool> = Updater<ports::FirmwarePartitions<Dfu, State>, SIGNED>;
+    /// Адаптер над разделами в памяти.
+    type Mem<const SIGNED: bool> = Updater<super::Partitions<Dfu, State>, SIGNED>;
+
+    /// Адаптер над `dfu` и `state` с самым длинным образом `capacity`.
+    fn mem<const SIGNED: bool>(dfu: Dfu, state: State, capacity: u32) -> Mem<SIGNED> {
+        Updater::new(super::Partitions {
+            dfu,
+            state,
+            capacity,
+            layout: LAYOUT,
+        })
+    }
 
     fn updater() -> Mem<false> {
-        Updater::new(Dfu::erased(), State::erased(), 768, LAYOUT)
+        mem(Dfu::erased(), State::erased(), 768)
     }
 
     fn with_state(magic: u8) -> Mem<false> {
         let mut state = State::erased();
         state.mem[..8].fill(magic);
-        Updater::new(Dfu::erased(), state, 768, LAYOUT)
+        mem(Dfu::erased(), state, 768)
     }
 
     /// Сквозной путь через порт: `Updater<_, true>` готовит раздел, образ и
@@ -406,7 +328,7 @@ mod tests {
             len,
             signature: keys.sign(&digest).to_bytes(),
         };
-        let mut u = Mem::<true>::new(Dfu::filled(0x00), State::erased(), 768, LAYOUT);
+        let mut u = mem::<true>(Dfu::filled(0x00), State::erased(), 768);
         u.prepare(len).await.expect("подготовка");
         let mut padded = image.clone();
         padded.resize(image.len().next_multiple_of(8), 0xFF);
@@ -414,7 +336,12 @@ mod tests {
         u.write(768, &record.to_bytes()).await.expect("запись");
         u.mark_updated().await.expect("запросить обмен");
 
-        let screening = screen_update(&mut u.dfu, &mut u.state, 768, &keys.public.to_bytes());
+        let screening = screen_update(
+            &mut u.parts.dfu,
+            &mut u.parts.state,
+            768,
+            &keys.public.to_bytes(),
+        );
 
         assert_eq!(screening.expect("проверка"), Screening::Approved);
     }
@@ -424,28 +351,28 @@ mod tests {
     #[test]
     #[should_panic(expected = "не кратен странице")]
     fn signed_refuses_a_capacity_off_the_erase_page() {
-        let _ = Mem::<true>::new(Dfu::erased(), State::erased(), 700, LAYOUT);
+        let _ = mem::<true>(Dfu::erased(), State::erased(), 700);
     }
 
     #[test]
     #[should_panic(expected = "запасная страница")]
     fn signed_refuses_a_dfu_without_room_for_the_spare_page() {
         // Вместимость DFU равна `capacity`: за образом страницы под запись нет.
-        let _ = Mem::<true>::new(Dfu::erased(), State::erased(), 1024, LAYOUT);
+        let _ = mem::<true>(Dfu::erased(), State::erased(), 1024);
     }
 
     #[tokio::test]
     async fn prepare_erases_only_the_pages_the_image_needs() {
-        let mut u = Mem::<false>::new(Dfu::filled(0x00), State::erased(), 768, LAYOUT);
+        let mut u = mem::<false>(Dfu::filled(0x00), State::erased(), 768);
 
         u.prepare(257).await.expect("стереть под образ");
 
         assert!(
-            u.dfu.mem[..512].iter().all(|b| *b == 0xFF),
+            u.parts.dfu.mem[..512].iter().all(|b| *b == 0xFF),
             "две страницы стёрты"
         );
         assert!(
-            u.dfu.mem[512..].iter().all(|b| *b == 0x00),
+            u.parts.dfu.mem[512..].iter().all(|b| *b == 0x00),
             "третья и запасная не тронуты"
         );
     }
@@ -457,7 +384,7 @@ mod tests {
         use core::pin::pin;
         use core::task::{Context, Waker};
 
-        let mut u = Mem::<false>::new(Dfu::filled(0x00), State::erased(), 768, LAYOUT);
+        let mut u = mem::<false>(Dfu::filled(0x00), State::erased(), 768);
         let mut cx = Context::from_waker(Waker::noop());
         let mut prepare = pin!(u.prepare(512));
 
@@ -472,17 +399,17 @@ mod tests {
     /// bootloader'а; остальное — как без подписи.
     #[tokio::test]
     async fn signed_prepare_also_erases_the_spare_page() {
-        let mut u = Mem::<true>::new(Dfu::filled(0x00), State::erased(), 768, LAYOUT);
+        let mut u = mem::<true>(Dfu::filled(0x00), State::erased(), 768);
 
         u.prepare(257).await.expect("стереть под образ и запись");
 
-        assert!(u.dfu.mem[..512].iter().all(|b| *b == 0xFF));
+        assert!(u.parts.dfu.mem[..512].iter().all(|b| *b == 0xFF));
         assert!(
-            u.dfu.mem[512..768].iter().all(|b| *b == 0x00),
+            u.parts.dfu.mem[512..768].iter().all(|b| *b == 0x00),
             "третья не тронута"
         );
         assert!(
-            u.dfu.mem[768..].iter().all(|b| *b == 0xFF),
+            u.parts.dfu.mem[768..].iter().all(|b| *b == 0xFF),
             "запасная стёрта"
         );
     }
@@ -490,7 +417,7 @@ mod tests {
     #[tokio::test]
     async fn prepare_refuses_zero_and_oversized_lengths_before_erasing() {
         for len in [0, 769] {
-            let mut u = Mem::<false>::new(Dfu::filled(0x00), State::erased(), 768, LAYOUT);
+            let mut u = mem::<false>(Dfu::filled(0x00), State::erased(), 768);
 
             let refused = u.prepare(len).await;
 
@@ -499,7 +426,7 @@ mod tests {
                 "{len}"
             );
             assert!(
-                u.dfu.mem.iter().all(|b| *b == 0x00),
+                u.parts.dfu.mem.iter().all(|b| *b == 0x00),
                 "раздел не должен быть стёрт"
             );
         }
@@ -563,13 +490,13 @@ mod tests {
         assert_eq!(u.capacity().expect("вместимость"), 768);
     }
 
-    /// Отпечаток раскладки доходит от нарезки (`FirmwarePartitions`) до порта
+    /// Отпечаток раскладки доходит от нарезки (`Partitions`) до порта
     /// без подмены: на МК его считает плата (`bsp::layout`), и адаптер не вправе
     /// отдавать вместо него что-то своё.
     #[test]
     fn reports_the_layout_from_its_partitions() {
         let u: Mem<false> = ports::Assemble::assemble(
-            ports::FirmwarePartitions {
+            super::Partitions {
                 dfu: Dfu::erased(),
                 state: State::erased(),
                 capacity: 768,
