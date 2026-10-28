@@ -9,7 +9,8 @@
 //! задачи. Сама задача — `task` узла из `domain`.
 //!
 //! Сторожа и перезапусков нет: узлы не падают, а зависший остаётся зависшим —
-//! сторожить исполнитель вам.
+//! сторожить исполнитель вам. Сети без графа нет: стек, его узел и узлы
+//! служб шаблон ставит только графом (`graph=yes`).
 {%- assign xs = links | split: "," %}
 {%- if ota == "true" %}
 pub mod ota;
@@ -18,23 +19,11 @@ pub mod ota;
 {%- if has_canopen == "true" %}
 mod canopen;
 {%- endif %}
-{%- if net_services contains "rest" %}
-mod http;
-{%- endif %}
 {%- if has_modbus == "true" %}
 mod modbus;
 {%- endif %}
-{%- if net_services contains "mqtt" %}
-mod mqtt;
-{%- endif %}
-{%- if has_net == "true" %}
-mod net;
-{%- endif %}
 {%- if has_protobuf == "true" %}
 mod protobuf;
-{%- endif %}
-{%- if net_services contains "ssh" %}
-mod ssh;
 {%- endif %}
 {%- if has_usb == "true" %}
 mod usb;
@@ -46,15 +35,12 @@ mod usb;
 ///
 /// Если задачу уже спавнили: `spawn_all` зовётся один раз за запуск, а
 /// проглоченный `SpawnError::Busy` означал бы, что узел молча не работает.
-pub fn spawn_all(spawner: embassy_executor::Spawner, {% if ota == "true" or has_net == "true" or has_usb == "true" or has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" %}board{% else %}_board{% endif %}: bsp::Board) {
+pub fn spawn_all(spawner: embassy_executor::Spawner, {% if ota == "true" or has_usb == "true" or has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" %}board{% else %}_board{% endif %}: bsp::Board) {
     // Загрузку процессора меряет задача из `cpu_load.rs`: в домене
     // executor-обвязки быть не может, а там ровно место для неё.
     spawner.spawn(crate::cpu_load::task().expect("задача CPU_LOAD свежая: спавнится один раз"));
 {%- if ota == "true" %}
     ota::spawn(spawner, board.firmware);
-{%- endif %}
-{%- if has_net == "true" %}
-    net::spawn(spawner, board.net.runner);
 {%- endif %}
 {%- for l in xs %}
 {%- assign f = l | split: ":" %}
@@ -65,30 +51,12 @@ pub fn spawn_all(spawner: embassy_executor::Spawner, {% if ota == "true" or has_
 {%- for l in xs %}
 {%- assign f = l | split: ":" %}
 {%- if f[3] == "modbus" %}
-    modbus::{{ f[4] }}::spawn(spawner, {% if f[0] == "uart" %}board.{{ f[4] }}{% elsif f[0] == "usb" %}board.{{ f[4] }}.cdc{% else %}board.net.stack{% endif %}, crate::modbus::handle());
+    modbus::{{ f[4] }}::spawn(spawner, {% if f[0] == "uart" %}board.{{ f[4] }}{% else %}board.{{ f[4] }}.cdc{% endif %}, crate::modbus::handle());
 {%- elsif f[3] == "protobuf" %}
     let info = crate::device_info(board.spec);
-    protobuf::{{ f[4] }}::spawn(spawner, {% if f[0] == "uart" %}board.{{ f[4] }}{% elsif f[0] == "usb" %}board.{{ f[4] }}.cdc{% else %}board.net.stack{% endif %}, info);
+    protobuf::{{ f[4] }}::spawn(spawner, {% if f[0] == "uart" %}board.{{ f[4] }}{% else %}board.{{ f[4] }}.cdc{% endif %}, info);
 {%- elsif f[3] == "canopen" %}
     canopen::{{ f[4] }}::spawn(spawner, board.{{ f[4] }}, {% if config == "true" %}board.config{% else %}(){% endif %});
 {%- endif %}
 {%- endfor %}
-{%- if net_services contains "rest" %}
-    http::spawn(spawner, board.net.stack, crate::device_info(board.spec));
-{%- endif %}
-{%- if net_services contains "ssh" %}
-    ssh::spawn(
-        spawner,
-        board.net.stack,
-        crate::device_info(board.spec),
-{%- if ssh_host_key == "config" %}
-        board.config,
-{%- else %}
-        &crate::net::ssh::HOST_KEY,
-{%- endif %}
-    );
-{%- endif %}
-{%- if net_services contains "mqtt" %}
-    mqtt::spawn(spawner, board.net.stack, crate::device_info(board.spec));
-{%- endif %}
 }

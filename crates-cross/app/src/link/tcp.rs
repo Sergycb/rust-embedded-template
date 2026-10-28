@@ -25,12 +25,6 @@ pub type Link = ::adapters::modbus::Tcp<::adapters::net::TcpServer>;
 {%- else %}
 pub type Link = ::adapters::cobs::TcpCobs;
 {%- endif %}
-{%- if graph != "true" %}
-
-/// Рычаг платы, над которым собирается канал, — тип по имени для задачи
-/// (задачи embassy не generic).
-pub type Source = bsp::net::Stack;
-{%- endif %}
 
 // Память сокета протокола: он держит её `&'static mut`. `ConstStaticCell` —
 // значения известны при компиляции и лежат в `.bss`.

@@ -3581,6 +3581,34 @@ fn the_menus_come_in_order_and_offer_only_what_is_possible() {
     );
 }
 
+/// Сеть — только с графом: без графа меню транспортов не предлагает
+/// Ethernet, а `--define` с tcp/udp при `graph=no` — ошибка с причиной.
+#[test]
+fn the_network_needs_the_graph() {
+    let ast = compile_script();
+    for links in ["tcp", "udp", "uart:modbus,tcp:modbus"] {
+        let err = run_cascade_with(&ast, "f407ve", &[("links", links), ("graph", "no")])
+            .err()
+            .unwrap_or_else(|| panic!("links={links} без графа не должен генерироваться"));
+        assert!(
+            err.to_string().contains("только с графом"),
+            "{links}: {err}"
+        );
+    }
+    let err = run_cascade_with(&ast, "f407ve", &[("interface", "tcp"), ("graph", "no")])
+        .err()
+        .expect("interface=tcp без графа не должен генерироваться");
+    assert!(err.to_string().contains("только с графом"), "{err}");
+
+    let result = interview(&ast, "f407ve", &[], &[("graph", "no")])
+        .expect("каскад без графа не должен падать");
+    let kinds = menu_values(&result, "transports").expect("меню транспортов показано");
+    assert!(
+        !kinds.iter().any(|kind| kind == "ethernet"),
+        "без графа Ethernet в меню: {kinds:?}"
+    );
+}
+
 /// Выбор в меню доходит до переменных, которые читают шаблоны.
 #[test]
 fn menu_picks_reach_the_template_variables() {
@@ -3592,7 +3620,7 @@ fn menu_picks_reach_the_template_variables() {
         &[
             ("ota", "yes"),
             ("config", "no"),
-            ("graph", "no"),
+            ("graph", "yes"),
             ("transports", "ethernet"),
             ("protocol", "modbus"),
             ("modbus_master", "yes"),
@@ -3602,7 +3630,7 @@ fn menu_picks_reach_the_template_variables() {
     let var = |name: &str| result.vars.get(name).map(String::as_str);
     assert_eq!(var("ota"), Some("true"));
     assert_eq!(var("config"), Some("false"));
-    assert_eq!(var("graph"), Some("false"));
+    assert_eq!(var("graph"), Some("true"));
     assert_eq!(var("interface"), Some("tcp"));
     assert_eq!(var("protocol"), Some("modbus"));
     assert_eq!(var("modbus_master"), Some("true"));

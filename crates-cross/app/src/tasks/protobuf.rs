@@ -8,9 +8,8 @@
 {%- for l in xs %}
 {%- assign f = l | split: ":" %}
 {%- assign lm = "crate::link::" | append: f[0] %}
-{%- if f[0] == "uart" or f[0] == "usb" %}
+{%- comment %} Без графа транспорт — UART или USB: у них модуль канала на транспорт. {% endcomment %}
 {%- assign lm = lm | append: "::" | append: f[4] %}
-{%- endif %}
 {%- if f[3] == "protobuf" %}
 
 /// Узел `PROTOBUF_{{ f[4] | upcase }}`.

@@ -92,14 +92,8 @@ SWAP_PAGE_SIZE = "{{page_size | remove: '_'}}"
 NET_SOCKETS = "{{net_stack_sockets}}"
 {%- endif %}
 {%- if net_services contains "rest" %}
-{%- if graph == "true" %}
 # Соединений REST API разом — копий пула узлов `HTTP` (`app::net`, пул в
 # `app/src/graph.rs`): у каждой свой сокет и свои буферы. Меняете — меняйте и
 # литерал пула в графе (DSL не берёт константу) и `NET_SOCKETS` выше.
-{%- else %}
-# Соединений REST API разом — копий пула задач `HTTP` (`app::net`, пул в
-# `app/src/tasks/http.rs`): у каждой свой сокет и свои буферы. Меняете — меняйте
-# и `NET_SOCKETS` выше.
-{%- endif %}
 HTTP_CONNECTIONS = "{{http_connections}}"
 {%- endif %}

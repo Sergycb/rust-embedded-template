@@ -659,7 +659,7 @@ ST-Link захваченным до переподключения кабеля 
 ### REST API
 
 Узлы `HTTP` (`crates-host/domain/src/http.rs`) — HTTP-сервер `picoserve` на порту 80,
-по сокету стека на соединение (`HTTP_CONNECTIONS` в `[env]` `crates-cross/.cargo/config.toml`, {% if graph == "true" %}пул `HTTP[{{ http_connections }}]` в графе{% else %}пул задач `crates-cross/app/src/tasks/http.rs`{% endif %}).
+по сокету стека на соединение (`HTTP_CONNECTIONS` в `[env]` `crates-cross/.cargo/config.toml`, пул `HTTP[{{ http_connections }}]` в графе).
 `GET /api/info` — сведения об устройстве JSON{% if ota == "true" %}, `POST /api/reboot` — перезагрузка
 командой узлу OTA{% endif %}; свои маршруты — в `router()` того же модуля.
 
