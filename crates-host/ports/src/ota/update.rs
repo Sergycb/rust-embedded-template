@@ -17,8 +17,6 @@
 //! сверяет со своим на `Finish`. Формула здесь по той же причине: считают её
 //! обе стороны.
 
-use crate::word::MAX_WRITE_SIZE;
-
 /// Границы разделов из `memory.x`, по которым считается отпечаток раскладки,
 /// — в этом порядке.
 ///
@@ -35,51 +33,14 @@ pub const LAYOUT_SYMBOLS: [&str; 6] = [
     "__bootloader_dfu_end",
 ];
 
-/// Разделы обновления — то, над чем работает адаптер [`FirmwareUpdate`]:
-/// раздел `DFU`, куда принимается образ, журнал обмена `BOOTLOADER_STATE` и
-/// самый длинный образ, который доедет до устройства.
+/// Самое широкое слово записи флеша среди STM32 — тридцать два байта (H7).
 ///
-/// Отдаёт их [`FirmwareLayout::split`]; сами они — тоже `FirmwareLayout`,
-/// уже нарезанный, — так host-тест подаёт адаптеру разделы в памяти.
-#[derive(Debug)]
-pub struct FirmwarePartitions<D, S> {
-    /// Раздел `DFU`.
-    pub dfu: D,
-    /// Раздел `BOOTLOADER_STATE`.
-    pub state: S,
-    /// Самый длинный принимаемый образ — размер `ACTIVE`, а не `DFU`
-    /// (см. [`FirmwareUpdate::capacity`]).
-    pub capacity: u32,
-    /// Отпечаток раскладки, под которую собрана эта прошивка
-    /// ([`layout_fingerprint`], см. [`FirmwareUpdate::layout`]).
-    pub layout: u32,
-}
-
-/// Флеш под обновлением, ещё не нарезанный на разделы, — рычаг платы, над
-/// которым узел OTA собирает адаптер [`FirmwareUpdate`] (порт `Assemble`).
-///
-/// Режет его узел, а не плата: где лежат `DFU` и `BOOTLOADER_STATE` — знание
-/// алгоритма обновления (символы `memory.x`, которые читает `embassy-boot`),
-/// а плата отдаёт только флеш (`adapters::ota::Linked`). Порт — чтобы на хосте
-/// нарезку подменяли готовые [`FirmwarePartitions`].
-pub trait FirmwareLayout {
-    /// Раздел `DFU`.
-    type Dfu;
-    /// Раздел `BOOTLOADER_STATE`.
-    type State;
-
-    /// Находит разделы обновления; зовётся один раз — при сборке адаптера.
-    fn split(self) -> FirmwarePartitions<Self::Dfu, Self::State>;
-}
-
-impl<D, S> FirmwareLayout for FirmwarePartitions<D, S> {
-    type Dfu = D;
-    type State = S;
-
-    fn split(self) -> Self {
-        self
-    }
-}
+/// Буфер под слово держится на этот максимум, а флешу отдаётся срез нужной
+/// длины: так адаптер обновления (`embassy-boot` требует буфер ровно в
+/// `STATE::WRITE_SIZE` байт с выравниванием флеша), буферизация образа до
+/// слова (`domain::ota::download`) и решение bootloader'а
+/// (`domain::ota::boot`) остаются generic и не знают слова конкретного чипа.
+pub const MAX_WRITE_SIZE: usize = 32;
 
 /// Обновление прошивки: то, что нужно логике приёма и применения образа.
 #[must_use]

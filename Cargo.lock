@@ -12,7 +12,6 @@ dependencies = [
  "defmt 1.2.0",
  "domain",
  "embassy-boot",
- "embassy-embedded-hal",
  "embassy-executor",
  "embassy-futures",
  "embassy-net",

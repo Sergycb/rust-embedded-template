@@ -22,8 +22,8 @@ unsafe extern "C" {
     static __bootloader_active_start: u8;
     /// Конец `ACTIVE` — см. `__bootloader_active_start`.
     static __bootloader_active_end: u8;
-    /// Начало `STATE` — для отпечатка раскладки, как и остальные границы
-    /// `embassy-boot` ниже.
+    /// Начало `STATE` — для нарезки разделов обновления и отпечатка раскладки,
+    /// как и остальные границы `embassy-boot` ниже.
     static __bootloader_state_start: u8;
     /// Конец `STATE`.
     static __bootloader_state_end: u8;
@@ -93,6 +93,20 @@ pub(crate) fn fingerprint() -> u32 {
         value(&raw const __bootloader_dfu_start),
         value(&raw const __bootloader_dfu_end),
     ])
+}
+
+/// Раздел `DFU`: `(начало, размер)` — смещение в его носителе и длина. Те же
+/// символы читает `embassy-boot` в bootloader'е (`from_linkerfile`), поэтому
+/// разделы приложения и bootloader'а совпадают по построению.
+pub(crate) fn dfu() -> (u32, u32) {
+    let start = value(&raw const __bootloader_dfu_start);
+    (start, value(&raw const __bootloader_dfu_end) - start)
+}
+
+/// Раздел `BOOTLOADER_STATE`: `(начало, размер)` — как у [`dfu`].
+pub(crate) fn state() -> (u32, u32) {
+    let start = value(&raw const __bootloader_state_start);
+    (start, value(&raw const __bootloader_state_end) - start)
 }
 {%- endif %}
 {%- if config_store == "flash" or config_store == "external" %}

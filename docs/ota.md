@@ -461,7 +461,7 @@ SPI NOR — клипсой программатора: записать в `STAT
   символов из ELF приложения, сверяет с ELF bootloader'а (разошлись — ошибка
   сборки) и печатает `раскладка: 0x…`; прошивка считает тот же отпечаток по
   адресам символов в рантайме (`bsp::layout::fingerprint` →
-  `adapters::ota::Linked`, порт
+  `adapters::ota::Partitions`, порт
   `FirmwareUpdate::layout`). На `Finish` — в обоих режимах, до
   `mark_updated` — узел сверяет отпечаток из хвоста со своим: не совпал —
   отказ `Layout` (`UpdateError::Layout`, код 17), обмен не запрашивается.

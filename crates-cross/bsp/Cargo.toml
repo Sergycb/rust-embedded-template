@@ -27,7 +27,7 @@ embassy-stm32 = { workspace = true, features = ["unstable-pac"] }
 {%- if has_usb == "true" or has_net == "true" or config_store == "eeprom" or ota == "true" %}
 # Обёртки, из которых плата собирает свои рычаги, — по строке на рычаг:
 {%- if ota == "true" %}
-#   флеш под обновлением (`adapters::ota::Linked`, src/flash.rs{% if ota_store == "external" %}, src/external.rs{% endif %})
+#   разделы обновления (`adapters::ota::Partitions`, src/flash.rs{% if ota_store == "external" %}, src/external.rs{% endif %})
 {%- endif %}
 {%- if config_store == "eeprom" %}
 #   EEPROM как `NorFlash` (`adapters::eeprom::Eeprom`, src/flash.rs)

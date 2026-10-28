@@ -212,6 +212,9 @@ impl ports::Assemble for Unavailable {
 impl ports::SettingsStorage for Unavailable {
     type Error = core::convert::Infallible;
 
+    /// Предела нет: ничего не хранится.
+    const MAX_VALUE: usize = usize::MAX;
+
     fn read<'a>(
         &mut self,
         _: Key,
@@ -232,6 +235,10 @@ impl ports::SettingsStorage for Unavailable {
 /// типом мимо порта.
 impl<F: NorFlash> ports::SettingsStorage for Settings<F> {
     type Error = Error<F::Error>;
+
+    /// Ключ и значение, дополненные до слова флеша, обязаны поместиться в
+    /// рабочий буфер (128 байт): столько слов, сколько в нём целиком, без ключа.
+    const MAX_VALUE: usize = SCRATCH / F::WRITE_SIZE * F::WRITE_SIZE - size_of::<Key>();
 
     /// Читает значение по ключу; `None` — ключ ещё не записан.
     ///

@@ -17,6 +17,7 @@ struct Memory(Option<Vec<u8>>);
 
 impl ports::SettingsStorage for Memory {
     type Error = ();
+    const MAX_VALUE: usize = usize::MAX;
 
     fn read<'a>(
         &mut self,

@@ -156,18 +156,10 @@ critical-section = { version = "1.2.0" }
 # крейта).
 # {%- if ota == "true" or erase_page == "true" %}
 # `embassy-boot` — без `-stm32`: сам он от чипа не зависит.
-# {%- if ota == "true" %}
-# `from_linkerfile` зовёт адаптер OTA (`adapters::ota::Linked`) — только на МК.
-# {%- endif %}
 embassy-boot           = { version = "0.7.0" }
-# {%- endif %}
-# {%- if ota == "true" or flash_page == "true" %}
-# {%- if ota == "true" %}
-# `adapters`: тип раздела `Partition` в `ota::Linked`.
 # {%- endif %}
 # {%- if flash_page == "true" %}
 # Тесты `flash-page`: `BlockingAsync` и `BlockingPartition`.
-# {%- endif %}
 embassy-embedded-hal   = { version = "0.6.0" }
 # {%- endif %}
 # Мьютексы адаптеров. Версия та же и у `supervisor` — иначе в прошивке

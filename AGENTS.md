@@ -221,7 +221,7 @@ read`: руками пришлось бы сначала найти адрес �
   `memory.x` — `boot` перешивается по проводу, а не образом — `docs/ota.md`.
 {%- endif %}
 {%- capture mutexes %}{% if shared_flash == "true" %}, `bsp::flash::FlashMutex`{% endif %}{% if ota == "true" and ota_store != "external" %}, мьютексов носителей `DFU` и `STATE`
-  (`bsp::flash::DFU_FLASH`, `bsp::flash::STATE_FLASH`, их ждёт `adapters::ota::Linked`{% if dfu_bank == "true" %}; `DFU` во втором банке —
+  (`bsp::flash::DFU_FLASH`, `bsp::flash::STATE_FLASH`, над ними `Partition` разделов обновления{% if dfu_bank == "true" %}; `DFU` во втором банке —
   `bsp::flash::DfuBankMutex`{% endif %}){% endif %}{% if config_store == "flash" %}, `CONFIG` (`bsp::flash::CONFIG_FLASH`){% endif %}{% if external_flash == "true" %},
   внешней флеши (`bsp::external::ExternalMutex`){% endif %}{% if ota == "true" %}, `local` на слотах узла OTA
   (`domain::ota`){% endif %}{% endcapture %}
@@ -275,14 +275,13 @@ read`: руками пришлось бы сначала найти адрес �
   `ACTIVE` —{% else %} Подробности —{% endif %} `docs/flash.md`.
 {%- endif %}
 {%- if ota == "true" %}
-- Флеш под обновлением плата отдаёт не нарезанным (`board.firmware:
-  bsp::FirmwareFlash` = `adapters::ota::Linked`: носители `DFU`/`STATE` со своими
-  страницами и размер `ACTIVE`); разделы по символам `memory.x`
-  (`FirmwareUpdaterConfig::from_linkerfile`) находит узел OTA, собирая адаптер
-  (порт `ports::FirmwareLayout`). Нарезка стоит под `cfg(target_os = "none")`:
-  host-lint и host-тесты её не видят (там вместо неё — готовые
-  `ports::FirmwarePartitions`), проверяет её только `cargo xtask lint cross`/`build` —
-  `docs/ota.md`.
+- Разделы обновления плата отдаёт нарезанными (`board.firmware:
+  bsp::FirmwareFlash` = `adapters::ota::Partitions`: `DFU`/`STATE` со своими
+  страницами, размер `ACTIVE`, отпечаток раскладки). Режет их `bsp::flash`
+  по символам `memory.x` (`bsp::layout::{dfu, state}`) — тем же, что читает
+  `from_linkerfile` в bootloader'е; узел OTA собирает над ними
+  `adapters::ota::Updater`. Нарезку проверяет только `cargo xtask lint cross`/`build`,
+  host-тесты подают адаптеру разделы в памяти — `docs/ota.md`.
 {%- endif %}
 {%- if ota == "true" or config_store == "flash" or config_store == "external" or dma_nc == "true" %}
 - Границы разделов и регионов памяти, нужные рычагам платы ({% if ota == "true" %}размер `ACTIVE`, {% endif %}{% if config_store == "flash" or config_store == "external" %}границы `CONFIG`, {% endif %}{% if external_flash == "true" %}конец

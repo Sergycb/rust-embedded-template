@@ -130,6 +130,7 @@ struct Memory(HashMap<u32, Vec<u8>>);
 
 impl SettingsStorage for Memory {
     type Error = &'static str;
+    const MAX_VALUE: usize = usize::MAX;
 
     fn read<'a>(
         &mut self,

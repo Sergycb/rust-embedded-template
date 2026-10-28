@@ -10,12 +10,11 @@
 Куски — рычаги платы, полями `Board`:
 {%- if ota == "true" and ota_store != "external" %}
 
-- `firmware` (`FirmwareFlash` — `adapters::ota::Linked`) — флеш под
-  обновлением, ещё не нарезанный: носители `DFU` и `BOOTLOADER_STATE` со своими
-  страницами и размер `ACTIVE` (из символов `memory.x` `__bootloader_active_*`, читает `bsp::layout`). Где в
-  нём лежат разделы, знает алгоритм обновления, а не плата: их находит узел OTA
-  по символам `memory.x` (`FirmwareUpdaterConfig::from_linkerfile`), когда
-  собирает адаптер (`adapters::ota::Updater`, порт `ports::FirmwareLayout`).
+- `firmware` (`FirmwareFlash` — `adapters::ota::Partitions`) — разделы
+  обновления: `DFU` и `BOOTLOADER_STATE` со своими страницами, нарезанные по
+  символам `memory.x` (`bsp::layout::{dfu, state}` — те же, что читает
+  `from_linkerfile` в bootloader'е), размер `ACTIVE` и отпечаток раскладки.
+  Над ними узел OTA собирает адаптер (`adapters::ota::Updater`).
   Обмен копирует ровно `ACTIVE`, поэтому предел образа — он, а не `DFU`.
 {%- if state_paged == "true" %} Носитель
   `BOOTLOADER_STATE` — `flash_page::ErasePage` со страницей своего сектора
