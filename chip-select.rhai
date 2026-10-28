@@ -916,13 +916,13 @@ const RAM_COST = #{
     // вложенных future — это сняло 7344 с прежних 26164); SSH — stm32h743zg ssh-password-config 20100
     // против tcp config=yes 3380 (буферы, ключи, futures `sunset`, статик RNG
     // для `getrandom`) — 16720,
-    // но stm32h743zg rest-ssh-key-no-graph (ext_flash=yes) 41904 на 300 больше
-    // суммы частей: SSH взят с этим запасом.
+    // но stm32h743zg rest-ssh-key (ext_flash=yes) 41652 на 608 больше суммы
+    // частей: SSH взят с этим запасом — 17328.
     // MQTT — stm32h743zg mqtt-modbus-tcp 16436 при оценке без MQTT 9680
     // (буферы `minimq` и сокета, сокет, future узла) — 6756, но
     // rest-ssh-mqtt (ext_flash=yes) 56148 на 676 больше оценки с прежними 6800:
     // взят с этим запасом и округлён вверх до 7500.
-    services: #{ ssh: 17020, rest: 18820, mqtt: 7500 },
+    services: #{ ssh: 17328, rest: 18820, mqtt: 7500 },
 };
 // Сверх статической RAM — под стек: он в `.data`/`.bss` не входит (flip-link
 // кладёт его под ними). Не замерен — без платы глубину стека не снять, — а
@@ -1465,7 +1465,9 @@ if WANTED_LINKS.len() > 0 {
         // Список с отметками (`checklist()`). Пункт — вид, у которого есть блок;
         // имени блока в пункте нет: транспорт получает первый блок вида, а
         // сменить блок — дело `resources.rs`.
-        let items = TRANSPORT_ITEMS.filter(|item| free_blocks(item.kind, INTERFACE_BLOCKS[item.kind], [], have, instances).len() > 0);
+        // Сеть — только с графом (см. проверку ниже): без него пункта нет.
+        let items = TRANSPORT_ITEMS.filter(|item| (wants_graph || item.value != "ethernet")
+            && free_blocks(item.kind, INTERFACE_BLOCKS[item.kind], [], have, instances).len() > 0);
         // Пункт, с которым отмеченные (и он сам) не помещаются в RAM, помечен,
         // но выбрать его можно — тогда в конце печатается предупреждение.
         // Протокол ещё не спрошен, поэтому пункт стоит как его худший протокол.
@@ -1529,6 +1531,13 @@ if WANTED_LINKS.len() > 0 {
     if links.len() == 0 && wanted_protocol != "" && wanted_protocol != "none" {
         throw "protocol: протокол " + wanted_protocol + " нужен транспорт — задайте interface (" + listed(PROTOCOL_INTERFACES[wanted_protocol]) + ")";
     }
+}
+// Сетевой транспорт — только с графом. Без графа узлы спавнил бы `tasks/`, а
+// сеть — это стек, его узел и узлы служб (REST, SSH, MQTT): второй, ручной путь
+// к тому же, что граф даёт декларацией, — с собственными сигналами готовности
+// и порядком старта, которые держались только тестами шаблона.
+if !wants_graph && links.some(|link| link.kind == "tcp" || link.kind == "udp") {
+    throw "links: сетевой транспорт (tcp/udp) — только с графом задач (graph=yes): без графа сети в шаблоне нет";
 }
 if protocol != "modbus" && variable::is_set("modbus_master") {
     let answer = variable::get("modbus_master");
@@ -2593,9 +2602,6 @@ if variable::get("graph") != "true" {
 	if variable::get("ota") != "true" {
 		file::delete("crates-cross/app/src/tasks/ota.rs");
 	}
-	if !has.tcp && !has.udp {
-		file::delete("crates-cross/app/src/tasks/net.rs");
-	}
 	if !has.usb {
 		file::delete("crates-cross/app/src/tasks/usb.rs");
 	}
@@ -2647,21 +2653,18 @@ if services.len() == 0 {
 if !services.contains("rest") {
 	file::delete("crates-host/domain/src/http.rs");
 	file::delete("crates-host/domain/src/http");
-	file::delete("crates-cross/app/src/tasks/http.rs");
 	file::delete("crates-cross/app/src/net/rest.rs");
 }
 if !services.contains("ssh") {
 	file::delete("crates-host/domain/src/ssh.rs");
 	file::delete("crates-host/domain/src/ssh");
-	file::delete("crates-cross/app/src/tasks/ssh.rs");
 	file::delete("crates-cross/app/src/net/ssh.rs");
 }
-// MQTT — узел, задача без графа, разбор `mqtt.toml` в build-скрипте `app`,
+// MQTT — узел, разбор `mqtt.toml` в build-скрипте `app`,
 // порт `Dial` и описание.
 if !services.contains("mqtt") {
 	file::delete("crates-host/domain/src/mqtt.rs");
 	file::delete("crates-host/domain/src/mqtt");
-	file::delete("crates-cross/app/src/tasks/mqtt.rs");
 	file::delete("crates-cross/app/src/net/mqtt.rs");
 	file::delete("crates-cross/app/build");
 	file::delete("crates-host/ports/src/dial.rs");

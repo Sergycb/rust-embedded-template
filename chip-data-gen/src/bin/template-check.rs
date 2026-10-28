@@ -255,20 +255,12 @@ fn default_cases() -> Vec<Case> {
         // драйвер в рецепте и `Rtu` поверх потока CDC вместо UART.
         Case::new("stm32f407ve").variant("modbus-usb", &["protocol=modbus", "interface=usb"]),
         // Протоколы без графа: узел спавнит `tasks::spawn_all` (`app/src/tasks/`),
-        // а `NET`/`USB` — рядом с ним. По одной конфигурации на вид
-        // интерфейса: UART, TCP, UDP, USB CDC и CAN (с настройками — слот
-        // хранилища узла CANopen).
+        // а `USB` — рядом с ним. По одной конфигурации на вид интерфейса: UART,
+        // USB CDC и CAN (с настройками — слот хранилища узла CANopen). Сети без
+        // графа нет — хук её не даёт.
         Case::new("stm32g474re").variant(
             "modbus-uart-no-graph",
             &["protocol=modbus", "interface=uart", "graph=no"],
-        ),
-        Case::new("stm32h743zg").variant(
-            "modbus-tcp-no-graph",
-            &["protocol=modbus", "interface=tcp", "graph=no"],
-        ),
-        Case::new("stm32f407ve").variant(
-            "protobuf-udp-no-graph",
-            &["protocol=protobuf", "interface=udp", "graph=no"],
         ),
         Case::new("stm32g474re").variant(
             "protobuf-usb-no-graph",
@@ -290,7 +282,7 @@ fn default_cases() -> Vec<Case> {
         // (два устройства с разными серийными номерами; без графа — и по
         // сигналу готовности OTA на каждое), TCP и UDP на одном стеке
         // (`NET_SOCKETS` = 1 + 2), поток с протоколом рядом с шиной без протокола,
-        // UART с UDP без графа. Транспорты без протокола: UDP (сокет и
+        // UART с UDP под одним протоколом. Транспорты без протокола: UDP (сокет и
         // `PacketMetadata` ждут ваш узел) и USB с графом (поток CDC в
         // `Board` никто не забирает).
         Case::new("stm32h743zg").variant(
@@ -306,55 +298,47 @@ fn default_cases() -> Vec<Case> {
         Case::new("stm32g474re").variant("usb-only", &["interface=usb"]),
         Case::new("stm32f407ve").variant("modbus-tcp-udp", &["links=tcp:modbus,udp:modbus"]),
         Case::new("stm32f407ve").variant("modbus-uart-can", &["links=uart:modbus,can"]),
-        Case::new("stm32f407ve").variant(
-            "protobuf-uart-udp-no-graph",
-            &["links=uart:protobuf,udp:protobuf", "graph=no"],
-        )
-        .smoke(),
-        // REST API (`domain::http`, пул `HTTP[2]`): с графом и OTA — рядом с
-        // Modbus по TCP, чтобы номер клиента OTA шёл следом за транспортом и
-        // сокетов стало три; без графа и без OTA — пул задач, сведения без
-        // protobuf и роутер без `/api/reboot`.
+        Case::new("stm32f407ve")
+            .variant("protobuf-uart-udp", &["links=uart:protobuf,udp:protobuf"])
+            .smoke(),
+        // REST API (`domain::http`, пул `HTTP[2]`): с OTA — рядом с Modbus по
+        // TCP, чтобы номер клиента OTA шёл следом за транспортом и сокетов
+        // стало три; без OTA — сведения без protobuf и роутер без
+        // `/api/reboot`.
         Case::new("stm32h743zg").variant(
             "rest-modbus-tcp",
             &["links=tcp:modbus", "net_services=rest"],
         ),
         Case::new("stm32f407ve").variant(
-            "rest-no-graph-no-ota",
-            &["links=tcp", "net_services=rest", "graph=no", "ota=no"],
+            "rest-no-ota",
+            &["links=tcp", "net_services=rest", "ota=no"],
         ),
-        // Консоль SSH (`domain::ssh`, `getrandom` над RNG платы): с графом —
-        // вход по паролю и ключ хоста, созданный платой в разделе настроек
-        // (`Stored`); без графа — вместе с REST (клиенты OTA 0 и 1), вход по
-        // ключу и ключ хоста из файла (`Fixed`). Обе службы с OTA в 256K не
-        // влезают — там `ext_flash=yes` (`ACTIVE` 384K).
+        // Консоль SSH (`domain::ssh`, `getrandom` над RNG платы): вход по
+        // паролю и ключ хоста, созданный платой в разделе настроек (`Stored`);
+        // вместе с REST (клиенты OTA 0 и 1) — вход по ключу и ключ хоста из
+        // файла (`Fixed`). Обе службы с OTA в 256K не влезают — там
+        // `ext_flash=yes` (`ACTIVE` 384K).
         Case::new("stm32h743zg").variant(
             "ssh-password-config",
             &["links=tcp", "net_services=ssh", "ssh_auth=password", "config=yes"],
         ),
         Case::new("stm32h743zg").variant(
-            "rest-ssh-key-no-graph",
+            "rest-ssh-key",
             &[
                 "links=tcp",
                 "net_services=rest,ssh",
                 "ssh_auth=key",
                 "ssh_key=ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl",
-                "graph=no",
                 "ext_flash=yes",
             ],
         ),
-        // Клиент MQTT (`domain::mqtt`, `adapters::net::TcpClient`): с графом и
-        // OTA — рядом с Modbus по TCP (клиент OTA 1, третий сокет); без графа и
-        // без OTA — задача из `tasks/mqtt.rs`; со всеми службами — номера OTA
-        // REST 0–1, SSH 2, MQTT 3 и сокеты каждой; поверх одного UDP —
-        // TCP-клиент без TCP-транспорта.
+        // Клиент MQTT (`domain::mqtt`, `adapters::net::TcpClient`): с OTA —
+        // рядом с Modbus по TCP (клиент OTA 1, третий сокет); со всеми
+        // службами — номера OTA REST 0–1, SSH 2, MQTT 3 и сокеты каждой; поверх
+        // одного UDP — TCP-клиент без TCP-транспорта.
         Case::new("stm32h743zg").variant(
             "mqtt-modbus-tcp",
             &["links=tcp:modbus", "net_services=mqtt"],
-        ),
-        Case::new("stm32f407ve").variant(
-            "mqtt-no-graph-no-ota",
-            &["links=tcp", "net_services=mqtt", "graph=no", "ota=no"],
         ),
         Case::new("stm32h743zg").variant(
             "rest-ssh-mqtt",
@@ -365,14 +349,8 @@ fn default_cases() -> Vec<Case> {
                 "ext_flash=yes",
             ],
         ),
-        // Без графа, но с OTA: ветка `tasks/mqtt.rs` с клиентом OTA.
-        Case::new("stm32f407ve").variant(
-            "mqtt-no-graph",
-            &["links=tcp", "net_services=mqtt", "graph=no"],
-        ),
         Case::new("stm32f407ve").variant("mqtt-udp", &["links=udp", "net_services=mqtt"]),
-        // С графом, но без OTA: узел MQTT без клиента OTA, `cmd/reboot` — строка
-        // в лог.
+        // Без OTA: узел MQTT без клиента OTA, `cmd/reboot` — строка в лог.
         Case::new("stm32f407ve").variant(
             "mqtt-no-ota",
             &["links=tcp", "net_services=mqtt", "ota=no"],

@@ -442,8 +442,8 @@ read`: руками пришлось бы сначала найти адрес �
   прошивкой), и он **коммитится**, а не уходит в `.gitignore`: токен и так открыт
   в каждом образе, а без файла не собрались бы свежий клон и CI. Число
   соединений — `HTTP_CONNECTIONS` в `[env]` `crates-cross/.cargo/config.toml`
-  (`crate::net::rest::CONNECTIONS`);{% if graph == "true" %} пул `HTTP[{{ http_connections }}]` в `graph.rs` —
-  литерал, который генерация пишет тем же числом (`const`-assert там же), и{% endif %}
+  (`crate::net::rest::CONNECTIONS`); пул `HTTP[{{ http_connections }}]` в `graph.rs` —
+  литерал, который генерация пишет тем же числом (`const`-assert там же), и
   сокеты стека (`NET_SOCKETS` в том же `[env]`, `bsp::net`) генерация считает с ним —
   правите руками одно — правьте и остальные.
 {%- endif %}
