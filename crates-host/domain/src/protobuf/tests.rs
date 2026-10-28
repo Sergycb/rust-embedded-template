@@ -243,3 +243,22 @@ fn a_second_update_command_in_flight_is_busy() {
     );
 }
 // {%- endif %}
+
+proptest::proptest! {
+    /// Кадр приходит снаружи, и каким бы он ни был — мусор, обрезок, чужая
+    /// схема, — узел не падает, отвечает на него не больше чем одним кадром
+    /// (команду обновления узел отдаёт OTA, и её исход приходит позже), и этот
+    /// кадр — ответ схемы.
+    #[test]
+    fn any_frame_gets_at_most_one_well_formed_reply(
+        frame in proptest::collection::vec(proptest::num::u8::ANY, 0..128)
+    ) {
+        let mut link = Link::with([Ok(frame)]);
+        serve(&mut link, 256);
+        proptest::prop_assert!(link.sent.len() <= 1, "{} ответов", link.sent.len());
+        if let Some(reply) = link.sent.first() {
+            let mut response = Response::default();
+            proptest::prop_assert!(response.decode_from_bytes(reply).is_ok());
+        }
+    }
+}

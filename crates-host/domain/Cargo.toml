@@ -165,10 +165,14 @@ embassy-usb        = { workspace = true }
 # Исполнитель для async-тестов над фейками портов (`#[tokio::test]`); фичи —
 # в корневом Cargo.toml.
 tokio = { workspace = true }
-# {%- if ota == "true" or has_modbus == "true" %}
+# {%- if ota == "true" or has_modbus == "true" or has_protobuf == "true" %}
 # Property-тесты:
 # {%- if ota == "true" %}
-# `download::Transfer` (любое разбиение образа на куски);
+# `download::Transfer` (любое разбиение образа на куски), узел OTA (любая
+# последовательность команд);
+# {%- endif %}
+# {%- if has_protobuf == "true" %}
+# узел PROTOBUF (любой входящий кадр не роняет его);
 # {%- endif %}
 # {%- if has_modbus == "true" %}
 # Modbus slave (любой кадр не роняет разбор).

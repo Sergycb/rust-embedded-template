@@ -389,3 +389,17 @@ renovate:
     LOG_LEVEL: info
   script:
     - renovate
+
+# Уязвимость попадает в базу RustSec и тогда, когда в проекте ничего не
+# меняли, а остальные джобы идут на push и MR: без расписания новая запись
+# всплыла бы при следующем коммите. Идёт по тому же Pipeline schedule, что и
+# renovate выше, — только `advisories` по обоим lock-файлам.
+audit:
+  stage: test
+  image: rust:1.96.0
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+  script:
+    - cargo install cargo-deny --locked
+    - cargo deny check advisories
+    - cargo deny --manifest-path crates-cross/Cargo.toml check advisories
