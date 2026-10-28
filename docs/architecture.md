@@ -354,9 +354,9 @@ device, cdc }` (классы `embassy-usb` регистрируются до п�
 устройство — узлу `USB_*`, поток CDC — транспорту протокола){% endif %}{% if has_usb == "true" and has_net == "true" %} и{% endif %}{% if has_net == "true" %} сеть —
 `board.net: bsp::net::Net { runner, stack }` (их рождает один `embassy_net::new`;
 фоновая работа — узлу `NET`, стек — сокетам узлов). Сокетов в стеке —
-`NET_SOCKETS` в `[env]` `crates-cross/.cargo/config.toml`: число считает
-генерация (DHCP-клиент, сетевые транспорты, соединения служб), плате незачем
-знать, сколько соединений откроет приложение.{% if rng_irq != "" %} Затравка стека{% if net_services contains "ssh" %} и бэкенд
+`bsp::net::SOCKETS`: стек строит плата, поэтому и счёт у неё (DHCP-клиент,
+сетевые транспорты, соединения служб — числа из генерации), и отдельной
+проверки, что слотов хватит, не нужно.{% if rng_irq != "" %} Затравка стека{% if net_services contains "ssh" %} и бэкенд
 `getrandom`{% endif %} над RNG — тоже плата (`bsp::rng`).{% endif %}{% else %}.{% endif %}
 {%- else %}.
 {%- endif %} {% if graph == "true" %}Граф берёт `Board`

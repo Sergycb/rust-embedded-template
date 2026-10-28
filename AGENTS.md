@@ -443,9 +443,9 @@ read`: руками пришлось бы сначала найти адрес �
   в каждом образе, а без файла не собрались бы свежий клон и CI. Число
   соединений — `HTTP_CONNECTIONS` в `[env]` `crates-cross/.cargo/config.toml`
   (`crate::net::rest::CONNECTIONS`); пул `HTTP[{{ http_connections }}]` в `graph.rs` —
-  литерал, который генерация пишет тем же числом (`const`-assert там же), и
-  сокеты стека (`NET_SOCKETS` в том же `[env]`, `bsp::net`) генерация считает с ним —
-  правите руками одно — правьте и остальные.
+  литерал, который генерация пишет тем же числом (`const`-assert там же);
+  сокеты стека под пул `bsp::net::SOCKETS` считает по тому же `HTTP_CONNECTIONS`.
+  Правите руками число — правьте и литерал.
 {%- endif %}
 {%- if net_services contains "ssh" %}
 - Консоль SSH (`domain::ssh`, узел `SSH`): {% if ssh_auth == "password" %}пароль — `ssh-password.txt`{% else %}открытый ключ пользователя — строка `crate::net::ssh::LOGIN`{% endif %}{% if ssh_host_key == "file" %}, ключ хоста — `ssh-host-key.bin` (`crate::net::ssh::HOST_KEY`){% endif %}.
@@ -468,8 +468,8 @@ read`: руками пришлось бы сначала найти адрес �
   зовёт `dial` снова; паузы перед попытками (1 → 30 с) — контракт порта
   `ports::dial::Dial`, их держит `adapters::net::TcpClient`, а не `domain`.
   {%- if ota == "true" %} Клиент входа `CMD` узла OTA для `cmd/reboot` — номер
-  `{{ mqtt_ota_client }}` (`domain::ota::ClientId`).{%- endif %} Сокет клиента — слот в `NET_SOCKETS`
-  (`[env]`, считает генерация); клиента собирает узел (`Assemble`) на стеке платы,
+  `{{ mqtt_ota_client }}` (`domain::ota::ClientId`).{%- endif %} Сокет клиента — слот в
+  `bsp::net::SOCKETS`; клиента собирает узел (`Assemble`) на стеке платы,
   буферы TCP — статики `crate::net::mqtt::buffers()`. Доступ к `cmd/` токеном в
   теле не защищён — только ACL брокера{% if ota == "true" %} (при пустом `user` `build.rs` предупреждает){% endif %} —
   `docs/modules/app-mqtt.md`.
@@ -504,7 +504,7 @@ read`: руками пришлось бы сначала найти адрес �
   собирает плата: {% if has_usb == "true" %}USB — `board.<транспорт>: bsp::usb::<транспорт>::Usb { device,
   cdc }` (классы регистрируются до постройки устройства){% if has_net == "true" %}, {% endif %}{% endif %}{% if has_net == "true" %}сеть — `board.net:
   bsp::net::Net { runner, stack }` (один `embassy_net::new`; сокетов —
-  `NET_SOCKETS` в `[env]`, считает генерация){% endif %}.{% endif %} {% if graph == "true" %}Граф берёт `boot: board:
+  `bsp::net::SOCKETS`, счёт по транспортам и службам){% endif %}.{% endif %} {% if graph == "true" %}Граф берёт `boot: board:
   bsp::Board;` и делит по полям{% else %}Поля делит `tasks::spawn_all(spawner, board)`{% endif %}.
   {%- if has_usb == "true" or has_net == "true" %}
   Не передавать половину пары через `static`{% if has_usb == "true" %} (поток CDC не `Send`){% endif %} и не делать

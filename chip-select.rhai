@@ -2409,18 +2409,10 @@ for link in links {
     if link.kind == "tcp" || link.kind == "udp" { net_sockets += 1; }
 }
 variable::set("net_sockets", net_sockets.to_string());
-// Все сокеты стека (`NET_SOCKETS` в `[env]`, `bsp::net`): DHCP-клиент, сетевые
-// транспорты и соединения сетевых служб — по сокету на копию пула REST, на
-// консоль SSH и на клиент MQTT. Плата строит стек под это число, а сокеты
-// открывают узлы.
 // Соединений REST разом — копий пула узлов `HTTP` (`HTTP_CONNECTIONS` в `[env]`,
 // литерал пула в `app/src/graph.rs`): решение приложения, а не узла.
 let http_connections = if services.contains("rest") { 2 } else { 0 };
 variable::set("http_connections", http_connections.to_string());
-let net_stack_sockets = net_sockets + 1 + http_connections;
-if services.contains("ssh") { net_stack_sockets += 1; }
-if services.contains("mqtt") { net_stack_sockets += 1; }
-variable::set("net_stack_sockets", net_stack_sockets.to_string());
 
 // Кадровый канал (`ports::FrameLink`, `LinkError`, `Handler`) нужен протоколам
 // узла `domain::server` (protobuf и Modbus slave), шине CAN (ошибка `CanBus`) и
