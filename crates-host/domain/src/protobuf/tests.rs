@@ -10,11 +10,8 @@ use ports::{FrameDuplex, FrameLink, LinkError};
 use proto::{Get, Request, Request_, Response, Response_, heapless};
 use supervisor::runtime::TaskExit;
 
-use super::service::tests::{INFO, service};
-// {%- if ota == "true" %}
-use super::Service;
-// {%- endif %}
-use super::task;
+use super::service::tests::INFO;
+use super::{Service, task};
 
 /// Канал: отдаёт заготовленные исходы `recv` — кадр снимается в опросе,
 /// который его возвращает, как требует `FrameDuplex`; кончились — ждёт.
@@ -93,13 +90,28 @@ fn poll(node: Pin<&mut (impl Future<Output = TaskExit> + ?Sized)>) {
 }
 
 /// Гоняет узел над `link` с буфером ответа на `capacity` байт по всем
-/// заготовленным кадрам, пока он не станет ждать следующий.
+/// заготовленным кадрам, пока он не станет ждать следующий{% if ota == "true" %}; узел OTA за
+/// входом `CMD` опрашивается по очереди с ним, так что и команда обновления
+/// получает ответ{% endif %}.
 fn serve(link: &mut Link, capacity: usize) {
     let stand = supervisor::stand!(PROTOBUF_FRAG<Link>);
-    let mut service = service(INFO);
+    // {%- if ota == "true" %}
+    let (ota, mut ota_node) = crate::ota::tests::live();
+    // {%- endif %}
+    let mut service = Service::new(
+        INFO, // {%- if ota == "true" %}
+        ota,
+        // {%- endif %}
+    );
     let response: &'static mut [u8] = vec![0; capacity].leak();
-    let ctx = stand.ctx(link, &mut service, response);
-    poll(pin!(task(ctx)));
+    let mut node = pin!(task(stand.ctx(link, &mut service, response)));
+    poll(node.as_mut());
+    // {%- if ota == "true" %}
+    for _ in 0..8 {
+        poll(ota_node.as_mut());
+        poll(node.as_mut());
+    }
+    // {%- endif %}
 }
 
 #[test]
@@ -197,19 +209,16 @@ fn an_update_command_is_answered_with_its_outcome() {
 
 proptest::proptest! {
     /// Кадр приходит снаружи, и каким бы он ни был — мусор, обрезок, чужая
-    /// схема, — узел не падает, отвечает на него не больше чем одним кадром
-    /// (команду обновления узел отдаёт OTA, и её исход приходит позже), и этот
-    /// кадр — ответ схемы.
+    /// схема, команда обновления, — узел не падает, отвечает на него ровно
+    /// одним кадром, и этот кадр — ответ схемы.
     #[test]
     fn any_frame_gets_at_most_one_well_formed_reply(
         frame in proptest::collection::vec(proptest::num::u8::ANY, 0..128)
     ) {
         let mut link = Link::with([Ok(frame)]);
         serve(&mut link, 256);
-        proptest::prop_assert!(link.sent.len() <= 1, "{} ответов", link.sent.len());
-        if let Some(reply) = link.sent.first() {
-            let mut response = Response::default();
-            proptest::prop_assert!(response.decode_from_bytes(reply).is_ok());
-        }
+        proptest::prop_assert_eq!(link.sent.len(), 1, "{} ответов", link.sent.len());
+        let mut response = Response::default();
+        proptest::prop_assert!(response.decode_from_bytes(&link.sent[0]).is_ok());
     }
 }

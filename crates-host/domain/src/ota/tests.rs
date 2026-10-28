@@ -49,9 +49,15 @@ pub(crate) type Node = Pin<Box<dyn Future<Output = TaskExit>>>;
 // {%- if has_modbus == "true" %}
 /// обработчиков протоколов (`modbus`)
 // {%- endif %}
-// {%- if has_modbus == "true" and net_services contains "mqtt" %}
+// {%- if has_modbus == "true" and has_protobuf == "true" %}
 /// и
 // {%- endif %}
+// {%- if has_protobuf == "true" %}
+/// узла `protobuf`
+// {%- endif %}
+// {%- if net_services contains "mqtt" %}{% if has_modbus == "true" or has_protobuf == "true" %}
+/// и
+// {%- endif %}{% endif %}
 // {%- if net_services contains "mqtt" %}
 /// сессии MQTT (`mqtt::serve`)
 // {%- endif %}
