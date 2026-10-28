@@ -19,21 +19,9 @@ pub mod udp;
 {%- if link_kinds contains "usb" %}
 pub mod usb;
 {%- endif %}
-{%- if has_protobuf == "true" %}
-
-/// Самое длинное сообщение схемы, под которое заведены буферы каналов узлов
-/// `PROTOBUF_*`. Схема с сообщениями длиннее — меняйте здесь: самый длинный
-/// ответ схемы (`domain::protobuf::RESPONSE_MAX`) обязан поместиться, это
-/// держит `const`-assert ниже.
-const PROTOBUF_MESSAGE: usize = 256;
-const _: () = assert!(
-    ::domain::protobuf::RESPONSE_MAX <= PROTOBUF_MESSAGE,
-    "самый длинный ответ схемы protobuf не помещается в PROTOBUF_MESSAGE"
-);
-{%- endif %}
 {%- if protocol_sockets != "0" %}
 
 /// Буфер сокета протокола — с запасом на {% if modbus_mbap == "true" %}самый длинный кадр Modbus TCP
-/// (260 байт){% endif %}{% if modbus_mbap == "true" and has_protobuf == "true" %} и {% endif %}{% if has_protobuf == "true" %}сообщение protobuf (`PROTOBUF_MESSAGE`){% endif %}.
+/// (260 байт){% endif %}{% if modbus_mbap == "true" and has_protobuf == "true" %} и {% endif %}{% if has_protobuf == "true" %}сообщение protobuf (`domain::protobuf::REQUEST_MAX`, `RESPONSE_MAX`){% endif %}.
 const SOCKET_BUFFER: usize = 1024;
 {%- endif %}

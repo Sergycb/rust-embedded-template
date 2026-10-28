@@ -17,10 +17,16 @@ const _: () = assert!(proto::UID_BYTES == crate::device::UID_BYTES);
 // Прошлую панику `app` сжимает до `PANIC_BRIEF` — она помещается в поле.
 const _: () = assert!(crate::device::PANIC_BRIEF <= proto::PANIC_BYTES);
 
-/// Самый длинный ответ схемы, байт: под него `app` заводит буфер ответа узла
-/// (`PROTOBUF_MESSAGE` в `crates-cross/app/src/link.rs`, `const`-assert там
-/// же). Не поместился бы — узел предупредил бы на старте, а такие ответы не
-/// ушли бы.
+/// Самый длинный запрос схемы, байт: под него `app` заводит буфер канала
+/// узла (`crate::link::<вид>` в `crates-cross/app`). Предел выводит
+/// `micropb` из ёмкостей полей (`crates-host/proto/build.rs`), поэтому
+/// буфер растёт вместе со схемой.
+pub const REQUEST_MAX: usize = match <Request as micropb::MessageEncode>::MAX_SIZE {
+    Ok(max) => max,
+    Err(_) => panic!("у запроса схемы нет предела длины"),
+};
+
+/// Самый длинный ответ схемы, байт: под него `app` заводит буфер ответа узла.
 pub const RESPONSE_MAX: usize = match <Response as micropb::MessageEncode>::MAX_SIZE {
     Ok(max) => max,
     Err(_) => panic!("у ответа схемы нет предела длины"),
