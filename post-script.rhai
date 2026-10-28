@@ -25,6 +25,25 @@ let target = variable::get("target");
 let ota = variable::get("ota");
 let config = variable::get("config");
 
+// Паспорт генерации: из чего собран проект. Через полгода по коду уже не
+// восстановить, выбирали ли при генерации OTA во внешнюю флеш или граф, — а
+// это нужно и для сравнения с новой версией шаблона, и для вопроса «почему
+// здесь нет X». Записаны итоговые значения хука, а не ввод `--define`: ввод
+// хук приводит к ним (`ota=yes` → `"true"`, транспорты → `links`).
+// `ssh_key` сюда не входит: это данные владельца, а не состав проекта.
+let answers = [
+	"# Ответы генерации из rust-embedded-template — то, из чего собран проект.",
+	"# Пишет post-script.rhai; править руками незачем: код от них уже не зависит.",
+];
+for name in ["chip", "target", "ci", "ota", "ota_store", "signed", "config", "config_store",
+		"graph", "links", "protocol", "modbus_master", "net_services", "ssh_auth",
+		"ssh_host_key", "external_flash", "rust_lib"] {
+	if variable::is_set(name) {
+		answers.push(name + " = \"" + variable::get(name) + "\"");
+	}
+}
+file::write(".template-answers.toml", answers);
+
 // Версия и ключ подписи живут в приложении и нужны только с подписью. Здесь,
 // а не в pre-хуке: окончательное `signed` pre-хук выставляет в трёх ветках
 // раскладки, а к этому моменту оно уже одно.
