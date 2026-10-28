@@ -36,13 +36,13 @@ static SOCKET_TX_META: ConstStaticCell<[PacketMetadata; 4]> =
 static FRAME: ConstStaticCell<[u8; ::adapters::modbus::DATAGRAM]> =
     ConstStaticCell::new([0; ::adapters::modbus::DATAGRAM]);
 {%- else %}
-// Буфер канала — сообщение.
-static FRAME: ConstStaticCell<[u8; crate::link::PROTOBUF_MESSAGE]> =
-    ConstStaticCell::new([0; crate::link::PROTOBUF_MESSAGE]);
+// Буфер канала — запрос.
+static FRAME: ConstStaticCell<[u8; ::domain::protobuf::REQUEST_MAX]> =
+    ConstStaticCell::new([0; ::domain::protobuf::REQUEST_MAX]);
 // Ответ узел кодирует сюда, а не в буфер канала: там может лежать принятый,
 // но ещё не разобранный запрос (`domain::protobuf`).
-static PROTOBUF_RESPONSE: ConstStaticCell<[u8; crate::link::PROTOBUF_MESSAGE]> =
-    ConstStaticCell::new([0; crate::link::PROTOBUF_MESSAGE]);
+static PROTOBUF_RESPONSE: ConstStaticCell<[u8; ::domain::protobuf::RESPONSE_MAX]> =
+    ConstStaticCell::new([0; ::domain::protobuf::RESPONSE_MAX]);
 {%- endif %}
 
 /// Память канала — ссылки на статики выше. Статики берутся ровно один раз:

@@ -13,7 +13,7 @@ pub mod {{ f[4] }} {
 
     // Буфер канала — сообщение и CRC (`rx_len`); кадру передачи — место под
     // худший случай COBS от всего буфера канала (`tx_len`).
-    const BUFFER: usize = ::adapters::cobs::rx_len(crate::link::PROTOBUF_MESSAGE);
+    const BUFFER: usize = ::adapters::cobs::rx_len(::domain::protobuf::REQUEST_MAX);
 {% endif %}
     /// Канал узла `{% if f[3] == "modbus" %}MODBUS{% else %}PROTOBUF{% endif %}_{{ f[4] | upcase }}`; собирается над UART платы (`board.{{ f[4] }}`).
 {%- if f[3] == "modbus" %}
@@ -36,8 +36,8 @@ pub mod {{ f[4] }} {
         ConstStaticCell::new([0; ::adapters::cobs::tx_len(BUFFER)]);
     // Ответ узел кодирует сюда, а не в буфер канала: там может лежать
     // недочитанный кадр (`domain::protobuf`).
-    static PROTOBUF_RESPONSE: ConstStaticCell<[u8; crate::link::PROTOBUF_MESSAGE]> =
-        ConstStaticCell::new([0; crate::link::PROTOBUF_MESSAGE]);
+    static PROTOBUF_RESPONSE: ConstStaticCell<[u8; ::domain::protobuf::RESPONSE_MAX]> =
+        ConstStaticCell::new([0; ::domain::protobuf::RESPONSE_MAX]);
 {%- endif %}
 
     /// Память канала — ссылки на статики выше. Статики берутся ровно один раз:
