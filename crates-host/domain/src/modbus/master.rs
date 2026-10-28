@@ -355,7 +355,7 @@ mod tests {
     use super::*;
     use crate::modbus::Slave;
     use crate::modbus::fakes::{Client, Map};
-    use ports::Handler;
+    use crate::server::Handler;
 
     /// Запрос master'а → наш slave → ответ обратно master'у: две реализации
     /// проверяют друг друга, и ни одна не знает, как устроена другая.

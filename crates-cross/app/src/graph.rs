@@ -58,8 +58,8 @@ supervisor_graph! {
         // из `crate::version`{% else %}Plain`{% endif %}). Образ узел принимает командами на свой вход
         // `CMD`{% if has_modbus != "true" and has_protobuf != "true" and has_canopen != "true" %}: клиента (`::domain::ota::OtaClient` над `ota_cmd_requester()`) получает ваш
         // протокол — без него узел только подтверждает образ{% else %} — их шлют узлы протоколов ниже, каждый со своим номером
-        // транспорта (сессию приёма держит один клиент, остальным — `Busy`){% endif %}{% if has_canopen == "true" or has_protobuf == "true" %}; узлы
-        // {% if has_canopen == "true" %}CANopen{% endif %}{% if has_canopen == "true" and has_protobuf == "true" %} и {% endif %}{% if has_protobuf == "true" %}PROTOBUF{% endif %} — на вход `ASK`, не дожидаясь исхода (ребро `asks:` в их фрагменте){% endif %}; алгоритм обновления — в
+        // транспорта (сессию приёма держит один клиент, остальным — `Busy`){% endif %}{% if has_canopen == "true" %}; узлы
+        // CANopen — на вход `ASK`, не дожидаясь исхода (ребро `asks:` в их фрагменте){% endif %}; алгоритм обновления — в
         // `domain::ota`. Вычисляется привязка в прологе `spawn_all` первой
         // строкой — раньше инициализатора блока `watchdog:`, как бы они ни стояли
         // в тексте, — частичным move: `firmware` уезжает в слот узла, `watchdog`
@@ -177,17 +177,19 @@ supervisor_graph! {
         // узел над рычагом платы, тип, буферы и буфер ответа — `{{ lm }}`;
         // обработчик `domain::protobuf::Service` над схемой `crates-host/proto` —
         // логика приложения, проект правит его в `domain`.{% if ota == "true" %} Команды обновления
-        // узел шлёт на вход `ASK` узла `OTA` (ребро `asks:` фрагмента) с номером этого
-        // транспорта и не ждёт исхода: канал обслуживается, пока OTA стирает раздел.{% endif %}
-        ::domain::PROTOBUF_FRAG<{{ lm }}::Link, ::domain::protobuf::Service> as PROTOBUF_{{ f[4] | upcase }} =
+        // обработчик шлёт узлу `OTA` на вход `CMD` своим клиентом (номер этого
+        // транспорта) и отвечает хосту их исходом.{% endif %}
+        ::domain::PROTOBUF_FRAG<{{ lm }}::Link> as PROTOBUF_{{ f[4] | upcase }} =
             ::domain::protobuf::ProtobufWiring {
                 source: {% if f[0] == "uart" %}board.{{ f[4] }}{% elsif f[0] == "usb" %}board.{{ f[4] }}.cdc{% else %}board.net.stack{% endif %},
                 buffers: {{ lm }}::buffers(),
                 response: {{ lm }}::response(),
-                service: ::domain::protobuf::Service::new(crate::device_info(board.spec)),
+                service: ::domain::protobuf::Service::new(
+                    crate::device_info(board.spec),
 {%- if ota == "true" %}
-                ota_client: ::domain::ota::ClientId({{ client }}),
+                    ::domain::ota::OtaClient::new(ota_cmd_requester(), ::domain::ota::ClientId({{ client }})),
 {%- endif %}
+                ),
             },
 {%- endif %}
 {%- if f[3] != "none" %}{% assign client = client | plus: 1 %}{% endif %}

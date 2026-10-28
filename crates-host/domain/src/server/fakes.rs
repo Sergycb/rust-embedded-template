@@ -5,9 +5,9 @@ use std::collections::VecDeque;
 
 use core::pin::pin;
 use core::task::{Context, Waker};
-use ports::{FrameLink, Handler, LinkError};
+use ports::{FrameLink, LinkError};
 
-use super::{ServerCtx, task};
+use super::{Handler, ServerCtx, task};
 
 /// Канал: отдаёт заранее заготовленные исходы `recv`, а когда они
 /// кончаются, ждёт следующего кадра вечно — как настоящий канал.
