@@ -3,5 +3,6 @@
 		"rust-lang.rust-analyzer",
 		"tamasfe.even-better-toml",
 		"probe-rs.probe-rs-debugger",
+		"ryanluker.vscode-coverage-gutters",
 	]
 }

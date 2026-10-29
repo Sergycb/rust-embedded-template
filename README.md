@@ -979,6 +979,12 @@ cargo llvm-cov nextest --workspace --exclude host-target-tests \
 `--release` обязателен ещё и потому, что `llvm-cov` ищет объектные файлы в каталоге
 своего профиля: `cargo-llvm-cov report` без него смотрел бы в `debug/`.
 
+Непокрытые строки прямо в редакторе показывает расширение Coverage Gutters
+(`ryanluker.vscode-coverage-gutters`, оно в рекомендациях `.vscode/extensions.json`):
+задача VSCode `coverage: lcov` гоняет ту же команду с `--lcov --output-path lcov.info`
+вместо `--summary-only`, а «Coverage Gutters: Watch» подхватывает файл и перерисовывает
+подсветку после каждого прогона. `lcov.info` — в `.gitignore`.
+
 Считается покрытие **только логики**: прошивка (`crates-cross`) живёт в другом
 воркспейсе и в отчёт не попадает вовсе, а `xtask` исключён явно
 (`--ignore-filename-regex`). Без этого исключения цифра меряла бы в основном сборочную
