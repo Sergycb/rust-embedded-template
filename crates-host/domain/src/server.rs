@@ -27,7 +27,6 @@ mod wiring;
 #[cfg(test)]
 pub(crate) mod fakes;
 
-pub use wiring::ServerWiring;
 // {%- if graph != "true" %}
 pub use wiring::serve;
 // {%- endif %}
@@ -43,7 +42,7 @@ use ports::{FrameLink, LinkError};
 // других узлов).
 supervisor::supervisor_fragment! {
     name: SERVER_FRAG<L, H>;
-    boot: inputs: $crate::server::ServerWiring<L, H>;
+    boot: inputs: struct $crate::server::ServerWiring;
 
     node resources: [
             /// Кадровый канал — с буфером кадра: не меньше самого длинного

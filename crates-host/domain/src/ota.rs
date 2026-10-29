@@ -74,7 +74,7 @@ pub use ports::{OtaCommand, OtaReply};
 // Подмодули — по теме; путь `domain::ota::…` у их типов прежний.
 pub use client::{CMD_BYTES, ClientId, NodeLost, OtaClient, OtaRequest};
 pub use timing::{REBOOT_GRACE, SESSION_TIMEOUT};
-pub use wiring::{Mode, OtaWiring};
+pub use wiring::Mode;
 
 use core::future::poll_fn;
 use core::pin::pin;
@@ -149,7 +149,7 @@ use crate::ota::wiring::Signature;
 // при старте (см. `begin`){% if has_usb == "true" %}; ждёт этого узел `USB`{% endif %}.
 supervisor::supervisor_fragment! {
     name: OTA_FRAG<F, R>;
-    boot: inputs: $crate::ota::OtaWiring<F, R>;
+    boot: inputs: struct $crate::ota::OtaWiring;
 
     node resources: [
             /// Адаптер обновления поверх разделов флеша (`FirmwareUpdate`).

@@ -36,7 +36,6 @@ mod codec;
 // протоколом protobuf: без него крейта схемы в проекте нет вовсе.
 /// Обработчик по умолчанию над примером схемы `crates-host/proto`.
 mod service;
-mod wiring;
 
 use defmt_or_log::{FormatOrDebug, info, warn};
 use micropb::MessageDecode;
@@ -46,7 +45,6 @@ use proto::Request;
 use crate::protobuf::codec::{decode_reason, encode};
 
 pub use service::{DeviceInfo, REQUEST_MAX, RESPONSE_MAX, Service};
-pub use wiring::ProtobufWiring;
 
 // Узел объявлен рядом со своей задачей, по узлу на транспорт.
 //
@@ -55,7 +53,7 @@ pub use wiring::ProtobufWiring;
 // Буфер ответа — память, которую объявил граф (`static [u8; RESPONSE_MAX]`).
 supervisor::supervisor_fragment! {
     name: PROTOBUF_FRAG<L>;
-    boot: inputs: $crate::protobuf::ProtobufWiring<L>;
+    boot: inputs: struct $crate::protobuf::ProtobufWiring;
 
     node resources: [
             /// Кадровый канал.

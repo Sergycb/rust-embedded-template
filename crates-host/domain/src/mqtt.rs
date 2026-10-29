@@ -26,8 +26,6 @@ mod session;
 mod telemetry;
 /// Имена тем, идентификатор клиента и разбор команд.
 mod topics;
-/// Вход узла `MqttWiring`.
-mod wiring;
 
 use core::net::SocketAddrV4;
 
@@ -40,7 +38,6 @@ pub use self::session::{AUTH_MAX, CONNECT_TIMEOUT, RX_BUFFER, TX_BUFFER};
 use self::session::{Env, serve};
 pub use self::telemetry::{TELEMETRY_INTERVAL, write_telemetry};
 pub use self::topics::{Command, PREFIX_MAX, Topics, parse_command};
-pub use self::wiring::MqttWiring;
 
 // Узел объявлен рядом со своей задачей — как `SSH`. `<B>` — откуда адрес
 // брокера (`Fixed` или свой тип проекта), `<D>` — соединение (`Dial` +
@@ -51,7 +48,7 @@ pub use self::wiring::MqttWiring;
 // `watchdog:`: брокера может не быть всю жизнь платы.
 supervisor::supervisor_fragment! {
     name: MQTT_FRAG<B, D>;
-    boot: inputs: $crate::mqtt::MqttWiring<B, D>;
+    boot: inputs: struct $crate::mqtt::MqttWiring;
 
     node resources: [
             /// Сетевой стек — ради адреса платы и MAC в `info`.

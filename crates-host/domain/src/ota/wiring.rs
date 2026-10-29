@@ -1,4 +1,4 @@
-//! Вход узла `OTA` (`OtaWiring`) и режим применения образа (`Mode`).
+//! Режим применения образа узла `OTA` (`Mode`).
 
 use defmt_or_log::{FormatOrDebug, warn};
 use ports::{FirmwareUpdate, Rejection, SIGNATURE_BYTES};
@@ -8,37 +8,6 @@ use crate::ota::update;
 
 /// Подпись образа.
 pub(super) type Signature = [u8; SIGNATURE_BYTES];
-
-/// Вход узла OTA: адаптер обновления `F`, чем перезагружать МК и как
-/// применять образ. Адаптер над разделами платы строит compose-site:
-///
-/// ```ignore
-// {%- if graph == "true" %}
-/// fragments: [::domain::OTA_FRAG<::adapters::ota::Updater<bsp::FirmwareFlash, false>,
-///                                bsp::reset::Reboot> as OTA
-///                 = ::domain::ota::OtaWiring { flash: ::adapters::ota::Updater::new(board.firmware),
-///                                              reboot: bsp::reset::Reboot,
-///                                              mode: ::domain::ota::Mode::Plain }];
-// {%- else %}
-/// // crates-cross/app/src/tasks/ota.rs
-/// let inputs = ::domain::ota::OtaWiring { flash: adapters::ota::Updater::new(board.firmware),
-///                                         reboot: bsp::reset::Reboot,
-///                                         mode: ::domain::ota::Mode::Plain };
-// {%- endif %}
-/// ```
-///
-/// Тип объявлен здесь, а не назван compose-site, по правилу фрагментов
-/// `supervisor`: подсистема говорит, что ей нужно, приложение это раздаёт —
-/// зависимость направлена от приложения к подсистеме и никогда обратно.
-#[derive(Debug)]
-pub struct OtaWiring<F, R> {
-    /// Адаптер обновления над разделами платы.
-    pub flash: F,
-    /// Перезагрузка МК — для команды `Reboot`.
-    pub reboot: R,
-    /// Режим применения: `Mode::Plain` или `Mode::Signed`.
-    pub mode: Mode,
-}
 
 /// Чем режимы отличаются: проверка `Start` до стирания и применение.
 ///
