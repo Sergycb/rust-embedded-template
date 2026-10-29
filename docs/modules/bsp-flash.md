@@ -14,7 +14,7 @@
   обновления: `DFU` и `BOOTLOADER_STATE` со своими страницами, нарезанные по
   символам `memory.x` (`bsp::layout::{dfu, state}` — те же, что читает
   `from_linkerfile` в bootloader'е), размер `ACTIVE` и отпечаток раскладки.
-  Над ними узел OTA собирает адаптер (`adapters::ota::Updater`).
+  Над ними compose-site узла OTA строит адаптер (`adapters::ota::Updater`).
   Обмен копирует ровно `ACTIVE`, поэтому предел образа — он, а не `DFU`.
 {%- if state_paged == "true" %} Носитель
   `BOOTLOADER_STATE` — `flash_page::ErasePage` со страницей своего сектора
@@ -32,13 +32,13 @@
 - `config` (`ConfigFlash`) — раздел `CONFIG` (границы — символы `memory.x`
   `__config_start`/`__config_end`, читает `bsp::layout`; страница —
   `CONFIG_ERASE_SIZE`{% if config_paged == "true" %}, над `ErasePage`{% endif %}, кратность ей — `ASSERT` в `memory.x`), над которым
-  узел-потребитель собирает хранилище (`adapters::settings`). Именно раздел:
+  compose-site узла-потребителя строит хранилище (`adapters::settings`). Именно раздел:
   запись за его границы отказывает, а не стирает {% if ota == "true" %}`ACTIVE` или bootloader{% else %}код приложения{% endif %}.
 {%- elsif config == "true" and config_store == "eeprom" %}
 
 - `config` (`ConfigFlash` — `adapters::eeprom::Eeprom` над `EepromFlash`) —
   внутренняя EEPROM как `NorFlash`, под замком того же контроллера; над ней
-  узел-потребитель собирает хранилище (`adapters::settings`).
+  compose-site узла-потребителя строит хранилище (`adapters::settings`).
 {%- endif %}
 
 Носители строятся над разделом на весь флеш (`Whole`,

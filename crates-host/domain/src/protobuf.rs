@@ -52,15 +52,14 @@ pub use wiring::ProtobufWiring;
 //
 // `<L>` — параметр фрагмента: канал платы `domain` не видит. `local` на
 // канале и обработчике — канал вправе быть `!Send` (периферия, сокет).
-// Буфер ответа — ссылка на статик приложения (`crate::link::<вид>`).
+// Буфер ответа — память, которую объявил граф (`static [u8; RESPONSE_MAX]`).
 supervisor::supervisor_fragment! {
     name: PROTOBUF_FRAG<L>;
     boot: inputs: $crate::protobuf::ProtobufWiring<L>;
 
     node resources: [
-            /// Кадровый канал — собирает его узел из рычага платы и памяти
-            /// приложения.
-            LINK: local L = <L as $crate::Assemble>::assemble(inputs.source, inputs.buffers),
+            /// Кадровый канал.
+            LINK: local L = inputs.link,
             /// Обработчик сообщений.
             SERVICE: local $crate::protobuf::Service = inputs.service,
             /// Буфер ответа.

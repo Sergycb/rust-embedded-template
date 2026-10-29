@@ -62,8 +62,8 @@ supervisor::supervisor_fragment! {
             PREFIX: &'static str = inputs.prefix,
             /// Откуда адрес брокера.
             BROKER: local B = inputs.broker,
-            /// Соединение с брокером — собирает его узел на стеке платы.
-            LINK: local D = <D as $crate::Assemble>::assemble(inputs.stack, inputs.link),
+            /// Соединение с брокером на стеке платы.
+            LINK: local D = inputs.link,
             // {%- if ota == "true" %}
             /// Клиент входа `CMD` узла OTA — для `cmd/reboot`.
             OTA: $crate::ota::OtaClient = inputs.ota,

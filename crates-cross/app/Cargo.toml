@@ -48,8 +48,8 @@ panic-persist = { workspace = true }
 bsp = { workspace = true, features = ["time-driver"] }
 domain = { workspace = true }
 {%- if has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" or ota == "true" or config == "true" or net_services contains "mqtt" %}
-# Адаптеры над рычагами платы собирают узлы (`ports::Assemble`), а приложение
-# называет их типы и заводит их буферы — по строке на адаптер:
+# Адаптеры над рычагами платы строит приложение в своей памяти и отдаёт
+# узлам готовыми — по строке на адаптер:
 {%- if protocol_link == "true" %}
 #   каналы протоколов над потоком, CDC или сокетом (src/link.rs)
 {%- endif %}
@@ -60,7 +60,7 @@ domain = { workspace = true }
 #   хранилище настроек (`adapters::settings::Settings`)
 {%- endif %}
 {%- if net_services contains "mqtt" %}
-#   клиент MQTT, его буферы — в src/net.rs
+#   клиент MQTT (`adapters::net::TcpClient`), его буферы — в графе
 {%- endif %}
 adapters = { workspace = true }
 {%- endif %}

@@ -73,8 +73,8 @@ supervisor::supervisor_fragment! {
             INFO: $crate::device::DeviceInfo = inputs.info,
             /// Как пускать пользователя.
             LOGIN: $crate::ssh::Login = inputs.login,
-            /// Ключ хоста — собирает его узел из того, что раздал compose-site.
-            HOST_KEY: local K = <K as $crate::Assemble>::assemble(inputs.host_key, ()),
+            /// Ключ хоста.
+            HOST_KEY: local K = inputs.host_key,
             // {%- if ota == "true" %}
             /// Клиент входа `CMD` узла OTA — для `reboot`.
             OTA: $crate::ota::OtaClient = inputs.ota,

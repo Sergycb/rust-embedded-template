@@ -28,8 +28,7 @@ pub struct Dictionary {
     // {%- endif %}
 }
 
-/// Вход узла `CANOPEN`: шина, адрес, словарь и из чего собрать хранилище
-/// настроек `S`. Строит его compose-site:
+/// Вход узла `CANOPEN`: шина, адрес, словарь и хранилище настроек `S`. Строит его compose-site:
 ///
 /// ```ignore
 // {%- if graph == "true" %}
@@ -37,7 +36,8 @@ pub struct Dictionary {
 ///                                    ::adapters::settings::Settings<bsp::ConfigFlash>> as CANOPEN
 ///                 = ::domain::canopen::CanOpenWiring { bus: board.can, node_id: 1,
 ///                       dictionary: ::domain::canopen::dictionary(),
-///                       settings: board.config, persist: true,
+///                       settings: ::adapters::settings::Settings::whole(board.config),
+///                       persist: true,
 ///                       serial: ::domain::canopen::serial(board.spec.uid),
 // {%- if ota == "true" %}
 ///                       ota_client: ::domain::ota::ClientId(0),
@@ -47,7 +47,8 @@ pub struct Dictionary {
 /// // crates-cross/app/src/tasks/canopen.rs
 /// let inputs = ::domain::canopen::CanOpenWiring { bus: board.can, node_id: 1,
 ///     dictionary: ::domain::canopen::dictionary(),
-///     settings: board.config, persist: true,
+///     settings: adapters::settings::Settings::whole(board.config),
+///     persist: true,
 ///     serial: ::domain::canopen::serial(board.spec.uid),
 // {%- if ota == "true" %}
 ///     ota_client: ::domain::ota::ClientId(0),
@@ -56,18 +57,15 @@ pub struct Dictionary {
 // {%- endif %}
 /// ```
 ///
-/// Написан руками, а не выведен фрагментом: слот хранилища инициализируется
-/// сборкой (порт [`Assemble`](ports::Assemble)) над рычагом платы, а не
-/// чтением поля.
-pub struct CanOpenWiring<C, S: ports::Assemble> {
+pub struct CanOpenWiring<C, S> {
     /// Шина CAN платы.
     pub bus: C,
     /// Адрес узла на шине, 1..=127.
     pub node_id: u8,
     /// Словарь объектов устройства.
     pub dictionary: Dictionary,
-    /// Из чего собрать хранилище: раздел настроек платы или `()` без него.
-    pub settings: S::Source,
+    /// Хранилище настроек: над разделом платы или `Unavailable` без него.
+    pub settings: S,
     /// Сохранять ли объекты и адрес: `false` — хранилища у проекта нет.
     pub persist: bool,
     /// Серийный номер для объекта идентичности (0x1018:04) — свёртка
@@ -81,7 +79,7 @@ pub struct CanOpenWiring<C, S: ports::Assemble> {
 }
 
 // Вручную: печатать шину и словарь незачем, а `Debug` есть не у всех.
-impl<C, S: ports::Assemble> core::fmt::Debug for CanOpenWiring<C, S> {
+impl<C, S> core::fmt::Debug for CanOpenWiring<C, S> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("CanOpenWiring")
             .field("node_id", &self.node_id)

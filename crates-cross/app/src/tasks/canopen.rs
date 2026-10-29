@@ -22,8 +22,6 @@ pub mod {{ f[4] }} {
     /// Шина узла.
     type Bus = bsp::can::{{ f[4] }}::Can;
 
-    /// Из чего собрать хранилище: {% if config == "true" %}раздел настроек платы{% else %}не из чего{% endif %}.
-    type StoreSource = {% if config == "true" %}bsp::ConfigFlash{% else %}(){% endif %};
 {%- if ota == "true" %}
 
     /// Метки команд в полёте на ребре `ASK` узла OTA — одна, по квоте.
@@ -31,9 +29,7 @@ pub mod {{ f[4] }} {
 {%- endif %}
 
     #[embassy_executor::task]
-    async fn task(mut bus: Bus, store: StoreSource, mut serial: u32) {
-        // Хранилище — над рычагом платы.
-        let mut store = <Store as domain::Assemble>::assemble(store, ());
+    async fn task(mut bus: Bus, mut store: Store, mut serial: u32) {
         let mut node_id = 1;
         let mut dictionary = domain::canopen::dictionary();
         let mut persist = {{config}};
@@ -58,7 +54,7 @@ pub mod {{ f[4] }} {
     }
 
     /// Спавнит узел; `serial` — серийный номер идентичности (0x1018:04).
-    pub fn spawn(spawner: Spawner, bus: Bus, store: StoreSource, serial: u32) {
+    pub fn spawn(spawner: Spawner, bus: Bus, store: Store, serial: u32) {
         let token = task(bus, store, serial);
         spawner.spawn(token.expect("задача CANOPEN_{{ f[4] | upcase }} свежая: спавнится один раз"));
     }

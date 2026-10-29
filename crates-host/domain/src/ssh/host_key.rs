@@ -26,16 +26,6 @@ pub trait HostKey {
 #[derive(Debug, Clone, Copy)]
 pub struct Fixed(pub &'static [u8; 32]);
 
-/// Собирать нечего: зерно вшито в образ, compose-site отдаёт ссылку на него.
-impl ports::Assemble for Fixed {
-    type Source = &'static [u8; 32];
-    type Buffers = ();
-
-    fn assemble(seed: &'static [u8; 32], (): ()) -> Self {
-        Self(seed)
-    }
-}
-
 impl HostKey for Fixed {
     #[expect(
         clippy::unused_async_trait_impl,
@@ -51,16 +41,6 @@ impl HostKey for Fixed {
 /// и записывает под [`HOST_KEY_ID`], следующие — читают.
 #[derive(Debug)]
 pub struct Stored<S>(pub S);
-
-/// Собирается вместе с хранилищем — над тем же рычагом платы.
-impl<S: ports::Assemble> ports::Assemble for Stored<S> {
-    type Source = S::Source;
-    type Buffers = S::Buffers;
-
-    fn assemble(source: S::Source, buffers: S::Buffers) -> Self {
-        Self(S::assemble(source, buffers))
-    }
-}
 
 impl<S: ports::SettingsStorage> HostKey for Stored<S> {
     async fn seed(&mut self) -> [u8; 32] {

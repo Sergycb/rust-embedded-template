@@ -96,8 +96,8 @@ cargo run -p app                    # прошить приложение и с�
 {%- if has_usb == "true" or has_net == "true" %} Пары, которые порознь не собрать, плата отдаёт
 собранными: {% if has_usb == "true" %}USB-устройство с потоком CDC{% if has_net == "true" %} и {% endif %}{% endif %}{% if has_net == "true" %}сетевой стек с его фоновой работой{% endif %}.
 {%- endif %}
-Протоколы над рычагами собирает узел `domain`, которому они нужны (порт `ports::Assemble`), а
-`app` выбирает тип адаптера и заводит статики с его буферами
+Протоколы над рычагами строит `app` — выбирает тип адаптера, заводит его
+память и отдаёт узлу `domain` готовым
 {%- if protocol_link == "true" or net_services != "" %}
 ({% if protocol_link == "true" %}`crates-cross/app/src/link/`{% if net_services != "" %}, {% endif %}{% endif %}{% if net_services != "" %}`crates-cross/app/src/net/`{% endif %})
 {%- endif %}: размер буфера и порт — решение
@@ -182,14 +182,12 @@ supervisor-графы, watchdog{% endif %}). Вся остальная логи�
 Драйвер переезжает из `adapters` в `bsp` только тогда, когда ему перестаёт хватать
 трейтов `embedded-hal`: понадобились `embassy_stm32::peripherals` или статический
 DMA-буфер. До этого момента его место — в `domain`, где он тестируется без железа.
-В `ports` — трейты, которыми домен говорит с миром, и `Assemble`: как адаптер
-собирается из рычага платы и памяти приложения — так узел собирает свой адаптер
-сам.
-{%- if ota == "true" %} `FirmwareUpdate` реализован в `adapters`, а собирает его узел OTA над
+В `ports` — трейты, которыми домен говорит с миром.
+{%- if ota == "true" %} `FirmwareUpdate` реализован в `adapters`, а строит его `app` над
 разделами флеша, которые отдаёт `Board`; порт перезагрузки `Reboot` для узла OTA
 реализует `bsp::reset`.{% endif %}
-{%- if config == "true" %} `SettingsStorage` реализован в `adapters`, а собирает его
-потребитель настроек над носителем, который отдаёт `Board`.{% endif %}
+{%- if config == "true" %} `SettingsStorage` реализован в `adapters`, а строит его
+`app` над носителем, который отдаёт `Board`.{% endif %}
 {%- if link_port == "true" %} `FrameLink` — канал целых кадров, который держит свой буфер (один на
 приём и ответ).{% if has_modbus == "true" %} `Handler` — протокол над ним: что ответить на кадр; обоих
 обслуживает узел протокола `domain::SERVER_FRAG`.{% endif %}
@@ -197,8 +195,8 @@ DMA-буфер. До этого момента его место — в `domain`
 протоколу и транспорту ({% if has_modbus == "true" %}`MODBUS_<транспорт>`{% if has_protobuf == "true" %}, {% endif %}{% endif %}{% if has_protobuf == "true" %}`PROTOBUF_<транспорт>`{% endif %}).{% endif %}
 {%- if has_protobuf == "true" %}
 {%- capture pb_links %}{% if has_uart == "true" or has_usb == "true" %}, адаптер
-кадрирования `adapters::cobs::Cobs` поверх потока ({% if has_uart == "true" %}UART{% if has_usb == "true" %}, {% endif %}{% endif %}{% if has_usb == "true" %}USB CDC{% endif %}){% endif %}{% if has_tcp == "true" %}, `TcpCobs`
-поверх TCP{% endif %}{% if has_udp == "true" %}, UDP-сокет `adapters::net::UdpLink`{% endif %}{% endcapture %} Канал protobuf — {{ pb_links | remove_first: ", " }}; это `FrameDuplex`:
+кадрирования `adapters::cobs::Cobs` поверх потока ({% if has_uart == "true" %}UART{% if has_usb == "true" %}, {% endif %}{% endif %}{% if has_usb == "true" %}USB CDC{% endif %}){% endif %}{% if has_tcp == "true" %}, тот же `Cobs`
+поверх TCP-сервера{% endif %}{% if has_udp == "true" %}, UDP-сокет `adapters::net::UdpLink`{% endif %}{% endcapture %} Канал protobuf — {{ pb_links | remove_first: ", " }}; это `FrameDuplex`:
 брошенный приём не теряет кадр, ответ уходит из чужого буфера.{% endif %}{% if has_can == "true" %} Шина CAN — свой порт `CanBus`.{% endif %}
 {%- endif %}
 {%- if protocol == "modbus" %} `Registers` — данные устройства, видимые по
@@ -296,9 +294,9 @@ flash и безусловно прыгает в него (`unsafe { bl.load(entr
 исходом на каждую команду. Адаптер `adapters::ota` (поверх `embassy-boot`) пишет
 образ и хранит состояние bootloader'а. Плата отдаёт ему только флеш —
 поле `firmware` (`bsp::FirmwareFlash`, `crates-cross/bsp/src/{% if ota_store == "external" %}external{% else %}flash{% endif %}.rs`: носители
-со своими страницами из чисел раскладки в `[env]`); разделы `DFU` и
-`BOOTLOADER_STATE` по символам `memory.x` в нём находит узел, когда собирает
-адаптер. {% if graph == "true" %}Граф забирает поле одной строкой (`fragments:` в
+со своими страницами из чисел раскладки в `[env]`), разделы `DFU` и
+`BOOTLOADER_STATE` в нём плата нарезает по символам `memory.x`, адаптер над ними
+(`adapters::ota::Updater`) строит `app`. {% if graph == "true" %}Граф забирает поле одной строкой (`fragments:` в
 `crates-cross/app/src/graph.rs`){% else %}Задача забирает поле в `crates-cross/app/src/tasks/ota.rs`{% endif %}. Версию образа задаёт приложение
 (`crates-cross/app/src/version.rs`), а не плата; ключ подписи зашит в bootloader
 (`crates-cross/boot`).
@@ -535,16 +533,15 @@ docs/ota.md.
 (`crates-cross/bsp/src/flash.rs`){% endif %}. Само хранилище —
 `adapters::settings::Settings` (тестируется на хосте) поверх `sequential-storage`
 на весь объём носителя, пары «ключ — значение», переживающие и перезапуск, и
-обновление прошивки, — собирает узел, которому оно нужно (порт `Assemble`, тип —
-`adapters::settings::Settings<bsp::ConfigFlash>` во входе узла).
+обновление прошивки, — строит `app` над носителем и отдаёт узлу, которому оно
+нужно (тип — `adapters::settings::Settings<bsp::ConfigFlash>` во входе узла).
 
 ```rust
-use ports::{Assemble, SettingsStorage}; // чтение и запись живут в порту
+use ports::SettingsStorage; // чтение и запись живут в порту
 
-// Узел в `domain`, обобщённый по хранилищу `S` ({% if graph == "true" %}граф{% else %}задача{% endif %} подставит
-// `adapters::settings::Settings<bsp::ConfigFlash>`), собирает его над носителем
-// `board.config`.
-let mut settings = S::assemble(store, ());
+// {% if graph == "true" %}Граф{% else %}Задача{% endif %} строит хранилище над носителем `board.config` и отдаёт
+// его узлу в `domain`, обобщённому по хранилищу `S`.
+let mut settings = adapters::settings::Settings::whole(board.config);
 settings.write(KEY_CALIBRATION, &encoded).await?;
 if let Some(raw) = settings.read(KEY_CALIBRATION, &mut scratch).await? {
     // раскодировать тем же, чем кодировали: postcard, miniconf, свой формат
@@ -644,8 +641,8 @@ ST-Link захваченным до переподключения кабеля 
 {%- elsif protocol == "protobuf" %} схему `crates-host/proto` и обработчик `crates-host/domain/src/protobuf/service.rs`.
 {%- else %} словарь объектов `crates-host/canopen/device.toml`.
 {%- endif %}
-{%- if protocol_link == "true" %} Канал протокола (кадрирование, сокет) собирает узел над рычагом
-платы, а тип канала, его буферы и порт — `crates-cross/app/src/link/<вид>.rs`.{% else %} Шину CAN узел берёт как есть, без адаптера.{% endif %}
+{%- if protocol_link == "true" %} Канал протокола (кадрирование, сокет) строит `app` над рычагом
+платы: тип канала, его буферы, порт и `link` — `crates-cross/app/src/link/<вид>.rs`.{% else %} Шину CAN узел берёт как есть, без адаптера.{% endif %}
 {%- endif %}
 
 Выводы шаблон не выбирает: в поле `Board`{% if has_usb == "true" or has_net == "true" %} ({% if has_usb == "true" %}у USB — под устройство

@@ -15,9 +15,8 @@
 флеша, {% if graph == "true" %}сторож, {% endif %}драйверы микросхем платы), и DMA-буферы, которые нужны железу.
 `app` — оркестрация задач (`Spawner`{% if graph == "true" %}, supervisor-графы, watchdog{% endif %}) и статики,
 которые домен получает ссылками: буферы узлов и транспортов{% if has_modbus == "true" %}, общая карта
-Modbus{% endif %}{% if net_services != "" %}, секреты служб{% endif %}. Объектов `app` не строит: адаптер над рычагом собирает
-сам узел (порт `ports::Assemble`, ниже), а `app` называет его тип и раздаёт поля
-платы. Вся остальная логика — в `domain`, даже если она асинхронная и типа
+Modbus{% endif %}{% if net_services != "" %}, секреты служб{% endif %}. Адаптеры над рычагами строит `app` и отдаёт узлам
+готовыми (ниже). Вся остальная логика — в `domain`, даже если она асинхронная и типа
 выглядит «системной» (стейтчарты, RPC, синхронизация задач).
 {%- if ota == "true" %}
 
@@ -52,9 +51,8 @@ HAL (`bsp::board::init_peripherals` — на умолчаниях `embassy-stm32
 - Знает имя чипа или блока, раскладку флеша, создаёт DMA-буфер под железо,
   драйвер микросхемы на плате → `bsp`.
 - Заводит память, которую домен получает ссылкой (буфер канала, сокета,
-  клиента), выбирает тип адаптера под рычаг, требует `Spawner` → `app`.
-- Собирает адаптер над рычагом платы (кадрирование, сокет, хранилище) → узел в
-  `domain`, через `Assemble`; сама реализация адаптера — `adapters`.
+  клиента), строит адаптер над рычагом платы (кадрирование, сокет, хранилище),
+  требует `Spawner` → `app`; сама реализация адаптера — `adapters`.
 - Всё остальное (FSM, конкурентные примитивы, конфигурация, коллекции, RPC-протокол
   между задачами) → `domain`, даже если результат используется только из `cross`.
 {%- if graph == "true" %}
@@ -110,53 +108,23 @@ HAL (`bsp::board::init_peripherals` — на умолчаниях `embassy-stm32
 {%- if ota == "true" %}{{ sep }}`adapters::ota` (поверх `embassy-boot`){% assign sep = ", " %}{% endif %}
 {%- if settings_port == "true" %}{{ sep }}`adapters::settings`
 (поверх `sequential-storage`){% assign sep = ", " %}{% endif %}
-{%- if protocol_link == "true" %}{{ sep }}транспорты протоколов{% endif %}. Собирает их **узел**, а не
-`app` и не `bsp`: каждый такой адаптер реализует `ports::Assemble` — из чего он
-собирается (`type Source`: рычаг платы
-{%- assign sep = " — " %}
-{%- if has_uart == "true" %}{{ sep }}поток UART{% assign sep = ", " %}{% endif %}
-{%- if has_usb == "true" %}{{ sep }}поток CDC{% assign sep = ", " %}{% endif %}
-{%- if has_can == "true" %}{{ sep }}шина CAN{% assign sep = ", " %}{% endif %}
-{%- if has_net == "true" %}{{ sep }}стек{% assign sep = ", " %}{% endif %}
-{%- if ota == "true" or config == "true" %}{{ sep }}разделы
-флеша{% endif %}) и в чём (`type Buffers`: ссылки на статики `app`, с ними и то, что задаёт
-протокол, например порт), — а узел обобщён по типу адаптера и зовёт
-`L::assemble(source, buffers)` {% if graph == "true" %}инициализатором своего слота
-(`<L as $crate::Assemble>::assemble(inputs.source, inputs.buffers)`){% else %}в своей задаче
-{%- assign sep = " (" %}
-{%- if has_modbus == "true" %}{{ sep }}`domain::server::serve`{% assign sep = ", " %}{% endif %}
-{%- if has_protobuf == "true" %}{{ sep }}`ProtobufCtx` в `tasks/protobuf.rs`{% assign sep = ", " %}{% endif %}
-{%- if sep == ", " %}){% endif %}{% endif %}. `domain` реэкспортирует трейт
-(`domain::Assemble`): инициализаторы разворачиваются в `app`, а у него `ports`
-нет.
-{%- if graph == "true" %}
-{%- assign sep = "" %}
-{%- capture wirings %}
-{%- if has_modbus == "true" %}{{ sep }}`ServerWiring`{% assign sep = ", " %}{% endif %}
-{%- if has_protobuf == "true" %}{{ sep }}`ProtobufWiring`{% assign sep = ", " %}{% endif %}
-{%- if ota == "true" %}{{ sep }}`OtaWiring`{% assign sep = ", " %}{% endif %}
-{%- if has_canopen == "true" %}{{ sep }}`CanOpenWiring`{% assign sep = ", " %}{% endif %}
-{%- if net_services contains "ssh" %}{{ sep }}`SshWiring`{% assign sep = ", " %}{% endif %}
-{%- if net_services contains "mqtt" %}{{ sep }}`MqttWiring`{% assign sep = ", " %}{% endif %}
-{%- endcapture %}
-{%- if wirings != "" %} Входы с такой сборкой — {{ wirings }} — написаны руками: структура, которую выводит фрагмент
-(`boot: … struct`), допускает в инициализаторе слота только чтение поля.
-{%- endif %}
-{%- endif %}
+{%- if protocol_link == "true" %}{{ sep }}транспорты протоколов{% endif %}. Строит их **compose-site**, а
+не узел и не `bsp`: {% if graph == "true" %}привязка узла в `fragments:` графа — одним выражением над рычагом
+платы (`Updater::new(board.firmware)`, `link(board.net.stack, static [u8; N], …)`),
+а память адаптера объявляет там же `static T`: ячейка на вхождение, в `.bss`,
+мимо стека{% else %}модуль задачи `crates-cross/app/src/tasks/` над рычагом платы, память — его
+статики `ConstStaticCell`{% endif %}. Узел получает адаптер готовым во входе и только читает поле
+(`LINK: local L = inputs.link`). Трейта сборки и структур буферов у адаптеров нет:
+`static` нужного размера можно объявить только там, где тип адаптера
+конкретен, — на compose-site.
 {%- assign sep = "" %}
 {%- capture types %}
 {%- if protocol_link == "true" %}{{ sep }}`crate::link::<вид>::<транспорт>::Link`{% assign sep = ", " %}{% endif %}
 {%- if ota == "true" %}{{ sep }}`adapters::ota::Updater<bsp::FirmwareFlash, _>`{% assign sep = ", " %}{% endif %}
 {%- if config == "true" %}{{ sep }}`adapters::settings::Settings<bsp::ConfigFlash>`{% assign sep = ", " %}{% endif %}
 {%- endcapture %}
-{%- assign sep = "" %}
-{%- capture statics %}
-{%- if protocol_link == "true" %}{{ sep }}`crate::link::<вид>::<транспорт>::buffers()`{% assign sep = ", " %}{% endif %}
-{%- if net_services contains "mqtt" %}{{ sep }}`crate::net::mqtt::buffers()`{% assign sep = ", " %}{% endif %}
-{%- endcapture %}
-{%- if types != "" %} `app`
-выбирает тип ({% if graph == "true" %}параметр фрагмента{% else %}в модуле задачи{% endif %}: {{ types }}) и раздаёт поля платы{% if statics != "" %} и
-ссылки на свои статики ({{ statics }}){% endif %}.
+{%- if types != "" %} Тип адаптера —
+{% if graph == "true" %}параметр фрагмента{% else %}в модуле задачи{% endif %}: {{ types }}.
 {%- endif %} Та реализация, которой
 нужны `embassy_stm32::peripherals` или регистр, — в `crates-cross/bsp`: сброс МК
 (`bsp::reset`){% if graph == "true" %}, сторож над IWDG (`bsp::wdg`){% endif %}
@@ -342,10 +310,10 @@ RAM. От килобайта и выше фрагмент пишет `resources:
 
 Протоколов над рычагами `bsp` не собирает: кадрирование транспорта, буферы
 сообщений{% if has_net == "true" %}, сокеты протоколов и служб{% endif %}{% if ota == "true" %}, адаптер обновления{% endif %}{% if config == "true" %}, хранилище настроек{% endif %} —
-решение проекта, а не свойство платы. Их собирает узел (`ports::Assemble`, выше)
-в памяти, которую заводит `app`: захотел проект другой буфер или порт — правится
+решение проекта, а не свойство платы. Их строит `app` (выше) в своей памяти:
+захотел проект другой буфер или порт — правится
 `app`{% if protocol_link == "true" or net_services != "" %} ({% if protocol_link == "true" %}`crates-cross/app/src/link/`{% if net_services != "" %}, {% endif %}{% endif %}{% if net_services != "" %}`crates-cross/app/src/net/`{% endif %}){% endif %}, плата не меняется. Буфер
-заводится там, где решают его размер, — статиком `app`, — а узел получает ссылку.
+заводится там, где решают его размер, — в `app`, — а узел получает ссылку.
 
 `Board` один (`Board::new() -> Board`)
 {%- if has_usb == "true" or has_net == "true" %}, и пары, которые нельзя собрать порознь,
@@ -392,9 +360,9 @@ device, cdc }` (классы `embassy-usb` регистрируются до п�
 {% if graph == "true" %}Кроме сторожа в граф уезжает поле `firmware`{% else %}В задачу узла OTA уезжает поле `firmware`{% endif %} (`bsp::FirmwareFlash` —
 `adapters::ota::Partitions`: разделы `DFU` и `STATE` со своими страницами, предел
 образа, равный `ACTIVE`, и отпечаток раскладки). {% if graph == "true" %}Compose-site кладёт его во вход узла,
-`domain::ota::OtaWiring { source: board.firmware, reboot: bsp::reset::Reboot, mode }`,
-прямо в `fragments:`, а адаптер{% else %}Адаптер{% endif %} обновления (`adapters::ota::Updater`, порт
-`FirmwareUpdate`) над ним собирает узел. Режет разделы плата — по символам
+`domain::ota::OtaWiring { flash: Updater::new(board.firmware), reboot: bsp::reset::Reboot, mode }`,
+прямо в `fragments:`: адаптер{% else %}Адаптер{% endif %} обновления (`adapters::ota::Updater`, порт
+`FirmwareUpdate`) над ним строит compose-site. Режет разделы плата — по символам
 `memory.x` (`bsp::layout`), тем же, что читает bootloader: где они лежат, знает
 раскладка, а она — дело платы. Сам `bsp` про `domain` не знает: логика приёма и
 применения образа живёт в `domain::ota` и видит только порты; host-тесты подают

@@ -152,9 +152,8 @@ supervisor::supervisor_fragment! {
     boot: inputs: $crate::ota::OtaWiring<F, R>;
 
     node resources: [
-            /// Адаптер обновления поверх разделов флеша (`FirmwareUpdate`) —
-            /// собирает его узел над разделами платы.
-            FLASH: local F = <F as $crate::Assemble>::assemble(inputs.source, ()),
+            /// Адаптер обновления поверх разделов флеша (`FirmwareUpdate`).
+            FLASH: local F = inputs.flash,
             /// Перезагрузка МК (`Reboot`) — для команды `Reboot`.
             REBOOT: R = inputs.reboot,
             /// Режим применения: `Mode::Plain` или `Mode::Signed`.

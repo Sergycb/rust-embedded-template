@@ -280,8 +280,8 @@ resources: [WS: &'static mut $crate::x::Workspace = static |w| w.gain = inputs.g
    (`docs/watchdog.md`) не проверяется. Узел, который ждёт событие, которого
    может не быть всю жизнь платы, сторожем не отмечается — как `NET` и `HTTP`.
 4. **Железо — через рычаг платы.** Узел не берёт периферию сам: `bsp` отдаёт
-   рычаг полем `Board`, адаптер над ним узел собирает через `ports::Assemble`
-   во входе фрагмента, а `app` раздаёт поле платы в `fragments:`
+   рычаг полем `Board`, адаптер над ним `app` строит в `fragments:` (память —
+   `static [u8; N]` там же) и отдаёт узлу во входе фрагмента
    (`docs/architecture.md`).
 5. **Тест на хосте** — по образцу `crates-host/domain/src/heartbeat/tests.rs`:
    `supervisor::stand!` строит контекст и порты узла без графа, время
@@ -356,9 +356,9 @@ resources: [WS: &'static mut $crate::x::Workspace = static |w| w.gain = inputs.g
 Плата отдаёт для узла разделы обновления `board.firmware`
 (`bsp::FirmwareFlash` — `adapters::ota::Partitions`, нарезанные по символам
 `memory.x`) и порт перезагрузки `bsp::reset::Reboot`; эта сторона кладёт их во
-вход фрагмента, а адаптер обновления собирает сам узел (`ports::Assemble`):
-`bsp` про `domain` не знает
-(`= ::domain::ota::OtaWiring { source: board.firmware, reboot:
+вход фрагмента вместе с адаптером обновления над разделами: `bsp` про `domain`
+не знает
+(`= ::domain::ota::OtaWiring { flash: Updater::new(board.firmware), reboot:
 bsp::reset::Reboot, mode: ::domain::ota::Mode::Signed { running_version:
 crate::version::FW_VERSION } }`). Типы слотов — аргументы фрагмента
 (`OTA_FRAG<::adapters::ota::Updater<bsp::FirmwareFlash, true>, bsp::reset::Reboot>`):
@@ -366,7 +366,7 @@ crate::version::FW_VERSION } }`). Типы слотов — аргументы �
 `supervisor/local-resources` в
 `crates-cross/Cargo.toml`): объекты платы `!Send`, и граф держит их на своём
 исполнителе, не требуя `Send`. Узел, чей `local`-слот заполняется
-инициализатором (здесь — из `inputs`), нельзя перевести на другой
+из `inputs`, нельзя перевести на другой
 исполнитель (`executor:`); захотите вынести OTA туда — менять `local` во
 фрагменте `domain::ota` и `NoopRawMutex` у {% if ota_store == "external" %}`bsp::external::ExternalMutex`{% else %}`bsp::flash::FlashMutex`{% endif %} вместе.
 

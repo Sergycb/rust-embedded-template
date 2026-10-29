@@ -136,13 +136,13 @@ async fn uart_drain_task(mut uart: embassy_stm32::usart::UartTx<'static, embassy
 
 Узел `MODBUS_<ТРАНСПОРТ>` — по одному на транспорт с Modbus в `links`.{% if graph == "true" %}
 Фрагмент — узел протокола `domain::SERVER_FRAG<L, H>`: канал
-`L` (`crate::link::<вид>::<транспорт>::Link`) узел собирает сам из рычага платы и
-буферов `crate::link::<вид>::<транспорт>::buffers()`, обработчик `H` —
+`L` (`crate::link::<вид>::<транспорт>::Link`) строит граф —
+`crate::link::<вид>::<транспорт>::link` над рычагом платы в памяти `static T`, обработчик `H` —
 `domain::modbus::Slave` над картой регистров с адресом slave'а (вход
 `domain::server::ServerWiring`).{% else %}
 В этом проекте это задача в `crates-cross/app/src/tasks/modbus.rs`: она зовёт
-`domain::server::serve` с каналом `crate::link::<вид>::<транспорт>::Link`, который
-узел собирает из рычага платы, и обработчиком `domain::modbus::Slave` над
+`domain::server::serve` с каналом `crate::link::<вид>::<транспорт>::link` над
+рычагом платы и обработчиком `domain::modbus::Slave` над
 картой регистров с адресом slave'а.{% endif %} Карта одна на проект: её
 заводит `crates-cross/app/src/modbus.rs` в `static` (`OnceLock`) при первом
 `crate::modbus::handle()`, и каждый узел берёт свою копию ручки

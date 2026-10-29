@@ -1,7 +1,7 @@
 //! Задачи узлов проекта: по модулю на задачу (или пул задач).
 //!
 //! В модуле — задача-обёртка `#[embassy_executor::task]` — она раздаёт узлу
-//! рычаги платы и статики, а адаптеры собирает сам узел (`domain::Assemble`), —
+//! рычаги платы и адаптеры над ними в памяти своих статиков —
 //! и `spawn`. `main` отдаёт плату (`bsp::Board`) в [`spawn_all`] целиком и сам
 //! задачами не занимается. Embassy-задача не может быть generic, поэтому
 //! каждая типизирована рычагом платы (`bsp`) или типами канала
@@ -59,7 +59,7 @@ pub fn spawn_all(spawner: embassy_executor::Spawner, {% if ota == "true" or has_
     canopen::{{ f[4] }}::spawn(
         spawner,
         board.{{ f[4] }},
-        {% if config == "true" %}board.config{% else %}(){% endif %},
+        {% if config == "true" %}adapters::settings::Settings::whole(board.config){% else %}adapters::settings::Unavailable{% endif %},
         domain::canopen::serial(board.spec.uid),
     );
 {%- endif %}

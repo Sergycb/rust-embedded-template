@@ -1,21 +1,16 @@
-//! Вход узла `PROTOBUF`: из чего собрать канал и чем отвечать.
+//! Вход узла `PROTOBUF`: канал, буфер ответа и чем отвечать.
 
-use ports::Assemble;
-
-/// Вход узла `PROTOBUF`: из чего собрать канал `L`, куда кодировать ответ и чем
-/// отвечать.
+/// Вход узла `PROTOBUF`: канал `L`, куда кодировать ответ и чем отвечать.
 ///
-/// Канал собирает узел (`L::assemble(source, buffers)` — порт
 // {%- if graph == "true" %}
-/// [`Assemble`]), а compose-site только раздаёт
-/// (`<вид>`/`<транспорт>` — как в `crates-cross/app/src/graph.rs`):
+/// Канал и память строит compose-site (`<вид>`/`<транспорт>` — как в
+/// `crates-cross/app/src/graph.rs`):
 ///
 /// ```ignore
 /// fragments: [::domain::PROTOBUF_FRAG<crate::link::<вид>::<транспорт>::Link>
 ///                 as PROTOBUF_<ТРАНСПОРТ> = ::domain::protobuf::ProtobufWiring {
-///                     source: board.<транспорт>,
-///                     buffers: crate::link::<вид>::<транспорт>::buffers(),
-///                     response: crate::link::<вид>::<транспорт>::response(),
+///                     link: crate::link::<вид>::<транспорт>::link(board.<транспорт>, static [u8; N], static [u8; M]),
+///                     response: static [u8; ::domain::protobuf::RESPONSE_MAX],
 ///                     service: ::domain::protobuf::Service::new(
 ///                         crate::device_info(board.spec),
 // {%- if ota == "true" %}
@@ -25,18 +20,12 @@ use ports::Assemble;
 ///                 }];
 /// ```
 // {%- else %}
-/// [`Assemble`]), а compose-site — задача `crates-cross/app/src/tasks/protobuf.rs`
-/// — только раздаёт поля платы и ссылки на свои статики.
+/// Канал и память строит задача `crates-cross/app/src/tasks/protobuf.rs`.
 // {%- endif %}
-///
-/// Написан руками, а не выведен фрагментом: слот канала инициализируется
-/// сборкой из двух полей, а не чтением одного.
 #[derive(Debug)]
-pub struct ProtobufWiring<L: Assemble> {
-    /// Рычаг платы, над которым собирается канал.
-    pub source: L::Source,
-    /// Память канала от приложения.
-    pub buffers: L::Buffers,
+pub struct ProtobufWiring<L> {
+    /// Кадровый канал над рычагом платы.
+    pub link: L,
     /// Буфер ответа — не короче самого длинного ответа схемы.
     pub response: &'static mut [u8],
     /// Обработчик сообщений.

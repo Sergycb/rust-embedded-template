@@ -65,17 +65,17 @@ mod tests {
 {%- endif %}
 
 {%- if ota == "true" %}
-    /// Адаптер обновления над флешем платы — так же, как его собирает узел
-    /// OTA (порт `Assemble`): `assemble` режет флеш на разделы по `memory.x`.
+    /// Адаптер обновления над разделами платы — так же, как его строит
+    /// compose-site узла OTA.
     fn updater(firmware: bsp::FirmwareFlash) -> adapters::ota::Updater<bsp::FirmwareFlash, {{signed}}> {
-        ports::Assemble::assemble(firmware, ())
+        adapters::ota::Updater::new(firmware)
     }
 {%- endif %}
 {%- if config == "true" and config_store != "external" %}
-    /// Хранилище настроек над носителем платы — так же, как его собирает
-    /// узел-потребитель (порт `Assemble`).
+    /// Хранилище настроек на весь носитель платы — так же, как его строит
+    /// compose-site узла-потребителя.
     fn settings(flash: bsp::ConfigFlash) -> impl ports::SettingsStorage<Error: core::fmt::Debug> {
-        <adapters::settings::Settings<_> as ports::Assemble>::assemble(flash, ())
+        adapters::settings::Settings::whole(flash)
     }
 {%- endif %}
 

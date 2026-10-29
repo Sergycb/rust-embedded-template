@@ -215,8 +215,8 @@ pub type ChipFlash = embassy_stm32::flash::Flash<'static, Blocking>;
 {%- endif %}
 {%- if firmware_here == "true" %}
 
-/// Разделы обновления — рычаг, над которым узел OTA собирает адаптер
-/// (`adapters::ota::Updater`, порт `Assemble`): `DFU` и `BOOTLOADER_STATE`,
+/// Разделы обновления — рычаг под адаптером обновления
+/// (`adapters::ota::Updater`): `DFU` и `BOOTLOADER_STATE`,
 /// нарезанные платой по символам `memory.x` (`crate::layout`), со своими
 /// страницами, размер `ACTIVE` и отпечаток раскладки.
 pub type FirmwareFlash = adapters::ota::Partitions<
@@ -226,15 +226,15 @@ pub type FirmwareFlash = adapters::ota::Partitions<
 {%- endif %}
 {%- if config_here == "true" %}
 
-/// Раздел `CONFIG` — носитель настроек, над которым узел-потребитель собирает
-/// хранилище (`adapters::settings`, порт `Assemble`). Именно раздел, а не весь
+/// Раздел `CONFIG` — носитель хранилища настроек (`adapters::settings`).
+/// Именно раздел, а не весь
 /// флеш: запись за его границы отказывает, а не стирает {% if ota == "true" %}`ACTIVE` или bootloader{% else %}прошивку{% endif %}.
 pub type ConfigFlash = Partition<'static, NoopRawMutex, ConfigBacking>;
 {%- endif %}
 {%- if eeprom_here == "true" %}
 
 /// Внутренняя EEPROM как `NorFlash` — носитель настроек, над которым
-/// узел-потребитель собирает хранилище (`adapters::settings`, порт `Assemble`).
+/// стоит хранилище (`adapters::settings`).
 /// Флеш под настройки не тратится вовсе: EEPROM пишется через тот же
 /// контроллер, что и флеш, поэтому доступ к ней — через общий [`FlashMutex`]
 /// (`embassy_stm32::flash::Flash::eeprom_*`), по операции под замком. Обёртку

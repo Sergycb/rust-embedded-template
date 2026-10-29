@@ -6,7 +6,7 @@
 {%- if f[3] == "modbus" or f[3] == "protobuf" %}
 //! {% if f[3] == "modbus" %}Заголовок MBAP{% else %}Кадры COBS + CRC{% endif %}, канал узла `{% if f[3] == "modbus" %}MODBUS{% else %}PROTOBUF{% endif %}_{{ f[4] | upcase }}`.
 
-use static_cell::ConstStaticCell;
+use domain::net::Stack;
 
 /// Порт, на котором протокол ждёт хост: {% if f[3] == "modbus" %}502 — стандартный порт Modbus
 /// TCP и UDP{% else %}5000 — выбран шаблоном, у protobuf стандартного нет{% endif %}. Порт задаёт протокол, а не
@@ -14,62 +14,39 @@ use static_cell::ConstStaticCell;
 const PORT: u16 = {% if f[3] == "modbus" %}502{% else %}5000{% endif %};
 {%- if f[3] == "protobuf" %}
 
-// Буфер канала — сообщение и CRC (`rx_len`); кадру передачи — место под
-// худший случай COBS от всего буфера канала (`tx_len`).
-const BUFFER: usize = ::adapters::cobs::rx_len(::domain::protobuf::REQUEST_MAX);
+/// Буфер канала — сообщение и CRC (`rx_len`).
+pub const BUFFER: usize = ::adapters::cobs::rx_len(::domain::protobuf::REQUEST_MAX);
+/// Кадр передачи — худший случай COBS от всего буфера канала (`tx_len`).
+pub const FRAME: usize = ::adapters::cobs::tx_len(BUFFER);
 {%- endif %}
 
-/// Канал узла `{% if f[3] == "modbus" %}MODBUS{% else %}PROTOBUF{% endif %}_{{ f[4] | upcase }}`; собирается над стеком платы (`board.net.stack`).
+/// Канал узла `{% if f[3] == "modbus" %}MODBUS{% else %}PROTOBUF{% endif %}_{{ f[4] | upcase }}` над стеком платы (`board.net.stack`).
 {%- if f[3] == "modbus" %}
 pub type Link = ::adapters::modbus::Tcp<::adapters::net::TcpServer>;
 {%- else %}
-pub type Link = ::adapters::cobs::TcpCobs;
+pub type Link = ::adapters::cobs::Cobs<'static, ::adapters::net::TcpServer>;
 {%- endif %}
 
-// Память сокета протокола: он держит её `&'static mut`. `ConstStaticCell` —
-// значения известны при компиляции и лежат в `.bss`.
-static SOCKET_RX: ConstStaticCell<[u8; crate::link::SOCKET_BUFFER]> =
-    ConstStaticCell::new([0; crate::link::SOCKET_BUFFER]);
-static SOCKET_TX: ConstStaticCell<[u8; crate::link::SOCKET_BUFFER]> =
-    ConstStaticCell::new([0; crate::link::SOCKET_BUFFER]);
-{%- if f[3] == "protobuf" %}
-static PROTOBUF_BUFFER: ConstStaticCell<[u8; BUFFER]> = ConstStaticCell::new([0; BUFFER]);
-static PROTOBUF_FRAME: ConstStaticCell<[u8; ::adapters::cobs::tx_len(BUFFER)]> =
-    ConstStaticCell::new([0; ::adapters::cobs::tx_len(BUFFER)]);
-// Ответ узел кодирует сюда, а не в буфер канала: там может лежать
-// недочитанный кадр (`domain::protobuf`).
-static PROTOBUF_RESPONSE: ConstStaticCell<[u8; ::domain::protobuf::RESPONSE_MAX]> =
-    ConstStaticCell::new([0; ::domain::protobuf::RESPONSE_MAX]);
-{%- endif %}
-
-/// Память канала — ссылки на статики выше. Статики берутся ровно один раз:
-/// узел собирается один раз за запуск.
+/// Канал над стеком `stack` в памяти, которую объявляет граф: буферы сокета
+/// `rx`/`tx` (`crate::link::SOCKET_BUFFER`){% if f[3] == "protobuf" %}, буфер канала `buf` ([`BUFFER`]) и
+/// кадра передачи `frame` ([`FRAME`]){% endif %}.
 {%- if f[3] == "modbus" %}
-pub fn buffers() -> ::adapters::net::TcpServerBuffers {
-    ::adapters::net::TcpServerBuffers {
-        port: PORT,
-        rx: SOCKET_RX.take(),
-        tx: SOCKET_TX.take(),
-    }
+pub fn link(stack: Stack<'static>, rx: &'static mut [u8], tx: &'static mut [u8]) -> Link {
+    ::adapters::modbus::Tcp::new(::adapters::net::TcpServer::new(stack, PORT, rx, tx))
 }
 {%- else %}
-pub fn buffers() -> ::adapters::cobs::TcpCobsBuffers {
-    ::adapters::cobs::TcpCobsBuffers {
-        socket: ::adapters::net::TcpServerBuffers {
-            port: PORT,
-            rx: SOCKET_RX.take(),
-            tx: SOCKET_TX.take(),
-        },
-        cobs: ::adapters::cobs::CobsBuffers {
-            buf: PROTOBUF_BUFFER.take(),
-            frame: PROTOBUF_FRAME.take(),
-        },
-    }
-}
-
-/// Буфер ответа узла — ссылка на статик выше; берётся ровно один раз.
-pub fn response() -> &'static mut [u8] {
-    PROTOBUF_RESPONSE.take()
+pub fn link(
+    stack: Stack<'static>,
+    rx: &'static mut [u8],
+    tx: &'static mut [u8],
+    buf: &'static mut [u8],
+    frame: &'static mut [u8],
+) -> Link {
+    ::adapters::cobs::Cobs::new(
+        ::adapters::net::TcpServer::new(stack, PORT, rx, tx),
+        buf,
+        frame,
+    )
 }
 {%- endif %}
 {%- endif %}

@@ -47,9 +47,8 @@ supervisor::supervisor_fragment! {
 
     node resources: [
             /// Кадровый канал — с буфером кадра: не меньше самого длинного
-            /// запроса и ответа протокола. Собирает его узел — из рычага
-            /// платы и памяти приложения.
-            LINK: local L = <L as $crate::Assemble>::assemble(inputs.source, inputs.buffers),
+            /// запроса и ответа протокола.
+            LINK: local L = inputs.link,
             /// Протокол над каналом: что ответить на кадр.
             HANDLER: local H = inputs.handler
         ],

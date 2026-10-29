@@ -44,15 +44,13 @@ skill'ом `rust-engineering` и не дублируются здесь. Это�
 `cross` остаётся минимальным: `bsp` — рычаги платы (объекты под трейтами и
 портами: потоки, шины, разделы флеша,{% if graph == "true" %} сторож,{% endif %} драйверы микросхем платы; DMA-буферы
 под железо), `app` — оркестрация задач (`Spawner`{% if graph == "true" %}, supervisor-графы, watchdog{% endif %}) и
-статики, которые домен получает ссылками (буферы узлов и транспортов{% if has_modbus == "true" %}, карта
-Modbus{% endif %}{% if net_services != "" %}, секреты служб{% endif %}). Объектов `app` не строит: **адаптер над рычагом собирает
-узел** через порт `ports::Assemble` (`type Source` — рычаг платы, `type Buffers`
-— память и параметры от `app`; реэкспорт `domain::Assemble`) — {% if graph == "true" %}инициализатором
-слота во фрагменте{% else %}в задаче{% endif %}; `app` называет тип адаптера
-параметром фрагмента и раздаёт поля платы и ссылки на статики.
-{%- capture wirings %}{% if has_modbus == "true" %}, `ServerWiring`{% endif %}{% if has_protobuf == "true" %}, `ProtobufWiring`{% endif %}{% if ota == "true" %}, `OtaWiring`{% endif %}{% if has_canopen == "true" %}, `CanOpenWiring`{% endif %}{% if net_services contains "ssh" %}, `SshWiring`{% endif %}{% if net_services contains "mqtt" %}, `MqttWiring`{% endif %}{% endcapture %} Входы с такой
-сборкой{% if wirings != "" %} ({{ wirings | remove_first: ", " }}){% endif %} пишутся руками, а не `boot: … struct`: выведенная структура
-допускает в инициализаторе только чтение поля. Порт с адаптером или библиотека
+память, которую домен получает ссылками (буферы узлов и транспортов{% if has_modbus == "true" %}, карта
+Modbus{% endif %}{% if net_services != "" %}, секреты служб{% endif %}). **Адаптер над рычагом строит compose-site** — {% if graph == "true" %}одним
+выражением в привязке узла в `fragments:` графа, а память адаптера объявляет
+там же `static [u8; N]` (ячейка на вхождение, в `.bss`, мимо стека){% else %}модуль
+задачи, память — его статики `ConstStaticCell`{% endif %} — и отдаёт узлу готовым во входе
+(`LINK: local L = inputs.link`); тип адаптера — параметр фрагмента. Трейта
+сборки и структур буферов у адаптеров нет. Порт с адаптером или библиотека
 прямо в `domain` — критерий в `docs/architecture.md`.
 Всё остальное — даже асинхронное и «системное» на вид (стейтчарты, RPC, синхронизация
 задач) — живёт в `domain`, а не в `cross`. Узлы тоже: подсистема объявляет свой
@@ -364,8 +362,8 @@ read`: руками пришлось бы сначала найти адрес �
   `Node<'f>` живёт в состояниях. Не переносить их в `static` или слот: тип
   замыкания там не назвать, а колбэки `zencan` своих данных не получают.
   Ключи `OBJECTS_KEY` и `NODE_ID_KEY` хранилища настроек заняты узлом{% if config == "true" %}, и носитель
-  (`board.config`) забирает он — хранилище над ним собирает сам узел
-  (`Assemble`), и своим настройкам проекта нужен общий доступ через него{% endif %} —
+  (`board.config`) уходит ему — хранилищем над ним (`Settings::whole`) во входе, и
+  своим настройкам проекта нужен общий доступ через него{% endif %} —
   `domain::canopen`.
 {%- endif %}
 {%- if dfu_bank == "true" %}
@@ -382,8 +380,8 @@ read`: руками пришлось бы сначала найти адрес �
   `adapters::eeprom::Eeprom` собирает сама плата){% elsif config_store == "external" %}внешняя флеш W25Q (драйвер
   `w25q` в `bsp::external`, шина — заглушка `bsp::stub::FlashBus`, пока проект не
   подставит выводы){% else %}раздел `CONFIG` внутреннего
-  флеша{% endif %}. Само хранилище собирает узел-потребитель (`Assemble`) над
-  `board.config`; тип — `adapters::settings::Settings<bsp::ConfigFlash>` прямо {% if graph == "true" %}в
+  флеша{% endif %}. Само хранилище — `Settings::whole(board.config)` на compose-site
+  узла-потребителя; тип — `adapters::settings::Settings<bsp::ConfigFlash>` прямо {% if graph == "true" %}в
   графе{% else %}в задаче{% endif %}{% if config_store == "eeprom" %}. EEPROM под хранилищем инвертирована: без
   этого заводские нули выглядели бы для `sequential-storage` закрытыми
   страницами{% endif %} — `docs/flash.md`.
@@ -415,12 +413,12 @@ read`: руками пришлось бы сначала найти адрес �
   ловится — `docs/modules/app-cpu-load.md`.
 {%- if protocol_link == "true" %}
 {%- capture sources %}{% if has_uart == "true" %}, потоком UART{% endif %}{% if has_usb == "true" %}, потоком CDC{% endif %}{% if has_net == "true" %}, сетевым стеком{% endif %}{% endcapture %}
-- Канал протокола (кадрирование, сокет) собирает узел протокола через
-  `Assemble` над тем, что отдала плата: {{ sources | remove_first: ", " }}.
+- Канал протокола (кадрирование, сокет) строит `link(…)` модуля транспорта над
+  тем, что отдала плата: {{ sources | remove_first: ", " }}; память канала — {% if graph == "true" %}`static T` в привязке графа{% else %}статики модуля задачи{% endif %}.
   {%- if has_modbus == "true" %} Узел Modbus slave — `domain::server::SERVER_FRAG<L, H>` ({% if graph == "true" %}граф называет
   узлы{% else %}узлы{% endif %} `MODBUS_<транспорт>`).{% endif %}
   {%- if has_protobuf == "true" %} Узел protobuf хоста — `domain::protobuf::PROTOBUF_FRAG<L>`
-  (`PROTOBUF_<транспорт>`).{% endif %} Тип канала (`Link`), его статики и `buffers()` —
+  (`PROTOBUF_<транспорт>`).{% endif %} Тип канала (`Link`), его размеры и `link` —
   `crates-cross/app/src/link/<вид>.rs`, по модулю на транспорт: размер буфера и
   порт — решение приложения, и `bsp` их не знает. Буфер кадра держит сам канал
   (`ports::FrameLink::buffer`), протокол — обработчик ({% if has_modbus == "true" %}`domain::server::Handler`:
@@ -429,7 +427,7 @@ read`: руками пришлось бы сначала найти адрес �
   {%- if has_protobuf == "true" %} Канал узла `PROTOBUF` —
   `ports::FrameDuplex`: брошенный `recv` не теряет кадр{% if cobs_used == "true" %} (у `adapters::cobs::Cobs`
   декодер живёт в канале, а не в future){% endif %}, а ответ уходит из своего буфера узла
-  (`response()` модуля `link`) через `send_from`.{% endif %} Вход узла — {% if graph == "true" %}выражение в
+  ({% if graph == "true" %}`static [u8; RESPONSE_MAX]` в привязке{% else %}статик модуля задачи{% endif %}) через `send_from`.{% endif %} Вход узла — {% if graph == "true" %}выражение в
   `fragments:` графа{% else %}`spawn` модуля задачи
   (`crates-cross/app/src/tasks/`: {% if has_modbus == "true" %}`domain::server::serve`{% if has_protobuf == "true" %}, {% endif %}{% endif %}{% if has_protobuf == "true" %}`ProtobufCtx` руками{% endif %}):
   по модулю на задачу, `main.rs` только зовёт `tasks::spawn_all`{% endif %}.
@@ -468,8 +466,8 @@ read`: руками пришлось бы сначала найти адрес �
   `ports::dial::Dial`, их держит `adapters::net::TcpClient`, а не `domain`.
   {%- if ota == "true" %} Клиент входа `CMD` узла OTA для `cmd/reboot` — номер
   `{{ mqtt_ota_client }}` (`domain::ota::ClientId`).{%- endif %} Сокет клиента — слот в
-  `bsp::net::SOCKETS`; клиента собирает узел (`Assemble`) на стеке платы,
-  буферы TCP — статики `crate::net::mqtt::buffers()`. Доступ к `cmd/` токеном в
+  `bsp::net::SOCKETS`; клиент (`TcpClient::new`) строит граф на стеке платы,
+  буферы TCP — `static [u8; crate::net::mqtt::TCP_BUFFER]` там же. Доступ к `cmd/` токеном в
   теле не защищён — только ACL брокера{% if ota == "true" %} (при пустом `user` `build.rs` предупреждает){% endif %} —
   `docs/modules/app-mqtt.md`.
 {%- endif %}
@@ -485,8 +483,8 @@ read`: руками пришлось бы сначала найти адрес �
   `HardwareWatchdog`{% endif %}): потоки, шины, куски флеша{% if ota == "true" or config == "true" %} ({% if ota == "true" %}`firmware`{% if config == "true" %}, {% endif %}{% endif %}{% if config == "true" %}`config`{% endif %}){% endif %}, драйверы
   микросхем платы, данные о чипе (`bsp::ChipSpec`), — и ничего не настраивает:
   ни периферии ядра, ни `Peripherals`, ни `Clocks` в полях нет. Протоколов над
-  рычагами и их буферов в `bsp` нет: тип и статики — в `app`{% if protocol_link == "true" or net_services != "" %} ({% if protocol_link == "true" %}`link`{% if net_services != "" %}, {% endif %}{% endif %}{% if net_services != "" %}`net`{% endif %}){% endif %}{% if ota == "true" or config == "true" %} или тип прямо {% if graph == "true" %}в графе{% else %}в задаче{% endif %}
-  ({% if ota == "true" %}адаптер обновления{% if config == "true" %}, {% endif %}{% endif %}{% if config == "true" %}хранилище{% endif %}){% endif %}, собирает узел{% if has_stub == "true" %}. Заглушка периферии до драйвера — `bsp::stub`{% endif %} — `docs/architecture.md`.
+  рычагами и их буферов в `bsp` нет: тип и память — в `app`{% if protocol_link == "true" or net_services != "" %} ({% if protocol_link == "true" %}`link`{% if net_services != "" %}, {% endif %}{% endif %}{% if net_services != "" %}`net`{% endif %}){% endif %}{% if ota == "true" or config == "true" %} или тип прямо {% if graph == "true" %}в графе{% else %}в задаче{% endif %}
+  ({% if ota == "true" %}адаптер обновления{% if config == "true" %}, {% endif %}{% endif %}{% if config == "true" %}хранилище{% endif %}){% endif %}, строит `app`{% if has_stub == "true" %}. Заглушка периферии до драйвера — `bsp::stub`{% endif %} — `docs/architecture.md`.
 {%- if external_flash == "true" %}
 - Внешняя флеш — W25Q, драйвер `w25q` (hw-drivers, `rev` закреплён) в
   `bsp::external`; шина под ним — заглушка `bsp::stub::FlashBus`, пока плата

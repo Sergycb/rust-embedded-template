@@ -91,9 +91,8 @@ supervisor::supervisor_fragment! {
             NODE_ID: u8 = inputs.node_id,
             /// Словарь объектов устройства.
             DICTIONARY: $crate::canopen::Dictionary = inputs.dictionary,
-            /// Хранилище сохранённых объектов и адреса узла — собирает его
-            /// узел над рычагом платы.
-            SETTINGS: local S = <S as $crate::Assemble>::assemble(inputs.settings, ()),
+            /// Хранилище сохранённых объектов и адреса узла.
+            SETTINGS: local S = inputs.settings,
             /// Сохранять ли объекты и адрес: `false` — хранилища у проекта нет.
             PERSIST: bool = inputs.persist,
             /// Серийный номер объекта идентичности (0x1018:04).

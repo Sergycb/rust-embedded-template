@@ -191,8 +191,8 @@ STM32C011D6 (32 KiB, то же ядро) проект занимает 12.6 KiB 
 размером) узел протокола и его `USB` спавнит `tasks::spawn_all` (модули задач в
 `crates-cross/app/src/tasks/` над `domain::server::serve` и
 `domain::{canopen,protobuf,usb}::task`, как `ota::task`). Тип канала протокола и его
-буферы даёт `crates-cross/app/src/link/<вид>.rs`, а собирает канал сам узел
-(`ports::Assemble`), так что граф и модули задач получают один и тот же объект. Тест каскада —
+`link(…)` даёт `crates-cross/app/src/link/<вид>.rs`, и граф (память — `static T`)
+и модули задач (память — свои статики) строят канал одним и тем же вызовом. Тест каскада —
 `protocol_does_not_need_the_graph`, конфигурации `*-no-graph` в `template-check`.
 
 **Сеть — только с графом.** TCP/UDP без графа меню не предлагает, а `--define` с ними

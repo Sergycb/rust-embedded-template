@@ -15,11 +15,10 @@ paths: crates-host/domain/**
   {% if graph == "true" %}граф в `crates-cross/app` — перечисляет фрагменты в `fragments:`, даёт узлам имена
   (`as HEARTBEAT`), подставляет типы и раздаёт поля платы{% else %}модули задач
   `crates-cross/app/src/tasks/` — подставляют типы и раздают поля платы{% endif %}.
-- Адаптер над рычагом платы узел собирает сам: порт `ports::Assemble`
-  (`Source` — рычаг, `Buffers` — ссылки на статики `app`), {% if graph == "true" %}инициализатором слота
-  (`<L as $crate::Assemble>::assemble(inputs.source, inputs.buffers)`){% else %}в задаче{% endif %}. Вход с такой сборкой пишется руками{% if has_modbus == "true" or ota == "true" %} ({% if has_modbus == "true" %}`ServerWiring`{% if ota == "true" %},
-  {% endif %}{% endif %}{% if ota == "true" %}`OtaWiring`{% endif %}){% endif %}: выведенная фрагментом структура (`boot: … struct`) допускает в
-  инициализаторе только чтение поля.
+- Адаптер над рычагом платы узел получает готовым во входе (`LINK: local L =
+  inputs.link`): строит его compose-site — {% if graph == "true" %}выражением в привязке графа, память
+  адаптера там же (`static [u8; N]`){% else %}модуль задачи, память — его статики{% endif %}. Трейта сборки и структур
+  буферов нет.
 - Liquid разрешён везде, и в корневом workspace тоже: условное подключение (протокол,
   который выбран при генерации) — теги `if`/`endif` в строках-комментариях `//` в `.rs` и
   `#` в `.toml`, то есть внутри комментариев. Так в репозитории

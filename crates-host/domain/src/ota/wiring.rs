@@ -9,23 +9,19 @@ use crate::ota::update;
 /// Подпись образа.
 pub(super) type Signature = [u8; SIGNATURE_BYTES];
 
-/// Вход узла OTA: из чего собрать адаптер обновления `F`, чем перезагружать
-/// МК и как применять образ.
-///
-/// Адаптер собирает узел (`F::assemble(source, ())` — порт
-/// [`Assemble`](ports::Assemble)) над разделами платы; compose-site только
-/// раздаёт:
+/// Вход узла OTA: адаптер обновления `F`, чем перезагружать МК и как
+/// применять образ. Адаптер над разделами платы строит compose-site:
 ///
 /// ```ignore
 // {%- if graph == "true" %}
 /// fragments: [::domain::OTA_FRAG<::adapters::ota::Updater<bsp::FirmwareFlash, false>,
 ///                                bsp::reset::Reboot> as OTA
-///                 = ::domain::ota::OtaWiring { source: board.firmware,
+///                 = ::domain::ota::OtaWiring { flash: ::adapters::ota::Updater::new(board.firmware),
 ///                                              reboot: bsp::reset::Reboot,
 ///                                              mode: ::domain::ota::Mode::Plain }];
 // {%- else %}
 /// // crates-cross/app/src/tasks/ota.rs
-/// let inputs = ::domain::ota::OtaWiring { source: board.firmware,
+/// let inputs = ::domain::ota::OtaWiring { flash: adapters::ota::Updater::new(board.firmware),
 ///                                         reboot: bsp::reset::Reboot,
 ///                                         mode: ::domain::ota::Mode::Plain };
 // {%- endif %}
@@ -34,12 +30,10 @@ pub(super) type Signature = [u8; SIGNATURE_BYTES];
 /// Тип объявлен здесь, а не назван compose-site, по правилу фрагментов
 /// `supervisor`: подсистема говорит, что ей нужно, приложение это раздаёт —
 /// зависимость направлена от приложения к подсистеме и никогда обратно.
-/// Написан руками, а не выведен фрагментом: слот адаптера инициализируется
-/// сборкой, а не чтением поля.
 #[derive(Debug)]
-pub struct OtaWiring<F: ports::Assemble, R> {
-    /// Разделы обновления платы, над которыми собирается адаптер.
-    pub source: F::Source,
+pub struct OtaWiring<F, R> {
+    /// Адаптер обновления над разделами платы.
+    pub flash: F,
     /// Перезагрузка МК — для команды `Reboot`.
     pub reboot: R,
     /// Режим применения: `Mode::Plain` или `Mode::Signed`.
