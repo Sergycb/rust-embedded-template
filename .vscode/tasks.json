@@ -26,6 +26,22 @@
 			"problemMatcher": ["$rustc"]
 		},
 		{
+			// Покрытие для Coverage Gutters: те же флаги, что в CI (README,
+			// «Что проверяет CI»), только отчёт — lcov.info в корне, его
+			// расширение находит само. Дальше — «Coverage Gutters: Watch».
+			"label": "coverage: lcov",
+			"type": "shell",
+			"command": "cargo",
+			"args": [
+				"llvm-cov", "nextest", "--workspace", "--exclude", "host-target-tests",
+				"--features", "domain/log{% if ota == 'true' %},domain/signed{% endif %}", "--release",
+				"--ignore-filename-regex", "xtask",
+				"--lcov", "--output-path", "lcov.info"
+			],
+			"group": "test",
+			"problemMatcher": ["$rustc"]
+		},
+		{
 			"label": "xtask: test target",
 			"type": "shell",
 			"command": "cargo",

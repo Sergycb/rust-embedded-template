@@ -27,6 +27,9 @@ crates-host/chip-info/target/
 # `cargo generate --path .` копирует рабочее дерево целиком, вместе с
 # неотслеживаемым мусором (см. debug.log выше).
 coverage.xml
+# То же покрытие в формате lcov — для Coverage Gutters в VSCode (задача
+# `coverage: lcov` в .vscode/tasks.json).
+lcov.info
 
 # Размер release-образа и база для сравнения с веткой по умолчанию: их кладёт
 # в корень cross-джоб CI (см. `IMAGE_SIZE_OUT` в crates-host/xtask). Причина
