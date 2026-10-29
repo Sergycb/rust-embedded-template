@@ -283,7 +283,8 @@ resources: [WS: &'static mut $crate::x::Workspace = static |w| w.gain = inputs.g
    рычаг полем `Board`, адаптер над ним `app` строит в `fragments:` (память —
    `static [u8; N]` там же) и отдаёт узлу во входе фрагмента
    (`docs/architecture.md`).
-5. **Тест на хосте** — по образцу `crates-host/domain/src/heartbeat/tests.rs`:
+5. **Тест на хосте** — по образцу `mod tests` в `crates-host/domain/src/heartbeat.rs`
+   (тесты — в модуле узла, не отдельным файлом):
    `supervisor::stand!` строит контекст и порты узла без графа, время
    двигает `MockDriver`. Гоняется `cargo xtask test host`.
 
