@@ -41,7 +41,7 @@ pub use ports::MAX_WRITE_SIZE;
 /// отпечаток раскладки.
 ///
 /// Нарезает их плата по символам `memory.x` (`bsp::flash::firmware`) и
-/// отдаёт полем `Board`; узел OTA собирает над ними [`Updater`].
+/// отдаёт полем `Board`; [`Updater`] над ними строит compose-site узла OTA.
 #[derive(Debug)]
 pub struct Partitions<D, S> {
     /// Раздел `DFU`.
@@ -78,18 +78,6 @@ pub struct Updater<P, const SIGNED: bool> {
 impl<P, const SIGNED: bool> core::fmt::Debug for Updater<P, SIGNED> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Updater").finish_non_exhaustive()
-    }
-}
-
-/// Собирается над разделами обновления платы (поле `Board`).
-impl<D: NorFlash, S: NorFlash, const SIGNED: bool> ports::Assemble
-    for Updater<Partitions<D, S>, SIGNED>
-{
-    type Source = Partitions<D, S>;
-    type Buffers = ();
-
-    fn assemble(parts: Partitions<D, S>, (): ()) -> Self {
-        Self::new(parts)
     }
 }
 
@@ -495,15 +483,12 @@ mod tests {
     /// отдавать вместо него что-то своё.
     #[test]
     fn reports_the_layout_from_its_partitions() {
-        let u: Mem<false> = ports::Assemble::assemble(
-            super::Partitions {
-                dfu: Dfu::erased(),
-                state: State::erased(),
-                capacity: 768,
-                layout: 0x1234_5678,
-            },
-            (),
-        );
+        let u: Mem<false> = Updater::new(super::Partitions {
+            dfu: Dfu::erased(),
+            state: State::erased(),
+            capacity: 768,
+            layout: 0x1234_5678,
+        });
         assert_eq!(u.layout(), 0x1234_5678);
     }
 }

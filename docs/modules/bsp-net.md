@@ -1,8 +1,8 @@
 Сеть платы — Ethernet-устройство (`bsp::net::Device`) и стек `embassy-net` над
 ним: `board.net` (`bsp::net::Net`) — фоновая работа стека (`runner`) и сам стек
 (`stack`). Стек, его память и адресацию собирает плата; сокеты на нём открывают
-узлы — каналы протоколов и соединения служб собирает каждый узел сам
-(`ports::Assemble`), а память сокетов и порты заводит приложение
+узлы — каналы протоколов и соединения служб строит приложение в своей
+памяти и отдаёт узлам готовыми
 {%- assign sep = " (" %}
 {%- if link_kinds contains "tcp" or link_kinds contains "udp" %}{{ sep }}`crates-cross/app/src/link/`{% assign sep = ", " %}{% endif %}
 {%- if net_services != "" %}{{ sep }}`crates-cross/app/src/net/`{% assign sep = ", " %}{% endif %}

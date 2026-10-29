@@ -63,9 +63,6 @@
 //! касается (`docs/conventions.md`, «`lib.rs` только объявляет модули»).
 // {%- endif %}
 
-/// Сборка адаптера из рычага платы и памяти приложения.
-pub mod assemble;
-
 // {%- if has_can == "true" %}
 // {%- if has_canopen == "true" %}
 /// Шина CAN: кадры для узла CANopen.
@@ -113,7 +110,6 @@ pub mod settings;
 pub mod eeprom;
 // {%- endif %}
 
-pub use assemble::Assemble;
 // {%- if has_can == "true" %}
 pub use can::CanBus;
 // {%- endif %}

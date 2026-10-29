@@ -1,7 +1,7 @@
 UART платы — поток байтов, по подмодулю на транспорт (`bsp::serial::<транспорт>`).
 {%- if link_kinds contains "uart" %}
-Канал протокола над ним ({% if has_modbus == "true" %}Modbus RTU{% else %}protobuf с кадрами COBS{% endif %}) собирает узел
-протокола (`ports::Assemble`), а тип канала и его буферы задаёт приложение
+Канал протокола над ним ({% if has_modbus == "true" %}Modbus RTU{% else %}protobuf с кадрами COBS{% endif %}) строит
+приложение: тип канала, его буферы и `link` —
 (`crates-cross/app/src/link/uart.rs`).
 {%- endif %}
 

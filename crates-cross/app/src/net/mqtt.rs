@@ -1,7 +1,5 @@
 //! Клиент MQTT (`domain::mqtt`, узел `MQTT`): брокер и префикс тем из
-//! `mqtt.toml`, буферы сокета клиента.
-
-use static_cell::ConstStaticCell;
+//! `mqtt.toml`, размер буферов сокета клиента.
 
 /// Брокер MQTT (`domain::mqtt`) из `mqtt.toml` в корне проекта: файл разбирает
 /// и проверяет `build.rs`, сюда он приходит переменными окружения компиляции.
@@ -33,23 +31,7 @@ const _: () = assert!(
 
 /// Буферы приёма и передачи сокета MQTT, байт: пакеты `minimq` ограничены
 /// его буферами (`domain::mqtt::RX_BUFFER`, `TX_BUFFER`), сокету хватает окна.
-const TCP_BUFFER: usize = 1024;
-
-static TCP_RX: ConstStaticCell<[u8; TCP_BUFFER]> = ConstStaticCell::new([0; TCP_BUFFER]);
-static TCP_TX: ConstStaticCell<[u8; TCP_BUFFER]> = ConstStaticCell::new([0; TCP_BUFFER]);
-
-/// Память соединения узла MQTT с брокером — буферы сокета TCP-клиента;
-/// собирает клиент сам узел.
-///
-/// # Panics
-///
-/// При втором вызове: буферы у клиента одни, а узел MQTT — один.
-pub fn buffers() -> adapters::net::TcpClientBuffers {
-    adapters::net::TcpClientBuffers {
-        rx: TCP_RX.take(),
-        tx: TCP_TX.take(),
-    }
-}
+pub const TCP_BUFFER: usize = 1024;
 
 /// Октет адреса брокера из строки `build.rs`.
 const fn octet(text: &str) -> u8 {

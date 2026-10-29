@@ -5,7 +5,7 @@
 //! Ничего из этого не знает чипа: устройство — любой
 //! [`Driver`](embassy_net::driver::Driver), сокеты — стек `embassy-net`.
 //! Плата собирает стек над своим устройством (Ethernet) и отдаёт его вместе с
-//! фоновой работой (`Net`); сокеты на стеке собирают узлы (`ports::Assemble`).
+//! фоновой работой (`Net`); сокеты на стеке строит граф и отдаёт узлам.
 
 // {%- if has_tcp == "true" or net_services contains "mqtt" %}
 mod tcp;
@@ -17,13 +17,13 @@ mod udp;
 use embassy_net::driver::Driver;
 
 // {%- if has_tcp == "true" or net_services contains "mqtt" %}
-pub use tcp::{TcpError, TcpServer, TcpServerBuffers};
+pub use tcp::{TcpError, TcpServer};
 // {%- if net_services contains "mqtt" %}
-pub use tcp::{TcpClient, TcpClientBuffers};
+pub use tcp::TcpClient;
 // {%- endif %}
 // {%- endif %}
 // {%- if has_udp == "true" %}
-pub use udp::{UdpBuffers, UdpError, UdpLink};
+pub use udp::{UdpError, UdpLink};
 // {%- endif %}
 
 /// Сеть платы: фоновая работа стека для узла `NET` и сам стек, на котором

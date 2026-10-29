@@ -47,8 +47,8 @@ pub type ExternalMutex = Mutex<NoopRawMutex, ExternalFlash>;
 
 {%- if ota == "true" and ota_store == "external" %}
 
-/// Разделы обновления на внешней флеши — рычаг, над которым узел OTA собирает
-/// адаптер (`adapters::ota::Updater`, порт `Assemble`). `DFU` и
+/// Разделы обновления на внешней флеши — рычаг под адаптером обновления
+/// (`adapters::ota::Updater`). `DFU` и
 /// `BOOTLOADER_STATE` нарезает плата по символам `memory.x` (`crate::layout`)
 /// — смещениям от начала микросхемы; оба над одним драйвером: команды разных
 /// разделов не должны перемежаться.
@@ -59,8 +59,8 @@ pub type FirmwareFlash = adapters::ota::Partitions<
 {%- endif %}
 {%- if config == "true" and config_store == "external" %}
 
-/// Раздел настроек на внешней флеши — носитель, над которым узел-потребитель
-/// собирает хранилище (`adapters::settings`, порт `Assemble`).
+/// Раздел настроек на внешней флеши — носитель хранилища настроек
+/// (`adapters::settings`).
 pub type ConfigFlash =
     embassy_embedded_hal::flash::partition::Partition<'static, NoopRawMutex, ExternalFlash>;
 {%- endif %}

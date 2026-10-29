@@ -16,9 +16,9 @@
 //! // Чтение и запись живут в порту домена — без импорта методов не видно.
 //! use ports::SettingsStorage;
 //!
-//! // Хранилище собирает узел над носителем платы (`board.config`) из своего
-//! // входа; `S` — `adapters::settings::Settings<bsp::ConfigFlash>`.
-//! let mut settings = S::assemble(store, ());
+//! // Хранилище — на весь носитель платы (`board.config`); строит его
+//! // compose-site и отдаёт узлу во входе.
+//! let mut settings = Settings::whole(board.config);
 //! let mut scratch = [0u8; 64];
 //! let mut buf = [0u8; 64];
 //! settings.write(KEY_CALIBRATION, &postcard::to_slice(&cal, &mut buf)?).await?;
@@ -168,21 +168,19 @@ impl<F: NorFlash> Settings<F> {
 // {%- endif %}
 
 // {%- if config == "true" %}
-// {%- if config_store == "eeprom" %}
-/// Собирается над носителем платы (внутренняя EEPROM) — на весь его объём.
-// {%- elsif config_store == "external" %}
-/// Собирается над носителем платы (раздел внешней флеши) — на весь его объём.
-// {%- else %}
-/// Собирается над носителем платы (раздел флеша) — на весь его объём.
-// {%- endif %}
-impl<F: NorFlash> ports::Assemble for Settings<F> {
-    type Source = F;
-    type Buffers = ();
-
+impl<F: NorFlash> Settings<F> {
+    // {%- if config_store == "eeprom" %}
+    /// Хранилище на весь носитель платы (внутренняя EEPROM, `board.config`).
+    // {%- elsif config_store == "external" %}
+    /// Хранилище на весь носитель платы (раздел внешней флеши, `board.config`).
+    // {%- else %}
+    /// Хранилище на весь носитель платы (раздел флеша, `board.config`).
+    // {%- endif %}
+    ///
     /// # Panics
     ///
     /// Как [`Settings::new`]: носитель не годится под `sequential-storage`.
-    fn assemble(flash: F, (): ()) -> Self {
+    pub fn whole(flash: F) -> Self {
         let end = u32::try_from(flash.capacity()).expect("носитель настроек больше 4 GiB");
         Self::new(flash, 0..end)
     }
@@ -198,16 +196,6 @@ impl<F: NorFlash> ports::Assemble for Settings<F> {
 /// который всё же в неё пишет, она не годится.
 #[derive(Debug, Default)]
 pub struct Unavailable;
-
-/// Собирать не из чего: раздела настроек у платы нет.
-impl ports::Assemble for Unavailable {
-    type Source = ();
-    type Buffers = ();
-
-    fn assemble((): (), (): ()) -> Self {
-        Self
-    }
-}
 
 impl ports::SettingsStorage for Unavailable {
     type Error = core::convert::Infallible;

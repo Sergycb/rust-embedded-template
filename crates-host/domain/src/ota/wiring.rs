@@ -1,4 +1,4 @@
-//! Вход узла `OTA` (`OtaWiring`) и режим применения образа (`Mode`).
+//! Режим применения образа узла `OTA` (`Mode`).
 
 use defmt_or_log::{FormatOrDebug, warn};
 use ports::{FirmwareUpdate, Rejection, SIGNATURE_BYTES};
@@ -8,43 +8,6 @@ use crate::ota::update;
 
 /// Подпись образа.
 pub(super) type Signature = [u8; SIGNATURE_BYTES];
-
-/// Вход узла OTA: из чего собрать адаптер обновления `F`, чем перезагружать
-/// МК и как применять образ.
-///
-/// Адаптер собирает узел (`F::assemble(source, ())` — порт
-/// [`Assemble`](ports::Assemble)) над разделами платы; compose-site только
-/// раздаёт:
-///
-/// ```ignore
-// {%- if graph == "true" %}
-/// fragments: [::domain::OTA_FRAG<::adapters::ota::Updater<bsp::FirmwareFlash, false>,
-///                                bsp::reset::Reboot> as OTA
-///                 = ::domain::ota::OtaWiring { source: board.firmware,
-///                                              reboot: bsp::reset::Reboot,
-///                                              mode: ::domain::ota::Mode::Plain }];
-// {%- else %}
-/// // crates-cross/app/src/tasks/ota.rs
-/// let inputs = ::domain::ota::OtaWiring { source: board.firmware,
-///                                         reboot: bsp::reset::Reboot,
-///                                         mode: ::domain::ota::Mode::Plain };
-// {%- endif %}
-/// ```
-///
-/// Тип объявлен здесь, а не назван compose-site, по правилу фрагментов
-/// `supervisor`: подсистема говорит, что ей нужно, приложение это раздаёт —
-/// зависимость направлена от приложения к подсистеме и никогда обратно.
-/// Написан руками, а не выведен фрагментом: слот адаптера инициализируется
-/// сборкой, а не чтением поля.
-#[derive(Debug)]
-pub struct OtaWiring<F: ports::Assemble, R> {
-    /// Разделы обновления платы, над которыми собирается адаптер.
-    pub source: F::Source,
-    /// Перезагрузка МК — для команды `Reboot`.
-    pub reboot: R,
-    /// Режим применения: `Mode::Plain` или `Mode::Signed`.
-    pub mode: Mode,
-}
 
 /// Чем режимы отличаются: проверка `Start` до стирания и применение.
 ///

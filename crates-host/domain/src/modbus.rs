@@ -4,8 +4,8 @@
 //! Master — тоже на уровне PDU, поверх транспорта [`ports::ModbusClient`].
 // {%- endif %}
 //!
-//! Канал выбирает типом compose-site, а собирает узел (транспорт из
-//! `adapters::modbus`, порты `ports::FrameLink` и `ports::Assemble`); здесь про
+//! Канал строит compose-site (транспорт из `adapters::modbus`, порт
+//! `ports::FrameLink`) и отдаёт узлу готовым; здесь про
 //! него ничего не известно: кадр, CRC, заголовок MBAP и пропуск битых кадров
 //! — дело канала. Данные slave'а — порт [`ports::Registers`], его реализует
 //! приложение; обслуживает канал узел протокола `domain::server::SERVER_FRAG`

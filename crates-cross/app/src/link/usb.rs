@@ -15,52 +15,30 @@
 {%- endif %}
 pub mod {{ f[4] }} {
 {%- if f[3] == "protobuf" %}
-    use static_cell::ConstStaticCell;
+    /// Буфер канала — сообщение и CRC (`rx_len`).
+    pub const BUFFER: usize = ::adapters::cobs::rx_len(::domain::protobuf::REQUEST_MAX);
+    /// Кадр передачи — худший случай COBS от всего буфера канала (`tx_len`).
+    pub const FRAME: usize = ::adapters::cobs::tx_len(BUFFER);
 
-    // Буфер канала — сообщение и CRC (`rx_len`); кадру передачи — место под
-    // худший случай COBS от всего буфера канала (`tx_len`).
-    const BUFFER: usize = ::adapters::cobs::rx_len(::domain::protobuf::REQUEST_MAX);
-{% endif %}
-    /// Канал узла `{% if f[3] == "modbus" %}MODBUS{% else %}PROTOBUF{% endif %}_{{ f[4] | upcase }}`; собирается над потоком CDC платы (`board.{{ f[4] }}.cdc`).
-{%- if f[3] == "modbus" %}
-    pub type Link = ::adapters::modbus::Rtu<bsp::usb::{{ f[4] }}::Cdc>;
-{%- else %}
-    pub type Link = ::adapters::cobs::Cobs<'static, bsp::usb::{{ f[4] }}::Cdc>;
 {%- endif %}
-{%- if graph != "true" %}
-
-    /// Рычаг платы, над которым собирается канал, — тип по имени для задачи
-    /// (задачи embassy не generic).
+    /// Рычаг платы, над которым строится канал (`board.{{ f[4] }}.cdc`).
     pub type Source = bsp::usb::{{ f[4] }}::Cdc;
-{%- endif %}
-{%- if f[3] == "protobuf" %}
 
-    // `ConstStaticCell`, а не `StaticCell`: значения известны при компиляции и
-    // лежат в `.bss`, а не собираются на стеке при старте.
-    static PROTOBUF_BUFFER: ConstStaticCell<[u8; BUFFER]> = ConstStaticCell::new([0; BUFFER]);
-    static PROTOBUF_FRAME: ConstStaticCell<[u8; ::adapters::cobs::tx_len(BUFFER)]> =
-        ConstStaticCell::new([0; ::adapters::cobs::tx_len(BUFFER)]);
-    // Ответ узел кодирует сюда, а не в буфер канала: там может лежать
-    // недочитанный кадр (`domain::protobuf`).
-    static PROTOBUF_RESPONSE: ConstStaticCell<[u8; ::domain::protobuf::RESPONSE_MAX]> =
-        ConstStaticCell::new([0; ::domain::protobuf::RESPONSE_MAX]);
-{%- endif %}
-
-    /// Память канала — ссылки на статики выше. Статики берутся ровно один раз:
-    /// узел собирается один раз за запуск.
+    /// Канал узла `{% if f[3] == "modbus" %}MODBUS{% else %}PROTOBUF{% endif %}_{{ f[4] | upcase }}`.
 {%- if f[3] == "modbus" %}
-    pub fn buffers() {}
-{%- else %}
-    pub fn buffers() -> ::adapters::cobs::CobsBuffers {
-        ::adapters::cobs::CobsBuffers {
-            buf: PROTOBUF_BUFFER.take(),
-            frame: PROTOBUF_FRAME.take(),
-        }
-    }
+    pub type Link = ::adapters::modbus::Rtu<Source>;
 
-    /// Буфер ответа узла — ссылка на статик выше; берётся ровно один раз.
-    pub fn response() -> &'static mut [u8] {
-        PROTOBUF_RESPONSE.take()
+    /// Канал над рычагом платы: кадр RTU памяти извне не просит.
+    pub fn link(source: Source) -> Link {
+        ::adapters::modbus::Rtu::new(source)
+    }
+{%- else %}
+    pub type Link = ::adapters::cobs::Cobs<'static, Source>;
+
+    /// Канал над рычагом платы в памяти от compose-site: буфер канала `buf`
+    /// ([`BUFFER`]) и кадра передачи `frame` ([`FRAME`]).
+    pub fn link(source: Source, buf: &'static mut [u8], frame: &'static mut [u8]) -> Link {
+        ::adapters::cobs::Cobs::new(source, buf, frame)
     }
 {%- endif %}
 }

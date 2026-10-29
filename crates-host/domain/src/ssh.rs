@@ -35,7 +35,6 @@ mod console;
 mod host_key;
 mod login;
 mod session;
-mod wiring;
 
 use defmt_or_log::{info, warn};
 use embassy_net::tcp::TcpSocket;
@@ -55,7 +54,6 @@ pub use host_key::{HOST_KEY_ID, Stored};
 // {%- endif %}
 pub use login::{Login, USER, ed25519_public_key};
 pub use session::{PORT, SSH_BUFFER, TCP_BUFFER};
-pub use wiring::SshWiring;
 
 // Узел объявлен рядом со своей задачей — как `HTTP`. `<K>` — ключ хоста
 // (`Fixed` или `Stored` над хранилищем платы, которого `domain` не видит);
@@ -64,7 +62,7 @@ pub use wiring::SshWiring;
 // которого может не быть всю жизнь платы.
 supervisor::supervisor_fragment! {
     name: SSH_FRAG<K>;
-    boot: inputs: $crate::ssh::SshWiring<K>;
+    boot: inputs: struct $crate::ssh::SshWiring;
 
     node resources: [
             /// Сетевой стек, на котором узел открывает свой сокет.
@@ -73,8 +71,8 @@ supervisor::supervisor_fragment! {
             INFO: $crate::device::DeviceInfo = inputs.info,
             /// Как пускать пользователя.
             LOGIN: $crate::ssh::Login = inputs.login,
-            /// Ключ хоста — собирает его узел из того, что раздал compose-site.
-            HOST_KEY: local K = <K as $crate::Assemble>::assemble(inputs.host_key, ()),
+            /// Ключ хоста.
+            HOST_KEY: local K = inputs.host_key,
             // {%- if ota == "true" %}
             /// Клиент входа `CMD` узла OTA — для `reboot`.
             OTA: $crate::ota::OtaClient = inputs.ota,

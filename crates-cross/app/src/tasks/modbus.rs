@@ -1,5 +1,5 @@
-//! Узлы `MODBUS_*`: Modbus slave, адрес 1, по модулю на транспорт. Канал узел
-//! собирает сам над рычагом платы (тип и буферы — `crate::link`); карта
+//! Узлы `MODBUS_*`: Modbus slave, адрес 1, по модулю на транспорт. Канал —
+//! `link` модуля транспорта (`crate::link`) над рычагом платы; карта
 //! регистров одна на все узлы (`crate::modbus`), каждый получает её ручку.
 {%- assign xs = links | split: "," %}
 {%- comment %} Номер клиента OTA — порядковый номер транспорта с протоколом в `links`, как в графе (`crate::graph`). {% endcomment %}
@@ -17,7 +17,7 @@ pub mod {{ f[4] }} {
 
     // Импорт, а не полный путь в сигнатурах: длина строки не зависит от
     // имени транспорта, и rustfmt не переносит её ни при каком имени.
-    use {{ lm }}::{Link, Source, buffers};
+    use {{ lm }}::{Link, Source, link};
 
     #[embassy_executor::task]
     async fn task(source: Source, map: crate::modbus::Handle) {
@@ -33,15 +33,13 @@ pub mod {{ f[4] }} {
         let regs = map;
 {%- endif %}
         domain::server::serve::<Link, _>(domain::server::ServerWiring {
-            source,
-            buffers: buffers(),
+            link: link(source),
             handler: domain::modbus::Slave::new(1, regs, crate::build::PKG_VERSION),
         })
         .await;
     }
 
-    /// Спавнит узел над рычагом платы `source` и картой `map`; канал
-    /// собирает узел.
+    /// Спавнит узел над рычагом платы `source` и картой `map`.
     pub fn spawn(spawner: Spawner, source: Source, map: crate::modbus::Handle) {
         let token = task(source, map);
         spawner.spawn(token.expect("задача MODBUS_{{ f[4] | upcase }} свежая: спавнится один раз"));

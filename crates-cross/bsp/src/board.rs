@@ -62,16 +62,16 @@ pub struct Board {
 {%- if ota == "true" %}
     /// Флеш под обновлением{% if ota_store == "external" %} — на внешней флеши{% endif %} ([`crate::FirmwareFlash`]): носители `DFU` и
     /// `BOOTLOADER_STATE` со своими страницами и размер `ACTIVE`. Разделы в нём
-    /// по символам `memory.x` находит узел OTA, когда собирает над ним адаптер
-    /// обновления (`adapters::ota::Updater`, порт `Assemble`); алгоритм
+    /// нарезаны по символам `memory.x`; адаптер обновления над ним
+    /// (`adapters::ota::Updater`) строит compose-site узла OTA; алгоритм
     /// обновления над портами — в `domain::ota`.
     pub firmware: crate::FirmwareFlash,
 {%- endif %}
 {%- if config == "true" %}
     /// Носитель настроек, переживающих перезапуск{% if ota == "true" %} и обновление прошивки{% endif %}
     /// ([`crate::ConfigFlash`]): {% if config_store == "eeprom" %}внутренняя EEPROM{% elsif config_store == "external" %}раздел на внешней флеши (драйвер — `bsp/src/external.rs`){% else %}раздел `CONFIG` во флеше{% endif %}.
-    /// Хранилище над ним — `adapters::settings` — собирает узел-потребитель
-    /// (`ports::Assemble`); формат значений выбирает проект.
+    /// Хранилище над ним — `adapters::settings::Settings::whole` — строит
+    /// compose-site узла-потребителя; формат значений выбирает проект.
     pub config: crate::ConfigFlash,
 {%- endif %}
 {%- assign xs = links | split: "," %}
@@ -80,8 +80,8 @@ pub struct Board {
 {%- if f[0] == "uart" %}
     /// UART `{{ f[2] }}` — поток байтов; пока заглушка `bsp::serial::{{ f[4] }}::Serial`, до
     /// драйвера платы (`docs/modules/bsp-serial.md`). {% if f[3] == "none" %}Протокола у транспорта
-    /// нет: поле ждёт ваш узел.{% else %}Канал протокола {{ f[3] }} над ним собирает узел протокола
-    /// (тип и буферы — `crates-cross/app/src/link/uart.rs`).{% endif %}
+    /// нет: поле ждёт ваш узел.{% else %}Канал протокола {{ f[3] }} над ним — тип и
+    /// `link` в `crates-cross/app/src/link/uart.rs`.{% endif %}
     pub {{ f[4] }}: crate::serial::{{ f[4] }}::Serial,
 {%- elsif f[0] == "can" %}
     /// Шина CAN `{{ f[2] }}`{% if f[3] == "canopen" %} под узлом `CANOPEN_{{ f[4] | upcase }}`{% endif %} — заглушка `bsp::can::{{ f[4] }}::Can`, пока проект не

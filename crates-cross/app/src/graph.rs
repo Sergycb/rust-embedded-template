@@ -53,7 +53,7 @@ supervisor_graph! {
         // Фрагмент OTA — с параметрами и своей привязкой. Параметры
         // (`<Updater, Reboot>`) — типы его слотов: слот — `static`, тип ему
         // нужен, а знает его только эта сторона. Привязка (`= …`) — вход узла
-        // (`domain::ota::OtaWiring`): адаптер обновления — его собирает узел над флешем `board.firmware`, нарезав его на разделы, сброс МК
+        // (`domain::ota::OtaWiring`): адаптер обновления над разделами `board.firmware`, сброс МК
         // `bsp::reset::Reboot` и режим применения (`Mode::{% if signed == "true" %}Signed` с версией этого образа
         // из `crate::version`{% else %}Plain`{% endif %}). Образ узел принимает командами на свой вход
         // `CMD`{% if has_modbus != "true" and has_protobuf != "true" and has_canopen != "true" %}: клиента (`::domain::ota::OtaClient` над `ota_cmd_requester()`) получает ваш
@@ -65,7 +65,7 @@ supervisor_graph! {
         // в тексте, — частичным move: `firmware` уезжает в слот узла, `watchdog`
         // следом забирает сторож, остаток `board` дропается в конце пролога.
         ::domain::OTA_FRAG<::adapters::ota::Updater<bsp::FirmwareFlash, {{signed}}>, bsp::reset::Reboot> as OTA = ::domain::ota::OtaWiring {
-            source: board.firmware,
+            flash: ::adapters::ota::Updater::new(board.firmware),
             reboot: bsp::reset::Reboot,
 {%- if signed == "true" %}
             mode: ::domain::ota::Mode::Signed {
@@ -108,11 +108,30 @@ supervisor_graph! {
 {%- if f[0] == "uart" or f[0] == "usb" %}
 {%- assign lm = lm | append: "::" | append: f[4] %}
 {%- endif %}
+{%- comment %} Канал: `link` модуля транспорта над рычагом платы в памяти, которую объявляет граф (`static T`). {% endcomment %}
+{%- capture link %}{{ lm }}::link({% if f[0] == "uart" %}board.{{ f[4] }}{% elsif f[0] == "usb" %}board.{{ f[4] }}.cdc{% else %}
+                    board.net.stack{% endif %}
+{%- if f[0] == "tcp" %},
+                    static [u8; crate::link::SOCKET_BUFFER],
+                    static [u8; crate::link::SOCKET_BUFFER]
+{%- elsif f[0] == "udp" %},
+                    static {{ lm }}::Meta,
+                    static [u8; crate::link::SOCKET_BUFFER],
+                    static {{ lm }}::Meta,
+                    static [u8; crate::link::SOCKET_BUFFER],
+                    static [u8; {{ lm }}::BUFFER]
+{%- endif %}
+{%- if f[3] == "protobuf" and f[0] != "udp" %},
+                    static [u8; {{ lm }}::BUFFER],
+                    static [u8; {{ lm }}::FRAME]
+{%- endif %}
+{%- if f[0] == "tcp" or f[0] == "udp" or f[3] == "protobuf" %},
+                ){% else %}){% endif %}{% endcapture %}
 {%- if f[3] == "modbus" %}
 
         // Узел `MODBUS_{{ f[4] | upcase }}` — Modbus slave (`domain::server` с обработчиком
-        // `domain::modbus::Slave`): канал (кадрирование{% if f[0] == "tcp" or f[0] == "udp" %}, сокет{% endif %}) собирает узел над рычагом
-        // платы, тип и буферы — `{{ lm }}`; карта регистров
+        // `domain::modbus::Slave`): канал (кадрирование{% if f[0] == "tcp" or f[0] == "udp" %}, сокет{% endif %}) — `{{ lm }}::link` над рычагом
+        // платы в памяти, которую объявляет граф (`static T`); карта регистров
         // одна на все узлы Modbus: ручку `crate::modbus::handle()` (`Copy`) получает каждый, а
         // тип карты проект меняет в одном месте — `crate::modbus::Map`.
         // Адрес slave'а — `unit`{% if f[0] == "tcp" or f[0] == "udp" %}: по сети устройство адресуется по IP, и
@@ -126,8 +145,7 @@ supervisor_graph! {
             ::domain::modbus::Slave<::domain::modbus::OtaRegisters<crate::modbus::Handle>>,
         > as MODBUS_{{ f[4] | upcase }} =
             ::domain::server::ServerWiring {
-                source: {% if f[0] == "uart" %}board.{{ f[4] }}{% elsif f[0] == "usb" %}board.{{ f[4] }}.cdc{% else %}board.net.stack{% endif %},
-                buffers: {{ lm }}::buffers(),
+                link: {{ link }},
                 handler: ::domain::modbus::Slave::new(
                     1,
                     ::domain::modbus::OtaRegisters::new(
@@ -143,8 +161,7 @@ supervisor_graph! {
 {%- else %}
         ::domain::SERVER_FRAG<{{ lm }}::Link, ::domain::modbus::Slave<crate::modbus::Handle>> as MODBUS_{{ f[4] | upcase }} =
             ::domain::server::ServerWiring {
-                source: {% if f[0] == "uart" %}board.{{ f[4] }}{% elsif f[0] == "usb" %}board.{{ f[4] }}.cdc{% else %}board.net.stack{% endif %},
-                buffers: {{ lm }}::buffers(),
+                link: {{ link }},
                 handler: ::domain::modbus::Slave::new(1, crate::modbus::handle(), crate::build::PKG_VERSION),
             },
 {%- endif %}
@@ -161,7 +178,7 @@ supervisor_graph! {
                 bus: board.{{ f[4] }},
                 node_id: 1,
                 dictionary: ::domain::canopen::dictionary(),
-                settings: {% if config == "true" %}board.config{% else %}(){% endif %},
+                settings: {% if config == "true" %}::adapters::settings::Settings::whole(board.config){% else %}::adapters::settings::Unavailable{% endif %},
                 persist: {{config}},
                 // Серийный номер идентичности (0x1018:04) — из заводского номера чипа.
                 serial: ::domain::canopen::serial(board.spec.uid),
@@ -173,17 +190,18 @@ supervisor_graph! {
             },
 {%- elsif f[3] == "protobuf" %}
 
-        // Узел `PROTOBUF_{{ f[4] | upcase }}` — сообщения protobuf от хоста (`domain::protobuf`): канал собирает
-        // узел над рычагом платы, тип, буферы и буфер ответа — `{{ lm }}`;
+        // Узел `PROTOBUF_{{ f[4] | upcase }}` — сообщения protobuf от хоста (`domain::protobuf`): канал —
+        // `{{ lm }}::link` над рычагом платы, память канала и буфер ответа объявляет граф (`static T`);
         // обработчик `domain::protobuf::Service` над схемой `crates-host/proto` —
         // логика приложения, проект правит его в `domain`.{% if ota == "true" %} Команды обновления
         // обработчик шлёт узлу `OTA` на вход `CMD` своим клиентом (номер этого
         // транспорта) и отвечает хосту их исходом.{% endif %}
         ::domain::PROTOBUF_FRAG<{{ lm }}::Link> as PROTOBUF_{{ f[4] | upcase }} =
             ::domain::protobuf::ProtobufWiring {
-                source: {% if f[0] == "uart" %}board.{{ f[4] }}{% elsif f[0] == "usb" %}board.{{ f[4] }}.cdc{% else %}board.net.stack{% endif %},
-                buffers: {{ lm }}::buffers(),
-                response: {{ lm }}::response(),
+                link: {{ link }},
+                // Ответ кодируется сюда, а не в буфер канала: там может лежать
+                // недочитанный кадр, и ответ уходит через `send_from`.
+                response: static [u8; ::domain::protobuf::RESPONSE_MAX],
                 service: ::domain::protobuf::Service::new(
                     crate::device_info(board.spec),
 {%- if ota == "true" %}
@@ -230,9 +248,9 @@ supervisor_graph! {
                 info: crate::device_info(board.spec),
                 login: crate::net::ssh::LOGIN,
 {%- if ssh_host_key == "config" %}
-                host_key: board.config,
+                host_key: ::domain::ssh::Stored(::adapters::settings::Settings::whole(board.config)),
 {%- else %}
-                host_key: &crate::net::ssh::HOST_KEY,
+                host_key: ::domain::ssh::Fixed(&crate::net::ssh::HOST_KEY),
 {%- endif %}
 {%- if ota == "true" %}
                 ota: ::domain::ota::OtaClient::new(
@@ -246,8 +264,8 @@ supervisor_graph! {
 
         // Узел `MQTT` — клиент брокера (`domain::mqtt`): адрес и префикс тем
         // — из `mqtt.toml` (`crate::net::mqtt::BROKER`, `MQTT_PREFIX`),
-        // соединение — TCP-клиент, его узел собирает на стеке `board.net.stack`
-        // в буферах `crate::net::mqtt::buffers()`, буферы `minimq` — слоты
+        // соединение — TCP-клиент на стеке `board.net.stack` в буферах, которые
+        // объявляет граф (`static T`), буферы `minimq` — слоты
         // `= static` фрагмента.{% if ota == "true" %} `cmd/reboot` — командой узлу `OTA` своим
         // клиентом, номер следом за остальными.{% endif %}
         ::domain::MQTT_FRAG<::domain::mqtt::Fixed, ::adapters::net::TcpClient> as MQTT =
@@ -256,7 +274,11 @@ supervisor_graph! {
                 info: crate::device_info(board.spec),
                 prefix: crate::net::mqtt::PREFIX,
                 broker: ::domain::mqtt::Fixed(crate::net::mqtt::BROKER),
-                link: crate::net::mqtt::buffers(),
+                link: ::adapters::net::TcpClient::new(
+                    board.net.stack,
+                    static [u8; crate::net::mqtt::TCP_BUFFER],
+                    static [u8; crate::net::mqtt::TCP_BUFFER],
+                ),
 {%- if ota == "true" %}
                 ota: ::domain::ota::OtaClient::new(
                     ota_cmd_requester(),

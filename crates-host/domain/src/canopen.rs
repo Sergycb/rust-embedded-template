@@ -69,7 +69,7 @@ use crate::canopen::frame::{fix_save_signature, is_heartbeat, to_frame, to_messa
 
 pub use persisted::{NODE_ID_KEY, OBJECTS_KEY, Persisted, STORE_CAPACITY};
 pub use stack::{Stack, TICK};
-pub use wiring::{CanOpenWiring, Dictionary, dictionary, serial};
+pub use wiring::{Dictionary, dictionary, serial};
 // {%- if ota == "true" %}
 pub use ota::{OTA, OTA_INDEX, OtaObject};
 // {%- endif %}
@@ -82,7 +82,7 @@ pub use ota::{OTA, OTA_INDEX, OtaObject};
 // его колбэки слотов не занимают: они в кадре задачи (`task`).
 supervisor::supervisor_fragment! {
     name: CANOPEN_FRAG<C, S>;
-    boot: inputs: $crate::canopen::CanOpenWiring<C, S>;
+    boot: inputs: struct $crate::canopen::CanOpenWiring;
 
     node resources: [
             /// Шина CAN платы.
@@ -91,9 +91,8 @@ supervisor::supervisor_fragment! {
             NODE_ID: u8 = inputs.node_id,
             /// Словарь объектов устройства.
             DICTIONARY: $crate::canopen::Dictionary = inputs.dictionary,
-            /// Хранилище сохранённых объектов и адреса узла — собирает его
-            /// узел над рычагом платы.
-            SETTINGS: local S = <S as $crate::Assemble>::assemble(inputs.settings, ()),
+            /// Хранилище сохранённых объектов и адреса узла.
+            SETTINGS: local S = inputs.settings,
             /// Сохранять ли объекты и адрес: `false` — хранилища у проекта нет.
             PERSIST: bool = inputs.persist,
             /// Серийный номер объекта идентичности (0x1018:04).

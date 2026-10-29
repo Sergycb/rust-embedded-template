@@ -14,7 +14,6 @@ use embassy_time::Duration;
 use embassy_time::{Instant, Timer};
 // {%- endif %}
 use embedded_io_async::{ErrorKind, ErrorType, Read, Write};
-use ports::Assemble;
 // {%- if net_services contains "mqtt" %}
 use ports::dial::Dial;
 
@@ -58,27 +57,6 @@ impl core::fmt::Debug for TcpServer {
         f.debug_struct("TcpServer")
             .field("port", &self.port)
             .finish_non_exhaustive()
-    }
-}
-
-/// Память и порт TCP-сервера от приложения: на каком порту ждать клиента и
-/// буферы сокета.
-#[derive(Debug)]
-pub struct TcpServerBuffers {
-    /// Порт, на котором сервер ждёт клиента.
-    pub port: u16,
-    /// Буфер приёма сокета.
-    pub rx: &'static mut [u8],
-    /// Буфер передачи сокета.
-    pub tx: &'static mut [u8],
-}
-
-impl Assemble for TcpServer {
-    type Source = Stack<'static>;
-    type Buffers = TcpServerBuffers;
-
-    fn assemble(stack: Stack<'static>, buffers: TcpServerBuffers) -> Self {
-        Self::new(stack, buffers.port, buffers.rx, buffers.tx)
     }
 }
 
@@ -239,24 +217,6 @@ impl core::fmt::Debug for TcpClient {
         f.debug_struct("TcpClient")
             .field("failures", &self.failures)
             .finish_non_exhaustive()
-    }
-}
-
-/// Буферы сокета TCP-клиента от приложения.
-#[derive(Debug)]
-pub struct TcpClientBuffers {
-    /// Буфер приёма сокета.
-    pub rx: &'static mut [u8],
-    /// Буфер передачи сокета.
-    pub tx: &'static mut [u8],
-}
-
-impl Assemble for TcpClient {
-    type Source = Stack<'static>;
-    type Buffers = TcpClientBuffers;
-
-    fn assemble(stack: Stack<'static>, buffers: TcpClientBuffers) -> Self {
-        Self::new(stack, buffers.rx, buffers.tx)
     }
 }
 
