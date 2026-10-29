@@ -58,7 +58,6 @@ use defmt_or_log::{FormatOrDebug, info, warn};
 use embassy_time::Instant;
 use embedded_can::Frame;
 use ports::{CanBus, LinkError, SettingsStorage};
-use supervisor::runtime::TaskExit;
 use zencan_node::common::NodeId;
 use zencan_node::common::messages::CanMessage;
 use zencan_node::common::nmt::NmtState;
@@ -85,8 +84,7 @@ supervisor::supervisor_fragment! {
     name: CANOPEN_FRAG<C, S>;
     boot: inputs: $crate::canopen::CanOpenWiring<C, S>;
 
-    node deps: [], restart: Never,
-        resources: [
+    node resources: [
             /// Шина CAN платы.
             BUS: local C = inputs.bus,
             /// Адрес узла на шине, 1..=127.
@@ -349,7 +347,7 @@ where
 ///
 /// Если `node_id` во входе не 1..=127, а сохранённого адреса нет, — ошибка
 /// конфигурации.
-pub async fn task<C, S>(mut ctx: CanOpenCtx<'_, C, S>) -> TaskExit
+pub async fn task<C, S>(mut ctx: CanOpenCtx<'_, C, S>)
 where
     C: CanBus,
     C::Error: FormatOrDebug,

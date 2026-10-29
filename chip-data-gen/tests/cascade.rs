@@ -28,6 +28,39 @@ fn read_script() -> String {
     std::fs::read_to_string(script_path()).expect("не удалось прочитать chip-select.rhai")
 }
 
+/// Ревизия rust-lib записана дважды: умолчанием `rust_lib_rev` в хуке (её
+/// получают проекты) и `rev` рабочих строк корневого `Cargo.toml` (под неё
+/// правят и проверяют шаблон). Разъедутся — проекты соберутся не против той
+/// ревизии, против которой шаблон проверен.
+#[test]
+fn rust_lib_rev_default_matches_the_root_manifest() {
+    let script = read_script();
+    let hook = script
+        .lines()
+        .find(|line| line.starts_with("let rust_lib_rev ="))
+        .and_then(|line| line.rsplit("else { \"").next()?.split('"').next())
+        .expect("в хуке нет умолчания `rust_lib_rev`");
+    let manifest = std::fs::read_to_string(repo_root().join("Cargo.toml"))
+        .expect("не удалось прочитать корневой Cargo.toml");
+    let revs: Vec<&str> = manifest
+        .lines()
+        .filter(|line| !line.starts_with('#') && line.contains("rust-lib.git"))
+        .map(|line| {
+            line.split("rev = \"")
+                .nth(1)
+                .and_then(|rest| rest.split('"').next())
+                .unwrap_or_else(|| panic!("строка rust-lib без `rev`: {line}"))
+        })
+        .collect();
+    assert!(!revs.is_empty(), "в корневом Cargo.toml нет строк rust-lib");
+    for rev in revs {
+        assert_eq!(
+            rev, hook,
+            "`rev` корневого Cargo.toml и умолчание хука разошлись"
+        );
+    }
+}
+
 /// Список чипов со штампом версий — тот файл, который хук импортирует первым.
 fn read_chip_list() -> String {
     std::fs::read_to_string(repo_root().join("chip-data").join("chips.rhai"))

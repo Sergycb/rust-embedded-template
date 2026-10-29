@@ -21,7 +21,6 @@ pub use timing::WATCHDOG;
 
 use defmt_or_log::info;
 use embassy_time::Instant;
-use supervisor::runtime::TaskExit;
 
 use timing::IDLE_PERIOD;
 
@@ -57,8 +56,7 @@ use timing::IDLE_PERIOD;
 supervisor::supervisor_fragment! {
     name: HEARTBEAT_FRAG;
 
-    node deps: [], restart: Never,
-        watchdog: $crate::heartbeat::WATCHDOG observe,
+    node watchdog: $crate::heartbeat::WATCHDOG observe,
         ctx: $crate::heartbeat::HeartbeatCtx,
         task: $crate::heartbeat::task;
 }
@@ -117,15 +115,14 @@ impl HeartbeatCtx<'_> {
 /// раз её future опрашивают» тут нет намеренно, иначе сторож сторожил бы
 /// исполнитель, а не полезную работу.
 ///
-/// Возвращаемый `TaskExit` — то, что граф сообщает о закончившемся прогоне.
-/// У автомата нет выходного состояния, `task` не возвращается никогда, так
-/// что значение недостижимо: узлы шаблона не падают (`restart: Never`), а
-/// на отказ связи пишут в лог и продолжают.
+/// У автомата нет выходного состояния, `task` не возвращается никогда: узлы
+/// шаблона не падают и не перезапускаются (у них нет `restart:`), а на отказ
+/// связи пишут в лог и продолжают.
 ///
 /// Что дальше: добавьте автомату состояния и строки переходов, узлу —
 /// `deps:` (порядок старта), `inbox:` (очередь событий — источник в
 /// `listen`), `resources:` (ручка периферии, переживающая перезапуск задачи)
 /// — всё это описано в `docs/modules/app-graph.md`.
-pub async fn task(mut ctx: HeartbeatCtx<'_>) -> TaskExit {
+pub async fn task(mut ctx: HeartbeatCtx<'_>) {
     match ctx.run().await {}
 }

@@ -34,7 +34,6 @@ pub use wiring::serve;
 
 use defmt_or_log::{FormatOrDebug, info, warn};
 use ports::{FrameLink, LinkError};
-use supervisor::runtime::TaskExit;
 
 // Узел объявлен рядом со своей задачей, по узлу на транспорт.
 //
@@ -46,8 +45,7 @@ supervisor::supervisor_fragment! {
     name: SERVER_FRAG<L, H>;
     boot: inputs: $crate::server::ServerWiring<L, H>;
 
-    node deps: [], restart: Never,
-        resources: [
+    node resources: [
             /// Кадровый канал — с буфером кадра: не меньше самого длинного
             /// запроса и ответа протокола. Собирает его узел — из рычага
             /// платы и памяти приложения.
@@ -146,7 +144,7 @@ where
 /// Без `watchdog:` намеренно: узел законно
 /// ждёт запрос сколько угодно, и отметка по таймеру сторожила бы
 /// исполнитель, а не работу.
-pub async fn task<L, H>(mut ctx: ServerCtx<'_, L, H>) -> TaskExit
+pub async fn task<L, H>(mut ctx: ServerCtx<'_, L, H>)
 where
     L: FrameLink,
     L::Error: FormatOrDebug,

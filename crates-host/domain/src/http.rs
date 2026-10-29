@@ -27,7 +27,6 @@ mod config;
 pub use config::{HTTP_BUFFER, PORT, TCP_RX, TCP_TX};
 
 use defmt_or_log::info;
-use supervisor::runtime::TaskExit;
 
 use api::{Api, router};
 
@@ -44,8 +43,7 @@ supervisor::supervisor_fragment! {
     name: HTTP_FRAG;
     boot: inputs: struct $crate::http::HttpWiring;
 
-    node deps: [], restart: Never,
-        resources: [
+    node resources: [
             /// Сетевой стек, на котором узел открывает свой сокет.
             STACK: local $crate::net::Stack<'static> = inputs.stack,
             /// Сведения для `/api/info`.
@@ -74,9 +72,9 @@ impl HttpCtx<'_> {
             states {
                 /// Сервер слушает порт.
                 Serving,
-                /// Недостижимо: сервер не возвращается. Состояние нужно
-                /// автомату — без выхода задача не вернула бы `TaskExit`.
-                exit Down { result: TaskExit },
+                /// Недостижимо: обслуживание не возвращается. Состояние нужно
+                /// таблице — строка без ожидания не может остаться в своём состоянии.
+                exit Down,
             }
             start => begin -> Serving;
             transitions {
@@ -121,8 +119,8 @@ impl HttpCtx<'_> {
 
 /// Узел `HTTP`: обслуживает соединение за соединением, пока жива прошивка;
 /// не возвращается.
-pub async fn task(mut ctx: HttpCtx<'_>) -> TaskExit {
-    ctx.run().await.result
+pub async fn task(mut ctx: HttpCtx<'_>) {
+    ctx.run().await;
 }
 
 #[cfg(test)]

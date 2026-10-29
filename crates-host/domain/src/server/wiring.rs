@@ -10,7 +10,6 @@ use defmt_or_log::FormatOrDebug;
 use ports::Assemble;
 // {%- if graph != "true" %}
 use ports::FrameLink;
-use supervisor::runtime::TaskExit;
 
 use super::{Handler, ServerCtx, task};
 // {%- endif %}
@@ -55,7 +54,7 @@ pub struct ServerWiring<L: Assemble, H> {
 // {%- if graph != "true" %}
 /// Узел протокола: собирает канал из `wiring` и обслуживает его автоматом
 /// [`task`], не выходя никогда.
-pub async fn serve<L, H>(wiring: ServerWiring<L, H>) -> TaskExit
+pub async fn serve<L, H>(wiring: ServerWiring<L, H>)
 where
     L: Assemble + FrameLink,
     L::Error: FormatOrDebug,
@@ -68,6 +67,6 @@ where
         handler: &mut handler,
         index: 0,
     })
-    .await
+    .await;
 }
 // {%- endif %}

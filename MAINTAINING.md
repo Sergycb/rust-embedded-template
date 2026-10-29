@@ -61,7 +61,7 @@
 `{{page_size}}`, `{{swap_paged}}`, `{{state_erase_size}}`, `{{state_paged}}`, `{{config_erase_size}}`, `{{config_paged}}`, `{{boot_partitioned}}`, `{{config_store}}`,
 `{{shared_flash}}`, `{{dual_core}}`, `{{bank_mode}}`, `{{erase_zero}}`,
 `{{watchdog_peripheral}}`, `{{cpu_freq_boost}}`, `{{dfu_bank}}`, `{{bank_switch}}`, `{{dual_bank_bit}}`,
-`{{rust_lib}}`, `{{newline}}` — плейсхолдеры, подставляемые
+`{{rust_lib}}`, `{{rust_lib_rev}}`, `{{newline}}` — плейсхолдеры, подставляемые
 Liquid-рендером cargo-generate. Из них в `[placeholders]` объявлен только `ci`; вопросы про OTA, настройки,
 граф, транспорт и протокол задаёт сам хук после выбора чипа (см. «Вопросы в хуке» ниже), а все остальные
 выставляет `variable::set` в `[hooks].pre`-скрипте
@@ -76,7 +76,7 @@ Liquid-рендером cargo-generate. Из них в `[placeholders]` объя
 `--define` по-прежнему читается через `variable::is_set`/`variable::get` внутри самого
 hook.
 
-### Значение в корневом workspace (`rust_lib`, `newline`)
+### Значение в корневом workspace (`rust_lib`, `rust_lib_rev`, `newline`)
 
 Адрес rust-lib — одна переменная `rust_lib` (хук; умолчание —
 `https://github.com/Sergycb/rust-lib`, форк — `--define rust_lib=…`, хранится
@@ -87,15 +87,22 @@ Liquid в корневом workspace живёт только в `#`-коммен
 
 ```toml
 # {%- comment %}
-supervisor   = { git = "https://github.com/Sergycb/rust-lib.git" }
+supervisor   = { git = "https://github.com/Sergycb/rust-lib.git", rev = "<ревизия>" }
 # {%- endcomment %}
-#{{newline}}supervisor   = { git = "{{rust_lib}}.git" }
+#{{newline}}supervisor   = { git = "{{rust_lib}}.git", rev = "{{rust_lib_rev}}" }
 ```
 
 В шаблоне первая строка рабочая, вторая — комментарий; в проекте первой нет, а
 `{{newline}}` (хук задаёт его как `"\n"`) отрывает строку от `#`, и она
 становится рабочей. Адрес в `comment` и умолчание в хуке — одно и то же значение,
 меняются вместе.
+
+Ревизия — так же: переменная `rust_lib_rev` (умолчание в хуке, форк —
+`--define rust_lib_rev=…`) и литерал в `comment`-строках корневого
+`Cargo.toml`. Проекты не получают lock-файла, так что без `rev` каждая
+генерация брала бы текущий main rust-lib, и смена его API роняла бы свежие
+проекты без правки шаблона. Новая ревизия — правка шаблона под неё: хук,
+литералы корневого `Cargo.toml`, `Cargo.lock`, затем проверка генерацией.
 
 Удвоенная фигурная скобка в исходнике — тег Liquid, где бы она ни стояла: в
 строке формата Rust (экранированная скобка JSON в `write!`), в комментарии, в

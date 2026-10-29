@@ -37,7 +37,7 @@ let answers = [
 ];
 for name in ["chip", "target", "ci", "ota", "ota_store", "signed", "config", "config_store",
 		"graph", "links", "protocol", "modbus_master", "net_services", "ssh_auth",
-		"ssh_host_key", "external_flash", "rust_lib"] {
+		"ssh_host_key", "external_flash", "rust_lib", "rust_lib_rev"] {
 	if variable::is_set(name) {
 		answers.push(name + " = \"" + variable::get(name) + "\"");
 	}

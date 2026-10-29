@@ -74,18 +74,32 @@ defmt = { workspace = true, optional = true }
 # Задачи, которые спавнит граф из `crates-cross/app`, живут здесь (`heartbeat.rs`,
 # `cpu_load.rs`) — вместе со своими фрагментами и политикой. `supervisor` нужен им
 # ради типов, которыми граф разговаривает с задачей: `Heartbeat` (отметка у
-# сторожа), `TaskExit` (чем кончился прогон). Знания о самом графе это не даёт — контекст задачи эмитит
+# сторожа). Знания о самом графе это не даёт — контекст задачи эмитит
 # фрагмент здесь же (`ctx: $crate::heartbeat::HeartbeatCtx`), типы его полей приходят через
 # `::supervisor::__private`, и тип compose-site здесь не называется, — но
 # {%- else %}
 # Задачи узлов, которые спавнит `crates-cross/app`, живут здесь (`cpu_load.rs`)
 # — вместе со своими фрагментами. `supervisor` нужен им ради контекста задачи,
-# который эмитит фрагмент здесь же, и `TaskExit` (чем кончился прогон); типы
+# который эмитит фрагмент здесь же; типы
 # полей контекста приходят через `::supervisor::__private`, — но
 # {%- endif %}
 # `embassy-executor` приезжает транзитивно, так что старое правило «в domain
 # нет embassy» больше не действует (docs/architecture.md).
-supervisor = { workspace = true }
+# Слова DSL у `supervisor` — под фичами, все выключены по умолчанию; здесь
+# включены те, что пишут фрагменты `domain`: `local` у слотов —
+# `local-resources`, `watchdog:` — `watchdog`, `ready` и `deps:` — `startup`,
+# `request:`/`serves:`/`asks:` — `request`. Фичи графа (`metadata-name`,
+# блок `watchdog:`) просит `crates-cross/Cargo.toml`.
+supervisor = { workspace = true, features = [
+    "local-resources",
+    # {%- if graph == "true" %}
+    "watchdog",
+    # {%- endif %}
+    # {%- if ota == "true" %}
+    "startup",
+    "request",
+    # {%- endif %}
+] }
 # Прямо, а не транзитивно через `supervisor`: `Ticker`/`Timer`/`Duration` стоят
 # в теле задачи, а не только в её сигнатуре.
 embassy-time = { workspace = true }

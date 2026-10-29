@@ -80,7 +80,7 @@ shadow-rs = { workspace = true }
 # Реализация трейта над IWDG живёт в `bsp` (bsp/src/wdg.rs), и там `watchdog`
 # стоит прямой зависимостью; граф получает оттуда готовый тип.
 {%- else %}
-# Типы контекста задач `domain` (`Readiness`, `TaskExit`) — из `supervisor`.
+# Типы контекста задач `domain` (`Readiness`) — из `supervisor`.
 {%- endif %}
 supervisor = { workspace = true }
 #

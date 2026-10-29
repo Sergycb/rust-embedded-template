@@ -13,7 +13,7 @@
    В `crates-cross/Cargo.toml` это `supervisor` и `watchdog` (первый спавнит
    `#[embassy_executor::task]`, второй драйвит аппаратный IWDG), в корневом —
    тот же `supervisor` у `domain`: там лежат узлы{% if graph == "true" %} графа{% endif %} и их задачи, а сигнатуры
-   называют `Heartbeat` и `TaskExit` (обоснование — `docs/architecture.md`).
+   называют контекст узла и `Heartbeat` (обоснование — `docs/architecture.md`).
    Обе строки — самостоятельные объявления одного крейта, и версия у них одна
    по построению: cargo резолвит git-зависимость на одну ревизию для всей
    сборки прошивки.

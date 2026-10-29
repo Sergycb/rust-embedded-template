@@ -70,8 +70,7 @@
 // перезапускаются.
 supervisor_fragment! {
     name: HEARTBEAT_FRAG;
-    node deps: [], restart: Never,
-        watchdog: Duration::from_secs(7),
+    node watchdog: Duration::from_secs(7),
         task: app_worker;
 }
 
