@@ -135,5 +135,5 @@ Host-тесты узла гоняют `serve` против поддельног�
 `cargo xtask test host` (nextest: процесс на тест), обычный `cargo test`
 запускает тесты потоками в одном процессе и может дать нестабильный результат.
 `TcpClient` проверяется на host над парой стеков `embassy-net` (тесты
-`adapters::net::tcp`), сборку узла с ним — сборка `crates-cross`
+`adapters::net::tcp::client`), сборку узла с ним — сборка `crates-cross`
 (`cargo xtask build`).

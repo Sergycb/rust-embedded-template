@@ -2528,10 +2528,18 @@ if on.modbus {
 		file::delete("crates-host/adapters/src/modbus/mbap.rs");
 	}
 }
-// TCP-клиент MQTT (`adapters::net::TcpClient`) живёт рядом с сервером — файл
-// нужен и при mqtt поверх одного UDP.
+// TCP: общее — `net/tcp.rs`, сервер транспортов — `net/tcp/server.rs`, клиент
+// MQTT — `net/tcp/client.rs` (нужен и при mqtt поверх одного UDP).
 if !has.tcp && !services.contains("mqtt") {
 	file::delete("crates-host/adapters/src/net/tcp.rs");
+	file::delete("crates-host/adapters/src/net/tcp");
+} else {
+	if !has.tcp {
+		file::delete("crates-host/adapters/src/net/tcp/server.rs");
+	}
+	if !services.contains("mqtt") {
+		file::delete("crates-host/adapters/src/net/tcp/client.rs");
+	}
 }
 if !has.udp {
 	file::delete("crates-host/adapters/src/net/udp.rs");

@@ -2419,6 +2419,8 @@ fn mqtt_is_offered_with_ethernet() {
     .expect("каскад не должен падать");
     let deleted = |result: &CascadeResult, path: &str| result.deleted.iter().any(|d| d == path);
     assert!(!deleted(&udp, "crates-host/adapters/src/net/tcp.rs"));
+    assert!(!deleted(&udp, "crates-host/adapters/src/net/tcp/client.rs"));
+    assert!(deleted(&udp, "crates-host/adapters/src/net/tcp/server.rs"));
     for path in mqtt_files {
         assert!(!deleted(&udp, path), "{path} удалён: {:?}", udp.deleted);
     }
@@ -3171,8 +3173,18 @@ fn transports_are_kept_only_for_the_selected_interface() {
         (
             "h743zg",
             &[("protocol", "modbus"), ("interface", "tcp")],
-            &["modbus/rtu.rs", "modbus/udp.rs", "net/udp.rs"],
-            &["modbus/tcp.rs", "modbus/mbap.rs", "net/tcp.rs"],
+            &[
+                "modbus/rtu.rs",
+                "modbus/udp.rs",
+                "net/udp.rs",
+                "net/tcp/client.rs",
+            ],
+            &[
+                "modbus/tcp.rs",
+                "modbus/mbap.rs",
+                "net/tcp.rs",
+                "net/tcp/server.rs",
+            ],
         ),
         // COBS нужен потоку (UART, USB, TCP), а UDP кадр даёт сама датаграмма.
         (
