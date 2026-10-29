@@ -162,7 +162,7 @@ nextest убивает, а не ждёт до таймаута CI.
 `ota::download` и `ota::update`), флеш в памяти под `embassy-boot` —
 `adapters::ota::fakes` (модуль `ota` адаптеров){% assign sep = ", " %}{% endif %}
 {%- if has_net == "true" %}{{ sep }}кабель между двумя стеками `embassy-net` —
-`adapters::net::fakes` ({% if has_tcp == "true" %}`net::tcp`{% if has_udp == "true" %} и {% endif %}{% endif %}{% if has_udp == "true" %}`net::udp`{% endif %}){% endif %}. Отдельного файла и крейта
+`adapters::net::fakes` ({% if has_tcp == "true" %}`net::tcp::server`{% if has_udp == "true" %} и {% endif %}{% endif %}{% if has_udp == "true" %}`net::udp`{% endif %}){% endif %}. Отдельного файла и крейта
 для фейков нет: в сборке их не видно, а с кодом, который они подменяют, они
 рядом.
 

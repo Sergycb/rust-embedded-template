@@ -17,10 +17,13 @@ mod udp;
 use embassy_net::driver::Driver;
 
 // {%- if has_tcp == "true" or net_services contains "mqtt" %}
-pub use tcp::{TcpError, TcpServer};
+pub use tcp::TcpError;
+// {%- endif %}
 // {%- if net_services contains "mqtt" %}
 pub use tcp::TcpClient;
 // {%- endif %}
+// {%- if has_tcp == "true" %}
+pub use tcp::TcpServer;
 // {%- endif %}
 // {%- if has_udp == "true" %}
 pub use udp::{UdpError, UdpLink};
