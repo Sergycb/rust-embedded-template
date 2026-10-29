@@ -1,7 +1,8 @@
 //! Тесты узла протокола: ответы на кадры и отказы канала.
 
-use ports::{Handler, LinkError};
+use ports::LinkError;
 
+use super::Handler;
 use super::fakes::{Link, serve};
 
 /// Отвечает кадром наоборот; на пустой кадр не отвечает.

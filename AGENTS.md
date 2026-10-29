@@ -420,14 +420,14 @@ read`: руками пришлось бы сначала найти адрес �
   `Assemble` над тем, что отдала плата: {{ sources | remove_first: ", " }}.
   {%- if has_modbus == "true" %} Узел Modbus slave — `domain::server::SERVER_FRAG<L, H>` ({% if graph == "true" %}граф называет
   узлы{% else %}узлы{% endif %} `MODBUS_<транспорт>`).{% endif %}
-  {%- if has_protobuf == "true" %} Узел protobuf хоста — `domain::protobuf::PROTOBUF_FRAG<L, S>`
+  {%- if has_protobuf == "true" %} Узел protobuf хоста — `domain::protobuf::PROTOBUF_FRAG<L>`
   (`PROTOBUF_<транспорт>`).{% endif %} Тип канала (`Link`), его статики и `buffers()` —
   `crates-cross/app/src/link/<вид>.rs`, по модулю на транспорт: размер буфера и
   порт — решение приложения, и `bsp` их не знает. Буфер кадра держит сам канал
-  (`ports::FrameLink::buffer`), протокол — обработчик ({% if has_modbus == "true" %}`ports::Handler`:
-  `domain::modbus::Slave`{% if has_protobuf == "true" %}; {% endif %}{% endif %}{% if has_protobuf == "true" %}`ports::ProtobufService`: `domain::protobuf::Service`{% endif %}).
-  {%- if has_protobuf == "true" %} {% if ota == "true" %}Узел
-  `PROTOBUF` ждёт кадр наперегонки с исходом команды OTA, поэтому его канал{% else %}Канал узла `PROTOBUF`{% endif %} —
+  (`ports::FrameLink::buffer`), протокол — обработчик ({% if has_modbus == "true" %}`domain::server::Handler`:
+  `domain::modbus::Slave`{% if has_protobuf == "true" %}; {% endif %}{% endif %}{% if has_protobuf == "true" %}`domain::protobuf::Service`{% endif %}) — не порт: его
+  реализует и зовёт сам `domain`.
+  {%- if has_protobuf == "true" %} Канал узла `PROTOBUF` —
   `ports::FrameDuplex`: брошенный `recv` не теряет кадр{% if cobs_used == "true" %} (у `adapters::cobs::Cobs`
   декодер живёт в канале, а не в future){% endif %}, а ответ уходит из своего буфера узла
   (`response()` модуля `link`) через `send_from`.{% endif %} Вход узла — {% if graph == "true" %}выражение в

@@ -75,11 +75,6 @@ pub mod assemble;
 pub mod can;
 
 // {%- endif %}
-// {%- if has_protobuf == "true" %}
-/// Обработчик сообщений хоста: сообщения схемы → типы приложения.
-pub mod protobuf;
-
-// {%- endif %}
 // {%- if link_port == "true" %}
 /// Кадровый канал связи: сообщения целиком, поверх датаграмм или адаптера
 /// кадрирования потока.
@@ -122,17 +117,8 @@ pub use assemble::Assemble;
 // {%- if has_can == "true" %}
 pub use can::CanBus;
 // {%- endif %}
-// {%- if has_protobuf == "true" %}
-pub use protobuf::ProtobufService;
-// {%- if ota == "true" %}
-pub use protobuf::Route;
-// {%- endif %}
-// {%- endif %}
 // {%- if link_port == "true" %}
 pub use link::{FrameDuplex, FrameLink, LinkError};
-// {%- if has_modbus == "true" %}
-pub use link::Handler;
-// {%- endif %}
 // {%- endif %}
 // {%- if net_services contains "mqtt" %}
 pub use dial::Dial;

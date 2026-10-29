@@ -5,7 +5,7 @@
 {%- assign askers = 0 %}
 {%- for l in xs %}
 {%- assign f = l | split: ":" %}
-{%- if f[3] == "canopen" or f[3] == "protobuf" %}{% assign askers = askers | plus: 1 %}{% endif %}
+{%- if f[3] == "canopen" %}{% assign askers = askers | plus: 1 %}{% endif %}
 {%- endfor %}
 
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -38,7 +38,7 @@ pub static CMD: RpcService<
     { domain::ota::CMD_BYTES },
 > = RpcService::new();
 
-/// Вход команд без ожидания исхода.{% if askers > 0 %} Клиенты — {% if has_canopen == "true" %}задачи CANopen{% endif %}{% if has_canopen == "true" and has_protobuf == "true" %} и {% endif %}{% if has_protobuf == "true" %}`PROTOBUF`{% endif %}, по ребру на транспорт с квотой
+/// Вход команд без ожидания исхода.{% if askers > 0 %} Клиенты — задачи CANopen, по ребру на транспорт с квотой
 /// в одну команду: очередь (`Q`) — сумма квот, `E` — число рёбер.{% else %} Клиентов у него нет: очередь и
 /// рёбра нулевые.{% endif %}
 pub static ASK: AskService<
@@ -52,10 +52,10 @@ pub static ASK: AskService<
 
 {%- if askers > 0 %}
 
-/// Рёбра входа `ASK`: ребро `i` — `i`-го транспорта {% if has_canopen == "true" and has_protobuf == "true" %}CANopen или protobuf{% elsif has_canopen == "true" %}CANopen{% else %}protobuf{% endif %} в `links`, слот `i`.
+/// Рёбра входа `ASK`: ребро `i` — `i`-го транспорта CANopen в `links`, слот `i`.
 {%- assign k = 0 %}
 pub static ASK_EDGES: [OtaEdge; {{ askers }}] = [
-{%- for l in xs %}{% assign f = l | split: ":" %}{% if f[3] == "canopen" or f[3] == "protobuf" %}{% if k > 0 %}, {% endif %}ASK.edge({{ k }}, {{ k }}, 1){% assign k = k | plus: 1 %}{% endif %}{% endfor -%}
+{%- for l in xs %}{% assign f = l | split: ":" %}{% if f[3] == "canopen" %}{% if k > 0 %}, {% endif %}ASK.edge({{ k }}, {{ k }}, 1){% assign k = k | plus: 1 %}{% endif %}{% endfor -%}
 ];
 {%- endif %}
 

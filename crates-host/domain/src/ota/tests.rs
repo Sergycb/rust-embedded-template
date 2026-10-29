@@ -8,7 +8,7 @@ use embassy_time::{Duration, MockDriver};
 use ports::{Chunk, OtaCommand, OtaReply, Progress, Reboot, Rejection};
 use supervisor::runtime::TaskExit;
 
-// {%- if has_modbus == "true" or net_services contains "mqtt" %}
+// {%- if has_modbus == "true" or has_protobuf == "true" or net_services contains "mqtt" %}
 use super::OtaClient;
 // {%- endif %}
 
@@ -41,7 +41,7 @@ enum Step {
     Skip(Duration),
 }
 
-// {%- if has_modbus == "true" or net_services contains "mqtt" %}
+// {%- if has_modbus == "true" or has_protobuf == "true" or net_services contains "mqtt" %}
 /// Узел OTA, который тест крутит сам: `poll` по очереди с запросом.
 pub(crate) type Node = Pin<Box<dyn Future<Output = TaskExit>>>;
 
@@ -49,9 +49,15 @@ pub(crate) type Node = Pin<Box<dyn Future<Output = TaskExit>>>;
 // {%- if has_modbus == "true" %}
 /// обработчиков протоколов (`modbus`)
 // {%- endif %}
-// {%- if has_modbus == "true" and net_services contains "mqtt" %}
+// {%- if has_modbus == "true" and has_protobuf == "true" %}
 /// и
 // {%- endif %}
+// {%- if has_protobuf == "true" %}
+/// узла `protobuf`
+// {%- endif %}
+// {%- if net_services contains "mqtt" %}{% if has_modbus == "true" or has_protobuf == "true" %}
+/// и
+// {%- endif %}{% endif %}
 // {%- if net_services contains "mqtt" %}
 /// сессии MQTT (`mqtt::serve`)
 // {%- endif %}
@@ -75,7 +81,7 @@ pub(crate) fn live() -> (OtaClient, Node) {
 }
 // {%- endif %}
 
-// {%- if has_canopen == "true" or has_protobuf == "true" %}
+// {%- if has_canopen == "true" %}
 /// Узел OTA на фейке флеша, чей вход `ASK` — `ask`: сервер ребра из стенда
 /// узла-клиента (`stand.ota_ask` у фрагмента с `asks: [OTA.ASK ..]`).
 pub(crate) fn serving<'a>(

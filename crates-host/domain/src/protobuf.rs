@@ -4,11 +4,9 @@
 // {%- endif %}
 //!
 //! Единственное место, где сообщения схемы превращаются в типы приложения,
-//! — обработчик [`ProtobufService`](ports::ProtobufService) приложения: в задачи
-//! уходят проверенные значения своих типов. Узел только разбирает запрос из
-//! кадра и кодирует ответ. Схему он не знает: сообщения — параметры
-//! (`micropb::MessageDecode`/`MessageEncode`), пример схемы — крейт
-//! `crates-host/proto`.
+//! — обработчик [`Service`](crate::protobuf::Service): в задачи уходят проверенные значения своих
+//! типов. Узел только разбирает запрос из кадра и кодирует ответ; схема —
+//! крейт `crates-host/proto`, проект правит её и [`Service`](crate::protobuf::Service) здесь.
 //!
 //! Канал под ним — [`FrameDuplex`](ports::FrameDuplex), кадр — одно
 //! сообщение целиком.
@@ -21,19 +19,14 @@
 //!
 //! Что узел делает с кадром:
 //!
-//! * кадр не разобрался как запрос — ответ
-//!   [`ProtobufService::malformed`](ports::ProtobufService::malformed);
-//! * {% if ota == "true" %}команда обновления (`ProtobufService::route`) — узлу OTA на вход `ASK`, не
-//!   дожидаясь исхода: канал обслуживается дальше, а исход, когда придёт,
-//!   уходит хосту ответом с тем же `request_id` — ответы на другие запросы
-//!   могут его обогнать;
-//! * {% endif %}остальное — [`ProtobufService::handle`](ports::ProtobufService::handle) и ответ;
-//! * ответ не помещается в буфер — в лог и без ответа, хост получит таймаут;
-//!   что буфер мал для какого-то ответа схемы, узел предупреждает уже при
-//!   старте.
+//! * кадр не разобрался как запрос — ответ [`Service::malformed`](crate::protobuf::Service::malformed);
+//! * остальное — [`Service::handle`](crate::protobuf::Service::handle) и ответ{% if ota == "true" %} (команда обновления — узлу OTA на вход
+//!   `CMD`, и ответ ждёт её исхода: пока OTA стирает раздел, канал не
+//!   обслуживается, как у Modbus){% endif %};
+//! * ответ не помещается в буфер — в лог и без ответа, хост получит таймаут.
 //!
-//! Ответ кодируется в свой буфер узла и уходит `send_from`: в буфере канала
-//! может лежать недочитанный кадр — его приём бросила гонка с исходом.
+//! Ответ кодируется в свой буфер узла (`RESPONSE_MAX` байт) и уходит
+//! `send_from`.
 //!
 //! Сообщения по инициативе устройства (события, телеметрия) — второй вход
 //! узла; появятся по вопросу при генерации проекта.
@@ -46,11 +39,9 @@ mod service;
 mod wiring;
 
 use defmt_or_log::{FormatOrDebug, info, warn};
-use micropb::{MessageDecode, MessageEncode};
-use ports::{FrameDuplex, LinkError, ProtobufService};
-// {%- if ota == "true" %}
-use ports::Route;
-// {%- endif %}
+use micropb::MessageDecode;
+use ports::{FrameDuplex, LinkError};
+use proto::Request;
 use supervisor::runtime::TaskExit;
 
 use crate::protobuf::codec::{decode_reason, encode};
@@ -60,46 +51,32 @@ pub use wiring::ProtobufWiring;
 
 // Узел объявлен рядом со своей задачей, по узлу на транспорт.
 //
-// `<L, S>` — параметры фрагмента: канал платы и обработчик приложения
-// `domain` не видит. `local` на обоих — канал вправе быть `!Send`
-// (периферия, сокет), обработчик — тоже. Буфер ответа — ссылка на статик
-// приложения (`crate::link::<вид>`): его размер — решение приложения.
+// `<L>` — параметр фрагмента: канал платы `domain` не видит. `local` на
+// канале и обработчике — канал вправе быть `!Send` (периферия, сокет).
+// Буфер ответа — ссылка на статик приложения (`crate::link::<вид>`).
 supervisor::supervisor_fragment! {
-    name: PROTOBUF_FRAG<L, S>;
-    boot: inputs: $crate::protobuf::ProtobufWiring<L, S>;
+    name: PROTOBUF_FRAG<L>;
+    boot: inputs: $crate::protobuf::ProtobufWiring<L>;
 
     node deps: [], restart: Never,
         resources: [
             /// Кадровый канал — собирает его узел из рычага платы и памяти
             /// приложения.
             LINK: local L = <L as $crate::Assemble>::assemble(inputs.source, inputs.buffers),
-            /// Обработчик сообщений приложения.
-            SERVICE: local S = inputs.service,
+            /// Обработчик сообщений.
+            SERVICE: local $crate::protobuf::Service = inputs.service,
             /// Буфер ответа.
-            RESPONSE: &'static mut [u8] = inputs.response,
-            // {%- if ota == "true" %}
-            /// Номер клиента узла OTA — транспорта.
-            OTA_CLIENT: $crate::ota::ClientId = inputs.ota_client
-            // {%- endif %}
+            RESPONSE: &'static mut [u8] = inputs.response
         ],
-        // {%- if ota == "true" %}
-        // Команды обновления — на вход `ASK` узла OTA без ожидания исхода:
-        // узел обслуживает канал, пока OTA стирает раздел. Метка — номер
-        // запроса (`request_id`), квота — одна команда в полёте.
-        asks: [OTA.ASK: $crate::ota::OtaRequest -> $crate::ota::OtaReply; 1 tag u32],
-        // {%- endif %}
         ctx: $crate::protobuf::ProtobufCtx,
         task: $crate::protobuf::task;
 }
 
 #[fsm::typestate]
-impl<L, S> ProtobufCtx<'_, L, S>
+impl<L> ProtobufCtx<'_, L>
 where
     L: FrameDuplex,
     L::Error: FormatOrDebug,
-    S: ProtobufService,
-    S::Request: MessageDecode + Default,
-    S::Response: MessageEncode,
 {
     fsm::machine! {
         machine Protobuf mod edges {
@@ -109,58 +86,28 @@ where
             }
             start => begin -> Listening;
             listen {
-                // {%- if ota == "true" %}
-                // Исход — первым: держит квоту, пока не забран, и уходит
-                // хосту сразу, а не за всеми кадрами в очереди.
-                Listening => ota: self.ota_ask.reply(),
-                // {%- endif %}
                 Listening => frame: self.link.recv(),
             }
             transitions {
-                Listening + frame(Ok(len))      => serve    -> self,
-                Listening + frame(Err(ref err)) => failed   -> self,
-                // {%- if ota == "true" %}
-                Listening + ota(reply)          => answered -> self,
-                // {%- endif %}
+                Listening + frame(Ok(len))      => serve  -> self,
+                Listening + frame(Err(ref err)) => failed -> self,
             }
         }
     }
 
     fn begin(&mut self) -> Listening {
-        let capacity = self.response.len();
         info!(
             "domain: узел PROTOBUF запущен, буфер ответа {} байт",
-            capacity
+            self.response.len()
         );
-        if let Ok(max) = S::Response::MAX_SIZE
-            && capacity < max
-        {
-            warn!(
-                "protobuf: буфер ответа {} байт, а самый длинный ответ схемы — {}: такие ответы не уйдут",
-                capacity, max
-            );
-        }
         Listening
     }
 
-    /// Разбирает кадр и отвечает на запрос{% if ota == "true" %}; команду обновления отдаёт
-    /// узлу OTA, не дожидаясь исхода{% endif %}.
+    /// Разбирает кадр и отвечает на запрос.
     async fn serve(&mut self, len: usize) {
-        let mut request = S::Request::default();
+        let mut request = Request::default();
         let response = match request.decode_from_bytes(&self.link.buffer()[..len]) {
-            Ok(()) => {
-                // {%- if ota == "true" %}
-                let request = match self.service.route(request) {
-                    Route::Handle(request) => request,
-                    Route::Reply(response) => return self.respond(&response).await,
-                    Route::Ota {
-                        request_id,
-                        command,
-                    } => return self.ota(request_id, command).await,
-                };
-                // {%- endif %}
-                self.service.handle(request).await
-            }
+            Ok(()) => self.service.handle(request).await,
             Err(err) => {
                 warn!("protobuf: кадр не разобрался: {}", decode_reason(&err));
                 self.service.malformed()
@@ -168,39 +115,6 @@ where
         };
         self.respond(&response).await;
     }
-    // {%- if ota == "true" %}
-
-    /// Команда обновления — на вход `ASK` узла OTA; исход принесёт `reply()`
-    /// (`answered`). Прежняя команда ещё без исхода (квота — одна) — ответ
-    /// `Busy` сразу.
-    async fn ota(&mut self, request_id: u32, command: ports::OtaCommand) {
-        let request = crate::ota::OtaRequest {
-            client: *self.ota_client,
-            command,
-        };
-        if let Err(busy) = self.ota_ask.try_call(request_id, request) {
-            warn!(
-                "protobuf: команда обновления {} отвергнута: прежняя ещё выполняется",
-                request_id
-            );
-            let response = self
-                .service
-                .ota_outcome(busy.tag, Err(ports::Rejection::Busy));
-            self.respond(&response).await;
-        }
-    }
-
-    /// Исход команды обновления — хосту ответом на её запрос.
-    async fn answered(&mut self, reply: supervisor::AskReply<u32, crate::ota::OtaReply>) {
-        let outcome = reply.outcome.unwrap_or_else(|_dropped| {
-            warn!("protobuf: узел OTA не ответил");
-            Err(ports::Rejection::Device)
-        });
-        let response = self.service.ota_outcome(reply.tag, outcome);
-        self.respond(&response).await;
-    }
-    // {%- endif %}
-
     /// Кадр потерян или канал отказал — в лог; узел ждёт следующий кадр.
     #[expect(
         clippy::unused_self,
@@ -211,7 +125,7 @@ where
     }
 
     /// Ответ — в буфер ответа и в канал; не поместился или не ушёл — в лог.
-    async fn respond(&mut self, response: &S::Response) {
+    async fn respond(&mut self, response: &proto::Response) {
         let Some(len) = encode(response, self.response) else {
             warn!(
                 "protobuf: ответ не помещается в буфер на {} байт",
@@ -230,13 +144,10 @@ where
 /// Без `watchdog:` намеренно: узел законно
 /// ждёт запрос сколько угодно, и отметка по таймеру сторожила бы
 /// исполнитель, а не работу.
-pub async fn task<L, S>(mut ctx: ProtobufCtx<'_, L, S>) -> TaskExit
+pub async fn task<L>(mut ctx: ProtobufCtx<'_, L>) -> TaskExit
 where
     L: FrameDuplex,
     L::Error: FormatOrDebug,
-    S: ProtobufService,
-    S::Request: MessageDecode + Default,
-    S::Response: MessageEncode,
 {
     match ctx.run().await {}
 }

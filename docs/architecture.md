@@ -93,7 +93,7 @@ HAL (`bsp::board::init_peripherals` — на умолчаниях `embassy-stm32
 логика разговаривает с портами — ошибки, — объявлено в `ports`: тот стал словарём
 домена, а не только набором трейтов. Своё в `domain` — только контексты узлов{% if graph == "true" %}
 (их эмитит фрагмент), состояния автоматов и входы фрагментов ({% if ota == "true" %}`OtaWiring`, {% endif %}`IdleMeter`{% if ota == "true" %}, `Mode`{% endif %}){% else %} и состояния автоматов{% endif %}{% if protocol != "none" %},
-включая обработчик протокола{% if graph == "true" %} на этом входе{% endif %}: {% if protocol == "protobuf" %}`protobuf::Service` (порт `ProtobufService`){% elsif protocol == "modbus" %}`modbus::EmptyRegisters` (порт `Registers`; карта одна на проект —
+включая обработчик протокола{% if graph == "true" %} на этом входе{% endif %}: {% if protocol == "protobuf" %}`protobuf::Service`{% elsif protocol == "modbus" %}`modbus::EmptyRegisters` (порт `Registers`; карта одна на проект —
 псевдоним `crate::modbus::Map`, ручка `crate::modbus::Handle` над
 `domain::modbus::MapMutex`, — все узлы `MODBUS_*` работают над ней{% if ota == "true" %}, а окно OTA
 `modbus::OtaRegisters` оборачивает ручку снаружи, вне блокировки{% endif %}){% else %}`canopen::dictionary` (словарь объектов){% endif %} — логика приложения,

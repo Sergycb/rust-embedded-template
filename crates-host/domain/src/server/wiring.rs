@@ -9,10 +9,10 @@ use defmt_or_log::FormatOrDebug;
 // {%- endif %}
 use ports::Assemble;
 // {%- if graph != "true" %}
-use ports::{FrameLink, Handler};
+use ports::FrameLink;
 use supervisor::runtime::TaskExit;
 
-use super::{ServerCtx, task};
+use super::{Handler, ServerCtx, task};
 // {%- endif %}
 
 /// Вход узла: из чего собрать канал `L` и чем отвечать.
