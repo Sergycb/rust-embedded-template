@@ -29,7 +29,8 @@
   забравшую `Peripherals`-ручку.
 * `inbox: [FIELD: Type; N]` — ограниченная упорядоченная очередь входящих
   сообщений (это и есть бывший `ector`: fire-and-forget между задачами).
-  Прямо стыкуется с `fsm_async::AsyncTimedRuntime::run` — см. ниже.
+  В автомате узла (`#[fsm::typestate]`) это обычный источник `listen` —
+  см. пример ниже.
 * `publish: [FIELD: Type; N]` / `subscribe: [OTHER.FIELD]` — broadcast
   состояния наружу через `embassy_sync::watch::Watch`.
 * `flags: [FIELD: Type]` — слово статуса подсистемы (`flags::Word`, битовые
