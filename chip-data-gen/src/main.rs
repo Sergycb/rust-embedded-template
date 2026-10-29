@@ -298,7 +298,8 @@ impl PatchedRepoCopy {
             );
         }
         fs::write(&manifest_path, patched)?;
-        strip_liquid_from_manifests(&dir)?;
+        let rev = rust_lib_rev(&dir)?;
+        strip_liquid_from_manifests(&dir, &rev)?;
 
         Ok(Self { dir })
     }
@@ -326,12 +327,12 @@ impl Drop for PatchedRepoCopy {
 /// не TOML. Ложная ветка безопаснее истинной: она оставляет манифест
 /// минимальным, а всё, что нужно генератору (`embassy-stm32` и его
 /// `stm32-metapac`), объявлено безусловно.
-fn strip_liquid_from_manifests(dir: &Path) -> anyhow::Result<()> {
+fn strip_liquid_from_manifests(dir: &Path, rev: &str) -> anyhow::Result<()> {
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
         if entry.file_type()?.is_dir() {
-            strip_liquid_from_manifests(&path)?;
+            strip_liquid_from_manifests(&path, rev)?;
         } else if entry.file_name() == "Cargo.toml" {
             let original = fs::read_to_string(&path)?;
             // `unless` стриппер не понимает: его теги остались бы в TOML, и
@@ -342,7 +343,9 @@ fn strip_liquid_from_manifests(dir: &Path) -> anyhow::Result<()> {
                 "{}: `{{% unless %}}` в манифесте — strip_liquid его не понимает",
                 path.display(),
             );
-            let stripped = strip_liquid(&original).replace("{{rust_lib}}", RUST_LIB);
+            let stripped = strip_liquid(&original)
+                .replace("{{rust_lib}}", RUST_LIB)
+                .replace("{{rust_lib_rev}}", rev);
             if stripped != original {
                 fs::write(&path, stripped)?;
             }
@@ -414,6 +417,20 @@ fn top_level_else(block: &str) -> Option<usize> {
         }
         at = next.0 + next.1.len();
     }
+}
+
+/// Ревизия rust-lib для плейсхолдера `{{rust_lib_rev}}` — та же, что у
+/// рабочей строки `supervisor` в корневом `Cargo.toml` шаблона: без своей
+/// копии числа, которую пришлось бы менять вместе с ним. С плейсхолдером как
+/// есть `cargo metadata` искал бы несуществующую ревизию.
+fn rust_lib_rev(root: &Path) -> anyhow::Result<String> {
+    let manifest = fs::read_to_string(root.join("Cargo.toml"))?;
+    manifest
+        .lines()
+        .filter(|line| line.starts_with("supervisor") && line.contains("rust-lib.git"))
+        .find_map(|line| line.split("rev = \"").nth(1)?.split('"').next())
+        .map(str::to_owned)
+        .context("в корневом Cargo.toml нет строки `supervisor` с `rev` rust-lib")
 }
 
 /// Адрес rust-lib, которым заменяется плейсхолдер `{{rust_lib}}` в

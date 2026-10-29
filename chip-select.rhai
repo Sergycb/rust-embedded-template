@@ -592,6 +592,17 @@ if rust_lib == "" {
     throw "rust_lib: пустой адрес репозитория rust-lib";
 }
 variable::set("rust_lib", rust_lib);
+// Ревизия rust-lib — тоже одна на все места: проекты не получают lock-файл,
+// и без `rev` первый же слом API в main rust-lib ронял бы свежую генерацию
+// (так было с supervisor 0.4: слова DSL ушли под фичи). Новую ревизию шаблон
+// берёт сознательно, вместе с правками под неё; форку — `--define rust_lib_rev=…`.
+// Умолчание равно `rev` в корневом Cargo.toml — сверяет тест
+// `rust_lib_rev_default_matches_the_root_manifest` (chip-data-gen/tests/cascade.rs).
+let rust_lib_rev = if variable::is_set("rust_lib_rev") { variable::get("rust_lib_rev") } else { "8a78ea30d02d32ac3bc1f853c10d740b369f6743" };
+if rust_lib_rev == "" || rust_lib_rev.contains(" ") {
+    throw "rust_lib_rev: пустая или с пробелом ревизия rust-lib";
+}
+variable::set("rust_lib_rev", rust_lib_rev);
 // Перевод строки для корневого Cargo.toml: Liquid в корневом workspace живёт в
 // `#`-комментариях, и рабочую строку с `{{rust_lib}}` там иначе не получить —
 // `#{{newline}}строка` в шаблоне комментарий, а после рендера — `#` и строка

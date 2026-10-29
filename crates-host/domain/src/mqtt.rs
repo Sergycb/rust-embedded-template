@@ -34,7 +34,6 @@ use core::net::SocketAddrV4;
 use defmt_or_log::{FormatOrDebug, info, warn};
 use embedded_io_async::{Read, Write};
 use ports::dial::Dial;
-use supervisor::runtime::TaskExit;
 
 pub use self::broker::{Broker, Endpoint, Fixed};
 pub use self::session::{AUTH_MAX, CONNECT_TIMEOUT, RX_BUFFER, TX_BUFFER};
@@ -54,8 +53,7 @@ supervisor::supervisor_fragment! {
     name: MQTT_FRAG<B, D>;
     boot: inputs: $crate::mqtt::MqttWiring<B, D>;
 
-    node deps: [], restart: Never,
-        resources: [
+    node resources: [
             /// Сетевой стек — ради адреса платы и MAC в `info`.
             STACK: local $crate::net::Stack<'static> = inputs.stack,
             /// Сведения для `info`.
@@ -167,9 +165,9 @@ where
 /// Узел `MQTT`: подключается к брокеру, ведёт сессию, после её конца
 /// подключается снова — пока жива прошивка; не возвращается.
 ///
-/// У автомата нет выходного состояния, поэтому [`TaskExit`] недостижим: узел
-/// не падает (`restart: Never`).
-pub async fn task<B: Broker, D: Dial + Read + Write>(mut ctx: MqttCtx<'_, B, D>) -> TaskExit
+/// У автомата нет выходного состояния: узел не падает (у него нет
+/// `restart:`).
+pub async fn task<B: Broker, D: Dial + Read + Write>(mut ctx: MqttCtx<'_, B, D>)
 where
     <D as Dial>::Error: FormatOrDebug,
 {

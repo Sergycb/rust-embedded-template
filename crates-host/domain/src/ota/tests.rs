@@ -6,7 +6,6 @@ use core::task::{Context, Poll, Waker};
 
 use embassy_time::{Duration, MockDriver};
 use ports::{Chunk, OtaCommand, OtaReply, Progress, Reboot, Rejection};
-use supervisor::runtime::TaskExit;
 
 // {%- if has_modbus == "true" or has_protobuf == "true" or net_services contains "mqtt" %}
 use super::OtaClient;
@@ -43,7 +42,7 @@ enum Step {
 
 // {%- if has_modbus == "true" or has_protobuf == "true" or net_services contains "mqtt" %}
 /// Узел OTA, который тест крутит сам: `poll` по очереди с запросом.
-pub(crate) type Node = Pin<Box<dyn Future<Output = TaskExit>>>;
+pub(crate) type Node = Pin<Box<dyn Future<Output = ()>>>;
 
 /// Узел OTA на фейке флеша и его клиент — для тестов
 // {%- if has_modbus == "true" %}
@@ -86,7 +85,7 @@ pub(crate) fn live() -> (OtaClient, Node) {
 /// узла-клиента (`stand.ota_ask` у фрагмента с `asks: [OTA.ASK ..]`).
 pub(crate) fn serving<'a>(
     ask: supervisor::AskServer<'a, OtaRequest, OtaReply>,
-) -> Pin<Box<dyn Future<Output = TaskExit> + 'a>> {
+) -> Pin<Box<dyn Future<Output = ()> + 'a>> {
     let stand = Box::leak(Box::new(
         supervisor::stand!(OTA_FRAG<FakeFlash, FakeReboot>; QUEUE_ASK = 1),
     ));
@@ -132,7 +131,7 @@ fn asked(step: Step) -> Step {
 
 /// Опрашивает `reply` по очереди с узлом, пока исход не придёт.
 fn await_reply<T>(
-    mut node: Pin<&mut impl Future<Output = TaskExit>>,
+    mut node: Pin<&mut impl Future<Output = ()>>,
     mut reply: Pin<&mut impl Future<Output = T>>,
 ) -> T {
     (0..16)

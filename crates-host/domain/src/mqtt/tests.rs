@@ -12,7 +12,6 @@ use std::vec::Vec;
 use embassy_time::{Duration, MockDriver};
 use embedded_io_async::{ErrorKind, ErrorType, Read, Write};
 use ports::dial::Dial;
-use supervisor::runtime::TaskExit;
 // {%- if ota == "true" %}
 use embassy_time::Instant;
 // {%- endif %}
@@ -541,7 +540,7 @@ fn accepting() -> FakeBroker {
     clippy::too_many_arguments,
     reason = "`ctx()` стенда берёт по аргументу на ресурс узла"
 )]
-fn node(link: FakeLink) -> Pin<Box<dyn Future<Output = TaskExit>>> {
+fn node(link: FakeLink) -> Pin<Box<dyn Future<Output = ()>>> {
     fn leak<T>(value: T) -> &'static mut T {
         Box::leak(Box::new(value))
     }
@@ -584,7 +583,7 @@ fn node(link: FakeLink) -> Pin<Box<dyn Future<Output = TaskExit>>> {
     )))
 }
 
-fn spin_node(node: &mut Pin<Box<dyn Future<Output = TaskExit>>>) {
+fn spin_node(node: &mut Pin<Box<dyn Future<Output = ()>>>) {
     for _ in 0..8 {
         assert!(poll(node.as_mut()).is_pending(), "узел не выходит");
     }

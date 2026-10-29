@@ -19,7 +19,7 @@
 Что даёт узел графа, помимо `deps:` (упорядоченный старт — через явный
 барьер готовности, а не порядок спавна) и `restart:`/`backoff:`
 (политика перезапуска с backoff'ом; узлы шаблона ею не пользуются — они не
-падают, `restart: Never`: на отказ связи пишут в лог и продолжают, а
+падают, `restart:` у них нет: на отказ связи пишут в лог и продолжают, а
 пережидает отказ реализация порта):
 
 * `resources: [SLOT: Type]` — эксклюзивная передача владения (обычно
@@ -43,9 +43,11 @@
   `respond(fut.await)`: вторая форма стоит лишнего `memmove` на флеше.
 * `watchdog: Duration` — участие узла в общем аппаратном watchdog'е,
   см. следующий раздел.
-* `shutdown: Cooperative` — узел не отменяют дропом посреди работы:
-  задача получает `stop: impl Stoppable` и выходит сама, доделав то, что
-  нельзя бросить на середине (запись во flash, транзакция на шине).
+* `shutdown: Interruptible | Cooperative` — узел, который `request_shutdown`
+  вправе остановить; без этого слова узел работает, пока не вернётся его
+  тело. `Cooperative` не отменяют дропом посреди работы: задача получает
+  `stop: impl Stoppable` и выходит сама, доделав то, что нельзя бросить на
+  середине (запись во flash, транзакция на шине).
 * `executor: NAME` — узел спавнится не на общем исполнителе, а на том,
   чей `SpawnerSlot` объявлен в графе (прерывательный приоритет, второе
   ядро).
@@ -53,8 +55,12 @@
   каждому узлу собственный `Clone`, второй — `&'static` на один
   физический ресурс (шина под `Mutex`).
 
-Полный список полей и их тонкости — в doc-комментариях самого
-`supervisor` и `supervisor-macros`; здесь только минимальный каркас.
+Каждое слово — под своей фичей `supervisor`, и все они выключены по
+умолчанию: слово без фичи — ошибка компиляции с её именем. Фичи слов
+фрагментов `domain` включает `crates-host/domain/Cargo.toml`, слова графа —
+`crates-cross/Cargo.toml`. Полный список полей, фич и их тонкости — в
+doc-комментариях самого `supervisor` и `supervisor-macros`; здесь только
+минимальный каркас.
 
 **Узел графа — это фрагмент, и живёт он в `domain` вместе со своей
 задачей.** Граф собственных узлов не объявляет вовсе: каждый приходит из
@@ -86,13 +92,12 @@
 supervisor::supervisor_fragment! {
     name: HEARTBEAT_FRAG;
 
-    node deps: [], restart: Never,
-        watchdog: $crate::heartbeat::WATCHDOG observe,
+    node watchdog: $crate::heartbeat::WATCHDOG observe,
         ctx: $crate::heartbeat::HeartbeatCtx,
         task: $crate::heartbeat::task;
 }
 
-pub async fn run(mut ctx: HeartbeatCtx<'_>) -> TaskExit {
+pub async fn run(mut ctx: HeartbeatCtx<'_>) {
     match ctx.run().await {}
 }
 
@@ -141,8 +146,8 @@ impl HeartbeatCtx<'_> {
   (это решение на весь граф, фрагмент лишь опрашивает его полем `watchdog:`
   своего узла).
 
-Цена всей схемы — зависимость `domain` от `supervisor` (ради `Heartbeat` и
-`TaskExit` в сигнатуре задачи, `Duration` в таймауте); она
+Цена всей схемы — зависимость `domain` от `supervisor` (ради контекста и
+`Heartbeat` в сигнатуре задачи, `Duration` в таймауте); она
 разобрана в `docs/architecture.md`. Сам фрагмент её не требует: он не
 генерирует задач, а `supervisor` по имени обязан быть только у compose-site.
 
@@ -162,8 +167,7 @@ supervisor::supervisor_fragment! {
     name: SENSOR_FRAG<R>;
     // Узлы шаблона не падают: на отказ автомат возвращается в начальное
     // состояние, перезапускать графу нечего.
-    node deps: [], restart: Never,
-        resources: [BUS: R],
+    node resources: [BUS: R],
         ctx: $crate::sensor::SensorCtx,
         task: $crate::sensor::run;
 }
@@ -172,14 +176,14 @@ supervisor::supervisor_fragment! {
 supervisor::supervisor_fragment! {
     name: LINK_FRAG;
     // Стартует только после того, как SENSOR сигнализировал готовность.
-    node deps: [SENSOR], restart: Never,
+    node deps: [SENSOR],
         inbox: [EVENTS: $crate::link::LinkEvent; 8],
         ctx: $crate::link::LinkCtx,
         task: $crate::link::run;
 }
 
-pub async fn run(mut ctx: LinkCtx<'_>) -> TaskExit {
-    match ctx.run().await {} // не возвращается; отменяется дропом при shutdown
+pub async fn run(mut ctx: LinkCtx<'_>) {
+    match ctx.run().await {} // не возвращается
 }
 
 #[fsm::typestate]
@@ -266,7 +270,7 @@ resources: [WS: &'static mut $crate::x::Workspace = static |w| w.gain = inputs.g
    (`supervisor_fragment!` с `ctx: $crate::<узел>::<Узел>Ctx` и
    `task: $crate::<узел>::task`, всё внутри полным путём), автомат
    `#[fsm::typestate]` на `impl <Узел>Ctx` и задача
-   `match ctx.run().await {}`. Узлы шаблона не падают: `restart: Never`,
+   `match ctx.run().await {}`. Узлы шаблона не падают (`restart:` нет),
    отказ связи — строка в лог и возврат в начальное состояние автомата.
 2. **Строка в графе** — в `fragments:` файла `crates-cross/app/src/graph.rs`:
    `::domain::<УЗЕЛ>_FRAG as <УЗЕЛ>`. Имя узлу даёт эта запись, а не фрагмент.

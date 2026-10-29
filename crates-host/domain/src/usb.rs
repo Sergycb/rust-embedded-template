@@ -12,14 +12,12 @@
 //! драйвер под устройством (USB-блок платы или заглушка), — это параметр
 //! фрагмента.
 //!
-//! `UsbDevice::run` не возвращается, поэтому узел запускается один раз
-//! (`restart: Never`).
+//! `UsbDevice::run` не возвращается.
 
 pub use embassy_usb::UsbDevice;
 
 use defmt_or_log::info;
 use embassy_usb::driver::Driver;
-use supervisor::runtime::TaskExit;
 
 // Узел объявлен рядом со своей задачей — как `NET_FRAG`. `<U>` — само
 // устройство `UsbDevice<'static, D>` над драйвером платы, которого `domain`
@@ -38,12 +36,10 @@ supervisor::supervisor_fragment! {
     name: USB_FRAG<U>;
     boot: inputs: struct $crate::usb::UsbWiring;
 
-    node deps: [
-            // {%- if ota == "true" %}
-            OTA ready
-            // {%- endif %}
-        ],
-        restart: Never,
+    node
+        // {%- if ota == "true" %}
+        deps: [OTA ready],
+        // {%- endif %}
         resources: [
             /// USB-устройство с классами протокола над драйвером платы.
             DEVICE: local U = inputs.device
@@ -59,9 +55,9 @@ impl<D: Driver<'static>> UsbCtx<'_, UsbDevice<'static, D>> {
             states {
                 /// Устройство работает.
                 Running,
-                /// Недостижимо: `UsbDevice::run` не возвращается. Состояние
-                /// нужно автомату — без выхода задача не вернула бы `TaskExit`.
-                exit Down { result: TaskExit },
+                /// Недостижимо: обслуживание не возвращается. Состояние нужно
+                /// таблице — строка без ожидания не может остаться в своём состоянии.
+                exit Down,
             }
             start => begin -> Running;
             transitions {
@@ -86,8 +82,8 @@ impl<D: Driver<'static>> UsbCtx<'_, UsbDevice<'static, D>> {
 }
 
 /// Узел `USB`: исполняет устройство, пока жива прошивка; не возвращается.
-pub async fn task<D: Driver<'static>>(mut ctx: UsbCtx<'_, UsbDevice<'static, D>>) -> TaskExit {
-    ctx.run().await.result
+pub async fn task<D: Driver<'static>>(mut ctx: UsbCtx<'_, UsbDevice<'static, D>>) {
+    ctx.run().await;
 }
 
 #[cfg(test)]

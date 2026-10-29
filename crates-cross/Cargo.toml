@@ -256,7 +256,7 @@ assign-resources = { version = "0.5.0" }
 # аппаратным сбросом — `before_reset` в `bsp::wdg`, застой и восстановление
 # узла — наблюдатель `observe:` в `graph.rs`, исход прогона — тело задачи.
 {%- else %}
-# `supervisor` — контексты узлов из `domain`, `TaskExit` и
+# `supervisor` — контексты узлов из `domain` и
 # каналы между узлами; узлы спавнит `tasks::spawn_all` (`app/src/tasks/`).
 #
 # Фичи `defmt` у `supervisor` нет: библиотека сама ничего не печатает. Что
@@ -279,17 +279,29 @@ assign-resources = { version = "0.5.0" }
 #   живёт на исполнителе, спавнящем узлы» лежит в `app`, а не в
 #   библиотеке.{% if shared_flash == "true" %} Это то же допущение, что у `NoopRawMutex` в
 #   `bsp::flash::FlashMutex`; менять их вместе.{% endif %}
-supervisor       = { git = "{{rust_lib}}.git", features = [
+#
+# * Слова DSL — под фичами, все выключены по умолчанию: фичи слов своих
+#   фрагментов включает `domain` (crates-host/domain/Cargo.toml), а здесь —
+#   слова самого графа{% if graph == "true" %} (блок `watchdog:` — `watchdog`){% endif %}. Слово без фичи — ошибка
+#   компиляции с её именем.{% if ota == "true" and graph != "true" %} `startup` — ради `supervisor::Readiness`,
+#   которую без графа строит `app` (src/tasks/ota.rs).{% endif %}
+supervisor       = { git = "{{rust_lib}}.git", rev = "{{rust_lib_rev}}", features = [
 	"metadata-name",
 	"local-resources",
+{%- if graph == "true" %}
+	"watchdog",
+{%- endif %}
+{%- if ota == "true" and graph != "true" %}
+	"startup",
+{%- endif %}
 ] }
 {%- if graph == "true" %}
-watchdog         = { git = "{{rust_lib}}.git" }
+watchdog         = { git = "{{rust_lib}}.git", rev = "{{rust_lib_rev}}" }
 {%- endif %}
 {%- if ota == "true" and graph != "true" %}
 # Входы команд узла OTA (`app`, src/tasks/ota.rs) — `static` модуля задачи.
 # Тот же git, что у `supervisor`, — один крейт в дереве.
-sync-request     = { git = "{{rust_lib}}.git" }
+sync-request     = { git = "{{rust_lib}}.git", rev = "{{rust_lib_rev}}" }
 {%- endif %}
 {%- if external_flash == "true" %}
 

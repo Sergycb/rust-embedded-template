@@ -43,7 +43,6 @@ use embassy_time::with_timeout;
 use sunset_async::SSHServer;
 use sunset_async::sunset::SignKey;
 use sunset_async::sunset::ed25519_dalek::SigningKey;
-use supervisor::runtime::TaskExit;
 
 use crate::ssh::console::Device;
 use crate::ssh::login::Access;
@@ -67,8 +66,7 @@ supervisor::supervisor_fragment! {
     name: SSH_FRAG<K>;
     boot: inputs: $crate::ssh::SshWiring<K>;
 
-    node deps: [], restart: Never,
-        resources: [
+    node resources: [
             /// Сетевой стек, на котором узел открывает свой сокет.
             STACK: local $crate::net::Stack<'static> = inputs.stack,
             /// Сведения для `info`.
@@ -101,9 +99,9 @@ impl<K: HostKey> SshCtx<'_, K> {
             states {
                 /// Ждёт соединения: ключ хоста и кого пускать.
                 Listening { key: SignKey, access: Access },
-                /// Недостижимо: сервер не возвращается. Состояние нужно
-                /// автомату — без выхода задача не вернула бы `TaskExit`.
-                exit Down { result: TaskExit },
+                /// Недостижимо: обслуживание не возвращается. Состояние нужно
+                /// таблице — строка без ожидания не может остаться в своём состоянии.
+                exit Down,
             }
             start => begin -> Listening;
             transitions {
@@ -180,8 +178,8 @@ impl<K: HostKey> SshCtx<'_, K> {
 
 /// Узел `SSH`: обслуживает соединение за соединением, пока жива прошивка;
 /// не возвращается.
-pub async fn task<K: HostKey>(mut ctx: SshCtx<'_, K>) -> TaskExit {
-    ctx.run().await.result
+pub async fn task<K: HostKey>(mut ctx: SshCtx<'_, K>) {
+    ctx.run().await;
 }
 
 #[cfg(test)]

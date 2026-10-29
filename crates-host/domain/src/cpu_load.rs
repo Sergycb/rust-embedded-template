@@ -47,7 +47,6 @@ pub use sampling::log_load;
 
 // {%- if graph == "true" %}
 use embassy_time::Instant;
-use supervisor::runtime::TaskExit;
 
 use load::CpuLoad;
 use sampling::{SAMPLE_INTERVAL, snapshot};
@@ -95,8 +94,7 @@ supervisor::supervisor_fragment! {
     name: CPU_LOAD_FRAG;
     boot: inputs: struct $crate::cpu_load::IdleMeter;
 
-    node deps: [], restart: Never,
-        resources: [
+    node resources: [
             /// Счётчик тиков сна, который ведёт цикл исполнителя.
             SLEEP_TICKS: &'static $crate::cpu_load::SleepTicks = inputs.sleep_ticks
         ],
@@ -166,9 +164,9 @@ impl CpuLoadCtx<'_> {
 /// значение, так что подписчик получит и пропущенные интервалы, лишь показав
 /// последний из них: счётчик знает «сколько сейчас», а не «сколько было когда».
 ///
-/// У автомата нет выходного состояния, поэтому [`TaskExit`] недостижим: узел
-/// не падает (`restart: Never`).
-pub async fn task(mut ctx: CpuLoadCtx<'_>) -> TaskExit {
+/// У автомата нет выходного состояния: узел не падает (у него нет
+/// `restart:`), и `task` не возвращается.
+pub async fn task(mut ctx: CpuLoadCtx<'_>) {
     match ctx.run().await {}
 }
 // {%- endif %}

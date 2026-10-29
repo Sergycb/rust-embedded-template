@@ -42,7 +42,6 @@ use defmt_or_log::{FormatOrDebug, info, warn};
 use micropb::MessageDecode;
 use ports::{FrameDuplex, LinkError};
 use proto::Request;
-use supervisor::runtime::TaskExit;
 
 use crate::protobuf::codec::{decode_reason, encode};
 
@@ -58,8 +57,7 @@ supervisor::supervisor_fragment! {
     name: PROTOBUF_FRAG<L>;
     boot: inputs: $crate::protobuf::ProtobufWiring<L>;
 
-    node deps: [], restart: Never,
-        resources: [
+    node resources: [
             /// Кадровый канал — собирает его узел из рычага платы и памяти
             /// приложения.
             LINK: local L = <L as $crate::Assemble>::assemble(inputs.source, inputs.buffers),
@@ -144,7 +142,7 @@ where
 /// Без `watchdog:` намеренно: узел законно
 /// ждёт запрос сколько угодно, и отметка по таймеру сторожила бы
 /// исполнитель, а не работу.
-pub async fn task<L>(mut ctx: ProtobufCtx<'_, L>) -> TaskExit
+pub async fn task<L>(mut ctx: ProtobufCtx<'_, L>)
 where
     L: FrameDuplex,
     L::Error: FormatOrDebug,

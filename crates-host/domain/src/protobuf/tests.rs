@@ -8,7 +8,6 @@ use std::collections::VecDeque;
 use micropb::{MessageDecode, MessageEncode, PbEncoder};
 use ports::{FrameDuplex, FrameLink, LinkError};
 use proto::{Get, Request, Request_, Response, Response_, heapless};
-use supervisor::runtime::TaskExit;
 
 use super::service::tests::INFO;
 use super::{Service, task};
@@ -84,7 +83,7 @@ fn request(id: u32, command: Request_::Command) -> Vec<u8> {
     })
 }
 
-fn poll(node: Pin<&mut (impl Future<Output = TaskExit> + ?Sized)>) {
+fn poll(node: Pin<&mut (impl Future<Output = ()> + ?Sized)>) {
     let mut cx = Context::from_waker(Waker::noop());
     assert!(node.poll(&mut cx).is_pending(), "узел не выходит");
 }

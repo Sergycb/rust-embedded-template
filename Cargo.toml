@@ -108,21 +108,21 @@ tokio        = { version = "1.54.1", default-features = false, features = ["rt",
 # Задачи графа живут в `domain` (`domain::heartbeat`), а граф, который их спавнит, —
 # в `crates-cross/app`. Контекст, который фрагмент эмитит в `domain` (`ctx:`),
 # снимает с задачи знание о графе, но не о типах, которыми граф с ней
-# разговаривает: `Heartbeat`, `TaskExit` и хэндлы каналов приходят отсюда.
+# разговаривает: `Heartbeat` и хэндлы каналов приходят отсюда.
 # {%- else %}
 # Задачи узлов живут в `domain`, а спавнит их `crates-cross/app`: контекст
-# задачи, `TaskExit` и хэндлы каналов приходят отсюда.
+# задачи и хэндлы каналов приходят отсюда.
 # {%- endif %}
-# Фичи не объявлены намеренно —
-# `defmt`/`metadata-name` просит `crates-cross/Cargo.toml`, и в прошивке они
-# складываются с этой строкой; хостовой сборке domain они не нужны.
+# Фичи здесь не объявлены: слова DSL фрагментов включает
+# `crates-host/domain/Cargo.toml`, `defmt`/`metadata-name` и слова графа —
+# `crates-cross/Cargo.toml`; в прошивке они складываются.
 # {%- comment %}
 # В репозитории шаблона — настоящий адрес, иначе workspace не собрать; в
 # проекте строки ниже нет, рабочую даёт `#{{newline}}…` с `rust_lib` из хука
 # (MAINTAINING.md, «Значение в корневом workspace»).
-supervisor   = { git = "https://github.com/Sergycb/rust-lib.git" }
+supervisor   = { git = "https://github.com/Sergycb/rust-lib.git", rev = "8a78ea30d02d32ac3bc1f853c10d740b369f6743" }
 # {%- endcomment %}
-#{{newline}}supervisor   = { git = "{{rust_lib}}.git" }
+#{{newline}}supervisor   = { git = "{{rust_lib}}.git", rev = "{{rust_lib_rev}}" }
 # Время в проекте одно — `embassy_time::Duration`: тем же типом
 # {%- if graph == "true" %}
 # граф задаёт свои таймауты,
@@ -137,9 +137,9 @@ embassy-time = { version = "0.5.1" }
 # таблица переходов проверяется компилятором. Тот же репозиторий, что у
 # `supervisor`.
 # {%- comment %}
-fsm          = { git = "https://github.com/Sergycb/rust-lib.git" }
+fsm          = { git = "https://github.com/Sergycb/rust-lib.git", rev = "8a78ea30d02d32ac3bc1f853c10d740b369f6743" }
 # {%- endcomment %}
-#{{newline}}fsm          = { git = "{{rust_lib}}.git" }
+#{{newline}}fsm          = { git = "{{rust_lib}}.git", rev = "{{rust_lib_rev}}" }
 # Тип счётчика тиков сна в `domain::cpu_load::SleepTicks`. Не
 # `core::sync::atomic::AtomicU64`: на Cortex-M0/M0+ его нет вовсе. Про то, чем
 # там эмулируется CAS, — `docs/conventions.md` и

@@ -7,15 +7,13 @@
 //! Узел не знает, что за устройство под стеком (Ethernet платы или
 //! заглушка) — это параметр фрагмента.
 //!
-//! `Runner::run` не возвращается, поэтому узел запускается один раз
-//! (`restart: Never`): перезапускать нечего, а упасть он может только
-//! паникой.
+//! `Runner::run` не возвращается, поэтому узел запускается один раз (без
+//! `restart:`): перезапускать нечего, а упасть он может только паникой.
 
 pub use embassy_net::{Runner, Stack};
 
 use defmt_or_log::info;
 use embassy_net::driver::Driver;
-use supervisor::runtime::TaskExit;
 
 // Узел объявлен рядом со своей задачей — как остальные. `<R>` — `Runner`
 // стека над устройством платы, которого `domain` не видит
@@ -31,8 +29,7 @@ supervisor::supervisor_fragment! {
     name: NET_FRAG<R>;
     boot: inputs: struct $crate::net::NetWiring;
 
-    node deps: [], restart: Never,
-        resources: [
+    node resources: [
             /// Фоновая работа стека `embassy-net` над устройством платы.
             RUNNER: local R = inputs.runner
         ],
@@ -47,9 +44,9 @@ impl<D: Driver> NetCtx<'_, Runner<'static, D>> {
             states {
                 /// Стек работает.
                 Running,
-                /// Недостижимо: `Runner::run` не возвращается. Состояние
-                /// нужно автомату — без выхода задача не вернула бы `TaskExit`.
-                exit Down { result: TaskExit },
+                /// Недостижимо: обслуживание не возвращается. Состояние нужно
+                /// таблице — строка без ожидания не может остаться в своём состоянии.
+                exit Down,
             }
             start => begin -> Running;
             transitions {
@@ -74,8 +71,8 @@ impl<D: Driver> NetCtx<'_, Runner<'static, D>> {
 }
 
 /// Узел `NET`: исполняет стек, пока жива прошивка; не возвращается.
-pub async fn task<D: Driver>(mut ctx: NetCtx<'_, Runner<'static, D>>) -> TaskExit {
-    ctx.run().await.result
+pub async fn task<D: Driver>(mut ctx: NetCtx<'_, Runner<'static, D>>) {
+    ctx.run().await;
 }
 
 #[cfg(test)]

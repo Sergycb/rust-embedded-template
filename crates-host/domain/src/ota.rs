@@ -83,7 +83,6 @@ use core::task::Poll;
 use defmt_or_log::{FormatOrDebug, info, warn};
 use embassy_time::{Instant, Timer};
 use ports::{Chunk, FirmwareUpdate, Progress, Reboot, Rejection};
-use supervisor::runtime::TaskExit;
 
 use crate::ota::client::Answer;
 use crate::ota::download::Transfer;
@@ -152,8 +151,7 @@ supervisor::supervisor_fragment! {
     name: OTA_FRAG<F, R>;
     boot: inputs: $crate::ota::OtaWiring<F, R>;
 
-    node deps: [], restart: Never,
-        resources: [
+    node resources: [
             /// Адаптер обновления поверх разделов флеша (`FirmwareUpdate`) —
             /// собирает его узел над разделами платы.
             FLASH: local F = <F as $crate::Assemble>::assemble(inputs.source, ()),
@@ -463,7 +461,7 @@ where
 /// реального прогресса, а команды может не быть всю жизнь платы. Аппаратный
 /// сторож кормит тикер графа, а не какой-то узел.
 // {%- endif %}
-pub async fn task<F, R>(mut ctx: OtaCtx<'_, F, R>) -> TaskExit
+pub async fn task<F, R>(mut ctx: OtaCtx<'_, F, R>)
 where
     F: FirmwareUpdate,
     F::Error: FormatOrDebug,

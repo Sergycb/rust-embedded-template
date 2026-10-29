@@ -246,8 +246,8 @@ dependencies = [
 
 [[package]]
 name = "cloned-cell"
-version = "0.3.0"
-source = "git+https://github.com/Sergycb/rust-lib.git#d484b88cf55d12194b24d8bf5fef5101794ce5dc"
+version = "0.4.0"
+source = "git+https://github.com/Sergycb/rust-lib.git?rev=8a78ea30d02d32ac3bc1f853c10d740b369f6743#8a78ea30d02d32ac3bc1f853c10d740b369f6743"
 dependencies = [
  "static_cell",
 ]
@@ -911,26 +911,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "enumflags2"
-version = "0.7.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1027f7680c853e056ebcec683615fb6fbbc07dbaa13b4d5d9442b146ded4ecef"
-dependencies = [
- "enumflags2_derive",
-]
-
-[[package]]
-name = "enumflags2_derive"
-version = "0.7.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67c78a4d8fdf9953a5c9d458f9efe940fd97a0cab0941c075a813ac594733827"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
 name = "equivalent"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -965,26 +945,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c66915cc5391097de7a2b0b972e8505aa33c0df401fd3a6811dbdb32881ba48"
 
 [[package]]
-name = "flags"
-version = "0.3.0"
-source = "git+https://github.com/Sergycb/rust-lib.git#d484b88cf55d12194b24d8bf5fef5101794ce5dc"
-dependencies = [
- "enumflags2",
- "flags-macros",
- "portable-atomic",
-]
-
-[[package]]
-name = "flags-macros"
-version = "0.3.0"
-source = "git+https://github.com/Sergycb/rust-lib.git#d484b88cf55d12194b24d8bf5fef5101794ce5dc"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 3.0.9",
-]
-
-[[package]]
 name = "flash-page"
 version = "0.1.0"
 dependencies = [
@@ -1005,8 +965,8 @@ checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 
 [[package]]
 name = "fsm"
-version = "0.3.0"
-source = "git+https://github.com/Sergycb/rust-lib.git#d484b88cf55d12194b24d8bf5fef5101794ce5dc"
+version = "0.4.0"
+source = "git+https://github.com/Sergycb/rust-lib.git?rev=8a78ea30d02d32ac3bc1f853c10d740b369f6743#8a78ea30d02d32ac3bc1f853c10d740b369f6743"
 dependencies = [
  "embassy-futures",
  "embassy-time",
@@ -1015,8 +975,8 @@ dependencies = [
 
 [[package]]
 name = "fsm-macros"
-version = "0.3.0"
-source = "git+https://github.com/Sergycb/rust-lib.git#d484b88cf55d12194b24d8bf5fef5101794ce5dc"
+version = "0.4.0"
+source = "git+https://github.com/Sergycb/rust-lib.git?rev=8a78ea30d02d32ac3bc1f853c10d740b369f6743#8a78ea30d02d32ac3bc1f853c10d740b369f6743"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2227,15 +2187,15 @@ dependencies = [
 
 [[package]]
 name = "supervisor"
-version = "0.3.0"
-source = "git+https://github.com/Sergycb/rust-lib.git#d484b88cf55d12194b24d8bf5fef5101794ce5dc"
+version = "0.4.0"
+source = "git+https://github.com/Sergycb/rust-lib.git?rev=8a78ea30d02d32ac3bc1f853c10d740b369f6743#8a78ea30d02d32ac3bc1f853c10d740b369f6743"
 dependencies = [
  "cloned-cell",
  "embassy-executor",
  "embassy-futures",
  "embassy-sync",
  "embassy-time",
- "flags",
+ "pin-project-lite",
  "portable-atomic",
  "supervisor-macros",
  "sync-request",
@@ -2245,8 +2205,19 @@ dependencies = [
 
 [[package]]
 name = "supervisor-macros"
-version = "0.3.0"
-source = "git+https://github.com/Sergycb/rust-lib.git#d484b88cf55d12194b24d8bf5fef5101794ce5dc"
+version = "0.4.0"
+source = "git+https://github.com/Sergycb/rust-lib.git?rev=8a78ea30d02d32ac3bc1f853c10d740b369f6743#8a78ea30d02d32ac3bc1f853c10d740b369f6743"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "supervisor-syntax",
+ "syn 3.0.9",
+]
+
+[[package]]
+name = "supervisor-syntax"
+version = "0.4.0"
+source = "git+https://github.com/Sergycb/rust-lib.git?rev=8a78ea30d02d32ac3bc1f853c10d740b369f6743#8a78ea30d02d32ac3bc1f853c10d740b369f6743"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2277,16 +2248,16 @@ dependencies = [
 
 [[package]]
 name = "sync-request"
-version = "0.3.0"
-source = "git+https://github.com/Sergycb/rust-lib.git#d484b88cf55d12194b24d8bf5fef5101794ce5dc"
+version = "0.4.0"
+source = "git+https://github.com/Sergycb/rust-lib.git?rev=8a78ea30d02d32ac3bc1f853c10d740b369f6743#8a78ea30d02d32ac3bc1f853c10d740b369f6743"
 dependencies = [
  "embassy-sync",
 ]
 
 [[package]]
 name = "sync-unsized"
-version = "0.3.0"
-source = "git+https://github.com/Sergycb/rust-lib.git#d484b88cf55d12194b24d8bf5fef5101794ce5dc"
+version = "0.4.0"
+source = "git+https://github.com/Sergycb/rust-lib.git?rev=8a78ea30d02d32ac3bc1f853c10d740b369f6743#8a78ea30d02d32ac3bc1f853c10d740b369f6743"
 dependencies = [
  "embassy-sync",
 ]
@@ -2582,8 +2553,8 @@ dependencies = [
 
 [[package]]
 name = "watchdog"
-version = "0.3.0"
-source = "git+https://github.com/Sergycb/rust-lib.git#d484b88cf55d12194b24d8bf5fef5101794ce5dc"
+version = "0.4.0"
+source = "git+https://github.com/Sergycb/rust-lib.git?rev=8a78ea30d02d32ac3bc1f853c10d740b369f6743#8a78ea30d02d32ac3bc1f853c10d740b369f6743"
 dependencies = [
  "embassy-time",
 ]
