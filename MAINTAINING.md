@@ -78,9 +78,11 @@ hook.
 
 ### Значение в корневом workspace (`rust_lib`, `rust_lib_rev`, `newline`)
 
-Адрес rust-lib — одна переменная `rust_lib` (хук; умолчание —
-`https://github.com/Sergycb/rust-lib`, форк — `--define rust_lib=…`, хранится
-без `.git`). В `crates-cross/Cargo.toml` и документации она подставляется
+Адрес rust-lib — одна переменная `rust_lib` (хук; умолчания нет: шаблон не
+называет сервер, адрес вводят при генерации или `--define rust_lib=…`, хранится
+без `.git`). Так же `hw_drivers` (драйвер `w25q`) — только с внешней флешью, без
+неё пустая строка. `template-check` и тесты каскада подставляют свои адреса сами
+(`REPO_DEFAULTS` в `template-check.rs`). В `crates-cross/Cargo.toml` и документации она подставляется
 обычным `{{rust_lib}}`. Корневой `Cargo.toml` и `deny.toml` так не могут: в
 репозитории шаблона они рабочие (`cargo xtask lint`, `cargo deny check`), а
 Liquid в корневом workspace живёт только в `#`-комментариях. Поэтому там пара:
@@ -94,8 +96,8 @@ supervisor   = { git = "https://github.com/Sergycb/rust-lib.git", rev = "<рев
 
 В шаблоне первая строка рабочая, вторая — комментарий; в проекте первой нет, а
 `{{newline}}` (хук задаёт его как `"\n"`) отрывает строку от `#`, и она
-становится рабочей. Адрес в `comment` и умолчание в хуке — одно и то же значение,
-меняются вместе.
+становится рабочей. Адрес в `comment` и `rust_lib` в `REPO_DEFAULTS`
+`template-check` — одно и то же значение, меняются вместе.
 
 Ревизия — так же: переменная `rust_lib_rev` (умолчание в хуке, форк —
 `--define rust_lib_rev=…`) и литерал в `comment`-строках корневого

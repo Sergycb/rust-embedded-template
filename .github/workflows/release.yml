@@ -36,7 +36,7 @@ jobs:
         with:
           workspaces: crates-cross
       - run: rustup target add {{target}}
-      # Версия — та же, что в .gitlab-ci.yml: от линкера зависит раскладка
+      # Версия — та же, что в `cargo xtask setup`: от линкера зависит раскладка
       # образа, и без пина релиз не повторить (docs/conventions.md,
       # «Воспроизводимый релиз»).
       - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2 (2.88.0)

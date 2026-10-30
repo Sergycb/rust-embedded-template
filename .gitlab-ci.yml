@@ -10,8 +10,8 @@ stages:
 
 variables:
   CARGO_TERM_COLOR: always
-  # Одна версия линкера у cross:build и release:build — та же, что в обоих
-  # workflow GitHub и в `cargo xtask setup` (docs/conventions.md, «Тулчейн запинен»).
+  # Одна версия линкера у cross:build и release:build — та же, что в
+  # `cargo xtask setup` (docs/conventions.md, «Тулчейн запинен»).
   FLIP_LINK_VERSION: "0.1.12"
 
 # Кеша два, а не один, и это не избыточность: GitLab не перезаписывает уже
@@ -203,10 +203,9 @@ cross:build:
     - cargo install cargo-deny --locked
     - cargo deny --manifest-path crates-cross/Cargo.toml check
     - cargo xtask build
-    # Размер образа отдельной метрикой. Кеша и базы, в отличие от GitHub, здесь
-    # не нужно: GitLab сам сравнивает metrics-отчёт merge request'а с отчётом
-    # целевой ветки и показывает разницу в виджете MR. Порога нет — как и у
-    # покрытия: цифра нужна, чтобы увидеть рост тогда, когда автор ещё помнит,
+    # Размер образа отдельной метрикой. Кеша и базы здесь не нужно: GitLab
+    # сам сравнивает metrics-отчёт merge request'а с отчётом целевой ветки и
+    # показывает разницу в виджете MR. Порога нет — как и у покрытия: цифра нужна, чтобы увидеть рост тогда, когда автор ещё помнит,
     # зачем он его добавил, а не чтобы ронять пайплайн.
     - echo "image_size_bytes $(cat .image-size)" > metrics.txt
   variables:
@@ -377,8 +376,7 @@ release:publish:
 
 # renovate.json — это КОНФИГУРАЦИЯ репозитория, а не запускалка: без джоба
 # ниже (или без Mend Renovate App, подключённого к проекту) он лежит мёртвым
-# грузом и никаких MR не создаёт. В отличие от GitHub, где dependabot.yml
-# работает нативно, силами самой платформы.
+# грузом и никаких MR не создаёт.
 #
 # Чтобы это заработало, нужны две вещи со стороны проекта:
 #   1. CI/CD variable RENOVATE_TOKEN — Project/Group Access Token с ролью

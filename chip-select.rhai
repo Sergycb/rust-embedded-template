@@ -386,6 +386,34 @@ fn ask(label, values, texts, default_value) {
     default_value
 }
 
+/// Адрес git-репозитория зависимости: `--define <name>=…` или ввод строки.
+/// Умолчания нет — без терминала и без `--define` генерация падает с подсказкой.
+/// Хранится без `.git` и завершающего `/`: Cargo.toml дописывает `.git` сам, а
+/// allow-git в deny.toml сравнивает адрес без него.
+fn repo_url(name, what) {
+    let url = "";
+    if variable::is_set(name) {
+        url = variable::get(name);
+    } else {
+        try {
+            url = variable::prompt(name + ": адрес git-репозитория " + what, "", "^\\S+$");
+        } catch (err) {
+            if !err.to_string().contains("not a terminal") { throw err; }
+        }
+    }
+    url.trim();
+    while url.ends_with("/") {
+        url.pop();
+    }
+    if url.ends_with(".git") {
+        url = url.sub_string(0, url.len() - 4);
+    }
+    if url == "" {
+        throw name + ": нужен адрес репозитория " + what + "; задайте --define " + name + "=https://…";
+    }
+    url
+}
+
 /// Список с отметками: отмеченные `values` в порядке пунктов. В хуках
 /// `cargo-generate` есть только одиночный выбор, поэтому отметка `[x] `/`[ ] `
 /// нарисована в тексте пункта (`value — text`), а меню после каждого выбора
@@ -578,19 +606,10 @@ fn is_dual_core(suffix) {
 
 // Источник rust-lib (supervisor, fsm, watchdog, sync-request) — одна переменная
 // на все места: оба Cargo.toml, allow-git в deny.toml, ссылки в документации.
-// Форк подставляется `--define rust_lib=https://…/rust-lib`; меню нет — вопрос
-// до выбора чипа никому не нужен. Хранится без `.git` и завершающего `/`:
-// Cargo.toml дописывает `.git` сам, а allow-git сравнивает адрес без него.
-let rust_lib = if variable::is_set("rust_lib") { variable::get("rust_lib") } else { "https://github.com/Sergycb/rust-lib" };
-while rust_lib.ends_with("/") {
-    rust_lib.pop();
-}
-if rust_lib.ends_with(".git") {
-    rust_lib = rust_lib.sub_string(0, rust_lib.len() - 4);
-}
-if rust_lib == "" {
-    throw "rust_lib: пустой адрес репозитория rust-lib";
-}
+// Умолчания нет намеренно: библиотека лежит на разных серверах, и шаблон ни одного
+// из них не называет — адрес вводит человек (`--define rust_lib=https://…/rust-lib`
+// без терминала). Без адреса проект не собрать, поэтому вопрос — до выбора чипа.
+let rust_lib = repo_url("rust_lib", "rust-lib (supervisor, fsm, watchdog)");
 variable::set("rust_lib", rust_lib);
 // Ревизия rust-lib — тоже одна на все места: проекты не получают lock-файл,
 // и без `rev` первый же слом API в main rust-lib ронял бы свежую генерацию
@@ -2343,6 +2362,12 @@ variable::set("erase_page", if variable::get("state_paged") == "true" || variabl
 variable::set("external_flash", if (variable::get("ota") == "true" && variable::get("ota_store") == "external") || variable::get("config_store") == "external" { "true" } else { "false" });
 if wants_ext && variable::get("external_flash") != "true" {
     print("Внешняя флеш: хранить на ней нечего (ни OTA, ни настроек) — драйвер W25Q в проект не входит");
+}
+// Источник hw-drivers (драйвер `w25q`) — как у `rust_lib`, без умолчания, но
+// спрашивается только с внешней флешью: без неё переменной нет, и ссылаются
+// на неё только блоки под `external_flash`.
+if variable::get("external_flash") == "true" {
+    variable::set("hw_drivers", repo_url("hw_drivers", "hw-drivers (w25q)"));
 }
 // Шина внешней флеши — `flash_bus`: QSPI, где он выведен, иначе SPI; что шина
 // у чипа есть, проверено при ответе `ext_flash`.

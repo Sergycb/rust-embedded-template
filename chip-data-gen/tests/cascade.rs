@@ -61,6 +61,56 @@ fn rust_lib_rev_default_matches_the_root_manifest() {
     }
 }
 
+/// Шаблон не называет сервер git-зависимостей: у `rust_lib`/`hw_drivers` нет
+/// умолчаний, адреса вводит человек.
+#[test]
+fn hook_names_no_dependency_server() {
+    let script = read_script();
+    for line in script.lines().filter(|line| line.contains("://")) {
+        assert!(line.contains("://…"), "адрес в хуке: {line}");
+    }
+}
+
+/// Пустой адрес — ошибка с подсказкой; `.git` и `/` в конце срезаются;
+/// `hw_drivers` нужен только с внешней флешью.
+#[test]
+fn dependency_urls_are_normalized_and_required() {
+    let ast = compile_script();
+    let Err(err) = run_cascade_with(&ast, "f407ve", &[("rust_lib", "")]) else {
+        panic!("пустой rust_lib должен падать");
+    };
+    assert!(err.to_string().contains("--define rust_lib="), "{err}");
+
+    let plain = run_cascade_with(&ast, "f407ve", &[("rust_lib", "https://h/rust-lib.git/")])
+        .expect("каскад с rust_lib");
+    let var = |result: &CascadeResult, name: &str| result.vars.get(name).cloned();
+    assert_eq!(
+        var(&plain, "rust_lib").as_deref(),
+        Some("https://h/rust-lib")
+    );
+    // Без внешней флеши адрес hw-drivers не нужен, и пустой — не ошибка.
+    run_cascade_with(&ast, "f407ve", &[("hw_drivers", "")]).expect("каскад без внешней флеши");
+
+    let Err(err) = run_cascade_with(&ast, "f407ve", &[("ext_flash", "yes"), ("hw_drivers", "")])
+    else {
+        panic!("пустой hw_drivers с внешней флешью должен падать");
+    };
+    assert!(err.to_string().contains("--define hw_drivers="), "{err}");
+    let ext = run_cascade_with(
+        &ast,
+        "f407ve",
+        &[
+            ("ext_flash", "yes"),
+            ("hw_drivers", "https://h/hw-drivers.git"),
+        ],
+    )
+    .expect("каскад с ext_flash=yes");
+    assert_eq!(
+        var(&ext, "hw_drivers").as_deref(),
+        Some("https://h/hw-drivers")
+    );
+}
+
 /// Список чипов со штампом версий — тот файл, который хук импортирует первым.
 fn read_chip_list() -> String {
     std::fs::read_to_string(repo_root().join("chip-data").join("chips.rhai"))
@@ -206,11 +256,17 @@ fn run_interview(
         .iter()
         .map(|(id, value)| ((*id).to_string(), (*value).to_string()))
         .collect();
+    // Адреса git-зависимостей умолчаний в хуке не имеют — их всегда задаёт
+    // `--define`; тест, которому важен сам адрес, задаёт свой.
     let vars: Vars = Rc::new(RefCell::new(
-        preset
-            .iter()
-            .map(|(name, value)| ((*name).to_string(), (*value).to_string()))
-            .collect::<HashMap<_, _>>(),
+        [
+            ("rust_lib", "https://example.com/rust-lib"),
+            ("hw_drivers", "https://example.com/hw-drivers"),
+        ]
+        .iter()
+        .chain(preset)
+        .map(|(name, value)| ((*name).to_string(), (*value).to_string()))
+        .collect::<HashMap<_, _>>(),
     ));
     let files: Files = Rc::new(RefCell::new(HashMap::new()));
     let deleted: Deleted = Rc::new(RefCell::new(Vec::new()));

@@ -126,17 +126,22 @@ cargo xtask lint cross    # cross: fmt --check + clippy -D warnings
 cargo xtask build         # cross: debug + release
 ```
 
-Это основа CI — там host и cross разнесены по разным джобам, которые идут
+{% if ci != "none" %}Это основа CI — там host и cross разнесены по разным джобам, которые идут
 параллельно и с раздельными кешами. Сверх этих четырёх CI гоняет `cargo deny
 check`, `cargo hack --feature-powerset`, покрытие (`cargo llvm-cov`) и `typos`:
 все четыре ставит `cargo xtask setup`, и при правке зависимостей или фич первые
-три стоит прогнать и локально. Отдельно от `ci.yml` (GitHub): `pins.yml` (Pins) —
+три стоит прогнать и локально.{% else %}CI в проекте нет, поэтому эти четыре гоняются руками. Сверх них —
+`cargo deny check`, `cargo hack --feature-powerset`, покрытие (`cargo llvm-cov`)
+и `typos`: все четыре ставит `cargo xtask setup`, и при правке зависимостей или
+фич первые три стоит прогнать.{% endif %}{% if ci == "github" %} Отдельно от `ci.yml`: `pins.yml` (Pins) —
 `chip-info --check` по фильтру путей (распиновка и справочник), `audit.yml` (Audit) —
-`cargo deny check advisories` по обоим lock-файлам каждую ночь (на GitLab — джоб `audit`
-по расписанию){% if ota == "true" %}, `release.yml`
-(Release) — `cargo xtask build` и подпись по тегу `v*`{% endif %}. Полный
+`cargo deny check advisories` по обоим lock-файлам каждую ночь{% if ota == "true" %}, `release.yml`
+(Release) — `cargo xtask build` и подпись по тегу `v*`{% endif %}.{% elsif ci == "gitlab" %} В `.gitlab-ci.yml` отдельно:
+`pins:check` — `chip-info --check` по фильтру путей (распиновка и справочник),
+`audit` — `cargo deny check advisories` по обоим lock-файлам по расписанию{% if ota == "true" %},
+`release:build`/`release:publish` — `cargo xtask build` и подпись по тегу `v*`{% endif %}.{% endif %}{% if ci != "none" %} Полный
 перечень и что нужно для зелёного CI — README, «Что проверяет CI». Добавили шаг
-в CI — допишите его сюда, компилятор такого расхождения не увидит.
+в CI — допишите его сюда, компилятор такого расхождения не увидит.{% endif %}
 
 Lock-файлы проект считает сам: корневой `Cargo.lock` создаёт первая
 host-сборка, `crates-cross/Cargo.lock` — первая cross-сборка,
@@ -175,8 +180,8 @@ read`: руками пришлось бы сначала найти адрес �
   `test host-target`, `panic-info`, `probe-rs`) без явного разрешения
   пользователя — необратимо и требует железа.
 - Не добавлять зависимости без разрешения пользователя — правила см. `docs/conventions.md`.
-- Не менять версию в `rust-toolchain.toml` без разрешения пользователя и без
-  образов `rust:` в `.gitlab-ci.yml` — от неё зависит воспроизводимость
+- Не менять версию в `rust-toolchain.toml` без разрешения пользователя{% if ci == "gitlab" %} и без
+  образов `rust:` в `.gitlab-ci.yml`{% endif %} — от неё зависит воспроизводимость
   релиза, см. `docs/conventions.md`.
 
 ## Инварианты, которые не ловит компилятор

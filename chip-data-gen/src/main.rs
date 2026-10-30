@@ -435,8 +435,8 @@ fn rust_lib_rev(root: &Path) -> anyhow::Result<String> {
 
 /// Адрес rust-lib, которым заменяется плейсхолдер `{{rust_lib}}` в
 /// `crates-cross/Cargo.toml` (без `.git`, как его хранит хук): с ним как есть
-/// `cargo metadata` падает на «invalid url». То же значение — умолчание
-/// `rust_lib` в `chip-select.rhai`; меняются вместе.
+/// `cargo metadata` падает на «invalid url». То же значение — `rust_lib` в
+/// `REPO_DEFAULTS` (`template-check.rs`); меняются вместе.
 const RUST_LIB: &str = "https://github.com/Sergycb/rust-lib";
 
 /// Начало условного тега. Не `{% if %}` целиком: между `if` и `%}` стоит само
