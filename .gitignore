@@ -5,9 +5,6 @@ crates-cross/target/
 # У chip-info свой [workspace] (Liquid в манифесте, см. его Cargo.toml), а
 # значит и свой target/ — корневое правило выше его не покрывает.
 crates-host/chip-info/target/
-# Флаги, срезающие из образа пути этой машины: их пишет `cargo xtask` под
-# каждую машину заново (crates-host/xtask/src/remap.rs).
-crates-cross/.cargo/remap.toml
 
 # Cargo.lock здесь НЕ игнорируется (дефолтный совет `cargo new` — «leave it for
 # libraries» — тут не применим): проект собирает прошивку, а не библиотеку, и

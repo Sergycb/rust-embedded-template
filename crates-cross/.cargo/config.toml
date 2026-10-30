@@ -1,8 +1,3 @@
-# Флаги, срезающие из образа пути машины сборки, — их пишет `cargo xtask` (любая
-# команда), см. crates-host/xtask/src/remap.rs. `optional`: в свежем клоне до
-# первого `cargo xtask` файла нет, и сборка идёт без них.
-include = [{ path = "remap.toml", optional = true }]
-
 [build]
 target = "{{target}}"
 
