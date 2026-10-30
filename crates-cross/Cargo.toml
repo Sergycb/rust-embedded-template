@@ -310,7 +310,7 @@ sync-request     = { git = "{{rust_lib}}.git", rev = "{{rust_lib_rev}}" }
 # bootloader'а (`sync`){% endif %}. Объём — по JEDEC ID при `init`. Своя библиотека
 # драйверов, по git; `rev` закреплён: драйвер стоит под {% if ota == "true" and ota_store == "external" %}данными OTA{% if config_store == "external" %} и
 # настройками{% endif %}{% else %}настройками{% endif %}, и чужое изменение команд микросхемы не должно приехать молча.
-w25q             = { git = "https://github.com/Sergycb/hw-drivers.git", rev = "4deb2e145fb5ed135f335b98c97b8bb12af98cc4", default-features = false, features = [
+w25q             = { git = "{{hw_drivers}}.git", rev = "4deb2e145fb5ed135f335b98c97b8bb12af98cc4", default-features = false, features = [
 	"nor-flash",
 	"defmt",
 ] }

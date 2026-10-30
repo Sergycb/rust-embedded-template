@@ -1,7 +1,7 @@
 Внешняя флеш платы — Winbond W25Q (W25Q10..W25Q128, серии JV, JW, FV) на
 блоке `{{ext_flash_block}}`: на ней {% if ota == "true" and ota_store == "external" %}`STATE` и `DFU` обновления{% if config_store == "external" %} и раздел настроек{% endif %}{% else %}раздел настроек{% endif %}.
 
-Драйвер — `w25q` из [hw-drivers](https://github.com/Sergycb/hw-drivers),
+Драйвер — `w25q` из [hw-drivers]({{hw_drivers}}),
 асинхронный (`ExternalFlash` здесь){% if ota == "true" and ota_store == "external" %}; у bootloader'а — блокирующий
 (`crates-cross/boot/src/external.rs`){% endif %}. Объём он узнаёт по JEDEC ID при
 `init`{% if ext_flash_bus != "spi" %}, там же ставит бит QE (четыре линии данных){% endif %}; разделы посчитаны при

@@ -809,6 +809,20 @@ fn check_one(
     for define in case.defines.iter().chain(&options.defines) {
         command.arg("--define").arg(define);
     }
+    // Адресов зависимостей у хука нет умолчания: без них генерация без
+    // терминала падает. Свой `--define` с тем же ключом их заменяет.
+    let repos = repo_urls(&case.defines, &options.defines);
+    for (key, url) in &repos {
+        let define = format!("{key}={url}");
+        if !case
+            .defines
+            .iter()
+            .chain(&options.defines)
+            .any(|d| *d == define)
+        {
+            command.arg("--define").arg(define);
+        }
+    }
     // Вывод генерации перехватывается ради строки `ram_estimate:` хука.
     let generated = capture(
         command
@@ -826,6 +840,7 @@ fn check_one(
 
     check_no_raw_placeholders(&project, log)?;
     check_ci_files(&project, &options.ci, log)?;
+    check_ci_mentions(&project, &options.ci, &repos, log)?;
     check_doc_paths(&project, log)?;
 
     let mut static_ram = None;
@@ -1055,6 +1070,87 @@ fn check_no_raw_placeholders(project: &Path, log: &File) -> anyhow::Result<()> {
     }
     note(log, "плейсхолдеры: не осталось ни одного")
 }
+
+/// Проект под одну платформу CI другую не упоминает: тексты про CI в шаблоне —
+/// под `{% if ci == … %}`, и пропущенное условие видно только здесь. Адреса
+/// (шаблона, индекса crates.io, git-зависимостей генерации) — не про CI и
+/// вырезаются из строки до поиска.
+fn check_ci_mentions(
+    project: &Path,
+    ci: &str,
+    repos: &[(&str, String)],
+    log: &File,
+) -> anyhow::Result<()> {
+    let foreign: &[&str] = match ci {
+        "github" => &["gitlab"],
+        "gitlab" => &["github"],
+        _ => &["github", "gitlab"],
+    };
+    let urls: Vec<&str> = [
+        "https://github.com/Sergycb/rust-embedded-template",
+        "https://github.com/rust-lang/crates.io-index",
+    ]
+    .into_iter()
+    .chain(repos.iter().map(|(_, url)| url.as_str()))
+    .collect();
+    let mut found = Vec::new();
+    visit_files(project, &mut |path| {
+        let relative = path.strip_prefix(project).unwrap_or(path);
+        let text = String::from_utf8_lossy(&fs::read(path)?).into_owned();
+        for (number, line) in text.lines().enumerate() {
+            let rest = urls
+                .iter()
+                .fold(line.to_owned(), |rest, url| rest.replace(url, ""));
+            if foreign
+                .iter()
+                .any(|name| rest.to_lowercase().contains(name))
+            {
+                found.push(format!(
+                    "{}:{}: {}",
+                    relative.display(),
+                    number + 1,
+                    line.trim()
+                ));
+            }
+        }
+        Ok(())
+    })?;
+    if !found.is_empty() {
+        bail!(
+            "при ci={ci} в проекте упомянута другая платформа CI:\n  {}",
+            found.join("\n  "),
+        );
+    }
+    note(
+        log,
+        format!("упоминания CI при ci={ci}: только своей платформы"),
+    )
+}
+
+/// Адрес каждой git-зависимости, с которым идёт генерация: последний
+/// `--define` конфигурации или общий, иначе — из [`REPO_DEFAULTS`].
+fn repo_urls(case: &[String], common: &[String]) -> Vec<(&'static str, String)> {
+    REPO_DEFAULTS
+        .iter()
+        .map(|&(key, url)| {
+            let prefix = format!("{key}=");
+            let given = case
+                .iter()
+                .chain(common)
+                .filter_map(|d| d.strip_prefix(&prefix))
+                .next_back();
+            (key, given.unwrap_or(url).to_owned())
+        })
+        .collect()
+}
+
+/// Адреса git-зависимостей для генерации: в хуке умолчаний нет (шаблон не
+/// называет сервер), проверка берёт рабочие зеркала автора. `rust_lib` — то же,
+/// что `RUST_LIB` в `chip-data-gen/src/main.rs`.
+const REPO_DEFAULTS: [(&str, &str); 2] = [
+    ("rust_lib", "https://github.com/Sergycb/rust-lib"),
+    ("hw_drivers", "https://github.com/Sergycb/hw-drivers"),
+];
 
 /// Что должно быть в сгенерированном проекте при каждом `ci` — и чего там быть
 /// не должно.
