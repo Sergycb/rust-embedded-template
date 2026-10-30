@@ -60,7 +60,7 @@ jobs:
       # По коммиту, а не по тегу: тег переставляем, и тогда прогон без правок
       # в этом репозитории выполнит другой код. Комментарий справа — версия,
       # для которой SHA снят; dependabot обновляет и SHA, и комментарий.
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7 (7.0.1)
 
       # В репозитории самого шаблона проверять нечего и нечем: чип-фича в
       # манифесте `chip-info` — это Liquid-плейсхолдер, и cargo такой манифест
@@ -75,7 +75,7 @@ jobs:
           fi
 
       - if: steps.guard.outputs.skip != 'true'
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2 (2.9.2)
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2 (2.9.3)
         with:
           # У `chip-info` свой [workspace] (чип выбирается Cargo-фичей), поэтому
           # и кеш отдельный — иначе он не подхватится.

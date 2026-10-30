@@ -210,7 +210,7 @@ embassy-time       = { version = "0.5.1" }
 # «тест упал» вместо HardFault (подробности — в crates-cross/target-tests/Cargo.toml,
 # там же про то, почему в этом бинарнике нет panic-probe). `defmt` — чтобы
 # вывод харнесса шёл тем же транспортом, что и логи прошивки.
-embedded-test      = { version = "0.7.2", default-features = false, features = [
+embedded-test      = { version = "0.7.3", default-features = false, features = [
 	"embassy-010",
 	"defmt",
 	"semihosting",
