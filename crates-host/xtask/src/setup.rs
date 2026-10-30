@@ -21,7 +21,9 @@ pub fn setup(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     // `cargo-flash` — отдельный бинарь того же пакета, им этапы `test target`
     // и `test host-target` заливают образы перед прогоном.
     install_if_missing(sh, &["probe-rs", "cargo-flash"], "probe-rs-tools")?;
-    install_if_missing(sh, &["flip-link"], "flip-link")?;
+    // Версия — та же, что у релизных джобов (`FLIP_LINK_VERSION`): от линкера
+    // зависит раскладка образа (docs/conventions.md, «Воспроизводимый релиз»).
+    install_if_missing(sh, &["flip-link"], "flip-link@0.1.12")?;
     install_if_missing(sh, &["cargo-nextest"], "cargo-nextest")?;
     // Дальше — то, что гоняет CI, чтобы его шаги воспроизводились локально:
     // лицензии и уязвимости (`cargo deny check`), сочетания фич (`cargo hack`),

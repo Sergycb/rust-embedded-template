@@ -3738,8 +3738,8 @@ fn every_path_through_the_menus_generates() {
     ];
     let used = template_variables();
     // Задаёт `cargo generate`, а не хук: вопрос `ci` и встроенные переменные.
-    // `github` и `secrets` — не переменные шаблона, а выражения GitHub Actions
-    // (`${{ secrets.X }}`), которые Liquid оставляет как есть.
+    // `github`, `secrets` и `env` — не переменные шаблона, а выражения GitHub
+    // Actions (`${{ secrets.X }}`), которые Liquid оставляет как есть.
     let external = [
         "ci",
         "project",
@@ -3749,6 +3749,7 @@ fn every_path_through_the_menus_generates() {
         "os",
         "github",
         "secrets",
+        "env",
     ];
     let mut paths = 0;
     let mut failures = Vec::new();
@@ -4882,4 +4883,59 @@ fn protocols_that_do_not_fit_are_marked() {
     assert!(!item(shown, "none").contains(NO_RAM), "{shown:?}");
     assert!(item(shown, "modbus").contains(NO_RAM), "{shown:?}");
     assert!(item(shown, "protobuf").contains(NO_RAM), "{shown:?}");
+}
+
+/// Версии, закреплённые ради воспроизводимого релиза, записаны в нескольких
+/// файлах (docs/conventions.md, «Тулчейн запинен»): rustc — в
+/// `rust-toolchain.toml` и образах `rust:` GitLab, `flip-link` — в `setup` и
+/// обоих CI. Поднятая в одном месте версия молча развела бы CI с релизом.
+#[test]
+fn pinned_versions_agree() {
+    let read = |path: &str| {
+        std::fs::read_to_string(repo_root().join(path))
+            .unwrap_or_else(|e| panic!("не удалось прочитать {path}: {e}"))
+    };
+    // Номера версий сразу за каждым вхождением `marker`; вхождения без номера
+    // (`flip-link@${{ env.… }}`) пропускаются.
+    let versions = |text: &str, marker: &str| -> Vec<String> {
+        text.split(marker)
+            .skip(1)
+            .map(|rest| {
+                rest.chars()
+                    .take_while(|c| c.is_ascii_digit() || *c == '.')
+                    .collect::<String>()
+            })
+            .filter(|version| !version.is_empty())
+            .collect()
+    };
+    let check = |what: &str, sources: &[(&str, &str)]| {
+        let mut all = Vec::new();
+        for (path, marker) in sources {
+            let found = versions(&read(path), marker);
+            assert!(!found.is_empty(), "{what}: в {path} нет `{marker}<версия>`");
+            all.extend(found.into_iter().map(|version| (*path, version)));
+        }
+        let first = &all[0].1;
+        assert!(
+            all.iter().all(|(_, version)| version == first),
+            "{what}: версии расходятся: {all:?}"
+        );
+    };
+
+    check(
+        "rustc",
+        &[
+            ("rust-toolchain.toml", "channel    = \""),
+            (".gitlab-ci.yml", "image: rust:"),
+        ],
+    );
+    check(
+        "flip-link",
+        &[
+            ("crates-host/xtask/src/setup.rs", "flip-link@"),
+            (".github/workflows/ci.yml", "flip-link@"),
+            (".github/workflows/release.yml", "FLIP_LINK_VERSION: \""),
+            (".gitlab-ci.yml", "FLIP_LINK_VERSION: \""),
+        ],
+    );
 }

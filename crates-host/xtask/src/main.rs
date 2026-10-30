@@ -6,6 +6,7 @@ mod memory;
 mod panic_info;
 mod pins;
 mod project;
+mod remap;
 // {%- if net_services contains "rest" or net_services contains "mqtt" or ssh_auth == "password" or ssh_host_key == "file" %}
 mod secrets;
 // {%- endif %}
@@ -27,6 +28,13 @@ fn main() -> Result<(), anyhow::Error> {
     let args = env::args().skip(1).collect::<Vec<_>>();
     let args = args.iter().map(|s| &**s).collect::<Vec<_>>();
     let sh = xshell::Shell::new()?;
+    // Перед любой командой, а не перед сборками: файл подхватывают и ручные
+    // `cargo run`/`cargo flash` в `crates-cross`, а не только вызовы `xtask`.
+    // Кроме `setup`: он идёт раньше, чем есть тулчейн, у которого спрашивается
+    // sysroot, и реестр, который `ensure` скачал бы.
+    if !matches!(&args[..], [] | ["setup"]) {
+        remap::ensure(&sh)?;
+    }
 
     match &args[..] {
         ["setup"] => setup::setup(&sh),

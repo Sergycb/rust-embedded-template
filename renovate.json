@@ -17,6 +17,12 @@
       "matchManagers": ["docker"],
       "matchFileNames": [".gitlab-ci.yml", "**/.gitlab-ci.yml"],
       "groupName": "gitlab images"
+    },
+    {
+      "description": "Образ rust: поднимают руками и вместе с rust-toolchain.toml (docs/conventions.md, «Тулчейн»)",
+      "matchManagers": ["docker"],
+      "matchPackageNames": ["rust"],
+      "enabled": false
     }
   ],
   "lockFileMaintenance": {
