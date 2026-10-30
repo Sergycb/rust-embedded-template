@@ -10,6 +10,9 @@ stages:
 
 variables:
   CARGO_TERM_COLOR: always
+  # Одна версия линкера у cross:build и release:build — та же, что в обоих
+  # workflow GitHub и в `cargo xtask setup` (docs/conventions.md, «Тулчейн запинен»).
+  FLIP_LINK_VERSION: "0.1.12"
 
 # Кеша два, а не один, и это не избыточность: GitLab не перезаписывает уже
 # существующий ключ, поэтому с общим ключом первым завершившийся джоб (а это
@@ -179,7 +182,7 @@ cross:build:
   before_script:
     - rustup component add rustfmt clippy
     - rustup target add {{target}}
-    - cargo install flip-link --locked
+    - cargo install flip-link --version "$FLIP_LINK_VERSION" --locked
   script:
     # `--locked` условный, как у host:test выше. Шаблон не раздаёт lock-файлов:
     # состав зависимостей зависит от ответов при генерации (OTA, раздел
@@ -267,8 +270,6 @@ release:build:
     # Релиз собирается ровно из закоммиченного Cargo.lock: без --locked cargo
     # молча разрешил бы зависимости заново.
     - cargo fetch --locked --manifest-path crates-cross/Cargo.toml
-  variables:
-    FLIP_LINK_VERSION: "0.1.12"
   script:
     # Прошивка печатает свою версию при старте (shadow-rs берёт её из
     # [workspace.package]), а релиз называется тегом. Разойдись они — и по

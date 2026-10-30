@@ -249,10 +249,13 @@ README, раздел «Bootloader»; не пытайтесь «исправит�
   F2/F4/F7 PLL включается только ради выхода Q.
 {%- endif %}
 - **Тулчейн запинен** — `rust-toolchain.toml` в корне (`channel`, компоненты
-  `rustfmt`, `clippy`, `llvm-tools` и цель прошивки).
+  `rustfmt`, `clippy` и цель прошивки; `llvm-tools` для покрытия ставят
+  `cargo xtask setup` и джоб покрытия — тянуть его в каждый джоб CI незачем).
   Причина — воспроизводимый релиз: разные версии rustc дают разный код, и
   образ по тегу без той же версии побайтно не повторить. Версию поднимают
-  руками и вместе с образами `rust:` в `.gitlab-ci.yml`. `rust-version = 1.96`
+  руками и вместе с образами `rust:` в `.gitlab-ci.yml`; версию `flip-link`
+  (`setup`, оба CI) — тоже везде разом. Расхождение ловит тест шаблона
+  `pinned_versions_agree`. `rust-version = 1.96`
   в манифесте остаётся: это нижняя граница крейтов `rust-lib`, а не версия
   сборки. `rustfmt.toml` и `.editorconfig` нет — `cargo fmt` на умолчаниях.
 - **Воспроизводимый релиз** — один коммит на одной ОС, собранный по тому же
@@ -266,7 +269,8 @@ README, раздел «Bootloader»; не пытайтесь «исправит�
   постоянный, `BUILD-ENV` его записывает; повторяют сборку по нему (Docker).
   Кроме тулчейна, это держат: `Cargo.lock` (релизные джобы зовут `cargo fetch
   --locked`) и `crates-cross/.cargo/remap.toml` — его пишет любая команда
-  `cargo xtask` (`crates-host/xtask/src/remap.rs`): `--remap-path-prefix`
+  `cargo xtask`, кроме `setup` (`crates-host/xtask/src/remap.rs`; на свежем
+  `CARGO_HOME` она сперва скачивает реестр): `--remap-path-prefix`
   срезает из мест паник префиксы машины (корень проекта, `CARGO_HOME`,
   sysroot), `--remap-path-scope=macro` оставляет отладочной информации
   настоящие пути. Поэтому побайтно совпадает `.bin`, но не ELF. Между ОС

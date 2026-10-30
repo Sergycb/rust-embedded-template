@@ -4,7 +4,7 @@
 # docs/conventions.md, «Тулчейн».
 [toolchain]
 channel    = "1.98.1"
-components = ["rustfmt", "clippy", "llvm-tools"]
+components = ["rustfmt", "clippy"]
 # Цель прошивки — ответ генерации; rustup ставит её вместе с тулчейном.
 # {%- comment %}
 # В репозитории шаблона цели нет: прошивка здесь не собирается, а

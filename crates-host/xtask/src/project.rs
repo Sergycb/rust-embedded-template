@@ -80,8 +80,13 @@ pub fn cross_target_dir() -> PathBuf {
 /// лежит в `crates-host/`. Ошибиться тут легко и незаметно — все команды
 /// строят пути от этого значения, и на уровень выше оно молча указывало бы в
 /// `crates-host/`.
+///
+/// Манифест берётся из среды запуска (`cargo run` её задаёт), а `env!` —
+/// только запасной путь: перенесённый проект cargo не пересобирает, и
+/// вшитый при сборке путь вёл бы в старый каталог.
 pub fn root_dir() -> PathBuf {
-    let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let mut dir = env::var_os("CARGO_MANIFEST_DIR")
+        .map_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")), PathBuf::from);
     dir.pop();
     dir.pop();
     dir

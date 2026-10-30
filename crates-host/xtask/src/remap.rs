@@ -14,7 +14,7 @@
 //! настоящими путями, и отладчик по-прежнему находит исходники.
 //!
 //! Префиксы свои у каждой машины, поэтому флаги не лежат в `config.toml`, а
-//! пишутся сюда перед каждой командой `xtask` и подключаются оттуда
+//! пишутся сюда перед командами `xtask` (кроме `setup`) и подключаются оттуда
 //! `include` (файл в `.gitignore`). Через файл, а не `--config` у вызовов
 //! `xtask`: тогда те же флаги получают и ручные `cargo run`/`cargo flash`, и их
 //! сборка не расходится с `cargo xtask build`.
@@ -33,11 +33,18 @@ use crate::project::{cross_target_dir, root_dir};
 /// Записывает `remap.toml` под эту машину; не трогает файл, если он уже такой.
 pub fn ensure(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     let root = root_dir();
-    let sysroot = {
-        let _p = sh.push_dir(root.join("crates-cross"));
-        cmd!(sh, "rustc --print sysroot").quiet().read()?
-    };
-    let prefixes = prefixes(&root, &cargo_home()?, Path::new(&sysroot))?;
+    let cargo_home = cargo_home()?;
+    let _p = sh.push_dir(root.join("crates-cross"));
+    // Свежий `CARGO_HOME`: каталогов индексов реестра ещё нет, и первая
+    // сборка срезала бы пути зависимостей не так, как следующие, — её образ
+    // разошёлся бы с ними. Скачиваем заранее то, что скачала бы она сама.
+    if !fs::read_dir(cargo_home.join("registry").join("src"))
+        .is_ok_and(|mut entries| entries.next().is_some())
+    {
+        cmd!(sh, "cargo fetch").run()?;
+    }
+    let sysroot = cmd!(sh, "rustc --print sysroot").quiet().read()?;
+    let prefixes = prefixes(&root, &cargo_home, Path::new(&sysroot))?;
 
     let mut text = String::from(
         "# Создаёт `cargo xtask` под эту машину (crates-host/xtask/src/remap.rs), не коммитится.\n\
@@ -71,12 +78,9 @@ fn prefixes(root: &Path, cargo_home: &Path, sysroot: &Path) -> Result<Vec<PathBu
     // `CARGO_TARGET_DIR` уводит его из корня: там код, сгенерированный build.rs.
     let mut prefixes = vec![root.to_path_buf(), cross_target_dir()];
     // Каталог индекса реестра тоже: `embassy-boot-0.7.0/src/…`, а не
-    // `index.crates.io-…/embassy-boot-0.7.0/src/…`. Сам `registry/src` — на
-    // машине, где реестр ещё не скачан (каталогов индексов нет): префикс машины
-    // уйдёт и там. CI перед релизом зовёт `cargo fetch`, так что индексы есть.
-    let registry = cargo_home.join("registry").join("src");
-    prefixes.push(registry.clone());
-    if let Ok(entries) = fs::read_dir(&registry) {
+    // `index.crates.io-…/embassy-boot-0.7.0/src/…`; они есть — `ensure`
+    // скачивает реестр до этого.
+    if let Ok(entries) = fs::read_dir(cargo_home.join("registry").join("src")) {
         for entry in entries {
             prefixes.push(entry?.path());
         }

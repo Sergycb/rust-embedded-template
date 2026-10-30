@@ -30,7 +30,11 @@ fn main() -> Result<(), anyhow::Error> {
     let sh = xshell::Shell::new()?;
     // Перед любой командой, а не перед сборками: файл подхватывают и ручные
     // `cargo run`/`cargo flash` в `crates-cross`, а не только вызовы `xtask`.
-    remap::ensure(&sh)?;
+    // Кроме `setup`: он идёт раньше, чем есть тулчейн, у которого спрашивается
+    // sysroot, и реестр, который `ensure` скачал бы.
+    if !matches!(&args[..], [] | ["setup"]) {
+        remap::ensure(&sh)?;
+    }
 
     match &args[..] {
         ["setup"] => setup::setup(&sh),
