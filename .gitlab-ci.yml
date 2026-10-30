@@ -39,7 +39,7 @@ variables:
 
 host:test:
   stage: test
-  image: rust:1.96.0
+  image: rust:1.98.1
   <<: [*cache_host, *not_scheduled]
   before_script:
     # llvm-tools нужен покрытию: cargo-llvm-cov зовёт llvm-profdata и llvm-cov
@@ -115,7 +115,7 @@ host:test:
 # `.typos.toml`.
 typos:
   stage: test
-  image: rust:1.96.0
+  image: rust:1.98.1
   <<: *not_scheduled
   script:
     - cargo install typos-cli --locked
@@ -131,7 +131,7 @@ typos:
 # (см. docs/conventions.md).
 pins:check:
   stage: test
-  image: rust:1.96.0
+  image: rust:1.98.1
   # Свой кеш, а не общий `.cache`: у `chip-info` отдельный [workspace], и его
   # артефакты лежат в `crates-host/chip-info/target`, которого в том якоре нет
   # — джоб пересобирал бы `stm32-metapac` каждый раз, то есть ровно ту цену,
@@ -174,7 +174,7 @@ pins:check:
 
 cross:build:
   stage: build
-  image: rust:1.96.0
+  image: rust:1.98.1
   <<: [*cache_cross, *not_scheduled]
   before_script:
     - rustup component add rustfmt clippy
@@ -255,13 +255,20 @@ board:test:
 # только маскировало бы ошибку в `rules`.
 release:build:
   stage: release
-  image: rust:1.96.0
+  image: rust:1.98.1
   <<: *cache_cross
   rules:
     - if: $CI_COMMIT_TAG
   before_script:
     - rustup target add {{target}}
-    - cargo install flip-link --locked
+    # Версия — та же, что в release.yml: от линкера зависит раскладка образа,
+    # и без пина релиз не повторить (docs/conventions.md, «Воспроизводимый релиз»).
+    - cargo install flip-link --version "$FLIP_LINK_VERSION" --locked
+    # Релиз собирается ровно из закоммиченного Cargo.lock: без --locked cargo
+    # молча разрешил бы зависимости заново.
+    - cargo fetch --locked --manifest-path crates-cross/Cargo.toml
+  variables:
+    FLIP_LINK_VERSION: "0.1.12"
   script:
     # Прошивка печатает свою версию при старте (shadow-rs берёт её из
     # [workspace.package]), а релиз называется тегом. Разойдись они — и по
@@ -313,6 +320,18 @@ release:build:
     # стек платы с этим релизом. Суммы — для сверки `sha256sum -c SHA256SUMS`.
     - cp "crates-cross/target/{{target}}/release/app" app.elf
     - sha256sum app.bin app.elf $(ls app.bin.sig 2>/dev/null) > SHA256SUMS
+    # Чем собрано — чтобы повторить сборку и сверить SHA256SUMS. Побайтно
+    # повторяется app.bin; ELF несёт в отладочной информации пути машины.
+    - |
+      {
+        echo "commit: $CI_COMMIT_SHA"
+        # Образ повторяется только по тому же пути проекта —
+        # docs/conventions.md, «Воспроизводимый релиз».
+        echo "path: $PWD"
+        rustc -vV
+        cargo -V
+        echo "flip-link $FLIP_LINK_VERSION"
+      } > BUILD-ENV
     - echo "BUILD_JOB_ID=$CI_JOB_ID" > build.env
   artifacts:
     paths:
@@ -320,6 +339,7 @@ release:build:
       - app.bin.sig
       - app.elf
       - SHA256SUMS
+      - BUILD-ENV
     reports:
       dotenv: build.env
     expire_in: never
@@ -346,6 +366,8 @@ release:publish:
           url: "$CI_PROJECT_URL/-/jobs/$BUILD_JOB_ID/artifacts/file/app.elf"
         - name: SHA256SUMS
           url: "$CI_PROJECT_URL/-/jobs/$BUILD_JOB_ID/artifacts/file/SHA256SUMS"
+        - name: BUILD-ENV
+          url: "$CI_PROJECT_URL/-/jobs/$BUILD_JOB_ID/artifacts/file/BUILD-ENV"
 {%- if signed == "true" %}
         - name: app.bin.sig
           url: "$CI_PROJECT_URL/-/jobs/$BUILD_JOB_ID/artifacts/file/app.bin.sig"
@@ -396,7 +418,7 @@ renovate:
 # renovate выше, — только `advisories` по обоим lock-файлам.
 audit:
   stage: test
-  image: rust:1.96.0
+  image: rust:1.98.1
   rules:
     - if: $CI_PIPELINE_SOURCE == "schedule"
   script:

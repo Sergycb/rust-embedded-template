@@ -23,6 +23,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  FLIP_LINK_VERSION: "0.1.12"
 
 jobs:
   release:
@@ -35,9 +36,15 @@ jobs:
         with:
           workspaces: crates-cross
       - run: rustup target add {{target}}
+      # Версия — та же, что в .gitlab-ci.yml: от линкера зависит раскладка
+      # образа, и без пина релиз не повторить (docs/conventions.md,
+      # «Воспроизводимый релиз»).
       - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2 (2.87.22)
         with:
-          tool: flip-link
+          tool: flip-link@{% raw %}${{ env.FLIP_LINK_VERSION }}{% endraw %}
+      # Релиз собирается ровно из закоммиченного Cargo.lock: без --locked cargo
+      # молча разрешил бы зависимости заново.
+      - run: cargo fetch --locked --manifest-path crates-cross/Cargo.toml
 
       # Прошивка печатает свою версию при старте (shadow-rs берёт её из
       # [workspace.package]), а релиз называется тегом. Разойдись они — и по
@@ -112,8 +119,19 @@ jobs:
           # Суммы — тем, кто качает образ мимо gh: сверка `sha256sum -c SHA256SUMS`.
           # shellcheck disable=SC2086
           (cd "$dir" && sha256sum $names > SHA256SUMS)
+          # Чем собрано — чтобы повторить сборку и сверить SHA256SUMS. Побайтно
+          # повторяется app.bin; ELF несёт в отладочной информации пути машины.
+          {
+            echo "commit: $GITHUB_SHA"
+            # Образ повторяется только по тому же пути проекта —
+            # docs/conventions.md, «Воспроизводимый релиз».
+            echo "path: $PWD"
+            rustc -vV
+            cargo -V
+            echo "flip-link $FLIP_LINK_VERSION"
+          } > "$dir/BUILD-ENV"
           files=""
-          for name in $names SHA256SUMS; do files="$files $dir/$name"; done
+          for name in $names SHA256SUMS BUILD-ENV; do files="$files $dir/$name"; done
           # shellcheck disable=SC2086
           gh release create "$GITHUB_REF_NAME" --generate-notes $files
 {%- endif %}

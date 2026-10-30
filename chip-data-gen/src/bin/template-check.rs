@@ -1134,8 +1134,10 @@ fn without_actions_expressions(line: &str) -> String {
 /// отличается от имени типа или команды в обратных кавычках.
 const DOC_PATH_ROOTS: &[&str] = &["crates-cross/", "crates-host/", "docs/", ".github/"];
 
-/// Пути, которых в свежем проекте нет по построению: их создаёт первая сборка.
+/// Пути, которых в свежем проекте нет по построению: их создаёт первая сборка
+/// (`remap.toml` — первая команда `cargo xtask`).
 const DOC_PATHS_BUILT_LATER: &[&str] = &[
+    "crates-cross/.cargo/remap.toml",
     "crates-cross/Cargo.lock",
     "crates-cross/target",
     "crates-host/chip-info/Cargo.lock",
