@@ -33,19 +33,19 @@ use anyhow::Context;
 
 // {%- if net_services contains "rest" %}
 /// Токен `Authorization: Bearer` REST API (`domain::http`), 32 шестнадцатеричных
-/// знака; его вшивает `crates-cross/app/src/net/rest.rs`.
+/// знака; его вшивает `crates-cross/app/src/net.rs`.
 pub const REST_TOKEN_FILE: &str = "rest-token.txt";
 // {%- endif %}
 
 // {%- if ssh_auth == "password" %}
 /// Пароль пользователя консоли SSH (`domain::ssh::USER`) при входе по паролю,
-/// 32 шестнадцатеричных знака; вшивает `crates-cross/app/src/net/ssh.rs`.
+/// 32 шестнадцатеричных знака; вшивает `crates-cross/app/src/net.rs`.
 pub const SSH_PASSWORD_FILE: &str = "ssh-password.txt";
 // {%- endif %}
 
 // {%- if ssh_host_key == "file" %}
 /// Зерно ключа хоста SSH (ed25519, 32 байта), когда ключ вшит в прошивку, а не
-/// создан платой; вшивает `crates-cross/app/src/net/ssh.rs`.
+/// создан платой; вшивает `crates-cross/app/src/net.rs`.
 pub const SSH_HOST_KEY_FILE: &str = "ssh-host-key.bin";
 // {%- endif %}
 

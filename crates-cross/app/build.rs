@@ -75,7 +75,7 @@ fn require(file: &str, what: &str) {
 {%- if net_services contains "mqtt" %}
 
 /// Брокер MQTT из `mqtt.toml` в корне проекта — переменными окружения
-/// компиляции, из которых `src/net/mqtt.rs` собирает `BROKER` и `PREFIX`.
+/// компиляции, из которых `src/net.rs` собирает `BROKER` и `PREFIX`.
 /// Битый файл роняет сборку с именем поля, а не плату на старте.
 fn mqtt_config() {
     require("mqtt.toml", "настроек брокера MQTT");

@@ -99,7 +99,7 @@ cargo run -p app                    # прошить приложение и с�
 Протоколы над рычагами строит `app` — выбирает тип адаптера, заводит его
 память и отдаёт узлу `domain` готовым
 {%- if protocol_link == "true" or net_services != "" %}
-({% if protocol_link == "true" %}`crates-cross/app/src/link/`{% if net_services != "" %}, {% endif %}{% endif %}{% if net_services != "" %}`crates-cross/app/src/net/`{% endif %})
+({% if protocol_link == "true" %}`crates-cross/app/src/link/`{% if net_services != "" %}, {% endif %}{% endif %}{% if net_services != "" %}`crates-cross/app/src/net.rs`{% endif %})
 {%- endif %}: размер буфера и порт — решение
 приложения, а не платы. Приложение и домен работают с объектами через порт{% if ota == "true" %} (узел
 OTA, например, зовёт `flash.mark_booted()`){% endif %} и про регистры не знают — `embassy-stm32`
@@ -695,7 +695,7 @@ ssh admin@<адрес платы> info
 ssh_key="ssh-ed25519 …"` при генерации): в прошивке тогда только открытый ключ.
 {%- else -%}
 Вход — по открытому ключу, данному при генерации (`crate::net::ssh::LOGIN` в
-`crates-cross/app/src/net/ssh.rs`): в прошивке только открытая половина, и прятать
+`crates-cross/app/src/net.rs`): в прошивке только открытая половина, и прятать
 её незачем. Сменить ключ — поправить строку.
 {%- endif %}
 

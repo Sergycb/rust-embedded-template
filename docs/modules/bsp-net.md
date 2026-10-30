@@ -5,7 +5,7 @@
 памяти и отдаёт узлам готовыми
 {%- assign sep = " (" %}
 {%- if link_kinds contains "tcp" or link_kinds contains "udp" %}{{ sep }}`crates-cross/app/src/link/`{% assign sep = ", " %}{% endif %}
-{%- if net_services != "" %}{{ sep }}`crates-cross/app/src/net/`{% assign sep = ", " %}{% endif %}
+{%- if net_services != "" %}{{ sep }}`crates-cross/app/src/net.rs`{% assign sep = ", " %}{% endif %}
 {%- if sep == ", " %}){% endif %}: порты — решение
 протокола, а не платы.
 
