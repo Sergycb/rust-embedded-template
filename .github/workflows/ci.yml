@@ -31,14 +31,14 @@ jobs:
       # единой правки в этом репозитории выполнит другой код. Комментарий
       # справа — версия, для которой SHA снят; dependabot обновляет и SHA,
       # и комментарий сам.
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2 (2.9.2)
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7 (7.0.1)
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2 (2.9.3)
       # На образе ubuntu-latest предустановлены cargo/rustc/rustdoc/rustfmt,
       # но НЕ clippy — без этой строки `cargo xtask lint` падает на
       # `cargo clippy` с "no such command" (код 101). В GitLab CI то же самое
       # делает before_script.
       - run: rustup component add rustfmt clippy
-      - uses: taiki-e/install-action@f518d12f5e8c169ccb8d6521f843b272ba949746 # плавающий тег cargo-nextest
+      - uses: taiki-e/install-action@8cf20993b5c06ee1e20640afaceeb72d4af5543f # плавающий тег cargo-nextest
       # Ловит рассинхрон Cargo.toml и закоммиченного Cargo.lock: без --locked
       # cargo молча обновил бы lock под себя, и CI остался бы зелёным на
       # версиях, которых нет в репозитории. Условный — по той же причине, что
@@ -56,7 +56,7 @@ jobs:
       - run: cargo xtask lint
       - run: cargo xtask test host
 
-      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2 (2.87.22)
+      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2 (2.88.0)
         with:
           tool: cargo-hack,cargo-deny
 
@@ -83,7 +83,7 @@ jobs:
       # llvm-tools — не «на всякий случай»: cargo-llvm-cov зовёт llvm-profdata
       # и llvm-cov из тулчейна, а в minimal-профиле их нет.
       - run: rustup component add llvm-tools
-      - uses: taiki-e/install-action@72f835688cb6c15903b796f704b01e652a2b8835 # плавающий тег cargo-llvm-cov
+      - uses: taiki-e/install-action@2409e52fd2fc8a8601d0d900fab9d85ae1fe714a # плавающий тег cargo-llvm-cov
       - name: Покрытие domain
         run: |
           set -o pipefail
@@ -106,8 +106,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2 (2.87.22)
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7 (7.0.1)
+      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2 (2.88.0)
         with:
           tool: typos
       - run: typos
@@ -117,8 +117,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2 (2.9.2)
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7 (7.0.1)
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2 (2.9.3)
         with:
           workspaces: crates-cross
       # Раньше target ставился автоматически из crates-cross/rust-toolchain.toml;
@@ -129,7 +129,7 @@ jobs:
       # Через install-action, а не `cargo install`: тот собирает flip-link из
       # исходников на каждом прогоне (минуты), install-action берёт готовый
       # бинарник.
-      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2 (2.87.22)
+      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2 (2.88.0)
         with:
           tool: flip-link
       # `--locked` условный, как у host выше. Шаблон не раздаёт lock-файлов:
@@ -148,7 +148,7 @@ jobs:
           fi
       - run: cargo xtask lint cross
       # Свой `Cargo.lock` прошивки, та же политика `deny.toml`.
-      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2 (2.87.22)
+      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2 (2.88.0)
         with:
           tool: cargo-deny
       - run: cargo deny --manifest-path crates-cross/Cargo.toml check
@@ -164,7 +164,7 @@ jobs:
       # обычный для них приём «скользящего» кеша. Кеш ветки по умолчанию из PR
       # читается, кеш PR из других веток — нет, так что схема работает как
       # задумано.
-      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4 (4.3.0)
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6 (6.1.0)
         with:
           path: .image-size-baseline
           key: image-size-{% raw %}${{ github.sha }}{% endraw %}
@@ -182,7 +182,7 @@ jobs:
       - name: Запомнить размер как базу
         if: github.ref_name == github.event.repository.default_branch
         run: cp .image-size .image-size-baseline
-      - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4 (4.3.0)
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6 (6.1.0)
         if: github.ref_name == github.event.repository.default_branch
         with:
           path: .image-size-baseline
@@ -221,7 +221,7 @@ jobs:
       group: hil
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7 (7.0.1)
       # Раннер свой, тулчейн на нём уже стоит — ставим только то, чего может
       # не хватать после смены target'а в проекте.
       - run: rustup target add {{target}}
