@@ -2664,26 +2664,19 @@ if services.len() == 0 {
 if !services.contains("rest") {
 	file::delete("crates-host/domain/src/http.rs");
 	file::delete("crates-host/domain/src/http");
-	file::delete("crates-cross/app/src/net/rest.rs");
 }
 if !services.contains("ssh") {
 	file::delete("crates-host/domain/src/ssh.rs");
 	file::delete("crates-host/domain/src/ssh");
-	file::delete("crates-cross/app/src/net/ssh.rs");
 }
 // MQTT — узел, разбор `mqtt.toml` в build-скрипте `app`,
 // порт `Dial` и описание.
 if !services.contains("mqtt") {
 	file::delete("crates-host/domain/src/mqtt.rs");
 	file::delete("crates-host/domain/src/mqtt");
-	file::delete("crates-cross/app/src/net/mqtt.rs");
 	file::delete("crates-cross/app/build");
 	file::delete("crates-host/ports/src/dial.rs");
 	file::delete("docs/modules/app-mqtt.md");
-}
-// Каталог модулей служб — последним: его файлы уходят по одному выше.
-if services.len() == 0 {
-	file::delete("crates-cross/app/src/net");
 }
 if !on.protobuf && services.len() == 0 {
 	file::delete("crates-host/domain/src/device.rs");

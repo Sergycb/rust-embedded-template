@@ -312,7 +312,7 @@ RAM. От килобайта и выше фрагмент пишет `resources:
 сообщений{% if has_net == "true" %}, сокеты протоколов и служб{% endif %}{% if ota == "true" %}, адаптер обновления{% endif %}{% if config == "true" %}, хранилище настроек{% endif %} —
 решение проекта, а не свойство платы. Их строит `app` (выше) в своей памяти:
 захотел проект другой буфер или порт — правится
-`app`{% if protocol_link == "true" or net_services != "" %} ({% if protocol_link == "true" %}`crates-cross/app/src/link/`{% if net_services != "" %}, {% endif %}{% endif %}{% if net_services != "" %}`crates-cross/app/src/net/`{% endif %}){% endif %}, плата не меняется. Буфер
+`app`{% if protocol_link == "true" or net_services != "" %} ({% if protocol_link == "true" %}`crates-cross/app/src/link/`{% if net_services != "" %}, {% endif %}{% endif %}{% if net_services != "" %}`crates-cross/app/src/net.rs`{% endif %}){% endif %}, плата не меняется. Буфер
 заводится там, где решают его размер, — в `app`, — а узел получает ссылку.
 
 `Board` один (`Board::new() -> Board`)

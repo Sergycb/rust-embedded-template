@@ -436,7 +436,7 @@ read`: руками пришлось бы сначала найти адрес �
 {%- endif %}
 {%- if net_services contains "rest" %}
 - Токен REST API — `rest-token.txt` в корне проекта, его вшивает
-  `include_str!` (`crate::net::rest::TOKEN` в `crates-cross/app/src/net/rest.rs`).
+  `include_str!` (`crate::net::rest::TOKEN` в `crates-cross/app/src/net.rs`).
   Файл создаёт `cargo xtask` (`secrets::ensure` — в `build`, `lint cross` и перед
   прошивкой), и он **коммитится**, а не уходит в `.gitignore`: токен и так открыт
   в каждом образе, а без файла не собрались бы свежий клон и CI. Число

@@ -645,7 +645,7 @@ Modbus. Через `--define` то же задаёт `links` (`parse_links()`, �
 сама в разделе настроек (`domain::ssh::Stored`), `file` — вшит из `ssh-host-key.bin`
 (`Fixed`; так и при `config` вместе с CANopen — раздел настроек целиком его). Пустые
 строки, когда не выбрано. Модули узлов невыбранных служб хук удаляет (`domain/src/http.rs`,
-`ssh.rs`, `mqtt.rs`, `app/src/tasks/{http,ssh,mqtt}.rs`, `app/src/net/{rest,ssh,mqtt}.rs` и `app/src/net.rs` без служб вовсе,
+`ssh.rs`, `mqtt.rs`, `app/src/tasks/{http,ssh,mqtt}.rs` и `app/src/net.rs` без служб вовсе (модули служб в нём — Liquid),
 `device.rs` без служб и protobuf); узел протокола `domain/src/server.rs` — без Modbus и
 protobuf. Сокеты стека считает `bsp::net::SOCKETS` из чисел генерации: DHCP-клиент,
 сетевые транспорты (`net_sockets`), по сокету на копию пула REST (`http_connections` →
