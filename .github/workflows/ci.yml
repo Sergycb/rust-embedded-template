@@ -13,10 +13,10 @@ on:
 permissions:
   contents: read
 
-# Новый пуш в ту же ветку/PR отменяет прогон предыдущего: он всё равно устарел.
-concurrency:
-  group: {% raw %}${{ github.workflow }}-${{ github.ref }}{% endraw %}
-  cancel-in-progress: true
+# Новый пуш в ту же ветку/PR отменяет устаревший прогон — но по джобам, а не
+# весь workflow разом: отмена на уровне workflow обрывала бы и `hil` посреди
+# прошивки, а у него своя группа без отмены. Группа у каждого джоба своя: с
+# общей джобы одного прогона отменяли бы друг друга.
 
 env:
   CARGO_TERM_COLOR: always
@@ -25,6 +25,9 @@ jobs:
   host:
     name: Host (fmt, clippy, tests)
     runs-on: ubuntu-latest
+    concurrency:
+      group: {% raw %}${{ github.workflow }}-${{ github.ref }}-host{% endraw %}
+      cancel-in-progress: true
     timeout-minutes: 20
     steps:
       # Действия запинены по коммиту: тег переставляем, и тогда прогон без
@@ -99,6 +102,9 @@ jobs:
   typos:
     name: Typos
     runs-on: ubuntu-latest
+    concurrency:
+      group: {% raw %}${{ github.workflow }}-${{ github.ref }}-typos{% endraw %}
+      cancel-in-progress: true
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7 (7.0.1)
@@ -110,6 +116,9 @@ jobs:
   cross:
     name: Cross (fmt, clippy, build)
     runs-on: ubuntu-latest
+    concurrency:
+      group: {% raw %}${{ github.workflow }}-${{ github.ref }}-cross{% endraw %}
+      cancel-in-progress: true
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7 (7.0.1)
