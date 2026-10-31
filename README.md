@@ -78,7 +78,7 @@ cargo run -p app                    # прошить приложение и с�
 {%- endif %}
 | Логика и узлы | `crates-host/domain/` | всё, что не про регистры: автоматы, протоколы, конфигурация, а также объявления узлов (`supervisor_fragment!`) и их работа ({% if graph == "true" %}`domain::heartbeat::run`, {% endif %}`domain::cpu_load::task` — автоматы `#[fsm::typestate]` на контексте узла) — тестируется на хосте; логика вне автоматов — функции над портами |
 {%- capture adapters_list %}{% if ota == "true" %}, OTA поверх `embassy-boot` (`adapters::ota`){% endif %}{% if settings_port == "true" %}, настройки поверх `sequential-storage` (`adapters::settings`){% endif %}{% if cobs_used == "true" %}, кадрирование потока COBS + CRC (`adapters::cobs`){% endif %}{% if protocol == "modbus" %}, транспорты Modbus (`adapters::modbus`){% endif %}{% if has_net == "true" %}, сокеты над `embassy-net` (`adapters::net`){% endif %}{% if has_usb == "true" %}, поток CDC ACM над `embassy-usb` (`adapters::usb`){% endif %}{% endcapture %}
-| Адаптеры без чипа | `crates-host/adapters/` | реализации портов, которым хватает `embedded-storage`/`embedded-hal`/`embedded-io-async`{% if adapters_list != "" %}: {{ adapters_list | remove_first: ", " }}{% endif %} — тестируется на хосте |
+| Адаптеры без чипа | `crates-host/adapters/` | реализации трейтов (портов `ports` и стандартных) поверх `embedded-storage`/`embedded-hal`/`embedded-io-async`, без чипа{% if adapters_list != "" %}: {{ adapters_list | remove_first: ", " }}{% endif %} — тестируется на хосте |
 {%- if protocol == "protobuf" %}
 | Схема protobuf | `crates-host/proto/` | `.proto` и типы, сгенерированные `micropb-gen` в `build.rs` (схему разбирает `protox`, системный `protoc` не нужен); пример — конверт `Request`/`Response` с `request_id`, проект заменяет своим. Обрабатывает узел `domain::PROTOBUF_FRAG` с обработчиком `domain::protobuf::Service` |
 {%- endif %}
@@ -92,25 +92,25 @@ cargo run -p app                    # прошить приложение и с�
 `Board::new()` — единственное место, где начинается владение железом, и единственное
 место, где оно заканчивается: наружу он отдаёт не периферию, а рычаги платы —
 объекты под трейтами, которыми можно управлять: потоки, шины, разделы флеша,{% if graph == "true" %}
-сторож,{% endif %} драйверы микросхем платы.
+сторож,{% endif %} драйверы микросхем платы (объект драйвера строит плата, его тип —
+`adapters` или внешний крейт).
 {%- if has_usb == "true" or has_net == "true" %} Пары, которые порознь не собрать, плата отдаёт
 собранными: {% if has_usb == "true" %}USB-устройство с потоком CDC{% if has_net == "true" %} и {% endif %}{% endif %}{% if has_net == "true" %}сетевой стек с его фоновой работой{% endif %}.
 {%- endif %}
-Протоколы над рычагами строит `app` — выбирает тип адаптера, заводит его
-память и отдаёт узлу `domain` готовым
+Протоколы приложения над рычагами (канал протокола, клиент, хранилище) строит
+`app` — выбирает тип адаптера, заводит его память и отдаёт узлу `domain` готовым
 {%- if protocol_link == "true" or net_services != "" %}
 ({% if protocol_link == "true" %}`crates-cross/app/src/link/`{% if net_services != "" %}, {% endif %}{% endif %}{% if net_services != "" %}`crates-cross/app/src/net.rs`{% endif %})
 {%- endif %}: размер буфера и порт — решение
-приложения, а не платы. Приложение и домен работают с объектами через порт{% if ota == "true" %} (узел
+приложения, а не платы. Приложение и домен работают с объектами через трейт{% if ota == "true" %} (узел
 OTA, например, зовёт `flash.mark_booted()`){% endif %} и про регистры не знают — `embassy-stm32`
 нет даже в манифесте `app`; из ядра приложение берёт только точку входа, паникёр,
 фолт и `wfe` исполнителя (`cortex-m-rt`, `cortex-m`). Ни `Peripherals`, ни
 периферия ядра Cortex-M, ни посчитанные частоты полями не отдаются.
 {%- if graph == "true" %}
 
-Единственное исключение из «только порты» — поле
-`board.watchdog`: сторож реализует не порт, а `watchdog::HardwareWatchdog`, и отдаётся
-он собранным, но не запущенным. Запускает его инициализатор блока `watchdog:` в самом
+Сторож (`board.watchdog`, трейт `watchdog::HardwareWatchdog`) отдаётся собранным,
+но не запущенным. Запускает его инициализатор блока `watchdog:` в самом
 графе (`= board.watchdog.arm()`), потому что с этого вызова железо тикает, а кормить его
 начинает только тикер графа — и промежуток между двумя моментами короче всего именно
 там. Забыть запуск компилятор не даст: трейт реализован только у запущенного типа.
