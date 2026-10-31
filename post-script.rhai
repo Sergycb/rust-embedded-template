@@ -35,7 +35,7 @@ let answers = [
 	"# Ответы генерации из rust-embedded-template — то, из чего собран проект.",
 	"# Пишет post-script.rhai; править руками незачем: код от них уже не зависит.",
 ];
-for name in ["chip", "target", "ci", "ota", "ota_store", "signed", "config", "config_store",
+for name in ["chip", "target", "ci", "ota", "ota_store", "config", "config_store",
 		"graph", "links", "protocol", "modbus_master", "net_services", "ssh_auth",
 		"ssh_host_key", "external_flash", "rust_lib", "rust_lib_rev", "hw_drivers"] {
 	if variable::is_set(name) {
@@ -44,10 +44,10 @@ for name in ["chip", "target", "ci", "ota", "ota_store", "signed", "config", "co
 }
 file::write(".template-answers.toml", answers);
 
-// Версия и ключ подписи живут в приложении и нужны только с подписью. Здесь,
-// а не в pre-хуке: окончательное `signed` pre-хук выставляет в трёх ветках
-// раскладки, а к этому моменту оно уже одно.
-if variable::get("signed") != "true" {
+// Версия и ключ подписи живут в приложении и нужны только с OTA (подпись —
+// всегда вместе с ним). Здесь, а не в pre-хуке: окончательное `ota` pre-хук
+// выставляет в нескольких ветках раскладки, а к этому моменту оно уже одно.
+if variable::get("ota") != "true" {
 	file::delete("crates-cross/app/src/version.rs");
 }
 

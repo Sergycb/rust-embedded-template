@@ -1797,7 +1797,6 @@ if variable::is_set("write_size") {
         file::delete("crates-cross/bsp/src/flash.rs");
         file::delete("docs/modules/bsp-flash.md");
     }
-    variable::set("signed", if wants_ota { "true" } else { "false" });
     // Страницу обмена знает только раскладка, а её тут пишет пользователь —
     // угадывать нельзя. Пустая строка означает «неизвестна»:
     // xtask по ней не отдаёт host-target тесту адреса разделов, и тест
@@ -1871,10 +1870,6 @@ if variable::is_set("write_size") {
     let settings_key = pl.settings_key;
     let app_length_key = pl.app_length_key;
     let graph = pl.graph;
-    // Подпись есть всегда, когда есть OTA, и только тогда: подписывается то,
-    // что приезжает в раздел DFU, и отдельного вопроса нет. Если схема не
-    // поместилась, нет ни OTA, ни подписи.
-    let signed = ota;
 
     if wants_config && !config {
         if erase_zero {
@@ -1966,7 +1961,6 @@ if variable::is_set("write_size") {
         file::delete("crates-cross/bsp/src/flash.rs");
         file::delete("docs/modules/bsp-flash.md");
     }
-    variable::set("signed", if signed { "true" } else { "false" });
     variable::set("graph", if graph { "true" } else { "false" });
 
     // База flash одна на оба режима: `__bootloader_*` отсчитываются от неё, а не
@@ -2130,6 +2124,27 @@ if variable::is_set("write_size") {
             "__bootloader_dfu_start   = " + m[ota_key + "dfu_offset"] + ";",
             "__bootloader_dfu_end     = " + m[ota_key + "dfu_offset"] + " + " + m[ota_key + "dfu_length"] + ";",
         ];
+        // Границы разделов — `ASSERT`'ом, чтобы правка раскладки руками падала
+        // линковкой, а не `Partition::new` на плате. `ACTIVE` стоит над цельным
+        // `Flash` (смещение кратно странице чипа), а длина — целым числом страниц
+        // обмена; внешние разделы кратны той же странице (стирание драйвера её
+        // делит). Объёма микросхемы генерация не знает — его сверяет на старте
+        // `__ext_flash_end`, здесь проверять не с чем.
+        let chip_page = m["page_size"];
+        let ext_page = plain_number(m[ota_key + "page_size"]).to_string();
+        let flash_end = m["flash_length"];
+        ext_symbols += [
+            "",
+            "/* Границы разделов OTA: Partition::new паникует на смещении или размере не по странице. */",
+            "ASSERT(__bootloader_active_start % " + chip_page + " == 0",
+            "    && (__bootloader_active_end - __bootloader_active_start) % " + ext_page + " == 0",
+            "    && __bootloader_active_end <= " + flash_end + ",",
+            "    \"ACTIVE: начало не на странице чипа (" + chip_page + "), размер не кратен странице обмена (" + ext_page + ") или конец за flash (" + flash_end + ")\");",
+            "ASSERT(__bootloader_state_start % " + ext_page + " == 0 && __bootloader_state_end % " + ext_page + " == 0,",
+            "    \"STATE на внешней флеши не на границах страницы обмена (" + ext_page + " байт)\");",
+            "ASSERT(__bootloader_dfu_start % " + ext_page + " == 0 && __bootloader_dfu_end % " + ext_page + " == 0,",
+            "    \"DFU на внешней флеши не на границах страницы обмена (" + ext_page + " байт)\");",
+        ];
         let app = [
             "/* Сгенерировано chip-select.rhai: приложение линкуется в ACTIVE, */",
             "/* с базы flash стартует bootloader (crates-cross/boot). */",
@@ -2180,6 +2195,35 @@ if variable::is_set("write_size") {
         // нулевое смещение — начало банка, а не база flash: цельный `Flash` туда не
         // дотягивается (его `FLASH_SIZE` — сумма банков, меньше смещения банка 2).
         let dfu_base = if dfu_bank { m["dfu_bank_origin"] } else { base };
+        // Границы разделов — `ASSERT`'ом, чтобы правка раскладки руками падала
+        // линковкой, а не `Partition::new` на плате (кратность при генерации
+        // проверяет `assert_embassy_boot_invariants` в chip-data-gen, но правку
+        // после неё — никто). Страницы — те же числа, что у прошивки:
+        // `ACTIVE`/`DFU` стоят над страницей обмена (`SWAP_PAGE_SIZE` или
+        // страница цельного `Flash`, она же `PAGE_SIZE` embassy-boot),
+        // `BOOTLOADER_STATE` — над страницей своего сектора (`STATE_ERASE_SIZE`;
+        // на F2/F4/F7 мельче страницы обмена). Конец `DFU` во втором банке не
+        // сверяется: смещения там от начала банка, а его размера раскладка не
+        // несёт.
+        let swap = m[ota_key + "swap_page_size"];
+        let state_erase = plain_number(m[ota_key + "bootloader_state_erase_size"]).to_string();
+        let flash_end = m["flash_length"];
+        let in_flash_ends = "__bootloader_active_end <= " + flash_end + " && __bootloader_state_end <= " + flash_end;
+        if !dfu_bank {
+            in_flash_ends += " && __bootloader_dfu_end <= " + flash_end;
+        }
+        let ota_asserts = [
+            "",
+            "/* Границы разделов OTA: Partition::new паникует на смещении или размере не по странице. */",
+            "ASSERT(__bootloader_active_start % " + swap + " == 0 && __bootloader_active_end % " + swap + " == 0,",
+            "    \"ACTIVE не на границах страницы обмена (" + swap + " байт)\");",
+            "ASSERT(__bootloader_dfu_start % " + swap + " == 0 && __bootloader_dfu_end % " + swap + " == 0,",
+            "    \"DFU не на границах страницы обмена (" + swap + " байт)\");",
+            "ASSERT(__bootloader_state_start % " + state_erase + " == 0 && __bootloader_state_end % " + state_erase + " == 0,",
+            "    \"BOOTLOADER_STATE не на границах своего сектора (" + state_erase + " байт)\");",
+            "ASSERT(" + in_flash_ends + ",",
+            "    \"раздел OTA выходит за flash (" + flash_end + ")\");",
+        ];
 
         // app линкуется В ACTIVE. Раньше оба крейта получали одинаковый
         // memory.x с FLASH от базы — и `cargo xtask flash` (сначала boot,
@@ -2206,6 +2250,7 @@ if variable::is_set("write_size") {
         app.push("");
         app.push("__bootloader_dfu_start = ORIGIN(DFU) - " + dfu_base + ";");
         app.push("__bootloader_dfu_end   = ORIGIN(DFU) + LENGTH(DFU) - " + dfu_base + ";");
+        app += ota_asserts;
         app += app_symbols;
         app += panic_section;
         app += dma_sections;
@@ -2241,6 +2286,7 @@ if variable::is_set("write_size") {
         boot.push("");
         boot.push("__bootloader_dfu_start = ORIGIN(DFU) - " + dfu_base + ";");
         boot.push("__bootloader_dfu_end   = ORIGIN(DFU) + LENGTH(DFU) - " + dfu_base + ";");
+        boot += ota_asserts;
         // Символов `_panic_dump_*` у bootloader'а нет: его паникёр ничего не
         // пишет (`crates-cross/boot/src/main.rs`). Регион `PANIC` в `ram` остаётся —
         // вырезанный из RAM bootloader'а, он не даёт его стеку затереть дамп
@@ -2751,8 +2797,5 @@ if variable::get("external_flash") != "true" {
 if variable::get("ota") == "true" {
 	if variable::get("ota_store") != "external" {
 		file::delete("crates-cross/boot/src/external.rs");
-	}
-	if variable::get("signed") != "true" {
-		file::delete("crates-cross/boot/src/signature.rs");
 	}
 }

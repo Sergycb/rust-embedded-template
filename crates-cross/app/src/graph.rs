@@ -54,8 +54,8 @@ supervisor_graph! {
         // (`<Updater, Reboot>`) — типы его слотов: слот — `static`, тип ему
         // нужен, а знает его только эта сторона. Привязка (`= …`) — вход узла
         // (`domain::ota::OtaWiring`): адаптер обновления над разделами `board.firmware`, сброс МК
-        // `bsp::reset::Reboot` и режим применения (`Mode::{% if signed == "true" %}Signed` с версией этого образа
-        // из `crate::version`{% else %}Plain`{% endif %}). Образ узел принимает командами на свой вход
+        // `bsp::reset::Reboot` и режим применения (`Mode::Signed` с версией этого образа
+        // из `crate::version`). Образ узел принимает командами на свой вход
         // `CMD`{% if has_modbus != "true" and has_protobuf != "true" and has_canopen != "true" %}: клиента (`::domain::ota::OtaClient` над `ota_cmd_requester()`) получает ваш
         // протокол — без него узел только подтверждает образ{% else %} — их шлют узлы протоколов ниже, каждый со своим номером
         // транспорта (сессию приёма держит один клиент, остальным — `Busy`){% endif %}{% if has_canopen == "true" %}; узлы
@@ -64,16 +64,12 @@ supervisor_graph! {
         // строкой — раньше инициализатора блока `watchdog:`, как бы они ни стояли
         // в тексте, — частичным move: `firmware` уезжает в слот узла, `watchdog`
         // следом забирает сторож, остаток `board` дропается в конце пролога.
-        ::domain::OTA_FRAG<::adapters::ota::Updater<bsp::FirmwareFlash, {{signed}}>, bsp::reset::Reboot> as OTA = ::domain::ota::OtaWiring {
+        ::domain::OTA_FRAG<::adapters::ota::Updater<bsp::FirmwareFlash, true>, bsp::reset::Reboot> as OTA = ::domain::ota::OtaWiring {
             flash: ::adapters::ota::Updater::new(board.firmware),
             reboot: bsp::reset::Reboot,
-{%- if signed == "true" %}
             mode: ::domain::ota::Mode::Signed {
                 running_version: crate::version::FW_VERSION,
             },
-{%- else %}
-            mode: ::domain::ota::Mode::Plain,
-{%- endif %}
         },
 {%- endif %}
 {%- assign xs = links | split: "," %}

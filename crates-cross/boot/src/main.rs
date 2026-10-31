@@ -4,10 +4,8 @@
 
 mod external;
 {%- endif %}
-{%- if signed == "true" %}
 
 mod signature;
-{%- endif %}
 
 use core::cell::RefCell;
 {% if state_paged == "true" %}
@@ -23,10 +21,8 @@ use defmt::info;
 // встраивается — одну диагностическую строку перед прыжком не стоит того
 // усложнять.
 use defmt_rtt as _;
-{%- if ota_store == "external" and signed == "true" %}
+{%- if ota_store == "external" %}
 use embassy_boot_stm32::{BootLoader, BootLoaderConfig, State};
-{%- elsif ota_store == "external" %}
-use embassy_boot_stm32::BootLoaderConfig;
 {%- else %}
 use embassy_boot_stm32::{BootLoader, BootLoaderConfig};
 {%- endif %}
@@ -128,7 +124,6 @@ fn main() -> ! {
         .0;
     let external = external::new(sys_hz);
 {%- endif %}
-{%- if signed == "true" %}
     // Новый образ проверяется до обмена разделов: см. `signature::screen`.
 {%- if ota_store == "external" %}
     let (flash, external, swap_allowed) = signature::screen(flash, external);
@@ -136,7 +131,6 @@ fn main() -> ! {
     let (flash, dfu) = signature::screen(flash, dfu);
 {%- else %}
     let flash = signature::screen(flash);
-{%- endif %}
 {%- endif %}
 
     // `Flash` (до `.into_blocking_regions()`) сам реализует `NorFlash` на
@@ -160,15 +154,11 @@ fn main() -> ! {
 
     let config = BootLoaderConfig::from_linkerfile_blocking(&flash, &external, &external);
     let active_offset = config.active.offset();
-{%- if signed == "true" %}
     let bl = if swap_allowed {
         external::prepare(config)
     } else {
         BootLoader { state: State::Boot }
     };
-{%- else %}
-    let bl = external::prepare(config);
-{%- endif %}
 {%- else %}
 {%- if state_paged == "true" %}
     // `BOOTLOADER_STATE` — со страницей своего сектора, а не всего чипа (см.

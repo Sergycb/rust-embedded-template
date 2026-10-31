@@ -115,8 +115,6 @@ struct Ota {
     /// Инертный образ (см. `inert_image` в `xtask`) — путь и байты.
     image_path: PathBuf,
     image: Vec<u8>,
-    /// Подписываются ли образы в этом проекте.
-    signed: bool,
 }
 
 impl Ota {
@@ -141,7 +139,6 @@ impl Ota {
             page_size: number("HOST_TARGET_PAGE_SIZE"),
             image_path,
             image,
-            signed: required_var("HOST_TARGET_SIGNED") == "true",
         })
     }
 
@@ -247,7 +244,7 @@ fn number<T: std::str::FromStr>(name: &str) -> T {
 /// `mark_booted()`, иначе откатывать будет нечего. Настоящая прошивка не
 /// годится ни для того, ни для другого — она себя подтверждает.
 ///
-/// С подписью образ кладётся вместе с записью о ней (`ports::PendingImage`),
+/// Образ кладётся вместе с записью о подписи (`ports::PendingImage`),
 /// которую подписал `xtask`: без записи bootloader обмен не пустит — это
 /// отдельный тест ниже. Закрытого ключа нет (CI, свежий клон) — подписать
 /// нечем, и тест пропускается с предупреждением.
@@ -258,14 +255,13 @@ fn ota_swaps_partitions_and_reverts_unconfirmed_image() {
     let Some(ota) = Ota::from_env() else {
         return;
     };
-    let record = env::var_os("HOST_TARGET_SIGNATURE_RECORD").map(PathBuf::from);
-    if ota.signed && record.is_none() {
+    let Some(record) = env::var_os("HOST_TARGET_SIGNATURE_RECORD").map(PathBuf::from) else {
         eprintln!(
             "ВНИМАНИЕ: обмен и откат НЕ проверены — образы подписываются, а закрытого ключа \
              нет, подписать инертный образ нечем"
         );
         return;
-    }
+    };
     let chip = &ota.chip;
     let state_path = env::temp_dir().join("host-target-ota-state.bin");
     ota.start_clean(&state_path);
@@ -277,9 +273,7 @@ fn ota_swaps_partitions_and_reverts_unconfirmed_image() {
     download(chip, &dfu_hex, &ota.image_path);
     // Запись лежит в запасной странице `DFU`, отдельно от начала образа, —
     // отдельной заливкой.
-    if let Some(record) = &record {
-        download(chip, &ota.record_addr(), record);
-    }
+    download(chip, &ota.record_addr(), &record);
     write_state(&state_path, SWAP_MAGIC, ota.write_size, ota.state_len);
     download(chip, &ota.state, &state_path);
 
@@ -351,19 +345,15 @@ fn ota_swaps_partitions_and_reverts_unconfirmed_image() {
     }
 }
 
-/// С подписью — образ без записи о ней bootloader не пускает: снимает запрос
+/// Образ без записи о подписи bootloader не пускает: снимает запрос
 /// на обмен (`BOOT_MAGIC` в состоянии), `ACTIVE` остаётся прежним. Это и есть
 /// свойство подписанного OTA — чужой образ, положенный в `DFU` мимо
-/// приложения, не встаёт. Без подписи проверять нечего, тест пропускается.
+/// приложения, не встаёт.
 #[test]
 fn ota_rejects_unsigned_image() {
     let Some(ota) = Ota::from_env() else {
         return;
     };
-    if !ota.signed {
-        eprintln!("образы не подписываются — отказывать неподписанному некому");
-        return;
-    }
     let chip = &ota.chip;
     let state_path = env::temp_dir().join("host-target-ota-state.bin");
     ota.start_clean(&state_path);

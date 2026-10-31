@@ -1,7 +1,5 @@
-{%- if signed == "true" -%}
 use std::path::{Path, PathBuf};
 
-{% endif -%}
 fn main() {
     println!("cargo::rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=memory.x");
@@ -9,14 +7,11 @@ fn main() {
         "cargo::rustc-link-search={}",
         std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR задаёт cargo")
     );
-{%- if signed == "true" %}
 
     public_key(&PathBuf::from(
         std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR задаёт cargo"),
     ));
-{%- endif %}
 }
-{%- if signed == "true" %}
 
 /// Открытый ключ подписи: из корня проекта в `OUT_DIR`, откуда его забирает
 /// `include_bytes!` в src/signature.rs. Через промежуточный файл, а не напрямую,
@@ -74,4 +69,3 @@ fn public_key(manifest: &Path) {
         std::fs::write(&out, key).expect("записать открытый ключ в OUT_DIR");
     }
 }
-{%- endif %}

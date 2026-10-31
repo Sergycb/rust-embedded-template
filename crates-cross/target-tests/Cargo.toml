@@ -60,7 +60,7 @@ ports = { workspace = true }
 # приложение, а тест собирает так же ({% if ota == "true" %}`updater`{% endif %}{% if ota == "true" and config == "true" %}, {% endif %}{% if config == "true" %}`settings`{% endif %} в tests/test.rs).
 adapters = { workspace = true }
 {%- endif %}
-{%- if signed == "true" %}
+{%- if ota == "true" %}
 # Проверка версии образа в тесте отката (`domain::ota::update::apply_signed`).
 domain = { workspace = true }
 {%- endif %}
