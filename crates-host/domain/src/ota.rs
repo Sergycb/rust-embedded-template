@@ -27,7 +27,8 @@
 //!   `Start`/`Chunk`/`Finish` другого клиента получают `Busy`; владелец молчит
 //!   дольше [`SESSION_TIMEOUT`](crate::ota::SESSION_TIMEOUT) — приём брошен;
 //! * `Ready` — образ применён, обмен разделов ждёт сброса; новый `Start`
-//!   отвергается как `Busy`.
+//!   отвергается как `Busy`, повтор `Finish` владельца (ответ на первый
+//!   потерялся) снова получает `Ready`, ничего не записав.
 //!
 //! `Reboot` принимается в любом состоянии: узел отвечает, даёт протоколу
 //! [`REBOOT_GRACE`](crate::ota::REBOOT_GRACE) отправить ответ и сбрасывает МК портом
@@ -186,8 +187,9 @@ where
                     signature: Signature,
                     until: Instant,
                 },
-                /// Образ применён, обмен разделов — на следующем сбросе.
-                Ready,
+                /// Образ применён, обмен разделов — на следующем сбросе; `owner` —
+                /// чей `Finish` его применил: его повтор снова получает `Ready`.
+                Ready { owner: ClientId },
             }
             start => begin -> Idle;
             listen {
@@ -203,7 +205,8 @@ where
                 Receiving + cmd((OtaRequest { client, command: OtaCommand::Chunk(ref chunk) }, served))         => chunk -> Receiving | Idle,
                 Receiving + cmd((OtaRequest { client, command: OtaCommand::Finish }, served))                   => finish -> Ready | Idle | Receiving,
                 Idle      + cmd((OtaRequest { command: OtaCommand::Chunk(_) | OtaCommand::Finish, .. }, served)) => no_session -> self,
-                Ready     + cmd((OtaRequest { command: OtaCommand::Chunk(_) | OtaCommand::Finish, .. }, served)) => no_session -> self,
+                Ready     + cmd((OtaRequest { client, command: OtaCommand::Finish }, served))                   => finish_again -> self,
+                Ready     + cmd((OtaRequest { command: OtaCommand::Chunk(_), .. }, served))                     => no_session -> self,
                 *         + cmd((OtaRequest { command: OtaCommand::Reboot, .. }, served))                       => reboot -> self,
                 Receiving + expired(())                                                                         => abandon -> Idle,
             }
@@ -293,10 +296,10 @@ where
         // знает это сам, не спрашивая адаптер, — и не зовёт подтверждение,
         // которое сняло бы запрос на обмен (см. `begin`).
         let back: edges::Start = match from {
-            edges::StartFrom::Ready(Ready) => {
+            edges::StartFrom::Ready(s) => {
                 warn!("ota: Start отвергнут: образ ждёт обмена, нужен Reboot");
                 served.respond(Err(Rejection::Busy));
-                return Ready.into();
+                return s.into();
             }
             // Приём другого клиента не трогаем — ни раздел, ни его срок; но
             // срок вышел (`expired` просто не успел) — приём брошен, как по
@@ -414,13 +417,28 @@ where
                 *self.confirmed = true;
                 info!("ota: образ принят, обмен разделов на следующем сбросе");
                 served.respond(Ok(Progress::Ready));
-                Ready.into()
+                Ready { owner: client }.into()
             }
             Err(rejection) => {
                 warn!("ota: образ отвергнут: {:?}", rejection);
                 served.respond(Err(rejection));
                 Idle.into()
             }
+        }
+    }
+
+    /// Повтор `Finish` после `Ready`: владельцу — снова `Ready`, ничего не
+    /// записано и не стёрто. Ответ на первый мог потеряться (`Finish` пишет
+    /// запись для bootloader'а и стирает `STATE` — на F4 до секунды), и
+    /// `NoSession` здесь хост счёл бы провалом и не прислал бы `Reboot`, а
+    /// образ молча применился бы на первом сбросе. Чужому — `NoSession`, как
+    /// любой `Finish` без своего приёма.
+    fn finish_again(&mut self, s: &Ready, client: ClientId, served: Answer<'_>) {
+        if client == s.owner {
+            info!("ota: повтор Finish — образ уже принят");
+            served.respond(Ok(Progress::Ready));
+        } else {
+            self.no_session(served);
         }
     }
 
@@ -960,6 +978,40 @@ pub(crate) mod tests {
         assert_eq!(&flash.memory[..16], &image[..], "образ, ждущий обмена, цел");
     }
 
+    /// Повтор `Finish` владельца после `Ready` (ответ потерялся) — снова
+    /// `Ready`, и ничего не записано повторно: обмен помечен один раз.
+    #[test]
+    fn a_repeated_finish_of_the_owner_is_ready_again() {
+        let mut flash = FakeFlash::new(64, 8);
+
+        let replies = run(
+            &mut flash,
+            vec![start(16), chunk(0, &image(16)), finish(), finish()],
+        );
+
+        assert_eq!(
+            &replies[2..],
+            &[Ok(Progress::Ready), Ok(Progress::Ready)],
+            "повтор получил тот же исход"
+        );
+        assert_eq!(flash.updated, 1, "обмен помечен одним Finish");
+        assert_eq!(flash.recorded.len(), 1, "запись для bootloader'а одна");
+    }
+
+    /// Чужой `Finish` после `Ready` — `NoSession`: приёма у него не было.
+    #[test]
+    fn a_foreign_finish_after_ready_is_no_session() {
+        let mut flash = FakeFlash::new(64, 8);
+
+        let replies = run(
+            &mut flash,
+            vec![start(16), chunk(0, &image(16)), finish(), by(1, finish())],
+        );
+
+        assert_eq!(replies.last(), Some(&Err(Rejection::NoSession)));
+        assert_eq!(flash.updated, 1);
+    }
+
     #[test]
     fn maps_a_bad_length_to_length_without_erasing() {
         let mut flash = FakeFlash::new(64, 8);
@@ -1471,7 +1523,8 @@ pub(crate) mod tests {
         /// Какие бы команды ни пришли и в каком бы порядке — от двух клиентов, с
         /// перерывами дольше срока сессии, — узел не падает, отвечает на каждую
         /// ровно одним исходом и помечает обмен ровно тогда, когда ответил
-        /// `Ready`. Сценарии выше проверяют по одной истории, здесь их тысячи.
+        /// `Ready`, — один раз, сколько бы владелец ни повторял `Finish`.
+        /// Сценарии выше проверяют по одной истории, здесь их тысячи.
         #[test]
         fn any_command_sequence_gets_one_reply_each_and_swaps_only_on_ready(
             steps in proptest::collection::vec(arbitrary_step(), 1..24)
@@ -1481,7 +1534,7 @@ pub(crate) mod tests {
             let replies = run(&mut flash, steps);
             proptest::prop_assert_eq!(replies.len(), commands);
             let ready = replies.iter().filter(|reply| **reply == Ok(Progress::Ready)).count();
-            proptest::prop_assert_eq!(flash.updated, ready);
+            proptest::prop_assert_eq!(flash.updated, usize::from(ready > 0));
         }
     }
 }
