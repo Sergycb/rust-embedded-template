@@ -1,5 +1,4 @@
-//! `STATE` и `DFU` на внешней флеши: драйвер, страница обмена и решение,
-//! менять ли разделы местами.
+//! `STATE` и `DFU` на внешней флеши: драйвер и страница обмена.
 
 // Страница обмена, под которую посчитана раскладка (`memory.x`): `ACTIVE`
 // кратен ей. Обмен идёт страницами `max(ACTIVE::ERASE_SIZE,
@@ -8,8 +7,7 @@
 // старте. Поэтому стирание драйвера обязано эту страницу делить. Число — то
 // же, что у приложения (`bsp::external`).
 use bsp::external::EXT_PAGE_SIZE;
-use domain::ota::boot::{BootPlan, boot_plan};
-use embassy_boot_stm32::{BootLoader, BootLoaderConfig, State};
+use embassy_boot_stm32::{BootLoader, BootLoaderConfig};
 use embedded_storage::nor_flash::NorFlash;
 
 const _: () = assert!(
@@ -80,18 +78,15 @@ pub(crate) fn new(sys_hz: u32) -> ExternalFlash {
     }
 }
 
-/// Подготовка к загрузке. Решает `domain::ota::boot::boot_plan` (там же
-/// host-тест с прерванным обменом): `Prepare` — строгий `BootLoader::prepare`,
-/// `BootCurrent` — текущий образ без обмена; почему — docs/ota.md,
-/// «Bootloader и внешняя флеш».
+/// Строгий `BootLoader::prepare`: зовётся, когда проверка нового образа
+/// (`signature::screen`) прочитала `STATE`, — обмен запрошен, идёт или его
+/// нет, и ошибка флеши посреди него кончается паникой и сбросом, а не прыжком
+/// в наполовину переписанный `ACTIVE` (docs/ota.md, «Bootloader и внешняя
+/// флеш»). `STATE` второй раз не читается: удачная проверка уже показала, что
+/// он читается, а повторное чтение, отказав, отправило бы bootloader в `ACTIVE`
+/// посреди обмена.
 pub(crate) fn prepare<ACTIVE: NorFlash, DFU: NorFlash, STATE: NorFlash>(
-    mut config: BootLoaderConfig<ACTIVE, DFU, STATE>,
+    config: BootLoaderConfig<ACTIVE, DFU, STATE>,
 ) -> BootLoader {
-    match boot_plan(&mut config.state) {
-        BootPlan::Prepare => BootLoader::prepare::<_, _, _, BUFFER_SIZE>(config),
-        BootPlan::BootCurrent => {
-            defmt::warn!("boot: внешняя флеш не отвечает — загружается текущий образ");
-            BootLoader { state: State::Boot }
-        }
-    }
+    BootLoader::prepare::<_, _, _, BUFFER_SIZE>(config)
 }

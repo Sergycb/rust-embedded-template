@@ -36,7 +36,7 @@ paths: crates-cross/**
   (`docs/clocks.md`, «Ядро: фолты, ловушка деления, счётчик тактов»). Сброс МК —
   рычаг `bsp::reset::Reboot`.
 - `bsp` не зависит от `domain`: входы узлов из полей `Board` заполняет `app`.{% if ota == "true" %}
-  `boot` зовёт из `domain` только {% if ota_store == "external" %}`domain::ota::boot::{boot_plan, screen_update}`{% else %}`domain::ota::boot::screen_update`{% endif %}.{% endif %}
+  `boot` зовёт из `domain` только `domain::ota::boot::screen_update`.{% endif %}
   Подробности — `docs/architecture.md`.
 - Логирование только `defmt`; `log` в прошивке не используется.
 - **Если вы в репозитории самого шаблона** (признак — каталог `chip-data-gen/`

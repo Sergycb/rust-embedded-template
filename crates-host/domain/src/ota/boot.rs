@@ -1,29 +1,16 @@
-//! Решение bootloader'а при старте: обменивать ли разделы и — под фичей
-//! `signed` — пускать ли новый образ, проверив его подпись. Над
-//! **блокирующими** разделами: у bootloader'а нет исполнителя.
+//! Решение bootloader'а при старте (под фичей `signed`): пускать ли новый
+//! образ, проверив его подпись. Над **блокирующими** разделами: у
+//! bootloader'а нет исполнителя.
 
 #[cfg(feature = "signed")]
 use embassy_boot::AlignedBuffer;
-// {%- if ota_store == "external" %}
-// Нужны `boot_plan` (внешняя OTA) и `screen_update` (подпись): в проекте без
-// того и другого их нет, а ветка без `signed` собирается всё равно.
-// {%- else %}
-// Нужны `screen_update` (подпись): в проекте без неё его нет, а ветка без
-// `signed` собирается всё равно.
-// {%- endif %}
-#[cfg_attr(
-    not(feature = "signed"),
-    allow(unused_imports, reason = "нужен не в каждом варианте сборки")
-)]
+#[cfg(feature = "signed")]
 use embassy_boot::BlockingFirmwareState;
 #[cfg(feature = "signed")]
 use embassy_boot::FirmwareUpdaterError as Error;
 #[cfg(feature = "signed")]
 use embassy_boot::State;
-#[cfg_attr(
-    not(feature = "signed"),
-    allow(unused_imports, reason = "нужен не в каждом варианте сборки")
-)]
+#[cfg(feature = "signed")]
 use ports::MAX_WRITE_SIZE;
 #[cfg(feature = "signed")]
 use ports::PendingImage;
@@ -64,44 +51,6 @@ pub enum ScreenFailure {
     /// Ключ не разбирается как точка кривой или подпись не сошлась.
     Signature,
 }
-
-// {%- if ota_store == "external" %}
-/// Что bootloader'у делать при старте — см. [`boot_plan`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BootPlan {
-    /// `STATE` не читается: загрузить текущий образ, разделы не трогать.
-    BootCurrent,
-    /// `STATE` читается: строгий `BootLoader::prepare` — обмен, если он
-    /// запрошен или прерван посередине; его ошибка обязана кончиться паникой
-    /// и сбросом, а не прыжком в `ACTIVE`.
-    Prepare,
-}
-
-/// Решение bootloader'а с разделами на внешней флеши (`ext_flash=yes`):
-/// готовить загрузку или сразу грузить текущий образ.
-///
-/// Два исхода по `STATE`: не читается — [`BootPlan::BootCurrent`], читается —
-/// [`BootPlan::Prepare`] (почему так — docs/ota.md, «Bootloader и внешняя
-/// флеш»). Обмен, прерванный отказом, узнаётся по магии `Swap`, которая
-/// держится всё время обмена (и отката), и `prepare` его продолжает, а не
-/// пропускает.
-///
-/// `WRITE_SIZE` раздела шире [`MAX_WRITE_SIZE`] не компилируется — на STM32 и
-/// распространённых SPI NOR такого нет.
-pub fn boot_plan<STATE: embedded_storage::nor_flash::NorFlash>(state: &mut STATE) -> BootPlan {
-    const {
-        assert!(
-            STATE::WRITE_SIZE <= MAX_WRITE_SIZE,
-            "слово записи раздела состояния шире MAX_WRITE_SIZE"
-        );
-    }
-    let mut word = [0; MAX_WRITE_SIZE];
-    match BlockingFirmwareState::new(state, &mut word[..STATE::WRITE_SIZE]).get_state() {
-        Ok(_) => BootPlan::Prepare,
-        Err(_) => BootPlan::BootCurrent,
-    }
-}
-// {%- endif %}
 
 /// Проверка нового образа bootloader'ом — один раз, перед обменом.
 ///
@@ -384,77 +333,6 @@ mod tests {
             }
         }
     }
-
-    // {%- if ota_store == "external" %}
-    /// Решение bootloader'а с внешней флешью (`boot_plan`) — над настоящим
-    /// обменом `embassy-boot`.
-    mod plan {
-        use super::fakes::{Dfu, Flaky, MemFlash, State, Unreadable};
-        use crate::ota::boot::{BootPlan, boot_plan};
-        use embassy_boot::{BlockingFirmwareState, BootLoader, BootLoaderConfig};
-
-        fn requested() -> State {
-            let mut state = State::erased();
-            BlockingFirmwareState::new(&mut state, &mut [0; 8])
-                .mark_updated()
-                .expect("запросить обмен");
-            state
-        }
-
-        #[test]
-        fn a_readable_state_without_a_request_is_prepared() {
-            assert_eq!(boot_plan(&mut State::erased()), BootPlan::Prepare);
-        }
-
-        #[test]
-        fn an_unreadable_state_boots_the_current_image() {
-            assert_eq!(boot_plan(&mut Unreadable), BootPlan::BootCurrent);
-        }
-
-        #[test]
-        fn a_requested_swap_is_prepared() {
-            assert_eq!(boot_plan(&mut requested()), BootPlan::Prepare);
-        }
-
-        /// Главное свойство: обмен, прерванный отказом внешней флеши, —
-        /// по-прежнему `Prepare`, то есть строгий `prepare` (сброс и повтор), а
-        /// не прыжок в наполовину переписанный `ACTIVE`. И повтор с ожившей
-        /// флешью доводит обмен до конца.
-        #[test]
-        fn an_interrupted_swap_stays_strict_and_resumes() {
-            let image: Vec<u8> = (0..768u32).map(|i| (i % 253) as u8).collect();
-            let mut active = MemFlash::<768>::filled(0x11);
-            let mut dfu = Flaky {
-                flash: Dfu::erased(),
-                ops: 0,
-            };
-            dfu.flash.mem[..768].copy_from_slice(&image);
-            let mut state = requested();
-            // Пара удачных шагов — и флеш отказывает посреди обмена.
-            dfu.ops = 2;
-
-            let interrupted = BootLoader::new(BootLoaderConfig {
-                active: &mut active,
-                dfu: &mut dfu,
-                state: &mut state,
-            })
-            .prepare_boot(&mut [0; 8]);
-            assert!(interrupted.is_err(), "обмен должен был прерваться");
-
-            assert_eq!(boot_plan(&mut state), BootPlan::Prepare);
-
-            dfu.ops = usize::MAX;
-            BootLoader::new(BootLoaderConfig {
-                active: &mut active,
-                dfu: &mut dfu,
-                state: &mut state,
-            })
-            .prepare_boot(&mut [0; 8])
-            .expect("обмен после сброса");
-            assert_eq!(&active.mem[..], &image[..], "обмен доведён до конца");
-        }
-    }
-    // {%- endif %}
 
     /// Проверка нового образа bootloader'ом (`screen_update`): настоящие ключи
     /// `salty` и — для отката — настоящий обмен `embassy-boot` над теми же

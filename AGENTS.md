@@ -31,11 +31,9 @@ skill'ом `rust-engineering` и не дублируются здесь. Это�
 {%- if ota == "true" %}
 **Исключение — `boot`:** bootloader зависит от `bsp` (банки, HAL, константы
 раскладки; фича `time-driver` ему не включается — `docs/architecture.md`; точка
-входа и паникёр у него свои) и от `domain` ради {% if ota_store == "external" %}двух свободных функций над
-блокирующими разделами, `domain::ota::boot::{boot_plan, screen_update}`; в образ
-попадают только они{% else %}одной свободной функции над блокирующими
-разделами, `domain::ota::boot::screen_update`; в образ попадает только она{% endif %}
-(`lto` + `--gc-sections` выбрасывают остальное). Типы — {% if ota_store == "external" %}`BootPlan`, {% endif %}`Screening`,
+входа и паникёр у него свои) и от `domain` ради одной свободной функции над
+блокирующими разделами, `domain::ota::boot::screen_update`; в образ попадает
+только она (`lto` + `--gc-sections` выбрасывают остальное). Типы — `Screening`,
 `ScreenFailure` — тоже в `domain::ota::boot`. Больше `cross` в `domain` ходит только
 через `app`; `bsp` от `domain` не зависит — `docs/architecture.md`.
 {%- else %}
