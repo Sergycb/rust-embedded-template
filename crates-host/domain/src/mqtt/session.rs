@@ -2,12 +2,12 @@
 //! Will, объявление платы, телеметрия и команды, пока связь жива; буферы
 //! `minimq` и бюджет передающего.
 
-use defmt_or_log::{info, warn};
+use defmt_or_log::{FormatOrDebug, info, warn};
 use embassy_time::{Duration, Instant, with_deadline, with_timeout};
 use heapless::String;
 use minimq::{
-    Buffers, ConfigBuilder, ConfigError, Connection, Publication, QoS, RetainHandling, Session,
-    SubscriptionOptions, TopicFilter, Will,
+    Buffers, ConfigBuilder, ConfigError, Connection, Error as MqttError, PeerError, PubError,
+    Publication, QoS, RetainHandling, Session, SubscriptionOptions, TopicFilter, Will,
 };
 // {%- if ota == "true" %}
 use ports::{OtaCommand, Progress};
@@ -96,7 +96,10 @@ pub(crate) struct Env<'a> {
 /// Одна сессия с брокером над установленным соединением `io`: подключение с
 /// Will, подписка на команды, `status` и `info`, дальше телеметрия и команды,
 /// пока связь жива. Паузы между попытками — не здесь: их держит транспорт.
-pub(crate) async fn serve<IO: minimq::Io>(io: IO, endpoint: &Endpoint, env: &mut Env<'_>) -> Ended {
+pub(crate) async fn serve<IO: minimq::Io>(io: IO, endpoint: &Endpoint, env: &mut Env<'_>) -> Ended
+where
+    IO::Error: FormatOrDebug,
+{
     let [a, b, c, d] = endpoint.addr;
     let port = endpoint.port;
     let Env {
@@ -120,10 +123,10 @@ pub(crate) async fn serve<IO: minimq::Io>(io: IO, endpoint: &Endpoint, env: &mut
     // закрывает `hang_up` узла.
     let mut conn = match with_timeout(CONNECT_TIMEOUT, session.connect(io)).await {
         Ok(Ok(conn)) => conn,
-        Ok(Err(_)) => {
+        Ok(Err(err)) => {
             warn!(
-                "mqtt: брокер {}.{}.{}.{}:{} не принял подключение — проверьте mqtt.toml",
-                a, b, c, d, port
+                "mqtt: брокер {}.{}.{}.{}:{} не принял подключение ({:?}) — проверьте mqtt.toml",
+                a, b, c, d, port, err
             );
             return Ended::Refused;
         }
@@ -137,8 +140,9 @@ pub(crate) async fn serve<IO: minimq::Io>(io: IO, endpoint: &Endpoint, env: &mut
     };
     info!("mqtt: подключён к брокеру {}.{}.{}.{}:{}", a, b, c, d, port);
 
-    // Любая ошибка `minimq` после подключения — связь потеряна: соединение
-    // больше не годится, следующая сессия — с новым.
+    // Ошибка `minimq` после подключения — связь потеряна: соединение больше
+    // не годится, следующая сессия — с новым. Кроме отказа брокера в ответ на
+    // подписку или публикацию (ниже, у `recv`).
     let online = async {
         announce(&mut conn, topics, &status, info, *mac, *ip).await?;
         let mut next = Instant::now() + TELEMETRY_INTERVAL;
@@ -153,11 +157,19 @@ pub(crate) async fn serve<IO: minimq::Io>(io: IO, endpoint: &Endpoint, env: &mut
                     let topic = topics.telemetry();
                     conn.publish(Publication::text(&topic, &json))
                         .await
-                        .map_err(drop)?;
+                        .map_err(session_error)?;
                     next = fsm::next_tick(next, TELEMETRY_INTERVAL, Instant::now());
                     continue;
                 }
-                Ok(Err(_)) => return Err(()),
+                // SUBACK или PUBACK с кодом отказа (чаще всего — ACL брокера
+                // не пускает в тему): `minimq` отдаёт его из `recv`, а
+                // соединение живо — обрыв здесь крутил бы переподключения, не
+                // назвав причины.
+                Ok(Err(MqttError::Peer(PeerError::Rejected(code)))) => {
+                    warn!("mqtt: брокер отказал: {:?}", code);
+                    continue;
+                }
+                Ok(Err(err)) => return Err(err),
                 Ok(Ok(message)) if message.retained() => {
                     warn!("mqtt: команда {} с retain пропущена", message.topic());
                     continue;
@@ -182,7 +194,7 @@ pub(crate) async fn serve<IO: minimq::Io>(io: IO, endpoint: &Endpoint, env: &mut
                     let topic = topics.reboot_result();
                     conn.publish(Publication::text(&topic, text).qos(QoS::AtLeastOnce))
                         .await
-                        .map_err(drop)?;
+                        .map_err(session_error)?;
                     // {%- endif %}
                     // {%- if ota != "true" %}
                     warn!("mqtt: перезагрузка без OTA недоступна");
@@ -191,12 +203,21 @@ pub(crate) async fn serve<IO: minimq::Io>(io: IO, endpoint: &Endpoint, env: &mut
             }
         }
     };
-    let Err(()): Result<core::convert::Infallible, ()> = online.await;
+    let Err(err): Result<core::convert::Infallible, MqttError<IO::Error>> = online.await;
     warn!(
-        "mqtt: связь с брокером {}.{}.{}.{}:{} пропала",
-        a, b, c, d, port
+        "mqtt: связь с брокером {}.{}.{}.{}:{} пропала: {:?}",
+        a, b, c, d, port, err
     );
     Ended::Lost
+}
+
+/// Ошибка сессии из ошибки публикации. Тело у сессии — готовый текст, и
+/// отказа его сериализации не бывает; случись он — это неверный запрос.
+fn session_error<P, E>(err: PubError<P, E>) -> MqttError<E> {
+    match err {
+        PubError::Session(err) => err,
+        PubError::Payload(_) => MqttError::InvalidRequest,
+    }
 }
 
 /// Длина пакета с оставшейся частью `rest` байт (меньше 16384): тип и длина
@@ -239,7 +260,7 @@ async fn announce<IO: minimq::Io>(
     info: &DeviceInfo,
     mac: [u8; 6],
     ip: Option<embassy_net::Ipv4Address>,
-) -> Result<(), ()> {
+) -> Result<(), MqttError<IO::Error>> {
     let filter = topics.cmd_filter();
     let options = SubscriptionOptions::default()
         // Команда, оставленная с retain, иначе приходила бы при каждом
@@ -249,8 +270,7 @@ async fn announce<IO: minimq::Io>(
         .ignore_local_messages()
         .maximum_qos(QoS::AtLeastOnce);
     conn.subscribe(&[TopicFilter::new(&filter).options(options)], &[])
-        .await
-        .map_err(drop)?;
+        .await?;
     // `online` — каждый раз: брокер мог уже разослать Will `offline`.
     conn.publish(
         Publication::text(status, "online")
@@ -258,7 +278,7 @@ async fn announce<IO: minimq::Io>(
             .retain(),
     )
     .await
-    .map_err(drop)?;
+    .map_err(session_error)?;
     let mut json = String::<INFO_MAX>::new();
     if crate::device::write_info(&mut json, info, mac, ip, Instant::now().as_secs()).is_err() {
         warn!("mqtt: сведения об устройстве не влезли в буфер");
@@ -271,6 +291,6 @@ async fn announce<IO: minimq::Io>(
             .retain(),
     )
     .await
-    .map_err(drop)?;
+    .map_err(session_error)?;
     Ok(())
 }
