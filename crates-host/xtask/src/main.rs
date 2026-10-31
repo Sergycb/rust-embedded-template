@@ -28,6 +28,9 @@ fn main() -> Result<(), anyhow::Error> {
         ["setup"] => setup::setup(&sh),
         ["test", stage @ ..] => test::test(&sh, stage),
         ["build"] => firmware::build(&sh),
+        // {%- if ota == "true" %}
+        ["sign"] => firmware::sign(),
+        // {%- endif %}
         ["lint"] => lint::lint_host(&sh),
         ["lint", "cross"] => lint::lint_cross(&sh),
         // Аргументы уходят в chip-info как есть (блок, вывод, `--snippet`,
@@ -56,6 +59,7 @@ fn usage() {
     println!(
         "      cargo xtask build                      # debug + release, app.bin, размер, подпись"
     );
+    println!("      cargo xtask sign                       # подписать собранный app.bin");
     // {%- else %}
     //{{newline}}    println!("      cargo xtask build                      # debug + release, размер");
     // {%- endif %}
@@ -73,8 +77,9 @@ fn usage() {
     );
     // {%- if ota == "true" %}
     println!();
-    println!("Отдельных команд для подписи нет: `build` сам создаёт ключевую пару при первой");
-    println!("сборке, кладёт открытый ключ в прошивку и подписывает release-образ.");
+    println!("`build` сам создаёт ключевую пару при первой сборке, кладёт открытый ключ в");
+    println!("прошивку и подписывает release-образ. `sign` подписывает уже собранный образ —");
+    println!("для релиза, где закрытый ключ появляется только после сборки.");
     // {%- endif %}
     println!();
     println!("Всё остальное про плату — напрямую через probe-rs:");

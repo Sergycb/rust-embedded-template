@@ -133,3 +133,24 @@ pub fn build(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     // {%- endif %}
     Ok(())
 }
+// {%- if ota == "true" %}
+
+/// `cargo xtask sign` — подпись образа, уже собранного `cargo xtask build`.
+///
+/// Релиз подписывает отдельным шагом: закрытый ключ появляется только после
+/// сборки, и `build.rs` и proc-macro зависимостей его не видят. Ключ — тот
+/// же `ota-signing-key.bin`, и сверяется он с bootloader'ом так же, как в
+/// `build`.
+pub fn sign() -> Result<(), anyhow::Error> {
+    let seed = ensure_signing_key(&root_dir())?
+        .context("нет закрытого ключа ota-signing-key.bin — подписывать нечем")?;
+    let release = cross_target_dir().join(TARGET).join("release");
+    let path = release.join(APP_ARTIFACT).with_extension("bin");
+    let image = fs::read(&path)
+        .with_context(|| format!("прочитать {} — сначала cargo xtask build", path.display()))?;
+    let boot_elf = release.join("boot");
+    let (boot_base, boot_image) = raw_image(&boot_elf)?;
+    ensure_image_key(&boot_elf, boot_base, &boot_image, &seed)?;
+    sign_image(&path, &image, &seed)
+}
+// {%- endif %}
