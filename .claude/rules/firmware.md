@@ -26,7 +26,7 @@ paths: crates-cross/**
   тактов) —
   `docs/clocks.md`{% if external_flash == "true" %}; и `init` внешней флеши в `bsp::external::new` (опознание
   микросхемы — без него драйвер не годится ни для одной операции), из-за него
-  `Board::new` асинхронный и зовётся из `main` через `block_on` —
+  `Board::new` асинхронный и зовётся из первой задачи исполнителя —
   `docs/modules/bsp-external.md`{% endif %}.
 - `lib.rs` только объявляет — `docs/conventions.md`, «`lib.rs` только объявляет
   модули».

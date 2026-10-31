@@ -42,7 +42,7 @@ impl ports::CycleCounter for Cycles {
 // флаг `take()` он не трогает. Из набора пишутся только `DCB` и `DWT`.
 #[expect(unsafe_code, reason = "обоснование — в комментарии выше")]
 fn start_counter() {
-    // SAFETY: зовётся из `Board::new` до запуска задач и прерываний; `DCB` и
+    // SAFETY: зовётся из `Board::new` раньше остальных задач и прерываний; `DCB` и
     // `DWT` больше нигде в `bsp` не пишутся, а счётчик потом только читается.
     let mut core = unsafe { cortex_m::Peripherals::steal() };
     // На части ядер (M7) DWT заперт после включения питания. Трассировка

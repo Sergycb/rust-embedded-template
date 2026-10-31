@@ -36,6 +36,7 @@ use defmt::info;
 // должен будет отдавать объект транспорта, собранный из реальной периферии).
 use defmt_rtt as _;
 
+use embassy_executor::Spawner;
 use embassy_executor::raw::Executor;
 use embassy_time::Instant;
 use shadow_rs::shadow;
@@ -120,19 +121,6 @@ fn main() -> ! {
         defmt::error!("app: предыдущий запуск упал: {}", reason);
     }
 
-    // Плата — рычаги для узлов.
-{%- if external_flash == "true" %}
-    // `Board::new` асинхронный (ждёт `init` внешней флеши), а исполнителя ещё
-    // нет — он поднимается ниже, руками: `block_on` крутит future здесь же, на
-    // стеке `main`.
-    let board = embassy_futures::block_on(bsp::Board::new());
-{%- else %}
-    let board = bsp::Board::new();
-{%- endif %}
-    // Следом — на чём именно: чип и его заводской номер, по которому
-    // экземпляр платы отличается от соседнего.
-    info!("app: {}", board.spec);
-
     // Исполнитель — свой, а не `#[embassy_executor::main]`, и это единственная
     // причина, по которой `main` здесь синхронный: только так измеряется сон
     // (docs/modules/app-cpu-load.md, «Почему цикл исполнителя в `main` написан
@@ -145,6 +133,60 @@ fn main() -> ! {
     // возврат из него, а не сон.
     let executor = EXECUTOR.init(Executor::new(usize::MAX as *mut ()));
     let spawner = executor.spawner();
+    // Плату собирает и узлы спавнит первая задача, `start`, — до неё в цикле
+    // ничего не выполняется.
+    spawner.spawn(start(spawner).expect("задача start свежая: спавнится один раз"));
+
+    // Цикл исполнителя: поллим, потом спим, пока нечего делать, и отмечаем в
+    // счётчике, сколько тиков проспали. `wfe()` возвращается и по событию (SEV
+    // от `spawn`, от пробуждения задачи), и по таймеру — от того, что сработал
+    // следующий `Timer` задачи, — так что это единственное место, где цикл ждёт.
+    // `poll` — первым: часы, которыми меряется сон, поднимает `Board::new` в
+    // первом же проходе (`embassy_stm32::init`), и до него `Instant` читать
+    // нечем.
+    loop {
+        // SAFETY: поллить исполнитель можно только из единственного места, а
+        // оно здесь — этот цикл единственный, кто его крутит. Ровно то же
+        // обещание, что у `Executor::run`.
+        //
+        // `#[expect(unsafe_code)]` — вместе с остальными в `crates-cross` (см.
+        // `crates-cross/Cargo.toml`): unsafe в прошивке допустим, но каждое
+        // место обязано быть перечислено и объяснено, а линт `unsafe_code`
+        // заставляет перечислять.
+        #[expect(unsafe_code, reason = "обоснование — в комментарии выше")]
+        unsafe {
+            executor.poll();
+        }
+        let before = Instant::now().as_ticks();
+        cortex_m::asm::wfe();
+        cpu_load::record_sleep_ticks(Instant::now().as_ticks().saturating_sub(before));
+    }
+}
+
+/// Первая задача: собирает плату и спавнит узлы.
+///
+/// Задачей, а не в `main` до исполнителя: {% if external_flash == "true" %}`Board::new` ждёт таймерами
+/// `embassy_time` (`init` внешней флеши){% else %}так `Board::new` может ждать таймерами
+/// `embassy_time`, когда плате это понадобится (сейчас он синхронный){% endif %}, а встроенной очереди
+/// таймеров нужен waker исполнителя — под `block_on` таймер паникует. Узлов в
+/// этот момент ещё нет, так что `Board::new` по-прежнему выполняется раньше
+/// всего остального.
+{%- if external_flash != "true" %}
+// `allow`, а не `expect`: `#[embassy_executor::task]` копирует атрибут и на
+// внешнюю, синхронную функцию, где линт не срабатывает, и `expect` там остаётся
+// неисполненным.
+#[allow(
+    clippy::unused_async,
+    reason = "задача embassy обязана быть async, а без внешней флеши `Board::new` синхронный"
+)]
+{%- endif %}
+#[embassy_executor::task]
+async fn start(spawner: Spawner) {
+    // Плата — рычаги для узлов.
+    let board = bsp::Board::new(){% if external_flash == "true" %}.await{% endif %};
+    // Следом — на чём именно: чип и его заводской номер, по которому
+    // экземпляр платы отличается от соседнего.
+    info!("app: {}", board.spec);
 {%- if graph == "true" %}
 
     // Граф задач — единственное место, где в этом проекте появляются задачи.
@@ -180,28 +222,4 @@ fn main() -> ! {
     // уезжает туда целиком.
     tasks::spawn_all(spawner, board);
 {%- endif %}
-
-    // Цикл исполнителя: спим, пока нечего делать, и отмечаем в счётчике, сколько
-    // тиков проспали. `wfe()` возвращается и по событию (SEV от `spawn`, от
-    // пробуждения задачи), и по таймеру — от того, что сработал следующий
-    // `Timer` задачи, — так что это единственное место, где цикл ждёт.
-    // `poll` — `unsafe`, и это то же обещание, что у `Executor::run`: поллить
-    // исполнитель можно только из единственного места, а оно здесь.
-    loop {
-        let before = Instant::now().as_ticks();
-        cortex_m::asm::wfe();
-        cpu_load::record_sleep_ticks(Instant::now().as_ticks().saturating_sub(before));
-        // SAFETY: поллить исполнитель можно только из единственного места, а
-        // оно здесь — цикл ниже единственный, кто его крутит, и `spawn_all` к
-        // этому моменту уже отработал. Ровно то же обещание, что у `Executor::run`.
-        //
-        // `#[expect(unsafe_code)]` — вместе с остальными в `crates-cross` (см.
-        // `crates-cross/Cargo.toml`): unsafe в прошивке допустим, но каждое
-        // место обязано быть перечислено и объяснено, а линт `unsafe_code`
-        // заставляет перечислять.
-        #[expect(unsafe_code, reason = "обоснование — в комментарии выше")]
-        unsafe {
-            executor.poll();
-        }
-    }
 }

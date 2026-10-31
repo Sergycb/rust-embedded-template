@@ -314,9 +314,6 @@ w25q             = { git = "{{hw_drivers}}.git", rev = "4deb2e145fb5ed135f335b98
 	"nor-flash",
 	"defmt",
 ] }
-# `block_on` в `main` приложения: `Board::new` асинхронный (ждёт `init`
-# внешней флеши), а исполнитель поднимается позже — вручную, ради `CPU_LOAD`.
-embassy-futures  = { version = "0.1.2" }
 {%- endif %}
 
 # Причина паники, переживающая сброс: release-паникёр `app`
