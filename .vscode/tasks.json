@@ -96,16 +96,9 @@
 		{
 			// Bootloader для отладки из launch.json: приложение линкуется в
 			// ACTIVE, а после сброса управление получает то, что лежит с базы
-			// flash.
-			"label": "flash: boot (debug)",
-			"type": "shell",
-			"command": "cargo",
-			"args": ["flash", "-p", "boot", "--chip", "{{chip}}"],
-			"options": { "cwd": "${workspaceFolder}/crates-cross" },
-			"problemMatcher": ["$rustc"]
-		},
-		{
-			"label": "flash: boot (release)",
+			// flash. Bootloader всегда release, под какой бы профиль ни
+			// собиралось приложение (README, «Быстрый старт»).
+			"label": "flash: boot",
 			"type": "shell",
 			"command": "cargo",
 			"args": ["flash", "-p", "boot", "--release", "--chip", "{{chip}}"],
@@ -115,13 +108,13 @@
 		{
 			"label": "debug: prepare (debug)",
 			"dependsOrder": "sequence",
-			"dependsOn": ["flash: boot (debug)", "build: app (debug)"],
+			"dependsOn": ["flash: boot", "build: app (debug)"],
 			"problemMatcher": []
 		},
 		{
 			"label": "debug: prepare (release)",
 			"dependsOrder": "sequence",
-			"dependsOn": ["flash: boot (release)", "build: app (release)"],
+			"dependsOn": ["flash: boot", "build: app (release)"],
 			"problemMatcher": []
 		},
 		// {% endif %}

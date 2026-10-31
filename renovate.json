@@ -19,7 +19,7 @@
       "groupName": "gitlab images"
     },
     {
-      "description": "Образ rust: поднимают руками и вместе с rust-toolchain.toml (docs/conventions.md, «Тулчейн»)",
+      "description": "Образ rust: поднимают руками и вместе с rust-toolchain.toml (docs/conventions.md, «Тулчейн запинен»)",
       "matchManagers": ["docker"],
       "matchPackageNames": ["rust"],
       "enabled": false
