@@ -60,6 +60,9 @@ pub static OTA_PUBLIC_KEY_IN_IMAGE: [u8; 32] =
 /// не ответила: образ не проверен, и обмен без проверки запустил бы
 /// неподписанный — даже если на следующем шаге флеш вдруг ответит. Тогда
 /// загружается текущий образ, запрос на обмен остаётся до следующего сброса.
+/// Кроме отказа на журнале после прочитанной магии `Swap`
+/// (`Screening::JournalUnreadable`): обмен, может быть, идёт, и `report`
+/// паникует, а не отдаёт `ACTIVE` прыжку.
 pub(crate) fn screen(
     flash: Flash<'static, Blocking>,
     external: ExternalFlash,
@@ -154,9 +157,13 @@ pub(crate) fn screen(flash: Flash<'static, Blocking>) -> Flash<'static, Blocking
 }
 {%- endif %}
 
-/// Исход проверки — в лог.
+/// Исход проверки — в лог; журнал `STATE` не прочитан — паника.
 fn report(screening: Screening) {
     match screening {
+        // Обмен, может быть, идёт: прыжок в `ACTIVE` мимо `prepare` попал бы в
+        // смесь страниц. Паника — сброс и повтор с журналом (паникёр —
+        // `boot/src/main.rs`), как и на любой ошибке флеша в строгом `prepare`.
+        Screening::JournalUnreadable => panic!("boot: журнал STATE не читается"),
         Screening::NothingToCheck => {}
         Screening::Approved => info!("boot: подпись нового образа сошлась"),
         Screening::Rejected(why) => defmt::warn!(

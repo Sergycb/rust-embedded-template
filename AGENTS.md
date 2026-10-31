@@ -227,8 +227,10 @@ read`: руками пришлось бы сначала найти адрес �
 - С `ext_flash=yes` (`DFU`/`STATE` на внешней флеши): `EXT_PAGE_SIZE` — одно
   число на `boot` и `bsp::external`, и стирание драйвера обязано его делить
   (`docs/flash.md`); bootloader грузит текущий образ мимо `prepare`, только
-  если `STATE` не читается или флеш отказала при проверке подписи, иначе —
-  строгий `prepare`, не `try_prepare` (`docs/ota.md`, «Bootloader и внешняя флеш»).
+  если `STATE` не читается или флеш отказала при проверке подписи, но не на
+  журнале после прочитанной магии `Swap` (`Screening::JournalUnreadable` —
+  паника и сброс); иначе — строгий `prepare`, не `try_prepare` (`docs/ota.md`,
+  «Bootloader и внешняя флеш»).
 {%- endif %}
 {%- if swap_paged == "true" %}
 - `SWAP_PAGE_SIZE` ({{page_size}}) — страница обмена крупнее физической, одно число на
