@@ -198,8 +198,8 @@ QSPI, где он выведен (`QUADSPI`, иначе `OCTOSPI`), иначе S
 {%- if ota == "true" and graph == "true" %}{{ sep }}`local`-слотами узла OTA (`domain::ota`,
   фрагмент `OTA_FRAG`){% assign sep = ", " %}{% endif %}
 {%- if sep == " " %} всеми носителями поверх `bsp::flash::FlashMutex`{% endif %} — менять их вместе с типом мьютекса.{% if has_modbus == "true" %} Карта регистров
-  Modbus (`domain::modbus::MapMutex`) сюда не входит: она лежит в `OnceLock` в
-  `static` (`crate::modbus` в `app`), и мьютекс у неё — `CriticalSectionRawMutex`.{% endif %}
+  Modbus (`domain::modbus::MapMutex`) сюда не входит — `docs/modules/app.md`,
+  «Modbus: одна карта на все узлы `MODBUS_*`».{% endif %}
 {%- if config == "true" %}
 - **Раздел — ровно две страницы стирания одного размера.** Меньше двух
   `sequential-storage` не берёт, и одной не хватило бы по сути: перед стиранием

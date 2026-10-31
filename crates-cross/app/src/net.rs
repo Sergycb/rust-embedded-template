@@ -68,10 +68,8 @@ pub mod rest {
         Err(_) => panic!("HTTP_CONNECTIONS в [env] crates-cross/.cargo/config.toml — не число"),
     };
 
-    /// Токен `Authorization: Bearer` REST API (`domain::http`). Файл в корне
-    /// проекта создаёт `cargo xtask`, если его нет (`build`, `lint cross` и
-    /// перед прошивкой), и он коммитится: токен всё равно лежит открыто в каждом
-    /// образе.
+    /// Токен `Authorization: Bearer` REST API (`domain::http`): файл в корне
+    /// проекта, который создаёт `cargo xtask` (README, «REST API»).
     pub const TOKEN: &str = include_str!("../../../rest-token.txt").trim_ascii();
 
     // Пустой файл — не «токена нет», а поломка: `domain::http` такой токен не
@@ -90,10 +88,8 @@ pub mod ssh {
     /// Как консоль SSH пускает пользователя: по паролю [`PASSWORD`].
     pub const LOGIN: domain::ssh::Login = domain::ssh::Login::Password(PASSWORD);
 
-    /// Пароль консоли SSH (`domain::ssh::USER`). Файл `ssh-password.txt` в корне
-    /// проекта создаёт `cargo xtask`, если его нет (`build`, `lint cross` и перед
-    /// прошивкой), и он коммитится — как токен REST: пароль всё равно лежит
-    /// открыто в каждом образе.
+    /// Пароль консоли SSH (`domain::ssh::USER`): файл `ssh-password.txt` в корне
+    /// проекта, который создаёт `cargo xtask` (README, «Консоль SSH»).
     const PASSWORD: &str = include_str!("../../../ssh-password.txt").trim_ascii();
 
     // Пустой пароль впустил бы любого с пустым паролем.
@@ -111,10 +107,8 @@ pub mod ssh {
 {%- endif %}
 {%- if ssh_host_key == "file" %}
 
-    /// Зерно ключа хоста SSH (ed25519): `ssh-host-key.bin` в корне проекта создаёт
-    /// `cargo xtask`, если его нет (`build`, `lint cross` и перед прошивкой), и он
-    /// коммитится. Один ключ на все платы с этой прошивкой, и лежит он открыто в
-    /// образе — защита уровня стенда.{% if has_canopen == "true" %} Плата не хранит его сама: раздел
+    /// Зерно ключа хоста SSH (ed25519): `ssh-host-key.bin` в корне проекта, который
+    /// создаёт `cargo xtask` (README, «Консоль SSH»).{% if has_canopen == "true" %} Плата не хранит его сама: раздел
     /// настроек забирает узел CANopen.{% elsif config == "true" and config_store == "external" %} Плата не хранит его
     /// сама: на внешней флеши до драйвера проекта стоит заглушка, и ключ менялся бы
     /// при каждом старте.{% endif %}

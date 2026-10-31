@@ -10,8 +10,8 @@
 //! Клиент брокера — тоже: граф строит [`TcpClient`](crate::net::TcpClient) (порт `ports::Dial`).
 // {%- endif %}
 // {%- if net_services contains "rest" or net_services contains "ssh" %}
-//! Серверы служб (`domain::http`, `domain::ssh`) адаптера не получают: стек
-//! приходит к узлу, и сокет узел открывает сам.
+//! Серверы служб (`domain::http`, `domain::ssh`) адаптера не получают —
+//! docs/architecture.md, «Адаптеры делятся по одному признаку — нужен ли чип».
 // {%- endif %}
 
 // {%- if has_tcp == "true" or net_services contains "mqtt" %}

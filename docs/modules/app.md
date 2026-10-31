@@ -129,14 +129,41 @@ async fn uart_drain_task(mut uart: embassy_stm32::usart::UartTx<'static, embassy
     }
 }
 ```
+{%- if protocol_link == "true" %}
+{%- capture sources %}{% if has_uart == "true" %}, потоком UART{% endif %}{% if has_usb == "true" %}, потоком CDC{% endif %}{% if has_net == "true" %}, сетевым стеком{% endif %}{% endcapture %}
+
+# Канал протокола: `crate::link`
+
+Канал протокола (кадрирование, сокет) строит `link(…)` модуля транспорта над
+тем, что отдала плата: {{ sources | remove_first: ", " }}; память канала —
+{% if graph == "true" %}`static T` в привязке графа{% else %}статики модуля задачи{% endif %}. Тип канала (`Link`), его размеры и
+`link` — `crates-cross/app/src/link/<вид>.rs`, по модулю на транспорт: у
+uart/usb — подмодуль `<транспорт>` с `Source` (рычаг платы под ним), у tcp/udp
+модуль транспорта — сам файл вида; путь типа —
+`crate::link::<вид>[::<транспорт>]::Link`. Задачи embassy не могут быть
+generic, поэтому узел называет канал этим псевдонимом. Размер буфера и порт —
+решение приложения, и `bsp` их не знает: своё кадрирование — другой тип `Link`
+и его `link`, свой размер буфера или порт — константы там.
+
+Буфер кадра держит сам канал (`ports::FrameLink::buffer`), а протокол —
+обработчик ({% if has_modbus == "true" %}`domain::server::Handler`: `domain::modbus::Slave`{% if has_protobuf == "true" %}; {% endif %}{% endif %}{% if has_protobuf == "true" %}`domain::protobuf::Service`{% endif %}) — не порт:
+его реализует и зовёт сам `domain`.
+{%- if has_modbus == "true" %} Узел Modbus slave — `::domain::SERVER_FRAG<L, H>`,
+объявлен в `domain::server` ({% if graph == "true" %}граф называет узлы{% else %}узлы{% endif %} `MODBUS_<транспорт>`).{% endif %}
+{%- if has_protobuf == "true" %} Узел protobuf хоста — `::domain::PROTOBUF_FRAG<L>`,
+объявлен в `domain::protobuf` (`PROTOBUF_<транспорт>`); его канал —
+`ports::FrameDuplex` (контракт — doc трейта), а ответ уходит из своего буфера
+узла ({% if graph == "true" %}`static [u8; RESPONSE_MAX]` в привязке{% else %}статик модуля задачи{% endif %}) через `send_from`.{% endif %} Вход узла — {% if graph == "true" %}выражение
+в `fragments:` графа{% else %}`spawn` модуля задачи (`crates-cross/app/src/tasks/`), по модулю на
+задачу; `main.rs` только зовёт `tasks::spawn_all`{% endif %}.
+{%- endif %}
 {%- if has_modbus == "true" %}
 
 # Modbus: одна карта на все узлы `MODBUS_*`
 
 Узел `MODBUS_<ТРАНСПОРТ>` — по одному на транспорт с Modbus в `links`.{% if graph == "true" %}
 Фрагмент — узел протокола `domain::SERVER_FRAG<L, H>`: канал
-`L` (`crate::link::<вид>[::<транспорт>]::Link`; у uart/usb — подмодуль на транспорт, у
-tcp/udp модуль транспорта — сам файл вида) строит граф —
+`L` (`crate::link::…::Link`, раздел выше) строит граф —
 `link` этого модуля над рычагом платы в памяти `static T`, обработчик `H` —
 `domain::modbus::Slave` над картой регистров с адресом slave'а (вход
 `domain::server::ServerWiring`).{% else %}

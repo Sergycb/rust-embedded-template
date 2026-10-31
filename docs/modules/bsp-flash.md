@@ -18,14 +18,13 @@
   Обмен копирует ровно `ACTIVE`, поэтому предел образа — он, а не `DFU`.
 {%- if state_paged == "true" %} Носитель
   `BOOTLOADER_STATE` — `flash_page::ErasePage` со страницей своего сектора
-  (`STATE_ERASE_SIZE`): над цельным `Flash` раздел не кратен его странице.{% else %} Сектор `BOOTLOADER_STATE` равен странице
+  (`STATE_ERASE_SIZE`).{% else %} Сектор `BOOTLOADER_STATE` равен странице
   цельного `Flash`, и носитель — он сам (равенство проверяет `const`-assert).{% endif %}
 {%- if swap_paged == "true" %} Носитель `DFU` — `ErasePage` со страницей
-  обмена `SWAP_PAGE_SIZE`, крупнее физической: так журнал `BOOTLOADER_STATE`
-  короче, и коду bootloader'а остаётся почти весь его блок.{% endif %}{% if dfu_bank == "true" %} `DFU` — в банке 2 за разрывом
-  адресов (`DfuBankMutex`): цельный `Flash` туда не дотягивается.{% endif %} Те же
-  числа (`STATE_ERASE_SIZE`{% if swap_paged == "true" %}, `SWAP_PAGE_SIZE`{% endif %}) берёт отсюда bootloader — разделам в
-  приложении и в нём расходиться негде.
+  обмена `SWAP_PAGE_SIZE`, крупнее физической.{% endif %}{% if dfu_bank == "true" %} `DFU` — в банке 2 за разрывом
+  адресов (`DfuBankMutex`).{% endif %} Те же
+  числа (`STATE_ERASE_SIZE`{% if swap_paged == "true" %}, `SWAP_PAGE_SIZE`{% endif %}) берёт отсюда bootloader; почему страницы такие —
+  `docs/flash.md`.
 {%- endif %}
 {%- if config == "true" and config_store == "flash" %}
 

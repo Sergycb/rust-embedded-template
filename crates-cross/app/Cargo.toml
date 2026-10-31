@@ -35,12 +35,9 @@ cortex-m-rt = { workspace = true }
 # паникёре, ловушка деления и регистры фолта (src/fault.rs).
 cortex-m = { workspace = true }
 # Паникёр по профилю (src/panic.rs) — обе обычные зависимости, выбор делает
-# `#[cfg(debug_assertions)]` (Cargo гейтить зависимости по профилю не умеет, см.
-# docs/conventions.md). dev: `panic-probe` печатает причину через defmt и
-# останавливает ядро `udf()`; release: свой `#[panic_handler]` сохраняет причину
-# через `panic-persist` в регион PANIC, печатает её и перезапускает МК.
-# `panic-probe` без `use` не линкуется, а `panic-persist` собран с
-# `custom-panic-handler` — своего обработчика у него нет.
+# `#[cfg(debug_assertions)]` (docs/diagnostics.md, «Два паникёра, один на
+# сборку»). `panic-persist` собран с `custom-panic-handler` — своего
+# обработчика у него нет.
 panic-probe = { workspace = true, features = ["print-defmt"] }
 panic-persist = { workspace = true }
 # Драйвер времени — фичей `bsp` (там же почему){% if ota == "true" %}: от него зависит и `boot`,
