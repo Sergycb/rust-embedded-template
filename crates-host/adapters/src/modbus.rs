@@ -20,8 +20,8 @@
 //! [`Tcp`](crate::modbus::Tcp) — заголовок MBAP (номер транзакции,
 //! протокол 0, длина, адрес) и PDU поверх потока. CRC нет — целостность
 //! обеспечивает TCP, границу — длина в заголовке. Длина вне допустимой —
-//! граница потеряна, и поток не выровнять: канал отказывает
-//! ([`LinkError::Down`](ports::LinkError::Down) с [`FrameError::Framing`](crate::modbus::FrameError::Framing)).
+//! граница потеряна, и поток не выровнять: slave обрывает соединение, а кадр
+//! потерян ([`LinkError::Lost`](ports::LinkError::Lost) с [`FrameError::Framing`](crate::modbus::FrameError::Framing)).
 // {%- if modbus_master == "true" %}
 //! Master в этом случае получает
 //! [`MasterError::Unexpected`](ports::MasterError::Unexpected).
@@ -101,8 +101,9 @@ pub enum FrameError<E> {
     /// Поток кончился: соединение закрыто. Потеря, а не отказ канала: над
     /// TCP-сервером (`net::TcpServer`) следующий `recv` примет нового клиента.
     Eof,
-    /// Длина в заголовке MBAP вне допустимой: граница кадра в потоке потеряна,
-    /// и соединение стоит переоткрыть.
+    /// Длина в заголовке MBAP вне допустимой: граница кадра в потоке потеряна.
+    /// Slave обрывает соединение (`net::HangUp`), следующий `recv` примет
+    /// нового клиента.
     Framing,
 }
 
@@ -275,6 +276,15 @@ mod fakes {
         }
     }
 
+    // {%- if modbus_tcp == "true" %}
+    /// Обрыв соединения: непрочитанное пропадает вместе с ним.
+    impl crate::net::HangUp for Duplex {
+        async fn hang_up(&mut self) {
+            self.pos = self.rx.len();
+        }
+    }
+
+    // {%- endif %}
     impl Write for Duplex {
         fn write(&mut self, buf: &[u8]) -> impl Future<Output = Result<usize, Self::Error>> {
             if let Some(reply) = self.reply.take() {

@@ -15,6 +15,7 @@ use super::mbap::{self, HEADER, Header, MAX_ADU};
 use super::master_error;
 // {%- endif %}
 use super::{FrameError, io_error, read_error};
+use crate::net::HangUp;
 
 /// Modbus TCP поверх потока `io` (сокет `embassy-net`).
 ///
@@ -36,7 +37,10 @@ use super::{FrameError, io_error, read_error};
 ///
 /// Соединение — забота потока `io`: закрытое клиентом — потеря кадра
 /// ([`FrameError::Eof`]), а не отказ: узел обслуживает дальше, и реализация
-/// потока обязана на следующем чтении принять новое соединение.
+/// потока обязана на следующем чтении принять новое соединение. Длина в
+/// заголовке вне допустимой — граница кадра потеряна, и slave обрывает
+/// соединение сам ([`HangUp`]): клиент переподключится и начнёт с чистого
+/// потока. Кадр без PDU (только адрес) пропускается — его граница известна.
 #[derive(Debug)]
 pub struct Tcp<T> {
     io: T,
@@ -69,7 +73,7 @@ impl<T> Tcp<T> {
 /// Почему не принят кадр.
 enum Recv<E> {
     Read(ReadExactError<E>),
-    /// Длина в заголовке вне допустимой.
+    /// Длина в заголовке вне допустимой: граница кадра потеряна.
     Framing,
 }
 
@@ -83,15 +87,19 @@ impl<T: Read + Write> Tcp<T> {
     /// Принимает кадр целиком в начало `rx`; возвращает заголовок и длину
     /// кадра.
     async fn frame(&mut self) -> Result<(Header, usize), Recv<T::Error>> {
-        self.fill(HEADER).await?;
-        let header = Header::parse(&self.rx);
-        let Some(total) = header.total() else {
+        loop {
+            self.fill(HEADER).await?;
+            let header = Header::parse(&self.rx);
+            if let Some(total) = header.total() {
+                self.fill(total).await?;
+                self.have = 0;
+                return Ok((header, total));
+            }
             self.have = 0;
-            return Err(Recv::Framing);
-        };
-        self.fill(total).await?;
-        self.have = 0;
-        Ok((header, total))
+            if !header.is_empty() {
+                return Err(Recv::Framing);
+            }
+        }
     }
 
     /// Брошенное чтение (таймаут) недочитанный кадр сохраняет — следующий
@@ -115,15 +123,21 @@ impl<T: Read + Write> Tcp<T> {
     // {%- endif %}
 }
 
-impl<T: Read + Write> FrameLink for Tcp<T> {
+impl<T: Read + Write + HangUp> FrameLink for Tcp<T> {
     type Error = FrameError<T::Error>;
 
     async fn recv(&mut self) -> Result<usize, LinkError<Self::Error>> {
         loop {
-            let (header, total) = self.frame().await.map_err(|e| match e {
-                Recv::Read(e) => read_error(e),
-                Recv::Framing => LinkError::Down(FrameError::Framing),
-            })?;
+            let (header, total) = match self.frame().await {
+                Ok(frame) => frame,
+                Err(Recv::Read(e)) => return Err(read_error(e)),
+                Err(Recv::Framing) => {
+                    // Границу кадра в этом соединении уже не найти: всё, что
+                    // придёт по нему дальше, читалось бы как заголовки.
+                    self.io.hang_up().await;
+                    return Err(LinkError::Lost(FrameError::Framing));
+                }
+            };
             if header.protocol != 0 {
                 // Чужой протокол поверх MBAP: спецификация велит его пропустить.
                 continue;
@@ -233,19 +247,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn server_skips_foreign_protocol_and_loses_bad_length() {
-        let mut bad_length = frame(1, 0, 1, &[0x03]);
-        bad_length[5] = 0;
+    async fn server_skips_foreign_protocol_and_empty_frames() {
         let input = [
             frame(1, 7, 1, &[0x03, 0, 0, 0, 1]),
-            frame(2, 0, 1, &[0x06, 0, 0, 0, 1]),
-            bad_length,
+            frame(2, 0, 1, &[]),
+            frame(3, 0, 1, &[0x06, 0, 0, 0, 1]),
         ]
         .concat();
         let mut tcp = Tcp::new(Duplex::new(&input));
         assert_eq!(tcp.recv().await, Ok(6));
         assert_eq!(tcp.buffer()[1], 0x06);
-        assert_eq!(tcp.recv().await, Err(LinkError::Down(FrameError::Framing)));
+    }
+
+    /// Длина вне допустимой — соединение обрывается: кадр за битым по нему
+    /// уже не читается, следующий `recv` — новое соединение (здесь — конец
+    /// входа).
+    #[tokio::test]
+    async fn server_hangs_up_on_bad_length() {
+        let mut bad_length = frame(1, 0, 1, &[0x03]);
+        bad_length[5] = 0;
+        let input = [bad_length, frame(2, 0, 1, &[0x06, 0, 0, 0, 1])].concat();
+        let mut tcp = Tcp::new(Duplex::new(&input));
+        assert_eq!(tcp.recv().await, Err(LinkError::Lost(FrameError::Framing)));
+        assert_eq!(tcp.recv().await, Err(LinkError::Lost(FrameError::Eof)));
     }
 
     // {%- if modbus_master == "true" %}
