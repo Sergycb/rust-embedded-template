@@ -52,6 +52,20 @@
 `.config/nextest.toml`: тест этих двух крейтов, не кончившийся за 20 с,
 nextest убивает, а не ждёт до таймаута CI.
 
+## Host-тесты — только через nextest
+
+Host-тесты гоняются `cargo xtask test host` — то есть `cargo nextest`, — а не
+`cargo test` и не кнопкой запуска тестов в IDE. Часы `embassy_time::MockDriver`
+(фича `mock-driver` в `[dev-dependencies]` `domain` и `adapters`) — одни на
+процесс: тест сбрасывает их (`MockDriver::get().reset()`) и двигает
+(`advance`). nextest запускает каждый тест отдельным процессом, а `cargo test`
+и IDE — потоками одного, и два теста с часами двигают время друг другу: такой
+тест то проходит, то нет, и дело не в тесте.
+{%- capture clocked %}{% if graph == "true" %}, `domain::heartbeat`{% endif %}{% if ota == "true" %}, `domain::ota`{% endif %}{% if has_protobuf == "true" %}, `domain::protobuf::service`{% endif %}{% if net_services contains "mqtt" %}, `domain::mqtt`, `adapters::net::tcp::client`{% endif %}{% if has_usb == "true" %}, `adapters::usb`{% endif %}{% endcapture %}
+{%- if clocked != "" %} В этом проекте с часами работают тесты {{ clocked | remove_first: ", " }},
+и то же касается любого нового теста с `MockDriver`.{% else %} Касается любого теста с
+`MockDriver`, в том числе первого, который появится в проекте.{% endif %}
+
 ## Feature-flag конвенции
 
 - `crates-cross/app`{% if ota == "true" %}, `crates-cross/boot`{% endif %} и `crates-cross/bsp` **не имеют фич `debug`/`release`,

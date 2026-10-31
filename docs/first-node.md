@@ -1,0 +1,89 @@
+# Первый свой узел
+
+Узел — подсистема со своей задачей. Объявление (`supervisor_fragment!`), автомат
+и тесты живут в `domain`, а в `cross` от узла остаётся {% if graph == "true" %}одна запись в графе{% else %}модуль задачи,
+который раздаёт ему рычаги платы и спавнит его{% endif %}. Почему так —
+`docs/architecture.md`, «Узлы — фрагменты в `domain`» и следующие разделы; здесь —
+путь по шагам.
+{%- if graph == "true" %}
+
+Образец — `crates-host/domain/src/heartbeat.rs`: узел из одного состояния,
+который только отмечается у сторожа. Что ещё умеет узел графа (почтовый ящик,
+публикация, большие объекты в слоте) — `docs/modules/app-graph.md`.
+{%- else %}
+
+Графа в проекте нет: узлы спавнит `tasks::spawn_all`
+(`crates-cross/app/src/tasks.rs`), по модулю на задачу{% if ota == "true" %}; самый полный образец —
+узел OTA, `crates-host/domain/src/ota.rs` и `crates-cross/app/src/tasks/ota.rs`{% endif %}.
+Сторожа и перезапусков нет: узлы не падают, а зависший остаётся зависшим.
+{%- endif %}
+
+1. **Модуль в `domain`** — `crates-host/domain/src/<узел>.rs` и строка
+   `pub mod <узел>;` в `crates-host/domain/src/lib.rs`. В модуле — фрагмент
+   (`supervisor_fragment!` с `ctx: $crate::<узел>::<Узел>Ctx` и
+   `task: $crate::<узел>::task`, всё внутри полным путём), автомат
+   `#[fsm::typestate]` на `impl <Узел>Ctx` и задача
+   `match ctx.run().await {}` (`docs/architecture.md`, «Каждая задача узла —
+   автомат `#[fsm::typestate]`»).
+2. **Новое слово DSL — фича `supervisor`.** Слова фрагмента — под фичами
+   `supervisor`, и все они выключены по умолчанию. Без фичи работают
+   `resources:`, `inbox:` и `publish:`/`subscribe:`; включены те, что пишут
+   узлы шаблона: `local` у слотов{% if graph == "true" %}, `watchdog:`{% endif %}{% if ota == "true" %}, `deps:`/`ready`,
+   `request:`/`serves:`/`asks:`{% endif %}. Остальное (`flags:`, `restart:`,
+   `shutdown:`{% if ota != "true" %}, `deps:`, `request:`{% endif %} и др.) не скомпилируется с именем
+   нужной фичи в ошибке: допишите её в список `supervisor` в
+   `crates-host/domain/Cargo.toml`. {% if graph == "true" %}Слова самого графа (блок `watchdog:`,
+   `executor`) — в `crates-cross/Cargo.toml`.{% else %}API `supervisor`, которое зовёт модуль задачи
+   в `app`, — фичей в `crates-cross/Cargo.toml`{% if ota == "true" %} (как `startup` ради
+   `supervisor::Readiness` в `tasks/ota.rs`){% endif %}.{% endif %} Какое слово под какой фичей —
+   `[features]` в `Cargo.toml` крейта `supervisor`.
+{%- if graph == "true" %}
+3. **Строка в графе** — в `fragments:` файла `crates-cross/app/src/graph.rs`:
+   `::domain::<УЗЕЛ>_FRAG as <УЗЕЛ>`. Имя узлу даёт эта запись, а не фрагмент.
+4. **Сторож — если узел обещает прогресс.** Поле `watchdog:` фрагмента и
+   `const WATCHDOG` рядом с узлом; новый узел обязан встать в список
+   `const`-assert'а в `graph.rs`, иначе цепочка таймаутов
+   (`docs/watchdog.md`) не проверяется. Узел, который ждёт событие, которого
+   может не быть всю жизнь платы, сторожем не отмечается{% if has_net == "true" %} — как `NET`{% if net_services contains "rest" %} и `HTTP`{% endif %}{% endif %}.
+5. **Железо — через рычаг платы.** Узел не берёт периферию сам: `bsp` отдаёт
+   рычаг полем `Board`, а адаптер над ним, чей тип или память выбирает
+   приложение, `app` строит в `fragments:` и отдаёт узлу во входе фрагмента
+   (`docs/architecture.md`, «Адаптеры делятся по одному признаку — нужен ли чип»).
+6. **Тест на хосте** — по образцу `mod tests` в `crates-host/domain/src/heartbeat.rs`
+   (тесты — в модуле узла, не отдельным файлом).
+{%- else %}
+3. **Модуль задачи** — `crates-cross/app/src/tasks/<узел>.rs`, строка
+   `mod <узел>;` в `crates-cross/app/src/tasks.rs` и вызов `spawn` в
+   `spawn_all`. Задача embassy не бывает generic, поэтому её аргументы —
+   рычаги платы (`bsp`) и типы `app`; контекст узла задача собирает из
+   локальных переменных своего кадра — по полю `&mut` на слот:
+
+   ```ignore
+   // crates-cross/app/src/tasks/sensor.rs
+   #[embassy_executor::task]
+   async fn task(mut bus: bsp::SensorBus) {
+       domain::sensor::task(domain::sensor::SensorCtx { bus: &mut bus, index: 0 }).await;
+   }
+
+   pub fn spawn(spawner: embassy_executor::Spawner, bus: bsp::SensorBus) {
+       spawner.spawn(task(bus).expect("задача SENSOR свежая: спавнится один раз"));
+   }
+
+   // в spawn_all (crates-cross/app/src/tasks.rs):
+   sensor::spawn(spawner, board.sensor);
+   ```
+
+   Входы `request:` — `static` модуля задачи{% if ota == "true" %} (`CMD` и `ASK` в `tasks/ota.rs`){% endif %}.
+4. **Железо — через рычаг платы.** Узел не берёт периферию сам: `bsp` отдаёт
+   рычаг полем `Board`, а адаптер над ним, чей тип или память выбирает
+   приложение, строит модуль задачи — память в его статиках — и отдаёт узлу
+   (`docs/architecture.md`, «Адаптеры делятся по одному признаку — нужен ли чип»).
+5. **Тест на хосте** — `mod tests` в модуле узла, не отдельным файлом{% if ota == "true" %}
+   (образец — `crates-host/domain/src/ota.rs`){% endif %}.
+{%- endif %}
+   `supervisor::stand!` строит контекст и порты узла без {% if graph == "true" %}графа{% else %}модуля задачи{% endif %}, время
+   двигает `MockDriver`. Гоняется только `cargo xtask test host` —
+   `docs/conventions.md`, «Host-тесты — только через nextest».
+
+Перед коммитом — четыре команды из `AGENTS.md`, «Порядок проверки перед
+коммитом»: узел собирается и в `domain`, и в `crates-cross`.

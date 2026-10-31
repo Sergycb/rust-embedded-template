@@ -131,9 +131,8 @@ topic read  devices/<uid>/cmd/#
 ## Тесты
 
 Host-тесты узла гоняют `serve` против поддельного брокера-потока; часть
-использует `embassy_time::MockDriver`, общий на процесс. Гонять их надо через
-`cargo xtask test host` (nextest: процесс на тест), обычный `cargo test`
-запускает тесты потоками в одном процессе и может дать нестабильный результат.
+двигает часы `MockDriver`, поэтому гоняются только `cargo xtask test host` —
+`docs/conventions.md`, «Host-тесты — только через nextest».
 `TcpClient` проверяется на host над парой стеков `embassy-net` (тесты
 `adapters::net::tcp::client`), сборку узла с ним — сборка `crates-cross`
 (`cargo xtask build`).

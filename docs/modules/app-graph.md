@@ -16,10 +16,8 @@
 почтовым ящиком). Раньше один и тот же граф приходилось объявлять трижды
 и следить за тем, чтобы три декларации не разъехались.
 
-Что даёт узел графа, помимо `deps:` (упорядоченный старт — через явный
-барьер готовности, а не порядок спавна) и `restart:`/`backoff:`
-(политика перезапуска с backoff'ом; узлы шаблона ею не пользуются — они не
-падают, `docs/architecture.md`, «Узлы не падают»):
+Что даёт узел графа в этом проекте{% if ota == "true" %}, помимо `deps:` (упорядоченный старт —
+через явный барьер готовности, а не порядок спавна){% endif %}:
 
 * `resources: [SLOT: Type]` — эксклюзивная передача владения в задачу на
   один прогон и обратно при её остановке. Узлы шаблона так получают рычаги
@@ -30,33 +28,27 @@
   см. пример ниже.
 * `publish: [FIELD: Type; N]` / `subscribe: [OTHER.FIELD]` — broadcast
   состояния наружу через `embassy_sync::watch::Watch`.
-* `flags: [FIELD: Type]` — слово статуса подсистемы (`flags::Word`, битовые
-  флаги): владелец получает `flags::Writer`, читатели — `flags::Reader` через
-  тот же `subscribe:`, без счётчика подписчиков.
+{%- if ota == "true" %}
 * `request: [FIELD: Req -> Resp]` / `calls: [OTHER.FIELD]` — request/response
   поверх `sync_request::RpcService`, с `RequestTimeoutExt::request_timeout`
   для таймаута. `Req`/`Resp` обязаны укладываться в 32 байта — больше
   задаётся явно, `[FIELD: Req -> Resp; 128]`, или на весь узел фрагмента
   `request_capacity: 128;`. Отвечать — `served.respond_with(fut).await`, а не
   `respond(fut.await)`: вторая форма стоит лишнего `memmove` на флеше.
+{%- endif %}
 * `watchdog: Duration` — участие узла в общем аппаратном watchdog'е,
   см. следующий раздел.
-* `shutdown: Interruptible | Cooperative` — узел, который `request_shutdown`
-  вправе остановить; без этого слова узел работает, пока не вернётся его
-  тело. `Cooperative` не отменяют дропом посреди работы: задача получает
-  `stop: impl Stoppable` и выходит сама, доделав то, что нельзя бросить на
-  середине (запись во flash, транзакция на шине).
-* `executor: NAME` — узел спавнится не на общем исполнителе, а на том,
-  чей `SpawnerSlot` объявлен в графе (прерывательный приоритет, второе
-  ядро).
 * `cloned:` / `shared:` — общий на весь граф объект: первый отдаёт
   каждому узлу собственный `Clone`, второй — `&'static` на один
   физический ресурс (шина под `Mutex`).
 
-Каждое слово — под своей фичей `supervisor`, и все они выключены по
-умолчанию: слово без фичи — ошибка компиляции с её именем. Фичи слов
-фрагментов `domain` включает `crates-host/domain/Cargo.toml`, слова графа —
-`crates-cross/Cargo.toml`. Полный список полей, фич и их тонкости — в
+Остальные слова DSL — `restart:`/`backoff:` (узлам шаблона не нужны: они не
+падают, `docs/architecture.md`, «Узлы не падают»), `shutdown:`, `flags:`,
+`executor:`{% if ota != "true" %}, `deps:`, `request:`/`calls:`{% endif %} и др. — под фичами `supervisor`,
+выключенными по умолчанию: слово без фичи — ошибка компиляции с её именем.
+Включаются в манифесте: слова фрагментов `domain` — в
+`crates-host/domain/Cargo.toml`, слова графа — в `crates-cross/Cargo.toml`
+(`docs/first-node.md`). Полный список полей, фич и их тонкости — в
 doc-комментариях самого `supervisor` и `supervisor-macros`; здесь только
 минимальный каркас.
 
@@ -166,7 +158,8 @@ supervisor::supervisor_fragment! {
 // в crates-host/domain/src/peer.rs — то есть там, где это тестируется на хосте:
 supervisor::supervisor_fragment! {
     name: PEER_FRAG;
-    // Стартует только после того, как SENSOR сигнализировал готовность.
+    // Стартует только после того, как SENSOR сигнализировал готовность.{% if ota != "true" %}
+    // `deps:` — фича `startup`, в этом проекте она выключена (`docs/first-node.md`).{% endif %}
     node deps: [SENSOR],
         inbox: [EVENTS: $crate::peer::PeerEvent; 8],
         ctx: $crate::peer::PeerCtx,
@@ -253,31 +246,8 @@ resources: [WS: &'static mut $crate::x::Workspace = static |w| w.gain = inputs.g
 
 # Первый свой узел
 
-Образец — `crates-host/domain/src/heartbeat.rs`: узел из одного состояния,
-который только отмечается у сторожа. Свой узел — тот же путь из пяти шагов.
-
-1. **Модуль в `domain`** — `crates-host/domain/src/<узел>.rs` и строка
-   `pub mod <узел>;` в `crates-host/domain/src/lib.rs`. В модуле — фрагмент
-   (`supervisor_fragment!` с `ctx: $crate::<узел>::<Узел>Ctx` и
-   `task: $crate::<узел>::task`, всё внутри полным путём), автомат
-   `#[fsm::typestate]` на `impl <Узел>Ctx` и задача
-   `match ctx.run().await {}` (`docs/architecture.md`, «Узлы — фрагменты в
-   `domain`» и следующие разделы).
-2. **Строка в графе** — в `fragments:` файла `crates-cross/app/src/graph.rs`:
-   `::domain::<УЗЕЛ>_FRAG as <УЗЕЛ>`. Имя узлу даёт эта запись, а не фрагмент.
-3. **Сторож — если узел обещает прогресс.** Поле `watchdog:` фрагмента и
-   `const WATCHDOG` рядом с узлом; новый узел обязан встать в список
-   `const`-assert'а в `graph.rs`, иначе цепочка таймаутов
-   (`docs/watchdog.md`) не проверяется. Узел, который ждёт событие, которого
-   может не быть всю жизнь платы, сторожем не отмечается — как `NET` и `HTTP`.
-4. **Железо — через рычаг платы.** Узел не берёт периферию сам: `bsp` отдаёт
-   рычаг полем `Board`, а адаптер над ним, чей тип или память выбирает
-   приложение, `app` строит в `fragments:` и отдаёт узлу во входе фрагмента (`docs/architecture.md`, «Адаптеры делятся по
-   одному признаку — нужен ли чип»).
-5. **Тест на хосте** — по образцу `mod tests` в `crates-host/domain/src/heartbeat.rs`
-   (тесты — в модуле узла, не отдельным файлом):
-   `supervisor::stand!` строит контекст и порты узла без графа, время
-   двигает `MockDriver`. Гоняется `cargo xtask test host`.
+Путь по шагам — модуль в `domain`, фича слова DSL, запись в `fragments:`,
+сторож, рычаг платы и тест на хосте — `docs/first-node.md`.
 
 # `watchdog` — мультиплексор задач в один аппаратный watchdog
 
