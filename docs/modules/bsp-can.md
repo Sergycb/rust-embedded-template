@@ -15,7 +15,9 @@ CANopen{% else %}вашим протоколом{% endif %}.
 
    Он печатает `bind_interrupts!` и группу `assign_resources!` со свободными
    выводами RX/TX; выберите те, что разведены на плате к трансиверу, и
-   добавьте их в готовую группу `can` в `resources.rs` — блок в ней уже есть.
+   добавьте их в готовую группу транспорта в `resources.rs` (`<транспорт>` —
+   имя блока строчными; `Board::new` берёт её как `r.<транспорт>`) — блок в
+   ней уже есть.
 
 2. Свой тип — реализация `ports::CanBus` поверх контроллера `embassy-stm32`
    (`{% if can_kind == "fdcan" %}CanConfigurator::into_normal_mode{% else %}Can::new` + `set_bitrate{% endif %}`): у CAN нет асинхронного трейта в

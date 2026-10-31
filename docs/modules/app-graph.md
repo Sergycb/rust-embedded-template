@@ -173,35 +173,35 @@ supervisor::supervisor_fragment! {
         task: $crate::sensor::task;
 }
 
-// в crates-host/domain/src/link.rs — то есть там, где это тестируется на хосте:
+// в crates-host/domain/src/peer.rs — то есть там, где это тестируется на хосте:
 supervisor::supervisor_fragment! {
-    name: LINK_FRAG;
+    name: PEER_FRAG;
     // Стартует только после того, как SENSOR сигнализировал готовность.
     node deps: [SENSOR],
-        inbox: [EVENTS: $crate::link::LinkEvent; 8],
-        ctx: $crate::link::LinkCtx,
-        task: $crate::link::task;
+        inbox: [EVENTS: $crate::peer::PeerEvent; 8],
+        ctx: $crate::peer::PeerCtx,
+        task: $crate::peer::task;
 }
 
-pub async fn task(mut ctx: LinkCtx<'_>) {
+pub async fn task(mut ctx: PeerCtx<'_>) {
     match ctx.run().await {} // не возвращается
 }
 
 #[fsm::typestate]
-impl LinkCtx<'_> {
+impl PeerCtx<'_> {
     fsm::machine! {
-        machine Link mod edges {
-            states { Disconnected, Connected { peer: u8 } }
+        machine Peer mod edges {
+            states { Disconnected, Connected { id: u8 } }
             start -> Disconnected;
             // Почтовый ящик узла — обычный источник событий.
             listen { * => ev: self.events.receive() }
             transitions {
-                Disconnected + ev(LinkEvent::Up(peer)) => up   -> Connected,
-                Connected    + ev(LinkEvent::Down)     => down -> Disconnected,
+                Disconnected + ev(PeerEvent::Up(id))   => up   -> Connected,
+                Connected    + ev(PeerEvent::Down)     => down -> Disconnected,
                 // Каждое событие каждого состояния — строкой: забытое не
                 // скомпилируется (`E0004`), `_ =>` здесь нет.
-                Disconnected + ev(LinkEvent::Down)     => ignore,
-                Connected    + ev(LinkEvent::Up(_))    => ignore,
+                Disconnected + ev(PeerEvent::Down)     => ignore,
+                Connected    + ev(PeerEvent::Up(_))    => ignore,
             }
         }
     }
@@ -213,7 +213,7 @@ impl LinkCtx<'_> {
 fragments: [::domain::HEARTBEAT_FRAG as HEARTBEAT,
             ::domain::SENSOR_FRAG<bsp::SensorBus> as SENSOR =
                 ::domain::sensor::SensorWiring { bus: board.sensor },
-            ::domain::LINK_FRAG as LINK];
+            ::domain::PEER_FRAG as PEER];
 
 // в main(): `board` уходит в `spawn_all` целиком. Привязку вычисляет пролог
 // `spawn_all` и кладёт рычаг в слот `SENSOR_BUS` сам — строки `provide_sensor_bus`
