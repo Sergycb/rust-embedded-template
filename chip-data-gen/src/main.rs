@@ -3118,10 +3118,6 @@ fn format_bank_modes(modes: &BTreeMap<&str, &'static str>) -> String {
     out
 }
 
-/// Множество идентификаторов чипов, которые знает локально установленный
-/// `probe-rs` (`probe-rs chip list`), например `STM32F407VE` — без суффикса
-/// корпус/темп.диапазон (`Tx`/`Hx`/...), см. обоснование в MAINTAINING.md
-/// («Плейсхолдеры шаблона»).
 /// Версия `embassy-stm32` так, как она объявлена в `crates-cross/Cargo.toml` — не
 /// разрешённая cargo: сверять надо именно объявление, иначе безобидный
 /// патч-релиз в реестре ронял бы тест штампа.
@@ -3163,6 +3159,10 @@ fn probe_rs_version() -> anyhow::Result<String> {
         .to_owned())
 }
 
+/// Множество идентификаторов чипов, которые знает локально установленный
+/// `probe-rs` (`probe-rs chip list`), например `STM32F407VE` — без суффикса
+/// корпус/темп.диапазон (`Tx`/`Hx`/...), см. обоснование в MAINTAINING.md
+/// («Плейсхолдеры шаблона»).
 fn probe_rs_chip_names() -> anyhow::Result<BTreeSet<String>> {
     let output = Command::new("probe-rs")
         .args(["chip", "list"])
