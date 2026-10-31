@@ -41,17 +41,39 @@ skill'ом `rust-engineering` и не дублируются здесь. Это�
 `cross` в `domain` ходит только через `app`; `bsp` от `domain` не зависит —
 `docs/architecture.md`.
 {%- endif %}
+{%- capture board_built %}{% if ota == "true" %}, разделы обновления (`adapters::ota::Partitions`){% endif %}{% if config_store == "eeprom" %}, EEPROM как `NorFlash` (`adapters::eeprom::Eeprom`){% endif %}{% if has_usb == "true" %}, пара USB с потоком CDC (`adapters::usb::cdc`){% endif %}{% if has_net == "true" %}, пара сети (`adapters::net::Net`){% endif %}{% endcapture %}
+{%- capture app_built %}{% if protocol_link == "true" %}, канал протокола{% endif %}{% if ota == "true" %}, адаптер обновления `adapters::ota::Updater`{% endif %}{% if config == "true" %}, хранилище настроек `adapters::settings::Settings`{% endif %}{% if net_services contains "mqtt" %}, клиент MQTT `adapters::net::TcpClient`{% endif %}{% endcapture %}
 `cross` остаётся минимальным: `bsp` — рычаги платы (объекты под трейтами и
-портами: потоки, шины, разделы флеша,{% if graph == "true" %} сторож,{% endif %} драйверы микросхем платы; DMA-буферы
+портами: потоки, шины, разделы флеша,{% if graph == "true" %} сторож,{% endif %} объекты драйверов микросхем платы; DMA-буферы
 под железо), `app` — оркестрация задач (`Spawner`{% if graph == "true" %}, supervisor-графы, watchdog{% endif %}) и
 память, которую домен получает ссылками (буферы узлов и транспортов{% if has_modbus == "true" %}, карта
-Modbus{% endif %}{% if net_services != "" %}, секреты служб{% endif %}). **Адаптер над рычагом строит compose-site** — {% if graph == "true" %}одним
-выражением в привязке узла в `fragments:` графа, а память адаптера объявляет
-там же `static [u8; N]` (ячейка на вхождение, в `.bss`, мимо стека){% else %}модуль
-задачи, память — его статики `ConstStaticCell`{% endif %} — и отдаёт узлу готовым во входе
-(`LINK: local L = inputs.link`); тип адаптера — параметр фрагмента. Трейта
-сборки и структур буферов у адаптеров нет. Порт с адаптером или библиотека
-прямо в `domain` — критерий в `docs/architecture.md`.
+Modbus{% endif %}{% if net_services != "" %}, секреты служб{% endif %}).
+**Реализация над стандартным трейтом — `adapters`, над чипом — `bsp`.** Тип,
+которому хватает трейтов `embedded-hal`/`embedded-io-async`/`embedded-storage`
+или портов `ports` (шина, поток, раздел приходят параметром), — `adapters`, в
+том числе тип драйвера микросхемы платы (или внешний крейт{% if external_flash == "true" %}, как `w25q`{% endif %}); объект
+драйвера строит `bsp` в `Board::new` и кладёт в `Board`. Нужен чип
+(`embassy_stm32::peripherals`, регистр) — `bsp`. HAL-объект, который уже
+реализует трейт, `bsp` отдаёт псевдонимом типа; своя структура в `bsp` —
+только обёртка там, где реализации трейта нет, плюс `Board` и данные вроде
+`bsp::ChipSpec`.
+**Кто строит адаптер, тот держит его память.** Адаптер, без которого рычаг не
+собрать, строит `bsp` в `Board::new`, и его память — статики `bsp`{% if board_built != "" %} ({{ board_built | remove_first: ", " }}){% endif %}.
+Адаптер, чей тип или память выбирает приложение{% if app_built != "" %} ({{ app_built | remove_first: ", " }}){% endif %},
+строит compose-site — место, где фрагмент получает типы и входы:
+{% if graph == "true" %}`fragments:` графа (`crates-cross/app/src/graph.rs`), одним выражением в
+привязке узла, а память адаптера объявляет там же `static [u8; N]` (ячейка на
+вхождение, в `.bss`, мимо стека){% else %}модуль задачи в `crates-cross/app/src/tasks/`,
+память — его статики `ConstStaticCell`{% endif %}. Узлу адаптер приходит готовым{% if graph == "true" %} во
+входе (`LINK: local L = inputs.link`), тип адаптера — параметр фрагмента{% else %} в
+контексте, тип адаптера — в модуле задачи{% endif %}; трейта сборки и структур буферов у
+таких адаптеров нет.
+{%- if net_services contains "rest" or net_services contains "ssh" %} Сервер службы ({% if net_services contains "rest" %}`HTTP`{% if net_services contains "ssh" %}, {% endif %}{% endif %}{% if net_services contains "ssh" %}`SSH`{% endif %})
+адаптера не получает: стек сети приходит к узлу рычагом
+(`STACK: local $crate::net::Stack`), сокет узел открывает сам в `domain`,
+буферы — слоты `= static` фрагмента{% if net_services contains "mqtt" %}; клиент MQTT, наоборот, подключается через порт
+`ports::Dial` адаптера выше{% endif %}.{% endif %} Порт с адаптером или библиотека прямо в `domain` —
+критерий в `docs/architecture.md`.
 Всё остальное — даже асинхронное и «системное» на вид (стейтчарты, RPC, синхронизация
 задач) — живёт в `domain`, а не в `cross`. Узлы тоже: подсистема объявляет свой
 `supervisor_fragment!`-ом{% if graph == "true" %} (`domain::cpu_load::CPU_LOAD_FRAG`){% endif %} рядом со своей задачей — самодостаточным модулем с задачей,
@@ -487,11 +509,15 @@ read`: руками пришлось бы сначала найти адрес �
 {%- endif %}
 - `Board` отдаёт рычаги платы — объекты под трейтами (`embedded-io-async`,
   `embedded-storage`, порты `ports` там, где стандартного трейта нет{% if graph == "true" %},
-  `HardwareWatchdog`{% endif %}): потоки, шины, куски флеша{% if ota == "true" or config == "true" %} ({% if ota == "true" %}`firmware`{% if config == "true" %}, {% endif %}{% endif %}{% if config == "true" %}`config`{% endif %}){% endif %}, драйверы
-  микросхем платы, данные о чипе (`bsp::ChipSpec`), — и ничего не настраивает:
-  ни периферии ядра, ни `Peripherals`, ни `Clocks` в полях нет. Протоколов над
-  рычагами и их буферов в `bsp` нет: тип и память — в `app`{% if protocol_link == "true" or net_services != "" %} ({% if protocol_link == "true" %}`link`{% if net_services != "" %}, {% endif %}{% endif %}{% if net_services != "" %}`net`{% endif %}){% endif %}{% if ota == "true" or config == "true" %} или тип прямо {% if graph == "true" %}в графе{% else %}в задаче{% endif %}
-  ({% if ota == "true" %}адаптер обновления{% if config == "true" %}, {% endif %}{% endif %}{% if config == "true" %}хранилище{% endif %}){% endif %}, строит `app`{% if has_stub == "true" %}. Заглушка периферии до драйвера — `bsp::stub`{% endif %} — `docs/architecture.md`.
+  `HardwareWatchdog`{% endif %}): потоки, шины, куски флеша{% if ota == "true" or config == "true" %} ({% if ota == "true" %}`firmware`{% if config == "true" %}, {% endif %}{% endif %}{% if config == "true" %}`config`{% endif %}){% endif %}, объекты
+  драйверов микросхем платы (тип драйвера — `adapters` или внешний крейт), данные
+  о чипе (`bsp::ChipSpec`), — и ничего не настраивает:
+  ни периферии ядра, ни `Peripherals`, ни `Clocks` в полях нет. Протоколов
+  приложения над рычагами (кадрирование{% if has_net == "true" %}, сокеты протоколов и клиентов{% endif %}{% if config == "true" %}, хранилище{% endif %})
+  и их буферов в `bsp` нет: тип и память — в `app`{% if protocol_link == "true" or net_services != "" %} ({% if protocol_link == "true" %}`link`{% if net_services != "" %}, {% endif %}{% endif %}{% if net_services != "" %}`net`{% endif %}){% endif %}{% if ota == "true" or config == "true" %} или тип прямо {% if graph == "true" %}в графе{% else %}в задаче{% endif %}
+  ({% if ota == "true" %}адаптер обновления{% if config == "true" %}, {% endif %}{% endif %}{% if config == "true" %}хранилище{% endif %}){% endif %}, строит `app`{% if has_usb == "true" or has_net == "true" %}. Память, без
+  которой рычаг не собрать ({% if has_usb == "true" %}буферы класса CDC{% if has_net == "true" %}, {% endif %}{% endif %}{% if has_net == "true" %}`StackResources` стека{% endif %}), — статики `bsp`:
+  адаптер над ней строит плата{% endif %}{% if has_stub == "true" %}. Заглушка периферии до драйвера — `bsp::stub`{% endif %} — `docs/architecture.md`.
 {%- if external_flash == "true" %}
 - Внешняя флеш — W25Q, драйвер `w25q` (hw-drivers, `rev` закреплён) в
   `bsp::external`; шина под ним — заглушка `bsp::stub::FlashBus`, пока плата
@@ -513,7 +539,7 @@ read`: руками пришлось бы сначала найти адрес �
   {%- if has_usb == "true" or has_net == "true" %}
   Не передавать половину пары через `static`{% if has_usb == "true" %} (поток CDC не `Send`){% endif %} и не делать
   поля `Board` `Option`{% else %} Не делать поля `Board` `Option`{% endif %} — `docs/architecture.md`.
-{%- capture wrappers %}{% if has_usb == "true" %}, обёртки USB CDC{% endif %}{% if has_net == "true" %}, `adapters::net::Net`{% endif %}{% if config_store == "eeprom" %}, EEPROM{% endif %}{% endcapture %}
+{%- capture wrappers %}{% if ota == "true" %}, разделы обновления `adapters::ota::Partitions`{% endif %}{% if has_usb == "true" %}, обёртки USB CDC{% endif %}{% if has_net == "true" %}, `adapters::net::Net`{% endif %}{% if config_store == "eeprom" %}, EEPROM{% endif %}{% endcapture %}
 {%- capture levers %}{% if wrappers != "" %}, `adapters` ({{ wrappers | remove_first: ", " }}){% endif %}{% if has_usb == "true" %}, `embassy-usb`{% endif %}{% if has_net == "true" %}, `embassy-net`{% endif %}{% if net_services contains "ssh" %}, `getrandom`{% endif %}{% endcapture %}
 - `bsp` зависит от `ports`{% if flash_page == "true" %}, `flash-page` (страница раздела{% if ota == "true" %}, общая с `boot`{% endif %}){% endif %}, HAL
   с трейтами драйверов{% if levers != "" %} и того, из чего собирает свои рычаги: {{ levers | remove_first: ", " }}{% endif %}. От `domain` — нет: типы домена{% if ota == "true" %} — например вход узла

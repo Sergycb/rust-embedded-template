@@ -1,13 +1,15 @@
 Сеть платы — Ethernet-устройство (`bsp::net::Device`) и стек `embassy-net` над
 ним: `board.net` (`bsp::net::Net`) — фоновая работа стека (`runner`) и сам стек
 (`stack`). Стек, его память и адресацию собирает плата; сокеты на нём открывают
-узлы — каналы протоколов и соединения служб строит приложение в своей
+узлы — каналы протоколов{% if net_services contains "mqtt" %} и клиент MQTT{% endif %} строит приложение в своей
 памяти и отдаёт узлам готовыми
 {%- assign sep = " (" %}
 {%- if link_kinds contains "tcp" or link_kinds contains "udp" %}{{ sep }}`crates-cross/app/src/link/`{% assign sep = ", " %}{% endif %}
 {%- if net_services != "" %}{{ sep }}`crates-cross/app/src/net.rs`{% assign sep = ", " %}{% endif %}
 {%- if sep == ", " %}){% endif %}: порты — решение
-протокола, а не платы.
+протокола, а не платы.{% if net_services contains "rest" or net_services contains "ssh" %} Сервер службы ({% if net_services contains "rest" %}`domain::http`{% if net_services contains "ssh" %}, {% endif %}{% endif %}{% if net_services contains "ssh" %}`domain::ssh`{% endif %})
+адаптера не получает: берёт сам стек и открывает сокет в своём узле, буферы —
+слоты `= static` фрагмента.{% endif %}
 
 Шаблон выводы не выбирает (`docs/architecture.md`), поэтому `Device` пока —
 заглушка `bsp::stub::NetDevice`: линк всегда опущен, кадров нет. Всё остальное
