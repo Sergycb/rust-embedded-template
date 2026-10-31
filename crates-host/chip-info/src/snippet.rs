@@ -17,32 +17,6 @@ use crate::notes::pin_note;
 const OPEN: char = '{';
 const CLOSE: char = '}';
 
-/// Строка таблицы [`HANDLERS`].
-///
-/// Структура, а не кортеж: полей стало четыре, и два из них — строковые
-/// срезы, которые в позиционной записи путаются между собой. Заодно уходит
-/// псевдоним, заведённый когда-то ради clippy (`type_complexity`).
-struct Handlers {
-    /// `kind` блока из метаданных `stm32-metapac`.
-    kind: &'static str,
-    /// Модуль `embassy_stm32`, в котором живёт обработчик.
-    module: &'static str,
-    /// Версии блока, у которых обработчик вообще существует. Пустой список —
-    /// «у всех версий этого вида».
-    ///
-    /// Нужно потому, что наличие обработчика в embassy зависит не только от
-    /// вида блока: `adc::InterruptHandler` определён лишь для пяти версий
-    /// ADC из полутора десятков, а модуль `comp` целиком закрыт
-    /// `#[cfg(any(comp_u5, comp_v2))]`. Без фильтра заготовка предлагала бы
-    /// тип, которого на этом чипе нет, — и вставивший её получал бы ошибку
-    /// компиляции вместо подсказки.
-    versions: &'static [&'static str],
-    /// Сигнал прерывания → шаблон типа. `{}` заменяется именем блока; без
-    /// него идут те, кто в embassy привязан к единственному экземпляру
-    /// (`eth`).
-    signals: &'static [(&'static str, &'static str)],
-}
-
 /// Модуль `embassy_stm32` и типы обработчиков прерываний для блока: `kind` из
 /// метаданных совпадает с именем модуля почти всегда (`usart`, `i2c`, `rng`,
 /// `sdmmc`), а сигнал прерывания различает обработчики там, где их несколько.
@@ -224,6 +198,32 @@ const HANDLERS: &[Handlers] = &[
     },
 ];
 
+/// Строка таблицы [`HANDLERS`].
+///
+/// Структура, а не кортеж: полей стало четыре, и два из них — строковые
+/// срезы, которые в позиционной записи путаются между собой. Заодно уходит
+/// псевдоним, заведённый когда-то ради clippy (`type_complexity`).
+struct Handlers {
+    /// `kind` блока из метаданных `stm32-metapac`.
+    kind: &'static str,
+    /// Модуль `embassy_stm32`, в котором живёт обработчик.
+    module: &'static str,
+    /// Версии блока, у которых обработчик вообще существует. Пустой список —
+    /// «у всех версий этого вида».
+    ///
+    /// Нужно потому, что наличие обработчика в embassy зависит не только от
+    /// вида блока: `adc::InterruptHandler` определён лишь для пяти версий
+    /// ADC из полутора десятков, а модуль `comp` целиком закрыт
+    /// `#[cfg(any(comp_u5, comp_v2))]`. Без фильтра заготовка предлагала бы
+    /// тип, которого на этом чипе нет, — и вставивший её получал бы ошибку
+    /// компиляции вместо подсказки.
+    versions: &'static [&'static str],
+    /// Сигнал прерывания → шаблон типа. `{}` заменяется именем блока; без
+    /// него идут те, кто в embassy привязан к единственному экземпляру
+    /// (`eth`).
+    signals: &'static [(&'static str, &'static str)],
+}
+
 /// Заготовка кода под блок: `bind_interrupts!` с правильными типами и каркас
 /// `assign_resources!` с реальными именами выводов.
 ///
@@ -288,11 +288,11 @@ pub(crate) fn print_snippet(name: &str) -> Result<(), anyhow::Error> {
                 println!("use embassy_stm32::{OPEN}bind_interrupts, {module}{CLOSE};");
             }
             println!();
-            println!("bind_interrupts!(struct Irqs {}", OPEN);
+            println!("bind_interrupts!(struct Irqs {OPEN}");
             for (interrupt, handlers) in handlers_by_interrupt(peripheral, row, name) {
                 println!("    {interrupt} => {};", handlers.join(", "));
             }
-            println!("{});", CLOSE);
+            println!("{CLOSE});");
         }
         // Не «данных не хватило», а содержательный ответ: у SPI и таймеров
         // обработчиков в embassy нет, они работают через DMA.
@@ -310,7 +310,7 @@ pub(crate) fn print_snippet(name: &str) -> Result<(), anyhow::Error> {
     println!("use assign_resources::assign_resources;");
     println!("use embassy_stm32::{OPEN}Peri, peripherals{CLOSE};");
     println!();
-    println!("assign_resources! {}", OPEN);
+    println!("assign_resources! {OPEN}");
     println!(
         "    {}: {}Resources {}",
         name.to_lowercase(),
@@ -346,8 +346,8 @@ pub(crate) fn print_snippet(name: &str) -> Result<(), anyhow::Error> {
             format_dma(channel),
         );
     }
-    println!("    {}", CLOSE);
-    println!("{}", CLOSE);
+    println!("    {CLOSE}");
+    println!("{CLOSE}");
     Ok(())
 }
 
@@ -368,15 +368,14 @@ fn signals(peripheral: &Peripheral) -> Vec<(&'static str, String, Vec<String>)> 
     let mut signals: Vec<(&'static str, Vec<&'static str>, Vec<&'static str>)> = Vec::new();
     let mut af_of: Vec<(&'static str, &'static str, Option<u8>)> = Vec::new();
     for pin in peripheral.pins {
-        let entry = match signals
+        let entry = if let Some(entry) = signals
             .iter_mut()
             .find(|(signal, _, _)| *signal == pin.signal)
         {
-            Some(entry) => entry,
-            None => {
-                signals.push((pin.signal, Vec::new(), Vec::new()));
-                signals.last_mut().expect("только что добавили")
-            }
+            entry
+        } else {
+            signals.push((pin.signal, Vec::new(), Vec::new()));
+            signals.last_mut().expect("только что добавили")
         };
         if pin_note(pin.pin).is_some() {
             entry.2.push(pin.pin);

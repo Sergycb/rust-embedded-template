@@ -222,8 +222,8 @@ fn describe_pin(name: &str) -> Result<(), anyhow::Error> {
         .unwrap_or(0);
     for (block, signal, af) in functions {
         match af {
-            Some(af) => println!("  {block:<width$}  {signal:<12} AF{af}", width = width),
-            None => println!("  {block:<width$}  {signal:<12} —", width = width),
+            Some(af) => println!("  {block:<width$}  {signal:<12} AF{af}"),
+            None => println!("  {block:<width$}  {signal:<12} —"),
         }
     }
 
