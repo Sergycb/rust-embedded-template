@@ -198,6 +198,12 @@ mod tests {
             .await
             .expect("раздел DFU должен стираться");
         ota.write(0, &DIRTY).await.expect("запись мусора");
+        // Прочитанный мусор оседает в кэше данных (D-cache M7, `ICACHE`
+        // L5/U5/H5, ART F2/F4): стирание ниже обязано его не оставить, иначе
+        // голова раздела прочитается мусором, а не стёртой.
+        let mut dirty = [ERASED; 8];
+        ota.read(0, &mut dirty).await.expect("чтение мусора");
+        assert_eq!(dirty, DIRTY[..8], "мусор не записался");
 
         ota.prepare(8).await.expect("раздел DFU должен стираться");
         let mut head = [!ERASED; 8];

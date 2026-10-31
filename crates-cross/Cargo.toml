@@ -163,9 +163,10 @@ getrandom              = { version = "0.4.3" }
 {%- if ota == "true" or has_modbus == "true" or shared_flash == "true" or external_flash == "true" or net_services contains "ssh" %}
 embassy-sync       = { version = "0.8.0" }
 {%- endif %}
-{%- if ota == "true" and ota_store == "external" %}
+{%- if shared_flash == "true" or ota == "true" and ota_store == "external" %}
 # Трейты `NorFlash` — нужны `boot/src/external.rs` (геометрия драйвера внешней
-# флеши в проверках при компиляции). Та же версия, что тянет embassy-boot.
+# флеши в проверках при компиляции) и `bsp/src/flash.rs` (обёртка флеша,
+# сбрасывающая кэш). Та же версия, что тянет embassy-boot.
 embedded-storage   = { version = "0.3.2" }
 {%- endif %}
 {%- if has_uart == "true" %}

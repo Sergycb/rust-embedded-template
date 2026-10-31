@@ -95,6 +95,13 @@ embassy-sync = { workspace = true }
 # разделы, которые нарезает плата (src/flash.rs{% if external_flash == "true" %}, src/external.rs{% endif %}).
 embassy-embedded-hal = { workspace = true }
 {%- endif %}
+{%- if shared_flash == "true" %}
+{%- if cache contains "scb_d" or cache contains "icache" or cache contains "dcen" %}
+# Трейты `NorFlash` — обёртка флеша чипа, сбрасывающая кэш после стирания и
+# записи (`Coherent` в src/flash.rs).
+embedded-storage = { workspace = true }
+{%- endif %}
+{%- endif %}
 # `static-cell` — потому что объектам платы нужна память `&'static`: общему
 # флешу и его разделам, USB-устройству и стеку — иначе их нельзя отдать в
 # задачу, которую спавнит `Spawner` (аргументы задач обязаны быть 'static).
