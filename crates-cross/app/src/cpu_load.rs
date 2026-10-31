@@ -36,11 +36,11 @@ pub fn sleep_ticks() -> &'static SleepTicks {
 }
 {%- if graph != "true" %}
 
-// Узел `CPU_LOAD` спавнит `main`. Обёртка нужна потому, что `Spawner::spawn` в `embassy-executor` 0.10
+// Узел `CPU_LOAD` спавнит `tasks::spawn_all`. Обёртка нужна потому, что `Spawner::spawn` в `embassy-executor` 0.10
 // берёт `SpawnToken`, а не функцию: `#[embassy_executor::task]` и есть тот
 // способ получить токен, не заводя executor-обвязку в домене, где ей не
 // место. Токен выдаёт она же, поэтому `expect` на её результате — в
-// `main.rs`.
+// `tasks::spawn_all`.
 //
 // Значение при этом по-прежнему уходит в лог, а не в `Watch`: канал без
 // читателя — это `Watch` вхолостую, и держать ради него `embassy-sync` в

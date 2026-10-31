@@ -6,7 +6,6 @@ use embassy_stm32::rcc::LSI_FREQ;
 use embassy_stm32::wdg::{IndependentWatchdog, Instance};
 use embassy_time::Duration;
 use watchdog::HardwareWatchdog;
-{%- if graph == "true" %}
 
 /// Аппаратный таймаут сторожа платы — параметр типа [`BoardWatchdog`].
 ///
@@ -15,11 +14,13 @@ use watchdog::HardwareWatchdog;
 /// им негде{% endif %}.
 ///
 /// Десять секунд — величина не измеренная, а взятая с запасом по цепочке,
-/// которую шаблон обязан удержать целиком: период отметок узла < таймаут узла
-/// (`domain::heartbeat::WATCHDOG`, 7 с) < этот таймаут минус
+/// которую шаблон обязан удержать целиком у каждого узла с `watchdog:`: период
+/// отметок узла < таймаут узла (`domain::heartbeat::WATCHDOG` и
+/// `domain::cpu_load::WATCHDOG`, по 7 с) < этот таймаут минус
 /// `WATCHDOG_CHECK_EVERY`; запас — на путь {% if ota == "true" %}от прыжка из bootloader'а{% else %}от старта{% endif %} до
-/// `spawn_all`, когда сторож уже взведён. Обе цифры слева живут во фрагменте
-/// узла (`domain::heartbeat`) и связаны там `const`-assert'ом;
+/// `spawn_all`, когда сторож уже взведён. Обе цифры слева живут в модуле узла
+/// (`domain::heartbeat::timing`, `domain::cpu_load::sampling`) и связаны там
+/// `const`-assert'ом;
 /// `WATCHDOG_CHECK_EVERY` — в `app/src/graph.rs`, и там же `const`-assert на
 /// правую часть цепочки: таймаут узла плюс `WATCHDOG_CHECK_EVERY` строго меньше
 /// этой цифры. Правьте их только вместе. Диапазону IWDG значение удовлетворяет
@@ -60,7 +61,6 @@ pub const HW_TIMEOUT_US: u32 = match u32::from_str_radix(env!("WATCHDOG_TIMEOUT_
     Ok(us) => us,
     Err(_) => panic!("WATCHDOG_TIMEOUT_US в .cargo/config.toml — не число"),
 };
-{%- endif %}
 
 /// Нижняя граница: короче этого `IndependentWatchdog` считает окно
 /// перезагрузки как `0u16 - 1`. В release (`overflow-checks = false`) это
@@ -88,8 +88,6 @@ const MAX_RELOAD: u32 = 0xFFF;
 /// 40 кГц предел 26.2 с, то есть таймаут 28 с проходил проверку и падал
 /// внутри embassy.
 const MAX_TIMEOUT_US: u32 = 1_000_000 * (MAX_RELOAD + 1) / (LSI_FREQ.0 / MAX_PRESCALER);
-
-{%- if graph == "true" %}
 
 /// Сторож этой платы, уже взведённый: блок IWDG выбранного чипа и таймаут
 /// [`HW_TIMEOUT_US`] — то, что граф задач называет в блоке `watchdog:`.
@@ -147,7 +145,6 @@ impl UnarmedBoardWatchdog {
         }
     }
 }
-{%- endif %}
 
 /// Сторож заряжен, но не запущен: регистры заполнены, счётчик стоит.
 #[derive(Debug)]

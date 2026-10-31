@@ -1,4 +1,4 @@
-Оркестрация embassy-задач: жизненный цикл, рестарты, watchdog, межзадачный
+Оркестрация embassy-задач: жизненный цикл, watchdog, межзадачный
 обмен. Остальное про крейт `app` — `app.md`.
 
 Примеры ниже намеренно не компилируются (`ignore`) — этот `cross`-workspace
@@ -7,7 +7,7 @@
 (`cargo generate`). Раскомментируйте и адаптируйте под свою плату по мере
 необходимости.
 
-# `supervisor` — граф задач: порядок старта, рестарты, обмен, watchdog
+# `supervisor` — граф задач: порядок старта, обмен, watchdog
 
 Один макрос `supervisor_graph!` описывает весь набор задач сразу. Он
 заменил три сторонних крейта, каждый из которых описывал свой срез того
@@ -22,11 +22,9 @@
 падают, `restart:` у них нет: на отказ связи пишут в лог и продолжают, а
 пережидает отказ реализация порта):
 
-* `resources: [SLOT: Type]` — эксклюзивная передача владения (обычно
-  ручкой периферии) в задачу на один прогон и обратно при её остановке,
-  чтобы следующий перезапуск получил тот же объект. Отвечает на вопрос,
-  который сам по себе `Spawner` не решает: как перезапустить задачу,
-  забравшую `Peripherals`-ручку.
+* `resources: [SLOT: Type]` — эксклюзивная передача владения в задачу на
+  один прогон и обратно при её остановке. Узлы шаблона так получают рычаги
+  платы и адаптеры над ними — из входа фрагмента (`= inputs.поле`).
 * `inbox: [FIELD: Type; N]` — ограниченная упорядоченная очередь входящих
   сообщений (это и есть бывший `ector`: fire-and-forget между задачами).
   В автомате узла (`#[fsm::typestate]`) это обычный источник `listen` —
@@ -76,8 +74,8 @@ doc-комментариях самого `supervisor` и `supervisor-macros`; �
 крейте фрагмента, а не compose-site, поэтому сигнатура задачи не называет
 ничего из крейта с графом. **Каждая задача — автомат `#[fsm::typestate]` на
 этом контексте**: таблица состояний и переходов стоит на `impl ИмяCtx`, действия
-— его методы, задача — `match ctx.run().await {}` (или `ctx.run().await.result`,
-если у автомата есть выходное состояние). Нелегальный переход и необработанное
+— его методы, задача — `match ctx.run().await {}` (или `ctx.run().await;`,
+если у автомата есть выходное состояние `exit Down`). Нелегальный переход и необработанное
 событие так не компилируются. Форма `task: имя` без `ctx:` тоже работает, но
 тип контекста тогда генерирует compose-site, и задача привязана к `cross`;
 проекция аргументов (`task: путь(ctx.поле)`) контекста не даёт вовсе — автомат
@@ -98,7 +96,7 @@ supervisor::supervisor_fragment! {
         task: $crate::heartbeat::task;
 }
 
-pub async fn run(mut ctx: HeartbeatCtx<'_>) {
+pub async fn task(mut ctx: HeartbeatCtx<'_>) {
     match ctx.run().await {}
 }
 
@@ -139,7 +137,7 @@ impl HeartbeatCtx<'_> {
   указывает в крейт фрагмента и переживает переименование зависимости в чужом
   манифесте, а `crate::` означал бы крейт, который фрагмент вызывает. Типы,
   которых фрагмент назвать не может (адаптер платы в слоте), — его параметры:
-  {% if ota == "true" %}`name: OTA_FRAG<F, R>` во фрагменте, `::domain::OTA_FRAG<::adapters::ota::Updater<bsp::FirmwareFlash, true>, bsp::reset::Reboot>` здесь{% else %}`name: SENSOR_FRAG<R>` во фрагменте, `::domain::SENSOR_FRAG<SensorResources>` здесь
+  {% if ota == "true" %}`name: OTA_FRAG<F, R>` во фрагменте, `::domain::OTA_FRAG<::adapters::ota::Updater<bsp::FirmwareFlash, true>, bsp::reset::Reboot>` здесь{% else %}`name: SENSOR_FRAG<R>` во фрагменте, `::domain::SENSOR_FRAG<bsp::SensorBus>` здесь
   (пример ниже){% endif %}.
 * **Порядок items фиксирован**: `name:` → `boot:` → `watchdog:` →
   `cloned:`/`shared:` → `executor` → `fragments:` последним. `fragments:`
@@ -147,8 +145,8 @@ impl HeartbeatCtx<'_> {
   (это решение на весь граф, фрагмент лишь опрашивает его полем `watchdog:`
   своего узла).
 
-Цена всей схемы — зависимость `domain` от `supervisor` (ради контекста и
-`Heartbeat` в сигнатуре задачи, `Duration` в таймауте); она
+Цена всей схемы — зависимость `domain` от `supervisor` (ради контекста узла
+в сигнатуре задачи, `Duration` в таймауте); она
 разобрана в `docs/architecture.md`. Сам фрагмент её не требует: он не
 генерирует задач, а `supervisor` по имени обязан быть только у compose-site.
 
@@ -162,15 +160,17 @@ impl HeartbeatCtx<'_> {
 нет — зависимости, ресурсы, почтовый ящик и тип, который знает лишь плата.
 
 ```ignore
-// в crates-host/domain/src/sensor.rs: слот под ручку периферии, тип которой
-// `domain` не видит, — отсюда параметр фрагмента.
+// в crates-host/domain/src/sensor.rs: слот под рычаг платы, тип которого
+// `domain` не видит, — отсюда параметр фрагмента. Вход `SensorWiring` эмитит
+// сам фрагмент: по полю на каждое `inputs.<поле>`.
 supervisor::supervisor_fragment! {
     name: SENSOR_FRAG<R>;
+    boot: inputs: struct $crate::sensor::SensorWiring;
     // Узлы шаблона не падают: на отказ автомат возвращается в начальное
     // состояние, перезапускать графу нечего.
-    node resources: [BUS: R],
+    node resources: [BUS: R = inputs.bus],
         ctx: $crate::sensor::SensorCtx,
-        task: $crate::sensor::run;
+        task: $crate::sensor::task;
 }
 
 // в crates-host/domain/src/link.rs — то есть там, где это тестируется на хосте:
@@ -180,10 +180,10 @@ supervisor::supervisor_fragment! {
     node deps: [SENSOR],
         inbox: [EVENTS: $crate::link::LinkEvent; 8],
         ctx: $crate::link::LinkCtx,
-        task: $crate::link::run;
+        task: $crate::link::task;
 }
 
-pub async fn run(mut ctx: LinkCtx<'_>) {
+pub async fn task(mut ctx: LinkCtx<'_>) {
     match ctx.run().await {} // не возвращается
 }
 
@@ -208,24 +208,24 @@ impl LinkCtx<'_> {
     // up(), down() — методы контекста
 }
 
-// здесь, в graph.rs: две записи вместо одной.
+// здесь, в graph.rs: две записи вместо одной. Рычаг платы узел получает
+// привязкой `= …` над полем `board` — `boot:`-объектом графа (`bsp::Board`).
 fragments: [::domain::HEARTBEAT_FRAG as HEARTBEAT,
-            ::domain::SENSOR_FRAG<SensorResources> as SENSOR,
+            ::domain::SENSOR_FRAG<bsp::SensorBus> as SENSOR =
+                ::domain::sensor::SensorWiring { bus: board.sensor },
             ::domain::LINK_FRAG as LINK];
 
-// в main(), после инициализации HAL: слот назван по узлу и по слоту.
-provide_sensor_bus(r.sensor).expect("слот пуст до первого spawn_all");
-// Второй параметр — `boot:`-объект графа; в шаблоне это `board`
-// (`bsp::Board`: рычаги платы). Слот,
-// написанный с инициализатором — во фрагменте `resources: [BUS: R = hw.sensor]`
-// при его собственной `boot: hw: …;`, а здесь `… as SENSOR = board.sensor`, —
-// заполняет сам граф:
-// строки `provide_sensor_bus` тогда нет вовсе, а значит её нельзя и забыть
-// (так устроен узел {% if ota == "true" %}OTA ниже{% else %}`CPU_LOAD`, `app.md`{% endif %}). Формой не обслуживаются слоты
+// в main(): `board` уходит в `spawn_all` целиком. Привязку вычисляет пролог
+// `spawn_all` и кладёт рычаг в слот `SENSOR_BUS` сам — строки `provide_sensor_bus`
+// нет вовсе, а значит её нельзя и забыть (так устроен узел
+// {% if ota == "true" %}OTA ниже{% else %}`CPU_LOAD`, `app.md`{% endif %}). Формой не обслуживаются слоты
 // `consume`/`shared` (их переиздаёт `respawn_all`, а boot-объект к тому
 // моменту потреблён) и всё, что требует `await` или повтора, — для этого
-// остаётся узел-инициализатор.
-spawn_all(&spawner, board).expect("узлы свежие");
+// остаётся узел-инициализатор. `Debug` у ошибки графа нет, поэтому не
+// `expect`, а `Display`:
+if let Err(err) = spawn_all(&spawner, board) {
+    defmt::panic!("app: spawn_all: {}", defmt::Display2Format(&err));
+}
 ```
 
 **Большой объект в слот по значению не кладут.** Слот `[X: T]` — `static`

@@ -303,13 +303,14 @@ const _: () = assert!(
 /// Как часто тикер графа опрашивает сторожей узлов и кормит железо.
 ///
 /// Единственная цифра графа, которая живёт здесь: она про один аппаратный
-/// сторож на всех, а не про какой-то узел. Таймаут узла — во фрагменте
-/// (`domain::heartbeat::WATCHDOG`), аппаратный — у железа
-/// (`bsp::wdg::HW_TIMEOUT_US`), и соотношение между ними проверяет
+/// сторож на всех, а не про какой-то узел. Таймауты узлов — в их модулях
+/// (`domain::heartbeat::WATCHDOG`, `domain::cpu_load::WATCHDOG`), аппаратный —
+/// у железа (`bsp::wdg::HW_TIMEOUT_US`), и соотношение между ними проверяет
 /// `const`-assert ниже. Компилятор проверяет сам `check_every` против
 /// аппаратного таймаута — `supervisor_graph!` эмитит `const`-assert, читая
 /// `HARDWARE_TIMEOUT` у типа сторожа; левое звено цепочки (период отметок <
-/// таймаут узла) держит `const`-assert во фрагменте (`domain::heartbeat`) —
+/// таймаут узла) держит `const`-assert в модуле узла
+/// (`domain::heartbeat::timing`, `domain::cpu_load::sampling`) —
 /// `docs/watchdog.md`.
 const WATCHDOG_CHECK_EVERY: Duration = Duration::from_millis(100);
 

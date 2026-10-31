@@ -72,10 +72,9 @@ log = { workspace = true, optional = true }
 defmt = { workspace = true, optional = true }
 # {%- if graph == "true" %}
 # Задачи, которые спавнит граф из `crates-cross/app`, живут здесь (`heartbeat.rs`,
-# `cpu_load.rs`) — вместе со своими фрагментами и политикой. `supervisor` нужен им
-# ради типов, которыми граф разговаривает с задачей: `Heartbeat` (отметка у
-# сторожа). Знания о самом графе это не даёт — контекст задачи эмитит
-# фрагмент здесь же (`ctx: $crate::heartbeat::HeartbeatCtx`), типы его полей приходят через
+# `cpu_load.rs`) — вместе со своими фрагментами. `supervisor` нужен им ради
+# контекста узла в сигнатуре задачи. Знания о самом графе это не даёт —
+# контекст задачи эмитит фрагмент здесь же (`ctx: $crate::heartbeat::HeartbeatCtx`), типы его полей приходят через
 # `::supervisor::__private`, и тип compose-site здесь не называется, — но
 # {%- else %}
 # Задачи узлов, которые спавнит `crates-cross/app`, живут здесь (`cpu_load.rs`)
