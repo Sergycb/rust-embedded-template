@@ -7,10 +7,9 @@ paths: crates-cross/**
   `bsp`; адаптеру — в модуле `app`, который выбирает его тип{% if protocol_link == "true" %} (`crate::link` —
   `docs/modules/app.md`, «Канал протокола: `crate::link`»){% endif %}, или конкретный тип прямо во
   входе узла) — `docs/architecture.md`.
-- Ровно один `#[panic_handler]` и один `#[global_logger]` на бинарник — это
-  ограничение линкера, а не Cargo. Развилка по профилю делается через
-  `#[cfg(debug_assertions)]` (паникёр — `app/src/panic.rs`{% if ota == "true" %}; у `boot` свой, сброс
-  без сообщения{% endif %}), не Cargo-фичей.
+- Ровно один `#[panic_handler]` и один `#[global_logger]` на бинарник, развилка
+  по профилю — `#[cfg(debug_assertions)]`, не Cargo-фича — `docs/diagnostics.md`,
+  «Два паникёра, один на сборку».
 - `Board` (один, `Board::new() -> Board`{% if has_usb == "true" or has_net == "true" %}, пары из одного конструктора собирает
   плата{% endif %}) отдаёт рычаги платы под трейтами и данные о чипе
   (`bsp::ChipSpec`), а не `Peripherals`, не пины, не периферию ядра и не
@@ -29,13 +28,13 @@ paths: crates-cross/**
   микросхемы — без него драйвер не годится ни для одной операции), из-за него
   `Board::new` асинхронный и зовётся из `main` через `block_on` —
   `docs/modules/bsp-external.md`{% endif %}.
-- `lib.rs` в `bsp` — только объявления модулей и реэкспорт; код живёт в
-  модулях. Модуль без кода (одна `#![doc = include_str!(..)]`) не заводить:
-  такой документации место в `docs/`.
+- `lib.rs` только объявляет — `docs/conventions.md`, «`lib.rs` только объявляет
+  модули».
 - `app` про `embassy-stm32` не знает — ни `use`, ни строки в манифесте. Ядро
   `app` берёт напрямую (`cortex-m-rt` — точка входа и `HardFault`, `cortex-m` —
-  свободные функции ядра), без обёрток в `bsp`; паника и фолт — в `app`. Сброс МК —
-  рычаг `bsp::reset::Reboot` (на M7 он чистит кэш данных перед сбросом).
+  свободные функции ядра), без обёрток в `bsp`; паника и фолт — в `app`
+  (`docs/clocks.md`, «Ядро: фолты, ловушка деления, счётчик тактов»). Сброс МК —
+  рычаг `bsp::reset::Reboot`.
 - `bsp` не зависит от `domain`: входы узлов из полей `Board` заполняет `app`.{% if ota == "true" %}
   `boot` зовёт из `domain` только {% if ota_store == "external" %}`domain::ota::boot::{boot_plan, screen_update}`{% else %}`domain::ota::boot::screen_update`{% endif %}.{% endif %}
   Подробности — `docs/architecture.md`.

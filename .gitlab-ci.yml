@@ -53,8 +53,8 @@ host:test:
   script:
     # --locked ловит рассинхрон Cargo.toml и закоммиченного Cargo.lock:
     # без него cargo молча подобрал бы свои версии, и пайплайн остался бы
-    # зелёным на том, чего в репозитории нет. Условный, как у cross:build ниже:
-    # lock-файлов шаблон не раздаёт, проект считает их сам первой сборкой.
+    # зелёным на том, чего в репозитории нет. Условный: lock-файлы проект
+    # считает сам первой сборкой (README, «Быстрый старт»).
     - |
       if [ -f Cargo.lock ]; then
         cargo fetch --locked
@@ -79,11 +79,8 @@ host:test:
     # Политика — `deny.toml`.
     - cargo deny check
 
-    # Покрытие без порога: цифра нужна, чтобы видеть, куда тесты не
-    # заглядывают, а не чтобы ронять пайплайн. Порог в проекте, где половина
-    # кода — `bsp` под железо, которого у раннера нет, означал бы только одно:
-    # писать тесты ради процента. Формат cobertura — тот, который GitLab
-    # показывает прямо в диффе merge request'а.
+    # Покрытие без порога (README, «Что проверяет CI»). Формат cobertura — тот,
+    # который GitLab показывает прямо в диффе merge request'а.
     - cargo llvm-cov nextest --workspace --exclude host-target-tests
       --features domain/log{% if ota == "true" %},domain/signed{% endif %} --release --ignore-filename-regex 'xtask' --summary-only
     # Второй вызов ничего не пересобирает и не перезапускает: `report` строит
@@ -183,13 +180,7 @@ cross:build:
     - rustup target add {{target}}
     - cargo install flip-link --version "$FLIP_LINK_VERSION" --locked
   script:
-    # `--locked` условный, как у host:test выше. Шаблон не раздаёт lock-файлов:
-    # состав зависимостей зависит от ответов при генерации (OTA, раздел
-    # настроек, подпись, протокол), и один файл подходил бы ровно
-    # одному сочетанию. Пока проект не собран и lock не закоммичен, строгий шаг
-    # падал бы не на рассинхроне, а на отсутствии файла — то есть первый же
-    # пайплайн свежего проекта был бы красным без причины. Как только lock в
-    # репозитории, проверка становится строгой сама.
+    # `--locked` условный, как у host:test выше (README, «Быстрый старт»).
     - |
       if [ -f crates-cross/Cargo.lock ]; then
         cargo fetch --locked --manifest-path crates-cross/Cargo.toml

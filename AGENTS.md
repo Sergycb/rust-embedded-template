@@ -134,12 +134,9 @@ check`, `cargo hack --feature-powerset`, покрытие (`cargo llvm-cov`) и 
 перечень и что нужно для зелёного CI — README, «Что проверяет CI». Добавили шаг
 в CI — допишите его сюда, компилятор такого расхождения не увидит.{% endif %}
 
-Lock-файлы проект считает сам: корневой `Cargo.lock` создаёт первая
-host-сборка, `crates-cross/Cargo.lock` — первая cross-сборка,
-`crates-host/chip-info/Cargo.lock` — первый `cargo xtask pins`. **Их надо
-закоммитить**, а не принять за мусор сборки. Шаблон их не раздаёт намеренно:
-состав пакетов зависит от ответов при генерации, и один шаблонный lock был бы
-верен одному сочетанию, а остальным ронял бы `cargo fetch --locked` в CI.
+Lock-файлы (корневой, `crates-cross/`, `crates-host/chip-info/`) проект считает
+сам первой сборкой. **Их надо закоммитить**, а не принять за мусор сборки —
+README, «Быстрый старт».
 
 Первые две команды железа не требуют вовсе, третья и четвёртая — только тулчейн с
 целевым target'ом и `flip-link` (линкер прошивки; оба ставит `cargo xtask setup`).
@@ -171,14 +168,12 @@ read`: руками пришлось бы сначала найти адрес �
   `test host-target`, `panic-info`, `probe-rs`) без явного разрешения
   пользователя — необратимо и требует железа.
 - Не запускать `cargo xtask setup` и `cargo install` без разрешения пользователя —
-  меняет систему: `setup` ставит `rustup target` и компоненты, `probe-rs`,
-  `flip-link`, `cargo-nextest`, `cargo-deny`, `cargo-hack`, `cargo-llvm-cov`,
-  `cargo-insta`, `typos-cli`, а для ручного запуска — `cargo-mutants`,
-  `cargo-bloat`, `cargo-machete`, `taplo-cli`.
+  меняет систему (что ставит `setup` — README, «Инструменты»).
 - Не добавлять зависимости без разрешения пользователя — правила см. `docs/conventions.md`.
 - Не менять версию в `rust-toolchain.toml` без разрешения пользователя{% if ci == "gitlab" %} и без
   образов `rust:` в `.gitlab-ci.yml`{% endif %} — от неё зависит воспроизводимость
-  релиза, см. `docs/conventions.md`.
+  релиза; версию `flip-link` — тоже только везде разом — `docs/conventions.md`,
+  «Тулчейн запинен».
 
 ## Инварианты, которые не ловит компилятор
 
@@ -187,13 +182,10 @@ read`: руками пришлось бы сначала найти адрес �
   {% endif %}{% endif %}{% if config == "true" %}`bsp::ConfigFlash`{% endif %}){% endif %}, адаптер — от `app`{% if protocol_link == "true" %} (`crate::link::<вид>[::<транспорт>]::Link`){% endif %} или
   конкретным типом прямо {% if graph == "true" %}в графе{% else %}в задаче{% endif %}{% if ota == "true" %} (`adapters::ota::Updater<bsp::FirmwareFlash, _>`){% endif %}
   — `docs/architecture.md`.
-- Ровно один `#[panic_handler]` и один активный `#[global_logger]` на бинарник: логгер
-  резолвится линковкой по имени символа и даёт `multiply defined!` при нарушении;
-  паникёр у каждого бинарника свой: у `app` — `crates-cross/app/src/panic.rs`,
-  выбирается `#[cfg(debug_assertions)]`: dev — `use panic_probe as _;`, release —
-  свой `#[panic_handler]` поверх `panic_persist::report_panic_info` (фича
-  `custom-panic-handler`);{% if ota == "true" %} у `boot` — сброс МК без сообщения (`boot/src/main.rs`: на сбросе держится продолжение прерванного обмена);{% endif %} у
-  `target-tests` — `embedded-test` — `docs/diagnostics.md`, `docs/conventions.md`.
+- Ровно один `#[panic_handler]` и один активный `#[global_logger]` на бинарник;
+  паникёр у каждого бинарника свой, у `app` профиль выбирает
+  `#[cfg(debug_assertions)]` в `crates-cross/app/src/panic.rs`, а не Cargo-фича —
+  `docs/diagnostics.md`, «Два паникёра, один на сборку».
 {%- if ota == "true" %}
 - `prepare(len)` порта `FirmwareUpdate` зовётся один раз перед приёмом образа
   (внутри `domain::ota::download::Transfer::start`), `write()` сектор больше не
@@ -269,44 +261,26 @@ read`: руками пришлось бы сначала найти адрес �
   `Board::new`{% else %}`Board::new`{% endif %} — до любого `Flash::new`; не переносить ниже и не убирать —
   `docs/flash.md`, «Банки flash».
 {%- endif %}
-- Паника и фолт — решение прошивки, а не рычаг платы: паникёр, обработчик
-  `HardFault` с причиной и ловушка деления — в `app` (`crates-cross/app/src/panic.rs`,
-  `crates-cross/app/src/fault.rs`; ловушку `main` включает первой строкой). Не
-  переносить обработчик в `bsp`: у `#[exception]` экспортируемое имя, и с LTO он
-  попал бы в любой бинарник, линкующий `bsp`{% if ota == "true" %}, — в `boot` это около 14 KiB зоны{% endif %}
-  (`docs/clocks.md`, «Ядро», `docs/architecture.md`). Сброс МК — рычаг
-  `bsp::reset::Reboot`: на M7 он сначала сбрасывает кэш данных в RAM, иначе дамп
-  паники пропадёт.
-- Флаги сброса `RCC` читает и снимает (`RMVF`) только `main` приложения —
-  первым делом, до `Board::new` (`bsp::reset::take_cause`, строка
-  `pin`/`software`/…){% if ota == "true" %}, `boot` их не трогает{% endif %}:
-  второе чтение за запуск увидело бы пустой регистр (`unknown`), а не снятые
-  из-за повисшего старта флаги копились бы от сброса к сбросу. Регистр и поля под чип выписывает генерация —
-  `docs/diagnostics.md`.
+- Паникёр, обработчик `HardFault` с причиной и ловушка деления — в `app`
+  (`crates-cross/app/src/panic.rs`, `fault.rs`), не в `bsp`: с LTO обработчик
+  попал бы в любой бинарник, линкующий `bsp` — `docs/clocks.md`, «Ядро: фолты,
+  ловушка деления, счётчик тактов». Сброс МК — рычаг `bsp::reset::Reboot`.
+- Флаги сброса `RCC` читает и снимает только `main` приложения — первым делом,
+  до `Board::new` (`bsp::reset::take_cause`), один раз за запуск —
+  `docs/diagnostics.md`, «Причина сброса».
 {%- if core_baseline != "true" %}
-- `Board::cycles` (`bsp::cycles::Cycles`, порт `ports::CycleCounter`) включает
-  `DWT.CYCCNT`; `DWT` и `DCB` `bsp` берёт через `steal()` и пишет только в
-  `Cycles::new` — приложение берёт свой `take()` как раньше.
+- `Board::cycles` включает `DWT.CYCCNT`; `DWT` и `DCB` `bsp` берёт через
+  `steal()` — приложению остаётся свой `take()` — `docs/clocks.md`, «Ядро:
+  фолты, ловушка деления, счётчик тактов».
 {%- endif %}
 {%- if cache != "" %}
-- `bsp::cache::enable()` — в `Board::new` сразу за `embassy_stm32::init`: кэши
-  с завода выключены, HAL их не включает. Что именно включается, решает
-  генерация по метаданным чипа (`docs/clocks.md`, «Кэши»).
-{%- if cache contains "scb_d" %}
-  Кэш данных ядра M7 DMA не видит, поэтому он включён только вместе с
-  non-cacheable регионом `DMA_NC` (`memory.x`; границы — символы
-  `__dma_nc_start`/`__dma_nc_end`, годность для MPU — `ASSERT` там же){% if bdma_nc == "true" %} и `SRAM4` под BDMA{% endif %}, который
-  `bsp::dma_nc` размечает в MPU: буфер DMA кладите в `#[link_section = ".dma_nc"]`{% if bdma_nc == "true" %} (BDMA — `".bdma_nc"`){% endif %}, не в обычный `static`. Секции в
-  `memory.x` вставлены `INSERT AFTER .gnu.sgstubs` — за `.uninit` они ломают
-  `cortex-m-rt` под `flip-link`.
-{%- endif %}
+- `bsp::cache::enable()` — в `Board::new` сразу за `embassy_stm32::init`{% if cache contains "scb_d" %}; буфер
+  DMA кладите в `#[link_section = ".dma_nc"]`{% if bdma_nc == "true" %} (BDMA — `".bdma_nc"`){% endif %}, не в обычный `static`:
+  кэш данных M7 DMA не видит{% endif %} — `docs/clocks.md`, «Кэши».
 {%- endif %}
 {%- if cpu_freq_boost == "true" %}
 - `bsp::clocks::ensure_cpu_freq_boost()` — первой строкой `Board::new`, до
-  `embassy_stm32::init`: option byte `CPU_FREQ_BOOST` (потолок ядра 550 МГц
-  вместо 520) читается при `init()` и вступает в силу только сбросом. Бит
-  пишется один раз на кристалл, побочно отключает ECC на ITCM/DTCM —
-  `docs/clocks.md`.
+  `embassy_stm32::init` — `docs/clocks.md`, «`CPU_FREQ_BOOST`».
 {%- endif %}
 {%- if has_net == "true" %}
 {%- if rng_irq != "" %}
@@ -438,10 +412,5 @@ read`: руками пришлось бы сначала найти адрес �
 
 ## Перед тем как отчитаться
 
-1. `cargo xtask lint`
-2. `cargo xtask test host`
-3. `cargo xtask lint cross`
-4. `cargo xtask build`
-
-Не сообщать о завершении задачи, пока все четыре не прошли (`EXIT=0`) — по одной: так видно,
-какая именно упала.
+Не сообщать о завершении задачи, пока все четыре команды из «Порядок проверки
+перед коммитом» не прошли (`EXIT=0`) — по одной: так видно, какая именно упала.
