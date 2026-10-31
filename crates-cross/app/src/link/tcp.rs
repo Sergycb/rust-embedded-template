@@ -16,8 +16,9 @@ const PORT: u16 = {% if f[3] == "modbus" %}502{% else %}5000{% endif %};
 
 /// Буфер канала — сообщение и CRC (`rx_len`).
 pub const BUFFER: usize = ::adapters::cobs::rx_len(::domain::protobuf::REQUEST_MAX);
-/// Кадр передачи — худший случай COBS от всего буфера канала (`tx_len`).
-pub const FRAME: usize = ::adapters::cobs::tx_len(BUFFER);
+/// Кадр передачи — худший случай COBS от самого длинного ответа (`tx_len`):
+/// узел отвечает из своего буфера (`send_from`), а не из буфера канала.
+pub const FRAME: usize = ::adapters::cobs::tx_len(::domain::protobuf::RESPONSE_MAX);
 {%- endif %}
 
 /// Канал узла `{% if f[3] == "modbus" %}MODBUS{% else %}PROTOBUF{% endif %}_{{ f[4] | upcase }}` над стеком платы (`board.net.stack`).

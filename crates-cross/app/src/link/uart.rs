@@ -11,8 +11,9 @@ pub mod {{ f[4] }} {
 {%- if f[3] == "protobuf" %}
     /// Буфер канала — сообщение и CRC (`rx_len`).
     pub const BUFFER: usize = ::adapters::cobs::rx_len(::domain::protobuf::REQUEST_MAX);
-    /// Кадр передачи — худший случай COBS от всего буфера канала (`tx_len`).
-    pub const FRAME: usize = ::adapters::cobs::tx_len(BUFFER);
+    /// Кадр передачи — худший случай COBS от самого длинного ответа (`tx_len`):
+    /// узел отвечает из своего буфера (`send_from`), а не из буфера канала.
+    pub const FRAME: usize = ::adapters::cobs::tx_len(::domain::protobuf::RESPONSE_MAX);
 
 {%- endif %}
     /// Рычаг платы, над которым строится канал (`board.{{ f[4] }}`).
