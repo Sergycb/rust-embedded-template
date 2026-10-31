@@ -215,68 +215,39 @@ read`: руками пришлось бы сначала найти адрес �
   узнаёт исход до сброса. Отказы до стирания обязаны оставаться такими:
   `Busy` и отсутствие подписи — до `Transfer::start`, длина — внутри него, до
   `prepare` — `docs/ota.md`.
-- Хвост образа — `[образ][раскладка u32 LE][версия u32 LE]` (`cargo xtask build`):
-  отпечаток раскладки (`ports::layout_fingerprint` над `ports::LAYOUT_SYMBOLS`)
-  узел OTA сверяет с `FirmwareUpdate::layout` на `Finish` (`apply_signed`), до
-  `mark_updated`; не совпал — `Rejection::Layout`. Сменилась раскладка
-  `memory.x` — `boot` перешивается по проводу, а не образом — `docs/ota.md`.
+- Хвост образа — `[образ][раскладка u32 LE][версия u32 LE]` (`cargo xtask build`);
+  отпечаток раскладки узел OTA сверяет на `Finish` до `mark_updated`, и сменилась
+  раскладка `memory.x` — `boot` перешивается по проводу, а не образом —
+  `docs/ota.md`, «Подпись OTA-образа».
 {%- endif %}
-{%- capture mutexes %}{% if shared_flash == "true" %}, `bsp::flash::FlashMutex`{% endif %}{% if ota == "true" and ota_store != "external" %}, мьютексов носителей `DFU` и `STATE`
-  (`bsp::flash::DFU_FLASH`, `bsp::flash::STATE_FLASH`, над ними `Partition` разделов обновления{% if dfu_bank == "true" %}; `DFU` во втором банке —
-  `bsp::flash::DfuBankMutex`{% endif %}){% endif %}{% if config_store == "flash" %}, `CONFIG` (`bsp::flash::CONFIG_FLASH`){% endif %}{% if external_flash == "true" %},
-  внешней флеши (`bsp::external::ExternalMutex`){% endif %}{% if ota == "true" and graph == "true" %}, `local` на слотах узла OTA
-  (`domain::ota`){% endif %}{% endcapture %}
-{%- if mutexes != "" %}
-- `NoopRawMutex` у {{ mutexes | remove_first: ", " }} — одно допущение «один исполнитель», менять вместе —
-  `docs/flash.md`, `docs/architecture.md`.{% if has_modbus == "true" %} Карта регистров Modbus
+{%- if shared_flash == "true" or ota == "true" or config_store == "flash" or external_flash == "true" %}
+- `NoopRawMutex` у мьютексов флеша{% if ota == "true" and graph == "true" %} и `local` на слотах узла OTA{% endif %} — одно допущение
+  «один исполнитель», менять вместе — `docs/flash.md`.{% if has_modbus == "true" %} Карта регистров Modbus
   (`domain::modbus::MapMutex`) в него не входит: она в `OnceLock` в `static`
   (`crate::modbus::handle()`), и мьютекс — `CriticalSectionRawMutex` ради `Sync`.{% endif %}
 {%- endif %}
 {%- if ota == "true" %}
 - Подтверждение образа (`mark_booted`) — в стартовом действии узла OTA
-  (`domain::ota`, `begin`, не удалось — ещё раз на следующем `Start`) и один
-  раз за запуск (слот `CONFIRMED`). Не
-  возвращать его в `main` до исполнителя{% if ota_store == "external" %}: драйвер внешней флеши может ждать
-  таймер{% endif %}. Не звать после принятого образа (`mark_updated` ставит тот же
-  флаг): после обмена и до него `STATE` одинаково `Swap`, и повтор снял бы
-  принятое обновление{% if has_usb == "true" %}. Узел `USB` встаёт на шину только после этой попытки
-  ({% if graph == "true" %}`ready` узла OTA и `deps: [OTA ready]` у `USB_FRAG`{% else %}сигнал
-  `READY_<транспорт>` в `crates-cross/app/src/tasks/ota.rs`{% endif %}): подтверждение после обновления или отката стирает
-  `STATE`, ядро стоит на выборке, и перечисление, попавшее на это, хост
-  бракует до переподключения —{% else %}. Подробности —{% endif %} `docs/ota.md`.
+  (`begin`), один раз за запуск и не после принятого образа; не возвращать его
+  в `main` до исполнителя{% if has_usb == "true" %}; узел `USB` встаёт на шину только после этой попытки{% endif %} —
+  `docs/ota.md`, «Подтверждение образа — в узле OTA, один раз за запуск».
 {%- endif %}
 {%- if ota == "true" and ota_store == "external" %}
 - С `ext_flash=yes` (`DFU`/`STATE` на внешней флеши): `EXT_PAGE_SIZE` — одно
-  число из генерации — переменная среды `[env]` в
-  `crates-cross/.cargo/config.toml`, общая у `boot` и `bsp::external`, — и стирание
-  драйвера обязано его делить (`const`-assert в обоих); драйвер —
-  два слота одной микросхемы (блокирующий в `boot`, асинхронный в `bsp`).
-  Bootloader загружает текущий образ мимо `prepare`, только если `STATE` не
-  читается (`BootPlan::BootCurrent`) или внешняя флеш отказала во время
-  проверки подписи (`signature::screen`: непроверенный образ обменивать
-  нельзя). Отвергнутый подписью образ идёт через строгий `prepare` —
-  `screen_update` уже снял запрос (`STATE` → `Boot`). При читаемом `STATE`
-  (`BootPlan::Prepare`) — строгий `prepare`, `try_prepare` не используется,
-  прыжок в наполовину переписанный `ACTIVE` недопустим — `docs/flash.md`, `docs/ota.md`.
+  число на `boot` и `bsp::external`, и стирание драйвера обязано его делить
+  (`docs/flash.md`); bootloader грузит текущий образ мимо `prepare`, только
+  если `STATE` не читается или флеш отказала при проверке подписи, иначе —
+  строгий `prepare`, не `try_prepare` (`docs/ota.md`, «Bootloader и внешняя флеш»).
 {%- endif %}
 {%- if swap_paged == "true" %}
-- `SWAP_PAGE_SIZE` — число из генерации ({{page_size}}), переменная среды
-  `[env]` в `crates-cross/.cargo/config.toml`; константа — `bsp::flash::SWAP_PAGE_SIZE`,
-  её берёт и `boot`:
-  страница обмена крупнее физической, `ACTIVE` и `DFU`
-  оборачиваются в `ErasePage<_, SWAP_PAGE_SIZE>` ради малого журнала `STATE`
-  (подписанному `boot` нужна зона ≥ 26 KiB). `STATE_ERASE_SIZE` — другое число
-  (страница сектора `STATE`) — `docs/flash.md`.
+- `SWAP_PAGE_SIZE` ({{page_size}}) — страница обмена крупнее физической, одно число на
+  `boot` и `bsp::flash`; `ACTIVE` и `DFU` стоят на `ErasePage<_, SWAP_PAGE_SIZE>` —
+  `docs/flash.md`, «Страница раздела — не всегда страница чипа».
 {%- endif %}
 {%- if ota == "true" and ota_store != "external" %}
-- `STATE_ERASE_SIZE` — число из генерации, одно на `boot` и приложение (переменная
-  среды в `crates-cross/.cargo/config.toml`, константа — `bsp::flash::STATE_ERASE_SIZE`). {% if state_paged == "true" %}Здесь `BOOTLOADER_STATE` строится над
-  `flash_page::ErasePage` со страницей своего сектора: над цельным `Flash` на F2/F4/F7 раздел не
-  кратен его странице, и `Partition::new` паникует на старте.{% else %}Здесь сектор `STATE` равен
-  странице цельного `Flash`, поэтому раздел строится прямо над ним, а равенство держит
-  `const`-assert рядом с константой (`bsp::flash`).{% endif %}{% if config_store == "flash" %} Так же и `CONFIG`
-  (`CONFIG_ERASE_SIZE` в `bsp::flash`): он может лежать в мелких секторах перед
-  `ACTIVE` —{% else %} Подробности —{% endif %} `docs/flash.md`.
+- `STATE_ERASE_SIZE` — страница сектора `STATE`, одно число на `boot` и
+  приложение (`bsp::flash::STATE_ERASE_SIZE`){% if config_store == "flash" %}; так же `CONFIG_ERASE_SIZE` у `CONFIG`{% endif %} —
+  `docs/flash.md`, «Страница раздела — {% if erase_page == "true" %}не всегда {% endif %}страница чипа».
 {%- endif %}
 {%- if ota == "true" %}
 - Разделы обновления плата отдаёт нарезанными (`board.firmware:
@@ -288,25 +259,16 @@ read`: руками пришлось бы сначала найти адрес �
   host-тесты подают адаптеру разделы в памяти — `docs/ota.md`.
 {%- endif %}
 {%- if ota == "true" or config_store == "flash" or config_store == "external" or dma_nc == "true" %}
-{%- capture layout_asserts %}{% if ota == "true" %}; границы разделов OTA кратны странице, над которой стоит раздел, и не выходят за flash{% if ota_store == "external" %} (объём внешней микросхемы сверяется на старте по `__ext_flash_end`){% endif %}{% endif %}{% if config_store == "flash" %}; `CONFIG` — на границах своей страницы{% endif %}{% if dma_nc == "true" %}; `DMA_NC`{% if bdma_nc == "true" %}/`SRAM4`{% endif %} годны для MPU{% endif %}{% endcapture %}
-- Границы разделов и регионов памяти, нужные рычагам платы ({% if ota == "true" %}размер `ACTIVE`, {% endif %}{% if config_store == "flash" or config_store == "external" %}границы `CONFIG`, {% endif %}{% if external_flash == "true" %}конец
-  разделов внешней флеши, {% endif %}{% if dma_nc == "true" %}регионы `DMA_NC`{% if bdma_nc == "true" %}/`SRAM4`{% endif %}, {% endif %}— одно место), — символы `memory.x`,
-  которые линкер вычисляет из регионов; читает их только `bsp::layout`
-  (`unsafe extern` с обычным `static`; читается только адрес, `&raw const`, —
-  значение символа и есть адрес). Проверки над ними — `ASSERT` в сгенерированном
-  `memory.x` (падает линковка, а не плата), не `const`-assert{% if layout_asserts != "" %}: {{ layout_asserts | remove_first: "; " }}{% endif %}. В `[env]`
-  `crates-cross/.cargo/config.toml` остаются только числа, которые нужны
-  компилятору (параметр `ErasePage`, `const`-assert, размер пула). Символы
-  обязаны быть в `memory.x` каждого бинарника, который их читает: `app` и
-  `target-tests`{% if ota == "true" and ota_store == "external" %}, `boot` — символы внешней флеши{% endif %} — `docs/flash.md`.
+- Границы разделов и регионов памяти, нужные рычагам платы, — символы
+  `memory.x`, и читает их только `bsp::layout`; проверки над ними — `ASSERT` в
+  `memory.x`, не `const`-assert; в `[env]` — только числа, нужные компилятору;
+  символы обязаны быть в `memory.x` каждого бинарника, который их читает —
+  `docs/flash.md`, «Символы раскладки».
 {%- endif %}
 {%- if bank_switch != "" %}
-- Флеш этого чипа с завода двухбанковый, а раскладка одобанковая:
-  `bsp::banks::ensure_single_bank()` стоит первой строкой {% if ota == "true" %}и в `boot`, и в
-  `Board::new`{% else %}`Board::new`{% endif %} — до любого `Flash::new`. Не переносить ниже и не убирать:
-  `embassy-stm32` паникует на несовпадении режима (G0/G4) или стирает не те
-  страницы (L4+). Новая плата прошивается дважды: первая прошивка
-  переключает режим и перезагружает МК — `docs/flash.md`.
+- `bsp::banks::ensure_single_bank()` стоит первой строкой {% if ota == "true" %}и в `boot`, и в
+  `Board::new`{% else %}`Board::new`{% endif %} — до любого `Flash::new`; не переносить ниже и не убирать —
+  `docs/flash.md`, «Банки flash».
 {%- endif %}
 - Паника и фолт — решение прошивки, а не рычаг платы: паникёр, обработчик
   `HardFault` с причиной и ловушка деления — в `app` (`crates-cross/app/src/panic.rs`,
@@ -376,11 +338,9 @@ read`: руками пришлось бы сначала найти адрес �
   `domain::canopen`.
 {%- endif %}
 {%- if dfu_bank == "true" %}
-- `DFU` — во втором банке, который стоит за разрывом в адресах: `boot` и
-  `bsp` пишут его через `Bank2Region`, а символы `__bootloader_dfu_*` в
-  `memory.x` отсчитаны от начала банка 2, а не от базы flash. Менять только
-  вместе; цельный `Flash` туда не дотягивается (`FLASH_SIZE` — сумма банков) —
-  `docs/flash.md`.
+- `DFU` — во втором банке: `boot` и `bsp` пишут его через `Bank2Region`, а
+  символы `__bootloader_dfu_*` отсчитаны от начала банка 2; менять только
+  вместе — `docs/flash.md`, «Банки flash».
 {%- endif %}
 {%- if config == "true" %}
 - Хранилище настроек — `adapters::settings` над любым async `NorFlash`, на весь

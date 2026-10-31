@@ -273,18 +273,9 @@ Compose-site — модули задач (подмодули `crates-cross/app/s
 нужен, а конкретный тип знает только `cross`; generic-`static` не бывает, и
 параметр — единственный способ фрагмента назвать тип, которого он не видит.
 Bound'ов у параметров нет намеренно: их держит сигнатура `ota::task`, и rustc
-проверяет её, а не копию в DSL. Слот адаптера (`FLASH`) к тому же помечен `local`,
-потому что `Updater` над флешем `bsp::FirmwareFlash` — `!Send` (держит `&'static Mutex<NoopRawMutex,
-…>`), а обычный слот — `static`, которому нужен `Send`; `local` снимает это
-требование, но взамен обязывает держать значение на одном исполнителе — том,
-что спавнит граф, и не даёт перевести узел, чей `local`-слот заполнен
-инициализатором (как здесь), на другой (`executor:`). Плата за это — фича
-`supervisor/local-resources` в `crates-cross/Cargo.toml` и по `unsafe`-блоку
-на каждый такой `local`-`static`, который макрос эмитит в `app`. Это то же
-допущение «один исполнитель», что у `NoopRawMutex` в `bsp::flash::FlashMutex`, —
-менять их вместе (`docs/flash.md`).{% if has_modbus == "true" %} Общая карта узлов Modbus из него вышла:
-`domain::modbus::MapMutex` — `CriticalSectionRawMutex`, потому что карта лежит
-в `OnceLock` в `static` (`crate::modbus`), а тому нужен `Sync`.{% endif %}
+проверяет её, а не копию в DSL. Слот адаптера (`FLASH`) к тому же помечен
+`local` — `Updater` не `Send` (`docs/modules/app-graph.md`, «OTA: узел уже в
+графе…»); это допущение «один исполнитель» — `docs/flash.md`.
 {%- endif %}
 
 **Большой объект — слот `&'static mut T = static`, а не по значению**

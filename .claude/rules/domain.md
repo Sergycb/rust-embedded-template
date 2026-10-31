@@ -30,10 +30,9 @@ paths: crates-host/domain/**
   автоматов, входы фрагментов ({% if ota == "true" %}`OtaWiring`, {% endif %}`IdleMeter`{% if ota == "true" %}, `Mode`{% endif %}), буферы кадра
   задачи, которые автомат получает аргументами стартового действия{% if has_canopen == "true" %} (`canopen::Persisted`){% endif %}{% if has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" %} и обработчик протокола,
   который фрагмент получает на входе ({% if has_protobuf == "true" %}`protobuf::Service`{% elsif has_modbus == "true" %}карта регистров (порт `Registers`; по умолчанию `modbus::EmptyRegisters`, тип выбирает `crate::modbus::Map` в `app`, карта общая у всех узлов Modbus){% else %}`canopen::dictionary` (словарь объектов){% endif %}): это логика
-  приложения, и проект правит его здесь{% endif %}.{% if ota == "true" %} Исключение — решение
-  bootloader'а в `domain::ota::boot`: {% if ota_store == "external" %}`BootPlan`, {% endif %}`Screening`, `ScreenFailure` — типы
-  результата {% if ota_store == "external" %}двух свободных функций{% else %}свободной функции{% endif %} над блокирующими разделами, которые
-  зовёт `crates-cross/boot` (`docs/architecture.md`).{% endif %} Всё, чем логика разговаривает
+  приложения, и проект правит его здесь{% endif %}.{% if ota == "true" %} Исключение — типы решения
+  bootloader'а в `domain::ota::boot`, которые зовёт `crates-cross/boot`
+  (`docs/architecture.md`).{% endif %} Всё, чем логика разговаривает
   с портами (ошибки), лежит в `ports`; логика вне автоматов — функции над портами,
   её состояние — локальные переменные вызова. Состояние, которое живёт дольше
   прогона автомата, — `resources:` узла, сброс — в стартовом действии.

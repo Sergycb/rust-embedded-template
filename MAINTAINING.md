@@ -444,17 +444,15 @@ MemoryRegion { address, size, settings: Some(FlashSettings { erase_size, write_s
 "the template folder", о котором предупреждает документация `file::write`, не в
 `crates-cross/*/memory.x` этого репозитория).
 
-**Границы, нужные прошивке в рантайме, — символы `memory.x`, а не `[env]`.** Размер
+**Границы, нужные прошивке в рантайме, — символы `memory.x`, а не `[env]`** (правило —
+`docs/flash.md`, «Символы раскладки»). Хук пишет их рядом с регионами: размер
 `ACTIVE` (из `__bootloader_active_*`), границы `CONFIG` (`__config_start`/`__config_end`:
 от `ORIGIN(CONFIG)` во внутреннем флеше, литералами на внешней), конец внешней флеши
-(`__ext_flash_end` = `MAX` по концам разделов) и регионы DMA (`__dma_nc_*`, `__bdma_nc_*`)
-хук пишет символами рядом с регионами, а `bsp::layout` читает их адресами одного блока
-`unsafe extern`. Проверки над ними — `ASSERT` в том же `memory.x` (кратность `CONFIG`
-его странице — литералом из генерации, MPU-годность регионов DMA): падает линковка. В
-`[env]` остаётся только то, что нужно компилятору (`STATE_ERASE_SIZE`, `SWAP_PAGE_SIZE`,
-`EXT_PAGE_SIZE`, `WATCHDOG_TIMEOUT_US`, `HTTP_CONNECTIONS`). Символы — в
-`memory.x` `app` и `target-tests`; у `boot` — только символы внешней флеши (он сверяет
-объём микросхемы), `CONFIG` и `DMA_NC` он не собирает. Ручные заготовки
+(`__ext_flash_end` = `MAX` по концам разделов), регионы DMA (`__dma_nc_*`, `__bdma_nc_*`)
+и `ASSERT`'ы над ними (кратность `CONFIG` его странице — литералом из генерации). В
+`[env]` из генерации едут `STATE_ERASE_SIZE`, `SWAP_PAGE_SIZE`, `EXT_PAGE_SIZE`,
+`WATCHDOG_TIMEOUT_US`, `HTTP_CONNECTIONS`. Символы — в `memory.x` `app` и
+`target-tests`; у `boot` — только символы внешней флеши. Ручные заготовки
 `crates-cross/*/memory.x` показывают, какие символы вписать. Тесты —
 `partition_bounds_are_linker_symbols` и соседние в `cascade.rs`.
 

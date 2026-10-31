@@ -65,11 +65,10 @@ ports = { workspace = true }
 embassy-embedded-hal = { workspace = true }
 # Решение bootloader'а —{% if ota_store == "external" %} обмен или текущий образ
 # (`domain::ota::boot::boot_plan`) и{% endif %} проверка нового образа перед обменом
-# (`domain::ota::boot::screen_update`, фича `signed`). Зависит от `domain`
-# ради {% if ota_store == "external" %}двух функций{% else %}функции{% endif %} над блокирующими разделами; в образ попадают только {% if ota_store == "external" %}они{% else %}она{% endif %}:
-# `lto = "fat"` и `--gc-sections` выбрасывают всё, на что нет ссылок
-# (узлы, `supervisor`, `embassy-executor`). Драйвер времени `domain` не
-# включает — см. комментарий к `embassy-stm32` в crates-cross/Cargo.toml.
+# (`domain::ota::boot::screen_update`, фича `signed`); почему `boot` зависит
+# от `domain` и что из него попадает в образ — docs/architecture.md. Драйвер
+# времени `domain` не включает — см. комментарий к `embassy-stm32` в
+# crates-cross/Cargo.toml.
 domain = { workspace = true, features = ["signed"] }
 {%- if ota_store == "external" %}
 # Геометрия драйвера внешней флеши в проверках при компиляции.

@@ -347,10 +347,11 @@ crate::version::FW_VERSION } }`). Типы слотов — аргументы �
 `supervisor/local-resources` в
 `crates-cross/Cargo.toml`): адаптер `Updater` не `Send` (держит `&'static
 Mutex<NoopRawMutex, …>`), и граф держит его на своём исполнителе, не требуя
-`Send`. Узел, чей `local`-слот заполняется
+`Send`. Плата за это — по `unsafe`-блоку на каждый такой `local`-`static`,
+который макрос эмитит в `app`. Узел, чей `local`-слот заполняется
 из `inputs`, нельзя перевести на другой
-исполнитель (`executor:`); захотите вынести OTA туда — менять `local` во
-фрагменте `domain::ota` и `NoopRawMutex` у {% if ota_store == "external" %}`bsp::external::ExternalMutex`{% else %}`bsp::flash::FlashMutex`{% endif %} вместе.
+исполнитель (`executor:`): это допущение «один исполнитель», и менять его
+вместе с `NoopRawMutex` у флеша (`docs/flash.md`).
 
 У узла нет `watchdog:`, и это не забывчивость: команды может не быть всю
 жизнь платы, и прогресса, о котором можно отметиться, у узла нет. Аппаратный
