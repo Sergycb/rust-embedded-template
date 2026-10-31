@@ -4,7 +4,7 @@ use embassy_net::Stack;
 use embassy_net::tcp::{State, TcpSocket};
 use embedded_io_async::{ErrorType, Read, Write};
 
-use super::{IDLE_TIMEOUT, KEEP_ALIVE, TcpError, is_open, reset};
+use super::{HangUp, IDLE_TIMEOUT, KEEP_ALIVE, TcpError, is_open, reset};
 
 /// TCP-сервер на одном порту — поток байтов для транспортов протоколов.
 // {%- if modbus_tcp == "true" %}
@@ -76,6 +76,12 @@ impl TcpServer {
     /// Сбрасывает соединение: следующее обращение примет новое.
     async fn drop_connection(&mut self) {
         reset(&mut self.socket).await;
+    }
+}
+
+impl HangUp for TcpServer {
+    async fn hang_up(&mut self) {
+        self.drop_connection().await;
     }
 }
 

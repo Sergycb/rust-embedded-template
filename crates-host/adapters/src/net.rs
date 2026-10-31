@@ -30,7 +30,7 @@ pub use tcp::TcpError;
 pub use tcp::TcpClient;
 // {%- endif %}
 // {%- if has_tcp == "true" %}
-pub use tcp::TcpServer;
+pub use tcp::{HangUp, TcpServer};
 // {%- endif %}
 // {%- if has_udp == "true" %}
 pub use udp::{UdpError, UdpLink};

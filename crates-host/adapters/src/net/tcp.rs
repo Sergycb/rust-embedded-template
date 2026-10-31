@@ -31,6 +31,20 @@ const KEEP_ALIVE: Duration = Duration::from_secs(10);
 /// пропавшим: три проверки подряд.
 const IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
+// {%- if has_tcp == "true" %}
+/// Поток над соединением, которое можно оборвать. Нужен протоколу, который,
+/// потеряв в потоке границу кадра, в том же соединении её уже не найдёт
+/// (`modbus::Tcp`): клиент переподключится и начнёт с чистого потока.
+#[expect(
+    async_fn_in_trait,
+    reason = "соединение обрывают на одном исполнителе: `Send` у future не нужен"
+)]
+pub trait HangUp {
+    /// Обрывает соединение; следующее чтение ждёт нового.
+    async fn hang_up(&mut self);
+}
+
+// {%- endif %}
 /// Почему `TcpServer` или `TcpClient` не прочитал или не записал.
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]

@@ -38,6 +38,14 @@ impl Header {
         let pdu = usize::from(self.length).checked_sub(1)?;
         (1..=MAX_PDU).contains(&pdu).then_some(HEADER + pdu)
     }
+    // {%- if modbus_tcp == "true" %}
+
+    /// Кадр без PDU — только адрес: длина вне допустимой, но граница кадра
+    /// известна — он кончается на заголовке.
+    pub(super) const fn is_empty(self) -> bool {
+        self.length == 1
+    }
+    // {%- endif %}
 }
 
 /// Заголовок кадра с PDU длины `pdu`.
