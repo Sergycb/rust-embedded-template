@@ -13,6 +13,19 @@ variables:
   # Одна версия линкера у cross:build и release:build — та же, что в
   # `cargo xtask setup` (docs/conventions.md, «Тулчейн запинен»).
   FLIP_LINK_VERSION: "0.1.12"
+  # Версии инструментов закреплены: без них пайплайн менял бы поведение без
+  # единого коммита, по тому, что crates.io отдал сегодня.
+  NEXTEST_VERSION: "0.9.150"
+  LLVM_COV_VERSION: "0.9.1"
+  HACK_VERSION: "0.6.45"
+  DENY_VERSION: "0.20.2"
+  TYPOS_VERSION: "1.51.1"
+  # Домашний каталог cargo — внутри проекта: GitLab кеширует только пути
+  # проекта, а у образа `rust:` он в `/usr/local/cargo`, и ни реестр, ни
+  # поставленные `cargo install` инструменты в кеш не попадали. Джобы,
+  # которые ставят инструменты, первой строкой добавляют `$CARGO_HOME/bin` в
+  # PATH: значение PATH из `variables:` GitLab не раскрыл бы.
+  CARGO_HOME: "$CI_PROJECT_DIR/.cargo-home"
 
 # Кеша два, а не один, и это не избыточность: GitLab не перезаписывает уже
 # существующий ключ, поэтому с общим ключом первым завершившийся джоб (а это
@@ -24,14 +37,16 @@ variables:
   cache:
     key: "$CI_COMMIT_REF_SLUG-host"
     paths:
-      - .cargo/registry
+      - .cargo-home/registry
+      - .cargo-home/bin
       - target
 
 .cache-cross: &cache_cross
   cache:
     key: "$CI_COMMIT_REF_SLUG-cross"
     paths:
-      - .cargo/registry
+      - .cargo-home/registry
+      - .cargo-home/bin
       - crates-cross/target
 
 # Пайплайны по расписанию заведены ради renovate (см. джоб в конце файла) —
@@ -47,9 +62,10 @@ host:test:
   before_script:
     # llvm-tools нужен покрытию: cargo-llvm-cov зовёт llvm-profdata и llvm-cov
     # из тулчейна, а в образе их нет.
+    - export PATH="$CARGO_HOME/bin:$PATH"
     - rustup component add rustfmt clippy llvm-tools
-    - cargo install cargo-nextest --locked
-    - cargo install cargo-llvm-cov --locked
+    - cargo install cargo-nextest --version "$NEXTEST_VERSION" --locked
+    - cargo install cargo-llvm-cov --version "$LLVM_COV_VERSION" --locked
   script:
     # --locked ловит рассинхрон Cargo.toml и закоммиченного Cargo.lock:
     # без него cargo молча подобрал бы свои версии, и пайплайн остался бы
@@ -70,7 +86,8 @@ host:test:
     # «невозможное» сочетание рано или поздно встретится (например, `domain`
     # без `log` и без `defmt` не собирается вовсе). `log` и `defmt`
     # взаимоисключающие, но одна из них обязательна; dev-зависимости не нужны.
-    - cargo install cargo-hack cargo-deny --locked
+    - cargo install cargo-hack --version "$HACK_VERSION" --locked
+    - cargo install cargo-deny --version "$DENY_VERSION" --locked
     - >
       cargo hack check --workspace --exclude host-target-tests --exclude xtask
       --feature-powerset --no-dev-deps
@@ -118,7 +135,8 @@ typos:
   image: rust:1.98.1
   <<: *not_scheduled
   script:
-    - cargo install typos-cli --locked
+    - export PATH="$CARGO_HOME/bin:$PATH"
+    - cargo install typos-cli --version "$TYPOS_VERSION" --locked
     - typos
 
 # Проверка распиновки: не занят ли выводами платы отладочный порт (`PA13`/
@@ -139,7 +157,7 @@ pins:check:
   cache:
     key: "pins-$CI_COMMIT_REF_SLUG"
     paths:
-      - .cargo/registry
+      - .cargo-home/registry
       - crates-host/chip-info/target
   # Одним правилом: `if` и `changes` внутри одного правила GitLab соединяет по
   # И. Источники перечислены явно, потому что в пайплайнах, где диффа нет
@@ -176,6 +194,7 @@ cross:build:
   image: rust:1.98.1
   <<: [*cache_cross, *not_scheduled]
   before_script:
+    - export PATH="$CARGO_HOME/bin:$PATH"
     - rustup component add rustfmt clippy
     - rustup target add {{target}}
     - cargo install flip-link --version "$FLIP_LINK_VERSION" --locked
@@ -190,7 +209,7 @@ cross:build:
       fi
     - cargo xtask lint cross
     # Свой `Cargo.lock` прошивки, та же политика `deny.toml`.
-    - cargo install cargo-deny --locked
+    - cargo install cargo-deny --version "$DENY_VERSION" --locked
     - cargo deny --manifest-path crates-cross/Cargo.toml check
     - cargo xtask build
     # Размер образа отдельной метрикой. Кеша и базы здесь не нужно: GitLab
@@ -252,6 +271,7 @@ release:build:
   rules:
     - if: $CI_COMMIT_TAG
   before_script:
+    - export PATH="$CARGO_HOME/bin:$PATH"
     - rustup target add {{target}}
     # Версия — та же, что в release.yml: от линкера зависит раскладка образа,
     # и без пина релиз не повторить (docs/conventions.md, «Воспроизводимый релиз»).
@@ -405,6 +425,7 @@ audit:
   rules:
     - if: $CI_PIPELINE_SOURCE == "schedule"
   script:
-    - cargo install cargo-deny --locked
+    - export PATH="$CARGO_HOME/bin:$PATH"
+    - cargo install cargo-deny --version "$DENY_VERSION" --locked
     - cargo deny check advisories
     - cargo deny --manifest-path crates-cross/Cargo.toml check advisories
