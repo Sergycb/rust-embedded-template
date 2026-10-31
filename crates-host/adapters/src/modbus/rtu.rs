@@ -1,6 +1,7 @@
 //! Кадр Modbus RTU — адрес, PDU, CRC16 — поверх потока байтов.
 
 use crc::{CRC_16_MODBUS, Crc, NoTable};
+use embassy_time::{Duration, with_timeout};
 use embedded_io_async::{Read, ReadExactError, Write};
 use ports::{FrameLink, LinkError, MAX_PDU};
 
@@ -13,6 +14,21 @@ use super::{FrameError, io_error, read_error};
 
 /// Наибольший кадр RTU: адрес, PDU до 253 байт, CRC.
 const MAX_ADU: usize = MAX_PDU + 3;
+
+/// Тишина посреди начатого кадра, после которой slave его выбрасывает.
+///
+/// По спецификации (Modbus over Serial Line 1.02, §2.5.1.1) кадр кончается
+/// паузой в 3,5 символа (выше 19200 бод — 1,75 мс), а пауза больше 1,5
+/// символа внутри кадра делает его битым. `Rtu` скорости линии не знает,
+/// поэтому константа берётся с запасом на медленную: 20 мс больше 1,5
+/// символа на любой скорости от 1200 бод (13,75 мс), так что целый кадр
+/// с допустимыми паузами внутри не режется, — и меньше тайм-аута любого
+/// master'а (обычно от 100 мс), так что после обрывка slave успевает
+/// очиститься до повтора запроса. Та же константа терпит и USB CDC, где
+/// кадр приходит пакетами с паузами в миллисекунды. На быстрой линии slave
+/// поэтому склеит обрывок со следующим кадром, если тот пришёл раньше
+/// 20 мс, — тогда кадр выровняет CRC, как и без паузы.
+const FRAME_GAP: Duration = Duration::from_millis(20);
 
 /// CRC-16/MODBUS: полином 0xA001 (отражённый 0x8005), начальное значение
 /// 0xFFFF. Без таблицы: 512 байт флеша не стоят выигрыша на кадрах до 256
@@ -39,7 +55,10 @@ const MAX_DRAIN: usize = 2 * MAX_ADU;
 /// FC08/00 с данными длиннее двух байт пропускается: длину его кадра не
 /// вывести, а отвечать, не проверив CRC, нельзя — master получит таймаут, а
 /// не Illegal Function. Кадры на
-/// зарезервированные адреса 248–255 пропускаются.
+/// зарезервированные адреса 248–255 пропускаются. Начатый кадр, после
+/// которого линия молчит дольше 20 мс (`FRAME_GAP`), slave выбрасывает:
+/// иначе помеха, сделавшая из функции FC16, заставила бы его ждать до 256
+/// байт, копя следующие запросы.
 ///
 // {%- if modbus_master == "true" %}
 /// Master ([`ModbusClient`]) перед каждым запросом сливает всё, что уже
@@ -152,15 +171,21 @@ impl<T: Read> Rtu<T> {
     /// больше, иначе начало следующего кадра пришлось бы хранить где-то ещё.
     async fn next_request(&mut self) -> Result<usize, ReadExactError<T::Error>> {
         loop {
-            self.fill(2).await?;
+            if !self.fill(2).await? {
+                continue;
+            }
             let Some(header) = request_header(self.rx[1]) else {
                 self.consume(1);
                 continue;
             };
-            self.fill(header).await?;
+            if !self.fill(header).await? {
+                continue;
+            }
             let len = request_len(&self.rx[..header]);
             if len <= MAX_ADU {
-                self.fill(len).await?;
+                if !self.fill(len).await? {
+                    continue;
+                }
                 if crc_ok(&self.rx[..len]) {
                     return Ok(len);
                 }
@@ -169,8 +194,32 @@ impl<T: Read> Rtu<T> {
         }
     }
 
-    async fn fill(&mut self, want: usize) -> Result<(), ReadExactError<T::Error>> {
-        super::fill(&mut self.io, &mut self.rx, &mut self.have, want).await
+    /// Дочитывает `rx` до `want` байт; `false` — линия смолкла посреди
+    /// начатого кадра дольше [`FRAME_GAP`], и начатое выброшено: разбор
+    /// начинается заново.
+    ///
+    /// Пустой буфер ждёт без срока — тишина между запросами обычна. Каждый
+    /// прочитанный кусок сразу учтён в `have`, а брошенное по сроку или
+    /// снаружи чтение ничего не забирает из потока: следующий вызов
+    /// продолжит с того же места.
+    async fn fill(&mut self, want: usize) -> Result<bool, ReadExactError<T::Error>> {
+        while self.have < want {
+            let read = self.io.read(&mut self.rx[self.have..want]);
+            let read = if self.have == 0 {
+                read.await
+            } else if let Ok(read) = with_timeout(FRAME_GAP, read).await {
+                read
+            } else {
+                self.have = 0;
+                return Ok(false);
+            };
+            match read {
+                Ok(0) => return Err(ReadExactError::UnexpectedEof),
+                Ok(n) => self.have += n,
+                Err(e) => return Err(ReadExactError::Other(e)),
+            }
+        }
+        Ok(true)
     }
 
     /// Убирает `n` байт из начала принятого.
@@ -354,8 +403,12 @@ fn crc_ok(frame: &[u8]) -> bool {
 mod tests {
     // {%- if modbus_master == "true" %}
     use core::convert::Infallible;
-
     // {%- endif %}
+    use core::pin::pin;
+    use core::task::{Context, Poll, Waker};
+
+    use embassy_time::MockDriver;
+
     use super::*;
     use crate::modbus::fakes::{Duplex, rtu_frame as frame};
 
@@ -485,6 +538,59 @@ mod tests {
                 pdu[0]
             );
         }
+    }
+
+    /// Помеха сделала из функции запроса FC16: по «счётчику байт» кадр ждал
+    /// бы 249 байт, копя следующие запросы. Тишина дольше [`FRAME_GAP`]
+    /// обрывок выбрасывает, и запрос после неё принят сразу.
+    #[test]
+    fn server_drops_a_started_frame_after_silence() {
+        MockDriver::get().reset();
+        let broken = [0x01, 0x10, 0, 0, 0, 1, 0xF0];
+        let good = frame(1, &[0x03, 0, 0, 0, 1]);
+        let mut rtu = Rtu::new(Duplex::new(&broken).waiting());
+        let mut cx = Context::from_waker(Waker::noop());
+        {
+            let mut recv = pin!(rtu.recv());
+            assert!(recv.as_mut().poll(&mut cx).is_pending());
+            MockDriver::get().advance(FRAME_GAP - Duration::from_ticks(1));
+            assert!(recv.as_mut().poll(&mut cx).is_pending());
+        }
+        assert_eq!(rtu.have, broken.len(), "до срока обрывок цел");
+        {
+            let mut recv = pin!(rtu.recv());
+            assert!(recv.as_mut().poll(&mut cx).is_pending());
+            MockDriver::get().advance(FRAME_GAP);
+            assert!(recv.as_mut().poll(&mut cx).is_pending());
+        }
+        assert_eq!(rtu.have, 0, "обрывок выброшен");
+
+        rtu.io.push(&good);
+        let Poll::Ready(Ok(len)) = pin!(rtu.recv()).poll(&mut cx) else {
+            panic!("запрос после тишины не принят");
+        };
+        assert_eq!(&rtu.buffer()[..len], &good[..good.len() - 2]);
+    }
+
+    /// Пауза короче [`FRAME_GAP`] кадр не рвёт, а брошенный посреди кадра
+    /// приём ничего не теряет: следующий `recv` дочитывает тот же кадр.
+    #[test]
+    fn server_keeps_a_frame_across_a_short_pause() {
+        MockDriver::get().reset();
+        let good = frame(1, &[0x03, 0, 0, 0, 1]);
+        let mut rtu = Rtu::new(Duplex::new(&good[..3]).waiting());
+        let mut cx = Context::from_waker(Waker::noop());
+        {
+            let mut recv = pin!(rtu.recv());
+            assert!(recv.as_mut().poll(&mut cx).is_pending());
+            MockDriver::get().advance(FRAME_GAP - Duration::from_ticks(1));
+            assert!(recv.as_mut().poll(&mut cx).is_pending());
+        }
+        rtu.io.push(&good[3..]);
+        let Poll::Ready(Ok(len)) = pin!(rtu.recv()).poll(&mut cx) else {
+            panic!("кадр не дочитан");
+        };
+        assert_eq!(&rtu.buffer()[..len], &good[..good.len() - 2]);
     }
 
     #[tokio::test]

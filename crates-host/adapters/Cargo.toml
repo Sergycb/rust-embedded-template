@@ -100,8 +100,17 @@ embassy-net = { workspace = true }
 # USB (`adapters::usb`): заглушка драйвера и поток CDC ACM.
 embassy-usb = { workspace = true }
 # {%- endif %}
-# {%- if has_net == "true" or has_usb == "true" %}
-# Таймауты: keep-alive сокета TCP (`net`), запись, которую хост не забирает (`usb`).
+# {%- if has_net == "true" or has_usb == "true" or modbus_rtu == "true" %}
+# Таймауты:
+# {%- if has_net == "true" %}
+# keep-alive сокета TCP (`net`);
+# {%- endif %}
+# {%- if has_usb == "true" %}
+# запись, которую хост не забирает (`usb`);
+# {%- endif %}
+# {%- if modbus_rtu == "true" %}
+# тишина посреди кадра RTU (`modbus::Rtu`).
+# {%- endif %}
 embassy-time = { workspace = true }
 # {%- endif %}
 # `defmt::Format` на ошибках адаптеров и строка лога `settings` — в прошивке.
@@ -129,7 +138,7 @@ tokio = { workspace = true }
 # Property-тесты кадрирования: любое дробление потока и любой мусор.
 proptest = { workspace = true }
 # {%- endif %}
-# {%- if has_net == "true" or has_usb == "true" or ota == "true" %}
+# {%- if has_net == "true" or has_usb == "true" or ota == "true" or modbus_rtu == "true" %}
 # {%- if has_net == "true" or has_usb == "true" %}
 # Тесты над стеками
 # {%- if has_net == "true" %}
@@ -140,6 +149,9 @@ proptest = { workspace = true }
 # {%- endif %}
 # ждут таймеров и критической секции — на хосте их дают драйвер времени
 # `mock-driver` и `critical-section/std`, как в `domain`.
+# {%- endif %}
+# {%- if modbus_rtu == "true" %}
+# Тест паузы посреди кадра RTU двигает часы `mock-driver`.
 # {%- endif %}
 # {%- if ota == "true" %}
 # С OTA драйвер времени нужен и `supervisor` из dev-зависимости `domain` — по
