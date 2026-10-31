@@ -29,7 +29,7 @@ use embassy_stm32::pac;
 {%- endif %}
 pub fn enable() {
 {%- if cache contains "scb" %}
-    // SAFETY: зовётся из `Board::new` до запуска задач и прерываний, на одном
+    // SAFETY: зовётся из `Board::new` раньше остальных задач и прерываний, на одном
     // ядре; `SCB` и `CPUID` здесь только читаются и пишутся регистры кэшей.
     let mut core = unsafe { cortex_m::Peripherals::steal() };
     core.SCB.enable_icache();

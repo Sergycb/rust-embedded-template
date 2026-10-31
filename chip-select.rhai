@@ -899,12 +899,15 @@ const PROTOCOL_TEXT = #{
 // у каждого случая она не ниже факта.
 const RAM_COST = #{
     // Без OTA, настроек, графа и транспортов: stm32f407ve ota=no graph=no — 1344
-    // (stm32l011f4 — 1316).
-    core: 1344,
+    // (stm32l011f4 — 1316), плюс задача `start` в `main.rs` (`app::start::POOL` —
+    // 56 байт на thumbv6m и thumbv7em): плату собирает она, а не `main`.
+    core: 1400,
     // stm32f407ve: 3880 с OTA против 1952 без неё; внешняя — stm32h723ve 3996
     // (ext_flash=yes config=yes) против 2012 (то же с ota=no), с драйвером
-    // W25Q над заглушкой шины.
-    ota: #{ internal: 1928, external: 1984 },
+    // W25Q над заглушкой шины; плюс 152 — задача `start` держит future
+    // `Board::new` через `.await` (`init` внешней флеши): `app::start::POOL`
+    // 208 байт вместо 56 в `core`.
+    ota: #{ internal: 1928, external: 2136 },
     // По месту хранения (`config_store`): stm32f407ve 3912 против 3880,
     // stm32l073rz (EEPROM) 3868 против 3860, stm32h723ve 1988 против 1988.
     config: #{ flash: 32, eeprom: 8, external: 0 },
