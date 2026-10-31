@@ -508,7 +508,7 @@ STM32WB10CC/WB15CC (`erase_value: 0` при другом префиксе, об�
 остальное `extra_region_lines` отдаёт готовыми строками под своими именами из
 `stm32-metapac`: ITCM, AXISRAM, CCMRAM, BKPSRAM, EEPROM, OTP и т.д. Раньше их не было
 вовсе — на H723VE пользователь видел 128 KiB DTCM и не видел ни 320 KiB AXISRAM, ни
-64 KiB ITCM, ни трёх SRAM. Две категории при этом выводятся ЗАКОММЕНТИРОВАННЫМИ, с
+64 KiB ITCM, ни трёх SRAM. Три категории при этом выводятся ЗАКОММЕНТИРОВАННЫМИ, с
 причиной прямо в строке:
 
 - **окна внешних шин** (`EXTERNAL_BUS_PREFIXES` — `FMC_`, `SDRAM_`, `OCTOSPI_`, ...):
@@ -519,6 +519,30 @@ STM32WB10CC/WB15CC (`erase_value: 0` при другом префиксе, об�
   `CCMRAM_DCODE`, `SRAM2_ICODE` при живом `SRAM2`): физически это одна и та же память по
   двум адресам, и разместить данные в обоих окнах разом — молчаливое наложение, которого
   линкер не заметит.
+
+- **память второго ядра** — SRAM2a/SRAM2b у STM32WB (`reserved_for_cpu2`, см.
+  ниже).
+
+**Память второго ядра раскладка не раздаёт.** У STM32WB (серия `wb`, не `wba` и не
+`wb0` — `has_wb_cpu2`) радиоядру CPU2 принадлежат верх SRAM2a/SRAM2b и flash от
+`SFSA × 4K` до конца — всегда, даже без стека (AN5185 §1.4–1.5, Table 5); доступ CPU1
+туда — bus error (RM0434 §3.6.4). SRAM2a/SRAM2b со SRAM1 стыкуются, и раньше RAM у
+xE/xG/xY шла через них до `0x20040000`: стек под flip-link и `.bss` уезжали в память
+CPU2, и прошивка падала на обнулении `.bss` до `main`. Теперь они исключаются ДО
+построения цепочек (`ram_chains`, как `mem_filter` в `embassy-stm32/build.rs`), и `RAM`
+— SRAM1, `PANIC` — в её конце. Flash для раскладки обрезает `flash_for_layout` по
+таблице `WB_CPU2_FLASH` — адрес установки `stm32wb5x_BLE_Stack_full_fw.bin` из Release
+Notes STM32WB Copro Wireless Binaries v1.24.0 по объёму: 1M — `0x080D0000`, 640K —
+`0x0807C000`, 512K — `0x0805C000`, 256K — `0x0801C000` (WB30/WB35 — тот же кристалл,
+WB50 — столбец xG). Все разделы (`ACTIVE`, `DFU`, `CONFIG`, внешняя OTA) кончаются ниже.
+Для WB10/WB15 (320K) в этих Release Notes таблицы нет, граница взята с запасом —
+`0x08020000` (192K от конца, как у xG); её стоит сверить с Release Notes копроцессора
+`STM32WB1x`. Со стеком крупнее (`BLE_Stack_full_extended`, `BLE_Mac_802_15_4`, Thread,
+Zigbee) границу проект опускает руками; `SFSA` установленного стека видно в
+STM32CubeProgrammer (Option bytes → Secure) — docs/flash.md, «Память второго ядра».
+Объём WB, которого нет в таблице, роняет генератор паникой: границу нового чипа берут
+из Release Notes, а не угадывают. Тесты — `wb_layout_leaves_the_cpu2_memory_alone` в
+`main.rs` и `wb_leaves_sram2_and_the_cpu2_flash_alone` в `cascade.rs`.
 
 Ограничения — четыре runtime-assert'а `assert_partitions` (`boot_loader.rs` из
 `embassy-boot`; именно assert'ы, а не документация: нарушены — bootloader паникует на

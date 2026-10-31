@@ -1653,6 +1653,69 @@ const H7_SRAM4: u64 = 0x3800_0000;
 /// Начало SRAM домена D2 у H7 (`SRAM1..3`) — RAM ядра CM4 двухъядерных чипов.
 const H7_D2_SRAM: u64 = 0x3000_0000;
 
+/// STM32WB с радиоядром CPU2 (Cortex-M0+): `wb10`…`wb55`, но не `wba` (одно
+/// ядро) и не `wb0` — тот же признак, что у `mem_filter` в
+/// `embassy-stm32/build.rs` («SRAM2a/SRAM2b are reserved for the radio core»).
+fn has_wb_cpu2(chip: &str) -> bool {
+    chip.starts_with("wb") && !chip.starts_with("wba") && !chip.starts_with("wb0")
+}
+
+/// SRAM2a/SRAM2b (и их окна I-Code) у STM32WB — память CPU2: их защищённые
+/// верхние части FUS и радиостек занимают всегда, даже когда стек не
+/// установлен (AN5185 §1.4–1.5, Table 5), а доступ CPU1 туда — bus error
+/// (RM0434 §3.6.4). Ни в `RAM`, ни в соседние с ним регионы они не идут.
+fn reserved_for_cpu2(chip: &str, region: &str) -> bool {
+    has_wb_cpu2(chip) && region.starts_with("SRAM2")
+}
+
+/// Где у STM32WB начинается flash CPU2, по объёму flash: `(объём, адрес)`.
+///
+/// Flash от `SFSA × 4K` до конца закрыт для CPU1 (RM0434 §3.6.4: доступ —
+/// `RDERR`/`WRPERR`), и там всегда сидит FUS, а со стеком — и стек (AN5185
+/// §1.4, Figure 1). Сам `SFSA` прошивка не выбирает: его ставит FUS при
+/// установке стека. Поэтому граница — адрес установки
+/// `stm32wb5x_BLE_Stack_full_fw.bin` из Release Notes STM32WB Copro Wireless
+/// Binaries v1.24.0 (Wireless Coprocessor Binary Table): xG (1M), xY (640K),
+/// xE (512K), xC (256K). Те же столбцы — у WB30/WB35 (тот же кристалл,
+/// RM0434) и WB50 (столбец xG). Стек крупнее (`BLE_Mac_802_15_4`, Thread,
+/// Zigbee) ставится ниже, и тогда границу опускают руками — docs/flash.md.
+///
+/// WB10/WB15 (320K, сектор 2K) в этих Release Notes нет (у них свои
+/// бинарники копроцессора), и граница не сверена с первоисточником: взята с
+/// тем же запасом от конца flash, что у xG (192K), — на 152K ниже FUS
+/// (`0x0804_6000`, AN5185 §2.2), тогда как у WB5x между `BLE_Stack_full` и
+/// FUS 120K.
+const WB_CPU2_FLASH: [(u64, u64); 5] = [
+    (256 * 1024, 0x0801_C000),
+    (320 * 1024, 0x0802_0000),
+    (512 * 1024, 0x0805_C000),
+    (640 * 1024, 0x0807_C000),
+    (1024 * 1024, 0x080D_0000),
+];
+
+/// Сколько flash от базы отдаётся раскладке: у STM32WB — до начала flash
+/// CPU2 ([`WB_CPU2_FLASH`]), у остальных — вся цепочка.
+///
+/// # Panics
+///
+/// У STM32WB с объёмом, которого нет в таблице: границу нового чипа надо
+/// взять из Release Notes копроцессора, а не угадать.
+fn flash_for_layout(chip: &str, chain_length: u64) -> u64 {
+    if !has_wb_cpu2(chip) {
+        return chain_length;
+    }
+    let (_, cpu2) = WB_CPU2_FLASH
+        .iter()
+        .find(|(size, _)| *size == chain_length)
+        .unwrap_or_else(|| {
+            panic!(
+                "{chip}: flash {} KiB — границы стека CPU2 для такого объёма нет в WB_CPU2_FLASH",
+                chain_length / 1024
+            )
+        });
+    cpu2 - FLASH_BASE
+}
+
 /// Регион `DMA_NC`: non-cacheable память под буферы DMA, которую `bsp::dma_nc`
 /// размечает в MPU. Без неё кэш данных ядра M7 DMA не видит.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1676,9 +1739,10 @@ fn dma_nc_size(end: u64, block: u64) -> Option<u64> {
 }
 
 /// Непрерывные цепочки RAM-блоков `(начало, конец)` по возрастанию адреса.
-/// Окна внешних шин и второе (I-Code) окно блока — не память программы, в
-/// цепочки не входят; блок, налезающий на цепочку, пропускается.
-fn ram_chains(regions: &[RawRegion]) -> Vec<(u64, u64)> {
+/// Окна внешних шин, второе (I-Code) окно блока и память CPU2 у STM32WB
+/// ([`reserved_for_cpu2`]) — не память программы, в цепочки не входят; блок,
+/// налезающий на цепочку, пропускается.
+fn ram_chains(chip: &str, regions: &[RawRegion]) -> Vec<(u64, u64)> {
     let mut ram: Vec<&RawRegion> = regions
         .iter()
         .filter(|r| {
@@ -1686,6 +1750,7 @@ fn ram_chains(regions: &[RawRegion]) -> Vec<(u64, u64)> {
                 && r.size > 0
                 && !r.name.ends_with(ALIAS_SUFFIX)
                 && !EXTERNAL_BUS_PREFIXES.iter().any(|p| r.name.starts_with(p))
+                && !reserved_for_cpu2(chip, &r.name)
         })
         .collect();
     ram.sort_by_key(|r| r.address);
@@ -1796,7 +1861,8 @@ fn compute_memory_layout(chip: &str, regions: &[RawRegion]) -> Option<MemoryLayo
             break;
         }
     }
-    let flash_total = end - FLASH_BASE;
+    let chain_end = end;
+    let flash_total = flash_for_layout(chip, chain_end - FLASH_BASE);
     if chain.is_empty() || flash_total == 0 {
         return None;
     }
@@ -1805,7 +1871,7 @@ fn compute_memory_layout(chip: &str, regions: &[RawRegion]) -> Option<MemoryLayo
     // с 1 MiB: банк 2 с 0x0810_0000; U5F7/U5F9 с 2 MiB). Приложению без OTA он
     // не достаётся (раздел кода обязан быть непрерывным), а с OTA в нём лежит
     // DFU. Стыкующийся банк 2 — просто продолжение flash.
-    let bank_gap = bank2.filter(|b| b.origin >= FLASH_BASE + flash_total);
+    let bank_gap = bank2.filter(|b| b.origin >= chain_end);
     // PAGE_SIZE в терминах embassy-boot — не наш const generic, а
     // `max(ACTIVE::ERASE_SIZE, DFU::ERASE_SIZE)` (`boot_loader.rs`). Обе
     // партиции живут поверх цельного `Flash` (`crates-cross/boot/src/main.rs`), у
@@ -1833,10 +1899,13 @@ fn compute_memory_layout(chip: &str, regions: &[RawRegion]) -> Option<MemoryLayo
     // с `RAM_BASE` там DTCM, и в её 128 KiB статики и стек не помещаются. Кэш
     // данных M7 отладчику не мешает: probe-rs ходит через AHB-AP ядра с HPROT
     // Cacheable, и RTT из кэшируемой RAM читается верно. Остальным семействам
-    // самая большая область не годится: у WB это SRAM2 — память радиостека CPU2.
+    // самая большая область не годится. У STM32WB SRAM2a/SRAM2b из цепочек
+    // исключены (`reserved_for_cpu2`): со SRAM1 они стыкуются, и раньше RAM
+    // xE/xG/xY шла через них до 0x2004_0000 — стек под flip-link и `.bss`
+    // попадали в память CPU2, и прошивка падала bus error'ом ещё до `main`.
     // Ядро CM4 двухъядерных H7 берёт SRAM домена D2: AXI-SRAM занята ядром
     // CM7, а до DTCM ядро CM4 не дотягивается вовсе.
-    let chains = ram_chains(regions);
+    let chains = ram_chains(chip, regions);
     let ram = if chip.starts_with("h7") && chip.ends_with("-cm4") {
         chains
             .iter()
@@ -1870,8 +1939,16 @@ fn compute_memory_layout(chip: &str, regions: &[RawRegion]) -> Option<MemoryLayo
         ram_length,
         panic,
         // Границы цепочек, а не ram_length: PANIC отрезан от RAM, но лежит
-        // внутри той же цепочки — регионом его дублировать не надо.
-        extra_regions: extra_region_lines(regions, FLASH_BASE + flash_total, ram, dma_nc.as_ref()),
+        // внутри той же цепочки — регионом его дублировать не надо. Flash —
+        // тоже до конца цепочки, а не `flash_total`: иначе у STM32WB банк,
+        // обрезанный по памяти CPU2, вышел бы рабочим регионом поверх `FLASH`.
+        extra_regions: extra_region_lines(
+            chip,
+            regions,
+            (FLASH_BASE, chain_end),
+            ram,
+            dma_nc.as_ref(),
+        ),
         write_size,
         page_size,
         erase_zero,
@@ -2103,18 +2180,20 @@ fn region_line(name: &str, attrs: &str, origin: u64, length: u64) -> String {
 /// у `app` и `boot` они разные). Раньше не выводились вовсе, и пользователь
 /// не видел, например, 320 KiB AXISRAM у H723 — только 128 KiB DTCM.
 ///
-/// Часть регионов выводится закомментированной (см. `EXTERNAL_BUS_PREFIXES` и
-/// `ALIAS_SUFFIX`): перечислить их надо, но объявлять рабочей памятью нельзя.
+/// Часть регионов выводится закомментированной (см. `EXTERNAL_BUS_PREFIXES`,
+/// `ALIAS_SUFFIX`, память CPU2 — [`reserved_for_cpu2`]): перечислить их надо,
+/// но объявлять рабочей памятью нельзя.
 fn extra_region_lines(
+    chip: &str,
     regions: &[RawRegion],
-    flash_end: u64,
+    (flash_start, flash_end): (u64, u64),
     (ram_start, ram_end): (u64, u64),
     dma_nc: Option<&DmaNc>,
 ) -> Vec<String> {
     let names: BTreeSet<&str> = regions.iter().map(|r| r.name.as_str()).collect();
     let covered = |r: &RawRegion| {
         let end = r.address + r.size;
-        (r.address >= FLASH_BASE && end <= flash_end) || (r.address >= ram_start && end <= ram_end)
+        (r.address >= flash_start && end <= flash_end) || (r.address >= ram_start && end <= ram_end)
     };
 
     let mut sorted: Vec<&RawRegion> = regions
@@ -2143,6 +2222,8 @@ fn extra_region_lines(
                     "внешняя шина: памяти нет, пока она не распаяна и не настроен контроллер"
                         .to_string(),
                 )
+            } else if reserved_for_cpu2(chip, &r.name) {
+                Some("память CPU2 (FUS, радиостек): доступ CPU1 - bus error".to_string())
             } else {
                 r.name.strip_suffix(ALIAS_SUFFIX).and_then(|stem| {
                     // Партнёр — либо тот же блок без суффикса (SRAM2_ICODE /
@@ -4547,8 +4628,9 @@ pub static METADATA: Metadata = Metadata {
         ];
         // SRAM (основная RAM) покрыта хуком, EMPTY нулевого размера пропущен.
         let lines = extra_region_lines(
+            "test",
             &regions,
-            FLASH_BASE + 512 * 1024,
+            (FLASH_BASE, FLASH_BASE + 512 * 1024),
             (RAM_BASE, RAM_BASE + 64 * 1024),
             None,
         );
@@ -4610,6 +4692,92 @@ pub static METADATA: Metadata = Metadata {
         assert_eq!(cm4.ram_origin, H7_D2_SRAM);
         assert_eq!(cm4.dma_nc, None);
         assert!(cm4.extra_regions.iter().any(|l| l.contains("AXISRAM")));
+    }
+
+    /// Все разделы внутреннего flash раскладки: `(имя, начало, длина)`.
+    fn flash_partitions(layout: &MemoryLayout) -> Vec<(&'static str, u64, u64)> {
+        let mut parts = vec![("FLASH", layout.flash_origin, layout.flash_length)];
+        let mut ota = |bootloader: &'static str, p: &OtaPartitions| {
+            parts.extend([
+                (bootloader, layout.flash_origin, p.bootloader_length),
+                (
+                    "STATE",
+                    p.bootloader_state_origin,
+                    p.bootloader_state_length,
+                ),
+                ("ACTIVE", p.active_origin, p.active_length),
+                ("DFU", p.dfu_origin, p.dfu_length),
+            ]);
+            if let Some(s) = p.settings {
+                parts.push(("CONFIG", s.origin, s.length));
+            }
+        };
+        if let Ok(p) = &layout.ota {
+            ota("BOOTLOADER", p);
+        }
+        if let Some(config) = &layout.config {
+            if let Ok(p) = &config.ota {
+                ota("BOOTLOADER+CONFIG", p);
+            }
+            parts.push(("CONFIG", config.tail.origin, config.tail.length));
+            parts.push(("FLASH+CONFIG", layout.flash_origin, config.flash_length));
+        }
+        if let Ok(e) = &layout.external {
+            parts.push(("ACTIVE (ext)", e.active_origin, e.active_length));
+        }
+        parts
+    }
+
+    /// STM32WB: RAM — только SRAM1, SRAM2a/2b за CPU2 и в соседних регионах
+    /// закомментированы; все разделы flash кончаются ниже стека CPU2
+    /// (`BLE_Stack_full`) — на каждом объёме из таблицы.
+    #[test]
+    fn wb_layout_leaves_the_cpu2_memory_alone() {
+        for (size, cpu2) in WB_CPU2_FLASH {
+            let erase_size = if size == 320 * 1024 { 2048 } else { 4096 };
+            let mut regions = flash_with_erase_value(size, erase_size, 8, 0xFF);
+            regions.retain(|r| r.kind != RegionKind::Ram);
+            regions.extend([
+                region("SRAM2A_ICODE", RegionKind::Ram, 0x1000_0000, 32 * 1024),
+                region("SRAM", RegionKind::Ram, RAM_BASE, 192 * 1024),
+                region("SRAM2A", RegionKind::Ram, 0x2003_0000, 32 * 1024),
+                region("SRAM2B", RegionKind::Ram, 0x2003_8000, 32 * 1024),
+            ]);
+            let layout = compute_memory_layout("wb55rg", &regions).expect("раскладка");
+            assert_eq!(layout.ram_origin, RAM_BASE);
+            assert_eq!(
+                layout.panic.0 + layout.panic.1,
+                0x2003_0000,
+                "{size}: PANIC — в конце SRAM1"
+            );
+            assert_eq!(layout.flash_origin + layout.flash_length, cpu2);
+            assert!(layout.ota.is_ok(), "{size}: OTA не поместилась");
+            for (name, origin, length) in flash_partitions(&layout) {
+                assert!(
+                    origin + length <= cpu2,
+                    "{size}: {name} {origin:#x}+{length:#x} заходит за {cpu2:#x}"
+                );
+            }
+            for sram2 in ["SRAM2A ", "SRAM2B ", "SRAM2A_ICODE"] {
+                let line = layout
+                    .extra_regions
+                    .iter()
+                    .find(|l| l.contains(sram2))
+                    .unwrap_or_else(|| panic!("{sram2} нет в {:?}", layout.extra_regions));
+                assert!(line.contains("/* ") && line.contains("CPU2"), "{line}");
+            }
+        }
+        // У WBA ядро одно, и SRAM2 — обычная память.
+        let mut wba = flash_with_erase_value(1024 * 1024, 8192, 16, 0xFF);
+        wba.push(region(
+            "SRAM2",
+            RegionKind::Ram,
+            RAM_BASE + 64 * 1024,
+            64 * 1024,
+        ));
+        let layout = compute_memory_layout("wba55cg", &wba).expect("раскладка");
+        assert_eq!(layout.ram_length + layout.panic.1, 128 * 1024);
+        assert_eq!(layout.flash_length, 1024 * 1024);
     }
 
     /// Нарушенный инвариант называет чип — иначе по одной панике на 1479 чипов

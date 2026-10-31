@@ -3984,6 +3984,29 @@ fn external_ota_on_a_bank_gap_chip_leaves_bank_2_alone() {
     );
 }
 
+/// STM32WB: RAM — только SRAM1 (SRAM2a/2b — память CPU2, доступ CPU1 — bus
+/// error), а всё во flash кончается ниже стека CPU2 `BLE_Stack_full`
+/// (0x080D_0000 у xG).
+#[test]
+fn wb_leaves_sram2_and_the_cpu2_flash_alone() {
+    let ast = compile_script();
+    let result =
+        run_cascade_with(&ast, "wb55rg", &[("config", "yes")]).expect("каскад не должен падать");
+    assert_eq!(var_of(&result, "ota"), Some("true"));
+    let app = written(&result, "crates-cross/app/memory.x");
+    assert_eq!(region_origin(&app, "RAM").as_deref(), Some("0x20000000"));
+    assert_eq!(region_origin(&app, "PANIC").as_deref(), Some("0x2002FE00"));
+    for region in ["FLASH", "DFU", "CONFIG"] {
+        let origin = region_origin(&app, region).unwrap_or_else(|| panic!("{region}: {app}"));
+        let origin = u64::from_str_radix(origin.trim_start_matches("0x"), 16).expect("адрес");
+        let length = region_length(&app, region).expect("длина");
+        assert!(
+            origin + length <= 0x080D_0000,
+            "{region} {origin:#x}+{length:#x} заходит во flash CPU2"
+        );
+    }
+}
+
 /// Переключение в одобанковый режим — у тех, кто с завода двухбанковый и получил
 /// одобанковую раскладку, с вариантом регистров своего семейства. F4 с 1 MiB и F7 с
 /// завода одобанковые — переключать нечего; у чипа с одной картой памяти выбора нет

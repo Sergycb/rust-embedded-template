@@ -374,6 +374,34 @@ QSPI, где он выведен (`QUADSPI`, иначе `OCTOSPI`), иначе S
   `stm32-data` описывает U375/U385 (`BANK_2` с 0x0801_0000 при `BANK_1` на
   512 KiB с базы). Такой регион генератор не считает банком: раздел там лёг бы
   поверх кода.
+{%- assign wb_cpu2 = "" %}
+{%- if chip_feature contains "stm32wb" %}{% unless chip_feature contains "stm32wba" or chip_feature contains "stm32wb0" %}{% assign wb_cpu2 = "1" %}{% endunless %}{% endif %}
+{%- if wb_cpu2 == "1" %}
+
+## Память второго ядра
+
+Шаблон собирает прошивку одного ядра, но второе от этого не исчезает: у
+него своя память, и генерация раскладывает `memory.x` в обход неё.
+{%- if wb_cpu2 == "1" %}
+
+- **STM32WB: верх flash и SRAM2a/SRAM2b — CPU2.** Flash от `SFSA × 4K` до
+  конца и защищённые части SRAM2a/SRAM2b занимают FUS и радиостек CPU2 —
+  всегда, даже когда стек не установлен (AN5185 §1.4–1.5, Table 5); доступ
+  CPU1 туда — bus error (RM0434 §3.6.4). Поэтому `RAM` — только SRAM1, а
+  SRAM2a/SRAM2b перечислены в `memory.x` закомментированными. Во flash всё
+  ({% if ota == "true" and ota_store != "external" %}bootloader, `STATE`, `ACTIVE`, `DFU`{% elsif ota == "true" %}bootloader и `ACTIVE`{% else %}образ{% endif %}{% if config_store == "flash" %}, `CONFIG`{% endif %}) кончается ниже адреса,
+  с которого ставится `stm32wb5x_BLE_Stack_full_fw.bin` (Release Notes STM32WB
+  Copro Wireless Binaries v1.24.0): `0x080D0000` у 1 MiB, `0x0807C000` у
+  640 KiB, `0x0805C000` у 512 KiB, `0x0801C000` у 256 KiB. У WB10/WB15
+  (320 KiB) этих данных нет, граница взята с запасом — `0x08020000`.
+- **Стек крупнее — граница ниже.** `BLE_Stack_full_extended`,
+  `BLE_Mac_802_15_4`, Thread и Zigbee ставятся ниже `BLE_Stack_full`, и
+  тогда конец последнего раздела в `memory.x` надо опустить до `SFSA × 4K`
+  от базы flash{% if ota == "true" and ota_store != "external" %} (`DFU` при этом остаётся на страницу обмена длиннее `ACTIVE`
+  — укорачиваются оба){% endif %}. `SFSA` установленного стека видно в STM32CubeProgrammer:
+  Option bytes → Secure.
+{%- endif %}
+{%- endif %}
 {%- if ota_store == "external" %}
 
 ## OTA с разделами на внешней флеши (`ext_flash=yes`)
