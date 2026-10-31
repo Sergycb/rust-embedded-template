@@ -201,7 +201,9 @@ impl Board {
         // (docs/resources.md), и каждая группа уходит в конструктор своего
         // модуля. Выводы и DMA-каналы платы добавляются в группы — наружу из
         // `bsp` по-прежнему уходит не периферия, а готовый объект, поле
-        // `Board`, реализующее порт из `ports`.
+        // `Board` под трейтом: стандартным (`embedded-hal`/`embedded-io-async`/
+        // `embedded-storage`){% if graph == "true" %}, трейтом крейта (`watchdog::HardwareWatchdog`){% endif %} или
+        // портом `ports` — там, где стандартного нет.
         let r = split_resources!(p);
 {%- if shared_flash == "true" %}
         let {% if dfu_bank == "true" %}(flash, dfu_bank){% else %}flash{% endif %} = crate::flash::new(r.flash);
@@ -210,8 +212,10 @@ impl Board {
         // Место для распиновки платы: заполните группы в `resources.rs`
         // (docs/resources.md), добавьте `use crate::resources::*;` и `let r =
         // split_resources!(p);` и собирайте из `r` свои драйверы. Наружу из `bsp` уходит не
-        // периферия, а готовый объект — поле `Board`, реализующее порт из
-        // `ports`.
+        // периферия, а готовый объект — поле `Board` под трейтом: стандартным
+        // (`embedded-hal`/`embedded-io-async`/`embedded-storage`){% if graph == "true" %}, трейтом крейта
+        // (`watchdog::HardwareWatchdog`){% endif %} или портом `ports` — там, где
+        // стандартного нет.
 {%- endif %}
 {%- if external_flash == "true" %}
         // Внешняя флеш — одна на {% if ota == "true" and ota_store == "external" %}`STATE`/`DFU`{% if config_store == "external" %} и настройки{% endif %}{% else %}настройки{% endif %}: драйвер

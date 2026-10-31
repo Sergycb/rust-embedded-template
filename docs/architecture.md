@@ -12,11 +12,12 @@
 
 **Правило**: `cross` должен оставаться минимальным. `bsp` — рычаги платы:
 объекты под трейтами и портами, которыми можно управлять (потоки, шины, разделы
-флеша, {% if graph == "true" %}сторож, {% endif %}драйверы микросхем платы), и DMA-буферы, которые нужны железу.
+флеша, {% if graph == "true" %}сторож, {% endif %}объекты драйверов микросхем платы), и DMA-буферы, которые нужны железу.
 `app` — оркестрация задач (`Spawner`{% if graph == "true" %}, supervisor-графы, watchdog{% endif %}) и статики,
 которые домен получает ссылками: буферы узлов и транспортов{% if has_modbus == "true" %}, общая карта
-Modbus{% endif %}{% if net_services != "" %}, секреты служб{% endif %}. Адаптеры над рычагами строит `app` и отдаёт узлам
-готовыми (ниже). Вся остальная логика — в `domain`, даже если она асинхронная и типа
+Modbus{% endif %}{% if net_services != "" %}, секреты служб{% endif %}. Адаптер, чей тип или память выбирает приложение,
+строит `app` и отдаёт узлу готовым; адаптер, без которого рычаг не собрать, —
+сама плата (ниже). Вся остальная логика — в `domain`, даже если она асинхронная и типа
 выглядит «системной» (стейтчарты, RPC, синхронизация задач).
 {%- if ota == "true" %}
 
@@ -49,10 +50,13 @@ HAL (`bsp::board::init_peripherals` — на умолчаниях `embassy-stm32
 
 Как решить, куда класть новую зависимость/код:
 - Знает имя чипа или блока, раскладку флеша, создаёт DMA-буфер под железо,
-  драйвер микросхемы на плате → `bsp`.
+  строит объект драйвера микросхемы на плате → `bsp`.
+- Реализует трейт (порт или стандартный) поверх трейтов `embedded-hal`/
+  `embedded-io-async`/`embedded-storage`, без чипа, — в том числе тип драйвера
+  микросхемы, если ему хватает этих трейтов, — → `adapters`.
 - Заводит память, которую домен получает ссылкой (буфер канала, сокета,
-  клиента), строит адаптер над рычагом платы (кадрирование, сокет, хранилище),
-  требует `Spawner` → `app`; сама реализация адаптера — `adapters`.
+  клиента), строит адаптер, чей тип или память выбирает приложение
+  (кадрирование, клиент, хранилище), требует `Spawner` → `app`.
 - Всё остальное (FSM, конкурентные примитивы, конфигурация, коллекции, RPC-протокол
   между задачами) → `domain`, даже если результат используется только из `cross`.
 {%- if graph == "true" %}
@@ -100,21 +104,23 @@ HAL (`bsp::board::init_peripherals` — на умолчаниях `embassy-stm32
 Состояние внутри одного вызова функции{% if ota == "true" %} (хвост до слова флеша при приёме){% endif %} живёт в
 её локальных переменных, а не в структуре.
 
-**Адаптеры делятся по одному признаку — нужен ли чип.** Реализация порта, которой
-хватает трейтов `embedded-storage`/`embedded-hal`/`embedded-io-async` (раздел флеша
-или шина приходят параметром), лежит в `crates-host/adapters` и тестируется на
-хосте на фейке
+**Адаптеры делятся по одному признаку — нужен ли чип.** Реализация трейта —
+порта или стандартного, — которой хватает трейтов
+`embedded-storage`/`embedded-hal`/`embedded-io-async` (раздел флеша, шина или
+поток приходят параметром), и типы-сборки, которые плата отдаёт целиком, лежат
+в `crates-host/adapters` и тестируются на хосте на фейке
 {%- assign sep = ": " %}
 {%- if ota == "true" %}{{ sep }}`adapters::ota` (поверх `embassy-boot`){% assign sep = ", " %}{% endif %}
 {%- if settings_port == "true" %}{{ sep }}`adapters::settings`
 (поверх `sequential-storage`){% assign sep = ", " %}{% endif %}
-{%- if protocol_link == "true" %}{{ sep }}транспорты протоколов{% endif %}. Строит их **compose-site**, а
-не узел и не `bsp`: {% if graph == "true" %}привязка узла в `fragments:` графа — одним выражением над рычагом
+{%- if protocol_link == "true" %}{{ sep }}транспорты протоколов{% endif %}. Адаптер, чей тип или память
+выбирает приложение, строит **compose-site** — место, где фрагмент получает
+типы и входы, — а не узел и не `bsp`: {% if graph == "true" %}привязка узла в `fragments:` графа — одним выражением над рычагом
 платы (`Updater::new(board.firmware)`, `link(board.net.stack, static [u8; N], …)`),
 а память адаптера объявляет там же `static T`: ячейка на вхождение, в `.bss`,
 мимо стека{% else %}модуль задачи `crates-cross/app/src/tasks/` над рычагом платы, память — его
 статики `ConstStaticCell`{% endif %}. Узел получает адаптер готовым во входе и только читает поле
-(`LINK: local L = inputs.link`). Трейта сборки и структур буферов у адаптеров нет:
+(`LINK: local L = inputs.link`). Трейта сборки и структур буферов у таких адаптеров нет:
 `static` нужного размера можно объявить только там, где тип адаптера
 конкретен, — на compose-site.
 {%- assign sep = "" %}
@@ -134,16 +140,20 @@ HAL (`bsp::board::init_peripherals` — на умолчаниях `embassy-stm32
 нет драйвера (`bsp::stub`){% endif %}{% if erase_page == "true" %}. Страница раздела
 (`flash_page::ErasePage`) — свой хостовый крейт, общий у `bsp` и `boot`: это
 геометрия флеша, а не адаптер, и обмен `embassy-boot` над ней проверяется на
-хосте{% endif %}.
+хосте{% endif %}. HAL-объект, который уже реализует нужный трейт, `bsp` отдаёт
+псевдонимом типа; своя структура в `bsp` — только обёртка там, где реализации
+трейта нет.
 {%- assign sep = "" %}
 {%- capture wrappers %}
+{%- if ota == "true" %}{{ sep }}разделы обновления (`adapters::ota::Partitions`){% assign sep = ", " %}{% endif %}
 {%- if has_usb == "true" %}{{ sep }}пару USB (`adapters::usb`){% assign sep = ", " %}{% endif %}
 {%- if has_net == "true" %}{{ sep }}пару сети (`adapters::net::Net`){% assign sep = ", " %}{% endif %}
 {%- if config_store == "eeprom" %}{{ sep }}EEPROM как `NorFlash`
 (`adapters::eeprom::Eeprom`){% assign sep = ", " %}{% endif %}
 {%- endcapture %}
 {%- if wrappers != "" %} Обратная зависимость есть: `bsp` берёт из `adapters` обёртки,
-которые собирает вместе с рычагом сама плата, — {{ wrappers }}; от `domain` `bsp` не зависит.
+без которых рычаг не собрать, и строит их сама плата в `Board::new` — {{ wrappers }}{% if has_usb == "true" or has_net == "true" %}; их память ({% if has_usb == "true" %}буферы класса CDC{% if has_net == "true" %}, {% endif %}{% endif %}{% if has_net == "true" %}`StackResources`
+стека{% endif %}) — статики `bsp`: кто строит адаптер, тот держит и его память{% endif %}; от `domain` `bsp` не зависит.
 {%- else %} От `domain` `bsp` не зависит.
 {%- endif %}
 
@@ -171,8 +181,10 @@ HAL (`bsp::board::init_peripherals` — на умолчаниях `embassy-stm32
 {%- assign sep = " (" %}
 {%- if ota == "true" %}{{ sep }}`embassy-boot`{% assign sep = ", " %}{% endif %}
 {%- if settings_port == "true" %}{{ sep }}`sequential-storage`{% assign sep = ", " %}{% endif %}
-{%- if has_net == "true" %}{{ sep }}сокеты
-   `embassy-net`{% assign sep = ", " %}{% endif %}
+{%- capture net_ports %}{% if protocol_sockets != "0" %}, транспортов протоколов (`ports::FrameLink`){% endif %}{% if net_services contains "mqtt" %}, клиента
+   MQTT (`ports::Dial`){% endif %}{% endcapture %}
+{%- if net_ports != "" %}{{ sep }}сокеты
+   `embassy-net` {{ net_ports | remove_first: ", " }}{% assign sep = ", " %}{% endif %}
 {%- if sep == ", " %}){% endif %}.
 
 Нет ни одной — порт был бы пустой прослойкой, и `domain` зовёт библиотеку прямо:
@@ -187,8 +199,10 @@ HAL (`bsp::board::init_peripherals` — на умолчаниях `embassy-stm32
 мономорфизуется, косвенных вызовов не появляется, — так что решает только то,
 есть ли за ним вторая реализация или тест.
 
-Та же мерка — для датчиков и микросхем, которых в шаблоне ещё нет: драйвер —
-`bsp` (рычаг платы); порт — `ports`, если у логики над датчиком есть что
+Та же мерка — для датчиков и микросхем, которых в шаблоне ещё нет: объект
+драйвера строит `bsp` и отдаёт полем `Board` (рычаг платы), а тип драйвера —
+`adapters` или внешний крейт, пока ему хватает трейтов `embedded-hal` (нужен
+чип — `bsp`); порт — `ports`, если у логики над датчиком есть что
 проверять отдельно или датчиков одного назначения несколько; адаптер «порт над
 драйвером» — `adapters`. Светодиоду, у которого проверять нечего, хватает трейта
 `embedded-hal`: свой порт ему не нужен.
@@ -301,19 +315,31 @@ RAM. От килобайта и выше фрагмент пишет `resources:
 управлять, под трейтами:
 {%- if has_uart == "true" or has_usb == "true" %} `embedded-io-async` ({% if has_uart == "true" %}поток UART{% if has_usb == "true" %}, {% endif %}{% endif %}{% if has_usb == "true" %}поток CDC{% endif %}),{% endif %}
 {%- if ota == "true" or config == "true" %}
-`embedded-storage(-async)` ({% if ota == "true" %}флеш под обновлением{% if config == "true" %}, {% endif %}{% endif %}{% if config == "true" %}носитель настроек{% endif %}),{% endif %} порты из
-`crates-host/ports` там, где стандартного трейта нет ({% if has_can == "true" %}`CanBus`, {% endif %}`CycleCounter`{% if ota == "true" %}, `Reboot`{% endif %}), — и драйверы микросхем платы
-({% if external_flash == "true" %}внешняя флеш W25Q; так же лягут{% else %}так лягут{% endif %} датчики и светодиоды). `Peripherals`,
+`embedded-storage(-async)` ({% if ota == "true" %}флеш под обновлением{% if config == "true" %}, {% endif %}{% endif %}{% if config == "true" %}носитель настроек{% endif %}),{% endif %}{% if graph == "true" %} трейт крейта
+сторожа (`watchdog::HardwareWatchdog`),{% endif %} порты из
+`crates-host/ports` там, где стандартного трейта нет ({% if has_can == "true" %}`CanBus`, {% endif %}`CycleCounter`{% if ota == "true" %}, `Reboot`{% endif %}), — и объекты драйверов микросхем платы
+({% if external_flash == "true" %}внешняя флеш W25Q; так же лягут{% else %}так лягут{% endif %} датчики и светодиоды; тип драйвера —
+`adapters` или внешний крейт{% if external_flash == "true" %}, как `w25q`{% endif %}, а строит объект `bsp`). `Peripherals`,
 отдельные пины и группы `assign_resources!` наружу из `bsp` не выходят: их
 потребляет сам `Board::new`, собирая рычаги. Приложение работает через трейты
 и про регистры не знает.
 
-Протоколов над рычагами `bsp` не собирает: кадрирование транспорта, буферы
-сообщений{% if has_net == "true" %}, сокеты протоколов и служб{% endif %}{% if ota == "true" %}, адаптер обновления{% endif %}{% if config == "true" %}, хранилище настроек{% endif %} —
+Протоколов приложения над рычагами `bsp` не собирает: кадрирование транспорта, буферы
+сообщений{% if has_net == "true" %}, сокеты протоколов{% if net_services contains "mqtt" %} и клиента MQTT{% endif %}{% endif %}{% if ota == "true" %}, адаптер обновления{% endif %}{% if config == "true" %}, хранилище настроек{% endif %} —
 решение проекта, а не свойство платы. Их строит `app` (выше) в своей памяти:
 захотел проект другой буфер или порт — правится
 `app`{% if protocol_link == "true" or net_services != "" %} ({% if protocol_link == "true" %}`crates-cross/app/src/link/`{% if net_services != "" %}, {% endif %}{% endif %}{% if net_services != "" %}`crates-cross/app/src/net.rs`{% endif %}){% endif %}, плата не меняется. Буфер
 заводится там, где решают его размер, — в `app`, — а узел получает ссылку.
+{%- if net_services contains "rest" or net_services contains "ssh" %} Сервер
+службы ({% if net_services contains "rest" %}`domain::http`{% if net_services contains "ssh" %}, {% endif %}{% endif %}{% if net_services contains "ssh" %}`domain::ssh`{% endif %}) адаптера не получает: стек сети приходит к
+узлу рычагом (`STACK: local $crate::net::Stack`), сокет узел открывает сам —
+библиотека службы зовётся в `domain` прямо, — а буферы сокета — слоты
+`= static` фрагмента{% if net_services contains "mqtt" %}. Из служб через адаптер compose-site
+подключается только клиент MQTT: `adapters::net::TcpClient` над стеком, порт
+`ports::Dial`{% endif %}.{% endif %}
+{%- if has_usb == "true" or has_net == "true" %} Память, без которой рычаг не собрать
+({% if has_usb == "true" %}буферы класса CDC{% if has_net == "true" %}, {% endif %}{% endif %}{% if has_net == "true" %}`StackResources` стека{% endif %}), — наоборот, у платы:
+адаптер над ней строит она (выше).{% endif %}
 
 `Board` один (`Board::new() -> Board`)
 {%- if has_usb == "true" or has_net == "true" %}, и пары, которые нельзя собрать порознь,
@@ -339,13 +365,7 @@ device, cdc }` (классы `embassy-usb` регистрируются до п�
 `bsp/time-driver`.
 {%- if graph == "true" %}
 
-Исключение из «только порты» ровно одно, и то формальное — поле `watchdog` в
-проекте с графом задач: сторож реализует не порт из `ports`, а
-`watchdog::HardwareWatchdog`. Приём границы тот же (приложение зовёт трейт, а
-не регистры), просто трейт приходит из крейта сторожа — держать его копию в
-`ports` было бы вторым объявлением одного и того же.
-
-Отдаётся он **заряженным, но не запущенным** (`wdg::UnarmedBoardWatchdog`), а
+Сторож (поле `watchdog`) отдаётся **заряженным, но не запущенным** (`wdg::UnarmedBoardWatchdog`), а
 запускает его инициализатор блока `watchdog:` графа —
 `= board.watchdog.arm()`. Причина — в моменте: с этого вызова сторож тикает, а
 кормит его только тикер графа, и всё, что стоит между этими двумя точками,

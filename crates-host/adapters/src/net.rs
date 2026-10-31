@@ -5,7 +5,14 @@
 //! Ничего из этого не знает чипа: устройство — любой
 //! [`Driver`](embassy_net::driver::Driver), сокеты — стек `embassy-net`.
 //! Плата собирает стек над своим устройством (Ethernet) и отдаёт его вместе с
-//! фоновой работой (`Net`); сокеты на стеке строит граф и отдаёт узлам.
+//! фоновой работой (`Net`); транспорты на стеке строит граф и отдаёт узлам.
+// {%- if net_services contains "mqtt" %}
+//! Клиент брокера — тоже: граф строит [`TcpClient`] (порт `ports::Dial`).
+// {%- endif %}
+// {%- if net_services contains "rest" or net_services contains "ssh" %}
+//! Серверы служб (`domain::http`, `domain::ssh`) адаптера не получают: стек
+//! приходит к узлу, и сокет узел открывает сам.
+// {%- endif %}
 
 // {%- if has_tcp == "true" or net_services contains "mqtt" %}
 mod tcp;

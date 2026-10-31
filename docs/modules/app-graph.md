@@ -138,7 +138,7 @@ impl HeartbeatCtx<'_> {
   голое имя искалось бы здесь и падало бы с `E0425`. `$crate::` при этом
   указывает в крейт фрагмента и переживает переименование зависимости в чужом
   манифесте, а `crate::` означал бы крейт, который фрагмент вызывает. Типы,
-  которых фрагмент назвать не может (адаптер платы в слоте), — его параметры:
+  которых фрагмент назвать не может (адаптер над рычагом в слоте), — его параметры:
   {% if ota == "true" %}`name: OTA_FRAG<F, R>` во фрагменте, `::domain::OTA_FRAG<::adapters::ota::Updater<bsp::FirmwareFlash, true>, bsp::reset::Reboot>` здесь{% else %}`name: SENSOR_FRAG<R>` во фрагменте, `::domain::SENSOR_FRAG<SensorResources>` здесь
   (пример ниже){% endif %}.
 * **Порядок items фиксирован**: `name:` → `boot:` → `watchdog:` →
@@ -281,9 +281,11 @@ resources: [WS: &'static mut $crate::x::Workspace = static |w| w.gain = inputs.g
    (`docs/watchdog.md`) не проверяется. Узел, который ждёт событие, которого
    может не быть всю жизнь платы, сторожем не отмечается — как `NET` и `HTTP`.
 4. **Железо — через рычаг платы.** Узел не берёт периферию сам: `bsp` отдаёт
-   рычаг полем `Board`, адаптер над ним `app` строит в `fragments:` (память —
-   `static [u8; N]` там же) и отдаёт узлу во входе фрагмента
-   (`docs/architecture.md`).
+   рычаг полем `Board`; адаптер над ним, чей тип или память выбирает
+   приложение, `app` строит в `fragments:` (память — `static [u8; N]` там же)
+   и отдаёт узлу во входе фрагмента, а адаптер, без которого рычаг не собрать,
+   плата собирает сама{% if net_services contains "rest" or net_services contains "ssh" %}. Сервер службы ({% if net_services contains "rest" %}`HTTP`{% if net_services contains "ssh" %}, {% endif %}{% endif %}{% if net_services contains "ssh" %}`SSH`{% endif %}) получает рычагом сам
+   стек сети и открывает сокет в узле{% endif %} (`docs/architecture.md`).
 5. **Тест на хосте** — по образцу `mod tests` в `crates-host/domain/src/heartbeat.rs`
    (тесты — в модуле узла, не отдельным файлом):
    `supervisor::stand!` строит контекст и порты узла без графа, время
@@ -366,8 +368,9 @@ crate::version::FW_VERSION } }`). Типы слотов — аргументы �
 (`OTA_FRAG<::adapters::ota::Updater<bsp::FirmwareFlash, true>, bsp::reset::Reboot>`):
 слот — `static`, тип ему нужен, а знает его только эта сторона. Слот адаптера — `local` (фича
 `supervisor/local-resources` в
-`crates-cross/Cargo.toml`): объекты платы `!Send`, и граф держит их на своём
-исполнителе, не требуя `Send`. Узел, чей `local`-слот заполняется
+`crates-cross/Cargo.toml`): адаптер `Updater` не `Send` (держит `&'static
+Mutex<NoopRawMutex, …>`), и граф держит его на своём исполнителе, не требуя
+`Send`. Узел, чей `local`-слот заполняется
 из `inputs`, нельзя перевести на другой
 исполнитель (`executor:`); захотите вынести OTA туда — менять `local` во
 фрагменте `domain::ota` и `NoopRawMutex` у {% if ota_store == "external" %}`bsp::external::ExternalMutex`{% else %}`bsp::flash::FlashMutex`{% endif %} вместе.

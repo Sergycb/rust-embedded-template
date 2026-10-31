@@ -15,10 +15,15 @@ paths: crates-host/domain/**
   {% if graph == "true" %}граф в `crates-cross/app` — перечисляет фрагменты в `fragments:`, даёт узлам имена
   (`as HEARTBEAT`), подставляет типы и раздаёт поля платы{% else %}модули задач
   `crates-cross/app/src/tasks/` — подставляют типы и раздают поля платы{% endif %}.
-- Адаптер над рычагом платы узел получает готовым во входе (`LINK: local L =
-  inputs.link`): строит его compose-site — {% if graph == "true" %}выражением в привязке графа, память
-  адаптера там же (`static [u8; N]`){% else %}модуль задачи, память — его статики{% endif %}. Трейта сборки и структур
-  буферов нет.
+- Адаптер над рычагом платы, чей тип или память выбирает приложение, узел
+  получает готовым во входе (`LINK: local L = inputs.link`): строит его
+  compose-site — {% if graph == "true" %}выражением в привязке графа, память адаптера там же
+  (`static [u8; N]`){% else %}модуль задачи, память — его статики{% endif %}. Трейта сборки и структур буферов у
+  таких адаптеров нет. Адаптер, без которого рычаг не собрать, строит плата, и
+  его буферы — в `bsp`.{% if net_services contains "rest" or net_services contains "ssh" %} Сервер службы ({% if net_services contains "rest" %}`http`{% if net_services contains "ssh" %}, {% endif %}{% endif %}{% if net_services contains "ssh" %}`ssh`{% endif %}) адаптера не
+  получает: стек сети — рычаг во входе, сокет узел открывает сам, буферы —
+  слоты `= static`{% if net_services contains "mqtt" %}; клиент `mqtt` подключается через порт `ports::Dial`
+  адаптера compose-site{% endif %}.{% endif %}
 - Liquid разрешён везде, и в корневом workspace тоже: условное подключение (протокол,
   который выбран при генерации) — теги `if`/`endif` в строках-комментариях `//` в `.rs` и
   `#` в `.toml`, то есть внутри комментариев. Так в репозитории
@@ -59,5 +64,6 @@ paths: crates-host/domain/**
   которого есть реализация вне `domain`. Абстракция, которую и реализует, и
   зовёт сам `domain` (обработчик кадра узла `server::Handler`), — его трейт,
   рядом с узлом, а не порт.
-- `adapters`: реализации портов, которым хватает
-  `embedded-storage`/`embedded-hal`; нужен чип — место в `crates-cross/bsp`.
+- `adapters`: реализации трейтов (портов или стандартных), которым хватает
+  `embedded-storage`/`embedded-hal`/`embedded-io-async`, и типы-сборки, которые
+  плата отдаёт целиком; нужен чип — место в `crates-cross/bsp`.

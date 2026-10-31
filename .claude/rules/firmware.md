@@ -13,10 +13,15 @@ paths: crates-cross/**
   без сообщения{% endif %}), не Cargo-фичей.
 - `Board` (один, `Board::new() -> Board`) отдаёт рычаги платы — объекты под
   трейтами (`embedded-io-async`, `embedded-storage`, порты `ports`): потоки, шины,
-  разделы флеша, драйверы микросхем платы — и данные о чипе (`bsp::ChipSpec`), а не
-  `Peripherals`, не пины, не периферию ядра и не `Clocks`.{% if has_usb == "true" or has_net == "true" %} Пары из одного
+  разделы флеша, объекты драйверов микросхем платы (тип драйвера — `adapters` или
+  внешний крейт) — и данные о чипе (`bsp::ChipSpec`), а не
+  `Peripherals`, не пины, не периферию ядра и не `Clocks`. Реализация поверх
+  стандартных трейтов — `adapters`, нужен чип — `bsp`; HAL-объект, уже
+  реализующий трейт, — псевдонимом, своя структура в `bsp` — только обёртка там,
+  где реализации трейта нет.{% if has_usb == "true" or has_net == "true" %} Пары из одного
   конструктора собирает плата: {% if has_usb == "true" %}`board.<usb>: Usb { device, cdc }`{% if has_net == "true" %}, {% endif %}{% endif %}{% if has_net == "true" %}`board.net: Net
-  { runner, stack }`{% endif %}.{% endif %} Адаптеры над рычагами строит `app` — {% if graph == "true" %}выражением в привязке графа, память — `static T`
+  { runner, stack }`{% endif %}, и память их адаптеров — статики `bsp`.{% endif %} Адаптеры, чей тип или
+  память выбирает приложение, строит `app` — {% if graph == "true" %}выражением в привязке графа, память — `static T`
   там же{% else %}модуль задачи, память — его статики{% endif %} (`crate::link::<вид>::<транспорт>::link`), — и отдаёт узлу
   `domain` готовыми.
 - `bsp` ничего не инициализирует сверх подъёма HAL: конструкторы зовутся `new`
@@ -35,7 +40,7 @@ paths: crates-cross/**
   `app` берёт напрямую (`cortex-m-rt` — точка входа и `HardFault`, `cortex-m` —
   свободные функции ядра), без обёрток в `bsp`; паника и фолт — в `app`. Сброс МК —
   рычаг `bsp::reset::Reboot` (на M7 он чистит кэш данных перед сбросом).
-{%- capture wrappers %}{% if has_usb == "true" %}, обёртки USB CDC{% endif %}{% if has_net == "true" %}, `Net`{% endif %}{% if config_store == "eeprom" %}, EEPROM{% endif %}{% endcapture %}
+{%- capture wrappers %}{% if ota == "true" %}, `Partitions`{% endif %}{% if has_usb == "true" %}, обёртки USB CDC{% endif %}{% if has_net == "true" %}, `Net`{% endif %}{% if config_store == "eeprom" %}, EEPROM{% endif %}{% endcapture %}
 {%- capture levers %}{% if wrappers != "" %}, `adapters` ({{ wrappers | remove_first: ", " }}){% endif %}{% if has_usb == "true" %}, `embassy-usb`{% endif %}{% if has_net == "true" %}, `embassy-net`{% endif %}{% if net_services contains "ssh" %}, `getrandom`{% endif %}{% endcapture %}
 - `bsp` зависит от `ports`{% if flash_page == "true" %} (и `flash-page`){% endif %}{% if levers != "" %} и от того, из чего собирает свои рычаги:
   {{ levers | remove_first: ", " }}, —{% else %},{% endif %} но не от `domain`: входы узлов из полей `Board` заполняет `app`.{% if ota == "true" %} `boot` зовёт `domain` только при `signed`{% if ota_store == "external" %} или
