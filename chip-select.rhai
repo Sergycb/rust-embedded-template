@@ -905,10 +905,11 @@ const RAM_COST = #{
     // (ext_flash=yes config=yes) против 2012 (то же с ota=no), с драйвером
     // W25Q над заглушкой шины; плюс 152 — задача `start` держит future
     // `Board::new` через `.await` (`init` внешней флеши): `app::start::POOL`
-    // 208 байт вместо 56 в `core`. Ещё 8 у обоих — владелец в состоянии
-    // `Ready` узла OTA (повтор `Finish`): stm32f407ve ota-external-no-graph
-    // 3544 при прежней оценке 3536.
-    ota: #{ internal: 1936, external: 2144 },
+    // 208 байт вместо 56 в `core`. Ещё 24 у обоих — владелец в состоянии
+    // `Ready` узла OTA (повтор `Finish`): без графа узел OTA дороже, чем в
+    // замере с графом выше, — stm32g474re can-only-no-graph 3344 и stm32f407ve
+    // ota-external-no-graph 3544 при прежних оценках 3328 и 3536.
+    ota: #{ internal: 1952, external: 2160 },
     // По месту хранения (`config_store`): stm32f407ve 3912 против 3880,
     // stm32l073rz (EEPROM) 3868 против 3860, stm32h723ve 1988 против 1988.
     config: #{ flash: 32, eeprom: 8, external: 0 },
