@@ -11,10 +11,10 @@ on:
   push:
     tags: ["v*"]
 
-# По умолчанию токен рабочего процесса доступен только на чтение — без этой
-# строки `gh release create` падает с 403.
-permissions:
-  contents: write
+# Права — по джобам: сборка, где выполняется код зависимостей, читает
+# репозиторий и только; право записи (создать релиз) получает публикация, в
+# которой ничего не собирается.
+permissions: {}
 
 # Релизы не отменяем: оборванный прогон оставил бы тег без образа.
 concurrency:
@@ -26,12 +26,22 @@ env:
   FLIP_LINK_VERSION: "0.1.12"
 
 jobs:
-  release:
-    name: Собрать, подписать, выложить
+  build:
+    name: Собрать и подписать
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # Секрет подписи — в окружении `release`, а не в секретах репозитория:
+    # там у окружения задаются обязательные ревьюеры и правило «только теги
+    # `v*`» (Settings → Environments → release). Без них подписанный релиз
+    # выпускает любой, кто может запушить тег, — на любой коммит.
+    environment: release
+    permissions:
+      contents: read
     steps:
+      # Токен в `.git/config` сборке не нужен: зависимости его не увидят.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7 (7.0.1)
+        with:
+          persist-credentials: false
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2 (2.9.3)
         with:
           workspaces: crates-cross
@@ -60,61 +70,60 @@ jobs:
           fi
           echo "версия $version"
 
-      # Закрытый ключ в репозитории не лежит (он в .gitignore), поэтому в CI
-      # он приходит секретом. Без него сборка НЕ падает: образ соберётся, но
-      # без подписи — и такой релиз ни одно уже прошитое устройство не примет,
-      # так что предупреждение здесь заметное.
-      #
-      # Секрет — 32 байта seed в base64: `base64 -w0 < ota-signing-key.bin`.
-      - name: Ключ подписи из секрета
+      # Оба ключа — до сборки, и без них релиза нет. Открытый ключ bootloader
+      # берёт из репозитория: не закоммичен — `cargo xtask build` создал бы
+      # одноразовую пару, и bootloader доверял бы ключу, которого больше нет ни
+      # у кого. Закрытый — секрет: без него образ вышел бы неподписанным, а
+      # такой не примет ни одно устройство.
+      - name: Ключи подписи должны быть
         env:
           SIGNING_KEY: {% raw %}${{ secrets.OTA_SIGNING_KEY }}{% endraw %}
         run: |
-          if [ -z "$SIGNING_KEY" ]; then
-            echo "::warning::секрет OTA_SIGNING_KEY не задан — образ будет собран, но НЕ подписан"
-            exit 0
+          if [ ! -f ota-public-key.bin ]; then
+            echo "::error::ota-public-key.bin не закоммичен — bootloader релиза доверял бы одноразовому ключу"
+            exit 1
           fi
-          printf '%s' "$SIGNING_KEY" | base64 -d > ota-signing-key.bin
-          size=$(wc -c < ota-signing-key.bin)
-          if [ "$size" -ne 32 ]; then
-            echo "::error::OTA_SIGNING_KEY после base64 -d даёт $size байт вместо 32"
+          if [ -z "$SIGNING_KEY" ]; then
+            echo "::error::секрет OTA_SIGNING_KEY не задан в окружении release — образ вышел бы неподписанным"
             exit 1
           fi
 
       # Та же команда, что и локально: она собирает оба профиля, меряет образ
-      # против раздела, кладёт рядом app.bin и подписывает его, если ключ на
-      # месте. Отдельного «релизного» пути сборки нет намеренно — иначе на
-      # устройства уезжало бы не то, что проверялось.
+      # против раздела и кладёт рядом app.bin. Отдельного «релизного» пути
+      # сборки нет намеренно — иначе на устройства уезжало бы не то, что
+      # проверялось. Закрытого ключа здесь ещё нет: `build.rs` и proc-macro
+      # зависимостей его не прочтут.
       - run: cargo xtask build
 
-      # Сверку открытого ключа с закрытым и с зашитым в прошивку xtask делает
-      # сам (ensure_signing_key, ensure_image_key) и падает при расхождении.
-      # Здесь остаётся то, чего он не видит: если ключ в секрете был, подпись
-      # обязана появиться — иначе выложился бы неподписанный релиз.
-      - name: Подпись должна появиться, если ключ был задан
+      # Ключ — только теперь и только на этот шаг: `cargo xtask sign` ничего
+      # не пересобирает. Секрет — 32 байта seed в base64:
+      # `base64 -w0 < ota-signing-key.bin`. Сверку ключа с открытым и с
+      # зашитым в bootloader делает сам xtask (ensure_signing_key,
+      # ensure_image_key).
+      - name: Подписать образ
+        env:
+          SIGNING_KEY: {% raw %}${{ secrets.OTA_SIGNING_KEY }}{% endraw %}
         run: |
-          if [ -f ota-signing-key.bin ] && [ ! -f crates-cross/target/{{target}}/release/app.bin.sig ]; then
-            echo "::error::ключ подписи был, а app.bin.sig после cargo xtask build нет — релиз вышел бы неподписанным"
+          printf '%s' "$SIGNING_KEY" | base64 -d > ota-signing-key.bin
+          size=$(wc -c < ota-signing-key.bin)
+          if [ "$size" -ne 32 ]; then
+            rm -f ota-signing-key.bin
+            echo "::error::OTA_SIGNING_KEY после base64 -d даёт $size байт вместо 32"
             exit 1
           fi
+          cargo xtask sign
+          rm -f ota-signing-key.bin
 
-      - name: Выложить образ в релиз
-        env:
-          GH_TOKEN: {% raw %}${{ secrets.GITHUB_TOKEN }}{% endraw %}
+      - name: Файлы релиза
         run: |
           dir="crates-cross/target/{{target}}/release"
+          mkdir release
           # ELF рядом с образом: по нему `probe-rs` и `defmt` расшифровывают лог
           # и стек платы с этим релизом — без него строки defmt не прочитать.
-          cp "$dir/app" "$dir/app.elf"
-          names="app.bin app.elf"
-          if [ -f "$dir/app.bin.sig" ]; then
-            names="$names app.bin.sig"
-          else
-            echo "::warning::подписи рядом с образом нет — релиз выйдет неподписанным"
-          fi
+          cp "$dir/app.bin" "$dir/app.bin.sig" release/
+          cp "$dir/app" release/app.elf
           # Суммы — тем, кто качает образ мимо gh: сверка `sha256sum -c SHA256SUMS`.
-          # shellcheck disable=SC2086
-          (cd "$dir" && sha256sum $names > SHA256SUMS)
+          (cd release && sha256sum app.bin app.bin.sig app.elf > SHA256SUMS)
           # Чем собрано — чтобы повторить сборку и сверить SHA256SUMS. Побайтно
           # повторяется app.bin; ELF несёт в отладочной информации пути машины.
           {
@@ -125,9 +134,30 @@ jobs:
             rustc -vV
             cargo -V
             echo "flip-link $FLIP_LINK_VERSION"
-          } > "$dir/BUILD-ENV"
-          files=""
-          for name in $names SHA256SUMS BUILD-ENV; do files="$files $dir/$name"; done
-          # shellcheck disable=SC2086
-          gh release create "$GITHUB_REF_NAME" --generate-notes $files
+          } > release/BUILD-ENV
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7 (7.0.2)
+        with:
+          name: release
+          path: release/
+          if-no-files-found: error
+
+  # Публикация — отдельным джобом: право записи в репозиторий у него есть, а
+  # сборки, то есть чужого кода, — нет.
+  publish:
+    name: Выложить
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8 (8.0.2)
+        with:
+          name: release
+          path: release
+      - name: Выложить образ в релиз
+        env:
+          GH_TOKEN: {% raw %}${{ secrets.GITHUB_TOKEN }}{% endraw %}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --generate-notes release/*
 {%- endif %}

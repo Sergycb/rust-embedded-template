@@ -89,6 +89,9 @@ Modbus{% endif %}{% if net_services != "" %}, секреты служб{% endif 
 | `cargo xtask test host` | `domain`: `cargo nextest` + doc-тесты |
 | `cargo xtask lint cross` | `crates-cross`: `fmt --check` + `clippy -D warnings` |
 | `cargo xtask build` | `crates-cross`: debug + release,{% if ota == "true" %} `app.bin`,{% endif %} размер образа{% if ota == "true" %}, подпись{% endif %} |
+{%- if ota == "true" %}
+| `cargo xtask sign` | подписать уже собранный `app.bin` ключом `ota-signing-key.bin`; так подписывает релиз — ключ появляется после сборки |
+{%- endif %}
 | `typos` | опечатки в коде и документации; исключения — `.typos.toml`. Нужен `typos-cli` (ставит `cargo xtask setup`), гоняется в CI отдельным джобом |
 | `cargo deny check` | лицензии (только пермиссивные{% if has_canopen == "true" %}; исключение — MPL-2.0 у `zencan`{% endif %}), источники, уязвимости зависимостей по `deny.toml`; для прошивки — с `--manifest-path crates-cross/Cargo.toml`. Нужен `cargo-deny` (ставит `cargo xtask setup`), гоняется в CI |
 | `cargo xtask pins [БЛОК\|ПИН]` | справочник по чипу `{{chip}}`: выводы, альтернативные функции, DMA, тактирование |

@@ -271,41 +271,48 @@ release:build:
         exit 1
       fi
       echo "версия $version"
-    # Закрытый ключ в репозитории не лежит (он в .gitignore), поэтому приходит
-    # переменной CI/CD — 32 байта seed в base64 (`base64 -w0 <
-    # ota-signing-key.bin`), тип Variable, masked. Без него сборка НЕ падает:
-    # образ соберётся, но без подписи, и такой релиз ни одно уже прошитое
-    # устройство не примет.
+    # Оба ключа — до сборки, и без них релиза нет. Открытый ключ bootloader
+    # берёт из репозитория: не закоммичен — `cargo xtask build` создал бы
+    # одноразовую пару, и bootloader доверял бы ключу, которого больше нет ни у
+    # кого. Закрытый — переменная CI/CD `OTA_SIGNING_KEY` (32 байта seed в
+    # base64: `base64 -w0 < ota-signing-key.bin`), тип Variable, masked и
+    # **protected**, а теги `v*` — protected (Settings → Repository →
+    # Protected tags): иначе её видит пайплайн любой ветки, и подписанный
+    # релиз выпускает любой, кто может запушить тег.
     - |
-      if [ -z "$OTA_SIGNING_KEY" ]; then
-        echo "ВНИМАНИЕ: переменная OTA_SIGNING_KEY не задана — образ будет собран, но НЕ подписан"
-      else
-        printf '%s' "$OTA_SIGNING_KEY" | base64 -d > ota-signing-key.bin
-        size=$(wc -c < ota-signing-key.bin)
-        if [ "$size" -ne 32 ]; then
-          echo "OTA_SIGNING_KEY после base64 -d даёт $size байт вместо 32"
-          exit 1
-        fi
-      fi
-    # Та же команда, что и локально: собирает оба профиля, меряет образ против
-    # раздела, кладёт рядом app.bin и подписывает его, если ключ на месте.
-    - cargo xtask build
-    # Сверку открытого ключа с закрытым и с зашитым в прошивку xtask делает сам
-    # (ensure_signing_key, ensure_image_key). Здесь — то, чего он не видит: если
-    # ключ был, подпись обязана появиться, иначе релиз вышел бы неподписанным.
-    - |
-      if [ -f ota-signing-key.bin ] && [ ! -f "crates-cross/target/{{target}}/release/app.bin.sig" ]; then
-        echo "ключ подписи был, а app.bin.sig после cargo xtask build нет — релиз вышел бы неподписанным"
+      if [ ! -f ota-public-key.bin ]; then
+        echo "ota-public-key.bin не закоммичен — bootloader релиза доверял бы одноразовому ключу"
         exit 1
       fi
+      if [ -z "$OTA_SIGNING_KEY" ]; then
+        echo "переменная OTA_SIGNING_KEY не задана (или не protected) — образ вышел бы неподписанным"
+        exit 1
+      fi
+    # Та же команда, что и локально: собирает оба профиля, меряет образ против
+    # раздела и кладёт рядом app.bin. Закрытого ключа здесь ещё нет: `build.rs`
+    # и proc-macro зависимостей его не прочтут.
+    - cargo xtask build
+    # Ключ — только теперь: `cargo xtask sign` ничего не пересобирает. Сверку
+    # ключа с открытым и с зашитым в bootloader делает сам xtask
+    # (ensure_signing_key, ensure_image_key).
+    - |
+      printf '%s' "$OTA_SIGNING_KEY" | base64 -d > ota-signing-key.bin
+      size=$(wc -c < ota-signing-key.bin)
+      if [ "$size" -ne 32 ]; then
+        rm -f ota-signing-key.bin
+        echo "OTA_SIGNING_KEY после base64 -d даёт $size байт вместо 32"
+        exit 1
+      fi
+      cargo xtask sign
+      rm -f ota-signing-key.bin
     # Артефакты собираются из корня: путь внутри target/ зависит от чипа, а в
     # `artifacts:` подстановки переменных нет.
     - cp "crates-cross/target/{{target}}/release/app.bin" app.bin
-    - if [ -f "crates-cross/target/{{target}}/release/app.bin.sig" ]; then cp "crates-cross/target/{{target}}/release/app.bin.sig" app.bin.sig; fi
+    - cp "crates-cross/target/{{target}}/release/app.bin.sig" app.bin.sig
     # ELF рядом с образом: по нему `probe-rs` и `defmt` расшифровывают лог и
     # стек платы с этим релизом. Суммы — для сверки `sha256sum -c SHA256SUMS`.
     - cp "crates-cross/target/{{target}}/release/app" app.elf
-    - sha256sum app.bin app.elf $(ls app.bin.sig 2>/dev/null) > SHA256SUMS
+    - sha256sum app.bin app.bin.sig app.elf > SHA256SUMS
     # Чем собрано — чтобы повторить сборку и сверить SHA256SUMS. Побайтно
     # повторяется app.bin; ELF несёт в отладочной информации пути машины.
     - |
