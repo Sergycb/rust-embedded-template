@@ -15,7 +15,8 @@ workspace = true
 # пустые выражения — на хосте это ровно то, что нужно.
 # {%- endif %}
 # В прошивку `defmt` включает crates-cross/Cargo.toml.
-# Драйверы без шины и линка (`adapters::fake`) — для host-тестов `domain`.
+# Драйверы без шины и линка (`adapters::fake`) — для host-тестов `domain` и
+# заглушек платы (`bsp::stub`).
 fake = []
 defmt = [
 	"dep:defmt",

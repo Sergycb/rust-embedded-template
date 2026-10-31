@@ -41,9 +41,11 @@ embassy-stm32 = { workspace = true, features = ["unstable-pac"] }
 {%- endif %}
 {%- if has_usb == "true" %}
 #   USB-устройство с потоком CDC (`adapters::usb`, src/usb.rs)
+#   драйвер-заглушка до USB-блока (`adapters::fake`, фича `fake`, src/stub.rs)
 {%- endif %}
 {%- if has_net == "true" %}
 #   стек с фоновой работой (`adapters::net::Net`, src/net.rs)
+#   устройство-заглушка до Ethernet (`adapters::fake`, фича `fake`, src/stub.rs)
 {%- endif %}
 {%- if has_usb == "true" or has_net == "true" %}
 {%- if has_usb == "true" and has_net == "true" %}
@@ -57,7 +59,7 @@ embassy-stm32 = { workspace = true, features = ["unstable-pac"] }
 # плата.
 {%- endif %}
 {%- endif %}
-adapters = { workspace = true }
+adapters = { workspace = true{% if has_usb == "true" or has_net == "true" %}, features = ["fake"]{% endif %} }
 {%- endif %}
 # Порты, которые плата реализует сама — у чего нет трейта в `embedded-hal`:
 # причина сброса (`ResetCause` в `ChipSpec`, src/reset.rs);{% if core_baseline != "true" %}
@@ -116,17 +118,12 @@ embedded-storage = { workspace = true }
 static_cell = { workspace = true }
 {%- endif %}
 {%- if has_usb == "true" %}
-# Трейт USB-драйвера — его реализует заглушка (`bsp::stub::UsbDriver`) и
-# драйвер `embassy-stm32`; устройство с классом CDC над ним — `embassy-usb`
-# (src/usb.rs).
-embassy-usb-driver = { workspace = true }
+# Устройство с классом CDC над драйвером USB-блока — `embassy-usb` (src/usb.rs).
 embassy-usb = { workspace = true }
 {%- endif %}
 {%- if has_net == "true" %}
-# Трейт сетевого драйвера — его реализует заглушка (`bsp::stub::NetDevice`) и
-# драйвер Ethernet `embassy-stm32`; стек над ним — `embassy-net` (src/net.rs),
-# сокеты на стеке открывают узлы.
-embassy-net-driver = { workspace = true }
+# Стек над драйвером Ethernet — `embassy-net` (src/net.rs), сокеты на стеке
+# открывают узлы.
 embassy-net = { workspace = true }
 {%- endif %}
 {%- if net_services contains "ssh" %}
