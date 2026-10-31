@@ -56,7 +56,7 @@ cargo run -p app                    # прошить приложение и с�
 `CPU_LOAD` только публикует процент (`docs/modules/app-cpu-load.md`).
 {%- else %} спавнит задачи: замер загрузки процессора `CPU_LOAD`, который
 пишет процент в лог (`docs/modules/app-cpu-load.md`), и узлы проекта —
-`tasks::spawn_all` (`crates-cross/app/src/tasks/`, модуль на задачу над
+`tasks::spawn_all` (`crates-cross/app/src/tasks.rs`, подмодуль на задачу над
 `domain::*::task`). Сторожа и перезапусков нет: узлы не падают, а зависший
 остаётся зависшим.
 {%- endif %}

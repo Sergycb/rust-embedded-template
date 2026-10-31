@@ -71,7 +71,7 @@ if config == "true" {
 if variable::get("graph") == "true" {
 	print("Граф задач: узел HEARTBEAT в crates-cross/app/src/graph.rs, его работа — в crates-host/domain/src/heartbeat.rs.");
 } else {
-	print("Без графа задач: узлы спавнит tasks::spawn_all (crates-cross/app/src/tasks/, модуль на задачу) — без сторожа и restart: (причина — выше).");
+	print("Без графа задач: узлы спавнит tasks::spawn_all (crates-cross/app/src/tasks.rs, подмодуль на задачу) — без сторожа (причина — выше).");
 }
 {
 	// По транспорту на строку (`вид:метка:блок:протокол:имя` из `links`): узел
@@ -91,7 +91,7 @@ if variable::get("graph") == "true" {
 			}
 			let proto = f[3];
 			let name = f[4];
-			let node = if proto == "modbus" { "MODBUS_" } else if proto == "protobuf" { "HOST_" } else if proto == "canopen" { "CANOPEN_" } else { "" };
+			let node = if proto == "modbus" { "MODBUS_" } else if proto == "protobuf" { "PROTOBUF_" } else if proto == "canopen" { "CANOPEN_" } else { "" };
 			let nodes = [];
 			if node != "" { nodes.push("узел " + node + name.to_upper()); }
 			if kind == "usb" { nodes.push("фоновый узел USB_" + name.to_upper()); }
@@ -146,12 +146,12 @@ print("  cargo xtask lint        # проверить, что всё на мес
 print("  cargo xtask test host   # тесты domain на хосте; этапы с платой — README");
 print("");
 if variable::get("graph") == "true" {
-	print("Что заполнить под свою плату: crates-cross/bsp/src/board.rs (распиновка),");
+	print("Что заполнить под свою плату: crates-cross/bsp/src/resources.rs (распиновка),");
 	print("crates-cross/app/src/graph.rs (граф задач), crates-host/domain/ (логика).");
 } else {
 	// Файла графа в таком проекте нет вовсе — его удаляет chip-select.rhai
 	// вместе с отключением графа, и звать сюда некуда.
-	print("Что заполнить под свою плату: crates-cross/bsp/src/board.rs (распиновка),");
+	print("Что заполнить под свою плату: crates-cross/bsp/src/resources.rs (распиновка),");
 	print("crates-host/domain/ (логика).");
 }
 // Справочник упомянут ровно здесь, а не в списке «Дальше» выше: он нужен не

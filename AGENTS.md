@@ -555,10 +555,9 @@ read`: руками пришлось бы сначала найти адрес �
 - `bsp` зависит от `ports`{% if flash_page == "true" %}, `flash-page` (страница раздела{% if ota == "true" %}, общая с `boot`{% endif %}){% endif %}, HAL
   с трейтами драйверов{% if levers != "" %} и того, из чего собирает свои рычаги: {{ levers | remove_first: ", " }}{% endif %}. От `domain` — нет: типы домена{% if ota == "true" %} — например вход узла
   OTA —{% endif %} заполняет из полей `Board` compose-site в `app` — `docs/architecture.md`.
-- Liquid в корневом workspace (`domain`, `ports`, `adapters`{% if protocol == "protobuf" %}, `proto`{% elsif protocol == "canopen" %}, `canopen`{% endif %},
-  корневой `Cargo.toml`) пишется внутри комментариев (строки `//` и `#` с тегами `if`/`endif`): в
-  репозитории шаблона эти крейты компилируются целиком, в проекте Liquid вырезает
-  невыбранное — `docs/architecture.md`.
+- Liquid в корневом workspace (все его члены и корневой `Cargo.toml`) — только
+  внутри комментариев и строковых литералов: в репозитории шаблона эти крейты
+  компилируются целиком — `docs/architecture.md`.
 - Новую зависимость для `cross` нельзя считать рабочей на тёплом кеше — проверять
   `rm -rf target && cargo build --target {{target}} ...` —
   `docs/conventions.md`.
