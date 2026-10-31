@@ -188,6 +188,36 @@ mod tests {
         );
     }
 
+    /// Хвост пишет `cargo xtask build`, а читает `apply_signed`, и общего
+    /// кода у них нет — значит разъехаться они могут только молча.
+    ///
+    /// Ловит это ПАРА тестов: здесь и `writes_the_tail_domain_reads` в
+    /// `crates-host/xtask/src/firmware.rs`, где стоят те же литералы.
+    /// Поодиночке ни один из них расхождения не увидит — каждый проверяет
+    /// свою сторону.
+    ///
+    /// Версия образа равна текущей, поэтому ответ — откат, и он несёт
+    /// прочитанную версию; до него `apply_signed` доходит, только если
+    /// раскладка в хвосте совпала с отпечатком фейка.
+    #[tokio::test]
+    async fn reads_the_tail_xtask_writes() {
+        const LAYOUT_LITERAL: u32 = 0x5EED_1A70;
+        const VERSION_LITERAL: u32 = 0x0102_0003;
+        const TAIL: [u8; 8] = [0x70, 0x1A, 0xED, 0x5E, 0x03, 0x00, 0x02, 0x01];
+        assert_eq!(LAYOUT, LAYOUT_LITERAL, "фейк отдаёт раскладку из литерала");
+        let mut flash = FakeFlash::new(256, 8);
+        flash.capacity = 128;
+        flash.memory[56..64].copy_from_slice(&TAIL);
+
+        assert_eq!(
+            apply_signed(&mut flash, VERSION_LITERAL, &SIGNATURE, 64).await,
+            Err(UpdateError::Rollback {
+                current: VERSION_LITERAL,
+                incoming: VERSION_LITERAL
+            })
+        );
+    }
+
     /// Порог — весь хвост (раскладка и версия), а не одна версия.
     #[tokio::test]
     async fn refuses_an_image_shorter_than_its_tail() {
