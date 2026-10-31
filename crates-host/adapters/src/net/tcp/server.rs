@@ -138,7 +138,8 @@ mod tests {
     use embedded_io_async::{ErrorKind, Read, Write};
 
     use super::*;
-    use crate::net::fakes::{DEVICE, PORT, leak, pair, with_network};
+    use crate::fake::cable::{DEVICE, leak, pair};
+    use crate::net::fakes::{PORT, with_network};
 
     /// Сервер принимает клиента, отвечает ему, видит его отключение концом
     /// потока — и принимает следующего на том же сокете.
