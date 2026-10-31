@@ -7,7 +7,7 @@
 //! Плата собирает стек над своим устройством (Ethernet) и отдаёт его вместе с
 //! фоновой работой (`Net`); транспорты на стеке строит граф и отдаёт узлам.
 // {%- if net_services contains "mqtt" %}
-//! Клиент брокера — тоже: граф строит [`TcpClient`] (порт `ports::Dial`).
+//! Клиент брокера — тоже: граф строит [`TcpClient`](crate::net::TcpClient) (порт `ports::Dial`).
 // {%- endif %}
 // {%- if net_services contains "rest" or net_services contains "ssh" %}
 //! Серверы служб (`domain::http`, `domain::ssh`) адаптера не получают: стек
