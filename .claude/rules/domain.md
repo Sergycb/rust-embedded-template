@@ -27,7 +27,7 @@ paths: crates-host/domain/**
   состояние или переход в себя, пауз в `domain` нет — `docs/architecture.md`,
   «Узлы не падают».
 - Своих типов в `domain` — только контексты узлов (их эмитит фрагмент), состояния
-  автоматов, входы фрагментов ({% if ota == "true" %}`OtaWiring`, {% endif %}`IdleMeter`{% if ota == "true" %}, `Mode`{% endif %}), буферы кадра
+  автоматов, входы фрагментов ({% if ota == "true" %}`OtaWiring`, {% endif %}`IdleMeter`), буферы кадра
   задачи, которые автомат получает аргументами стартового действия{% if has_canopen == "true" %} (`canopen::Persisted`){% endif %}{% if has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" %} и обработчик протокола,
   который фрагмент получает на входе ({% if has_protobuf == "true" %}`protobuf::Service`{% elsif has_modbus == "true" %}карта регистров (порт `Registers`; одна на все узлы Modbus — `docs/modules/app.md`){% else %}`canopen::dictionary` (словарь объектов){% endif %}): это логика
   приложения, и проект правит его здесь{% endif %}.{% if ota == "true" %} Исключение — типы решения

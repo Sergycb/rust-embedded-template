@@ -5,9 +5,7 @@
 //! проверяется оно на хосте с фейком порта. Подпись приложение не проверяет —
 //! это делает bootloader (`domain::ota::boot::screen_update`), а отсюда ему
 //! уходит запись с подписью и длиной ([`PendingImage`](ports::PendingImage)) — обычной
-//! записью порта в запасную страницу раздела. Без подписи применять нечего:
-//! `FirmwareUpdate::mark_updated` адаптера платы — но и тогда перед ним
-//! сверяется раскладка (`check_layout`).
+//! записью порта в запасную страницу раздела.
 //!
 //! Хвост образа — `[образ][раскладка u32 LE][версия u32 LE]`; подпись, хвост
 //! и порядок проверок — docs/ota.md, «Подпись OTA-образа».
@@ -33,7 +31,7 @@ pub const VERSION_BYTES: u32 = 4;
 pub const LAYOUT_BYTES: u32 = 4;
 
 /// Сверяет отпечаток раскладки в хвосте принятого образа с отпечатком этой
-/// прошивки ([`FirmwareUpdate::layout`]) — до `mark_updated`, в обоих режимах.
+/// прошивки ([`FirmwareUpdate::layout`]) — до `mark_updated`.
 ///
 /// Образ под другую раскладку (другие `ACTIVE`/`DFU`/`STATE` в `memory.x`)
 /// после обмена не запустился бы, а bootloader, собранный под старую, обменял
@@ -46,7 +44,7 @@ pub const LAYOUT_BYTES: u32 = 4;
 /// - `Truncated` — если длина меньше хвоста с раскладкой и версией,
 /// - `Layout` — если отпечатки не совпали,
 /// - `Flash` — если чтение раздела не удалось.
-pub(crate) async fn check_layout<F: FirmwareUpdate>(
+async fn check_layout<F: FirmwareUpdate>(
     flash: &mut F,
     len: u32,
 ) -> Result<(), UpdateError<F::Error>> {
@@ -81,7 +79,7 @@ pub(crate) async fn check_layout<F: FirmwareUpdate>(
 ///
 /// Запись о подписи ложится в запасную страницу раздела, по смещению
 /// [`capacity`](ports::FirmwareUpdate::capacity) — её стирает `prepare`
-/// адаптера проекта с подписью (`adapters::ota::Updater<_, true>`), — и только
+/// адаптера (`adapters::ota::Updater`), — и только
 /// потом помечается обмен: bootloader, увидев запрос, обязан найти и запись.
 ///
 /// Порядок проверок — длина (с [`capacity`](ports::FirmwareUpdate::capacity),

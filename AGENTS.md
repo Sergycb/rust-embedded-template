@@ -180,7 +180,7 @@ read`: руками пришлось бы сначала найти адрес �
 - Задачи `embassy` не могут быть generic: тип, уезжающий в `#[embassy_executor::task]`,
   получает псевдоним (`pub type X = ...`): рычаг — от `bsp`{% if ota == "true" or config == "true" %} ({% if ota == "true" %}`bsp::FirmwareFlash`{% if config == "true" %},
   {% endif %}{% endif %}{% if config == "true" %}`bsp::ConfigFlash`{% endif %}){% endif %}, адаптер — от `app`{% if protocol_link == "true" %} (`crate::link::<вид>[::<транспорт>]::Link`){% endif %} или
-  конкретным типом прямо {% if graph == "true" %}в графе{% else %}в задаче{% endif %}{% if ota == "true" %} (`adapters::ota::Updater<bsp::FirmwareFlash, _>`){% endif %}
+  конкретным типом прямо {% if graph == "true" %}в графе{% else %}в задаче{% endif %}{% if ota == "true" %} (`adapters::ota::Updater<bsp::FirmwareFlash>`){% endif %}
   — `docs/architecture.md`.
 - Ровно один `#[panic_handler]` и один активный `#[global_logger]` на бинарник;
   паникёр у каждого бинарника свой, у `app` профиль выбирает

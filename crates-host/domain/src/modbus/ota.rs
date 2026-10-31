@@ -269,14 +269,18 @@ mod tests {
         let (ota, mut node) = live();
         let mut regs = OtaRegisters::new(EmptyRegisters, ota);
 
+        // Длина 9 и подпись — 32 регистра: без неё `Start` отвергнут.
+        let mut start = vec![1, 0, 9];
+        start.extend([0x0909; 32]);
         assert_eq!(
-            write(&mut regs, &mut node, OTA_BASE, &[1, 0, 9]),
+            write(&mut regs, &mut node, OTA_BASE, &start),
             Ok(()),
             "Start"
         );
         assert_eq!(status(&mut regs), [1, 0, 0]);
         // 9 байт: четыре полных регистра и нечётный последний в старшем байте;
-        // байты 1..5 — отпечаток раскладки фейка, иначе `Finish` отвергнут.
+        // байты 1..5 — отпечаток раскладки фейка, 5..9 — версия 9.8.1798, новее
+        // версии узла; иначе `Finish` отвергнут.
         let [l0, l1, l2, l3] = LAYOUT.to_le_bytes().map(u16::from);
         let chunk = [
             2,

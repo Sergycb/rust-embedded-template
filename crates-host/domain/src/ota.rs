@@ -34,12 +34,14 @@
 //! [`Reboot`](ports::Reboot). Сброс — команда хоста, а не следствие `Finish`:
 //! так хост узнаёт исход образа до сброса, а не по факту перезагрузки.
 //!
-//! Применение различается по Cargo-варианту (`signed`), а Liquid в `domain`
-//! запрещён, поэтому режим — данные входа узла: [`Mode::Plain`](crate::ota::Mode::Plain) или
+//! Образ всегда подписан: `Start` без подписи отвергается до стирания, а
+//! `Finish` применяет образ [`apply_signed`](crate::ota::update::apply_signed)
+//! — с проверкой версии против версии этой прошивки, которую узел получает во
+//! входе (`OtaWiring::running_version`,
 // {%- if graph == "true" %}
-//! [`Mode::Signed`](crate::ota::Mode::Signed), и выбирает его `crates-cross/app/src/graph.rs`.
+//! `crates-cross/app/src/graph.rs`).
 // {%- else %}
-//! [`Mode::Signed`](crate::ota::Mode::Signed), и выбирает его `crates-cross/app/src/tasks/ota.rs`.
+//! `crates-cross/app/src/tasks/ota.rs`).
 // {%- endif %}
 //! Подробности — `docs/ota.md`.
 
@@ -65,7 +67,6 @@ pub mod version;
 mod client;
 mod rejection;
 mod timing;
-mod wiring;
 
 // Типы входа `CMD` — под путём `domain`: фрагмент называет их полным путём, а
 // compose-site (`app`) от `ports` не зависит.
@@ -74,7 +75,6 @@ pub use ports::{OtaCommand, OtaReply};
 // Подмодули — по теме; путь `domain::ota::…` у их типов прежний.
 pub use client::{CMD_BYTES, ClientId, NodeLost, OtaClient, OtaRequest};
 pub use timing::{REBOOT_GRACE, SESSION_TIMEOUT};
-pub use wiring::Mode;
 
 use core::future::poll_fn;
 use core::pin::pin;
@@ -82,25 +82,22 @@ use core::task::Poll;
 
 use defmt_or_log::{FormatOrDebug, info, warn};
 use embassy_time::{Instant, Timer};
-use ports::{Chunk, FirmwareUpdate, Progress, Reboot, Rejection};
+use ports::{Chunk, FirmwareUpdate, Progress, Reboot, Rejection, SIGNATURE_BYTES};
 
 use crate::ota::client::Answer;
 use crate::ota::download::Transfer;
-use crate::ota::rejection::{busy, download_rejection};
-use crate::ota::wiring::Signature;
+use crate::ota::rejection::{busy, download_rejection, update_rejection};
+
+/// Подпись образа — из `Start`, до `Finish` её держит состояние `Receiving`.
+type Signature = [u8; SIGNATURE_BYTES];
 
 // {%- if graph == "true" %}
 // Узел объявлен здесь же, где лежит его задача, — как `HEARTBEAT_FRAG` в
 // `domain::heartbeat`; compose-site (`crates-cross/app/src/graph.rs`) только
-// перечисляет фрагмент, называет узел (`as OTA`) и кормит его входом. Фрагмент
-// один на оба Cargo-варианта `signed`: режим применения — данные входа
-// (`OtaWiring::mode`), а не второй фрагмент. Какой режим подставить — решает
-// `graph.rs`.
+// перечисляет фрагмент, называет узел (`as OTA`) и кормит его входом.
 // {%- else %}
 // Узел объявлен здесь же, где лежит его задача; задача модуля
-// `crates-cross/app/src/tasks/ota.rs` кормит его входом. Фрагмент один на оба
-// Cargo-варианта `signed`: режим применения — данные входа (`OtaWiring::mode`),
-// а не второй фрагмент. Какой режим подставить — решает `tasks/ota.rs`.
+// `crates-cross/app/src/tasks/ota.rs` кормит его входом.
 // {%- endif %}
 //
 // `boot: inputs: …` — собственная привязка фрагмента: compose-site пишет
@@ -156,8 +153,9 @@ supervisor::supervisor_fragment! {
             FLASH: local F = inputs.flash,
             /// Перезагрузка МК (`Reboot`) — для команды `Reboot`.
             REBOOT: R = inputs.reboot,
-            /// Режим применения: `Mode::Plain` или `Mode::Signed`.
-            MODE: $crate::ota::Mode = inputs.mode,
+            /// Версия этой прошивки (`FW_VERSION` приложения): образ не новее
+            /// неё отвергается на `Finish` — защита от отката.
+            RUNNING_VERSION: u32 = inputs.running_version,
             CONFIRMED: bool = false
         ],
         // Литерал, а не `CMD_BYTES`: макрос принимает здесь только число. Равен ему.
@@ -185,7 +183,7 @@ where
                 Receiving {
                     owner: ClientId,
                     transfer: Transfer,
-                    signature: Option<Signature>,
+                    signature: Signature,
                     until: Instant,
                 },
                 /// Образ применён, обмен разделов — на следующем сбросе.
@@ -277,8 +275,10 @@ where
         }
     }
 
-    /// `Start`: проверки до стирания — владелец приёма, занятость, затем режим
-    /// (подпись), — и подготовка раздела. Незаконченный приём того же клиента
+    /// `Start`: проверки до стирания — владелец приёма, занятость, затем
+    /// подпись, — и подготовка раздела. Без подписи — отказ ДО стирания:
+    /// применить такой образ нечем, а стирание уничтожило бы образ, в который
+    /// устройство откатывается. Незаконченный приём того же клиента
     /// брошен, чужой — `Busy`.
     async fn start(
         &mut self,
@@ -316,18 +316,21 @@ where
         // Занятость — до всего: адаптер и так откажет в `prepare`, но тогда
         // хост услышал бы `Device` вместо «сначала перезагрузи».
         let screened = match self.flash.is_busy().await {
-            Ok(false) => self.mode.check(signature.as_ref()),
+            Ok(false) => signature.ok_or(Rejection::Signature),
             Ok(true) => Err(Rejection::Busy),
             Err(err) => {
                 warn!("ota: флеш не ответил о занятости: {:?}", &err);
                 Err(Rejection::Device)
             }
         };
-        if let Err(rejection) = screened {
-            warn!("ota: Start отвергнут: {:?}", rejection);
-            served.respond(Err(rejection));
-            return back;
-        }
+        let signature = match screened {
+            Ok(signature) => signature,
+            Err(rejection) => {
+                warn!("ota: Start отвергнут: {:?}", rejection);
+                served.respond(Err(rejection));
+                return back;
+            }
+        };
         match Transfer::start(&mut *self.flash, len).await {
             Ok(transfer) => {
                 served.respond(Ok(Progress::Started));
@@ -377,8 +380,9 @@ where
         }
     }
 
-    /// `Finish`: сверка длины, затем применение через режим (plain или
-    /// signed); не от владельца — `Busy`, приём продолжается.
+    /// `Finish`: сверка длины, затем применение — проверки и запись подписи
+    /// для bootloader'а ([`apply_signed`](crate::ota::update::apply_signed));
+    /// не от владельца — `Busy`, приём продолжается.
     async fn finish(
         &mut self,
         s: Receiving,
@@ -390,9 +394,12 @@ where
         }
         let outcome = match s.transfer.finish(&mut *self.flash).await {
             Ok(len) => {
-                self.mode
-                    .apply(&mut *self.flash, s.signature.as_ref(), len)
+                update::apply_signed(&mut *self.flash, *self.running_version, &s.signature, len)
                     .await
+                    .map_err(|err| {
+                        warn!("ota: применение отвергнуто: {:?}", &err);
+                        update_rejection(&err)
+                    })
             }
             Err(err) => {
                 warn!("ota: приём не сошёлся: {:?}", &err);
@@ -479,13 +486,19 @@ pub(crate) mod tests {
     use super::OtaClient;
     // {%- endif %}
 
-    use super::{ClientId, Mode, OtaRequest, REBOOT_GRACE, SESSION_TIMEOUT, task};
+    use super::{ClientId, OtaRequest, REBOOT_GRACE, SESSION_TIMEOUT, task};
     /// Отпечаток раскладки фейка — образы тестов узла и протоколов несут его
     /// в хвосте.
     pub(crate) use crate::ota::fakes::LAYOUT;
     use crate::ota::fakes::{FakeFlash, SIGNATURE};
     use crate::ota::update::{LAYOUT_BYTES, VERSION_BYTES};
     use crate::ota::version::pack;
+
+    /// Версия «этой прошивки» во входе узла — у стендов протоколов тоже.
+    const RUNNING_VERSION: u32 = pack(1, 2, 3);
+
+    /// Версия в хвосте образов [`image`] — новее [`RUNNING_VERSION`].
+    const NEWER: u32 = pack(1, 2, 4);
 
     /// Сброс МК в тесте — паника с узнаваемым текстом: `reboot` не
     /// возвращается, а `#[should_panic]` ловит именно её.
@@ -538,7 +551,7 @@ pub(crate) mod tests {
         let node = task(stand.ctx(
             Box::leak(Box::new(FakeFlash::new(1024, 8))),
             Box::leak(Box::new(FakeReboot)),
-            Box::leak(Box::new(Mode::Plain)),
+            Box::leak(Box::new(RUNNING_VERSION)),
             Box::leak(Box::new(false)),
         ));
         (
@@ -560,7 +573,7 @@ pub(crate) mod tests {
         Box::pin(task(super::OtaCtx {
             flash: Box::leak(Box::new(FakeFlash::new(1024, 8))),
             reboot: Box::leak(Box::new(FakeReboot)),
-            mode: Box::leak(Box::new(Mode::Plain)),
+            running_version: Box::leak(Box::new(RUNNING_VERSION)),
             confirmed: Box::leak(Box::new(false)),
             cmd: stand.cmd.server().expect("сервер CMD стенда свободен"),
             ask,
@@ -620,18 +633,13 @@ pub(crate) mod tests {
     /// Гоняет узел по сценарию и возвращает ответы на команды по порядку.
     /// `confirmed` — слот снаружи, как у второго прогона узла в том же
     /// запуске прошивки.
-    fn run_on(
-        flash: &mut FakeFlash,
-        mut mode: Mode,
-        confirmed: &mut bool,
-        steps: Vec<Step>,
-    ) -> Vec<OtaReply> {
+    fn run_on(flash: &mut FakeFlash, confirmed: &mut bool, steps: Vec<Step>) -> Vec<OtaReply> {
         MockDriver::get().reset();
         let stand = supervisor::stand!(OTA_FRAG<FakeFlash, FakeReboot>; QUEUE_ASK = 1);
-        let mut reboot = FakeReboot;
+        let (mut reboot, mut version) = (FakeReboot, RUNNING_VERSION);
         let requester = stand.cmd.requester();
         let mut asker = stand.ask();
-        let mut node = pin!(task(stand.ctx(flash, &mut reboot, &mut mode, confirmed)));
+        let mut node = pin!(task(stand.ctx(flash, &mut reboot, &mut version, confirmed)));
         assert!(poll(node.as_mut()).is_pending(), "узел ждёт команду");
 
         let mut replies = Vec::new();
@@ -660,23 +668,25 @@ pub(crate) mod tests {
         replies
     }
 
-    fn run(flash: &mut FakeFlash, mode: Mode, steps: Vec<Step>) -> Vec<OtaReply> {
-        run_on(flash, mode, &mut false, steps)
+    fn run(flash: &mut FakeFlash, steps: Vec<Step>) -> Vec<OtaReply> {
+        run_on(flash, &mut false, steps)
     }
 
+    /// `Start` с подписью — как его шлёт любой хост.
     #[expect(clippy::cast_possible_truncation, reason = "размеры в тестах малы")]
     fn start(len: usize) -> Step {
         send(OtaCommand::Start {
             len: len as u32,
-            signature: None,
+            signature: Some(SIGNATURE),
         })
     }
 
+    /// `Start` без подписи — его узел отвергает.
     #[expect(clippy::cast_possible_truncation, reason = "размеры в тестах малы")]
-    fn signed_start(len: usize) -> Step {
+    fn unsigned_start(len: usize) -> Step {
         send(OtaCommand::Start {
             len: len as u32,
-            signature: Some(SIGNATURE),
+            signature: None,
         })
     }
 
@@ -699,30 +709,45 @@ pub(crate) mod tests {
         send(OtaCommand::Finish)
     }
 
-    /// Образ с отпечатком раскладки фейка ([`LAYOUT`]) перед местом версии —
-    /// без него `Finish` отвергался бы в обоих режимах.
-    #[expect(clippy::cast_possible_truncation, reason = "размеры в тестах малы")]
+    /// Образ, как его собирает `cargo xtask build`: хвост — отпечаток
+    /// раскладки фейка ([`LAYOUT`]) и версия [`NEWER`]; без них `Finish`
+    /// отвергался бы.
     fn image(len: usize) -> Vec<u8> {
+        versioned_image(len, NEWER)
+    }
+
+    /// Образ с отпечатком [`LAYOUT`] и версией `version` в хвосте.
+    #[expect(clippy::cast_possible_truncation, reason = "размеры в тестах малы")]
+    fn versioned_image(len: usize, version: u32) -> Vec<u8> {
         let mut image: Vec<u8> = (0..len).map(|i| (i * 3) as u8).collect();
-        let layout = len - (LAYOUT_BYTES + VERSION_BYTES) as usize;
-        image[layout..layout + LAYOUT_BYTES as usize].copy_from_slice(&LAYOUT.to_le_bytes());
+        let at = len - VERSION_BYTES as usize;
+        image[at - LAYOUT_BYTES as usize..at].copy_from_slice(&LAYOUT.to_le_bytes());
+        image[at..].copy_from_slice(&version.to_le_bytes());
         image
     }
 
+    /// Полный приём образа: `Start`, куски, `Finish`.
+    fn update(image: &[u8]) -> Vec<Step> {
+        let mut steps = vec![start(image.len())];
+        steps.extend(chunks(image));
+        steps.push(finish());
+        steps
+    }
+
     /// Счастливый путь: раздел подготовлен один раз, каждый кусок
-    /// подтверждён принятой длиной, обмен запрошен, хост услышал `Ready`.
+    /// подтверждён принятой длиной, подпись из `Start` и длина доехали до
+    /// адаптера записью для bootloader'а, и только после неё помечен обмен;
+    /// хост услышал `Ready`.
     #[test]
-    fn applies_an_unsigned_image_and_replies_to_every_command() {
+    fn applies_an_image_and_replies_to_every_command() {
         let image = image(64);
         let mut flash = FakeFlash::new(1024, 8);
-        let mut steps = vec![start(64)];
-        steps.extend(chunks(&image));
-        steps.push(finish());
 
-        let replies = run(&mut flash, Mode::Plain, steps);
+        let replies = run(&mut flash, update(&image));
 
         assert_eq!(flash.prepared, Some(64));
         assert_eq!(&flash.memory[..64], &image[..]);
+        assert_eq!(flash.recorded, vec![(SIGNATURE, 64)]);
         assert_eq!(flash.updated, 1, "обмен разделов запрошен один раз");
         assert_eq!(
             replies,
@@ -744,7 +769,7 @@ pub(crate) mod tests {
     fn confirms_the_running_image_before_the_first_command() {
         let mut flash = FakeFlash::new(64, 8);
 
-        run(&mut flash, Mode::Plain, vec![]);
+        run(&mut flash, vec![]);
 
         assert_eq!(flash.booted, 1);
         assert_eq!(flash.prepared, None, "раздел не тронут");
@@ -759,11 +784,11 @@ pub(crate) mod tests {
         flash.confirm_takes = Some(Duration::from_millis(1000));
         // Свой `stand!` на тест: готовность — `static` на месте вызова.
         let stand = supervisor::stand!(OTA_FRAG<FakeFlash, FakeReboot>; QUEUE_ASK = 1);
-        let (mut reboot, mut mode, mut confirmed) = (FakeReboot, Mode::Plain, false);
+        let (mut reboot, mut version, mut confirmed) = (FakeReboot, RUNNING_VERSION, false);
         let mut node = pin!(task(stand.ctx(
             &mut flash,
             &mut reboot,
-            &mut mode,
+            &mut version,
             &mut confirmed
         )));
 
@@ -782,11 +807,11 @@ pub(crate) mod tests {
         let mut flash = FakeFlash::new(64, 8);
         flash.mark_booted = Err("флеш не отвечает");
         let stand = supervisor::stand!(OTA_FRAG<FakeFlash, FakeReboot>; QUEUE_ASK = 1);
-        let (mut reboot, mut mode, mut confirmed) = (FakeReboot, Mode::Plain, false);
+        let (mut reboot, mut version, mut confirmed) = (FakeReboot, RUNNING_VERSION, false);
         let mut node = pin!(task(stand.ctx(
             &mut flash,
             &mut reboot,
-            &mut mode,
+            &mut version,
             &mut confirmed
         )));
 
@@ -803,13 +828,12 @@ pub(crate) mod tests {
 
         run_on(
             &mut flash,
-            Mode::Plain,
             &mut confirmed,
             vec![start(16), chunk(0, &image(16)), finish()],
         );
         assert_eq!((flash.booted, flash.updated), (1, 1));
 
-        run_on(&mut flash, Mode::Plain, &mut confirmed, vec![]);
+        run_on(&mut flash, &mut confirmed, vec![]);
         assert_eq!(flash.booted, 1, "второй прогон не подтверждает");
     }
 
@@ -821,11 +845,11 @@ pub(crate) mod tests {
         let mut flash = FakeFlash::new(64, 8);
         flash.mark_booted = Err("флеш не отвечает");
 
-        run_on(&mut flash, Mode::Plain, &mut confirmed, vec![]);
+        run_on(&mut flash, &mut confirmed, vec![]);
         assert!(!confirmed);
 
         flash.mark_booted = Ok(());
-        run_on(&mut flash, Mode::Plain, &mut confirmed, vec![]);
+        run_on(&mut flash, &mut confirmed, vec![]);
         assert!(confirmed);
     }
 
@@ -840,7 +864,6 @@ pub(crate) mod tests {
         // Образ длиннее раздела — отвергнут, но подтверждение пробовалось.
         run_on(
             &mut flash,
-            Mode::Plain,
             &mut confirmed,
             vec![start(1000), chunk(0, &[0; 8])],
         );
@@ -858,11 +881,7 @@ pub(crate) mod tests {
         let mut flash = FakeFlash::new(64, 8);
         flash.mark_booted = Err("флеш не отвечает");
 
-        let replies = run(
-            &mut flash,
-            Mode::Plain,
-            vec![start(8), chunk(0, &image(8)), finish()],
-        );
+        let replies = run(&mut flash, vec![start(8), chunk(0, &image(8)), finish()]);
 
         assert_eq!(replies.last(), Some(&Ok(Progress::Ready)), "образ принят");
     }
@@ -877,7 +896,6 @@ pub(crate) mod tests {
 
         run(
             &mut flash,
-            Mode::Plain,
             vec![start(16), chunk(0, &image(16)), finish(), start(16)],
         );
 
@@ -895,7 +913,7 @@ pub(crate) mod tests {
         let mut flash = FakeFlash::new(64, 8);
         flash.busy = true;
 
-        let replies = run(&mut flash, Mode::Plain, vec![start(8)]);
+        let replies = run(&mut flash, vec![start(8)]);
 
         assert_eq!(replies, vec![Err(Rejection::Busy)]);
         assert_eq!(flash.prepared, None, "раздел не должен быть стёрт");
@@ -910,7 +928,6 @@ pub(crate) mod tests {
 
         let replies = run(
             &mut flash,
-            Mode::Plain,
             vec![
                 start(16),
                 chunk(0, &image),
@@ -932,7 +949,7 @@ pub(crate) mod tests {
     fn maps_a_bad_length_to_length_without_erasing() {
         let mut flash = FakeFlash::new(64, 8);
 
-        let replies = run(&mut flash, Mode::Plain, vec![start(65)]);
+        let replies = run(&mut flash, vec![start(65)]);
 
         assert_eq!(replies, vec![Err(Rejection::Length)]);
         assert_eq!(flash.prepared, None);
@@ -946,7 +963,6 @@ pub(crate) mod tests {
 
         let replies = run(
             &mut flash,
-            Mode::Plain,
             vec![
                 start(16),
                 chunk(0, &[0; 16]),
@@ -967,11 +983,7 @@ pub(crate) mod tests {
     fn an_early_finish_is_a_transfer_failure() {
         let mut flash = FakeFlash::new(64, 8);
 
-        let replies = run(
-            &mut flash,
-            Mode::Plain,
-            vec![start(16), chunk(0, &image(8)), finish()],
-        );
+        let replies = run(&mut flash, vec![start(16), chunk(0, &image(8)), finish()]);
 
         assert_eq!(replies.last(), Some(&Err(Rejection::Transfer)));
         assert_eq!(flash.updated, 0);
@@ -983,7 +995,7 @@ pub(crate) mod tests {
         let mut flash = FakeFlash::new(64, 8);
         flash.word = 0;
 
-        let replies = run(&mut flash, Mode::Plain, vec![start(8)]);
+        let replies = run(&mut flash, vec![start(8)]);
 
         assert_eq!(replies, vec![Err(Rejection::Device)]);
         assert_eq!(flash.prepared, None);
@@ -994,11 +1006,7 @@ pub(crate) mod tests {
         let mut flash = FakeFlash::new(64, 8);
         flash.mark_updated = Err("флеш отказал");
 
-        let replies = run(
-            &mut flash,
-            Mode::Plain,
-            vec![start(8), chunk(0, &image(8)), finish()],
-        );
+        let replies = run(&mut flash, vec![start(8), chunk(0, &image(8)), finish()]);
 
         assert_eq!(replies.last(), Some(&Err(Rejection::Device)));
     }
@@ -1010,7 +1018,6 @@ pub(crate) mod tests {
 
         let replies = run(
             &mut flash,
-            Mode::Plain,
             vec![
                 chunk(0, &[0; 8]),
                 finish(),
@@ -1041,7 +1048,6 @@ pub(crate) mod tests {
 
         let replies = run(
             &mut flash,
-            Mode::Plain,
             vec![
                 start(16),
                 chunk(0, &image[..8]),
@@ -1075,7 +1081,6 @@ pub(crate) mod tests {
 
         let replies = run(
             &mut flash,
-            Mode::Plain,
             vec![
                 start(32),
                 chunk(0, &[0; 8]),
@@ -1098,7 +1103,6 @@ pub(crate) mod tests {
 
         let replies = run(
             &mut flash,
-            Mode::Plain,
             vec![
                 start(32),
                 chunk(0, &[0xAA; 8]),
@@ -1121,7 +1125,6 @@ pub(crate) mod tests {
 
         let replies = run(
             &mut flash,
-            Mode::Plain,
             vec![
                 start(32),
                 Step::Wait(almost),
@@ -1152,7 +1155,6 @@ pub(crate) mod tests {
 
         let replies = run(
             &mut flash,
-            Mode::Plain,
             vec![start(16), by(1, start(8)), chunk(0, &image), finish()],
         );
 
@@ -1178,7 +1180,6 @@ pub(crate) mod tests {
 
         let replies = run(
             &mut flash,
-            Mode::Plain,
             vec![
                 start(16),
                 by(1, chunk(0, &[0xAA; 16])),
@@ -1208,7 +1209,6 @@ pub(crate) mod tests {
 
         let replies = run(
             &mut flash,
-            Mode::Plain,
             vec![
                 asked(by(1, start(16))),
                 chunk(0, &[0xAA; 16]),
@@ -1236,7 +1236,6 @@ pub(crate) mod tests {
 
         let replies = run(
             &mut flash,
-            Mode::Plain,
             vec![start(8), by(1, finish()), chunk(0, &image(8)), finish()],
         );
 
@@ -1260,7 +1259,6 @@ pub(crate) mod tests {
 
         let replies = run(
             &mut flash,
-            Mode::Plain,
             vec![
                 start(32),
                 chunk(0, &[0xAA; 8]),
@@ -1292,7 +1290,6 @@ pub(crate) mod tests {
 
         let replies = run(
             &mut flash,
-            Mode::Plain,
             vec![
                 start(16),
                 Step::Wait(half),
@@ -1322,7 +1319,6 @@ pub(crate) mod tests {
 
         let replies = run(
             &mut flash,
-            Mode::Plain,
             vec![start(16), Step::Skip(SESSION_TIMEOUT), by(1, start(8))],
         );
 
@@ -1335,11 +1331,7 @@ pub(crate) mod tests {
     fn reboot_is_served_for_any_client() {
         let mut flash = FakeFlash::new(64, 8);
 
-        let replies = run(
-            &mut flash,
-            Mode::Plain,
-            vec![start(16), by(1, send(OtaCommand::Reboot))],
-        );
+        let replies = run(&mut flash, vec![start(16), by(1, send(OtaCommand::Reboot))]);
 
         assert_eq!(
             replies,
@@ -1355,7 +1347,6 @@ pub(crate) mod tests {
 
         let replies = run(
             &mut flash,
-            Mode::Plain,
             vec![
                 send(OtaCommand::Reboot),
                 Step::Wait(REBOOT_GRACE - Duration::from_millis(1)),
@@ -1365,54 +1356,17 @@ pub(crate) mod tests {
 
         run(
             &mut flash,
-            Mode::Plain,
             vec![send(OtaCommand::Reboot), Step::Wait(REBOOT_GRACE)],
         );
-    }
-
-    /// С подписью; версия «этой прошивки» — 1.2.3.
-    fn signed() -> Mode {
-        Mode::Signed {
-            running_version: pack(1, 2, 3),
-        }
-    }
-
-    /// Образ с версией в хвосте — как его собирает `cargo xtask build`.
-    fn versioned_image(len: usize, version: u32) -> Vec<u8> {
-        let mut image = image(len);
-        image[len - VERSION_BYTES as usize..].copy_from_slice(&version.to_le_bytes());
-        image
-    }
-
-    fn signed_update(image: &[u8]) -> Vec<Step> {
-        let mut steps = vec![signed_start(image.len())];
-        steps.extend(chunks(image));
-        steps.push(finish());
-        steps
-    }
-
-    /// Счастливый путь с подписью: подпись из `Start` и длина доехали до
-    /// адаптера записью для bootloader'а, и только после неё помечен обмен.
-    #[test]
-    fn applies_a_signed_image_with_the_signature_from_start() {
-        let image = versioned_image(64, pack(1, 2, 4));
-        let mut flash = FakeFlash::new(1024, 8);
-
-        let replies = run(&mut flash, signed(), signed_update(&image));
-
-        assert_eq!(&flash.memory[..64], &image[..]);
-        assert_eq!(flash.recorded, vec![(SIGNATURE, 64)]);
-        assert_eq!(flash.updated, 1);
-        assert_eq!(replies.last(), Some(&Ok(Progress::Ready)));
     }
 
     /// Без подписи в `Start` — отказ ДО стирания: стирание уничтожило бы
     /// образ, в который устройство откатывается, а применить всё равно нечем.
     #[test]
-    fn refuses_a_signed_update_without_a_signature_before_erasing() {
+    fn refuses_an_update_without_a_signature_before_erasing() {
         let mut flash = FakeFlash::new(64, 8);
 
-        let replies = run(&mut flash, signed(), vec![start(8), chunk(0, &[0; 8])]);
+        let replies = run(&mut flash, vec![unsigned_start(8), chunk(0, &[0; 8])]);
 
         assert_eq!(
             replies,
@@ -1424,93 +1378,57 @@ pub(crate) mod tests {
     /// Та же версия — откат, и код для хоста свой.
     #[test]
     fn maps_a_rollback_to_rollback() {
-        let image = versioned_image(64, pack(1, 2, 3));
+        let image = versioned_image(64, RUNNING_VERSION);
         let mut flash = FakeFlash::new(1024, 8);
 
-        let replies = run(&mut flash, signed(), signed_update(&image));
+        let replies = run(&mut flash, update(&image));
 
         assert_eq!(replies.last(), Some(&Err(Rejection::Rollback)));
         assert!(flash.recorded.is_empty(), "обмен не должен быть запрошен");
+        assert_eq!(flash.updated, 0);
     }
 
     /// Образ короче хвоста (раскладка и версия) — `Length`, а не паника на
-    /// вычитании.
+    /// вычитании; обмен не запрошен.
     #[test]
-    fn maps_a_signed_image_shorter_than_the_tail_to_length() {
+    fn maps_an_image_shorter_than_the_tail_to_length() {
         let mut flash = FakeFlash::new(1024, 8);
 
-        let replies = run(&mut flash, signed(), signed_update(&[0; 7]));
+        let replies = run(&mut flash, update(&[0; 7]));
 
         assert_eq!(replies.last(), Some(&Err(Rejection::Length)));
-        assert!(flash.recorded.is_empty());
-    }
-
-    /// Чужая раскладка с подписью — `Layout`, а не `Rollback`, хотя версия
-    /// новее; обмен не запрошен.
-    #[test]
-    fn maps_a_signed_image_for_another_layout_to_layout() {
-        let mut image = versioned_image(64, pack(1, 2, 4));
-        image[56..60].copy_from_slice(&(!LAYOUT).to_le_bytes());
-        let mut flash = FakeFlash::new(1024, 8);
-
-        let replies = run(&mut flash, signed(), signed_update(&image));
-
-        assert_eq!(replies.last(), Some(&Err(Rejection::Layout)));
         assert!(flash.recorded.is_empty());
         assert_eq!(flash.updated, 0);
     }
 
-    /// Без подписи раскладка сверяется тоже: чужая — `Layout`, обмен не
-    /// запрошен, приём окончен.
+    /// Чужая раскладка — `Layout`, а не `Rollback`, хотя версия новее; обмен
+    /// не запрошен, приём окончен.
     #[test]
-    fn refuses_an_unsigned_image_for_another_layout_before_marking_the_swap() {
+    fn refuses_an_image_for_another_layout_before_marking_the_swap() {
         let mut image = image(64);
         image[56..60].copy_from_slice(&(!LAYOUT).to_le_bytes());
         let mut flash = FakeFlash::new(1024, 8);
-        let mut steps = vec![start(64)];
-        steps.extend(chunks(&image));
-        steps.extend([finish(), chunk(0, &[0; 8])]);
+        let mut steps = update(&image);
+        steps.push(chunk(0, &[0; 8]));
 
-        let replies = run(&mut flash, Mode::Plain, steps);
+        let replies = run(&mut flash, steps);
 
         assert_eq!(
             replies[replies.len() - 2..],
             [Err(Rejection::Layout), Err(Rejection::NoSession)]
         );
+        assert!(flash.recorded.is_empty());
         assert_eq!(flash.updated, 0, "обмен под чужую раскладку не помечается");
-    }
-
-    /// Без подписи образ короче хвоста — `Length`, обмен не запрошен.
-    #[test]
-    fn refuses_an_unsigned_image_shorter_than_the_tail() {
-        let mut flash = FakeFlash::new(1024, 8);
-        let steps = vec![start(7), chunk(0, &[0; 7]), finish()];
-
-        let replies = run(&mut flash, Mode::Plain, steps);
-
-        assert_eq!(replies.last(), Some(&Err(Rejection::Length)));
-        assert_eq!(flash.updated, 0);
-    }
-
-    /// Длина больше вместимости — `Length` ещё на `Start`, до стирания.
-    #[test]
-    fn maps_a_too_long_signed_image_to_length_without_erasing() {
-        let mut flash = FakeFlash::new(64, 8);
-
-        let replies = run(&mut flash, signed(), vec![signed_start(65)]);
-
-        assert_eq!(replies, vec![Err(Rejection::Length)]);
-        assert_eq!(flash.prepared, None);
     }
 
     /// Отказ флеша при записи для bootloader'а — `Device`, обмен не помечен.
     #[test]
     fn maps_a_flash_failure_on_the_signature_record_to_device() {
-        let image = versioned_image(64, pack(1, 2, 4));
+        let image = image(64);
         let mut flash = FakeFlash::new(1024, 8);
         flash.record = Err("флеш отказал");
 
-        let replies = run(&mut flash, signed(), signed_update(&image));
+        let replies = run(&mut flash, update(&image));
 
         assert_eq!(replies.last(), Some(&Err(Rejection::Device)));
         assert_eq!(flash.updated, 0);
@@ -1545,7 +1463,7 @@ pub(crate) mod tests {
         ) {
             let commands = steps.iter().filter(|step| !matches!(step, Step::Wait(_))).count();
             let mut flash = FakeFlash::new(1024, 8);
-            let replies = run(&mut flash, Mode::Plain, steps);
+            let replies = run(&mut flash, steps);
             proptest::prop_assert_eq!(replies.len(), commands);
             let ready = replies.iter().filter(|reply| **reply == Ok(Progress::Ready)).count();
             proptest::prop_assert_eq!(flash.updated, ready);

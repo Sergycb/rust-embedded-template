@@ -82,7 +82,7 @@ fn default_cases() -> Vec<Case> {
         // Одноядерный с OTA и подписью образа (она всегда идёт вместе с OTA:
         // проверка в bootloader'е `screen_update`, ключ через `boot/build.rs`,
         // `salty` со своей `slow-motion` и профилем dev, в `app/src/version.rs`
-        // — `FW_VERSION` для `Mode::Signed`), одна карта памяти — самый
+        // — `FW_VERSION` во входе узла OTA), одна карта памяти — самый
         // обычный случай.
         Case::new("stm32f407ve").smoke(),
         // Тот же чип, но от OTA отказались при генерации: ветка «один образ на

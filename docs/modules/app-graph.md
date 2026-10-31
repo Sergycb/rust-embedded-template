@@ -128,7 +128,7 @@ impl HeartbeatCtx<'_> {
   называет, пишется полным путём (`$crate::heartbeat::WATCHDOG`; почему —
   `docs/architecture.md`, «Узлы — фрагменты в `domain`»). Типы,
   которых фрагмент назвать не может (адаптер над рычагом в слоте), — его параметры:
-  {% if ota == "true" %}`name: OTA_FRAG<F, R>` во фрагменте, `::domain::OTA_FRAG<::adapters::ota::Updater<bsp::FirmwareFlash, true>, bsp::reset::Reboot>` здесь{% else %}`name: SENSOR_FRAG<R>` во фрагменте, `::domain::SENSOR_FRAG<bsp::SensorBus>` здесь
+  {% if ota == "true" %}`name: OTA_FRAG<F, R>` во фрагменте, `::domain::OTA_FRAG<::adapters::ota::Updater<bsp::FirmwareFlash>, bsp::reset::Reboot>` здесь{% else %}`name: SENSOR_FRAG<R>` во фрагменте, `::domain::SENSOR_FRAG<bsp::SensorBus>` здесь
   (пример ниже){% endif %}.
 * **Порядок items фиксирован**: `name:` → `boot:` → `watchdog:` →
   `cloned:`/`shared:` → `executor` → `fragments:` последним. `fragments:`
@@ -314,14 +314,14 @@ resources: [WS: &'static mut $crate::x::Workspace = static |w| w.gain = inputs.g
 
 # OTA: узел уже в графе, вам остаётся канал
 
-Узел `OTA` объявлен в `domain::ota` (`OTA_FRAG`; режим применения —
-`Mode::Signed` — подставила генерация во вход) и спавнится отсюда записью в
+Узел `OTA` объявлен в `domain::ota` (`OTA_FRAG`; версию этого образа для
+защиты от отката подставила генерация во вход) и спавнится отсюда записью в
 `fragments:` — она же даёт ему имя (`as OTA`) и типы двух его слотов
 аргументами. Образ он принимает командами (`ports::OtaCommand`) на свой вход
 `CMD` — `request:` фрагмента, запрос с ответом (или на `ASK` — `serves:`, для
 клиента, который не ждёт исхода в вызове): `Start` (сверка длины до
 стирания), `Chunk` (буферизация до слова флеша — `domain::ota::download::Transfer`),
-`Finish` (`mark_updated` или `domain::ota::update::apply_signed`), `Reboot`, — и на
+`Finish` (`domain::ota::update::apply_signed`), `Reboot`, — и на
 каждую отвечает исходом `ports::OtaReply`. Всё это — host-тесты в
 `crates-host/domain/src/ota.rs`.
 
@@ -340,9 +340,8 @@ resources: [WS: &'static mut $crate::x::Workspace = static |w| w.gain = inputs.g
 вход фрагмента вместе с адаптером обновления над разделами: `bsp` про `domain`
 не знает
 (`= ::domain::ota::OtaWiring { flash: Updater::new(board.firmware), reboot:
-bsp::reset::Reboot, mode: ::domain::ota::Mode::Signed { running_version:
-crate::version::FW_VERSION } }`). Типы слотов — аргументы фрагмента
-(`OTA_FRAG<::adapters::ota::Updater<bsp::FirmwareFlash, true>, bsp::reset::Reboot>`):
+bsp::reset::Reboot, running_version: crate::version::FW_VERSION }`). Типы слотов — аргументы фрагмента
+(`OTA_FRAG<::adapters::ota::Updater<bsp::FirmwareFlash>, bsp::reset::Reboot>`):
 слот — `static`, тип ему нужен, а знает его только эта сторона. Слот адаптера — `local` (фича
 `supervisor/local-resources` в
 `crates-cross/Cargo.toml`): адаптер `Updater` не `Send` (держит `&'static

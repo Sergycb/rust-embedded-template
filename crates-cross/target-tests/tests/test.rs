@@ -67,7 +67,7 @@ mod tests {
 {%- if ota == "true" %}
     /// Адаптер обновления над разделами платы — так же, как его строит
     /// compose-site узла OTA.
-    fn updater(firmware: bsp::FirmwareFlash) -> adapters::ota::Updater<bsp::FirmwareFlash, true> {
+    fn updater(firmware: bsp::FirmwareFlash) -> adapters::ota::Updater<bsp::FirmwareFlash> {
         adapters::ota::Updater::new(firmware)
     }
 {%- endif %}

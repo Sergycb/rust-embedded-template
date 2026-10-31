@@ -337,7 +337,7 @@ mod tests {
             1,
             Request_::Command::OtaStart(proto::OtaStart {
                 len: 8,
-                signature: heapless::Vec::new(),
+                signature: heapless::Vec::from_slice(&[9; 64]).unwrap(),
             }),
         ))]);
         {
