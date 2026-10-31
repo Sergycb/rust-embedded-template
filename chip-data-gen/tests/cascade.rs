@@ -4006,6 +4006,121 @@ fn external_ota_on_a_bank_gap_chip_leaves_bank_2_alone() {
     );
 }
 
+/// Ядро CM7 двухъядерного H7: первый сектор банка 2 (0x0810_0000–0x0811_FFFF)
+/// — точка старта CM4 с заводскими option bytes, и раскладка его не трогает:
+/// `DFU` — с 0x0812_0000 через `Bank2Region` (смещения от начала банка), а
+/// приложение без OTA — только в банке 1.
+#[test]
+fn cm7_of_a_dual_core_h7_leaves_the_cm4_boot_sector_alone() {
+    let ast = compile_script();
+    let result = run_cascade_to(&ast, "h745zi-cm7").expect("каскад не должен падать");
+    assert_eq!(var_of(&result, "ota"), Some("true"));
+    assert_eq!(var_of(&result, "dfu_bank"), Some("true"));
+    for file in ["crates-cross/boot/memory.x", "crates-cross/app/memory.x"] {
+        let memory = written(&result, file);
+        assert_eq!(
+            region_origin(&memory, "DFU").as_deref(),
+            Some("0x08120000"),
+            "{file}"
+        );
+        assert!(
+            memory.contains("__bootloader_dfu_start = ORIGIN(DFU) - 0x08100000;"),
+            "{file}: {memory}"
+        );
+    }
+
+    let single = run_cascade_with(&ast, "h745zi-cm7", &[("ota", "no")]).expect("без OTA");
+    let app = written(&single, "crates-cross/app/memory.x");
+    assert!(
+        app.contains("FLASH             (rx)  : ORIGIN = 0x08000000, LENGTH = 1024K"),
+        "{app}"
+    );
+}
+
+/// Ядро CM4 двухъядерного H7 — в банке 2, откуда оно стартует: bootloader и
+/// приложение без OTA — с 0x0810_0000, а символы разделов по-прежнему от базы
+/// цельного `Flash` (0x0800_0000), и конец flash в `ASSERT` — смещение банка
+/// плюс его длина. При 2×512 KiB цельному `Flash` банк 2 недоступен: OTA и
+/// настройки отключаются, а не раскладываются туда, куда прошивка не напишет.
+#[test]
+fn cm4_of_a_dual_core_h7_lives_in_bank_2() {
+    let ast = compile_script();
+    let result = run_cascade_to(&ast, "h745zi-cm4").expect("каскад не должен падать");
+    assert_eq!(var_of(&result, "ota"), Some("true"));
+    assert_eq!(var_of(&result, "dfu_bank"), Some("false"));
+    let boot = written(&result, "crates-cross/boot/memory.x");
+    assert_eq!(region_origin(&boot, "FLASH").as_deref(), Some("0x08100000"));
+    for memory in [boot, written(&result, "crates-cross/app/memory.x")] {
+        assert!(
+            memory.contains("__bootloader_state_start = ORIGIN(BOOTLOADER_STATE) - 0x08000000;"),
+            "{memory}"
+        );
+        assert!(
+            memory.contains("<= (0x08100000 - 0x08000000 + 1024K)"),
+            "{memory}"
+        );
+    }
+
+    let single =
+        run_cascade_with(&ast, "h745zi-cm4", &[("ota", "no"), ("config", "yes")]).expect("без OTA");
+    let app = written(&single, "crates-cross/app/memory.x");
+    assert_eq!(region_origin(&app, "FLASH").as_deref(), Some("0x08100000"));
+    assert!(
+        app.contains("__config_start = ORIGIN(CONFIG) - 0x08000000;"),
+        "{app}"
+    );
+
+    let xg = run_interview(
+        &ast,
+        "h745zg-cm4",
+        &[("chip_feature", "stm32h745zg-cm4")],
+        &[],
+    )
+    .expect("каскад не должен падать");
+    assert_eq!(var_of(&xg, "ota"), Some("false"));
+    assert_eq!(var_of(&xg, "config"), Some("false"));
+    for question in ["ota:", "config:"] {
+        let (_, menu) = xg
+            .prompts
+            .iter()
+            .find(|(label, _)| label.starts_with(question))
+            .unwrap_or_else(|| panic!("вопрос {question} не задан"));
+        let yes = menu
+            .iter()
+            .find(|choice| choice.starts_with("yes"))
+            .unwrap_or_else(|| panic!("нет варианта yes: {menu:?}"));
+        assert!(yes.contains("DOES NOT FIT"), "{question} {menu:?}");
+    }
+    let app = written(&xg, "crates-cross/app/memory.x");
+    assert!(
+        app.contains("FLASH             (rx)  : ORIGIN = 0x08100000, LENGTH = 512K"),
+        "{app}"
+    );
+}
+
+/// STM32WB: RAM — только SRAM1 (SRAM2a/2b — память CPU2, доступ CPU1 — bus
+/// error), а всё во flash кончается ниже стека CPU2 `BLE_Stack_full`
+/// (0x080D_0000 у xG).
+#[test]
+fn wb_leaves_sram2_and_the_cpu2_flash_alone() {
+    let ast = compile_script();
+    let result =
+        run_cascade_with(&ast, "wb55rg", &[("config", "yes")]).expect("каскад не должен падать");
+    assert_eq!(var_of(&result, "ota"), Some("true"));
+    let app = written(&result, "crates-cross/app/memory.x");
+    assert_eq!(region_origin(&app, "RAM").as_deref(), Some("0x20000000"));
+    assert_eq!(region_origin(&app, "PANIC").as_deref(), Some("0x2002FE00"));
+    for region in ["FLASH", "DFU", "CONFIG"] {
+        let origin = region_origin(&app, region).unwrap_or_else(|| panic!("{region}: {app}"));
+        let origin = u64::from_str_radix(origin.trim_start_matches("0x"), 16).expect("адрес");
+        let length = region_length(&app, region).expect("длина");
+        assert!(
+            origin + length <= 0x080D_0000,
+            "{region} {origin:#x}+{length:#x} заходит во flash CPU2"
+        );
+    }
+}
+
 /// Переключение в одобанковый режим — у тех, кто с завода двухбанковый и получил
 /// одобанковую раскладку, с вариантом регистров своего семейства. F4 с 1 MiB и F7 с
 /// завода одобанковые — переключать нечего; у чипа с одной картой памяти выбора нет

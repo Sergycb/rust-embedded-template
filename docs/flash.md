@@ -358,13 +358,15 @@ QSPI, где он выведен (`QUADSPI`, иначе `OCTOSPI`), иначе S
 - **Банки разделены разрывом — dual-bank{% if dfu_bank == "true" %}, `DFU` во втором{% endif %}.** У H742/743/745/747
   и H7A3 с 1 MiB банк 2 начинается с 0x0810_0000, у U5F7/U5F9 с 2 MiB — с
   0x0820_0000. Кода там быть не может (раздел приложения обязан быть
-  непрерывным), поэтому {% if ota == "true" and ota_store != "external" %}банк 2 целиком под `DFU`, а `ACTIVE` —
+  непрерывным), поэтому {% if ota == "true" and ota_store != "external" %}банк 2 целиком под `DFU`{% if chip_feature contains "stm32h7" and chip_feature contains "-cm7" %} (у CM7 двухъядерного H7 — без первого
+  сектора, ниже){% endif %}, а `ACTIVE` —
   весь банк 1 за вычетом резерва под bootloader{% else %}приложению достаётся
   банк 1, а банк 2 перечислен в `memory.x` регионом `BANK_2`{% endif %}.
 {%- if dfu_bank == "true" %}
 - **`DFU` за разрывом пишется через регион банка, а не через цельный
   `Flash`.** У того `FLASH_SIZE` — сумма банков, она меньше смещения банка 2, и
-  запись туда кончилась бы `Error::Size`. Поэтому `boot` и `bsp` при
+  запись туда кончилась бы `Error::Size`{% if chip_feature contains "stm32h7" and chip_feature contains "-cm7" %} (у CM7 двухъядерного H7 разрыв — первый
+  сектор банка 2, «Память второго ядра» ниже){% endif %}. Поэтому `boot` и `bsp` при
   `dfu_bank = true` разбирают флеш на `Bank1Region` (bootloader, `STATE`,
   `ACTIVE`{% if config_store == "flash" %}, настройки{% endif %} — смещения от базы flash, как у цельного `Flash`) и
   `Bank2Region` (`DFU`), а символы `__bootloader_dfu_*` в `memory.x` отсчитаны
@@ -374,6 +376,63 @@ QSPI, где он выведен (`QUADSPI`, иначе `OCTOSPI`), иначе S
   `stm32-data` описывает U375/U385 (`BANK_2` с 0x0801_0000 при `BANK_1` на
   512 KiB с базы). Такой регион генератор не считает банком: раздел там лёг бы
   поверх кода.
+{%- assign wb_cpu2 = "" %}
+{%- if chip_feature contains "stm32wb" %}{% unless chip_feature contains "stm32wba" or chip_feature contains "stm32wb0" %}{% assign wb_cpu2 = "1" %}{% endunless %}{% endif %}
+{%- assign h7_dual = "" %}
+{%- if dual_core == "true" and chip_feature contains "stm32h7" %}{% assign h7_dual = "1" %}{% endif %}
+{%- if wb_cpu2 == "1" or h7_dual == "1" %}
+
+## Память второго ядра
+
+Шаблон собирает прошивку одного ядра, но второе от этого не исчезает: у
+него своя память, и генерация раскладывает `memory.x` в обход неё.
+{%- if wb_cpu2 == "1" %}
+
+- **STM32WB: верх flash и SRAM2a/SRAM2b — CPU2.** Flash от `SFSA × 4K` до
+  конца и защищённые части SRAM2a/SRAM2b занимают FUS и радиостек CPU2 —
+  всегда, даже когда стек не установлен (AN5185 §1.4–1.5, Table 5); доступ
+  CPU1 туда — bus error (RM0434 §3.6.4). Поэтому `RAM` — только SRAM1, а
+  SRAM2a/SRAM2b перечислены в `memory.x` закомментированными. Во flash всё
+  ({% if ota == "true" and ota_store != "external" %}bootloader, `STATE`, `ACTIVE`, `DFU`{% elsif ota == "true" %}bootloader и `ACTIVE`{% else %}образ{% endif %}{% if config_store == "flash" %}, `CONFIG`{% endif %}) кончается ниже адреса,
+  с которого ставится `stm32wb5x_BLE_Stack_full_fw.bin` (Release Notes STM32WB
+  Copro Wireless Binaries v1.24.0): `0x080D0000` у 1 MiB, `0x0807C000` у
+  640 KiB, `0x0805C000` у 512 KiB, `0x0801C000` у 256 KiB. У WB10/WB15
+  (320 KiB) этих данных нет, граница взята с запасом — `0x08020000`.
+- **Стек крупнее — граница ниже.** `BLE_Stack_full_extended`,
+  `BLE_Mac_802_15_4`, Thread и Zigbee ставятся ниже `BLE_Stack_full`, и
+  тогда конец последнего раздела в `memory.x` надо опустить до `SFSA × 4K`
+  от базы flash{% if ota == "true" and ota_store != "external" %} (`DFU` при этом остаётся на страницу обмена длиннее `ACTIVE`
+  — укорачиваются оба){% endif %}. `SFSA` установленного стека видно в STM32CubeProgrammer:
+  Option bytes → Secure.
+{%- endif %}
+{%- if h7_dual == "1" %}
+
+- **STM32H745/747/755/757: с завода стартуют оба ядра.** Заводские option
+  bytes — `BCM7 = BCM4 = 1`, CM7 стартует с `0x08000000` (`BOOT_CM7_ADD0`),
+  CM4 — с `0x08100000`, начала банка 2 (`BOOT_CM4_ADD0`; RM0399 §4.4.4
+  Table 20, §2.6 Tables 8–9; AN5557 §3.2). Так же делят flash ST
+  (`NUCLEO-H745ZI-Q/Templates`) и embassy (`examples/stm32h755cm4`,
+  `stm32h755cm7`): CM7 — банк 1, CM4 — банк 2.
+{%- if chip_feature contains "-cm7" %}
+- **Этот проект — CM7: банк 1, первый сектор банка 2 пуст.** Сектор
+  `0x08100000–0x0811FFFF` — точка старта CM4, и генерация в него ничего не
+  кладёт{% if ota == "true" and ota_store != "external" %}: `DFU` начинается с `0x08120000` и пишется через `Bank2Region`
+  (смещения от начала банка 2, как за разрывом выше){% else %}: образ — только в банке 1{% endif %}. Пока CM4 разрешён, он
+  стартует в этот стёртый сектор — и исполнит всё, что туда однажды попадёт.
+  Рекомендуется снять `BCM4` (STM32CubeProgrammer → Option bytes → User
+  Configuration): тогда CM4 не стартует вовсе.
+{%- else %}
+- **Этот проект — CM4: всё в банке 2, с `0x08100000`.** {% if ota == "true" %}Bootloader, `STATE`,
+  `ACTIVE`{% if ota_store != "external" %}, `DFU`{% endif %}{% if config_store == "flash" %}, `CONFIG`{% endif %} — там же{% else %}Образ — там же{% endif %}; символы разделов по-прежнему
+  отсчитаны от базы цельного `Flash` (`0x08000000`). CM7 при этом стартует с
+  `0x08000000`: либо снимите `BCM7` (STM32CubeProgrammer → Option bytes →
+  User Configuration; ведущим станет CM4), либо держите первый сектор банка
+  1 стёртым. На чипах 2×512 KiB (`…g-cm4`) банк 2 лежит за пределом
+  цельного `Flash` embassy, и OTA с разделом настроек во flash генерация
+  отключает: писать туда прошивке нечем.
+{%- endif %}
+{%- endif %}
+{%- endif %}
 {%- if ota_store == "external" %}
 
 ## OTA с разделами на внешней флеши (`ext_flash=yes`)

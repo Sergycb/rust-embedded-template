@@ -37,17 +37,16 @@ fn family_table() {
     // шаблона, не сделана без отдельного запроса пользователя.
     //
     // ВАЖНО для STM32H745/747/755/757 (не относится к STM32WL54/55, см.
-    // ниже): по умолчанию (option bytes BCM7=BCM4=1 у большинства ревизий)
-    // ВТОРОЕ ядро тоже стартует при сбросе — не остаётся выключенным само по
-    // себе — с адреса `BOOT_CM4_ADD0` (заводское значение — 0x08100000,
-    // база Flash Bank2). Этот адрес попадает ровно на DFU-партицию из
-    // MEMORY_LAYOUT ниже: после первого OTA-обновления там будет лежать
-    // валидный образ прошивки CM7, и CM4 начнёт параллельно исполнять его
-    // же на общей периферии/DMA — необслуживаемая гонка, не «второе ядро в
-    // сбросе». Перед использованием проверьте/снимите BCM4 (или уведите
-    // `BOOT_CM4_ADDx` на пустую область) через `probe-rs`/STM32CubeProgrammer
-    // — шаблон это не делает. У STM32WL54/55 наоборот: CPU2 (CM0+) по
-    // умолчанию не стартует, пока CPU1 явно не выставит `PWR_CR4.C2BOOT` —
+    // ниже): с заводскими option bytes (BCM7 = BCM4 = 1, RM0399 Table 20)
+    // ВТОРОЕ ядро тоже стартует при сбросе — CM7 с 0x08000000, CM4 с
+    // 0x08100000, начала банка 2. Раскладка из MEMORY_LAYOUT место старта
+    // второго ядра не занимает (CM7 — банк 1 без первого сектора банка 2,
+    // CM4 — банк 2; см. `H7Core` в chip-data-gen), но ядро это не
+    // останавливает: оно стартует в стёртую память. Бит второго ядра (BCM4
+    // для CM7, BCM7 для CM4) снимают через STM32CubeProgrammer — шаблон
+    // этого не делает (docs/flash.md, «Память второго ядра»). У STM32WL54/55
+    // наоборот: CPU2 (CM0+) по умолчанию не стартует, пока CPU1 явно не
+    // выставит `PWR_CR4.C2BOOT` —
     // там «остаётся в сбросе» после сгенерированной прошивки верно как есть.
     [
         ["wba", "cortex-m33", "thumbv8m.main-none-eabihf"],
@@ -1879,8 +1878,9 @@ if variable::is_set("write_size") {
         }
     }
 
-    // Второй банк flash за разрывом (H743 с 1 MiB и т.п.): с внутренней OTA
-    // DFU лежит в нём, и прошивка пишет его через регион банка.
+    // Второй банк flash за разрывом (H743 с 1 MiB и т.п.; у CM7 двухъядерного
+    // H7 разрыв — первый сектор банка 2): с внутренней OTA DFU лежит в нём, и
+    // прошивка пишет его через регион банка.
     let dfu_bank = m.contains("dfu_bank_origin");
 
     let pl = plan(m, erase_zero, WANTS_FINAL, LIMITS);
@@ -1974,8 +1974,18 @@ if variable::is_set("write_size") {
     variable::set("graph", if graph { "true" } else { "false" });
 
     // База flash одна на оба режима: `__bootloader_*` отсчитываются от неё, а не
-    // от ORIGIN(FLASH) конкретного крейта — так их читает embassy-boot.
-    let flash_base = m["flash_origin"];
+    // от ORIGIN(FLASH) конкретного крейта — так их читает embassy-boot. Это
+    // база цельного `Flash` embassy (`embassy_stm32::flash::FLASH_BASE`), у
+    // всех STM32 — 0x08000000. Раскладка (`flash_origin`) начинается с неё у
+    // всех, кроме ядра CM4 двухъядерных H7: то лежит в банке 2, откуда
+    // стартует (chip-data-gen, `H7Core`), — и конец flash в `ASSERT`'ах ниже
+    // (`flash_end`) тогда смещение от базы, а не длина.
+    let flash_base = "0x08000000";
+    let flash_end = if m["flash_origin"] == flash_base {
+        m["flash_length"]
+    } else {
+        "(" + m["flash_origin"] + " - " + flash_base + " + " + m["flash_length"] + ")"
+    };
     let config_region = [];
     if in_flash {
         config_region.push("    CONFIG            (rx)  : ORIGIN = " + m[settings_key + "origin"] + ", LENGTH = " + m[settings_key + "length"]);
@@ -2142,7 +2152,6 @@ if variable::is_set("write_size") {
         // `__ext_flash_end`, здесь проверять не с чем.
         let chip_page = m["page_size"];
         let ext_page = plain_number(m[ota_key + "page_size"]).to_string();
-        let flash_end = m["flash_length"];
         ext_symbols += [
             "",
             "/* Границы разделов OTA: Partition::new паникует на смещении или размере не по странице. */",
@@ -2217,7 +2226,6 @@ if variable::is_set("write_size") {
         // несёт.
         let swap = m[ota_key + "swap_page_size"];
         let state_erase = plain_number(m[ota_key + "bootloader_state_erase_size"]).to_string();
-        let flash_end = m["flash_length"];
         let in_flash_ends = "__bootloader_active_end <= " + flash_end + " && __bootloader_state_end <= " + flash_end;
         if !dfu_bank {
             in_flash_ends += " && __bootloader_dfu_end <= " + flash_end;
