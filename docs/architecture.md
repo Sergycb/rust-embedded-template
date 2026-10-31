@@ -112,7 +112,7 @@ HAL (`bsp::board::init_peripherals` — на умолчаниях `embassy-stm32
 не узел и не `bsp`: {% if graph == "true" %}привязка узла в `fragments:` графа — одним выражением над рычагом
 платы (`Updater::new(board.firmware)`, `link(board.net.stack, static [u8; N], …)`),
 а память адаптера объявляет там же `static T`: ячейка на вхождение, в `.bss`,
-мимо стека{% else %}модуль задачи `crates-cross/app/src/tasks/` над рычагом платы, память — его
+мимо стека{% else %}модуль задачи (подмодуль `crates-cross/app/src/tasks.rs`) над рычагом платы, память — его
 статики `ConstStaticCell`{% endif %}. Узел получает адаптер готовым во входе и только читает поле
 (`LINK: local L = inputs.link`). Трейта сборки и структур буферов у адаптеров нет:
 `static` нужного размера можно объявить только там, где тип адаптера

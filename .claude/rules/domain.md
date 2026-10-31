@@ -14,7 +14,7 @@ paths: crates-host/domain/**
   (адаптер в слоте), — его параметр{% if ota == "true" %} (`name: OTA_FRAG<F, R>`){% endif %}. Compose-site —
   {% if graph == "true" %}граф в `crates-cross/app` — перечисляет фрагменты в `fragments:`, даёт узлам имена
   (`as HEARTBEAT`), подставляет типы и раздаёт поля платы{% else %}модули задач
-  `crates-cross/app/src/tasks/` — подставляют типы и раздают поля платы{% endif %}.
+  (подмодули `crates-cross/app/src/tasks.rs`) — подставляют типы и раздают поля платы{% endif %}.
 - Адаптер над рычагом платы узел получает готовым во входе (`LINK: local L =
   inputs.link`): строит его compose-site — {% if graph == "true" %}выражением в привязке графа, память
   адаптера там же (`static [u8; N]`){% else %}модуль задачи, память — его статики{% endif %}. Трейта сборки и структур

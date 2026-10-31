@@ -2645,6 +2645,10 @@ if variable::get("graph") != "true" {
 	if !on.canopen {
 		file::delete("crates-cross/app/src/tasks/canopen.rs");
 	}
+	// Ни одного модуля — каталог не нужен: `tasks.rs` спавнит только `CPU_LOAD`.
+	if variable::get("ota") != "true" && !has.usb && !on.modbus && !on.protobuf && !on.canopen {
+		file::delete("crates-cross/app/src/tasks");
+	}
 }
 if variable::get("has_stub") != "true" {
 	file::delete("crates-cross/bsp/src/stub.rs");

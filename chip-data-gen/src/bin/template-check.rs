@@ -1319,11 +1319,6 @@ const NOT_IN_PROJECT: &[&str] = &[
     "docs/superpowers",
 ];
 
-/// Пустые каталоги, оставленные намеренно: `app/src/tasks/` доки называют
-/// местом модулей задач и без графа, даже когда ни одного модуля в проекте нет
-/// (`stm32l011f4`: ни OTA, ни транспортов).
-const EMPTY_DIRS_ALLOWED: &[&str] = &["crates-cross/app/src/tasks"];
-
 /// В проекте нет файлов сопровождения шаблона и пустых каталогов — следов
 /// того, что хук удалил все файлы каталога, а сам каталог оставил.
 fn check_no_leftovers(project: &Path, log: &File) -> anyhow::Result<()> {
@@ -1355,9 +1350,7 @@ fn find_empty_dirs(project: &Path, dir: &Path, found: &mut Vec<String>) -> anyho
         if fs::read_dir(&path)?.next().is_none() {
             let relative = path.strip_prefix(project).unwrap_or(&path);
             let relative = relative.to_string_lossy().replace('\\', "/");
-            if !EMPTY_DIRS_ALLOWED.contains(&relative.as_str()) {
-                found.push(format!("{relative}/"));
-            }
+            found.push(format!("{relative}/"));
         } else {
             find_empty_dirs(project, &path, found)?;
         }

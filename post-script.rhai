@@ -71,7 +71,7 @@ if config == "true" {
 if variable::get("graph") == "true" {
 	print("Граф задач: узел HEARTBEAT в crates-cross/app/src/graph.rs, его работа — в crates-host/domain/src/heartbeat.rs.");
 } else {
-	print("Без графа задач: узлы спавнит tasks::spawn_all (crates-cross/app/src/tasks/, модуль на задачу) — без сторожа (причина — выше).");
+	print("Без графа задач: узлы спавнит tasks::spawn_all (crates-cross/app/src/tasks.rs, подмодуль на задачу) — без сторожа (причина — выше).");
 }
 {
 	// По транспорту на строку (`вид:метка:блок:протокол:имя` из `links`): узел
