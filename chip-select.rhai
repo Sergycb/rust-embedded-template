@@ -239,9 +239,11 @@ fn plan(m, erase_zero, wants, limits) {
     // Дальше партиции берутся по одному из наборов ключей: `key` — раскладка
     // без OTA (весь flash или он без раздела настроек в хвосте), `ota_key` —
     // раскладка с OTA. Внутренняя OTA — те же наборы (`` или `config_`),
-    // внешняя — свои (`ext_` или `ext_cfg_`, настройки во внутреннем флеше).
+    // внешняя — свой (`ext_`). Внутреннего раздела настроек при внешней OTA не
+    // бывает: `ext_flash=yes` уводит на внешнюю флешь и настройки
+    // (`wants.external`), и `in_flash` тогда ложно.
     let key = if in_flash { "config_" } else { "" };
-    let ext_key = if in_flash { "ext_cfg_" } else { "ext_" };
+    let ext_key = "ext_";
     let ota_key = if wants.ext_ota { ext_key } else { key };
 
     // Схема нужна только если её и хотят, и она помещается. «Помещается» — это
@@ -258,14 +260,9 @@ fn plan(m, erase_zero, wants, limits) {
     // начале стоит таблица векторов приложения. С OTA — там, где его положил
     // chip-data-gen (`config_ota_settings_*`): в мелких секторах перед ACTIVE,
     // если так ACTIVE больше (F2/F4/F7), иначе тоже в хвосте. Страница — сектор
-    // под разделом (`flash_page::ErasePage` в bsp::flash).
-    let settings_key = if ext_ota {
-        "ext_cfg_settings_"
-    } else if ota {
-        "config_ota_settings_"
-    } else {
-        "config_"
-    };
+    // под разделом (`flash_page::ErasePage` в bsp::flash). Нужен только при
+    // `in_flash`, а значит, не при внешней OTA.
+    let settings_key = if ota { "config_ota_settings_" } else { "config_" };
 
     // Граф задач меряется по разделу, в который линкуется приложение: при OTA
     // это ACTIVE, без неё — весь flash за вычетом того, что забрали настройки.
