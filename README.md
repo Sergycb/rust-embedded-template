@@ -611,7 +611,11 @@ ST-Link захваченным до переподключения кабеля 
 что запись по одному транспорту видна чтению по другому. Slave отвечает на функции
 1–6, 15, 16 (coils, discrete inputs, holding и input registers) и 43/14 Read Device
 Identification (производитель и модель — `crates-host/domain/src/modbus/identity.rs`,
-ревизия — `build::PKG_VERSION` прошивки); на остальные — Illegal Function.
+ревизия — `build::PKG_VERSION` прошивки); на остальные — Illegal Function.{% if modbus_rtu == "true" %} По RTU
+это так для всех открытых функций спецификации; кадр пользовательской функции
+(65–72, 100–110), MEI, кроме 14, и FC08/00 длиннее двух байт данных slave
+пропускает молча: длину кадра по коду функции не вывести, а без неё не
+проверить CRC (`adapters::modbus::Rtu`).{% endif %}
 {%- elsif protocol == "protobuf" %} схему `crates-host/proto` и обработчик `crates-host/domain/src/protobuf/service.rs`.
 {%- else %} словарь объектов `crates-host/canopen/device.toml`.
 {%- endif %}
