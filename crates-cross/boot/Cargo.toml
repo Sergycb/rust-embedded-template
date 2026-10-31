@@ -63,8 +63,7 @@ ports = { workspace = true }
 # Раздел на весь флеш под замком (`BlockingPartition`), из которого строятся
 # `STATE`, `ACTIVE` и `DFU`: те же разделы, что собирает приложение (`bsp`).
 embassy-embedded-hal = { workspace = true }
-# Решение bootloader'а —{% if ota_store == "external" %} обмен или текущий образ
-# (`domain::ota::boot::boot_plan`) и{% endif %} проверка нового образа перед обменом
+# Решение bootloader'а — проверка нового образа перед обменом
 # (`domain::ota::boot::screen_update`, фича `signed`); почему `boot` зависит
 # от `domain` и что из него попадает в образ — docs/architecture.md. Драйвер
 # времени `domain` не включает — см. комментарий к `embassy-stm32` в

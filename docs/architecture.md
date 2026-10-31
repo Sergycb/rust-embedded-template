@@ -22,14 +22,11 @@ Modbus{% endif %}{% if net_services != "" %}, секреты служб{% endif 
 {%- if ota == "true" %}
 
 **Единственное исключение — `boot`.** `app` подключает `domain` целиком, а bootloader
-(`crates-cross/boot`) — только ради {% if ota_store == "external" %}двух свободных функций над блокирующими
-разделами: `domain::ota::boot::boot_plan` (обменивать ли разделы или грузить
-текущий образ) и `domain::ota::boot::screen_update` (проверка подписи перед
-обменом). В образ попадают только они{% else %}одной свободной функции над блокирующими
+(`crates-cross/boot`) — только ради одной свободной функции над блокирующими
 разделами — `domain::ota::boot::screen_update` (проверка подписи перед
-обменом). В образ попадает только она{% endif %}: `lto = "fat"` и `--gc-sections`
+обменом). В образ попадает только она: `lto = "fat"` и `--gc-sections`
 выбрасывают всё, на что нет ссылок (узлы, `supervisor`, `embassy-executor`). Типы
-решения bootloader'а — {% if ota_store == "external" %}`BootPlan`, {% endif %}`Screening`, `ScreenFailure` — живут там же, в
+решения bootloader'а — `Screening`, `ScreenFailure` — живут там же, в
 `domain::ota::boot`; логика решения остаётся в `domain` и тестируется на хосте, а не
 копируется в `boot`. `bsp` по-прежнему `domain` не зависит (см. ниже).
 
