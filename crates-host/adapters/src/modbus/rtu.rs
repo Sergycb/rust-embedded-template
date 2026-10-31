@@ -32,8 +32,8 @@ const MAX_DRAIN: usize = 2 * MAX_ADU;
 // {%- endif %}
 ///
 /// Slave ([`FrameLink`], кадр «адрес и PDU») не принимает кадр с неверной CRC и кадр с
-/// функцией, кроме FC01–06, 15, 16: длину её кадра по коду функции не
-/// вывести, а отвечать, не проверив CRC, нельзя — master получит таймаут, а
+/// функцией, кроме FC01–06, 15, 16 и 43/14 (Read Device Identification): длину
+/// её кадра по коду функции не вывести, а отвечать, не проверив CRC, нельзя — master получит таймаут, а
 /// не Illegal Function. Кадры на зарезервированные адреса 248–255
 /// пропускаются.
 ///
@@ -267,16 +267,23 @@ fn request_header(fc: u8) -> Option<usize> {
         0x01..=0x06 => Some(2),
         // адрес, функция, начало, количество, счётчик байт
         0x0F | 0x10 => Some(7),
+        // адрес, функция, тип MEI
+        0x2B => Some(3),
         _ => None,
     }
 }
 
 /// Длина кадра запроса по его заголовку из [`request_header`] байт:
-/// FC01–06 — фиксированная, FC15/16 — по счётчику байт. Может превышать
-/// [`MAX_ADU`] — такой кадр не настоящий.
+/// FC01–06 и 43/14 — фиксированная, FC15/16 — по счётчику байт. Может
+/// превышать [`MAX_ADU`] — такой кадр не настоящий.
 fn request_len(header: &[u8]) -> usize {
     match header[1] {
         0x0F | 0x10 => 9 + usize::from(header[6]),
+        // Read Device Identification: адрес, функция, MEI, код чтения,
+        // объект, CRC.
+        0x2B if header[2] == 0x0E => 7,
+        // Другие MEI slave не обслуживает, и длину их кадра не вывести.
+        0x2B => usize::MAX,
         _ => 8,
     }
 }
@@ -361,6 +368,9 @@ mod tests {
         assert_eq!(request_header(0x10), Some(7));
         assert_eq!(request_len(&[1, 0x10, 0, 0, 0, 2, 4]), 13);
         assert_eq!(request_header(0x08), None);
+        assert_eq!(request_header(0x2B), Some(3));
+        assert_eq!(request_len(&[1, 0x2B, 0x0E]), 7);
+        assert!(request_len(&[1, 0x2B, 0x0D]) > MAX_ADU);
     }
 
     // {%- if modbus_master == "true" %}
@@ -401,6 +411,22 @@ mod tests {
         rtu.buffer()[1..5].copy_from_slice(&[0x03, 2, 0, 5]);
         rtu.send(5).await.unwrap();
         assert_eq!(rtu.io.tx, frame(7, &[0x03, 2, 0, 5]));
+    }
+
+    #[tokio::test]
+    async fn server_receives_read_device_identification() {
+        let input = [
+            frame(1, &[0x2B, 0x0E, 0x01, 0x00]),
+            frame(1, &[0x03, 0, 0, 0, 1]),
+        ]
+        .concat();
+        assert_eq!(
+            requests(&input).await,
+            [
+                (1, vec![0x2B, 0x0E, 0x01, 0x00]),
+                (1, vec![0x03, 0, 0, 0, 1])
+            ]
+        );
     }
 
     #[tokio::test]
