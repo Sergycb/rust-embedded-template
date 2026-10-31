@@ -1716,6 +1716,34 @@ fn flash_for_layout(chip: &str, chain_length: u64) -> u64 {
     cpu2 - FLASH_BASE
 }
 
+/// Ядро двухъядерного H7 (STM32H745/747/755/757) — по суффиксу чип-фичи.
+///
+/// С заводскими option bytes (`BCM7 = BCM4 = 1`, `BOOT_CM7_ADD0 = 0x0800`,
+/// `BOOT_CM4_ADD0 = 0x0810`; RM0399 §4.4.4 Table 20, §2.6 Tables 8–9, AN5557
+/// §3.2) стартуют оба: CM7 — с 0x0800_0000, CM4 — с 0x0810_0000, начала
+/// банка 2. Так их и раскладывают ST (`NUCLEO-H745ZI-Q/Templates`) и embassy
+/// (`examples/stm32h755cm4`, `stm32h755cm7`): CM7 — банк 1, CM4 — банк 2.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum H7Core {
+    /// Банк 1; первый сектор банка 2 не занимается: оттуда стартует CM4.
+    Cm7,
+    /// Вся раскладка — в банке 2, с точки старта CM4.
+    Cm4,
+}
+
+fn h7_dual_core(chip: &str) -> Option<H7Core> {
+    if !chip.starts_with("h7") {
+        return None;
+    }
+    if chip.ends_with("-cm7") {
+        Some(H7Core::Cm7)
+    } else if chip.ends_with("-cm4") {
+        Some(H7Core::Cm4)
+    } else {
+        None
+    }
+}
+
 /// Регион `DMA_NC`: non-cacheable память под буферы DMA, которую `bsp::dma_nc`
 /// размечает в MPU. Без неё кэш данных ядра M7 DMA не видит.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1851,9 +1879,21 @@ fn compute_memory_layout(chip: &str, regions: &[RawRegion]) -> Option<MemoryLayo
         .collect();
     flash.sort_by_key(|r| r.address);
 
+    let bank2 = bank2_of(regions);
+    let dual_core = h7_dual_core(chip);
+    // Раскладка начинается там, откуда стартует ядро: у CM4 двухъядерного H7 —
+    // с банка 2 (`BOOT_CM4_ADD0`, см. `H7Core`), у остальных — с базы flash.
+    let origin = match dual_core {
+        Some(H7Core::Cm4) => bank2?.origin,
+        _ => FLASH_BASE,
+    };
     let mut chain: Vec<&RawRegion> = Vec::new();
-    let mut end = FLASH_BASE;
+    let mut end = origin;
     for region in flash {
+        // CM7 банк 2 не продолжает: с его первого сектора стартует CM4.
+        if dual_core == Some(H7Core::Cm7) && bank2.is_some_and(|b| region.address >= b.origin) {
+            break;
+        }
         if region.address == end {
             end += region.size;
             chain.push(region);
@@ -1862,16 +1902,51 @@ fn compute_memory_layout(chip: &str, regions: &[RawRegion]) -> Option<MemoryLayo
         }
     }
     let chain_end = end;
-    let flash_total = flash_for_layout(chip, chain_end - FLASH_BASE);
+    let flash_total = flash_for_layout(chip, chain_end - origin);
     if chain.is_empty() || flash_total == 0 {
         return None;
     }
-    let bank2 = bank2_of(regions);
     // Второй банк вне цепочки — между банками разрыв (H742/743/745/747 и H7A3
     // с 1 MiB: банк 2 с 0x0810_0000; U5F7/U5F9 с 2 MiB). Приложению без OTA он
     // не достаётся (раздел кода обязан быть непрерывным), а с OTA в нём лежит
     // DFU. Стыкующийся банк 2 — просто продолжение flash.
-    let bank_gap = bank2.filter(|b| b.origin >= chain_end);
+    //
+    // У CM7 двухъядерного H7 разрыв — первый сектор банка 2, точка старта
+    // CM4: туда не ложится ничего, и `DFU` начинается за ним. Смещения `DFU`
+    // при этом всё равно от начала банка (`dfu_bank_origin` ниже) — так их
+    // считает `Bank2Region`.
+    let bank_gap = match dual_core {
+        Some(H7Core::Cm7) => bank2.and_then(|b| {
+            let boot_sector = regions
+                .iter()
+                .find(|r| r.kind == RegionKind::Flash && r.address == b.origin)?
+                .flash?
+                .erase_size;
+            Some(Bank2 {
+                origin: b.origin + boot_sector,
+                length: b.length.checked_sub(boot_sector)?,
+            })
+        }),
+        _ => bank2.filter(|b| b.origin >= chain_end),
+    };
+    // Цельный `Flash` embassy видит от базы ровно сумму банков (`FLASH_SIZE`
+    // в `embassy-stm32/build.rs`), и банк 2 за разрывом ему не дотянуть. У
+    // CM4 двухъядерного H7 с 2×512K туда попадает вся раскладка: писать во
+    // flash (bootloader — в `ACTIVE`, приложение — в `DFU` и раздел настроек)
+    // прошивке нечем, и OTA с настройками честно отключаются.
+    let flash_reach = FLASH_BASE
+        + regions
+            .iter()
+            .filter(|r| r.kind == RegionKind::Flash && r.name.starts_with("BANK_"))
+            .map(|r| r.size)
+            .sum::<u64>();
+    let unreachable = (origin + flash_total > flash_reach).then(|| {
+        format!(
+            "flash ядра ({origin:#010x}..{:#010x}) за пределом цельного Flash embassy \
+             (до {flash_reach:#010x}): писать туда прошивке нечем",
+            origin + flash_total
+        )
+    });
     // PAGE_SIZE в терминах embassy-boot — не наш const generic, а
     // `max(ACTIVE::ERASE_SIZE, DFU::ERASE_SIZE)` (`boot_loader.rs`). Обе
     // партиции живут поверх цельного `Flash` (`crates-cross/boot/src/main.rs`), у
@@ -1906,7 +1981,7 @@ fn compute_memory_layout(chip: &str, regions: &[RawRegion]) -> Option<MemoryLayo
     // Ядро CM4 двухъядерных H7 берёт SRAM домена D2: AXI-SRAM занята ядром
     // CM7, а до DTCM ядро CM4 не дотягивается вовсе.
     let chains = ram_chains(chip, regions);
-    let ram = if chip.starts_with("h7") && chip.ends_with("-cm4") {
+    let ram = if dual_core == Some(H7Core::Cm4) {
         chains
             .iter()
             .copied()
@@ -1933,7 +2008,7 @@ fn compute_memory_layout(chip: &str, regions: &[RawRegion]) -> Option<MemoryLayo
     let panic = (ram_origin + ram_length, reserved);
 
     Some(MemoryLayout {
-        flash_origin: FLASH_BASE,
+        flash_origin: origin,
         flash_length: flash_total,
         ram_origin,
         ram_length,
@@ -1942,37 +2017,35 @@ fn compute_memory_layout(chip: &str, regions: &[RawRegion]) -> Option<MemoryLayo
         // внутри той же цепочки — регионом его дублировать не надо. Flash —
         // тоже до конца цепочки, а не `flash_total`: иначе у STM32WB банк,
         // обрезанный по памяти CPU2, вышел бы рабочим регионом поверх `FLASH`.
-        extra_regions: extra_region_lines(
-            chip,
-            regions,
-            (FLASH_BASE, chain_end),
-            ram,
-            dma_nc.as_ref(),
-        ),
+        extra_regions: extra_region_lines(chip, regions, (origin, chain_end), ram, dma_nc.as_ref()),
         write_size,
         page_size,
         erase_zero,
-        dfu_bank_origin: bank_gap.map(|b| b.origin),
+        // Начало банка, а не разрыва: от него `Bank2Region` считает смещения.
+        dfu_bank_origin: bank_gap.and(bank2).map(|b| b.origin),
         dma_nc,
         bdma_nc: bdma_nc_region(chip, regions),
-        ota: compute_ota_partitions(
-            chip,
-            &chain,
-            flash_total,
-            page_size,
-            write_size,
-            false,
-            bank_gap,
-        ),
-        config: compute_config_partition(
-            chip,
-            &chain,
-            flash_total,
-            page_size,
-            write_size,
-            bank_gap,
-        ),
-        external: compute_external_ota(chip, flash_total, page_size),
+        ota: match &unreachable {
+            Some(note) => Err(note.clone()),
+            None => compute_ota_partitions(
+                chip,
+                &chain,
+                flash_total,
+                page_size,
+                write_size,
+                false,
+                bank_gap,
+            ),
+        },
+        config: if unreachable.is_some() {
+            None
+        } else {
+            compute_config_partition(chip, &chain, flash_total, page_size, write_size, bank_gap)
+        },
+        external: match &unreachable {
+            Some(note) => Err(note.clone()),
+            None => compute_external_ota(chip, origin, flash_total, page_size),
+        },
     })
 }
 
@@ -1994,6 +2067,7 @@ fn compute_memory_layout(chip: &str, regions: &[RawRegion]) -> Option<MemoryLayo
 /// `assert_external_invariants`.
 fn compute_external_ota(
     chip: &str,
+    flash_origin: u64,
     flash_total: u64,
     page_size: u64,
 ) -> Result<ExternalOta, String> {
@@ -2017,7 +2091,7 @@ fn compute_external_ota(
     let dfu_length = (active_length + page).next_multiple_of(ext_align);
     let external = ExternalOta {
         bootloader_length: zone,
-        active_origin: FLASH_BASE + zone,
+        active_origin: flash_origin + zone,
         active_length,
         page_size: page,
         ext_align,
@@ -2028,15 +2102,16 @@ fn compute_external_ota(
         config_offset: state_length + dfu_length,
         config_length: 2 * ext_align,
     };
-    assert_external_invariants(chip, &external, page_size);
+    assert_external_invariants(chip, &external, flash_origin, page_size);
     Ok(external)
 }
 
 /// Проверки `assert_partitions` и `Partition::new` для внешней раскладки — на
 /// этапе генерации, по той же причине, что `assert_embassy_boot_invariants`.
+/// `flash_origin` — откуда начинается раскладка (зона bootloader'а);
 /// `chip_page` — крупнейший сектор чипа: страница цельного `Flash` под
 /// `ACTIVE`.
-fn assert_external_invariants(chip: &str, e: &ExternalOta, chip_page: u64) {
+fn assert_external_invariants(chip: &str, e: &ExternalOta, flash_origin: u64, chip_page: u64) {
     let page = e.page_size;
     assert!(
         page.is_multiple_of(chip_page) && page.is_multiple_of(EXT_ERASE_MIN),
@@ -2065,13 +2140,15 @@ fn assert_external_invariants(chip: &str, e: &ExternalOta, chip_page: u64) {
         "{chip}: журналу прогресса нужно {journal_words} слов по {EXT_WRITE_MAX}, в STATE {} байт",
         e.state_length
     );
+    // Смещение — от базы цельного `Flash`, над которым строится раздел.
     let active_offset = e.active_origin - FLASH_BASE;
     assert!(
-        active_offset.is_multiple_of(chip_page) && e.bootloader_length <= active_offset,
-        "{chip}: ACTIVE не с границы страницы чипа или налезает на bootloader"
+        active_offset.is_multiple_of(chip_page),
+        "{chip}: ACTIVE не с границы страницы чипа"
     );
     assert_eq!(
-        e.bootloader_length, active_offset,
+        flash_origin + e.bootloader_length,
+        e.active_origin,
         "{chip}: bootloader занимает всю зону до ACTIVE"
     );
     for (name, offset, length) in [
@@ -2123,7 +2200,7 @@ fn compute_config_partition(
     }
     let flash_length = flash_total - length;
     let tail = SettingsPartition {
-        origin: FLASH_BASE + flash_length,
+        origin: chain.first()?.address + flash_length,
         length,
         erase_size: page_size,
     };
@@ -2181,8 +2258,8 @@ fn region_line(name: &str, attrs: &str, origin: u64, length: u64) -> String {
 /// не видел, например, 320 KiB AXISRAM у H723 — только 128 KiB DTCM.
 ///
 /// Часть регионов выводится закомментированной (см. `EXTERNAL_BUS_PREFIXES`,
-/// `ALIAS_SUFFIX`, память CPU2 — [`reserved_for_cpu2`]): перечислить их надо,
-/// но объявлять рабочей памятью нельзя.
+/// `ALIAS_SUFFIX`, память второго ядра — [`reserved_for_cpu2`], [`H7Core`]):
+/// перечислить их надо, но объявлять рабочей памятью нельзя.
 fn extra_region_lines(
     chip: &str,
     regions: &[RawRegion],
@@ -2224,6 +2301,17 @@ fn extra_region_lines(
                 )
             } else if reserved_for_cpu2(chip, &r.name) {
                 Some("память CPU2 (FUS, радиостек): доступ CPU1 - bus error".to_string())
+            } else if r.kind == RegionKind::Flash
+                && let Some(core) = h7_dual_core(chip)
+            {
+                // Flash второго ядра: банк, с которого оно стартует.
+                Some(
+                    match core {
+                        H7Core::Cm7 => "банк ядра CM4: с его первого сектора стартует CM4",
+                        H7Core::Cm4 => "банк ядра CM7: с его начала стартует CM7",
+                    }
+                    .to_string(),
+                )
             } else {
                 r.name.strip_suffix(ALIAS_SUFFIX).and_then(|stem| {
                     // Партнёр — либо тот же блок без суффикса (SRAM2_ICODE /
@@ -2380,8 +2468,14 @@ fn compute_ota_at(
 ) -> Result<OtaPartitions, String> {
     // Банк 2 за разрывом — весь под `DFU`.
     let dfu_zone = bank_gap.map(|b| (b.origin, b.origin + b.length));
-    let erase_size_at = |offset_from_flash_base: u64| -> Option<u64> {
-        let addr = FLASH_BASE + offset_from_flash_base;
+    // Начало раскладки: база flash, а у CM4 двухъядерного H7 — банк 2. Все
+    // смещения ниже — от него.
+    let origin = chain
+        .first()
+        .ok_or_else(|| "flash-цепочка пуста".to_string())?
+        .address;
+    let erase_size_at = |offset_from_origin: u64| -> Option<u64> {
+        let addr = origin + offset_from_origin;
         chain
             .iter()
             .find(|r| addr >= r.address && addr < r.address + r.size)
@@ -2464,7 +2558,7 @@ fn compute_ota_at(
             // Пополам остаток не делится: DFU обязан быть на страницу больше
             // ACTIVE (проверка 3).
             let active_pages = (remaining_pages - 1) / 2;
-            let dfu_start = FLASH_BASE + reserved_size + active_pages * page_size;
+            let dfu_start = origin + reserved_size + active_pages * page_size;
             (active_pages, remaining_pages - active_pages, dfu_start)
         };
 
@@ -2473,7 +2567,7 @@ fn compute_ota_at(
         let state_needed = (2 + 4 * active_pages) * write_size;
         let placed = reserve_sectors(&erase_size_at, reserved_size).and_then(|sectors| {
             if with_settings {
-                place_settings_and_state(&sectors, state_needed)
+                place_settings_and_state(origin, &sectors, state_needed)
                     .map(|(settings, state)| (Some(settings), state))
             } else {
                 place_state(&sectors, state_needed, BOOTLOADER_MIN).map(|state| (None, state))
@@ -2487,11 +2581,11 @@ fn compute_ota_at(
             continue;
         };
 
-        let active_origin = FLASH_BASE + reserved_size;
+        let active_origin = origin + reserved_size;
         let active_length = active_pages * page_size;
         let partitions = OtaPartitions {
-            bootloader_length: settings.map_or(state_offset, |s| s.origin - FLASH_BASE),
-            bootloader_state_origin: FLASH_BASE + state_offset,
+            bootloader_length: settings.map_or(state_offset, |s| s.origin - origin),
+            bootloader_state_origin: origin + state_offset,
             bootloader_state_length: state_length,
             bootloader_state_erase_size: state_erase,
             swap_page_size: page_size,
@@ -2501,7 +2595,7 @@ fn compute_ota_at(
             dfu_length: dfu_pages * page_size,
             settings,
         };
-        assert_embassy_boot_invariants(chip, &partitions, chain_page(chain), write_size);
+        assert_embassy_boot_invariants(chip, &partitions, origin, chain_page(chain), write_size);
         return Ok(partitions);
     }
 }
@@ -2578,7 +2672,10 @@ fn reserve_sectors(
 /// равными секторами раздел садился бы в запас bootloader'а и ужимал его до
 /// 16 KiB ради одной-двух страниц `ACTIVE`; с этой границей такие чипы честно
 /// получают раздел в хвосте (см. `compute_config_partition`).
+///
+/// Смещения `sectors` — от `origin`, начала раскладки.
 fn place_settings_and_state(
+    origin: u64,
     sectors: &[(u64, u64)],
     state_needed: u64,
 ) -> Option<(SettingsPartition, (u64, u64, u64))> {
@@ -2590,7 +2687,7 @@ fn place_settings_and_state(
         let state = place_state(&sectors[i + 2..], state_needed, 0)?;
         Some((
             SettingsPartition {
-                origin: FLASH_BASE + offset,
+                origin: origin + offset,
                 length: 2 * erase,
                 erase_size: erase,
             },
@@ -2608,7 +2705,16 @@ fn place_settings_and_state(
 /// обязан выдавать только валидные раскладки, невалидная — баг в нём самом, а
 /// не «чип не подошёл». Ровно этой проверки не хватало: 279 из 972 прежних
 /// раскладок нарушали четвёртую и роняли bootloader на первом же старте.
-fn assert_embassy_boot_invariants(chip: &str, p: &OtaPartitions, chip_page: u64, write_size: u64) {
+///
+/// `flash_origin` — начало зоны bootloader'а; смещения для `Partition::new`
+/// — от базы цельного `Flash` (`FLASH_BASE`), как их считает прошивка.
+fn assert_embassy_boot_invariants(
+    chip: &str,
+    p: &OtaPartitions,
+    flash_origin: u64,
+    chip_page: u64,
+    write_size: u64,
+) {
     let page_size = p.swap_page_size;
     assert!(
         page_size.is_multiple_of(chip_page),
@@ -2646,7 +2752,7 @@ fn assert_embassy_boot_invariants(chip: &str, p: &OtaPartitions, chip_page: u64,
     let active_end = p.active_origin + p.active_length;
     let dfu_end = p.dfu_origin + p.dfu_length;
     assert!(
-        after_bootloader == FLASH_BASE + p.bootloader_length
+        after_bootloader == flash_origin + p.bootloader_length
             && ahead.is_none_or(|s| s.origin + s.length <= p.bootloader_state_origin)
             && p.bootloader_state_origin + p.bootloader_state_length <= p.active_origin
             && p.dfu_origin >= active_end
@@ -4256,7 +4362,7 @@ pub static METADATA: Metadata = Metadata {
             dfu_length: 256 * 1024,
             settings: None,
         };
-        assert_embassy_boot_invariants("test", &state_on_the_chip_page, 128 * 1024, 4);
+        assert_embassy_boot_invariants("test", &state_on_the_chip_page, FLASH_BASE, 128 * 1024, 4);
     }
 
     /// Мелкие сектора у самого начала (4×4 KiB): bootloader'у перед последним
@@ -4283,7 +4389,8 @@ pub static METADATA: Metadata = Metadata {
     /// `STATE`, `DFU`, настройки по 128 KiB (страница обмена крупнее блока).
     #[test]
     fn external_layout_keeps_everything_but_the_bootloader_for_active() {
-        let e = compute_external_ota("test", 512 * 1024, 128 * 1024).expect("помещается");
+        let e =
+            compute_external_ota("test", FLASH_BASE, 512 * 1024, 128 * 1024).expect("помещается");
         assert_eq!(e.bootloader_length, 128 * 1024);
         assert_eq!(e.active_origin, FLASH_BASE + 0x2_0000);
         assert_eq!(e.active_length, 384 * 1024);
@@ -4298,7 +4405,8 @@ pub static METADATA: Metadata = Metadata {
     /// `ACTIVE` кратен 4 KiB — стиранию внешней NOR, — а не 2 KiB чипа.
     #[test]
     fn external_layout_on_small_pages_rounds_active_to_the_external_sector() {
-        let e = compute_external_ota("test", 128 * 1024 + 2048, 2048).expect("помещается");
+        let e =
+            compute_external_ota("test", FLASH_BASE, 128 * 1024 + 2048, 2048).expect("помещается");
         assert_eq!(e.bootloader_length, 32 * 1024);
         assert_eq!(e.active_length, 96 * 1024);
         assert_eq!(e.page_size, 4 * 1024);
@@ -4311,7 +4419,8 @@ pub static METADATA: Metadata = Metadata {
 
     #[test]
     fn external_layout_reports_a_chip_too_small_for_it() {
-        let note = compute_external_ota("test", 32 * 1024, 1024).expect_err("не помещается");
+        let note =
+            compute_external_ota("test", FLASH_BASE, 32 * 1024, 1024).expect_err("не помещается");
         assert!(note.contains("ни страницы"), "{note}");
     }
 
@@ -4661,14 +4770,7 @@ pub static METADATA: Metadata = Metadata {
     /// остаются своими строками.
     #[test]
     fn h7_ram_is_the_largest_block_with_dma_nc_at_its_tail() {
-        let mut regions = flash_with_erase_value(2048 * 1024, 128 * 1024, 32, 0xFF);
-        regions.retain(|r| r.kind != RegionKind::Ram);
-        regions.extend([
-            region("DTCM", RegionKind::Ram, RAM_BASE, 128 * 1024),
-            region("AXISRAM", RegionKind::Ram, 0x2400_0000, 512 * 1024),
-            region("SRAM1", RegionKind::Ram, H7_D2_SRAM, 128 * 1024),
-            region("SRAM4", RegionKind::Ram, H7_SRAM4, 64 * 1024),
-        ]);
+        let regions = h7_dual_bank(1024 * 1024);
         let layout = compute_memory_layout("h743zi", &regions).expect("раскладка");
         assert_eq!(layout.ram_origin, 0x2400_0000);
         assert_eq!(layout.ram_length + layout.panic.1, 480 * 1024);
@@ -4693,6 +4795,41 @@ pub static METADATA: Metadata = Metadata {
         assert_eq!(cm4.dma_nc, None);
         assert!(cm4.extra_regions.iter().any(|l| l.contains("AXISRAM")));
     }
+
+    /// Карта памяти H743/H745: два банка по `bank` с сектором 128 KiB, банк 2 —
+    /// с 0x0810_0000 (стык при 1 MiB, разрыв при 512 KiB), RAM — как у H7.
+    fn h7_dual_bank(bank: u64) -> Vec<RawRegion> {
+        let flash = Some(FlashSettings {
+            erase_size: 128 * 1024,
+            write_size: 32,
+            erase_value: 0xFF,
+        });
+        vec![
+            RawRegion {
+                name: "BANK_1".to_string(),
+                kind: RegionKind::Flash,
+                address: FLASH_BASE,
+                size: bank,
+                flash,
+            },
+            RawRegion {
+                name: "BANK_2".to_string(),
+                kind: RegionKind::Flash,
+                address: H7_BANK2,
+                size: bank,
+                flash,
+            },
+            region("DTCM", RegionKind::Ram, RAM_BASE, 128 * 1024),
+            region("AXISRAM", RegionKind::Ram, 0x2400_0000, 512 * 1024),
+            region("SRAM1", RegionKind::Ram, H7_D2_SRAM, 128 * 1024),
+            region("SRAM4", RegionKind::Ram, H7_SRAM4, 64 * 1024),
+        ]
+    }
+
+    /// Точка старта CM4 с заводскими option bytes — начало банка 2.
+    const H7_BANK2: u64 = 0x0810_0000;
+    /// Первый сектор банка 2: с него стартует CM4, ядру CM7 туда нельзя.
+    const CM4_BOOT_SECTOR: std::ops::Range<u64> = H7_BANK2..H7_BANK2 + 128 * 1024;
 
     /// Все разделы внутреннего flash раскладки: `(имя, начало, длина)`.
     fn flash_partitions(layout: &MemoryLayout) -> Vec<(&'static str, u64, u64)> {
@@ -4780,6 +4917,66 @@ pub static METADATA: Metadata = Metadata {
         assert_eq!(layout.flash_length, 1024 * 1024);
     }
 
+    /// CM4 двухъядерного H7 — целиком в банке 2, с точки своего старта. При
+    /// 2×512 KiB банк 2 цельному `Flash` embassy недоступен: OTA и настройки
+    /// отключены, а не разложены туда, куда прошивка не напишет.
+    #[test]
+    fn h7_cm4_lives_in_bank_2() {
+        let xi = compute_memory_layout("h745zi-cm4", &h7_dual_bank(1024 * 1024)).expect("xI");
+        assert_eq!((xi.flash_origin, xi.flash_length), (H7_BANK2, 1024 * 1024));
+        assert!(
+            xi.ota.is_ok() && xi.external.is_ok(),
+            "OTA на xI помещается"
+        );
+        assert!(
+            xi.config.as_ref().is_some_and(|c| c.ota.is_ok()),
+            "OTA с настройками на xI помещается"
+        );
+        for (name, origin, _) in flash_partitions(&xi) {
+            assert!(origin >= H7_BANK2, "{name} с {origin:#x} — в банке 1");
+        }
+        let bank1 = xi
+            .extra_regions
+            .iter()
+            .find(|l| l.contains("BANK_1"))
+            .expect("банк 1 перечислен");
+        assert!(bank1.contains("/* "), "{bank1}");
+
+        let xg = compute_memory_layout("h745zg-cm4", &h7_dual_bank(512 * 1024)).expect("xG");
+        assert_eq!((xg.flash_origin, xg.flash_length), (H7_BANK2, 512 * 1024));
+        assert!(xg.ota.is_err() && xg.external.is_err() && xg.config.is_none());
+    }
+
+    /// CM7 двухъядерного H7 не трогает первый сектор банка 2 — точку старта
+    /// CM4: приложение без OTA — в банке 1, `DFU` — за этим сектором, со
+    /// смещениями от начала банка (`Bank2Region`).
+    #[test]
+    fn h7_cm7_keeps_the_cm4_boot_sector_free() {
+        for (chip, bank) in [("h745zi-cm7", 1024 * 1024), ("h745zg-cm7", 512 * 1024)] {
+            let layout = compute_memory_layout(chip, &h7_dual_bank(bank)).expect("раскладка");
+            assert_eq!(
+                (layout.flash_origin, layout.flash_length),
+                (FLASH_BASE, bank)
+            );
+            assert_eq!(layout.dfu_bank_origin, Some(H7_BANK2), "{chip}");
+            let ota = layout.ota.as_ref().expect("OTA помещается");
+            assert_eq!(ota.dfu_origin, CM4_BOOT_SECTOR.end, "{chip}");
+            assert!(ota.dfu_origin + ota.dfu_length <= H7_BANK2 + bank, "{chip}");
+            for (name, origin, length) in flash_partitions(&layout) {
+                assert!(
+                    origin + length <= CM4_BOOT_SECTOR.start || origin >= CM4_BOOT_SECTOR.end,
+                    "{chip}: {name} {origin:#x}+{length:#x} задевает первый сектор банка 2"
+                );
+            }
+            let bank2 = layout
+                .extra_regions
+                .iter()
+                .find(|l| l.contains("BANK_2"))
+                .expect("банк 2 перечислен");
+            assert!(bank2.contains("/* "), "{chip}: {bank2}");
+        }
+    }
+
     /// Нарушенный инвариант называет чип — иначе по одной панике на 1479 чипов
     /// не понять, чья раскладка сломана.
     #[test]
@@ -4797,7 +4994,7 @@ pub static METADATA: Metadata = Metadata {
             dfu_length: 6000,
             settings: None,
         };
-        assert_embassy_boot_invariants("STM32TEST", &broken, 2048, 8);
+        assert_embassy_boot_invariants("STM32TEST", &broken, FLASH_BASE, 2048, 8);
     }
 
     /// `CORE_MARKERS` (какие суффиксы считать ядром, а не градацией) и
