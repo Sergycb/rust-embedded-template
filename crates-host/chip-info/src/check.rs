@@ -231,3 +231,163 @@ fn pins_in(line: &str) -> Vec<String> {
     }
     found
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{env, fs, path::PathBuf, process};
+
+    use super::{assigned_lines, pins_in, resource_sources};
+
+    /// Выводы, которые `check_resources` сочтёт назначенными: строки тела
+    /// `assign_resources!` без комментариев, разобранные на имена выводов.
+    fn assigned_pins(text: &str) -> Vec<(usize, String)> {
+        assigned_lines(text)
+            .into_iter()
+            .flat_map(|(number, line)| pins_in(&line).into_iter().map(move |pin| (number, pin)))
+            .collect()
+    }
+
+    fn pins(found: &[(usize, String)]) -> Vec<&str> {
+        found.iter().map(|(_, pin)| pin.as_str()).collect()
+    }
+
+    /// Обычный `resources.rs`: назначенные выводы находятся с номерами строк
+    /// исходного файла, а `//!`, импорты и код за макросом не в счёт.
+    #[test]
+    fn finds_pins_assigned_in_the_macro_body() {
+        let text = "\
+//! Пример из документации: `swdio: PA13` здесь не назначение.
+use embassy_stm32::{Peri, peripherals};
+
+assign_resources! {
+    flash: FlashResources { flash: FLASH },
+    usart: UsartResources {
+        usart: USART1,
+        tx: PA9,
+        rx: PA10,
+    },
+}
+
+fn after() -> u8 { PA14 }
+";
+        assert_eq!(
+            assigned_pins(text),
+            [(8, "PA9".to_owned()), (9, "PA10".to_owned())]
+        );
+    }
+
+    /// Регрессия: вырезался только `//`, и вывод внутри `/* ... */` считался
+    /// назначенным — в том числе когда комментарий тянется через строки.
+    #[test]
+    fn skips_pins_inside_block_comments() {
+        let text = "\
+assign_resources! {
+    usart: UsartResources { usart: USART1, /* swdio: PA13, */ tx: PA9 },
+    /*
+    debug: DebugResources { swclk: PA14 },
+    */
+}
+";
+        assert_eq!(pins(&assigned_pins(text)), ["PA9"]);
+    }
+
+    /// Регрессия: считался весь файл, и обычный импорт `PA13` давал
+    /// «КОНФЛИКТ» на проекте, который отладочный порт не трогал.
+    #[test]
+    fn ignores_pins_outside_assign_resources() {
+        let text = "\
+use embassy_stm32::peripherals::PA13;
+
+assign_resources! {
+    usart: UsartResources { usart: USART1, tx: PA9 },
+}
+";
+        assert_eq!(pins(&assigned_pins(text)), ["PA9"]);
+    }
+
+    /// Регрессия: первый же `*/` закрывал комментарий целиком, хотя в Rust
+    /// блочные комментарии вкладываются, — и остаток внешнего считался кодом.
+    #[test]
+    fn counts_nested_block_comment_depth() {
+        let text = "\
+assign_resources! {
+    /* внешний /* внутренний: PA13 */ всё ещё комментарий: PA14 */
+    usart: UsartResources { usart: USART1, tx: PA9 },
+}
+";
+        assert_eq!(pins(&assigned_pins(text)), ["PA9"]);
+    }
+
+    /// Регрессия: `SPI1` читался как вывод `PI1` — имя вывода внутри другого
+    /// идентификатора выводом не является.
+    #[test]
+    fn does_not_read_a_pin_inside_an_identifier() {
+        assert_eq!(pins_in("spi: SPI1, sck: PA5, mosi: PA7"), ["PA5", "PA7"]);
+        assert!(pins_in("dma: DMA1_CH4, tim: TIM_PI1").is_empty());
+        // Сам по себе `PI1` — вывод, и суффикс двойника тоже часть имени.
+        assert_eq!(pins_in("a: PI1, b: PA0_C"), ["PI1", "PA0_C"]);
+    }
+
+    /// Хвостовой комментарий отрезается, а строка остаётся: заготовка из
+    /// `pins БЛОК --snippet` перечисляет альтернативы прямо за запятой, и
+    /// назначен из них только первый вывод.
+    #[test]
+    fn cuts_the_trailing_comment_but_keeps_the_line() {
+        let text = "\
+assign_resources! {
+    spi: SpiResources {
+        spi: SPI1,
+        sck: PA5,  // ещё: PB3(AF5)
+        /// Doc-комментарий в теле: miso: PA13
+        miso: PA6,
+    },
+}
+";
+        assert_eq!(pins(&assigned_pins(text)), ["PA5", "PA6"]);
+    }
+
+    /// Тело закрывается только после первой открытой скобки: с `{` на
+    /// следующей строке макрос не кончается на самом `assign_resources!`.
+    #[test]
+    fn opens_the_body_on_the_next_line() {
+        let text = "\
+assign_resources!
+{
+    usart: UsartResources { usart: USART1, tx: PA9 },
+}
+static AFTER: u8 = PA13;
+";
+        assert_eq!(pins(&assigned_pins(text)), ["PA9"]);
+    }
+
+    /// Обход рекурсивный: `assign_resources!` в `board/pins.rs` не теряется —
+    /// иначе занятый `PA13` прошёл бы проверку как «выводов не назначено».
+    /// Порядок от файловой системы не зависит.
+    #[test]
+    fn collects_rust_sources_recursively_and_sorted() {
+        let root = env::temp_dir().join(format!("chip-info-sources-{}", process::id()));
+        if root.exists() {
+            fs::remove_dir_all(&root).unwrap();
+        }
+        fs::create_dir_all(root.join("board")).unwrap();
+        for file in ["resources.rs", "board.rs", "board/pins.rs", "memory.x"] {
+            fs::write(root.join(file), "").unwrap();
+        }
+
+        let found = resource_sources(&root).unwrap();
+        fs::remove_dir_all(&root).unwrap();
+
+        let relative: Vec<_> = found
+            .iter()
+            .map(|path| path.strip_prefix(&root).unwrap().to_path_buf())
+            .collect();
+        assert_eq!(
+            relative,
+            [
+                ["board", "pins.rs"].iter().collect(),
+                PathBuf::from("board.rs"),
+                PathBuf::from("resources.rs"),
+            ]
+        );
+    }
+}

@@ -31,8 +31,17 @@ stm32-metapac = { version = "21", default-features = false, features = [
 ] }
 anyhow = "1.0.104"
 
-# Не член ни одного [workspace] — [workspace.lints] не наследуются, поэтому те
-# же правила, что в корневом и crates-cross/Cargo.toml, продублированы явно.
+# Не член ни одного [workspace] — [workspace.lints] не наследуются, поэтому
+# все правила корневого Cargo.toml продублированы явно; обоснование каждого —
+# в комментариях там. Меняете их там — меняйте и здесь. Группы
+# `arbitrary_source_item_ordering` и послабления для тестов берутся из
+# корневого clippy.toml: clippy ищет его вверх от манифеста.
+[lints.rust]
+# Как в корне, `deny`: unsafe этому справочнику не нужен вовсе.
+unsafe_code = "deny"
+missing_debug_implementations = "warn"
+unsafe_op_in_unsafe_fn        = "warn"
+
 [lints.clippy]
 all                     = { level = "warn", priority = -1 }
 unwrap_used             = "deny"
@@ -41,3 +50,9 @@ dbg_macro               = "deny"
 todo                    = "warn"
 unimplemented           = "warn"
 large_stack_arrays      = "warn"
+undocumented_unsafe_blocks = "warn"
+pedantic = { level = "warn", priority = -1 }
+allow_attributes_without_reason = "warn"
+mod_module_files        = "warn"
+map_err_ignore          = "warn"
+arbitrary_source_item_ordering = "warn"

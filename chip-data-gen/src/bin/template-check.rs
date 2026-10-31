@@ -467,6 +467,9 @@ struct Run {
     /// Отпечаток хостового workspace ([`host_key`]) → конфигурация, на которой
     /// он уже прошёл `xtask lint`, `test host` и `deny` корня.
     host_checked: Mutex<HashMap<u64, String>>,
+    /// Отказ `pins --check` на занятом отладочном порте уже проверен
+    /// ([`check_pins_reject_debug_port`]) — раз на прогон.
+    debug_port_checked: AtomicBool,
     /// Упала хотя бы одна конфигурация — новых не начинаем.
     failed: AtomicBool,
     finished: AtomicUsize,
@@ -548,6 +551,7 @@ fn main() -> anyhow::Result<()> {
         template,
         work_dir,
         host_checked: Mutex::new(HashMap::new()),
+        debug_port_checked: AtomicBool::new(false),
         failed: AtomicBool::new(false),
         finished: AtomicUsize::new(0),
     };
@@ -744,11 +748,12 @@ impl ChipChecks {
 /// DMA и тактированием, а `RCC` есть на любом STM32 (в отличие от, например,
 /// `SPI4`).
 ///
-/// fmt/clippy для chip-info — здесь же и по той же причине; в сгенерированном
-/// проекте манифест уже подставлен, и обе команды работают. `cargo xtask lint`
-/// их намеренно не зовёт: тогда каждый пользовательский CI тянул бы
-/// stm32-metapac ради инструмента, который на сборку прошивки никак не влияет.
-const CHIP_COMMANDS: [&[&str]; 5] = [
+/// fmt/clippy/test для chip-info — здесь же и по той же причине; в
+/// сгенерированном проекте манифест уже подставлен, и все три команды работают.
+/// `cargo xtask lint` и `test host` их намеренно не зовут: тогда каждый
+/// пользовательский CI тянул бы stm32-metapac ради инструмента, который на
+/// сборку прошивки никак не влияет.
+const CHIP_COMMANDS: [&[&str]; 6] = [
     &["xtask", "pins"],
     &["xtask", "pins", "RCC"],
     // Заготовка — на I2C1, и это не произвольный выбор: он есть на всех чипах
@@ -770,6 +775,14 @@ const CHIP_COMMANDS: [&[&str]; 5] = [
         "--",
         "-D",
         "warnings",
+    ],
+    // Юнит-тесты текстового разбора `--check`: каждая его регрессия ложной
+    // тревогой роняла бы джоб `Pins` у пользователя, а молчанием — пропускала
+    // занятый отладочный порт.
+    &[
+        "test",
+        "--manifest-path",
+        "crates-host/chip-info/Cargo.toml",
     ],
 ];
 
@@ -968,6 +981,11 @@ fn check_one(
         // От проекта зависит: `--check` на нетронутом `bsp` обязан проходить —
         // шаблон не занимает ни одного вывода, а выбранный интерфейс — свои.
         cargo(&["xtask", "pins", "--check"])?;
+        // Обратная сторона той же проверки — раз на прогон: от конфигурации
+        // она не зависит, а `chip-info` здесь уже собран.
+        if !run.debug_port_checked.swap(true, Ordering::Relaxed) {
+            check_pins_reject_debug_port(&project, cargo_target_dir, log)?;
+        }
     }
 
     if options.keep {
@@ -976,6 +994,65 @@ fn check_one(
         fs::remove_dir_all(&project).with_context(|| format!("удалить {}", project.display()))?;
     }
     Ok(static_ram)
+}
+
+/// `cargo xtask pins --check` обязан отказать, когда в `assign_resources!`
+/// занят отладочный порт: без этого шага проверялся только путь «всё чисто»,
+/// и `--check`, который молча пропускает `PA13`, прошёл бы его так же, как
+/// исправный.
+///
+/// В `resources.rs` на время одного запуска дописывается группа со SWDIO
+/// (`PA13`), потом файл возвращается как был — до разбора исхода, чтобы и
+/// проваленная проверка не оставила проект испорченным. Пересборки нет:
+/// `--check` читает исходники `bsp` текстом во время работы, а сам `chip-info`
+/// уже собран положительным `pins --check` перед этим. Ждём не просто
+/// ненулевой код, а строку `КОНФЛИКТ: PA13` (её печатает `check_resources` в
+/// `crates-host/chip-info/src/check.rs`): иначе за отказ сошла бы любая
+/// поломка сборки или запуска.
+fn check_pins_reject_debug_port(
+    project: &Path,
+    cargo_target_dir: &Path,
+    mut log: &File,
+) -> anyhow::Result<()> {
+    const HEAD: &str = "assign_resources! {";
+    let resources = project.join("crates-cross/bsp/src/resources.rs");
+    let original = fs::read_to_string(&resources)
+        .with_context(|| format!("прочитать {}", resources.display()))?;
+    anyhow::ensure!(
+        original.matches(HEAD).count() == 1,
+        "в {} не ровно одно `{HEAD}` — некуда вписать занятый отладочный порт",
+        resources.display(),
+    );
+    let busy = original.replacen(
+        HEAD,
+        &format!("{HEAD}\n    debug: DebugResources {{ swdio: PA13 }},"),
+        1,
+    );
+    fs::write(&resources, busy).with_context(|| format!("записать {}", resources.display()))?;
+
+    let output = Command::new("cargo")
+        .args(["xtask", "pins", "--check"])
+        .current_dir(project)
+        .env("CARGO_TARGET_DIR", cargo_target_dir)
+        .output();
+    fs::write(&resources, &original).with_context(|| format!("вернуть {}", resources.display()))?;
+    let output = output.context("запустить `cargo xtask pins --check`")?;
+    log.write_all(&output.stdout).context("записать в лог")?;
+    log.write_all(&output.stderr).context("записать в лог")?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if output.status.success() || !stdout.contains("КОНФЛИКТ: PA13") {
+        bail!(
+            "`cargo xtask pins --check` не отказал на SWDIO (`PA13`), вписанном в \
+             `assign_resources!` (код {}, вывод — в логе): разбор в \
+             crates-host/chip-info/src/check.rs пропускает занятый отладочный порт",
+            output.status,
+        );
+    }
+    note(
+        log,
+        "pins --check: на занятом `PA13` отказал, как и должен — resources.rs возвращён",
+    )
 }
 
 /// `resources.rs` — заглушка без групп: проект без интерфейса.
