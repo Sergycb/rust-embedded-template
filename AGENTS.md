@@ -221,7 +221,7 @@ read`: руками пришлось бы сначала найти адрес �
   получает псевдоним (`pub type X = ...`): рычаг — от `bsp`{% if ota == "true" or config == "true" %} ({% if ota == "true" %}`bsp::FirmwareFlash`{% if config == "true" %},
   {% endif %}{% endif %}{% if config == "true" %}`bsp::ConfigFlash`{% endif %}){% endif %}, адаптер — от `app`{% if protocol_link == "true" %} (`crate::link::<вид>[::<транспорт>]::Link`: у uart/usb —
   подмодуль на транспорт и `Source`, у tcp/udp модуль транспорта — сам файл вида){% endif %} или
-  конкретным типом прямо {% if graph == "true" %}в графе{% else %}в задаче{% endif %}{% if ota == "true" %} (`adapters::ota::Updater<bsp::FirmwareFlash, _>`){% endif %}
+  конкретным типом прямо {% if graph == "true" %}в графе{% else %}в задаче{% endif %}{% if ota == "true" %} (`adapters::ota::Updater<bsp::FirmwareFlash>`){% endif %}
   — `docs/architecture.md`.
 - Ровно один `#[panic_handler]` и один активный `#[global_logger]` на бинарник: логгер
   резолвится линковкой по имени символа и даёт `multiply defined!` при нарушении;

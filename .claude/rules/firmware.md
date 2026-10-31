@@ -6,7 +6,7 @@ paths: crates-cross/**
   `#[embassy_executor::task]`, обязан иметь псевдоним типа (рычагу платы — в
   `bsp`{% if ota == "true" or config == "true" %}: {% if ota == "true" %}`bsp::FirmwareFlash`{% if config == "true" %}, {% endif %}{% endif %}{% if config == "true" %}`bsp::ConfigFlash`{% endif %}{% endif %}; адаптеру — в модуле `app`,
   который выбирает его тип{% if protocol_link == "true" %}, `crate::link`{% endif %}, или конкретный тип прямо во входе узла{% if ota == "true" or config == "true" %}:
-  {% if ota == "true" %}`adapters::ota::Updater<bsp::FirmwareFlash, _>`{% if config == "true" %}, {% endif %}{% endif %}{% if config == "true" %}`adapters::settings::Settings<bsp::ConfigFlash>`{% endif %}{% endif %}).
+  {% if ota == "true" %}`adapters::ota::Updater<bsp::FirmwareFlash>`{% if config == "true" %}, {% endif %}{% endif %}{% if config == "true" %}`adapters::settings::Settings<bsp::ConfigFlash>`{% endif %}{% endif %}).
 - Ровно один `#[panic_handler]` и один `#[global_logger]` на бинарник — это
   ограничение линкера, а не Cargo. Развилка по профилю делается через
   `#[cfg(debug_assertions)]` (паникёр — `app/src/panic.rs`{% if ota == "true" %}; у `boot` свой, сброс

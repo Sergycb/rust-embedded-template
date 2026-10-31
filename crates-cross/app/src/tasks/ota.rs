@@ -20,7 +20,7 @@ use sync_request::ask::AskService;
 {%- endif %}
 
 /// Адаптер обновления над флешем платы.
-type Updater = adapters::ota::Updater<bsp::FirmwareFlash, true>;
+type Updater = adapters::ota::Updater<bsp::FirmwareFlash>;
 {%- if askers > 0 %}
 
 /// Ребро входа `ASK` — доля одного клиента в его очереди.
@@ -71,25 +71,22 @@ pub static READY_{{ f[4] | upcase }}: Signal<CriticalSectionRawMutex, ()> = Sign
 {%- endfor %}
 
 /// Спавнит узел над разделами обновления платы — адаптер обновления строит задача;
-/// режим —
-/// `Signed` с версией этого образа (`crate::version::FW_VERSION`).
+/// версия этого образа для защиты от отката — `crate::version::FW_VERSION`.
 pub fn spawn(spawner: embassy_executor::Spawner, firmware: bsp::FirmwareFlash) {
-    let mode = domain::ota::Mode::Signed {
-        running_version: crate::version::FW_VERSION,
-    };
-    spawner.spawn(task(firmware, mode).expect("задача OTA свежая: спавнится один раз"));
+    spawner.spawn(task(firmware).expect("задача OTA свежая: спавнится один раз"));
 }
 
 #[embassy_executor::task]
-async fn task(firmware: bsp::FirmwareFlash, mut mode: domain::ota::Mode) {
+async fn task(firmware: bsp::FirmwareFlash) {
     // Адаптер обновления — над разделами обновления платы.
     let mut flash = Updater::new(firmware);
     let mut reboot = bsp::reset::Reboot;
+    let mut running_version = crate::version::FW_VERSION;
     let mut confirmed = false;
     domain::ota::task(domain::ota::OtaCtx {
         flash: &mut flash,
         reboot: &mut reboot,
-        mode: &mut mode,
+        running_version: &mut running_version,
         confirmed: &mut confirmed,
         cmd: CMD.server().expect("сервер входа CMD один — у этой задачи"),
         ask: ASK.server().expect("сервер входа ASK один — у этой задачи"),

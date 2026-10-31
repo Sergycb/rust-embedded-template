@@ -95,7 +95,7 @@ HAL (`bsp::board::init_peripherals` — на умолчаниях `embassy-stm32
 версия (`ota::version::*`), решение bootloader'а (`ota::boot::*`) — функции над портами, а действия автоматов зовут их. {% endif %}Всё, чем
 логика разговаривает с портами — ошибки, — объявлено в `ports`: тот стал словарём
 домена, а не только набором трейтов. Своё в `domain` — только контексты узлов{% if graph == "true" %}
-(их эмитит фрагмент), состояния автоматов и входы фрагментов ({% if ota == "true" %}`OtaWiring`, {% endif %}`IdleMeter`{% if ota == "true" %}, `Mode`{% endif %}){% else %} и состояния автоматов{% endif %}{% if protocol != "none" %},
+(их эмитит фрагмент), состояния автоматов и входы фрагментов ({% if ota == "true" %}`OtaWiring`, {% endif %}`IdleMeter`){% else %} и состояния автоматов{% endif %}{% if protocol != "none" %},
 включая обработчик протокола{% if graph == "true" %} на этом входе{% endif %}: {% if protocol == "protobuf" %}`protobuf::Service`{% elsif protocol == "modbus" %}`modbus::EmptyRegisters` (порт `Registers`; карта одна на проект —
 псевдоним `crate::modbus::Map`, ручка `crate::modbus::Handle` над
 `domain::modbus::MapMutex`, — все узлы `MODBUS_*` работают над ней{% if ota == "true" %}, а окно OTA
@@ -126,7 +126,7 @@ HAL (`bsp::board::init_peripherals` — на умолчаниях `embassy-stm32
 {%- assign sep = "" %}
 {%- capture types %}
 {%- if protocol_link == "true" %}{{ sep }}`crate::link::<вид>[::<транспорт>]::Link` (у uart/usb — подмодуль на транспорт, у tcp/udp модуль транспорта — сам файл вида){% assign sep = ", " %}{% endif %}
-{%- if ota == "true" %}{{ sep }}`adapters::ota::Updater<bsp::FirmwareFlash, _>`{% assign sep = ", " %}{% endif %}
+{%- if ota == "true" %}{{ sep }}`adapters::ota::Updater<bsp::FirmwareFlash>`{% assign sep = ", " %}{% endif %}
 {%- if config == "true" %}{{ sep }}`adapters::settings::Settings<bsp::ConfigFlash>`{% assign sep = ", " %}{% endif %}
 {%- endcapture %}
 {%- if types != "" %} Тип адаптера —
@@ -221,7 +221,7 @@ compose-site остаётся правое: таймаут узла плюс `WA
 
 **Типы ресурсных слотов** узла OTA — параметры фрагмента: `name: OTA_FRAG<F, R>`,
 а compose-site подставляет их в `fragments:` угловыми скобками
-(`::domain::OTA_FRAG<::adapters::ota::Updater<bsp::FirmwareFlash, true>, bsp::reset::Reboot>`). Слот — `static`, тип ему
+(`::domain::OTA_FRAG<::adapters::ota::Updater<bsp::FirmwareFlash>, bsp::reset::Reboot>`). Слот — `static`, тип ему
 нужен, а конкретный тип знает только `cross`; generic-`static` не бывает, и
 параметр — единственный способ фрагмента назвать тип, которого он не видит.
 Bound'ов у параметров нет намеренно: их держит сигнатура `ota::task`, и rustc
@@ -380,7 +380,7 @@ device, cdc }` (классы `embassy-usb` регистрируются до п�
 {% if graph == "true" %}Кроме сторожа в граф уезжает поле `firmware`{% else %}В задачу узла OTA уезжает поле `firmware`{% endif %} (`bsp::FirmwareFlash` —
 `adapters::ota::Partitions`: разделы `DFU` и `STATE` со своими страницами, предел
 образа, равный `ACTIVE`, и отпечаток раскладки). {% if graph == "true" %}Compose-site кладёт его во вход узла,
-`domain::ota::OtaWiring { flash: Updater::new(board.firmware), reboot: bsp::reset::Reboot, mode }`,
+`domain::ota::OtaWiring { flash: Updater::new(board.firmware), reboot: bsp::reset::Reboot, running_version }`,
 прямо в `fragments:`: адаптер{% else %}Адаптер{% endif %} обновления (`adapters::ota::Updater`, порт
 `FirmwareUpdate`) над ним строит compose-site. Режет разделы плата — по символам
 `memory.x` (`bsp::layout`), тем же, что читает bootloader: где они лежат, знает
@@ -390,8 +390,8 @@ device, cdc }` (классы `embassy-usb` регистрируются до п�
 а командами узла протокола на вход узла `CMD` ({% if graph == "true" %}`request:` графа, клиент —
 `ota_cmd_requester()`{% else %}`static` в `crate::tasks::ota`{% endif %}; `docs/ota.md`). Вместимость раздела адаптер отдаёт через
 порт же (`FirmwareUpdate::capacity`). Версия образа — свойство прошивки, а не
-платы: её задаёт приложение (`crates-cross/app/src/version.rs`) режимом
-узла `Mode::Signed`{% if graph == "true" %} прямо в `fragments:`{% endif %}; ключ подписи — в
+платы: её задаёт приложение (`crates-cross/app/src/version.rs`) во входе
+узла (`running_version`){% if graph == "true" %} прямо в `fragments:`{% endif %}; ключ подписи — в
 bootloader'е (`crates-cross/boot`), который подпись и проверяет.
 {%- endif %}
 
@@ -483,7 +483,7 @@ host`), поэтому их исходник обязан оставаться �
 {%- endcapture %}
 {%- assign sep = "" %}
 {%- capture concrete %}
-{%- if ota == "true" %}{{ sep }}`adapters::ota::Updater<bsp::FirmwareFlash, _>`{% assign sep = ", " %}{% endif %}
+{%- if ota == "true" %}{{ sep }}`adapters::ota::Updater<bsp::FirmwareFlash>`{% assign sep = ", " %}{% endif %}
 {%- if config == "true" %}{{ sep }}`adapters::settings::Settings<bsp::ConfigFlash>`{% assign sep = ", " %}{% endif %}
 {%- endcapture %} Рычагу платы его даёт `bsp` ({% if levers != "" %}{{ levers }}{% else %}`pub type X = ...`{% endif %})
 {%- if protocol_link == "true" or concrete != "" %}, адаптеру —{% if protocol_link == "true" %} модуль
