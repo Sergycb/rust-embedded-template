@@ -809,7 +809,7 @@ if variable::is_set("graph") {
     wants_graph = answer == "yes" || answer == "true";
 }
 if !wants_graph {
-    print("Граф задач отключён по вашему выбору: main заканчивается после инициализации");
+    print("Граф задач отключён по вашему выбору: узлы спавнит tasks::spawn_all, без сторожа");
 }
 
 // Пороги для `plan()`: функция глобальных констант не видит.
@@ -1407,14 +1407,14 @@ if variable::is_set("graph") {
     }
 } else if manual_now || plan_now.graph {
     let answer = ask(
-        "graph: граф задач supervisor (порядок старта, рестарты, watchdog)",
+        "graph: граф задач supervisor (порядок старта, watchdog)",
         ["yes", "no"],
-        ["yes - task graph and watchdog", "no - no graph: main ends after init"],
+        ["yes - task graph and watchdog", "no - no graph: tasks::spawn_all, no watchdog"],
         "yes"
     );
     wants_graph = answer == "yes";
     if !wants_graph {
-        print("Граф задач отключён по вашему выбору: main заканчивается после инициализации");
+        print("Граф задач отключён по вашему выбору: узлы спавнит tasks::spawn_all, без сторожа");
     }
 } else {
     wants_graph = false;
@@ -1810,11 +1810,9 @@ if variable::is_set("write_size") {
     variable::set("swap_paged", "false");
     // Страница раздела `BOOTLOADER_STATE` (`flash_page::ErasePage`; число
     // уезжает переменной среды в crates-cross/.cargo/config.toml, её читают
-    // bsp::flash и boot) — тоже знание раскладки. Её здесь нет,
-    // поэтому — страница цельного `Flash`, как было до `ErasePage`: верно на
-    // чипах с равными секторами, а на F2/F4/F7 `STATE` в мелком секторе
-    // приведёт к панике `Partition::new` при старте — об этом печатается
-    // предупреждение ниже.
+    // bsp::flash и boot) — тоже знание раскладки. Её здесь нет, поэтому
+    // пустая строка: `STATE_ERASE_SIZE` вписывает человек, без него проект не
+    // соберётся — об этом печатается подсказка ниже.
     variable::set("state_erase_size", "");
     // Страницы сектора `STATE` здесь никто не знает — раздел остаётся под
     // `ErasePage` с числом, которое впишет человек.
@@ -2447,7 +2445,7 @@ variable::set("net_sockets", net_sockets.to_string());
 let http_connections = if services.contains("rest") { 2 } else { 0 };
 variable::set("http_connections", http_connections.to_string());
 
-// Кадровый канал (`ports::FrameLink`, `LinkError`, `Handler`) нужен протоколам
+// Кадровый канал (`ports::FrameLink`, `LinkError`) нужен протоколам
 // узла `domain::server` (protobuf и Modbus slave), шине CAN (ошибка `CanBus`) и
 // UDP-каналу (`adapters::net::UdpLink` реализует `FrameLink`) — с протоколом и без него.
 variable::set("link_port", if on.protobuf || on.modbus || has.can || has.udp { "true" } else { "false" });
