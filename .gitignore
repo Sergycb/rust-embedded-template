@@ -5,6 +5,12 @@ crates-cross/target/
 # У chip-info свой [workspace] (Liquid в манифесте, см. его Cargo.toml), а
 # значит и свой target/ — корневое правило выше его не покрывает.
 crates-host/chip-info/target/
+{%- if ci == "gitlab" %}
+# Домашний каталог cargo в GitLab CI (`CARGO_HOME` в .gitlab-ci.yml) — внутри
+# проекта, чтобы попадать в кеш; без этой строки `typos` читал бы исходники
+# всего реестра.
+.cargo-home/
+{%- endif %}
 
 # Cargo.lock здесь НЕ игнорируется (дефолтный совет `cargo new` — «leave it for
 # libraries» — тут не применим): проект собирает прошивку, а не библиотеку, и
