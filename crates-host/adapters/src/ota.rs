@@ -58,11 +58,10 @@ pub struct Partitions<D, S> {
 
 /// Доступ к разделам обновления `P` — [`Partitions`] платы.
 ///
-/// `prepare` стирает, кроме страниц под образ, и запасную страницу `DFU` за
-/// `capacity` — туда `domain::ota::update::apply_signed` кладёт запись для
-/// bootloader'а (`ports::PendingImage`); оставь её нестёртой — запись легла бы
-/// поверх остатков прошлого обмена. Цена — ещё одно стирание страницы на
-/// обновление (на F4 — сектор 128 KiB).
+/// `prepare` стирает всё, что обмен перенесёт в `ACTIVE` (`DFU[..capacity]`),
+/// и запасную страницу за ним — туда `domain::ota::update::apply` кладёт
+/// запись для bootloader'а (`ports::PendingImage`); оставь её нестёртой —
+/// запись легла бы поверх остатков прошлого обмена.
 ///
 /// `capacity` разделов — самый длинный образ, который доедет до устройства:
 /// размер `ACTIVE`, а не `DFU` (docs/ota.md, «Приём образа: стирание отдельно
@@ -189,10 +188,15 @@ impl<D: NorFlash, S: NorFlash> FirmwareUpdate for Updater<Partitions<D, S>> {
         self.dfu_is_busy().await
     }
 
-    /// Стирает столько страниц раздела `DFU`, сколько нужно образу длиной
-    /// `len`, и запасную — под запись для bootloader'а. `prepare_update()` из
-    /// `embassy-boot` здесь не годится: он стирает раздел целиком, а это и
-    /// время (на крупных секторах — секунды), и лишний износ флеша.
+    /// Стирает `DFU[..capacity]` — всё, что обмен `embassy-boot` перенесёт в
+    /// `ACTIVE`, а не только страницы под образ длиной `len`, — и запасную
+    /// страницу под запись для bootloader'а. Подпись покрывает только `len`
+    /// байт, а обмен копирует раздел целиком: нестёртый хвост с остатками
+    /// прошлых загрузок (в том числе чужого, отвергнутого bootloader'ом
+    /// образа) уехал бы в `ACTIVE` непроверенным. Худшее время от этого не
+    /// растёт — образ во весь `ACTIVE` стирал столько же; дольше становится
+    /// только приём короткого образа (docs/ota.md, «Приём образа»).
+    /// `len` нужна для отказа до стирания.
     ///
     /// Стирает по странице и уступает исполнитель после каждой: флеш платы
     /// блокирующий (`BlockingAsync`), и стирание всего диапазона одним вызовом
@@ -209,19 +213,14 @@ impl<D: NorFlash, S: NorFlash> FirmwareUpdate for Updater<Partitions<D, S>> {
         if len == 0 || len > self.parts.capacity {
             return Err(Error::Flash(NorFlashErrorKind::OutOfBounds));
         }
-        // Длина округляется ВВЕРХ до страницы: стереть половину страницы флеш
-        // не умеет, а оставить её нестёртой — значит потерять хвост образа.
-        // За границу раздела округление не уйдёт: `DFU` больше `ACTIVE`
-        // (= `capacity`) минимум на страницу; `saturating_mul` — страховка на
-        // случай, если проверку однажды ослабят.
+        // `capacity` кратна странице, и за ней помещается запасная — это
+        // проверил `new`, поэтому `end` не выходит за раздел.
         let page = self.erase_size();
-        let end = len.div_ceil(page).saturating_mul(page);
+        let end = self.parts.capacity + page;
         for from in (0..end).step_by(page as usize) {
             self.parts.dfu.erase(from, from + page).await?;
             embassy_futures::yield_now().await;
         }
-        let spare = self.parts.capacity;
-        self.parts.dfu.erase(spare, spare + page).await?;
         Ok(())
     }
 
@@ -338,8 +337,9 @@ mod tests {
         let _ = mem(Dfu::erased(), State::erased(), 1024);
     }
 
-    /// `prepare` уступает исполнитель после каждой страницы: две страницы —
-    /// два `Pending`, и только третий `poll` завершает подготовку.
+    /// `prepare` уступает исполнитель после каждой страницы: три страницы
+    /// `ACTIVE` и запасная — четыре `Pending`, и только пятый `poll`
+    /// завершает подготовку.
     #[test]
     fn prepare_yields_after_each_page() {
         use core::pin::pin;
@@ -353,28 +353,21 @@ mod tests {
             .take_while(|_| prepare.as_mut().poll(&mut cx).is_pending())
             .count();
 
-        assert_eq!(pending, 2, "по уступке на каждую из двух страниц");
+        assert_eq!(pending, 4, "по уступке на каждую из четырёх страниц");
     }
 
-    /// `prepare` стирает только страницы, нужные образу, и запасную — под
-    /// запись для bootloader'а.
+    /// Короткий образ — а стёрт весь `DFU`: и страницы за образом, которые
+    /// обмен всё равно перенесёт в `ACTIVE`, и запасная под запись для
+    /// bootloader'а. Остатки прошлой загрузки за образом подпись не покрывает.
     #[tokio::test]
-    async fn prepare_erases_the_pages_the_image_needs_and_the_spare_page() {
+    async fn prepare_erases_everything_the_swap_moves_and_the_spare_page() {
         let mut u = mem(Dfu::filled(0x00), State::erased(), 768);
 
-        u.prepare(257).await.expect("стереть под образ и запись");
+        u.prepare(8).await.expect("стереть раздел");
 
         assert!(
-            u.parts.dfu.mem[..512].iter().all(|b| *b == 0xFF),
-            "две страницы стёрты"
-        );
-        assert!(
-            u.parts.dfu.mem[512..768].iter().all(|b| *b == 0x00),
-            "третья не тронута"
-        );
-        assert!(
-            u.parts.dfu.mem[768..].iter().all(|b| *b == 0xFF),
-            "запасная стёрта"
+            u.parts.dfu.mem.iter().all(|b| *b == 0xFF),
+            "весь DFU стёрт, а не только страница под образ"
         );
     }
 

@@ -349,7 +349,7 @@ impl EepromAccess for EepromFlash {
 /// а стирание и запись идут мимо него, и `embassy-stm32` после них кэш не
 /// сбрасывает: прочитанное до стирания так и читалось бы после, и
 /// `sequential-storage` с `embassy-boot` видели бы стёртое старым (поймано на
-/// NUCLEO-H743 target-тестом `prepare_erases_only_what_the_image_needs`). Кэши
+/// NUCLEO-H743 target-тестом `prepare_erases_what_the_swap_moves`). Кэши
 /// включает `crate::cache::enable` — docs/clocks.md, «Кэши».
 pub struct Coherent<F>(F);
 
