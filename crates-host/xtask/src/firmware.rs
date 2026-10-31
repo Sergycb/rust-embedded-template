@@ -104,8 +104,7 @@ pub fn build(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
         let (major, minor, patch) = unpack_version(version);
         println!("версия образа: {major}.{minor}.{patch}");
     }
-    image.extend_from_slice(&layout.to_le_bytes());
-    image.extend_from_slice(&version.to_le_bytes());
+    append_tail(&mut image, layout, version);
     // {%- else %}
     //{{newline}}    let (base, image) = raw_image(&elf)?;
     // {%- endif %}
@@ -152,5 +151,36 @@ pub fn sign() -> Result<(), anyhow::Error> {
     let (boot_base, boot_image) = raw_image(&boot_elf)?;
     ensure_image_key(&boot_elf, boot_base, &boot_image, &seed)?;
     sign_image(&path, &image, &seed)
+}
+
+/// Дописывает хвост `[раскладка u32 LE][версия u32 LE]` в конец образа.
+///
+/// Читает его `domain::ota::update::apply_signed` с конца: версия — на
+/// `len - 4`, раскладка — перед ней. Зависимости на `domain` у xtask нет,
+/// поэтому формат держит пара тестов — см. `writes_the_tail_domain_reads`.
+fn append_tail(image: &mut Vec<u8>, layout: u32, version: u32) {
+    image.extend_from_slice(&layout.to_le_bytes());
+    image.extend_from_slice(&version.to_le_bytes());
+}
+
+#[cfg(test)]
+mod tests {
+    /// Хвост пишет xtask, а читает `domain`, и общего кода у них нет —
+    /// значит разъехаться они могут только молча.
+    ///
+    /// Ловит это ПАРА тестов: здесь и `reads_the_tail_xtask_writes` в
+    /// `domain::ota::update` (`crates-host/domain/src/ota/update.rs`), где
+    /// стоят те же литералы. Поодиночке ни один из них расхождения не увидит —
+    /// каждый проверяет свою сторону. Байты несимметричны, так что пойман
+    /// будет и обмен полей местами, и смена порядка байт.
+    #[test]
+    fn writes_the_tail_domain_reads() {
+        let mut image = vec![0xAA; 4];
+
+        super::append_tail(&mut image, 0x5EED_1A70, 0x0102_0003);
+
+        assert_eq!(image[..4], [0xAA; 4], "сам образ не тронут");
+        assert_eq!(image[4..], [0x70, 0x1A, 0xED, 0x5E, 0x03, 0x00, 0x02, 0x01]);
+    }
 }
 // {%- endif %}
