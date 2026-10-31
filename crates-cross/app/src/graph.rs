@@ -263,7 +263,7 @@ supervisor_graph! {
 {%- if net_services contains "mqtt" %}
 
         // Узел `MQTT` — клиент брокера (`domain::mqtt`): адрес и префикс тем
-        // — из `mqtt.toml` (`crate::net::mqtt::BROKER`, `MQTT_PREFIX`),
+        // — из `mqtt.toml` (`crate::net::mqtt::BROKER`, `PREFIX`),
         // соединение — TCP-клиент на стеке `board.net.stack` в буферах, которые
         // объявляет граф (`static T`), буферы `minimq` — слоты
         // `= static` фрагмента.{% if ota == "true" %} `cmd/reboot` — командой узлу `OTA` своим

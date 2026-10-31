@@ -188,7 +188,8 @@ read`: руками пришлось бы сначала найти адрес �
 
 - Задачи `embassy` не могут быть generic: тип, уезжающий в `#[embassy_executor::task]`,
   получает псевдоним (`pub type X = ...`): рычаг — от `bsp`{% if ota == "true" or config == "true" %} ({% if ota == "true" %}`bsp::FirmwareFlash`{% if config == "true" %},
-  {% endif %}{% endif %}{% if config == "true" %}`bsp::ConfigFlash`{% endif %}){% endif %}, адаптер — от `app`{% if protocol_link == "true" %} (`crate::link::<вид>::<транспорт>::Link`){% endif %} или
+  {% endif %}{% endif %}{% if config == "true" %}`bsp::ConfigFlash`{% endif %}){% endif %}, адаптер — от `app`{% if protocol_link == "true" %} (`crate::link::<вид>[::<транспорт>]::Link`: у uart/usb —
+  подмодуль на транспорт и `Source`, у tcp/udp модуль транспорта — сам файл вида){% endif %} или
   конкретным типом прямо {% if graph == "true" %}в графе{% else %}в задаче{% endif %}{% if ota == "true" %} (`adapters::ota::Updater<bsp::FirmwareFlash, _>`){% endif %}
   — `docs/architecture.md`.
 - Ровно один `#[panic_handler]` и один активный `#[global_logger]` на бинарник: логгер
@@ -349,9 +350,8 @@ read`: руками пришлось бы сначала найти адрес �
 {%- if rng_irq != "" %}
 - Клок блока `RNG` даёт `config()` в `crates-cross/bsp/src/board.rs` — у
   каждой линии свой источник (PLL Q, HSI48, `RNGSEL`). Меняете тактирование —
-  сохраните его: без клока `Rng::new` в `Board::new` паникует (линии с
-  мультиплексором RNG) или прошивка виснет в ожидании слова там же, в
-  `Board::new` (F2/F4/F7, L0, L4, U0) —
+  сохраните его: без клока прошивка паникует или виснет в `Board::new`
+  (`Rng::new`, затравка) — что именно, зависит от линии,
   `docs/modules/bsp-rng.md`. Блок `RNG` берёт группа `rng` из
   `resources.rs`, и генератор наружу не выходит: `bsp::rng::seed` в
   `Board::new` засевает им сетевой стек и {% if net_services contains "ssh" %}оставляет его бэкенду
@@ -363,10 +363,11 @@ read`: руками пришлось бы сначала найти адрес �
 {%- endif %}
 {%- endif %}
 {%- if protocol == "canopen" %}
-- Буфер сохранённых объектов CANopen и колбэки стека над ним — локальные
-  `domain::canopen::task`, автомат получает их аргументами стартового действия
-  (`start(..) => begin` в таблице, `ctx.run(&persisted, &mut callbacks)`), а
-  `Node<'f>` живёт в состояниях. Не переносить их в `static` или слот: тип
+- Буфер сохранённых объектов CANopen, колбэки стека над ним и сам стек
+  (`Node`) — локальные `domain::canopen::task`, автомат получает их аргументами
+  стартового действия (`start(persisted, callbacks, node) => begin` в таблице,
+  `ctx.run(&persisted, &mut callbacks, &mut node)`), а в состояниях живёт
+  `Stack<'f>` — ссылки на них. Не переносить их в `static` или слот: тип
   замыкания там не назвать, а колбэки `zencan` своих данных не получают.
   Ключи `OBJECTS_KEY` и `NODE_ID_KEY` хранилища настроек заняты узлом{% if config == "true" %}, и носитель
   (`board.config`) уходит ему — хранилищем над ним (`Settings::whole`) во входе, и
@@ -422,11 +423,12 @@ read`: руками пришлось бы сначала найти адрес �
 {%- capture sources %}{% if has_uart == "true" %}, потоком UART{% endif %}{% if has_usb == "true" %}, потоком CDC{% endif %}{% if has_net == "true" %}, сетевым стеком{% endif %}{% endcapture %}
 - Канал протокола (кадрирование, сокет) строит `link(…)` модуля транспорта над
   тем, что отдала плата: {{ sources | remove_first: ", " }}; память канала — {% if graph == "true" %}`static T` в привязке графа{% else %}статики модуля задачи{% endif %}.
-  {%- if has_modbus == "true" %} Узел Modbus slave — `domain::server::SERVER_FRAG<L, H>` ({% if graph == "true" %}граф называет
-  узлы{% else %}узлы{% endif %} `MODBUS_<транспорт>`).{% endif %}
-  {%- if has_protobuf == "true" %} Узел protobuf хоста — `domain::protobuf::PROTOBUF_FRAG<L>`
-  (`PROTOBUF_<транспорт>`).{% endif %} Тип канала (`Link`), его размеры и `link` —
-  `crates-cross/app/src/link/<вид>.rs`, по модулю на транспорт: размер буфера и
+  {%- if has_modbus == "true" %} Узел Modbus slave — `::domain::SERVER_FRAG<L, H>`, объявлен в `domain::server`
+  ({% if graph == "true" %}граф называет узлы{% else %}узлы{% endif %} `MODBUS_<транспорт>`).{% endif %}
+  {%- if has_protobuf == "true" %} Узел protobuf хоста — `::domain::PROTOBUF_FRAG<L>`, объявлен в
+  `domain::protobuf` (`PROTOBUF_<транспорт>`).{% endif %} Тип канала (`Link`), его размеры и `link` —
+  `crates-cross/app/src/link/<вид>.rs`, по модулю на транспорт (у uart/usb — подмодуль
+  `<транспорт>` с `Source`, у tcp/udp модуль транспорта — сам файл вида): размер буфера и
   порт — решение приложения, и `bsp` их не знает. Буфер кадра держит сам канал
   (`ports::FrameLink::buffer`), протокол — обработчик ({% if has_modbus == "true" %}`domain::server::Handler`:
   `domain::modbus::Slave`{% if has_protobuf == "true" %}; {% endif %}{% endif %}{% if has_protobuf == "true" %}`domain::protobuf::Service`{% endif %}) — не порт: его

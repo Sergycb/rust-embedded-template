@@ -119,7 +119,7 @@ HAL (`bsp::board::init_peripherals` — на умолчаниях `embassy-stm32
 конкретен, — на compose-site.
 {%- assign sep = "" %}
 {%- capture types %}
-{%- if protocol_link == "true" %}{{ sep }}`crate::link::<вид>::<транспорт>::Link`{% assign sep = ", " %}{% endif %}
+{%- if protocol_link == "true" %}{{ sep }}`crate::link::<вид>[::<транспорт>]::Link` (у uart/usb — подмодуль на транспорт, у tcp/udp модуль транспорта — сам файл вида){% assign sep = ", " %}{% endif %}
 {%- if ota == "true" %}{{ sep }}`adapters::ota::Updater<bsp::FirmwareFlash, _>`{% assign sep = ", " %}{% endif %}
 {%- if config == "true" %}{{ sep }}`adapters::settings::Settings<bsp::ConfigFlash>`{% assign sep = ", " %}{% endif %}
 {%- endcapture %}
@@ -459,7 +459,8 @@ host-тестируем. Саму подпись
 {%- if config == "true" %}{{ sep }}`adapters::settings::Settings<bsp::ConfigFlash>`{% assign sep = ", " %}{% endif %}
 {%- endcapture %} Рычагу платы его даёт `bsp` ({% if levers != "" %}{{ levers }}{% else %}`pub type X = ...`{% endif %})
 {%- if protocol_link == "true" or concrete != "" %}, адаптеру —{% if protocol_link == "true" %} модуль
-`app`, который выбирает его тип (`crate::link::<вид>::<транспорт>::Link` и `Source`){% if concrete != "" %},
+`app`, который выбирает его тип (`crate::link::<вид>[::<транспорт>]::Link`; у uart/usb — подмодуль на
+транспорт и `Source`, у tcp/udp модуль транспорта — сам файл вида){% if concrete != "" %},
 или{% endif %}{% endif %}{% if concrete != "" %} конкретный тип прямо во входе узла ({{ concrete }} — модуля под одну строку `app`
 не заводит){% endif %}{% endif %}. Приложение при этом всё
 равно зовёт только методы порта.
