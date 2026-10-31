@@ -1,3 +1,8 @@
+# Host-тесты — только через nextest (`cargo xtask test host`): он даёт тесту
+# свой процесс, а часы `MockDriver` — одни на процесс, и под `cargo test`
+# тесты с ними нестабильны — docs/conventions.md, «Host-тесты — только через
+# nextest».
+#
 # Host-тесты `domain` и `adapters` идут над фейками портов и флеша, которые
 # не ждут по-настоящему: их future готовы с первого `poll` (`mod fakes`
 # рядом с тестами){% if has_net == "true" %}, а сетевые тесты `adapters::net`
