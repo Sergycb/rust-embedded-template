@@ -30,7 +30,7 @@ mod topics;
 use core::net::SocketAddrV4;
 
 use defmt_or_log::{FormatOrDebug, info, warn};
-use embedded_io_async::{Read, Write};
+use embedded_io_async::{ErrorType, Read, Write};
 use ports::dial::Dial;
 
 pub use self::broker::{Broker, Endpoint, Fixed};
@@ -78,6 +78,7 @@ supervisor::supervisor_fragment! {
 impl<B: Broker, D: Dial + Read + Write> MqttCtx<'_, B, D>
 where
     <D as Dial>::Error: FormatOrDebug,
+    <D as ErrorType>::Error: FormatOrDebug,
 {
     fsm::machine! {
         machine Mqtt mod edges {
@@ -167,6 +168,7 @@ where
 pub async fn task<B: Broker, D: Dial + Read + Write>(mut ctx: MqttCtx<'_, B, D>)
 where
     <D as Dial>::Error: FormatOrDebug,
+    <D as ErrorType>::Error: FormatOrDebug,
 {
     match ctx.run().await {}
 }
@@ -583,6 +585,20 @@ pub(crate) mod tests {
         let (broker, mut session) = online(env());
         broker.fail_reads();
         assert_eq!(poll(session.as_mut()), Poll::Ready(Ended::Lost));
+    }
+
+    /// Отказ брокера в ответ на публикацию (PUBACK с кодом 0x87, Not
+    /// authorized — ACL не пускает в тему) — не обрыв связи: сессия живёт.
+    #[test]
+    fn rejected_publish_keeps_session() {
+        let (broker, mut session) = online(env());
+        let [hi, lo] = 2u16.to_be_bytes();
+        broker.push(&[0x40, 0x03, hi, lo, 0x87]);
+        assert!(poll(session.as_mut()).is_pending(), "сессия в сети");
+        MockDriver::get().advance(TELEMETRY_INTERVAL);
+        assert!(poll(session.as_mut()).is_pending());
+        let sent = sent(&broker.output());
+        assert!(sent.iter().any(|p| p.topic == topic("/telemetry")));
     }
 
     #[test]
