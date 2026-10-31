@@ -124,15 +124,14 @@ Modbus{% endif %}{% if net_services != "" %}, секреты служб{% endif 
 | `cargo xtask lint cross` | `crates-cross`: `fmt --check` + `clippy -D warnings` |
 | `cargo xtask build` | `crates-cross`: debug + release,{% if ota == "true" %} `app.bin`,{% endif %} размер образа{% if ota == "true" %}, подпись{% endif %} |
 | `typos` | опечатки в коде и документации; исключения — `.typos.toml`. Нужен `typos-cli` (ставит `cargo xtask setup`), гоняется в CI отдельным джобом |
-| `cargo deny check` | лицензии (только пермиссивные), источники, уязвимости зависимостей по `deny.toml`; для прошивки — с `--manifest-path crates-cross/Cargo.toml`. Нужен `cargo-deny` (ставит `cargo xtask setup`), гоняется в CI |
+| `cargo deny check` | лицензии (только пермиссивные{% if has_canopen == "true" %}; исключение — MPL-2.0 у `zencan`{% endif %}), источники, уязвимости зависимостей по `deny.toml`; для прошивки — с `--manifest-path crates-cross/Cargo.toml`. Нужен `cargo-deny` (ставит `cargo xtask setup`), гоняется в CI |
 | `cargo xtask pins [БЛОК\|ПИН]` | справочник по чипу `{{chip}}`: выводы, альтернативные функции, DMA, тактирование |
-| `cargo xtask pins --check` | не занят ли отладочный порт в `resources.rs` |
+| `cargo xtask pins --check` | распиновка во всём `crates-cross/bsp/src`: занятый отладочный порт — ошибка, выводы кварца и MCO — предупреждение |
 
 ### С платой — не запускать без явного разрешения пользователя
 
 | Команда | Что делает |
 |---|---|
-| `cargo xtask setup` | ставит `rustup target` и компоненты, `probe-rs`, `flip-link`, `cargo-nextest`, `cargo-deny`, `cargo-hack`, `cargo-llvm-cov`, `cargo-insta`, `typos-cli`, а для ручного запуска — `cargo-mutants`, `cargo-bloat`, `cargo-machete`, `taplo-cli` — меняет систему |
 | {% if ota == "true" %}`cargo flash -p boot --release --chip {{chip}}`, затем {% endif %}`cargo run -p app` (исключение из правила выше: запускать в `crates-cross/`) | прошивка руками — необратимо; отдельной команды в `xtask` нет, и начало образа с `memory.x` здесь не сверяется — это делает `cargo xtask build` |
 | `cargo xtask test target` | тесты внутри МК (`embedded-test` + `probe-rs run`){% if ota == "true" %}; сам заливает bootloader{% endif %} |
 | `cargo xtask test host-target` | хост управляет прошитым устройством; сам заливает release-образы, сверив начало приложения с `ORIGIN` раздела из `memory.x` |
@@ -163,7 +162,8 @@ check`, `cargo hack --feature-powerset`, покрытие (`cargo llvm-cov`) и 
 `cargo deny check advisories` по обоим lock-файлам каждую ночь{% if ota == "true" %}, `release.yml`
 (Release) — `cargo xtask build` и подпись по тегу `v*`{% endif %}.{% elsif ci == "gitlab" %} В `.gitlab-ci.yml` отдельно:
 `pins:check` — `chip-info --check` по фильтру путей (распиновка и справочник),
-`audit` — `cargo deny check advisories` по обоим lock-файлам по расписанию{% if ota == "true" %},
+`audit` — `cargo deny check advisories` по обоим lock-файлам по расписанию,
+`renovate` — обновления зависимостей по тому же расписанию{% if ota == "true" %},
 `release:build`/`release:publish` — `cargo xtask build` и подпись по тегу `v*`{% endif %}.{% endif %}{% if ci != "none" %} Полный
 перечень и что нужно для зелёного CI — README, «Что проверяет CI». Добавили шаг
 в CI — допишите его сюда, компилятор такого расхождения не увидит.{% endif %}
@@ -176,8 +176,8 @@ host-сборка, `crates-cross/Cargo.lock` — первая cross-сборка
 верен одному сочетанию, а остальным ронял бы `cargo fetch --locked` в CI.
 
 Первые две команды железа не требуют вовсе, третья и четвёртая — только тулчейн с
-целевым target'ом (ставится `cargo xtask setup`). Два оставшихся этапа тестирования
-нужны с подключённой платой:
+целевым target'ом и `flip-link` (линкер прошивки; оба ставит `cargo xtask setup`).
+Два оставшихся этапа тестирования нужны с подключённой платой:
 
 ```
 cargo xtask test target        # тесты внутри МК (embedded-test + probe-rs run)
@@ -204,6 +204,11 @@ read`: руками пришлось бы сначала найти адрес �
 - Не прошивать плату (`cargo flash`, `cargo run` в `crates-cross`, `test target`,
   `test host-target`, `panic-info`, `probe-rs`) без явного разрешения
   пользователя — необратимо и требует железа.
+- Не запускать `cargo xtask setup` и `cargo install` без разрешения пользователя —
+  меняет систему: `setup` ставит `rustup target` и компоненты, `probe-rs`,
+  `flip-link`, `cargo-nextest`, `cargo-deny`, `cargo-hack`, `cargo-llvm-cov`,
+  `cargo-insta`, `typos-cli`, а для ручного запуска — `cargo-mutants`,
+  `cargo-bloat`, `cargo-machete`, `taplo-cli`.
 - Не добавлять зависимости без разрешения пользователя — правила см. `docs/conventions.md`.
 - Не менять версию в `rust-toolchain.toml` без разрешения пользователя{% if ci == "gitlab" %} и без
   образов `rust:` в `.gitlab-ci.yml`{% endif %} — от неё зависит воспроизводимость
