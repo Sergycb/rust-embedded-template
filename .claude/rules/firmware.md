@@ -11,20 +11,15 @@ paths: crates-cross/**
   ограничение линкера, а не Cargo. Развилка по профилю делается через
   `#[cfg(debug_assertions)]` (паникёр — `app/src/panic.rs`{% if ota == "true" %}; у `boot` свой, сброс
   без сообщения{% endif %}), не Cargo-фичей.
-- `Board` (один, `Board::new() -> Board`) отдаёт рычаги платы — объекты под
-  трейтами (`embedded-io-async`, `embedded-storage`, порты `ports`): потоки, шины,
-  разделы флеша, объекты драйверов микросхем платы (тип драйвера — `adapters` или
-  внешний крейт) — и данные о чипе (`bsp::ChipSpec`), а не
-  `Peripherals`, не пины, не периферию ядра и не `Clocks`. Реализация поверх
-  стандартных трейтов — `adapters`, нужен чип — `bsp`; HAL-объект, уже
-  реализующий трейт, — псевдонимом, своя структура в `bsp` — только обёртка там,
-  где реализации трейта нет.{% if has_usb == "true" or has_net == "true" %} Пары из одного
-  конструктора собирает плата: {% if has_usb == "true" %}`board.<usb>: Usb { device, cdc }`{% if has_net == "true" %}, {% endif %}{% endif %}{% if has_net == "true" %}`board.net: Net
-  { runner, stack }`{% endif %}, и память их адаптеров — статики `bsp`.{% endif %} Адаптеры, чей тип или
-  память выбирает приложение, строит `app` — {% if graph == "true" %}выражением в привязке графа, память — `static T`
-  там же{% else %}модуль задачи, память — его статики{% endif %} (`crate::link::<вид>[::<транспорт>]::link`: у uart/usb — подмодуль на
-  транспорт, у tcp/udp модуль транспорта — сам файл вида), — и отдаёт узлу
-  `domain` готовыми.
+- `Board` (один, `Board::new() -> Board`{% if has_usb == "true" or has_net == "true" %}, пары из одного конструктора собирает
+  плата{% endif %}) отдаёт рычаги платы под трейтами и данные о чипе
+  (`bsp::ChipSpec`), а не `Peripherals`, не пины, не периферию ядра и не
+  `Clocks` — `docs/architecture.md`, «`Board` отдаёт рычаги платы, а не
+  периферию и не протоколы».
+- Реализация поверх стандартных трейтов — `adapters`, нужен чип — `bsp`; кто
+  строит адаптер, тот держит его память; адаптеры, чей тип или память выбирает
+  приложение, строит `app` и отдаёт узлу готовыми — `docs/architecture.md`,
+  «Адаптеры делятся по одному признаку — нужен ли чип».
 - `bsp` ничего не инициализирует сверх подъёма HAL: конструкторы зовутся `new`
   и только создают объекты. Всё, что запускает железо{% if graph == "true" %} (`arm()` у сторожа){% endif %},
   делает тот, кто этим железом распоряжается. Исключения — `ensure_*` для
@@ -41,11 +36,9 @@ paths: crates-cross/**
   `app` берёт напрямую (`cortex-m-rt` — точка входа и `HardFault`, `cortex-m` —
   свободные функции ядра), без обёрток в `bsp`; паника и фолт — в `app`. Сброс МК —
   рычаг `bsp::reset::Reboot` (на M7 он чистит кэш данных перед сбросом).
-{%- capture wrappers %}{% if ota == "true" %}, `Partitions`{% endif %}{% if has_usb == "true" %}, обёртки USB CDC{% endif %}{% if has_net == "true" %}, `Net`{% endif %}{% if config_store == "eeprom" %}, EEPROM{% endif %}{% endcapture %}
-{%- capture levers %}{% if wrappers != "" %}, `adapters` ({{ wrappers | remove_first: ", " }}){% endif %}{% if has_usb == "true" %}, `embassy-usb`{% endif %}{% if has_net == "true" %}, `embassy-net`{% endif %}{% if net_services contains "ssh" %}, `getrandom`{% endif %}{% endcapture %}
-- `bsp` зависит от `ports`{% if flash_page == "true" %} (и `flash-page`){% endif %}{% if levers != "" %} и от того, из чего собирает свои рычаги:
-  {{ levers | remove_first: ", " }}, —{% else %},{% endif %} но не от `domain`: входы узлов из полей `Board` заполняет `app`.{% if ota == "true" %} `boot` зовёт из `domain` только
-  {% if ota_store == "external" %}`domain::ota::boot::{boot_plan, screen_update}`{% else %}`domain::ota::boot::screen_update`{% endif %} (`docs/architecture.md`).{% endif %}
+- `bsp` не зависит от `domain`: входы узлов из полей `Board` заполняет `app`.{% if ota == "true" %}
+  `boot` зовёт из `domain` только {% if ota_store == "external" %}`domain::ota::boot::{boot_plan, screen_update}`{% else %}`domain::ota::boot::screen_update`{% endif %}.{% endif %}
+  Подробности — `docs/architecture.md`.
 - Логирование только `defmt`; `log` в прошивке не используется.
 - **Если вы в репозитории самого шаблона** (признак — каталог `chip-data-gen/`
   в корне): файлы здесь содержат Liquid и до генерации не являются валидным

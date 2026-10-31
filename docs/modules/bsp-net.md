@@ -7,9 +7,9 @@
 {%- if link_kinds contains "tcp" or link_kinds contains "udp" %}{{ sep }}`crates-cross/app/src/link/`{% assign sep = ", " %}{% endif %}
 {%- if net_services != "" %}{{ sep }}`crates-cross/app/src/net.rs`{% assign sep = ", " %}{% endif %}
 {%- if sep == ", " %}){% endif %}: порты — решение
-протокола, а не платы.{% if net_services contains "rest" or net_services contains "ssh" %} Сервер службы ({% if net_services contains "rest" %}`domain::http`{% if net_services contains "ssh" %}, {% endif %}{% endif %}{% if net_services contains "ssh" %}`domain::ssh`{% endif %})
-адаптера не получает: берёт сам стек и открывает сокет в своём узле, буферы —
-слоты `= static` фрагмента.{% endif %}
+протокола, а не платы.{% if net_services contains "rest" or net_services contains "ssh" %} Сервер службы адаптера не получает и открывает сокет
+сам — `docs/architecture.md`, «Адаптеры делятся по одному признаку — нужен ли
+чип».{% endif %}
 
 Шаблон выводы не выбирает (`docs/architecture.md`), поэтому `Device` пока —
 заглушка `bsp::stub::NetDevice`: линк всегда опущен, кадров нет. Всё остальное
@@ -18,10 +18,9 @@
 Проект собирается и запускается, протокол ждёт клиента вечно. Подставить
 Ethernet — заменить устройство: стек, сокеты и граф не меняются.
 
-Пару собирает плата, а не приложение: фоновая работа стека и сам стек
-рождаются одним `embassy_net::new` и уходят разным узлам, поэтому `Board::new`
-строит её один раз, а граф делит по полям (`board.net.runner` — узлу `NET`,
-`board.net.stack` — узлам с сокетами). Затравка стека — {% if rng_irq != "" %}первое слово аппаратного
+Пару собирает плата, а не приложение (`docs/architecture.md`, «`Board` отдаёт
+рычаги платы, а не периферию и не протоколы»); граф делит её по полям
+(`board.net.runner` — узлу `NET`, `board.net.stack` — узлам с сокетами). Затравка стека — {% if rng_irq != "" %}первое слово аппаратного
 генератора (`bsp::rng`){% else %}из заводского номера (`seed_from_uid`: RNG у чипа нет){% endif %}.
 
 ## Как подставить свой Ethernet

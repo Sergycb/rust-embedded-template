@@ -281,11 +281,9 @@ resources: [WS: &'static mut $crate::x::Workspace = static |w| w.gain = inputs.g
    (`docs/watchdog.md`) не проверяется. Узел, который ждёт событие, которого
    может не быть всю жизнь платы, сторожем не отмечается — как `NET` и `HTTP`.
 4. **Железо — через рычаг платы.** Узел не берёт периферию сам: `bsp` отдаёт
-   рычаг полем `Board`; адаптер над ним, чей тип или память выбирает
-   приложение, `app` строит в `fragments:` (память — `static [u8; N]` там же)
-   и отдаёт узлу во входе фрагмента, а адаптер, без которого рычаг не собрать,
-   плата собирает сама{% if net_services contains "rest" or net_services contains "ssh" %}. Сервер службы ({% if net_services contains "rest" %}`HTTP`{% if net_services contains "ssh" %}, {% endif %}{% endif %}{% if net_services contains "ssh" %}`SSH`{% endif %}) получает рычагом сам
-   стек сети и открывает сокет в узле{% endif %} (`docs/architecture.md`).
+   рычаг полем `Board`, а адаптер над ним, чей тип или память выбирает
+   приложение, `app` строит в `fragments:` и отдаёт узлу во входе фрагмента (`docs/architecture.md`, «Адаптеры делятся по
+   одному признаку — нужен ли чип»).
 5. **Тест на хосте** — по образцу `mod tests` в `crates-host/domain/src/heartbeat.rs`
    (тесты — в модуле узла, не отдельным файлом):
    `supervisor::stand!` строит контекст и порты узла без графа, время
