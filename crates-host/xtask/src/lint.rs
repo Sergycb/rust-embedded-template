@@ -42,19 +42,11 @@ pub fn lint_cross(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     // {%- endif %}
     let _p = sh.push_dir(root_dir().join("crates-cross"));
     cmd!(sh, "cargo fmt --check").run()?;
-    // Без `--all-targets`: он добавил бы `lib test` — цель, которую cargo
-    // строит для unit-тестов внутри библиотеки. Ей нужен крейт `test`, а его
-    // для `thumbv*-none-*` не существует (E0463), так что no_std-библиотека
-    // вроде `bsp` на ней падает всегда, независимо от своего содержимого.
-    cmd!(sh, "cargo clippy --workspace -- -D warnings").run()?;
-    // Тесты на устройстве при этом линтятся: у них свой harness и свой
-    // `#![no_main]`, крейт `test` им не нужен — но и в `--workspace` выше они
-    // не попадают, потому что это отдельная тестовая цель.
-    cmd!(
-        sh,
-        "cargo clippy -p target-tests --test test -- -D warnings"
-    )
-    .run()?;
+    // `--all-targets` — та же команда, что зовёт rust-analyzer: заодно
+    // линтятся тесты на устройстве (`target-tests`, свой harness). Цели
+    // unit-тестов у `bsp` нет (`test = false` в его манифесте): ей нужен крейт
+    // `test`, а его для `thumbv*-none-*` не существует (E0463).
+    cmd!(sh, "cargo clippy --workspace --all-targets -- -D warnings").run()?;
     // Second pass, release only: the release profile turns
     // `debug-assertions`/`overflow-checks` off, so anything behind `debug_assert!`
     // or `#[cfg(not(debug_assertions))]` (the release panic handler in
