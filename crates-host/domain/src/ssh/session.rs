@@ -11,7 +11,7 @@ use sunset_async::sunset::{ChanHandle, PubKey, ServEvent, SignKey};
 use sunset_async::{ProgressHolder, SSHServer};
 
 use crate::ssh::console::{Device, LINE, Out, parse, run, shell};
-use crate::ssh::login::{Access, USER};
+use crate::ssh::login::Access;
 
 /// Порт SSH.
 pub const PORT: u16 = 22;
@@ -156,7 +156,7 @@ async fn negotiate(
     loop {
         // `sunset` попыток не считает: перебору пароля мешает только это и
         // `LOGIN_TIMEOUT`. Отказ — конец соединения, как у OpenSSH.
-        if failures >= MAX_AUTH_TRIES {
+        if tries_exhausted(failures) {
             warn!(
                 "ssh: {} неудачных попыток входа — соединение закрыто",
                 failures
@@ -172,10 +172,10 @@ async fn negotiate(
                 matches!(access, Access::Key(_)),
             )?,
             ServEvent::PasswordAuth(a) => {
-                if let Access::Password(password) = access
-                    && a.matches_username(USER)
-                    && a.matches_password(password)
-                {
+                if access.admits_password(
+                    |user| a.matches_username(user),
+                    |password| a.matches_password(password),
+                ) {
                     a.allow()?;
                 } else {
                     warn!("ssh: неверный пользователь или пароль");
@@ -183,11 +183,13 @@ async fn negotiate(
                 }
             }
             ServEvent::PubkeyAuth(a) => {
-                let known = match (access, a.pubkey()?) {
-                    (Access::Key(key), PubKey::Ed25519(given)) => given.key.0 == key,
-                    _ => false,
+                // Не `match`: прочие варианты `PubKey` зависят от фич `sunset`.
+                let key = if let PubKey::Ed25519(given) = a.pubkey()? {
+                    Some(given.key.0)
+                } else {
+                    None
                 };
-                if known && a.username()? == USER {
+                if access.admits_key(key, |user| a.username().map(|name| name == user))? {
                     a.allow()?;
                 } else {
                     warn!("ssh: чужой ключ или пользователь");
@@ -219,4 +221,10 @@ async fn negotiate(
             _ => {}
         }
     }
+}
+
+/// Попытки входа на соединение кончились: после `failures` неудач оно
+/// закрывается.
+pub(super) fn tries_exhausted(failures: u8) -> bool {
+    failures >= MAX_AUTH_TRIES
 }

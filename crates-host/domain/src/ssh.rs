@@ -182,11 +182,13 @@ pub async fn task<K: HostKey>(mut ctx: SshCtx<'_, K>) {
 
 #[cfg(test)]
 mod tests {
-    //! Тесты узла `SSH`: ключ пользователя, команды, `info`, ключ хоста.
+    //! Тесты узла `SSH`: ключ пользователя, вход, команды, `info`, ключ хоста.
 
     use crate::device::{DeviceInfo, PANIC_BRIEF};
     use crate::ssh::console::{INFO_TEXT, parse, write_info};
-    use crate::ssh::{Command, ed25519_public_key};
+    use crate::ssh::login::Access;
+    use crate::ssh::session::tries_exhausted;
+    use crate::ssh::{Command, Login, USER, ed25519_public_key};
     // {%- if ssh_host_key == "config" %}
     use crate::ssh::{HostKey, Stored};
     // {%- endif %}
@@ -248,6 +250,75 @@ mod tests {
         ] {
             assert_eq!(ed25519_public_key(line), None, "{line}");
         }
+    }
+
+    /// По паролю пускает только пароль прошивки вместе с [`USER`]; при входе
+    /// по ключу (и при ключе, который не разобрался) пароль не пускает никого.
+    #[test]
+    fn a_password_lets_in_only_its_user() {
+        let by_password = Access::new(Login::Password("s3cret"));
+        // Сверка `sunset` здесь — простое равенство: решение от неё не
+        // зависит.
+        for (access, user, password, admitted) in [
+            (by_password, USER, "s3cret", true),
+            (by_password, USER, "s3cre", false),
+            (by_password, USER, "S3CRET", false),
+            (by_password, USER, "", false),
+            (by_password, "root", "s3cret", false),
+            // Вход по ключу, а пришёл пароль.
+            (Access::new(Login::Key(KEY)), USER, "s3cret", false),
+            (Access::new(Login::Key("мусор")), USER, "s3cret", false),
+            (Access::new(Login::Key("мусор")), USER, "", false),
+        ] {
+            assert_eq!(
+                access.admits_password(|u| u == user, |p| p == password),
+                admitted,
+                "{user} {password}"
+            );
+        }
+    }
+
+    /// По ключу пускает только ключ прошивки вместе с [`USER`]; при входе по
+    /// паролю (и при ключе прошивки, который не разобрался) ключ не пускает
+    /// никого.
+    #[test]
+    fn a_key_lets_in_only_its_user() {
+        let key = ed25519_public_key(KEY).expect("ключ разбирается");
+        let by_key = Access::new(Login::Key(KEY));
+        for (access, user, given, admitted) in [
+            (by_key, USER, Some(key), true),
+            (by_key, "root", Some(key), false),
+            (by_key, USER, Some([0x55; 32]), false),
+            // Ключ не ed25519.
+            (by_key, USER, None, false),
+            // Вход по паролю, а пришёл ключ.
+            (
+                Access::new(Login::Password("s3cret")),
+                USER,
+                Some(key),
+                false,
+            ),
+            (Access::new(Login::Key("мусор")), USER, Some(key), false),
+            (Access::new(Login::Key("мусор")), USER, Some([0; 32]), false),
+        ] {
+            assert_eq!(
+                access.admits_key(given, |u| Ok::<_, ()>(u == user)),
+                Ok(admitted),
+                "{user} {given:?}"
+            );
+        }
+        // Чужой ключ — неудача, а имя не спрашивается: ошибка его разбора
+        // закрыла бы соединение, а не засчиталась попыткой.
+        assert_eq!(by_key.admits_key(Some([0x55; 32]), |_| Err(())), Ok(false));
+    }
+
+    /// Пять неудач — ещё попытка, шестая закрывает соединение.
+    #[test]
+    fn the_sixth_failure_closes_the_connection() {
+        for failures in 0..6 {
+            assert!(!tries_exhausted(failures), "{failures}");
+        }
+        assert!(tries_exhausted(6));
     }
 
     #[test]
