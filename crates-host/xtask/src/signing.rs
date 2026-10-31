@@ -7,8 +7,8 @@ use anyhow::Context;
 use crate::image::{PUBLIC_KEY_SYMBOL, image_symbol};
 
 /// Открытый ключ, которым устройство проверяет подпись. В отличие от закрытого
-/// — коммитится: именно он попадает в прошивку (его читает
-/// `crates-cross/app/build.rs`), и без него собранный образ не примет ни одно
+/// — коммитится: именно он попадает в bootloader (его читает
+/// `crates-cross/boot/build.rs`), и без него собранный образ не примет ни одно
 /// устройство.
 pub const PUBLIC_KEY_FILE: &str = "ota-public-key.bin";
 
