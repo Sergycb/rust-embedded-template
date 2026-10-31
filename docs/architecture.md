@@ -127,10 +127,8 @@ Compose-site — модули задач (подмодули `crates-cross/app/s
 логика разговаривает с портами — ошибки, — объявлено в `ports`: тот стал словарём
 домена, а не только набором трейтов. Своё в `domain` — только контексты узлов{% if graph == "true" %}
 (их эмитит фрагмент), состояния автоматов и входы фрагментов ({% if ota == "true" %}`OtaWiring`, {% endif %}`IdleMeter`{% if ota == "true" %}, `Mode`{% endif %}){% else %} и состояния автоматов{% endif %}{% if protocol != "none" %},
-включая обработчик протокола{% if graph == "true" %} на этом входе{% endif %}: {% if protocol == "protobuf" %}`protobuf::Service`{% elsif protocol == "modbus" %}`modbus::EmptyRegisters` (порт `Registers`; карта одна на проект —
-псевдоним `crate::modbus::Map`, ручка `crate::modbus::Handle` над
-`domain::modbus::MapMutex`, — все узлы `MODBUS_*` работают над ней{% if ota == "true" %}, а окно OTA
-`modbus::OtaRegisters` оборачивает ручку снаружи, вне блокировки{% endif %}){% else %}`canopen::dictionary` (словарь объектов){% endif %} — логика приложения,
+включая обработчик протокола{% if graph == "true" %} на этом входе{% endif %}: {% if protocol == "protobuf" %}`protobuf::Service`{% elsif protocol == "modbus" %}`modbus::EmptyRegisters` (порт `Registers`; карта одна на все узлы `MODBUS_*` —
+`docs/modules/app.md`){% else %}`canopen::dictionary` (словарь объектов){% endif %} — логика приложения,
 которую проект правит под себя, поэтому живёт в `domain`, а не в `app`{% endif %}.
 Состояние внутри одного вызова функции{% if ota == "true" %} (хвост до слова флеша при приёме){% endif %} живёт в
 её локальных переменных, а не в структуре.
@@ -169,7 +167,7 @@ Compose-site — модули задач (подмодули `crates-cross/app/s
 `ports::Dial`{% endif %}.{% endif %}
 {%- assign sep = "" %}
 {%- capture types %}
-{%- if protocol_link == "true" %}{{ sep }}`crate::link::<вид>[::<транспорт>]::Link` (у uart/usb — подмодуль на транспорт, у tcp/udp модуль транспорта — сам файл вида){% assign sep = ", " %}{% endif %}
+{%- if protocol_link == "true" %}{{ sep }}`crate::link::<вид>[::<транспорт>]::Link` (`docs/modules/app.md`){% assign sep = ", " %}{% endif %}
 {%- if ota == "true" %}{{ sep }}`adapters::ota::Updater<bsp::FirmwareFlash, _>`{% assign sep = ", " %}{% endif %}
 {%- if config == "true" %}{{ sep }}`adapters::settings::Settings<bsp::ConfigFlash>`{% assign sep = ", " %}{% endif %}
 {%- endcapture %}
@@ -370,6 +368,17 @@ Bound'ов у параметров нет намеренно: их держит 
 {%- if has_usb == "true" or has_net == "true" %} Память, без которой рычаг не собрать
 ({% if has_usb == "true" %}буферы класса CDC{% if has_net == "true" %}, {% endif %}{% endif %}{% if has_net == "true" %}`StackResources` стека{% endif %}), — наоборот, у платы:
 адаптер над ней строит она (выше).{% endif %}
+{%- if has_stub == "true" %}
+
+**Выводов шаблон не выбирает — до драйвера в поле `Board` стоит заглушка
+(`bsp::stub`).** Какой блок и на каких ножках, знает только плата. Пока драйвер не
+подставлен, проект с заглушкой собирается и запускается: приём ждёт вечно (узел
+спит, не занимая исполнитель), а передача молча выбрасывает данные. Заглушка —
+часть платы, а не приложения: «железо, которого пока нет». Заменить её —
+поменять псевдоним в модуле блока на драйвер `embassy-stm32`{% if has_can == "true" %} (у CAN — свой тип
+над контроллером, реализующий `ports::CanBus`){% endif %}; рецепт — `docs/modules/bsp-*.md`
+модуля блока.
+{%- endif %}
 
 `Board` один (`Board::new() -> Board`)
 {%- if has_usb == "true" or has_net == "true" %}, и пары, которые нельзя собрать порознь,
@@ -377,10 +386,8 @@ Bound'ов у параметров нет намеренно: их держит 
 device, cdc }` (классы `embassy-usb` регистрируются до постройки устройства;
 устройство — узлу `USB_*`, поток CDC — транспорту протокола){% endif %}{% if has_usb == "true" and has_net == "true" %} и{% endif %}{% if has_net == "true" %} сеть —
 `board.net: bsp::net::Net { runner, stack }` (их рождает один `embassy_net::new`;
-фоновая работа — узлу `NET`, стек — сокетам узлов). Сокетов в стеке —
-`bsp::net::SOCKETS`: стек строит плата, поэтому и счёт у неё (DHCP-клиент,
-сетевые транспорты, соединения служб — числа из генерации), и отдельной
-проверки, что слотов хватит, не нужно.{% if rng_irq != "" %} Затравка стека{% if net_services contains "ssh" %} и бэкенд
+фоновая работа — узлу `NET`, стек — сокетам узлов). Стек строит плата, поэтому
+и счёт сокетов у неё (`bsp::net::SOCKETS`, `docs/modules/bsp-net.md`).{% if rng_irq != "" %} Затравка стека{% if net_services contains "ssh" %} и бэкенд
 `getrandom`{% endif %} над RNG — тоже плата (`bsp::rng`).{% endif %}{% else %}.{% endif %}
 {%- else %}.
 {%- endif %} {% if graph == "true" %}Граф берёт `Board`
@@ -510,8 +517,7 @@ host`), поэтому их исходник обязан оставаться �
 {%- if config == "true" %}{{ sep }}`adapters::settings::Settings<bsp::ConfigFlash>`{% assign sep = ", " %}{% endif %}
 {%- endcapture %} Рычагу платы его даёт `bsp` ({% if levers != "" %}{{ levers }}{% else %}`pub type X = ...`{% endif %})
 {%- if protocol_link == "true" or concrete != "" %}, адаптеру —{% if protocol_link == "true" %} модуль
-`app`, который выбирает его тип (`crate::link::<вид>[::<транспорт>]::Link`; у uart/usb — подмодуль на
-транспорт и `Source`, у tcp/udp модуль транспорта — сам файл вида){% if concrete != "" %},
+`app`, который выбирает его тип (`crate::link::<вид>[::<транспорт>]::Link`, `docs/modules/app.md`){% if concrete != "" %},
 или{% endif %}{% endif %}{% if concrete != "" %} конкретный тип прямо во входе узла ({{ concrete }} — модуля под одну строку `app`
 не заводит){% endif %}{% endif %}. Приложение при этом всё
 равно зовёт только методы порта.

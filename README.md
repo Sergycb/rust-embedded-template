@@ -606,12 +606,13 @@ Identification (производитель и модель — `crates-host/doma
 {%- else %} словарь объектов `crates-host/canopen/device.toml`.
 {%- endif %}
 {%- if protocol_link == "true" %} Канал протокола (кадрирование, сокет) строит `app` над рычагом
-платы: тип канала, его буферы, порт и `link` — `crates-cross/app/src/link/<вид>.rs`.{% else %} Шину CAN узел берёт как есть, без адаптера.{% endif %}
+платы: тип канала, его буферы, порт и `link` — `crates-cross/app/src/link/<вид>.rs`
+(`docs/modules/app.md`).{% else %} Шину CAN узел берёт как есть, без адаптера.{% endif %}
 {%- endif %}
 
 Выводы шаблон не выбирает: в поле `Board`{% if has_usb == "true" or has_net == "true" %} ({% if has_usb == "true" %}у USB — под устройство
 `embassy-usb`{% if has_net == "true" %}, {% endif %}{% endif %}{% if has_net == "true" %}у Ethernet — под стек `embassy-net`{% endif %}; их собирает плата){% endif %} встаёт заглушка (`bsp::stub`), с которой проект
-собирается и запускается, но узел ждёт впустую. Подставить своё железо —
+собирается и запускается, но узел ждёт впустую (`docs/architecture.md`). Подставить своё железо —
 правка в модуле `bsp` транспорта по рецепту из таблицы
 (`cargo xtask pins <БЛОК> --snippet`).
 {%- if modbus_master == "true" %} Master Modbus —

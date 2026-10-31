@@ -184,8 +184,7 @@ read`: руками пришлось бы сначала найти адрес �
 
 - Задачи `embassy` не могут быть generic: тип, уезжающий в `#[embassy_executor::task]`,
   получает псевдоним (`pub type X = ...`): рычаг — от `bsp`{% if ota == "true" or config == "true" %} ({% if ota == "true" %}`bsp::FirmwareFlash`{% if config == "true" %},
-  {% endif %}{% endif %}{% if config == "true" %}`bsp::ConfigFlash`{% endif %}){% endif %}, адаптер — от `app`{% if protocol_link == "true" %} (`crate::link::<вид>[::<транспорт>]::Link`: у uart/usb —
-  подмодуль на транспорт и `Source`, у tcp/udp модуль транспорта — сам файл вида){% endif %} или
+  {% endif %}{% endif %}{% if config == "true" %}`bsp::ConfigFlash`{% endif %}){% endif %}, адаптер — от `app`{% if protocol_link == "true" %} (`crate::link::<вид>[::<транспорт>]::Link`){% endif %} или
   конкретным типом прямо {% if graph == "true" %}в графе{% else %}в задаче{% endif %}{% if ota == "true" %} (`adapters::ota::Updater<bsp::FirmwareFlash, _>`){% endif %}
   — `docs/architecture.md`.
 - Ровно один `#[panic_handler]` и один активный `#[global_logger]` на бинарник: логгер
@@ -223,8 +222,8 @@ read`: руками пришлось бы сначала найти адрес �
 {%- if shared_flash == "true" or ota == "true" or config_store == "flash" or external_flash == "true" %}
 - `NoopRawMutex` у мьютексов флеша{% if ota == "true" and graph == "true" %} и `local` на слотах узла OTA{% endif %} — одно допущение
   «один исполнитель», менять вместе — `docs/flash.md`.{% if has_modbus == "true" %} Карта регистров Modbus
-  (`domain::modbus::MapMutex`) в него не входит: она в `OnceLock` в `static`
-  (`crate::modbus::handle()`), и мьютекс — `CriticalSectionRawMutex` ради `Sync`.{% endif %}
+  (`domain::modbus::MapMutex`, `CriticalSectionRawMutex`) в него не входит —
+  `docs/modules/app.md`, «Modbus: одна карта на все узлы `MODBUS_*`».{% endif %}
 {%- endif %}
 {%- if ota == "true" %}
 - Подтверждение образа (`mark_booted`) — в стартовом действии узла OTA
@@ -311,18 +310,10 @@ read`: руками пришлось бы сначала найти адрес �
 {%- endif %}
 {%- if has_net == "true" %}
 {%- if rng_irq != "" %}
-- Клок блока `RNG` даёт `config()` в `crates-cross/bsp/src/board.rs` — у
-  каждой линии свой источник (PLL Q, HSI48, `RNGSEL`). Меняете тактирование —
-  сохраните его: без клока прошивка паникует или виснет в `Board::new`
-  (`Rng::new`, затравка) — что именно, зависит от линии,
-  `docs/modules/bsp-rng.md`. Блок `RNG` берёт группа `rng` из
-  `resources.rs`, и генератор наружу не выходит: `bsp::rng::seed` в
-  `Board::new` засевает им сетевой стек и {% if net_services contains "ssh" %}оставляет его бэкенду
-  `getrandom` (`bsp::rng`, символ `__getrandom_v03_custom`; бэкенд выбирает
-  `--cfg getrandom_backend="custom"` в `crates-cross/.cargo/config.toml`) —
-  другого пути к генератору нет, SSH берёт байты через `getrandom`{% else %}дропает его, так что блок
-  включён только на время затравки{% endif %}.
-  Блок и клок заводятся только с сетевым транспортом.
+- Клок блока `RNG` даёт `config()` в `crates-cross/bsp/src/board.rs` — меняете
+  тактирование, сохраните его: без клока прошивка паникует или виснет в
+  `Board::new`. Генератор наружу из `bsp` не выходит{% if net_services contains "ssh" %}: SSH берёт байты только
+  через `getrandom`{% endif %} — `docs/modules/bsp-rng.md`.
 {%- endif %}
 {%- endif %}
 {%- if protocol == "canopen" %}
@@ -371,65 +362,36 @@ read`: руками пришлось бы сначала найти адрес �
   `#[embassy_executor::main]`: возврат к макросу молча ломает замер загрузки —
   `docs/modules/app-cpu-load.md`, «Почему цикл исполнителя в `main` написан руками».
 {%- if protocol_link == "true" %}
-{%- capture sources %}{% if has_uart == "true" %}, потоком UART{% endif %}{% if has_usb == "true" %}, потоком CDC{% endif %}{% if has_net == "true" %}, сетевым стеком{% endif %}{% endcapture %}
-- Канал протокола (кадрирование, сокет) строит `link(…)` модуля транспорта над
-  тем, что отдала плата: {{ sources | remove_first: ", " }}; память канала — {% if graph == "true" %}`static T` в привязке графа{% else %}статики модуля задачи{% endif %}.
-  {%- if has_modbus == "true" %} Узел Modbus slave — `::domain::SERVER_FRAG<L, H>`, объявлен в `domain::server`
-  ({% if graph == "true" %}граф называет узлы{% else %}узлы{% endif %} `MODBUS_<транспорт>`).{% endif %}
-  {%- if has_protobuf == "true" %} Узел protobuf хоста — `::domain::PROTOBUF_FRAG<L>`, объявлен в
-  `domain::protobuf` (`PROTOBUF_<транспорт>`).{% endif %} Тип канала (`Link`), его размеры и `link` —
-  `crates-cross/app/src/link/<вид>.rs`, по модулю на транспорт (у uart/usb — подмодуль
-  `<транспорт>` с `Source`, у tcp/udp модуль транспорта — сам файл вида): размер буфера и
-  порт — решение приложения, и `bsp` их не знает. Буфер кадра держит сам канал
-  (`ports::FrameLink::buffer`), протокол — обработчик ({% if has_modbus == "true" %}`domain::server::Handler`:
-  `domain::modbus::Slave`{% if has_protobuf == "true" %}; {% endif %}{% endif %}{% if has_protobuf == "true" %}`domain::protobuf::Service`{% endif %}) — не порт: его
-  реализует и зовёт сам `domain`.
-  {%- if has_protobuf == "true" %} Канал узла `PROTOBUF` —
-  `ports::FrameDuplex`: брошенный `recv` не теряет кадр{% if cobs_used == "true" %} (у `adapters::cobs::Cobs`
-  декодер живёт в канале, а не в future){% endif %}, а ответ уходит из своего буфера узла
-  ({% if graph == "true" %}`static [u8; RESPONSE_MAX]` в привязке{% else %}статик модуля задачи{% endif %}) через `send_from`.{% endif %} Вход узла — {% if graph == "true" %}выражение в
-  `fragments:` графа{% else %}`spawn` модуля задачи
-  (`crates-cross/app/src/tasks/`: {% if has_modbus == "true" %}`domain::server::serve`{% if has_protobuf == "true" %}, {% endif %}{% endif %}{% if has_protobuf == "true" %}`ProtobufCtx` руками{% endif %}):
-  по модулю на задачу, `main.rs` только зовёт `tasks::spawn_all`{% endif %}.
+- Канал протокола строит `link(…)` модуля транспорта `crate::link::<вид>[::<транспорт>]`
+  над рычагом платы, память — {% if graph == "true" %}`static T` в привязке графа{% else %}статики модуля задачи{% endif %}; размер буфера и
+  порт — решение `app`, `bsp` их не знает; обработчик протокола — не порт{% if has_protobuf == "true" %};
+  канал `PROTOBUF` — `ports::FrameDuplex`, ответ — `send_from` из своего буфера{% endif %} —
+  `docs/modules/app.md`, «Канал протокола: `crate::link`».
 {%- endif %}
 {%- if net_services contains "rest" %}
-- Токен REST API — `rest-token.txt` в корне проекта, его вшивает
-  `include_str!` (`crate::net::rest::TOKEN` в `crates-cross/app/src/net.rs`).
-  Файл создаёт `cargo xtask` (`secrets::ensure` — в `build`, `lint cross` и перед
-  прошивкой), и он **коммитится**, а не уходит в `.gitignore`: токен и так открыт
-  в каждом образе, а без файла не собрались бы свежий клон и CI. Число
-  соединений — `HTTP_CONNECTIONS` в `[env]` `crates-cross/.cargo/config.toml`
-  (`crate::net::rest::CONNECTIONS`); пул `HTTP[{{ http_connections }}]` в `graph.rs` —
-  литерал, который генерация пишет тем же числом (`const`-assert там же);
-  сокеты стека под пул `bsp::net::SOCKETS` считает по тому же `HTTP_CONNECTIONS`.
-  Правите руками число — правьте и литерал.
+- Токен REST API — `rest-token.txt` в корне проекта: создаёт `cargo xtask`
+  (`secrets::ensure`), и он **коммитится**, а не уходит в `.gitignore` —
+  README, «REST API». Число соединений — `HTTP_CONNECTIONS` в `[env]`; пул
+  `HTTP[{{ http_connections }}]` в `graph.rs` — литерал того же числа (`const`-assert там же):
+  правите руками число — правьте и литерал.
 {%- endif %}
 {%- if net_services contains "ssh" %}
-- Консоль SSH (`domain::ssh`, узел `SSH`): {% if ssh_auth == "password" %}пароль — `ssh-password.txt`{% else %}открытый ключ пользователя — строка `crate::net::ssh::LOGIN`{% endif %}{% if ssh_host_key == "file" %}, ключ хоста — `ssh-host-key.bin` (`crate::net::ssh::HOST_KEY`){% endif %}.
-  {% if ssh_auth == "password" or ssh_host_key == "file" %}Файлы в корне проекта создаёт `cargo xtask` (`secrets::ensure`) и они
-  **коммитятся**{% if net_services contains "rest" %}, как токен REST{% endif %}: они вшиты и открыты в образе. {% endif %}{% if ssh_host_key == "config" %}Ключ хоста плата
-  создаёт при первом старте (`domain::ssh::Stored`, ключ настроек
+- Консоль SSH (`domain::ssh`, узел `SSH`): {% if ssh_auth == "password" %}пароль — `ssh-password.txt`{% else %}открытый ключ пользователя — строка `crate::net::ssh::LOGIN`{% endif %}{% if ssh_host_key == "file" %}, ключ хоста — `ssh-host-key.bin`{% endif %}{% if ssh_auth == "password" or ssh_host_key == "file" %};
+  файлы создаёт `cargo xtask` (`secrets::ensure`), и они **коммитятся**{% endif %} — README, «Консоль SSH».{% if ssh_host_key == "config" %}
+  Ключ хоста плата создаёт при первом старте (ключ настроек
   `domain::ssh::HOST_KEY_ID`) — хранилище настроек забирает узел `SSH`, своим
-  настройкам проекта нужен общий доступ через него. {% endif %}Случайность
-  `sunset` берёт через `getrandom` (`crates-cross/bsp/src/rng.rs`): без бэкенда
-  или с нулями вместо RNG ключи сессий предсказуемы. Код `sunset` — около
-  165 KiB, отсюда порог раздела приложения в генерации (`SSH_MIN_PARTITION`).
+  настройкам проекта нужен общий доступ через него.{% endif %} Случайность `sunset`
+  берёт через `getrandom` (`docs/modules/bsp-rng.md`): без бэкенда ключи сессий
+  предсказуемы. Код `sunset` — около 165 KiB, отсюда порог раздела приложения в
+  генерации (`SSH_MIN_PARTITION`).
 {%- endif %}
 {%- if net_services contains "mqtt" %}
-- Брокер MQTT (`domain::mqtt`, узел `MQTT`): адрес, вход и префикс тем — `mqtt.toml` в
-  корне проекта. Файл создаёт `cargo xtask` (`secrets::ensure`), он **коммитится**, а
-  читает и вшивает его `crates-cross/app/build.rs` (`crate::net::mqtt::BROKER`,
-  `PREFIX`; пароль открыт в образе). Заготовку сборка не отвергает: адрес
-  вписывает человек. Узел подключается сам: `dial` — одна попытка, неудачная —
-  строка в лог с адресом, и после неё и после любого конца сессии узел сразу
-  зовёт `dial` снова; паузы перед попытками (1 → 30 с) — контракт порта
-  `ports::dial::Dial`, их держит `adapters::net::TcpClient`, а не `domain`.
-  {%- if ota == "true" %} Клиент входа `CMD` узла OTA для `cmd/reboot` — номер
-  `{{ mqtt_ota_client }}` (`domain::ota::ClientId`).{%- endif %} Сокет клиента — слот в
-  `bsp::net::SOCKETS`; клиент (`TcpClient::new`) строит граф на стеке платы,
-  буферы TCP — `static [u8; crate::net::mqtt::TCP_BUFFER]` там же. Доступ к `cmd/` токеном в
-  теле не защищён — только ACL брокера{% if ota == "true" %} (при пустом `user` `build.rs` предупреждает){% endif %} —
-  `docs/modules/app-mqtt.md`.
+- Брокер MQTT (`domain::mqtt`, узел `MQTT`) — `mqtt.toml` в корне проекта:
+  создаёт `cargo xtask` (`secrets::ensure`), он **коммитится**, вшивает его
+  `crates-cross/app/build.rs` (README, «Клиент MQTT»). Паузы перед попытками
+  `dial` — контракт порта `ports::dial::Dial`, их держит `adapters::net::TcpClient`,
+  а не `domain`{% if ota == "true" %}; клиент входа `CMD` узла OTA — номер `{{ mqtt_ota_client }}`{% endif %}; доступ к `cmd/` —
+  только ACL брокера — `docs/modules/app-mqtt.md`.
 {%- endif %}
 {%- if graph == "true" %}
 - `#![allow(dead_code)]` в начале `crates-cross/app/src/graph.rs` — не
