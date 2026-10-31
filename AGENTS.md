@@ -56,40 +56,25 @@ Modbus{% endif %}{% if net_services != "" %}, секреты служб{% endif 
 прямо в `domain` — `docs/architecture.md`, «Адаптеры делятся по одному признаку — нужен
 ли чип» и «Порт и адаптер — или библиотека прямо в `domain`».
 Всё остальное — даже асинхронное и «системное» на вид (стейтчарты, RPC, синхронизация
-задач) — живёт в `domain`, а не в `cross`. Узлы тоже: подсистема объявляет свой
-`supervisor_fragment!`-ом{% if graph == "true" %} (`domain::cpu_load::CPU_LOAD_FRAG`){% endif %} рядом со своей задачей — самодостаточным модулем с задачей{% if graph == "true" %}
-и таймаутом сторожа{% endif %}, все имена внутри полным путём (`$crate::…`, `::supervisor::…`),
-типы, которых он не видит, — параметрами{% if ota == "true" %} (`OTA_FRAG` объявлен в `domain::ota`,
-виден как `::domain::OTA_FRAG<F, R>`){% endif %}.
-{%- if graph == "true" %} Граф собственных узлов не объявляет:
-`crates-cross/app/src/graph.rs` — только `boot:`, блок `watchdog:` и `fragments:`,
-который перечисляет фрагменты и даёт узлам имена (`HEARTBEAT_FRAG as HEARTBEAT`,
-`CPU_LOAD_FRAG as CPU_LOAD`).
-{%- endif %}
-**Каждая задача узла — автомат `#[fsm::typestate]`** на контексте, который эмитит
-фрагмент ({% if graph == "true" %}`ctx: $crate::cpu_load::CpuLoadCtx, task: $crate::cpu_load::task;`{% else %}`ctx: $crate::<узел>::<Узел>Ctx, task: $crate::<узел>::task;`{% endif %}): таблица на
-`impl <Узел>Ctx`, действия — его методы, задача — `match ctx.run().await {}`
-{%- if has_canopen == "true" %}
-(состоянию, которое заимствует данные из кадра задачи, — `ctx.run(&буфер, …)`
-с аргументами стартового действия, как у `domain::canopen`)
-{%- endif %}
-(у автомата с выходным состоянием `exit Down` — `ctx.run().await;`).
-Голый `loop` в функции `task` узла (вне действий автомата) и проекция аргументов
-(`task: f(ctx.поле)`) не пишутся
-{%- if graph == "true" %}.{% else %};
-единственное исключение — `cpu_load::log_load` (не узел).{% endif %} Бесконечное
-обслуживание внутри действия, которое ведёт в `exit Down`, — можно.
+задач) — живёт в `domain`, а не в `cross`, и узлы тоже (всё — `docs/architecture.md`):
+- подсистема объявляет узел `supervisor_fragment!`-ом рядом со своей задачей —
+  самодостаточным модулем, все имена внутри полным путём (`$crate::…`), типы,
+  которых он не видит, — параметрами{% if graph == "true" %}; `crates-cross/app/src/graph.rs` собственных
+  узлов не объявляет — только `boot:`, блок `watchdog:` и `fragments:` с именами
+  узлов{% endif %} — «Узлы — фрагменты в `domain`»;
+- **каждая задача узла — автомат `#[fsm::typestate]`** на контексте фрагмента,
+  задача — `match ctx.run().await {}`; голый `loop` в функции `task` и проекция
+  аргументов (`task: f(ctx.поле)`) не пишутся{% if graph != "true" %} (исключение — `cpu_load::log_load`,
+  не узел){% endif %} — «Каждая задача узла — автомат `#[fsm::typestate]`»;
 {%- if graph == "true" %}
-Объект от килобайта в слот по значению не кладётся (дважды проходит через стек
-под `flip-link`): слот `&'static mut T = static` — `docs/modules/app-graph.md`.
+- объект от килобайта в слот по значению не кладётся: слот
+  `&'static mut T = static` — `docs/modules/app-graph.md`;
 {%- endif %}
-**Узлы не падают:** `restart:` нет ни у одного, задача возвращает `()`. Отказ связи (канал, шина, транспорт) — запись в лог и возврат в
-начальное состояние автомата или переход в себя, а не выход и перезапуск{% if graph == "true" %} графом{% endif %}; переждать отказ
-(не вернуть ошибку снова без ожидания) — контракт порта, его держит реализация.
-Отсюда и зависимость `domain` от `supervisor` (ради контекста в сигнатуре; слова DSL —
-под фичами `supervisor`, их включает `crates-host/domain/Cargo.toml`) —
-`embassy-executor` приезжает туда транзитивно, и это осознанно; `embassy-stm32` — нет.
-Подробности, прецеденты и пограничные случаи (например, `watchdog`) — `docs/architecture.md`.
+- **узлы не падают:** `restart:` нет, задача возвращает `()`, отказ связи —
+  лог и возврат в начальное состояние автомата или переход в себя; переждать
+  отказ — контракт порта — «Узлы не падают»;
+- цена — зависимость `domain` от `supervisor` (транзитивно и от
+  `embassy-executor`); `embassy-stm32` в `domain` нет — «Цена решения…».
 
 ## Команды
 
@@ -411,31 +396,20 @@ read`: руками пришлось бы сначала найти адрес �
   страницами{% endif %} — `docs/flash.md`.
 {%- endif %}
 {%- if graph == "true" %}
-- У каждого узла с `watchdog:` своя связанная цепочка таймаутов (период
-  отметок узла < `domain::heartbeat::WATCHDOG` и `domain::cpu_load::WATCHDOG`,
-  и обе < `bsp::wdg::HW_TIMEOUT_US` минус `WATCHDOG_CHECK_EVERY` графа) —
-  менять только вместе; левое звено держит `const`-assert в модуле узла
-  (`domain::heartbeat::timing`, `domain::cpu_load::sampling`),
-  правое — `const`-assert в `crates-cross/app/src/graph.rs`, и новый узел с
-  `watchdog:` обязан встать в его список — `docs/watchdog.md`.
+- У каждого узла с `watchdog:` цепочка таймаутов (период отметок < таймаут
+  узла < `bsp::wdg::HW_TIMEOUT_US` минус `WATCHDOG_CHECK_EVERY`) — менять
+  только вместе; новый узел с `watchdog:` обязан встать в список `const`-assert'а
+  в `crates-cross/app/src/graph.rs` — `docs/watchdog.md`.
 - Сторож запускается в прологе `spawn_all` (`= board.watchdog.arm()`), а не в
-  `Board::new`: с этого момента железо тикает, а кормит его только тикер графа.
-  {%- if ota == "true" %}
-  В release его раньше запускает bootloader — только перед самым прыжком в
-  образ (обмен разделов и проверка подписи идут без сторожа), с
-  тем же таймаутом `bsp::wdg::HW_TIMEOUT_US` (переменная `WATCHDOG_TIMEOUT_US`
-  в `[env]` `crates-cross/.cargo/config.toml` у обоих общая), и путь от прыжка до
-  `spawn_all` обязан в него уложиться
-  {%- endif %} — `docs/watchdog.md`.
+  `Board::new`{% if ota == "true" %}; в release его раньше запускает bootloader с тем же таймаутом, и путь
+  от прыжка до `spawn_all` обязан в него уложиться{% endif %} — `docs/watchdog.md`.
 {%- elsif ota == "true" %}
 - Сторожа нет ни в `boot`, ни в приложении: зависший до `mark_booted` образ сам
   не откатится.
 {%- endif %}
 - Цикл исполнителя в `crates-cross/app/src/main.rs` поднят руками, а не
-  `#[embassy_executor::main]`: только так измеряется сон задач, на котором стоит
-  {% if graph == "true" %}узел `CPU_LOAD`{% else %}замер загрузки (`cpu_load::log_load`){% endif %}. Возврат к макросу молча ломает измерение (счётчик сна
-  перестаёт расти, {% if graph == "true" %}узел публикует 100%{% else %}в лог идёт 100%{% endif %}), и ничем, кроме линтера, это не
-  ловится — `docs/modules/app-cpu-load.md`.
+  `#[embassy_executor::main]`: возврат к макросу молча ломает замер загрузки —
+  `docs/modules/app-cpu-load.md`, «Почему цикл исполнителя в `main` написан руками».
 {%- if protocol_link == "true" %}
 {%- capture sources %}{% if has_uart == "true" %}, потоком UART{% endif %}{% if has_usb == "true" %}, потоком CDC{% endif %}{% if has_net == "true" %}, сетевым стеком{% endif %}{% endcapture %}
 - Канал протокола (кадрирование, сокет) строит `link(…)` модуля транспорта над

@@ -76,8 +76,8 @@ nextest убивает, а не ждёт до таймаута CI.
   {% if graph == "true" %}ошибку `spawn_all` — `main.rs` (через `Display`: `Debug` у ошибки графа нет),
   имя узла, переставшего кормить сторож, перед аппаратным сбросом —
   `before_reset` в `bsp::wdg`, застой узла — наблюдатель `observe:` в
-  `graph.rs`{% else %}ошибку спавна задачи — `expect` в `tasks::spawn_all`{% endif %}. Перезапусков узлов в шаблоне нет: отказ связи узел пишет в лог
-  и продолжает, а пережидает его реализация порта.
+  `graph.rs`{% else %}ошибку спавна задачи — `expect` в `tasks::spawn_all`{% endif %}. Перезапусков узлов в шаблоне нет
+  (`docs/architecture.md`, «Узлы не падают»).
 - **Паникёр — у каждого бинарника свой.** У `app` —
   `crates-cross/app/src/panic.rs`, выбирает профиль:
   `#[cfg(debug_assertions)]` на `use panic_probe as _;`, `#[cfg(not(debug_assertions))]`
