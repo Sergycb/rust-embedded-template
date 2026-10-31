@@ -205,5 +205,9 @@ embassy-time = { workspace = true, features = ["mock-driver", "generic-queue-8"]
 critical-section = { workspace = true, features = ["std"] }
 # {%- if has_net == "true" or has_usb == "true" %}
 # Узлы транспортов тестируются над драйверами без шины из `adapters::fake`.
+# {%- if net_services contains "rest" %}
+# Маршрутизатор REST (`domain::http`) — над кабелем между двумя стеками
+# (`adapters::fake::cable`).
+# {%- endif %}
 adapters = { workspace = true, features = ["fake"] }
 # {%- endif %}

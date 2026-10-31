@@ -134,7 +134,8 @@ mod tests {
     use embedded_io_async::{Read, Write};
 
     use super::*;
-    use crate::net::fakes::{HOST, PORT, leak, pair, with_network};
+    use crate::fake::cable::{HOST, leak, pair};
+    use crate::net::fakes::{PORT, with_network};
 
     /// Сервер на «хосте» пары, к которому подключается [`TcpClient`].
     const SERVER: SocketAddrV4 = SocketAddrV4::new(HOST, PORT);

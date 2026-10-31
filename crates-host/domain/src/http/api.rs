@@ -130,3 +130,308 @@ async fn reboot(api: &Api) -> (StatusCode, &'static str) {
     }
 }
 // {%- endif %}
+
+#[cfg(test)]
+mod tests {
+    //! Маршрутизатор целиком: настоящий `picoserve` на стеке `embassy-net`,
+    //! клиент — второй стек на том же кабеле в памяти
+    //! (`adapters::fake::cable`). Время `MockDriver` двигает только клиент,
+    //! пока ждёт ответа (`ACK_DELAY`), — таймаутов `picoserve` оно не
+    //! достигает, и соединение закрывает сам обмен.
+
+    // {%- if ota == "true" %}
+    use core::convert::Infallible;
+
+    // {%- endif %}
+    use adapters::fake::cable::{DEVICE, leak, pair};
+    use embassy_net::Stack;
+    use embassy_net::tcp::TcpSocket;
+    use embassy_time::{Duration, MockDriver};
+    // {%- if ota == "true" %}
+    use ports::{OtaCommand, OtaReply, Progress, Rejection};
+    use supervisor::Server;
+    // {%- endif %}
+
+    use super::{Api, router};
+    use crate::device::{DeviceInfo, UID_BYTES};
+    use crate::http::{HTTP_BUFFER, PORT, TCP_RX, TCP_TX};
+    // {%- if ota == "true" %}
+    use crate::ota::{OtaClient, OtaRequest};
+    // {%- endif %}
+
+    /// Отложенное подтверждение `smoltcp` по умолчанию.
+    ///
+    /// `picoserve` пишет заголовки и тело ответа разными сегментами, а Nagle
+    /// у сокета сервера держит тело, пока клиент не подтвердит заголовки.
+    /// Клиенту отправлять нечего, и подтверждение он шлёт по таймеру — при
+    /// стоящем времени никогда. Клиент, ждущий ответа, двигает время на эту
+    /// паузу.
+    const ACK_DELAY: Duration = Duration::from_millis(10);
+
+    /// Токен прошивки в тестах.
+    const TOKEN: &str = "s3cret";
+
+    /// Сведения для `/api/info`.
+    const INFO: DeviceInfo = DeviceInfo {
+        version: "1.2.3",
+        commit: "abcdef12",
+        chip: "stm32f407ve",
+        uid: [0x5a; UID_BYTES],
+        flash_size: 512 * 1024,
+        sys_hz: Some(168_000_000),
+        reset: "pin",
+        last_panic: None,
+    };
+
+    /// Методы, которыми тест стучится в каждый маршрут: метод без
+    /// обработчика у маршрута — `405`, с обработчиком — `401` без токена.
+    const METHODS: [&str; 5] = ["GET", "POST", "PUT", "DELETE", "PATCH"];
+
+    /// Ответ сервера: код, заявленная длина тела и само тело.
+    struct Response {
+        status: u16,
+        length: Option<usize>,
+        body: Vec<u8>,
+    }
+
+    impl Response {
+        fn parse(raw: &[u8]) -> Self {
+            let end = raw
+                .windows(4)
+                .position(|w| w == b"\r\n\r\n")
+                .expect("заголовки кончаются пустой строкой");
+            let head = core::str::from_utf8(&raw[..end]).expect("заголовки — текст");
+            let mut lines = head.split("\r\n");
+            let status = lines
+                .next()
+                .and_then(|line| line.split(' ').nth(1))
+                .and_then(|code| code.parse().ok())
+                .expect("строка статуса с кодом");
+            let length = lines
+                .filter_map(|line| line.split_once(':'))
+                .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+                .map(|(_, value)| value.trim().parse().expect("Content-Length — число"));
+            Self {
+                status,
+                length,
+                body: raw[end + 4..].to_vec(),
+            }
+        }
+    }
+
+    /// Пути маршрутов — из исходника [`router`]: первый строковый литерал
+    /// каждого вызова `route`.
+    ///
+    /// Из исходника, а не списком в тесте: новый маршрут попадает в проверку
+    /// токена сам, и забытый в нём `_: Auth` роняет тест, а не открывает API.
+    /// Потолок приёма — путь литералом прямо в вызове: вложенные роутеры
+    /// (`nest`) и пути из констант сюда не попадут.
+    fn routes() -> Vec<&'static str> {
+        let source = include_str!("api.rs");
+        // Только код до тестов: в них самих вызов ищется строкой.
+        let (code, _) = source
+            .split_once("#[cfg(test)]")
+            .expect("модуль тестов в api.rs");
+        code.split(".route(")
+            .skip(1)
+            .map(|call| call.split('"').nth(1).expect("путь маршрута — литерал"))
+            .collect()
+    }
+
+    /// Запрос без тела; `auth` — значение заголовка `Authorization`.
+    fn request(method: &str, path: &str, auth: Option<&str>) -> String {
+        let auth = auth
+            .map(|value| format!("Authorization: {value}\r\n"))
+            .unwrap_or_default();
+        format!("{method} {path} HTTP/1.1\r\nHost: {DEVICE}\r\n{auth}\r\n")
+    }
+
+    /// Одно соединение с сервером: запрос, ответ до закрытия сервером.
+    async fn exchange(host: Stack<'static>, request: &str) -> Response {
+        let mut client = TcpSocket::new(host, leak([0; 1024]), leak([0; 1024]));
+        client.connect((DEVICE, PORT)).await.unwrap();
+        let mut rest = request.as_bytes();
+        while !rest.is_empty() {
+            let n = client.write(rest).await.unwrap();
+            rest = &rest[n..];
+        }
+        client.flush().await.unwrap();
+        // Сервер закрывает соединение после ответа (`Config::const_default`):
+        // конец потока — конец ответа.
+        let mut raw = Vec::new();
+        let mut buf = [0; 256];
+        loop {
+            // Чтение не готово и за круг опроса остальных — время на
+            // [`ACK_DELAY`] вперёд: так уходит подтверждение, которого ждёт
+            // тело ответа.
+            let n = loop {
+                tokio::select! {
+                    biased;
+                    n = client.read(&mut buf) => break n.unwrap(),
+                    () = tokio::task::yield_now() => MockDriver::get().advance(ACK_DELAY),
+                }
+            };
+            if n == 0 {
+                break;
+            }
+            raw.extend_from_slice(&buf[..n]);
+        }
+        client.close();
+        client.flush().await.unwrap();
+        Response::parse(&raw)
+    }
+
+    /// Гоняет сервер REST на стеке-устройстве и оба стека, пока идёт `test`;
+    /// `test` получает стек-хост.
+    async fn with_server<R>(
+        // {%- if ota == "true" %}
+        ota: OtaClient,
+        // {%- endif %}
+        test: impl AsyncFnOnce(Stack<'static>) -> R,
+    ) -> R {
+        static CONFIG: picoserve::Config = picoserve::Config::const_default();
+        let ((device, mut device_runner), (host, mut host_runner)) = pair();
+        let app = router().with_state(Api {
+            info: INFO,
+            stack: device,
+            token: TOKEN,
+            // {%- if ota == "true" %}
+            ota,
+            // {%- endif %}
+        });
+        let server = picoserve::Server::new(&app, &CONFIG, leak([0; HTTP_BUFFER]))
+            .listen_and_serve(0_usize, device, PORT, leak([0; TCP_RX]), leak([0; TCP_TX]));
+        tokio::select! {
+            never = device_runner.run() => never,
+            never = host_runner.run() => never,
+            never = server => match never {},
+            result = test(host) => result,
+        }
+    }
+
+    // {%- if ota == "true" %}
+    /// Узел OTA, который на любую команду отвечает «сбрасываюсь».
+    async fn agree(cmd: &mut Server<'static, OtaRequest, OtaReply>) -> Infallible {
+        loop {
+            let (_, served) = cmd.serve().await;
+            served.respond(Ok(Progress::Rebooting));
+        }
+    }
+    // {%- endif %}
+
+    /// Без заголовка и с чужим токеном каждый маршрут из [`router`] каждым
+    /// своим методом отвечает `401`; Content-Length — длина тела.
+    #[tokio::test]
+    async fn every_route_demands_the_token() {
+        let routes = routes();
+        assert!(
+            routes.contains(&"/api/info"),
+            "маршруты не нашлись в исходнике: {routes:?}"
+        );
+        // {%- if ota == "true" %}
+        let (ota, mut cmd) = crate::ota::tests::cmd();
+        // {%- endif %}
+        with_server(
+            // {%- if ota == "true" %}
+            ota,
+            // {%- endif %}
+            async |host| {
+                let sweep = async {
+                    for path in &routes {
+                        let mut refused = false;
+                        for method in METHODS {
+                            for auth in [None, Some("Bearer wrong"), Some("Basic s3cret")] {
+                                let response = exchange(host, &request(method, path, auth)).await;
+                                match response.status {
+                                    401 => refused = true,
+                                    405 => {}
+                                    other => {
+                                        panic!("{method} {path}, Authorization {auth:?}: {other}")
+                                    }
+                                }
+                                assert_eq!(
+                                    response.length,
+                                    Some(response.body.len()),
+                                    "{method} {path}: Content-Length"
+                                );
+                            }
+                        }
+                        assert!(refused, "{path}: ни один метод не ответил 401");
+                    }
+                };
+                // {%- if ota == "true" %}
+                // Узел OTA соглашается на всё: команда, дошедшая до него без
+                // токена, даёт `202`, и тест падает на нём, а не виснет.
+                let sweep = async {
+                    tokio::select! {
+                        () = sweep => {}
+                        never = agree(&mut cmd) => match never {},
+                    }
+                };
+                // {%- endif %}
+                sweep.await;
+            },
+        )
+        .await;
+    }
+
+    /// `GET /api/info` с токеном — `200` и JSON, длина которого заявлена в
+    /// Content-Length.
+    #[tokio::test]
+    async fn info_answers_with_the_token() {
+        with_server(
+            // {%- if ota == "true" %}
+            crate::ota::tests::cmd().0,
+            // {%- endif %}
+            async |host| {
+                let auth = format!("Bearer {TOKEN}");
+                let response = exchange(host, &request("GET", "/api/info", Some(&auth))).await;
+                assert_eq!(response.status, 200);
+                assert_eq!(response.length, Some(response.body.len()));
+                let body = core::str::from_utf8(&response.body).expect("JSON — текст");
+                assert!(body.starts_with('{'), "{body}");
+                assert!(body.contains(INFO.chip), "{body}");
+            },
+        )
+        .await;
+    }
+    // {%- if ota == "true" %}
+
+    /// `POST /api/reboot` отвечает исходом команды узлу OTA: `202` — сброс
+    /// принят, `409` — любой другой ответ узла, `503` — узел взял команду и
+    /// не ответил.
+    #[tokio::test]
+    async fn reboot_answers_with_the_ota_outcome() {
+        let (ota, mut cmd) = crate::ota::tests::cmd();
+        let cases: [(Option<OtaReply>, u16); 4] = [
+            (Some(Ok(Progress::Rebooting)), 202),
+            (Some(Ok(Progress::Ready)), 409),
+            (Some(Err(Rejection::Busy)), 409),
+            (None, 503),
+        ];
+        with_server(ota, async |host| {
+            let node = async {
+                for (reply, _) in &cases {
+                    let (request, served) = cmd.serve().await;
+                    assert_eq!(request.command, OtaCommand::Reboot);
+                    // `None` — обязанность ответить брошена: узел потерян.
+                    if let Some(reply) = reply {
+                        served.respond(*reply);
+                    }
+                }
+            };
+            let client = async {
+                let auth = format!("Bearer {TOKEN}");
+                for (reply, status) in &cases {
+                    let response =
+                        exchange(host, &request("POST", "/api/reboot", Some(&auth))).await;
+                    assert_eq!(response.status, *status, "исход узла {reply:?}");
+                    assert_eq!(response.length, Some(response.body.len()));
+                }
+            };
+            tokio::join!(node, client);
+        })
+        .await;
+    }
+    // {%- endif %}
+}

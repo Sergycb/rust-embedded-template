@@ -482,7 +482,7 @@ pub(crate) mod tests {
     use embassy_time::{Duration, MockDriver};
     use ports::{Chunk, OtaCommand, OtaReply, Progress, Reboot, Rejection};
 
-    // {%- if has_modbus == "true" or has_protobuf == "true" or net_services contains "mqtt" %}
+    // {%- if has_modbus == "true" or has_protobuf == "true" or net_services contains "mqtt" or net_services contains "rest" %}
     use super::OtaClient;
     // {%- endif %}
 
@@ -557,6 +557,21 @@ pub(crate) mod tests {
         (
             OtaClient::new(stand.cmd.requester(), ClientId(0)),
             Box::pin(node),
+        )
+    }
+    // {%- endif %}
+
+    // {%- if net_services contains "rest" %}
+    /// Вход `CMD` узла OTA без самого узла и его клиент — для тестов
+    /// `http`: на команду отвечает тест, и исходом, которого узел не даёт, и
+    /// молчанием (сервер берёт запрос и бросает его).
+    pub(crate) fn cmd() -> (OtaClient, supervisor::Server<'static, OtaRequest, OtaReply>) {
+        let stand = Box::leak(Box::new(
+            supervisor::stand!(OTA_FRAG<FakeFlash, FakeReboot>; QUEUE_ASK = 1),
+        ));
+        (
+            OtaClient::new(stand.cmd.requester(), ClientId(0)),
+            stand.cmd.server().expect("сервер CMD стенда свободен"),
         )
     }
     // {%- endif %}
