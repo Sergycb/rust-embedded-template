@@ -38,6 +38,36 @@ impl Access {
             }
         }
     }
+
+    /// Пускать ли по открытому ключу: `key` — предъявленный ключ ed25519
+    /// (`None` — ключ другого типа), `user` сверяет имя клиента с
+    /// ожидаемым. Имя спрашивается, только когда ключ свой: ошибка его
+    /// разбора — ошибка протокола, а не неудача входа.
+    pub(super) fn admits_key<E>(
+        self,
+        key: Option<[u8; 32]>,
+        user: impl FnOnce(&str) -> Result<bool, E>,
+    ) -> Result<bool, E> {
+        match (self, key) {
+            (Self::Key(expected), Some(given)) if given == expected => user(USER),
+            _ => Ok(false),
+        }
+    }
+
+    /// Пускать ли по паролю: `user` и `password` сверяют предъявленное с
+    /// ожидаемым. Сверку делает `sunset` (`matches_username`,
+    /// `matches_password` — без выхода на первом несовпавшем байте), здесь
+    /// только решение.
+    pub(super) fn admits_password(
+        self,
+        user: impl FnOnce(&str) -> bool,
+        password: impl FnOnce(&str) -> bool,
+    ) -> bool {
+        match self {
+            Self::Password(expected) => user(USER) && password(expected),
+            Self::Key(_) | Self::Nobody => false,
+        }
+    }
 }
 
 /// Открытый ключ ed25519 из строки `ssh-ed25519 <base64> [комментарий]`: блоб
