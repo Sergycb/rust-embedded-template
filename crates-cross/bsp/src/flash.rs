@@ -395,8 +395,9 @@ pub(crate) fn new(resources: crate::resources::FlashResources) -> &'static Flash
 
 /// Нарезает разделы обновления: `DFU` и `BOOTLOADER_STATE` над общим
 /// [`FlashMutex`] со своими страницами — по символам `memory.x`, как их
-/// режет bootloader. Границы кратны страницам (`ASSERT` в `memory.x`): иначе
-/// `Partition::new` паникует на старте.
+/// режет bootloader. Границы обязаны быть кратны страницам, иначе
+/// `Partition::new` паникует на старте: в сгенерированном `memory.x` это
+/// держит `ASSERT` (падает линковка), в заполненном руками — никто.
 {%- if dfu_bank == "true" %}
 ///
 /// `DFU` — в банке 2, `STATE` — в банке 1.

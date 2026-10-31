@@ -288,11 +288,13 @@ read`: руками пришлось бы сначала найти адрес �
   host-тесты подают адаптеру разделы в памяти — `docs/ota.md`.
 {%- endif %}
 {%- if ota == "true" or config_store == "flash" or config_store == "external" or dma_nc == "true" %}
+{%- capture layout_asserts %}{% if ota == "true" %}; границы разделов OTA кратны странице, над которой стоит раздел, и не выходят за flash{% if ota_store == "external" %} (объём внешней микросхемы сверяется на старте по `__ext_flash_end`){% endif %}{% endif %}{% if config_store == "flash" %}; `CONFIG` — на границах своей страницы{% endif %}{% if dma_nc == "true" %}; `DMA_NC`{% if bdma_nc == "true" %}/`SRAM4`{% endif %} годны для MPU{% endif %}{% endcapture %}
 - Границы разделов и регионов памяти, нужные рычагам платы ({% if ota == "true" %}размер `ACTIVE`, {% endif %}{% if config_store == "flash" or config_store == "external" %}границы `CONFIG`, {% endif %}{% if external_flash == "true" %}конец
   разделов внешней флеши, {% endif %}{% if dma_nc == "true" %}регионы `DMA_NC`{% if bdma_nc == "true" %}/`SRAM4`{% endif %}, {% endif %}— одно место), — символы `memory.x`,
   которые линкер вычисляет из регионов; читает их только `bsp::layout`
-  (`unsafe extern` с `safe static`, значение — адрес символа). Проверки над ними —
-  `ASSERT` в `memory.x` (падает линковка, а не плата), не `const`-assert. В `[env]`
+  (`unsafe extern` с обычным `static`; читается только адрес, `&raw const`, —
+  значение символа и есть адрес). Проверки над ними — `ASSERT` в сгенерированном
+  `memory.x` (падает линковка, а не плата), не `const`-assert{% if layout_asserts != "" %}: {{ layout_asserts | remove_first: "; " }}{% endif %}. В `[env]`
   `crates-cross/.cargo/config.toml` остаются только числа, которые нужны
   компилятору (параметр `ErasePage`, `const`-assert, размер пула). Символы
   обязаны быть в `memory.x` каждого бинарника, который их читает: `app` и
