@@ -78,8 +78,9 @@ F2/F4/F7 (у F4 16, 64 и 128 KiB): в мелких секторах можно 
   в сектор 4 — см. раздел про `CONFIG` ниже.{% endif %}
 - **`STATE_ERASE_SIZE` — одно число на `boot` и `bsp::flash`** из плейсхолдера
   `state_erase_size`: оно едет переменной среды в `[env]`
-  `crates-cross/.cargo/config.toml`, и оба крейта читают её через `env!` —
-  разделу в bootloader'е и в приложении расходиться нельзя.{% if swap_paged == "true" or ota_store == "external" %} Так же едет{% if swap_paged == "true" %} `SWAP_PAGE_SIZE`{% endif %}{% if ota_store == "external" %} `EXT_PAGE_SIZE`{% endif %}.{% endif %}
+  `crates-cross/.cargo/config.toml`; через `env!` её читает `bsp::flash`
+  (`bsp::flash::STATE_ERASE_SIZE`), а `boot` берёт константу оттуда же —
+  разделу в bootloader'е и в приложении расходиться нельзя.{% if swap_paged == "true" or ota_store == "external" %} Так же едет{% if swap_paged == "true" %} `SWAP_PAGE_SIZE` (`bsp::flash`){% endif %}{% if ota_store == "external" %} `EXT_PAGE_SIZE` (`bsp::external`){% endif %}.{% endif %}
   В `[env]` — только числа, которые нужны компилятору (параметр `ErasePage`,
   `const`-assert). Границы разделов — размер `ACTIVE`{% if config == "true" %}, границы раздела настроек{% endif %} —
   туда не ездят: это символы `memory.x` (`__bootloader_active_*`{% if config == "true" %},
@@ -87,11 +88,14 @@ F2/F4/F7 (у F4 16, 64 и 128 KiB): в мелких секторах можно 
   (подробнее — «Символы раскладки» ниже). **`ErasePage` над `STATE` нужен не всегда**:
   плейсхолдер `state_paged` = "true" только там, где сектор `STATE` мельче страницы
   цельного `Flash` (F2/F4/F7). На чипах с равными секторами раздел строится прямо
-  над `Whole`, а `const`-assert (`STATE_ERASE_SIZE == MAX_ERASE_SIZE`) в `boot` и
-  `bsp::flash` ловит расхождение генерации с реальным чипом.{% if config == "true" %} Так же и `CONFIG`
-  (`config_paged`).{% endif %} При ручной раскладке (`--define write_size=...`) хук
-  подставляет страницу цельного `Flash` — на F2/F4/F7 туда надо вписать размер
-  сектора `STATE` руками.
+  над `Whole`, а `const`-assert (`STATE_ERASE_SIZE == MAX_ERASE_SIZE`) в
+  `bsp::flash` ловит расхождение генерации с реальным чипом (bootloader линкует
+  тот же `bsp`).{% if config == "true" %} Так же и `CONFIG`
+  (`config_paged`).{% endif %} При ручной раскладке (`--define write_size=...`)
+  сектора `STATE` генерация не знает: раздел строится над `ErasePage`
+  (`state_paged` = "true"), а `STATE_ERASE_SIZE` в `[env]` остаётся пустым — впишите
+  размер сектора, в котором лежит `STATE`, иначе проект не соберётся (хук
+  печатает об этом при генерации).
 - **Страница обмена `ACTIVE`/`DFU` бывает крупнее физической — ради `STATE`.**
   `PAGE_SIZE` обмена в `embassy-boot` — `max` из страниц обоих разделов, а журнал
   `STATE` — `(2 + 4*N) * WRITE_SIZE` байт при N страницах обмена в `ACTIVE`. На
@@ -117,8 +121,10 @@ F2/F4/F7 (у F4 16, 64 и 128 KiB): в мелких секторах можно 
   настроек — литерал в `bsp::flash` (`bsp::flash` строит раздел над
   `ErasePage` с этой страницей) и тот же литерал в `ASSERT` `memory.x`, который
   держит границы раздела (символы `__config_start`/`__config_end`) кратными ей. При ручной раскладке
-  (`--define write_size=...`) хук подставляет страницу цельного `Flash` — на
-  F2/F4/F7 туда надо вписать размер сектора раздела руками.
+  (`--define write_size=...`) раздел настроек во флеше не выделяется: где
+  начинается `CONFIG`, генерация не знает, и хук выключает настройки с
+  подсказкой добавить регион `CONFIG` и символы `__config_start`/`__config_end`
+  в `memory.x` руками.
 {%- endif %}
 {%- elsif ota_in == "1" or cfg_flash == "1" %}
 
@@ -127,8 +133,8 @@ F2/F4/F7 (у F4 16, 64 и 128 KiB): в мелких секторах можно 
 У этого чипа {% if ota_in == "1" %}сектора, в которых лежат `STATE`{% if cfg_flash == "1" %} и `CONFIG`{% endif %},{% else %}сектор, в котором лежит `CONFIG`,{% endif %} не мельче страницы
 цельного `embassy_stm32::flash::Flash` (`MAX_ERASE_SIZE`), поэтому разделы
 строятся прямо над `Whole`, без обёрток. Число из генерации ({% if ota_in == "1" %}`STATE_ERASE_SIZE`{% if cfg_flash == "1" %},
-{% endif %}{% endif %}{% if cfg_flash == "1" %}`CONFIG_ERASE_SIZE`{% endif %}) равно этой странице, и `const`-assert в {% if ota_in == "1" %}`boot` и {% endif %}`bsp`
-ловит расхождение при сборке, а не на плате.
+{% endif %}{% endif %}{% if cfg_flash == "1" %}`CONFIG_ERASE_SIZE`{% endif %}) равно этой странице, и `const`-assert в `bsp::flash` ловит расхождение при
+сборке, а не на плате{% if ota_in == "1" %} (bootloader линкует тот же `bsp`){% endif %}.
 {%- endif %}
 {%- if config == "true" or shared_flash == "true" %}
 
@@ -170,8 +176,9 @@ QSPI, где он выведен (`QUADSPI`, иначе `OCTOSPI`), иначе S
   `embassy_embedded_hal::flash::partition::BlockingPartition::new(flash, 0, flash::SIZE)`
   (`Whole` в `bsp::flash`) — раздел с нулевым смещением: операции идут под замком, по одной. `BlockingPartition::new`
   паникует, если объём флеша не кратен `ERASE_SIZE`; у STM32 он всегда кратен
-  самому крупному сектору, и `const`-assert в `bsp::flash`{% if ota == "true" %} и `boot`{% endif %} проверяет это
-  при сборке{% if dfu_bank == "true" %} (банк 2 на чипе с `dfu_bank` — отдельный раздел){% endif %}.{% if ota_in == "1" %} Потребители —
+  самому крупному сектору{% if dfu_bank == "true" %}. Здесь раздел — банк 1 (банк 2 с `DFU` — отдельный
+  раздел), и `const`-assert'а на объём нет ни в `bsp::flash`, ни в `boot`{% else %}, и `const`-assert в `bsp::flash`{% if boot_partitioned == "true" %} и в `boot`{% endif %} проверяет это
+  при сборке{% endif %}.{% if ota_in == "1" %} Потребители —
   разделы OTA{% if cfg_flash == "1" %} и настройки{% endif %} — асинхронные и стоят на `BlockingAsync` поверх `Whole`; `boot` строит разделы над тем же
   `Mutex<_, RefCell<_>>` блокирующе.{% elsif cfg_flash == "1" %} Потребитель —
   раздел настроек — асинхронный и стоит на `BlockingAsync` поверх `Whole`.{% endif %}{% if config_store == "eeprom" %} Свой тип поверх мьютекса есть только в
@@ -404,8 +411,9 @@ NOR. Во внутреннем флеше остаются bootloader и `ACTIVE
 Объём микросхемы генератор не знает — его узнаёт драйвер по JEDEC ID при
 `init`; поэтому выравнивание с запасом (64 KiB — самый крупный блок стирания
 NOR), а конец разделов — символ `memory.x` `__ext_flash_end` (`MAX` по концам
-разделов, считает линкер): микросхему меньше
-`Board::new` называет в логе при старте, а операции за её концом отказывают.
+разделов, считает линкер). Микросхема меньше этого конца — `Board::new` пишет
+об этом строку в лог при старте, и драйвер отказывает во всех операциях
+ошибкой, а не паникой.
 {%- if config == "true" %}
 
 **Настройки — там же, где OTA.** Внешняя флеш на плате либо есть, либо нет

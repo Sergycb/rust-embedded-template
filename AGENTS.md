@@ -31,10 +31,11 @@ skill'ом `rust-engineering` и не дублируются здесь. Это�
 {%- if ota == "true" %}
 **Исключение — `boot`:** bootloader зависит от `bsp` (банки, HAL, константы
 раскладки; фича `time-driver` ему не включается — `docs/architecture.md`; точка
-входа и паникёр у него свои) и от `domain` (при `signed`{% if ota_store == "external" %} или `ext_flash=yes`{% endif %})
-ради двух свободных функций над блокирующими разделами,
-`domain::ota::boot::{boot_plan, screen_update}`; в образ попадают только они
-(`lto` + `--gc-sections` выбрасывают остальное). Их типы — `BootPlan`, `Screening`,
+входа и паникёр у него свои) и от `domain` ради {% if ota_store == "external" %}двух свободных функций над
+блокирующими разделами, `domain::ota::boot::{boot_plan, screen_update}`; в образ
+попадают только они{% else %}одной свободной функции над блокирующими
+разделами, `domain::ota::boot::screen_update`; в образ попадает только она{% endif %}
+(`lto` + `--gc-sections` выбрасывают остальное). Типы — {% if ota_store == "external" %}`BootPlan`, {% endif %}`Screening`,
 `ScreenFailure` — тоже в `domain::ota::boot`. Больше `cross` в `domain` ходит только
 через `app`; `bsp` от `domain` не зависит — `docs/architecture.md`.
 {%- else %}
@@ -220,7 +221,7 @@ read`: руками пришлось бы сначала найти адрес �
   `prepare` — `docs/ota.md`.
 - Хвост образа — `[образ][раскладка u32 LE][версия u32 LE]` (`cargo xtask build`):
   отпечаток раскладки (`ports::layout_fingerprint` над `ports::LAYOUT_SYMBOLS`)
-  узел OTA сверяет с `FirmwareUpdate::layout` на `Finish` в обоих режимах, до
+  узел OTA сверяет с `FirmwareUpdate::layout` на `Finish` (`apply_signed`), до
   `mark_updated`; не совпал — `Rejection::Layout`. Сменилась раскладка
   `memory.x` — `boot` перешивается по проводу, а не образом — `docs/ota.md`.
 {%- endif %}
@@ -254,10 +255,13 @@ read`: руками пришлось бы сначала найти адрес �
   `crates-cross/.cargo/config.toml`, общая у `boot` и `bsp::external`, — и стирание
   драйвера обязано его делить (`const`-assert в обоих); драйвер —
   два слота одной микросхемы (блокирующий в `boot`, асинхронный в `bsp`).
-  Bootloader загружает текущий образ без обмена, только если `STATE` не
-  читается (`BootPlan::BootCurrent`) или (с подписью) новый образ отвергнут; при
-  читаемом `STATE` (`BootPlan::Prepare`) — строгий `prepare`, `try_prepare` не
-  используется, прыжок в наполовину переписанный `ACTIVE` недопустим — `docs/flash.md`, `docs/ota.md`.
+  Bootloader загружает текущий образ мимо `prepare`, только если `STATE` не
+  читается (`BootPlan::BootCurrent`) или внешняя флеш отказала во время
+  проверки подписи (`signature::screen`: непроверенный образ обменивать
+  нельзя). Отвергнутый подписью образ идёт через строгий `prepare` —
+  `screen_update` уже снял запрос (`STATE` → `Boot`). При читаемом `STATE`
+  (`BootPlan::Prepare`) — строгий `prepare`, `try_prepare` не используется,
+  прыжок в наполовину переписанный `ACTIVE` недопустим — `docs/flash.md`, `docs/ota.md`.
 {%- endif %}
 {%- if swap_paged == "true" %}
 - `SWAP_PAGE_SIZE` — число из генерации ({{page_size}}), переменная среды

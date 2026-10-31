@@ -38,8 +38,8 @@ paths: crates-cross/**
 {%- capture wrappers %}{% if has_usb == "true" %}, обёртки USB CDC{% endif %}{% if has_net == "true" %}, `Net`{% endif %}{% if config_store == "eeprom" %}, EEPROM{% endif %}{% endcapture %}
 {%- capture levers %}{% if wrappers != "" %}, `adapters` ({{ wrappers | remove_first: ", " }}){% endif %}{% if has_usb == "true" %}, `embassy-usb`{% endif %}{% if has_net == "true" %}, `embassy-net`{% endif %}{% if net_services contains "ssh" %}, `getrandom`{% endif %}{% endcapture %}
 - `bsp` зависит от `ports`{% if flash_page == "true" %} (и `flash-page`){% endif %}{% if levers != "" %} и от того, из чего собирает свои рычаги:
-  {{ levers | remove_first: ", " }}, —{% else %},{% endif %} но не от `domain`: входы узлов из полей `Board` заполняет `app`.{% if ota == "true" %} `boot` зовёт `domain` только при `signed`{% if ota_store == "external" %} или
-  `ext_flash=yes`{% endif %} и только `domain::ota::boot::{boot_plan, screen_update}`.{% endif %}
+  {{ levers | remove_first: ", " }}, —{% else %},{% endif %} но не от `domain`: входы узлов из полей `Board` заполняет `app`.{% if ota == "true" %} `boot` зовёт из `domain` только
+  {% if ota_store == "external" %}`domain::ota::boot::{boot_plan, screen_update}`{% else %}`domain::ota::boot::screen_update`{% endif %} (`docs/architecture.md`).{% endif %}
 - Логирование только `defmt`; `log` в прошивке не используется.
 - **Если вы в репозитории самого шаблона** (признак — каталог `chip-data-gen/`
   в корне): файлы здесь содержат Liquid и до генерации не являются валидным

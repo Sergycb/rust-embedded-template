@@ -48,6 +48,7 @@
 флеша, операции идут под замком, по одной{% if ota_in == "1" or cfg_in == "1" %}; асинхронный вид для {% if ota_in == "1" %}`embassy-boot`{% if cfg_in == "1" %} и
 {% endif %}{% endif %}{% if cfg_in == "1" %}`sequential-storage`{% endif %} даёт `BlockingAsync`{% endif %}. `BlockingPartition::new` паникует,
 если объём не кратен `ERASE_SIZE`; у STM32 он всегда кратен самому крупному
-сектору, и `const`-assert здесь{% if ota == "true" %} и в `boot`{% endif %} проверяет это при сборке.
+сектору, и {% if dfu_bank == "true" %}здесь раздел — банк 1 (банк 2 с `DFU` — отдельный раздел), так что
+`const`-assert'а на объём нет ни здесь, ни в `boot`{% else %}`const`-assert здесь{% if boot_partitioned == "true" %} и в `boot`{% endif %} проверяет это при сборке{% endif %}.
 
 `NoopRawMutex` подразумевает один исполнитель — подробности в `docs/flash.md`.
