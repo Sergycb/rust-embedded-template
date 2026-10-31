@@ -161,7 +161,7 @@ impl HeartbeatCtx<'_> {
 ///
 /// Что дальше: добавьте автомату состояния и строки переходов, узлу —
 /// `deps:` (порядок старта), `inbox:` (очередь событий — источник в
-/// `listen`), `resources:` (ручка периферии, переживающая перезапуск задачи)
+/// `listen`), `resources:` (состояние, которое живёт дольше прогона автомата)
 /// — всё это описано в `docs/modules/app-graph.md`.
 pub async fn task(mut ctx: HeartbeatCtx<'_>) {
     match ctx.run().await {}
