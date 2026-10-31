@@ -30,11 +30,12 @@ pub const APP_ARTIFACT: &str = "app";
 
 /// Фичи `domain` для проверок на хосте.
 // {%- if ota == "true" %}
-/// С подписью образа (`domain/signed`): без неё её код нигде не проверялся бы.
+/// С кодом bootloader'а (`domain/boot`, проверка подписи): без фичи он нигде
+/// на хосте не проверялся бы.
 // {%- endif %}
 pub fn host_features() -> &'static str {
     // {%- if ota == "true" %}
-    "domain/log,domain/signed"
+    "domain/log,domain/boot"
     // {%- else %}
     //{{newline}}    "domain/log"
     // {%- endif %}

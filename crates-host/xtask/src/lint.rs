@@ -15,9 +15,9 @@ pub fn lint_host(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     )
     .run()?;
     // {%- if ota == "true" %}
-    // `domain` без фичи `signed` — как его собирает `app` (проверка подписи —
+    // `domain` без фичи `boot` — как его собирает `app` (проверка подписи —
     // только в `boot`): иначе этот вариант нигде не собирался бы. Только
-    // clippy — тесты и doc без `signed` время не стоят.
+    // clippy — тесты и doc без `boot` время не стоят.
     cmd!(
         sh,
         "cargo clippy --workspace --all-targets --features domain/log -- -D warnings"

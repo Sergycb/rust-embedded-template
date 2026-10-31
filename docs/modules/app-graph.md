@@ -291,7 +291,7 @@ resources: [WS: &'static mut $crate::x::Workspace = static |w| w.gain = inputs.g
 `CMD` — `request:` фрагмента, запрос с ответом (или на `ASK` — `serves:`, для
 клиента, который не ждёт исхода в вызове): `Start` (сверка длины до
 стирания), `Chunk` (буферизация до слова флеша — `domain::ota::download::Transfer`),
-`Finish` (`domain::ota::update::apply_signed`), `Reboot`, — и на
+`Finish` (`domain::ota::update::apply`), `Reboot`, — и на
 каждую отвечает исходом `ports::OtaReply`. Всё это — host-тесты в
 `crates-host/domain/src/ota.rs`.
 

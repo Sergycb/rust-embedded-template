@@ -25,7 +25,7 @@ pub const VERSION_BYTES: u32 = 4;
 /// версией ([`VERSION_BYTES`]).
 ///
 /// Перед версией, а не за ней: версия осталась на `len - 4`, где её и
-/// читали (`apply_signed`, target-тест `ota_rejects_an_older_image`).
+/// читали (`apply`, target-тест `ota_rejects_an_older_image`).
 /// `cargo xtask build` берёт значения символов [`ports::LAYOUT_SYMBOLS`] из
 /// ELF приложения.
 pub const LAYOUT_BYTES: u32 = 4;
@@ -97,7 +97,7 @@ async fn check_layout<F: FirmwareUpdate>(
 /// - `Layout` — если образ собран под другую раскладку памяти,
 /// - `Rollback` — если версия не новее текущей,
 /// - `Flash` — если адаптер флеша вернул ошибку.
-pub async fn apply_signed<F: FirmwareUpdate>(
+pub async fn apply<F: FirmwareUpdate>(
     flash: &mut F,
     running_version: u32,
     signature: &[u8; 64],
@@ -136,7 +136,7 @@ pub async fn apply_signed<F: FirmwareUpdate>(
 
 #[cfg(test)]
 mod tests {
-    use super::apply_signed;
+    use super::apply;
     use crate::ota::fakes::{FakeFlash, LAYOUT, SIGNATURE};
     use crate::ota::version::pack;
     use ports::UpdateError;
@@ -148,7 +148,7 @@ mod tests {
     async fn records_a_newer_signed_image_for_the_bootloader() {
         let mut flash = FakeFlash::with_image(64, pack(1, 2, 4));
 
-        apply_signed(&mut flash, CURRENT, &SIGNATURE, 64)
+        apply(&mut flash, CURRENT, &SIGNATURE, 64)
             .await
             .expect("образ новее");
 
@@ -163,7 +163,7 @@ mod tests {
         let mut flash = FakeFlash::with_image(64, pack(1, 2, 4));
         flash.busy = true; // и занят — а отказ всё равно по длине
 
-        let refused = apply_signed(&mut flash, CURRENT, &SIGNATURE, 129).await;
+        let refused = apply(&mut flash, CURRENT, &SIGNATURE, 129).await;
 
         assert_eq!(
             refused,
@@ -183,12 +183,12 @@ mod tests {
         flash.busy = true;
 
         assert_eq!(
-            apply_signed(&mut flash, CURRENT, &SIGNATURE, 64).await,
+            apply(&mut flash, CURRENT, &SIGNATURE, 64).await,
             Err(UpdateError::Busy)
         );
     }
 
-    /// Хвост пишет `cargo xtask build`, а читает `apply_signed`, и общего
+    /// Хвост пишет `cargo xtask build`, а читает `apply`, и общего
     /// кода у них нет — значит разъехаться они могут только молча.
     ///
     /// Ловит это ПАРА тестов: здесь и `writes_the_tail_domain_reads` в
@@ -197,7 +197,7 @@ mod tests {
     /// свою сторону.
     ///
     /// Версия образа равна текущей, поэтому ответ — откат, и он несёт
-    /// прочитанную версию; до него `apply_signed` доходит, только если
+    /// прочитанную версию; до него `apply` доходит, только если
     /// раскладка в хвосте совпала с отпечатком фейка.
     #[tokio::test]
     async fn reads_the_tail_xtask_writes() {
@@ -210,7 +210,7 @@ mod tests {
         flash.memory[56..64].copy_from_slice(&TAIL);
 
         assert_eq!(
-            apply_signed(&mut flash, VERSION_LITERAL, &SIGNATURE, 64).await,
+            apply(&mut flash, VERSION_LITERAL, &SIGNATURE, 64).await,
             Err(UpdateError::Rollback {
                 current: VERSION_LITERAL,
                 incoming: VERSION_LITERAL
@@ -224,7 +224,7 @@ mod tests {
         let mut flash = FakeFlash::with_image(64, pack(1, 2, 4));
 
         assert_eq!(
-            apply_signed(&mut flash, CURRENT, &SIGNATURE, 7).await,
+            apply(&mut flash, CURRENT, &SIGNATURE, 7).await,
             Err(UpdateError::Truncated { len: 7 })
         );
     }
@@ -237,7 +237,7 @@ mod tests {
         flash.memory[56..60].copy_from_slice(&(!LAYOUT).to_le_bytes());
 
         assert_eq!(
-            apply_signed(&mut flash, CURRENT, &SIGNATURE, 64).await,
+            apply(&mut flash, CURRENT, &SIGNATURE, 64).await,
             Err(UpdateError::Layout {
                 device: LAYOUT,
                 image: !LAYOUT
@@ -255,7 +255,7 @@ mod tests {
             let mut flash = FakeFlash::with_image(64, incoming);
 
             assert_eq!(
-                apply_signed(&mut flash, CURRENT, &SIGNATURE, 64).await,
+                apply(&mut flash, CURRENT, &SIGNATURE, 64).await,
                 Err(UpdateError::Rollback {
                     current: CURRENT,
                     incoming
@@ -274,7 +274,7 @@ mod tests {
         flash.record = Err("флеш отказал");
 
         assert_eq!(
-            apply_signed(&mut flash, CURRENT, &SIGNATURE, 64).await,
+            apply(&mut flash, CURRENT, &SIGNATURE, 64).await,
             Err(UpdateError::Flash("флеш отказал"))
         );
         assert_eq!(flash.updated, 0, "обмен без записи не помечается");

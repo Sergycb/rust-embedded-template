@@ -39,13 +39,13 @@ defmt = [
 	# {%- endif %}
 ]
 # {%- if ota == "true" %}
-# Проверка подписи нового образа в bootloader'е (`ota::boot::screen_update`).
-# Включает `boot` (подпись есть при любой OTA); в корневом
+# Код bootloader'а — проверка подписи нового образа (`ota::boot::screen_update`),
+# отсюда и имя фичи. Включает крейт `boot` (подпись есть при любой OTA); в корневом
 # workspace её включают `cargo xtask lint`/`test host`, чтобы всё это
 # проверялось и на хосте. Проверяет `salty` напрямую, а не
 # `verify_and_mark_updated` из embassy-boot: тот живёт в апдейтере приложения,
 # а проверка — в bootloader'е.
-signed = ["dep:salty"]
+boot = ["dep:salty"]
 # {%- endif %}
 log = [
 	"dep:log",

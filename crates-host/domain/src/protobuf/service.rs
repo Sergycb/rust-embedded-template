@@ -191,7 +191,8 @@ const _: () = assert!(
     "пределы OtaChunk.data/OtaStart.signature в proto/build.rs разошлись с ports"
 );
 
-/// Подпись из `ota_start`: пусто — без подписи, 64 байта — подпись, иначе
+/// Подпись из `ota_start`: пусто — подписи нет (узел OTA отвергнет `Start`),
+/// 64 байта — подпись, иначе
 /// отказ: обрезанную подпись принять за целую нельзя.
 fn signature(bytes: &[u8]) -> Result<Option<[u8; SIGNATURE_BYTES]>, TryFromSliceError> {
     if bytes.is_empty() {

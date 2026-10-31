@@ -88,7 +88,7 @@ jobs:
           {
             echo '```'
             cargo llvm-cov nextest --workspace --exclude host-target-tests \
-              --features domain/log{% if ota == "true" %},domain/signed{% endif %} --release \
+              --features domain/log{% if ota == "true" %},domain/boot{% endif %} --release \
               --ignore-filename-regex 'xtask' --summary-only
             echo '```'
           } | tee -a "$GITHUB_STEP_SUMMARY"

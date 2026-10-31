@@ -285,7 +285,7 @@ flash и безусловно прыгает в него (`unsafe { bl.load(entr
 
 Всё, что не зависит от протокола, готово и уже крутится{% if graph == "true" %} в графе задач{% endif %}: узел
 `OTA` (`domain::ota`) принимает образ командами в раздел `DFU`, применяет его
-(`domain::ota::update::apply_signed`) и отвечает
+(`domain::ota::update::apply`) и отвечает
 исходом на каждую команду. Адаптер `adapters::ota` (поверх `embassy-boot`) пишет
 образ и хранит состояние bootloader'а. Плата отдаёт ему только флеш —
 поле `firmware` (`bsp::FirmwareFlash`, `crates-cross/bsp/src/{% if ota_store == "external" %}external{% else %}flash{% endif %}.rs`: носители
@@ -362,7 +362,7 @@ docs/ota.md, «Приём образа: стирание отдельно от �
 
 Подпись идёт вместе с OTA: отдельного вопроса нет, при `ota` она всегда включена. {% if graph == "true" %}Граф
 кормит{% else %}Задача кормит{% endif %} узел OTA версией этого образа (`running_version` во входе `OTA_FRAG`):
-принятый образ применяет `domain::ota::update::apply_signed` с
+принятый образ применяет `domain::ota::update::apply` с
 подписью из команды `Start`: она проверяет образ (защита от отката — ниже) и оставляет
 подпись bootloader'у. **Подпись проверяет bootloader** — перед обменом, открытым ключом,
 зашитым в него; не сошлось — устройство загружается с прежним образом, и отправитель
@@ -964,11 +964,11 @@ panicked at crates-cross/app/src/main.rs:194:5:
 ```sh
 cargo install cargo-llvm-cov --locked
 cargo llvm-cov nextest --workspace --exclude host-target-tests \
-  --features domain/log{% if ota == "true" %},domain/signed{% endif %} --release \
+  --features domain/log{% if ota == "true" %},domain/boot{% endif %} --release \
   --ignore-filename-regex 'xtask' --summary-only
 ```
 
-{% if ota == "true" %}`domain/signed`, {% endif %}`--release` и `--ignore-filename-regex` — не украшение: без них
+{% if ota == "true" %}`domain/boot`, {% endif %}`--release` и `--ignore-filename-regex` — не украшение: без них
 локальный прогон считает не то же, что CI, и сравнивать проценты бессмысленно.
 `--release` обязателен ещё и потому, что `llvm-cov` ищет объектные файлы в каталоге
 своего профиля: `cargo-llvm-cov report` без него смотрел бы в `debug/`.

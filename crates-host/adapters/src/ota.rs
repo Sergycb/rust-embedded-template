@@ -144,9 +144,9 @@ impl<D: NorFlash, S: NorFlash> Updater<Partitions<D, S>> {
 
     /// Пометка обмена — через `FirmwareState`, а не апдейтер: тот прячет
     /// `mark_updated` под фичей `_verify` у `embassy-boot`, а состояние — нет,
-    /// и делает ровно то же (`set_magic(SWAP_MAGIC)`). Защита от
-    /// неподписанного образа — bootloader (`screen_update`): без записи о
-    /// подписи он обмен не пропустит.
+    /// и делает ровно то же (`set_magic(SWAP_MAGIC)`). Подпись проверяет
+    /// bootloader (`screen_update`): без записи о подписи он обмен не
+    /// пропустит.
     fn state(&mut self) -> FirmwareState<'_, &mut S> {
         FirmwareState::new(&mut self.parts.state, &mut self.aligned.0[..S::WRITE_SIZE])
     }
@@ -289,7 +289,7 @@ mod tests {
     }
 
     /// Сквозной путь через порт: `Updater` готовит раздел, образ и
-    /// запись ложатся туда, куда пишет `domain::ota::update::apply_signed`
+    /// запись ложатся туда, куда пишет `domain::ota::update::apply`
     /// (смещение `capacity`), — и bootloader находит их там же.
     #[tokio::test]
     async fn what_the_signed_port_writes_is_what_the_bootloader_reads() {
