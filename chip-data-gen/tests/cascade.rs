@@ -592,20 +592,42 @@ fn erase_zero_follows_the_metadata_not_the_chip_name() {
     }
 }
 
-/// Чип, куда OTA не помещается и без раздела настроек, получает при генерации
-/// настоящую причину отказа, а не совет отказаться от настроек: пока такой
-/// совет был, на f030c8 (15K под ACTIVE при OTA_MIN_ACTIVE 24K) он печатался
-/// ложно и глушил настоящую причину.
+/// Явное «да», которое не помещается, уводит в ручную раскладку — и там же,
+/// под «Выбранное не помещается», печатается почему: другого места у причины
+/// нет, автоматическая раскладка до невместившегося выбора не доходит.
+///
+/// f030c8 с настройками: цифры набора `config_` сходятся, но `ACTIVE` (14K, а
+/// не 15K набора без настроек) меньше `OTA_MIN_ACTIVE`. h723ve: схема не
+/// сходится, причина — `note` от chip-data-gen. f401cb: раздел настроек при
+/// секторе 64 KiB не выделен вовсе.
 #[test]
-fn ota_refusal_names_the_real_reason_with_settings() {
+fn refusal_names_the_reason_for_ota_and_settings() {
     let ast = compile_script();
-    let too_small = run_chip_with(&ast, "f030c8", &[("config", "yes"), ("ota", "yes")])
-        .expect("каскад не должен падать");
-    let log = too_small.prints.join("\n");
-    assert!(
-        log.contains("Выбранное не помещается"),
-        "настоящая причина осталась незаявленной:\n{log}"
-    );
+    for (suffix, preset, reason) in [
+        (
+            "f030c8",
+            &[("config", "yes"), ("ota", "yes")][..],
+            "OTA: под приложение (ACTIVE) осталось бы 14K",
+        ),
+        (
+            "h723ve",
+            &[("ota", "yes")][..],
+            "OTA: flash 512 KiB при секторе 128 KiB",
+        ),
+        (
+            "f401cb",
+            &[("config", "yes")][..],
+            "настройки: под раздел во flash нужны две страницы стирания",
+        ),
+    ] {
+        let result = run_chip_with(&ast, suffix, preset)
+            .unwrap_or_else(|err| panic!("{suffix}: каскад упал: {err}"));
+        let log = result.prints.join("\n");
+        assert!(
+            log.contains("Выбранное не помещается") && log.contains(reason),
+            "{suffix}: причина отказа «{reason}» не напечатана:\n{log}"
+        );
+    }
 }
 
 /// Текст записанного `file::write` файла одной строкой.

@@ -1720,6 +1720,29 @@ if !variable::is_set("write_size") && ((wants_ota && !plan_final.ota) || (wants_
     variable::set("write_size", layout["write_size"]);
     print("Выбранное не помещается на " + chip_name + ": раскладку памяти (memory.x и числа в [env]");
     print("  crates-cross/.cargo/config.toml) вы заполняете сами — так же, как при --define write_size=...");
+    // Причина — здесь и только здесь: автоматическая раскладка ниже до
+    // невместившегося выбора не доходит. OTA объясняет набор цифр, по которому
+    // считается вся раскладка (`ota_key`: `note`, `config_note` или `ext_note`
+    // от chip-data-gen), а если цифры сошлись — порог `OTA_MIN_ACTIVE`.
+    if wants_ota && !plan_final.ota {
+        let ota_key = plan_final.ota_key;
+        if layout[ota_key + "ota"] != "true" {
+            print("  OTA: " + layout[ota_key + "note"]);
+        } else {
+            print("  OTA: под приложение (ACTIVE) осталось бы " + layout[ota_key + "active_length"]
+                + ", куда не помещается даже пустая прошивка");
+        }
+        if !wants_ext_ota && plan_final.ext_fits && chip_bus.len() > 0 {
+            print("  с DFU/STATE на внешней флеши OTA помещается: ACTIVE " + layout["ext_active_length"]
+                + "; сгенерируйте с --define ext_flash=yes");
+        }
+    }
+    // Флеш, стирающийся в ноль, сюда не доходит: такие настройки отсекает
+    // вопрос `config` выше. Остаётся одно — chip-data-gen раздел не выделил.
+    if wants_config && !plan_final.config {
+        print("  настройки: под раздел во flash нужны две страницы стирания (по " + layout["page_size"]
+            + " байт), а их не остаётся");
+    }
 }
 
 // Где лежат настройки (`config_store`) — одним решением для всех трёх веток
@@ -1866,33 +1889,22 @@ if variable::is_set("write_size") {
     let key = pl.key;
     let ext_key = pl.ext_key;
     let ota_key = pl.ota_key;
-    let ota_fits = pl.ota_fits;
     let ext_fits = pl.ext_fits;
     let ota = pl.ota;
     let ext_ota = pl.ext_ota;
     let settings_key = pl.settings_key;
-    let app_length_key = pl.app_length_key;
     let graph = pl.graph;
 
-    if wants_config && !config {
-        if erase_zero {
-            print("Раздел настроек для " + suffix + " не выделен: у этого чипа флеш стирается в ноль,");
-            print("  а sequential-storage считает стёртым состоянием 0xFF — хранилище молча не заработало бы");
-        } else {
-            print("Раздел настроек для " + suffix + " не выделен: под него нужны две страницы стирания, а их не остаётся");
-        }
-    }
-    // Подсказки про внешнюю флешь: внутри схема не помещается, а снаружи
-    // помещается — или помещается, но `ACTIVE` с внешней флешью заметно (в
-    // полтора раза и больше) крупнее.
-    if wants_ota && !wants_ext_ota && ext_fits {
-        if !ota_fits {
-            print("OTA во внутреннем flash не помещается, а с DFU/STATE на внешней флеши — да:");
-            print("  ACTIVE " + m[ext_key + "active_length"] + "; сгенерируйте с --define ext_flash=yes");
-        } else if size_in_bytes(m[ext_key + "active_length"]) * 2 >= size_in_bytes(m[ota_key + "active_length"]) * 3 {
-            print("Подсказка: с DFU/STATE на внешней флеши ACTIVE был бы " + m[ext_key + "active_length"]
-                + " вместо " + m[ota_key + "active_length"] + " (--define ext_flash=yes)");
-        }
+    // Сюда доходит только то, что поместилось: выбранные OTA, настройки и
+    // граф здесь все получились (невместившиеся OTA и настройки ушли в ручную
+    // раскладку выше вместе с причиной, граф снят ещё в меню).
+    // Подсказка про внешнюю флешь: `ACTIVE` с ней заметно (в полтора раза и
+    // больше) крупнее.
+    if wants_ota && !wants_ext_ota && ext_fits
+        && size_in_bytes(m[ext_key + "active_length"]) * 2 >= size_in_bytes(m[ota_key + "active_length"]) * 3
+    {
+        print("Подсказка: с DFU/STATE на внешней флеши ACTIVE был бы " + m[ext_key + "active_length"]
+            + " вместо " + m[ota_key + "active_length"] + " (--define ext_flash=yes)");
     }
     if in_flash {
         print("Раздел настроек: " + m[settings_key + "length"] + " с адреса " + m[settings_key + "origin"]);
@@ -1902,11 +1914,6 @@ if variable::is_set("write_size") {
         print("Настройки — на внешней флеши W25Q: подставьте шину с выводами платы в crates-cross/bsp/src/external.rs");
         print("  (пока там заглушка bsp::stub::FlashBus — проект собирается, настройки не сохраняются; docs/modules/bsp-external.md)");
     }
-    if wants_graph && !graph {
-        print("Граф задач отключён для " + suffix + ": под приложение отведено " + m[app_length_key] + ", а supervisor туда не помещается");
-        print("  с графом проект генерируется под чип с большим разделом приложения");
-    }
-
     variable::set("write_size", m["write_size"]);
     // `page_size` — страница обмена embassy-boot (`PAGE_SIZE`): по ней xtask
     // и host-target тест ищут прежний образ (он уезжает в `DFU[i + 1]`). С
@@ -2296,36 +2303,10 @@ if variable::is_set("write_size") {
         // приложения до того, как его прочтёт следующий старт `app`.
         file::write("crates-cross/boot/memory.x", boot);
     } else {
-        // OTA-схема embassy-boot в этот чип не помещается — почему именно,
-        // сказано в "note" (посчитано chip-data-gen по реальным секторам).
-        // Проект собирается одним образом на весь flash, crates-cross/boot в него не
-        // попадает вовсе (см. [conditional] в cargo-generate.toml).
-        // Причина у отказа две: либо схема не помещается (тогда её объясняет
-        // "note" из MEMORY_LAYOUT), либо от неё отказались при генерации —
-        // там объяснять нечего, сообщение уже напечатано выше.
-        // Причина берётся по тому же ключу, что и вся раскладка: когда схему
-        // вытеснил раздел настроек, объяснение лежит в "config_note", а
-        // "note" у такого чипа нет вовсе — и в комментарий memory.x попадала
-        // пустота (rhai на отсутствующем ключе молча отдаёт unit).
-        let note_key = ota_key + "note";
-        let reason = "отключён при генерации";
-        if wants_ota {
-            reason = if m.contains(note_key) { m[note_key] } else { "схема не помещается во flash" };
-            // Отдельная причина: раскладка-то сходится, но в раздел под
-            // приложение не влезает даже пустая прошивка шаблона. Общее
-            // «схема не помещается» тут вводило бы в заблуждение — цифры
-            // сошлись, не сошёлся смысл.
-            if m.contains(ota_key + "active_length")
-                && size_in_bytes(m[ota_key + "active_length"]) < OTA_MIN_ACTIVE
-            {
-                reason = "под приложение осталось бы " + m[ota_key + "active_length"]
-                    + ", куда не помещается даже пустая прошивка";
-            }
-        }
-        if wants_ota {
-            print("OTA отключён для " + suffix + ": " + reason);
-            print("  собирается один образ на весь flash, crates-cross/boot в проект не входит");
-        }
+        // OTA нет: от неё отказались при генерации (сообщение уже напечатано
+        // выше). Невместившаяся OTA сюда не доходит — она уходит в ручную
+        // раскладку вместе с причиной. Проект собирается одним образом на
+        // весь flash, crates-cross/boot в него не попадает вовсе.
         // Каталог убирается здесь, а не через [conditional] в
         // cargo-generate.toml: условия там вычисляются по значениям
         // [placeholders] и переменных, выставленных хуком, не видят
