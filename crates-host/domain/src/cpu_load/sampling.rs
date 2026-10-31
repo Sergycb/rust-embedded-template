@@ -71,7 +71,7 @@ const _: () = assert!(
 pub type SleepTicks = AtomicU32;
 
 // {%- if graph != "true" %}
-/// Замер загрузки: спавнится из `main.rs` (через
+/// Замер загрузки: спавнится из `tasks::spawn_all` в `app` (через
 /// `#[embassy_executor::task]`, потому что `Spawner::spawn` берёт токен, а не
 /// функцию), а значение уходит в лог — публиковать ему некуда.
 ///
