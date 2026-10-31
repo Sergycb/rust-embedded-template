@@ -23,7 +23,7 @@ cargo generate --git https://github.com/Sergycb/rust-embedded-template
 ## Быстрый старт
 
 ```sh
-cargo xtask setup        # тулчейн, probe-rs, flip-link и cargo-плагины из CI
+cargo xtask setup        # тулчейн, probe-rs, flip-link и cargo-плагины (CI и ручные)
 cargo xtask lint         # проверить, что окружение на месте
 cargo xtask test host    # тесты domain — железо не нужно
 
@@ -48,7 +48,7 @@ cargo run -p app                    # прошить приложение и с�
 проекте нет той или иной части, и с ним сравнивают проект с новой версией шаблона.
 
 Свежесгенерированный проект собирается и запускается как есть: `main.rs` поднимает
-`Board`, печатает версию с номером запуска и
+`Board`, печатает версию и коммит, из которого собран образ, и
 {%- if graph == "true" %} спавнит граф задач — узел `HEARTBEAT`,
 который сообщает о старте и ждёт, и узел `CPU_LOAD`, который меряет загрузку
 процессора. Это каркас: оба уже стоят в графе под сторожем, и дописывать
@@ -748,9 +748,9 @@ ML-KEM и ChaCha20-Poly1305), поэтому генерация предлага
 ## Команды `xtask`
 
 ```
-cargo xtask setup                  # тулчейн, probe-rs-tools, flip-link, cargo-плагины из CI
+cargo xtask setup                  # тулчейн, probe-rs-tools, flip-link, cargo-плагины (CI и ручные)
 cargo xtask build                  # cross: debug + release{% if ota == "true" %}, app.bin, размер (в т.ч. зона bootloader), подпись{% else %}, размер{% endif %}
-cargo xtask lint [cross]           # fmt --check + clippy -D warnings (host или cross)
+cargo xtask lint [cross]           # fmt --check + clippy -D warnings (host или cross; у host ещё cargo doc)
 cargo xtask test [host|target|host-target|all]
 cargo xtask pins [БЛОК|ПИН]        # справочник по чипу
 cargo xtask panic-info             # причина последнего падения, снятая с платы
@@ -761,8 +761,10 @@ cargo xtask panic-info             # причина последнего пад�
 
 Отдельной команды прошивки нет: это `cargo flash`/`cargo run` в `crates-cross` (см.
 «Быстрый старт»). Этапы `test target` и `test host-target` заливают нужные образы
-сами{% if ota == "true" %} — сначала bootloader, —{% else %},{% endif %} а образ приложения перед записью сверяют с началом раздела
-из `memory.x`.
+сами{% if ota == "true" %}, сначала bootloader{% endif %}. Начало образа приложения с началом раздела из `memory.x`
+перед записью сверяет только `test host-target`; `test target` заливает тестовый образ
+через `probe-rs run` без этой сверки, а то, что `memory.x` тестов совпадает с
+`memory.x` приложения, проверяет `lint cross`.
 
 `build` не только собирает: он печатает, сколько release-образ занимает от раздела, в
 который линкуется (`app: 12.8 KiB из 128.0 KiB {% if ota == "true" %}ACTIVE{% else %}FLASH{% endif %} (9%)`){% if ota == "true" %}, кладёт рядом с ELF сырой
@@ -886,8 +888,9 @@ probe-rs erase --chip {{chip}} --connect-under-reset              # см. ниж
 `предыдущий запуск упал: ...`. Читается оно ровно один раз: `panic-persist` стирает
 свою магию, чтобы одно и то же падение не всплывало после каждого сброса.
 
-Рядом — причина сброса: `Board::new` читает флаги `RCC` (сторож, программный сброс,
-питание, вывод `NRST`…) и снимает их, а строка старта `app: …` её показывает.
+Рядом — причина сброса: `main` ещё до `Board::new` читает флаги `RCC` (сторож,
+программный сброс, питание, вывод `NRST`…) и снимает их (`bsp::reset::take_cause`), а
+строка старта `app: причина сброса …` её показывает.
 {%- if has_protobuf == "true" or net_services != "" %}
 Без пробника обе вещи видны хосту в сведениях об устройстве — поля `reset` и
 `last_panic`{% if has_protobuf == "true" %} (protobuf `Info`){% endif %}{% if net_services contains "rest" %}, REST `/api/info`{% endif %}{% if net_services contains "mqtt" %}, MQTT `info`{% endif %}{% if net_services contains "ssh" %}, `info` в SSH{% endif %}; паника там коротко: файл, строка
@@ -903,8 +906,12 @@ probe-rs erase --chip {{chip}} --connect-under-reset              # см. ниж
 ### Достать причину с зависшей платы
 
 Чтобы увидеть строку при старте, пробник должен быть подключён **в момент** старта.
-Для release-платы, которая упала и перезапустилась без пробника{% if ota == "true" %}, — и для
-bootloader'а, который дамп сам не читает{% endif %}:
+Дамп пишет только release-паникёр `app` (`panic-probe` в debug его не пишет{% if ota == "true" %}, паникёр
+bootloader'а — тоже{% endif %}), а живёт он ровно до следующего старта release-`app`: тот
+первым делом его вычитывает и стирает магию. Поэтому команда достаёт причину, только
+если после паники приложение до этого чтения не дошло — например, ядро остановлено
+пробником сразу после сброса{% if ota == "true" %} или плата повисла в bootloader'е{% endif %}, — а питание не
+снимали:
 
 ```sh
 cargo xtask panic-info   # причина последнего падения, снятая с платы как есть
@@ -922,7 +929,8 @@ panicked at crates-cross/app/src/main.rs:194:5:
 Если приложение уже успело стартовать и вычитать дамп, команда так и скажет: магии на
 месте нет, причина ушла в лог того запуска.
 
-Развилка по профилю во всём шаблоне ровно одна — выбор паникёра. Cargo-фич
+Развилка по профилю во всём шаблоне ровно одна — выбор паникёра (и под тем же `cfg`
+чтение дампа при старте `app`). Cargo-фич
 `debug`/`release` нет нигде: `defmt` включён безусловно в обоих профилях (`log` в
 прошивке не используется вовсе, только в host-тестах `domain`), а тесты на устройстве
 — на паникёре `embedded-test`, для которого паника это способ сообщить раннеру про
@@ -957,6 +965,17 @@ panicked at crates-cross/app/src/main.rs:194:5:
 ограничения»). Состав самих джобов — {% if ci == "github" %}`.github/workflows/*.yml`{% else %}`.gitlab-ci.yml`{% endif %};
 в `AGENTS.md` перечень дан одной строкой. Отдельным дешёвым джобом идёт `typos`
 (опечатки в коде и документации); что он считает не опечаткой — в `.typos.toml`.
+
+Сверх этих четырёх команд host-прогон гоняет `cargo hack check --feature-powerset` —
+`check` каждого сочетания фич каждого крейта (`log` и `defmt` взаимоисключающие, но одна
+из них обязательна) — и `cargo deny check` по `deny.toml`: лицензии, источники
+зависимостей, уязвимости. Прошивка проходит тот же `cargo deny check` по своему
+`crates-cross/Cargo.lock`. Локально — те же команды, их ставит `cargo xtask setup`.
+{%- if ci == "gitlab" %} По расписанию, кроме `audit` (ниже), идёт джоб `renovate` — см.
+[«Обновление зависимостей»](#обновление-зависимостей).{% endif %}
+{%- if ota == "true" %} Пуш тега `v*` запускает релизный прогон —
+{% if ci == "github" %}`.github/workflows/release.yml`{% else %}джобы `release:build` и `release:publish`{% endif %}, см.
+[«Выпуск релиза по тегу»](#выпуск-релиза-по-тегу).{% endif %}
 
 Уязвимости проверяются ещё и по ночам: база RustSec пополняется и тогда, когда в
 проекте ничего не меняли, а основной прогон идёт только на push и PR. Это
@@ -1070,17 +1089,7 @@ protection: PR, не трогающий распиновку, его не зап
 включён менеджер `docker` с правилом на `.gitlab-ci.yml`.
 
 Альтернатива джобу — подключить к проекту [Mend Renovate App](https://docs.renovatebot.com/getting-started/running/)
-(он поддерживает GitLab); тогда джоб можно удалить.
-
-Два манифеста в `renovate.json` исключены через `ignorePaths` — не из-за
-нераспознавания версий, а потому что cargo их не резолвит: в
-`crates-cross/Cargo.toml` в `members` стоит Liquid-плейсхолдер, а
-`crates-host/chip-info/Cargo.toml` выбирает чип Cargo-фичей, которой в шаблоне
-ещё нет. Без исключения Renovate либо споткнётся на невалидном TOML, либо
-пропустит обновления молча — что хуже: `stm32-metapac` и `embassy-stm32` в
-`crates-cross` тогда останутся на старых версиях навсегда. Оба манифеста
-разбираются только в сгенерированном проекте, и там обновления работают
-(см. «Проверка изменений в шаблоне» в `MAINTAINING.md`).{% endif %}
+(он поддерживает GitLab); тогда джоб можно удалить.{% endif %}
 {% endif %}
 
 ## Инструменты

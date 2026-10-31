@@ -69,7 +69,7 @@ fn usage() {
         "      cargo xtask pins БЛОК --snippet        # заготовка bind_interrupts!/assign_resources!"
     );
     println!(
-        "      cargo xtask pins --check               # не занят ли отладочный порт в resources.rs"
+        "      cargo xtask pins --check               # отладочный порт, кварц и MCO в bsp/src"
     );
     println!(
         "      cargo xtask panic-info                 # причина последнего падения с платы, с разбором"
