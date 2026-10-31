@@ -19,9 +19,6 @@ mod test;
 use std::env;
 
 use project::CHIP;
-// {%- if ota == "true" %}
-use project::signing_enabled;
-// {%- endif %}
 
 fn main() -> Result<(), anyhow::Error> {
     let args = env::args().skip(1).collect::<Vec<_>>();
@@ -75,11 +72,9 @@ fn usage() {
         "      cargo xtask panic-info                 # причина последнего падения с платы, с разбором"
     );
     // {%- if ota == "true" %}
-    if signing_enabled() {
-        println!();
-        println!("Отдельных команд для подписи нет: `build` сам создаёт ключевую пару при первой");
-        println!("сборке, кладёт открытый ключ в прошивку и подписывает release-образ.");
-    }
+    println!();
+    println!("Отдельных команд для подписи нет: `build` сам создаёт ключевую пару при первой");
+    println!("сборке, кладёт открытый ключ в прошивку и подписывает release-образ.");
     // {%- endif %}
     println!();
     println!("Всё остальное про плату — напрямую через probe-rs:");

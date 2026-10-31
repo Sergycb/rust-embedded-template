@@ -17,7 +17,6 @@ use crate::image::{image_version, layout_fingerprint, unpack_version};
 // {%- endif %}
 use crate::project::{APP_ARTIFACT, TARGET, cross_target_dir, root_dir};
 // {%- if ota == "true" %}
-use crate::project::signing_enabled;
 use crate::signing::{ensure_image_key, ensure_signing_key, sign_image};
 // {%- endif %}
 use crate::size::{report_image, report_ram};
@@ -30,11 +29,7 @@ pub fn build(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     // Ключ приводится в порядок ДО сборки, а не после: открытый попадает в
     // bootloader через build.rs крейта boot, то есть должен существовать к
     // моменту компиляции.
-    let seed = if signing_enabled() {
-        ensure_signing_key(&root_dir())?
-    } else {
-        None
-    };
+    let seed = ensure_signing_key(&root_dir())?;
     // {%- endif %}
     // {%- if net_services contains "rest" or net_services contains "mqtt" or ssh_auth == "password" or ssh_host_key == "file" %}
     // Секреты служб — тоже до сборки: прошивка вшивает их `include_str!`.

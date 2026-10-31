@@ -20,7 +20,7 @@ use sync_request::ask::AskService;
 {%- endif %}
 
 /// Адаптер обновления над флешем платы.
-type Updater = adapters::ota::Updater<bsp::FirmwareFlash, {{signed}}>;
+type Updater = adapters::ota::Updater<bsp::FirmwareFlash, true>;
 {%- if askers > 0 %}
 
 /// Ребро входа `ASK` — доля одного клиента в его очереди.
@@ -72,15 +72,11 @@ pub static READY_{{ f[4] | upcase }}: Signal<CriticalSectionRawMutex, ()> = Sign
 
 /// Спавнит узел над разделами обновления платы — адаптер обновления строит задача;
 /// режим —
-/// {% if signed == "true" %}`Signed` с версией этого образа (`crate::version::FW_VERSION`){% else %}`Plain`{% endif %}.
+/// `Signed` с версией этого образа (`crate::version::FW_VERSION`).
 pub fn spawn(spawner: embassy_executor::Spawner, firmware: bsp::FirmwareFlash) {
-{%- if signed == "true" %}
     let mode = domain::ota::Mode::Signed {
         running_version: crate::version::FW_VERSION,
     };
-{%- else %}
-    let mode = domain::ota::Mode::Plain;
-{%- endif %}
     spawner.spawn(task(firmware, mode).expect("задача OTA свежая: спавнится один раз"));
 }
 

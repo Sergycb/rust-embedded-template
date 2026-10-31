@@ -1800,7 +1800,6 @@ if variable::is_set("write_size") {
         file::delete("crates-cross/bsp/src/flash.rs");
         file::delete("docs/modules/bsp-flash.md");
     }
-    variable::set("signed", if wants_ota { "true" } else { "false" });
     // Страницу обмена знает только раскладка, а её тут пишет пользователь —
     // угадывать нельзя. Пустая строка означает «неизвестна»:
     // xtask по ней не отдаёт host-target тесту адреса разделов, и тест
@@ -1876,10 +1875,6 @@ if variable::is_set("write_size") {
     let settings_key = pl.settings_key;
     let app_length_key = pl.app_length_key;
     let graph = pl.graph;
-    // Подпись есть всегда, когда есть OTA, и только тогда: подписывается то,
-    // что приезжает в раздел DFU, и отдельного вопроса нет. Если схема не
-    // поместилась, нет ни OTA, ни подписи.
-    let signed = ota;
 
     if wants_config && !config {
         if erase_zero {
@@ -1971,7 +1966,6 @@ if variable::is_set("write_size") {
         file::delete("crates-cross/bsp/src/flash.rs");
         file::delete("docs/modules/bsp-flash.md");
     }
-    variable::set("signed", if signed { "true" } else { "false" });
     variable::set("graph", if graph { "true" } else { "false" });
 
     // База flash одна на оба режима: `__bootloader_*` отсчитываются от неё, а не
@@ -2752,8 +2746,5 @@ if variable::get("external_flash") != "true" {
 if variable::get("ota") == "true" {
 	if variable::get("ota_store") != "external" {
 		file::delete("crates-cross/boot/src/external.rs");
-	}
-	if variable::get("signed") != "true" {
-		file::delete("crates-cross/boot/src/signature.rs");
 	}
 }

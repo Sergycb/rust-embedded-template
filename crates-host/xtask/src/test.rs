@@ -14,7 +14,7 @@ use crate::flash::flash_boot;
 // {%- if ota == "true" and ota_store != "external" %}
 use crate::image::raw_image;
 use crate::memory::{Region, app_memory_regions, app_region, region};
-use crate::project::{PAGE_SIZE, TARGET, WRITE_SIZE, cross_target_dir, signing_enabled};
+use crate::project::{PAGE_SIZE, TARGET, WRITE_SIZE, cross_target_dir};
 use crate::signing::{ensure_image_key, ensure_signing_key};
 // {%- endif %}
 use crate::project::{CHIP, host_features, root_dir};
@@ -93,11 +93,7 @@ fn test_host_target(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     // {%- if ota == "true" and ota_store != "external" %}
     // Ключ — до прошивки, как и в `build`: открытый попадает в bootloader
     // через его build.rs, то есть должен существовать к моменту компиляции.
-    let seed = if signing_enabled() {
-        ensure_signing_key(&root_dir())?
-    } else {
-        None
-    };
+    let seed = ensure_signing_key(&root_dir())?;
     // {%- endif %}
     flash_all(sh, "release")?;
     // {%- if ota == "true" and ota_store != "external" %}
@@ -192,7 +188,7 @@ fn ota_env<'a>(
     let mut vars = Vec::new();
     // Подписать нечем — обмен bootloader не пустит. Отказ чужому образу
     // проверяется и так: ему ключ не нужен.
-    if signing_enabled() && seed.is_none() {
+    if seed.is_none() {
         println!(
             "ВНИМАНИЕ: закрытого ключа нет — обмен и откат подписанного образа НЕ \
              проверяются, только отказ неподписанному"
@@ -209,7 +205,6 @@ fn ota_env<'a>(
         vars.push(sh.push_env("HOST_TARGET_SIGNATURE_RECORD", path));
     }
     vars.extend([
-        sh.push_env("HOST_TARGET_SIGNED", signing_enabled().to_string()),
         sh.push_env("HOST_TARGET_INERT_IMAGE", image_path),
         sh.push_env("HOST_TARGET_ACTIVE_ADDR", format!("{:#x}", active.origin)),
         // Размер `ACTIVE` — это `capacity`, с которым bootloader ищет запись о
