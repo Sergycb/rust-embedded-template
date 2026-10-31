@@ -31,7 +31,7 @@ pub(super) fn download_rejection<F>(err: &DownloadError<F>) -> Rejection {
     }
 }
 
-/// Код отказа для хоста по ошибке применения (раскладка — в обоих режимах).
+/// Код отказа для хоста по ошибке применения.
 pub(super) fn update_rejection<E>(err: &UpdateError<E>) -> Rejection {
     match err {
         UpdateError::TooLong { .. } | UpdateError::Truncated { .. } => Rejection::Length,

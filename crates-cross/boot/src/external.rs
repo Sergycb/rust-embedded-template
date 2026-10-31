@@ -80,12 +80,10 @@ pub(crate) fn new(sys_hz: u32) -> ExternalFlash {
     }
 }
 
-/// Подготовка к загрузке. Решает `domain::ota::boot::boot_plan` (там же почему
-/// и host-тест с прерванным обменом): `Prepare` — строгий
-/// `BootLoader::prepare`, ошибка которого — паника, сброс и продолжение обмена
-/// по журналу, а не прыжок в наполовину переписанный `ACTIVE`; `BootCurrent` —
-/// `STATE` не читается (внешняя флеш не отвечает), был ли начат обмен, узнать
-/// нельзя, и загружается текущий образ без обмена.
+/// Подготовка к загрузке. Решает `domain::ota::boot::boot_plan` (там же
+/// host-тест с прерванным обменом): `Prepare` — строгий `BootLoader::prepare`,
+/// `BootCurrent` — текущий образ без обмена; почему — docs/ota.md,
+/// «Bootloader и внешняя флеш».
 pub(crate) fn prepare<ACTIVE: NorFlash, DFU: NorFlash, STATE: NorFlash>(
     mut config: BootLoaderConfig<ACTIVE, DFU, STATE>,
 ) -> BootLoader {

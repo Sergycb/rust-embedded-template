@@ -24,14 +24,6 @@ pub const WRITE_SIZE: &str = "{{write_size}}";
 /// host-target тесту нужно знать, где его искать.
 pub const PAGE_SIZE: &str = "{{page_size}}";
 // {%- endif %}
-// {%- if ota == "true" %}
-
-/// Подписываются ли OTA-образы — ответ, данный при генерации. Строкой:
-/// исходник шаблона обязан оставаться разбираемым Rust (`xtask` — член
-/// корневого workspace и линтуется там), а плейсхолдер переживает это только
-/// внутри строкового литерала.
-pub const SIGNED: &str = "{{signed}}";
-// {%- endif %}
 
 /// Имя файла ELF приложения в каталоге сборки — то, что [`crate::firmware::build`] читает.
 pub const APP_ARTIFACT: &str = "app";
@@ -47,15 +39,6 @@ pub fn host_features() -> &'static str {
     //{{newline}}    "domain/log"
     // {%- endif %}
 }
-// {%- if ota == "true" %}
-
-/// Сравнение с `"true"`, а не с `"false"`: в неподставленном шаблоне (где
-/// константа — сам плейсхолдер) команды должны отказывать, а не делать вид,
-/// что подпись включена.
-pub fn signing_enabled() -> bool {
-    SIGNED == "true"
-}
-// {%- endif %}
 
 /// Каталог сборки `cross`-воркспейса.
 ///

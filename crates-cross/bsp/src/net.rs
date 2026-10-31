@@ -4,11 +4,9 @@ use embassy_net::{Config, DhcpConfig, StackResources};
 use static_cell::ConstStaticCell;
 
 /// Сокетов в стеке: DHCP-клиент, по сокету на сетевой транспорт и на каждое
-/// соединение сетевых служб приложения{% if net_services != "" %} ({% if net_services contains "rest" %}пул REST{% endif %}{% if net_services contains "ssh" %}{% if net_services contains "rest" %}, {% endif %}консоль SSH{% endif %}{% if net_services contains "mqtt" %}{% if net_services contains "rest" or net_services contains "ssh" %}, {% endif %}клиент MQTT{% endif %}){% endif %}. Стек
-/// строит плата, поэтому и счёт здесь: число слотов сходится с тем, кто их
-/// открывает, без отдельной проверки. Слот — около 500 байт оперативной
-/// памяти, поэтому без запаса: откроете ещё сокет (или включите фичу `dns` у
-/// `embassy-net` — она тоже занимает слот) — прибавьте его здесь.
+/// соединение сетевых служб приложения{% if net_services != "" %} ({% if net_services contains "rest" %}пул REST{% endif %}{% if net_services contains "ssh" %}{% if net_services contains "rest" %}, {% endif %}консоль SSH{% endif %}{% if net_services contains "mqtt" %}{% if net_services contains "rest" or net_services contains "ssh" %}, {% endif %}клиент MQTT{% endif %}){% endif %}. Без
+/// запаса: откроете ещё сокет — прибавьте его здесь (модуль, «Адрес, MAC и
+/// порты»).
 pub const SOCKETS: usize = DHCP + LINKS + SERVICES;
 {%- assign single = 0 %}
 {%- if net_services contains "ssh" %}{% assign single = single | plus: 1 %}{% endif %}

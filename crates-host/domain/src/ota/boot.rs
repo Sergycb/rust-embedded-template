@@ -41,6 +41,11 @@ pub enum Screening {
     /// Образ отвергнут, запрос на обмен снят (`STATE` → `Boot`): загрузится
     /// прежний образ.
     Rejected(ScreenFailure),
+    /// Магия `Swap` прочитана, а журнал прогресса — нет: новый ли это запрос
+    /// или обмен уже идёт (и `ACTIVE` — смесь страниц), неизвестно. Решения
+    /// нет: ни проверять, ни грузить `ACTIVE` мимо `prepare` нельзя — только
+    /// сброс и повтор.
+    JournalUnreadable,
 }
 
 /// Почему образ в `DFU` отвергнут.
@@ -75,19 +80,11 @@ pub enum BootPlan {
 /// Решение bootloader'а с разделами на внешней флеши (`ext_flash=yes`):
 /// готовить загрузку или сразу грузить текущий образ.
 ///
-/// Внешняя микросхема — отдельная деталь платы (не распаяна, не подставлен
-/// драйвер, отказала), и из-за неё устройство не должно перестать
-/// загружаться: образ в `ACTIVE` внутренний и, пока обмен его не тронул, цел.
-/// Но прыжок в `ACTIVE` посреди обмена — смесь старых и новых страниц:
-/// `HardFault`, а дойди такой образ до подтверждения — битый образ навсегда.
-/// Отсюда два исхода по `STATE`:
-///
-/// - не читается — [`BootPlan::BootCurrent`]: был ли начат обмен, узнать
-///   нечем; не начатый — частый случай (заглушка, не распаянная микросхема), а
-///   отказ флеши посреди обмена, не проходящий и после сброса, — редкий;
-/// - читается — [`BootPlan::Prepare`]: строгий `prepare`. Обмен, прерванный
-///   отказом, узнаётся по магии `Swap`, которая держится всё время обмена (и
-///   отката), и `prepare` его продолжает, а не пропускает.
+/// Два исхода по `STATE`: не читается — [`BootPlan::BootCurrent`], читается —
+/// [`BootPlan::Prepare`] (почему так — docs/ota.md, «Bootloader и внешняя
+/// флеш»). Обмен, прерванный отказом, узнаётся по магии `Swap`, которая
+/// держится всё время обмена (и отката), и `prepare` его продолжает, а не
+/// пропускает.
 ///
 /// `WRITE_SIZE` раздела шире [`MAX_WRITE_SIZE`] не компилируется — на STM32 и
 /// распространённых SPI NOR такого нет.
@@ -122,6 +119,10 @@ pub fn boot_plan<STATE: embedded_storage::nor_flash::NorFlash>(state: &mut STATE
 /// Отказ снимает запрос: в `STATE` пишется магия `Boot` (`mark_booted`), и
 /// следующий за этим `BootLoader::prepare` грузит прежний образ.
 ///
+/// Отказ флеша на журнале после прочитанной магии `Swap` — не ошибка, а
+/// [`Screening::JournalUnreadable`]: остальные ошибки оставляют `ACTIVE`
+/// нетронутым обменом (журнал пуст) или не дают узнать даже магию, а эта — нет.
+///
 /// Время: SHA-512 всего образа и одна проверка ed25519 — порядка сотни
 /// миллионов тактов в портируемой реализации. Сторож к этому моменту не
 /// запущен: проверка — один неделимый вызов, покормить его внутри нечем.
@@ -130,7 +131,8 @@ pub fn boot_plan<STATE: embedded_storage::nor_flash::NorFlash>(state: &mut STATE
 ///
 /// # Errors
 ///
-/// Ошибка флеша при чтении разделов или при снятии запроса.
+/// Ошибка флеша при чтении магии `STATE`, при чтении `DFU` (журнал пуст —
+/// обмен не начинался) или при снятии запроса.
 #[cfg(feature = "signed")]
 pub fn screen_update<DFU, STATE>(
     dfu: &mut DFU,
@@ -161,8 +163,12 @@ where
         reason = "WRITE_SIZE <= MAX_WRITE_SIZE"
     )]
     let size = STATE::WRITE_SIZE as u32;
-    state.read(size, &mut validity[..STATE::WRITE_SIZE])?;
-    state.read(2 * size, &mut first_step[..STATE::WRITE_SIZE])?;
+    let journal = state
+        .read(size, &mut validity[..STATE::WRITE_SIZE])
+        .and_then(|()| state.read(2 * size, &mut first_step[..STATE::WRITE_SIZE]));
+    if journal.is_err() {
+        return Ok(Screening::JournalUnreadable);
+    }
     if validity != first_step {
         return Ok(Screening::NothingToCheck);
     }
@@ -458,6 +464,7 @@ mod tests {
         use embassy_boot::{
             BlockingFirmwareState, BootLoader, BootLoaderConfig, State as BootState,
         };
+        use embedded_storage::nor_flash::{ErrorType, NorFlash, NorFlashErrorKind, ReadNorFlash};
 
         use ports::PendingImage;
 
@@ -467,6 +474,45 @@ mod tests {
         /// `ACTIVE` — три страницы, как `capacity` у `updater()` выше.
         const CAPACITY: u32 = 768;
         const SEED: [u8; 32] = [42; 32];
+
+        /// `STATE`, у которого читается начало (магия), а с `from` и дальше —
+        /// отказ: помеха на шине внешней флеши после первого чтения.
+        struct Torn {
+            flash: State,
+            from: u32,
+        }
+
+        impl ErrorType for Torn {
+            type Error = NorFlashErrorKind;
+        }
+
+        impl ReadNorFlash for Torn {
+            const READ_SIZE: usize = 1;
+
+            fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), Self::Error> {
+                if offset >= self.from {
+                    return Err(NorFlashErrorKind::Other);
+                }
+                self.flash.read(offset, bytes)
+            }
+
+            fn capacity(&self) -> usize {
+                self.flash.capacity()
+            }
+        }
+
+        impl NorFlash for Torn {
+            const WRITE_SIZE: usize = 8;
+            const ERASE_SIZE: usize = 256;
+
+            fn erase(&mut self, from: u32, to: u32) -> Result<(), Self::Error> {
+                self.flash.erase(from, to)
+            }
+
+            fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), Self::Error> {
+                self.flash.write(offset, bytes)
+            }
+        }
 
         fn public_key() -> [u8; 32] {
             salty::Keypair::from(&SEED).public.to_bytes()
@@ -615,6 +661,50 @@ mod tests {
 
             assert_eq!(screening.expect("проверка"), Screening::NothingToCheck);
             assert_eq!(state_of(&mut state), BootState::Swap, "запрос не снят");
+        }
+
+        fn torn(from: u32) -> (Dfu, Torn) {
+            let image = image();
+            let (dfu, state) = pending(
+                &image,
+                PendingImage {
+                    len: 600,
+                    signature: sign(&image),
+                },
+            );
+            (dfu, Torn { flash: state, from })
+        }
+
+        /// Магия `Swap` прочитана, журнал — нет (слово 1 или слово 2): обмен,
+        /// может быть, идёт, и это не ошибка «грузи текущий образ», а отдельный
+        /// исход, на котором bootloader не прыгает в `ACTIVE`. Запрос не снят.
+        #[test]
+        fn an_unreadable_journal_after_the_swap_magic_is_no_go_ahead() {
+            for from in [8, 16] {
+                let (mut dfu, mut state) = torn(from);
+
+                let screening = screen_update(&mut dfu, &mut state, CAPACITY, &public_key());
+
+                assert_eq!(
+                    screening.expect("исход, а не ошибка"),
+                    Screening::JournalUnreadable,
+                    "отказ с байта {from}"
+                );
+                assert_eq!(
+                    state_of(&mut state.flash),
+                    BootState::Swap,
+                    "запрос не снят"
+                );
+            }
+        }
+
+        /// Не прочиталась сама магия — по-прежнему ошибка: bootloader с
+        /// внешней флешью грузит текущий образ без обмена.
+        #[test]
+        fn an_unreadable_magic_stays_an_error() {
+            let (mut dfu, mut state) = torn(0);
+
+            assert!(screen_update(&mut dfu, &mut state, CAPACITY, &public_key()).is_err());
         }
 
         #[test]

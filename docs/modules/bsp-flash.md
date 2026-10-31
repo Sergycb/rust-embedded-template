@@ -18,14 +18,13 @@
   Обмен копирует ровно `ACTIVE`, поэтому предел образа — он, а не `DFU`.
 {%- if state_paged == "true" %} Носитель
   `BOOTLOADER_STATE` — `flash_page::ErasePage` со страницей своего сектора
-  (`STATE_ERASE_SIZE`): над цельным `Flash` раздел не кратен его странице.{% else %} Сектор `BOOTLOADER_STATE` равен странице
+  (`STATE_ERASE_SIZE`).{% else %} Сектор `BOOTLOADER_STATE` равен странице
   цельного `Flash`, и носитель — он сам (равенство проверяет `const`-assert).{% endif %}
 {%- if swap_paged == "true" %} Носитель `DFU` — `ErasePage` со страницей
-  обмена `SWAP_PAGE_SIZE`, крупнее физической: так журнал `BOOTLOADER_STATE`
-  короче, и коду bootloader'а остаётся почти весь его блок.{% endif %}{% if dfu_bank == "true" %} `DFU` — в банке 2 за разрывом
-  адресов (`DfuBankMutex`): цельный `Flash` туда не дотягивается.{% endif %} Те же
-  числа (`STATE_ERASE_SIZE`{% if swap_paged == "true" %}, `SWAP_PAGE_SIZE`{% endif %}) берёт отсюда bootloader — разделам в
-  приложении и в нём расходиться негде.
+  обмена `SWAP_PAGE_SIZE`, крупнее физической.{% endif %}{% if dfu_bank == "true" %} `DFU` — в банке 2 за разрывом
+  адресов (`DfuBankMutex`).{% endif %} Те же
+  числа (`STATE_ERASE_SIZE`{% if swap_paged == "true" %}, `SWAP_PAGE_SIZE`{% endif %}) берёт отсюда bootloader; почему страницы такие —
+  `docs/flash.md`.
 {%- endif %}
 {%- if config == "true" and config_store == "flash" %}
 
@@ -48,6 +47,7 @@
 флеша, операции идут под замком, по одной{% if ota_in == "1" or cfg_in == "1" %}; асинхронный вид для {% if ota_in == "1" %}`embassy-boot`{% if cfg_in == "1" %} и
 {% endif %}{% endif %}{% if cfg_in == "1" %}`sequential-storage`{% endif %} даёт `BlockingAsync`{% endif %}. `BlockingPartition::new` паникует,
 если объём не кратен `ERASE_SIZE`; у STM32 он всегда кратен самому крупному
-сектору, и `const`-assert здесь{% if ota == "true" %} и в `boot`{% endif %} проверяет это при сборке.
+сектору, и {% if dfu_bank == "true" %}здесь раздел — банк 1 (банк 2 с `DFU` — отдельный раздел), так что
+`const`-assert'а на объём нет ни здесь, ни в `boot`{% else %}`const`-assert здесь{% if boot_partitioned == "true" %} и в `boot`{% endif %} проверяет это при сборке{% endif %}.
 
 `NoopRawMutex` подразумевает один исполнитель — подробности в `docs/flash.md`.

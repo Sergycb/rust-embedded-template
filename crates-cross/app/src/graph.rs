@@ -17,9 +17,8 @@ use defmt::{info, warn};
 use supervisor::{Duration, Liveness, supervisor_graph};
 
 supervisor_graph! {
-    // Узлы приезжают из `domain`: каждая подсистема объявляет свой фрагмент
-    // (`supervisor_fragment!`) рядом со своей задачей — вместе с таймаутом
-    // сторожа, — а здесь остаётся то, что знает про железо:
+    // Узлы приезжают из `domain` фрагментами (docs/architecture.md, «Узлы —
+    // фрагменты в `domain`»), а здесь остаётся то, что знает про железо:
     // `boot:`-объект, блок `watchdog:` и список фрагментов. Растёт проект —
     // растёт список, а не тело графа.
     //
@@ -54,8 +53,8 @@ supervisor_graph! {
         // (`<Updater, Reboot>`) — типы его слотов: слот — `static`, тип ему
         // нужен, а знает его только эта сторона. Привязка (`= …`) — вход узла
         // (`domain::ota::OtaWiring`): адаптер обновления над разделами `board.firmware`, сброс МК
-        // `bsp::reset::Reboot` и режим применения (`Mode::{% if signed == "true" %}Signed` с версией этого образа
-        // из `crate::version`{% else %}Plain`{% endif %}). Образ узел принимает командами на свой вход
+        // `bsp::reset::Reboot` и версия этого образа из `crate::version` (защита от
+        // отката: образ не новее неё узел отвергает). Образ узел принимает командами на свой вход
         // `CMD`{% if has_modbus != "true" and has_protobuf != "true" and has_canopen != "true" %}: клиента (`::domain::ota::OtaClient` над `ota_cmd_requester()`) получает ваш
         // протокол — без него узел только подтверждает образ{% else %} — их шлют узлы протоколов ниже, каждый со своим номером
         // транспорта (сессию приёма держит один клиент, остальным — `Busy`){% endif %}{% if has_canopen == "true" %}; узлы
@@ -64,16 +63,10 @@ supervisor_graph! {
         // строкой — раньше инициализатора блока `watchdog:`, как бы они ни стояли
         // в тексте, — частичным move: `firmware` уезжает в слот узла, `watchdog`
         // следом забирает сторож, остаток `board` дропается в конце пролога.
-        ::domain::OTA_FRAG<::adapters::ota::Updater<bsp::FirmwareFlash, {{signed}}>, bsp::reset::Reboot> as OTA = ::domain::ota::OtaWiring {
+        ::domain::OTA_FRAG<::adapters::ota::Updater<bsp::FirmwareFlash>, bsp::reset::Reboot> as OTA = ::domain::ota::OtaWiring {
             flash: ::adapters::ota::Updater::new(board.firmware),
             reboot: bsp::reset::Reboot,
-{%- if signed == "true" %}
-            mode: ::domain::ota::Mode::Signed {
-                running_version: crate::version::FW_VERSION,
-            },
-{%- else %}
-            mode: ::domain::ota::Mode::Plain,
-{%- endif %}
+            running_version: crate::version::FW_VERSION,
         },
 {%- endif %}
 {%- assign xs = links | split: "," %}
@@ -263,7 +256,7 @@ supervisor_graph! {
 {%- if net_services contains "mqtt" %}
 
         // Узел `MQTT` — клиент брокера (`domain::mqtt`): адрес и префикс тем
-        // — из `mqtt.toml` (`crate::net::mqtt::BROKER`, `MQTT_PREFIX`),
+        // — из `mqtt.toml` (`crate::net::mqtt::BROKER`, `PREFIX`),
         // соединение — TCP-клиент на стеке `board.net.stack` в буферах, которые
         // объявляет граф (`static T`), буферы `minimq` — слоты
         // `= static` фрагмента.{% if ota == "true" %} `cmd/reboot` — командой узлу `OTA` своим
@@ -303,14 +296,8 @@ const _: () = assert!(
 /// Как часто тикер графа опрашивает сторожей узлов и кормит железо.
 ///
 /// Единственная цифра графа, которая живёт здесь: она про один аппаратный
-/// сторож на всех, а не про какой-то узел. Таймаут узла — во фрагменте
-/// (`domain::heartbeat::WATCHDOG`), аппаратный — у железа
-/// (`bsp::wdg::HW_TIMEOUT_US`), и соотношение между ними проверяет
-/// `const`-assert ниже. Компилятор проверяет сам `check_every` против
-/// аппаратного таймаута — `supervisor_graph!` эмитит `const`-assert, читая
-/// `HARDWARE_TIMEOUT` у типа сторожа; левое звено цепочки (период отметок <
-/// таймаут узла) держит `const`-assert во фрагменте (`domain::heartbeat`) —
-/// `docs/watchdog.md`.
+/// сторож на всех, а не про какой-то узел. Цепочка таймаутов и где какое её
+/// звено проверяется — `docs/watchdog.md`; правое звено — `const`-assert ниже.
 const WATCHDOG_CHECK_EVERY: Duration = Duration::from_millis(100);
 
 // Правое звено цепочки таймаутов, и единственное место в шаблоне, где видны оба
@@ -338,10 +325,7 @@ const _: () = assert!(
 /// Куда уходит просрочка наблюдаемого узла.
 ///
 /// Наблюдатель — часть декларации графа (`observe:` в блоке `watchdog:`), а не
-/// то, что приложение устанавливает вызовом: узел с маркером `observe` и без
-/// этой клаузы — ошибка компиляции, и клауза без единого такого узла тоже.
-/// Каждая половина по отдельности выглядит рабочей и не является — узел,
-/// докладывающий в никуда, тише ненаблюдаемого, но не безопаснее.
+/// вызов (docs/watchdog.md).
 ///
 /// Печатью список действий не исчерпывается, он с неё начинается: что делать
 /// с зависшим узлом — перезапустить соседа, деградировать, поднять тревогу —

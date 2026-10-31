@@ -1,4 +1,4 @@
-Оркестрация embassy-задач: жизненный цикл, рестарты, watchdog, межзадачный
+Оркестрация embassy-задач: жизненный цикл, watchdog, межзадачный
 обмен. Остальное про крейт `app` — `app.md`.
 
 Примеры ниже намеренно не компилируются (`ignore`) — этот `cross`-workspace
@@ -7,7 +7,7 @@
 (`cargo generate`). Раскомментируйте и адаптируйте под свою плату по мере
 необходимости.
 
-# `supervisor` — граф задач: порядок старта, рестарты, обмен, watchdog
+# `supervisor` — граф задач: порядок старта, обмен, watchdog
 
 Один макрос `supervisor_graph!` описывает весь набор задач сразу. Он
 заменил три сторонних крейта, каждый из которых описывал свой срез того
@@ -19,14 +19,11 @@
 Что даёт узел графа, помимо `deps:` (упорядоченный старт — через явный
 барьер готовности, а не порядок спавна) и `restart:`/`backoff:`
 (политика перезапуска с backoff'ом; узлы шаблона ею не пользуются — они не
-падают, `restart:` у них нет: на отказ связи пишут в лог и продолжают, а
-пережидает отказ реализация порта):
+падают, `docs/architecture.md`, «Узлы не падают»):
 
-* `resources: [SLOT: Type]` — эксклюзивная передача владения (обычно
-  ручкой периферии) в задачу на один прогон и обратно при её остановке,
-  чтобы следующий перезапуск получил тот же объект. Отвечает на вопрос,
-  который сам по себе `Spawner` не решает: как перезапустить задачу,
-  забравшую `Peripherals`-ручку.
+* `resources: [SLOT: Type]` — эксклюзивная передача владения в задачу на
+  один прогон и обратно при её остановке. Узлы шаблона так получают рычаги
+  платы и адаптеры над ними — из входа фрагмента (`= inputs.поле`).
 * `inbox: [FIELD: Type; N]` — ограниченная упорядоченная очередь входящих
   сообщений (это и есть бывший `ector`: fire-and-forget между задачами).
   В автомате узла (`#[fsm::typestate]`) это обычный источник `listen` —
@@ -75,13 +72,9 @@ doc-комментариях самого `supervisor` и `supervisor-macros`; �
 эмитит структуру контекста (поля — слоты, каналы, `heartbeat`, `index`) в
 крейте фрагмента, а не compose-site, поэтому сигнатура задачи не называет
 ничего из крейта с графом. **Каждая задача — автомат `#[fsm::typestate]` на
-этом контексте**: таблица состояний и переходов стоит на `impl ИмяCtx`, действия
-— его методы, задача — `match ctx.run().await {}` (или `ctx.run().await.result`,
-если у автомата есть выходное состояние). Нелегальный переход и необработанное
-событие так не компилируются. Форма `task: имя` без `ctx:` тоже работает, но
-тип контекста тогда генерирует compose-site, и задача привязана к `cross`;
-проекция аргументов (`task: путь(ctx.поле)`) контекста не даёт вовсе — автомат
-стоять не на чем.
+этом контексте** (`docs/architecture.md`, «Каждая задача узла — автомат
+`#[fsm::typestate]`»). Форма `task: имя` без `ctx:` тоже работает, но
+тип контекста тогда генерирует compose-site, и задача привязана к `cross`.
 
 **Вторая — фрагменты.** `supervisor_fragment!` объявляет самодостаточный
 срез графа — один узел (без имени) с его политикой, таймаутом, слотами и
@@ -98,7 +91,7 @@ supervisor::supervisor_fragment! {
         task: $crate::heartbeat::task;
 }
 
-pub async fn run(mut ctx: HeartbeatCtx<'_>) {
+pub async fn task(mut ctx: HeartbeatCtx<'_>) {
     match ctx.run().await {}
 }
 
@@ -131,15 +124,11 @@ impl HeartbeatCtx<'_> {
   объявляет сверх узла (слоты, `provide_*`, `publish:`-приёмники), получает
   префикс этого имени: `resources: [DEVICE: …]` у `… as SENSOR` — это слот
   `SENSOR_DEVICE` и `provide_sensor_device`.
-* **Токены фрагмента резолвятся на compose-site**, а не в крейте, где он
-  написан: `macro_rules!` подставляет их в место вызова. Поэтому всё, что
-  фрагмент называет, пишется полным путём — `$crate::heartbeat::WATCHDOG`,
-  `$crate::heartbeat::task` — и от этого файла ничего не требует;
-  голое имя искалось бы здесь и падало бы с `E0425`. `$crate::` при этом
-  указывает в крейт фрагмента и переживает переименование зависимости в чужом
-  манифесте, а `crate::` означал бы крейт, который фрагмент вызывает. Типы,
-  которых фрагмент назвать не может (адаптер платы в слоте), — его параметры:
-  {% if ota == "true" %}`name: OTA_FRAG<F, R>` во фрагменте, `::domain::OTA_FRAG<::adapters::ota::Updater<bsp::FirmwareFlash, true>, bsp::reset::Reboot>` здесь{% else %}`name: SENSOR_FRAG<R>` во фрагменте, `::domain::SENSOR_FRAG<SensorResources>` здесь
+* **Токены фрагмента резолвятся на compose-site**, поэтому всё, что фрагмент
+  называет, пишется полным путём (`$crate::heartbeat::WATCHDOG`; почему —
+  `docs/architecture.md`, «Узлы — фрагменты в `domain`»). Типы,
+  которых фрагмент назвать не может (адаптер над рычагом в слоте), — его параметры:
+  {% if ota == "true" %}`name: OTA_FRAG<F, R>` во фрагменте, `::domain::OTA_FRAG<::adapters::ota::Updater<bsp::FirmwareFlash>, bsp::reset::Reboot>` здесь{% else %}`name: SENSOR_FRAG<R>` во фрагменте, `::domain::SENSOR_FRAG<bsp::SensorBus>` здесь
   (пример ниже){% endif %}.
 * **Порядок items фиксирован**: `name:` → `boot:` → `watchdog:` →
   `cloned:`/`shared:` → `executor` → `fragments:` последним. `fragments:`
@@ -147,9 +136,8 @@ impl HeartbeatCtx<'_> {
   (это решение на весь граф, фрагмент лишь опрашивает его полем `watchdog:`
   своего узла).
 
-Цена всей схемы — зависимость `domain` от `supervisor` (ради контекста и
-`Heartbeat` в сигнатуре задачи, `Duration` в таймауте); она
-разобрана в `docs/architecture.md`. Сам фрагмент её не требует: он не
+Цена всей схемы — зависимость `domain` от `supervisor` (`docs/architecture.md`,
+«Цена решения…»). Сам фрагмент её не требует: он не
 генерирует задач, а `supervisor` по имени обязан быть только у compose-site.
 
 Время везде — `embassy_time::Duration`, единственный тип времени во всей
@@ -162,70 +150,72 @@ impl HeartbeatCtx<'_> {
 нет — зависимости, ресурсы, почтовый ящик и тип, который знает лишь плата.
 
 ```ignore
-// в crates-host/domain/src/sensor.rs: слот под ручку периферии, тип которой
-// `domain` не видит, — отсюда параметр фрагмента.
+// в crates-host/domain/src/sensor.rs: слот под рычаг платы, тип которого
+// `domain` не видит, — отсюда параметр фрагмента. Вход `SensorWiring` эмитит
+// сам фрагмент: по полю на каждое `inputs.<поле>`.
 supervisor::supervisor_fragment! {
     name: SENSOR_FRAG<R>;
+    boot: inputs: struct $crate::sensor::SensorWiring;
     // Узлы шаблона не падают: на отказ автомат возвращается в начальное
     // состояние, перезапускать графу нечего.
-    node resources: [BUS: R],
+    node resources: [BUS: R = inputs.bus],
         ctx: $crate::sensor::SensorCtx,
-        task: $crate::sensor::run;
+        task: $crate::sensor::task;
 }
 
-// в crates-host/domain/src/link.rs — то есть там, где это тестируется на хосте:
+// в crates-host/domain/src/peer.rs — то есть там, где это тестируется на хосте:
 supervisor::supervisor_fragment! {
-    name: LINK_FRAG;
+    name: PEER_FRAG;
     // Стартует только после того, как SENSOR сигнализировал готовность.
     node deps: [SENSOR],
-        inbox: [EVENTS: $crate::link::LinkEvent; 8],
-        ctx: $crate::link::LinkCtx,
-        task: $crate::link::run;
+        inbox: [EVENTS: $crate::peer::PeerEvent; 8],
+        ctx: $crate::peer::PeerCtx,
+        task: $crate::peer::task;
 }
 
-pub async fn run(mut ctx: LinkCtx<'_>) {
+pub async fn task(mut ctx: PeerCtx<'_>) {
     match ctx.run().await {} // не возвращается
 }
 
 #[fsm::typestate]
-impl LinkCtx<'_> {
+impl PeerCtx<'_> {
     fsm::machine! {
-        machine Link mod edges {
-            states { Disconnected, Connected { peer: u8 } }
+        machine Peer mod edges {
+            states { Disconnected, Connected { id: u8 } }
             start -> Disconnected;
             // Почтовый ящик узла — обычный источник событий.
             listen { * => ev: self.events.receive() }
             transitions {
-                Disconnected + ev(LinkEvent::Up(peer)) => up   -> Connected,
-                Connected    + ev(LinkEvent::Down)     => down -> Disconnected,
+                Disconnected + ev(PeerEvent::Up(id))   => up   -> Connected,
+                Connected    + ev(PeerEvent::Down)     => down -> Disconnected,
                 // Каждое событие каждого состояния — строкой: забытое не
                 // скомпилируется (`E0004`), `_ =>` здесь нет.
-                Disconnected + ev(LinkEvent::Down)     => ignore,
-                Connected    + ev(LinkEvent::Up(_))    => ignore,
+                Disconnected + ev(PeerEvent::Down)     => ignore,
+                Connected    + ev(PeerEvent::Up(_))    => ignore,
             }
         }
     }
     // up(), down() — методы контекста
 }
 
-// здесь, в graph.rs: две записи вместо одной.
+// здесь, в graph.rs: две записи вместо одной. Рычаг платы узел получает
+// привязкой `= …` над полем `board` — `boot:`-объектом графа (`bsp::Board`).
 fragments: [::domain::HEARTBEAT_FRAG as HEARTBEAT,
-            ::domain::SENSOR_FRAG<SensorResources> as SENSOR,
-            ::domain::LINK_FRAG as LINK];
+            ::domain::SENSOR_FRAG<bsp::SensorBus> as SENSOR =
+                ::domain::sensor::SensorWiring { bus: board.sensor },
+            ::domain::PEER_FRAG as PEER];
 
-// в main(), после инициализации HAL: слот назван по узлу и по слоту.
-provide_sensor_bus(r.sensor).expect("слот пуст до первого spawn_all");
-// Второй параметр — `boot:`-объект графа; в шаблоне это `board`
-// (`bsp::Board`: рычаги платы). Слот,
-// написанный с инициализатором — во фрагменте `resources: [BUS: R = hw.sensor]`
-// при его собственной `boot: hw: …;`, а здесь `… as SENSOR = board.sensor`, —
-// заполняет сам граф:
-// строки `provide_sensor_bus` тогда нет вовсе, а значит её нельзя и забыть
-// (так устроен узел {% if ota == "true" %}OTA ниже{% else %}`CPU_LOAD`, `app.md`{% endif %}). Формой не обслуживаются слоты
+// в main(): `board` уходит в `spawn_all` целиком. Привязку вычисляет пролог
+// `spawn_all` и кладёт рычаг в слот `SENSOR_BUS` сам — строки `provide_sensor_bus`
+// нет вовсе, а значит её нельзя и забыть (так устроен узел
+// {% if ota == "true" %}OTA ниже{% else %}`CPU_LOAD`, `app.md`{% endif %}). Формой не обслуживаются слоты
 // `consume`/`shared` (их переиздаёт `respawn_all`, а boot-объект к тому
 // моменту потреблён) и всё, что требует `await` или повтора, — для этого
-// остаётся узел-инициализатор.
-spawn_all(&spawner, board).expect("узлы свежие");
+// остаётся узел-инициализатор. `Debug` у ошибки графа нет, поэтому не
+// `expect`, а `Display`:
+if let Err(err) = spawn_all(&spawner, board) {
+    defmt::panic!("app: spawn_all: {}", defmt::Display2Format(&err));
+}
 ```
 
 **Большой объект в слот по значению не кладут.** Слот `[X: T]` — `static`
@@ -271,8 +261,8 @@ resources: [WS: &'static mut $crate::x::Workspace = static |w| w.gain = inputs.g
    (`supervisor_fragment!` с `ctx: $crate::<узел>::<Узел>Ctx` и
    `task: $crate::<узел>::task`, всё внутри полным путём), автомат
    `#[fsm::typestate]` на `impl <Узел>Ctx` и задача
-   `match ctx.run().await {}`. Узлы шаблона не падают (`restart:` нет),
-   отказ связи — строка в лог и возврат в начальное состояние автомата.
+   `match ctx.run().await {}` (`docs/architecture.md`, «Узлы — фрагменты в
+   `domain`» и следующие разделы).
 2. **Строка в графе** — в `fragments:` файла `crates-cross/app/src/graph.rs`:
    `::domain::<УЗЕЛ>_FRAG as <УЗЕЛ>`. Имя узлу даёт эта запись, а не фрагмент.
 3. **Сторож — если узел обещает прогресс.** Поле `watchdog:` фрагмента и
@@ -281,9 +271,9 @@ resources: [WS: &'static mut $crate::x::Workspace = static |w| w.gain = inputs.g
    (`docs/watchdog.md`) не проверяется. Узел, который ждёт событие, которого
    может не быть всю жизнь платы, сторожем не отмечается — как `NET` и `HTTP`.
 4. **Железо — через рычаг платы.** Узел не берёт периферию сам: `bsp` отдаёт
-   рычаг полем `Board`, адаптер над ним `app` строит в `fragments:` (память —
-   `static [u8; N]` там же) и отдаёт узлу во входе фрагмента
-   (`docs/architecture.md`).
+   рычаг полем `Board`, а адаптер над ним, чей тип или память выбирает
+   приложение, `app` строит в `fragments:` и отдаёт узлу во входе фрагмента (`docs/architecture.md`, «Адаптеры делятся по
+   одному признаку — нужен ли чип»).
 5. **Тест на хосте** — по образцу `mod tests` в `crates-host/domain/src/heartbeat.rs`
    (тесты — в модуле узла, не отдельным файлом):
    `supervisor::stand!` строит контекст и порты узла без графа, время
@@ -308,24 +298,13 @@ resources: [WS: &'static mut $crate::x::Workspace = static |w| w.gain = inputs.g
 ядра CM4 `IWDG2`), объект собирает `Board::new`, а запускает его блок
 `watchdog:` графа — инициализатором `= board.watchdog.arm()`, где
 `board` это объявленный выше `boot:`-объект, который `main` передаёт в
-`spawn_all`. Всё, что осталось на вас, — цифры, и живут они там, о чём
-каждая: `WATCHDOG_CHECK_EVERY` здесь (про один сторож на всех), таймаут узла
-во фрагменте (про этот узел, вместе с периодом его отметок — и их соотношение
-держит `const`-assert там же; узлов в шаблоне два, `HEARTBEAT` и `CPU_LOAD`, и
-цифры у них свои), `bsp::wdg::HW_TIMEOUT_US` у железа. Второе соотношение
-(таймаут узла плюс `WATCHDOG_CHECK_EVERY` меньше `HW_TIMEOUT_US`) держит
-`const`-assert рядом с `WATCHDOG_CHECK_EVERY`: второго места, где видны оба
-конца, нет, а `supervisor` намеренно их не связывает.
+`spawn_all`. Всё, что осталось на вас, — цифры: `WATCHDOG_CHECK_EVERY` здесь,
+таймаут узла во фрагменте, `bsp::wdg::HW_TIMEOUT_US` у железа; их цепочка и
+где какое звено проверяется — `docs/watchdog.md`.
 
 Узел объявлен **наблюдаемым** (`watchdog: ... observe`): его просрочка
-докладывается наблюдателю графа (`report_liveness`) и не превращается в
-аппаратный сброс. Так шаблон не раздаёт проект, который перезагружает сам
-себя, стоит добавить в узел работу длиннее его таймаута. Уберёте слово
-`observe` — у узла появится настоящая аппаратная подстраховка, и тогда же
-стоит перечитать оба соотношения таймаутов в `bsp::wdg::Iwdg::arm`.
-Наблюдаемость узла ничего не меняет для железа: сторож взведён и кормится
-тикером графа, поэтому вставший целиком исполнитель сбрасывает плату в
-любом случае.
+докладывается наблюдателю графа (`report_liveness`), а не сбрасывает плату
+(`docs/watchdog.md`).
 
 Важное следствие: `Heartbeat::feed()` узел зовёт **явно**, из тела своей
 задачи, и только когда реально продвинулся. Автоматического «задача жива,
@@ -335,14 +314,14 @@ resources: [WS: &'static mut $crate::x::Workspace = static |w| w.gain = inputs.g
 
 # OTA: узел уже в графе, вам остаётся канал
 
-Узел `OTA` объявлен в `domain::ota` (`OTA_FRAG`; режим применения —
-`Mode::Signed` — подставила генерация во вход) и спавнится отсюда записью в
+Узел `OTA` объявлен в `domain::ota` (`OTA_FRAG`; версию этого образа для
+защиты от отката подставила генерация во вход) и спавнится отсюда записью в
 `fragments:` — она же даёт ему имя (`as OTA`) и типы двух его слотов
 аргументами. Образ он принимает командами (`ports::OtaCommand`) на свой вход
 `CMD` — `request:` фрагмента, запрос с ответом (или на `ASK` — `serves:`, для
 клиента, который не ждёт исхода в вызове): `Start` (сверка длины до
 стирания), `Chunk` (буферизация до слова флеша — `domain::ota::download::Transfer`),
-`Finish` (`mark_updated` или `domain::ota::update::apply_signed`), `Reboot`, — и на
+`Finish` (`domain::ota::update::apply_signed`), `Reboot`, — и на
 каждую отвечает исходом `ports::OtaReply`. Всё это — host-тесты в
 `crates-host/domain/src/ota.rs`.
 
@@ -361,16 +340,17 @@ resources: [WS: &'static mut $crate::x::Workspace = static |w| w.gain = inputs.g
 вход фрагмента вместе с адаптером обновления над разделами: `bsp` про `domain`
 не знает
 (`= ::domain::ota::OtaWiring { flash: Updater::new(board.firmware), reboot:
-bsp::reset::Reboot, mode: ::domain::ota::Mode::Signed { running_version:
-crate::version::FW_VERSION } }`). Типы слотов — аргументы фрагмента
-(`OTA_FRAG<::adapters::ota::Updater<bsp::FirmwareFlash, true>, bsp::reset::Reboot>`):
+bsp::reset::Reboot, running_version: crate::version::FW_VERSION }`). Типы слотов — аргументы фрагмента
+(`OTA_FRAG<::adapters::ota::Updater<bsp::FirmwareFlash>, bsp::reset::Reboot>`):
 слот — `static`, тип ему нужен, а знает его только эта сторона. Слот адаптера — `local` (фича
 `supervisor/local-resources` в
-`crates-cross/Cargo.toml`): объекты платы `!Send`, и граф держит их на своём
-исполнителе, не требуя `Send`. Узел, чей `local`-слот заполняется
+`crates-cross/Cargo.toml`): адаптер `Updater` не `Send` (держит `&'static
+Mutex<NoopRawMutex, …>`), и граф держит его на своём исполнителе, не требуя
+`Send`. Плата за это — по `unsafe`-блоку на каждый такой `local`-`static`,
+который макрос эмитит в `app`. Узел, чей `local`-слот заполняется
 из `inputs`, нельзя перевести на другой
-исполнитель (`executor:`); захотите вынести OTA туда — менять `local` во
-фрагменте `domain::ota` и `NoopRawMutex` у {% if ota_store == "external" %}`bsp::external::ExternalMutex`{% else %}`bsp::flash::FlashMutex`{% endif %} вместе.
+исполнитель (`executor:`): это допущение «один исполнитель», и менять его
+вместе с `NoopRawMutex` у флеша (`docs/flash.md`).
 
 У узла нет `watchdog:`, и это не забывчивость: команды может не быть всю
 жизнь платы, и прогресса, о котором можно отметиться, у узла нет. Аппаратный

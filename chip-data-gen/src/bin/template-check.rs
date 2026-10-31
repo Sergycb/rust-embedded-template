@@ -1,5 +1,5 @@
 //! Проверка шаблона целиком: сгенерировать проект и убедиться, что он
-//! собирается — то, что до сих пор делалось руками по инструкции из CLAUDE.md
+//! собирается — то, что до сих пор делалось руками
 //! (найти все `{{...}}`/`{% ... %}`, подставить значения, выбрать ветку
 //! Liquid-условия, собрать, откатить правки, не забыть проверить `git diff`).
 //!
@@ -13,17 +13,16 @@
 //! cargo run --manifest-path chip-data-gen/Cargo.toml --bin template-check -- stm32g071rb
 //! ```
 //!
-//! Уровни: `--quick` по всему набору — на каждую правку; `--only` по
-//! затронутой ветке и `--smoke` — по ходу работы; полный прогон — перед
-//! вливанием в master. Конфигурации идут параллельно (`--jobs`, по умолчанию
+//! Какой уровень когда — MAINTAINING.md, «Какой уровень когда». Конфигурации
+//! идут параллельно (`--jobs`, по умолчанию
 //! [`DEFAULT_JOBS`]), вывод каждой — в свой лог, в консоли — строка на итог.
 //!
 //! Ловит ровно тот класс поломок, который не виден ни линтом, ни тестами
-//! репозитория шаблона: у самого шаблона `Cargo.lock` пинит ревизии
-//! git-зависимостей, поэтому ломающее изменение в `rust-lib` локально не
-//! видно. Сгенерированный проект lock-файлов из шаблона не получает и
-//! резолвит зависимости заново — так что каждая конфигурация собирается на
-//! текущих версиях, как собрался бы свежий проект пользователя.
+//! репозитория шаблона: сгенерированный проект lock-файлов из шаблона не
+//! получает и резолвит зависимости заново — git-зависимости по закреплённой
+//! ревизии (`rust_lib_rev`, `rev` у `w25q`), crates.io по semver-диапазону. Так
+//! каждая конфигурация собирается на текущих версиях с crates.io, как собрался
+//! бы свежий проект пользователя, а `Cargo.lock` самого шаблона держит прежние.
 //!
 //! Конфигурации по умолчанию подобраны так, чтобы задеть все ветки
 //! генерации: обычный одноядерный, чип с выбором банковой схемы, чип, куда
@@ -83,7 +82,7 @@ fn default_cases() -> Vec<Case> {
         // Одноядерный с OTA и подписью образа (она всегда идёт вместе с OTA:
         // проверка в bootloader'е `screen_update`, ключ через `boot/build.rs`,
         // `salty` со своей `slow-motion` и профилем dev, в `app/src/version.rs`
-        // — `FW_VERSION` для `Mode::Signed`), одна карта памяти — самый
+        // — `FW_VERSION` во входе узла OTA), одна карта памяти — самый
         // обычный случай.
         Case::new("stm32f407ve").smoke(),
         // Тот же чип, но от OTA отказались при генерации: ветка «один образ на
@@ -427,8 +426,10 @@ impl Case {
 }
 
 /// Файлы, где сырые `{{...}}` остаются намеренно и после генерации.
-/// `CLAUDE.md` документирует плейсхолдеры как текст и потому исключён из
-/// Liquid-подстановки (`exclude` в cargo-generate.toml).
+/// `CLAUDE.md` — импорт `@AGENTS.md` плюс пункты только для Claude Code, и в
+/// них Liquid упомянут текстом (`{{ }}`, `{% %}` — признак файлов шаблона,
+/// по которым нет графа кода); поэтому он исключён из Liquid-подстановки
+/// (`exclude` в cargo-generate.toml) и едет в проект как есть.
 const RAW_PLACEHOLDERS_ALLOWED: &[&str] = &["CLAUDE.md"];
 
 /// Каталоги, которые не обходим при поиске остаточных плейсхолдеров.
@@ -842,6 +843,7 @@ fn check_one(
     check_ci_files(&project, &options.ci, log)?;
     check_ci_mentions(&project, &options.ci, &repos, log)?;
     check_doc_paths(&project, log)?;
+    check_no_leftovers(&project, log)?;
 
     let mut static_ram = None;
     if !options.quick {
@@ -1300,6 +1302,59 @@ fn check_doc_paths(project: &Path, log: &File) -> anyhow::Result<()> {
         );
     }
     note(log, "пути в доках: все на месте")
+}
+
+/// Файлы репозитория шаблона, которым в проекте не место: хуки cargo-generate
+/// не копирует сам, остальное держит `ignore` в cargo-generate.toml.
+/// `chip-data-gen` и неотслеживаемое сюда не входят — копия шаблона, из которой
+/// идёт генерация, их и так не несёт (`copy_template`).
+const NOT_IN_PROJECT: &[&str] = &[
+    "chip-select.rhai",
+    "post-script.rhai",
+    "MAINTAINING.md",
+    "chip-data",
+    "Cargo.lock",
+    "crates-host/chip-info/Cargo.lock",
+    "docs/superpowers",
+];
+
+/// В проекте нет файлов сопровождения шаблона и пустых каталогов — следов
+/// того, что хук удалил все файлы каталога, а сам каталог оставил.
+fn check_no_leftovers(project: &Path, log: &File) -> anyhow::Result<()> {
+    let mut found: Vec<String> = NOT_IN_PROJECT
+        .iter()
+        .filter(|path| project.join(path).exists())
+        .map(|path| (*path).to_owned())
+        .collect();
+    find_empty_dirs(project, project, &mut found)?;
+    if !found.is_empty() {
+        bail!(
+            "в проекте лишнее (файлы шаблона или пустые каталоги):\n  {}",
+            found.join("\n  ")
+        );
+    }
+    note(log, "лишних файлов и пустых каталогов нет")
+}
+
+fn find_empty_dirs(project: &Path, dir: &Path, found: &mut Vec<String>) -> anyhow::Result<()> {
+    for entry in fs::read_dir(dir).with_context(|| format!("прочитать {}", dir.display()))?
+    {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir()
+            || SKIP_DIRS.contains(&entry.file_name().to_string_lossy().as_ref())
+        {
+            continue;
+        }
+        let path = entry.path();
+        if fs::read_dir(&path)?.next().is_none() {
+            let relative = path.strip_prefix(project).unwrap_or(&path);
+            let relative = relative.to_string_lossy().replace('\\', "/");
+            found.push(format!("{relative}/"));
+        } else {
+            find_empty_dirs(project, &path, found)?;
+        }
+    }
+    Ok(())
 }
 
 fn visit_files(

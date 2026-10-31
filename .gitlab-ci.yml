@@ -53,8 +53,8 @@ host:test:
   script:
     # --locked ловит рассинхрон Cargo.toml и закоммиченного Cargo.lock:
     # без него cargo молча подобрал бы свои версии, и пайплайн остался бы
-    # зелёным на том, чего в репозитории нет. Условный, как у cross:build ниже:
-    # lock-файлов шаблон не раздаёт, проект считает их сам первой сборкой.
+    # зелёным на том, чего в репозитории нет. Условный: lock-файлы проект
+    # считает сам первой сборкой (README, «Быстрый старт»).
     - |
       if [ -f Cargo.lock ]; then
         cargo fetch --locked
@@ -79,11 +79,8 @@ host:test:
     # Политика — `deny.toml`.
     - cargo deny check
 
-    # Покрытие без порога: цифра нужна, чтобы видеть, куда тесты не
-    # заглядывают, а не чтобы ронять пайплайн. Порог в проекте, где половина
-    # кода — `bsp` под железо, которого у раннера нет, означал бы только одно:
-    # писать тесты ради процента. Формат cobertura — тот, который GitLab
-    # показывает прямо в диффе merge request'а.
+    # Покрытие без порога (README, «Что проверяет CI»). Формат cobertura — тот,
+    # который GitLab показывает прямо в диффе merge request'а.
     - cargo llvm-cov nextest --workspace --exclude host-target-tests
       --features domain/log{% if ota == "true" %},domain/signed{% endif %} --release --ignore-filename-regex 'xtask' --summary-only
     # Второй вызов ничего не пересобирает и не перезапускает: `report` строит
@@ -130,8 +127,7 @@ typos:
 #
 # `changes` здесь не оптимизация, а условие существования джоба: без фильтра
 # каждый пайплайн платил бы сборкой `stm32-metapac` ради инструмента, который
-# на прошивку не влияет, — а от этого в шаблоне отказывались осознанно
-# (см. docs/conventions.md).
+# на прошивку не влияет.
 pins:check:
   stage: test
   image: rust:1.98.1
@@ -184,13 +180,7 @@ cross:build:
     - rustup target add {{target}}
     - cargo install flip-link --version "$FLIP_LINK_VERSION" --locked
   script:
-    # `--locked` условный, как у host:test выше. Шаблон не раздаёт lock-файлов:
-    # состав зависимостей зависит от ответов при генерации (OTA, раздел
-    # настроек, подпись, протокол), и один файл подходил бы ровно
-    # одному сочетанию. Пока проект не собран и lock не закоммичен, строгий шаг
-    # падал бы не на рассинхроне, а на отсутствии файла — то есть первый же
-    # пайплайн свежего проекта был бы красным без причины. Как только lock в
-    # репозитории, проверка становится строгой сама.
+    # `--locked` условный, как у host:test выше (README, «Быстрый старт»).
     - |
       if [ -f crates-cross/Cargo.lock ]; then
         cargo fetch --locked --manifest-path crates-cross/Cargo.toml
@@ -281,7 +271,6 @@ release:build:
         exit 1
       fi
       echo "версия $version"
-{%- if signed == "true" %}
     # Закрытый ключ в репозитории не лежит (он в .gitignore), поэтому приходит
     # переменной CI/CD — 32 байта seed в base64 (`base64 -w0 <
     # ota-signing-key.bin`), тип Variable, masked. Без него сборка НЕ падает:
@@ -298,11 +287,9 @@ release:build:
           exit 1
         fi
       fi
-{%- endif %}
     # Та же команда, что и локально: собирает оба профиля, меряет образ против
     # раздела, кладёт рядом app.bin и подписывает его, если ключ на месте.
     - cargo xtask build
-{%- if signed == "true" %}
     # Сверку открытого ключа с закрытым и с зашитым в прошивку xtask делает сам
     # (ensure_signing_key, ensure_image_key). Здесь — то, чего он не видит: если
     # ключ был, подпись обязана появиться, иначе релиз вышел бы неподписанным.
@@ -311,7 +298,6 @@ release:build:
         echo "ключ подписи был, а app.bin.sig после cargo xtask build нет — релиз вышел бы неподписанным"
         exit 1
       fi
-{%- endif %}
     # Артефакты собираются из корня: путь внутри target/ зависит от чипа, а в
     # `artifacts:` подстановки переменных нет.
     - cp "crates-cross/target/{{target}}/release/app.bin" app.bin
@@ -368,10 +354,8 @@ release:publish:
           url: "$CI_PROJECT_URL/-/jobs/$BUILD_JOB_ID/artifacts/file/SHA256SUMS"
         - name: BUILD-ENV
           url: "$CI_PROJECT_URL/-/jobs/$BUILD_JOB_ID/artifacts/file/BUILD-ENV"
-{%- if signed == "true" %}
         - name: app.bin.sig
           url: "$CI_PROJECT_URL/-/jobs/$BUILD_JOB_ID/artifacts/file/app.bin.sig"
-{%- endif %}
 {%- endif %}
 
 # renovate.json — это КОНФИГУРАЦИЯ репозитория, а не запускалка: без джоба

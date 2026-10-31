@@ -71,15 +71,11 @@ use static_cell::StaticCell;
 
 /// Страница раздела `BOOTLOADER_STATE` — размер сектора, в котором он лежит.
 ///
-/// Цельный `Flash` объявляет страницей самый крупный сектор чипа, а
-/// `Partition::new` паникует на разделе, не кратном странице. На F2/F4/F7
-/// `STATE` лежит в мелком секторе (у F4 — 16 KiB, а с разделом настроек
-/// 64 KiB при странице 128 KiB), поэтому его страница своя{% if state_paged != "true" %}; у этого чипа
-/// она равна странице цельного `Flash`, и раздел строится прямо над ним, а
-/// равенство держит `const`-assert ниже{% endif %}. Число посчитано при
-/// генерации тем же расчётом, что адреса в `memory.x`, и приезжает переменной
-/// среды `STATE_ERASE_SIZE` из `[env]` `crates-cross/.cargo/config.toml`. Её
-/// же берёт bootloader — отсюда, и разделу в приложении и в нём расходиться нельзя.
+/// Своя у `STATE`, потому что `Partition::new` паникует на разделе, не кратном
+/// странице цельного `Flash`{% if state_paged != "true" %}; у этого чипа она равна странице цельного
+/// `Flash`, и равенство держит `const`-assert ниже{% endif %}. Число — из генерации
+/// (`STATE_ERASE_SIZE` в `[env]`), его же берёт отсюда bootloader
+/// (docs/flash.md, «Страница раздела — {% if erase_page == "true" %}не всегда {% endif %}страница чипа»).
 pub const STATE_ERASE_SIZE: usize = match usize::from_str_radix(env!("STATE_ERASE_SIZE"), 10) {
     Ok(size) => size,
     Err(_) => panic!("STATE_ERASE_SIZE в [env] crates-cross/.cargo/config.toml — не число"),
@@ -96,12 +92,12 @@ const _: () = assert!(
 
 /// Страница обмена `ACTIVE` и `DFU` — крупнее физической страницы флеша.
 ///
-/// Генерация берёт её больше физической, чтобы журнал `BOOTLOADER_STATE`
-/// (запись на каждую страницу `ACTIVE`) стал короче и коду bootloader'а
-/// остался почти весь его блок. Флеш под `DFU` — `ErasePage<_, SWAP_PAGE_SIZE>`;
-/// `ACTIVE` с той же страницей собирает bootloader (отсюда же берёт и число).
-/// Число — `page_size` из генерации, переменная среды `SWAP_PAGE_SIZE`; кратно
-/// оно странице стирания флеша (проверка ниже).
+/// Крупнее — ради короткого журнала `BOOTLOADER_STATE` (docs/flash.md,
+/// «Страница раздела — не всегда страница чипа»). Флеш под `DFU` —
+/// `ErasePage<_, SWAP_PAGE_SIZE>`; `ACTIVE` с той же страницей собирает
+/// bootloader (отсюда же берёт и число). Число — `page_size` из генерации,
+/// переменная среды `SWAP_PAGE_SIZE`; кратно оно странице стирания флеша
+/// (проверка ниже).
 pub const SWAP_PAGE_SIZE: usize = match usize::from_str_radix(env!("SWAP_PAGE_SIZE"), 10) {
     Ok(size) => size,
     Err(_) => panic!("SWAP_PAGE_SIZE в [env] crates-cross/.cargo/config.toml — не число"),
@@ -195,8 +191,7 @@ const _: () = assert!(
 {%- endif %}
 ///
 /// `NoopRawMutex`, а не `CriticalSectionRawMutex`: все пользователи работают из
-/// задач одного исполнителя, то есть без вытеснения. Появится второй
-/// исполнитель (прерывательный приоритет, второе ядро) — менять здесь.
+/// задач одного исполнителя; что менять вместе с ним — docs/flash.md.
 pub type FlashMutex = blocking_mutex::Mutex<NoopRawMutex, RefCell<ChipFlash>>;
 {%- if dfu_bank == "true" %}
 
@@ -395,8 +390,9 @@ pub(crate) fn new(resources: crate::resources::FlashResources) -> &'static Flash
 
 /// Нарезает разделы обновления: `DFU` и `BOOTLOADER_STATE` над общим
 /// [`FlashMutex`] со своими страницами — по символам `memory.x`, как их
-/// режет bootloader. Границы кратны страницам (`ASSERT` в `memory.x`): иначе
-/// `Partition::new` паникует на старте.
+/// режет bootloader. Границы обязаны быть кратны страницам, иначе
+/// `Partition::new` паникует на старте: в сгенерированном `memory.x` это
+/// держит `ASSERT` (падает линковка), в заполненном руками — никто.
 {%- if dfu_bank == "true" %}
 ///
 /// `DFU` — в банке 2, `STATE` — в банке 1.
