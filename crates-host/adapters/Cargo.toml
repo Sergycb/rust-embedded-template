@@ -9,7 +9,8 @@ rust-version.workspace = true
 workspace = true
 
 [features]
-# Сами адаптеры ничего не пишут в лог.
+# Сами адаптеры в лог почти не пишут: только `settings` — строку о стирании
+# повреждённого раздела, и только в прошивке (`defmt::warn!` под фичей `defmt`).
 # {%- if ota == "true" %}
 # У `embassy-boot` без фич `log`/`defmt` его макросы вывода превращаются в
 # пустые выражения — на хосте это ровно то, что нужно.
@@ -102,7 +103,7 @@ embassy-usb = { workspace = true }
 # Таймауты: keep-alive сокета TCP (`net`), запись, которую хост не забирает (`usb`).
 embassy-time = { workspace = true }
 # {%- endif %}
-# `defmt::Format` на ошибках адаптеров — в прошивке.
+# `defmt::Format` на ошибках адаптеров и строка лога `settings` — в прошивке.
 defmt = { workspace = true, optional = true }
 
 [dev-dependencies]

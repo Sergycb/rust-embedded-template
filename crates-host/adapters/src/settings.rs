@@ -81,6 +81,18 @@
 //! `sequential-storage` старого не хранит.
 // {%- endif %}
 //!
+//! # Повреждённый раздел
+//!
+//! Обрыв питания посреди стирания или переноса записей `sequential-storage`
+//! чинит сам: на `Corrupted` любая его операция зовёт `try_repair` и
+//! повторяет себя; одну битую страницу из двух он тоже разбирает сам, хоть и
+//! не всегда без потери записей. Не починилось — раздел стирается целиком, и
+//! операция идёт уже над пустым: настройки потеряны, а не заперты навсегда, и
+//! узлы читают «ключа нет» — то же, что на новой плате. В лог прошивки — одна
+//! строка о стирании.
+//! `Corrupted` наружу не уходит; не удалось само стирание — наружу ошибка
+//! флеша, и следующая операция попробует снова.
+//!
 //! # Чего здесь нет
 //!
 //! **Удаления ключа.** `sequential_storage::map::remove_item` требует
@@ -122,7 +134,9 @@ const SCRATCH: usize = 128;
 pub type Key = u32;
 
 // {%- if config == "true" %}
-/// Ошибка хранилища. Включает и ошибки флеша, и повреждение данных в разделе.
+/// Ошибка хранилища — ошибка `sequential-storage` над ошибкой флеша.
+/// `Corrupted` [`Settings`] наружу не отдаёт — повреждённый раздел стирается
+/// (см. «Повреждённый раздел» в документации модуля).
 pub type Error<E> = sequential_storage::Error<E>;
 
 /// Кеш, который ничего не кеширует (см. раздел «Чего здесь нет»).
@@ -184,6 +198,19 @@ impl<F: NorFlash> Settings<F> {
         let end = u32::try_from(flash.capacity()).expect("носитель настроек больше 4 GiB");
         Self::new(flash, 0..end)
     }
+
+    /// Раздел повреждён, и `sequential-storage` его не починил: стирает
+    /// целиком — настройки потеряны, но хранилище снова работает.
+    ///
+    /// `Corrupted` до сюда доходит уже после попытки самого крейта: на нём
+    /// любая операция зовёт свой `try_repair` (дотирает недостёртые страницы,
+    /// повторяет прерванный перенос записей) и повторяет себя. Не помогло —
+    /// чинить больше нечем, и крейт сам советует стереть раздел.
+    async fn erase_corrupted(&mut self) -> Result<(), Error<F::Error>> {
+        #[cfg(feature = "defmt")]
+        defmt::warn!("настройки: раздел повреждён и не починился — стёрт, настройки сброшены");
+        self.map.erase_all().await
+    }
 }
 // {%- endif %}
 
@@ -235,16 +262,22 @@ impl<F: NorFlash> ports::SettingsStorage for Settings<F> {
     /// даже с чужим ключом — отказывает с `BufferTooSmall`. Внутренний вмещает
     /// любую запись этого хранилища, вызывающему копируется только значение;
     /// не влезло — `BufferTooSmall(длина значения)`.
+    ///
+    /// Раздел повреждён — стирается (см. «Повреждённый раздел»), и ключ
+    /// читается как ещё не записанный.
     async fn read<'a>(
         &mut self,
         key: Key,
         scratch: &'a mut [u8],
     ) -> Result<Option<&'a [u8]>, Self::Error> {
-        let Some(value) = self
-            .map
-            .fetch_item::<&[u8]>(&mut self.scratch, &key)
-            .await?
-        else {
+        let found = match self.map.fetch_item::<&[u8]>(&mut self.scratch, &key).await {
+            Err(sequential_storage::Error::Corrupted { .. }) => {
+                self.erase_corrupted().await?;
+                None
+            }
+            found => found?,
+        };
+        let Some(value) = found else {
             return Ok(None);
         };
         let out = scratch
@@ -259,8 +292,17 @@ impl<F: NorFlash> ports::SettingsStorage for Settings<F> {
     /// Физически идёт дозапись в конец страницы — стирание происходит, только
     /// когда страница закончилась. На этом и держится ресурс флеша, поэтому
     /// сохранять настройку в цикле опроса всё же не стоит.
+    ///
+    /// Раздел повреждён — стирается (см. «Повреждённый раздел»), и значение
+    /// пишется в пустой.
     async fn write(&mut self, key: Key, value: &[u8]) -> Result<(), Self::Error> {
-        self.map.store_item(&mut self.scratch, &key, &value).await
+        match self.map.store_item(&mut self.scratch, &key, &value).await {
+            Err(sequential_storage::Error::Corrupted { .. }) => {
+                self.erase_corrupted().await?;
+                self.map.store_item(&mut self.scratch, &key, &value).await
+            }
+            done => done,
+        }
     }
 }
 
@@ -438,6 +480,89 @@ mod tests {
             second.read(5, &mut scratch).await.expect("чтение"),
             Some(&b"newest"[..])
         );
+    }
+
+    /// Флеш, в котором записаны ключи 1 и 2, а страница `page` затёрта
+    /// мусором `0x5A`.
+    async fn with_a_broken_page(page: usize) -> Settings<Flash> {
+        let mut settings = Settings::new(Flash::erased(), 0..512);
+        settings.write(1, b"one").await.expect("запись 1");
+        settings.write(2, b"two").await.expect("запись 2");
+        let mut mem = core::mem::take(&mut settings.map.flash().mem);
+        mem[page * 256..][..256].fill(0x5A);
+        Settings::new(Flash { mem }, 0..512)
+    }
+
+    /// Раздел целиком в мусоре: `sequential-storage` отвечает `Corrupted` и
+    /// после своего ремонта, и хранилище стирает раздел — чтение даёт «ключа
+    /// нет», запись и чтение дальше работают.
+    #[tokio::test]
+    async fn a_garbage_partition_is_erased_and_works_again() {
+        let mut settings = Settings::new(
+            Flash {
+                mem: vec![0x5A; 512],
+            },
+            0..512,
+        );
+        let mut scratch = [0u8; 32];
+
+        assert_eq!(settings.read(1, &mut scratch).await.expect("чтение"), None);
+        settings.write(1, b"fresh").await.expect("запись");
+        assert_eq!(
+            settings.read(1, &mut scratch).await.expect("чтение"),
+            Some(&b"fresh"[..])
+        );
+    }
+
+    /// Записи были, но обе страницы помечены закрытыми — такого раздела
+    /// `sequential-storage` не чинит. Первой операцией оказалась запись: она
+    /// стирает раздел и пишет в пустой, а прежние ключи читаются как
+    /// отсутствующие.
+    #[tokio::test]
+    async fn a_write_to_an_unrepairable_partition_erases_it_first() {
+        let mut settings = Settings::new(Flash::erased(), 0..512);
+        settings.write(1, b"one").await.expect("запись 1");
+        let mut mem = core::mem::take(&mut settings.map.flash().mem);
+        // Маркеры состояния страницы — её первый и последний байт.
+        for marker in [0, 255, 256, 511] {
+            mem[marker] = 0;
+        }
+        let mut settings = Settings::new(Flash { mem }, 0..512);
+        let mut scratch = [0u8; 32];
+
+        settings.write(2, b"fresh").await.expect("запись");
+
+        assert_eq!(
+            settings.read(2, &mut scratch).await.expect("чтение"),
+            Some(&b"fresh"[..])
+        );
+        assert_eq!(settings.read(1, &mut scratch).await.expect("чтение"), None);
+    }
+
+    /// Одна битая страница из двух: исход определён и без стирания всего
+    /// раздела — его даёт ремонт самого `sequential-storage`. Битая страница с
+    /// записями теряет свои ключи. Битая вторая страница читается закрытой, и
+    /// записи целой видны, пока первая запись не запустит ремонт: тот считает
+    /// перенос прерванным и повторяет его с битой страницы — записи пропадают и
+    /// здесь. В обоих случаях запись и чтение дальше работают.
+    #[tokio::test]
+    async fn one_broken_page_of_two_has_a_defined_outcome() {
+        for (page, before) in [(0, None), (1, Some(&b"one"[..]))] {
+            let mut settings = with_a_broken_page(page).await;
+            let mut scratch = [0u8; 32];
+
+            assert_eq!(
+                settings.read(1, &mut scratch).await.expect("чтение"),
+                before,
+                "страница {page}"
+            );
+            settings.write(3, b"three").await.expect("запись");
+            assert_eq!(
+                settings.read(3, &mut scratch).await.expect("чтение"),
+                Some(&b"three"[..]),
+                "страница {page}"
+            );
+        }
     }
 
     // {%- if has_canopen == "true" and config != "true" %}
