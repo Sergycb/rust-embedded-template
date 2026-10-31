@@ -3,7 +3,29 @@
 //! кадр разбирает обработчик `domain::modbus::Slave`, а обслуживает канал узел
 //! `domain::server`.
 // {%- if modbus_master == "true" %}
-//! Они же реализуют порт master'а [`ports::ModbusClient`].
+//! Они же реализуют порт master'а [`ports::ModbusClient`], но готовым
+//! master'ом работает только RTU над UART.
+// {%- if modbus_rtu == "true" %}
+//! - [`Rtu`](crate::modbus::Rtu) master'ом требует `ReadReady` — слива входа
+//!   перед запросом: его реализуют `BufferedUart` и `RingBufferedUartRx` из
+//!   `embassy-stm32`.
+// {%- if has_usb == "true" %}
+//!   У `usb::CdcStream` его нет, и `Rtu<CdcStream>` master'ом не собирается.
+// {%- endif %}
+// {%- endif %}
+// {%- if modbus_tcp == "true" %}
+//! - [`Tcp`](crate::modbus::Tcp) над `net::TcpServer` — сервер: соединение
+//!   открывает удалённая сторона, а без него запись — ошибка. Master'у к
+//!   выбранному slave'у нужен свой исходящий поток — клиент TCP.
+// {%- endif %}
+// {%- if modbus_udp == "true" %}
+//! - [`Udp`](crate::modbus::Udp) над `net::UdpLink` шлёт отправителю последней
+//!   принятой датаграммы: до первой входящей — `NoPeer`
+//!   ([`LinkError::Lost`](ports::LinkError::Lost)), потом — тому, кто писал
+//!   последним, а не выбранному slave'у. Master'у нужен свой канал с адресом
+//!   назначения.
+// {%- endif %}
+//!
 // {%- endif %}
 //! Логика `domain::modbus` работает с PDU, не зная, какой транспорт под ней.
 //!

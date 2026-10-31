@@ -199,7 +199,10 @@ Modbus: его реализует приложение, а кадры к нем�
 `FrameLink` с кадром «адрес и PDU»:
 {%- capture mb_links %}{% if modbus_rtu == "true" %}, `adapters::modbus::Rtu` (RTU поверх потока
 {% if has_uart == "true" %}UART{% if has_usb == "true" %} или {% endif %}{% endif %}{% if has_usb == "true" %}USB CDC{% endif %}){% endif %}{% if modbus_tcp == "true" %}, `adapters::modbus::Tcp` (MBAP поверх потока TCP){% endif %}{% if modbus_udp == "true" %}, `adapters::modbus::Udp` (MBAP в датаграмме){% endif %}{% endcapture %} {{ mb_links | remove_first: ", " }}.{% if modbus_master == "true" %} Они же реализуют порт
-master'а `ModbusClient`.{% endif %}
+master'а `ModbusClient`, но рабочий master из коробки — только `Rtu` над UART:{% if has_usb == "true" %} над USB
+CDC (нет `ReadReady`) он master'ом не собирается,{% endif %} а TCP- и UDP-каналы шаблона серверные — пишут тому,
+кто подключился или прислал последнюю датаграмму, а не выбранному slave'у
+(doc модуля `adapters::modbus`).{% endif %}
 {%- endif %}
 {%- if protocol == "protobuf" %}
 Сообщения protobuf от хоста переводит в свои проверенные типы обработчик
