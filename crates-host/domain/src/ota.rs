@@ -579,10 +579,10 @@ pub(crate) mod tests {
     }
     // {%- endif %}
 
-    // {%- if net_services contains "rest" %}
+    // {%- if net_services contains "rest" or has_modbus == "true" %}
     /// Вход `CMD` узла OTA без самого узла и его клиент — для тестов
-    /// `http`: на команду отвечает тест, и исходом, которого узел не даёт, и
-    /// молчанием (сервер берёт запрос и бросает его).
+    /// протоколов (`http`, `modbus`): на команду отвечает тест, и исходом,
+    /// которого узел не даёт, и молчанием (сервер берёт запрос и бросает его).
     pub(crate) fn cmd() -> (OtaClient, supervisor::Server<'static, OtaRequest, OtaReply>) {
         let stand = Box::leak(Box::new(
             supervisor::stand!(OTA_FRAG<FakeFlash, FakeReboot>; QUEUE_ASK = 1),
