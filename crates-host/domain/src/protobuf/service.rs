@@ -312,10 +312,12 @@ pub(crate) mod tests {
         assert!(service(INFO).info().uptime_s >= before + 2);
     }
 
+    /// Версия ровно в предел поля уходит целиком, а не обрезанной.
     #[test]
     fn a_version_of_exactly_the_limit_is_accepted() {
         let version: &'static str = "v".repeat(proto::VERSION_BYTES).leak();
-        let _service = service(DeviceInfo { version, ..INFO });
+        let info = service(DeviceInfo { version, ..INFO }).info();
+        assert_eq!(info.version, version);
     }
 
     #[test]
