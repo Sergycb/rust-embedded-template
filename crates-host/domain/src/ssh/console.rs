@@ -11,6 +11,7 @@ use ports::{OtaCommand, Progress};
 use crate::ota::OtaClient;
 // {%- endif %}
 use crate::device::{DeviceInfo, PANIC_BRIEF};
+use crate::ssh::session::CLOSE_WAIT;
 
 /// Длина строки команды.
 pub(super) const LINE: usize = 64;
@@ -297,7 +298,10 @@ pub(super) async fn shell<IO: Read + Write>(io: IO, device: &Device<'_>) -> Resu
                 "ssh: консоль молчала {} с — сессия закрыта",
                 SHELL_IDLE.as_secs()
             );
-            return out.text("\nidle timeout, session closed\n").await;
+            // Клиент, переставший читать канал, не держит сессию и
+            // прощанием: окно, забитое прежним выводом, ждалось бы вечно.
+            let farewell = out.text("\nidle timeout, session closed\n");
+            return with_timeout(CLOSE_WAIT, farewell).await.unwrap_or(Ok(()));
         };
         if read? == 0 {
             return Ok(());

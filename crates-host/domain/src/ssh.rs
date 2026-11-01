@@ -196,7 +196,7 @@ mod tests {
         Device, Editor, INFO_TEXT, Key, LINE, SHELL_IDLE, parse, shell, write_info,
     };
     use crate::ssh::login::Access;
-    use crate::ssh::session::tries_exhausted;
+    use crate::ssh::session::{CLOSE_WAIT, tries_exhausted};
     use crate::ssh::{Command, Login, USER, ed25519_public_key};
     // {%- if ssh_host_key == "config" %}
     use crate::ssh::{HostKey, Stored};
@@ -236,8 +236,12 @@ mod tests {
     }
     // {%- endif %}
 
-    /// Терминал, который молчит: чтение не кончается, вывод копится.
-    struct Silent(Vec<u8>);
+    /// Терминал, который молчит: чтение не кончается, вывод копится, пока в
+    /// окне канала есть место (`room` байт), дальше запись ждёт вечно.
+    struct Silent {
+        shown: Vec<u8>,
+        room: usize,
+    }
 
     impl embedded_io_async::ErrorType for Silent {
         type Error = Infallible;
@@ -250,13 +254,14 @@ mod tests {
     }
 
     impl embedded_io_async::Write for Silent {
-        #[expect(
-            clippy::unused_async_trait_impl,
-            reason = "сигнатуру задаёт трейт `Write`; вывод в память ничего не ждёт"
-        )]
         async fn write(&mut self, buf: &[u8]) -> Result<usize, Infallible> {
-            self.0.extend_from_slice(buf);
-            Ok(buf.len())
+            if self.room == 0 {
+                core::future::pending::<()>().await;
+            }
+            let n = buf.len().min(self.room);
+            self.shown.extend_from_slice(&buf[..n]);
+            self.room -= n;
+            Ok(n)
         }
 
         #[expect(
@@ -545,9 +550,12 @@ mod tests {
     }
 
     /// Консоль без ввода закрывается через [`SHELL_IDLE`], не раньше, и
-    /// говорит клиенту почему.
+    /// говорит клиенту почему; клиент, который не читает, прощание держит
+    /// не дольше [`CLOSE_WAIT`].
     #[test]
     fn a_silent_shell_closes_after_idle() {
+        const PROMPT: &str = "console, 'help' for commands\r\n> ";
+        const FAREWELL: &str = "\r\nidle timeout, session closed\r\n";
         MockDriver::get().reset();
         let ((stack, _), _) = adapters::fake::cable::pair();
         let info = DeviceInfo {
@@ -567,21 +575,32 @@ mod tests {
             ota: crate::ota::tests::cmd().0,
             // {%- endif %}
         };
-        let mut terminal = Silent(Vec::new());
+        let mut cx = Context::from_waker(Waker::noop());
+
+        let mut reading = Silent {
+            shown: Vec::new(),
+            room: usize::MAX,
+        };
         {
-            let mut console = pin!(shell(&mut terminal, &device));
-            let mut cx = Context::from_waker(Waker::noop());
+            let mut console = pin!(shell(&mut reading, &device));
             assert!(console.as_mut().poll(&mut cx).is_pending());
             MockDriver::get().advance(SHELL_IDLE - Duration::from_secs(1));
             assert!(console.as_mut().poll(&mut cx).is_pending());
             MockDriver::get().advance(Duration::from_secs(1));
             assert_eq!(console.as_mut().poll(&mut cx), Poll::Ready(Ok(())));
         }
-        let shown = String::from_utf8(terminal.0).expect("вывод — текст");
-        assert!(
-            shown.ends_with("> \r\nidle timeout, session closed\r\n"),
-            "{shown:?}"
-        );
+        assert_eq!(reading.shown, format!("{PROMPT}{FAREWELL}").as_bytes());
+
+        let mut deaf = Silent {
+            shown: Vec::new(),
+            room: PROMPT.len(),
+        };
+        let mut console = pin!(shell(&mut deaf, &device));
+        assert!(console.as_mut().poll(&mut cx).is_pending());
+        MockDriver::get().advance(SHELL_IDLE);
+        assert!(console.as_mut().poll(&mut cx).is_pending());
+        MockDriver::get().advance(CLOSE_WAIT);
+        assert_eq!(console.as_mut().poll(&mut cx), Poll::Ready(Ok(())));
     }
 
     #[test]
