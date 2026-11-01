@@ -1,23 +1,33 @@
 /* Заполняется вручную: этот файл остаётся в проекте, только когда раскладку
-   отключили при генерации (`--define write_size=...`). Обычно chip-select.rhai
-   пишет сюда готовые адреса по секторам чипа.
+   отключили при генерации (`--define write_size=...`) или выбранное в неё не
+   поместилось. Обычно chip-select.rhai пишет сюда готовые адреса по секторам
+   чипа.
 
    Форма повторяет сгенерированную, и отступать от неё не надо — ниже
    объяснено, где это стоит рабочей прошивки. */
 
 MEMORY {
+{%- if ota == "true" %}
     /* FLASH здесь — это раздел ACTIVE, а НЕ весь чип: приложение линкуется в
        него, а с базы flash стартует bootloader (crates-cross/boot). Впишете
        сюда базу — прошивка приложения затрёт bootloader. */
     FLASH             (rx)  : ORIGIN = /* 0xXXXXXXXX — начало ACTIVE */, LENGTH = /* XXXK */
+{%- if ota_store != "external" %}
     BOOTLOADER_STATE  (rx)  : ORIGIN = /* 0xXXXXXXXX */, LENGTH = /* XXXK */
     DFU               (rx)  : ORIGIN = /* 0xXXXXXXXX */, LENGTH = /* XXXK */
+{%- endif %}
+{%- else %}
+    /* Без OTA приложение — единственный образ: FLASH — весь flash чипа от его
+       базы (обычно 0x08000000). */
+    FLASH             (rx)  : ORIGIN = /* 0xXXXXXXXX — база flash */, LENGTH = /* XXXK */
+{%- endif %}
     RAM               (xrw) : ORIGIN = /* 0xXXXXXXXX */, LENGTH = /* XXXK */
     /* Хвост RAM, отрезанный от её конца: PANIC — под дамп panic-persist
        (паникёр release-профиля). Обязателен: без символов _panic_dump_*
        release-образ не слинкуется. */
     PANIC             (xrw) : ORIGIN = /* ADDR END RAM - LEN */, LENGTH = /* LEN */
 }
+{%- if ota == "true" %}
 
 /* База flash всего чипа, обычно 0x08000000 — впишите литералом.
 
@@ -29,15 +39,30 @@ MEMORY {
    `ORIGIN(FLASH)` и там верны: у бутлоадера FLASH и правда начинается с базы. */
 __flash_base = /* 0xXXXXXXXX */;
 
-__bootloader_state_start = ORIGIN(BOOTLOADER_STATE) - __flash_base;
-__bootloader_state_end   = ORIGIN(BOOTLOADER_STATE) + LENGTH(BOOTLOADER_STATE) - __flash_base;
-
 /* ACTIVE — это и есть FLASH данного крейта. */
 __bootloader_active_start = ORIGIN(FLASH) - __flash_base;
 __bootloader_active_end   = ORIGIN(FLASH) + LENGTH(FLASH) - __flash_base;
+{%- if ota_store == "external" %}
+
+/* STATE и DFU — на внешней флеши (драйвер в bsp и boot): смещения от её
+   начала, а не адреса — регионов в MEMORY у них нет, в адресном пространстве
+   МК внешней флеши нет. Границы кратны странице обмена EXT_PAGE_SIZE
+   ([env] crates-cross/.cargo/config.toml), DFU длиннее ACTIVE ровно на неё;
+   те же числа — в crates-cross/boot/memory.x. */
+__bootloader_state_start = /* 0xXXXXXXXX */;
+__bootloader_state_end   = /* 0xXXXXXXXX */;
+
+__bootloader_dfu_start = /* 0xXXXXXXXX */;
+__bootloader_dfu_end   = /* 0xXXXXXXXX */;
+{%- else %}
+
+__bootloader_state_start = ORIGIN(BOOTLOADER_STATE) - __flash_base;
+__bootloader_state_end   = ORIGIN(BOOTLOADER_STATE) + LENGTH(BOOTLOADER_STATE) - __flash_base;
 
 __bootloader_dfu_start = ORIGIN(DFU) - __flash_base;
 __bootloader_dfu_end   = ORIGIN(DFU) + LENGTH(DFU) - __flash_base;
+{%- endif %}
+{%- endif %}
 {%- if config_store == "external" %}
 
 /* Раздел настроек на внешней флеши (bsp::layout): смещения от её начала. */
