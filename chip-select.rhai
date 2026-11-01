@@ -74,8 +74,9 @@ fn family_table() {
 }
 
 fn watchdog_family_table() {
-    // Сторож по семействам: [префикс, верхний предел LSI в Гц]. Порядок — как в
-    // family_table(): длинные префиксы раньше (wba раньше wb).
+    // Сторож по семействам: [префикс, верхний предел LSI в Гц, заморозка IWDG
+    // при остановленном ядре, такт блока DBGMCU]. Порядок — как в family_table():
+    // длинные префиксы раньше (wba раньше wb).
     //
     // Предел LSI — max f_LSI из таблицы «LSI oscillator characteristics»
     // даташита (по полному диапазону температур, где он разбит), а не номинал:
@@ -86,28 +87,36 @@ fn watchdog_family_table() {
     // L0 DocID025844 (STM32L053), L1 DocID024330 (STM32L151-A), L4 DS10198,
     // L5 DS12737, U0 DS14463, U3 DS14830, U5 DS13737, WB DS11929 (LSI1: embassy
     // не включает LSI2), WBA DS14127 (до 85 °C), WL DS13293.
+    //
+    // Заморозка — «регистр:поле» блока `DBGMCU` из
+    // `stm32-metapac/src/peripherals/dbgmcu_<семейство>.rs` (аксессор блока и
+    // `set_<поле>` его структуры; у WB/WL — регистр CPU1, не `c2…`); такт —
+    // «регистр:поле» `RCC` из `rcc_<версия>.rs` тех семейств, где `DBGMCU`
+    // без него не пишется (`set_dbgen`/`set_dbgmcuen`), у остальных пусто.
+    // Версия `dbgmcu` в метаданных совпадает с префиксом у каждого чипа CHIPS
+    // (stm32-metapac 21: исключения — WB0x и `wl5x-cm0p`, их в CHIPS нет).
     [
-        ["wba", 33600],
-        ["h5", 33600],
-        ["l5", 34000],
-        ["u3", 33600],
-        ["u5", 33600],
-        ["f3", 50000],
-        ["f4", 47000],
-        ["g4", 34000],
-        ["l4", 34000],
-        ["wb", 34000],
-        ["wl", 34000],
-        ["f7", 47000],
-        ["h7", 33600],
-        ["f1", 60000],
-        ["f2", 47000],
-        ["l1", 56000],
-        ["c0", 34000],
-        ["f0", 50000],
-        ["g0", 34000],
-        ["l0", 56000],
-        ["u0", 34000],
+        ["wba", 33600, "apb1lfzr:dbg_iwdg_stop", ""],
+        ["h5", 33600, "apb1lfzr:iwdg_stop", ""],
+        ["l5", 34000, "apb1fzr1:iwdg", ""],
+        ["u3", 33600, "apb1lfzr:dbg_iwdg_stop", ""],
+        ["u5", 33600, "apb1lfzr:dbg_iwdg_stop", ""],
+        ["f3", 50000, "apb1fzr:iwdg", "apb2enr:dbgmcuen"],
+        ["f4", 47000, "apb1fzr:iwdg", ""],
+        ["g4", 34000, "apb1lfzr:iwdg", ""],
+        ["l4", 34000, "apb1fzr1:iwdg", ""],
+        ["wb", 34000, "apb1fzr1:iwdg", ""],
+        ["wl", 34000, "apb1fzr1:iwdg", ""],
+        ["f7", 47000, "apb1fzr:iwdg", ""],
+        ["h7", 33600, "apb4fzr1:iwdg1", ""],
+        ["f1", 60000, "cr:iwdg", ""],
+        ["f2", 47000, "apb1_fz:iwdg", ""],
+        ["l1", 56000, "apb1_fz:dbg_iwdg_stop", ""],
+        ["c0", 34000, "apb1fzr:iwdg", "apbenr1:dbgen"],
+        ["f0", 50000, "apb1_fz:iwdg", "apb2enr:dbgmcuen"],
+        ["g0", 34000, "apb1fzr:iwdg", "apbenr1:dbgen"],
+        ["l0", 56000, "apb1fzr:iwdg", "apb2enr:dbgen"],
+        ["u0", 34000, "apb1fzr:dbg_iwdg_stop", "dbgcfgr:dbgen"],
     ]
 }
 
@@ -1236,8 +1245,10 @@ if bank_switch == "" {
 variable::set("watchdog_peripheral", if WATCHDOG.contains(suffix) { WATCHDOG[suffix] } else { "IWDG" });
 
 // Сторож по семейству (см. watchdog_family_table()): верхний предел LSI — им
-// `bsp::wdg` поправляет таймаут в цепочке. Ключ — самый длинный префикс, как в
-// family_table().
+// `bsp::wdg` поправляет таймаут в цепочке; заморозка IWDG при остановленном ядре —
+// её dev-сборка ставит при взводе. Ключ — самый длинный префикс, как в
+// family_table(). У `IWDG2` (ядро CM4 двухъядерных H7) бита заморозки в
+// `stm32-metapac` нет — заморозки нет (docs/watchdog.md).
 let watchdog_family = ();
 for row in watchdog_family_table() {
     if suffix.starts_with(row[0]) {
@@ -1250,6 +1261,8 @@ if watchdog_family == () {
         + "\" — добавьте семейство в watchdog_family_table() в chip-select.rhai");
 }
 variable::set("lsi_max_hz", watchdog_family[1].to_string());
+variable::set("dbgmcu_freeze", if variable::get("watchdog_peripheral") == "IWDG2" { "" } else { watchdog_family[2] });
+variable::set("dbgmcu_clock", watchdog_family[3]);
 
 // Option byte CPU_FREQ_BOOST (см. CPU_FREQ_BOOST выше): включает в bsp модуль
 // `clocks` с `ensure_cpu_freq_boost()`. Без переопределения через --define:

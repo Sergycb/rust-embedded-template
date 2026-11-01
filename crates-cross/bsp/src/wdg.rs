@@ -202,6 +202,9 @@ impl<T: Instance + 'static, const TIMEOUT_US: u32> Iwdg<T, TIMEOUT_US, Disarmed>
     /// Забыть этот вызов нельзя: [`HardwareWatchdog`] реализован только у
     /// [`Armed`], а блок `watchdog:` графа требует именно его.
     ///
+    /// В dev-сборке (`debug_assertions`) он ещё и замораживает сторож на время
+    /// остановки ядра отладчиком — `freeze_on_halt`.
+    ///
     /// Аппаратный таймаут должен быть **больше** таймаута узла в графе плюс
     /// `check_every` (цепочка — docs/watchdog.md). Половину этого соотношения —
     /// `check_every` против аппаратного таймаута —
@@ -211,6 +214,8 @@ impl<T: Instance + 'static, const TIMEOUT_US: u32> Iwdg<T, TIMEOUT_US, Disarmed>
     /// конца, см. её документацию в `watchdog`.
     #[must_use]
     pub fn arm(self) -> Iwdg<T, TIMEOUT_US, Armed> {
+        #[cfg(debug_assertions)]
+        freeze_on_halt();
         let mut inner = self.inner;
         inner.unleash();
         Iwdg {
@@ -258,3 +263,42 @@ impl<T: Instance + 'static, const TIMEOUT_US: u32> HardwareWatchdog for Iwdg<T, 
         }
     }
 }
+
+/// Останавливает счётчик IWDG, пока ядро остановлено отладчиком (бит
+/// заморозки в `DBGMCU`).
+///
+/// Без него IWDG тикает и под брейкпоинтом: остановка дольше таймаута
+/// сбрасывает МК, и отладка dev-сборки превращается в гонку со сторожем.
+/// Только в dev-сборке: в release сторож обязан сбрасывать и зависшее под
+/// отладчиком устройство — так он ведёт себя в поле. Ставится до запуска
+/// счётчика, чтобы первая же остановка была под заморозкой. Регистр и поле —
+/// из `stm32-metapac` по семейству (`watchdog_family_table()` в
+/// `chip-select.rhai` шаблона).
+{%- if dbgmcu_freeze == "" %}
+///
+/// У этого блока бита заморозки нет в `stm32-metapac` (`IWDG2` ядра CM4
+/// двухъядерных H7), и функция пуста: сторож тикает и под отладчиком
+/// (docs/watchdog.md).
+{%- endif %}
+///
+/// Бит живёт до сброса по питанию, а не до системного (на H7 проверено): прошитая следом
+/// release-сборка на той же плате тоже будет заморожена под отладчиком.
+#[cfg(debug_assertions)]
+{%- if dbgmcu_freeze == "" %}
+fn freeze_on_halt() {}
+{%- else %}
+fn freeze_on_halt() {
+{%- assign fz = dbgmcu_freeze | split: ":" %}
+{%- if dbgmcu_clock != "" %}
+{%- assign ck = dbgmcu_clock | split: ":" %}
+    use embassy_stm32::pac::{DBGMCU, RCC};
+
+    // Без такта блока запись в `DBGMCU` теряется.
+    RCC.{{ ck[0] }}().modify(|w| w.set_{{ ck[1] }}(true));
+{%- else %}
+    use embassy_stm32::pac::DBGMCU;
+
+{%- endif %}
+    DBGMCU.{{ fz[0] }}().modify(|w| w.set_{{ fz[1] }}(true));
+}
+{%- endif %}
