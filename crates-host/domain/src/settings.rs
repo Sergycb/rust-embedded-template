@@ -94,7 +94,7 @@
 //! # Чего здесь нет
 //!
 //! **Удаления ключа.** `sequential_storage::map::remove_item` требует
-//! [`MultiwriteNorFlash`](embedded_storage::nor_flash::MultiwriteNorFlash) —
+//! [`MultiwriteNorFlash`](embedded_storage_async::nor_flash::MultiwriteNorFlash) —
 //! флеша, в одно и то же слово которого можно писать дважды. У STM32 это не
 //! так, и трейт для `Flash` не реализован. Ключ «удаляется» записью значения,
 //! которое ваш формат понимает как «нет данных» (`Option::None` в postcard —
