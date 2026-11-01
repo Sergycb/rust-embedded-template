@@ -1395,11 +1395,28 @@ const NOT_IN_PROJECT: &[&str] = &[
     "docs/superpowers",
 ];
 
-/// В проекте нет файлов сопровождения шаблона и пустых каталогов — следов
-/// того, что хук удалил все файлы каталога, а сам каталог оставил.
+/// Секреты, которые `cargo xtask` кладёт в корень проекта (`signing`,
+/// `secrets`). В git шаблона их нет, но рабочая копия мейнтейнера может их
+/// нести, а `cargo generate --path .` копирует её целиком: ключ подписи
+/// мейнтейнера стал бы корнем доверия проекта, токен и пароли — общими у всех
+/// проектов. Держит их `ignore` в cargo-generate.toml; чтобы проверялся именно
+/// он, `copy_template` кладёт в копию шаблона пустые подделки.
+const SECRETS: &[&str] = &[
+    "ota-signing-key.bin",
+    "ota-public-key.bin",
+    "rest-token.txt",
+    "ssh-password.txt",
+    "ssh-host-key.bin",
+    "mqtt.toml",
+];
+
+/// В проекте нет файлов сопровождения шаблона, секретов из рабочей копии и
+/// пустых каталогов — следов того, что хук удалил все файлы каталога, а сам
+/// каталог оставил.
 fn check_no_leftovers(project: &Path, log: &File) -> anyhow::Result<()> {
     let mut found: Vec<String> = NOT_IN_PROJECT
         .iter()
+        .chain(SECRETS)
         .filter(|path| project.join(path).exists())
         .map(|path| (*path).to_owned())
         .collect();
@@ -1881,7 +1898,9 @@ fn repo_root() -> PathBuf {
 /// правки едут — проверка идёт до коммита), без неотслеживаемых. Обход дерева
 /// уносил и их: так в каждый проверяемый проект попадал чужой черновик из
 /// `docs/`. Каталоги сборки под git не лежат и отпадают сами;
-/// `chip-data-gen/` — сам этот инструмент — пропускается явно.
+/// `chip-data-gen/` — сам этот инструмент — пропускается явно. Исключение —
+/// пустые [`SECRETS`]: рабочая копия, из которой зовут `--path .`, их может
+/// нести.
 ///
 /// Прошлая копия сносится целиком: правки шаблона должны доезжать до проверки,
 /// а не оставаться в устаревшем слепке.
@@ -1908,6 +1927,10 @@ fn copy_template(repo_root: &Path, dest: &Path) -> anyhow::Result<()> {
         }
         fs::copy(&from, &to)
             .with_context(|| format!("скопировать {} в {}", from.display(), to.display()))?;
+    }
+    for name in SECRETS {
+        let to = dest.join(name);
+        fs::write(&to, b"").with_context(|| format!("создать {}", to.display()))?;
     }
 
     let untracked = git_files(repo_root, &["--others", "--exclude-standard"])?;

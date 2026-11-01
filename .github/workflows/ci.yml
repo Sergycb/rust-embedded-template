@@ -36,11 +36,17 @@ jobs:
       # и комментарий сам.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7 (7.0.1)
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2 (2.9.3)
-      # На образе ubuntu-latest предустановлены cargo/rustc/rustdoc/rustfmt,
-      # но НЕ clippy — без этой строки `cargo xtask lint` падает на
-      # `cargo clippy` с "no such command" (код 101).
+      # Компоненты есть в rust-toolchain.toml, но явно: rustup ставит их
+      # оттуда только вместе с самим тулчейном, и там, где эта версия уже
+      # стоит, их бы не было (так же у cross ниже).
       - run: rustup component add rustfmt clippy
-      - uses: taiki-e/install-action@8cf20993b5c06ee1e20640afaceeb72d4af5543f # плавающий тег cargo-nextest
+      # Версии инструментов закреплены явно: без них версию задавал бы SHA
+      # install-action, и бамп действия от dependabot молча менял бы
+      # инструмент. SHA у всех шагов один: плавающие теги вида `cargo-nextest`
+      # dependabot не обновляет — ссылка не semver.
+      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2 (2.88.0)
+        with:
+          tool: cargo-nextest@0.9.150
       # Ловит рассинхрон Cargo.toml и закоммиченного Cargo.lock: без --locked
       # cargo молча обновил бы lock под себя, и CI остался бы зелёным на
       # версиях, которых нет в репозитории. Условный: lock-файлы проект
@@ -59,7 +65,7 @@ jobs:
 
       - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2 (2.88.0)
         with:
-          tool: cargo-hack,cargo-deny
+          tool: cargo-hack@0.6.45,cargo-deny@0.20.2
 
       # cargo-hack: `check` для каждого сочетания фич каждого крейта. Фичи
       # аддитивны, и cargo в одной сборке объединяет их со всего графа, так что
@@ -81,7 +87,9 @@ jobs:
       # llvm-tools — не «на всякий случай»: cargo-llvm-cov зовёт llvm-profdata
       # и llvm-cov из тулчейна, а в minimal-профиле их нет.
       - run: rustup component add llvm-tools
-      - uses: taiki-e/install-action@2409e52fd2fc8a8601d0d900fab9d85ae1fe714a # плавающий тег cargo-llvm-cov
+      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2 (2.88.0)
+        with:
+          tool: cargo-llvm-cov@0.9.1
       - name: Покрытие domain
         run: |
           set -o pipefail
@@ -110,7 +118,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7 (7.0.1)
       - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2 (2.88.0)
         with:
-          tool: typos
+          tool: typos@1.51.1
       - run: typos
 
   cross:
@@ -149,7 +157,7 @@ jobs:
       # Свой `Cargo.lock` прошивки, та же политика `deny.toml`.
       - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2 (2.88.0)
         with:
-          tool: cargo-deny
+          tool: cargo-deny@0.20.2
       - run: cargo deny --manifest-path crates-cross/Cargo.toml check
 
       # Размер образа в сравнении с веткой по умолчанию. Порога здесь нет — как

@@ -34,7 +34,7 @@ jobs:
       - if: steps.guard.outputs.skip != 'true'
         uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2 (2.88.0)
         with:
-          tool: cargo-deny
+          tool: cargo-deny@0.20.2
       - if: steps.guard.outputs.skip != 'true'
         run: cargo deny check advisories
       - if: steps.guard.outputs.skip != 'true'

@@ -872,8 +872,8 @@ STM32H743ZI, граф, без транспортов, минута работы)
 делает CI»:
 
 ```
-cargo xtask lint          # корневой workspace: fmt --check + clippy -D warnings
-cargo xtask test host     # domain: cargo nextest
+cargo xtask lint          # корневой workspace: fmt --check + clippy -D warnings + cargo doc
+cargo xtask test host     # domain: cargo nextest + doc-тесты
 
 cargo fmt    --manifest-path chip-data-gen/Cargo.toml --check
 cargo clippy --manifest-path chip-data-gen/Cargo.toml --all-targets -- -D warnings
@@ -1079,8 +1079,11 @@ host`, `crates-cross/Cargo.lock` — `cargo xtask build`, `crates-host/chip-info
 lock-файлах прямо при генерации, а `--locked` в обоих CI проекта условный — строгий,
 как только файл закоммичен.
 
-Корневой `Cargo.lock` и `crates-host/chip-info/Cargo.lock` в самом репозитории шаблона
-остаются — для его собственной сборки и CI; в проекты они не едут.
+Корневой `Cargo.lock` в самом репозитории шаблона остаётся — для его собственной
+сборки (`cargo xtask lint`/`test host`, `cargo deny check`); в проекты он не едет.
+Lock-файла `chip-info` в шаблоне нет: его манифест здесь не резолвится (Liquid в
+чип-фиче), и такой lock никто бы не читал — ни сборка, ни `template-check` (генерация
+его не берёт), ни бот (см. ниже).
 
 Цена решения, которую надо знать: свежесгенерированный проект берёт с crates.io
 текущие совместимые по semver версии, а не проверенные мейнтейнером. git-зависимости
@@ -1101,7 +1104,8 @@ lock-файлах прямо при генерации, а `--locked` в обо�
 - **`/crates-host/chip-info`** — TOML валиден (Liquid стоит строкой в списке фич), но
   резолв падает: `stm32-metapac` не имеет фичи `{{chip_feature}}`. Именно резолв и
   делает бот, так что PR отсюда не появится. Живое доказательство, что не появлялся
-  никогда: манифест объявлял `anyhow 1.0.100`, а его же lock давно держал 1.0.104.
+  никогда: манифест объявлял `anyhow 1.0.100`, а лежавший тогда в шаблоне lock давно
+  держал 1.0.104.
 - **Корневой** резолвится, но git-зависимости из приватного `rust-lib` бот обновлять
   не станет — доступа к репозиторию у него нет.
 - **`chip-data-gen`** в списке отсутствует вовсе, и добавить его нельзя: файл уезжает

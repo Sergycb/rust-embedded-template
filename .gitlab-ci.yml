@@ -276,8 +276,11 @@ release:build:
     # Версия — та же, что в release.yml: от линкера зависит раскладка образа,
     # и без пина релиз не повторить (docs/conventions.md, «Воспроизводимый релиз»).
     - cargo install flip-link --version "$FLIP_LINK_VERSION" --locked
-    # Релиз собирается ровно из закоммиченного Cargo.lock: без --locked cargo
-    # молча разрешил бы зависимости заново.
+    # Релиз собирается ровно из закоммиченных Cargo.lock: без --locked cargo
+    # молча разрешил бы зависимости заново. Оба: прошивку собирает
+    # crates-cross, а подписывает и пишет отпечаток раскладки xtask из
+    # корневого workspace.
+    - cargo fetch --locked
     - cargo fetch --locked --manifest-path crates-cross/Cargo.toml
   script:
     # Прошивка печатает свою версию при старте (shadow-rs берёт её из

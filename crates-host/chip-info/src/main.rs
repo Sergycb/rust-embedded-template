@@ -44,8 +44,9 @@ fn main() -> Result<(), anyhow::Error> {
         match arg.as_str() {
             "--snippet" => snippet = true,
             "--check" => check = true,
-            // Пустая строка приезжает из задачи VS Code с пустым ответом на
-            // запрос аргумента — см. разбор в xtask.
+            // Пустая строка приезжает из задачи VS Code `xtask: pins` с пустым
+            // ответом на запрос аргумента: `cargo xtask pins` передаёт
+            // аргументы как есть.
             "" => {}
             flag if flag.starts_with("--") => bail!(
                 "неизвестный ключ {flag}; есть только --snippet (заготовка кода под блок) и \

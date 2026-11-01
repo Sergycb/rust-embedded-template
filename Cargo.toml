@@ -175,7 +175,9 @@ sequential-storage     = { version = "8.0.2", default-features = false }
 # {%- endif %}
 # {%- if stream_io == "true" or net_services contains "ssh" or net_services contains "mqtt" %}
 # Поток байтов `embedded_io_async::{Read, Write}`. Версия та же, что у
-# `embassy-stm32` 0.6, — иначе в прошивке были бы две копии трейта.
+# `embassy-stm32` 0.6: его типы реализуют трейты этой версии, а не другой.
+# Копия в дереве не единственная (`embassy-usb-driver` тянет 0.6), но порты
+# и их реализации сходятся на этой.
 # {%- if has_uart == "true" %}
 # Его реализует `BufferedUart` из `embassy-stm32`.
 # {%- endif %}
@@ -220,7 +222,8 @@ crc                    = { version = "3.4.0" }
 # {%- if has_protobuf == "true" %}
 # Protobuf (`crates-host/proto` — схема и сгенерированные типы, `domain` —
 # узел PROTOBUF): без alloc, повторяющиеся поля и строки — в контейнерах
-# `heapless` 0.9, той же версии, что у остального дерева.
+# `heapless` 0.9, той же версии, что у `embassy-sync` (сторонние крейты могут
+# тянуть в дерево и другую).
 micropb                = { version = "0.7.0", default-features = false, features = [
 	"encode",
 	"decode",
@@ -248,7 +251,8 @@ embassy-net            = { version = "0.9.1", features = [
 ] }
 # {%- endif %}
 # {%- if has_protobuf == "true" or net_services != "" %}
-# Строки и векторы без кучи; 0.9 — та же версия, что у остального дерева.
+# Строки и векторы без кучи; 0.9 — та же версия, что у `embassy-sync`
+# (сторонние крейты могут тянуть в дерево и другую).
 # {%- if has_protobuf == "true" %}
 # Контейнеры полей protobuf (`micropb`).
 # {%- endif %}

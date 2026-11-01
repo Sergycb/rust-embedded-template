@@ -16,9 +16,13 @@ use crate::notes::{Severity, pin_note};
 ///
 /// От `CARGO_MANIFEST_DIR`, а не от текущего каталога: команду зовут через
 /// `cargo xtask pins` откуда угодно, и `current_dir()` указывал бы куда
-/// попало.
+/// попало. Манифест берётся из среды запуска (`cargo run` её задаёт), а
+/// `env!` — только запасной путь: перенесённый проект cargo не пересобирает,
+/// и вшитый при сборке путь вёл бы в старый каталог (так же `root_dir` в
+/// xtask).
 pub(crate) fn project_root() -> Option<PathBuf> {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    env::var_os("CARGO_MANIFEST_DIR")
+        .map_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")), PathBuf::from)
         .parent()
         .and_then(Path::parent)
         .map(Path::to_path_buf)
