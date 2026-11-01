@@ -313,13 +313,19 @@ const WATCHDOG_CHECK_EVERY: Duration = Duration::from_millis(100);
 // один только этот комментарий. `<` на `Duration` в `const` не работает (нет
 // const-трейтов), поэтому сравниваются микросекунды — как в `HW_TIMEOUT_US`,
 // а не тики, чья частота зависит от фичи `tick-hz-*`.
+//
+// Справа — не номинал `HW_TIMEOUT_US`, а `HW_TIMEOUT_MIN_US`: таймаут при LSI
+// на верхнем пределе семейства. Embassy заряжает IWDG от номинальной частоты
+// LSI, а реальная плавает (у F4 до 47 кГц при номинале 32), и на номинале
+// цепочка сходилась бы там, где на быстром LSI железо её опережает.
 const _: () = assert!(
     ::domain::heartbeat::WATCHDOG.as_micros() + WATCHDOG_CHECK_EVERY.as_micros()
-        < bsp::wdg::HW_TIMEOUT_US as u64
+        < bsp::wdg::HW_TIMEOUT_MIN_US
         && ::domain::cpu_load::WATCHDOG.as_micros() + WATCHDOG_CHECK_EVERY.as_micros()
-            < bsp::wdg::HW_TIMEOUT_US as u64,
-    "таймаут узла плюс WATCHDOG_CHECK_EVERY обязан быть меньше bsp::wdg::HW_TIMEOUT_US: иначе железо \
-     сбросит МК раньше, чем узел заметит зависшую задачу, и сброс придёт от железа, а не от supervisor"
+            < bsp::wdg::HW_TIMEOUT_MIN_US,
+    "таймаут узла плюс WATCHDOG_CHECK_EVERY обязан быть меньше bsp::wdg::HW_TIMEOUT_MIN_US (таймаут \
+     IWDG при самом быстром LSI): иначе железо сбросит МК раньше, чем узел заметит зависшую задачу, и \
+     сброс придёт от железа, а не от supervisor"
 );
 
 /// Куда уходит просрочка наблюдаемого узла.

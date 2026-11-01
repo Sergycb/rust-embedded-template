@@ -73,6 +73,44 @@ fn family_table() {
     ]
 }
 
+fn watchdog_family_table() {
+    // Сторож по семействам: [префикс, верхний предел LSI в Гц]. Порядок — как в
+    // family_table(): длинные префиксы раньше (wba раньше wb).
+    //
+    // Предел LSI — max f_LSI из таблицы «LSI oscillator characteristics»
+    // даташита (по полному диапазону температур, где он разбит), а не номинал:
+    // таймаут IWDG embassy считает от номинала `LSI_FREQ` (40 кГц у F0/F1/F3,
+    // 32 кГц у остальных), а реальный короче в LSI_FREQ / max раз. Даташиты:
+    // C0 DS13866, F0 DS9773, F1 DS5319, F2 DS6329, F3 DS9118, F4 DS8626,
+    // F7 DocID027590, G0 DS12232, G4 DS12288, H5 DS14258, H7 DS12110,
+    // L0 DocID025844 (STM32L053), L1 DocID024330 (STM32L151-A), L4 DS10198,
+    // L5 DS12737, U0 DS14463, U3 DS14830, U5 DS13737, WB DS11929 (LSI1: embassy
+    // не включает LSI2), WBA DS14127 (до 85 °C), WL DS13293.
+    [
+        ["wba", 33600],
+        ["h5", 33600],
+        ["l5", 34000],
+        ["u3", 33600],
+        ["u5", 33600],
+        ["f3", 50000],
+        ["f4", 47000],
+        ["g4", 34000],
+        ["l4", 34000],
+        ["wb", 34000],
+        ["wl", 34000],
+        ["f7", 47000],
+        ["h7", 33600],
+        ["f1", 60000],
+        ["f2", 47000],
+        ["l1", 56000],
+        ["c0", 34000],
+        ["f0", 50000],
+        ["g0", 34000],
+        ["l0", 56000],
+        ["u0", 34000],
+    ]
+}
+
 fn core_override(marker) {
     // Суффикс после дефиса, когда он обозначает КОНКРЕТНОЕ ядро (двухъядерные
     // чипы: STM32H745/747/755/757 — cm7/cm4, STM32WL54/55 — cm4/cm0p) —
@@ -1196,6 +1234,22 @@ if bank_switch == "" {
 // переопределения через --define, как dual_core и bank_mode: значение целиком
 // выводится из chip_feature.
 variable::set("watchdog_peripheral", if WATCHDOG.contains(suffix) { WATCHDOG[suffix] } else { "IWDG" });
+
+// Сторож по семейству (см. watchdog_family_table()): верхний предел LSI — им
+// `bsp::wdg` поправляет таймаут в цепочке. Ключ — самый длинный префикс, как в
+// family_table().
+let watchdog_family = ();
+for row in watchdog_family_table() {
+    if suffix.starts_with(row[0]) {
+        watchdog_family = row;
+        break;
+    }
+}
+if watchdog_family == () {
+    abort("chip-select: нет строки сторожа для \"" + suffix
+        + "\" — добавьте семейство в watchdog_family_table() в chip-select.rhai");
+}
+variable::set("lsi_max_hz", watchdog_family[1].to_string());
 
 // Option byte CPU_FREQ_BOOST (см. CPU_FREQ_BOOST выше): включает в bsp модуль
 // `clocks` с `ensure_cpu_freq_boost()`. Без переопределения через --define:

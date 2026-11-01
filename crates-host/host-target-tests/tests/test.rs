@@ -296,7 +296,7 @@ fn ota_swaps_partitions_and_reverts_unconfirmed_image() {
     // {%- if graph == "true" %}
     // Обмен можно и не застать: release-bootloader
     // запускает сторож, а инертный образ его не кормит и через
-    // таймаут сторожа (10 с, `bsp::wdg::HW_TIMEOUT_US`) после прыжка сбрасывается сам — bootloader
+    // таймаут сторожа (13 с номинально, `bsp::wdg::HW_TIMEOUT_US`) после прыжка сбрасывается сам — bootloader
     // тут же откатывает его.
     // {%- endif %}
     let dfu_previous = format!("{:#x}", ota.dfu + ota.page_size);
