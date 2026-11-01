@@ -8,7 +8,8 @@ use crate::project::root_dir;
 
 // {%- if ota == "true" %}
 /// Регион из `MEMORY {}`: `build` по нему меряет раздел приложения,
-/// `test host-target` передаёт тесту адреса разделов OTA, `panic-info` читает PANIC.
+/// `test host-target` передаёт тесту размер `ACTIVE` (сроки ожидания), `panic-info`
+/// читает PANIC.
 // {%- else %}
 //{{newline}}/// Регион из `MEMORY {}`: `build` по нему меряет флеш приложения,
 //{{newline}}/// `panic-info` читает PANIC.

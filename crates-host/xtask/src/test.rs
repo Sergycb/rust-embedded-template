@@ -1,21 +1,23 @@
 //! `cargo xtask test <этап>` — три этапа тестирования и их сумма.
 
-// {%- if ota == "true" and ota_store != "external" %}
-use std::{env, fs};
+use std::env;
+// {%- if ota == "true" and has_protobuf == "true" %}
+use std::fs;
 
 use anyhow::Context;
 // {%- endif %}
 use xshell::cmd;
 
-use crate::flash::flash_all;
+use crate::flash::{check_app, flash_all, flash_images};
 // {%- if ota == "true" %}
 use crate::flash::flash_boot;
 // {%- endif %}
-// {%- if ota == "true" and ota_store != "external" %}
-use crate::image::raw_image;
-use crate::memory::{Region, app_memory_regions, app_region, region};
-use crate::project::{PAGE_SIZE, TARGET, WRITE_SIZE, cross_target_dir};
-use crate::signing::{ensure_image_key, ensure_signing_key};
+// {%- if ota == "true" and has_protobuf == "true" %}
+use crate::firmware::{OtaImage, ota_image};
+use crate::image::{raw_image, unpack_version};
+use crate::memory::{app_memory_regions, app_region};
+use crate::project::{APP_ARTIFACT, TARGET, cross_target_dir};
+use crate::signing::{ensure_image_key, ensure_signing_key, foreign_signature, signature};
 // {%- endif %}
 use crate::project::{CHIP, host_features, root_dir};
 
@@ -25,25 +27,29 @@ const STAGES: [(&str, &str, Stage); 4] = [
     ("host", "логика domain на хосте — плата не нужна", test_host),
     (
         "target",
-        "тесты внутри МК (embedded-test + probe-rs run) — нужна плата",
+        "тесты внутри МК (embedded-test + probe-rs run) — нужна плата с пробником",
         test_target,
     ),
     (
         "host-target",
-        "хост управляет прошитым устройством — нужна плата",
+        "хост проверяет готовое устройство по протоколу проекта — нужна плата на связи",
         test_host_target,
     ),
     ("all", "все три подряд", test_all),
 ];
-// {%- if ota == "true" and ota_store != "external" %}
+// {%- if has_protobuf == "true" %}
 
-/// Тестов цикла OTA в `host-target-tests`: обмен с откатом и отказ
-/// неподписанному — без адресов разделов пропускаются оба.
-const OTA_CYCLE_TESTS: usize = 2;
+/// Сценариев в `host-target-tests` (protobuf): пропущенные без адреса
+/// устройства считаются от этого числа.
+// {%- if ota == "true" %}
+const SCENARIOS: usize = 6;
+// {%- else %}
+//{{newline}}const SCENARIOS: usize = 1;
+// {%- endif %}
 // {%- endif %}
 
 type Stage = fn(&xshell::Shell) -> Result<(), anyhow::Error>;
-// {%- if ota == "true" and ota_store != "external" %}
+// {%- if has_protobuf == "true" %}
 
 /// Тесты host-target, которые пройдут пропуском: сколько и почему.
 type Skipped = (usize, &'static str);
@@ -72,11 +78,19 @@ pub fn test(sh: &xshell::Shell, stage: &[&str]) -> Result<(), anyhow::Error> {
 /// тестов внутри МК здесь не заливает `test target`, а первым делом
 /// `test host-target` — заливает и после себя на плате оставляет. Упали тесты
 /// внутри МК — рабочая прошивка шьётся сразу, как в отдельном этапе.
+///
+/// Без пробника этап внутри МК пропускается с предупреждением (код выхода —
+/// нулевой): `host-target` проверяет готовое устройство по протоколу, и
+/// пробник ему не нужен. Отдельный `test target` без пробника — ошибка.
 fn test_all(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     test_host(sh)?;
-    if let Err(failed) = run_target_tests(sh) {
-        flash_all(sh, "release")?;
-        return Err(failed);
+    if probe_present(sh) {
+        if let Err(failed) = run_target_tests(sh) {
+            flash_all(sh, "release")?;
+            return Err(failed);
+        }
+    } else {
+        println!("ВНИМАНИЕ: пробника нет — этап target (тесты внутри МК) пропущен");
     }
     test_host_target(sh)
 }
@@ -98,73 +112,112 @@ fn test_host(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-/// Хост управляет уже прошитым устройством: сначала заливаем то, что тест
-// {%- if ota == "true" and ota_store != "external" %}
-/// будет проверять, потом запускаем сам тест. Чип и адреса разделов уходят к
-/// нему через окружение: первое подставляется при генерации в одном месте,
-/// вторые считаются по `memory.x` — знать это в двух местах незачем.
-// {%- else %}
-//{{newline}}/// будет проверять, потом запускаем сам тест. Чип уходит к нему через
-//{{newline}}/// окружение — он подставляется при генерации в одном месте.
-// {%- endif %}
+/// Хост проверяет готовое устройство только через транспорт и протокол
+/// проекта — так, как с ним будет говорить настоящий хост.
+///
+/// Пробник здесь — лишь необязательная прошивка перед тестами: есть — шьём
+/// release-образы (с OTA — и передаём тестам ожидаемую версию); нет — тесты
+/// идут против того, что уже прошито. Перепрошивки после тестов нет: сценарии
+/// оставляют устройство на рабочем образе. Сверка начала образа с разделом из
+/// `memory.x` — всегда: это проверка сборки, а не железа.
+///
+/// Адрес устройства — из окружения (`HOST_TARGET_ADDR` или `HOST_TARGET_PORT`,
+/// README, «Трёхэтапное тестирование»); без него сценарии пропускаются, и
+/// сводка после прогона говорит почему.
 fn test_host_target(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
-    // {%- if ota == "true" and ota_store != "external" %}
-    // Ключ — до прошивки, как и в `build`: открытый попадает в bootloader
-    // через его build.rs, то есть должен существовать к моменту компиляции.
+    // {%- if ota == "true" and has_protobuf == "true" %}
+    // Ключ — до сборки, как и в `build`: открытый попадает в bootloader через
+    // его build.rs, то есть должен существовать к моменту компиляции.
     let seed = ensure_signing_key(&root_dir())?;
     // {%- endif %}
-    flash_all(sh, "release")?;
-    // {%- if ota == "true" and ota_store != "external" %}
-    // Как в `build`: ключ в залитом bootloader'е обязан быть тем, которым
-    // подписывается инертный образ, — иначе тест обмена упал бы, обвиняя
-    // bootloader в отказе, а не сборку в старом ключе.
-    if let Some(seed) = &seed {
-        let boot_elf = cross_target_dir().join(TARGET).join("release").join("boot");
-        let (base, image) = raw_image(&boot_elf)?;
-        ensure_image_key(&boot_elf, base, &image, seed)?;
+    let flash = probe_present(sh);
+    check_app(sh, "release")?;
+    // {%- if has_protobuf == "true" %}
+    let mut skipped = Vec::new();
+    let addressed = !(unset("HOST_TARGET_ADDR") && unset("HOST_TARGET_PORT"));
+    if !addressed {
+        skipped.push((
+            SCENARIOS,
+            "адрес устройства не задан: HOST_TARGET_ADDR (ip или ip:порт) или HOST_TARGET_PORT \
+             (COM3, /dev/ttyACM0)",
+        ));
+    }
+    // {%- endif %}
+    // {%- if ota == "true" and has_protobuf == "true" %}
+    // Образы для сценариев OTA — до прошивки: сборка, которая не сходится
+    // (раскладка, ключ), не должна оставить плату с новым bootloader'ом. Без
+    // адреса сценарии не пойдут — и собирать их незачем.
+    let _ota_vars = if addressed {
+        ota_env(sh, seed.as_ref(), flash, &mut skipped)?
+    } else {
+        Vec::new()
+    };
+    // {%- endif %}
+    if flash {
+        flash_images(sh, "release")?;
+    } else {
+        println!("пробника нет — прошивка пропущена, тесты идут против уже прошитого устройства");
     }
 
-    let regions = app_memory_regions()?;
-
-    // Разделы OTA — ради теста полного цикла обновления: он пишет образ в
-    // `DFU`, просит смену разделов через `BOOTLOADER_STATE` и смотрит, что
-    // оказалось в `ACTIVE`. Раздел приложения ищется тем же `app_region`, что и
-    // в `build`: разъедься эти два места, `build` мерил бы один регион, а тест
-    // проверял другой.
-    let active = app_region(&regions).map(|(_, partition)| partition);
-    let dfu = region(&regions, "DFU");
-    let state = region(&regions, "BOOTLOADER_STATE");
-    let ram = region(&regions, "RAM");
-    // {%- endif %}
-
     let _env_chip = sh.push_env("HOST_TARGET_CHIP", CHIP);
-    // {%- if ota == "true" and ota_store != "external" %}
-    let mut skipped = Vec::new();
-    let _env_ota = ota_env(sh, active, dfu, state, ram, seed.as_ref(), &mut skipped)?;
-    // {%- endif %}
     let _p = sh.push_dir(root_dir().join("crates-host").join("host-target-tests"));
-    // В один поток: пробник у платы один, а nextest по умолчанию гоняет
-    // тесты параллельно — два `probe-rs` на одной цели дерутся за неё и
-    // падают с невнятной ошибкой захвата.
-    // {%- if ota == "true" and ota_store != "external" %}
-    // Сводка — и после упавшего прогона: в выводе nextest пропуск не виден
-    // ни при каком исходе.
+    // {%- if has_protobuf == "true" %}
+    // По одному: канал к устройству один, а nextest по умолчанию гоняет тесты
+    // параллельно — два сценария разом мешали бы друг другу (чужой `Start`
+    // получает `Busy`, `Reboot` одного рвёт связь другому).
+    //
+    // Сводка — и после упавшего прогона: в выводе nextest пропуск не виден ни
+    // при каком исходе.
     let run = cmd!(sh, "cargo nextest run --test-threads 1").run();
     report_skipped(&skipped);
     run?;
     // {%- else %}
-    // {%- if ota == "true" %}
-    // На внешней флеши `DFU` и `STATE` пробнику не достать — цикла OTA в
-    // сценариях нет, и пустой прогон говорит почему, а не проходит молча.
-    //{{newline}}    println!("тест цикла OTA пропущен: DFU и STATE на внешней флеши, пробнику их не достать");
-    // {%- endif %}
-    // Сценариев в шаблоне нет (`host-target-tests/tests/test.rs`) — пустой
-    // прогон не ошибка.
+    // Сценарии написаны под protobuf; под протокол проекта их нет —
+    // пустой прогон не ошибка, а причина печатается.
+    //{{newline}}    println!("сценариев host-target нет: {% if has_modbus == "true" %}Modbus — следующая итерация шаблона{% elsif has_canopen == "true" %}CANopen — отложены{% else %}свой протокол — тесты под него пишет проект{% endif %} (crates-host/host-target-tests)");
     //{{newline}}    cmd!(sh, "cargo nextest run --test-threads 1 --no-tests warn").run()?;
     // {%- endif %}
     Ok(())
 }
-// {%- if ota == "true" and ota_store != "external" %}
+
+/// Есть ли пробник — от этого зависит только прошивка перед `host-target` и
+/// этап `target` внутри `test all`.
+///
+/// Задан `PROBE_RS_PROBE` — пробник назван явно, и он считается
+/// подключённым: не найдётся — прошивка упадёт с ошибкой, а не тесты молча
+/// пойдут против чужой прошивки. Иначе — `probe-rs list`; не запустился он
+/// сам (не установлен) — пробника тоже нет.
+fn probe_present(sh: &xshell::Shell) -> bool {
+    if !unset("PROBE_RS_PROBE") {
+        return true;
+    }
+    match cmd!(sh, "probe-rs list").quiet().ignore_stderr().read() {
+        Ok(list) => lists_a_probe(&list),
+        Err(err) => {
+            println!("probe-rs list не запустился ({err}) — считаем, что пробника нет");
+            false
+        }
+    }
+}
+
+/// Переменная окружения не задана или пустая — так CI отдаёт переменную
+/// репозитория, которой нет.
+fn unset(name: &str) -> bool {
+    env::var_os(name).is_none_or(|value| value.is_empty())
+}
+
+/// В выводе `probe-rs list` есть пробник: строка вида `[0]: STLink V3 -- …`.
+fn lists_a_probe(list: &str) -> bool {
+    list.lines().any(|line| {
+        line.trim_start()
+            .strip_prefix('[')
+            .and_then(|rest| rest.split_once("]:"))
+            .is_some_and(|(index, _)| {
+                !index.is_empty() && index.bytes().all(|b| b.is_ascii_digit())
+            })
+    })
+}
+// {%- if has_protobuf == "true" %}
 
 /// Итог после прогона: nextest считает пропуск внутри теста (`return` без
 /// окружения) пройденным тестом, и зелёная сводка выглядела бы полной
@@ -179,111 +232,100 @@ fn report_skipped(skipped: &[Skipped]) {
         println!("  {count} — {why}");
     }
 }
+// {%- endif %}
+// {%- if ota == "true" and has_protobuf == "true" %}
 
-/// Адреса разделов OTA и инертный образ в окружение теста — если разделы
-/// вообще есть.
+/// Образы для сценариев OTA — в окружение теста.
 ///
-/// Возвращает guard'ы `xshell`: переменные живут, пока жив результат. Пустой
-/// вектор (разделов нет в `memory.x` или неизвестна страница) означает, что
-/// тест полного цикла обновления сам себя пропустит.
+/// Тестовый образ `app-unconfirmed` (версия `u32::MAX`, себя не
+/// подтверждает) — с подписью ключом проекта, если он есть, и подписью
+/// случайным ключом, которого нет ни в одном bootloader'е. Рабочий образ —
+/// для отказа той же версии. Длина `ACTIVE` — сроки ожидания стирания и
+/// обмена. Ожидаемая версия — только если плату прошили здесь: иначе на ней
+/// неизвестно что.
 ///
-/// С подписью (`seed`) рядом с образом кладётся запись о ней
-/// (`ports::PendingImage`): без неё bootloader отвергает обмен до первого шага.
-///
-/// Тесты, которые из-за этого пройдут пропуском, — в `skipped`: сводка о них
-/// печатается после прогона ([`report_skipped`]), а не до него.
+/// Возвращает guard'ы `xshell`: переменные живут, пока жив результат.
 fn ota_env<'a>(
     sh: &'a xshell::Shell,
-    active: Option<&Region>,
-    dfu: Option<&Region>,
-    state: Option<&Region>,
-    ram: Option<&Region>,
     seed: Option<&[u8; 32]>,
+    flash: bool,
     skipped: &mut Vec<Skipped>,
 ) -> Result<Vec<xshell::PushEnv<'a>>, anyhow::Error> {
-    let (Some(active), Some(dfu), Some(state), Some(ram)) = (active, dfu, state, ram) else {
-        skipped.push((
-            OTA_CYCLE_TESTS,
-            "цикл OTA: в memory.x не хватает регионов ACTIVE/DFU/BOOTLOADER_STATE/RAM",
-        ));
-        return Ok(Vec::new());
-    };
-    // Пустой `page_size` означает, что раскладку считал не шаблон, а человек
-    // (см. chip-select.rhai): размер страницы стирания тогда неизвестен, а
-    // без него тест обмена искал бы прежний образ не по тому адресу — он
-    // уезжает ровно на страницу. Лучше пропустить проверку, чем получить
-    // падение, обвиняющее bootloader.
-    if PAGE_SIZE.is_empty() {
-        skipped.push((
-            OTA_CYCLE_TESTS,
-            "цикл OTA: размер страницы стирания неизвестен (раскладку считал не шаблон)",
-        ));
-        return Ok(Vec::new());
+    {
+        let _p = sh.push_dir(root_dir().join("crates-cross"));
+        // Bootloader — отдельным вызовом, как в `build` (там же почему): с
+        // его ELF сверяются раскладка и ключ.
+        cmd!(sh, "cargo build -p boot --release").run()?;
+        cmd!(
+            sh,
+            "cargo build -p app --release --bin app-unconfirmed --features unconfirmed"
+        )
+        .run()?;
     }
-
-    let tmp = env::temp_dir();
-    let image = inert_image(
-        u32::try_from(active.origin).context("ORIGIN(ACTIVE) не в 32 битах")?,
-        u32::try_from(ram.origin + ram.length).context("конец RAM не в 32 битах")?,
+    let release = cross_target_dir().join(TARGET).join("release");
+    let working = ota_image(&release.join(APP_ARTIFACT))?;
+    let unconfirmed = ota_image(&release.join("app-unconfirmed"))?;
+    anyhow::ensure!(
+        unconfirmed.version == u32::MAX,
+        "тестовый образ app-unconfirmed собран с версией {:#010x}, а не u32::MAX — фича \
+         `version-max` не дошла до crates-cross/app/src/version.rs",
+        unconfirmed.version,
     );
-    let image_path = tmp.join("host-target-ota-image.bin");
-    fs::write(&image_path, &image).with_context(|| format!("записать {}", image_path.display()))?;
+    let regions = app_memory_regions()?;
+    let (_, active) = app_region(&regions).context("в memory.x приложения нет раздела ACTIVE")?;
 
-    let mut vars = Vec::new();
-    // Подписать нечем — обмен bootloader не пустит. Отказ чужому образу
-    // проверяется и так: ему ключ не нужен.
-    if seed.is_none() {
+    let dir = release.join("host-target");
+    fs::create_dir_all(&dir).with_context(|| format!("создать {}", dir.display()))?;
+    let write = |name: &str, bytes: &[u8]| {
+        let path = dir.join(name);
+        fs::write(&path, bytes)
+            .with_context(|| format!("записать {}", path.display()))
+            .map(|()| path)
+    };
+    let OtaImage { image, .. } = &unconfirmed;
+    let mut vars = vec![
+        sh.push_env("HOST_TARGET_IMAGE", write("app.bin", &working.image)?),
+        sh.push_env(
+            "HOST_TARGET_UNCONFIRMED_IMAGE",
+            write("app-unconfirmed.bin", image)?,
+        ),
+        sh.push_env(
+            "HOST_TARGET_FOREIGN_SIG",
+            write(
+                "app-unconfirmed.bin.foreign-sig",
+                &foreign_signature(image)?,
+            )?,
+        ),
+        // Сколько ждать стирания `DFU` и обмена разделов — от размера `ACTIVE`.
+        sh.push_env("HOST_TARGET_ACTIVE_LEN", active.length.to_string()),
+    ];
+    if let Some(seed) = seed {
+        // Как в `build`: ключ в bootloader'е обязан быть тем, которым
+        // подписывается образ, — иначе тест обмена упал бы, обвиняя
+        // bootloader, а не сборку в старом ключе. Сверяется с собранным здесь
+        // ELF; в чужом, уже прошитом bootloader'е (без пробника) ключ не
+        // проверить — тест отката называет эту причину сам.
+        let boot_elf = release.join("boot");
+        let (boot_base, boot_image) = raw_image(&boot_elf)?;
+        ensure_image_key(&boot_elf, boot_base, &boot_image, seed)?;
+        vars.push(sh.push_env(
+            "HOST_TARGET_UNCONFIRMED_SIG",
+            write("app-unconfirmed.bin.sig", &signature(image, seed))?,
+        ));
+    } else {
         skipped.push((
             1,
-            "обмен и откат подписанного образа: закрытого ключа нет, подписать инертный образ \
-             нечем (отказ неподписанному проверяется)",
+            "обмен и откат: закрытого ключа нет — тестовый образ подписать нечем",
         ));
     }
-    if let Some(seed) = seed {
-        let record = ports::PendingImage {
-            len: u32::try_from(image.len()).context("длина инертного образа")?,
-            signature: crate::signing::signature(&image, seed),
-        };
-        let path = tmp.join("host-target-ota-record.bin");
-        fs::write(&path, record.to_bytes())
-            .with_context(|| format!("записать {}", path.display()))?;
-        vars.push(sh.push_env("HOST_TARGET_SIGNATURE_RECORD", path));
+    if flash {
+        let (major, minor, patch) = unpack_version(working.version);
+        vars.push(sh.push_env(
+            "HOST_TARGET_EXPECT_VERSION",
+            format!("{major}.{minor}.{patch}"),
+        ));
     }
-    vars.extend([
-        sh.push_env("HOST_TARGET_INERT_IMAGE", image_path),
-        sh.push_env("HOST_TARGET_ACTIVE_ADDR", format!("{:#x}", active.origin)),
-        // Размер `ACTIVE` — это `capacity`, с которым bootloader ищет запись о
-        // подписи (`DFU + capacity`), и от него же зависит, сколько длится обмен.
-        sh.push_env("HOST_TARGET_ACTIVE_LEN", active.length.to_string()),
-        sh.push_env("HOST_TARGET_DFU_ADDR", format!("{:#x}", dfu.origin)),
-        sh.push_env("HOST_TARGET_STATE_ADDR", format!("{:#x}", state.origin)),
-        // Длина нужна не для красоты: `mark_updated()` стирает раздел
-        // состояния ЦЕЛИКОМ, и тест обязан делать то же самое. Раздел
-        // многосекторный на чипах с мелкими страницами (журнал прогресса —
-        // слово на страницу ACTIVE в каждом из четырёх проходов), и стирание
-        // одного первого сектора оставило бы там прошлый журнал.
-        sh.push_env("HOST_TARGET_STATE_LEN", state.length.to_string()),
-        sh.push_env("HOST_TARGET_WRITE_SIZE", WRITE_SIZE),
-        sh.push_env("HOST_TARGET_PAGE_SIZE", PAGE_SIZE),
-    ]);
     Ok(vars)
-}
-
-/// Образ, который тест цикла OTA заливает в `DFU`: таблица векторов и `b .`.
-///
-/// Обязан стартовать (иначе проверялся бы `HardFault`, а не откат) и обязан НЕ
-/// дойти до `mark_booted()`, иначе откатывать нечего. Стек — вершина RAM:
-/// сам образ стеком не пользуется, но Cortex-M читает это слово при старте
-/// раньше первой инструкции. Обработчик сброса — сразу за двумя словами
-/// таблицы, бит 0 — режим Thumb, без него ядро уходит в `HardFault` на первой же
-/// инструкции. Собирается здесь, а не в тесте: подписывает его `xtask`, и хеш
-/// считается от тех самых байт, что лягут в `DFU`.
-fn inert_image(active: u32, ram_end: u32) -> Vec<u8> {
-    let mut image = Vec::new();
-    image.extend_from_slice(&ram_end.to_le_bytes());
-    image.extend_from_slice(&(active + 8 + 1).to_le_bytes());
-    image.extend_from_slice(&0xE7FE_u16.to_le_bytes());
-    image
 }
 // {%- endif %}
 
@@ -299,11 +341,11 @@ fn test_target(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
 
 // {%- if ota == "true" %}
 /// Сами тесты внутри МК, без рабочей прошивки после них. Bootloader
-/// заливается первым по той же причине, что и в `test_host_target`: тестовый
-/// образ линкуется в `ACTIVE` (его `memory.x` — копия app'ового), а `probe-rs
-/// run` после заливки сбрасывает чип, и управление получает не тест, а то, что
-/// лежит с базы flash. На плате, где bootloader'а нет — свежей или после
-/// `probe-rs erase`, — без этой строки не выполнился бы ни один тест.
+/// заливается первым: тестовый образ линкуется в `ACTIVE` (его `memory.x` —
+/// копия app'ового), а `probe-rs run` после заливки сбрасывает чип, и
+/// управление получает не тест, а то, что лежит с базы flash. На плате, где
+/// bootloader'а нет — свежей или после `probe-rs erase`, — без этой строки не
+/// выполнился бы ни один тест.
 // {%- else %}
 //{{newline}}/// Сами тесты внутри МК, без рабочей прошивки после них.
 // {%- endif %}
@@ -315,22 +357,17 @@ fn run_target_tests(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     cmd!(sh, "cargo test").run()?;
     Ok(())
 }
-// {%- if ota == "true" and ota_store != "external" %}
 
 #[cfg(test)]
 mod tests {
-    /// Байты инертного образа: вершина RAM — стек, обработчик сброса сразу за
-    /// таблицей с битом Thumb, затем `b .`.
+    /// Пробник в выводе `probe-rs list` — строка с номером в скобках; без
+    /// пробников — ни одной такой.
     #[test]
-    fn the_inert_image_starts_and_spins() {
-        assert_eq!(
-            super::inert_image(0x0800_8000, 0x2002_0000),
-            [
-                0x00, 0x00, 0x02, 0x20, // SP = 0x2002_0000
-                0x09, 0x80, 0x00, 0x08, // сброс = 0x0800_8008 | 1
-                0xFE, 0xE7, // b .
-            ]
-        );
+    fn a_probe_is_a_numbered_line_of_probe_rs_list() {
+        assert!(super::lists_a_probe(
+            "The following debug probes were found:\n[0]: STLink V3 -- 0483:374e:002A (ST-LINK)\n"
+        ));
+        assert!(!super::lists_a_probe("No debug probes were found.\n"));
+        assert!(!super::lists_a_probe("[x]: не номер\n[]: пусто\n"));
     }
 }
-// {%- endif %}
