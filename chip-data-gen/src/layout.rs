@@ -45,7 +45,7 @@ const ALIAS_SUFFIX: &str = "_ICODE";
 /// Ориентир на размер бинарника bootloader (embassy-boot + defmt +
 /// cortex-m-rt) — на практике укладывается в 20-30 KiB, отсюда небольшой
 /// запас. Bootloader сам по себе не стирается во время работы, поэтому ему
-/// не нужно быть кратным PAGE_SIZE — только BOOTLOADER_STATE после него.
+/// не нужно быть кратным `PAGE_SIZE` — только `BOOTLOADER_STATE` после него.
 const BOOTLOADER_TARGET: u64 = 32 * 1024;
 
 /// Сколько от зарезервированного блока обязано остаться под сам бинарник
@@ -125,7 +125,7 @@ const H7_D2_SRAM: u64 = 0x3000_0000;
 /// WB10/WB15 (320K, сектор 2K) в этих Release Notes нет (у них свои
 /// бинарники копроцессора), и граница не сверена с первоисточником: взята с
 /// тем же запасом от конца flash, что у xG (192K), — на 152K ниже FUS
-/// (`0x0804_6000`, AN5185 §2.2), тогда как у WB5x между `BLE_Stack_full` и
+/// (`0x0804_6000`, AN5185 §2.2), тогда как у `WB5x` между `BLE_Stack_full` и
 /// FUS 120K.
 const WB_CPU2_FLASH: [(u64, u64); 5] = [
     (256 * 1024, 0x0801_C000),
@@ -150,7 +150,7 @@ pub(crate) struct MemoryLayout {
     pub(crate) ram_length: u64,
     /// Хвост RAM под дамп `panic-persist` — единственный резерв в RAM. Всегда
     /// есть, если есть раскладка: без символов `_panic_dump_*` release-образ
-    /// `app` не слинкуется (см. PANIC_MIN).
+    /// `app` не слинкуется (см. `PANIC_MIN`).
     pub(crate) panic: (u64, u64),
     /// Готовые строки `MEMORY { }` для всех прочих регионов чипа (ITCM, DTCM,
     /// CCMRAM, BKPSRAM, EEPROM, OTP, окна внешних шин...) — см.
@@ -297,7 +297,7 @@ pub(crate) struct ConfigPartition {
 ///
 /// С заводскими option bytes (`BCM7 = BCM4 = 1`, `BOOT_CM7_ADD0 = 0x0800`,
 /// `BOOT_CM4_ADD0 = 0x0810`; RM0399 §4.4.4 Table 20, §2.6 Tables 8–9, AN5557
-/// §3.2) стартуют оба: CM7 — с 0x0800_0000, CM4 — с 0x0810_0000, начала
+/// §3.2) стартуют оба: CM7 — с `0x0800_0000`, CM4 — с `0x0810_0000`, начала
 /// банка 2. Так их и раскладывают ST (`NUCLEO-H745ZI-Q/Templates`) и embassy
 /// (`examples/stm32h755cm4`, `stm32h755cm7`): CM7 — банк 1, CM4 — банк 2.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -327,6 +327,10 @@ struct Bank2 {
 /// от базы и — если помещается — партиции OTA. `None` только когда считать не
 /// из чего (нет flash- или RAM-цепочки от базового адреса); тогда `main`
 /// отказывается писать `chip-data/` (см. `without_layout`).
+#[expect(
+    clippy::too_many_lines,
+    reason = "цепочки flash и RAM, резервы и наборы разделов считаются над одними и теми же регионами чипа подряд"
+)]
 pub(crate) fn compute_memory_layout(chip: &str, regions: &[RawRegion]) -> Option<MemoryLayout> {
     let mut flash: Vec<&RawRegion> = regions
         .iter()
@@ -647,8 +651,8 @@ fn bdma_nc_region(chip: &str, regions: &[RawRegion]) -> Option<(u64, u64)> {
 /// цепочка от первого из них. `None` — банк один.
 ///
 /// Банк 2, начинающийся внутри банка 1, — не банк, а ошибка метаданных: у
-/// STM32U375/U385 `stm32-data` объявляет `BANK_2` с 0x0801_0000 при `BANK_1`
-/// с 0x0800_0000 на 512 KiB. Положить туда DFU значило бы писать образ поверх
+/// STM32U375/U385 `stm32-data` объявляет `BANK_2` с `0x0801_0000` при `BANK_1`
+/// с `0x0800_0000` на 512 KiB. Положить туда DFU значило бы писать образ поверх
 /// своего же кода, поэтому такой чип считается однобанковым — как и раньше,
 /// когда налезающий регион просто не попадал в цепочку flash.
 fn bank2_of(regions: &[RawRegion]) -> Option<Bank2> {
@@ -1084,6 +1088,10 @@ fn journal_bytes(p: &OtaPartitions, write_size: u64) -> u64 {
 ///
 /// `Err` — схема не помещается; текст объясняет, чего именно не хватило, и
 /// доходит до пользователя при генерации.
+#[expect(
+    clippy::too_many_lines,
+    reason = "проверки схемы идут по порядку и каждая объясняет свой отказ; разнесённые по функциям, они потеряли бы общий контекст сообщений"
+)]
 fn compute_ota_at(
     chip: &str,
     chain: &[&RawRegion],
@@ -1433,6 +1441,12 @@ mod tests {
     use super::*;
     use crate::metadata::FlashSettings;
 
+    /// Точка старта CM4 с заводскими option bytes — начало банка 2.
+    const H7_BANK2: u64 = 0x0810_0000;
+
+    /// Первый сектор банка 2: с него стартует CM4, ядру CM7 туда нельзя.
+    const CM4_BOOT_SECTOR: std::ops::Range<u64> = H7_BANK2..H7_BANK2 + 128 * 1024;
+
     /// Флеш из двух банков по `bank` байт со страницей 2 KiB; второй — с
     /// адреса `bank2_origin` (вплотную к первому или за разрывом, как у G47x
     /// с 128/256 KiB).
@@ -1462,7 +1476,7 @@ mod tests {
         assert!(ota.active_origin + ota.active_length > FLASH_BASE + bank);
     }
 
-    /// Банк 2 за разрывом (как у H743 с 1 MiB: банк 2 с 0x0810_0000): цепочка
+    /// Банк 2 за разрывом (как у H743 с 1 MiB: банк 2 с `0x0810_0000`): цепочка
     /// для приложения — только банк 1, DFU — в банке 2, и хук узнаёт об этом
     /// по `dfu_bank_origin`.
     #[test]
@@ -1939,7 +1953,7 @@ mod tests {
     }
 
     /// Карта памяти H743/H745: два банка по `bank` с сектором 128 KiB, банк 2 —
-    /// с 0x0810_0000 (стык при 1 MiB, разрыв при 512 KiB), RAM — как у H7.
+    /// с `0x0810_0000` (стык при 1 MiB, разрыв при 512 KiB), RAM — как у H7.
     fn h7_dual_bank(bank: u64) -> Vec<RawRegion> {
         let flash = Some(FlashSettings {
             erase_size: 128 * 1024,
@@ -1967,12 +1981,6 @@ mod tests {
             region("SRAM4", RegionKind::Ram, H7_SRAM4, 64 * 1024),
         ]
     }
-
-    /// Точка старта CM4 с заводскими option bytes — начало банка 2.
-    const H7_BANK2: u64 = 0x0810_0000;
-
-    /// Первый сектор банка 2: с него стартует CM4, ядру CM7 туда нельзя.
-    const CM4_BOOT_SECTOR: std::ops::Range<u64> = H7_BANK2..H7_BANK2 + 128 * 1024;
 
     /// Все разделы внутреннего flash раскладки: `(имя, начало, длина)`.
     fn flash_partitions(layout: &MemoryLayout) -> Vec<(&'static str, u64, u64)> {

@@ -92,7 +92,7 @@ pub(crate) struct SharedMetadata {
     pub(crate) watchdogs: Vec<String>,
     /// Блок `PWR` версии `h7rm0468` (STM32H723/725/730/733/735): только у этой
     /// линии потолок ядра на VOS0 зависит от option byte `CPU_FREQ_BOOST` —
-    /// 520 МГц без него, 550 МГц с ним. По той же версии `embassy-stm32`
+    /// 520 мегагерц без него, 550 мегагерц с ним. По той же версии `embassy-stm32`
     /// выбирает предел частоты (`cfg(pwr_h7rm0468)` в `rcc/h.rs`), так что
     /// признак и HAL расходиться не могут.
     pub(crate) cpu_freq_boost: bool,
@@ -321,7 +321,7 @@ pub(crate) fn reset_register(text: &str) -> anyhow::Result<(String, String)> {
 /// Клок `RNG` по линии чипа (RM каждой линии, раздел RCC).
 ///
 /// В метаданных этого нет: у половины линий источник RNG там записан шиной
-/// (`HCLK2`), хотя на деле блок тактируется от 48 МГц, а мультиплексоры
+/// (`HCLK2`), хотя на деле блок тактируется от 48 мегагерц, а мультиплексоры
 /// `embassy-stm32` по умолчанию пишет нулями, и ноль у части линий — «без
 /// клока» (`RNGSEL` у G0) или выключенный PLL (`RNGSEL` у WL). Без клока
 /// `Rng::new` у линий с мультиплексором паникует на старте, а у остальных
@@ -781,6 +781,8 @@ fn field<'a>(block: &'a str, key: &str) -> Option<&'a str> {
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::Write as _;
+
     use super::*;
 
     /// Одноконфигурационный чип: `stm32-data` печатает `memory: &[&[` одной
@@ -867,7 +869,7 @@ pub static METADATA: Metadata = Metadata {
 
         let multi = configs(MULTI_CONFIG);
         assert_eq!(multi.len(), 2);
-        assert_eq!(multi[0][0].size, 524288);
+        assert_eq!(multi[0][0].size, 524_288);
         assert_eq!(multi[1].len(), 2);
         assert_eq!(multi[1][1].name, "BANK_2");
     }
@@ -949,21 +951,27 @@ pub static METADATA: Metadata = Metadata {
     fn rcc_excerpt(accessors: &[(&str, &str)], registers: &[(&str, &[&str])]) -> String {
         let mut text = String::from("pub struct Rcc {\n    ptr: *mut u8,\n}\nimpl Rcc {\n");
         for (accessor, register) in accessors {
-            text.push_str(&format!(
+            writeln!(
+                text,
                 "    pub const fn {accessor}(self) -> crate::common::Reg<regs::{register}, \
-                 crate::common::RW> {{\n    }}\n"
-            ));
+                 crate::common::RW> {{\n    }}"
+            )
+            .expect("запись в String не отказывает");
         }
         text.push_str("}\npub mod regs {\n");
         for (register, fields) in registers {
-            text.push_str(&format!(
-                "    pub struct {register}(pub u32);\n    impl {register} {{\n"
-            ));
+            writeln!(
+                text,
+                "    pub struct {register}(pub u32);\n    impl {register} {{"
+            )
+            .expect("запись в String не отказывает");
             for field in *fields {
-                text.push_str(&format!(
+                writeln!(
+                    text,
                     "        pub const fn {field}(&self) -> bool {{\n        }}\n        \
-                     pub fn set_{field}(&mut self, val: bool) {{\n        }}\n"
-                ));
+                     pub fn set_{field}(&mut self, val: bool) {{\n        }}"
+                )
+                .expect("запись в String не отказывает");
             }
             text.push_str("    }\n");
         }
@@ -1250,16 +1258,16 @@ pub static METADATA: Metadata = Metadata {
             )
         };
         let pins = |signals: &[&str]| {
-            signals
-                .iter()
-                .map(|signal| {
-                    format!(
-                        "
+            signals.iter().fold(String::new(), |mut out, signal| {
+                write!(
+                    out,
+                    "
             PeripheralPin {{ pin: \"PB1\", signal: \"{signal}\", af: Some(9) }},
         "
-                    )
-                })
-                .collect::<String>()
+                )
+                .expect("запись в String не отказывает");
+                out
+            })
         };
         let spi = pins(&["SCK", "MISO", "MOSI"]);
         let quad = pins(&["CLK", "BK1_NCS", "BK1_IO0", "BK1_IO1", "BK1_IO2", "BK1_IO3"]);
@@ -1345,6 +1353,6 @@ pub static METADATA: Metadata = Metadata {
         // и наибольший ACTIVE.
         let (regions, mode) = select_memory_config(configs(MULTI_CONFIG)).expect("две карты");
         assert_eq!(mode, "single-bank");
-        assert_eq!(regions[0].size, 524288);
+        assert_eq!(regions[0].size, 524_288);
     }
 }

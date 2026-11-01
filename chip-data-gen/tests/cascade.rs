@@ -17,6 +17,44 @@ use rhai::{
     module_resolvers::StaticModuleResolver,
 };
 
+const MASTER_FILE: &str = "crates-host/domain/src/modbus/master.rs";
+
+/// Ключ ed25519 для ответов `ssh_key`.
+const SSH_KEY: &str =
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl user@host";
+
+const NO_RAM: &str = "DOES NOT FIT in RAM";
+
+/// Скрипт хука и таблицы, которые он импортирует из `chip-data/`.
+struct Script {
+    ast: AST,
+    modules: StaticModuleResolver,
+}
+
+type Vars = Rc<RefCell<HashMap<String, String>>>;
+type Files = Rc<RefCell<HashMap<String, Vec<String>>>>;
+type Deleted = Rc<RefCell<Vec<String>>>;
+/// Всё, что хук напечатал. Сообщения при генерации — единственный способ
+/// объяснить пользователю решение, принятое за него (сняли OTA, сняли раздел
+/// настроек, не посчитали раскладку), и ошибиться в них так же легко, как в
+/// коде: одно из них уже врало (см. `ota_blamed_on_the_settings_partition`).
+type Prints = Rc<RefCell<Vec<String>>>;
+/// Показанные меню: заголовок и варианты (см. `CascadeResult::prompts`).
+type Prompts = Rc<RefCell<Vec<(String, Vec<String>)>>>;
+
+/// Итог одного прогона: переменные (`chip`, `chip_feature`, `cpu`, `target`,
+/// `write_size`, `ota`, `bank_mode`…), файлы, записанные через `file::write`
+/// (memory.x), построчно, и пути, снесённые через `file::delete` (crates-cross/boot у чипов без OTA).
+struct CascadeResult {
+    vars: HashMap<String, String>,
+    files: HashMap<String, Vec<String>>,
+    deleted: Vec<String>,
+    prints: Vec<String>,
+    /// Показанные меню: заголовок и варианты в том порядке, в каком их видит
+    /// пользователь. Каскад по символам (выбор чипа) сюда не попадает.
+    prompts: Vec<(String, Vec<String>)>,
+}
+
 fn script_path() -> PathBuf {
     repo_root().join("chip-select.rhai")
 }
@@ -114,12 +152,6 @@ fn read_chip_list() -> String {
         .expect("не удалось прочитать chip-data/chips.rhai")
 }
 
-/// Скрипт хука и таблицы, которые он импортирует из `chip-data/`.
-struct Script {
-    ast: AST,
-    modules: StaticModuleResolver,
-}
-
 /// Парсинг — основная стоимость прогона, а таблицы раскладок в `chip-data/`
 /// — это ~90 тысяч строк; поэтому и скрипт, и все его модули разбираются один
 /// раз на вызывающий тест, а не при каждом обращении к `run_cascade_to` (для
@@ -176,30 +208,6 @@ fn compile_script() -> Script {
     Script { ast, modules }
 }
 
-type Vars = Rc<RefCell<HashMap<String, String>>>;
-type Files = Rc<RefCell<HashMap<String, Vec<String>>>>;
-type Deleted = Rc<RefCell<Vec<String>>>;
-/// Всё, что хук напечатал. Сообщения при генерации — единственный способ
-/// объяснить пользователю решение, принятое за него (сняли OTA, сняли раздел
-/// настроек, не посчитали раскладку), и ошибиться в них так же легко, как в
-/// коде: одно из них уже врало (см. `ota_blamed_on_the_settings_partition`).
-type Prints = Rc<RefCell<Vec<String>>>;
-/// Показанные меню: заголовок и варианты (см. `CascadeResult::prompts`).
-type Prompts = Rc<RefCell<Vec<(String, Vec<String>)>>>;
-
-/// Итог одного прогона: переменные (chip/chip_feature/cpu/target/write_size/
-/// ota/bank_mode), файлы, записанные через `file::write` (memory.x), построчно,
-/// и пути, снесённые через `file::delete` (crates-cross/boot у чипов без OTA).
-struct CascadeResult {
-    vars: HashMap<String, String>,
-    files: HashMap<String, Vec<String>>,
-    deleted: Vec<String>,
-    prints: Vec<String>,
-    /// Показанные меню: заголовок и варианты в том порядке, в каком их видит
-    /// пользователь. Каскад по символам (выбор чипа) сюда не попадает.
-    prompts: Vec<(String, Vec<String>)>,
-}
-
 /// Прогоняет уже скомпилированный chip-select.rhai один раз, ведя каскад к
 /// `target_suffix` (суффикс без "stm32", например "f407ve" или "l151c6-a").
 fn run_cascade_to(
@@ -242,6 +250,10 @@ fn run_cascade_with(
 /// пункт в первом показе меню `transports:` и закрывает его во втором. Меню без ответа (или когда
 /// ответы его id кончились) ведёт себя как запуск без терминала: `variable::prompt` отвечает ошибкой «not a
 /// terminal», и хук берёт умолчание.
+#[expect(
+    clippy::too_many_lines,
+    reason = "моки всех функций хука, которые зовёт каскад, регистрируются в одном движке"
+)]
 fn run_interview(
     script: &Script,
     target_suffix: &str,
@@ -1460,8 +1472,6 @@ fn protocol_over_uart_keeps_the_serial_module() {
     }
 }
 
-const MASTER_FILE: &str = "crates-host/domain/src/modbus/master.rs";
-
 /// Master Modbus выключен по умолчанию: ответ «false», а файл логики master'а
 /// хук удаляет — вместе с ним остальное вырезает Liquid.
 #[test]
@@ -2295,10 +2305,6 @@ fn ethernet_item_becomes_tcp() {
     );
 }
 
-/// Ключ ed25519 для ответов `ssh_key`.
-const SSH_KEY: &str =
-    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl user@host";
-
 /// Сетевые службы — тем же списком с отметками, что и транспорты, и только
 /// при Ethernet; у SSH затем — способ входа и ключ.
 #[test]
@@ -2570,6 +2576,10 @@ fn an_empty_key_falls_back_to_password() {
 }
 
 /// `--define` строгий: всё, что службы сделать не могут, — ошибка с причиной.
+#[expect(
+    clippy::too_many_lines,
+    reason = "таблица случаев `--define` с ожидаемыми ошибками"
+)]
 #[test]
 fn net_services_defines_are_strict() {
     let ast = compile_script();
@@ -3155,9 +3165,9 @@ fn settings_go_to_small_sectors_with_ota_and_to_the_tail_without() {
 /// секторами и при разделе настроек в хвосте flash обёртки нет.
 #[test]
 fn erase_page_wrapper_only_where_the_sector_is_smaller_than_the_chip_page() {
-    let ast = compile_script();
     // (чип, ответы, state_paged, config_paged, boot_partitioned)
     type Case<'a> = (&'a str, &'a [(&'a str, &'a str)], &'a str, &'a str, &'a str);
+    let ast = compile_script();
     let cases: [Case; 6] = [
         // F4: `STATE` в секторе 16 KiB при странице 128 KiB.
         ("f407ve", &[], "true", "false", "true"),
@@ -3211,7 +3221,6 @@ fn erase_page_wrapper_only_where_the_sector_is_smaller_than_the_chip_page() {
 /// TCP и UDP, сокеты сети и COBS — каждый лишь там, где ему есть кого обслуживать.
 #[test]
 fn transports_are_kept_only_for_the_selected_interface() {
-    let ast = compile_script();
     // (чип, ответы, файлы, которые должны быть удалены, файлы, которые остаются)
     type Case<'a> = (
         &'a str,
@@ -3222,6 +3231,7 @@ fn transports_are_kept_only_for_the_selected_interface() {
     const M: &str = "crates-host/adapters/src/modbus/";
     const N: &str = "crates-host/adapters/src/net/";
     const COBS: &str = "crates-host/adapters/src/cobs.rs";
+    let ast = compile_script();
     let cases: [Case; 5] = [
         (
             "g474re",
@@ -3298,7 +3308,6 @@ fn transports_are_kept_only_for_the_selected_interface() {
 /// только обёртке страницы или внешней флеши.
 #[test]
 fn ota_and_settings_code_is_kept_only_when_selected() {
-    let ast = compile_script();
     const OTA: [&str; 5] = [
         "crates-host/ports/src/ota.rs",
         "crates-host/ports/src/ota",
@@ -3314,6 +3323,7 @@ fn ota_and_settings_code_is_kept_only_when_selected() {
     const WORD: &str = "crates-host/ports/src/word.rs";
     // (чип, ответы, OTA вырезана, настройки вырезаны, flash-page вырезан)
     type Case<'a> = (&'a str, &'a [(&'a str, &'a str)], bool, bool, bool);
+    let ast = compile_script();
     let cases: [Case; 5] = [
         (
             "g474re",
@@ -3376,11 +3386,11 @@ fn ota_and_settings_code_is_kept_only_when_selected() {
 /// (`ports::link`) — только протоколам, которые им пользуются.
 #[test]
 fn watchdog_and_link_port_follow_the_choices() {
-    let ast = compile_script();
     const WDG: [&str; 2] = ["crates-cross/bsp/src/wdg.rs", "docs/modules/bsp-wdg.md"];
     const LINK: &str = "crates-host/ports/src/link.rs";
     // (чип, ответы, сторож удалён, канал удалён)
     type Case<'a> = (&'a str, &'a [(&'a str, &'a str)], bool, bool);
+    let ast = compile_script();
     let cases: [Case; 7] = [
         ("g474re", &[], false, true),
         ("g474re", &[("graph", "no")], true, true),
@@ -3437,9 +3447,17 @@ fn template_variables() -> std::collections::BTreeSet<String> {
 }
 
 /// То же по дереву `root`.
+#[expect(
+    clippy::too_many_lines,
+    reason = "разбор Liquid-тегов одного файла — один проход по тексту"
+)]
 fn template_variables_in(root: &std::path::Path) -> std::collections::BTreeSet<String> {
     use std::collections::BTreeSet;
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "разбор Liquid-тегов одного файла — один проход по тексту"
+    )]
     fn walk(dir: &std::path::Path, found: &mut BTreeSet<String>) {
         let Ok(entries) = std::fs::read_dir(dir) else {
             return;
@@ -3466,7 +3484,10 @@ fn template_variables_in(root: &std::path::Path) -> std::collections::BTreeSet<S
                 continue;
             }
             // Сам хук и Rust-код генератора не шаблон: в них Liquid встречается как текст.
-            if name.ends_with(".rhai") || name == "Cargo.lock" || name.ends_with(".lock") {
+            if std::path::Path::new(&name)
+                .extension()
+                .is_some_and(|ext| ext == "rhai" || ext == "lock")
+            {
                 continue;
             }
             let Ok(text) = std::fs::read_to_string(&path) else {
@@ -3783,6 +3804,10 @@ fn every_chip_generates_with_the_defaults() {
 
 /// Обход всех путей по меню на характерных чипах: каждый путь, который меню
 /// вообще позволяет пройти, даёт допустимые ответы и не роняет генерацию.
+#[expect(
+    clippy::too_many_lines,
+    reason = "обход меню по всем характерным чипам — один сценарий"
+)]
 #[test]
 fn every_path_through_the_menus_generates() {
     let ast = compile_script();
@@ -3947,7 +3972,7 @@ fn watchdog_peripheral_follows_the_chip_metadata() {
     }
 }
 
-/// Банк 2 за разрывом (H743ZG: 2×512 KiB, банк 2 с 0x0810_0000): DFU в нём, а
+/// Банк 2 за разрывом (H743ZG: 2×512 KiB, банк 2 с `0x0810_0000`): DFU в нём, а
 /// его символы — от начала банка 2, потому что прошивка пишет его через
 /// `Bank2Region` (`dfu_bank = true`); цельный `Flash` туда не дотягивается.
 #[test]
@@ -3993,9 +4018,9 @@ fn external_ota_on_a_bank_gap_chip_leaves_bank_2_alone() {
     );
 }
 
-/// Ядро CM7 двухъядерного H7: первый сектор банка 2 (0x0810_0000–0x0811_FFFF)
+/// Ядро CM7 двухъядерного H7: первый сектор банка 2 (`0x0810_0000–0x0811_FFFF`)
 /// — точка старта CM4 с заводскими option bytes, и раскладка его не трогает:
-/// `DFU` — с 0x0812_0000 через `Bank2Region` (смещения от начала банка), а
+/// `DFU` — с `0x0812_0000` через `Bank2Region` (смещения от начала банка), а
 /// приложение без OTA — только в банке 1.
 #[test]
 fn cm7_of_a_dual_core_h7_leaves_the_cm4_boot_sector_alone() {
@@ -4025,8 +4050,8 @@ fn cm7_of_a_dual_core_h7_leaves_the_cm4_boot_sector_alone() {
 }
 
 /// Ядро CM4 двухъядерного H7 — в банке 2, откуда оно стартует: bootloader и
-/// приложение без OTA — с 0x0810_0000, а символы разделов по-прежнему от базы
-/// цельного `Flash` (0x0800_0000), и конец flash в `ASSERT` — смещение банка
+/// приложение без OTA — с `0x0810_0000`, а символы разделов по-прежнему от базы
+/// цельного `Flash` (`0x0800_0000`), и конец flash в `ASSERT` — смещение банка
 /// плюс его длина. При 2×512 KiB цельному `Flash` банк 2 недоступен: OTA и
 /// настройки отключаются, а не раскладываются туда, куда прошивка не напишет.
 #[test]
@@ -4087,7 +4112,7 @@ fn cm4_of_a_dual_core_h7_lives_in_bank_2() {
 
 /// STM32WB: RAM — только SRAM1 (SRAM2a/2b — память CPU2, доступ CPU1 — bus
 /// error), а всё во flash кончается ниже стека CPU2 `BLE_Stack_full`
-/// (0x080D_0000 у xG).
+/// (`0x080D_0000` у xG).
 #[test]
 fn wb_leaves_sram2_and_the_cpu2_flash_alone() {
     let ast = compile_script();
@@ -4206,6 +4231,8 @@ fn reset_flags_follow_the_chip_table() {
 /// только у чипа с RNG; без интерфейса или на другом интерфейсе — удалены.
 #[test]
 fn rng_files_stay_only_for_network_interfaces() {
+    // (чип, ответы, удалены ли файлы)
+    type RngCase<'a> = (&'a str, &'a [(&'a str, &'a str)], bool);
     let ast = compile_script();
     let files = ["crates-cross/bsp/src/rng.rs", "docs/modules/bsp-rng.md"];
     let deleted = |suffix: &str, preset: &[(&str, &str)]| {
@@ -4215,8 +4242,6 @@ fn rng_files_stay_only_for_network_interfaces() {
             .map(|file| result.deleted.iter().any(|path| path == file))
             .collect::<Vec<_>>()
     };
-    // (чип, ответы, удалены ли файлы)
-    type RngCase<'a> = (&'a str, &'a [(&'a str, &'a str)], bool);
     let cases: [RngCase; 6] = [
         ("h743zg", &[], true),
         (
@@ -4717,8 +4742,6 @@ fn item<'a>(shown: &'a [String], value: &str) -> &'a str {
         .find(|choice| menu_value(choice) == value)
         .unwrap_or_else(|| panic!("в меню нет пункта {value}: {shown:?}"))
 }
-
-const NO_RAM: &str = "DOES NOT FIT in RAM";
 
 /// `ram_estimate` — байты статической RAM, с транспортом их больше; хук печатает
 /// её строкой `ram_estimate:` (её читает `template-check`).

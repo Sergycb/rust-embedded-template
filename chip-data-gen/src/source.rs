@@ -106,6 +106,7 @@ impl Drop for PatchedRepoCopy {
 }
 
 /// Корень репозитория шаблона — каталог, в котором лежит `chip-data-gen/`.
+#[must_use]
 pub fn repo_root() -> PathBuf {
     let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     dir.pop();
@@ -115,6 +116,10 @@ pub fn repo_root() -> PathBuf {
 /// Версия `embassy-stm32` так, как она объявлена в `crates-cross/Cargo.toml` — не
 /// разрешённая cargo: сверять надо именно объявление, иначе безобидный
 /// патч-релиз в реестре ронял бы тест штампа.
+///
+/// # Errors
+///
+/// Манифест не прочитался или в нём нет строки `embassy-stm32` с версией.
 pub fn declared_embassy_version(repo_root: &Path) -> anyhow::Result<String> {
     let manifest_path = repo_root.join("crates-cross").join("Cargo.toml");
     let manifest = fs::read_to_string(&manifest_path)

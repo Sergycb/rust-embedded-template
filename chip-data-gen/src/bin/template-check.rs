@@ -45,7 +45,7 @@
 use std::{
     collections::{HashMap, HashSet, hash_map::DefaultHasher},
     env,
-    fmt::Display,
+    fmt::{Display, Write as _},
     fs::{self, File},
     hash::{Hash, Hasher},
     io::Write,
@@ -68,6 +68,230 @@ use chip_data_gen::source::{RUST_LIB, repo_root};
 /// (гигабайты), так что больше трёх по умолчанию не берём.
 const DEFAULT_JOBS: usize = 3;
 
+/// Файлы, где сырые `{{...}}` остаются намеренно и после генерации.
+/// `CLAUDE.md` — импорт `@AGENTS.md` плюс пункты только для Claude Code, и в
+/// них Liquid упомянут текстом (`{{ }}`, `{% %}` — признак файлов шаблона,
+/// по которым нет графа кода); поэтому он исключён из Liquid-подстановки
+/// (`exclude` в cargo-generate.toml) и едет в проект как есть.
+const RAW_PLACEHOLDERS_ALLOWED: &[&str] = &["CLAUDE.md"];
+
+/// Каталоги, которые не обходим при поиске остаточных плейсхолдеров.
+const SKIP_DIRS: &[&str] = &[".git", "target"];
+
+/// Каталоги верхнего уровня под git, которые не нужны копии шаблона, из которой
+/// идёт генерация: сам этот инструмент (в проекты он не попадает — `ignore` в
+/// cargo-generate.toml). Каталоги сборки и `.git` под git не лежат, отбор по
+/// `git ls-files` их уже не видит.
+const SKIP_IN_TEMPLATE: &[&str] = &["chip-data-gen"];
+
+/// Команды, которые зависят только от чипа (`chip-info`), — раз на чип полосы.
+///
+/// `xtask pins` — единственный способ вообще проверить `chip-info`: его
+/// манифест до генерации не резолвится (Liquid в чип-фиче), так что ни `cargo
+/// xtask lint`, ни CI самого шаблона его не трогают. Оба вызова не случайны:
+/// без аргумента идёт перечисление блоков, с `RCC` — ветка с таблицей выводов,
+/// DMA и тактированием, а `RCC` есть на любом STM32 (в отличие от, например,
+/// `SPI4`).
+///
+/// fmt/clippy/test для chip-info — здесь же и по той же причине; в
+/// сгенерированном проекте манифест уже подставлен, и все три команды работают.
+/// `cargo xtask lint` и `test host` их намеренно не зовут: тогда каждый
+/// пользовательский CI тянул бы stm32-metapac ради инструмента, который на
+/// сборку прошивки никак не влияет.
+const CHIP_COMMANDS: [&[&str]; 6] = [
+    &["xtask", "pins"],
+    &["xtask", "pins", "RCC"],
+    // Заготовка — на I2C1, и это не произвольный выбор: он есть на всех чипах
+    // набора (у stm32l011f4, например, USART1 нет вовсе — только USART2 и
+    // LPUART1), а обработчиков прерывания у него два и они разные, то есть
+    // проверяется самая ошибкоопасная ветка таблицы.
+    &["xtask", "pins", "I2C1", "--snippet"],
+    &[
+        "fmt",
+        "--manifest-path",
+        "crates-host/chip-info/Cargo.toml",
+        "--check",
+    ],
+    &[
+        "clippy",
+        "--manifest-path",
+        "crates-host/chip-info/Cargo.toml",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings",
+    ],
+    // Юнит-тесты текстового разбора `--check`: каждая его регрессия ложной
+    // тревогой роняла бы джоб `Pins` у пользователя, а молчанием — пропускала
+    // занятый отладочный порт.
+    &[
+        "test",
+        "--manifest-path",
+        "crates-host/chip-info/Cargo.toml",
+    ],
+];
+
+/// Что хостовый workspace (`xtask lint`, `test host`, `deny` корня) не читает —
+/// пути от корня проекта. Список исключений, а не включений: забытое здесь
+/// стоит лишь лишнего прогона, а забытое во включениях — пропущенной проверки.
+const NOT_HOST: &[&str] = &[
+    ".git",
+    ".github",
+    ".vscode",
+    ".claude",
+    "target",
+    "docs",
+    "crates-cross",
+    "crates-host/chip-info",
+];
+
+/// Адреса git-зависимостей для генерации: в хуке умолчаний нет (шаблон не
+/// называет сервер), проверка берёт рабочие зеркала автора. `rust_lib` — тот же
+/// адрес, которым генератор подставляет плейсхолдер в манифестах.
+const REPO_DEFAULTS: [(&str, &str); 2] = [
+    ("rust_lib", RUST_LIB),
+    ("hw_drivers", "https://github.com/Sergycb/hw-drivers"),
+];
+
+/// Начала путей проекта, которые доки и комментарии называют: по ним ссылка
+/// отличается от имени типа или команды в обратных кавычках.
+const DOC_PATH_ROOTS: &[&str] = &["crates-cross/", "crates-host/", "docs/", ".github/"];
+
+/// Пути, которых в свежем проекте нет по построению: их создаёт первая сборка.
+const DOC_PATHS_BUILT_LATER: &[&str] = &[
+    "crates-cross/Cargo.lock",
+    "crates-cross/target",
+    "crates-host/chip-info/Cargo.lock",
+];
+
+/// Файлы репозитория шаблона, которым в проекте не место: хуки cargo-generate
+/// не копирует сам, остальное держит `ignore` в cargo-generate.toml.
+/// `chip-data-gen` и неотслеживаемое сюда не входят — копия шаблона, из которой
+/// идёт генерация, их и так не несёт (`copy_template`).
+const NOT_IN_PROJECT: &[&str] = &[
+    "chip-select.rhai",
+    "post-script.rhai",
+    "MAINTAINING.md",
+    "chip-data",
+    "Cargo.lock",
+    "crates-host/chip-info/Cargo.lock",
+    "docs/superpowers",
+];
+
+/// Одна проверяемая конфигурация: чип плюс, если нужно, дополнительные
+/// `--define` и суффикс, отличающий её каталог от других прогонов того же чипа.
+struct Case {
+    chip: String,
+    suffix: Option<String>,
+    defines: Vec<String>,
+    /// Входит в набор `--smoke`.
+    smoke: bool,
+}
+
+impl Case {
+    fn new(chip: &str) -> Self {
+        Self {
+            chip: chip.to_owned(),
+            suffix: None,
+            defines: Vec::new(),
+            smoke: false,
+        }
+    }
+
+    fn variant(self, suffix: &str, defines: &[&str]) -> Self {
+        Self {
+            suffix: Some(suffix.to_owned()),
+            defines: defines.iter().map(|d| (*d).to_owned()).collect(),
+            ..self
+        }
+    }
+
+    fn smoke(self) -> Self {
+        Self {
+            smoke: true,
+            ..self
+        }
+    }
+
+    /// Имя проекта, оно же имя каталога.
+    fn name(&self) -> String {
+        match &self.suffix {
+            // Дефис в чип-фиче двухъядерного чипа (`stm32h745zi-cm7`)
+            // переносим как есть: cargo-generate санитизирует имя в
+            // kebab-case и молча переименовывает каталог, так что `_` привёл
+            // бы к поиску несуществующего пути.
+            Some(suffix) => format!("tc-{}-{suffix}", self.chip),
+            None => format!("tc-{}", self.chip),
+        }
+    }
+
+    fn label(&self) -> String {
+        match &self.suffix {
+            Some(suffix) => format!("{} ({suffix})", self.chip),
+            None => self.chip.clone(),
+        }
+    }
+}
+
+struct Options {
+    cases: Vec<Case>,
+    ci: String,
+    /// Общие `--define k=v` для каждой конфигурации (после её собственных).
+    defines: Vec<String>,
+    /// Только сгенерировать и проверить рендер, без сборки — быстрая проверка
+    /// хуков и Liquid-условий (секунды вместо минут на чип).
+    quick: bool,
+    /// Не удалять сгенерированные проекты после успеха.
+    keep: bool,
+    /// Сколько конфигураций идёт одновременно (`--jobs`).
+    jobs: usize,
+}
+
+/// Статическая RAM сборки и оценка хука (у ручной раскладки её нет).
+type Ram = (u64, Option<u64>);
+
+/// Общее на весь прогон: что проверяем, где и что уже проверено.
+struct Run {
+    options: Options,
+    /// Облегчённая копия шаблона, из которой генерируем.
+    template: PathBuf,
+    work_dir: PathBuf,
+    /// Отпечаток хостового workspace ([`host_key`]) → конфигурация, на которой
+    /// он уже прошёл `xtask lint`, `test host` и `deny` корня.
+    host_checked: Mutex<HashMap<u64, String>>,
+    /// Отказ `pins --check` на занятом отладочном порте уже проверен
+    /// ([`check_pins_reject_debug_port`]) — раз на прогон.
+    debug_port_checked: AtomicBool,
+    /// Упала хотя бы одна конфигурация — новых не начинаем.
+    failed: AtomicBool,
+    finished: AtomicUsize,
+}
+
+/// Какие чипы полосы уже прошли проверки `chip-info` и заготовок. От проекта
+/// они не зависят — только от чипа; исключение — половина `assign_resources!`,
+/// которая проверяется лишь в проекте без интерфейса (см.
+/// [`check_snippets_compile`]), поэтому такой проект проверяет чип ещё раз.
+#[derive(Default)]
+struct ChipChecks {
+    any: HashSet<String>,
+    with_resources: HashSet<String>,
+}
+
+impl ChipChecks {
+    /// Нужны ли проверки чипа этому проекту; если да — считает их сделанными.
+    fn due(&mut self, chip: &str, placeholder_resources: bool) -> bool {
+        if self.with_resources.contains(chip) || (!placeholder_resources && self.any.contains(chip))
+        {
+            return false;
+        }
+        self.any.insert(chip.to_owned());
+        if placeholder_resources {
+            self.with_resources.insert(chip.to_owned());
+        }
+        true
+    }
+}
+
 /// Каждая запись здесь включает свою ветку генерации — см. doc-комментарий
 /// выше. Менять только вместе с пониманием, какую ветку теряем.
 ///
@@ -78,6 +302,10 @@ const DEFAULT_JOBS: usize = 3;
 /// `.smoke()` — набор `--smoke`: по конфигурации на ось генерации (OTA с
 /// подписью и графом, без графа на M0+, 2 KiB RAM, внешняя OTA, CANopen с
 /// настройками, сеть на H7, USB, несколько транспортов без графа).
+#[expect(
+    clippy::too_many_lines,
+    reason = "таблица случаев: по строке на конфигурацию, делить её не на что"
+)]
 fn default_cases() -> Vec<Case> {
     vec![
         // Одноядерный с OTA и подписью образа (она всегда идёт вместе с OTA:
@@ -371,111 +599,10 @@ fn default_cases() -> Vec<Case> {
     ]
 }
 
-/// Одна проверяемая конфигурация: чип плюс, если нужно, дополнительные
-/// `--define` и суффикс, отличающий её каталог от других прогонов того же чипа.
-struct Case {
-    chip: String,
-    suffix: Option<String>,
-    defines: Vec<String>,
-    /// Входит в набор `--smoke`.
-    smoke: bool,
-}
-
-impl Case {
-    fn new(chip: &str) -> Self {
-        Self {
-            chip: chip.to_owned(),
-            suffix: None,
-            defines: Vec::new(),
-            smoke: false,
-        }
-    }
-
-    fn variant(self, suffix: &str, defines: &[&str]) -> Self {
-        Self {
-            suffix: Some(suffix.to_owned()),
-            defines: defines.iter().map(|d| (*d).to_owned()).collect(),
-            ..self
-        }
-    }
-
-    fn smoke(self) -> Self {
-        Self {
-            smoke: true,
-            ..self
-        }
-    }
-
-    /// Имя проекта, оно же имя каталога.
-    fn name(&self) -> String {
-        match &self.suffix {
-            // Дефис в чип-фиче двухъядерного чипа (`stm32h745zi-cm7`)
-            // переносим как есть: cargo-generate санитизирует имя в
-            // kebab-case и молча переименовывает каталог, так что `_` привёл
-            // бы к поиску несуществующего пути.
-            Some(suffix) => format!("tc-{}-{suffix}", self.chip),
-            None => format!("tc-{}", self.chip),
-        }
-    }
-
-    fn label(&self) -> String {
-        match &self.suffix {
-            Some(suffix) => format!("{} ({suffix})", self.chip),
-            None => self.chip.clone(),
-        }
-    }
-}
-
-/// Файлы, где сырые `{{...}}` остаются намеренно и после генерации.
-/// `CLAUDE.md` — импорт `@AGENTS.md` плюс пункты только для Claude Code, и в
-/// них Liquid упомянут текстом (`{{ }}`, `{% %}` — признак файлов шаблона,
-/// по которым нет графа кода); поэтому он исключён из Liquid-подстановки
-/// (`exclude` в cargo-generate.toml) и едет в проект как есть.
-const RAW_PLACEHOLDERS_ALLOWED: &[&str] = &["CLAUDE.md"];
-
-/// Каталоги, которые не обходим при поиске остаточных плейсхолдеров.
-const SKIP_DIRS: &[&str] = &[".git", "target"];
-
-/// Каталоги верхнего уровня под git, которые не нужны копии шаблона, из которой
-/// идёт генерация: сам этот инструмент (в проекты он не попадает — `ignore` в
-/// cargo-generate.toml). Каталоги сборки и `.git` под git не лежат, отбор по
-/// `git ls-files` их уже не видит.
-const SKIP_IN_TEMPLATE: &[&str] = &["chip-data-gen"];
-
-struct Options {
-    cases: Vec<Case>,
-    ci: String,
-    /// Общие `--define k=v` для каждой конфигурации (после её собственных).
-    defines: Vec<String>,
-    /// Только сгенерировать и проверить рендер, без сборки — быстрая проверка
-    /// хуков и Liquid-условий (секунды вместо минут на чип).
-    quick: bool,
-    /// Не удалять сгенерированные проекты после успеха.
-    keep: bool,
-    /// Сколько конфигураций идёт одновременно (`--jobs`).
-    jobs: usize,
-}
-
-/// Статическая RAM сборки и оценка хука (у ручной раскладки её нет).
-type Ram = (u64, Option<u64>);
-
-/// Общее на весь прогон: что проверяем, где и что уже проверено.
-struct Run {
-    options: Options,
-    /// Облегчённая копия шаблона, из которой генерируем.
-    template: PathBuf,
-    work_dir: PathBuf,
-    /// Отпечаток хостового workspace ([`host_key`]) → конфигурация, на которой
-    /// он уже прошёл `xtask lint`, `test host` и `deny` корня.
-    host_checked: Mutex<HashMap<u64, String>>,
-    /// Отказ `pins --check` на занятом отладочном порте уже проверен
-    /// ([`check_pins_reject_debug_port`]) — раз на прогон.
-    debug_port_checked: AtomicBool,
-    /// Упала хотя бы одна конфигурация — новых не начинаем.
-    failed: AtomicBool,
-    finished: AtomicUsize,
-}
-
+#[expect(
+    clippy::too_many_lines,
+    reason = "пролог, проверки без сборки, дорожки сборки и итог — один сценарий над общими опциями"
+)]
 fn main() -> anyhow::Result<()> {
     let options = parse_args()?;
     let repo_root = repo_root();
@@ -715,84 +842,16 @@ fn run_lane(
     outcomes
 }
 
-/// Какие чипы полосы уже прошли проверки `chip-info` и заготовок. От проекта
-/// они не зависят — только от чипа; исключение — половина `assign_resources!`,
-/// которая проверяется лишь в проекте без интерфейса (см.
-/// [`check_snippets_compile`]), поэтому такой проект проверяет чип ещё раз.
-#[derive(Default)]
-struct ChipChecks {
-    any: HashSet<String>,
-    with_resources: HashSet<String>,
-}
-
-impl ChipChecks {
-    /// Нужны ли проверки чипа этому проекту; если да — считает их сделанными.
-    fn due(&mut self, chip: &str, placeholder_resources: bool) -> bool {
-        if self.with_resources.contains(chip) || (!placeholder_resources && self.any.contains(chip))
-        {
-            return false;
-        }
-        self.any.insert(chip.to_owned());
-        if placeholder_resources {
-            self.with_resources.insert(chip.to_owned());
-        }
-        true
-    }
-}
-
-/// Команды, которые зависят только от чипа (`chip-info`), — раз на чип полосы.
-///
-/// `xtask pins` — единственный способ вообще проверить `chip-info`: его
-/// манифест до генерации не резолвится (Liquid в чип-фиче), так что ни `cargo
-/// xtask lint`, ни CI самого шаблона его не трогают. Оба вызова не случайны:
-/// без аргумента идёт перечисление блоков, с `RCC` — ветка с таблицей выводов,
-/// DMA и тактированием, а `RCC` есть на любом STM32 (в отличие от, например,
-/// `SPI4`).
-///
-/// fmt/clippy/test для chip-info — здесь же и по той же причине; в
-/// сгенерированном проекте манифест уже подставлен, и все три команды работают.
-/// `cargo xtask lint` и `test host` их намеренно не зовут: тогда каждый
-/// пользовательский CI тянул бы stm32-metapac ради инструмента, который на
-/// сборку прошивки никак не влияет.
-const CHIP_COMMANDS: [&[&str]; 6] = [
-    &["xtask", "pins"],
-    &["xtask", "pins", "RCC"],
-    // Заготовка — на I2C1, и это не произвольный выбор: он есть на всех чипах
-    // набора (у stm32l011f4, например, USART1 нет вовсе — только USART2 и
-    // LPUART1), а обработчиков прерывания у него два и они разные, то есть
-    // проверяется самая ошибкоопасная ветка таблицы.
-    &["xtask", "pins", "I2C1", "--snippet"],
-    &[
-        "fmt",
-        "--manifest-path",
-        "crates-host/chip-info/Cargo.toml",
-        "--check",
-    ],
-    &[
-        "clippy",
-        "--manifest-path",
-        "crates-host/chip-info/Cargo.toml",
-        "--all-targets",
-        "--",
-        "-D",
-        "warnings",
-    ],
-    // Юнит-тесты текстового разбора `--check`: каждая его регрессия ложной
-    // тревогой роняла бы джоб `Pins` у пользователя, а молчанием — пропускала
-    // занятый отладочный порт.
-    &[
-        "test",
-        "--manifest-path",
-        "crates-host/chip-info/Cargo.toml",
-    ],
-];
-
 /// Строка в лог конфигурации.
 fn note(mut log: &File, line: impl Display) -> anyhow::Result<()> {
     writeln!(log, "{line}").context("записать в лог")
 }
 
 /// Отдаёт статическую RAM сборки и оценку хука (без сборки — `None`).
+#[expect(
+    clippy::too_many_lines,
+    reason = "проверки одного проекта идут по порядку и пишут в один лог"
+)]
 fn check_one(
     run: &Run,
     cargo_target_dir: &Path,
@@ -1061,20 +1120,6 @@ fn is_placeholder_resources(resources: &str) -> bool {
     resources.contains("BoardResources {}")
 }
 
-/// Что хостовый workspace (`xtask lint`, `test host`, `deny` корня) не читает —
-/// пути от корня проекта. Список исключений, а не включений: забытое здесь
-/// стоит лишь лишнего прогона, а забытое во включениях — пропущенной проверки.
-const NOT_HOST: &[&str] = &[
-    ".git",
-    ".github",
-    ".vscode",
-    ".claude",
-    "target",
-    "docs",
-    "crates-cross",
-    "crates-host/chip-info",
-];
-
 /// Отпечаток хостового workspace проекта: все файлы, кроме [`NOT_HOST`] и
 /// `.md`, с именем проекта и чип-фичей, заменёнными на одно и то же. Они стоят
 /// в строковых литералах и на исход проверок не влияют, а без замены
@@ -1087,7 +1132,9 @@ fn host_key(project: &Path, case: &Case) -> anyhow::Result<u64> {
             .unwrap_or(path)
             .to_string_lossy()
             .replace('\\', "/");
-        let skipped = relative.ends_with(".md")
+        let skipped = Path::new(&relative)
+            .extension()
+            .is_some_and(|ext| ext == "md")
             || NOT_HOST.iter().any(|dir| {
                 relative
                     .strip_prefix(dir)
@@ -1224,14 +1271,6 @@ fn repo_urls(case: &[String], common: &[String]) -> Vec<(&'static str, String)> 
         .collect()
 }
 
-/// Адреса git-зависимостей для генерации: в хуке умолчаний нет (шаблон не
-/// называет сервер), проверка берёт рабочие зеркала автора. `rust_lib` — тот же
-/// адрес, которым генератор подставляет плейсхолдер в манифестах.
-const REPO_DEFAULTS: [(&str, &str); 2] = [
-    ("rust_lib", RUST_LIB),
-    ("hw_drivers", "https://github.com/Sergycb/hw-drivers"),
-];
-
 /// Что должно быть в сгенерированном проекте при каждом `ci` — и чего там быть
 /// не должно.
 ///
@@ -1306,17 +1345,6 @@ fn without_actions_expressions(line: &str) -> String {
     out
 }
 
-/// Начала путей проекта, которые доки и комментарии называют: по ним ссылка
-/// отличается от имени типа или команды в обратных кавычках.
-const DOC_PATH_ROOTS: &[&str] = &["crates-cross/", "crates-host/", "docs/", ".github/"];
-
-/// Пути, которых в свежем проекте нет по построению: их создаёт первая сборка.
-const DOC_PATHS_BUILT_LATER: &[&str] = &[
-    "crates-cross/Cargo.lock",
-    "crates-cross/target",
-    "crates-host/chip-info/Cargo.lock",
-];
-
 /// Пути проекта, названные в тексте: в обратных кавычках (`` `docs/flash.md` ``)
 /// и целью ссылки Markdown (`](docs/flash.md)`). Хвост `:строка`, `#якорь` и
 /// закрывающая пунктуация отрезаются; шаблоны (`<вид>`, `*`, `{…}`) —
@@ -1381,20 +1409,6 @@ fn check_doc_paths(project: &Path, log: &File) -> anyhow::Result<()> {
     }
     note(log, "пути в доках: все на месте")
 }
-
-/// Файлы репозитория шаблона, которым в проекте не место: хуки cargo-generate
-/// не копирует сам, остальное держит `ignore` в cargo-generate.toml.
-/// `chip-data-gen` и неотслеживаемое сюда не входят — копия шаблона, из которой
-/// идёт генерация, их и так не несёт (`copy_template`).
-const NOT_IN_PROJECT: &[&str] = &[
-    "chip-select.rhai",
-    "post-script.rhai",
-    "MAINTAINING.md",
-    "chip-data",
-    "Cargo.lock",
-    "crates-host/chip-info/Cargo.lock",
-    "docs/superpowers",
-];
 
 /// В проекте нет файлов сопровождения шаблона и пустых каталогов — следов
 /// того, что хук удалил все файлы каталога, а сам каталог оставил.
@@ -1500,7 +1514,7 @@ fn capture(
     }
     let output = command
         .output()
-        .with_context(|| format!("запустить {:?}", command.get_program()))?;
+        .with_context(|| format!("запустить {}", command.get_program().display()))?;
     if !output.status.success() {
         // stdout — тоже: перед ошибкой хук печатает то, что к ней привело.
         bail!(
@@ -1604,11 +1618,13 @@ fn check_snippets_compile(
             // Импортов модулю не добавляется ни одного: заготовка печатает
             // свои, и в этом половина смысла проверки — вставленная как есть,
             // она обязана собираться сама по себе.
-            module.push_str(&format!(
+            write!(
+                module,
                 "mod irqs_{} {{\n{}\n}}\n\n",
                 block.to_lowercase(),
                 indent(&bind),
-            ));
+            )
+            .expect("запись в String не отказывает");
         }
         if placeholder_only && *block == with_resources {
             resources = part_of(&snippet, "assign_resources!");
@@ -1772,7 +1788,7 @@ fn run_command(
         .stderr(log.try_clone().context("открыть лог для команды")?);
     let status = command
         .status()
-        .with_context(|| format!("запустить {:?}", command.get_program()))?;
+        .with_context(|| format!("запустить {}", command.get_program().display()))?;
     if !status.success() {
         bail!("команда завершилась с {status}");
     }

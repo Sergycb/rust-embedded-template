@@ -2,6 +2,7 @@
 
 use std::{
     collections::BTreeMap,
+    fmt::Write as _,
     fs,
     path::{Path, PathBuf},
 };
@@ -9,7 +10,7 @@ use std::{
 use anyhow::Context;
 
 use crate::{
-    layout::{ExternalOta, MemoryLayout, format_addr, format_size},
+    layout::{ExternalOta, MemoryLayout, OtaPartitions, format_addr, format_size},
     metadata::{INTERFACE_TAGS, RngClock},
 };
 
@@ -41,7 +42,7 @@ pub(crate) fn format_memory_layouts(
     let mut files: BTreeMap<String, String> = BTreeMap::new();
     for (suffix, m) in layouts {
         let mut out = String::new();
-        out.push_str(&format!("    \"{suffix}\": #{{\n"));
+        writeln!(out, "    \"{suffix}\": #{{").expect("запись в String не отказывает");
         push_field(&mut out, "flash_origin", &format_addr(m.flash_origin));
         push_field(&mut out, "flash_length", &format_size(m.flash_length));
         push_field(&mut out, "ram_origin", &format_addr(m.ram_origin));
@@ -53,7 +54,7 @@ pub(crate) fn format_memory_layouts(
             out.push_str("        \"extra_regions\": [\n");
             for line in &m.extra_regions {
                 assert!(!line.contains('"'), "кавычка в строке региона: {line}");
-                out.push_str(&format!("            \"{line}\",\n"));
+                writeln!(out, "            \"{line}\",").expect("запись в String не отказывает");
             }
             out.push_str("        ],\n");
         }
@@ -80,43 +81,7 @@ pub(crate) fn format_memory_layouts(
             push_field(&mut out, "dfu_bank_origin", &format_addr(origin));
         }
         match &m.ota {
-            Ok(p) => {
-                push_field(&mut out, "ota", "true");
-                push_field(
-                    &mut out,
-                    "bootloader_length",
-                    &format_size(p.bootloader_length),
-                );
-                push_field(
-                    &mut out,
-                    "bootloader_state_origin",
-                    &format_addr(p.bootloader_state_origin),
-                );
-                push_field(
-                    &mut out,
-                    "bootloader_state_length",
-                    &format_size(p.bootloader_state_length),
-                );
-                push_field(
-                    &mut out,
-                    "bootloader_state_erase_size",
-                    &rust_literal(p.bootloader_state_erase_size),
-                );
-                push_field(&mut out, "swap_page_size", &p.swap_page_size.to_string());
-                push_field(
-                    &mut out,
-                    "swap_paged",
-                    if p.swap_page_size > m.page_size {
-                        "true"
-                    } else {
-                        "false"
-                    },
-                );
-                push_field(&mut out, "active_origin", &format_addr(p.active_origin));
-                push_field(&mut out, "active_length", &format_size(p.active_length));
-                push_field(&mut out, "dfu_origin", &format_addr(p.dfu_origin));
-                push_field(&mut out, "dfu_length", &format_size(p.dfu_length));
-            }
+            Ok(p) => push_ota(&mut out, "", p, m.page_size),
             Err(note) => {
                 push_field(&mut out, "ota", "false");
                 push_field(&mut out, "note", note);
@@ -144,53 +109,7 @@ pub(crate) fn format_memory_layouts(
                 );
                 match &config.ota {
                     Ok(p) => {
-                        push_field(&mut out, "config_ota", "true");
-                        push_field(
-                            &mut out,
-                            "config_bootloader_length",
-                            &format_size(p.bootloader_length),
-                        );
-                        push_field(
-                            &mut out,
-                            "config_bootloader_state_origin",
-                            &format_addr(p.bootloader_state_origin),
-                        );
-                        push_field(
-                            &mut out,
-                            "config_bootloader_state_length",
-                            &format_size(p.bootloader_state_length),
-                        );
-                        push_field(
-                            &mut out,
-                            "config_bootloader_state_erase_size",
-                            &rust_literal(p.bootloader_state_erase_size),
-                        );
-                        push_field(
-                            &mut out,
-                            "config_swap_page_size",
-                            &p.swap_page_size.to_string(),
-                        );
-                        push_field(
-                            &mut out,
-                            "config_swap_paged",
-                            if p.swap_page_size > m.page_size {
-                                "true"
-                            } else {
-                                "false"
-                            },
-                        );
-                        push_field(
-                            &mut out,
-                            "config_active_origin",
-                            &format_addr(p.active_origin),
-                        );
-                        push_field(
-                            &mut out,
-                            "config_active_length",
-                            &format_size(p.active_length),
-                        );
-                        push_field(&mut out, "config_dfu_origin", &format_addr(p.dfu_origin));
-                        push_field(&mut out, "config_dfu_length", &format_size(p.dfu_length));
+                        push_ota(&mut out, "config_", p, m.page_size);
                         let settings = p
                             .settings
                             .expect("схема набора config_ всегда считается с разделом настроек");
@@ -239,13 +158,15 @@ pub(crate) fn format_memory_layouts(
 pub(crate) fn format_watchdogs(watchdogs: &BTreeMap<&str, String>) -> String {
     let mut out = String::new();
     out.push_str(DATA_HEADER);
-    out.push_str(&format!(
-        "// {} шт., остальным — {DEFAULT_WATCHDOG}\n",
+    writeln!(
+        out,
+        "// {} шт., остальным — {DEFAULT_WATCHDOG}",
         watchdogs.len()
-    ));
+    )
+    .expect("запись в String не отказывает");
     out.push_str("export const WATCHDOG = #{\n");
     for (suffix, name) in watchdogs {
-        out.push_str(&format!("    \"{suffix}\": \"{name}\",\n"));
+        writeln!(out, "    \"{suffix}\": \"{name}\",").expect("запись в String не отказывает");
     }
     out.push_str("};\n");
     out
@@ -256,15 +177,15 @@ pub(crate) fn format_watchdogs(watchdogs: &BTreeMap<&str, String>) -> String {
 pub(crate) fn format_rngs(chips: &BTreeMap<&str, (String, RngClock)>) -> String {
     let mut out = String::new();
     out.push_str(DATA_HEADER);
-    out.push_str(&format!(
-        "// {} шт.: [прерывание, клок, источник]\n",
-        chips.len()
-    ));
+    writeln!(out, "// {} шт.: [прерывание, клок, источник]", chips.len())
+        .expect("запись в String не отказывает");
     out.push_str("export const RNG = #{\n");
     for (suffix, (interrupt, (clock, source))) in chips {
-        out.push_str(&format!(
-            "    \"{suffix}\": [\"{interrupt}\", \"{clock}\", \"{source}\"],\n"
-        ));
+        writeln!(
+            out,
+            "    \"{suffix}\": [\"{interrupt}\", \"{clock}\", \"{source}\"],"
+        )
+        .expect("запись в String не отказывает");
     }
     out.push_str("};\n");
     out
@@ -275,28 +196,20 @@ pub(crate) fn format_rngs(chips: &BTreeMap<&str, (String, RngClock)>) -> String 
 pub(crate) fn format_interfaces(chips: &BTreeMap<&str, Vec<&'static str>>) -> String {
     let mut out = String::new();
     out.push_str(DATA_HEADER);
-    out.push_str(&format!(
-        "// {} шт.; метки: {}
-",
+    writeln!(
+        out,
+        "// {} шт.; метки: {}",
         chips.len(),
         INTERFACE_TAGS.join(", ")
-    ));
-    out.push_str(
-        "export const INTERFACES = #{
-",
-    );
+    )
+    .expect("запись в String не отказывает");
+    out.push_str("export const INTERFACES = #{\n");
     for (suffix, tags) in chips {
         let tags: Vec<String> = tags.iter().map(|t| format!("\"{t}\"")).collect();
-        out.push_str(&format!(
-            "    \"{suffix}\": [{}],
-",
-            tags.join(", ")
-        ));
+        writeln!(out, "    \"{suffix}\": [{}],", tags.join(", "))
+            .expect("запись в String не отказывает");
     }
-    out.push_str(
-        "};
-",
-    );
+    out.push_str("};\n");
     out
 }
 
@@ -307,15 +220,13 @@ pub(crate) fn format_instances(
 ) -> String {
     let mut out = String::new();
     out.push_str(DATA_HEADER);
-    out.push_str(&format!(
-        "// {} шт.; метка интерфейса: имена блоков в порядке выбора
-",
+    writeln!(
+        out,
+        "// {} шт.; метка интерфейса: имена блоков в порядке выбора",
         chips.len()
-    ));
-    out.push_str(
-        "export const INSTANCES = #{
-",
-    );
+    )
+    .expect("запись в String не отказывает");
+    out.push_str("export const INSTANCES = #{\n");
     for (suffix, names) in chips {
         let names: Vec<String> = names
             .iter()
@@ -324,16 +235,10 @@ pub(crate) fn format_instances(
                 format!("\"{tag}\": [{}]", blocks.join(", "))
             })
             .collect();
-        out.push_str(&format!(
-            "    \"{suffix}\": #{{{}}},
-",
-            names.join(", ")
-        ));
+        writeln!(out, "    \"{suffix}\": #{{{}}},", names.join(", "))
+            .expect("запись в String не отказывает");
     }
-    out.push_str(
-        "};
-",
-    );
+    out.push_str("};\n");
     out
 }
 
@@ -343,10 +248,10 @@ pub(crate) fn format_instances(
 pub(crate) fn format_cpu_freq_boost(chips: &[&str]) -> String {
     let mut out = String::new();
     out.push_str(DATA_HEADER);
-    out.push_str(&format!("// {} шт.\n", chips.len()));
+    writeln!(out, "// {} шт.", chips.len()).expect("запись в String не отказывает");
     out.push_str("export const CPU_FREQ_BOOST = [\n");
     for suffix in chips {
-        out.push_str(&format!("    \"{suffix}\",\n"));
+        writeln!(out, "    \"{suffix}\",").expect("запись в String не отказывает");
     }
     out.push_str("];\n");
     out
@@ -357,26 +262,13 @@ pub(crate) fn format_cpu_freq_boost(chips: &[&str]) -> String {
 pub(crate) fn format_caches(chips: &BTreeMap<&str, Vec<&'static str>>) -> String {
     let mut out = String::new();
     out.push_str(DATA_HEADER);
-    out.push_str(&format!(
-        "// {} шт.
-",
-        chips.len()
-    ));
-    out.push_str(
-        "export const CACHE = #{
-",
-    );
+    writeln!(out, "// {} шт.", chips.len()).expect("запись в String не отказывает");
+    out.push_str("export const CACHE = #{\n");
     for (suffix, tokens) in chips {
-        out.push_str(&format!(
-            "    \"{suffix}\": \"{}\",
-",
-            tokens.join(" ")
-        ));
+        writeln!(out, "    \"{suffix}\": \"{}\",", tokens.join(" "))
+            .expect("запись в String не отказывает");
     }
-    out.push_str(
-        "};
-",
-    );
+    out.push_str("};\n");
     out
 }
 
@@ -389,16 +281,15 @@ pub(crate) fn format_resets(
 ) -> String {
     let mut out = String::new();
     out.push_str(DATA_HEADER);
-    out.push_str(&format!("// {} шт.\n", chips.len()));
+    writeln!(out, "// {} шт.", chips.len()).expect("запись в String не отказывает");
     out.push_str("export const RESET = #{\n");
     for (suffix, version) in chips {
-        out.push_str(&format!("    \"{suffix}\": \"{version}\",\n"));
+        writeln!(out, "    \"{suffix}\": \"{version}\",").expect("запись в String не отказывает");
     }
     out.push_str("};\nexport const RESET_REGS = #{\n");
     for (version, (register, flags)) in registers {
-        out.push_str(&format!(
-            "    \"{version}\": [\"{register}\", \"{flags}\"],\n"
-        ));
+        writeln!(out, "    \"{version}\": [\"{register}\", \"{flags}\"],")
+            .expect("запись в String не отказывает");
     }
     out.push_str("};\n");
     out
@@ -409,10 +300,11 @@ pub(crate) fn format_resets(
 pub(crate) fn format_bank_switch(chips: &BTreeMap<&str, (&'static str, u8)>) -> String {
     let mut out = String::new();
     out.push_str(DATA_HEADER);
-    out.push_str(&format!("// {} шт.\n", chips.len()));
+    writeln!(out, "// {} шт.", chips.len()).expect("запись в String не отказывает");
     out.push_str("export const BANK_SWITCH = #{\n");
     for (suffix, (variant, bit)) in chips {
-        out.push_str(&format!("    \"{suffix}\": \"{variant}:{bit}\",\n"));
+        writeln!(out, "    \"{suffix}\": \"{variant}:{bit}\",")
+            .expect("запись в String не отказывает");
     }
     out.push_str("};\n");
     out
@@ -424,10 +316,10 @@ pub(crate) fn format_bank_switch(chips: &BTreeMap<&str, (&'static str, u8)>) -> 
 pub(crate) fn format_bank_modes(modes: &BTreeMap<&str, &'static str>) -> String {
     let mut out = String::new();
     out.push_str(DATA_HEADER);
-    out.push_str(&format!("// {} шт.\n", modes.len()));
+    writeln!(out, "// {} шт.", modes.len()).expect("запись в String не отказывает");
     out.push_str("export const BANK_MODE = #{\n");
     for (suffix, mode) in modes {
-        out.push_str(&format!("    \"{suffix}\": \"{mode}\",\n"));
+        writeln!(out, "    \"{suffix}\": \"{mode}\",").expect("запись в String не отказывает");
     }
     out.push_str("};\n");
     out
@@ -442,7 +334,7 @@ pub(crate) fn format_source_stamp(embassy_version: &str, probe_rs_version: &str)
 pub(crate) fn format_chip_list(suffixes: &[&str], stamp: &str) -> String {
     let mut out = String::new();
     out.push_str(DATA_HEADER);
-    out.push_str(&format!("// {} шт.\n", suffixes.len()));
+    writeln!(out, "// {} шт.", suffixes.len()).expect("запись в String не отказывает");
     out.push_str(stamp);
     out.push_str("export const CHIPS = [\n");
     for suffix in suffixes {
@@ -457,7 +349,7 @@ pub(crate) fn format_chip_list(suffixes: &[&str], stamp: &str) -> String {
 pub(crate) fn format_package_choices(choices: &BTreeMap<&str, Vec<String>>) -> String {
     let mut out = String::new();
     out.push_str(DATA_HEADER);
-    out.push_str(&format!("// {} шт.\n", choices.len()));
+    writeln!(out, "// {} шт.", choices.len()).expect("запись в String не отказывает");
     out.push_str("export const PACKAGE_CHOICES = #{\n");
     for (suffix, candidates) in choices {
         out.push_str("    \"");
@@ -569,13 +461,46 @@ fn rust_literal(v: u64) -> String {
 /// молча при правке сообщений).
 fn push_field(out: &mut String, key: &str, value: &str) {
     assert!(!value.contains('"'), "кавычка в значении {key}: {value}");
-    out.push_str(&format!("        \"{key}\": \"{value}\",\n"));
+    writeln!(out, "        \"{key}\": \"{value}\",").expect("запись в String не отказывает");
 }
 
 /// Файл раскладок, в котором лежит чип: первые два символа суффикса (`f4`,
 /// `h7`, `wb`). Тот же ключ хук вычисляет в `import` — менять только вместе.
 fn layout_family(suffix: &str) -> &str {
     &suffix[..2]
+}
+
+/// Поля одного набора `OtaPartitions` с префиксом `prefix` (`""` — схема без
+/// настроек, `config_` — с ними); `page_size` — физическая страница чипа.
+fn push_ota(out: &mut String, prefix: &str, p: &OtaPartitions, page_size: u64) {
+    let mut field = |key: &str, value: &str| push_field(out, &format!("{prefix}{key}"), value);
+    field("ota", "true");
+    field("bootloader_length", &format_size(p.bootloader_length));
+    field(
+        "bootloader_state_origin",
+        &format_addr(p.bootloader_state_origin),
+    );
+    field(
+        "bootloader_state_length",
+        &format_size(p.bootloader_state_length),
+    );
+    field(
+        "bootloader_state_erase_size",
+        &rust_literal(p.bootloader_state_erase_size),
+    );
+    field("swap_page_size", &p.swap_page_size.to_string());
+    field(
+        "swap_paged",
+        if p.swap_page_size > page_size {
+            "true"
+        } else {
+            "false"
+        },
+    );
+    field("active_origin", &format_addr(p.active_origin));
+    field("active_length", &format_size(p.active_length));
+    field("dfu_origin", &format_addr(p.dfu_origin));
+    field("dfu_length", &format_size(p.dfu_length));
 }
 
 /// Поля одного набора `ExternalOta` с префиксом `prefix`. Внешние значения —
