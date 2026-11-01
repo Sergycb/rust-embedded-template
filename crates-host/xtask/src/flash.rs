@@ -1,4 +1,5 @@
-//! Прошивка платы перед этапами `test target` и `test host-target`.
+//! Прошивка платы перед этапами `test target` и `test host-target` и рабочая
+//! прошивка после `test target`.
 //!
 // {%- if ota == "true" %}
 //! Отдельной команды `flash` нет: руками прошивают `cargo flash -p boot --release` и
@@ -55,7 +56,13 @@ pub fn flash_all(sh: &xshell::Shell, profile: &str) -> Result<(), anyhow::Error>
 ///
 /// Bootloader всегда release. `watchdog = false` собирает его с фичей
 /// `no-watchdog` — для тестов на плате, где кормить сторож некому.
+///
+/// Ключ подписи — здесь, до сборки, а не у каждого вызывающего: открытый
+/// попадает в bootloader через его build.rs, и без файла (свежий клон, первый
+/// запуск мимо `cargo xtask build`) тот собрался бы с нулевым ключом и отвергал
+/// любой образ.
 pub fn flash_boot(sh: &xshell::Shell, watchdog: bool) -> Result<(), anyhow::Error> {
+    crate::signing::ensure_signing_key(&root_dir())?;
     let _p = sh.push_dir(root_dir().join("crates-cross"));
     if watchdog {
         cmd!(sh, "cargo flash -p boot --release --chip {CHIP}").run()?;

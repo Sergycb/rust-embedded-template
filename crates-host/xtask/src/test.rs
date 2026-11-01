@@ -57,9 +57,16 @@ pub fn test(sh: &xshell::Shell, stage: &[&str]) -> Result<(), anyhow::Error> {
     }
 }
 
+/// Все три этапа, и каждый образ шьётся по разу: рабочую прошивку после
+/// тестов внутри МК здесь не заливает `test target`, а первым делом
+/// `test host-target` — заливает и после себя на плате оставляет. Упали тесты
+/// внутри МК — рабочая прошивка шьётся сразу, как в отдельном этапе.
 fn test_all(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     test_host(sh)?;
-    test_target(sh)?;
+    if let Err(failed) = run_target_tests(sh) {
+        flash_all(sh, "release")?;
+        return Err(failed);
+    }
     test_host_target(sh)
 }
 
@@ -242,17 +249,27 @@ fn inert_image(active: u32, ram_end: u32) -> Vec<u8> {
 }
 // {%- endif %}
 
-// {%- if ota == "true" %}
-/// Тесты внутри МК. Bootloader заливается первым по той же причине, что и в
-/// `test_host_target`: тестовый образ линкуется в `ACTIVE` (его `memory.x` —
-/// копия app'ового), а `probe-rs run` после заливки сбрасывает чип, и
-/// управление получает не тест, а то, что лежит с базы flash. На плате, где
-/// bootloader'а нет — свежей или после `probe-rs erase`, — без этой строки
-/// не выполнился бы ни один тест.
-// {%- else %}
-//{{newline}}/// Тесты внутри МК.
-// {%- endif %}
+/// Тесты внутри МК, затем рабочая прошивка (`flash_all`, release) — и после
+/// упавших тестов тоже. Без неё на плате остался бы тестовый образ{% if ota == "true" %} над
+/// bootloader'ом без сторожа (`no-watchdog`) — и молча пропала бы защита
+/// «образ завис до `spawn_all` — сторож сбросил, bootloader откатил»{% endif %}.
 fn test_target(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
+    let tests = run_target_tests(sh);
+    flash_all(sh, "release")?;
+    tests
+}
+
+// {%- if ota == "true" %}
+/// Сами тесты внутри МК, без рабочей прошивки после них. Bootloader
+/// заливается первым по той же причине, что и в `test_host_target`: тестовый
+/// образ линкуется в `ACTIVE` (его `memory.x` — копия app'ового), а `probe-rs
+/// run` после заливки сбрасывает чип, и управление получает не тест, а то, что
+/// лежит с базы flash. На плате, где bootloader'а нет — свежей или после
+/// `probe-rs erase`, — без этой строки не выполнился бы ни один тест.
+// {%- else %}
+//{{newline}}/// Сами тесты внутри МК, без рабочей прошивки после них.
+// {%- endif %}
+fn run_target_tests(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     // {%- if ota == "true" %}
     flash_boot(sh, false)?;
     // {%- endif %}

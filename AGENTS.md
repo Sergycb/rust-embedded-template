@@ -100,9 +100,9 @@ Modbus{% endif %}{% if net_services != "" %}, секреты служб{% endif 
 | Команда | Что делает |
 |---|---|
 | {% if ota == "true" %}`cargo flash -p boot --release --chip {{chip}}`, затем {% endif %}`cargo run -p app` (исключение из правила выше: запускать в `crates-cross/`) | прошивка руками — необратимо; отдельной команды в `xtask` нет, и начало образа с `memory.x` здесь не сверяется — это делает `cargo xtask build` |
-| `cargo xtask test target` | тесты внутри МК (`embedded-test` + `probe-rs run`){% if ota == "true" %}; сам заливает bootloader{% endif %} |
+| `cargo xtask test target` | тесты внутри МК (`embedded-test` + `probe-rs run`){% if ota == "true" %}; сам заливает bootloader без сторожа{% endif %}, после тестов — рабочую {% if ota == "true" %}пару (bootloader со сторожем и `app`){% else %}прошивку (`app`){% endif %}, release |
 | `cargo xtask test host-target` | хост управляет прошитым устройством; сам заливает release-образы, сверив начало приложения с `ORIGIN` раздела из `memory.x` |
-| `cargo xtask test all` | обе строки выше |
+| `cargo xtask test all` | обе строки выше, каждый образ — по разу |
 | `cargo xtask panic-info` | читает регион `PANIC` с живой платы через `probe-rs` |
 | `probe-rs attach --chip {{chip}} crates-cross/target/{{target}}/debug/app` | лог живой платы |
 | `probe-rs erase --chip {{chip}} --connect-under-reset` | снять плату, зациклившуюся на панике |
