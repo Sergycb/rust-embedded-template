@@ -146,7 +146,7 @@ bootloader, `layout_fingerprint` считает и `cargo xtask build`){% endif 
 порта или стандартного, — которой хватает трейтов
 `embedded-storage`/`embedded-hal`/`embedded-io-async` (раздел флеша, шина или
 поток приходят параметром), и типы-сборки, которые плата отдаёт целиком, лежат
-в `crates-host/adapters` и тестируются на хосте на фейке
+в `crates-host/adapters-hw` и тестируются на хосте на фейке
 {%- assign sep = ": " %}
 {%- if ota == "true" %}{{ sep }}`adapters::ota` (поверх `embassy-boot`){% assign sep = ", " %}{% endif %}
 {%- if settings_port == "true" %}{{ sep }}`adapters::settings`

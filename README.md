@@ -83,7 +83,7 @@ cargo run -p app                    # прошить приложение и с�
 {%- endif %}
 | Логика и узлы | `crates-host/domain/` | всё, что не про регистры: автоматы, протоколы, конфигурация, а также объявления узлов (`supervisor_fragment!`) и их работа ({% if graph == "true" %}`domain::heartbeat::task`, `domain::cpu_load::task` — {% endif %}автоматы `#[fsm::typestate]` на контексте узла) — тестируется на хосте; логика вне автоматов — функции над портами |
 {%- capture adapters_list %}{% if ota == "true" %}, OTA поверх `embassy-boot` (`adapters::ota`){% endif %}{% if settings_port == "true" %}, настройки поверх `sequential-storage` (`adapters::settings`){% endif %}{% if cobs_used == "true" %}, кадрирование потока COBS + CRC (`adapters::cobs`){% endif %}{% if protocol == "modbus" %}, транспорты Modbus (`adapters::modbus`){% endif %}{% if has_net == "true" %}, сокеты над `embassy-net` (`adapters::net`){% endif %}{% if has_usb == "true" %}, поток CDC ACM над `embassy-usb` (`adapters::usb`){% endif %}{% endcapture %}
-| Адаптеры без чипа | `crates-host/adapters/` | реализации трейтов (портов `ports` и стандартных) поверх `embedded-storage`/`embedded-hal`/`embedded-io-async`, без чипа{% if adapters_list != "" %}: {{ adapters_list | remove_first: ", " }}{% endif %} — тестируется на хосте |
+| Адаптеры без чипа | `crates-host/adapters-hw/` | реализации трейтов (портов `ports` и стандартных) поверх `embedded-storage`/`embedded-hal`/`embedded-io-async`, без чипа{% if adapters_list != "" %}: {{ adapters_list | remove_first: ", " }}{% endif %} — тестируется на хосте |
 {%- if protocol == "protobuf" %}
 | Схема protobuf | `crates-host/proto/` | `.proto` и типы, сгенерированные `micropb-gen` в `build.rs` (схему разбирает `protox`, системный `protoc` не нужен); пример — конверт `Request`/`Response` с `request_id`, проект заменяет своим. Обрабатывает узел `domain::PROTOBUF_FRAG` с обработчиком `domain::protobuf::Service` |
 {%- endif %}
@@ -171,7 +171,7 @@ supervisor-графы, watchdog{% endif %}). Вся остальная логи�
 
 ```
 вывод чипа → группа assign_resources! (bsp/src/resources.rs)
-           → тип драйвера, generic по трейтам embedded-hal, живёт в crates-host/adapters
+           → тип драйвера, generic по трейтам embedded-hal, живёт в crates-host/adapters-hw
              (или во внешнем крейте) и проверяется на хосте моком — до тех пор,
              пока ему не понадобится периферия конкретного чипа
            → объект драйвера над шиной собирает bsp в Board::new

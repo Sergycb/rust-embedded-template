@@ -74,7 +74,7 @@ let sensor_bus = embassy_stm32::i2c::I2c::new(
 
 Драйвер датчика — тоже рычаг платы: его объект собирает `bsp` над шиной и
 отдаёт полем `Board`, а тип драйвера, generic по трейтам `embedded-hal`, живёт
-в `crates-host/adapters` или во внешнем крейте{% if external_flash == "true" %}, как `w25q` под внешней
+в `crates-host/adapters-hw` или во внешнем крейте{% if external_flash == "true" %}, как `w25q` под внешней
 флешью{% endif %}. Заводить ли над ним порт — docs/architecture.md, «Порт и адаптер —
 или библиотека прямо в `domain`».
 
