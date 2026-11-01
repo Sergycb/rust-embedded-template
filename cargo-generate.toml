@@ -1,5 +1,7 @@
 [template]
-cargo_generate_version = ">=0.19.0"
+# Нижняя граница — версия, на которой шаблон проверен (она же закреплена в
+# .github/workflows/template.yml); поднимать вместе.
+cargo_generate_version = ">=0.23.12"
 # `exclude` — копируется без Liquid-подстановки (CLAUDE.md), `ignore` — не
 # копируется вовсе (MAINTAINING.md, chip-data-gen); каталог — по имени, без
 # глоба `/**`. Почему что куда — MAINTAINING.md, «Что здесь есть, чего нет в
