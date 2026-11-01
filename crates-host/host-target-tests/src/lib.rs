@@ -507,7 +507,8 @@ fn target_from_env() -> Result<Option<Target>, String> {
         };
         return Ok(Some(Target::Serial { port, baud }));
         // {%- else %}
-        //{{newline}}        return Err(format!("HOST_TARGET_PORT={port}: UART/USB с protobuf нет, нужен ADDR"));
+        //{{newline}}        let why = format!("HOST_TARGET_PORT={port}: UART/USB с protobuf нет");
+        //{{newline}}        return Err(why);
         // {%- endif %}
     }
     Ok(None)
