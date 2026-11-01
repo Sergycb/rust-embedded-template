@@ -436,7 +436,7 @@ fn default_cases() -> Vec<Case> {
         // известные ограничения).
         //
         // Заодно — настройки во внутренней EEPROM (`config=yes` на L0/L1):
-        // `adapters::eeprom::Eeprom` поверх `Flash::eeprom_*`, единственное место
+        // `adapters_hw::eeprom::Eeprom` поверх `Flash::eeprom_*`, единственное место
         // под настройки на флеше, стирающемся в ноль.
         Case::new("stm32l073rz").variant("config", &["config=yes"]),
         // Та же EEPROM без OTA: в `bsp::flash` остаются только общий замок и
@@ -479,7 +479,7 @@ fn default_cases() -> Vec<Case> {
             ],
         ),
         // Протоколы по сети: стек `embassy-net` над заглушкой устройства, узел
-        // NET в графе и сокет из `adapters::net`. Modbus TCP — на H7 (Ethernet
+        // NET в графе и сокет из `adapters_hw::net`. Modbus TCP — на H7 (Ethernet
         // v2), protobuf UDP — на F4 (Ethernet v1). Modbus TCP — заодно с master
         // (`modbus_master=yes`): единственная конфигурация, где клиентская
         // половина (`ports::ModbusClient`, `domain::modbus::master`, клиентские

@@ -118,7 +118,7 @@ async fn check_layout<F: FirmwareUpdate>(
 ///
 /// Запись о подписи ложится в запасную страницу раздела, по смещению
 /// [`capacity`](ports::FirmwareUpdate::capacity) — её стирает `prepare`
-/// адаптера (`adapters::ota::Updater`), — и только
+/// адаптера (`adapters_hw::ota::Updater`), — и только
 /// потом помечается обмен: bootloader, увидев запрос, обязан найти и запись.
 ///
 /// Порядок проверок — длина (с [`capacity`](ports::FirmwareUpdate::capacity),

@@ -48,11 +48,11 @@ pub type ExternalMutex = Mutex<NoopRawMutex, ExternalFlash>;
 {%- if ota == "true" and ota_store == "external" %}
 
 /// Разделы обновления на внешней флеши — рычаг под адаптером обновления
-/// (`adapters::ota::Updater`). `DFU` и
+/// (`adapters_hw::ota::Updater`). `DFU` и
 /// `BOOTLOADER_STATE` нарезает плата по символам `memory.x` (`crate::layout`)
 /// — смещениям от начала микросхемы; оба над одним драйвером: команды разных
 /// разделов не должны перемежаться.
-pub type FirmwareFlash = adapters::ota::Partitions<
+pub type FirmwareFlash = adapters_hw::ota::Partitions<
     Partition<'static, NoopRawMutex, ExternalFlash>,
     Partition<'static, NoopRawMutex, ExternalFlash>,
 >;
@@ -60,7 +60,7 @@ pub type FirmwareFlash = adapters::ota::Partitions<
 {%- if config == "true" and config_store == "external" %}
 
 /// Раздел настроек на внешней флеши — носитель хранилища настроек
-/// (`adapters::settings`).
+/// (`adapters_hw::settings`).
 pub type ConfigFlash =
     embassy_embedded_hal::flash::partition::Partition<'static, NoopRawMutex, ExternalFlash>;
 {%- endif %}
@@ -129,7 +129,7 @@ pub(crate) async fn new(_resources: crate::resources::ExtFlashResources) -> &'st
 pub(crate) fn firmware(external: &'static ExternalMutex) -> FirmwareFlash {
     let (dfu_start, dfu_len) = crate::layout::dfu();
     let (state_start, state_len) = crate::layout::state();
-    adapters::ota::Partitions {
+    adapters_hw::ota::Partitions {
         dfu: Partition::new(external, dfu_start, dfu_len),
         state: Partition::new(external, state_start, state_len),
         capacity: crate::layout::active_len(),

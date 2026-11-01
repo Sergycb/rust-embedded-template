@@ -197,7 +197,7 @@ const SSH_MIN_PARTITION = 262144;
 const OTA_MIN_ACTIVE = 24576;
 
 /// Меньше этого объёма EEPROM под настройки не годится: `sequential-storage`
-/// нужны две страницы, а страница обёртки `adapters::eeprom::Eeprom` — 128
+/// нужны две страницы, а страница обёртки `adapters_hw::eeprom::Eeprom` — 128
 /// байт, то есть минимум две страницы (`Eeprom::PAGE`). У STM32L010F4/K4 EEPROM всего 128 байт — им
 /// настройки предлагаются, как всем остальным, во флеше.
 const EEPROM_MIN = 256;
@@ -2724,7 +2724,7 @@ if variable::get("link_port") != "true" {
 if variable::get("ota") != "true" {
     file::delete("crates-host/ports/src/ota.rs");
     file::delete("crates-host/ports/src/ota");
-    file::delete("crates-host/adapters/src/ota.rs");
+    file::delete("crates-host/adapters-hw/src/ota.rs");
     file::delete("crates-host/domain/src/ota.rs");
     file::delete("crates-host/domain/src/ota");
     // Подпись образа в `xtask` и описание OTA.
@@ -2741,7 +2741,7 @@ if variable::get("ota") != "true" {
 }
 if variable::get("settings_port") != "true" {
     file::delete("crates-host/ports/src/settings.rs");
-    file::delete("crates-host/adapters/src/settings.rs");
+    file::delete("crates-host/adapters-hw/src/settings.rs");
 }
 // Мост blocking → async и заглушка внешней флеши — только когда ими кто-то
 // пользуется: обёртка страницы (`erase_page`) или внешняя флеш.
@@ -2776,23 +2776,23 @@ if variable::get("has_stub") != "true" {
 // Флеш в памяти (`fake::MemFlash`) — тестам разделов OTA и хранилища настроек.
 let mem_flash = variable::get("ota") == "true" || variable::get("config") == "true";
 if !mem_flash {
-    file::delete("crates-host/adapters/src/fake/flash.rs");
+    file::delete("crates-host/adapters-hw/src/fake/flash.rs");
 }
 if !has.usb && !has.tcp && !has.udp && !mem_flash {
-    file::delete("crates-host/adapters/src/fake.rs");
+    file::delete("crates-host/adapters-hw/src/fake.rs");
 }
 // USB — устройство `embassy-usb`, узел USB и поток CDC — только с транспортом usb.
 if !has.usb {
     file::delete("crates-cross/bsp/src/usb.rs");
     file::delete("docs/modules/bsp-usb.md");
-    file::delete("crates-host/adapters/src/usb.rs");
+    file::delete("crates-host/adapters-hw/src/usb.rs");
     file::delete("crates-host/domain/src/usb.rs");
 }
 // Сеть — стек `embassy-net`, узел NET и их сокеты — только с tcp/udp.
 if !has.tcp && !has.udp {
     file::delete("crates-cross/bsp/src/net.rs");
     file::delete("docs/modules/bsp-net.md");
-    file::delete("crates-host/adapters/src/net.rs");
+    file::delete("crates-host/adapters-hw/src/net.rs");
     // Крейта `adapters-logic` без сети может не быть вовсе (удалён выше).
     if adapters_logic {
         file::delete("crates-host/adapters-logic/src/net.rs");
@@ -2800,9 +2800,9 @@ if !has.tcp && !has.udp {
     }
     // `fake::cable` — кабель между двумя стеками `embassy-net`; `fake.rs` при
     // одном USB или флеше в памяти остаётся, а `mod cable` в нём под `has_net`.
-    file::delete("crates-host/adapters/src/fake/cable.rs");
+    file::delete("crates-host/adapters-hw/src/fake/cable.rs");
     if !mem_flash {
-        file::delete("crates-host/adapters/src/fake");
+        file::delete("crates-host/adapters-hw/src/fake");
     }
     file::delete("crates-host/domain/src/net.rs");
 }
@@ -2874,7 +2874,7 @@ variable::set("ota_cmd_clients", (protocol_clients
 // Обёртка EEPROM — только когда настройки лежат в ней; без неё файл с
 // тестами и `pub mod eeprom;` (закрыт тем же условием в lib.rs) — мусор.
 if variable::get("config_store") != "eeprom" {
-    file::delete("crates-host/adapters/src/eeprom.rs");
+    file::delete("crates-host/adapters-hw/src/eeprom.rs");
 }
 
 // Драйвер внешней флеши в bsp — только когда на ней что-то лежит: разделы

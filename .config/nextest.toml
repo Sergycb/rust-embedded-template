@@ -3,7 +3,7 @@
 # тесты с ними нестабильны — docs/conventions.md, «Host-тесты — только через
 # nextest».
 #
-# Host-тесты `domain`, `adapters` и `adapters-logic` идут над фейками портов и флеша, которые
+# Host-тесты `domain`, `adapters-hw` и `adapters-logic` идут над фейками портов и флеша, которые
 # не ждут по-настоящему: их future готовы с первого `poll` (`mod fakes`
 # рядом с тестами){% if has_net == "true" %}, а сетевые тесты `adapters_logic::net`
 # гоняют два стека `embassy-net` в памяти при стоящем времени — за
@@ -16,5 +16,5 @@
 # а не перечень `package(…)`: крейта, которого нет в проекте, nextest
 # не прощает — фильтр с ним падает.
 [[profile.default.overrides]]
-filter = 'package(/^(domain|adapters|adapters-logic)$/)'
+filter = 'package(/^(domain|adapters-hw|adapters-logic)$/)'
 slow-timeout = { period = "10s", terminate-after = 2 }

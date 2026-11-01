@@ -147,7 +147,7 @@ type Signature = [u8; SIGNATURE_BYTES];
 //
 // `<F, R>` — параметры фрагмента: адаптер обновления и порт перезагрузки
 // платы `domain` не видит. `local` на `FLASH`: разделы платы — `!Send`
-// (`adapters::ota::Updater` над ними держит `&'static Mutex<NoopRawMutex, …>`),
+// (`adapters_hw::ota::Updater` над ними держит `&'static Mutex<NoopRawMutex, …>`),
 // а обычный слот — `static`, которому нужен `Send`. `local` меняет слот на
 // `LocalResourceSlot` и снимает это требование, взамен обязывая держать
 // значение на одном исполнителе — том, что спавнит задачи (то же допущение, что

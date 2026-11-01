@@ -1539,17 +1539,17 @@ fn no_protocol_by_default() {
         "crates-host/adapters-logic/src/cobs.rs",
         "crates-host/adapters-logic",
         "crates-cross/bsp/src/stub.rs",
-        "crates-host/adapters/src/fake/cable.rs",
+        "crates-host/adapters-hw/src/fake/cable.rs",
         "crates-host/domain/src/modbus",
         "crates-host/domain/src/protobuf",
         "crates-host/domain/src/canopen.rs",
         "crates-host/domain/src/canopen",
         "crates-host/domain/src/net.rs",
-        "crates-host/adapters/src/net.rs",
+        "crates-host/adapters-hw/src/net.rs",
         "crates-cross/bsp/src/net.rs",
         "docs/modules/bsp-net.md",
         "crates-cross/bsp/src/usb.rs",
-        "crates-host/adapters/src/usb.rs",
+        "crates-host/adapters-hw/src/usb.rs",
         "crates-host/domain/src/usb.rs",
         "docs/modules/bsp-usb.md",
     ] {
@@ -1565,8 +1565,8 @@ fn no_protocol_by_default() {
         !result
             .deleted
             .iter()
-            .any(|path| path == "crates-host/adapters/src/fake.rs"
-                || path == "crates-host/adapters/src/fake/flash.rs"),
+            .any(|path| path == "crates-host/adapters-hw/src/fake.rs"
+                || path == "crates-host/adapters-hw/src/fake/flash.rs"),
         "флеш в памяти удалён при OTA: {:?}",
         result.deleted
     );
@@ -1578,8 +1578,8 @@ fn no_protocol_by_default() {
     )
     .expect("каскад без OTA и настроек");
     for path in [
-        "crates-host/adapters/src/fake.rs",
-        "crates-host/adapters/src/fake",
+        "crates-host/adapters-hw/src/fake.rs",
+        "crates-host/adapters-hw/src/fake",
     ] {
         assert!(
             bare.deleted.iter().any(|deleted| deleted == path),
@@ -1632,9 +1632,9 @@ fn protocol_over_uart_keeps_the_serial_module() {
             // Заглушка UART в `bsp`; драйверов-фейков USB/сети нет, а
             // `fake` остаётся ради флеша в памяти (OTA на g474re).
             ("crates-cross/bsp/src/stub.rs", true),
-            ("crates-host/adapters/src/fake/cable.rs", false),
-            ("crates-host/adapters/src/fake.rs", true),
-            ("crates-host/adapters/src/fake/flash.rs", true),
+            ("crates-host/adapters-hw/src/fake/cable.rs", false),
+            ("crates-host/adapters-hw/src/fake.rs", true),
+            ("crates-host/adapters-hw/src/fake/flash.rs", true),
         ] {
             assert_eq!(kept(path), wanted, "{protocol}: {path}");
         }
@@ -1798,7 +1798,7 @@ fn the_interface_block_is_named_by_the_chip() {
     }
 }
 
-/// Протокол по сети оставляет стек — `bsp::net`, `adapters::net`, транспорты
+/// Протокол по сети оставляет стек — `bsp::net`, `adapters_hw::net`, транспорты
 /// `adapters_logic::net`, узел `domain::net` — только у чипа с выведенным
 /// Ethernet.
 #[test]
@@ -1812,7 +1812,7 @@ fn protocol_over_network_keeps_the_net_stack() {
         .expect("каскад не должен падать");
         for kept in [
             "crates-cross/bsp/src/net.rs",
-            "crates-host/adapters/src/net.rs",
+            "crates-host/adapters-hw/src/net.rs",
             "crates-host/adapters-logic/src/net.rs",
             "crates-host/adapters-logic/src/net",
             "crates-host/domain/src/net.rs",
@@ -3082,7 +3082,7 @@ fn ota_survives_where_the_app_partition_is_large_enough() {
 /// библиотеки.
 ///
 /// У L0/L1 есть внутренняя EEPROM — настройки уходят туда (обёртка
-/// `adapters::eeprom` инвертирует байты, и заводской ноль читается как `0xFF`),
+/// `adapters_hw::eeprom` инвертирует байты, и заводской ноль читается как `0xFF`),
 /// а раздела `CONFIG` во флеше нет. У WB10CC/WB15CC флеш тоже стирается в
 /// ноль, а EEPROM нет — им настройки по-прежнему не предлагаются.
 #[test]
@@ -3470,13 +3470,13 @@ fn ota_and_settings_code_is_kept_only_when_selected() {
     const OTA: [&str; 5] = [
         "crates-host/ports/src/ota.rs",
         "crates-host/ports/src/ota",
-        "crates-host/adapters/src/ota.rs",
+        "crates-host/adapters-hw/src/ota.rs",
         "crates-host/domain/src/ota.rs",
         "crates-host/domain/src/ota",
     ];
     const SETTINGS: [&str; 2] = [
         "crates-host/ports/src/settings.rs",
-        "crates-host/adapters/src/settings.rs",
+        "crates-host/adapters-hw/src/settings.rs",
     ];
     const FLASH: &str = "crates-host/flash-page";
     // (чип, ответы, OTA вырезана, настройки вырезаны, flash-page вырезан)

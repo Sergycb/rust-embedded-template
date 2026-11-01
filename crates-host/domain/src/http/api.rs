@@ -135,7 +135,7 @@ async fn reboot(api: &Api) -> (StatusCode, &'static str) {
 mod tests {
     //! Маршрутизатор целиком: настоящий `picoserve` на стеке `embassy-net`,
     //! клиент — второй стек на том же кабеле в памяти
-    //! (`adapters::fake::cable`). Время `MockDriver` двигает только клиент,
+    //! (`adapters_hw::fake::cable`). Время `MockDriver` двигает только клиент,
     //! пока ждёт ответа (`ACK_DELAY`), — таймаутов `picoserve` оно не
     //! достигает, и соединение закрывает сам обмен.
 
@@ -143,7 +143,7 @@ mod tests {
     use core::convert::Infallible;
 
     // {%- endif %}
-    use adapters::fake::cable::{DEVICE, leak, pair};
+    use adapters_hw::fake::cable::{DEVICE, leak, pair};
     use embassy_net::Stack;
     use embassy_net::tcp::TcpSocket;
     use embassy_time::{Duration, MockDriver};

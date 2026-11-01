@@ -220,17 +220,17 @@ pub type ChipFlash = {% if flash_cache == "true" %}Coherent<embassy_stm32::flash
 {%- if firmware_here == "true" %}
 
 /// Разделы обновления — рычаг под адаптером обновления
-/// (`adapters::ota::Updater`): `DFU` и `BOOTLOADER_STATE`,
+/// (`adapters_hw::ota::Updater`): `DFU` и `BOOTLOADER_STATE`,
 /// нарезанные платой по символам `memory.x` (`crate::layout`), со своими
 /// страницами, размер `ACTIVE` и отпечаток раскладки.
-pub type FirmwareFlash = adapters::ota::Partitions<
+pub type FirmwareFlash = adapters_hw::ota::Partitions<
     Partition<'static, NoopRawMutex, DfuFlash>,
     Partition<'static, NoopRawMutex, StateFlash>,
 >;
 {%- endif %}
 {%- if config_here == "true" %}
 
-/// Раздел `CONFIG` — носитель хранилища настроек (`adapters::settings`).
+/// Раздел `CONFIG` — носитель хранилища настроек (`adapters_hw::settings`).
 /// Именно раздел, а не весь
 /// флеш: запись за его границы отказывает, а не стирает {% if ota == "true" %}`ACTIVE` или bootloader{% else %}прошивку{% endif %}.
 pub type ConfigFlash = Partition<'static, NoopRawMutex, ConfigBacking>;
@@ -238,13 +238,13 @@ pub type ConfigFlash = Partition<'static, NoopRawMutex, ConfigBacking>;
 {%- if eeprom_here == "true" %}
 
 /// Внутренняя EEPROM как `NorFlash` — носитель настроек, над которым
-/// стоит хранилище (`adapters::settings`).
+/// стоит хранилище (`adapters_hw::settings`).
 /// Флеш под настройки не тратится вовсе: EEPROM пишется через тот же
 /// контроллер, что и флеш, поэтому доступ к ней — через общий [`FlashMutex`]
 /// (`embassy_stm32::flash::Flash::eeprom_*`), по операции под замком. Обёртку
-/// `adapters::eeprom::Eeprom` (инверсия байтов, страница) собирает плата, и
+/// `adapters_hw::eeprom::Eeprom` (инверсия байтов, страница) собирает плата, и
 /// под хранилище отдана вся EEPROM, округлённая до её страницы.
-pub type ConfigFlash = adapters::eeprom::Eeprom<EepromFlash>;
+pub type ConfigFlash = adapters_hw::eeprom::Eeprom<EepromFlash>;
 {%- endif %}
 {%- if dfu_bank == "true" %}
 
@@ -510,7 +510,7 @@ pub(crate) fn firmware(flash: &'static FlashMutex) -> FirmwareFlash {
 {%- endif %}
     let (dfu_start, dfu_len) = crate::layout::dfu();
     let (state_start, state_len) = crate::layout::state();
-    adapters::ota::Partitions {
+    adapters_hw::ota::Partitions {
         dfu: Partition::new(DFU_FLASH.init(mutex::Mutex::new(dfu)), dfu_start, dfu_len),
         state: Partition::new(
             STATE_FLASH.init(mutex::Mutex::new(state)),
@@ -542,6 +542,6 @@ pub(crate) fn config(flash: &'static FlashMutex) -> ConfigFlash {
 
 /// Собирает внутреннюю EEPROM как `NorFlash`.
 pub(crate) fn config(flash: &'static FlashMutex) -> ConfigFlash {
-    adapters::eeprom::Eeprom::new(EepromFlash(flash))
+    adapters_hw::eeprom::Eeprom::new(EepromFlash(flash))
 }
 {%- endif %}

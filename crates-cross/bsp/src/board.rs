@@ -53,14 +53,14 @@ pub struct Board {
     /// Флеш под обновлением{% if ota_store == "external" %} — на внешней флеши{% endif %} ([`crate::FirmwareFlash`]): носители `DFU` и
     /// `BOOTLOADER_STATE` со своими страницами и размер `ACTIVE`. Разделы в нём
     /// нарезаны по символам `memory.x`; адаптер обновления над ним
-    /// (`adapters::ota::Updater`) строит compose-site узла OTA; алгоритм
+    /// (`adapters_hw::ota::Updater`) строит compose-site узла OTA; алгоритм
     /// обновления над портами — в `domain::ota`.
     pub firmware: crate::FirmwareFlash,
 {%- endif %}
 {%- if config == "true" %}
     /// Носитель настроек, переживающих перезапуск{% if ota == "true" %} и обновление прошивки{% endif %}
     /// ([`crate::ConfigFlash`]): {% if config_store == "eeprom" %}внутренняя EEPROM{% elsif config_store == "external" %}раздел на внешней флеши (драйвер — `bsp/src/external.rs`){% else %}раздел `CONFIG` во флеше{% endif %}.
-    /// Хранилище над ним — `adapters::settings::Settings::whole` — строит
+    /// Хранилище над ним — `adapters_hw::settings::Settings::whole` — строит
     /// compose-site узла-потребителя; формат значений выбирает проект.
     pub config: crate::ConfigFlash,
 {%- endif %}

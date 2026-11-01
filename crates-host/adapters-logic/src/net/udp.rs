@@ -120,7 +120,7 @@ async fn send_to(
 
 #[cfg(test)]
 mod tests {
-    use adapters::fake::cable::{DEVICE, leak, pair};
+    use adapters_hw::fake::cable::{DEVICE, leak, pair};
 
     use super::*;
     use crate::net::fakes::{PORT, with_network};

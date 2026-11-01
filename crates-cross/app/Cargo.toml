@@ -43,12 +43,12 @@ domain = { workspace = true }
 # Адаптеры над рычагами платы строит приложение в своей памяти и отдаёт
 # узлам готовыми — по строке на адаптер:
 {%- if ota == "true" %}
-#   адаптер обновления (`adapters::ota::Updater`)
+#   адаптер обновления (`adapters_hw::ota::Updater`)
 {%- endif %}
 {%- if config == "true" %}
-#   хранилище настроек (`adapters::settings::Settings`)
+#   хранилище настроек (`adapters_hw::settings::Settings`)
 {%- endif %}
-adapters = { workspace = true }
+adapters-hw = { workspace = true }
 {%- endif %}
 {%- if protocol_link == "true" %}
 # Каналы протоколов над потоком, CDC или сокетом (src/link.rs) строит

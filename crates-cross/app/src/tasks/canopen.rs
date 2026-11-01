@@ -17,7 +17,7 @@ pub mod {{ f[4] }} {
 {%- endif %}
 
     /// Хранилище узла: {% if config == "true" %}раздел настроек платы{% else %}раздела настроек нет — объекты и адрес не сохраняются{% endif %}.
-    type Store = {% if config == "true" %}adapters::settings::Settings<bsp::ConfigFlash>{% else %}adapters::settings::Unavailable{% endif %};
+    type Store = {% if config == "true" %}adapters_hw::settings::Settings<bsp::ConfigFlash>{% else %}adapters_hw::settings::Unavailable{% endif %};
 
     /// Шина узла.
     type Bus = bsp::can::{{ f[4] }}::Can;

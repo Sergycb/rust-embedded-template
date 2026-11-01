@@ -84,9 +84,9 @@ proptest = { workspace = true }
 # {%- if has_net == "true" or modbus_rtu == "true" %}
 # {%- if has_net == "true" %}
 # Транспорты над сокетами тестируются над кабелем между двумя стеками
-# `embassy-net` в памяти (`adapters::fake::cable`); стеки ждут таймеров и
+# `embassy-net` в памяти (`adapters_hw::fake::cable`); стеки ждут таймеров и
 # критической секции — на хосте их дают `mock-driver` и `critical-section/std`.
-adapters = { workspace = true, features = ["fake"] }
+adapters-hw = { workspace = true, features = ["fake"] }
 # {%- endif %}
 # {%- if modbus_rtu == "true" %}
 # Тест паузы посреди кадра RTU двигает часы `mock-driver`.

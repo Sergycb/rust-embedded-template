@@ -218,7 +218,7 @@ ports            = { path = "../crates-host/ports", features = ["defmt"] }
 # Адаптеры, generic по флешу/шине: собирают их узлы над рычагами `bsp`, а `bsp`
 # берёт отсюда обёртки, из которых строит рычаги сам. `defmt` — ради `Format`
 # на ошибках в логе прошивки; на хосте крейт собирается без фич вывода вовсе.
-adapters         = { path = "../crates-host/adapters", features = ["defmt"] }
+adapters-hw      = { path = "../crates-host/adapters-hw", features = ["defmt"] }
 {%- endif %}
 {%- if protocol_link == "true" %}
 # Каналы протоколов над рычагами платы (кадрирование потока, сокеты) — их
@@ -269,7 +269,7 @@ assign-resources = { version = "0.5.0" }
 #   `&'static str` на узел.
 #
 # * `local-resources` — ради слотов `local`: они держат `!Send`-объекты
-#   платы{% if ota == "true" %} (например, `adapters::ota::Updater` над разделами `bsp::flash`
+#   платы{% if ota == "true" %} (например, `adapters_hw::ota::Updater` над разделами `bsp::flash`
 #   ссылается на `Mutex<NoopRawMutex, …>`){% endif %}, а обычный слот — это `static`,
 #   которому нужен `Send`.
 #   Фича включает `LocalResourceSlot` и снимает у `supervisor`

@@ -17,7 +17,7 @@
 )]
 {%- endif %}
 pub mod {{ f[4] }} {
-    use adapters::usb::CdcBuffers;
+    use adapters_hw::usb::CdcBuffers;
     use embassy_usb::Config;
     use embassy_usb::class::cdc_acm::State;
     use static_cell::{ConstStaticCell, StaticCell};
@@ -34,12 +34,12 @@ pub mod {{ f[4] }} {
 
     /// Поток CDC — то, на чём стоит {% if f[3] != "none" %}транспорт протокола{% else %}ваш узел: в сигнатуре его задачи тип нужен
     /// по имени (задачи embassy не generic){% endif %}.
-    pub type Cdc = adapters::usb::CdcStream<'static, Driver>;
+    pub type Cdc = adapters_hw::usb::CdcStream<'static, Driver>;
 
     /// Устройство и поток CDC — из одного `Builder`: классы регистрируются до
     /// того, как построено устройство, поэтому плата собирает их вместе.
     /// Поле `Board` — `device` уезжает в узел `USB_{{ f[4] | upcase }}`, `cdc` — под протокол.
-    pub type Usb = adapters::usb::Usb<Driver>;
+    pub type Usb = adapters_hw::usb::Usb<Driver>;
 
     // Память устройства: `Builder` и класс держат её `&'static mut`.
     // `ConstStaticCell`, а не `StaticCell`: значения известны при компиляции и
@@ -56,7 +56,7 @@ pub mod {{ f[4] }} {
     static SERIAL: ConstStaticCell<[u8; 26]> = ConstStaticCell::new([0; 26]);
 {%- endif %}
 
-    /// Собирает устройство с одним классом CDC ACM (`adapters::usb::cdc`).
+    /// Собирает устройство с одним классом CDC ACM (`adapters_hw::usb::Usb::new`).
     /// Серийный номер — заводской номер чипа{% if usb_index > 1 %} с номером устройства
     /// `-{{ usb_index }}`{% endif %}. Блок приходит группой `resources.rs` — заглушка драйвера его
     /// не трогает, драйвер платы соберётся из него и выводов.
@@ -76,7 +76,7 @@ pub mod {{ f[4] }} {
         config.serial_number = Some(uid_hex);
 {%- endif %}
 
-        adapters::usb::cdc(
+        Usb::new(
             Driver::default(),
             config,
             BUFFERS.take(),

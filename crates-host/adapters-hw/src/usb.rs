@@ -145,42 +145,44 @@ pub struct Usb<D: Driver<'static>> {
     pub cdc: CdcStream<'static, D>,
 }
 
+impl<D: Driver<'static>> Usb<D> {
+    /// Собирает USB-устройство с одним классом CDC ACM над драйвером платы:
+    /// устройство уезжает в узел `USB`, поток — под транспорт протокола.
+    #[must_use]
+    pub fn new(
+        driver: D,
+        config: Config<'static>,
+        buffers: &'static mut CdcBuffers,
+        state: &'static mut State<'static>,
+    ) -> Self {
+        let CdcBuffers {
+            config_descriptor,
+            bos_descriptor,
+            control,
+            rx,
+        } = buffers;
+        let mut builder = Builder::new(
+            driver,
+            config,
+            config_descriptor,
+            bos_descriptor,
+            &mut [],
+            control,
+        );
+        let class = CdcAcmClass::new(&mut builder, state, PACKET);
+        let device = builder.build();
+        let (tx, rx_half) = class.split();
+        Self {
+            device,
+            cdc: CdcStream::new(tx, rx_half.into_buffered(rx)),
+        }
+    }
+}
+
 // Вручную: у `UsbDevice` нет `Debug`.
 impl<D: Driver<'static>> core::fmt::Debug for Usb<D> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Usb").finish_non_exhaustive()
-    }
-}
-
-/// Собирает USB-устройство с одним классом CDC ACM над драйвером платы:
-/// устройство уезжает в узел `USB`, поток — под транспорт протокола.
-#[must_use]
-pub fn cdc<D: Driver<'static>>(
-    driver: D,
-    config: Config<'static>,
-    buffers: &'static mut CdcBuffers,
-    state: &'static mut State<'static>,
-) -> Usb<D> {
-    let CdcBuffers {
-        config_descriptor,
-        bos_descriptor,
-        control,
-        rx,
-    } = buffers;
-    let mut builder = Builder::new(
-        driver,
-        config,
-        config_descriptor,
-        bos_descriptor,
-        &mut [],
-        control,
-    );
-    let class = CdcAcmClass::new(&mut builder, state, PACKET);
-    let device = builder.build();
-    let (tx, rx_half) = class.split();
-    Usb {
-        device,
-        cdc: CdcStream::new(tx, rx_half.into_buffered(rx)),
     }
 }
 
@@ -332,7 +334,7 @@ mod tests {
     /// Поток CDC над сценарным драйвером и хост, который им управляет.
     fn stream() -> (CdcStream<'static, Scripted>, Shared) {
         let host = Shared::default();
-        let Usb { cdc: stream, .. } = cdc(
+        let Usb { cdc: stream, .. } = Usb::new(
             Scripted(Rc::clone(&host)),
             embassy_usb::Config::new(0xC0DE, 0xCAFE),
             leak(CdcBuffers::new()),

@@ -67,15 +67,15 @@ mod tests {
 {%- if ota == "true" %}
     /// Адаптер обновления над разделами платы — так же, как его строит
     /// compose-site узла OTA.
-    fn updater(firmware: bsp::FirmwareFlash) -> adapters::ota::Updater<bsp::FirmwareFlash> {
-        adapters::ota::Updater::new(firmware)
+    fn updater(firmware: bsp::FirmwareFlash) -> adapters_hw::ota::Updater<bsp::FirmwareFlash> {
+        adapters_hw::ota::Updater::new(firmware)
     }
 {%- endif %}
 {%- if config == "true" and config_store != "external" %}
     /// Хранилище настроек на весь носитель платы — так же, как его строит
     /// compose-site узла-потребителя.
     fn settings(flash: bsp::ConfigFlash) -> impl ports::SettingsStorage<Error: core::fmt::Debug> {
-        adapters::settings::Settings::whole(flash)
+        adapters_hw::settings::Settings::whole(flash)
     }
 {%- endif %}
 

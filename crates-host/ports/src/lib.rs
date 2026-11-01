@@ -41,7 +41,7 @@
 // {%- if settings_port == "true" %}
 //! [`SettingsStorage`] — хранилище настроек.
 // {%- if config == "true" %}
-//! Его реализует `adapters::settings::Settings` над любым `NorFlash`, а строит
+//! Его реализует `adapters_hw::settings::Settings` над любым `NorFlash`, а строит
 //! compose-site (`Settings::whole(board.config)`) над носителем, который плата
 //! отдаёт полем `Board::config`:
 // {%- if config_store == "eeprom" %}
@@ -53,7 +53,7 @@
 // {%- endif %}
 // {%- else %}
 //! Раздела настроек у проекта нет: на его месте —
-//! `adapters::settings::Unavailable`.
+//! `adapters_hw::settings::Unavailable`.
 // {%- endif %}
 // {%- endif %}
 //! Порты протоколов связи и транспортов — только те, что выбраны при

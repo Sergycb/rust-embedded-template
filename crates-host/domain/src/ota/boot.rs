@@ -177,10 +177,10 @@ fn check_pending<DFU: embedded_storage::nor_flash::NorFlash>(
 
 #[cfg(test)]
 mod tests {
-    /// Разделы в памяти (`adapters::fake::MemFlash`, блокирующий — как и сами
+    /// Разделы в памяти (`adapters_hw::fake::MemFlash`, блокирующий — как и сами
     /// проверяемые функции) и носители, которые отказывают.
     mod fakes {
-        pub(super) use adapters::fake::MemFlash;
+        pub(super) use adapters_hw::fake::MemFlash;
         use embedded_storage::nor_flash::{ErrorType, NorFlash, NorFlashErrorKind, ReadNorFlash};
 
         /// `DFU`, который после `ops` удачных стираний и записей отказывает —

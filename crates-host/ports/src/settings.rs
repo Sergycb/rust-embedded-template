@@ -1,6 +1,6 @@
 //! Порт хранилища настроек.
 //!
-//! Реализует `adapters::settings::Settings` над любым `NorFlash`: носитель —
+//! Реализует `adapters_hw::settings::Settings` над любым `NorFlash`: носитель —
 //! сырой `NorFlash` поля `Board::config` — отдаёт плата, а хранилище над ним
 //! строит compose-site (`Settings::whole(board.config)`). Формат значений
 //! выбирает проект.

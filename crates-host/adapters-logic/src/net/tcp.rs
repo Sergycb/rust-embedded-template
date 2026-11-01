@@ -201,7 +201,7 @@ async fn reset(socket: &mut TcpSocket<'_>) {
 
 #[cfg(test)]
 mod tests {
-    use adapters::fake::cable::{DEVICE, leak, pair};
+    use adapters_hw::fake::cable::{DEVICE, leak, pair};
     use embassy_net::tcp::{self, AcceptError, State, TcpSocket};
     use embedded_io_async::{ErrorKind, Read, Write};
 

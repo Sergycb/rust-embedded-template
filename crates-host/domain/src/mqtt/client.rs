@@ -182,7 +182,7 @@ mod tests {
     use embassy_time::MockDriver;
     use embedded_io_async::{Read, Write};
 
-    use adapters::fake::cable::{HOST, Loopback, leak, pair};
+    use adapters_hw::fake::cable::{HOST, Loopback, leak, pair};
     use embassy_net::Runner;
 
     use super::*;

@@ -1,5 +1,5 @@
 [package]
-name = "adapters"
+name = "adapters-hw"
 version.workspace      = true
 edition.workspace      = true
 license.workspace      = true
@@ -16,7 +16,7 @@ workspace = true
 # пустые выражения — на хосте это ровно то, что нужно.
 # {%- endif %}
 # В прошивку `defmt` включает crates-cross/Cargo.toml.
-# Драйверы без шины и линка (`adapters::fake`) — для host-тестов `domain` и
+# Драйверы без шины и линка (`adapters_hw::fake`) — для host-тестов `domain` и
 # заглушек платы (`bsp::stub`).
 fake = []
 defmt = [
@@ -58,11 +58,11 @@ sequential-storage = { workspace = true }
 embedded-io-async = { workspace = true }
 # {%- endif %}
 # {%- if has_net == "true" %}
-# Сеть (`adapters::net`): стек платы и заглушка устройства.
+# Сеть (`adapters_hw::net`): стек платы и заглушка устройства.
 embassy-net = { workspace = true }
 # {%- endif %}
 # {%- if has_usb == "true" %}
-# USB (`adapters::usb`): заглушка драйвера и поток CDC ACM.
+# USB (`adapters_hw::usb`): заглушка драйвера и поток CDC ACM.
 embassy-usb = { workspace = true }
 # Таймаут записи, которую хост не забирает (`usb`).
 embassy-time = { workspace = true }

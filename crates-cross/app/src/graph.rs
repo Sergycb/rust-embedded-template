@@ -64,8 +64,8 @@ supervisor_graph! {
         // строкой — раньше инициализатора блока `watchdog:`, как бы они ни стояли
         // в тексте, — частичным move: `firmware` уезжает в слот узла, `watchdog`
         // следом забирает сторож, остаток `board` дропается в конце пролога.
-        ::domain::OTA_FRAG<::adapters::ota::Updater<bsp::FirmwareFlash>, bsp::reset::Reboot, OTA_CMD_PARKED> as OTA = ::domain::ota::OtaWiring {
-            flash: ::adapters::ota::Updater::new(board.firmware),
+        ::domain::OTA_FRAG<::adapters_hw::ota::Updater<bsp::FirmwareFlash>, bsp::reset::Reboot, OTA_CMD_PARKED> as OTA = ::domain::ota::OtaWiring {
+            flash: ::adapters_hw::ota::Updater::new(board.firmware),
             reboot: bsp::reset::Reboot,
             running_version: crate::version::FW_VERSION,
         },
@@ -167,12 +167,12 @@ supervisor_graph! {
         // сети — `node_id`, 1..=127. Хранилище — {% if config == "true" %}раздел настроек платы: в нём узел сохраняет
         // объекты по команде `save` и адрес, назначенный по LSS (ключи
         // `domain::canopen::{OBJECTS_KEY, NODE_ID_KEY}`){% else %}раздела настроек нет — объекты и адрес не сохраняются{% endif %}.
-        ::domain::CANOPEN_FRAG<bsp::can::{{ f[4] }}::Can, {% if config == "true" %}::adapters::settings::Settings<bsp::ConfigFlash>{% else %}::adapters::settings::Unavailable{% endif %}> as CANOPEN_{{ f[4] | upcase }} =
+        ::domain::CANOPEN_FRAG<bsp::can::{{ f[4] }}::Can, {% if config == "true" %}::adapters_hw::settings::Settings<bsp::ConfigFlash>{% else %}::adapters_hw::settings::Unavailable{% endif %}> as CANOPEN_{{ f[4] | upcase }} =
             ::domain::canopen::CanOpenWiring {
                 bus: board.{{ f[4] }},
                 node_id: 1,
                 dictionary: ::domain::canopen::dictionary(),
-                settings: {% if config == "true" %}::adapters::settings::Settings::whole(board.config){% else %}::adapters::settings::Unavailable{% endif %},
+                settings: {% if config == "true" %}::adapters_hw::settings::Settings::whole(board.config){% else %}::adapters_hw::settings::Unavailable{% endif %},
                 persist: {{config}},
                 // Серийный номер идентичности (0x1018:04) — из заводского номера чипа.
                 serial: ::domain::canopen::serial(board.spec.uid),
@@ -236,13 +236,13 @@ supervisor_graph! {
         // хранится в разделе настроек (`domain::ssh::Stored`){% else %}вшит из `ssh-host-key.bin`
         // (`domain::ssh::Fixed`){% endif %}.{% if ota == "true" %} `reboot` — командой узлу `OTA` своим
         // клиентом, номер следом за остальными.{% endif %}
-        ::domain::SSH_FRAG<{% if ssh_host_key == "config" %}::domain::ssh::Stored<::adapters::settings::Settings<bsp::ConfigFlash>>{% else %}::domain::ssh::Fixed{% endif %}> as SSH =
+        ::domain::SSH_FRAG<{% if ssh_host_key == "config" %}::domain::ssh::Stored<::adapters_hw::settings::Settings<bsp::ConfigFlash>>{% else %}::domain::ssh::Fixed{% endif %}> as SSH =
             ::domain::ssh::SshWiring {
                 stack: board.net.stack,
                 info: crate::device_info(board.spec),
                 login: crate::net::ssh::LOGIN,
 {%- if ssh_host_key == "config" %}
-                host_key: ::domain::ssh::Stored(::adapters::settings::Settings::whole(board.config)),
+                host_key: ::domain::ssh::Stored(::adapters_hw::settings::Settings::whole(board.config)),
 {%- else %}
                 host_key: ::domain::ssh::Fixed(&crate::net::ssh::HOST_KEY),
 {%- endif %}

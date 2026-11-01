@@ -749,7 +749,7 @@ pub(crate) mod tests {
             dns_servers: Default::default(),
         });
         let (stack, _runner) = embassy_net::new(
-            adapters::fake::NetDevice::new([2, 0, 0, 0, 0, 1]),
+            adapters_hw::fake::NetDevice::new([2, 0, 0, 0, 0, 1]),
             config,
             leak(embassy_net::StackResources::<2>::new()),
             1,

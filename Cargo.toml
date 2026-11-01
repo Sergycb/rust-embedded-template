@@ -2,7 +2,7 @@
 members = [
 	"crates-host/domain",
 	"crates-host/host-target-tests",
-	"crates-host/adapters",
+	"crates-host/adapters-hw",
 	# {%- if adapters_logic == "true" %}
 	"crates-host/adapters-logic",
 	# {%- endif %}
@@ -31,7 +31,7 @@ license      = "MIT"
 rust-version = "1.96"
 
 [workspace.lints.rust]
-# Ни одного `unsafe` в host-крейтах (`domain`, `ports`, `adapters`,
+# Ни одного `unsafe` в host-крейтах (`domain`, `ports`, `adapters-hw`,
 # `adapters-logic`, `xtask`) нет и быть не должно: это обычный Rust, а
 # единственное, что могло бы его потребовать, — макросы, и появление unsafe
 # в макросе чужого крейта должно быть видно сразу. В `crates-cross` тот же
@@ -84,7 +84,7 @@ arbitrary_source_item_ordering = "warn"
 # и путь были в одном месте, как у внешних зависимостей.
 ports        = { path = "crates-host/ports" }
 # {%- if has_net == "true" or has_usb == "true" or ota == "true" %}
-adapters     = { path = "crates-host/adapters" }
+adapters-hw  = { path = "crates-host/adapters-hw" }
 # {%- endif %}
 # {%- if adapters_logic == "true" %}
 adapters-logic = { path = "crates-host/adapters-logic" }
@@ -104,7 +104,7 @@ defmt        = { version = "1.2.0" }
 # собираются без него (рабочий пример — `thiserror::Error` на
 # `ports::MasterError`).
 thiserror    = { version = "2.0.21", default-features = false }
-# Только для dev-зависимостей `domain`, `adapters` и `adapters-logic`: исполнитель async-тестов
+# Только для dev-зависимостей `domain`, `adapters-hw` и `adapters-logic`: исполнитель async-тестов
 # (`#[tokio::test]`) над фейками портов и флеша. Без `default-features` — из
 # всего tokio нужны ровно однопоточный рантайм (`rt`) и атрибут (`macros`);
 # сеть, файлы и время сюда не приезжают. В прошивку не уезжает:
@@ -177,7 +177,7 @@ embedded-storage       = { version = "0.3.2" }
 embedded-storage-async = { version = "0.4.2" }
 # {%- endif %}
 # {%- if config == "true" %}
-# Хранилище настроек (`adapters::settings`).
+# Хранилище настроек (`adapters_hw::settings`).
 sequential-storage     = { version = "8.0.2", default-features = false }
 # {%- endif %}
 # {%- if stream_io == "true" or net_services contains "ssh" or net_services contains "mqtt" %}
@@ -189,7 +189,7 @@ sequential-storage     = { version = "8.0.2", default-features = false }
 # Его реализует `BufferedUart` из `embassy-stm32`.
 # {%- endif %}
 # {%- if has_usb == "true" %}
-# Его реализует поток USB CDC (`adapters::usb`).
+# Его реализует поток USB CDC (`adapters_hw::usb`).
 # {%- endif %}
 # {%- if has_tcp == "true" %}
 # Его реализует сокет TCP `embassy-net` (`adapters_logic::net::TcpServer`).
@@ -245,7 +245,7 @@ micropb-gen            = { version = "0.7.0" }
 protox                 = { version = "0.10.0" }
 # {%- endif %}
 # {%- if has_net == "true" %}
-# Сетевой стек под интерфейсами tcp/udp (`adapters::net`, транспорты
+# Сетевой стек под интерфейсами tcp/udp (`adapters_hw::net`, транспорты
 # `adapters_logic::net`, узел `domain::net`):
 # версия, парная к `embassy-stm32` 0.6 (те же `embassy-net-driver` 0.2,
 # `embassy-sync`, `embassy-time`, `embedded-io-async`). `smoltcp` под ним —
@@ -294,7 +294,7 @@ sunset-async           = { version = "0.6.0" }
 # `select` сессии SSH — та же версия, что тянет `sunset-async`.
 # {%- endif %}
 # {%- if ota == "true" %}
-# `yield_now` между страницами стирания OTA (`adapters::ota`) — та же версия,
+# `yield_now` между страницами стирания OTA (`adapters_hw::ota`) — та же версия,
 # что тянет `embassy-boot`.
 # {%- endif %}
 embassy-futures        = { version = "0.1.2" }
@@ -313,7 +313,7 @@ minimq                 = { version = "0.13.5", default-features = false }
 getrandom              = { version = "0.4.3", default-features = false }
 # {%- endif %}
 # {%- if has_usb == "true" %}
-# USB-устройство под интерфейсом usb (`adapters::usb`, узел `domain::usb`):
+# USB-устройство под интерфейсом usb (`adapters_hw::usb`, узел `domain::usb`):
 # версия, парная к `embassy-stm32` 0.6 (те же `embassy-usb-driver` 0.2,
 # `embassy-sync`, `heapless`). Без default-фич: `usbd-hid` шаблону не нужен.
 embassy-usb            = { version = "0.6.0", default-features = false }
