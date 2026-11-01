@@ -188,16 +188,18 @@ generic, поэтому узел называет канал этим псевд
 {%- endif %}
 {%- if ota == "true" %}
 
-# Тестовый образ `app-unconfirmed`: фичи `unconfirmed` и `version-max`
+# Тестовый образ `app-unconfirmed`: фичи `unconfirmed` и `version-next`
 
 У пакета два бинарника из одного `main.rs`: рабочий `app` и тестовый
 `app-unconfirmed` (`required-features = ["unconfirmed"]`), которым `cargo
 xtask test host-target` проверяет обмен и откат по протоколу проекта. Фичи:
 
-* `version-max` — версия образа `u32::MAX`, текстом `255.255.65535`
-  (`crate::version::FW_VERSION`, `FW_VERSION_TEXT` — их же видят хост в
-  сведениях об устройстве и баннер старта);
-* `unconfirmed` (включает `version-max`) — узел OTA получает
+* `version-next` — версия образа на единицу больше `version` из Cargo.toml
+  (`crate::version::FW_VERSION`): ровно настолько, чтобы рабочий образ той
+  же сборки принял его как обновление;
+* `unconfirmed` (включает `version-next`) — хосту и в баннере образ
+  называет себя меткой `unconfirmed` вместо версии (`FW_VERSION_TEXT`), а узел
+  OTA получает
   `confirmed: cfg!(feature = "unconfirmed")` во входе и `mark_booted` не
   зовёт: следующий сброс откатывает образ. В логе старта — `warn!`.
 

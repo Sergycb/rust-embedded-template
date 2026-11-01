@@ -37,9 +37,9 @@ use host_target_tests::Device;
 // {%- if ota == "true" %}
 use host_target_tests::{Info, slow_timeout};
 
-/// Версия тестового образа `app-unconfirmed` (`u32::MAX`,
-/// `crates-cross/app/src/version.rs`).
-const MAX_VERSION: &str = "255.255.65535";
+/// Как называет себя тестовый образ `app-unconfirmed` вместо версии
+/// (`UNCONFIRMED_TEXT` в `crates-cross/app/src/version.rs`).
+const UNCONFIRMED: &str = "unconfirmed";
 
 /// Подпись, которой заведомо нет: устройство подпись не проверяет (только
 /// её наличие), и отказ той же версии приходит раньше; пропусти его
@@ -133,7 +133,7 @@ fn foreign_signature_is_not_swapped() {
     );
     assert_eq!(device.reboot().expect("Reboot"), Ok(()));
     let after = back(&mut device);
-    if after.version == MAX_VERSION {
+    if after.version == UNCONFIRMED {
         // Встал — откатываем, чтобы оставить устройство на рабочем образе.
         if device.reboot().is_ok_and(|outcome| outcome.is_ok()) {
             device.wait_back(slow_timeout()).ok();
@@ -163,12 +163,14 @@ fn unconfirmed_image_is_swapped_and_rolled_back() {
         device
             .upload(&image, &signature, slow_timeout())
             .expect("загрузка образа"),
-        Ok(())
+        Ok(()),
+        "тестовый образ — версия собранного рабочего + 1; `Rollback` значит, что на \
+         устройстве прошивка не старше его"
     );
     assert_eq!(device.reboot().expect("Reboot"), Ok(()));
     let swapped = back(&mut device);
     assert_eq!(
-        swapped.version, MAX_VERSION,
+        swapped.version, UNCONFIRMED,
         "после сброса работает не тестовый образ — обмена не было. Если плату прошивали не \
          здесь (пробника не было), в её bootloader'е может быть другой открытый ключ, и он \
          отвергает образы этого проекта"
@@ -219,7 +221,7 @@ fn same_version_is_rejected() {
 /// прогон) — сброс его откатывает.
 fn settle(device: &mut Device) -> Info {
     let info = back(device);
-    if info.version != MAX_VERSION {
+    if info.version != UNCONFIRMED {
         return info;
     }
     eprintln!("на устройстве тестовый образ от прерванного прогона — откатываем сбросом");

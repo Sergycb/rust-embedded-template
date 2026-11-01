@@ -2,7 +2,7 @@
 
 use std::env;
 // {%- if ota == "true" and has_protobuf == "true" %}
-use std::fs;
+use std::{fs, path::PathBuf};
 
 use anyhow::Context;
 // {%- endif %}
@@ -53,6 +53,24 @@ type Stage = fn(&xshell::Shell) -> Result<(), anyhow::Error>;
 
 /// Тесты host-target, которые пройдут пропуском: сколько и почему.
 type Skipped = (usize, &'static str);
+// {%- endif %}
+// {%- if ota == "true" and has_protobuf == "true" %}
+
+/// Временный каталог образов OTA для сценариев: удаляется, когда
+/// `test host-target` кончается, — и после ошибки, и при панике (`Drop`).
+///
+/// Тестовый образ подписан ключом проекта (иначе устройство с этим ключом
+/// его не примет), и пережить прогон он не должен: ни в `target/`, ни рядом с
+/// `app.bin` его нет.
+struct Scratch(PathBuf);
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        // Не удалось — каталог во временных файлах ОС; ронять из-за этого
+        // нечего, а паника в `Drop` при раскрутке оборвала бы процесс.
+        fs::remove_dir_all(&self.0).ok();
+    }
+}
 // {%- endif %}
 
 /// Без этапа — список этапов, а не запуск какого-то из них, и код выхода
@@ -147,10 +165,10 @@ fn test_host_target(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     // Образы для сценариев OTA — до прошивки: сборка, которая не сходится
     // (раскладка, ключ), не должна оставить плату с новым bootloader'ом. Без
     // адреса сценарии не пойдут — и собирать их незачем.
-    let _ota_vars = if addressed {
-        ota_env(sh, seed.as_ref(), flash, &mut skipped)?
+    let _ota_env = if addressed {
+        Some(ota_env(sh, seed.as_ref(), flash, &mut skipped)?)
     } else {
-        Vec::new()
+        None
     };
     // {%- endif %}
     if flash {
@@ -237,20 +255,21 @@ fn report_skipped(skipped: &[Skipped]) {
 
 /// Образы для сценариев OTA — в окружение теста.
 ///
-/// Тестовый образ `app-unconfirmed` (версия `u32::MAX`, себя не
+/// Тестовый образ `app-unconfirmed` (версия рабочего + 1, себя не
 /// подтверждает) — с подписью ключом проекта, если он есть, и подписью
 /// случайным ключом, которого нет ни в одном bootloader'е. Рабочий образ —
 /// для отказа той же версии. Длина `ACTIVE` — сроки ожидания стирания и
 /// обмена. Ожидаемая версия — только если плату прошили здесь: иначе на ней
 /// неизвестно что.
 ///
-/// Возвращает guard'ы `xshell`: переменные живут, пока жив результат.
+/// Образы и подписи — только во временном каталоге ([`Scratch`]), который
+/// живёт, пока жив результат, как и переменные (guard'ы `xshell`).
 fn ota_env<'a>(
     sh: &'a xshell::Shell,
     seed: Option<&[u8; 32]>,
     flash: bool,
     skipped: &mut Vec<Skipped>,
-) -> Result<Vec<xshell::PushEnv<'a>>, anyhow::Error> {
+) -> Result<(Scratch, Vec<xshell::PushEnv<'a>>), anyhow::Error> {
     {
         let _p = sh.push_dir(root_dir().join("crates-cross"));
         // Bootloader — отдельным вызовом, как в `build` (там же почему): с
@@ -266,18 +285,19 @@ fn ota_env<'a>(
     let working = ota_image(&release.join(APP_ARTIFACT))?;
     let unconfirmed = ota_image(&release.join("app-unconfirmed"))?;
     anyhow::ensure!(
-        unconfirmed.version == u32::MAX,
-        "тестовый образ app-unconfirmed собран с версией {:#010x}, а не u32::MAX — фича \
-         `version-max` не дошла до crates-cross/app/src/version.rs",
+        Some(unconfirmed.version) == working.version.checked_add(1),
+        "тестовый образ app-unconfirmed собран с версией {:#010x}, а не рабочей + 1 \
+         ({:#010x}) — фича `version-next` не дошла до crates-cross/app/src/version.rs",
         unconfirmed.version,
+        working.version,
     );
     let regions = app_memory_regions()?;
     let (_, active) = app_region(&regions).context("в memory.x приложения нет раздела ACTIVE")?;
 
-    let dir = release.join("host-target");
-    fs::create_dir_all(&dir).with_context(|| format!("создать {}", dir.display()))?;
+    let dir = Scratch(env::temp_dir().join(format!("host-target-{}", std::process::id())));
+    fs::create_dir_all(&dir.0).with_context(|| format!("создать {}", dir.0.display()))?;
     let write = |name: &str, bytes: &[u8]| {
-        let path = dir.join(name);
+        let path = dir.0.join(name);
         fs::write(&path, bytes)
             .with_context(|| format!("записать {}", path.display()))
             .map(|()| path)
@@ -325,7 +345,7 @@ fn ota_env<'a>(
             format!("{major}.{minor}.{patch}"),
         ));
     }
-    Ok(vars)
+    Ok((dir, vars))
 }
 // {%- endif %}
 

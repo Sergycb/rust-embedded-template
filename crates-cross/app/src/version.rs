@@ -5,25 +5,35 @@
 //! Подпись приложение не проверяет: ключ зашит в bootloader, и проверяет он
 //! (`crates-cross/boot`, `domain::ota::boot::screen_update`).
 
-/// Версия этого образа — [`PACKAGE_VERSION`], а с фичей `version-max`
-/// (тестовый образ `app-unconfirmed`) — наибольшая, `u32::MAX`: хост по
-/// версии отличает тестовый образ от рабочего, не читая флеш, и любой
-/// настоящий образ рядом с ним не новее — docs/ota.md, «Тесты OTA по
-/// протоколу».
-pub const FW_VERSION: u32 = if cfg!(feature = "version-max") {
-    domain::ota::version::pack(u8::MAX, u8::MAX, u16::MAX)
+/// Версия этого образа — [`PACKAGE_VERSION`], а с фичей `version-next`
+/// (тестовый образ `app-unconfirmed`) — на единицу больше: ровно настолько,
+/// чтобы устройство на рабочем образе приняло тестовый (защита от отката —
+/// строго «новее»), и не больше. Не `u32::MAX`: подписанный ключом проекта
+/// образ «новее всего», встань он однажды насовсем, закрыл бы устройству
+/// все обычные обновления; `+1` закрыл бы самое большее одну версию —
+/// docs/ota.md, «Тесты OTA по протоколу».
+pub const FW_VERSION: u32 = if cfg!(feature = "version-next") {
+    match PACKAGE_VERSION.checked_add(1) {
+        Some(next) => next,
+        None => panic!("version в Cargo.toml — уже наибольшая, тестовому образу некуда расти"),
+    }
 } else {
     PACKAGE_VERSION
 };
 
 /// Версия этого образа текстом — то, что он называет хосту и печатает в
-/// баннере старта: `version` из Cargo.toml или, с `version-max`, ровно
-/// [`FW_VERSION`] в виде `major.minor.patch`.
-pub const FW_VERSION_TEXT: &str = if cfg!(feature = "version-max") {
-    "255.255.65535"
+/// баннере старта: `version` из Cargo.toml, а у тестового образа
+/// (`unconfirmed`) — метка [`UNCONFIRMED_TEXT`]: по ней хост видит, что
+/// обмен разделов состоялся, не читая флеш.
+pub const FW_VERSION_TEXT: &str = if cfg!(feature = "unconfirmed") {
+    UNCONFIRMED_TEXT
 } else {
     crate::build::PKG_VERSION
 };
+
+/// Метка тестового образа `app-unconfirmed` вместо версии в ответе хосту —
+/// та же строка в `crates-host/host-target-tests/tests/test.rs`.
+const UNCONFIRMED_TEXT: &str = "unconfirmed";
 
 /// `version` из Cargo.toml, свёрнутая `domain::ota::version::pack` в четыре
 /// байта.
