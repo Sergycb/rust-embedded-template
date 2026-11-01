@@ -1,8 +1,8 @@
 Флеш платы: общий замок над контроллером и куски флеша, которые плата отдаёт
 узлам.
 
-Контроллер флеша на чипе один, а работать с ним нужно всем сразу{% if ota == "true" and ota_store != "external" %}: флешу под
-обновлением (`DFU` и `BOOTLOADER_STATE`){% endif %}{% if config == "true" and config_store == "flash" %}, разделу `CONFIG` настроек{% elsif config == "true" and config_store == "eeprom" %}, EEPROM настроек (она пишется через тот же контроллер){% endif %}. Поэтому объект
+{% capture flash_users %}{% if ota == "true" and ota_store != "external" %}, флешу под
+обновлением (`DFU` и `BOOTLOADER_STATE`){% endif %}{% if config == "true" and config_store == "flash" %}, разделу `CONFIG` настроек{% elsif config == "true" and config_store == "eeprom" %}, EEPROM настроек (она пишется через тот же контроллер){% endif %}{% endcapture %}Контроллер флеша на чипе один, а работать с ним нужно всем сразу: {{ flash_users | remove_first: ", " }}. Поэтому объект
 создаётся ровно один раз (`flash::new`, ему отдаётся группа `flash` из
 `resources.rs`), лежит в `static` под блокирующим замком (`FlashMutex`), а
 куски флеша получают на него ссылки.
