@@ -120,7 +120,7 @@ tokio        = { version = "1.54.1", default-features = false, features = ["rt",
 # В репозитории шаблона — настоящий адрес, иначе workspace не собрать; в
 # проекте строки ниже нет, рабочую даёт `#{{newline}}…` с `rust_lib` из хука
 # (MAINTAINING.md, «Значение в корневом workspace»).
-supervisor   = { git = "https://github.com/Sergycb/rust-lib.git", rev = "8a78ea30d02d32ac3bc1f853c10d740b369f6743" }
+supervisor   = { git = "https://github.com/Sergycb/rust-lib.git", rev = "ab5be5805ed581c2d040c6c08d6644f7f8471e7d" }
 # {%- endcomment %}
 #{{newline}}supervisor   = { git = "{{rust_lib}}.git", rev = "{{rust_lib_rev}}" }
 # Время в проекте одно — `embassy_time::Duration`: тем же типом
@@ -137,7 +137,7 @@ embassy-time = { version = "0.5.1" }
 # таблица переходов проверяется компилятором. Тот же репозиторий, что у
 # `supervisor`.
 # {%- comment %}
-fsm          = { git = "https://github.com/Sergycb/rust-lib.git", rev = "8a78ea30d02d32ac3bc1f853c10d740b369f6743" }
+fsm          = { git = "https://github.com/Sergycb/rust-lib.git", rev = "ab5be5805ed581c2d040c6c08d6644f7f8471e7d" }
 # {%- endcomment %}
 #{{newline}}fsm          = { git = "{{rust_lib}}.git", rev = "{{rust_lib_rev}}" }
 # Тип счётчика тиков сна в `domain::cpu_load::SleepTicks`. Не

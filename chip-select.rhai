@@ -671,7 +671,7 @@ variable::set("rust_lib", rust_lib);
 // берёт сознательно, вместе с правками под неё; форку — `--define rust_lib_rev=…`.
 // Умолчание равно `rev` в корневом Cargo.toml — сверяет тест
 // `rust_lib_rev_default_matches_the_root_manifest` (chip-data-gen/tests/cascade.rs).
-let rust_lib_rev = if variable::is_set("rust_lib_rev") { variable::get("rust_lib_rev") } else { "8a78ea30d02d32ac3bc1f853c10d740b369f6743" };
+let rust_lib_rev = if variable::is_set("rust_lib_rev") { variable::get("rust_lib_rev") } else { "ab5be5805ed581c2d040c6c08d6644f7f8471e7d" };
 if rust_lib_rev == "" || rust_lib_rev.contains(" ") {
     throw "rust_lib_rev: пустая или с пробелом ревизия rust-lib";
 }
