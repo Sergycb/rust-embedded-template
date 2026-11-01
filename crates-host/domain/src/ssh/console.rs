@@ -75,6 +75,116 @@ impl<W: Write> Out<W> {
     }
 }
 
+/// Что консоли сделать с принятым байтом.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Key {
+    /// Ничего: байт не меняет строку.
+    Nothing,
+    /// Байт принят в строку — эхо им же.
+    Echo(u8),
+    /// Последний символ стёрт — стереть его и на экране.
+    Erase,
+    /// Ctrl-C: строка сброшена.
+    Cancel,
+    /// Конец строки: выполнить команду.
+    Enter(Command),
+    /// Ctrl-D на пустой строке: конец сессии.
+    Eof,
+}
+
+/// Где внутри управляющей последовательности терминала стоит ввод.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum Escape {
+    /// Вне последовательности.
+    #[default]
+    Off,
+    /// После ESC.
+    Started,
+    /// Внутри CSI (`ESC [` … финальный байт): стрелки, Home, Delete.
+    Csi,
+    /// После `ESC O` — SS3, ещё один байт: стрелки и F1–F4 в режиме
+    /// приложения.
+    Ss3,
+}
+
+/// Строка, которую набирает терминал `shell`: байт за байтом, без вывода —
+/// что показать, решает вызывающий по [`Key`].
+#[derive(Debug, Default)]
+pub(super) struct Editor {
+    line: heapless::String<LINE>,
+    /// Прошлый байт — `\r`: `\r\n` — один конец строки, а не строка и
+    /// пустая за ней.
+    after_cr: bool,
+    escape: Escape,
+}
+
+impl Editor {
+    /// Принимает байт от терминала.
+    pub(super) fn feed(&mut self, byte: u8) -> Key {
+        let after_cr = core::mem::replace(&mut self.after_cr, byte == b'\r');
+        match self.escape {
+            Escape::Off => {}
+            Escape::Started => match byte {
+                b'[' => {
+                    self.escape = Escape::Csi;
+                    return Key::Nothing;
+                }
+                b'O' => {
+                    self.escape = Escape::Ss3;
+                    return Key::Nothing;
+                }
+                // Одиночный ESC отброшен, байт за ним — обычный ввод.
+                _ => self.escape = Escape::Off,
+            },
+            Escape::Csi => match byte {
+                // Параметры и промежуточные байты.
+                0x20..=0x3f => return Key::Nothing,
+                // Финальный байт — конец последовательности.
+                0x40..=0x7e => {
+                    self.escape = Escape::Off;
+                    return Key::Nothing;
+                }
+                // Оборванная последовательность: управляющий байт —
+                // обычный ввод.
+                _ => self.escape = Escape::Off,
+            },
+            Escape::Ss3 => {
+                self.escape = Escape::Off;
+                return Key::Nothing;
+            }
+        }
+        match byte {
+            0x1b => {
+                self.escape = Escape::Started;
+                Key::Nothing
+            }
+            b'\n' if after_cr => Key::Nothing,
+            b'\r' | b'\n' => {
+                let command = parse(&self.line);
+                self.reset();
+                Key::Enter(command)
+            }
+            // Ctrl-C.
+            0x03 => {
+                self.reset();
+                Key::Cancel
+            }
+            // Ctrl-D: на набранной строке не обрывает сессию.
+            0x04 if self.line.is_empty() => Key::Eof,
+            // Backspace/DEL.
+            0x08 | 0x7f if self.line.pop().is_some() => Key::Erase,
+            // Длиннее строки — символ не принимается и не отображается.
+            c @ 0x20..0x7f if self.line.push(char::from(c)).is_ok() => Key::Echo(c),
+            _ => Key::Nothing,
+        }
+    }
+
+    /// Новая строка.
+    fn reset(&mut self) {
+        self.line.clear();
+    }
+}
+
 /// Команда из строки.
 pub(super) fn parse(line: &str) -> Command {
     let mut words = line.split_ascii_whitespace();
@@ -155,35 +265,25 @@ pub(super) async fn shell(
 ) -> Result<(), sunset_async::sunset::Error> {
     let mut out = Out { io, crlf: true };
     out.text("console, 'help' for commands\n> ").await?;
-    let mut line = heapless::String::<LINE>::new();
+    let mut editor = Editor::default();
     let mut byte = [0];
-    let mut after_cr = false;
     loop {
         if out.io.read(&mut byte).await? == 0 {
             return Ok(());
         }
-        // `\r\n` — один конец строки, а не строка и пустая за ней.
-        let skip = after_cr && byte[0] == b'\n';
-        after_cr = byte[0] == b'\r';
-        if skip {
-            continue;
-        }
-        match byte[0] {
-            // Ctrl-D.
-            0x04 => return Ok(()),
-            b'\r' | b'\n' => {
+        match editor.feed(byte[0]) {
+            Key::Nothing => {}
+            Key::Echo(c) => out.io.write_all(&[c]).await?,
+            Key::Erase => out.io.write_all(b"\x08 \x08").await?,
+            Key::Cancel => out.text("^C\n> ").await?,
+            Key::Enter(command) => {
                 out.text("\n").await?;
-                if !run(parse(&line), &mut out, device).await? {
+                if !run(command, &mut out, device).await? {
                     return Ok(());
                 }
                 out.text("> ").await?;
-                line.clear();
             }
-            // Backspace/DEL.
-            0x08 | 0x7f if line.pop().is_some() => out.io.write_all(b"\x08 \x08").await?,
-            // Длиннее строки — символ не принимается и не отображается.
-            c @ 0x20..0x7f if line.push(char::from(c)).is_ok() => out.io.write_all(&byte).await?,
-            _ => {}
+            Key::Eof => return Ok(()),
         }
     }
 }

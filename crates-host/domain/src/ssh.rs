@@ -185,7 +185,7 @@ mod tests {
     //! Тесты узла `SSH`: ключ пользователя, вход, команды, `info`, ключ хоста.
 
     use crate::device::{DeviceInfo, PANIC_BRIEF};
-    use crate::ssh::console::{INFO_TEXT, parse, write_info};
+    use crate::ssh::console::{Editor, INFO_TEXT, Key, parse, write_info};
     use crate::ssh::login::Access;
     use crate::ssh::session::tries_exhausted;
     use crate::ssh::{Command, Login, USER, ed25519_public_key};
@@ -352,6 +352,100 @@ mod tests {
         assert_eq!(parse("reboot yes"), Command::Reboot { confirmed: true });
         assert_eq!(parse("reboot yes please"), Command::Unknown);
         // {%- endif %}
+    }
+
+    /// Что консоль делает с байтами `input`, без [`Key::Nothing`].
+    fn keys(editor: &mut Editor, input: &[u8]) -> Vec<Key> {
+        input
+            .iter()
+            .map(|&byte| editor.feed(byte))
+            .filter(|key| *key != Key::Nothing)
+            .collect()
+    }
+
+    /// Эхо каждого байта `text`.
+    fn echo(text: &str) -> impl Iterator<Item = Key> {
+        text.bytes().map(Key::Echo)
+    }
+
+    /// Правка строки: переводы строки, Backspace, управляющие
+    /// последовательности стрелок, Ctrl-C и Ctrl-D.
+    #[test]
+    fn the_editor_takes_only_what_it_shows() {
+        let cases: [(&[u8], Vec<Key>); 14] = [
+            (
+                b"help\r",
+                echo("help").chain([Key::Enter(Command::Help)]).collect(),
+            ),
+            // `\r\n` — один конец строки; `\r` и `\n` поодиночке — каждый.
+            (
+                b"help\r\n",
+                echo("help").chain([Key::Enter(Command::Help)]).collect(),
+            ),
+            (b"\r\r", vec![Key::Enter(Command::Empty); 2]),
+            (b"\n\n", vec![Key::Enter(Command::Empty); 2]),
+            (
+                b"inf\x08fo\x7f\x7fo\r",
+                echo("inf")
+                    .chain([Key::Erase])
+                    .chain(echo("fo"))
+                    .chain([Key::Erase; 2])
+                    .chain(echo("o"))
+                    .chain([Key::Enter(Command::Unknown)])
+                    .collect(),
+            ),
+            // Backspace на пустой строке не стирает приглашение.
+            (b"\x7f\r", vec![Key::Enter(Command::Empty)]),
+            // Стрелки и Ctrl-стрелки (CSI с параметрами) — ни в строку, ни
+            // в эхо.
+            (
+                b"\x1b[A\x1b[1;5Cinfo\x1b[D\r",
+                echo("info").chain([Key::Enter(Command::Info)]).collect(),
+            ),
+            // SS3 — стрелка в режиме приложения.
+            (
+                b"\x1bOAinfo\r",
+                echo("info").chain([Key::Enter(Command::Info)]).collect(),
+            ),
+            // Одиночный ESC отброшен, следующий байт — обычный ввод.
+            (
+                b"\x1binfo\r",
+                echo("info").chain([Key::Enter(Command::Info)]).collect(),
+            ),
+            // Оборванная CSI: перевод строки внутри неё — конец строки.
+            (
+                b"info\x1b[1\r",
+                echo("info").chain([Key::Enter(Command::Info)]).collect(),
+            ),
+            // Ctrl-C сбрасывает набранное.
+            (
+                b"exi\x03info\r",
+                echo("exi")
+                    .chain([Key::Cancel])
+                    .chain(echo("info"))
+                    .chain([Key::Enter(Command::Info)])
+                    .collect(),
+            ),
+            (b"\x04", vec![Key::Eof]),
+            // Ctrl-D на набранной строке сессию не обрывает.
+            (
+                b"exit\x04\r",
+                echo("exit").chain([Key::Enter(Command::Exit)]).collect(),
+            ),
+            // Прочие управляющие байты не попадают ни в строку, ни в эхо.
+            (
+                b"in\tfo\x00\r",
+                echo("info").chain([Key::Enter(Command::Info)]).collect(),
+            ),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(
+                keys(&mut Editor::default(), input),
+                expected,
+                "{}",
+                input.escape_ascii()
+            );
+        }
     }
 
     #[test]
