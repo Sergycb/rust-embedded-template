@@ -113,8 +113,9 @@ pub fn panic_info(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
 /// probe-rs 0.31 печатает голый hex-список, 0.32 по умолчанию — таблицу
 /// (`HexTable`): каждая строка начинается адресом `{address:08x}: `, ASCII-колонки
 /// нет. Пропускается только такой адрес — hex-цифры с двоеточием; любое другое
-/// слово по-прежнему разбирается строго ([`parse_hex`]). Так же читает
-/// `host-target-tests` (`try_read_words`).
+/// слово по-прежнему разбирается строго ([`parse_hex`]). `host-target-tests`
+/// (`try_read_words`) читает тот же вывод проще и своим кодом: отбрасывает
+/// любое слово с двоеточием, а на не-hex падает, а не возвращает `None`.
 fn parse_words(output: &str) -> Option<Vec<u32>> {
     output
         .split_whitespace()

@@ -838,8 +838,8 @@ release-образ не линкуется. Размер — доля RAM (`PANI
 делает CI»:
 
 ```
-cargo xtask lint          # корневой workspace: fmt --check + clippy -D warnings
-cargo xtask test host     # domain: cargo nextest
+cargo xtask lint          # корневой workspace: fmt --check + clippy -D warnings + cargo doc
+cargo xtask test host     # domain: cargo nextest + doc-тесты
 
 cargo fmt    --manifest-path chip-data-gen/Cargo.toml --check
 cargo clippy --manifest-path chip-data-gen/Cargo.toml --all-targets -- -D warnings
