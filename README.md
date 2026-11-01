@@ -743,7 +743,11 @@ cargo xtask panic-info             # причина последнего пад�
 
 Отдельной команды прошивки нет: это `cargo flash`/`cargo run` в `crates-cross` (см.
 «Быстрый старт»). Этапы `test target` и `test host-target` заливают нужные образы
-сами{% if ota == "true" %}, сначала bootloader{% endif %}. Начало образа приложения с началом раздела из `memory.x`
+сами{% if ota == "true" %}, сначала bootloader{% endif %}, и оба оставляют на плате рабочую прошивку — release{% if ota == "true" %}-пару
+bootloader со сторожем и `app`: `test target` гоняет тесты над bootloader'ом без
+сторожа (`no-watchdog`) и после них, даже упавших, заливает пару{% else %} `app`:
+`test target` после тестов, даже упавших, заливает её{% endif %}. `test all` эту заливку
+пропускает — её тут же делает `test host-target`, — так что каждый образ шьётся по разу. Начало образа приложения с началом раздела из `memory.x`
 перед записью сверяет только `test host-target`; `test target` заливает тестовый образ
 через `probe-rs run` без этой сверки, а то, что `memory.x` тестов совпадает с
 `memory.x` приложения, проверяет `lint cross`.

@@ -292,6 +292,25 @@ const _: () = assert!(
     "копий HTTP в графе столько же, сколько HTTP_CONNECTIONS в [env]"
 );
 {%- endif %}
+{%- if ota == "true" and ota_cmd_clients != "0" %}
+
+// Вход `CMD` узла `OTA` — `RpcService`: клиенты ждут исхода в вызове, а
+// ждущих сверх `PARKED_CALLERS` сервис паркует расточительно — регистрация в
+// полный список будит всех, и они вытесняют друг друга по кругу
+// (`sync-request`, документация константы). Клиентов — {{ ota_cmd_clients }}: узлы
+// протоколов, кроме CANopen (тот на `ASK`), копии `HTTP`, `SSH`, `MQTT`; число
+// считает генерация. Не сходится — раздели вход, а не поднимай константу.
+//
+// Константа — копия `sync_request::PARKED_CALLERS` (`sync-request/src/lib.rs`
+// ревизии `rust-lib` из `Cargo.toml`): с графом `app` от `sync-request` не
+// зависит, а `supervisor` отдаёт его только скрытым `__private`. Сменится в
+// `sync-request` — правьте здесь.
+const PARKED_CALLERS: usize = 4;
+const _: () = assert!(
+    {{ ota_cmd_clients }} <= PARKED_CALLERS,
+    "клиентов входа CMD узла OTA больше PARKED_CALLERS (sync-request): раздели вход"
+);
+{%- endif %}
 
 /// Как часто тикер графа опрашивает сторожей узлов и кормит железо.
 ///
@@ -313,13 +332,19 @@ const WATCHDOG_CHECK_EVERY: Duration = Duration::from_millis(100);
 // один только этот комментарий. `<` на `Duration` в `const` не работает (нет
 // const-трейтов), поэтому сравниваются микросекунды — как в `HW_TIMEOUT_US`,
 // а не тики, чья частота зависит от фичи `tick-hz-*`.
+//
+// Справа — не номинал `HW_TIMEOUT_US`, а `HW_TIMEOUT_MIN_US`: таймаут при LSI
+// на верхнем пределе семейства. Embassy заряжает IWDG от номинальной частоты
+// LSI, а реальная плавает (у F4 до 47 кГц при номинале 32), и на номинале
+// цепочка сходилась бы там, где на быстром LSI железо её опережает.
 const _: () = assert!(
     ::domain::heartbeat::WATCHDOG.as_micros() + WATCHDOG_CHECK_EVERY.as_micros()
-        < bsp::wdg::HW_TIMEOUT_US as u64
+        < bsp::wdg::HW_TIMEOUT_MIN_US
         && ::domain::cpu_load::WATCHDOG.as_micros() + WATCHDOG_CHECK_EVERY.as_micros()
-            < bsp::wdg::HW_TIMEOUT_US as u64,
-    "таймаут узла плюс WATCHDOG_CHECK_EVERY обязан быть меньше bsp::wdg::HW_TIMEOUT_US: иначе железо \
-     сбросит МК раньше, чем узел заметит зависшую задачу, и сброс придёт от железа, а не от supervisor"
+            < bsp::wdg::HW_TIMEOUT_MIN_US,
+    "таймаут узла плюс WATCHDOG_CHECK_EVERY обязан быть меньше bsp::wdg::HW_TIMEOUT_MIN_US (таймаут \
+     IWDG при самом быстром LSI): иначе железо сбросит МК раньше, чем узел заметит зависшую задачу, и \
+     сброс придёт от железа, а не от supervisor"
 );
 
 /// Куда уходит просрочка наблюдаемого узла.

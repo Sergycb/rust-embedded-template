@@ -13,11 +13,12 @@ use watchdog::HardwareWatchdog;
 /// (`WATCHDOG_TIMEOUT_US`){% if ota == "true" %}; bootloader берёт его отсюда же, так что разойтись
 /// им негде{% endif %}.
 ///
-/// Десять секунд — величина не измеренная, а взятая с запасом по цепочке
-/// таймаутов (docs/watchdog.md); запас — на путь {% if ota == "true" %}от прыжка из bootloader'а{% else %}от старта{% endif %} до
-/// `spawn_all`, когда сторож уже взведён. Правьте цепочку только вместе.
-/// Диапазону IWDG значение удовлетворяет
-/// на любом семействе (предел — 26.2 с при LSI 40 кГц, см. `MAX_TIMEOUT_US`
+/// Тринадцать секунд — величина не измеренная, а взятая по цепочке таймаутов
+/// (docs/watchdog.md) с поправкой на LSI: это номинал, а реальный таймаут
+/// короче — [`HW_TIMEOUT_MIN_US`], у L0/L1 (LSI до 56 кГц при номинале 32)
+/// 7.4 с, и он обязан пережить таймаут узла (7 с) плюс `check_every`.
+/// Правьте цепочку только вместе. Диапазону IWDG значение удовлетворяет на
+/// любом семействе (предел — 26.2 с при LSI 40 кГц, см. `MAX_TIMEOUT_US`
 /// ниже).
 ///
 /// **В микросекундах и `u32`, а не `Duration`, потому что это аргумент
@@ -32,9 +33,10 @@ use watchdog::HardwareWatchdog;
 /// а выход самой цифры за диапазон IWDG становится ошибкой сборки вместо паники
 /// на плате.
 ///
-/// Второе требование к нему — пережить всё, что стоит между взведением
-/// сторожа и первым кормлением от тикера графа; что там окажется в
-/// конкретном проекте, шаблон не знает.
+/// Второе требование к нему — пережить (тоже в худшем случае,
+/// [`HW_TIMEOUT_MIN_US`]) всё, что стоит между взведением сторожа и первым
+/// кормлением от тикера графа: путь {% if ota == "true" %}от прыжка из bootloader'а{% else %}от старта{% endif %} до `spawn_all`;
+/// что там окажется в конкретном проекте, шаблон не знает.
 {%- if ota == "true" %}
 ///
 /// Той же цифрой взводит сторож release-bootloader (`crates-cross/boot`) —
@@ -49,6 +51,32 @@ use watchdog::HardwareWatchdog;
 pub const HW_TIMEOUT_US: u32 = match u32::from_str_radix(env!("WATCHDOG_TIMEOUT_US"), 10) {
     Ok(us) => us,
     Err(_) => panic!("WATCHDOG_TIMEOUT_US в .cargo/config.toml — не число"),
+};
+
+/// Верхний предел частоты LSI у семейства чипа, Гц, — max `f_LSI` из таблицы
+/// «LSI oscillator characteristics» даташита; таблица по семействам со
+/// ссылками на документы — `watchdog_family_table()` в `chip-select.rhai`
+/// репозитория шаблона.
+///
+/// Нужен затем, что embassy считает прескалер и перезагрузку IWDG от
+/// номинала [`LSI_FREQ`], а генератор плавает: у F4 17…47 кГц при номинале
+/// 32, у F1 30…60 при 40. Быстрее LSI — раньше сброс.
+pub const LSI_MAX_HZ: u32 = {{lsi_max_hz}};
+
+/// Наименьший реальный таймаут сторожа, мкс: [`HW_TIMEOUT_US`] при LSI на
+/// верхнем пределе, `HW_TIMEOUT_US * LSI_FREQ / LSI_MAX_HZ`.
+///
+/// С ним, а не с номиналом, сравнивает таймауты узлов `const`-assert цепочки
+/// в `app/src/graph.rs`: на номинале она сходилась бы, а на быстром LSI
+/// железо сбрасывало бы МК раньше, чем `supervisor` заметит зависший узел.
+/// Медленный LSI (нижний предел) цепочку не рвёт — он лишь дольше ждёт сброса
+/// зависшего устройства.
+pub const HW_TIMEOUT_MIN_US: u64 = {
+    assert!(
+        LSI_MAX_HZ >= LSI_FREQ.0,
+        "LSI_MAX_HZ ниже номинала LSI_FREQ: в таблице сторожа chip-select.rhai не предел"
+    );
+    HW_TIMEOUT_US as u64 * LSI_FREQ.0 as u64 / LSI_MAX_HZ as u64
 };
 
 /// Нижняя граница: короче этого `IndependentWatchdog` считает окно
@@ -174,6 +202,9 @@ impl<T: Instance + 'static, const TIMEOUT_US: u32> Iwdg<T, TIMEOUT_US, Disarmed>
     /// Забыть этот вызов нельзя: [`HardwareWatchdog`] реализован только у
     /// [`Armed`], а блок `watchdog:` графа требует именно его.
     ///
+    /// В dev-сборке (`debug_assertions`) он ещё и замораживает сторож на время
+    /// остановки ядра отладчиком — `freeze_on_halt`.
+    ///
     /// Аппаратный таймаут должен быть **больше** таймаута узла в графе плюс
     /// `check_every` (цепочка — docs/watchdog.md). Половину этого соотношения —
     /// `check_every` против аппаратного таймаута —
@@ -183,6 +214,8 @@ impl<T: Instance + 'static, const TIMEOUT_US: u32> Iwdg<T, TIMEOUT_US, Disarmed>
     /// конца, см. её документацию в `watchdog`.
     #[must_use]
     pub fn arm(self) -> Iwdg<T, TIMEOUT_US, Armed> {
+        #[cfg(debug_assertions)]
+        freeze_on_halt();
         let mut inner = self.inner;
         inner.unleash();
         Iwdg {
@@ -230,3 +263,42 @@ impl<T: Instance + 'static, const TIMEOUT_US: u32> HardwareWatchdog for Iwdg<T, 
         }
     }
 }
+
+/// Останавливает счётчик IWDG, пока ядро остановлено отладчиком (бит
+/// заморозки в `DBGMCU`).
+///
+/// Без него IWDG тикает и под брейкпоинтом: остановка дольше таймаута
+/// сбрасывает МК, и отладка dev-сборки превращается в гонку со сторожем.
+/// Только в dev-сборке: в release сторож обязан сбрасывать и зависшее под
+/// отладчиком устройство — так он ведёт себя в поле. Ставится до запуска
+/// счётчика, чтобы первая же остановка была под заморозкой. Регистр и поле —
+/// из `stm32-metapac` по семейству (`watchdog_family_table()` в
+/// `chip-select.rhai` шаблона).
+{%- if dbgmcu_freeze == "" %}
+///
+/// У этого блока бита заморозки нет в `stm32-metapac` (`IWDG2` ядра CM4
+/// двухъядерных H7), и функция пуста: сторож тикает и под отладчиком
+/// (docs/watchdog.md).
+{%- endif %}
+///
+/// Бит живёт до сброса по питанию, а не до системного (на H7 проверено): прошитая следом
+/// release-сборка на той же плате тоже будет заморожена под отладчиком.
+#[cfg(debug_assertions)]
+{%- if dbgmcu_freeze == "" %}
+fn freeze_on_halt() {}
+{%- else %}
+fn freeze_on_halt() {
+{%- assign fz = dbgmcu_freeze | split: ":" %}
+{%- if dbgmcu_clock != "" %}
+{%- assign ck = dbgmcu_clock | split: ":" %}
+    use embassy_stm32::pac::{DBGMCU, RCC};
+
+    // Без такта блока запись в `DBGMCU` теряется.
+    RCC.{{ ck[0] }}().modify(|w| w.set_{{ ck[1] }}(true));
+{%- else %}
+    use embassy_stm32::pac::DBGMCU;
+
+{%- endif %}
+    DBGMCU.{{ fz[0] }}().modify(|w| w.set_{{ fz[1] }}(true));
+}
+{%- endif %}

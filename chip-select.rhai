@@ -73,6 +73,53 @@ fn family_table() {
     ]
 }
 
+fn watchdog_family_table() {
+    // Сторож по семействам: [префикс, верхний предел LSI в Гц, заморозка IWDG
+    // при остановленном ядре, такт блока DBGMCU]. Порядок — как в family_table():
+    // длинные префиксы раньше (wba раньше wb).
+    //
+    // Предел LSI — max f_LSI из таблицы «LSI oscillator characteristics»
+    // даташита (по полному диапазону температур, где он разбит), а не номинал:
+    // таймаут IWDG embassy считает от номинала `LSI_FREQ` (40 кГц у F0/F1/F3,
+    // 32 кГц у остальных), а реальный короче в LSI_FREQ / max раз. Даташиты:
+    // C0 DS13866, F0 DS9773, F1 DS5319, F2 DS6329, F3 DS9118, F4 DS8626,
+    // F7 DocID027590, G0 DS12232, G4 DS12288, H5 DS14258, H7 DS12110,
+    // L0 DocID025844 (STM32L053), L1 DocID024330 (STM32L151-A), L4 DS10198,
+    // L5 DS12737, U0 DS14463, U3 DS14830, U5 DS13737, WB DS11929 (LSI1: embassy
+    // не включает LSI2), WBA DS14127 (до 85 °C), WL DS13293.
+    //
+    // Заморозка — «регистр:поле» блока `DBGMCU` из
+    // `stm32-metapac/src/peripherals/dbgmcu_<семейство>.rs` (аксессор блока и
+    // `set_<поле>` его структуры; у WB/WL — регистр CPU1, не `c2…`); такт —
+    // «регистр:поле» `RCC` из `rcc_<версия>.rs` тех семейств, где `DBGMCU`
+    // без него не пишется (`set_dbgen`/`set_dbgmcuen`), у остальных пусто.
+    // Версия `dbgmcu` в метаданных совпадает с префиксом у каждого чипа CHIPS
+    // (stm32-metapac 21: исключения — WB0x и `wl5x-cm0p`, их в CHIPS нет).
+    [
+        ["wba", 33600, "apb1lfzr:dbg_iwdg_stop", ""],
+        ["h5", 33600, "apb1lfzr:iwdg_stop", ""],
+        ["l5", 34000, "apb1fzr1:iwdg", ""],
+        ["u3", 33600, "apb1lfzr:dbg_iwdg_stop", ""],
+        ["u5", 33600, "apb1lfzr:dbg_iwdg_stop", ""],
+        ["f3", 50000, "apb1fzr:iwdg", "apb2enr:dbgmcuen"],
+        ["f4", 47000, "apb1fzr:iwdg", ""],
+        ["g4", 34000, "apb1lfzr:iwdg", ""],
+        ["l4", 34000, "apb1fzr1:iwdg", ""],
+        ["wb", 34000, "apb1fzr1:iwdg", ""],
+        ["wl", 34000, "apb1fzr1:iwdg", ""],
+        ["f7", 47000, "apb1fzr:iwdg", ""],
+        ["h7", 33600, "apb4fzr1:iwdg1", ""],
+        ["f1", 60000, "cr:iwdg", ""],
+        ["f2", 47000, "apb1_fz:iwdg", ""],
+        ["l1", 56000, "apb1_fz:dbg_iwdg_stop", ""],
+        ["c0", 34000, "apb1fzr:iwdg", "apbenr1:dbgen"],
+        ["f0", 50000, "apb1_fz:iwdg", "apb2enr:dbgmcuen"],
+        ["g0", 34000, "apb1fzr:iwdg", "apbenr1:dbgen"],
+        ["l0", 56000, "apb1fzr:iwdg", "apb2enr:dbgen"],
+        ["u0", 34000, "apb1fzr:dbg_iwdg_stop", "dbgcfgr:dbgen"],
+    ]
+}
+
 fn core_override(marker) {
     // Суффикс после дефиса, когда он обозначает КОНКРЕТНОЕ ядро (двухъядерные
     // чипы: STM32H745/747/755/757 — cm7/cm4, STM32WL54/55 — cm4/cm0p) —
@@ -957,15 +1004,30 @@ const RAM_COST = #{
     services: #{ ssh: 17328, rest: 18820, mqtt: 7500 },
 };
 // Сверх статической RAM — под стек: он в `.data`/`.bss` не входит (flip-link
-// кладёт его под ними). Не замерен — без платы глубину стека не снять, — а
-// выбран: futures задач `embassy` и буферы транспортов лежат в `.bss`, так что на
-// стеке только цепочка `poll`, кадры прерываний и форматирование паники.
-// Ошибка в меньшую сторону не тихая: под flip-link переполнение стека — HardFault,
-// а не порча статиков. Больше — и Modbus по UART не взял бы STM32C011D6 (6 KiB).
+// кладёт его под ними). futures задач `embassy` и буферы транспортов лежат в
+// `.bss`, так что на стеке — цепочка `poll` одной задачи, кадры прерываний и
+// форматирование паники. Ошибка в меньшую сторону не тихая: под flip-link
+// переполнение стека — HardFault, а не порча статиков.
+//
+// Замер закраской на плате (MAINTAINING.md, «Оценка RAM»), STM32H743ZI, граф,
+// без транспортов, минута работы: без OTA — 576 байт, с OTA (internal) — 2352
+// (release; dev-профиль — 2336). Разницу даёт один кадр: `poll` задачи узла OTA
+// — 2040 байт. Базовый резерв — 1024 (576 с запасом; больше — и Modbus по UART
+// не взял бы STM32C011D6, 6 KiB), а части, у которых своя глубокая цепочка, —
+// прибавкой (`STACK_EXTRA`, складываются, хоть задачи и не вложены друг в друга).
 const STACK_RESERVE = 1024;
-// RAM, на которой незамеренный `STACK_RESERVE` уже решает, хватит ли стека: у
-// чипов до 8 KiB (L0, F0, C0, младшие F1/G0) хук предупреждает, сколько стеку
-// остаётся, и просит проверить прошивку на плате (`MAINTAINING.md`, «Оценка RAM»).
+// Прибавки к `STACK_RESERVE`. `ota` — до 4 KiB вместе с базой: замер 2352,
+// статическая оценка цепочки задачи OTA по дизассемблеру (кадры `push`/`sub sp`
+// по прямым вызовам) — 2956 плюс `main` и исполнитель. `ssh` — не замерен (на
+// плате без Ethernet обмен ключами не поднять), а оценён так же: цепочка задачи
+// `SSH` — 39624 байта, из них кадры `negotiate` (13712) и
+// `ml_kem::EncapsulationKey::encapsulate_deterministic` (20552) — обмен ключами
+// ML-KEM-768; взято 40 KiB.
+const STACK_EXTRA = #{ ota: 3072, ssh: 40960 };
+// RAM, на которой `STACK_RESERVE` (замерен на H7, на ядрах M0 кадры другие) уже
+// решает, хватит ли стека: у чипов до 8 KiB (L0, F0, C0, младшие F1/G0) хук
+// предупреждает, сколько стеку остаётся, и просит проверить прошивку на плате
+// (`MAINTAINING.md`, «Оценка RAM»).
 const SMALL_RAM = 8192;
 
 // Ответы отсекают чипы ещё до каскада: сетевой стек просит чип с Ethernet,
@@ -1035,8 +1097,9 @@ if !variable::is_set("chip_feature")
         // них. С ручной раскладкой (`write_size`) оценки нет.
         if RAM_LINKS.len() > 0 && !variable::is_set("write_size") {
             let asked = #{ ota: NEED.ota, ext_ota: NEED.ext_ota, config: NEED.config, external: NEED.config && wants_external, graph: NEED.graph };
-            let base = ram_base(RAM_COST, plan(m, m["erase_zero"] == "true", asked, LIMITS));
-            if ram_estimate(RAM_COST, base, RAM_LINKS, []) + STACK_RESERVE > size_in_bytes(m["ram_length"]) {
+            let p = plan(m, m["erase_zero"] == "true", asked, LIMITS);
+            let stack = STACK_RESERVE + if p.ota { STACK_EXTRA.ota } else { 0 };
+            if ram_estimate(RAM_COST, ram_base(RAM_COST, p), RAM_LINKS, []) + stack > size_in_bytes(m["ram_length"]) {
                 return false;
             }
         }
@@ -1199,6 +1262,26 @@ if bank_switch == "" {
 // переопределения через --define, как dual_core и bank_mode: значение целиком
 // выводится из chip_feature.
 variable::set("watchdog_peripheral", if WATCHDOG.contains(suffix) { WATCHDOG[suffix] } else { "IWDG" });
+
+// Сторож по семейству (см. watchdog_family_table()): верхний предел LSI — им
+// `bsp::wdg` поправляет таймаут в цепочке; заморозка IWDG при остановленном ядре —
+// её dev-сборка ставит при взводе. Ключ — самый длинный префикс, как в
+// family_table(). У `IWDG2` (ядро CM4 двухъядерных H7) бита заморозки в
+// `stm32-metapac` нет — заморозки нет (docs/watchdog.md).
+let watchdog_family = ();
+for row in watchdog_family_table() {
+    if suffix.starts_with(row[0]) {
+        watchdog_family = row;
+        break;
+    }
+}
+if watchdog_family == () {
+    abort("chip-select: нет строки сторожа для \"" + suffix
+        + "\" — добавьте семейство в watchdog_family_table() в chip-select.rhai");
+}
+variable::set("lsi_max_hz", watchdog_family[1].to_string());
+variable::set("dbgmcu_freeze", if variable::get("watchdog_peripheral") == "IWDG2" { "" } else { watchdog_family[2] });
+variable::set("dbgmcu_clock", watchdog_family[3]);
 
 // Option byte CPU_FREQ_BOOST (см. CPU_FREQ_BOOST выше): включает в bsp модуль
 // `clocks` с `ensure_cpu_freq_boost()`. Без переопределения через --define:
@@ -1437,13 +1520,16 @@ let instances = if INSTANCES.contains(suffix) { INSTANCES[suffix] } else { #{} }
 // RAM: статическая без транспортов по итоговым OTA, настройкам и графу, и
 // объём региона `RAM`. С ручной раскладкой регион пишет человек — оценки нет
 // (`ram_limit` = `()`), и ничего не помечается.
-let ram_base_now = ram_base(RAM_COST, plan(layout, erase_zero, #{ ota: wants_ota, ext_ota: wants_ext_ota, config: wants_config, external: wants_external, graph: wants_graph }, LIMITS));
+let ram_plan = plan(layout, erase_zero, #{ ota: wants_ota, ext_ota: wants_ext_ota, config: wants_config, external: wants_external, graph: wants_graph }, LIMITS);
+let ram_base_now = ram_base(RAM_COST, ram_plan);
+// Резерв стека без служб: их выбирают позже, и прибавку `ssh` докладывает итог.
+let stack_now = STACK_RESERVE + if ram_plan.ota { STACK_EXTRA.ota } else { 0 };
 let ram_limit = if manual_now { () } else { size_in_bytes(layout["ram_length"]) };
 // Приписка к пункту меню, с которым транспорты `set` (`#{ kind, protocol }`) не
 // помещаются; помещаются или оценки нет — пусто.
 let ram_mark = |set| {
     if ram_limit == () { return ""; }
-    let need = ram_estimate(RAM_COST, ram_base_now, set, []) + STACK_RESERVE;
+    let need = ram_estimate(RAM_COST, ram_base_now, set, []) + stack_now;
     if need > ram_limit { " - DOES NOT FIT in RAM (est. " + kib(need) + " of " + kib(ram_limit) + ")" } else { "" }
 };
 let links = [];
@@ -1682,9 +1768,10 @@ variable::set("ram_estimate", "");
 if ram_limit != () {
     let need = ram_estimate(RAM_COST, ram_base_now, links, services);
     variable::set("ram_estimate", need.to_string());
-    print("ram_estimate: " + need + " байт статической RAM (+ " + STACK_RESERVE + " под стек) из " + ram_limit + " байт RAM");
-    if links.len() > 0 && need + STACK_RESERVE > ram_limit {
-        let why = "не помещается в RAM " + chip_name + " (оценка " + kib(need + STACK_RESERVE) + " из " + kib(ram_limit) + ")";
+    let stack = stack_now + if services.contains("ssh") { STACK_EXTRA.ssh } else { 0 };
+    print("ram_estimate: " + need + " байт статической RAM (+ " + stack + " под стек) из " + ram_limit + " байт RAM");
+    if links.len() > 0 && need + stack > ram_limit {
+        let why = "не помещается в RAM " + chip_name + " (оценка " + kib(need + stack) + " из " + kib(ram_limit) + ")";
         // Стоимости транспортов замерены с графом: без него оценка завышена до
         // ~750 байт (stm32f407ve protobuf-usb-usb-no-graph), отказ — с этим запасом.
         if variable::is_set("links") { throw "links: " + variable::get("links") + " " + why; }
@@ -1694,7 +1781,7 @@ if ram_limit != () {
     if ram_limit <= SMALL_RAM {
         let left = if ram_limit > need { ram_limit - need } else { 0 };
         print("Внимание: у " + chip_name + " RAM " + kib(ram_limit) + ", стеку остаётся около " + left
-            + " байт, а глубина стека шаблона не замерена — проверьте прошивку на плате (MAINTAINING.md, «Оценка RAM»)");
+            + " байт, а глубина стека шаблона замерена только на H7 (резерв " + stack + " байт) — проверьте прошивку на плате (MAINTAINING.md, «Оценка RAM»)");
     }
 }
 
@@ -2770,6 +2857,14 @@ variable::set("rest_ota_client", protocol_clients.to_string());
 variable::set("ssh_ota_client", (protocol_clients + http_connections).to_string());
 variable::set("mqtt_ota_client", (protocol_clients + http_connections
 	+ (if services.contains("ssh") { 1 } else { 0 })).to_string());
+// Сколько из них ждут исхода в вызове на входе `CMD` (`sync_request::RpcService`):
+// все, кроме CANopen — тот шлёт на `ASK`. Число сверяет `const`-assert с
+// `sync_request::PARKED_CALLERS` (`app/src/graph.rs`, `app/src/tasks/ota.rs`).
+variable::set("ota_cmd_clients", (protocol_clients
+	- links.filter(|link| link.protocol == "canopen").len()
+	+ http_connections
+	+ (if services.contains("ssh") { 1 } else { 0 })
+	+ (if services.contains("mqtt") { 1 } else { 0 })).to_string());
 
 // Обёртка EEPROM — только когда настройки лежат в ней; без неё файл с
 // тестами и `pub mod eeprom;` (закрыт тем же условием в lib.rs) — мусор.

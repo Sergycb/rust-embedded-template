@@ -62,7 +62,7 @@ DEFMT_LOG = "info"
 # Аппаратный таймаут сторожа, мкс. Здесь, а не константой в коде, потому что
 # у неё есть обоснование и пара — `bsp::wdg::HW_TIMEOUT_US` (там же почему
 # цифра такая){% if ota == "true" %}; bootloader берёт её оттуда же{% endif %} (docs/watchdog.md).
-WATCHDOG_TIMEOUT_US = "10000000"
+WATCHDOG_TIMEOUT_US = "13000000"
 {%- endif %}
 {%- if ota == "true" %}
 # Страницы раздела, посчитанные при генерации (`memory.x` считается теми же
