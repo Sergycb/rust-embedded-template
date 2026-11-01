@@ -34,7 +34,7 @@
 			"command": "cargo",
 			"args": [
 				"llvm-cov", "nextest", "--workspace", "--exclude", "host-target-tests",
-				"--features", "domain/log{% if ota == 'true' %},domain/signed{% endif %}", "--release",
+				"--features", "domain/log{% if ota == 'true' %},domain/boot{% endif %}", "--release",
 				"--ignore-filename-regex", "xtask",
 				"--lcov", "--output-path", "lcov.info"
 			],

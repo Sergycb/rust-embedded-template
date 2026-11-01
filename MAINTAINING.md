@@ -36,7 +36,7 @@
   суффикса (`f4`, `h7`, `wb`). Целиком раскладка — ~75 тысяч строк, а хуку нужна одна
   запись, поэтому он импортирует только файл своего семейства. Руками не правится.
 - `post-script.rhai` — post-хук: пишет паспорт генерации `.template-answers.toml`
-  (итоговые ответы хука), удаляет `crates-cross/app/src/version.rs` без подписи и
+  (итоговые ответы хука), удаляет `crates-cross/app/src/version.rs` без OTA и
   печатает сводку «что дальше». Команд не выполняет: `cargo update` оттуда убран
   (причина — комментарий в начале `post-script.rhai`), поэтому и `--allow-commands`
   при генерации не нужен.
@@ -172,13 +172,13 @@ bootloader и `STATE`. Отсюда и второй набор цифр в `MEMO
 
 Подпись OTA-образа — не вопрос и не переменная генерации, а часть OTA: есть OTA — есть
 подпись, нет OTA (в том числе если схема не поместилась во flash) — нет и подписи. Всё,
-что к ней относится, закрыто условием по `ota`: фича `signed` у `domain` (проверка подписи — `domain::ota::boot`, ею пользуется `boot`), ключ в `crates-cross/boot`
+что к ней относится, закрыто условием по `ota`: фича `boot` у `domain` (проверка подписи — `domain::ota::boot`, ею пользуется `boot`), ключ в `crates-cross/boot`
 (`boot/build.rs`, `OTA_PUBLIC_KEY_IN_IMAGE`, вызов `screen_update`),
 `running_version` во входе узла OTA (`app/src/graph.rs`, `app/src/tasks/ota.rs`) и файл `crates-cross/app/src/version.rs`
 (`FW_VERSION` для него; без OTA его удаляет `post-script.rhai`). Режима без подписи нет и
 в `domain`/`adapters`. Подпись проверяет bootloader
 (`domain::ota::boot::screen_update`), приложение — только длину, занятость и версию
-(`domain::ota::update::apply_signed`), см. docs/ota.md.
+(`domain::ota::update::apply`), см. docs/ota.md.
 
 `modbus_master` (Modbus master, клиентская половина; по умолчанию `no`) — той же формы:
 строка `yes`/`no`, хук приводит ответ к `"true"`/`"false"`. Смысл он имеет только при

@@ -1,22 +1,22 @@
-//! Решение bootloader'а при старте (под фичей `signed`): пускать ли новый
+//! Решение bootloader'а при старте (под фичей `boot`): пускать ли новый
 //! образ, проверив его подпись. Над **блокирующими** разделами: у
 //! bootloader'а нет исполнителя.
 
-#[cfg(feature = "signed")]
+#[cfg(feature = "boot")]
 use embassy_boot::AlignedBuffer;
-#[cfg(feature = "signed")]
+#[cfg(feature = "boot")]
 use embassy_boot::BlockingFirmwareState;
-#[cfg(feature = "signed")]
+#[cfg(feature = "boot")]
 use embassy_boot::FirmwareUpdaterError as Error;
-#[cfg(feature = "signed")]
+#[cfg(feature = "boot")]
 use embassy_boot::State;
-#[cfg(feature = "signed")]
+#[cfg(feature = "boot")]
 use ports::MAX_WRITE_SIZE;
-#[cfg(feature = "signed")]
+#[cfg(feature = "boot")]
 use ports::PendingImage;
 
 /// Что решил bootloader об обновлении — см. [`screen_update`].
-#[cfg(feature = "signed")]
+#[cfg(feature = "boot")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Screening {
     /// Нового запроса на обмен нет: обычный старт, обмен, прерванный на
@@ -36,11 +36,11 @@ pub enum Screening {
 }
 
 /// Почему образ в `DFU` отвергнут.
-#[cfg(feature = "signed")]
+#[cfg(feature = "boot")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScreenFailure {
     /// Обмен запрошен, а записи о принятом образе нет — образ положили мимо
-    /// `domain::ota::update::apply_signed`, то есть без подписи.
+    /// `domain::ota::update::apply`, то есть без подписи.
     NoRecord,
     /// Длина в записи — ноль или больше `ACTIVE`.
     Length,
@@ -82,7 +82,7 @@ pub enum ScreenFailure {
 ///
 /// Ошибка флеша при чтении магии `STATE`, при чтении `DFU` (журнал пуст —
 /// обмен не начинался) или при снятии запроса.
-#[cfg(feature = "signed")]
+#[cfg(feature = "boot")]
 pub fn screen_update<DFU, STATE>(
     dfu: &mut DFU,
     state: &mut STATE,
@@ -132,7 +132,7 @@ where
 }
 
 /// Сама проверка записи и подписи — без решения, что делать с отказом.
-#[cfg(feature = "signed")]
+#[cfg(feature = "boot")]
 fn check_pending<DFU: embedded_storage::nor_flash::NorFlash>(
     dfu: &mut DFU,
     capacity: u32,
@@ -337,7 +337,7 @@ mod tests {
     /// Проверка нового образа bootloader'ом (`screen_update`): настоящие ключи
     /// `salty` и — для отката — настоящий обмен `embassy-boot` над теми же
     /// фейками, что и выше.
-    #[cfg(feature = "signed")]
+    #[cfg(feature = "boot")]
     mod screening {
         use embassy_boot::{
             BlockingFirmwareState, BootLoader, BootLoaderConfig, State as BootState,

@@ -59,6 +59,6 @@ ports = { workspace = true }
 adapters = { workspace = true }
 {%- endif %}
 {%- if ota == "true" %}
-# Проверка версии образа в тесте отката (`domain::ota::update::apply_signed`).
+# Проверка версии образа в тесте отката (`domain::ota::update::apply`).
 domain = { workspace = true }
 {%- endif %}

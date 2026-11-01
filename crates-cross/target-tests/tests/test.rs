@@ -159,8 +159,8 @@ mod tests {
     }
 {%- endif %}
 
-    /// `prepare(len)` стирает раздел так, как ждёт `embassy-boot`, и ровно
-    /// столько страниц, сколько занимает образ.
+    /// `prepare(len)` стирает раздел так, как ждёт `embassy-boot`, и целиком —
+    /// всё, что обмен перенесёт в `ACTIVE`, а не только страницы под образ.
     ///
     /// Первое: стёртый флеш читается тем же значением, которое считает стёртым
     /// `embassy-boot`. Проверка выглядит тавтологией ровно до того момента, как
@@ -171,15 +171,15 @@ mod tests {
     /// Ожидаемое значение подставляется при генерации из того же признака, по
     /// которому включается фича, так что тест сверяет две стороны одного
     /// решения: что мы сказали `embassy-boot` и что на самом деле делает чип.
-    /// Эта часть идёт первой и выполняется всегда.
     ///
-    /// Второе: страниц стёрто не меньше (иначе хвост лёг бы в нестёртую память)
-    /// и не больше (иначе незачем было брать длину). Без этого обе половины
-    /// смысла не проверялись ничем: все прочие вызовы `prepare` в тестах
-    /// укладываются в одну страницу, и «округляем вверх» там не отличить ни от
-    /// «округляем вниз», ни от «стираем всё».
+    /// Второе: короткий образ, а стёрты и последняя страница `ACTIVE`, и
+    /// запасная за ней. Подпись покрывает только образ, а обмен копирует
+    /// раздел целиком: нестёртый хвост с остатками прошлых загрузок уехал бы в
+    /// `ACTIVE` непроверенным (docs/ota.md, «Приём образа»). Все прочие вызовы
+    /// `prepare` в тестах укладываются в одну страницу, и «стираем всё» там не
+    /// отличить от «стираем под образ».
     #[test]
-    async fn prepare_erases_only_what_the_image_needs(board: Board) {
+    async fn prepare_erases_what_the_swap_moves(board: Board) {
         use ports::FirmwareUpdate;
 
 {%- if ota_store == "external" %}
@@ -189,15 +189,28 @@ mod tests {
 {%- endif %}
 
         let mut ota = updater(board.firmware);
+        let page = ota.erase_size();
+        let capacity = ota.capacity().expect("вместимость раздела");
+        // Последняя страница `ACTIVE`: дальше всего от короткого образа.
+        let tail = capacity - page;
 
         // Пачкаем раздел перед стиранием: иначе тест зелёный и в случае, когда
         // `prepare` не сделал ничего, а байты остались стёртыми с прошлого
         // прогона. Мусор — инверсия ожидаемого, чтобы он был мусором и там,
-        // где стёртое состояние нулевое.
-        ota.prepare(u32::try_from(DIRTY.len()).expect("образ короче 4 ГиБ"))
+        // где стёртое состояние нулевое. Запасная страница (`capacity`) —
+        // туда ляжет запись для bootloader'а.
+        ota.prepare(capacity)
             .await
             .expect("раздел DFU должен стираться");
-        ota.write(0, &DIRTY).await.expect("запись мусора");
+        ota.write(0, &DIRTY).await.expect("запись мусора в начало");
+        if tail != 0 {
+            ota.write(tail, &DIRTY)
+                .await
+                .expect("запись мусора в последнюю страницу ACTIVE");
+        }
+        ota.write(capacity, &DIRTY)
+            .await
+            .expect("запись мусора в запасную страницу");
         // Прочитанный мусор оседает в кэше данных (D-cache M7, `ICACHE`
         // L5/U5/H5, ART F2/F4): стирание ниже обязано его не оставить, иначе
         // голова раздела прочитается мусором, а не стёртой.
@@ -206,6 +219,7 @@ mod tests {
         assert_eq!(dirty, DIRTY[..8], "мусор не записался");
 
         ota.prepare(8).await.expect("раздел DFU должен стираться");
+
         let mut head = [!ERASED; 8];
         ota.read(0, &mut head)
             .await
@@ -216,50 +230,20 @@ mod tests {
              проверьте фичу flash-erase-zero и признак erase_zero в chip-select.rhai"
         );
 
-        let page = ota.erase_size();
-        let capacity = ota.capacity().expect("вместимость раздела");
-
-        // Трёх страниц нет — проверять нечего: на чипах с сектором в четверть
-        // мегабайта весь раздел это одна-две страницы, и «лишнего не стёрли»
-        // там не выразить. Молча зеленеть тест при этом не должен.
-        if capacity < page * 3 {
-            defmt::warn!(
-                "prepare_erases_only_what_the_image_needs: в разделе {} байт при странице {} — \
-                 проверка пропущена",
-                capacity,
-                page
-            );
-            return;
-        }
-
-        // Метки на второй и третьей странице: одна попадёт под стирание,
-        // другая обязана уцелеть.
-        ota.prepare(capacity).await.expect("стереть весь раздел");
-        ota.write(page, &DIRTY)
-            .await
-            .expect("метка на 2-й странице");
-        ota.write(page * 2, &DIRTY)
-            .await
-            .expect("метка на 3-й странице");
-
-        // На байт больше страницы — значит страниц нужно две.
-        ota.prepare(page + 1).await.expect("стереть под образ");
-
         let mut read = [!ERASED; 32];
-        ota.read(page, &mut read)
+        ota.read(tail, &mut read)
             .await
-            .expect("чтение 2-й страницы");
+            .expect("чтение последней страницы ACTIVE");
         assert_eq!(
             read, [ERASED; 32],
-            "вторую страницу образ занимает, а она не стёрта: длина округляется вниз"
+            "хвост DFU за образом не стёрт — обмен перенёс бы его в ACTIVE непроверенным"
         );
-
-        ota.read(page * 2, &mut read)
+        ota.read(capacity, &mut read)
             .await
-            .expect("чтение 3-й страницы");
+            .expect("чтение запасной страницы");
         assert_eq!(
-            read, DIRTY,
-            "стёрта страница за пределами образа — prepare стирает больше нужного"
+            read, [ERASED; 32],
+            "запасная страница не стёрта — запись для bootloader'а легла бы на мусор"
         );
     }
 
@@ -357,8 +341,7 @@ mod tests {
             .await
             .expect("раздел DFU должен принимать запись");
 
-        let refused =
-            domain::ota::update::apply_signed(&mut ota, RUNNING, &[0u8; 64], LENGTH).await;
+        let refused = domain::ota::update::apply(&mut ota, RUNNING, &[0u8; 64], LENGTH).await;
         assert!(
             matches!(refused, Err(UpdateError::Rollback { .. })),
             "старый образ должен отвергаться отдельной ошибкой, а не общей"
@@ -379,8 +362,7 @@ mod tests {
             .await
             .expect("раздел DFU должен принимать запись");
 
-        let accepted =
-            domain::ota::update::apply_signed(&mut ota, RUNNING, &[0u8; 64], LONGER).await;
+        let accepted = domain::ota::update::apply(&mut ota, RUNNING, &[0u8; 64], LONGER).await;
         ota.mark_booted().await.expect("снять запрос на обмен");
         assert!(
             accepted.is_ok(),

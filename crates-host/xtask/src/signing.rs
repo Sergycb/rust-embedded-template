@@ -7,8 +7,8 @@ use anyhow::Context;
 use crate::image::{PUBLIC_KEY_SYMBOL, image_symbol};
 
 /// Открытый ключ, которым устройство проверяет подпись. В отличие от закрытого
-/// — коммитится: именно он попадает в прошивку (его читает
-/// `crates-cross/app/build.rs`), и без него собранный образ не примет ни одно
+/// — коммитится: именно он попадает в bootloader (его читает
+/// `crates-cross/boot/build.rs`), и без него собранный образ не примет ни одно
 /// устройство.
 pub const PUBLIC_KEY_FILE: &str = "ota-public-key.bin";
 
@@ -52,7 +52,7 @@ pub fn sign_image(image_path: &Path, image: &[u8], seed: &[u8; 32]) -> Result<()
     println!("подпись: {} (64 байта)", path.display());
     println!(
         "устройству нужны обе величины: подпись и длина образа ({} байт) — их несёт первая \
-         команда обновления (Start), применяет узел domain::ota через apply_signed",
+         команда обновления (Start), применяет узел domain::ota через apply",
         image.len(),
     );
     Ok(())

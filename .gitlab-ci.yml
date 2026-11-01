@@ -99,7 +99,7 @@ host:test:
     # Покрытие без порога (README, «Что проверяет CI»). Формат cobertura — тот,
     # который GitLab показывает прямо в диффе merge request'а.
     - cargo llvm-cov nextest --workspace --exclude host-target-tests
-      --features domain/log{% if ota == "true" %},domain/signed{% endif %} --release --ignore-filename-regex 'xtask' --summary-only
+      --features domain/log{% if ota == "true" %},domain/boot{% endif %} --release --ignore-filename-regex 'xtask' --summary-only
     # Второй вызов ничего не пересобирает и не перезапускает: `report` строит
     # отчёт по данным, которые оставил предыдущий шаг. Два вызова нужны потому,
     # что форматов за раз бывает только один — а нужны оба: таблица в лог (её

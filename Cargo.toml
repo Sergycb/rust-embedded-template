@@ -318,7 +318,7 @@ zencan-build           = { version = "0.0.5" }
 embedded-can           = { version = "0.4.1" }
 # {%- endif %}
 # {%- if ota == "true" %}
-# Проверка подписи образа — под фичей `domain/signed`. Из двух реализаций,
+# Проверка подписи образа — под фичей `domain/boot`. Из двух реализаций,
 # которые понимает embassy-boot, взята меньшая: `ed25519-dalek` тянет
 # `curve25519-dalek` с `sha2`, salty самодостаточен и написан под
 # микроконтроллеры. `slow-motion` — портируемая tweetnacl-реализация вместо

@@ -121,7 +121,7 @@ Compose-site — модули задач (подмодули `crates-cross/app/s
 
 ### Логика — функции над портами; типы, которыми она с ними говорит, — в `ports`
 
-{% if ota == "true" %}Приём образа (`download::Transfer`), применение обновления (`update::apply_signed`),
+{% if ota == "true" %}Приём образа (`download::Transfer`), применение обновления (`update::apply`),
 версия (`ota::version::*`), решение bootloader'а (`ota::boot::*`) — функции над портами, а действия автоматов зовут их. {% endif %}Всё, чем
 логика разговаривает с портами — ошибки, — объявлено в `ports`: тот стал словарём
 домена, а не только набором трейтов. Своё в `domain` — только контексты узлов{% if graph == "true" %}
@@ -467,7 +467,7 @@ bootloader'е (`crates-cross/boot`), который подпись и прове
 **Применение обновления — тоже через порт.** `mark_updated` — метод
 `FirmwareUpdate`; запись о подписи (`ports::PendingImage`) кладётся обычным
 `write` в запасную страницу `DFU`, отдельного трейта под подпись нет. Порядок
-проверок перед вызовом — `domain::ota::update::apply_signed`, и он
+проверок перед вызовом — `domain::ota::update::apply`, и он
 host-тестируем. Саму подпись
 проверяет bootloader (`domain::ota::boot::screen_update`) — `docs/ota.md`.
 {%- endif %}

@@ -36,7 +36,7 @@
 //! так хост узнаёт исход образа до сброса, а не по факту перезагрузки.
 //!
 //! Образ всегда подписан: `Start` без подписи отвергается до стирания, а
-//! `Finish` применяет образ [`apply_signed`](crate::ota::update::apply_signed)
+//! `Finish` применяет образ [`apply`](crate::ota::update::apply)
 //! — с проверкой версии против версии этой прошивки, которую узел получает во
 //! входе (`OtaWiring::running_version`,
 // {%- if graph == "true" %}
@@ -384,7 +384,7 @@ where
     }
 
     /// `Finish`: сверка длины, затем применение — проверки и запись подписи
-    /// для bootloader'а ([`apply_signed`](crate::ota::update::apply_signed));
+    /// для bootloader'а ([`apply`](crate::ota::update::apply));
     /// не от владельца — `Busy`, приём продолжается.
     async fn finish(
         &mut self,
@@ -396,14 +396,12 @@ where
             return busy(s, client, served).into();
         }
         let outcome = match s.transfer.finish(&mut *self.flash).await {
-            Ok(len) => {
-                update::apply_signed(&mut *self.flash, *self.running_version, &s.signature, len)
-                    .await
-                    .map_err(|err| {
-                        warn!("ota: применение отвергнуто: {:?}", &err);
-                        update_rejection(&err)
-                    })
-            }
+            Ok(len) => update::apply(&mut *self.flash, *self.running_version, &s.signature, len)
+                .await
+                .map_err(|err| {
+                    warn!("ota: применение отвергнуто: {:?}", &err);
+                    update_rejection(&err)
+                }),
             Err(err) => {
                 warn!("ota: приём не сошёлся: {:?}", &err);
                 Err(download_rejection(&err))
