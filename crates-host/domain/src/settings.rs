@@ -443,7 +443,7 @@ mod tests {
         let mut first = Settings::new(Flash::erased(), 0..512);
         first.write(5, b"kept").await.expect("запись");
         first.write(5, b"newest").await.expect("перезапись");
-        let mem = core::mem::take(&mut first.map.flash().mem);
+        let mem = core::mem::take(&mut first.flash().mem);
 
         let mut second = Settings::new(Flash { mem }, 0..512);
         let mut scratch = [0u8; 32];
@@ -460,7 +460,7 @@ mod tests {
         let mut settings = Settings::new(Flash::erased(), 0..512);
         settings.write(1, b"one").await.expect("запись 1");
         settings.write(2, b"two").await.expect("запись 2");
-        let mut mem = core::mem::take(&mut settings.map.flash().mem);
+        let mut mem = core::mem::take(&mut settings.flash().mem);
         mem[page * 256..][..256].fill(0x5A);
         Settings::new(Flash { mem }, 0..512)
     }
@@ -489,7 +489,7 @@ mod tests {
     async fn a_write_to_an_unrepairable_partition_erases_it_first() {
         let mut settings = Settings::new(Flash::erased(), 0..512);
         settings.write(1, b"one").await.expect("запись 1");
-        let mut mem = core::mem::take(&mut settings.map.flash().mem);
+        let mut mem = core::mem::take(&mut settings.flash().mem);
         // Маркеры состояния страницы — её первый и последний байт.
         for marker in [0, 255, 256, 511] {
             mem[marker] = 0;

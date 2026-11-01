@@ -211,7 +211,7 @@ embassy-time = { workspace = true, features = ["mock-driver", "generic-queue-8"]
 # Реализация критической секции для хоста: её просит `MockDriver`. На плате её
 # даёт `cortex-m` фичей `critical-section-single-core` (crates-cross/Cargo.toml).
 critical-section = { workspace = true, features = ["std"] }
-# {%- if has_net == "true" or has_usb == "true" or ota == "true" %}
+# {%- if has_net == "true" or has_usb == "true" or ota == "true" or settings_port == "true" %}
 # {%- if has_net == "true" or has_usb == "true" %}
 # Узлы транспортов тестируются над драйверами без шины из `adapters_hw::fake`.
 # {%- endif %}
@@ -221,6 +221,10 @@ critical-section = { workspace = true, features = ["std"] }
 # {%- endif %}
 # {%- if ota == "true" %}
 # Проверка образа bootloader'ом (`ota::boot`) — над флешем в памяти
+# (`adapters_hw::fake::MemFlash`).
+# {%- endif %}
+# {%- if settings_port == "true" %}
+# Хранилище настроек (`settings`) и его потребители — над флешем в памяти
 # (`adapters_hw::fake::MemFlash`).
 # {%- endif %}
 adapters-hw = { workspace = true, features = ["fake"] }

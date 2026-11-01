@@ -83,7 +83,7 @@ arbitrary_source_item_ordering = "warn"
 # Крейты самого проекта: порты/адаптеры domain объявлены здесь, чтобы версия
 # и путь были в одном месте, как у внешних зависимостей.
 ports        = { path = "crates-host/ports" }
-# {%- if has_net == "true" or has_usb == "true" or ota == "true" %}
+# {%- if has_net == "true" or has_usb == "true" or ota == "true" or settings_port == "true" %}
 adapters-hw  = { path = "crates-host/adapters-hw" }
 # {%- endif %}
 # {%- if adapters_logic == "true" %}

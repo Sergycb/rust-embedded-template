@@ -39,7 +39,7 @@ embassy-boot = { workspace = true }
 # `yield_now` между страницами стирания в `ota::Updater::prepare`.
 embassy-futures = { workspace = true }
 # {%- endif %}
-# {%- if ota == "true" or config == "true" %}
+# {%- if ota == "true" or settings_port == "true" %}
 embedded-storage = { workspace = true }
 embedded-storage-async = { workspace = true }
 # {%- endif %}

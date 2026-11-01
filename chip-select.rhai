@@ -2772,8 +2772,9 @@ if variable::get("graph") != "true" {
 if variable::get("has_stub") != "true" {
     file::delete("crates-cross/bsp/src/stub.rs");
 }
-// Флеш в памяти (`fake::MemFlash`) — тестам разделов OTA и хранилища настроек.
-let mem_flash = variable::get("ota") == "true" || variable::get("config") == "true";
+// Флеш в памяти (`fake::MemFlash`) — тестам разделов OTA и хранилища настроек
+// (`domain::settings` есть и у CANopen без раздела — `settings_port`).
+let mem_flash = variable::get("ota") == "true" || variable::get("settings_port") == "true";
 if !mem_flash {
     file::delete("crates-host/adapters-hw/src/fake/flash.rs");
 }

@@ -17,7 +17,7 @@
 //! пока проект не подставит свои (`bsp::stub`; фичу `fake` включает `bsp`); на
 //! хосте сюда ходят тесты `adapters` и `domain`.
 // {%- endif %}
-// {%- if ota == "true" or config == "true" %}
+// {%- if ota == "true" or settings_port == "true" %}
 // {%- if has_usb == "true" or has_net == "true" %}
 //!
 // {%- endif %}
@@ -32,7 +32,7 @@
 #[cfg(not(target_os = "none"))]
 pub mod cable;
 // {%- endif %}
-// {%- if ota == "true" or config == "true" %}
+// {%- if ota == "true" or settings_port == "true" %}
 
 /// Флеш в памяти. Только на хосте, по той же причине, что и кабель: ему
 /// нужен `alloc`.
