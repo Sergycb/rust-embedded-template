@@ -37,6 +37,17 @@ pub static CMD: RpcService<
     domain::ota::OtaReply,
     { domain::ota::CMD_BYTES },
 > = RpcService::new();
+{%- if ota_cmd_clients != "0" %}
+
+// Клиентов `CMD` ({{ ota_cmd_clients }} — задачи протоколов, кроме CANopen: тот на
+// `ASK`) не больше, чем `RpcService` паркует как следует: сверх
+// `PARKED_CALLERS` ждущие будят и вытесняют друг друга по кругу. Не сходится —
+// раздели вход, а не поднимай константу.
+const _: () = assert!(
+    {{ ota_cmd_clients }} <= sync_request::PARKED_CALLERS,
+    "клиентов входа CMD узла OTA больше sync_request::PARKED_CALLERS: раздели вход"
+);
+{%- endif %}
 
 /// Вход команд без ожидания исхода.{% if askers > 0 %} Клиенты — задачи CANopen, по ребру на транспорт с квотой
 /// в одну команду: очередь (`Q`) — сумма квот, `E` — число рёбер.{% else %} Клиентов у него нет: очередь и

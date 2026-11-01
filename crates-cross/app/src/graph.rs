@@ -292,6 +292,25 @@ const _: () = assert!(
     "копий HTTP в графе столько же, сколько HTTP_CONNECTIONS в [env]"
 );
 {%- endif %}
+{%- if ota == "true" and ota_cmd_clients != "0" %}
+
+// Вход `CMD` узла `OTA` — `RpcService`: клиенты ждут исхода в вызове, а
+// ждущих сверх `PARKED_CALLERS` сервис паркует расточительно — регистрация в
+// полный список будит всех, и они вытесняют друг друга по кругу
+// (`sync-request`, документация константы). Клиентов — {{ ota_cmd_clients }}: узлы
+// протоколов, кроме CANopen (тот на `ASK`), копии `HTTP`, `SSH`, `MQTT`; число
+// считает генерация. Не сходится — раздели вход, а не поднимай константу.
+//
+// Константа — копия `sync_request::PARKED_CALLERS` (`sync-request/src/lib.rs`
+// ревизии `rust-lib` из `Cargo.toml`): с графом `app` от `sync-request` не
+// зависит, а `supervisor` отдаёт его только скрытым `__private`. Сменится в
+// `sync-request` — правьте здесь.
+const PARKED_CALLERS: usize = 4;
+const _: () = assert!(
+    {{ ota_cmd_clients }} <= PARKED_CALLERS,
+    "клиентов входа CMD узла OTA больше PARKED_CALLERS (sync-request): раздели вход"
+);
+{%- endif %}
 
 /// Как часто тикер графа опрашивает сторожей узлов и кормит железо.
 ///
