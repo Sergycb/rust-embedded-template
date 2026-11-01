@@ -434,8 +434,8 @@ fn ask(label, values, texts, default_value) {
 /// Хранится без `.git` и завершающего `/`: Cargo.toml дописывает `.git` сам, а
 /// allow-git в deny.toml сравнивает адрес без него. Пробелов, кавычек и `\`
 /// в адресе быть не может — проверка одна и для ввода, и для `--define`:
-/// строка уезжает литералом в TOML (`git = "…"` в Cargo.toml, паспорт
-/// `.template-answers.toml`), и кавычка в ней сломала бы манифест.
+/// строка уезжает литералом в TOML (`git = "…"` в Cargo.toml), и кавычка в
+/// ней сломала бы манифест.
 fn repo_url(name, what) {
     let url = "";
     if variable::is_set(name) {
@@ -1871,9 +1871,6 @@ variable::set("config_paged", "false");
 // тогда ему нужны `FLASH_BYTES` и обёртки; иначе все три раздела — прямо
 // над `Flash`.
 variable::set("boot_partitioned", "false");
-// Кто пишет memory.x — для паспорта генерации (`post-script.rhai`): по одному
-// `write_size` этого не понять, его хук выставляет в обеих ветках.
-variable::set("memory_layout", if variable::is_set("write_size") { "manual" } else { "generated" });
 if variable::is_set("write_size") {
     variable::set("ota", if wants_ota { "true" } else { "false" });
     variable::set("ota_store", if wants_ext_ota { "external" } else { "internal" });
