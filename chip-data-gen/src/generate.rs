@@ -230,7 +230,11 @@ pub fn run() -> anyhow::Result<()> {
         with_external,
     );
 
-    let stamp = format_source_stamp(&declared_embassy_version(&repo_root)?, &probe_rs_version()?);
+    let stamp = format_source_stamp(
+        &declared_embassy_version(&repo_root)?,
+        &cargo_metadata.stm32_metapac_version,
+        &probe_rs_version()?,
+    );
     let mut files = vec![
         ("chips.rhai".to_owned(), format_chip_list(&suffixes, &stamp)),
         (

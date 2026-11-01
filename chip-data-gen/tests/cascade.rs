@@ -16,8 +16,8 @@ use std::{
 };
 
 use chip_data_gen::{
-    emit::SOURCE_STAMP_PREFIX,
-    source::{declared_embassy_version, repo_root},
+    emit::source_stamp_versions,
+    source::{declared_embassy_version, repo_root, resolved_metapac_version},
 };
 use rhai::{
     AST, Array, Dynamic, Engine, EvalAltResult, Module, Scope,
@@ -1117,18 +1117,28 @@ fn state_and_config_lengths_are_multiples_of_their_erase_size() {
 /// dependabot/renovate, и молча: списки при этом остались бы от старой версии,
 /// а расхождение вылезло бы у пользователя шаблона при генерации.
 ///
-/// Штамп пишет `chip-data-gen` (`emit::format_source_stamp`); версию и начало
-/// штампа тест берёт у него же.
+/// То же со `stm32-metapac`: `embassy-stm32` тянет его диапазоном, и минорный
+/// релиз metapac меняет данные при той же версии `embassy-stm32`. Её тест
+/// разрешает так же, как генератор, — `cargo metadata` без lock-файла, то есть
+/// с доступом к реестру.
+///
+/// Штамп пишет `chip-data-gen` (`emit::format_source_stamp`); начало штампа и
+/// версии тест берёт у него же.
 #[test]
 fn generated_blocks_match_the_declared_embassy_version() {
     let declared = declared_embassy_version(&repo_root())
         .expect("версия embassy-stm32 в crates-cross/Cargo.toml");
+    let metapac = resolved_metapac_version(&repo_root())
+        .unwrap_or_else(|err| panic!("версия stm32-metapac от cargo metadata: {err:#}"));
 
-    let expected = format!("{SOURCE_STAMP_PREFIX}{declared} (crates-cross/Cargo.toml)");
+    let expected = source_stamp_versions(&declared, &metapac);
+    let list = read_chip_list();
     assert!(
-        read_chip_list().contains(&expected),
-        "chip-data/ собран не под embassy-stm32 {declared} — перегенерируйте списки:\n\
-         cargo run --manifest-path chip-data-gen/Cargo.toml"
+        list.contains(&format!("{expected},")),
+        "chip-data/ собран не под embassy-stm32 {declared} и stm32-metapac {metapac} \
+         (штамп: {:?}) — перегенерируйте списки:\n\
+         cargo run --manifest-path chip-data-gen/Cargo.toml",
+        list.lines().find(|line| line.starts_with("// Источник")),
     );
 }
 

@@ -52,6 +52,9 @@ pub(crate) struct CargoMetadata {
     /// фичей `metadata` — отдельно эту зависимость никуда добавлять не
     /// нужно, только найти, куда Cargo её скачал.
     pub(crate) stm32_metapac_chips_dir: PathBuf,
+    /// Разрешённая версия `stm32-metapac` — в штамп источника: диапазон у
+    /// `embassy-stm32` её не фиксирует (`emit::source_stamp_versions`).
+    pub(crate) stm32_metapac_version: String,
 }
 
 /// Временная копия всего репозитория (без `target/`/`.git`/самого
@@ -189,10 +192,28 @@ pub(crate) fn resolve_cargo_metadata(repo_root: &Path) -> anyhow::Result<CargoMe
         );
     }
 
+    let stm32_metapac_version = stm32_metapac["version"]
+        .as_str()
+        .context("stm32-metapac: нет поля version")?
+        .to_owned();
+
     Ok(CargoMetadata {
         embassy_chip_features,
         stm32_metapac_chips_dir,
+        stm32_metapac_version,
     })
+}
+
+/// Версия `stm32-metapac`, которую `cargo metadata` разрешает для
+/// `crates-cross` сейчас, — та, по которой генератор собрал бы `chip-data/`.
+///
+/// # Errors
+///
+/// Как у генератора: не скопировался репозиторий, не отработал `cargo
+/// metadata` (резолв без lock-файла — нужен доступ к реестру), в графе нет
+/// `stm32-metapac`.
+pub fn resolved_metapac_version(repo_root: &Path) -> anyhow::Result<String> {
+    Ok(resolve_cargo_metadata(repo_root)?.stm32_metapac_version)
 }
 
 /// Часть суффикса, которую нужно сверять с `probe-rs chip list` — до первого

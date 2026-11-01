@@ -325,9 +325,27 @@ pub(crate) fn format_bank_modes(modes: &BTreeMap<&str, &'static str>) -> String 
     out
 }
 
-pub(crate) fn format_source_stamp(embassy_version: &str, probe_rs_version: &str) -> String {
+/// Штамп источников: [`source_stamp_versions`] и версия probe-rs — справочно,
+/// она у каждого мейнтейнера своя.
+pub(crate) fn format_source_stamp(
+    embassy_version: &str,
+    metapac_version: &str,
+    probe_rs_version: &str,
+) -> String {
     format!(
-        "{SOURCE_STAMP_PREFIX}{embassy_version} (crates-cross/Cargo.toml), probe-rs {probe_rs_version}\n"
+        "{}, probe-rs {probe_rs_version}\n",
+        source_stamp_versions(embassy_version, metapac_version)
+    )
+}
+
+/// Начало штампа, которое сверяет тест: объявленная версия `embassy-stm32` и
+/// разрешённая `stm32-metapac`. Вторая нужна потому, что `embassy-stm32`
+/// тянет metapac диапазоном (`"21"`), а lock-файла у генератора нет: минорный
+/// релиз metapac молча меняет данные при той же версии `embassy-stm32`.
+#[must_use]
+pub fn source_stamp_versions(embassy_version: &str, metapac_version: &str) -> String {
+    format!(
+        "{SOURCE_STAMP_PREFIX}{embassy_version} (crates-cross/Cargo.toml), stm32-metapac {metapac_version}"
     )
 }
 

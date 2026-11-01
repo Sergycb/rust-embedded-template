@@ -1177,19 +1177,24 @@ Rust-код генератора: гоняет реальный скрипт ч�
 
 ### Когда перегенерировать данные
 
-Списки в `chip-data/` собраны из чип-фич конкретной версии `embassy-stm32` и из
-`probe-rs chip list` конкретной установленной версии probe-rs. Обе версии записаны
-штампом в начале `chip-data/chips.rhai`:
+Списки в `chip-data/` собраны из чип-фич конкретной версии `embassy-stm32`,
+метаданных `stm32-metapac`, которую он разрешил, и из `probe-rs chip list`
+конкретной установленной версии probe-rs. Все три версии записаны штампом в начале
+`chip-data/chips.rhai`:
 
 ```
-// Источник: embassy-stm32 0.6.0 (crates-cross/Cargo.toml), probe-rs <версия>
+// Источник: embassy-stm32 0.6.0 (crates-cross/Cargo.toml), stm32-metapac <версия>, probe-rs <версия>
 ```
 
-Тест `generated_blocks_match_the_declared_embassy_version` сверяет штамп с версией,
-объявленной в `crates-cross/Cargo.toml`, и падает, если они разошлись. Это не формальность:
-версию поднимает dependabot/renovate, молча, а списки при этом остались бы от старой —
-расхождение вылезло бы уже у пользователя шаблона, при генерации. Увидели красный тест
-— перегенерируйте:
+Тест `generated_blocks_match_the_declared_embassy_version` сверяет штамп с версией
+`embassy-stm32`, объявленной в `crates-cross/Cargo.toml`, и с версией `stm32-metapac`,
+которую сейчас разрешает `cargo metadata`, и падает, если хоть одна разошлась. Это не
+формальность: версию `embassy-stm32` поднимает dependabot/renovate, молча, а metapac
+`embassy-stm32` тянет диапазоном (`"21"`) — lock-файла у генератора нет, и минорный
+релиз metapac меняет данные при той же версии `embassy-stm32`. Списки при этом
+остались бы от старой — расхождение вылезло бы уже у пользователя шаблона, при
+генерации. Тест резолвит граф, как генератор, без lock-файла — ему нужен доступ к
+реестру crates.io. Увидели красный тест — перегенерируйте:
 
 ```
 cargo run --manifest-path chip-data-gen/Cargo.toml
