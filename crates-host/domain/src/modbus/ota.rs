@@ -24,11 +24,9 @@
 //! секунды: тайм-аут master'а на `Start` должен быть длиннее стирания.
 
 use defmt_or_log::warn;
-use ports::{
-    Bits, BitsMut, CHUNK_BYTES, Chunk, Exception, OtaCommand, Progress, Registers, SIGNATURE_BYTES,
-    Words, WordsMut, reply_code,
-};
+use ports::{CHUNK_BYTES, Chunk, Exception, OtaCommand, Progress, SIGNATURE_BYTES, reply_code};
 
+use crate::modbus::{Bits, BitsMut, Registers, Words, WordsMut};
 use crate::ota::OtaClient;
 
 /// Начало окна OTA — высоко в адресах, чтобы не мешать карте проекта.
@@ -224,10 +222,10 @@ fn bytes(values: Words<'_>, from: u16, out: &mut [u8]) {
 mod tests {
     use core::task::{Context, Poll, Waker};
 
-    use ports::{Exception, Registers, Words, WordsMut};
+    use ports::Exception;
 
     use super::{OTA_BASE, OtaRegisters};
-    use crate::modbus::EmptyRegisters;
+    use crate::modbus::{EmptyRegisters, Registers, Words, WordsMut};
     use crate::ota::tests::{LAYOUT, Node, live};
 
     /// Запись FC16 по `start`, пока рядом крутится узел OTA.

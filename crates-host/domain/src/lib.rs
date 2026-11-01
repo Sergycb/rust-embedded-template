@@ -33,8 +33,8 @@ pub mod protobuf;
 // {%- endif %}
 // {%- if has_modbus == "true" %}
 
-/// Modbus: slave над портом `ports::Registers` — обработчик кадра для узла
-/// протокола — см. модуль.
+/// Modbus: slave над картой регистров `modbus::Registers` — обработчик
+/// кадра для узла протокола — см. модуль.
 // {%- if modbus_master == "true" %}
 /// Master — функции поверх `ports::ModbusClient`.
 // {%- endif %}

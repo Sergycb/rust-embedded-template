@@ -16,12 +16,14 @@
 //! (turnaround delay спецификации, обычно 100–200 мс), — тоже дело
 //! вызывающего.
 
-use ports::{Bits, Exception, MAX_PDU, MasterError, ModbusClient, Words};
+use ports::{Exception, MAX_PDU, MasterError, ModbusClient};
 use rusty_modbus_codec::{ResponsePdu, decode_response};
 use rusty_modbus_types::{
     MAX_READ_COILS, MAX_READ_DISCRETE_INPUTS, MAX_READ_REGISTERS, MAX_WRITE_COILS,
     MAX_WRITE_REGISTERS,
 };
+
+use crate::modbus::{Bits, Words};
 
 /// Длина PDU любого запроса FC01–06: функция и два 16-битных поля.
 const HEAD: usize = 5;

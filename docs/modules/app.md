@@ -184,7 +184,7 @@ generic, поэтому узел называет канал этим псевд
 
 Свою карту проект подставляет в одном месте — псевдоним `Map` в
 `crates-cross/app/src/modbus.rs` (по умолчанию `domain::modbus::EmptyRegisters`):
-тип реализует `ports::Registers` и живёт в `domain`. Карта строится через
+тип реализует `domain::modbus::Registers` и живёт в `domain`. Карта строится через
 `Map::default()`; без `Default` замените эту одну строку в `crate::modbus::handle`
 своим конструктором. Узлы{% if graph == "true" %} и граф{% endif %} тип берут оттуда и правок не требуют.
 {%- endif %}

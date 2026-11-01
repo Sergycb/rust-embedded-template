@@ -9,7 +9,7 @@
 
 use embassy_sync::once_lock::OnceLock;
 
-/// Карта проекта — реализация `ports::Registers`. Сейчас пуста; проект
+/// Карта проекта — реализация `domain::modbus::Registers`. Сейчас пуста; проект
 /// описывает свою в `domain` и ставит её сюда.
 pub type Map = domain::modbus::EmptyRegisters;
 

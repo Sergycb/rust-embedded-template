@@ -89,8 +89,7 @@ pub mod dial;
 
 // {%- endif %}
 // {%- if has_modbus == "true" %}
-/// Modbus: данные slave'а, представления битов и регистров кадра, транспорты,
-/// ошибки обмена.
+/// Modbus: предел PDU, коды исключений, транспорт master'а, ошибки обмена.
 pub mod modbus;
 
 // {%- endif %}
@@ -115,7 +114,7 @@ pub use link::{FrameDuplex, FrameLink, LinkError};
 pub use dial::Dial;
 // {%- endif %}
 // {%- if has_modbus == "true" %}
-pub use modbus::{Bits, BitsMut, Exception, MAX_PDU, Registers, Words, WordsMut};
+pub use modbus::{Exception, MAX_PDU};
 // {%- if modbus_master == "true" %}
 pub use modbus::{MasterError, ModbusClient};
 // {%- endif %}

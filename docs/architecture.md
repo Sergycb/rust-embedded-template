@@ -126,7 +126,7 @@ Compose-site — модули задач (подмодули `crates-cross/app/s
 логика разговаривает с портами — ошибки, — объявлено в `ports`: тот стал словарём
 домена, а не только набором трейтов. Своё в `domain` — только контексты узлов{% if graph == "true" %}
 (их эмитит фрагмент), состояния автоматов и входы фрагментов ({% if ota == "true" %}`OtaWiring`, {% endif %}`IdleMeter`){% else %} и состояния автоматов{% endif %}{% if protocol != "none" %},
-включая обработчик протокола{% if graph == "true" %} на этом входе{% endif %}: {% if protocol == "protobuf" %}`protobuf::Service`{% elsif protocol == "modbus" %}`modbus::EmptyRegisters` (порт `Registers`; карта одна на все узлы `MODBUS_*` —
+включая обработчик протокола{% if graph == "true" %} на этом входе{% endif %}: {% if protocol == "protobuf" %}`protobuf::Service`{% elsif protocol == "modbus" %}`modbus::EmptyRegisters` (трейт домена `modbus::Registers`, не порт; карта одна на все узлы `MODBUS_*` —
 `docs/modules/app.md`){% else %}`canopen::dictionary` (словарь объектов){% endif %} — логика приложения,
 которую проект правит под себя, поэтому живёт в `domain`, а не в `app`{% endif %}.
 Состояние внутри одного вызова функции{% if ota == "true" %} (хвост до слова флеша при приёме){% endif %} живёт в
@@ -244,7 +244,8 @@ Compose-site — модули задач (подмодули `crates-cross/app/s
 
 Порт при этом — только граница логики с адаптером или платой: трейт, у которого
 есть реализация вне `domain`. Абстракция, которую и реализует, и зовёт сам
-`domain`{% if has_modbus == "true" %} (обработчик кадра узла протокола, `server::Handler`){% endif %}, — его трейт рядом с узлом, а
+`domain`{% if has_modbus == "true" %} (обработчик кадра узла протокола, `server::Handler`; карта
+регистров slave'а, `modbus::Registers`){% endif %}, — его трейт рядом с узлом, а
 не порт.
 
 Та же мерка — для датчиков и микросхем, которых в шаблоне ещё нет: объект
