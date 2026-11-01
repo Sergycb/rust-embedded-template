@@ -96,6 +96,14 @@ pub(crate) struct Env<'a> {
 /// Одна сессия с брокером над установленным соединением `io`: подключение с
 /// Will, подписка на команды, `status` и `info`, дальше телеметрия и команды,
 /// пока связь жива. Паузы между попытками — не здесь: их держит транспорт.
+///
+/// Допущение: Receive Maximum брокера (CONNACK) — не меньше 3. Столько
+/// публикаций `QoS` 1 сессия держит неподтверждёнными разом — `status`, `info`
+/// и исход `reboot`, те же, что в `TX_BUDGET`; Will в счёт не идёт, его
+/// публикует брокер. Квоту `minimq` 0.13 берёт из CONNACK и на исчерпанной
+/// `publish` отвечает `NotReady`, а не ждёт PUBACK, — сессия сочтёт это
+/// обрывом и переподключится. Брокеры по умолчанию дают больше
+/// (у Mosquitto — 20, `max_inflight_messages`).
 pub(crate) async fn serve<IO: minimq::Io>(io: IO, endpoint: &Endpoint, env: &mut Env<'_>) -> Ended
 where
     IO::Error: FormatOrDebug,
