@@ -1,10 +1,10 @@
 //! Команды консоли: разбор строки, выполнение, вывод в канал и интерактивный
 //! `shell`.
 
+use defmt_or_log::info;
 use embassy_net::Stack;
-use embassy_time::Instant;
+use embassy_time::{Duration, Instant, with_timeout};
 use embedded_io_async::{Read, Write};
-use sunset_async::ChanInOut;
 // {%- if ota == "true" %}
 use ports::{OtaCommand, Progress};
 
@@ -14,6 +14,14 @@ use crate::device::{DeviceInfo, PANIC_BRIEF};
 
 /// Длина строки команды.
 pub(super) const LINE: usize = 64;
+
+/// Сколько `shell` ждёт ввода, прежде чем закрыть сессию. Соединение у узла
+/// одно, а живой, но молчащий клиент (забытое окно терминала) держал бы его
+/// бессрочно: пробы keep-alive он подтверждает, и `IDLE` сокета не
+/// срабатывает, а keep-alive самого SSH до консоли не доходит. 15 минут —
+/// как `TMOUT=900` в рекомендациях CIS для оболочки: паузу, пока человек
+/// читает или отвлёкся, это переживает, брошенную консоль — отпускает.
+pub(super) const SHELL_IDLE: Duration = Duration::from_secs(15 * 60);
 
 /// Самый длинный ответ на `info`, байт: 256 — прошлые строки с запасом под
 /// длинную версию, 27 — `reset independent_watchdog`, остальное — строка
@@ -276,17 +284,24 @@ pub(super) async fn run<W: Write>(
     Ok(true)
 }
 
-/// Консоль `shell`: строка за строкой до `exit`, Ctrl-D или EOF.
-pub(super) async fn shell(
-    io: ChanInOut<'_>,
-    device: &Device<'_>,
-) -> Result<(), sunset_async::sunset::Error> {
+/// Консоль `shell`: строка за строкой до `exit`, Ctrl-D, EOF или
+/// [`SHELL_IDLE`] без ввода.
+pub(super) async fn shell<IO: Read + Write>(io: IO, device: &Device<'_>) -> Result<(), IO::Error> {
     let mut out = Out { io, crlf: true };
     out.text("console, 'help' for commands\n> ").await?;
     let mut editor = Editor::default();
     let mut byte = [0];
     loop {
-        if out.io.read(&mut byte).await? == 0 {
+        // Брошенное по сроку чтение ничего нужного не теряет: сессия
+        // кончается.
+        let Ok(read) = with_timeout(SHELL_IDLE, out.io.read(&mut byte)).await else {
+            info!(
+                "ssh: консоль молчала {} с — сессия закрыта",
+                SHELL_IDLE.as_secs()
+            );
+            return out.text("\nidle timeout, session closed\n").await;
+        };
+        if read? == 0 {
             return Ok(());
         }
         match editor.feed(byte[0]) {

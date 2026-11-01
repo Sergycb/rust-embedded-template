@@ -23,7 +23,8 @@
 //! платой при первом старте и хранимый в разделе настроек (`Stored`). Он не
 //! меняется от сброса к сбросу, и клиент один раз запоминает его в
 //! `known_hosts`. Попыток входа `sunset` не считает — их ограничивает узел: шесть
-//! неудач и 30 секунд на вход на соединение.
+//! неудач и 30 секунд на вход на соединение. Консоль без ввода закрывается через
+//! 15 минут: соединение у узла одно.
 //!
 //! Чего в `sunset` 0.6 нет: `exit-status` (OpenSSH выходит с кодом 255) и
 //! EOF/CLOSE канала по инициативе сервера — оба `sunset` шлёт только эхом на
@@ -184,8 +185,16 @@ pub async fn task<K: HostKey>(mut ctx: SshCtx<'_, K>) {
 mod tests {
     //! Тесты узла `SSH`: ключ пользователя, вход, команды, `info`, ключ хоста.
 
+    use core::convert::Infallible;
+    use core::pin::pin;
+    use core::task::{Context, Poll, Waker};
+
+    use embassy_time::{Duration, MockDriver};
+
     use crate::device::{DeviceInfo, PANIC_BRIEF};
-    use crate::ssh::console::{Editor, INFO_TEXT, Key, LINE, parse, write_info};
+    use crate::ssh::console::{
+        Device, Editor, INFO_TEXT, Key, LINE, SHELL_IDLE, parse, shell, write_info,
+    };
     use crate::ssh::login::Access;
     use crate::ssh::session::tries_exhausted;
     use crate::ssh::{Command, Login, USER, ed25519_public_key};
@@ -226,6 +235,38 @@ mod tests {
         }
     }
     // {%- endif %}
+
+    /// Терминал, который молчит: чтение не кончается, вывод копится.
+    struct Silent(Vec<u8>);
+
+    impl embedded_io_async::ErrorType for Silent {
+        type Error = Infallible;
+    }
+
+    impl embedded_io_async::Read for Silent {
+        async fn read(&mut self, _: &mut [u8]) -> Result<usize, Infallible> {
+            core::future::pending().await
+        }
+    }
+
+    impl embedded_io_async::Write for Silent {
+        #[expect(
+            clippy::unused_async_trait_impl,
+            reason = "сигнатуру задаёт трейт `Write`; вывод в память ничего не ждёт"
+        )]
+        async fn write(&mut self, buf: &[u8]) -> Result<usize, Infallible> {
+            self.0.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        #[expect(
+            clippy::unused_async_trait_impl,
+            reason = "сигнатуру задаёт трейт `Write`; у памяти нечего досылать"
+        )]
+        async fn flush(&mut self) -> Result<(), Infallible> {
+            Ok(())
+        }
+    }
 
     #[test]
     fn an_openssh_line_gives_the_raw_key() {
@@ -484,6 +525,46 @@ mod tests {
         assert_eq!(
             keys(&mut editor, &full).last(),
             Some(&Key::Enter(Command::Info))
+        );
+    }
+
+    /// Консоль без ввода закрывается через [`SHELL_IDLE`], не раньше, и
+    /// говорит клиенту почему.
+    #[test]
+    fn a_silent_shell_closes_after_idle() {
+        MockDriver::get().reset();
+        let ((stack, _), _) = adapters::fake::cable::pair();
+        let info = DeviceInfo {
+            version: "0.1.0",
+            commit: "abc",
+            chip: "STM32G071RB",
+            uid: [0; crate::device::UID_BYTES],
+            flash_size: 0,
+            sys_hz: None,
+            reset: "software",
+            last_panic: None,
+        };
+        let device = Device {
+            info: &info,
+            stack,
+            // {%- if ota == "true" %}
+            ota: crate::ota::tests::cmd().0,
+            // {%- endif %}
+        };
+        let mut terminal = Silent(Vec::new());
+        {
+            let mut console = pin!(shell(&mut terminal, &device));
+            let mut cx = Context::from_waker(Waker::noop());
+            assert!(console.as_mut().poll(&mut cx).is_pending());
+            MockDriver::get().advance(SHELL_IDLE - Duration::from_secs(1));
+            assert!(console.as_mut().poll(&mut cx).is_pending());
+            MockDriver::get().advance(Duration::from_secs(1));
+            assert_eq!(console.as_mut().poll(&mut cx), Poll::Ready(Ok(())));
+        }
+        let shown = String::from_utf8(terminal.0).expect("вывод — текст");
+        assert!(
+            shown.ends_with("> \r\nidle timeout, session closed\r\n"),
+            "{shown:?}"
         );
     }
 
