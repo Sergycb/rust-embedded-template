@@ -214,7 +214,8 @@ fn test_host_target(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     // {%- else %}
     // Сценарии написаны под protobuf; под протокол проекта их нет —
     // пустой прогон не ошибка, а причина печатается.
-    //{{newline}}    println!("сценариев host-target нет: {% if has_modbus == "true" %}Modbus — следующая итерация шаблона{% elsif has_canopen == "true" %}CANopen — отложены{% else %}свой протокол — тесты под него пишет проект{% endif %} (crates-host/host-target-tests)");
+    //{{newline}}    let why = "{% if has_modbus == "true" %}Modbus — следующая итерация шаблона{% elsif has_canopen == "true" %}CANopen — отложены{% else %}свой протокол — тесты под него пишет проект{% endif %}";
+    //{{newline}}    println!("сценариев host-target нет: {why} (crates-host/host-target-tests)");
     //{{newline}}    cmd!(sh, "cargo nextest run --test-threads 1 --no-tests warn").run()?;
     // {%- endif %}
     Ok(())
