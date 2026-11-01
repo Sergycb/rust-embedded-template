@@ -4,6 +4,7 @@
 с трёхэтапной моделью тестирования и единой точкой входа для сборки/тестов через `xtask`.
 
 ```sh
+cargo install cargo-generate     # один раз, если его ещё нет
 cargo generate --git https://github.com/Sergycb/rust-embedded-template
 ```
 
@@ -21,6 +22,10 @@ cargo generate --git https://github.com/Sergycb/rust-embedded-template
 [«Как выбирается чип»](#как-выбирается-чип) в конце.
 
 ## Быстрый старт
+
+Часть зависимостей — `supervisor`, `fsm`{% if graph == "true" %}, `watchdog`{% endif %}{% if ota == "true" and graph != "true" %}, `sync-request`{% endif %} — git-крейты
+[rust-lib]({{rust_lib}}) (адрес — ответ при генерации): без доступа к этому
+репозиторию проект не соберётся ни локально, ни в CI.
 
 ```sh
 cargo xtask setup        # тулчейн, probe-rs, flip-link и cargo-плагины (CI и ручные)
