@@ -1,7 +1,7 @@
 //! Modbus slave — обработчик кадра «адрес и PDU» для узла протокола
 //! `domain::server`.
 
-use ports::{Bits, BitsMut, Exception, MAX_PDU, Registers, Words, WordsMut};
+use ports::{Exception, MAX_PDU};
 use rusty_modbus_codec::validate::{
     validate_read_coils, validate_read_discrete_inputs, validate_read_registers,
     validate_write_coils, validate_write_registers,
@@ -9,7 +9,7 @@ use rusty_modbus_codec::validate::{
 use rusty_modbus_codec::{RequestPdu, decode_request};
 use rusty_modbus_types::ExceptionCode;
 
-use crate::modbus::identity;
+use crate::modbus::{Bits, BitsMut, Registers, Words, WordsMut, identity};
 use crate::server::Handler;
 
 /// Ответ на запись — первые пять байт запроса: функция, адрес и значение

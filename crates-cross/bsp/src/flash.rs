@@ -67,11 +67,11 @@ use embassy_sync::{blocking_mutex, mutex};
 {%- if flash_cache == "true" %}
 use embedded_storage::nor_flash::{ErrorType, NorFlash, ReadNorFlash};
 {%- endif %}
+{%- if eeprom_here == "true" %}
+use embedded_storage::{ReadStorage, Storage};
+{%- endif %}
 {%- if paged == "true" %}
 use flash_page::ErasePage;
-{%- endif %}
-{%- if eeprom_here == "true" %}
-use ports::EepromAccess;
 {%- endif %}
 use static_cell::StaticCell;
 {%- if firmware_here == "true" %}
@@ -244,7 +244,7 @@ pub type ConfigFlash = Partition<'static, NoopRawMutex, ConfigBacking>;
 /// (`embassy_stm32::flash::Flash::eeprom_*`), по операции под замком. Обёртку
 /// `adapters::eeprom::Eeprom` (инверсия байтов, страница) собирает плата, и
 /// под хранилище отдана вся EEPROM, округлённая до её страницы.
-pub type ConfigFlash = adapters::eeprom::Eeprom<'static, EepromFlash>;
+pub type ConfigFlash = adapters::eeprom::Eeprom<EepromFlash>;
 {%- endif %}
 {%- if dfu_bank == "true" %}
 
@@ -307,7 +307,7 @@ type ConfigBacking = BlockingAsync<Whole>;
 {%- if eeprom_here == "true" %}
 
 /// Общий [`FlashMutex`] как источник EEPROM. Свой тип, а не `impl` на самом
-/// мьютексе: и трейт `EepromAccess`, и `Mutex` чужие для `bsp`.
+/// мьютексе: и трейт `Storage`, и `Mutex` чужие для `bsp`.
 pub struct EepromFlash(&'static FlashMutex);
 
 // Вручную: у `Flash` из `embassy-stm32` нет `Debug`.
@@ -317,25 +317,21 @@ impl core::fmt::Debug for EepromFlash {
     }
 }
 
-impl EepromAccess for EepromFlash {
+impl ReadStorage for EepromFlash {
     type Error = embassy_stm32::flash::Error;
 
-    fn size(&self) -> u32 {
-        // `usize` на Cortex-M — 32 бита, усечения нет.
-        #[expect(
-            clippy::cast_possible_truncation,
-            reason = "`usize` на Cortex-M — 32 бита"
-        )]
-        let size = embassy_stm32::flash::EEPROM_SIZE as u32;
-        size
-    }
-
-    fn read(&self, offset: u32, buf: &mut [u8]) -> Result<(), Self::Error> {
+    fn read(&mut self, offset: u32, buf: &mut [u8]) -> Result<(), Self::Error> {
         self.0
             .lock(|flash| flash.borrow_mut().eeprom_read_slice(offset, buf))
     }
 
-    fn write(&self, offset: u32, data: &[u8]) -> Result<(), Self::Error> {
+    fn capacity(&self) -> usize {
+        embassy_stm32::flash::EEPROM_SIZE
+    }
+}
+
+impl Storage for EepromFlash {
+    fn write(&mut self, offset: u32, data: &[u8]) -> Result<(), Self::Error> {
         self.0
             .lock(|flash| flash.borrow_mut().eeprom_write_slice(offset, data))
     }
@@ -455,12 +451,6 @@ static STATE_FLASH: StaticCell<mutex::Mutex<NoopRawMutex, StateFlash>> = StaticC
 /// исполнитель», что у `FlashMutex`{% if firmware_here == "true" %} и носителей обновления{% endif %}; менять вместе.
 static CONFIG_FLASH: StaticCell<mutex::Mutex<NoopRawMutex, ConfigBacking>> = StaticCell::new();
 {%- endif %}
-{%- if eeprom_here == "true" %}
-
-/// `&'static` — обёртка `Eeprom` держит доступ к EEPROM ссылкой, а хранилище
-/// уезжает в задачу.
-static EEPROM: StaticCell<EepromFlash> = StaticCell::new();
-{%- endif %}
 
 /// Забирает контроллер флеша и заводит общий замок. Зовётся один раз.
 {%- if dfu_bank == "true" %}
@@ -552,6 +542,6 @@ pub(crate) fn config(flash: &'static FlashMutex) -> ConfigFlash {
 
 /// Собирает внутреннюю EEPROM как `NorFlash`.
 pub(crate) fn config(flash: &'static FlashMutex) -> ConfigFlash {
-    adapters::eeprom::Eeprom::new(EEPROM.init(EepromFlash(flash)))
+    adapters::eeprom::Eeprom::new(EepromFlash(flash))
 }
 {%- endif %}

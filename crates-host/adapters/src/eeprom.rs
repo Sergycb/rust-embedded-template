@@ -18,12 +18,13 @@
 //!   (доступ идёт под блокирующим замком общего флеша). Стирание уже чистой
 //!   страницы не стоит ничего, грязной — по слову на каждое изменившееся.
 //!
-//! Доступ к самой EEPROM — порт [`EepromAccess`](ports::EepromAccess): его реализует `bsp` поверх
-//! `embassy_stm32::flash::Flash::eeprom_*` (того же объекта, что делят OTA и
-//! настройки), host-тест — поверх памяти.
+//! Доступ к самой EEPROM — стандартный [`Storage`](embedded_storage::Storage):
+//! побайтная запись без стирания — ровно его контракт. Реализует его `bsp`
+//! поверх `embassy_stm32::flash::Flash::eeprom_*` (того же объекта, что делят
+//! OTA и настройки), host-тест — поверх памяти.
 
+use embedded_storage::Storage;
 use embedded_storage::nor_flash::{ErrorType, NorFlashError, NorFlashErrorKind};
-use ports::EepromAccess;
 
 /// Слово записи EEPROM: единица, кратность которой требует `write`, и шаг, которым
 /// `rewrite` сравнивает старое с новым.
@@ -53,11 +54,11 @@ impl<E: core::fmt::Debug> NorFlashError for Error<E> {
 
 /// EEPROM, видимая как `NorFlash` со страницей [`Eeprom::PAGE`] байт.
 #[derive(Debug)]
-pub struct Eeprom<'a, A> {
-    eeprom: &'a A,
+pub struct Eeprom<A> {
+    eeprom: A,
 }
 
-impl<'a, A: EepromAccess> Eeprom<'a, A> {
+impl<A: Storage> Eeprom<A> {
     /// Страница «стирания». Своей у EEPROM нет; 128 байт — компромисс:
     /// `sequential-storage` нужны минимум две страницы, и под хранилище
     /// годится EEPROM от 256 байт (у STM32L010F4/K4 её всего 128 — им хук
@@ -68,15 +69,17 @@ impl<'a, A: EepromAccess> Eeprom<'a, A> {
 
     /// Оборачивает доступ к EEPROM.
     #[must_use]
-    pub const fn new(eeprom: &'a A) -> Self {
+    pub const fn new(eeprom: A) -> Self {
         Self { eeprom }
     }
 
     /// Объём, пригодный под хранилище: вся EEPROM, округлённая вниз до
     /// страницы.
     #[must_use]
-    pub fn usable(&self) -> u32 {
-        self.eeprom.size() / Self::PAGE * Self::PAGE
+    fn usable(&self) -> u32 {
+        // Смещения `NorFlash` — `u32`: больше адресовать всё равно нечем.
+        let size = u32::try_from(self.eeprom.capacity()).unwrap_or(u32::MAX);
+        size / Self::PAGE * Self::PAGE
     }
 
     fn check(&self, offset: u32, len: usize, unit: u32) -> Result<(), Error<A::Error>> {
@@ -95,7 +98,7 @@ impl<'a, A: EepromAccess> Eeprom<'a, A> {
     /// превращает прочитанный кусок в то, что должно лечь, и пишутся только
     /// изменившиеся слова — каждое стоит миллисекунды.
     fn rewrite(
-        &self,
+        &mut self,
         offset: u32,
         len: u32,
         mut next: impl FnMut(usize, &mut [u8]),
@@ -134,11 +137,13 @@ impl<'a, A: EepromAccess> Eeprom<'a, A> {
     }
 }
 
-impl<A: EepromAccess> ErrorType for Eeprom<'_, A> {
+impl<A: Storage<Error: core::fmt::Debug>> ErrorType for Eeprom<A> {
     type Error = Error<A::Error>;
 }
 
-impl<A: EepromAccess> embedded_storage_async::nor_flash::ReadNorFlash for Eeprom<'_, A> {
+impl<A: Storage<Error: core::fmt::Debug>> embedded_storage_async::nor_flash::ReadNorFlash
+    for Eeprom<A>
+{
     const READ_SIZE: usize = 1;
 
     fn read(
@@ -161,7 +166,9 @@ impl<A: EepromAccess> embedded_storage_async::nor_flash::ReadNorFlash for Eeprom
     }
 }
 
-impl<A: EepromAccess> embedded_storage_async::nor_flash::NorFlash for Eeprom<'_, A> {
+impl<A: Storage<Error: core::fmt::Debug>> embedded_storage_async::nor_flash::NorFlash
+    for Eeprom<A>
+{
     /// Слово: хранилище пишет кусками этой кратности, а EEPROM словом
     /// записывает быстрее, чем побайтно.
     const WRITE_SIZE: usize = WORD as usize;
@@ -202,9 +209,8 @@ impl<A: EepromAccess> embedded_storage_async::nor_flash::NorFlash for Eeprom<'_,
 mod tests {
     use core::cell::RefCell;
 
+    use embedded_storage::{ReadStorage, Storage};
     use embedded_storage_async::nor_flash::{NorFlash, ReadNorFlash};
-
-    use ports::EepromAccess;
 
     use super::Eeprom;
     use crate::settings::Settings;
@@ -225,20 +231,24 @@ mod tests {
         }
     }
 
-    impl EepromAccess for MemEeprom {
+    // На ссылке: обёртка забирает доступ по значению, а тест после неё
+    // смотрит в память и счётчик записей.
+    impl ReadStorage for &MemEeprom {
         type Error = ();
 
-        fn size(&self) -> u32 {
-            u32::try_from(self.mem.borrow().len()).unwrap()
-        }
-
-        fn read(&self, offset: u32, buf: &mut [u8]) -> Result<(), ()> {
+        fn read(&mut self, offset: u32, buf: &mut [u8]) -> Result<(), ()> {
             let start = offset as usize;
             buf.copy_from_slice(&self.mem.borrow()[start..start + buf.len()]);
             Ok(())
         }
 
-        fn write(&self, offset: u32, data: &[u8]) -> Result<(), ()> {
+        fn capacity(&self) -> usize {
+            self.mem.borrow().len()
+        }
+    }
+
+    impl Storage for &MemEeprom {
+        fn write(&mut self, offset: u32, data: &[u8]) -> Result<(), ()> {
             let start = offset as usize;
             self.mem.borrow_mut()[start..start + data.len()].copy_from_slice(data);
             *self.writes.borrow_mut() += 1;

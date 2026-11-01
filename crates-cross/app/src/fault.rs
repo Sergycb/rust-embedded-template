@@ -9,8 +9,7 @@
 //! отдельно: выключенные, они эскалируют в `HardFault`, а регистр `CFSR`
 //! заполняется в любом случае — отдельные обработчики ничего не добавили бы.
 //!
-//! Здесь, а не в `bsp` — docs/clocks.md, «Ядро: фолты, ловушка деления,
-//! счётчик тактов». {% if ota == "true" %}Bootloader и `target-tests` остаются{% else %}`target-tests` остаётся{% endif %} на `HardFault` по
+//! Здесь, а не в `bsp` — docs/clocks.md, «Ядро: фолты и ловушка деления». {% if ota == "true" %}Bootloader и `target-tests` остаются{% else %}`target-tests` остаётся{% endif %} на `HardFault` по
 //! умолчанию из `cortex-m-rt`.
 
 {%- if core_baseline != "true" %}

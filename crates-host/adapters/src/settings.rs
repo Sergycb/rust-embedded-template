@@ -208,7 +208,7 @@ impl<F: NorFlash> Settings<F> {
     /// чинить больше нечем, и крейт сам советует стереть раздел.
     async fn erase_corrupted(&mut self) -> Result<(), Error<F::Error>> {
         #[cfg(feature = "defmt")]
-        defmt::warn!("настройки: раздел повреждён и не починился — стёрт, настройки сброшены");
+        defmt::warn!("settings: раздел повреждён и не починился — стёрт, настройки сброшены");
         self.map.erase_all().await
     }
 }

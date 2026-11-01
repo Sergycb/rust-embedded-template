@@ -4549,7 +4549,7 @@ fn every_m7_chip_gets_a_dma_region() {
 }
 
 /// `core_baseline` — ядра без `DWT.CYCCNT`, `CFSR` и ловушки деления (M0, M0+,
-/// M23): им `bsp` не собирает `cycles`, а `ports` — `CycleCounter`.
+/// M23): им `app` не собирает ловушку деления и причину фолта.
 #[test]
 fn baseline_cores_are_marked() {
     let ast = compile_script();

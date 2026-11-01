@@ -47,12 +47,12 @@ pub fn lint_cross(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     // unit-тестов у `bsp` нет (`test = false` в его манифесте): ей нужен крейт
     // `test`, а его для `thumbv*-none-*` не существует (E0463).
     cmd!(sh, "cargo clippy --workspace --all-targets -- -D warnings").run()?;
-    // Second pass, release only: the release profile turns
-    // `debug-assertions`/`overflow-checks` off, so anything behind `debug_assert!`
-    // or `#[cfg(not(debug_assertions))]` (the release panic handler in
-    // `app/src/panic.rs`) is only type-checked here. `bsp` is linted alongside
-    // `app` so that it gets `app`'s features. target-tests carry no such code,
-    // so re-linting it would just repeat the first pass.
+    // Второй проход, только release: профиль release выключает
+    // `debug-assertions`/`overflow-checks`, поэтому всё, что за `debug_assert!`
+    // или `#[cfg(not(debug_assertions))]` (паникёр release в
+    // `app/src/panic.rs`), проверяется только здесь. `bsp` линтуется вместе с
+    // `app`, чтобы получить фичи `app`. В `target-tests` такого кода нет —
+    // повторный проход над ними повторил бы первый.
     // {%- if ota == "true" %}
     cmd!(
         sh,

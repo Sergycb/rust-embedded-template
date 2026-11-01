@@ -200,7 +200,7 @@ fn main() -> ! {
         reason = "`usize` на Cortex-M — 32 бита"
     )]
     let entry = FLASH_BASE as u32 + active_offset;
-    info!("boot: jumping to app at {:x}", entry);
+    info!("boot: переход в приложение по адресу {:x}", entry);
 {%- if graph == "true" %}
     // Сторож — последним, прямо перед прыжком, и целиком достаётся приложению:
     // до первого кормления из графа ему нужно поднять HAL и запустить граф.
@@ -247,5 +247,5 @@ fn main() -> ! {
 /// некому — дамп разбирает только `app`.
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo) -> ! {
-    bsp::reset::Reboot.reboot()
+    bsp::reset::Reboot.reset_now()
 }

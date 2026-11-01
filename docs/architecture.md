@@ -126,7 +126,7 @@ Compose-site — модули задач (подмодули `crates-cross/app/s
 логика разговаривает с портами — ошибки, — объявлено в `ports`: тот стал словарём
 домена, а не только набором трейтов. Своё в `domain` — только контексты узлов{% if graph == "true" %}
 (их эмитит фрагмент), состояния автоматов и входы фрагментов ({% if ota == "true" %}`OtaWiring`, {% endif %}`IdleMeter`){% else %} и состояния автоматов{% endif %}{% if protocol != "none" %},
-включая обработчик протокола{% if graph == "true" %} на этом входе{% endif %}: {% if protocol == "protobuf" %}`protobuf::Service`{% elsif protocol == "modbus" %}`modbus::EmptyRegisters` (порт `Registers`; карта одна на все узлы `MODBUS_*` —
+включая обработчик протокола{% if graph == "true" %} на этом входе{% endif %}: {% if protocol == "protobuf" %}`protobuf::Service`{% elsif protocol == "modbus" %}`modbus::EmptyRegisters` (трейт домена `modbus::Registers`, не порт; карта одна на все узлы `MODBUS_*` —
 `docs/modules/app.md`){% else %}`canopen::dictionary` (словарь объектов){% endif %} — логика приложения,
 которую проект правит под себя, поэтому живёт в `domain`, а не в `app`{% endif %}.
 Состояние внутри одного вызова функции{% if ota == "true" %} (хвост до слова флеша при приёме){% endif %} живёт в
@@ -244,7 +244,8 @@ Compose-site — модули задач (подмодули `crates-cross/app/s
 
 Порт при этом — только граница логики с адаптером или платой: трейт, у которого
 есть реализация вне `domain`. Абстракция, которую и реализует, и зовёт сам
-`domain`{% if has_modbus == "true" %} (обработчик кадра узла протокола, `server::Handler`){% endif %}, — его трейт рядом с узлом, а
+`domain`{% if has_modbus == "true" %} (обработчик кадра узла протокола, `server::Handler`; карта
+регистров slave'а, `modbus::Registers`){% endif %}, — его трейт рядом с узлом, а
 не порт.
 
 Та же мерка — для датчиков и микросхем, которых в шаблоне ещё нет: объект
@@ -351,7 +352,7 @@ Bound'ов у параметров нет намеренно: их держит 
 {%- if ota == "true" or config == "true" %}
 `embedded-storage(-async)` ({% if ota == "true" %}флеш под обновлением{% if config == "true" %}, {% endif %}{% endif %}{% if config == "true" %}носитель настроек{% endif %}),{% endif %}{% if graph == "true" %} трейт крейта
 сторожа (`watchdog::HardwareWatchdog`),{% endif %} порты из
-`crates-host/ports` там, где стандартного трейта нет ({% if has_can == "true" %}`CanBus`, {% endif %}`CycleCounter`{% if ota == "true" %}, `Reboot`{% endif %}), — и объекты драйверов микросхем платы
+`crates-host/ports` там, где стандартного трейта нет{% if has_can == "true" or ota == "true" %} ({% if has_can == "true" %}`CanBus`{% if ota == "true" %}, {% endif %}{% endif %}{% if ota == "true" %}`Reboot`{% endif %}){% endif %}, — и объекты драйверов микросхем платы
 ({% if external_flash == "true" %}внешняя флеш W25Q; так же лягут{% else %}так лягут{% endif %} датчики и светодиоды; тип драйвера —
 `adapters` или внешний крейт{% if external_flash == "true" %}, как `w25q`{% endif %}, а строит объект `bsp`). `Peripherals`,
 отдельные пины и группы `assign_resources!` наружу из `bsp` не выходят: их
@@ -431,12 +432,11 @@ bootloader'е (`crates-cross/boot`), который подпись и прове
 что делать с объектом, решает приложение, а не `bsp`. Отсюда и имя `new` вместо
 прежнего `init`.
 
-Исключения, помимо `ensure_*` для option bytes: {% if cache != "" %}`bsp::cache::enable()` включает
-кэши чипа сразу за `init`, {% endif %}`Cycles::new` — счётчик тактов (`docs/clocks.md`,
-«Кэши», «Ядро»). Это не «на будущее»: с завода кэши выключены, счётчик стоит, а
-знает, что есть у этого ядра, только `bsp`. Ловушку деления включает не плата, а
-`app` (`app/src/fault.rs`, первой строкой `main`). Периферию ядра
-(`DWT`, `SCB`) они берут через `steal()`, не трогая флаг `take()`.
+Исключения — `ensure_*` для option bytes{% if cache != "" %} и `bsp::cache::enable()`: он включает
+кэши чипа сразу за `init` (`docs/clocks.md`, «Кэши»). Это не «на будущее»: с
+завода кэши выключены, а знает, что есть у этого ядра, только `bsp`; периферию
+ядра (`SCB`) он берёт через `steal()`, не трогая флаг `take()`{% endif %}. Ловушку
+деления включает не плата, а `app` (`app/src/fault.rs`, первой строкой `main`).
 {%- if external_flash == "true" %}
 
 И внешняя флеш: её драйвер (`bsp::external`) в `Board::new` опознаёт микросхему

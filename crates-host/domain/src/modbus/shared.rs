@@ -15,7 +15,9 @@ use core::fmt;
 
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::mutex::Mutex;
-use ports::{Bits, BitsMut, Exception, Registers, Words, WordsMut};
+use ports::Exception;
+
+use crate::modbus::{Bits, BitsMut, Registers, Words, WordsMut};
 
 /// Мьютекс карты регистров, общей у нескольких узлов.
 ///
@@ -92,10 +94,11 @@ mod tests {
     use core::pin::pin;
     use core::task::{Context, Poll, Waker};
 
-    use ports::{Exception, Registers, Words, WordsMut};
+    use ports::Exception;
 
     use super::{MapMutex, SharedRegisters};
     use crate::modbus::fakes::Map;
+    use crate::modbus::{Registers, Words, WordsMut};
 
     /// Карта, запись которой ждёт между двумя регистрами — как настоящая,
     /// которая отдаёт уставку задаче или пишет во флеш.

@@ -23,12 +23,6 @@
 //!   узел ждёт следующий кадр: восстановить канал и подождать, пока он
 //!   вернётся, — дело реализации `FrameLink` на следующем `recv`.
 
-mod wiring;
-
-// {%- if graph != "true" %}
-pub use wiring::serve;
-// {%- endif %}
-
 use defmt_or_log::{FormatOrDebug, info, warn};
 use ports::{FrameLink, LinkError};
 
@@ -107,10 +101,7 @@ where
 
     fn begin(&mut self) -> Listening {
         let capacity = self.link.buffer().len();
-        info!(
-            "domain: узел протокола запущен, буфер кадра {} байт",
-            capacity
-        );
+        info!("server: узел запущен, буфер кадра {} байт", capacity);
         self.handler.begin(capacity);
         Listening
     }

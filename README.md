@@ -193,9 +193,10 @@ supervisor-графы, watchdog{% endif %}). Вся остальная логи�
 поверх TCP-сервера{% endif %}{% if has_udp == "true" %}, UDP-сокет `adapters::net::UdpLink`{% endif %}{% endcapture %} Канал protobuf — {{ pb_links | remove_first: ", " }}; это `FrameDuplex`:
 брошенный приём не теряет кадр, ответ уходит из чужого буфера.{% endif %}{% if has_can == "true" %} Шина CAN — свой порт `CanBus`.{% endif %}
 {%- endif %}
-{%- if protocol == "modbus" %} `Registers` — данные устройства, видимые по
-Modbus: его реализует приложение, а кадры к нему переводит обработчик
-`domain::modbus::Slave` (адрес, широковещание, исключения). Канал slave'а —
+{%- if protocol == "modbus" %} `domain::modbus::Registers` — данные устройства,
+видимые по Modbus: его реализует карта проекта в `domain`, а кадры к нему переводит
+обработчик `domain::modbus::Slave` (адрес, широковещание, исключения); это трейт
+домена, а не порт. Канал slave'а —
 `FrameLink` с кадром «адрес и PDU»:
 {%- capture mb_links %}{% if modbus_rtu == "true" %}, `adapters::modbus::Rtu` (RTU поверх потока
 {% if has_uart == "true" %}UART{% if has_usb == "true" %} или {% endif %}{% endif %}{% if has_usb == "true" %}USB CDC{% endif %}){% endif %}{% if modbus_tcp == "true" %}, `adapters::modbus::Tcp` (MBAP поверх потока TCP){% endif %}{% if modbus_udp == "true" %}, `adapters::modbus::Udp` (MBAP в датаграмме){% endif %}{% endcapture %} {{ mb_links | remove_first: ", " }}.{% if modbus_master == "true" %} Они же реализуют порт
@@ -716,7 +717,7 @@ ML-KEM и ChaCha20-Poly1305), поэтому генерация предлага
 ## Тактирование: дамп при старте и контракт платы
 
 `Board::new()` печатает в defmt фактические частоты, посчитанные HAL
-(`bsp: board initialized, clocks ...`). Это не отладочный
+(`bsp: плата готова, частоты ...`). Это не отладочный
 вывод, а единственный способ увидеть, что получилось: компилятор про частоты не знает
 ничего, а embassy проверяет только верхние границы шин (`assert!(hclk <= hclk_max)`).
 Конфигурация, из-за которой HSE не завёлся и HAL молча уехал на HSI, или та, что даёт

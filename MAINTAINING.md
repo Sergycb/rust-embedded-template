@@ -206,8 +206,8 @@ STM32C011D6 (32 KiB, то же ядро) проект занимает 12.6 KiB 
 
 Протоколу связи по UART, USB и CAN граф не нужен: при `graph=no` (и когда граф снят
 размером) узел протокола и его `USB` спавнит `tasks::spawn_all` (модули задач в
-`crates-cross/app/src/tasks/` над `domain::server::serve` и
-`domain::{canopen,protobuf,usb}::task`, как `ota::task`). Тип канала протокола и его
+`crates-cross/app/src/tasks/` над `domain::{server,canopen,protobuf,usb}::task`,
+как `ota::task`). Тип канала протокола и его
 `link(…)` даёт `crates-cross/app/src/link/<вид>.rs`, и граф (память — `static T`)
 и модули задач (память — свои статики) строят канал одним и тем же вызовом. Тест каскада —
 `protocol_does_not_need_the_graph`, конфигурации `*-no-graph` в `template-check`.
@@ -429,9 +429,8 @@ D2 с `0x30000000`, мимо AXI-SRAM ядра CM7. `DMA_NC` не берётся
 `docs/clocks.md`, «Кэши».
 
 `core_baseline` ("true" для Cortex-M0/M0+/M23 по `cpu`) — ядра без `DWT.CYCCNT`, `CFSR` и
-`DIV_0_TRP`: им нет `bsp::cycles` с `Board::cycles` и `ports::cycles`, ловушки деления в
-`app/src/fault.rs`, а обработчик `HardFault` там собирается короче (`pc`/`lr`). Тест —
-`baseline_cores_are_marked`. Обработчик остаётся у всех: `#[exception]` экспортирует имя, и
+`DIV_0_TRP`: им нет ловушки деления в `app/src/fault.rs`, а обработчик `HardFault` там
+собирается короче (`pc`/`lr`). Тест — `baseline_cores_are_marked`. Обработчик остаётся у всех: `#[exception]` экспортирует имя, и
 `app` держит его в образе без ссылок; на плате фолт не вызывался.
 
 Когда блоков два, метаданные обоих ядер перечисляют оба — различить их там нечем, и

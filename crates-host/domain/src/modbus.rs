@@ -7,8 +7,10 @@
 //! Канал строит compose-site (транспорт из `adapters::modbus`, порт
 //! `ports::FrameLink`) и отдаёт узлу готовым; здесь про
 //! него ничего не известно: кадр, CRC, заголовок MBAP и пропуск битых кадров
-//! — дело канала. Данные slave'а — порт [`ports::Registers`], его реализует
-//! приложение; обслуживает канал узел протокола `::domain::SERVER_FRAG`
+//! — дело канала. Данные slave'а — трейт
+//! [`Registers`](crate::modbus::Registers): его реализует карта проекта, а
+//! зовёт [`Slave`](crate::modbus::Slave), оба в `domain`, поэтому он не порт.
+//! Обслуживает канал узел протокола `::domain::SERVER_FRAG`
 //! (объявлен в `domain::server`) с обработчиком [`Slave`](crate::modbus::Slave).
 // {%- if modbus_master == "true" %}
 //! Master — по функции на запрос, без узла: что опрашивать, как часто и куда
@@ -41,13 +43,14 @@
 pub mod master;
 
 // {%- endif %}
-/// Slave: обработчик кадра, запросы — порту [`ports::Registers`].
+/// Slave: обработчик кадра, запросы — карте [`Registers`].
 mod slave;
 
 /// Идентификация устройства (FC43): производитель, модель, прошивка.
 mod identity;
 
-/// Карта регистров по умолчанию — пустая, место под карту устройства.
+/// Данные slave'а: трейт карты, представления кадра и карта по умолчанию —
+/// пустая, место под карту устройства.
 mod registers;
 
 /// Одна карта регистров на несколько узлов (по узлу на транспорт).
@@ -59,7 +62,7 @@ mod ota;
 // {%- endif %}
 
 pub use identity::{PRODUCT, VENDOR};
-pub use registers::EmptyRegisters;
+pub use registers::{Bits, BitsMut, EmptyRegisters, Registers, Words, WordsMut};
 pub use shared::{MapMutex, SharedRegisters};
 pub use slave::Slave;
 // {%- if ota == "true" %}
@@ -75,10 +78,12 @@ mod fakes {
     use core::convert::Infallible;
 
     // {%- endif %}
-    use ports::{Bits, BitsMut, Exception, Registers, Words, WordsMut};
+    use ports::Exception;
     // {%- if modbus_master == "true" %}
     use ports::{MasterError, ModbusClient};
     // {%- endif %}
+
+    use crate::modbus::{Bits, BitsMut, Registers, Words, WordsMut};
 
     // {%- if modbus_master == "true" %}
     /// Транспорт master'а: записывает запросы, на первый обмен отвечает

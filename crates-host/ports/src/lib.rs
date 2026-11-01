@@ -89,14 +89,8 @@ pub mod dial;
 
 // {%- endif %}
 // {%- if has_modbus == "true" %}
-/// Modbus: данные slave'а, представления битов и регистров кадра, транспорты,
-/// ошибки обмена.
+/// Modbus: предел PDU, коды исключений, транспорт master'а, ошибки обмена.
 pub mod modbus;
-
-// {%- endif %}
-// {%- if core_baseline != "true" %}
-/// Счётчик тактов ядра.
-pub mod cycles;
 
 // {%- endif %}
 // {%- if ota == "true" %}
@@ -109,11 +103,6 @@ pub mod ota;
 /// Хранилище настроек.
 pub mod settings;
 // {%- endif %}
-// {%- if config_store == "eeprom" %}
-
-/// Доступ к внутренней EEPROM — под хранилищем настроек на L0/L1.
-pub mod eeprom;
-// {%- endif %}
 
 // {%- if has_can == "true" %}
 pub use can::CanBus;
@@ -125,13 +114,10 @@ pub use link::{FrameDuplex, FrameLink, LinkError};
 pub use dial::Dial;
 // {%- endif %}
 // {%- if has_modbus == "true" %}
-pub use modbus::{Bits, BitsMut, Exception, MAX_PDU, Registers, Words, WordsMut};
+pub use modbus::{Exception, MAX_PDU};
 // {%- if modbus_master == "true" %}
 pub use modbus::{MasterError, ModbusClient};
 // {%- endif %}
-// {%- endif %}
-// {%- if core_baseline != "true" %}
-pub use cycles::CycleCounter;
 // {%- endif %}
 // {%- if ota == "true" %}
 pub use ota::command::{
@@ -145,7 +131,4 @@ pub use ota::update::{
 // {%- endif %}
 // {%- if settings_port == "true" %}
 pub use settings::SettingsStorage;
-// {%- endif %}
-// {%- if config_store == "eeprom" %}
-pub use eeprom::EepromAccess;
 // {%- endif %}

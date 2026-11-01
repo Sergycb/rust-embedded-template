@@ -172,11 +172,11 @@ impl<D: NorFlash, S: NorFlash> Updater<Partitions<D, S>> {
 impl<D: NorFlash, S: NorFlash> FirmwareUpdate for Updater<Partitions<D, S>> {
     type Error = Error;
 
-    fn write_granularity(&mut self) -> u32 {
+    fn write_granularity(&self) -> u32 {
         u32::try_from(D::WRITE_SIZE).expect("WRITE_SIZE не должен превышать u32::MAX")
     }
 
-    fn capacity(&mut self) -> Result<u32, Self::Error> {
+    fn capacity(&self) -> Result<u32, Self::Error> {
         Ok(self.parts.capacity)
     }
 
@@ -441,7 +441,7 @@ mod tests {
 
     #[test]
     fn reports_the_flash_geometry() {
-        let mut u = updater();
+        let u = updater();
         assert_eq!(u.write_granularity(), 8);
         assert_eq!(u.erase_size(), 256);
         assert_eq!(u.capacity().expect("вместимость"), 768);

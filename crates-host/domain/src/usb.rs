@@ -71,7 +71,7 @@ impl<D: Driver<'static>> UsbCtx<'_, UsbDevice<'static, D>> {
         reason = "сигнатуру действия задаёт таблица `#[fsm::typestate]`"
     )]
     fn begin(&mut self) -> Running {
-        info!("domain: узел USB запущен");
+        info!("usb: узел запущен");
         Running
     }
 

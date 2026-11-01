@@ -43,8 +43,8 @@ pub fn sleep_ticks() -> &'static SleepTicks {
 // `tasks::spawn_all`.
 //
 // Значение при этом по-прежнему уходит в лог, а не в `Watch`: канал без
-// читателя — это `Watch` вхолостую, и держать ради него `embassy-sync` в
-// приложении незачем. Свою подписку заводите сами, когда появится читатель.
+// читателя — это `Watch` вхолостую. Свою подписку заводите сами, когда
+// появится читатель.
 #[embassy_executor::task]
 pub async fn task() {
     domain::cpu_load::log_load(sleep_ticks()).await;

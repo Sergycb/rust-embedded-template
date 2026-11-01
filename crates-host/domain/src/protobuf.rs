@@ -44,7 +44,7 @@ use proto::Request;
 
 use crate::protobuf::codec::{decode_reason, encode};
 
-pub use service::{DeviceInfo, REQUEST_MAX, RESPONSE_MAX, Service};
+pub use service::{REQUEST_MAX, RESPONSE_MAX, Service};
 
 // Узел объявлен рядом со своей задачей, по узлу на транспорт.
 //
@@ -92,7 +92,7 @@ where
 
     fn begin(&mut self) -> Listening {
         info!(
-            "domain: узел PROTOBUF запущен, буфер ответа {} байт",
+            "protobuf: узел запущен, буфер ответа {} байт",
             self.response.len()
         );
         Listening

@@ -12,7 +12,7 @@ use crate::ota::OtaClient;
 // {%- endif %}
 use proto::{Error, Info, Request, Request_, Response, Response_, heapless};
 
-pub use crate::device::DeviceInfo;
+use crate::device::DeviceInfo;
 
 // Поле `uid` схемы — ровно заводской номер: копируется без проверки длины.
 const _: () = assert!(proto::UID_BYTES == crate::device::UID_BYTES);

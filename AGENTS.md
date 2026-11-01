@@ -266,16 +266,11 @@ read`: руками пришлось бы сначала найти адрес �
 {%- endif %}
 - Паникёр, обработчик `HardFault` с причиной и ловушка деления — в `app`
   (`crates-cross/app/src/panic.rs`, `fault.rs`), не в `bsp`: с LTO обработчик
-  попал бы в любой бинарник, линкующий `bsp` — `docs/clocks.md`, «Ядро: фолты,
-  ловушка деления, счётчик тактов». Сброс МК — рычаг `bsp::reset::Reboot`.
+  попал бы в любой бинарник, линкующий `bsp` — `docs/clocks.md`, «Ядро: фолты
+  и ловушка деления». Сброс МК — рычаг `bsp::reset::Reboot`.
 - Флаги сброса `RCC` читает и снимает только `main` приложения — первым делом,
   до `Board::new` (`bsp::reset::take_cause`), один раз за запуск —
   `docs/diagnostics.md`, «Причина сброса».
-{%- if core_baseline != "true" %}
-- `Board::cycles` включает `DWT.CYCCNT`; `DWT` и `DCB` `bsp` берёт через
-  `steal()` — приложению остаётся свой `take()` — `docs/clocks.md`, «Ядро:
-  фолты, ловушка деления, счётчик тактов».
-{%- endif %}
 {%- if cache != "" %}
 - `bsp::cache::enable()` — в `Board::new` сразу за `embassy_stm32::init`{% if cache contains "scb_d" %}; буфер
   DMA кладите в `#[link_section = ".dma_nc"]`{% if bdma_nc == "true" %} (BDMA — `".bdma_nc"`){% endif %}, не в обычный `static`:
@@ -313,7 +308,7 @@ read`: руками пришлось бы сначала найти адрес �
 {%- if config == "true" %}
 - Хранилище настроек — `adapters::settings` над любым async `NorFlash`, на весь
   его объём. Носитель отдаёт плата рычагом `NorFlash`
-  (`board.config: bsp::ConfigFlash`): {% if config_store == "eeprom" %}EEPROM L0/L1 (доступ — порт `ports::EepromAccess`, обёртку
+  (`board.config: bsp::ConfigFlash`): {% if config_store == "eeprom" %}EEPROM L0/L1 (доступ — `embedded_storage::Storage`, обёртку
   `adapters::eeprom::Eeprom` собирает сама плата){% elsif config_store == "external" %}внешняя флеш W25Q (драйвер
   `w25q` в `bsp::external`, шина — заглушка `bsp::stub::FlashBus`, пока проект не
   подставит выводы){% else %}раздел `CONFIG` внутреннего

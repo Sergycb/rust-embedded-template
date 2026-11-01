@@ -4,9 +4,10 @@
 //! `zencan-build` генерирует из него (см. `build.rs`).
 //!
 //! Отдельным крейтом, а не модулем `domain`: генерация со своим `build.rs`
-//! живёт в одном месте, и узел CANopen `domain::canopen` от описания не
-//! зависит — compose-site передаёт ему `NODE_MBOX`, `NODE_STATE` и
-//! `OD_TABLE` отсюда.
+//! живёт в одном месте. Узел CANopen `domain::canopen` от этого крейта
+//! зависит: `domain::canopen::dictionary()` собирает из его `static`
+//! (`NODE_MBOX`, `NODE_STATE`, `OD_TABLE`, `OBJECT1018`…) словарь
+//! `domain::canopen::Dictionary`, а compose-site отдаёт его узлу.
 //!
 //! Объекты приложения — `OBJECT2000`, `OBJECT2001`… (по индексу): их
 //! читает и пишет логика устройства, а хост — по SDO и PDO.

@@ -86,6 +86,7 @@ pub fn panic_brief(m: &str, max: usize) -> &str {
     let brief = &m[start..end];
     &brief[..brief.floor_char_boundary(max)]
 }
+// {%- if net_services != "" %}
 
 /// Строка JSON в кавычках: `"` и `\` экранируются, управляющие символы —
 /// `\u00XX`. Строки сведений задаёт сборка, но проект волен поставить свои —
@@ -94,7 +95,7 @@ pub fn panic_brief(m: &str, max: usize) -> &str {
 /// # Errors
 ///
 /// Ошибка записи в `out` (например, буфер короче строки).
-pub fn write_json_string(out: &mut impl core::fmt::Write, s: &str) -> core::fmt::Result {
+fn write_json_string(out: &mut impl core::fmt::Write, s: &str) -> core::fmt::Result {
     out.write_char('"')?;
     for c in s.chars() {
         match c {
@@ -106,7 +107,6 @@ pub fn write_json_string(out: &mut impl core::fmt::Write, s: &str) -> core::fmt:
     }
     out.write_char('"')
 }
-// {%- if net_services != "" %}
 
 /// Сведения об устройстве JSON-объектом: прошивка, чип, MAC, адрес, время
 /// работы, причина сброса и прошлая паника.
@@ -270,6 +270,7 @@ mod tests {
         assert_eq!(panic_brief(m, 11), "m.rs:1:1:\n");
         assert_eq!(panic_brief(m, 0), "");
     }
+    // {%- if net_services != "" %}
 
     /// Кавычки, обратная косая и управляющие символы в строках сведений не
     /// ломают JSON.
@@ -279,4 +280,5 @@ mod tests {
         write_json_string(&mut out, "a\"b\\c\nd").unwrap();
         assert_eq!(out, r#""a\"b\\c\u000ad""#);
     }
+    // {%- endif %}
 }

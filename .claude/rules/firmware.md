@@ -22,9 +22,7 @@ paths: crates-cross/**
 - `bsp` ничего не инициализирует сверх подъёма HAL: конструкторы зовутся `new`
   и только создают объекты. Всё, что запускает железо{% if graph == "true" %} (`arm()` у сторожа){% endif %},
   делает тот, кто этим железом распоряжается. Исключения — `ensure_*` для
-  option bytes, `bsp::cache::enable()` (кэши чипа) и `Cycles::new` (счётчик
-  тактов) —
-  `docs/clocks.md`{% if external_flash == "true" %}; и `init` внешней флеши в `bsp::external::new` (опознание
+  option bytes и `bsp::cache::enable()` (кэши чипа) — `docs/clocks.md`{% if external_flash == "true" %}; и `init` внешней флеши в `bsp::external::new` (опознание
   микросхемы — без него драйвер не годится ни для одной операции), из-за него
   `Board::new` асинхронный и зовётся из первой задачи исполнителя —
   `docs/modules/bsp-external.md`{% endif %}.
@@ -33,7 +31,7 @@ paths: crates-cross/**
 - `app` про `embassy-stm32` не знает — ни `use`, ни строки в манифесте. Ядро
   `app` берёт напрямую (`cortex-m-rt` — точка входа и `HardFault`, `cortex-m` —
   свободные функции ядра), без обёрток в `bsp`; паника и фолт — в `app`
-  (`docs/clocks.md`, «Ядро: фолты, ловушка деления, счётчик тактов»). Сброс МК —
+  (`docs/clocks.md`, «Ядро: фолты и ловушка деления»). Сброс МК —
   рычаг `bsp::reset::Reboot`.
 - `bsp` не зависит от `domain`: входы узлов из полей `Board` заполняет `app`.{% if ota == "true" %}
   `boot` зовёт из `domain` только `domain::ota::boot::screen_update`.{% endif %}

@@ -60,7 +60,7 @@ impl<D: Driver> NetCtx<'_, Runner<'static, D>> {
         reason = "сигнатуру действия задаёт таблица `#[fsm::typestate]`"
     )]
     fn begin(&mut self) -> Running {
-        info!("domain: узел NET запущен");
+        info!("net: узел запущен");
         Running
     }
 

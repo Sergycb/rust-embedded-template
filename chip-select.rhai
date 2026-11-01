@@ -646,12 +646,6 @@ fn listed(values) {
     out
 }
 
-/// Адрес из таблицы раскладки: `"0x08008000"`. `parse_int` в rhai понимает
-/// только десятичные числа без префикса, поэтому шестнадцатеричный разбор свой.
-fn hex_value(text) {
-    parse_int(text.sub_string(2), 16)
-}
-
 fn is_dual_core(suffix) {
     // Тот же признак, что различает ветки в cpu_and_target(): суффикс после
     // дефиса — это конкретное ядро (core_override() узнаёт его), а не
@@ -1297,16 +1291,10 @@ if !CPU_FREQ_BOOST.contains(suffix) {
 
 // Ядра Armv6-M/Armv8-M Baseline (Cortex-M0, M0+, M23): без счётчика циклов `DWT`,
 // без регистров причины фолта (`CFSR`/`HFSR`) и без ловушки деления `CCR.DIV_0_TRP`.
-// По этому признаку `bsp` собирает `cycles` и ветки `fault`, а `ports` — `CycleCounter`.
+// По этому признаку `app` собирает ветки `fault`.
 let cpu_core = variable::get("cpu");
 let core_baseline = cpu_core == "cortex-m0" || cpu_core == "cortex-m0plus" || cpu_core == "cortex-m23";
 variable::set("core_baseline", if core_baseline { "true" } else { "false" });
-// `mod cycles` у обоих крейтов под тем же признаком вырезает Liquid; файл без
-// `mod` компилятор не видит, и он уехал бы в проект мёртвым кодом.
-if core_baseline {
-    file::delete("crates-cross/bsp/src/cycles.rs");
-    file::delete("crates-host/ports/src/cycles.rs");
-}
 
 // Кэши (см. CACHE выше). Без переопределения через --define: значение целиком
 // выводится из chip_feature и cpu. Теги `scb` (кэш инструкций ядра M7) и `scb_d`
@@ -2727,7 +2715,6 @@ if variable::get("protocol_link") != "true" {
 // slave: у protobuf свой узел (`domain::protobuf`).
 if !on.modbus {
     file::delete("crates-host/domain/src/server.rs");
-    file::delete("crates-host/domain/src/server");
 }
 if variable::get("link_port") != "true" {
     file::delete("crates-host/ports/src/link.rs");

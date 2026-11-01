@@ -27,10 +27,10 @@
 
 use defmt_or_log::warn;
 use ports::{
-    Bits, BitsMut, CHUNK_BYTES, Chunk, Exception, OtaCommand, Progress, Registers, Rejection,
-    SIGNATURE_BYTES, Words, WordsMut, reply_code,
+    CHUNK_BYTES, Chunk, Exception, OtaCommand, Progress, Rejection, SIGNATURE_BYTES, reply_code,
 };
 
+use crate::modbus::{Bits, BitsMut, Registers, Words, WordsMut};
 use crate::ota::OtaClient;
 
 /// Начало окна OTA — высоко в адресах, чтобы не мешать карте проекта.
@@ -229,12 +229,10 @@ fn bytes(values: Words<'_>, from: u16, out: &mut [u8]) {
 mod tests {
     use core::task::{Context, Poll, Waker};
 
-    use ports::{
-        Exception, OtaCommand, Progress, Registers, Rejection, Words, WordsMut, reply_code,
-    };
+    use ports::{Exception, OtaCommand, Progress, Rejection, reply_code};
 
     use super::{OTA_BASE, OtaRegisters};
-    use crate::modbus::EmptyRegisters;
+    use crate::modbus::{EmptyRegisters, Registers, Words, WordsMut};
     use crate::ota::tests::{LAYOUT, Node, live};
 
     /// Запись FC16 по `start`, пока рядом крутится узел OTA.

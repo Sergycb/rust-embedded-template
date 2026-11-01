@@ -18,9 +18,6 @@ pub mod can;
 {%- if cpu_freq_boost == "true" %}
 pub mod clocks;
 {%- endif %}
-{%- if core_baseline != "true" %}
-pub mod cycles;
-{%- endif %}
 {%- if cache contains "scb_d" %}
 pub mod dma_nc;
 {%- endif %}

@@ -120,7 +120,7 @@ impl HeartbeatCtx<'_> {
         reason = "сигнатуру действия задаёт таблица `#[fsm::typestate]`"
     )]
     fn begin(&mut self) -> Idle {
-        info!("domain: узел HEARTBEAT запущен");
+        info!("heartbeat: узел запущен");
         Idle {
             next: Instant::now() + IDLE_PERIOD,
         }

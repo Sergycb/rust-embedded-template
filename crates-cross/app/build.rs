@@ -51,7 +51,7 @@ fn main() {
 
     ShadowBuilder::builder()
         .build()
-        .expect("failed to generate shadow-rs build info");
+        .expect("shadow-rs не собрал сведения о сборке");
 }
 {%- if net_services contains "rest" or ssh_auth == "password" or ssh_host_key == "file" or net_services contains "mqtt" %}
 
