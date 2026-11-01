@@ -350,8 +350,10 @@ read`: руками пришлось бы сначала найти адрес �
   правите руками число — правьте и литерал.
 {%- endif %}
 {%- if net_services contains "ssh" %}
-- Консоль SSH (`domain::ssh`, узел `SSH`): {% if ssh_auth == "password" %}пароль — `ssh-password.txt`{% else %}открытый ключ пользователя — строка `crate::net::ssh::LOGIN`{% endif %}{% if ssh_host_key == "file" %}, ключ хоста — `ssh-host-key.bin`{% endif %}{% if ssh_auth == "password" or ssh_host_key == "file" %};
-  файлы создаёт `cargo xtask` (`secrets::ensure`), и они **коммитятся**{% endif %} — README, «Консоль SSH».{% if ssh_host_key == "config" %}
+- Консоль SSH (`domain::ssh`, узел `SSH`): {% if ssh_auth == "password" %}хэш пароля — `ssh-password.hash`{% else %}открытый ключ пользователя — строка `crate::net::ssh::LOGIN`{% endif %}{% if ssh_host_key == "file" %}, ключ хоста — `ssh-host-key.bin`{% endif %}{% if ssh_auth == "password" or ssh_host_key == "file" %};
+  файлы создаёт `cargo xtask` (`secrets::ensure`), и они **коммитятся**{% endif %}{% if ssh_auth == "password" %}.
+  Открытый пароль — `ssh-password.txt`, он в `.gitignore` и в прошивку не
+  попадает: не коммитить и не вшивать его вместо хэша{% endif %} — README, «Консоль SSH».{% if ssh_host_key == "config" %}
   Ключ хоста плата создаёт при первом старте (ключ настроек
   `domain::ssh::HOST_KEY_ID`) — хранилище настроек забирает узел `SSH`, своим
   настройкам проекта нужен общий доступ через него.{% endif %} Случайность `sunset`

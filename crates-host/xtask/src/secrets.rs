@@ -4,7 +4,7 @@
 //! - токен REST API;
 // {%- endif %}
 // {%- if ssh_auth == "password" %}
-//! - пароль консоли SSH;
+//! - хэш пароля консоли SSH (сам пароль — рядом, в git не идёт);
 // {%- endif %}
 // {%- if ssh_host_key == "file" %}
 //! - вшиваемый ключ хоста SSH;
@@ -15,6 +15,9 @@
 //!
 //! Создаются при первой сборке и коммитятся — почему, README, разделы
 //! сетевых служб.
+// {%- if ssh_auth == "password" %}
+//! Не коммитится только открытый пароль SSH: прошивке хватает его хэша.
+// {%- endif %}
 // {%- if net_services contains "rest" or ssh_auth == "password" or ssh_host_key == "file" %}
 //! Секреты — случайные; защита — уровня стенда.
 // {%- endif %}
@@ -29,6 +32,9 @@ use std::fmt::Write as _;
 use std::{fs, path::Path};
 
 use anyhow::Context;
+// {%- if ssh_auth == "password" %}
+use sha2::{Digest, Sha256};
+// {%- endif %}
 
 // {%- if net_services contains "rest" %}
 /// Токен `Authorization: Bearer` REST API (`domain::http`), 32 шестнадцатеричных
@@ -38,8 +44,16 @@ pub const REST_TOKEN_FILE: &str = "rest-token.txt";
 
 // {%- if ssh_auth == "password" %}
 /// Пароль пользователя консоли SSH (`domain::ssh::USER`) при входе по паролю,
-/// 32 шестнадцатеричных знака; вшивает `crates-cross/app/src/net.rs`.
+/// 32 шестнадцатеричных знака. Прошивке он не нужен — ей хватает
+/// [`SSH_PASSWORD_HASH_FILE`], — поэтому в `.gitignore`: его знает тот, кто
+/// создал.
 pub const SSH_PASSWORD_FILE: &str = "ssh-password.txt";
+
+/// Хэш пароля консоли SSH, 48 байт как есть: 16 байт случайной соли и
+/// SHA-256(соль ‖ пароль) — формат `domain::ssh::Login::PasswordHash`.
+/// Бинарный, как `ssh-host-key.bin`: `crates-cross/app/src/net.rs` вшивает его
+/// `include_bytes!` без разбора. Коммитится: пароль из него не достать.
+pub const SSH_PASSWORD_HASH_FILE: &str = "ssh-password.hash";
 // {%- endif %}
 
 // {%- if ssh_host_key == "file" %}
@@ -79,7 +93,10 @@ pub fn ensure(root: &Path) -> Result<(), anyhow::Error> {
     ensure_text(&root.join(REST_TOKEN_FILE), "токен REST API")?;
     // {%- endif %}
     // {%- if ssh_auth == "password" %}
-    ensure_text(&root.join(SSH_PASSWORD_FILE), "пароль консоли SSH")?;
+    ensure_password_hash(
+        &root.join(SSH_PASSWORD_HASH_FILE),
+        &root.join(SSH_PASSWORD_FILE),
+    )?;
     // {%- endif %}
     // {%- if ssh_host_key == "file" %}
     ensure_bytes(&root.join(SSH_HOST_KEY_FILE), "ключ хоста SSH")?;
@@ -89,20 +106,67 @@ pub fn ensure(root: &Path) -> Result<(), anyhow::Error> {
     // {%- endif %}
     Ok(())
 }
-// {%- if net_services contains "rest" or ssh_auth == "password" %}
+// {%- if net_services contains "rest" %}
 
-/// 16 случайных байт шестнадцатеричной строкой — токен или пароль.
+/// Случайный токен в текстовом файле.
 fn ensure_text(path: &Path, what: &str) -> Result<(), anyhow::Error> {
     if path.exists() {
         return Ok(());
     }
+    fs::write(path, format!("{}\n", random_hex()?))
+        .with_context(|| format!("записать {}", path.display()))?;
+    created(path, what);
+    Ok(())
+}
+// {%- endif %}
+// {%- if ssh_auth == "password" %}
+
+/// Хэш пароля консоли SSH в `hash`. Есть — не трогает и пароля не ищет:
+/// сборке хватает хэша. Нет — хэширует пароль из `password` (так меняют
+/// пароль: свой — в файл, хэш — удалить), а нет и его — создаёт случайный и
+/// печатает его один раз.
+fn ensure_password_hash(hash: &Path, password: &Path) -> Result<(), anyhow::Error> {
+    if hash.exists() {
+        return Ok(());
+    }
+    let text = if password.exists() {
+        let text = fs::read_to_string(password)
+            .with_context(|| format!("прочитать {}", password.display()))?;
+        let text = text.trim_ascii().to_owned();
+        anyhow::ensure!(
+            !text.is_empty(),
+            "{} пуст: впишите пароль или удалите файл — `cargo xtask` создаст новый",
+            password.display()
+        );
+        text
+    } else {
+        let text = random_hex()?;
+        fs::write(password, format!("{text}\n"))
+            .with_context(|| format!("записать {}", password.display()))?;
+        println!(
+            "создан {} — пароль консоли SSH: {text}. В git он не идёт (.gitignore): \
+             сохраните его, в прошивку вшит только хэш",
+            password.display()
+        );
+        text
+    };
+    let salt = random::<16>()?;
+    let digest = Sha256::new_with_prefix(salt).chain_update(text).finalize();
+    fs::write(hash, [&salt[..], &digest[..]].concat())
+        .with_context(|| format!("записать {}", hash.display()))?;
+    created(hash, "хэш пароля консоли SSH");
+    Ok(())
+}
+// {%- endif %}
+// {%- if net_services contains "rest" or ssh_auth == "password" %}
+
+/// 16 случайных байт шестнадцатеричной строкой — токен или пароль.
+fn random_hex() -> Result<String, anyhow::Error> {
     let mut text = String::new();
     for b in random::<16>()? {
         write!(text, "{b:02x}").expect("запись в String не отказывает");
     }
-    fs::write(path, format!("{text}\n")).with_context(|| format!("записать {}", path.display()))?;
-    created(path, what);
-    Ok(())
+    Ok(text)
 }
 // {%- endif %}
 // {%- if ssh_host_key == "file" %}
@@ -162,8 +226,13 @@ mod mqtt_toml;
 mod tests {
     use std::fs;
 
-    // {%- if net_services contains "rest" or ssh_auth == "password" %}
+    // {%- if net_services contains "rest" %}
     use super::ensure_text;
+    // {%- endif %}
+    // {%- if ssh_auth == "password" %}
+    use sha2::{Digest, Sha256};
+
+    use super::ensure_password_hash;
     // {%- endif %}
     // {%- if ssh_host_key == "file" %}
     use super::ensure_bytes;
@@ -172,7 +241,7 @@ mod tests {
     use super::{MQTT_CONFIG_TEMPLATE, ensure_mqtt_config};
     // {%- endif %}
     use crate::memory::scratch::scratch;
-    // {%- if net_services contains "rest" or ssh_auth == "password" %}
+    // {%- if net_services contains "rest" %}
 
     #[test]
     fn a_missing_text_is_created_random() {
@@ -185,6 +254,59 @@ mod tests {
         assert_eq!(token.len(), 32);
         assert!(token.bytes().all(|c| c.is_ascii_hexdigit()), "{token}");
         assert_ne!(token, fs::read_to_string(&b).unwrap().trim_end());
+    }
+    // {%- endif %}
+    // {%- if ssh_auth == "password" %}
+
+    /// Соль и SHA-256(соль ‖ `password`) — то, что сверяет
+    /// `domain::ssh::Login::PasswordHash`.
+    fn assert_hash_of(hash: &[u8], password: &str) {
+        assert_eq!(hash.len(), 48);
+        let (salt, digest) = hash.split_at(16);
+        let expected = Sha256::new_with_prefix(salt)
+            .chain_update(password)
+            .finalize();
+        assert_eq!(digest, &expected[..], "хэш не от {password:?}");
+    }
+
+    /// Нет ни хэша, ни пароля — случайный пароль в текстовом файле и его хэш
+    /// со случайной солью.
+    #[test]
+    fn a_missing_password_is_created_with_its_hash() {
+        let dir = scratch("ssh-password-new");
+        let (hash, password) = (dir.path().join("p.hash"), dir.path().join("p.txt"));
+        ensure_password_hash(&hash, &password).unwrap();
+        let text = fs::read_to_string(&password).unwrap();
+        let text = text.trim_end();
+        assert_eq!(text.len(), 32);
+        assert!(text.bytes().all(|c| c.is_ascii_hexdigit()), "{text}");
+        let first = fs::read(&hash).unwrap();
+        assert_hash_of(&first, text);
+
+        // Тот же пароль заново — другая соль.
+        fs::remove_file(&hash).unwrap();
+        ensure_password_hash(&hash, &password).unwrap();
+        let second = fs::read(&hash).unwrap();
+        assert_hash_of(&second, text);
+        assert_ne!(first[..16], second[..16]);
+    }
+
+    /// Хэша нет, а пароль есть — хэшируется он, а не новый; файл пароля не
+    /// трогается. Пустой — ошибка, а не хэш пустого пароля.
+    #[test]
+    fn an_existing_password_is_hashed() {
+        let dir = scratch("ssh-password-own");
+        let (hash, password) = (dir.path().join("p.hash"), dir.path().join("p.txt"));
+        fs::write(&password, "mine\n").unwrap();
+        ensure_password_hash(&hash, &password).unwrap();
+        assert_hash_of(&fs::read(&hash).unwrap(), "mine");
+        assert_eq!(fs::read_to_string(&password).unwrap(), "mine\n");
+
+        let (hash, password) = (dir.path().join("e.hash"), dir.path().join("e.txt"));
+        fs::write(&password, " \n").unwrap();
+        let err = ensure_password_hash(&hash, &password).unwrap_err();
+        assert!(err.to_string().contains("пуст"), "{err}");
+        assert!(!hash.exists());
     }
     // {%- endif %}
     // {%- if ssh_host_key == "file" %}
@@ -203,11 +325,19 @@ mod tests {
     #[test]
     fn existing_files_are_kept() {
         let dir = scratch("secrets-kept");
-        // {%- if net_services contains "rest" or ssh_auth == "password" %}
+        // {%- if net_services contains "rest" %}
         let text = dir.path().join("t.txt");
         fs::write(&text, "mine\n").unwrap();
         ensure_text(&text, "t").unwrap();
         assert_eq!(fs::read_to_string(&text).unwrap(), "mine\n");
+        // {%- endif %}
+        // {%- if ssh_auth == "password" %}
+        // Хэш есть, а пароля нет — сборка идёт по хэшу, нового пароля нет.
+        let (hash, password) = (dir.path().join("p.hash"), dir.path().join("p.txt"));
+        fs::write(&hash, [7; 48]).unwrap();
+        ensure_password_hash(&hash, &password).unwrap();
+        assert_eq!(fs::read(&hash).unwrap(), [7; 48]);
+        assert!(!password.exists());
         // {%- endif %}
         // {%- if ssh_host_key == "file" %}
         let bytes = dir.path().join("k.bin");

@@ -714,7 +714,7 @@ Modbus. Через `--define` то же задаёт `links` (`parse_links()`, �
 protobuf. Сокеты стека считает `bsp::net::SOCKETS` из чисел генерации: DHCP-клиент,
 сетевые транспорты (`net_sockets`), по сокету на копию пула REST (`http_connections` →
 `HTTP_CONNECTIONS`), на SSH и на MQTT. Секреты
-(`rest-token.txt`, `ssh-password.txt`, `ssh-host-key.bin`, заготовка `mqtt.toml`) создаёт `cargo xtask`
+(`rest-token.txt`, `ssh-password.hash` с паролем в `ssh-password.txt`, `ssh-host-key.bin`, заготовка `mqtt.toml`) создаёт `cargo xtask`
 (`secrets.rs`). Тесты — `net_services_*`, `ssh_*`, `password_login_asks_no_key` в
 `cascade.rs`; обход путей отвечает на `ssh_key` заранее.
 Без терминала `variable::prompt` отвечает «not a terminal», и `ask()` берёт умолчание:

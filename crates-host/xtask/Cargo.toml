@@ -36,6 +36,11 @@ ports = { workspace = true }
 # {%- endif %}
 getrandom = "0.4.3"
 # {%- endif %}
+# {%- if ssh_auth == "password" %}
+# Хэш пароля консоли SSH (`secrets.rs`) — тот же SHA-256, которым прошивка
+# сверяет предъявленный пароль (`domain::ssh::Login::PasswordHash`).
+sha2 = { workspace = true }
+# {%- endif %}
 # Сырой образ из ELF — своим разбором, а не `cargo objcopy`: тот требует
 # cargo-binutils, которого `cargo xtask setup` не ставит, и у пользователя
 # такая команда не запустилась бы.

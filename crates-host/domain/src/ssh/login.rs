@@ -1,15 +1,35 @@
-//! Вход пользователя: кого пускать и разбор его открытого ключа из прошивки.
+//! Вход пользователя: кого пускать, сверка пароля с хэшем и разбор открытого
+//! ключа из прошивки.
 
 use defmt_or_log::warn;
+use sha2::{Digest, Sha256};
+use subtle::ConstantTimeEq;
+
+/// Длина хэша пароля [`Login::PasswordHash`]: 16 байт соли и 32 байта
+/// SHA-256(соль ‖ пароль). Тот же формат пишет `cargo xtask` в
+/// `ssh-password.hash` (`secrets.rs`).
+pub const PASSWORD_HASH_LEN: usize = SALT_LEN + DIGEST_LEN;
 
 /// Пользователь консоли.
 pub const USER: &str = "admin";
 
+/// Длина соли в начале хэша пароля.
+const SALT_LEN: usize = 16;
+
+/// Длина SHA-256.
+const DIGEST_LEN: usize = 32;
+
 /// Как плата пускает пользователя [`USER`].
 #[derive(Debug, Clone, Copy)]
 pub enum Login {
-    /// По паролю; пустой не пускает никого.
-    Password(&'static str),
+    /// По паролю, которого в прошивке нет — только хэш: [`PASSWORD_HASH_LEN`]
+    /// байт, соль и SHA-256(соль ‖ пароль). Хэш другой длины не пускает
+    /// никого.
+    ///
+    /// SHA-256 без KDF (bcrypt, argon2) — потому что пароль генерирует
+    /// `cargo xtask`: 128 бит из ОС, перебор их по хэшу невозможен и без
+    /// замедления. Пароль, придуманный человеком, такой защиты не даёт.
+    PasswordHash(&'static [u8]),
     /// По открытому ключу: строка `ssh-ed25519 AAAA… [комментарий]` из
     /// `~/.ssh/id_ed25519.pub`.
     Key(&'static str),
@@ -18,25 +38,35 @@ pub enum Login {
 /// Кого пускать: проверенная форма [`Login`].
 #[derive(Clone, Copy)]
 pub(super) enum Access {
-    Password(&'static str),
+    Password {
+        salt: &'static [u8; SALT_LEN],
+        digest: &'static [u8; DIGEST_LEN],
+    },
     Key([u8; 32]),
-    /// Ключ из прошивки не разобрался или пароль пуст — никого: пускать без
-    /// проверки нельзя.
+    /// Ключ из прошивки не разобрался или хэш пароля не той длины — никого:
+    /// пускать без проверки нельзя.
     Nobody,
 }
 
 impl Access {
     pub(super) fn new(login: Login) -> Self {
         match login {
-            // Как пустой токен REST (`http::auth::authorized`): пустой пароль
-            // впустил бы любого, кто его не ввёл. Прошивку с пустым
-            // `ssh-password.txt` не соберёт `const`-assert в `app`, здесь —
-            // защита для любого другого источника `Login`.
-            Login::Password("") => {
-                warn!("ssh: пароль в прошивке пуст — вход закрыт");
-                Self::Nobody
+            // Битый хэш — не «пускать всех»: прошивку с хэшем не той длины не
+            // соберёт `const`-assert в `app`, здесь — защита для любого
+            // другого источника `Login`.
+            Login::PasswordHash(hash) => {
+                if let Some((salt, digest)) = hash.split_first_chunk()
+                    && let Ok(digest) = digest.try_into()
+                {
+                    Self::Password { salt, digest }
+                } else {
+                    warn!(
+                        "ssh: хэш пароля в прошивке не {} байт — вход закрыт",
+                        PASSWORD_HASH_LEN
+                    );
+                    Self::Nobody
+                }
             }
-            Login::Password(password) => Self::Password(password),
             Login::Key(line) => {
                 if let Some(key) = ed25519_public_key(line) {
                     Self::Key(key)
@@ -63,17 +93,23 @@ impl Access {
         }
     }
 
-    /// Пускать ли по паролю: `user` и `password` сверяют предъявленное с
-    /// ожидаемым. Сверку делает `sunset` (`matches_username`,
-    /// `matches_password` — без выхода на первом несовпавшем байте), здесь
-    /// только решение.
-    pub(super) fn admits_password(
-        self,
-        user: impl FnOnce(&str) -> bool,
-        password: impl FnOnce(&str) -> bool,
-    ) -> bool {
+    /// Пускать ли по паролю: `user` сверяет имя клиента с ожидаемым
+    /// (`sunset`, `matches_username`), `password` — предъявленный пароль.
+    /// Его SHA-256 с солью сравнивается с хэшем прошивки за постоянное время.
+    pub(super) fn admits_password(self, user: impl FnOnce(&str) -> bool, password: &[u8]) -> bool {
         match self {
-            Self::Password(expected) => user(USER) && password(expected),
+            // Пустой не пускает, даже будь хэш от пустого пароля: как пустой
+            // токен REST (`http::auth::authorized`).
+            Self::Password { salt, digest } => {
+                user(USER)
+                    && !password.is_empty()
+                    && Sha256::new_with_prefix(salt)
+                        .chain_update(password)
+                        .finalize()
+                        .as_slice()
+                        .ct_eq(digest)
+                        .into()
+            }
             Self::Key(_) | Self::Nobody => false,
         }
     }

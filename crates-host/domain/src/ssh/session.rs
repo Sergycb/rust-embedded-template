@@ -170,14 +170,14 @@ async fn negotiate(
         match server.progress(&mut ph).await? {
             ServEvent::Hostkeys(h) => h.hostkeys(&[key])?,
             ServEvent::FirstAuth(mut a) => a.set_auth_methods(
-                matches!(access, Access::Password(_)),
+                matches!(access, Access::Password { .. }),
                 matches!(access, Access::Key(_)),
             )?,
             ServEvent::PasswordAuth(a) => {
-                if access.admits_password(
-                    |user| a.matches_username(user),
-                    |password| a.matches_password(password),
-                ) {
+                // Пароль не прочитался — как пустой: не пускает (так же
+                // `matches_password` `sunset`).
+                let password = a.raw_password().map(|p| p.0).unwrap_or_default();
+                if access.admits_password(|user| a.matches_username(user), password) {
                     a.allow()?;
                 } else {
                     warn!("ssh: неверный пользователь или пароль");
