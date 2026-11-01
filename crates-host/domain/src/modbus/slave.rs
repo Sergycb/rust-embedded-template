@@ -2,7 +2,6 @@
 //! `domain::server`.
 
 use ports::{Bits, BitsMut, Exception, MAX_PDU, Registers, Words, WordsMut};
-use rusty_modbus_codec::error::DecodeError;
 use rusty_modbus_codec::validate::{
     validate_read_coils, validate_read_discrete_inputs, validate_read_registers,
     validate_write_coils, validate_write_registers,
@@ -28,8 +27,8 @@ const ECHO: usize = 5;
 ///
 /// Недопустимый запрос — количество вне диапазона спецификации, счётчик
 /// байт не сходится, coil не 0x0000/0xFF00 — получает исключение до вызова
-/// `regs`, неизвестная функция — Illegal Function. Битые кадры отбрасывает
-/// канал.
+/// `regs`. Функция, которую slave не исполняет, — Illegal Function, даже с
+/// битыми данными: функция проверяется первой. Битые кадры отбрасывает канал.
 ///
 /// На FC43/14 (Read Device Identification) отвечает сам, без `regs`:
 /// производитель и модель — константы [`VENDOR`](crate::modbus::VENDOR) и
@@ -99,15 +98,17 @@ impl<R: Registers> Handler for Slave<R> {
 /// Выполняет запрос `pdu` и кладёт PDU ответа в `out`; возвращает его длину.
 async fn respond<R: Registers>(pdu: &[u8], regs: &mut R, revision: &str, out: &mut [u8]) -> usize {
     let fc = pdu[0];
-    // Кодек FC43 не знает: идентификация отвечается до разбора.
-    let result = if fc == identity::FUNCTION {
-        identity::read_device_id(pdu, revision, out)
-    } else {
-        match decode_request(pdu) {
+    let result = match fc {
+        // Кодек FC43 не знает: идентификация отвечается до разбора.
+        identity::FUNCTION => identity::read_device_id(pdu, revision, out),
+        // Функция проверяется до данных (спецификация, §4.5, рис. 9): битый
+        // PDU функции, которую slave не исполняет, — Illegal Function, а не
+        // Illegal Data Value.
+        0x01..=0x06 | 0x0F | 0x10 => match decode_request(pdu) {
             Ok(request) => execute(&request, pdu, regs, out).await,
-            Err(DecodeError::UnknownFunctionCode(_)) => Err(Exception::IllegalFunction),
             Err(_) => Err(Exception::IllegalDataValue),
-        }
+        },
+        _ => Err(Exception::IllegalFunction),
     };
     match result {
         Ok(len) => len,
@@ -182,6 +183,7 @@ async fn execute<R: Registers>(
                 .await?;
             Ok(echo(out, pdu))
         }
+        // Не бывает: до разбора `respond` пропускает только функции выше.
         _ => Err(Exception::IllegalFunction),
     }
 }
@@ -281,7 +283,7 @@ mod tests {
 
     #[tokio::test]
     async fn invalid_requests_get_exceptions() {
-        let cases: [(&[u8], &[u8]); 8] = [
+        let cases: [(&[u8], &[u8]); 11] = [
             // qty=0 и qty>125 — Illegal Data Value
             (&[0x03, 0, 0, 0, 0], &[0x83, 0x03]),
             (&[0x03, 0, 0, 0, 200], &[0x83, 0x03]),
@@ -297,6 +299,11 @@ mod tests {
             (&[0x2B, 0x0E, 0x02, 0x00], &[0xAB, 0x03]),
             // запрос обрезан
             (&[0x03, 0, 0], &[0x83, 0x03]),
+            // Функции, которые кодек знает, а slave не исполняет: сначала
+            // проверяется функция, и битый PDU — тоже Illegal Function.
+            (&[0x08, 0x00], &[0x88, 0x01]),
+            (&[0x16, 0, 0, 0xFF], &[0x96, 0x01]),
+            (&[0x08, 0, 0, 0x12, 0x34], &[0x88, 0x01]),
         ];
         for (request, reply) in cases {
             let mut map = Map::default();

@@ -199,7 +199,10 @@ Modbus: его реализует приложение, а кадры к нем�
 `FrameLink` с кадром «адрес и PDU»:
 {%- capture mb_links %}{% if modbus_rtu == "true" %}, `adapters::modbus::Rtu` (RTU поверх потока
 {% if has_uart == "true" %}UART{% if has_usb == "true" %} или {% endif %}{% endif %}{% if has_usb == "true" %}USB CDC{% endif %}){% endif %}{% if modbus_tcp == "true" %}, `adapters::modbus::Tcp` (MBAP поверх потока TCP){% endif %}{% if modbus_udp == "true" %}, `adapters::modbus::Udp` (MBAP в датаграмме){% endif %}{% endcapture %} {{ mb_links | remove_first: ", " }}.{% if modbus_master == "true" %} Они же реализуют порт
-master'а `ModbusClient`.{% endif %}
+master'а `ModbusClient`, но рабочий master из коробки — только `Rtu` над UART:{% if has_usb == "true" %} над USB
+CDC (нет `ReadReady`) он master'ом не собирается,{% endif %} а TCP- и UDP-каналы шаблона серверные — пишут тому,
+кто подключился или прислал последнюю датаграмму, а не выбранному slave'у
+(doc модуля `adapters::modbus`).{% endif %}
 {%- endif %}
 {%- if protocol == "protobuf" %}
 Сообщения protobuf от хоста переводит в свои проверенные типы обработчик
@@ -611,7 +614,11 @@ ST-Link захваченным до переподключения кабеля 
 что запись по одному транспорту видна чтению по другому. Slave отвечает на функции
 1–6, 15, 16 (coils, discrete inputs, holding и input registers) и 43/14 Read Device
 Identification (производитель и модель — `crates-host/domain/src/modbus/identity.rs`,
-ревизия — `build::PKG_VERSION` прошивки); на остальные — Illegal Function.
+ревизия — `build::PKG_VERSION` прошивки); на остальные — Illegal Function.{% if modbus_rtu == "true" %} По RTU
+это так для всех открытых функций спецификации; кадр пользовательской функции
+(65–72, 100–110), MEI, кроме 14, и FC08/00 длиннее двух байт данных slave
+пропускает молча: длину кадра по коду функции не вывести, а без неё не
+проверить CRC (`adapters::modbus::Rtu`).{% endif %}
 {%- elsif protocol == "protobuf" %} схему `crates-host/proto` и обработчик `crates-host/domain/src/protobuf/service.rs`.
 {%- else %} словарь объектов `crates-host/canopen/device.toml`.
 {%- endif %}

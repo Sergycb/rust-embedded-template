@@ -54,6 +54,13 @@ UART платы — поток байтов, по подмодулю на тра
 `BufferedUart` реализует `embedded_io_async::{Read, ReadReady, Write}` сам{% if link_kinds contains "uart" %} —
 ровно то, что ждёт транспорт {% if has_modbus == "true" %}`adapters::modbus::Rtu`{% else %}`adapters::cobs::Cobs`{% endif %}{% endif %},
 поэтому ни прослойки, ни трейтов в `bsp` не нужно.
+{%- if link_kinds contains "uart" and has_modbus == "true" %}
+Скорость линии `Rtu` не знает: начатый кадр, после которого линия молчит
+дольше 20 мс, он выбрасывает при любой скорости. Это больше паузы, которую
+спецификация допускает внутри кадра, на всём от 1200 бод, — медленнее 1200
+целый кадр с паузами внутри был бы порезан (`FRAME_GAP` в
+`crates-host/adapters/src/modbus/rtu.rs`).
+{%- endif %}
 
 ## RS-485
 

@@ -4,8 +4,10 @@
 //! с [`OTA_BASE`]; всё остальное уходит карте проекта как было. Одна запись
 //! FC16 по адресу [`OTA_BASE`] — одна команда узлу OTA (`ports::OtaCommand`),
 //! и ответ на запись — её исход: обычный ответ FC16 — команда выполнена,
-//! исключение `ServerDeviceFailure` (04) — отвергнута. Точный код и сколько
-//! байт образа принято лежат во входных регистрах (FC04) с той же базы.
+//! исключение `ServerDeviceFailure` (04) — отвергнута или узел OTA не ответил
+//! (код `Device`). Точный код и сколько байт образа принято лежат во входных
+//! регистрах (FC04) с той же базы; запись не по форме — `IllegalDataValue`
+//! (03) и код 0.
 //!
 //! Holding-регистры с [`OTA_BASE`], одна запись на команду:
 //!
@@ -25,8 +27,8 @@
 
 use defmt_or_log::warn;
 use ports::{
-    Bits, BitsMut, CHUNK_BYTES, Chunk, Exception, OtaCommand, Progress, Registers, SIGNATURE_BYTES,
-    Words, WordsMut, reply_code,
+    Bits, BitsMut, CHUNK_BYTES, Chunk, Exception, OtaCommand, Progress, Registers, Rejection,
+    SIGNATURE_BYTES, Words, WordsMut, reply_code,
 };
 
 use crate::ota::OtaClient;
@@ -79,11 +81,14 @@ impl<R> OtaRegisters<R> {
 
     /// Команда узлу OTA и её исход — ответом на запись.
     async fn command(&mut self, values: Words<'_>) -> Result<(), Exception> {
+        // Исход прошлой команды к этой не относится: запись не по форме
+        // оставляет 0 — «исхода нет», а не чужой код.
+        self.status = 0;
         let command = parse(values).ok_or(Exception::IllegalDataValue)?;
-        let Ok(reply) = self.ota.request(command).await else {
+        let reply = self.ota.request(command).await.unwrap_or_else(|_lost| {
             warn!("modbus: узел OTA не ответил");
-            return Err(Exception::ServerDeviceFailure);
-        };
+            Err(Rejection::Device)
+        });
         self.status = reply_code(&reply);
         match reply {
             Ok(Progress::Received(received)) => self.received = received,
@@ -224,7 +229,9 @@ fn bytes(values: Words<'_>, from: u16, out: &mut [u8]) {
 mod tests {
     use core::task::{Context, Poll, Waker};
 
-    use ports::{Exception, Registers, Words, WordsMut};
+    use ports::{
+        Exception, OtaCommand, Progress, Registers, Rejection, Words, WordsMut, reply_code,
+    };
 
     use super::{OTA_BASE, OtaRegisters};
     use crate::modbus::EmptyRegisters;
@@ -319,20 +326,54 @@ mod tests {
         assert_eq!(status(&mut regs)[0], 16, "NoSession");
     }
 
-    /// Запись не по форме — `IllegalDataValue`, до узла OTA она не доходит.
+    /// Запись не по форме — `IllegalDataValue`, до узла OTA она не доходит,
+    /// а код прошлого исхода в окне не остаётся.
     #[test]
     fn a_malformed_command_is_illegal_data_value() {
         let (ota, mut node) = live();
         let mut regs = OtaRegisters::new(EmptyRegisters, ota);
 
         for values in [&[9][..], &[1, 0], &[2, 0, 0, 4, 1], &[3, 0]] {
+            // Перед каждой — исход настоящей команды: `Finish` без приёма.
+            assert_eq!(
+                write(&mut regs, &mut node, OTA_BASE, &[3]),
+                Err(Exception::ServerDeviceFailure)
+            );
+            assert_eq!(status(&mut regs)[0], 16, "NoSession");
             assert_eq!(
                 write(&mut regs, &mut node, OTA_BASE, values),
                 Err(Exception::IllegalDataValue),
                 "{values:?}"
             );
+            assert_eq!(status(&mut regs)[0], 0, "{values:?}: исхода нет");
         }
-        assert_eq!(status(&mut regs)[0], 0, "исходов не было");
+    }
+
+    /// Узел OTA взял команду и не ответил — исключение 04 и код `Device`,
+    /// принятая длина обнулена, а не исход прошлой команды.
+    #[test]
+    fn a_lost_node_is_device_failure_with_the_device_code() {
+        let (ota, mut cmd) = crate::ota::tests::cmd();
+        let mut node: Node = Box::pin(async move {
+            let (_, served) = cmd.serve().await;
+            served.respond(Ok(Progress::Received(9)));
+            // Второй запрос узел берёт и бросает, не ответив: `_` — дроп сразу.
+            let (request, _) = cmd.serve().await;
+            assert_eq!(request.command, OtaCommand::Finish);
+            core::future::pending::<()>().await;
+        });
+        let mut regs = OtaRegisters::new(EmptyRegisters, ota);
+
+        assert_eq!(write(&mut regs, &mut node, OTA_BASE, &[3]), Ok(()));
+        assert_eq!(status(&mut regs), [2, 0, 9]);
+        assert_eq!(
+            write(&mut regs, &mut node, OTA_BASE, &[3]),
+            Err(Exception::ServerDeviceFailure)
+        );
+        assert_eq!(
+            status(&mut regs),
+            [reply_code(&Err(Rejection::Device)), 0, 0]
+        );
     }
 
     /// Запись в середину окна — не команда; вне окна — карта проекта.

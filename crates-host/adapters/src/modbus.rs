@@ -3,17 +3,41 @@
 //! кадр разбирает обработчик `domain::modbus::Slave`, а обслуживает канал узел
 //! `domain::server`.
 // {%- if modbus_master == "true" %}
-//! Они же реализуют порт master'а [`ports::ModbusClient`].
+//! Они же реализуют порт master'а [`ports::ModbusClient`], но готовым
+//! master'ом работает только RTU над UART.
+// {%- if modbus_rtu == "true" %}
+//! - [`Rtu`](crate::modbus::Rtu) master'ом требует `ReadReady` — слива входа
+//!   перед запросом: его реализуют `BufferedUart` и `RingBufferedUartRx` из
+//!   `embassy-stm32`.
+// {%- if has_usb == "true" %}
+//!   У `usb::CdcStream` его нет, и `Rtu<CdcStream>` master'ом не собирается.
+// {%- endif %}
+// {%- endif %}
+// {%- if modbus_tcp == "true" %}
+//! - [`Tcp`](crate::modbus::Tcp) над `net::TcpServer` — сервер: соединение
+//!   открывает удалённая сторона, а без него запись — ошибка. Master'у к
+//!   выбранному slave'у нужен свой исходящий поток — клиент TCP.
+// {%- endif %}
+// {%- if modbus_udp == "true" %}
+//! - [`Udp`](crate::modbus::Udp) над `net::UdpLink` шлёт отправителю последней
+//!   принятой датаграммы: до первой входящей — `NoPeer`
+//!   ([`LinkError::Lost`](ports::LinkError::Lost)), потом — тому, кто писал
+//!   последним, а не выбранному slave'у. Master'у нужен свой канал с адресом
+//!   назначения.
+// {%- endif %}
+//!
 // {%- endif %}
 //! Логика `domain::modbus` работает с PDU, не зная, какой транспорт под ней.
 //!
 // {%- if modbus_rtu == "true" %}
 //! [`Rtu`](crate::modbus::Rtu) — кадр «адрес, PDU, CRC» поверх
-//! `embedded_io_async::{Read, Write}`. Пауза между кадрами в потоке не
-//! видна, поэтому граница кадра выводится из содержимого: длина — из
-//! кода функции и счётчика байт, CRC подтверждает, что кадр найден верно;
-//! после битого кадра slave сдвигается на байт, пока CRC не сойдётся
-//! снова.
+//! `embedded_io_async::{Read, Write}`. Граница кадра выводится из
+//! содержимого: длина — из кода функции и счётчика байт, CRC подтверждает,
+//! что кадр найден верно; после битого кадра slave сдвигается на байт, пока
+//! CRC не сойдётся снова. Паузу в 3,5 символа между кадрами поток точно не
+//! показывает, и slave ловит только долгую тишину посреди начатого кадра
+//! (20 мс): такой обрывок он выбрасывает, а не ждёт его конца по счётчику
+//! байт.
 //!
 // {%- endif %}
 // {%- if modbus_tcp == "true" %}
@@ -87,7 +111,7 @@ pub use udp::{DATAGRAM, Udp};
 // {%- endif %}
 
 // {%- if modbus_stream == "true" %}
-use embedded_io_async::{Error, ErrorKind, Read, ReadExactError};
+use embedded_io_async::{Error, ErrorKind, ReadExactError};
 use ports::LinkError;
 // {%- endif %}
 
@@ -107,10 +131,11 @@ pub enum FrameError<E> {
     Framing,
 }
 
+// {%- if modbus_tcp == "true" %}
 /// Дочитывает `rx` из `io` до `want` байт. Каждый прочитанный кусок сразу
 /// учтён в `have`, поэтому брошенное чтение ничего не теряет: следующий
 /// вызов продолжит с того же места.
-async fn fill<T: Read>(
+async fn fill<T: embedded_io_async::Read>(
     io: &mut T,
     rx: &mut [u8],
     have: &mut usize,
@@ -125,6 +150,7 @@ async fn fill<T: Read>(
     }
     Ok(())
 }
+// {%- endif %}
 
 /// Отказ потока как исход канала: разорванное соединение — отказ, шум на
 /// линии (переполнение, чётность; `embassy-stm32` отдаёт их как
@@ -234,7 +260,9 @@ mod fakes {
             self
         }
         // {%- endif %}
-        // {%- if modbus_tcp == "true" %}
+        // {%- endif %}
+        // {%- if modbus_rtu == "true" or modbus_master == "true" %}
+        // {%- if modbus_rtu == "true" or modbus_tcp == "true" %}
 
         /// Пустой вход — ожидание, а не конец потока.
         pub(super) fn waiting(mut self) -> Self {
@@ -243,7 +271,7 @@ mod fakes {
         }
         // {%- endif %}
         // {%- endif %}
-        // {%- if modbus_tcp == "true" %}
+        // {%- if modbus_rtu == "true" or modbus_tcp == "true" %}
 
         /// Дописывает `bytes` ко входу — пришли позже.
         pub(super) fn push(&mut self, bytes: &[u8]) {
