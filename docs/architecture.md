@@ -33,7 +33,7 @@ Modbus{% endif %}{% if net_services != "" %}, секреты служб{% endif 
 От `bsp` bootloader зависит всегда: {% if bank_switch != "" %}переключение банков (`bsp::banks`), {% endif %}подъём
 HAL (`bsp::board::init_peripherals` — на умолчаниях `embassy-stm32`, не на конфиге
 платы), константы раскладки ({% if shared_flash == "true" %}`bsp::flash`{% if external_flash == "true" %}, {% endif %}{% endif %}{% if external_flash == "true" %}`bsp::external`{% endif %}{% if graph == "true" %},
-`bsp::wdg::HW_TIMEOUT_US`{% endif %}). Копий у `boot` больше нет. Точка входа
+`bsp::wdg::HW_TIMEOUT_US`{% endif %}). Своих копий этих констант у `boot` нет. Точка входа
 (`cortex-m-rt`) и паникёр у него свои: паника и фолт — решение прошивки, а не
 рычаг платы, и у `boot` это сброс МК без сообщения, а у `app` — дамп в
 `PANIC` и обработчик `HardFault` с причиной (`app/src/panic.rs`,
@@ -398,7 +398,7 @@ device, cdc }` (классы `embassy-usb` регистрируются до п�
 `Board` берёт `tasks::spawn_all(spawner, board)`{% endif %}. Отвергнуто: `Option`-поля в
 `Board` (тип врёт, ошибка уходит в рантайм){% if has_usb == "true" %}, передача половины пары через
 `static` (поток CDC не `Send`){% endif %} и отдельные `Drivers` с парами, собранными в
-`app`, — так было раньше, и `app` строил объекты, которые по смыслу — рычаг
+`app`: тогда `app` строил бы объекты, которые по смыслу — рычаг
 платы. Прямое следствие того же правила: `embassy-stm32` нет и в манифесте `app` —
 даже драйвер времени (`time-driver-any`) приложение включает фичей
 `bsp/time-driver`.

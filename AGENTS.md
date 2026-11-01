@@ -189,7 +189,7 @@ read`: руками пришлось бы сначала найти адрес �
   `docs/diagnostics.md`, «Два паникёра, один на сборку».
 {%- if ota == "true" %}
 - `prepare(len)` порта `FirmwareUpdate` зовётся один раз перед приёмом образа
-  (внутри `domain::ota::download::Transfer::start`), `write()` сектор больше не
+  (внутри `domain::ota::download::Transfer::start`), `write()` сектор не
   стирает — `docs/ota.md`.
 {%- endif %}
 - `lib.rs` только объявляет: атрибуты, `//!`, `mod`, `pub use` — определения
