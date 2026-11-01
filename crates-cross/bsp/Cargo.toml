@@ -61,11 +61,10 @@ embassy-stm32 = { workspace = true, features = ["unstable-pac"] }
 {%- endif %}
 adapters = { workspace = true{% if has_usb == "true" or has_net == "true" %}, features = ["fake"]{% endif %} }
 {%- endif %}
-{%- if ota == "true" or config_store == "eeprom" or has_can == "true" %}
+{%- if ota == "true" or has_can == "true" %}
 # Порты, которые плата реализует сама — у чего нет трейта в `embedded-hal`:{% if ota == "true" %}
 # перезагрузка для узла OTA (`Reboot`, src/reset.rs) и отпечаток раскладки
-# (`layout_fingerprint`, src/layout.rs);{% endif %}{% if config_store == "eeprom" %}
-# доступ к EEPROM (`EepromAccess`, src/flash.rs);{% endif %}{% if has_can == "true" %}
+# (`layout_fingerprint`, src/layout.rs);{% endif %}{% if has_can == "true" %}
 # шина CAN (`CanBus`, заглушка в src/stub.rs);{% endif %}
 ports = { workspace = true }
 {%- endif %}
@@ -106,9 +105,10 @@ embassy-sync = { workspace = true }
 embassy-embedded-hal = { workspace = true }
 {%- endif %}
 {%- if shared_flash == "true" %}
-{%- if cache contains "scb_d" or cache contains "icache" or cache contains "dcen" %}
-# Трейты `NorFlash` — обёртка флеша чипа, сбрасывающая кэш после стирания и
-# записи (`Coherent` в src/flash.rs).
+{%- if cache contains "scb_d" or cache contains "icache" or cache contains "dcen" or config_store == "eeprom" %}
+# {% if config_store == "eeprom" %}Трейт `Storage` — доступ к EEPROM под обёрткой `adapters::eeprom::Eeprom`
+# (`EepromFlash` в src/flash.rs){% else %}Трейты `NorFlash` — обёртка флеша чипа, сбрасывающая кэш после стирания и
+# записи (`Coherent` в src/flash.rs){% endif %}.
 embedded-storage = { workspace = true }
 {%- endif %}
 {%- endif %}

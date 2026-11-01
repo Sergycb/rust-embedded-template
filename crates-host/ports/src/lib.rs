@@ -104,11 +104,6 @@ pub mod ota;
 /// Хранилище настроек.
 pub mod settings;
 // {%- endif %}
-// {%- if config_store == "eeprom" %}
-
-/// Доступ к внутренней EEPROM — под хранилищем настроек на L0/L1.
-pub mod eeprom;
-// {%- endif %}
 
 // {%- if has_can == "true" %}
 pub use can::CanBus;
@@ -137,7 +132,4 @@ pub use ota::update::{
 // {%- endif %}
 // {%- if settings_port == "true" %}
 pub use settings::SettingsStorage;
-// {%- endif %}
-// {%- if config_store == "eeprom" %}
-pub use eeprom::EepromAccess;
 // {%- endif %}

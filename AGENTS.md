@@ -308,7 +308,7 @@ read`: руками пришлось бы сначала найти адрес �
 {%- if config == "true" %}
 - Хранилище настроек — `adapters::settings` над любым async `NorFlash`, на весь
   его объём. Носитель отдаёт плата рычагом `NorFlash`
-  (`board.config: bsp::ConfigFlash`): {% if config_store == "eeprom" %}EEPROM L0/L1 (доступ — порт `ports::EepromAccess`, обёртку
+  (`board.config: bsp::ConfigFlash`): {% if config_store == "eeprom" %}EEPROM L0/L1 (доступ — `embedded_storage::Storage`, обёртку
   `adapters::eeprom::Eeprom` собирает сама плата){% elsif config_store == "external" %}внешняя флеш W25Q (драйвер
   `w25q` в `bsp::external`, шина — заглушка `bsp::stub::FlashBus`, пока проект не
   подставит выводы){% else %}раздел `CONFIG` внутреннего

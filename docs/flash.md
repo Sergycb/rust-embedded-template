@@ -182,7 +182,7 @@ QSPI, где он выведен (`QUADSPI`, иначе `OCTOSPI`), иначе S
   разделы OTA{% if cfg_flash == "1" %} и настройки{% endif %} — асинхронные и стоят на `BlockingAsync` поверх `Whole`; `boot` строит разделы над тем же
   `Mutex<_, RefCell<_>>` блокирующе.{% elsif cfg_flash == "1" %} Потребитель —
   раздел настроек — асинхронный и стоит на `BlockingAsync` поверх `Whole`.{% endif %}{% if config_store == "eeprom" %} Свой тип поверх мьютекса есть только в
-  ветке EEPROM (`bsp::flash::EepromFlash`): `EepromAccess` и `Mutex` чужие
+  ветке EEPROM (`bsp::flash::EepromFlash`): `Storage` и `Mutex` чужие
   для `bsp`.{% endif %}
 {%- endif %}
 {% if shared_flash != "true" %}
