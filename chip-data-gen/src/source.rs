@@ -4,7 +4,7 @@
 
 use std::{
     collections::BTreeSet,
-    fs,
+    fs::{self, File},
     path::{Path, PathBuf},
     process::Command,
 };
@@ -34,6 +34,16 @@ const LIQUID_IF: &str = "{% if";
 const LIQUID_ENDIF: &str = "{% endif %}";
 const LIQUID_ELSE: &str = "{% else %}";
 
+/// Каталоги рабочей копии (от корня, через `/`), которым во временной копии не
+/// место: служебные каталоги агентов и их git worktree. Это чужие копии
+/// шаблона со своими `Cargo.toml` — и Liquid другой ревизии в них уронил бы
+/// `strip_liquid_from_manifests` (`{% unless` → `ensure!`). Прочие вложенные
+/// worktree и репозитории `copy_dir_recursive` узнаёт по `.git` внутри.
+const NOT_COPIED: &[&str] = &[".claude/worktrees", ".kilo/worktrees", ".remember"];
+
+/// Имя временной копии в `temp_dir()` и, с `.lock`, её блокировки.
+const COPY_NAME: &str = "chip-data-gen-repo";
+
 /// Результат разбора `cargo metadata` для пропатченного `crates-cross/Cargo.toml`:
 /// всё, что нужно взять из графа зависимостей за один вызов `cargo`.
 pub(crate) struct CargoMetadata {
@@ -57,25 +67,45 @@ pub(crate) struct CargoMetadata {
     pub(crate) stm32_metapac_version: String,
 }
 
-/// Временная копия всего репозитория (без `target/`/`.git`/самого
-/// `chip-data-gen/`) с замененным `{{chip_feature}}` в `crates-cross/Cargo.toml` —
-/// `cargo metadata` не может разрешить зависимости, пока там стоит буквальный
-/// нерезолвящийся плейсхолдер. Копируем репозиторий целиком, а не только
-/// `crates-cross/`: у `crates-cross` путь на `domain` относительный (`../crates-host/domain`),
-/// поэтому структура каталогов вокруг `crates-cross/Cargo.toml` должна совпадать с
-/// реальной. Каталог удаляется при выходе из области видимости.
+/// Временная копия рабочего дерева (без `target/`/`.git`/самого
+/// `chip-data-gen/` и [`NOT_COPIED`]) с замененным `{{chip_feature}}` в
+/// `crates-cross/Cargo.toml` — `cargo metadata` не может разрешить зависимости,
+/// пока там стоит буквальный нерезолвящийся плейсхолдер. Копируем репозиторий
+/// целиком, а не только `crates-cross/`: у `crates-cross` путь на `domain`
+/// относительный (`../crates-host/domain`), поэтому структура каталогов вокруг
+/// `crates-cross/Cargo.toml` должна совпадать с реальной. И копируем рабочее
+/// дерево, а не `git ls-files`: новый крейт, которого ещё нет в git, уже член
+/// workspace, и без него `cargo metadata` не резолвится.
+///
+/// Имя каталога постоянное ([`COPY_NAME`]), а не по pid: копию упавшего
+/// прогона (паника, Ctrl+C — `Drop` тогда не отрабатывает) удаляет следующий
+/// же `create()`. Чтобы два прогона разом (генератор и тест штампа, два
+/// worktree) не делили каталог, его держит блокировка ОС на файле рядом —
+/// второй ждёт первого; блокировку снимает и падение процесса. Каталог
+/// удаляется при выходе из области видимости.
 struct PatchedRepoCopy {
     dir: PathBuf,
+    /// Держит блокировку, пока жива копия; снимается вместе с файлом.
+    _lock: File,
 }
 
 impl PatchedRepoCopy {
     fn create(repo_root: &Path) -> anyhow::Result<Self> {
-        let dir = std::env::temp_dir().join(format!("chip-data-gen-repo-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(COPY_NAME);
+        let lock_path = dir.with_extension("lock");
+        let lock = File::options()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&lock_path)
+            .with_context(|| format!("открыть {}", lock_path.display()))?;
+        lock.lock()
+            .with_context(|| format!("заблокировать {}", lock_path.display()))?;
         if dir.exists() {
             fs::remove_dir_all(&dir)
                 .context("не удалось очистить старую временную копию репозитория")?;
         }
-        copy_dir_recursive(repo_root, &dir)
+        copy_dir_recursive(repo_root, repo_root, &dir)
             .context("не удалось скопировать репозиторий во временный каталог")?;
 
         let manifest_path = dir.join("crates-cross/Cargo.toml");
@@ -91,7 +121,7 @@ impl PatchedRepoCopy {
         let rev = rust_lib_rev(&dir)?;
         strip_liquid_from_manifests(&dir, &rev)?;
 
-        Ok(Self { dir })
+        Ok(Self { dir, _lock: lock })
     }
 
     fn cross_manifest_path(&self) -> PathBuf {
@@ -102,8 +132,8 @@ impl PatchedRepoCopy {
 impl Drop for PatchedRepoCopy {
     fn drop(&mut self) {
         // Ошибку игнорируем: Drop не может её вернуть, а недочищенный
-        // временный каталог не мешает следующему запуску (create()
-        // сам удаляет старый перед копированием).
+        // временный каталог не мешает следующему запуску (create() под той же
+        // блокировкой сам удаляет старый перед копированием).
         drop(fs::remove_dir_all(&self.dir));
     }
 }
@@ -453,21 +483,36 @@ fn matching_endif(text: &str) -> Option<usize> {
     Some(at)
 }
 
-fn copy_dir_recursive(src: &Path, dst: &Path) -> anyhow::Result<()> {
+/// Копирует `src` (каталог внутри рабочей копии `root`) в `dst`.
+fn copy_dir_recursive(root: &Path, src: &Path, dst: &Path) -> anyhow::Result<()> {
     fs::create_dir_all(dst)?;
     for entry in fs::read_dir(src)? {
         let entry = entry?;
+        let name = entry.file_name();
+        // `.git` — и каталог основной копии, и файл-ссылка git worktree.
+        if name == ".git" {
+            continue;
+        }
         let src_path = entry.path();
-        let dst_path = dst.join(entry.file_name());
+        let dst_path = dst.join(&name);
         if entry.file_type()?.is_dir() {
-            // target/.git — не нужны для разрешения зависимостей и могут
-            // быть огромными; chip-data-gen — сам этот инструмент, копировать
-            // его в свою же временную копию незачем.
-            let name = entry.file_name();
-            if name == "target" || name == ".git" || name == "chip-data-gen" {
+            let relative = src_path
+                .strip_prefix(root)
+                .unwrap_or(&src_path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            // target — не нужен для разрешения зависимостей и может быть
+            // огромным; chip-data-gen — сам этот инструмент, копировать его в
+            // свою же временную копию незачем; `.git` внутри — вложенный
+            // репозиторий или чужой worktree (см. `NOT_COPIED`).
+            if name == "target"
+                || name == "chip-data-gen"
+                || NOT_COPIED.contains(&relative.as_str())
+                || src_path.join(".git").exists()
+            {
                 continue;
             }
-            copy_dir_recursive(&src_path, &dst_path)?;
+            copy_dir_recursive(root, &src_path, &dst_path)?;
         } else {
             fs::copy(&src_path, &dst_path)?;
         }
