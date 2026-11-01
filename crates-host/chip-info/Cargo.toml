@@ -3,7 +3,7 @@ name = "chip-info"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-rust-version = "1.96"
+rust-version = "1.98"
 publish = false
 
 # Свой `[workspace]`, как у `crates-cross/` — и по той же причине, только наоборот.
