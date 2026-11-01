@@ -2576,9 +2576,9 @@ variable::set("http_connections", http_connections.to_string());
 // узла `domain::server` (protobuf и Modbus slave), шине CAN (ошибка `CanBus`) и
 // UDP-каналу (`adapters_logic::net::UdpLink` реализует `FrameLink`) — с протоколом и без него.
 variable::set("link_port", if on.protobuf || on.modbus || has.can || has.udp { "true" } else { "false" });
-// Порт хранилища настроек (`ports::SettingsStorage`) нужен, пока есть что в него
-// класть: раздел, EEPROM или внешняя флеш (`config`) либо заглушка `Unavailable`
-// у узла CANopen без хранилища. Иначе порта и адаптера в проекте нет.
+// Хранилище настроек (`domain::settings`) нужно, пока есть что в него класть:
+// раздел, EEPROM или внешняя флеш (`config`) — либо узлу CANopen, который без
+// раздела получает `None` (`Option<Settings<NoFlash>>`). Иначе модуля нет.
 variable::set("settings_port", if variable::get("config") == "true" || on.canopen { "true" } else { "false" });
 variable::set("stream_io", if has.uart || has.usb || has.tcp { "true" } else { "false" });
 // Заглушки периферии в `bsp/src/stub.rs`: UART, CAN, USB, Ethernet, внешняя флеш.
@@ -2589,7 +2589,7 @@ variable::set("crc_used", if modbus_rtu || cobs_used { "true" } else { "false" }
 variable::set("framing_tests", if on.modbus || cobs_used { "true" } else { "false" });
 // Асинхронные трейты в `ports`: без них `#![expect(async_fn_in_trait)]` не
 // срабатывает, и сборка падает.
-variable::set("ports_async", if variable::get("ota") == "true" || variable::get("settings_port") == "true" || on.modbus || on.protobuf || on.canopen || has.can || has.udp { "true" } else { "false" });
+variable::set("ports_async", if variable::get("ota") == "true" || on.modbus || on.protobuf || on.canopen || has.can || has.udp { "true" } else { "false" });
 // Модуль `link` в `app`: транспорты протоколов (`app::link::<вид>[::<имя>]`) — кадрирование,
 // буферы и сокет над объектами платы. Без Modbus и protobuf транспорту нечего оборачивать (CANopen берёт
 // шину CAN как есть).
@@ -2740,8 +2740,7 @@ if variable::get("ota") != "true" {
     }
 }
 if variable::get("settings_port") != "true" {
-    file::delete("crates-host/ports/src/settings.rs");
-    file::delete("crates-host/adapters-hw/src/settings.rs");
+    file::delete("crates-host/domain/src/settings.rs");
 }
 // Мост blocking → async и заглушка внешней флеши — только когда ими кто-то
 // пользуется: обёртка страницы (`erase_page`) или внешняя флеш.

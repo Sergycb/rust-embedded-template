@@ -60,7 +60,7 @@ pub type FirmwareFlash = adapters_hw::ota::Partitions<
 {%- if config == "true" and config_store == "external" %}
 
 /// Раздел настроек на внешней флеши — носитель хранилища настроек
-/// (`adapters_hw::settings`).
+/// (`domain::settings`).
 pub type ConfigFlash =
     embassy_embedded_hal::flash::partition::Partition<'static, NoopRawMutex, ExternalFlash>;
 {%- endif %}

@@ -59,7 +59,7 @@ pub fn spawn_all(spawner: embassy_executor::Spawner, {% if ota == "true" or has_
     canopen::{{ f[4] }}::spawn(
         spawner,
         board.{{ f[4] }},
-        {% if config == "true" %}adapters_hw::settings::Settings::whole(board.config){% else %}adapters_hw::settings::Unavailable{% endif %},
+        {% if config == "true" %}Some(domain::settings::Settings::whole(board.config)){% else %}None{% endif %},
         domain::canopen::serial(board.spec.uid),
     );
 {%- endif %}

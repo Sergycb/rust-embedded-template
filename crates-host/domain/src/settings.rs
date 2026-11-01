@@ -1,9 +1,11 @@
-// {%- if config != "true" %}
-//! Заглушка хранилища настроек для узла CANopen, у которого раздела настроек нет.
-// {%- endif %}
-// {%- if config == "true" %}
 //! Настройки во flash: пары «ключ — значение», переживающие и перезапуск, и
 //! обновление прошивки, — поверх `sequential-storage`.
+// {%- if config != "true" %}
+//!
+//! Раздела настроек у проекта нет: тип нужен узлу CANopen, которому
+//! хранилище не обязательно, — он получает `None` ([`NoFlash`](crate::settings::NoFlash)).
+// {%- endif %}
+// {%- if config == "true" %}
 //!
 //! Раздел под них режет генерация (`CONFIG`, две страницы стирания — меньше
 //! `sequential-storage` не берёт; в хвосте flash или, с OTA на F2/F4/F7, в
@@ -13,9 +15,6 @@
 //! (postcard, `miniconf`, свой формат), решает проект.
 //!
 //! ```ignore
-//! // Чтение и запись живут в порту домена — без импорта методов не видно.
-//! use ports::SettingsStorage;
-//!
 //! // Хранилище — на весь носитель платы (`board.config`); строит его
 //! // compose-site и отдаёт узлу во входе.
 //! let mut settings = Settings::whole(board.config);
@@ -27,13 +26,13 @@
 //! }
 //! ```
 //!
-//! # Настройки как дерево: `miniconf` поверх порта
+//! # Настройки как дерево: `miniconf` поверх хранилища
 //!
 //! Структура целиком под одним ключом — самый короткий путь, но с первым же
 //! добавленным полем старая запись перестаёт читаться. Приём из экосистемы
 //! Stabilizer (`serial-settings`): `#[derive(Tree)]` на структуре настроек, и
 //! каждый лист адресуется путём (`/gain/1`); во flash уезжает по листу под
-//! ключом `fnv1a(путь)` — ровно `u32`, которого ждёт порт. Новое поле
+//! ключом `fnv1a(путь)` — ровно `u32`, которого ждёт хранилище. Новое поле
 //! остаётся `Default`, старые читаются. Сам `miniconf` ничего не хранит и
 //! зависимостью шаблона не является — это выбор проекта, как и `postcard` с
 //! `yafnv` в этом наброске (имена функций — по документации версии, которую
@@ -42,7 +41,6 @@
 //! ```ignore
 //! use heapless::String;
 //! use miniconf::{Path, Tree, TreeSchema};
-//! use ports::SettingsStorage;
 //!
 //! #[derive(Default, Tree)]
 //! struct Config {
@@ -109,10 +107,13 @@
 //! пишутся редко, экономить здесь нечего.
 // {%- endif %}
 
-// {%- if config == "true" %}
 use core::ops::Range;
 
+use defmt_or_log::warn;
 use embedded_storage_async::nor_flash::NorFlash;
+// {%- if has_canopen == "true" and config != "true" %}
+use embedded_storage_async::nor_flash::{ErrorType, ReadNorFlash};
+// {%- endif %}
 use sequential_storage::cache::{Cache, Uncached};
 use sequential_storage::map::{MapConfig, MapStorage};
 
@@ -127,13 +128,11 @@ use sequential_storage::map::{MapConfig, MapStorage};
 /// нельзя, пока в разделе лежат записи прошивки с большим буфером: на первой
 /// такой записи любое чтение откажет с `BufferTooSmall`.
 const SCRATCH: usize = 128;
-// {%- endif %}
 
 /// Ключ настройки. `u32`, а не строка: строковый ключ пишется во flash целиком
 /// при каждом сохранении, а раздел здесь — две страницы.
 pub type Key = u32;
 
-// {%- if config == "true" %}
 /// Ошибка хранилища — ошибка `sequential-storage` над ошибкой флеша.
 /// `Corrupted` [`Settings`] наружу не отдаёт — повреждённый раздел стирается
 /// (см. «Повреждённый раздел» в документации модуля).
@@ -177,12 +176,7 @@ impl<F: NorFlash> Settings<F> {
             scratch: [0; SCRATCH],
         }
     }
-}
 
-// {%- endif %}
-
-// {%- if config == "true" %}
-impl<F: NorFlash> Settings<F> {
     // {%- if config_store == "eeprom" %}
     /// Хранилище на весь носитель платы (внутренняя EEPROM, `board.config`).
     // {%- elsif config_store == "external" %}
@@ -206,57 +200,31 @@ impl<F: NorFlash> Settings<F> {
     /// любая операция зовёт свой `try_repair` (дотирает недостёртые страницы,
     /// повторяет прерванный перенос записей) и повторяет себя. Не помогло —
     /// чинить больше нечем, и крейт сам советует стереть раздел.
+    /// Носитель — тестам, которые смотрят во флеш под хранилищем.
+    #[cfg(test)]
+    pub(crate) fn flash(&mut self) -> &mut F {
+        self.map.flash()
+    }
+
     async fn erase_corrupted(&mut self) -> Result<(), Error<F::Error>> {
-        #[cfg(feature = "defmt")]
-        defmt::warn!("settings: раздел повреждён и не починился — стёрт, настройки сброшены");
+        warn!("settings: раздел повреждён и не починился — стёрт, настройки сброшены");
         self.map.erase_all().await
     }
 }
-// {%- endif %}
 
-// {%- if has_canopen == "true" and config != "true" %}
-/// Хранилища нет — у проекта нет раздела настроек.
-///
-/// Для узлов, которым хранилище нужно по сигнатуре, но не обязательно для
-/// работы (`domain::canopen` без раздела настроек сохранять не берётся):
-/// читается пустым, а запись отвечает успехом и данные не хранит — узлу,
-/// который всё же в неё пишет, она не годится.
-#[derive(Debug, Default)]
-pub struct Unavailable;
-
-impl ports::SettingsStorage for Unavailable {
-    type Error = core::convert::Infallible;
-
-    /// Предела нет: ничего не хранится.
-    const MAX_VALUE: usize = usize::MAX;
-
-    fn read<'a>(
-        &mut self,
-        _: Key,
-        _: &'a mut [u8],
-    ) -> impl Future<Output = Result<Option<&'a [u8]>, Self::Error>> {
-        core::future::ready(Ok(None))
-    }
-
-    fn write(&mut self, _: Key, _: &[u8]) -> impl Future<Output = Result<(), Self::Error>> {
-        core::future::ready(Ok(()))
-    }
-}
-// {%- endif %}
-
-// {%- if config == "true" %}
-/// Порт домена. Собственных `read`/`write` у `Settings` нет намеренно: они
-/// перекрыли бы трейтовые при вызове, и приложение работало бы с конкретным
-/// типом мимо порта.
-impl<F: NorFlash> ports::SettingsStorage for Settings<F> {
-    type Error = Error<F::Error>;
-
+impl<F: NorFlash> Settings<F> {
+    /// Самое длинное значение, которое хранилище запишет и прочитает, байт.
+    ///
     /// Ключ и значение, дополненные до слова флеша, обязаны поместиться в
-    /// рабочий буфер (128 байт): столько слов, сколько в нём целиком, без ключа.
-    const MAX_VALUE: usize = SCRATCH / F::WRITE_SIZE * F::WRITE_SIZE - size_of::<Key>();
+    /// рабочий буфер (128 байт): столько слов, сколько в нём целиком, без
+    /// ключа. Предел считается от настоящего слова носителя, а не от худшего
+    /// среди чипов; узел, который хранит значения известной длины, сверяет её
+    /// с пределом `const`-проверкой.
+    pub const MAX_VALUE: usize = SCRATCH / F::WRITE_SIZE * F::WRITE_SIZE - size_of::<Key>();
 
     /// Читает значение по ключу; `None` — ключ ещё не записан.
     ///
+    /// Значение копируется в буфер вызывающего, и результат ссылается на него.
     /// Ищет во внутреннем буфере, а не в буфере вызывающего: `sequential-storage`
     /// читает в буфер поиска каждую запись раздела и на любой, что длиннее, —
     /// даже с чужим ключом — отказывает с `BufferTooSmall`. Внутренний вмещает
@@ -265,11 +233,16 @@ impl<F: NorFlash> ports::SettingsStorage for Settings<F> {
     ///
     /// Раздел повреждён — стирается (см. «Повреждённый раздел»), и ключ
     /// читается как ещё не записанный.
-    async fn read<'a>(
+    ///
+    /// # Errors
+    ///
+    /// Ошибка флеша, если чтение не удалось, или `BufferTooSmall`, если
+    /// значение длиннее буфера, — обрезанного значения не бывает.
+    pub async fn read<'a>(
         &mut self,
         key: Key,
         scratch: &'a mut [u8],
-    ) -> Result<Option<&'a [u8]>, Self::Error> {
+    ) -> Result<Option<&'a [u8]>, Error<F::Error>> {
         let found = match self.map.fetch_item::<&[u8]>(&mut self.scratch, &key).await {
             Err(sequential_storage::Error::Corrupted { .. }) => {
                 self.erase_corrupted().await?;
@@ -295,7 +268,12 @@ impl<F: NorFlash> ports::SettingsStorage for Settings<F> {
     ///
     /// Раздел повреждён — стирается (см. «Повреждённый раздел»), и значение
     /// пишется в пустой.
-    async fn write(&mut self, key: Key, value: &[u8]) -> Result<(), Self::Error> {
+    ///
+    /// # Errors
+    ///
+    /// Ошибка флеша, если запись не удалась, или ошибка `sequential-storage`,
+    /// если значение длиннее [`MAX_VALUE`](Self::MAX_VALUE).
+    pub async fn write(&mut self, key: Key, value: &[u8]) -> Result<(), Error<F::Error>> {
         match self.map.store_item(&mut self.scratch, &key, &value).await {
             Err(sequential_storage::Error::Corrupted { .. }) => {
                 self.erase_corrupted().await?;
@@ -305,13 +283,64 @@ impl<F: NorFlash> ports::SettingsStorage for Settings<F> {
         }
     }
 }
+// {%- if has_canopen == "true" and config != "true" %}
+
+/// Носителя нет: у проекта нет раздела настроек.
+///
+/// Значений у типа нет, и `Option<Settings<NoFlash>>` — всегда `None`: так
+/// узел, которому хранилище не обязательно (`domain::canopen`), получает
+/// «хранилища нет» без своего типа-заглушки. Флешем тип притворяется только
+/// ради границы `Settings<F: NorFlash>`: вызвать его методы не на чем.
+#[derive(Debug)]
+pub enum NoFlash {}
+
+impl ErrorType for NoFlash {
+    type Error = core::convert::Infallible;
+}
+
+impl ReadNorFlash for NoFlash {
+    const READ_SIZE: usize = 1;
+
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "значений у типа нет: тело не исполняется никогда"
+    )]
+    async fn read(&mut self, _: u32, _: &mut [u8]) -> Result<(), Self::Error> {
+        match *self {}
+    }
+
+    fn capacity(&self) -> usize {
+        match *self {}
+    }
+}
+
+impl NorFlash for NoFlash {
+    const WRITE_SIZE: usize = 1;
+    const ERASE_SIZE: usize = 1;
+
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "значений у типа нет: тело не исполняется никогда"
+    )]
+    async fn erase(&mut self, _: u32, _: u32) -> Result<(), Self::Error> {
+        match *self {}
+    }
+
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "значений у типа нет: тело не исполняется никогда"
+    )]
+    async fn write(&mut self, _: u32, _: &[u8]) -> Result<(), Self::Error> {
+        match *self {}
+    }
+}
+// {%- endif %}
 
 #[cfg(test)]
 mod tests {
-    use ports::SettingsStorage;
+    use adapters_hw::fake::MemFlash;
 
     use super::Settings;
-    use crate::fake::MemFlash;
 
     /// Флеш под `sequential-storage`: две страницы по 256 байт (меньше он не
     /// берёт), слово 8.
@@ -502,19 +531,58 @@ mod tests {
             );
         }
     }
+    // {%- if config_store == "eeprom" %}
 
-    // {%- if has_canopen == "true" and config != "true" %}
-    /// `Unavailable` читается пустым, а запись «успешна» и ничего не хранит —
-    /// как заявлено в документации.
+    /// Главное для EEPROM L0/L1: хранилище работает поверх неё с завода, без
+    /// первичной подготовки, — заводские нули обёртка
+    /// (`adapters_hw::eeprom::Eeprom`) читает стёртым флешем.
     #[tokio::test]
-    async fn unavailable_reads_empty_and_forgets_writes() {
-        let mut settings = super::Unavailable;
-        let mut scratch = [0u8; 8];
+    async fn settings_work_on_a_fresh_eeprom() {
+        use core::cell::RefCell;
 
-        settings.write(1, b"lost").await.expect("запись «успешна»");
+        use adapters_hw::eeprom::Eeprom;
+        use embedded_storage::{ReadStorage, Storage};
 
-        assert_eq!(settings.read(1, &mut scratch).await.expect("чтение"), None);
+        /// EEPROM в памяти: с завода нули, как у L0/L1.
+        struct MemEeprom(RefCell<Vec<u8>>);
+
+        impl ReadStorage for &MemEeprom {
+            type Error = ();
+
+            fn read(&mut self, offset: u32, buf: &mut [u8]) -> Result<(), ()> {
+                let start = offset as usize;
+                buf.copy_from_slice(&self.0.borrow()[start..start + buf.len()]);
+                Ok(())
+            }
+
+            fn capacity(&self) -> usize {
+                self.0.borrow().len()
+            }
+        }
+
+        impl Storage for &MemEeprom {
+            fn write(&mut self, offset: u32, data: &[u8]) -> Result<(), ()> {
+                let start = offset as usize;
+                self.0.borrow_mut()[start..start + data.len()].copy_from_slice(data);
+                Ok(())
+            }
+        }
+
+        let eeprom = MemEeprom(RefCell::new(vec![0; 512]));
+        let mut settings = Settings::new(Eeprom::new(&eeprom), 0..512);
+        let mut scratch = [0; 64];
+
+        settings.write(1, b"template").await.expect("запись");
+        settings.write(2, b"second").await.expect("запись");
+
+        assert_eq!(
+            settings.read(1, &mut scratch).await.expect("чтение"),
+            Some(&b"template"[..])
+        );
+        assert_eq!(
+            settings.read(2, &mut scratch).await.expect("чтение"),
+            Some(&b"second"[..])
+        );
     }
     // {%- endif %}
 }
-// {%- endif %}

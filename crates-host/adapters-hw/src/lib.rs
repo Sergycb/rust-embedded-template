@@ -15,12 +15,6 @@
 pub mod ota;
 
 // {%- endif %}
-// {%- if settings_port == "true" %}
-/// Настройки во flash поверх `sequential-storage`: пары «ключ — значение»,
-/// переживающие перезапуск и обновление прошивки.
-pub mod settings;
-
-// {%- endif %}
 // {%- if has_net == "true" %}
 /// Сеть поверх `embassy-net`: стек платы и его фоновая работа.
 pub mod net;

@@ -3474,10 +3474,7 @@ fn ota_and_settings_code_is_kept_only_when_selected() {
         "crates-host/domain/src/ota.rs",
         "crates-host/domain/src/ota",
     ];
-    const SETTINGS: [&str; 2] = [
-        "crates-host/ports/src/settings.rs",
-        "crates-host/adapters-hw/src/settings.rs",
-    ];
+    const SETTINGS: [&str; 1] = ["crates-host/domain/src/settings.rs"];
     const FLASH: &str = "crates-host/flash-page";
     // (чип, ответы, OTA вырезана, настройки вырезаны, flash-page вырезан)
     type Case<'a> = (&'a str, &'a [(&'a str, &'a str)], bool, bool, bool);

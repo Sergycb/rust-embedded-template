@@ -19,11 +19,13 @@ use core::cell::RefCell;
 use core::convert::Infallible;
 
 use defmt_or_log::{FormatOrDebug, info, warn};
-use ports::SettingsStorage;
+use embedded_storage_async::nor_flash::NorFlash;
 use zencan_node::common::NodeId;
 use zencan_node::embedded_io::Read;
 use zencan_node::object_dict::ODEntry;
 use zencan_node::{restore_stored_comm_objects, restore_stored_objects};
+
+use crate::settings::{Error, Settings};
 
 /// Ключ хранилища настроек, под которым лежат сохранённые объекты.
 ///
@@ -39,7 +41,7 @@ pub const NODE_ID_KEY: u32 = 0x00C0_0002;
 /// Сколько байт сохранённых объектов помещается.
 ///
 /// Граница — не этот буфер, а значение хранилища настроек: у
-/// `adapters_hw::settings` рабочий буфер на 128 байт вмещает ключ (4 байта) и
+/// `crate::settings` рабочий буфер на 128 байт вмещает ключ (4 байта) и
 /// значение. Постоянные объекты примера сериализуются в 43 байта; свой
 /// `device.toml` с большим числом постоянных объектов — поднимите оба числа.
 /// Не поместившееся не сохраняется (предупреждение в лог).
@@ -54,7 +56,7 @@ pub const STORE_CAPACITY: usize = 96;
 /// прошивкой с большим `STORE_CAPACITY`, а не отказать на чтении.
 const READ_SCRATCH: usize = 128;
 
-// Предел самого хранилища (`SettingsStorage::MAX_VALUE`) зависит от носителя
+// Предел самого хранилища (`Settings::MAX_VALUE`) зависит от носителя
 // и проверяется в `save`.
 const _: () = assert!(
     READ_SCRATCH >= STORE_CAPACITY,
@@ -143,10 +145,13 @@ impl Default for Persisted {
 ///
 /// Отказ чтения — не отказ узла: стек стартует с адресом из входа узла и
 /// объектами из `device.toml`, как на новой плате.
-pub(super) async fn load<S>(persisted: &RefCell<Persisted>, settings: &mut S) -> Option<NodeId>
+pub(super) async fn load<F>(
+    persisted: &RefCell<Persisted>,
+    settings: &mut Settings<F>,
+) -> Option<NodeId>
 where
-    S: SettingsStorage,
-    S::Error: FormatOrDebug,
+    F: NorFlash,
+    Error<F::Error>: FormatOrDebug,
 {
     let mut scratch = [0; READ_SCRATCH];
     match settings.read(OBJECTS_KEY, &mut scratch).await {
@@ -182,15 +187,15 @@ where
     reason = "колбэки стека зовутся только из `Node::process` этой задачи, \
               а не во время записи"
 )]
-pub(super) async fn save<S>(persisted: &RefCell<Persisted>, settings: &mut S)
+pub(super) async fn save<F>(persisted: &RefCell<Persisted>, settings: &mut Settings<F>)
 where
-    S: SettingsStorage,
-    S::Error: FormatOrDebug,
+    F: NorFlash,
+    Error<F::Error>: FormatOrDebug,
 {
     // Иначе объекты записывались бы с отказом на каждом `save`.
     const {
         assert!(
-            STORE_CAPACITY <= S::MAX_VALUE,
+            STORE_CAPACITY <= Settings::<F>::MAX_VALUE,
             "хранилище настроек не вмещает STORE_CAPACITY байт объектов CANopen"
         );
     }
@@ -217,51 +222,67 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use adapters_hw::fake::MemFlash;
+    use embedded_storage_async::nor_flash::{ErrorType, NorFlashErrorKind, ReadNorFlash};
 
     use super::*;
 
-    /// Хранилище в памяти; `fail` — каждый вызов отказывает.
-    #[derive(Default)]
-    struct Memory {
-        items: HashMap<u32, Vec<u8>>,
-        fail: bool,
+    /// Носитель настроек: две страницы по 256 байт, слово 8.
+    type Flash = MemFlash<512, 8, 256>;
+
+    /// Флеш, который отказывает на любой операции.
+    struct Broken;
+
+    impl ErrorType for Broken {
+        type Error = NorFlashErrorKind;
     }
 
-    impl SettingsStorage for Memory {
-        type Error = &'static str;
-        const MAX_VALUE: usize = usize::MAX;
+    impl ReadNorFlash for Broken {
+        const READ_SIZE: usize = 1;
 
-        fn read<'a>(
+        fn read(
             &mut self,
-            key: u32,
-            scratch: &'a mut [u8],
-        ) -> impl Future<Output = Result<Option<&'a [u8]>, Self::Error>> {
-            let outcome = if self.fail {
-                Err("отказ")
-            } else if let Some(value) = self.items.get(&key) {
-                // Как `sequential-storage`: ключ и значение — в буфер.
-                match scratch.get_mut(..4 + value.len()) {
-                    Some(item) => {
-                        item[4..].copy_from_slice(value);
-                        Ok(Some(&item[4..]))
-                    }
-                    None => Err("буфер меньше элемента"),
-                }
-            } else {
-                Ok(None)
-            };
-            std::future::ready(outcome)
+            _: u32,
+            _: &mut [u8],
+        ) -> impl Future<Output = Result<(), NorFlashErrorKind>> {
+            core::future::ready(Err(NorFlashErrorKind::Other))
+        }
+
+        fn capacity(&self) -> usize {
+            512
+        }
+    }
+
+    impl NorFlash for Broken {
+        const WRITE_SIZE: usize = 8;
+        const ERASE_SIZE: usize = 256;
+
+        fn erase(&mut self, _: u32, _: u32) -> impl Future<Output = Result<(), NorFlashErrorKind>> {
+            core::future::ready(Err(NorFlashErrorKind::Other))
         }
 
         fn write(
             &mut self,
-            key: u32,
-            value: &[u8],
-        ) -> impl Future<Output = Result<(), Self::Error>> {
-            self.items.insert(key, value.to_vec());
-            std::future::ready(Ok(()))
+            _: u32,
+            _: &[u8],
+        ) -> impl Future<Output = Result<(), NorFlashErrorKind>> {
+            core::future::ready(Err(NorFlashErrorKind::Other))
         }
+    }
+
+    /// Пустое хранилище над стёртым флешем.
+    fn memory() -> Settings<Flash> {
+        Settings::new(Flash::erased(), 0..512)
+    }
+
+    /// Что записано под ключом `key`.
+    async fn stored<F: NorFlash>(settings: &mut Settings<F>, key: u32) -> Option<Vec<u8>> {
+        let mut scratch = [0; 128];
+        settings
+            .read(key, &mut scratch)
+            .await
+            .expect("чтение")
+            .map(<[u8]>::to_vec)
     }
 
     #[test]
@@ -285,10 +306,11 @@ mod tests {
 
     #[tokio::test]
     async fn load_of_a_too_large_value_restores_nothing() {
-        let mut settings = Memory::default();
+        let mut settings = memory();
         settings
-            .items
-            .insert(OBJECTS_KEY, vec![1; STORE_CAPACITY + 1]);
+            .write(OBJECTS_KEY, &[1; STORE_CAPACITY + 1])
+            .await
+            .expect("запись");
         let persisted = RefCell::new(Persisted::new());
         assert_eq!(load(&persisted, &mut settings).await, None);
         assert_eq!(persisted.borrow().len, 0);
@@ -296,9 +318,12 @@ mod tests {
 
     #[tokio::test]
     async fn load_of_a_stored_value_and_address() {
-        let mut settings = Memory::default();
-        settings.items.insert(OBJECTS_KEY, vec![1, 2, 3]);
-        settings.items.insert(NODE_ID_KEY, vec![9]);
+        let mut settings = memory();
+        settings
+            .write(OBJECTS_KEY, &[1, 2, 3])
+            .await
+            .expect("запись");
+        settings.write(NODE_ID_KEY, &[9]).await.expect("запись");
         let persisted = RefCell::new(Persisted::new());
         let node_id = load(&persisted, &mut settings).await;
         assert_eq!(node_id.map(|id| id.raw()), Some(9));
@@ -308,10 +333,7 @@ mod tests {
 
     #[tokio::test]
     async fn load_survives_read_errors() {
-        let mut settings = Memory {
-            fail: true,
-            ..Memory::default()
-        };
+        let mut settings = Settings::new(Broken, 0..512);
         let persisted = RefCell::new(Persisted::new());
         assert_eq!(load(&persisted, &mut settings).await, None);
         assert_eq!(persisted.borrow().len, 0);
@@ -319,13 +341,19 @@ mod tests {
 
     #[tokio::test]
     async fn save_writes_once_and_clears_the_flags() {
-        let mut settings = Memory::default();
+        let mut settings = memory();
         let persisted = RefCell::new(Persisted::new());
         persisted.borrow_mut().store(&mut &[4, 5][..], 2);
         save(&persisted, &mut settings).await;
-        assert_eq!(settings.items.get(&OBJECTS_KEY), Some(&vec![4, 5]));
-        settings.items.clear();
+        assert_eq!(stored(&mut settings, OBJECTS_KEY).await, Some(vec![4, 5]));
+        // Второй `save` записал бы снова; новое значение под ключом поверх
+        // того же флеша показало бы, что записал.
+        settings.write(OBJECTS_KEY, &[7]).await.expect("запись");
         save(&persisted, &mut settings).await;
-        assert!(settings.items.is_empty(), "второй раз писать нечего");
+        assert_eq!(
+            stored(&mut settings, OBJECTS_KEY).await,
+            Some(vec![7]),
+            "второй раз писать нечего"
+        );
     }
 }

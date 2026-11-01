@@ -172,12 +172,12 @@ embassy-embedded-hal   = { version = "0.6.0" }
 # `flash-page`. Версия та же и у `supervisor` — иначе в прошивке оказалось бы
 # две несовместимые копии крейта.
 embassy-sync           = { version = "0.8.0" }
-# {%- if ota == "true" or config == "true" or flash_page == "true" %}
+# {%- if ota == "true" or settings_port == "true" or flash_page == "true" %}
 embedded-storage       = { version = "0.3.2" }
 embedded-storage-async = { version = "0.4.2" }
 # {%- endif %}
-# {%- if config == "true" %}
-# Хранилище настроек (`adapters_hw::settings`).
+# {%- if settings_port == "true" %}
+# Хранилище настроек (`domain::settings`).
 sequential-storage     = { version = "8.0.2", default-features = false }
 # {%- endif %}
 # {%- if stream_io == "true" or net_services contains "ssh" or net_services contains "mqtt" %}

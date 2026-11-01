@@ -20,7 +20,6 @@ dependencies = [
  "embedded-storage-async",
  "ports",
  "salty",
- "sequential-storage",
  "tokio",
 ]
 
@@ -576,6 +575,7 @@ dependencies = [
  "embedded-can",
  "embedded-io-async 0.7.0",
  "embedded-storage",
+ "embedded-storage-async",
  "fsm",
  "getrandom",
  "heapless 0.9.3",
@@ -590,6 +590,7 @@ dependencies = [
  "rusty-modbus-codec",
  "rusty-modbus-types",
  "salty",
+ "sequential-storage",
  "sunset-async",
  "supervisor",
  "tokio",

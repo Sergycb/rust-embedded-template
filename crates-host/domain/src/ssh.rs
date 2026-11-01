@@ -199,39 +199,52 @@ mod tests {
     use crate::ssh::session::{CLOSE_WAIT, tries_exhausted};
     use crate::ssh::{Command, Login, USER, ed25519_public_key};
     // {%- if ssh_host_key == "config" %}
-    use crate::ssh::{HostKey, Stored};
+    use crate::settings::Settings;
+    use crate::ssh::{HOST_KEY_ID, HostKey, Stored};
+    use adapters_hw::fake::MemFlash;
+    use embedded_storage_async::nor_flash::{ErrorType, NorFlash, NorFlashErrorKind, ReadNorFlash};
     // {%- endif %}
 
     const KEY: &str = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl user@host";
     // {%- if ssh_host_key == "config" %}
 
-    /// Хранилище в памяти: что записано, то и читается.
-    #[derive(Default)]
-    struct Memory(Option<Vec<u8>>);
+    /// Носитель настроек: две страницы по 256 байт, слово 8.
+    type Flash = MemFlash<512, 8, 256>;
 
-    impl ports::SettingsStorage for Memory {
-        type Error = ();
-        const MAX_VALUE: usize = usize::MAX;
+    /// Флеш, который не читается: запись и стирание — как у [`Flash`], чтение
+    /// отказывает. Так разыгрывается раздел, который не прочитался.
+    struct Unreadable(Flash);
 
-        fn read<'a>(
+    impl ErrorType for Unreadable {
+        type Error = NorFlashErrorKind;
+    }
+
+    impl ReadNorFlash for Unreadable {
+        const READ_SIZE: usize = 1;
+
+        fn read(
             &mut self,
             _: u32,
-            scratch: &'a mut [u8],
-        ) -> impl Future<Output = Result<Option<&'a [u8]>, ()>> {
-            // Как у порта: значение длиннее буфера — ошибка, а не обрезка.
-            core::future::ready(match &self.0 {
-                None => Ok(None),
-                Some(v) if v.len() > scratch.len() => Err(()),
-                Some(v) => {
-                    scratch[..v.len()].copy_from_slice(v);
-                    Ok(Some(&scratch[..v.len()]))
-                }
-            })
+            _: &mut [u8],
+        ) -> impl Future<Output = Result<(), NorFlashErrorKind>> {
+            core::future::ready(Err(NorFlashErrorKind::Other))
         }
 
-        fn write(&mut self, _: u32, value: &[u8]) -> impl Future<Output = Result<(), ()>> {
-            self.0 = Some(value.to_vec());
-            core::future::ready(Ok(()))
+        fn capacity(&self) -> usize {
+            ReadNorFlash::capacity(&self.0)
+        }
+    }
+
+    impl NorFlash for Unreadable {
+        const WRITE_SIZE: usize = <Flash as NorFlash>::WRITE_SIZE;
+        const ERASE_SIZE: usize = <Flash as NorFlash>::ERASE_SIZE;
+
+        async fn erase(&mut self, from: u32, to: u32) -> Result<(), NorFlashErrorKind> {
+            NorFlash::erase(&mut self.0, from, to).await
+        }
+
+        async fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), NorFlashErrorKind> {
+            NorFlash::write(&mut self.0, offset, bytes).await
         }
     }
     // {%- endif %}
@@ -317,6 +330,23 @@ mod tests {
             Ok(())
         }
     }
+
+    // {%- if ssh_host_key == "config" %}
+    /// Хранилище над флешем `flash`.
+    fn settings<F: NorFlash>(flash: F) -> Settings<F> {
+        Settings::new(flash, 0..512)
+    }
+
+    /// Ключ хоста, записанный в хранилище.
+    async fn stored_key<F: NorFlash>(settings: &mut Settings<F>) -> Option<Vec<u8>> {
+        let mut scratch = [0; 128];
+        settings
+            .read(HOST_KEY_ID, &mut scratch)
+            .await
+            .expect("чтение")
+            .map(<[u8]>::to_vec)
+    }
+    // {%- endif %}
 
     /// Сведения об устройстве для консоли — значения не важны.
     fn device_info() -> DeviceInfo {
@@ -761,28 +791,41 @@ mod tests {
     /// Первый старт создаёт ключ и записывает, следующий читает тот же.
     #[tokio::test]
     async fn the_stored_key_survives_a_restart() {
-        let mut stored = Stored(Memory::default());
+        let mut stored = Stored(settings(Flash::erased()));
         let first = stored.seed().await;
         assert_ne!(first, [0; 32]);
-        assert_eq!(stored.0.0.as_deref(), Some(&first[..]));
-        assert_eq!(Stored(Memory(stored.0.0.clone())).seed().await, first);
+        assert_eq!(stored_key(&mut stored.0).await, Some(first.to_vec()));
+        // Новое хранилище над тем же флешем — как после сброса.
+        let mem = core::mem::take(&mut stored.0.flash().mem);
+        assert_eq!(Stored(settings(Flash { mem })).seed().await, first);
     }
 
     /// Ключ не той длины — короче или длиннее 32 байт — заменяется новым и
-    /// записывается; раздел, который не прочитался (здесь — значение длиннее
-    /// буфера чтения), не перезаписывается: сбой мог быть временным.
+    /// записывается; раздел, который не прочитался, не перезаписывается: сбой
+    /// мог быть временным.
     #[tokio::test]
     async fn only_a_missing_key_is_overwritten() {
         for len in [16, 33, 64] {
-            let mut wrong = Stored(Memory(Some(vec![1; len])));
+            let mut wrong = Stored(settings(Flash::erased()));
+            wrong
+                .0
+                .write(HOST_KEY_ID, &vec![1; len])
+                .await
+                .expect("запись");
             let seed = wrong.seed().await;
-            assert_eq!(wrong.0.0.as_deref(), Some(&seed[..]), "{len} байт");
+            assert_eq!(
+                stored_key(&mut wrong.0).await,
+                Some(seed.to_vec()),
+                "{len} байт"
+            );
         }
 
-        let unreadable = vec![2; 200];
-        let mut broken = Stored(Memory(Some(unreadable.clone())));
+        let mut broken = Stored(settings(Unreadable(Flash::erased())));
         broken.seed().await;
-        assert_eq!(broken.0.0, Some(unreadable));
+        assert!(
+            broken.0.flash().0.mem.iter().all(|b| *b == 0xFF),
+            "непрочитанный раздел не тронут"
+        );
     }
     // {%- endif %}
 }

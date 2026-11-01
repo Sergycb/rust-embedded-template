@@ -74,8 +74,8 @@ mod tests {
 {%- if config == "true" and config_store != "external" %}
     /// Хранилище настроек на весь носитель платы — так же, как его строит
     /// compose-site узла-потребителя.
-    fn settings(flash: bsp::ConfigFlash) -> impl ports::SettingsStorage<Error: core::fmt::Debug> {
-        adapters_hw::settings::Settings::whole(flash)
+    fn settings(flash: bsp::ConfigFlash) -> domain::settings::Settings<bsp::ConfigFlash> {
+        domain::settings::Settings::whole(flash)
     }
 {%- endif %}
 
@@ -386,7 +386,6 @@ mod tests {
     /// кончилась.
     #[test]
     async fn settings_store_and_read_back(board: Board) {
-        use ports::SettingsStorage;
 
         const KEY: u32 = 0;
         let written = b"template";

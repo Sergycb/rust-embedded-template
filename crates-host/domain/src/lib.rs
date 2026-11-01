@@ -20,6 +20,12 @@ pub mod cpu_load;
 /// Узел `CANOPEN`: узел CANopen на шине CAN — стек `zencan` — см. модуль.
 pub mod canopen;
 // {%- endif %}
+// {%- if settings_port == "true" %}
+
+/// Хранилище настроек во flash поверх `sequential-storage`: пары «ключ —
+/// значение», переживающие перезапуск и обновление прошивки — см. модуль.
+pub mod settings;
+// {%- endif %}
 // {%- if has_protobuf == "true" or net_services != "" %}
 
 /// Сведения об устройстве — общие у узлов `PROTOBUF`, `HTTP` и `SSH`.

@@ -213,7 +213,6 @@ mod tests {
     use embedded_storage_async::nor_flash::{NorFlash, ReadNorFlash};
 
     use super::Eeprom;
-    use crate::settings::Settings;
 
     /// EEPROM в памяти: с завода нули, как у L0/L1; считает записи.
     #[derive(Debug)]
@@ -350,28 +349,5 @@ mod tests {
 
         assert!(flash.erase(256, 128).await.is_err());
         assert_eq!(*eeprom.writes.borrow(), 0);
-    }
-
-    /// Главное: хранилище настроек работает поверх EEPROM с завода, без
-    /// первичной подготовки.
-    #[tokio::test]
-    async fn settings_work_on_a_fresh_eeprom() {
-        use ports::SettingsStorage;
-
-        let eeprom = MemEeprom::new(512);
-        let mut settings = Settings::new(Eeprom::new(&eeprom), 0..512);
-        let mut scratch = [0; 64];
-
-        settings.write(1, b"template").await.expect("запись");
-        settings.write(2, b"second").await.expect("запись");
-
-        assert_eq!(
-            settings.read(1, &mut scratch).await.expect("чтение"),
-            Some(&b"template"[..])
-        );
-        assert_eq!(
-            settings.read(2, &mut scratch).await.expect("чтение"),
-            Some(&b"second"[..])
-        );
     }
 }

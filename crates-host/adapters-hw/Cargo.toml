@@ -9,8 +9,6 @@ rust-version.workspace = true
 workspace = true
 
 [features]
-# Сами адаптеры в лог почти не пишут: только `settings` — строку о стирании
-# повреждённого раздела, и только в прошивке (`defmt::warn!` под фичей `defmt`).
 # {%- if ota == "true" %}
 # У `embassy-boot` без фич `log`/`defmt` его макросы вывода превращаются в
 # пустые выражения — на хосте это ровно то, что нужно.
@@ -24,9 +22,6 @@ defmt = [
 	"ports/defmt",
 	# {%- if ota == "true" %}
 	"embassy-boot/defmt",
-	# {%- endif %}
-	# {%- if config == "true" %}
-	"sequential-storage/defmt",
 	# {%- endif %}
 	# {%- if has_net == "true" %}
 	"embassy-net/defmt",
@@ -48,10 +43,6 @@ embassy-futures = { workspace = true }
 embedded-storage = { workspace = true }
 embedded-storage-async = { workspace = true }
 # {%- endif %}
-# {%- if config == "true" %}
-# Хранилище настроек (settings.rs) — async API.
-sequential-storage = { workspace = true }
-# {%- endif %}
 # {%- if has_usb == "true" %}
 # Поток байтов `embedded_io_async::{Read, Write}` — его реализует поток CDC
 # (`usb::CdcStream`).
@@ -67,7 +58,7 @@ embassy-usb = { workspace = true }
 # Таймаут записи, которую хост не забирает (`usb`).
 embassy-time = { workspace = true }
 # {%- endif %}
-# `defmt::Format` на ошибках адаптеров и строка лога `settings` — в прошивке.
+# `defmt::Format` на ошибках адаптеров — в прошивке.
 defmt = { workspace = true, optional = true }
 
 [dev-dependencies]

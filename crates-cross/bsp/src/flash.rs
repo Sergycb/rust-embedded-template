@@ -230,7 +230,7 @@ pub type FirmwareFlash = adapters_hw::ota::Partitions<
 {%- endif %}
 {%- if config_here == "true" %}
 
-/// Раздел `CONFIG` — носитель хранилища настроек (`adapters_hw::settings`).
+/// Раздел `CONFIG` — носитель хранилища настроек (`domain::settings`).
 /// Именно раздел, а не весь
 /// флеш: запись за его границы отказывает, а не стирает {% if ota == "true" %}`ACTIVE` или bootloader{% else %}прошивку{% endif %}.
 pub type ConfigFlash = Partition<'static, NoopRawMutex, ConfigBacking>;
@@ -238,7 +238,7 @@ pub type ConfigFlash = Partition<'static, NoopRawMutex, ConfigBacking>;
 {%- if eeprom_here == "true" %}
 
 /// Внутренняя EEPROM как `NorFlash` — носитель настроек, над которым
-/// стоит хранилище (`adapters_hw::settings`).
+/// стоит хранилище (`domain::settings`).
 /// Флеш под настройки не тратится вовсе: EEPROM пишется через тот же
 /// контроллер, что и флеш, поэтому доступ к ней — через общий [`FlashMutex`]
 /// (`embassy_stm32::flash::Flash::eeprom_*`), по операции под замком. Обёртку

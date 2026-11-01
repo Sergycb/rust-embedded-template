@@ -60,7 +60,7 @@ pub struct Board {
 {%- if config == "true" %}
     /// Носитель настроек, переживающих перезапуск{% if ota == "true" %} и обновление прошивки{% endif %}
     /// ([`crate::ConfigFlash`]): {% if config_store == "eeprom" %}внутренняя EEPROM{% elsif config_store == "external" %}раздел на внешней флеши (драйвер — `bsp/src/external.rs`){% else %}раздел `CONFIG` во флеше{% endif %}.
-    /// Хранилище над ним — `adapters_hw::settings::Settings::whole` — строит
+    /// Хранилище над ним — `domain::settings::Settings::whole` — строит
     /// compose-site узла-потребителя; формат значений выбирает проект.
     pub config: crate::ConfigFlash,
 {%- endif %}

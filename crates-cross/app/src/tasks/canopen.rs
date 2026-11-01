@@ -17,7 +17,7 @@ pub mod {{ f[4] }} {
 {%- endif %}
 
     /// Хранилище узла: {% if config == "true" %}раздел настроек платы{% else %}раздела настроек нет — объекты и адрес не сохраняются{% endif %}.
-    type Store = {% if config == "true" %}adapters_hw::settings::Settings<bsp::ConfigFlash>{% else %}adapters_hw::settings::Unavailable{% endif %};
+    type Store = Option<domain::settings::Settings<{% if config == "true" %}bsp::ConfigFlash{% else %}domain::settings::NoFlash{% endif %}>>;
 
     /// Шина узла.
     type Bus = bsp::can::{{ f[4] }}::Can;
@@ -32,13 +32,11 @@ pub mod {{ f[4] }} {
     async fn task(mut bus: Bus, mut store: Store, mut serial: u32) {
         let mut node_id = 1;
         let mut dictionary = domain::canopen::dictionary();
-        let mut persist = {{config}};
         domain::canopen::task(domain::canopen::CanOpenCtx {
             bus: &mut bus,
             node_id: &mut node_id,
             dictionary: &mut dictionary,
             settings: &mut store,
-            persist: &mut persist,
             serial: &mut serial,
 {%- if ota == "true" %}
             ota_client: &mut domain::ota::ClientId({{ client }}),
