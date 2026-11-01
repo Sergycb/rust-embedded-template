@@ -6,8 +6,6 @@ version = 4
 name = "adapters"
 version = "0.1.0"
 dependencies = [
- "cobs",
- "crc",
  "critical-section",
  "defmt 1.2.0",
  "domain",
@@ -21,9 +19,26 @@ dependencies = [
  "embedded-storage",
  "embedded-storage-async",
  "ports",
- "proptest",
  "salty",
  "sequential-storage",
+ "tokio",
+]
+
+[[package]]
+name = "adapters-logic"
+version = "0.1.0"
+dependencies = [
+ "adapters",
+ "cobs",
+ "crc",
+ "critical-section",
+ "defmt 1.2.0",
+ "embassy-net",
+ "embassy-time",
+ "embedded-io-async 0.7.0",
+ "ports",
+ "proptest",
+ "rusty-modbus-types",
  "tokio",
 ]
 

@@ -20,14 +20,8 @@ pub mod ota;
 pub mod settings;
 
 // {%- endif %}
-// {%- if cobs_used == "true" %}
-/// Кадрирование потока байтов в кадры `ports::FrameLink`:
-/// COBS и CRC.
-pub mod cobs;
-
-// {%- endif %}
 // {%- if has_net == "true" %}
-/// Сеть поверх `embassy-net`: транспорты над сокетами стека.
+/// Сеть поверх `embassy-net`: стек платы и его фоновая работа.
 pub mod net;
 
 // {%- endif %}
@@ -41,15 +35,6 @@ pub mod usb;
 /// `domain`).
 #[cfg(any(test, feature = "fake"))]
 pub mod fake;
-
-// {%- endif %}
-// {%- if has_modbus == "true" %}
-/// Транспорты Modbus — каналы slave'а (`ports::FrameLink` с
-/// кадром «адрес и PDU») для узла протокола `domain::server`.
-// {%- if modbus_master == "true" %}
-/// Они же реализуют порт master'а `ports::ModbusClient`.
-// {%- endif %}
-pub mod modbus;
 
 // {%- endif %}
 // {%- if config_store == "eeprom" %}

@@ -1535,8 +1535,9 @@ fn no_protocol_by_default() {
         "crates-host/ports/src/link.rs",
         "crates-host/ports/src/modbus.rs",
         "crates-host/ports/src/can.rs",
-        "crates-host/adapters/src/modbus",
-        "crates-host/adapters/src/cobs.rs",
+        "crates-host/adapters-logic/src/modbus",
+        "crates-host/adapters-logic/src/cobs.rs",
+        "crates-host/adapters-logic",
         "crates-cross/bsp/src/stub.rs",
         "crates-host/adapters/src/fake/cable.rs",
         "crates-host/domain/src/modbus",
@@ -1545,7 +1546,6 @@ fn no_protocol_by_default() {
         "crates-host/domain/src/canopen",
         "crates-host/domain/src/net.rs",
         "crates-host/adapters/src/net.rs",
-        "crates-host/adapters/src/net",
         "crates-cross/bsp/src/net.rs",
         "docs/modules/bsp-net.md",
         "crates-cross/bsp/src/usb.rs",
@@ -1620,7 +1620,8 @@ fn protocol_over_uart_keeps_the_serial_module() {
         for (path, wanted) in [
             ("crates-host/proto", protocol == "protobuf"),
             ("crates-host/domain/src/protobuf.rs", protocol == "protobuf"),
-            ("crates-host/adapters/src/cobs.rs", protocol == "protobuf"),
+            ("crates-host/adapters-logic/src/cobs.rs", protocol == "protobuf"),
+            ("crates-host/adapters-logic", true),
             ("crates-host/domain/src/modbus.rs", protocol == "modbus"),
             ("crates-host/ports/src/modbus.rs", protocol == "modbus"),
             // Кадровый канал нужен обоим: узел протокола `domain::server` —
@@ -1797,8 +1798,9 @@ fn the_interface_block_is_named_by_the_chip() {
     }
 }
 
-/// Протокол по сети оставляет стек — `bsp::net`, `adapters::net`, узел
-/// `domain::net` — только у чипа с выведенным Ethernet.
+/// Протокол по сети оставляет стек — `bsp::net`, `adapters::net`, транспорты
+/// `adapters_logic::net`, узел `domain::net` — только у чипа с выведенным
+/// Ethernet.
 #[test]
 fn protocol_over_network_keeps_the_net_stack() {
     for iface in ["tcp", "udp"] {
@@ -1811,7 +1813,8 @@ fn protocol_over_network_keeps_the_net_stack() {
         for kept in [
             "crates-cross/bsp/src/net.rs",
             "crates-host/adapters/src/net.rs",
-            "crates-host/adapters/src/net",
+            "crates-host/adapters-logic/src/net.rs",
+            "crates-host/adapters-logic/src/net",
             "crates-host/domain/src/net.rs",
             "crates-host/domain/src/modbus.rs",
         ] {
@@ -2326,14 +2329,14 @@ fn derived_flags_follow_every_link() {
     for path in [
         "crates-cross/bsp/src/serial.rs",
         "crates-cross/bsp/src/can.rs",
-        "crates-host/adapters/src/modbus/rtu.rs",
-        "crates-host/adapters/src/modbus/tcp.rs",
+        "crates-host/adapters-logic/src/modbus/rtu.rs",
+        "crates-host/adapters-logic/src/modbus/tcp.rs",
     ] {
         assert!(!deleted(path), "{path} удалён: {:?}", result.deleted);
     }
     for path in [
-        "crates-host/adapters/src/modbus/udp.rs",
-        "crates-host/adapters/src/cobs.rs",
+        "crates-host/adapters-logic/src/modbus/udp.rs",
+        "crates-host/adapters-logic/src/cobs.rs",
     ] {
         assert!(deleted(path), "{path} не удалён: {:?}", result.deleted);
     }
@@ -2354,7 +2357,7 @@ fn protobuf_over_udp_and_a_stream_keeps_cobs() {
         !result
             .deleted
             .iter()
-            .any(|d| d == "crates-host/adapters/src/cobs.rs"),
+            .any(|d| d == "crates-host/adapters-logic/src/cobs.rs"),
         "{:?}",
         result.deleted
     );
@@ -2643,6 +2646,7 @@ fn mqtt_is_offered_with_ethernet() {
 
     let mqtt_files = [
         "crates-host/domain/src/mqtt.rs",
+        "crates-host/domain/src/mqtt",
         "crates-host/ports/src/dial.rs",
         "crates-cross/app/build",
     ];
@@ -2654,9 +2658,9 @@ fn mqtt_is_offered_with_ethernet() {
     )
     .expect("каскад не должен падать");
     let deleted = |result: &CascadeResult, path: &str| result.deleted.iter().any(|d| d == path);
-    assert!(!deleted(&udp, "crates-host/adapters/src/net/tcp.rs"));
-    assert!(!deleted(&udp, "crates-host/adapters/src/net/tcp/client.rs"));
-    assert!(deleted(&udp, "crates-host/adapters/src/net/tcp/server.rs"));
+    // Клиент брокера живёт с узлом (`domain/src/mqtt/client.rs`), сервер
+    // транспортов TCP без tcp не нужен.
+    assert!(deleted(&udp, "crates-host/adapters-logic/src/net/tcp.rs"));
     for path in mqtt_files {
         assert!(!deleted(&udp, path), "{path} удалён: {:?}", udp.deleted);
     }
@@ -2667,7 +2671,7 @@ fn mqtt_is_offered_with_ethernet() {
         &[],
     )
     .expect("каскад не должен падать");
-    assert!(deleted(&rest, "crates-host/adapters/src/net/tcp.rs"));
+    assert!(deleted(&rest, "crates-host/adapters-logic/src/net/tcp.rs"));
     for path in mqtt_files {
         assert!(deleted(&rest, path), "{path} не удалён: {:?}", rest.deleted);
     }
@@ -3382,7 +3386,7 @@ fn erase_page_wrapper_only_where_the_sector_is_smaller_than_the_chip_page() {
     }
 }
 
-/// Транспорты в `adapters` остаются только под выбранный интерфейс: Modbus RTU,
+/// Транспорты в `adapters-logic` остаются только под выбранный интерфейс: Modbus RTU,
 /// TCP и UDP, сокеты сети и COBS — каждый лишь там, где ему есть кого обслуживать.
 #[test]
 fn transports_are_kept_only_for_the_selected_interface() {
@@ -3393,9 +3397,9 @@ fn transports_are_kept_only_for_the_selected_interface() {
         &'a [&'a str],
         &'a [&'a str],
     );
-    const M: &str = "crates-host/adapters/src/modbus/";
-    const N: &str = "crates-host/adapters/src/net/";
-    const COBS: &str = "crates-host/adapters/src/cobs.rs";
+    const M: &str = "crates-host/adapters-logic/src/modbus/";
+    const N: &str = "crates-host/adapters-logic/src/net/";
+    const COBS: &str = "crates-host/adapters-logic/src/cobs.rs";
     let ast = compile_script();
     let cases: [Case; 5] = [
         (
@@ -3413,18 +3417,8 @@ fn transports_are_kept_only_for_the_selected_interface() {
         (
             "h743zg",
             &[("protocol", "modbus"), ("interface", "tcp")],
-            &[
-                "modbus/rtu.rs",
-                "modbus/udp.rs",
-                "net/udp.rs",
-                "net/tcp/client.rs",
-            ],
-            &[
-                "modbus/tcp.rs",
-                "modbus/mbap.rs",
-                "net/tcp.rs",
-                "net/tcp/server.rs",
-            ],
+            &["modbus/rtu.rs", "modbus/udp.rs", "net/udp.rs"],
+            &["modbus/tcp.rs", "modbus/mbap.rs", "net/tcp.rs"],
         ),
         // COBS нужен потоку (UART, USB, TCP), а UDP кадр даёт сама датаграмма.
         (

@@ -20,6 +20,8 @@
 
 /// Адрес брокера: `Endpoint` и откуда он берётся (`Broker`, `Fixed`).
 mod broker;
+/// TCP-клиент брокера над сокетом стека: подключение с паузой между попытками.
+mod client;
 /// Сессия `minimq` над готовым потоком байтов и её буферы.
 mod session;
 /// Как часто и что плата публикует в `telemetry`.
@@ -34,6 +36,7 @@ use embedded_io_async::{ErrorType, Read, Write};
 use ports::dial::Dial;
 
 pub use self::broker::{Broker, Endpoint, Fixed};
+pub use self::client::{ClientError, TcpClient};
 pub use self::session::{AUTH_MAX, CONNECT_TIMEOUT, RX_BUFFER, TX_BUFFER};
 use self::session::{Env, serve};
 pub use self::telemetry::{TELEMETRY_INTERVAL, write_telemetry};
@@ -41,7 +44,7 @@ pub use self::topics::{Command, PREFIX_MAX, Topics, parse_command};
 
 // Узел объявлен рядом со своей задачей — как `SSH`. `<B>` — откуда адрес
 // брокера (`Fixed` или свой тип проекта), `<D>` — соединение (`Dial` +
-// поток байтов; `adapters::net::TcpClient` над сокетом стека — собирает его
+// поток байтов; `domain::mqtt::TcpClient` над сокетом стека — собирает его
 // слот `LINK` из стека и буферов TCP от `app`); `local` у них и у стека — все
 // вправе быть `!Send`.
 // Буферы `minimq` — слоты `= static`: через стек они не идут. Без

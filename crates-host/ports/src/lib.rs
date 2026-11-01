@@ -114,6 +114,9 @@ pub use can::CanBus;
 // {%- if link_port == "true" %}
 pub use link::{FrameDuplex, FrameLink, LinkError};
 // {%- endif %}
+// {%- if modbus_tcp == "true" %}
+pub use link::HangUp;
+// {%- endif %}
 // {%- if net_services contains "mqtt" %}
 pub use dial::Dial;
 // {%- endif %}

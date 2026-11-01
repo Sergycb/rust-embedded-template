@@ -306,7 +306,7 @@ mod fakes {
 
     // {%- if modbus_tcp == "true" %}
     /// Обрыв соединения: непрочитанное пропадает вместе с ним.
-    impl crate::net::HangUp for Duplex {
+    impl ports::HangUp for Duplex {
         async fn hang_up(&mut self) {
             self.pos = self.rx.len();
         }

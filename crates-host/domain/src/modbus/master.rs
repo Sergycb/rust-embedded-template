@@ -4,12 +4,12 @@
 //! Ответ из-за линии — граница доверия: транспорт сверяет то, что вне PDU
 //! (адрес, CRC, номер транзакции), а здесь PDU сверяется с запросом
 //! (функция, количество, счётчик байт, эхо записи), и всё, что не сошлось,
-//! — [`MasterError::Unexpected`](ports::MasterError::Unexpected), а не
-//! паника и не мусор в `out`.
+//! — [`RequestError::Unexpected`](crate::modbus::master::RequestError::Unexpected),
+//! а не паника и не мусор в `out`.
 //!
 //! Таймаута здесь нет: ждать ответ сколько угодно — дело вызывающего
 //! (`embassy_time::with_timeout`). Что делать с опоздавшим ответом на
-//! брошенный запрос, решает транспорт (`adapters::modbus`).
+//! брошенный запрос, решает транспорт (`adapters_logic::modbus`).
 //!
 //! После широковещательной записи (`unit` 0) ответа нет, и функция
 //! возвращается сразу; выдержать паузу, пока slave'ы её выполняют
@@ -31,6 +31,36 @@ const HEAD: usize = 5;
 /// Длина заголовка запроса FC15/16: [`HEAD`] и счётчик байт данных.
 const MULTIPLE_HEAD: usize = HEAD + 1;
 
+/// Что может пойти не так в запросе master'а.
+///
+/// То, что вне PDU (адрес, CRC, номер транзакции, обрыв), сверяет
+/// транспорт — [`Transport`](Self::Transport); то, что внутри, — логика
+/// master'а здесь.
+#[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[non_exhaustive]
+pub enum RequestError<E> {
+    /// Транспорт не доставил ответ.
+    Transport(MasterError<E>),
+    /// Slave ответил исключением.
+    Exception(Exception),
+    /// PDU ответа не на этот запрос: другая функция, не то количество,
+    /// неразборное содержимое, эхо записи не совпало.
+    Unexpected,
+}
+
+impl<E: core::fmt::Debug> core::fmt::Display for RequestError<E> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Transport(err) => write!(f, "{err}"),
+            Self::Exception(exception) => write!(f, "slave ответил исключением {exception:?}"),
+            Self::Unexpected => f.write_str("ответ не соответствует запросу"),
+        }
+    }
+}
+
+impl<E: core::fmt::Debug> core::error::Error for RequestError<E> {}
+
 /// Читает coils `start..start + out.len()` slave'а `unit` в `out` (FC01).
 ///
 /// # Errors
@@ -45,7 +75,7 @@ pub async fn read_coils<C: ModbusClient>(
     unit: u8,
     start: u16,
     out: &mut [bool],
-) -> Result<(), MasterError<C::Error>> {
+) -> Result<(), RequestError<C::Error>> {
     read_bits(link, unit, 0x01, start, out, MAX_READ_COILS).await
 }
 
@@ -64,7 +94,7 @@ pub async fn read_discrete_inputs<C: ModbusClient>(
     unit: u8,
     start: u16,
     out: &mut [bool],
-) -> Result<(), MasterError<C::Error>> {
+) -> Result<(), RequestError<C::Error>> {
     read_bits(link, unit, 0x02, start, out, MAX_READ_DISCRETE_INPUTS).await
 }
 
@@ -83,7 +113,7 @@ pub async fn read_holding<C: ModbusClient>(
     unit: u8,
     start: u16,
     out: &mut [u16],
-) -> Result<(), MasterError<C::Error>> {
+) -> Result<(), RequestError<C::Error>> {
     read_words(link, unit, 0x03, start, out).await
 }
 
@@ -102,7 +132,7 @@ pub async fn read_input<C: ModbusClient>(
     unit: u8,
     start: u16,
     out: &mut [u16],
-) -> Result<(), MasterError<C::Error>> {
+) -> Result<(), RequestError<C::Error>> {
     read_words(link, unit, 0x04, start, out).await
 }
 
@@ -116,7 +146,7 @@ pub async fn write_coil<C: ModbusClient>(
     unit: u8,
     address: u16,
     value: bool,
-) -> Result<(), MasterError<C::Error>> {
+) -> Result<(), RequestError<C::Error>> {
     let wire: u16 = if value { 0xFF00 } else { 0x0000 };
     write_single(link, unit, 0x05, address, wire).await
 }
@@ -132,7 +162,7 @@ pub async fn write_register<C: ModbusClient>(
     unit: u8,
     address: u16,
     value: u16,
-) -> Result<(), MasterError<C::Error>> {
+) -> Result<(), RequestError<C::Error>> {
     write_single(link, unit, 0x06, address, value).await
 }
 
@@ -151,7 +181,7 @@ pub async fn write_coils<C: ModbusClient>(
     unit: u8,
     start: u16,
     values: &[bool],
-) -> Result<(), MasterError<C::Error>> {
+) -> Result<(), RequestError<C::Error>> {
     let qty = quantity(values.len(), MAX_WRITE_COILS);
     let bytes = usize::from(qty.div_ceil(8));
     let mut tx = [0_u8; MAX_PDU];
@@ -179,7 +209,7 @@ pub async fn write_registers<C: ModbusClient>(
     unit: u8,
     start: u16,
     values: &[u16],
-) -> Result<(), MasterError<C::Error>> {
+) -> Result<(), RequestError<C::Error>> {
     let qty = quantity(values.len(), MAX_WRITE_REGISTERS);
     let bytes = values.len() * 2;
     let mut tx = [0_u8; MAX_PDU];
@@ -202,17 +232,17 @@ async fn read_bits<C: ModbusClient>(
     start: u16,
     out: &mut [bool],
     max: u16,
-) -> Result<(), MasterError<C::Error>> {
+) -> Result<(), RequestError<C::Error>> {
     let qty = quantity(out.len(), max);
     let mut rx = [0_u8; MAX_PDU];
     let len = read_request(link, unit, fc, start, qty, &mut rx).await?;
     let status = match decode(&rx[..len], fc)? {
         ResponsePdu::ReadCoils(r) if fc == 0x01 => r.coil_status,
         ResponsePdu::ReadDiscreteInputs(r) if fc == 0x02 => r.coil_status,
-        _ => return Err(MasterError::Unexpected),
+        _ => return Err(RequestError::Unexpected),
     };
     if status.len() != usize::from(qty.div_ceil(8)) {
-        return Err(MasterError::Unexpected);
+        return Err(RequestError::Unexpected);
     }
     for (slot, value) in out.iter_mut().zip(Bits::new(status, qty).iter()) {
         *slot = value;
@@ -226,17 +256,17 @@ async fn read_words<C: ModbusClient>(
     fc: u8,
     start: u16,
     out: &mut [u16],
-) -> Result<(), MasterError<C::Error>> {
+) -> Result<(), RequestError<C::Error>> {
     let qty = quantity(out.len(), MAX_READ_REGISTERS);
     let mut rx = [0_u8; MAX_PDU];
     let len = read_request(link, unit, fc, start, qty, &mut rx).await?;
     let data = match decode(&rx[..len], fc)? {
         ResponsePdu::ReadHoldingRegisters(r) if fc == 0x03 => r.register_data,
         ResponsePdu::ReadInputRegisters(r) if fc == 0x04 => r.register_data,
-        _ => return Err(MasterError::Unexpected),
+        _ => return Err(RequestError::Unexpected),
     };
     if data.len() != out.len() * 2 {
-        return Err(MasterError::Unexpected);
+        return Err(RequestError::Unexpected);
     }
     for (slot, value) in out.iter_mut().zip(Words::new(data).iter()) {
         *slot = value;
@@ -253,12 +283,14 @@ async fn read_request<C: ModbusClient>(
     start: u16,
     qty: u16,
     rx: &mut [u8; MAX_PDU],
-) -> Result<usize, MasterError<C::Error>> {
+) -> Result<usize, RequestError<C::Error>> {
     assert!(
         unit != 0,
         "чтение с адреса 0: широковещательного чтения нет"
     );
-    link.exchange(unit, &head(fc, start, qty), rx).await
+    link.exchange(unit, &head(fc, start, qty), rx)
+        .await
+        .map_err(RequestError::Transport)
 }
 
 async fn write_single<C: ModbusClient>(
@@ -267,24 +299,27 @@ async fn write_single<C: ModbusClient>(
     fc: u8,
     address: u16,
     value: u16,
-) -> Result<(), MasterError<C::Error>> {
+) -> Result<(), RequestError<C::Error>> {
     let tx = head(fc, address, value);
     if unit == 0 {
-        return link.broadcast(&tx).await;
+        return link.broadcast(&tx).await.map_err(RequestError::Transport);
     }
     let mut rx = [0_u8; MAX_PDU];
-    let len = link.exchange(unit, &tx, &mut rx).await?;
+    let len = link
+        .exchange(unit, &tx, &mut rx)
+        .await
+        .map_err(RequestError::Transport)?;
     let echoed = match decode(&rx[..len], fc)? {
         ResponsePdu::WriteSingleCoil(r) if fc == 0x05 => {
             (r.address.0, if r.value.as_bool() { 0xFF00 } else { 0 })
         }
         ResponsePdu::WriteSingleRegister(r) if fc == 0x06 => (r.address.0, r.value),
-        _ => return Err(MasterError::Unexpected),
+        _ => return Err(RequestError::Unexpected),
     };
     if echoed == (address, value) {
         Ok(())
     } else {
-        Err(MasterError::Unexpected)
+        Err(RequestError::Unexpected)
     }
 }
 
@@ -312,22 +347,25 @@ async fn write_multiple<C: ModbusClient>(
     start: u16,
     qty: u16,
     tx: &[u8],
-) -> Result<(), MasterError<C::Error>> {
+) -> Result<(), RequestError<C::Error>> {
     if unit == 0 {
-        return link.broadcast(tx).await;
+        return link.broadcast(tx).await.map_err(RequestError::Transport);
     }
     let fc = tx[0];
     let mut rx = [0_u8; MAX_PDU];
-    let len = link.exchange(unit, tx, &mut rx).await?;
+    let len = link
+        .exchange(unit, tx, &mut rx)
+        .await
+        .map_err(RequestError::Transport)?;
     let echoed = match decode(&rx[..len], fc)? {
         ResponsePdu::WriteMultipleCoils(r) if fc == 0x0F => (r.address.0, r.quantity.0),
         ResponsePdu::WriteMultipleRegisters(r) if fc == 0x10 => (r.address.0, r.quantity.0),
-        _ => return Err(MasterError::Unexpected),
+        _ => return Err(RequestError::Unexpected),
     };
     if echoed == (start, qty) {
         Ok(())
     } else {
-        Err(MasterError::Unexpected)
+        Err(RequestError::Unexpected)
     }
 }
 
@@ -340,12 +378,12 @@ fn quantity(len: usize, max: u16) -> u16 {
 }
 
 /// Разбирает PDU ответа на функцию `fc`; исключение на неё — ошибка.
-fn decode<E>(pdu: &[u8], fc: u8) -> Result<ResponsePdu<'_>, MasterError<E>> {
+fn decode<E>(pdu: &[u8], fc: u8) -> Result<ResponsePdu<'_>, RequestError<E>> {
     match decode_response(pdu) {
         Ok(ResponsePdu::Exception(e)) if e.function_code.code() == fc => Err(
-            MasterError::Exception(Exception::from_code(e.exception_code.code())),
+            RequestError::Exception(Exception::from_code(e.exception_code.code())),
         ),
-        Ok(ResponsePdu::Exception(_)) | Err(_) => Err(MasterError::Unexpected),
+        Ok(ResponsePdu::Exception(_)) | Err(_) => Err(RequestError::Unexpected),
         Ok(pdu) => Ok(pdu),
     }
 }
@@ -361,15 +399,15 @@ mod tests {
 
     /// Запрос master'а → наш slave → ответ обратно master'у: две реализации
     /// проверяют друг друга, и ни одна не знает, как устроена другая.
-    async fn through_slave<F, Fut>(map: &mut Map, call: F) -> Result<(), MasterError<Infallible>>
+    async fn through_slave<F, Fut>(map: &mut Map, call: F) -> Result<(), RequestError<Infallible>>
     where
         F: Fn(Client) -> Fut,
-        Fut: Future<Output = (Result<(), MasterError<Infallible>>, Client)>,
+        Fut: Future<Output = (Result<(), RequestError<Infallible>>, Client)>,
     {
         // Первый прогон: ответа нет, master отправляет запрос и упирается в
         // конец потока.
         let (first, client) = call(Client::default()).await;
-        assert_eq!(first, Err(MasterError::Eof));
+        assert_eq!(first, Err(RequestError::Transport(MasterError::Eof)));
         let (unit, request) = &client.sent[0];
         let mut frame = [0; MAX_PDU + 1];
         frame[0] = *unit;
@@ -441,7 +479,7 @@ mod tests {
         ] {
             let mut link = Client::replying(&[0x83, code]);
             let r = read_holding(&mut link, 1, 0, &mut [0; 1]).await;
-            assert_eq!(r, Err(MasterError::Exception(exception)));
+            assert_eq!(r, Err(RequestError::Exception(exception)));
         }
     }
 
@@ -464,7 +502,7 @@ mod tests {
         for reply in cases {
             let mut link = Client::replying(reply);
             let r = read_holding(&mut link, 1, 0, &mut [0; 3]).await;
-            assert_eq!(r, Err(MasterError::Unexpected), "ответ {reply:02X?}");
+            assert_eq!(r, Err(RequestError::Unexpected), "ответ {reply:02X?}");
         }
     }
 

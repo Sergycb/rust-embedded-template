@@ -4,7 +4,7 @@
 //! Master — тоже на уровне PDU, поверх транспорта [`ports::ModbusClient`].
 // {%- endif %}
 //!
-//! Канал строит compose-site (транспорт из `adapters::modbus`, порт
+//! Канал строит compose-site (транспорт из `adapters_logic::modbus`, порт
 //! `ports::FrameLink`) и отдаёт узлу готовым; здесь про
 //! него ничего не известно: кадр, CRC, заголовок MBAP и пропуск битых кадров
 //! — дело канала. Данные slave'а — трейт

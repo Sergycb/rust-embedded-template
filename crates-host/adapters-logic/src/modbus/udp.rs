@@ -1,12 +1,13 @@
 //! Modbus UDP: заголовок MBAP и PDU, по кадру в датаграмме.
 
 use ports::{FrameLink, LinkError};
+use rusty_modbus_types::MbapHeader;
 
 // {%- if modbus_master == "true" %}
 use ports::{MAX_PDU, MasterError, ModbusClient};
 
 // {%- endif %}
-use super::mbap::{self, HEADER, Header, MAX_ADU};
+use super::mbap::{self, HEADER, MAX_ADU};
 
 /// Сколько байт нужно буферу канала под [`Udp`]: самая длинная датаграмма
 /// Modbus — заголовок MBAP и PDU.
@@ -66,13 +67,13 @@ impl<L: FrameLink> Udp<L> {
     }
 
     /// Ждёт целую датаграмму Modbus в `buf`; возвращает заголовок и длину.
-    async fn datagram(&mut self) -> Result<(Header, usize), LinkError<L::Error>> {
+    async fn datagram(&mut self) -> Result<(MbapHeader, usize), LinkError<L::Error>> {
         let mut lost = 0_u8;
         loop {
             match self.link.recv().await {
                 Ok(len) if len >= HEADER => {
-                    let header = Header::parse(self.link.buffer());
-                    if header.protocol == 0 && header.total() == Some(len) {
+                    let header = mbap::parse(self.link.buffer());
+                    if header.protocol_id.get() == 0 && mbap::total(header) == Some(len) {
                         return Ok((header, len));
                     }
                 }
@@ -109,8 +110,8 @@ impl<L: FrameLink> FrameLink for Udp<L> {
 
     async fn recv(&mut self) -> Result<usize, LinkError<L::Error>> {
         let (header, len) = self.datagram().await?;
-        self.tid = header.tid;
-        self.unit = header.unit;
+        self.tid = header.transaction_id.get();
+        self.unit = header.unit_id;
         self.link.buffer()[HEADER - 1] = 0xFF;
         Ok(len - (HEADER - 1))
     }
@@ -150,11 +151,11 @@ impl<L: FrameLink> ModbusClient for Udp<L> {
             .map_err(MasterError::Io)?;
         loop {
             let (header, len) = self.datagram().await.map_err(MasterError::Io)?;
-            if header.tid != self.tid {
+            if header.transaction_id.get() != self.tid {
                 // Опоздавший ответ на брошенный запрос.
                 continue;
             }
-            if header.unit != unit {
+            if header.unit_id != unit {
                 return Err(MasterError::Unexpected);
             }
             let pdu = &self.link.buffer()[HEADER..len];

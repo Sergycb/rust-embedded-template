@@ -17,7 +17,7 @@ use embassy_net::udp::PacketMetadata;
 const PORT: u16 = {% if f[3] == "modbus" %}502{% else %}5000{% endif %};
 
 /// Буфер канала — {% if f[3] == "modbus" %}самая длинная датаграмма Modbus{% else %}запрос{% endif %}.
-pub const BUFFER: usize = {% if f[3] == "modbus" %}::adapters::modbus::DATAGRAM{% else %}::domain::protobuf::REQUEST_MAX{% endif %};
+pub const BUFFER: usize = {% if f[3] == "modbus" %}::adapters_logic::modbus::DATAGRAM{% else %}::domain::protobuf::REQUEST_MAX{% endif %};
 
 /// Сколько датаграмм держит очередь сокета в каждую сторону.
 const QUEUE: usize = 4;
@@ -29,9 +29,9 @@ pub type Meta = MaybeUninit<[PacketMetadata; QUEUE]>;
 
 /// Канал узла `{% if f[3] == "modbus" %}MODBUS{% else %}PROTOBUF{% endif %}_{{ f[4] | upcase }}` над стеком платы (`board.net.stack`).
 {%- if f[3] == "modbus" %}
-pub type Link = ::adapters::modbus::Udp<::adapters::net::UdpLink>;
+pub type Link = ::adapters_logic::modbus::Udp<::adapters_logic::net::UdpLink>;
 {%- else %}
-pub type Link = ::adapters::net::UdpLink;
+pub type Link = ::adapters_logic::net::UdpLink;
 {%- endif %}
 
 /// Канал над стеком `stack` в памяти, которую объявляет граф: метаданные
@@ -48,11 +48,11 @@ pub fn link(
     let rx_meta = rx_meta.write([PacketMetadata::EMPTY; QUEUE]);
     let tx_meta = tx_meta.write([PacketMetadata::EMPTY; QUEUE]);
 {%- if f[3] == "modbus" %}
-    ::adapters::modbus::Udp::new(::adapters::net::UdpLink::new(
+    ::adapters_logic::modbus::Udp::new(::adapters_logic::net::UdpLink::new(
         stack, PORT, rx_meta, rx, tx_meta, tx, frame,
     ))
 {%- else %}
-    ::adapters::net::UdpLink::new(stack, PORT, rx_meta, rx, tx_meta, tx, frame)
+    ::adapters_logic::net::UdpLink::new(stack, PORT, rx_meta, rx, tx_meta, tx, frame)
 {%- endif %}
 }
 {%- endif %}

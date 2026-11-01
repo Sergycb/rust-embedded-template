@@ -262,13 +262,13 @@ supervisor_graph! {
         // объявляет граф (`static T`), буферы `minimq` — слоты
         // `= static` фрагмента.{% if ota == "true" %} `cmd/reboot` — командой узлу `OTA` своим
         // клиентом, номер следом за остальными.{% endif %}
-        ::domain::MQTT_FRAG<::domain::mqtt::Fixed, ::adapters::net::TcpClient> as MQTT =
+        ::domain::MQTT_FRAG<::domain::mqtt::Fixed, ::domain::mqtt::TcpClient> as MQTT =
             ::domain::mqtt::MqttWiring {
                 stack: board.net.stack,
                 info: crate::device_info(board.spec),
                 prefix: crate::net::mqtt::PREFIX,
                 broker: ::domain::mqtt::Fixed(crate::net::mqtt::BROKER),
-                link: ::adapters::net::TcpClient::new(
+                link: ::domain::mqtt::TcpClient::new(
                     board.net.stack,
                     static [u8; crate::net::mqtt::TCP_BUFFER],
                     static [u8; crate::net::mqtt::TCP_BUFFER],

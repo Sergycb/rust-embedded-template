@@ -120,8 +120,9 @@ async fn send_to(
 
 #[cfg(test)]
 mod tests {
+    use adapters::fake::cable::{DEVICE, leak, pair};
+
     use super::*;
-    use crate::fake::cable::{DEVICE, leak, pair};
     use crate::net::fakes::{PORT, with_network};
 
     fn udp(stack: Stack<'static>, port: u16) -> UdpLink {

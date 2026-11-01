@@ -52,64 +52,19 @@ embedded-storage-async = { workspace = true }
 # Хранилище настроек (settings.rs) — async API.
 sequential-storage = { workspace = true }
 # {%- endif %}
-# {%- if stream_io == "true" or net_services contains "mqtt" %}
-# Поток байтов `embedded_io_async::{Read, Write}` — трейты транспортов платы.
 # {%- if has_usb == "true" %}
-# - `usb::CdcStream`
-# {%- endif %}
-# {%- if has_tcp == "true" %}
-# - `net::TcpServer`
-# {%- endif %}
-# {%- if modbus_rtu == "true" %}
-# - `modbus::Rtu`
-# {%- endif %}
-# {%- if modbus_tcp == "true" %}
-# - `modbus::Tcp`
-# {%- endif %}
-# {%- if cobs_used == "true" %}
-# - `cobs::Cobs`
-# {%- endif %}
-# {%- if net_services contains "mqtt" %}
-# - `net::TcpClient` клиента MQTT
-# {%- endif %}
-# {%- if has_udp == "true" %}
-# UDP-каналу поток не нужен: границу кадра даёт датаграмма.
-# {%- endif %}
+# Поток байтов `embedded_io_async::{Read, Write}` — его реализует поток CDC
+# (`usb::CdcStream`).
 embedded-io-async = { workspace = true }
 # {%- endif %}
-# {%- if crc_used == "true" %}
-# CRC кадра:
-# {%- if modbus_rtu == "true" %}
-# RTU (`modbus::Rtu`);
-# {%- endif %}
-# {%- if cobs_used == "true" %}
-# COBS (`cobs::Cobs`).
-# {%- endif %}
-crc = { workspace = true }
-# {%- endif %}
-# {%- if cobs_used == "true" %}
-# Кадрирование COBS под `cobs::Cobs`.
-cobs = { workspace = true }
-# {%- endif %}
 # {%- if has_net == "true" %}
-# Сеть (`adapters::net`): заглушка устройства, TCP-сервер, UDP-канал.
+# Сеть (`adapters::net`): стек платы и заглушка устройства.
 embassy-net = { workspace = true }
 # {%- endif %}
 # {%- if has_usb == "true" %}
 # USB (`adapters::usb`): заглушка драйвера и поток CDC ACM.
 embassy-usb = { workspace = true }
-# {%- endif %}
-# {%- if has_net == "true" or has_usb == "true" or modbus_rtu == "true" %}
-# Таймауты:
-# {%- if has_net == "true" %}
-# keep-alive сокета TCP (`net`);
-# {%- endif %}
-# {%- if has_usb == "true" %}
-# запись, которую хост не забирает (`usb`);
-# {%- endif %}
-# {%- if modbus_rtu == "true" %}
-# тишина посреди кадра RTU (`modbus::Rtu`).
-# {%- endif %}
+# Таймаут записи, которую хост не забирает (`usb`).
 embassy-time = { workspace = true }
 # {%- endif %}
 # `defmt::Format` на ошибках адаптеров и строка лога `settings` — в прошивке.
@@ -133,11 +88,7 @@ embassy-executor = { workspace = true, features = ["platform-std", "executor-thr
 # Исполнитель для async-тестов над флешем в памяти (`#[tokio::test]`); фичи —
 # в корневом Cargo.toml.
 tokio = { workspace = true }
-# {%- if framing_tests == "true" %}
-# Property-тесты кадрирования: любое дробление потока и любой мусор.
-proptest = { workspace = true }
-# {%- endif %}
-# {%- if has_net == "true" or has_usb == "true" or ota == "true" or modbus_rtu == "true" %}
+# {%- if has_net == "true" or has_usb == "true" or ota == "true" %}
 # {%- if has_net == "true" or has_usb == "true" %}
 # Тесты над стеками
 # {%- if has_net == "true" %}
@@ -148,9 +99,6 @@ proptest = { workspace = true }
 # {%- endif %}
 # ждут таймеров и критической секции — на хосте их дают драйвер времени
 # `mock-driver` и `critical-section/std`, как в `domain`.
-# {%- endif %}
-# {%- if modbus_rtu == "true" %}
-# Тест паузы посреди кадра RTU двигает часы `mock-driver`.
 # {%- endif %}
 # {%- if ota == "true" %}
 # С OTA драйвер времени нужен и `supervisor` из dev-зависимости `domain` — по

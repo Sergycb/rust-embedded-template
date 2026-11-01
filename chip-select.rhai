@@ -965,7 +965,7 @@ const RAM_COST = #{
     links: #{
         // stm32g474re uart-only 3884 против 3884; Modbus — stm32h743zg два UART и
         // TCP 13940 (по одному — 2168); protobuf — stm32f407ve 6824 против 3880.
-        // Modbus RTU держит свой буфер кадра (`adapters::modbus::Rtu`, 256 байт):
+        // Modbus RTU держит свой буфер кадра (`adapters_logic::modbus::Rtu`, 256 байт):
         // stm32f407ve modbus-uart-can 6320 = 3880 + 2440 (UART с Modbus).
         "uart:none": 0, "uart:modbus": 2472, "uart:protobuf": 2944,
         // CANopen — stm32g474re canopen-config 7620 против 3884 + 32 (настройки);
@@ -2574,7 +2574,7 @@ variable::set("http_connections", http_connections.to_string());
 
 // Кадровый канал (`ports::FrameLink`, `LinkError`) нужен протоколам
 // узла `domain::server` (protobuf и Modbus slave), шине CAN (ошибка `CanBus`) и
-// UDP-каналу (`adapters::net::UdpLink` реализует `FrameLink`) — с протоколом и без него.
+// UDP-каналу (`adapters_logic::net::UdpLink` реализует `FrameLink`) — с протоколом и без него.
 variable::set("link_port", if on.protobuf || on.modbus || has.can || has.udp { "true" } else { "false" });
 // Порт хранилища настроек (`ports::SettingsStorage`) нужен, пока есть что в него
 // класть: раздел, EEPROM или внешняя флеш (`config`) либо заглушка `Unavailable`
@@ -2651,8 +2651,8 @@ if !has.can {
 // `pub use`, зависимости, фичи) вырезает Liquid в комментариях.
 if !on.modbus {
     file::delete("crates-host/ports/src/modbus.rs");
-    file::delete("crates-host/adapters/src/modbus.rs");
-    file::delete("crates-host/adapters/src/modbus");
+    file::delete("crates-host/adapters-logic/src/modbus.rs");
+    file::delete("crates-host/adapters-logic/src/modbus");
     file::delete("crates-host/domain/src/modbus.rs");
     file::delete("crates-host/domain/src/modbus");
     file::delete("crates-cross/app/src/modbus.rs");
@@ -2662,36 +2662,36 @@ if !on.modbus {
 // тесты в `modbus.rs`/`net.rs` вырезает Liquid в комментариях.
 if on.modbus {
     if !modbus_rtu {
-        file::delete("crates-host/adapters/src/modbus/rtu.rs");
+        file::delete("crates-host/adapters-logic/src/modbus/rtu.rs");
     }
     if !modbus_tcp {
-        file::delete("crates-host/adapters/src/modbus/tcp.rs");
+        file::delete("crates-host/adapters-logic/src/modbus/tcp.rs");
     }
     if !modbus_udp {
-        file::delete("crates-host/adapters/src/modbus/udp.rs");
+        file::delete("crates-host/adapters-logic/src/modbus/udp.rs");
     }
     if !modbus_mbap {
-        file::delete("crates-host/adapters/src/modbus/mbap.rs");
+        file::delete("crates-host/adapters-logic/src/modbus/mbap.rs");
     }
 }
-// TCP: общее — `net/tcp.rs`, сервер транспортов — `net/tcp/server.rs`, клиент
-// MQTT — `net/tcp/client.rs` (нужен и при mqtt поверх одного UDP).
-if !has.tcp && !services.contains("mqtt") {
-    file::delete("crates-host/adapters/src/net/tcp.rs");
-    file::delete("crates-host/adapters/src/net/tcp");
-} else {
-    if !has.tcp {
-        file::delete("crates-host/adapters/src/net/tcp/server.rs");
-    }
-    if !services.contains("mqtt") {
-        file::delete("crates-host/adapters/src/net/tcp/client.rs");
-    }
+// Сервер транспортов TCP — `net/tcp.rs`; клиент MQTT живёт с узлом
+// (`domain/src/mqtt/client.rs`) и уходит вместе с ним.
+if !has.tcp {
+    file::delete("crates-host/adapters-logic/src/net/tcp.rs");
 }
 if !has.udp {
-    file::delete("crates-host/adapters/src/net/udp.rs");
+    file::delete("crates-host/adapters-logic/src/net/udp.rs");
 }
 if !cobs_used {
-    file::delete("crates-host/adapters/src/cobs.rs");
+    file::delete("crates-host/adapters-logic/src/cobs.rs");
+}
+// Реализации портов, которых несколько (`adapters-logic`): каналы протоколов
+// и транспорты над сокетами. Нет ни одной — нет и крейта; член workspace и
+// зависимость на него вырезает Liquid.
+let adapters_logic = on.modbus || cobs_used || has.tcp || has.udp;
+variable::set("adapters_logic", if adapters_logic { "true" } else { "false" });
+if !adapters_logic {
+    file::delete("crates-host/adapters-logic");
 }
 if !on.protobuf {
     file::delete("crates-host/domain/src/protobuf.rs");
@@ -2793,7 +2793,11 @@ if !has.tcp && !has.udp {
     file::delete("crates-cross/bsp/src/net.rs");
     file::delete("docs/modules/bsp-net.md");
     file::delete("crates-host/adapters/src/net.rs");
-    file::delete("crates-host/adapters/src/net");
+    // Крейта `adapters-logic` без сети может не быть вовсе (удалён выше).
+    if adapters_logic {
+        file::delete("crates-host/adapters-logic/src/net.rs");
+        file::delete("crates-host/adapters-logic/src/net");
+    }
     // `fake::cable` — кабель между двумя стеками `embassy-net`; `fake.rs` при
     // одном USB или флеше в памяти остаётся, а `mod cable` в нём под `has_net`.
     file::delete("crates-host/adapters/src/fake/cable.rs");

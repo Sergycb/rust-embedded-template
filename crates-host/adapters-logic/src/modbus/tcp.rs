@@ -1,7 +1,8 @@
 //! Modbus TCP: заголовок MBAP и PDU поверх потока байтов.
 
 use embedded_io_async::{Read, ReadExactError, Write};
-use ports::{FrameLink, LinkError};
+use ports::{FrameLink, HangUp, LinkError};
+use rusty_modbus_types::MbapHeader;
 // {%- if modbus_master == "true" %}
 use ports::MAX_PDU;
 // {%- endif %}
@@ -10,12 +11,11 @@ use ports::MAX_PDU;
 use ports::{MasterError, ModbusClient};
 
 // {%- endif %}
-use super::mbap::{self, HEADER, Header, MAX_ADU};
+use super::mbap::{self, HEADER, MAX_ADU};
 // {%- if modbus_master == "true" %}
 use super::master_error;
 // {%- endif %}
 use super::{FrameError, io_error, read_error};
-use crate::net::HangUp;
 
 /// Modbus TCP поверх потока `io` (сокет `embassy-net`).
 ///
@@ -86,17 +86,17 @@ impl<E> From<ReadExactError<E>> for Recv<E> {
 impl<T: Read + Write> Tcp<T> {
     /// Принимает кадр целиком в начало `rx`; возвращает заголовок и длину
     /// кадра.
-    async fn frame(&mut self) -> Result<(Header, usize), Recv<T::Error>> {
+    async fn frame(&mut self) -> Result<(MbapHeader, usize), Recv<T::Error>> {
         loop {
             self.fill(HEADER).await?;
-            let header = Header::parse(&self.rx);
-            if let Some(total) = header.total() {
+            let header = mbap::parse(&self.rx);
+            if let Some(total) = mbap::total(header) {
                 self.fill(total).await?;
                 self.have = 0;
                 return Ok((header, total));
             }
             self.have = 0;
-            if !header.is_empty() {
+            if !mbap::is_empty(header) {
                 return Err(Recv::Framing);
             }
         }
@@ -138,12 +138,12 @@ impl<T: Read + Write + HangUp> FrameLink for Tcp<T> {
                     return Err(LinkError::Lost(FrameError::Framing));
                 }
             };
-            if header.protocol != 0 {
+            if header.protocol_id.get() != 0 {
                 // Чужой протокол поверх MBAP: спецификация велит его пропустить.
                 continue;
             }
-            self.tid = header.tid;
-            self.unit = header.unit;
+            self.tid = header.transaction_id.get();
+            self.unit = header.unit_id;
             self.rx[HEADER - 1] = 0xFF;
             return Ok(total - (HEADER - 1));
         }
@@ -190,11 +190,11 @@ impl<T: Read + Write> ModbusClient for Tcp<T> {
                 Recv::Read(e) => master_error(e),
                 Recv::Framing => MasterError::Unexpected,
             })?;
-            if header.protocol != 0 || header.tid != self.tid {
+            if header.protocol_id.get() != 0 || header.transaction_id.get() != self.tid {
                 // Опоздавший ответ на брошенный запрос или чужой протокол.
                 continue;
             }
-            if header.unit != unit {
+            if header.unit_id != unit {
                 return Err(MasterError::Unexpected);
             }
             let pdu = &self.rx[HEADER..total];

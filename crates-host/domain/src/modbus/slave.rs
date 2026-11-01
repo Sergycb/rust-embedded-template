@@ -17,7 +17,7 @@ use crate::server::Handler;
 const ECHO: usize = 5;
 
 /// Slave с адресом `unit` над данными `regs`: кадр «адрес и PDU» из канала
-/// (`adapters::modbus::{Rtu, Tcp, Udp}`) — в запрос к `regs`, ответ — в тот
+/// (`adapters_logic::modbus::{Rtu, Tcp, Udp}`) — в запрос к `regs`, ответ — в тот
 /// же кадр.
 ///
 /// Отвечает на запрос с адресом `unit` и с 0xFF — так TCP и UDP

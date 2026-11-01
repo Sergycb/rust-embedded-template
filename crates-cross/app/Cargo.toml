@@ -39,22 +39,21 @@ panic-persist = { workspace = true }
 # которому драйвер времени нельзя{% endif %}.
 bsp = { workspace = true, features = ["time-driver"] }
 domain = { workspace = true }
-{%- if has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" or ota == "true" or config == "true" or net_services contains "mqtt" %}
+{%- if has_canopen == "true" or ota == "true" or config == "true" %}
 # Адаптеры над рычагами платы строит приложение в своей памяти и отдаёт
 # узлам готовыми — по строке на адаптер:
-{%- if protocol_link == "true" %}
-#   каналы протоколов над потоком, CDC или сокетом (src/link.rs)
-{%- endif %}
 {%- if ota == "true" %}
 #   адаптер обновления (`adapters::ota::Updater`)
 {%- endif %}
 {%- if config == "true" %}
 #   хранилище настроек (`adapters::settings::Settings`)
 {%- endif %}
-{%- if net_services contains "mqtt" %}
-#   клиент MQTT (`adapters::net::TcpClient`), его буферы — в графе
-{%- endif %}
 adapters = { workspace = true }
+{%- endif %}
+{%- if protocol_link == "true" %}
+# Каналы протоколов над потоком, CDC или сокетом (src/link.rs) строит
+# приложение в своей памяти и отдаёт узлам готовыми.
+adapters-logic = { workspace = true }
 {%- endif %}
 {%- if has_udp == "true" %}
 # Метаданные датаграмм UDP-сокета протокола (src/link.rs).

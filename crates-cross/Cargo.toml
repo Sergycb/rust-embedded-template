@@ -214,11 +214,16 @@ embedded-test      = { version = "0.7.3", default-features = false, features = [
 # Трейты-границы домена и типы ошибок: их реализуют adapters и bsp, а app
 # работает только через них. `defmt` — ради `Format` на ошибках в логе.
 ports            = { path = "../crates-host/ports", features = ["defmt"] }
-{%- if ota == "true" or config == "true" or has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" or has_usb == "true" or has_net == "true" %}
+{%- if ota == "true" or config == "true" or has_canopen == "true" or has_usb == "true" or has_net == "true" %}
 # Адаптеры, generic по флешу/шине: собирают их узлы над рычагами `bsp`, а `bsp`
 # берёт отсюда обёртки, из которых строит рычаги сам. `defmt` — ради `Format`
 # на ошибках в логе прошивки; на хосте крейт собирается без фич вывода вовсе.
 adapters         = { path = "../crates-host/adapters", features = ["defmt"] }
+{%- endif %}
+{%- if protocol_link == "true" %}
+# Каналы протоколов над рычагами платы (кадрирование потока, сокеты) — их
+# строит `app` (src/link.rs). `defmt` — ради `Format` на ошибках каналов.
+adapters-logic   = { path = "../crates-host/adapters-logic", features = ["defmt"] }
 {%- endif %}
 {%- if flash_page == "true" %}
 flash-page       = { path = "../crates-host/flash-page" }

@@ -14,18 +14,18 @@ use domain::net::Stack;
 const PORT: u16 = {% if f[3] == "modbus" %}502{% else %}5000{% endif %};
 {%- if f[3] == "protobuf" %}
 
-/// Буфер канала — сообщение и CRC (`rx_len`).
-pub const BUFFER: usize = ::adapters::cobs::rx_len(::domain::protobuf::REQUEST_MAX);
+/// Буфер канала — закодированные сообщение и CRC (`rx_len`).
+pub const BUFFER: usize = ::adapters_logic::cobs::rx_len(::domain::protobuf::REQUEST_MAX);
 /// Кадр передачи — худший случай COBS от самого длинного ответа (`tx_len`):
 /// узел отвечает из своего буфера (`send_from`), а не из буфера канала.
-pub const FRAME: usize = ::adapters::cobs::tx_len(::domain::protobuf::RESPONSE_MAX);
+pub const FRAME: usize = ::adapters_logic::cobs::tx_len(::domain::protobuf::RESPONSE_MAX);
 {%- endif %}
 
 /// Канал узла `{% if f[3] == "modbus" %}MODBUS{% else %}PROTOBUF{% endif %}_{{ f[4] | upcase }}` над стеком платы (`board.net.stack`).
 {%- if f[3] == "modbus" %}
-pub type Link = ::adapters::modbus::Tcp<::adapters::net::TcpServer>;
+pub type Link = ::adapters_logic::modbus::Tcp<::adapters_logic::net::TcpServer>;
 {%- else %}
-pub type Link = ::adapters::cobs::Cobs<'static, ::adapters::net::TcpServer>;
+pub type Link = ::adapters_logic::cobs::Cobs<'static, ::adapters_logic::net::TcpServer>;
 {%- endif %}
 
 /// Канал над стеком `stack` в памяти, которую объявляет граф: буферы сокета
@@ -33,7 +33,7 @@ pub type Link = ::adapters::cobs::Cobs<'static, ::adapters::net::TcpServer>;
 /// кадра передачи `frame` ([`FRAME`]){% endif %}.
 {%- if f[3] == "modbus" %}
 pub fn link(stack: Stack<'static>, rx: &'static mut [u8], tx: &'static mut [u8]) -> Link {
-    ::adapters::modbus::Tcp::new(::adapters::net::TcpServer::new(stack, PORT, rx, tx))
+    ::adapters_logic::modbus::Tcp::new(::adapters_logic::net::TcpServer::new(stack, PORT, rx, tx))
 }
 {%- else %}
 pub fn link(
@@ -43,8 +43,8 @@ pub fn link(
     buf: &'static mut [u8],
     frame: &'static mut [u8],
 ) -> Link {
-    ::adapters::cobs::Cobs::new(
-        ::adapters::net::TcpServer::new(stack, PORT, rx, tx),
+    ::adapters_logic::cobs::Cobs::new(
+        ::adapters_logic::net::TcpServer::new(stack, PORT, rx, tx),
         buf,
         frame,
     )

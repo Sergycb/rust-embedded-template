@@ -589,7 +589,7 @@ fn default_cases() -> Vec<Case> {
                 "ext_flash=yes",
             ],
         ),
-        // Клиент MQTT (`domain::mqtt`, `adapters::net::TcpClient`): с OTA —
+        // Клиент MQTT (`domain::mqtt`, `domain::mqtt::TcpClient`): с OTA —
         // рядом с Modbus по TCP (клиент OTA 1, третий сокет); со всеми
         // службами — номера OTA REST 0–1, SSH 2, MQTT 3 и сокеты каждой; поверх
         // одного UDP — TCP-клиент без TCP-транспорта.

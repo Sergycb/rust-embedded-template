@@ -1,15 +1,19 @@
-//! TCP-клиент — исходящее соединение для служб, которые сами подключаются к
-//! серверу.
+//! TCP-клиент брокера — исходящее соединение над сокетом стека платы.
 
 use core::net::SocketAddrV4;
 
 use embassy_net::Stack;
-use embassy_net::tcp::{self, TcpSocket};
+use embassy_net::tcp::{self, State, TcpSocket};
 use embassy_time::{Duration, Instant, Timer};
-use embedded_io_async::{ErrorType, Read, Write};
+use embedded_io_async::{ErrorKind, ErrorType, Read, Write};
 use ports::dial::Dial;
 
-use super::{IDLE_TIMEOUT, KEEP_ALIVE, TcpError, is_open, reset};
+/// Как часто проверять молчащего брокера (keep-alive TCP).
+const KEEP_ALIVE: Duration = Duration::from_secs(10);
+
+/// Через сколько без ответа на keep-alive и данные соединение считается
+/// пропавшим: три проверки подряд.
+const IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Сколько должно прожить соединение, чтобы отказы до него забылись.
 const STABLE: Duration = Duration::from_secs(30);
@@ -26,7 +30,7 @@ const MAX_BACKOFF: Duration = Duration::from_secs(30);
 /// (сервер оборвал его сразу — неверный пароль, — и бить в него без паузы
 /// нельзя); соединение, прожившее дольше, счёт сбрасывает. Чтение и запись без
 /// соединения — ошибка: поток принадлежит соединению, которое открыл `dial`.
-/// Пропавший сервер снимают keep-alive и таймаут, как у `TcpServer`.
+/// Пропавший сервер снимают keep-alive и таймаут.
 pub struct TcpClient {
     socket: TcpSocket<'static>,
     /// Отказов подряд — от него пауза перед следующей попыткой.
@@ -87,42 +91,87 @@ impl Dial for TcpClient {
 }
 
 impl ErrorType for TcpClient {
-    type Error = TcpError;
+    type Error = ClientError;
 }
 
 impl Read for TcpClient {
-    async fn read(&mut self, buf: &mut [u8]) -> Result<usize, TcpError> {
+    async fn read(&mut self, buf: &mut [u8]) -> Result<usize, ClientError> {
         if !is_open(&self.socket) {
-            return Err(TcpError::NotConnected);
+            return Err(ClientError::NotConnected);
         }
-        self.socket.read(buf).await.map_err(TcpError::Io)
+        self.socket.read(buf).await.map_err(ClientError::Io)
     }
 }
 
 impl Write for TcpClient {
-    async fn write(&mut self, buf: &[u8]) -> Result<usize, TcpError> {
+    async fn write(&mut self, buf: &[u8]) -> Result<usize, ClientError> {
         if !is_open(&self.socket) {
-            return Err(TcpError::NotConnected);
+            return Err(ClientError::NotConnected);
         }
-        self.socket.write(buf).await.map_err(TcpError::Io)
+        self.socket.write(buf).await.map_err(ClientError::Io)
     }
 
-    async fn flush(&mut self) -> Result<(), TcpError> {
+    async fn flush(&mut self) -> Result<(), ClientError> {
         if !is_open(&self.socket) {
-            return Err(TcpError::NotConnected);
+            return Err(ClientError::NotConnected);
         }
-        self.socket.flush().await.map_err(TcpError::Io)
+        self.socket.flush().await.map_err(ClientError::Io)
+    }
+}
+
+/// Почему [`TcpClient`] не прочитал или не записал.
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum ClientError {
+    /// Соединение оборвалось; следующий `dial` откроет новое.
+    Io(tcp::Error),
+    /// Чтение или запись без соединения.
+    NotConnected,
+}
+
+impl core::fmt::Display for ClientError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Io(err) => write!(f, "соединение оборвалось: {err:?}"),
+            Self::NotConnected => f.write_str("нет соединения"),
+        }
+    }
+}
+
+impl core::error::Error for ClientError {}
+
+impl embedded_io_async::Error for ClientError {
+    fn kind(&self) -> ErrorKind {
+        match self {
+            Self::Io(_) => ErrorKind::ConnectionReset,
+            Self::NotConnected => ErrorKind::NotConnected,
+        }
     }
 }
 
 /// Пауза перед попыткой после `failures` отказов подряд: 0, 1, 2, 4 … с, не
 /// больше [`MAX_BACKOFF`].
-pub(crate) fn backoff(failures: u32) -> Duration {
+fn backoff(failures: u32) -> Duration {
     match failures {
         0 => Duration::from_secs(0),
         // Сдвиг ограничен: дальше 2⁵ с пауза всё равно упирается в потолок.
         n => Duration::from_secs(1 << (n - 1).min(5)).min(MAX_BACKOFF),
     }
+}
+
+/// Есть ли у сокета соединение, по которому можно читать и писать.
+fn is_open(socket: &TcpSocket<'_>) -> bool {
+    matches!(
+        socket.state(),
+        State::Established | State::CloseWait | State::FinWait1 | State::FinWait2
+    )
+}
+
+/// Сбрасывает соединение сокета и дожидается ухода RST: сокет снова свободен.
+async fn reset(socket: &mut TcpSocket<'_>) {
+    socket.abort();
+    // Ошибка здесь — то же отсутствие соединения, которое и сбрасываем.
+    let _flushed = socket.flush().await;
 }
 
 #[cfg(test)]
@@ -133,9 +182,13 @@ mod tests {
     use embassy_time::MockDriver;
     use embedded_io_async::{Read, Write};
 
+    use adapters::fake::cable::{HOST, Loopback, leak, pair};
+    use embassy_net::Runner;
+
     use super::*;
-    use crate::fake::cable::{HOST, leak, pair};
-    use crate::net::fakes::{PORT, with_network};
+
+    /// Порт сервера на «хосте» пары.
+    const PORT: u16 = 1883;
 
     /// Сервер на «хосте» пары, к которому подключается [`TcpClient`].
     const SERVER: SocketAddrV4 = SocketAddrV4::new(HOST, PORT);
@@ -170,6 +223,19 @@ mod tests {
         })
         .await;
         assert_eq!(client.failures, 0);
+    }
+
+    /// Гоняет оба стека, пока идёт `test`.
+    async fn with_network<R>(
+        mut device: Runner<'static, Loopback>,
+        mut host: Runner<'static, Loopback>,
+        test: impl Future<Output = R>,
+    ) -> R {
+        tokio::select! {
+            never = device.run() => never,
+            never = host.run() => never,
+            result = test => result,
+        }
     }
 
     /// Даёт стекам и клиенту поработать, не двигая время.
@@ -284,12 +350,15 @@ mod tests {
         let mut client = TcpClient::new(device, leak([0; 64]), leak([0; 64]));
         assert!(matches!(
             client.read(&mut [0; 4]).await,
-            Err(TcpError::NotConnected)
+            Err(ClientError::NotConnected)
         ));
         assert!(matches!(
             client.write(b"x").await,
-            Err(TcpError::NotConnected)
+            Err(ClientError::NotConnected)
         ));
-        assert!(matches!(client.flush().await, Err(TcpError::NotConnected)));
+        assert!(matches!(
+            client.flush().await,
+            Err(ClientError::NotConnected)
+        ));
     }
 }
