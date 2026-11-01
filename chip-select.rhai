@@ -1242,7 +1242,7 @@ variable::set("rng_source", rng[2]);
 // под tcp/udp (сид стека `embassy-net`) и только там, где он есть у чипа.
 
 // Готовые адреса/размеры для memory.x. Строится из метаданных stm32-metapac
-// (реальные границы секторов чипа), не гадание — см. chip-data-gen/src/main.rs,
+// (реальные границы секторов чипа), не гадание — см. chip-data-gen/src/layout.rs,
 // compute_memory_layout(). У каждой записи есть "ota":
 //   "true"  — OTA-схема embassy-boot помещается: есть BOOTLOADER/ACTIVE/DFU/
 //             BOOTLOADER_STATE, crates-cross/boot собирается и прошивается;

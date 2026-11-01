@@ -8,17 +8,14 @@
 
 use std::{cell::RefCell, collections::HashMap, path::PathBuf, rc::Rc};
 
+use chip_data_gen::{
+    emit::SOURCE_STAMP_PREFIX,
+    source::{declared_embassy_version, repo_root},
+};
 use rhai::{
     AST, Array, Dynamic, Engine, EvalAltResult, Module, Scope,
     module_resolvers::StaticModuleResolver,
 };
-
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("chip-data-gen должен лежать внутри репозитория")
-        .to_path_buf()
-}
 
 fn script_path() -> PathBuf {
     repo_root().join("chip-select.rhai")
@@ -1049,24 +1046,14 @@ fn state_and_config_lengths_are_multiples_of_their_erase_size() {
 /// dependabot/renovate, и молча: списки при этом остались бы от старой версии,
 /// а расхождение вылезло бы у пользователя шаблона при генерации.
 ///
-/// Штамп пишет `chip-data-gen` (см. `format_source_stamp`); строка здесь
-/// продублирована намеренно — тест это отдельный крейт и до констант бинарника
-/// не дотягивается.
+/// Штамп пишет `chip-data-gen` (`emit::format_source_stamp`); версию и начало
+/// штампа тест берёт у него же.
 #[test]
 fn generated_blocks_match_the_declared_embassy_version() {
-    let manifest_path = repo_root().join("crates-cross").join("Cargo.toml");
-    let manifest = std::fs::read_to_string(&manifest_path)
-        .expect("не удалось прочитать crates-cross/Cargo.toml");
-    let declared = manifest
-        .lines()
-        .find(|line| line.trim_start().starts_with("embassy-stm32"))
-        .and_then(|line| line.split_once("version"))
-        .and_then(|(_, rest)| rest.trim_start().strip_prefix('='))
-        .and_then(|rest| rest.trim_start().strip_prefix('"'))
-        .and_then(|rest| rest.split_once('"').map(|(version, _)| version.to_owned()))
-        .expect("в crates-cross/Cargo.toml не нашлась версия embassy-stm32");
+    let declared = declared_embassy_version(&repo_root())
+        .expect("версия embassy-stm32 в crates-cross/Cargo.toml");
 
-    let expected = format!("// Источник: embassy-stm32 {declared} (crates-cross/Cargo.toml)");
+    let expected = format!("{SOURCE_STAMP_PREFIX}{declared} (crates-cross/Cargo.toml)");
     assert!(
         read_chip_list().contains(&expected),
         "chip-data/ собран не под embassy-stm32 {declared} — перегенерируйте списки:\n\

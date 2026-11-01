@@ -60,6 +60,7 @@ use std::{
 };
 
 use anyhow::{Context, bail};
+use chip_data_gen::source::{RUST_LIB, repo_root};
 
 /// Сколько конфигураций собирается одновременно. Сборка цепочки проектных
 /// крейтов (`domain` → `adapters` → `app`) ядра почти не загружает, поэтому
@@ -1224,10 +1225,10 @@ fn repo_urls(case: &[String], common: &[String]) -> Vec<(&'static str, String)> 
 }
 
 /// Адреса git-зависимостей для генерации: в хуке умолчаний нет (шаблон не
-/// называет сервер), проверка берёт рабочие зеркала автора. `rust_lib` — то же,
-/// что `RUST_LIB` в `chip-data-gen/src/main.rs`.
+/// называет сервер), проверка берёт рабочие зеркала автора. `rust_lib` — тот же
+/// адрес, которым генератор подставляет плейсхолдер в манифестах.
 const REPO_DEFAULTS: [(&str, &str); 2] = [
-    ("rust_lib", "https://github.com/Sergycb/rust-lib"),
+    ("rust_lib", RUST_LIB),
     ("hw_drivers", "https://github.com/Sergycb/hw-drivers"),
 ];
 
@@ -1868,12 +1869,6 @@ fn parse_args() -> anyhow::Result<Options> {
         keep,
         jobs,
     })
-}
-
-fn repo_root() -> PathBuf {
-    let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    dir.pop();
-    dir
 }
 
 /// Копирует шаблон в отдельный каталог — ровно то, что увидел бы

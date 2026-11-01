@@ -103,10 +103,10 @@ supervisor   = { git = "https://github.com/Sergycb/rust-lib.git", rev = "<рев
 
 В шаблоне первая строка рабочая, вторая — комментарий; в проекте первой нет, а
 `{{newline}}` (хук задаёт его как `"\n"`) отрывает строку от `#`, и она
-становится рабочей. Адрес rust-lib в репозитории шаблона записан в четырёх местах,
+становится рабочей. Адрес rust-lib в репозитории шаблона записан в трёх местах,
 и меняются они вместе: `comment`-строки корневого `Cargo.toml`, `allow-git` в
-`comment`-блоке `deny.toml`, `rust_lib` в `REPO_DEFAULTS` (`template-check.rs`) и
-`RUST_LIB` в `chip-data-gen/src/main.rs`.
+`comment`-блоке `deny.toml` и `RUST_LIB` в `chip-data-gen/src/source.rs` (его же
+берёт `REPO_DEFAULTS` в `template-check.rs`).
 
 Ревизия — так же: переменная `rust_lib_rev` (умолчание в хуке, форк —
 `--define rust_lib_rev=…`) и литерал в `comment`-строках корневого
@@ -408,7 +408,7 @@ H723/725/730/733/735. Им `bsp` получает `src/clocks.rs`, осталь�
 подряд `clippy` не пропускает. Нет блока `RCC`, регистра с `set_rmvf` (или их два), ни одного
 известного флага — генератор падает, хук без записи — тоже. `bsp/src/reset.rs` разворачивает
 пары Liquid-циклом в цепочку `if`. Тесты — `reset_flags_of_*` (F4, H743, C0, G0) в
-`chip-data-gen/src/main.rs`.
+`chip-data-gen/src/metadata.rs`.
 
 Кэш данных ядра M7 (тег `scb_d`) включается только вместе с регионом `DMA_NC`: `chip-data-gen`
 (`dma_nc_region`) отрезает до 32 KiB от конца RAM (`PANIC` уходит под регион) и кладёт в
@@ -786,7 +786,7 @@ release-образ не линкуется. Размер — доля RAM (`PANI
 
 Регрессионные тесты на всё перечисленное — `chip-data-gen/tests/cascade.rs`
 (`memory_layout_invariants_hold_for_every_chip` проходит по всем чипам сразу) и юнит-тесты
-в `chip-data-gen/src/main.rs`.
+в `chip-data-gen/src/layout.rs`.
 
 ### Оценка RAM (`ram_estimate`, таблица `RAM_COST`)
 
@@ -1171,7 +1171,7 @@ Rust-код генератора: гоняет реальный скрипт ч�
 — единицы минут, интерпретация Rhai). Не в `cargo xtask lint`/CI (`chip-data-gen` не
 член workspace, см. выше), гонять вручную при правке `chip-select.rhai`/`chip-data-gen`:
 `cargo test --manifest-path chip-data-gen/Cargo.toml --release` (та же команда
-запускает и юнит-тесты генератора из `chip-data-gen/src/main.rs`).
+запускает и юнит-тесты генератора из модулей `chip-data-gen/src/`).
 
 ### Когда перегенерировать данные
 
