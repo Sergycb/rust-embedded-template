@@ -1001,15 +1001,30 @@ const RAM_COST = #{
     services: #{ ssh: 17328, rest: 18820, mqtt: 7500 },
 };
 // Сверх статической RAM — под стек: он в `.data`/`.bss` не входит (flip-link
-// кладёт его под ними). Не замерен — без платы глубину стека не снять, — а
-// выбран: futures задач `embassy` и буферы транспортов лежат в `.bss`, так что на
-// стеке только цепочка `poll`, кадры прерываний и форматирование паники.
-// Ошибка в меньшую сторону не тихая: под flip-link переполнение стека — HardFault,
-// а не порча статиков. Больше — и Modbus по UART не взял бы STM32C011D6 (6 KiB).
+// кладёт его под ними). futures задач `embassy` и буферы транспортов лежат в
+// `.bss`, так что на стеке — цепочка `poll` одной задачи, кадры прерываний и
+// форматирование паники. Ошибка в меньшую сторону не тихая: под flip-link
+// переполнение стека — HardFault, а не порча статиков.
+//
+// Замер закраской на плате (MAINTAINING.md, «Оценка RAM»), STM32H743ZI, граф,
+// без транспортов, минута работы: без OTA — 576 байт, с OTA (internal) — 2352
+// (release; dev-профиль — 2336). Разницу даёт один кадр: `poll` задачи узла OTA
+// — 2040 байт. Базовый резерв — 1024 (576 с запасом; больше — и Modbus по UART
+// не взял бы STM32C011D6, 6 KiB), а части, у которых своя глубокая цепочка, —
+// прибавкой (`STACK_EXTRA`, складываются, хоть задачи и не вложены друг в друга).
 const STACK_RESERVE = 1024;
-// RAM, на которой незамеренный `STACK_RESERVE` уже решает, хватит ли стека: у
-// чипов до 8 KiB (L0, F0, C0, младшие F1/G0) хук предупреждает, сколько стеку
-// остаётся, и просит проверить прошивку на плате (`MAINTAINING.md`, «Оценка RAM»).
+// Прибавки к `STACK_RESERVE`. `ota` — до 4 KiB вместе с базой: замер 2352,
+// статическая оценка цепочки задачи OTA по дизассемблеру (кадры `push`/`sub sp`
+// по прямым вызовам) — 2956 плюс `main` и исполнитель. `ssh` — не замерен (на
+// плате без Ethernet обмен ключами не поднять), а оценён так же: цепочка задачи
+// `SSH` — 39624 байта, из них кадры `negotiate` (13712) и
+// `ml_kem::EncapsulationKey::encapsulate_deterministic` (20552) — обмен ключами
+// ML-KEM-768; взято 40 KiB.
+const STACK_EXTRA = #{ ota: 3072, ssh: 40960 };
+// RAM, на которой `STACK_RESERVE` (замерен на H7, на ядрах M0 кадры другие) уже
+// решает, хватит ли стека: у чипов до 8 KiB (L0, F0, C0, младшие F1/G0) хук
+// предупреждает, сколько стеку остаётся, и просит проверить прошивку на плате
+// (`MAINTAINING.md`, «Оценка RAM»).
 const SMALL_RAM = 8192;
 
 // Ответы отсекают чипы ещё до каскада: сетевой стек просит чип с Ethernet,
@@ -1079,8 +1094,9 @@ if !variable::is_set("chip_feature")
         // них. С ручной раскладкой (`write_size`) оценки нет.
         if RAM_LINKS.len() > 0 && !variable::is_set("write_size") {
             let asked = #{ ota: NEED.ota, ext_ota: NEED.ext_ota, config: NEED.config, external: NEED.config && wants_external, graph: NEED.graph };
-            let base = ram_base(RAM_COST, plan(m, m["erase_zero"] == "true", asked, LIMITS));
-            if ram_estimate(RAM_COST, base, RAM_LINKS, []) + STACK_RESERVE > size_in_bytes(m["ram_length"]) {
+            let p = plan(m, m["erase_zero"] == "true", asked, LIMITS);
+            let stack = STACK_RESERVE + if p.ota { STACK_EXTRA.ota } else { 0 };
+            if ram_estimate(RAM_COST, ram_base(RAM_COST, p), RAM_LINKS, []) + stack > size_in_bytes(m["ram_length"]) {
                 return false;
             }
         }
@@ -1501,13 +1517,16 @@ let instances = if INSTANCES.contains(suffix) { INSTANCES[suffix] } else { #{} }
 // RAM: статическая без транспортов по итоговым OTA, настройкам и графу, и
 // объём региона `RAM`. С ручной раскладкой регион пишет человек — оценки нет
 // (`ram_limit` = `()`), и ничего не помечается.
-let ram_base_now = ram_base(RAM_COST, plan(layout, erase_zero, #{ ota: wants_ota, ext_ota: wants_ext_ota, config: wants_config, external: wants_external, graph: wants_graph }, LIMITS));
+let ram_plan = plan(layout, erase_zero, #{ ota: wants_ota, ext_ota: wants_ext_ota, config: wants_config, external: wants_external, graph: wants_graph }, LIMITS);
+let ram_base_now = ram_base(RAM_COST, ram_plan);
+// Резерв стека без служб: их выбирают позже, и прибавку `ssh` докладывает итог.
+let stack_now = STACK_RESERVE + if ram_plan.ota { STACK_EXTRA.ota } else { 0 };
 let ram_limit = if manual_now { () } else { size_in_bytes(layout["ram_length"]) };
 // Приписка к пункту меню, с которым транспорты `set` (`#{ kind, protocol }`) не
 // помещаются; помещаются или оценки нет — пусто.
 let ram_mark = |set| {
     if ram_limit == () { return ""; }
-    let need = ram_estimate(RAM_COST, ram_base_now, set, []) + STACK_RESERVE;
+    let need = ram_estimate(RAM_COST, ram_base_now, set, []) + stack_now;
     if need > ram_limit { " - DOES NOT FIT in RAM (est. " + kib(need) + " of " + kib(ram_limit) + ")" } else { "" }
 };
 let links = [];
@@ -1746,9 +1765,10 @@ variable::set("ram_estimate", "");
 if ram_limit != () {
     let need = ram_estimate(RAM_COST, ram_base_now, links, services);
     variable::set("ram_estimate", need.to_string());
-    print("ram_estimate: " + need + " байт статической RAM (+ " + STACK_RESERVE + " под стек) из " + ram_limit + " байт RAM");
-    if links.len() > 0 && need + STACK_RESERVE > ram_limit {
-        let why = "не помещается в RAM " + chip_name + " (оценка " + kib(need + STACK_RESERVE) + " из " + kib(ram_limit) + ")";
+    let stack = stack_now + if services.contains("ssh") { STACK_EXTRA.ssh } else { 0 };
+    print("ram_estimate: " + need + " байт статической RAM (+ " + stack + " под стек) из " + ram_limit + " байт RAM");
+    if links.len() > 0 && need + stack > ram_limit {
+        let why = "не помещается в RAM " + chip_name + " (оценка " + kib(need + stack) + " из " + kib(ram_limit) + ")";
         // Стоимости транспортов замерены с графом: без него оценка завышена до
         // ~750 байт (stm32f407ve protobuf-usb-usb-no-graph), отказ — с этим запасом.
         if variable::is_set("links") { throw "links: " + variable::get("links") + " " + why; }
@@ -1758,7 +1778,7 @@ if ram_limit != () {
     if ram_limit <= SMALL_RAM {
         let left = if ram_limit > need { ram_limit - need } else { 0 };
         print("Внимание: у " + chip_name + " RAM " + kib(ram_limit) + ", стеку остаётся около " + left
-            + " байт, а глубина стека шаблона не замерена — проверьте прошивку на плате (MAINTAINING.md, «Оценка RAM»)");
+            + " байт, а глубина стека шаблона замерена только на H7 (резерв " + stack + " байт) — проверьте прошивку на плате (MAINTAINING.md, «Оценка RAM»)");
     }
 }
 

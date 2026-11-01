@@ -4891,9 +4891,9 @@ fn a_transport_that_does_not_fit_is_marked() {
     }
 }
 
-/// Самый дорогой по RAM протокол каждого вида транспорта и запас под стек — из
-/// `RAM_COST` и `STACK_RESERVE` самого хука, а не числами в тесте.
-fn transport_ram_costs() -> (HashMap<String, i64>, i64) {
+/// Самый дорогой по RAM протокол каждого вида транспорта — из `RAM_COST` самого
+/// хука, а не числами в тесте.
+fn transport_ram_costs() -> HashMap<String, i64> {
     let script = read_script();
     let begin = script
         .find("const RAM_COST = ")
@@ -4918,40 +4918,51 @@ fn transport_ram_costs() -> (HashMap<String, i64>, i64) {
         let slot = worst.entry(kind).or_insert(0);
         *slot = (*slot).max(cost);
     }
-    let reserve = script
-        .split("const STACK_RESERVE = ")
-        .nth(1)
-        .and_then(|rest| rest.split(';').next())
-        .and_then(|number| number.trim().parse().ok())
-        .expect("STACK_RESERVE не найден");
-    (worst, reserve)
+    worst
 }
+
+/// Ответы, с которыми ищется чип для `marks_are_recomputed_after_each_toggle` и
+/// идёт сам тест. Без графа: с ответами по умолчанию (OTA и граф) нужного окна RAM
+/// нет ни у одного чипа с USB, UART и CAN — резерв стека с OTA (`STACK_EXTRA.ota`)
+/// сдвинул его мимо 16 KiB у STM32F072, а без OTA база мала для них же.
+const MARKS_DEFINES: &[(&str, &str)] = &[("graph", "no")];
 
 /// Чип, на котором USB и UART помещаются вместе, а с CAN — нет, и помещаются
 /// USB с CAN: `база + usb + uart + стек <= ram_length < то же + can` и
 /// `база + usb + can + стек <= ram_length`. Ищется перебором чипов по оценке
 /// самого хука, поэтому рост `RAM_COST` не ломает тест, а меняет чип.
 fn chip_where_the_third_transport_does_not_fit(ast: &Script) -> String {
-    let (worst, reserve) = transport_ram_costs();
+    let worst = transport_ram_costs();
     let (usb, uart, can) = (worst["usb"], worst["uart"], worst["can"]);
     for suffix in all_chip_suffixes() {
-        let Ok(result) = interview(ast, &suffix, &[], &[]) else {
+        let Ok(result) = interview(ast, &suffix, MARKS_DEFINES, &[]) else {
             continue;
         };
         let Some(base) = var_of(&result, "ram_estimate").and_then(|n| n.parse::<i64>().ok()) else {
             continue;
         };
-        let Some(limit) = result
+        // Предел RAM и резерв под стек — из строки сводки хука: резерв зависит
+        // от плана (прибавка `STACK_EXTRA` за OTA), а не одна константа.
+        let Some((reserve, limit)) = result
             .prints
             .iter()
             .find_map(|line| line.strip_prefix("ram_estimate: "))
             .and_then(|line| {
-                line.split_once(" из ")?
+                let reserve = line
+                    .split_once("(+ ")?
                     .1
                     .split_whitespace()
                     .next()?
                     .parse::<i64>()
-                    .ok()
+                    .ok()?;
+                let limit = line
+                    .split_once(" из ")?
+                    .1
+                    .split_whitespace()
+                    .next()?
+                    .parse::<i64>()
+                    .ok()?;
+                Some((reserve, limit))
             })
         else {
             continue;
@@ -4983,7 +4994,7 @@ fn marks_are_recomputed_after_each_toggle() {
     let result = interview(
         &ast,
         &chip,
-        &[],
+        MARKS_DEFINES,
         &[
             ("transports", "usb"),
             ("transports", "uart"),
