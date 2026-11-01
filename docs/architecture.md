@@ -69,7 +69,7 @@ compose-site, а не в крейте, где фрагмент написан, �
 и падало бы с `E0425`. `$crate::` указывает в крейт фрагмента и переживает
 переименование зависимости в чужом манифесте, а `crate::` означал бы крейт,
 который фрагмент вызывает. Тип, которого фрагмент назвать не может (адаптер над
-рычагом в слоте), — его параметр{% if ota == "true" %} (`name: OTA_FRAG<F, R>`){% endif %}. Слово DSL без своей фичи
+рычагом в слоте), — его параметр{% if ota == "true" %} (`name: OTA_FRAG<F, R, const PARKED: usize>`){% endif %}. Слово DSL без своей фичи
 `supervisor` не компилируется: новое слово во фрагменте — фича в
 `crates-host/domain/Cargo.toml`.
 {%- if graph == "true" %}
@@ -265,15 +265,17 @@ Compose-site — модули задач (подмодули `crates-cross/app/s
 цепочки проверяется — `docs/watchdog.md`.
 {%- if ota == "true" %}
 
-**Типы ресурсных слотов** узла OTA — параметры фрагмента: `name: OTA_FRAG<F, R>`,
+**Типы ресурсных слотов** узла OTA — параметры фрагмента: `name: OTA_FRAG<F, R, const PARKED: usize>`,
 а compose-site подставляет их в `fragments:` угловыми скобками
-(`::domain::OTA_FRAG<::adapters::ota::Updater<bsp::FirmwareFlash>, bsp::reset::Reboot>`). Слот — `static`, тип ему
+(`::domain::OTA_FRAG<::adapters::ota::Updater<bsp::FirmwareFlash>, bsp::reset::Reboot, OTA_CMD_PARKED>`). Слот — `static`, тип ему
 нужен, а конкретный тип знает только `cross`; generic-`static` не бывает, и
 параметр — единственный способ фрагмента назвать тип, которого он не видит.
 Bound'ов у параметров нет намеренно: их держит сигнатура `ota::task`, и rustc
 проверяет её, а не копию в DSL. Слот адаптера (`FLASH`) к тому же помечен
 `local` — `Updater` не `Send` (`docs/modules/app-graph.md`, «OTA: узел уже в
-графе…»); это допущение «один исполнитель» — `docs/flash.md`.
+графе…»); это допущение «один исполнитель» — `docs/flash.md`. Третий параметр,
+`PARKED`, — не тип, а число мест ожидания входа `CMD`: его клиентов знает
+compose-site, а не фрагмент (там же).
 {%- endif %}
 
 **Большой объект — слот `&'static mut T = static`, а не по значению**

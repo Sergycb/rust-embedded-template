@@ -120,7 +120,7 @@ impl HeartbeatCtx<'_> {
   называет, пишется полным путём (`$crate::heartbeat::WATCHDOG`; почему —
   `docs/architecture.md`, «Узлы — фрагменты в `domain`»). Типы,
   которых фрагмент назвать не может (адаптер над рычагом в слоте), — его параметры:
-  {% if ota == "true" %}`name: OTA_FRAG<F, R>` во фрагменте, `::domain::OTA_FRAG<::adapters::ota::Updater<bsp::FirmwareFlash>, bsp::reset::Reboot>` здесь{% else %}`name: SENSOR_FRAG<R>` во фрагменте, `::domain::SENSOR_FRAG<bsp::SensorBus>` здесь
+  {% if ota == "true" %}`name: OTA_FRAG<F, R, const PARKED: usize>` во фрагменте, `::domain::OTA_FRAG<::adapters::ota::Updater<bsp::FirmwareFlash>, bsp::reset::Reboot, OTA_CMD_PARKED>` здесь{% else %}`name: SENSOR_FRAG<R>` во фрагменте, `::domain::SENSOR_FRAG<bsp::SensorBus>` здесь
   (пример ниже){% endif %}.
 * **Порядок items фиксирован**: `name:` → `boot:` → `watchdog:` →
   `cloned:`/`shared:` → `executor` → `fragments:` последним. `fragments:`
@@ -311,8 +311,13 @@ resources: [WS: &'static mut $crate::x::Workspace = static |w| w.gain = inputs.g
 не знает
 (`= ::domain::ota::OtaWiring { flash: Updater::new(board.firmware), reboot:
 bsp::reset::Reboot, running_version: crate::version::FW_VERSION }`). Типы слотов — аргументы фрагмента
-(`OTA_FRAG<::adapters::ota::Updater<bsp::FirmwareFlash>, bsp::reset::Reboot>`):
-слот — `static`, тип ему нужен, а знает его только эта сторона. Слот адаптера — `local` (фича
+(`OTA_FRAG<::adapters::ota::Updater<bsp::FirmwareFlash>, bsp::reset::Reboot, OTA_CMD_PARKED>`):
+слот — `static`, тип ему нужен, а знает его только эта сторона. Третий
+аргумент — места ожидания входа `CMD`, `domain::ota::cmd_parked` от числа его
+клиентов, которое считает генерация: один клиент держит вызов, остальные
+ждут, и мест им на одно меньше клиентов — при умолчании `sync-request` (4)
+ждущие сверх четырёх будили бы друг друга по кругу. Подключили к `CMD` своего
+клиента — прибавьте его к числу в `OTA_CMD_PARKED`. Слот адаптера — `local` (фича
 `supervisor/local-resources` в
 `crates-cross/Cargo.toml`): адаптер `Updater` не `Send` (держит `&'static
 Mutex<NoopRawMutex, …>`), и граф держит его на своём исполнителе, не требуя

@@ -2851,8 +2851,8 @@ variable::set("ssh_ota_client", (protocol_clients + http_connections).to_string(
 variable::set("mqtt_ota_client", (protocol_clients + http_connections
     + (if services.contains("ssh") { 1 } else { 0 })).to_string());
 // Сколько из них ждут исхода в вызове на входе `CMD` (`sync_request::RpcService`):
-// все, кроме CANopen — тот шлёт на `ASK`. Число сверяет `const`-assert с
-// `sync_request::PARKED_CALLERS` (`app/src/graph.rs`, `app/src/tasks/ota.rs`).
+// все, кроме CANopen — тот шлёт на `ASK`. Места ожидания входа считает из этого
+// числа `domain::ota::cmd_parked` (`app/src/graph.rs`, `app/src/tasks/ota.rs`).
 variable::set("ota_cmd_clients", (protocol_clients
     - links.filter(|link| link.protocol == "canopen").len()
     + http_connections

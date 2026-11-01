@@ -36,18 +36,16 @@ pub static CMD: RpcService<
     domain::ota::OtaRequest,
     domain::ota::OtaReply,
     { domain::ota::CMD_BYTES },
+    CMD_PARKED,
 > = RpcService::new();
-{%- if ota_cmd_clients != "0" %}
 
-// Клиентов `CMD` ({{ ota_cmd_clients }} — задачи протоколов, кроме CANopen: тот на
-// `ASK`) не больше, чем `RpcService` паркует как следует: сверх
-// `PARKED_CALLERS` ждущие будят и вытесняют друг друга по кругу. Не сходится —
-// раздели вход, а не поднимай константу.
-const _: () = assert!(
-    {{ ota_cmd_clients }} <= sync_request::PARKED_CALLERS,
-    "клиентов входа CMD узла OTA больше sync_request::PARKED_CALLERS: раздели вход"
-);
-{%- endif %}
+// Мест ожидания у `CMD` — по его клиентам, а не умолчание `sync-request` (4):
+// иначе ждущие сверх четырёх будят друг друга по кругу. Клиентов —
+// {{ ota_cmd_clients }}: задачи протоколов, кроме CANopen (тот на `ASK`); число считает
+// генерация. Подключили к `CMD` своего клиента — прибавьте его к числу здесь.
+// Тем же числом назван контекст узла: параметр фрагмента `OTA_FRAG` он несёт
+// и без графа.
+const CMD_PARKED: usize = domain::ota::cmd_parked({{ ota_cmd_clients }});
 
 /// Вход команд без ожидания исхода.{% if askers > 0 %} Клиенты — задачи CANopen, по ребру на транспорт с квотой
 /// в одну команду: очередь (`Q`) — сумма квот, `E` — число рёбер.{% else %} Клиентов у него нет: очередь и
@@ -94,7 +92,7 @@ async fn task(firmware: bsp::FirmwareFlash) {
     let mut reboot = bsp::reset::Reboot;
     let mut running_version = crate::version::FW_VERSION;
     let mut confirmed = false;
-    domain::ota::task(domain::ota::OtaCtx {
+    domain::ota::task(domain::ota::OtaCtx::<'_, _, _, CMD_PARKED> {
         flash: &mut flash,
         reboot: &mut reboot,
         running_version: &mut running_version,

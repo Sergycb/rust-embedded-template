@@ -74,7 +74,7 @@ mod timing;
 pub use ports::{OtaCommand, OtaReply};
 
 // Подмодули — по теме; путь `domain::ota::…` у их типов прежний.
-pub use client::{CMD_BYTES, ClientId, NodeLost, OtaClient, OtaRequest};
+pub use client::{CMD_BYTES, ClientId, NodeLost, OtaClient, OtaRequest, cmd_parked};
 pub use timing::{REBOOT_GRACE, SESSION_TIMEOUT};
 
 use core::future::poll_fn;
@@ -135,6 +135,11 @@ type Signature = [u8; SIGNATURE_BYTES];
 // {%- endif %}
 // Менять все места вместе.
 //
+// `PARKED` — мест ожидания у `CMD` (`parked`): клиентов входа фрагмент не
+// знает, их считает compose-site — `cmd_parked` от числа клиентов, которое
+// даёт генерация. Без этого мест было бы `sync_request::PARKED_CALLERS`, и
+// ждущие сверх него будили бы друг друга по кругу.
+//
 // `<F, R>` — параметры фрагмента: адаптер обновления и порт перезагрузки
 // платы `domain` не видит. `local` на `FLASH`: разделы платы — `!Send`
 // (`adapters::ota::Updater` над ними держит `&'static Mutex<NoopRawMutex, …>`),
@@ -149,7 +154,7 @@ type Signature = [u8; SIGNATURE_BYTES];
 // `ready` — образ подтверждён (или попытка была), `STATE` больше не стирается
 // при старте (см. `begin`){% if has_usb == "true" %}; ждёт этого узел `USB`{% endif %}.
 supervisor::supervisor_fragment! {
-    name: OTA_FRAG<F, R>;
+    name: OTA_FRAG<F, R, const PARKED: usize>;
     boot: inputs: struct $crate::ota::OtaWiring;
 
     node resources: [
@@ -163,7 +168,7 @@ supervisor::supervisor_fragment! {
             CONFIRMED: bool = false
         ],
         // Литерал, а не `CMD_BYTES`: макрос принимает здесь только число. Равен ему.
-        request: [CMD: $crate::ota::OtaRequest -> $crate::ota::OtaReply; 144],
+        request: [CMD: $crate::ota::OtaRequest -> $crate::ota::OtaReply; 144 parked PARKED],
         serves: [ASK: $crate::ota::OtaRequest -> $crate::ota::OtaReply; 144],
         ready,
         ctx: $crate::ota::OtaCtx,
@@ -171,7 +176,7 @@ supervisor::supervisor_fragment! {
 }
 
 #[fsm::typestate]
-impl<'a, F, R> OtaCtx<'a, F, R>
+impl<'a, F, R, const PARKED: usize> OtaCtx<'a, F, R, PARKED>
 where
     F: FirmwareUpdate,
     F::Error: FormatOrDebug,
@@ -481,7 +486,7 @@ where
 /// реального прогресса, а команды может не быть всю жизнь платы. Аппаратный
 /// сторож кормит тикер графа, а не какой-то узел.
 // {%- endif %}
-pub async fn task<F, R>(mut ctx: OtaCtx<'_, F, R>)
+pub async fn task<F, R, const PARKED: usize>(mut ctx: OtaCtx<'_, F, R, PARKED>)
 where
     F: FirmwareUpdate,
     F::Error: FormatOrDebug,
@@ -565,7 +570,7 @@ pub(crate) mod tests {
     /// `'static`, как у `ota_cmd_requester()`.
     pub(crate) fn live() -> (OtaClient, Node) {
         let stand = Box::leak(Box::new(
-            supervisor::stand!(OTA_FRAG<FakeFlash, FakeReboot>; QUEUE_ASK = 1),
+            supervisor::stand!(OTA_FRAG<FakeFlash, FakeReboot, 1>; QUEUE_ASK = 1),
         ));
         let node = task(stand.ctx(
             Box::leak(Box::new(FakeFlash::new(1024, 8))),
@@ -586,7 +591,7 @@ pub(crate) mod tests {
     /// которого узел не даёт, и молчанием (сервер берёт запрос и бросает его).
     pub(crate) fn cmd() -> (OtaClient, supervisor::Server<'static, OtaRequest, OtaReply>) {
         let stand = Box::leak(Box::new(
-            supervisor::stand!(OTA_FRAG<FakeFlash, FakeReboot>; QUEUE_ASK = 1),
+            supervisor::stand!(OTA_FRAG<FakeFlash, FakeReboot, 1>; QUEUE_ASK = 1),
         ));
         (
             OtaClient::new(stand.cmd.requester(), ClientId(0)),
@@ -602,9 +607,9 @@ pub(crate) mod tests {
         ask: supervisor::AskServer<'a, OtaRequest, OtaReply>,
     ) -> Pin<Box<dyn Future<Output = ()> + 'a>> {
         let stand = Box::leak(Box::new(
-            supervisor::stand!(OTA_FRAG<FakeFlash, FakeReboot>; QUEUE_ASK = 1),
+            supervisor::stand!(OTA_FRAG<FakeFlash, FakeReboot, 1>; QUEUE_ASK = 1),
         ));
-        Box::pin(task(super::OtaCtx {
+        Box::pin(task(super::OtaCtx::<'_, _, _, 1> {
             flash: Box::leak(Box::new(FakeFlash::new(1024, 8))),
             reboot: Box::leak(Box::new(FakeReboot)),
             running_version: Box::leak(Box::new(RUNNING_VERSION)),
@@ -669,7 +674,7 @@ pub(crate) mod tests {
     /// запуске прошивки.
     fn run_on(flash: &mut FakeFlash, confirmed: &mut bool, steps: Vec<Step>) -> Vec<OtaReply> {
         MockDriver::get().reset();
-        let stand = supervisor::stand!(OTA_FRAG<FakeFlash, FakeReboot>; QUEUE_ASK = 1);
+        let stand = supervisor::stand!(OTA_FRAG<FakeFlash, FakeReboot, 1>; QUEUE_ASK = 1);
         let (mut reboot, mut version) = (FakeReboot, RUNNING_VERSION);
         let requester = stand.cmd.requester();
         let mut asker = stand.ask();
@@ -817,7 +822,7 @@ pub(crate) mod tests {
         let mut flash = FakeFlash::new(64, 8);
         flash.confirm_takes = Some(Duration::from_millis(1000));
         // Свой `stand!` на тест: готовность — `static` на месте вызова.
-        let stand = supervisor::stand!(OTA_FRAG<FakeFlash, FakeReboot>; QUEUE_ASK = 1);
+        let stand = supervisor::stand!(OTA_FRAG<FakeFlash, FakeReboot, 1>; QUEUE_ASK = 1);
         let (mut reboot, mut version, mut confirmed) = (FakeReboot, RUNNING_VERSION, false);
         let mut node = pin!(task(stand.ctx(
             &mut flash,
@@ -840,7 +845,7 @@ pub(crate) mod tests {
     fn is_ready_after_a_failed_confirmation() {
         let mut flash = FakeFlash::new(64, 8);
         flash.mark_booted = Err("флеш не отвечает");
-        let stand = supervisor::stand!(OTA_FRAG<FakeFlash, FakeReboot>; QUEUE_ASK = 1);
+        let stand = supervisor::stand!(OTA_FRAG<FakeFlash, FakeReboot, 1>; QUEUE_ASK = 1);
         let (mut reboot, mut version, mut confirmed) = (FakeReboot, RUNNING_VERSION, false);
         let mut node = pin!(task(stand.ctx(
             &mut flash,

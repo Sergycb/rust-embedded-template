@@ -50,8 +50,9 @@ supervisor_graph! {
 {%- if ota == "true" %}
 
         // Фрагмент OTA — с параметрами и своей привязкой. Параметры
-        // (`<Updater, Reboot>`) — типы его слотов: слот — `static`, тип ему
-        // нужен, а знает его только эта сторона. Привязка (`= …`) — вход узла
+        // (`<Updater, Reboot, …>`) — типы его слотов: слот — `static`, тип ему
+        // нужен, а знает его только эта сторона; третий, число, — места ожидания
+        // входа `CMD` (`OTA_CMD_PARKED` ниже). Привязка (`= …`) — вход узла
         // (`domain::ota::OtaWiring`): адаптер обновления над разделами `board.firmware`, сброс МК
         // `bsp::reset::Reboot` и версия этого образа из `crate::version` (защита от
         // отката: образ не новее неё узел отвергает). Образ узел принимает командами на свой вход
@@ -63,7 +64,7 @@ supervisor_graph! {
         // строкой — раньше инициализатора блока `watchdog:`, как бы они ни стояли
         // в тексте, — частичным move: `firmware` уезжает в слот узла, `watchdog`
         // следом забирает сторож, остаток `board` дропается в конце пролога.
-        ::domain::OTA_FRAG<::adapters::ota::Updater<bsp::FirmwareFlash>, bsp::reset::Reboot> as OTA = ::domain::ota::OtaWiring {
+        ::domain::OTA_FRAG<::adapters::ota::Updater<bsp::FirmwareFlash>, bsp::reset::Reboot, OTA_CMD_PARKED> as OTA = ::domain::ota::OtaWiring {
             flash: ::adapters::ota::Updater::new(board.firmware),
             reboot: bsp::reset::Reboot,
             running_version: crate::version::FW_VERSION,
@@ -292,24 +293,15 @@ const _: () = assert!(
     "копий HTTP в графе столько же, сколько HTTP_CONNECTIONS в [env]"
 );
 {%- endif %}
-{%- if ota == "true" and ota_cmd_clients != "0" %}
+{%- if ota == "true" %}
 
-// Вход `CMD` узла `OTA` — `RpcService`: клиенты ждут исхода в вызове, а
-// ждущих сверх `PARKED_CALLERS` сервис паркует расточительно — регистрация в
-// полный список будит всех, и они вытесняют друг друга по кругу
-// (`sync-request`, документация константы). Клиентов — {{ ota_cmd_clients }}: узлы
-// протоколов, кроме CANopen (тот на `ASK`), копии `HTTP`, `SSH`, `MQTT`; число
-// считает генерация. Не сходится — раздели вход, а не поднимай константу.
-//
-// Константа — копия `sync_request::PARKED_CALLERS` (`sync-request/src/lib.rs`
-// ревизии `rust-lib` из `Cargo.toml`): с графом `app` от `sync-request` не
-// зависит, а `supervisor` отдаёт его только скрытым `__private`. Сменится в
-// `sync-request` — правьте здесь.
-const PARKED_CALLERS: usize = 4;
-const _: () = assert!(
-    {{ ota_cmd_clients }} <= PARKED_CALLERS,
-    "клиентов входа CMD узла OTA больше PARKED_CALLERS (sync-request): раздели вход"
-);
+// Мест ожидания входа `CMD` узла `OTA` (`RpcService`) — по его клиентам, а не
+// умолчание `sync-request` (4): иначе ждущие сверх четырёх будят друг друга
+// по кругу. Клиентов — {{ ota_cmd_clients }}: узлы протоколов, кроме CANopen
+// (тот на `ASK`), копии `HTTP`, `SSH`, `MQTT`; число считает генерация.
+// Подключили к `CMD` своего клиента — прибавьте его к числу здесь. Константа, а не
+// выражение в `fragments:`: аргумент фрагмента — литерал или одно имя.
+const OTA_CMD_PARKED: usize = ::domain::ota::cmd_parked({{ ota_cmd_clients }});
 {%- endif %}
 
 /// Как часто тикер графа опрашивает сторожей узлов и кормит железо.
