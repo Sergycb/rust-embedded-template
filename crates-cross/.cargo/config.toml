@@ -24,6 +24,7 @@ rustflags = [
 	'getrandom_backend="custom"',
 {%- endif %}
 ]
+{%- if target == "thumbv6m-none-eabi" %}
 
 # Cortex-M0/M0+ (ARMv6-M — STM32 C0/F0/G0/L0 и CM0+-ядра WB/WL) — единственная
 # цель шаблона без аппаратного compare-and-swap (у Cortex-M23 на
@@ -52,9 +53,11 @@ rustflags = [
 # члене, которому она нужна транзитивно, и терялась при сборке члена в одиночку.
 # Cargo складывает эту секцию с `[target.'cfg(...)']` выше, а не выбирает одну
 # из них (проверено `cargo build -v`: у `portable_atomic` в одной команде и
-# `target-cpu`, и `flip-link`, и cfg). На остальных целях секция не читается.
+# `target-cpu`, и `flip-link`, и cfg). Под другие цели секция не генерируется:
+# у них CAS аппаратный.
 [target.thumbv6m-none-eabi]
 rustflags = ["--cfg", "portable_atomic_unsafe_assume_single_core"]
+{%- endif %}
 
 [env]
 DEFMT_LOG = "info"
