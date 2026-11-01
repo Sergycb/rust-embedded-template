@@ -7,12 +7,12 @@
 //! — что узел делает — логика, и проверяется она на хосте на фейках портов.
 //!
 //! Образ приходит не по своему каналу: узел протокола переводит свои сообщения в
-//! [`OtaCommand`](ports::OtaCommand) и отдаёт их узлу через один из двух
+//! [`OtaCommand`](crate::ota::OtaCommand) и отдаёт их узлу через один из двух
 //! входов: `CMD` (`request:` фрагмента — клиент ждёт исхода в вызове) или `ASK`
 //! (`serves:` — клиент отправляет команду, не дожидаясь, и забирает исход из
 //! `reply()`, обслуживая тем временем свой канал). Для узла входы одинаковы:
 //! команды обоих идут в один автомат. На каждую команду узел отвечает
-//! [`OtaReply`](ports::OtaReply) — её исходом, и протокол передаёт его хосту
+//! [`OtaReply`](crate::ota::OtaReply) — её исходом, и протокол передаёт его хосту
 //! как есть: ни опрашивать статус, ни угадывать, дошёл ли кусок, хосту не
 //! нужно. Узел про протокол не знает, протокол — про флеш.
 //!
@@ -46,6 +46,10 @@
 // {%- endif %}
 //! Подробности — `docs/ota.md`.
 
+/// Команды узлу и исходы на них: куски образа, подпись, коды для хоста — см.
+/// модуль.
+pub mod command;
+
 /// Приём образа по кускам: сверка длины, стирание один раз, буферизация до
 /// слова флеша — шаги над портом `FirmwareUpdate`, см. модуль.
 pub mod download;
@@ -69,9 +73,9 @@ mod client;
 mod rejection;
 mod timing;
 
-// Типы входа `CMD` — под путём `domain`: фрагмент называет их полным путём, а
-// compose-site (`app`) от `ports` не зависит.
-pub use ports::{OtaCommand, OtaReply};
+// Типы входа `CMD` — и в корне `domain::ota`, под именами с `Ota`: их полным
+// путём называют фрагмент и compose-site (`app`).
+pub use command::{Command as OtaCommand, Reply as OtaReply};
 
 // Подмодули — по теме; путь `domain::ota::…` у их типов прежний.
 pub use client::{CMD_BYTES, ClientId, NodeLost, OtaClient, OtaRequest, cmd_parked};
@@ -83,9 +87,10 @@ use core::task::Poll;
 
 use defmt_or_log::{FormatOrDebug, info, warn};
 use embassy_time::{Instant, Timer};
-use ports::{Chunk, FirmwareUpdate, Progress, Reboot, Rejection, SIGNATURE_BYTES};
+use ports::{FirmwareUpdate, Reboot};
 
 use crate::ota::client::Answer;
+use crate::ota::command::{Chunk, Progress, Rejection, SIGNATURE_BYTES};
 use crate::ota::download::Transfer;
 use crate::ota::rejection::{busy, download_rejection, update_rejection};
 
@@ -504,7 +509,10 @@ pub(crate) mod tests {
     use core::task::{Context, Poll, Waker};
 
     use embassy_time::{Duration, MockDriver};
-    use ports::{Chunk, OtaCommand, OtaReply, Progress, Reboot, Rejection};
+    use ports::Reboot;
+
+    use crate::ota::command::{Chunk, Progress, Rejection};
+    use crate::ota::{OtaCommand, OtaReply};
 
     // {%- if has_modbus == "true" or has_protobuf == "true" or net_services contains "mqtt" or net_services contains "rest" %}
     use super::OtaClient;

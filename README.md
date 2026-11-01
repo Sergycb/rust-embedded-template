@@ -307,12 +307,12 @@ flash и безусловно прыгает в него (`unsafe { bl.load(entr
 
 Своего канала у образа нет — он идёт через протокол, по которому хост и так
 говорит с устройством. Узел протокола переводит свои сообщения в команды
-`ports::OtaCommand` и отдаёт их узлу `OTA` (вход `CMD` — запрос с ответом).
+`domain::ota::OtaCommand` и отдаёт их узлу `OTA` (вход `CMD` — запрос с ответом).
 Клиента входа — {% if graph == "true" %}`ota_cmd_requester()` графа{% else %}`crate::tasks::ota::CMD.requester()`, `static` в
 `crates-cross/app/src/tasks/ota.rs`{% endif %} — узел протокола держит обёрнутым в
 `domain::ota::OtaClient::new(.., domain::ota::ClientId(n))`, где `n` —
 порядковый номер транспорта с протоколом в `links`, с 0. Ответ узла
-`ports::OtaReply` уходит хосту как есть:
+`domain::ota::OtaReply` уходит хосту как есть:
 
 | Команда | Ответ |
 |---|---|

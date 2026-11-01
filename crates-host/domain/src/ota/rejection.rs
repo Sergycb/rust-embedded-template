@@ -2,10 +2,12 @@
 //! применения — в код [`Rejection`].
 
 use defmt_or_log::warn;
-use ports::{DownloadError, Rejection, UpdateError};
 
 use crate::ota::Receiving;
 use crate::ota::client::{Answer, ClientId};
+use crate::ota::command::Rejection;
+use crate::ota::download::DownloadError;
+use crate::ota::update::UpdateError;
 
 /// Команда приёма не от владельца: `Busy`, приём владельца — и его срок — как
 /// были.

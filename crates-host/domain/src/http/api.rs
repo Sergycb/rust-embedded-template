@@ -8,12 +8,12 @@ use picoserve::response::{Content, StatusCode};
 use picoserve::routing::get;
 // {%- if ota == "true" %}
 use picoserve::routing::post;
-use ports::{OtaCommand, Progress};
 // {%- endif %}
 
 use crate::device::DeviceInfo;
 // {%- if ota == "true" %}
-use crate::ota::OtaClient;
+use crate::ota::command::Progress;
+use crate::ota::{OtaClient, OtaCommand};
 // {%- endif %}
 
 use super::auth::Auth;
@@ -148,7 +148,8 @@ mod tests {
     use embassy_net::tcp::TcpSocket;
     use embassy_time::{Duration, MockDriver};
     // {%- if ota == "true" %}
-    use ports::{OtaCommand, OtaReply, Progress, Rejection};
+    use crate::ota::command::{Progress, Rejection};
+    use crate::ota::{OtaCommand, OtaReply};
     use supervisor::Server;
     // {%- endif %}
 

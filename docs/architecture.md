@@ -119,12 +119,20 @@ Compose-site — модули задач (подмодули `crates-cross/app/s
 без ожидания) — контракт порта, его держит реализация{% if net_services contains "mqtt" %} (паузы перед попытками
 подключения к брокеру — `adapters::net::TcpClient`, а не `domain::mqtt`){% endif %}.
 
-### Логика — функции над портами; типы, которыми она с ними говорит, — в `ports`
+### Логика — функции над портами; `ports` — только контракт с реализацией
 
 {% if ota == "true" %}Приём образа (`download::Transfer`), применение обновления (`update::apply`),
-версия (`ota::version::*`), решение bootloader'а (`ota::boot::*`) — функции над портами, а действия автоматов зовут их. {% endif %}Всё, чем
-логика разговаривает с портами — ошибки, — объявлено в `ports`: тот стал словарём
-домена, а не только набором трейтов. Своё в `domain` — только контексты узлов{% if graph == "true" %}
+версия (`ota::version::*`), решение bootloader'а (`ota::boot::*`) — функции над портами, а действия автоматов зовут их. {% endif %}`ports` —
+контракт между логикой и реализацией (`adapters`, `bsp`): трейты портов и то,
+без чего контракт не выразить, — типы из сигнатур трейтов{% if link_port == "true" %} (`LinkError`){% endif %} и форматы,
+которые обязаны одинаково понимать обе стороны{% if ota == "true" %} (`PendingImage` читает
+bootloader, `layout_fingerprint` считает и `cargo xtask build`){% endif %}. Всё, что нужно
+только логике и от реализации не зависит, — в `domain`, подмодулем рядом с
+узлом, которому оно нужно{% if ota == "true" %}: команды узлу OTA и исходы (`ota::command`), ошибки
+приёма и применения (`download::DownloadError`, `update::UpdateError`){% endif %}. Причина —
+реализация порта таких типов не видит: в `ports` всякая их правка задевала бы
+`adapters` и `bsp` зря, а контракт терялся бы среди словаря логики. Там же, в
+`domain`, — контексты узлов{% if graph == "true" %}
 (их эмитит фрагмент), состояния автоматов и входы фрагментов ({% if ota == "true" %}`OtaWiring`, {% endif %}`IdleMeter`){% else %} и состояния автоматов{% endif %}{% if protocol != "none" %},
 включая обработчик протокола{% if graph == "true" %} на этом входе{% endif %}: {% if protocol == "protobuf" %}`protobuf::Service`{% elsif protocol == "modbus" %}`modbus::EmptyRegisters` (трейт домена `modbus::Registers`, не порт; карта одна на все узлы `MODBUS_*` —
 `docs/modules/app.md`){% else %}`canopen::dictionary` (словарь объектов){% endif %} — логика приложения,

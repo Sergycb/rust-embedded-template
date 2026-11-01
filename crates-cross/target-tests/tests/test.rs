@@ -310,7 +310,8 @@ mod tests {
     /// версии, `Layout`, и `Rollback` тест бы не увидел.
     #[test]
     async fn ota_rejects_an_older_image(board: Board) {
-        use ports::{FirmwareUpdate, UpdateError};
+        use domain::ota::update::UpdateError;
+        use ports::FirmwareUpdate;
 
         const LENGTH: u32 = 32;
         const LONGER: u32 = LENGTH * 2;

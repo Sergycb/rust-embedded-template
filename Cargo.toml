@@ -96,7 +96,7 @@ log          = { version = "0.4.34" }
 defmt        = { version = "1.2.0" }
 # no_std: у thiserror `default-features` включают "std", а domain и cross
 # собираются без него (рабочий пример — `thiserror::Error` на
-# `ports::DownloadError` и `ports::UpdateError`).
+# `ports::MasterError`).
 thiserror    = { version = "2.0.21", default-features = false }
 # Только для dev-зависимостей `domain` и `adapters`: исполнитель async-тестов
 # (`#[tokio::test]`) над фейками портов и флеша. Без `default-features` — из

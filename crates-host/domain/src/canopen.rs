@@ -248,7 +248,7 @@ where
     fn answered(&mut self, reply: supervisor::AskReply<(), crate::ota::OtaReply>) {
         let reply = reply.outcome.unwrap_or_else(|_dropped| {
             warn!("canopen: узел OTA не ответил");
-            Err(ports::Rejection::Device)
+            Err(crate::ota::command::Rejection::Device)
         });
         OTA.record(reply);
     }

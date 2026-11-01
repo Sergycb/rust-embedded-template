@@ -285,12 +285,12 @@ resources: [WS: &'static mut $crate::x::Workspace = static |w| w.gain = inputs.g
 Узел `OTA` объявлен в `domain::ota` (`OTA_FRAG`; версию этого образа для
 защиты от отката подставила генерация во вход) и спавнится отсюда записью в
 `fragments:` — она же даёт ему имя (`as OTA`) и типы двух его слотов
-аргументами. Образ он принимает командами (`ports::OtaCommand`) на свой вход
+аргументами. Образ он принимает командами (`domain::ota::OtaCommand`) на свой вход
 `CMD` — `request:` фрагмента, запрос с ответом (или на `ASK` — `serves:`, для
 клиента, который не ждёт исхода в вызове): `Start` (сверка длины до
 стирания), `Chunk` (буферизация до слова флеша — `domain::ota::download::Transfer`),
 `Finish` (`domain::ota::update::apply`), `Reboot`, — и на
-каждую отвечает исходом `ports::OtaReply`. Всё это — host-тесты в
+каждую отвечает исходом `domain::ota::OtaReply`. Всё это — host-тесты в
 `crates-host/domain/src/ota.rs`.
 
 Команды шлёт узел протокола: клиента входа отдаёт аксессор графа

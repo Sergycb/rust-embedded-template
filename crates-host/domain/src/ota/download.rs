@@ -1,6 +1,6 @@
 //! Приём образа по кускам: всё, что одинаково для любого протокола.
 //!
-//! Образ приходит командами (`ports::OtaCommand`): узел протокола переводит
+//! Образ приходит командами ([`OtaCommand`](crate::ota::OtaCommand)): узел протокола переводит
 //! свои сообщения в `Start`, `Chunk` и `Finish`, а узел [`ota`](crate::ota)
 //! ведёт приём шагами [`Transfer`]. Вокруг этих шагов есть работа, которая от
 //! протокола не зависит вовсе, и делать её в каждом проекте заново незачем:
@@ -22,7 +22,7 @@
 //! хосте — с фейком порта, на котором можно разыграть и лишний байт, и кусок в
 //! один байт.
 
-use ports::{DownloadError, FirmwareUpdate, MAX_WRITE_SIZE};
+use ports::{FirmwareUpdate, MAX_WRITE_SIZE};
 
 /// Приём одного образа между `Start` и `Finish` — данные состояния
 /// `Receiving` узла OTA.
@@ -235,14 +235,42 @@ impl Transfer {
     }
 }
 
+/// Что может пойти не так при приёме образа ([`Transfer`]).
+#[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[non_exhaustive]
+pub enum DownloadError<F> {
+    /// Обещали образ нулевой длины. Проверяется здесь, а не оставляется
+    /// реализации порта: `prepare(0)` не стёр бы ничего, и первая же запись
+    /// легла бы в нестёртую память, на F2/F4/F7 молча.
+    Empty,
+    /// Устройство столько не примет: образ длиннее того, что помещается в
+    /// раздел. Проверяется до стирания — раздел остаётся нетронутым.
+    TooLong { announced: u32, capacity: u32 },
+    /// Порт назвал гранулярность записи, с которой работать нельзя: ноль
+    /// (деление на него паникует, а паника в release — это сброс) или больше
+    /// самого широкого слова STM32 (32 байта), то есть шире буфера.
+    UnusableGranularity(u32),
+    /// Прислали больше, чем обещали в начале. Приём прекращается: это либо
+    /// сбой канала, либо попытка вылезти за раздел.
+    TooMuchData { announced: u32, received: u32 },
+    /// Кусок не встык к принятым: разрыв или наложение. Повтор уже принятого
+    /// куска сюда не попадает — его подтверждают без записи.
+    OutOfOrder { expected: u32, offset: u32 },
+    /// Передача кончилась, не добрав до обещанной длины.
+    Incomplete { announced: u32, received: u32 },
+    /// Отказ самого флеша.
+    Flash(F),
+}
+
 #[cfg(test)]
 #[expect(clippy::cast_possible_truncation, reason = "размеры в тестах малы")]
 mod tests {
     use ports::MAX_WRITE_SIZE;
 
-    use super::Transfer;
+    use super::{DownloadError, Transfer};
     use crate::ota::fakes::FakeFlash;
-    use ports::{DownloadError, FirmwareUpdate};
+    use ports::FirmwareUpdate;
 
     /// Исход приёма целиком и сколько кусков в него ушло.
     struct Received<E> {

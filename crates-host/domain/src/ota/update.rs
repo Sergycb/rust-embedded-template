@@ -10,7 +10,7 @@
 //! Хвост образа — `[образ][раскладка u32 LE][версия u32 LE]`; подпись, хвост
 //! и порядок проверок — docs/ota.md, «Подпись OTA-образа».
 
-use ports::{FirmwareUpdate, PendingImage, UpdateError};
+use ports::{FirmwareUpdate, PendingImage};
 
 use crate::ota::version;
 
@@ -29,6 +29,45 @@ pub const VERSION_BYTES: u32 = 4;
 /// `cargo xtask build` берёт значения символов [`ports::LAYOUT_SYMBOLS`] из
 /// ELF приложения.
 pub const LAYOUT_BYTES: u32 = 4;
+
+/// Чем может закончиться применение обновления ([`apply`]).
+///
+/// Каждому отказу — свой вариант, и это не для красоты: пока разные защиты
+/// возвращали одно и то же, target-тест оставался зелёным после удаления одной
+/// из них (проверено удалением на живой плате). Отказов подписи здесь нет:
+/// её проверяет bootloader, и о неудаче отправитель узнаёт по тому, что версия
+/// после перезагрузки не сменилась.
+#[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[non_exhaustive]
+pub enum UpdateError<E> {
+    /// Длина из недоверенного канала больше вместимости. Проверяется ПЕРВОЙ:
+    /// длина уходит в запись для bootloader'а, и образ, не помещающийся в
+    /// `ACTIVE`, он отверг бы только после перезагрузки.
+    TooLong { len: u32, capacity: u32 },
+    /// Образ короче собственного хвоста (раскладка и версия) — мусор в канале,
+    /// а не откат.
+    Truncated { len: u32 },
+    /// В разделе обновления лежит образ отката — трогать его нельзя. Отделён от
+    /// [`Rollback`](Self::Rollback): версия у того образа заведомо старее, и
+    /// проверка версии честно ответила бы «откат», соврав о причине.
+    Busy,
+    /// Образ не новее текущего — попытка отката. Обе версии в упакованном
+    /// виде (см. [`version`]).
+    Rollback { current: u32, incoming: u32 },
+    /// Образ собран под другую раскладку памяти: отпечаток в его хвосте не
+    /// совпал с отпечатком этой прошивки (см. [`ports::layout_fingerprint`]).
+    /// Обмен не запрашивается — такой образ после него не запустился бы.
+    Layout { device: u32, image: u32 },
+    /// Всё, что приходит из адаптера: отказ флеша, негодное состояние.
+    Flash(E),
+}
+
+impl<E> From<E> for UpdateError<E> {
+    fn from(error: E) -> Self {
+        Self::Flash(error)
+    }
+}
 
 /// Сверяет отпечаток раскладки в хвосте принятого образа с отпечатком этой
 /// прошивки ([`FirmwareUpdate::layout`]) — до `mark_updated`.
@@ -136,10 +175,9 @@ pub async fn apply<F: FirmwareUpdate>(
 
 #[cfg(test)]
 mod tests {
-    use super::apply;
+    use super::{UpdateError, apply};
     use crate::ota::fakes::{FakeFlash, LAYOUT, SIGNATURE};
     use crate::ota::version::pack;
-    use ports::UpdateError;
 
     /// Версия «этой прошивки» в тестах.
     const CURRENT: u32 = pack(1, 2, 3);

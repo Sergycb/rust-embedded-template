@@ -195,10 +195,10 @@ read`: руками пришлось бы сначала найти адрес �
 - `lib.rs` только объявляет: атрибуты, `//!`, `mod`, `pub use` — определения
   живут в модулях — `docs/conventions.md`.
 {%- if ota == "true" %}
-- Образ приходит командами (`ports::OtaCommand`) на вход `CMD` узла OTA —
+- Образ приходит командами (`domain::ota::OtaCommand`) на вход `CMD` узла OTA —
   запрос с ответом — или на `ASK` (`serves:`; клиент не ждёт исхода в вызове и
-  забирает его из `reply()`), и каждая команда получает исход (`ports::OtaReply`), который
-  протокол отдаёт хосту в своём виде ({% if has_protobuf == "true" %}protobuf — `Ok`/`Error`, {% endif %}{% if has_modbus == "true" %}Modbus — код `ports::reply_code`, {% endif %}{% if has_canopen == "true" %}CANopen — код `ports::reply_code`, {% endif %}`docs/ota.md`). Своего канала у OTA нет: узел протокола
+  забирает его из `reply()`), и каждая команда получает исход (`domain::ota::OtaReply`), который
+  протокол отдаёт хосту в своём виде ({% if has_protobuf == "true" %}protobuf — `Ok`/`Error`, {% endif %}{% if has_modbus == "true" %}Modbus — код `domain::ota::command::reply_code`, {% endif %}{% if has_canopen == "true" %}CANopen — код `domain::ota::command::reply_code`, {% endif %}`docs/ota.md`). Своего канала у OTA нет: узел протокола
   только переводит сообщения в команды. Запрос несёт номер клиента —
   транспорта (`domain::ota::OtaClient`, номер из генерации): приём держит один
   владелец, чужим `Start`/`Chunk`/`Finish` — `Busy` до `Finish`, отказа или

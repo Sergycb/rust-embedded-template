@@ -5,10 +5,10 @@ use defmt_or_log::info;
 use embassy_net::Stack;
 use embassy_time::{Duration, Instant, with_timeout};
 use embedded_io_async::{Read, Write};
-// {%- if ota == "true" %}
-use ports::{OtaCommand, Progress};
 
-use crate::ota::OtaClient;
+// {%- if ota == "true" %}
+use crate::ota::command::Progress;
+use crate::ota::{OtaClient, OtaCommand};
 // {%- endif %}
 use crate::device::{DeviceInfo, PANIC_BRIEF};
 use crate::ssh::session::CLOSE_WAIT;
