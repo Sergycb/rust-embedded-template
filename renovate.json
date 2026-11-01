@@ -9,6 +9,11 @@
   },
   "packageRules": [
     {
+      "description": "Свежий релиз ждёт неделю: за это время отзывают сломанные и вредоносные версии (yank), и MR с ними не появляется",
+      "matchPackageNames": ["*"],
+      "minimumReleaseAge": "7 days"
+    },
+    {
       "matchManagers": ["cargo"],
       "matchFileNames": ["Cargo.toml", "**/Cargo.toml"],
       "groupName": "cargo dependencies"
