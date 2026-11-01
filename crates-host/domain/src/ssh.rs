@@ -396,16 +396,18 @@ mod tests {
         assert_eq!(Stored(Memory(stored.0.0.clone())).seed().await, first);
     }
 
-    /// Ключ не той длины заменяется новым и записывается; раздел, который не
-    /// прочитался (здесь — значение длиннее буфера), не перезаписывается:
-    /// сбой мог быть временным.
+    /// Ключ не той длины — короче или длиннее 32 байт — заменяется новым и
+    /// записывается; раздел, который не прочитался (здесь — значение длиннее
+    /// буфера чтения), не перезаписывается: сбой мог быть временным.
     #[tokio::test]
     async fn only_a_missing_key_is_overwritten() {
-        let mut short = Stored(Memory(Some(vec![1; 16])));
-        let seed = short.seed().await;
-        assert_eq!(short.0.0.as_deref(), Some(&seed[..]));
+        for len in [16, 33, 64] {
+            let mut wrong = Stored(Memory(Some(vec![1; len])));
+            let seed = wrong.seed().await;
+            assert_eq!(wrong.0.0.as_deref(), Some(&seed[..]), "{len} байт");
+        }
 
-        let unreadable = vec![2; 64];
+        let unreadable = vec![2; 200];
         let mut broken = Stored(Memory(Some(unreadable.clone())));
         broken.seed().await;
         assert_eq!(broken.0.0, Some(unreadable));
