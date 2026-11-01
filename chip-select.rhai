@@ -2616,7 +2616,6 @@ if !cobs_used {
 	file::delete("crates-host/adapters/src/cobs.rs");
 }
 if !on.protobuf {
-	file::delete("crates-host/ports/src/protobuf.rs");
 	file::delete("crates-host/domain/src/protobuf.rs");
 	file::delete("crates-host/domain/src/protobuf");
 	file::delete("crates-host/proto");
@@ -2663,10 +2662,6 @@ if variable::get("ota") != "true" {
 		file::delete("crates-host/domain/src/canopen/ota.rs");
 	}
 }
-// То же для хранилища настроек.
-if variable::get("ota") != "true" && !on.canopen {
-	file::delete("crates-host/ports/src/word.rs");
-}
 if variable::get("settings_port") != "true" {
 	file::delete("crates-host/ports/src/settings.rs");
 	file::delete("crates-host/adapters/src/settings.rs");
@@ -2710,7 +2705,6 @@ if !has.usb {
 	file::delete("docs/modules/bsp-usb.md");
 	file::delete("crates-host/adapters/src/usb.rs");
 	file::delete("crates-host/domain/src/usb.rs");
-	file::delete("crates-host/domain/src/usb");
 }
 // Сеть — стек `embassy-net`, узел NET и их сокеты — только с tcp/udp.
 if !has.tcp && !has.udp {
@@ -2722,7 +2716,6 @@ if !has.tcp && !has.udp {
 	// одном USB остаётся, а `mod cable` в нём под `has_net`.
 	file::delete("crates-host/adapters/src/fake");
 	file::delete("crates-host/domain/src/net.rs");
-	file::delete("crates-host/domain/src/net");
 }
 // RNG — только с tcp/udp и только если он есть у чипа (`rng_irq` не пуст).
 if rng[0] == "" || (!has.tcp && !has.udp) {

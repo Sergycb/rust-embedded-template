@@ -6,7 +6,14 @@
 //! (та ветка не создаёт ни одного `variable::prompt` вызова и потому не может
 //! поймать баги вроде бесконечного цикла в самом каскаде).
 
-use std::{cell::RefCell, collections::HashMap, path::PathBuf, rc::Rc};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+    process::Command,
+    rc::Rc,
+    sync::OnceLock,
+};
 
 use chip_data_gen::{
     emit::SOURCE_STAMP_PREFIX,
@@ -53,6 +60,49 @@ struct CascadeResult {
     /// Показанные меню: заголовок и варианты в том порядке, в каком их видит
     /// пользователь. Каскад по символам (выбор чипа) сюда не попадает.
     prompts: Vec<(String, Vec<String>)>,
+}
+
+/// Файлы репозитория шаблона по `git ls-files` — то, что уезжает в
+/// `cargo generate`: относительно корня, через `/`.
+fn tracked_files() -> &'static [String] {
+    static FILES: OnceLock<Vec<String>> = OnceLock::new();
+    FILES.get_or_init(|| {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repo_root())
+            .args(["ls-files", "-z"])
+            .output()
+            .expect("запустить git ls-files");
+        assert!(
+            output.status.success(),
+            "git ls-files: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout)
+            .expect("git ls-files вернул не UTF-8")
+            .split('\0')
+            .filter(|path| !path.is_empty())
+            .map(str::to_owned)
+            .collect()
+    })
+}
+
+/// Файлы из [`tracked_files`] и все их каталоги — пути, которые может
+/// удалить `file::delete`.
+fn tracked_paths() -> &'static HashSet<String> {
+    static PATHS: OnceLock<HashSet<String>> = OnceLock::new();
+    PATHS.get_or_init(|| {
+        let mut paths = HashSet::new();
+        for file in tracked_files() {
+            let mut path = file.as_str();
+            paths.insert(path.to_owned());
+            while let Some((dir, _)) = path.rsplit_once('/') {
+                paths.insert(dir.to_owned());
+                path = dir;
+            }
+        }
+        paths
+    })
 }
 
 fn script_path() -> PathBuf {
@@ -431,6 +481,15 @@ fn run_interview(
         file_module.set_native_fn(
             "delete",
             move |path: &str| -> Result<(), Box<EvalAltResult>> {
+                // `cargo generate` молча проходит мимо пути, которого нет: такой
+                // `file::delete` мёртв — файл переименовали или удалили, а хук
+                // остался ждать его по старому имени.
+                if !tracked_paths().contains(path) {
+                    return Err(format!(
+                        "file::delete(\"{path}\"): такого пути нет в git ls-files"
+                    )
+                    .into());
+                }
                 deleted.borrow_mut().push(path.to_string());
                 Ok(())
             },
@@ -1395,7 +1454,6 @@ fn no_protocol_by_default() {
         "crates-host/ports/src/link.rs",
         "crates-host/ports/src/modbus.rs",
         "crates-host/ports/src/modbus",
-        "crates-host/ports/src/protobuf.rs",
         "crates-host/ports/src/can.rs",
         "crates-host/adapters/src/modbus",
         "crates-host/adapters/src/cobs.rs",
@@ -3320,7 +3378,6 @@ fn ota_and_settings_code_is_kept_only_when_selected() {
         "crates-host/adapters/src/settings.rs",
     ];
     const FLASH: &str = "crates-host/flash-page";
-    const WORD: &str = "crates-host/ports/src/word.rs";
     // (чип, ответы, OTA вырезана, настройки вырезаны, flash-page вырезан)
     type Case<'a> = (&'a str, &'a [(&'a str, &'a str)], bool, bool, bool);
     let ast = compile_script();
@@ -3376,9 +3433,6 @@ fn ota_and_settings_code_is_kept_only_when_selected() {
             assert_eq!(gone(path), no_settings, "{chip} {answers:?}: {path}");
         }
         assert_eq!(gone(FLASH), no_flash, "{chip} {answers:?}: {FLASH}");
-        // Слово записи читают OTA и узел CANopen; одни настройки — нет.
-        let canopen = answers.contains(&("protocol", "canopen"));
-        assert_eq!(gone(WORD), no_ota && !canopen, "{chip} {answers:?}: {WORD}");
     }
 }
 
