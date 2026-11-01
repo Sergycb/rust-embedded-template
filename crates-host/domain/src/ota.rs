@@ -38,11 +38,11 @@
 //! Образ всегда подписан: `Start` без подписи отвергается до стирания, а
 //! `Finish` применяет образ [`apply_signed`](crate::ota::update::apply_signed)
 //! — с проверкой версии против версии этой прошивки, которую узел получает во
-//! входе (`OtaWiring::running_version`,
+//! входе
 // {%- if graph == "true" %}
-//! `crates-cross/app/src/graph.rs`).
+//! (`OtaWiring::running_version`, `crates-cross/app/src/graph.rs`).
 // {%- else %}
-//! `crates-cross/app/src/tasks/ota.rs`).
+//! (поле `running_version` контекста `OtaCtx`, `crates-cross/app/src/tasks/ota.rs`).
 // {%- endif %}
 //! Подробности — `docs/ota.md`.
 
@@ -101,16 +101,19 @@ type Signature = [u8; SIGNATURE_BYTES];
 // `crates-cross/app/src/tasks/ota.rs` кормит его входом.
 // {%- endif %}
 //
-// `boot: inputs: …` — собственная привязка фрагмента: compose-site пишет
+// `boot: inputs: …` — собственная привязка фрагмента:
 // {%- if graph == "true" %}
+// compose-site пишет
 // `fragments: [::domain::OTA_FRAG<…> as OTA = ::domain::ota::OtaWiring { … }]`,
 // а `spawn_all` связывает её первой строкой пролога, и инициализаторы слотов
+// ниже читают её поля.
 // {%- else %}
-// `::domain::ota::OtaWiring { … }` (`crates-cross/app/src/tasks/ota.rs`),
-// и инициализаторы слотов
+// без графа её никто не заполняет: задача `crates-cross/app/src/tasks/ota.rs`
+// собирает `OtaCtx` сама, и слоты — её локальные переменные с теми же
+// начальными значениями.
 // {%- endif %}
-// ниже читают её поля. `CONFIRMED` — без входа: подтверждён ли уже образ в
-// этом запуске (см. действие `begin`).
+// `CONFIRMED` — без входа: подтверждён ли уже образ в этом запуске (см.
+// действие `begin`).
 //
 // `request: [CMD: …]` — вход команд: запрос с ответом (`sync-request`), а не
 // очередь, потому что протокол отвечает хосту исходом именно своей команды.
@@ -262,7 +265,7 @@ where
     /// попавшее на стирание, хост бракует до переподключения (`docs/ota.md`).
     /// Переносите подтверждение позже — переносите и это{% else %}`{% endif %}{% comment %}`{% endcomment %}.
     async fn begin(&mut self) -> Idle {
-        info!("domain: узел OTA запущен");
+        info!("ota: узел запущен");
         self.confirm().await;
         self.ready.set();
         Idle
@@ -1691,11 +1694,11 @@ mod fakes {
     impl FirmwareUpdate for FakeFlash {
         type Error = &'static str;
 
-        fn write_granularity(&mut self) -> u32 {
+        fn write_granularity(&self) -> u32 {
             self.word
         }
 
-        fn capacity(&mut self) -> Result<u32, Self::Error> {
+        fn capacity(&self) -> Result<u32, Self::Error> {
             Ok(self.capacity)
         }
 

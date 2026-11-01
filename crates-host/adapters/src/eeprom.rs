@@ -76,7 +76,7 @@ impl<A: Storage> Eeprom<A> {
     /// Объём, пригодный под хранилище: вся EEPROM, округлённая вниз до
     /// страницы.
     #[must_use]
-    pub fn usable(&self) -> u32 {
+    fn usable(&self) -> u32 {
         // Смещения `NorFlash` — `u32`: больше адресовать всё равно нечем.
         let size = u32::try_from(self.eeprom.capacity()).unwrap_or(u32::MAX);
         size / Self::PAGE * Self::PAGE

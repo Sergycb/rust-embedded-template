@@ -109,7 +109,7 @@ impl<K: HostKey> SshCtx<'_, K> {
     }
 
     async fn begin(&mut self) -> Listening {
-        info!("domain: узел SSH запущен");
+        info!("ssh: узел запущен");
         let seed = self.host_key.seed().await;
         Listening {
             key: SignKey::Ed25519(SigningKey::from_bytes(&seed)),

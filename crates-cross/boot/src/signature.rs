@@ -2,7 +2,7 @@
 
 use core::cell::RefCell;
 
-use defmt::info;
+use defmt::{info, warn};
 use domain::ota::boot::{ScreenFailure, Screening, screen_update};
 use embassy_boot_stm32::BootLoaderConfig;
 {%- if boot_partitioned == "true" %}
@@ -81,9 +81,7 @@ pub(crate) fn screen(
             report(screening);
             true
         } else {
-            defmt::warn!(
-                "boot: внешняя флеш не отвечает — новый образ не проверен, обмен пропущен"
-            );
+            warn!("boot: внешняя флеш не отвечает — новый образ не проверен, обмен пропущен");
             false
         }
     };
@@ -166,7 +164,7 @@ fn report(screening: Screening) {
         Screening::JournalUnreadable => panic!("boot: журнал STATE не читается"),
         Screening::NothingToCheck => {}
         Screening::Approved => info!("boot: подпись нового образа сошлась"),
-        Screening::Rejected(why) => defmt::warn!(
+        Screening::Rejected(why) => warn!(
             "boot: новый образ отвергнут ({=str}), загружается прежний",
             match why {
                 ScreenFailure::NoRecord => "нет записи о подписи",

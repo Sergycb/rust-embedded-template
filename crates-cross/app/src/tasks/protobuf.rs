@@ -13,7 +13,7 @@
 
 /// Узел `PROTOBUF_{{ f[4] | upcase }}`.
 pub mod {{ f[4] }} {
-    use domain::protobuf::DeviceInfo;
+    use domain::device::DeviceInfo;
     use embassy_executor::Spawner;
     use static_cell::ConstStaticCell;
 

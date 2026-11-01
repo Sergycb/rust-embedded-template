@@ -553,10 +553,10 @@ mod tests {
         )]
         impl FirmwareUpdate for NoPrepare {
             type Error = &'static str;
-            fn write_granularity(&mut self) -> u32 {
+            fn write_granularity(&self) -> u32 {
                 self.0.write_granularity()
             }
-            fn capacity(&mut self) -> Result<u32, Self::Error> {
+            fn capacity(&self) -> Result<u32, Self::Error> {
                 self.0.capacity()
             }
             fn layout(&self) -> u32 {

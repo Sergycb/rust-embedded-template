@@ -84,7 +84,7 @@ impl HttpCtx<'_> {
     }
 
     fn begin(&mut self) -> Serving {
-        info!("domain: узел HTTP {} запущен", self.index);
+        info!("http: узел запущен, номер в пуле {}", self.index);
         Serving
     }
 

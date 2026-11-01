@@ -71,7 +71,10 @@ Host-тесты гоняются `cargo xtask test host` — то есть `carg
 - `crates-cross/app`{% if ota == "true" %}, `crates-cross/boot`{% endif %} и `crates-cross/bsp` **не имеют фич `debug`/`release`,
   `log` и `defmt`**: `log` в прошивке не используется вовсе, `defmt` включён
   безусловно в обоих профилях, транспорт — `defmt-rtt` в обоих. Фич у
-  `crates-cross/bsp`{% if ota == "true" %}/`crates-cross/boot`{% endif %} нет вообще никаких: выбор одно-/двухъядерной
+  `crates-cross/bsp`{% if ota == "true" %}/`crates-cross/boot`{% endif %} — {% if ota == "true" %}по одной, и обе{% else %}одна, и она{% endif %} не про профиль и не про
+  чип: `time-driver` у `bsp` — драйвер времени, его включает `app`{% if ota == "true" %} (`boot` —
+  нет, комментарий в манифесте `bsp`), `no-watchdog` у `boot` — bootloader под
+  тесты на плате (`cargo xtask test target`){% endif %}. Выбор одно-/двухъядерной
   реализации делается Liquid-условием при генерации, а не Cargo-фичей
   (`init_peripherals` в `bsp/src/board.rs`).
 - **У самой `embassy-stm32` фича `defmt` включена безусловно**, и это не

@@ -174,7 +174,7 @@ where
         // словаря уже при старте.
         d.identity.set_serial(*self.serial);
         let node_id = self.restore(persisted).await;
-        info!("domain: узел CANOPEN запущен, адрес {}", node_id.raw());
+        info!("canopen: узел запущен, адрес {}", node_id.raw());
         // `Node::new` сам зовёт `reset_app` — тот восстанавливает объекты из
         // прочитанного `restore`.
         let node = node.insert(Node::new(

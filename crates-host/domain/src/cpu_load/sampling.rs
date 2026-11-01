@@ -86,7 +86,7 @@ pub async fn log_load(sleep_ticks: &SleepTicks) {
     loop {
         embassy_time::Timer::after(SAMPLE_INTERVAL).await;
         if let Some(percent) = cpu_load.sample(snapshot(sleep_ticks)) {
-            defmt_or_log::info!("domain: узел CPU_LOAD: загрузка {}%", percent);
+            defmt_or_log::info!("cpu_load: загрузка {}%", percent);
         }
     }
 }

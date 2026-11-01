@@ -28,7 +28,7 @@ mod tasks;
 mod version;
 {%- endif %}
 
-use defmt::info;
+use defmt::{error, info};
 // RTT остаётся дефолтным транспортом в обоих профилях — сырой шаблон не знает,
 // какой конкретный USART на плате пользователь отведёт под лог без пробника.
 // Паттерн замены (UART, без RTT/пробника) для release — в
@@ -87,7 +87,7 @@ fn main() -> ! {
     // `shadow-rs` в build.rs). Без этого build-info собиралась бы впустую, а по
     // OTA легко получить плату с прошивкой, происхождение которой неизвестно.
     info!(
-        "app: starting {} ({})",
+        "app: запуск {} ({})",
         build::PKG_VERSION,
         build::SHORT_COMMIT,
     );
@@ -118,7 +118,7 @@ fn main() -> ! {
     // `panic::take` запоминает прочитанное: сведения об устройстве берут ту
     // же строку позже (`panic::last`).
     if let Some(reason) = panic::take() {
-        defmt::error!("app: предыдущий запуск упал: {}", reason);
+        error!("app: предыдущий запуск упал: {}", reason);
     }
 
     // Исполнитель — свой, а не `#[embassy_executor::main]`, и это единственная

@@ -101,10 +101,7 @@ where
 
     fn begin(&mut self) -> Listening {
         let capacity = self.link.buffer().len();
-        info!(
-            "domain: узел протокола запущен, буфер кадра {} байт",
-            capacity
-        );
+        info!("server: узел запущен, буфер кадра {} байт", capacity);
         self.handler.begin(capacity);
         Listening
     }

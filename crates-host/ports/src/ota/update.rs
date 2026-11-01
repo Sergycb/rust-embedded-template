@@ -55,7 +55,7 @@ pub trait FirmwareUpdate {
     /// тридцати двух в зависимости от чипа. Канал доставки об этом не знает и
     /// отдаёт пакеты какой угодно длины, поэтому кто-то должен копить их до
     /// кратности; `domain::ota::download::Transfer` делает это за вас.
-    fn write_granularity(&mut self) -> u32;
+    fn write_granularity(&self) -> u32;
 
     /// Самый длинный образ, который устройство способно принять и запустить.
     ///
@@ -70,7 +70,7 @@ pub trait FirmwareUpdate {
     /// # Errors
     ///
     /// Возвращает ошибку флеша, если чтение конфигурации раздела не удалось.
-    fn capacity(&mut self) -> Result<u32, Self::Error>;
+    fn capacity(&self) -> Result<u32, Self::Error>;
 
     /// Отпечаток раскладки памяти этой прошивки ([`layout_fingerprint`] по
     /// [`LAYOUT_SYMBOLS`]) — с ним сверяется отпечаток в хвосте принятого

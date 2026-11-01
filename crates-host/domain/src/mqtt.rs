@@ -100,7 +100,7 @@ where
     /// Темы платы; первое подключение — после того, как стек получил адрес
     /// (статический или от DHCP).
     async fn begin(&mut self) -> Offline {
-        info!("domain: узел MQTT запущен");
+        info!("mqtt: узел запущен");
         self.stack.wait_config_up().await;
         Offline {
             topics: Topics::new(self.prefix, &self.info.uid),

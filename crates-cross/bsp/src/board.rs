@@ -184,7 +184,7 @@ impl Board {
         // — она берётся не с шины, а через мультиплексор (`Config.rcc.mux`),
         // и от общего дампа может отличаться.
         let clocks = embassy_stm32::rcc::clocks(&p.RCC);
-        info!("bsp: board initialized, clocks {}", clocks);
+        info!("bsp: плата готова, частоты {}", clocks);
 
 {%- if has_resources == "true" %}
         // Вся периферия разбирается здесь, по группам `resources.rs`
