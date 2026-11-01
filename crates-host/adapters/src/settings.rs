@@ -308,71 +308,14 @@ impl<F: NorFlash> ports::SettingsStorage for Settings<F> {
 
 #[cfg(test)]
 mod tests {
-    use embedded_storage::nor_flash::{ErrorType, NorFlashErrorKind};
-    use embedded_storage_async::nor_flash::{NorFlash, ReadNorFlash};
     use ports::SettingsStorage;
 
     use super::Settings;
+    use crate::fake::MemFlash;
 
-    /// Асинхронный флеш в памяти — то, чего ждёт `sequential-storage`: две
-    /// страницы по 256 байт (меньше он не берёт), слово 8, стирание в `0xFF`,
-    /// запись только «единицы в нули» — иначе не проверить, что хранилище не
-    /// пишет поверх нестёртого.
-    #[derive(Debug)]
-    struct Flash {
-        mem: Vec<u8>,
-    }
-
-    impl Flash {
-        fn erased() -> Self {
-            Self {
-                mem: vec![0xFF; 512],
-            }
-        }
-    }
-
-    impl ErrorType for Flash {
-        type Error = NorFlashErrorKind;
-    }
-
-    impl ReadNorFlash for Flash {
-        const READ_SIZE: usize = 1;
-
-        fn read(
-            &mut self,
-            offset: u32,
-            bytes: &mut [u8],
-        ) -> impl Future<Output = Result<(), Self::Error>> {
-            let start = offset as usize;
-            bytes.copy_from_slice(&self.mem[start..start + bytes.len()]);
-            core::future::ready(Ok(()))
-        }
-
-        fn capacity(&self) -> usize {
-            self.mem.len()
-        }
-    }
-
-    impl NorFlash for Flash {
-        const WRITE_SIZE: usize = 8;
-        const ERASE_SIZE: usize = 256;
-
-        fn erase(&mut self, from: u32, to: u32) -> impl Future<Output = Result<(), Self::Error>> {
-            self.mem[from as usize..to as usize].fill(0xFF);
-            core::future::ready(Ok(()))
-        }
-
-        fn write(
-            &mut self,
-            offset: u32,
-            bytes: &[u8],
-        ) -> impl Future<Output = Result<(), Self::Error>> {
-            for (cell, byte) in self.mem[offset as usize..].iter_mut().zip(bytes) {
-                *cell &= *byte;
-            }
-            core::future::ready(Ok(()))
-        }
-    }
+    /// Флеш под `sequential-storage`: две страницы по 256 байт (меньше он не
+    /// берёт), слово 8.
+    type Flash = MemFlash<512, 8, 256>;
 
     #[tokio::test]
     async fn stores_and_reads_back() {
@@ -498,12 +441,7 @@ mod tests {
     /// нет», запись и чтение дальше работают.
     #[tokio::test]
     async fn a_garbage_partition_is_erased_and_works_again() {
-        let mut settings = Settings::new(
-            Flash {
-                mem: vec![0x5A; 512],
-            },
-            0..512,
-        );
+        let mut settings = Settings::new(Flash::filled(0x5A), 0..512);
         let mut scratch = [0u8; 32];
 
         assert_eq!(settings.read(1, &mut scratch).await.expect("чтение"), None);

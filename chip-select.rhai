@@ -2773,7 +2773,12 @@ if variable::get("graph") != "true" {
 if variable::get("has_stub") != "true" {
     file::delete("crates-cross/bsp/src/stub.rs");
 }
-if !has.usb && !has.tcp && !has.udp {
+// Флеш в памяти (`fake::MemFlash`) — тестам разделов OTA и хранилища настроек.
+let mem_flash = variable::get("ota") == "true" || variable::get("config") == "true";
+if !mem_flash {
+    file::delete("crates-host/adapters/src/fake/flash.rs");
+}
+if !has.usb && !has.tcp && !has.udp && !mem_flash {
     file::delete("crates-host/adapters/src/fake.rs");
 }
 // USB — устройство `embassy-usb`, узел USB и поток CDC — только с транспортом usb.
@@ -2790,8 +2795,11 @@ if !has.tcp && !has.udp {
     file::delete("crates-host/adapters/src/net.rs");
     file::delete("crates-host/adapters/src/net");
     // `fake::cable` — кабель между двумя стеками `embassy-net`; `fake.rs` при
-    // одном USB остаётся, а `mod cable` в нём под `has_net`.
-    file::delete("crates-host/adapters/src/fake");
+    // одном USB или флеше в памяти остаётся, а `mod cable` в нём под `has_net`.
+    file::delete("crates-host/adapters/src/fake/cable.rs");
+    if !mem_flash {
+        file::delete("crates-host/adapters/src/fake");
+    }
     file::delete("crates-host/domain/src/net.rs");
 }
 // RNG — только с tcp/udp и только если он есть у чипа (`rng_irq` не пуст).
