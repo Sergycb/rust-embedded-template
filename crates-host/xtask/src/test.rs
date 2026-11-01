@@ -2,7 +2,11 @@
 
 use std::env;
 // {%- if ota == "true" and has_protobuf == "true" %}
-use std::{fs, path::PathBuf};
+use std::{
+    fmt::Write as _,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use anyhow::Context;
 // {%- endif %}
@@ -63,6 +67,24 @@ type Skipped = (usize, &'static str);
 /// его не примет), и пережить прогон он не должен: ни в `target/`, ни рядом с
 /// `app.bin` его нет.
 struct Scratch(PathBuf);
+
+impl Scratch {
+    /// Новый каталог в `dir` со случайным именем (16 байт `getrandom`): имя
+    /// не угадать заранее, а существующий каталог — ошибка, а не повод его
+    /// взять ([`create_private_dir`]) — подложить каталог или симлинк и
+    /// перехватить подписанный образ нельзя.
+    fn new_in(dir: &Path) -> Result<Self, anyhow::Error> {
+        let mut random = [0u8; 16];
+        getrandom::fill(&mut random).context("не удалось получить случайные байты от ОС")?;
+        let mut name = String::from("host-target-");
+        for byte in random {
+            write!(name, "{byte:02x}").expect("запись в String не отказывает");
+        }
+        let path = dir.join(name);
+        create_private_dir(&path).with_context(|| format!("создать {}", path.display()))?;
+        Ok(Self(path))
+    }
+}
 
 impl Drop for Scratch {
     fn drop(&mut self) {
@@ -294,8 +316,7 @@ fn ota_env<'a>(
     let regions = app_memory_regions()?;
     let (_, active) = app_region(&regions).context("в memory.x приложения нет раздела ACTIVE")?;
 
-    let dir = Scratch(env::temp_dir().join(format!("host-target-{}", std::process::id())));
-    fs::create_dir_all(&dir.0).with_context(|| format!("создать {}", dir.0.display()))?;
+    let dir = Scratch::new_in(&env::temp_dir())?;
     let write = |name: &str, bytes: &[u8]| {
         let path = dir.0.join(name);
         fs::write(&path, bytes)
@@ -347,6 +368,22 @@ fn ota_env<'a>(
     }
     Ok((dir, vars))
 }
+
+/// Создаёт каталог `path`, которого ещё нет: `create_dir`, а не `_all` —
+/// существующий (подложенный заранее, симлинк) — ошибка. На unix права 0700
+/// ставятся атомарно при создании; на Windows `%TEMP%` и так у каждого
+/// пользователя свой.
+#[cfg(unix)]
+fn create_private_dir(path: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+    fs::DirBuilder::new().mode(0o700).create(path)
+}
+
+/// См. unix-вариант выше: здесь права не нужны — `%TEMP%` свой у каждого.
+#[cfg(not(unix))]
+fn create_private_dir(path: &Path) -> std::io::Result<()> {
+    fs::create_dir(path)
+}
 // {%- endif %}
 
 /// Тесты внутри МК, затем рабочая прошивка (`flash_all`, release) — и после
@@ -390,4 +427,22 @@ mod tests {
         assert!(!super::lists_a_probe("No debug probes were found.\n"));
         assert!(!super::lists_a_probe("[x]: не номер\n[]: пусто\n"));
     }
+    // {%- if ota == "true" and has_protobuf == "true" %}
+
+    /// Каталог образов: имя случайное, существующий не берётся, и после
+    /// `Drop` его нет.
+    #[test]
+    fn the_image_scratch_is_fresh_and_goes_away() {
+        let base = crate::memory::scratch::scratch("host-target-scratch");
+        let first = super::Scratch::new_in(base.path()).expect("каталог");
+        let second = super::Scratch::new_in(base.path()).expect("каталог");
+        assert_ne!(first.0, second.0, "имя случайное");
+        assert!(first.0.is_dir());
+        super::create_private_dir(&first.0).expect_err("существующий каталог не берётся");
+
+        let path = first.0.clone();
+        drop(first);
+        assert!(!path.exists(), "каталог удалён в Drop");
+    }
+    // {%- endif %}
 }
