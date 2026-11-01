@@ -196,6 +196,46 @@ fn dependency_urls_are_normalized_and_required() {
     );
 }
 
+/// Адрес уходит литералом в TOML (`git = "…"` и паспорт генерации): пробел,
+/// кавычка и `\` в нём — ошибка и в `--define`, а не только в строке ввода.
+#[test]
+fn dependency_urls_reject_what_would_break_toml() {
+    let ast = compile_script();
+    for url in ["https://h/a b", "https://h/a\"b", "https://h/a\\b"] {
+        for (name, extra) in [
+            ("rust_lib", None),
+            ("hw_drivers", Some(("ext_flash", "yes"))),
+        ] {
+            let mut answers = vec![(name, url)];
+            answers.extend(extra);
+            let Err(err) = run_cascade_with(&ast, "f407ve", &answers) else {
+                panic!("{name}={url:?} должен падать");
+            };
+            assert!(
+                err.to_string().contains("без пробелов, кавычек"),
+                "{name}={url:?}: {err}"
+            );
+        }
+    }
+}
+
+/// Паспорт генерации различает раскладку хука и ручную: `write_size` хук
+/// выставляет в обеих ветках, а `memory_layout` — только своё.
+#[test]
+fn memory_layout_tells_manual_from_generated() {
+    let ast = compile_script();
+    let generated = run_cascade_to(&ast, "f407ve").expect("каскад");
+    assert_eq!(
+        generated.vars.get("memory_layout").map(String::as_str),
+        Some("generated")
+    );
+    let manual = run_cascade_with(&ast, "f407ve", &[("write_size", "4")]).expect("каскад");
+    assert_eq!(
+        manual.vars.get("memory_layout").map(String::as_str),
+        Some("manual")
+    );
+}
+
 /// Список чипов со штампом версий — тот файл, который хук импортирует первым.
 fn read_chip_list() -> String {
     std::fs::read_to_string(repo_root().join("chip-data").join("chips.rhai"))
