@@ -1,4 +1,4 @@
-# rust-embedded-template
+# {{project-name}}
 
 `cargo-generate` шаблон для embedded-проектов на STM32 (Rust, `no_std`, [Embassy](https://embassy.dev)),
 с трёхэтапной моделью тестирования и единой точкой входа для сборки/тестов через `xtask`.
