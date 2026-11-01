@@ -52,7 +52,6 @@ embedded-storage-async = { workspace = true }
 # Хранилище настроек (settings.rs) — async API.
 sequential-storage = { workspace = true }
 # {%- endif %}
-embassy-sync = { workspace = true }
 # {%- if stream_io == "true" or net_services contains "mqtt" %}
 # Поток байтов `embedded_io_async::{Read, Write}` — трейты транспортов платы.
 # {%- if has_usb == "true" %}

@@ -162,8 +162,9 @@ embassy-boot           = { version = "0.7.0" }
 # Тесты `flash-page`: `BlockingAsync` и `BlockingPartition`.
 embassy-embedded-hal   = { version = "0.6.0" }
 # {%- endif %}
-# Мьютексы адаптеров. Версия та же и у `supervisor` — иначе в прошивке
-# оказалось бы две несовместимые копии крейта.
+# Мьютекс карты регистров `domain::modbus` и замок разделов в тестах
+# `flash-page`. Версия та же и у `supervisor` — иначе в прошивке оказалось бы
+# две несовместимые копии крейта.
 embassy-sync           = { version = "0.8.0" }
 # {%- if ota == "true" or config == "true" or flash_page == "true" %}
 embedded-storage       = { version = "0.3.2" }

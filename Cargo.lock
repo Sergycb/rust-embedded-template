@@ -15,7 +15,6 @@ dependencies = [
  "embassy-executor",
  "embassy-futures",
  "embassy-net",
- "embassy-sync",
  "embassy-time",
  "embassy-usb",
  "embedded-io-async 0.7.0",
