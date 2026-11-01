@@ -181,7 +181,8 @@ bootloader и `STATE`. Отсюда и второй набор цифр в `MEMO
 (`domain::ota::update::apply_signed`), см. docs/ota.md.
 
 `modbus_master` (Modbus master, клиентская половина; по умолчанию `no`) — той же формы:
-строка `yes`/`no`, хук приводит ответ к `"true"`/`"false"`. Смысл он имеет только при
+строка `yes`/`no` (как у `ota`, `config`, `graph`, `ext_flash` — `yes_no_define`;
+`true`/`false` на входе — ошибка), хук приводит ответ к `"true"`/`"false"`. Смысл он имеет только при
 `protocol=modbus`: меню спрашивает его только тогда, а `--define modbus_master=yes` при другом
 протоколе — ошибка (`no` принимается). Master не получают ни protobuf, ни CANopen. «true» оставляет `ports::ModbusClient`/`MasterError`,
 `domain::modbus::master`, клиентские impl'ы транспортов `Rtu`/`Tcp`/`Udp` (в них же

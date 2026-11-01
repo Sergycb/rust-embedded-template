@@ -1218,6 +1218,31 @@ fn an_unknown_config_answer_is_an_error() {
     }
 }
 
+/// Одно правило для всех вопросов «да/нет» в `--define`: только `yes`/`no`.
+/// Раньше `graph` и `modbus_master` принимали ещё и `true`/`false`, а `ota`,
+/// `config`, `ext_flash` — нет.
+#[test]
+fn every_yes_no_define_takes_only_yes_or_no() {
+    let ast = compile_script();
+    let modbus = [("interface", "uart"), ("protocol", "modbus")];
+    for name in ["ota", "config", "graph", "ext_flash", "modbus_master"] {
+        for answer in ["true", "false", "Yes"] {
+            let mut answers = vec![(name, answer)];
+            if name == "modbus_master" {
+                answers.extend(modbus);
+            }
+            let err = run_cascade_with(&ast, "f407ve", &answers)
+                .err()
+                .unwrap_or_else(|| panic!("{name}={answer} должен быть ошибкой"));
+            assert!(
+                err.to_string()
+                    .contains(&format!("{name}: ожидается yes или no")),
+                "{name}={answer}: {err}"
+            );
+        }
+    }
+}
+
 #[test]
 fn an_ota_answer_that_does_not_fit_keeps_ota_and_leaves_memory_to_the_user() {
     // Явный ответ уважается: h723ve схему не вмещает, но bootloader остаётся, а
@@ -1561,31 +1586,29 @@ fn modbus_master_is_off_by_default() {
     );
 }
 
-/// `modbus_master=yes` (и старое `true`) при Modbus оставляет файл master'а.
+/// `modbus_master=yes` при Modbus оставляет файл master'а (`true` — ошибка, см.
+/// `every_yes_no_define_takes_only_yes_or_no`).
 #[test]
 fn modbus_master_yes_keeps_the_master() {
-    for answer in ["yes", "true"] {
-        let result = run_cascade_with(
-            &compile_script(),
-            "g474re",
-            &[
-                ("protocol", "modbus"),
-                ("interface", "uart"),
-                ("modbus_master", answer),
-            ],
-        )
-        .expect("каскад не должен падать");
-        assert_eq!(
-            result.vars.get("modbus_master").map(String::as_str),
-            Some("true"),
-            "ответ {answer}"
-        );
-        assert!(
-            !result.deleted.iter().any(|path| path == MASTER_FILE),
-            "master.rs удалён при modbus_master={answer}: {:?}",
-            result.deleted
-        );
-    }
+    let result = run_cascade_with(
+        &compile_script(),
+        "g474re",
+        &[
+            ("protocol", "modbus"),
+            ("interface", "uart"),
+            ("modbus_master", "yes"),
+        ],
+    )
+    .expect("каскад не должен падать");
+    assert_eq!(
+        result.vars.get("modbus_master").map(String::as_str),
+        Some("true")
+    );
+    assert!(
+        !result.deleted.iter().any(|path| path == MASTER_FILE),
+        "master.rs удалён при modbus_master=yes: {:?}",
+        result.deleted
+    );
 }
 
 /// Без Modbus master'у нечем быть: вопрос не задаётся, ответ «no» принимается, а

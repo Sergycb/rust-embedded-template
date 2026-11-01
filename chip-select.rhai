@@ -553,15 +553,24 @@ fn links_text(links) {
     out
 }
 
+/// Ответ «да/нет» из `--define name=…`: только `yes` или `no`, у всех
+/// вопросов одинаково (`cargo-generate.toml`, «`--define` … строгий»).
+/// `true`/`false` — тоже ошибка: в шаблоне это значения переменных после хука,
+/// и принимать их на входе одним вопросам и не принимать другим значило бы
+/// держать два правила вместо одного.
+fn yes_no_define(name) {
+    let answer = variable::get(name);
+    if answer != "yes" && answer != "no" {
+        throw name + ": ожидается yes или no, а не «" + answer + "»";
+    }
+    answer == "yes"
+}
+
 /// Ответ `modbus_master`: спрашивается один раз, когда в проекте впервые
 /// выбран Modbus; `--define` проверяется строго.
 fn modbus_master_answer() {
     if variable::is_set("modbus_master") {
-        let answer = variable::get("modbus_master");
-        if answer != "yes" && answer != "true" && answer != "no" && answer != "false" {
-            throw "modbus_master: ожидается yes или no, а не «" + answer + "»";
-        }
-        return answer == "yes" || answer == "true";
+        return yes_no_define("modbus_master");
     }
     ask(
         "modbus_master: Modbus master (клиент) в дополнение к slave",
@@ -727,11 +736,7 @@ const RNG = rng_data::RNG;
 // предлагаются. В меню — после выбора чипа, первым из вопросов о памяти.
 let wants_ext = false;
 if variable::is_set("ext_flash") {
-    let answer = variable::get("ext_flash");
-    if answer != "yes" && answer != "no" {
-        throw "ext_flash: ожидается yes или no, а не «" + answer + "»";
-    }
-    wants_ext = answer == "yes";
+    wants_ext = yes_no_define("ext_flash");
 }
 
 // Ответ на вопрос про OTA (`--define ota=yes|no`). Дальше по коду `ota`
@@ -753,10 +758,7 @@ if variable::is_set("ota") {
         throw "ota: ожидается yes или no; где лежат DFU и STATE, решает ext_flash (`" + answer + "` — это ext_flash="
             + (if answer == "external" { "yes" } else { "no" }) + " и ota=yes)";
     }
-    if answer != "yes" && answer != "no" {
-        throw "ota: ожидается yes или no, а не «" + answer + "»";
-    }
-    wants_ota = answer == "yes";
+    wants_ota = yes_no_define("ota");
 }
 let wants_ext_ota = wants_ota && wants_ext;
 
@@ -790,10 +792,7 @@ if variable::is_set("config") {
         throw "config: ожидается yes или no; где лежат настройки, решает ext_flash (`" + answer + "` — это ext_flash="
             + (if answer == "external" { "yes" } else { "no" }) + " и config=yes)";
     }
-    if answer != "yes" && answer != "no" {
-        throw "config: ожидается yes или no, а не «" + answer + "»";
-    }
-    wants_config = answer == "yes";
+    wants_config = yes_no_define("config");
 }
 let wants_external = wants_config && wants_ext;
 
@@ -801,11 +800,7 @@ let wants_external = wants_config && wants_ext;
 // размер раздела, в который линкуется приложение (см. GRAPH_MIN_PARTITION).
 let wants_graph = true;
 if variable::is_set("graph") {
-    let answer = variable::get("graph");
-    if answer != "yes" && answer != "true" && answer != "no" && answer != "false" {
-        throw "graph: ожидается yes или no, а не «" + answer + "»";
-    }
-    wants_graph = answer == "yes" || answer == "true";
+    wants_graph = yes_no_define("graph");
 }
 if !wants_graph {
     print("Граф задач отключён по вашему выбору: узлы спавнит tasks::spawn_all, без сторожа");
@@ -1579,11 +1574,8 @@ if WANTED_LINKS.len() > 0 {
 if !wants_graph && links.some(|link| link.kind == "tcp" || link.kind == "udp") {
     throw "links: сетевой транспорт (tcp/udp) — только с графом задач (graph=yes): без графа сети в шаблоне нет";
 }
-if protocol != "modbus" && variable::is_set("modbus_master") {
-    let answer = variable::get("modbus_master");
-    if answer == "yes" || answer == "true" {
-        throw "modbus_master: master есть только у протокола modbus, а выбран " + protocol;
-    }
+if protocol != "modbus" && variable::is_set("modbus_master") && yes_no_define("modbus_master") {
+    throw "modbus_master: master есть только у протокола modbus, а выбран " + protocol;
 }
 
 // --- Сетевые службы (`net_services`, `NET_SERVICE_ITEMS`): список с отметками,
