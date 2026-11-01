@@ -3507,136 +3507,117 @@ fn watchdog_and_link_port_follow_the_choices() {
 /// Хук обязан задать каждую на любом пути по меню — иначе подстановка в
 /// `cargo generate` упадёт на неопределённой переменной.
 fn template_variables() -> std::collections::BTreeSet<String> {
-    template_variables_in(&repo_root())
+    // Обход — по `git ls-files`, а не по рабочему дереву: в рабочем дереве
+    // лежат чужие worktree и служебные каталоги агентов, а `.claude/rules`,
+    // который едет в проект с Liquid, обход каталогов пропускал вместе со
+    // всем `.claude`. Сам хук, таблицы `chip-data/` и генератор не шаблон: в
+    // них Liquid встречается как текст.
+    let files: Vec<&str> = tracked_files()
+        .iter()
+        .map(String::as_str)
+        .filter(|path| {
+            !path.starts_with("chip-data-gen/")
+                && !path.starts_with("chip-data/")
+                && std::path::Path::new(path)
+                    .extension()
+                    .is_none_or(|ext| ext != "rhai" && ext != "lock")
+        })
+        .collect();
+    template_variables_in(&repo_root(), &files)
 }
 
-/// То же по дереву `root`.
-#[expect(
-    clippy::too_many_lines,
-    reason = "разбор Liquid-тегов одного файла — один проход по тексту"
-)]
-fn template_variables_in(root: &std::path::Path) -> std::collections::BTreeSet<String> {
+/// То же по файлам `files` (пути от `root`).
+fn template_variables_in(
+    root: &std::path::Path,
+    files: &[&str],
+) -> std::collections::BTreeSet<String> {
+    let mut found = std::collections::BTreeSet::new();
+    for file in files {
+        // Не UTF-8 (картинки, ключи) — не шаблон.
+        if let Ok(text) = std::fs::read_to_string(root.join(file)) {
+            found.extend(file_variables(&text));
+        }
+    }
+    found
+}
+
+/// Переменные хука одного файла шаблона.
+fn file_variables(text: &str) -> std::collections::BTreeSet<String> {
     use std::collections::BTreeSet;
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "разбор Liquid-тегов одного файла — один проход по тексту"
-    )]
-    fn walk(dir: &std::path::Path, found: &mut BTreeSet<String>) {
-        let Ok(entries) = std::fs::read_dir(dir) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let name = entry.file_name().to_string_lossy().to_string();
-            if path.is_dir() {
-                if matches!(
-                    name.as_str(),
-                    "target"
-                        | ".git"
-                        | "chip-data-gen"
-                        | "chip-data"
-                        | ".remember"
-                        | ".claude"
-                        | "superpowers"
-                        | ".superpowers"
-                        | "node_modules"
-                ) {
-                    continue;
-                }
-                walk(&path, found);
-                continue;
-            }
-            // Сам хук и Rust-код генератора не шаблон: в них Liquid встречается как текст.
-            if std::path::Path::new(&name)
-                .extension()
-                .is_some_and(|ext| ext == "rhai" || ext == "lock")
-            {
-                continue;
-            }
-            let Ok(text) = std::fs::read_to_string(&path) else {
-                continue;
-            };
-            // Переменные файла и имена, которые он объявляет сам (`for`, `assign`,
-            // `capture`): вторые — не переменные хука.
-            let mut local = BTreeSet::new();
-            let mut declared = BTreeSet::new();
-            let mut rest = text.as_str();
-            while let Some(start) = rest.find("{{") {
-                let after = &rest[start + 2..];
-                let Some(end) = after.find("}}") else { break };
-                let inner = after[..end].trim().trim_start_matches('-').trim();
-                let ident: String = inner
+    // Переменные файла и имена, которые он объявляет сам (`for`, `assign`,
+    // `capture`): вторые — не переменные хука.
+    let mut local = BTreeSet::new();
+    let mut declared = BTreeSet::new();
+    let mut rest = text;
+    while let Some(start) = rest.find("{{") {
+        let after = &rest[start + 2..];
+        let Some(end) = after.find("}}") else { break };
+        let inner = after[..end].trim().trim_start_matches('-').trim();
+        let ident: String = inner
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .collect();
+        if !ident.is_empty() && !ident.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+            local.insert(ident);
+        }
+        rest = &after[end + 2..];
+    }
+    let mut rest = text;
+    while let Some(start) = rest.find("{%") {
+        let after = &rest[start + 2..];
+        let Some(end) = after.find("%}") else { break };
+        let tag = after[..end].trim().trim_start_matches('-').trim();
+        for (keyword, sep) in [("for ", " in "), ("assign ", "="), ("capture ", "")] {
+            if let Some(body) = tag.strip_prefix(keyword) {
+                let name: String = body
+                    .trim_start()
                     .chars()
                     .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
                     .collect();
-                if !ident.is_empty() && !ident.chars().next().is_some_and(|c| c.is_ascii_digit()) {
-                    local.insert(ident);
+                declared.insert(name);
+                // Первое имя правой части (`links` в `assign xs = links | split`,
+                // `net_sockets` в `for i in (1..net_sockets)`) — переменная
+                // хука, если файл не объявил его сам; строковый литерал — нет.
+                let Some((_, expr)) = body.split_once(sep).filter(|_| !sep.is_empty()) else {
+                    continue;
+                };
+                let head = expr.split('|').next().unwrap_or_default().trim();
+                if head.starts_with(['"', '\'']) {
+                    continue;
                 }
-                rest = &after[end + 2..];
-            }
-            let mut rest = text.as_str();
-            while let Some(start) = rest.find("{%") {
-                let after = &rest[start + 2..];
-                let Some(end) = after.find("%}") else { break };
-                let tag = after[..end].trim().trim_start_matches('-').trim();
-                for (keyword, sep) in [("for ", " in "), ("assign ", "="), ("capture ", "")] {
-                    if let Some(body) = tag.strip_prefix(keyword) {
-                        let name: String = body
-                            .trim_start()
-                            .chars()
-                            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
-                            .collect();
-                        declared.insert(name);
-                        // Первое имя правой части (`links` в `assign xs = links | split`,
-                        // `net_sockets` в `for i in (1..net_sockets)`) — переменная
-                        // хука, если файл не объявил его сам; строковый литерал — нет.
-                        let Some((_, expr)) = body.split_once(sep).filter(|_| !sep.is_empty())
-                        else {
-                            continue;
-                        };
-                        let head = expr.split('|').next().unwrap_or_default().trim();
-                        if head.starts_with(['"', '\'']) {
-                            continue;
-                        }
-                        if let Some(first) = head
-                            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-                            .find(|w| !w.is_empty() && !w.starts_with(|c: char| c.is_ascii_digit()))
-                        {
-                            local.insert(first.to_string());
-                        }
-                    }
-                }
-                if let Some(cond) = tag
-                    .strip_prefix("if ")
-                    .or_else(|| tag.strip_prefix("elsif "))
-                    .or_else(|| tag.strip_prefix("unless "))
+                if let Some(first) = head
+                    .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                    .find(|w| !w.is_empty() && !w.starts_with(|c: char| c.is_ascii_digit()))
                 {
-                    // Каждый операнд, за которым стоит оператор сравнения.
-                    let words: Vec<&str> = cond.split_whitespace().collect();
-                    for (i, word) in words.iter().enumerate() {
-                        let is_op = matches!(
-                            words.get(i + 1).copied(),
-                            Some("==" | "!=" | ">" | "<" | ">=" | "<=" | "contains")
-                        );
-                        let bare = i == 0 && words.len() == 1;
-                        if (is_op || bare)
-                            && word.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-                            && !word.chars().next().is_some_and(|c| c.is_ascii_digit())
-                        {
-                            local.insert((*word).to_string());
-                        }
-                    }
+                    local.insert(first.to_string());
                 }
-                rest = &after[end + 2..];
             }
-            found.extend(local.difference(&declared).cloned());
         }
+        if let Some(cond) = tag
+            .strip_prefix("if ")
+            .or_else(|| tag.strip_prefix("elsif "))
+            .or_else(|| tag.strip_prefix("unless "))
+        {
+            // Каждый операнд, за которым стоит оператор сравнения.
+            let words: Vec<&str> = cond.split_whitespace().collect();
+            for (i, word) in words.iter().enumerate() {
+                let is_op = matches!(
+                    words.get(i + 1).copied(),
+                    Some("==" | "!=" | ">" | "<" | ">=" | "<=" | "contains")
+                );
+                let bare = i == 0 && words.len() == 1;
+                if (is_op || bare)
+                    && word.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                    && !word.chars().next().is_some_and(|c| c.is_ascii_digit())
+                {
+                    local.insert((*word).to_string());
+                }
+            }
+        }
+        rest = &after[end + 2..];
     }
-
-    let mut found = BTreeSet::new();
-    walk(root, &mut found);
-    found
+    local.difference(&declared).cloned().collect()
 }
 
 /// Переменные циклов (`{% for l in xs %}`, `{% assign f = … %}`) объявляет сам
@@ -3652,7 +3633,7 @@ fn loop_variables_are_not_hook_variables() {
         "{%- assign xs = links | split: \",\" -%}{% for l in xs %}{{ l }}         {% assign f = l | split: \":\" %}{{ f[0] }}{% capture c %}x{% endcapture %}{{ c }}         {% endfor %}{{ chip }}",
     )
     .expect("временный файл");
-    let found = template_variables_in(&dir);
+    let found = template_variables_in(&dir, &["t.rs"]);
     std::fs::remove_dir_all(&dir).ok();
     assert_eq!(found.into_iter().collect::<Vec<_>>(), ["chip", "links"]);
 }
