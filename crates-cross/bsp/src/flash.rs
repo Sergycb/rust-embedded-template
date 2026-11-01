@@ -67,11 +67,11 @@ use embassy_sync::{blocking_mutex, mutex};
 {%- if flash_cache == "true" %}
 use embedded_storage::nor_flash::{ErrorType, NorFlash, ReadNorFlash};
 {%- endif %}
-{%- if paged == "true" %}
-use flash_page::ErasePage;
-{%- endif %}
 {%- if eeprom_here == "true" %}
 use embedded_storage::{ReadStorage, Storage};
+{%- endif %}
+{%- if paged == "true" %}
+use flash_page::ErasePage;
 {%- endif %}
 use static_cell::StaticCell;
 {%- if firmware_here == "true" %}
