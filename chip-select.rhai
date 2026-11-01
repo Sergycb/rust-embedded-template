@@ -25,8 +25,8 @@ fn family_table() {
     //
     // ОСОЗНАННОЕ ОГРАНИЧЕНИЕ (не забытая деталь, зафиксировано по решению
     // пользователя): для выбранного суффикса каскад выставляет переменную
-    // `dual_core` (см. is_dual_core() и конец скрипта), которую crates-cross/bsp и
-    // crates-cross/boot используют, чтобы вызвать `embassy_stm32::init_primary()`
+    // `dual_core` (см. is_dual_core() и конец скрипта), по которой `Board::new()`
+    // в crates-cross/bsp/src/board.rs зовёт `embassy_stm32::init_primary()`
     // вместо недоступного на dual-core `init()` — сгенерированный `cross`
     // собирается. Но код пишется только под ОДНО (то, что выбрано в
     // каскаде) ядро: второй образ шаблон не генерирует, взаимодействие с
@@ -1165,8 +1165,9 @@ if !variable::is_set("cpu") {
 if !variable::is_set("target") {
     variable::set("target", family[1]);
 }
-// Читается из crates-cross/bsp/Cargo.toml и crates-cross/boot/Cargo.toml (условно
-// включает фичу "dual-core" в default) — см. Board::new()/main() там же.
+// Читается Liquid-ом в crates-cross/bsp/src/board.rs: на двухъядерном чипе
+// `Board::new()` зовёт `init_primary()` вместо `init()` (Cargo-фичи под это
+// у `bsp`/`boot` нет — ядро выбирает сама чип-фича `embassy-stm32`).
 // Без переопределения через --define (в отличие от chip/cpu/target/
 // write_size): значение полностью выводится из chip_feature, легитимной
 // причины расходиться с ним нет.
@@ -1265,7 +1266,7 @@ variable::set("rng_source", rng[2]);
 // задают его через --define.
 //
 // Таблица разложена по файлам семейств — первые два символа суффикса, тот же
-// ключ, что `layout_family` в chip-data-gen: целиком она ~89 тысяч строк, а
+// ключ, что `layout_family` в chip-data-gen: целиком она ~75 тысяч строк, а
 // нужна одна запись.
 import "chip-data/layout/" + suffix.sub_string(0, 2) as layout_data;
 const MEMORY_LAYOUT = layout_data::MEMORY_LAYOUT;
@@ -2327,7 +2328,7 @@ if variable::is_set("write_size") {
         // весь flash, crates-cross/boot в него не попадает вовсе.
         // Каталог убирается здесь, а не через [conditional] в
         // cargo-generate.toml: условия там вычисляются по значениям
-        // [placeholders] и переменных, выставленных хуком, не видят
+        // [placeholders], а переменных, выставленных хуком, не видят
         // (проверено эмпирически — с `[conditional.'ota != "true"']` каталог
         // оставался на месте, а то же условие по `ci` работало). Удаление
         // идёт по временной копии шаблона, до рендера — как и file::write.

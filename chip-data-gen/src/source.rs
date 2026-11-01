@@ -340,9 +340,9 @@ pub(crate) fn probe_rs_chip_names() -> anyhow::Result<BTreeSet<String>> {
 /// временной копии, выбирая ЛОЖНУЮ ветку — то есть выбрасывая блок целиком.
 ///
 /// Нужно, потому что `cargo metadata` читает манифесты всех членов workspace,
-/// а те содержат условные куски (`"dual-core"` в `crates-cross/bsp`/`crates-cross/boot`,
-/// `"boot"` среди `members` и фича банка в `crates-cross/Cargo.toml`) — с ними это
-/// не TOML. Ложная ветка безопаснее истинной: она оставляет манифест
+/// а те содержат условные куски (`"boot"` среди `members` и фича банка в
+/// `crates-cross/Cargo.toml`, зависимости под выбранные интерфейсы, OTA и
+/// настройки в `crates-cross/bsp` и корневом workspace) — с ними это не TOML. Ложная ветка безопаснее истинной: она оставляет манифест
 /// минимальным, а всё, что нужно генератору (`embassy-stm32` и его
 /// `stm32-metapac`), объявлено безусловно.
 fn strip_liquid_from_manifests(dir: &Path, rev: &str) -> anyhow::Result<()> {

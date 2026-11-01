@@ -34,7 +34,7 @@ pub(crate) const DEFAULT_WATCHDOG: &str = "IWDG";
 const DATA_HEADER: &str = "// Сгенерировано chip-data-gen, руками не править: cargo run --manifest-path chip-data-gen/Cargo.toml\n";
 
 /// Раскладки по файлам семейств: ключ — [`layout_family`], значение — текст
-/// `chip-data/layout/<ключ>.rhai`. Одной таблицей это 89 тысяч строк, а хуку
+/// `chip-data/layout/<ключ>.rhai`. Одной таблицей это ~75 тысяч строк, а хуку
 /// нужна одна запись — он импортирует только файл своего семейства.
 pub(crate) fn format_memory_layouts(
     layouts: &BTreeMap<&str, MemoryLayout>,
