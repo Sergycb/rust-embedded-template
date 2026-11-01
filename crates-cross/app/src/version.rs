@@ -5,8 +5,28 @@
 //! Подпись приложение не проверяет: ключ зашит в bootloader, и проверяет он
 //! (`crates-cross/boot`, `domain::ota::boot::screen_update`).
 
-/// Версия этого образа — `version` из Cargo.toml, свёрнутая
-/// `domain::ota::version::pack` в четыре байта.
+/// Версия этого образа — [`PACKAGE_VERSION`], а с фичей `version-max`
+/// (тестовый образ `app-unconfirmed`) — наибольшая, `u32::MAX`: хост по
+/// версии отличает тестовый образ от рабочего, не читая флеш, и любой
+/// настоящий образ рядом с ним не новее — docs/ota.md, «Тесты OTA по
+/// протоколу».
+pub const FW_VERSION: u32 = if cfg!(feature = "version-max") {
+    domain::ota::version::pack(u8::MAX, u8::MAX, u16::MAX)
+} else {
+    PACKAGE_VERSION
+};
+
+/// Версия этого образа текстом — то, что он называет хосту и печатает в
+/// баннере старта: `version` из Cargo.toml или, с `version-max`, ровно
+/// [`FW_VERSION`] в виде `major.minor.patch`.
+pub const FW_VERSION_TEXT: &str = if cfg!(feature = "version-max") {
+    "255.255.65535"
+} else {
+    crate::build::PKG_VERSION
+};
+
+/// `version` из Cargo.toml, свёрнутая `domain::ota::version::pack` в четыре
+/// байта.
 ///
 /// Компоненты берутся из того же `shadow-rs`, что печатает версию в баннере
 /// старта (`crate::build`), — у версии в прошивке один источник. Считается
@@ -14,7 +34,7 @@
 /// до 65535), — ошибка сборки, а не прошивка, молча принимающая откат.
 /// Пререлизный суффикс не учитывается: semver считает `1.2.3-rc1` младше
 /// `1.2.3`, а уместить это в четыре байта нечем — README, «Защита от отката».
-pub const FW_VERSION: u32 = {
+const PACKAGE_VERSION: u32 = {
     let (Ok(major), Ok(minor), Ok(patch)) = (
         u8::from_str_radix(crate::build::PKG_VERSION_MAJOR, 10),
         u8::from_str_radix(crate::build::PKG_VERSION_MINOR, 10),

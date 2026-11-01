@@ -186,6 +186,27 @@ generic, поэтому узел называет канал этим псевд
 `Map::default()`; без `Default` замените эту одну строку в `crate::modbus::handle`
 своим конструктором. Узлы{% if graph == "true" %} и граф{% endif %} тип берут оттуда и правок не требуют.
 {%- endif %}
+{%- if ota == "true" %}
+
+# Тестовый образ `app-unconfirmed`: фичи `unconfirmed` и `version-max`
+
+У пакета два бинарника из одного `main.rs`: рабочий `app` и тестовый
+`app-unconfirmed` (`required-features = ["unconfirmed"]`), которым `cargo
+xtask test host-target` проверяет обмен и откат по протоколу проекта. Фичи:
+
+* `version-max` — версия образа `u32::MAX`, текстом `255.255.65535`
+  (`crate::version::FW_VERSION`, `FW_VERSION_TEXT` — их же видят хост в
+  сведениях об устройстве и баннер старта);
+* `unconfirmed` (включает `version-max`) — узел OTA получает
+  `confirmed: cfg!(feature = "unconfirmed")` во входе и `mark_booted` не
+  зовёт: следующий сброс откатывает образ. В логе старта — `warn!`.
+
+`cargo build`, `cargo xtask build`/`lint cross` и релиз его не собирают
+(`required-features`), `cargo run -p app` берёт `app` (`default-run`), а
+`cargo flash` в `xtask` — `--bin app`. Cargo при каждом вызове предупреждает,
+что `src/main.rs` стоит в двух целях, — это он. Подробности — `docs/ota.md`,
+«Тесты OTA по протоколу».
+{%- endif %}
 
 # Питание от батареи: STOP между задачами
 

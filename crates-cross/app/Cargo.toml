@@ -4,6 +4,10 @@ version.workspace      = true
 edition.workspace      = true
 license.workspace      = true
 rust-version.workspace = true
+{%- if ota == "true" %}
+# `cargo run -p app` — рабочий образ, а не тестовый `app-unconfirmed` ниже.
+default-run = "app"
+{%- endif %}
 
 [lints]
 workspace = true
@@ -11,6 +15,33 @@ workspace = true
 [[bin]]
 name = "app"
 harness = false
+{%- if ota == "true" %}
+
+[features]
+# Версия образа `u32::MAX` (`255.255.65535`, `crate::version`): любой
+# настоящий образ рядом с ним не новее, и устройство на нём отвергнет его как
+# откат. Сама по себе нужна только `unconfirmed`.
+version-max = []
+# Тестовый образ `cargo xtask test host-target`: не подтверждает себя
+# (`mark_booted` не зовёт, `domain::ota`), и следующий сброс откатывает его —
+# так проверяется обмен с откатом по протоколу проекта. Только для бинарника
+# `app-unconfirmed` ниже — docs/ota.md, «Тесты OTA по протоколу».
+unconfirmed = ["version-max"]
+
+# Тестовый образ — тот же `main.rs` с фичей `unconfirmed`. Отдельным
+# бинарником, а не фичей у `app`: у ELF своё имя, и рабочий `app` (и `app.bin`
+# из `cargo xtask build`, и `cargo flash -p app --bin app`) с ним не спутать.
+# `required-features`: без фичи его не собирают ни `cargo build`, ни `cargo
+# xtask build`/`lint cross` — только `cargo xtask test host-target` (и проверка
+# шаблона). Cargo предупреждает, что `src/main.rs` стоит в двух целях, — это он.
+[[bin]]
+name = "app-unconfirmed"
+path = "src/main.rs"
+required-features = ["unconfirmed"]
+harness = false
+test = false
+bench = false
+{%- endif %}
 
 [dependencies]
 embassy-executor = { workspace = true, features = ["defmt"] }

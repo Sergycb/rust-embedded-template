@@ -68,6 +68,10 @@ supervisor_graph! {
             flash: ::adapters::ota::Updater::new(board.firmware),
             reboot: bsp::reset::Reboot,
             running_version: crate::version::FW_VERSION,
+            // Тестовый образ `app-unconfirmed` начинает «уже подтверждённым» и
+            // `mark_booted` не зовёт: следующий сброс его откатывает
+            // (`cargo xtask test host-target`, docs/ota.md).
+            confirmed: cfg!(feature = "unconfirmed"),
         },
 {%- endif %}
 {%- assign xs = links | split: "," %}
@@ -149,7 +153,7 @@ supervisor_graph! {
                             ::domain::ota::ClientId({{ client }}),
                         ),
                     ),
-                    crate::build::PKG_VERSION,
+                    crate::version::FW_VERSION_TEXT,
                 ),
             },
 {%- else %}

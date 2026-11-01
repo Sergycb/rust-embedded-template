@@ -33,7 +33,7 @@ pub mod {{ f[4] }} {
         let regs = map;
 {%- endif %}
         let mut link = link(source);
-        let mut handler = domain::modbus::Slave::new(1, regs, crate::build::PKG_VERSION);
+        let mut handler = domain::modbus::Slave::new(1, regs, {% if ota == "true" %}crate::version::FW_VERSION_TEXT{% else %}crate::build::PKG_VERSION{% endif %});
         domain::server::task(domain::server::ServerCtx {
             link: &mut link,
             handler: &mut handler,

@@ -112,8 +112,10 @@ type Signature = [u8; SIGNATURE_BYTES];
 // собирает `OtaCtx` сама, и слоты — её локальные переменные с теми же
 // начальными значениями.
 // {%- endif %}
-// `CONFIRMED` — без входа: подтверждён ли уже образ в этом запуске (см.
-// действие `begin`).
+// `CONFIRMED` — подтверждён ли уже образ в этом запуске (см. действие
+// `begin`). Начальное значение даёт приложение: у рабочего образа `false`, у
+// тестового `app-unconfirmed` (`cargo xtask test host-target`) — `true`, и
+// он себя не подтверждает — следующий сброс откатывает его.
 //
 // `request: [CMD: …]` — вход команд: запрос с ответом (`sync-request`), а не
 // очередь, потому что протокол отвечает хосту исходом именно своей команды.
@@ -165,7 +167,9 @@ supervisor::supervisor_fragment! {
             /// Версия этой прошивки (`FW_VERSION` приложения): образ не новее
             /// неё отвергается на `Finish` — защита от отката.
             RUNNING_VERSION: u32 = inputs.running_version,
-            CONFIRMED: bool = false
+            /// Подтверждён ли образ в этом запуске; начальное — от приложения
+            /// (`cfg!(feature = "unconfirmed")`, см. выше).
+            CONFIRMED: bool = inputs.confirmed
         ],
         // Литерал, а не `CMD_BYTES`: макрос принимает здесь только число. Равен ему.
         request: [CMD: $crate::ota::OtaRequest -> $crate::ota::OtaReply; 144 parked PARKED],
@@ -874,6 +878,19 @@ pub(crate) mod tests {
 
         run_on(&mut flash, &mut confirmed, vec![]);
         assert_eq!(flash.booted, 1, "второй прогон не подтверждает");
+    }
+
+    /// Тестовый образ `app-unconfirmed` приходит с `confirmed = true` во
+    /// входе: себя не подтверждает ни при старте, ни на `Start`, и следующий
+    /// сброс его откатывает — на этом стоит тест отката `host-target`.
+    #[test]
+    fn an_image_started_confirmed_never_confirms_itself() {
+        let mut confirmed = true;
+        let mut flash = FakeFlash::new(64, 8);
+
+        run_on(&mut flash, &mut confirmed, vec![start(1000)]);
+
+        assert_eq!(flash.confirm_attempts, 0);
     }
 
     /// Подтверждение не удалось, образов не было — узел работает дальше и

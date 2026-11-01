@@ -62,7 +62,7 @@ static RESET: cortex_m::interrupt::Mutex<core::cell::Cell<&'static str>> =
 /// из `panic::last`, причина сброса — из [`RESET`], остальное — с платы.
 fn device_info(spec: bsp::ChipSpec) -> domain::device::DeviceInfo {
     domain::device::DeviceInfo {
-        version: build::PKG_VERSION,
+        version: {% if ota == "true" %}version::FW_VERSION_TEXT{% else %}build::PKG_VERSION{% endif %},
         commit: build::SHORT_COMMIT,
         chip: spec.chip,
         uid: spec.uid,
@@ -88,9 +88,19 @@ fn main() -> ! {
     // OTA легко получить плату с прошивкой, происхождение которой неизвестно.
     info!(
         "app: запуск {} ({})",
-        build::PKG_VERSION,
+        {% if ota == "true" %}version::FW_VERSION_TEXT{% else %}build::PKG_VERSION{% endif %},
         build::SHORT_COMMIT,
     );
+{%- if ota == "true" %}
+    // Тестовый образ `cargo xtask test host-target` (бинарник `app-unconfirmed`)
+    // виден с первых строк лога: он себя не подтверждает, и следующий сброс
+    // откатывает его (docs/ota.md, «Тесты OTA по протоколу»).
+    if cfg!(feature = "unconfirmed") {
+        defmt::warn!(
+            "app: ТЕСТОВЫЙ образ app-unconfirmed: себя не подтверждает, следующий сброс его откатит"
+        );
+    }
+{%- endif %}
 
     // Причина сброса — до `Board::new` и до всего, что может повиснуть или
     // упасть (docs/diagnostics.md, «Причина сброса»). Сброс из `ensure_*`
