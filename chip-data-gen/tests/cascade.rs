@@ -1538,7 +1538,7 @@ fn no_protocol_by_default() {
         "crates-host/adapters/src/modbus",
         "crates-host/adapters/src/cobs.rs",
         "crates-cross/bsp/src/stub.rs",
-        "crates-host/adapters/src/fake.rs",
+        "crates-host/adapters/src/fake/cable.rs",
         "crates-host/domain/src/modbus",
         "crates-host/domain/src/protobuf",
         "crates-host/domain/src/canopen.rs",
@@ -1557,6 +1557,34 @@ fn no_protocol_by_default() {
             result.deleted.iter().any(|deleted| deleted == path),
             "{path} без своего протокола остался: {:?}",
             result.deleted
+        );
+    }
+    // Без сети и USB `fake` остаётся ради флеша в памяти — тестам OTA.
+    assert_eq!(result.vars.get("ota").map(String::as_str), Some("true"));
+    assert!(
+        !result
+            .deleted
+            .iter()
+            .any(|path| path == "crates-host/adapters/src/fake.rs"
+                || path == "crates-host/adapters/src/fake/flash.rs"),
+        "флеш в памяти удалён при OTA: {:?}",
+        result.deleted
+    );
+    // Ни сети, ни USB, ни OTA, ни настроек — `fake` не нужен никому.
+    let bare = run_cascade_with(
+        &compile_script(),
+        "f407ve",
+        &[("ota", "no"), ("config", "no")],
+    )
+    .expect("каскад без OTA и настроек");
+    for path in [
+        "crates-host/adapters/src/fake.rs",
+        "crates-host/adapters/src/fake",
+    ] {
+        assert!(
+            bare.deleted.iter().any(|deleted| deleted == path),
+            "{path} остался без пользователей: {:?}",
+            bare.deleted
         );
     }
 }
@@ -1600,9 +1628,12 @@ fn protocol_over_uart_keeps_the_serial_module() {
             ("crates-host/ports/src/link.rs", true),
             ("crates-host/canopen", false),
             ("crates-host/ports/src/can.rs", false),
-            // Заглушка UART в `bsp`; драйверов-фейков USB/сети нет.
+            // Заглушка UART в `bsp`; драйверов-фейков USB/сети нет, а
+            // `fake` остаётся ради флеша в памяти (OTA на g474re).
             ("crates-cross/bsp/src/stub.rs", true),
-            ("crates-host/adapters/src/fake.rs", false),
+            ("crates-host/adapters/src/fake/cable.rs", false),
+            ("crates-host/adapters/src/fake.rs", true),
+            ("crates-host/adapters/src/fake/flash.rs", true),
         ] {
             assert_eq!(kept(path), wanted, "{protocol}: {path}");
         }

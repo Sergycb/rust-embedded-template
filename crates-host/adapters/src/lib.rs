@@ -36,8 +36,9 @@ pub mod net;
 pub mod usb;
 
 // {%- endif %}
-// {%- if has_usb == "true" or has_net == "true" %}
-/// Драйверы без шины и линка — для host-тестов (`adapters`, `domain`).
+// {%- if has_usb == "true" or has_net == "true" or ota == "true" or config == "true" %}
+/// Драйверы без шины и линка и флеш в памяти — для host-тестов (`adapters`,
+/// `domain`).
 #[cfg(any(test, feature = "fake"))]
 pub mod fake;
 

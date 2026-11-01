@@ -171,25 +171,24 @@ Host-тесты гоняются `cargo xtask test host` — то есть `carg
 файл
 {%- assign sep = ": " %}
 {%- if ota == "true" %}{{ sep }}фейки портов OTA — `domain::ota::fakes` (их делят `ota`,
-`ota::download` и `ota::update`), флеш в памяти под `embassy-boot` —
-`adapters::ota::fakes` (модуль `ota` адаптеров){% assign sep = ", " %}{% endif %}
+`ota::download` и `ota::update`){% assign sep = ", " %}{% endif %}
 {%- if has_net == "true" %}{{ sep }}кабель между двумя стеками `embassy-net` —
 `adapters::net::fakes` ({% if has_tcp == "true" %}`net::tcp::server`{% if has_udp == "true" %} и {% endif %}{% endif %}{% if has_udp == "true" %}`net::udp`{% endif %}){% endif %}. Отдельного файла и крейта
 для фейков нет: в сборке их не видно, а с кодом, который они подменяют, они
 рядом.
+{%- if has_usb == "true" or has_net == "true" or ota == "true" or config == "true" %}
 
-Фейк, который нужен одному модулю, живёт в его же `mod tests`
-{%- if settings_port == "true" %}: так у адаптера
-`settings` — свой асинхронный флеш в памяти ровно под свои тесты (под
-`sequential-storage`){% if ota == "true" %}; так же и
-`domain::ota::boot` — свой `MemFlash` в его `mod tests::fakes`, а не общий с
-`adapters::ota::fakes` (крейты разные, и тянуть тестовый код через границу
-крейта не стоит){% endif %}
-{%- elsif ota == "true" %}: так у
-`domain::ota::boot` — свой `MemFlash` в его `mod tests::fakes`, а не общий с
-`adapters::ota::fakes` (крейты разные, и тянуть тестовый код через границу
-крейта не стоит){% endif %}.{% if settings_port == "true" or ota == "true" %} Готового мока `NorFlash` в экосистеме нет —
-`embedded-hal-mock` флеш не покрывает.{% endif %}
+Исключение — фейки, которые делят крейты: они в `adapters::fake` (модуль под
+`cfg(any(test, feature = "fake"))`)
+{%- assign sep = ": " %}
+{%- if has_usb == "true" or has_net == "true" %}{{ sep }}драйверы без шины и линка для тестов узлов и транспортов{% assign sep = "; " %}{% endif %}
+{%- if ota == "true" or config == "true" %}{{ sep }}флеш в памяти с семантикой NOR
+`adapters::fake::MemFlash` — его берут тесты {% if ota == "true" %}`adapters::ota`, `domain::ota::boot`{% if config == "true" %} и {% endif %}{% endif %}{% if config == "true" %}`adapters::settings`{% endif %}.
+Готового мока `NorFlash` в экосистеме нет — `embedded-hal-mock` флеш не
+покрывает{% endif %}.
+{%- endif %}
+
+Фейк, который нужен одному модулю, живёт в его же `mod tests`.
 
 ## Порядок объектов в модуле
 
