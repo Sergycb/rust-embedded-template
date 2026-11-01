@@ -91,7 +91,7 @@ Modbus{% endif %}{% if net_services != "" %}, секреты служб{% endif 
 | `cargo xtask sign` | подписать уже собранный `app.bin` ключом `ota-signing-key.bin`; так подписывает релиз — ключ появляется после сборки |
 {%- endif %}
 | `typos` | опечатки в коде и документации; исключения — `.typos.toml`. Нужен `typos-cli` (ставит `cargo xtask setup`), гоняется в CI отдельным джобом |
-| `cargo deny check` | лицензии (только пермиссивные{% if has_canopen == "true" %}; исключение — MPL-2.0 у `zencan`{% endif %}), источники, уязвимости зависимостей по `deny.toml`; для прошивки — с `--manifest-path crates-cross/Cargo.toml`. Нужен `cargo-deny` (ставит `cargo xtask setup`), гоняется в CI |
+| `cargo deny check` | лицензии (только пермиссивные{% if has_canopen == "true" %}; исключение — MPL-2.0 у `zencan`{% endif %}{% if protobuf_serial == "true" %}; исключение — MPL-2.0 у `serialport` клиента `host-target-tests`{% endif %}), источники, уязвимости зависимостей по `deny.toml`; для прошивки — с `--manifest-path crates-cross/Cargo.toml`. Нужен `cargo-deny` (ставит `cargo xtask setup`), гоняется в CI |
 | `cargo xtask pins [БЛОК\|ПИН]` | справочник по чипу `{{chip}}`: выводы, альтернативные функции, DMA, тактирование |
 | `cargo xtask pins --check` | распиновка во всём `crates-cross/bsp/src`: занятый отладочный порт — ошибка, выводы кварца и MCO — предупреждение |
 

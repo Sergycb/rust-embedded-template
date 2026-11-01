@@ -38,16 +38,23 @@ allow = [
 ]
 confidence-threshold = 0.9
 
-# {%- if has_canopen == "true" %}
-# Исключение — стек CANopen `zencan` (MPL-2.0): копилефт на уровне файла. Он
-# обязывает публиковать изменения в файлах самого zencan, а на код проекта
-# (MIT), который им пользуется, не распространяется. Разрешено только этим
-# крейтам и только для MPL-2.0 — решение и сравнение с `canopen-rs` —
-# `domain::canopen`.
+# {%- if has_canopen == "true" or protobuf_serial == "true" %}
+# Исключения — MPL-2.0: копилефт на уровне файла. Он обязывает публиковать
+# изменения в файлах самого крейта, а на код проекта (MIT), который им
+# пользуется, не распространяется. Разрешено только перечисленным крейтам и
+# только для MPL-2.0.
 exceptions = [
+	# {%- if has_canopen == "true" %}
+	# Стек CANopen `zencan` — решение и сравнение с `canopen-rs` — `domain::canopen`.
 	{ allow = ["MPL-2.0"], crate = "zencan-node" },
 	{ allow = ["MPL-2.0"], crate = "zencan-common" },
 	{ allow = ["MPL-2.0"], crate = "zencan-build" },
+	# {%- endif %}
+	# {%- if protobuf_serial == "true" %}
+	# Последовательный порт клиента `host-target-tests` (только тесты на хосте, в
+	# прошивку не попадает).
+	{ allow = ["MPL-2.0"], crate = "serialport" },
+	# {%- endif %}
 ]
 # {%- endif %}
 

@@ -2586,6 +2586,10 @@ variable::set("modbus_mbap", if modbus_mbap { "true" } else { "false" });
 // в тестах адаптера; UDP-датаграммам они не нужны.
 variable::set("modbus_stream", if modbus_rtu || modbus_tcp { "true" } else { "false" });
 variable::set("cobs_used", if cobs_used { "true" } else { "false" });
+// protobuf по последовательному порту (UART, USB CDC): клиенту `host-target-tests`
+// нужен `serialport` (MPL-2.0, исключение в `deny.toml`) — только тогда.
+let protobuf_serial = links.some(|link| link.protocol == "protobuf" && (link.kind == "uart" || link.kind == "usb"));
+variable::set("protobuf_serial", if protobuf_serial { "true" } else { "false" });
 // Сокеты протоколов на стеке `embassy-net` (порт, буферы): по одному на сетевой
 // транспорт с протоколом. Транспорт без протокола сокета не открывает.
 variable::set("protocol_sockets", sockets.to_string());
