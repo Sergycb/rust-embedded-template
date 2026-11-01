@@ -1210,7 +1210,7 @@ if !CPU_FREQ_BOOST.contains(suffix) {
 
 // Ядра Armv6-M/Armv8-M Baseline (Cortex-M0, M0+, M23): без счётчика циклов `DWT`,
 // без регистров причины фолта (`CFSR`/`HFSR`) и без ловушки деления `CCR.DIV_0_TRP`.
-// По этому признаку `bsp` собирает `cycles` и ветки `fault`, а `ports` — `CycleCounter`.
+// По этому признаку `app` собирает ветки `fault`.
 let cpu_core = variable::get("cpu");
 variable::set("core_baseline", if cpu_core == "cortex-m0" || cpu_core == "cortex-m0plus" || cpu_core == "cortex-m23" { "true" } else { "false" });
 

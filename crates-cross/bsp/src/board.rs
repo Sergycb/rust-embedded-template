@@ -49,10 +49,6 @@ pub struct ChipSpec {
 pub struct Board {
     /// Сведения о чипе: имя, заводской номер, объём flash, частота `sys`.
     pub spec: ChipSpec,
-{%- if core_baseline != "true" %}
-    /// Счётчик тактов ядра (`bsp::cycles`) — реализация `ports::CycleCounter`.
-    pub cycles: crate::cycles::Cycles,
-{%- endif %}
 {%- if ota == "true" %}
     /// Флеш под обновлением{% if ota_store == "external" %} — на внешней флеши{% endif %} ([`crate::FirmwareFlash`]): носители `DFU` и
     /// `BOOTLOADER_STATE` со своими страницами и размер `ACTIVE`. Разделы в нём
@@ -237,9 +233,6 @@ impl Board {
                 flash_size,
                 sys_hz,
             },
-{%- if core_baseline != "true" %}
-            cycles: crate::cycles::Cycles::new(sys_hz),
-{%- endif %}
 {%- if ota == "true" %}
             firmware: {% if ota_store == "external" %}crate::external::firmware(external){% elsif dfu_bank == "true" %}crate::flash::firmware(flash, dfu_bank){% else %}crate::flash::firmware(flash){% endif %},
 {%- endif %}

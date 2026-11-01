@@ -158,11 +158,11 @@ Host-тесты гоняются `cargo xtask test host` — то есть `carg
 либо `#![doc = include_str!(..)]` в самом модуле, как в `bsp`; у приватных и
 тестовых{% if ota == "true" %} (`ota::fakes`){% endif %} — по необходимости. Определений — типов,
 трейтов, функций, `impl` — в нём нет: они живут в модулях, названных по
-предметной области ({% if ota == "true" %}`ports::ota`, `domain::ota::download`{% else %}`ports::cycles`, `domain::cpu_load::load`{% endif %}), а не по слою
+предметной области ({% if ota == "true" %}`ports::ota`, `domain::ota::download`{% else %}`domain::cpu_load::load`{% endif %}), а не по слою
 (`types`, `utils`).
 
 Реэкспорт в корне — часть правила, а не исключение из него: так устроены
-`embedded-hal` и `embassy-*`, и так путь `ports::{% if ota == "true" %}FirmwareUpdate{% else %}CycleCounter{% endif %}` остаётся
+`embedded-hal` и `embassy-*`, и так путь `ports::{% if ota == "true" %}FirmwareUpdate{% else %}<Трейт>{% endif %}` остаётся
 коротким, а перестановка модулей внутри крейта не касается его пользователей.
 
 Тестовые помощники, которые делят несколько модулей, — блок

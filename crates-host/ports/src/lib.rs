@@ -94,11 +94,6 @@ pub mod dial;
 pub mod modbus;
 
 // {%- endif %}
-// {%- if core_baseline != "true" %}
-/// Счётчик тактов ядра.
-pub mod cycles;
-
-// {%- endif %}
 // {%- if ota == "true" %}
 /// OTA: команды узлу, запись во флеш, проверка подписи, перезагрузка и ошибки
 /// приёма и применения.
@@ -129,9 +124,6 @@ pub use modbus::{Bits, BitsMut, Exception, MAX_PDU, Registers, Words, WordsMut};
 // {%- if modbus_master == "true" %}
 pub use modbus::{MasterError, ModbusClient};
 // {%- endif %}
-// {%- endif %}
-// {%- if core_baseline != "true" %}
-pub use cycles::CycleCounter;
 // {%- endif %}
 // {%- if ota == "true" %}
 pub use ota::command::{
