@@ -1410,8 +1410,9 @@ fn check_doc_paths(project: &Path, log: &File) -> anyhow::Result<()> {
     note(log, "пути в доках: все на месте")
 }
 
-/// В проекте нет файлов сопровождения шаблона и пустых каталогов — следов
-/// того, что хук удалил все файлы каталога, а сам каталог оставил.
+/// В проекте нет файлов сопровождения шаблона, пустых каталогов — следов
+/// того, что хук удалил все файлы каталога, а сам каталог оставил, — и
+/// модулей без `mod` (`find_orphan_modules`).
 fn check_no_leftovers(project: &Path, log: &File) -> anyhow::Result<()> {
     let mut found: Vec<String> = NOT_IN_PROJECT
         .iter()
@@ -1419,13 +1420,79 @@ fn check_no_leftovers(project: &Path, log: &File) -> anyhow::Result<()> {
         .map(|path| (*path).to_owned())
         .collect();
     find_empty_dirs(project, project, &mut found)?;
+    find_orphan_modules(project, &mut found)?;
     if !found.is_empty() {
         bail!(
-            "в проекте лишнее (файлы шаблона или пустые каталоги):\n  {}",
+            "в проекте лишнее (файлы шаблона, пустые каталоги, модули без `mod`):\n  {}",
             found.join("\n  ")
         );
     }
-    note(log, "лишних файлов и пустых каталогов нет")
+    note(
+        log,
+        "лишних файлов, пустых каталогов и модулей без `mod` нет",
+    )
+}
+
+/// `.rs` под `src/`, на который в родительском модуле нет `mod <имя>`: Liquid
+/// вырезал объявление, а хук оставил файл. Компилятор такой файл не видит
+/// вовсе — ни ошибкой, ни предупреждением, — и в проект уезжает мёртвый код.
+/// Не модули по построению: корни крейтов (`lib.rs`, `main.rs`) и всё под
+/// `bin/`, `tests/`, `examples/`, `benches/`; `build.rs` лежит вне `src/`.
+fn find_orphan_modules(project: &Path, found: &mut Vec<String>) -> anyhow::Result<()> {
+    visit_files(project, &mut |path| {
+        let relative = path
+            .strip_prefix(project)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        let parts: Vec<&str> = relative.split('/').collect();
+        let Some(src) = parts.iter().position(|part| *part == "src") else {
+            return Ok(());
+        };
+        let (Some(file), Some(stem)) = (
+            parts.last(),
+            Path::new(&relative).file_stem().and_then(|s| s.to_str()),
+        ) else {
+            return Ok(());
+        };
+        let inner = &parts[src + 1..];
+        if Path::new(file).extension().is_none_or(|ext| ext != "rs")
+            || inner[..inner.len() - 1]
+                .iter()
+                .any(|dir| matches!(*dir, "bin" | "tests" | "examples" | "benches"))
+            || (inner.len() == 1 && matches!(stem, "lib" | "main"))
+        {
+            return Ok(());
+        }
+        // `foo/mod.rs` — модуль `foo`, и объявлен он уровнем выше.
+        let (name, parent) = if stem == "mod" {
+            (inner[inner.len() - 2], &parts[..parts.len() - 2])
+        } else {
+            (stem, &parts[..parts.len() - 1])
+        };
+        let parent_dir = parent.join("/");
+        let candidates: Vec<String> = if parent.len() == src + 1 {
+            vec![
+                format!("{parent_dir}/lib.rs"),
+                format!("{parent_dir}/main.rs"),
+            ]
+        } else {
+            vec![format!("{parent_dir}.rs"), format!("{parent_dir}/mod.rs")]
+        };
+        let declared = candidates.iter().any(|candidate| {
+            fs::read_to_string(project.join(candidate)).is_ok_and(|text| {
+                text.lines().any(|line| {
+                    let line = line.trim();
+                    line.ends_with(&format!("mod {name};"))
+                        || line.ends_with(&format!("mod {name} {{"))
+                })
+            })
+        });
+        if !declared {
+            found.push(relative.clone());
+        }
+        Ok(())
+    })
 }
 
 fn find_empty_dirs(project: &Path, dir: &Path, found: &mut Vec<String>) -> anyhow::Result<()> {
