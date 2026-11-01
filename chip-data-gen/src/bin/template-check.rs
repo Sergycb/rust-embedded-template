@@ -186,6 +186,11 @@ struct Case {
     defines: Vec<String>,
     /// Входит в набор `--smoke`.
     smoke: bool,
+    /// Только генерация и проверки над файлами, без сборки и в полном прогоне:
+    /// ручная раскладка (`memory.x` с пропусками под числа человека) не
+    /// линкуется по построению, а у чипов, добавленных ради рендера своих
+    /// веток, сборка не задела бы ничего нового.
+    render_only: bool,
 }
 
 impl Case {
@@ -195,6 +200,7 @@ impl Case {
             suffix: None,
             defines: Vec::new(),
             smoke: false,
+            render_only: false,
         }
     }
 
@@ -209,6 +215,13 @@ impl Case {
     fn smoke(self) -> Self {
         Self {
             smoke: true,
+            ..self
+        }
+    }
+
+    fn render_only(self) -> Self {
+        Self {
+            render_only: true,
             ..self
         }
     }
@@ -302,6 +315,7 @@ impl ChipChecks {
 /// `.smoke()` — набор `--smoke`: по конфигурации на ось генерации (OTA с
 /// подписью и графом, без графа на M0+, 2 KiB RAM, внешняя OTA, CANopen с
 /// настройками, сеть на H7, USB, несколько транспортов без графа).
+/// `.render_only()` — без сборки и в полном прогоне (`Case::render_only`).
 #[expect(
     clippy::too_many_lines,
     reason = "таблица случаев: по строке на конфигурацию, делить её не на что"
@@ -596,6 +610,47 @@ fn default_cases() -> Vec<Case> {
         Case::new("stm32g0b1rc"),
         Case::new("stm32l4r5zi"),
         Case::new("stm32l552ze"),
+        // Серии, которых в наборе не было вовсе, со сборкой: F1 (Cortex-M3,
+        // flash v1 и 64 KiB — OTA не помещается), C0 (16 KiB flash и 6 KiB RAM
+        // на M0+), U5 и H5 (Cortex-M33, Armv8-M Mainline), WB (RAM и flash
+        // CPU2 вычтены из раскладки) и CM7 двухъядерного H7 (`IWDG1`, банк 2
+        // под стартом CM4 не трогается).
+        Case::new("stm32f103c8"),
+        Case::new("stm32c011f4"),
+        Case::new("stm32u585ai"),
+        Case::new("stm32h563zi"),
+        Case::new("stm32h745zi-cm7"),
+        Case::new("stm32wb55rg"),
+        // Остальные серии — только рендер: их ветки в хуке (раскладка,
+        // сторож, кэш, банки) те же, что у собранных соседей.
+        Case::new("stm32f030c8").render_only(),
+        Case::new("stm32f207zg").render_only(),
+        Case::new("stm32f303re").render_only(),
+        Case::new("stm32l152re").render_only(),
+        Case::new("stm32u083rc").render_only(),
+        Case::new("stm32u385rg").render_only(),
+        // Внешняя флеш, на которой хранить нечего (ни OTA, ни настроек):
+        // драйвер в проект не входит, и `memory.x` — без символов внешней флеши.
+        Case::new("stm32f407ve")
+            .variant("ext-flash-empty", &["ext_flash=yes", "ota=no", "config=no"])
+            .render_only(),
+        // Ручная раскладка (`write_size` через `--define`): заготовки
+        // `crates-cross/*/memory.x` с пропусками под числа человека — во всех
+        // трёх формах: OTA во внутреннем флеше, OTA с `STATE`/`DFU` на
+        // внешней флеши (символы — смещения в ней) и без OTA (`FLASH` — весь
+        // чип, без bootloader'а). Собрать их нельзя: числа вписывает человек.
+        Case::new("stm32f407ve")
+            .variant("manual-layout", &["write_size=4"])
+            .render_only(),
+        Case::new("stm32f407ve")
+            .variant(
+                "manual-layout-ota-external",
+                &["write_size=4", "ext_flash=yes", "config=yes"],
+            )
+            .render_only(),
+        Case::new("stm32f407ve")
+            .variant("manual-layout-no-ota", &["write_size=4", "ota=no"])
+            .render_only(),
     ]
 }
 
@@ -919,7 +974,12 @@ fn check_one(
     check_no_leftovers(&project, log)?;
 
     let mut static_ram = None;
-    if !options.quick {
+    if case.render_only {
+        note(
+            log,
+            "сборки нет: конфигурация только на рендер (`render_only`)",
+        )?;
+    } else if !options.quick {
         // До первой команды: дальше в проекте появляются `Cargo.lock` и секреты.
         let host_key = host_key(&project, case)?;
         // Ровно те команды, которые README обещает пользователю шаблона.
