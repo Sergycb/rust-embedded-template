@@ -752,6 +752,9 @@ ML-KEM и ChaCha20-Poly1305), поэтому генерация предлага
 ```
 cargo xtask setup                  # тулчейн, probe-rs-tools, flip-link, cargo-плагины (CI и ручные)
 cargo xtask build                  # cross: debug + release{% if ota == "true" %}, app.bin, размер (в т.ч. зона bootloader), подпись{% else %}, размер{% endif %}
+{%- if ota == "true" %}
+cargo xtask sign                   # подписать уже собранный app.bin (так подписывает релиз)
+{%- endif %}
 cargo xtask lint [cross]           # fmt --check + clippy -D warnings (host или cross; у host ещё cargo doc)
 cargo xtask test [host|target|host-target|all]
 cargo xtask pins [БЛОК|ПИН]        # справочник по чипу
