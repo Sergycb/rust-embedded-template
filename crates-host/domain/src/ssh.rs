@@ -413,7 +413,7 @@ mod tests {
     /// последовательности стрелок, Ctrl-C и Ctrl-D.
     #[test]
     fn the_editor_takes_only_what_it_shows() {
-        let cases: [(&[u8], Vec<Key>); 14] = [
+        let cases: [(&[u8], Vec<Key>); 15] = [
             (
                 b"help\r",
                 echo("help").chain([Key::Enter(Command::Help)]).collect(),
@@ -453,9 +453,14 @@ mod tests {
                 b"\x1binfo\r",
                 echo("info").chain([Key::Enter(Command::Info)]).collect(),
             ),
-            // Оборванная CSI: перевод строки внутри неё — конец строки.
+            // Оборванные CSI и SS3: перевод строки внутри — конец строки,
+            // и `\r\n` — всё так же один.
             (
-                b"info\x1b[1\r",
+                b"info\x1b[1\r\n",
+                echo("info").chain([Key::Enter(Command::Info)]).collect(),
+            ),
+            (
+                b"info\x1bO\r\n",
                 echo("info").chain([Key::Enter(Command::Info)]).collect(),
             ),
             // Ctrl-C сбрасывает набранное.
@@ -518,6 +523,17 @@ mod tests {
             keys(&mut editor, b"\x03info\r").last(),
             Some(&Key::Enter(Command::Info))
         );
+        // Строка, стёртая до пустой, — тоже новая: что на экране, то и
+        // в ней, и Ctrl-D на ней завершает сессию.
+        keys(&mut editor, &long);
+        keys(&mut editor, &[0x7f; LINE]);
+        assert_eq!(
+            keys(&mut editor, b"info\r").last(),
+            Some(&Key::Enter(Command::Info))
+        );
+        keys(&mut editor, &long);
+        keys(&mut editor, &[0x08; LINE]);
+        assert_eq!(keys(&mut editor, b"\x04"), vec![Key::Eof]);
         // Ровно `LINE` байт — ещё строка.
         let mut full = b"info".to_vec();
         full.resize(LINE, b' ');

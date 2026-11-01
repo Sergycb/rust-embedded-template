@@ -123,8 +123,9 @@ pub(super) struct Editor {
     /// Набрано больше [`LINE`]: лишнее не принято, и по Enter строка —
     /// [`Command::Unknown`], а не обрезанный префикс: из длинной строки
     /// иначе собиралась бы другая команда (`reboot` с `yes` на 64-м байте).
-    /// Сбрасывают Enter и Ctrl-C, не Backspace: стёртый хвост на экране не
-    /// возвращает потерянных символов.
+    /// Сбрасывают Enter, Ctrl-C и строка, стёртая до пустой; стёртый хвост —
+    /// нет: потерянных символов он не возвращает, а начало на экране
+    /// осталось от той же длинной строки.
     overflow: bool,
     /// Прошлый байт — `\r`: `\r\n` — один конец строки, а не строка и
     /// пустая за ней.
@@ -135,38 +136,13 @@ pub(super) struct Editor {
 impl Editor {
     /// Принимает байт от терминала.
     pub(super) fn feed(&mut self, byte: u8) -> Key {
-        let after_cr = core::mem::replace(&mut self.after_cr, byte == b'\r');
-        match self.escape {
-            Escape::Off => {}
-            Escape::Started => match byte {
-                b'[' => {
-                    self.escape = Escape::Csi;
-                    return Key::Nothing;
-                }
-                b'O' => {
-                    self.escape = Escape::Ss3;
-                    return Key::Nothing;
-                }
-                // Одиночный ESC отброшен, байт за ним — обычный ввод.
-                _ => self.escape = Escape::Off,
-            },
-            Escape::Csi => match byte {
-                // Параметры и промежуточные байты.
-                0x20..=0x3f => return Key::Nothing,
-                // Финальный байт — конец последовательности.
-                0x40..=0x7e => {
-                    self.escape = Escape::Off;
-                    return Key::Nothing;
-                }
-                // Оборванная последовательность: управляющий байт —
-                // обычный ввод.
-                _ => self.escape = Escape::Off,
-            },
-            Escape::Ss3 => {
-                self.escape = Escape::Off;
-                return Key::Nothing;
-            }
+        // Байт, поглощённый последовательностью, — не ввод, и `\r` в нём не
+        // склеивается со следующим `\n`.
+        let after_cr = core::mem::take(&mut self.after_cr);
+        if self.escaped(byte) {
+            return Key::Nothing;
         }
+        self.after_cr = byte == b'\r';
         match byte {
             0x1b => {
                 self.escape = Escape::Started;
@@ -188,9 +164,14 @@ impl Editor {
                 Key::Cancel
             }
             // Ctrl-D: на набранной строке не обрывает сессию.
-            0x04 if self.line.is_empty() && !self.overflow => Key::Eof,
+            0x04 if self.line.is_empty() => Key::Eof,
             // Backspace/DEL.
-            0x08 | 0x7f if self.line.pop().is_some() => Key::Erase,
+            0x08 | 0x7f if self.line.pop().is_some() => {
+                if self.line.is_empty() {
+                    self.overflow = false;
+                }
+                Key::Erase
+            }
             c @ 0x20..0x7f => {
                 if self.line.push(char::from(c)).is_ok() {
                     Key::Echo(c)
@@ -202,6 +183,23 @@ impl Editor {
             }
             _ => Key::Nothing,
         }
+    }
+
+    /// Поглощает байт управляющей последовательности; `false` — байт —
+    /// обычный ввод.
+    fn escaped(&mut self, byte: u8) -> bool {
+        let (consumed, next) = match (self.escape, byte) {
+            // `ESC [`, затем параметры и промежуточные байты CSI.
+            (Escape::Started, b'[') | (Escape::Csi, 0x20..=0x3f) => (true, Escape::Csi),
+            (Escape::Started, b'O') => (true, Escape::Ss3),
+            // Финальный байт CSI и байт за SS3 — конец последовательности.
+            (Escape::Csi, 0x40..=0x7e) | (Escape::Ss3, 0x20..=0x7e) => (true, Escape::Off),
+            // Вне последовательности; одиночный ESC отброшен, а управляющий
+            // байт обрывает начатую — дальше обычный ввод.
+            _ => (false, Escape::Off),
+        };
+        self.escape = next;
+        consumed
     }
 
     /// Новая строка.
