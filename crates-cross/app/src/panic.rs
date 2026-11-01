@@ -64,5 +64,5 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
         panic_persist::report_panic_info(info);
         defmt::error!("panic: {}", defmt::Display2Format(info));
     }
-    bsp::reset::Reboot.reboot()
+    bsp::reset::Reboot.reset_now()
 }

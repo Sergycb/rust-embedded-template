@@ -14,13 +14,17 @@ pub struct Reboot;
 
 impl Reboot {
     /// Сбрасывает МК; не возвращается.
+    ///
+    /// Своё имя, а не `reboot`: собственный метод с именем трейтового
+    /// `ports::Reboot::reboot` перекрыл бы его при вызове (`docs/architecture.md`,
+    /// «Дублировать методы портов собственными нельзя»).
 {%- if cache contains "scb_d" %}
     #[expect(
         unsafe_code,
         reason = "периферия ядра берётся через `steal()`: сброс — последнее, что выполняет прошивка"
     )]
 {%- endif %}
-    pub fn reboot(self) -> ! {
+    pub fn reset_now(self) -> ! {
 {%- if cache contains "scb_d" %}
         // SAFETY: после сброса ничего не выполняется, владельцу `Peripherals`
         // конфликтовать не с кем.
@@ -34,7 +38,7 @@ impl Reboot {
 
 impl ports::Reboot for Reboot {
     fn reboot(&mut self) -> ! {
-        Reboot::reboot(*self)
+        self.reset_now()
     }
 }
 {%- endif %}

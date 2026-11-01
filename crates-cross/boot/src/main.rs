@@ -247,5 +247,5 @@ fn main() -> ! {
 /// некому — дамп разбирает только `app`.
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo) -> ! {
-    bsp::reset::Reboot.reboot()
+    bsp::reset::Reboot.reset_now()
 }
