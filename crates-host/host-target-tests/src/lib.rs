@@ -43,7 +43,7 @@ use std::{
 // {%- endif %}
 
 use micropb::{MessageDecode, MessageEncode, PbEncoder};
-use proto::{Get, Request, Request_, Response, Response_, heapless};
+use proto::{Get, Request, Request_, Response, Response_};
 
 /// Порт узла protobuf по сети — `PORT` модулей `link::tcp` и `link::udp` прошивки.
 const NET_PORT: u16 = 5000;
@@ -346,7 +346,7 @@ impl Device {
     pub fn start(&mut self, len: usize, signature: &[u8], slow: Duration) -> io::Result<Outcome> {
         let start = proto::OtaStart {
             len: u32::try_from(len).map_err(io::Error::other)?,
-            signature: heapless::Vec::from_slice(signature)
+            signature: proto::heapless::Vec::from_slice(signature)
                 .map_err(|err| io::Error::other(format!("подпись: {err:?}")))?,
         };
         self.call(Request_::Command::OtaStart(start), slow)
@@ -370,7 +370,7 @@ impl Device {
         }
         for (index, data) in image.chunks(proto::OTA_CHUNK_BYTES).enumerate() {
             let chunk = proto::OtaChunk {
-                data: heapless::Vec::from_slice(data)
+                data: proto::heapless::Vec::from_slice(data)
                     .map_err(|err| io::Error::other(format!("кусок: {err:?}")))?,
                 offset: u32::try_from(index * proto::OTA_CHUNK_BYTES).map_err(io::Error::other)?,
             };
