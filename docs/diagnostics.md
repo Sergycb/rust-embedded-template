@@ -37,9 +37,8 @@ item» (или «`#[panic_handler]` function required» — если не ост
 
 ## Регион `PANIC`
 
-Отрезан от конца RAM при генерации (`chip-data-gen`, `PANIC_FRACTION`/`PANIC_MIN`/
-`PANIC_MAX`), адресуется
-символами `_panic_dump_start`/`_panic_dump_end` из `memory.x` — без секции: секция с
+Отрезан от конца RAM при генерации (регион `PANIC` в `crates-cross/app/memory.x`),
+адресуется символами `_panic_dump_start`/`_panic_dump_end` из `memory.x` — без секции: секция с
 VMA у верхней границы RAM убеждает `flip-link`, что двигать стек некуда, и прошивка
 уходит в HardFault на первом же `push`. Формат записи — `panic-persist`: магия
 `0x0FACADE0` по смещению 0, длина по 4, байты сообщения с 8; его же читает
