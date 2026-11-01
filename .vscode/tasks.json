@@ -14,7 +14,7 @@
 			"type": "shell",
 			"command": "cargo",
 			"args": ["xtask", "test", "all"],
-			"group": { "kind": "test", "isDefault": true },
+			"group": "test",
 			"problemMatcher": ["$rustc"]
 		},
 		{
@@ -22,7 +22,7 @@
 			"type": "shell",
 			"command": "cargo",
 			"args": ["xtask", "test", "host"],
-			"group": "test",
+			"group": { "kind": "test", "isDefault": true },
 			"problemMatcher": ["$rustc"]
 		},
 		{
