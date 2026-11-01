@@ -90,6 +90,17 @@ ignore = [
 	# Отчёт о покрытии для Coverage Gutters (задача `coverage: lcov`) — та же
 	# причина: неотслеживаемый файл в корне, а копирует его `--path .`.
 	"lcov.info",
+	# Секреты проекта, которые `cargo xtask` создаёт в корне. В git шаблона их
+	# нет, но из рабочей копии, где они появились, `--path .` унёс бы их в
+	# проект: ключ подписи мейнтейнера стал бы корнем доверия пользователя,
+	# токен и пароли — общими у всех проектов. Что их здесь нет, проверяет
+	# `template-check` (`SECRETS`).
+	"ota-signing-key.bin",
+	"ota-public-key.bin",
+	"rest-token.txt",
+	"ssh-password.txt",
+	"ssh-host-key.bin",
+	"mqtt.toml",
 ]
 
 [placeholders]
