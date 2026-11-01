@@ -151,8 +151,8 @@ type Signature = [u8; SIGNATURE_BYTES];
 //
 // Без `watchdog:` намеренно — см. `task`.
 //
-// `ready` — образ подтверждён (или попытка была), `STATE` больше не стирается
-// при старте (см. `begin`){% if has_usb == "true" %}; ждёт этого узел `USB`{% endif %}.
+// `ready` — образ подтверждён (или попытка была): стирания `STATE` при старте
+// в этом запуске уже не будет (см. `begin`){% if has_usb == "true" %}; ждёт этого узел `USB`{% endif %}.
 supervisor::supervisor_fragment! {
     name: OTA_FRAG<F, R, const PARKED: usize>;
     boot: inputs: struct $crate::ota::OtaWiring;

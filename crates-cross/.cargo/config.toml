@@ -10,9 +10,9 @@ rustflags = [
 	"linker=flip-link",
 	"-C",
 	"link-arg=-Tlink.x",
-	# defmt всегда используется (см. docs/conventions.md, "Feature-flag конвенции") —
-	# в отличие от прежней схемы с log-only release-профилем, безусловно
-	# нужен и в build.rs подставлять его больше незачем.
+	# defmt используется всегда, в обоих профилях (см. docs/conventions.md,
+	# "Feature-flag конвенции"), поэтому скрипт линкера defmt — здесь
+	# безусловно, а не подставляется из build.rs.
 	"-C",
 	"link-arg=-Tdefmt.x",
 	"-C",

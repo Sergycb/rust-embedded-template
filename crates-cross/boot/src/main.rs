@@ -174,8 +174,8 @@ fn main() -> ! {
     let config = BootLoaderConfig::from_linkerfile_blocking(&flash, &dfu, {% if state_paged == "true" %}&state{% else %}&flash{% endif %});
 {%- elsif swap_paged == "true" %}
     // `ACTIVE` и `DFU` — со страницей обмена `SWAP_PAGE_SIZE`, крупнее физической
-    // страницы флеша (см. её описание): один мьютекс на оба раздела, как и
-    // раньше у цельного `Flash`.
+    // страницы флеша (см. её описание): один мьютекс на оба раздела — они
+    // делят один контроллер `Flash`.
     let swap = Mutex::new(RefCell::new(ErasePage::<_, SWAP_PAGE_SIZE>::new(
         BlockingPartition::new(&flash, 0, FLASH_BYTES),
     )));

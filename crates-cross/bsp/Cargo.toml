@@ -157,6 +157,6 @@ watchdog = { workspace = true }
 embassy-time = { workspace = true }
 {%- endif %}
 # Безусловно, не за фичей: `log` в прошивке не используется вовсе, поэтому
-# фичам `defmt`/`log` у bsp (и мосту `defmt-or-log`) выбирать больше не из
+# фичам `defmt`/`log` у bsp (и мосту `defmt-or-log`) выбирать не из
 # чего — defmt включён в обоих профилях, как в `app` и `boot`.
 defmt = { workspace = true }
