@@ -303,6 +303,22 @@ mod tests {
 
         super::image_from_segments(&segments).expect_err("наложение должно отвергаться");
     }
+
+    /// Образ, начавшийся не с `ORIGIN` раздела, к прошивке не допускается —
+    /// ни на байт раньше, ни позже.
+    #[test]
+    fn the_image_base_must_be_the_partition_origin() {
+        let active = crate::memory::Region {
+            origin: 0x0800_8000,
+            length: 0x1_0000,
+        };
+
+        super::ensure_image_base(0x0800_8000, "ACTIVE", &active).expect("база совпала");
+        for base in [0x0800_0000, 0x0800_7FFF, 0x0800_8001] {
+            super::ensure_image_base(base, "ACTIVE", &active)
+                .expect_err(&format!("{base:#x} — не ORIGIN(ACTIVE)"));
+        }
+    }
     // {%- if ota == "true" %}
 
     /// Формула та же, что в `domain::ota::version::pack`, но зависимости на

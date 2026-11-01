@@ -53,7 +53,7 @@ pub fn panic_info(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
         );
     };
 
-    if magic != PANIC_MAGIC {
+    let Some(length) = message_length(magic, length, panic.length)? else {
         println!("дампа нет: в начале PANIC не {PANIC_MAGIC:#010x}, а {magic:#010x}.");
         // Сырой ответ рядом с разобранным: обрезанное слово (`0FACADE` вместо
         // `0FACADE0`) разбирается в другое число, и без исходной строки «плата не
@@ -64,30 +64,50 @@ pub fn panic_info(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
              причина ушла в defmt-лог того запуска."
         );
         return Ok(());
-    }
+    };
 
-    // Восемь байт заголовка не входят в сообщение. Длину всё равно
-    // проверяем: в регионе могло оказаться что угодно, а `probe-rs read` с
-    // мусорным числом слов ждал бы долго и молча.
-    let available = panic.length.saturating_sub(8);
+    let start = format!("{:#x}", panic.origin + 8);
+    let words = length.to_string();
+    let body = cmd!(sh, "probe-rs read --chip {CHIP} b8 {start} {words}").read()?;
+    // Строго, как заголовок: молчаливый `0x00` вместо непрочитанного слова дал бы
+    // обрезанное сообщение паники с ВЫГЛЯДЯЩИМ выводом, а это худший вид
+    // ответа — читатель поверит ему и ищет не ту причину.
+    let words = parse_words(&body).with_context(|| {
+        format!("не разобрал вывод `probe-rs read` ({body:?}) — ожидался голый hex-список байт")
+    })?;
+    let bytes = message_bytes(words, length)?;
+
+    let dump = String::from_utf8_lossy(&bytes);
+    println!("причина последнего падения ({} байт):", bytes.len());
+    println!("{dump}");
+
+    Ok(())
+}
+
+/// Длина сообщения из заголовка `PANIC`: `None` — магии нет, дампа нет;
+/// отказ — магия есть, а длина в регион `region_len` не помещается.
+///
+/// Восемь байт заголовка не входят в сообщение. Длину всё равно проверяем: в
+/// регионе могло оказаться что угодно, а `probe-rs read` с мусорным числом
+/// слов ждал бы долго и молча.
+fn message_length(magic: u32, length: u32, region_len: u64) -> Result<Option<u32>, anyhow::Error> {
+    if magic != PANIC_MAGIC {
+        return Ok(None);
+    }
+    let available = region_len.saturating_sub(8);
     if length == 0 || u64::from(length) > available {
         anyhow::bail!(
             "магия на месте, но длина сообщения ({length}) не помещается в PANIC ({available} \
              байт) — дамп повреждён"
         );
     }
+    Ok(Some(length))
+}
 
-    let start = format!("{:#x}", panic.origin + 8);
-    let wanted = length;
-    let words = wanted.to_string();
-    let body = cmd!(sh, "probe-rs read --chip {CHIP} b8 {start} {words}").read()?;
-    // Строго, как заголовок: молчаливый `0x00` вместо непрочитанного слова дал бы
-    // обрезанное сообщение паники с ВЫГЛЯДЯЩИМ выводом, а это худший вид
-    // ответа — читатель поверит ему и ищет не ту причину.
-    let bytes = parse_words(&body)
-        .with_context(|| {
-            format!("не разобрал вывод `probe-rs read` ({body:?}) — ожидался голый hex-список байт")
-        })?
+/// Байты сообщения из слов `probe-rs read b8`: каждое — байт, и их ровно
+/// `wanted`.
+fn message_bytes(words: Vec<u32>, wanted: u32) -> Result<Vec<u8>, anyhow::Error> {
+    let bytes = words
         .into_iter()
         .map(|byte| {
             u8::try_from(byte).with_context(|| {
@@ -100,12 +120,7 @@ pub fn panic_info(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
         "из PANIC прочитано {} байт вместо {wanted} — дамп собран не полностью",
         bytes.len(),
     );
-
-    let dump = String::from_utf8_lossy(&bytes);
-    println!("причина последнего падения ({} байт):", bytes.len());
-    println!("{dump}");
-
-    Ok(())
+    Ok(bytes)
 }
 
 /// Слова из вывода `probe-rs read`; `None` — вывод не разобран.
@@ -175,6 +190,32 @@ mod tests {
             super::parse_words("24077e08: 70 61\n24077e10: 6e\n"),
             Some(vec![0x70, 0x61, 0x6e])
         );
+    }
+
+    /// Заголовок `PANIC`: без магии — дампа нет; с магией длина обязана
+    /// быть ненулевой и помещаться в регион за восемью байтами заголовка.
+    #[test]
+    fn decodes_the_panic_header() {
+        use super::{PANIC_MAGIC, message_length};
+
+        assert_eq!(message_length(0, 5, 1024).unwrap(), None);
+        assert_eq!(message_length(PANIC_MAGIC >> 4, 5, 1024).unwrap(), None);
+        assert_eq!(message_length(PANIC_MAGIC, 5, 1024).unwrap(), Some(5));
+        assert_eq!(message_length(PANIC_MAGIC, 1016, 1024).unwrap(), Some(1016));
+        message_length(PANIC_MAGIC, 1017, 1024).expect_err("длина за концом региона");
+        message_length(PANIC_MAGIC, 0, 1024).expect_err("пустое сообщение");
+        message_length(PANIC_MAGIC, 1, 4).expect_err("регион короче заголовка");
+    }
+
+    /// Тело дампа: слова — байты, и их ровно столько, сколько в заголовке.
+    #[test]
+    fn decodes_the_panic_message() {
+        use super::message_bytes;
+
+        assert_eq!(message_bytes(vec![0x70, 0x61], 2).unwrap(), b"pa");
+        message_bytes(vec![0x70], 2).expect_err("неполное тело");
+        message_bytes(vec![0x70, 0x61, 0x6e], 2).expect_err("лишние байты");
+        message_bytes(vec![0x170, 0x61], 2).expect_err("слово — не байт");
     }
 
     /// Пропускается только адрес строки: любое другое слово с двоеточием или

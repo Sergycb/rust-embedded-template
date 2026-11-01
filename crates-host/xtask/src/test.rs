@@ -277,3 +277,22 @@ fn run_target_tests(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     cmd!(sh, "cargo test").run()?;
     Ok(())
 }
+// {%- if ota == "true" and ota_store != "external" %}
+
+#[cfg(test)]
+mod tests {
+    /// Байты инертного образа: вершина RAM — стек, обработчик сброса сразу за
+    /// таблицей с битом Thumb, затем `b .`.
+    #[test]
+    fn the_inert_image_starts_and_spins() {
+        assert_eq!(
+            super::inert_image(0x0800_8000, 0x2002_0000),
+            [
+                0x00, 0x00, 0x02, 0x20, // SP = 0x2002_0000
+                0x09, 0x80, 0x00, 0x08, // сброс = 0x0800_8008 | 1
+                0xFE, 0xE7, // b .
+            ]
+        );
+    }
+}
+// {%- endif %}
