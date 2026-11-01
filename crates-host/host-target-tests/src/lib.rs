@@ -507,7 +507,9 @@ fn target_from_env() -> Result<Option<Target>, String> {
         };
         return Ok(Some(Target::Serial { port, baud }));
         // {%- else %}
-        //{{newline}}        return Err(format!("HOST_TARGET_PORT={port}: protobuf по UART или USB в проекте нет — задайте HOST_TARGET_ADDR"));
+        //{{newline}}        return Err(format!(
+        //{{newline}}            "HOST_TARGET_PORT={port}: protobuf по UART или USB в проекте нет — задайте HOST_TARGET_ADDR"
+        //{{newline}}        ));
         // {%- endif %}
     }
     Ok(None)
@@ -547,6 +549,15 @@ fn open(target: &Target) -> io::Result<Box<dyn Channel>> {
             Box::new(Framed::new(stream))
         }
         // {%- endif %}
+        // {%- if protobuf_serial == "true" %}
+        Target::Serial { port, baud } => {
+            let wire = serialport::new(port, *baud)
+                .timeout(REPLY_TIMEOUT)
+                .open()
+                .map_err(io::Error::from)?;
+            Box::new(Framed::new(wire))
+        }
+        // {%- endif %}
         Target::Udp(addr) => {
             let socket = UdpSocket::bind(if addr.is_ipv4() {
                 "0.0.0.0:0"
@@ -556,14 +567,6 @@ fn open(target: &Target) -> io::Result<Box<dyn Channel>> {
             socket.connect(addr)?;
             Box::new(Datagram(socket))
         }
-        // {%- if protobuf_serial == "true" %}
-        Target::Serial { port, baud } => {
-            let wire = serialport::new(port, *baud)
-                .timeout(REPLY_TIMEOUT)
-                .open()
-                .map_err(io::Error::from)?;
-            Box::new(Framed::new(wire))
-        } // {%- endif %}
     })
 }
 // {%- endif %}
