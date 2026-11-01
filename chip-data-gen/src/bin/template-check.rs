@@ -1520,7 +1520,7 @@ fn find_orphan_modules(project: &Path, found: &mut Vec<String>) -> anyhow::Resul
             || inner[..inner.len() - 1]
                 .iter()
                 .any(|dir| matches!(*dir, "bin" | "tests" | "examples" | "benches"))
-            || (inner.len() == 1 && matches!(stem, "lib" | "main"))
+            || (inner.len() == 1 && matches!(stem, "lib" | "main" | "mod"))
         {
             return Ok(());
         }
