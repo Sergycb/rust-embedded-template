@@ -1,19 +1,28 @@
 //! Команды консоли: разбор строки, выполнение, вывод в канал и интерактивный
 //! `shell`.
 
+use defmt_or_log::info;
 use embassy_net::Stack;
-use embassy_time::Instant;
+use embassy_time::{Duration, Instant, with_timeout};
 use embedded_io_async::{Read, Write};
-use sunset_async::ChanInOut;
 // {%- if ota == "true" %}
 use ports::{OtaCommand, Progress};
 
 use crate::ota::OtaClient;
 // {%- endif %}
 use crate::device::{DeviceInfo, PANIC_BRIEF};
+use crate::ssh::session::CLOSE_WAIT;
 
 /// Длина строки команды.
 pub(super) const LINE: usize = 64;
+
+/// Сколько `shell` ждёт ввода, прежде чем закрыть сессию. Соединение у узла
+/// одно, а живой, но молчащий клиент (забытое окно терминала) держал бы его
+/// бессрочно: пробы keep-alive он подтверждает, и `IDLE` сокета не
+/// срабатывает, а keep-alive самого SSH до консоли не доходит. 15 минут —
+/// как `TMOUT=900` в рекомендациях CIS для оболочки: паузу, пока человек
+/// читает или отвлёкся, это переживает, брошенную консоль — отпускает.
+pub(super) const SHELL_IDLE: Duration = Duration::from_secs(15 * 60);
 
 /// Самый длинный ответ на `info`, байт: 256 — прошлые строки с запасом под
 /// длинную версию, 27 — `reset independent_watchdog`, остальное — строка
@@ -72,6 +81,132 @@ impl<W: Write> Out<W> {
             self.io.write_all(line.as_bytes()).await?;
         }
         Ok(())
+    }
+}
+
+/// Что консоли сделать с принятым байтом.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Key {
+    /// Ничего: байт не меняет строку.
+    Nothing,
+    /// Байт принят в строку — эхо им же.
+    Echo(u8),
+    /// Последний символ стёрт — стереть его и на экране.
+    Erase,
+    /// Ctrl-C: строка сброшена.
+    Cancel,
+    /// Конец строки: выполнить команду.
+    Enter(Command),
+    /// Ctrl-D на пустой строке: конец сессии.
+    Eof,
+}
+
+/// Где внутри управляющей последовательности терминала стоит ввод.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum Escape {
+    /// Вне последовательности.
+    #[default]
+    Off,
+    /// После ESC.
+    Started,
+    /// Внутри CSI (`ESC [` … финальный байт): стрелки, Home, Delete.
+    Csi,
+    /// После `ESC O` — SS3, ещё один байт: стрелки и F1–F4 в режиме
+    /// приложения.
+    Ss3,
+}
+
+/// Строка, которую набирает терминал `shell`: байт за байтом, без вывода —
+/// что показать, решает вызывающий по [`Key`].
+#[derive(Debug, Default)]
+pub(super) struct Editor {
+    line: heapless::String<LINE>,
+    /// Набрано больше [`LINE`]: лишнее не принято, и по Enter строка —
+    /// [`Command::Unknown`], а не обрезанный префикс: из длинной строки
+    /// иначе собиралась бы другая команда (`reboot` с `yes` на 64-м байте).
+    /// Сбрасывают Enter, Ctrl-C и строка, стёртая до пустой; стёртый хвост —
+    /// нет: потерянных символов он не возвращает, а начало на экране
+    /// осталось от той же длинной строки.
+    overflow: bool,
+    /// Прошлый байт — `\r`: `\r\n` — один конец строки, а не строка и
+    /// пустая за ней.
+    after_cr: bool,
+    escape: Escape,
+}
+
+impl Editor {
+    /// Принимает байт от терминала.
+    pub(super) fn feed(&mut self, byte: u8) -> Key {
+        // Байт, поглощённый последовательностью, — не ввод, и `\r` в нём не
+        // склеивается со следующим `\n`.
+        let after_cr = core::mem::take(&mut self.after_cr);
+        if self.escaped(byte) {
+            return Key::Nothing;
+        }
+        self.after_cr = byte == b'\r';
+        match byte {
+            0x1b => {
+                self.escape = Escape::Started;
+                Key::Nothing
+            }
+            b'\n' if after_cr => Key::Nothing,
+            b'\r' | b'\n' => {
+                let command = if self.overflow {
+                    Command::Unknown
+                } else {
+                    parse(&self.line)
+                };
+                self.reset();
+                Key::Enter(command)
+            }
+            // Ctrl-C.
+            0x03 => {
+                self.reset();
+                Key::Cancel
+            }
+            // Ctrl-D: на набранной строке не обрывает сессию.
+            0x04 if self.line.is_empty() => Key::Eof,
+            // Backspace/DEL.
+            0x08 | 0x7f if self.line.pop().is_some() => {
+                if self.line.is_empty() {
+                    self.overflow = false;
+                }
+                Key::Erase
+            }
+            c @ 0x20..0x7f => {
+                if self.line.push(char::from(c)).is_ok() {
+                    Key::Echo(c)
+                } else {
+                    // Не принят и не отображается.
+                    self.overflow = true;
+                    Key::Nothing
+                }
+            }
+            _ => Key::Nothing,
+        }
+    }
+
+    /// Поглощает байт управляющей последовательности; `false` — байт —
+    /// обычный ввод.
+    fn escaped(&mut self, byte: u8) -> bool {
+        let (consumed, next) = match (self.escape, byte) {
+            // `ESC [`, затем параметры и промежуточные байты CSI.
+            (Escape::Started, b'[') | (Escape::Csi, 0x20..=0x3f) => (true, Escape::Csi),
+            (Escape::Started, b'O') => (true, Escape::Ss3),
+            // Финальный байт CSI и байт за SS3 — конец последовательности.
+            (Escape::Csi, 0x40..=0x7e) | (Escape::Ss3, 0x20..=0x7e) => (true, Escape::Off),
+            // Вне последовательности; одиночный ESC отброшен, а управляющий
+            // байт обрывает начатую — дальше обычный ввод.
+            _ => (false, Escape::Off),
+        };
+        self.escape = next;
+        consumed
+    }
+
+    /// Новая строка.
+    fn reset(&mut self) {
+        self.line.clear();
+        self.overflow = false;
     }
 }
 
@@ -148,42 +283,42 @@ pub(super) async fn run<W: Write>(
     Ok(true)
 }
 
-/// Консоль `shell`: строка за строкой до `exit`, Ctrl-D или EOF.
-pub(super) async fn shell(
-    io: ChanInOut<'_>,
-    device: &Device<'_>,
-) -> Result<(), sunset_async::sunset::Error> {
+/// Консоль `shell`: строка за строкой до `exit`, Ctrl-D, EOF или
+/// [`SHELL_IDLE`] без ввода.
+pub(super) async fn shell<IO: Read + Write>(io: IO, device: &Device<'_>) -> Result<(), IO::Error> {
     let mut out = Out { io, crlf: true };
     out.text("console, 'help' for commands\n> ").await?;
-    let mut line = heapless::String::<LINE>::new();
+    let mut editor = Editor::default();
     let mut byte = [0];
-    let mut after_cr = false;
     loop {
-        if out.io.read(&mut byte).await? == 0 {
+        // Брошенное по сроку чтение ничего нужного не теряет: сессия
+        // кончается.
+        let Ok(read) = with_timeout(SHELL_IDLE, out.io.read(&mut byte)).await else {
+            info!(
+                "ssh: консоль молчала {} с — сессия закрыта",
+                SHELL_IDLE.as_secs()
+            );
+            // Клиент, переставший читать канал, не держит сессию и
+            // прощанием: окно, забитое прежним выводом, ждалось бы вечно.
+            let farewell = out.text("\nidle timeout, session closed\n");
+            return with_timeout(CLOSE_WAIT, farewell).await.unwrap_or(Ok(()));
+        };
+        if read? == 0 {
             return Ok(());
         }
-        // `\r\n` — один конец строки, а не строка и пустая за ней.
-        let skip = after_cr && byte[0] == b'\n';
-        after_cr = byte[0] == b'\r';
-        if skip {
-            continue;
-        }
-        match byte[0] {
-            // Ctrl-D.
-            0x04 => return Ok(()),
-            b'\r' | b'\n' => {
+        match editor.feed(byte[0]) {
+            Key::Nothing => {}
+            Key::Echo(c) => out.io.write_all(&[c]).await?,
+            Key::Erase => out.io.write_all(b"\x08 \x08").await?,
+            Key::Cancel => out.text("^C\n> ").await?,
+            Key::Enter(command) => {
                 out.text("\n").await?;
-                if !run(parse(&line), &mut out, device).await? {
+                if !run(command, &mut out, device).await? {
                     return Ok(());
                 }
                 out.text("> ").await?;
-                line.clear();
             }
-            // Backspace/DEL.
-            0x08 | 0x7f if line.pop().is_some() => out.io.write_all(b"\x08 \x08").await?,
-            // Длиннее строки — символ не принимается и не отображается.
-            c @ 0x20..0x7f if line.push(char::from(c)).is_ok() => out.io.write_all(&byte).await?,
-            _ => {}
+            Key::Eof => return Ok(()),
         }
     }
 }

@@ -23,7 +23,8 @@
 //! платой при первом старте и хранимый в разделе настроек (`Stored`). Он не
 //! меняется от сброса к сбросу, и клиент один раз запоминает его в
 //! `known_hosts`. Попыток входа `sunset` не считает — их ограничивает узел: шесть
-//! неудач и 30 секунд на вход на соединение.
+//! неудач и 30 секунд на вход на соединение. Консоль без ввода закрывается через
+//! 15 минут: соединение у узла одно.
 //!
 //! Чего в `sunset` 0.6 нет: `exit-status` (OpenSSH выходит с кодом 255) и
 //! EOF/CLOSE канала по инициативе сервера — оба `sunset` шлёт только эхом на
@@ -184,10 +185,18 @@ pub async fn task<K: HostKey>(mut ctx: SshCtx<'_, K>) {
 mod tests {
     //! Тесты узла `SSH`: ключ пользователя, вход, команды, `info`, ключ хоста.
 
+    use core::convert::Infallible;
+    use core::pin::pin;
+    use core::task::{Context, Poll, Waker};
+
+    use embassy_time::{Duration, MockDriver};
+
     use crate::device::{DeviceInfo, PANIC_BRIEF};
-    use crate::ssh::console::{INFO_TEXT, parse, write_info};
+    use crate::ssh::console::{
+        Device, Editor, INFO_TEXT, Key, LINE, SHELL_IDLE, parse, shell, write_info,
+    };
     use crate::ssh::login::Access;
-    use crate::ssh::session::tries_exhausted;
+    use crate::ssh::session::{CLOSE_WAIT, tries_exhausted};
     use crate::ssh::{Command, Login, USER, ed25519_public_key};
     // {%- if ssh_host_key == "config" %}
     use crate::ssh::{HostKey, Stored};
@@ -226,6 +235,43 @@ mod tests {
         }
     }
     // {%- endif %}
+
+    /// Терминал, который молчит: чтение не кончается, вывод копится, пока в
+    /// окне канала есть место (`room` байт), дальше запись ждёт вечно.
+    struct Silent {
+        shown: Vec<u8>,
+        room: usize,
+    }
+
+    impl embedded_io_async::ErrorType for Silent {
+        type Error = Infallible;
+    }
+
+    impl embedded_io_async::Read for Silent {
+        async fn read(&mut self, _: &mut [u8]) -> Result<usize, Infallible> {
+            core::future::pending().await
+        }
+    }
+
+    impl embedded_io_async::Write for Silent {
+        async fn write(&mut self, buf: &[u8]) -> Result<usize, Infallible> {
+            if self.room == 0 {
+                core::future::pending::<()>().await;
+            }
+            let n = buf.len().min(self.room);
+            self.shown.extend_from_slice(&buf[..n]);
+            self.room -= n;
+            Ok(n)
+        }
+
+        #[expect(
+            clippy::unused_async_trait_impl,
+            reason = "сигнатуру задаёт трейт `Write`; у памяти нечего досылать"
+        )]
+        async fn flush(&mut self) -> Result<(), Infallible> {
+            Ok(())
+        }
+    }
 
     #[test]
     fn an_openssh_line_gives_the_raw_key() {
@@ -276,6 +322,24 @@ mod tests {
                 "{user} {password}"
             );
         }
+    }
+
+    /// Пустой пароль прошивки — не «пускать всех»: ни пустой пароль, ни
+    /// какой-либо другой, ни ключ не проходят.
+    #[test]
+    fn an_empty_password_lets_no_one_in() {
+        let empty = Access::new(Login::Password(""));
+        for password in ["", "s3cret"] {
+            assert!(
+                !empty.admits_password(|u| u == USER, |p| p == password),
+                "{password:?}"
+            );
+        }
+        let key = ed25519_public_key(KEY).expect("ключ разбирается");
+        assert_eq!(
+            empty.admits_key(Some(key), |_| Ok::<_, ()>(true)),
+            Ok(false)
+        );
     }
 
     /// По ключу пускает только ключ прошивки вместе с [`USER`]; при входе по
@@ -334,6 +398,209 @@ mod tests {
         assert_eq!(parse("reboot yes"), Command::Reboot { confirmed: true });
         assert_eq!(parse("reboot yes please"), Command::Unknown);
         // {%- endif %}
+    }
+
+    /// Что консоль делает с байтами `input`, без [`Key::Nothing`].
+    fn keys(editor: &mut Editor, input: &[u8]) -> Vec<Key> {
+        input
+            .iter()
+            .map(|&byte| editor.feed(byte))
+            .filter(|key| *key != Key::Nothing)
+            .collect()
+    }
+
+    /// Эхо каждого байта `text`.
+    fn echo(text: &str) -> impl Iterator<Item = Key> {
+        text.bytes().map(Key::Echo)
+    }
+
+    /// Правка строки: переводы строки, Backspace, управляющие
+    /// последовательности стрелок, Ctrl-C и Ctrl-D.
+    #[test]
+    fn the_editor_takes_only_what_it_shows() {
+        let cases: [(&[u8], Vec<Key>); 15] = [
+            (
+                b"help\r",
+                echo("help").chain([Key::Enter(Command::Help)]).collect(),
+            ),
+            // `\r\n` — один конец строки; `\r` и `\n` поодиночке — каждый.
+            (
+                b"help\r\n",
+                echo("help").chain([Key::Enter(Command::Help)]).collect(),
+            ),
+            (b"\r\r", vec![Key::Enter(Command::Empty); 2]),
+            (b"\n\n", vec![Key::Enter(Command::Empty); 2]),
+            (
+                b"inf\x08fo\x7f\x7fo\r",
+                echo("inf")
+                    .chain([Key::Erase])
+                    .chain(echo("fo"))
+                    .chain([Key::Erase; 2])
+                    .chain(echo("o"))
+                    .chain([Key::Enter(Command::Unknown)])
+                    .collect(),
+            ),
+            // Backspace на пустой строке не стирает приглашение.
+            (b"\x7f\r", vec![Key::Enter(Command::Empty)]),
+            // Стрелки и Ctrl-стрелки (CSI с параметрами) — ни в строку, ни
+            // в эхо.
+            (
+                b"\x1b[A\x1b[1;5Cinfo\x1b[D\r",
+                echo("info").chain([Key::Enter(Command::Info)]).collect(),
+            ),
+            // SS3 — стрелка в режиме приложения.
+            (
+                b"\x1bOAinfo\r",
+                echo("info").chain([Key::Enter(Command::Info)]).collect(),
+            ),
+            // Одиночный ESC отброшен, следующий байт — обычный ввод.
+            (
+                b"\x1binfo\r",
+                echo("info").chain([Key::Enter(Command::Info)]).collect(),
+            ),
+            // Оборванные CSI и SS3: перевод строки внутри — конец строки,
+            // и `\r\n` — всё так же один.
+            (
+                b"info\x1b[1\r\n",
+                echo("info").chain([Key::Enter(Command::Info)]).collect(),
+            ),
+            (
+                b"info\x1bO\r\n",
+                echo("info").chain([Key::Enter(Command::Info)]).collect(),
+            ),
+            // Ctrl-C сбрасывает набранное.
+            (
+                b"exi\x03info\r",
+                echo("exi")
+                    .chain([Key::Cancel])
+                    .chain(echo("info"))
+                    .chain([Key::Enter(Command::Info)])
+                    .collect(),
+            ),
+            (b"\x04", vec![Key::Eof]),
+            // Ctrl-D на набранной строке сессию не обрывает.
+            (
+                b"exit\x04\r",
+                echo("exit").chain([Key::Enter(Command::Exit)]).collect(),
+            ),
+            // Прочие управляющие байты не попадают ни в строку, ни в эхо.
+            (
+                b"in\tfo\x00\r",
+                echo("info").chain([Key::Enter(Command::Info)]).collect(),
+            ),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(
+                keys(&mut Editor::default(), input),
+                expected,
+                "{}",
+                input.escape_ascii()
+            );
+        }
+    }
+
+    /// Строка длиннее [`LINE`] — неизвестная команда, а не префикс: из
+    /// `reboot`, пробелов и `yes` на последних байтах собралась бы другая.
+    #[test]
+    fn an_overlong_line_is_no_command() {
+        let mut editor = Editor::default();
+        let mut long = b"reboot".to_vec();
+        long.resize(LINE - "yes".len(), b' ');
+        long.extend_from_slice(b"yes please");
+        let pressed = keys(&mut editor, &long);
+        // Лишнее не принимается и не отображается.
+        assert_eq!(pressed.len(), LINE);
+        assert!(pressed.iter().all(|key| matches!(key, Key::Echo(_))));
+        assert_eq!(keys(&mut editor, b"\r"), vec![Key::Enter(Command::Unknown)]);
+        // Стёртый хвост потерянного не возвращает.
+        keys(&mut editor, &long);
+        assert_eq!(
+            keys(&mut editor, b"\x7f\r"),
+            vec![Key::Erase, Key::Enter(Command::Unknown)]
+        );
+        // Enter и Ctrl-C начинают новую строку.
+        assert_eq!(
+            keys(&mut editor, b"info\r").last(),
+            Some(&Key::Enter(Command::Info))
+        );
+        keys(&mut editor, &long);
+        assert_eq!(
+            keys(&mut editor, b"\x03info\r").last(),
+            Some(&Key::Enter(Command::Info))
+        );
+        // Строка, стёртая до пустой, — тоже новая: что на экране, то и
+        // в ней, и Ctrl-D на ней завершает сессию.
+        keys(&mut editor, &long);
+        keys(&mut editor, &[0x7f; LINE]);
+        assert_eq!(
+            keys(&mut editor, b"info\r").last(),
+            Some(&Key::Enter(Command::Info))
+        );
+        keys(&mut editor, &long);
+        keys(&mut editor, &[0x08; LINE]);
+        assert_eq!(keys(&mut editor, b"\x04"), vec![Key::Eof]);
+        // Ровно `LINE` байт — ещё строка.
+        let mut full = b"info".to_vec();
+        full.resize(LINE, b' ');
+        full.push(b'\r');
+        assert_eq!(
+            keys(&mut editor, &full).last(),
+            Some(&Key::Enter(Command::Info))
+        );
+    }
+
+    /// Консоль без ввода закрывается через [`SHELL_IDLE`], не раньше, и
+    /// говорит клиенту почему; клиент, который не читает, прощание держит
+    /// не дольше [`CLOSE_WAIT`].
+    #[test]
+    fn a_silent_shell_closes_after_idle() {
+        const PROMPT: &str = "console, 'help' for commands\r\n> ";
+        const FAREWELL: &str = "\r\nidle timeout, session closed\r\n";
+        MockDriver::get().reset();
+        let ((stack, _), _) = adapters::fake::cable::pair();
+        let info = DeviceInfo {
+            version: "0.1.0",
+            commit: "abc",
+            chip: "STM32G071RB",
+            uid: [0; crate::device::UID_BYTES],
+            flash_size: 0,
+            sys_hz: None,
+            reset: "software",
+            last_panic: None,
+        };
+        let device = Device {
+            info: &info,
+            stack,
+            // {%- if ota == "true" %}
+            ota: crate::ota::tests::cmd().0,
+            // {%- endif %}
+        };
+        let mut cx = Context::from_waker(Waker::noop());
+
+        let mut reading = Silent {
+            shown: Vec::new(),
+            room: usize::MAX,
+        };
+        {
+            let mut console = pin!(shell(&mut reading, &device));
+            assert!(console.as_mut().poll(&mut cx).is_pending());
+            MockDriver::get().advance(SHELL_IDLE - Duration::from_secs(1));
+            assert!(console.as_mut().poll(&mut cx).is_pending());
+            MockDriver::get().advance(Duration::from_secs(1));
+            assert_eq!(console.as_mut().poll(&mut cx), Poll::Ready(Ok(())));
+        }
+        assert_eq!(reading.shown, format!("{PROMPT}{FAREWELL}").as_bytes());
+
+        let mut deaf = Silent {
+            shown: Vec::new(),
+            room: PROMPT.len(),
+        };
+        let mut console = pin!(shell(&mut deaf, &device));
+        assert!(console.as_mut().poll(&mut cx).is_pending());
+        MockDriver::get().advance(SHELL_IDLE);
+        assert!(console.as_mut().poll(&mut cx).is_pending());
+        MockDriver::get().advance(CLOSE_WAIT);
+        assert_eq!(console.as_mut().poll(&mut cx), Poll::Ready(Ok(())));
     }
 
     #[test]
@@ -396,16 +663,18 @@ mod tests {
         assert_eq!(Stored(Memory(stored.0.0.clone())).seed().await, first);
     }
 
-    /// Ключ не той длины заменяется новым и записывается; раздел, который не
-    /// прочитался (здесь — значение длиннее буфера), не перезаписывается:
-    /// сбой мог быть временным.
+    /// Ключ не той длины — короче или длиннее 32 байт — заменяется новым и
+    /// записывается; раздел, который не прочитался (здесь — значение длиннее
+    /// буфера чтения), не перезаписывается: сбой мог быть временным.
     #[tokio::test]
     async fn only_a_missing_key_is_overwritten() {
-        let mut short = Stored(Memory(Some(vec![1; 16])));
-        let seed = short.seed().await;
-        assert_eq!(short.0.0.as_deref(), Some(&seed[..]));
+        for len in [16, 33, 64] {
+            let mut wrong = Stored(Memory(Some(vec![1; len])));
+            let seed = wrong.seed().await;
+            assert_eq!(wrong.0.0.as_deref(), Some(&seed[..]), "{len} байт");
+        }
 
-        let unreadable = vec![2; 64];
+        let unreadable = vec![2; 200];
         let mut broken = Stored(Memory(Some(unreadable.clone())));
         broken.seed().await;
         assert_eq!(broken.0.0, Some(unreadable));
