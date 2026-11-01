@@ -2651,7 +2651,6 @@ if !has.can {
 // `pub use`, зависимости, фичи) вырезает Liquid в комментариях.
 if !on.modbus {
     file::delete("crates-host/ports/src/modbus.rs");
-    file::delete("crates-host/ports/src/modbus");
     file::delete("crates-host/adapters/src/modbus.rs");
     file::delete("crates-host/adapters/src/modbus");
     file::delete("crates-host/domain/src/modbus.rs");
@@ -2864,7 +2863,6 @@ variable::set("ota_cmd_clients", (protocol_clients
 // тестами и `pub mod eeprom;` (закрыт тем же условием в lib.rs) — мусор.
 if variable::get("config_store") != "eeprom" {
     file::delete("crates-host/adapters/src/eeprom.rs");
-    file::delete("crates-host/ports/src/eeprom.rs");
 }
 
 // Драйвер внешней флеши в bsp — только когда на ней что-то лежит: разделы

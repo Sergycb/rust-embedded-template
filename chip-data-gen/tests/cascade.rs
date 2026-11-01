@@ -32,6 +32,12 @@ const SSH_KEY: &str =
 
 const NO_RAM: &str = "DOES NOT FIT in RAM";
 
+/// Ответы, с которыми ищется чип для `marks_are_recomputed_after_each_toggle` и
+/// идёт сам тест. Без графа: с ответами по умолчанию (OTA и граф) нужного окна RAM
+/// нет ни у одного чипа с USB, UART и CAN — резерв стека с OTA (`STACK_EXTRA.ota`)
+/// сдвинул его мимо 16 KiB у STM32F072, а без OTA база мала для них же.
+const MARKS_DEFINES: &[(&str, &str)] = &[("graph", "no")];
+
 /// Скрипт хука и таблицы, которые он импортирует из `chip-data/`.
 struct Script {
     ast: AST,
@@ -1528,7 +1534,6 @@ fn no_protocol_by_default() {
         "crates-host/canopen",
         "crates-host/ports/src/link.rs",
         "crates-host/ports/src/modbus.rs",
-        "crates-host/ports/src/modbus",
         "crates-host/ports/src/can.rs",
         "crates-host/adapters/src/modbus",
         "crates-host/adapters/src/cobs.rs",
@@ -1590,7 +1595,6 @@ fn protocol_over_uart_keeps_the_serial_module() {
             ("crates-host/adapters/src/cobs.rs", protocol == "protobuf"),
             ("crates-host/domain/src/modbus.rs", protocol == "modbus"),
             ("crates-host/ports/src/modbus.rs", protocol == "modbus"),
-            ("crates-host/ports/src/modbus", protocol == "modbus"),
             // Кадровый канал нужен обоим: узел протокола `domain::server` —
             // над `FrameLink` и у protobuf, и у Modbus slave.
             ("crates-host/ports/src/link.rs", true),
@@ -1779,7 +1783,6 @@ fn protocol_over_network_keeps_the_net_stack() {
             "crates-host/adapters/src/net",
             "crates-host/domain/src/net.rs",
             "crates-host/domain/src/modbus.rs",
-            "crates-host/ports/src/modbus",
         ] {
             assert!(
                 !result.deleted.iter().any(|path| path == kept),
@@ -5038,12 +5041,6 @@ fn transport_ram_costs() -> HashMap<String, i64> {
     }
     worst
 }
-
-/// Ответы, с которыми ищется чип для `marks_are_recomputed_after_each_toggle` и
-/// идёт сам тест. Без графа: с ответами по умолчанию (OTA и граф) нужного окна RAM
-/// нет ни у одного чипа с USB, UART и CAN — резерв стека с OTA (`STACK_EXTRA.ota`)
-/// сдвинул его мимо 16 KiB у STM32F072, а без OTA база мала для них же.
-const MARKS_DEFINES: &[(&str, &str)] = &[("graph", "no")];
 
 /// Чип, на котором USB и UART помещаются вместе, а с CAN — нет, и помещаются
 /// USB с CAN: `база + usb + uart + стек <= ram_length < то же + can` и

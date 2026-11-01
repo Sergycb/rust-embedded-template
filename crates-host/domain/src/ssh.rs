@@ -431,10 +431,10 @@ mod tests {
             (b"\r\r", vec![Key::Enter(Command::Empty); 2]),
             (b"\n\n", vec![Key::Enter(Command::Empty); 2]),
             (
-                b"inf\x08fo\x7f\x7fo\r",
+                b"inf\x08xy\x7f\x7fo\r",
                 echo("inf")
                     .chain([Key::Erase])
-                    .chain(echo("fo"))
+                    .chain(echo("xy"))
                     .chain([Key::Erase; 2])
                     .chain(echo("o"))
                     .chain([Key::Enter(Command::Unknown)])
