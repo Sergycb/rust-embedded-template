@@ -478,14 +478,23 @@ fn checklist(label, values, texts) {
 /// `note.call(value, chosen)` — строка после текста пункта `value` при
 /// отмеченных `chosen`; считается заново при каждой перерисовке.
 fn checklist(label, values, texts, note) {
+    checklist(label, values, texts, note, false)
+}
+
+/// То же, а с `need_one` пункта `done` нет, пока ничего не отмечено: пустой
+/// список выбрать нельзя. Без терминала умолчание `done` тогда не в меню, и
+/// `ask` отвечает первым пунктом — он и отмечается, а следующий показ уже
+/// закрывается `done`. `values` не пуст — иначе показывать нечего.
+fn checklist(label, values, texts, note, need_one) {
     let marked = values.map(|value| false);
     loop {
         let chosen = [];
         for i in 0..values.len() {
             if marked[i] { chosen.push(values[i]); }
         }
-        let shown_values = ["done"];
-        let shown_texts = ["done"];
+        let open = need_one && chosen.len() == 0;
+        let shown_values = if open { [] } else { ["done"] };
+        let shown_texts = if open { [] } else { ["done"] };
         for i in 0..values.len() {
             shown_values.push(values[i]);
             shown_texts.push((if marked[i] { "[x] " } else { "[ ] " }) + values[i] + " - " + texts[i] + note.call(values[i], chosen));
@@ -1597,8 +1606,13 @@ if WANTED_LINKS.len() > 0 {
             }
             ram_mark.call(set)
         };
-        let marked = checklist("transports: отметьте транспорты (Enter — отметить или снять)",
-            items.map(|item| item.value), items.map(|item| item.text), ram_note);
+        // С OTA пустой список не выбрать: образ приходит по транспорту проекта
+        // (проверка ниже) — пункта `done` нет, пока ничего не отмечено.
+        let marked = if wants_ota && items.len() == 0 { [] } else {
+            checklist("transports: отметьте транспорты (Enter — отметить или снять"
+                + (if wants_ota { "; с OTA — хотя бы один)" } else { ")" }),
+                items.map(|item| item.value), items.map(|item| item.text), ram_note, wants_ota)
+        };
         for item in items {
             if !marked.contains(item.value) { continue; }
             let kind = if item.value == "ethernet" {
@@ -1648,6 +1662,22 @@ if WANTED_LINKS.len() > 0 {
     if links.len() == 0 && wanted_protocol != "" && wanted_protocol != "none" {
         throw "protocol: протокол " + wanted_protocol + " нужен транспорт — задайте interface (" + listed(PROTOCOL_INTERFACES[wanted_protocol]) + ")";
     }
+}
+// OTA без транспорта: образ приходит командами по транспорту проекта (узел
+// OTA своего канала не имеет), и проверяет готовое устройство `cargo xtask test
+// host-target` тоже через него. В меню пустой список с OTA не выбрать (см.
+// `checklist` выше; без терминала отмечается первый транспорт), сюда доходит
+// `--define interface=none` — `--define` не спрятать, поэтому ошибка с
+// подсказкой, — и чип без единого выведенного транспорта. Протокол при этом
+// может быть `none`: свой протокол поверх транспорта пишет проект.
+// OTA к этому месту уже решён окончательно: не поместившийся уходит в ручную
+// раскладку, а не снимается.
+if wants_ota && links.len() == 0 {
+    let usable = LINK_KINDS.filter(|name| (wants_graph || (name != "tcp" && name != "udp"))
+        && free_blocks(name, INTERFACE_BLOCKS[name], [], have, instances).len() > 0);
+    throw "ota: образ приходит по транспорту проекта, а транспорта нет — задайте --define interface=…"
+        + (if usable.len() > 0 { " (" + listed(usable) + ")" } else { " (у " + chip_name + " выведенных нет)" })
+        + " или links=…, либо ota=no";
 }
 // Сетевой транспорт — только с графом. Без графа узлы спавнил бы `tasks/`, а
 // сеть — это стек, его узел и узлы служб (REST, SSH, MQTT): второй, ручной путь
