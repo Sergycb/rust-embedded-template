@@ -341,6 +341,68 @@ mod tests {
         assert_eq!(object.pending.take(), None);
     }
 
+    /// Подындексы по таблице модуля: размер, отказ чтения команд, отказ
+    /// записи кодов исхода и чужой подындекс.
+    #[test]
+    fn subindices_follow_the_table() {
+        let object = OtaObject::new();
+        let mut buf = [0; 8];
+        for (sub, size) in [(0, Ok(1)), (1, Ok(0)), (4, Ok(0)), (5, Ok(2)), (6, Ok(4))] {
+            assert_eq!(object.read_size(sub), size, "read_size({sub})");
+        }
+        assert_eq!(read(&object, 0), [6], "sub 0 — число подындексов");
+        for sub in 1..=4 {
+            assert_eq!(
+                object.read(sub, 0, &mut buf),
+                Err(AbortCode::WriteOnly),
+                "read({sub})"
+            );
+        }
+        for sub in [0, 5, 6] {
+            assert_eq!(
+                object.write(sub, &[0; 4]),
+                Err(AbortCode::ReadOnly),
+                "write({sub})"
+            );
+        }
+        for sub in [7, 0xFF] {
+            assert_eq!(object.read_size(sub), Err(AbortCode::NoSuchSubIndex));
+            assert_eq!(
+                object.read(sub, 0, &mut buf),
+                Err(AbortCode::NoSuchSubIndex)
+            );
+            assert_eq!(object.write(sub, &[0; 4]), Err(AbortCode::NoSuchSubIndex));
+        }
+        assert_eq!(object.pending.take(), None);
+    }
+
+    /// Чтение со смещением: хвост значения, на конце — пусто, за концом —
+    /// отказ, а не паника.
+    #[test]
+    fn reads_honour_the_offset() {
+        let object = OtaObject::new();
+        object.record(Ok(Progress::Received(0x0403_0201)));
+        let mut buf = [0; 8];
+        assert_eq!(object.read(6, 1, &mut buf), Ok(3));
+        assert_eq!(buf[..3], [2, 3, 4]);
+        assert_eq!(object.read(6, 4, &mut buf), Ok(0));
+        assert_eq!(
+            object.read(6, 5, &mut buf),
+            Err(AbortCode::DataTypeMismatchLengthHigh)
+        );
+        assert_eq!(
+            object.read(5, 3, &mut buf),
+            Err(AbortCode::DataTypeMismatchLengthHigh)
+        );
+        let mut short = [0; 2];
+        assert_eq!(
+            object.read(6, 0, &mut short),
+            Ok(2),
+            "буфер короче значения"
+        );
+        assert_eq!(short, [1, 2]);
+    }
+
     /// Принятая длина — по последнему `Received`; `Started` и отказ её
     /// обнуляют, `Ready` оставляет.
     #[test]

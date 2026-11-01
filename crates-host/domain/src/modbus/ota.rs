@@ -231,7 +231,7 @@ mod tests {
 
     use ports::{Exception, OtaCommand, Progress, Rejection, reply_code};
 
-    use super::{OTA_BASE, OtaRegisters};
+    use super::{OTA_BASE, OTA_REGISTERS, OtaRegisters, STATUS_REGISTERS};
     use crate::modbus::{EmptyRegisters, Registers, Words, WordsMut};
     use crate::ota::tests::{LAYOUT, Node, live};
 
@@ -266,6 +266,33 @@ mod tests {
             assert!(matches!(read.as_mut().poll(&mut cx), Poll::Ready(Ok(()))));
         }
         [0, 2, 4].map(|i| u16::from_be_bytes([bytes[i], bytes[i + 1]]))
+    }
+
+    /// Чтение `len` регистров с `start`: holding (FC03) или входных (FC04).
+    /// Окно отвечает сразу, без узла OTA.
+    fn read(
+        regs: &mut OtaRegisters<EmptyRegisters>,
+        holding: bool,
+        start: u16,
+        len: u16,
+    ) -> Result<Vec<u16>, Exception> {
+        let mut bytes = vec![0; usize::from(len) * 2];
+        let mut cx = Context::from_waker(Waker::noop());
+        let out = WordsMut::new(&mut bytes);
+        let result = if holding {
+            core::pin::pin!(regs.read_holding(start, out)).poll(&mut cx)
+        } else {
+            core::pin::pin!(regs.read_input(start, out)).poll(&mut cx)
+        };
+        let Poll::Ready(result) = result else {
+            panic!("чтение {start:#x}+{len} не завершилось сразу");
+        };
+        result.map(|()| {
+            bytes
+                .chunks(2)
+                .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
+                .collect()
+        })
     }
 
     /// Полный цикл записями FC16: каждый исход — в окне исхода.
@@ -393,6 +420,64 @@ mod tests {
             write(&mut regs, &mut node, 0, &[1]),
             Err(Exception::IllegalFunction),
             "вне окна — карта проекта (пустая)"
+        );
+    }
+
+    /// Окно команд не читается ни целиком, ни частью, ни наложением с
+    /// любого края; сразу за ним — снова карта проекта.
+    #[test]
+    fn the_command_window_is_not_readable() {
+        let (ota, _node) = live();
+        let mut regs = OtaRegisters::new(EmptyRegisters, ota);
+        let top = OTA_BASE + OTA_REGISTERS;
+
+        for (start, len) in [
+            (OTA_BASE, OTA_REGISTERS),
+            (OTA_BASE, 1),
+            (OTA_BASE + 5, 3),
+            (top - 1, 1),
+            (OTA_BASE - 1, 2),
+            (top - 1, 2),
+        ] {
+            assert_eq!(
+                read(&mut regs, true, start, len),
+                Err(Exception::IllegalDataAddress),
+                "FC03 {start:#x}+{len}"
+            );
+        }
+        for (start, len) in [(OTA_BASE - 1, 1), (top, 1)] {
+            assert_eq!(
+                read(&mut regs, true, start, len),
+                Err(Exception::IllegalFunction),
+                "FC03 {start:#x}+{len}: карта проекта (пустая)"
+            );
+        }
+    }
+
+    /// Окно исхода читается и с середины; наложение на его край — отказ.
+    #[test]
+    fn the_status_window_is_readable_from_any_register_in_it() {
+        let (ota, mut node) = live();
+        let mut regs = OtaRegisters::new(EmptyRegisters, ota);
+        // Исход с ненулевым кодом: `Finish` без приёма — `NoSession`.
+        assert_eq!(
+            write(&mut regs, &mut node, OTA_BASE, &[3]),
+            Err(Exception::ServerDeviceFailure)
+        );
+
+        assert_eq!(read(&mut regs, false, OTA_BASE + 1, 2), Ok(vec![0, 0]));
+        assert_eq!(read(&mut regs, false, OTA_BASE, 1), Ok(vec![16]));
+        for (start, len) in [(OTA_BASE - 1, 2), (OTA_BASE + 2, 2)] {
+            assert_eq!(
+                read(&mut regs, false, start, len),
+                Err(Exception::IllegalDataAddress),
+                "FC04 {start:#x}+{len}"
+            );
+        }
+        assert_eq!(
+            read(&mut regs, false, OTA_BASE + STATUS_REGISTERS, 1),
+            Err(Exception::IllegalFunction),
+            "за окном — карта проекта (пустая)"
         );
     }
 }

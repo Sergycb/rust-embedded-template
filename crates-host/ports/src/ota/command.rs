@@ -203,10 +203,27 @@ mod tests {
     use super::*;
 
     /// Коды уходят хосту числом: перенумерация сломала бы уже выпущенные
-    /// клиенты, поэтому новый отказ встаёт в конец.
+    /// клиенты, поэтому таблица закреплена целиком, а новый отказ встаёт в
+    /// конец.
     #[test]
-    fn layout_rejection_takes_the_next_free_code() {
-        assert_eq!(reply_code(&Err(Rejection::NoSession)), 16);
-        assert_eq!(reply_code(&Err(Rejection::Layout)), 17);
+    fn every_reply_keeps_its_code() {
+        let table: [(Reply, u16); 13] = [
+            (Ok(Progress::Started), 1),
+            (Ok(Progress::Received(0)), 2),
+            (Ok(Progress::Received(u32::MAX)), 2),
+            (Ok(Progress::Ready), 3),
+            (Ok(Progress::Rebooting), 4),
+            (Err(Rejection::Length), 10),
+            (Err(Rejection::Transfer), 11),
+            (Err(Rejection::Busy), 12),
+            (Err(Rejection::Rollback), 13),
+            (Err(Rejection::Signature), 14),
+            (Err(Rejection::Device), 15),
+            (Err(Rejection::NoSession), 16),
+            (Err(Rejection::Layout), 17),
+        ];
+        for (reply, code) in table {
+            assert_eq!(reply_code(&reply), code, "{reply:?}");
+        }
     }
 }
