@@ -386,7 +386,6 @@ mod tests {
     /// кончилась.
     #[test]
     async fn settings_store_and_read_back(board: Board) {
-
         const KEY: u32 = 0;
         let written = b"template";
         let mut scratch = [0u8; 32];
