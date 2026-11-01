@@ -35,8 +35,19 @@ const STAGES: [(&str, &str, Stage); 4] = [
     ),
     ("all", "все три подряд", test_all),
 ];
+// {%- if ota == "true" and ota_store != "external" %}
+
+/// Тестов цикла OTA в `host-target-tests`: обмен с откатом и отказ
+/// неподписанному — без адресов разделов пропускаются оба.
+const OTA_CYCLE_TESTS: usize = 2;
+// {%- endif %}
 
 type Stage = fn(&xshell::Shell) -> Result<(), anyhow::Error>;
+// {%- if ota == "true" and ota_store != "external" %}
+
+/// Тесты host-target, которые пройдут пропуском: сколько и почему.
+type Skipped = (usize, &'static str);
+// {%- endif %}
 
 /// Без этапа — список этапов, а не запуск какого-то из них, и код выхода
 /// ненулевой: иначе `cargo xtask test` в скрипте давал бы зелёный прогон, в
@@ -128,14 +139,19 @@ fn test_host_target(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
 
     let _env_chip = sh.push_env("HOST_TARGET_CHIP", CHIP);
     // {%- if ota == "true" and ota_store != "external" %}
-    let _env_ota = ota_env(sh, active, dfu, state, ram, seed.as_ref())?;
+    let mut skipped = Vec::new();
+    let _env_ota = ota_env(sh, active, dfu, state, ram, seed.as_ref(), &mut skipped)?;
     // {%- endif %}
     let _p = sh.push_dir(root_dir().join("crates-host").join("host-target-tests"));
     // В один поток: пробник у платы один, а nextest по умолчанию гоняет
     // тесты параллельно — два `probe-rs` на одной цели дерутся за неё и
     // падают с невнятной ошибкой захвата.
     // {%- if ota == "true" and ota_store != "external" %}
-    cmd!(sh, "cargo nextest run --test-threads 1").run()?;
+    // Сводка — и после упавшего прогона: в выводе nextest пропуск не виден
+    // ни при каком исходе.
+    let run = cmd!(sh, "cargo nextest run --test-threads 1").run();
+    report_skipped(&skipped);
+    run?;
     // {%- else %}
     // {%- if ota == "true" %}
     // На внешней флеши `DFU` и `STATE` пробнику не достать — цикла OTA в
@@ -150,6 +166,20 @@ fn test_host_target(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
 }
 // {%- if ota == "true" and ota_store != "external" %}
 
+/// Итог после прогона: nextest считает пропуск внутри теста (`return` без
+/// окружения) пройденным тестом, и зелёная сводка выглядела бы полной
+/// проверкой.
+fn report_skipped(skipped: &[Skipped]) {
+    let total: usize = skipped.iter().map(|(count, _)| count).sum();
+    if total == 0 {
+        return;
+    }
+    println!("ВНИМАНИЕ: тестов host-target, прошедших пропуском, ничего не проверив, — {total}:");
+    for (count, why) in skipped {
+        println!("  {count} — {why}");
+    }
+}
+
 /// Адреса разделов OTA и инертный образ в окружение теста — если разделы
 /// вообще есть.
 ///
@@ -159,6 +189,9 @@ fn test_host_target(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
 ///
 /// С подписью (`seed`) рядом с образом кладётся запись о ней
 /// (`ports::PendingImage`): без неё bootloader отвергает обмен до первого шага.
+///
+/// Тесты, которые из-за этого пройдут пропуском, — в `skipped`: сводка о них
+/// печатается после прогона ([`report_skipped`]), а не до него.
 fn ota_env<'a>(
     sh: &'a xshell::Shell,
     active: Option<&Region>,
@@ -166,12 +199,13 @@ fn ota_env<'a>(
     state: Option<&Region>,
     ram: Option<&Region>,
     seed: Option<&[u8; 32]>,
+    skipped: &mut Vec<Skipped>,
 ) -> Result<Vec<xshell::PushEnv<'a>>, anyhow::Error> {
     let (Some(active), Some(dfu), Some(state), Some(ram)) = (active, dfu, state, ram) else {
-        println!(
-            "ВНИМАНИЕ: в memory.x не хватает регионов ACTIVE/DFU/BOOTLOADER_STATE/RAM — \
-             тест цикла OTA пропущен"
-        );
+        skipped.push((
+            OTA_CYCLE_TESTS,
+            "цикл OTA: в memory.x не хватает регионов ACTIVE/DFU/BOOTLOADER_STATE/RAM",
+        ));
         return Ok(Vec::new());
     };
     // Пустой `page_size` означает, что раскладку считал не шаблон, а человек
@@ -180,7 +214,10 @@ fn ota_env<'a>(
     // уезжает ровно на страницу. Лучше пропустить проверку, чем получить
     // падение, обвиняющее bootloader.
     if PAGE_SIZE.is_empty() {
-        println!("ВНИМАНИЕ: размер страницы стирания неизвестен — тест цикла OTA пропущен");
+        skipped.push((
+            OTA_CYCLE_TESTS,
+            "цикл OTA: размер страницы стирания неизвестен (раскладку считал не шаблон)",
+        ));
         return Ok(Vec::new());
     }
 
@@ -196,10 +233,11 @@ fn ota_env<'a>(
     // Подписать нечем — обмен bootloader не пустит. Отказ чужому образу
     // проверяется и так: ему ключ не нужен.
     if seed.is_none() {
-        println!(
-            "ВНИМАНИЕ: закрытого ключа нет — обмен и откат подписанного образа НЕ \
-             проверяются, только отказ неподписанному"
-        );
+        skipped.push((
+            1,
+            "обмен и откат подписанного образа: закрытого ключа нет, подписать инертный образ \
+             нечем (отказ неподписанному проверяется)",
+        ));
     }
     if let Some(seed) = seed {
         let record = ports::PendingImage {
@@ -277,3 +315,22 @@ fn run_target_tests(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     cmd!(sh, "cargo test").run()?;
     Ok(())
 }
+// {%- if ota == "true" and ota_store != "external" %}
+
+#[cfg(test)]
+mod tests {
+    /// Байты инертного образа: вершина RAM — стек, обработчик сброса сразу за
+    /// таблицей с битом Thumb, затем `b .`.
+    #[test]
+    fn the_inert_image_starts_and_spins() {
+        assert_eq!(
+            super::inert_image(0x0800_8000, 0x2002_0000),
+            [
+                0x00, 0x00, 0x02, 0x20, // SP = 0x2002_0000
+                0x09, 0x80, 0x00, 0x08, // сброс = 0x0800_8008 | 1
+                0xFE, 0xE7, // b .
+            ]
+        );
+    }
+}
+// {%- endif %}
