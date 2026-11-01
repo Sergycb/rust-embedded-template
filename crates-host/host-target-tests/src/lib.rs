@@ -50,8 +50,13 @@ const NET_PORT: u16 = 5000;
 
 /// Сетевой транспорт protobuf в проекте — им идёт `HOST_TARGET_ADDR` без
 /// приставки; пусто — сетевого нет.
-const NET_KIND: &str =
-    "{% if link_kinds contains 'tcp' %}tcp{% elsif link_kinds contains 'udp' %}udp{% endif %}";
+// {%- if link_kinds contains "tcp" %}
+const NET_KIND: &str = "tcp";
+// {%- elsif link_kinds contains "udp" %}
+//{{newline}}const NET_KIND: &str = "udp";
+// {%- else %}
+//{{newline}}const NET_KIND: &str = "";
+// {%- endif %}
 
 /// Сколько ждать ответа на обычную команду.
 const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
