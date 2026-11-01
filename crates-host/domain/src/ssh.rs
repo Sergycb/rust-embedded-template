@@ -273,6 +273,65 @@ mod tests {
         }
     }
 
+    /// Терминал по сценарию: отдаёт байты `input` по одному, затем EOF;
+    /// вывод копится.
+    struct Script {
+        input: &'static [u8],
+        shown: Vec<u8>,
+    }
+
+    impl embedded_io_async::ErrorType for Script {
+        type Error = Infallible;
+    }
+
+    impl embedded_io_async::Read for Script {
+        #[expect(
+            clippy::unused_async_trait_impl,
+            reason = "сигнатуру задаёт трейт `Read`; сценарий в памяти не ждёт"
+        )]
+        async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Infallible> {
+            let Some((&byte, rest)) = self.input.split_first() else {
+                return Ok(0);
+            };
+            buf[0] = byte;
+            self.input = rest;
+            Ok(1)
+        }
+    }
+
+    impl embedded_io_async::Write for Script {
+        #[expect(
+            clippy::unused_async_trait_impl,
+            reason = "сигнатуру задаёт трейт `Write`; память пишется сразу"
+        )]
+        async fn write(&mut self, buf: &[u8]) -> Result<usize, Infallible> {
+            self.shown.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        #[expect(
+            clippy::unused_async_trait_impl,
+            reason = "сигнатуру задаёт трейт `Write`; у памяти нечего досылать"
+        )]
+        async fn flush(&mut self) -> Result<(), Infallible> {
+            Ok(())
+        }
+    }
+
+    /// Сведения об устройстве для консоли — значения не важны.
+    fn device_info() -> DeviceInfo {
+        DeviceInfo {
+            version: "0.1.0",
+            commit: "abc",
+            chip: "STM32G071RB",
+            uid: [0; crate::device::UID_BYTES],
+            flash_size: 0,
+            sys_hz: None,
+            reset: "software",
+            last_panic: None,
+        }
+    }
+
     #[test]
     fn an_openssh_line_gives_the_raw_key() {
         let key = ed25519_public_key(KEY).expect("ключ разбирается");
@@ -293,6 +352,12 @@ mod tests {
             "ssh-rsa AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl",
             "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5",
             "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJ!",
+            // Блоб нужной длины (51 байт), но имя типа внутри — не ed25519.
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE4AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl",
+            // Блоб нужной длины, но длина ключа внутри — 31, а не 32.
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAH+MqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl",
+            // Верный блоб и ещё три байта — base64 длиннее буфера.
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJlAAAA",
         ] {
             assert_eq!(ed25519_public_key(line), None, "{line}");
         }
@@ -558,16 +623,7 @@ mod tests {
         const FAREWELL: &str = "\r\nidle timeout, session closed\r\n";
         MockDriver::get().reset();
         let ((stack, _), _) = adapters::fake::cable::pair();
-        let info = DeviceInfo {
-            version: "0.1.0",
-            commit: "abc",
-            chip: "STM32G071RB",
-            uid: [0; crate::device::UID_BYTES],
-            flash_size: 0,
-            sys_hz: None,
-            reset: "software",
-            last_panic: None,
-        };
+        let info = device_info();
         let device = Device {
             info: &info,
             stack,
@@ -601,6 +657,55 @@ mod tests {
         assert!(console.as_mut().poll(&mut cx).is_pending());
         MockDriver::get().advance(CLOSE_WAIT);
         assert_eq!(console.as_mut().poll(&mut cx), Poll::Ready(Ok(())));
+    }
+
+    /// Что терминал видит на ввод: эхо, стирание `\x08 \x08`, `^C`,
+    /// исполненная команда с приглашением за ней; `exit`, Ctrl-D и EOF
+    /// кончают сессию.
+    #[test]
+    fn the_shell_shows_what_the_editor_decides() {
+        const PROMPT: &str = "console, 'help' for commands\r\n> ";
+        let ((stack, _), _) = adapters::fake::cable::pair();
+        let info = device_info();
+        let device = Device {
+            info: &info,
+            stack,
+            // {%- if ota == "true" %}
+            ota: crate::ota::tests::cmd().0,
+            // {%- endif %}
+        };
+        let mut cx = Context::from_waker(Waker::noop());
+        // Ввод, вывод и что осталось непрочитанным после конца сессии.
+        let cases: [(&[u8], String, &[u8]); 4] = [
+            (
+                b"x\x7fbad\r\x03exit\rinfo\r",
+                format!(
+                    "{PROMPT}x\x08 \x08bad\r\nunknown command, 'help' for the list\r\n> \
+                     ^C\r\n> exit\r\n"
+                ),
+                b"info\r",
+            ),
+            // Ctrl-D на набранной строке не обрывает сессию и не отображается.
+            (b"ex\x04it\r", format!("{PROMPT}exit\r\n"), b""),
+            (b"\x04info\r", PROMPT.to_owned(), b"info\r"),
+            // EOF посреди строки — конец сессии без исполнения.
+            (b"exi", format!("{PROMPT}exi"), b""),
+        ];
+        for (input, shown, left) in cases {
+            let mut terminal = Script {
+                input,
+                shown: Vec::new(),
+            };
+            let console = pin!(shell(&mut terminal, &device)).poll(&mut cx);
+            let input = input.escape_ascii();
+            assert_eq!(console, Poll::Ready(Ok(())), "{input}");
+            assert_eq!(
+                terminal.shown.escape_ascii().to_string(),
+                shown.as_bytes().escape_ascii().to_string(),
+                "{input}"
+            );
+            assert_eq!(terminal.input, left, "{input}: ввод после конца сессии");
+        }
     }
 
     #[test]
