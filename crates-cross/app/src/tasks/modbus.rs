@@ -17,7 +17,7 @@ pub mod {{ f[4] }} {
 
     // Импорт, а не полный путь в сигнатурах: длина строки не зависит от
     // имени транспорта, и rustfmt не переносит её ни при каком имени.
-    use {{ lm }}::{Link, Source, link};
+    use {{ lm }}::{Source, link};
 
     #[embassy_executor::task]
     async fn task(source: Source, map: crate::modbus::Handle) {
@@ -32,9 +32,12 @@ pub mod {{ f[4] }} {
 {%- else %}
         let regs = map;
 {%- endif %}
-        domain::server::serve::<Link, _>(domain::server::ServerWiring {
-            link: link(source),
-            handler: domain::modbus::Slave::new(1, regs, crate::build::PKG_VERSION),
+        let mut link = link(source);
+        let mut handler = domain::modbus::Slave::new(1, regs, crate::build::PKG_VERSION);
+        domain::server::task(domain::server::ServerCtx {
+            link: &mut link,
+            handler: &mut handler,
+            index: 0,
         })
         .await;
     }

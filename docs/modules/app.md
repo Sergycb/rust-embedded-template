@@ -167,10 +167,10 @@ generic, поэтому узел называет канал этим псевд
 `link` этого модуля над рычагом платы в памяти `static T`, обработчик `H` —
 `domain::modbus::Slave` над картой регистров с адресом slave'а (вход
 `domain::server::ServerWiring`).{% else %}
-В этом проекте это задача в `crates-cross/app/src/tasks/modbus.rs`: она зовёт
-`domain::server::serve` с каналом `crate::link::<вид>[::<транспорт>]::link` над
-рычагом платы и обработчиком `domain::modbus::Slave` над
-картой регистров с адресом slave'а.{% endif %} Карта одна на проект: её
+В этом проекте это задача в `crates-cross/app/src/tasks/modbus.rs`: она собирает
+контекст узла `domain::server::ServerCtx` — канал `crate::link::<вид>[::<транспорт>]::link`
+над рычагом платы и обработчик `domain::modbus::Slave` над
+картой регистров с адресом slave'а — и зовёт `domain::server::task`.{% endif %} Карта одна на проект: её
 заводит `crates-cross/app/src/modbus.rs` в `static` (`OnceLock`) при первом
 `crate::modbus::handle()`, и каждый узел берёт свою копию ручки
 (`crate::modbus::Handle` = `domain::modbus::SharedRegisters<Map>`, `Copy`) — запись через один транспорт видна чтению через

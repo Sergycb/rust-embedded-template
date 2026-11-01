@@ -2630,7 +2630,6 @@ if variable::get("protocol_link") != "true" {
 // slave: у protobuf свой узел (`domain::protobuf`).
 if !on.modbus {
 	file::delete("crates-host/domain/src/server.rs");
-	file::delete("crates-host/domain/src/server");
 }
 if variable::get("link_port") != "true" {
 	file::delete("crates-host/ports/src/link.rs");
