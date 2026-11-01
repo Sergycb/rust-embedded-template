@@ -1542,7 +1542,8 @@ fn find_orphan_modules(project: &Path, found: &mut Vec<String>) -> anyhow::Resul
         let declared = candidates.iter().any(|candidate| {
             fs::read_to_string(project.join(candidate)).is_ok_and(|text| {
                 text.lines().any(|line| {
-                    let line = line.trim();
+                    // Без хвостового комментария: `pub mod foo; // …`.
+                    let line = line.split("//").next().unwrap_or_default().trim();
                     line.ends_with(&format!("mod {name};"))
                         || line.ends_with(&format!("mod {name} {{"))
                 })
