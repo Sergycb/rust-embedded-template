@@ -1,12 +1,18 @@
-/* Заполняется вручную: сюда попадает этот файл, только если раскладку не
-   удалось посчитать при генерации (или её отключили `--define write_size=...`).
-   Обычно chip-select.rhai пишет сюда готовые адреса по секторам чипа. */
+/* Заполняется вручную: этот файл остаётся в проекте, только когда раскладку
+   отключили при генерации (`--define write_size=...`) или выбранное в неё не
+   поместилось. Обычно chip-select.rhai пишет сюда готовые адреса по секторам
+   чипа. Числа — те же, что в crates-cross/app/memory.x. */
 
 MEMORY {
-    FLASH             (rx)  : ORIGIN = /* 0xXXXXXXXX */, LENGTH = /* XXXK */
+    /* FLASH здесь — зона самого bootloader'а: от базы flash до {% if ota_store == "external" %}ACTIVE{% else %}BOOTLOADER_STATE{% endif %}. */
+    FLASH             (rx)  : ORIGIN = /* 0xXXXXXXXX — база flash */, LENGTH = /* XXXK */
+{%- if ota_store != "external" %}
     BOOTLOADER_STATE  (rx)  : ORIGIN = /* 0xXXXXXXXX */, LENGTH = /* XXXK */
+{%- endif %}
     ACTIVE            (rx)  : ORIGIN = /* 0xXXXXXXXX */, LENGTH = /* XXXK */
+{%- if ota_store != "external" %}
     DFU               (rx)  : ORIGIN = /* 0xXXXXXXXX */, LENGTH = /* XXXK */
+{%- endif %}
     RAM               (xrw) : ORIGIN = /* 0xXXXXXXXX */, LENGTH = /* XXXK */
     /* Хвост RAM, отрезанный от её конца: PANIC — дамп паники приложения.
        Bootloader в него не пишет, но и стеком своим не трогает: дамп
@@ -14,15 +20,17 @@ MEMORY {
     PANIC             (xrw) : ORIGIN = /* ADDR END RAM - LEN */, LENGTH = /* LEN */
 }
 
-__bootloader_state_start = ORIGIN(BOOTLOADER_STATE) - ORIGIN(FLASH);
-__bootloader_state_end   = ORIGIN(BOOTLOADER_STATE) + LENGTH(BOOTLOADER_STATE) - ORIGIN(FLASH);
-
 __bootloader_active_start = ORIGIN(ACTIVE) - ORIGIN(FLASH);
 __bootloader_active_end   = ORIGIN(ACTIVE) + LENGTH(ACTIVE) - ORIGIN(FLASH);
-
-__bootloader_dfu_start = ORIGIN(DFU) - ORIGIN(FLASH);
-__bootloader_dfu_end   = ORIGIN(DFU) + LENGTH(DFU) - ORIGIN(FLASH);
 {%- if ota_store == "external" %}
+
+/* STATE и DFU — на внешней флеши: смещения от её начала, те же, что в
+   memory.x приложения. Регионов в MEMORY у них нет. */
+__bootloader_state_start = /* 0xXXXXXXXX */;
+__bootloader_state_end   = /* 0xXXXXXXXX */;
+
+__bootloader_dfu_start = /* 0xXXXXXXXX */;
+__bootloader_dfu_end   = /* 0xXXXXXXXX */;
 {%- if config_store == "external" %}
 
 /* Раздел настроек на внешней флеши — те же смещения, что в memory.x приложения. */
@@ -33,4 +41,11 @@ __config_end   = /* 0xXXXXXXXX */;
 /* Конец последнего раздела на внешней флеши (bsp::layout): микросхема меньше
    не годится. */
 __ext_flash_end = {% if config_store == "external" %}MAX(MAX(__bootloader_state_end, __bootloader_dfu_end), __config_end){% else %}MAX(__bootloader_state_end, __bootloader_dfu_end){% endif %};
+{%- else %}
+
+__bootloader_state_start = ORIGIN(BOOTLOADER_STATE) - ORIGIN(FLASH);
+__bootloader_state_end   = ORIGIN(BOOTLOADER_STATE) + LENGTH(BOOTLOADER_STATE) - ORIGIN(FLASH);
+
+__bootloader_dfu_start = ORIGIN(DFU) - ORIGIN(FLASH);
+__bootloader_dfu_end   = ORIGIN(DFU) + LENGTH(DFU) - ORIGIN(FLASH);
 {%- endif %}

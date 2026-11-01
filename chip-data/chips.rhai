@@ -1,6 +1,6 @@
 // Сгенерировано chip-data-gen, руками не править: cargo run --manifest-path chip-data-gen/Cargo.toml
 // 1479 шт.
-// Источник: embassy-stm32 0.6.0 (crates-cross/Cargo.toml), probe-rs 0.32.0
+// Источник: embassy-stm32 0.6.0 (crates-cross/Cargo.toml), stm32-metapac 21.0.0, probe-rs 0.32.0
 export const CHIPS = [
     "c011d6",
     "c011f4",

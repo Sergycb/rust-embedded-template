@@ -103,10 +103,10 @@ supervisor   = { git = "https://github.com/Sergycb/rust-lib.git", rev = "<рев
 
 В шаблоне первая строка рабочая, вторая — комментарий; в проекте первой нет, а
 `{{newline}}` (хук задаёт его как `"\n"`) отрывает строку от `#`, и она
-становится рабочей. Адрес rust-lib в репозитории шаблона записан в четырёх местах,
+становится рабочей. Адрес rust-lib в репозитории шаблона записан в трёх местах,
 и меняются они вместе: `comment`-строки корневого `Cargo.toml`, `allow-git` в
-`comment`-блоке `deny.toml`, `rust_lib` в `REPO_DEFAULTS` (`template-check.rs`) и
-`RUST_LIB` в `chip-data-gen/src/main.rs`.
+`comment`-блоке `deny.toml` и `RUST_LIB` в `chip-data-gen/src/source.rs` (его же
+берёт `REPO_DEFAULTS` в `template-check.rs`).
 
 Ревизия — так же: переменная `rust_lib_rev` (умолчание в хуке, форк —
 `--define rust_lib_rev=…`) и литерал в `comment`-строках корневого
@@ -181,7 +181,8 @@ bootloader и `STATE`. Отсюда и второй набор цифр в `MEMO
 (`domain::ota::update::apply`), см. docs/ota.md.
 
 `modbus_master` (Modbus master, клиентская половина; по умолчанию `no`) — той же формы:
-строка `yes`/`no`, хук приводит ответ к `"true"`/`"false"`. Смысл он имеет только при
+строка `yes`/`no` (как у `ota`, `config`, `graph`, `ext_flash` — `yes_no_define`;
+`true`/`false` на входе — ошибка), хук приводит ответ к `"true"`/`"false"`. Смысл он имеет только при
 `protocol=modbus`: меню спрашивает его только тогда, а `--define modbus_master=yes` при другом
 протоколе — ошибка (`no` принимается). Master не получают ни protobuf, ни CANopen. «true» оставляет `ports::ModbusClient`/`MasterError`,
 `domain::modbus::master`, клиентские impl'ы транспортов `Rtu`/`Tcp`/`Udp` (в них же
@@ -408,7 +409,7 @@ H723/725/730/733/735. Им `bsp` получает `src/clocks.rs`, осталь�
 подряд `clippy` не пропускает. Нет блока `RCC`, регистра с `set_rmvf` (или их два), ни одного
 известного флага — генератор падает, хук без записи — тоже. `bsp/src/reset.rs` разворачивает
 пары Liquid-циклом в цепочку `if`. Тесты — `reset_flags_of_*` (F4, H743, C0, G0) в
-`chip-data-gen/src/main.rs`.
+`chip-data-gen/src/metadata.rs`.
 
 Кэш данных ядра M7 (тег `scb_d`) включается только вместе с регионом `DMA_NC`: `chip-data-gen`
 (`dma_nc_region`) отрезает до 32 KiB от конца RAM (`PANIC` уходит под регион) и кладёт в
@@ -487,9 +488,8 @@ MemoryRegion { address, size, settings: Some(FlashSettings { erase_size, write_s
 чипа. Раньше хук считал признак как «фича начинается на `l0`/`l1`» — и мимо проходили
 STM32WB10CC/WB15CC (`erase_value: 0` при другом префиксе, оба в каскаде): проект под
 них получал `embassy-boot` без `flash-erase-zero` и неработающий раздел настроек, обе
-поломки молчаливые. Эвристика по имени осталась одним последним рубежом в хуке — на
-случай чипа, которого нет в таблице (сейчас таких нет), — и печатает предупреждение.
-Стережёт это тест каскада `erase_zero_follows_the_metadata_not_the_chip_name`, где
+поломки молчаливые. Запасной эвристики по имени в хуке нет: запись раскладки есть у
+каждого чипа из `CHIPS`, а без неё хук делает `abort` (см. «Чипы без OTA»). Стережёт это тест каскада `erase_zero_follows_the_metadata_not_the_chip_name`, где
 рядом с `wb10cc`/`wb15cc` стоит `wb55rg` с обычным флешем: без него зелёным остался бы
 и вариант «всё семейство WB стирается в ноль».
 
@@ -729,7 +729,7 @@ bootloader'а, всплыла бы на первом обновлении). Чи
 путей по меню на характерных чипах (`every_path_through_the_menus_generates`; на каждом
 пути заданы все переменные шаблона) и умолчания для каждого чипа
 (`every_chip_generates_with_the_defaults`) в `tests/cascade.rs`. В
-ветках с ручной раскладкой (`write_size` через `--define`, чип без раскладки)
+ветке с ручной раскладкой (`write_size` через `--define`)
 `ext_page_size` — 4 KiB с предупреждением, как `state_erase_size` там же.
 
 `bsp/src/external.rs` хук удаляет везде, кроме `ext_flash=yes`. Стерегут ветку тесты
@@ -800,7 +800,7 @@ release-образ не линкуется. Размер — доля RAM (`PANI
 
 Регрессионные тесты на всё перечисленное — `chip-data-gen/tests/cascade.rs`
 (`memory_layout_invariants_hold_for_every_chip` проходит по всем чипам сразу) и юнит-тесты
-в `chip-data-gen/src/main.rs`.
+в `chip-data-gen/src/layout.rs`.
 
 ### Оценка RAM (`ram_estimate`, таблица `RAM_COST`)
 
@@ -920,11 +920,18 @@ OTA не помещается (`IWDG1` вместо `IWDG`, как и у H743); 
 читается нулями (`flash-erase-zero`); `ext_flash=yes` на OCTOSPI (H7), QUADSPI (L4) и SPI (F4, L0); протоколы и
 интерфейсы (`protocol`/`interface`): Modbus и protobuf поверх UART, CANopen на FDCAN
 и bxCAN, Modbus TCP и protobuf UDP (стек `embassy-net`, узел NET), USB CDC
-(устройство `embassy-usb` и узел USB). Дальше
+(устройство `embassy-usb` и узел USB); серии F1, C0, U5, H5, WB и CM7 двухъядерного H7.
+Часть конфигураций — `.render_only()`: генерация и проверки над файлами без сборки
+даже в полном прогоне — ручная раскладка (`write_size`, все три формы заготовок
+`memory.x`: внутренняя OTA, внешняя, без OTA — собрать их нельзя, числа вписывает
+человек), внешняя флешь, на которой хранить нечего, и чипы остальных серий (F0, F2,
+F3, L1, U0, U3), у которых своих веток сборки нет. Дальше
 проверяет, что не осталось ни одного
 неподставленного плейсхолдера, что состав CI-файлов проекта совпадает с выбранным
 `ci` (см. ниже про `--ci`), что в проекте нет файлов сопровождения шаблона и пустых
-каталогов (`check_no_leftovers`), и прогоняет в сгенерированном проекте `cargo xtask
+каталогов, а у каждого `.rs` под `src/` есть `mod` в родительском модуле
+(`check_no_leftovers`: файл, чьё объявление вырезал Liquid, компилятор не видит
+вовсе), и прогоняет в сгенерированном проекте `cargo xtask
 lint`, `test host`, `lint cross`, `build` — то есть ровно то, что README обещает
 пользователю, — плюс `cargo xtask pins` (четырежды: без аргумента, с `RCC`, с
 `I2C1 --snippet` и `--check`) и fmt/clippy/test для `chip-info`.
@@ -994,8 +1001,8 @@ git-зависимостями, которых этому джобу не нуж
 ожидании навсегда.
 
 Флаги: `--quick` — только генерация и проверки над файлами проекта без сборки
-(плейсхолдеры, состав CI-файлов и упоминания CI, пути в доках, лишние файлы и пустые
-каталоги), `--ci gitlab|none` — другой CI-провайдер, `--define ключ=значение` (можно
+(плейсхолдеры, состав CI-файлов и упоминания CI, пути в доках, лишние файлы, пустые
+каталоги и модули без `mod`), `--ci gitlab|none` — другой CI-провайдер, `--define ключ=значение` (можно
 несколько раз) — дополнительный ответ ко всем проверяемым конфигурациям, например
 `--ci gitlab --define config=yes stm32f407ve`, `--keep` — не удалять проекты после
 успеха, `--smoke`/`--only` — уровни выше, `--jobs N` — сколько конфигураций
@@ -1209,23 +1216,28 @@ Rust-код генератора: гоняет реальный скрипт ч�
 — единицы минут, интерпретация Rhai). Не в `cargo xtask lint`/CI (`chip-data-gen` не
 член workspace, см. выше), гонять вручную при правке `chip-select.rhai`/`chip-data-gen`:
 `cargo test --manifest-path chip-data-gen/Cargo.toml --release` (та же команда
-запускает и юнит-тесты генератора из `chip-data-gen/src/main.rs`).
+запускает и юнит-тесты генератора из модулей `chip-data-gen/src/`).
 
 ### Когда перегенерировать данные
 
-Списки в `chip-data/` собраны из чип-фич конкретной версии `embassy-stm32` и из
-`probe-rs chip list` конкретной установленной версии probe-rs. Обе версии записаны
-штампом в начале `chip-data/chips.rhai`:
+Списки в `chip-data/` собраны из чип-фич конкретной версии `embassy-stm32`,
+метаданных `stm32-metapac`, которую он разрешил, и из `probe-rs chip list`
+конкретной установленной версии probe-rs. Все три версии записаны штампом в начале
+`chip-data/chips.rhai`:
 
 ```
-// Источник: embassy-stm32 0.6.0 (crates-cross/Cargo.toml), probe-rs <версия>
+// Источник: embassy-stm32 0.6.0 (crates-cross/Cargo.toml), stm32-metapac <версия>, probe-rs <версия>
 ```
 
-Тест `generated_blocks_match_the_declared_embassy_version` сверяет штамп с версией,
-объявленной в `crates-cross/Cargo.toml`, и падает, если они разошлись. Это не формальность:
-версию поднимает dependabot/renovate, молча, а списки при этом остались бы от старой —
-расхождение вылезло бы уже у пользователя шаблона, при генерации. Увидели красный тест
-— перегенерируйте:
+Тест `generated_blocks_match_the_declared_embassy_version` сверяет штамп с версией
+`embassy-stm32`, объявленной в `crates-cross/Cargo.toml`, и с версией `stm32-metapac`,
+которую сейчас разрешает `cargo metadata`, и падает, если хоть одна разошлась. Это не
+формальность: версию `embassy-stm32` поднимает dependabot/renovate, молча, а metapac
+`embassy-stm32` тянет диапазоном (`"21"`) — lock-файла у генератора нет, и минорный
+релиз metapac меняет данные при той же версии `embassy-stm32`. Списки при этом
+остались бы от старой — расхождение вылезло бы уже у пользователя шаблона, при
+генерации. Тест резолвит граф, как генератор, без lock-файла — ему нужен доступ к
+реестру crates.io. Увидели красный тест — перегенерируйте:
 
 ```
 cargo run --manifest-path chip-data-gen/Cargo.toml

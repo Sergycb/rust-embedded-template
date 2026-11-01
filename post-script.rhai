@@ -30,16 +30,28 @@ let config = variable::get("config");
 // это нужно и для сравнения с новой версией шаблона, и для вопроса «почему
 // здесь нет X». Записаны итоговые значения хука, а не ввод `--define`: ввод
 // хук приводит к ним (`ota=yes` → `"true"`, транспорты → `links`).
+// `memory_layout` — `manual`, когда `memory.x` заполняет человек (задан
+// `write_size` или выбранное не поместилось); `write_size` тогда — заданный
+// через `--define` или, во втором случае, из раскладки чипа.
 // `ssh_key` сюда не входит: это данные владельца, а не состав проекта.
+//
+// Значения — базовые строки TOML: `\` и `"` экранируются. Адреса `rust_lib`
+// и `hw_drivers` хук их и так не пропускает (`repo_url`), остальное — его
+// собственные значения; экранирование держит файл валидным и при новой
+// переменной, о которой этого никто не проверил.
 let answers = [
 	"# Ответы генерации из rust-embedded-template — то, из чего собран проект.",
 	"# Пишет post-script.rhai; править руками незачем: код от них уже не зависит.",
 ];
 for name in ["chip", "target", "ci", "ota", "ota_store", "config", "config_store",
 		"graph", "links", "protocol", "modbus_master", "net_services", "ssh_auth",
-		"ssh_host_key", "external_flash", "rust_lib", "rust_lib_rev", "hw_drivers"] {
+		"ssh_host_key", "external_flash", "memory_layout", "write_size", "rust_lib",
+		"rust_lib_rev", "hw_drivers"] {
 	if variable::is_set(name) {
-		answers.push(name + " = \"" + variable::get(name) + "\"");
+		let value = variable::get(name);
+		value.replace("\\", "\\\\");
+		value.replace("\"", "\\\"");
+		answers.push(name + " = \"" + value + "\"");
 	}
 }
 file::write(".template-answers.toml", answers);

@@ -6,18 +6,103 @@
 //! (та ветка не создаёт ни одного `variable::prompt` вызова и потому не может
 //! поймать баги вроде бесконечного цикла в самом каскаде).
 
-use std::{cell::RefCell, collections::HashMap, path::PathBuf, rc::Rc};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+    process::Command,
+    rc::Rc,
+    sync::OnceLock,
+};
 
+use chip_data_gen::{
+    emit::source_stamp_versions,
+    source::{declared_embassy_version, repo_root, resolved_metapac_version},
+};
 use rhai::{
     AST, Array, Dynamic, Engine, EvalAltResult, Module, Scope,
     module_resolvers::StaticModuleResolver,
 };
 
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("chip-data-gen должен лежать внутри репозитория")
-        .to_path_buf()
+const MASTER_FILE: &str = "crates-host/domain/src/modbus/master.rs";
+
+/// Ключ ed25519 для ответов `ssh_key`.
+const SSH_KEY: &str =
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl user@host";
+
+const NO_RAM: &str = "DOES NOT FIT in RAM";
+
+/// Скрипт хука и таблицы, которые он импортирует из `chip-data/`.
+struct Script {
+    ast: AST,
+    modules: StaticModuleResolver,
+}
+
+type Vars = Rc<RefCell<HashMap<String, String>>>;
+type Files = Rc<RefCell<HashMap<String, Vec<String>>>>;
+type Deleted = Rc<RefCell<Vec<String>>>;
+/// Всё, что хук напечатал. Сообщения при генерации — единственный способ
+/// объяснить пользователю решение, принятое за него (сняли OTA, сняли раздел
+/// настроек, не посчитали раскладку), и ошибиться в них так же легко, как в
+/// коде: одно из них уже врало (см. `ota_blamed_on_the_settings_partition`).
+type Prints = Rc<RefCell<Vec<String>>>;
+/// Показанные меню: заголовок и варианты (см. `CascadeResult::prompts`).
+type Prompts = Rc<RefCell<Vec<(String, Vec<String>)>>>;
+
+/// Итог одного прогона: переменные (`chip`, `chip_feature`, `cpu`, `target`,
+/// `write_size`, `ota`, `bank_mode`…), файлы, записанные через `file::write`
+/// (memory.x), построчно, и пути, снесённые через `file::delete` (crates-cross/boot у чипов без OTA).
+struct CascadeResult {
+    vars: HashMap<String, String>,
+    files: HashMap<String, Vec<String>>,
+    deleted: Vec<String>,
+    prints: Vec<String>,
+    /// Показанные меню: заголовок и варианты в том порядке, в каком их видит
+    /// пользователь. Каскад по символам (выбор чипа) сюда не попадает.
+    prompts: Vec<(String, Vec<String>)>,
+}
+
+/// Файлы репозитория шаблона по `git ls-files` — то, что уезжает в
+/// `cargo generate`: относительно корня, через `/`.
+fn tracked_files() -> &'static [String] {
+    static FILES: OnceLock<Vec<String>> = OnceLock::new();
+    FILES.get_or_init(|| {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repo_root())
+            .args(["ls-files", "-z"])
+            .output()
+            .expect("запустить git ls-files");
+        assert!(
+            output.status.success(),
+            "git ls-files: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout)
+            .expect("git ls-files вернул не UTF-8")
+            .split('\0')
+            .filter(|path| !path.is_empty())
+            .map(str::to_owned)
+            .collect()
+    })
+}
+
+/// Файлы из [`tracked_files`] и все их каталоги — пути, которые может
+/// удалить `file::delete`.
+fn tracked_paths() -> &'static HashSet<String> {
+    static PATHS: OnceLock<HashSet<String>> = OnceLock::new();
+    PATHS.get_or_init(|| {
+        let mut paths = HashSet::new();
+        for file in tracked_files() {
+            let mut path = file.as_str();
+            paths.insert(path.to_owned());
+            while let Some((dir, _)) = path.rsplit_once('/') {
+                paths.insert(dir.to_owned());
+                path = dir;
+            }
+        }
+        paths
+    })
 }
 
 fn script_path() -> PathBuf {
@@ -111,16 +196,50 @@ fn dependency_urls_are_normalized_and_required() {
     );
 }
 
+/// Адрес уходит литералом в TOML (`git = "…"` и паспорт генерации): пробел,
+/// кавычка и `\` в нём — ошибка и в `--define`, а не только в строке ввода.
+#[test]
+fn dependency_urls_reject_what_would_break_toml() {
+    let ast = compile_script();
+    for url in ["https://h/a b", "https://h/a\"b", "https://h/a\\b"] {
+        for (name, extra) in [
+            ("rust_lib", None),
+            ("hw_drivers", Some(("ext_flash", "yes"))),
+        ] {
+            let mut answers = vec![(name, url)];
+            answers.extend(extra);
+            let Err(err) = run_cascade_with(&ast, "f407ve", &answers) else {
+                panic!("{name}={url:?} должен падать");
+            };
+            assert!(
+                err.to_string().contains("без пробелов, кавычек"),
+                "{name}={url:?}: {err}"
+            );
+        }
+    }
+}
+
+/// Паспорт генерации различает раскладку хука и ручную: `write_size` хук
+/// выставляет в обеих ветках, а `memory_layout` — только своё.
+#[test]
+fn memory_layout_tells_manual_from_generated() {
+    let ast = compile_script();
+    let generated = run_cascade_to(&ast, "f407ve").expect("каскад");
+    assert_eq!(
+        generated.vars.get("memory_layout").map(String::as_str),
+        Some("generated")
+    );
+    let manual = run_cascade_with(&ast, "f407ve", &[("write_size", "4")]).expect("каскад");
+    assert_eq!(
+        manual.vars.get("memory_layout").map(String::as_str),
+        Some("manual")
+    );
+}
+
 /// Список чипов со штампом версий — тот файл, который хук импортирует первым.
 fn read_chip_list() -> String {
     std::fs::read_to_string(repo_root().join("chip-data").join("chips.rhai"))
         .expect("не удалось прочитать chip-data/chips.rhai")
-}
-
-/// Скрипт хука и таблицы, которые он импортирует из `chip-data/`.
-struct Script {
-    ast: AST,
-    modules: StaticModuleResolver,
 }
 
 /// Парсинг — основная стоимость прогона, а таблицы раскладок в `chip-data/`
@@ -179,30 +298,6 @@ fn compile_script() -> Script {
     Script { ast, modules }
 }
 
-type Vars = Rc<RefCell<HashMap<String, String>>>;
-type Files = Rc<RefCell<HashMap<String, Vec<String>>>>;
-type Deleted = Rc<RefCell<Vec<String>>>;
-/// Всё, что хук напечатал. Сообщения при генерации — единственный способ
-/// объяснить пользователю решение, принятое за него (сняли OTA, сняли раздел
-/// настроек, не посчитали раскладку), и ошибиться в них так же легко, как в
-/// коде: одно из них уже врало (см. `ota_blamed_on_the_settings_partition`).
-type Prints = Rc<RefCell<Vec<String>>>;
-/// Показанные меню: заголовок и варианты (см. `CascadeResult::prompts`).
-type Prompts = Rc<RefCell<Vec<(String, Vec<String>)>>>;
-
-/// Итог одного прогона: переменные (chip/chip_feature/cpu/target/write_size/
-/// ota/bank_mode), файлы, записанные через `file::write` (memory.x), построчно,
-/// и пути, снесённые через `file::delete` (crates-cross/boot у чипов без OTA).
-struct CascadeResult {
-    vars: HashMap<String, String>,
-    files: HashMap<String, Vec<String>>,
-    deleted: Vec<String>,
-    prints: Vec<String>,
-    /// Показанные меню: заголовок и варианты в том порядке, в каком их видит
-    /// пользователь. Каскад по символам (выбор чипа) сюда не попадает.
-    prompts: Vec<(String, Vec<String>)>,
-}
-
 /// Прогоняет уже скомпилированный chip-select.rhai один раз, ведя каскад к
 /// `target_suffix` (суффикс без "stm32", например "f407ve" или "l151c6-a").
 fn run_cascade_to(
@@ -245,6 +340,10 @@ fn run_cascade_with(
 /// пункт в первом показе меню `transports:` и закрывает его во втором. Меню без ответа (или когда
 /// ответы его id кончились) ведёт себя как запуск без терминала: `variable::prompt` отвечает ошибкой «not a
 /// terminal», и хук берёт умолчание.
+#[expect(
+    clippy::too_many_lines,
+    reason = "моки всех функций хука, которые зовёт каскад, регистрируются в одном движке"
+)]
 fn run_interview(
     script: &Script,
     target_suffix: &str,
@@ -422,6 +521,15 @@ fn run_interview(
         file_module.set_native_fn(
             "delete",
             move |path: &str| -> Result<(), Box<EvalAltResult>> {
+                // `cargo generate` молча проходит мимо пути, которого нет: такой
+                // `file::delete` мёртв — файл переименовали или удалили, а хук
+                // остался ждать его по старому имени.
+                if !tracked_paths().contains(path) {
+                    return Err(format!(
+                        "file::delete(\"{path}\"): такого пути нет в git ls-files"
+                    )
+                    .into());
+                }
                 deleted.borrow_mut().push(path.to_string());
                 Ok(())
             },
@@ -1049,28 +1157,28 @@ fn state_and_config_lengths_are_multiples_of_their_erase_size() {
 /// dependabot/renovate, и молча: списки при этом остались бы от старой версии,
 /// а расхождение вылезло бы у пользователя шаблона при генерации.
 ///
-/// Штамп пишет `chip-data-gen` (см. `format_source_stamp`); строка здесь
-/// продублирована намеренно — тест это отдельный крейт и до констант бинарника
-/// не дотягивается.
+/// То же со `stm32-metapac`: `embassy-stm32` тянет его диапазоном, и минорный
+/// релиз metapac меняет данные при той же версии `embassy-stm32`. Её тест
+/// разрешает так же, как генератор, — `cargo metadata` без lock-файла, то есть
+/// с доступом к реестру.
+///
+/// Штамп пишет `chip-data-gen` (`emit::format_source_stamp`); начало штампа и
+/// версии тест берёт у него же.
 #[test]
 fn generated_blocks_match_the_declared_embassy_version() {
-    let manifest_path = repo_root().join("crates-cross").join("Cargo.toml");
-    let manifest = std::fs::read_to_string(&manifest_path)
-        .expect("не удалось прочитать crates-cross/Cargo.toml");
-    let declared = manifest
-        .lines()
-        .find(|line| line.trim_start().starts_with("embassy-stm32"))
-        .and_then(|line| line.split_once("version"))
-        .and_then(|(_, rest)| rest.trim_start().strip_prefix('='))
-        .and_then(|rest| rest.trim_start().strip_prefix('"'))
-        .and_then(|rest| rest.split_once('"').map(|(version, _)| version.to_owned()))
-        .expect("в crates-cross/Cargo.toml не нашлась версия embassy-stm32");
+    let declared = declared_embassy_version(&repo_root())
+        .expect("версия embassy-stm32 в crates-cross/Cargo.toml");
+    let metapac = resolved_metapac_version(&repo_root())
+        .unwrap_or_else(|err| panic!("версия stm32-metapac от cargo metadata: {err:#}"));
 
-    let expected = format!("// Источник: embassy-stm32 {declared} (crates-cross/Cargo.toml)");
+    let expected = source_stamp_versions(&declared, &metapac);
+    let list = read_chip_list();
     assert!(
-        read_chip_list().contains(&expected),
-        "chip-data/ собран не под embassy-stm32 {declared} — перегенерируйте списки:\n\
-         cargo run --manifest-path chip-data-gen/Cargo.toml"
+        list.contains(&format!("{expected},")),
+        "chip-data/ собран не под embassy-stm32 {declared} и stm32-metapac {metapac} \
+         (штамп: {:?}) — перегенерируйте списки:\n\
+         cargo run --manifest-path chip-data-gen/Cargo.toml",
+        list.lines().find(|line| line.starts_with("// Источник")),
     );
 }
 
@@ -1147,6 +1255,31 @@ fn an_unknown_config_answer_is_an_error() {
             .err()
             .unwrap_or_else(|| panic!("config={answer} должен быть ошибкой"));
         assert!(err.to_string().contains("ожидается yes или no"), "{err}");
+    }
+}
+
+/// Одно правило для всех вопросов «да/нет» в `--define`: только `yes`/`no`.
+/// Раньше `graph` и `modbus_master` принимали ещё и `true`/`false`, а `ota`,
+/// `config`, `ext_flash` — нет.
+#[test]
+fn every_yes_no_define_takes_only_yes_or_no() {
+    let ast = compile_script();
+    let modbus = [("interface", "uart"), ("protocol", "modbus")];
+    for name in ["ota", "config", "graph", "ext_flash", "modbus_master"] {
+        for answer in ["true", "false", "Yes"] {
+            let mut answers = vec![(name, answer)];
+            if name == "modbus_master" {
+                answers.extend(modbus);
+            }
+            let err = run_cascade_with(&ast, "f407ve", &answers)
+                .err()
+                .unwrap_or_else(|| panic!("{name}={answer} должен быть ошибкой"));
+            assert!(
+                err.to_string()
+                    .contains(&format!("{name}: ожидается yes или no")),
+                "{name}={answer}: {err}"
+            );
+        }
     }
 }
 
@@ -1396,7 +1529,6 @@ fn no_protocol_by_default() {
         "crates-host/ports/src/link.rs",
         "crates-host/ports/src/modbus.rs",
         "crates-host/ports/src/modbus",
-        "crates-host/ports/src/protobuf.rs",
         "crates-host/ports/src/can.rs",
         "crates-host/adapters/src/modbus",
         "crates-host/adapters/src/cobs.rs",
@@ -1473,8 +1605,6 @@ fn protocol_over_uart_keeps_the_serial_module() {
     }
 }
 
-const MASTER_FILE: &str = "crates-host/domain/src/modbus/master.rs";
-
 /// Master Modbus выключен по умолчанию: ответ «false», а файл логики master'а
 /// хук удаляет — вместе с ним остальное вырезает Liquid.
 #[test]
@@ -1496,31 +1626,29 @@ fn modbus_master_is_off_by_default() {
     );
 }
 
-/// `modbus_master=yes` (и старое `true`) при Modbus оставляет файл master'а.
+/// `modbus_master=yes` при Modbus оставляет файл master'а (`true` — ошибка, см.
+/// `every_yes_no_define_takes_only_yes_or_no`).
 #[test]
 fn modbus_master_yes_keeps_the_master() {
-    for answer in ["yes", "true"] {
-        let result = run_cascade_with(
-            &compile_script(),
-            "g474re",
-            &[
-                ("protocol", "modbus"),
-                ("interface", "uart"),
-                ("modbus_master", answer),
-            ],
-        )
-        .expect("каскад не должен падать");
-        assert_eq!(
-            result.vars.get("modbus_master").map(String::as_str),
-            Some("true"),
-            "ответ {answer}"
-        );
-        assert!(
-            !result.deleted.iter().any(|path| path == MASTER_FILE),
-            "master.rs удалён при modbus_master={answer}: {:?}",
-            result.deleted
-        );
-    }
+    let result = run_cascade_with(
+        &compile_script(),
+        "g474re",
+        &[
+            ("protocol", "modbus"),
+            ("interface", "uart"),
+            ("modbus_master", "yes"),
+        ],
+    )
+    .expect("каскад не должен падать");
+    assert_eq!(
+        result.vars.get("modbus_master").map(String::as_str),
+        Some("true")
+    );
+    assert!(
+        !result.deleted.iter().any(|path| path == MASTER_FILE),
+        "master.rs удалён при modbus_master=yes: {:?}",
+        result.deleted
+    );
 }
 
 /// Без Modbus master'у нечем быть: вопрос не задаётся, ответ «no» принимается, а
@@ -2308,10 +2436,6 @@ fn ethernet_item_becomes_tcp() {
     );
 }
 
-/// Ключ ed25519 для ответов `ssh_key`.
-const SSH_KEY: &str =
-    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl user@host";
-
 /// Сетевые службы — тем же списком с отметками, что и транспорты, и только
 /// при Ethernet; у SSH затем — способ входа и ключ.
 #[test]
@@ -2583,6 +2707,10 @@ fn an_empty_key_falls_back_to_password() {
 }
 
 /// `--define` строгий: всё, что службы сделать не могут, — ошибка с причиной.
+#[expect(
+    clippy::too_many_lines,
+    reason = "таблица случаев `--define` с ожидаемыми ошибками"
+)]
 #[test]
 fn net_services_defines_are_strict() {
     let ast = compile_script();
@@ -3168,9 +3296,9 @@ fn settings_go_to_small_sectors_with_ota_and_to_the_tail_without() {
 /// секторами и при разделе настроек в хвосте flash обёртки нет.
 #[test]
 fn erase_page_wrapper_only_where_the_sector_is_smaller_than_the_chip_page() {
-    let ast = compile_script();
     // (чип, ответы, state_paged, config_paged, boot_partitioned)
     type Case<'a> = (&'a str, &'a [(&'a str, &'a str)], &'a str, &'a str, &'a str);
+    let ast = compile_script();
     let cases: [Case; 6] = [
         // F4: `STATE` в секторе 16 KiB при странице 128 KiB.
         ("f407ve", &[], "true", "false", "true"),
@@ -3224,7 +3352,6 @@ fn erase_page_wrapper_only_where_the_sector_is_smaller_than_the_chip_page() {
 /// TCP и UDP, сокеты сети и COBS — каждый лишь там, где ему есть кого обслуживать.
 #[test]
 fn transports_are_kept_only_for_the_selected_interface() {
-    let ast = compile_script();
     // (чип, ответы, файлы, которые должны быть удалены, файлы, которые остаются)
     type Case<'a> = (
         &'a str,
@@ -3235,6 +3362,7 @@ fn transports_are_kept_only_for_the_selected_interface() {
     const M: &str = "crates-host/adapters/src/modbus/";
     const N: &str = "crates-host/adapters/src/net/";
     const COBS: &str = "crates-host/adapters/src/cobs.rs";
+    let ast = compile_script();
     let cases: [Case; 5] = [
         (
             "g474re",
@@ -3311,7 +3439,6 @@ fn transports_are_kept_only_for_the_selected_interface() {
 /// только обёртке страницы или внешней флеши.
 #[test]
 fn ota_and_settings_code_is_kept_only_when_selected() {
-    let ast = compile_script();
     const OTA: [&str; 5] = [
         "crates-host/ports/src/ota.rs",
         "crates-host/ports/src/ota",
@@ -3324,9 +3451,9 @@ fn ota_and_settings_code_is_kept_only_when_selected() {
         "crates-host/adapters/src/settings.rs",
     ];
     const FLASH: &str = "crates-host/flash-page";
-    const WORD: &str = "crates-host/ports/src/word.rs";
     // (чип, ответы, OTA вырезана, настройки вырезаны, flash-page вырезан)
     type Case<'a> = (&'a str, &'a [(&'a str, &'a str)], bool, bool, bool);
+    let ast = compile_script();
     let cases: [Case; 5] = [
         (
             "g474re",
@@ -3379,9 +3506,6 @@ fn ota_and_settings_code_is_kept_only_when_selected() {
             assert_eq!(gone(path), no_settings, "{chip} {answers:?}: {path}");
         }
         assert_eq!(gone(FLASH), no_flash, "{chip} {answers:?}: {FLASH}");
-        // Слово записи читают OTA и узел CANopen; одни настройки — нет.
-        let canopen = answers.contains(&("protocol", "canopen"));
-        assert_eq!(gone(WORD), no_ota && !canopen, "{chip} {answers:?}: {WORD}");
     }
 }
 
@@ -3389,11 +3513,11 @@ fn ota_and_settings_code_is_kept_only_when_selected() {
 /// (`ports::link`) — только протоколам, которые им пользуются.
 #[test]
 fn watchdog_and_link_port_follow_the_choices() {
-    let ast = compile_script();
     const WDG: [&str; 2] = ["crates-cross/bsp/src/wdg.rs", "docs/modules/bsp-wdg.md"];
     const LINK: &str = "crates-host/ports/src/link.rs";
     // (чип, ответы, сторож удалён, канал удалён)
     type Case<'a> = (&'a str, &'a [(&'a str, &'a str)], bool, bool);
+    let ast = compile_script();
     let cases: [Case; 7] = [
         ("g474re", &[], false, true),
         ("g474re", &[("graph", "no")], true, true),
@@ -3446,125 +3570,117 @@ fn watchdog_and_link_port_follow_the_choices() {
 /// Хук обязан задать каждую на любом пути по меню — иначе подстановка в
 /// `cargo generate` упадёт на неопределённой переменной.
 fn template_variables() -> std::collections::BTreeSet<String> {
-    template_variables_in(&repo_root())
+    // Обход — по `git ls-files`, а не по рабочему дереву: в рабочем дереве
+    // лежат чужие worktree и служебные каталоги агентов, а `.claude/rules`,
+    // который едет в проект с Liquid, обход каталогов пропускал вместе со
+    // всем `.claude`. Сам хук, таблицы `chip-data/` и генератор не шаблон: в
+    // них Liquid встречается как текст.
+    let files: Vec<&str> = tracked_files()
+        .iter()
+        .map(String::as_str)
+        .filter(|path| {
+            !path.starts_with("chip-data-gen/")
+                && !path.starts_with("chip-data/")
+                && std::path::Path::new(path)
+                    .extension()
+                    .is_none_or(|ext| ext != "rhai" && ext != "lock")
+        })
+        .collect();
+    template_variables_in(&repo_root(), &files)
 }
 
-/// То же по дереву `root`.
-fn template_variables_in(root: &std::path::Path) -> std::collections::BTreeSet<String> {
+/// То же по файлам `files` (пути от `root`).
+fn template_variables_in(
+    root: &std::path::Path,
+    files: &[&str],
+) -> std::collections::BTreeSet<String> {
+    let mut found = std::collections::BTreeSet::new();
+    for file in files {
+        // Не UTF-8 (картинки, ключи) — не шаблон.
+        if let Ok(text) = std::fs::read_to_string(root.join(file)) {
+            found.extend(file_variables(&text));
+        }
+    }
+    found
+}
+
+/// Переменные хука одного файла шаблона.
+fn file_variables(text: &str) -> std::collections::BTreeSet<String> {
     use std::collections::BTreeSet;
 
-    fn walk(dir: &std::path::Path, found: &mut BTreeSet<String>) {
-        let Ok(entries) = std::fs::read_dir(dir) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let name = entry.file_name().to_string_lossy().to_string();
-            if path.is_dir() {
-                if matches!(
-                    name.as_str(),
-                    "target"
-                        | ".git"
-                        | "chip-data-gen"
-                        | "chip-data"
-                        | ".remember"
-                        | ".claude"
-                        | "superpowers"
-                        | ".superpowers"
-                        | "node_modules"
-                ) {
-                    continue;
-                }
-                walk(&path, found);
-                continue;
-            }
-            // Сам хук и Rust-код генератора не шаблон: в них Liquid встречается как текст.
-            if name.ends_with(".rhai") || name == "Cargo.lock" || name.ends_with(".lock") {
-                continue;
-            }
-            let Ok(text) = std::fs::read_to_string(&path) else {
-                continue;
-            };
-            // Переменные файла и имена, которые он объявляет сам (`for`, `assign`,
-            // `capture`): вторые — не переменные хука.
-            let mut local = BTreeSet::new();
-            let mut declared = BTreeSet::new();
-            let mut rest = text.as_str();
-            while let Some(start) = rest.find("{{") {
-                let after = &rest[start + 2..];
-                let Some(end) = after.find("}}") else { break };
-                let inner = after[..end].trim().trim_start_matches('-').trim();
-                let ident: String = inner
+    // Переменные файла и имена, которые он объявляет сам (`for`, `assign`,
+    // `capture`): вторые — не переменные хука.
+    let mut local = BTreeSet::new();
+    let mut declared = BTreeSet::new();
+    let mut rest = text;
+    while let Some(start) = rest.find("{{") {
+        let after = &rest[start + 2..];
+        let Some(end) = after.find("}}") else { break };
+        let inner = after[..end].trim().trim_start_matches('-').trim();
+        let ident: String = inner
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .collect();
+        if !ident.is_empty() && !ident.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+            local.insert(ident);
+        }
+        rest = &after[end + 2..];
+    }
+    let mut rest = text;
+    while let Some(start) = rest.find("{%") {
+        let after = &rest[start + 2..];
+        let Some(end) = after.find("%}") else { break };
+        let tag = after[..end].trim().trim_start_matches('-').trim();
+        for (keyword, sep) in [("for ", " in "), ("assign ", "="), ("capture ", "")] {
+            if let Some(body) = tag.strip_prefix(keyword) {
+                let name: String = body
+                    .trim_start()
                     .chars()
                     .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
                     .collect();
-                if !ident.is_empty() && !ident.chars().next().is_some_and(|c| c.is_ascii_digit()) {
-                    local.insert(ident);
+                declared.insert(name);
+                // Первое имя правой части (`links` в `assign xs = links | split`,
+                // `net_sockets` в `for i in (1..net_sockets)`) — переменная
+                // хука, если файл не объявил его сам; строковый литерал — нет.
+                let Some((_, expr)) = body.split_once(sep).filter(|_| !sep.is_empty()) else {
+                    continue;
+                };
+                let head = expr.split('|').next().unwrap_or_default().trim();
+                if head.starts_with(['"', '\'']) {
+                    continue;
                 }
-                rest = &after[end + 2..];
-            }
-            let mut rest = text.as_str();
-            while let Some(start) = rest.find("{%") {
-                let after = &rest[start + 2..];
-                let Some(end) = after.find("%}") else { break };
-                let tag = after[..end].trim().trim_start_matches('-').trim();
-                for (keyword, sep) in [("for ", " in "), ("assign ", "="), ("capture ", "")] {
-                    if let Some(body) = tag.strip_prefix(keyword) {
-                        let name: String = body
-                            .trim_start()
-                            .chars()
-                            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
-                            .collect();
-                        declared.insert(name);
-                        // Первое имя правой части (`links` в `assign xs = links | split`,
-                        // `net_sockets` в `for i in (1..net_sockets)`) — переменная
-                        // хука, если файл не объявил его сам; строковый литерал — нет.
-                        let Some((_, expr)) = body.split_once(sep).filter(|_| !sep.is_empty())
-                        else {
-                            continue;
-                        };
-                        let head = expr.split('|').next().unwrap_or_default().trim();
-                        if head.starts_with(['"', '\'']) {
-                            continue;
-                        }
-                        if let Some(first) = head
-                            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-                            .find(|w| !w.is_empty() && !w.starts_with(|c: char| c.is_ascii_digit()))
-                        {
-                            local.insert(first.to_string());
-                        }
-                    }
-                }
-                if let Some(cond) = tag
-                    .strip_prefix("if ")
-                    .or_else(|| tag.strip_prefix("elsif "))
-                    .or_else(|| tag.strip_prefix("unless "))
+                if let Some(first) = head
+                    .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                    .find(|w| !w.is_empty() && !w.starts_with(|c: char| c.is_ascii_digit()))
                 {
-                    // Каждый операнд, за которым стоит оператор сравнения.
-                    let words: Vec<&str> = cond.split_whitespace().collect();
-                    for (i, word) in words.iter().enumerate() {
-                        let is_op = matches!(
-                            words.get(i + 1).copied(),
-                            Some("==" | "!=" | ">" | "<" | ">=" | "<=" | "contains")
-                        );
-                        let bare = i == 0 && words.len() == 1;
-                        if (is_op || bare)
-                            && word.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-                            && !word.chars().next().is_some_and(|c| c.is_ascii_digit())
-                        {
-                            local.insert((*word).to_string());
-                        }
-                    }
+                    local.insert(first.to_string());
                 }
-                rest = &after[end + 2..];
             }
-            found.extend(local.difference(&declared).cloned());
         }
+        if let Some(cond) = tag
+            .strip_prefix("if ")
+            .or_else(|| tag.strip_prefix("elsif "))
+            .or_else(|| tag.strip_prefix("unless "))
+        {
+            // Каждый операнд, за которым стоит оператор сравнения.
+            let words: Vec<&str> = cond.split_whitespace().collect();
+            for (i, word) in words.iter().enumerate() {
+                let is_op = matches!(
+                    words.get(i + 1).copied(),
+                    Some("==" | "!=" | ">" | "<" | ">=" | "<=" | "contains")
+                );
+                let bare = i == 0 && words.len() == 1;
+                if (is_op || bare)
+                    && word.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                    && !word.chars().next().is_some_and(|c| c.is_ascii_digit())
+                {
+                    local.insert((*word).to_string());
+                }
+            }
+        }
+        rest = &after[end + 2..];
     }
-
-    let mut found = BTreeSet::new();
-    walk(root, &mut found);
-    found
+    local.difference(&declared).cloned().collect()
 }
 
 /// Переменные циклов (`{% for l in xs %}`, `{% assign f = … %}`) объявляет сам
@@ -3580,7 +3696,7 @@ fn loop_variables_are_not_hook_variables() {
         "{%- assign xs = links | split: \",\" -%}{% for l in xs %}{{ l }}         {% assign f = l | split: \":\" %}{{ f[0] }}{% capture c %}x{% endcapture %}{{ c }}         {% endfor %}{{ chip }}",
     )
     .expect("временный файл");
-    let found = template_variables_in(&dir);
+    let found = template_variables_in(&dir, &["t.rs"]);
     std::fs::remove_dir_all(&dir).ok();
     assert_eq!(found.into_iter().collect::<Vec<_>>(), ["chip", "links"]);
 }
@@ -3796,6 +3912,10 @@ fn every_chip_generates_with_the_defaults() {
 
 /// Обход всех путей по меню на характерных чипах: каждый путь, который меню
 /// вообще позволяет пройти, даёт допустимые ответы и не роняет генерацию.
+#[expect(
+    clippy::too_many_lines,
+    reason = "обход меню по всем характерным чипам — один сценарий"
+)]
 #[test]
 fn every_path_through_the_menus_generates() {
     let ast = compile_script();
@@ -3960,7 +4080,7 @@ fn watchdog_peripheral_follows_the_chip_metadata() {
     }
 }
 
-/// Банк 2 за разрывом (H743ZG: 2×512 KiB, банк 2 с 0x0810_0000): DFU в нём, а
+/// Банк 2 за разрывом (H743ZG: 2×512 KiB, банк 2 с `0x0810_0000`): DFU в нём, а
 /// его символы — от начала банка 2, потому что прошивка пишет его через
 /// `Bank2Region` (`dfu_bank = true`); цельный `Flash` туда не дотягивается.
 #[test]
@@ -4006,9 +4126,9 @@ fn external_ota_on_a_bank_gap_chip_leaves_bank_2_alone() {
     );
 }
 
-/// Ядро CM7 двухъядерного H7: первый сектор банка 2 (0x0810_0000–0x0811_FFFF)
+/// Ядро CM7 двухъядерного H7: первый сектор банка 2 (`0x0810_0000–0x0811_FFFF`)
 /// — точка старта CM4 с заводскими option bytes, и раскладка его не трогает:
-/// `DFU` — с 0x0812_0000 через `Bank2Region` (смещения от начала банка), а
+/// `DFU` — с `0x0812_0000` через `Bank2Region` (смещения от начала банка), а
 /// приложение без OTA — только в банке 1.
 #[test]
 fn cm7_of_a_dual_core_h7_leaves_the_cm4_boot_sector_alone() {
@@ -4038,8 +4158,8 @@ fn cm7_of_a_dual_core_h7_leaves_the_cm4_boot_sector_alone() {
 }
 
 /// Ядро CM4 двухъядерного H7 — в банке 2, откуда оно стартует: bootloader и
-/// приложение без OTA — с 0x0810_0000, а символы разделов по-прежнему от базы
-/// цельного `Flash` (0x0800_0000), и конец flash в `ASSERT` — смещение банка
+/// приложение без OTA — с `0x0810_0000`, а символы разделов по-прежнему от базы
+/// цельного `Flash` (`0x0800_0000`), и конец flash в `ASSERT` — смещение банка
 /// плюс его длина. При 2×512 KiB цельному `Flash` банк 2 недоступен: OTA и
 /// настройки отключаются, а не раскладываются туда, куда прошивка не напишет.
 #[test]
@@ -4100,7 +4220,7 @@ fn cm4_of_a_dual_core_h7_lives_in_bank_2() {
 
 /// STM32WB: RAM — только SRAM1 (SRAM2a/2b — память CPU2, доступ CPU1 — bus
 /// error), а всё во flash кончается ниже стека CPU2 `BLE_Stack_full`
-/// (0x080D_0000 у xG).
+/// (`0x080D_0000` у xG).
 #[test]
 fn wb_leaves_sram2_and_the_cpu2_flash_alone() {
     let ast = compile_script();
@@ -4219,6 +4339,8 @@ fn reset_flags_follow_the_chip_table() {
 /// только у чипа с RNG; без интерфейса или на другом интерфейсе — удалены.
 #[test]
 fn rng_files_stay_only_for_network_interfaces() {
+    // (чип, ответы, удалены ли файлы)
+    type RngCase<'a> = (&'a str, &'a [(&'a str, &'a str)], bool);
     let ast = compile_script();
     let files = ["crates-cross/bsp/src/rng.rs", "docs/modules/bsp-rng.md"];
     let deleted = |suffix: &str, preset: &[(&str, &str)]| {
@@ -4228,8 +4350,6 @@ fn rng_files_stay_only_for_network_interfaces() {
             .map(|file| result.deleted.iter().any(|path| path == file))
             .collect::<Vec<_>>()
     };
-    // (чип, ответы, удалены ли файлы)
-    type RngCase<'a> = (&'a str, &'a [(&'a str, &'a str)], bool);
     let cases: [RngCase; 6] = [
         ("h743zg", &[], true),
         (
@@ -4730,8 +4850,6 @@ fn item<'a>(shown: &'a [String], value: &str) -> &'a str {
         .find(|choice| menu_value(choice) == value)
         .unwrap_or_else(|| panic!("в меню нет пункта {value}: {shown:?}"))
 }
-
-const NO_RAM: &str = "DOES NOT FIT in RAM";
 
 /// `ram_estimate` — байты статической RAM, с транспортом их больше; хук печатает
 /// её строкой `ram_estimate:` (её читает `template-check`).

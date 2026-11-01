@@ -25,8 +25,8 @@ fn family_table() {
     //
     // ОСОЗНАННОЕ ОГРАНИЧЕНИЕ (не забытая деталь, зафиксировано по решению
     // пользователя): для выбранного суффикса каскад выставляет переменную
-    // `dual_core` (см. is_dual_core() и конец скрипта), которую crates-cross/bsp и
-    // crates-cross/boot используют, чтобы вызвать `embassy_stm32::init_primary()`
+    // `dual_core` (см. is_dual_core() и конец скрипта), по которой `Board::new()`
+    // в crates-cross/bsp/src/board.rs зовёт `embassy_stm32::init_primary()`
     // вместо недоступного на dual-core `init()` — сгенерированный `cross`
     // собирается. Но код пишется только под ОДНО (то, что выбрано в
     // каскаде) ядро: второй образ шаблон не генерирует, взаимодействие с
@@ -432,7 +432,10 @@ fn ask(label, values, texts, default_value) {
 /// Адрес git-репозитория зависимости: `--define <name>=…` или ввод строки.
 /// Умолчания нет — без терминала и без `--define` генерация падает с подсказкой.
 /// Хранится без `.git` и завершающего `/`: Cargo.toml дописывает `.git` сам, а
-/// allow-git в deny.toml сравнивает адрес без него.
+/// allow-git в deny.toml сравнивает адрес без него. Пробелов, кавычек и `\`
+/// в адресе быть не может — проверка одна и для ввода, и для `--define`:
+/// строка уезжает литералом в TOML (`git = "…"` в Cargo.toml, паспорт
+/// `.template-answers.toml`), и кавычка в ней сломала бы манифест.
 fn repo_url(name, what) {
     let url = "";
     if variable::is_set(name) {
@@ -453,6 +456,11 @@ fn repo_url(name, what) {
     }
     if url == "" {
         throw name + ": нужен адрес репозитория " + what + "; задайте --define " + name + "=https://…";
+    }
+    for bad in [" ", "\t", "\n", "\r", "\"", "\\"] {
+        if url.contains(bad) {
+            throw name + ": адрес «" + url + "» — без пробелов, кавычек и \\ (он уходит строкой в Cargo.toml)";
+        }
     }
     url
 }
@@ -600,15 +608,24 @@ fn links_text(links) {
     out
 }
 
+/// Ответ «да/нет» из `--define name=…`: только `yes` или `no`, у всех
+/// вопросов одинаково (`cargo-generate.toml`, «`--define` … строгий»).
+/// `true`/`false` — тоже ошибка: в шаблоне это значения переменных после хука,
+/// и принимать их на входе одним вопросам и не принимать другим значило бы
+/// держать два правила вместо одного.
+fn yes_no_define(name) {
+    let answer = variable::get(name);
+    if answer != "yes" && answer != "no" {
+        throw name + ": ожидается yes или no, а не «" + answer + "»";
+    }
+    answer == "yes"
+}
+
 /// Ответ `modbus_master`: спрашивается один раз, когда в проекте впервые
 /// выбран Modbus; `--define` проверяется строго.
 fn modbus_master_answer() {
     if variable::is_set("modbus_master") {
-        let answer = variable::get("modbus_master");
-        if answer != "yes" && answer != "true" && answer != "no" && answer != "false" {
-            throw "modbus_master: ожидается yes или no, а не «" + answer + "»";
-        }
-        return answer == "yes" || answer == "true";
+        return yes_no_define("modbus_master");
     }
     ask(
         "modbus_master: Modbus master (клиент) в дополнение к slave",
@@ -774,11 +791,7 @@ const RNG = rng_data::RNG;
 // предлагаются. В меню — после выбора чипа, первым из вопросов о памяти.
 let wants_ext = false;
 if variable::is_set("ext_flash") {
-    let answer = variable::get("ext_flash");
-    if answer != "yes" && answer != "no" {
-        throw "ext_flash: ожидается yes или no, а не «" + answer + "»";
-    }
-    wants_ext = answer == "yes";
+    wants_ext = yes_no_define("ext_flash");
 }
 
 // Ответ на вопрос про OTA (`--define ota=yes|no`). Дальше по коду `ota`
@@ -800,10 +813,7 @@ if variable::is_set("ota") {
         throw "ota: ожидается yes или no; где лежат DFU и STATE, решает ext_flash (`" + answer + "` — это ext_flash="
             + (if answer == "external" { "yes" } else { "no" }) + " и ota=yes)";
     }
-    if answer != "yes" && answer != "no" {
-        throw "ota: ожидается yes или no, а не «" + answer + "»";
-    }
-    wants_ota = answer == "yes";
+    wants_ota = yes_no_define("ota");
 }
 let wants_ext_ota = wants_ota && wants_ext;
 
@@ -837,10 +847,7 @@ if variable::is_set("config") {
         throw "config: ожидается yes или no; где лежат настройки, решает ext_flash (`" + answer + "` — это ext_flash="
             + (if answer == "external" { "yes" } else { "no" }) + " и config=yes)";
     }
-    if answer != "yes" && answer != "no" {
-        throw "config: ожидается yes или no, а не «" + answer + "»";
-    }
-    wants_config = answer == "yes";
+    wants_config = yes_no_define("config");
 }
 let wants_external = wants_config && wants_ext;
 
@@ -848,11 +855,7 @@ let wants_external = wants_config && wants_ext;
 // размер раздела, в который линкуется приложение (см. GRAPH_MIN_PARTITION).
 let wants_graph = true;
 if variable::is_set("graph") {
-    let answer = variable::get("graph");
-    if answer != "yes" && answer != "true" && answer != "no" && answer != "false" {
-        throw "graph: ожидается yes или no, а не «" + answer + "»";
-    }
-    wants_graph = answer == "yes" || answer == "true";
+    wants_graph = yes_no_define("graph");
 }
 if !wants_graph {
     print("Граф задач отключён по вашему выбору: узлы спавнит tasks::spawn_all, без сторожа");
@@ -1026,8 +1029,8 @@ const STACK_RESERVE = 1024;
 const STACK_EXTRA = #{ ota: 3072, ssh: 40960 };
 // RAM, на которой `STACK_RESERVE` (замерен на H7, на ядрах M0 кадры другие) уже
 // решает, хватит ли стека: у чипов до 8 KiB (L0, F0, C0, младшие F1/G0) хук
-// предупреждает, сколько стеку остаётся, и просит проверить прошивку на плате
-// (`MAINTAINING.md`, «Оценка RAM»).
+// предупреждает, сколько стеку остаётся, и просит проверить прошивку на плате.
+// Ссылается сообщение на docs/diagnostics.md проекта: MAINTAINING.md в проект не едет.
 const SMALL_RAM = 8192;
 
 // Ответы отсекают чипы ещё до каскада: сетевой стек просит чип с Ethernet,
@@ -1228,8 +1231,9 @@ if !variable::is_set("cpu") {
 if !variable::is_set("target") {
     variable::set("target", family[1]);
 }
-// Читается из crates-cross/bsp/Cargo.toml и crates-cross/boot/Cargo.toml (условно
-// включает фичу "dual-core" в default) — см. Board::new()/main() там же.
+// Читается Liquid-ом в crates-cross/bsp/src/board.rs: на двухъядерном чипе
+// `Board::new()` зовёт `init_primary()` вместо `init()` (Cargo-фичи под это
+// у `bsp`/`boot` нет — ядро выбирает сама чип-фича `embassy-stm32`).
 // Без переопределения через --define (в отличие от chip/cpu/target/
 // write_size): значение полностью выводится из chip_feature, легитимной
 // причины расходиться с ним нет.
@@ -1295,7 +1299,14 @@ if !CPU_FREQ_BOOST.contains(suffix) {
 // без регистров причины фолта (`CFSR`/`HFSR`) и без ловушки деления `CCR.DIV_0_TRP`.
 // По этому признаку `bsp` собирает `cycles` и ветки `fault`, а `ports` — `CycleCounter`.
 let cpu_core = variable::get("cpu");
-variable::set("core_baseline", if cpu_core == "cortex-m0" || cpu_core == "cortex-m0plus" || cpu_core == "cortex-m23" { "true" } else { "false" });
+let core_baseline = cpu_core == "cortex-m0" || cpu_core == "cortex-m0plus" || cpu_core == "cortex-m23";
+variable::set("core_baseline", if core_baseline { "true" } else { "false" });
+// `mod cycles` у обоих крейтов под тем же признаком вырезает Liquid; файл без
+// `mod` компилятор не видит, и он уехал бы в проект мёртвым кодом.
+if core_baseline {
+    file::delete("crates-cross/bsp/src/cycles.rs");
+    file::delete("crates-host/ports/src/cycles.rs");
+}
 
 // Кэши (см. CACHE выше). Без переопределения через --define: значение целиком
 // выводится из chip_feature и cpu. Теги `scb` (кэш инструкций ядра M7) и `scb_d`
@@ -1325,7 +1336,7 @@ variable::set("rng_source", rng[2]);
 // под tcp/udp (сид стека `embassy-net`) и только там, где он есть у чипа.
 
 // Готовые адреса/размеры для memory.x. Строится из метаданных stm32-metapac
-// (реальные границы секторов чипа), не гадание — см. chip-data-gen/src/main.rs,
+// (реальные границы секторов чипа), не гадание — см. chip-data-gen/src/layout.rs,
 // compute_memory_layout(). У каждой записи есть "ota":
 //   "true"  — OTA-схема embassy-boot помещается: есть BOOTLOADER/ACTIVE/DFU/
 //             BOOTLOADER_STATE, crates-cross/boot собирается и прошивается;
@@ -1341,7 +1352,7 @@ variable::set("rng_source", rng[2]);
 // задают его через --define.
 //
 // Таблица разложена по файлам семейств — первые два символа суффикса, тот же
-// ключ, что `layout_family` в chip-data-gen: целиком она ~89 тысяч строк, а
+// ключ, что `layout_family` в chip-data-gen: целиком она ~75 тысяч строк, а
 // нужна одна запись.
 import "chip-data/layout/" + suffix.sub_string(0, 2) as layout_data;
 const MEMORY_LAYOUT = layout_data::MEMORY_LAYOUT;
@@ -1657,11 +1668,8 @@ if WANTED_LINKS.len() > 0 {
 if !wants_graph && links.some(|link| link.kind == "tcp" || link.kind == "udp") {
     throw "links: сетевой транспорт (tcp/udp) — только с графом задач (graph=yes): без графа сети в шаблоне нет";
 }
-if protocol != "modbus" && variable::is_set("modbus_master") {
-    let answer = variable::get("modbus_master");
-    if answer == "yes" || answer == "true" {
-        throw "modbus_master: master есть только у протокола modbus, а выбран " + protocol;
-    }
+if protocol != "modbus" && variable::is_set("modbus_master") && yes_no_define("modbus_master") {
+    throw "modbus_master: master есть только у протокола modbus, а выбран " + protocol;
 }
 
 // --- Сетевые службы (`net_services`, `NET_SERVICE_ITEMS`): список с отметками,
@@ -1781,7 +1789,7 @@ if ram_limit != () {
     if ram_limit <= SMALL_RAM {
         let left = if ram_limit > need { ram_limit - need } else { 0 };
         print("Внимание: у " + chip_name + " RAM " + kib(ram_limit) + ", стеку остаётся около " + left
-            + " байт, а глубина стека шаблона замерена только на H7 (резерв " + stack + " байт) — проверьте прошивку на плате (MAINTAINING.md, «Оценка RAM»)");
+            + " байт, а глубина стека шаблона замерена только на H7 (резерв " + stack + " байт) — проверьте прошивку на плате (docs/diagnostics.md, «Чего здесь нет»)");
     }
 }
 
@@ -1875,6 +1883,9 @@ variable::set("config_paged", "false");
 // тогда ему нужны `FLASH_BYTES` и обёртки; иначе все три раздела — прямо
 // над `Flash`.
 variable::set("boot_partitioned", "false");
+// Кто пишет memory.x — для паспорта генерации (`post-script.rhai`): по одному
+// `write_size` этого не понять, его хук выставляет в обеих ветках.
+variable::set("memory_layout", if variable::is_set("write_size") { "manual" } else { "generated" });
 if variable::is_set("write_size") {
     variable::set("ota", if wants_ota { "true" } else { "false" });
     variable::set("ota_store", if wants_ext_ota { "external" } else { "internal" });
@@ -2407,7 +2418,7 @@ if variable::is_set("write_size") {
         // весь flash, crates-cross/boot в него не попадает вовсе.
         // Каталог убирается здесь, а не через [conditional] в
         // cargo-generate.toml: условия там вычисляются по значениям
-        // [placeholders] и переменных, выставленных хуком, не видят
+        // [placeholders], а переменных, выставленных хуком, не видят
         // (проверено эмпирически — с `[conditional.'ota != "true"']` каталог
         // оставался на месте, а то же условие по `ci` работало). Удаление
         // идёт по временной копии шаблона, до рендера — как и file::write.
@@ -2447,21 +2458,21 @@ if variable::is_set("write_size") {
 // отключается по размеру раздела). Условие в `crates-cross/app/src/main.rs` (`mod graph;`)
 // закрыто тем же `{% if %}`, поэтому удаление файла ничего не ломает.
 if variable::get("graph") != "true" {
-	file::delete("crates-cross/app/src/graph.rs");
-	// Сторож запускает блок `watchdog:` графа; без графа его некому взводить, а
-	// `Board` поля сторожа не имеет.
-	file::delete("crates-cross/bsp/src/wdg.rs");
-	file::delete("docs/modules/bsp-wdg.md");
-	// Узел `HEARTBEAT` спавнит только граф, и сторожа без графа нет.
-	file::delete("crates-host/domain/src/heartbeat.rs");
-	file::delete("crates-host/domain/src/heartbeat");
-	file::delete("docs/watchdog.md");
-	// Документация `graph.rs`; общее для крейта `app` — в `docs/modules/app.md`.
-	file::delete("docs/modules/app-graph.md");
+    file::delete("crates-cross/app/src/graph.rs");
+    // Сторож запускает блок `watchdog:` графа; без графа его некому взводить, а
+    // `Board` поля сторожа не имеет.
+    file::delete("crates-cross/bsp/src/wdg.rs");
+    file::delete("docs/modules/bsp-wdg.md");
+    // Узел `HEARTBEAT` спавнит только граф, и сторожа без графа нет.
+    file::delete("crates-host/domain/src/heartbeat.rs");
+    file::delete("crates-host/domain/src/heartbeat");
+    file::delete("docs/watchdog.md");
+    // Документация `graph.rs`; общее для крейта `app` — в `docs/modules/app.md`.
+    file::delete("docs/modules/app-graph.md");
 } else {
-	// С графом узлы спавнит он (`fragments:`), модули задач без графа не нужны.
-	file::delete("crates-cross/app/src/tasks.rs");
-	file::delete("crates-cross/app/src/tasks");
+    // С графом узлы спавнит он (`fragments:`), модули задач без графа не нужны.
+    file::delete("crates-cross/app/src/tasks.rs");
+    file::delete("crates-cross/app/src/tasks");
 }
 
 // Протокол и транспорт выбраны и проверены выше (вопросы после выбора чипа), а
@@ -2617,7 +2628,7 @@ for kind in ["uart", "usb", "tcp", "udp"] {
 // внешней флеши, регионы DMA) — пока есть что из них читать.
 let layout_store = variable::get("config_store");
 if variable::get("ota") != "true" && layout_store != "flash" && layout_store != "external" && variable::get("dma_nc") != "true" {
-	file::delete("crates-cross/bsp/src/layout.rs");
+    file::delete("crates-cross/bsp/src/layout.rs");
 }
 // Группы `resources.rs` нужны, пока есть что в них класть: общий флеш, сторож
 // графа, блоки транспортов или шина внешней флеши. Иначе в файле остаётся пустая группа.
@@ -2629,18 +2640,18 @@ variable::set("modbus_master", if master { "true" } else { "false" });
 // клиентские impl'ы вырезает Liquid в комментариях. Без modbus каталог
 // `domain/src/modbus` уже удалён ниже целиком, второй раз его не трогаем.
 if on.modbus && !master {
-	file::delete("crates-host/domain/src/modbus/master.rs");
+    file::delete("crates-host/domain/src/modbus/master.rs");
 }
 // Модуль заглушки UART в bsp — только с транспортом uart: без него
 // `bsp::serial` не объявлен, и файл остался бы мусором с Liquid внутри.
 if !has.uart {
-	file::delete("crates-cross/bsp/src/serial.rs");
-	file::delete("docs/modules/bsp-serial.md");
+    file::delete("crates-cross/bsp/src/serial.rs");
+    file::delete("docs/modules/bsp-serial.md");
 }
 // То же для CAN: модуль шины и его документация — только с транспортом can.
 if !has.can {
-	file::delete("crates-cross/bsp/src/can.rs");
-	file::delete("docs/modules/bsp-can.md");
+    file::delete("crates-cross/bsp/src/can.rs");
+    file::delete("docs/modules/bsp-can.md");
 }
 // Крейты протоколов — только в проекте, где протокол выбран: без них нет ни
 // схемы protobuf (и её генерации в `build.rs`), ни словаря CANopen. Ссылки на
@@ -2651,187 +2662,183 @@ if !has.can {
 // а проект без протокола — ничего из них. Ссылки на удалённое (`mod`,
 // `pub use`, зависимости, фичи) вырезает Liquid в комментариях.
 if !on.modbus {
-	file::delete("crates-host/ports/src/modbus.rs");
-	file::delete("crates-host/ports/src/modbus");
-	file::delete("crates-host/adapters/src/modbus.rs");
-	file::delete("crates-host/adapters/src/modbus");
-	file::delete("crates-host/domain/src/modbus.rs");
-	file::delete("crates-host/domain/src/modbus");
-	file::delete("crates-cross/app/src/modbus.rs");
+    file::delete("crates-host/ports/src/modbus.rs");
+    file::delete("crates-host/ports/src/modbus");
+    file::delete("crates-host/adapters/src/modbus.rs");
+    file::delete("crates-host/adapters/src/modbus");
+    file::delete("crates-host/domain/src/modbus.rs");
+    file::delete("crates-host/domain/src/modbus");
+    file::delete("crates-cross/app/src/modbus.rs");
 }
 // Транспорты Modbus и сокеты сети — только под выбранные транспорты: остальные
 // файлы адаптеров были бы кодом, до которого не дотянуться. `mod`, `pub use` и
 // тесты в `modbus.rs`/`net.rs` вырезает Liquid в комментариях.
 if on.modbus {
-	if !modbus_rtu {
-		file::delete("crates-host/adapters/src/modbus/rtu.rs");
-	}
-	if !modbus_tcp {
-		file::delete("crates-host/adapters/src/modbus/tcp.rs");
-	}
-	if !modbus_udp {
-		file::delete("crates-host/adapters/src/modbus/udp.rs");
-	}
-	if !modbus_mbap {
-		file::delete("crates-host/adapters/src/modbus/mbap.rs");
-	}
+    if !modbus_rtu {
+        file::delete("crates-host/adapters/src/modbus/rtu.rs");
+    }
+    if !modbus_tcp {
+        file::delete("crates-host/adapters/src/modbus/tcp.rs");
+    }
+    if !modbus_udp {
+        file::delete("crates-host/adapters/src/modbus/udp.rs");
+    }
+    if !modbus_mbap {
+        file::delete("crates-host/adapters/src/modbus/mbap.rs");
+    }
 }
 // TCP: общее — `net/tcp.rs`, сервер транспортов — `net/tcp/server.rs`, клиент
 // MQTT — `net/tcp/client.rs` (нужен и при mqtt поверх одного UDP).
 if !has.tcp && !services.contains("mqtt") {
-	file::delete("crates-host/adapters/src/net/tcp.rs");
-	file::delete("crates-host/adapters/src/net/tcp");
+    file::delete("crates-host/adapters/src/net/tcp.rs");
+    file::delete("crates-host/adapters/src/net/tcp");
 } else {
-	if !has.tcp {
-		file::delete("crates-host/adapters/src/net/tcp/server.rs");
-	}
-	if !services.contains("mqtt") {
-		file::delete("crates-host/adapters/src/net/tcp/client.rs");
-	}
+    if !has.tcp {
+        file::delete("crates-host/adapters/src/net/tcp/server.rs");
+    }
+    if !services.contains("mqtt") {
+        file::delete("crates-host/adapters/src/net/tcp/client.rs");
+    }
 }
 if !has.udp {
-	file::delete("crates-host/adapters/src/net/udp.rs");
+    file::delete("crates-host/adapters/src/net/udp.rs");
 }
 if !cobs_used {
-	file::delete("crates-host/adapters/src/cobs.rs");
+    file::delete("crates-host/adapters/src/cobs.rs");
 }
 if !on.protobuf {
-	file::delete("crates-host/ports/src/protobuf.rs");
-	file::delete("crates-host/domain/src/protobuf.rs");
-	file::delete("crates-host/domain/src/protobuf");
-	file::delete("crates-host/proto");
+    file::delete("crates-host/domain/src/protobuf.rs");
+    file::delete("crates-host/domain/src/protobuf");
+    file::delete("crates-host/proto");
 }
 if !has.can {
-	file::delete("crates-host/ports/src/can.rs");
+    file::delete("crates-host/ports/src/can.rs");
 }
 if !on.canopen {
-	file::delete("crates-host/domain/src/canopen.rs");
-	file::delete("crates-host/domain/src/canopen");
-	file::delete("crates-host/canopen");
+    file::delete("crates-host/domain/src/canopen.rs");
+    file::delete("crates-host/domain/src/canopen");
+    file::delete("crates-host/canopen");
 }
 if variable::get("protocol_link") != "true" {
-	file::delete("crates-cross/app/src/link.rs");
-	file::delete("crates-cross/app/src/link");
+    file::delete("crates-cross/app/src/link.rs");
+    file::delete("crates-cross/app/src/link");
 }
 // Узел протокола «запрос — ответ» (`domain::server`) обслуживает только Modbus
 // slave: у protobuf свой узел (`domain::protobuf`).
 if !on.modbus {
-	file::delete("crates-host/domain/src/server.rs");
-	file::delete("crates-host/domain/src/server");
+    file::delete("crates-host/domain/src/server.rs");
+    file::delete("crates-host/domain/src/server");
 }
 if variable::get("link_port") != "true" {
-	file::delete("crates-host/ports/src/link.rs");
+    file::delete("crates-host/ports/src/link.rs");
 }
 // OTA — порты, адаптер и узел `domain::ota` — только в проекте с OTA: без неё это
 // код, до которого не дотянуться от `main` и графа. `mod`, `pub use` и зависимости
 // вырезает Liquid.
 if variable::get("ota") != "true" {
-	file::delete("crates-host/ports/src/ota.rs");
-	file::delete("crates-host/ports/src/ota");
-	file::delete("crates-host/adapters/src/ota.rs");
-	file::delete("crates-host/domain/src/ota.rs");
-	file::delete("crates-host/domain/src/ota");
-	// Подпись образа в `xtask` и описание OTA.
-	file::delete("crates-host/xtask/src/signing.rs");
-	file::delete("docs/ota.md");
-	// Перевод команд OTA у протокола: каталог протокола есть, только если он
-	// выбран, — чужой хук уже удалил выше.
-	if on.modbus {
-		file::delete("crates-host/domain/src/modbus/ota.rs");
-	}
-	if on.canopen {
-		file::delete("crates-host/domain/src/canopen/ota.rs");
-	}
-}
-// То же для хранилища настроек.
-if variable::get("ota") != "true" && !on.canopen {
-	file::delete("crates-host/ports/src/word.rs");
+    file::delete("crates-host/ports/src/ota.rs");
+    file::delete("crates-host/ports/src/ota");
+    file::delete("crates-host/adapters/src/ota.rs");
+    file::delete("crates-host/domain/src/ota.rs");
+    file::delete("crates-host/domain/src/ota");
+    // Подпись образа в `xtask` и описание OTA.
+    file::delete("crates-host/xtask/src/signing.rs");
+    file::delete("docs/ota.md");
+    // Перевод команд OTA у протокола: каталог протокола есть, только если он
+    // выбран, — чужой хук уже удалил выше.
+    if on.modbus {
+        file::delete("crates-host/domain/src/modbus/ota.rs");
+    }
+    if on.canopen {
+        file::delete("crates-host/domain/src/canopen/ota.rs");
+    }
 }
 if variable::get("settings_port") != "true" {
-	file::delete("crates-host/ports/src/settings.rs");
-	file::delete("crates-host/adapters/src/settings.rs");
+    file::delete("crates-host/ports/src/settings.rs");
+    file::delete("crates-host/adapters/src/settings.rs");
 }
 // Мост blocking → async и заглушка внешней флеши — только когда ими кто-то
 // пользуется: обёртка страницы (`erase_page`) или внешняя флеш.
 if variable::get("flash_page") != "true" {
-	file::delete("crates-host/flash-page");
+    file::delete("crates-host/flash-page");
 }
 // Модули задач без графа (`app/src/tasks/`) — по узлу, только выбранные.
 if variable::get("graph") != "true" {
-	if variable::get("ota") != "true" {
-		file::delete("crates-cross/app/src/tasks/ota.rs");
-	}
-	if !has.usb {
-		file::delete("crates-cross/app/src/tasks/usb.rs");
-	}
-	if !on.modbus {
-		file::delete("crates-cross/app/src/tasks/modbus.rs");
-	}
-	if !on.protobuf {
-		file::delete("crates-cross/app/src/tasks/protobuf.rs");
-	}
-	if !on.canopen {
-		file::delete("crates-cross/app/src/tasks/canopen.rs");
-	}
-	// Ни одного модуля — каталог не нужен: `tasks.rs` спавнит только `CPU_LOAD`.
-	if variable::get("ota") != "true" && !has.usb && !on.modbus && !on.protobuf && !on.canopen {
-		file::delete("crates-cross/app/src/tasks");
-	}
+    if variable::get("ota") != "true" {
+        file::delete("crates-cross/app/src/tasks/ota.rs");
+    }
+    if !has.usb {
+        file::delete("crates-cross/app/src/tasks/usb.rs");
+    }
+    if !on.modbus {
+        file::delete("crates-cross/app/src/tasks/modbus.rs");
+    }
+    if !on.protobuf {
+        file::delete("crates-cross/app/src/tasks/protobuf.rs");
+    }
+    if !on.canopen {
+        file::delete("crates-cross/app/src/tasks/canopen.rs");
+    }
+    // Ни одного модуля — каталог не нужен: `tasks.rs` спавнит только `CPU_LOAD`.
+    if variable::get("ota") != "true" && !has.usb && !on.modbus && !on.protobuf && !on.canopen {
+        file::delete("crates-cross/app/src/tasks");
+    }
 }
 if variable::get("has_stub") != "true" {
-	file::delete("crates-cross/bsp/src/stub.rs");
+    file::delete("crates-cross/bsp/src/stub.rs");
 }
 if !has.usb && !has.tcp && !has.udp {
-	file::delete("crates-host/adapters/src/fake.rs");
+    file::delete("crates-host/adapters/src/fake.rs");
 }
 // USB — устройство `embassy-usb`, узел USB и поток CDC — только с транспортом usb.
 if !has.usb {
-	file::delete("crates-cross/bsp/src/usb.rs");
-	file::delete("docs/modules/bsp-usb.md");
-	file::delete("crates-host/adapters/src/usb.rs");
-	file::delete("crates-host/domain/src/usb.rs");
-	file::delete("crates-host/domain/src/usb");
+    file::delete("crates-cross/bsp/src/usb.rs");
+    file::delete("docs/modules/bsp-usb.md");
+    file::delete("crates-host/adapters/src/usb.rs");
+    file::delete("crates-host/domain/src/usb.rs");
 }
 // Сеть — стек `embassy-net`, узел NET и их сокеты — только с tcp/udp.
 if !has.tcp && !has.udp {
-	file::delete("crates-cross/bsp/src/net.rs");
-	file::delete("docs/modules/bsp-net.md");
-	file::delete("crates-host/adapters/src/net.rs");
-	file::delete("crates-host/adapters/src/net");
-	file::delete("crates-host/domain/src/net.rs");
-	file::delete("crates-host/domain/src/net");
+    file::delete("crates-cross/bsp/src/net.rs");
+    file::delete("docs/modules/bsp-net.md");
+    file::delete("crates-host/adapters/src/net.rs");
+    file::delete("crates-host/adapters/src/net");
+    // `fake::cable` — кабель между двумя стеками `embassy-net`; `fake.rs` при
+    // одном USB остаётся, а `mod cable` в нём под `has_net`.
+    file::delete("crates-host/adapters/src/fake");
+    file::delete("crates-host/domain/src/net.rs");
 }
 // RNG — только с tcp/udp и только если он есть у чипа (`rng_irq` не пуст).
 if rng[0] == "" || (!has.tcp && !has.udp) {
-	file::delete("crates-cross/bsp/src/rng.rs");
-	file::delete("docs/modules/bsp-rng.md");
+    file::delete("crates-cross/bsp/src/rng.rs");
+    file::delete("docs/modules/bsp-rng.md");
 }
 // Сетевые службы приложения (`app::net`: секреты, брокер MQTT) — только с
 // выбранной службой.
 if services.len() == 0 {
-	file::delete("crates-cross/app/src/net.rs");
+    file::delete("crates-cross/app/src/net.rs");
 }
 // Узлы сетевых служб — только выбранных. Сведения об устройстве
 // (`domain::device`) читают PROTOBUF, HTTP, SSH и MQTT.
 if !services.contains("rest") {
-	file::delete("crates-host/domain/src/http.rs");
-	file::delete("crates-host/domain/src/http");
+    file::delete("crates-host/domain/src/http.rs");
+    file::delete("crates-host/domain/src/http");
 }
 if !services.contains("ssh") {
-	file::delete("crates-host/domain/src/ssh.rs");
-	file::delete("crates-host/domain/src/ssh");
+    file::delete("crates-host/domain/src/ssh.rs");
+    file::delete("crates-host/domain/src/ssh");
 }
 // MQTT — узел, разбор `mqtt.toml` в build-скрипте `app`,
 // порт `Dial` и описание.
 if !services.contains("mqtt") {
-	file::delete("crates-host/domain/src/mqtt.rs");
-	file::delete("crates-host/domain/src/mqtt");
-	file::delete("crates-cross/app/build");
-	file::delete("crates-host/ports/src/dial.rs");
-	file::delete("docs/modules/app-mqtt.md");
+    file::delete("crates-host/domain/src/mqtt.rs");
+    file::delete("crates-host/domain/src/mqtt");
+    file::delete("crates-cross/app/build");
+    file::delete("crates-host/ports/src/dial.rs");
+    file::delete("docs/modules/app-mqtt.md");
 }
 if !on.protobuf && services.len() == 0 {
-	file::delete("crates-host/domain/src/device.rs");
+    file::delete("crates-host/domain/src/device.rs");
 }
 // Ключ хоста SSH (`ssh_host_key`): `config` — плата создаёт его при первом
 // старте и хранит в разделе настроек; `file` — `ssh-host-key.bin` из корня
@@ -2840,13 +2847,13 @@ if !on.protobuf && services.len() == 0 {
 // флеши (`config_store` `external`) до драйвера проекта стоит заглушка, и
 // ключ менялся бы при каждом старте — тоже файлом.
 variable::set("ssh_host_key", if !services.contains("ssh") { "" }
-	else if variable::get("config") == "true" && variable::get("config_store") != "external" && !on.canopen { "config" }
-	else { "file" });
+    else if variable::get("config") == "true" && variable::get("config_store") != "external" && !on.canopen { "config" }
+    else { "file" });
 // Файлы служб в корне проекта (`xtask::secrets`): токен REST, пароль и ключ
 // хоста SSH, настройки брокера MQTT — только если хоть один из них нужен.
 if !services.contains("rest") && !services.contains("mqtt") && ssh_auth != "password"
-	&& variable::get("ssh_host_key") != "file" {
-	file::delete("crates-host/xtask/src/secrets.rs");
+    && variable::get("ssh_host_key") != "file" {
+    file::delete("crates-host/xtask/src/secrets.rs");
 }
 // Номера клиентов OTA у служб — следом за транспортами с протоколом: одно
 // число на граф и задачи без графа, а не счёт в каждом файле. У REST — по
@@ -2856,36 +2863,36 @@ let protocol_clients = links.filter(|link| link.protocol != "none").len();
 variable::set("rest_ota_client", protocol_clients.to_string());
 variable::set("ssh_ota_client", (protocol_clients + http_connections).to_string());
 variable::set("mqtt_ota_client", (protocol_clients + http_connections
-	+ (if services.contains("ssh") { 1 } else { 0 })).to_string());
+    + (if services.contains("ssh") { 1 } else { 0 })).to_string());
 // Сколько из них ждут исхода в вызове на входе `CMD` (`sync_request::RpcService`):
 // все, кроме CANopen — тот шлёт на `ASK`. Число сверяет `const`-assert с
 // `sync_request::PARKED_CALLERS` (`app/src/graph.rs`, `app/src/tasks/ota.rs`).
 variable::set("ota_cmd_clients", (protocol_clients
-	- links.filter(|link| link.protocol == "canopen").len()
-	+ http_connections
-	+ (if services.contains("ssh") { 1 } else { 0 })
-	+ (if services.contains("mqtt") { 1 } else { 0 })).to_string());
+    - links.filter(|link| link.protocol == "canopen").len()
+    + http_connections
+    + (if services.contains("ssh") { 1 } else { 0 })
+    + (if services.contains("mqtt") { 1 } else { 0 })).to_string());
 
 // Обёртка EEPROM — только когда настройки лежат в ней; без неё файл с
 // тестами и `pub mod eeprom;` (закрыт тем же условием в lib.rs) — мусор.
 if variable::get("config_store") != "eeprom" {
-	file::delete("crates-host/adapters/src/eeprom.rs");
-	file::delete("crates-host/ports/src/eeprom.rs");
+    file::delete("crates-host/adapters/src/eeprom.rs");
+    file::delete("crates-host/ports/src/eeprom.rs");
 }
 
 // Драйвер внешней флеши в bsp — только когда на ней что-то лежит: разделы
 // OTA или настройки. Без него `bsp::external` не объявлен, и файл остался бы
 // мусором с Liquid внутри; рецепт подключения — вместе с ним.
 if variable::get("external_flash") != "true" {
-	file::delete("crates-cross/bsp/src/external.rs");
-	file::delete("docs/modules/bsp-external.md");
+    file::delete("crates-cross/bsp/src/external.rs");
+    file::delete("docs/modules/bsp-external.md");
 }
 
 // Подмодули bootloader'а под ответы — по той же причине: `mod` в
 // `crates-cross/boot/src/main.rs` закрыт тем же `{% if %}`, а файл с Liquid
 // остался бы мусором. Без OTA каталога `boot` нет вовсе.
 if variable::get("ota") == "true" {
-	if variable::get("ota_store") != "external" {
-		file::delete("crates-cross/boot/src/external.rs");
-	}
+    if variable::get("ota_store") != "external" {
+        file::delete("crates-cross/boot/src/external.rs");
+    }
 }
