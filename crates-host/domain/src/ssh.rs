@@ -278,6 +278,24 @@ mod tests {
         }
     }
 
+    /// Пустой пароль прошивки — не «пускать всех»: ни пустой пароль, ни
+    /// какой-либо другой, ни ключ не проходят.
+    #[test]
+    fn an_empty_password_lets_no_one_in() {
+        let empty = Access::new(Login::Password(""));
+        for password in ["", "s3cret"] {
+            assert!(
+                !empty.admits_password(|u| u == USER, |p| p == password),
+                "{password:?}"
+            );
+        }
+        let key = ed25519_public_key(KEY).expect("ключ разбирается");
+        assert_eq!(
+            empty.admits_key(Some(key), |_| Ok::<_, ()>(true)),
+            Ok(false)
+        );
+    }
+
     /// По ключу пускает только ключ прошивки вместе с [`USER`]; при входе по
     /// паролю (и при ключе прошивки, который не разобрался) ключ не пускает
     /// никого.

@@ -8,7 +8,7 @@ pub const USER: &str = "admin";
 /// Как плата пускает пользователя [`USER`].
 #[derive(Debug, Clone, Copy)]
 pub enum Login {
-    /// По паролю.
+    /// По паролю; пустой не пускает никого.
     Password(&'static str),
     /// По открытому ключу: строка `ssh-ed25519 AAAA… [комментарий]` из
     /// `~/.ssh/id_ed25519.pub`.
@@ -20,13 +20,22 @@ pub enum Login {
 pub(super) enum Access {
     Password(&'static str),
     Key([u8; 32]),
-    /// Ключ из прошивки не разобрался — никого: пускать без проверки нельзя.
+    /// Ключ из прошивки не разобрался или пароль пуст — никого: пускать без
+    /// проверки нельзя.
     Nobody,
 }
 
 impl Access {
     pub(super) fn new(login: Login) -> Self {
         match login {
+            // Как пустой токен REST (`http::auth::authorized`): пустой пароль
+            // впустил бы любого, кто его не ввёл. Прошивку с пустым
+            // `ssh-password.txt` не соберёт `const`-assert в `app`, здесь —
+            // защита для любого другого источника `Login`.
+            Login::Password("") => {
+                warn!("ssh: пароль в прошивке пуст — вход закрыт");
+                Self::Nobody
+            }
             Login::Password(password) => Self::Password(password),
             Login::Key(line) => {
                 if let Some(key) = ed25519_public_key(line) {
