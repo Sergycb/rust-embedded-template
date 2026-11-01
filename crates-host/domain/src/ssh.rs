@@ -185,7 +185,7 @@ mod tests {
     //! Тесты узла `SSH`: ключ пользователя, вход, команды, `info`, ключ хоста.
 
     use crate::device::{DeviceInfo, PANIC_BRIEF};
-    use crate::ssh::console::{Editor, INFO_TEXT, Key, parse, write_info};
+    use crate::ssh::console::{Editor, INFO_TEXT, Key, LINE, parse, write_info};
     use crate::ssh::login::Access;
     use crate::ssh::session::tries_exhausted;
     use crate::ssh::{Command, Login, USER, ed25519_public_key};
@@ -446,6 +446,45 @@ mod tests {
                 input.escape_ascii()
             );
         }
+    }
+
+    /// Строка длиннее [`LINE`] — неизвестная команда, а не префикс: из
+    /// `reboot`, пробелов и `yes` на последних байтах собралась бы другая.
+    #[test]
+    fn an_overlong_line_is_no_command() {
+        let mut editor = Editor::default();
+        let mut long = b"reboot".to_vec();
+        long.resize(LINE - "yes".len(), b' ');
+        long.extend_from_slice(b"yes please");
+        let pressed = keys(&mut editor, &long);
+        // Лишнее не принимается и не отображается.
+        assert_eq!(pressed.len(), LINE);
+        assert!(pressed.iter().all(|key| matches!(key, Key::Echo(_))));
+        assert_eq!(keys(&mut editor, b"\r"), vec![Key::Enter(Command::Unknown)]);
+        // Стёртый хвост потерянного не возвращает.
+        keys(&mut editor, &long);
+        assert_eq!(
+            keys(&mut editor, b"\x7f\r"),
+            vec![Key::Erase, Key::Enter(Command::Unknown)]
+        );
+        // Enter и Ctrl-C начинают новую строку.
+        assert_eq!(
+            keys(&mut editor, b"info\r").last(),
+            Some(&Key::Enter(Command::Info))
+        );
+        keys(&mut editor, &long);
+        assert_eq!(
+            keys(&mut editor, b"\x03info\r").last(),
+            Some(&Key::Enter(Command::Info))
+        );
+        // Ровно `LINE` байт — ещё строка.
+        let mut full = b"info".to_vec();
+        full.resize(LINE, b' ');
+        full.push(b'\r');
+        assert_eq!(
+            keys(&mut editor, &full).last(),
+            Some(&Key::Enter(Command::Info))
+        );
     }
 
     #[test]

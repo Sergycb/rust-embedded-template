@@ -112,6 +112,12 @@ enum Escape {
 #[derive(Debug, Default)]
 pub(super) struct Editor {
     line: heapless::String<LINE>,
+    /// Набрано больше [`LINE`]: лишнее не принято, и по Enter строка —
+    /// [`Command::Unknown`], а не обрезанный префикс: из длинной строки
+    /// иначе собиралась бы другая команда (`reboot` с `yes` на 64-м байте).
+    /// Сбрасывают Enter и Ctrl-C, не Backspace: стёртый хвост на экране не
+    /// возвращает потерянных символов.
+    overflow: bool,
     /// Прошлый байт — `\r`: `\r\n` — один конец строки, а не строка и
     /// пустая за ней.
     after_cr: bool,
@@ -160,7 +166,11 @@ impl Editor {
             }
             b'\n' if after_cr => Key::Nothing,
             b'\r' | b'\n' => {
-                let command = parse(&self.line);
+                let command = if self.overflow {
+                    Command::Unknown
+                } else {
+                    parse(&self.line)
+                };
                 self.reset();
                 Key::Enter(command)
             }
@@ -170,11 +180,18 @@ impl Editor {
                 Key::Cancel
             }
             // Ctrl-D: на набранной строке не обрывает сессию.
-            0x04 if self.line.is_empty() => Key::Eof,
+            0x04 if self.line.is_empty() && !self.overflow => Key::Eof,
             // Backspace/DEL.
             0x08 | 0x7f if self.line.pop().is_some() => Key::Erase,
-            // Длиннее строки — символ не принимается и не отображается.
-            c @ 0x20..0x7f if self.line.push(char::from(c)).is_ok() => Key::Echo(c),
+            c @ 0x20..0x7f => {
+                if self.line.push(char::from(c)).is_ok() {
+                    Key::Echo(c)
+                } else {
+                    // Не принят и не отображается.
+                    self.overflow = true;
+                    Key::Nothing
+                }
+            }
             _ => Key::Nothing,
         }
     }
@@ -182,6 +199,7 @@ impl Editor {
     /// Новая строка.
     fn reset(&mut self) {
         self.line.clear();
+        self.overflow = false;
     }
 }
 
