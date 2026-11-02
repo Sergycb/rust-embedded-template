@@ -574,7 +574,7 @@ fn default_cases() -> Vec<Case> {
         // Консоль SSH (`domain::ssh`, `getrandom` над RNG платы): вход по
         // паролю и ключ хоста, созданный платой в разделе настроек (`Stored`);
         // вместе с REST (клиенты OTA 0 и 1) — вход по ключу и ключ хоста из
-        // файла (`Fixed`). Обе службы с OTA в 256K не влезают — там
+        // файла (`HOST_KEY` в `app`). Обе службы с OTA в 256K не влезают — там
         // `ext_flash=yes` (`ACTIVE` 384K).
         Case::new("stm32h743zg").variant(
             "ssh-password-config",
