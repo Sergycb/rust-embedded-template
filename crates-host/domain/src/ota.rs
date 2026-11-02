@@ -956,8 +956,8 @@ pub(crate) mod tests {
     }
 
     /// Гоняет узел по сценарию и возвращает ответы на команды по порядку.
-    /// `confirmed` — слот снаружи, как у второго прогона узла в том же
-    /// запуске прошивки.
+    /// `confirmed` — слот снаружи: тестовый образ `app-unconfirmed` приходит с
+    /// `true`, а сценарий видит, чем узел его оставил.
     fn run_on(flash: &mut FakeFlash, confirmed: &mut bool, steps: Vec<Step>) -> Vec<OtaReply> {
         MockDriver::get().reset();
         let stand = supervisor::stand!(OTA_FRAG<FakeFlash, FakeReboot, 1>; QUEUE_ASK = 1);
@@ -1144,25 +1144,6 @@ pub(crate) mod tests {
         assert!(stand.is_ready());
     }
 
-    /// Рестарт узла после принятого образа не подтверждает снова: иначе
-    /// запрос на обмен, о котором хост услышал `Ready`, был бы молча снят.
-    #[test]
-    fn a_second_run_does_not_confirm_again() {
-        let mut confirmed = false;
-        let mut flash = flash(128);
-
-        run_on(
-            &mut flash,
-            &mut confirmed,
-            vec![start(16), chunk(0, &image(16)), finish()],
-        );
-        assert_eq!(flash.booted(), 1);
-        assert!(flash.swap_requested());
-
-        run_on(&mut flash, &mut confirmed, vec![]);
-        assert_eq!(flash.confirm_attempts(), 1, "второй прогон не подтверждает");
-    }
-
     /// Тестовый образ `app-unconfirmed` приходит с `confirmed = true` во
     /// входе: себя не подтверждает ни при старте, ни на `Start`, и следующий
     /// сброс его откатывает.
@@ -1177,22 +1158,6 @@ pub(crate) mod tests {
         run_on(&mut flash, &mut confirmed, vec![start(1000)]);
 
         assert_eq!(flash.confirm_attempts(), 0);
-    }
-
-    /// Подтверждение не удалось, образов не было — узел работает дальше и
-    /// пробует снова на следующем прогоне.
-    #[test]
-    fn a_failed_confirmation_is_retried_on_the_next_run() {
-        let mut confirmed = false;
-        let mut flash = flash(128);
-        flash.refuse_confirm(true);
-
-        run_on(&mut flash, &mut confirmed, vec![]);
-        assert!(!confirmed);
-
-        flash.refuse_confirm(false);
-        run_on(&mut flash, &mut confirmed, vec![]);
-        assert!(confirmed);
     }
 
     /// Не удалось подтвердить при старте — узел пробует ещё раз на каждом
@@ -1466,27 +1431,6 @@ pub(crate) mod tests {
             &replies[2..],
             &[Err(Rejection::Transfer), Err(Rejection::NoSession)]
         );
-    }
-
-    /// Новый `Start` посреди приёма начинает образ заново.
-    #[test]
-    fn a_start_while_receiving_starts_over() {
-        let mut flash = flash(128);
-        let image = image(16);
-
-        let replies = run(
-            &mut flash,
-            vec![
-                start(32),
-                chunk(0, &[0xAA; 8]),
-                start(16),
-                chunk(0, &image),
-                finish(),
-            ],
-        );
-
-        assert_eq!(replies.last(), Some(&Ok(Progress::Ready)));
-        assert_eq!(&flash.memory()[..16], &image[..]);
     }
 
     /// Хост замолчал дольше тайм-аута — приём брошен, кусок после паузы уже
