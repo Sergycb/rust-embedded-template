@@ -45,7 +45,8 @@ use std::{
 use micropb::{MessageDecode, MessageEncode, PbEncoder};
 use proto::{Get, Request, Request_, Response, Response_};
 
-/// Порт узла protobuf по сети — `PORT` модулей `link::tcp` и `link::udp` прошивки.
+/// Порт узла protobuf по сети — порт сокета в привязке узла `PROTOBUF_*` в графе
+/// прошивки (`crates-cross/app/src/graph.rs`).
 const NET_PORT: u16 = 5000;
 
 /// Сетевой транспорт protobuf в проекте — им идёт `HOST_TARGET_ADDR` без
@@ -75,7 +76,7 @@ const DEFAULT_BAUD: u32 = 115_200;
 // {%- endif %}
 // {%- if cobs_used == "true" %}
 
-/// CRC кадра — та же, что у `adapters::cobs` в прошивке.
+/// CRC кадра — та же, что у `adapters_logic::cobs` в прошивке.
 const CRC: crc::Crc<u16> = crc::Crc::<u16>::new(&crc::CRC_16_IBM_SDLC);
 // {%- endif %}
 
@@ -129,7 +130,7 @@ pub struct Device {
 
 // {%- if cobs_used == "true" %}
 /// Поток кадров COBS + CRC: на проводе `0x00`, COBS от `[сообщение][CRC LE]`,
-/// `0x00` — как пишет и читает `adapters::cobs` в прошивке.
+/// `0x00` — как пишет и читает `adapters_logic::cobs` в прошивке.
 struct Framed<W> {
     wire: W,
     /// Прочитано, но не разобрано: хвост за концом кадра — начало следующего.
@@ -220,7 +221,7 @@ impl Wire for Box<dyn serialport::SerialPort> {
 }
 // {%- endif %}
 
-/// UDP: датаграмма — сообщение, как у `adapters::net::UdpLink`.
+/// UDP: датаграмма — сообщение, как у `adapters_logic::net::UdpLink`.
 struct Datagram(UdpSocket);
 
 impl Channel for Datagram {
@@ -637,7 +638,7 @@ mod tests {
         }
     }
 
-    /// Кадр — как в `adapters::cobs`: `0x00`, COBS от сообщения с CRC
+    /// Кадр — как в `adapters_logic::cobs`: `0x00`, COBS от сообщения с CRC
     /// младшим байтом первым, `0x00`. Два кадра подряд с мусором между ними
     /// разбираются по одному, битый пропускается.
     #[test]

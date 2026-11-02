@@ -1167,11 +1167,11 @@ pub(crate) mod tests {
     #[test]
     fn an_image_started_confirmed_never_confirms_itself() {
         let mut confirmed = true;
-        let mut flash = FakeFlash::new(64, 8);
+        let mut flash = flash(128);
 
         run_on(&mut flash, &mut confirmed, vec![start(1000)]);
 
-        assert_eq!(flash.confirm_attempts, 0);
+        assert_eq!(flash.confirm_attempts(), 0);
     }
 
     /// Подтверждение не удалось, образов не было — узел работает дальше и

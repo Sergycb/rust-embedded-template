@@ -16,7 +16,7 @@ workspace = true
 proto   = { workspace = true }
 micropb = { workspace = true, features = ["alloc"] }
 # {%- if cobs_used == "true" %}
-# Кадры COBS + CRC-16/IBM-SDLC — как `adapters::cobs` в прошивке (TCP, UART,
+# Кадры COBS + CRC-16/IBM-SDLC — как `adapters_logic::cobs` в прошивке (TCP, UART,
 # USB CDC). `alloc` — `encode_vec`/`decode_vec`: на хосте куча есть.
 cobs = { workspace = true, features = ["alloc"] }
 crc  = { workspace = true }
