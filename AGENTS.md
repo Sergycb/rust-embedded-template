@@ -44,15 +44,19 @@ skill'ом `rust-engineering` и не дублируются здесь. Это�
 портами; DMA-буферы под железо), `app` — оркестрация задач (`Spawner`{% if graph == "true" %}, supervisor-графы, watchdog{% endif %}) и
 память, которую домен получает ссылками (буферы узлов и транспортов{% if has_modbus == "true" %}, карта
 Modbus{% endif %}{% if net_services != "" %}, секреты служб{% endif %}).
-**Реализация над стандартным трейтом — `adapters`, над чипом — `bsp`**: HAL-объект
-с трейтом `bsp` отдаёт псевдонимом, своя структура в `bsp` — только обёртка там,
-где реализации трейта нет. **Кто строит адаптер, тот держит его память:**
+**Нужен чип — `bsp`; обёртка над железом без чипа — `adapters-hw`; реализации
+портов, когда их несколько, — `adapters-logic`; остальное — `domain`; трейты —
+только `ports`**: HAL-объект с трейтом `bsp` отдаёт псевдонимом, своя структура
+в `bsp` — только обёртка там, где реализации трейта нет. **Трейт — только под
+несколько реализаций** (в разных узлах одной прошивки или в разных вариантах
+генерации, которые иначе потребовали бы Liquid в логике); одна реализация —
+конкретный тип без трейта, тест — над ним же. **Кто строит адаптер, тот держит его память:**
 адаптер, без которого рычаг не собрать, — плата в `Board::new`; адаптер, чей
 тип или память выбирает приложение, — compose-site ({% if graph == "true" %}привязка узла в
 `fragments:` графа, память — `static [u8; N]` там же{% else %}модуль задачи, память — его статики{% endif %}), и узел получает его
-готовым во входе. Оба правила с пограничными случаями и порт против библиотеки
-прямо в `domain` — `docs/architecture.md`, «Адаптеры делятся по одному признаку — нужен
-ли чип» и «Порт и адаптер — или библиотека прямо в `domain`».
+готовым во входе. Правила с пограничными случаями — `docs/architecture.md`,
+«Адаптеры делятся по одному признаку — нужен ли чип» и «Трейт — только под
+несколько реализаций».
 Всё остальное — даже асинхронное и «системное» на вид (стейтчарты, RPC, синхронизация
 задач) — живёт в `domain`, а не в `cross`, и узлы тоже (всё — `docs/architecture.md`):
 - подсистема объявляет узел `supervisor_fragment!`-ом рядом со своей задачей —
@@ -181,14 +185,14 @@ read`: руками пришлось бы сначала найти адрес �
 - Задачи `embassy` не могут быть generic: тип, уезжающий в `#[embassy_executor::task]`,
   получает псевдоним (`pub type X = ...`): рычаг — от `bsp`{% if ota == "true" or config == "true" %} ({% if ota == "true" %}`bsp::FirmwareFlash`{% if config == "true" %},
   {% endif %}{% endif %}{% if config == "true" %}`bsp::ConfigFlash`{% endif %}){% endif %}, адаптер — от `app`{% if protocol_link == "true" %} (`crate::link::<вид>[::<транспорт>]::Link`){% endif %} или
-  конкретным типом прямо {% if graph == "true" %}в графе{% else %}в задаче{% endif %}{% if ota == "true" %} (`adapters::ota::Updater<bsp::FirmwareFlash>`){% endif %}
+  конкретным типом прямо {% if graph == "true" %}в графе{% else %}в задаче{% endif %}{% if ota == "true" %} (`domain::ota::Updater<bsp::FirmwareFlash>`){% endif %}
   — `docs/architecture.md`.
 - Ровно один `#[panic_handler]` и один активный `#[global_logger]` на бинарник;
   паникёр у каждого бинарника свой, у `app` профиль выбирает
   `#[cfg(debug_assertions)]` в `crates-cross/app/src/panic.rs`, а не Cargo-фича —
   `docs/diagnostics.md`, «Два паникёра, один на сборку».
 {%- if ota == "true" %}
-- `prepare(len)` порта `FirmwareUpdate` зовётся один раз перед приёмом образа
+- `prepare(len)` адаптера `domain::ota::Updater` зовётся один раз перед приёмом образа
   (внутри `domain::ota::download::Transfer::start`), `write()` сектор не
   стирает — `docs/ota.md`.
 {%- endif %}
@@ -247,11 +251,11 @@ read`: руками пришлось бы сначала найти адрес �
 {%- endif %}
 {%- if ota == "true" %}
 - Разделы обновления плата отдаёт нарезанными (`board.firmware:
-  bsp::FirmwareFlash` = `adapters::ota::Partitions`: `DFU`/`STATE` со своими
+  bsp::FirmwareFlash` = `ports::Partitions`: `DFU`/`STATE` со своими
   страницами, размер `ACTIVE`, отпечаток раскладки). Режет их `bsp::flash`
   по символам `memory.x` (`bsp::layout::{dfu, state}`) — тем же, что читает
   `from_linkerfile` в bootloader'е; узел OTA собирает над ними
-  `adapters::ota::Updater`. Нарезку проверяет только `cargo xtask lint cross`/`build`,
+  `domain::ota::Updater`. Нарезку проверяет только `cargo xtask lint cross`/`build`,
   host-тесты подают адаптеру разделы в памяти — `docs/ota.md`.
 {%- endif %}
 {%- if ota == "true" or config_store == "flash" or config_store == "external" or dma_nc == "true" %}
@@ -308,14 +312,14 @@ read`: руками пришлось бы сначала найти адрес �
   вместе — `docs/flash.md`, «Банки flash».
 {%- endif %}
 {%- if config == "true" %}
-- Хранилище настроек — `adapters::settings` над любым async `NorFlash`, на весь
+- Хранилище настроек — `domain::settings` над любым async `NorFlash`, на весь
   его объём. Носитель отдаёт плата рычагом `NorFlash`
   (`board.config: bsp::ConfigFlash`): {% if config_store == "eeprom" %}EEPROM L0/L1 (доступ — `embedded_storage::Storage`, обёртку
-  `adapters::eeprom::Eeprom` собирает сама плата){% elsif config_store == "external" %}внешняя флеш W25Q (драйвер
+  `adapters_hw::eeprom::Eeprom` собирает сама плата){% elsif config_store == "external" %}внешняя флеш W25Q (драйвер
   `w25q` в `bsp::external`, шина — заглушка `bsp::stub::FlashBus`, пока проект не
   подставит выводы){% else %}раздел `CONFIG` внутреннего
   флеша{% endif %}. Само хранилище — `Settings::whole(board.config)` на compose-site
-  узла-потребителя; тип — `adapters::settings::Settings<bsp::ConfigFlash>` прямо {% if graph == "true" %}в
+  узла-потребителя; тип — `domain::settings::Settings<bsp::ConfigFlash>` прямо {% if graph == "true" %}в
   графе{% else %}в задаче{% endif %}{% if config_store == "eeprom" %}. EEPROM под хранилищем инвертирована: без
   этого заводские нули выглядели бы для `sequential-storage` закрытыми
   страницами{% endif %} — `docs/flash.md`.
@@ -363,8 +367,7 @@ read`: руками пришлось бы сначала найти адрес �
 - Брокер MQTT (`domain::mqtt`, узел `MQTT`) — `mqtt.toml` в корне проекта:
   создаёт `cargo xtask` (`secrets::ensure`), он **коммитится**, вшивает его
   `crates-cross/app/build.rs` (README, «Клиент MQTT»). Паузы перед попытками
-  `dial` — контракт порта `ports::dial::Dial`, их держит `adapters::net::TcpClient`,
-  а не `domain`{% if ota == "true" %}; клиент входа `CMD` узла OTA — номер `{{ mqtt_ota_client }}`{% endif %}; доступ к `cmd/` —
+  `dial` держит клиент `domain::mqtt::TcpClient`, а не автомат узла{% if ota == "true" %}; клиент входа `CMD` узла OTA — номер `{{ mqtt_ota_client }}`{% endif %}; доступ к `cmd/` —
   только ACL брокера — `docs/modules/app-mqtt.md`.
 {%- endif %}
 {%- if graph == "true" %}
@@ -395,7 +398,7 @@ read`: руками пришлось бы сначала найти адрес �
   ({% if has_usb == "true" %}`bsp::usb::<транспорт>::Usb { device, cdc }`{% if has_net == "true" %}, {% endif %}{% endif %}{% if has_net == "true" %}`bsp::net::Net { runner, stack }`{% endif %}), собирает плата{% endif %}.
   {% if graph == "true" %}Граф берёт `boot: board: bsp::Board;` и делит по полям{% else %}Поля делит `tasks::spawn_all(spawner, board)`{% endif %}. Не делать поля
   `Board` `Option`{% if has_usb == "true" or has_net == "true" %} и не передавать половину пары через `static`{% endif %} — там же.
-{%- capture bsp_deps %}{% if flash_page == "true" %}, `flash-page`{% endif %}{% if has_usb == "true" or has_net == "true" or config_store == "eeprom" or ota == "true" %}, обёртки `adapters`{% endif %}{% endcapture %}
+{%- capture bsp_deps %}{% if flash_page == "true" %}, `flash-page`{% endif %}{% if has_usb == "true" or has_net == "true" or config_store == "eeprom" %}, обёртки `adapters-hw`{% endif %}{% endcapture %}
 - `bsp` зависит от `ports`, HAL и того, из чего собирает свои рычаги{% if bsp_deps != "" %}
   ({{ bsp_deps | remove_first: ", " }}){% endif %}, но не от `domain`: входы узлов из полей `Board`
   заполняет compose-site в `app` — `docs/architecture.md`, «Адаптеры делятся по

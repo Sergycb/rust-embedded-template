@@ -130,8 +130,13 @@ cargo run -p app                    # прошить приложение и с�
 ```
 ├── crates-host/          # Всё, что собирается под хост
 │   ├── domain/            # Бизнес-логика, no_std
-│   ├── ports/             # Трейты-границы домена
-│   ├── adapters/          # Реализации трейтов без чипа
+│   ├── ports/             # Все трейты проекта и форматы, общие с реализацией
+{%- if adapters_hw == "true" %}
+│   ├── adapters-hw/       # Обёртки над железом без чипа, драйверы-заглушки
+{%- endif %}
+{%- if adapters_logic == "true" %}
+│   ├── adapters-logic/    # Реализации портов, когда их несколько
+{%- endif %}
 {%- if flash_page == "true" %}
 │   ├── flash-page/        # Страница стирания раздела (общая у bsp и boot)
 {%- endif %}
@@ -185,36 +190,39 @@ supervisor-графы, watchdog{% endif %}). Вся остальная логи�
            → узел domain получает его во входе и зовёт через порт из ports
 ```
 
-Где лежит тип — в `adapters` или в `bsp`, — решает один признак, нужен ли чип
-(docs/architecture.md, «Адаптеры делятся по одному признаку — нужен ли чип»).
-В `ports` — трейты, которыми домен говорит с миром.
-{%- if ota == "true" %} `FirmwareUpdate` реализован в `adapters`, а строит его `app` над
-разделами флеша, которые отдаёт `Board`; порт перезагрузки `Reboot` для узла OTA
+Где лежит тип, решает один признак: нужен чип — `bsp`; обёртка над железом
+без чипа — `adapters-hw`; реализации портов, когда их несколько, —
+`adapters-logic`; остальное — `domain` (docs/architecture.md, «Адаптеры
+делятся по одному признаку — нужен ли чип»). В `ports` — все трейты, и каждый —
+под несколько реализаций; у трейта с одной реализацией места нет, логика зовёт
+конкретный тип («Трейт — только под несколько реализаций»).
+{%- if ota == "true" %} Адаптер обновления — конкретный тип `domain::ota::Updater`, его строит `app` над
+разделами флеша, которые отдаёт `Board` (`ports::Partitions`); порт перезагрузки `Reboot` для узла OTA
 реализует `bsp::reset`.{% endif %}
-{%- if config == "true" %} `SettingsStorage` реализован в `adapters`, а строит его
+{%- if config == "true" %} Хранилище настроек — конкретный тип `domain::settings::Settings`, его строит
 `app` над носителем, который отдаёт `Board`.{% endif %}
 {%- if link_port == "true" %} `FrameLink` — канал целых кадров, который держит свой буфер (один на
-приём и ответ).{% if has_modbus == "true" %} `Handler` — протокол над ним: что ответить на кадр; обоих
-обслуживает узел протокола `domain::SERVER_FRAG`.{% endif %}
+приём и ответ).{% if has_modbus == "true" %} Узел протокола `domain::SERVER_FRAG` обслуживает его
+Modbus slave'ом (`domain::modbus::Slave`): обработчик один, трейта под него нет.{% endif %}
 {%- if has_modbus == "true" or has_protobuf == "true" %} {% if graph == "true" %}Граф называет{% else %}Модули задач называют{% endif %} узел по
 протоколу и транспорту ({% if has_modbus == "true" %}`MODBUS_<транспорт>`{% if has_protobuf == "true" %}, {% endif %}{% endif %}{% if has_protobuf == "true" %}`PROTOBUF_<транспорт>`{% endif %}).{% endif %}
 {%- if has_protobuf == "true" %}
 {%- capture pb_links %}{% if has_uart == "true" or has_usb == "true" %}, адаптер
-кадрирования `adapters::cobs::Cobs` поверх потока ({% if has_uart == "true" %}UART{% if has_usb == "true" %}, {% endif %}{% endif %}{% if has_usb == "true" %}USB CDC{% endif %}){% endif %}{% if has_tcp == "true" %}, тот же `Cobs`
-поверх TCP-сервера{% endif %}{% if has_udp == "true" %}, UDP-сокет `adapters::net::UdpLink`{% endif %}{% endcapture %} Канал protobuf — {{ pb_links | remove_first: ", " }}; это `FrameDuplex`:
+кадрирования `adapters_logic::cobs::Cobs` поверх потока ({% if has_uart == "true" %}UART{% if has_usb == "true" %}, {% endif %}{% endif %}{% if has_usb == "true" %}USB CDC{% endif %}){% endif %}{% if has_tcp == "true" %}, тот же `Cobs`
+поверх TCP-сервера{% endif %}{% if has_udp == "true" %}, UDP-сокет `adapters_logic::net::UdpLink`{% endif %}{% endcapture %} Канал protobuf — {{ pb_links | remove_first: ", " }}; это `FrameDuplex`:
 брошенный приём не теряет кадр, ответ уходит из чужого буфера.{% endif %}{% if has_can == "true" %} Шина CAN — свой порт `CanBus`.{% endif %}
 {%- endif %}
-{%- if protocol == "modbus" %} `domain::modbus::Registers` — данные устройства,
-видимые по Modbus: его реализует карта проекта в `domain`, а кадры к нему переводит
-обработчик `domain::modbus::Slave` (адрес, широковещание, исключения); это трейт
-домена, а не порт. Канал slave'а —
+{%- if protocol == "modbus" %} `ports::Registers` — данные устройства,
+видимые по Modbus: его реализуют карта проекта в `domain` и обёртки над ней (общая
+ручка{% if ota == "true" %}, окно OTA{% endif %}), а кадры к нему переводит обработчик `domain::modbus::Slave`
+(адрес, широковещание, исключения). Канал slave'а —
 `FrameLink` с кадром «адрес и PDU»:
-{%- capture mb_links %}{% if modbus_rtu == "true" %}, `adapters::modbus::Rtu` (RTU поверх потока
-{% if has_uart == "true" %}UART{% if has_usb == "true" %} или {% endif %}{% endif %}{% if has_usb == "true" %}USB CDC{% endif %}){% endif %}{% if modbus_tcp == "true" %}, `adapters::modbus::Tcp` (MBAP поверх потока TCP){% endif %}{% if modbus_udp == "true" %}, `adapters::modbus::Udp` (MBAP в датаграмме){% endif %}{% endcapture %} {{ mb_links | remove_first: ", " }}.{% if modbus_master == "true" %} Они же реализуют порт
+{%- capture mb_links %}{% if modbus_rtu == "true" %}, `adapters_logic::modbus::Rtu` (RTU поверх потока
+{% if has_uart == "true" %}UART{% if has_usb == "true" %} или {% endif %}{% endif %}{% if has_usb == "true" %}USB CDC{% endif %}){% endif %}{% if modbus_tcp == "true" %}, `adapters_logic::modbus::Tcp` (MBAP поверх потока TCP){% endif %}{% if modbus_udp == "true" %}, `adapters_logic::modbus::Udp` (MBAP в датаграмме){% endif %}{% endcapture %} {{ mb_links | remove_first: ", " }}.{% if modbus_master == "true" %} Они же реализуют порт
 master'а `ModbusClient`, но рабочий master из коробки — только `Rtu` над UART:{% if has_usb == "true" %} над USB
 CDC (нет `ReadReady`) он master'ом не собирается,{% endif %} а TCP- и UDP-каналы шаблона серверные — пишут тому,
 кто подключился или прислал последнюю датаграмму, а не выбранному slave'у
-(doc модуля `adapters::modbus`).{% endif %}
+(doc модуля `adapters_logic::modbus`).{% endif %}
 {%- endif %}
 {%- if protocol == "protobuf" %}
 Сообщения protobuf от хоста переводит в свои проверенные типы обработчик
@@ -226,8 +234,7 @@ CDC (нет `ReadReady`) он master'ом не собирается,{% endif %} 
 (стек `zencan`): его реализует плата поверх CAN-контроллера чипа (`bsp::can`), а
 на хосте узел проверяется над фейком шины.
 {%- endif %} Заводить ли свой порт под датчики и периферию вашего
-устройства — docs/architecture.md, «Порт и адаптер — или библиотека прямо в
-`domain`».
+устройства — docs/architecture.md, «Трейт — только под несколько реализаций».
 
 Библиотек с заранее подключённой демонстрацией `domain` не раздаёт: чем и как
 пользоваться в бизнес-логике — решение проекта, а usage-примеры для конкретной
@@ -301,12 +308,12 @@ flash и безусловно прыгает в него (`unsafe { bl.load(entr
 Всё, что не зависит от протокола, готово и уже крутится{% if graph == "true" %} в графе задач{% endif %}: узел
 `OTA` (`domain::ota`) принимает образ командами в раздел `DFU`, применяет его
 (`domain::ota::update::apply`) и отвечает
-исходом на каждую команду. Адаптер `adapters::ota` (поверх `embassy-boot`) пишет
+исходом на каждую команду. Адаптер `domain::ota::Updater` (поверх `embassy-boot`) пишет
 образ и хранит состояние bootloader'а. Плата отдаёт ему только флеш —
 поле `firmware` (`bsp::FirmwareFlash`, `crates-cross/bsp/src/{% if ota_store == "external" %}external{% else %}flash{% endif %}.rs`: носители
 со своими страницами из чисел раскладки в `[env]`), разделы `DFU` и
 `BOOTLOADER_STATE` в нём плата нарезает по символам `memory.x`, адаптер над ними
-(`adapters::ota::Updater`) строит `app`. {% if graph == "true" %}Граф забирает поле одной строкой (`fragments:` в
+(`domain::ota::Updater`) строит `app`. {% if graph == "true" %}Граф забирает поле одной строкой (`fragments:` в
 `crates-cross/app/src/graph.rs`){% else %}Задача забирает поле в `crates-cross/app/src/tasks/ota.rs`{% endif %}. Версию образа задаёт приложение
 (`crates-cross/app/src/version.rs`), а не плата; ключ подписи зашит в bootloader
 (`crates-cross/boot`).
@@ -511,17 +518,15 @@ git tag v1.2.3 && git push origin v1.2.3
 (`bsp::ConfigFlash`), носитель — {% if config_store == "eeprom" %}EEPROM, обёрнутая платой в `NorFlash`
 (`crates-cross/bsp/src/flash.rs`){% elsif config_store == "external" %}внешняя флеш (`crates-cross/bsp/src/external.rs`){% else %}раздел `CONFIG` от границ из генерации
 (`crates-cross/bsp/src/flash.rs`){% endif %}. Само хранилище —
-`adapters::settings::Settings` (тестируется на хосте) поверх `sequential-storage`
+`domain::settings::Settings` (тестируется на хосте) поверх `sequential-storage`
 на весь объём носителя, пары «ключ — значение», переживающие и перезапуск, и
 обновление прошивки, — строит `app` над носителем и отдаёт узлу, которому оно
-нужно (тип — `adapters::settings::Settings<bsp::ConfigFlash>` во входе узла).
+нужно (тип — `domain::settings::Settings<bsp::ConfigFlash>` во входе узла).
 
 ```rust
-use ports::SettingsStorage; // чтение и запись живут в порту
-
 // {% if graph == "true" %}Граф{% else %}Задача{% endif %} строит хранилище над носителем `board.config` и отдаёт
-// его узлу в `domain`, обобщённому по хранилищу `S`.
-let mut settings = adapters::settings::Settings::whole(board.config);
+// его узлу в `domain`, обобщённому по носителю `F`.
+let mut settings = domain::settings::Settings::whole(board.config);
 settings.write(KEY_CALIBRATION, &encoded).await?;
 if let Some(raw) = settings.read(KEY_CALIBRATION, &mut scratch).await? {
     // раскодировать тем же, чем кодировали: postcard, miniconf, свой формат
@@ -624,7 +629,7 @@ Identification (производитель и модель — `crates-host/doma
 это так для всех открытых функций спецификации; кадр пользовательской функции
 (65–72, 100–110), MEI, кроме 14, и FC08/00 длиннее двух байт данных slave
 пропускает молча: длину кадра по коду функции не вывести, а без неё не
-проверить CRC (`adapters::modbus::Rtu`).{% endif %}
+проверить CRC (`adapters_logic::modbus::Rtu`).{% endif %}
 {%- elsif protocol == "protobuf" %} схему `crates-host/proto` и обработчик `crates-host/domain/src/protobuf/service.rs`.
 {%- else %} словарь объектов `crates-host/canopen/device.toml`.
 {%- endif %}

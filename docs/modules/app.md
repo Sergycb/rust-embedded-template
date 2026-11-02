@@ -144,9 +144,9 @@ generic, поэтому узел называет канал этим псевд
 и его `link`, свой размер буфера или порт — константы там.
 
 Буфер кадра держит сам канал (`ports::FrameLink::buffer`), а протокол —
-обработчик ({% if has_modbus == "true" %}`domain::server::Handler`: `domain::modbus::Slave`{% if has_protobuf == "true" %}; {% endif %}{% endif %}{% if has_protobuf == "true" %}`domain::protobuf::Service`{% endif %}) — не порт:
-его реализует и зовёт сам `domain`.
-{%- if has_modbus == "true" %} Узел Modbus slave — `::domain::SERVER_FRAG<L, H>`,
+обработчик ({% if has_modbus == "true" %}`domain::modbus::Slave`{% if has_protobuf == "true" %}; {% endif %}{% endif %}{% if has_protobuf == "true" %}`domain::protobuf::Service`{% endif %}) — конкретный тип домена, трейта
+под него нет: реализация одна.
+{%- if has_modbus == "true" %} Узел Modbus slave — `::domain::SERVER_FRAG<L, R>`,
 объявлен в `domain::server` ({% if graph == "true" %}граф называет узлы{% else %}узлы{% endif %} `MODBUS_<транспорт>`).{% endif %}
 {%- if has_protobuf == "true" %} Узел protobuf хоста — `::domain::PROTOBUF_FRAG<L>`,
 объявлен в `domain::protobuf` (`PROTOBUF_<транспорт>`); его канал —
@@ -160,10 +160,10 @@ generic, поэтому узел называет канал этим псевд
 # Modbus: одна карта на все узлы `MODBUS_*`
 
 Узел `MODBUS_<ТРАНСПОРТ>` — по одному на транспорт с Modbus в `links`.{% if graph == "true" %}
-Фрагмент — узел протокола `domain::SERVER_FRAG<L, H>`: канал
+Фрагмент — узел протокола `domain::SERVER_FRAG<L, R>`: канал
 `L` (`crate::link::…::Link`, раздел выше) строит граф —
-`link` этого модуля над рычагом платы в памяти `static T`, обработчик `H` —
-`domain::modbus::Slave` над картой регистров с адресом slave'а (вход
+`link` этого модуля над рычагом платы в памяти `static T`, обработчик —
+`domain::modbus::Slave` над картой регистров `R` с адресом slave'а (вход
 `domain::server::ServerWiring`).{% else %}
 В этом проекте это задача в `crates-cross/app/src/tasks/modbus.rs`: она собирает
 контекст узла `domain::server::ServerCtx` — канал `crate::link::<вид>[::<транспорт>]::link`

@@ -2608,8 +2608,8 @@ fn the_ssh_host_key_lives_where_it_survives() {
 }
 
 /// MQTT предлагается с Ethernet (RNG ему не нужен); без Ethernet `--define` —
-/// ошибка. Порт `Dial`, узел и разбор `mqtt.toml` — только с ним, а TCP-клиент
-/// остаётся и поверх одного UDP.
+/// ошибка. Узел, его TCP-клиент (`domain::mqtt::TcpClient`) и разбор `mqtt.toml` —
+/// только с ним.
 #[test]
 fn mqtt_is_offered_with_ethernet() {
     let ast = compile_script();

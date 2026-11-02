@@ -52,7 +52,7 @@ UART платы — поток байтов, по подмодулю на тра
    добавляются в неё.
 
 `BufferedUart` реализует `embedded_io_async::{Read, ReadReady, Write}` сам{% if link_kinds contains "uart" %} —
-ровно то, что ждёт транспорт {% if has_modbus == "true" %}`adapters::modbus::Rtu`{% else %}`adapters::cobs::Cobs`{% endif %}{% endif %},
+ровно то, что ждёт транспорт {% if has_modbus == "true" %}`adapters_logic::modbus::Rtu`{% else %}`adapters_logic::cobs::Cobs`{% endif %}{% endif %},
 поэтому ни прослойки, ни трейтов в `bsp` не нужно.
 {%- if link_kinds contains "uart" and has_modbus == "true" %}
 Скорость линии `Rtu` не знает: начатый кадр, после которого линия молчит
@@ -73,6 +73,6 @@ RS-485 — тот же UART плюс вывод DE, который включа�
 * у USART v1/v2 (F1, F2, F4) аппаратного DE нет, и `new_with_de` не
   существует. Переключать DE придётся программно: поднять перед записью,
   опустить после `flush`, — обёрткой поверх `OutputPin`. В шаблоне её нет,
-  добавить её в `adapters` — по первой нужде.
+  добавить её в `adapters-logic` — по первой нужде.
 
 Версию USART показывает тот же `cargo xtask pins {{iface_periph}}`.

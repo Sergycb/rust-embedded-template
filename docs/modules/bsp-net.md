@@ -14,7 +14,7 @@
 Шаблон выводы не выбирает (`docs/architecture.md`), поэтому `Device` пока —
 заглушка `bsp::stub::NetDevice`: линк всегда опущен, кадров нет. Всё остальное
 настоящее: стек `embassy-net` с DHCP, его фоновая работа в узле `NET`
-(`domain::net`) и сокеты протоколов{% if has_tcp == "true" %} (`adapters::net::TcpServer`){% endif %}{% if has_udp == "true" %} (`adapters::net::UdpLink`){% endif %}.
+(`domain::net`) и сокеты протоколов{% if has_tcp == "true" %} (`adapters_logic::net::TcpServer`){% endif %}{% if has_udp == "true" %} (`adapters_logic::net::UdpLink`){% endif %}.
 Проект собирается и запускается, протокол ждёт клиента вечно. Подставить
 Ethernet — заменить устройство: стек, сокеты и граф не меняются.
 

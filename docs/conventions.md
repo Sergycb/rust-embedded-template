@@ -40,12 +40,12 @@
 вырост» с компилируемым примером на каждую (`fsm`, `typestate`, `miniconf` и
 т.п.): как пользоваться библиотекой, показывает её собственная
 документация, а не шаблон{% if settings_port == "true" %}; единственное исключение — набросок подключения
-`miniconf` поверх порта настроек в шапке `adapters::settings`, потому что
-порт (`u32`-ключ → байты) проектировался под эту связку{% endif %}. Из `[dev-dependencies]` у `domain` (сверх того, что
+`miniconf` поверх хранилища настроек в шапке `domain::settings`, потому что
+хранилище (`u32`-ключ → байты) проектировалось под эту связку{% endif %}. Из `[dev-dependencies]` у `domain` (сверх того, что
 нужно для линковки `supervisor`, — см. комментарий в манифесте) главная —
 `tokio` (`rt` + `macros`, без
 `default-features`) — исполнитель для `#[tokio::test]` над фейками портов; у
-`adapters` он же для фейка флеша. Своего `block_on` в тестах нет намеренно:
+`adapters-hw` и `adapters-logic` он же — для тестов над фейками драйверов и потоков. Своего `block_on` в тестах нет намеренно:
 он был бы двумя копиями одних и тех же восьми строк в двух крейтах. Тест,
 повисший на `Pending` (фейки не ждут), ловит `.config/nextest.toml`: тест
 этих двух крейтов, не кончившийся за 20 с, nextest убивает, а не ждёт до
@@ -55,12 +55,12 @@
 
 Host-тесты гоняются `cargo xtask test host` — то есть `cargo nextest`, — а не
 `cargo test` и не кнопкой запуска тестов в IDE. Часы `embassy_time::MockDriver`
-(фича `mock-driver` в `[dev-dependencies]` `domain` и `adapters`) — одни на
+(фича `mock-driver` в `[dev-dependencies]` `domain`, `adapters-hw` и `adapters-logic`) — одни на
 процесс: тест сбрасывает их (`MockDriver::get().reset()`) и двигает
 (`advance`). nextest запускает каждый тест отдельным процессом, а `cargo test`
 и IDE — потоками одного, и два теста с часами двигают время друг другу: такой
 тест то проходит, то нет, и дело не в тесте.
-{%- capture clocked %}{% if graph == "true" %}, `domain::heartbeat`{% endif %}{% if ota == "true" %}, `domain::ota`{% endif %}{% if has_protobuf == "true" %}, `domain::protobuf::service`{% endif %}{% if net_services contains "mqtt" %}, `domain::mqtt`, `adapters::net::tcp::client`{% endif %}{% if net_services contains "ssh" %}, `domain::ssh`{% endif %}{% if has_usb == "true" %}, `adapters::usb`{% endif %}{% if modbus_rtu == "true" %}, `adapters::modbus::rtu`{% endif %}{% endcapture %}
+{%- capture clocked %}{% if graph == "true" %}, `domain::heartbeat`{% endif %}{% if ota == "true" %}, `domain::ota`{% endif %}{% if has_protobuf == "true" %}, `domain::protobuf::service`{% endif %}{% if net_services contains "mqtt" %}, `domain::mqtt`{% endif %}{% if net_services contains "ssh" %}, `domain::ssh`{% endif %}{% if has_usb == "true" %}, `adapters_hw::usb`{% endif %}{% if modbus_rtu == "true" %}, `adapters_logic::modbus::rtu`{% endif %}{% endcapture %}
 {%- if clocked != "" %} В этом проекте с часами работают тесты {{ clocked | remove_first: ", " }},
 и то же касается любого нового теста с `MockDriver`.{% else %} Касается любого теста с
 `MockDriver`, в том числе первого, который появится в проекте.{% endif %}
@@ -163,7 +163,7 @@ Host-тесты гоняются `cargo xtask test host` — то есть `carg
 (`types`, `utils`).
 
 Реэкспорт в корне — часть правила, а не исключение из него: так устроены
-`embedded-hal` и `embassy-*`, и так путь `ports::{% if ota == "true" %}FirmwareUpdate{% else %}<Трейт>{% endif %}` остаётся
+`embedded-hal` и `embassy-*`, и так путь `ports::{% if ota == "true" %}Partitions{% else %}<Трейт>{% endif %}` остаётся
 коротким, а перестановка модулей внутри крейта не касается его пользователей.
 
 Тестовые помощники, которые делят несколько модулей, — блок
@@ -172,18 +172,18 @@ Host-тесты гоняются `cargo xtask test host` — то есть `carg
 {%- assign sep = ": " %}
 {%- if ota == "true" %}{{ sep }}фейки портов OTA — `domain::ota::fakes` (их делят `ota`,
 `ota::download` и `ota::update`){% assign sep = ", " %}{% endif %}
-{%- if has_net == "true" %}{{ sep }}кабель между двумя стеками `embassy-net` —
-`adapters::net::fakes` ({% if has_tcp == "true" %}`net::tcp::server`{% if has_udp == "true" %} и {% endif %}{% endif %}{% if has_udp == "true" %}`net::udp`{% endif %}){% endif %}. Отдельного файла и крейта
+{%- if has_net == "true" %}{{ sep }}прогон двух стеков `embassy-net` на кабеле —
+`adapters_logic::net::fakes` ({% if has_tcp == "true" %}`net::tcp`{% if has_udp == "true" %} и {% endif %}{% endif %}{% if has_udp == "true" %}`net::udp`{% endif %}){% endif %}. Отдельного файла и крейта
 для фейков нет: в сборке их не видно, а с кодом, который они подменяют, они
 рядом.
 {%- if has_usb == "true" or has_net == "true" or ota == "true" or config == "true" %}
 
-Исключение — фейки, которые делят крейты: они в `adapters::fake` (модуль под
+Исключение — фейки, которые делят крейты: они в `adapters_hw::fake` (модуль под
 `cfg(any(test, feature = "fake"))`)
 {%- assign sep = ": " %}
 {%- if has_usb == "true" or has_net == "true" %}{{ sep }}драйверы без шины и линка для тестов узлов и транспортов{% assign sep = "; " %}{% endif %}
 {%- if ota == "true" or config == "true" %}{{ sep }}флеш в памяти с семантикой NOR
-`adapters::fake::MemFlash` — его берут тесты {% if ota == "true" %}`adapters::ota`, `domain::ota::boot`{% if config == "true" %} и {% endif %}{% endif %}{% if config == "true" %}`adapters::settings`{% endif %}.
+`adapters_hw::fake::MemFlash` — его берут тесты {% if ota == "true" %}`domain::ota` (под `Updater`), `domain::ota::boot`{% if settings_port == "true" %} и {% endif %}{% endif %}{% if settings_port == "true" %}`domain::settings`{% endif %}.
 Готового мока `NorFlash` в экосистеме нет — `embedded-hal-mock` флеш не
 покрывает{% endif %}.
 {%- endif %}

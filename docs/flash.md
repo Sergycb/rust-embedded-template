@@ -132,10 +132,10 @@ F2/F4/F7 (у F4 16, 64 и 128 KiB): в мелких секторах можно 
 ## {% if config == "true" %}Хранилище настроек{% if shared_flash == "true" %} и общий `Flash`{% endif %}{% else %}Общий `Flash`{% endif %}
 {%- if config == "true" %}
 
-Опциональное, спрашивается при генерации (`config`, в меню после выбора чипа). Хранилище — `adapters::settings` поверх `sequential-storage`
+Опциональное, спрашивается при генерации (`config`, в меню после выбора чипа). Хранилище — `domain::settings` поверх `sequential-storage`
 — принимает любой асинхронный `NorFlash`, и плата подставляет в этот слот
 носитель (ответ `config_store` при генерации; `ConfigFlash` в `crates-cross/bsp/src/{% if config_store == "external" %}external{% else %}flash{% endif %}.rs`):
-{% if config_store == "eeprom" %}внутренняя EEPROM чипа целиком — `adapters::eeprom::Eeprom` над `Flash::eeprom_*`{% elsif config_store == "external" %}раздел на внешней флеши W25Q над драйвером `w25q` (`bsp::external`); шина — заглушка, пока плата её не подставит{% else %}раздел `CONFIG` во внутреннем флеше — `BlockingAsync<{% if config_paged == "true" %}ErasePage<Whole>{% else %}Whole{% endif %}>`{% endif %}.
+{% if config_store == "eeprom" %}внутренняя EEPROM чипа целиком — `adapters_hw::eeprom::Eeprom` над `Flash::eeprom_*`{% elsif config_store == "external" %}раздел на внешней флеши W25Q над драйвером `w25q` (`bsp::external`); шина — заглушка, пока плата её не подставит{% else %}раздел `CONFIG` во внутреннем флеше — `BlockingAsync<{% if config_paged == "true" %}ErasePage<Whole>{% else %}Whole{% endif %}>`{% endif %}.
 
 `Board` отдаёт поле `config` (`bsp::ConfigFlash`).
 {%- endif %}
@@ -224,7 +224,7 @@ QSPI, где он выведен (`QUADSPI`, иначе `OCTOSPI`), иначе S
 {%- endif %}
 {%- if config_store == "eeprom" %}
 - **EEPROM под хранилищем инвертирована.** Чистая EEPROM L0/L1 читается
-  нулями, а хранилищу нужны `0xFF`: обёртка `adapters::eeprom::Eeprom` отдаёт
+  нулями, а хранилищу нужны `0xFF`: обёртка `adapters_hw::eeprom::Eeprom` отдаёт
   каждый байт инвертированным, и заводской ноль сразу выглядит стёртым — без
   первичной подготовки. Запись — побитовое И со старым значением, как у NOR
   (сама EEPROM перезаписывает байт целиком), «стирание» страницы (128 байт) —

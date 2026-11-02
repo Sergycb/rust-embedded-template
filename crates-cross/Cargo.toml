@@ -211,8 +211,8 @@ embedded-test      = { version = "0.7.3", default-features = false, features = [
 	"semihosting",
 	"panic-handler",
 ] }
-# Трейты-границы домена и типы ошибок: их реализуют adapters и bsp, а app
-# работает только через них. `defmt` — ради `Format` на ошибках в логе.
+# Трейты и типы ошибок из их сигнатур: их реализуют `adapters-logic` и `bsp`, а app
+# работает через них. `defmt` — ради `Format` на ошибках в логе.
 ports            = { path = "../crates-host/ports", features = ["defmt"] }
 {%- if config_store == "eeprom" or has_usb == "true" or has_net == "true" %}
 # Обёртки над железом без чипа: из них `bsp` строит рычаги сам. `defmt` —
