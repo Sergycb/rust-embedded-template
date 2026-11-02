@@ -1,12 +1,8 @@
-//! Ключ хоста ed25519: вшитый в прошивку или созданный платой и хранимый в
+//! Ключ хоста ed25519, созданный платой при первом старте и хранимый в
 //! разделе настроек.
 
-// {%- if ssh_host_key == "config" %}
 use defmt_or_log::{info, warn};
 use embedded_storage_async::nor_flash::NorFlash;
-// {%- endif %}
-use ports::HostKey;
-// {%- if ssh_host_key == "config" %}
 
 use crate::settings::Settings;
 
@@ -19,30 +15,17 @@ pub const HOST_KEY_ID: u32 = 0x0055_0001;
 /// каждый запуск получал бы временный. 128 — рабочий буфер
 /// `crate::settings`: длиннее хранилище не запишет.
 const READ_SCRATCH: usize = 128;
-// {%- endif %}
-
-/// Ключ хоста, вшитый в прошивку.
-#[derive(Debug, Clone, Copy)]
-pub struct Fixed(pub &'static [u8; 32]);
-
-impl HostKey for Fixed {
-    #[expect(
-        clippy::unused_async_trait_impl,
-        reason = "сигнатуру задаёт порт `HostKey`; вшитому ключу ждать нечего"
-    )]
-    async fn seed(&mut self) -> [u8; 32] {
-        *self.0
-    }
-}
-// {%- if ssh_host_key == "config" %}
 
 /// Ключ хоста в хранилище настроек над носителем `F`: первый старт создаёт
 /// его из `getrandom` и записывает под [`HOST_KEY_ID`], следующие — читают.
 #[derive(Debug)]
 pub struct Stored<F: NorFlash>(pub Settings<F>);
 
-impl<F: NorFlash> HostKey for Stored<F> {
-    async fn seed(&mut self) -> [u8; 32] {
+impl<F: NorFlash> Stored<F> {
+    /// Зерно ключа хоста. Не отказывает: ключ нужен, чтобы вообще пустить
+    /// клиента, и ключ, который не удалось сохранить, отдаётся хотя бы на
+    /// этот запуск.
+    pub async fn seed(&mut self) -> [u8; 32] {
         // Иначе ключ не записался бы ни разу и менялся бы с каждым сбросом.
         const {
             assert!(
@@ -85,4 +68,3 @@ impl<F: NorFlash> HostKey for Stored<F> {
         seed
     }
 }
-// {%- endif %}

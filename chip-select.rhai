@@ -2619,8 +2619,7 @@ variable::set("crc_used", if modbus_rtu || cobs_used { "true" } else { "false" }
 variable::set("framing_tests", if on.modbus || cobs_used { "true" } else { "false" });
 // Асинхронные трейты в `ports` (каналы, шина CAN, транспорт master'а, карта
 // регистров): без них `#![expect(async_fn_in_trait)]` не срабатывает, и сборка
-// падает. У OTA в `ports` асинхронных трейтов нет (`Reboot` синхронный), у SSH
-// трейт ключа хоста ловит своё условие в `ports/src/lib.rs`.
+// падает. У OTA в `ports` асинхронных трейтов нет (`Reboot` синхронный).
 variable::set("ports_async", if on.modbus || on.protobuf || on.canopen || has.can || has.udp { "true" } else { "false" });
 // Канал протокола над рычагом платы (кадрирование, буферы, сокет —
 // `adapters-logic`): его строит `app` прямо в привязке графа или в задаче
@@ -2843,7 +2842,6 @@ if !services.contains("rest") {
 if !services.contains("ssh") {
     file::delete("crates-host/domain/src/ssh.rs");
     file::delete("crates-host/domain/src/ssh");
-    file::delete("crates-host/ports/src/host_key.rs");
 }
 // MQTT — узел (с клиентом брокера `mqtt/client.rs`), разбор `mqtt.toml` в
 // build-скрипте `app` и описание.
@@ -2865,6 +2863,10 @@ if !on.protobuf && services.len() == 0 {
 variable::set("ssh_host_key", if !services.contains("ssh") { "" }
     else if variable::get("config") == "true" && variable::get("config_store") != "external" && !on.canopen { "config" }
     else { "file" });
+// Ключ из файла узел берёт статикой `app`, модуль хранимого ключа ему не нужен.
+if variable::get("ssh_host_key") == "file" {
+    file::delete("crates-host/domain/src/ssh/host_key.rs");
+}
 // Файлы служб в корне проекта (`xtask::secrets`): токен REST, пароль и ключ
 // хоста SSH, настройки брокера MQTT — только если хоть один из них нужен.
 if !services.contains("rest") && !services.contains("mqtt") && ssh_auth != "password"
