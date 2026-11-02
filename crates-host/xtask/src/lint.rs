@@ -90,7 +90,9 @@ fn ensure_test_memory_matches_app() -> Result<(), anyhow::Error> {
     anyhow::ensure!(
         read("app")? == read("target-tests")?,
         "crates-cross/target-tests/memory.x расходится с crates-cross/app/memory.x — \
-         файлы обязаны совпадать (их пишет chip-select.rhai одним текстом)",
+         файлы сверяются целиком, вместе с комментариями: скопируйте \
+         crates-cross/app/memory.x поверх crates-cross/target-tests/memory.x \
+         (тесты на устройстве прошиваются на место приложения)",
     );
     Ok(())
 }
