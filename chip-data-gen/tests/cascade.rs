@@ -4041,8 +4041,8 @@ fn every_path_through_the_menus_generates() {
     ];
     let used = template_variables();
     // Задаёт `cargo generate`, а не хук: вопрос `ci` и встроенные переменные.
-    // `github`, `secrets` и `env` — не переменные шаблона, а выражения GitHub
-    // Actions (`${{ secrets.X }}`), которые Liquid оставляет как есть.
+    // `github`, `secrets`, `vars` и `env` — не переменные шаблона, а выражения
+    // GitHub Actions (`${{ secrets.X }}`), которые Liquid оставляет как есть.
     let external = [
         "ci",
         "project",
@@ -4052,6 +4052,7 @@ fn every_path_through_the_menus_generates() {
         "os",
         "github",
         "secrets",
+        "vars",
         "env",
     ];
     let mut paths = 0;

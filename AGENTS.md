@@ -101,8 +101,8 @@ Modbus{% endif %}{% if net_services != "" %}, секреты служб{% endif 
 |---|---|
 | {% if ota == "true" %}`cargo flash -p boot --release --chip {{chip}}`, затем {% endif %}`cargo run -p app` (исключение из правила выше: запускать в `crates-cross/`) | прошивка руками — необратимо; отдельной команды в `xtask` нет, и начало образа с `memory.x` здесь не сверяется — это делает `cargo xtask build` |
 | `cargo xtask test target` | тесты внутри МК (`embedded-test` + `probe-rs run`){% if ota == "true" %}; сам заливает bootloader без сторожа{% endif %}, после тестов — рабочую {% if ota == "true" %}пару (bootloader со сторожем и `app`){% else %}прошивку (`app`){% endif %}, release |
-| `cargo xtask test host-target` | хост управляет прошитым устройством; сам заливает release-образы, сверив начало приложения с `ORIGIN` раздела из `memory.x` |
-| `cargo xtask test all` | обе строки выше, каждый образ — по разу |
+| `cargo xtask test host-target` | хост проверяет готовое устройство по протоколу проекта (адрес — `HOST_TARGET_ADDR` или `HOST_TARGET_PORT`, без него сценарии пропускаются); начало приложения с `ORIGIN` раздела из `memory.x` сверяет всегда, release-образы шьёт, только если есть пробник (нет — тесты идут против прошитого){% if ota == "true" %}; собирает и грузит по протоколу тестовый образ `app-unconfirmed`{% endif %} |
+| `cargo xtask test all` | обе строки выше, каждый образ — по разу; без пробника этап `target` пропускается с `ВНИМАНИЕ` |
 | `cargo xtask panic-info` | читает регион `PANIC` с живой платы через `probe-rs` |
 | `probe-rs attach --chip {{chip}} crates-cross/target/{{target}}/debug/app` | лог живой платы |
 | `probe-rs erase --chip {{chip}} --connect-under-reset` | снять плату, зациклившуюся на панике |
@@ -141,11 +141,12 @@ README, «Быстрый старт».
 
 Первые две команды железа не требуют вовсе, третья и четвёртая — только тулчейн с
 целевым target'ом и `flip-link` (линкер прошивки; оба ставит `cargo xtask setup`).
-Два оставшихся этапа тестирования нужны с подключённой платой:
+Два оставшихся этапа тестирования нужны с платой: `target` — с пробником,
+`host-target` — на связи по транспорту проекта (пробник — только чтобы прошить):
 
 ```
 cargo xtask test target        # тесты внутри МК (embedded-test + probe-rs run)
-cargo xtask test host-target   # хост управляет прошитым устройством
+cargo xtask test host-target   # хост проверяет готовое устройство по протоколу
 ```
 
 В `xtask` намеренно только то, что не делается одной командой `cargo`: две сборки
@@ -166,7 +167,8 @@ read`: руками пришлось бы сначала найти адрес �
 ## Запреты
 
 - Не прошивать плату (`cargo flash`, `cargo run` в `crates-cross`, `test target`,
-  `test host-target`, `panic-info`, `probe-rs`) без явного разрешения
+  `test host-target` — он шьёт, если видит пробник{% if ota == "true" %}, и грузит тестовый образ по
+  протоколу{% endif %}, — `panic-info`, `probe-rs`) без явного разрешения
   пользователя — необратимо и требует железа.
 - Не запускать `cargo xtask setup` и `cargo install` без разрешения пользователя —
   меняет систему (что ставит `setup` — README, «Инструменты»).

@@ -2034,18 +2034,16 @@ if variable::is_set("write_size") {
         print("  (пока там заглушка bsp::stub::FlashBus — проект собирается, настройки не сохраняются; docs/modules/bsp-external.md)");
     }
     variable::set("write_size", m["write_size"]);
-    // `page_size` — страница обмена embassy-boot (`PAGE_SIZE`): по ней xtask
-    // и host-target тест ищут прежний образ (он уезжает в `DFU[i + 1]`). С
-    // внутренней OTA это `swap_page_size` её набора цифр — она крупнее
+    // `page_size` — страница обмена embassy-boot (`PAGE_SIZE`, `SWAP_PAGE_SIZE`
+    // в `[env]`): ею bootloader переносит разделы (прежний образ уезжает в
+    // `DFU[i + 1]`). С внутренней OTA это `swap_page_size` её набора цифр — она крупнее
     // физической страницы чипа там, где chip-data-gen расширил её ради
     // журнала `STATE` (`swap_paged`): прошивка тогда оборачивает ACTIVE и DFU в
     // `flash_page::ErasePage<_, SWAP_PAGE_SIZE>` (= page_size). Без OTA страницы обмена нет —
     // остаётся физическая, и `swap_paged` = "false".
     // С внешними разделами страница обмена зависит от стирания драйвера, а
-    // DFU в адресном пространстве МК нет вовсе — host-target тест обмена
-    // (он читает DFU пробником) здесь не к чему применить. Пусто — «размер
-    // неизвестен», тест сам себя пропускает; `swap_paged` = "false" (у внешней
-    // OTA своя `ext_page_size`).
+    // DFU в адресном пространстве МК нет вовсе. Пусто — «размер неизвестен»;
+    // `swap_paged` = "false" (у внешней OTA своя `ext_page_size`).
     let swap_page = m["page_size"];
     let swap_paged = false;
     if ota && !ext_ota {
