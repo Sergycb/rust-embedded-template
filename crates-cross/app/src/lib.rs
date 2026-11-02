@@ -6,9 +6,9 @@
 )]
 
 // Библиотека пакета — всё, что не запуск: узлы{% if graph == "true" %} (граф){% else %} (задачи){% endif %}, паникёр и логгер,
-// обработчик `HardFault`, счётчик сна{% if ota == "true" %}, свойства образа{% endif %}. Запуск — у каждого
-// бинарника свой: `#[entry]` рабочего `app` (`src/main.rs`){% if ota == "true" %} и тестового
-// `app-unconfirmed` (`src/bin/app-unconfirmed.rs`){% endif %}. Паникёр, логгер и обработчики
+// обработчик `HardFault`, счётчик сна{% if ota == "true" %}, свойства образа{% endif %}. Запуск — `#[entry]`
+// бинарника: рабочего `app` (`src/main.rs`){% if test_image == "true" %} и тестового
+// `app-unconfirmed` (`src/bin/app-unconfirmed.rs`), у каждого свой{% endif %}. Паникёр, логгер и обработчики
 // фолтов живут здесь и попадают в бинарник ровно по разу — docs/diagnostics.md,
 // «Два паникёра, один на сборку»{% if ota == "true" %}; docs/modules/app.md{% endif %}.
 pub mod cpu_load;

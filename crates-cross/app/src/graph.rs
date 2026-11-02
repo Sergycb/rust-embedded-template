@@ -32,7 +32,7 @@ supervisor_graph! {
     // фрагмент (слоты, `provide_*`), получает префикс этого имени.
 {%- if ota == "true" %}
     // `boot:`-объект — плата и свойства образа (`Boot` ниже): их отдаёт задача
-    // `start` бинарника, у рабочего и тестового образа они свои.
+    // `start` бинарника{% if test_image == "true" %}, у рабочего и тестового образа они свои{% endif %}.
     boot: boot: Boot;
 {%- else %}
     boot: board: bsp::Board;
@@ -78,9 +78,10 @@ supervisor_graph! {
             flash: ::domain::ota::Updater::new({{ board }}.firmware),
             reboot: bsp::reset::Reboot,
             running_version: boot.image.version,
-            // Тестовый образ `app-unconfirmed` начинает «уже подтверждённым» и
-            // `mark_booted` не зовёт: следующий сброс его откатывает
-            // ({% if has_protobuf == "true" %}`cargo xtask test host-target`, {% endif %}docs/ota.md).
+            // `confirmed` — из свойств образа бинарника{% if test_image == "true" %}: тестовый
+            // `app-unconfirmed` начинает «уже подтверждённым» и `mark_booted` не
+            // зовёт, следующий сброс его откатывает (`cargo xtask test
+            // host-target`, docs/ota.md){% endif %}.
             confirmed: boot.image.confirmed,
         },
 {%- endif %}
@@ -412,9 +413,13 @@ const _: () = assert!(
 
 /// `boot:`-объект графа: что `spawn_all` получает от задачи `start` бинарника.
 ///
-/// Плата — рычаги для узлов, свойства образа — то, чем рабочий `app` и
-/// тестовый `app-unconfirmed` различаются (`crate::version`). Инициализаторы
-/// `fragments:` и `watchdog:` забирают из него поля частичными move.
+/// Плата — рычаги для узлов, свойства образа — версия и подтверждение
+/// (`crate::version`).
+// {%- if test_image == "true" %}
+/// Ими рабочий `app` и тестовый `app-unconfirmed` и различаются.
+// {%- endif %}
+/// Инициализаторы `fragments:` и `watchdog:` забирают из него поля частичными
+/// move.
 pub struct Boot {
     /// Плата целиком: её поля делят узлы.
     pub board: bsp::Board,

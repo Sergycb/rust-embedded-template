@@ -126,7 +126,7 @@ Modbus{% endif %}{% if net_services != "" %}, секреты служб{% endif 
 |---|---|
 | {% if ota == "true" %}`cargo flash -p boot --release --chip {{chip}}`, затем {% endif %}`cargo run -p app` (исключение из правила выше: запускать в `crates-cross/`) | прошивка руками — необратимо; отдельной команды в `xtask` нет{% if ota == "true" %}. Перед первой прошивкой bootloader'а — `cargo xtask build` из корня: он создаёт ключ подписи, а bootloader, собранный без `ota-public-key.bin`, получает нулевой ключ и отвергает любой образ{% endif %}. Начало образа с `memory.x` здесь не сверяется — это делает `cargo xtask build` |
 | `cargo xtask test target` | тесты внутри МК (`embedded-test` + `probe-rs run`){% if ota == "true" %}; сам заливает bootloader{% if graph == "true" %} без сторожа{% endif %}{% endif %}, после тестов — рабочую {% if ota == "true" %}пару (bootloader{% if graph == "true" %} со сторожем{% endif %} и `app`){% else %}прошивку (`app`){% endif %}, release |
-| `cargo xtask test host-target` | {% if has_protobuf == "true" %}хост проверяет готовое устройство по протоколу проекта (адрес — `HOST_TARGET_ADDR` или `HOST_TARGET_PORT`, без него сценарии пропускаются){% else %}сценарии хоста написаны только под protobuf, под протокол этого проекта их нет (`crates-host/host-target-tests`) — прогон пустой{% endif %}; начало приложения с `ORIGIN` раздела из `memory.x` сверяет всегда, release-образы шьёт, только если есть пробник{% if has_protobuf == "true" %} (нет — тесты идут против прошитого){% endif %}{% if ota == "true" and has_protobuf == "true" %}; собирает и грузит по протоколу тестовый образ `app-unconfirmed`{% endif %} |
+| `cargo xtask test host-target` | {% if has_protobuf == "true" %}хост проверяет готовое устройство по протоколу проекта (адрес — `HOST_TARGET_ADDR` или `HOST_TARGET_PORT`, без него сценарии пропускаются){% else %}сценарии хоста написаны только под protobuf, под протокол этого проекта их нет (`crates-host/host-target-tests`) — прогон пустой{% endif %}; начало приложения с `ORIGIN` раздела из `memory.x` сверяет всегда, release-образы шьёт, только если есть пробник{% if has_protobuf == "true" %} (нет — тесты идут против прошитого){% endif %}{% if test_image == "true" %}; собирает и грузит по протоколу тестовый образ `app-unconfirmed`{% endif %} |
 | `cargo xtask test all` | `test host`, затем обе строки выше, каждый образ — по разу; без пробника этап `target` пропускается с `ВНИМАНИЕ` |
 | `cargo xtask panic-info` | читает регион `PANIC` с живой платы через `probe-rs` |
 | `probe-rs attach --chip {{chip}} crates-cross/target/{{target}}/debug/app` | лог живой платы |
@@ -188,7 +188,7 @@ README, «Быстрый старт».
 ## Запреты
 
 - Не прошивать плату (`cargo flash`, `cargo run` в `crates-cross`, `test target`,
-  `test host-target` — он шьёт, если видит пробник{% if ota == "true" and has_protobuf == "true" %}, и грузит тестовый образ по
+  `test host-target` — он шьёт, если видит пробник{% if test_image == "true" %}, и грузит тестовый образ по
   протоколу{% endif %}, — `panic-info`, `probe-rs`) без явного разрешения
   пользователя — необратимо и требует железа.
 - Не запускать `cargo xtask setup` и `cargo install` без разрешения пользователя —
@@ -248,12 +248,13 @@ README, «Быстрый старт».
   - шаблон зовёт его в стартовом действии узла OTA (`begin`); перенести позже,
     туда, где устройство доказало работоспособность, можно{% if has_usb == "true" %} — вместе с
     готовностью: узел `USB` встаёт на шину только после этой попытки{% endif %};
-  - исключение — тестовый образ `app-unconfirmed` (свой бинарник{% if has_protobuf == "true" %}, его грузит
-    `cargo xtask test host-target`{% else %}; сценариев `host-target`, которые его грузят, под
-    протокол этого проекта пока нет{% endif %}): он себя не подтверждает вовсе (`confirmed`
+{%- if test_image == "true" %}
+  - исключение — тестовый образ `app-unconfirmed` (свой бинарник, его грузит
+    `cargo xtask test host-target`): он себя не подтверждает вовсе (`confirmed`
     во входе узла — из свойств образа `IMAGE` его бинарника,
     `crates-cross/app/src/bin/`), чтобы сброс его откатил; в `cargo xtask build`
     и релиз он не попадает — `docs/ota.md`, «Тесты OTA по протоколу (host-target)».
+{%- endif %}
 - Свойства образа (`app::version::Image`: версия для защиты от отката,
   версия текстом, `confirmed`) объявляет константой `IMAGE` каждый бинарник
   `app` и отдаёт в `app::spawn_all`{% if graph == "true" %} (`boot:`-объект `app::Boot`){% endif %}; рядом у
@@ -378,7 +379,7 @@ README, «Быстрый старт».
 - Сторожа нет ни в `boot`, ни в приложении: зависший до `mark_booted` образ сам
   не откатится.
 {%- endif %}
-- Цикл исполнителя в `main` бинарника (`crates-cross/app/src/main.rs`{% if ota == "true" %} и
+- Цикл исполнителя в `main` бинарника (`crates-cross/app/src/main.rs`{% if test_image == "true" %} и
   `src/bin/app-unconfirmed.rs` — запуск у каждого свой{% endif %}) поднят руками, а не
   `#[embassy_executor::main]`: возврат к макросу молча ломает замер загрузки —
   `docs/modules/app-cpu-load.md`, «Почему цикл исполнителя в `main` написан руками».
@@ -443,7 +444,7 @@ README, «Быстрый старт».
     свою (рецепт — там же);
   - `Board::new` асинхронный: драйвер опознаёт микросхему (`init`, до 2 с, если
     она дотирает стирание), ждёт таймерами `embassy_time` и потому зовётся из
-    первой задачи исполнителя (`start` в `main.rs`{% if ota == "true" %} и `bin/app-unconfirmed.rs`{% endif %} —
+    первой задачи исполнителя (`start` в `main.rs`{% if test_image == "true" %} и `bin/app-unconfirmed.rs`{% endif %} —
     `crates-cross/app/src/`), а не через `block_on` до него — там таймер
     паникует{% if graph == "true" %}; путь до `spawn_all` обязан уложиться в таймаут сторожа{% endif %};
   - не прошёл `init` или микросхема меньше конца разделов (символ `memory.x`

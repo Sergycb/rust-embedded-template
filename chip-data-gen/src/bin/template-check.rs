@@ -1093,12 +1093,14 @@ fn check_one(
             )
         })?;
         note(log, &output)?;
-        // Тестовый образ `app-unconfirmed` линтует `lint cross` выше (оба
+        // Тестовый образ `app-unconfirmed` (есть только с OTA и protobuf —
+        // `test_image` в chip-select.rhai) линтует `lint cross` выше (оба
         // бинарника `app`, debug и release), а собирает только `test
         // host-target`, которому нужна плата. `build` его не собирает (`--bin
         // app`) — в релиз он не попадает. Каталог сборки общий на полосу, но
         // собрать ELF тестового образа в template-check некому: clippy пишет
-        // только метаданные.
+        // только метаданные. Проверка — на любой OTA: без protobuf бинарника
+        // нет, и она проходит сама.
         if project.join("crates-cross/boot").exists() {
             for entry in fs::read_dir(cargo_target_dir)
                 .with_context(|| format!("прочитать {}", cargo_target_dir.display()))?

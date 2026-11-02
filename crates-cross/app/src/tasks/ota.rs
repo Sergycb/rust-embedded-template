@@ -91,9 +91,10 @@ pub fn spawn(
     firmware: bsp::FirmwareFlash,
     image: crate::version::Image,
 ) {
-    // Тестовый образ `app-unconfirmed` начинает «уже подтверждённым» и
-    // `mark_booted` не зовёт: следующий сброс его откатывает
-    // ({% if has_protobuf == "true" %}`cargo xtask test host-target`, {% endif %}docs/ota.md). В задачу — только два
+    // `confirmed` — из свойств образа бинарника{% if test_image == "true" %}: тестовый
+    // `app-unconfirmed` начинает «уже подтверждённым» и `mark_booted` не
+    // зовёт, следующий сброс его откатывает (`cargo xtask test host-target`,
+    // docs/ota.md){% endif %}. В задачу — только два
     // поля, а не `image` целиком: аргументы задачи и есть её слоты, и текст
     // версии узлу OTA ни к чему.
     let token = task(firmware, image.version, image.confirmed);

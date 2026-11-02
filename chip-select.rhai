@@ -2770,6 +2770,15 @@ if !on.modbus {
 if variable::get("link_port") != "true" {
     file::delete("crates-host/ports/src/link.rs");
 }
+// Тестовый образ `app-unconfirmed` — бинарник для сценариев OTA `cargo xtask test
+// host-target`, а они есть только у protobuf: без них образ никто не грузит, и
+// второй бинарник лишь удлинял бы сборку. Оставленный файл в `src/bin/` cargo сам
+// нашёл бы вторым бинарником, поэтому удаляется каталог.
+let test_image = variable::get("ota") == "true" && on.protobuf;
+variable::set("test_image", if test_image { "true" } else { "false" });
+if !test_image {
+    file::delete("crates-cross/app/src/bin");
+}
 // OTA — порты, адаптер и узел `domain::ota` — только в проекте с OTA: без неё это
 // код, до которого не дотянуться от `main` и графа. `mod`, `pub use` и зависимости
 // вырезает Liquid.
@@ -2781,9 +2790,6 @@ if variable::get("ota") != "true" {
     // Подпись образа в `xtask` и описание OTA.
     file::delete("crates-host/xtask/src/signing.rs");
     file::delete("docs/ota.md");
-    // Точка входа тестового образа `app-unconfirmed`: без OTA его нет, а
-    // оставленный файл в `src/bin/` cargo сам нашёл бы вторым бинарником.
-    file::delete("crates-cross/app/src/bin");
     // Перевод команд OTA у протокола: каталог невыбранного протокола уже
     // удалён выше, поэтому — только у выбранного.
     if on.modbus {

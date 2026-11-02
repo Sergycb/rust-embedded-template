@@ -1050,7 +1050,8 @@ lint`, `test host`, `lint cross`, `build` — то есть ровно то, ч�
 пользователю, — плюс `cargo xtask pins` (четырежды: без аргумента, с `RCC`, с
 `I2C1 --snippet` и `--check`) и fmt/clippy/test для `chip-info`; `cargo deny check` обоих
 workspace; сверку оценки RAM хука с фактом сборки («Оценка RAM» выше) и, с OTA,
-проверку, что `build` не собрал тестовый образ `app-unconfirmed`.
+проверку, что `build` не собрал тестовый образ `app-unconfirmed` (сам бинарник есть
+только при `test_image` — OTA и protobuf, `chip-select.rhai`).
 
 Не всё из этого гоняется на каждой конфигурации — повторять проверку на тех же
 входных данных незачем:

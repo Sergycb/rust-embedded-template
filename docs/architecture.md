@@ -475,7 +475,7 @@ bootloader'е (`crates-cross/boot`), который подпись и прове
 — `init` читает JEDEC ID{% if ext_flash_bus != "spi" %} и ставит бит QE{% endif %}: без этого драйвер не знает объёма и
 не годится ни для одной операции. `init` ждёт микросхему (до 2 с, если она
 ещё стирает после сброса), поэтому `Board::new` асинхронный, а зовёт его первая
-задача исполнителя (`start` в `main` бинарника — `crates-cross/app/src/main.rs`{% if ota == "true" %} и `src/bin/app-unconfirmed.rs`{% endif %}): ждёт он таймерами `embassy_time`, а
+задача исполнителя (`start` в `main` бинарника — `crates-cross/app/src/main.rs`{% if test_image == "true" %} и `src/bin/app-unconfirmed.rs`{% endif %}): ждёт он таймерами `embassy_time`, а
 встроенной очереди таймеров нужен waker исполнителя, не `block_on`; не прошёл —
 строка в лог, и флеш отказывает, а не паникует (docs/modules/bsp-external.md).
 {%- endif %}

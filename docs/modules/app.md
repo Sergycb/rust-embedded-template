@@ -202,7 +202,7 @@ async fn uart_drain_task(mut uart: bsp::LogTx) {
 `Map::default()`; без `Default` замените эту одну строку в `crate::modbus::handle`
 своим конструктором. Узлы{% if graph == "true" %} и граф{% endif %} тип берут оттуда и правок не требуют.
 {%- endif %}
-{%- if ota == "true" %}
+{%- if test_image == "true" %}
 
 # Тестовый образ `app-unconfirmed`: свой бинарник, свои свойства образа
 
@@ -277,7 +277,7 @@ USB, Ethernet и CAN в STOP не работают.
 //          });
 //      }
 //
-// 4. main.rs{% if ota == "true" %} (и bin/app-unconfirmed.rs){% endif %}: цикл остаётся ручным, меняется только сон —
+// 4. main.rs{% if test_image == "true" %} (и bin/app-unconfirmed.rs){% endif %}: цикл остаётся ручным, меняется только сон —
 //    вместо `wfe()` `bsp::power::sleep(&WORK)`.
 //
 //    Замер сна для {% if graph == "true" %}узла `CPU_LOAD`{% else %}загрузки{% endif %} не ломается: после пробуждения драйвер
