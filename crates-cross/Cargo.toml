@@ -222,7 +222,8 @@ adapters-hw      = { path = "../crates-host/adapters-hw", features = ["defmt"] }
 {%- endif %}
 {%- if protocol_link == "true" %}
 # Каналы протоколов над рычагами платы (кадрирование потока, сокеты) — их
-# строит `app` (src/link.rs). `defmt` — ради `Format` на ошибках каналов.
+# строит `app` в привязке графа или в задаче протокола. `defmt` — ради
+# `Format` на ошибках каналов.
 adapters-logic   = { path = "../crates-host/adapters-logic", features = ["defmt"] }
 {%- endif %}
 {%- if flash_page == "true" %}

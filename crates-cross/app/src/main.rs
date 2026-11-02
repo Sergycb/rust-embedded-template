@@ -11,9 +11,6 @@ mod fault;
 {%- if graph == "true" %}
 mod graph;
 {%- endif %}
-{%- if protocol_link == "true" %}
-mod link;
-{%- endif %}
 {%- if has_modbus == "true" %}
 mod modbus;
 {%- endif %}

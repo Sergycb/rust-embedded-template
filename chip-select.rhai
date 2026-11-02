@@ -2592,12 +2592,13 @@ variable::set("framing_tests", if on.modbus || cobs_used { "true" } else { "fals
 // падает. У OTA в `ports` асинхронных трейтов нет (`Reboot` синхронный), у SSH
 // трейт ключа хоста ловит своё условие в `ports/src/lib.rs`.
 variable::set("ports_async", if on.modbus || on.protobuf || on.canopen || has.can || has.udp { "true" } else { "false" });
-// Модуль `link` в `app`: транспорты протоколов (`app::link::<вид>[::<имя>]`) — кадрирование,
-// буферы и сокет над объектами платы. Без Modbus и protobuf транспорту нечего оборачивать (CANopen берёт
+// Канал протокола над рычагом платы (кадрирование, буферы, сокет —
+// `adapters-logic`): его строит `app` прямо в привязке графа или в задаче
+// протокола. Без Modbus и protobuf транспорту нечего оборачивать (CANopen берёт
 // шину CAN как есть).
 variable::set("protocol_link", if on.modbus || on.protobuf { "true" } else { "false" });
-// Файл на вид транспорта с каналом (`app/src/link/<вид>.rs`): виды через запятую
-// для объявлений в `link.rs`, файлы остальных видов уходят.
+// Виды транспортов с каналом протокола через запятую — для документации
+// (`docs/modules/bsp-*.md`).
 let link_kinds = [];
 for link in links {
     if (link.protocol == "modbus" || link.protocol == "protobuf") && !link_kinds.contains(link.kind) {
@@ -2609,11 +2610,6 @@ for kind in link_kinds {
     link_kinds_text += if link_kinds_text == "" { kind } else { "," + kind };
 }
 variable::set("link_kinds", link_kinds_text);
-for kind in ["uart", "usb", "tcp", "udp"] {
-    if !link_kinds.contains(kind) {
-        file::delete("crates-cross/app/src/link/" + kind + ".rs");
-    }
-}
 // Символы раскладки `memory.x` (`bsp::layout`: `ACTIVE`, границы `CONFIG`, конец
 // внешней флеши, регионы DMA) — пока есть что из них читать.
 let layout_store = variable::get("config_store");
@@ -2708,10 +2704,6 @@ if !on.canopen {
     file::delete("crates-host/domain/src/canopen.rs");
     file::delete("crates-host/domain/src/canopen");
     file::delete("crates-host/canopen");
-}
-if variable::get("protocol_link") != "true" {
-    file::delete("crates-cross/app/src/link.rs");
-    file::delete("crates-cross/app/src/link");
 }
 // Узел протокола «запрос — ответ» (`domain::server`) обслуживает только Modbus
 // slave: у protobuf свой узел (`domain::protobuf`).

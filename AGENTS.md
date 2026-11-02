@@ -184,7 +184,7 @@ read`: руками пришлось бы сначала найти адрес �
 
 - Задачи `embassy` не могут быть generic: тип, уезжающий в `#[embassy_executor::task]`,
   получает псевдоним (`pub type X = ...`): рычаг — от `bsp`{% if ota == "true" or config == "true" %} ({% if ota == "true" %}`bsp::FirmwareFlash`{% if config == "true" %},
-  {% endif %}{% endif %}{% if config == "true" %}`bsp::ConfigFlash`{% endif %}){% endif %}, адаптер — от `app`{% if protocol_link == "true" %} (`crate::link::<вид>[::<транспорт>]::Link`){% endif %} или
+  {% endif %}{% endif %}{% if config == "true" %}`bsp::ConfigFlash`{% endif %}){% endif %}, адаптер — от `app` или
   конкретным типом прямо {% if graph == "true" %}в графе{% else %}в задаче{% endif %}{% if ota == "true" %} (`domain::ota::Updater<bsp::FirmwareFlash>`){% endif %}
   — `docs/architecture.md`.
 - Ровно один `#[panic_handler]` и один активный `#[global_logger]` на бинарник;
@@ -340,11 +340,14 @@ read`: руками пришлось бы сначала найти адрес �
   `#[embassy_executor::main]`: возврат к макросу молча ломает замер загрузки —
   `docs/modules/app-cpu-load.md`, «Почему цикл исполнителя в `main` написан руками».
 {%- if protocol_link == "true" %}
-- Канал протокола строит `link(…)` модуля транспорта `crate::link::<вид>[::<транспорт>]`
-  над рычагом платы, память — {% if graph == "true" %}`static T` в привязке графа{% else %}статики модуля задачи{% endif %}; размер буфера и
-  порт — решение `app`, `bsp` их не знает; обработчик протокола — не порт{% if has_protobuf == "true" %};
-  канал `PROTOBUF` — `ports::FrameDuplex`, ответ — `send_from` из своего буфера{% endif %} —
-  `docs/modules/app.md`, «Канал протокола: `crate::link`».
+- Канал протокола — конкретный тип из `adapters-logic` над рычагом платы; строит его
+  {% if graph == "true" %}привязка узла в `fragments:` графа (тип — параметр фрагмента, память —
+  `static T` там же){% else %}задача протокола `crates-cross/app/src/tasks/<протокол>.rs` (рычаг —
+  псевдоним `Source`, память — статики модуля){% endif %}; модуля-обёртки над каналами в
+  `app` нет. Размер буфера и порт — решение `app`, `bsp` их не знает; обработчик
+  протокола — не порт{% if has_protobuf == "true" %}; канал `PROTOBUF` — `ports::FrameDuplex`, ответ —
+  `send_from` из своего буфера{% endif %} — `docs/modules/app.md`, «Канал протокола —
+  конкретным типом там, где строится».
 {%- endif %}
 {%- if net_services contains "rest" %}
 - Токен REST API — `rest-token.txt` в корне проекта: создаёт `cargo xtask`

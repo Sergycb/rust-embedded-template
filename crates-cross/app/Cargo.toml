@@ -40,12 +40,13 @@ panic-persist = { workspace = true }
 bsp = { workspace = true, features = ["time-driver"] }
 domain = { workspace = true }
 {%- if protocol_link == "true" %}
-# Каналы протоколов над потоком, CDC или сокетом (src/link.rs) строит
-# приложение в своей памяти и отдаёт узлам готовыми.
+# Каналы протоколов над потоком, CDC или сокетом строит приложение в своей
+# памяти (привязка в src/graph.rs{% if graph != "true" %}, задача в src/tasks/{% endif %}) и отдаёт узлам готовыми.
 adapters-logic = { workspace = true }
 {%- endif %}
 {%- if has_udp == "true" %}
-# Метаданные датаграмм UDP-сокета протокола (src/link.rs).
+# Тип метаданных датаграмм UDP-сокета протокола — память под них объявляет
+# граф (src/graph.rs).
 embassy-net = { workspace = true }
 {%- endif %}
 shadow-rs = { workspace = true }

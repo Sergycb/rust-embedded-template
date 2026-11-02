@@ -130,18 +130,21 @@ async fn uart_drain_task(mut uart: embassy_stm32::usart::UartTx<'static, embassy
 {%- if protocol_link == "true" %}
 {%- capture sources %}{% if has_uart == "true" %}, потоком UART{% endif %}{% if has_usb == "true" %}, потоком CDC{% endif %}{% if has_net == "true" %}, сетевым стеком{% endif %}{% endcapture %}
 
-# Канал протокола: `crate::link`
+# Канал протокола — конкретным типом там, где строится
 
-Канал протокола (кадрирование, сокет) строит `link(…)` модуля транспорта над
-тем, что отдала плата: {{ sources | remove_first: ", " }}; память канала —
-{% if graph == "true" %}`static T` в привязке графа{% else %}статики модуля задачи{% endif %}. Тип канала (`Link`), его размеры и
-`link` — `crates-cross/app/src/link/<вид>.rs`, по модулю на транспорт: у
-uart/usb — подмодуль `<транспорт>` с `Source` (рычаг платы под ним), у tcp/udp
-модуль транспорта — сам файл вида; путь типа —
-`crate::link::<вид>[::<транспорт>]::Link`. Задачи embassy не могут быть
-generic, поэтому узел называет канал этим псевдонимом. Размер буфера и порт —
-решение приложения, и `bsp` их не знает: своё кадрирование — другой тип `Link`
-и его `link`, свой размер буфера или порт — константы там.
+Канал протокола (кадрирование{% if has_net == "true" %}, сокет{% endif %}) — тип из `adapters-logic` над тем, что
+отдала плата: {{ sources | remove_first: ", " }}. Строит его {% if graph == "true" %}привязка узла в `fragments:`
+графа (`crates-cross/app/src/graph.rs`): тип канала стоит параметром фрагмента,
+конструктор — во входе узла, память — `static T` там же{% else %}задача протокола
+(`crates-cross/app/src/tasks/<протокол>.rs`): рычаг платы — псевдоним `Source`
+(задачи embassy не могут быть generic), канал — конкретным типом в теле
+задачи, память — статики модуля задачи{% endif %}. Отдельного модуля «каналов» в
+`app` нет: у каждого канала одно место сборки, и псевдоним над ним ничего не
+добавлял бы. Размер буфера и порт — решение приложения, и `bsp` их не знает:
+своё кадрирование — другой тип в том же месте, свой размер буфера или порт —
+число там же, с комментарием, что оно значит.{% if has_udp == "true" %} Память метаданных датаграмм UDP
+приходит в `adapters_logic::net::UdpLink::new` нулями (`MaybeUninit`), и
+заполняет её сам конструктор.{% endif %}
 
 Буфер кадра держит сам канал (`ports::FrameLink::buffer`), а протокол —
 обработчик ({% if has_modbus == "true" %}`domain::modbus::Slave`{% if has_protobuf == "true" %}; {% endif %}{% endif %}{% if has_protobuf == "true" %}`domain::protobuf::Service`{% endif %}) — конкретный тип домена, трейта
@@ -161,12 +164,12 @@ generic, поэтому узел называет канал этим псевд
 
 Узел `MODBUS_<ТРАНСПОРТ>` — по одному на транспорт с Modbus в `links`.{% if graph == "true" %}
 Фрагмент — узел протокола `domain::SERVER_FRAG<L, R>`: канал
-`L` (`crate::link::…::Link`, раздел выше) строит граф —
-`link` этого модуля над рычагом платы в памяти `static T`, обработчик —
+`L` (раздел выше) строит граф — конкретным типом из `adapters_logic::modbus`
+над рычагом платы в памяти `static T`, обработчик —
 `domain::modbus::Slave` над картой регистров `R` с адресом slave'а (вход
 `domain::server::ServerWiring`).{% else %}
 В этом проекте это задача в `crates-cross/app/src/tasks/modbus.rs`: она собирает
-контекст узла `domain::server::ServerCtx` — канал `crate::link::<вид>[::<транспорт>]::link`
+контекст узла `domain::server::ServerCtx` — канал `adapters_logic::modbus::Rtu`
 над рычагом платы и обработчик `domain::modbus::Slave` над
 картой регистров с адресом slave'а — и зовёт `domain::server::task`.{% endif %} Карта одна на проект: её
 заводит `crates-cross/app/src/modbus.rs` в `static` (`OnceLock`) при первом

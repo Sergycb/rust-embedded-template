@@ -1,14 +1,11 @@
 //! Узлы `PROTOBUF_*`: сообщения protobuf от хоста, по модулю на транспорт.
-//! Канал — `link` модуля транспорта (`crate::link`) над рычагом платы в
-//! памяти статиков модуля задачи.
+//! Канал — кадры COBS + CRC над рычагом платы, конкретным типом прямо в
+//! задаче, в памяти статиков модуля задачи.
 {%- assign xs = links | split: "," %}
 {%- comment %} Номер клиента OTA — порядковый номер транспорта с протоколом в `links`, как в графе (`crate::graph`). {% endcomment %}
 {%- assign client = 0 %}
 {%- for l in xs %}
 {%- assign f = l | split: ":" %}
-{%- assign lm = "crate::link::" | append: f[0] %}
-{%- comment %} Без графа транспорт — UART или USB: у них модуль канала на транспорт. {% endcomment %}
-{%- assign lm = lm | append: "::" | append: f[4] %}
 {%- if f[3] == "protobuf" %}
 
 /// Узел `PROTOBUF_{{ f[4] | upcase }}`.
@@ -17,9 +14,14 @@ pub mod {{ f[4] }} {
     use embassy_executor::Spawner;
     use static_cell::ConstStaticCell;
 
-    // Импорт, а не полный путь в сигнатурах: длина строки не зависит от
-    // имени транспорта, и rustfmt не переносит её ни при каком имени.
-    use {{ lm }}::{BUFFER, FRAME, Source, link};
+    /// Буфер канала — закодированные сообщение и CRC (`rx_len`).
+    const BUFFER: usize = adapters_logic::cobs::rx_len(domain::protobuf::REQUEST_MAX);
+    /// Кадр передачи — худший случай COBS от самого длинного ответа (`tx_len`):
+    /// узел отвечает из своего буфера (`send_from`), а не из буфера канала.
+    const FRAME: usize = adapters_logic::cobs::tx_len(domain::protobuf::RESPONSE_MAX);
+
+    /// Рычаг платы, над которым строится канал (`board.{{ f[4] }}{% if f[0] == "usb" %}.cdc{% endif %}`).
+    type Source = {% if f[0] == "usb" %}bsp::usb::{{ f[4] }}::Cdc{% else %}bsp::serial::{{ f[4] }}::Serial{% endif %};
 
     // Память канала и буфер ответа: граф объявил бы её сам (`static T`), без
     // него — статики задачи. `ConstStaticCell` — нули известны при компиляции
@@ -35,7 +37,8 @@ pub mod {{ f[4] }} {
     async fn task(source: Source, info: DeviceInfo) {
         // Канал — над рычагом платы; статики берутся один раз: задача
         // спавнится один раз за запуск.
-        let mut link = link(source, LINK_BUFFER.take(), LINK_FRAME.take());
+        let mut link =
+            adapters_logic::cobs::Cobs::new(source, LINK_BUFFER.take(), LINK_FRAME.take());
         let mut service = domain::protobuf::Service::new(
             info,
 {%- if ota == "true" %}

@@ -2866,8 +2866,8 @@ fn net_services_defines_are_strict() {
 
 /// Протоколу граф не нужен: без него узел спавнит `tasks::spawn_all`, и ни ответ `graph=no`,
 /// ни размер раздела (здесь — 16 KiB у `l031f4`; у `l011f4` с тем же разделом Modbus не
-/// помещается в 2 KiB RAM) генерацию не останавливают. Готовый
-/// транспорт `app/src/link.rs` остаётся, пока выбран Modbus или protobuf.
+/// помещается в 2 KiB RAM) генерацию не останавливают. Задача протокола
+/// `app/src/tasks/<протокол>.rs` остаётся, пока выбран Modbus или protobuf.
 #[test]
 fn protocol_does_not_need_the_graph() {
     let script = compile_script();
@@ -2892,22 +2892,15 @@ fn protocol_does_not_need_the_graph() {
             Some("false"),
             "{chip} {preset:?}"
         );
+        let task = format!(
+            "crates-cross/app/src/tasks/{}.rs",
+            result.vars.get("protocol").map_or("", String::as_str)
+        );
         assert!(
-            !result
-                .deleted
-                .iter()
-                .any(|path| path == "crates-cross/app/src/link.rs"),
-            "{chip} {preset:?}: link.rs удалён при выбранном протоколе"
+            !result.deleted.iter().any(|path| *path == task),
+            "{chip} {preset:?}: {task} удалён при выбранном протоколе"
         );
     }
-
-    let none = run_cascade_with(&script, "f407ve", &[]).expect("каскад не должен падать");
-    assert!(
-        none.deleted
-            .iter()
-            .any(|path| path == "crates-cross/app/src/link.rs"),
-        "без протокола link.rs должен удаляться"
-    );
 }
 
 /// Транспорт без протокола — рабочий выбор: заглушка интерфейса и его фоновый

@@ -2119,7 +2119,7 @@ mod tests {
     #[test]
     fn doc_paths_are_named_paths_only() {
         let text = "см. `docs/flash.md`, `crates-cross/app/src/main.rs:42` и \
-                    [ота](docs/ota.md#откат); `bsp::Board`, `crates-cross/app/src/link/<вид>.rs`, \
+                    [ота](docs/ota.md#откат); `bsp::Board`, `crates-cross/app/src/tasks/<протокол>.rs`, \
                     `docs/modules/`.";
         assert_eq!(
             doc_paths(text),

@@ -106,7 +106,7 @@ cargo run -p app                    # прошить приложение и с�
 `Board::new()` — единственное место, где начинается владение железом: наружу он
 отдаёт не периферию, а рычаги платы — объекты под трейтами{% if has_usb == "true" or has_net == "true" %} (пары, которые порознь
 не собрать, — {% if has_usb == "true" %}USB-устройство с потоком CDC{% if has_net == "true" %} и {% endif %}{% endif %}{% if has_net == "true" %}сетевой стек с его фоновой работой{% endif %}, — собранными){% endif %}.
-Протоколы приложения над ними строит `app`{% if protocol_link == "true" or net_services != "" %} ({% if protocol_link == "true" %}`crates-cross/app/src/link/`{% if net_services != "" %}, {% endif %}{% endif %}{% if net_services != "" %}`crates-cross/app/src/net.rs`{% endif %}){% endif %}, и
+Протоколы приложения над ними строит `app`{% if protocol_link == "true" or net_services != "" %} ({% if protocol_link == "true" %}{% if graph == "true" %}`crates-cross/app/src/graph.rs`{% else %}`crates-cross/app/src/tasks/`{% endif %}{% if net_services != "" %}, {% endif %}{% endif %}{% if net_services != "" %}`crates-cross/app/src/net.rs`{% endif %}){% endif %}, и
 ни приложение, ни домен про регистры не знают — `embassy-stm32` нет даже в
 манифесте `app`. Подробно — docs/architecture.md, «`Board` отдаёт рычаги платы,
 а не периферию и не протоколы».
@@ -634,8 +634,8 @@ Identification (производитель и модель — `crates-host/doma
 {%- else %} словарь объектов `crates-host/canopen/device.toml`.
 {%- endif %}
 {%- if protocol_link == "true" %} Канал протокола (кадрирование, сокет) строит `app` над рычагом
-платы: тип канала, его буферы, порт и `link` — `crates-cross/app/src/link/<вид>.rs`
-(`docs/modules/app.md`).{% else %} Шину CAN узел берёт как есть, без адаптера.{% endif %}
+платы конкретным типом: тип канала, его буферы и порт — {% if graph == "true" %}в привязке узла в
+`crates-cross/app/src/graph.rs`{% else %}в задаче протокола `crates-cross/app/src/tasks/{{ protocol }}.rs`{% endif %} (`docs/modules/app.md`).{% else %} Шину CAN узел берёт как есть, без адаптера.{% endif %}
 {%- endif %}
 
 Выводы шаблон не выбирает: в поле `Board`{% if has_usb == "true" or has_net == "true" %} ({% if has_usb == "true" %}у USB — под устройство

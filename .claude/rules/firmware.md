@@ -4,9 +4,9 @@ paths: crates-cross/**
 
 - Задачи embassy не могут быть generic: объект, уезжающий в
   `#[embassy_executor::task]`, обязан иметь псевдоним типа (рычагу платы — в
-  `bsp`; адаптеру — в модуле `app`, который выбирает его тип{% if protocol_link == "true" %} (`crate::link` —
-  `docs/modules/app.md`, «Канал протокола: `crate::link`»){% endif %}, или конкретный тип прямо во
-  входе узла) — `docs/architecture.md`.
+  `bsp`; адаптеру — в модуле `app`, который выбирает его тип, или конкретный
+  тип прямо во входе узла{% if protocol_link == "true" %}, как канал протокола (`docs/modules/app.md`,
+  «Канал протокола — конкретным типом там, где строится»){% endif %}) — `docs/architecture.md`.
 - Ровно один `#[panic_handler]` и один `#[global_logger]` на бинарник, развилка
   по профилю — `#[cfg(debug_assertions)]`, не Cargo-фича — `docs/diagnostics.md`,
   «Два паникёра, один на сборку».

@@ -1,8 +1,8 @@
 UART платы — поток байтов, по подмодулю на транспорт (`bsp::serial::<транспорт>`).
 {%- if link_kinds contains "uart" %}
 Канал протокола над ним ({% if has_modbus == "true" %}Modbus RTU{% else %}protobuf с кадрами COBS{% endif %}) строит
-приложение: тип канала, его буферы и `link` —
-(`crates-cross/app/src/link/uart.rs`).
+приложение конкретным типом — {% if graph == "true" %}в привязке узла (`crates-cross/app/src/graph.rs`){% else %}в задаче протокола
+(`crates-cross/app/src/tasks/{{ protocol }}.rs`){% endif %}.
 {%- endif %}
 
 Шаблон выводы не выбирает (`docs/architecture.md`), поэтому в `Serial` пока

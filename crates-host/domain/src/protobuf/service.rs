@@ -20,9 +20,9 @@ const _: () = assert!(proto::UID_BYTES == crate::device::UID_BYTES);
 const _: () = assert!(crate::device::PANIC_BRIEF <= proto::PANIC_BYTES);
 
 /// Самый длинный запрос схемы, байт: под него `app` заводит буфер канала
-/// узла (`crate::link::<вид>` в `crates-cross/app`). Предел выводит
-/// `micropb` из ёмкостей полей (`crates-host/proto/build.rs`), поэтому
-/// буфер растёт вместе со схемой.
+/// узла (привязка узла в графе или задача протокола в `crates-cross/app`).
+/// Предел выводит `micropb` из ёмкостей полей (`crates-host/proto/build.rs`),
+/// поэтому буфер растёт вместе со схемой.
 pub const REQUEST_MAX: usize = match <Request as micropb::MessageEncode>::MAX_SIZE {
     Ok(max) => max,
     Err(_) => panic!("у запроса схемы нет предела длины"),

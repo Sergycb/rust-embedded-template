@@ -1,5 +1,7 @@
 //! UDP-транспорт: [`UdpLink`] и его ошибка.
 
+use core::mem::MaybeUninit;
+
 use embassy_net::Stack;
 use embassy_net::udp::{PacketMetadata, RecvError, SendError, UdpMetadata, UdpSocket};
 use ports::{FrameDuplex, FrameLink, LinkError};
@@ -31,23 +33,30 @@ impl core::fmt::Debug for UdpLink {
 
 impl UdpLink {
     /// Канал на порту `port` стека `stack`: буферы приёма и передачи сокета и
-    /// их метаданные — по датаграмме на запись; `buf` — буфер канала
-    /// (`FrameLink::buffer`), не короче самой длинной датаграммы протокола.
+    /// память под их метаданные — по записи на датаграмму в очереди, `Q` в
+    /// каждую сторону; `buf` — буфер канала (`FrameLink::buffer`), не короче
+    /// самой длинной датаграммы протокола.
+    ///
+    /// Метаданные приходят неинициализированными (`MaybeUninit`) и
+    /// заполняются здесь: память от compose-site — нули (`static T` графа), а
+    /// нулевые байты — не `PacketMetadata`.
     ///
     /// # Panics
     ///
     /// Если `port` 0 — сокет без порта не принимает ничего.
     #[must_use]
-    pub fn new(
+    pub fn new<const Q: usize>(
         stack: Stack<'static>,
         port: u16,
-        rx_meta: &'static mut [PacketMetadata],
+        rx_meta: &'static mut MaybeUninit<[PacketMetadata; Q]>,
         rx: &'static mut [u8],
-        tx_meta: &'static mut [PacketMetadata],
+        tx_meta: &'static mut MaybeUninit<[PacketMetadata; Q]>,
         tx: &'static mut [u8],
         buf: &'static mut [u8],
     ) -> Self {
         assert!(port != 0, "UDP-канал на порту 0");
+        let rx_meta = rx_meta.write([PacketMetadata::EMPTY; Q]);
+        let tx_meta = tx_meta.write([PacketMetadata::EMPTY; Q]);
         let mut socket = UdpSocket::new(stack, rx_meta, rx, tx_meta, tx);
         // Свежий сокет с ненулевым портом привязывается всегда.
         let bound = socket.bind(port);
@@ -129,9 +138,9 @@ mod tests {
         UdpLink::new(
             stack,
             port,
-            leak([PacketMetadata::EMPTY; 4]),
+            leak(MaybeUninit::<[PacketMetadata; 4]>::uninit()),
             leak([0; 16]),
-            leak([PacketMetadata::EMPTY; 4]),
+            leak(MaybeUninit::<[PacketMetadata; 4]>::uninit()),
             leak([0; 64]),
             leak([0; 8]),
         )
