@@ -58,11 +58,23 @@ pub fn sign_image(image_path: &Path, image: &[u8], seed: &[u8; 32]) -> Result<()
     Ok(())
 }
 
-/// Подпись образа без записи в файл — для инертного образа host-target теста.
+/// Подпись образа без записи в файл — и для образов `test host-target`.
 pub fn signature(image: &[u8], seed: &[u8; 32]) -> [u8; 64] {
     let digest = salty::Sha512::new().updated(image).finalize();
     salty::Keypair::from(seed).sign(&digest).to_bytes()
 }
+// {%- if has_protobuf == "true" %}
+
+/// Подпись образа случайным ключом, которого нет ни в одном bootloader'е, —
+/// настоящая подпись Ed25519, но чужая: `test host-target` проверяет, что
+/// такой образ устройство принимает (подпись проверяет не оно), а bootloader
+/// обмен не пускает.
+pub fn foreign_signature(image: &[u8]) -> Result<[u8; 64], anyhow::Error> {
+    let mut seed = [0u8; 32];
+    getrandom::fill(&mut seed).context("не удалось получить случайные байты от ОС")?;
+    Ok(signature(image, &seed))
+}
+// {%- endif %}
 
 /// Приводит пару ключей в согласованное состояние и возвращает закрытый.
 ///

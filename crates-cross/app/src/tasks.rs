@@ -53,7 +53,7 @@ pub fn spawn_all(spawner: embassy_executor::Spawner, {% if ota == "true" or has_
 {%- if f[3] == "modbus" %}
     modbus::{{ f[4] }}::spawn(spawner, {% if f[0] == "uart" %}board.{{ f[4] }}{% else %}board.{{ f[4] }}.cdc{% endif %}, crate::modbus::handle());
 {%- elsif f[3] == "protobuf" %}
-    let info = crate::device_info(board.spec);
+    let info = crate::run::device_info(board.spec);
     protobuf::{{ f[4] }}::spawn(spawner, {% if f[0] == "uart" %}board.{{ f[4] }}{% else %}board.{{ f[4] }}.cdc{% endif %}, info);
 {%- elsif f[3] == "canopen" %}
     canopen::{{ f[4] }}::spawn(

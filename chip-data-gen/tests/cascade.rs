@@ -1509,10 +1509,12 @@ fn graph_is_dropped_when_the_app_partition_is_too_small() {
 }
 
 /// Без ответов про протокол проект — без протокола: ни узла, ни заглушки
-/// UART в `bsp`.
+/// UART в `bsp`. Без OTA: с ней без терминала отмечается первый транспорт
+/// (`ota_needs_a_transport`).
 #[test]
 fn no_protocol_by_default() {
-    let result = run_cascade_to(&compile_script(), "f407ve").expect("каскад не должен падать");
+    let result = run_cascade_with(&compile_script(), "f407ve", &[("ota", "no")])
+        .expect("каскад не должен падать");
     assert_eq!(
         result.vars.get("protocol").map(String::as_str),
         Some("none")
@@ -1558,7 +1560,9 @@ fn no_protocol_by_default() {
             result.deleted
         );
     }
-    // Без сети и USB `adapters-hw` остаётся ради флеша в памяти — тестам OTA.
+    // Без сети и USB `adapters-hw` остаётся ради флеша в памяти — тестам OTA (с
+    // ней транспорт есть: без терминала — первый, UART без протокола).
+    let result = run_cascade_to(&compile_script(), "f407ve").expect("каскад не должен падать");
     assert_eq!(result.vars.get("ota").map(String::as_str), Some("true"));
     assert!(
         !result
@@ -1687,7 +1691,7 @@ fn modbus_master_yes_keeps_the_master() {
 #[test]
 fn modbus_master_is_false_without_modbus() {
     let ast = compile_script();
-    for (protocol, interface) in [("none", "none"), ("protobuf", "uart"), ("canopen", "can")] {
+    for (protocol, interface) in [("none", "uart"), ("protobuf", "uart"), ("canopen", "can")] {
         let err = run_cascade_with(
             &ast,
             "g474re",
@@ -2044,11 +2048,13 @@ fn links_tolerate_spaces_but_not_empty_items() {
 }
 
 /// В списке каждый вид — одним пунктом, без имён блоков, в порядке `uart`,
-/// `can`, `ethernet`, `usb`; первый пункт — `done`. У F407 шесть USART и
+/// `can`, `ethernet`, `usb`; первый пункт — `done` (без OTA: с ней его нет, пока
+/// ничего не отмечено, — `ota_needs_a_transport`). У F407 шесть USART и
 /// ETH, а пункт `uart` один, и пунктов `tcp`/`udp` нет.
 #[test]
 fn each_kind_is_listed_once() {
-    let result = interview(&compile_script(), "f407ve", &[], &[]).expect("каскад не должен падать");
+    let result = interview(&compile_script(), "f407ve", &[("ota", "no")], &[])
+        .expect("каскад не должен падать");
     let menus = all_menu_values(&result, "transports");
     assert_eq!(menus, [["done", "uart", "can", "ethernet", "usb"]]);
     let shown = &result
@@ -2184,7 +2190,7 @@ fn marks_are_shown_in_the_redrawn_menu() {
     let result = interview(
         &compile_script(),
         "f407ve",
-        &[],
+        &[("ota", "no")],
         &[("transports", "uart"), ("transports", "done")],
     )
     .expect("каскад не должен падать");
@@ -2221,11 +2227,17 @@ fn toggling_twice_leaves_the_transport_out() {
     );
 }
 
-/// `done` без отметок — проект без транспортов, о протоколе не спрашивают.
+/// `done` без отметок — проект без транспортов, о протоколе не спрашивают
+/// (без OTA: с ней пустой список не выбрать).
 #[test]
 fn done_without_marks_gives_no_transports() {
-    let result = interview(&compile_script(), "f407ve", &[], &[("transports", "done")])
-        .expect("каскад не должен падать");
+    let result = interview(
+        &compile_script(),
+        "f407ve",
+        &[("ota", "no")],
+        &[("transports", "done")],
+    )
+    .expect("каскад не должен падать");
     assert_eq!(var_of(&result, "links"), Some(""));
     assert_eq!(var_of(&result, "interface"), Some("none"));
     assert!(all_menu_values(&result, "protocol").is_empty());
@@ -2419,13 +2431,64 @@ fn no_terminal_adds_no_extra_links() {
     assert_eq!(all_menu_values(&result, "transports").len(), 2);
 }
 
-/// Без терминала список показан один раз, и проект — без транспортов.
+/// Без терминала список показан один раз, и проект без OTA — без
+/// транспортов.
 #[test]
 fn no_terminal_leaves_the_list_empty() {
-    let result = interview(&compile_script(), "f407ve", &[], &[]).expect("каскад не должен падать");
+    let result = interview(&compile_script(), "f407ve", &[("ota", "no")], &[])
+        .expect("каскад не должен падать");
     assert_eq!(all_menu_values(&result, "transports").len(), 1);
     assert_eq!(var_of(&result, "links"), Some(""));
     assert_eq!(var_of(&result, "protocol"), Some("none"));
+}
+
+/// С OTA образ приходит по транспорту проекта: в списке нет `done`, пока
+/// ничего не отмечено (после отметки — есть); без терминала отмечается первый
+/// транспорт; протокол при этом может остаться `none`. `--define
+/// interface=none` спрятать нельзя — ошибка с подсказкой.
+#[test]
+fn ota_needs_a_transport() {
+    let ast = compile_script();
+    let picked = interview(
+        &ast,
+        "f407ve",
+        &[],
+        &[("transports", "can"), ("transports", "done")],
+    )
+    .expect("каскад не должен падать");
+    assert_eq!(
+        all_menu_values(&picked, "transports"),
+        [
+            vec!["uart", "can", "ethernet", "usb"],
+            vec!["done", "uart", "can", "ethernet", "usb"],
+        ]
+    );
+    assert_eq!(var_of(&picked, "ota"), Some("true"));
+    assert!(var_of(&picked, "links").is_some_and(|links| links.starts_with("can:")));
+
+    let silent = interview(&ast, "f407ve", &[], &[]).expect("каскад не должен падать");
+    assert_eq!(var_of(&silent, "ota"), Some("true"));
+    assert_eq!(
+        var_of(&silent, "links"),
+        Some("uart:usart:USART1:none:usart1")
+    );
+    assert_eq!(var_of(&silent, "protocol"), Some("none"));
+
+    for defines in [
+        &[("interface", "none")][..],
+        &[("interface", "none"), ("ota", "yes")][..],
+    ] {
+        let err = run_chip_with(&ast, "f407ve", defines)
+            .err()
+            .unwrap_or_else(|| panic!("{defines:?}: OTA без транспорта принят"));
+        assert!(
+            err.to_string()
+                .contains("ota: образ приходит по транспорту проекта"),
+            "{err}"
+        );
+    }
+    run_chip_with(&ast, "f407ve", &[("interface", "none"), ("ota", "no")])
+        .expect("без OTA проект без транспорта годится");
 }
 
 /// `tcp` и `udp` делят один ETH: каждый вид получает его по разу, второй
@@ -3786,11 +3849,15 @@ fn the_menus_come_in_order_and_offer_only_what_is_possible() {
         ]
     );
 
-    // Транспорт: только то, чьи блоки есть у чипа. У G071 нет ни Ethernet, ни USB.
+    // Транспорт: только то, чьи блоки есть у чипа. У G071 нет ни Ethernet, ни USB;
+    // с OTA (умолчание) `done` нет, пока ничего не отмечено (`ota_needs_a_transport`).
     let g071 = interview(&ast, "g071rb", &[], &[]).expect("каскад не должен падать");
     let interfaces = menu_values(&g071, "transports").expect("транспорт не предложен");
+    assert_eq!(interfaces, ["uart"]);
+    // Без транспорта (только без OTA) протокол не спрашивается вовсе.
+    let g071 = interview(&ast, "g071rb", &[("ota", "no")], &[]).expect("каскад не должен падать");
+    let interfaces = menu_values(&g071, "transports").expect("транспорт не предложен");
     assert_eq!(interfaces, ["done", "uart"]);
-    // Без транспорта протокол не спрашивается вовсе.
     assert!(menu_values(&g071, "protocol").is_none());
 
     // Протоколы — только те, что работают поверх выбранного транспорта.
@@ -3886,6 +3953,8 @@ fn menu_picks_reach_the_template_variables() {
 
 /// Без терминала и без `--define` вопросы получают умолчания, и генерация не
 /// падает ни на одном чипе: ни одного вопроса, на который некому ответить.
+/// Протокола по умолчанию нет; транспорта нет без OTA, а с OTA — первый из
+/// списка (`ota_needs_a_transport`).
 #[test]
 fn every_chip_generates_with_the_defaults() {
     let ast = compile_script();
@@ -3895,9 +3964,11 @@ fn every_chip_generates_with_the_defaults() {
             Err(err) => failures.push(format!("{suffix}: {err}")),
             Ok(result) => {
                 let var = |name: &str| result.vars.get(name).map(String::as_str);
-                if var("protocol") != Some("none") || var("interface") != Some("none") {
+                if var("protocol") != Some("none")
+                    || (var("ota") == Some("true")) == (var("interface") == Some("none"))
+                {
                     failures.push(format!(
-                        "{suffix}: умолчание — не «без протокола и транспорта»"
+                        "{suffix}: умолчание — не «без протокола; транспорт только с OTA»"
                     ));
                 }
                 // Умолчание не обещает невозможного: OTA — только если помещается.
@@ -3945,8 +4016,8 @@ fn every_path_through_the_menus_generates() {
     ];
     let used = template_variables();
     // Задаёт `cargo generate`, а не хук: вопрос `ci` и встроенные переменные.
-    // `github`, `secrets` и `env` — не переменные шаблона, а выражения GitHub
-    // Actions (`${{ secrets.X }}`), которые Liquid оставляет как есть.
+    // `github`, `secrets`, `vars` и `env` — не переменные шаблона, а выражения
+    // GitHub Actions (`${{ secrets.X }}`), которые Liquid оставляет как есть.
     let external = [
         "ci",
         "project",
@@ -3956,6 +4027,7 @@ fn every_path_through_the_menus_generates() {
         "os",
         "github",
         "secrets",
+        "vars",
         "env",
     ];
     let mut paths = 0;

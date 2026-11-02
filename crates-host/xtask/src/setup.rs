@@ -19,7 +19,7 @@ pub fn setup(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     // --version` на машине без nextest запускается успешно — это сам `cargo`
     // печатает «no such command», — и установка молча пропускалась бы.
     // `cargo-flash` — отдельный бинарь того же пакета, им этапы `test target`
-    // и `test host-target` заливают образы перед прогоном.
+    // и `test host-target` (если есть пробник) заливают образы перед прогоном.
     install_if_missing(sh, &["probe-rs", "cargo-flash"], "probe-rs-tools")?;
     // Версия — та же, что у релизных джобов (`FLIP_LINK_VERSION`): от линкера
     // зависит раскладка образа (docs/conventions.md, «Воспроизводимый релиз»).

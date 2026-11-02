@@ -30,7 +30,7 @@ pub mod {{ f[4] }} {
 {%- endif %}
         // Кадр RTU памяти извне не просит.
         let mut link = adapters_logic::modbus::Rtu::new(source);
-        let mut handler = domain::modbus::Slave::new(1, regs, crate::build::PKG_VERSION);
+        let mut handler = domain::modbus::Slave::new(1, regs, {% if ota == "true" %}crate::version::FW_VERSION_TEXT{% else %}crate::build::PKG_VERSION{% endif %});
         domain::server::task(domain::server::ServerCtx {
             link: &mut link,
             handler: &mut handler,

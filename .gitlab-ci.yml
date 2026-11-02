@@ -250,6 +250,10 @@ board:test:
     - if: $HIL == "true" && $CI_PIPELINE_SOURCE != "schedule"
   before_script:
     - rustup target add {{target}}
+  # Адрес платы для сценариев host-target — переменные CI/CD рядом с `HIL`
+  # (`HOST_TARGET_ADDR` или `HOST_TARGET_PORT`, README, «Тесты на плате в CI»):
+  # GitLab отдаёт их джобу окружением сам. Не заданы — сценарии пропускаются
+  # со сводкой.
   script:
     - cargo xtask test target
     - cargo xtask test host-target

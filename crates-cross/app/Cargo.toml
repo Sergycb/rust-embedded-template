@@ -4,17 +4,57 @@ version.workspace      = true
 edition.workspace      = true
 license.workspace      = true
 rust-version.workspace = true
+{%- if ota == "true" %}
+# `cargo run -p app` — рабочий образ, а не тестовый `app-unconfirmed` ниже.
+default-run = "app"
+{%- endif %}
 
 [lints]
 workspace = true
 
+# Тело прошивки — библиотека пакета (`src/lib.rs`), бинарники — только точки
+# входа. Целей unit-тестов, бенчмарков и doc-тестов у неё нет: им нужен крейт
+# `test`, а его для `thumbv*-none-*` нет (E0463), как и у `bsp`.
+[lib]
+test = false
+bench = false
+doctest = false
+
 [[bin]]
 name = "app"
 harness = false
+{%- if ota == "true" %}
+
+[features]
+# Версия образа на единицу больше `version` из Cargo.toml (`crate::version`):
+# устройство на рабочем образе той же сборки примет его как обновление. Сама
+# по себе нужна только `unconfirmed`.
+version-next = []
+# Тестовый образ `cargo xtask test host-target`: не подтверждает себя
+# (`mark_booted` не зовёт, `domain::ota`), и следующий сброс откатывает его —
+# так проверяется обмен с откатом по протоколу проекта. Только для бинарника
+# `app-unconfirmed` ниже — docs/ota.md, «Тесты OTA по протоколу».
+# Хосту образ называет себя меткой `unconfirmed` вместо версии.
+unconfirmed = ["version-next"]
+
+# Тестовый образ — та же библиотека пакета с фичей `unconfirmed` и своя точка
+# входа. Отдельным бинарником, а не фичей у `app`: у ELF своё имя, и рабочий
+# `app` (и `app.bin` из `cargo xtask build`, и `cargo flash -p app --bin app`) с
+# ним не спутать. `required-features`: без фичи его не собирают ни `cargo
+# build`, ни `cargo xtask build`/`lint cross` — только `cargo xtask test
+# host-target` (и проверка шаблона).
+[[bin]]
+name = "app-unconfirmed"
+path = "src/bin/app-unconfirmed.rs"
+required-features = ["unconfirmed"]
+harness = false
+test = false
+bench = false
+{%- endif %}
 
 [dependencies]
 embassy-executor = { workspace = true, features = ["defmt"] }
-# Прямо, а не транзитивно: `main.rs` поднимает `raw::Executor` в `StaticCell`
+# Прямо, а не транзитивно: `run.rs` поднимает `raw::Executor` в `StaticCell`
 # сам, а не макросом `#[embassy_executor::main]` — иначе нечем мерить, сколько
 # тиков исполнитель стоял (docs/modules/app-cpu-load.md).
 static_cell = { workspace = true }
@@ -52,7 +92,7 @@ embassy-net = { workspace = true }
 shadow-rs = { workspace = true }
 {%- if graph == "true" %}
 # Граф задач в graph.rs — настоящий код, а не пример: compose-site фрагментов
-# из `domain`, блок `watchdog:`, `spawn_all` в main.rs.
+# из `domain`, блок `watchdog:`, `spawn_all` в run.rs.
 #
 # И единственная зависимость графа — это обещание самого `supervisor`
 # (`supervisor-sole-dep-fixture` в rust-lib): всё, что compose-site называет

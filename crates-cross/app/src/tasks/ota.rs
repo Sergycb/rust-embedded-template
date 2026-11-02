@@ -91,7 +91,10 @@ async fn task(firmware: bsp::FirmwareFlash) {
     let mut flash = Updater::new(firmware);
     let mut reboot = bsp::reset::Reboot;
     let mut running_version = crate::version::FW_VERSION;
-    let mut confirmed = false;
+    // Тестовый образ `app-unconfirmed` начинает «уже подтверждённым» и
+    // `mark_booted` не зовёт: следующий сброс его откатывает
+    // (`cargo xtask test host-target`, docs/ota.md).
+    let mut confirmed = cfg!(feature = "unconfirmed");
     domain::ota::task(domain::ota::OtaCtx::<'_, _, _, CMD_PARKED> {
         flash: &mut flash,
         reboot: &mut reboot,

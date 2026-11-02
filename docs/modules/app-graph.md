@@ -308,7 +308,8 @@ resources: [WS: &'static mut $crate::x::Workspace = static |w| w.gain = inputs.g
 вход фрагмента вместе с адаптером обновления над разделами: `bsp` про `domain`
 не знает
 (`= ::domain::ota::OtaWiring { flash: Updater::new(board.firmware), reboot:
-bsp::reset::Reboot, running_version: crate::version::FW_VERSION }`). Типы слотов — аргументы фрагмента
+bsp::reset::Reboot, running_version: crate::version::FW_VERSION, confirmed:
+cfg!(feature = "unconfirmed") }`). Типы слотов — аргументы фрагмента
 (`OTA_FRAG<::domain::ota::Updater<bsp::FirmwareFlash>, bsp::reset::Reboot, OTA_CMD_PARKED>`):
 слот — `static`, тип ему нужен, а знает его только эта сторона. Третий
 аргумент — места ожидания входа `CMD`, `domain::ota::cmd_parked` от числа его

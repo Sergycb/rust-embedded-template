@@ -1,494 +1,273 @@
-//! Тесты, где хост управляет уже прошитым устройством
-//! (`cargo xtask test host-target`).
+//! Сценарии `cargo xtask test host-target`: хост проверяет готовое
+//! устройство через транспорт и протокол проекта (клиент — `src/lib.rs`).
 //!
-//! Третий этап трёхэтапной модели. Отличие от двух других — в том, кто кем
-//! командует: `cargo xtask test host` гоняет логику `domain` на хосте без
-//! всякого железа, `cargo xtask test target` выполняет код *внутри* МК, а
-//! здесь тест — обычная host-программа, которая смотрит на устройство
-//! снаружи и общается с ним так же, как это будет делать реальный оператор
-//! или соседний сервис.
+//! Прошивку, если есть пробник, заливает `xtask` (release) и передаёт сюда
+//! через окружение то, что знает только он: чип (`HOST_TARGET_CHIP`) и
+//! прошитую версию (`HOST_TARGET_EXPECT_VERSION` — с OTA и только если шил сам).
+// {%- if ota == "true" and has_protobuf == "true" %}
+//! Для OTA — образы и их подписи (`HOST_TARGET_*_IMAGE`, `*_SIG`) и размер
+//! `ACTIVE` для сроков ожидания.
+// {%- endif %}
+//! Пробника нет — сценарии идут против того, что уже прошито.
 //!
-// {%- if ota == "true" and ota_store != "external" %}
-//! Прошивку заливает `cargo xtask test host-target` (release-профиль,
-//! bootloader + приложение) и передаёт сюда через окружение всё, что зависит
-//! от чипа: `HOST_TARGET_CHIP`, границы разделов
-//! `ACTIVE`/`DFU`/`BOOTLOADER_STATE`, размер слова записи флеша, инертный
-//! образ для `DFU` и запись о его подписи (если есть закрытый ключ). Через окружение, а не
-//! константами в коде: чип подставляется при генерации в одном месте, адреса
-//! считаются по `memory.x`, то есть по той же раскладке, с которой собрана
-//! прошивка, а подписать образ может только `xtask` — у него ключ.
+//! Идут строго по одному (`--test-threads 1` в `xtask`): канал к устройству
+//! один, и два сценария разом мешали бы друг другу. Каждый начинает с того,
+//! что устройство на связи, и оставляет его на рабочем образе.
+// {%- if has_protobuf != "true" %}
+//!
+//! Сценариев здесь нет: они написаны под protobuf, а в проекте
+// {%- if has_modbus == "true" %}
+//! Modbus — его сценарии придут следующей итерацией шаблона
+// {%- elsif has_canopen == "true" %}
+//! `CANopen` — его сценарии отложены
 // {%- else %}
-//{{newline}}//! Прошивку заливает `cargo xtask test host-target` (release-профиль) и
-//{{newline}}//! передаёт сюда через окружение чип, `HOST_TARGET_CHIP`: он подставляется
-//{{newline}}//! при генерации в одном месте.
+//! свой протокол — тесты под него пишет проект, поверх своего канала
 // {%- endif %}
-//!
-//! Внешних зависимостей у крейта нет намеренно: `probe-rs` для этого этапа и
-//! так обязателен (им же прошивают), и вызвать его как процесс дешевле, чем
-//! тянуть в проект его библиотечную версию со своим деревом зависимостей.
-//!
-//! Почему проверка идёт через чтение памяти, а не через defmt-лог: у
-//! `probe-rs attach` нет режима «прочитать и выйти», он держит сессию, пока
-//! его не убьют. А убитый на Windows `probe-rs` оставляет ST-Link
-//! захваченным — следующая команда падает с `reset not supported by WinUSB`
-//! до переподключения кабеля (поймано вживую на `STM32F3Discovery`). Поэтому
-//! здесь только одноразовые команды, каждая из которых завершается сама.
-// {%- if ota != "true" or ota_store == "external" %}
-//!
-//! Сценариев здесь пока нет: шаблон не знает, что спросить у вашего
-//! устройства снаружи. Настоящие сценарии пишутся здесь, поверх его канала
-//! связи.
+//! (куда они встанут — `src/lib.rs`).
 // {%- endif %}
-// {%- if ota == "true" and ota_store != "external" %}
+// {%- if has_protobuf == "true" %}
 
-use std::{
-    env, fs,
-    path::{Path, PathBuf},
-    process::Command,
-    thread,
-    time::{Duration, Instant},
-};
+use std::env;
+// {%- if ota == "true" %}
+use std::fs;
+// {%- endif %}
+use std::time::Duration;
 
-/// Сколько ждать после сброса, прежде чем читать состояние платы. Приложению
-/// нужно дойти до `main`, то есть отработать инициализацию HAL; на порядок
-/// больше того, что это занимает на практике, но всё ещё мгновение по меркам
-/// теста.
-const BOOT_TIME: Duration = Duration::from_millis(300);
+use host_target_tests::Device;
+// {%- if ota == "true" %}
+use host_target_tests::{Info, slow_timeout};
 
-/// Нижняя граница ожидания обмена — на чипах с мелкими страницами весь
-/// обмен укладывается в доли секунды, и время уходит на сброс и опрос.
-const SWAP_TIMEOUT_BASE: Duration = Duration::from_secs(20);
+/// Как называет себя тестовый образ `app-unconfirmed` вместо версии
+/// (`UNCONFIRMED_TEXT` в `crates-cross/app/src/version.rs`).
+const UNCONFIRMED: &str = "unconfirmed";
 
-/// Запас времени на стирание и программирование 128 KiB флеша. Худший
-/// известный случай — F0/F1 с записью полусловами: 128 страниц по ≤ 40 мс и
-/// 64K полуслов по ≤ 70 мкс (datasheet) — около 10 с. У H7 измерено ~1,2 с на
-/// стирание сектора 128K, программирование словами по 32 байта на этом фоне
-/// мало. Предел ограничивает только провал: успех ждёт содержимого, а не его.
-const COPY_PER_128K: Duration = Duration::from_secs(10);
+/// Подпись, которой заведомо нет: устройство подпись не проверяет (только
+/// её наличие), и отказ той же версии приходит раньше; пропусти его
+/// устройство по ошибке — такой образ не пустит bootloader.
+const NOT_A_SIGNATURE: [u8; 64] = [0xA5; 64];
+// {%- endif %}
 
-/// Сколько слов образа сравнивать. Первые два — начальный указатель стека и
-/// адрес обработчика сброса, дальше — таблица векторов: этого с запасом
-/// хватает, чтобы отличить один образ от другого.
-const HEAD_WORDS: usize = 4;
+/// Сколько ждать устройство, не дольше: старт после прошивки, перечисление
+/// USB, подъём сети.
+const BOOT_WAIT: Duration = Duration::from_secs(30);
 
-/// Магия «поменяй разделы на следующем сбросе» из `embassy-boot`
-/// (`SWAP_MAGIC`, `lib.rs`). Состояние — это `WRITE_SIZE` байт одного и того
-/// же значения в стёртом разделе; ровно это и делает `mark_updated()`.
-const SWAP_MAGIC: u8 = 0xF0;
-
-/// Магия «откат сделан» (`REVERT_MAGIC` там же). Её пишет только `revert()`,
-/// а зовётся он, только если обмен уже состоялся (`is_swapped`), — поэтому
-/// она в разделе состояния доказывает весь цикл «обмен → откат» сама, как бы
-/// ни легли по времени сбросы. Живёт недолго: прошивка, к которой откатились,
-/// подтверждает себя при старте и пишет поверх `BOOT_MAGIC`.
-const REVERT_MAGIC: u8 = 0xC0;
-
-/// Магия «обновления нет, запускай что лежит» (`BOOT_MAGIC` там же). Ею тест
-/// начинает — и это не перестраховка.
-///
-/// После УСПЕШНОГО прогона состояние безопасно: bootloader, откатив образ,
-/// пишет туда `REVERT_MAGIC`, и следующий запуск ничего не откатывает. А вот
-/// прогон, прерванный между обменом и откатом (упал по таймауту, снято
-/// Ctrl+C, отвалился пробник), оставляет `SWAP_MAGIC` с завершённым журналом
-/// — то есть «обмен сделан, подтверждения не было». Первый же сброс после
-/// такого затрёт только что прошитый `ACTIVE` тем, что лежит в `DFU`.
-///
-/// Ею же bootloader снимает запрос на обмен, отвергнув образ
-/// (`domain::ota::boot::screen_update`).
-const BOOT_MAGIC: u8 = 0xD0;
-
-/// Значение стёртого флеша у STM32. Им заполняется остаток раздела состояния:
-/// так `probe-rs download` сотрёт его целиком, оставив ровно то, что оставляет
-/// `mark_updated()`.
-const ERASED: u8 = 0xFF;
-
-/// Раскладка OTA из окружения — то, что нужно обоим тестам цикла.
-struct Ota {
-    chip: String,
-    active: u32,
-    active_len: u32,
-    dfu: u32,
-    state: String,
-    state_len: usize,
-    write_size: usize,
-    page_size: u32,
-    /// Инертный образ (см. `inert_image` в `xtask`) — путь и байты.
-    image_path: PathBuf,
-    image: Vec<u8>,
-}
-
-impl Ota {
-    /// `None` — адресов разделов `xtask` не передал: их нет в `memory.x` или
-    /// раскладку писал человек (почему — в выводе `xtask`).
-    fn from_env() -> Option<Self> {
-        let Ok(active) = env::var("HOST_TARGET_ACTIVE_ADDR") else {
-            eprintln!("адресов разделов OTA нет — тест цикла пропущен (причина — в выводе xtask)");
-            return None;
-        };
-        let image_path = PathBuf::from(required_var("HOST_TARGET_INERT_IMAGE"));
-        let image = fs::read(&image_path).expect("прочитать инертный образ от xtask");
-        Some(Self {
-            chip: required_var("HOST_TARGET_CHIP"),
-            active: parse_address(&active),
-            active_len: number("HOST_TARGET_ACTIVE_LEN"),
-            dfu: parse_address(&required_var("HOST_TARGET_DFU_ADDR")),
-            state: required_var("HOST_TARGET_STATE_ADDR"),
-            state_len: number("HOST_TARGET_STATE_LEN"),
-            write_size: number("HOST_TARGET_WRITE_SIZE"),
-            // Десятичное, в отличие от адресов: размеры приходят из раскладки числом.
-            page_size: number("HOST_TARGET_PAGE_SIZE"),
-            image_path,
-            image,
-        })
-    }
-
-    /// Запись о подписи bootloader ищет по смещению `capacity` от начала
-    /// `DFU`, а `capacity` у него — размер `ACTIVE` (`config.active.size()` в
-    /// `boot/src/signature.rs`): запасная страница `DFU`.
-    fn record_addr(&self) -> String {
-        format!("{:#x}", self.dfu + self.active_len)
-    }
-
-    /// Известное состояние перед началом: «обновления нет». После прошлого
-    /// прогона в разделе состояния лежит неподтверждённое обновление, и первый
-    /// же сброс увёл бы плату в откат — тест мерил бы не то, что думает.
-    fn start_clean(&self, state_path: &Path) {
-        write_state(state_path, BOOT_MAGIC, self.write_size, self.state_len);
-        download(&self.chip, &self.state, state_path);
-        reset(&self.chip);
-        thread::sleep(BOOT_TIME);
-    }
-
-    /// Магия в начале раздела состояния. Занимает одно слово записи — у F0/F1
-    /// это два байта, дальше уже журнал, поэтому сравнивается не больше слова.
-    fn state_is(&self, magic: u8) -> Result<bool, String> {
-        let head = try_read_words(&self.chip, &self.state, 1)?[0].to_le_bytes();
-        Ok(head[..self.write_size.min(4)].iter().all(|&b| b == magic))
-    }
-
-    /// Первые два слова инертного образа — стек и обработчик сброса.
-    fn image_head(&self) -> [u32; 2] {
-        [0, 4]
-            .map(|at| u32::from_le_bytes(self.image[at..at + 4].try_into().expect("слово образа")))
+/// Устройство на связи и называет себя: чип — тот, под который собран
+/// проект, версия — та, что прошили (если прошивали здесь).
+#[test]
+fn info_answers() {
+    let Some(mut device) = Device::from_env() else {
+        return;
+    };
+    // Ждём, а не спрашиваем раз: сценарий бывает первым сразу после прошивки,
+    // когда порт USB CDC ещё не появился, а сеть не поднялась.
+    let info = device
+        .wait_back(BOOT_WAIT)
+        .unwrap_or_else(|why| panic!("устройство не ответило на Info: {why}"));
+    let chip = required("HOST_TARGET_CHIP");
+    assert!(
+        info.chip.eq_ignore_ascii_case(&chip),
+        "устройство — {}, а проект собран под {chip}",
+        info.chip
+    );
+    if let Ok(expected) = env::var("HOST_TARGET_EXPECT_VERSION") {
+        assert_eq!(
+            release(&info.version),
+            expected,
+            "на устройстве не та версия, что прошили только что"
+        );
     }
 }
+// {%- if ota == "true" %}
 
-fn reset(chip: &str) {
-    probe_rs(&["reset", "--chip", chip]);
+/// `Reboot` отвечает до сброса, устройство возвращается в срок, и причина
+/// сброса — программная: сбросила его команда, а не сторож или питание.
+#[test]
+fn reboot_comes_back() {
+    let Some(mut device) = Device::from_env() else {
+        return;
+    };
+    settle(&mut device);
+    assert_eq!(device.reboot().expect("Reboot"), Ok(()));
+    let info = device
+        .wait_back(slow_timeout())
+        .unwrap_or_else(|why| panic!("устройство не вернулось после Reboot: {why}"));
+    assert_eq!(info.reset, "software", "причина сброса после Reboot");
 }
 
-/// Команда `probe-rs`, отказ которой — провал теста.
-fn probe_rs(args: &[&str]) -> String {
-    try_probe_rs(args).unwrap_or_else(|why| panic!("{why}"))
+/// `Start` без подписи отвергается до стирания раздела — образ, в который
+/// устройство откатывается, цел, — и работает прежняя прошивка.
+#[test]
+fn unsigned_start_is_rejected() {
+    let Some(mut device) = Device::from_env() else {
+        return;
+    };
+    let before = settle(&mut device);
+    let image = file("HOST_TARGET_UNCONFIRMED_IMAGE");
+    assert_eq!(
+        device
+            .start(image.len(), &[], slow_timeout())
+            .expect("Start"),
+        Err("Signature".to_owned()),
+        "Start без подписи"
+    );
+    assert_eq!(device.info().expect("Info").version, before.version);
 }
 
-/// Команда `probe-rs`, отказ которой бывает временным: пока bootloader стирает
-/// сектор банка, из которого сам исполняется, ядро стоит на выборке
-/// инструкции, остановить его пробник не может, и `read` отвечает ошибкой
-/// (`Core is running, but we expected it to be halted`; ~1,2 с на сектор 128K
-/// у H7). Не запустился сам `probe-rs` — это не временно, паника.
-fn try_probe_rs(args: &[&str]) -> Result<String, String> {
-    let output = Command::new("probe-rs")
-        .args(args)
-        .output()
-        .expect("не удалось запустить probe-rs — установите его: cargo xtask setup");
-    if !output.status.success() {
-        return Err(format!(
-            "`probe-rs {}` завершилась с {}:\n{}",
-            args.join(" "),
-            output.status,
-            String::from_utf8_lossy(&output.stderr),
-        ));
+/// Образ под чужим ключом приложение принимает — подпись проверяет не оно, а
+/// bootloader, — и bootloader не пускает его: после сброса работает прежняя
+/// прошивка.
+#[test]
+fn foreign_signature_is_not_swapped() {
+    let Some(mut device) = Device::from_env() else {
+        return;
+    };
+    let before = settle(&mut device);
+    let image = file("HOST_TARGET_UNCONFIRMED_IMAGE");
+    let signature = file("HOST_TARGET_FOREIGN_SIG");
+    assert_eq!(
+        device
+            .upload(&image, &signature, slow_timeout())
+            .expect("загрузка образа"),
+        Ok(()),
+        "приложение подпись не проверяет — Finish обязан пройти"
+    );
+    assert_eq!(device.reboot().expect("Reboot"), Ok(()));
+    let after = back(&mut device);
+    if after.version == UNCONFIRMED {
+        // Встал — откатываем, чтобы оставить устройство на рабочем образе.
+        if device.reboot().is_ok_and(|outcome| outcome.is_ok()) {
+            device.wait_back(slow_timeout()).ok();
+        }
+        panic!("bootloader пустил образ под ЧУЖИМ ключом: подпись OTA ничего не защищает");
     }
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    assert_eq!(after.version, before.version);
 }
 
-fn required_var(name: &str) -> String {
+/// Главный тест обмена: тестовый образ `app-unconfirmed` встаёт после
+/// сброса (обмен разделов), но себя не подтверждает — и следующий сброс
+/// возвращает прежнюю прошивку (откат). Без перепрошивки: устройство
+/// остаётся на рабочем образе.
+#[test]
+fn unconfirmed_image_is_swapped_and_rolled_back() {
+    let Some(mut device) = Device::from_env() else {
+        return;
+    };
+    let Some(signature) = env::var_os("HOST_TARGET_UNCONFIRMED_SIG") else {
+        host_target_tests::skip(
+            "обмен и откат: закрытого ключа нет — тестовый образ подписать нечем",
+        );
+        return;
+    };
+    let before = settle(&mut device);
+    let image = file("HOST_TARGET_UNCONFIRMED_IMAGE");
+    let signature = fs::read(&signature).expect("прочитать подпись тестового образа");
+    assert_eq!(
+        device
+            .upload(&image, &signature, slow_timeout())
+            .expect("загрузка образа"),
+        Ok(()),
+        "тестовый образ — версия собранного рабочего + 1; `Rollback` значит, что на \
+         устройстве прошивка не старше его"
+    );
+    assert_eq!(device.reboot().expect("Reboot"), Ok(()));
+    let swapped = back(&mut device);
+    assert_eq!(
+        swapped.version, UNCONFIRMED,
+        "после сброса работает не тестовый образ — обмена не было. Если плату прошивали не \
+         здесь (пробника не было), в её bootloader'е может быть другой открытый ключ, и он \
+         отвергает образы этого проекта"
+    );
+    assert_eq!(device.reboot().expect("Reboot"), Ok(()));
+    let reverted = back(&mut device);
+    assert_eq!(
+        reverted.version, before.version,
+        "неподтверждённый образ не откатился: неработающая прошивка, проехавшая по OTA, \
+         осталась бы на устройстве"
+    );
+}
+
+/// Образ той же версии отвергается на `Finish` — защита от отката.
+#[test]
+fn same_version_is_rejected() {
+    let Some(mut device) = Device::from_env() else {
+        return;
+    };
+    let running = settle(&mut device);
+    let image = file("HOST_TARGET_IMAGE");
+    let tail = image.len() - 4;
+    let version = u32::from_le_bytes(image[tail..].try_into().expect("версия в хвосте образа"));
+    let Some(running_version) = pack(release(&running.version)) else {
+        panic!(
+            "версия устройства {} — не major.minor.patch",
+            running.version
+        );
+    };
+    if running_version < version {
+        eprintln!("на устройстве {}", running.version);
+        host_target_tests::skip(
+            "отказ той же версии: устройство старше собранного образа — проверять нечем",
+        );
+        return;
+    }
+    assert_eq!(
+        device
+            .upload(&image, &NOT_A_SIGNATURE, slow_timeout())
+            .expect("загрузка образа"),
+        Err("Rollback".to_owned()),
+        "образ не новее работающего обязан отвергаться (`Layout` вместо `Rollback` — \
+         устройство прошито под другую раскладку memory.x)"
+    );
+}
+
+/// Устройство на связи и на рабочем образе: остался тестовый (прерванный
+/// прогон) — сброс его откатывает.
+fn settle(device: &mut Device) -> Info {
+    let info = back(device);
+    if info.version != UNCONFIRMED {
+        return info;
+    }
+    eprintln!("на устройстве тестовый образ от прерванного прогона — откатываем сбросом");
+    assert_eq!(device.reboot().expect("Reboot"), Ok(()));
+    back(device)
+}
+
+/// Ответ после сброса — или провал с причиной.
+fn back(device: &mut Device) -> Info {
+    device
+        .wait_back(slow_timeout())
+        .unwrap_or_else(|why| panic!("устройство не на связи: {why}"))
+}
+
+/// Байты файла, путь к которому `xtask` положил в `var`.
+fn file(var: &str) -> Vec<u8> {
+    let path = required(var);
+    fs::read(&path).unwrap_or_else(|err| panic!("{var}={path}: {err}"))
+}
+
+/// `major.minor.patch` — в число, как его сворачивает прошивка
+/// (`domain::ota::version::pack`).
+fn pack(version: &str) -> Option<u32> {
+    let mut parts = version.split('.');
+    let major: u8 = parts.next()?.parse().ok()?;
+    let minor: u8 = parts.next()?.parse().ok()?;
+    let patch: u16 = parts.next()?.parse().ok()?;
+    parts
+        .next()
+        .is_none()
+        .then_some((u32::from(major) << 24) | (u32::from(minor) << 16) | u32::from(patch))
+}
+// {%- endif %}
+
+/// Версия без пререлизного суффикса: прошивка сравнивает и называет
+/// `major.minor.patch` (README, «Защита от отката»).
+fn release(version: &str) -> &str {
+    version.split(['-', '+']).next().unwrap_or(version)
+}
+
+/// Переменная, которую задаёт `xtask`.
+fn required(name: &str) -> String {
     env::var(name).unwrap_or_else(|_| {
-        panic!(
-            "{name} не задана: этот этап запускается через `cargo xtask test host-target`, \
-             который сам прошивает плату и передаёт сюда чип и адреса разделов"
-        )
+        panic!("{name} не задана: этот этап запускается через `cargo xtask test host-target`")
     })
-}
-
-/// Сколько ждать смены разделов: [`SWAP_TIMEOUT_BASE`] плюс перенос страниц.
-///
-/// Обмен в `embassy-boot` стирает и переписывает каждую страницу `ACTIVE` и
-/// каждую страницу `DFU` по разу — вдвое больше байт, чем в `ACTIVE`; откат —
-/// столько же. Ждём не фиксированное время, а нужного содержимого (см.
-/// [`wait_for`]) — предел лишь ограничивает ожидание сверху. Постоянный предел
-/// на H7 (раздел из нескольких секторов по 128K) не уложил бы и один обмен.
-fn swap_timeout(active_len: u32) -> Duration {
-    SWAP_TIMEOUT_BASE + COPY_PER_128K * (2 * active_len).div_ceil(128 * 1024)
-}
-
-fn number<T: std::str::FromStr>(name: &str) -> T {
-    required_var(name)
-        .parse()
-        .unwrap_or_else(|_| panic!("{name} — не число байт"))
-}
-
-/// Полный цикл обновления: смена разделов на сбросе и откат образа, который
-/// себя не подтвердил.
-///
-/// Это единственная проверка второй половины OTA. Тест на устройстве
-/// (`cargo xtask test target`) доходит только до записи в `DFU` и намеренно
-/// не зовёт `mark_updated`: он не переживёт собственный сброс, а раннер
-/// перезаливает образ между тестами. Отсюда и хост: он умеет и записать
-/// раздел, и сбросить плату, и посмотреть, что получилось.
-///
-/// Обновление подсовывается **инертное** — восемь байт таблицы векторов и
-/// бесконечный цикл. Так и должно быть: образ обязан стартовать (иначе
-/// проверялся бы не откат, а поведение при `HardFault`) и обязан НЕ дойти до
-/// `mark_booted()`, иначе откатывать будет нечего. Настоящая прошивка не
-/// годится ни для того, ни для другого — она себя подтверждает.
-///
-/// Образ кладётся вместе с записью о подписи (`ports::PendingImage`),
-/// которую подписал `xtask`: без записи bootloader обмен не пустит — это
-/// отдельный тест ниже. Закрытого ключа нет (CI, свежий клон) — подписать
-/// нечем, и тест пропускается с предупреждением.
-///
-/// После теста плата остаётся на исходном образе: откат — часть проверки.
-#[test]
-fn ota_swaps_partitions_and_reverts_unconfirmed_image() {
-    let Some(ota) = Ota::from_env() else {
-        return;
-    };
-    let Some(record) = env::var_os("HOST_TARGET_SIGNATURE_RECORD").map(PathBuf::from) else {
-        eprintln!(
-            "ВНИМАНИЕ: обмен и откат НЕ проверены — образы подписываются, а закрытого ключа \
-             нет, подписать инертный образ нечем"
-        );
-        return;
-    };
-    let chip = &ota.chip;
-    let state_path = env::temp_dir().join("host-target-ota-state.bin");
-    ota.start_clean(&state_path);
-
-    let active_hex = format!("{:#x}", ota.active);
-    let dfu_hex = format!("{:#x}", ota.dfu);
-    let original = read_words(chip, &active_hex, HEAD_WORDS);
-
-    download(chip, &dfu_hex, &ota.image_path);
-    // Запись лежит в запасной странице `DFU`, отдельно от начала образа, —
-    // отдельной заливкой.
-    download(chip, &ota.record_addr(), &record);
-    write_state(&state_path, SWAP_MAGIC, ota.write_size, ota.state_len);
-    download(chip, &ota.state, &state_path);
-
-    reset(chip);
-    let expected_head = ota.image_head();
-    let timeout = swap_timeout(ota.active_len);
-    // Признак завершённого обмена — оба раздела сразу: в `ACTIVE` новый
-    // образ, в `DFU` старый. Смотреть только на `ACTIVE` мало: bootloader
-    // переносит страницы по одной, и его голова меняется задолго до конца
-    // переноса — сброс в этот момент застал бы обмен на середине.
-    //
-    // Прежний образ ищется СО СДВИГОМ НА СТРАНИЦУ, и это не деталь
-    // реализации, о которой можно забыть: `swap()` в embassy-boot переносит
-    // `ACTIVE[i]` не в `DFU[i]`, а в `DFU[i + 1]` — лишняя страница `DFU`
-    // (её требует `assert_partitions`) работает разменной. В начале `DFU`
-    // при этом так и остаётся первая страница нового образа.
-    //
-    // Обмен доказывает и магия `REVERT`: без состоявшегося обмена отката не
-    // бывает.
-    // {%- if graph == "true" %}
-    // Обмен можно и не застать: release-bootloader
-    // запускает сторож, а инертный образ его не кормит и через
-    // таймаут сторожа (13 с номинально, `bsp::wdg::HW_TIMEOUT_US`) после прыжка сбрасывается сам — bootloader
-    // тут же откатывает его.
-    // {%- endif %}
-    let dfu_previous = format!("{:#x}", ota.dfu + ota.page_size);
-    let swapped = wait_for(timeout, || {
-        Ok(
-            (try_read_words(chip, &active_hex, HEAD_WORDS)?[..2] == expected_head
-                && try_read_words(chip, &dfu_previous, HEAD_WORDS)? == original)
-                || ota.state_is(REVERT_MAGIC)?,
-        )
-    });
-    if let Err(why) = swapped {
-        panic!(
-            "после сброса разделы не поменялись местами: в ACTIVE не залитый образ или в DFU не \
-             прежний (магия SWAP не дошла до BOOTLOADER_STATE, схема разделов не сходится либо \
-             bootloader отверг запись о подписи). {why}"
-        );
-    }
-
-    // Второй сброс: подтверждения не было (инертный образ ничего не делает),
-    // значит bootloader обязан вернуть предыдущий.
-    // {%- if graph == "true" %}
-    // Если откат уже сделал
-    // сторож (см. выше), сброс ничего не меняет: состояние `REVERT`, и
-    // bootloader просто запускает прежний образ.
-    // {%- endif %}
-    // Здесь сдвига уже нет —
-    // `revert()` переносит `ACTIVE[i]` в `DFU[i]` и читает новый образ для
-    // `ACTIVE` из `DFU[i + 1]`, то есть оттуда, куда его положил обмен.
-    //
-    // Состояние — `REVERT` ИЛИ `BOOT`: вернувшаяся прошивка при старте
-    // подтверждает себя (`mark_booted` в `begin` узла OTA) и за миллисекунды
-    // меняет `REVERT` на `BOOT` — опрос раз в полсекунды `REVERT` почти не
-    // застаёт. Откат доказывают разделы, а состояние — лишь то, что нового
-    // обмена не запрошено (не `SWAP`).
-    reset(chip);
-    let reverted = wait_for(timeout, || {
-        Ok(try_read_words(chip, &active_hex, HEAD_WORDS)? == original
-            && try_read_words(chip, &dfu_hex, HEAD_WORDS)?[..2] == expected_head
-            && (ota.state_is(REVERT_MAGIC)? || ota.state_is(BOOT_MAGIC)?))
-    });
-    if let Err(why) = reverted {
-        panic!(
-            "образ не откатился: в ACTIVE осталось не то, что было до обновления. Это значит, \
-             что неработающая прошивка, проехавшая по OTA, оставила бы плату мёртвой. {why}"
-        );
-    }
-}
-
-/// Образ без записи о подписи bootloader не пускает: снимает запрос
-/// на обмен (`BOOT_MAGIC` в состоянии), `ACTIVE` остаётся прежним. Это и есть
-/// свойство подписанного OTA — чужой образ, положенный в `DFU` мимо
-/// приложения, не встаёт.
-#[test]
-fn ota_rejects_unsigned_image() {
-    let Some(ota) = Ota::from_env() else {
-        return;
-    };
-    let chip = &ota.chip;
-    let state_path = env::temp_dir().join("host-target-ota-state.bin");
-    ota.start_clean(&state_path);
-
-    let active_hex = format!("{:#x}", ota.active);
-    let original = read_words(chip, &active_hex, HEAD_WORDS);
-
-    // Запись от прошлого подписанного прогона, прерванного до обмена, лежала
-    // бы там до сих пор и была бы верной — стираем явно. `probe-rs download`
-    // стирает сектор целиком, записывается одно стёртое слово.
-    let erased_path = env::temp_dir().join("host-target-ota-erased.bin");
-    fs::write(&erased_path, vec![ERASED; ota.write_size]).expect("записать стёртое слово");
-    download(chip, &ota.record_addr(), &erased_path);
-    download(chip, &format!("{:#x}", ota.dfu), &ota.image_path);
-    write_state(&state_path, SWAP_MAGIC, ota.write_size, ota.state_len);
-    download(chip, &ota.state, &state_path);
-
-    reset(chip);
-    // `SWAP` в состоянии до проверки bootloader'ом, `BOOT` — после отказа:
-    // между ними раздел стёрт, и пока он стирается, чтения отказывают.
-    // {%- if graph == "true" %}
-    //
-    // `BOOT` с прежним `ACTIVE` — ещё и конец ОШИБОЧНО пропущенного обмена в
-    // проекте со сторожем: инертный образ встал, сторож сбросил, bootloader
-    // откатил, прежняя прошивка подтвердила себя. Различает их сам инертный
-    // образ: пропущенный, он сидит в `ACTIVE` до сброса сторожем (секунды,
-    // `bsp::wdg::HW_TIMEOUT_US`) — опрос раз в полсекунды его застанет.
-    // {%- else %}
-    //
-    // Пропущенный по ошибке обмен виден по `ACTIVE`: инертный образ встал бы
-    // туда и остался.
-    // {%- endif %}
-    let inert_head = ota.image_head();
-    let rejected = wait_for(swap_timeout(ota.active_len), || {
-        let active_now = try_read_words(chip, &active_hex, HEAD_WORDS)?;
-        assert!(
-            active_now[..2] != inert_head,
-            "неподписанный образ ВСТАЛ в ACTIVE: bootloader пропустил обмен без записи о подписи"
-        );
-        Ok(ota.state_is(BOOT_MAGIC)? && active_now == original)
-    });
-    if let Err(why) = rejected {
-        panic!(
-            "неподписанный образ не отвергнут: запрос на обмен не снят или ACTIVE изменился. \
-             Значит, в DFU можно положить чужую прошивку мимо приложения, и она встанет. {why}"
-        );
-    }
-}
-
-/// Ждёт выполнения условия, но не дольше `timeout`.
-///
-/// Опрос, а не фиксированная пауза: перенос разделов занимает от долей
-/// секунды до десятков (зависит от размера страницы и раздела), и любая
-/// пауза «на глаз» была бы либо флаки, либо вдвое длиннее нужного.
-///
-/// Ошибка условия — «ещё не готово», а не провал: пока bootloader стирает
-/// флеш, `probe-rs` не может остановить ядро (см. [`try_probe_rs`]). Если
-/// время вышло, а последнее чтение отказало, — его текст в `Err`, а не потерян.
-fn wait_for(
-    timeout: Duration,
-    mut done: impl FnMut() -> Result<bool, String>,
-) -> Result<(), String> {
-    let start = Instant::now();
-    loop {
-        let last = done();
-        if let Ok(true) = last {
-            // Видно с `--no-capture`: так меряется, сколько оставлено запаса.
-            eprintln!("дождались за {:?} из {timeout:?}", start.elapsed());
-            return Ok(());
-        }
-        if start.elapsed() >= timeout {
-            return Err(match last {
-                Err(why) => format!("Не дождались за {timeout:?}; последнее чтение: {why}"),
-                _ => format!("Не дождались за {timeout:?}."),
-            });
-        }
-        thread::sleep(Duration::from_millis(500));
-    }
-}
-
-/// Готовит образ раздела состояния: магия в начале, дальше стёртый флеш до
-/// конца раздела.
-///
-/// Раздел пишется целиком не для полноты картины: `mark_updated()` начинает с
-/// erase ВСЕГО раздела, а `probe-rs download` стирает ровно те секторы, в
-/// которые пишет. Ограничься тест первым словом — на чипе с мелкими
-/// страницами (раздел состояния там многосекторный: журнал прогресса это
-/// слово на каждую страницу `ACTIVE` в каждом из четырёх проходов) следующий
-/// прогон работал бы поверх прошлого журнала.
-fn write_state(path: &Path, magic: u8, write_size: usize, state_len: usize) {
-    let mut image = vec![ERASED; state_len];
-    image[..write_size].fill(magic);
-    fs::write(path, &image).expect("записать образ раздела состояния");
-}
-
-/// Заливает сырой образ по абсолютному адресу. Стиранием секторов занимается
-/// сам `probe-rs`.
-fn download(chip: &str, address: &str, path: &Path) {
-    let path = path.to_string_lossy().into_owned();
-    probe_rs(&[
-        "download",
-        "--chip",
-        chip,
-        "--binary-format",
-        "bin",
-        "--base-address",
-        address,
-        &path,
-    ]);
-}
-
-fn read_words(chip: &str, address: &str, words: usize) -> Vec<u32> {
-    try_read_words(chip, address, words).unwrap_or_else(|why| panic!("{why}"))
-}
-
-/// Чтение, отказ которого `wait_for` переждёт. Не hex в выводе — не временно,
-/// паника: разбор разошёлся с форматом `probe-rs`.
-fn try_read_words(chip: &str, address: &str, words: usize) -> Result<Vec<u32>, String> {
-    let count = words.to_string();
-    Ok(
-        try_probe_rs(&["read", "--chip", chip, "b32", address, &count])?
-            .split_whitespace()
-            // probe-rs 0.32 печатает таблицу: адрес строки `08040000:` перед словами.
-            .filter(|word| !word.ends_with(':'))
-            .map(|word| {
-                u32::from_str_radix(word, 16)
-                    .unwrap_or_else(|_| panic!("`probe-rs read` вернул не hex-слово: {word:?}"))
-            })
-            .collect(),
-    )
-}
-
-/// `0x08020000` из окружения — в число.
-fn parse_address(raw: &str) -> u32 {
-    let digits = raw.trim_start_matches("0x");
-    u32::from_str_radix(digits, 16).unwrap_or_else(|_| panic!("не адрес: {raw}"))
 }
 // {%- endif %}

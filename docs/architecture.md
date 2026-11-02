@@ -423,7 +423,7 @@ device, cdc }` (классы `embassy-usb` регистрируются до п�
 {% if graph == "true" %}Кроме сторожа в граф уезжает поле `firmware`{% else %}В задачу узла OTA уезжает поле `firmware`{% endif %} (`bsp::FirmwareFlash` —
 `ports::Partitions`: разделы `DFU` и `STATE` со своими страницами, предел
 образа, равный `ACTIVE`, и отпечаток раскладки). {% if graph == "true" %}Compose-site кладёт его во вход узла,
-`domain::ota::OtaWiring { flash: Updater::new(board.firmware), reboot: bsp::reset::Reboot, running_version }`,
+`domain::ota::OtaWiring { flash: Updater::new(board.firmware), reboot: bsp::reset::Reboot, running_version, confirmed }`,
 прямо в `fragments:`: адаптер{% else %}Адаптер{% endif %} обновления (`domain::ota::Updater` — конкретный
 тип домена, трейта нет) над ним строит compose-site. Режет разделы плата — по символам
 `memory.x` (`bsp::layout`), тем же, что читает bootloader: где они лежат, знает
@@ -455,7 +455,7 @@ bootloader'е (`crates-cross/boot`), который подпись и прове
 — `init` читает JEDEC ID и{% if ext_flash_bus != "spi" %} ставит бит QE, без чего{% else %} без этого{% endif %} драйвер не знает объёма и
 не годится ни для одной операции. `init` ждёт микросхему (до 2 с, если она
 ещё стирает после сброса), поэтому `Board::new` асинхронный, а зовёт его первая
-задача исполнителя (`start` в `main.rs`): ждёт он таймерами `embassy_time`, а
+задача исполнителя (`start` в `crates-cross/app/src/run.rs`): ждёт он таймерами `embassy_time`, а
 встроенной очереди таймеров нужен waker исполнителя, не `block_on`; не прошёл —
 строка в лог, и флеш отказывает, а не паникует (docs/modules/bsp-external.md).
 {%- endif %}
