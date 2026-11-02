@@ -73,8 +73,8 @@ Modbus{% endif %}{% if net_services != "" %}, секреты служб{% endif 
   `&'static mut T = static` — `docs/modules/app-graph.md`;
 {%- endif %}
 - **узлы не падают:** `restart:` нет, задача возвращает `()`, отказ связи —
-  лог и возврат в начальное состояние автомата или переход в себя; переждать
-  отказ — дело реализации порта или конкретного типа под узлом — «Узлы не падают»;
+  лог и возврат в начальное состояние автомата или переход в себя — «Узлы не
+  падают»;
 - цена — зависимость `domain` от `supervisor` (транзитивно и от
   `embassy-executor`); `embassy-stm32` в `domain` нет — «Цена решения…».
 
@@ -378,7 +378,7 @@ read`: руками пришлось бы сначала найти адрес �
 - Брокер MQTT (`domain::mqtt`, узел `MQTT`) — `mqtt.toml` в корне проекта:
   создаёт `cargo xtask` (`secrets::ensure`), он **коммитится**, вшивает его
   `crates-cross/app/build.rs` (README, «Клиент MQTT»). Паузы перед попытками
-  `dial` держит клиент `domain::mqtt::TcpClient`, а не автомат узла{% if ota == "true" %}; клиент входа `CMD` узла OTA — номер `{{ mqtt_ota_client }}`{% endif %}; доступ к `cmd/` —
+  `dial` держит клиент `domain::mqtt::TcpClient`{% if ota == "true" %}; клиент входа `CMD` узла OTA — номер `{{ mqtt_ota_client }}`{% endif %}; доступ к `cmd/` —
   только ACL брокера — `docs/modules/app-mqtt.md`.
 {%- endif %}
 {%- if graph == "true" %}
