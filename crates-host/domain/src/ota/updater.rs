@@ -195,8 +195,11 @@ impl<D: NorFlash, S: NorFlash> Updater<Partitions<D, S>> {
     /// отката по версии.
     ///
     /// `Revert` — откат уже случился: в `ACTIVE` прежний образ, в `DFU` —
-    /// отвергнутый. `embassy-boot` в `verify_booted` писать в нём разрешает;
-    /// здесь `Revert` тоже считается занятым.
+    /// отвергнутый. Беречь в `DFU` нечего, и `embassy-boot` в `verify_booted`
+    /// писать в нём разрешает, но здесь `Revert` тоже считается занятым: он
+    /// держится, только пока прежний образ себя не подтвердил (`mark_booted`
+    /// узла OTA переводит `STATE` в `Boot`), то есть подтверждение не прошло —
+    /// принимать обновление на устройстве в таком состоянии незачем.
     ///
     /// # Errors
     ///
@@ -511,7 +514,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn write_and_prepare_refuse_while_the_partition_holds_a_rollback_image() {
+    async fn write_and_prepare_refuse_while_a_swap_is_pending_or_just_reverted() {
         // 0xF0 — SWAP_MAGIC, 0xC0 — REVERT_MAGIC (`embassy-boot`, lib.rs).
         for magic in [0xF0, 0xC0] {
             let mut u = with_state(magic);
