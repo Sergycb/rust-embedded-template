@@ -41,23 +41,8 @@ const STAGES: [(&str, &str, Stage); 4] = [
     ),
     ("all", "все три подряд", test_all),
 ];
-// {%- if has_protobuf == "true" %}
-
-/// Сценариев в `host-target-tests` (protobuf): пропущенные без адреса
-/// устройства считаются от этого числа.
-// {%- if ota == "true" %}
-const SCENARIOS: usize = 6;
-// {%- else %}
-//{{newline}}const SCENARIOS: usize = 1;
-// {%- endif %}
-// {%- endif %}
 
 type Stage = fn(&xshell::Shell) -> Result<(), anyhow::Error>;
-// {%- if has_protobuf == "true" %}
-
-/// Тесты host-target, которые пройдут пропуском: сколько и почему.
-type Skipped = (usize, &'static str);
-// {%- endif %}
 // {%- if ota == "true" and has_protobuf == "true" %}
 
 /// Временный каталог образов OTA для сценариев: удаляется, когда
@@ -172,23 +157,13 @@ fn test_host_target(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     // {%- endif %}
     let flash = probe_present(sh);
     check_app(sh, "release")?;
-    // {%- if has_protobuf == "true" %}
-    let mut skipped = Vec::new();
-    let addressed = !(unset("HOST_TARGET_ADDR") && unset("HOST_TARGET_PORT"));
-    if !addressed {
-        skipped.push((
-            SCENARIOS,
-            "адрес устройства не задан: HOST_TARGET_ADDR (ip или ip:порт) или HOST_TARGET_PORT \
-             (COM3, /dev/ttyACM0)",
-        ));
-    }
-    // {%- endif %}
     // {%- if ota == "true" and has_protobuf == "true" %}
+    let addressed = !(unset("HOST_TARGET_ADDR") && unset("HOST_TARGET_PORT"));
     // Образы для сценариев OTA — до прошивки: сборка, которая не сходится
     // (раскладка, ключ), не должна оставить плату с новым bootloader'ом. Без
     // адреса сценарии не пойдут — и собирать их незачем.
     let _ota_env = if addressed {
-        Some(ota_env(sh, seed.as_ref(), flash, &mut skipped)?)
+        Some(ota_env(sh, seed.as_ref(), flash)?)
     } else {
         None
     };
@@ -206,10 +181,18 @@ fn test_host_target(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     // параллельно — два сценария разом мешали бы друг другу (чужой `Start`
     // получает `Busy`, `Reboot` одного рвёт связь другому).
     //
-    // Сводка — и после упавшего прогона: в выводе nextest пропуск не виден ни
+    // Пропуски сценарии пишут в журнал (`host_target_tests::skip`), а сводка
+    // по нему — и после упавшего прогона: в выводе nextest пропуск не виден ни
     // при каком исходе.
-    let run = cmd!(sh, "cargo nextest run --test-threads 1").run();
-    report_skipped(&skipped);
+    let log = env::temp_dir().join(format!("host-target-skips-{}.log", std::process::id()));
+    // Журнал от прошлого прогона с тем же номером процесса сосчитался бы дважды.
+    std::fs::remove_file(&log).ok();
+    let run = {
+        let _log = sh.push_env("HOST_TARGET_SKIP_LOG", &log);
+        cmd!(sh, "cargo nextest run --test-threads 1").run()
+    };
+    report_skipped(&std::fs::read_to_string(&log).unwrap_or_default());
+    std::fs::remove_file(&log).ok();
     run?;
     // {%- else %}
     // Сценарии написаны под protobuf; под протокол проекта их нет —
@@ -262,14 +245,22 @@ fn lists_a_probe(list: &str) -> bool {
 
 /// Итог после прогона: nextest считает пропуск внутри теста (`return` без
 /// окружения) пройденным тестом, и зелёная сводка выглядела бы полной
-/// проверкой.
-fn report_skipped(skipped: &[Skipped]) {
-    let total: usize = skipped.iter().map(|(count, _)| count).sum();
+/// проверкой. `log` — журнал пропусков, строка на пропущенный сценарий с его
+/// причиной; одинаковые причины складываются.
+fn report_skipped(log: &str) {
+    let mut reasons: Vec<(usize, &str)> = Vec::new();
+    for why in log.lines().filter(|line| !line.is_empty()) {
+        match reasons.iter_mut().find(|(_, known)| *known == why) {
+            Some((count, _)) => *count += 1,
+            None => reasons.push((1, why)),
+        }
+    }
+    let total: usize = reasons.iter().map(|(count, _)| count).sum();
     if total == 0 {
         return;
     }
     println!("ВНИМАНИЕ: тестов host-target, прошедших пропуском, ничего не проверив, — {total}:");
-    for (count, why) in skipped {
+    for (count, why) in reasons {
         println!("  {count} — {why}");
     }
 }
@@ -291,7 +282,6 @@ fn ota_env<'a>(
     sh: &'a xshell::Shell,
     seed: Option<&[u8; 32]>,
     flash: bool,
-    skipped: &mut Vec<Skipped>,
 ) -> Result<(Scratch, Vec<xshell::PushEnv<'a>>), anyhow::Error> {
     {
         let _p = sh.push_dir(root_dir().join("crates-cross"));
@@ -353,11 +343,6 @@ fn ota_env<'a>(
         vars.push(sh.push_env(
             "HOST_TARGET_UNCONFIRMED_SIG",
             write("app-unconfirmed.bin.sig", &signature(image, seed))?,
-        ));
-    } else {
-        skipped.push((
-            1,
-            "обмен и откат: закрытого ключа нет — тестовый образ подписать нечем",
         ));
     }
     if flash {

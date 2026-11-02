@@ -257,9 +257,9 @@ impl Device {
         let target = match target_from_env() {
             Ok(Some(target)) => target,
             Ok(None) => {
-                eprintln!(
-                    "адрес устройства не задан (HOST_TARGET_ADDR или HOST_TARGET_PORT) — сценарий \
-                     пропущен"
+                skip(
+                    "адрес устройства не задан: HOST_TARGET_ADDR (ip или ip:порт) или \
+                     HOST_TARGET_PORT (COM3, /dev/ttyACM0)",
                 );
                 return None;
             }
@@ -437,6 +437,34 @@ impl std::fmt::Debug for Device {
         f.debug_struct("Device")
             .field("target", &self.target)
             .finish_non_exhaustive()
+    }
+}
+
+/// Сценарий пропущен по причине `why` (одной строкой): она уходит в stderr
+/// (видна с `--no-capture`) и в журнал пропусков `HOST_TARGET_SKIP_LOG`, по
+/// которому `xtask` после прогона печатает сводку. Без журнала пропуск был бы
+/// не виден: nextest считает такой сценарий пройденным.
+///
+/// # Panics
+///
+/// Журнал задан, а записать в него не вышло: сводка тогда соврала бы.
+pub fn skip(why: &str) {
+    eprintln!("сценарий пропущен: {why}");
+    if let Some(log) = env::var_os("HOST_TARGET_SKIP_LOG") {
+        let line = why.replace('\n', " ");
+        let written = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log)
+            .and_then(|mut file| {
+                std::io::Write::write_all(&mut file, format!("{line}\n").as_bytes())
+            });
+        if let Err(err) = written {
+            panic!(
+                "журнал пропусков {}: {err}",
+                std::path::Path::new(&log).display()
+            );
+        }
     }
 }
 
