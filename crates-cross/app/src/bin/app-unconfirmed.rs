@@ -1,4 +1,4 @@
-//! Тестовый образ `cargo xtask test host-target` — запуск той же прошивки, что
+//! Тестовый образ{% if has_protobuf == "true" %} `cargo xtask test host-target`{% endif %} — запуск той же прошивки, что
 //! `app` (`src/main.rs`), с другими свойствами образа ([`IMAGE`]): версия на
 //! единицу больше, хосту образ называет себя меткой `unconfirmed` и себя не
 //! подтверждает — следующий сброс его откатывает (docs/ota.md, «Тесты OTA по
@@ -23,8 +23,8 @@ use static_cell::StaticCell;
 /// протоколу».
 ///
 /// Текст — метка `unconfirmed` вместо версии: по ней хост видит, что обмен
-/// разделов состоялся, не читая флеш (та же строка — в
-/// `crates-host/host-target-tests/tests/test.rs`). `confirmed: true` —
+/// разделов состоялся, не читая флеш{% if has_protobuf == "true" %} (та же строка — в
+/// `crates-host/host-target-tests/tests/test.rs`){% endif %}. `confirmed: true` —
 /// узел OTA начинает «уже подтверждённым» и `mark_booted` не зовёт.
 const IMAGE: app::version::Image = app::version::Image {
     version: match app::version::PACKAGE_VERSION.checked_add(1) {
@@ -35,8 +35,8 @@ const IMAGE: app::version::Image = app::version::Image {
     confirmed: true,
 };
 
-/// Версия этого образа по имени символа — для `cargo xtask test host-target`
-/// (хвост образа и проверка «рабочая + 1»); зачем `#[used]` и `no_mangle` —
+/// Версия этого образа по имени символа{% if has_protobuf == "true" %} — для `cargo xtask test host-target`
+/// (хвост образа и проверка «рабочая + 1»){% else %}, как у рабочего `app`{% endif %}; зачем `#[used]` и `no_mangle` —
 /// у того же символа в `src/main.rs`.
 #[used]
 #[expect(unsafe_code, reason = "имя символа нужно xtask, см. src/main.rs")]

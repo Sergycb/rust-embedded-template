@@ -35,8 +35,9 @@ pub fn ensure_image_key(
     anyhow::ensure!(
         compiled == signing,
         "в bootloader'е не тот открытый ключ, которым подписывается образ: устройство отвергнет \
-         это обновление. Пересоберите bootloader (`cargo clean -p boot`) — ключ попадает в \
-         него через crates-cross/boot/build.rs из {PUBLIC_KEY_FILE}"
+         это обновление. Пересоберите bootloader (`cargo clean --manifest-path \
+         crates-cross/Cargo.toml -p boot`) — ключ попадает в него через \
+         crates-cross/boot/build.rs из {PUBLIC_KEY_FILE}"
     );
     Ok(())
 }
@@ -232,10 +233,9 @@ mod tests {
         assert_eq!(public, public_of(&seed));
     }
 
-    /// Ветка, по которой идёт каждая вторая и последующая сборка, — и до сих
-    /// пор не проверенная ни одним тестом. Переверни сравнение ключей, и все
-    /// остальные тесты остались бы зелёными, а любая нормальная сборка стала
-    /// бы падать с «пара не соответствует».
+    /// Ветка, по которой идёт каждая вторая и последующая сборка. Переверни
+    /// сравнение ключей — остальные тесты остались бы зелёными, а любая
+    /// нормальная сборка стала бы падать с «пара не соответствует».
     #[test]
     fn accepts_a_matching_pair_and_leaves_it_alone() {
         let dir = scratch("matching");

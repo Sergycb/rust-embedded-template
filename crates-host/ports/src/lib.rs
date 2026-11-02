@@ -10,7 +10,7 @@
 // сам напомнит убрать атрибут.
 #![expect(
     async_fn_in_trait,
-    reason = "Embassy tasks require async fn in trait; supervisor fragments call them on a single executor"
+    reason = "один исполнитель embassy: границы `Send` у future не нужно"
 )]
 // {%- endif %}
 
@@ -22,10 +22,19 @@
 //! зовёт конкретный тип. Исключение —
 //! рычаг платы, который зовёт логика узла: `domain` не видит `bsp`, и рычаг
 //! приходит к ней трейтом даже при одной реализации.
-//! Реализации живут в `adapters-logic` (каналы и транспорты протоколов над
-//! потоком и сокетами), в `crates-cross/bsp` (то, чему нужна периферия
-//! конкретного чипа) и в `domain` (карта регистров) —
-//! docs/architecture.md, «Трейт — только под несколько реализаций».
+// {%- if adapters_logic == "true" or ota == "true" or has_can == "true" or has_modbus == "true" %}
+//! Реализации живут:
+// {%- if adapters_logic == "true" %}
+//! в `adapters-logic` — каналы и транспорты протоколов над потоком и сокетами;
+// {%- endif %}
+// {%- if ota == "true" or has_can == "true" %}
+//! в `crates-cross/bsp` — то, чему нужна периферия конкретного чипа;
+// {%- endif %}
+// {%- if has_modbus == "true" %}
+//! в `domain` — карта регистров;
+// {%- endif %}
+//! почему так — docs/architecture.md, «Трейт — только под несколько реализаций».
+// {%- endif %}
 //!
 //! Отсюда и то, чего здесь нет: сведения о чипе (`bsp::ChipSpec`) — данные, а
 //! не поведение, и их тип живёт в `bsp`, рядом с `Board`. Причина сброса и
@@ -67,20 +76,28 @@ pub mod can;
 
 // {%- endif %}
 // {%- if link_port == "true" %}
+// {%- if adapters_logic == "true" %}
 /// Кадровый канал связи: сообщения целиком, поверх датаграмм или адаптера
 /// кадрирования потока.
+// {%- else %}
+/// Ошибка обмена кадрами — для шины CAN.
+// {%- endif %}
 pub mod link;
 
 // {%- endif %}
 // {%- if has_modbus == "true" %}
+// {%- if modbus_master == "true" %}
 /// Modbus: предел PDU, коды исключений, данные slave'а, транспорт master'а,
 /// ошибки обмена.
+// {%- else %}
+/// Modbus: предел PDU, коды исключений, данные slave'а.
+// {%- endif %}
 pub mod modbus;
 
 // {%- endif %}
 // {%- if ota == "true" %}
-/// OTA: запись во флеш, запись о подписи для bootloader'а, отпечаток раскладки,
-/// перезагрузка.
+/// OTA: разделы обновления, запись о подписи для bootloader'а, отпечаток
+/// раскладки, перезагрузка.
 pub mod ota;
 
 // {%- endif %}

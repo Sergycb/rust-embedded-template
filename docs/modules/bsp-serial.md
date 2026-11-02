@@ -8,21 +8,38 @@ UART платы — поток байтов, по подмодулю на тра
 Шаблон выводы не выбирает (`docs/architecture.md`), поэтому в `Serial` пока
 стоит заглушка `bsp::stub::Serial`: проект собирается и
 запускается, {% if link_kinds contains "uart" %}узел протокола{% else %}приём{% endif %} ждёт байтов вечно, а запись уходит в никуда.
-Поток лежит полем `Board::<транспорт>` (например `usart1`), а какой это USART и на
+Поток лежит полем `board.<транспорт>` (например `board.usart1`), а какой это USART и на
 каких ножках — решает только этот модуль, поэтому заменить заглушку на драйвер —
 правка в одном месте.
 
 ## Как подставить свой UART
+{%- assign xs = links | split: "," %}
+{%- assign uart_block = "" %}
+{%- assign uart_group = "" %}
+{%- for l in xs %}
+{%- assign f = l | split: ":" %}
+{%- if f[0] == "uart" %}
+{%- if uart_block == "" %}
+{%- assign uart_block = f[2] %}
+{%- assign parts = f[4] | split: "_" %}
+{%- capture uart_group %}{% for part in parts %}{{ part | capitalize }}{% endfor %}Resources{% endcapture %}
+{%- endif %}
+{%- endif %}
+{%- endfor %}
 
-1. Блоки для своего USART — из справочника по чипу (блок транспорта, например
-   `{{iface_periph}}`):
+Ниже — на примере первого UART-транспорта (`{{ uart_block }}`); у остальных то же
+со своим блоком.
+
+1. Блоки для своего USART — из справочника по чипу:
 
    ```text
-   cargo xtask pins {{iface_periph}} --snippet
+   cargo xtask pins {{ uart_block }} --snippet
    ```
 
    Он печатает `bind_interrupts!` и группу `assign_resources!` со свободными
-   выводами; выберите те, что разведены на плате.
+   выводами; выберите те, что разведены на плате, и добавьте их в группу
+   транспорта в `resources.rs`. `bind_interrupts!` положите в подмодуль
+   транспорта, а не в `board.rs`, как советует распечатка: его `Irqs` берёт `new`.
 
 2. В подмодуле транспорта — псевдоним на драйвер `embassy-stm32` (задачи
    embassy не generic, и узлу нужен именованный тип), конструктор — на сборку
@@ -31,7 +48,7 @@ UART платы — поток байтов, по подмодулю на тра
 
    ```rust,ignore
    use embassy_stm32::usart::{BufferedUart, Config};
-   use crate::resources::Usart1Resources;
+   use crate::resources::{{ uart_group }};
    use static_cell::ConstStaticCell;
 
    pub type Serial = BufferedUart<'static>;
@@ -39,7 +56,7 @@ UART платы — поток байтов, по подмодулю на тра
    static TX: ConstStaticCell<[u8; 256]> = ConstStaticCell::new([0; 256]);
    static RX: ConstStaticCell<[u8; 256]> = ConstStaticCell::new([0; 256]);
 
-   pub(crate) fn new(r: Usart1Resources) -> Serial {
+   pub(crate) fn new(r: {{ uart_group }}) -> Serial {
        let mut config = Config::default();
        config.baudrate = 115_200;
        BufferedUart::new(r.usart, r.rx, r.tx, TX.take(), RX.take(), Irqs, config)
@@ -48,8 +65,7 @@ UART платы — поток байтов, по подмодулю на тра
    ```
 
    `Board::new` уже передаёт группу транспорта из `resources.rs`:
-   `crate::serial::<транспорт>::new(r.<транспорт>)` (`docs/resources.md`); выводы
-   добавляются в неё.
+   `crate::serial::<транспорт>::new(r.<транспорт>)` (`docs/resources.md`).
 
 `BufferedUart` реализует `embedded_io_async::{Read, ReadReady, Write}` сам{% if link_kinds contains "uart" %} —
 ровно то, что ждёт транспорт {% if has_modbus == "true" %}`adapters_logic::modbus::Rtu`{% else %}`adapters_logic::cobs::Cobs`{% endif %}{% endif %},
@@ -75,4 +91,4 @@ RS-485 — тот же UART плюс вывод DE, который включа�
   опустить после `flush`, — обёрткой поверх `OutputPin`. В шаблоне её нет,
   добавить её в `adapters-hw` (обёртка над железом без чипа) — по первой нужде.
 
-Версию USART показывает тот же `cargo xtask pins {{iface_periph}}`.
+Версию USART показывает тот же `cargo xtask pins {{ uart_block }}`.

@@ -24,8 +24,14 @@ revision_number = 1
 num_rpdo = 1
 num_tpdo = 1
 
-# Уставка, которую хост пишет по SDO или RPDO. `persist` — переживает
-# перезагрузку: сохраняется командой `save` в 0x1010 (`domain::canopen`).
+# Уставка, которую хост пишет по SDO или RPDO.
+# {%- if config == "true" %}
+# `persist` — переживает перезагрузку: сохраняется командой `save` в 0x1010
+# (`domain::canopen`).
+# {%- else %}
+# `persist` здесь не действует: раздела настроек нет, и объекта 0x1010 в
+# словаре тоже.
+# {%- endif %}
 [[objects]]
 index = 0x2000
 parameter_name = "Setpoint"

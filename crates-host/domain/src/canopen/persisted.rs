@@ -29,7 +29,7 @@ use crate::settings::{Error, Settings};
 
 /// Ключ хранилища настроек, под которым лежат сохранённые объекты.
 ///
-/// Ключи узла — в своей сотне (`0xC0_0000`), чтобы не пересечься с
+/// Ключи узла — в своём диапазоне `0x00C0_xxxx`, чтобы не пересечься с
 /// настройками проекта в том же хранилище.
 pub const OBJECTS_KEY: u32 = 0x00C0_0001;
 
@@ -119,8 +119,10 @@ impl Persisted {
         self.node_id = Some(node_id.raw());
     }
 
-    /// Старт стека и NMT Reset Node: все сохранённые объекты; NMT Reset
-    /// Communication (`comms`) — только объекты связи (`0x1000..=0x1FFF`).
+    /// Старт стека и NMT Reset Node: все сохранённые объекты (несохранённые
+    /// `zencan` 0.0.5 к умолчаниям не возвращает — `//!` модуля `canopen`);
+    /// NMT Reset Communication (`comms`) — только объекты связи
+    /// (`0x1000..=0x1FFF`).
     pub(super) fn restore(&self, od: &[ODEntry<'_>], comms: bool) {
         if self.len == 0 {
             return;

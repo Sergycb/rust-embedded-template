@@ -15,11 +15,8 @@ use bsp::flash::STATE_ERASE_SIZE;
 use bsp::flash::SWAP_PAGE_SIZE;
 {%- endif %}
 use defmt::info;
-// RTT — дефолтный транспорт в обоих профилях (см. crates-cross/app/src/main.rs);
-// boot вдобавок не спавнит embassy-задач, поэтому очередь+drain-таск под
-// USB/UART (паттерн — docs/modules/app.md) сюда в принципе не
-// встраивается — одну диагностическую строку перед прыжком не стоит того
-// усложнять.
+// RTT — дефолтный транспорт в обоих профилях (см. crates-cross/app/src/panic.rs);
+// почему без UART-транспорта — crates-cross/boot/Cargo.toml.
 use defmt_rtt as _;
 {%- if ota_store == "external" %}
 use embassy_boot_stm32::{BootLoader, BootLoaderConfig, State};
@@ -51,12 +48,12 @@ const SWAP_BUFFER_SIZE: usize = {{write_size}};
 {%- if boot_partitioned == "true" and dfu_bank == "true" %}
 
 /// Размер банка 1 в байтах — столько занимает раздел на весь флеш, из
-/// которого строятся `STATE` и `ACTIVE`.
+/// которого строится `STATE`.
 const FLASH_BYTES: u32 = embassy_stm32::flash::BANK1_REGION.size;
 {%- elsif boot_partitioned == "true" %}
 
 /// Размер всего флеша в байтах — столько занимает раздел на весь флеш, из
-/// которого строятся `STATE`, `ACTIVE` и `DFU`.
+/// которого строятся разделы со своей страницей (`ErasePage`): {% if state_paged == "true" %}`STATE`{% endif %}{% if state_paged == "true" and swap_paged == "true" %}, {% endif %}{% if swap_paged == "true" %}`ACTIVE` и `DFU`{% endif %}.
 ///
 /// `usize` на Cortex-M — 32 бита, усечения нет.
 #[expect(
@@ -95,7 +92,7 @@ type Bank2 = embassy_stm32::flash::Bank2Region<'static, embassy_stm32::flash::Bl
 fn main() -> ! {
 {%- if bank_switch != "" %}
     // Первым делом: `Flash::new` ниже паникует на двухбанковом флеше при
-    // одобанковой раскладке (см. `bsp::banks`).
+    // однобанковой раскладке (см. `bsp::banks`).
     bsp::banks::ensure_single_bank();
 {%- endif %}
     // На умолчаниях HAL, а не на конфиге платы: тактирование настраивает
@@ -221,16 +218,17 @@ fn main() -> ! {
     // Предпосылки — раскладка и записанный образ, и обе сводятся к файлам:
     // * `entry` — это `FLASH_BASE` плюс смещение раздела ACTIVE, которое
     //   `BootLoaderConfig::from_linkerfile_blocking` берёт из символов
-    //   `__bootloader_active_*`, то есть из `ORIGIN(FLASH)` и `LENGTH(FLASH)`
-    //   в `crates-cross/boot/memory.x`; раскладку приложения с линковкой
+    //   `__bootloader_active_*`, то есть из `ORIGIN(ACTIVE)` в
+    //   `crates-cross/boot/memory.x` (тот же адрес, что `ORIGIN(FLASH)` в
+    //   `crates-cross/app/memory.x`); раскладку приложения с линковкой
     //   сверяют `cargo xtask build` и прошивка перед тестами на плате.
     // * первое и второе слова по этому адресу — MSP и reset-вектор образа,
     //   которые линкер положил в тот же раздел. Что bootloader их не
     //   проверяет — оговорка выше, про повреждённый образ.
     //
-    // `#[expect(unsafe_code)]` — как и остальные unsafe в `crates-cross` (см. `crates-cross/Cargo.toml`)
-    // (`app/src/main.rs`, `app/src/version.rs`): линт требует, чтобы каждое такое место
-    // было перечислено явно.
+    // `#[expect(unsafe_code)]` — как и у остальных unsafe в `crates-cross`
+    // (перечень и почему — `crates-cross/Cargo.toml`, `[workspace.lints.rust]`):
+    // линт требует, чтобы каждое такое место было перечислено явно.
     #[expect(unsafe_code, reason = "обоснование — в комментарии выше")]
     unsafe {
         bl.load(entry)

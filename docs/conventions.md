@@ -2,10 +2,12 @@
 
 ## Правила добавления новых зависимостей
 
-1. **Не верить кешу.** Компиляция на `{{target}}` после `cargo build`
-   с уже тёплым `target/` может «пройти», даже если чистая сборка не проходит.
+1. **Не верить кешу.** Компиляция на `{{target}}` с уже тёплым
+   `crates-cross/target/` может «пройти», даже если чистая сборка не проходит.
    Перед тем как считать зависимость рабочей на ARM — обязательно
-   `rm -rf target && cargo build --target {{target}} ...`. Прецедент:
+   `rm -rf crates-cross/target && cargo xtask build` из корня (прошивка
+   собирается в `crates-cross/` со своим `.cargo/config.toml`, и корневой
+   `target/` её кеша не держит). Прецедент:
    `firmware-controller` дважды казался рабочим на тёплом кеше, а на no_std ARM
    не собирается.
 2. **Крейты из личной библиотеки** ([rust-lib]({{rust_lib}}))
@@ -37,30 +39,30 @@
    все Arc-based, альтернативы без alloc нет, поэтому `wg` не взят.
 
 `domain` не держит курируемый набор бизнес-логических библиотек «на
-вырост» с компилируемым примером на каждую (`fsm`, `typestate`, `miniconf` и
-т.п.): как пользоваться библиотекой, показывает её собственная
+вырост» с компилируемым примером на каждую (`typestate`, `miniconf` и
+т.п.; `fsm` — не пример, на нём стоит каждый узел): как пользоваться библиотекой, показывает её собственная
 документация, а не шаблон{% if settings_port == "true" %}; единственное исключение — набросок подключения
 `miniconf` поверх хранилища настроек в шапке `domain::settings`, потому что
 хранилище (`u32`-ключ → байты) проектировалось под эту связку{% endif %}. Из `[dev-dependencies]` у `domain` (сверх того, что
 нужно для линковки `supervisor`, — см. комментарий в манифесте) главная —
 `tokio` (`rt` + `macros`, без
-`default-features`) — исполнитель для `#[tokio::test]` над фейками портов; у
-`adapters-hw` и `adapters-logic` он же — для тестов над фейками драйверов и потоков. Своего `block_on` в тестах нет намеренно:
-он был бы двумя копиями одних и тех же восьми строк в двух крейтах. Тест,
+`default-features`) — исполнитель для `#[tokio::test]` над фейками портов{% if adapters_hw == "true" or adapters_logic == "true" %}; у
+{% if adapters_hw == "true" %}`adapters-hw`{% if adapters_logic == "true" %} и {% endif %}{% endif %}{% if adapters_logic == "true" %}`adapters-logic`{% endif %} он же — для тестов над фейками драйверов и потоков{% endif %}. Своего `block_on` в тестах нет намеренно:
+он был бы копией одних и тех же восьми строк в каждом крейте с async-тестами. Тест,
 повисший на `Pending` (фейки не ждут), ловит `.config/nextest.toml`: тест
-этих двух крейтов, не кончившийся за 20 с, nextest убивает, а не ждёт до
+этих крейтов, не кончившийся за 20 с, nextest убивает, а не ждёт до
 таймаута CI.
 
 ## Host-тесты — только через nextest
 
 Host-тесты гоняются `cargo xtask test host` — то есть `cargo nextest`, — а не
 `cargo test` и не кнопкой запуска тестов в IDE. Часы `embassy_time::MockDriver`
-(фича `mock-driver` в `[dev-dependencies]` `domain`, `adapters-hw` и `adapters-logic`) — одни на
+(фича `mock-driver` в `[dev-dependencies]` `domain`{% if adapters_hw == "true" %}, `adapters-hw`{% endif %}{% if adapters_logic == "true" %}, `adapters-logic`{% endif %}) — одни на
 процесс: тест сбрасывает их (`MockDriver::get().reset()`) и двигает
 (`advance`). nextest запускает каждый тест отдельным процессом, а `cargo test`
 и IDE — потоками одного, и два теста с часами двигают время друг другу: такой
 тест то проходит, то нет, и дело не в тесте.
-{%- capture clocked %}{% if graph == "true" %}, `domain::heartbeat`{% endif %}{% if ota == "true" %}, `domain::ota`{% endif %}{% if has_protobuf == "true" %}, `domain::protobuf::service`{% endif %}{% if net_services contains "mqtt" %}, `domain::mqtt`{% endif %}{% if net_services contains "ssh" %}, `domain::ssh`{% endif %}{% if has_usb == "true" %}, `adapters_hw::usb`{% endif %}{% if modbus_rtu == "true" %}, `adapters_logic::modbus::rtu`{% endif %}{% endcapture %}
+{%- capture clocked %}{% if graph == "true" %}, `domain::heartbeat`{% endif %}{% if ota == "true" %}, `domain::ota`{% endif %}{% if has_protobuf == "true" %}, `domain::protobuf::service`{% endif %}{% if net_services contains "rest" %}, `domain::http`{% endif %}{% if net_services contains "mqtt" %}, `domain::mqtt`{% endif %}{% if net_services contains "ssh" %}, `domain::ssh`{% endif %}{% if has_usb == "true" %}, `adapters_hw::usb`{% endif %}{% if modbus_rtu == "true" %}, `adapters_logic::modbus::rtu`{% endif %}{% endcapture %}
 {%- if clocked != "" %} В этом проекте с часами работают тесты {{ clocked | remove_first: ", " }},
 и то же касается любого нового теста с `MockDriver`.{% else %} Касается любого теста с
 `MockDriver`, в том числе первого, который появится в проекте.{% endif %}
@@ -87,7 +89,7 @@ Host-тесты гоняются `cargo xtask test host` — то есть `carg
   фрагменты и граф (`crates-host/domain/Cargo.toml`, `crates-cross/Cargo.toml`), плюс
   `metadata-name`: она кладёт имя узла из DSL в `embassy_executor::Metadata` и
   занимает flash, по `&'static str` на узел. Фичи `defmt` у `supervisor`{% if graph == "true" %}/`watchdog`{% endif %}
-  не включены — библиотека сама ничего не
+  нет — библиотека сама ничего не
   печатает, и нужное прошивка логирует сама:
   {% if graph == "true" %}ошибку `spawn_all` — задача `start` в `main` бинарника приложения (через `Display`: `Debug` у ошибки графа нет),
   имя узла, переставшего кормить сторож, перед аппаратным сбросом —
@@ -99,9 +101,10 @@ Host-тесты гоняются `cargo xtask test host` — то есть `carg
 - **`HardFault` перехватывает `app`** (`crates-cross/app/src/fault.rs`): фолт
   становится паникой с регистрами причины и дальше идёт штатным путём паники. У
   {% if ota == "true" %}`boot` и {% endif %}`target-tests` — дефолт `cortex-m-rt`; см. `docs/diagnostics.md`.
-- **Развилка по профилю в шаблоне ровно одна** — выбор паникёра (`app/src/panic.rs` под
+- {% if graph == "true" %}**Развилок по профилю в шаблоне две**{% else %}**Развилка по профилю в шаблоне ровно одна**{% endif %} — выбор паникёра (`app/src/panic.rs` под
   `cfg(debug_assertions)`) и чтение дампа при старте `app` под тем
-  же `cfg`. Появится вторая — держите её в той же форме, см. следующий пункт.
+  же `cfg`{% if graph == "true" %}; вторая — заморозка сторожа под отладчиком в dev-сборке
+  (`freeze_on_halt` в `bsp::wdg`, тоже под `cfg(debug_assertions)`){% endif %}. Появится новая — держите её в той же форме, см. следующий пункт.
 - **Если развилка по профилю всё-таки понадобится** (реалистичный случай —
   release-транспорт defmt без пробника, см. следующий пункт), делать её через
   `#[cfg(debug_assertions)]` на `use ... as _;`, а не через Cargo-фичу. И
@@ -139,11 +142,9 @@ Host-тесты гоняются `cargo xtask test host` — то есть `carg
   «defmt-транспорт для `release` без пробника». Дефолт в обоих профилях
   (`crates-cross/app/src/panic.rs`) — `defmt-rtt`; при подключении паттерна не забыть сделать
   существующий `use defmt_rtt as _;` тоже `#[cfg(debug_assertions)]`.
-- `-Tdefmt.x` линкуется статически из `crates-cross/.cargo/config.toml` (`rustflags`,
-  рядом с `-Tlink.x`), не из `build.rs` — `defmt` используется в обоих профилях
-  безусловно, в отличие от прежней схемы с `log`-only `release`, где это
-  приходилось делать условно через `CARGO_FEATURE_DEFMT` в build-скрипте
-  каждого бинарного крейта.
+- `-Tdefmt.x` — в `rustflags` `crates-cross/.cargo/config.toml` рядом с
+  `-Tlink.x`, а не в `build.rs`: `defmt` включён в обоих профилях безусловно, и
+  подставлять скрипт линкера по условию незачем.
 - `panic-abort` не использовать — не собирается на stable (требует nightly
   `#![feature(core_intrinsics)]`, не обновлялся с 2019). `panic-halt` тоже не
   подключён: остановка получается и без него — `panic-probe` под debug у
@@ -174,7 +175,7 @@ Host-тесты гоняются `cargo xtask test host` — то есть `carg
 
 - Фейк, который нужен только тестам своего крейта, — `#[cfg(test)] mod fake`
   (подмодули и так видят его приватным; `pub(crate)` — если его берут модули
-  вне родителя, как `domain::server::fake`)
+  вне родителя{% if has_modbus == "true" %}, как `domain::server::fake`{% endif %})
 {%- assign sep = ": " %}
 {%- if ota == "true" %}{{ sep }}разделы обновления в памяти — `domain::ota::fake` (их делят `ota`,
   `ota::download` и `ota::update`){% assign sep = ", " %}{% endif %}
@@ -246,8 +247,10 @@ Host-тесты гоняются `cargo xtask test host` — то есть `carg
 ## Известные, осознанные ограничения (не баги)
 {%- if ota == "true" %}
 
-Bootloader (безусловный прыжок без проверки образа) — осознанный компромисс, описан в
-README, раздел «Bootloader»; не пытайтесь «исправить» без запроса пользователя.
+Bootloader прыгает в `ACTIVE`, не проверяя вектор сброса и SP образа (подпись
+нового образа перед обменом он проверяет — `docs/ota.md`), — осознанный
+компромисс, описан в README, раздел «Bootloader»; не пытайтесь «исправить» без
+запроса пользователя.
 
 Дополнительно — решения, у каждого из которых своя причина
 {%- else %}

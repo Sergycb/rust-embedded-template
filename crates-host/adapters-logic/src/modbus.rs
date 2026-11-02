@@ -1,5 +1,5 @@
-//! Транспорт Modbus {% if modbus_rtu == "true" %}— RTU поверх потока байтов{% elsif modbus_tcp == "true" %}— TCP поверх потока{% else %}— UDP поверх датаграмм{% endif %}.
-//! Для slave'а он — кадровый канал [`ports::FrameLink`] с кадром «адрес и PDU»:
+//! Транспорты Modbus:{% if modbus_rtu == "true" %} RTU поверх потока байтов{% endif %}{% if modbus_tcp == "true" %}{% if modbus_rtu == "true" %},{% endif %} TCP поверх потока{% endif %}{% if modbus_udp == "true" %}{% if modbus_rtu == "true" or modbus_tcp == "true" %},{% endif %} UDP поверх датаграмм{% endif %}.
+//! Для slave'а каждый — кадровый канал [`ports::FrameLink`] с кадром «адрес и PDU»:
 //! кадр разбирает обработчик `domain::modbus::Slave`, а обслуживает канал узел
 //! `domain::server`.
 // {%- if modbus_master == "true" %}
@@ -10,7 +10,7 @@
 //!   перед запросом: его реализуют `BufferedUart` и `RingBufferedUartRx` из
 //!   `embassy-stm32`.
 // {%- if has_usb == "true" %}
-//!   У `usb::CdcStream` его нет, и `Rtu<CdcStream>` master'ом не собирается.
+//!   У `adapters_hw::usb::CdcStream` его нет, и `Rtu<CdcStream>` master'ом не собирается.
 // {%- endif %}
 // {%- endif %}
 // {%- if modbus_tcp == "true" %}

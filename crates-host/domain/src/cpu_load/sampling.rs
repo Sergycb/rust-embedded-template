@@ -25,7 +25,7 @@ use super::load::Sample;
 /// сектора флеша при приёме образа блокирует исполнитель на секунды. Нижнюю
 /// границу — больше интервала — держит `const`-assert ниже. Второе звено, с
 /// другого конца, не здесь:
-/// `WATCHDOG + WATCHDOG_CHECK_EVERY < bsp::wdg::HW_TIMEOUT_US`
+/// `WATCHDOG + WATCHDOG_CHECK_EVERY < bsp::wdg::HW_TIMEOUT_MIN_US`
 /// (`docs/watchdog.md`) — его держит `const`-assert в `app/src/graph.rs`, где
 /// видны оба конца.
 pub const WATCHDOG: Duration = Duration::from_secs(7);
@@ -34,8 +34,8 @@ pub const WATCHDOG: Duration = Duration::from_secs(7);
 /// Как часто снимаются счётчики.
 ///
 // {%- if graph == "true" %}
-/// Заодно период отметок у сторожа узла: замерение дольше, чем отметка, и
-/// узел выглядел бы зависшим. Второе следствие — разрешение самой оценки:
+/// Заодно это период отметок у сторожа узла: отметка ставится на каждом
+/// замере. Второе следствие — разрешение самой оценки:
 // {%- else %}
 /// Отсюда и разрешение самой оценки:
 // {%- endif %}
@@ -55,7 +55,7 @@ const _: () = assert!(
 /// Счётчик тиков, проведённых исполнителем во сне.
 ///
 /// Тик — это тик `embassy-time` (его `Instant::as_ticks`), а не цикл CPU:
-/// на стендовом стенде разные частоты дают разные числа при одной и той же
+/// на стенде разные частоты дают разные числа при одной и той же
 /// загрузке, и это не расходится, это разные единицы.
 ///
 /// 32 бита, а не 64: 64-битных атомиков у Cortex-M нет, и `AtomicU64` там —
@@ -67,7 +67,7 @@ const _: () = assert!(
 ///
 /// Не [`core::sync::atomic::AtomicU32`] потому, что на Cortex-M0/M0+ у него
 /// нет `fetch_add` (нет CAS), а [`portable_atomic`] — ровно про это (см.
-/// `docs/conventions.md`).
+/// `docs/modules/app-cpu-load.md`, «Почему `portable_atomic::AtomicU32`»).
 pub type SleepTicks = AtomicU32;
 
 // {%- if graph != "true" %}

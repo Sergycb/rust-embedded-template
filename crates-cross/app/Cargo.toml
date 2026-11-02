@@ -26,14 +26,14 @@ name = "app"
 harness = false
 {%- if ota == "true" %}
 
-# Тестовый образ `cargo xtask test host-target`: та же библиотека пакета, свой
+# Тестовый образ{% if has_protobuf == "true" %} `cargo xtask test host-target`{% endif %}: та же библиотека пакета, свой
 # запуск и свои свойства образа (`src/bin/app-unconfirmed.rs`) — версия на
 # единицу больше, себя не подтверждает, и следующий сброс его откатывает
 # (docs/ota.md, «Тесты OTA по протоколу»). Отдельным бинарником: у ELF своё
 # имя, и рабочий `app` (`app.bin` из `cargo xtask build`, `cargo flash -p app
 # --bin app`) с ним не спутать. Голый `cargo build` собирает оба; `cargo xtask
-# build` и прошивка — только `--bin app`, `cargo xtask test host-target` —
-# `--bin app-unconfirmed`, `cargo xtask lint cross` линтует оба.
+# build` и прошивка — только `--bin app`{% if has_protobuf == "true" %}, `cargo xtask test host-target` —
+# `--bin app-unconfirmed`{% endif %}, `cargo xtask lint cross` линтует оба.
 [[bin]]
 name = "app-unconfirmed"
 path = "src/bin/app-unconfirmed.rs"
@@ -82,7 +82,7 @@ embassy-net = { workspace = true }
 shadow-rs = { workspace = true }
 {%- if graph == "true" %}
 # Граф задач в graph.rs — настоящий код, а не пример: compose-site фрагментов
-# из `domain`, блок `watchdog:`, `spawn_all` в `main` бинарника.
+# из `domain`, блок `watchdog:`, `spawn_all` в задаче `start` бинарника.
 #
 # И единственная зависимость графа — это обещание самого `supervisor`
 # (`supervisor-sole-dep-fixture` в rust-lib): всё, что compose-site называет
@@ -90,15 +90,19 @@ shadow-rs = { workspace = true }
 # (`observe:`), `HardwareWatchdog` — он реэкспортирует публичными путями.
 # Реализация трейта над IWDG живёт в `bsp` (bsp/src/wdg.rs), и там `watchdog`
 # стоит прямой зависимостью; граф получает оттуда готовый тип.
+{%- elsif ota == "true" %}
+# `supervisor::Readiness` в контексте узла OTA (src/tasks/ota.rs).
 {%- else %}
-# Типы контекста задач `domain` (`Readiness`) — из `supervisor`.
+# Код `app` в этой конфигурации `supervisor` не называет: зависимость лишь
+# включает фичи из `[workspace.dependencies]` (crates-cross/Cargo.toml) тому же
+# крейту, что у `domain`.
 {%- endif %}
 supervisor = { workspace = true }
 #
 # `embassy-stm32` здесь нет и быть не должно: про чип знает `bsp`, а
 # приложение — только про объекты, которые тот отдаёт. Драйвер времени
 # (`time-driver-any`) включает фича `bsp/time-driver` — см. `bsp/Cargo.toml`,
-# почему она не в воркспейсе и не безусловная.
+# почему она не в воркспейсе{% if ota == "true" %} и не безусловная{% endif %}.
 
 {%- if ota == "true" and graph != "true" %}
 # Входы команд узла OTA (`tasks::ota::CMD` и `ASK`): модуль задачи объявляет

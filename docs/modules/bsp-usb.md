@@ -5,8 +5,8 @@ USB платы — драйвер USB-блока и устройство `embass
 здесь же, в `bsp`: классы регистрируются до постройки устройства, и порознь
 устройство и поток не собрать.
 
-Шаблон выводы не выбирает (`docs/architecture.md`), поэтому `UsbDriver` пока —
-заглушка `bsp::stub::UsbDriver`: шина никогда не просыпается, хост устройство не
+Шаблон выводы не выбирает (`docs/architecture.md`), поэтому драйвер подмодуля
+(`type Driver`) пока — заглушка `bsp::stub::UsbDriver`: шина никогда не просыпается, хост устройство не
 видит. Всё остальное настоящее: устройство `embassy-usb` с классом CDC, его
 фоновая работа в узле `USB_<транспорт>` (`domain::usb`) и поток
 `adapters_hw::usb::CdcStream` под протоколом или вашим узлом. Проект собирается и
@@ -19,54 +19,69 @@ USB платы — драйвер USB-блока и устройство `embass
 `board.<транспорт>.cdc` — каналу протокола или вашему узлу).
 
 ## Как подставить свой USB
+{%- assign xs = links | split: "," %}
+{%- assign usb_block = "" %}
+{%- assign usb_tag = "" %}
+{%- for l in xs %}
+{%- assign f = l | split: ":" %}
+{%- if f[0] == "usb" %}
+{%- if usb_block == "" %}
+{%- assign usb_block = f[2] %}
+{%- assign usb_tag = f[1] %}
+{%- endif %}
+{%- endif %}
+{%- endfor %}
 
-1. Выводы и прерывание — из справочника по чипу (блок транспорта, например
-   `{{iface_periph}}`):
+Ниже — на примере первого USB-транспорта (`{{ usb_block }}`); у остальных то же
+со своим блоком.
+
+1. Выводы и прерывание — из справочника по чипу:
 
    ```text
-   cargo xtask pins {{iface_periph}} --snippet
+   cargo xtask pins {{ usb_block }} --snippet
    ```
-{%- if usb_kind == "otg" and iface_periph != "USB_OTG_FS" %}
+{%- if usb_tag == "otg" and usb_block != "USB_OTG_FS" %}
 
-   У этого чипа выведен только `{{iface_periph}}` (так бывает у H723, H730,
-   H7A3): ниже `USB_OTG_FS` читайте как `{{iface_periph}}`, а `Driver::new_fs` — как
-   конструктор для этого блока.
+   У этого чипа выведен только `{{ usb_block }}` (так бывает у H723, H730,
+   H7A3); `Driver::new_fs` включает и у него внутренний FS PHY.
 {%- endif %}
 
    Он печатает `bind_interrupts!` и группу `assign_resources!` с выводами
-   `DP`/`DM`. USB тактируется частотой 48 мегагерц (`HSI48` или PLL): без неё хост
+   `DP`/`DM`. Выводы добавьте в группу транспорта в `resources.rs`, а
+   `bind_interrupts!` положите в подмодуль транспорта, а не в `board.rs`, как
+   советует распечатка: `Irqs` берёт его `new`. USB тактируется частотой
+   48 мегагерц (`HSI48` или PLL): без неё хост
    устройство не увидит. На H7 мультиплексор `usbsel` по сбросу выключен —
    рецепт с `HSI48` и CRS в `docs/clocks.md`, «H7: ядра периферии и USB».
 
-2. В подмодуле транспорта — псевдоним на драйвер `embassy-stm32` и сборка
-   вместо заглушки:
+2. В подмодуле транспорта замените псевдоним `Driver` драйвером `embassy-stm32`,
+   а `Driver::default()` в `new` — его сборкой:
 
    ```rust,ignore
-   use embassy_stm32::usb::Driver;
-   use embassy_stm32::peripherals::{{iface_periph}};
+   // Вместо `type Driver = crate::stub::UsbDriver;`:
+   type Driver = embassy_stm32::usb::Driver<'static, embassy_stm32::peripherals::{{ usb_block }}>;
 
-   pub type UsbDriver = Driver<'static, {{iface_periph}}>;
+{%- if usb_tag == "otg" %}
 
-{%- if usb_kind == "otg" %}
    // Рядом, статиком модуля: буфер приёма драйвера — память блока, а не класса.
    // Обычный static, не `.dma_nc`: драйвер OTG читает FIFO процессором, DMA
    // не использует, и кэш данных ему не помеха.
    static EP_OUT: ConstStaticCell<[u8; 256]> = ConstStaticCell::new([0; 256]);
 
-   // В `new`, вместо `UsbDriver::default()`:
+   // В `new` (параметр `_resources` переименуйте в `r`), вместо `Driver::default()`:
    let mut otg = embassy_stm32::usb::Config::default();
    otg.vbus_detection = false; // VBUS не разведён — иначе true
    Driver::new_fs(r.usb, Irqs, r.dp, r.dm, EP_OUT.take(), otg)
 {%- else %}
 
-   // В `new`, вместо `UsbDriver::default()`:
+   // В `new` (параметр `_resources` переименуйте в `r`), вместо `Driver::default()`:
    Driver::new(r.usb, Irqs, r.dp, r.dm)
 {%- endif %}
    ```
 
    `new` получает группу ресурсов транспорта из `resources.rs`: `Board::new` уже
-   зовёт `crate::usb::<транспорт>::new(r.<транспорт>)` (`docs/resources.md`);
-   выводы добавляются в группу.
+   зовёт `crate::usb::<транспорт>::new(r.<транспорт>)` (`docs/resources.md`).
+   `Device`, `Cdc` и `Usb` построены на `Driver` и правок не требуют.
 
 ## Идентификаторы
 

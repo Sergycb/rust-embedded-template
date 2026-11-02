@@ -64,7 +64,7 @@ fn usage() {
     //{{newline}}    println!("      cargo xtask build                      # debug + release, размер");
     // {%- endif %}
     println!("      cargo xtask lint [cross]");
-    println!("      cargo xtask test [host|target|host-target|all]");
+    println!("      cargo xtask test <host|target|host-target|all>");
     println!("      cargo xtask pins [БЛОК|ПИН]            # справочник по чипу: SPI1, PA9");
     println!(
         "      cargo xtask pins БЛОК --snippet        # заготовка bind_interrupts!/assign_resources!"

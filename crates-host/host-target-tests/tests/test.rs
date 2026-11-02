@@ -37,8 +37,8 @@ use host_target_tests::Device;
 // {%- if ota == "true" %}
 use host_target_tests::{Info, slow_timeout};
 
-/// Как называет себя тестовый образ `app-unconfirmed` вместо версии
-/// (`UNCONFIRMED_TEXT` в `crates-cross/app/src/version.rs`).
+/// Как называет себя тестовый образ `app-unconfirmed` вместо версии — `text`
+/// его `IMAGE` (`crates-cross/app/src/bin/app-unconfirmed.rs`).
 const UNCONFIRMED: &str = "unconfirmed";
 
 /// Подпись, которой заведомо нет: устройство подпись не проверяет (только
@@ -258,8 +258,9 @@ fn pack(version: &str) -> Option<u32> {
 }
 // {%- endif %}
 
-/// Версия без пререлизного суффикса: прошивка сравнивает и называет
-/// `major.minor.patch` (README, «Защита от отката»).
+/// Версия без пререлизного суффикса: устройство называет версию целиком, а
+/// `HOST_TARGET_EXPECT_VERSION` — `major.minor.patch` версии, свёрнутой в
+/// образ{% if ota == "true" %} (README, «Защита от отката»){% endif %}.
 fn release(version: &str) -> &str {
     version.split(['-', '+']).next().unwrap_or(version)
 }

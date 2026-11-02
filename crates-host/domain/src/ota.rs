@@ -80,7 +80,7 @@ mod updater;
 // путём называют фрагмент и compose-site (`app`).
 pub use command::{Command as OtaCommand, Reply as OtaReply};
 
-// Подмодули — по теме; путь `domain::ota::…` у их типов прежний.
+// Подмодули — по теме; их типы видны как `domain::ota::…`.
 pub use client::{CMD_BYTES, ClientId, NodeLost, OtaClient, OtaRequest, cmd_parked};
 pub use timing::{REBOOT_GRACE, SESSION_TIMEOUT};
 pub use updater::{FlashError, Updater};
@@ -124,9 +124,10 @@ type Signature = [u8; SIGNATURE_BYTES];
 // {%- endif %}
 // `CONFIRMED` — подтверждён ли уже образ в этом запуске (см. действие
 // `begin`). Начальное значение даёт приложение — свойства образа, которые
-// объявляет его бинарник (`crates-cross/app/src/version.rs`): у рабочего
-// образа `false`, у тестового `app-unconfirmed` (`cargo xtask test
-// host-target`) — `true`, и он себя не подтверждает — следующий сброс
+// объявляет его бинарник (константа `IMAGE` типа `app::version::Image` в
+// `crates-cross/app/src/main.rs` и `src/bin/app-unconfirmed.rs`): у рабочего
+// образа `false`, у тестового `app-unconfirmed`{% if has_protobuf == "true" %} (`cargo xtask test
+// host-target`){% endif %} — `true`, и он себя не подтверждает — следующий сброс
 // откатывает его.
 //
 // `request: [CMD: …]` — вход команд: запрос с ответом (`sync-request`), а не
@@ -273,11 +274,9 @@ where
     /// туда; тогда откат застрахует и от образа, который стартует, но не
     /// работает.
     ///
-    /// Ошибка — не повод ронять узел: устройство работает, просто следующий
-    /// сброс вернёт прежний образ. Знать об этом важнее, чем упасть.
-    ///
-    /// Не удалось — флаг не ставится, и узел пробует ещё раз на следующем
-    /// `Start`.
+    /// Ошибка — не повод ронять узел: флаг не ставится, узел пробует ещё раз
+    /// на следующем `Start`, а следующий сброс без подтверждения вернёт
+    /// прежний образ.
     ///
     /// Готовность (`ready`) — после подтверждения, удачного или нет.
     /// Первая загрузка нового или откаченного образа стирает здесь `STATE`,
@@ -781,7 +780,8 @@ mod fake {
 #[cfg(test)]
 pub(crate) mod tests {
     //! Host-тесты узла `OTA` на фейках портов: сценарии команд через входы
-    //! `CMD`/`ASK` и стенды узла для тестов протоколов (`live`, `serving`).
+    //! `CMD`/`ASK` и стенды узла для тестов протоколов (`live`, `cmd`,
+    //! `serving`).
 
     use core::pin::{Pin, pin};
     use core::task::{Context, Poll, Waker};
@@ -1165,7 +1165,10 @@ pub(crate) mod tests {
 
     /// Тестовый образ `app-unconfirmed` приходит с `confirmed = true` во
     /// входе: себя не подтверждает ни при старте, ни на `Start`, и следующий
-    /// сброс его откатывает — на этом стоит тест отката `host-target`.
+    /// сброс его откатывает.
+    // {%- if has_protobuf == "true" %}
+    /// На этом стоит тест отката `host-target`.
+    // {%- endif %}
     #[test]
     fn an_image_started_confirmed_never_confirms_itself() {
         let mut confirmed = true;
@@ -1310,11 +1313,7 @@ pub(crate) mod tests {
             "повтор получил тот же исход"
         );
         assert!(flash.swap_requested(), "обмен помечен");
-        assert_eq!(
-            flash.magics_swap(),
-            1,
-            "обмен помечен одним Finish, запись для bootloader'а — одна"
-        );
+        assert_eq!(flash.magics_swap(), 1, "обмен помечен одним Finish");
     }
 
     /// Чужой `Finish` после `Ready` — `NoSession`: приёма у него не было.
@@ -1837,7 +1836,7 @@ pub(crate) mod tests {
         /// Какие бы команды ни пришли и в каком бы порядке — от двух клиентов, с
         /// перерывами дольше срока сессии, — узел не падает, отвечает на каждую
         /// ровно одним исходом и помечает обмен ровно тогда, когда ответил
-        /// `Ready`, — один раз, сколько бы владелец ни повторял `Finish`.
+        /// `Ready`.
         /// Сценарии выше проверяют по одной истории, здесь их тысячи.
         #[test]
         fn any_command_sequence_gets_one_reply_each_and_swaps_only_on_ready(

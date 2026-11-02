@@ -9,7 +9,8 @@
 // обработчик `HardFault`, счётчик сна{% if ota == "true" %}, свойства образа{% endif %}. Запуск — у каждого
 // бинарника свой: `#[entry]` рабочего `app` (`src/main.rs`){% if ota == "true" %} и тестового
 // `app-unconfirmed` (`src/bin/app-unconfirmed.rs`){% endif %}. Паникёр, логгер и обработчики
-// фолтов живут здесь и попадают в бинарник ровно по разу — docs/modules/app.md.
+// фолтов живут здесь и попадают в бинарник ровно по разу — docs/diagnostics.md,
+// «Два паникёра, один на сборку»{% if ota == "true" %}; docs/modules/app.md{% endif %}.
 pub mod cpu_load;
 {%- if has_protobuf == "true" or net_services != "" %}
 pub mod device;

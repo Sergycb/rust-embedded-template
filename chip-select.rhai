@@ -1,15 +1,18 @@
 // pre-хук: каскадный посимвольный выбор STM32 (семейство -> линейка -> дальше
-// по символу), подставляет chip_feature/chip/cpu/target/dual_core/bank_mode,
-// write_size/ota и оба memory.x (см. MEMORY_LAYOUT ниже). Не init-хук — init
-// выполняется ДО того, как cargo-generate резолвит `--define` в liquid-объект,
+// по символу), подставляет chip_feature/chip/cpu/target и производные
+// переменные Liquid (`variable::set`), задаёт вопросы про OTA, настройки, граф
+// и транспорты, пишет memory.x приложения, target-tests и boot (см.
+// MEMORY_LAYOUT ниже) и удаляет файлы, не нужные ответам (`file::delete`).
+// Не init-хук — init выполняется ДО того, как cargo-generate резолвит
+// `--define` в liquid-объект,
 // поэтому `variable::is_set("chip_feature")` ниже не увидел бы значение с CLI
 // (проверено эмпирически).
 //
 // Таблицы чипов лежат в chip-data/ (подключаются `import` ниже) и перегенерируются:
 //   cargo run --manifest-path chip-data-gen/Cargo.toml
-// при обновлении версии embassy-stm32 в crates-cross/Cargo.toml (сейчас "0.6.0",
-// обычный semver-пин на crates.io, а не git-зависимость) или локально
-// установленной версии probe-rs-tools.
+// при обновлении embassy-stm32 в crates-cross/Cargo.toml (штамп версий —
+// шапка chip-data/chips.rhai), stm32-metapac или локально установленной версии
+// probe-rs-tools — MAINTAINING.md, «Когда перегенерировать данные».
 
 fn family_table() {
     // Ключи отсортированы по убыванию длины — важно для семейств с общим
@@ -192,8 +195,8 @@ const SSH_MIN_PARTITION = 262144;
 ///
 /// Порог стоит между двумя реальными группами чипов: у 160 из них под
 /// приложение выходит 16256 байт и меньше, а следующий по величине раздел —
-/// сразу 40 KiB. Любое значение внутри этого промежутка отсекает ровно
-/// неработающие конфигурации, поэтому взято круглое.
+/// уже 36 KiB (STM32WB35CC/WB55xC). Любое значение внутри этого промежутка
+/// отсекает ровно неработающие конфигурации, поэтому взято круглое.
 const OTA_MIN_ACTIVE = 24576;
 
 /// Меньше этого объёма EEPROM под настройки не годится: `sequential-storage`
@@ -204,7 +207,9 @@ const EEPROM_MIN = 256;
 
 /// Раздел настроек на внешней флеши без OTA на ней: два блока по 64 KiB
 /// (самое крупное стирание NOR) — столько же, сколько chip-data-gen кладёт
-/// за `DFU` (`config_length`), чтобы проект не зависел от того, с OTA он или нет.
+/// за `DFU` (`ext_config_length`) у чипов с сектором до 64 KiB, чтобы проект
+/// не зависел от того, с OTA он или нет. У сектора крупнее (F2/F4/F7/H7) за
+/// `DFU` выходит два сектора чипа — 256 или 512 KiB.
 const EXT_CONFIG_LENGTH = 131072;
 
 /// Размер из таблицы раскладки в байтах: `"128K"`, `"1M"`, `"5376"`.
@@ -286,7 +291,7 @@ fn plan(m, erase_zero, wants, limits) {
     // без OTA (весь flash или он без раздела настроек в хвосте), `ota_key` —
     // раскладка с OTA. Внутренняя OTA — те же наборы (`` или `config_`),
     // внешняя — свой (`ext_`). Внутреннего раздела настроек при внешней OTA не
-    // бывает: `ext_flash=yes` уводит на внешнюю флешь и настройки
+    // бывает: `ext_flash=yes` уводит на внешнюю флеш и настройки
     // (`wants.external`), и `in_flash` тогда ложно.
     let key = if in_flash { "config_" } else { "" };
     let ext_key = "ext_";
@@ -723,7 +728,7 @@ const PACKAGE_CHOICES = packages_data::PACKAGE_CHOICES;
 import "chip-data/bank_mode" as bank_mode_data;
 const BANK_MODE = bank_mode_data::BANK_MODE;
 
-// Чипы, у которых раскладка одобанковая, а с завода флеш двухбанковый (G0B/G0C,
+// Чипы, у которых раскладка однобанковая, а с завода флеш двухбанковый (G0B/G0C,
 // G4 cat3, L4+, L5): режим переключает сама прошивка (crates-cross/bsp/src/banks.rs,
 // docs/flash.md). Значение — вариант регистров option bytes.
 import "chip-data/bank_switch" as bank_switch_data;
@@ -801,8 +806,9 @@ if variable::is_set("ext_flash") {
 // перезаписывается уже вычисленной строкой `"true"`/`"false"`: на неё смотрят
 // Liquid-условия в шаблоне.
 //
-// «Да» здесь означает лишь «не возражаю»: помещается ли схема в flash, решает
-// раскладка ниже. А вот «нет» — окончательное, и проверять нечего. Где лежат
+// Оба ответа окончательные: «нет» — проверять нечего, а не поместившееся «да»
+// не превращается в «нет» — bootloader остаётся, раскладку памяти заполняет
+// человек, как при `--define write_size=...` (см. `WANTS_FINAL` ниже). Где лежат
 // `DFU` и `STATE` (`ota_store`), решает `ext_flash`.
 //
 // Незнакомый ответ (опечатка в `--define`) — ошибка, а не «без OTA»: молча
@@ -825,14 +831,17 @@ if !wants_ota {
 }
 
 // Раздел под настройки — вопрос того же рода, что и про OTA, и с той же
-// механикой ответа (`--define config=yes|no`). «Да» здесь тоже означает «не
-// возражаю»: хватит ли под него места, решает раскладка ниже.
+// механикой ответа (`--define config=yes|no`). Не поместившееся «да» тоже
+// уводит раскладку памяти человеку (`WANTS_FINAL` ниже), но раздела во flash
+// тогда нет: `config` = false, и хук печатает, что `CONFIG` вписывается в
+// memory.x вручную (ветка `write_size` ниже).
 //
 // Во flash чипа он стоит дороже, чем кажется: две страницы стирания. С OTA
 // chip-data-gen кладёт их в мелкие сектора перед ACTIVE, где это выгоднее (на
 // F4 — 2×16 KiB), но без OTA это две последние страницы flash по максимальному
-// сектору чипа: на F4/F7/H7 — 256 KiB. Поэтому по умолчанию «нет», а цена
-// печатается ниже — до того, как пользователь увидит собранный проект.
+// сектору чипа: до 256 KiB на F4/H7, до 512 KiB на F74x–F77x. Поэтому по
+// умолчанию «нет», а цена печатается ниже — до того, как пользователь увидит
+// собранный проект.
 //
 // Где лежат настройки (`config_store`, на него смотрят bsp::flash и bsp::external):
 //   "flash"    — раздел во внутреннем флеше (как описано выше);
@@ -854,8 +863,9 @@ if variable::is_set("config") {
 }
 let wants_external = wants_config && wants_ext;
 
-// Граф задач. «Да» и здесь означает «не возражаю»: помещается ли он, решает
-// размер раздела, в который линкуется приложение (см. GRAPH_MIN_PARTITION).
+// Граф задач. Без ответа он есть, если помещается: решает размер раздела, в
+// который линкуется приложение (см. GRAPH_MIN_PARTITION). Не поместившийся
+// `--define graph=yes` — ошибка (ниже); в ручной раскладке граф не отсекается.
 let wants_graph = true;
 if variable::is_set("graph") {
     wants_graph = yes_no_define("graph");
@@ -1251,7 +1261,7 @@ variable::set("dual_core", if dual_core { "true" } else { "false" });
 // --define, как и dual_core: значение целиком выводится из chip_feature.
 variable::set("bank_mode", if BANK_MODE.contains(suffix) { BANK_MODE[suffix] } else { "" });
 
-// Переключение в одобанковый режим (см. BANK_SWITCH выше): вариант регистров или пустая
+// Переключение в однобанковый режим (см. BANK_SWITCH выше): вариант регистров или пустая
 // строка. Без переопределения через --define, как и bank_mode.
 // Значение таблицы — «вариант:бит» (`g4:22`): бит FLASH_OPTR двухбанкового режима у L4+ и
 // L5 зависит от объёма (см. `bank_switch_bits` в chip-data-gen).
@@ -1452,7 +1462,9 @@ if !variable::is_set("ota") {
     wants_ota = answer == "yes";
     wants_ext_ota = wants_ota && wants_ext;
     if !wants_ota {
-        print("OTA отключён по вашему выбору: один образ на весь flash, crates-cross/boot в проект не входит");
+        // Не поместившаяся схема без терминала — «нет» по умолчанию, а не выбор человека.
+        print((if fits { "OTA отключён по вашему выбору" } else { "OTA отключён: на " + chip_name + " схема не помещается" })
+            + ": один образ на весь flash, crates-cross/boot в проект не входит");
     }
 }
 
@@ -1868,7 +1880,7 @@ if !variable::is_set("write_size") && ((wants_ota && !plan_final.ota) || (wants_
 // ниже (см. `config_store()` выше).
 let store = config_store(MEMORY_LAYOUT[suffix], wants_config, wants_external, EEPROM_MIN);
 
-// write_size, оба memory.x и признак ota — вместе, одним источником: если
+// write_size, memory.x и признак ota — вместе, одним источником: если
 // пользователь уже задал write_size вручную через `--define`, авточипу
 // доверять нельзя (адреса в memory.x привязаны именно к вычисленному
 // write_size), оставляем всё как есть — ручное заполнение, как раньше.
@@ -1908,7 +1920,7 @@ variable::set("boot_partitioned", "false");
 if variable::is_set("write_size") {
     variable::set("ota", if wants_ota { "true" } else { "false" });
     variable::set("ota_store", if wants_ext_ota { "external" } else { "internal" });
-    // Разкладку здесь пишет человек: DFU через регион банка 2 включает он сам.
+    // Раскладку здесь пишет человек: DFU через регион банка 2 включает он сам.
     variable::set("dfu_bank", "false");
     if !wants_ota {
         file::delete("crates-cross/boot");
@@ -2018,7 +2030,7 @@ if variable::is_set("write_size") {
     // Сюда доходит только то, что поместилось: выбранные OTA, настройки и
     // граф здесь все получились (невместившиеся OTA и настройки ушли в ручную
     // раскладку выше вместе с причиной, граф снят ещё в меню).
-    // Подсказка про внешнюю флешь: `ACTIVE` с ней заметно (в полтора раза и
+    // Подсказка про внешнюю флеш: `ACTIVE` с ней заметно (в полтора раза и
     // больше) крупнее.
     if wants_ota && !wants_ext_ota && ext_fits
         && size_in_bytes(m[ext_key + "active_length"]) * 2 >= size_in_bytes(m[ota_key + "active_length"]) * 3
@@ -2055,7 +2067,7 @@ if variable::is_set("write_size") {
     variable::set("swap_paged", if swap_paged { "true" } else { "false" });
     // Сектор, в котором лежит `BOOTLOADER_STATE`: на F2/F4/F7 он мельче
     // страницы обмена, и раздел над цельным `Flash` не строился бы вовсе (см.
-    // `compute_ota_partitions` в chip-data-gen). Без OTA его нет, как и
+    // `compute_ota_at` в chip-data-gen, пятая проверка). Без OTA его нет, как и
     // файлов, которые его читают; с внешней — его страницу несёт драйвер.
     if ota && !ext_ota {
         variable::set("state_erase_size", m[ota_key + "bootloader_state_erase_size"]);
@@ -2246,8 +2258,8 @@ if variable::is_set("write_size") {
     let app_symbols = layout_symbols + ext_layout + dma_symbols;
 
     if ext_ota {
-        // Внутри — только ACTIVE (и, если так решено, раздел настроек);
-        // `STATE` и `DFU` — на внешней флеши. Их символы — смещения от начала
+        // Внутри — только ACTIVE; `STATE`, `DFU` и настройки, если они есть, —
+        // на внешней флеши. Их символы — смещения от начала
         // ВНЕШНЕЙ флеши: embassy-boot читает их как смещения в том `NorFlash`,
         // над которым строит раздел, а там стоит драйвер микросхемы. Регионов
         // в `MEMORY` у них нет: в адресном пространстве МК внешней флеши нет.
@@ -2362,8 +2374,8 @@ if variable::is_set("write_size") {
         ];
 
         // app линкуется В ACTIVE. Раньше оба крейта получали одинаковый
-        // memory.x с FLASH от базы — и `cargo xtask flash` (сначала boot,
-        // потом app) затирал bootloader образом приложения.
+        // memory.x с FLASH от базы — и прошивка (сначала boot, потом app)
+        // затирала bootloader образом приложения.
         let app = [
             "/* Сгенерировано chip-select.rhai: приложение линкуется в ACTIVE, */",
             "/* с базы flash стартует bootloader (crates-cross/boot). */",
@@ -2606,8 +2618,9 @@ variable::set("net_sockets", net_sockets.to_string());
 let http_connections = if services.contains("rest") { 2 } else { 0 };
 variable::set("http_connections", http_connections.to_string());
 
-// Кадровый канал (`ports::FrameLink`, `LinkError`) нужен протоколам
-// узла `domain::server` (protobuf и Modbus slave), шине CAN (ошибка `CanBus`) и
+// Кадровый канал (`ports::FrameLink`, `LinkError`) нужен протоколам — Modbus
+// slave (узел `domain::server`) и protobuf (узел `domain::protobuf`, канал
+// `FrameDuplex` поверх `FrameLink`), — шине CAN (ошибка `CanBus`) и
 // UDP-каналу (`adapters_logic::net::UdpLink` реализует `FrameLink`) — с протоколом и без него.
 variable::set("link_port", if on.protobuf || on.modbus || has.can || has.udp { "true" } else { "false" });
 // Хранилище настроек (`domain::settings`) нужно, пока есть что в него класть:
@@ -2657,7 +2670,7 @@ let master = on.modbus && wants_master;
 variable::set("modbus_master", if master { "true" } else { "false" });
 // Файл master'а — только там, где он выбран; `pub mod master;`, порт и
 // клиентские impl'ы вырезает Liquid в комментариях. Без modbus каталог
-// `domain/src/modbus` уже удалён ниже целиком, второй раз его не трогаем.
+// `domain/src/modbus` удаляется ниже целиком, здесь его не трогаем.
 if on.modbus && !master {
     file::delete("crates-host/domain/src/modbus/master.rs");
 }
@@ -2672,11 +2685,8 @@ if !has.can {
     file::delete("crates-cross/bsp/src/can.rs");
     file::delete("docs/modules/bsp-can.md");
 }
-// Крейты протоколов — только в проекте, где протокол выбран: без них нет ни
-// схемы protobuf (и её генерации в `build.rs`), ни словаря CANopen. Ссылки на
-// них в корневом `Cargo.toml`, `domain/Cargo.toml` и исходниках `domain`
-// вырезает Liquid в комментариях вокруг них.
-// Стек протокола целиком — порт, адаптер, узел, крейт примера — только в
+// Стек протокола целиком — порт, адаптер, узел и крейт (`proto` — схема
+// protobuf с генерацией в `build.rs`, `canopen` — словарь объектов) — только в
 // проекте, где он выбран: «modbus поверх uart» не тянет ни protobuf, ни CAN,
 // а проект без протокола — ничего из них. Ссылки на удалённое (`mod`,
 // `pub use`, зависимости, фичи) вырезает Liquid в комментариях.
@@ -2760,8 +2770,8 @@ if variable::get("ota") != "true" {
     // Точка входа тестового образа `app-unconfirmed`: без OTA его нет, а
     // оставленный файл в `src/bin/` cargo сам нашёл бы вторым бинарником.
     file::delete("crates-cross/app/src/bin");
-    // Перевод команд OTA у протокола: каталог протокола есть, только если он
-    // выбран, — чужой хук уже удалил выше.
+    // Перевод команд OTA у протокола: каталог невыбранного протокола уже
+    // удалён выше, поэтому — только у выбранного.
     if on.modbus {
         file::delete("crates-host/domain/src/modbus/ota.rs");
     }
@@ -2772,8 +2782,8 @@ if variable::get("ota") != "true" {
 if variable::get("settings_port") != "true" {
     file::delete("crates-host/domain/src/settings.rs");
 }
-// Мост blocking → async и заглушка внешней флеши — только когда ими кто-то
-// пользуется: обёртка страницы (`erase_page`) или внешняя флеш.
+// Крейт `flash-page` (`ErasePage`, `erase_size`) — только когда он кому-то
+// нужен (`flash_page` выше).
 if variable::get("flash_page") != "true" {
     file::delete("crates-host/flash-page");
 }

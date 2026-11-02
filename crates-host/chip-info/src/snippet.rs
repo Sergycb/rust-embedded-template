@@ -272,7 +272,7 @@ pub(crate) fn print_snippet(name: &str) -> Result<(), anyhow::Error> {
                 .join(", "),
         ),
         Some(row) => {
-            println!("// crates-cross/bsp/src/board.rs — рядом с созданием объектов платы");
+            println!("// в модуль crates-cross/bsp/src, где строится объект блока (Irqs — в new)");
             // Импорты печатаются вместе с макросом, а не подразумеваются:
             // заготовку вставляют как есть, и без них она не собирается.
             // `peripherals` нужен не всегда — у `eth` обработчик без

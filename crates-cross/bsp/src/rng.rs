@@ -36,7 +36,7 @@ type Rng = rng::Rng<'static, RNG>;
 static GENERATOR: Mutex<CriticalSectionRawMutex, RefCell<Option<Rng>>> =
     Mutex::new(RefCell::new(None));
 
-/// Затравка сетевого стека — первое слово генератора; сам генератор остаётся
+/// Затравка сетевого стека — 64 бита (два слова) генератора; сам генератор остаётся
 /// бэкендом `getrandom` — случайность для SSH. Зовёт `Board::new`, один раз.
 pub(crate) fn seed(resources: crate::resources::RngResources) -> u64 {
     let mut rng = Rng::new(resources.rng, Irqs);
@@ -77,7 +77,7 @@ unsafe extern "Rust" fn __getrandom_v03_custom(
 }
 {%- else %}
 
-/// Затравка сетевого стека — первое слово генератора. Блок выключается, когда
+/// Затравка сетевого стека — 64 бита (два слова) генератора. Блок выключается, когда
 /// генератор дропается на выходе: больше он прошивке не нужен (бэкенд
 /// `getrandom` над ним заводит служба `ssh`).
 pub(crate) fn seed(resources: crate::resources::RngResources) -> u64 {

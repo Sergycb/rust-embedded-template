@@ -6,21 +6,37 @@ CANopen{% else %}вашим протоколом{% endif %}.
 запускается, {% if has_canopen == "true" %}узел CANopen{% else %}приём{% endif %} ждёт кадров вечно, а отправка уходит в никуда.
 
 ## Как подставить свой CAN
+{%- assign xs = links | split: "," %}
+{%- assign can_block = "" %}
+{%- assign can_tag = "" %}
+{%- for l in xs %}
+{%- assign f = l | split: ":" %}
+{%- if f[0] == "can" %}
+{%- if can_block == "" %}
+{%- assign can_block = f[2] %}
+{%- assign can_tag = f[1] %}
+{%- endif %}
+{%- endif %}
+{%- endfor %}
+
+Ниже — на примере первого CAN-транспорта (`{{ can_block }}`); у остальных то же
+со своим блоком.
 
 1. Блоки для своего контроллера — из справочника по чипу:
 
    ```text
-   cargo xtask pins {{iface_periph}} --snippet
+   cargo xtask pins {{ can_block }} --snippet
    ```
 
    Он печатает `bind_interrupts!` и группу `assign_resources!` со свободными
    выводами RX/TX; выберите те, что разведены на плате к трансиверу, и
    добавьте их в готовую группу транспорта в `resources.rs` (`<транспорт>` —
    имя блока строчными; `Board::new` берёт её как `r.<транспорт>`) — блок в
-   ней уже есть.
+   ней уже есть. `bind_interrupts!` положите в подмодуль транспорта, а не в
+   `board.rs`, как советует распечатка: его `Irqs` берёт `new`.
 
 2. Свой тип — реализация `ports::CanBus` поверх контроллера `embassy-stm32`
-   (`{% if can_kind == "fdcan" %}CanConfigurator::into_normal_mode{% else %}Can::new` + `set_bitrate{% endif %}`): у CAN нет асинхронного трейта в
+   (`{% if can_tag == "fdcan" %}CanConfigurator::into_normal_mode{% else %}Can::new` + `set_bitrate{% endif %}`): у CAN нет асинхронного трейта в
    `embedded-can`, поэтому порт свой, и `bsp` от `ports` уже зависит. Псевдоним
    `Can` в подмодуле транспорта — на него, `new` — на сборку контроллера из
    группы транспорта (`Board::new` уже передаёт её:
@@ -40,12 +56,13 @@ CANopen{% else %}вашим протоколом{% endif %}.
   цикл, не отдавая исполнитель. Запомните момент `Instant::now() + 50 мс` и
   ждите его в начале следующего `recv`, а не в самой ошибке: такт узла,
   отменив `recv` посреди паузы, иначе ни разу не дал бы ошибке дойти до лога.
-{%- if can_kind == "bxcan" %}
+{%- if can_tag == "bxcan" %}
 - **Включение bxCAN ограничить по времени.** Выход из режима инициализации
   (`Can::enable`) ждёт синхронизации с линией в цикле `yield_now` без сна;
   на линии, застрявшей в доминантном уровне, исполнитель не уснул бы вовсе.
-  `with_timeout` в 5 мс превращает это в потерю кадра. `enable` — `async`, а
-  `Board::new` синхронный, поэтому включать при первом обмене.
+  `with_timeout` в 5 мс превращает это в потерю кадра. `enable` ждёт линию,
+  поэтому включать не в `Board::new` (плата собирается до узлов), а при первом
+  обмене.
 {%- endif %}
 {%- if has_canopen == "true" %}
 

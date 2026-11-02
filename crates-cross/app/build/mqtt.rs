@@ -8,11 +8,14 @@
 use std::net::Ipv4Addr;
 
 /// Самый длинный префикс тем — `domain::mqtt::PREFIX_MAX`: build-скрипт `domain`
-/// не видит, равенство держит `const`-assert в `crate::net`.
+/// не видит. Префикс длиннее предела `domain` ловит `const`-assert в
+/// `crate::net`, а то, что число здесь меньше, чем там, не ловит ничто —
+/// правьте оба вместе.
 const PREFIX_MAX: usize = 39;
 
-/// Самые длинные `user` и `password` вместе — `domain::mqtt::AUTH_MAX`; равенство
-/// держит `const`-assert в `crate::net`.
+/// Самые длинные `user` и `password` вместе — `domain::mqtt::AUTH_MAX`; как и с
+/// [`PREFIX_MAX`], `const`-assert в `crate::net` ловит только превышение
+/// предела `domain`, а не расхождение чисел.
 const AUTH_MAX: usize = 256;
 
 /// Настройки брокера.

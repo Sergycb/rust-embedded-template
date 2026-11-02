@@ -16,9 +16,11 @@
 
 Читать загрузку — ваше дело: как, разово или подпиской, — `app-cpu-load.md`,
 «Кто читает загрузку».
-Обратите внимание, чего в `fragments:` нет: `provide_cpu_load_sleep_ticks(..)`.
-У узла `SLEEP_TICKS` есть инициализатор (`= inputs.sleep_ticks`) и своя
-`boot:`-привязка, поэтому заполняет его сам граф, и забыть строку нельзя{% if ota == "true" %} —
+Обратите внимание, чего нет в задаче `start` перед `spawn_all`: вызова
+`provide_cpu_load_sleep_ticks(..)`. У слота `SLEEP_TICKS` узла `CPU_LOAD` есть
+инициализатор (`= inputs.sleep_ticks`) из собственной `boot:`-привязки
+фрагмента (`IdleMeter` в записи `fragments:`), поэтому заполняет его сам граф,
+и забыть строку нельзя{% if ota == "true" %} —
 ровно как у узла `OTA` (`app-graph.md`){% endif %}.
 {%- else %}
 
@@ -52,8 +54,8 @@
 `panic.rs` держит `defmt-rtt` дефолтным транспортом в обоих профилях —
 шаблон не знает, какой конкретный USART{% if has_usb == "true" %}/USB{% endif %} плата отведёт под лог
 без пробника (RTT его не даёт, отладочный пробник должен быть физически
-подключён). Ниже — паттерн на замену для `release`, когда `Board` начнёт
-отдавать реальную периферию. **При его подключении обязательно сделайте
+подключён). Ниже — паттерн на замену для `release`, когда плата начнёт
+отдавать рычаг UART под лог. **При его подключении обязательно сделайте
 `use defmt_rtt as _;` в `panic.rs` `#[cfg(debug_assertions)]`** (сейчас он
 безусловный): `#[global_logger]` резолвится линкером по имени символа
 (`_defmt_acquire` и т.п.), а не как rustc lang item, поэтому два активных
@@ -82,16 +84,20 @@ symbol multiply defined!`. Инвариант — ровно один актив
 
 Раз все turnkey-варианты отпадают, паттерн приходится держать своим —
 благо это буквально то, чем был бы `defmt-bbq`/`defmt-serial`, только
-против актуального `defmt@1.x`. Grant/commit API `bbqueue` уже
+против актуального `defmt@1.x`. Grant/commit API `bbqueue` (0.7) уже
 объяснён в `docs/buffers.md` (там — DMA-буфер, тут — очередь под
 лог); ниже — только то, что специфично именно для `#[global_logger]`:
 
 ```ignore
-use bbqueue::BBBuffer;
+use bbqueue::{
+    queue::BBQueue,
+    traits::{coordination::{% if core_baseline == "true" %}cs::CsCoord{% else %}cas::AtomicCoord{% endif %} as Coord, notifier::polling::Polling, storage::Inline},
+};
 use defmt::{Encoder, Logger};
 
-static QUEUE: BBBuffer<1024> = BBBuffer::new();
-static mut PRODUCER: Option<bbqueue::Producer<'static, 1024>> = None;
+{% if core_baseline == "true" %}// Cortex-M0/M0+ без CAS: координация на критической секции — фича
+// `critical-section` у `bbqueue`.
+{% endif %}static QUEUE: BBQueue<Inline<1024>, Coord, Polling> = BBQueue::new();
 static mut ENCODER: Encoder = Encoder::new();
 
 #[defmt::global_logger]
@@ -109,20 +115,27 @@ unsafe impl Logger for UartLogger {
         // ENCODER.end_frame(write), снять флаг "захвачен"
     }
     unsafe fn write(bytes: &[u8]) {
-        // grant_max_remaining(bytes.len()) в PRODUCER, copy_from_slice, commit
+        // QUEUE.stream_producer().grant_max_remaining(bytes.len()),
+        // copy_from_slice, commit
     }
 }
 
 // отдельная задача, только под release — DMA-запись consumer-половины
-// очереди в USART, аналогично примеру из docs/buffers.md:
+// очереди в USART, аналогично примеру из docs/buffers.md. Тип UART — псевдоним
+// рычага в `bsp` (`app` про `embassy-stm32` не знает, а задача embassy не
+// generic), например `pub type LogTx = UartTx<'static, mode::Async>;`:
 #[embassy_executor::task]
-async fn uart_drain_task(mut uart: embassy_stm32::usart::UartTx<'static, embassy_stm32::mode::Async>) {
-    let mut consumer = QUEUE.try_split().unwrap().1;
+async fn uart_drain_task(mut uart: bsp::LogTx) {
+    let consumer = QUEUE.stream_consumer();
     loop {
-        if let Ok(grant) = consumer.read() {
-            let len = grant.len();
-            let _ = uart.write(&grant).await;
-            grant.release(len);
+        match consumer.read() {
+            Ok(grant) => {
+                let len = grant.len();
+                let _ = uart.write(&grant).await;
+                grant.release(len);
+            }
+            // Очередь пуста: отдать исполнитель, а не крутиться в цикле.
+            Err(_) => embassy_time::Timer::after_millis(10).await,
         }
     }
 }
@@ -250,15 +263,22 @@ USB, Ethernet и CAN в STOP не работают.
 //      #[unsafe(export_name = "__pender")]
 //      fn pender(_: *mut ()) { WORK.store(true, Ordering::SeqCst); }
 //
-// 3. main.rs{% if ota == "true" %} (и bin/app-unconfirmed.rs){% endif %}: цикл остаётся ручным, меняется только сон — вместо `wfe()`:
+// 3. bsp — про чип знает только он (`app` `embassy-stm32` не видит): модуль
+//    `bsp::power` с одной функцией; `critical-section` — прямой зависимостью
+//    `bsp` (реализацию даёт `cortex-m`, крейт в дереве уже есть):
 //
-//      critical_section::with(|cs| {
-//          if !WORK.swap(false, Ordering::SeqCst) {
-//              // SAFETY: периферию, которой нужен сон без STOP, держат
-//              // драйверы HAL; своей через PAC в проекте нет.
-//              unsafe { embassy_stm32::low_power::sleep(cs) };
-//          }
-//      });
+//      pub fn sleep(work: &AtomicBool) {
+//          critical_section::with(|cs| {
+//              if !work.swap(false, Ordering::SeqCst) {
+//                  // SAFETY: периферию, которой нужен сон без STOP, держат
+//                  // драйверы HAL; своей через PAC в проекте нет.
+//                  unsafe { embassy_stm32::low_power::sleep(cs) };
+//              }
+//          });
+//      }
+//
+// 4. main.rs{% if ota == "true" %} (и bin/app-unconfirmed.rs){% endif %}: цикл остаётся ручным, меняется только сон —
+//    вместо `wfe()` `bsp::power::sleep(&WORK)`.
 //
 //    Замер сна для {% if graph == "true" %}узла `CPU_LOAD`{% else %}загрузки{% endif %} не ломается: после пробуждения драйвер
 //    времени досчитывает проспанное по RTC, и `Instant::now()` вокруг сна
@@ -289,7 +309,8 @@ USB, Ethernet и CAN в STOP не работают.
 {%- if graph == "true" %}
 * **Сторож в STOP не спит.** IWDG тикает от LSI и продолжает считать.
   Опционный байт `IWDG_STOP` не нужен: тикер просыпается по RTC чаще
-  таймаута — если период тикера по правилу выше короче `HW_TIMEOUT_US`.
+  таймаута — если период тикера по правилу выше короче
+  `bsp::wdg::HW_TIMEOUT_MIN_US` (таймаут на самом быстром LSI).
   Остановить уже запущенный IWDG нельзя — это его свойство, а не недосмотр
   (см. `bsp::wdg`).
 {%- endif %}
@@ -311,4 +332,6 @@ USB, Ethernet и CAN в STOP не работают.
 плавающий от сборки к сборке адрес (то есть данные не переживут смену
 образа). Нужен фиксированный адрес — отрежьте свой регион в `memory.x`, как
 отрезан `PANIC` (`crates-cross/app/memory.x`), и отдавайте его наружу
-объектом за портом из `bsp`, а не голым указателем из `app`.
+рычагом платы из `bsp` — конкретным типом, порт только под несколько
+реализаций (`docs/architecture.md`, «Трейт — только под несколько
+реализаций»), — а не голым указателем из `app`.

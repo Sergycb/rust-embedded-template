@@ -15,17 +15,6 @@ harness = false
 workspace = true
 
 [dependencies]
-# Транспорт нужен здесь по той же причине, что и в `app`: тестовый бинарник —
-# это полноценная прошивка, которую заливают в плату целиком.
-#
-# А вот `panic-probe` здесь НЕ подключён, в отличие от `app`, и это не
-# упущение: паникёр в тестовом бинарнике — это способ сообщить раннеру, что
-# тест провалился. `embedded-test` под фичей `panic-handler` (она в его
-# default) заканчивает панику через `semihosting::process::abort()`, который
-# `probe-rs run` понимает как «этот тест упал» и переходит к следующему;
-# `panic-probe` вместо этого делает `udf()`, то есть HardFault, и один
-# провалившийся assert обрушил бы весь прогон. Ограничение «ровно один
-# `#[panic_handler]`» — на бинарник, а не на workspace (docs/diagnostics.md).
 # Не для собственного использования, а ради impl'а `critical-section`: его
 # даёт `cortex-m` с фичей `critical-section-single-core` (см. crates-cross/Cargo.toml),
 # и без прямой зависимости фича в дереве зависимостей этой цели не включается. Ошибка при
@@ -34,11 +23,16 @@ workspace = true
 # поймать это можно лишь реальным `cargo xtask test target`.
 cortex-m = { workspace = true }
 defmt = { workspace = true }
+# Транспорт нужен здесь по той же причине, что и в `app`: тестовый бинарник —
+# это полноценная прошивка, которую заливают в плату целиком.
 defmt-rtt = { workspace = true }
 # Макрос `#[embedded_test::tests]` с фичей `embassy-010` разворачивается в код,
 # который обращается к `::embassy_executor` — по имени, из крейта теста, поэтому
 # зависимость нужна прямая, транзитивной через embassy-stm32 не хватает.
 embassy-executor = { workspace = true }
+# Паникёр — от `embedded-test` (фича `panic-handler`), а `panic-probe` здесь
+# нет, в отличие от `app`: почему — tests/test.rs. «Ровно один
+# `#[panic_handler]`» — на бинарник, а не на workspace (docs/diagnostics.md).
 embedded-test = { workspace = true, features = ["panic-handler"] }
 # Отметка времени у строк лога — как у `app` (см. crates-cross/Cargo.toml).
 embassy-time = { workspace = true, features = ["defmt-timestamp-uptime-ms"] }
@@ -52,8 +46,9 @@ embassy-stm32 = { workspace = true, features = ["time-driver-any"] }
 bsp = { workspace = true }
 {%- if ota == "true" or config == "true" %}
 # {% if ota == "true" %}Адаптер обновления над разделами платы и проверка версии образа в тесте
-# отката (`domain::ota`, `updater` в tests/test.rs){% if config == "true" %};
-# {% endif %}{% endif %}{% if config == "true" %}хранилище настроек над носителем платы (`domain::settings`,
-# `settings` в tests/test.rs){% endif %} — тест собирает их так же, как приложение.
+# отката (`domain::ota`, `updater` в tests/test.rs){% if config == "true" and config_store != "external" %};
+# {% endif %}{% endif %}{% if config == "true" and config_store != "external" %}хранилище настроек над носителем платы (`domain::settings`,
+# `settings` в tests/test.rs){% endif %}{% if ota == "true" or config_store != "external" %} — тест собирает их так же, как приложение.{% else %}Теста хранилища настроек над внешней флешью нет: тесты
+# этой конфигурации `domain` не называют.{% endif %}
 domain = { workspace = true }
 {%- endif %}

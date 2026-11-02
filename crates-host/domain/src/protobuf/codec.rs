@@ -18,7 +18,8 @@ pub(super) fn decode_reason<E>(err: &DecodeError<E>) -> &'static str {
         DecodeError::Capacity => "поле не помещается в контейнер",
         DecodeError::WrongLen => "длина поля не сходится",
         DecodeError::Reader(_) => "ошибка чтения",
-        // `DecodeError` — `#[non_exhaustive]`: новая причина в `micropb`.
+        // `WrongWireType`, `NestingLimit` и новые причины `micropb`
+        // (`DecodeError` — `#[non_exhaustive]`).
         _ => "кадр не разобрался",
     }
 }

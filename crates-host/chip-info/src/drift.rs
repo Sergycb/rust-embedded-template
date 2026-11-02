@@ -35,7 +35,8 @@ pub(crate) fn warn_on_chip_drift() {
         eprintln!(
             "ВНИМАНИЕ: в {} нет чип-фичи \"{CHIP_FEATURE}\", под которую собран справочник.\n\
 			 Похоже, чип проекта сменили — тогда поправьте его и в crates-host/chip-info/Cargo.toml,\n\
-			 иначе ниже будет распиновка чужого чипа.\n",
+			 и в CHIP_FEATURE (crates-host/chip-info/src/drift.rs), иначе ниже будет распиновка\n\
+			 чужого чипа. Имя чипа для probe-rs — CHIP в crates-host/xtask/src/project.rs.\n",
             manifest.display(),
         );
     }

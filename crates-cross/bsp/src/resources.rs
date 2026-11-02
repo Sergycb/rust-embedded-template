@@ -9,8 +9,8 @@
 //! под блок с реальными именами выводов печатает
 //! `cargo xtask pins <БЛОК> --snippet`; переносится в макрос ниже только сама
 //! группа.
-{%- else %} Шаблон кладёт сюда блоки того, что нужно ему самому:
-//! флеш{% if graph == "true" %}, сторожевой таймер{% endif %}{% if external_flash == "true" %}, шину внешней флеши{% endif %}{% if has_net == "true" %}{% if rng_irq != "" %}, RNG{% endif %}{% endif %}{% if links != "" %} и блоки выбранных транспортов (группа на транспорт){% endif %}, —
+{%- else %}{% capture blocks %}{% if shared_flash == "true" %}, флеш{% endif %}{% if graph == "true" %}, сторожевой таймер{% endif %}{% if external_flash == "true" %}, шину внешней флеши{% endif %}{% if has_net == "true" %}{% if rng_irq != "" %}, RNG{% endif %}{% endif %}{% endcapture %} Шаблон кладёт сюда блоки того, что нужно ему самому:
+//! {{ blocks | remove_first: ", " }}{% if links != "" %}{% if blocks != "" %} и {% endif %}блоки выбранных транспортов (группа на транспорт){% endif %}, —
 //! без выводов: их выбирает плата. Заготовку с выводами и DMA-каналами печатает
 //! `cargo xtask pins <БЛОК> --snippet`; из неё в группу переносятся поля.
 {%- endif %} Занят ли отладочный порт —

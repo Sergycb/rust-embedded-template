@@ -32,7 +32,7 @@ allow = [
 	"Zlib",
 	"Unicode-3.0",
 	# {%- if has_net == "true" %}
-	# `smoltcp` — TCP/IP-стек под `embassy-net`.
+	# `smoltcp` — TCP/IP-стек под `embassy-net`{% if net_services contains "ssh" %}; `sunset` и `sunset-async` — SSH-сервер{% endif %}.
 	"0BSD",
 	# {%- endif %}
 ]

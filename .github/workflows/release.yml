@@ -48,7 +48,7 @@ jobs:
       - run: rustup target add {{target}}
       # Версия — та же, что в `cargo xtask setup`: от линкера зависит раскладка
       # образа, и без пина релиз не повторить (docs/conventions.md,
-      # «Воспроизводимый релиз»).
+      # «Тулчейн запинен»).
       - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2 (2.88.0)
         with:
           tool: flip-link@{% raw %}${{ env.FLIP_LINK_VERSION }}{% endraw %}

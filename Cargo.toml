@@ -60,9 +60,9 @@ unimplemented           = "warn"
 large_stack_arrays      = "warn"
 # Каждый `unsafe`-блок обязан объяснять, почему он корректен. Ловит ровно то,
 # что иначе ловить нечем: unsafe без комментария выглядит как обычная строка.
-# Таких мест в шаблоне четыре, все в `crates-cross` и все с комментарием, а
-# `executor.poll()` в `app/src/main.rs` этому линту и обязан — до него он шёл
-# без `// SAFETY:` вовсе.
+# Все такие места — в `crates-cross`, и у каждого комментарий; `executor.poll()`
+# в `app/src/main.rs` этому линту и обязан — до него он шёл без `// SAFETY:`
+# вовсе.
 undocumented_unsafe_blocks = "warn"
 # `pedantic`: приведения без `as`, `# Errors`/`# Panics` в doc, `#[must_use]`.
 # Приоритет -1, иначе группа конфликтует с отдельными линтами (clippy
@@ -123,7 +123,7 @@ tokio        = { version = "1.54.1", default-features = false, features = ["rt",
 # задачи и хэндлы каналов приходят отсюда.
 # {%- endif %}
 # Фичи здесь не объявлены: слова DSL фрагментов включает
-# `crates-host/domain/Cargo.toml`, `defmt`/`metadata-name` и слова графа —
+# `crates-host/domain/Cargo.toml`, `metadata-name` и слова графа —
 # `crates-cross/Cargo.toml`; в прошивке они складываются.
 # {%- comment %}
 # В репозитории шаблона — настоящий адрес, иначе workspace не собрать; в
@@ -157,7 +157,7 @@ portable-atomic = { version = "1.15.0" }
 # Только для dev-зависимостей `domain`: хостовый тестовый бинарник линкует
 # `supervisor`, а тот — `embassy-executor`, у которого без платформенной фичи
 # нет `__pender` (и нет драйвера времени у `embassy-time`). В прошивку эти
-# фичи не уезжают: dev-зависимости пути-зависимости не собираются вовсе.
+# фичи не уезжают: dev-зависимости path-зависимостей cargo не собирает.
 embassy-executor = { version = "0.10.0" }
 critical-section = { version = "1.2.0" }
 # Адаптеры generic по флешу и потому живут в корневом workspace: здесь те же

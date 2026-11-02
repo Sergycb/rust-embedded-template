@@ -582,9 +582,9 @@ mod tests {
         assert!(stripped.contains("defmt"), "{stripped}");
     }
 
-    /// Вложенный `{% if %}` — ровно та форма, что стоит в
-    /// `crates-cross/bsp/Cargo.toml`: условная фича `flash-erase-zero` внутри
-    /// списка `features`, а весь блок — внутри условия по `ota`.
+    /// Вложенный `{% if %}` — как в `crates-cross/Cargo.toml` (условие по
+    /// `erase_zero` внутри условия по `ota`) и в `crates-cross/bsp/Cargo.toml`
+    /// (блок зависимости `adapters-hw`).
     ///
     /// Пока `strip_liquid` искал ближайший `{% endif %}`, а не парный, он
     /// резал от внешнего открывающего до внутреннего закрывающего: в тексте

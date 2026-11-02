@@ -2,7 +2,7 @@
 узлам.
 
 {% capture flash_users %}{% if ota == "true" and ota_store != "external" %}, флешу под
-обновлением (`DFU` и `BOOTLOADER_STATE`){% endif %}{% if config == "true" and config_store == "flash" %}, разделу `CONFIG` настроек{% elsif config == "true" and config_store == "eeprom" %}, EEPROM настроек (она пишется через тот же контроллер){% endif %}{% endcapture %}Контроллер флеша на чипе один, а работать с ним нужно всем сразу: {{ flash_users | remove_first: ", " }}. Поэтому объект
+обновлением (`DFU` и `BOOTLOADER_STATE`){% endif %}{% if config == "true" and config_store == "flash" %}, разделу `CONFIG` настроек{% elsif config == "true" and config_store == "eeprom" %}, EEPROM настроек (она пишется через тот же контроллер){% endif %}{% endcapture %}Контроллер флеша на чипе один, и работают с ним: {{ flash_users | remove_first: ", " }}. Поэтому объект
 создаётся ровно один раз (`flash::new`, ему отдаётся группа `flash` из
 `resources.rs`), лежит в `static` под блокирующим замком (`FlashMutex`), а
 куски флеша получают на него ссылки.
@@ -22,8 +22,10 @@
   цельного `Flash`, и носитель — он сам (равенство проверяет `const`-assert).{% endif %}
 {%- if swap_paged == "true" %} Носитель `DFU` — `ErasePage` со страницей
   обмена `SWAP_PAGE_SIZE`, крупнее физической.{% endif %}{% if dfu_bank == "true" %} `DFU` — в банке 2 за разрывом
-  адресов (`DfuBankMutex`).{% endif %} Те же
-  числа (`STATE_ERASE_SIZE`{% if swap_paged == "true" %}, `SWAP_PAGE_SIZE`{% endif %}) берёт отсюда bootloader; почему страницы такие —
+  адресов (`DfuBankMutex`).{% endif %}{% if state_paged == "true" or swap_paged == "true" %} Те же
+  числа ({% if state_paged == "true" %}`STATE_ERASE_SIZE`{% if swap_paged == "true" %}, {% endif %}{% endif %}{% if swap_paged == "true" %}`SWAP_PAGE_SIZE`{% endif %}) берёт отсюда bootloader{% else %} Bootloader строит
+  `STATE` над тем же цельным `Flash`, и его страницу держит `const`-assert
+  отсюда (bootloader линкует `bsp`){% endif %}; почему страницы такие —
   `docs/flash.md`.
 {%- endif %}
 {%- if config == "true" and config_store == "flash" %}
@@ -39,15 +41,21 @@
   внутренняя EEPROM как `NorFlash`, под замком того же контроллера; над ней
   compose-site узла-потребителя строит хранилище (`domain::settings`).
 {%- endif %}
+{%- assign ota_in = "" %}{% if ota == "true" and ota_store != "external" %}{% assign ota_in = "1" %}{% endif %}
+{%- assign cfg_in = "" %}{% if config == "true" and config_store == "flash" %}{% assign cfg_in = "1" %}{% endif %}
+{%- if ota_in == "1" or cfg_in == "1" %}
 
 Носители строятся над разделом на весь флеш (`Whole`,
 `BlockingPartition::new(flash, 0, SIZE)`): смещения те же, что у самого
-{%- assign ota_in = "" %}{% if ota == "true" and ota_store != "external" %}{% assign ota_in = "1" %}{% endif %}
-{%- assign cfg_in = "" %}{% if config == "true" and config_store == "flash" %}{% assign cfg_in = "1" %}{% endif %}
-флеша, операции идут под замком, по одной{% if ota_in == "1" or cfg_in == "1" %}; асинхронный вид для {% if ota_in == "1" %}`embassy-boot`{% if cfg_in == "1" %} и
-{% endif %}{% endif %}{% if cfg_in == "1" %}`sequential-storage`{% endif %} даёт `BlockingAsync`{% endif %}. `BlockingPartition::new` паникует,
+флеша, операции идут под замком, по одной; асинхронный вид для {% if ota_in == "1" %}`embassy-boot`{% if cfg_in == "1" %} и
+{% endif %}{% endif %}{% if cfg_in == "1" %}`sequential-storage`{% endif %} даёт `BlockingAsync`. `BlockingPartition::new` паникует,
 если объём не кратен `ERASE_SIZE`; у STM32 он всегда кратен самому крупному
 сектору, и {% if dfu_bank == "true" %}здесь раздел — банк 1 (банк 2 с `DFU` — отдельный раздел), так что
 `const`-assert'а на объём нет ни здесь, ни в `boot`{% else %}`const`-assert здесь{% if boot_partitioned == "true" %} и в `boot`{% endif %} проверяет это при сборке{% endif %}.
+{%- else %}
+
+EEPROM пишется через тот же контроллер: `EepromFlash` берёт замок
+`FlashMutex` на каждую операцию.
+{%- endif %}
 
 `NoopRawMutex` подразумевает один исполнитель — подробности в `docs/flash.md`.

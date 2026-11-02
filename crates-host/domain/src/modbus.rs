@@ -1,7 +1,9 @@
-//! Modbus: slave на уровне PDU — функция и данные — обработчиком кадра
-//! «адрес и PDU» ([`Slave`](crate::modbus::Slave)) для узла протокола `domain::server`.
+//! Modbus slave на уровне PDU (функция и данные): обработчик
+//! [`Slave`](crate::modbus::Slave) отвечает на кадр «адрес и PDU» для узла
+//! протокола `domain::server`.
 // {%- if modbus_master == "true" %}
-//! Master — тоже на уровне PDU, поверх транспорта [`ports::ModbusClient`].
+//! Master — тоже на уровне PDU, поверх транспорта [`ports::ModbusClient`]
+//! (из коробки — только RTU над UART, см. `master`).
 // {%- endif %}
 //!
 //! Канал строит compose-site (транспорт из `adapters_logic::modbus`, порт

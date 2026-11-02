@@ -19,8 +19,10 @@
 | `status` | плата → брокер | 1 | да | `online` после подключения; `offline` — Will, его рассылает брокер, когда плата пропала |
 | `info` | плата → брокер | 1 | да | сведения об устройстве, JSON{% if net_services contains "rest" %} (те же, что в REST `/api/info`){% endif %} |
 | `telemetry` | плата → брокер | 0 | нет | `{"uptime_s":N}` раз в 10 с (`TELEMETRY_INTERVAL`) |
-| `cmd/reboot` | брокер → плата | — | — | перезагрузка; тело не читается |
+| `cmd/reboot` | брокер → плата | — | — | перезагрузка{% if ota != "true" %} (в этом проекте — только строка в лог){% endif %}; тело не читается |
+{%- if ota == "true" %}
 | `cmd/reboot/result` | плата → брокер | 1 | нет | `accepted` или `refused` |
+{%- endif %}
 
 Подписка — `<prefix>/<uid>/cmd/#`, с `RetainHandling::Never`: сохранённых
 команд брокер не присылает. Если сообщение всё же пришло с флагом retain, оно
@@ -49,7 +51,7 @@
 |---|---|
 | `host` | IPv4 брокера; DNS у платы нет |
 | `port` | 1-65535 |
-| `user`, `password` | вход на брокер; пустой `user` — без имени и пароля (тогда и `password` пуст). Вместе до 256 байт (`domain::mqtt::AUTH_MAX`): `CONNECT` с ними `minimq` держит в буфере передачи всю сессию, и остаток рассчитан на неподтверждённые `status`, `info` и исход `reboot`. `"` и `\` внутри не допускаются |
+| `user`, `password` | вход на брокер; пустой `user` — без имени и пароля (тогда и `password` пуст). Вместе до 256 байт (`domain::mqtt::AUTH_MAX`): `CONNECT` с ними `minimq` держит в буфере передачи всю сессию, и остаток рассчитан на неподтверждённые `status`{% if ota == "true" %}, `info` и исход `reboot`{% else %} и `info`{% endif %}. `"` и `\` внутри не допускаются |
 | `prefix` | префикс тем: непустой, до 39 байт (предел `domain::mqtt::PREFIX_MAX` — `client_id` до 64 байт), без `/`, `+`, `#` и без `$` в начале (такие темы брокер держит для себя, `$SYS`) |
 
 Пароль лежит в образе открытым текстом{% if net_services contains "rest" %}, как токен REST{% endif %}: от того, кто держит в
@@ -89,9 +91,9 @@
 Темы команд разбирает `domain::mqtt::parse_command` в вариант `Command`.
 Новая команда: тема-константа рядом с `REBOOT`, вариант в `Command`, ветка в
 `parse_command` и в `match command` внутри `serve`; ответ — своей темой
-`…/result`, как у `reboot`. Подписка `cmd/#` и строка ACL `topic read …/cmd/#`
+`…/result`{% if ota == "true" %}, как у `reboot`{% endif %}. Подписка `cmd/#` и строка ACL `topic read …/cmd/#`
 уже ловят новую команду, а тему ответа плата пишет — ей в ACL нужна своя строка
-`topic write …/cmd/<команда>/result`, как у `reboot`.
+`topic write …/cmd/<команда>/result`{% if ota == "true" %}, как у `reboot`{% endif %}.
 
 ## Чего нет и почему
 
@@ -102,12 +104,12 @@
 - **Сохранённая сессия.** Команды, пока плата в оффлайне, не копятся: для
   `reboot` это вред, а подписки дёшево восстановить.
 - **Ожидания квоты брокера.** Узел рассчитывает, что Receive Maximum брокера
-  (свойство CONNACK) не меньше 3: столько публикаций QoS 1 — `status`, `info`
-  и исход `reboot` — могут разом ждать PUBACK. На исчерпанной квоте `minimq`
+  (свойство CONNACK) не меньше {% if ota == "true" %}3: столько публикаций QoS 1 — `status`, `info`
+  и исход `reboot`{% else %}2: столько публикаций QoS 1 — `status` и `info`{% endif %} — могут разом ждать PUBACK. На исчерпанной квоте `minimq`
   не ждёт подтверждений, а отказывает публикации (`NotReady`), и узел сочтёт
   это обрывом: переподключение по кругу и строка «связь с брокером пропала»
   в логе. Брокеры по умолчанию дают больше (у Mosquitto — 20,
-  `max_inflight_messages`); если свой брокер урезан до 1–2, поднимите
+  `max_inflight_messages`); если свой брокер урезан до {% if ota == "true" %}1–2{% else %}1{% endif %}, поднимите
   предел на нём.
 
 ## Адрес брокера
@@ -129,12 +131,14 @@ user <плата>
 topic write devices/<uid>/status
 topic write devices/<uid>/info
 topic write devices/<uid>/telemetry
+{%- if ota == "true" %}
 topic write devices/<uid>/cmd/reboot/result
+{%- endif %}
 topic read  devices/<uid>/cmd/#
 ```
 
 Управляющему клиенту — `topic write devices/<uid>/cmd/#` и чтение остальных
-тем. Без этого любой вошедший на брокер может перезагрузить плату.
+тем.{% if ota == "true" %} Без этого любой вошедший на брокер может перезагрузить плату.{% endif %}
 
 ## Тесты
 

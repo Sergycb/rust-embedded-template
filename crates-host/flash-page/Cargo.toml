@@ -18,7 +18,7 @@ embedded-storage-async = { workspace = true }
 [dev-dependencies]
 # `BlockingAsync` (async-вид флеша) и `BlockingPartition` (раздел под замком) —
 # как их собирает `bsp`; свои копии в тестах не нужны.
-# {%- if ota == "true" %}
+# {%- if boot_partitioned == "true" %}
 # Так же их собирает и bootloader.
 # {%- endif %}
 embassy-embedded-hal = { workspace = true }

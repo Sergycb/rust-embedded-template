@@ -32,12 +32,12 @@
 //! хвосте flash), с OTA на неравных (в мелких секторах перед ACTIVE), во
 //! внутренней EEPROM и на внешней флеши (драйвер W25Q над шиной-заглушкой — SPI, QUADSPI,
 //! OCTOSPI), подпись образа (с графом и без) и чип, у которого
-//! стёртый флеш читается нулями, два протокола поверх UART (Modbus и protobuf)
+//! стёртый флеш читается нулями, два протокола поверх UART (Modbus и protobuf),
 //! CANopen на FDCAN и bxCAN, Modbus TCP (с master), protobuf UDP, protobuf и
 //! Modbus по USB (Modbus без master — по UART и по USB); чипы с клоком RNG через мультиплексор (G0, WL, WBA, L4) и по одному
 //! чипу на каждый вариант регистров `banks.rs` (`g0`, `g4`, `l4`, `l5`), а
 //! также несколько транспортов разом (`links`: два UART и TCP, два USB с графом
-//! и без, TCP и UDP, UART и CAN, UART и UDP без графа) и транспорты без протокола
+//! и без, TCP и UDP, UART и CAN, UART и UDP) и транспорты без протокола
 //! (UDP, USB с графом). Точный список — в `default_cases()`. Свой набор чипов —
 //! позиционными аргументами; `--define k=v` (многократно) добавляет определение
 //! к каждой конфигурации, например `--ci gitlab --define config=yes stm32f407ve`.
@@ -63,7 +63,7 @@ use anyhow::{Context, bail};
 use chip_data_gen::source::{RUST_LIB, repo_root};
 
 /// Сколько конфигураций собирается одновременно. Сборка цепочки проектных
-/// крейтов (`domain` → `adapters-logic` → `app`) ядра почти не загружает, поэтому
+/// крейтов (`ports` → `domain`/`adapters-logic` → `app`) ядра почти не загружает, поэтому
 /// параллельные конфигурации окупаются; каждая полоса — свой каталог сборки
 /// (гигабайты), так что больше трёх по умолчанию не берём.
 const DEFAULT_JOBS: usize = 3;
@@ -330,7 +330,7 @@ impl ChipChecks {
 ///
 /// `.smoke()` — набор `--smoke`: по конфигурации на ось генерации (OTA с
 /// подписью и графом, без графа на M0+, 2 KiB RAM, внешняя OTA, CANopen с
-/// настройками, сеть на H7, USB, несколько транспортов без графа).
+/// настройками, сеть на H7, USB, несколько транспортов — UART и UDP).
 /// `.render_only()` — без сборки и в полном прогоне (`Case::render_only`).
 #[expect(
     clippy::too_many_lines,
@@ -357,7 +357,7 @@ fn default_cases() -> Vec<Case> {
         // OTA не помещается (`config_ota = false`), `boot` в проект не входит,
         // и ветка `dfu_bank` не собиралась бы вовсе.
         Case::new("stm32h743zg").variant("dfu-bank", &[]),
-        // С завода двухбанковый флеш при одобанковой раскладке: `bsp/src/banks.rs`
+        // С завода двухбанковый флеш при однобанковой раскладке: `bsp/src/banks.rs`
         // (вариант `g4`) в `bsp`, его зовут и `Board::new`, и `boot`; `unstable-pac` — у `bsp`.
         Case::new("stm32g474re"),
         // OTA не помещается: crates-cross/boot удаляется из проекта, members и xtask
@@ -366,9 +366,9 @@ fn default_cases() -> Vec<Case> {
         // Заодно — настройки на внешней флеши (`ext_flash=yes`, `ota=no`): драйвер
         // W25Q над шиной-заглушкой, раздел с начала микросхемы. Без OTA общий
         // объект `Flash` при этом не нужен вовсе (`shared_flash = false`), и
-        // это единственная конфигурация, где bsp собирается без него, а
-        // `config::new` — без аргумента. H7 — потому что именно у него раздел
-        // во внутреннем флеше дороже всего (2×128 KiB).
+        // это единственная конфигурация, где bsp собирается без него. H7 —
+        // потому что именно у него раздел во внутреннем флеше дороже всего
+        // (2×128 KiB).
         Case::new("stm32h723ve").variant(
             "config-external",
             &["ext_flash=yes", "config=yes", "ota=no"],
@@ -383,22 +383,23 @@ fn default_cases() -> Vec<Case> {
         // здесь ничего не решал.
         Case::new("stm32h745zi-cm4"),
         // Другой конец линейки: 2 KiB RAM и Cortex-M0+ (thumbv6m, без CAS в железе).
-        // Резерв под PANIC здесь считается долей RAM, а не фиксированным килобайтом —
-        // на таком чипе тот был бы половиной памяти.
+        // Резерв под PANIC здесь считается долей RAM, а не фиксированными 512 байтами
+        // (`PANIC_MAX` в chip-data-gen) — на таком чипе это четверть памяти.
         Case::new("stm32l011f4").smoke(),
         // Раздел настроек вместе с OTA на равных секторах (2 KiB): в хвосте
         // flash, страница раздела — страница чипа, схема OTA после него всё ещё
-        // помещается — в проект попадают разом bootloader, ota.rs и config.rs.
+        // помещается — в проект попадают разом bootloader, разделы OTA и хранилище
+        // настроек (`bsp::flash`, `domain::ota`, `domain::settings`).
         Case::new("stm32g071rb").variant("config", &["config=yes"]),
         // Он же без OTA: две последние страницы flash (таблица векторов
-        // приложения стоит в начале). Ветка «config есть, bootloader и ota.rs
-        // удалены» — только здесь.
+        // приложения стоит в начале). Ветка «config есть, bootloader и
+        // `domain::ota` удалены» — только здесь.
         Case::new("stm32g071rb").variant("config-no-ota", &["config=yes", "ota=no"]),
         // Раздел настроек вместе с OTA на неравных секторах: у F407 он ложится
         // в сектора 2–3 по 16 KiB перед ACTIVE, `STATE` — в сектор 4 (64 KiB);
         // `CONFIG_ERASE_SIZE` и `STATE_ERASE_SIZE` меньше страницы чипа, оба
-        // раздела — над `ErasePage`. В проект попадают разом bootloader, ota.rs и
-        // config.rs.
+        // раздела — над `ErasePage`. В проект попадают разом bootloader, разделы
+        // OTA и хранилище настроек.
         Case::new("stm32f407ve").variant("config", &["config=yes"]),
         // OTA с `STATE`/`DFU` на внешней флеши (`ext_flash=yes`) — на чипе, куда
         // внутренняя схема не помещается вовсе. Разом: слот драйвера в `boot`
@@ -423,8 +424,9 @@ fn default_cases() -> Vec<Case> {
         // шины при этом объявляет четыре линии, и драйвер собирается с
         // quad-командами.
         Case::new("stm32l476rg").variant("ota-external", &["ext_flash=yes"]),
-        // OTA без графа: узел OTA запускает сам `main` (`ota_task`;
-        // `app/src/version.rs` есть, `graph.rs` нет), а bootloader — без сторожа.
+        // OTA без графа: узел OTA (`app/src/tasks/ota.rs`) спавнит
+        // `tasks::spawn_all` (`app/src/version.rs` есть, `graph.rs` нет), а
+        // bootloader — без сторожа.
         // Чип — Cortex-M0+: проверка подписи (она есть всегда, когда есть OTA)
         // живёт в bootloader'е, и код `salty` под Thumb-1 заметно толще, чем
         // под M4; влезает ли release-bootloader в свою зону на M0+, проверяет эта
@@ -461,8 +463,8 @@ fn default_cases() -> Vec<Case> {
         Case::new("stm32g474re").variant("canopen-fdcan", &["protocol=canopen", "interface=can"]),
         Case::new("stm32f407ve").variant("canopen-bxcan", &["protocol=canopen", "interface=can"]),
         // CANopen с разделом настроек: объекты по `save` и адрес по LSS — в
-        // хранилище настроек (`domain::canopen`), колбэки стека — `StaticCell`
-        // в графе.
+        // хранилище настроек (`domain::canopen`); колбэки стека и сам стек —
+        // локальные задачи узла.
         Case::new("stm32g474re").variant(
             "canopen-config",
             &["protocol=canopen", "interface=can", "config=yes"],
@@ -480,7 +482,8 @@ fn default_cases() -> Vec<Case> {
             ],
         ),
         // Протоколы по сети: стек `embassy-net` над заглушкой устройства, узел
-        // NET в графе и сокет из `adapters_hw::net`. Modbus TCP — на H7 (Ethernet
+        // NET в графе (стек — `adapters_hw::net`) и транспорт на сокете из
+        // `adapters_logic::net`. Modbus TCP — на H7 (Ethernet
         // v2), protobuf UDP — на F4 (Ethernet v1). Modbus TCP — заодно с master
         // (`modbus_master=yes`): единственная конфигурация, где клиентская
         // половина (`ports::ModbusClient`, `domain::modbus::master`, клиентские

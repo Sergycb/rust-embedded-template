@@ -66,8 +66,8 @@ log = [
 ignored = ["log", "defmt"]
 
 [dependencies]
-# Порты — границы самого домена: логика вызывает их, а реализации приходят из
-# `adapters-logic` (хост) и `crates-cross/bsp` (железо). Зависимость нужна, чтобы
+# Порты — границы самого домена: логика вызывает их, а где живут реализации —
+# `//!` крейта `ports`. Зависимость нужна, чтобы
 # правило «порт заводится под то, чем пользуется логика» было выполнимым: без
 # неё `domain` не может даже назвать свои порты.
 ports = { workspace = true }
@@ -150,7 +150,7 @@ embassy-net        = { workspace = true }
 picoserve          = { workspace = true }
 # {%- endif %}
 # {%- if net_services != "" %}
-# Тексты ответов REST и строки консоли SSH — в `heapless::String`.
+# Строки узлов сетевых служб — в `heapless::String`.
 heapless           = { workspace = true }
 # {%- endif %}
 # {%- if net_services contains "ssh" %}
@@ -207,7 +207,7 @@ embedded-storage = { workspace = true }
 # узел PROTOBUF (любой входящий кадр не роняет его);
 # {%- endif %}
 # {%- if has_modbus == "true" %}
-# Modbus slave (любой кадр не роняет разбор).
+# Modbus slave{% if modbus_master == "true" %} и master{% endif %} (любой кадр не роняет разбор).
 # {%- endif %}
 proptest = { workspace = true }
 # {%- endif %}
@@ -238,8 +238,8 @@ critical-section = { workspace = true, features = ["std"] }
 # Узлы транспортов тестируются над драйверами без шины (`adapters_hw::usb::fake`,
 # `adapters_hw::net::fake`).
 # {%- endif %}
-# {%- if net_services contains "rest" %}
-# Маршрутизатор REST (`domain::http`) — над кабелем между двумя стеками
+# {%- if net_services != "" %}
+# Узлы сетевых служб — над кабелем между двумя стеками
 # (`adapters_hw::net::fake::cable`).
 # {%- endif %}
 # {%- if ota == "true" %}

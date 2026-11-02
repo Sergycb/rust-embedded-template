@@ -11,10 +11,14 @@
 который только отмечается у сторожа. Что ещё умеет узел графа (почтовый ящик,
 публикация, большие объекты в слоте) — `docs/modules/app-graph.md`.
 {%- else %}
+{%- capture samples %}{% if has_usb == "true" %}, узел USB — самый короткий (`crates-host/domain/src/usb.rs` и `crates-cross/app/src/tasks/usb.rs`){% endif %}{% if ota == "true" %}, узел OTA — самый полный (`crates-host/domain/src/ota.rs` и `crates-cross/app/src/tasks/ota.rs`){% endif %}{% if has_modbus == "true" %}, узел Modbus (`crates-host/domain/src/server.rs` и `crates-cross/app/src/tasks/modbus.rs`){% endif %}{% if has_protobuf == "true" %}, узел protobuf (`crates-host/domain/src/protobuf.rs` и `crates-cross/app/src/tasks/protobuf.rs`){% endif %}{% if has_canopen == "true" %}, узел CANopen (`crates-host/domain/src/canopen.rs` и `crates-cross/app/src/tasks/canopen.rs`){% endif %}{% endcapture %}
 
 Графа в проекте нет: узлы спавнит `tasks::spawn_all`
-(`crates-cross/app/src/tasks.rs`), по модулю на задачу{% if ota == "true" %}; самый полный образец —
-узел OTA, `crates-host/domain/src/ota.rs` и `crates-cross/app/src/tasks/ota.rs`{% endif %}.
+(`crates-cross/app/src/tasks.rs`), по модулю на задачу. {% if samples != "" %}Образцы: {{ samples | remove_first: ", " }}.{% else %}Готового узла-образца в
+проекте нет: `domain::cpu_load` без графа — не узел, а цикл. Образцы фрагмента
+и автомата — в репозитории шаблона
+([rust-embedded-template](https://github.com/Sergycb/rust-embedded-template)):
+`crates-host/domain/src/usb.rs` — самый короткий узел.{% endif %}
 Сторожа и перезапусков нет: узлы не падают, а зависший остаётся зависшим.
 {%- endif %}
 
@@ -40,6 +44,10 @@
 {%- if graph == "true" %}
 3. **Строка в графе** — в `fragments:` файла `crates-cross/app/src/graph.rs`:
    `::domain::<УЗЕЛ>_FRAG as <УЗЕЛ>`. Имя узлу даёт эта запись, а не фрагмент.
+   Узел со входом (`boot: inputs: struct …`) получает его значение там же —
+   `… as <УЗЕЛ> = ::domain::<узел>::<Вход> { … }`, узел с параметрами — типы в
+   угловых скобках, `::domain::<УЗЕЛ>_FRAG<Тип, …> as <УЗЕЛ>` (образцы — `CPU_LOAD`{% if ota == "true" %}
+   и `OTA`{% endif %} в `graph.rs`).
 4. **Сторож — если узел обещает прогресс.** Поле `watchdog:` фрагмента и
    `const WATCHDOG` рядом с узлом; новый узел обязан встать в список
    `const`-assert'а в `graph.rs`, иначе цепочка таймаутов
@@ -69,8 +77,9 @@
        spawner.spawn(task(bus).expect("задача SENSOR свежая: спавнится один раз"));
    }
 
-   // в spawn_all (crates-cross/app/src/tasks.rs):
-   sensor::spawn(spawner, board.sensor);
+   // в spawn_all (crates-cross/app/src/tasks.rs{% if ota != "true" and has_usb != "true" and has_modbus != "true" and has_protobuf != "true" and has_canopen != "true" %}; параметр `_board`
+   // свежего проекта переименуйте в `board`{% endif %}):
+   sensor::spawn(spawner, board.sensor_bus);
    ```
 
    Входы `request:` — `static` модуля задачи{% if ota == "true" %} (`CMD` и `ASK` в `tasks/ota.rs`){% endif %}.

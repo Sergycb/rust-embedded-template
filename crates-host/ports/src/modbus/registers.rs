@@ -3,9 +3,10 @@
 //!
 //! Трейт, потому что реализаций несколько и в одной прошивке они вложены
 //! друг в друга: карта проекта (`domain::modbus::EmptyRegisters` — её
-//! заготовка), окно OTA поверх неё (`domain::modbus::OtaRegisters`) и общая
-//! ручка на все узлы Modbus (`domain::modbus::SharedRegisters`); зовёт их
-//! обработчик `domain::modbus::Slave`.
+//! заготовка){% if ota == "true" %}, окно OTA поверх неё
+//! (`domain::modbus::OtaRegisters`){% endif %} и общая ручка на все узлы
+//! Modbus (`domain::modbus::SharedRegisters`); зовёт их обработчик
+//! `domain::modbus::Slave`.
 
 use crate::modbus::Exception;
 

@@ -81,7 +81,7 @@ impl ports::CanBus for Can {
 {%- if external_flash == "true" %}
 
 /// Шина внешней флеши, к которой ещё не подключили микросхему, — место под
-/// {% if ext_flash_bus == "spi" %}SPI{% else %}QSPI{% endif %} платы (`bsp::external::Bus`).
+/// {% if ext_flash_bus == "spi" %}SPI{% elsif ext_flash_bus == "quadspi" %}QUADSPI{% else %}OCTOSPI{% endif %} платы (`bsp::external::Bus`).
 ///
 /// Драйвер W25Q над ней настоящий, а каждая команда отвечает
 /// [`NotConnected`]: `init` не проходит, и драйвер отказывает в любой
