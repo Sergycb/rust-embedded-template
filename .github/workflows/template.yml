@@ -70,7 +70,7 @@ jobs:
       # вместе.
       - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2 (2.88.0)
         with:
-          tool: cargo-generate@0.23.12
+          tool: cargo-generate@0.26.0
 
       # `--quick`: генерация под каждый чип из набора и проверка, что не
       # осталось неподставленных плейсхолдеров; без сборки, которой всё равно
