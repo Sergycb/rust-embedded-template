@@ -14,10 +14,12 @@ pub struct Reboot;
 
 impl Reboot {
     /// Сбрасывает МК; не возвращается.
+{%- if ota == "true" %}
     ///
     /// Своё имя, а не `reboot`: собственный метод с именем трейтового
     /// `ports::Reboot::reboot` перекрыл бы его при вызове (`docs/architecture.md`,
-    /// «Дублировать методы портов собственными нельзя»).
+    /// «Метод — один, у самого типа»).
+{%- endif %}
 {%- if cache contains "scb_d" %}
     #[expect(
         unsafe_code,

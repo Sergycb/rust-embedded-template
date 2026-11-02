@@ -10,13 +10,16 @@
 //! | `status` | плата → брокер | `online`/`offline` (retain; `offline` — will) |
 //! | `info` | плата → брокер | сведения об устройстве, JSON (retain) |
 //! | `telemetry` | плата → брокер | время работы раз в [`TELEMETRY_INTERVAL`](crate::mqtt::TELEMETRY_INTERVAL), JSON |
-//! | `cmd/reboot` | брокер → плата | перезагрузка |
+//! | `cmd/reboot` | брокер → плата | перезагрузка{% if ota != "true" %}; без OTA — только строка в лог{% endif %} |
+// {%- if ota == "true" %}
 //! | `cmd/reboot/result` | плата → брокер | исход команды |
+// {%- endif %}
 //!
 //! Здесь — фрагмент узла, его автомат и задача; имена тем и разбор команд —
-//! `topics`, адрес брокера — `broker`, тексты телеметрии — `telemetry`, одна
-//! сессия с брокером над готовым потоком байтов — `session` (`serve`), вход —
-//! `wiring`.
+//! `topics`, адрес брокера — `broker`, TCP-клиент брокера с паузами между
+//! попытками — `client` ([`TcpClient`](crate::mqtt::TcpClient)), тексты
+//! телеметрии — `telemetry`, одна сессия с брокером над готовым потоком
+//! байтов — `session` (`serve`). Вход узла (`MqttWiring`) выводит фрагмент.
 
 /// Адрес брокера: `Endpoint`.
 mod broker;
@@ -41,7 +44,7 @@ use self::session::{Env, serve};
 pub use self::telemetry::{TELEMETRY_INTERVAL, write_telemetry};
 pub use self::topics::{Command, PREFIX_MAX, Topics, parse_command};
 
-// Узел объявлен рядом со своей задачей — как `SSH`. Адрес брокера — во входе,
+// Узел объявлен рядом со своей задачей. Адрес брокера — во входе,
 // соединение — `TcpClient` над сокетом стека (его слот `LINK` собирает
 // compose-site из стека и буферов TCP от `app`); `local` у него и у стека —
 // оба вправе быть `!Send`.

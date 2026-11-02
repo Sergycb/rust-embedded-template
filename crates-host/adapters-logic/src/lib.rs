@@ -1,8 +1,20 @@
 #![cfg_attr(not(test), no_std)]
 
-//! Реализации портов там, где их несколько: каналы протоколов
-//! (`ports::FrameLink`, `ports::FrameDuplex`) над потоком байтов и
-//! датаграммой и транспорты master'а Modbus (`ports::ModbusClient`).
+//! Реализации портов там, где их несколько, и транспорты под ними.
+// {%- if cobs_used == "true" or has_modbus == "true" or has_udp == "true" %}
+// {%- if cobs_used == "true" or has_udp == "true" %}
+//! Каналы протоколов (`ports::FrameLink`, `ports::FrameDuplex`) — над потоком
+//! байтов или датаграммой.
+// {%- else %}
+//! Каналы протоколов (`ports::FrameLink`) — над потоком байтов или датаграммой.
+// {%- endif %}
+// {%- endif %}
+// {%- if modbus_master == "true" %}
+//! Транспорты master'а Modbus (`ports::ModbusClient`).
+// {%- endif %}
+// {%- if has_tcp == "true" %}
+//! TCP-сервер (`net::TcpServer`) — поток байтов над сокетом.
+// {%- endif %}
 //!
 //! Чипа здесь нет: поток — любой `embedded_io_async::{Read, Write}`, сокеты —
 //! стек `embassy-net`, который строит плата. Обёртки над железом без чипа —

@@ -70,7 +70,7 @@ WATCHDOG_TIMEOUT_US = "13000000"
 {%- if ota == "true" %}
 # Страницы раздела, посчитанные при генерации (`memory.x` считается теми же
 # цифрами): их ждёт компилятор — параметром `ErasePage` и `const`-assert'ами, —
-# и приложение, и bootloader берут их из `bsp` (`bsp::flash`{% if ota_store == "external" %}, `bsp::external`{% endif %}; docs/flash.md).
+# и приложение, и bootloader берут их из `bsp` (`{% if ota_store == "external" %}bsp::external{% else %}bsp::flash{% endif %}`; docs/flash.md).
 # Границы разделов и регионов (`ACTIVE`, `CONFIG`, конец внешней флеши, `DMA_NC`)
 # здесь не лежат: это символы `memory.x`, `bsp::layout` читает их линкерными
 # символами, а проверки над ними — `ASSERT` там же.
@@ -81,6 +81,10 @@ EXT_PAGE_SIZE = "{{ext_page_size | remove: '_'}}"
 {%- if state_erase_size != "" %}
 # Страница `BOOTLOADER_STATE` — размер сектора, в котором он лежит.
 STATE_ERASE_SIZE = "{{state_erase_size | remove: '_'}}"
+{%- else %}
+# Ручная раскладка: впишите страницу сектора `BOOTLOADER_STATE` — без неё
+# проект не соберётся (её читает `bsp::flash::STATE_ERASE_SIZE`).
+# STATE_ERASE_SIZE = "…"
 {%- endif %}
 {%- if swap_paged == "true" %}
 # Страница обмена `ACTIVE` и `DFU`, крупнее физической (`ErasePage`).

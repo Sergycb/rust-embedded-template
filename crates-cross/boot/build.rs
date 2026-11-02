@@ -36,7 +36,8 @@ fn public_key(manifest: &Path) {
     // `rerun-if-changed` только на существующий файл: отсутствующий по такому
     // пути cargo считает вечно устаревшим, и скрипт перезапускался бы на
     // каждой сборке, пересобирая bootloader. Обратная сторона: ключ, положенный
-    // МИМО `cargo xtask build`, скрипт не заметит — лечится `cargo clean -p boot`.
+    // МИМО `cargo xtask build`, скрипт не заметит — лечится
+    // `cargo clean --manifest-path crates-cross/Cargo.toml -p boot` из корня проекта.
     let key = match std::fs::read(&source) {
         Ok(bytes) if bytes.len() == 32 => {
             println!("cargo::rerun-if-changed={}", source.display());

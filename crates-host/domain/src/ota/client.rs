@@ -47,8 +47,8 @@ pub struct OtaRequest {
 
 /// Клиент узла OTA для узла протокола: requester входа `CMD` и свой номер.
 ///
-/// Узел протокола зовёт [`request`](Self::request) с голой командой, как
-/// раньше `Requester::request`, а номер подставляется сам.
+/// Узел протокола зовёт [`request`](Self::request) с голой командой; номер
+/// клиента подставляется сам.
 #[derive(Debug, Clone, Copy)]
 pub struct OtaClient {
     requester: Requester<'static, OtaRequest, OtaReply>,

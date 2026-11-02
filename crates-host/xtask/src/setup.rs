@@ -21,20 +21,21 @@ pub fn setup(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     // `cargo-flash` — отдельный бинарь того же пакета, им этапы `test target`
     // и `test host-target` (если есть пробник) заливают образы перед прогоном.
     install_if_missing(sh, &["probe-rs", "cargo-flash"], "probe-rs-tools")?;
-    // Версия — та же, что у релизных джобов (`FLIP_LINK_VERSION`): от линкера
-    // зависит раскладка образа (docs/conventions.md, «Воспроизводимый релиз»).
+    // Версия закреплена{% if ci == "github" %} — та же, что в ci.yml{% if ota == "true" %} и release.yml{% endif %}{% elsif ci == "gitlab" %} — та же, что `FLIP_LINK_VERSION` в .gitlab-ci.yml{% endif %}: от
+    // линкера зависит раскладка образа (docs/conventions.md, «Тулчейн запинен»).
     install_if_missing(sh, &["flip-link"], "flip-link@0.1.12")?;
     install_if_missing(sh, &["cargo-nextest"], "cargo-nextest")?;
     // Дальше — то, что гоняет CI, чтобы его шаги воспроизводились локально:
     // лицензии и уязвимости (`cargo deny check`), сочетания фич (`cargo hack`),
-    // покрытие (`cargo llvm-cov`) и разбор изменившихся снапшотов `insta`.
+    // покрытие (`cargo llvm-cov`). И `cargo insta review` — разбор изменившихся
+    // снапшотов (CI его не зовёт: снапшоты сверяет сам nextest).
     install_if_missing(sh, &["cargo-deny"], "cargo-deny")?;
     install_if_missing(sh, &["cargo-hack"], "cargo-hack")?;
     install_if_missing(sh, &["cargo-llvm-cov"], "cargo-llvm-cov")?;
     install_if_missing(sh, &["cargo-insta"], "cargo-insta")?;
     // Текстовые проверки: опечатки (`typos`) гоняет и CI, а неиспользуемые
-    // зависимости (`cargo machete`) и формат манифестов (`taplo fmt --check`)
-    // — вручную, в CI их нет. У `typos` и `taplo` пакет и бинарник называются
+    // зависимости (`cargo machete`) и синтаксис манифестов (`taplo check`) —
+    // вручную, в CI их нет. У `typos` и `taplo` пакет и бинарник называются
     // по-разному.
     install_if_missing(sh, &["cargo-machete"], "cargo-machete")?;
     install_if_missing(sh, &["typos"], "typos-cli")?;

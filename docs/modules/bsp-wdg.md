@@ -10,12 +10,12 @@
 
 **Всё это уже собрано.** Объект строит `Board::new` (поле `watchdog`,
 ещё не запущенный), блок `watchdog:` графа запускает его сам
-(`= board.watchdog.arm()`), а узлы `HEARTBEAT` и `CPU_LOAD` объявляют
+(`= {% if ota == "true" %}boot.{% endif %}board.watchdog.arm()`), а узлы `HEARTBEAT` и `CPU_LOAD` объявляют
 `watchdog:` и отмечаются через `heartbeat.feed()` — см. `app/src/graph.rs`. Ниже —
 только то, что стоит знать, прежде чем это менять.
 
 **Запускается он в прологе `spawn_all`, а не в `Board::new` и не в
-`main`, а собран и запущен — разные типы:** [`UnarmedBoardWatchdog::new`]
+`main`, а собран и запущен — разные типы:** `UnarmedBoardWatchdog::new`
 отдаёт [`Disarmed`]-сторож (регистры заполнены, счётчик стоит), [`Iwdg::arm`]
 превращает его в [`Armed`], и только у второго реализован
 [`watchdog::HardwareWatchdog`] — невзведённый сторож в блок `watchdog:` не

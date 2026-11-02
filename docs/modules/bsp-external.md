@@ -13,23 +13,28 @@ XM25QH…) `init` не проходят: драйвер сверяет прои�
 Шаблон выводы не выбирает (`docs/architecture.md`), поэтому шина под
 драйвером — заглушка `bsp::stub::FlashBus`: `init` не проходит, и каждая
 операция с флешью отвечает ошибкой. Проект собирается и работает, только {% if ota == "true" and ota_store == "external" %}образ
-не принимается, а bootloader загружает текущий, не обменивая разделы{% else %}настройки не сохраняются{% endif %}.
+не принимается, а bootloader загружает текущий, не обменивая разделы{% if config_store == "external" %}, и настройки
+не сохраняются{% endif %}{% else %}настройки не сохраняются{% endif %}.
 
 Разделы — одним объектом под одним мьютексом (`ExternalMutex`): микросхема
 одна, и операции разных разделов не должны перемежаться посреди команды.
 
 ## Как подключить микросхему
 
-Блок шины уже лежит в группе `ext_flash` (`resources.rs`). Выводы и
-DMA-каналы к нему — из справочника по чипу:
+Блок шины уже лежит в группе `ext_flash` (`resources.rs`). Выводы{% if ext_flash_bus != "octospi" %} и
+DMA-каналы{% endif %} к нему — из справочника по чипу:
 
 ```text
 cargo xtask pins {{ext_flash_block}} --snippet
 ```
 
-Перенесите в группу `ext_flash` выводы, разведённые на плате, и DMA-каналы, а
+{% if ext_flash_bus == "spi" %}Перенесите в группу `ext_flash` выводы, разведённые на плате, и DMA-каналы, а
+в `bsp/src/external.rs` заведите `bind_interrupts!` с прерываниями DMA-каналов
+(`dma::InterruptHandler`): своего обработчика у SPI нет, и заготовка
+`bind_interrupts!` для него не печатает.{% elsif ext_flash_bus == "quadspi" %}Перенесите в группу `ext_flash` выводы, разведённые на плате, и DMA-канал, а
 `bind_interrupts!` из заготовки — в `bsp/src/external.rs`, дописав в него
-прерывания DMA-каналов (`dma::InterruptHandler`).
+прерывание DMA-канала (`dma::InterruptHandler`).{% else %}Перенесите в группу `ext_flash` выводы, разведённые на плате. DMA блоку не
+нужен: рецепт ниже блокирующий.{% endif %}
 {%- if ext_flash_bus == "spi" %}
 
 1. Шина — `w25q::spi::SpiAdapter` над `SpiDevice`: SPI-блок и вывод CS

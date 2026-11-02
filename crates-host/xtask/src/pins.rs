@@ -21,7 +21,7 @@ const CHIP_FEATURE: &str = "{{chip_feature}}";
 /// выбирает чип Cargo-фичей, то есть в его манифесте живёт Liquid, а манифест
 /// с Liquid не резолвится. Будь он членом корневого workspace, в репозитории
 /// шаблона перестали бы работать `cargo xtask lint` и `test host`. Подробнее —
-/// в doc-комментарии `crates-host/chip-info/src/main.rs`.
+/// в комментарии над `[workspace]` в `crates-host/chip-info/Cargo.toml`.
 pub fn pins(sh: &xshell::Shell, args: &[&str]) -> Result<(), anyhow::Error> {
     // В самом репозитории шаблона плейсхолдер не подставлен — там chip-info не
     // собирается вовсе, и невнятная ошибка Liquid-парсинга манифеста лучше

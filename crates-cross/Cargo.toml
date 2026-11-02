@@ -26,9 +26,11 @@ rust-version = "1.99"
 # `-D warnings` в `cargo xtask lint cross` превращал бы предупреждение в ошибку.
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(rust_analyzer)"] }
 # `warn`, а не `deny`, как в корневом workspace: unsafe в `crates-cross` есть
-# и оправдан — {% if ota == "true" %}прыжок в образ в `boot`, {% endif %}поллинг исполнителя в `app`,
-# регистры ядра и линкерные символы в `bsp`. На каждом таком месте стоит
-# `#[expect(unsafe_code)]` с объяснением, и это весь
+# и оправдан — {% if ota == "true" %}прыжок в образ и символ ключа подписи в `boot`, {% endif %}поллинг
+# исполнителя{% if ota == "true" %}, символ версии образа{% endif %} и регистры фолта в `app`, регистры ядра и
+# линкерные символы в `bsp`. На каждом таком месте стоит
+# `#[expect(unsafe_code)]` с объяснением (`#[allow]` с `reason` — там, где линт
+# срабатывает в коде макроса, как у `#[exception]` в `app/src/fault.rs`), и это весь
 # unsafe этого воркспейса, который видит clippy (проверено прогоном с
 # `-W unsafe_code`, а не перечислением файлов). Вместе с `-D warnings` в
 # `cargo xtask lint cross` линт делает новый unsafe ошибкой сборки — то есть
@@ -56,7 +58,7 @@ large_stack_arrays      = "warn"
 undocumented_unsafe_blocks = "warn"
 # `pedantic`: приведения без `as`, `# Errors`/`# Panics` в doc, `#[must_use]`.
 # Приоритет -1, иначе группа конфликтует с отдельными линтами (clippy
-# `lint_groups_priority`). `warn` вместе с `-D warnings` в `cargo xtask lint`
+# `lint_groups_priority`). `warn` вместе с `-D warnings` в `cargo xtask lint cross`
 # даёт ошибку сборки, поэтому исключения пишутся точечно:
 # `#[expect(lint, reason = "…")]`, а не `#[allow]`.
 pedantic                  = { level = "warn", priority = -1 }
@@ -143,14 +145,15 @@ static_cell            = { version = "2.1.1" }
 embassy-usb            = { version = "0.6.0", default-features = false, features = ["defmt"] }
 {%- endif %}
 {%- if has_net == "true" %}
-# Сетевой стек (`bsp::net`): та же версия и фичи, что в корневом Cargo.toml.
+# Сетевой стек (`bsp::net`): та же версия и фичи, что в корневом Cargo.toml,
+# плюс `defmt`.
 embassy-net            = { version = "0.9.1", features = ["tcp", "udp", "proto-ipv4", "medium-ethernet", "dhcpv4", "defmt"] }
 {%- if net_services contains "ssh" %}
 # Случайность для криптографии (`bsp::rng` — бэкенд над RNG платы): через
-# `getrandom` её берут и крейты, что зовут его сами (`sunset`), и те, что берут
-# генератор параметром (`getrandom::SysRng`, фича `sys_rng`). Без фич: своего
-# источника на `target_os = "none"` у него нет, бэкенд — `--cfg` в
-# `.cargo/config.toml`.
+# `getrandom` её берут крейты, что зовут его сами (`sunset`, `domain::ssh`);
+# крейту с генератором-параметром годится `getrandom::SysRng` (фича `sys_rng`,
+# сейчас не включена). Своих фич здесь нет: источника на `target_os = "none"`
+# у крейта нет, бэкенд — `--cfg` в `.cargo/config.toml`.
 getrandom              = { version = "0.4.3" }
 {%- endif %}
 {%- endif %}
@@ -160,7 +163,8 @@ embassy-sync       = { version = "0.8.0" }
 {%- if shared_flash == "true" or ota == "true" and ota_store == "external" %}
 # Трейты `NorFlash` — нужны `boot/src/external.rs` (геометрия драйвера внешней
 # флеши в проверках при компиляции) и `bsp/src/flash.rs` (обёртка флеша,
-# сбрасывающая кэш). Та же версия, что тянет embassy-boot.
+# сбрасывающая кэш, или доступ к EEPROM через `Storage`). Та же версия, что
+# тянет embassy-boot.
 embedded-storage   = { version = "0.3.2" }
 {%- endif %}
 {%- if has_uart == "true" %}
@@ -202,7 +206,7 @@ embassy-time       = { version = "0.5.1" }
 # default отключён, чтобы состав фич был виден списком, но обе входящие в
 # него фичи здесь же и перечислены: `semihosting` — канал, которым тест
 # сообщает результат раннеру, `panic-handler` — то, что превращает панику в
-# «тест упал» вместо HardFault (подробности — в crates-cross/target-tests/Cargo.toml,
+# «тест упал» вместо HardFault (подробности — в crates-cross/target-tests/tests/test.rs,
 # там же про то, почему в этом бинарнике нет panic-probe). `defmt` — чтобы
 # вывод харнесса шёл тем же транспортом, что и логи прошивки.
 embedded-test      = { version = "0.7.3", default-features = false, features = [
@@ -238,9 +242,9 @@ domain           = { path = "../crates-host/domain", default-features = false, f
 shadow-rs        = { version = "2.0.0", default-features = false }
 assign-resources = { version = "0.5.0" }
 
-# Крейты из личной библиотеки ({{rust_lib}}) — про железо
-# и оркестрацию, поэтому объявлены здесь, а не в корневом workspace'е (для
-# `domain`).
+# Крейты из личной библиотеки ({{rust_lib}}). `supervisor` объявлен и в
+# корневом workspace'е — для фрагментов `domain`, ревизия та же; здесь — с
+# фичами прошивки{% if graph == "true" %}, рядом — `watchdog`, нужный только ей{% elsif ota == "true" %}, рядом — `sync-request`, нужный только ей{% endif %}.
 #
 {%- if graph == "true" %}
 # `supervisor` — вместо трёх сторонних крейтов: `embassy-supervisor`
@@ -251,9 +255,9 @@ assign-resources = { version = "0.5.0" }
 # `watchdog` — no_std-ядро мультиплексора (трейт `HardwareWatchdog`),
 # нужно напрямую, чтобы `bsp` мог реализовать этот трейт над IWDG.
 #
-# Фича `defmt` у `supervisor` не включена: библиотека сама ничего не
+# Фичи `defmt` у `supervisor` нет: библиотека сама ничего не
 # печатает. Что видно в логе, решает прошивка: ошибку
-# `spawn_all` печатает `main` бинарника `app`, имя узла, переставшего кормить сторож, перед
+# `spawn_all` печатает задача `start` бинарника `app`, имя узла, переставшего кормить сторож, перед
 # аппаратным сбросом — `before_reset` в `bsp::wdg`, застой и восстановление
 # узла — наблюдатель `observe:` в `graph.rs`, исход прогона — тело задачи.
 {%- else %}
@@ -270,16 +274,17 @@ assign-resources = { version = "0.5.0" }
 #   `&'static str` на узел.
 #
 # * `local-resources` — ради слотов `local`: они держат `!Send`-объекты
-#   платы{% if ota == "true" %} (например, `domain::ota::Updater` над разделами `bsp::flash`
+#   платы{% if ota == "true" %} (например, `domain::ota::Updater` над разделами `{% if ota_store == "external" %}bsp::external{% else %}bsp::flash{% endif %}`
 #   ссылается на `Mutex<NoopRawMutex, …>`){% endif %}, а обычный слот — это `static`,
 #   которому нужен `Send`.
 #   Фича включает `LocalResourceSlot` и снимает у `supervisor`
 #   `forbid(unsafe_code)` до `deny` (у слота один документированный
-#   `unsafe impl Sync`), а макрос эмитит по `unsafe`-блоку на каждый такой
+#   `unsafe impl Sync`){% if graph == "true" %}, а макрос эмитит по `unsafe`-блоку на каждый такой
 #   `static` (`LocalResourceSlot::empty()`) в `app`: обязательство «значение
 #   живёт на исполнителе, спавнящем узлы» лежит в `app`, а не в
 #   библиотеке.{% if shared_flash == "true" %} Это то же допущение «один исполнитель», что у
-#   `NoopRawMutex` флеша (docs/flash.md).{% endif %}
+#   `NoopRawMutex` флеша (docs/flash.md).{% endif %}{% else %}. Фичу просят и фрагменты `domain` (их слоты
+#   `local`); без графа статиков слотов в `app` нет.{% endif %}
 #
 # * Слова DSL — под фичами, все выключены по умолчанию: фичи слов своих
 #   фрагментов включает `domain` (crates-host/domain/Cargo.toml), а здесь —
@@ -319,7 +324,8 @@ w25q             = { git = "{{hw_drivers}}.git", rev = "4deb2e145fb5ed135f335b98
 
 # Причина паники, переживающая сброс: release-паникёр `app`
 # (`app/src/panic.rs`) пишет её `report_panic_info` в регион PANIC (посчитан при
-# генерации, см. memory.x) и делает `sys_reset`; следующий старт `app` читает её
+# генерации, см. memory.x) и сбрасывает МК рычагом `bsp::reset::Reboot`;
+# следующий старт `app` читает её
 # и печатает. `custom-panic-handler` снимает собственный `#[panic_handler]`
 # крейта — свой нужен, чтобы вдобавок напечатать причину в RTT. `utf8` добавляет
 # `get_panic_message_utf8`, без него сообщение читается только байтами.

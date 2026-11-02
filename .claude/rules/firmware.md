@@ -9,7 +9,7 @@ paths: crates-cross/**
   сама, а границу задачи пересекает рычаг платы — псевдоним `Source`{% endif %}{% endif %}{% if protocol_link == "true" %}
   (`docs/modules/app.md`, «Канал протокола — конкретным типом там, где строится»){% endif %}) —
   `docs/architecture.md`.
-- Ровно один `#[panic_handler]` и один `#[global_logger]` на бинарник, развилка
+- Ровно один `#[panic_handler]` и один активный `#[global_logger]` на бинарник, развилка
   по профилю — `#[cfg(debug_assertions)]`, не Cargo-фича — `docs/diagnostics.md`,
   «Два паникёра, один на сборку».
 - `Board` (один, `Board::new() -> Board`{% if has_usb == "true" or has_net == "true" %}, пары из одного конструктора собирает

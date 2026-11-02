@@ -93,7 +93,7 @@ pub fn spawn(
 ) {
     // Тестовый образ `app-unconfirmed` начинает «уже подтверждённым» и
     // `mark_booted` не зовёт: следующий сброс его откатывает
-    // (`cargo xtask test host-target`, docs/ota.md). В задачу — только два
+    // ({% if has_protobuf == "true" %}`cargo xtask test host-target`, {% endif %}docs/ota.md). В задачу — только два
     // поля, а не `image` целиком: аргументы задачи и есть её слоты, и текст
     // версии узлу OTA ни к чему.
     let token = task(firmware, image.version, image.confirmed);

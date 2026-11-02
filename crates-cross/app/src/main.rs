@@ -4,8 +4,8 @@
 //! узлы. Всё, что не запуск, — библиотека пакета (`src/lib.rs`).{% if ota == "true" %} Запуск
 //! тестового образа — свой, в `src/bin/app-unconfirmed.rs`, и повторяет этот
 //! шаг в шаг: правите запуск здесь (свой слот перед `spawn_all`, новый шаг до
-//! исполнителя) — правьте и там, иначе `cargo xtask test host-target` проверит
-//! обмен на другой прошивке.{% endif %}
+//! исполнителя) — правьте и там, иначе {% if has_protobuf == "true" %}`cargo xtask test host-target` проверит
+//! обмен на другой прошивке{% else %}тестовый образ разойдётся с рабочим{% endif %}.{% endif %}
 #![no_std]
 #![no_main]
 
@@ -16,8 +16,8 @@ use embassy_time::Instant;
 use static_cell::StaticCell;
 {%- if ota == "true" %}
 
-/// Свойства этого образа (`app::version`): версия — `version` из Cargo.toml,
-/// себя подтверждает.
+/// Свойства этого образа (`app::version`): версия — `version` из Cargo.toml;
+/// `confirmed: false` — узел OTA подтвердит образ сам (`mark_booted`).
 const IMAGE: app::version::Image = app::version::Image {
     version: app::version::PACKAGE_VERSION,
     text: app::build::PKG_VERSION,
@@ -178,16 +178,18 @@ async fn start(spawner: Spawner) {
     // `boot:`-объекте графа (`app::Boot`){% else %} — это объявленный графом `boot:`-объект{% endif %},
     // из которого его инициализаторы забирают объекты частичными move.
     // Такие заборы уже есть — сторож в блоке `watchdog:`{% if ota == "true" %}, вход узла
-    // OTA в `fragments:` (`board.firmware` и свойства образа){% endif %} — и здесь же
-    // окажутся ваши: `resources: [SLOT: T = {% if ota == "true" %}boot.{% endif %}board.<поле>]` вместо
+    // OTA в `fragments:` (`boot.board.firmware` и `boot.image`){% endif %} — и здесь же
+    // окажутся ваши: привязка фрагмента в `fragments:` (`= …Wiring { поле:
+    // {% if ota == "true" %}boot.{% endif %}board.<поле> }`, docs/modules/app-graph.md) вместо
     // `provide_<slot>(..)` перед этой строкой. Оттого и последняя строка
     // `spawn_all`: после неё `board` принадлежит прологу.
     //
     // Аппаратный сторож запускается ВНУТРИ этого вызова — инициализатором
     // блока `watchdog:` (docs/watchdog.md); всё своё долгое
-    // ({% if ota == "true" %}проверка подписи, {% endif %}запись во flash) держите ВЫШЕ этой строки.{% if ota == "true" %} В release сторож
+    // (запись во flash) держите ВЫШЕ этой строки.{% if ota == "true" %} В release сторож
     // к этой строке уже тикает — его запустил bootloader, и путь от прыжка
-    // сюда обязан уложиться в `bsp::wdg::HW_TIMEOUT_US`.{% endif %}
+    // сюда обязан уложиться в `bsp::wdg::HW_TIMEOUT_MIN_US` (таймаут сторожа
+    // при самом быстром LSI).{% endif %}
     //
     // Паника, а не `let _ =`, и это не педантизм: сторож запускается в
     // прологе, ДО спавна узлов, поэтому отказ (узел уже занят) оставляет

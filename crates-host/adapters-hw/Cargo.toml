@@ -48,7 +48,7 @@ embassy-time = { workspace = true }
 # {%- endif %}
 
 [dev-dependencies]
-# Исполнитель для async-тестов над флешем в памяти (`#[tokio::test]`); фичи —
+# Исполнитель для async-тестов (`#[tokio::test]`){% if config_store == "eeprom" or has_usb == "true" %} над{% if config_store == "eeprom" %} EEPROM в памяти{% endif %}{% if config_store == "eeprom" and has_usb == "true" %} и{% endif %}{% if has_usb == "true" %} сценарным драйвером USB{% endif %}{% endif %}; фичи —
 # в корневом Cargo.toml.
 tokio = { workspace = true }
 # {%- if has_net == "true" or has_usb == "true" %}

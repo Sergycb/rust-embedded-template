@@ -1,12 +1,10 @@
 Сеть платы — Ethernet-устройство (`bsp::net::Device`) и стек `embassy-net` над
 ним: `board.net` (`bsp::net::Net`) — фоновая работа стека (`runner`) и сам стек
 (`stack`). Стек, его память и адресацию собирает плата; сокеты на нём открывают
-узлы — каналы протоколов{% if net_services contains "mqtt" %} и клиент MQTT{% endif %} строит приложение в своей
-памяти и отдаёт узлам готовыми
-{%- assign sep = " (" %}
-{%- if link_kinds contains "tcp" or link_kinds contains "udp" %}{{ sep }}привязки узлов протоколов в `crates-cross/app/src/graph.rs`{% assign sep = ", " %}{% endif %}
-{%- if net_services != "" %}{{ sep }}`crates-cross/app/src/net.rs`{% assign sep = ", " %}{% endif %}
-{%- if sep == ", " %}){% endif %}: порты — решение
+узлы{% if link_kinds contains "tcp" or link_kinds contains "udp" %} — каналы протоколов{% if net_services contains "mqtt" %} и клиент MQTT{% endif %} строит приложение в своей
+памяти и отдаёт узлам готовыми, в привязках узлов (`crates-cross/app/src/graph.rs`){% elsif net_services contains "mqtt" %} — клиент MQTT строит приложение в своей
+памяти и отдаёт узлу готовым, в привязке узла (`crates-cross/app/src/graph.rs`){% endif %}{% if net_services != "" %};
+константы и секреты служб — в `crates-cross/app/src/net.rs`{% endif %}. Порты — решение
 протокола, а не платы.{% if net_services contains "rest" or net_services contains "ssh" %} Сервер службы адаптера не получает и открывает сокет
 сам — `docs/architecture.md`, «Адаптеры делятся по одному признаку — нужен ли
 чип».{% endif %}
@@ -14,13 +12,13 @@
 Шаблон выводы не выбирает (`docs/architecture.md`), поэтому `Device` пока —
 заглушка `bsp::stub::NetDevice`: линк всегда опущен, кадров нет. Всё остальное
 настоящее: стек `embassy-net` с DHCP, его фоновая работа в узле `NET`
-(`domain::net`) и сокеты протоколов{% if has_tcp == "true" %} (`adapters_logic::net::TcpServer`){% endif %}{% if has_udp == "true" %} (`adapters_logic::net::UdpLink`){% endif %}.
+(`domain::net`) и сокеты протоколов{% if has_tcp == "true" or has_udp == "true" %} ({% if has_tcp == "true" %}`adapters_logic::net::TcpServer`{% endif %}{% if has_tcp == "true" and has_udp == "true" %}, {% endif %}{% if has_udp == "true" %}`adapters_logic::net::UdpLink`{% endif %}){% endif %}.
 Проект собирается и запускается, протокол ждёт клиента вечно. Подставить
 Ethernet — заменить устройство: стек, сокеты и граф не меняются.
 
 Пару собирает плата, а не приложение (`docs/architecture.md`, «`Board` отдаёт
 рычаги платы, а не периферию и не протоколы»); граф делит её по полям
-(`board.net.runner` — узлу `NET`, `board.net.stack` — узлам с сокетами). Затравка стека — {% if rng_irq != "" %}первое слово аппаратного
+(`board.net.runner` — узлу `NET`, `board.net.stack` — узлам с сокетами). Затравка стека — {% if rng_irq != "" %}64 бита (два слова) аппаратного
 генератора (`bsp::rng`){% else %}из заводского номера (`seed_from_uid`: RNG у чипа нет){% endif %}.
 
 ## Как подставить свой Ethernet
@@ -33,7 +31,10 @@ Ethernet — заменить устройство: стек, сокеты и г
 
    Он печатает `bind_interrupts!` и группу `assign_resources!`: `REF_CLK`,
    `CRS_DV`, `RXD0`/`RXD1`, `TXD0`/`TXD1`, `TX_EN`, `MDIO`, `MDC`. Выберите те, что
-   разведены к PHY на плате (на Nucleo-144 — `LAN8742A`).
+   разведены к PHY на плате (на Nucleo-144 — `LAN8742A`), и добавьте их в
+   группу `eth` в `resources.rs` вместе с блоком шины MDIO — `sma: ETH_SMA`
+   (распечатка его не даёт). `bind_interrupts!` положите в `bsp/src/net.rs`:
+   его `Irqs` берёт `new`.
 
 2. Псевдоним — на драйвер `embassy-stm32`, сборка — вместо заглушки:
 
@@ -48,7 +49,8 @@ Ethernet — заменить устройство: стек, сокеты и г
    #[unsafe(link_section = ".dma_nc")]
    static mut QUEUE: MaybeUninit<PacketQueue<4, 4>> = MaybeUninit::uninit();
 
-   // В `new`, вместо `Device::new(mac_from_uid(uid))`:
+   // В `new` (параметр `_resources` переименуйте в `r`), вместо
+   // `Device::new(mac_from_uid(uid))`:
    // SAFETY: `new` зовётся один раз, из `Board::new`; других ссылок на `QUEUE` нет.
    let queue = unsafe { &mut *(&raw mut QUEUE) };
    PacketQueue::init(queue);
@@ -57,15 +59,18 @@ Ethernet — заменить устройство: стек, сокеты и г
    let queue = unsafe { queue.assume_init_mut() };
    Ethernet::new(
        queue, r.eth, Irqs,
-       r.ref_clk, r.crs, r.rx_d0, r.rx_d1, r.tx_d0, r.tx_d1, r.tx_en,
+       r.ref_clk, r.crs_dv, r.rxd0, r.rxd1, r.txd0, r.txd1, r.tx_en,
        mac_from_uid(uid), r.sma, r.mdio, r.mdc,
    )
    ```
 
+   Регион `DMA_NC` у H7R/S — 8 KiB (у остальных — 32 KiB), и `PacketQueue<4, 4>`
+   в него не влезет: там берите `PacketQueue<2, 2>` (~6 KiB).
+
    Очередь — не `ConstStaticCell`: секция `.dma_nc` — `NOLOAD`, и флаг «уже
    взят» внутри ячейки при старте был бы мусором. Обычный `static` здесь
    ломается молча: дескрипторы и кадры, которые пишет DMA, ядро читает из кэша
-   данных устаревшими (`docs/clocks.md`, «Кэш данных ядра M7 и DMA»). Оба
+   данных устаревшими (`docs/clocks.md`, «Кэши», абзац «Кэш данных ядра M7 и DMA»). Оба
    `unsafe` — новые места: впишите их в список в комментарии к `unsafe_code` в
    `crates-cross/Cargo.toml`, каждое — под `#[expect(unsafe_code, reason = …)]`.
 {% else %}
@@ -73,10 +78,11 @@ Ethernet — заменить устройство: стек, сокеты и г
    // память блока, а не стека.
    static QUEUE: ConstStaticCell<PacketQueue<4, 4>> = ConstStaticCell::new(PacketQueue::new());
 
-   // В `new`, вместо `Device::new(mac_from_uid(uid))`:
+   // В `new` (параметр `_resources` переименуйте в `r`), вместо
+   // `Device::new(mac_from_uid(uid))`:
    Ethernet::new(
        QUEUE.take(), r.eth, Irqs,
-       r.ref_clk, r.crs, r.rx_d0, r.rx_d1, r.tx_d0, r.tx_d1, r.tx_en,
+       r.ref_clk, r.crs_dv, r.rxd0, r.rxd1, r.txd0, r.txd1, r.tx_en,
        mac_from_uid(uid), r.sma, r.mdio, r.mdc,
    )
    ```
@@ -90,7 +96,7 @@ Ethernet — заменить устройство: стек, сокеты и г
    Точные аргументы зависят от версии блока Ethernet чипа (v1 у F4/F7, v2 у
    H5/H7) — сверяйте с `embassy-stm32` 0.6 (`src/eth/v1`, `src/eth/v2`).
    `new` получает группу `eth` из `resources.rs`: `Board::new` уже зовёт
-   `crate::net::new(uid, seed, r.eth)` (`docs/resources.md`); выводы добавляются в группу.
+   `crate::net::new(uid, seed, r.eth)` (`docs/resources.md`).
 
 3. В графе — тип устройства во фрагменте `NET`: он уже назван через
    `bsp::net::Device`, менять ничего не нужно.

@@ -10,7 +10,8 @@
 use embassy_sync::once_lock::OnceLock;
 
 /// Карта проекта — реализация `domain::modbus::Registers`. Сейчас пуста; проект
-/// описывает свою в `domain` и ставит её сюда.
+/// описывает свою в `domain` (заготовка — `crates-host/domain/src/modbus/map.rs`)
+/// и ставит её сюда.
 pub type Map = domain::modbus::EmptyRegisters;
 
 /// Ручка карты, общей у всех узлов Modbus. Псевдоним: тип слота узла и

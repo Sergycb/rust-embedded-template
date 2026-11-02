@@ -265,13 +265,15 @@ resources: [WS: &'static mut $crate::x::Workspace = static |w| w.gain = inputs.g
 Писать её руками не нужно, и подключать тоже: имя блока подставлено при
 генерации из метаданных чипа (`IWDG`, на H7 `IWDG1`, на двухъядерных H7 у
 ядра CM4 `IWDG2`), объект собирает `Board::new`, а запускает его блок
-`watchdog:` графа — инициализатором `= board.watchdog.arm()`, где
-`board` это объявленный выше `boot:`-объект, который `main` передаёт в
-`spawn_all`. Всё, что осталось на вас, — цифры: `WATCHDOG_CHECK_EVERY` здесь,
-таймаут узла во фрагменте, `bsp::wdg::HW_TIMEOUT_US` у железа; их цепочка и
-где какое звено проверяется — `docs/watchdog.md`.
+`watchdog:` графа — инициализатором `= {% if ota == "true" %}boot.{% endif %}board.watchdog.arm()`, где
+{% if ota == "true" %}`boot` — объявленный выше `boot:`-объект (`Boot`: плата и свойства образа){% else %}`board` — объявленный выше `boot:`-объект{% endif %}, который задача `start`
+бинарника передаёт в `spawn_all`. Всё, что осталось на вас, — цифры:
+`WATCHDOG_CHECK_EVERY` здесь, таймаут узла во фрагменте, у железа —
+`WATCHDOG_TIMEOUT_US` в `[env]` crates-cross/.cargo/config.toml
+(`bsp::wdg::HW_TIMEOUT_US`); их цепочка и где какое звено проверяется —
+`docs/watchdog.md`.
 
-Узел объявлен **наблюдаемым** (`watchdog: ... observe`): его просрочка
+Узлы шаблона (`HEARTBEAT`, `CPU_LOAD`) объявлены **наблюдаемыми** (`watchdog: ... observe`): их просрочка
 докладывается наблюдателю графа (`report_liveness`), а не сбрасывает плату
 (`docs/watchdog.md`).
 
@@ -284,7 +286,7 @@ resources: [WS: &'static mut $crate::x::Workspace = static |w| w.gain = inputs.g
 # OTA: узел уже в графе, вам остаётся канал
 
 Узел `OTA` объявлен в `domain::ota` (`OTA_FRAG`; версию этого образа для
-защиты от отката подставила генерация во вход) и спавнится отсюда записью в
+защиты от отката он получает во входе из свойств образа `boot.image`) и спавнится отсюда записью в
 `fragments:` — она же даёт ему имя (`as OTA`) и типы двух его слотов
 аргументами. Образ он принимает командами (`domain::ota::OtaCommand`) на свой вход
 `CMD` — `request:` фрагмента, запрос с ответом (или на `ASK` — `serves:`, для
@@ -311,7 +313,7 @@ resources: [WS: &'static mut $crate::x::Workspace = static |w| w.gain = inputs.g
 (`= ::domain::ota::OtaWiring { flash: Updater::new(boot.board.firmware), reboot:
 bsp::reset::Reboot, running_version: boot.image.version, confirmed:
 boot.image.confirmed }`). Плата и свойства образа (`crate::version::Image`) —
-поля `boot:`-объекта `Boot`: его собирает `main` бинарника, и у рабочего `app`
+поля `boot:`-объекта `Boot`: его собирает задача `start` бинарника, и у рабочего `app`
 и тестового `app-unconfirmed` свойства свои. Типы слотов — аргументы фрагмента
 (`OTA_FRAG<::domain::ota::Updater<bsp::FirmwareFlash>, bsp::reset::Reboot, OTA_CMD_PARKED>`):
 слот — `static`, тип ему нужен, а знает его только эта сторона. Третий

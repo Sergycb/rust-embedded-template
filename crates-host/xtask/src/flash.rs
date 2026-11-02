@@ -2,8 +2,8 @@
 //! прошивка после `test target`.
 //!
 // {%- if ota == "true" %}
-//! Отдельной команды `flash` нет: руками прошивают `cargo flash -p boot --release` и
-//! `cargo run -p app` в `crates-cross` (см. README, «Быстрый старт»). Здесь
+//! Отдельной команды `flash` нет: руками прошивают `cargo flash -p boot --release
+//! --chip {{chip}}` и `cargo run -p app` в `crates-cross` (см. README, «Быстрый старт»). Здесь
 //! только то, что тестам нужно залить самим, и в правильном порядке —
 //! сначала bootloader.
 // {%- else %}

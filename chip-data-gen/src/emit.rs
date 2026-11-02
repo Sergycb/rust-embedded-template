@@ -67,8 +67,8 @@ pub(crate) fn format_memory_layouts(
             "erase_zero",
             if m.erase_zero { "true" } else { "false" },
         );
-        // Только у чипов с разрывом между банками — по наличию ключа хук и
-        // решает, что DFU пишется через регион банка.
+        // Только у чипов с регионом `DMA_NC` (`SRAM4` под BDMA — у H7): по
+        // наличию ключа хук включает `dma_nc` и `bdma_nc`.
         if let Some(dma) = &m.dma_nc {
             push_field(&mut out, "dma_nc_origin", &format_addr(dma.origin));
             push_field(&mut out, "dma_nc_length", &format_size(dma.length));
@@ -77,6 +77,8 @@ pub(crate) fn format_memory_layouts(
             push_field(&mut out, "bdma_nc_origin", &format_addr(origin));
             push_field(&mut out, "bdma_nc_length", &format_size(length));
         }
+        // Только у чипов с разрывом между банками — по наличию ключа хук и
+        // решает, что DFU пишется через регион банка.
         if let Some(origin) = m.dfu_bank_origin {
             push_field(&mut out, "dfu_bank_origin", &format_addr(origin));
         }
@@ -153,8 +155,8 @@ pub(crate) fn format_memory_layouts(
 }
 
 /// Только чипы, у которых блок сторожевого таймера зовётся НЕ `IWDG` — для
-/// остальных хук подставляет [`DEFAULT_WATCHDOG`]. Полная таблица на 1533
-/// чипа повторяла бы одно и то же слово полутора тысячами строк.
+/// остальных хук подставляет [`DEFAULT_WATCHDOG`]. Полная таблица на все
+/// чипы повторяла бы одно и то же слово полутора тысячами строк.
 pub(crate) fn format_watchdogs(watchdogs: &BTreeMap<&str, String>) -> String {
     let mut out = String::new();
     out.push_str(DATA_HEADER);
@@ -295,7 +297,7 @@ pub(crate) fn format_resets(
     out
 }
 
-/// Чипы, которым прошивка переключает флеш в одобанковый режим, — с вариантом
+/// Чипы, которым прошивка переключает флеш в однобанковый режим, — с вариантом
 /// регистров (см. `generate::FACTORY_DUAL_BANK`) и битом режима через двоеточие.
 pub(crate) fn format_bank_switch(chips: &BTreeMap<&str, (&'static str, u8)>) -> String {
     let mut out = String::new();
@@ -458,9 +460,10 @@ pub(crate) fn write_data_dir(dir: &Path, files: &[(String, String)]) -> anyhow::
 }
 
 /// Число как литерал Rust с разделителями разрядов (`131_072`): значение
-/// уходит прямо в `const` crates-cross (`STATE_ERASE_SIZE`), а там
-/// `clippy::unreadable_literal` под `-D warnings` не пропускает шесть цифр
-/// подряд.
+/// уходит прямо в `const` crates-cross (`CONFIG_ERASE_SIZE` в `bsp::flash`), а
+/// там `clippy::unreadable_literal` под `-D warnings` не пропускает шесть цифр
+/// подряд. В `[env]` (`STATE_ERASE_SIZE`, `EXT_PAGE_SIZE`) `_` снимает фильтр
+/// Liquid `remove`.
 fn rust_literal(v: u64) -> String {
     let digits = v.to_string();
     let mut out = String::new();

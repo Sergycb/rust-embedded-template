@@ -1,4 +1,5 @@
-// Пост-хук: сводка по сгенерированному проекту.
+// Пост-хук: удаляет crates-cross/app/src/version.rs без OTA и печатает
+// сводку по сгенерированному проекту.
 //
 // `cargo update` здесь был и намеренно убран. Он занимал больше половины
 // времени генерации (два вызова, каждый резолвит свой воркспейс и лезет за
@@ -18,8 +19,8 @@
 // `--allow-commands` в неинтерактивном режиме.
 
 // Значения выставил pre-хук (chip-select.rhai), здесь они уже известны. Без
-// этой сводки первое, что видит пользователь в новом проекте, — три строки
-// main.rs и четыре файла doc-комментариев с `ignore`-примерами.
+// этой сводки пользователь не узнает, что хук решил за него (OTA, граф,
+// назначенные блоки транспортов) и что заполнить первым.
 let chip = variable::get("chip");
 let target = variable::get("target");
 let ota = variable::get("ota");
@@ -96,7 +97,7 @@ if variable::get("graph") == "true" {
 		print("Блоки интерфейсов назначены по умолчанию: " + blocks + ". Сменить блок и задать выводы своей платы — crates-cross/bsp/src/resources.rs (cargo xtask pins <БЛОК> --snippet печатает готовую группу); имена транспортов (поле Board, модули bsp и app, имена узлов) остаются от блока по умолчанию.");
 	}
 	if variable::get("has_modbus") == "true" {
-		print("Modbus: карта регистров — crates-host/domain/src/modbus/registers.rs; одна на все узлы, тип подставляет crates-cross/app/src/modbus.rs (псевдоним Map, строится Map::default()).");
+		print("Modbus: карта регистров — crates-host/domain/src/modbus/map.rs (заготовка EmptyRegisters); одна на все узлы, тип подставляет crates-cross/app/src/modbus.rs (псевдоним Map, строится Map::default()).");
 	}
 	if variable::get("has_canopen") == "true" {
 		print("CANopen: словарь объектов — crates-host/canopen/device.toml.");
@@ -107,10 +108,11 @@ if variable::get("graph") == "true" {
 }
 
 // Lock-файлов шаблон не раздаёт: состав зависимостей зависит от ответов выше —
-// при `ota=no` уходят `embassy-boot*`, при `config=yes` добавляются
-// `sequential-storage` с `embedded-storage-async`, при OTA — `salty`,
-// протокол приносит свои крейты. Один шаблонный lock подходил бы ровно одному
-// сочетанию, а остальным ломал бы `cargo fetch --locked` в CI. Поэтому их
+// при `ota=no` уходят `embassy-boot*`, при `config=yes` добавляется
+// `sequential-storage`, при OTA — `salty` (`embedded-storage-async` — при
+// любом из них), протокол приносит свои крейты. Один шаблонный lock
+// подходил бы ровно одному сочетанию, а остальным ломал бы
+// `cargo fetch --locked` в CI. Поэтому их
 // считает первая же сборка проекта — и вот об этом надо сказать вслух, иначе
 // файлы появятся «сами собой» и рискуют остаться незакоммиченными.
 print("");

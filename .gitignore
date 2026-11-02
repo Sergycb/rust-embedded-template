@@ -83,8 +83,11 @@ CLAUDE.local.md
 # Рабочие файлы самого Claude Code внутри .claude/ — состояние конкретной
 # машины (сессии, реестр агентов, расписания, блокировки), а не конвенции
 # проекта. .claude/rules/ при этом остаётся под git — это конвенции по путям,
-# они едут в историю. Список сверен с .git/info/exclude (раздел
-# claude-code-runtime), плюс settings.local.json, которого там нет.
+# они едут в историю.
+{%- comment %}
+# Список сверен с .git/info/exclude (раздел claude-code-runtime), плюс
+# settings.local.json, которого там нет.
+{%- endcomment %}
 .claude/settings.local.json
 .claude/mailbox/
 .claude/routines/.state/
@@ -101,6 +104,9 @@ CLAUDE.local.md
 # в cargo-generate.toml он уже в ignore — сюда, чтобы не уехал в историю
 # случайным `git add -A`.
 .superpowers/
-# Следы прерванного прогона chip-data-gen (см. write_data_dir).
+{%- comment %}
+# Следы прерванного прогона chip-data-gen (см. write_data_dir) — только в
+# репозитории шаблона.
 chip-data.tmp/
 chip-data.old/
+{%- endcomment %}

@@ -32,8 +32,8 @@ pub fn app_memory_regions() -> Result<Vec<(String, Region)>, anyhow::Error> {
 }
 
 // {%- if ota == "true" %}
-/// Регионы из `memory.x` bootloader'а: его `FLASH` — собственная зона до
-/// `BOOTLOADER_STATE`.
+/// Регионы из `memory.x` bootloader'а: его `FLASH` — собственная зона от
+/// базы flash до первого раздела OTA.
 pub fn boot_memory_regions() -> Result<Vec<(String, Region)>, anyhow::Error> {
     let memory_x = root_dir()
         .join("crates-cross")
@@ -199,7 +199,7 @@ fn parse_region_line(line: &str, source: &Path) -> Result<(String, Region), anyh
     if origin.is_empty() || length.is_empty() {
         anyhow::bail!(
             "{}: строка региона не заполнена, значение стоит в /* … */: {line}\nРаскладку \
-             считает chip-data-gen при генерации; если она не вышла, регионы вписывают руками \
+             пишет генерация проекта; если она не вышла, регионы вписывают руками \
              по образцу в crates-cross/app/memory.x",
             source.display(),
         );
@@ -326,10 +326,8 @@ __flash_end = ORIGIN(FLASH) + LENGTH(FLASH);
         assert_eq!(regions[0].1.length, 64 * 1024);
     }
 
-    /// Формы, которые линкер принимает, а парсер не знает. Пропущенный молча,
-    /// такой регион просто исчез бы: `build` пропустил бы образ, не сверив ни
-    /// базу, ни размер, и ошибка выглядела бы не как поломка, а как «всё в
-    /// порядке».
+    /// Регион, закомментированный генератором (`/* FMC (rw) : … - причина */`),
+    /// — не регион.
     #[test]
     fn skips_regions_commented_out_by_the_generator() {
         let dir = scratch("commented-region");
@@ -347,6 +345,10 @@ __flash_end = ORIGIN(FLASH) + LENGTH(FLASH);
         assert_eq!(regions.len(), 1);
     }
 
+    /// Формы, которые линкер принимает, а парсер не знает. Пропущенный молча,
+    /// такой регион просто исчез бы: `build` пропустил бы образ, не сверив ни
+    /// базу, ни размер, и ошибка выглядела бы не как поломка, а как «всё в
+    /// порядке».
     #[test]
     fn refuses_forms_it_does_not_know() {
         let dir = scratch("unknown-form");

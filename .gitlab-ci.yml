@@ -27,12 +27,11 @@ variables:
   # PATH: значение PATH из `variables:` GitLab не раскрыл бы.
   CARGO_HOME: "$CI_PROJECT_DIR/.cargo-home"
 
-# Кеша два, а не один, и это не избыточность: GitLab не перезаписывает уже
-# существующий ключ, поэтому с общим ключом первым завершившийся джоб (а это
-# всегда `host:test`, он в стейдже `test`) забирал бы ключ себе, и
-# `cross:build` лишь скачивал бы его — `crates-cross/target`, самая дорогая
-# часть, не сохранилась бы никогда. Отдельный ключ у `pins:check` уже стоит
-# (см. ниже), и комментарий там объясняет ту же причину.
+# Кеша два, а не один, и это не избыточность: джобы с общим ключом
+# перезаписывают архив друг друга, и `host:test` с `cross:build` по очереди
+# выбрасывали бы из кеша чужой `target` — `crates-cross/target`, самая дорогая
+# часть, не доживала бы до следующего пайплайна. Отдельный ключ у `pins:check`
+# — по той же причине (см. ниже).
 .cache-host: &cache_host
   cache:
     key: "$CI_COMMIT_REF_SLUG-host"
@@ -149,8 +148,9 @@ typos:
 pins:check:
   stage: test
   image: rust:1.99.1
-  # Свой кеш, а не общий `.cache`: у `chip-info` отдельный [workspace], и его
-  # артефакты лежат в `crates-host/chip-info/target`, которого в том якоре нет
+  # Свой кеш, а не `.cache-host`/`.cache-cross`: у `chip-info` отдельный
+  # [workspace], и его артефакты лежат в `crates-host/chip-info/target`,
+  # которого в тех якорях нет
   # — джоб пересобирал бы `stm32-metapac` каждый раз, то есть ровно ту цену,
   # ради экономии которой заведён фильтр. Отдельный ключ заодно убирает гонку:
   # с общим ключом два джоба одной стадии перезаписывают архив друг друга.
@@ -167,9 +167,9 @@ pins:check:
     - if: $CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "merge_request_event"
       changes:
         - crates-cross/bsp/src/**
-        # Обновление `stm32-metapac` (у него своя запись в renovate) меняет те
-        # самые метаданные, по которым идёт проверка; смена чипа правит обе
-        # чип-фичи сразу.
+        # Обновление `stm32-metapac` (манифест `chip-info` renovate находит
+        # правилом `**/Cargo.toml`) меняет те самые метаданные, по которым идёт
+        # проверка; смена чипа правит обе чип-фичи сразу.
         - crates-host/chip-info/**
         - crates-cross/Cargo.toml
   script:
@@ -234,8 +234,9 @@ cross:build:
 # ни у кого нет.
 #
 # Требования к раннеру (тег `stm32`): подключённая плата с отладочным
-# пробником, rust с целевым target'ом, probe-rs-tools, flip-link — всё ставит
-# `cargo xtask setup`, см. README, «Тесты на плате в CI».
+# пробником, rust с целевым target'ом, probe-rs-tools, flip-link и
+# cargo-nextest — всё ставит `cargo xtask setup`, см. README, «Тесты на плате
+# в CI».
 #
 # `resource_group` — не украшение: пробник у платы один, и два пайплайна за
 # него подерутся. GitLab выполняет джобы одной группы строго по одному.
@@ -250,10 +251,12 @@ board:test:
     - if: $HIL == "true" && $CI_PIPELINE_SOURCE != "schedule"
   before_script:
     - rustup target add {{target}}
-  # Адрес платы для сценариев host-target — переменные CI/CD рядом с `HIL`
+  # {% if has_protobuf == "true" %}Адрес платы для сценариев host-target — переменные CI/CD рядом с `HIL`
   # (`HOST_TARGET_ADDR` или `HOST_TARGET_PORT`, README, «Тесты на плате в CI»):
   # GitLab отдаёт их джобу окружением сам. Не заданы — сценарии пропускаются
-  # со сводкой.
+  # со сводкой.{% else %}Сценарии host-target написаны под protobuf: в этом
+  # проекте их нет — этап только сверяет начало образа с `memory.x` и, раз
+  # пробник есть, шьёт release-образы.{% endif %}
   script:
     - cargo xtask test target
     - cargo xtask test host-target
@@ -277,8 +280,9 @@ release:build:
   before_script:
     - export PATH="$CARGO_HOME/bin:$PATH"
     - rustup target add {{target}}
-    # Версия — та же, что в release.yml: от линкера зависит раскладка образа,
-    # и без пина релиз не повторить (docs/conventions.md, «Воспроизводимый релиз»).
+    # Версия — `FLIP_LINK_VERSION` выше, та же, что в `cargo xtask setup`: от
+    # линкера зависит раскладка образа, и без пина релиз не повторить
+    # (docs/conventions.md, «Тулчейн запинен»).
     - cargo install flip-link --version "$FLIP_LINK_VERSION" --locked
     # Релиз собирается ровно из закоммиченных Cargo.lock: без --locked cargo
     # молча разрешил бы зависимости заново. Оба: прошивку собирает
@@ -398,13 +402,13 @@ release:publish:
 #
 # Чтобы это заработало, нужны две вещи со стороны проекта:
 #   1. CI/CD variable RENOVATE_TOKEN — Project/Group Access Token с ролью
-#      Developer и скоупом `api` (масked, не protected: расписание может идти
+#      Developer и скоупом `api` (masked, не protected: расписание может идти
 #      по незащищённой ветке);
 #   2. Pipeline schedule (CI/CD -> Schedules), например раз в сутки ночью.
 #
 # Джоб намеренно не в стейдже сборки и запускается ТОЛЬКО по расписанию: на
-# обычных push/MR он не нужен, а остальные джобы, наоборот, исключены из
-# расписания (см. .not-scheduled выше).
+# обычных push/MR он не нужен, а сборка и тесты, наоборот, исключены из
+# расписания (см. .not-scheduled выше). По расписанию идёт ещё только `audit`.
 #
 # Взят образ renovate/renovate вместо `include:` официального
 # renovate-bot/renovate-runner — так конфиг самодостаточен и не зависит от

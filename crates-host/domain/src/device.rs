@@ -21,7 +21,7 @@ pub const UID_BYTES: usize = 12;
 pub const PANIC_BRIEF: usize = 96;
 // {%- if net_services != "" %}
 
-/// Самый длинный объект [`write_info`], байт: 256 — прошлые поля с запасом
+/// Самый длинный объект [`write_info`], байт: 256 — остальные поля с запасом
 /// под длинную версию, 243 — `reset` (31) и худший `last_panic` (14 и 198:
 /// [`PANIC_BRIEF`] байт из кавычек по два и перевода строки в шесть).
 // {%- if net_services contains "rest" %}
