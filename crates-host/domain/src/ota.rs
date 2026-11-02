@@ -103,72 +103,73 @@ use crate::ota::rejection::{busy, download_rejection, update_rejection};
 type Signature = [u8; SIGNATURE_BYTES];
 
 // {%- if graph == "true" %}
-// Узел объявлен здесь же, где лежит его задача, — как `HEARTBEAT_FRAG` в
+// Узел объявлен рядом со своей задачей, как `HEARTBEAT_FRAG` в
 // `domain::heartbeat`; compose-site (`crates-cross/app/src/graph.rs`) только
 // перечисляет фрагмент, называет узел (`as OTA`) и кормит его входом.
 // {%- else %}
-// Узел объявлен здесь же, где лежит его задача; задача модуля
+// Узел объявлен рядом со своей задачей; задача модуля
 // `crates-cross/app/src/tasks/ota.rs` кормит его входом.
 // {%- endif %}
+// Слова DSL и зачем они здесь:
 //
-// `boot: inputs: …` — собственная привязка фрагмента:
+// - `boot: inputs: …` — собственная привязка фрагмента.
 // {%- if graph == "true" %}
-// compose-site пишет
-// `fragments: [::domain::OTA_FRAG<…> as OTA = ::domain::ota::OtaWiring { … }]`,
-// а `spawn_all` связывает её первой строкой пролога, и инициализаторы слотов
-// ниже читают её поля.
+//   Compose-site пишет
+//   `fragments: [::domain::OTA_FRAG<…> as OTA = ::domain::ota::OtaWiring { … }]`,
+//   `spawn_all` связывает её первой строкой пролога, инициализаторы слотов
+//   ниже читают её поля.
 // {%- else %}
-// без графа её никто не заполняет: задача `crates-cross/app/src/tasks/ota.rs`
-// собирает `OtaCtx` сама, и слоты — её локальные переменные с теми же
-// начальными значениями.
+//   Без графа её никто не заполняет: задача `crates-cross/app/src/tasks/ota.rs`
+//   собирает `OtaCtx` сама, слоты — её локальные переменные с теми же
+//   начальными значениями.
 // {%- endif %}
-// `CONFIRMED` — подтверждён ли уже образ в этом запуске (см. действие
-// `begin`). Начальное значение даёт приложение — свойства образа, которые
-// объявляет его бинарник (константа `IMAGE` типа `app::version::Image` в
-// `crates-cross/app/src/main.rs` и `src/bin/app-unconfirmed.rs`): у рабочего
-// образа `false`, у тестового `app-unconfirmed`{% if has_protobuf == "true" %} (`cargo xtask test
-// host-target`){% endif %} — `true`, и он себя не подтверждает — следующий сброс
-// откатывает его.
-//
-// `request: [CMD: …]` — вход команд: запрос с ответом (`sync-request`), а не
-// очередь, потому что протокол отвечает хосту исходом именно своей команды.
+// - `CONFIRMED` — подтверждён ли образ в этом запуске (см. `begin`). Начальное
+//   значение — из свойств образа бинарника (константа `IMAGE` типа
+//   `app::version::Image` в `crates-cross/app/src/main.rs` и
+//   `src/bin/app-unconfirmed.rs`): у рабочего `false`; у тестового
+//   `app-unconfirmed`{% if has_protobuf == "true" %} (`cargo xtask test host-target`){% endif %} — `true`, он
+//   себя не подтверждает, и следующий сброс его откатывает.
+// - `request: [CMD: …]` — запрос с ответом (`sync-request`), а не очередь:
+//   протокол отвечает хосту исходом именно своей команды.
 // {%- if graph == "true" %}
-// Узел протокола держит `OtaClient` — requester из аксессора графа
-// `ota_cmd_requester()` и номер транспорта, который раздаёт compose-site.
+//   Клиент — `OtaClient`: requester из аксессора графа `ota_cmd_requester()` и
+//   номер транспорта, который раздаёт compose-site.
 // {%- else %}
-// Узел протокола держит `OtaClient` — requester входа и номер транспорта,
-// которые раздаёт `crates-cross/app/src/tasks/ota.rs`.
+//   Клиент — `OtaClient`: requester входа и номер транспорта, которые раздаёт
+//   `crates-cross/app/src/tasks/ota.rs`.
 // {%- endif %}
-// `serves: [ASK: …]` — тот же вход для клиента, которому нельзя ждать исхода в
-// вызове: узел протокола, который всё это время должен обслуживать свой
-// канал. Он объявляет ребро `asks: [OTA.ASK: …; квота tag …]`, отправляет
-// команду, не дожидаясь, и забирает исход из `reply()`. Очередь — сумма квот
-// рёбер, её считает `supervisor`; без спрашивающих она пустая, и `ASK` просто молчит.
-// Ёмкость обоих — `CMD_BYTES` (литералом: макрос другого не принимает).
+// - `serves: [ASK: …]` — тот же вход для клиента, которому нельзя ждать
+//   исхода в вызове (узел протокола, обслуживающий свой канал): он объявляет
+//   ребро `asks: [OTA.ASK: …; квота tag …]`, шлёт команду не дожидаясь и
+//   забирает исход из `reply()`. Очередь — сумма квот рёбер (считает
+//   `supervisor`); без спрашивающих она пустая, и `ASK` молчит.
+// - Ёмкость `CMD` и `ASK` — `CMD_BYTES`, литералом: макрос другого не
+//   принимает.
 // {%- if graph != "true" %}
-// Её же берут `static` входов (`crates-cross/app/src/tasks/ota.rs`).
+//   Её же берут `static` входов (`crates-cross/app/src/tasks/ota.rs`).
 // {%- endif %}
-// Менять все места вместе.
-//
-// `PARKED` — мест ожидания у `CMD` (`parked`): клиентов входа фрагмент не
-// знает, их считает compose-site — `cmd_parked` от числа клиентов, которое
-// даёт генерация. Без этого мест было бы `sync_request::PARKED_CALLERS`, и
-// ждущие сверх него будили бы друг друга по кругу.
-//
-// `<F, R>` — параметры фрагмента: адаптер обновления над разделами платы
-// (`Updater<bsp::FirmwareFlash>`) и порт перезагрузки `domain` не видит.
-// `local` на `FLASH`: разделы платы — `!Send` (`Updater` над ними держит
-// `&'static Mutex<NoopRawMutex, …>`),
-// а обычный слот — `static`, которому нужен `Send`. `local` меняет слот на
-// `LocalResourceSlot` и снимает это требование, взамен обязывая держать
-// значение на одном исполнителе — том, что спавнит задачи (то же допущение, что
-// `NoopRawMutex` у `FlashMutex`). Compose-site платит фичей
-// `supervisor/local-resources` и `unsafe`-блоком на каждый `local`-`static`.
-//
-// Без `watchdog:` намеренно — см. `task`.
-//
-// `ready` — образ подтверждён (или попытка была): стирания `STATE` при старте
-// в этом запуске уже не будет (см. `begin`){% if has_usb == "true" %}; ждёт этого узел `USB`{% endif %}.
+//   Менять все места вместе.
+// - `PARKED` — мест ожидания у `CMD` (`parked`): клиентов входа знает не
+//   фрагмент, а compose-site — `cmd_parked` от их числа из генерации. Без
+//   этого мест было бы `sync_request::PARKED_CALLERS`, и ждущие сверх него
+//   будили бы друг друга по кругу.
+// - `<F, R>` — адаптер обновления над разделами платы
+//   (`Updater<bsp::FirmwareFlash>`) и порт перезагрузки: их типов `domain` не
+//   видит.
+// - `local` на `FLASH` — `Updater` над разделами `!Send` (держит
+//   `&'static Mutex<NoopRawMutex, …>`), а обычный слот — `static`, которому
+//   нужен `Send`. `LocalResourceSlot` снимает требование, взамен обязывая
+//   держать значение на исполнителе, который спавнит задачи (то же
+//   допущение, что `NoopRawMutex` у `FlashMutex`). Цена на compose-site —
+//   фича `supervisor/local-resources` и `unsafe`-блок на каждый
+//   `local`-`static`.
+// {%- if graph == "true" %}
+//   Подробнее — `docs/modules/app-graph.md`, «OTA: узел уже в графе, вам
+//   остаётся канал».
+// - Без `watchdog:` намеренно — см. `task`.
+// {%- endif %}
+// - `ready` — образ подтверждён (или попытка была): стирания `STATE` при
+//   старте в этом запуске уже не будет (см. `begin`){% if has_usb == "true" %}; ждёт этого узел `USB`{% endif %}.
 supervisor::supervisor_fragment! {
     name: OTA_FRAG<F, R, const PARKED: usize>;
     boot: inputs: struct $crate::ota::OtaWiring;

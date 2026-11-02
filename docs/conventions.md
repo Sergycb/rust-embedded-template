@@ -96,41 +96,19 @@ Host-тесты гоняются `cargo xtask test host` — то есть `carg
   `before_reset` в `bsp::wdg`, застой узла — наблюдатель `observe:` в
   `graph.rs`{% else %}ошибку спавна задачи — `expect` в `tasks::spawn_all`{% endif %}. Перезапусков узлов в шаблоне нет
   (`docs/architecture.md`, «Узлы не падают»).
-- **Паникёр — у каждого бинарника свой** (`docs/diagnostics.md`, «Два
-  паникёра, один на сборку»).
+- **Паникёр и `#[global_logger]` — ровно по одному на бинарник**, развилка по
+  профилю — `#[cfg(debug_assertions)]` на `use … as _;`, а не Cargo-фича: Cargo
+  не умеет гейтить зависимости по профилю. Почему так, как проверено и чего
+  не подключать (`panic-abort`, `panic-halt`) — `docs/diagnostics.md`, «Два
+  паникёра, один на сборку».
 - **`HardFault` перехватывает `app`** (`crates-cross/app/src/fault.rs`): фолт
   становится паникой с регистрами причины и дальше идёт штатным путём паники. У
   {% if ota == "true" %}`boot` и {% endif %}`target-tests` — дефолт `cortex-m-rt`; см. `docs/diagnostics.md`.
 - {% if graph == "true" %}**Развилок по профилю в шаблоне две**{% else %}**Развилка по профилю в шаблоне ровно одна**{% endif %} — выбор паникёра (`app/src/panic.rs` под
   `cfg(debug_assertions)`) и чтение дампа при старте `app` под тем
   же `cfg`{% if graph == "true" %}; вторая — заморозка сторожа под отладчиком в dev-сборке
-  (`freeze_on_halt` в `bsp::wdg`, тоже под `cfg(debug_assertions)`){% endif %}. Появится новая — держите её в той же форме, см. следующий пункт.
-- **Если развилка по профилю всё-таки понадобится** (реалистичный случай —
-  release-транспорт defmt без пробника, см. следующий пункт), делать её через
-  `#[cfg(debug_assertions)]` на `use ... as _;`, а не через Cargo-фичу. И
-  `#[panic_handler]`, и `#[global_logger]` требуют ровно одной активной
-  реализации **на бинарник** — это ограничение rustc/линкера, а не Cargo, а
-  `debug_assertions` уже даёт ровно одно значение на сборку (`dev`/`test` →
-  `true`, `release` → `false`). **Cargo при этом не умеет** гейтить сами
-  зависимости по `debug_assertions`
-  (`[target.'cfg(debug_assertions)'.dependencies]` не работает — резолвится
-  через `rustc --print=cfg` независимо от профиля, см. rust-lang/cargo#7634),
-  поэтому обе стороны развилки остаются обычными зависимостями `app`, а
-  выбор — только через `cfg` на `use`.
-  **Проверено эмпирически** (два разных механизма, не путать): крейт, на
-  который в исходнике нет ни одной ссылки (`use` отсутствует вовсе, а не
-  `cfg`-исключён), не регистрирует `#[panic_handler]` как lang item — поэтому
-  `panic-probe` обычной зависимостью + `cfg` на `use` не конфликтует с
-  release-обработчиком — так и устроен выбор паникёра сейчас.
-  `#[global_logger]` устроен иначе: резолвится линковкой по имени символа
-  (`_defmt_acquire` и т.п.), и если два `use` окажутся активны одновременно —
-  жёсткий `error: Linking globals named '_defmt_acquire': symbol multiply
-  defined!`. При правке `crates-cross/app/src/panic.rs` держите инвариант «ровно один
-  `use <логгер> as _;` активен на сборку».
-  **Осторожно с `[profile.dev]`/`[profile.release]` в `crates-cross/Cargo.toml`**:
-  `debug-assertions` там задан явно (ради `overflow-checks`) — если развилка
-  по профилю появится, правка этого поля по несвязанной причине молча
-  переключит и её, без предупреждения компилятора.
+  (`freeze_on_halt` в `bsp::wdg`, тоже под `cfg(debug_assertions)`){% endif %}. Появится новая — держите её в той же форме (`docs/diagnostics.md`, «Два
+  паникёра, один на сборку»).
 - defmt-транспорт для `release` без пробника (UART) — не в реальном коде:
   шаблон не знает, какую периферию конкретная плата отведёт под это, а
   `Board` наружу периферию не отдаёт вовсе (см. `docs/architecture.md`, «`Board` отдаёт рычаги платы, а не периферию и не протоколы»), так
@@ -139,17 +117,12 @@ Host-тесты гоняются `cargo xtask test host` — то есть `carg
   Паттерн и обоснование, почему {% if has_usb == "true" %}все три turnkey-крейта{% else %}оба turnkey-крейта{% endif %} отпали (`defmt-bbq` и
   `defmt-serial` держат `defmt@0.3.x` при `defmt@1.x` у нас{% if has_usb == "true" %},
   `defmt-embassy-usbserial` требует `embassy-usb ^0.5`{% endif %}) — `docs/modules/app.md`,
-  «defmt-транспорт для `release` без пробника». Дефолт в обоих профилях
+  «defmt-транспорт для `release` без пробника: UART». Дефолт в обоих профилях
   (`crates-cross/app/src/panic.rs`) — `defmt-rtt`; при подключении паттерна не забыть сделать
   существующий `use defmt_rtt as _;` тоже `#[cfg(debug_assertions)]`.
 - `-Tdefmt.x` — в `rustflags` `crates-cross/.cargo/config.toml` рядом с
   `-Tlink.x`, а не в `build.rs`: `defmt` включён в обоих профилях безусловно, и
   подставлять скрипт линкера по условию незачем.
-- `panic-abort` не использовать — не собирается на stable (требует nightly
-  `#![feature(core_intrinsics)]`, не обновлялся с 2019). `panic-halt` тоже не
-  подключён: остановка получается и без него — `panic-probe` под debug у
-  `app`, — а держать ради этого ещё одну реализацию `#[panic_handler]`
-  незачем.
 
 ## `lib.rs` только объявляет модули
 
