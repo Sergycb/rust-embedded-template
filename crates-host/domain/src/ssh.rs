@@ -19,9 +19,13 @@
 //! перезагрузку — у OTA.
 //!
 //! Протокол — `sunset`, сокет — `sunset-async` над `embassy-net`. Ключ хоста
-//! ed25519 даёт [`HostKey`](ports::HostKey): вшитый в прошивку ([`Fixed`](crate::ssh::Fixed)) или созданный
-//! платой при первом старте и хранимый в разделе настроек (`Stored`). Он не
-//! меняется от сброса к сбросу, и клиент один раз запоминает его в
+// {%- if ssh_host_key == "config" %}
+//! ed25519 создаёт плата при первом старте и хранит в разделе настроек
+//! ([`Stored`](crate::ssh::Stored)).
+// {%- else %}
+//! ed25519 вшит в прошивку (`ssh-host-key.bin`).
+// {%- endif %}
+//! Он не меняется от сброса к сбросу, и клиент один раз запоминает его в
 //! `known_hosts`. Попыток входа `sunset` не считает — их ограничивает узел: шесть
 //! неудач и 30 секунд на вход на соединение. Консоль без ввода закрывается через
 //! 15 минут: соединение у узла одно.
@@ -33,14 +37,18 @@
 //! `session`).
 
 mod console;
+// {%- if ssh_host_key == "config" %}
 mod host_key;
+// {%- endif %}
 mod login;
 mod session;
 
 use defmt_or_log::{info, warn};
 use embassy_net::tcp::TcpSocket;
 use embassy_time::with_timeout;
-use ports::HostKey;
+// {%- if ssh_host_key == "config" %}
+use embedded_storage_async::nor_flash::NorFlash;
+// {%- endif %}
 use sunset_async::SSHServer;
 use sunset_async::sunset::SignKey;
 use sunset_async::sunset::ed25519_dalek::SigningKey;
@@ -50,20 +58,27 @@ use crate::ssh::login::Access;
 use crate::ssh::session::{CLOSE_WAIT, IDLE, KEEP_ALIVE, session};
 
 pub use console::Command;
-pub use host_key::Fixed;
 // {%- if ssh_host_key == "config" %}
 pub use host_key::{HOST_KEY_ID, Stored};
 // {%- endif %}
 pub use login::{Login, PASSWORD_HASH_LEN, USER, ed25519_public_key};
 pub use session::{PORT, SSH_BUFFER, TCP_BUFFER};
 
-// Узел объявлен рядом со своей задачей — как `HTTP`. `<K>` — ключ хоста
-// (`Fixed` или `Stored` над хранилищем платы, которого `domain` не видит);
-// `local` у него и у стека — оба вправе быть `!Send`. Буферы (~7 KiB) — слоты
-// `= static`: через стек они не идут. Без `watchdog:`: сервер ждёт клиента,
-// которого может не быть всю жизнь платы.
+// Узел объявлен рядом со своей задачей — как `HTTP`.
+// {%- if ssh_host_key == "config" %}
+// `<K>` — ключ хоста в хранилище над носителем платы (`Stored<…>`), которого
+// `domain` не видит. `local` у ключа и у стека — оба вправе быть `!Send`.
+// {%- else %}
+// `local` у стека — он вправе быть `!Send`.
+// {%- endif %}
+// Буферы (~7 KiB) — слоты `= static`: через стек они не идут. Без
+// `watchdog:`: сервер ждёт клиента, которого может не быть всю жизнь платы.
 supervisor::supervisor_fragment! {
+    // {%- if ssh_host_key == "config" %}
     name: SSH_FRAG<K>;
+    // {%- else %}
+    //{{newline}}    name: SSH_FRAG;
+    // {%- endif %}
     boot: inputs: struct $crate::ssh::SshWiring;
 
     node resources: [
@@ -74,7 +89,11 @@ supervisor::supervisor_fragment! {
             /// Как пускать пользователя.
             LOGIN: $crate::ssh::Login = inputs.login,
             /// Ключ хоста.
+            // {%- if ssh_host_key == "config" %}
             HOST_KEY: local K = inputs.host_key,
+            // {%- else %}
+            //{{newline}}            HOST_KEY: &'static [u8; 32] = inputs.host_key,
+            // {%- endif %}
             // {%- if ota == "true" %}
             /// Клиент входа `CMD` узла OTA — для `reboot`.
             OTA: $crate::ota::OtaClient = inputs.ota,
@@ -92,8 +111,14 @@ supervisor::supervisor_fragment! {
         task: $crate::ssh::task;
 }
 
+// Заголовок блока по варианту (здесь, у `begin` и у `task`): заголовок `file`
+// — в той же строке, что `else`. Отдельной строкой с `newline` он оставил бы в
+// проекте `//` перед собой с отступом блока, и `cargo fmt --check` упал бы.
 #[fsm::typestate]
-impl<K: HostKey> SshCtx<'_, K> {
+// {%- if ssh_host_key == "config" %}
+impl<F: NorFlash> SshCtx<'_, Stored<F>> {
+    // {%- else %}{{newline}}impl SshCtx<'_> {
+    // {%- endif %}
     fsm::machine! {
         machine Ssh mod edges {
             states {
@@ -110,9 +135,16 @@ impl<K: HostKey> SshCtx<'_, K> {
         }
     }
 
+    // {%- if ssh_host_key == "config" %}
     async fn begin(&mut self) -> Listening {
+        // {%- else %}{{newline}}    fn begin(&mut self) -> Listening {
+        // {%- endif %}
         info!("ssh: узел запущен");
+        // {%- if ssh_host_key == "config" %}
         let seed = self.host_key.seed().await;
+        // {%- else %}
+        //{{newline}}        let seed = **self.host_key;
+        // {%- endif %}
         Listening {
             key: SignKey::Ed25519(SigningKey::from_bytes(&seed)),
             access: Access::new(*self.login),
@@ -178,7 +210,10 @@ impl<K: HostKey> SshCtx<'_, K> {
 
 /// Узел `SSH`: обслуживает соединение за соединением, пока жива прошивка;
 /// не возвращается.
-pub async fn task<K: HostKey>(mut ctx: SshCtx<'_, K>) {
+// {%- if ssh_host_key == "config" %}
+pub async fn task<F: NorFlash>(mut ctx: SshCtx<'_, Stored<F>>) {
+    // {%- else %}{{newline}}pub async fn task(mut ctx: SshCtx<'_>) {
+    // {%- endif %}
     ctx.run().await;
 }
 
@@ -204,7 +239,6 @@ mod tests {
     use crate::ssh::{HOST_KEY_ID, Stored};
     use adapters_hw::flash::fake::MemFlash;
     use embedded_storage_async::nor_flash::{ErrorType, NorFlash, NorFlashErrorKind, ReadNorFlash};
-    use ports::HostKey;
     // {%- endif %}
 
     const KEY: &str = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl user@host";

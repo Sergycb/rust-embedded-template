@@ -711,7 +711,8 @@ Modbus. Через `--define` то же задаёт `links` (`parse_links()`, �
 Итог — `net_services` (`ssh,rest,mqtt` в порядке пунктов, через `--define` — в порядке
 списка), `ssh_auth`, `ssh_key`, и `ssh_host_key`: `config` — ключ хоста плата создаёт
 сама в разделе настроек (`domain::ssh::Stored`), `file` — вшит из `ssh-host-key.bin`
-(`Fixed`; так и при `config` вместе с CANopen — раздел настроек целиком его). Пустые
+(`crate::net::ssh::HOST_KEY` в `app`; так и при `config` вместе с CANopen — раздел
+настроек целиком его). Пустые
 строки, когда не выбрано. Модули узлов невыбранных служб хук удаляет (`domain/src/http.rs`,
 `ssh.rs`, `mqtt.rs` с их каталогами, `app/src/net.rs` без служб вовсе (модули служб в нём — Liquid),
 `device.rs` без служб и protobuf); узел протокола `domain/src/server.rs` — без Modbus и
