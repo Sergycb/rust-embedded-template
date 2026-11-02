@@ -59,8 +59,8 @@ HAL (`bsp::board::init_peripherals` — на умолчаниях `embassy-stm32
   клиента), строит адаптер, чей тип или память выбирает приложение
   (кадрирование, клиент, хранилище), требует `Spawner` → `app`.
 - Всё остальное (FSM, конкурентные примитивы, конфигурация, коллекции, RPC-протокол
-  между задачами, конкретные типы логики{% if ota == "true" or config == "true" or net_services contains "mqtt" %} —
-  {% assign sep = "" %}{% if ota == "true" %}{{ sep }}адаптер обновления `ota::Updater`{% assign sep = ", " %}{% endif %}{% if config == "true" %}{{ sep }}хранилище настроек `settings::Settings`{% assign sep = ", " %}{% endif %}{% if net_services contains "mqtt" %}{{ sep }}клиент брокера `mqtt::TcpClient`{% endif %}{% endif %}) → `domain`,
+  между задачами, конкретные типы логики{% if ota == "true" or settings_port == "true" or net_services contains "mqtt" %} —
+  {% assign sep = "" %}{% if ota == "true" %}{{ sep }}адаптер обновления `ota::Updater`{% assign sep = ", " %}{% endif %}{% if settings_port == "true" %}{{ sep }}хранилище настроек `settings::Settings`{% assign sep = ", " %}{% endif %}{% if net_services contains "mqtt" %}{{ sep }}клиент брокера `mqtt::TcpClient`{% endif %}{% endif %}) → `domain`,
   даже если результат используется только из `cross`.
 
 ### Узлы — фрагменты в `domain`
@@ -122,7 +122,7 @@ Compose-site — модули задач (подмодули `crates-cross/app/s
 шина, транспорт) — запись в лог и возврат в начальное состояние автомата или
 переход в себя, а не выход и перезапуск{% if graph == "true" %} графом{% endif %}; отдельного состояния
 восстановления и пауз в автоматах узлов нет. Переждать отказ (не вернуть ошибку снова
-без ожидания) — контракт порта, его держит реализация{% if net_services contains "mqtt" %} (паузы перед попытками
+без ожидания) — дело реализации порта или конкретного типа под узлом{% if net_services contains "mqtt" %} (паузы перед попытками
 подключения к брокеру — клиент `domain::mqtt::TcpClient`, а не автомат узла){% endif %}.
 
 ### Логика — функции над портами и конкретными типами; трейты — только в `ports`
@@ -159,8 +159,10 @@ build`){% endif %}. В `domain` трейтов нет. Всё, что нужно
 (`adapters_logic::modbus`){% endif %}{% if has_net == "true" %}, транспорты над сокетами `embassy-net` (`adapters_logic::net`){% endif %}{% endcapture %}
 {%- if hw_list != "" %} Обёртки над железом в проекте: {{ hw_list | remove_first: ", " }}.{% endif %}
 {%- if logic_list != "" %} Реализации портов: {{ logic_list | remove_first: ", " }}.{% endif %}
-Оба крейта хостовые и тестируются на хосте на фейках драйверов
-(модули `fake` в `adapters_hw::usb`/`net`){% if has_net == "true" %} и на кабеле между двумя стеками в памяти{% endif %}.
+{%- if adapters_hw == "true" or adapters_logic == "true" %}
+{% if adapters_hw == "true" and adapters_logic == "true" %}Оба крейта хостовые и тестируются{% else %}Крейт хостовый и тестируется{% endif %} на хосте на фейках драйверов
+(модули `fake` рядом с подменяемым кодом — `docs/conventions.md`, «Фейки»){% if has_net == "true" %} и на кабеле между двумя стеками в памяти{% endif %}.
+{%- endif %}
 
 **Кто строит адаптер, тот держит его память.** Адаптер, без которого рычаг не
 собрать, строит плата в `Board::new`, и его память — статики `bsp` (ниже).
@@ -220,7 +222,10 @@ build`){% endif %}. В `domain` трейтов нет. Всё, что нужно
 Трейт заводится, только если одна логика работает с разными реализациями:
 в разных узлах одной прошивки или в разных вариантах генерации шаблона, которые
 иначе потребовали бы Liquid в коде логики. Одна реализация — конкретный тип без
-трейта. Все трейты живут в `ports`; в `domain` трейтов нет.
+трейта. Все трейты живут в `ports`; в `domain` трейтов нет. Исключение из
+мерки одно — граница зависимостей: `domain` не видит `bsp`, и рычаг платы,
+который зовёт логика узла, приходит к ней трейтом даже при одной реализации
+на плате{% if ota == "true" %} (`Reboot`){% endif %}.
 {%- assign sep = "" %}
 {%- capture traits %}
 {%- if link_port == "true" %}{{ sep }}`FrameLink`{% if has_protobuf == "true" %}/`FrameDuplex`{% endif %} — канал протокола над потоком и датаграммой (в одной прошивке
@@ -228,9 +233,9 @@ build`){% endif %}. В `domain` трейтов нет. Всё, что нужно
 {%- if has_modbus == "true" %}{{ sep }}`Registers` — карта slave'а: карта проекта, {% if ota == "true" %}окно OTA поверх неё, {% endif %}общая ручка на
 все узлы `MODBUS_*` вложены друг в друга{% assign sep = "; " %}{% endif %}
 {%- if modbus_master == "true" %}{{ sep }}`ModbusClient` — транспорт master'а (RTU, MBAP-TCP, MBAP-UDP){% assign sep = "; " %}{% endif %}
-{%- if modbus_tcp == "true" %}{{ sep }}`HangUp` — обрыв соединения под MBAP-TCP{% assign sep = "; " %}{% endif %}
+{%- if modbus_tcp == "true" %}{{ sep }}`HangUp` — обрыв соединения под MBAP-TCP: TCP-сервер и поток тестов кадрирования MBAP (тот проверяется без стека){% assign sep = "; " %}{% endif %}
 {%- if has_can == "true" %}{{ sep }}`CanBus` — шина CAN: контроллер платы и заглушка{% assign sep = "; " %}{% endif %}
-{%- if ota == "true" %}{{ sep }}`Reboot` — сброс МК: на плате регистр, на хосте узел проверяется с фейком{% assign sep = "; " %}{% endif %}
+{%- if ota == "true" %}{{ sep }}`Reboot` — сброс МК: реализация на плате (`bsp::reset`), за границей, которую `domain` не видит{% assign sep = "; " %}{% endif %}
 {%- if net_services contains "ssh" %}{{ sep }}`HostKey` — ключ хоста SSH: вшитый и созданный платой — разные варианты генерации{% assign sep = "; " %}{% endif %}
 {%- endcapture %}
 {%- if traits != "" %} В этом проекте: {{ traits }}.{% endif %}

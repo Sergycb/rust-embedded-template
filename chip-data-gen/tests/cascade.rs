@@ -2892,10 +2892,9 @@ fn protocol_does_not_need_the_graph() {
             Some("false"),
             "{chip} {preset:?}"
         );
-        let task = format!(
-            "crates-cross/app/src/tasks/{}.rs",
-            result.vars.get("protocol").map_or("", String::as_str)
-        );
+        let protocol = result.vars.get("protocol").map_or("", String::as_str);
+        assert!(!protocol.is_empty(), "{chip} {preset:?}: протокол не выбран");
+        let task = format!("crates-cross/app/src/tasks/{protocol}.rs");
         assert!(
             !result.deleted.iter().any(|path| *path == task),
             "{chip} {preset:?}: {task} удалён при выбранном протоколе"

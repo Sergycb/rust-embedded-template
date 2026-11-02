@@ -41,7 +41,7 @@ bsp = { workspace = true, features = ["time-driver"] }
 domain = { workspace = true }
 {%- if protocol_link == "true" %}
 # Каналы протоколов над потоком, CDC или сокетом строит приложение в своей
-# памяти (привязка в src/graph.rs{% if graph != "true" %}, задача в src/tasks/{% endif %}) и отдаёт узлам готовыми.
+# памяти ({% if graph == "true" %}привязка узла в src/graph.rs{% else %}задача протокола в src/tasks/{% endif %}) и отдаёт узлам готовыми.
 adapters-logic = { workspace = true }
 {%- endif %}
 {%- if has_udp == "true" %}

@@ -110,8 +110,8 @@ supervisor_graph! {
 {%- capture link %}::adapters_logic::modbus::Tcp::new(::adapters_logic::net::TcpServer::new(
                     board.net.stack,
                     {{ port }},
-                    static [u8; 1024],
-                    static [u8; 1024],
+                    static [u8; SOCKET_BUFFER],
+                    static [u8; SOCKET_BUFFER],
                 )){% endcapture %}
 {%- elsif f[0] == "udp" %}
 {%- capture ty %}::adapters_logic::modbus::Udp<::adapters_logic::net::UdpLink>{% endcapture %}
@@ -119,9 +119,9 @@ supervisor_graph! {
                     board.net.stack,
                     {{ port }},
                     static ::core::mem::MaybeUninit<[::embassy_net::udp::PacketMetadata; 4]>,
-                    static [u8; 1024],
+                    static [u8; SOCKET_BUFFER],
                     static ::core::mem::MaybeUninit<[::embassy_net::udp::PacketMetadata; 4]>,
-                    static [u8; 1024],
+                    static [u8; SOCKET_BUFFER],
                     static [u8; ::adapters_logic::modbus::DATAGRAM],
                 )){% endcapture %}
 {%- else %}
@@ -135,9 +135,9 @@ supervisor_graph! {
                     board.net.stack,
                     {{ port }},
                     static ::core::mem::MaybeUninit<[::embassy_net::udp::PacketMetadata; 4]>,
-                    static [u8; 1024],
+                    static [u8; SOCKET_BUFFER],
                     static ::core::mem::MaybeUninit<[::embassy_net::udp::PacketMetadata; 4]>,
-                    static [u8; 1024],
+                    static [u8; SOCKET_BUFFER],
                     static [u8; ::domain::protobuf::REQUEST_MAX],
                 ){% endcapture %}
 {%- else %}
@@ -145,8 +145,8 @@ supervisor_graph! {
 {%- capture src %}::adapters_logic::net::TcpServer::new(
                         board.net.stack,
                         {{ port }},
-                        static [u8; 1024],
-                        static [u8; 1024],
+                        static [u8; SOCKET_BUFFER],
+                        static [u8; SOCKET_BUFFER],
                     ){% endcapture %}
 {%- capture srct %}::adapters_logic::net::TcpServer{% endcapture %}
 {%- endif %}
@@ -162,7 +162,7 @@ supervisor_graph! {
 {%- capture sizes %}
 {%- if f[0] == "tcp" or f[0] == "udp" %}
         // Порт {{ port }} — {% if f[3] == "modbus" %}стандартный порт Modbus TCP и UDP{% else %}выбран шаблоном, у protobuf стандартного нет{% endif %}; буферы сокета —
-        // по 1024 байта, с запасом на {% if f[3] == "modbus" %}самый длинный кадр Modbus TCP (260 байт){% else %}сообщение protobuf (`domain::protobuf::REQUEST_MAX`, `RESPONSE_MAX`){% endif %}{% if f[0] == "udp" %};
+        // `SOCKET_BUFFER` (ниже){% if f[0] == "udp" %};
         // очередь — 4 датаграммы в каждую сторону, буфер канала — {% if f[3] == "modbus" %}самая длинная датаграмма{% else %}запрос{% endif %}{% endif %}.
 {%- endif %}
 {%- if f[3] == "protobuf" and f[0] != "udp" %}
@@ -340,6 +340,13 @@ const _: () = assert!(
     crate::net::rest::CONNECTIONS == {{ http_connections }},
     "копий HTTP в графе столько же, сколько HTTP_CONNECTIONS в [env]"
 );
+{%- endif %}
+{%- if protocol_sockets != "0" %}
+
+/// Буфер сокета протокола в каждую сторону, байт — с запасом на {% if modbus_mbap == "true" %}самый
+/// длинный кадр Modbus TCP (260 байт){% endif %}{% if modbus_mbap == "true" and has_protobuf == "true" %} и {% endif %}{% if has_protobuf == "true" %}сообщение protobuf (`domain::protobuf::REQUEST_MAX`,
+/// `RESPONSE_MAX`){% endif %}. Одно число на все сокеты протоколов в `fragments:` выше.
+const SOCKET_BUFFER: usize = 1024;
 {%- endif %}
 {%- if ota == "true" %}
 

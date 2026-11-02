@@ -2556,8 +2556,9 @@ variable::set("modbus_mbap", if modbus_mbap { "true" } else { "false" });
 // в тестах адаптера; UDP-датаграммам они не нужны.
 variable::set("modbus_stream", if modbus_rtu || modbus_tcp { "true" } else { "false" });
 variable::set("cobs_used", if cobs_used { "true" } else { "false" });
-// Сокеты протоколов на стеке `embassy-net` (порт, буферы): по одному на сетевой
-// транспорт с протоколом. Транспорт без протокола сокета не открывает.
+// Сокеты протоколов на стеке `embassy-net` (порт, буферы — `SOCKET_BUFFER` в
+// `app/src/graph.rs`): по одному на сетевой транспорт с протоколом. Транспорт
+// без протокола сокета не открывает.
 variable::set("protocol_sockets", sockets.to_string());
 // Слоты сокетов в стеке: по одному на каждый сетевой транспорт, с протоколом и
 // без — на `tcp` без протокола сокет открывает приложение, и без слота под него

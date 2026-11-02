@@ -170,7 +170,7 @@
 недоверенного канала, и команды «начать» могло не быть. Без этой проверки
 приложение затёрло бы образ, в который bootloader откатывается на ближайшем
 сбросе, причём на F2/F4/F7 молча. Проверка запрещает `Swap` и `Revert` —
-строже, чем `verify_booted`, который `Revert` разрешает (см. `dfu_is_busy` в
+строже, чем `verify_booted`, который `Revert` разрешает (см. `Updater::is_busy` в
 `domain::ota::updater`): вариантов у `State` четыре, а неизвестная магия читается как
 `Boot`. Тестами это ловится —
 `write_and_prepare_refuse_while_the_partition_holds_a_rollback_image`
