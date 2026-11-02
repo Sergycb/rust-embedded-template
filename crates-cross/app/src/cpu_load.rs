@@ -4,7 +4,7 @@ use core::sync::atomic::Ordering;
 
 use domain::cpu_load::SleepTicks;
 
-/// Тики, проведённые во сне. Пишет цикл исполнителя в `run.rs`, читает узел
+/// Тики, проведённые во сне. Пишет цикл исполнителя в `main` бинарника, читает узел
 /// `CPU_LOAD`, и ничего больше — отсюда и `Relaxed`: значение нужно как грубая
 /// прикидка «сколько стояли», а порядок замеров задаёт сам периодический тик.
 static SLEEP_TICKS: SleepTicks = SleepTicks::new(0);
@@ -31,6 +31,7 @@ pub fn record_sleep_ticks(delta_ticks: u64) {
 /// `'static` — потому что ссылку уносит задача узла, а аргументы задач обязаны
 /// быть `'static`.
 {%- endif %}
+#[must_use]
 pub fn sleep_ticks() -> &'static SleepTicks {
     &SLEEP_TICKS
 }

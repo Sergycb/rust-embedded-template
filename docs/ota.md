@@ -499,7 +499,7 @@ SPI NOR — клипсой программатора: записать в `STAT
   остальным и адресуется одним вычитанием из длины.
 - **Версию проверяет приложение, а не bootloader.** Bootloader не знает версию
   текущего образа: запись о длине есть только у нового. Приложение знает свою
-  (`FW_VERSION`), а версию нового читает из хвоста `DFU` — из ещё не
+  (свойства образа своего бинарника), а версию нового читает из хвоста `DFU` — из ещё не
   проверенных байтов, но подделать её нельзя: она внутри подписанного, и
   bootloader, проверяя подпись, проверит и её.
 - **Bootloader версию не проверяет — защита от отката только в приложении.**
@@ -617,14 +617,16 @@ SPI NOR — клипсой программатора: записать в `STAT
 Откат проверяется только на образе, который себя не подтверждает, — рабочая
 прошивка подтверждает себя в `begin` узла OTA. Поэтому тестовый образ —
 отдельный бинарник того же `app` (`[[bin]] app-unconfirmed`,
-`crates-cross/app/Cargo.toml`) со своей точкой входа
-(`crates-cross/app/src/bin/app-unconfirmed.rs`; тело прошивки у обоих —
-библиотека пакета) и фичей `unconfirmed`:
+`crates-cross/app/Cargo.toml`) со своим запуском
+(`crates-cross/app/src/bin/app-unconfirmed.rs`; всё, что не запуск, у обоих —
+библиотека пакета) и своими свойствами образа — константой `IMAGE`
+(`app::version::Image`), которую он отдаёт в `spawn_all`:
 
-- узел OTA получает во входе `confirmed = cfg!(feature = "unconfirmed")` —
-  слот «уже подтверждён», и `mark_booted` не зовётся ни при старте, ни на
+- узел OTA получает во входе `confirmed = IMAGE.confirmed` (`true`) — слот
+  «уже подтверждён», и `mark_booted` не зовётся ни при старте, ни на
   `Start`; логика узла та же, что у рабочего образа;
-- версия — рабочая + 1 (`version-next`, `crates-cross/app/src/version.rs`):
+- версия — рабочая + 1 (`app::version::PACKAGE_VERSION` + 1; свой символ
+  `FW_VERSION_IN_IMAGE` у бинарника тоже свой):
   ровно настолько, чтобы устройство на рабочем образе приняло его (защита от
   отката — строго «новее»), и не больше. Не `u32::MAX`: подписанный ключом
   проекта образ «новее всего», встань он однажды насовсем (утечка, ошибка в
@@ -636,9 +638,10 @@ SPI NOR — клипсой программатора: записать в `STAT
 - в логе старта — `warn!` «ТЕСТОВЫЙ образ app-unconfirmed».
 
 Собирает его только `cargo xtask test host-target` (`cargo build -p app
---release --bin app-unconfirmed --features unconfirmed`): `required-features`
-не пускает его ни в `cargo build`, ни в `cargo xtask build`/`lint cross`, ни в
-`app.bin` релиза, а `cargo flash` шьёт `--bin app`. Образ OTA из него — та же
+--release --bin app-unconfirmed`, без фич): `cargo xtask build` собирает
+только `--bin app`, так что в `app.bin` релиза он не попадает, а `cargo flash`
+шьёт `--bin app`. Голый `cargo build` в `crates-cross/` собирает оба
+бинарника, `cargo xtask lint cross` линтует оба. Образ OTA из него — та же
 функция, что у `build` (`ota_image` в `crates-host/xtask/src/firmware.rs`:
 сырой образ, хвост `[образ][раскладка][версия]`, сверка раскладки с
 bootloader'ом). Подписей две: ключом проекта (`HOST_TARGET_UNCONFIRMED_SIG`) и

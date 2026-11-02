@@ -481,7 +481,7 @@ NOR), а конец разделов — символ `memory.x` `__ext_flash_en
 `crates-cross/boot/src/external.rs`: исполнителя там нет, задержки — на
 `SysTick`, `cortex_m::delay::Delay`). Оба опознают микросхему (`init`) при старте:
 `Board::new` поэтому асинхронный, и зовёт его первая задача исполнителя
-(`start` в `crates-cross/app/src/run.rs`). Шина
+(`start` в `main` бинарника — `crates-cross/app/src/main.rs`{% if ota == "true" %} и `src/bin/app-unconfirmed.rs`{% endif %}). Шина
 под обоими в шаблоне — заглушка `bsp::stub::FlashBus`: проект собирается и
 работает, OTA не принимает образы, bootloader грузит текущий
 (docs/modules/bsp-external.md).

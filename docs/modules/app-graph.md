@@ -190,13 +190,14 @@ impl PeerCtx<'_> {
 }
 
 // здесь, в graph.rs: две записи вместо одной. Рычаг платы узел получает
-// привязкой `= …` над полем `board` — `boot:`-объектом графа (`bsp::Board`).
+// привязкой `= …` над {% if ota == "true" %}полем `boot.board` — платой в `boot:`-объекте графа
+// (`Boot`: плата и свойства образа){% else %}полем `board` — `boot:`-объектом графа (`bsp::Board`){% endif %}.
 fragments: [::domain::HEARTBEAT_FRAG as HEARTBEAT,
             ::domain::SENSOR_FRAG<bsp::SensorBus> as SENSOR =
-                ::domain::sensor::SensorWiring { bus: board.sensor },
+                ::domain::sensor::SensorWiring { bus: {% if ota == "true" %}boot.{% endif %}board.sensor },
             ::domain::PEER_FRAG as PEER];
 
-// в main(): `board` уходит в `spawn_all` целиком. Привязку вычисляет пролог
+// в `start` бинарника: {% if ota == "true" %}`boot` (плата и свойства образа){% else %}`board`{% endif %} уходит в `spawn_all` целиком. Привязку вычисляет пролог
 // `spawn_all` и кладёт рычаг в слот `SENSOR_BUS` сам — строки `provide_sensor_bus`
 // нет вовсе, а значит её нельзя и забыть (так устроен узел
 // {% if ota == "true" %}OTA ниже{% else %}`CPU_LOAD`, `app.md`{% endif %}). Формой не обслуживаются слоты
@@ -204,7 +205,7 @@ fragments: [::domain::HEARTBEAT_FRAG as HEARTBEAT,
 // моменту потреблён) и всё, что требует `await` или повтора, — для этого
 // остаётся узел-инициализатор. `Debug` у ошибки графа нет, поэтому не
 // `expect`, а `Display`:
-if let Err(err) = spawn_all(&spawner, board) {
+if let Err(err) = spawn_all(&spawner, {% if ota == "true" %}boot{% else %}board{% endif %}) {
     defmt::panic!("app: spawn_all: {}", defmt::Display2Format(&err));
 }
 ```
@@ -307,9 +308,11 @@ resources: [WS: &'static mut $crate::x::Workspace = static |w| w.gain = inputs.g
 `memory.x`) и порт перезагрузки `bsp::reset::Reboot`; эта сторона кладёт их во
 вход фрагмента вместе с адаптером обновления над разделами: `bsp` про `domain`
 не знает
-(`= ::domain::ota::OtaWiring { flash: Updater::new(board.firmware), reboot:
-bsp::reset::Reboot, running_version: crate::version::FW_VERSION, confirmed:
-cfg!(feature = "unconfirmed") }`). Типы слотов — аргументы фрагмента
+(`= ::domain::ota::OtaWiring { flash: Updater::new(boot.board.firmware), reboot:
+bsp::reset::Reboot, running_version: boot.image.version, confirmed:
+boot.image.confirmed }`). Плата и свойства образа (`crate::version::Image`) —
+поля `boot:`-объекта `Boot`: его собирает `main` бинарника, и у рабочего `app`
+и тестового `app-unconfirmed` свойства свои. Типы слотов — аргументы фрагмента
 (`OTA_FRAG<::domain::ota::Updater<bsp::FirmwareFlash>, bsp::reset::Reboot, OTA_CMD_PARKED>`):
 слот — `static`, тип ему нужен, а знает его только эта сторона. Третий
 аргумент — места ожидания входа `CMD`, `domain::ota::cmd_parked` от числа его

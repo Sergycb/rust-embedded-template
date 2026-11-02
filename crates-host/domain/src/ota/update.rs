@@ -117,7 +117,7 @@ async fn check_layout<D: NorFlash, S: NorFlash>(
 /// `signature` и `len` приезжают вместе с образом по вашему каналу, а берутся
 /// из сборки: `cargo xtask build` кладёт рядом с ELF сырой `app.bin`, его
 /// подпись `app.bin.sig` и печатает длину. Подписан не образ, а его SHA-512.
-/// `running_version` — версия этой прошивки (`FW_VERSION` приложения).
+/// `running_version` — версия этой прошивки (свойства образа приложения).
 ///
 /// Запись о подписи ложится в запасную страницу раздела, по смещению
 /// [`capacity`](Updater::capacity) — её стирает [`Updater::prepare`], — и

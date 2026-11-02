@@ -80,21 +80,31 @@ pub static READY_{{ f[4] | upcase }}: Signal<CriticalSectionRawMutex, ()> = Sign
 {%- endfor %}
 
 /// Спавнит узел над разделами обновления платы — адаптер обновления строит задача;
-/// версия этого образа для защиты от отката — `crate::version::FW_VERSION`.
-pub fn spawn(spawner: embassy_executor::Spawner, firmware: bsp::FirmwareFlash) {
-    spawner.spawn(task(firmware).expect("задача OTA свежая: спавнится один раз"));
+/// `image` — свойства этого образа (`crate::version`): версия для защиты от
+/// отката и подтверждение.
+///
+/// # Panics
+///
+/// Если задачу уже спавнили: `spawn` зовётся один раз за запуск.
+pub fn spawn(
+    spawner: embassy_executor::Spawner,
+    firmware: bsp::FirmwareFlash,
+    image: crate::version::Image,
+) {
+    // Тестовый образ `app-unconfirmed` начинает «уже подтверждённым» и
+    // `mark_booted` не зовёт: следующий сброс его откатывает
+    // (`cargo xtask test host-target`, docs/ota.md). В задачу — только два
+    // поля, а не `image` целиком: аргументы задачи и есть её слоты, и текст
+    // версии узлу OTA ни к чему.
+    let token = task(firmware, image.version, image.confirmed);
+    spawner.spawn(token.expect("задача OTA свежая: спавнится один раз"));
 }
 
 #[embassy_executor::task]
-async fn task(firmware: bsp::FirmwareFlash) {
+async fn task(firmware: bsp::FirmwareFlash, mut running_version: u32, mut confirmed: bool) {
     // Адаптер обновления — над разделами обновления платы.
     let mut flash = Updater::new(firmware);
     let mut reboot = bsp::reset::Reboot;
-    let mut running_version = crate::version::FW_VERSION;
-    // Тестовый образ `app-unconfirmed` начинает «уже подтверждённым» и
-    // `mark_booted` не зовёт: следующий сброс его откатывает
-    // (`cargo xtask test host-target`, docs/ota.md).
-    let mut confirmed = cfg!(feature = "unconfirmed");
     domain::ota::task(domain::ota::OtaCtx::<'_, _, _, CMD_PARKED> {
         flash: &mut flash,
         reboot: &mut reboot,

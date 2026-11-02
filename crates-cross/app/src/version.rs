@@ -1,42 +1,16 @@
-//! Свойства этого образа: его версия.
+//! Свойства образа: версия и подтверждение.
 //!
-//! Здесь, а не в `bsp`: это свойство прошивки, а не платы. Compose-site
-//! ({% if graph == "true" %}`graph.rs`{% else %}`tasks/ota.rs`{% endif %}) отдаёт её во вход узла OTA (`running_version`) — защита от отката.
+//! Здесь, а не в `bsp`: это свойство прошивки, а не платы. Свои свойства
+//! объявляет каждый бинарник пакета константой [`Image`] — рабочий `app`
+//! (`src/main.rs`) и тестовый `app-unconfirmed` (`src/bin/app-unconfirmed.rs`)
+//! — и отдаёт их в {% if graph == "true" %}`graph::spawn_all` (поле `image` `boot:`-объекта
+//! [`crate::graph::Boot`]){% else %}`tasks::spawn_all`{% endif %}; библиотека их не выбирает. Узел OTA получает
+//! версию (`running_version`, защита от отката) и подтверждение во входе.
 //! Подпись приложение не проверяет: ключ зашит в bootloader, и проверяет он
 //! (`crates-cross/boot`, `domain::ota::boot::screen_update`).
 
-/// Версия этого образа — [`PACKAGE_VERSION`], а с фичей `version-next`
-/// (тестовый образ `app-unconfirmed`) — на единицу больше: ровно настолько,
-/// чтобы устройство на рабочем образе приняло тестовый (защита от отката —
-/// строго «новее»), и не больше. Не `u32::MAX`: подписанный ключом проекта
-/// образ «новее всего», встань он однажды насовсем, закрыл бы устройству
-/// все обычные обновления; `+1` закрыл бы самое большее одну версию —
-/// docs/ota.md, «Тесты OTA по протоколу».
-pub const FW_VERSION: u32 = if cfg!(feature = "version-next") {
-    match PACKAGE_VERSION.checked_add(1) {
-        Some(next) => next,
-        None => panic!("version в Cargo.toml — уже наибольшая, тестовому образу некуда расти"),
-    }
-} else {
-    PACKAGE_VERSION
-};
-
-/// Версия этого образа текстом — то, что он называет хосту и печатает в
-/// баннере старта: `version` из Cargo.toml, а у тестового образа
-/// (`unconfirmed`) — метка [`UNCONFIRMED_TEXT`]: по ней хост видит, что
-/// обмен разделов состоялся, не читая флеш.
-pub const FW_VERSION_TEXT: &str = if cfg!(feature = "unconfirmed") {
-    UNCONFIRMED_TEXT
-} else {
-    crate::build::PKG_VERSION
-};
-
-/// Метка тестового образа `app-unconfirmed` вместо версии в ответе хосту —
-/// та же строка в `crates-host/host-target-tests/tests/test.rs`.
-const UNCONFIRMED_TEXT: &str = "unconfirmed";
-
 /// `version` из Cargo.toml, свёрнутая `domain::ota::version::pack` в четыре
-/// байта.
+/// байта, — версия рабочего образа.
 ///
 /// Компоненты берутся из того же `shadow-rs`, что печатает версию в баннере
 /// старта (`crate::build`), — у версии в прошивке один источник. Считается
@@ -44,7 +18,7 @@ const UNCONFIRMED_TEXT: &str = "unconfirmed";
 /// до 65535), — ошибка сборки, а не прошивка, молча принимающая откат.
 /// Пререлизный суффикс не учитывается: semver считает `1.2.3-rc1` младше
 /// `1.2.3`, а уместить это в четыре байта нечем — README, «Защита от отката».
-const PACKAGE_VERSION: u32 = {
+pub const PACKAGE_VERSION: u32 = {
     let (Ok(major), Ok(minor), Ok(patch)) = (
         u8::from_str_radix(crate::build::PKG_VERSION_MAJOR, 10),
         u8::from_str_radix(crate::build::PKG_VERSION_MINOR, 10),
@@ -57,19 +31,18 @@ const PACKAGE_VERSION: u32 = {
     domain::ota::version::pack(major, minor, patch)
 };
 
-/// Версия этого образа, видимая снаружи по имени символа.
-///
-/// Существует ради одной вещи: `cargo xtask build` находит её в ELF и
-/// дописывает те же четыре байта в хвост `app.bin`. Так у версии остаётся один
-/// источник — то, что скомпилировано в прошивку, — и хост не может приписать
-/// образу чужой номер, прочитав его из другого места.
-///
-/// `#[used]` и `no_mangle` вдвоём: первое просит оставить статик, который код
-/// не читает, второе — сохранить имя, по которому его ищет xtask. Строго
-/// говоря, `#[used]` обязывает только компилятор (rust-lang/rust#47384), но
-/// LLVM ставит символу `SHF_GNU_RETAIN`, и в release он на месте; пропади он —
-/// `cargo xtask build` не найдёт символ и остановит сборку.
-#[used]
-#[expect(unsafe_code, reason = "обоснование — в комментарии выше")] // имя символа нужно xtask, см. выше
-#[unsafe(no_mangle)]
-pub static FW_VERSION_IN_IMAGE: u32 = FW_VERSION;
+/// Свойства образа, которые знает только его бинарник.
+#[derive(Clone, Copy)]
+pub struct Image {
+    /// Версия для защиты от отката (`domain::ota::version::pack`): образ не
+    /// новее неё узел OTA отвергает. Её же `cargo xtask build` дописывает в
+    /// хвост `app.bin` — из символа `FW_VERSION_IN_IMAGE` бинарника.
+    pub version: u32,
+    /// Версия текстом — то, что образ называет хосту (`domain::device`{% if has_modbus == "true" %},
+    /// Modbus{% endif %}) и печатает в баннере старта.
+    pub text: &'static str,
+    /// Образ уже подтверждён: узел OTA `mark_booted` не зовёт, и следующий
+    /// сброс откатывает образ (тестовый `app-unconfirmed`). Рабочий образ —
+    /// `false`: подтверждает себя сам.
+    pub confirmed: bool,
+}

@@ -400,9 +400,10 @@ device, cdc }` (классы `embassy-usb` регистрируются до п�
 `getrandom`{% endif %} над RNG — тоже плата (`bsp::rng`).{% endif %}{% else %}.{% endif %}
 {%- else %}.
 {%- endif %} {% if graph == "true" %}Граф берёт `Board`
-`boot:`-объектом (`boot: board: bsp::Board;`) и делит по полям{% if has_usb == "true" or has_net == "true" %}
+`boot:`-объектом ({% if ota == "true" %}`boot: boot: Boot;` — плата и рядом свойства образа от бинарника,
+`boot.board.<поле>`{% else %}`boot: board: bsp::Board;`{% endif %}) и делит по полям{% if has_usb == "true" or has_net == "true" %}
 ({% if has_usb == "true" %}`board.<транспорт>.device`/`.cdc`{% if has_net == "true" %}, {% endif %}{% endif %}{% if has_net == "true" %}`board.net.runner`/`.stack`{% endif %}){% endif %}{% else %}Целиком
-`Board` берёт `tasks::spawn_all(spawner, board)`{% endif %}. Отвергнуто: `Option`-поля в
+`Board` берёт `tasks::spawn_all(spawner, board{% if ota == "true" %}, IMAGE{% endif %})`{% endif %}. Отвергнуто: `Option`-поля в
 `Board` (тип врёт, ошибка уходит в рантайм){% if has_usb == "true" %}, передача половины пары через
 `static` (поток CDC не `Send`){% endif %} и отдельные `Drivers` с парами, собранными в
 `app`: тогда `app` строил бы объекты, которые по смыслу — рычаг
@@ -420,7 +421,7 @@ device, cdc }` (классы `embassy-usb` регистрируются до п�
 {% if graph == "true" %}Кроме сторожа в граф уезжает поле `firmware`{% else %}В задачу узла OTA уезжает поле `firmware`{% endif %} (`bsp::FirmwareFlash` —
 `ports::Partitions`: разделы `DFU` и `STATE` со своими страницами, предел
 образа, равный `ACTIVE`, и отпечаток раскладки). {% if graph == "true" %}Compose-site кладёт его во вход узла,
-`domain::ota::OtaWiring { flash: Updater::new(board.firmware), reboot: bsp::reset::Reboot, running_version, confirmed }`,
+`domain::ota::OtaWiring { flash: Updater::new(boot.board.firmware), reboot: bsp::reset::Reboot, running_version, confirmed }`,
 прямо в `fragments:`: адаптер{% else %}Адаптер{% endif %} обновления (`domain::ota::Updater` — конкретный
 тип домена, трейта нет) над ним строит compose-site. Режет разделы плата — по символам
 `memory.x` (`bsp::layout`), тем же, что читает bootloader: где они лежат, знает
@@ -430,7 +431,7 @@ device, cdc }` (классы `embassy-usb` регистрируются до п�
 а командами узла протокола на вход узла `CMD` ({% if graph == "true" %}`request:` графа, клиент —
 `ota_cmd_requester()`{% else %}`static` в `crate::tasks::ota`{% endif %}; `docs/ota.md`). Вместимость раздела отдаёт сам
 адаптер (`Updater::capacity`). Версия образа — свойство прошивки, а не
-платы: её задаёт приложение (`crates-cross/app/src/version.rs`) во входе
+платы: её задаёт бинарник приложения (свойства образа, `crates-cross/app/src/version.rs`) во входе
 узла (`running_version`){% if graph == "true" %} прямо в `fragments:`{% endif %}; ключ подписи — в
 bootloader'е (`crates-cross/boot`), который подпись и проверяет.
 {%- endif %}
@@ -452,7 +453,7 @@ bootloader'е (`crates-cross/boot`), который подпись и прове
 — `init` читает JEDEC ID и{% if ext_flash_bus != "spi" %} ставит бит QE, без чего{% else %} без этого{% endif %} драйвер не знает объёма и
 не годится ни для одной операции. `init` ждёт микросхему (до 2 с, если она
 ещё стирает после сброса), поэтому `Board::new` асинхронный, а зовёт его первая
-задача исполнителя (`start` в `crates-cross/app/src/run.rs`): ждёт он таймерами `embassy_time`, а
+задача исполнителя (`start` в `main` бинарника — `crates-cross/app/src/main.rs`{% if ota == "true" %} и `src/bin/app-unconfirmed.rs`{% endif %}): ждёт он таймерами `embassy_time`, а
 встроенной очереди таймеров нужен waker исполнителя, не `block_on`; не прошёл —
 строка в лог, и флеш отказывает, а не паникует (docs/modules/bsp-external.md).
 {%- endif %}

@@ -231,10 +231,17 @@ read`: руками пришлось бы сначала найти адрес �
   устройство доказало работоспособность, можно{% if has_usb == "true" %} — вместе с готовностью: узел
   `USB` встаёт на шину только после этой попытки{% endif %} — `docs/ota.md`,
   «Подтверждение образа — в узле OTA, один раз за запуск». Исключение —
-  тестовый образ `app-unconfirmed` (фича `unconfirmed`, `cargo xtask test
+  тестовый образ `app-unconfirmed` (свой бинарник, `cargo xtask test
   host-target`): он себя не подтверждает вовсе (`confirmed` во входе узла —
-  `cfg!(feature = "unconfirmed")`), чтобы сброс его откатил; в `cargo xtask
-  build` и релиз он не попадает — `docs/ota.md`, «Тесты OTA по протоколу».
+  из свойств образа `IMAGE` его бинарника, `crates-cross/app/src/bin/`),
+  чтобы сброс его откатил; в `cargo xtask build` и релиз он не попадает —
+  `docs/ota.md`, «Тесты OTA по протоколу».
+- Свойства образа (`app::version::Image`: версия для защиты от отката,
+  версия текстом, `confirmed`) объявляет константой `IMAGE` каждый бинарник
+  `app` и отдаёт в {% if graph == "true" %}`graph::spawn_all` (`boot:`-объект `graph::Boot`){% else %}`tasks::spawn_all`{% endif %}, как и
+  свой символ `FW_VERSION_IN_IMAGE` (его читает `cargo xtask`); фич Cargo,
+  глобальных переменных и символов, которые библиотека читала бы у
+  бинарника, для этого нет — `docs/modules/app.md`.
 {%- endif %}
 {%- if ota == "true" and ota_store == "external" %}
 - С `ext_flash=yes` (`DFU`/`STATE` на внешней флеши): `EXT_PAGE_SIZE` — одно
@@ -342,7 +349,8 @@ read`: руками пришлось бы сначала найти адрес �
 - Сторожа нет ни в `boot`, ни в приложении: зависший до `mark_booted` образ сам
   не откатится.
 {%- endif %}
-- Цикл исполнителя в `crates-cross/app/src/run.rs` поднят руками, а не
+- Цикл исполнителя в `main` бинарника (`crates-cross/app/src/main.rs`{% if ota == "true" %} и
+  `src/bin/app-unconfirmed.rs` — запуск у каждого свой{% endif %}) поднят руками, а не
   `#[embassy_executor::main]`: возврат к макросу молча ломает замер загрузки —
   `docs/modules/app-cpu-load.md`, «Почему цикл исполнителя в `main` написан руками».
 {%- if protocol_link == "true" %}
@@ -399,7 +407,7 @@ read`: руками пришлось бы сначала найти адрес �
   не подставит свою (рецепт — `docs/modules/bsp-external.md`).
   `Board::new` асинхронный: драйвер опознаёт микросхему (`init`, до 2 с, если
   она дотирает стирание), ждёт таймерами `embassy_time` и потому зовётся из
-  первой задачи исполнителя (`start` в `crates-cross/app/src/run.rs`), а не через `block_on` до
+  первой задачи исполнителя (`start` в `main.rs`{% if ota == "true" %} и `bin/app-unconfirmed.rs`{% endif %} — `crates-cross/app/src/`), а не через `block_on` до
   него — там таймер паникует{% if graph == "true" %}; путь до `spawn_all` обязан уложиться в таймаут сторожа{% endif %}.
   Не прошёл `init` или микросхема меньше конца разделов (символ `memory.x`
   `__ext_flash_end`, `bsp::layout::ext_flash_end`) — строка в лог, флеш
@@ -407,7 +415,7 @@ read`: руками пришлось бы сначала найти адрес �
 {%- endif %}
 - `Board::new()` отдаёт один `Board`{% if has_usb == "true" or has_net == "true" %}; пары, которые нельзя собрать порознь
   ({% if has_usb == "true" %}`bsp::usb::<транспорт>::Usb { device, cdc }`{% if has_net == "true" %}, {% endif %}{% endif %}{% if has_net == "true" %}`bsp::net::Net { runner, stack }`{% endif %}), собирает плата{% endif %}.
-  {% if graph == "true" %}Граф берёт `boot: board: bsp::Board;` и делит по полям{% else %}Поля делит `tasks::spawn_all(spawner, board)`{% endif %}. Не делать поля
+  {% if graph == "true" %}Граф берёт {% if ota == "true" %}`boot: boot: Boot;` (плата и свойства образа){% else %}`boot: board: bsp::Board;`{% endif %} и делит по полям{% else %}Поля делит `tasks::spawn_all(spawner, board{% if ota == "true" %}, IMAGE{% endif %})`{% endif %}. Не делать поля
   `Board` `Option`{% if has_usb == "true" or has_net == "true" %} и не передавать половину пары через `static`{% endif %} — там же.
 {%- capture bsp_deps %}{% if flash_page == "true" %}, `flash-page`{% endif %}{% if has_usb == "true" or has_net == "true" or config_store == "eeprom" %}, обёртки `adapters-hw`{% endif %}{% endcapture %}
 - `bsp` зависит от `ports`, HAL и того, из чего собирает свои рычаги{% if bsp_deps != "" %}
