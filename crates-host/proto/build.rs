@@ -28,8 +28,8 @@ const LIMITS: &[(&str, &str, u32)] = &[
     ("PANIC_BYTES", ".host.Info.last_panic", 96),
     ("ERROR_TEXT_BYTES", ".host.Error.text", 64),
     // {%- if ota == "true" %}
-    // Те же пределы, что у команды узлу OTA (`ports::SIGNATURE_BYTES`,
-    // `ports::CHUNK_BYTES`): длиннее не дойдёт до узла.
+    // Те же пределы, что у команды узлу OTA (`domain::ota::command`:
+    // `SIGNATURE_BYTES`, `CHUNK_BYTES`): длиннее не дойдёт до узла.
     ("OTA_SIGNATURE_BYTES", ".host.OtaStart.signature", 64),
     ("OTA_CHUNK_BYTES", ".host.OtaChunk.data", 128),
     // {%- endif %}

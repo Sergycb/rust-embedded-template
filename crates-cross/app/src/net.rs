@@ -85,17 +85,21 @@ pub mod rest {
 /// Консоль SSH (`domain::ssh`, узел `SSH`): вход пользователя{% if ssh_host_key == "file" %} и ключ хоста{% endif %}.
 pub mod ssh {
 {%- if ssh_auth == "password" %}
-    /// Как консоль SSH пускает пользователя: по паролю [`PASSWORD`].
-    pub const LOGIN: domain::ssh::Login = domain::ssh::Login::Password(PASSWORD);
+    /// Как консоль SSH пускает пользователя: по паролю, чей хэш —
+    /// [`PASSWORD_HASH`].
+    pub const LOGIN: domain::ssh::Login = domain::ssh::Login::PasswordHash(PASSWORD_HASH);
 
-    /// Пароль консоли SSH (`domain::ssh::USER`): файл `ssh-password.txt` в корне
-    /// проекта, который создаёт `cargo xtask` (README, «Консоль SSH»).
-    const PASSWORD: &str = include_str!("../../../ssh-password.txt").trim_ascii();
+    /// Хэш пароля консоли SSH (`domain::ssh::USER`) — соль и SHA-256(соль ‖
+    /// пароль): файл `ssh-password.hash` в корне проекта, который создаёт
+    /// `cargo xtask` (README, «Консоль SSH»). Самого пароля в прошивке нет.
+    const PASSWORD_HASH: &[u8] = include_bytes!("../../../ssh-password.hash");
 
-    // Пустой пароль впустил бы любого с пустым паролем.
+    // Хэш не той длины `domain::ssh` не пустит никого — лучше узнать это при
+    // сборке, чем по отказу на плате.
     const _: () = assert!(
-        !PASSWORD.is_empty(),
-        "ssh-password.txt пуст: удалите файл, и `cargo xtask build` создаст новый пароль"
+        PASSWORD_HASH.len() == domain::ssh::PASSWORD_HASH_LEN,
+        "ssh-password.hash битый: удалите его, и `cargo xtask build` создаст новый \
+         из ssh-password.txt (или новый пароль, если нет и его)"
     );
 {%- else %}
     /// Как консоль SSH пускает пользователя: по открытому ключу, данному при

@@ -2,16 +2,19 @@
 //! отказ различим.
 //!
 //! Здесь, а не в адаптере: «принимать ли этот образ» — правило продукта, и
-//! проверяется оно на хосте с фейком порта. Подпись приложение не проверяет —
-//! это делает bootloader (`domain::ota::boot::screen_update`), а отсюда ему
-//! уходит запись с подписью и длиной ([`PendingImage`](ports::PendingImage)) — обычной
-//! записью порта в запасную страницу раздела.
+//! проверяется оно на хосте над разделами в памяти. Подпись приложение не
+//! проверяет — это делает bootloader (`domain::ota::boot::screen_update`), а
+//! отсюда ему уходит запись с подписью и длиной
+//! ([`PendingImage`](ports::PendingImage)) — обычной записью адаптера в
+//! запасную страницу раздела.
 //!
 //! Хвост образа — `[образ][раскладка u32 LE][версия u32 LE]`; подпись, хвост
 //! и порядок проверок — docs/ota.md, «Подпись OTA-образа».
 
-use ports::{FirmwareUpdate, PendingImage, UpdateError};
+use embedded_storage_async::nor_flash::NorFlash;
+use ports::{Partitions, PendingImage};
 
+use crate::ota::updater::{FlashError, Updater};
 use crate::ota::version;
 
 /// Сколько байт в хвосте образа занимает версия.
@@ -30,8 +33,47 @@ pub const VERSION_BYTES: u32 = 4;
 /// ELF приложения.
 pub const LAYOUT_BYTES: u32 = 4;
 
+/// Чем может закончиться применение обновления ([`apply`]).
+///
+/// Каждому отказу — свой вариант, и это не для красоты: пока разные защиты
+/// возвращали одно и то же, target-тест оставался зелёным после удаления одной
+/// из них (проверено удалением на живой плате). Отказов подписи здесь нет:
+/// её проверяет bootloader, и о неудаче отправитель узнаёт по тому, что версия
+/// после перезагрузки не сменилась.
+#[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[non_exhaustive]
+pub enum UpdateError {
+    /// Длина из недоверенного канала больше вместимости. Проверяется ПЕРВОЙ:
+    /// длина уходит в запись для bootloader'а, и образ, не помещающийся в
+    /// `ACTIVE`, он отверг бы только после перезагрузки.
+    TooLong { len: u32, capacity: u32 },
+    /// Образ короче собственного хвоста (раскладка и версия) — мусор в канале,
+    /// а не откат.
+    Truncated { len: u32 },
+    /// В разделе обновления лежит образ отката — трогать его нельзя. Отделён от
+    /// [`Rollback`](Self::Rollback): версия у того образа заведомо старее, и
+    /// проверка версии честно ответила бы «откат», соврав о причине.
+    Busy,
+    /// Образ не новее текущего — попытка отката. Обе версии в упакованном
+    /// виде (см. [`version`]).
+    Rollback { current: u32, incoming: u32 },
+    /// Образ собран под другую раскладку памяти: отпечаток в его хвосте не
+    /// совпал с отпечатком этой прошивки (см. [`ports::layout_fingerprint`]).
+    /// Обмен не запрашивается — такой образ после него не запустился бы.
+    Layout { device: u32, image: u32 },
+    /// Всё, что приходит из адаптера: отказ флеша, негодное состояние.
+    Flash(FlashError),
+}
+
+impl From<FlashError> for UpdateError {
+    fn from(error: FlashError) -> Self {
+        Self::Flash(error)
+    }
+}
+
 /// Сверяет отпечаток раскладки в хвосте принятого образа с отпечатком этой
-/// прошивки ([`FirmwareUpdate::layout`]) — до `mark_updated`.
+/// прошивки ([`Updater::layout`]) — до `mark_updated`.
 ///
 /// Образ под другую раскладку (другие `ACTIVE`/`DFU`/`STATE` в `memory.x`)
 /// после обмена не запустился бы, а bootloader, собранный под старую, обменял
@@ -44,10 +86,10 @@ pub const LAYOUT_BYTES: u32 = 4;
 /// - `Truncated` — если длина меньше хвоста с раскладкой и версией,
 /// - `Layout` — если отпечатки не совпали,
 /// - `Flash` — если чтение раздела не удалось.
-async fn check_layout<F: FirmwareUpdate>(
-    flash: &mut F,
+async fn check_layout<D: NorFlash, S: NorFlash>(
+    flash: &mut Updater<Partitions<D, S>>,
     len: u32,
-) -> Result<(), UpdateError<F::Error>> {
+) -> Result<(), UpdateError> {
     // Отдельная ветка, чтобы вычитание не ушло в отрицательное: в release оно
     // завернулось бы и увело чтение в конец раздела.
     let Some(offset) = len.checked_sub(LAYOUT_BYTES + VERSION_BYTES) else {
@@ -78,11 +120,11 @@ async fn check_layout<F: FirmwareUpdate>(
 /// `running_version` — версия этой прошивки (`FW_VERSION` приложения).
 ///
 /// Запись о подписи ложится в запасную страницу раздела, по смещению
-/// [`capacity`](ports::FirmwareUpdate::capacity) — её стирает `prepare`
-/// адаптера (`adapters::ota::Updater`), — и только
-/// потом помечается обмен: bootloader, увидев запрос, обязан найти и запись.
+/// [`capacity`](Updater::capacity) — её стирает [`Updater::prepare`], — и
+/// только потом помечается обмен: bootloader, увидев запрос, обязан найти и
+/// запись.
 ///
-/// Порядок проверок — длина (с [`capacity`](ports::FirmwareUpdate::capacity),
+/// Порядок проверок — длина (с [`capacity`](Updater::capacity),
 /// то есть `ACTIVE`), занятость раздела, раскладка (`check_layout`), версия —
 /// ради различимых отказов; причина каждого шага — docs/ota.md, «Подпись
 /// OTA-образа». Подпись здесь не проверяется: это делает bootloader перед
@@ -97,13 +139,13 @@ async fn check_layout<F: FirmwareUpdate>(
 /// - `Layout` — если образ собран под другую раскладку памяти,
 /// - `Rollback` — если версия не новее текущей,
 /// - `Flash` — если адаптер флеша вернул ошибку.
-pub async fn apply<F: FirmwareUpdate>(
-    flash: &mut F,
+pub async fn apply<D: NorFlash, S: NorFlash>(
+    flash: &mut Updater<Partitions<D, S>>,
     running_version: u32,
     signature: &[u8; 64],
     len: u32,
-) -> Result<(), UpdateError<F::Error>> {
-    let capacity = flash.capacity()?;
+) -> Result<(), UpdateError> {
+    let capacity = flash.capacity();
     if len > capacity {
         return Err(UpdateError::TooLong { len, capacity });
     }
@@ -136,32 +178,34 @@ pub async fn apply<F: FirmwareUpdate>(
 
 #[cfg(test)]
 mod tests {
-    use super::apply;
-    use crate::ota::fakes::{FakeFlash, LAYOUT, SIGNATURE};
+    use embedded_storage::nor_flash::NorFlashErrorKind;
+
+    use super::{UpdateError, apply};
+    use crate::ota::FlashError;
+    use crate::ota::fake::{LAYOUT, SIGNATURE, flash, with_image};
     use crate::ota::version::pack;
-    use ports::UpdateError;
 
     /// Версия «этой прошивки» в тестах.
     const CURRENT: u32 = pack(1, 2, 3);
 
     #[tokio::test]
     async fn records_a_newer_signed_image_for_the_bootloader() {
-        let mut flash = FakeFlash::with_image(64, pack(1, 2, 4));
+        let mut flash = with_image(64, pack(1, 2, 4));
 
         apply(&mut flash, CURRENT, &SIGNATURE, 64)
             .await
             .expect("образ новее");
 
-        assert_eq!(flash.recorded, vec![(SIGNATURE, 64)]);
-        assert_eq!(flash.updated, 1, "обмен помечен после записи");
+        assert_eq!(flash.recorded(), Some((SIGNATURE, 64)));
+        assert!(flash.swap_requested(), "обмен помечен после записи");
     }
 
     /// Длина — первой, и своим вариантом: пока защиты отвечали одинаково,
     /// удаление одной из них тест не замечал.
     #[tokio::test]
     async fn refuses_a_length_beyond_capacity_before_anything_else() {
-        let mut flash = FakeFlash::with_image(64, pack(1, 2, 4));
-        flash.busy = true; // и занят — а отказ всё равно по длине
+        let mut flash = with_image(64, pack(1, 2, 4));
+        flash.set_busy(); // и занят — а отказ всё равно по длине
 
         let refused = apply(&mut flash, CURRENT, &SIGNATURE, 129).await;
 
@@ -172,15 +216,15 @@ mod tests {
                 capacity: 128
             })
         );
-        assert!(flash.recorded.is_empty());
+        assert!(flash.recorded().is_none());
     }
 
     /// Занятый раздел — до версии: версия у образа отката заведомо старее, и
     /// ответ «откат» соврал бы о причине.
     #[tokio::test]
     async fn refuses_a_busy_partition_instead_of_calling_it_a_rollback() {
-        let mut flash = FakeFlash::with_image(64, pack(0, 0, 1));
-        flash.busy = true;
+        let mut flash = with_image(64, pack(0, 0, 1));
+        flash.set_busy();
 
         assert_eq!(
             apply(&mut flash, CURRENT, &SIGNATURE, 64).await,
@@ -204,10 +248,12 @@ mod tests {
         const LAYOUT_LITERAL: u32 = 0x5EED_1A70;
         const VERSION_LITERAL: u32 = 0x0102_0003;
         const TAIL: [u8; 8] = [0x70, 0x1A, 0xED, 0x5E, 0x03, 0x00, 0x02, 0x01];
-        assert_eq!(LAYOUT, LAYOUT_LITERAL, "фейк отдаёт раскладку из литерала");
-        let mut flash = FakeFlash::new(256, 8);
-        flash.capacity = 128;
-        flash.memory[56..64].copy_from_slice(&TAIL);
+        assert_eq!(
+            LAYOUT, LAYOUT_LITERAL,
+            "разделы тестов отдают раскладку из литерала"
+        );
+        let mut flash = flash(128);
+        flash.memory()[56..64].copy_from_slice(&TAIL);
 
         assert_eq!(
             apply(&mut flash, VERSION_LITERAL, &SIGNATURE, 64).await,
@@ -221,7 +267,7 @@ mod tests {
     /// Порог — весь хвост (раскладка и версия), а не одна версия.
     #[tokio::test]
     async fn refuses_an_image_shorter_than_its_tail() {
-        let mut flash = FakeFlash::with_image(64, pack(1, 2, 4));
+        let mut flash = with_image(64, pack(1, 2, 4));
 
         assert_eq!(
             apply(&mut flash, CURRENT, &SIGNATURE, 7).await,
@@ -233,8 +279,8 @@ mod tests {
     /// у него новее, так что проверка раскладки — не попутный откат.
     #[tokio::test]
     async fn refuses_an_image_built_for_another_layout() {
-        let mut flash = FakeFlash::with_image(64, pack(1, 2, 4));
-        flash.memory[56..60].copy_from_slice(&(!LAYOUT).to_le_bytes());
+        let mut flash = with_image(64, pack(1, 2, 4));
+        flash.memory()[56..60].copy_from_slice(&(!LAYOUT).to_le_bytes());
 
         assert_eq!(
             apply(&mut flash, CURRENT, &SIGNATURE, 64).await,
@@ -243,8 +289,11 @@ mod tests {
                 image: !LAYOUT
             })
         );
-        assert!(flash.recorded.is_empty());
-        assert_eq!(flash.updated, 0, "обмен под чужую раскладку не помечается");
+        assert!(flash.recorded().is_none());
+        assert!(
+            !flash.swap_requested(),
+            "обмен под чужую раскладку не помечается"
+        );
     }
 
     /// Та же версия — тоже откат: повторная заливка того же номера — типичный
@@ -252,7 +301,7 @@ mod tests {
     #[tokio::test]
     async fn refuses_an_older_or_equal_image() {
         for incoming in [pack(1, 2, 3), pack(1, 1, 9)] {
-            let mut flash = FakeFlash::with_image(64, incoming);
+            let mut flash = with_image(64, incoming);
 
             assert_eq!(
                 apply(&mut flash, CURRENT, &SIGNATURE, 64).await,
@@ -261,8 +310,8 @@ mod tests {
                     incoming
                 })
             );
-            assert!(flash.recorded.is_empty());
-            assert_eq!(flash.updated, 0);
+            assert!(flash.recorded().is_none());
+            assert!(!flash.swap_requested());
         }
     }
 
@@ -270,13 +319,15 @@ mod tests {
     /// обмен без записи не помечается.
     #[tokio::test]
     async fn passes_a_flash_failure_while_recording_through() {
-        let mut flash = FakeFlash::with_image(64, pack(1, 2, 4));
-        flash.record = Err("флеш отказал");
+        let mut flash = with_image(64, pack(1, 2, 4));
+        flash.refuse_record();
 
         assert_eq!(
             apply(&mut flash, CURRENT, &SIGNATURE, 64).await,
-            Err(UpdateError::Flash("флеш отказал"))
+            Err(UpdateError::Flash(FlashError::Flash(
+                NorFlashErrorKind::Other
+            )))
         );
-        assert_eq!(flash.updated, 0, "обмен без записи не помечается");
+        assert!(!flash.swap_requested(), "обмен без записи не помечается");
     }
 }

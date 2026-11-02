@@ -57,7 +57,8 @@ use core::convert::Infallible;
 use defmt_or_log::{FormatOrDebug, info, warn};
 use embassy_time::Instant;
 use embedded_can::Frame;
-use ports::{CanBus, LinkError, SettingsStorage};
+use embedded_storage_async::nor_flash::NorFlash;
+use ports::{CanBus, LinkError};
 use zencan_node::common::NodeId;
 use zencan_node::common::messages::CanMessage;
 use zencan_node::common::nmt::NmtState;
@@ -66,6 +67,7 @@ use zencan_node::object_dict::ODEntry;
 use zencan_node::{Callbacks, Node};
 
 use crate::canopen::frame::{fix_save_signature, is_heartbeat, to_frame, to_message};
+use crate::settings::{Error as SettingsError, Settings};
 
 pub use persisted::{NODE_ID_KEY, OBJECTS_KEY, Persisted, STORE_CAPACITY};
 pub use stack::{Stack, TICK};
@@ -76,8 +78,8 @@ pub use ota::{OTA, OTA_INDEX, OtaObject};
 
 // Узел объявлен рядом со своей задачей.
 //
-// `<C>` и `<S>` — параметры фрагмента: шину и хранилище настроек платы
-// `domain` не видит. `local` — шина и хранилище вправе быть `!Send`
+// `<C>` и `<S>` — параметры фрагмента: шину и хранилище настроек над
+// носителем платы (`settings::Settings<…>`) `domain` не видит. `local` — шина и хранилище вправе быть `!Send`
 // (периферия). Словарь — обычный слот: ссылки на `static` — `Send`. Стек и
 // его колбэки слотов не занимают: они в кадре задачи (`task`).
 supervisor::supervisor_fragment! {
@@ -91,10 +93,9 @@ supervisor::supervisor_fragment! {
             NODE_ID: u8 = inputs.node_id,
             /// Словарь объектов устройства.
             DICTIONARY: $crate::canopen::Dictionary = inputs.dictionary,
-            /// Хранилище сохранённых объектов и адреса узла.
-            SETTINGS: local S = inputs.settings,
-            /// Сохранять ли объекты и адрес: `false` — хранилища у проекта нет.
-            PERSIST: bool = inputs.persist,
+            /// Хранилище сохранённых объектов и адреса узла; `None` — раздела
+            /// настроек у проекта нет, и узел ничего не сохраняет.
+            SETTINGS: local Option<S> = inputs.settings,
             /// Серийный номер объекта идентичности (0x1018:04).
             SERIAL: u32 = inputs.serial,
             // {%- if ota == "true" %}
@@ -113,12 +114,12 @@ supervisor::supervisor_fragment! {
 }
 
 #[fsm::typestate]
-impl<'f, C, S> CanOpenCtx<'_, C, S>
+impl<'f, C, F> CanOpenCtx<'_, C, Settings<F>>
 where
     C: CanBus,
     C::Error: FormatOrDebug,
-    S: SettingsStorage,
-    S::Error: FormatOrDebug,
+    F: NorFlash,
+    SettingsError<F::Error>: FormatOrDebug,
 {
     fsm::machine! {
         machine CanOpen mod edges {
@@ -248,7 +249,7 @@ where
     fn answered(&mut self, reply: supervisor::AskReply<(), crate::ota::OtaReply>) {
         let reply = reply.outcome.unwrap_or_else(|_dropped| {
             warn!("canopen: узел OTA не ответил");
-            Err(ports::Rejection::Device)
+            Err(crate::ota::command::Rejection::Device)
         });
         OTA.record(reply);
     }
@@ -284,7 +285,9 @@ where
         }
         // После ответов: запись во флеш долгая, а мастер ждёт подтверждения
         // `save` по SDO. Хранилищу шина не нужна: `save` уже принят стеком.
-        persisted::save(s.stack.persisted, self.settings).await;
+        if let Some(settings) = self.settings.as_mut() {
+            persisted::save(s.stack.persisted, settings).await;
+        }
         // {%- if ota == "true" %}
         // Команда OTA, поставленная записью SDO, — на вход `ASK` узла OTA, не
         // дожидаясь исхода: его принесёт `reply()` (`answered`).
@@ -293,14 +296,14 @@ where
     }
 
     /// Адрес узла и сохранённые объекты — из хранилища, до создания стека.
-    /// Без хранилища (`persist` — `false`) не читает ничего.
+    /// Без хранилища (`None`) не читает ничего.
     ///
     /// # Panics
     ///
     /// Если `node_id` во входе не 1..=127, а сохранённого адреса нет.
     async fn restore(&mut self, persisted: &RefCell<Persisted>) -> NodeId {
-        if *self.persist
-            && let Some(node_id) = persisted::load(persisted, self.settings).await
+        if let Some(settings) = self.settings.as_mut()
+            && let Some(node_id) = persisted::load(persisted, settings).await
         {
             return node_id;
         }
@@ -335,7 +338,7 @@ where
 /// кроме кадра задачи, негде — тип замыкания не назвать в `static`, а поле
 /// контекста на время автомата не заимствовать. Автомат получает их
 /// аргументами стартового действия (`start(..)` в таблице). Без хранилища
-/// (`persist` во входе — `false`) колбэков нет: стек отвечает на `save` и на
+/// (`settings` во входе — `None`) колбэков нет: стек отвечает на `save` и на
 /// LSS «Store configuration» отказом.
 ///
 /// Без `watchdog:` намеренно:
@@ -346,12 +349,12 @@ where
 ///
 /// Если `node_id` во входе не 1..=127, а сохранённого адреса нет, — ошибка
 /// конфигурации.
-pub async fn task<C, S>(mut ctx: CanOpenCtx<'_, C, S>)
+pub async fn task<C, F>(mut ctx: CanOpenCtx<'_, C, Settings<F>>)
 where
     C: CanBus,
     C::Error: FormatOrDebug,
-    S: SettingsStorage,
-    S::Error: FormatOrDebug,
+    F: NorFlash,
+    SettingsError<F::Error>: FormatOrDebug,
 {
     let persisted = RefCell::new(Persisted::new());
     let mut store_objects = |reader: &mut dyn Read<Error = Infallible>, size: usize| {
@@ -363,7 +366,7 @@ where
     let mut reset_app = |od: &[ODEntry<'_>]| persisted.borrow().restore(od, false);
     let mut reset_comms = |od: &[ODEntry<'_>]| persisted.borrow().restore(od, true);
     let mut node = None;
-    let mut callbacks = (*ctx.persist).then(|| Callbacks {
+    let mut callbacks = ctx.settings.is_some().then(|| Callbacks {
         store_objects: Some(&mut store_objects),
         store_node_config: Some(&mut store_node_config),
         reset_app: Some(&mut reset_app),
@@ -388,14 +391,16 @@ mod tests {
     use core::future::poll_fn;
     use core::pin::pin;
     use core::task::{Context, Poll, Waker};
-    use std::collections::{HashMap, VecDeque};
+    use std::collections::VecDeque;
     use std::rc::Rc;
     use std::sync::{Mutex, PoisonError};
 
+    use adapters_hw::flash::fake::MemFlash;
     use embedded_can::{Frame, Id, StandardId};
-    use ports::{CanBus, LinkError, SettingsStorage};
+    use ports::{CanBus, LinkError};
 
     use super::{NODE_ID_KEY, task};
+    use crate::settings::Settings;
 
     /// Адрес узла в тестах: SDO-запросы — на `0x605`, ответы — с `0x585`.
     const NODE: u8 = 5;
@@ -499,46 +504,34 @@ mod tests {
         }
     }
 
-    /// Хранилище настроек в памяти — с поведением `sequential-storage`: в
-    /// буфер чтения ложатся ключ и значение, значение отдаётся срезом после
-    /// ключа, а не поместившийся элемент — ошибка.
-    #[derive(Debug, Default)]
-    struct Memory(HashMap<u32, Vec<u8>>);
+    /// Носитель настроек в тестах: две страницы по 256 байт, слово 8.
+    type Flash = MemFlash<512, 8, 256>;
 
-    impl SettingsStorage for Memory {
-        type Error = &'static str;
-        const MAX_VALUE: usize = usize::MAX;
-
-        fn read<'a>(
-            &mut self,
-            key: u32,
-            scratch: &'a mut [u8],
-        ) -> impl Future<Output = Result<Option<&'a [u8]>, Self::Error>> {
-            let Some(value) = self.0.get(&key) else {
-                return std::future::ready(Ok(None));
-            };
-            let Some(item) = scratch.get_mut(..4 + value.len()) else {
-                return std::future::ready(Err("буфер меньше элемента"));
-            };
-            item[..4].copy_from_slice(&key.to_le_bytes());
-            item[4..].copy_from_slice(value);
-            std::future::ready(Ok(Some(&item[4..])))
-        }
-
-        fn write(
-            &mut self,
-            key: u32,
-            value: &[u8],
-        ) -> impl Future<Output = Result<(), Self::Error>> {
-            self.0.insert(key, value.to_vec());
-            std::future::ready(Ok(()))
-        }
-    }
+    /// Хранилище узла в тестах: настоящее, над флешем в памяти; `None` —
+    /// хранилища нет.
+    type Store = Option<Settings<Flash>>;
 
     /// Словарь из примера — `static` на весь процесс: тесты, которые гоняют
     /// по нему узел, обязаны идти по одному, иначе один тест читает кадры
     /// другого (под `cargo test` они идут потоками одного процесса).
     static DICTIONARY: Mutex<()> = Mutex::new(());
+
+    /// Пустое хранилище над стёртым флешем.
+    fn memory() -> Settings<Flash> {
+        Settings::new(Flash::erased(), 0..512)
+    }
+
+    /// Что записано под ключом `key`. Флеш в памяти не ждёт, поэтому чтение
+    /// готово с первого опроса.
+    fn stored(settings: &mut Store, key: u32) -> Option<Vec<u8>> {
+        let settings = settings.as_mut().expect("хранилище есть");
+        let mut scratch = [0; 128];
+        let mut read = pin!(settings.read(key, &mut scratch));
+        let Poll::Ready(read) = read.as_mut().poll(&mut Context::from_waker(Waker::noop())) else {
+            panic!("чтение флеша в памяти не ждёт");
+        };
+        read.expect("чтение").map(<[u8]>::to_vec)
+    }
 
     fn frame(id: u16, data: &[u8]) -> TestFrame {
         TestFrame::new(StandardId::new(id).unwrap(), data).unwrap()
@@ -547,17 +540,12 @@ mod tests {
     /// Гоняет узел на словаре из примера `crates-host/canopen`, пока кадры не
     /// кончатся: узел не выходит, а ждёт следующий.
     fn serve(bus: &mut Bus) {
-        serve_with(bus, &mut Memory::default());
+        serve_with(bus, &mut Some(memory()));
     }
 
-    /// То же над заданным хранилищем: новый прогон — новый стек над ним, как
-    /// после сброса МК.
-    fn serve_with(bus: &mut Bus, settings: &mut Memory) {
-        serve_persist(bus, settings, true);
-    }
-
-    /// То же; `persist` — есть ли у узла хранилище.
-    fn serve_persist(bus: &mut Bus, settings: &mut Memory, mut persist: bool) {
+    /// То же над заданным хранилищем (`None` — хранилища нет): новый прогон —
+    /// новый стек над ним, как после сброса МК.
+    fn serve_with(bus: &mut Bus, settings: &mut Store) {
         let _only_one = DICTIONARY.lock().unwrap_or_else(PoisonError::into_inner);
         // Почтовый ящик — `static`: очередь передачи после прошлого прогона к
         // этому не относится.
@@ -568,13 +556,12 @@ mod tests {
         // {%- if ota == "true" %}
         let mut ota_client = crate::ota::ClientId(0);
         // {%- endif %}
-        let stand = supervisor::stand!(CANOPEN_FRAG<Bus, Memory>);
+        let stand = supervisor::stand!(CANOPEN_FRAG<Bus, Settings<Flash>>);
         let ctx = stand.ctx(
             bus,
             &mut node_id,
             &mut dictionary,
             settings,
-            &mut persist,
             &mut serial,
             // {%- if ota == "true" %}
             &mut ota_client,
@@ -604,10 +591,10 @@ mod tests {
         let incoming = Rc::clone(&bus.incoming);
         {
             let mut dictionary = super::dictionary();
-            let (mut node_id, mut settings, mut persist) = (NODE, Memory::default(), false);
+            let (mut node_id, mut settings): (u8, Store) = (NODE, None);
             let mut serial = SERIAL;
             let mut ota_client = crate::ota::ClientId(0);
-            let stand = supervisor::stand!(CANOPEN_FRAG<Bus, Memory>);
+            let stand = supervisor::stand!(CANOPEN_FRAG<Bus, Settings<Flash>>);
             let mut ota_node =
                 crate::ota::tests::serving(stand.ota_ask.server().expect("сервер ASK свободен"));
             let ctx = stand.ctx(
@@ -615,7 +602,6 @@ mod tests {
                 &mut node_id,
                 &mut dictionary,
                 &mut settings,
-                &mut persist,
                 &mut serial,
                 &mut ota_client,
             );
@@ -790,7 +776,7 @@ mod tests {
     /// хранилищем поднимается с ними, а не со значениями из `device.toml`.
     #[test]
     fn saved_objects_survive_a_new_stack() {
-        let mut settings = Memory::default();
+        let mut settings = Some(memory());
         let mut bus = Bus::with([
             // 0x2000:00 = 0x1234 (expedited, 2 байта), затем save.
             Ok(frame(0x605, &[0x2B, 0x00, 0x20, 0x00, 0x34, 0x12, 0, 0])),
@@ -799,10 +785,7 @@ mod tests {
         serve_with(&mut bus, &mut settings);
         let reply = bus.sent.last().expect("ответ на save");
         assert_eq!(reply.data[0], 0x60, "save подтверждён: {reply:?}");
-        let stored = settings
-            .0
-            .get(&super::OBJECTS_KEY)
-            .expect("объекты сохранены");
+        let stored = stored(&mut settings, super::OBJECTS_KEY).expect("объекты сохранены");
         assert!(
             !stored.is_empty() && stored.len() <= super::STORE_CAPACITY,
             "{} байт",
@@ -822,7 +805,7 @@ mod tests {
     #[test]
     fn lss_address_survives_a_new_stack() {
         const ASSIGNED: u8 = 9;
-        let mut settings = Memory::default();
+        let mut settings = Some(memory());
         let mut bus = Bus::with([
             // Switch mode global → configuration, Configure node id, Store.
             Ok(frame(0x7E5, &[0x04, 0x01, 0, 0, 0, 0, 0, 0])),
@@ -831,8 +814,8 @@ mod tests {
         ]);
         serve_with(&mut bus, &mut settings);
         assert_eq!(
-            settings.0.get(&NODE_ID_KEY).map(Vec::as_slice),
-            Some(&[ASSIGNED][..]),
+            stored(&mut settings, NODE_ID_KEY),
+            Some(vec![ASSIGNED]),
             "ответы LSS: {:?}",
             bus.sent
         );
@@ -846,16 +829,25 @@ mod tests {
         );
     }
 
-    /// Без хранилища колбэков нет, и узел ничего не сохраняет. Что ответит
-    /// стек, зависит от прогонов до этого: флаг «сохранение поддерживается»
-    /// `zencan` ставит в `static` и не снимает, а под `cargo test` тесты делят
-    /// процесс, — поэтому проверяется хранилище, а не ответ.
+    /// Без хранилища (`None`) колбэков нет: `save` узел принимает и работает
+    /// дальше, сохранять ему некуда. Что ответит стек, зависит от прогонов до
+    /// этого: флаг «сохранение поддерживается» `zencan` ставит в `static` и не
+    /// снимает, а под `cargo test` тесты делят процесс, — поэтому проверяется
+    /// только то, что узел жив и отвечает на следующий запрос.
     #[test]
-    fn without_storage_nothing_is_saved() {
-        let mut settings = Memory::default();
-        let mut bus = Bus::with([Ok(frame(0x605, &SAVE))]);
-        serve_persist(&mut bus, &mut settings, false);
-        assert!(settings.0.is_empty(), "{:?}", settings.0);
+    fn without_storage_the_node_serves_on() {
+        let mut bus = Bus::with([
+            Ok(frame(0x605, &SAVE)),
+            Ok(frame(0x605, &[0x40, 0x18, 0x10, 0x01, 0, 0, 0, 0])),
+        ]);
+        serve_with(&mut bus, &mut None);
+        assert!(
+            bus.sent
+                .iter()
+                .any(|f| f.id == Id::Standard(StandardId::new(0x585).unwrap())),
+            "ответ SDO: {:?}",
+            bus.sent
+        );
     }
 
     // Объекта `0x1010` нет без раздела настроек (`crates-host/canopen/build.rs`).
@@ -864,13 +856,13 @@ mod tests {
     /// переставляет сигнатуру и для неё.
     #[test]
     fn save_without_size_is_accepted() {
-        let mut settings = Memory::default();
+        let mut settings = Some(memory());
         let mut save = SAVE;
         save[0] = 0x22;
         let mut bus = Bus::with([Ok(frame(0x605, &save))]);
         serve_with(&mut bus, &mut settings);
         assert!(
-            settings.0.contains_key(&super::OBJECTS_KEY),
+            stored(&mut settings, super::OBJECTS_KEY).is_some(),
             "ответы: {:?}",
             bus.sent
         );

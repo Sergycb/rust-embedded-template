@@ -1,14 +1,20 @@
-//! Словарь Modbus для портов: предел PDU и коды исключений.
+//! Словарь Modbus для портов: предел PDU, коды исключений и данные slave'а.
 //!
-//! Данные slave'а (`domain::modbus::Registers`) — трейт домена, а не порт:
-//! его и реализует карта проекта, и зовёт обработчик `domain::modbus::Slave`.
+//! Данные slave'а — трейт [`Registers`](crate::Registers) и представления
+//! кадра (`registers`): его реализуют карта проекта и обёртки над ней в
+//! `domain::modbus`, а зовёт обработчик `domain::modbus::Slave`.
 //! Транспорт slave'а — канал [`FrameLink`](crate::FrameLink) с кадром «адрес
-//! и PDU», его реализует `adapters::modbus` (RTU, TCP, UDP).
+//! и PDU», его реализует `adapters_logic::modbus` (RTU, TCP, UDP).
 // {%- if modbus_master == "true" %}
 //! Транспорт master'а — [`ModbusClient`](crate::ModbusClient) — реализуют они
 //! же; его ошибка — [`MasterError`](crate::modbus::MasterError)
 //! (`domain::modbus::master`).
 // {%- endif %}
+
+/// Данные slave'а: трейт карты и представления битов и регистров кадра.
+mod registers;
+
+pub use registers::{Bits, BitsMut, Registers, Words, WordsMut};
 
 /// Наибольший PDU Modbus — функция и данные: 253 байта. Предел пришёл из
 /// кадра RTU (256 байт с адресом и CRC) и одинаков для всех транспортов.
@@ -17,7 +23,7 @@ pub const MAX_PDU: usize = 253;
 
 /// Код исключения Modbus — ответ slave'а вместо данных.
 ///
-/// Карта slave'а (`domain::modbus::Registers`) возвращает обычно первые
+/// Карта slave'а ([`Registers`]) возвращает обычно первые
 /// четыре; на проводе бывает любой, включая коды шлюза и нестандартные
 /// ([`Exception::Other`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,7 +95,7 @@ impl Exception {
 /// Транспорт Modbus-master'а: кадр запроса — устройству, кадр ответа —
 /// обратно.
 ///
-/// Реализуют `adapters::modbus::{Rtu, Tcp, Udp}`: кадр RTU с CRC поверх
+/// Реализуют `adapters_logic::modbus::{Rtu, Tcp, Udp}`: кадр RTU с CRC поверх
 /// потока, MBAP поверх потока TCP, MBAP в датаграмме UDP. Логика master'а
 /// (`domain::modbus::master`) работает с PDU — функция и данные — и про
 /// транспорт не знает.
@@ -137,7 +143,9 @@ pub trait ModbusClient {
 }
 // {%- endif %}
 // {%- if modbus_master == "true" %}
-/// Что может пойти не так в запросе master'а (`domain::modbus::master`).
+/// Почему транспорт master'а не доставил ответ: то, что вне PDU. Исключение
+/// slave'а и PDU не на тот запрос — ошибки логики master'а
+/// (`domain::modbus::master::RequestError`), транспорт их не разбирает.
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[non_exhaustive]
@@ -151,11 +159,9 @@ pub enum MasterError<E> {
     /// Контрольная сумма ответа не сошлась: помеха на линии (RTU).
     #[error("CRC ответа не сошлась")]
     Crc,
-    /// Slave ответил исключением.
-    #[error("slave ответил исключением {0:?}")]
-    Exception(Exception),
-    /// Целый кадр, но не ответ на этот запрос: чужой адрес, другая функция,
-    /// не то количество, неразборное содержимое, кадр не по протоколу.
+    /// Целый кадр, но не ответ на этот запрос: чужой адрес, длина вне
+    /// допустимой, кадр не по протоколу. То, что внутри PDU, транспорт не
+    /// сверяет — это делает логика master'а.
     #[error("ответ не соответствует запросу")]
     Unexpected,
 }

@@ -1,23 +1,19 @@
 //! Узлы `MODBUS_*`: Modbus slave, адрес 1, по модулю на транспорт. Канал —
-//! `link` модуля транспорта (`crate::link`) над рычагом платы; карта
+//! кадр RTU над рычагом платы, конкретным типом прямо в задаче; карта
 //! регистров одна на все узлы (`crate::modbus`), каждый получает её ручку.
 {%- assign xs = links | split: "," %}
 {%- comment %} Номер клиента OTA — порядковый номер транспорта с протоколом в `links`, как в графе (`crate::graph`). {% endcomment %}
 {%- assign client = 0 %}
 {%- for l in xs %}
 {%- assign f = l | split: ":" %}
-{%- assign lm = "crate::link::" | append: f[0] %}
-{%- comment %} Без графа транспорт — UART или USB: у них модуль канала на транспорт. {% endcomment %}
-{%- assign lm = lm | append: "::" | append: f[4] %}
 {%- if f[3] == "modbus" %}
 
 /// Узел `MODBUS_{{ f[4] | upcase }}`.
 pub mod {{ f[4] }} {
     use embassy_executor::Spawner;
 
-    // Импорт, а не полный путь в сигнатурах: длина строки не зависит от
-    // имени транспорта, и rustfmt не переносит её ни при каком имени.
-    use {{ lm }}::{Source, link};
+    /// Рычаг платы, над которым строится канал (`board.{{ f[4] }}{% if f[0] == "usb" %}.cdc{% endif %}`).
+    type Source = {% if f[0] == "usb" %}bsp::usb::{{ f[4] }}::Cdc{% else %}bsp::serial::{{ f[4] }}::Serial{% endif %};
 
     #[embassy_executor::task]
     async fn task(source: Source, map: crate::modbus::Handle) {
@@ -32,8 +28,9 @@ pub mod {{ f[4] }} {
 {%- else %}
         let regs = map;
 {%- endif %}
-        let mut link = link(source);
-        let mut handler = domain::modbus::Slave::new(1, regs, crate::build::PKG_VERSION);
+        // Кадр RTU памяти извне не просит.
+        let mut link = adapters_logic::modbus::Rtu::new(source);
+        let mut handler = domain::modbus::Slave::new(1, regs, {% if ota == "true" %}crate::version::FW_VERSION_TEXT{% else %}crate::build::PKG_VERSION{% endif %});
         domain::server::task(domain::server::ServerCtx {
             link: &mut link,
             handler: &mut handler,

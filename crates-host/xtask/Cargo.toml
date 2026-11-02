@@ -22,19 +22,23 @@ xshell = "0.2.7"
 salty = { version = "0.3.0", default-features = false }
 # {%- endif %}
 # {%- if ota == "true" %}
-# Отпечаток раскладки в хвосте образа (`layout_fingerprint`) и запись о
-# подписи (`PendingImage`) для host-target теста подписанного OTA: формат
-# берётся у прошивки, а не повторяется здесь руками.
+# Отпечаток раскладки в хвосте образа (`layout_fingerprint`): формат берётся
+# у прошивки, а не повторяется здесь руками.
 ports = { workspace = true }
 # {%- endif %}
 # {%- if ota == "true" or net_services contains "rest" or ssh_auth == "password" or ssh_host_key == "file" %}
 # {%- if ota == "true" %}
-# Случайный ключ подписи OTA (`signing.rs`).
+# Случайный ключ подписи OTA и чужой ключ для `test host-target` (`signing.rs`).
 # {%- endif %}
 # {%- if net_services contains "rest" or ssh_auth == "password" or ssh_host_key == "file" %}
 # Случайные секреты сетевых служб (`secrets.rs`).
 # {%- endif %}
 getrandom = "0.4.3"
+# {%- endif %}
+# {%- if ssh_auth == "password" %}
+# Хэш пароля консоли SSH (`secrets.rs`) — тот же SHA-256, которым прошивка
+# сверяет предъявленный пароль (`domain::ssh::Login::PasswordHash`).
+sha2 = { workspace = true }
 # {%- endif %}
 # Сырой образ из ELF — своим разбором, а не `cargo objcopy`: тот требует
 # cargo-binutils, которого `cargo xtask setup` не ставит, и у пользователя

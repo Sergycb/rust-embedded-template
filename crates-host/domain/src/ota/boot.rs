@@ -175,99 +175,102 @@ fn check_pending<DFU: embedded_storage::nor_flash::NorFlash>(
     }
 }
 
+/// Разделы в памяти (`adapters_hw::flash::fake::MemFlash`, блокирующий — как и сами
+/// проверяемые функции) и носители, которые отказывают. Только с проверкой
+/// подписи (`boot`): других тестов над ними нет.
 #[cfg(test)]
-mod tests {
-    /// Разделы в памяти (`adapters::fake::MemFlash`, блокирующий — как и сами
-    /// проверяемые функции) и носители, которые отказывают.
-    mod fakes {
-        pub(super) use adapters::fake::MemFlash;
-        use embedded_storage::nor_flash::{ErrorType, NorFlash, NorFlashErrorKind, ReadNorFlash};
+#[cfg(feature = "boot")]
+mod fake {
+    pub(super) use adapters_hw::flash::fake::MemFlash;
+    use embedded_storage::nor_flash::{ErrorType, NorFlash, NorFlashErrorKind, ReadNorFlash};
 
-        /// `DFU`, который после `ops` удачных стираний и записей отказывает —
-        /// носитель, отвалившийся посреди обмена.
-        pub(super) struct Flaky {
-            pub(super) flash: Dfu,
-            pub(super) ops: usize,
-        }
+    /// `DFU`, который после `ops` удачных стираний и записей отказывает —
+    /// носитель, отвалившийся посреди обмена.
+    pub(super) struct Flaky {
+        pub(super) flash: Dfu,
+        pub(super) ops: usize,
+    }
 
-        impl Flaky {
-            fn tick(&mut self) -> Result<(), NorFlashErrorKind> {
-                self.ops = self.ops.checked_sub(1).ok_or(NorFlashErrorKind::Other)?;
-                Ok(())
-            }
-        }
-
-        impl ErrorType for Flaky {
-            type Error = NorFlashErrorKind;
-        }
-
-        impl ReadNorFlash for Flaky {
-            const READ_SIZE: usize = 1;
-
-            fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), Self::Error> {
-                self.flash.read(offset, bytes)
-            }
-
-            fn capacity(&self) -> usize {
-                self.flash.capacity()
-            }
-        }
-
-        impl NorFlash for Flaky {
-            const WRITE_SIZE: usize = 8;
-            const ERASE_SIZE: usize = 256;
-
-            fn erase(&mut self, from: u32, to: u32) -> Result<(), Self::Error> {
-                self.tick()?;
-                self.flash.erase(from, to)
-            }
-
-            fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), Self::Error> {
-                self.tick()?;
-                self.flash.write(offset, bytes)
-            }
-        }
-
-        /// Четыре страницы по 256 байт, слово 8; ACTIVE (= capacity) — три
-        /// страницы, как требует запас на обмен.
-        pub(super) type Dfu = MemFlash<1024, 8, 256>;
-        /// Раздел состояния: страница на магию плюс журнал прогресса.
-        pub(super) type State = MemFlash<256, 8, 256>;
-
-        /// Микросхема, которая не отвечает вовсе (не распаяна, не подставлен
-        /// драйвер): всякое чтение — отказ.
-        pub(super) struct Unreadable;
-
-        impl ErrorType for Unreadable {
-            type Error = NorFlashErrorKind;
-        }
-
-        impl ReadNorFlash for Unreadable {
-            const READ_SIZE: usize = 1;
-
-            fn read(&mut self, _offset: u32, _bytes: &mut [u8]) -> Result<(), Self::Error> {
-                Err(NorFlashErrorKind::Other)
-            }
-
-            fn capacity(&self) -> usize {
-                0
-            }
-        }
-
-        impl NorFlash for Unreadable {
-            const WRITE_SIZE: usize = 8;
-            const ERASE_SIZE: usize = 256;
-
-            fn erase(&mut self, _from: u32, _to: u32) -> Result<(), Self::Error> {
-                Err(NorFlashErrorKind::Other)
-            }
-
-            fn write(&mut self, _offset: u32, _bytes: &[u8]) -> Result<(), Self::Error> {
-                Err(NorFlashErrorKind::Other)
-            }
+    impl Flaky {
+        fn tick(&mut self) -> Result<(), NorFlashErrorKind> {
+            self.ops = self.ops.checked_sub(1).ok_or(NorFlashErrorKind::Other)?;
+            Ok(())
         }
     }
 
+    impl ErrorType for Flaky {
+        type Error = NorFlashErrorKind;
+    }
+
+    impl ReadNorFlash for Flaky {
+        const READ_SIZE: usize = 1;
+
+        fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), Self::Error> {
+            self.flash.read(offset, bytes)
+        }
+
+        fn capacity(&self) -> usize {
+            self.flash.capacity()
+        }
+    }
+
+    impl NorFlash for Flaky {
+        const WRITE_SIZE: usize = 8;
+        const ERASE_SIZE: usize = 256;
+
+        fn erase(&mut self, from: u32, to: u32) -> Result<(), Self::Error> {
+            self.tick()?;
+            self.flash.erase(from, to)
+        }
+
+        fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), Self::Error> {
+            self.tick()?;
+            self.flash.write(offset, bytes)
+        }
+    }
+
+    /// Четыре страницы по 256 байт, слово 8; ACTIVE (= capacity) — три
+    /// страницы, как требует запас на обмен.
+    pub(super) type Dfu = MemFlash<1024, 8, 256>;
+    /// Раздел состояния: страница на магию плюс журнал прогресса.
+    pub(super) type State = MemFlash<256, 8, 256>;
+
+    /// Микросхема, которая не отвечает вовсе (не распаяна, не подставлен
+    /// драйвер): всякое чтение — отказ.
+    pub(super) struct Unreadable;
+
+    impl ErrorType for Unreadable {
+        type Error = NorFlashErrorKind;
+    }
+
+    impl ReadNorFlash for Unreadable {
+        const READ_SIZE: usize = 1;
+
+        fn read(&mut self, _offset: u32, _bytes: &mut [u8]) -> Result<(), Self::Error> {
+            Err(NorFlashErrorKind::Other)
+        }
+
+        fn capacity(&self) -> usize {
+            0
+        }
+    }
+
+    impl NorFlash for Unreadable {
+        const WRITE_SIZE: usize = 8;
+        const ERASE_SIZE: usize = 256;
+
+        fn erase(&mut self, _from: u32, _to: u32) -> Result<(), Self::Error> {
+            Err(NorFlashErrorKind::Other)
+        }
+
+        fn write(&mut self, _offset: u32, _bytes: &[u8]) -> Result<(), Self::Error> {
+            Err(NorFlashErrorKind::Other)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
     /// Проверка нового образа bootloader'ом (`screen_update`): настоящие ключи
     /// `salty` и — для отката — настоящий обмен `embassy-boot` над теми же
     /// фейками, что и выше.
@@ -280,7 +283,7 @@ mod tests {
 
         use ports::PendingImage;
 
-        use super::fakes::{Dfu, Flaky, MemFlash, State, Unreadable};
+        use crate::ota::boot::fake::{Dfu, Flaky, MemFlash, State, Unreadable};
         use crate::ota::boot::{ScreenFailure, Screening, screen_update};
 
         /// `ACTIVE` — три страницы, как `capacity` у `updater()` выше.

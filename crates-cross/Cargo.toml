@@ -18,7 +18,7 @@ version      = "0.1.0"
 edition      = "2024"
 license      = "MIT"
 # Тот же MSRV, что в корневом Cargo.toml — воркспейса два, а тулчейн один.
-rust-version = "1.96"
+rust-version = "1.98"
 
 [workspace.lints.rust]
 # `#[embedded_test::tests]` генерирует ветку под `cfg(rust_analyzer)`, чтобы IDE
@@ -50,7 +50,7 @@ todo                    = "warn"
 unimplemented           = "warn"
 large_stack_arrays      = "warn"
 # Каждый `unsafe`-блок обязан объяснять, почему он корректен. Линт нашёл то,
-# чего не видел ни один линтер: `executor.poll()` в `app/src/main.rs` шёл без
+# чего не видел ни один линтер: `executor.poll()` в `app/src/run.rs` шёл без
 # `// SAFETY:`, хотя объяснение рядом стояло — на несколько строк выше и без
 # префикса, которого ждёт clippy.
 undocumented_unsafe_blocks = "warn"
@@ -211,14 +211,20 @@ embedded-test      = { version = "0.7.3", default-features = false, features = [
 	"semihosting",
 	"panic-handler",
 ] }
-# Трейты-границы домена и типы ошибок: их реализуют adapters и bsp, а app
-# работает только через них. `defmt` — ради `Format` на ошибках в логе.
+# Все трейты проекта, типы из их сигнатур и форматы, общие у реализации и
+# логики. `defmt` — ради `Format` на ошибках в логе.
 ports            = { path = "../crates-host/ports", features = ["defmt"] }
-{%- if ota == "true" or config == "true" or has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" or has_usb == "true" or has_net == "true" %}
-# Адаптеры, generic по флешу/шине: собирают их узлы над рычагами `bsp`, а `bsp`
-# берёт отсюда обёртки, из которых строит рычаги сам. `defmt` — ради `Format`
-# на ошибках в логе прошивки; на хосте крейт собирается без фич вывода вовсе.
-adapters         = { path = "../crates-host/adapters", features = ["defmt"] }
+{%- if config_store == "eeprom" or has_usb == "true" or has_net == "true" %}
+# Обёртки над железом без чипа: из них `bsp` строит рычаги сам. `defmt` —
+# вывод стеков под обёртками в логе прошивки; на хосте крейт собирается без
+# фич вывода вовсе.
+adapters-hw      = { path = "../crates-host/adapters-hw", features = ["defmt"] }
+{%- endif %}
+{%- if protocol_link == "true" %}
+# Каналы протоколов над рычагами платы (кадрирование потока, сокеты) — их
+# строит `app` в привязке графа или в задаче протокола. `defmt` — ради
+# `Format` на ошибках каналов.
+adapters-logic   = { path = "../crates-host/adapters-logic", features = ["defmt"] }
 {%- endif %}
 {%- if flash_page == "true" %}
 flash-page       = { path = "../crates-host/flash-page" }
@@ -247,7 +253,7 @@ assign-resources = { version = "0.5.0" }
 #
 # Фича `defmt` у `supervisor` не включена: библиотека сама ничего не
 # печатает. Что видно в логе, решает прошивка: ошибку
-# `spawn_all` печатает `main.rs`, имя узла, переставшего кормить сторож, перед
+# `spawn_all` печатает `app/src/run.rs`, имя узла, переставшего кормить сторож, перед
 # аппаратным сбросом — `before_reset` в `bsp::wdg`, застой и восстановление
 # узла — наблюдатель `observe:` в `graph.rs`, исход прогона — тело задачи.
 {%- else %}
@@ -264,7 +270,7 @@ assign-resources = { version = "0.5.0" }
 #   `&'static str` на узел.
 #
 # * `local-resources` — ради слотов `local`: они держат `!Send`-объекты
-#   платы{% if ota == "true" %} (например, `adapters::ota::Updater` над разделами `bsp::flash`
+#   платы{% if ota == "true" %} (например, `domain::ota::Updater` над разделами `bsp::flash`
 #   ссылается на `Mutex<NoopRawMutex, …>`){% endif %}, а обычный слот — это `static`,
 #   которому нужен `Send`.
 #   Фича включает `LocalResourceSlot` и снимает у `supervisor`

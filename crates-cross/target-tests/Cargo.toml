@@ -51,14 +51,9 @@ embassy-stm32 = { workspace = true, features = ["time-driver-any"] }
 # `cortex-m-rt`: обработчик с причиной — у `app` (src/fault.rs).
 bsp = { workspace = true }
 {%- if ota == "true" or config == "true" %}
-# Трейты портов: тесты дёргают объекты `Board` тем же способом, что и `app`
-# ({% if ota == "true" %}`FirmwareUpdate` — тесты OTA{% endif %}{% if ota == "true" and config == "true" %}, {% endif %}{% if config == "true" %}`SettingsStorage` — тест настроек{% endif %}).
-ports = { workspace = true }
-# {% if ota == "true" %}Адаптер обновления{% endif %}{% if ota == "true" and config == "true" %} и хранилище настроек{% elsif config == "true" %}Хранилище настроек{% endif %} над разделами платы — {% if ota == "true" and config == "true" %}их{% else %}его{% endif %} собирает
-# приложение, а тест собирает так же ({% if ota == "true" %}`updater`{% endif %}{% if ota == "true" and config == "true" %}, {% endif %}{% if config == "true" %}`settings`{% endif %} в tests/test.rs).
-adapters = { workspace = true }
-{%- endif %}
-{%- if ota == "true" %}
-# Проверка версии образа в тесте отката (`domain::ota::update::apply`).
+# {% if ota == "true" %}Адаптер обновления над разделами платы и проверка версии образа в тесте
+# отката (`domain::ota`, `updater` в tests/test.rs){% if config == "true" %};
+# {% endif %}{% endif %}{% if config == "true" %}хранилище настроек над носителем платы (`domain::settings`,
+# `settings` в tests/test.rs){% endif %} — тест собирает их так же, как приложение.
 domain = { workspace = true }
 {%- endif %}

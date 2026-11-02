@@ -1,6 +1,6 @@
 //! Приём образа по кускам: всё, что одинаково для любого протокола.
 //!
-//! Образ приходит командами (`ports::OtaCommand`): узел протокола переводит
+//! Образ приходит командами ([`OtaCommand`](crate::ota::OtaCommand)): узел протокола переводит
 //! свои сообщения в `Start`, `Chunk` и `Finish`, а узел [`ota`](crate::ota)
 //! ведёт приём шагами [`Transfer`]. Вокруг этих шагов есть работа, которая от
 //! протокола не зависит вовсе, и делать её в каждом проекте заново незачем:
@@ -17,12 +17,15 @@
 //!
 //! [`Transfer`] делает всё перечисленное. Это не самостоятельный объект, а
 //! данные состояния `Receiving` автомата узла OTA: между двумя командами приём
-//! живёт там, а шаги — функции над портом `FirmwareUpdate`. Здесь, а не в
+//! живёт там, а шаги — функции над адаптером [`Updater`]. Здесь, а не в
 //! `bsp`: это правила приёма, а не свойство флеша, и проверяются они на
-//! хосте — с фейком порта, на котором можно разыграть и лишний байт, и кусок в
-//! один байт.
+//! хосте — над разделами в памяти, на которых можно разыграть и лишний байт, и
+//! кусок в один байт.
 
-use ports::{DownloadError, FirmwareUpdate, MAX_WRITE_SIZE};
+use embedded_storage_async::nor_flash::NorFlash;
+use ports::{MAX_WRITE_SIZE, Partitions};
+
+use crate::ota::updater::{FlashError, Updater};
 
 /// Приём одного образа между `Start` и `Finish` — данные состояния
 /// `Receiving` узла OTA.
@@ -43,8 +46,8 @@ pub struct Transfer {
 }
 
 impl Transfer {
-    /// Начинает приём образа длиной `announced`: проверяет длину и слово
-    /// флеша и готовит раздел.
+    /// Начинает приём образа длиной `announced`: проверяет длину и готовит
+    /// раздел.
     ///
     /// Порядок важен: длина сверяется с вместимостью ДО стирания, потому что
     /// стирание уничтожает образ, в который устройство откатывается. Узнать,
@@ -53,18 +56,17 @@ impl Transfer {
     /// # Errors
     ///
     /// - `Empty` — заявлена нулевая длина,
-    /// - `TooLong` — длина больше вместимости раздела или добитая длина не влезает,
-    /// - `UnusableGranularity` — порт вернул негодную гранулярность,
+    /// - `TooLong` — длина больше вместимости раздела,
     /// - `Flash` — флеш отказал.
-    pub async fn start<F: FirmwareUpdate>(
-        flash: &mut F,
+    pub async fn start<D: NorFlash, S: NorFlash>(
+        flash: &mut Updater<Partitions<D, S>>,
         announced: u32,
-    ) -> Result<Self, DownloadError<F::Error>> {
+    ) -> Result<Self, DownloadError> {
         if announced == 0 {
             return Err(DownloadError::Empty);
         }
 
-        let capacity = flash.capacity().map_err(DownloadError::Flash)?;
+        let capacity = flash.capacity();
         if announced > capacity {
             return Err(DownloadError::TooLong {
                 announced,
@@ -72,24 +74,10 @@ impl Transfer {
             });
         }
 
-        // Ноль отвергается вместе со слишком широким словом, и это не симметрия
-        // ради симметрии: на нуле первый же кусок делил бы на ноль, а деление
-        // паникует и в release — то есть уводит устройство в сброс.
+        // Слово — от 1 до `MAX_WRITE_SIZE`, и делить на него можно; раздел
+        // кратен странице, страница — слову, так что и добитый до слова хвост
+        // не выходит за раздел. Всё это проверил `Updater::new` при сборке.
         let word = flash.write_granularity();
-        if word == 0 || word as usize > MAX_WRITE_SIZE {
-            return Err(DownloadError::UnusableGranularity(word));
-        }
-
-        // Добитая до слова длина тоже обязана помещаться: хвост пишется целым
-        // словом, и на образе, чья длина не кратна слову, запись ушла бы за
-        // границу. У настоящего раздела это не случается (он кратен слову), но
-        // порт такого не обещает.
-        if announced.div_ceil(word).saturating_mul(word) > capacity {
-            return Err(DownloadError::TooLong {
-                announced,
-                capacity,
-            });
-        }
 
         flash
             .prepare(announced)
@@ -130,12 +118,12 @@ impl Transfer {
     ///
     /// Если кусок длиннее `u32::MAX`: размеры образов ограничены разделом
     /// флеша, на практике это невозможно.
-    pub async fn chunk<F: FirmwareUpdate>(
+    pub async fn chunk<D: NorFlash, S: NorFlash>(
         &mut self,
-        flash: &mut F,
+        flash: &mut Updater<Partitions<D, S>>,
         offset: u32,
         mut chunk: &[u8],
-    ) -> Result<u32, DownloadError<F::Error>> {
+    ) -> Result<u32, DownloadError> {
         let len = u32::try_from(chunk.len()).expect("кусок короче u32::MAX байт");
         let expected = self.received();
         if offset != expected {
@@ -202,10 +190,10 @@ impl Transfer {
     ///
     /// - `Incomplete` — принято меньше обещанного,
     /// - `Flash` — флеш отказал.
-    pub async fn finish<F: FirmwareUpdate>(
+    pub async fn finish<D: NorFlash, S: NorFlash>(
         mut self,
-        flash: &mut F,
-    ) -> Result<u32, DownloadError<F::Error>> {
+        flash: &mut Updater<Partitions<D, S>>,
+    ) -> Result<u32, DownloadError> {
         let received = self.received();
         if received != self.announced {
             return Err(DownloadError::Incomplete {
@@ -235,28 +223,54 @@ impl Transfer {
     }
 }
 
+/// Что может пойти не так при приёме образа ([`Transfer`]).
+#[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[non_exhaustive]
+pub enum DownloadError {
+    /// Обещали образ нулевой длины. Проверяется здесь, а не оставляется
+    /// реализации порта: `prepare(0)` не стёр бы ничего, и первая же запись
+    /// легла бы в нестёртую память, на F2/F4/F7 молча.
+    Empty,
+    /// Устройство столько не примет: образ длиннее того, что помещается в
+    /// раздел. Проверяется до стирания — раздел остаётся нетронутым.
+    TooLong { announced: u32, capacity: u32 },
+    /// Прислали больше, чем обещали в начале. Приём прекращается: это либо
+    /// сбой канала, либо попытка вылезти за раздел.
+    TooMuchData { announced: u32, received: u32 },
+    /// Кусок не встык к принятым: разрыв или наложение. Повтор уже принятого
+    /// куска сюда не попадает — его подтверждают без записи.
+    OutOfOrder { expected: u32, offset: u32 },
+    /// Передача кончилась, не добрав до обещанной длины.
+    Incomplete { announced: u32, received: u32 },
+    /// Отказ самого флеша.
+    Flash(FlashError),
+}
+
 #[cfg(test)]
 #[expect(clippy::cast_possible_truncation, reason = "размеры в тестах малы")]
 mod tests {
-    use ports::MAX_WRITE_SIZE;
+    use embedded_storage::nor_flash::NorFlashErrorKind;
+    use embedded_storage_async::nor_flash::NorFlash;
+    use ports::{MAX_WRITE_SIZE, Partitions};
 
-    use super::Transfer;
-    use crate::ota::fakes::FakeFlash;
-    use ports::{DownloadError, FirmwareUpdate};
+    use super::{DownloadError, Transfer};
+    use crate::ota::fake::{flash, flash_with_word};
+    use crate::ota::{FlashError, Updater};
 
     /// Исход приёма целиком и сколько кусков в него ушло.
-    struct Received<E> {
-        result: Result<u32, DownloadError<E>>,
+    struct Received {
+        result: Result<u32, DownloadError>,
         taken: usize,
     }
 
     /// Приём целиком, как его ведёт узел: `start`, куски по одному, `finish`.
     /// Первая ошибка прекращает приём.
-    async fn receive<F: FirmwareUpdate>(
-        flash: &mut F,
+    async fn receive<D: NorFlash, S: NorFlash>(
+        flash: &mut Updater<Partitions<D, S>>,
         announced: u32,
         chunks: impl IntoIterator<Item = Vec<u8>>,
-    ) -> Received<F::Error> {
+    ) -> Received {
         let mut transfer = match Transfer::start(flash, announced).await {
             Ok(transfer) => transfer,
             Err(err) => {
@@ -289,6 +303,19 @@ mod tests {
         (0..len).map(|i| (i * seed) as u8).collect()
     }
 
+    /// Принимает `data` кусками `chunks` над разделом со словом `W` и
+    /// отдаёт принятую длину и содержимое раздела.
+    fn reassemble<const W: usize>(data: &[u8], chunks: Vec<Vec<u8>>) -> (u32, Vec<u8>) {
+        let mut flash = flash_with_word::<W>(1024);
+        let len = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("рантайм")
+            .block_on(receive(&mut flash, data.len() as u32, chunks))
+            .result
+            .expect("приём");
+        (len, flash.memory().clone())
+    }
+
     proptest::proptest! {
         /// Как бы канал ни нарезал образ и какой бы ширины ни было слово флеша,
         /// во флеше оказывается ровно образ, добитый `0xFF` до целого слова.
@@ -309,19 +336,20 @@ mod tests {
                 chunks.push(head.to_vec());
                 rest = tail;
             }
-            let mut flash = FakeFlash::new(1024, word);
-
-            let len = tokio::runtime::Builder::new_current_thread()
-                .build()
-                .expect("рантайм")
-                .block_on(receive(&mut flash, data.len() as u32, chunks))
-                .result
-                .expect("приём");
+            // Слово флеша — константа типа раздела: по экземпляру на ширину.
+            let (len, memory) = match word {
+                1 => reassemble::<1>(&data, chunks),
+                2 => reassemble::<2>(&data, chunks),
+                4 => reassemble::<4>(&data, chunks),
+                8 => reassemble::<8>(&data, chunks),
+                16 => reassemble::<16>(&data, chunks),
+                _ => reassemble::<32>(&data, chunks),
+            };
 
             proptest::prop_assert_eq!(len, data.len() as u32);
-            proptest::prop_assert_eq!(&flash.memory[..data.len()], &data[..]);
+            proptest::prop_assert_eq!(&memory[..data.len()], &data[..]);
             let padded = data.len().next_multiple_of(word as usize);
-            proptest::prop_assert!(flash.memory[data.len()..padded].iter().all(|b| *b == 0xFF));
+            proptest::prop_assert!(memory[data.len()..padded].iter().all(|b| *b == 0xFF));
         }
     }
 
@@ -331,7 +359,7 @@ mod tests {
     async fn reassembles_an_image_from_single_byte_chunks() {
         let image = image(100, 1);
         let chunks = image.iter().map(|b| vec![*b]);
-        let mut flash = FakeFlash::new(1024, 8);
+        let mut flash = flash(1024);
 
         let len = receive(&mut flash, image.len() as u32, chunks)
             .await
@@ -339,7 +367,7 @@ mod tests {
             .expect("приём должен завершиться");
 
         assert_eq!(len, image.len() as u32);
-        assert_eq!(&flash.memory[..image.len()], &image[..]);
+        assert_eq!(&flash.memory()[..image.len()], &image[..]);
     }
 
     /// Куски, не кратные ни слову, ни друг другу.
@@ -347,18 +375,21 @@ mod tests {
     async fn reassembles_an_image_from_ragged_chunks() {
         let image = image(200, 7);
         let chunks = image.chunks(13).map(<[u8]>::to_vec);
-        let mut flash = FakeFlash::new(1024, 8);
+        let mut flash = flash(1024);
 
         receive(&mut flash, image.len() as u32, chunks)
             .await
             .result
             .expect("приём");
 
-        assert_eq!(&flash.memory[..image.len()], &image[..]);
+        assert_eq!(&flash.memory()[..image.len()], &image[..]);
         // Всё, что дошло до флеша, было кратно слову — иначе фейк отказал бы;
         // здесь же проверяется, что запись вообще шла словами, а не одним
         // куском в конце.
-        assert!(flash.writes.len() > 1, "запись должна идти по мере приёма");
+        assert!(
+            flash.writes().len() > 1,
+            "запись должна идти по мере приёма"
+        );
     }
 
     /// Слово в 32 байта (самое широкое у STM32) и образ, не кратный ему.
@@ -366,16 +397,16 @@ mod tests {
     async fn pads_the_last_word_of_an_unaligned_image() {
         let image = image(70, 1);
         let chunks = vec![image.clone()];
-        let mut flash = FakeFlash::new(1024, MAX_WRITE_SIZE as u32);
+        let mut flash = flash_with_word::<MAX_WRITE_SIZE>(1024);
 
         receive(&mut flash, image.len() as u32, chunks)
             .await
             .result
             .expect("приём");
 
-        assert_eq!(&flash.memory[..image.len()], &image[..]);
+        assert_eq!(&flash.memory()[..image.len()], &image[..]);
         // Хвост добит единицами — фиксированным значением, а не мусором.
-        assert_eq!(&flash.memory[image.len()..96], &[0xFF; 26][..]);
+        assert_eq!(&flash.memory()[image.len()..96], &[0xFF; 26][..]);
     }
 
     /// Нулевая длина отвергается здесь, а не оставляется реализации порта:
@@ -384,15 +415,15 @@ mod tests {
     #[tokio::test]
     async fn refuses_an_empty_image_before_touching_the_partition() {
         let chunks = Vec::new();
-        let mut flash = FakeFlash::new(64, 8);
-        flash.memory.fill(0xA5);
+        let mut flash = flash(128);
+        flash.memory().fill(0xA5);
 
         let refused = receive(&mut flash, 0, chunks).await.result;
 
         assert_eq!(refused, Err(DownloadError::Empty));
-        assert_eq!(flash.prepared, None, "раздел не должен быть подготовлен");
+        assert!(!flash.prepared(), "раздел не должен быть подготовлен");
         assert!(
-            flash.memory.iter().all(|b| *b == 0xA5),
+            flash.memory().iter().all(|b| *b == 0xA5),
             "раздел не должен быть стёрт"
         );
     }
@@ -402,20 +433,20 @@ mod tests {
     #[tokio::test]
     async fn refuses_an_image_longer_than_the_partition_without_erasing() {
         let chunks = Vec::new();
-        let mut flash = FakeFlash::new(64, 8);
-        flash.memory.fill(0xA5);
+        let mut flash = flash(128);
+        flash.memory().fill(0xA5);
 
-        let refused = receive(&mut flash, 65, chunks).await.result;
+        let refused = receive(&mut flash, 129, chunks).await.result;
 
         assert_eq!(
             refused,
             Err(DownloadError::TooLong {
-                announced: 65,
-                capacity: 64
+                announced: 129,
+                capacity: 128
             })
         );
-        assert_eq!(flash.prepared, None);
-        assert!(flash.memory.iter().all(|b| *b == 0xA5));
+        assert!(!flash.prepared());
+        assert!(flash.memory().iter().all(|b| *b == 0xA5));
     }
 
     /// Канал прислал больше, чем обещал: приём прекращается на том куске, где
@@ -423,7 +454,7 @@ mod tests {
     #[tokio::test]
     async fn refuses_more_data_than_announced() {
         let chunks = vec![vec![0; 16], vec![0; 1], vec![0; 100]];
-        let mut flash = FakeFlash::new(1024, 8);
+        let mut flash = flash(1024);
 
         let received = receive(&mut flash, 16, chunks).await;
         let refused = received.result;
@@ -443,26 +474,26 @@ mod tests {
     #[tokio::test]
     async fn a_repeated_chunk_is_acknowledged_without_writing() {
         let image = image(16, 5);
-        let mut flash = FakeFlash::new(64, 8);
+        let mut flash = flash(128);
         let mut transfer = Transfer::start(&mut flash, 16).await.unwrap();
 
         assert_eq!(transfer.chunk(&mut flash, 0, &image[..8]).await, Ok(8));
-        let writes = flash.writes.len();
+        let writes = flash.writes().len();
         assert_eq!(
             transfer.chunk(&mut flash, 0, &image[..8]).await,
             Ok(8),
             "повтор"
         );
-        assert_eq!(flash.writes.len(), writes, "повтор не пишется");
+        assert_eq!(flash.writes().len(), writes, "повтор не пишется");
         assert_eq!(transfer.chunk(&mut flash, 8, &image[8..]).await, Ok(16));
         assert_eq!(transfer.finish(&mut flash).await, Ok(16));
-        assert_eq!(&flash.memory[..16], &image[..]);
+        assert_eq!(&flash.memory()[..16], &image[..]);
     }
 
     /// Разрыв и наложение — отказ: кусок не встык к принятым.
     #[tokio::test]
     async fn a_gap_or_an_overlap_is_out_of_order() {
-        let mut flash = FakeFlash::new(64, 8);
+        let mut flash = flash(128);
         let mut transfer = Transfer::start(&mut flash, 32).await.unwrap();
         transfer.chunk(&mut flash, 0, &[0; 8]).await.unwrap();
 
@@ -489,7 +520,7 @@ mod tests {
     #[tokio::test]
     async fn refuses_an_incomplete_transfer() {
         let chunks = vec![vec![0; 20]];
-        let mut flash = FakeFlash::new(1024, 8);
+        let mut flash = flash(1024);
 
         let refused = receive(&mut flash, 32, chunks).await.result;
 
@@ -502,93 +533,20 @@ mod tests {
         );
     }
 
-    /// Гранулярность, с которой работать нельзя, отвергается до стирания.
-    #[tokio::test]
-    async fn refuses_an_unusable_write_granularity() {
-        for word in [0, u32::try_from(MAX_WRITE_SIZE).unwrap() + 1] {
-            let chunks = Vec::new();
-            let mut flash = FakeFlash::new(1024, word.max(1));
-            flash.word = word;
-
-            let refused = receive(&mut flash, 32, chunks).await.result;
-
-            assert_eq!(refused, Err(DownloadError::UnusableGranularity(word)));
-            assert_eq!(flash.prepared, None);
-        }
-    }
-
-    /// Образ, чья добитая до слова длина не влезает, отвергается тоже: иначе
-    /// последнее слово ушло бы за границу раздела.
-    #[tokio::test]
-    async fn refuses_an_image_whose_padded_length_overflows() {
-        let chunks = Vec::new();
-        let mut flash = FakeFlash::new(100, 32);
-
-        let refused = receive(&mut flash, 100, chunks).await.result;
-
-        assert_eq!(
-            refused,
-            Err(DownloadError::TooLong {
-                announced: 100,
-                capacity: 100
-            })
-        );
-    }
-
     /// Отказ флеша доходит до вызывающего как есть, а не теряется.
     #[tokio::test]
     async fn passes_a_flash_failure_through() {
         let chunks = vec![vec![0; 8]];
-        // Обёртка, у которой `prepare` «проходит», но флаг подготовки не
-        // ставит: первая же запись фейка ответит отказом, и он обязан дойти
-        // до вызывающего как `Flash(_)`.
-        #[expect(
-            clippy::items_after_statements,
-            reason = "локальный тип теста стоит рядом с использованием"
-        )]
-        struct NoPrepare(FakeFlash);
-        #[expect(
-            clippy::items_after_statements,
-            reason = "локальный тип теста стоит рядом с использованием"
-        )]
-        impl FirmwareUpdate for NoPrepare {
-            type Error = &'static str;
-            fn write_granularity(&self) -> u32 {
-                self.0.write_granularity()
-            }
-            fn capacity(&self) -> Result<u32, Self::Error> {
-                self.0.capacity()
-            }
-            fn layout(&self) -> u32 {
-                self.0.layout()
-            }
-            async fn is_busy(&mut self) -> Result<bool, Self::Error> {
-                self.0.is_busy().await
-            }
-            fn prepare(&mut self, _len: u32) -> impl Future<Output = Result<(), Self::Error>> {
-                // «подготовил», но флаг не поставил — запись откажет
-                std::future::ready(Ok(()))
-            }
-            async fn write(&mut self, offset: u32, data: &[u8]) -> Result<(), Self::Error> {
-                self.0.write(offset, data).await
-            }
-            async fn read(&mut self, offset: u32, buf: &mut [u8]) -> Result<(), Self::Error> {
-                self.0.read(offset, buf).await
-            }
-            async fn mark_booted(&mut self) -> Result<(), Self::Error> {
-                self.0.mark_booted().await
-            }
-            async fn mark_updated(&mut self) -> Result<(), Self::Error> {
-                self.0.mark_updated().await
-            }
-        }
-        let mut flash = NoPrepare(FakeFlash::new(1024, 8));
+        let mut flash = flash(1024);
+        flash.refuse_writes_from(0);
 
         let failed = receive(&mut flash, 8, chunks).await.result;
 
         assert_eq!(
             failed,
-            Err(DownloadError::Flash("запись без подготовки раздела"))
+            Err(DownloadError::Flash(FlashError::Flash(
+                NorFlashErrorKind::Other
+            )))
         );
     }
 }

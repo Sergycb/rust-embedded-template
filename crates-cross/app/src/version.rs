@@ -5,8 +5,38 @@
 //! Подпись приложение не проверяет: ключ зашит в bootloader, и проверяет он
 //! (`crates-cross/boot`, `domain::ota::boot::screen_update`).
 
-/// Версия этого образа — `version` из Cargo.toml, свёрнутая
-/// `domain::ota::version::pack` в четыре байта.
+/// Версия этого образа — [`PACKAGE_VERSION`], а с фичей `version-next`
+/// (тестовый образ `app-unconfirmed`) — на единицу больше: ровно настолько,
+/// чтобы устройство на рабочем образе приняло тестовый (защита от отката —
+/// строго «новее»), и не больше. Не `u32::MAX`: подписанный ключом проекта
+/// образ «новее всего», встань он однажды насовсем, закрыл бы устройству
+/// все обычные обновления; `+1` закрыл бы самое большее одну версию —
+/// docs/ota.md, «Тесты OTA по протоколу».
+pub const FW_VERSION: u32 = if cfg!(feature = "version-next") {
+    match PACKAGE_VERSION.checked_add(1) {
+        Some(next) => next,
+        None => panic!("version в Cargo.toml — уже наибольшая, тестовому образу некуда расти"),
+    }
+} else {
+    PACKAGE_VERSION
+};
+
+/// Версия этого образа текстом — то, что он называет хосту и печатает в
+/// баннере старта: `version` из Cargo.toml, а у тестового образа
+/// (`unconfirmed`) — метка [`UNCONFIRMED_TEXT`]: по ней хост видит, что
+/// обмен разделов состоялся, не читая флеш.
+pub const FW_VERSION_TEXT: &str = if cfg!(feature = "unconfirmed") {
+    UNCONFIRMED_TEXT
+} else {
+    crate::build::PKG_VERSION
+};
+
+/// Метка тестового образа `app-unconfirmed` вместо версии в ответе хосту —
+/// та же строка в `crates-host/host-target-tests/tests/test.rs`.
+const UNCONFIRMED_TEXT: &str = "unconfirmed";
+
+/// `version` из Cargo.toml, свёрнутая `domain::ota::version::pack` в четыре
+/// байта.
 ///
 /// Компоненты берутся из того же `shadow-rs`, что печатает версию в баннере
 /// старта (`crate::build`), — у версии в прошивке один источник. Считается
@@ -14,7 +44,7 @@
 /// до 65535), — ошибка сборки, а не прошивка, молча принимающая откат.
 /// Пререлизный суффикс не учитывается: semver считает `1.2.3-rc1` младше
 /// `1.2.3`, а уместить это в четыре байта нечем — README, «Защита от отката».
-pub const FW_VERSION: u32 = {
+const PACKAGE_VERSION: u32 = {
     let (Ok(major), Ok(minor), Ok(patch)) = (
         u8::from_str_radix(crate::build::PKG_VERSION_MAJOR, 10),
         u8::from_str_radix(crate::build::PKG_VERSION_MINOR, 10),

@@ -63,7 +63,7 @@ use anyhow::{Context, bail};
 use chip_data_gen::source::{RUST_LIB, repo_root};
 
 /// Сколько конфигураций собирается одновременно. Сборка цепочки проектных
-/// крейтов (`domain` → `adapters` → `app`) ядра почти не загружает, поэтому
+/// крейтов (`domain` → `adapters-logic` → `app`) ядра почти не загружает, поэтому
 /// параллельные конфигурации окупаются; каждая полоса — свой каталог сборки
 /// (гигабайты), так что больше трёх по умолчанию не берём.
 const DEFAULT_JOBS: usize = 3;
@@ -189,6 +189,7 @@ const SECRETS: &[&str] = &[
     "ota-public-key.bin",
     "rest-token.txt",
     "ssh-password.txt",
+    "ssh-password.hash",
     "ssh-host-key.bin",
     "mqtt.toml",
 ];
@@ -436,7 +437,7 @@ fn default_cases() -> Vec<Case> {
         // известные ограничения).
         //
         // Заодно — настройки во внутренней EEPROM (`config=yes` на L0/L1):
-        // `adapters::eeprom::Eeprom` поверх `Flash::eeprom_*`, единственное место
+        // `adapters_hw::eeprom::Eeprom` поверх `Flash::eeprom_*`, единственное место
         // под настройки на флеше, стирающемся в ноль.
         Case::new("stm32l073rz").variant("config", &["config=yes"]),
         // Та же EEPROM без OTA: в `bsp::flash` остаются только общий замок и
@@ -444,7 +445,7 @@ fn default_cases() -> Vec<Case> {
         // (`whole = false`), и импорты у этой ветки свои.
         Case::new("stm32l073rz").variant("eeprom-no-ota", &["config=yes", "ota=no"]),
         // Протоколы поверх UART: узел в графе, заглушка `bsp::serial` и
-        // транспорт из `adapters` вокруг неё. Modbus — на USART v4 (G4, есть
+        // транспорт из `adapters-logic` вокруг неё. Modbus — на USART v4 (G4, есть
         // аппаратный DE), protobuf — на F4 (USART v2, без него): оба
         // интерфейса из таблицы chip-data/interfaces.rhai.
         Case::new("stm32g474re").variant("modbus-uart", &["protocol=modbus", "interface=uart"]),
@@ -479,7 +480,7 @@ fn default_cases() -> Vec<Case> {
             ],
         ),
         // Протоколы по сети: стек `embassy-net` над заглушкой устройства, узел
-        // NET в графе и сокет из `adapters::net`. Modbus TCP — на H7 (Ethernet
+        // NET в графе и сокет из `adapters_hw::net`. Modbus TCP — на H7 (Ethernet
         // v2), protobuf UDP — на F4 (Ethernet v1). Modbus TCP — заодно с master
         // (`modbus_master=yes`): единственная конфигурация, где клиентская
         // половина (`ports::ModbusClient`, `domain::modbus::master`, клиентские
@@ -500,7 +501,7 @@ fn default_cases() -> Vec<Case> {
         Case::new("stm32g474re").variant("usb-only-no-graph", &["interface=usb", "graph=no"]),
         // Остальные транспорты по сети: Modbus UDP (MBAP в датаграмме, без потока
         // и CRC) и protobuf по TCP (COBS поверх сокета) — у каждого свой набор
-        // файлов в `adapters`, остальные при генерации вырезаются.
+        // файлов в `adapters-logic`, остальные при генерации вырезаются.
         Case::new("stm32h743zg").variant("modbus-udp", &["protocol=modbus", "interface=udp"]),
         Case::new("stm32h743zg").variant("protobuf-tcp", &["protocol=protobuf", "interface=tcp"]),
         // protobuf по USB CDC: устройство `embassy-usb`, узел USB и поток CDC
@@ -579,6 +580,13 @@ fn default_cases() -> Vec<Case> {
             "ssh-password-config",
             &["links=tcp", "net_services=ssh", "ssh_auth=password", "config=yes"],
         ),
+        // SSH с OTA и без других служб и протоколов: тестам консоли нужен вход
+        // `CMD` узла OTA без самого узла (`ota::tests::cmd`), а остальные
+        // конфигурации с SSH тянут его через REST.
+        Case::new("stm32h743zg").variant(
+            "ssh-ota",
+            &["links=tcp", "net_services=ssh", "ssh_auth=password", "ext_flash=yes"],
+        ),
         Case::new("stm32h743zg").variant(
             "rest-ssh-key",
             &[
@@ -589,7 +597,7 @@ fn default_cases() -> Vec<Case> {
                 "ext_flash=yes",
             ],
         ),
-        // Клиент MQTT (`domain::mqtt`, `adapters::net::TcpClient`): с OTA —
+        // Клиент MQTT (`domain::mqtt`, `domain::mqtt::TcpClient`): с OTA —
         // рядом с Modbus по TCP (клиент OTA 1, третий сокет); со всеми
         // службами — номера OTA REST 0–1, SSH 2, MQTT 3 и сокеты каждой; поверх
         // одного UDP — TCP-клиент без TCP-транспорта.
@@ -1074,6 +1082,52 @@ fn check_one(
             )
         })?;
         note(log, &output)?;
+        // Тестовый образ `app-unconfirmed` (`required-features`) не собирают
+        // ни `build`, ни `lint cross` — только `test host-target`, которому
+        // нужна плата. Без этого шага его ветки (`cfg!(feature = …)` в `app`)
+        // не компилировал бы никто. Release — как его собирает тест.
+        if project.join("crates-cross/boot").exists() {
+            // И обратное: `build` его не собрал — в релиз он не попадает.
+            // Каталог сборки общий на полосу, но собрать ELF тестового образа
+            // в template-check некому (clippy ниже пишет только метаданные).
+            for entry in fs::read_dir(cargo_target_dir)
+                .with_context(|| format!("прочитать {}", cargo_target_dir.display()))?
+            {
+                let leaked = entry?.path().join("release").join("app-unconfirmed");
+                if leaked.exists() {
+                    bail!(
+                        "{}: `cargo xtask build` собрал тестовый образ {} — он не должен \
+                         попадать в сборку релиза (required-features в crates-cross/app/Cargo.toml)",
+                        case.label(),
+                        leaked.display(),
+                    );
+                }
+            }
+            run_command(
+                Command::new("cargo").args([
+                    "clippy",
+                    "-p",
+                    "app",
+                    "--release",
+                    "--bin",
+                    "app-unconfirmed",
+                    "--features",
+                    "unconfirmed",
+                    "--",
+                    "-D",
+                    "warnings",
+                ]),
+                &project.join("crates-cross"),
+                Some(cargo_target_dir),
+                log,
+            )
+            .with_context(|| {
+                format!(
+                    "clippy тестового образа app-unconfirmed (оставлен для разбора: {})",
+                    project.display(),
+                )
+            })?;
+        }
         let ram = parse_static_ram(&output).with_context(|| {
             format!(
                 "в выводе `cargo xtask build` нет строки `ram: <N> байт статической RAM …` \
@@ -2119,7 +2173,7 @@ mod tests {
     #[test]
     fn doc_paths_are_named_paths_only() {
         let text = "см. `docs/flash.md`, `crates-cross/app/src/main.rs:42` и \
-                    [ота](docs/ota.md#откат); `bsp::Board`, `crates-cross/app/src/link/<вид>.rs`, \
+                    [ота](docs/ota.md#откат); `bsp::Board`, `crates-cross/app/src/tasks/<протокол>.rs`, \
                     `docs/modules/`.";
         assert_eq!(
             doc_paths(text),

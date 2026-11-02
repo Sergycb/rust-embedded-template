@@ -19,7 +19,7 @@
 //! перезагрузку — у OTA.
 //!
 //! Протокол — `sunset`, сокет — `sunset-async` над `embassy-net`. Ключ хоста
-//! ed25519 даёт [`HostKey`](crate::ssh::HostKey): вшитый в прошивку ([`Fixed`](crate::ssh::Fixed)) или созданный
+//! ed25519 даёт [`HostKey`](ports::HostKey): вшитый в прошивку ([`Fixed`](crate::ssh::Fixed)) или созданный
 //! платой при первом старте и хранимый в разделе настроек (`Stored`). Он не
 //! меняется от сброса к сбросу, и клиент один раз запоминает его в
 //! `known_hosts`. Попыток входа `sunset` не считает — их ограничивает узел: шесть
@@ -40,6 +40,7 @@ mod session;
 use defmt_or_log::{info, warn};
 use embassy_net::tcp::TcpSocket;
 use embassy_time::with_timeout;
+use ports::HostKey;
 use sunset_async::SSHServer;
 use sunset_async::sunset::SignKey;
 use sunset_async::sunset::ed25519_dalek::SigningKey;
@@ -49,11 +50,11 @@ use crate::ssh::login::Access;
 use crate::ssh::session::{CLOSE_WAIT, IDLE, KEEP_ALIVE, session};
 
 pub use console::Command;
-pub use host_key::{Fixed, HostKey};
+pub use host_key::Fixed;
 // {%- if ssh_host_key == "config" %}
 pub use host_key::{HOST_KEY_ID, Stored};
 // {%- endif %}
-pub use login::{Login, USER, ed25519_public_key};
+pub use login::{Login, PASSWORD_HASH_LEN, USER, ed25519_public_key};
 pub use session::{PORT, SSH_BUFFER, TCP_BUFFER};
 
 // Узел объявлен рядом со своей задачей — как `HTTP`. `<K>` — ключ хоста
@@ -199,39 +200,53 @@ mod tests {
     use crate::ssh::session::{CLOSE_WAIT, tries_exhausted};
     use crate::ssh::{Command, Login, USER, ed25519_public_key};
     // {%- if ssh_host_key == "config" %}
-    use crate::ssh::{HostKey, Stored};
+    use crate::settings::Settings;
+    use crate::ssh::{HOST_KEY_ID, Stored};
+    use adapters_hw::flash::fake::MemFlash;
+    use embedded_storage_async::nor_flash::{ErrorType, NorFlash, NorFlashErrorKind, ReadNorFlash};
+    use ports::HostKey;
     // {%- endif %}
 
     const KEY: &str = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl user@host";
     // {%- if ssh_host_key == "config" %}
 
-    /// Хранилище в памяти: что записано, то и читается.
-    #[derive(Default)]
-    struct Memory(Option<Vec<u8>>);
+    /// Носитель настроек: две страницы по 256 байт, слово 8.
+    type Flash = MemFlash<512, 8, 256>;
 
-    impl ports::SettingsStorage for Memory {
-        type Error = ();
-        const MAX_VALUE: usize = usize::MAX;
+    /// Флеш, который не читается: запись и стирание — как у [`Flash`], чтение
+    /// отказывает. Так разыгрывается раздел, который не прочитался.
+    struct Unreadable(Flash);
 
-        fn read<'a>(
+    impl ErrorType for Unreadable {
+        type Error = NorFlashErrorKind;
+    }
+
+    impl ReadNorFlash for Unreadable {
+        const READ_SIZE: usize = 1;
+
+        fn read(
             &mut self,
             _: u32,
-            scratch: &'a mut [u8],
-        ) -> impl Future<Output = Result<Option<&'a [u8]>, ()>> {
-            // Как у порта: значение длиннее буфера — ошибка, а не обрезка.
-            core::future::ready(match &self.0 {
-                None => Ok(None),
-                Some(v) if v.len() > scratch.len() => Err(()),
-                Some(v) => {
-                    scratch[..v.len()].copy_from_slice(v);
-                    Ok(Some(&scratch[..v.len()]))
-                }
-            })
+            _: &mut [u8],
+        ) -> impl Future<Output = Result<(), NorFlashErrorKind>> {
+            core::future::ready(Err(NorFlashErrorKind::Other))
         }
 
-        fn write(&mut self, _: u32, value: &[u8]) -> impl Future<Output = Result<(), ()>> {
-            self.0 = Some(value.to_vec());
-            core::future::ready(Ok(()))
+        fn capacity(&self) -> usize {
+            ReadNorFlash::capacity(&self.0)
+        }
+    }
+
+    impl NorFlash for Unreadable {
+        const WRITE_SIZE: usize = <Flash as NorFlash>::WRITE_SIZE;
+        const ERASE_SIZE: usize = <Flash as NorFlash>::ERASE_SIZE;
+
+        async fn erase(&mut self, from: u32, to: u32) -> Result<(), NorFlashErrorKind> {
+            NorFlash::erase(&mut self.0, from, to).await
+        }
+
+        async fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), NorFlashErrorKind> {
+            NorFlash::write(&mut self.0, offset, bytes).await
         }
     }
     // {%- endif %}
@@ -318,6 +333,23 @@ mod tests {
         }
     }
 
+    // {%- if ssh_host_key == "config" %}
+    /// Хранилище над флешем `flash`.
+    fn settings<F: NorFlash>(flash: F) -> Settings<F> {
+        Settings::new(flash, 0..512)
+    }
+
+    /// Ключ хоста, записанный в хранилище.
+    async fn stored_key<F: NorFlash>(settings: &mut Settings<F>) -> Option<Vec<u8>> {
+        let mut scratch = [0; 128];
+        settings
+            .read(HOST_KEY_ID, &mut scratch)
+            .await
+            .expect("чтение")
+            .map(<[u8]>::to_vec)
+    }
+    // {%- endif %}
+
     /// Сведения об устройстве для консоли — значения не важны.
     fn device_info() -> DeviceInfo {
         DeviceInfo {
@@ -363,16 +395,31 @@ mod tests {
         }
     }
 
-    /// По паролю пускает только пароль прошивки вместе с [`USER`]; при входе
-    /// по ключу (и при ключе, который не разобрался) пароль не пускает никого.
+    /// Хэш пароля, как его пишет `cargo xtask` в `ssh-password.hash`: соль и
+    /// SHA-256(соль ‖ пароль).
+    fn hashed(password: &str) -> &'static [u8] {
+        use sha2::{Digest, Sha256};
+
+        let salt = [0x5a; 16];
+        let mut hash = salt.to_vec();
+        hash.extend_from_slice(
+            &Sha256::new_with_prefix(salt)
+                .chain_update(password)
+                .finalize(),
+        );
+        hash.leak()
+    }
+
+    /// По паролю пускает только пароль, чей хэш в прошивке, вместе с
+    /// [`USER`]; при входе по ключу (и при ключе, который не разобрался)
+    /// пароль не пускает никого.
     #[test]
     fn a_password_lets_in_only_its_user() {
-        let by_password = Access::new(Login::Password("s3cret"));
-        // Сверка `sunset` здесь — простое равенство: решение от неё не
-        // зависит.
+        let by_password = Access::new(Login::PasswordHash(hashed("s3cret")));
         for (access, user, password, admitted) in [
             (by_password, USER, "s3cret", true),
             (by_password, USER, "s3cre", false),
+            (by_password, USER, "s3cret ", false),
             (by_password, USER, "S3CRET", false),
             (by_password, USER, "", false),
             (by_password, "root", "s3cret", false),
@@ -382,29 +429,42 @@ mod tests {
             (Access::new(Login::Key("мусор")), USER, "", false),
         ] {
             assert_eq!(
-                access.admits_password(|u| u == user, |p| p == password),
+                access.admits_password(|u| u == user, password.as_bytes()),
                 admitted,
                 "{user} {password}"
             );
         }
+        // Соль — часть хэша: тот же пароль с другой солью не сходится.
+        let mut salted = hashed("s3cret").to_vec();
+        salted[0] ^= 1;
+        let salted = Access::new(Login::PasswordHash(salted.leak()));
+        assert!(!salted.admits_password(|u| u == USER, b"s3cret"));
     }
 
-    /// Пустой пароль прошивки — не «пускать всех»: ни пустой пароль, ни
-    /// какой-либо другой, ни ключ не проходят.
+    /// Хэш не той длины (пустой, обрезанный, длиннее) — не «пускать всех»: ни
+    /// пустой пароль, ни какой-либо другой, ни ключ не проходят. Пустой
+    /// пароль не пускает, даже если хэш от него.
     #[test]
-    fn an_empty_password_lets_no_one_in() {
-        let empty = Access::new(Login::Password(""));
-        for password in ["", "s3cret"] {
-            assert!(
-                !empty.admits_password(|u| u == USER, |p| p == password),
-                "{password:?}"
+    fn a_broken_hash_or_an_empty_password_lets_no_one_in() {
+        let good = hashed("s3cret");
+        let longer = [good, &[0]].concat().leak();
+        let key = ed25519_public_key(KEY).expect("ключ разбирается");
+        for hash in [&[][..], &good[..good.len() - 1], longer] {
+            let broken = Access::new(Login::PasswordHash(hash));
+            for password in ["", "s3cret"] {
+                assert!(
+                    !broken.admits_password(|u| u == USER, password.as_bytes()),
+                    "{} {password:?}",
+                    hash.len()
+                );
+            }
+            assert_eq!(
+                broken.admits_key(Some(key), |_| Ok::<_, ()>(true)),
+                Ok(false)
             );
         }
-        let key = ed25519_public_key(KEY).expect("ключ разбирается");
-        assert_eq!(
-            empty.admits_key(Some(key), |_| Ok::<_, ()>(true)),
-            Ok(false)
-        );
+        let empty = Access::new(Login::PasswordHash(hashed("")));
+        assert!(!empty.admits_password(|u| u == USER, b""));
     }
 
     /// По ключу пускает только ключ прошивки вместе с [`USER`]; при входе по
@@ -422,7 +482,7 @@ mod tests {
             (by_key, USER, None, false),
             // Вход по паролю, а пришёл ключ.
             (
-                Access::new(Login::Password("s3cret")),
+                Access::new(Login::PasswordHash(hashed("s3cret"))),
                 USER,
                 Some(key),
                 false,
@@ -622,7 +682,7 @@ mod tests {
         const PROMPT: &str = "console, 'help' for commands\r\n> ";
         const FAREWELL: &str = "\r\nidle timeout, session closed\r\n";
         MockDriver::get().reset();
-        let ((stack, _), _) = adapters::fake::cable::pair();
+        let ((stack, _), _) = adapters_hw::net::fake::cable::pair();
         let info = device_info();
         let device = Device {
             info: &info,
@@ -665,7 +725,7 @@ mod tests {
     #[test]
     fn the_shell_shows_what_the_editor_decides() {
         const PROMPT: &str = "console, 'help' for commands\r\n> ";
-        let ((stack, _), _) = adapters::fake::cable::pair();
+        let ((stack, _), _) = adapters_hw::net::fake::cable::pair();
         let info = device_info();
         let device = Device {
             info: &info,
@@ -761,28 +821,41 @@ mod tests {
     /// Первый старт создаёт ключ и записывает, следующий читает тот же.
     #[tokio::test]
     async fn the_stored_key_survives_a_restart() {
-        let mut stored = Stored(Memory::default());
+        let mut stored = Stored(settings(Flash::erased()));
         let first = stored.seed().await;
         assert_ne!(first, [0; 32]);
-        assert_eq!(stored.0.0.as_deref(), Some(&first[..]));
-        assert_eq!(Stored(Memory(stored.0.0.clone())).seed().await, first);
+        assert_eq!(stored_key(&mut stored.0).await, Some(first.to_vec()));
+        // Новое хранилище над тем же флешем — как после сброса.
+        let mem = core::mem::take(&mut stored.0.flash().mem);
+        assert_eq!(Stored(settings(Flash { mem })).seed().await, first);
     }
 
     /// Ключ не той длины — короче или длиннее 32 байт — заменяется новым и
-    /// записывается; раздел, который не прочитался (здесь — значение длиннее
-    /// буфера чтения), не перезаписывается: сбой мог быть временным.
+    /// записывается; раздел, который не прочитался, не перезаписывается: сбой
+    /// мог быть временным.
     #[tokio::test]
     async fn only_a_missing_key_is_overwritten() {
         for len in [16, 33, 64] {
-            let mut wrong = Stored(Memory(Some(vec![1; len])));
+            let mut wrong = Stored(settings(Flash::erased()));
+            wrong
+                .0
+                .write(HOST_KEY_ID, &vec![1; len])
+                .await
+                .expect("запись");
             let seed = wrong.seed().await;
-            assert_eq!(wrong.0.0.as_deref(), Some(&seed[..]), "{len} байт");
+            assert_eq!(
+                stored_key(&mut wrong.0).await,
+                Some(seed.to_vec()),
+                "{len} байт"
+            );
         }
 
-        let unreadable = vec![2; 200];
-        let mut broken = Stored(Memory(Some(unreadable.clone())));
+        let mut broken = Stored(settings(Unreadable(Flash::erased())));
         broken.seed().await;
-        assert_eq!(broken.0.0, Some(unreadable));
+        assert!(
+            broken.0.flash().0.mem.iter().all(|b| *b == 0xFF),
+            "непрочитанный раздел не тронут"
+        );
     }
     // {%- endif %}
 }

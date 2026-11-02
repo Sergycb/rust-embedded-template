@@ -8,7 +8,7 @@
 //! | 2 | wo, domain | `Chunk`: смещение (u32), затем байты, до 128 |
 //! | 3 | wo, u32 | `Finish`: 4 байта, значение не важно |
 //! | 4 | wo, u32 | `Reboot`: 4 байта, значение не важно |
-//! | 5 | ro, u16 | код исхода последней команды (`ports::reply_code`); 0 — ещё выполняется |
+//! | 5 | ro, u16 | код исхода последней команды (`domain::ota::command::reply_code`); 0 — ещё выполняется |
 //! | 6 | ro, u32 | сколько байт образа принято |
 //!
 //! Числа — младшим байтом первым, как всё в CANopen.
@@ -27,13 +27,13 @@
 //! прошивку, как и словарь `zencan`, в котором стоит.
 
 use defmt_or_log::warn;
-use ports::{CHUNK_BYTES, Chunk, OtaCommand, OtaReply, Progress, SIGNATURE_BYTES, reply_code};
 use zencan_node::common::AtomicCell;
 use zencan_node::common::objects::{AccessType, DataType, ObjectCode, PdoMappable, SubInfo};
 use zencan_node::common::sdo::AbortCode;
 use zencan_node::object_dict::ObjectAccess;
 
-use crate::ota::{ClientId, OtaRequest};
+use crate::ota::command::{CHUNK_BYTES, Chunk, Progress, Rejection, SIGNATURE_BYTES, reply_code};
+use crate::ota::{ClientId, OtaCommand, OtaReply, OtaRequest};
 
 /// Индекс объекта OTA — в области приложения `zencan` (0x2000–0x4FFF). Тот же,
 /// что в `device.toml`; разойтись им не даёт тест узла.
@@ -95,7 +95,7 @@ impl OtaObject {
             // Не бывает: запись не ставит команду, пока прежняя в полёте, а
             // квота — одна команда.
             warn!("canopen: вход ASK узла OTA занят");
-            self.record(Err(ports::Rejection::Busy));
+            self.record(Err(Rejection::Busy));
         }
     }
 
@@ -243,7 +243,8 @@ fn chunk(data: &[u8]) -> Result<OtaCommand, AbortCode> {
 
 #[cfg(test)]
 mod tests {
-    use ports::{Chunk, OtaCommand, Progress, Rejection};
+    use crate::ota::OtaCommand;
+    use crate::ota::command::{Chunk, Progress, Rejection};
     use zencan_node::common::sdo::AbortCode;
     use zencan_node::object_dict::ObjectAccess;
 

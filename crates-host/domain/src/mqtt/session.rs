@@ -9,16 +9,14 @@ use minimq::{
     Buffers, ConfigBuilder, ConfigError, Connection, Error as MqttError, PeerError, PubError,
     Publication, QoS, RetainHandling, Session, SubscriptionOptions, TopicFilter, Will,
 };
-// {%- if ota == "true" %}
-use ports::{OtaCommand, Progress};
-// {%- endif %}
 
 use super::broker::Endpoint;
 use super::telemetry::{TELEMETRY_INTERVAL, write_telemetry};
 use super::topics::{CLIENT_ID_LEN, Command, TOPIC_LEN, Topics, parse_command};
 use crate::device::{DeviceInfo, INFO_MAX};
 // {%- if ota == "true" %}
-use crate::ota::OtaClient;
+use crate::ota::command::Progress;
+use crate::ota::{OtaClient, OtaCommand};
 // {%- endif %}
 
 /// Буфер входящих пакетов `minimq`: самая длинная команда с темой.

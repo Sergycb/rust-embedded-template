@@ -2,7 +2,7 @@
 //!
 //! [`OtaRegisters`] оборачивает карту проекта и перехватывает только своё окно
 //! с [`OTA_BASE`]; всё остальное уходит карте проекта как было. Одна запись
-//! FC16 по адресу [`OTA_BASE`] — одна команда узлу OTA (`ports::OtaCommand`),
+//! FC16 по адресу [`OTA_BASE`] — одна команда узлу OTA ([`OtaCommand`]),
 //! и ответ на запись — её исход: обычный ответ FC16 — команда выполнена,
 //! исключение `ServerDeviceFailure` (04) — отвергнута или узел OTA не ответил
 //! (код `Device`). Точный код и сколько байт образа принято лежат во входных
@@ -20,18 +20,17 @@
 //!
 //! Байты — старший первым в регистре; нечётный последний — в старшем байте.
 //! Входные регистры с [`OTA_BASE`]: код последнего исхода
-//! (`ports::reply_code`), принято байт (старшие 16 бит), принято (младшие).
+//! ([`reply_code`]), принято байт (старшие 16 бит), принято (младшие).
 //!
 //! Slave отвечает после исхода, а `Start` стирает раздел — на F2/F4/F7 это
 //! секунды: тайм-аут master'а на `Start` должен быть длиннее стирания.
 
 use defmt_or_log::warn;
-use ports::{
-    CHUNK_BYTES, Chunk, Exception, OtaCommand, Progress, Rejection, SIGNATURE_BYTES, reply_code,
-};
+use ports::Exception;
 
 use crate::modbus::{Bits, BitsMut, Registers, Words, WordsMut};
-use crate::ota::OtaClient;
+use crate::ota::command::{CHUNK_BYTES, Chunk, Progress, Rejection, SIGNATURE_BYTES, reply_code};
+use crate::ota::{OtaClient, OtaCommand};
 
 /// Начало окна OTA — высоко в адресах, чтобы не мешать карте проекта.
 pub const OTA_BASE: u16 = 0xF000;
@@ -229,7 +228,10 @@ fn bytes(values: Words<'_>, from: u16, out: &mut [u8]) {
 mod tests {
     use core::task::{Context, Poll, Waker};
 
-    use ports::{Exception, OtaCommand, Progress, Rejection, reply_code};
+    use ports::Exception;
+
+    use crate::ota::OtaCommand;
+    use crate::ota::command::{Progress, Rejection, reply_code};
 
     use super::{OTA_BASE, OTA_REGISTERS, OtaRegisters, STATUS_REGISTERS};
     use crate::modbus::{EmptyRegisters, Registers, Words, WordsMut};

@@ -1,0 +1,66 @@
+[package]
+name = "adapters-hw"
+version.workspace      = true
+edition.workspace      = true
+license.workspace      = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+# `defmt` — вывод стеков под обёртками (`embassy-net`, `embassy-usb`) в
+# прошивке; включает crates-cross/Cargo.toml. Свой код крейта в лог не пишет.
+# Драйверы без шины и линка (`usb::fake`, `net::fake`) и флеш в памяти
+# (`flash::fake`, только хост) — для host-тестов `domain`, `adapters-logic` и
+# заглушек платы (`bsp::stub`).
+fake = []
+defmt = [
+	# {%- if has_net == "true" %}
+	"embassy-net/defmt",
+	# {%- endif %}
+	# {%- if has_usb == "true" %}
+	"embassy-usb/defmt",
+	# {%- endif %}
+]
+
+[dependencies]
+# {%- if ota == "true" or settings_port == "true" %}
+# Флеш: EEPROM как `NorFlash` (`eeprom`) и флеш в памяти (`flash::fake::MemFlash`) —
+# тестам разделов OTA и хранилища настроек.
+embedded-storage = { workspace = true }
+embedded-storage-async = { workspace = true }
+# {%- endif %}
+# {%- if has_usb == "true" %}
+# Поток байтов `embedded_io_async::{Read, Write}` — его реализует поток CDC
+# (`usb::CdcStream`).
+embedded-io-async = { workspace = true }
+# {%- endif %}
+# {%- if has_net == "true" %}
+# Сеть (`adapters_hw::net`): стек платы и заглушка устройства.
+embassy-net = { workspace = true }
+# {%- endif %}
+# {%- if has_usb == "true" %}
+# USB (`adapters_hw::usb`): заглушка драйвера и поток CDC ACM.
+embassy-usb = { workspace = true }
+# Таймаут записи, которую хост не забирает (`usb`).
+embassy-time = { workspace = true }
+# {%- endif %}
+
+[dev-dependencies]
+# Исполнитель для async-тестов над флешем в памяти (`#[tokio::test]`); фичи —
+# в корневом Cargo.toml.
+tokio = { workspace = true }
+# {%- if has_net == "true" or has_usb == "true" %}
+# Тесты над стеками
+# {%- if has_net == "true" %}
+# `embassy-net`
+# {%- endif %}
+# {%- if has_usb == "true" %}
+# `embassy-usb`
+# {%- endif %}
+# ждут таймеров и критической секции — на хосте их дают драйвер времени
+# `mock-driver` и `critical-section/std`, как в `domain`.
+embassy-time = { workspace = true, features = ["mock-driver", "generic-queue-8"] }
+critical-section = { workspace = true, features = ["std"] }
+# {%- endif %}

@@ -1,5 +1,5 @@
 #![cfg_attr(not(test), no_std)]
-// {%- if ports_async == "true" or net_services contains "mqtt" %}
+// {%- if ports_async == "true" or net_services contains "ssh" %}
 // `async fn` в публичном трейте: rustc предупреждает (`async_fn_in_trait`), что
 // у возвращаемого future нет границы `Send` и потребовать её вызывающий не
 // сможет. Для однопоточного исполнителя embassy это ровно то, что нужно, а с
@@ -14,53 +14,42 @@
 )]
 // {%- endif %}
 
-//! Порты — границы `domain`: трейты, которые логика вызывает, не зная, что за
-//! ними стоит, и типы, которыми она с ними разговаривает. Реализации живут в
-//! `adapters` (всё, что generic по `embedded-hal`/`embedded-storage` и потому
-//! тестируется на хосте) и в `crates-cross/bsp` (то, чему нужна периферия
-//! конкретного чипа), а сама логика ни о тех, ни о других не знает.
+//! Порты — все трейты проекта и то, без чего их не выразить: типы из сигнатур
+//! и форматы, которые обязаны совпадать у реализации и логики.
 //!
-//! Когда порт заводится, а когда логика зовёт трейт `embedded-hal` или
-//! библиотеку прямо, — docs/architecture.md, «Порт и адаптер — или библиотека
-//! прямо в `domain`».
+//! Трейт здесь, только если одна логика работает с разными реализациями — в
+//! разных узлах одной прошивки или в разных вариантах генерации; у трейта с
+//! одной реализацией места нет, логика зовёт конкретный тип. Исключение —
+//! рычаг платы, который зовёт логика узла: `domain` не видит `bsp`, и рычаг
+//! приходит к ней трейтом даже при одной реализации.
+//! Реализации живут в `adapters-logic` (каналы и транспорты протоколов над
+//! потоком и сокетами), в `crates-cross/bsp` (то, чему нужна периферия
+//! конкретного чипа) и в `domain` (карта регистров, ключ хоста) —
+//! docs/architecture.md, «Трейт — только под несколько реализаций».
 //!
 //! Отсюда и то, чего здесь нет: сведения о чипе (`bsp::ChipSpec`) — данные, а
 //! не поведение, и их тип живёт в `bsp`, рядом с `Board`. Причина сброса и
 //! сообщение прошлой паники приходят в сведения об устройстве строками от `app`.
 //!
-//! Типы ошибок тоже здесь, а не в `domain`: домен — только функции над портами,
-//! а всё, что он возвращает, объявлено в его словаре.
+//! Нет здесь и того, что нужно только логике, — команд узлам, ошибок её
+//! операций: они в `domain`, рядом с узлом. Реализация порта их не видит, и
+//! правка их в `ports` задевала бы `adapters-logic` и `bsp` зря.
 //!
 // {%- if ota == "true" %}
-//! [`FirmwareUpdate`] реализован, когда при генерации выбрана OTA; образ
-//! приходит командами [`OtaCommand`] от узла протокола.
-// {%- endif %}
-// {%- if settings_port == "true" %}
-//! [`SettingsStorage`] — хранилище настроек.
-// {%- if config == "true" %}
-//! Его реализует `adapters::settings::Settings` над любым `NorFlash`, а строит
-//! compose-site (`Settings::whole(board.config)`) над носителем, который плата
-//! отдаёт полем `Board::config`:
-// {%- if config_store == "eeprom" %}
-//! внутренней EEPROM.
-// {%- elsif config_store == "external" %}
-//! разделом на внешней флеши.
-// {%- else %}
-//! разделом `CONFIG` внутреннего флеша.
-// {%- endif %}
-// {%- else %}
-//! Раздела настроек у проекта нет: на его месте —
-//! `adapters::settings::Unavailable`.
-// {%- endif %}
+//! С OTA здесь контракт обновления с платой и bootloader'ом
+//! ([`Partitions`], [`PendingImage`], [`layout_fingerprint`]) и перезагрузка
+//! ([`Reboot`]); образ приходит командами `domain::ota::OtaCommand` от узла
+//! протокола.
 // {%- endif %}
 //! Порты протоколов связи и транспортов — только те, что выбраны при
 //! генерации.
 //!
 // {%- if ota == "true" %}
 //! Модули названы по операции домена, которая ими пользуется, а не по трейту:
-//! ошибка операции (`DownloadError` у `domain::ota::download`) лежит
-//! рядом с портом, через который операция идёт. Наружу всё реэкспортируется в
-//! корень — путь `ports::FirmwareUpdate` короче, а внутреннее деление
+//! в `ota::update` — разделы, в которые образ пишется, и записи, которые
+//! обязаны одинаково понимать плата, приложение и bootloader. Наружу всё
+//! реэкспортируется в
+//! корень — путь `ports::Partitions` короче, а внутреннее деление
 //! пользователя не касается (`docs/conventions.md`, «`lib.rs` только объявляет
 //! модули»).
 // {%- else %}
@@ -83,25 +72,22 @@ pub mod can;
 pub mod link;
 
 // {%- endif %}
-// {%- if net_services contains "mqtt" %}
-/// Исходящее соединение: клиент подключается к серверу и пережидает отказы.
-pub mod dial;
+// {%- if net_services contains "ssh" %}
+/// Ключ хоста SSH: вшитый в прошивку или созданный платой.
+pub mod host_key;
 
 // {%- endif %}
 // {%- if has_modbus == "true" %}
-/// Modbus: предел PDU, коды исключений, транспорт master'а, ошибки обмена.
+/// Modbus: предел PDU, коды исключений, данные slave'а, транспорт master'а,
+/// ошибки обмена.
 pub mod modbus;
 
 // {%- endif %}
 // {%- if ota == "true" %}
-/// OTA: команды узлу, запись во флеш, проверка подписи, перезагрузка и ошибки
-/// приёма и применения.
+/// OTA: запись во флеш, запись о подписи для bootloader'а, отпечаток раскладки,
+/// перезагрузка.
 pub mod ota;
 
-// {%- endif %}
-// {%- if settings_port == "true" %}
-/// Хранилище настроек.
-pub mod settings;
 // {%- endif %}
 
 // {%- if has_can == "true" %}
@@ -110,25 +96,18 @@ pub use can::CanBus;
 // {%- if link_port == "true" %}
 pub use link::{FrameDuplex, FrameLink, LinkError};
 // {%- endif %}
-// {%- if net_services contains "mqtt" %}
-pub use dial::Dial;
+// {%- if net_services contains "ssh" %}
+pub use host_key::HostKey;
 // {%- endif %}
 // {%- if has_modbus == "true" %}
-pub use modbus::{Exception, MAX_PDU};
+pub use modbus::{Bits, BitsMut, Exception, MAX_PDU, Registers, Words, WordsMut};
 // {%- if modbus_master == "true" %}
 pub use modbus::{MasterError, ModbusClient};
 // {%- endif %}
 // {%- endif %}
 // {%- if ota == "true" %}
-pub use ota::command::{
-    CHUNK_BYTES, Chunk, Command as OtaCommand, Progress, Reboot, Rejection, Reply as OtaReply,
-    SIGNATURE_BYTES, reply_code,
-};
-pub use ota::download::DownloadError;
+pub use ota::reboot::Reboot;
 pub use ota::update::{
-    FirmwareUpdate, LAYOUT_SYMBOLS, MAX_WRITE_SIZE, PendingImage, UpdateError, layout_fingerprint,
+    LAYOUT_SYMBOLS, MAX_WRITE_SIZE, Partitions, PendingImage, layout_fingerprint,
 };
-// {%- endif %}
-// {%- if settings_port == "true" %}
-pub use settings::SettingsStorage;
 // {%- endif %}

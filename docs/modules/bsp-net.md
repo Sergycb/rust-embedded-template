@@ -4,7 +4,7 @@
 узлы — каналы протоколов{% if net_services contains "mqtt" %} и клиент MQTT{% endif %} строит приложение в своей
 памяти и отдаёт узлам готовыми
 {%- assign sep = " (" %}
-{%- if link_kinds contains "tcp" or link_kinds contains "udp" %}{{ sep }}`crates-cross/app/src/link/`{% assign sep = ", " %}{% endif %}
+{%- if link_kinds contains "tcp" or link_kinds contains "udp" %}{{ sep }}привязки узлов протоколов в `crates-cross/app/src/graph.rs`{% assign sep = ", " %}{% endif %}
 {%- if net_services != "" %}{{ sep }}`crates-cross/app/src/net.rs`{% assign sep = ", " %}{% endif %}
 {%- if sep == ", " %}){% endif %}: порты — решение
 протокола, а не платы.{% if net_services contains "rest" or net_services contains "ssh" %} Сервер службы адаптера не получает и открывает сокет
@@ -14,7 +14,7 @@
 Шаблон выводы не выбирает (`docs/architecture.md`), поэтому `Device` пока —
 заглушка `bsp::stub::NetDevice`: линк всегда опущен, кадров нет. Всё остальное
 настоящее: стек `embassy-net` с DHCP, его фоновая работа в узле `NET`
-(`domain::net`) и сокеты протоколов{% if has_tcp == "true" %} (`adapters::net::TcpServer`){% endif %}{% if has_udp == "true" %} (`adapters::net::UdpLink`){% endif %}.
+(`domain::net`) и сокеты протоколов{% if has_tcp == "true" %} (`adapters_logic::net::TcpServer`){% endif %}{% if has_udp == "true" %} (`adapters_logic::net::UdpLink`){% endif %}.
 Проект собирается и запускается, протокол ждёт клиента вечно. Подставить
 Ethernet — заменить устройство: стек, сокеты и граф не меняются.
 
@@ -117,8 +117,8 @@ Ethernet — заменить устройство: стек, сокеты и г
 * MAC — из заводского номера чипа (`mac_from_uid` в `bsp/src/net.rs`), локально
   администрируемый. Свой, выданный производителем, — подставьте там же.
 {%- if link_kinds contains "tcp" or link_kinds contains "udp" %}
-* Порты протоколов — `PORT` в {% if link_kinds contains "tcp" %}`crates-cross/app/src/link/tcp.rs`{% if link_kinds contains "udp" %} и `udp.rs`{% endif %}{% else %}`crates-cross/app/src/link/udp.rs`{% endif %}: их
-  задаёт протокол, а не плата.
+* Порты протоколов — число в конструкторе сокета в привязке узла протокола
+  (`crates-cross/app/src/graph.rs`): их задаёт протокол, а не плата.
 {%- endif %}
 * Сокетов в стеке — `bsp::net::SOCKETS`: DHCP-клиент, по одному на сетевой
   транспорт и на каждое соединение служб{% if net_services contains "rest" %} (пул REST — по `HTTP_CONNECTIONS`){% endif %} — числа из

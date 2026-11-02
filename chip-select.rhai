@@ -197,7 +197,7 @@ const SSH_MIN_PARTITION = 262144;
 const OTA_MIN_ACTIVE = 24576;
 
 /// Меньше этого объёма EEPROM под настройки не годится: `sequential-storage`
-/// нужны две страницы, а страница обёртки `adapters::eeprom::Eeprom` — 128
+/// нужны две страницы, а страница обёртки `adapters_hw::eeprom::Eeprom` — 128
 /// байт, то есть минимум две страницы (`Eeprom::PAGE`). У STM32L010F4/K4 EEPROM всего 128 байт — им
 /// настройки предлагаются, как всем остальным, во флеше.
 const EEPROM_MIN = 256;
@@ -434,8 +434,8 @@ fn ask(label, values, texts, default_value) {
 /// Хранится без `.git` и завершающего `/`: Cargo.toml дописывает `.git` сам, а
 /// allow-git в deny.toml сравнивает адрес без него. Пробелов, кавычек и `\`
 /// в адресе быть не может — проверка одна и для ввода, и для `--define`:
-/// строка уезжает литералом в TOML (`git = "…"` в Cargo.toml, паспорт
-/// `.template-answers.toml`), и кавычка в ней сломала бы манифест.
+/// строка уезжает литералом в TOML (`git = "…"` в Cargo.toml), и кавычка в
+/// ней сломала бы манифест.
 fn repo_url(name, what) {
     let url = "";
     if variable::is_set(name) {
@@ -478,14 +478,23 @@ fn checklist(label, values, texts) {
 /// `note.call(value, chosen)` — строка после текста пункта `value` при
 /// отмеченных `chosen`; считается заново при каждой перерисовке.
 fn checklist(label, values, texts, note) {
+    checklist(label, values, texts, note, false)
+}
+
+/// То же, а с `need_one` пункта `done` нет, пока ничего не отмечено: пустой
+/// список выбрать нельзя. Без терминала умолчание `done` тогда не в меню, и
+/// `ask` отвечает первым пунктом — он и отмечается, а следующий показ уже
+/// закрывается `done`. `values` не пуст — иначе показывать нечего.
+fn checklist(label, values, texts, note, need_one) {
     let marked = values.map(|value| false);
     loop {
         let chosen = [];
         for i in 0..values.len() {
             if marked[i] { chosen.push(values[i]); }
         }
-        let shown_values = ["done"];
-        let shown_texts = ["done"];
+        let open = need_one && chosen.len() == 0;
+        let shown_values = if open { [] } else { ["done"] };
+        let shown_texts = if open { [] } else { ["done"] };
         for i in 0..values.len() {
             shown_values.push(values[i]);
             shown_texts.push((if marked[i] { "[x] " } else { "[ ] " }) + values[i] + " - " + texts[i] + note.call(values[i], chosen));
@@ -942,7 +951,7 @@ const PROTOCOL_TEXT = #{
 // у каждого случая она не ниже факта.
 const RAM_COST = #{
     // Без OTA, настроек, графа и транспортов: stm32f407ve ota=no graph=no — 1344
-    // (stm32l011f4 — 1316), плюс задача `start` в `main.rs` (`app::start::POOL` —
+    // (stm32l011f4 — 1316), плюс задача `start` в `run.rs` (`app::run::start::POOL` —
     // 56 байт на thumbv6m и thumbv7em): плату собирает она, а не `main`.
     core: 1400,
     // stm32f407ve: 3880 с OTA против 1952 без неё; внешняя — stm32h723ve 3996
@@ -965,7 +974,7 @@ const RAM_COST = #{
     links: #{
         // stm32g474re uart-only 3884 против 3884; Modbus — stm32h743zg два UART и
         // TCP 13940 (по одному — 2168); protobuf — stm32f407ve 6824 против 3880.
-        // Modbus RTU держит свой буфер кадра (`adapters::modbus::Rtu`, 256 байт):
+        // Modbus RTU держит свой буфер кадра (`adapters_logic::modbus::Rtu`, 256 байт):
         // stm32f407ve modbus-uart-can 6320 = 3880 + 2440 (UART с Modbus).
         "uart:none": 0, "uart:modbus": 2472, "uart:protobuf": 2944,
         // CANopen — stm32g474re canopen-config 7620 против 3884 + 32 (настройки);
@@ -1597,8 +1606,13 @@ if WANTED_LINKS.len() > 0 {
             }
             ram_mark.call(set)
         };
-        let marked = checklist("transports: отметьте транспорты (Enter — отметить или снять)",
-            items.map(|item| item.value), items.map(|item| item.text), ram_note);
+        // С OTA пустой список не выбрать: образ приходит по транспорту проекта
+        // (проверка ниже) — пункта `done` нет, пока ничего не отмечено.
+        let marked = if wants_ota && items.len() == 0 { [] } else {
+            checklist("transports: отметьте транспорты (Enter — отметить или снять"
+                + (if wants_ota { "; с OTA — хотя бы один)" } else { ")" }),
+                items.map(|item| item.value), items.map(|item| item.text), ram_note, wants_ota)
+        };
         for item in items {
             if !marked.contains(item.value) { continue; }
             let kind = if item.value == "ethernet" {
@@ -1648,6 +1662,22 @@ if WANTED_LINKS.len() > 0 {
     if links.len() == 0 && wanted_protocol != "" && wanted_protocol != "none" {
         throw "protocol: протокол " + wanted_protocol + " нужен транспорт — задайте interface (" + listed(PROTOCOL_INTERFACES[wanted_protocol]) + ")";
     }
+}
+// OTA без транспорта: образ приходит командами по транспорту проекта (узел
+// OTA своего канала не имеет), и проверяет готовое устройство `cargo xtask test
+// host-target` тоже через него. В меню пустой список с OTA не выбрать (см.
+// `checklist` выше; без терминала отмечается первый транспорт), сюда доходит
+// `--define interface=none` — `--define` не спрятать, поэтому ошибка с
+// подсказкой, — и чип без единого выведенного транспорта. Протокол при этом
+// может быть `none`: свой протокол поверх транспорта пишет проект.
+// OTA к этому месту уже решён окончательно: не поместившийся уходит в ручную
+// раскладку, а не снимается.
+if wants_ota && links.len() == 0 {
+    let usable = LINK_KINDS.filter(|name| (wants_graph || (name != "tcp" && name != "udp"))
+        && free_blocks(name, INTERFACE_BLOCKS[name], [], have, instances).len() > 0);
+    throw "ota: образ приходит по транспорту проекта, а транспорта нет — задайте --define interface=…"
+        + (if usable.len() > 0 { " (" + listed(usable) + ")" } else { " (у " + chip_name + " выведенных нет)" })
+        + " или links=…, либо ota=no";
 }
 // Сетевой транспорт — только с графом. Без графа узлы спавнил бы `tasks/`, а
 // сеть — это стек, его узел и узлы служб (REST, SSH, MQTT): второй, ручной путь
@@ -1871,9 +1901,6 @@ variable::set("config_paged", "false");
 // тогда ему нужны `FLASH_BYTES` и обёртки; иначе все три раздела — прямо
 // над `Flash`.
 variable::set("boot_partitioned", "false");
-// Кто пишет memory.x — для паспорта генерации (`post-script.rhai`): по одному
-// `write_size` этого не понять, его хук выставляет в обеих ветках.
-variable::set("memory_layout", if variable::is_set("write_size") { "manual" } else { "generated" });
 if variable::is_set("write_size") {
     variable::set("ota", if wants_ota { "true" } else { "false" });
     variable::set("ota_store", if wants_ext_ota { "external" } else { "internal" });
@@ -2004,18 +2031,16 @@ if variable::is_set("write_size") {
         print("  (пока там заглушка bsp::stub::FlashBus — проект собирается, настройки не сохраняются; docs/modules/bsp-external.md)");
     }
     variable::set("write_size", m["write_size"]);
-    // `page_size` — страница обмена embassy-boot (`PAGE_SIZE`): по ней xtask
-    // и host-target тест ищут прежний образ (он уезжает в `DFU[i + 1]`). С
-    // внутренней OTA это `swap_page_size` её набора цифр — она крупнее
+    // `page_size` — страница обмена embassy-boot (`PAGE_SIZE`, `SWAP_PAGE_SIZE`
+    // в `[env]`): ею bootloader переносит разделы (прежний образ уезжает в
+    // `DFU[i + 1]`). С внутренней OTA это `swap_page_size` её набора цифр — она крупнее
     // физической страницы чипа там, где chip-data-gen расширил её ради
     // журнала `STATE` (`swap_paged`): прошивка тогда оборачивает ACTIVE и DFU в
     // `flash_page::ErasePage<_, SWAP_PAGE_SIZE>` (= page_size). Без OTA страницы обмена нет —
     // остаётся физическая, и `swap_paged` = "false".
     // С внешними разделами страница обмена зависит от стирания драйвера, а
-    // DFU в адресном пространстве МК нет вовсе — host-target тест обмена
-    // (он читает DFU пробником) здесь не к чему применить. Пусто — «размер
-    // неизвестен», тест сам себя пропускает; `swap_paged` = "false" (у внешней
-    // OTA своя `ext_page_size`).
+    // DFU в адресном пространстве МК нет вовсе. Пусто — «размер неизвестен»;
+    // `swap_paged` = "false" (у внешней OTA своя `ext_page_size`).
     let swap_page = m["page_size"];
     let swap_paged = false;
     if ota && !ext_ota {
@@ -2443,7 +2468,7 @@ if variable::is_set("write_size") {
 // `{% if graph == "true" %}`, и остался бы файл с одной строкой
 // `#![doc = include_str!(..)]` — модуль без кода, только ради документации.
 // Граф возвращают перегенерацией проекта (см. сообщение выше, где он
-// отключается по размеру раздела). Условие в `crates-cross/app/src/main.rs` (`mod graph;`)
+// отключается по размеру раздела). Условие в `crates-cross/app/src/lib.rs` (`mod graph;`)
 // закрыто тем же `{% if %}`, поэтому удаление файла ничего не ломает.
 if variable::get("graph") != "true" {
     file::delete("crates-cross/app/src/graph.rs");
@@ -2556,8 +2581,13 @@ variable::set("modbus_mbap", if modbus_mbap { "true" } else { "false" });
 // в тестах адаптера; UDP-датаграммам они не нужны.
 variable::set("modbus_stream", if modbus_rtu || modbus_tcp { "true" } else { "false" });
 variable::set("cobs_used", if cobs_used { "true" } else { "false" });
-// Сокеты протоколов на стеке `embassy-net` (порт, буферы): по одному на сетевой
-// транспорт с протоколом. Транспорт без протокола сокета не открывает.
+// protobuf по последовательному порту (UART, USB CDC): клиенту `host-target-tests`
+// нужен `serialport` (MPL-2.0, исключение в `deny.toml`) — только тогда.
+let protobuf_serial = links.some(|link| link.protocol == "protobuf" && (link.kind == "uart" || link.kind == "usb"));
+variable::set("protobuf_serial", if protobuf_serial { "true" } else { "false" });
+// Сокеты протоколов на стеке `embassy-net` (порт, буферы — `SOCKET_BUFFER` в
+// `app/src/graph.rs`): по одному на сетевой транспорт с протоколом. Транспорт
+// без протокола сокета не открывает.
 variable::set("protocol_sockets", sockets.to_string());
 // Слоты сокетов в стеке: по одному на каждый сетевой транспорт, с протоколом и
 // без — на `tcp` без протокола сокет открывает приложение, и без слота под него
@@ -2574,11 +2604,11 @@ variable::set("http_connections", http_connections.to_string());
 
 // Кадровый канал (`ports::FrameLink`, `LinkError`) нужен протоколам
 // узла `domain::server` (protobuf и Modbus slave), шине CAN (ошибка `CanBus`) и
-// UDP-каналу (`adapters::net::UdpLink` реализует `FrameLink`) — с протоколом и без него.
+// UDP-каналу (`adapters_logic::net::UdpLink` реализует `FrameLink`) — с протоколом и без него.
 variable::set("link_port", if on.protobuf || on.modbus || has.can || has.udp { "true" } else { "false" });
-// Порт хранилища настроек (`ports::SettingsStorage`) нужен, пока есть что в него
-// класть: раздел, EEPROM или внешняя флеш (`config`) либо заглушка `Unavailable`
-// у узла CANopen без хранилища. Иначе порта и адаптера в проекте нет.
+// Хранилище настроек (`domain::settings`) нужно, пока есть что в него класть:
+// раздел, EEPROM или внешняя флеш (`config`) — либо узлу CANopen, который без
+// раздела получает `None` (`Option<Settings<NoFlash>>`). Иначе модуля нет.
 variable::set("settings_port", if variable::get("config") == "true" || on.canopen { "true" } else { "false" });
 variable::set("stream_io", if has.uart || has.usb || has.tcp { "true" } else { "false" });
 // Заглушки периферии в `bsp/src/stub.rs`: UART, CAN, USB, Ethernet, внешняя флеш.
@@ -2587,15 +2617,18 @@ variable::set("has_stub", if has.uart || has.can || has.usb || has.tcp || has.ud
 variable::set("crc_used", if modbus_rtu || cobs_used { "true" } else { "false" });
 // Property-тесты кадрирования есть у Modbus (RTU, TCP, UDP) и у COBS.
 variable::set("framing_tests", if on.modbus || cobs_used { "true" } else { "false" });
-// Асинхронные трейты в `ports`: без них `#![expect(async_fn_in_trait)]` не
-// срабатывает, и сборка падает.
-variable::set("ports_async", if variable::get("ota") == "true" || variable::get("settings_port") == "true" || on.modbus || on.protobuf || on.canopen || has.can || has.udp { "true" } else { "false" });
-// Модуль `link` в `app`: транспорты протоколов (`app::link::<вид>[::<имя>]`) — кадрирование,
-// буферы и сокет над объектами платы. Без Modbus и protobuf транспорту нечего оборачивать (CANopen берёт
+// Асинхронные трейты в `ports` (каналы, шина CAN, транспорт master'а, карта
+// регистров): без них `#![expect(async_fn_in_trait)]` не срабатывает, и сборка
+// падает. У OTA в `ports` асинхронных трейтов нет (`Reboot` синхронный), у SSH
+// трейт ключа хоста ловит своё условие в `ports/src/lib.rs`.
+variable::set("ports_async", if on.modbus || on.protobuf || on.canopen || has.can || has.udp { "true" } else { "false" });
+// Канал протокола над рычагом платы (кадрирование, буферы, сокет —
+// `adapters-logic`): его строит `app` прямо в привязке графа или в задаче
+// протокола. Без Modbus и protobuf транспорту нечего оборачивать (CANopen берёт
 // шину CAN как есть).
 variable::set("protocol_link", if on.modbus || on.protobuf { "true" } else { "false" });
-// Файл на вид транспорта с каналом (`app/src/link/<вид>.rs`): виды через запятую
-// для объявлений в `link.rs`, файлы остальных видов уходят.
+// Виды транспортов с каналом протокола через запятую — для документации
+// (`docs/modules/bsp-*.md`).
 let link_kinds = [];
 for link in links {
     if (link.protocol == "modbus" || link.protocol == "protobuf") && !link_kinds.contains(link.kind) {
@@ -2607,11 +2640,6 @@ for kind in link_kinds {
     link_kinds_text += if link_kinds_text == "" { kind } else { "," + kind };
 }
 variable::set("link_kinds", link_kinds_text);
-for kind in ["uart", "usb", "tcp", "udp"] {
-    if !link_kinds.contains(kind) {
-        file::delete("crates-cross/app/src/link/" + kind + ".rs");
-    }
-}
 // Символы раскладки `memory.x` (`bsp::layout`: `ACTIVE`, границы `CONFIG`, конец
 // внешней флеши, регионы DMA) — пока есть что из них читать.
 let layout_store = variable::get("config_store");
@@ -2651,8 +2679,9 @@ if !has.can {
 // `pub use`, зависимости, фичи) вырезает Liquid в комментариях.
 if !on.modbus {
     file::delete("crates-host/ports/src/modbus.rs");
-    file::delete("crates-host/adapters/src/modbus.rs");
-    file::delete("crates-host/adapters/src/modbus");
+    file::delete("crates-host/ports/src/modbus");
+    file::delete("crates-host/adapters-logic/src/modbus.rs");
+    file::delete("crates-host/adapters-logic/src/modbus");
     file::delete("crates-host/domain/src/modbus.rs");
     file::delete("crates-host/domain/src/modbus");
     file::delete("crates-cross/app/src/modbus.rs");
@@ -2662,36 +2691,36 @@ if !on.modbus {
 // тесты в `modbus.rs`/`net.rs` вырезает Liquid в комментариях.
 if on.modbus {
     if !modbus_rtu {
-        file::delete("crates-host/adapters/src/modbus/rtu.rs");
+        file::delete("crates-host/adapters-logic/src/modbus/rtu.rs");
     }
     if !modbus_tcp {
-        file::delete("crates-host/adapters/src/modbus/tcp.rs");
+        file::delete("crates-host/adapters-logic/src/modbus/tcp.rs");
     }
     if !modbus_udp {
-        file::delete("crates-host/adapters/src/modbus/udp.rs");
+        file::delete("crates-host/adapters-logic/src/modbus/udp.rs");
     }
     if !modbus_mbap {
-        file::delete("crates-host/adapters/src/modbus/mbap.rs");
+        file::delete("crates-host/adapters-logic/src/modbus/mbap.rs");
     }
 }
-// TCP: общее — `net/tcp.rs`, сервер транспортов — `net/tcp/server.rs`, клиент
-// MQTT — `net/tcp/client.rs` (нужен и при mqtt поверх одного UDP).
-if !has.tcp && !services.contains("mqtt") {
-    file::delete("crates-host/adapters/src/net/tcp.rs");
-    file::delete("crates-host/adapters/src/net/tcp");
-} else {
-    if !has.tcp {
-        file::delete("crates-host/adapters/src/net/tcp/server.rs");
-    }
-    if !services.contains("mqtt") {
-        file::delete("crates-host/adapters/src/net/tcp/client.rs");
-    }
+// Сервер транспортов TCP — `net/tcp.rs`; клиент MQTT живёт с узлом
+// (`domain/src/mqtt/client.rs`) и уходит вместе с ним.
+if !has.tcp {
+    file::delete("crates-host/adapters-logic/src/net/tcp.rs");
 }
 if !has.udp {
-    file::delete("crates-host/adapters/src/net/udp.rs");
+    file::delete("crates-host/adapters-logic/src/net/udp.rs");
 }
 if !cobs_used {
-    file::delete("crates-host/adapters/src/cobs.rs");
+    file::delete("crates-host/adapters-logic/src/cobs.rs");
+}
+// Реализации портов, которых несколько (`adapters-logic`): каналы протоколов
+// и транспорты над сокетами. Нет ни одной — нет и крейта; член workspace и
+// зависимость на него вырезает Liquid.
+let adapters_logic = on.modbus || cobs_used || has.tcp || has.udp;
+variable::set("adapters_logic", if adapters_logic { "true" } else { "false" });
+if !adapters_logic {
+    file::delete("crates-host/adapters-logic");
 }
 if !on.protobuf {
     file::delete("crates-host/domain/src/protobuf.rs");
@@ -2705,10 +2734,6 @@ if !on.canopen {
     file::delete("crates-host/domain/src/canopen.rs");
     file::delete("crates-host/domain/src/canopen");
     file::delete("crates-host/canopen");
-}
-if variable::get("protocol_link") != "true" {
-    file::delete("crates-cross/app/src/link.rs");
-    file::delete("crates-cross/app/src/link");
 }
 // Узел протокола «запрос — ответ» (`domain::server`) обслуживает только Modbus
 // slave: у protobuf свой узел (`domain::protobuf`).
@@ -2724,12 +2749,14 @@ if variable::get("link_port") != "true" {
 if variable::get("ota") != "true" {
     file::delete("crates-host/ports/src/ota.rs");
     file::delete("crates-host/ports/src/ota");
-    file::delete("crates-host/adapters/src/ota.rs");
     file::delete("crates-host/domain/src/ota.rs");
     file::delete("crates-host/domain/src/ota");
     // Подпись образа в `xtask` и описание OTA.
     file::delete("crates-host/xtask/src/signing.rs");
     file::delete("docs/ota.md");
+    // Точка входа тестового образа `app-unconfirmed`: без OTA его нет, а
+    // оставленный файл в `src/bin/` cargo сам нашёл бы вторым бинарником.
+    file::delete("crates-cross/app/src/bin");
     // Перевод команд OTA у протокола: каталог протокола есть, только если он
     // выбран, — чужой хук уже удалил выше.
     if on.modbus {
@@ -2740,8 +2767,7 @@ if variable::get("ota") != "true" {
     }
 }
 if variable::get("settings_port") != "true" {
-    file::delete("crates-host/ports/src/settings.rs");
-    file::delete("crates-host/adapters/src/settings.rs");
+    file::delete("crates-host/domain/src/settings.rs");
 }
 // Мост blocking → async и заглушка внешней флеши — только когда ими кто-то
 // пользуется: обёртка страницы (`erase_page`) или внешняя флеш.
@@ -2773,32 +2799,28 @@ if variable::get("graph") != "true" {
 if variable::get("has_stub") != "true" {
     file::delete("crates-cross/bsp/src/stub.rs");
 }
-// Флеш в памяти (`fake::MemFlash`) — тестам разделов OTA и хранилища настроек.
-let mem_flash = variable::get("ota") == "true" || variable::get("config") == "true";
+// Флеш в памяти (`flash::fake::MemFlash`) — тестам разделов OTA и хранилища
+// настроек (`domain::settings` есть и у CANopen без раздела — `settings_port`).
+let mem_flash = variable::get("ota") == "true" || variable::get("settings_port") == "true";
 if !mem_flash {
-    file::delete("crates-host/adapters/src/fake/flash.rs");
-}
-if !has.usb && !has.tcp && !has.udp && !mem_flash {
-    file::delete("crates-host/adapters/src/fake.rs");
+    file::delete("crates-host/adapters-hw/src/flash.rs");
 }
 // USB — устройство `embassy-usb`, узел USB и поток CDC — только с транспортом usb.
 if !has.usb {
     file::delete("crates-cross/bsp/src/usb.rs");
     file::delete("docs/modules/bsp-usb.md");
-    file::delete("crates-host/adapters/src/usb.rs");
+    file::delete("crates-host/adapters-hw/src/usb.rs");
     file::delete("crates-host/domain/src/usb.rs");
 }
 // Сеть — стек `embassy-net`, узел NET и их сокеты — только с tcp/udp.
 if !has.tcp && !has.udp {
     file::delete("crates-cross/bsp/src/net.rs");
     file::delete("docs/modules/bsp-net.md");
-    file::delete("crates-host/adapters/src/net.rs");
-    file::delete("crates-host/adapters/src/net");
-    // `fake::cable` — кабель между двумя стеками `embassy-net`; `fake.rs` при
-    // одном USB или флеше в памяти остаётся, а `mod cable` в нём под `has_net`.
-    file::delete("crates-host/adapters/src/fake/cable.rs");
-    if !mem_flash {
-        file::delete("crates-host/adapters/src/fake");
+    file::delete("crates-host/adapters-hw/src/net.rs");
+    // Крейта `adapters-logic` без сети может не быть вовсе (удалён выше).
+    if adapters_logic {
+        file::delete("crates-host/adapters-logic/src/net.rs");
+        file::delete("crates-host/adapters-logic/src/net");
     }
     file::delete("crates-host/domain/src/net.rs");
 }
@@ -2821,14 +2843,14 @@ if !services.contains("rest") {
 if !services.contains("ssh") {
     file::delete("crates-host/domain/src/ssh.rs");
     file::delete("crates-host/domain/src/ssh");
+    file::delete("crates-host/ports/src/host_key.rs");
 }
-// MQTT — узел, разбор `mqtt.toml` в build-скрипте `app`,
-// порт `Dial` и описание.
+// MQTT — узел (с клиентом брокера `mqtt/client.rs`), разбор `mqtt.toml` в
+// build-скрипте `app` и описание.
 if !services.contains("mqtt") {
     file::delete("crates-host/domain/src/mqtt.rs");
     file::delete("crates-host/domain/src/mqtt");
     file::delete("crates-cross/app/build");
-    file::delete("crates-host/ports/src/dial.rs");
     file::delete("docs/modules/app-mqtt.md");
 }
 if !on.protobuf && services.len() == 0 {
@@ -2870,7 +2892,16 @@ variable::set("ota_cmd_clients", (protocol_clients
 // Обёртка EEPROM — только когда настройки лежат в ней; без неё файл с
 // тестами и `pub mod eeprom;` (закрыт тем же условием в lib.rs) — мусор.
 if variable::get("config_store") != "eeprom" {
-    file::delete("crates-host/adapters/src/eeprom.rs");
+    file::delete("crates-host/adapters-hw/src/eeprom.rs");
+}
+// Обёртки над железом без чипа (`adapters-hw`): USB, сеть, EEPROM и фейки —
+// флеш в памяти тестам OTA и настроек. Нет ни одной — нет и крейта; член
+// workspace и зависимости на него вырезает Liquid. Последним: файлы крейта
+// выше удаляются по одному.
+let adapters_hw = has.usb || has.tcp || has.udp || mem_flash;
+variable::set("adapters_hw", if adapters_hw { "true" } else { "false" });
+if !adapters_hw {
+    file::delete("crates-host/adapters-hw");
 }
 
 // Драйвер внешней флеши в bsp — только когда на ней что-то лежит: разделы

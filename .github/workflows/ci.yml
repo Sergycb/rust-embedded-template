@@ -219,8 +219,9 @@ jobs:
     # Запас на прошивку и оба этапа тестов; зависший пробник иначе держал бы
     # единственный раннер (и группу hil) до шести часов, а то и дольше.
     timeout-minutes: 30
-    # Пробник у платы один, и параллельные прогоны за него дерутся — ровно по
-    # этой причине `test host-target` внутри зовёт nextest с --test-threads 1.
+    # Пробник и канал связи у платы по одному, и параллельные прогоны за них
+    # дерутся — по той же причине `test host-target` внутри зовёт nextest с
+    # --test-threads 1.
     # `cancel-in-progress: false`: обрывать прогон посреди прошивки нельзя,
     # плата останется с половиной образа.
     concurrency:
@@ -232,4 +233,11 @@ jobs:
       # не хватать после смены target'а в проекте.
       - run: rustup target add {{target}}
       - run: cargo xtask test target
+      # Адрес платы для сценариев host-target — переменные репозитория рядом с
+      # `HIL` (README, «Тесты на плате в CI»). Не задан — пустая строка, и
+      # сценарии пропускаются со сводкой, а не падают.
       - run: cargo xtask test host-target
+        env:
+          HOST_TARGET_ADDR: {% raw %}${{ vars.HOST_TARGET_ADDR }}{% endraw %}
+          HOST_TARGET_PORT: {% raw %}${{ vars.HOST_TARGET_PORT }}{% endraw %}
+          HOST_TARGET_BAUD: {% raw %}${{ vars.HOST_TARGET_BAUD }}{% endraw %}

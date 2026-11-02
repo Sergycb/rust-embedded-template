@@ -35,7 +35,7 @@ supervisor_graph! {
         ::domain::HEARTBEAT_FRAG as HEARTBEAT,
 
         // Узел `CPU_LOAD` меряет загрузку процессора. Вход — счётчик тиков сна,
-        // который ведёт ручной цикл исполнителя в `main.rs` (docs/modules/
+        // который ведёт ручной цикл исполнителя в `run.rs` (docs/modules/
         // app-cpu-load.md); всё, что нужно фрагменту, — ссылка на него: тип
         // входа объявляет подсистема (`domain::cpu_load::IdleMeter`), а
         // значение собирает приложение.
@@ -64,19 +64,19 @@ supervisor_graph! {
         // строкой — раньше инициализатора блока `watchdog:`, как бы они ни стояли
         // в тексте, — частичным move: `firmware` уезжает в слот узла, `watchdog`
         // следом забирает сторож, остаток `board` дропается в конце пролога.
-        ::domain::OTA_FRAG<::adapters::ota::Updater<bsp::FirmwareFlash>, bsp::reset::Reboot, OTA_CMD_PARKED> as OTA = ::domain::ota::OtaWiring {
-            flash: ::adapters::ota::Updater::new(board.firmware),
+        ::domain::OTA_FRAG<::domain::ota::Updater<bsp::FirmwareFlash>, bsp::reset::Reboot, OTA_CMD_PARKED> as OTA = ::domain::ota::OtaWiring {
+            flash: ::domain::ota::Updater::new(board.firmware),
             reboot: bsp::reset::Reboot,
             running_version: crate::version::FW_VERSION,
+            // Тестовый образ `app-unconfirmed` начинает «уже подтверждённым» и
+            // `mark_booted` не зовёт: следующий сброс его откатывает
+            // (`cargo xtask test host-target`, docs/ota.md).
+            confirmed: cfg!(feature = "unconfirmed"),
         },
 {%- endif %}
 {%- assign xs = links | split: "," %}
 {%- for l in xs %}
 {%- assign f = l | split: ":" %}
-{%- assign lm = "crate::link::" | append: f[0] %}
-{%- if f[0] == "uart" or f[0] == "usb" %}
-{%- assign lm = lm | append: "::" | append: f[4] %}
-{%- endif %}
 {%- if f[0] == "usb" %}
 
         // Узел `USB_{{ f[4] | upcase }}` — фоновая работа устройства `embassy-usb` (`domain::usb`),
@@ -98,45 +98,98 @@ supervisor_graph! {
 {%- assign client = 0 %}
 {%- for l in xs %}
 {%- assign f = l | split: ":" %}
-{%- assign lm = "crate::link::" | append: f[0] %}
-{%- if f[0] == "uart" or f[0] == "usb" %}
-{%- assign lm = lm | append: "::" | append: f[4] %}
+{%- comment %} Канал — конкретным типом прямо в привязке: тип (`ty`) и конструктор (`link`) над рычагом платы в памяти, которую объявляет граф (`static T`). {% endcomment %}
+{%- assign port = "502" %}
+{%- if f[3] == "protobuf" %}{% assign port = "5000" %}{% endif %}
+{%- if f[0] == "uart" %}
+{%- capture src %}board.{{ f[4] }}{% endcapture %}
+{%- capture srct %}bsp::serial::{{ f[4] }}::Serial{% endcapture %}
+{%- elsif f[0] == "usb" %}
+{%- capture src %}board.{{ f[4] }}.cdc{% endcapture %}
+{%- capture srct %}bsp::usb::{{ f[4] }}::Cdc{% endcapture %}
 {%- endif %}
-{%- comment %} Канал: `link` модуля транспорта над рычагом платы в памяти, которую объявляет граф (`static T`). {% endcomment %}
-{%- capture link %}{{ lm }}::link({% if f[0] == "uart" %}board.{{ f[4] }}{% elsif f[0] == "usb" %}board.{{ f[4] }}.cdc{% else %}
-                    board.net.stack{% endif %}
-{%- if f[0] == "tcp" %},
-                    static [u8; crate::link::SOCKET_BUFFER],
-                    static [u8; crate::link::SOCKET_BUFFER]
-{%- elsif f[0] == "udp" %},
-                    static {{ lm }}::Meta,
-                    static [u8; crate::link::SOCKET_BUFFER],
-                    static {{ lm }}::Meta,
-                    static [u8; crate::link::SOCKET_BUFFER],
-                    static [u8; {{ lm }}::BUFFER]
+{%- if f[3] == "modbus" %}
+{%- if f[0] == "tcp" %}
+{%- capture ty %}::adapters_logic::modbus::Tcp<::adapters_logic::net::TcpServer>{% endcapture %}
+{%- capture link %}::adapters_logic::modbus::Tcp::new(::adapters_logic::net::TcpServer::new(
+                    board.net.stack,
+                    {{ port }},
+                    static [u8; SOCKET_BUFFER],
+                    static [u8; SOCKET_BUFFER],
+                )){% endcapture %}
+{%- elsif f[0] == "udp" %}
+{%- capture ty %}::adapters_logic::modbus::Udp<::adapters_logic::net::UdpLink>{% endcapture %}
+{%- capture link %}::adapters_logic::modbus::Udp::new(::adapters_logic::net::UdpLink::new(
+                    board.net.stack,
+                    {{ port }},
+                    static ::core::mem::MaybeUninit<[::embassy_net::udp::PacketMetadata; 4]>,
+                    static [u8; SOCKET_BUFFER],
+                    static ::core::mem::MaybeUninit<[::embassy_net::udp::PacketMetadata; 4]>,
+                    static [u8; SOCKET_BUFFER],
+                    static [u8; ::adapters_logic::modbus::DATAGRAM],
+                )){% endcapture %}
+{%- else %}
+{%- capture ty %}::adapters_logic::modbus::Rtu<{{ srct }}>{% endcapture %}
+{%- capture link %}::adapters_logic::modbus::Rtu::new({{ src }}){% endcapture %}
 {%- endif %}
-{%- if f[3] == "protobuf" and f[0] != "udp" %},
-                    static [u8; {{ lm }}::BUFFER],
-                    static [u8; {{ lm }}::FRAME]
+{%- elsif f[3] == "protobuf" %}
+{%- if f[0] == "udp" %}
+{%- capture ty %}::adapters_logic::net::UdpLink{% endcapture %}
+{%- capture link %}::adapters_logic::net::UdpLink::new(
+                    board.net.stack,
+                    {{ port }},
+                    static ::core::mem::MaybeUninit<[::embassy_net::udp::PacketMetadata; 4]>,
+                    static [u8; SOCKET_BUFFER],
+                    static ::core::mem::MaybeUninit<[::embassy_net::udp::PacketMetadata; 4]>,
+                    static [u8; SOCKET_BUFFER],
+                    static [u8; ::domain::protobuf::REQUEST_MAX],
+                ){% endcapture %}
+{%- else %}
+{%- if f[0] == "tcp" %}
+{%- capture src %}::adapters_logic::net::TcpServer::new(
+                        board.net.stack,
+                        {{ port }},
+                        static [u8; SOCKET_BUFFER],
+                        static [u8; SOCKET_BUFFER],
+                    ){% endcapture %}
+{%- capture srct %}::adapters_logic::net::TcpServer{% endcapture %}
 {%- endif %}
-{%- if f[0] == "tcp" or f[0] == "udp" or f[3] == "protobuf" %},
-                ){% else %}){% endif %}{% endcapture %}
+{%- capture ty %}::adapters_logic::cobs::Cobs<'static, {{ srct }}>{% endcapture %}
+{%- capture link %}::adapters_logic::cobs::Cobs::new(
+                    {{ src }},
+                    static [u8; ::adapters_logic::cobs::rx_len(::domain::protobuf::REQUEST_MAX)],
+                    static [u8; ::adapters_logic::cobs::tx_len(::domain::protobuf::RESPONSE_MAX)],
+                ){% endcapture %}
+{%- endif %}
+{%- endif %}
+{%- comment %} Что значат числа канала — одной строкой над узлом. {% endcomment %}
+{%- capture sizes %}
+{%- if f[0] == "tcp" or f[0] == "udp" %}
+        // Порт {{ port }} — {% if f[3] == "modbus" %}стандартный порт Modbus TCP и UDP{% else %}выбран шаблоном, у protobuf стандартного нет{% endif %}; буферы сокета —
+        // `SOCKET_BUFFER` (ниже){% if f[0] == "udp" %};
+        // очередь — 4 датаграммы в каждую сторону, буфер канала — {% if f[3] == "modbus" %}самая длинная датаграмма{% else %}запрос{% endif %}{% endif %}.
+{%- endif %}
+{%- if f[3] == "protobuf" and f[0] != "udp" %}
+        // Буфер канала — закодированные сообщение и CRC (`rx_len`), кадр передачи —
+        // худший случай COBS от самого длинного ответа (`tx_len`).
+{%- endif %}
+{%- endcapture %}
 {%- if f[3] == "modbus" %}
 
         // Узел `MODBUS_{{ f[4] | upcase }}` — Modbus slave (`domain::server` с обработчиком
-        // `domain::modbus::Slave`): канал (кадрирование{% if f[0] == "tcp" or f[0] == "udp" %}, сокет{% endif %}) — `{{ lm }}::link` над рычагом
-        // платы в памяти, которую объявляет граф (`static T`); карта регистров
+        // `domain::modbus::Slave`): канал (кадрирование{% if f[0] == "tcp" or f[0] == "udp" %}, сокет{% endif %}) строится здесь{% if f[0] == "uart" or f[0] == "usb" %} над рычагом
+        // платы{% endif %} в памяти, которую объявляет граф (`static T`); карта регистров
         // одна на все узлы Modbus: ручку `crate::modbus::handle()` (`Copy`) получает каждый, а
         // тип карты проект меняет в одном месте — `crate::modbus::Map`.
         // Адрес slave'а — `unit`{% if f[0] == "tcp" or f[0] == "udp" %}: по сети устройство адресуется по IP, и
-        // slave отвечает на любой адрес в MBAP{% endif %}.
+        // slave отвечает на любой адрес в MBAP{% endif %}.{{ sizes }}
 {%- if ota == "true" %}
         // Карта обёрнута окном OTA (`domain::modbus::OtaRegisters`): записи FC16
         // по `OTA_BASE` уходят узлу `OTA` командами — клиентом его входа `CMD`
         // (`OtaClient` с номером этого транспорта), остальное — карте проекта.
         ::domain::SERVER_FRAG<
-            {{ lm }}::Link,
-            ::domain::modbus::Slave<::domain::modbus::OtaRegisters<crate::modbus::Handle>>,
+            {{ ty }},
+            ::domain::modbus::OtaRegisters<crate::modbus::Handle>,
         > as MODBUS_{{ f[4] | upcase }} =
             ::domain::server::ServerWiring {
                 link: {{ link }},
@@ -149,11 +202,11 @@ supervisor_graph! {
                             ::domain::ota::ClientId({{ client }}),
                         ),
                     ),
-                    crate::build::PKG_VERSION,
+                    crate::version::FW_VERSION_TEXT,
                 ),
             },
 {%- else %}
-        ::domain::SERVER_FRAG<{{ lm }}::Link, ::domain::modbus::Slave<crate::modbus::Handle>> as MODBUS_{{ f[4] | upcase }} =
+        ::domain::SERVER_FRAG<{{ ty }}, crate::modbus::Handle> as MODBUS_{{ f[4] | upcase }} =
             ::domain::server::ServerWiring {
                 link: {{ link }},
                 handler: ::domain::modbus::Slave::new(1, crate::modbus::handle(), crate::build::PKG_VERSION),
@@ -167,13 +220,12 @@ supervisor_graph! {
         // сети — `node_id`, 1..=127. Хранилище — {% if config == "true" %}раздел настроек платы: в нём узел сохраняет
         // объекты по команде `save` и адрес, назначенный по LSS (ключи
         // `domain::canopen::{OBJECTS_KEY, NODE_ID_KEY}`){% else %}раздела настроек нет — объекты и адрес не сохраняются{% endif %}.
-        ::domain::CANOPEN_FRAG<bsp::can::{{ f[4] }}::Can, {% if config == "true" %}::adapters::settings::Settings<bsp::ConfigFlash>{% else %}::adapters::settings::Unavailable{% endif %}> as CANOPEN_{{ f[4] | upcase }} =
+        ::domain::CANOPEN_FRAG<bsp::can::{{ f[4] }}::Can, ::domain::settings::Settings<{% if config == "true" %}bsp::ConfigFlash{% else %}::domain::settings::NoFlash{% endif %}>> as CANOPEN_{{ f[4] | upcase }} =
             ::domain::canopen::CanOpenWiring {
                 bus: board.{{ f[4] }},
                 node_id: 1,
                 dictionary: ::domain::canopen::dictionary(),
-                settings: {% if config == "true" %}::adapters::settings::Settings::whole(board.config){% else %}::adapters::settings::Unavailable{% endif %},
-                persist: {{config}},
+                settings: {% if config == "true" %}Some(::domain::settings::Settings::whole(board.config)){% else %}None{% endif %},
                 // Серийный номер идентичности (0x1018:04) — из заводского номера чипа.
                 serial: ::domain::canopen::serial(board.spec.uid),
 {%- if ota == "true" %}
@@ -184,20 +236,20 @@ supervisor_graph! {
             },
 {%- elsif f[3] == "protobuf" %}
 
-        // Узел `PROTOBUF_{{ f[4] | upcase }}` — сообщения protobuf от хоста (`domain::protobuf`): канал —
-        // `{{ lm }}::link` над рычагом платы, память канала и буфер ответа объявляет граф (`static T`);
+        // Узел `PROTOBUF_{{ f[4] | upcase }}` — сообщения protobuf от хоста (`domain::protobuf`): канал
+        // строится здесь{% if f[0] == "uart" or f[0] == "usb" %} над рычагом платы{% endif %}, память канала и буфер ответа объявляет граф (`static T`);
         // обработчик `domain::protobuf::Service` над схемой `crates-host/proto` —
         // логика приложения, проект правит его в `domain`.{% if ota == "true" %} Команды обновления
         // обработчик шлёт узлу `OTA` на вход `CMD` своим клиентом (номер этого
-        // транспорта) и отвечает хосту их исходом.{% endif %}
-        ::domain::PROTOBUF_FRAG<{{ lm }}::Link> as PROTOBUF_{{ f[4] | upcase }} =
+        // транспорта) и отвечает хосту их исходом.{% endif %}{{ sizes }}
+        ::domain::PROTOBUF_FRAG<{{ ty }}> as PROTOBUF_{{ f[4] | upcase }} =
             ::domain::protobuf::ProtobufWiring {
                 link: {{ link }},
                 // Ответ кодируется сюда, а не в буфер канала: там может лежать
                 // недочитанный кадр, и ответ уходит через `send_from`.
                 response: static [u8; ::domain::protobuf::RESPONSE_MAX],
                 service: ::domain::protobuf::Service::new(
-                    crate::device_info(board.spec),
+                    crate::run::device_info(board.spec),
 {%- if ota == "true" %}
                     ::domain::ota::OtaClient::new(ota_cmd_requester(), ::domain::ota::ClientId({{ client }})),
 {%- endif %}
@@ -216,7 +268,7 @@ supervisor_graph! {
         // следом за транспортами: сессия приёма у OTA — одного клиента.{% endif %}
         ::domain::HTTP_FRAG as HTTP[{{ http_connections }}] = core::array::from_fn(|{% if ota == "true" %}i{% else %}_{% endif %}| ::domain::http::HttpWiring {
             stack: board.net.stack,
-            info: crate::device_info(board.spec),
+            info: crate::run::device_info(board.spec),
             token: crate::net::rest::TOKEN,
 {%- if ota == "true" %}
             ota: ::domain::ota::OtaClient::new(
@@ -236,13 +288,13 @@ supervisor_graph! {
         // хранится в разделе настроек (`domain::ssh::Stored`){% else %}вшит из `ssh-host-key.bin`
         // (`domain::ssh::Fixed`){% endif %}.{% if ota == "true" %} `reboot` — командой узлу `OTA` своим
         // клиентом, номер следом за остальными.{% endif %}
-        ::domain::SSH_FRAG<{% if ssh_host_key == "config" %}::domain::ssh::Stored<::adapters::settings::Settings<bsp::ConfigFlash>>{% else %}::domain::ssh::Fixed{% endif %}> as SSH =
+        ::domain::SSH_FRAG<{% if ssh_host_key == "config" %}::domain::ssh::Stored<bsp::ConfigFlash>{% else %}::domain::ssh::Fixed{% endif %}> as SSH =
             ::domain::ssh::SshWiring {
                 stack: board.net.stack,
-                info: crate::device_info(board.spec),
+                info: crate::run::device_info(board.spec),
                 login: crate::net::ssh::LOGIN,
 {%- if ssh_host_key == "config" %}
-                host_key: ::domain::ssh::Stored(::adapters::settings::Settings::whole(board.config)),
+                host_key: ::domain::ssh::Stored(::domain::settings::Settings::whole(board.config)),
 {%- else %}
                 host_key: ::domain::ssh::Fixed(&crate::net::ssh::HOST_KEY),
 {%- endif %}
@@ -262,13 +314,13 @@ supervisor_graph! {
         // объявляет граф (`static T`), буферы `minimq` — слоты
         // `= static` фрагмента.{% if ota == "true" %} `cmd/reboot` — командой узлу `OTA` своим
         // клиентом, номер следом за остальными.{% endif %}
-        ::domain::MQTT_FRAG<::domain::mqtt::Fixed, ::adapters::net::TcpClient> as MQTT =
+        ::domain::MQTT_FRAG as MQTT =
             ::domain::mqtt::MqttWiring {
                 stack: board.net.stack,
-                info: crate::device_info(board.spec),
+                info: crate::run::device_info(board.spec),
                 prefix: crate::net::mqtt::PREFIX,
-                broker: ::domain::mqtt::Fixed(crate::net::mqtt::BROKER),
-                link: ::adapters::net::TcpClient::new(
+                broker: crate::net::mqtt::BROKER,
+                link: ::domain::mqtt::TcpClient::new(
                     board.net.stack,
                     static [u8; crate::net::mqtt::TCP_BUFFER],
                     static [u8; crate::net::mqtt::TCP_BUFFER],
@@ -292,6 +344,13 @@ const _: () = assert!(
     crate::net::rest::CONNECTIONS == {{ http_connections }},
     "копий HTTP в графе столько же, сколько HTTP_CONNECTIONS в [env]"
 );
+{%- endif %}
+{%- if protocol_sockets != "0" %}
+
+/// Буфер сокета протокола в каждую сторону, байт — с запасом на {% if modbus_mbap == "true" %}самый
+/// длинный кадр Modbus TCP (260 байт){% endif %}{% if modbus_mbap == "true" and has_protobuf == "true" %} и {% endif %}{% if has_protobuf == "true" %}сообщение protobuf (`domain::protobuf::REQUEST_MAX`,
+/// `RESPONSE_MAX`){% endif %}. Одно число на все сокеты протоколов в `fragments:` выше.
+const SOCKET_BUFFER: usize = 1024;
 {%- endif %}
 {%- if ota == "true" %}
 

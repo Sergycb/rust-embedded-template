@@ -5,7 +5,7 @@
 // {%- endif %}
 
 // {%- if ota == "true" %}
-use std::fs;
+use std::{fs, path::Path};
 
 use anyhow::Context;
 // {%- endif %}
@@ -22,6 +22,21 @@ use crate::signing::{ensure_image_key, ensure_signing_key, sign_image};
 use crate::size::{report_image, report_ram};
 // {%- if ota == "true" %}
 use crate::size::{report_boot, warn_boot_runtime_symbols};
+
+/// Образ для OTA из ELF приложения: сырой образ с хвостом
+/// `[раскладка u32 LE][версия u32 LE]` — то, что уезжает в `DFU` и что
+/// подписывается. Собирает его [`ota_image`].
+#[derive(Debug)]
+pub struct OtaImage {
+    /// Адрес, с которого образ начинается (`ORIGIN` раздела).
+    pub base: u64,
+    /// Байты образа вместе с хвостом.
+    pub image: Vec<u8>,
+    /// Отпечаток раскладки памяти из хвоста.
+    pub layout: u32,
+    /// Версия образа из хвоста.
+    pub version: u32,
+}
 // {%- endif %}
 
 pub fn build(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
@@ -72,39 +87,17 @@ pub fn build(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
         elf.display(),
     );
     // {%- if ota == "true" %}
-    let (base, mut image) = raw_image(&elf)?;
-    let boot_elf = cross_target_dir().join(TARGET).join("release").join("boot");
-
-    // Хвост образа — `[раскладка u32 LE][версия u32 LE]`, и обязательно ДО
-    // подписи: устройство читает его из последних восьми байт принятого
-    // образа. Раскладку (отпечаток границ разделов из memory.x) оно сверяет
-    // со своей на `Finish` и образ под другую раскладку отвергает до обмена;
-    // версию сравнивает со своей и отказывается ставить
-    // прошивку не новее текущей (защита от атаки отката). Не будь хвост
-    // подписан вместе с образом, соврать им мог бы кто угодно.
-    //
-    // Оба значения берутся из ELF, а не из Cargo.toml и memory.x: так у них
-    // остаётся ровно один источник — то, что скомпилировано в прошивку.
-    let layout = layout_fingerprint(&elf)?;
-    // Раскладку bootloader и приложение обязаны понимать одинаково
-    // (`embassy-boot` в обоих ищет разделы по тем же символам), и образ под
-    // одну раскладку с bootloader'ом под другую испортил бы обмен.
-    let boot_layout = layout_fingerprint(&boot_elf)?;
-    anyhow::ensure!(
-        layout == boot_layout,
-        "раскладка памяти приложения ({layout:#010x}) и bootloader'а ({boot_layout:#010x}) \
-         разошлась: границы BOOTLOADER_STATE/ACTIVE/DFU в crates-cross/app/memory.x и \
-         crates-cross/boot/memory.x обязаны совпадать. Поправьте memory.x и пересоберите; \
-         если раскладка сменилась намеренно, новый bootloader прошивается по проводу — \
-         образом по OTA её не сменить (устройство отвергнет его на Finish)",
-    );
-    let version = image_version(&elf, base, &image)?;
+    let OtaImage {
+        base,
+        image,
+        layout,
+        version,
+    } = ota_image(&elf)?;
     println!("раскладка: {layout:#010x}");
     {
         let (major, minor, patch) = unpack_version(version);
         println!("версия образа: {major}.{minor}.{patch}");
     }
-    append_tail(&mut image, layout, version);
     // {%- else %}
     //{{newline}}    let (base, image) = raw_image(&elf)?;
     // {%- endif %}
@@ -116,6 +109,7 @@ pub fn build(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     // {%- if ota == "true" %}
 
     // `.bin` — ровно то, что уезжает в раздел `DFU`.
+    let boot_elf = cross_target_dir().join(TARGET).join("release").join("boot");
     let (boot_base, boot_image) = raw_image(&boot_elf)?;
     report_boot(boot_image.len() as u64)?;
     warn_boot_runtime_symbols(&boot_elf)?;
@@ -151,6 +145,46 @@ pub fn sign() -> Result<(), anyhow::Error> {
     let (boot_base, boot_image) = raw_image(&boot_elf)?;
     ensure_image_key(&boot_elf, boot_base, &boot_image, &seed)?;
     sign_image(&path, &image, &seed)
+}
+
+/// Собирает [`OtaImage`] из release-ELF приложения `elf` — общее у `build` и
+/// `test host-target` (рабочий образ и тестовый `app-unconfirmed`).
+/// Bootloader (release-ELF `boot` рядом) уже собран: с ним сверяется
+/// раскладка.
+///
+/// Хвост — `[раскладка u32 LE][версия u32 LE]`, и обязательно ДО подписи:
+/// устройство читает его из последних восьми байт принятого образа. Раскладку
+/// (отпечаток границ разделов из memory.x) оно сверяет со своей на `Finish` и
+/// образ под другую раскладку отвергает до обмена; версию сравнивает со своей
+/// и отказывается ставить прошивку не новее текущей (защита от атаки отката).
+/// Не будь хвост подписан вместе с образом, соврать им мог бы кто угодно.
+///
+/// Оба значения берутся из ELF, а не из Cargo.toml и memory.x: так у них
+/// остаётся ровно один источник — то, что скомпилировано в прошивку.
+pub fn ota_image(elf: &Path) -> Result<OtaImage, anyhow::Error> {
+    let (base, mut image) = raw_image(elf)?;
+    let boot_elf = cross_target_dir().join(TARGET).join("release").join("boot");
+    let layout = layout_fingerprint(elf)?;
+    // Раскладку bootloader и приложение обязаны понимать одинаково
+    // (`embassy-boot` в обоих ищет разделы по тем же символам), и образ под
+    // одну раскладку с bootloader'ом под другую испортил бы обмен.
+    let boot_layout = layout_fingerprint(&boot_elf)?;
+    anyhow::ensure!(
+        layout == boot_layout,
+        "раскладка памяти приложения ({layout:#010x}) и bootloader'а ({boot_layout:#010x}) \
+         разошлась: границы BOOTLOADER_STATE/ACTIVE/DFU в crates-cross/app/memory.x и \
+         crates-cross/boot/memory.x обязаны совпадать. Поправьте memory.x и пересоберите; \
+         если раскладка сменилась намеренно, новый bootloader прошивается по проводу — \
+         образом по OTA её не сменить (устройство отвергнет его на Finish)",
+    );
+    let version = image_version(elf, base, &image)?;
+    append_tail(&mut image, layout, version);
+    Ok(OtaImage {
+        base,
+        image,
+        layout,
+        version,
+    })
 }
 
 /// Дописывает хвост `[раскладка u32 LE][версия u32 LE]` в конец образа.

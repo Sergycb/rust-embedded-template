@@ -44,15 +44,19 @@ skill'ом `rust-engineering` и не дублируются здесь. Это�
 портами; DMA-буферы под железо), `app` — оркестрация задач (`Spawner`{% if graph == "true" %}, supervisor-графы, watchdog{% endif %}) и
 память, которую домен получает ссылками (буферы узлов и транспортов{% if has_modbus == "true" %}, карта
 Modbus{% endif %}{% if net_services != "" %}, секреты служб{% endif %}).
-**Реализация над стандартным трейтом — `adapters`, над чипом — `bsp`**: HAL-объект
-с трейтом `bsp` отдаёт псевдонимом, своя структура в `bsp` — только обёртка там,
-где реализации трейта нет. **Кто строит адаптер, тот держит его память:**
+**Нужен чип — `bsp`; обёртка над железом без чипа — `adapters-hw`; реализации
+портов, когда их несколько, — `adapters-logic`; остальное — `domain`; трейты —
+только `ports`**: HAL-объект с трейтом `bsp` отдаёт псевдонимом, своя структура
+в `bsp` — только обёртка там, где реализации трейта нет. **Трейт — только под
+несколько реализаций** (в разных узлах одной прошивки или в разных вариантах
+генерации, которые иначе потребовали бы Liquid в логике); одна реализация —
+конкретный тип без трейта, тест — над ним же. **Кто строит адаптер, тот держит его память:**
 адаптер, без которого рычаг не собрать, — плата в `Board::new`; адаптер, чей
 тип или память выбирает приложение, — compose-site ({% if graph == "true" %}привязка узла в
 `fragments:` графа, память — `static [u8; N]` там же{% else %}модуль задачи, память — его статики{% endif %}), и узел получает его
-готовым во входе. Оба правила с пограничными случаями и порт против библиотеки
-прямо в `domain` — `docs/architecture.md`, «Адаптеры делятся по одному признаку — нужен
-ли чип» и «Порт и адаптер — или библиотека прямо в `domain`».
+готовым во входе. Правила с пограничными случаями — `docs/architecture.md`,
+«Адаптеры делятся по одному признаку — нужен ли чип» и «Трейт — только под
+несколько реализаций».
 Всё остальное — даже асинхронное и «системное» на вид (стейтчарты, RPC, синхронизация
 задач) — живёт в `domain`, а не в `cross`, и узлы тоже (всё — `docs/architecture.md`):
 - подсистема объявляет узел `supervisor_fragment!`-ом рядом со своей задачей —
@@ -70,7 +74,7 @@ Modbus{% endif %}{% if net_services != "" %}, секреты служб{% endif 
 {%- endif %}
 - **узлы не падают:** `restart:` нет, задача возвращает `()`, отказ связи —
   лог и возврат в начальное состояние автомата или переход в себя; переждать
-  отказ — контракт порта — «Узлы не падают»;
+  отказ — дело реализации порта или конкретного типа под узлом — «Узлы не падают»;
 - цена — зависимость `domain` от `supervisor` (транзитивно и от
   `embassy-executor`); `embassy-stm32` в `domain` нет — «Цена решения…».
 
@@ -91,7 +95,7 @@ Modbus{% endif %}{% if net_services != "" %}, секреты служб{% endif 
 | `cargo xtask sign` | подписать уже собранный `app.bin` ключом `ota-signing-key.bin`; так подписывает релиз — ключ появляется после сборки |
 {%- endif %}
 | `typos` | опечатки в коде и документации; исключения — `.typos.toml`. Нужен `typos-cli` (ставит `cargo xtask setup`), гоняется в CI отдельным джобом |
-| `cargo deny check` | лицензии (только пермиссивные{% if has_canopen == "true" %}; исключение — MPL-2.0 у `zencan`{% endif %}), источники, уязвимости зависимостей по `deny.toml`; для прошивки — с `--manifest-path crates-cross/Cargo.toml`. Нужен `cargo-deny` (ставит `cargo xtask setup`), гоняется в CI |
+| `cargo deny check` | лицензии (только пермиссивные{% if has_canopen == "true" %}; исключение — MPL-2.0 у `zencan`{% endif %}{% if protobuf_serial == "true" %}; исключение — MPL-2.0 у `serialport` клиента `host-target-tests`{% endif %}), источники, уязвимости зависимостей по `deny.toml`; для прошивки — с `--manifest-path crates-cross/Cargo.toml`. Нужен `cargo-deny` (ставит `cargo xtask setup`), гоняется в CI |
 | `cargo xtask pins [БЛОК\|ПИН]` | справочник по чипу `{{chip}}`: выводы, альтернативные функции, DMA, тактирование |
 | `cargo xtask pins --check` | распиновка во всём `crates-cross/bsp/src`: занятый отладочный порт — ошибка, выводы кварца и MCO — предупреждение |
 
@@ -101,8 +105,8 @@ Modbus{% endif %}{% if net_services != "" %}, секреты служб{% endif 
 |---|---|
 | {% if ota == "true" %}`cargo flash -p boot --release --chip {{chip}}`, затем {% endif %}`cargo run -p app` (исключение из правила выше: запускать в `crates-cross/`) | прошивка руками — необратимо; отдельной команды в `xtask` нет, и начало образа с `memory.x` здесь не сверяется — это делает `cargo xtask build` |
 | `cargo xtask test target` | тесты внутри МК (`embedded-test` + `probe-rs run`){% if ota == "true" %}; сам заливает bootloader без сторожа{% endif %}, после тестов — рабочую {% if ota == "true" %}пару (bootloader со сторожем и `app`){% else %}прошивку (`app`){% endif %}, release |
-| `cargo xtask test host-target` | хост управляет прошитым устройством; сам заливает release-образы, сверив начало приложения с `ORIGIN` раздела из `memory.x` |
-| `cargo xtask test all` | обе строки выше, каждый образ — по разу |
+| `cargo xtask test host-target` | хост проверяет готовое устройство по протоколу проекта (адрес — `HOST_TARGET_ADDR` или `HOST_TARGET_PORT`, без него сценарии пропускаются); начало приложения с `ORIGIN` раздела из `memory.x` сверяет всегда, release-образы шьёт, только если есть пробник (нет — тесты идут против прошитого){% if ota == "true" %}; собирает и грузит по протоколу тестовый образ `app-unconfirmed`{% endif %} |
+| `cargo xtask test all` | обе строки выше, каждый образ — по разу; без пробника этап `target` пропускается с `ВНИМАНИЕ` |
 | `cargo xtask panic-info` | читает регион `PANIC` с живой платы через `probe-rs` |
 | `probe-rs attach --chip {{chip}} crates-cross/target/{{target}}/debug/app` | лог живой платы |
 | `probe-rs erase --chip {{chip}} --connect-under-reset` | снять плату, зациклившуюся на панике |
@@ -141,11 +145,12 @@ README, «Быстрый старт».
 
 Первые две команды железа не требуют вовсе, третья и четвёртая — только тулчейн с
 целевым target'ом и `flip-link` (линкер прошивки; оба ставит `cargo xtask setup`).
-Два оставшихся этапа тестирования нужны с подключённой платой:
+Два оставшихся этапа тестирования нужны с платой: `target` — с пробником,
+`host-target` — на связи по транспорту проекта (пробник — только чтобы прошить):
 
 ```
 cargo xtask test target        # тесты внутри МК (embedded-test + probe-rs run)
-cargo xtask test host-target   # хост управляет прошитым устройством
+cargo xtask test host-target   # хост проверяет готовое устройство по протоколу
 ```
 
 В `xtask` намеренно только то, что не делается одной командой `cargo`: две сборки
@@ -166,7 +171,8 @@ read`: руками пришлось бы сначала найти адрес �
 ## Запреты
 
 - Не прошивать плату (`cargo flash`, `cargo run` в `crates-cross`, `test target`,
-  `test host-target`, `panic-info`, `probe-rs`) без явного разрешения
+  `test host-target` — он шьёт, если видит пробник{% if ota == "true" %}, и грузит тестовый образ по
+  протоколу{% endif %}, — `panic-info`, `probe-rs`) без явного разрешения
   пользователя — необратимо и требует железа.
 - Не запускать `cargo xtask setup` и `cargo install` без разрешения пользователя —
   меняет систему (что ставит `setup` — README, «Инструменты»).
@@ -180,25 +186,25 @@ read`: руками пришлось бы сначала найти адрес �
 
 - Задачи `embassy` не могут быть generic: тип, уезжающий в `#[embassy_executor::task]`,
   получает псевдоним (`pub type X = ...`): рычаг — от `bsp`{% if ota == "true" or config == "true" %} ({% if ota == "true" %}`bsp::FirmwareFlash`{% if config == "true" %},
-  {% endif %}{% endif %}{% if config == "true" %}`bsp::ConfigFlash`{% endif %}){% endif %}, адаптер — от `app`{% if protocol_link == "true" %} (`crate::link::<вид>[::<транспорт>]::Link`){% endif %} или
-  конкретным типом прямо {% if graph == "true" %}в графе{% else %}в задаче{% endif %}{% if ota == "true" %} (`adapters::ota::Updater<bsp::FirmwareFlash>`){% endif %}
+  {% endif %}{% endif %}{% if config == "true" %}`bsp::ConfigFlash`{% endif %}){% endif %}, адаптер — от `app` или
+  конкретным типом прямо {% if graph == "true" %}в графе{% else %}в задаче{% endif %}{% if ota == "true" %} (`domain::ota::Updater<bsp::FirmwareFlash>`){% endif %}
   — `docs/architecture.md`.
 - Ровно один `#[panic_handler]` и один активный `#[global_logger]` на бинарник;
   паникёр у каждого бинарника свой, у `app` профиль выбирает
   `#[cfg(debug_assertions)]` в `crates-cross/app/src/panic.rs`, а не Cargo-фича —
   `docs/diagnostics.md`, «Два паникёра, один на сборку».
 {%- if ota == "true" %}
-- `prepare(len)` порта `FirmwareUpdate` зовётся один раз перед приёмом образа
+- `prepare(len)` адаптера `domain::ota::Updater` зовётся один раз перед приёмом образа
   (внутри `domain::ota::download::Transfer::start`), `write()` сектор не
   стирает — `docs/ota.md`.
 {%- endif %}
 - `lib.rs` только объявляет: атрибуты, `//!`, `mod`, `pub use` — определения
   живут в модулях — `docs/conventions.md`.
 {%- if ota == "true" %}
-- Образ приходит командами (`ports::OtaCommand`) на вход `CMD` узла OTA —
+- Образ приходит командами (`domain::ota::OtaCommand`) на вход `CMD` узла OTA —
   запрос с ответом — или на `ASK` (`serves:`; клиент не ждёт исхода в вызове и
-  забирает его из `reply()`), и каждая команда получает исход (`ports::OtaReply`), который
-  протокол отдаёт хосту в своём виде ({% if has_protobuf == "true" %}protobuf — `Ok`/`Error`, {% endif %}{% if has_modbus == "true" %}Modbus — код `ports::reply_code`, {% endif %}{% if has_canopen == "true" %}CANopen — код `ports::reply_code`, {% endif %}`docs/ota.md`). Своего канала у OTA нет: узел протокола
+  забирает его из `reply()`), и каждая команда получает исход (`domain::ota::OtaReply`), который
+  протокол отдаёт хосту в своём виде ({% if has_protobuf == "true" %}protobuf — `Ok`/`Error`, {% endif %}{% if has_modbus == "true" %}Modbus — код `domain::ota::command::reply_code`, {% endif %}{% if has_canopen == "true" %}CANopen — код `domain::ota::command::reply_code`, {% endif %}`docs/ota.md`). Своего канала у OTA нет: узел протокола
   только переводит сообщения в команды. Запрос несёт номер клиента —
   транспорта (`domain::ota::OtaClient`, номер из генерации): приём держит один
   владелец, чужим `Start`/`Chunk`/`Finish` — `Busy` до `Finish`, отказа или
@@ -224,7 +230,11 @@ read`: руками пришлось бы сначала найти адрес �
   стартовом действии узла OTA (`begin`); перенести позже, туда, где
   устройство доказало работоспособность, можно{% if has_usb == "true" %} — вместе с готовностью: узел
   `USB` встаёт на шину только после этой попытки{% endif %} — `docs/ota.md`,
-  «Подтверждение образа — в узле OTA, один раз за запуск».
+  «Подтверждение образа — в узле OTA, один раз за запуск». Исключение —
+  тестовый образ `app-unconfirmed` (фича `unconfirmed`, `cargo xtask test
+  host-target`): он себя не подтверждает вовсе (`confirmed` во входе узла —
+  `cfg!(feature = "unconfirmed")`), чтобы сброс его откатил; в `cargo xtask
+  build` и релиз он не попадает — `docs/ota.md`, «Тесты OTA по протоколу».
 {%- endif %}
 {%- if ota == "true" and ota_store == "external" %}
 - С `ext_flash=yes` (`DFU`/`STATE` на внешней флеши): `EXT_PAGE_SIZE` — одно
@@ -247,11 +257,11 @@ read`: руками пришлось бы сначала найти адрес �
 {%- endif %}
 {%- if ota == "true" %}
 - Разделы обновления плата отдаёт нарезанными (`board.firmware:
-  bsp::FirmwareFlash` = `adapters::ota::Partitions`: `DFU`/`STATE` со своими
+  bsp::FirmwareFlash` = `ports::Partitions`: `DFU`/`STATE` со своими
   страницами, размер `ACTIVE`, отпечаток раскладки). Режет их `bsp::flash`
   по символам `memory.x` (`bsp::layout::{dfu, state}`) — тем же, что читает
   `from_linkerfile` в bootloader'е; узел OTA собирает над ними
-  `adapters::ota::Updater`. Нарезку проверяет только `cargo xtask lint cross`/`build`,
+  `domain::ota::Updater`. Нарезку проверяет только `cargo xtask lint cross`/`build`,
   host-тесты подают адаптеру разделы в памяти — `docs/ota.md`.
 {%- endif %}
 {%- if ota == "true" or config_store == "flash" or config_store == "external" or dma_nc == "true" %}
@@ -308,14 +318,14 @@ read`: руками пришлось бы сначала найти адрес �
   вместе — `docs/flash.md`, «Банки flash».
 {%- endif %}
 {%- if config == "true" %}
-- Хранилище настроек — `adapters::settings` над любым async `NorFlash`, на весь
+- Хранилище настроек — `domain::settings` над любым async `NorFlash`, на весь
   его объём. Носитель отдаёт плата рычагом `NorFlash`
   (`board.config: bsp::ConfigFlash`): {% if config_store == "eeprom" %}EEPROM L0/L1 (доступ — `embedded_storage::Storage`, обёртку
-  `adapters::eeprom::Eeprom` собирает сама плата){% elsif config_store == "external" %}внешняя флеш W25Q (драйвер
+  `adapters_hw::eeprom::Eeprom` собирает сама плата){% elsif config_store == "external" %}внешняя флеш W25Q (драйвер
   `w25q` в `bsp::external`, шина — заглушка `bsp::stub::FlashBus`, пока проект не
   подставит выводы){% else %}раздел `CONFIG` внутреннего
   флеша{% endif %}. Само хранилище — `Settings::whole(board.config)` на compose-site
-  узла-потребителя; тип — `adapters::settings::Settings<bsp::ConfigFlash>` прямо {% if graph == "true" %}в
+  узла-потребителя; тип — `domain::settings::Settings<bsp::ConfigFlash>` прямо {% if graph == "true" %}в
   графе{% else %}в задаче{% endif %}{% if config_store == "eeprom" %}. EEPROM под хранилищем инвертирована: без
   этого заводские нули выглядели бы для `sequential-storage` закрытыми
   страницами{% endif %} — `docs/flash.md`.
@@ -332,15 +342,18 @@ read`: руками пришлось бы сначала найти адрес �
 - Сторожа нет ни в `boot`, ни в приложении: зависший до `mark_booted` образ сам
   не откатится.
 {%- endif %}
-- Цикл исполнителя в `crates-cross/app/src/main.rs` поднят руками, а не
+- Цикл исполнителя в `crates-cross/app/src/run.rs` поднят руками, а не
   `#[embassy_executor::main]`: возврат к макросу молча ломает замер загрузки —
   `docs/modules/app-cpu-load.md`, «Почему цикл исполнителя в `main` написан руками».
 {%- if protocol_link == "true" %}
-- Канал протокола строит `link(…)` модуля транспорта `crate::link::<вид>[::<транспорт>]`
-  над рычагом платы, память — {% if graph == "true" %}`static T` в привязке графа{% else %}статики модуля задачи{% endif %}; размер буфера и
-  порт — решение `app`, `bsp` их не знает; обработчик протокола — не порт{% if has_protobuf == "true" %};
-  канал `PROTOBUF` — `ports::FrameDuplex`, ответ — `send_from` из своего буфера{% endif %} —
-  `docs/modules/app.md`, «Канал протокола: `crate::link`».
+- Канал протокола — конкретный тип из `adapters-logic` над рычагом платы; строит его
+  {% if graph == "true" %}привязка узла в `fragments:` графа (тип — параметр фрагмента, память —
+  `static T` там же){% else %}задача протокола `crates-cross/app/src/tasks/<протокол>.rs` (рычаг —
+  псевдоним `Source`, память — статики модуля){% endif %}; модуля-обёртки над каналами в
+  `app` нет. Размер буфера и порт — решение `app`, `bsp` их не знает; обработчик
+  протокола — не порт{% if has_protobuf == "true" %}; канал `PROTOBUF` — `ports::FrameDuplex`, ответ —
+  `send_from` из своего буфера{% endif %} — `docs/modules/app.md`, «Канал протокола —
+  конкретным типом там, где строится».
 {%- endif %}
 {%- if net_services contains "rest" %}
 - Токен REST API — `rest-token.txt` в корне проекта: создаёт `cargo xtask`
@@ -350,8 +363,10 @@ read`: руками пришлось бы сначала найти адрес �
   правите руками число — правьте и литерал.
 {%- endif %}
 {%- if net_services contains "ssh" %}
-- Консоль SSH (`domain::ssh`, узел `SSH`): {% if ssh_auth == "password" %}пароль — `ssh-password.txt`{% else %}открытый ключ пользователя — строка `crate::net::ssh::LOGIN`{% endif %}{% if ssh_host_key == "file" %}, ключ хоста — `ssh-host-key.bin`{% endif %}{% if ssh_auth == "password" or ssh_host_key == "file" %};
-  файлы создаёт `cargo xtask` (`secrets::ensure`), и они **коммитятся**{% endif %} — README, «Консоль SSH».{% if ssh_host_key == "config" %}
+- Консоль SSH (`domain::ssh`, узел `SSH`): {% if ssh_auth == "password" %}хэш пароля — `ssh-password.hash`{% else %}открытый ключ пользователя — строка `crate::net::ssh::LOGIN`{% endif %}{% if ssh_host_key == "file" %}, ключ хоста — `ssh-host-key.bin`{% endif %}{% if ssh_auth == "password" or ssh_host_key == "file" %};
+  файлы создаёт `cargo xtask` (`secrets::ensure`), и они **коммитятся**{% endif %}{% if ssh_auth == "password" %}.
+  Открытый пароль — `ssh-password.txt`, он в `.gitignore` и в прошивку не
+  попадает: не коммитить и не вшивать его вместо хэша{% endif %} — README, «Консоль SSH».{% if ssh_host_key == "config" %}
   Ключ хоста плата создаёт при первом старте (ключ настроек
   `domain::ssh::HOST_KEY_ID`) — хранилище настроек забирает узел `SSH`, своим
   настройкам проекта нужен общий доступ через него.{% endif %} Случайность `sunset`
@@ -363,8 +378,7 @@ read`: руками пришлось бы сначала найти адрес �
 - Брокер MQTT (`domain::mqtt`, узел `MQTT`) — `mqtt.toml` в корне проекта:
   создаёт `cargo xtask` (`secrets::ensure`), он **коммитится**, вшивает его
   `crates-cross/app/build.rs` (README, «Клиент MQTT»). Паузы перед попытками
-  `dial` — контракт порта `ports::dial::Dial`, их держит `adapters::net::TcpClient`,
-  а не `domain`{% if ota == "true" %}; клиент входа `CMD` узла OTA — номер `{{ mqtt_ota_client }}`{% endif %}; доступ к `cmd/` —
+  `dial` держит клиент `domain::mqtt::TcpClient`, а не автомат узла{% if ota == "true" %}; клиент входа `CMD` узла OTA — номер `{{ mqtt_ota_client }}`{% endif %}; доступ к `cmd/` —
   только ACL брокера — `docs/modules/app-mqtt.md`.
 {%- endif %}
 {%- if graph == "true" %}
@@ -385,7 +399,7 @@ read`: руками пришлось бы сначала найти адрес �
   не подставит свою (рецепт — `docs/modules/bsp-external.md`).
   `Board::new` асинхронный: драйвер опознаёт микросхему (`init`, до 2 с, если
   она дотирает стирание), ждёт таймерами `embassy_time` и потому зовётся из
-  первой задачи исполнителя (`start` в `main.rs`), а не через `block_on` до
+  первой задачи исполнителя (`start` в `crates-cross/app/src/run.rs`), а не через `block_on` до
   него — там таймер паникует{% if graph == "true" %}; путь до `spawn_all` обязан уложиться в таймаут сторожа{% endif %}.
   Не прошёл `init` или микросхема меньше конца разделов (символ `memory.x`
   `__ext_flash_end`, `bsp::layout::ext_flash_end`) — строка в лог, флеш
@@ -395,7 +409,7 @@ read`: руками пришлось бы сначала найти адрес �
   ({% if has_usb == "true" %}`bsp::usb::<транспорт>::Usb { device, cdc }`{% if has_net == "true" %}, {% endif %}{% endif %}{% if has_net == "true" %}`bsp::net::Net { runner, stack }`{% endif %}), собирает плата{% endif %}.
   {% if graph == "true" %}Граф берёт `boot: board: bsp::Board;` и делит по полям{% else %}Поля делит `tasks::spawn_all(spawner, board)`{% endif %}. Не делать поля
   `Board` `Option`{% if has_usb == "true" or has_net == "true" %} и не передавать половину пары через `static`{% endif %} — там же.
-{%- capture bsp_deps %}{% if flash_page == "true" %}, `flash-page`{% endif %}{% if has_usb == "true" or has_net == "true" or config_store == "eeprom" or ota == "true" %}, обёртки `adapters`{% endif %}{% endcapture %}
+{%- capture bsp_deps %}{% if flash_page == "true" %}, `flash-page`{% endif %}{% if has_usb == "true" or has_net == "true" or config_store == "eeprom" %}, обёртки `adapters-hw`{% endif %}{% endcapture %}
 - `bsp` зависит от `ports`, HAL и того, из чего собирает свои рычаги{% if bsp_deps != "" %}
   ({{ bsp_deps | remove_first: ", " }}){% endif %}, но не от `domain`: входы узлов из полей `Board`
   заполняет compose-site в `app` — `docs/architecture.md`, «Адаптеры делятся по

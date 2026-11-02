@@ -4,9 +4,9 @@
 //! рычаги платы и адаптеры над ними в памяти своих статиков —
 //! и `spawn`. `main` отдаёт плату (`bsp::Board`) в [`spawn_all`] целиком и сам
 //! задачами не занимается. Embassy-задача не может быть generic, поэтому
-//! каждая типизирована рычагом платы (`bsp`) или типами канала
-//! (`crate::link`). Контекст узла собирается из локальных переменных кадра
-//! задачи. Сама задача — `task` узла из `domain`.
+//! каждая типизирована рычагом платы (`bsp`); канал протокола над ним задача
+//! строит сама, конкретным типом. Контекст узла собирается из локальных
+//! переменных кадра задачи. Сама задача — `task` узла из `domain`.
 //!
 //! Сторожа и перезапусков нет: узлы не падают, а зависший остаётся зависшим —
 //! сторожить исполнитель вам. Сети без графа нет: стек, его узел и узлы
@@ -53,13 +53,13 @@ pub fn spawn_all(spawner: embassy_executor::Spawner, {% if ota == "true" or has_
 {%- if f[3] == "modbus" %}
     modbus::{{ f[4] }}::spawn(spawner, {% if f[0] == "uart" %}board.{{ f[4] }}{% else %}board.{{ f[4] }}.cdc{% endif %}, crate::modbus::handle());
 {%- elsif f[3] == "protobuf" %}
-    let info = crate::device_info(board.spec);
+    let info = crate::run::device_info(board.spec);
     protobuf::{{ f[4] }}::spawn(spawner, {% if f[0] == "uart" %}board.{{ f[4] }}{% else %}board.{{ f[4] }}.cdc{% endif %}, info);
 {%- elsif f[3] == "canopen" %}
     canopen::{{ f[4] }}::spawn(
         spawner,
         board.{{ f[4] }},
-        {% if config == "true" %}adapters::settings::Settings::whole(board.config){% else %}adapters::settings::Unavailable{% endif %},
+        {% if config == "true" %}Some(domain::settings::Settings::whole(board.config)){% else %}None{% endif %},
         domain::canopen::serial(board.spec.uid),
     );
 {%- endif %}

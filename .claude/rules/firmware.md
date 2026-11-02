@@ -4,9 +4,11 @@ paths: crates-cross/**
 
 - Задачи embassy не могут быть generic: объект, уезжающий в
   `#[embassy_executor::task]`, обязан иметь псевдоним типа (рычагу платы — в
-  `bsp`; адаптеру — в модуле `app`, который выбирает его тип{% if protocol_link == "true" %} (`crate::link` —
-  `docs/modules/app.md`, «Канал протокола: `crate::link`»){% endif %}, или конкретный тип прямо во
-  входе узла) — `docs/architecture.md`.
+  `bsp`; адаптеру — в модуле `app`, который выбирает его тип, или конкретный
+  тип прямо {% if graph == "true" %}во входе узла{% if protocol_link == "true" %}, как канал протокола{% endif %}{% else %}в задаче{% if protocol_link == "true" %}: канал протокола задача строит
+  сама, а границу задачи пересекает рычаг платы — псевдоним `Source`{% endif %}{% endif %}{% if protocol_link == "true" %}
+  (`docs/modules/app.md`, «Канал протокола — конкретным типом там, где строится»){% endif %}) —
+  `docs/architecture.md`.
 - Ровно один `#[panic_handler]` и один `#[global_logger]` на бинарник, развилка
   по профилю — `#[cfg(debug_assertions)]`, не Cargo-фича — `docs/diagnostics.md`,
   «Два паникёра, один на сборку».
@@ -15,7 +17,8 @@ paths: crates-cross/**
   (`bsp::ChipSpec`), а не `Peripherals`, не пины, не периферию ядра и не
   `Clocks` — `docs/architecture.md`, «`Board` отдаёт рычаги платы, а не
   периферию и не протоколы».
-- Реализация поверх стандартных трейтов — `adapters`, нужен чип — `bsp`; кто
+- Нужен чип — `bsp`; обёртка над железом без чипа — `adapters-hw`; реализации
+  портов, когда их несколько, — `adapters-logic`; кто
   строит адаптер, тот держит его память; адаптеры, чей тип или память выбирает
   приложение, строит `app` и отдаёт узлу готовыми — `docs/architecture.md`,
   «Адаптеры делятся по одному признаку — нужен ли чип».

@@ -202,7 +202,7 @@ fn dependency_urls_are_normalized_and_required() {
     );
 }
 
-/// Адрес уходит литералом в TOML (`git = "…"` и паспорт генерации): пробел,
+/// Адрес уходит литералом в TOML (`git = "…"`): пробел,
 /// кавычка и `\` в нём — ошибка и в `--define`, а не только в строке ввода.
 #[test]
 fn dependency_urls_reject_what_would_break_toml() {
@@ -223,23 +223,6 @@ fn dependency_urls_reject_what_would_break_toml() {
             );
         }
     }
-}
-
-/// Паспорт генерации различает раскладку хука и ручную: `write_size` хук
-/// выставляет в обеих ветках, а `memory_layout` — только своё.
-#[test]
-fn memory_layout_tells_manual_from_generated() {
-    let ast = compile_script();
-    let generated = run_cascade_to(&ast, "f407ve").expect("каскад");
-    assert_eq!(
-        generated.vars.get("memory_layout").map(String::as_str),
-        Some("generated")
-    );
-    let manual = run_cascade_with(&ast, "f407ve", &[("write_size", "4")]).expect("каскад");
-    assert_eq!(
-        manual.vars.get("memory_layout").map(String::as_str),
-        Some("manual")
-    );
 }
 
 /// Список чипов со штампом версий — тот файл, который хук импортирует первым.
@@ -1509,10 +1492,12 @@ fn graph_is_dropped_when_the_app_partition_is_too_small() {
 }
 
 /// Без ответов про протокол проект — без протокола: ни узла, ни заглушки
-/// UART в `bsp`.
+/// UART в `bsp`. Без OTA: с ней без терминала отмечается первый транспорт
+/// (`ota_needs_a_transport`).
 #[test]
 fn no_protocol_by_default() {
-    let result = run_cascade_to(&compile_script(), "f407ve").expect("каскад не должен падать");
+    let result = run_cascade_with(&compile_script(), "f407ve", &[("ota", "no")])
+        .expect("каскад не должен падать");
     assert_eq!(
         result.vars.get("protocol").map(String::as_str),
         Some("none")
@@ -1535,21 +1520,20 @@ fn no_protocol_by_default() {
         "crates-host/ports/src/link.rs",
         "crates-host/ports/src/modbus.rs",
         "crates-host/ports/src/can.rs",
-        "crates-host/adapters/src/modbus",
-        "crates-host/adapters/src/cobs.rs",
+        "crates-host/adapters-logic/src/modbus",
+        "crates-host/adapters-logic/src/cobs.rs",
+        "crates-host/adapters-logic",
         "crates-cross/bsp/src/stub.rs",
-        "crates-host/adapters/src/fake/cable.rs",
         "crates-host/domain/src/modbus",
         "crates-host/domain/src/protobuf",
         "crates-host/domain/src/canopen.rs",
         "crates-host/domain/src/canopen",
         "crates-host/domain/src/net.rs",
-        "crates-host/adapters/src/net.rs",
-        "crates-host/adapters/src/net",
+        "crates-host/adapters-hw/src/net.rs",
         "crates-cross/bsp/src/net.rs",
         "docs/modules/bsp-net.md",
         "crates-cross/bsp/src/usb.rs",
-        "crates-host/adapters/src/usb.rs",
+        "crates-host/adapters-hw/src/usb.rs",
         "crates-host/domain/src/usb.rs",
         "docs/modules/bsp-usb.md",
     ] {
@@ -1559,34 +1543,32 @@ fn no_protocol_by_default() {
             result.deleted
         );
     }
-    // Без сети и USB `fake` остаётся ради флеша в памяти — тестам OTA.
+    // Без сети и USB `adapters-hw` остаётся ради флеша в памяти — тестам OTA (с
+    // ней транспорт есть: без терминала — первый, UART без протокола).
+    let result = run_cascade_to(&compile_script(), "f407ve").expect("каскад не должен падать");
     assert_eq!(result.vars.get("ota").map(String::as_str), Some("true"));
     assert!(
         !result
             .deleted
             .iter()
-            .any(|path| path == "crates-host/adapters/src/fake.rs"
-                || path == "crates-host/adapters/src/fake/flash.rs"),
+            .any(|path| path == "crates-host/adapters-hw/src/flash.rs"),
         "флеш в памяти удалён при OTA: {:?}",
         result.deleted
     );
-    // Ни сети, ни USB, ни OTA, ни настроек — `fake` не нужен никому.
+    // Ни сети, ни USB, ни OTA, ни настроек — флеш в памяти не нужен никому.
     let bare = run_cascade_with(
         &compile_script(),
         "f407ve",
         &[("ota", "no"), ("config", "no")],
     )
     .expect("каскад без OTA и настроек");
-    for path in [
-        "crates-host/adapters/src/fake.rs",
-        "crates-host/adapters/src/fake",
-    ] {
-        assert!(
-            bare.deleted.iter().any(|deleted| deleted == path),
-            "{path} остался без пользователей: {:?}",
-            bare.deleted
-        );
-    }
+    assert!(
+        bare.deleted
+            .iter()
+            .any(|deleted| deleted == "crates-host/adapters-hw/src/flash.rs"),
+        "флеш в памяти остался без пользователей: {:?}",
+        bare.deleted
+    );
 }
 
 /// Протокол поверх UART оставляет в `bsp` модуль заглушки.
@@ -1620,7 +1602,8 @@ fn protocol_over_uart_keeps_the_serial_module() {
         for (path, wanted) in [
             ("crates-host/proto", protocol == "protobuf"),
             ("crates-host/domain/src/protobuf.rs", protocol == "protobuf"),
-            ("crates-host/adapters/src/cobs.rs", protocol == "protobuf"),
+            ("crates-host/adapters-logic/src/cobs.rs", protocol == "protobuf"),
+            ("crates-host/adapters-logic", true),
             ("crates-host/domain/src/modbus.rs", protocol == "modbus"),
             ("crates-host/ports/src/modbus.rs", protocol == "modbus"),
             // Кадровый канал нужен обоим: узел протокола `domain::server` —
@@ -1628,12 +1611,11 @@ fn protocol_over_uart_keeps_the_serial_module() {
             ("crates-host/ports/src/link.rs", true),
             ("crates-host/canopen", false),
             ("crates-host/ports/src/can.rs", false),
-            // Заглушка UART в `bsp`; драйверов-фейков USB/сети нет, а
-            // `fake` остаётся ради флеша в памяти (OTA на g474re).
+            // Заглушка UART в `bsp`; модулей USB/сети нет, а флеш в памяти
+            // остаётся (OTA на g474re).
             ("crates-cross/bsp/src/stub.rs", true),
-            ("crates-host/adapters/src/fake/cable.rs", false),
-            ("crates-host/adapters/src/fake.rs", true),
-            ("crates-host/adapters/src/fake/flash.rs", true),
+            ("crates-host/adapters-hw/src/net.rs", false),
+            ("crates-host/adapters-hw/src/flash.rs", true),
         ] {
             assert_eq!(kept(path), wanted, "{protocol}: {path}");
         }
@@ -1692,7 +1674,7 @@ fn modbus_master_yes_keeps_the_master() {
 #[test]
 fn modbus_master_is_false_without_modbus() {
     let ast = compile_script();
-    for (protocol, interface) in [("none", "none"), ("protobuf", "uart"), ("canopen", "can")] {
+    for (protocol, interface) in [("none", "uart"), ("protobuf", "uart"), ("canopen", "can")] {
         let err = run_cascade_with(
             &ast,
             "g474re",
@@ -1797,8 +1779,9 @@ fn the_interface_block_is_named_by_the_chip() {
     }
 }
 
-/// Протокол по сети оставляет стек — `bsp::net`, `adapters::net`, узел
-/// `domain::net` — только у чипа с выведенным Ethernet.
+/// Протокол по сети оставляет стек — `bsp::net`, `adapters_hw::net`, транспорты
+/// `adapters_logic::net`, узел `domain::net` — только у чипа с выведенным
+/// Ethernet.
 #[test]
 fn protocol_over_network_keeps_the_net_stack() {
     for iface in ["tcp", "udp"] {
@@ -1810,8 +1793,9 @@ fn protocol_over_network_keeps_the_net_stack() {
         .expect("каскад не должен падать");
         for kept in [
             "crates-cross/bsp/src/net.rs",
-            "crates-host/adapters/src/net.rs",
-            "crates-host/adapters/src/net",
+            "crates-host/adapters-hw/src/net.rs",
+            "crates-host/adapters-logic/src/net.rs",
+            "crates-host/adapters-logic/src/net",
             "crates-host/domain/src/net.rs",
             "crates-host/domain/src/modbus.rs",
         ] {
@@ -2047,11 +2031,13 @@ fn links_tolerate_spaces_but_not_empty_items() {
 }
 
 /// В списке каждый вид — одним пунктом, без имён блоков, в порядке `uart`,
-/// `can`, `ethernet`, `usb`; первый пункт — `done`. У F407 шесть USART и
+/// `can`, `ethernet`, `usb`; первый пункт — `done` (без OTA: с ней его нет, пока
+/// ничего не отмечено, — `ota_needs_a_transport`). У F407 шесть USART и
 /// ETH, а пункт `uart` один, и пунктов `tcp`/`udp` нет.
 #[test]
 fn each_kind_is_listed_once() {
-    let result = interview(&compile_script(), "f407ve", &[], &[]).expect("каскад не должен падать");
+    let result = interview(&compile_script(), "f407ve", &[("ota", "no")], &[])
+        .expect("каскад не должен падать");
     let menus = all_menu_values(&result, "transports");
     assert_eq!(menus, [["done", "uart", "can", "ethernet", "usb"]]);
     let shown = &result
@@ -2187,7 +2173,7 @@ fn marks_are_shown_in_the_redrawn_menu() {
     let result = interview(
         &compile_script(),
         "f407ve",
-        &[],
+        &[("ota", "no")],
         &[("transports", "uart"), ("transports", "done")],
     )
     .expect("каскад не должен падать");
@@ -2224,11 +2210,17 @@ fn toggling_twice_leaves_the_transport_out() {
     );
 }
 
-/// `done` без отметок — проект без транспортов, о протоколе не спрашивают.
+/// `done` без отметок — проект без транспортов, о протоколе не спрашивают
+/// (без OTA: с ней пустой список не выбрать).
 #[test]
 fn done_without_marks_gives_no_transports() {
-    let result = interview(&compile_script(), "f407ve", &[], &[("transports", "done")])
-        .expect("каскад не должен падать");
+    let result = interview(
+        &compile_script(),
+        "f407ve",
+        &[("ota", "no")],
+        &[("transports", "done")],
+    )
+    .expect("каскад не должен падать");
     assert_eq!(var_of(&result, "links"), Some(""));
     assert_eq!(var_of(&result, "interface"), Some("none"));
     assert!(all_menu_values(&result, "protocol").is_empty());
@@ -2326,14 +2318,14 @@ fn derived_flags_follow_every_link() {
     for path in [
         "crates-cross/bsp/src/serial.rs",
         "crates-cross/bsp/src/can.rs",
-        "crates-host/adapters/src/modbus/rtu.rs",
-        "crates-host/adapters/src/modbus/tcp.rs",
+        "crates-host/adapters-logic/src/modbus/rtu.rs",
+        "crates-host/adapters-logic/src/modbus/tcp.rs",
     ] {
         assert!(!deleted(path), "{path} удалён: {:?}", result.deleted);
     }
     for path in [
-        "crates-host/adapters/src/modbus/udp.rs",
-        "crates-host/adapters/src/cobs.rs",
+        "crates-host/adapters-logic/src/modbus/udp.rs",
+        "crates-host/adapters-logic/src/cobs.rs",
     ] {
         assert!(deleted(path), "{path} не удалён: {:?}", result.deleted);
     }
@@ -2354,7 +2346,7 @@ fn protobuf_over_udp_and_a_stream_keeps_cobs() {
         !result
             .deleted
             .iter()
-            .any(|d| d == "crates-host/adapters/src/cobs.rs"),
+            .any(|d| d == "crates-host/adapters-logic/src/cobs.rs"),
         "{:?}",
         result.deleted
     );
@@ -2422,13 +2414,64 @@ fn no_terminal_adds_no_extra_links() {
     assert_eq!(all_menu_values(&result, "transports").len(), 2);
 }
 
-/// Без терминала список показан один раз, и проект — без транспортов.
+/// Без терминала список показан один раз, и проект без OTA — без
+/// транспортов.
 #[test]
 fn no_terminal_leaves_the_list_empty() {
-    let result = interview(&compile_script(), "f407ve", &[], &[]).expect("каскад не должен падать");
+    let result = interview(&compile_script(), "f407ve", &[("ota", "no")], &[])
+        .expect("каскад не должен падать");
     assert_eq!(all_menu_values(&result, "transports").len(), 1);
     assert_eq!(var_of(&result, "links"), Some(""));
     assert_eq!(var_of(&result, "protocol"), Some("none"));
+}
+
+/// С OTA образ приходит по транспорту проекта: в списке нет `done`, пока
+/// ничего не отмечено (после отметки — есть); без терминала отмечается первый
+/// транспорт; протокол при этом может остаться `none`. `--define
+/// interface=none` спрятать нельзя — ошибка с подсказкой.
+#[test]
+fn ota_needs_a_transport() {
+    let ast = compile_script();
+    let picked = interview(
+        &ast,
+        "f407ve",
+        &[],
+        &[("transports", "can"), ("transports", "done")],
+    )
+    .expect("каскад не должен падать");
+    assert_eq!(
+        all_menu_values(&picked, "transports"),
+        [
+            vec!["uart", "can", "ethernet", "usb"],
+            vec!["done", "uart", "can", "ethernet", "usb"],
+        ]
+    );
+    assert_eq!(var_of(&picked, "ota"), Some("true"));
+    assert!(var_of(&picked, "links").is_some_and(|links| links.starts_with("can:")));
+
+    let silent = interview(&ast, "f407ve", &[], &[]).expect("каскад не должен падать");
+    assert_eq!(var_of(&silent, "ota"), Some("true"));
+    assert_eq!(
+        var_of(&silent, "links"),
+        Some("uart:usart:USART1:none:usart1")
+    );
+    assert_eq!(var_of(&silent, "protocol"), Some("none"));
+
+    for defines in [
+        &[("interface", "none")][..],
+        &[("interface", "none"), ("ota", "yes")][..],
+    ] {
+        let err = run_chip_with(&ast, "f407ve", defines)
+            .err()
+            .unwrap_or_else(|| panic!("{defines:?}: OTA без транспорта принят"));
+        assert!(
+            err.to_string()
+                .contains("ota: образ приходит по транспорту проекта"),
+            "{err}"
+        );
+    }
+    run_chip_with(&ast, "f407ve", &[("interface", "none"), ("ota", "no")])
+        .expect("без OTA проект без транспорта годится");
 }
 
 /// `tcp` и `udp` делят один ETH: каждый вид получает его по разу, второй
@@ -2605,8 +2648,8 @@ fn the_ssh_host_key_lives_where_it_survives() {
 }
 
 /// MQTT предлагается с Ethernet (RNG ему не нужен); без Ethernet `--define` —
-/// ошибка. Порт `Dial`, узел и разбор `mqtt.toml` — только с ним, а TCP-клиент
-/// остаётся и поверх одного UDP.
+/// ошибка. Узел, его TCP-клиент (`domain::mqtt::TcpClient`) и разбор `mqtt.toml` —
+/// только с ним.
 #[test]
 fn mqtt_is_offered_with_ethernet() {
     let ast = compile_script();
@@ -2643,7 +2686,7 @@ fn mqtt_is_offered_with_ethernet() {
 
     let mqtt_files = [
         "crates-host/domain/src/mqtt.rs",
-        "crates-host/ports/src/dial.rs",
+        "crates-host/domain/src/mqtt",
         "crates-cross/app/build",
     ];
     let udp = interview(
@@ -2654,9 +2697,9 @@ fn mqtt_is_offered_with_ethernet() {
     )
     .expect("каскад не должен падать");
     let deleted = |result: &CascadeResult, path: &str| result.deleted.iter().any(|d| d == path);
-    assert!(!deleted(&udp, "crates-host/adapters/src/net/tcp.rs"));
-    assert!(!deleted(&udp, "crates-host/adapters/src/net/tcp/client.rs"));
-    assert!(deleted(&udp, "crates-host/adapters/src/net/tcp/server.rs"));
+    // Клиент брокера живёт с узлом (`domain/src/mqtt/client.rs`), сервер
+    // транспортов TCP без tcp не нужен.
+    assert!(deleted(&udp, "crates-host/adapters-logic/src/net/tcp.rs"));
     for path in mqtt_files {
         assert!(!deleted(&udp, path), "{path} удалён: {:?}", udp.deleted);
     }
@@ -2667,7 +2710,7 @@ fn mqtt_is_offered_with_ethernet() {
         &[],
     )
     .expect("каскад не должен падать");
-    assert!(deleted(&rest, "crates-host/adapters/src/net/tcp.rs"));
+    assert!(deleted(&rest, "crates-host/adapters-logic/src/net/tcp.rs"));
     for path in mqtt_files {
         assert!(deleted(&rest, path), "{path} не удалён: {:?}", rest.deleted);
     }
@@ -2869,8 +2912,8 @@ fn net_services_defines_are_strict() {
 
 /// Протоколу граф не нужен: без него узел спавнит `tasks::spawn_all`, и ни ответ `graph=no`,
 /// ни размер раздела (здесь — 16 KiB у `l031f4`; у `l011f4` с тем же разделом Modbus не
-/// помещается в 2 KiB RAM) генерацию не останавливают. Готовый
-/// транспорт `app/src/link.rs` остаётся, пока выбран Modbus или protobuf.
+/// помещается в 2 KiB RAM) генерацию не останавливают. Задача протокола
+/// `app/src/tasks/<протокол>.rs` остаётся, пока выбран Modbus или protobuf.
 #[test]
 fn protocol_does_not_need_the_graph() {
     let script = compile_script();
@@ -2895,22 +2938,14 @@ fn protocol_does_not_need_the_graph() {
             Some("false"),
             "{chip} {preset:?}"
         );
+        let protocol = result.vars.get("protocol").map_or("", String::as_str);
+        assert!(!protocol.is_empty(), "{chip} {preset:?}: протокол не выбран");
+        let task = format!("crates-cross/app/src/tasks/{protocol}.rs");
         assert!(
-            !result
-                .deleted
-                .iter()
-                .any(|path| path == "crates-cross/app/src/link.rs"),
-            "{chip} {preset:?}: link.rs удалён при выбранном протоколе"
+            !result.deleted.iter().any(|path| *path == task),
+            "{chip} {preset:?}: {task} удалён при выбранном протоколе"
         );
     }
-
-    let none = run_cascade_with(&script, "f407ve", &[]).expect("каскад не должен падать");
-    assert!(
-        none.deleted
-            .iter()
-            .any(|path| path == "crates-cross/app/src/link.rs"),
-        "без протокола link.rs должен удаляться"
-    );
 }
 
 /// Транспорт без протокола — рабочий выбор: заглушка интерфейса и его фоновый
@@ -3078,7 +3113,7 @@ fn ota_survives_where_the_app_partition_is_large_enough() {
 /// библиотеки.
 ///
 /// У L0/L1 есть внутренняя EEPROM — настройки уходят туда (обёртка
-/// `adapters::eeprom` инвертирует байты, и заводской ноль читается как `0xFF`),
+/// `adapters_hw::eeprom` инвертирует байты, и заводской ноль читается как `0xFF`),
 /// а раздела `CONFIG` во флеше нет. У WB10CC/WB15CC флеш тоже стирается в
 /// ноль, а EEPROM нет — им настройки по-прежнему не предлагаются.
 #[test]
@@ -3382,7 +3417,7 @@ fn erase_page_wrapper_only_where_the_sector_is_smaller_than_the_chip_page() {
     }
 }
 
-/// Транспорты в `adapters` остаются только под выбранный интерфейс: Modbus RTU,
+/// Транспорты в `adapters-logic` остаются только под выбранный интерфейс: Modbus RTU,
 /// TCP и UDP, сокеты сети и COBS — каждый лишь там, где ему есть кого обслуживать.
 #[test]
 fn transports_are_kept_only_for_the_selected_interface() {
@@ -3393,9 +3428,9 @@ fn transports_are_kept_only_for_the_selected_interface() {
         &'a [&'a str],
         &'a [&'a str],
     );
-    const M: &str = "crates-host/adapters/src/modbus/";
-    const N: &str = "crates-host/adapters/src/net/";
-    const COBS: &str = "crates-host/adapters/src/cobs.rs";
+    const M: &str = "crates-host/adapters-logic/src/modbus/";
+    const N: &str = "crates-host/adapters-logic/src/net/";
+    const COBS: &str = "crates-host/adapters-logic/src/cobs.rs";
     let ast = compile_script();
     let cases: [Case; 5] = [
         (
@@ -3413,18 +3448,8 @@ fn transports_are_kept_only_for_the_selected_interface() {
         (
             "h743zg",
             &[("protocol", "modbus"), ("interface", "tcp")],
-            &[
-                "modbus/rtu.rs",
-                "modbus/udp.rs",
-                "net/udp.rs",
-                "net/tcp/client.rs",
-            ],
-            &[
-                "modbus/tcp.rs",
-                "modbus/mbap.rs",
-                "net/tcp.rs",
-                "net/tcp/server.rs",
-            ],
+            &["modbus/rtu.rs", "modbus/udp.rs", "net/udp.rs"],
+            &["modbus/tcp.rs", "modbus/mbap.rs", "net/tcp.rs"],
         ),
         // COBS нужен потоку (UART, USB, TCP), а UDP кадр даёт сама датаграмма.
         (
@@ -3467,23 +3492,19 @@ fn transports_are_kept_only_for_the_selected_interface() {
     }
 }
 
-/// OTA и хранилище настроек в `ports`, `adapters` и `domain` остаются только там,
+/// OTA и хранилище настроек в `ports` и `domain` остаются только там,
 /// где они выбраны: без них это код, до которого не дотянуться от `main` и графа.
-/// Заглушка `Unavailable` нужна и узлу CANopen без хранилища, а `flash.rs` —
+/// Хранилище нужно и узлу CANopen без раздела (`None`), а `flash.rs` —
 /// только обёртке страницы или внешней флеши.
 #[test]
 fn ota_and_settings_code_is_kept_only_when_selected() {
-    const OTA: [&str; 5] = [
+    const OTA: [&str; 4] = [
         "crates-host/ports/src/ota.rs",
         "crates-host/ports/src/ota",
-        "crates-host/adapters/src/ota.rs",
         "crates-host/domain/src/ota.rs",
         "crates-host/domain/src/ota",
     ];
-    const SETTINGS: [&str; 2] = [
-        "crates-host/ports/src/settings.rs",
-        "crates-host/adapters/src/settings.rs",
-    ];
+    const SETTINGS: [&str; 1] = ["crates-host/domain/src/settings.rs"];
     const FLASH: &str = "crates-host/flash-page";
     // (чип, ответы, OTA вырезана, настройки вырезаны, flash-page вырезан)
     type Case<'a> = (&'a str, &'a [(&'a str, &'a str)], bool, bool, bool);
@@ -3811,11 +3832,15 @@ fn the_menus_come_in_order_and_offer_only_what_is_possible() {
         ]
     );
 
-    // Транспорт: только то, чьи блоки есть у чипа. У G071 нет ни Ethernet, ни USB.
+    // Транспорт: только то, чьи блоки есть у чипа. У G071 нет ни Ethernet, ни USB;
+    // с OTA (умолчание) `done` нет, пока ничего не отмечено (`ota_needs_a_transport`).
     let g071 = interview(&ast, "g071rb", &[], &[]).expect("каскад не должен падать");
     let interfaces = menu_values(&g071, "transports").expect("транспорт не предложен");
+    assert_eq!(interfaces, ["uart"]);
+    // Без транспорта (только без OTA) протокол не спрашивается вовсе.
+    let g071 = interview(&ast, "g071rb", &[("ota", "no")], &[]).expect("каскад не должен падать");
+    let interfaces = menu_values(&g071, "transports").expect("транспорт не предложен");
     assert_eq!(interfaces, ["done", "uart"]);
-    // Без транспорта протокол не спрашивается вовсе.
     assert!(menu_values(&g071, "protocol").is_none());
 
     // Протоколы — только те, что работают поверх выбранного транспорта.
@@ -3911,6 +3936,8 @@ fn menu_picks_reach_the_template_variables() {
 
 /// Без терминала и без `--define` вопросы получают умолчания, и генерация не
 /// падает ни на одном чипе: ни одного вопроса, на который некому ответить.
+/// Протокола по умолчанию нет; транспорта нет без OTA, а с OTA — первый из
+/// списка (`ota_needs_a_transport`).
 #[test]
 fn every_chip_generates_with_the_defaults() {
     let ast = compile_script();
@@ -3920,9 +3947,11 @@ fn every_chip_generates_with_the_defaults() {
             Err(err) => failures.push(format!("{suffix}: {err}")),
             Ok(result) => {
                 let var = |name: &str| result.vars.get(name).map(String::as_str);
-                if var("protocol") != Some("none") || var("interface") != Some("none") {
+                if var("protocol") != Some("none")
+                    || (var("ota") == Some("true")) == (var("interface") == Some("none"))
+                {
                     failures.push(format!(
-                        "{suffix}: умолчание — не «без протокола и транспорта»"
+                        "{suffix}: умолчание — не «без протокола; транспорт только с OTA»"
                     ));
                 }
                 // Умолчание не обещает невозможного: OTA — только если помещается.
@@ -3970,8 +3999,8 @@ fn every_path_through_the_menus_generates() {
     ];
     let used = template_variables();
     // Задаёт `cargo generate`, а не хук: вопрос `ci` и встроенные переменные.
-    // `github`, `secrets` и `env` — не переменные шаблона, а выражения GitHub
-    // Actions (`${{ secrets.X }}`), которые Liquid оставляет как есть.
+    // `github`, `secrets`, `vars` и `env` — не переменные шаблона, а выражения
+    // GitHub Actions (`${{ secrets.X }}`), которые Liquid оставляет как есть.
     let external = [
         "ci",
         "project",
@@ -3981,6 +4010,7 @@ fn every_path_through_the_menus_generates() {
         "os",
         "github",
         "secrets",
+        "vars",
         "env",
     ];
     let mut paths = 0;

@@ -18,8 +18,10 @@
 //! сессия с брокером над готовым потоком байтов — `session` (`serve`), вход —
 //! `wiring`.
 
-/// Адрес брокера: `Endpoint` и откуда он берётся (`Broker`, `Fixed`).
+/// Адрес брокера: `Endpoint`.
 mod broker;
+/// TCP-клиент брокера над сокетом стека: подключение с паузой между попытками.
+mod client;
 /// Сессия `minimq` над готовым потоком байтов и её буферы.
 mod session;
 /// Как часто и что плата публикует в `telemetry`.
@@ -29,25 +31,24 @@ mod topics;
 
 use core::net::SocketAddrV4;
 
-use defmt_or_log::{FormatOrDebug, info, warn};
-use embedded_io_async::{ErrorType, Read, Write};
-use ports::dial::Dial;
+use defmt_or_log::{info, warn};
+use embassy_net::tcp::ConnectError;
 
-pub use self::broker::{Broker, Endpoint, Fixed};
+pub use self::broker::Endpoint;
+pub use self::client::{ClientError, TcpClient};
 pub use self::session::{AUTH_MAX, CONNECT_TIMEOUT, RX_BUFFER, TX_BUFFER};
 use self::session::{Env, serve};
 pub use self::telemetry::{TELEMETRY_INTERVAL, write_telemetry};
 pub use self::topics::{Command, PREFIX_MAX, Topics, parse_command};
 
-// Узел объявлен рядом со своей задачей — как `SSH`. `<B>` — откуда адрес
-// брокера (`Fixed` или свой тип проекта), `<D>` — соединение (`Dial` +
-// поток байтов; `adapters::net::TcpClient` над сокетом стека — собирает его
-// слот `LINK` из стека и буферов TCP от `app`); `local` у них и у стека — все
-// вправе быть `!Send`.
+// Узел объявлен рядом со своей задачей — как `SSH`. Адрес брокера — во входе,
+// соединение — `TcpClient` над сокетом стека (его слот `LINK` собирает
+// compose-site из стека и буферов TCP от `app`); `local` у него и у стека —
+// оба вправе быть `!Send`.
 // Буферы `minimq` — слоты `= static`: через стек они не идут. Без
 // `watchdog:`: брокера может не быть всю жизнь платы.
 supervisor::supervisor_fragment! {
-    name: MQTT_FRAG<B, D>;
+    name: MQTT_FRAG;
     boot: inputs: struct $crate::mqtt::MqttWiring;
 
     node resources: [
@@ -57,10 +58,10 @@ supervisor::supervisor_fragment! {
             INFO: $crate::device::DeviceInfo = inputs.info,
             /// Префикс тем, не длиннее `PREFIX_MAX`.
             PREFIX: &'static str = inputs.prefix,
-            /// Откуда адрес брокера.
-            BROKER: local B = inputs.broker,
+            /// Адрес брокера.
+            BROKER: $crate::mqtt::Endpoint = inputs.broker,
             /// Соединение с брокером на стеке платы.
-            LINK: local D = inputs.link,
+            LINK: local $crate::mqtt::TcpClient = inputs.link,
             // {%- if ota == "true" %}
             /// Клиент входа `CMD` узла OTA — для `cmd/reboot`.
             OTA: $crate::ota::OtaClient = inputs.ota,
@@ -75,11 +76,7 @@ supervisor::supervisor_fragment! {
 }
 
 #[fsm::typestate]
-impl<B: Broker, D: Dial + Read + Write> MqttCtx<'_, B, D>
-where
-    <D as Dial>::Error: FormatOrDebug,
-    <D as ErrorType>::Error: FormatOrDebug,
-{
+impl MqttCtx<'_> {
     fsm::machine! {
         machine Mqtt mod edges {
             states {
@@ -108,9 +105,9 @@ where
     }
 
     /// Адрес брокера и одна попытка подключиться к нему; паузу перед ней
-    /// выдерживает `Dial`.
-    async fn dial(&mut self) -> Result<Endpoint, (Endpoint, <D as Dial>::Error)> {
-        let endpoint = self.broker.endpoint().await;
+    /// выдерживает клиент (`TcpClient::dial`).
+    async fn dial(&mut self) -> Result<Endpoint, (Endpoint, ConnectError)> {
+        let endpoint = *self.broker;
         match self
             .link
             .dial(SocketAddrV4::new(endpoint.addr.into(), endpoint.port))
@@ -127,7 +124,7 @@ where
         clippy::unused_self,
         reason = "сигнатуру действия задаёт таблица `#[fsm::typestate]`"
     )]
-    fn unreachable(&mut self, failure: &(Endpoint, <D as Dial>::Error)) {
+    fn unreachable(&mut self, failure: &(Endpoint, ConnectError)) {
         let (endpoint, err) = failure;
         let [a, b, c, d] = endpoint.addr;
         warn!(
@@ -165,11 +162,7 @@ where
 ///
 /// У автомата нет выходного состояния: узел не падает (у него нет
 /// `restart:`).
-pub async fn task<B: Broker, D: Dial + Read + Write>(mut ctx: MqttCtx<'_, B, D>)
-where
-    <D as Dial>::Error: FormatOrDebug,
-    <D as ErrorType>::Error: FormatOrDebug,
-{
+pub async fn task(mut ctx: MqttCtx<'_>) {
     match ctx.run().await {}
 }
 
@@ -178,7 +171,6 @@ pub(crate) mod tests {
     //! Тесты узла `MQTT`: темы, телеметрия, сессия над брокером в памяти и
     //! задача узла над стендом.
 
-    use core::net::SocketAddrV4;
     use core::pin::Pin;
     use core::task::{Context, Poll, Waker};
     use std::cell::RefCell;
@@ -186,17 +178,19 @@ pub(crate) mod tests {
     use std::rc::Rc;
     use std::vec::Vec;
 
+    use adapters_hw::net::fake::cable::{leak, pair};
+    use embassy_net::Stack;
+    use embassy_net::tcp::TcpSocket;
     use embassy_time::{Duration, MockDriver};
     use embedded_io_async::{ErrorKind, ErrorType, Read, Write};
-    use ports::dial::Dial;
     // {%- if ota == "true" %}
     use embassy_time::Instant;
     // {%- endif %}
 
     use super::session::{Ended, Env, serve};
     use super::{
-        CONNECT_TIMEOUT, Command, Endpoint, Fixed, PREFIX_MAX, RX_BUFFER, TELEMETRY_INTERVAL,
-        TX_BUFFER, Topics, parse_command, task, write_telemetry,
+        CONNECT_TIMEOUT, Command, Endpoint, PREFIX_MAX, RX_BUFFER, TELEMETRY_INTERVAL, TX_BUFFER,
+        TcpClient, Topics, parse_command, task, write_telemetry,
     };
     use crate::device::{DeviceInfo, UID_BYTES};
     // {%- if ota == "true" %}
@@ -206,8 +200,9 @@ pub(crate) mod tests {
     use crate::device::INFO_MAX;
     // {%- endif %}
 
+    /// Брокер — на «хосте» кабеля в памяти (`adapters_hw::net::fake::cable::HOST`).
     const ENDPOINT: Endpoint = Endpoint {
-        addr: [10, 0, 0, 1],
+        addr: [10, 0, 0, 2],
         port: 1883,
         user: "",
         password: "",
@@ -215,6 +210,11 @@ pub(crate) mod tests {
 
     const UID: [u8; UID_BYTES] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
     const UID_TEXT: &str = "0102030405060708090a0b0c";
+
+    /// Отложенное подтверждение `smoltcp`: при стоящем времени оно не уходит
+    /// никогда, и `flush` клиента ждал бы вечно. Ждущая сторона двигает время
+    /// на эту паузу.
+    const ACK_DELAY: Duration = Duration::from_millis(10);
 
     /// Брокер в памяти — поток байтов для [`serve`]: вход — то, что «прислал»
     /// брокер ([`FakeBroker::push`]), выход — всё, что записала плата.
@@ -298,79 +298,55 @@ pub(crate) mod tests {
 
     type Running = Pin<Box<dyn Future<Output = Ended>>>;
 
-    /// Соединение узла: на каждый `dial` — следующий из заготовленных
-    /// сценариев, [`FakeBroker`] или `None` — отказ. Сценарии кончились —
-    /// `dial` ждёт вечно, как реализация в паузе перед попыткой.
-    #[derive(Clone, Default)]
-    struct FakeLink(Rc<RefCell<Calls>>);
+    /// Брокер на «хосте» кабеля: сокет, на котором он принимает плату.
+    struct Broker(TcpSocket<'static>);
 
-    #[derive(Default)]
-    struct Calls {
-        scenarios: VecDeque<Option<FakeBroker>>,
-        current: Option<FakeBroker>,
-        dials: usize,
-        hang_ups: usize,
-    }
-
-    impl FakeLink {
-        fn new(scenarios: impl IntoIterator<Item = Option<FakeBroker>>) -> Self {
-            let link = Self::default();
-            link.0.borrow_mut().scenarios.extend(scenarios);
-            link
+    impl Broker {
+        fn new(host: Stack<'static>) -> Self {
+            Self(TcpSocket::new(host, leak([0; 2048]), leak([0; 2048])))
         }
 
-        fn dials(&self) -> usize {
-            self.0.borrow().dials
+        /// Принимает подключение платы и читает её CONNECT.
+        async fn accept(&mut self) -> Vec<u8> {
+            pump(self.0.accept(ENDPOINT.port))
+                .await
+                .expect("плата подключилась");
+            let mut got = Vec::new();
+            self.read_until(&mut got, b"MQTT").await;
+            got
         }
 
-        fn hang_ups(&self) -> usize {
-            self.0.borrow().hang_ups
+        /// Читает в `got`, пока там не найдётся `needle`.
+        async fn read_until(&mut self, got: &mut Vec<u8>, needle: &[u8]) {
+            while !contains(got, needle) {
+                let mut buf = [0; 512];
+                let n = pump(self.0.read(&mut buf)).await.expect("соединение живо");
+                assert!(n > 0, "плата закрыла соединение раньше {needle:02X?}");
+                got.extend_from_slice(&buf[..n]);
+            }
         }
 
-        fn current(&self) -> FakeBroker {
-            self.0.borrow().current.clone().expect("соединение открыто")
-        }
-    }
-
-    impl Dial for FakeLink {
-        type Error = ErrorKind;
-
-        async fn dial(&mut self, to: SocketAddrV4) -> Result<(), ErrorKind> {
-            assert_eq!(to, SocketAddrV4::new(ENDPOINT.addr.into(), ENDPOINT.port));
-            core::future::poll_fn(|_| {
-                let mut calls = self.0.borrow_mut();
-                let Some(next) = calls.scenarios.pop_front() else {
-                    return Poll::Pending;
-                };
-                calls.dials += 1;
-                calls.current.clone_from(&next);
-                Poll::Ready(next.map(drop).ok_or(ErrorKind::TimedOut))
-            })
-            .await
+        /// Пакет брокера плате.
+        async fn send(&mut self, bytes: &[u8]) {
+            pump(self.0.write_all(bytes)).await.expect("пакет ушёл");
         }
 
-        fn hang_up(&mut self) {
-            self.0.borrow_mut().hang_ups += 1;
-        }
-    }
-
-    impl ErrorType for FakeLink {
-        type Error = ErrorKind;
-    }
-
-    impl Read for FakeLink {
-        async fn read(&mut self, buf: &mut [u8]) -> Result<usize, ErrorKind> {
-            self.current().read(buf).await
-        }
-    }
-
-    impl Write for FakeLink {
-        async fn write(&mut self, buf: &[u8]) -> Result<usize, ErrorKind> {
-            self.current().write(buf).await
+        /// Подключение платы закрыто — ею (трубка положена) или брокером
+        /// (`abort`): сокет снова свободен для `accept`.
+        async fn close(&mut self) {
+            self.0.abort();
+            pump(self.0.flush()).await.ok();
         }
 
-        async fn flush(&mut self) -> Result<(), ErrorKind> {
-            self.current().flush().await
+        /// Принимает плату и ведёт её до подписки: CONNACK, SUBACK; отдаёт
+        /// всё, что плата прислала до публикации `online`.
+        async fn welcome(&mut self) -> Vec<u8> {
+            let mut got = self.accept().await;
+            self.send(&connack(0)).await;
+            self.read_until(&mut got, topic("/cmd/#").as_bytes()).await;
+            self.send(&suback(1)).await;
+            self.read_until(&mut got, b"online").await;
+            got
         }
     }
 
@@ -718,40 +694,28 @@ pub(crate) mod tests {
     }
     // {%- endif %}
 
-    /// Брокер, который примет подключение и подписку.
-    fn accepting() -> FakeBroker {
-        let broker = FakeBroker::default();
-        broker.push(&connack(0));
-        broker.push(&suback(1));
-        broker
+    /// Ждёт `fut`, двигая время на [`ACK_DELAY`], пока он не готов за круг
+    /// опроса остальных: так уходят подтверждения стека и выдерживаются паузы
+    /// клиента перед попыткой.
+    async fn pump<T>(fut: impl Future<Output = T>) -> T {
+        let mut fut = core::pin::pin!(fut);
+        loop {
+            tokio::select! {
+                biased;
+                out = &mut fut => return out,
+                () = tokio::task::yield_now() => MockDriver::get().advance(ACK_DELAY),
+            }
+        }
     }
 
-    /// Задача узла над `link`: стек с готовым адресом, остальное — на всё
-    /// время теста.
+    /// Задача узла над клиентом брокера на стеке `stack`, остальное — на
+    /// всё время теста.
     #[expect(
         clippy::too_many_arguments,
         reason = "`ctx()` стенда берёт по аргументу на ресурс узла"
     )]
-    fn node(link: FakeLink) -> Pin<Box<dyn Future<Output = ()>>> {
-        fn leak<T>(value: T) -> &'static mut T {
-            Box::leak(Box::new(value))
-        }
-        #[expect(
-            clippy::default_trait_access,
-            reason = "тип списка DNS — heapless из embassy-net, по имени не назван"
-        )]
-        let config = embassy_net::Config::ipv4_static(embassy_net::StaticConfigV4 {
-            address: embassy_net::Ipv4Cidr::new(embassy_net::Ipv4Address::new(10, 0, 0, 2), 24),
-            gateway: None,
-            dns_servers: Default::default(),
-        });
-        let (stack, _runner) = embassy_net::new(
-            adapters::fake::NetDevice::new([2, 0, 0, 0, 0, 1]),
-            config,
-            leak(embassy_net::StackResources::<2>::new()),
-            1,
-        );
-        let stand = leak(supervisor::stand!(super::MQTT_FRAG<Fixed, FakeLink>));
+    fn node(stack: Stack<'static>) -> Pin<Box<dyn Future<Output = ()>>> {
+        let stand = leak(supervisor::stand!(super::MQTT_FRAG));
         Box::pin(task(stand.ctx(
             leak(stack),
             leak(DeviceInfo {
@@ -765,8 +729,8 @@ pub(crate) mod tests {
                 last_panic: None,
             }),
             leak("devices"),
-            leak(Fixed(ENDPOINT)),
-            leak(link),
+            leak(ENDPOINT),
+            leak(TcpClient::new(stack, leak([0; 1024]), leak([0; 1024]))),
             // {%- if ota == "true" %}
             leak(crate::ota::tests::live().0),
             // {%- endif %}
@@ -775,60 +739,93 @@ pub(crate) mod tests {
         )))
     }
 
-    fn spin_node(node: &mut Pin<Box<dyn Future<Output = ()>>>) {
-        for _ in 0..8 {
-            assert!(poll(node.as_mut()).is_pending(), "узел не выходит");
+    /// Гоняет оба стека и узел на «устройстве», пока брокер ведёт сценарий
+    /// `script` на «хосте».
+    async fn with_broker<R>(script: impl AsyncFnOnce(Broker) -> R) -> R {
+        MockDriver::get().reset();
+        let ((device, mut device_runner), (host, mut host_runner)) = pair();
+        let node = node(device);
+        tokio::select! {
+            never = device_runner.run() => never,
+            never = host_runner.run() => never,
+            () = node => panic!("узел вернулся"),
+            result = script(Broker::new(host)) => result,
         }
     }
 
-    #[test]
-    fn node_redials_after_refusal() {
-        let refusing = FakeBroker::default();
-        refusing.push(&connack(0x86));
-        let second = accepting();
-        let link = FakeLink::new([Some(refusing), Some(second.clone())]);
-        let mut node = node(link.clone());
-        spin_node(&mut node);
-        assert_eq!(link.dials(), 2);
-        assert_eq!(link.hang_ups(), 1);
-        let sent = sent(&second.output());
-        let status = sent.iter().find(|p| p.topic == topic("/status")).unwrap();
-        assert_eq!(status.payload, b"online");
+    /// Брокер отверг подключение — плата кладёт трубку и подключается снова
+    /// после паузы клиента (соединение прожило меньше 30 с — отказ), и вторая
+    /// сессия выходит в сеть.
+    #[tokio::test]
+    async fn node_redials_after_refusal() {
+        with_broker(async |mut broker| {
+            broker.accept().await;
+            broker.send(&connack(0x86)).await;
+            broker.close().await;
+            let refused = embassy_time::Instant::now();
+            let second = broker.welcome().await;
+            assert!(
+                refused.elapsed() >= Duration::from_secs(1),
+                "повтор без паузы клиента"
+            );
+            assert!(contains(&second, b"online"));
+        })
+        .await;
     }
 
-    #[test]
-    fn node_logs_and_redials_on_dial_failure() {
-        let second = accepting();
-        let link = FakeLink::new([None, Some(second.clone())]);
-        let mut node = node(link.clone());
-        spin_node(&mut node);
-        assert_eq!(link.dials(), 2);
-        let sent = sent(&second.output());
-        let status = sent.iter().find(|p| p.topic == topic("/status")).unwrap();
-        assert_eq!(status.payload, b"online");
+    /// Брокера ещё нет — попытка отказывает (RST), узел пишет в лог и
+    /// подключается снова, когда брокер поднялся.
+    #[tokio::test]
+    async fn node_logs_and_redials_on_dial_failure() {
+        with_broker(async |mut broker| {
+            // Пусть первая попытка придёт, пока никто не слушает.
+            for _ in 0..100 {
+                tokio::task::yield_now().await;
+            }
+            let started = embassy_time::Instant::now();
+            let session = broker.welcome().await;
+            // Подключение — только после паузы клиента: значит, первая
+            // попытка отказала, а не дождалась брокера.
+            assert!(
+                started.elapsed() >= Duration::from_secs(1),
+                "первая попытка не отказала"
+            );
+            assert!(contains(&session, topic("/status").as_bytes()));
+        })
+        .await;
     }
 
-    #[test]
-    fn node_redials_after_loss() {
-        let (first, second) = (accepting(), accepting());
-        let link = FakeLink::new([Some(first.clone()), Some(second.clone())]);
-        let mut node = node(link.clone());
-        spin_node(&mut node);
-        assert_eq!(link.dials(), 1, "первая сессия в сети");
-        first.fail_reads();
-        spin_node(&mut node);
-        assert_eq!(link.dials(), 2);
-        assert_eq!(link.hang_ups(), 1);
-        assert!(contains(&second.output(), topic("/cmd/#").as_bytes()));
+    /// Связь оборвалась посреди сессии — узел подключается снова и снова
+    /// подписывается.
+    #[tokio::test]
+    async fn node_redials_after_loss() {
+        with_broker(async |mut broker| {
+            broker.welcome().await;
+            broker.close().await;
+            let second = broker.welcome().await;
+            assert!(contains(&second, topic("/cmd/#").as_bytes()));
+        })
+        .await;
     }
 
-    #[test]
-    fn node_never_returns() {
-        let link = FakeLink::new([Some(accepting())]);
-        let mut node = node(link.clone());
-        spin_node(&mut node);
-        MockDriver::get().advance(Duration::from_secs(60));
-        spin_node(&mut node);
-        assert_eq!(link.dials(), 1, "живая сессия не переподключается");
+    /// Минута в сети — узел не возвращается (`with_broker` упал бы на его
+    /// выходе) и живую сессию не рвёт.
+    #[tokio::test]
+    async fn node_never_returns() {
+        with_broker(async |mut broker| {
+            broker.welcome().await;
+            for _ in 0..60 {
+                MockDriver::get().advance(Duration::from_secs(1));
+                for _ in 0..10 {
+                    tokio::task::yield_now().await;
+                }
+            }
+            assert_eq!(
+                broker.0.state(),
+                embassy_net::tcp::State::Established,
+                "сессия та же"
+            );
+        })
+        .await;
     }
 }

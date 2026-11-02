@@ -2,7 +2,8 @@
 //!
 //! Средний этап трёхэтапной модели: host-тесты (`cargo xtask test host`)
 //! гоняют логику `domain` на хосте и про железо ничего не знают, а
-//! host-target тесты смотрят на прошитое устройство снаружи. Здесь — код,
+//! host-target тесты смотрят на готовое устройство снаружи, через его протокол.
+//! Здесь — код,
 //! которому нужен настоящий чип: тактирование, драйвер времени, периферия,
 //! ровно та инициализация, которую делает `Board`.
 //!
@@ -21,7 +22,7 @@
 #![no_std]
 #![no_main]
 
-// Транспорт тот же, что в `app` (см. crates-cross/app/src/main.rs), а паникёр —
+// Транспорт тот же, что в `app` (см. crates-cross/app/src/run.rs), а паникёр —
 // нет: здесь его даёт сам `embedded-test`, и это принципиально. Его
 // `#[panic_handler]` заканчивается `semihosting::process::abort()`, который
 // `probe-rs run` читает как «этот тест упал» и переходит к следующему;
@@ -67,15 +68,15 @@ mod tests {
 {%- if ota == "true" %}
     /// Адаптер обновления над разделами платы — так же, как его строит
     /// compose-site узла OTA.
-    fn updater(firmware: bsp::FirmwareFlash) -> adapters::ota::Updater<bsp::FirmwareFlash> {
-        adapters::ota::Updater::new(firmware)
+    fn updater(firmware: bsp::FirmwareFlash) -> domain::ota::Updater<bsp::FirmwareFlash> {
+        domain::ota::Updater::new(firmware)
     }
 {%- endif %}
 {%- if config == "true" and config_store != "external" %}
     /// Хранилище настроек на весь носитель платы — так же, как его строит
     /// compose-site узла-потребителя.
-    fn settings(flash: bsp::ConfigFlash) -> impl ports::SettingsStorage<Error: core::fmt::Debug> {
-        adapters::settings::Settings::whole(flash)
+    fn settings(flash: bsp::ConfigFlash) -> domain::settings::Settings<bsp::ConfigFlash> {
+        domain::settings::Settings::whole(flash)
     }
 {%- endif %}
 
@@ -180,17 +181,15 @@ mod tests {
     /// отличить от «стираем под образ».
     #[test]
     async fn prepare_erases_what_the_swap_moves(board: Board) {
-        use ports::FirmwareUpdate;
-
 {%- if ota_store == "external" %}
         if no_external_flash() {
             return;
         }
-{%- endif %}
 
+{%- endif %}
         let mut ota = updater(board.firmware);
         let page = ota.erase_size();
-        let capacity = ota.capacity().expect("вместимость раздела");
+        let capacity = ota.capacity();
         // Последняя страница `ACTIVE`: дальше всего от короткого образа.
         let tail = capacity - page;
 
@@ -258,14 +257,12 @@ mod tests {
     /// настоящий, а вся суть именно в стирании.
     #[test]
     async fn dfu_partition_keeps_both_writes_into_one_sector(board: Board) {
-        use ports::FirmwareUpdate;
-
 {%- if ota_store == "external" %}
         if no_external_flash() {
             return;
         }
-{%- endif %}
 
+{%- endif %}
         let mut ota = updater(board.firmware);
 
         let first = [0xA1u8; 32];
@@ -306,11 +303,11 @@ mod tests {
     /// `cargo xtask build`), поэтому тест их туда и кладёт: подделать их
     /// злоумышленник не может, они внутри подписанных байтов, а вот тесту
     /// достаточно записи в `DFU`. Перед версией — отпечаток раскладки самой
-    /// платы (`FirmwareUpdate::layout`): без него отказ пришёл бы раньше
+    /// платы (`Updater::layout`): без него отказ пришёл бы раньше
     /// версии, `Layout`, и `Rollback` тест бы не увидел.
     #[test]
     async fn ota_rejects_an_older_image(board: Board) {
-        use ports::{FirmwareUpdate, UpdateError};
+        use domain::ota::update::UpdateError;
 
         const LENGTH: u32 = 32;
         const LONGER: u32 = LENGTH * 2;
@@ -323,8 +320,8 @@ mod tests {
         if no_external_flash() {
             return;
         }
-{%- endif %}
 
+{%- endif %}
         let mut ota = updater(board.firmware);
 
         // Кратно WRITE_SIZE флеша. Хвост — раскладка этой прошивки (иначе
@@ -385,8 +382,6 @@ mod tests {
     /// кончилась.
     #[test]
     async fn settings_store_and_read_back(board: Board) {
-        use ports::SettingsStorage;
-
         const KEY: u32 = 0;
         let written = b"template";
         let mut scratch = [0u8; 32];

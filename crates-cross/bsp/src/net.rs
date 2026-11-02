@@ -37,7 +37,7 @@ pub type Stack = embassy_net::Stack<'static>;
 
 /// Фоновая работа стека (узел `NET`) и сам стек — их рождает один
 /// `embassy_net::new`.
-pub type Net = adapters::net::Net<Device>;
+pub type Net = adapters_hw::net::Net<Device>;
 
 // Память стека: `embassy_net::new` держит её `&'static mut`. `ConstStaticCell`
 // — значения известны при компиляции и лежат в `.bss`, а не собираются на

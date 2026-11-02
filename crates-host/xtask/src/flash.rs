@@ -33,20 +33,34 @@ pub fn flash_all(sh: &xshell::Shell, profile: &str) -> Result<(), anyhow::Error>
     //
     // {%- endif %}
     // Проверка раскладки вообще — до первой записи в железо, а не после:
-    // прошивка необратима, и её откат стоит отдельного флеш-цикла. `cargo
-    // flash` сам пересобирает пакет, но прочитать ELF получается только после
-    // сборки, а `build` между ними может не стоять. Поэтому образ собираем
-    // здесь и сразу сверяем его начало с началом раздела — той же проверкой,
-    // что и в `build`, только без печати размера.
-    // {%- if net_services contains "rest" or net_services contains "mqtt" or ssh_auth == "password" or ssh_host_key == "file" %}
-    // Секреты вшиваются в прошивку (`include_str!`): к сборке файлы нужны.
-    crate::secrets::ensure(&root_dir())?;
-    // {%- endif %}
-    check_image_origin(sh, profile)?;
+    // прошивка необратима, и её откат стоит отдельного флеш-цикла.
+    check_app(sh, profile)?;
+    flash_images(sh, profile)
+}
+
+/// То же без сверки: её уже сделал вызывающий ([`check_app`]) — `test
+/// host-target`, которому между сверкой и прошивкой ещё собирать образы OTA.
+pub fn flash_images(sh: &xshell::Shell, profile: &str) -> Result<(), anyhow::Error> {
     // {%- if ota == "true" %}
     flash_boot(sh, true)?;
     // {%- endif %}
     flash_package(sh, APP_ARTIFACT, profile)
+}
+
+/// Собирает приложение и сверяет начало его образа с началом раздела — без
+/// прошивки: перед записью её делает [`flash_all`], а `test host-target` —
+/// всегда, и без пробника тоже (это проверка сборки, а не железа).
+///
+/// `cargo flash` сам пересобирает пакет, но прочитать ELF получается только
+/// после сборки, а `build` между ними может не стоять. Поэтому образ собираем
+/// здесь и сразу сверяем его начало с началом раздела — той же проверкой, что
+/// и в `build`, только без печати размера.
+pub fn check_app(sh: &xshell::Shell, profile: &str) -> Result<(), anyhow::Error> {
+    // {%- if net_services contains "rest" or net_services contains "mqtt" or ssh_auth == "password" or ssh_host_key == "file" %}
+    // Секреты вшиваются в прошивку (`include_str!`): к сборке файлы нужны.
+    crate::secrets::ensure(&root_dir())?;
+    // {%- endif %}
+    check_image_origin(sh, profile)
 }
 // {%- if ota == "true" %}
 
@@ -77,11 +91,17 @@ pub fn flash_boot(sh: &xshell::Shell, watchdog: bool) -> Result<(), anyhow::Erro
 }
 // {%- endif %}
 
+/// Бинарник пакета — явно (`--bin`, одноимённый пакету): у `app` с OTA
+/// бинарников два, второй — тестовый `app-unconfirmed`, и шить надо не его.
 fn flash_package(sh: &xshell::Shell, package: &str, profile: &str) -> Result<(), anyhow::Error> {
     let _p = sh.push_dir(root_dir().join("crates-cross"));
     match profile {
-        "release" => cmd!(sh, "cargo flash -p {package} --release --chip {CHIP}").run()?,
-        _ => cmd!(sh, "cargo flash -p {package} --chip {CHIP}").run()?,
+        "release" => cmd!(
+            sh,
+            "cargo flash -p {package} --bin {package} --release --chip {CHIP}"
+        )
+        .run()?,
+        _ => cmd!(sh, "cargo flash -p {package} --bin {package} --chip {CHIP}").run()?,
     }
     Ok(())
 }

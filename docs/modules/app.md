@@ -49,12 +49,12 @@
 
 # defmt-транспорт для `release` без пробника: UART
 
-`main.rs` держит `defmt-rtt` дефолтным транспортом в обоих профилях —
+`run.rs` держит `defmt-rtt` дефолтным транспортом в обоих профилях —
 шаблон не знает, какой конкретный USART{% if has_usb == "true" %}/USB{% endif %} плата отведёт под лог
 без пробника (RTT его не даёт, отладочный пробник должен быть физически
 подключён). Ниже — паттерн на замену для `release`, когда `Board` начнёт
 отдавать реальную периферию. **При его подключении обязательно сделайте
-`use defmt_rtt as _;` в `main.rs` `#[cfg(debug_assertions)]`** (сейчас он
+`use defmt_rtt as _;` в `run.rs` `#[cfg(debug_assertions)]`** (сейчас он
 безусловный): `#[global_logger]` резолвится линкером по имени символа
 (`_defmt_acquire` и т.п.), а не как rustc lang item, поэтому два активных
 разом дадут жёсткий `error: Linking globals named '_defmt_acquire':
@@ -130,43 +130,46 @@ async fn uart_drain_task(mut uart: embassy_stm32::usart::UartTx<'static, embassy
 {%- if protocol_link == "true" %}
 {%- capture sources %}{% if has_uart == "true" %}, потоком UART{% endif %}{% if has_usb == "true" %}, потоком CDC{% endif %}{% if has_net == "true" %}, сетевым стеком{% endif %}{% endcapture %}
 
-# Канал протокола: `crate::link`
+# Канал протокола — конкретным типом там, где строится
 
-Канал протокола (кадрирование, сокет) строит `link(…)` модуля транспорта над
-тем, что отдала плата: {{ sources | remove_first: ", " }}; память канала —
-{% if graph == "true" %}`static T` в привязке графа{% else %}статики модуля задачи{% endif %}. Тип канала (`Link`), его размеры и
-`link` — `crates-cross/app/src/link/<вид>.rs`, по модулю на транспорт: у
-uart/usb — подмодуль `<транспорт>` с `Source` (рычаг платы под ним), у tcp/udp
-модуль транспорта — сам файл вида; путь типа —
-`crate::link::<вид>[::<транспорт>]::Link`. Задачи embassy не могут быть
-generic, поэтому узел называет канал этим псевдонимом. Размер буфера и порт —
-решение приложения, и `bsp` их не знает: своё кадрирование — другой тип `Link`
-и его `link`, свой размер буфера или порт — константы там.
+Канал протокола (кадрирование{% if has_net == "true" %}, сокет{% endif %}) — тип из `adapters-logic` над тем, что
+отдала плата: {{ sources | remove_first: ", " }}. Строит его {% if graph == "true" %}привязка узла в `fragments:`
+графа (`crates-cross/app/src/graph.rs`): тип канала стоит параметром фрагмента,
+конструктор — во входе узла, память — `static T` там же{% else %}задача протокола
+(`crates-cross/app/src/tasks/<протокол>.rs`): рычаг платы — псевдоним `Source`
+(задачи embassy не могут быть generic), канал — конкретным типом в теле
+задачи, память — статики модуля задачи{% endif %}. Отдельного модуля «каналов» в
+`app` нет: у каждого канала одно место сборки, и псевдоним над ним ничего не
+добавлял бы. Размер буфера и порт — решение приложения, и `bsp` их не знает:
+своё кадрирование — другой тип в том же месте, свой размер буфера или порт —
+число там же, с комментарием, что оно значит.{% if has_udp == "true" %} Память метаданных датаграмм UDP
+приходит в `adapters_logic::net::UdpLink::new` нулями (`MaybeUninit`), и
+заполняет её сам конструктор.{% endif %}
 
 Буфер кадра держит сам канал (`ports::FrameLink::buffer`), а протокол —
-обработчик ({% if has_modbus == "true" %}`domain::server::Handler`: `domain::modbus::Slave`{% if has_protobuf == "true" %}; {% endif %}{% endif %}{% if has_protobuf == "true" %}`domain::protobuf::Service`{% endif %}) — не порт:
-его реализует и зовёт сам `domain`.
-{%- if has_modbus == "true" %} Узел Modbus slave — `::domain::SERVER_FRAG<L, H>`,
+обработчик ({% if has_modbus == "true" %}`domain::modbus::Slave`{% if has_protobuf == "true" %}; {% endif %}{% endif %}{% if has_protobuf == "true" %}`domain::protobuf::Service`{% endif %}) — конкретный тип домена, трейта
+под него нет: реализация одна.
+{%- if has_modbus == "true" %} Узел Modbus slave — `::domain::SERVER_FRAG<L, R>`,
 объявлен в `domain::server` ({% if graph == "true" %}граф называет узлы{% else %}узлы{% endif %} `MODBUS_<транспорт>`).{% endif %}
 {%- if has_protobuf == "true" %} Узел protobuf хоста — `::domain::PROTOBUF_FRAG<L>`,
 объявлен в `domain::protobuf` (`PROTOBUF_<транспорт>`); его канал —
 `ports::FrameDuplex` (контракт — doc трейта), а ответ уходит из своего буфера
 узла ({% if graph == "true" %}`static [u8; RESPONSE_MAX]` в привязке{% else %}статик модуля задачи{% endif %}) через `send_from`.{% endif %} Вход узла — {% if graph == "true" %}выражение
 в `fragments:` графа{% else %}`spawn` модуля задачи (`crates-cross/app/src/tasks/`), по модулю на
-задачу; `main.rs` только зовёт `tasks::spawn_all`{% endif %}.
+задачу; `run.rs` только зовёт `tasks::spawn_all`{% endif %}.
 {%- endif %}
 {%- if has_modbus == "true" %}
 
 # Modbus: одна карта на все узлы `MODBUS_*`
 
 Узел `MODBUS_<ТРАНСПОРТ>` — по одному на транспорт с Modbus в `links`.{% if graph == "true" %}
-Фрагмент — узел протокола `domain::SERVER_FRAG<L, H>`: канал
-`L` (`crate::link::…::Link`, раздел выше) строит граф —
-`link` этого модуля над рычагом платы в памяти `static T`, обработчик `H` —
-`domain::modbus::Slave` над картой регистров с адресом slave'а (вход
+Фрагмент — узел протокола `domain::SERVER_FRAG<L, R>`: канал
+`L` (раздел выше) строит граф — конкретным типом из `adapters_logic::modbus`
+над рычагом платы в памяти `static T`, обработчик —
+`domain::modbus::Slave` над картой регистров `R` с адресом slave'а (вход
 `domain::server::ServerWiring`).{% else %}
 В этом проекте это задача в `crates-cross/app/src/tasks/modbus.rs`: она собирает
-контекст узла `domain::server::ServerCtx` — канал `crate::link::<вид>[::<транспорт>]::link`
+контекст узла `domain::server::ServerCtx` — канал `adapters_logic::modbus::Rtu`
 над рычагом платы и обработчик `domain::modbus::Slave` над
 картой регистров с адресом slave'а — и зовёт `domain::server::task`.{% endif %} Карта одна на проект: её
 заводит `crates-cross/app/src/modbus.rs` в `static` (`OnceLock`) при первом
@@ -185,6 +188,33 @@ generic, поэтому узел называет канал этим псевд
 тип реализует `domain::modbus::Registers` и живёт в `domain`. Карта строится через
 `Map::default()`; без `Default` замените эту одну строку в `crate::modbus::handle`
 своим конструктором. Узлы{% if graph == "true" %} и граф{% endif %} тип берут оттуда и правок не требуют.
+{%- endif %}
+{%- if ota == "true" %}
+
+# Тестовый образ `app-unconfirmed`: фичи `unconfirmed` и `version-next`
+
+У пакета два бинарника, у каждого своя точка входа: рабочий `app`
+(`src/main.rs`) и тестовый `app-unconfirmed` (`src/bin/app-unconfirmed.rs`,
+`required-features = ["unconfirmed"]`), которым `cargo xtask test
+host-target` проверяет обмен и откат по протоколу проекта. Тело прошивки —
+библиотека пакета (`src/lib.rs`, запуск и цикл исполнителя — `src/run.rs`):
+оба `#[entry]` только зовут `app::run`, а паникёр, логгер и обработчик
+`HardFault` из библиотеки попадают в каждый бинарник по разу. Чем образы
+различаются, решает фича (`cfg!(feature = …)` в библиотеке). Фичи:
+
+* `version-next` — версия образа на единицу больше `version` из Cargo.toml
+  (`crate::version::FW_VERSION`): ровно настолько, чтобы рабочий образ той
+  же сборки принял его как обновление;
+* `unconfirmed` (включает `version-next`) — хосту и в баннере образ
+  называет себя меткой `unconfirmed` вместо версии (`FW_VERSION_TEXT`), а узел
+  OTA получает
+  `confirmed: cfg!(feature = "unconfirmed")` во входе и `mark_booted` не
+  зовёт: следующий сброс откатывает образ. В логе старта — `warn!`.
+
+`cargo build`, `cargo xtask build`/`lint cross` и релиз его не собирают
+(`required-features`), `cargo run -p app` берёт `app` (`default-run`), а
+`cargo flash` в `xtask` — `--bin app`. Подробности — `docs/ota.md`, «Тесты OTA
+по протоколу».
 {%- endif %}
 
 # Питание от батареи: STOP между задачами
@@ -215,7 +245,7 @@ USB, Ethernet и CAN в STOP не работают.
 //      #[unsafe(export_name = "__pender")]
 //      fn pender(_: *mut ()) { WORK.store(true, Ordering::SeqCst); }
 //
-// 3. main.rs: цикл остаётся ручным, меняется только сон — вместо `wfe()`:
+// 3. run.rs: цикл остаётся ручным, меняется только сон — вместо `wfe()`:
 //
 //      critical_section::with(|cs| {
 //          if !WORK.swap(false, Ordering::SeqCst) {

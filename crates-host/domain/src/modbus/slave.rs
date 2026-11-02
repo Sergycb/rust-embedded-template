@@ -10,14 +10,13 @@ use rusty_modbus_codec::{RequestPdu, decode_request};
 use rusty_modbus_types::ExceptionCode;
 
 use crate::modbus::{Bits, BitsMut, Registers, Words, WordsMut, identity};
-use crate::server::Handler;
 
 /// Ответ на запись — первые пять байт запроса: функция, адрес и значение
 /// (FC05/06) или количество (FC15/16).
 const ECHO: usize = 5;
 
 /// Slave с адресом `unit` над данными `regs`: кадр «адрес и PDU» из канала
-/// (`adapters::modbus::{Rtu, Tcp, Udp}`) — в запрос к `regs`, ответ — в тот
+/// (`adapters_logic::modbus::{Rtu, Tcp, Udp}`) — в запрос к `regs`, ответ — в тот
 /// же кадр.
 ///
 /// Отвечает на запрос с адресом `unit` и с 0xFF — так TCP и UDP
@@ -66,8 +65,14 @@ impl<R> Slave<R> {
     }
 }
 
-impl<R: Registers> Handler for Slave<R> {
-    fn begin(&mut self, capacity: usize) {
+impl<R: Registers> Slave<R> {
+    /// Проверка при старте узла: `capacity` — размер буфера канала.
+    ///
+    /// # Panics
+    ///
+    /// Если буфер не вмещает адрес и самый длинный PDU: ответ не поместился
+    /// бы, и это ошибка сборки канала.
+    pub fn begin(&mut self, capacity: usize) {
         assert!(
             capacity > MAX_PDU,
             "буфер кадра {capacity} не вмещает адрес и PDU ({} байт)",
@@ -76,7 +81,13 @@ impl<R: Registers> Handler for Slave<R> {
         defmt_or_log::info!("modbus: slave, адрес {}", self.unit);
     }
 
-    async fn handle(&mut self, frame: &mut [u8], len: usize) -> Option<usize> {
+    /// Отвечает на кадр «адрес и PDU» `frame[..len]`: кладёт ответ в начало
+    /// того же `frame` и возвращает его длину; `None` — не отвечать (чужой
+    /// адрес, широковещательный запрос, ответ не поместился).
+    ///
+    /// Буфер один на запрос и ответ — тот же, что у канала: запрос, нужный и
+    /// во время записи ответа, slave копирует себе сам.
+    pub async fn handle(&mut self, frame: &mut [u8], len: usize) -> Option<usize> {
         let (&to, pdu) = frame[..len].split_first()?;
         let &fc = pdu.first()?;
         let answer = to == self.unit || to == 0xFF;
@@ -223,7 +234,7 @@ fn exception(code: ExceptionCode) -> Exception {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modbus::fakes::Map;
+    use crate::modbus::fake::Map;
 
     /// Прогоняет запросы `(адрес, PDU)` через slave с адресом 1; возвращает
     /// ответы.

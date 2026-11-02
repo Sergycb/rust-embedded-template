@@ -1,0 +1,96 @@
+[package]
+name = "adapters-logic"
+version.workspace      = true
+edition.workspace      = true
+license.workspace      = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+# `defmt::Format` на ошибках каналов — в прошивке; включает crates-cross/Cargo.toml.
+defmt = [
+	"dep:defmt",
+	"ports/defmt",
+	# {%- if has_net == "true" %}
+	"embassy-net/defmt",
+	# {%- endif %}
+]
+
+[dependencies]
+ports = { workspace = true }
+# {%- if stream_io == "true" %}
+# Поток байтов `embedded_io_async::{Read, Write}` — под каналами над потоком:
+# {%- if modbus_rtu == "true" %}
+# - `modbus::Rtu`
+# {%- endif %}
+# {%- if modbus_tcp == "true" %}
+# - `modbus::Tcp`
+# {%- endif %}
+# {%- if cobs_used == "true" %}
+# - `cobs::Cobs`
+# {%- endif %}
+# {%- if has_tcp == "true" %}
+# и его реализует `net::TcpServer`.
+# {%- endif %}
+# {%- if has_udp == "true" %}
+# UDP-каналу поток не нужен: границу кадра даёт датаграмма.
+# {%- endif %}
+embedded-io-async = { workspace = true }
+# {%- endif %}
+# {%- if crc_used == "true" %}
+# CRC кадра:
+# {%- if modbus_rtu == "true" %}
+# RTU (`modbus::Rtu`);
+# {%- endif %}
+# {%- if cobs_used == "true" %}
+# COBS (`cobs::Cobs`).
+# {%- endif %}
+crc = { workspace = true }
+# {%- endif %}
+# {%- if cobs_used == "true" %}
+# Кодек COBS под `cobs::Cobs`.
+cobs = { workspace = true }
+# {%- endif %}
+# {%- if modbus_mbap == "true" %}
+# Заголовок MBAP (`MbapHeader`) — из словаря Modbus, а не свой (`modbus::mbap`).
+rusty-modbus-types = { workspace = true }
+# {%- endif %}
+# {%- if has_net == "true" %}
+# Сокеты `embassy-net` под транспортами (`net`).
+embassy-net = { workspace = true }
+# {%- endif %}
+# {%- if has_tcp == "true" or modbus_rtu == "true" %}
+# Таймауты:
+# {%- if has_tcp == "true" %}
+# keep-alive сокета TCP (`net`);
+# {%- endif %}
+# {%- if modbus_rtu == "true" %}
+# тишина посреди кадра RTU (`modbus::Rtu`).
+# {%- endif %}
+embassy-time = { workspace = true }
+# {%- endif %}
+defmt = { workspace = true, optional = true }
+
+[dev-dependencies]
+# Исполнитель для async-тестов над фейками потоков (`#[tokio::test]`); фичи —
+# в корневом Cargo.toml.
+tokio = { workspace = true }
+# {%- if framing_tests == "true" %}
+# Property-тесты кадрирования: любое дробление потока и любой мусор.
+proptest = { workspace = true }
+# {%- endif %}
+# {%- if has_net == "true" or modbus_rtu == "true" %}
+# {%- if has_net == "true" %}
+# Транспорты над сокетами тестируются над кабелем между двумя стеками
+# `embassy-net` в памяти (`adapters_hw::net::fake::cable`); стеки ждут таймеров и
+# критической секции — на хосте их дают `mock-driver` и `critical-section/std`.
+adapters-hw = { workspace = true, features = ["fake"] }
+# {%- endif %}
+# {%- if modbus_rtu == "true" %}
+# Тест паузы посреди кадра RTU двигает часы `mock-driver`.
+# {%- endif %}
+embassy-time = { workspace = true, features = ["mock-driver", "generic-queue-8"] }
+critical-section = { workspace = true, features = ["std"] }
+# {%- endif %}

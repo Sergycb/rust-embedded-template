@@ -6,9 +6,9 @@ use embassy_time::Instant;
 use core::array::TryFromSliceError;
 use core::fmt::Write as _;
 use defmt_or_log::warn;
-use ports::{Chunk, OtaCommand, OtaReply, Rejection, SIGNATURE_BYTES};
 
-use crate::ota::OtaClient;
+use crate::ota::command::{CHUNK_BYTES, Chunk, Rejection, SIGNATURE_BYTES};
+use crate::ota::{OtaClient, OtaCommand, OtaReply};
 // {%- endif %}
 use proto::{Error, Info, Request, Request_, Response, Response_, heapless};
 
@@ -20,9 +20,9 @@ const _: () = assert!(proto::UID_BYTES == crate::device::UID_BYTES);
 const _: () = assert!(crate::device::PANIC_BRIEF <= proto::PANIC_BYTES);
 
 /// Самый длинный запрос схемы, байт: под него `app` заводит буфер канала
-/// узла (`crate::link::<вид>` в `crates-cross/app`). Предел выводит
-/// `micropb` из ёмкостей полей (`crates-host/proto/build.rs`), поэтому
-/// буфер растёт вместе со схемой.
+/// узла (привязка узла в графе или задача протокола в `crates-cross/app`).
+/// Предел выводит `micropb` из ёмкостей полей (`crates-host/proto/build.rs`),
+/// поэтому буфер растёт вместе со схемой.
 pub const REQUEST_MAX: usize = match <Request as micropb::MessageEncode>::MAX_SIZE {
     Ok(max) => max,
     Err(_) => panic!("у запроса схемы нет предела длины"),
@@ -187,8 +187,8 @@ impl Service {
 // Пределы полей схемы (`proto/build.rs`) — те же, что у команды узлу OTA:
 // разойдутся — кусок или подпись, прошедшие разбор, не дойдут до узла.
 const _: () = assert!(
-    proto::OTA_CHUNK_BYTES == ports::CHUNK_BYTES && proto::OTA_SIGNATURE_BYTES == SIGNATURE_BYTES,
-    "пределы OtaChunk.data/OtaStart.signature в proto/build.rs разошлись с ports"
+    proto::OTA_CHUNK_BYTES == CHUNK_BYTES && proto::OTA_SIGNATURE_BYTES == SIGNATURE_BYTES,
+    "пределы OtaChunk.data/OtaStart.signature в proto/build.rs разошлись с ota::command"
 );
 
 /// Подпись из `ota_start`: пусто — подписи нет (узел OTA отвергнет `Start`),
@@ -202,7 +202,7 @@ fn signature(bytes: &[u8]) -> Result<Option<[u8; SIGNATURE_BYTES]>, TryFromSlice
 }
 
 /// Исход команды обновления — `ok` или `error` с именем отказа
-/// (`ports::Rejection`).
+/// ([`Rejection`]).
 fn ota_reply(reply: OtaReply) -> Response_::Result {
     match reply {
         Ok(_) => Response_::Result::Ok(proto::Ok {}),
@@ -352,7 +352,7 @@ pub(crate) mod tests {
     #[test]
     fn an_outcome_becomes_ok_or_the_rejection_name() {
         assert!(matches!(
-            ota_reply(Ok(ports::Progress::Started)),
+            ota_reply(Ok(crate::ota::command::Progress::Started)),
             Response_::Result::Ok(_)
         ));
         let refused = ota_reply(Err(Rejection::NoSession));

@@ -40,12 +40,12 @@
 вырост» с компилируемым примером на каждую (`fsm`, `typestate`, `miniconf` и
 т.п.): как пользоваться библиотекой, показывает её собственная
 документация, а не шаблон{% if settings_port == "true" %}; единственное исключение — набросок подключения
-`miniconf` поверх порта настроек в шапке `adapters::settings`, потому что
-порт (`u32`-ключ → байты) проектировался под эту связку{% endif %}. Из `[dev-dependencies]` у `domain` (сверх того, что
+`miniconf` поверх хранилища настроек в шапке `domain::settings`, потому что
+хранилище (`u32`-ключ → байты) проектировалось под эту связку{% endif %}. Из `[dev-dependencies]` у `domain` (сверх того, что
 нужно для линковки `supervisor`, — см. комментарий в манифесте) главная —
 `tokio` (`rt` + `macros`, без
 `default-features`) — исполнитель для `#[tokio::test]` над фейками портов; у
-`adapters` он же для фейка флеша. Своего `block_on` в тестах нет намеренно:
+`adapters-hw` и `adapters-logic` он же — для тестов над фейками драйверов и потоков. Своего `block_on` в тестах нет намеренно:
 он был бы двумя копиями одних и тех же восьми строк в двух крейтах. Тест,
 повисший на `Pending` (фейки не ждут), ловит `.config/nextest.toml`: тест
 этих двух крейтов, не кончившийся за 20 с, nextest убивает, а не ждёт до
@@ -55,12 +55,12 @@
 
 Host-тесты гоняются `cargo xtask test host` — то есть `cargo nextest`, — а не
 `cargo test` и не кнопкой запуска тестов в IDE. Часы `embassy_time::MockDriver`
-(фича `mock-driver` в `[dev-dependencies]` `domain` и `adapters`) — одни на
+(фича `mock-driver` в `[dev-dependencies]` `domain`, `adapters-hw` и `adapters-logic`) — одни на
 процесс: тест сбрасывает их (`MockDriver::get().reset()`) и двигает
 (`advance`). nextest запускает каждый тест отдельным процессом, а `cargo test`
 и IDE — потоками одного, и два теста с часами двигают время друг другу: такой
 тест то проходит, то нет, и дело не в тесте.
-{%- capture clocked %}{% if graph == "true" %}, `domain::heartbeat`{% endif %}{% if ota == "true" %}, `domain::ota`{% endif %}{% if has_protobuf == "true" %}, `domain::protobuf::service`{% endif %}{% if net_services contains "mqtt" %}, `domain::mqtt`, `adapters::net::tcp::client`{% endif %}{% if net_services contains "ssh" %}, `domain::ssh`{% endif %}{% if has_usb == "true" %}, `adapters::usb`{% endif %}{% if modbus_rtu == "true" %}, `adapters::modbus::rtu`{% endif %}{% endcapture %}
+{%- capture clocked %}{% if graph == "true" %}, `domain::heartbeat`{% endif %}{% if ota == "true" %}, `domain::ota`{% endif %}{% if has_protobuf == "true" %}, `domain::protobuf::service`{% endif %}{% if net_services contains "mqtt" %}, `domain::mqtt`{% endif %}{% if net_services contains "ssh" %}, `domain::ssh`{% endif %}{% if has_usb == "true" %}, `adapters_hw::usb`{% endif %}{% if modbus_rtu == "true" %}, `adapters_logic::modbus::rtu`{% endif %}{% endcapture %}
 {%- if clocked != "" %} В этом проекте с часами работают тесты {{ clocked | remove_first: ", " }},
 и то же касается любого нового теста с `MockDriver`.{% else %} Касается любого теста с
 `MockDriver`, в том числе первого, который появится в проекте.{% endif %}
@@ -89,7 +89,7 @@ Host-тесты гоняются `cargo xtask test host` — то есть `carg
   занимает flash, по `&'static str` на узел. Фичи `defmt` у `supervisor`{% if graph == "true" %}/`watchdog`{% endif %}
   не включены — библиотека сама ничего не
   печатает, и нужное прошивка логирует сама:
-  {% if graph == "true" %}ошибку `spawn_all` — `main.rs` (через `Display`: `Debug` у ошибки графа нет),
+  {% if graph == "true" %}ошибку `spawn_all` — `run.rs` приложения (через `Display`: `Debug` у ошибки графа нет),
   имя узла, переставшего кормить сторож, перед аппаратным сбросом —
   `before_reset` в `bsp::wdg`, застой узла — наблюдатель `observe:` в
   `graph.rs`{% else %}ошибку спавна задачи — `expect` в `tasks::spawn_all`{% endif %}. Перезапусков узлов в шаблоне нет
@@ -122,7 +122,7 @@ Host-тесты гоняются `cargo xtask test host` — то есть `carg
   `#[global_logger]` устроен иначе: резолвится линковкой по имени символа
   (`_defmt_acquire` и т.п.), и если два `use` окажутся активны одновременно —
   жёсткий `error: Linking globals named '_defmt_acquire': symbol multiply
-  defined!`. При правке `main.rs` держите инвариант «ровно один
+  defined!`. При правке `run.rs` приложения держите инвариант «ровно один
   `use <логгер> as _;` активен на сборку».
   **Осторожно с `[profile.dev]`/`[profile.release]` в `crates-cross/Cargo.toml`**:
   `debug-assertions` там задан явно (ради `overflow-checks`) — если развилка
@@ -137,7 +137,7 @@ Host-тесты гоняются `cargo xtask test host` — то есть `carg
   `defmt-serial` держат `defmt@0.3.x` при `defmt@1.x` у нас{% if has_usb == "true" %},
   `defmt-embassy-usbserial` требует `embassy-usb ^0.5`{% endif %}) — `docs/modules/app.md`,
   «defmt-транспорт для `release` без пробника». Дефолт в обоих профилях реального
-  `main.rs` — `defmt-rtt`; при подключении паттерна не забыть сделать
+  `run.rs` — `defmt-rtt`; при подключении паттерна не забыть сделать
   существующий `use defmt_rtt as _;` тоже `#[cfg(debug_assertions)]`.
 - `-Tdefmt.x` линкуется статически из `crates-cross/.cargo/config.toml` (`rustflags`,
   рядом с `-Tlink.x`), не из `build.rs` — `defmt` используется в обоих профилях
@@ -157,38 +157,46 @@ Host-тесты гоняются `cargo xtask test host` — то есть `carg
 `pub use`-реэкспорты. Модуль без кода (одна `#![doc = include_str!(..)]`) не
 заводится: такой документации место в `docs/`. Публичный `mod` документирован — `///` над объявлением
 либо `#![doc = include_str!(..)]` в самом модуле, как в `bsp`; у приватных и
-тестовых{% if ota == "true" %} (`ota::fakes`){% endif %} — по необходимости. Определений — типов,
+тестовых{% if ota == "true" %} (`ota::fake`){% endif %} — по необходимости. Определений — типов,
 трейтов, функций, `impl` — в нём нет: они живут в модулях, названных по
 предметной области ({% if ota == "true" %}`ports::ota`, `domain::ota::download`{% else %}`domain::cpu_load::load`{% endif %}), а не по слою
 (`types`, `utils`).
 
 Реэкспорт в корне — часть правила, а не исключение из него: так устроены
-`embedded-hal` и `embassy-*`, и так путь `ports::{% if ota == "true" %}FirmwareUpdate{% else %}<Трейт>{% endif %}` остаётся
+`embedded-hal` и `embassy-*`, и так путь `ports::{% if ota == "true" %}Partitions{% else %}<Трейт>{% endif %}` остаётся
 коротким, а перестановка модулей внутри крейта не касается его пользователей.
 
-Тестовые помощники, которые делят несколько модулей, — блок
-`#[cfg(test)] mod fakes { .. }` в конце их общего родителя, а не отдельный
-файл
-{%- assign sep = ": " %}
-{%- if ota == "true" %}{{ sep }}фейки портов OTA — `domain::ota::fakes` (их делят `ota`,
-`ota::download` и `ota::update`){% assign sep = ", " %}{% endif %}
-{%- if has_net == "true" %}{{ sep }}кабель между двумя стеками `embassy-net` —
-`adapters::net::fakes` ({% if has_tcp == "true" %}`net::tcp::server`{% if has_udp == "true" %} и {% endif %}{% endif %}{% if has_udp == "true" %}`net::udp`{% endif %}){% endif %}. Отдельного файла и крейта
-для фейков нет: в сборке их не видно, а с кодом, который они подменяют, они
-рядом.
-{%- if has_usb == "true" or has_net == "true" or ota == "true" or config == "true" %}
+## Фейки
 
-Исключение — фейки, которые делят крейты: они в `adapters::fake` (модуль под
-`cfg(any(test, feature = "fake"))`)
+Фейк — не отдельный файл и не отдельный крейт, а модуль `fake` в конце того
+модуля, который он подменяет, перед `#[cfg(test)] mod tests`: в сборке его не
+видно, а с подменяемым кодом он рядом.
+
+- Фейк, который нужен только тестам своего крейта, — `#[cfg(test)] mod fake`
+  (подмодули и так видят его приватным; `pub(crate)` — если его берут модули
+  вне родителя, как `domain::server::fake`)
 {%- assign sep = ": " %}
-{%- if has_usb == "true" or has_net == "true" %}{{ sep }}драйверы без шины и линка для тестов узлов и транспортов{% assign sep = "; " %}{% endif %}
-{%- if ota == "true" or config == "true" %}{{ sep }}флеш в памяти с семантикой NOR
-`adapters::fake::MemFlash` — его берут тесты {% if ota == "true" %}`adapters::ota`, `domain::ota::boot`{% if config == "true" %} и {% endif %}{% endif %}{% if config == "true" %}`adapters::settings`{% endif %}.
-Готового мока `NorFlash` в экосистеме нет — `embedded-hal-mock` флеш не
-покрывает{% endif %}.
+{%- if ota == "true" %}{{ sep }}разделы обновления в памяти — `domain::ota::fake` (их делят `ota`,
+  `ota::download` и `ota::update`){% assign sep = ", " %}{% endif %}
+{%- if has_net == "true" %}{{ sep }}прогон двух стеков `embassy-net` на кабеле —
+  `adapters_logic::net::fake` ({% if has_tcp == "true" %}`net::tcp`{% if has_udp == "true" %} и {% endif %}{% endif %}{% if has_udp == "true" %}`net::udp`{% endif %}){% endif %}.
+{%- if has_usb == "true" or has_net == "true" or ota == "true" or settings_port == "true" %}
+- Фейк, который берут другие крейты, — `#[cfg(any(test, feature = "fake"))]
+  pub mod fake` в `adapters-hw`
+{%- assign sep = ": " %}
+{%- if has_usb == "true" %}{{ sep }}драйвер USB без шины (`usb::fake`){% assign sep = ", " %}{% endif %}
+{%- if has_net == "true" %}{{ sep }}устройство без линка и кабель между двумя стеками
+  (`net::fake`, `net::fake::cable`){% assign sep = ", " %}{% endif %}
+{%- if ota == "true" or settings_port == "true" %}{{ sep }}флеш в памяти с семантикой NOR
+  (`flash::fake::MemFlash` — его берут тесты {% if ota == "true" %}`domain::ota`, `domain::ota::boot`{% if settings_port == "true" %} и {% endif %}{% endif %}{% if settings_port == "true" %}`domain::settings`{% endif %}; готового
+  мока `NorFlash` в экосистеме нет — `embedded-hal-mock` флеш не покрывает){% endif %}.
+  Фичу `fake` включают dev-зависимости `domain` и `adapters-logic`{% if has_usb == "true" or has_net == "true" %}, а
+  в прошивке — `bsp`: те же драйверы стоят заглушками в слотах платы
+  (`bsp::stub`){% endif %}.
 {%- endif %}
-
-Фейк, который нужен одному модулю, живёт в его же `mod tests`.
+- Вспомогательный тип одного теста (сценарный драйвер, сокет-брокер) — в самом
+  `mod tests`; `mod fake` — для фейков, на которых стоит набор тестов модуля
+  или нескольких модулей.
 
 ## Порядок объектов в модуле
 
@@ -202,12 +210,19 @@ Host-тесты гоняются `cargo xtask test host` — то есть `carg
 6. `static` — память, которую модуль отдаёт `'static`, — после типов, под
    которые она заведена;
 7. функции;
-8. `#[cfg(test)] mod tests`.
+8. `mod fake` — фейки модуля (раздел «Фейки»);
+9. `#[cfg(test)] mod tests`.
 
 Порядок групп 1–7 держит clippy — `arbitrary_source_item_ordering` в
 `[workspace.lints.clippy]` обоих workspace, группы — `module-item-order-groupings`
 в обоих `clippy.toml`. Безымянные `const _: () = assert!(..)` линт не трогает —
-они остаются рядом с тем, что проверяют, — а модуль тестов он пропускает.
+они остаются рядом с тем, что проверяют, — а модули под `#[cfg(test)]` (`tests`
+и тестовый `fake`) он пропускает. Модуль `fake` под фичей
+(`cfg(any(test, feature = "fake"))`) для линта обычный `mod` не на своём
+месте, поэтому модуль, который его держит, снимает линт у себя:
+`#![cfg_attr(any(test, feature = "fake"), expect(clippy::arbitrary_source_item_ordering, ..))]`.
+Условие нужно, чтобы снять ровно там, где модуль есть: без фичи `expect` без
+нарушения сам стал бы предупреждением.
 
 Внутри каждого вида (`mod` с `mod`, `const` с `const`, `type` с `type`,
 `struct`, `enum`, `trait`, `static`, `fn` — каждый сам с собой) публичное стоит
@@ -265,9 +280,9 @@ README, раздел «Bootloader»; не пытайтесь «исправит�
   Причина — воспроизводимый релиз: разные версии rustc дают разный код, и
   образ по тегу без той же версии побайтно не повторить. Версию поднимают
   руками{% if ci == "gitlab" %} и вместе с образами `rust:` в `.gitlab-ci.yml`{% endif %}; версию `flip-link`
-  (`setup`, CI) — тоже везде разом. `rust-version = 1.96`
-  в манифесте остаётся: это нижняя граница крейтов `rust-lib`, а не версия
-  сборки. `rustfmt.toml` и `.editorconfig` нет — `cargo fmt` на умолчаниях.
+  (`setup`, CI) — тоже везде разом, как и `rust-version` в манифестах (корневой,
+  `crates-cross`, `chip-info`): MSRV приложения — версия, которой его
+  проверяют, а не меньшая, которую никто не собирает. `rustfmt.toml` и `.editorconfig` нет — `cargo fmt` на умолчаниях.
 - **Воспроизводимый релиз** — один коммит, собранный в том же окружении, что
   и релизный джоб CI (образ `rust:` — тот же путь проекта, `CARGO_HOME`,
   sysroot и каталог сборки), даёт побайтно один `app.bin` (и одну подпись).

@@ -1,0 +1,183 @@
+//! UDP-транспорт: [`UdpLink`] и его ошибка.
+
+use core::mem::MaybeUninit;
+
+use embassy_net::Stack;
+use embassy_net::udp::{PacketMetadata, RecvError, SendError, UdpMetadata, UdpSocket};
+use ports::{FrameDuplex, FrameLink, LinkError};
+
+/// UDP-канал на одном порту — [`FrameLink`] для протоколов, которым
+/// датаграмма и есть кадр.
+// {%- if modbus_udp == "true" %}
+/// Так работает `modbus::Udp`.
+// {%- endif %}
+// {%- if has_protobuf == "true" %}
+/// Так работает узел PROTOBUF.
+// {%- endif %}
+///
+/// Отвечает тому, кто прислал последнюю датаграмму: адрес отправителя порт
+/// не передаёт, а протоколы отвечают на запрос.
+pub struct UdpLink {
+    socket: UdpSocket<'static>,
+    peer: Option<UdpMetadata>,
+    /// Буфер канала: принятая датаграмма и собираемая к отправке.
+    buf: &'static mut [u8],
+}
+
+// Вручную: у сокетов `embassy-net` нет `Debug`.
+impl core::fmt::Debug for UdpLink {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("UdpLink").finish_non_exhaustive()
+    }
+}
+
+impl UdpLink {
+    /// Канал на порту `port` стека `stack`: буферы приёма и передачи сокета и
+    /// память под их метаданные — по записи на датаграмму в очереди, `Q` в
+    /// каждую сторону; `buf` — буфер канала (`FrameLink::buffer`), не короче
+    /// самой длинной датаграммы протокола.
+    ///
+    /// Метаданные приходят неинициализированными (`MaybeUninit`) и
+    /// заполняются здесь: память от compose-site — нули (`static T` графа), а
+    /// нулевые байты — не `PacketMetadata`.
+    ///
+    /// # Panics
+    ///
+    /// Если `port` 0 — сокет без порта не принимает ничего.
+    #[must_use]
+    pub fn new<const Q: usize>(
+        stack: Stack<'static>,
+        port: u16,
+        rx_meta: &'static mut MaybeUninit<[PacketMetadata; Q]>,
+        rx: &'static mut [u8],
+        tx_meta: &'static mut MaybeUninit<[PacketMetadata; Q]>,
+        tx: &'static mut [u8],
+        buf: &'static mut [u8],
+    ) -> Self {
+        assert!(port != 0, "UDP-канал на порту 0");
+        let rx_meta = rx_meta.write([PacketMetadata::EMPTY; Q]);
+        let tx_meta = tx_meta.write([PacketMetadata::EMPTY; Q]);
+        let mut socket = UdpSocket::new(stack, rx_meta, rx, tx_meta, tx);
+        // Свежий сокет с ненулевым портом привязывается всегда.
+        let bound = socket.bind(port);
+        assert!(bound.is_ok(), "привязка UDP к порту {port}: {bound:?}");
+        Self {
+            socket,
+            peer: None,
+            buf,
+        }
+    }
+}
+
+/// Почему [`UdpLink`] потерял датаграмму.
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum UdpError {
+    /// Датаграмма длиннее буфера.
+    Truncated,
+    /// Отвечать некому: датаграмм ещё не было.
+    NoPeer,
+    /// Стек не отправил датаграмму.
+    Send(SendError),
+}
+
+impl FrameLink for UdpLink {
+    type Error = UdpError;
+
+    async fn recv(&mut self) -> Result<usize, LinkError<UdpError>> {
+        match self.socket.recv_from(self.buf).await {
+            Ok((len, meta)) => {
+                self.peer = Some(meta);
+                Ok(len)
+            }
+            Err(RecvError::Truncated) => Err(LinkError::Lost(UdpError::Truncated)),
+        }
+    }
+
+    fn buffer(&mut self) -> &mut [u8] {
+        self.buf
+    }
+
+    async fn send(&mut self, len: usize) -> Result<(), LinkError<UdpError>> {
+        let Self { socket, peer, buf } = self;
+        send_to(socket, *peer, &buf[..len]).await
+    }
+}
+
+/// Датаграмма снимается с сокета в том же опросе, что её возвращает
+/// (`UdpSocket::recv_from`), — брошенный `recv` её не теряет.
+impl FrameDuplex for UdpLink {
+    async fn send_from(&mut self, frame: &[u8]) -> Result<(), LinkError<UdpError>> {
+        send_to(&mut self.socket, self.peer, frame).await
+    }
+}
+
+/// Датаграмма `frame` — отправителю последней принятой.
+async fn send_to(
+    socket: &mut UdpSocket<'static>,
+    peer: Option<UdpMetadata>,
+    frame: &[u8],
+) -> Result<(), LinkError<UdpError>> {
+    let Some(peer) = peer else {
+        return Err(LinkError::Lost(UdpError::NoPeer));
+    };
+    socket
+        .send_to(frame, peer)
+        .await
+        .map_err(|err| LinkError::Lost(UdpError::Send(err)))
+}
+
+#[cfg(test)]
+mod tests {
+    use adapters_hw::net::fake::cable::{DEVICE, leak, pair};
+
+    use super::*;
+    use crate::net::fake::{PORT, with_network};
+
+    fn udp(stack: Stack<'static>, port: u16) -> UdpLink {
+        UdpLink::new(
+            stack,
+            port,
+            leak(MaybeUninit::<[PacketMetadata; 4]>::uninit()),
+            leak([0; 16]),
+            leak(MaybeUninit::<[PacketMetadata; 4]>::uninit()),
+            leak([0; 64]),
+            leak([0; 8]),
+        )
+    }
+
+    /// UDP-канал отвечает отправителю последней датаграммы; ответить до
+    /// первой датаграммы некому, длинная датаграмма — потеря.
+    #[tokio::test]
+    async fn udp_link_replies_to_the_last_sender() {
+        let ((device, device_runner), (host, host_runner)) = pair();
+        let mut link = udp(device, PORT);
+        let peer = udp(host, 4000);
+        with_network(device_runner, host_runner, async {
+            assert!(matches!(
+                link.send(1).await,
+                Err(LinkError::Lost(UdpError::NoPeer))
+            ));
+
+            peer.socket
+                .send_to(&[1, 2, 3], (DEVICE, PORT))
+                .await
+                .unwrap();
+            assert_eq!(link.recv().await.unwrap(), 3);
+            assert_eq!(link.buffer()[..3], [1, 2, 3]);
+            link.buffer()[..2].copy_from_slice(&[9, 8]);
+            link.send(2).await.unwrap();
+            let mut reply = [0; 16];
+            let (n, from) = peer.socket.recv_from(&mut reply).await.unwrap();
+            assert_eq!((&reply[..n], from.endpoint.port), (&[9, 8][..], PORT));
+
+            peer.socket.send_to(&[0; 12], (DEVICE, PORT)).await.unwrap();
+            // Датаграмма длиннее буфера канала (8 байт).
+            assert!(matches!(
+                link.recv().await,
+                Err(LinkError::Lost(UdpError::Truncated))
+            ));
+        })
+        .await;
+    }
+}

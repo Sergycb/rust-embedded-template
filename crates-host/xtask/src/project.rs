@@ -9,22 +9,6 @@ pub const CHIP: &str = "{{chip}}";
 /// проект.
 pub const TARGET: &str = "{{target}}";
 
-// {%- if ota == "true" and ota_store != "external" %}
-/// Минимальная единица записи во flash этого чипа. Подставляется при
-/// генерации, как и всё остальное про раскладку. Нужна host-target тесту:
-/// состояние bootloader'а — это `WRITE_SIZE` байт одинаковой магии, короче
-/// записать нельзя.
-pub const WRITE_SIZE: &str = "{{write_size}}";
-
-/// Страница обмена `embassy-boot` (`PAGE_SIZE`): максимум из страниц стирания
-/// `ACTIVE` и `DFU`. Бывает крупнее физической страницы чипа — на чипах с
-/// мелкими страницами генерация расширяет её (`swap_paged`), чтобы журнал
-/// `BOOTLOADER_STATE` не отнимал место у кода bootloader'а. Ею bootloader
-/// переносит разделы, и на неё же смещается прежний образ при обмене —
-/// host-target тесту нужно знать, где его искать.
-pub const PAGE_SIZE: &str = "{{page_size}}";
-// {%- endif %}
-
 /// Имя файла ELF приложения в каталоге сборки — то, что [`crate::firmware::build`] читает.
 pub const APP_ARTIFACT: &str = "app";
 

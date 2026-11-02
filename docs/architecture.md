@@ -48,14 +48,20 @@ HAL (`bsp::board::init_peripherals` — на умолчаниях `embassy-stm32
 Как решить, куда класть новую зависимость/код:
 - Знает имя чипа или блока, раскладку флеша, создаёт DMA-буфер под железо,
   строит объект драйвера микросхемы на плате → `bsp`.
-- Реализует трейт (порт или стандартный) поверх трейтов `embedded-hal`/
-  `embedded-io-async`/`embedded-storage`, без чипа, — в том числе тип драйвера
-  микросхемы, если ему хватает этих трейтов, — → `adapters`.
+- Обёртка над железом или стеком драйвера без чипа — то, из чего плата
+  собирает рычаг (устройство USB, стек сети, EEPROM как флеш), драйверы-заглушки
+  → `adapters-hw`.
+- Реализация порта, когда реализаций несколько (каналы протоколов над потоком
+  и датаграммой, транспорты Modbus) → `adapters-logic`.
+- Трейт — любой, если у него несколько реализаций → `ports`; трейта с одной
+  реализацией нет вовсе (ниже, «Трейт — только под несколько реализаций»).
 - Заводит память, которую домен получает ссылкой (буфер канала, сокета,
   клиента), строит адаптер, чей тип или память выбирает приложение
   (кадрирование, клиент, хранилище), требует `Spawner` → `app`.
 - Всё остальное (FSM, конкурентные примитивы, конфигурация, коллекции, RPC-протокол
-  между задачами) → `domain`, даже если результат используется только из `cross`.
+  между задачами, конкретные типы логики{% if ota == "true" or settings_port == "true" or net_services contains "mqtt" %} —
+  {% assign sep = "" %}{% if ota == "true" %}{{ sep }}адаптер обновления `ota::Updater`{% assign sep = ", " %}{% endif %}{% if settings_port == "true" %}{{ sep }}хранилище настроек `settings::Settings`{% assign sep = ", " %}{% endif %}{% if net_services contains "mqtt" %}{{ sep }}клиент брокера `mqtt::TcpClient`{% endif %}{% endif %}) → `domain`,
+  даже если результат используется только из `cross`.
 
 ### Узлы — фрагменты в `domain`
 
@@ -115,42 +121,55 @@ Compose-site — модули задач (подмодули `crates-cross/app/s
 `restart:` нет ни у одного узла, задача возвращает `()`. Отказ связи (канал,
 шина, транспорт) — запись в лог и возврат в начальное состояние автомата или
 переход в себя, а не выход и перезапуск{% if graph == "true" %} графом{% endif %}; отдельного состояния
-восстановления и пауз в `domain` нет. Переждать отказ (не вернуть ошибку снова
-без ожидания) — контракт порта, его держит реализация{% if net_services contains "mqtt" %} (паузы перед попытками
-подключения к брокеру — `adapters::net::TcpClient`, а не `domain::mqtt`){% endif %}.
+восстановления и пауз в автоматах узлов нет. Переждать отказ (не вернуть ошибку снова
+без ожидания) — дело реализации порта или конкретного типа под узлом{% if net_services contains "mqtt" %} (паузы перед попытками
+подключения к брокеру — клиент `domain::mqtt::TcpClient`, а не автомат узла){% endif %}.
 
-### Логика — функции над портами; типы, которыми она с ними говорит, — в `ports`
+### Логика — функции над портами и конкретными типами; трейты — только в `ports`
 
 {% if ota == "true" %}Приём образа (`download::Transfer`), применение обновления (`update::apply`),
-версия (`ota::version::*`), решение bootloader'а (`ota::boot::*`) — функции над портами, а действия автоматов зовут их. {% endif %}Всё, чем
-логика разговаривает с портами — ошибки, — объявлено в `ports`: тот стал словарём
-домена, а не только набором трейтов. Своё в `domain` — только контексты узлов{% if graph == "true" %}
-(их эмитит фрагмент), состояния автоматов и входы фрагментов ({% if ota == "true" %}`OtaWiring`, {% endif %}`IdleMeter`){% else %} и состояния автоматов{% endif %}{% if protocol != "none" %},
-включая обработчик протокола{% if graph == "true" %} на этом входе{% endif %}: {% if protocol == "protobuf" %}`protobuf::Service`{% elsif protocol == "modbus" %}`modbus::EmptyRegisters` (трейт домена `modbus::Registers`, не порт; карта одна на все узлы `MODBUS_*` —
-`docs/modules/app.md`){% else %}`canopen::dictionary` (словарь объектов){% endif %} — логика приложения,
+версия (`ota::version::*`), решение bootloader'а (`ota::boot::*`) — функции, а действия автоматов зовут их. {% endif %}`ports` —
+все трейты проекта (каждый — под несколько реализаций, ниже) и то, без чего
+контракт не выразить: типы из сигнатур трейтов{% if link_port == "true" %} (`LinkError`){% endif %} и форматы,
+которые обязаны одинаково понимать обе стороны{% if ota == "true" %} (`Partitions` отдаёт плата,
+`PendingImage` читает bootloader, `layout_fingerprint` считает и `cargo xtask
+build`){% endif %}. В `domain` трейтов нет. Всё, что нужно только логике, — в `domain`,
+подмодулем рядом с узлом, которому оно нужно{% if ota == "true" %}: команды узлу OTA и исходы
+(`ota::command`), ошибки приёма и применения (`download::DownloadError`,
+`update::UpdateError`){% endif %}{% if modbus_master == "true" %}; ошибка запроса master'а
+(`modbus::master::RequestError`) — тоже здесь, в `ports` — только то, что
+сверяет транспорт (`MasterError`){% endif %}. Причина — реализация такие типы не видит:
+в `ports` всякая их правка задевала бы `adapters-logic` и `bsp` зря. Там же,
+в `domain`, — контексты узлов{% if graph == "true" %} (их эмитит фрагмент), состояния
+автоматов и входы фрагментов ({% if ota == "true" %}`OtaWiring`, {% endif %}`IdleMeter`){% else %} и состояния автоматов{% endif %}{% if protocol != "none" %},
+включая обработчик протокола{% if graph == "true" %} на этом входе{% endif %}: {% if protocol == "protobuf" %}`protobuf::Service`{% elsif protocol == "modbus" %}`modbus::Slave` над картой
+`modbus::EmptyRegisters` (карта одна на все узлы `MODBUS_*` — `docs/modules/app.md`){% else %}`canopen::dictionary` (словарь объектов){% endif %} — логика приложения,
 которую проект правит под себя, поэтому живёт в `domain`, а не в `app`{% endif %}.
 Состояние внутри одного вызова функции{% if ota == "true" %} (хвост до слова флеша при приёме){% endif %} живёт в
 её локальных переменных, а не в структуре.
 
 ### Адаптеры делятся по одному признаку — нужен ли чип
 
-Реализация трейта —
-порта или стандартного, — которой хватает трейтов
-`embedded-storage`/`embedded-hal`/`embedded-io-async` (раздел флеша, шина или
-поток приходят параметром), и типы-сборки, которые плата отдаёт целиком, лежат
-в `crates-host/adapters` и тестируются на хосте на фейке
-{%- assign sep = ": " %}
-{%- if ota == "true" %}{{ sep }}`adapters::ota` (поверх `embassy-boot`){% assign sep = ", " %}{% endif %}
-{%- if settings_port == "true" %}{{ sep }}`adapters::settings`
-(поверх `sequential-storage`){% assign sep = ", " %}{% endif %}
-{%- if protocol_link == "true" %}{{ sep }}транспорты протоколов{% endif %}.
+Нужен чип — `bsp`; обёртка над железом без чипа — `adapters-hw`; реализации
+портов, когда их несколько, — `adapters-logic`; остальное — `domain`; трейты —
+только `ports`.
+{%- capture hw_list %}{% if has_usb == "true" %}, устройство USB с потоком CDC (`adapters_hw::usb::Usb::new`){% endif %}{% if has_net == "true" %}, стек сети с фоновой работой (`adapters_hw::net::Net`){% endif %}{% if config_store == "eeprom" %}, EEPROM как `NorFlash`
+(`adapters_hw::eeprom::Eeprom`){% endif %}{% endcapture %}
+{%- capture logic_list %}{% if cobs_used == "true" %}, кадрирование потока (`adapters_logic::cobs::Cobs`){% endif %}{% if has_modbus == "true" %}, транспорты Modbus
+(`adapters_logic::modbus`){% endif %}{% if has_net == "true" %}, транспорты над сокетами `embassy-net` (`adapters_logic::net`){% endif %}{% endcapture %}
+{%- if hw_list != "" %} Обёртки над железом в проекте: {{ hw_list | remove_first: ", " }}.{% endif %}
+{%- if logic_list != "" %} Реализации портов: {{ logic_list | remove_first: ", " }}.{% endif %}
+{%- if adapters_hw == "true" or adapters_logic == "true" %}
+{% if adapters_hw == "true" and adapters_logic == "true" %}Оба крейта хостовые и тестируются{% else %}Крейт хостовый и тестируется{% endif %} на хосте на фейках драйверов
+(модули `fake` рядом с подменяемым кодом — `docs/conventions.md`, «Фейки»){% if has_net == "true" %} и на кабеле между двумя стеками в памяти{% endif %}.
+{%- endif %}
 
 **Кто строит адаптер, тот держит его память.** Адаптер, без которого рычаг не
 собрать, строит плата в `Board::new`, и его память — статики `bsp` (ниже).
 Адаптер, чей тип или память
 выбирает приложение, строит **compose-site** — место, где фрагмент получает
 типы и входы, — а не узел и не `bsp`: {% if graph == "true" %}привязка узла в `fragments:` графа — одним выражением над рычагом
-платы (`Updater::new(board.firmware)`, `link(board.net.stack, static [u8; N], …)`),
+платы (`link(board.net.stack, static [u8; N], …)`{% if ota == "true" %}, `Updater::new(board.firmware)`{% endif %}),
 а память адаптера объявляет там же `static T`: ячейка на вхождение, в `.bss`,
 мимо стека{% else %}модуль задачи (подмодуль `crates-cross/app/src/tasks.rs`) над рычагом платы, память — его
 статики{% endif %}. Узел получает адаптер готовым во входе и только читает поле
@@ -161,14 +180,14 @@ Compose-site — модули задач (подмодули `crates-cross/app/s
 службы ({% if net_services contains "rest" %}`domain::http`{% if net_services contains "ssh" %}, {% endif %}{% endif %}{% if net_services contains "ssh" %}`domain::ssh`{% endif %}) адаптера не получает: стек сети приходит к
 узлу рычагом (`STACK: local $crate::net::Stack`), сокет узел открывает сам —
 библиотека службы зовётся в `domain` прямо, — а буферы сокета — слоты
-`= static` фрагмента{% if net_services contains "mqtt" %}. Из служб через адаптер compose-site
-подключается только клиент MQTT: `adapters::net::TcpClient` над стеком, порт
-`ports::Dial`{% endif %}.{% endif %}
+`= static` фрагмента{% if net_services contains "mqtt" %}. Клиент MQTT — тоже конкретный тип домена:
+`domain::mqtt::TcpClient` над стеком строит compose-site, буферы сокета — его
+`static`{% endif %}.{% endif %}
 {%- assign sep = "" %}
 {%- capture types %}
-{%- if protocol_link == "true" %}{{ sep }}`crate::link::<вид>[::<транспорт>]::Link` (`docs/modules/app.md`){% assign sep = ", " %}{% endif %}
-{%- if ota == "true" %}{{ sep }}`adapters::ota::Updater<bsp::FirmwareFlash>`{% assign sep = ", " %}{% endif %}
-{%- if config == "true" %}{{ sep }}`adapters::settings::Settings<bsp::ConfigFlash>`{% assign sep = ", " %}{% endif %}
+{%- if protocol_link == "true" %}{{ sep }}канал протокола (`adapters_logic::…`, `docs/modules/app.md`){% assign sep = ", " %}{% endif %}
+{%- if ota == "true" %}{{ sep }}`domain::ota::Updater<bsp::FirmwareFlash>`{% assign sep = ", " %}{% endif %}
+{%- if config == "true" %}{{ sep }}`domain::settings::Settings<bsp::ConfigFlash>`{% assign sep = ", " %}{% endif %}
 {%- endcapture %}
 {%- if types != "" %} Тип адаптера —
 {% if graph == "true" %}параметр фрагмента{% else %}в модуле задачи{% endif %}: {{ types }}.
@@ -186,75 +205,67 @@ Compose-site — модули задач (подмодули `crates-cross/app/s
 трейта нет.
 {%- assign sep = "" %}
 {%- capture wrappers %}
-{%- if ota == "true" %}{{ sep }}разделы обновления (`adapters::ota::Partitions`){% assign sep = ", " %}{% endif %}
-{%- if has_usb == "true" %}{{ sep }}пару USB (`adapters::usb`){% assign sep = ", " %}{% endif %}
-{%- if has_net == "true" %}{{ sep }}пару сети (`adapters::net::Net`){% assign sep = ", " %}{% endif %}
+{%- if has_usb == "true" %}{{ sep }}пару USB (`adapters_hw::usb`){% assign sep = ", " %}{% endif %}
+{%- if has_net == "true" %}{{ sep }}пару сети (`adapters_hw::net::Net`){% assign sep = ", " %}{% endif %}
 {%- if config_store == "eeprom" %}{{ sep }}EEPROM как `NorFlash`
-(`adapters::eeprom::Eeprom`){% assign sep = ", " %}{% endif %}
+(`adapters_hw::eeprom::Eeprom`){% assign sep = ", " %}{% endif %}
 {%- endcapture %}
-{%- if wrappers != "" %} Обратная зависимость есть: `bsp` берёт из `adapters` обёртки,
+{%- if wrappers != "" %} Обратная зависимость есть: `bsp` берёт из `adapters-hw` обёртки,
 без которых рычаг не собрать, и строит их сама плата в `Board::new` — {{ wrappers }}{% if has_usb == "true" or has_net == "true" %}; их память ({% if has_usb == "true" %}буферы класса CDC{% if has_net == "true" %}, {% endif %}{% endif %}{% if has_net == "true" %}`StackResources`
 стека{% endif %}) — статики `bsp`: кто строит адаптер, тот держит и его память{% endif %}; от `domain` `bsp` не зависит.
 {%- else %} От `domain` `bsp` не зависит.
-{%- endif %}
+{%- endif %}{% if ota == "true" %} Разделы обновления плата отдаёт контрактом из `ports`
+(`ports::Partitions`): адаптер над ними — тип домена.{% endif %}
 
-### Порт и адаптер — или библиотека прямо в `domain`
+### Трейт — только под несколько реализаций
 
-Порт в `ports` и его
-реализация в `adapters` заводятся не «на случай, если заменим интерфейс» — в
-прошивке конкретного изделия этого не случается, — а когда есть хотя бы одна из
-трёх причин:
+Трейт заводится, только если одна логика работает с разными реализациями:
+в разных узлах одной прошивки или в разных вариантах генерации шаблона, которые
+иначе потребовали бы Liquid в коде логики. Одна реализация — конкретный тип без
+трейта. Все трейты живут в `ports`; в `domain` трейтов нет. Исключение из
+мерки одно — граница зависимостей: `domain` не видит `bsp`, и рычаг платы,
+который зовёт логика узла, приходит к ней трейтом даже при одной реализации
+на плате{% if ota == "true" %} (`Reboot`){% endif %}.
+{%- assign sep = "" %}
+{%- capture traits %}
+{%- if link_port == "true" %}{{ sep }}`FrameLink`{% if has_protobuf == "true" %}/`FrameDuplex`{% endif %} — канал протокола над потоком и датаграммой (в одной прошивке
+бывают оба){% assign sep = "; " %}{% endif %}
+{%- if has_modbus == "true" %}{{ sep }}`Registers` — карта slave'а: карта проекта, {% if ota == "true" %}окно OTA поверх неё, {% endif %}общая ручка на
+все узлы `MODBUS_*` вложены друг в друга{% assign sep = "; " %}{% endif %}
+{%- if modbus_master == "true" %}{{ sep }}`ModbusClient` — транспорт master'а (RTU, MBAP-TCP, MBAP-UDP){% assign sep = "; " %}{% endif %}
+{%- if has_can == "true" %}{{ sep }}`CanBus` — шина CAN: контроллер платы и заглушка{% assign sep = "; " %}{% endif %}
+{%- if ota == "true" %}{{ sep }}`Reboot` — сброс МК: реализация на плате (`bsp::reset`), за границей, которую `domain` не видит{% assign sep = "; " %}{% endif %}
+{%- if net_services contains "ssh" %}{{ sep }}`HostKey` — ключ хоста SSH: вшитый и созданный платой — разные варианты генерации{% assign sep = "; " %}{% endif %}
+{%- endcapture %}
+{%- if traits != "" %} В этом проекте: {{ traits }}.{% endif %}
 
-1. **Реализаций несколько одновременно.** Шаблон генерирует проекты с разными
-   транспортами и носителями, а в одном проекте протокол может работать над
-   несколькими транспортами сразу
-{%- if has_modbus == "true" %}: у Modbus кадрирование своё на каждый
+Одна реализация — конкретный тип прямо в узле, и тест идёт над ним же
 {%- assign sep = " (" %}
-{%- if modbus_rtu == "true" %}{{ sep }}RTU{% assign sep = ", " %}{% endif %}
-{%- if modbus_tcp == "true" %}{{ sep }}MBAP над TCP{% assign sep = ", " %}{% endif %}
-{%- if modbus_udp == "true" %}{{ sep }}MBAP в датаграммах UDP{% assign sep = ", " %}{% endif %})
-{%- elsif has_protobuf == "true" %}: канал `PROTOBUF` — {% if cobs_used == "true" %}над COBS{% if has_udp == "true" %} и {% endif %}{% endif %}{% if has_udp == "true" %}над датаграммой{% endif %}
-{%- endif %}.
-2. **Логике нужен фейк с отказами.** Алгоритм узла проверяется на хосте отказом
-   в нужный момент{% if ota == "true" %} — «подтверждение образа не удалось, повторить на следующем
-   `Start`» (`domain::ota` над фейком `FirmwareUpdate`){% endif %}; на настоящей библиотеке
-   такой отказ на хосте не воспроизвести.
-3. **Тяжёлая зависимость отделяется от логики**, чтобы алгоритм читался и
-   тестировался без неё
-{%- assign sep = " (" %}
-{%- if ota == "true" %}{{ sep }}`embassy-boot`{% assign sep = ", " %}{% endif %}
-{%- if settings_port == "true" %}{{ sep }}`sequential-storage`{% assign sep = ", " %}{% endif %}
-{%- capture net_ports %}{% if protocol_sockets != "0" %}, транспортов протоколов (`ports::FrameLink`){% endif %}{% if net_services contains "mqtt" %}, клиента
-   MQTT (`ports::Dial`){% endif %}{% endcapture %}
-{%- if net_ports != "" %}{{ sep }}сокеты
-   `embassy-net` {{ net_ports | remove_first: ", " }}{% assign sep = ", " %}{% endif %}
-{%- if sep == ", " %}){% endif %}.
-
-Нет ни одной — порт был бы пустой прослойкой, и `domain` зовёт библиотеку прямо:
-реализация одна и тестируется как есть
+{%- if ota == "true" %}{{ sep }}`ota::Updater` — над разделами в памяти с отказами по заказу{% assign sep = ", " %}{% endif %}
+{%- if settings_port == "true" %}{{ sep }}`settings::Settings` — над флешем в памяти{% assign sep = ", " %}{% endif %}
+{%- if net_services contains "mqtt" %}{{ sep }}`mqtt::TcpClient` — по кабелю между двумя стеками{% assign sep = ", " %}{% endif %}
+{%- if has_modbus == "true" %}{{ sep }}узел протокола — над настоящим `modbus::Slave`{% assign sep = ", " %}{% endif %}
+{%- if sep == ", " %}){% endif %}: фейк трейта, которого нет, тестов не держит, а
+отказ, нужный тесту, разыгрывает флеш или сокет под настоящим типом.
+Библиотека с одной реализацией зовётся в `domain` прямо
 {%- assign sep = " (" %}
 {%- if has_protobuf == "true" %}{{ sep }}`micropb`{% assign sep = ", " %}{% endif %}
 {%- if net_services contains "mqtt" %}{{ sep }}`minimq`{% assign sep = ", " %}{% endif %}
 {%- if net_services contains "ssh" %}{{ sep }}`sunset`{% assign sep = ", " %}{% endif %}
 {%- if net_services contains "rest" %}{{ sep }}`picoserve`{% assign sep = ", " %}{% endif %}
 {%- if has_canopen == "true" %}{{ sep }}`zencan`{% assign sep = ", " %}{% endif %}
-{%- if sep == ", " %}){% endif %}. Цены у порта в прошивке нет — обобщённый код
+{%- if settings_port == "true" %}{{ sep }}`sequential-storage`{% assign sep = ", " %}{% endif %}
+{%- if ota == "true" %}{{ sep }}`embassy-boot`{% assign sep = ", " %}{% endif %}
+{%- if sep == ", " %}){% endif %}. Цены у трейта в прошивке нет — обобщённый код
 мономорфизуется, косвенных вызовов не появляется, — так что решает только то,
-есть ли за ним вторая реализация или тест.
-
-Порт при этом — только граница логики с адаптером или платой: трейт, у которого
-есть реализация вне `domain`. Абстракция, которую и реализует, и зовёт сам
-`domain`{% if has_modbus == "true" %} (обработчик кадра узла протокола, `server::Handler`; карта
-регистров slave'а, `modbus::Registers`){% endif %}, — его трейт рядом с узлом, а
-не порт.
+есть ли за ним вторая реализация.
 
 Та же мерка — для датчиков и микросхем, которых в шаблоне ещё нет: объект
 драйвера строит `bsp` и отдаёт полем `Board` (рычаг платы), а тип драйвера —
-`adapters` или внешний крейт, пока ему хватает трейтов `embedded-hal` (нужен
-чип — `bsp`); порт — `ports`, если у логики над датчиком есть что
-проверять отдельно или датчиков одного назначения несколько; адаптер «порт над
-драйвером» — `adapters`. Светодиоду, у которого проверять нечего, хватает трейта
-`embedded-hal`: свой порт ему не нужен.
+`adapters-hw` или внешний крейт, пока ему хватает трейтов `embedded-hal` (нужен
+чип — `bsp`); трейт в `ports` — если датчиков одного назначения несколько и
+логика над ними одна. Светодиоду, у которого реализация одна, хватает трейта
+`embedded-hal`: свой трейт ему не нужен.
 {%- if graph == "true" %}
 
 ### Фрагменты графа: цифры, типы слотов, большие объекты
@@ -267,7 +278,7 @@ Compose-site — модули задач (подмодули `crates-cross/app/s
 
 **Типы ресурсных слотов** узла OTA — параметры фрагмента: `name: OTA_FRAG<F, R, const PARKED: usize>`,
 а compose-site подставляет их в `fragments:` угловыми скобками
-(`::domain::OTA_FRAG<::adapters::ota::Updater<bsp::FirmwareFlash>, bsp::reset::Reboot, OTA_CMD_PARKED>`). Слот — `static`, тип ему
+(`::domain::OTA_FRAG<::domain::ota::Updater<bsp::FirmwareFlash>, bsp::reset::Reboot, OTA_CMD_PARKED>`). Слот — `static`, тип ему
 нужен, а конкретный тип знает только `cross`; generic-`static` не бывает, и
 параметр — единственный способ фрагмента назвать тип, которого он не видит.
 Bound'ов у параметров нет намеренно: их держит сигнатура `ota::task`, и rustc
@@ -355,7 +366,7 @@ compose-site, а не фрагмент (там же).
 сторожа (`watchdog::HardwareWatchdog`),{% endif %} порты из
 `crates-host/ports` там, где стандартного трейта нет{% if has_can == "true" or ota == "true" %} ({% if has_can == "true" %}`CanBus`{% if ota == "true" %}, {% endif %}{% endif %}{% if ota == "true" %}`Reboot`{% endif %}){% endif %}, — и объекты драйверов микросхем платы
 ({% if external_flash == "true" %}внешняя флеш W25Q; так же лягут{% else %}так лягут{% endif %} датчики и светодиоды; тип драйвера —
-`adapters` или внешний крейт{% if external_flash == "true" %}, как `w25q`{% endif %}, а строит объект `bsp`). `Peripherals`,
+`adapters-hw` или внешний крейт{% if external_flash == "true" %}, как `w25q`{% endif %}, а строит объект `bsp`). `Peripherals`,
 отдельные пины и группы `assign_resources!` наружу из `bsp` не выходят: их
 потребляет сам `Board::new`, собирая рычаги. Приложение работает через трейты
 и про регистры не знает.
@@ -364,7 +375,7 @@ compose-site, а не фрагмент (там же).
 сообщений{% if has_net == "true" %}, сокеты протоколов{% if net_services contains "mqtt" %} и клиента MQTT{% endif %}{% endif %}{% if ota == "true" %}, адаптер обновления{% endif %}{% if config == "true" %}, хранилище настроек{% endif %} —
 решение проекта, а не свойство платы. Их строит `app` (выше) в своей памяти:
 захотел проект другой буфер или порт — правится
-`app`{% if protocol_link == "true" or net_services != "" %} ({% if protocol_link == "true" %}`crates-cross/app/src/link/`{% if net_services != "" %}, {% endif %}{% endif %}{% if net_services != "" %}`crates-cross/app/src/net.rs`{% endif %}){% endif %}, плата не меняется. Буфер
+`app`{% if protocol_link == "true" or net_services != "" %} ({% if protocol_link == "true" %}{% if graph == "true" %}`crates-cross/app/src/graph.rs`{% else %}`crates-cross/app/src/tasks/`{% endif %}{% if net_services != "" %}, {% endif %}{% endif %}{% if net_services != "" %}`crates-cross/app/src/net.rs`{% endif %}){% endif %}, плата не меняется. Буфер
 заводится там, где решают его размер, — в `app`, — а узел получает ссылку.
 {%- if has_usb == "true" or has_net == "true" %} Память, без которой рычаг не собрать
 ({% if has_usb == "true" %}буферы класса CDC{% if has_net == "true" %}, {% endif %}{% endif %}{% if has_net == "true" %}`StackResources` стека{% endif %}), — наоборот, у платы:
@@ -410,18 +421,18 @@ device, cdc }` (классы `embassy-usb` регистрируются до п�
 {%- if ota == "true" %}
 
 {% if graph == "true" %}Кроме сторожа в граф уезжает поле `firmware`{% else %}В задачу узла OTA уезжает поле `firmware`{% endif %} (`bsp::FirmwareFlash` —
-`adapters::ota::Partitions`: разделы `DFU` и `STATE` со своими страницами, предел
+`ports::Partitions`: разделы `DFU` и `STATE` со своими страницами, предел
 образа, равный `ACTIVE`, и отпечаток раскладки). {% if graph == "true" %}Compose-site кладёт его во вход узла,
-`domain::ota::OtaWiring { flash: Updater::new(board.firmware), reboot: bsp::reset::Reboot, running_version }`,
-прямо в `fragments:`: адаптер{% else %}Адаптер{% endif %} обновления (`adapters::ota::Updater`, порт
-`FirmwareUpdate`) над ним строит compose-site. Режет разделы плата — по символам
+`domain::ota::OtaWiring { flash: Updater::new(board.firmware), reboot: bsp::reset::Reboot, running_version, confirmed }`,
+прямо в `fragments:`: адаптер{% else %}Адаптер{% endif %} обновления (`domain::ota::Updater` — конкретный
+тип домена, трейта нет) над ним строит compose-site. Режет разделы плата — по символам
 `memory.x` (`bsp::layout`), тем же, что читает bootloader: где они лежат, знает
 раскладка, а она — дело платы. Сам `bsp` про `domain` не знает: логика приёма и
-применения образа живёт в `domain::ota` и видит только порты; host-тесты подают
+применения образа живёт в `domain::ota` и видит только `Partitions`; host-тесты подают
 адаптеру разделы в памяти, а саму нарезку проверяет сборка `crates-cross`. Образ приходит не по каналу,
 а командами узла протокола на вход узла `CMD` ({% if graph == "true" %}`request:` графа, клиент —
-`ota_cmd_requester()`{% else %}`static` в `crate::tasks::ota`{% endif %}; `docs/ota.md`). Вместимость раздела адаптер отдаёт через
-порт же (`FirmwareUpdate::capacity`). Версия образа — свойство прошивки, а не
+`ota_cmd_requester()`{% else %}`static` в `crate::tasks::ota`{% endif %}; `docs/ota.md`). Вместимость раздела отдаёт сам
+адаптер (`Updater::capacity`). Версия образа — свойство прошивки, а не
 платы: её задаёт приложение (`crates-cross/app/src/version.rs`) во входе
 узла (`running_version`){% if graph == "true" %} прямо в `fragments:`{% endif %}; ключ подписи — в
 bootloader'е (`crates-cross/boot`), который подпись и проверяет.
@@ -444,7 +455,7 @@ bootloader'е (`crates-cross/boot`), который подпись и прове
 — `init` читает JEDEC ID и{% if ext_flash_bus != "spi" %} ставит бит QE, без чего{% else %} без этого{% endif %} драйвер не знает объёма и
 не годится ни для одной операции. `init` ждёт микросхему (до 2 с, если она
 ещё стирает после сброса), поэтому `Board::new` асинхронный, а зовёт его первая
-задача исполнителя (`start` в `main.rs`): ждёт он таймерами `embassy_time`, а
+задача исполнителя (`start` в `crates-cross/app/src/run.rs`): ждёт он таймерами `embassy_time`, а
 встроенной очереди таймеров нужен waker исполнителя, не `block_on`; не прошёл —
 строка в лог, и флеш отказывает, а не паникует (docs/modules/bsp-external.md).
 {%- endif %}
@@ -454,7 +465,7 @@ bootloader'е (`crates-cross/boot`), который подпись и прове
 реализует: это то, что приложение сообщает о себе наружу (лог старта, ответ
 хосту), а знает это только `bsp`. Тип объявлен в `bsp`, рядом с `Board`, а не
 в `ports`: домен его не читает, а порт заводится под то, чем пользуется
-логика (раздел «Порт и адаптер — или библиотека прямо в `domain`» выше).
+логика (раздел «Трейт — только под несколько реализаций» выше).
 Понадобятся эти сведения домену — тогда тип и переедет в `ports`. По той же
 мерке у `Board` нет метода под причину прошлой паники: домену она не нужна,
 это диагностика старта, и её печатает `main` напрямую из `panic-persist`.
@@ -465,20 +476,18 @@ bootloader'е (`crates-cross/boot`), который подпись и прове
 
 {%- if ota == "true" %}
 
-**Применение обновления — тоже через порт.** `mark_updated` — метод
-`FirmwareUpdate`; запись о подписи (`ports::PendingImage`) кладётся обычным
+**Применение обновления — методы адаптера.** `mark_updated` — метод
+`Updater`; запись о подписи (`ports::PendingImage`) кладётся обычным
 `write` в запасную страницу `DFU`, отдельного трейта под подпись нет. Порядок
 проверок перед вызовом — `domain::ota::update::apply`, и он
 host-тестируем. Саму подпись
 проверяет bootloader (`domain::ota::boot::screen_update`) — `docs/ota.md`.
 {%- endif %}
 
-**Дублировать методы портов собственными нельзя{% if ota == "true" or settings_port == "true" %}.** У {% if ota == "true" %}`adapters::ota::Updater`{% if settings_port == "true" %} и
-{% endif %}{% endif %}{% if settings_port == "true" %}`adapters::settings::Settings`{% endif %} {% if settings_port == "true" %}inherent-методы `write`/`read`{% if ota == "true" %}/`mark_booted`{% endif %} были
-удалены, а не оставлены{% else %}inherent-метод `mark_booted` был
-удалён, а не оставлен{% endif %} рядом с трейтовыми: собственный{% else %}:** собственный{% endif %} метод с тем же именем
-перекрывает трейтовый при вызове, и приложение снова начало бы работать с
-конкретным типом мимо порта — то есть мимо той самой границы.
+**Метод — один, у самого типа.** У конкретного типа без трейта
+(`Updater`, `Settings`, `TcpClient`) методы — собственные; заводить рядом трейт с теми
+же именами «на будущее» нельзя: собственный метод перекрыл бы трейтовый при
+вызове, и вторая реализация, ради которой трейт заводят, работала бы мимо него.
 
 **Liquid в корневом workspace — внутри комментариев.** Все члены корневого
 workspace (`members` корневого `Cargo.toml`) и сам корневой `Cargo.toml`
@@ -514,12 +523,10 @@ host`), поэтому их исходник обязан оставаться �
 {%- endcapture %}
 {%- assign sep = "" %}
 {%- capture concrete %}
-{%- if ota == "true" %}{{ sep }}`adapters::ota::Updater<bsp::FirmwareFlash>`{% assign sep = ", " %}{% endif %}
-{%- if config == "true" %}{{ sep }}`adapters::settings::Settings<bsp::ConfigFlash>`{% assign sep = ", " %}{% endif %}
+{%- if protocol_link == "true" %}{{ sep }}канал протокола из `adapters_logic` (`docs/modules/app.md`){% assign sep = ", " %}{% endif %}
+{%- if ota == "true" %}{{ sep }}`domain::ota::Updater<bsp::FirmwareFlash>`{% assign sep = ", " %}{% endif %}
+{%- if config == "true" %}{{ sep }}`domain::settings::Settings<bsp::ConfigFlash>`{% assign sep = ", " %}{% endif %}
 {%- endcapture %} Рычагу платы его даёт `bsp` ({% if levers != "" %}{{ levers }}{% else %}`pub type X = ...`{% endif %})
-{%- if protocol_link == "true" or concrete != "" %}, адаптеру —{% if protocol_link == "true" %} модуль
-`app`, который выбирает его тип (`crate::link::<вид>[::<транспорт>]::Link`, `docs/modules/app.md`){% if concrete != "" %},
-или{% endif %}{% endif %}{% if concrete != "" %} конкретный тип прямо во входе узла ({{ concrete }} — модуля под одну строку `app`
-не заводит){% endif %}{% endif %}. Приложение при этом всё
-равно зовёт только методы порта.
+{%- if concrete != "" %}, адаптеру — конкретный тип прямо {% if graph == "true" %}во входе узла{% else %}в задаче{% endif %} ({{ concrete }} — модуля
+под одну строку `app` не заводит){% endif %}.
 
