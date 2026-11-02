@@ -579,6 +579,13 @@ fn default_cases() -> Vec<Case> {
             "ssh-password-config",
             &["links=tcp", "net_services=ssh", "ssh_auth=password", "config=yes"],
         ),
+        // SSH с OTA и без других служб и протоколов: тестам консоли нужен вход
+        // `CMD` узла OTA без самого узла (`ota::tests::cmd`), а остальные
+        // конфигурации с SSH тянут его через REST.
+        Case::new("stm32h743zg").variant(
+            "ssh-ota",
+            &["links=tcp", "net_services=ssh", "ssh_auth=password", "ext_flash=yes"],
+        ),
         Case::new("stm32h743zg").variant(
             "rest-ssh-key",
             &[

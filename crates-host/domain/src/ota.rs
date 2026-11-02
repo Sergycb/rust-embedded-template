@@ -790,7 +790,7 @@ pub(crate) mod tests {
     use crate::ota::command::{Chunk, Progress, Rejection};
     use crate::ota::{OtaCommand, OtaReply};
 
-    // {%- if has_modbus == "true" or has_protobuf == "true" or net_services contains "mqtt" or net_services contains "rest" %}
+    // {%- if has_modbus == "true" or has_protobuf == "true" or net_services contains "mqtt" or net_services contains "rest" or net_services contains "ssh" %}
     use super::OtaClient;
     // {%- endif %}
 
@@ -869,9 +869,9 @@ pub(crate) mod tests {
     }
     // {%- endif %}
 
-    // {%- if net_services contains "rest" or has_modbus == "true" %}
+    // {%- if net_services contains "rest" or net_services contains "ssh" or has_modbus == "true" %}
     /// Вход `CMD` узла OTA без самого узла и его клиент — для тестов
-    /// протоколов (`http`, `modbus`): на команду отвечает тест, и исходом,
+    /// протоколов (`http`, `ssh`, `modbus`): на команду отвечает тест, и исходом,
     /// которого узел не даёт, и молчанием (сервер берёт запрос и бросает его).
     pub(crate) fn cmd() -> (OtaClient, supervisor::Server<'static, OtaRequest, OtaReply>) {
         let stand = Box::leak(Box::new(
