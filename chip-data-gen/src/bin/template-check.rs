@@ -347,6 +347,14 @@ fn default_cases() -> Vec<Case> {
         // Тот же чип, но от OTA отказались при генерации: ветка «один образ на
         // весь flash» на чипе, куда схема прекрасно помещается.
         Case::new("stm32f407ve").variant("no-ota", &["ota=no"]),
+        // Голый проект — без OTA, графа и транспортов: `resources.rs` в нём
+        // заглушка без групп, и только тогда `check_snippets_compile` собирает
+        // половину `assign_resources!` из `pins --snippet`. Заготовки у каждого
+        // чипа свои, поэтому голый вариант — у каждого из основных чипов набора,
+        // а не только у самых маленьких (l011f4, c011f4), куда другое не влезает.
+        Case::new("stm32f407ve").variant("bare", &["ota=no", "graph=no"]),
+        Case::new("stm32g474re").variant("bare", &["ota=no", "graph=no"]),
+        Case::new("stm32h743zg").variant("bare", &["ota=no", "graph=no"]),
         // Несколько карт памяти: в crates-cross/Cargo.toml должна появиться фича
         // "single-bank", без неё build.rs embassy-stm32 паникует.
         Case::new("stm32f429zg"),
