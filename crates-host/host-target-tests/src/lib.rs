@@ -46,7 +46,7 @@ use micropb::{MessageDecode, MessageEncode, PbEncoder};
 use proto::{Get, Request, Request_, Response, Response_};
 
 /// Порт узла protobuf по сети — порт сокета в привязке узла `PROTOBUF_*` в графе
-/// прошивки (`crates-cross/app/src/graph.rs`).
+/// прошивки (сеть есть только с графом).
 const NET_PORT: u16 = 5000;
 
 /// Сетевой транспорт protobuf в проекте — им идёт `HOST_TARGET_ADDR` без
