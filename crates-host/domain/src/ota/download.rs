@@ -56,7 +56,7 @@ impl Transfer {
     /// # Errors
     ///
     /// - `Empty` — заявлена нулевая длина,
-    /// - `TooLong` — длина больше вместимости раздела или добитая длина не влезает,
+    /// - `TooLong` — длина больше вместимости раздела,
     /// - `Flash` — флеш отказал.
     pub async fn start<D: NorFlash, S: NorFlash>(
         flash: &mut Updater<Partitions<D, S>>,
@@ -74,20 +74,10 @@ impl Transfer {
             });
         }
 
-        // Слово — от 1 до `MAX_WRITE_SIZE`: это проверил `Updater::new` при
-        // сборке, и делить на него можно.
+        // Слово — от 1 до `MAX_WRITE_SIZE`, и делить на него можно; раздел
+        // кратен странице, страница — слову, так что и добитый до слова хвост
+        // не выходит за раздел. Всё это проверил `Updater::new` при сборке.
         let word = flash.write_granularity();
-
-        // Добитая до слова длина тоже обязана помещаться: хвост пишется целым
-        // словом, и на образе, чья длина не кратна слову, запись ушла бы за
-        // границу. Раздел кратен странице, а страница — слову, так что на
-        // настоящей раскладке это не случается; проверка стоит дёшево.
-        if announced.div_ceil(word).saturating_mul(word) > capacity {
-            return Err(DownloadError::TooLong {
-                announced,
-                capacity,
-            });
-        }
 
         flash
             .prepare(announced)

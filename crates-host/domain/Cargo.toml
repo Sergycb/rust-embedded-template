@@ -188,6 +188,11 @@ embassy-usb        = { workspace = true }
 # Исполнитель для async-тестов над фейками портов (`#[tokio::test]`); фичи —
 # в корневом Cargo.toml.
 tokio = { workspace = true }
+# {%- if config_store == "eeprom" and ota != "true" %}
+# Тест хранилища поверх EEPROM (`settings`): доступ к EEPROM в памяти —
+# `embedded_storage::Storage`. С OTA крейт и так в зависимостях.
+embedded-storage = { workspace = true }
+# {%- endif %}
 # {%- if ota == "true" or has_modbus == "true" or has_protobuf == "true" %}
 # Property-тесты:
 # {%- if ota == "true" %}

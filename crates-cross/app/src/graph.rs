@@ -136,7 +136,7 @@ supervisor_graph! {
         // (`OtaClient` с номером этого транспорта), остальное — карте проекта.
         ::domain::SERVER_FRAG<
             {{ lm }}::Link,
-            ::domain::modbus::Slave<::domain::modbus::OtaRegisters<crate::modbus::Handle>>,
+            ::domain::modbus::OtaRegisters<crate::modbus::Handle>,
         > as MODBUS_{{ f[4] | upcase }} =
             ::domain::server::ServerWiring {
                 link: {{ link }},
@@ -153,7 +153,7 @@ supervisor_graph! {
                 ),
             },
 {%- else %}
-        ::domain::SERVER_FRAG<{{ lm }}::Link, ::domain::modbus::Slave<crate::modbus::Handle>> as MODBUS_{{ f[4] | upcase }} =
+        ::domain::SERVER_FRAG<{{ lm }}::Link, crate::modbus::Handle> as MODBUS_{{ f[4] | upcase }} =
             ::domain::server::ServerWiring {
                 link: {{ link }},
                 handler: ::domain::modbus::Slave::new(1, crate::modbus::handle(), crate::build::PKG_VERSION),

@@ -754,14 +754,20 @@ pub(crate) mod tests {
     }
 
     /// Брокер отверг подключение — плата кладёт трубку и подключается снова
-    /// (после паузы клиента), и вторая сессия выходит в сеть.
+    /// после паузы клиента (соединение прожило меньше 30 с — отказ), и вторая
+    /// сессия выходит в сеть.
     #[tokio::test]
     async fn node_redials_after_refusal() {
         with_broker(async |mut broker| {
             broker.accept().await;
             broker.send(&connack(0x86)).await;
             broker.close().await;
+            let refused = embassy_time::Instant::now();
             let second = broker.welcome().await;
+            assert!(
+                refused.elapsed() >= Duration::from_secs(1),
+                "повтор без паузы клиента"
+            );
             assert!(contains(&second, b"online"));
         })
         .await;
@@ -776,7 +782,14 @@ pub(crate) mod tests {
             for _ in 0..100 {
                 tokio::task::yield_now().await;
             }
+            let started = embassy_time::Instant::now();
             let session = broker.welcome().await;
+            // Подключение — только после паузы клиента: значит, первая
+            // попытка отказала, а не дождалась брокера.
+            assert!(
+                started.elapsed() >= Duration::from_secs(1),
+                "первая попытка не отказала"
+            );
             assert!(contains(&session, topic("/status").as_bytes()));
         })
         .await;
@@ -796,7 +809,7 @@ pub(crate) mod tests {
     }
 
     /// Минута в сети — узел не возвращается (`with_broker` упал бы на его
-    /// выходе).
+    /// выходе) и живую сессию не рвёт.
     #[tokio::test]
     async fn node_never_returns() {
         with_broker(async |mut broker| {
@@ -807,6 +820,11 @@ pub(crate) mod tests {
                     tokio::task::yield_now().await;
                 }
             }
+            assert_eq!(
+                broker.0.state(),
+                embassy_net::tcp::State::Established,
+                "сессия та же"
+            );
         })
         .await;
     }

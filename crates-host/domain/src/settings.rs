@@ -193,6 +193,12 @@ impl<F: NorFlash> Settings<F> {
         Self::new(flash, 0..end)
     }
 
+    /// Носитель — тестам, которые смотрят во флеш под хранилищем.
+    #[cfg(test)]
+    pub(crate) fn flash(&mut self) -> &mut F {
+        self.map.flash()
+    }
+
     /// Раздел повреждён, и `sequential-storage` его не починил: стирает
     /// целиком — настройки потеряны, но хранилище снова работает.
     ///
@@ -200,12 +206,6 @@ impl<F: NorFlash> Settings<F> {
     /// любая операция зовёт свой `try_repair` (дотирает недостёртые страницы,
     /// повторяет прерванный перенос записей) и повторяет себя. Не помогло —
     /// чинить больше нечем, и крейт сам советует стереть раздел.
-    /// Носитель — тестам, которые смотрят во флеш под хранилищем.
-    #[cfg(test)]
-    pub(crate) fn flash(&mut self) -> &mut F {
-        self.map.flash()
-    }
-
     async fn erase_corrupted(&mut self) -> Result<(), Error<F::Error>> {
         warn!("settings: раздел повреждён и не починился — стёрт, настройки сброшены");
         self.map.erase_all().await

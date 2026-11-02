@@ -184,8 +184,8 @@ mod tests {
         if no_external_flash() {
             return;
         }
-{%- endif %}
 
+{%- endif %}
         let mut ota = updater(board.firmware);
         let page = ota.erase_size();
         let capacity = ota.capacity();
@@ -260,8 +260,8 @@ mod tests {
         if no_external_flash() {
             return;
         }
-{%- endif %}
 
+{%- endif %}
         let mut ota = updater(board.firmware);
 
         let first = [0xA1u8; 32];
@@ -307,6 +307,7 @@ mod tests {
     #[test]
     async fn ota_rejects_an_older_image(board: Board) {
         use domain::ota::update::UpdateError;
+
         const LENGTH: u32 = 32;
         const LONGER: u32 = LENGTH * 2;
 
@@ -318,8 +319,8 @@ mod tests {
         if no_external_flash() {
             return;
         }
-{%- endif %}
 
+{%- endif %}
         let mut ota = updater(board.firmware);
 
         // Кратно WRITE_SIZE флеша. Хвост — раскладка этой прошивки (иначе

@@ -2587,9 +2587,11 @@ variable::set("has_stub", if has.uart || has.can || has.usb || has.tcp || has.ud
 variable::set("crc_used", if modbus_rtu || cobs_used { "true" } else { "false" });
 // Property-тесты кадрирования есть у Modbus (RTU, TCP, UDP) и у COBS.
 variable::set("framing_tests", if on.modbus || cobs_used { "true" } else { "false" });
-// Асинхронные трейты в `ports`: без них `#![expect(async_fn_in_trait)]` не
-// срабатывает, и сборка падает.
-variable::set("ports_async", if variable::get("ota") == "true" || on.modbus || on.protobuf || on.canopen || has.can || has.udp { "true" } else { "false" });
+// Асинхронные трейты в `ports` (каналы, шина CAN, транспорт master'а, карта
+// регистров): без них `#![expect(async_fn_in_trait)]` не срабатывает, и сборка
+// падает. У OTA в `ports` асинхронных трейтов нет (`Reboot` синхронный), у SSH
+// трейт ключа хоста ловит своё условие в `ports/src/lib.rs`.
+variable::set("ports_async", if on.modbus || on.protobuf || on.canopen || has.can || has.udp { "true" } else { "false" });
 // Модуль `link` в `app`: транспорты протоколов (`app::link::<вид>[::<имя>]`) — кадрирование,
 // буферы и сокет над объектами платы. Без Modbus и protobuf транспорту нечего оборачивать (CANopen берёт
 // шину CAN как есть).

@@ -54,10 +54,9 @@ impl From<FirmwareUpdaterError> for FlashError {
             FirmwareUpdaterError::Flash(kind) => Self::Flash(kind),
             FirmwareUpdaterError::BadState => Self::BadState,
             // Подпись проверяет `verify_and_mark_updated`, а его адаптер не
-            // зовёт: подпись проверяет bootloader (`ota::boot`).
-            FirmwareUpdaterError::Signature(_) => {
-                unreachable!("адаптер не проверяет подпись — это делает bootloader")
-            }
+            // зовёт (подпись проверяет bootloader, `ota::boot`): такой ошибки
+            // не бывает. Пришла бы — отказ устройства, а не паника узла.
+            FirmwareUpdaterError::Signature(_) => Self::Flash(NorFlashErrorKind::Other),
         }
     }
 }
@@ -110,6 +109,12 @@ impl<D: NorFlash, S: NorFlash> Updater<Partitions<D, S>> {
             assert!(
                 PendingImage::LEN.is_multiple_of(D::WRITE_SIZE),
                 "запись для bootloader'а не кратна слову записи DFU"
+            );
+            // Тогда и `capacity` (кратна странице, проверено ниже) кратна
+            // слову: добитый до слова образ не длиннее `capacity`.
+            assert!(
+                D::ERASE_SIZE.is_multiple_of(D::WRITE_SIZE),
+                "страница стирания DFU не кратна слову записи"
             );
         }
         let capacity = parts.capacity;
