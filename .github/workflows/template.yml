@@ -6,7 +6,7 @@
 #
 # Ограничение, определяющее состав джобов: `domain` зависит от приватного
 # Sergycb/rust-lib, доступа к которому у Actions нет. Поэтому здесь только то,
-# что обходится без резолва зависимостей — каскад выбора чипа, инструменты
+# что обходится без резолва git-зависимостей — каскад выбора чипа, инструменты
 # мейнтейнера и сама генерация. Сборку сгенерированного проекта проверяет
 # `template-check` без `--quick`, и это остаётся локальной командой
 # (см. MAINTAINING.md).
@@ -25,8 +25,11 @@ on:
 permissions:
   contents: read
 
+# Без `{% raw %}`, в отличие от ci.yml проектов: этот файл cargo-generate не
+# рендерит, и GitHub получил бы Liquid как есть — `{%` в начале значения YAML
+# не разбирает, и workflow не запускался вовсе.
 concurrency:
-  group: {% raw %}${{ github.workflow }}-${{ github.ref }}{% endraw %}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -58,12 +61,13 @@ jobs:
       - run: cargo clippy --manifest-path chip-data-gen/Cargo.toml --all-targets -- -D warnings
 
       # Тесты на сам `chip-select.rhai`: гоняют его через движок rhai с
-      # подменёнными `variable`/`file`, каждый — по всем 1479 чипам. Здесь же
-      # проверка штампа версий (списки чипов собраны из той же версии
-      # embassy-stm32, что объявлена в crates-cross/Cargo.toml) и юнит-тесты разбора
-      # метаданных. В `--release`, иначе интерпретация rhai растягивает прогон
-      # с секунд до минут.
-      - run: cargo test --manifest-path chip-data-gen/Cargo.toml --release
+      # подменёнными `variable`/`file`, каждый — по всем 1479 чипам, и юнит-тесты
+      # разбора метаданных. Кроме проверки штампа версий: она резолвит граф
+      # crates-cross через `cargo metadata`, а в нём git-зависимость rust-lib,
+      # которой здесь не скачать, — её гоняют локально (MAINTAINING.md, «Когда
+      # перегенерировать данные»). В `--release`, иначе интерпретация rhai
+      # растягивает прогон с секунд до минут.
+      - run: cargo test --manifest-path chip-data-gen/Cargo.toml --release -- --skip generated_blocks_match_the_declared_embassy_version
 
       # Версия закреплена — та, на которой проверен шаблон; она же нижняя
       # граница `cargo_generate_version` в cargo-generate.toml. Поднимать

@@ -1142,14 +1142,16 @@ fn state_and_config_lengths_are_multiples_of_their_erase_size() {
 
 /// Списки чипов в `chip-data/` собраны из чип-фич конкретной версии
 /// `embassy-stm32`. Связь «подняли версию — перегенерируйте» до появления
-/// штампа держалась только на памяти мейнтейнера, а поднимает версию обычно
-/// dependabot/renovate, и молча: списки при этом остались бы от старой версии,
-/// а расхождение вылезло бы у пользователя шаблона при генерации.
+/// штампа держалась только на памяти мейнтейнера: бот в `crates-cross/Cargo.toml`
+/// шаблона не дотягивается (MAINTAINING.md, «Версии зависимостей: бот сюда не
+/// дотягивается»), версию поднимают руками, и забытая перегенерация оставила бы
+/// списки от старой — расхождение вылезло бы у пользователя шаблона при генерации.
 ///
 /// То же со `stm32-metapac`: `embassy-stm32` тянет его диапазоном, и минорный
 /// релиз metapac меняет данные при той же версии `embassy-stm32`. Её тест
 /// разрешает так же, как генератор, — `cargo metadata` без lock-файла, то есть
-/// с доступом к реестру.
+/// с доступом к реестру и к git-зависимости `rust-lib` (поэтому CI шаблона
+/// тест пропускает).
 ///
 /// Штамп пишет `chip-data-gen` (`emit::format_source_stamp`); начало штампа и
 /// версии тест берёт у него же.
@@ -1602,7 +1604,10 @@ fn protocol_over_uart_keeps_the_serial_module() {
         for (path, wanted) in [
             ("crates-host/proto", protocol == "protobuf"),
             ("crates-host/domain/src/protobuf.rs", protocol == "protobuf"),
-            ("crates-host/adapters-logic/src/cobs.rs", protocol == "protobuf"),
+            (
+                "crates-host/adapters-logic/src/cobs.rs",
+                protocol == "protobuf",
+            ),
             ("crates-host/adapters-logic", true),
             ("crates-host/domain/src/modbus.rs", protocol == "modbus"),
             ("crates-host/ports/src/modbus.rs", protocol == "modbus"),
@@ -2948,10 +2953,13 @@ fn protocol_does_not_need_the_graph() {
             "{chip} {preset:?}"
         );
         let protocol = result.vars.get("protocol").map_or("", String::as_str);
-        assert!(!protocol.is_empty(), "{chip} {preset:?}: протокол не выбран");
+        assert!(
+            !protocol.is_empty(),
+            "{chip} {preset:?}: протокол не выбран"
+        );
         let task = format!("crates-cross/app/src/tasks/{protocol}.rs");
         assert!(
-            !result.deleted.iter().any(|path| *path == task),
+            !result.deleted.contains(&task),
             "{chip} {preset:?}: {task} удалён при выбранном протоколе"
         );
     }
