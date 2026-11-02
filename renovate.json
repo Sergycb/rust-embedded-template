@@ -4,9 +4,6 @@
   "cargo": {
     "enabled": true
   },
-  "docker": {
-    "enabled": true
-  },
   "packageRules": [
     {
       "description": "Свежий релиз ждёт неделю: за это время отзывают сломанные и вредоносные версии (yank), и MR с ними не появляется",
@@ -19,13 +16,13 @@
       "groupName": "cargo dependencies"
     },
     {
-      "matchManagers": ["docker"],
-      "matchFileNames": [".gitlab-ci.yml", "**/.gitlab-ci.yml"],
+      "description": "Образы из .gitlab-ci.yml находит менеджер gitlabci (менеджера docker у Renovate нет)",
+      "matchManagers": ["gitlabci"],
       "groupName": "gitlab images"
     },
     {
       "description": "Образ rust: поднимают руками и вместе с rust-toolchain.toml (docs/conventions.md, «Тулчейн запинен»)",
-      "matchManagers": ["docker"],
+      "matchDatasources": ["docker"],
       "matchPackageNames": ["rust"],
       "enabled": false
     }

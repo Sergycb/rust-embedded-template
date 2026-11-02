@@ -1161,8 +1161,10 @@ cargo-воркспейсам (корневой, `crates-cross/`, `crates-host/ch
    джоб не запустится никогда — на обычных push/MR он намеренно не срабатывает.
 
 Образы в `.gitlab-ci.yml` (`rust`, `release-cli`, сам `renovate`) запинены на версии, а
-не на `latest` — два из трёх получают секреты. Поднимает их Renovate: в `renovate.json`
-включён менеджер `docker` с правилом на `.gitlab-ci.yml`.
+не на `latest`: на них идут джобы с секретами. `release-cli` и `renovate` поднимает
+Renovate (менеджер `gitlabci`, группа `gitlab images` в `renovate.json`), а `rust` —
+нет: его версия — это версия тулчейна, её поднимают руками вместе с
+`rust-toolchain.toml` (`docs/conventions.md`, «Тулчейн запинен»).
 
 Альтернатива джобу — подключить к проекту [Mend Renovate App](https://docs.renovatebot.com/getting-started/running/)
 (он поддерживает GitLab); тогда джоб можно удалить.{% endif %}
