@@ -38,11 +38,11 @@ embassy-stm32 = { workspace = true, features = ["unstable-pac"] }
 {%- endif %}
 {%- if has_usb == "true" %}
 #   USB-устройство с потоком CDC (`adapters_hw::usb`, src/usb.rs)
-#   драйвер-заглушка до USB-блока (`adapters_hw::fake`, фича `fake`, src/stub.rs)
+#   драйвер-заглушка до USB-блока (`adapters_hw::usb::fake`, фича `fake`, src/stub.rs)
 {%- endif %}
 {%- if has_net == "true" %}
 #   стек с фоновой работой (`adapters_hw::net::Net`, src/net.rs)
-#   устройство-заглушка до Ethernet (`adapters_hw::fake`, фича `fake`, src/stub.rs)
+#   устройство-заглушка до Ethernet (`adapters_hw::net::fake`, фича `fake`, src/stub.rs)
 {%- endif %}
 {%- if has_usb == "true" or has_net == "true" %}
 {%- if has_usb == "true" and has_net == "true" %}

@@ -97,7 +97,7 @@ mod tests {
     use ports::Exception;
 
     use super::{MapMutex, SharedRegisters};
-    use crate::modbus::fakes::Map;
+    use crate::modbus::fake::Map;
     use crate::modbus::{Registers, Words, WordsMut};
 
     /// Карта, запись которой ждёт между двумя регистрами — как настоящая,

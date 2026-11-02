@@ -222,7 +222,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use adapters_hw::fake::MemFlash;
+    use adapters_hw::flash::fake::MemFlash;
     use embedded_storage_async::nor_flash::{ErrorType, NorFlashErrorKind, ReadNorFlash};
 
     use super::*;

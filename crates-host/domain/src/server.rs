@@ -113,71 +113,7 @@ where
 }
 
 #[cfg(test)]
-mod tests {
-    //! Тесты узла протокола: ответы на кадры и отказы канала — над настоящим
-    //! slave'ом и картой в памяти.
-
-    use ports::LinkError;
-
-    use super::fakes::{Link, serve};
-    use crate::modbus::Slave;
-    use crate::modbus::fakes::Map;
-
-    /// Ответ slave'а 1 на [`read`]: регистр 0 карты — ноль.
-    const REPLY: [u8; 5] = [1, 0x03, 2, 0, 0];
-
-    /// Чтение одного holding-регистра у slave'а `unit` — кадр «адрес и PDU».
-    fn read(unit: u8) -> Vec<u8> {
-        vec![unit, 0x03, 0, 0, 0, 1]
-    }
-
-    fn slave() -> Slave<Map> {
-        Slave::new(1, Map::default(), "1.2.3")
-    }
-
-    #[test]
-    fn answers_each_frame_and_stays_silent_when_the_slave_is() {
-        // Второй кадр — чужому адресу: slave молчит, и узел не отправляет
-        // ничего.
-        let mut link = Link::with([Ok(read(1)), Ok(read(2)), Ok(read(1))], 260);
-        serve(&mut link, &mut slave());
-        assert_eq!(link.sent, [REPLY.to_vec(), REPLY.to_vec()]);
-    }
-
-    /// Потерянный кадр и закрытый канал узел переживает: следующий кадр —
-    /// ответ.
-    #[test]
-    fn lost_frames_and_a_closed_link_do_not_stop_the_node() {
-        let mut link = Link::with(
-            [
-                Err(LinkError::Lost("помеха")),
-                Err(LinkError::Down("кабель вынут")),
-                Ok(read(1)),
-            ],
-            260,
-        );
-        serve(&mut link, &mut slave());
-        assert_eq!(link.sent, [REPLY.to_vec()]);
-    }
-
-    /// Ответ, не ушедший в канал, — отказом или потерей, — узел не
-    /// останавливает: он ждёт следующий кадр и отвечает на него.
-    #[test]
-    fn failed_sends_do_not_stop_the_node() {
-        for send in [
-            Err(LinkError::Down("обрыв")),
-            Err(LinkError::Lost("не влез")),
-        ] {
-            let mut link = Link::with([Ok(read(1)), Ok(read(1))], 260);
-            link.send = send;
-            serve(&mut link, &mut slave());
-            assert_eq!(link.sent.len(), 2, "оба кадра обработаны");
-        }
-    }
-}
-
-#[cfg(test)]
-pub(crate) mod fakes {
+pub(crate) mod fake {
     //! Фейк кадрового канала и прогон узла над ним — для тестов узла и
     //! обработчиков, которые гоняют через него.
 
@@ -258,5 +194,69 @@ pub(crate) mod fakes {
         let mut task = pin!(task(ctx));
         let mut cx = Context::from_waker(Waker::noop());
         assert!(task.as_mut().poll(&mut cx).is_pending(), "ждёт кадр");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Тесты узла протокола: ответы на кадры и отказы канала — над настоящим
+    //! slave'ом и картой в памяти.
+
+    use ports::LinkError;
+
+    use super::fake::{Link, serve};
+    use crate::modbus::Slave;
+    use crate::modbus::fake::Map;
+
+    /// Ответ slave'а 1 на [`read`]: регистр 0 карты — ноль.
+    const REPLY: [u8; 5] = [1, 0x03, 2, 0, 0];
+
+    /// Чтение одного holding-регистра у slave'а `unit` — кадр «адрес и PDU».
+    fn read(unit: u8) -> Vec<u8> {
+        vec![unit, 0x03, 0, 0, 0, 1]
+    }
+
+    fn slave() -> Slave<Map> {
+        Slave::new(1, Map::default(), "1.2.3")
+    }
+
+    #[test]
+    fn answers_each_frame_and_stays_silent_when_the_slave_is() {
+        // Второй кадр — чужому адресу: slave молчит, и узел не отправляет
+        // ничего.
+        let mut link = Link::with([Ok(read(1)), Ok(read(2)), Ok(read(1))], 260);
+        serve(&mut link, &mut slave());
+        assert_eq!(link.sent, [REPLY.to_vec(), REPLY.to_vec()]);
+    }
+
+    /// Потерянный кадр и закрытый канал узел переживает: следующий кадр —
+    /// ответ.
+    #[test]
+    fn lost_frames_and_a_closed_link_do_not_stop_the_node() {
+        let mut link = Link::with(
+            [
+                Err(LinkError::Lost("помеха")),
+                Err(LinkError::Down("кабель вынут")),
+                Ok(read(1)),
+            ],
+            260,
+        );
+        serve(&mut link, &mut slave());
+        assert_eq!(link.sent, [REPLY.to_vec()]);
+    }
+
+    /// Ответ, не ушедший в канал, — отказом или потерей, — узел не
+    /// останавливает: он ждёт следующий кадр и отвечает на него.
+    #[test]
+    fn failed_sends_do_not_stop_the_node() {
+        for send in [
+            Err(LinkError::Down("обрыв")),
+            Err(LinkError::Lost("не влез")),
+        ] {
+            let mut link = Link::with([Ok(read(1)), Ok(read(1))], 260);
+            link.send = send;
+            serve(&mut link, &mut slave());
+            assert_eq!(link.sent.len(), 2, "оба кадра обработаны");
+        }
     }
 }

@@ -202,7 +202,7 @@ mod tests {
     // {%- if ssh_host_key == "config" %}
     use crate::settings::Settings;
     use crate::ssh::{HOST_KEY_ID, Stored};
-    use adapters_hw::fake::MemFlash;
+    use adapters_hw::flash::fake::MemFlash;
     use embedded_storage_async::nor_flash::{ErrorType, NorFlash, NorFlashErrorKind, ReadNorFlash};
     use ports::HostKey;
     // {%- endif %}
@@ -654,7 +654,7 @@ mod tests {
         const PROMPT: &str = "console, 'help' for commands\r\n> ";
         const FAREWELL: &str = "\r\nidle timeout, session closed\r\n";
         MockDriver::get().reset();
-        let ((stack, _), _) = adapters_hw::fake::cable::pair();
+        let ((stack, _), _) = adapters_hw::net::fake::cable::pair();
         let info = device_info();
         let device = Device {
             info: &info,
@@ -697,7 +697,7 @@ mod tests {
     #[test]
     fn the_shell_shows_what_the_editor_decides() {
         const PROMPT: &str = "console, 'help' for commands\r\n> ";
-        let ((stack, _), _) = adapters_hw::fake::cable::pair();
+        let ((stack, _), _) = adapters_hw::net::fake::cable::pair();
         let info = device_info();
         let device = Device {
             info: &info,

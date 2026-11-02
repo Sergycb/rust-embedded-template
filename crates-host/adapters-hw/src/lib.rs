@@ -2,8 +2,9 @@
 
 //! Обёртки над железом и стеками драйверов без конкретного чипа — то, из чего
 //! плата (`crates-cross/bsp`) собирает свои рычаги: устройство USB с потоком
-//! CDC, стек сети, EEPROM как флеш; и драйверы без шины и линка — заглушки
-//! платы и фейки host-тестов.
+//! CDC, стек сети, EEPROM как флеш. Драйверы без шины и линка — заглушки
+//! платы и фейки host-тестов — модулем `fake` в конце модуля, который они
+//! подменяют (`usb::fake`, `net::fake`, `flash::fake`).
 //!
 //! Деление: нужен чип — `bsp`; обёртка над железом без чипа — здесь;
 //! реализации портов, когда их несколько, — `adapters-logic` —
@@ -19,12 +20,9 @@ pub mod net;
 pub mod usb;
 
 // {%- endif %}
-// {%- if has_usb == "true" or has_net == "true" or ota == "true" or settings_port == "true" %}
-/// Драйверы без шины и линка и флеш в памяти — для host-тестов (`adapters-hw`,
-/// `adapters-logic`,
-/// `domain`).
-#[cfg(any(test, feature = "fake"))]
-pub mod fake;
+// {%- if ota == "true" or settings_port == "true" %}
+/// Флеш с семантикой NOR без чипа: флеш в памяти для host-тестов.
+pub mod flash;
 
 // {%- endif %}
 // {%- if config_store == "eeprom" %}

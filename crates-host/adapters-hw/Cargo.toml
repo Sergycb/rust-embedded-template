@@ -11,7 +11,8 @@ workspace = true
 [features]
 # `defmt` — вывод стеков под обёртками (`embassy-net`, `embassy-usb`) в
 # прошивке; включает crates-cross/Cargo.toml. Свой код крейта в лог не пишет.
-# Драйверы без шины и линка (`adapters_hw::fake`) — для host-тестов `domain` и
+# Драйверы без шины и линка (`usb::fake`, `net::fake`) и флеш в памяти
+# (`flash::fake`, только хост) — для host-тестов `domain`, `adapters-logic` и
 # заглушек платы (`bsp::stub`).
 fake = []
 defmt = [
@@ -25,7 +26,7 @@ defmt = [
 
 [dependencies]
 # {%- if ota == "true" or settings_port == "true" %}
-# Флеш: EEPROM как `NorFlash` (`eeprom`) и флеш в памяти (`fake::MemFlash`) —
+# Флеш: EEPROM как `NorFlash` (`eeprom`) и флеш в памяти (`flash::fake::MemFlash`) —
 # тестам разделов OTA и хранилища настроек.
 embedded-storage = { workspace = true }
 embedded-storage-async = { workspace = true }

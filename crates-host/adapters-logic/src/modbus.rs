@@ -188,7 +188,7 @@ fn master_error<E>(e: ReadExactError<E>) -> ports::MasterError<E> {
 // {%- endif %}
 
 #[cfg(test)]
-mod fakes {
+mod fake {
     //! Фейки для host-тестов транспортов: поток байтов и канал датаграмм.
     //!
     //! Ни один не ждёт по-настоящему — их future готовы с первого `poll`, —

@@ -176,7 +176,7 @@ impl<L: FrameLink> ModbusClient for Udp<L> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modbus::fakes::{Datagrams, mbap_frame as frame};
+    use crate::modbus::fake::{Datagrams, mbap_frame as frame};
 
     #[tokio::test]
     async fn server_skips_broken_and_replies_to_last() {

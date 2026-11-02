@@ -410,7 +410,7 @@ mod tests {
     use embassy_time::MockDriver;
 
     use super::*;
-    use crate::modbus::fakes::{Duplex, rtu_frame as frame};
+    use crate::modbus::fake::{Duplex, rtu_frame as frame};
 
     /// Кадры с CRC, посчитанной не нами: документация `async-modbus` и
     /// примеры спецификации.

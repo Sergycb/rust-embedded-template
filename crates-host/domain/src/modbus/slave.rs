@@ -234,7 +234,7 @@ fn exception(code: ExceptionCode) -> Exception {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modbus::fakes::Map;
+    use crate::modbus::fake::Map;
 
     /// Прогоняет запросы `(адрес, PDU)` через slave с адресом 1; возвращает
     /// ответы.

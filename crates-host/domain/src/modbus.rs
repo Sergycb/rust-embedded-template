@@ -73,7 +73,7 @@ pub use ota::{OTA_BASE, OTA_REGISTERS, OtaRegisters, STATUS_REGISTERS};
 // {%- endif %}
 
 #[cfg(test)]
-pub(crate) mod fakes {
+pub(crate) mod fake {
     //! Фейки для host-тестов Modbus: карта регистров и транспорт master'а на
     //! уровне PDU — оба готовы с первого `poll`.
 

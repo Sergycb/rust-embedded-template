@@ -22,11 +22,11 @@ pub use udp::{UdpError, UdpLink};
 // {%- endif %}
 
 #[cfg(test)]
-mod fakes {
-    //! Поверх кабеля в памяти (`adapters_hw::fake::cable`) — то, что нужно тестам
+mod fake {
+    //! Поверх кабеля в памяти (`adapters_hw::net::fake::cable`) — то, что нужно тестам
     //! транспортов: порт и прогон обоих стеков.
 
-    use adapters_hw::fake::cable::Loopback;
+    use adapters_hw::net::fake::cable::Loopback;
     use embassy_net::Runner;
 
     pub(super) const PORT: u16 = 502;

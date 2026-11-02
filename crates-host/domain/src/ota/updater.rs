@@ -16,7 +16,7 @@
 //! Тип конкретный, без трейта: реализация одна, и приём, применение и узел
 //! зовут её прямо. Отказы, которые надо проверить на хосте (запись для
 //! bootloader'а, подтверждение, обмен), разыгрывает флеш под ней
-//! (`ota::fakes`).
+//! (`ota::fake`).
 //!
 //! # Про подтверждение: без него обновление живёт один запуск
 //!
@@ -358,7 +358,7 @@ impl<D: NorFlash, S: NorFlash> Updater<Partitions<D, S>> {
 }
 
 /// Разделы — тестам, которые смотрят во флеш под адаптером и разыгрывают его
-/// отказы (`ota::fakes`).
+/// отказы (`ota::fake`).
 #[cfg(test)]
 impl<P> Updater<P> {
     pub(crate) fn partitions(&mut self) -> &mut P {
@@ -368,7 +368,7 @@ impl<P> Updater<P> {
 
 #[cfg(test)]
 mod tests {
-    use adapters_hw::fake::MemFlash;
+    use adapters_hw::flash::fake::MemFlash;
     use embedded_storage::nor_flash::NorFlashErrorKind;
     use ports::Partitions;
 

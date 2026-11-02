@@ -178,7 +178,7 @@ pub(crate) mod tests {
     use std::rc::Rc;
     use std::vec::Vec;
 
-    use adapters_hw::fake::cable::{leak, pair};
+    use adapters_hw::net::fake::cable::{leak, pair};
     use embassy_net::Stack;
     use embassy_net::tcp::TcpSocket;
     use embassy_time::{Duration, MockDriver};
@@ -200,7 +200,7 @@ pub(crate) mod tests {
     use crate::device::INFO_MAX;
     // {%- endif %}
 
-    /// Брокер — на «хосте» кабеля в памяти (`adapters_hw::fake::cable::HOST`).
+    /// Брокер — на «хосте» кабеля в памяти (`adapters_hw::net::fake::cable::HOST`).
     const ENDPOINT: Endpoint = Endpoint {
         addr: [10, 0, 0, 2],
         port: 1883,

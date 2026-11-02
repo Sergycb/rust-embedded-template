@@ -157,7 +157,7 @@ Host-тесты гоняются `cargo xtask test host` — то есть `carg
 `pub use`-реэкспорты. Модуль без кода (одна `#![doc = include_str!(..)]`) не
 заводится: такой документации место в `docs/`. Публичный `mod` документирован — `///` над объявлением
 либо `#![doc = include_str!(..)]` в самом модуле, как в `bsp`; у приватных и
-тестовых{% if ota == "true" %} (`ota::fakes`){% endif %} — по необходимости. Определений — типов,
+тестовых{% if ota == "true" %} (`ota::fake`){% endif %} — по необходимости. Определений — типов,
 трейтов, функций, `impl` — в нём нет: они живут в модулях, названных по
 предметной области ({% if ota == "true" %}`ports::ota`, `domain::ota::download`{% else %}`domain::cpu_load::load`{% endif %}), а не по слою
 (`types`, `utils`).
@@ -166,29 +166,34 @@ Host-тесты гоняются `cargo xtask test host` — то есть `carg
 `embedded-hal` и `embassy-*`, и так путь `ports::{% if ota == "true" %}Partitions{% else %}<Трейт>{% endif %}` остаётся
 коротким, а перестановка модулей внутри крейта не касается его пользователей.
 
-Тестовые помощники, которые делят несколько модулей, — блок
-`#[cfg(test)] mod fakes { .. }` в конце их общего родителя, а не отдельный
-файл
+## Фейки
+
+Фейк — не отдельный файл и не отдельный крейт, а модуль `fake` в конце того
+модуля, который он подменяет, перед `#[cfg(test)] mod tests`: в сборке его не
+видно, а с подменяемым кодом он рядом.
+
+- Фейк, который нужен только тестам своего крейта, — `#[cfg(test)] mod fake`
+  (`pub(crate)`, если его делят подмодули)
 {%- assign sep = ": " %}
-{%- if ota == "true" %}{{ sep }}фейки портов OTA — `domain::ota::fakes` (их делят `ota`,
-`ota::download` и `ota::update`){% assign sep = ", " %}{% endif %}
+{%- if ota == "true" %}{{ sep }}разделы обновления в памяти — `domain::ota::fake` (их делят `ota`,
+  `ota::download` и `ota::update`){% assign sep = ", " %}{% endif %}
 {%- if has_net == "true" %}{{ sep }}прогон двух стеков `embassy-net` на кабеле —
-`adapters_logic::net::fakes` ({% if has_tcp == "true" %}`net::tcp`{% if has_udp == "true" %} и {% endif %}{% endif %}{% if has_udp == "true" %}`net::udp`{% endif %}){% endif %}. Отдельного файла и крейта
-для фейков нет: в сборке их не видно, а с кодом, который они подменяют, они
-рядом.
-{%- if has_usb == "true" or has_net == "true" or ota == "true" or config == "true" %}
-
-Исключение — фейки, которые делят крейты: они в `adapters_hw::fake` (модуль под
-`cfg(any(test, feature = "fake"))`)
+  `adapters_logic::net::fake` ({% if has_tcp == "true" %}`net::tcp`{% if has_udp == "true" %} и {% endif %}{% endif %}{% if has_udp == "true" %}`net::udp`{% endif %}){% endif %}.
+{%- if has_usb == "true" or has_net == "true" or ota == "true" or settings_port == "true" %}
+- Фейк, который берут другие крейты, — `#[cfg(any(test, feature = "fake"))]
+  pub mod fake` в `adapters-hw`
 {%- assign sep = ": " %}
-{%- if has_usb == "true" or has_net == "true" %}{{ sep }}драйверы без шины и линка для тестов узлов и транспортов{% assign sep = "; " %}{% endif %}
-{%- if ota == "true" or config == "true" %}{{ sep }}флеш в памяти с семантикой NOR
-`adapters_hw::fake::MemFlash` — его берут тесты {% if ota == "true" %}`domain::ota` (под `Updater`), `domain::ota::boot`{% if settings_port == "true" %} и {% endif %}{% endif %}{% if settings_port == "true" %}`domain::settings`{% endif %}.
-Готового мока `NorFlash` в экосистеме нет — `embedded-hal-mock` флеш не
-покрывает{% endif %}.
+{%- if has_usb == "true" %}{{ sep }}драйвер USB без шины (`usb::fake`){% assign sep = ", " %}{% endif %}
+{%- if has_net == "true" %}{{ sep }}устройство без линка и кабель между двумя стеками
+  (`net::fake`, `net::fake::cable`){% assign sep = ", " %}{% endif %}
+{%- if ota == "true" or settings_port == "true" %}{{ sep }}флеш в памяти с семантикой NOR
+  (`flash::fake::MemFlash` — его берут тесты {% if ota == "true" %}`domain::ota`, `domain::ota::boot`{% if settings_port == "true" %} и {% endif %}{% endif %}{% if settings_port == "true" %}`domain::settings`{% endif %}; готового
+  мока `NorFlash` в экосистеме нет — `embedded-hal-mock` флеш не покрывает){% endif %}.
+  Фичу `fake` включают dev-зависимости `domain` и `adapters-logic`{% if has_usb == "true" or has_net == "true" %}, а
+  в прошивке — `bsp`: те же драйверы стоят заглушками в слотах платы
+  (`bsp::stub`){% endif %}.
 {%- endif %}
-
-Фейк, который нужен одному модулю, живёт в его же `mod tests`.
+- Фейк, который нужен одному модулю, живёт в его же `mod tests`.
 
 ## Порядок объектов в модуле
 
@@ -202,12 +207,19 @@ Host-тесты гоняются `cargo xtask test host` — то есть `carg
 6. `static` — память, которую модуль отдаёт `'static`, — после типов, под
    которые она заведена;
 7. функции;
-8. `#[cfg(test)] mod tests`.
+8. `mod fake` — фейки модуля (раздел «Фейки»);
+9. `#[cfg(test)] mod tests`.
 
 Порядок групп 1–7 держит clippy — `arbitrary_source_item_ordering` в
 `[workspace.lints.clippy]` обоих workspace, группы — `module-item-order-groupings`
 в обоих `clippy.toml`. Безымянные `const _: () = assert!(..)` линт не трогает —
-они остаются рядом с тем, что проверяют, — а модуль тестов он пропускает.
+они остаются рядом с тем, что проверяют, — а модули под `#[cfg(test)]` (`tests`
+и тестовый `fake`) он пропускает. Модуль `fake` под фичей
+(`cfg(any(test, feature = "fake"))`) для линта обычный `mod` не на своём
+месте, поэтому модуль, который его держит, снимает линт у себя:
+`#![cfg_attr(any(test, feature = "fake"), expect(clippy::arbitrary_source_item_ordering, ..))]`.
+Условие нужно, чтобы снять ровно там, где модуль есть: без фичи `expect` без
+нарушения сам стал бы предупреждением.
 
 Внутри каждого вида (`mod` с `mod`, `const` с `const`, `type` с `type`,
 `struct`, `enum`, `trait`, `static`, `fn` — каждый сам с собой) публичное стоит

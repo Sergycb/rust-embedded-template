@@ -182,7 +182,7 @@ mod tests {
 
     use super::{UpdateError, apply};
     use crate::ota::FlashError;
-    use crate::ota::fakes::{LAYOUT, SIGNATURE, flash, with_image};
+    use crate::ota::fake::{LAYOUT, SIGNATURE, flash, with_image};
     use crate::ota::version::pack;
 
     /// Версия «этой прошивки» в тестах.

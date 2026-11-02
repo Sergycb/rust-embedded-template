@@ -219,7 +219,7 @@ mod tests {
 
     // {%- endif %}
     use super::*;
-    use crate::modbus::fakes::{Duplex, mbap_frame as frame};
+    use crate::modbus::fake::{Duplex, mbap_frame as frame};
 
     #[tokio::test]
     async fn server_echoes_transaction_and_unit() {

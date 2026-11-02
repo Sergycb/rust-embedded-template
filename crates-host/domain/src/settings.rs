@@ -338,7 +338,7 @@ impl NorFlash for NoFlash {
 
 #[cfg(test)]
 mod tests {
-    use adapters_hw::fake::MemFlash;
+    use adapters_hw::flash::fake::MemFlash;
 
     use super::Settings;
 

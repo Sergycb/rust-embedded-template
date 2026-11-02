@@ -508,6 +508,271 @@ pub async fn task<D, S, R, const PARKED: usize>(
 }
 
 #[cfg(test)]
+mod fake {
+    //! Разделы обновления в памяти под настоящим [`Updater`] — общие для
+    //! `download`, `update` и узла `ota`.
+    //!
+    //! Флеш — `MemFlash` (придирчивый, как NOR: кратность слову, запись только
+    //! «единицы в нули»), а поверх — [`Probe`]: журнал операций и отказы там,
+    //! где их надо разыграть (запись для bootloader'а, магия `STATE`,
+    //! стирание `STATE`), и долгое стирание `STATE` на таймере `MockDriver`.
+    //! Всё остальное — `embassy-boot` и адаптер — настоящее.
+    //!
+    //! Флеш в памяти не ждёт — future готовы с первого `poll`, — поэтому тестам
+    //! хватает однопоточного `#[tokio::test]`. Исключение —
+    //! [`confirm_takes`](Updater::confirm_takes): стирание `STATE` ждёт таймер.
+
+    use adapters_hw::flash::fake::MemFlash;
+    use embassy_time::{Duration, Timer};
+    use embedded_storage_async::nor_flash::{ErrorType, NorFlash, NorFlashErrorKind, ReadNorFlash};
+    use ports::{Partitions, PendingImage};
+
+    use crate::ota::Updater;
+    use crate::ota::update::{LAYOUT_BYTES, VERSION_BYTES};
+
+    /// Отпечаток раскладки разделов тестов — его отдаёт `layout()`; образы
+    /// тестов несут его в хвосте, кроме тех, что разыгрывают чужую раскладку.
+    pub(crate) const LAYOUT: u32 = 0x5EED_1A70;
+
+    /// Подпись, которую тесты кладут в `Start`; приложение её не проверяет, а
+    /// оставляет bootloader'у — важно, что дошла именно она.
+    pub(super) const SIGNATURE: [u8; 64] = [9; 64];
+
+    /// Страница стирания: кратна любому слову STM32 (до 32 байт) и вмещает
+    /// запись для bootloader'а (`PendingImage::LEN`, 96 байт).
+    const PAGE: usize = 128;
+
+    /// Объём `DFU`: самый длинный образ тестов (1024 байта) и запасная
+    /// страница за ним.
+    const DFU: usize = 1024 + PAGE;
+
+    /// Магия `embassy-boot`: образ подтверждён.
+    const BOOT_MAGIC: u8 = 0xD0;
+
+    /// Магия `embassy-boot`: обмен на следующем сбросе.
+    const SWAP_MAGIC: u8 = 0xF0;
+
+    /// Раздел `DFU` со словом `W`.
+    pub(super) type Dfu<const W: usize> = Probe<MemFlash<DFU, W, PAGE>>;
+
+    /// Раздел `STATE`: страница на магию и журнал.
+    pub(super) type State = Probe<MemFlash<PAGE, 8, PAGE>>;
+
+    /// Настоящий адаптер обновления над разделами в памяти, слово `DFU` — `W`.
+    pub(crate) type FakeFlash<const W: usize = 8> = Updater<Partitions<Dfu<W>, State>>;
+
+    /// Флеш с журналом операций и отказами по заказу.
+    pub(super) struct Probe<F> {
+        flash: F,
+        /// Запись по этому смещению и дальше отказывает.
+        refuse_from: Option<u32>,
+        /// Магии, запись которых по смещению 0 отказывает.
+        refuse_magic: Vec<u8>,
+        /// Стирание отказывает.
+        refuse_erase: bool,
+        /// Сколько длится стирание.
+        erase_takes: Option<Duration>,
+        /// Удачные записи: смещение и длина.
+        writes: Vec<(u32, usize)>,
+        /// Сколько раз стирали.
+        erases: usize,
+        /// Магии, которые пытались записать по смещению 0, и удалось ли.
+        magics: Vec<(u8, bool)>,
+    }
+
+    impl<F> Probe<F> {
+        const fn new(flash: F) -> Self {
+            Self {
+                flash,
+                refuse_from: None,
+                refuse_magic: Vec::new(),
+                refuse_erase: false,
+                erase_takes: None,
+                writes: Vec::new(),
+                erases: 0,
+                magics: Vec::new(),
+            }
+        }
+    }
+
+    impl<F: ErrorType<Error = NorFlashErrorKind>> ErrorType for Probe<F> {
+        type Error = NorFlashErrorKind;
+    }
+
+    impl<F: ReadNorFlash + ErrorType<Error = NorFlashErrorKind>> ReadNorFlash for Probe<F> {
+        const READ_SIZE: usize = F::READ_SIZE;
+
+        async fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), Self::Error> {
+            self.flash.read(offset, bytes).await
+        }
+
+        fn capacity(&self) -> usize {
+            self.flash.capacity()
+        }
+    }
+
+    impl<F: NorFlash + ErrorType<Error = NorFlashErrorKind>> NorFlash for Probe<F> {
+        const WRITE_SIZE: usize = F::WRITE_SIZE;
+        const ERASE_SIZE: usize = F::ERASE_SIZE;
+
+        async fn erase(&mut self, from: u32, to: u32) -> Result<(), Self::Error> {
+            if let Some(takes) = self.erase_takes {
+                Timer::after(takes).await;
+            }
+            if self.refuse_erase {
+                return Err(NorFlashErrorKind::Other);
+            }
+            self.erases += 1;
+            self.flash.erase(from, to).await
+        }
+
+        async fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), Self::Error> {
+            let magic = (offset == 0)
+                .then(|| bytes.first().copied())
+                .flatten()
+                .filter(|magic| bytes.iter().all(|b| b == magic));
+            let refused = magic.is_some_and(|magic| self.refuse_magic.contains(&magic))
+                || self.refuse_from.is_some_and(|from| offset >= from);
+            if let Some(magic) = magic {
+                self.magics.push((magic, !refused));
+            }
+            if refused {
+                return Err(NorFlashErrorKind::Other);
+            }
+            self.flash.write(offset, bytes).await?;
+            self.writes.push((offset, bytes.len()));
+            Ok(())
+        }
+    }
+
+    /// Наблюдения и отказы — у того же адаптера, что видит узел.
+    impl<const W: usize> FakeFlash<W> {
+        /// Содержимое раздела `DFU`.
+        pub(super) fn memory(&mut self) -> &mut Vec<u8> {
+            &mut self.partitions().dfu.flash.mem
+        }
+
+        /// Удачные записи в `DFU`: смещение и длина.
+        pub(super) fn writes(&mut self) -> &[(u32, usize)] {
+            &self.partitions().dfu.writes
+        }
+
+        /// Готовили ли раздел — стирали ли `DFU`.
+        pub(super) fn prepared(&mut self) -> bool {
+            self.partitions().dfu.erases > 0
+        }
+
+        /// Сколько раз готовили раздел: `prepare` стирает `capacity` и
+        /// запасную страницу — по стиранию на страницу.
+        pub(super) fn prepares(&mut self) -> usize {
+            let pages = self.capacity() as usize / PAGE + 1;
+            self.partitions().dfu.erases / pages
+        }
+
+        /// Запись для bootloader'а за `capacity`: подпись и длина.
+        pub(super) fn recorded(&mut self) -> Option<([u8; 64], u32)> {
+            let at = self.capacity() as usize;
+            let bytes: [u8; PendingImage::LEN] = self.memory()[at..at + PendingImage::LEN]
+                .try_into()
+                .expect("за capacity есть место под запись");
+            PendingImage::from_bytes(&bytes).map(|record| (record.signature, record.len))
+        }
+
+        /// Помечен ли обмен разделов (`mark_updated`).
+        pub(super) fn swap_requested(&mut self) -> bool {
+            self.partitions().state.flash.mem[..8] == [SWAP_MAGIC; 8]
+        }
+
+        /// Сколько раз помечали обмен (запись магии `Swap` прошла).
+        pub(super) fn magics_swap(&mut self) -> usize {
+            let magics = &self.partitions().state.magics;
+            magics.iter().filter(|m| **m == (SWAP_MAGIC, true)).count()
+        }
+
+        /// Сколько раз образ подтвердили (запись магии `Boot` прошла).
+        pub(super) fn booted(&mut self) -> usize {
+            let magics = &self.partitions().state.magics;
+            magics.iter().filter(|m| **m == (BOOT_MAGIC, true)).count()
+        }
+
+        /// Сколько раз пытались подтвердить образ — удачно или нет.
+        pub(super) fn confirm_attempts(&mut self) -> usize {
+            let magics = &self.partitions().state.magics;
+            magics.iter().filter(|(m, _)| *m == BOOT_MAGIC).count()
+        }
+
+        /// В `STATE` — образ, ждущий обмена: раздел занят.
+        pub(super) fn set_busy(&mut self) {
+            self.partitions().state.flash.mem[..8].fill(SWAP_MAGIC);
+        }
+
+        /// Подтверждение образа отказывает (`refuse`) или снова проходит:
+        /// запись магии `Boot` не проходит после стирания `STATE`.
+        pub(super) fn refuse_confirm(&mut self, refuse: bool) {
+            let magics = &mut self.partitions().state.refuse_magic;
+            magics.retain(|m| *m != BOOT_MAGIC);
+            if refuse {
+                magics.push(BOOT_MAGIC);
+            }
+        }
+
+        /// Стирание `STATE` отказывает: подтверждение и пометка обмена не
+        /// трогают раздел — образ, ждущий обмена, так и остаётся.
+        pub(super) fn refuse_state_erase(&mut self) {
+            self.partitions().state.refuse_erase = true;
+        }
+
+        /// Пометка обмена отказывает: запись магии `Swap` не проходит.
+        pub(super) fn refuse_swap(&mut self) {
+            self.partitions().state.refuse_magic.push(SWAP_MAGIC);
+        }
+
+        /// Запись в `DFU` отказывает с `offset` и дальше.
+        pub(super) fn refuse_writes_from(&mut self, offset: u32) {
+            self.partitions().dfu.refuse_from = Some(offset);
+        }
+
+        /// Запись для bootloader'а (за `capacity`) отказывает.
+        pub(super) fn refuse_record(&mut self) {
+            let capacity = self.capacity();
+            self.refuse_writes_from(capacity);
+        }
+
+        /// Стирание `STATE` — то, чем подтверждается образ, — длится `takes`.
+        pub(super) fn confirm_takes(&mut self, takes: Duration) {
+            self.partitions().state.erase_takes = Some(takes);
+        }
+    }
+
+    /// Адаптер над чистыми разделами со словом `W` и самым длинным образом
+    /// `capacity` (кратно 128 и не больше 1024).
+    pub(super) fn flash_with_word<const W: usize>(capacity: u32) -> FakeFlash<W> {
+        Updater::new(Partitions {
+            dfu: Probe::new(MemFlash::erased()),
+            state: Probe::new(MemFlash::erased()),
+            capacity,
+            layout: LAYOUT,
+        })
+    }
+
+    /// То же со словом 8.
+    pub(super) fn flash(capacity: u32) -> FakeFlash {
+        flash_with_word(capacity)
+    }
+
+    /// Раздел, в котором уже лежит образ длиной `len` с отпечатком [`LAYOUT`]
+    /// и версией `incoming` в хвосте; самый длинный образ — 128 байт.
+    pub(super) fn with_image(len: u32, incoming: u32) -> FakeFlash {
+        let mut flash = flash(128);
+        let version = (len - VERSION_BYTES) as usize;
+        let memory = flash.memory();
+        memory[version - LAYOUT_BYTES as usize..version].copy_from_slice(&LAYOUT.to_le_bytes());
+        memory[version..len as usize].copy_from_slice(&incoming.to_le_bytes());
+        flash
+    }
+}
+
+#[cfg(test)]
 pub(crate) mod tests {
     //! Host-тесты узла `OTA` на фейках портов: сценарии команд через входы
     //! `CMD`/`ASK` и стенды узла для тестов протоколов (`live`, `serving`).
@@ -528,8 +793,8 @@ pub(crate) mod tests {
     use super::{ClientId, OtaRequest, REBOOT_GRACE, SESSION_TIMEOUT, task};
     /// Отпечаток раскладки фейка — образы тестов узла и протоколов несут его
     /// в хвосте.
-    pub(crate) use crate::ota::fakes::LAYOUT;
-    use crate::ota::fakes::{FakeFlash, SIGNATURE, flash};
+    pub(crate) use crate::ota::fake::LAYOUT;
+    use crate::ota::fake::{FakeFlash, SIGNATURE, flash};
     use crate::ota::update::{LAYOUT_BYTES, VERSION_BYTES};
     use crate::ota::version::pack;
 
@@ -1566,270 +1831,5 @@ pub(crate) mod tests {
             let ready = replies.iter().filter(|reply| **reply == Ok(Progress::Ready)).count();
             proptest::prop_assert_eq!(flash.swap_requested(), ready > 0);
         }
-    }
-}
-
-#[cfg(test)]
-mod fakes {
-    //! Разделы обновления в памяти под настоящим [`Updater`] — общие для
-    //! `download`, `update` и узла `ota`.
-    //!
-    //! Флеш — `MemFlash` (придирчивый, как NOR: кратность слову, запись только
-    //! «единицы в нули»), а поверх — [`Probe`]: журнал операций и отказы там,
-    //! где их надо разыграть (запись для bootloader'а, магия `STATE`,
-    //! стирание `STATE`), и долгое стирание `STATE` на таймере `MockDriver`.
-    //! Всё остальное — `embassy-boot` и адаптер — настоящее.
-    //!
-    //! Флеш в памяти не ждёт — future готовы с первого `poll`, — поэтому тестам
-    //! хватает однопоточного `#[tokio::test]`. Исключение —
-    //! [`confirm_takes`](Updater::confirm_takes): стирание `STATE` ждёт таймер.
-
-    use adapters_hw::fake::MemFlash;
-    use embassy_time::{Duration, Timer};
-    use embedded_storage_async::nor_flash::{ErrorType, NorFlash, NorFlashErrorKind, ReadNorFlash};
-    use ports::{Partitions, PendingImage};
-
-    use crate::ota::Updater;
-    use crate::ota::update::{LAYOUT_BYTES, VERSION_BYTES};
-
-    /// Отпечаток раскладки разделов тестов — его отдаёт `layout()`; образы
-    /// тестов несут его в хвосте, кроме тех, что разыгрывают чужую раскладку.
-    pub(crate) const LAYOUT: u32 = 0x5EED_1A70;
-
-    /// Подпись, которую тесты кладут в `Start`; приложение её не проверяет, а
-    /// оставляет bootloader'у — важно, что дошла именно она.
-    pub(super) const SIGNATURE: [u8; 64] = [9; 64];
-
-    /// Страница стирания: кратна любому слову STM32 (до 32 байт) и вмещает
-    /// запись для bootloader'а (`PendingImage::LEN`, 96 байт).
-    const PAGE: usize = 128;
-
-    /// Объём `DFU`: самый длинный образ тестов (1024 байта) и запасная
-    /// страница за ним.
-    const DFU: usize = 1024 + PAGE;
-
-    /// Магия `embassy-boot`: образ подтверждён.
-    const BOOT_MAGIC: u8 = 0xD0;
-
-    /// Магия `embassy-boot`: обмен на следующем сбросе.
-    const SWAP_MAGIC: u8 = 0xF0;
-
-    /// Раздел `DFU` со словом `W`.
-    pub(super) type Dfu<const W: usize> = Probe<MemFlash<DFU, W, PAGE>>;
-
-    /// Раздел `STATE`: страница на магию и журнал.
-    pub(super) type State = Probe<MemFlash<PAGE, 8, PAGE>>;
-
-    /// Настоящий адаптер обновления над разделами в памяти, слово `DFU` — `W`.
-    pub(crate) type FakeFlash<const W: usize = 8> = Updater<Partitions<Dfu<W>, State>>;
-
-    /// Флеш с журналом операций и отказами по заказу.
-    pub(super) struct Probe<F> {
-        flash: F,
-        /// Запись по этому смещению и дальше отказывает.
-        refuse_from: Option<u32>,
-        /// Магии, запись которых по смещению 0 отказывает.
-        refuse_magic: Vec<u8>,
-        /// Стирание отказывает.
-        refuse_erase: bool,
-        /// Сколько длится стирание.
-        erase_takes: Option<Duration>,
-        /// Удачные записи: смещение и длина.
-        writes: Vec<(u32, usize)>,
-        /// Сколько раз стирали.
-        erases: usize,
-        /// Магии, которые пытались записать по смещению 0, и удалось ли.
-        magics: Vec<(u8, bool)>,
-    }
-
-    impl<F> Probe<F> {
-        const fn new(flash: F) -> Self {
-            Self {
-                flash,
-                refuse_from: None,
-                refuse_magic: Vec::new(),
-                refuse_erase: false,
-                erase_takes: None,
-                writes: Vec::new(),
-                erases: 0,
-                magics: Vec::new(),
-            }
-        }
-    }
-
-    impl<F: ErrorType<Error = NorFlashErrorKind>> ErrorType for Probe<F> {
-        type Error = NorFlashErrorKind;
-    }
-
-    impl<F: ReadNorFlash + ErrorType<Error = NorFlashErrorKind>> ReadNorFlash for Probe<F> {
-        const READ_SIZE: usize = F::READ_SIZE;
-
-        async fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), Self::Error> {
-            self.flash.read(offset, bytes).await
-        }
-
-        fn capacity(&self) -> usize {
-            self.flash.capacity()
-        }
-    }
-
-    impl<F: NorFlash + ErrorType<Error = NorFlashErrorKind>> NorFlash for Probe<F> {
-        const WRITE_SIZE: usize = F::WRITE_SIZE;
-        const ERASE_SIZE: usize = F::ERASE_SIZE;
-
-        async fn erase(&mut self, from: u32, to: u32) -> Result<(), Self::Error> {
-            if let Some(takes) = self.erase_takes {
-                Timer::after(takes).await;
-            }
-            if self.refuse_erase {
-                return Err(NorFlashErrorKind::Other);
-            }
-            self.erases += 1;
-            self.flash.erase(from, to).await
-        }
-
-        async fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), Self::Error> {
-            let magic = (offset == 0)
-                .then(|| bytes.first().copied())
-                .flatten()
-                .filter(|magic| bytes.iter().all(|b| b == magic));
-            let refused = magic.is_some_and(|magic| self.refuse_magic.contains(&magic))
-                || self.refuse_from.is_some_and(|from| offset >= from);
-            if let Some(magic) = magic {
-                self.magics.push((magic, !refused));
-            }
-            if refused {
-                return Err(NorFlashErrorKind::Other);
-            }
-            self.flash.write(offset, bytes).await?;
-            self.writes.push((offset, bytes.len()));
-            Ok(())
-        }
-    }
-
-    /// Наблюдения и отказы — у того же адаптера, что видит узел.
-    impl<const W: usize> FakeFlash<W> {
-        /// Содержимое раздела `DFU`.
-        pub(super) fn memory(&mut self) -> &mut Vec<u8> {
-            &mut self.partitions().dfu.flash.mem
-        }
-
-        /// Удачные записи в `DFU`: смещение и длина.
-        pub(super) fn writes(&mut self) -> &[(u32, usize)] {
-            &self.partitions().dfu.writes
-        }
-
-        /// Готовили ли раздел — стирали ли `DFU`.
-        pub(super) fn prepared(&mut self) -> bool {
-            self.partitions().dfu.erases > 0
-        }
-
-        /// Сколько раз готовили раздел: `prepare` стирает `capacity` и
-        /// запасную страницу — по стиранию на страницу.
-        pub(super) fn prepares(&mut self) -> usize {
-            let pages = self.capacity() as usize / PAGE + 1;
-            self.partitions().dfu.erases / pages
-        }
-
-        /// Запись для bootloader'а за `capacity`: подпись и длина.
-        pub(super) fn recorded(&mut self) -> Option<([u8; 64], u32)> {
-            let at = self.capacity() as usize;
-            let bytes: [u8; PendingImage::LEN] = self.memory()[at..at + PendingImage::LEN]
-                .try_into()
-                .expect("за capacity есть место под запись");
-            PendingImage::from_bytes(&bytes).map(|record| (record.signature, record.len))
-        }
-
-        /// Помечен ли обмен разделов (`mark_updated`).
-        pub(super) fn swap_requested(&mut self) -> bool {
-            self.partitions().state.flash.mem[..8] == [SWAP_MAGIC; 8]
-        }
-
-        /// Сколько раз помечали обмен (запись магии `Swap` прошла).
-        pub(super) fn magics_swap(&mut self) -> usize {
-            let magics = &self.partitions().state.magics;
-            magics.iter().filter(|m| **m == (SWAP_MAGIC, true)).count()
-        }
-
-        /// Сколько раз образ подтвердили (запись магии `Boot` прошла).
-        pub(super) fn booted(&mut self) -> usize {
-            let magics = &self.partitions().state.magics;
-            magics.iter().filter(|m| **m == (BOOT_MAGIC, true)).count()
-        }
-
-        /// Сколько раз пытались подтвердить образ — удачно или нет.
-        pub(super) fn confirm_attempts(&mut self) -> usize {
-            let magics = &self.partitions().state.magics;
-            magics.iter().filter(|(m, _)| *m == BOOT_MAGIC).count()
-        }
-
-        /// В `STATE` — образ, ждущий обмена: раздел занят.
-        pub(super) fn set_busy(&mut self) {
-            self.partitions().state.flash.mem[..8].fill(SWAP_MAGIC);
-        }
-
-        /// Подтверждение образа отказывает (`refuse`) или снова проходит:
-        /// запись магии `Boot` не проходит после стирания `STATE`.
-        pub(super) fn refuse_confirm(&mut self, refuse: bool) {
-            let magics = &mut self.partitions().state.refuse_magic;
-            magics.retain(|m| *m != BOOT_MAGIC);
-            if refuse {
-                magics.push(BOOT_MAGIC);
-            }
-        }
-
-        /// Стирание `STATE` отказывает: подтверждение и пометка обмена не
-        /// трогают раздел — образ, ждущий обмена, так и остаётся.
-        pub(super) fn refuse_state_erase(&mut self) {
-            self.partitions().state.refuse_erase = true;
-        }
-
-        /// Пометка обмена отказывает: запись магии `Swap` не проходит.
-        pub(super) fn refuse_swap(&mut self) {
-            self.partitions().state.refuse_magic.push(SWAP_MAGIC);
-        }
-
-        /// Запись в `DFU` отказывает с `offset` и дальше.
-        pub(super) fn refuse_writes_from(&mut self, offset: u32) {
-            self.partitions().dfu.refuse_from = Some(offset);
-        }
-
-        /// Запись для bootloader'а (за `capacity`) отказывает.
-        pub(super) fn refuse_record(&mut self) {
-            let capacity = self.capacity();
-            self.refuse_writes_from(capacity);
-        }
-
-        /// Стирание `STATE` — то, чем подтверждается образ, — длится `takes`.
-        pub(super) fn confirm_takes(&mut self, takes: Duration) {
-            self.partitions().state.erase_takes = Some(takes);
-        }
-    }
-
-    /// Адаптер над чистыми разделами со словом `W` и самым длинным образом
-    /// `capacity` (кратно 128 и не больше 1024).
-    pub(super) fn flash_with_word<const W: usize>(capacity: u32) -> FakeFlash<W> {
-        Updater::new(Partitions {
-            dfu: Probe::new(MemFlash::erased()),
-            state: Probe::new(MemFlash::erased()),
-            capacity,
-            layout: LAYOUT,
-        })
-    }
-
-    /// То же со словом 8.
-    pub(super) fn flash(capacity: u32) -> FakeFlash {
-        flash_with_word(capacity)
-    }
-
-    /// Раздел, в котором уже лежит образ длиной `len` с отпечатком [`LAYOUT`]
-    /// и версией `incoming` в хвосте; самый длинный образ — 128 байт.
-    pub(super) fn with_image(len: u32, incoming: u32) -> FakeFlash {
-        let mut flash = flash(128);
-        let version = (len - VERSION_BYTES) as usize;
-        let memory = flash.memory();
-        memory[version - LAYOUT_BYTES as usize..version].copy_from_slice(&LAYOUT.to_le_bytes());
-        memory[version..len as usize].copy_from_slice(&incoming.to_le_bytes());
-        flash
     }
 }

@@ -4,6 +4,16 @@
 //! класс CDC — стек `embassy-usb`. `bsp` только собирает устройство над
 //! своим USB-блоком и отдаёт эти объекты в `Board`.
 
+#![cfg_attr(
+    any(test, feature = "fake"),
+    expect(
+        clippy::arbitrary_source_item_ordering,
+        reason = "фейк — в конце модуля, который он подменяет, перед тестами: \
+                  docs/conventions.md, «Фейки»; модуль `fake` под `cfg(test)` \
+                  линт пропускает сам, под фичей — нет"
+    )
+)]
+
 use core::convert::Infallible;
 
 use embassy_time::{Duration, with_timeout};
@@ -186,6 +196,206 @@ impl<D: Driver<'static>> core::fmt::Debug for Usb<D> {
     }
 }
 
+/// Драйвер без шины: хост устройство не видит, а устройство и класс над ним
+/// настоящие. Заглушка в слоте USB платы (`bsp::stub`, фичу `fake` включает
+/// `bsp`), пока проект не подставит свой драйвер, и драйвер host-тестов узлов
+/// над USB.
+#[cfg(any(test, feature = "fake"))]
+pub mod fake {
+    use embassy_usb::driver::{
+        Bus, ControlPipe, Direction, Driver, Endpoint, EndpointAddress, EndpointAllocError,
+        EndpointError, EndpointIn, EndpointInfo, EndpointOut, EndpointType, Event, Unsupported,
+    };
+
+    /// Пакет управляющей точки по умолчанию — 64 байта (full-speed).
+    const CONTROL_PACKET: usize = 64;
+
+    /// USB-драйвер без шины: хост устройство не видит.
+    #[derive(Debug, Default)]
+    pub struct UsbDriver {
+        /// Сколько конечных точек уже выдано — для их адресов.
+        endpoints: usize,
+    }
+
+    /// Конечная точка, по которой ничего не приходит и не уходит.
+    #[derive(Debug)]
+    pub struct NoEndpoint(EndpointInfo);
+
+    /// Шина и управляющий канал, на которых не происходит ничего.
+    #[derive(Debug)]
+    pub struct NoBus;
+
+    impl UsbDriver {
+        fn endpoint(
+            &mut self,
+            dir: Direction,
+            ep_type: EndpointType,
+            max_packet_size: u16,
+            interval_ms: u8,
+        ) -> NoEndpoint {
+            self.endpoints += 1;
+            NoEndpoint(EndpointInfo {
+                addr: EndpointAddress::from_parts(self.endpoints, dir),
+                ep_type,
+                max_packet_size,
+                interval_ms,
+            })
+        }
+    }
+
+    impl Driver<'_> for UsbDriver {
+        type EndpointOut = NoEndpoint;
+        type EndpointIn = NoEndpoint;
+        type ControlPipe = NoBus;
+        type Bus = NoBus;
+
+        fn alloc_endpoint_out(
+            &mut self,
+            ep_type: EndpointType,
+            _: Option<EndpointAddress>,
+            max_packet_size: u16,
+            interval_ms: u8,
+        ) -> Result<NoEndpoint, EndpointAllocError> {
+            Ok(self.endpoint(Direction::Out, ep_type, max_packet_size, interval_ms))
+        }
+
+        fn alloc_endpoint_in(
+            &mut self,
+            ep_type: EndpointType,
+            _: Option<EndpointAddress>,
+            max_packet_size: u16,
+            interval_ms: u8,
+        ) -> Result<NoEndpoint, EndpointAllocError> {
+            Ok(self.endpoint(Direction::In, ep_type, max_packet_size, interval_ms))
+        }
+
+        fn start(self, _: u16) -> (NoBus, NoBus) {
+            (NoBus, NoBus)
+        }
+    }
+
+    impl Endpoint for NoEndpoint {
+        fn info(&self) -> &EndpointInfo {
+            &self.0
+        }
+
+        async fn wait_enabled(&mut self) {
+            core::future::pending::<()>().await;
+        }
+    }
+
+    impl EndpointOut for NoEndpoint {
+        async fn read(&mut self, _: &mut [u8]) -> Result<usize, EndpointError> {
+            core::future::pending().await
+        }
+    }
+
+    impl EndpointIn for NoEndpoint {
+        async fn write(&mut self, _: &[u8]) -> Result<(), EndpointError> {
+            core::future::pending().await
+        }
+    }
+
+    impl Bus for NoBus {
+        fn enable(&mut self) -> impl Future<Output = ()> {
+            core::future::ready(())
+        }
+
+        fn disable(&mut self) -> impl Future<Output = ()> {
+            core::future::ready(())
+        }
+
+        async fn poll(&mut self) -> Event {
+            core::future::pending().await
+        }
+
+        fn endpoint_set_enabled(&mut self, _: EndpointAddress, _: bool) {}
+
+        fn endpoint_set_stalled(&mut self, _: EndpointAddress, _: bool) {}
+
+        fn endpoint_is_stalled(&mut self, _: EndpointAddress) -> bool {
+            false
+        }
+
+        fn remote_wakeup(&mut self) -> impl Future<Output = Result<(), Unsupported>> {
+            core::future::ready(Err(Unsupported))
+        }
+    }
+
+    impl ControlPipe for NoBus {
+        fn max_packet_size(&self) -> usize {
+            CONTROL_PACKET
+        }
+
+        async fn setup(&mut self) -> [u8; 8] {
+            core::future::pending().await
+        }
+
+        async fn data_out(
+            &mut self,
+            _: &mut [u8],
+            _: bool,
+            _: bool,
+        ) -> Result<usize, EndpointError> {
+            core::future::pending().await
+        }
+
+        async fn data_in(&mut self, _: &[u8], _: bool, _: bool) -> Result<(), EndpointError> {
+            core::future::pending().await
+        }
+
+        fn accept(&mut self) -> impl Future<Output = ()> {
+            core::future::ready(())
+        }
+
+        fn reject(&mut self) -> impl Future<Output = ()> {
+            core::future::ready(())
+        }
+
+        fn accept_set_address(&mut self, _: u8) -> impl Future<Output = ()> {
+            core::future::ready(())
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use core::pin::pin;
+        use core::task::{Context, Waker};
+
+        use super::*;
+
+        /// Драйвер выдаёт точки с растущими адресами и ничего не делает: шина и
+        /// точки ждут вечно.
+        #[test]
+        fn usb_driver_never_wakes() {
+            let mut driver = UsbDriver::default();
+            let out = driver
+                .alloc_endpoint_out(EndpointType::Bulk, None, 64, 0)
+                .unwrap();
+            let mut input = driver
+                .alloc_endpoint_in(EndpointType::Bulk, None, 64, 0)
+                .unwrap();
+            assert_eq!(
+                out.info().addr,
+                EndpointAddress::from_parts(1, Direction::Out)
+            );
+            assert_eq!(
+                input.info().addr,
+                EndpointAddress::from_parts(2, Direction::In)
+            );
+
+            let (mut bus, mut control) = driver.start(64);
+            let mut cx = Context::from_waker(Waker::noop());
+            assert!(pin!(bus.poll()).poll(&mut cx).is_pending());
+            assert!(pin!(control.setup()).poll(&mut cx).is_pending());
+            assert!(pin!(input.write(&[1])).poll(&mut cx).is_pending());
+            assert!(pin!(input.wait_enabled()).poll(&mut cx).is_pending());
+            assert_eq!(control.max_packet_size(), CONTROL_PACKET);
+            assert!(!bus.endpoint_is_stalled(out.info().addr));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use core::pin::pin;
@@ -201,8 +411,8 @@ mod tests {
         EndpointInfo, EndpointOut, EndpointType,
     };
 
+    use super::fake::NoBus;
     use super::*;
-    use crate::fake::NoBus;
 
     /// Что делает хост — общее состояние всех точек сценарного драйвера.
     #[derive(Default)]

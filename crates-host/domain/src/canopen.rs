@@ -395,7 +395,7 @@ mod tests {
     use std::rc::Rc;
     use std::sync::{Mutex, PoisonError};
 
-    use adapters_hw::fake::MemFlash;
+    use adapters_hw::flash::fake::MemFlash;
     use embedded_can::{Frame, Id, StandardId};
     use ports::{CanBus, LinkError};
 

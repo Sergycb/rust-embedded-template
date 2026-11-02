@@ -2774,14 +2774,11 @@ if variable::get("graph") != "true" {
 if variable::get("has_stub") != "true" {
     file::delete("crates-cross/bsp/src/stub.rs");
 }
-// Флеш в памяти (`fake::MemFlash`) — тестам разделов OTA и хранилища настроек
-// (`domain::settings` есть и у CANopen без раздела — `settings_port`).
+// Флеш в памяти (`flash::fake::MemFlash`) — тестам разделов OTA и хранилища
+// настроек (`domain::settings` есть и у CANopen без раздела — `settings_port`).
 let mem_flash = variable::get("ota") == "true" || variable::get("settings_port") == "true";
 if !mem_flash {
-    file::delete("crates-host/adapters-hw/src/fake/flash.rs");
-}
-if !has.usb && !has.tcp && !has.udp && !mem_flash {
-    file::delete("crates-host/adapters-hw/src/fake.rs");
+    file::delete("crates-host/adapters-hw/src/flash.rs");
 }
 // USB — устройство `embassy-usb`, узел USB и поток CDC — только с транспортом usb.
 if !has.usb {
@@ -2799,12 +2796,6 @@ if !has.tcp && !has.udp {
     if adapters_logic {
         file::delete("crates-host/adapters-logic/src/net.rs");
         file::delete("crates-host/adapters-logic/src/net");
-    }
-    // `fake::cable` — кабель между двумя стеками `embassy-net`; `fake.rs` при
-    // одном USB или флеше в памяти остаётся, а `mod cable` в нём под `has_net`.
-    file::delete("crates-host/adapters-hw/src/fake/cable.rs");
-    if !mem_flash {
-        file::delete("crates-host/adapters-hw/src/fake");
     }
     file::delete("crates-host/domain/src/net.rs");
 }

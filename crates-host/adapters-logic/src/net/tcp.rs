@@ -201,12 +201,12 @@ async fn reset(socket: &mut TcpSocket<'_>) {
 
 #[cfg(test)]
 mod tests {
-    use adapters_hw::fake::cable::{DEVICE, leak, pair};
+    use adapters_hw::net::fake::cable::{DEVICE, leak, pair};
     use embassy_net::tcp::{self, AcceptError, State, TcpSocket};
     use embedded_io_async::{ErrorKind, Read, Write};
 
     use super::*;
-    use crate::net::fakes::{PORT, with_network};
+    use crate::net::fake::{PORT, with_network};
 
     /// Сервер принимает клиента, отвечает ему, видит его отключение концом
     /// потока — и принимает следующего на том же сокете.

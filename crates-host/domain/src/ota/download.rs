@@ -255,7 +255,7 @@ mod tests {
     use ports::{MAX_WRITE_SIZE, Partitions};
 
     use super::{DownloadError, Transfer};
-    use crate::ota::fakes::{flash, flash_with_word};
+    use crate::ota::fake::{flash, flash_with_word};
     use crate::ota::{FlashError, Updater};
 
     /// Исход приёма целиком и сколько кусков в него ушло.
