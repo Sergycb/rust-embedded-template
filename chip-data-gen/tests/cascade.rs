@@ -2223,7 +2223,10 @@ fn done_without_marks_gives_no_transports() {
     .expect("каскад не должен падать");
     assert_eq!(var_of(&result, "links"), Some(""));
     assert_eq!(var_of(&result, "interface"), Some("none"));
-    assert!(all_menu_values(&result, "protocol").is_empty());
+    assert_eq!(
+        all_menu_values(&result, "protocol"),
+        Vec::<Vec<String>>::new()
+    );
 }
 
 /// Вопроса «добавить ещё один транспорт?» больше нет — ни в одном прогоне.
@@ -2551,7 +2554,10 @@ fn no_net_services_without_ethernet() {
         &[("transports", "uart"), ("transports", "done")],
     )
     .expect("каскад не должен падать");
-    assert!(all_menu_values(&result, "net_services").is_empty());
+    assert_eq!(
+        all_menu_values(&result, "net_services"),
+        Vec::<Vec<String>>::new()
+    );
     assert_eq!(var_of(&result, "net_services"), Some(""));
     assert_eq!(var_of(&result, "ssh_auth"), Some(""));
     assert_eq!(var_of(&result, "ssh_key"), Some(""));
@@ -2746,7 +2752,10 @@ fn no_terminal_gives_no_net_services() {
     .expect("каскад не должен падать");
     assert_eq!(all_menu_values(&result, "net_services").len(), 1);
     assert_eq!(var_of(&result, "net_services"), Some(""));
-    assert!(all_menu_values(&result, "ssh_auth").is_empty());
+    assert_eq!(
+        all_menu_values(&result, "ssh_auth"),
+        Vec::<Vec<String>>::new()
+    );
 }
 
 /// Вход по паролю — ключ не спрашивают.

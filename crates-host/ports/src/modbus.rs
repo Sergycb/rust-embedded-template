@@ -1,13 +1,13 @@
 //! Словарь Modbus для портов: предел PDU, коды исключений и данные slave'а.
 //!
-//! Данные slave'а — трейт [`Registers`](crate::Registers) и представления
+//! Данные slave'а — трейт [`Registers`] и представления
 //! кадра (`registers`): его реализуют карта проекта и обёртки над ней в
 //! `domain::modbus`, а зовёт обработчик `domain::modbus::Slave`.
-//! Транспорт slave'а — канал [`FrameLink`](crate::FrameLink) с кадром «адрес
+//! Транспорт slave'а — канал [`FrameLink`] с кадром «адрес
 //! и PDU», его реализует `adapters_logic::modbus` (RTU, TCP, UDP).
 // {%- if modbus_master == "true" %}
-//! Транспорт master'а — [`ModbusClient`](crate::ModbusClient) — реализуют они
-//! же; его ошибка — [`MasterError`](crate::modbus::MasterError)
+//! Транспорт master'а — [`ModbusClient`] — реализуют они
+//! же; его ошибка — [`MasterError`]
 //! (`domain::modbus::master`).
 // {%- endif %}
 

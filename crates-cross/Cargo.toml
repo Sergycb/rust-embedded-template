@@ -18,7 +18,7 @@ version      = "0.1.0"
 edition      = "2024"
 license      = "MIT"
 # Тот же MSRV, что в корневом Cargo.toml — воркспейса два, а тулчейн один.
-rust-version = "1.98"
+rust-version = "1.99"
 
 [workspace.lints.rust]
 # `#[embedded_test::tests]` генерирует ветку под `cfg(rust_analyzer)`, чтобы IDE

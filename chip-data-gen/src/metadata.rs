@@ -1111,7 +1111,10 @@ pub static METADATA: Metadata = Metadata {
             parse_watchdog_names("name: \"IWDG1\",\n  name: \"IWDG2\",\n"),
             vec!["IWDG1".to_string(), "IWDG2".to_string()]
         );
-        assert!(parse_watchdog_names("name: \"WWDG\",\n").is_empty());
+        assert_eq!(
+            parse_watchdog_names("name: \"WWDG\",\n"),
+            Vec::<String>::new()
+        );
     }
 
     /// Блок без выводов в корпусе — не интерфейс; FDCAN и bxCAN различаются
@@ -1283,7 +1286,7 @@ pub static METADATA: Metadata = Metadata {
         assert_eq!(found["spi"], ["SPI1", "SPI2"], "SPI3 без MISO не годится");
         assert_eq!(found["quadspi"], ["QUADSPI"]);
         assert!(!found.contains_key("octospi"), "OCTOSPI1 без IO2/IO3");
-        assert!(parse_interfaces(&text).is_empty());
+        assert_eq!(parse_interfaces(&text), Vec::<&str>::new());
 
         // С мультиплексором выводы у `OCTOSPIM`, с приставкой порта: годится
         // порт целиком, а порты вперемешку — нет.

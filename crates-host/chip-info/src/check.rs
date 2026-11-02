@@ -327,7 +327,10 @@ assign_resources! {
     #[test]
     fn does_not_read_a_pin_inside_an_identifier() {
         assert_eq!(pins_in("spi: SPI1, sck: PA5, mosi: PA7"), ["PA5", "PA7"]);
-        assert!(pins_in("dma: DMA1_CH4, tim: TIM_PI1").is_empty());
+        assert_eq!(
+            pins_in("dma: DMA1_CH4, tim: TIM_PI1"),
+            Vec::<String>::new()
+        );
         // Сам по себе `PI1` — вывод, и суффикс двойника тоже часть имени.
         assert_eq!(pins_in("a: PI1, b: PA0_C"), ["PI1", "PA0_C"]);
     }
