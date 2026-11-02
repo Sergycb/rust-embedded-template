@@ -2515,7 +2515,7 @@ fn ethernet_item_becomes_tcp() {
         result
             .prompts
             .iter()
-            .any(|(label, _)| label.starts_with("protocol: протокол связи поверх ethernet (TCP) ")),
+            .any(|(label, _)| label == "protocol: протокол связи поверх ethernet (TCP)"),
         "{:?}",
         result.prompts
     );
