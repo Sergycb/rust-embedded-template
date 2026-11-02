@@ -4,7 +4,7 @@
 с трёхэтапной моделью тестирования и единой точкой входа для сборки/тестов через `xtask`.
 
 ```sh
-cargo install cargo-generate     # один раз, если его ещё нет
+cargo install cargo-generate --locked   # нужна 0.26 или новее
 cargo generate --git https://github.com/Sergycb/rust-embedded-template
 ```
 

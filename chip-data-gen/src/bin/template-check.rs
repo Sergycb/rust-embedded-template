@@ -685,14 +685,11 @@ fn main() -> anyhow::Result<()> {
     let options = parse_args()?;
     let repo_root = repo_root();
 
-    // Вне репозитория, и это важнее удобства: `cargo generate --path` копирует
-    // каталог шаблона ЦЕЛИКОМ во временную папку, прежде чем прочитать
-    // cargo-generate.toml, так что `ignore = ["target", ...]` от копирования
-    // не спасает — он решает лишь, что попадёт в готовый проект. Кеш сборки
-    // (каталог на полосу, `target-<N>`) дорастает до гигабайтов;
-    // внутри `target/` он превращал каждую генерацию из локального пути в
-    // копирование этих гигабайтов. Однажды это кончилось «Недостаточно места
-    // на диске (os error 112)» на ровном месте.
+    // Вне репозитория: `cargo generate --path` копирует каталог шаблона
+    // целиком, прежде чем прочитать cargo-generate.toml, а кеш сборки (каталог
+    // на полосу, `target-<N>`) дорастает до гигабайтов. Внутри `target/` он
+    // однажды кончился «Недостаточно места на диске (os error 112)»
+    // (MAINTAINING.md, «Генерация из локального пути»).
     let work_dir = work_dir(&repo_root);
     fs::create_dir_all(&work_dir)
         .with_context(|| format!("создать рабочий каталог {}", work_dir.display()))?;
@@ -976,8 +973,11 @@ fn check_one(
         }
     }
     // Вывод генерации перехватывается ради строки `ram_estimate:` хука.
+    // `--no-fmt`: rustfmt генерации спрятал бы огрехи формы в Liquid, а
+    // проверять их должен `cargo xtask lint` в проекте (cargo-generate.toml).
     let generated = capture(
         command
+            .arg("--no-fmt")
             .arg("--silent")
             .arg("--destination")
             .arg(&run.work_dir),

@@ -1,17 +1,22 @@
 [template]
 # Нижняя граница — версия, на которой шаблон проверен (она же закреплена в
 # .github/workflows/template.yml); поднимать вместе.
-cargo_generate_version = ">=0.23.12"
+cargo_generate_version = ">=0.26.0"
 # `exclude` — копируется без Liquid-подстановки (CLAUDE.md), `ignore` — не
 # копируется вовсе (MAINTAINING.md, chip-data-gen); каталог — по имени, без
 # глоба `/**`. Почему что куда — MAINTAINING.md, «Что здесь есть, чего нет в
 # проектах пользователей» и «Плейсхолдеры шаблона».
+# `fmt` не задан — сгенерированные `.rs` проходят через rustfmt (умолчание с
+# 0.26). Вывод шаблона и без этого обязан быть чистым: `template-check`
+# генерирует с `--no-fmt`, и огрехи Liquid ловит `cargo xtask lint` в проекте.
 exclude = ["CLAUDE.md"]
 # "target"/"crates-cross/target" — сборочный кэш (см. .gitignore), не источник
 # шаблона; без исключения `cargo generate` падает с "Substitution skipped,
 # found invalid syntax", пытаясь Liquid-рендерить бинарные файлы внутри
 # него, если он присутствует локально у того, кто генерирует (обычное
 # состояние для мейнтейнера, собиравшего репозиторий перед тестом каскада).
+# Пропуск по `CACHEDIR.TAG` (с 0.24) их не заменяет: каталог, который первым
+# создал rust-analyzer (`flycheck0`) или `cargo llvm-cov`, остаётся без метки.
 # `.local`/`.remember` — рабочие каталоги инструментов мейнтейнера. В git их
 # нет, но `cargo generate --path .` копирует рабочее дерево целиком, вместе с
 # неотслеживаемыми файлами. `.claude` в этот список больше не входит целиком:
@@ -107,10 +112,12 @@ ignore = [
 [placeholders]
 # chip/chip_feature/cpu/target/write_size здесь не объявлены: их выставляет
 # pre-хук chip-select.rhai — MAINTAINING.md, «Плейсхолдеры шаблона».
+# Подпись видна только в меню; `--define`, `default` и Liquid получают `value`.
+# Подписи — ASCII, как и пункты меню хука (MAINTAINING.md, «Вопросы в хуке»).
 ci = { type = "string", prompt = "CI provider", choices = [
-	"github",
-	"gitlab",
-	"none",
+	{ value = "github", label = "github - GitHub Actions" },
+	{ value = "gitlab", label = "gitlab - GitLab CI" },
+	{ value = "none", label = "none - no CI" },
 ], default = "github" }
 
 # Вопросы про OTA, настройки, граф, транспорт и протокол здесь НЕ объявлены:
