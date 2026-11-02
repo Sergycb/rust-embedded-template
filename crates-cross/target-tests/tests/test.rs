@@ -22,7 +22,7 @@
 #![no_std]
 #![no_main]
 
-// Транспорт тот же, что в `app` (см. crates-cross/app/src/main.rs), а паникёр —
+// Транспорт тот же, что в `app` (см. crates-cross/app/src/run.rs), а паникёр —
 // нет: здесь его даёт сам `embedded-test`, и это принципиально. Его
 // `#[panic_handler]` заканчивается `semihosting::process::abort()`, который
 // `probe-rs run` читает как «этот тест упал» и переходит к следующему;

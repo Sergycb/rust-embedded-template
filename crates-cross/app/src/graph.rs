@@ -35,7 +35,7 @@ supervisor_graph! {
         ::domain::HEARTBEAT_FRAG as HEARTBEAT,
 
         // Узел `CPU_LOAD` меряет загрузку процессора. Вход — счётчик тиков сна,
-        // который ведёт ручной цикл исполнителя в `main.rs` (docs/modules/
+        // который ведёт ручной цикл исполнителя в `run.rs` (docs/modules/
         // app-cpu-load.md); всё, что нужно фрагменту, — ссылка на него: тип
         // входа объявляет подсистема (`domain::cpu_load::IdleMeter`), а
         // значение собирает приложение.
@@ -201,7 +201,7 @@ supervisor_graph! {
                 // недочитанный кадр, и ответ уходит через `send_from`.
                 response: static [u8; ::domain::protobuf::RESPONSE_MAX],
                 service: ::domain::protobuf::Service::new(
-                    crate::device_info(board.spec),
+                    crate::run::device_info(board.spec),
 {%- if ota == "true" %}
                     ::domain::ota::OtaClient::new(ota_cmd_requester(), ::domain::ota::ClientId({{ client }})),
 {%- endif %}
@@ -220,7 +220,7 @@ supervisor_graph! {
         // следом за транспортами: сессия приёма у OTA — одного клиента.{% endif %}
         ::domain::HTTP_FRAG as HTTP[{{ http_connections }}] = core::array::from_fn(|{% if ota == "true" %}i{% else %}_{% endif %}| ::domain::http::HttpWiring {
             stack: board.net.stack,
-            info: crate::device_info(board.spec),
+            info: crate::run::device_info(board.spec),
             token: crate::net::rest::TOKEN,
 {%- if ota == "true" %}
             ota: ::domain::ota::OtaClient::new(
@@ -243,7 +243,7 @@ supervisor_graph! {
         ::domain::SSH_FRAG<{% if ssh_host_key == "config" %}::domain::ssh::Stored<::adapters::settings::Settings<bsp::ConfigFlash>>{% else %}::domain::ssh::Fixed{% endif %}> as SSH =
             ::domain::ssh::SshWiring {
                 stack: board.net.stack,
-                info: crate::device_info(board.spec),
+                info: crate::run::device_info(board.spec),
                 login: crate::net::ssh::LOGIN,
 {%- if ssh_host_key == "config" %}
                 host_key: ::domain::ssh::Stored(::adapters::settings::Settings::whole(board.config)),
@@ -269,7 +269,7 @@ supervisor_graph! {
         ::domain::MQTT_FRAG<::domain::mqtt::Fixed, ::adapters::net::TcpClient> as MQTT =
             ::domain::mqtt::MqttWiring {
                 stack: board.net.stack,
-                info: crate::device_info(board.spec),
+                info: crate::run::device_info(board.spec),
                 prefix: crate::net::mqtt::PREFIX,
                 broker: ::domain::mqtt::Fixed(crate::net::mqtt::BROKER),
                 link: ::adapters::net::TcpClient::new(

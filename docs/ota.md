@@ -616,7 +616,9 @@ SPI NOR — клипсой программатора: записать в `STAT
 Откат проверяется только на образе, который себя не подтверждает, — рабочая
 прошивка подтверждает себя в `begin` узла OTA. Поэтому тестовый образ —
 отдельный бинарник того же `app` (`[[bin]] app-unconfirmed`,
-`crates-cross/app/Cargo.toml`) с фичей `unconfirmed`:
+`crates-cross/app/Cargo.toml`) со своей точкой входа
+(`crates-cross/app/src/bin/app-unconfirmed.rs`; тело прошивки у обоих —
+библиотека пакета) и фичей `unconfirmed`:
 
 - узел OTA получает во входе `confirmed = cfg!(feature = "unconfirmed")` —
   слот «уже подтверждён», и `mark_booted` не зовётся ни при старте, ни на

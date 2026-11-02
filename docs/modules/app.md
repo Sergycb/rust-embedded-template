@@ -49,12 +49,12 @@
 
 # defmt-транспорт для `release` без пробника: UART
 
-`main.rs` держит `defmt-rtt` дефолтным транспортом в обоих профилях —
+`run.rs` держит `defmt-rtt` дефолтным транспортом в обоих профилях —
 шаблон не знает, какой конкретный USART{% if has_usb == "true" %}/USB{% endif %} плата отведёт под лог
 без пробника (RTT его не даёт, отладочный пробник должен быть физически
 подключён). Ниже — паттерн на замену для `release`, когда `Board` начнёт
 отдавать реальную периферию. **При его подключении обязательно сделайте
-`use defmt_rtt as _;` в `main.rs` `#[cfg(debug_assertions)]`** (сейчас он
+`use defmt_rtt as _;` в `run.rs` `#[cfg(debug_assertions)]`** (сейчас он
 безусловный): `#[global_logger]` резолвится линкером по имени символа
 (`_defmt_acquire` и т.п.), а не как rustc lang item, поэтому два активных
 разом дадут жёсткий `error: Linking globals named '_defmt_acquire':
@@ -153,7 +153,7 @@ generic, поэтому узел называет канал этим псевд
 `ports::FrameDuplex` (контракт — doc трейта), а ответ уходит из своего буфера
 узла ({% if graph == "true" %}`static [u8; RESPONSE_MAX]` в привязке{% else %}статик модуля задачи{% endif %}) через `send_from`.{% endif %} Вход узла — {% if graph == "true" %}выражение
 в `fragments:` графа{% else %}`spawn` модуля задачи (`crates-cross/app/src/tasks/`), по модулю на
-задачу; `main.rs` только зовёт `tasks::spawn_all`{% endif %}.
+задачу; `run.rs` только зовёт `tasks::spawn_all`{% endif %}.
 {%- endif %}
 {%- if has_modbus == "true" %}
 
@@ -190,9 +190,14 @@ generic, поэтому узел называет канал этим псевд
 
 # Тестовый образ `app-unconfirmed`: фичи `unconfirmed` и `version-next`
 
-У пакета два бинарника из одного `main.rs`: рабочий `app` и тестовый
-`app-unconfirmed` (`required-features = ["unconfirmed"]`), которым `cargo
-xtask test host-target` проверяет обмен и откат по протоколу проекта. Фичи:
+У пакета два бинарника, у каждого своя точка входа: рабочий `app`
+(`src/main.rs`) и тестовый `app-unconfirmed` (`src/bin/app-unconfirmed.rs`,
+`required-features = ["unconfirmed"]`), которым `cargo xtask test
+host-target` проверяет обмен и откат по протоколу проекта. Тело прошивки —
+библиотека пакета (`src/lib.rs`, запуск и цикл исполнителя — `src/run.rs`):
+оба `#[entry]` только зовут `app::run`, а паникёр, логгер и обработчик
+`HardFault` из библиотеки попадают в каждый бинарник по разу. Чем образы
+различаются, решает фича (`cfg!(feature = …)` в библиотеке). Фичи:
 
 * `version-next` — версия образа на единицу больше `version` из Cargo.toml
   (`crate::version::FW_VERSION`): ровно настолько, чтобы рабочий образ той
@@ -205,9 +210,8 @@ xtask test host-target` проверяет обмен и откат по про�
 
 `cargo build`, `cargo xtask build`/`lint cross` и релиз его не собирают
 (`required-features`), `cargo run -p app` берёт `app` (`default-run`), а
-`cargo flash` в `xtask` — `--bin app`. Cargo при каждом вызове предупреждает,
-что `src/main.rs` стоит в двух целях, — это он. Подробности — `docs/ota.md`,
-«Тесты OTA по протоколу».
+`cargo flash` в `xtask` — `--bin app`. Подробности — `docs/ota.md`, «Тесты OTA
+по протоколу».
 {%- endif %}
 
 # Питание от батареи: STOP между задачами
@@ -238,7 +242,7 @@ USB, Ethernet и CAN в STOP не работают.
 //      #[unsafe(export_name = "__pender")]
 //      fn pender(_: *mut ()) { WORK.store(true, Ordering::SeqCst); }
 //
-// 3. main.rs: цикл остаётся ручным, меняется только сон — вместо `wfe()`:
+// 3. run.rs: цикл остаётся ручным, меняется только сон — вместо `wfe()`:
 //
 //      critical_section::with(|cs| {
 //          if !WORK.swap(false, Ordering::SeqCst) {

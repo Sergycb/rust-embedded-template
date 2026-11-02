@@ -951,7 +951,7 @@ const PROTOCOL_TEXT = #{
 // у каждого случая она не ниже факта.
 const RAM_COST = #{
     // Без OTA, настроек, графа и транспортов: stm32f407ve ota=no graph=no — 1344
-    // (stm32l011f4 — 1316), плюс задача `start` в `main.rs` (`app::start::POOL` —
+    // (stm32l011f4 — 1316), плюс задача `start` в `run.rs` (`app::run::start::POOL` —
     // 56 байт на thumbv6m и thumbv7em): плату собирает она, а не `main`.
     core: 1400,
     // stm32f407ve: 3880 с OTA против 1952 без неё; внешняя — stm32h723ve 3996
@@ -2471,7 +2471,7 @@ if variable::is_set("write_size") {
 // `{% if graph == "true" %}`, и остался бы файл с одной строкой
 // `#![doc = include_str!(..)]` — модуль без кода, только ради документации.
 // Граф возвращают перегенерацией проекта (см. сообщение выше, где он
-// отключается по размеру раздела). Условие в `crates-cross/app/src/main.rs` (`mod graph;`)
+// отключается по размеру раздела). Условие в `crates-cross/app/src/lib.rs` (`mod graph;`)
 // закрыто тем же `{% if %}`, поэтому удаление файла ничего не ломает.
 if variable::get("graph") != "true" {
     file::delete("crates-cross/app/src/graph.rs");
@@ -2762,6 +2762,9 @@ if variable::get("ota") != "true" {
     // Подпись образа в `xtask` и описание OTA.
     file::delete("crates-host/xtask/src/signing.rs");
     file::delete("docs/ota.md");
+    // Точка входа тестового образа `app-unconfirmed`: без OTA его нет, а
+    // оставленный файл в `src/bin/` cargo сам нашёл бы вторым бинарником.
+    file::delete("crates-cross/app/src/bin");
     // Перевод команд OTA у протокола: каталог протокола есть, только если он
     // выбран, — чужой хук уже удалил выше.
     if on.modbus {
