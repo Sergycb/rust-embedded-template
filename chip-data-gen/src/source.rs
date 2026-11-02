@@ -729,10 +729,13 @@ mod tests {
             vec!["STM32L151C6TxA".to_string(), "STM32L151C6UxA".to_string()]
         );
         // Ядерный маркер и суффикс без дефиса сюда не доходят.
-        assert!(package_candidates("h745zi-cm4", &chips).is_empty());
-        assert!(package_candidates("l151c6", &chips).is_empty());
+        assert_eq!(
+            package_candidates("h745zi-cm4", &chips),
+            Vec::<String>::new()
+        );
+        assert_eq!(package_candidates("l151c6", &chips), Vec::<String>::new());
         // Градация, для которой нет более точной цели.
-        assert!(package_candidates("l151c6-c", &chips).is_empty());
+        assert_eq!(package_candidates("l151c6-c", &chips), Vec::<String>::new());
     }
 
     /// `CORE_MARKERS` (какие суффиксы считать ядром, а не градацией) и
