@@ -318,6 +318,11 @@ pub(crate) fn print_snippet(name: &str) -> Result<(), anyhow::Error> {
         OPEN,
     );
     println!("        {}: {name},", kind_field(kind, name));
+    // Выводы MDIO/MDC у embassy принадлежат не `ETH`, а отдельному синглтону
+    // шины управления PHY: без него `Sma::new` не собрать.
+    if kind == "eth" {
+        println!("        sma: ETH_SMA,");
+    }
     let fields = signals(peripheral);
     let width = fields
         .iter()
