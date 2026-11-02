@@ -54,11 +54,11 @@ pub fn lint_cross(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     // `app`, чтобы получить фичи `app`. В `target-tests` такого кода нет —
     // повторный проход над ними повторил бы первый.
     // {%- if ota == "true" %}
-    cmd!(
-        sh,
-        "cargo clippy -p app -p boot -p bsp --release -- -D warnings"
-    )
-    .run()?;
+    cmd!(sh, "cargo clippy -p app -p bsp --release -- -D warnings").run()?;
+    // `boot` — отдельным вызовом: в одном с `app` cargo объединил бы фичи, и
+    // `bsp` пришёл бы к нему с `time-driver`, которого у настоящего bootloader'а
+    // нет (он всегда release, `docs/architecture.md`).
+    cmd!(sh, "cargo clippy -p boot --release -- -D warnings").run()?;
     // Bootloader под тесты на плате (`cargo xtask test target`) собирается с
     // фичей `no-watchdog`: эта ветка нигде больше не компилируется.
     cmd!(

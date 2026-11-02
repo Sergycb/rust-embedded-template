@@ -4,8 +4,8 @@
 //! Канал ([`FrameLink`]) реализует `adapters-logic` над транспортами
 //! платы: кадрирование потока байтов или датаграммы.
 // {%- else %}
-//! Реализаций канала ([`FrameLink`]) в этом проекте нет: из модуля нужна
-//! только ошибка обмена [`LinkError`] — её возвращает шина CAN (`CanBus`).
+//! Канала кадров в этом проекте нет: из модуля нужна только ошибка обмена
+//! [`LinkError`] — её возвращает шина CAN (`CanBus`).
 // {%- endif %}
 //! Что делать с принятым кадром, решает протокол, а не канал: протокол не
 //! знает, какой канал под ним.
@@ -15,6 +15,7 @@
 // {%- if has_protobuf == "true" %}
 //! protobuf хоста — узел `domain::protobuf` над [`FrameDuplex`].
 // {%- endif %}
+// {%- if adapters_logic == "true" %}
 
 /// Канал, который принимает и отправляет кадры целиком: границы кадра
 /// определяет транспорт или адаптер под портом, а не протокол.
@@ -118,8 +119,13 @@ pub trait FrameDuplex: FrameLink {
     /// отказал.
     async fn send_from(&mut self, frame: &[u8]) -> Result<(), LinkError<Self::Error>>;
 }
+// {%- endif %}
 
+// {%- if adapters_logic == "true" %}
 /// Почему [`FrameLink`] не принял или не отправил кадр.
+// {%- else %}
+/// Почему шина CAN (`CanBus`) не приняла или не отправила кадр.
+// {%- endif %}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum LinkError<E> {

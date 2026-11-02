@@ -48,21 +48,18 @@ pub fn boot_memory_regions() -> Result<Vec<(String, Region)>, anyhow::Error> {
 ///
 /// Приложение линкуется в `ACTIVE`, а если такого региона нет — в `FLASH`.
 /// Причём в посчитанном при генерации файле `FLASH` приложения это и ЕСТЬ
-/// раздел `ACTIVE`: линкеру он отдан под этим именем. Отсюда и второе имя в
-/// паре — по наличию `DFU` видно, раздел перед нами или весь флеш, а сказать
-/// «из 128 KiB FLASH» про чип с 512 KiB значило бы соврать.
+/// раздел `ACTIVE`: линкеру он отдан под этим именем. Отсюда и имя в паре —
+/// всегда `ACTIVE`: сказать «из 128 KiB FLASH» про чип с 512 KiB значило бы
+/// соврать. По наличию `DFU` раздел не распознать: при OTA на внешней флеши
+/// `DFU` в `memory.x` нет вовсе.
 // {%- else %}
 //{{newline}}/// Без разделов это весь флеш, `FLASH`.
 // {%- endif %}
 pub fn app_region(regions: &[(String, Region)]) -> Option<(&'static str, &Region)> {
     // {%- if ota == "true" %}
-    let partitioned = region(regions, "DFU").is_some();
     region(regions, "ACTIVE")
+        .or_else(|| region(regions, "FLASH"))
         .map(|active| ("ACTIVE", active))
-        .or_else(|| {
-            region(regions, "FLASH")
-                .map(|flash| (if partitioned { "ACTIVE" } else { "FLASH" }, flash))
-        })
     // {%- else %}
     //{{newline}}    region(regions, "FLASH").map(|flash| ("FLASH", flash))
     // {%- endif %}

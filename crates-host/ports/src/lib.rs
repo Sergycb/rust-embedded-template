@@ -106,7 +106,11 @@ pub mod ota;
 pub use can::CanBus;
 // {%- endif %}
 // {%- if link_port == "true" %}
+// {%- if adapters_logic == "true" %}
 pub use link::{FrameDuplex, FrameLink, LinkError};
+// {%- else %}
+//{{newline}}pub use link::LinkError;
+// {%- endif %}
 // {%- endif %}
 // {%- if has_modbus == "true" %}
 pub use modbus::{Bits, BitsMut, Exception, MAX_PDU, Registers, Words, WordsMut};

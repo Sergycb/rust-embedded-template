@@ -1666,7 +1666,7 @@ if WANTED_LINKS.len() > 0 {
                 texts[i] += ram_mark.call(links + [#{ kind: kind, protocol: values[i] }]);
             }
             if values.len() > 1 {
-                link_protocol = ask("protocol: протокол связи поверх " + item.name + " (узел в графе)", values, texts, "none");
+                link_protocol = ask("protocol: протокол связи поверх " + item.name, values, texts, "none");
             }
         }
         links.push(#{ kind: kind, tag: free[0].tag, block: free[0].block, protocol: link_protocol });

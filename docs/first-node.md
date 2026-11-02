@@ -18,7 +18,7 @@
 проекте нет: `domain::cpu_load` без графа — не узел, а цикл. Образцы фрагмента
 и автомата — в репозитории шаблона
 ([rust-embedded-template](https://github.com/Sergycb/rust-embedded-template)):
-`crates-host/domain/src/usb.rs` — самый короткий узел.{% endif %}
+модуль `domain::usb` — самый короткий узел.{% endif %}
 Сторожа и перезапусков нет: узлы не падают, а зависший остаётся зависшим.
 {%- endif %}
 
