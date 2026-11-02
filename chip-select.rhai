@@ -2651,6 +2651,7 @@ if !has.can {
 // `pub use`, зависимости, фичи) вырезает Liquid в комментариях.
 if !on.modbus {
     file::delete("crates-host/ports/src/modbus.rs");
+    file::delete("crates-host/ports/src/modbus");
     file::delete("crates-host/adapters-logic/src/modbus.rs");
     file::delete("crates-host/adapters-logic/src/modbus");
     file::delete("crates-host/domain/src/modbus.rs");
@@ -2724,7 +2725,6 @@ if variable::get("link_port") != "true" {
 if variable::get("ota") != "true" {
     file::delete("crates-host/ports/src/ota.rs");
     file::delete("crates-host/ports/src/ota");
-    file::delete("crates-host/adapters-hw/src/ota.rs");
     file::delete("crates-host/domain/src/ota.rs");
     file::delete("crates-host/domain/src/ota");
     // Подпись образа в `xtask` и описание OTA.
@@ -2825,14 +2825,14 @@ if !services.contains("rest") {
 if !services.contains("ssh") {
     file::delete("crates-host/domain/src/ssh.rs");
     file::delete("crates-host/domain/src/ssh");
+    file::delete("crates-host/ports/src/host_key.rs");
 }
-// MQTT — узел, разбор `mqtt.toml` в build-скрипте `app`,
-// порт `Dial` и описание.
+// MQTT — узел (с клиентом брокера `mqtt/client.rs`), разбор `mqtt.toml` в
+// build-скрипте `app` и описание.
 if !services.contains("mqtt") {
     file::delete("crates-host/domain/src/mqtt.rs");
     file::delete("crates-host/domain/src/mqtt");
     file::delete("crates-cross/app/build");
-    file::delete("crates-host/ports/src/dial.rs");
     file::delete("docs/modules/app-mqtt.md");
 }
 if !on.protobuf && services.len() == 0 {
@@ -2875,6 +2875,15 @@ variable::set("ota_cmd_clients", (protocol_clients
 // тестами и `pub mod eeprom;` (закрыт тем же условием в lib.rs) — мусор.
 if variable::get("config_store") != "eeprom" {
     file::delete("crates-host/adapters-hw/src/eeprom.rs");
+}
+// Обёртки над железом без чипа (`adapters-hw`): USB, сеть, EEPROM и фейки —
+// флеш в памяти тестам OTA и настроек. Нет ни одной — нет и крейта; член
+// workspace и зависимости на него вырезает Liquid. Последним: файлы крейта
+// выше удаляются по одному.
+let adapters_hw = has.usb || has.tcp || has.udp || mem_flash;
+variable::set("adapters_hw", if adapters_hw { "true" } else { "false" });
+if !adapters_hw {
+    file::delete("crates-host/adapters-hw");
 }
 
 // Драйвер внешней флеши в bsp — только когда на ней что-то лежит: разделы

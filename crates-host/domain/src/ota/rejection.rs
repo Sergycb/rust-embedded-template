@@ -21,20 +21,20 @@ pub(super) fn busy(s: Receiving, client: ClientId, served: Answer<'_>) -> Receiv
 }
 
 /// Код отказа для хоста по ошибке приёма.
-pub(super) fn download_rejection<F>(err: &DownloadError<F>) -> Rejection {
+pub(super) fn download_rejection(err: &DownloadError) -> Rejection {
     match err {
         DownloadError::Empty | DownloadError::TooLong { .. } => Rejection::Length,
         DownloadError::TooMuchData { .. }
         | DownloadError::Incomplete { .. }
         | DownloadError::OutOfOrder { .. } => Rejection::Transfer,
-        // `UnusableGranularity`, `Flash` и незнакомые варианты (перечисление
-        // `non_exhaustive`) сообщаются как отказ устройства, а не прячутся.
+        // `Flash` и незнакомые варианты (перечисление `non_exhaustive`)
+        // сообщаются как отказ устройства, а не прячутся.
         _ => Rejection::Device,
     }
 }
 
 /// Код отказа для хоста по ошибке применения.
-pub(super) fn update_rejection<E>(err: &UpdateError<E>) -> Rejection {
+pub(super) fn update_rejection(err: &UpdateError) -> Rejection {
     match err {
         UpdateError::TooLong { .. } | UpdateError::Truncated { .. } => Rejection::Length,
         UpdateError::Busy => Rejection::Busy,

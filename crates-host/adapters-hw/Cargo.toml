@@ -9,20 +9,12 @@ rust-version.workspace = true
 workspace = true
 
 [features]
-# {%- if ota == "true" %}
-# У `embassy-boot` без фич `log`/`defmt` его макросы вывода превращаются в
-# пустые выражения — на хосте это ровно то, что нужно.
-# {%- endif %}
-# В прошивку `defmt` включает crates-cross/Cargo.toml.
+# `defmt` — вывод стеков под обёртками (`embassy-net`, `embassy-usb`) в
+# прошивке; включает crates-cross/Cargo.toml. Свой код крейта в лог не пишет.
 # Драйверы без шины и линка (`adapters_hw::fake`) — для host-тестов `domain` и
 # заглушек платы (`bsp::stub`).
 fake = []
 defmt = [
-	"dep:defmt",
-	"ports/defmt",
-	# {%- if ota == "true" %}
-	"embassy-boot/defmt",
-	# {%- endif %}
 	# {%- if has_net == "true" %}
 	"embassy-net/defmt",
 	# {%- endif %}
@@ -32,14 +24,9 @@ defmt = [
 ]
 
 [dependencies]
-ports = { workspace = true }
-# {%- if ota == "true" %}
-# Обновление прошивки поверх разделов `NorFlash` — сам крейт от чипа не зависит.
-embassy-boot = { workspace = true }
-# `yield_now` между страницами стирания в `ota::Updater::prepare`.
-embassy-futures = { workspace = true }
-# {%- endif %}
 # {%- if ota == "true" or settings_port == "true" %}
+# Флеш: EEPROM как `NorFlash` (`eeprom`) и флеш в памяти (`fake::MemFlash`) —
+# тестам разделов OTA и хранилища настроек.
 embedded-storage = { workspace = true }
 embedded-storage-async = { workspace = true }
 # {%- endif %}
@@ -58,28 +45,11 @@ embassy-usb = { workspace = true }
 # Таймаут записи, которую хост не забирает (`usb`).
 embassy-time = { workspace = true }
 # {%- endif %}
-# `defmt::Format` на ошибках адаптеров — в прошивке.
-defmt = { workspace = true, optional = true }
 
 [dev-dependencies]
-# {%- if ota == "true" %}
-# Сквозной тест `ota`: то, что пишет `Updater`, находит проверка
-# bootloader'а (`domain::ota::boot::screen_update`). Подписывает `salty`, как
-# `cargo xtask build`. Циклическая dev-зависимость (у `domain` она на `adapters`)
-# cargo разрешена: в обычную сборку ни та ни другая не попадает.
-domain = { path = "../domain", features = ["boot"] }
-salty = { workspace = true }
-# `domain` тянет `supervisor`, а с ним `embassy-executor`, которому без
-# платформенной фичи не хватает `__pender`. Фичу включает dev-зависимость
-# самого `domain`, но cargo учитывает dev-зависимости только тестируемого
-# пакета: без этой строки `cargo test -p adapters` не линкуется, хотя тест
-# всего workspace проходит.
-embassy-executor = { workspace = true, features = ["platform-std", "executor-thread"] }
-# {%- endif %}
 # Исполнитель для async-тестов над флешем в памяти (`#[tokio::test]`); фичи —
 # в корневом Cargo.toml.
 tokio = { workspace = true }
-# {%- if has_net == "true" or has_usb == "true" or ota == "true" %}
 # {%- if has_net == "true" or has_usb == "true" %}
 # Тесты над стеками
 # {%- if has_net == "true" %}
@@ -90,11 +60,6 @@ tokio = { workspace = true }
 # {%- endif %}
 # ждут таймеров и критической секции — на хосте их дают драйвер времени
 # `mock-driver` и `critical-section/std`, как в `domain`.
-# {%- endif %}
-# {%- if ota == "true" %}
-# С OTA драйвер времени нужен и `supervisor` из dev-зависимости `domain` — по
-# той же причине, что выше.
-# {%- endif %}
 embassy-time = { workspace = true, features = ["mock-driver", "generic-queue-8"] }
 critical-section = { workspace = true, features = ["std"] }
 # {%- endif %}

@@ -64,8 +64,8 @@ supervisor_graph! {
         // строкой — раньше инициализатора блока `watchdog:`, как бы они ни стояли
         // в тексте, — частичным move: `firmware` уезжает в слот узла, `watchdog`
         // следом забирает сторож, остаток `board` дропается в конце пролога.
-        ::domain::OTA_FRAG<::adapters_hw::ota::Updater<bsp::FirmwareFlash>, bsp::reset::Reboot, OTA_CMD_PARKED> as OTA = ::domain::ota::OtaWiring {
-            flash: ::adapters_hw::ota::Updater::new(board.firmware),
+        ::domain::OTA_FRAG<::domain::ota::Updater<bsp::FirmwareFlash>, bsp::reset::Reboot, OTA_CMD_PARKED> as OTA = ::domain::ota::OtaWiring {
+            flash: ::domain::ota::Updater::new(board.firmware),
             reboot: bsp::reset::Reboot,
             running_version: crate::version::FW_VERSION,
         },
@@ -261,12 +261,12 @@ supervisor_graph! {
         // объявляет граф (`static T`), буферы `minimq` — слоты
         // `= static` фрагмента.{% if ota == "true" %} `cmd/reboot` — командой узлу `OTA` своим
         // клиентом, номер следом за остальными.{% endif %}
-        ::domain::MQTT_FRAG<::domain::mqtt::Fixed, ::domain::mqtt::TcpClient> as MQTT =
+        ::domain::MQTT_FRAG as MQTT =
             ::domain::mqtt::MqttWiring {
                 stack: board.net.stack,
                 info: crate::device_info(board.spec),
                 prefix: crate::net::mqtt::PREFIX,
-                broker: ::domain::mqtt::Fixed(crate::net::mqtt::BROKER),
+                broker: crate::net::mqtt::BROKER,
                 link: ::domain::mqtt::TcpClient::new(
                     board.net.stack,
                     static [u8; crate::net::mqtt::TCP_BUFFER],

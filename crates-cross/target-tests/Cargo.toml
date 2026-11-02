@@ -50,17 +50,10 @@ embassy-stm32 = { workspace = true, features = ["time-driver-any"] }
 # Паникёр у тестов свой (`embedded-test`), `HardFault` — по умолчанию из
 # `cortex-m-rt`: обработчик с причиной — у `app` (src/fault.rs).
 bsp = { workspace = true }
-{%- if ota == "true" %}
-# Трейты портов: тесты OTA дёргают объекты `Board` тем же способом, что и
-# `app` (`FirmwareUpdate`).
-ports = { workspace = true }
-# Адаптер обновления над разделами платы — его собирает приложение, а тест
-# собирает так же (`updater` в tests/test.rs).
-adapters-hw = { workspace = true }
-{%- endif %}
 {%- if ota == "true" or config == "true" %}
-# {% if ota == "true" %}Проверка версии образа в тесте отката (`domain::ota::update::apply`){% if config == "true" %};
+# {% if ota == "true" %}Адаптер обновления над разделами платы и проверка версии образа в тесте
+# отката (`domain::ota`, `updater` в tests/test.rs){% if config == "true" %};
 # {% endif %}{% endif %}{% if config == "true" %}хранилище настроек над носителем платы (`domain::settings`,
-# `settings` в tests/test.rs) — тест собирает его так же, как приложение{% endif %}.
+# `settings` в tests/test.rs){% endif %} — тест собирает их так же, как приложение.
 domain = { workspace = true }
 {%- endif %}

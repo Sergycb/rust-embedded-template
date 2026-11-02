@@ -4,7 +4,8 @@
 // {%- if graph == "true" %}
 //! (см. `domain::heartbeat`)
 // {%- endif %}
-//! — что узел делает — логика, и проверяется она на хосте на фейках портов.
+//! — что узел делает — логика, и проверяется она на хосте: адаптер
+//! обновления — настоящий, над разделами в памяти.
 //!
 //! Образ приходит не по своему каналу: узел протокола переводит свои сообщения в
 //! [`OtaCommand`](crate::ota::OtaCommand) и отдаёт их узлу через один из двух
@@ -51,7 +52,7 @@
 pub mod command;
 
 /// Приём образа по кускам: сверка длины, стирание один раз, буферизация до
-/// слова флеша — шаги над портом `FirmwareUpdate`, см. модуль.
+/// слова флеша — шаги над адаптером [`Updater`], см. модуль.
 pub mod download;
 
 /// Решение bootloader'а при старте и проверка подписи нового образа — над
@@ -60,8 +61,8 @@ pub mod download;
 pub mod boot;
 
 /// Применение подписанного обновления: порядок проверок, в котором каждый
-/// отказ различим, и запись подписи для bootloader'а. Функция над портом
-/// `FirmwareUpdate` — см. модуль.
+/// отказ различим, и запись подписи для bootloader'а. Функция над адаптером
+/// [`Updater`] — см. модуль.
 pub mod update;
 
 /// Версия прошивки в 32 битах и правило приёма обновления (защита от
@@ -72,6 +73,8 @@ pub mod version;
 mod client;
 mod rejection;
 mod timing;
+/// Адаптер обновления над `embassy-boot`: разделы `DFU` и `STATE` платы.
+mod updater;
 
 // Типы входа `CMD` — и в корне `domain::ota`, под именами с `Ota`: их полным
 // путём называют фрагмент и compose-site (`app`).
@@ -80,14 +83,16 @@ pub use command::{Command as OtaCommand, Reply as OtaReply};
 // Подмодули — по теме; путь `domain::ota::…` у их типов прежний.
 pub use client::{CMD_BYTES, ClientId, NodeLost, OtaClient, OtaRequest, cmd_parked};
 pub use timing::{REBOOT_GRACE, SESSION_TIMEOUT};
+pub use updater::{FlashError, Updater};
 
 use core::future::poll_fn;
 use core::pin::pin;
 use core::task::Poll;
 
-use defmt_or_log::{FormatOrDebug, info, warn};
+use defmt_or_log::{info, warn};
 use embassy_time::{Instant, Timer};
-use ports::{FirmwareUpdate, Reboot};
+use embedded_storage_async::nor_flash::NorFlash;
+use ports::{Partitions, Reboot};
 
 use crate::ota::client::Answer;
 use crate::ota::command::{Chunk, Progress, Rejection, SIGNATURE_BYTES};
@@ -145,9 +150,10 @@ type Signature = [u8; SIGNATURE_BYTES];
 // даёт генерация. Без этого мест было бы `sync_request::PARKED_CALLERS`, и
 // ждущие сверх него будили бы друг друга по кругу.
 //
-// `<F, R>` — параметры фрагмента: адаптер обновления и порт перезагрузки
-// платы `domain` не видит. `local` на `FLASH`: разделы платы — `!Send`
-// (`adapters_hw::ota::Updater` над ними держит `&'static Mutex<NoopRawMutex, …>`),
+// `<F, R>` — параметры фрагмента: адаптер обновления над разделами платы
+// (`Updater<bsp::FirmwareFlash>`) и порт перезагрузки `domain` не видит.
+// `local` на `FLASH`: разделы платы — `!Send` (`Updater` над ними держит
+// `&'static Mutex<NoopRawMutex, …>`),
 // а обычный слот — `static`, которому нужен `Send`. `local` меняет слот на
 // `LocalResourceSlot` и снимает это требование, взамен обязывая держать
 // значение на одном исполнителе — том, что спавнит задачи (то же допущение, что
@@ -163,7 +169,7 @@ supervisor::supervisor_fragment! {
     boot: inputs: struct $crate::ota::OtaWiring;
 
     node resources: [
-            /// Адаптер обновления поверх разделов флеша (`FirmwareUpdate`).
+            /// Адаптер обновления поверх разделов флеша (`Updater`).
             FLASH: local F = inputs.flash,
             /// Перезагрузка МК (`Reboot`) — для команды `Reboot`.
             REBOOT: R = inputs.reboot,
@@ -181,10 +187,10 @@ supervisor::supervisor_fragment! {
 }
 
 #[fsm::typestate]
-impl<'a, F, R, const PARKED: usize> OtaCtx<'a, F, R, PARKED>
+impl<'a, D, S, R, const PARKED: usize> OtaCtx<'a, Updater<Partitions<D, S>>, R, PARKED>
 where
-    F: FirmwareUpdate,
-    F::Error: FormatOrDebug,
+    D: NorFlash,
+    S: NorFlash,
     R: Reboot,
 {
     fsm::machine! {
@@ -491,10 +497,11 @@ where
 /// реального прогресса, а команды может не быть всю жизнь платы. Аппаратный
 /// сторож кормит тикер графа, а не какой-то узел.
 // {%- endif %}
-pub async fn task<F, R, const PARKED: usize>(mut ctx: OtaCtx<'_, F, R, PARKED>)
-where
-    F: FirmwareUpdate,
-    F::Error: FormatOrDebug,
+pub async fn task<D, S, R, const PARKED: usize>(
+    mut ctx: OtaCtx<'_, Updater<Partitions<D, S>>, R, PARKED>,
+) where
+    D: NorFlash,
+    S: NorFlash,
     R: Reboot,
 {
     match ctx.run().await {}
@@ -522,7 +529,7 @@ pub(crate) mod tests {
     /// Отпечаток раскладки фейка — образы тестов узла и протоколов несут его
     /// в хвосте.
     pub(crate) use crate::ota::fakes::LAYOUT;
-    use crate::ota::fakes::{FakeFlash, SIGNATURE};
+    use crate::ota::fakes::{FakeFlash, SIGNATURE, flash};
     use crate::ota::update::{LAYOUT_BYTES, VERSION_BYTES};
     use crate::ota::version::pack;
 
@@ -581,7 +588,7 @@ pub(crate) mod tests {
             supervisor::stand!(OTA_FRAG<FakeFlash, FakeReboot, 1>; QUEUE_ASK = 1),
         ));
         let node = task(stand.ctx(
-            Box::leak(Box::new(FakeFlash::new(1024, 8))),
+            Box::leak(Box::new(flash(128))),
             Box::leak(Box::new(FakeReboot)),
             Box::leak(Box::new(RUNNING_VERSION)),
             Box::leak(Box::new(false)),
@@ -618,7 +625,7 @@ pub(crate) mod tests {
             supervisor::stand!(OTA_FRAG<FakeFlash, FakeReboot, 1>; QUEUE_ASK = 1),
         ));
         Box::pin(task(super::OtaCtx::<'_, _, _, 1> {
-            flash: Box::leak(Box::new(FakeFlash::new(1024, 8))),
+            flash: Box::leak(Box::new(flash(128))),
             reboot: Box::leak(Box::new(FakeReboot)),
             running_version: Box::leak(Box::new(RUNNING_VERSION)),
             confirmed: Box::leak(Box::new(false)),
@@ -788,14 +795,14 @@ pub(crate) mod tests {
     #[test]
     fn applies_an_image_and_replies_to_every_command() {
         let image = image(64);
-        let mut flash = FakeFlash::new(1024, 8);
+        let mut flash = flash(1024);
 
         let replies = run(&mut flash, update(&image));
 
-        assert_eq!(flash.prepared, Some(64));
-        assert_eq!(&flash.memory[..64], &image[..]);
-        assert_eq!(flash.recorded, vec![(SIGNATURE, 64)]);
-        assert_eq!(flash.updated, 1, "обмен разделов запрошен один раз");
+        assert_eq!(flash.prepares(), 1, "раздел подготовлен один раз");
+        assert_eq!(&flash.memory()[..64], &image[..]);
+        assert_eq!(flash.recorded(), Some((SIGNATURE, 64)));
+        assert!(flash.swap_requested(), "обмен разделов запрошен");
         assert_eq!(
             replies,
             vec![
@@ -814,12 +821,12 @@ pub(crate) mod tests {
     /// bootloader откатил бы обновление на следующем сбросе.
     #[test]
     fn confirms_the_running_image_before_the_first_command() {
-        let mut flash = FakeFlash::new(64, 8);
+        let mut flash = flash(128);
 
         run(&mut flash, vec![]);
 
-        assert_eq!(flash.booted, 1);
-        assert_eq!(flash.prepared, None, "раздел не тронут");
+        assert_eq!(flash.booted(), 1);
+        assert!(!flash.prepared(), "раздел не тронут");
     }
 
     /// Готовность — только когда подтверждение закончилось: узлу, который её
@@ -827,8 +834,8 @@ pub(crate) mod tests {
     #[test]
     fn is_ready_only_after_the_confirmation() {
         MockDriver::get().reset();
-        let mut flash = FakeFlash::new(64, 8);
-        flash.confirm_takes = Some(Duration::from_millis(1000));
+        let mut flash = flash(128);
+        flash.confirm_takes(Duration::from_millis(1000));
         // Свой `stand!` на тест: готовность — `static` на месте вызова.
         let stand = supervisor::stand!(OTA_FRAG<FakeFlash, FakeReboot, 1>; QUEUE_ASK = 1);
         let (mut reboot, mut version, mut confirmed) = (FakeReboot, RUNNING_VERSION, false);
@@ -851,8 +858,8 @@ pub(crate) mod tests {
     /// которые ждут готовности.
     #[test]
     fn is_ready_after_a_failed_confirmation() {
-        let mut flash = FakeFlash::new(64, 8);
-        flash.mark_booted = Err("флеш не отвечает");
+        let mut flash = flash(128);
+        flash.refuse_confirm(true);
         let stand = supervisor::stand!(OTA_FRAG<FakeFlash, FakeReboot, 1>; QUEUE_ASK = 1);
         let (mut reboot, mut version, mut confirmed) = (FakeReboot, RUNNING_VERSION, false);
         let mut node = pin!(task(stand.ctx(
@@ -871,17 +878,18 @@ pub(crate) mod tests {
     #[test]
     fn a_second_run_does_not_confirm_again() {
         let mut confirmed = false;
-        let mut flash = FakeFlash::new(64, 8);
+        let mut flash = flash(128);
 
         run_on(
             &mut flash,
             &mut confirmed,
             vec![start(16), chunk(0, &image(16)), finish()],
         );
-        assert_eq!((flash.booted, flash.updated), (1, 1));
+        assert_eq!(flash.booted(), 1);
+        assert!(flash.swap_requested());
 
         run_on(&mut flash, &mut confirmed, vec![]);
-        assert_eq!(flash.booted, 1, "второй прогон не подтверждает");
+        assert_eq!(flash.confirm_attempts(), 1, "второй прогон не подтверждает");
     }
 
     /// Подтверждение не удалось, образов не было — узел работает дальше и
@@ -889,13 +897,13 @@ pub(crate) mod tests {
     #[test]
     fn a_failed_confirmation_is_retried_on_the_next_run() {
         let mut confirmed = false;
-        let mut flash = FakeFlash::new(64, 8);
-        flash.mark_booted = Err("флеш не отвечает");
+        let mut flash = flash(128);
+        flash.refuse_confirm(true);
 
         run_on(&mut flash, &mut confirmed, vec![]);
         assert!(!confirmed);
 
-        flash.mark_booted = Ok(());
+        flash.refuse_confirm(false);
         run_on(&mut flash, &mut confirmed, vec![]);
         assert!(confirmed);
     }
@@ -905,8 +913,8 @@ pub(crate) mod tests {
     #[test]
     fn a_failed_confirmation_is_retried_on_the_next_start() {
         let mut confirmed = false;
-        let mut flash = FakeFlash::new(64, 8);
-        flash.mark_booted = Err("флеш не отвечает");
+        let mut flash = flash(128);
+        flash.refuse_confirm(true);
 
         // Образ длиннее раздела — отвергнут, но подтверждение пробовалось.
         run_on(
@@ -916,7 +924,8 @@ pub(crate) mod tests {
         );
 
         assert_eq!(
-            flash.confirm_attempts, 2,
+            flash.confirm_attempts(),
+            2,
             "при старте и на Start, на куске — нет"
         );
         assert!(!confirmed);
@@ -925,8 +934,8 @@ pub(crate) mod tests {
     /// Отказ подтверждения не мешает принять образ.
     #[test]
     fn a_failed_confirmation_does_not_block_an_update() {
-        let mut flash = FakeFlash::new(64, 8);
-        flash.mark_booted = Err("флеш не отвечает");
+        let mut flash = flash(128);
+        flash.refuse_confirm(true);
 
         let replies = run(&mut flash, vec![start(8), chunk(0, &image(8)), finish()]);
 
@@ -938,17 +947,18 @@ pub(crate) mod tests {
     /// `Ready`.
     #[test]
     fn an_accepted_image_is_never_followed_by_a_confirmation() {
-        let mut flash = FakeFlash::new(64, 8);
-        flash.mark_booted = Err("флеш не отвечает");
+        let mut flash = flash(128);
+        flash.refuse_confirm(true);
 
         run(
             &mut flash,
             vec![start(16), chunk(0, &image(16)), finish(), start(16)],
         );
 
-        assert_eq!(flash.updated, 1, "обмен запрошен");
+        assert!(flash.swap_requested(), "обмен запрошен");
         assert_eq!(
-            flash.confirm_attempts, 2,
+            flash.confirm_attempts(),
+            2,
             "при старте и на первом Start, на втором — нет"
         );
     }
@@ -957,20 +967,23 @@ pub(crate) mod tests {
     /// хост услышал бы `Device` вместо «перезагрузи».
     #[test]
     fn replies_busy_before_touching_the_partition() {
-        let mut flash = FakeFlash::new(64, 8);
-        flash.busy = true;
+        let mut flash = flash(128);
+        // Образ ждёт обмена, а подтверждение не трогает `STATE` (стирание
+        // отказывает): раздел занят и после старта узла.
+        flash.set_busy();
+        flash.refuse_state_erase();
 
         let replies = run(&mut flash, vec![start(8)]);
 
         assert_eq!(replies, vec![Err(Rejection::Busy)]);
-        assert_eq!(flash.prepared, None, "раздел не должен быть стёрт");
+        assert!(!flash.prepared(), "раздел не должен быть стёрт");
     }
 
     /// После `Ready` новый образ — `Busy`, а не стирание раздела с образом,
     /// ждущим обмена; узел по-прежнему ждёт `Reboot`.
     #[test]
     fn a_start_after_ready_is_busy_and_keeps_the_pending_image() {
-        let mut flash = FakeFlash::new(64, 8);
+        let mut flash = flash(128);
         let image = image(16);
 
         let replies = run(
@@ -989,14 +1002,18 @@ pub(crate) mod tests {
             &[Err(Rejection::Busy), Err(Rejection::NoSession)],
             "Start отвергнут, приёма нет"
         );
-        assert_eq!(&flash.memory[..16], &image[..], "образ, ждущий обмена, цел");
+        assert_eq!(
+            &flash.memory()[..16],
+            &image[..],
+            "образ, ждущий обмена, цел"
+        );
     }
 
     /// Повтор `Finish` владельца после `Ready` (ответ потерялся) — снова
     /// `Ready`, и ничего не записано повторно: обмен помечен один раз.
     #[test]
     fn a_repeated_finish_of_the_owner_is_ready_again() {
-        let mut flash = FakeFlash::new(64, 8);
+        let mut flash = flash(128);
 
         let replies = run(
             &mut flash,
@@ -1008,14 +1025,18 @@ pub(crate) mod tests {
             &[Ok(Progress::Ready), Ok(Progress::Ready)],
             "повтор получил тот же исход"
         );
-        assert_eq!(flash.updated, 1, "обмен помечен одним Finish");
-        assert_eq!(flash.recorded.len(), 1, "запись для bootloader'а одна");
+        assert!(flash.swap_requested(), "обмен помечен");
+        assert_eq!(
+            flash.magics_swap(),
+            1,
+            "обмен помечен одним Finish, запись для bootloader'а — одна"
+        );
     }
 
     /// Чужой `Finish` после `Ready` — `NoSession`: приёма у него не было.
     #[test]
     fn a_foreign_finish_after_ready_is_no_session() {
-        let mut flash = FakeFlash::new(64, 8);
+        let mut flash = flash(128);
 
         let replies = run(
             &mut flash,
@@ -1023,24 +1044,24 @@ pub(crate) mod tests {
         );
 
         assert_eq!(replies.last(), Some(&Err(Rejection::NoSession)));
-        assert_eq!(flash.updated, 1);
+        assert!(flash.swap_requested());
     }
 
     #[test]
     fn maps_a_bad_length_to_length_without_erasing() {
-        let mut flash = FakeFlash::new(64, 8);
+        let mut flash = flash(128);
 
-        let replies = run(&mut flash, vec![start(65)]);
+        let replies = run(&mut flash, vec![start(129)]);
 
         assert_eq!(replies, vec![Err(Rejection::Length)]);
-        assert_eq!(flash.prepared, None);
+        assert!(!flash.prepared());
     }
 
     /// Лишние байты — `Transfer`, и приём брошен: следующий кусок уже без
     /// приёма.
     #[test]
     fn excess_data_is_a_transfer_failure_that_ends_the_session() {
-        let mut flash = FakeFlash::new(64, 8);
+        let mut flash = flash(128);
 
         let replies = run(
             &mut flash,
@@ -1056,36 +1077,24 @@ pub(crate) mod tests {
             &replies[2..],
             &[Err(Rejection::Transfer), Err(Rejection::NoSession)]
         );
-        assert_eq!(flash.updated, 0, "обмен не запрашивался");
+        assert!(!flash.swap_requested(), "обмен не запрашивался");
     }
 
     /// `Finish` до последнего байта — `Transfer`, обмен не запрошен.
     #[test]
     fn an_early_finish_is_a_transfer_failure() {
-        let mut flash = FakeFlash::new(64, 8);
+        let mut flash = flash(128);
 
         let replies = run(&mut flash, vec![start(16), chunk(0, &image(8)), finish()]);
 
         assert_eq!(replies.last(), Some(&Err(Rejection::Transfer)));
-        assert_eq!(flash.updated, 0);
-    }
-
-    /// Негодная гранулярность — вина устройства, не хоста, и до стирания.
-    #[test]
-    fn maps_an_unusable_granularity_to_device_without_erasing() {
-        let mut flash = FakeFlash::new(64, 8);
-        flash.word = 0;
-
-        let replies = run(&mut flash, vec![start(8)]);
-
-        assert_eq!(replies, vec![Err(Rejection::Device)]);
-        assert_eq!(flash.prepared, None);
+        assert!(!flash.swap_requested());
     }
 
     #[test]
     fn maps_a_flash_failure_on_apply_to_device() {
-        let mut flash = FakeFlash::new(64, 8);
-        flash.mark_updated = Err("флеш отказал");
+        let mut flash = flash(128);
+        flash.refuse_swap();
 
         let replies = run(&mut flash, vec![start(8), chunk(0, &image(8)), finish()]);
 
@@ -1095,7 +1104,7 @@ pub(crate) mod tests {
     /// Кусок и `Finish` без `Start` — `NoSession`, и узел работает дальше.
     #[test]
     fn a_chunk_or_finish_without_start_is_no_session() {
-        let mut flash = FakeFlash::new(64, 8);
+        let mut flash = flash(128);
 
         let replies = run(
             &mut flash,
@@ -1124,7 +1133,7 @@ pub(crate) mod tests {
     /// образ собирается верно; кусок не встык — `Transfer`, приём брошен.
     #[test]
     fn a_repeated_chunk_is_acknowledged_and_a_gap_ends_the_session() {
-        let mut flash = FakeFlash::new(64, 8);
+        let mut flash = flash(128);
         let image = image(16);
 
         let replies = run(
@@ -1152,13 +1161,13 @@ pub(crate) mod tests {
                 Err(Rejection::NoSession),
             ]
         );
-        assert_eq!(&flash.memory[..16], &image[..]);
+        assert_eq!(&flash.memory()[..16], &image[..]);
     }
 
     /// Кусок не встык к принятым — `Transfer`, приём брошен.
     #[test]
     fn a_chunk_out_of_order_is_a_transfer_failure() {
-        let mut flash = FakeFlash::new(64, 8);
+        let mut flash = flash(128);
 
         let replies = run(
             &mut flash,
@@ -1179,7 +1188,7 @@ pub(crate) mod tests {
     /// Новый `Start` посреди приёма начинает образ заново.
     #[test]
     fn a_start_while_receiving_starts_over() {
-        let mut flash = FakeFlash::new(64, 8);
+        let mut flash = flash(128);
         let image = image(16);
 
         let replies = run(
@@ -1194,14 +1203,14 @@ pub(crate) mod tests {
         );
 
         assert_eq!(replies.last(), Some(&Ok(Progress::Ready)));
-        assert_eq!(&flash.memory[..16], &image[..]);
+        assert_eq!(&flash.memory()[..16], &image[..]);
     }
 
     /// Хост замолчал дольше тайм-аута — приём брошен, кусок после паузы уже
     /// без приёма; молчание короче тайм-аута приём не прерывает.
     #[test]
     fn silence_longer_than_the_timeout_abandons_the_session() {
-        let mut flash = FakeFlash::new(64, 8);
+        let mut flash = flash(128);
         let almost = SESSION_TIMEOUT - Duration::from_millis(1);
 
         let replies = run(
@@ -1231,7 +1240,7 @@ pub(crate) mod tests {
     /// Чужой `Start` посреди приёма — `Busy`, приём владельца не тронут.
     #[test]
     fn a_foreign_start_during_receiving_is_busy() {
-        let mut flash = FakeFlash::new(64, 8);
+        let mut flash = flash(128);
         let image = image(16);
 
         let replies = run(
@@ -1248,15 +1257,15 @@ pub(crate) mod tests {
                 Ok(Progress::Ready),
             ]
         );
-        assert_eq!(flash.prepared, Some(16), "чужой Start раздел не готовил");
-        assert_eq!(&flash.memory[..16], &image[..]);
+        assert_eq!(flash.prepares(), 1, "чужой Start раздел не готовил");
+        assert_eq!(&flash.memory()[..16], &image[..]);
     }
 
     /// Чужой кусок с тем смещением, что ждёт владелец, — `Busy` и не
     /// записан; кусок владельца следом принят.
     #[test]
     fn a_foreign_chunk_is_busy_and_not_written() {
-        let mut flash = FakeFlash::new(64, 8);
+        let mut flash = flash(128);
         let image = image(16);
 
         let replies = run(
@@ -1278,14 +1287,14 @@ pub(crate) mod tests {
                 Ok(Progress::Ready),
             ]
         );
-        assert_eq!(&flash.memory[..16], &image[..]);
+        assert_eq!(&flash.memory()[..16], &image[..]);
     }
 
     /// Входы `CMD` и `ASK` — один автомат: приём, начатый через `ASK`,
     /// идёт через него, а команда клиента с `CMD` получает `Busy`.
     #[test]
     fn both_inputs_drive_one_session() {
-        let mut flash = FakeFlash::new(64, 8);
+        let mut flash = flash(128);
         let image = image(16);
 
         let replies = run(
@@ -1307,13 +1316,13 @@ pub(crate) mod tests {
                 Ok(Progress::Ready),
             ]
         );
-        assert_eq!(&flash.memory[..16], &image[..]);
+        assert_eq!(&flash.memory()[..16], &image[..]);
     }
 
     /// Чужой `Finish` — `Busy`, приём продолжается.
     #[test]
     fn a_foreign_finish_is_busy() {
-        let mut flash = FakeFlash::new(64, 8);
+        let mut flash = flash(128);
 
         let replies = run(
             &mut flash,
@@ -1329,13 +1338,17 @@ pub(crate) mod tests {
                 Ok(Progress::Ready),
             ]
         );
-        assert_eq!(flash.updated, 1, "обмен запрошен одним Finish владельца");
+        assert_eq!(
+            flash.magics_swap(),
+            1,
+            "обмен запрошен одним Finish владельца"
+        );
     }
 
     /// Владелец повторил `Start` (ответ потерялся) — приём с нуля, не `Busy`.
     #[test]
     fn the_owner_may_restart_its_session() {
-        let mut flash = FakeFlash::new(64, 8);
+        let mut flash = flash(128);
         let image = image(16);
 
         let replies = run(
@@ -1359,14 +1372,14 @@ pub(crate) mod tests {
                 Ok(Progress::Ready),
             ]
         );
-        assert_eq!(flash.prepared, Some(16));
+        assert_eq!(flash.prepares(), 2, "владелец начал заново");
     }
 
     /// Владелец замолчал — по сроку от его последней команды сессия свободна;
     /// чужой `Start` посреди срока его не продлевает.
     #[test]
     fn a_silent_owner_releases_the_session() {
-        let mut flash = FakeFlash::new(64, 8);
+        let mut flash = flash(128);
         let half = SESSION_TIMEOUT / 2;
 
         let replies = run(
@@ -1388,7 +1401,7 @@ pub(crate) mod tests {
                 Ok(Progress::Started),
             ]
         );
-        assert_eq!(flash.prepared, Some(8), "сессия клиента 1");
+        assert_eq!(flash.prepares(), 2, "сессия клиента 1 — вторая подготовка");
     }
 
     /// Чужой `Start` после срока владельца, но раньше, чем узел заметил срок
@@ -1396,7 +1409,7 @@ pub(crate) mod tests {
     /// брошен, начинается приём нового клиента.
     #[test]
     fn a_foreign_start_past_the_owners_deadline_takes_over() {
-        let mut flash = FakeFlash::new(64, 8);
+        let mut flash = flash(128);
 
         let replies = run(
             &mut flash,
@@ -1404,13 +1417,13 @@ pub(crate) mod tests {
         );
 
         assert_eq!(replies, vec![Ok(Progress::Started), Ok(Progress::Started)]);
-        assert_eq!(flash.prepared, Some(8), "сессия клиента 1");
+        assert_eq!(flash.prepares(), 2, "сессия клиента 1 — вторая подготовка");
     }
 
     /// `Reboot` обслуживается от любого клиента, и посреди чужого приёма тоже.
     #[test]
     fn reboot_is_served_for_any_client() {
-        let mut flash = FakeFlash::new(64, 8);
+        let mut flash = flash(128);
 
         let replies = run(&mut flash, vec![start(16), by(1, send(OtaCommand::Reboot))]);
 
@@ -1424,7 +1437,7 @@ pub(crate) mod tests {
     #[test]
     #[should_panic(expected = "МК сброшен")]
     fn reboot_replies_and_resets_after_the_grace_period() {
-        let mut flash = FakeFlash::new(64, 8);
+        let mut flash = flash(128);
 
         let replies = run(
             &mut flash,
@@ -1445,7 +1458,7 @@ pub(crate) mod tests {
     /// образ, в который устройство откатывается, а применить всё равно нечем.
     #[test]
     fn refuses_an_update_without_a_signature_before_erasing() {
-        let mut flash = FakeFlash::new(64, 8);
+        let mut flash = flash(128);
 
         let replies = run(&mut flash, vec![unsigned_start(8), chunk(0, &[0; 8])]);
 
@@ -1453,33 +1466,33 @@ pub(crate) mod tests {
             replies,
             vec![Err(Rejection::Signature), Err(Rejection::NoSession)]
         );
-        assert_eq!(flash.prepared, None, "раздел не должен быть стёрт");
+        assert!(!flash.prepared(), "раздел не должен быть стёрт");
     }
 
     /// Та же версия — откат, и код для хоста свой.
     #[test]
     fn maps_a_rollback_to_rollback() {
         let image = versioned_image(64, RUNNING_VERSION);
-        let mut flash = FakeFlash::new(1024, 8);
+        let mut flash = flash(1024);
 
         let replies = run(&mut flash, update(&image));
 
         assert_eq!(replies.last(), Some(&Err(Rejection::Rollback)));
-        assert!(flash.recorded.is_empty(), "обмен не должен быть запрошен");
-        assert_eq!(flash.updated, 0);
+        assert!(flash.recorded().is_none(), "обмен не должен быть запрошен");
+        assert!(!flash.swap_requested());
     }
 
     /// Образ короче хвоста (раскладка и версия) — `Length`, а не паника на
     /// вычитании; обмен не запрошен.
     #[test]
     fn maps_an_image_shorter_than_the_tail_to_length() {
-        let mut flash = FakeFlash::new(1024, 8);
+        let mut flash = flash(1024);
 
         let replies = run(&mut flash, update(&[0; 7]));
 
         assert_eq!(replies.last(), Some(&Err(Rejection::Length)));
-        assert!(flash.recorded.is_empty());
-        assert_eq!(flash.updated, 0);
+        assert!(flash.recorded().is_none());
+        assert!(!flash.swap_requested());
     }
 
     /// Чужая раскладка — `Layout`, а не `Rollback`, хотя версия новее; обмен
@@ -1488,7 +1501,7 @@ pub(crate) mod tests {
     fn refuses_an_image_for_another_layout_before_marking_the_swap() {
         let mut image = image(64);
         image[56..60].copy_from_slice(&(!LAYOUT).to_le_bytes());
-        let mut flash = FakeFlash::new(1024, 8);
+        let mut flash = flash(1024);
         let mut steps = update(&image);
         steps.push(chunk(0, &[0; 8]));
 
@@ -1498,21 +1511,24 @@ pub(crate) mod tests {
             replies[replies.len() - 2..],
             [Err(Rejection::Layout), Err(Rejection::NoSession)]
         );
-        assert!(flash.recorded.is_empty());
-        assert_eq!(flash.updated, 0, "обмен под чужую раскладку не помечается");
+        assert!(flash.recorded().is_none());
+        assert!(
+            !flash.swap_requested(),
+            "обмен под чужую раскладку не помечается"
+        );
     }
 
     /// Отказ флеша при записи для bootloader'а — `Device`, обмен не помечен.
     #[test]
     fn maps_a_flash_failure_on_the_signature_record_to_device() {
         let image = image(64);
-        let mut flash = FakeFlash::new(1024, 8);
-        flash.record = Err("флеш отказал");
+        let mut flash = flash(1024);
+        flash.refuse_record();
 
         let replies = run(&mut flash, update(&image));
 
         assert_eq!(replies.last(), Some(&Err(Rejection::Device)));
-        assert_eq!(flash.updated, 0);
+        assert!(!flash.swap_requested());
     }
 
     /// Шаг случайного сценария: что прислать и от какого клиента.
@@ -1544,221 +1560,276 @@ pub(crate) mod tests {
             steps in proptest::collection::vec(arbitrary_step(), 1..24)
         ) {
             let commands = steps.iter().filter(|step| !matches!(step, Step::Wait(_))).count();
-            let mut flash = FakeFlash::new(1024, 8);
+            let mut flash = flash(1024);
             let replies = run(&mut flash, steps);
             proptest::prop_assert_eq!(replies.len(), commands);
             let ready = replies.iter().filter(|reply| **reply == Ok(Progress::Ready)).count();
-            proptest::prop_assert_eq!(flash.updated, usize::from(ready > 0));
+            proptest::prop_assert_eq!(flash.swap_requested(), ready > 0);
         }
     }
 }
 
 #[cfg(test)]
 mod fakes {
-    //! Фейки портов обновления для host-тестов.
+    //! Разделы обновления в памяти под настоящим [`Updater`] — общие для
+    //! `download`, `update` и узла `ota`.
     //!
-    //! Один фейк на порт, общий для `download`, `update` и `ota`: сценарии у
-    //! модулей разные, а придирки фейка — те же, что у настоящего адаптера
-    //! (кратность записи слову, запись только после `prepare`), и держать их в
-    //! трёх копиях значило бы проверять три разных флеша.
+    //! Флеш — `MemFlash` (придирчивый, как NOR: кратность слову, запись только
+    //! «единицы в нули»), а поверх — [`Probe`]: журнал операций и отказы там,
+    //! где их надо разыграть (запись для bootloader'а, магия `STATE`,
+    //! стирание `STATE`), и долгое стирание `STATE` на таймере `MockDriver`.
+    //! Всё остальное — `embassy-boot` и адаптер — настоящее.
     //!
-    //! Ни один фейк не ждёт по-настоящему — их future готовы с первого `poll`, —
-    //! поэтому тестам хватает однопоточного `#[tokio::test]`. Исключение —
-    //! `FakeFlash::confirm_takes`: подтверждение ждёт таймер `MockDriver`.
+    //! Флеш в памяти не ждёт — future готовы с первого `poll`, — поэтому тестам
+    //! хватает однопоточного `#[tokio::test]`. Исключение —
+    //! [`confirm_takes`](Updater::confirm_takes): стирание `STATE` ждёт таймер.
 
+    use adapters_hw::fake::MemFlash;
     use embassy_time::{Duration, Timer};
-    use ports::{FirmwareUpdate, PendingImage};
+    use embedded_storage_async::nor_flash::{ErrorType, NorFlash, NorFlashErrorKind, ReadNorFlash};
+    use ports::{Partitions, PendingImage};
 
+    use crate::ota::Updater;
     use crate::ota::update::{LAYOUT_BYTES, VERSION_BYTES};
 
-    /// Отпечаток раскладки фейка — его отдаёт `layout()`; образы тестов несут
-    /// его в хвосте, кроме тех, что разыгрывают чужую раскладку.
+    /// Отпечаток раскладки разделов тестов — его отдаёт `layout()`; образы
+    /// тестов несут его в хвосте, кроме тех, что разыгрывают чужую раскладку.
     pub(crate) const LAYOUT: u32 = 0x5EED_1A70;
 
-    /// Подпись, которую тесты кладут в `Start`; фейк её не проверяет, а
-    /// записывает — важно, что до него доехала именно она.
+    /// Подпись, которую тесты кладут в `Start`; приложение её не проверяет, а
+    /// оставляет bootloader'у — важно, что дошла именно она.
     pub(super) const SIGNATURE: [u8; 64] = [9; 64];
 
-    /// Флеш в памяти, придирчивый ровно там же, где настоящий, плюс запасная
-    /// страница за `capacity` — туда применение с подписью кладёт запись для
-    /// bootloader'а.
-    ///
-    /// Главное здесь — проверки кратности: без них тест не отличил бы
-    /// работающую буферизацию от её отсутствия, а на плате разница вылезла бы
-    /// отказом записи (или, на F2/F4/F7, испорченным образом).
-    pub(super) struct FakeFlash {
-        pub(super) memory: Vec<u8>,
-        /// То, что отдаёт `capacity()`. По умолчанию — длина `memory`; тесты
-        /// применения ставят меньше, чтобы разыграть «в приёмник влез, в
-        /// активный раздел — нет».
-        pub(super) capacity: u32,
-        pub(super) word: u32,
-        pub(super) busy: bool,
-        pub(super) prepared: Option<u32>,
-        pub(super) writes: Vec<(u32, usize)>,
-        /// Что ответить на запись в запасную страницу (запись для
-        /// bootloader'а); `Err` разыгрывает отказ флеша.
-        pub(super) record: Result<(), &'static str>,
-        /// Что оставлено bootloader'у в запасной странице: подпись и длина.
-        pub(super) recorded: Vec<([u8; 64], u32)>,
-        /// Что ответить на `mark_updated`; `Err` разыгрывает отказ флеша.
-        pub(super) mark_updated: Result<(), &'static str>,
-        /// Сколько раз просили обмен разделов.
-        pub(super) updated: usize,
-        /// Что ответить на `mark_booted`; `Err` разыгрывает отказ флеша.
-        pub(super) mark_booted: Result<(), &'static str>,
-        /// Сколько раз образ подтвердили успешно.
-        pub(super) booted: usize,
-        /// Сколько раз звали `mark_booted` — удачно или нет.
-        pub(super) confirm_attempts: usize,
-        /// Сколько длится `mark_booted` — как стирание `STATE` на плате;
-        /// `None` — мгновенно.
-        pub(super) confirm_takes: Option<Duration>,
+    /// Страница стирания: кратна любому слову STM32 (до 32 байт) и вмещает
+    /// запись для bootloader'а (`PendingImage::LEN`, 96 байт).
+    const PAGE: usize = 128;
+
+    /// Объём `DFU`: самый длинный образ тестов (1024 байта) и запасная
+    /// страница за ним.
+    const DFU: usize = 1024 + PAGE;
+
+    /// Магия `embassy-boot`: образ подтверждён.
+    const BOOT_MAGIC: u8 = 0xD0;
+
+    /// Магия `embassy-boot`: обмен на следующем сбросе.
+    const SWAP_MAGIC: u8 = 0xF0;
+
+    /// Раздел `DFU` со словом `W`.
+    pub(super) type Dfu<const W: usize> = Probe<MemFlash<DFU, W, PAGE>>;
+
+    /// Раздел `STATE`: страница на магию и журнал.
+    pub(super) type State = Probe<MemFlash<PAGE, 8, PAGE>>;
+
+    /// Настоящий адаптер обновления над разделами в памяти, слово `DFU` — `W`.
+    pub(crate) type FakeFlash<const W: usize = 8> = Updater<Partitions<Dfu<W>, State>>;
+
+    /// Флеш с журналом операций и отказами по заказу.
+    pub(super) struct Probe<F> {
+        flash: F,
+        /// Запись по этому смещению и дальше отказывает.
+        refuse_from: Option<u32>,
+        /// Магии, запись которых по смещению 0 отказывает.
+        refuse_magic: Vec<u8>,
+        /// Стирание отказывает.
+        refuse_erase: bool,
+        /// Сколько длится стирание.
+        erase_takes: Option<Duration>,
+        /// Удачные записи: смещение и длина.
+        writes: Vec<(u32, usize)>,
+        /// Сколько раз стирали.
+        erases: usize,
+        /// Магии, которые пытались записать по смещению 0, и удалось ли.
+        magics: Vec<(u8, bool)>,
     }
 
-    impl FakeFlash {
-        /// Запасная страница за `capacity` — под запись для bootloader'а.
-        const SPARE: usize = 128;
-
-        pub(super) fn new(capacity: usize, word: u32) -> Self {
+    impl<F> Probe<F> {
+        const fn new(flash: F) -> Self {
             Self {
-                memory: vec![0xFF; capacity + Self::SPARE],
-                capacity: u32::try_from(capacity).unwrap(),
-                word,
-                busy: false,
-                prepared: None,
+                flash,
+                refuse_from: None,
+                refuse_magic: Vec::new(),
+                refuse_erase: false,
+                erase_takes: None,
                 writes: Vec::new(),
-                record: Ok(()),
-                recorded: Vec::new(),
-                mark_updated: Ok(()),
-                updated: 0,
-                mark_booted: Ok(()),
-                booted: 0,
-                confirm_attempts: 0,
-                confirm_takes: None,
+                erases: 0,
+                magics: Vec::new(),
             }
-        }
-
-        /// Раздел, в котором уже лежит образ длиной `len` с отпечатком
-        /// [`LAYOUT`] и версией `incoming` в хвосте, и вместимость меньше
-        /// раздела — как у настоящей схемы с обменом.
-        pub(super) fn with_image(len: u32, incoming: u32) -> Self {
-            let mut flash = Self::new(256, 8);
-            flash.capacity = 128;
-            let version = (len - VERSION_BYTES) as usize;
-            flash.memory[version - LAYOUT_BYTES as usize..version]
-                .copy_from_slice(&LAYOUT.to_le_bytes());
-            flash.memory[version..len as usize].copy_from_slice(&incoming.to_le_bytes());
-            flash
         }
     }
 
-    impl FakeFlash {
-        fn do_prepare(&mut self, len: u32) -> Result<(), &'static str> {
-            if len == 0 || len > self.capacity {
-                return Err("негодная длина");
-            }
-            self.prepared = Some(len);
-            self.memory.fill(0xFF);
-            Ok(())
+    impl<F: ErrorType<Error = NorFlashErrorKind>> ErrorType for Probe<F> {
+        type Error = NorFlashErrorKind;
+    }
+
+    impl<F: ReadNorFlash + ErrorType<Error = NorFlashErrorKind>> ReadNorFlash for Probe<F> {
+        const READ_SIZE: usize = F::READ_SIZE;
+
+        async fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), Self::Error> {
+            self.flash.read(offset, bytes).await
         }
 
-        fn do_write(&mut self, offset: u32, data: &[u8]) -> Result<(), &'static str> {
-            if offset >= self.capacity {
-                // Запасная страница: запись для bootloader'а — ровно там, где её
-                // ищет `domain::ota::boot::screen_update`, и целыми словами.
-                if offset != self.capacity {
-                    return Err("запись для bootloader'а не по смещению capacity");
-                }
-                if !u32::try_from(data.len()).is_ok_and(|v| v.is_multiple_of(self.word)) {
-                    return Err("длина записи не кратна слову");
-                }
-                self.record?;
-                let bytes: &[u8; PendingImage::LEN] =
-                    data.try_into().ok().ok_or("запись не той длины")?;
-                let record = PendingImage::from_bytes(bytes).ok_or("не запись о подписи")?;
-                self.recorded.push((record.signature, record.len));
-                return Ok(());
+        fn capacity(&self) -> usize {
+            self.flash.capacity()
+        }
+    }
+
+    impl<F: NorFlash + ErrorType<Error = NorFlashErrorKind>> NorFlash for Probe<F> {
+        const WRITE_SIZE: usize = F::WRITE_SIZE;
+        const ERASE_SIZE: usize = F::ERASE_SIZE;
+
+        async fn erase(&mut self, from: u32, to: u32) -> Result<(), Self::Error> {
+            if let Some(takes) = self.erase_takes {
+                Timer::after(takes).await;
             }
-            if self.prepared.is_none() {
-                return Err("запись без подготовки раздела");
+            if self.refuse_erase {
+                return Err(NorFlashErrorKind::Other);
             }
-            if !u32::try_from(data.len()).is_ok_and(|v| v.is_multiple_of(self.word)) {
-                return Err("длина записи не кратна слову");
-            }
-            if !offset.is_multiple_of(self.word) {
-                return Err("смещение не кратно слову");
-            }
-            let start = offset as usize;
-            self.memory[start..start + data.len()].copy_from_slice(data);
-            self.writes.push((offset, data.len()));
-            Ok(())
+            self.erases += 1;
+            self.flash.erase(from, to).await
         }
 
-        fn do_mark_updated(&mut self) -> Result<(), &'static str> {
-            self.mark_updated?;
-            self.updated += 1;
+        async fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), Self::Error> {
+            let magic = (offset == 0)
+                .then(|| bytes.first().copied())
+                .flatten()
+                .filter(|magic| bytes.iter().all(|b| b == magic));
+            let refused = magic.is_some_and(|magic| self.refuse_magic.contains(&magic))
+                || self.refuse_from.is_some_and(|from| offset >= from);
+            if let Some(magic) = magic {
+                self.magics.push((magic, !refused));
+            }
+            if refused {
+                return Err(NorFlashErrorKind::Other);
+            }
+            self.flash.write(offset, bytes).await?;
+            self.writes.push((offset, bytes.len()));
             Ok(())
         }
     }
 
-    impl FirmwareUpdate for FakeFlash {
-        type Error = &'static str;
-
-        fn write_granularity(&self) -> u32 {
-            self.word
+    /// Наблюдения и отказы — у того же адаптера, что видит узел.
+    impl<const W: usize> FakeFlash<W> {
+        /// Содержимое раздела `DFU`.
+        pub(super) fn memory(&mut self) -> &mut Vec<u8> {
+            &mut self.partitions().dfu.flash.mem
         }
 
-        fn capacity(&self) -> Result<u32, Self::Error> {
-            Ok(self.capacity)
+        /// Удачные записи в `DFU`: смещение и длина.
+        pub(super) fn writes(&mut self) -> &[(u32, usize)] {
+            &self.partitions().dfu.writes
         }
 
-        fn layout(&self) -> u32 {
-            LAYOUT
+        /// Готовили ли раздел — стирали ли `DFU`.
+        pub(super) fn prepared(&mut self) -> bool {
+            self.partitions().dfu.erases > 0
         }
 
-        fn is_busy(&mut self) -> impl Future<Output = Result<bool, Self::Error>> {
-            std::future::ready(Ok(self.busy))
+        /// Сколько раз готовили раздел: `prepare` стирает `capacity` и
+        /// запасную страницу — по стиранию на страницу.
+        pub(super) fn prepares(&mut self) -> usize {
+            let pages = self.capacity() as usize / PAGE + 1;
+            self.partitions().dfu.erases / pages
         }
 
-        fn prepare(&mut self, len: u32) -> impl Future<Output = Result<(), Self::Error>> {
-            std::future::ready(self.do_prepare(len))
+        /// Запись для bootloader'а за `capacity`: подпись и длина.
+        pub(super) fn recorded(&mut self) -> Option<([u8; 64], u32)> {
+            let at = self.capacity() as usize;
+            let bytes: [u8; PendingImage::LEN] = self.memory()[at..at + PendingImage::LEN]
+                .try_into()
+                .expect("за capacity есть место под запись");
+            PendingImage::from_bytes(&bytes).map(|record| (record.signature, record.len))
         }
 
-        fn write(
-            &mut self,
-            offset: u32,
-            data: &[u8],
-        ) -> impl Future<Output = Result<(), Self::Error>> {
-            std::future::ready(self.do_write(offset, data))
+        /// Помечен ли обмен разделов (`mark_updated`).
+        pub(super) fn swap_requested(&mut self) -> bool {
+            self.partitions().state.flash.mem[..8] == [SWAP_MAGIC; 8]
         }
 
-        fn read(
-            &mut self,
-            offset: u32,
-            buf: &mut [u8],
-        ) -> impl Future<Output = Result<(), Self::Error>> {
-            let start = offset as usize;
-            buf.copy_from_slice(&self.memory[start..start + buf.len()]);
-            std::future::ready(Ok(()))
+        /// Сколько раз помечали обмен (запись магии `Swap` прошла).
+        pub(super) fn magics_swap(&mut self) -> usize {
+            let magics = &self.partitions().state.magics;
+            magics.iter().filter(|m| **m == (SWAP_MAGIC, true)).count()
         }
 
-        fn mark_booted(&mut self) -> impl Future<Output = Result<(), Self::Error>> {
-            self.confirm_attempts += 1;
-            if self.mark_booted.is_ok() {
-                self.booted += 1;
+        /// Сколько раз образ подтвердили (запись магии `Boot` прошла).
+        pub(super) fn booted(&mut self) -> usize {
+            let magics = &self.partitions().state.magics;
+            magics.iter().filter(|m| **m == (BOOT_MAGIC, true)).count()
+        }
+
+        /// Сколько раз пытались подтвердить образ — удачно или нет.
+        pub(super) fn confirm_attempts(&mut self) -> usize {
+            let magics = &self.partitions().state.magics;
+            magics.iter().filter(|(m, _)| *m == BOOT_MAGIC).count()
+        }
+
+        /// В `STATE` — образ, ждущий обмена: раздел занят.
+        pub(super) fn set_busy(&mut self) {
+            self.partitions().state.flash.mem[..8].fill(SWAP_MAGIC);
+        }
+
+        /// Подтверждение образа отказывает (`refuse`) или снова проходит:
+        /// запись магии `Boot` не проходит после стирания `STATE`.
+        pub(super) fn refuse_confirm(&mut self, refuse: bool) {
+            let magics = &mut self.partitions().state.refuse_magic;
+            magics.retain(|m| *m != BOOT_MAGIC);
+            if refuse {
+                magics.push(BOOT_MAGIC);
             }
-            let (result, takes) = (self.mark_booted, self.confirm_takes);
-            async move {
-                if let Some(takes) = takes {
-                    Timer::after(takes).await;
-                }
-                result
-            }
         }
 
-        fn mark_updated(&mut self) -> impl Future<Output = Result<(), Self::Error>> {
-            std::future::ready(self.do_mark_updated())
+        /// Стирание `STATE` отказывает: подтверждение и пометка обмена не
+        /// трогают раздел — образ, ждущий обмена, так и остаётся.
+        pub(super) fn refuse_state_erase(&mut self) {
+            self.partitions().state.refuse_erase = true;
         }
+
+        /// Пометка обмена отказывает: запись магии `Swap` не проходит.
+        pub(super) fn refuse_swap(&mut self) {
+            self.partitions().state.refuse_magic.push(SWAP_MAGIC);
+        }
+
+        /// Запись в `DFU` отказывает с `offset` и дальше.
+        pub(super) fn refuse_writes_from(&mut self, offset: u32) {
+            self.partitions().dfu.refuse_from = Some(offset);
+        }
+
+        /// Запись для bootloader'а (за `capacity`) отказывает.
+        pub(super) fn refuse_record(&mut self) {
+            let capacity = self.capacity();
+            self.refuse_writes_from(capacity);
+        }
+
+        /// Стирание `STATE` — то, чем подтверждается образ, — длится `takes`.
+        pub(super) fn confirm_takes(&mut self, takes: Duration) {
+            self.partitions().state.erase_takes = Some(takes);
+        }
+    }
+
+    /// Адаптер над чистыми разделами со словом `W` и самым длинным образом
+    /// `capacity` (кратно 128 и не больше 1024).
+    pub(super) fn flash_with_word<const W: usize>(capacity: u32) -> FakeFlash<W> {
+        Updater::new(Partitions {
+            dfu: Probe::new(MemFlash::erased()),
+            state: Probe::new(MemFlash::erased()),
+            capacity,
+            layout: LAYOUT,
+        })
+    }
+
+    /// То же со словом 8.
+    pub(super) fn flash(capacity: u32) -> FakeFlash {
+        flash_with_word(capacity)
+    }
+
+    /// Раздел, в котором уже лежит образ длиной `len` с отпечатком [`LAYOUT`]
+    /// и версией `incoming` в хвосте; самый длинный образ — 128 байт.
+    pub(super) fn with_image(len: u32, incoming: u32) -> FakeFlash {
+        let mut flash = flash(128);
+        let version = (len - VERSION_BYTES) as usize;
+        let memory = flash.memory();
+        memory[version - LAYOUT_BYTES as usize..version].copy_from_slice(&LAYOUT.to_le_bytes());
+        memory[version..len as usize].copy_from_slice(&incoming.to_le_bytes());
+        flash
     }
 }

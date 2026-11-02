@@ -2647,7 +2647,6 @@ fn mqtt_is_offered_with_ethernet() {
     let mqtt_files = [
         "crates-host/domain/src/mqtt.rs",
         "crates-host/domain/src/mqtt",
-        "crates-host/ports/src/dial.rs",
         "crates-cross/app/build",
     ];
     let udp = interview(
@@ -3461,16 +3460,15 @@ fn transports_are_kept_only_for_the_selected_interface() {
     }
 }
 
-/// OTA и хранилище настроек в `ports`, `adapters` и `domain` остаются только там,
+/// OTA и хранилище настроек в `ports` и `domain` остаются только там,
 /// где они выбраны: без них это код, до которого не дотянуться от `main` и графа.
-/// Заглушка `Unavailable` нужна и узлу CANopen без хранилища, а `flash.rs` —
+/// Хранилище нужно и узлу CANopen без раздела (`None`), а `flash.rs` —
 /// только обёртке страницы или внешней флеши.
 #[test]
 fn ota_and_settings_code_is_kept_only_when_selected() {
-    const OTA: [&str; 5] = [
+    const OTA: [&str; 4] = [
         "crates-host/ports/src/ota.rs",
         "crates-host/ports/src/ota",
-        "crates-host/adapters-hw/src/ota.rs",
         "crates-host/domain/src/ota.rs",
         "crates-host/domain/src/ota",
     ];

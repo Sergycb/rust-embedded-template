@@ -39,11 +39,6 @@ panic-persist = { workspace = true }
 # которому драйвер времени нельзя{% endif %}.
 bsp = { workspace = true, features = ["time-driver"] }
 domain = { workspace = true }
-{%- if ota == "true" %}
-# Адаптер обновления (`adapters_hw::ota::Updater`) над разделами платы строит
-# приложение и отдаёт узлу OTA готовым.
-adapters-hw = { workspace = true }
-{%- endif %}
 {%- if protocol_link == "true" %}
 # Каналы протоколов над потоком, CDC или сокетом (src/link.rs) строит
 # приложение в своей памяти и отдаёт узлам готовыми.

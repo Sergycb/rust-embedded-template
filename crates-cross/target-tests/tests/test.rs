@@ -67,8 +67,8 @@ mod tests {
 {%- if ota == "true" %}
     /// Адаптер обновления над разделами платы — так же, как его строит
     /// compose-site узла OTA.
-    fn updater(firmware: bsp::FirmwareFlash) -> adapters_hw::ota::Updater<bsp::FirmwareFlash> {
-        adapters_hw::ota::Updater::new(firmware)
+    fn updater(firmware: bsp::FirmwareFlash) -> domain::ota::Updater<bsp::FirmwareFlash> {
+        domain::ota::Updater::new(firmware)
     }
 {%- endif %}
 {%- if config == "true" and config_store != "external" %}
@@ -180,8 +180,6 @@ mod tests {
     /// отличить от «стираем под образ».
     #[test]
     async fn prepare_erases_what_the_swap_moves(board: Board) {
-        use ports::FirmwareUpdate;
-
 {%- if ota_store == "external" %}
         if no_external_flash() {
             return;
@@ -190,7 +188,7 @@ mod tests {
 
         let mut ota = updater(board.firmware);
         let page = ota.erase_size();
-        let capacity = ota.capacity().expect("вместимость раздела");
+        let capacity = ota.capacity();
         // Последняя страница `ACTIVE`: дальше всего от короткого образа.
         let tail = capacity - page;
 
@@ -258,8 +256,6 @@ mod tests {
     /// настоящий, а вся суть именно в стирании.
     #[test]
     async fn dfu_partition_keeps_both_writes_into_one_sector(board: Board) {
-        use ports::FirmwareUpdate;
-
 {%- if ota_store == "external" %}
         if no_external_flash() {
             return;
@@ -306,13 +302,11 @@ mod tests {
     /// `cargo xtask build`), поэтому тест их туда и кладёт: подделать их
     /// злоумышленник не может, они внутри подписанных байтов, а вот тесту
     /// достаточно записи в `DFU`. Перед версией — отпечаток раскладки самой
-    /// платы (`FirmwareUpdate::layout`): без него отказ пришёл бы раньше
+    /// платы (`Updater::layout`): без него отказ пришёл бы раньше
     /// версии, `Layout`, и `Rollback` тест бы не увидел.
     #[test]
     async fn ota_rejects_an_older_image(board: Board) {
         use domain::ota::update::UpdateError;
-        use ports::FirmwareUpdate;
-
         const LENGTH: u32 = 32;
         const LONGER: u32 = LENGTH * 2;
 

@@ -53,7 +53,7 @@ pub struct Board {
     /// Флеш под обновлением{% if ota_store == "external" %} — на внешней флеши{% endif %} ([`crate::FirmwareFlash`]): носители `DFU` и
     /// `BOOTLOADER_STATE` со своими страницами и размер `ACTIVE`. Разделы в нём
     /// нарезаны по символам `memory.x`; адаптер обновления над ним
-    /// (`adapters_hw::ota::Updater`) строит compose-site узла OTA; алгоритм
+    /// (`domain::ota::Updater`) строит compose-site узла OTA; алгоритм
     /// обновления над портами — в `domain::ota`.
     pub firmware: crate::FirmwareFlash,
 {%- endif %}

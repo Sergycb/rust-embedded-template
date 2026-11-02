@@ -19,7 +19,7 @@
 //! перезагрузку — у OTA.
 //!
 //! Протокол — `sunset`, сокет — `sunset-async` над `embassy-net`. Ключ хоста
-//! ed25519 даёт [`HostKey`](crate::ssh::HostKey): вшитый в прошивку ([`Fixed`](crate::ssh::Fixed)) или созданный
+//! ed25519 даёт [`HostKey`](ports::HostKey): вшитый в прошивку ([`Fixed`](crate::ssh::Fixed)) или созданный
 //! платой при первом старте и хранимый в разделе настроек (`Stored`). Он не
 //! меняется от сброса к сбросу, и клиент один раз запоминает его в
 //! `known_hosts`. Попыток входа `sunset` не считает — их ограничивает узел: шесть
@@ -40,6 +40,7 @@ mod session;
 use defmt_or_log::{info, warn};
 use embassy_net::tcp::TcpSocket;
 use embassy_time::with_timeout;
+use ports::HostKey;
 use sunset_async::SSHServer;
 use sunset_async::sunset::SignKey;
 use sunset_async::sunset::ed25519_dalek::SigningKey;
@@ -49,7 +50,7 @@ use crate::ssh::login::Access;
 use crate::ssh::session::{CLOSE_WAIT, IDLE, KEEP_ALIVE, session};
 
 pub use console::Command;
-pub use host_key::{Fixed, HostKey};
+pub use host_key::Fixed;
 // {%- if ssh_host_key == "config" %}
 pub use host_key::{HOST_KEY_ID, Stored};
 // {%- endif %}
@@ -200,9 +201,10 @@ mod tests {
     use crate::ssh::{Command, Login, USER, ed25519_public_key};
     // {%- if ssh_host_key == "config" %}
     use crate::settings::Settings;
-    use crate::ssh::{HOST_KEY_ID, HostKey, Stored};
+    use crate::ssh::{HOST_KEY_ID, Stored};
     use adapters_hw::fake::MemFlash;
     use embedded_storage_async::nor_flash::{ErrorType, NorFlash, NorFlashErrorKind, ReadNorFlash};
+    use ports::HostKey;
     // {%- endif %}
 
     const KEY: &str = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl user@host";

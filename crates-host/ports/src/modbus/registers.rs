@@ -1,13 +1,13 @@
-//! Данные slave'а: трейт [`Registers`](crate::modbus::Registers),
-//! представления битов и регистров кадра, через которые он их читает и
-//! пишет, и карта по умолчанию —
-//! [`EmptyRegisters`](crate::modbus::EmptyRegisters).
+//! Данные slave'а: трейт [`Registers`](crate::Registers) и представления
+//! битов и регистров кадра, через которые он их читает и пишет.
 //!
-//! Трейт домена, а не порт: реализует его карта проекта здесь же, в `domain`,
-//! а зовёт обработчик [`Slave`](crate::modbus::Slave) (`docs/architecture.md`,
-//! «Порт и адаптер — или библиотека прямо в `domain`»).
+//! Трейт, потому что реализаций несколько и в одной прошивке они вложены
+//! друг в друга: карта проекта (`domain::modbus::EmptyRegisters` — её
+//! заготовка), окно OTA поверх неё (`domain::modbus::OtaRegisters`) и общая
+//! ручка на все узлы Modbus (`domain::modbus::SharedRegisters`); зовёт их
+//! обработчик `domain::modbus::Slave`.
 
-use ports::Exception;
+use crate::modbus::Exception;
 
 /// Биты (coils, discrete inputs) в том виде, в каком они лежат в кадре:
 /// упакованы по восемь, младший бит байта — младший адрес.
@@ -333,18 +333,6 @@ pub trait Registers {
         Err(Exception::IllegalFunction)
     }
 }
-
-/// Карта, с которой стартует узел `MODBUS` шаблона: таблиц нет, и на
-/// любой запрос slave отвечает Illegal Function — так, как по умолчанию
-/// отвечают методы [`Registers`].
-///
-/// Это отправная точка: проект описывает здесь свою карту — какие coils и
-/// регистры видны по шине и что делать при записи (применить уставку,
-/// отправить событие задаче), реализуя нужные методы трейта.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct EmptyRegisters;
-
-impl Registers for EmptyRegisters {}
 
 #[cfg(test)]
 mod tests {

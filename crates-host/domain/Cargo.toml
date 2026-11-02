@@ -21,6 +21,7 @@ defmt = [
 	"ports/defmt",
 	# {%- if ota == "true" %}
 	"embassy-boot/defmt",
+	"embedded-storage/defmt",
 	# {%- endif %}
 	# {%- if has_canopen == "true" %}
 	"zencan-node/defmt",
@@ -66,7 +67,7 @@ ignored = ["log", "defmt"]
 
 [dependencies]
 # Порты — границы самого домена: логика вызывает их, а реализации приходят из
-# `adapters` (хост) и `crates-cross/bsp` (железо). Зависимость нужна, чтобы
+# `adapters-logic` (хост) и `crates-cross/bsp` (железо). Зависимость нужна, чтобы
 # правило «порт заводится под то, чем пользуется логика» было выполнимым: без
 # неё `domain` не может даже назвать свои порты.
 ports = { workspace = true }
@@ -97,23 +98,28 @@ embassy-time = { workspace = true }
 # Задачи узлов — автоматы `#[fsm::typestate]` на контексте фрагмента.
 fsm = { workspace = true }
 # {%- if ota == "true" %}
-# Решение bootloader'а (`ota::boot`): состояние `embassy-boot` над блокирующими
-# разделами `NorFlash`. Сам крейт от чипа не зависит.
+# OTA над `embassy-boot`, сам он от чипа не зависит: решение bootloader'а
+# (`ota::boot`) — над блокирующими разделами `NorFlash`, адаптер обновления
+# приложения (`ota::Updater`) — над асинхронными.
 embassy-boot = { workspace = true }
 embedded-storage = { workspace = true }
 salty = { workspace = true, optional = true }
 # {%- endif %}
+# {%- if ota == "true" or settings_port == "true" %}
+# Асинхронные разделы флеша: адаптер обновления (`ota::Updater`), хранилище
+# настроек (`domain::settings`).
+embedded-storage-async = { workspace = true }
+# {%- endif %}
 # {%- if settings_port == "true" %}
 # Хранилище настроек (`domain::settings`) над любым async `NorFlash`.
 sequential-storage = { workspace = true }
-embedded-storage-async = { workspace = true }
 # {%- endif %}
 # Прямо, а не транзитивно: тип счётчика в `cpu_load::SleepTicks` —
 # `portable_atomic::AtomicU32`, потому что на Cortex-M0/M0+ у `core`
 # атомика нет `fetch_add`.
 portable-atomic = { workspace = true }
 # {%- if has_modbus == "true" %}
-# Modbus (`domain::modbus`): разбор PDU — кодек; транспорты — в `adapters`.
+# Modbus (`domain::modbus`): разбор PDU — кодек; транспорты — в `adapters-logic`.
 # Обоснование выбора — `//!` модуля `domain::modbus`.
 rusty-modbus-codec = { workspace = true }
 rusty-modbus-types = { workspace = true }
@@ -149,9 +155,16 @@ heapless           = { workspace = true }
 # {%- endif %}
 # {%- if net_services contains "ssh" %}
 # Узел SSH (`domain::ssh`): протокол `sunset` над сокетом — `sunset-async`
-# (реэкспортирует `sunset`), канал сессии — `embedded-io-async`, `select`
-# сессии — `embassy-futures`.
+# (реэкспортирует `sunset`), канал сессии — `embedded-io-async`.
 sunset-async       = { workspace = true }
+# {%- endif %}
+# {%- if ota == "true" or net_services contains "ssh" %}
+# {%- if ota == "true" %}
+# `yield_now` между страницами стирания (`ota::Updater`).
+# {%- endif %}
+# {%- if net_services contains "ssh" %}
+# `select` сессии SSH (`domain::ssh`).
+# {%- endif %}
 embassy-futures    = { workspace = true }
 # {%- endif %}
 # {%- if net_services contains "ssh" or net_services contains "mqtt" %}

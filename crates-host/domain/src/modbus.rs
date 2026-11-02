@@ -7,9 +7,9 @@
 //! Канал строит compose-site (транспорт из `adapters_logic::modbus`, порт
 //! `ports::FrameLink`) и отдаёт узлу готовым; здесь про
 //! него ничего не известно: кадр, CRC, заголовок MBAP и пропуск битых кадров
-//! — дело канала. Данные slave'а — трейт
-//! [`Registers`](crate::modbus::Registers): его реализует карта проекта, а
-//! зовёт [`Slave`](crate::modbus::Slave), оба в `domain`, поэтому он не порт.
+//! — дело канала. Данные slave'а — порт [`ports::Registers`]: его реализуют
+//! карта проекта ([`EmptyRegisters`](crate::modbus::EmptyRegisters) — её
+//! заготовка) и обёртки над ней, а зовёт [`Slave`](crate::modbus::Slave).
 //! Обслуживает канал узел протокола `::domain::SERVER_FRAG`
 //! (объявлен в `domain::server`) с обработчиком [`Slave`](crate::modbus::Slave).
 // {%- if modbus_master == "true" %}
@@ -49,9 +49,8 @@ mod slave;
 /// Идентификация устройства (FC43): производитель, модель, прошивка.
 mod identity;
 
-/// Данные slave'а: трейт карты, представления кадра и карта по умолчанию —
-/// пустая, место под карту устройства.
-mod registers;
+/// Карта по умолчанию — пустая, место под карту устройства.
+mod map;
 
 /// Одна карта регистров на несколько узлов (по узлу на транспорт).
 mod shared;
@@ -62,7 +61,11 @@ mod ota;
 // {%- endif %}
 
 pub use identity::{PRODUCT, VENDOR};
-pub use registers::{Bits, BitsMut, EmptyRegisters, Registers, Words, WordsMut};
+pub use map::EmptyRegisters;
+// Трейт карты и представления кадра — порт (`ports::Registers`): у карты
+// несколько реализаций, вложенных друг в друга. Здесь — тем же путём, что и
+// остальной словарь Modbus узла.
+pub use ports::{Bits, BitsMut, Registers, Words, WordsMut};
 pub use shared::{MapMutex, SharedRegisters};
 pub use slave::Slave;
 // {%- if ota == "true" %}
@@ -70,7 +73,7 @@ pub use ota::{OTA_BASE, OTA_REGISTERS, OtaRegisters, STATUS_REGISTERS};
 // {%- endif %}
 
 #[cfg(test)]
-mod fakes {
+pub(crate) mod fakes {
     //! Фейки для host-тестов Modbus: карта регистров и транспорт master'а на
     //! уровне PDU — оба готовы с первого `poll`.
 
@@ -134,7 +137,7 @@ mod fakes {
     /// Карта устройства: 16 coils и 16 holding-регистров; input registers и
     /// discrete inputs не реализованы — на них slave отвечает Illegal Function.
     #[derive(Default)]
-    pub(super) struct Map {
+    pub(crate) struct Map {
         pub(super) coils: [bool; 16],
         pub(super) holding: [u16; 16],
         /// Каждый вызов записи регистров: начало и значения — по нему тест

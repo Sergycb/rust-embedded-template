@@ -63,7 +63,7 @@ use anyhow::{Context, bail};
 use chip_data_gen::source::{RUST_LIB, repo_root};
 
 /// Сколько конфигураций собирается одновременно. Сборка цепочки проектных
-/// крейтов (`domain` → `adapters` → `app`) ядра почти не загружает, поэтому
+/// крейтов (`domain` → `adapters-logic` → `app`) ядра почти не загружает, поэтому
 /// параллельные конфигурации окупаются; каждая полоса — свой каталог сборки
 /// (гигабайты), так что больше трёх по умолчанию не берём.
 const DEFAULT_JOBS: usize = 3;
@@ -444,7 +444,7 @@ fn default_cases() -> Vec<Case> {
         // (`whole = false`), и импорты у этой ветки свои.
         Case::new("stm32l073rz").variant("eeprom-no-ota", &["config=yes", "ota=no"]),
         // Протоколы поверх UART: узел в графе, заглушка `bsp::serial` и
-        // транспорт из `adapters` вокруг неё. Modbus — на USART v4 (G4, есть
+        // транспорт из `adapters-logic` вокруг неё. Modbus — на USART v4 (G4, есть
         // аппаратный DE), protobuf — на F4 (USART v2, без него): оба
         // интерфейса из таблицы chip-data/interfaces.rhai.
         Case::new("stm32g474re").variant("modbus-uart", &["protocol=modbus", "interface=uart"]),
@@ -500,7 +500,7 @@ fn default_cases() -> Vec<Case> {
         Case::new("stm32g474re").variant("usb-only-no-graph", &["interface=usb", "graph=no"]),
         // Остальные транспорты по сети: Modbus UDP (MBAP в датаграмме, без потока
         // и CRC) и protobuf по TCP (COBS поверх сокета) — у каждого свой набор
-        // файлов в `adapters`, остальные при генерации вырезаются.
+        // файлов в `adapters-logic`, остальные при генерации вырезаются.
         Case::new("stm32h743zg").variant("modbus-udp", &["protocol=modbus", "interface=udp"]),
         Case::new("stm32h743zg").variant("protobuf-tcp", &["protocol=protobuf", "interface=tcp"]),
         // protobuf по USB CDC: устройство `embassy-usb`, узел USB и поток CDC

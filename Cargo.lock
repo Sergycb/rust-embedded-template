@@ -7,19 +7,12 @@ name = "adapters-hw"
 version = "0.1.0"
 dependencies = [
  "critical-section",
- "defmt 1.2.0",
- "domain",
- "embassy-boot",
- "embassy-executor",
- "embassy-futures",
  "embassy-net",
  "embassy-time",
  "embassy-usb",
  "embedded-io-async 0.7.0",
  "embedded-storage",
  "embedded-storage-async",
- "ports",
- "salty",
  "tokio",
 ]
 
@@ -915,6 +908,9 @@ name = "embedded-storage"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c815b3ed4213d85d6cfd274b871f430c0681084e28dfd4a537877f47f844ec83"
+dependencies = [
+ "defmt 1.2.0",
+]
 
 [[package]]
 name = "embedded-storage-async"

@@ -178,7 +178,9 @@ fn check_pending<DFU: embedded_storage::nor_flash::NorFlash>(
 #[cfg(test)]
 mod tests {
     /// Разделы в памяти (`adapters_hw::fake::MemFlash`, блокирующий — как и сами
-    /// проверяемые функции) и носители, которые отказывают.
+    /// проверяемые функции) и носители, которые отказывают. Только с проверкой
+    /// подписи (`boot`): других тестов над ними нет.
+    #[cfg(feature = "boot")]
     mod fakes {
         pub(super) use adapters_hw::fake::MemFlash;
         use embedded_storage::nor_flash::{ErrorType, NorFlash, NorFlashErrorKind, ReadNorFlash};

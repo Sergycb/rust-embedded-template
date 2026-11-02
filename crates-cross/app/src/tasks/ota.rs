@@ -28,7 +28,7 @@ use sync_request::ask::AskService;
 const CMD_PARKED: usize = domain::ota::cmd_parked({{ ota_cmd_clients }});
 
 /// Адаптер обновления над флешем платы.
-type Updater = adapters_hw::ota::Updater<bsp::FirmwareFlash>;
+type Updater = domain::ota::Updater<bsp::FirmwareFlash>;
 {%- if askers > 0 %}
 
 /// Ребро входа `ASK` — доля одного клиента в его очереди.

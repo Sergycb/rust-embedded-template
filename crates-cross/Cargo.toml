@@ -214,10 +214,10 @@ embedded-test      = { version = "0.7.3", default-features = false, features = [
 # Трейты-границы домена и типы ошибок: их реализуют adapters и bsp, а app
 # работает только через них. `defmt` — ради `Format` на ошибках в логе.
 ports            = { path = "../crates-host/ports", features = ["defmt"] }
-{%- if ota == "true" or config == "true" or has_canopen == "true" or has_usb == "true" or has_net == "true" %}
-# Адаптеры, generic по флешу/шине: собирают их узлы над рычагами `bsp`, а `bsp`
-# берёт отсюда обёртки, из которых строит рычаги сам. `defmt` — ради `Format`
-# на ошибках в логе прошивки; на хосте крейт собирается без фич вывода вовсе.
+{%- if config_store == "eeprom" or has_usb == "true" or has_net == "true" %}
+# Обёртки над железом без чипа: из них `bsp` строит рычаги сам. `defmt` —
+# вывод стеков под обёртками в логе прошивки; на хосте крейт собирается без
+# фич вывода вовсе.
 adapters-hw      = { path = "../crates-host/adapters-hw", features = ["defmt"] }
 {%- endif %}
 {%- if protocol_link == "true" %}
@@ -269,7 +269,7 @@ assign-resources = { version = "0.5.0" }
 #   `&'static str` на узел.
 #
 # * `local-resources` — ради слотов `local`: они держат `!Send`-объекты
-#   платы{% if ota == "true" %} (например, `adapters_hw::ota::Updater` над разделами `bsp::flash`
+#   платы{% if ota == "true" %} (например, `domain::ota::Updater` над разделами `bsp::flash`
 #   ссылается на `Mutex<NoopRawMutex, …>`){% endif %}, а обычный слот — это `static`,
 #   которому нужен `Send`.
 #   Фича включает `LocalResourceSlot` и снимает у `supervisor`

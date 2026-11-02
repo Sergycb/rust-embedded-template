@@ -1,5 +1,5 @@
 #![cfg_attr(not(test), no_std)]
-// {%- if ports_async == "true" or net_services contains "mqtt" %}
+// {%- if ports_async == "true" or net_services contains "ssh" %}
 // `async fn` в публичном трейте: rustc предупреждает (`async_fn_in_trait`), что
 // у возвращаемого future нет границы `Send` и потребовать её вызывающий не
 // сможет. Для однопоточного исполнителя embassy это ровно то, что нужно, а с
@@ -18,7 +18,7 @@
 //! вызывает, не зная, что за ними стоит, и то, без чего контракт не выразить, —
 //! типы из сигнатур трейтов и форматы, которые обязаны совпадать у реализации и
 //! логики. Реализации живут в
-//! `adapters` (всё, что generic по `embedded-hal`/`embedded-storage` и потому
+//! `adapters-logic` (всё, что generic по `embedded-hal`/`embedded-io-async` и потому
 //! тестируется на хосте) и в `crates-cross/bsp` (то, чему нужна периферия
 //! конкретного чипа), а сама логика ни о тех, ни о других не знает.
 //!
@@ -32,21 +32,23 @@
 //!
 //! Нет здесь и того, что нужно только логике, — команд узлам, ошибок её
 //! операций: они в `domain`, рядом с узлом. Реализация порта их не видит, и
-//! правка их в `ports` задевала бы `adapters` и `bsp` зря.
+//! правка их в `ports` задевала бы `adapters-logic` и `bsp` зря.
 //!
 // {%- if ota == "true" %}
-//! [`FirmwareUpdate`] реализован, когда при генерации выбрана OTA; образ
-//! приходит командами `domain::ota::OtaCommand` от узла протокола.
+//! С OTA здесь контракт обновления с платой и bootloader'ом
+//! ([`Partitions`], [`PendingImage`], [`layout_fingerprint`]) и перезагрузка
+//! ([`Reboot`]); образ приходит командами `domain::ota::OtaCommand` от узла
+//! протокола.
 // {%- endif %}
 //! Порты протоколов связи и транспортов — только те, что выбраны при
 //! генерации.
 //!
 // {%- if ota == "true" %}
 //! Модули названы по операции домена, которая ими пользуется, а не по трейту:
-//! в `ota::update` — порт, через который образ пишется и применяется, и записи,
-//! которые обязаны одинаково понимать обе его стороны. Наружу всё
+//! в `ota::update` — разделы, в которые образ пишется, и записи, которые
+//! обязаны одинаково понимать плата, приложение и bootloader. Наружу всё
 //! реэкспортируется в
-//! корень — путь `ports::FirmwareUpdate` короче, а внутреннее деление
+//! корень — путь `ports::Partitions` короче, а внутреннее деление
 //! пользователя не касается (`docs/conventions.md`, «`lib.rs` только объявляет
 //! модули»).
 // {%- else %}
@@ -69,13 +71,14 @@ pub mod can;
 pub mod link;
 
 // {%- endif %}
-// {%- if net_services contains "mqtt" %}
-/// Исходящее соединение: клиент подключается к серверу и пережидает отказы.
-pub mod dial;
+// {%- if net_services contains "ssh" %}
+/// Ключ хоста SSH: вшитый в прошивку или созданный платой.
+pub mod host_key;
 
 // {%- endif %}
 // {%- if has_modbus == "true" %}
-/// Modbus: предел PDU, коды исключений, транспорт master'а, ошибки обмена.
+/// Modbus: предел PDU, коды исключений, данные slave'а, транспорт master'а,
+/// ошибки обмена.
 pub mod modbus;
 
 // {%- endif %}
@@ -95,11 +98,11 @@ pub use link::{FrameDuplex, FrameLink, LinkError};
 // {%- if modbus_tcp == "true" %}
 pub use link::HangUp;
 // {%- endif %}
-// {%- if net_services contains "mqtt" %}
-pub use dial::Dial;
+// {%- if net_services contains "ssh" %}
+pub use host_key::HostKey;
 // {%- endif %}
 // {%- if has_modbus == "true" %}
-pub use modbus::{Exception, MAX_PDU};
+pub use modbus::{Bits, BitsMut, Exception, MAX_PDU, Registers, Words, WordsMut};
 // {%- if modbus_master == "true" %}
 pub use modbus::{MasterError, ModbusClient};
 // {%- endif %}
@@ -107,6 +110,6 @@ pub use modbus::{MasterError, ModbusClient};
 // {%- if ota == "true" %}
 pub use ota::reboot::Reboot;
 pub use ota::update::{
-    FirmwareUpdate, LAYOUT_SYMBOLS, MAX_WRITE_SIZE, PendingImage, layout_fingerprint,
+    LAYOUT_SYMBOLS, MAX_WRITE_SIZE, Partitions, PendingImage, layout_fingerprint,
 };
 // {%- endif %}

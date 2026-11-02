@@ -220,10 +220,10 @@ pub type ChipFlash = {% if flash_cache == "true" %}Coherent<embassy_stm32::flash
 {%- if firmware_here == "true" %}
 
 /// Разделы обновления — рычаг под адаптером обновления
-/// (`adapters_hw::ota::Updater`): `DFU` и `BOOTLOADER_STATE`,
+/// (`domain::ota::Updater`): `DFU` и `BOOTLOADER_STATE`,
 /// нарезанные платой по символам `memory.x` (`crate::layout`), со своими
 /// страницами, размер `ACTIVE` и отпечаток раскладки.
-pub type FirmwareFlash = adapters_hw::ota::Partitions<
+pub type FirmwareFlash = ports::Partitions<
     Partition<'static, NoopRawMutex, DfuFlash>,
     Partition<'static, NoopRawMutex, StateFlash>,
 >;
@@ -510,7 +510,7 @@ pub(crate) fn firmware(flash: &'static FlashMutex) -> FirmwareFlash {
 {%- endif %}
     let (dfu_start, dfu_len) = crate::layout::dfu();
     let (state_start, state_len) = crate::layout::state();
-    adapters_hw::ota::Partitions {
+    ports::Partitions {
         dfu: Partition::new(DFU_FLASH.init(mutex::Mutex::new(dfu)), dfu_start, dfu_len),
         state: Partition::new(
             STATE_FLASH.init(mutex::Mutex::new(state)),

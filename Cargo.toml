@@ -2,7 +2,9 @@
 members = [
 	"crates-host/domain",
 	"crates-host/host-target-tests",
+	# {%- if adapters_hw == "true" %}
 	"crates-host/adapters-hw",
+	# {%- endif %}
 	# {%- if adapters_logic == "true" %}
 	"crates-host/adapters-logic",
 	# {%- endif %}
@@ -83,7 +85,7 @@ arbitrary_source_item_ordering = "warn"
 # Крейты самого проекта: порты/адаптеры domain объявлены здесь, чтобы версия
 # и путь были в одном месте, как у внешних зависимостей.
 ports        = { path = "crates-host/ports" }
-# {%- if has_net == "true" or has_usb == "true" or ota == "true" or settings_port == "true" %}
+# {%- if adapters_hw == "true" %}
 adapters-hw  = { path = "crates-host/adapters-hw" }
 # {%- endif %}
 # {%- if adapters_logic == "true" %}
@@ -294,7 +296,7 @@ sunset-async           = { version = "0.6.0" }
 # `select` сессии SSH — та же версия, что тянет `sunset-async`.
 # {%- endif %}
 # {%- if ota == "true" %}
-# `yield_now` между страницами стирания OTA (`adapters_hw::ota`) — та же версия,
+# `yield_now` между страницами стирания OTA (`domain::ota::Updater`) — та же версия,
 # что тянет `embassy-boot`.
 # {%- endif %}
 embassy-futures        = { version = "0.1.2" }

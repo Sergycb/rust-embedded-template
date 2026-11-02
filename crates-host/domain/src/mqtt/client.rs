@@ -6,7 +6,6 @@ use embassy_net::Stack;
 use embassy_net::tcp::{self, State, TcpSocket};
 use embassy_time::{Duration, Instant, Timer};
 use embedded_io_async::{ErrorKind, ErrorType, Read, Write};
-use ports::dial::Dial;
 
 /// Как часто проверять молчащего брокера (keep-alive TCP).
 const KEEP_ALIVE: Duration = Duration::from_secs(10);
@@ -24,7 +23,7 @@ const MAX_BACKOFF: Duration = Duration::from_secs(30);
 /// TCP-клиент — исходящее соединение для служб, которые сами подключаются к
 /// серверу (клиент MQTT).
 ///
-/// Отказ сервера ([`Dial`]) он пережидает сам: `dial` — одна попытка, и
+/// Отказ сервера он пережидает сам: [`dial`](Self::dial) — одна попытка, и
 /// перед ней — пауза по числу отказов подряд, 0, 1, 2, 4 … до 30 с. Отказ —
 /// неудачная попытка и соединение, прожившее меньше 30 с до следующего `dial`
 /// (сервер оборвал его сразу — неверный пароль, — и бить в него без паузы
@@ -58,12 +57,21 @@ impl TcpClient {
             connected_at: None,
         }
     }
-}
 
-impl Dial for TcpClient {
-    type Error = tcp::ConnectError;
-
-    async fn dial(&mut self, to: SocketAddrV4) -> Result<(), tcp::ConnectError> {
+    /// Выдерживает паузу по числу отказов подряд и один раз пытается
+    /// подключиться к `to`; прежнее соединение, если трубку не положили,
+    /// закрывается.
+    ///
+    /// Переждать отказ — дело клиента, а не узла: узел после отказа и после
+    /// любой ошибки сессии пишет в лог, кладёт трубку и сразу зовёт `dial`
+    /// снова. Без паузы он крутился бы, не отдавая исполнитель, и засыпал бы
+    /// брокер попытками.
+    ///
+    /// # Errors
+    ///
+    /// Подключиться не удалось: сервер не отвечает, отверг соединение или
+    /// до него нет маршрута.
+    pub async fn dial(&mut self, to: SocketAddrV4) -> Result<(), tcp::ConnectError> {
         if let Some(since) = self.connected_at.take() {
             self.failures = if since.elapsed() >= STABLE {
                 0
@@ -84,7 +92,9 @@ impl Dial for TcpClient {
         connected
     }
 
-    fn hang_up(&mut self) {
+    /// Закрывает текущее соединение (сбросом, без обмена остатком данных);
+    /// следующий [`dial`](Self::dial) откроет новое.
+    pub fn hang_up(&mut self) {
         // RST уйдёт с ближайшим опросом стека; `dial` его дождётся.
         self.socket.abort();
     }

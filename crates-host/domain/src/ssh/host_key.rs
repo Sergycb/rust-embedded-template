@@ -4,6 +4,9 @@
 // {%- if ssh_host_key == "config" %}
 use defmt_or_log::{info, warn};
 use embedded_storage_async::nor_flash::NorFlash;
+// {%- endif %}
+use ports::HostKey;
+// {%- if ssh_host_key == "config" %}
 
 use crate::settings::Settings;
 
@@ -18,20 +21,6 @@ pub const HOST_KEY_ID: u32 = 0x0055_0001;
 const READ_SCRATCH: usize = 128;
 // {%- endif %}
 
-/// Ключ хоста — зерно ed25519, 32 байта.
-// Future без границы `Send` — то, что нужно однопоточному исполнителю
-// embassy; так же, как трейты `ports` (`ports/src/lib.rs`).
-#[expect(
-    async_fn_in_trait,
-    reason = "узел SSH зовёт ключ на одном исполнителе: `Send` у future не нужен"
-)]
-pub trait HostKey {
-    /// Зерно ключа хоста. Не отказывает: ключ нужен, чтобы вообще пустить
-    /// клиента, и реализация, которой не удалось сохранить ключ, отдаёт его
-    /// хотя бы на этот запуск.
-    async fn seed(&mut self) -> [u8; 32];
-}
-
 /// Ключ хоста, вшитый в прошивку.
 #[derive(Debug, Clone, Copy)]
 pub struct Fixed(pub &'static [u8; 32]);
@@ -39,7 +28,7 @@ pub struct Fixed(pub &'static [u8; 32]);
 impl HostKey for Fixed {
     #[expect(
         clippy::unused_async_trait_impl,
-        reason = "сигнатуру задаёт трейт `HostKey`; вшитому ключу ждать нечего"
+        reason = "сигнатуру задаёт порт `HostKey`; вшитому ключу ждать нечего"
     )]
     async fn seed(&mut self) -> [u8; 32] {
         *self.0

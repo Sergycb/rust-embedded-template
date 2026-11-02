@@ -1,7 +1,8 @@
-//! Словарь Modbus для портов: предел PDU и коды исключений.
+//! Словарь Modbus для портов: предел PDU, коды исключений и данные slave'а.
 //!
-//! Данные slave'а (`domain::modbus::Registers`) — трейт домена, а не порт:
-//! его и реализует карта проекта, и зовёт обработчик `domain::modbus::Slave`.
+//! Данные slave'а — трейт [`Registers`](crate::Registers) и представления
+//! кадра (`registers`): его реализуют карта проекта и обёртки над ней в
+//! `domain::modbus`, а зовёт обработчик `domain::modbus::Slave`.
 //! Транспорт slave'а — канал [`FrameLink`](crate::FrameLink) с кадром «адрес
 //! и PDU», его реализует `adapters_logic::modbus` (RTU, TCP, UDP).
 // {%- if modbus_master == "true" %}
@@ -10,6 +11,11 @@
 //! (`domain::modbus::master`).
 // {%- endif %}
 
+/// Данные slave'а: трейт карты и представления битов и регистров кадра.
+mod registers;
+
+pub use registers::{Bits, BitsMut, Registers, Words, WordsMut};
+
 /// Наибольший PDU Modbus — функция и данные: 253 байта. Предел пришёл из
 /// кадра RTU (256 байт с адресом и CRC) и одинаков для всех транспортов.
 /// Буферы PDU транспортов — не короче.
@@ -17,7 +23,7 @@ pub const MAX_PDU: usize = 253;
 
 /// Код исключения Modbus — ответ slave'а вместо данных.
 ///
-/// Карта slave'а (`domain::modbus::Registers`) возвращает обычно первые
+/// Карта slave'а ([`Registers`]) возвращает обычно первые
 /// четыре; на проводе бывает любой, включая коды шлюза и нестандартные
 /// ([`Exception::Other`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

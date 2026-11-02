@@ -9,12 +9,6 @@
 //! реализации портов, когда их несколько, — `adapters-logic` —
 //! docs/architecture.md, «Адаптеры делятся по одному признаку — нужен ли чип».
 
-// {%- if ota == "true" %}
-/// Обновление прошивки поверх `embassy-boot`: разделы `DFU`/`BOOTLOADER_STATE`
-/// как два `NorFlash`.
-pub mod ota;
-
-// {%- endif %}
 // {%- if has_net == "true" %}
 /// Сеть поверх `embassy-net`: стек платы и его фоновая работа.
 pub mod net;
@@ -26,7 +20,8 @@ pub mod usb;
 
 // {%- endif %}
 // {%- if has_usb == "true" or has_net == "true" or ota == "true" or settings_port == "true" %}
-/// Драйверы без шины и линка и флеш в памяти — для host-тестов (`adapters`,
+/// Драйверы без шины и линка и флеш в памяти — для host-тестов (`adapters-hw`,
+/// `adapters-logic`,
 /// `domain`).
 #[cfg(any(test, feature = "fake"))]
 pub mod fake;
