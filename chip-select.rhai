@@ -951,7 +951,7 @@ const PROTOCOL_TEXT = #{
 // у каждого случая она не ниже факта.
 const RAM_COST = #{
     // Без OTA, настроек, графа и транспортов: stm32f407ve ota=no graph=no — 1344
-    // (stm32l011f4 — 1316), плюс задача `start` в `run.rs` (`app::run::start::POOL` —
+    // (stm32l011f4 — 1316), плюс задача `start` в `main.rs` (`app::start::POOL` —
     // 56 байт на thumbv6m и thumbv7em): плату собирает она, а не `main`.
     core: 1400,
     // stm32f407ve: 3880 с OTA против 1952 без неё; внешняя — stm32h723ve 3996
@@ -961,8 +961,12 @@ const RAM_COST = #{
     // 208 байт вместо 56 в `core`. Ещё 24 у обоих — владелец в состоянии
     // `Ready` узла OTA (повтор `Finish`): без графа узел OTA дороже, чем в
     // замере с графом выше, — stm32g474re can-only-no-graph 3344 и stm32f407ve
-    // ota-external-no-graph 3544 при прежних оценках 3328 и 3536.
-    ota: #{ internal: 1952, external: 2160 },
+    // ota-external-no-graph 3544 при прежних оценках 3328 и 3536. И 32 у
+    // внутренней — выравнивание, а не данные: с запуском в каждом бинарнике
+    // (`EXECUTOR` и `start::POOL` — в `main.rs`, а не в библиотеке) компоновщик
+    // кладёт статики в другом порядке, и `.bss` добирает до `.uninit` на 32
+    // байта больше при тех же символах — can-only-no-graph 3376 против 3344.
+    ota: #{ internal: 1984, external: 2160 },
     // По месту хранения (`config_store`): stm32f407ve 3912 против 3880,
     // stm32l073rz (EEPROM) 3868 против 3860, stm32h723ve 1988 против 1988.
     config: #{ flash: 32, eeprom: 8, external: 0 },
@@ -2855,6 +2859,7 @@ if !services.contains("mqtt") {
 }
 if !on.protobuf && services.len() == 0 {
     file::delete("crates-host/domain/src/device.rs");
+    file::delete("crates-cross/app/src/device.rs");
 }
 // Ключ хоста SSH (`ssh_host_key`): `config` — плата создаёт его при первом
 // старте и хранит в разделе настроек; `file` — `ssh-host-key.bin` из корня

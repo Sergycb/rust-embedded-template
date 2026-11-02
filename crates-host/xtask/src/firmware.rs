@@ -53,8 +53,12 @@ pub fn build(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
 
     {
         let _p = sh.push_dir(root_dir().join("crates-cross"));
-        cmd!(sh, "cargo build").run()?;
-        cmd!(sh, "cargo build --release").run()?;
+        // Только рабочий бинарник: голый `cargo build` собрал бы все
+        // бинарники `app`{% if ota == "true" %}, и тестовый `app-unconfirmed` (`cargo xtask test
+        // host-target`) лёг бы в сборку релиза рядом с рабочим{% endif %}. Пакеты — те же
+        // `default-members`, что у голого вызова, поэтому и фичи те же.
+        cmd!(sh, "cargo build --bin {APP_ARTIFACT}").run()?;
+        cmd!(sh, "cargo build --release --bin {APP_ARTIFACT}").run()?;
         // {%- if ota == "true" %}
 
         // Bootloader — только release и ОТДЕЛЬНЫМ вызовом, и это не про

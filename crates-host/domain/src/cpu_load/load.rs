@@ -23,7 +23,7 @@ pub struct Sample {
     pub total_ticks: u64,
 
     /// Сколько из них исполнитель проспал — по модулю 2³². Счётчик ведёт
-    /// цикл в `crates-cross/app/src/run.rs`, а его тип объявлен рядом
+    /// цикл в `main` бинарника `crates-cross/app`, а его тип объявлен рядом
     /// ([`crate::cpu_load::SleepTicks`]).
     pub sleep_ticks: u32,
 }

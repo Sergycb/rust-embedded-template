@@ -16,7 +16,7 @@ pub mod {{ f[4] }} {
     type Source = {% if f[0] == "usb" %}bsp::usb::{{ f[4] }}::Cdc{% else %}bsp::serial::{{ f[4] }}::Serial{% endif %};
 
     #[embassy_executor::task]
-    async fn task(source: Source, map: crate::modbus::Handle) {
+    async fn task(source: Source, map: crate::modbus::Handle{% if ota == "true" %}, version: &'static str{% endif %}) {
 {%- if ota == "true" %}
         let regs = domain::modbus::OtaRegisters::new(
             map,
@@ -30,7 +30,7 @@ pub mod {{ f[4] }} {
 {%- endif %}
         // Кадр RTU памяти извне не просит.
         let mut link = adapters_logic::modbus::Rtu::new(source);
-        let mut handler = domain::modbus::Slave::new(1, regs, {% if ota == "true" %}crate::version::FW_VERSION_TEXT{% else %}crate::build::PKG_VERSION{% endif %});
+        let mut handler = domain::modbus::Slave::new(1, regs, {% if ota == "true" %}version{% else %}crate::build::PKG_VERSION{% endif %});
         domain::server::task(domain::server::ServerCtx {
             link: &mut link,
             handler: &mut handler,
@@ -38,10 +38,24 @@ pub mod {{ f[4] }} {
         })
         .await;
     }
+{%- if ota == "true" %}
+
+    /// Спавнит узел над рычагом платы `source` и картой `map`; `version` —
+    /// версия образа текстом (свойства образа бинарника), которую slave
+    /// называет хосту.
+    pub fn spawn(
+        spawner: Spawner,
+        source: Source,
+        map: crate::modbus::Handle,
+        version: &'static str,
+    ) {
+        let token = task(source, map, version);
+{%- else %}
 
     /// Спавнит узел над рычагом платы `source` и картой `map`.
     pub fn spawn(spawner: Spawner, source: Source, map: crate::modbus::Handle) {
         let token = task(source, map);
+{%- endif %}
         spawner.spawn(token.expect("задача MODBUS_{{ f[4] | upcase }} свежая: спавнится один раз"));
     }
 }

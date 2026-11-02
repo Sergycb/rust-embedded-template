@@ -32,9 +32,9 @@
 ломает измерение: счётчик сна перестаёт расти, и загрузка показывает 100%, а
 ничем, кроме линтера, это не ловится.
 
-Поэтому `main` (точнее, `app::run` в `crates-cross/app/src/run.rs`, который
-зовёт `#[entry]` бинарника) поднимает `embassy_executor::raw::Executor`
-вручную и крутит цикл сам:
+Поэтому `main` бинарника (`#[entry]` в `crates-cross/app/src/main.rs`{% if ota == "true" %}, и так же
+у тестового образа в `src/bin/app-unconfirmed.rs` — запуск у каждого свой{% endif %})
+поднимает `embassy_executor::raw::Executor` вручную и крутит цикл сам:
 
 ```rust
 loop {

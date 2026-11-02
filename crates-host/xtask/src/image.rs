@@ -23,8 +23,8 @@ pub const PUBLIC_KEY_SYMBOL: &str = "OTA_PUBLIC_KEY_IN_IMAGE";
 
 /// Имя символа, в котором прошивка хранит собственную версию.
 ///
-/// Определён в `crates-cross/app/src/version.rs` под `#[unsafe(no_mangle)]` ровно
-/// ради этого чтения.
+/// Определён у каждого бинарника `app` (`crates-cross/app/src/main.rs`,
+/// `src/bin/app-unconfirmed.rs`) под `#[unsafe(no_mangle)]` ровно ради этого чтения.
 const FW_VERSION_SYMBOL: &str = "FW_VERSION_IN_IMAGE";
 
 /// Чем заполняются пропуски между сегментами образа. Значение любое, лишь бы
@@ -113,7 +113,7 @@ pub fn image_symbol<'a>(
 
     let address = symbol_address(&file, name).with_context(|| {
         format!(
-            "в {} нет символа {name} (версию определяет crates-cross/app/src/version.rs, ключ — \
+            "в {} нет символа {name} (версию определяет бинарник — crates-cross/app/src/main.rs, ключ — \
              crates-cross/boot/src/signature.rs): либо прошивка собрана без него, либо статик \
              выбросили при линковке (тогда верните ему #[used] и #[unsafe(no_mangle)])",
             elf.display(),

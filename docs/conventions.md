@@ -89,7 +89,7 @@ Host-тесты гоняются `cargo xtask test host` — то есть `carg
   занимает flash, по `&'static str` на узел. Фичи `defmt` у `supervisor`{% if graph == "true" %}/`watchdog`{% endif %}
   не включены — библиотека сама ничего не
   печатает, и нужное прошивка логирует сама:
-  {% if graph == "true" %}ошибку `spawn_all` — `run.rs` приложения (через `Display`: `Debug` у ошибки графа нет),
+  {% if graph == "true" %}ошибку `spawn_all` — задача `start` в `main` бинарника приложения (через `Display`: `Debug` у ошибки графа нет),
   имя узла, переставшего кормить сторож, перед аппаратным сбросом —
   `before_reset` в `bsp::wdg`, застой узла — наблюдатель `observe:` в
   `graph.rs`{% else %}ошибку спавна задачи — `expect` в `tasks::spawn_all`{% endif %}. Перезапусков узлов в шаблоне нет
@@ -122,7 +122,7 @@ Host-тесты гоняются `cargo xtask test host` — то есть `carg
   `#[global_logger]` устроен иначе: резолвится линковкой по имени символа
   (`_defmt_acquire` и т.п.), и если два `use` окажутся активны одновременно —
   жёсткий `error: Linking globals named '_defmt_acquire': symbol multiply
-  defined!`. При правке `run.rs` приложения держите инвариант «ровно один
+  defined!`. При правке `crates-cross/app/src/panic.rs` держите инвариант «ровно один
   `use <логгер> as _;` активен на сборку».
   **Осторожно с `[profile.dev]`/`[profile.release]` в `crates-cross/Cargo.toml`**:
   `debug-assertions` там задан явно (ради `overflow-checks`) — если развилка
@@ -136,8 +136,8 @@ Host-тесты гоняются `cargo xtask test host` — то есть `carg
   Паттерн и обоснование, почему {% if has_usb == "true" %}все три turnkey-крейта{% else %}оба turnkey-крейта{% endif %} отпали (`defmt-bbq` и
   `defmt-serial` держат `defmt@0.3.x` при `defmt@1.x` у нас{% if has_usb == "true" %},
   `defmt-embassy-usbserial` требует `embassy-usb ^0.5`{% endif %}) — `docs/modules/app.md`,
-  «defmt-транспорт для `release` без пробника». Дефолт в обоих профилях реального
-  `run.rs` — `defmt-rtt`; при подключении паттерна не забыть сделать
+  «defmt-транспорт для `release` без пробника». Дефолт в обоих профилях
+  (`crates-cross/app/src/panic.rs`) — `defmt-rtt`; при подключении паттерна не забыть сделать
   существующий `use defmt_rtt as _;` тоже `#[cfg(debug_assertions)]`.
 - `-Tdefmt.x` линкуется статически из `crates-cross/.cargo/config.toml` (`rustflags`,
   рядом с `-Tlink.x`), не из `build.rs` — `defmt` используется в обоих профилях

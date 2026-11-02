@@ -114,9 +114,13 @@ fn check_image_origin(sh: &xshell::Shell, profile: &str) -> Result<(), anyhow::E
     {
         let _p = sh.push_dir(root_dir().join("crates-cross"));
         if profile == "release" {
-            cmd!(sh, "cargo build -p {APP_ARTIFACT} --release").run()?;
+            cmd!(
+                sh,
+                "cargo build -p {APP_ARTIFACT} --bin {APP_ARTIFACT} --release"
+            )
+            .run()?;
         } else {
-            cmd!(sh, "cargo build -p {APP_ARTIFACT}").run()?;
+            cmd!(sh, "cargo build -p {APP_ARTIFACT} --bin {APP_ARTIFACT}").run()?;
         }
     }
 

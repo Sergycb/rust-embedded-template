@@ -340,8 +340,8 @@ fn default_cases() -> Vec<Case> {
     vec![
         // Одноядерный с OTA и подписью образа (она всегда идёт вместе с OTA:
         // проверка в bootloader'е `screen_update`, ключ через `boot/build.rs`,
-        // `salty` со своей `slow-motion` и профилем dev, в `app/src/version.rs`
-        // — `FW_VERSION` во входе узла OTA), одна карта памяти — самый
+        // `salty` со своей `slow-motion` и профилем dev, свойства образа
+        // `app/src/version.rs` во входе узла OTA), одна карта памяти — самый
         // обычный случай.
         Case::new("stm32f407ve").smoke(),
         // Тот же чип, но от OTA отказались при генерации: ветка «один образ на
@@ -1082,14 +1082,13 @@ fn check_one(
             )
         })?;
         note(log, &output)?;
-        // Тестовый образ `app-unconfirmed` (`required-features`) не собирают
-        // ни `build`, ни `lint cross` — только `test host-target`, которому
-        // нужна плата. Без этого шага его ветки (`cfg!(feature = …)` в `app`)
-        // не компилировал бы никто. Release — как его собирает тест.
+        // Тестовый образ `app-unconfirmed` линтует `lint cross` выше (оба
+        // бинарника `app`, debug и release), а собирает только `test
+        // host-target`, которому нужна плата. `build` его не собирает (`--bin
+        // app`) — в релиз он не попадает. Каталог сборки общий на полосу, но
+        // собрать ELF тестового образа в template-check некому: clippy пишет
+        // только метаданные.
         if project.join("crates-cross/boot").exists() {
-            // И обратное: `build` его не собрал — в релиз он не попадает.
-            // Каталог сборки общий на полосу, но собрать ELF тестового образа
-            // в template-check некому (clippy ниже пишет только метаданные).
             for entry in fs::read_dir(cargo_target_dir)
                 .with_context(|| format!("прочитать {}", cargo_target_dir.display()))?
             {
@@ -1097,36 +1096,12 @@ fn check_one(
                 if leaked.exists() {
                     bail!(
                         "{}: `cargo xtask build` собрал тестовый образ {} — он не должен \
-                         попадать в сборку релиза (required-features в crates-cross/app/Cargo.toml)",
+                         попадать в сборку релиза (`--bin app` в crates-host/xtask/src/firmware.rs)",
                         case.label(),
                         leaked.display(),
                     );
                 }
             }
-            run_command(
-                Command::new("cargo").args([
-                    "clippy",
-                    "-p",
-                    "app",
-                    "--release",
-                    "--bin",
-                    "app-unconfirmed",
-                    "--features",
-                    "unconfirmed",
-                    "--",
-                    "-D",
-                    "warnings",
-                ]),
-                &project.join("crates-cross"),
-                Some(cargo_target_dir),
-                log,
-            )
-            .with_context(|| {
-                format!(
-                    "clippy тестового образа app-unconfirmed (оставлен для разбора: {})",
-                    project.display(),
-                )
-            })?;
         }
         let ram = parse_static_ram(&output).with_context(|| {
             format!(

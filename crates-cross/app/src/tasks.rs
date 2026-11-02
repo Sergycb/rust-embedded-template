@@ -29,18 +29,27 @@ mod protobuf;
 mod usb;
 {%- endif %}
 
-/// Спавнит задачи всех узлов проекта.
+/// Спавнит задачи всех узлов проекта{% if ota == "true" %}; `image` — свойства образа, которые
+/// отдаёт `main` бинарника (`crate::version`){% endif %}.
 ///
 /// # Panics
 ///
 /// Если задачу уже спавнили: `spawn_all` зовётся один раз за запуск, а
 /// проглоченный `SpawnError::Busy` означал бы, что узел молча не работает.
-pub fn spawn_all(spawner: embassy_executor::Spawner, {% if ota == "true" or has_usb == "true" or has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" %}board{% else %}_board{% endif %}: bsp::Board) {
+{%- if ota == "true" %}
+pub fn spawn_all(
+    spawner: embassy_executor::Spawner,
+    board: bsp::Board,
+    image: crate::version::Image,
+) {
+{%- else %}
+pub fn spawn_all(spawner: embassy_executor::Spawner, {% if has_usb == "true" or has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" %}board{% else %}_board{% endif %}: bsp::Board) {
+{%- endif %}
     // Загрузку процессора меряет задача из `cpu_load.rs`: в домене
     // executor-обвязки быть не может, а там ровно место для неё.
     spawner.spawn(crate::cpu_load::task().expect("задача CPU_LOAD свежая: спавнится один раз"));
 {%- if ota == "true" %}
-    ota::spawn(spawner, board.firmware);
+    ota::spawn(spawner, board.firmware, image);
 {%- endif %}
 {%- for l in xs %}
 {%- assign f = l | split: ":" %}
@@ -51,9 +60,9 @@ pub fn spawn_all(spawner: embassy_executor::Spawner, {% if ota == "true" or has_
 {%- for l in xs %}
 {%- assign f = l | split: ":" %}
 {%- if f[3] == "modbus" %}
-    modbus::{{ f[4] }}::spawn(spawner, {% if f[0] == "uart" %}board.{{ f[4] }}{% else %}board.{{ f[4] }}.cdc{% endif %}, crate::modbus::handle());
+    modbus::{{ f[4] }}::spawn(spawner, {% if f[0] == "uart" %}board.{{ f[4] }}{% else %}board.{{ f[4] }}.cdc{% endif %}, crate::modbus::handle(){% if ota == "true" %}, image.text{% endif %});
 {%- elsif f[3] == "protobuf" %}
-    let info = crate::run::device_info(board.spec);
+    let info = crate::device::info(board.spec{% if ota == "true" %}, image{% endif %});
     protobuf::{{ f[4] }}::spawn(spawner, {% if f[0] == "uart" %}board.{{ f[4] }}{% else %}board.{{ f[4] }}.cdc{% endif %}, info);
 {%- elsif f[3] == "canopen" %}
     canopen::{{ f[4] }}::spawn(

@@ -288,11 +288,7 @@ fn ota_env<'a>(
         // Bootloader — отдельным вызовом, как в `build` (там же почему): с
         // его ELF сверяются раскладка и ключ.
         cmd!(sh, "cargo build -p boot --release").run()?;
-        cmd!(
-            sh,
-            "cargo build -p app --release --bin app-unconfirmed --features unconfirmed"
-        )
-        .run()?;
+        cmd!(sh, "cargo build -p app --release --bin app-unconfirmed").run()?;
     }
     let release = cross_target_dir().join(TARGET).join("release");
     let working = ota_image(&release.join(APP_ARTIFACT))?;
@@ -300,7 +296,8 @@ fn ota_env<'a>(
     anyhow::ensure!(
         Some(unconfirmed.version) == working.version.checked_add(1),
         "тестовый образ app-unconfirmed собран с версией {:#010x}, а не рабочей + 1 \
-         ({:#010x}) — фича `version-next` не дошла до crates-cross/app/src/version.rs",
+         ({:#010x}) — сверьте `IMAGE` в crates-cross/app/src/bin/app-unconfirmed.rs и \
+         crates-cross/app/src/main.rs",
         unconfirmed.version,
         working.version,
     );
