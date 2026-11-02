@@ -64,11 +64,8 @@ ports = { workspace = true }
 {%- if boot_partitioned == "true" %}
 # Раздел на весь флеш под замком (`BlockingPartition`) — основа разделов со
 # своей страницей (`flash_page::ErasePage`, src/main.rs): тот же приём, что в `bsp`.
-{%- else %}
-# `BlockingPartition` этой конфигурации не нужен: все три раздела bootloader
-# строит прямо над `Flash`, и в его коде крейт не назван.
-{%- endif %}
 embassy-embedded-hal = { workspace = true }
+{%- endif %}
 # Решение bootloader'а — проверка нового образа перед обменом
 # (`domain::ota::boot::screen_update`, фича `boot` у `domain`); почему `boot` зависит
 # от `domain` и что из него попадает в образ — docs/architecture.md. Драйвер

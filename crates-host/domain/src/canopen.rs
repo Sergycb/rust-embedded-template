@@ -384,13 +384,6 @@ where
 mod tests {
     //! Тесты узла `CANOPEN`: гоняют узел на словаре примера `crates-host/canopen`.
 
-    // `ctx(..)` стенда (`supervisor::stand!`) берёт по аргументу на ресурс узла —
-    // их восемь с OTA; `allow`, а не `expect`: без OTA их семь, и линт молчит.
-    #![allow(
-        clippy::too_many_arguments,
-        reason = "ctx(..) стенда: аргумент на каждый ресурс узла CANOPEN"
-    )]
-
     use core::cell::RefCell;
     use core::future::poll_fn;
     use core::pin::pin;
