@@ -269,14 +269,12 @@ mod fake {
             self.waits = true;
             self
         }
-        // {%- endif %}
-        // {%- endif %}
-        // {%- if modbus_rtu == "true" or modbus_tcp == "true" %}
 
         /// Дописывает `bytes` ко входу — пришли позже.
         pub(super) fn push(&mut self, bytes: &[u8]) {
             self.rx.extend_from_slice(bytes);
         }
+        // {%- endif %}
         // {%- endif %}
     }
 
