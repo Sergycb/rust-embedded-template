@@ -712,11 +712,21 @@ ssh admin@<адрес платы> info
 ```
 
 {% if ssh_auth == "password" -%}
-Вход — по паролю из `ssh-password.txt` в корне проекта: его создаёт `cargo xtask`,
-если файла нет (`build`, `lint cross` и перед прошивкой), и он коммитится — пароль всё равно открыт в каждом образе.
-Это защита уровня стенда; надёжнее — вход по ключу (`--define ssh_auth=key
-ssh_key="ssh-ed25519 …"` при генерации): в прошивке тогда только открытый ключ
-(ниже, «Секреты служб»).
+Вход — по паролю. Пароля нет ни в образе, ни в git: `cargo xtask` (`build`, `lint
+cross` и перед прошивкой), не найдя `ssh-password.hash` в корне проекта, создаёт
+случайный пароль (128 бит), один раз печатает его и кладёт в `ssh-password.txt` —
+этот файл в `.gitignore`, сохраните пароль сами. Коммитится и вшивается в прошивку
+`ssh-password.hash`: 16 байт соли и SHA-256(соль ‖ пароль), плата сверяет с ним
+предъявленный пароль за постоянное время. Хэш есть, а `ssh-password.txt` нет (свежий
+клон) — сборка идёт как есть: пароль знает тот, кто его создал.
+
+Хэш — SHA-256, а не медленная функция вроде argon2: 128 случайных бит по хэшу не
+перебрать и без замедления. Сменить пароль — вписать свой в `ssh-password.txt`,
+удалить `ssh-password.hash` и собрать: `cargo xtask` захэширует пароль из файла. Но
+пароль, придуманный человеком, по хэшу из образа перебирается быстро — берите
+случайный не короче 16 символов. Пароль один на все платы с этой прошивкой; надёжнее
+— вход по ключу (`--define ssh_auth=key ssh_key="ssh-ed25519 …"` при генерации): в
+прошивке тогда только открытый ключ.
 {%- else -%}
 Вход — по открытому ключу, данному при генерации (`crate::net::ssh::LOGIN` в
 `crates-cross/app/src/net.rs`): в прошивке только открытая половина, и прятать
@@ -754,7 +764,7 @@ ML-KEM и ChaCha20-Poly1305), поэтому генерация предлага
 ограничивает ACL брокера. Темы, ACL, как добавить поле и команду —
 `docs/modules/app-mqtt.md`. Вход на брокер одинаков у всех плат — ниже, «Секреты служб».
 {%- endif %}
-{%- capture service_secrets %}{% if net_services contains "rest" %}, токен REST (`rest-token.txt`){% endif %}{% if net_services contains "ssh" %}{% if ssh_auth == "password" %}, пароль SSH (`ssh-password.txt`){% endif %}{% if ssh_host_key == "file" %}, ключ хоста SSH (`ssh-host-key.bin`){% endif %}{% endif %}{% if net_services contains "mqtt" %}, вход на брокер MQTT (`mqtt.toml`){% endif %}{% endcapture %}
+{%- capture service_secrets %}{% if net_services contains "rest" %}, токен REST (`rest-token.txt`){% endif %}{% if net_services contains "ssh" %}{% if ssh_host_key == "file" %}, ключ хоста SSH (`ssh-host-key.bin`){% endif %}{% endif %}{% if net_services contains "mqtt" %}, вход на брокер MQTT (`mqtt.toml`){% endif %}{% endcapture %}
 {%- if service_secrets != "" %}
 
 ### Секреты служб — одни на все устройства

@@ -18,7 +18,7 @@ fn main() {
     require("rest-token.txt", "токена REST API");
 {%- endif %}
 {%- if ssh_auth == "password" %}
-    require("ssh-password.txt", "пароля консоли SSH");
+    require("ssh-password.hash", "хэша пароля консоли SSH");
 {%- endif %}
 {%- if ssh_host_key == "file" %}
     require("ssh-host-key.bin", "ключа хоста SSH");

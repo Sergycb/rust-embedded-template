@@ -600,6 +600,8 @@ dependencies = [
  "rusty-modbus-types",
  "salty",
  "sequential-storage",
+ "sha2",
+ "subtle",
  "sunset-async",
  "supervisor",
  "tokio",
@@ -2806,6 +2808,7 @@ dependencies = [
  "object",
  "ports",
  "salty",
+ "sha2",
  "xshell",
 ]
 

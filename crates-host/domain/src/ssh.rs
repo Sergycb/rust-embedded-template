@@ -54,7 +54,7 @@ pub use host_key::Fixed;
 // {%- if ssh_host_key == "config" %}
 pub use host_key::{HOST_KEY_ID, Stored};
 // {%- endif %}
-pub use login::{Login, USER, ed25519_public_key};
+pub use login::{Login, PASSWORD_HASH_LEN, USER, ed25519_public_key};
 pub use session::{PORT, SSH_BUFFER, TCP_BUFFER};
 
 // Узел объявлен рядом со своей задачей — как `HTTP`. `<K>` — ключ хоста
@@ -395,16 +395,31 @@ mod tests {
         }
     }
 
-    /// По паролю пускает только пароль прошивки вместе с [`USER`]; при входе
-    /// по ключу (и при ключе, который не разобрался) пароль не пускает никого.
+    /// Хэш пароля, как его пишет `cargo xtask` в `ssh-password.hash`: соль и
+    /// SHA-256(соль ‖ пароль).
+    fn hashed(password: &str) -> &'static [u8] {
+        use sha2::{Digest, Sha256};
+
+        let salt = [0x5a; 16];
+        let mut hash = salt.to_vec();
+        hash.extend_from_slice(
+            &Sha256::new_with_prefix(salt)
+                .chain_update(password)
+                .finalize(),
+        );
+        hash.leak()
+    }
+
+    /// По паролю пускает только пароль, чей хэш в прошивке, вместе с
+    /// [`USER`]; при входе по ключу (и при ключе, который не разобрался)
+    /// пароль не пускает никого.
     #[test]
     fn a_password_lets_in_only_its_user() {
-        let by_password = Access::new(Login::Password("s3cret"));
-        // Сверка `sunset` здесь — простое равенство: решение от неё не
-        // зависит.
+        let by_password = Access::new(Login::PasswordHash(hashed("s3cret")));
         for (access, user, password, admitted) in [
             (by_password, USER, "s3cret", true),
             (by_password, USER, "s3cre", false),
+            (by_password, USER, "s3cret ", false),
             (by_password, USER, "S3CRET", false),
             (by_password, USER, "", false),
             (by_password, "root", "s3cret", false),
@@ -414,29 +429,42 @@ mod tests {
             (Access::new(Login::Key("мусор")), USER, "", false),
         ] {
             assert_eq!(
-                access.admits_password(|u| u == user, |p| p == password),
+                access.admits_password(|u| u == user, password.as_bytes()),
                 admitted,
                 "{user} {password}"
             );
         }
+        // Соль — часть хэша: тот же пароль с другой солью не сходится.
+        let mut salted = hashed("s3cret").to_vec();
+        salted[0] ^= 1;
+        let salted = Access::new(Login::PasswordHash(salted.leak()));
+        assert!(!salted.admits_password(|u| u == USER, b"s3cret"));
     }
 
-    /// Пустой пароль прошивки — не «пускать всех»: ни пустой пароль, ни
-    /// какой-либо другой, ни ключ не проходят.
+    /// Хэш не той длины (пустой, обрезанный, длиннее) — не «пускать всех»: ни
+    /// пустой пароль, ни какой-либо другой, ни ключ не проходят. Пустой
+    /// пароль не пускает, даже если хэш от него.
     #[test]
-    fn an_empty_password_lets_no_one_in() {
-        let empty = Access::new(Login::Password(""));
-        for password in ["", "s3cret"] {
-            assert!(
-                !empty.admits_password(|u| u == USER, |p| p == password),
-                "{password:?}"
+    fn a_broken_hash_or_an_empty_password_lets_no_one_in() {
+        let good = hashed("s3cret");
+        let longer = [good, &[0]].concat().leak();
+        let key = ed25519_public_key(KEY).expect("ключ разбирается");
+        for hash in [&[][..], &good[..good.len() - 1], longer] {
+            let broken = Access::new(Login::PasswordHash(hash));
+            for password in ["", "s3cret"] {
+                assert!(
+                    !broken.admits_password(|u| u == USER, password.as_bytes()),
+                    "{} {password:?}",
+                    hash.len()
+                );
+            }
+            assert_eq!(
+                broken.admits_key(Some(key), |_| Ok::<_, ()>(true)),
+                Ok(false)
             );
         }
-        let key = ed25519_public_key(KEY).expect("ключ разбирается");
-        assert_eq!(
-            empty.admits_key(Some(key), |_| Ok::<_, ()>(true)),
-            Ok(false)
-        );
+        let empty = Access::new(Login::PasswordHash(hashed("")));
+        assert!(!empty.admits_password(|u| u == USER, b""));
     }
 
     /// По ключу пускает только ключ прошивки вместе с [`USER`]; при входе по
@@ -454,7 +482,7 @@ mod tests {
             (by_key, USER, None, false),
             // Вход по паролю, а пришёл ключ.
             (
-                Access::new(Login::Password("s3cret")),
+                Access::new(Login::PasswordHash(hashed("s3cret"))),
                 USER,
                 Some(key),
                 false,

@@ -166,6 +166,10 @@ sunset-async       = { workspace = true }
 # `select` сессии SSH (`domain::ssh`).
 # {%- endif %}
 embassy-futures    = { workspace = true }
+# Вход по паролю (`domain::ssh::Login::PasswordHash`): SHA-256 предъявленного
+# пароля с солью и сравнение с хэшем из прошивки за постоянное время.
+sha2               = { workspace = true }
+subtle             = { workspace = true }
 # {%- endif %}
 # {%- if net_services contains "ssh" or net_services contains "mqtt" %}
 # Поток байтов сокета: канал сессии SSH, транспорт `minimq` (`minimq::Io`).

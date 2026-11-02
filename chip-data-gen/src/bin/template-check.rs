@@ -189,6 +189,7 @@ const SECRETS: &[&str] = &[
     "ota-public-key.bin",
     "rest-token.txt",
     "ssh-password.txt",
+    "ssh-password.hash",
     "ssh-host-key.bin",
     "mqtt.toml",
 ];
