@@ -33,7 +33,7 @@ use std::fs;
 // {%- endif %}
 use std::time::Duration;
 
-use host_target_tests::{Device, skip};
+use host_target_tests::Device;
 // {%- if ota == "true" %}
 use host_target_tests::{Info, slow_timeout};
 
@@ -153,7 +153,9 @@ fn unconfirmed_image_is_swapped_and_rolled_back() {
         return;
     };
     let Some(signature) = env::var_os("HOST_TARGET_UNCONFIRMED_SIG") else {
-        skip("обмен и откат: закрытого ключа нет — тестовый образ подписать нечем");
+        host_target_tests::skip(
+            "обмен и откат: закрытого ключа нет — тестовый образ подписать нечем",
+        );
         return;
     };
     let before = settle(&mut device);
@@ -202,7 +204,9 @@ fn same_version_is_rejected() {
     };
     if running_version < version {
         eprintln!("на устройстве {}", running.version);
-        skip("отказ той же версии: устройство старше собранного образа — проверять нечем");
+        host_target_tests::skip(
+            "отказ той же версии: устройство старше собранного образа — проверять нечем",
+        );
         return;
     }
     assert_eq!(
