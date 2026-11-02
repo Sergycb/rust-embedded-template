@@ -30,10 +30,10 @@ Ethernet — заменить устройство: стек, сокеты и г
    ```
 
    Он печатает `bind_interrupts!` и группу `assign_resources!`: `REF_CLK`,
-   `CRS_DV`, `RXD0`/`RXD1`, `TXD0`/`TXD1`, `TX_EN`, `MDIO`, `MDC`. Выберите те, что
-   разведены к PHY на плате (на Nucleo-144 — `LAN8742A`), и добавьте их в
-   группу `eth` в `resources.rs` вместе с блоком шины MDIO — `sma: ETH_SMA`
-   (распечатка его не даёт). `bind_interrupts!` положите в `bsp/src/net.rs`:
+   `CRS_DV`, `RXD0`/`RXD1`, `TXD0`/`TXD1`, `TX_EN`, `MDIO`, `MDC`, а также блок
+   шины MDIO `sma: ETH_SMA`. Перенесите группу в `eth` в `resources.rs`, выбрав
+   выводы, разведённые к PHY на плате (на Nucleo-144 — `LAN8742A`).
+   `bind_interrupts!` положите в `bsp/src/net.rs`:
    его `Irqs` берёт `new`.
 
 2. Псевдоним — на драйвер `embassy-stm32`, сборка — вместо заглушки:

@@ -642,6 +642,7 @@ SPI NOR — клипсой программатора: записать в `STAT
 {%- else %} Сценарии написаны под protobuf; под протокол этого проекта их нет —
 `cargo xtask test host-target` говорит это и проходит пустым.
 {%- endif %}
+{%- if test_image == "true" %}
 
 ### Тестовый образ `app-unconfirmed`
 
@@ -663,11 +664,10 @@ SPI NOR — клипсой программатора: записать в `STAT
   проекта образ «новее всего», встань он однажды насовсем (утечка, ошибка в
   подтверждении), закрыл бы устройству все обычные обновления; `+1` — самое
   большее одну версию;
-- {% if has_protobuf == "true" or has_modbus == "true" %}хосту ({% if has_protobuf == "true" %}`Info`{% if has_modbus == "true" %}, {% endif %}{% endif %}{% if has_modbus == "true" %}Modbus FC43{% endif %}) и {% endif %}в баннере он называет себя меткой
-  `unconfirmed` вместо версии{% if has_protobuf == "true" %}: по ней тест видит, что обмен состоялся, не
-  читая флеш{% endif %};
+- хосту (`Info`{% if has_modbus == "true" %}, Modbus FC43{% endif %}) и в баннере он называет себя меткой
+  `unconfirmed` вместо версии: по ней тест видит, что обмен состоялся, не
+  читая флеш;
 - в логе старта — `warn!` «ТЕСТОВЫЙ образ app-unconfirmed».
-{%- if has_protobuf == "true" %}
 
 Собирает его только `cargo xtask test host-target` (`cargo build -p app
 --release --bin app-unconfirmed`, без фич): `cargo xtask build` собирает
@@ -711,10 +711,4 @@ bootloader'а и стирание `STATE`) и сброс с обменом ра�
 вдвое больше `ACTIVE`. Предел ограничивает только провал: успех ждёт ответа
 устройства. Сколько ушло на самом деле — `устройство ответило через …` в
 выводе с `--no-capture`.
-{%- else %}
-
-Бинарник в проекте есть, но собирают его только голый `cargo build` в
-`crates-cross/` и `cargo xtask lint cross` (линтует оба бинарника): сценариев,
-которые грузят его по протоколу, под этот протокол нет. `cargo xtask build` и
-`cargo flash` берут только `--bin app`, так что в `app.bin` релиза он не попадает.
 {%- endif %}

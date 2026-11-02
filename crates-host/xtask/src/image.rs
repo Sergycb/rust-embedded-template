@@ -23,8 +23,11 @@ pub const PUBLIC_KEY_SYMBOL: &str = "OTA_PUBLIC_KEY_IN_IMAGE";
 
 /// Имя символа, в котором прошивка хранит собственную версию.
 ///
-/// Определён у каждого бинарника `app` (`crates-cross/app/src/main.rs`,
-/// `src/bin/app-unconfirmed.rs`) под `#[unsafe(no_mangle)]` ровно ради этого чтения.
+/// Определён в бинарнике `app` (`crates-cross/app/src/main.rs`) под
+/// `#[unsafe(no_mangle)]` ровно ради этого чтения.
+// {%- if test_image == "true" %}
+/// Свой — и у тестового `app-unconfirmed` (`src/bin/app-unconfirmed.rs`).
+// {%- endif %}
 const FW_VERSION_SYMBOL: &str = "FW_VERSION_IN_IMAGE";
 
 /// Чем заполняются пропуски между сегментами образа. Значение любое, лишь бы

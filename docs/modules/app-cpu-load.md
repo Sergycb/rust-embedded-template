@@ -32,7 +32,7 @@
 ломает измерение: счётчик сна перестаёт расти, и загрузка показывает 100%, а
 ни компилятор, ни линтер, ни тесты этого не ловят.
 
-Поэтому `main` бинарника (`#[entry]` в `crates-cross/app/src/main.rs`{% if ota == "true" %}, и так же
+Поэтому `main` бинарника (`#[entry]` в `crates-cross/app/src/main.rs`{% if test_image == "true" %}, и так же
 у тестового образа в `src/bin/app-unconfirmed.rs` — запуск у каждого свой{% endif %})
 поднимает `embassy_executor::raw::Executor` вручную и крутит цикл сам:
 

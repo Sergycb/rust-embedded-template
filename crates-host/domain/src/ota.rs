@@ -125,10 +125,10 @@ type Signature = [u8; SIGNATURE_BYTES];
 // {%- endif %}
 // - `CONFIRMED` — подтверждён ли образ в этом запуске (см. `begin`). Начальное
 //   значение — из свойств образа бинарника (константа `IMAGE` типа
-//   `app::version::Image` в `crates-cross/app/src/main.rs` и
-//   `src/bin/app-unconfirmed.rs`): у рабочего `false`; у тестового
-//   `app-unconfirmed`{% if has_protobuf == "true" %} (`cargo xtask test host-target`){% endif %} — `true`, он
-//   себя не подтверждает, и следующий сброс его откатывает.
+//   `app::version::Image` в `crates-cross/app/src/main.rs`{% if test_image == "true" %} и
+//   `src/bin/app-unconfirmed.rs`{% endif %}): у рабочего `false`{% if test_image == "true" %}; у тестового
+//   `app-unconfirmed` (`cargo xtask test host-target`) — `true`, он
+//   себя не подтверждает, и следующий сброс его откатывает{% endif %}.
 // - `request: [CMD: …]` — запрос с ответом (`sync-request`), а не очередь:
 //   протокол отвечает хосту исходом именно своей команды.
 // {%- if graph == "true" %}
@@ -957,8 +957,8 @@ pub(crate) mod tests {
     }
 
     /// Гоняет узел по сценарию и возвращает ответы на команды по порядку.
-    /// `confirmed` — слот снаружи: тестовый образ `app-unconfirmed` приходит с
-    /// `true`, а сценарий видит, чем узел его оставил.
+    /// `confirmed` — слот снаружи: образ, который себя не подтверждает,
+    /// приходит с `true`, а сценарий видит, чем узел его оставил.
     fn run_on(flash: &mut FakeFlash, confirmed: &mut bool, steps: Vec<Step>) -> Vec<OtaReply> {
         MockDriver::get().reset();
         let stand = supervisor::stand!(OTA_FRAG<FakeFlash, FakeReboot, 1>; QUEUE_ASK = 1);
@@ -1145,11 +1145,11 @@ pub(crate) mod tests {
         assert!(stand.is_ready());
     }
 
-    /// Тестовый образ `app-unconfirmed` приходит с `confirmed = true` во
-    /// входе: себя не подтверждает ни при старте, ни на `Start`, и следующий
-    /// сброс его откатывает.
-    // {%- if has_protobuf == "true" %}
-    /// На этом стоит тест отката `host-target`.
+    /// Образ с `confirmed = true` во входе себя не подтверждает ни при
+    /// старте, ни на `Start`, и следующий сброс его откатывает.
+    // {%- if test_image == "true" %}
+    /// Так приходит тестовый образ `app-unconfirmed`; на этом стоит тест
+    /// отката `host-target`.
     // {%- endif %}
     #[test]
     fn an_image_started_confirmed_never_confirms_itself() {

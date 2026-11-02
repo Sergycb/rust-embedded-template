@@ -91,8 +91,11 @@ pub fn flash_boot(sh: &xshell::Shell, watchdog: bool) -> Result<(), anyhow::Erro
 }
 // {%- endif %}
 
-/// Бинарник пакета — явно (`--bin`, одноимённый пакету): у `app` с OTA
-/// бинарников два, второй — тестовый `app-unconfirmed`, и шить надо не его.
+/// Бинарник пакета — явно (`--bin`, одноимённый пакету).
+// {%- if test_image == "true" %}
+/// У `app` бинарников два, второй — тестовый `app-unconfirmed`, и шить надо
+/// не его.
+// {%- endif %}
 fn flash_package(sh: &xshell::Shell, package: &str, profile: &str) -> Result<(), anyhow::Error> {
     let _p = sh.push_dir(root_dir().join("crates-cross"));
     match profile {
