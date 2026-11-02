@@ -22,17 +22,17 @@ pub use udp::{UdpError, UdpLink};
 // {%- endif %}
 
 #[cfg(test)]
-mod fake {
+pub(crate) mod fake {
     //! Поверх кабеля в памяти (`adapters_hw::net::fake::cable`) — то, что нужно тестам
     //! транспортов: порт и прогон обоих стеков.
 
     use adapters_hw::net::fake::cable::Loopback;
     use embassy_net::Runner;
 
-    pub(super) const PORT: u16 = 502;
+    pub(crate) const PORT: u16 = 502;
 
     /// Гоняет оба стека, пока идёт `test`.
-    pub(super) async fn with_network<R>(
+    pub(crate) async fn with_network<R>(
         mut device: Runner<'static, Loopback>,
         mut host: Runner<'static, Loopback>,
         test: impl Future<Output = R>,

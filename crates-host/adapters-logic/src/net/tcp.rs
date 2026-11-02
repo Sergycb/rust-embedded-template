@@ -4,9 +4,6 @@ use embassy_net::Stack;
 use embassy_net::tcp::{self, AcceptError, State, TcpSocket};
 use embassy_time::Duration;
 use embedded_io_async::{ErrorKind, ErrorType, Read, Write};
-// {%- if modbus_tcp == "true" %}
-use ports::HangUp;
-// {%- endif %}
 
 /// Как часто проверять молчащего собеседника (keep-alive TCP).
 const KEEP_ALIVE: Duration = Duration::from_secs(10);
@@ -86,16 +83,17 @@ impl TcpServer {
     async fn drop_connection(&mut self) {
         reset(&mut self.socket).await;
     }
-}
+    // {%- if modbus_tcp == "true" %}
 
-// {%- if modbus_tcp == "true" %}
-impl HangUp for TcpServer {
-    async fn hang_up(&mut self) {
+    /// Обрывает соединение: следующее чтение ждёт нового клиента. Нужен
+    /// протоколу, который, потеряв в потоке границу кадра, в том же
+    /// соединении её уже не найдёт (`modbus::Tcp`): клиент переподключится и
+    /// начнёт с чистого потока.
+    pub(crate) async fn hang_up(&mut self) {
         self.drop_connection().await;
     }
+    // {%- endif %}
 }
-
-// {%- endif %}
 impl ErrorType for TcpServer {
     type Error = TcpError;
 }

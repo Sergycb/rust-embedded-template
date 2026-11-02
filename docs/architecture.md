@@ -233,7 +233,6 @@ build`){% endif %}. В `domain` трейтов нет. Всё, что нужно
 {%- if has_modbus == "true" %}{{ sep }}`Registers` — карта slave'а: карта проекта, {% if ota == "true" %}окно OTA поверх неё, {% endif %}общая ручка на
 все узлы `MODBUS_*` вложены друг в друга{% assign sep = "; " %}{% endif %}
 {%- if modbus_master == "true" %}{{ sep }}`ModbusClient` — транспорт master'а (RTU, MBAP-TCP, MBAP-UDP){% assign sep = "; " %}{% endif %}
-{%- if modbus_tcp == "true" %}{{ sep }}`HangUp` — обрыв соединения под MBAP-TCP: TCP-сервер и поток тестов кадрирования MBAP (тот проверяется без стека){% assign sep = "; " %}{% endif %}
 {%- if has_can == "true" %}{{ sep }}`CanBus` — шина CAN: контроллер платы и заглушка{% assign sep = "; " %}{% endif %}
 {%- if ota == "true" %}{{ sep }}`Reboot` — сброс МК: реализация на плате (`bsp::reset`), за границей, которую `domain` не видит{% assign sep = "; " %}{% endif %}
 {%- if net_services contains "ssh" %}{{ sep }}`HostKey` — ключ хоста SSH: вшитый и созданный платой — разные варианты генерации{% assign sep = "; " %}{% endif %}

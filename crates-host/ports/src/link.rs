@@ -114,19 +114,6 @@ pub trait FrameDuplex: FrameLink {
     async fn send_from(&mut self, frame: &[u8]) -> Result<(), LinkError<Self::Error>>;
 }
 
-// {%- if modbus_tcp == "true" %}
-/// Поток над соединением, которое можно оборвать.
-///
-/// Нужен протоколу, который, потеряв в потоке границу кадра, в том же
-/// соединении её уже не найдёт (`adapters_logic::modbus::Tcp`): клиент
-/// переподключится и начнёт с чистого потока. Реализует
-/// `adapters_logic::net::TcpServer`.
-pub trait HangUp {
-    /// Обрывает соединение; следующее чтение ждёт нового.
-    async fn hang_up(&mut self);
-}
-
-// {%- endif %}
 /// Почему [`FrameLink`] не принял или не отправил кадр.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]

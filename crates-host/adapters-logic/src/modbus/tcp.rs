@@ -1,7 +1,7 @@
 //! Modbus TCP: заголовок MBAP и PDU поверх потока байтов.
 
 use embedded_io_async::{Read, ReadExactError, Write};
-use ports::{FrameLink, HangUp, LinkError};
+use ports::{FrameLink, LinkError};
 use rusty_modbus_types::MbapHeader;
 // {%- if modbus_master == "true" %}
 use ports::MAX_PDU;
@@ -16,6 +16,7 @@ use super::mbap::{self, HEADER, MAX_ADU};
 use super::master_error;
 // {%- endif %}
 use super::{FrameError, io_error, read_error};
+use crate::net::{TcpError, TcpServer};
 
 /// Modbus TCP поверх потока `io` (сокет `embassy-net`).
 ///
@@ -26,7 +27,7 @@ use super::{FrameError, io_error, read_error};
 /// записи оставляет на линии полкадра, после чего соединение стоит
 /// переоткрыть.
 ///
-/// Для slave'а — канал [`FrameLink`] с кадром «адрес и PDU» прямо в приёмном
+/// Для slave'а — канал [`FrameLink`] над [`TcpServer`] с кадром «адрес и PDU» прямо в приёмном
 /// буфере, за заголовком: любой запрос приходит как адресованный самому
 /// устройству, 0xFF (см. [модуль](super)), а ответ несёт адрес и номер
 /// транзакции запроса.
@@ -39,8 +40,8 @@ use super::{FrameError, io_error, read_error};
 /// ([`FrameError::Eof`]), а не отказ: узел обслуживает дальше, и реализация
 /// потока обязана на следующем чтении принять новое соединение. Длина в
 /// заголовке вне допустимой — граница кадра потеряна, и slave обрывает
-/// соединение сам ([`HangUp`]): клиент переподключится и начнёт с чистого
-/// потока. Кадр без PDU (только адрес) пропускается — его граница известна.
+/// соединение сам (`TcpServer::hang_up`): клиент переподключится и начнёт с
+/// чистого потока. Кадр без PDU (только адрес) пропускается — его граница известна.
 #[derive(Debug)]
 pub struct Tcp<T> {
     io: T,
@@ -123,8 +124,8 @@ impl<T: Read + Write> Tcp<T> {
     // {%- endif %}
 }
 
-impl<T: Read + Write + HangUp> FrameLink for Tcp<T> {
-    type Error = FrameError<T::Error>;
+impl FrameLink for Tcp<TcpServer> {
+    type Error = FrameError<TcpError>;
 
     async fn recv(&mut self) -> Result<usize, LinkError<Self::Error>> {
         loop {
@@ -218,58 +219,146 @@ mod tests {
     use core::convert::Infallible;
 
     // {%- endif %}
+    use adapters_hw::net::fake::cable::{DEVICE, leak, pair};
+    use embassy_net::Stack;
+    use embassy_net::tcp::TcpSocket;
+
     use super::*;
     use crate::modbus::fake::{Duplex, mbap_frame as frame};
+    use crate::net::fake::{PORT, with_network};
+
+    /// Клиент на «хосте» кабеля: подключается к slave'у, пишет `request` и
+    /// читает ответ длиной `reply`.
+    async fn ask(client: &mut TcpSocket<'static>, request: &[u8], reply: usize) -> Vec<u8> {
+        client.write_all(request).await.unwrap();
+        client.flush().await.unwrap();
+        let mut got = vec![0; reply];
+        client.read_exact(&mut got).await.unwrap();
+        got
+    }
+
+    /// Новое соединение клиента к slave'у.
+    async fn connect(host: Stack<'static>) -> TcpSocket<'static> {
+        let mut client = TcpSocket::new(host, leak([0; 512]), leak([0; 512]));
+        client.connect((DEVICE, PORT)).await.unwrap();
+        client
+    }
+
+    /// Закрывает соединение со стороны клиента. Время `mock-driver` стоит, и
+    /// отложенное подтверждение `smoltcp` не уходит: ответ slave'а
+    /// подтверждает следующий запрос клиента или его FIN, а FIN — сброс
+    /// соединения slave'ом при конце потока (`net::tcp`, тест сервера).
+    async fn close(mut client: TcpSocket<'static>) {
+        client.close();
+        let _reset = client.flush().await;
+    }
+
+    /// Slave над настоящим TCP-сервером на «устройстве» кабеля.
+    fn slave(device: Stack<'static>) -> Tcp<TcpServer> {
+        Tcp::new(TcpServer::new(device, PORT, leak([0; 512]), leak([0; 512])))
+    }
 
     #[tokio::test]
     async fn server_echoes_transaction_and_unit() {
-        let input = [
-            frame(0x0102, 0, 0, &[0x03, 0, 1, 0, 1]),
-            frame(9, 0, 5, &[0x06, 0, 0, 0, 1]),
-        ]
-        .concat();
-        let mut tcp = Tcp::new(Duplex::new(&input));
-        // Любой адрес в MBAP — само устройство, и 0 — не широковещание.
-        let len = tcp.recv().await.unwrap();
-        assert_eq!(&tcp.buffer()[..len], &[0xFF, 0x03, 0, 1, 0, 1]);
-        tcp.buffer()[1..5].copy_from_slice(&[0x03, 2, 0, 7]);
-        tcp.send(5).await.unwrap();
-        let len = tcp.recv().await.unwrap();
-        assert_eq!(tcp.buffer()[0], 0xFF);
-        tcp.send(len).await.unwrap();
-        let expected = [
-            frame(0x0102, 0, 0, &[0x03, 2, 0, 7]),
-            frame(9, 0, 5, &[0x06, 0, 0, 0, 1]),
-        ]
-        .concat();
-        assert_eq!(tcp.io.tx, expected);
-        assert_eq!(tcp.recv().await, Err(LinkError::Lost(FrameError::Eof)));
+        let ((device, device_runner), (host, host_runner)) = pair();
+        let mut tcp = slave(device);
+        with_network(device_runner, host_runner, async {
+            let device_side = async {
+                // Любой адрес в MBAP — само устройство, и 0 — не широковещание.
+                let len = tcp.recv().await.unwrap();
+                assert_eq!(&tcp.buffer()[..len], &[0xFF, 0x03, 0, 1, 0, 1]);
+                tcp.buffer()[1..5].copy_from_slice(&[0x03, 2, 0, 7]);
+                tcp.send(5).await.unwrap();
+                let len = tcp.recv().await.unwrap();
+                assert_eq!(tcp.buffer()[0], 0xFF);
+                tcp.send(len).await.unwrap();
+                assert!(matches!(
+                    tcp.recv().await,
+                    Err(LinkError::Lost(FrameError::Eof))
+                ));
+            };
+            let host_side = async {
+                let mut client = connect(host).await;
+                let first = ask(&mut client, &frame(0x0102, 0, 0, &[0x03, 0, 1, 0, 1]), 11).await;
+                assert_eq!(first, frame(0x0102, 0, 0, &[0x03, 2, 0, 7]));
+                let echo = frame(9, 0, 5, &[0x06, 0, 0, 0, 1]);
+                assert_eq!(ask(&mut client, &echo, echo.len()).await, echo);
+                close(client).await;
+            };
+            tokio::join!(device_side, host_side);
+        })
+        .await;
     }
 
     #[tokio::test]
     async fn server_skips_foreign_protocol_and_empty_frames() {
-        let input = [
-            frame(1, 7, 1, &[0x03, 0, 0, 0, 1]),
-            frame(2, 0, 1, &[]),
-            frame(3, 0, 1, &[0x06, 0, 0, 0, 1]),
-        ]
-        .concat();
-        let mut tcp = Tcp::new(Duplex::new(&input));
-        assert_eq!(tcp.recv().await, Ok(6));
-        assert_eq!(tcp.buffer()[1], 0x06);
+        let ((device, device_runner), (host, host_runner)) = pair();
+        let mut tcp = slave(device);
+        with_network(device_runner, host_runner, async {
+            let device_side = async {
+                assert!(matches!(tcp.recv().await, Ok(6)));
+                assert_eq!(tcp.buffer()[1], 0x06);
+                tcp.send(6).await.unwrap();
+                assert!(tcp.recv().await.is_err(), "клиент закрыл соединение");
+            };
+            let host_side = async {
+                let mut client = connect(host).await;
+                let input = [
+                    frame(1, 7, 1, &[0x03, 0, 0, 0, 1]),
+                    frame(2, 0, 1, &[]),
+                    frame(3, 0, 1, &[0x06, 0, 0, 0, 1]),
+                ]
+                .concat();
+                let echo = frame(3, 0, 1, &[0x06, 0, 0, 0, 1]);
+                assert_eq!(ask(&mut client, &input, echo.len()).await, echo);
+                close(client).await;
+            };
+            tokio::join!(device_side, host_side);
+        })
+        .await;
     }
 
-    /// Длина вне допустимой — соединение обрывается: кадр за битым по нему
-    /// уже не читается, следующий `recv` — новое соединение (здесь — конец
-    /// входа).
+    /// Длина вне допустимой — slave обрывает соединение: кадр за битым по нему
+    /// уже не читается, следующий `recv` — новое соединение.
     #[tokio::test]
     async fn server_hangs_up_on_bad_length() {
+        let ((device, device_runner), (host, host_runner)) = pair();
+        let mut tcp = slave(device);
         let mut bad_length = frame(1, 0, 1, &[0x03]);
         bad_length[5] = 0;
-        let input = [bad_length, frame(2, 0, 1, &[0x06, 0, 0, 0, 1])].concat();
-        let mut tcp = Tcp::new(Duplex::new(&input));
-        assert_eq!(tcp.recv().await, Err(LinkError::Lost(FrameError::Framing)));
-        assert_eq!(tcp.recv().await, Err(LinkError::Lost(FrameError::Eof)));
+        let stranded = frame(2, 0, 1, &[0x06, 0, 0, 0, 1]);
+        let fresh = frame(3, 0, 1, &[0x06, 0, 0, 0, 2]);
+        with_network(device_runner, host_runner, async {
+            let device_side = async {
+                assert!(matches!(
+                    tcp.recv().await,
+                    Err(LinkError::Lost(FrameError::Framing))
+                ));
+                let len = tcp.recv().await.unwrap();
+                assert_eq!(
+                    &tcp.buffer()[1..len],
+                    &[0x06, 0, 0, 0, 2],
+                    "кадр нового соединения"
+                );
+                tcp.send(len).await.unwrap();
+                assert!(tcp.recv().await.is_err(), "клиент закрыл соединение");
+            };
+            let host_side = async {
+                let mut first = connect(host).await;
+                first
+                    .write_all(&[bad_length.as_slice(), &stranded].concat())
+                    .await
+                    .unwrap();
+                // Ответа нет: соединение оборвано slave'ом.
+                let mut buf = [0; 16];
+                assert!(!matches!(first.read(&mut buf).await, Ok(n) if n > 0));
+                let mut second = connect(host).await;
+                assert_eq!(ask(&mut second, &fresh, fresh.len()).await, fresh);
+                close(second).await;
+            };
+            tokio::join!(device_side, host_side);
+        })
+        .await;
     }
 
     // {%- if modbus_master == "true" %}
@@ -336,26 +425,46 @@ mod tests {
     // {%- endif %}
 
     /// Оборванное чтение (конец потока) — не таймаут: недочитанный кадр
-    /// сбрасывается, и поток, продолжившийся другим соединением
-    /// (`net::TcpServer`), читается с начала кадра.
+    /// сбрасывается, и поток, продолжившийся другим соединением, читается с
+    /// начала кадра.
     #[tokio::test]
     async fn ended_stream_drops_the_partial_frame() {
+        let ((device, device_runner), (host, host_runner)) = pair();
+        let mut tcp = slave(device);
         let fresh = frame(1, 0, 7, &[0x03, 0, 1, 0, 1]);
-        let mut tcp = Tcp::new(Duplex::new(&fresh[..4]));
-        assert_eq!(tcp.recv().await, Err(LinkError::Lost(FrameError::Eof)));
-        tcp.io.push(&fresh);
-        let len = tcp.recv().await.unwrap();
-        assert_eq!(&tcp.buffer()[1..len], &[0x03, 0, 1, 0, 1]);
+        with_network(device_runner, host_runner, async {
+            let device_side = async {
+                assert!(matches!(
+                    tcp.recv().await,
+                    Err(LinkError::Lost(FrameError::Eof))
+                ));
+                let len = tcp.recv().await.unwrap();
+                assert_eq!(&tcp.buffer()[1..len], &[0x03, 0, 1, 0, 1]);
+                tcp.send(len).await.unwrap();
+                assert!(tcp.recv().await.is_err(), "клиент закрыл соединение");
+            };
+            let host_side = async {
+                let mut first = connect(host).await;
+                first.write_all(&fresh[..4]).await.unwrap();
+                close(first).await;
+                let mut second = connect(host).await;
+                assert_eq!(ask(&mut second, &fresh, fresh.len()).await, fresh);
+                close(second).await;
+            };
+            tokio::join!(device_side, host_side);
+        })
+        .await;
     }
 
     proptest::proptest! {
-        /// Что бы ни пришло по соединению — транспорт не паникует.
+        /// Что бы ни пришло по соединению — разбор кадров не паникует. Разбор
+        /// не зависит от потока под ним, поэтому идёт над потоком в памяти.
         #[test]
         fn never_panics(input in proptest::collection::vec(proptest::num::u8::ANY, 0..600)) {
             let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
             rt.block_on(async {
                 let mut tcp = Tcp::new(Duplex::new(&input));
-                while tcp.recv().await.is_ok() {}
+                while tcp.frame().await.is_ok() {}
                 // {%- if modbus_master == "true" %}
                 let _ignored = exchange(1, Duplex::replying(&input)).await;
                 // {%- endif %}

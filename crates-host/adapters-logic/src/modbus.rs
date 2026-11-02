@@ -126,7 +126,7 @@ pub enum FrameError<E> {
     /// TCP-сервером (`net::TcpServer`) следующий `recv` примет нового клиента.
     Eof,
     /// Длина в заголовке MBAP вне допустимой: граница кадра в потоке потеряна.
-    /// Slave обрывает соединение (`net::HangUp`), следующий `recv` примет
+    /// Slave обрывает соединение (`net::TcpServer`), следующий `recv` примет
     /// нового клиента.
     Framing,
 }
@@ -304,15 +304,6 @@ mod fake {
         }
     }
 
-    // {%- if modbus_tcp == "true" %}
-    /// Обрыв соединения: непрочитанное пропадает вместе с ним.
-    impl ports::HangUp for Duplex {
-        async fn hang_up(&mut self) {
-            self.pos = self.rx.len();
-        }
-    }
-
-    // {%- endif %}
     impl Write for Duplex {
         fn write(&mut self, buf: &[u8]) -> impl Future<Output = Result<usize, Self::Error>> {
             if let Some(reply) = self.reply.take() {
