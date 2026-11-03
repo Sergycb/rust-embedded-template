@@ -396,11 +396,9 @@ README, «Быстрый старт».
   правите руками число — правьте и литерал.
 {%- endif %}
 {%- if net_services contains "ssh" %}
-- Консоль SSH (`domain::ssh`, узел `SSH`): {% if ssh_auth == "password" %}хэш пароля — `ssh-password.hash`{% else %}открытый ключ пользователя — строка `crate::net::ssh::LOGIN`{% endif %}{% if ssh_host_key == "file" %}, ключ хоста — `ssh-host-key.bin`{% endif %}{% if ssh_auth == "password" and ssh_host_key == "file" %};
-  файлы создаёт `cargo xtask` (`secrets::ensure`), и они **коммитятся**{% elsif ssh_auth == "password" or ssh_host_key == "file" %};
-  файл создаёт `cargo xtask` (`secrets::ensure`), и он **коммитится**{% endif %}{% if ssh_auth == "password" %}.
-  Открытый пароль — `ssh-password.txt`, он в `.gitignore` и в прошивку не
-  попадает: не коммитить и не вшивать его вместо хэша{% endif %} — README, «Консоль SSH».{% if ssh_host_key == "config" %}
+- Консоль SSH (`domain::ssh`, узел `SSH`): вход — по паролю консоли (ниже){% if ssh_host_key == "file" %}; ключ
+  хоста — `ssh-host-key.bin`: создаёт `cargo xtask` (`secrets::ensure`), и он
+  **коммитится**{% endif %} — README, «Консоль SSH».{% if ssh_host_key == "config" %}
   Ключ хоста плата создаёт при первом старте (ключ настроек
   `domain::ssh::HOST_KEY_ID`) — хранилище настроек забирает узел `SSH`, своим
   настройкам проекта нужен общий доступ через него.{% endif %} Случайность `sunset`
@@ -414,6 +412,13 @@ README, «Быстрый старт».
   консоли — рычаг платы, слот `IO` — `local` (`RefCell` в `shell` делает future
   `!Send`). Порог раздела приложения — `CLI_MIN_PARTITION` в генерации — README,
   «Консоль `cli`».
+{%- endif %}
+{%- if has_console == "true" %}
+- Вход в консоль — всегда по паролю, способа без пароля нет. Хэш —
+  `console-password.hash` (`crate::console::PASSWORD`): создаёт `cargo xtask`
+  (`secrets::ensure`), он **коммитится**. Открытый пароль —
+  `console-password.txt`, он в `.gitignore` и в прошивку не попадает: не
+  коммитить и не вшивать его вместо хэша — README, «Пароль консоли».
 {%- endif %}
 {%- if net_services contains "mqtt" %}
 - Брокер MQTT (`domain::mqtt`, узел `MQTT`) — `mqtt.toml` в корне проекта:

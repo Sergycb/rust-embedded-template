@@ -723,27 +723,7 @@ ssh admin@<адрес платы>
 ssh admin@<адрес платы> info
 ```
 
-{% if ssh_auth == "password" -%}
-Вход — по паролю. Пароля нет ни в образе, ни в git: `cargo xtask` (`build`, `lint
-cross` и перед прошивкой), не найдя `ssh-password.hash` в корне проекта, создаёт
-случайный пароль (128 бит), один раз печатает его и кладёт в `ssh-password.txt` —
-этот файл в `.gitignore`, сохраните пароль сами. Коммитится и вшивается в прошивку
-`ssh-password.hash`: 16 байт соли и SHA-256(соль ‖ пароль), плата сверяет с ним
-предъявленный пароль за постоянное время. Хэш есть, а `ssh-password.txt` нет (свежий
-клон) — сборка идёт как есть: пароль знает тот, кто его создал.
-
-Хэш — SHA-256, а не медленная функция вроде argon2: 128 случайных бит по хэшу не
-перебрать и без замедления. Сменить пароль — вписать свой в `ssh-password.txt`,
-удалить `ssh-password.hash` и собрать: `cargo xtask` захэширует пароль из файла. Но
-пароль, придуманный человеком, по хэшу из образа перебирается быстро — берите
-случайный не короче 16 символов. Пароль один на все платы с этой прошивкой; надёжнее
-— вход по ключу (`--define ssh_auth=key --define ssh_key="ssh-ed25519 …"` при генерации): в
-прошивке тогда только открытый ключ.
-{%- else -%}
-Вход — по открытому ключу, данному при генерации (`crate::net::ssh::LOGIN` в
-`crates-cross/app/src/net.rs`): в прошивке только открытая половина, и прятать
-её незачем. Сменить ключ — поправить строку.
-{%- endif %}
+Вход — по паролю (ниже, «Пароль консоли»).
 
 {% if ssh_host_key == "config" -%}
 Ключ хоста плата создаёт при первом старте и хранит в разделе настроек: у каждой
@@ -774,10 +754,33 @@ SSH тяжёлый: около 165 KiB флеша, 19 KiB статической
 {% assign xs = links | split: "," %}{% for l in xs %}{% assign f = l | split: ":" %}{% if f[3] == "cli" %}`{{ f[4] }}` ({% if f[0] == "usb" %}USB CDC ACM{% else %}UART{% endif %}){% endif %}{% endfor %}.
 Команды те же, что в SSH: `help`, `info`{% if ota == "true" %}, `reboot yes`{% endif %}, `exit`; свои — вариантами
 enum `Command`. Терминалу нужен ANSI (стрелки, история, Tab): `picocom`, `minicom`,
-PuTTY. Срока молчания нет: `exit` или Ctrl-D печатают приглашение заново.
+PuTTY. Сначала консоль спрашивает пароль (`password:`, без эха; ниже, «Пароль
+консоли»): неверный — отказ и секунда паузы до нового запроса. Срока молчания
+нет: `exit` или Ctrl-D возвращают к паролю.
 
 Консоль в проекте одна: с `cli` генерация не предлагает ни второй `cli`, ни SSH
 (`net_services=ssh` с `cli` — ошибка). Порог раздела приложения — 128 KiB.
+{%- endif %}
+{%- if has_console == "true" %}
+
+### Пароль консоли
+
+Вход в консоль — всегда по паролю{% if net_services contains "ssh" %} (пользователь SSH — `admin`){% endif %}. Пароля нет ни в образе, ни в
+git: `cargo xtask` (`build`, `lint cross` и перед прошивкой), не найдя
+`console-password.hash` в корне проекта, создаёт случайный пароль (128 бит), один
+раз печатает его и кладёт в `console-password.txt` — этот файл в `.gitignore`,
+сохраните пароль сами. Коммитится и вшивается в прошивку
+(`crate::console::PASSWORD`, `crates-cross/app/src/console.rs`) `console-password.hash`:
+16 байт соли и SHA-256(соль ‖ пароль), плата сверяет с ним предъявленный пароль за
+постоянное время. Хэш есть, а `console-password.txt` нет (свежий клон) — сборка идёт
+как есть: пароль знает тот, кто его создал.
+
+Хэш — SHA-256, а не медленная функция вроде argon2: 128 случайных бит по хэшу не
+перебрать и без замедления. Сменить пароль — вписать свой в `console-password.txt`,
+удалить `console-password.hash` и собрать: `cargo xtask` захэширует пароль из файла.
+Но пароль, придуманный человеком, по хэшу из образа перебирается быстро — берите
+случайный не короче 16 символов. Пароль один на все платы с этой прошивкой — ниже,
+«Секреты служб».
 {%- endif %}
 {%- if net_services contains "mqtt" %}
 
@@ -791,7 +794,7 @@ PuTTY. Срока молчания нет: `exit` или Ctrl-D печатают
 ограничивает ACL брокера. Темы, ACL, как добавить поле и команду —
 `docs/modules/app-mqtt.md`. Вход на брокер одинаков у всех плат — ниже, «Секреты служб».
 {%- endif %}
-{%- capture service_secrets %}{% if net_services contains "rest" %}, токен REST (`rest-token.txt`){% endif %}{% if net_services contains "ssh" %}{% if ssh_host_key == "file" %}, ключ хоста SSH (`ssh-host-key.bin`){% endif %}{% endif %}{% if net_services contains "mqtt" %}, вход на брокер MQTT (`mqtt.toml`){% endif %}{% endcapture %}
+{%- capture service_secrets %}{% if net_services contains "rest" %}, токен REST (`rest-token.txt`){% endif %}{% if has_console == "true" %}, хэш пароля консоли (`console-password.hash`){% endif %}{% if net_services contains "ssh" %}{% if ssh_host_key == "file" %}, ключ хоста SSH (`ssh-host-key.bin`){% endif %}{% endif %}{% if net_services contains "mqtt" %}, вход на брокер MQTT (`mqtt.toml`){% endif %}{% endcapture %}
 {%- if service_secrets != "" %}
 
 ### Секреты служб — одни на все устройства

@@ -1,9 +1,9 @@
 //! Узел `SSH`: консоль платы по SSH.
 //!
 //! Одно соединение на порту [`PORT`](crate::ssh::PORT), пользователь
-//! [`USER`](crate::ssh::USER), одна сессия: `shell` или `exec`. Вход —
-//! [`Login`](crate::ssh::Login): по паролю или по открытому ключу ed25519, что выбрано при
-//! генерации. Команды:
+//! [`USER`](crate::ssh::USER), одна сессия: `shell` или `exec`. Вход — по
+//! паролю, чей хэш вшит в прошивку
+//! ([`PasswordHash`](crate::console::PasswordHash)). Команды:
 //!
 //! | Команда | Ответ |
 //! |---|---|
@@ -44,7 +44,6 @@
 // {%- if ssh_host_key == "config" %}
 mod host_key;
 // {%- endif %}
-mod login;
 mod session;
 
 use defmt_or_log::{info, warn};
@@ -57,15 +56,13 @@ use sunset_async::SSHServer;
 use sunset_async::sunset::SignKey;
 use sunset_async::sunset::ed25519_dalek::SigningKey;
 
-use crate::console::Device;
-use crate::ssh::login::Access;
+use crate::console::{Access, Device};
 use crate::ssh::session::{CLOSE_WAIT, IDLE, KEEP_ALIVE, session};
 
-pub use crate::console::{Command, Confirm};
+pub use crate::console::{Command, Confirm, USER};
 // {%- if ssh_host_key == "config" %}
 pub use host_key::{HOST_KEY_ID, Stored};
 // {%- endif %}
-pub use login::{Login, PASSWORD_HASH_LEN, USER, ed25519_public_key};
 pub use session::{PORT, SSH_BUFFER, TCP_BUFFER};
 
 // Узел объявлен рядом со своей задачей.
@@ -90,8 +87,8 @@ supervisor::supervisor_fragment! {
             STACK: local $crate::net::Stack<'static> = inputs.stack,
             /// Сведения для `info`.
             INFO: $crate::device::DeviceInfo = inputs.info,
-            /// Как пускать пользователя.
-            LOGIN: $crate::ssh::Login = inputs.login,
+            /// Хэш пароля пользователя.
+            LOGIN: $crate::console::PasswordHash = inputs.login,
             /// Ключ хоста.
             // {%- if ssh_host_key == "config" %}
             HOST_KEY: local K = inputs.host_key,
@@ -223,19 +220,15 @@ pub async fn task<F: NorFlash>(mut ctx: SshCtx<'_, Stored<F>>) {
 
 #[cfg(test)]
 mod tests {
-    //! Тесты узла `SSH`: ключ пользователя, вход, ключ хоста.
+    //! Тесты узла `SSH`: попытки входа, ключ хоста.
 
-    use crate::ssh::login::Access;
     use crate::ssh::session::tries_exhausted;
-    use crate::ssh::{Login, USER, ed25519_public_key};
     // {%- if ssh_host_key == "config" %}
     use crate::settings::Settings;
     use crate::ssh::{HOST_KEY_ID, Stored};
     use adapters_hw::flash::fake::MemFlash;
     use embedded_storage_async::nor_flash::{ErrorType, NorFlash, NorFlashErrorKind, ReadNorFlash};
     // {%- endif %}
-
-    const KEY: &str = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl user@host";
     // {%- if ssh_host_key == "config" %}
 
     /// Носитель настроек: две страницы по 256 байт, слово 8.
@@ -295,143 +288,6 @@ mod tests {
             .map(<[u8]>::to_vec)
     }
     // {%- endif %}
-
-    #[test]
-    fn an_openssh_line_gives_the_raw_key() {
-        let key = ed25519_public_key(KEY).expect("ключ разбирается");
-        assert_eq!(key[..4], [0xe3, 0x2a, 0xaa, 0x79]);
-        assert_eq!(key[28..], [0x7d, 0x18, 0xa2, 0x65]);
-        // Комментарий необязателен.
-        assert_eq!(
-            ed25519_public_key(&KEY[..KEY.len() - " user@host".len()]),
-            Some(key)
-        );
-    }
-
-    #[test]
-    fn anything_else_is_not_a_key() {
-        for line in [
-            "",
-            "ssh-ed25519",
-            "ssh-rsa AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl",
-            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5",
-            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJ!",
-            // Блоб нужной длины (51 байт), но имя типа внутри — не ed25519.
-            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE4AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl",
-            // Блоб нужной длины, но длина ключа внутри — 31, а не 32.
-            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAH+MqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl",
-            // Верный блоб и ещё три байта — base64 длиннее буфера.
-            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJlAAAA",
-        ] {
-            assert_eq!(ed25519_public_key(line), None, "{line}");
-        }
-    }
-
-    /// Хэш пароля, как его пишет `cargo xtask` в `ssh-password.hash`: соль и
-    /// SHA-256(соль ‖ пароль).
-    fn hashed(password: &str) -> &'static [u8] {
-        use sha2::{Digest, Sha256};
-
-        let salt = [0x5a; 16];
-        let mut hash = salt.to_vec();
-        hash.extend_from_slice(
-            &Sha256::new_with_prefix(salt)
-                .chain_update(password)
-                .finalize(),
-        );
-        hash.leak()
-    }
-
-    /// По паролю пускает только пароль, чей хэш в прошивке, вместе с
-    /// [`USER`]; при входе по ключу (и при ключе, который не разобрался)
-    /// пароль не пускает никого.
-    #[test]
-    fn a_password_lets_in_only_its_user() {
-        let by_password = Access::new(Login::PasswordHash(hashed("s3cret")));
-        for (access, user, password, admitted) in [
-            (by_password, USER, "s3cret", true),
-            (by_password, USER, "s3cre", false),
-            (by_password, USER, "s3cret ", false),
-            (by_password, USER, "S3CRET", false),
-            (by_password, USER, "", false),
-            (by_password, "root", "s3cret", false),
-            // Вход по ключу, а пришёл пароль.
-            (Access::new(Login::Key(KEY)), USER, "s3cret", false),
-            (Access::new(Login::Key("мусор")), USER, "s3cret", false),
-            (Access::new(Login::Key("мусор")), USER, "", false),
-        ] {
-            assert_eq!(
-                access.admits_password(|u| u == user, password.as_bytes()),
-                admitted,
-                "{user} {password}"
-            );
-        }
-        // Соль — часть хэша: тот же пароль с другой солью не сходится.
-        let mut salted = hashed("s3cret").to_vec();
-        salted[0] ^= 1;
-        let salted = Access::new(Login::PasswordHash(salted.leak()));
-        assert!(!salted.admits_password(|u| u == USER, b"s3cret"));
-    }
-
-    /// Хэш не той длины (пустой, обрезанный, длиннее) — не «пускать всех»: ни
-    /// пустой пароль, ни какой-либо другой, ни ключ не проходят. Пустой
-    /// пароль не пускает, даже если хэш от него.
-    #[test]
-    fn a_broken_hash_or_an_empty_password_lets_no_one_in() {
-        let good = hashed("s3cret");
-        let longer = [good, &[0]].concat().leak();
-        let key = ed25519_public_key(KEY).expect("ключ разбирается");
-        for hash in [&[][..], &good[..good.len() - 1], longer] {
-            let broken = Access::new(Login::PasswordHash(hash));
-            for password in ["", "s3cret"] {
-                assert!(
-                    !broken.admits_password(|u| u == USER, password.as_bytes()),
-                    "{} {password:?}",
-                    hash.len()
-                );
-            }
-            assert_eq!(
-                broken.admits_key(Some(key), |_| Ok::<_, ()>(true)),
-                Ok(false)
-            );
-        }
-        let empty = Access::new(Login::PasswordHash(hashed("")));
-        assert!(!empty.admits_password(|u| u == USER, b""));
-    }
-
-    /// По ключу пускает только ключ прошивки вместе с [`USER`]; при входе по
-    /// паролю (и при ключе прошивки, который не разобрался) ключ не пускает
-    /// никого.
-    #[test]
-    fn a_key_lets_in_only_its_user() {
-        let key = ed25519_public_key(KEY).expect("ключ разбирается");
-        let by_key = Access::new(Login::Key(KEY));
-        for (access, user, given, admitted) in [
-            (by_key, USER, Some(key), true),
-            (by_key, "root", Some(key), false),
-            (by_key, USER, Some([0x55; 32]), false),
-            // Ключ не ed25519.
-            (by_key, USER, None, false),
-            // Вход по паролю, а пришёл ключ.
-            (
-                Access::new(Login::PasswordHash(hashed("s3cret"))),
-                USER,
-                Some(key),
-                false,
-            ),
-            (Access::new(Login::Key("мусор")), USER, Some(key), false),
-            (Access::new(Login::Key("мусор")), USER, Some([0; 32]), false),
-        ] {
-            assert_eq!(
-                access.admits_key(given, |u| Ok::<_, ()>(u == user)),
-                Ok(admitted),
-                "{user} {given:?}"
-            );
-        }
-        // Чужой ключ — неудача, а имя не спрашивается: ошибка его разбора
-        // закрыла бы соединение, а не засчиталась попыткой.
-        assert_eq!(by_key.admits_key(Some([0x55; 32]), |_| Err(())), Ok(false));
-    }
 
     /// Пять неудач — ещё попытка, шестая закрывает соединение.
     #[test]

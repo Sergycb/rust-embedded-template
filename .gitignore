@@ -57,12 +57,12 @@ metrics.txt
 # рядом с отсутствующим закрытым — сигнал для `build` остановиться, а не
 # выпускать молча новый корень доверия.
 ota-signing-key.bin
-{%- if ssh_auth == "password" %}
+{%- if has_console == "true" %}
 
-# Пароль консоли SSH открытым текстом (создаётся при `cargo xtask build`).
-# Прошивка вшивает только его хэш — `ssh-password.hash`, он коммитится; сам
+# Пароль консоли открытым текстом (создаётся при `cargo xtask build`).
+# Прошивка вшивает только его хэш — `console-password.hash`, он коммитится; сам
 # пароль в истории сделал бы хэш бесполезным.
-ssh-password.txt
+console-password.txt
 {%- endif %}
 
 

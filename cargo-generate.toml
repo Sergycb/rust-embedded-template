@@ -103,8 +103,8 @@ ignore = [
 	"ota-signing-key.bin",
 	"ota-public-key.bin",
 	"rest-token.txt",
-	"ssh-password.txt",
-	"ssh-password.hash",
+	"console-password.txt",
+	"console-password.hash",
 	"ssh-host-key.bin",
 	"mqtt.toml",
 ]
@@ -138,8 +138,8 @@ ci = { type = "string", prompt = "CI provider", choices = [
 #     вида (и TCP с UDP разом) — только так; протокол в проекте один, CANopen —
 #     на одной шине; `cli` (консоль, только `uart`/`usb`, раздел приложения от
 #     128 KiB) — сверх него и одна на проект: второй `cli` и `ssh` с ней — ошибка;
-#   net_services — `ssh,rest,mqtt`, только с Ethernet; ssh_auth — `password`
-#     (умолчание) или `key`, ssh_key — строка `ssh-ed25519 …` при `key`;
+#   net_services — `ssh,rest,mqtt`, только с Ethernet; вход в консоль (SSH и
+#     `cli`) — всегда по паролю, прежние `ssh_auth`/`ssh_key` — ошибка;
 #   rust_lib, hw_drivers (только с внешней флеш) — адреса, умолчания нет.
 # Умолчания без терминала: `ota` и `graph` — `yes`, если помещаются; с OTA
 # `interface` — первый транспорт чипа без протокола; остальное — `no`/`none`.

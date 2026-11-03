@@ -11,6 +11,9 @@
 // `app-unconfirmed` (`src/bin/app-unconfirmed.rs`), у каждого свой{% endif %}. Паникёр, логгер и обработчики
 // фолтов живут здесь и попадают в бинарник ровно по разу — docs/diagnostics.md,
 // «Два паникёра, один на сборку»{% if ota == "true" %}; docs/modules/app.md{% endif %}.
+{%- if has_console == "true" %}
+pub mod console;
+{%- endif %}
 pub mod cpu_load;
 {%- if has_protobuf == "true" or net_services != "" or has_cli == "true" %}
 pub mod device;

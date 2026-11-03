@@ -2,8 +2,12 @@
 //! канал и интерактивный `shell`.
 //!
 //! Консоль одна на плату по смыслу, но открывается с того транспорта, который
-//! выбран в проекте: SSH (`ssh`) или `cli` поверх UART/USB. Команды и разбор
-//! общие, различаются только канал и срок молчания.
+//! выбран в проекте: SSH (`ssh`) или `cli` поверх UART/USB. Команды, разбор и
+//! вход — по паролю, чей хэш вшит в прошивку
+//! ([`PasswordHash`](crate::console::PasswordHash)), — общие;
+//! различаются только канал и срок молчания.
+
+mod login;
 
 use core::cell::RefCell;
 use core::str::FromStr;
@@ -17,6 +21,9 @@ use bareminal_cli::process::RuntimeError;
 use bareminal_cli::process::{CommandsParser, HelpIter, ProcessError};
 // {%- endif %}
 use bareminal_macros::Command;
+// {%- if has_cli == "true" %}
+use defmt_or_log::warn;
+// {%- endif %}
 use defmt_or_log::info;
 // {%- if has_net == "true" %}
 use embassy_net::Stack;
@@ -33,6 +40,9 @@ use crate::ota::{OtaClient, OtaCommand};
 // {%- endif %}
 use crate::device::{DeviceInfo, PANIC_BRIEF};
 
+pub(crate) use login::Access;
+pub use login::{PASSWORD_HASH_LEN, PasswordHash, USER};
+
 // {%- if has_cli == "true" %}
 // Узел `CONSOLE`: консоль поверх выбранного UART/USB. Живёт рядом с задачей;
 // слот `IO` — `local`, потому что `RefCell` в `shell` делает future `!Send`.
@@ -45,6 +55,8 @@ supervisor::supervisor_fragment! {
             IO: local T = inputs.io,
             /// Сведения для `info`.
             INFO: $crate::device::DeviceInfo = inputs.info,
+            /// Хэш пароля входа.
+            LOGIN: $crate::console::PasswordHash = inputs.login,
             // {%- if has_net == "true" %}
             /// Стек сети проекта: `info` показывает MAC и адрес.
             STACK: local $crate::console::NetStack = inputs.stack,
@@ -73,6 +85,10 @@ const HISTORY: usize = 4;
 /// потока: поток, который отказывает сразу, иначе крутил бы цикл без
 /// `await` и не отдавал исполнитель другим задачам.
 const RESTART_PAUSE: Duration = Duration::from_millis(100);
+
+/// Пауза после неверного пароля: перебор по проводу — не быстрее попытки в
+/// секунду.
+const WRONG_PASSWORD_PAUSE: Duration = Duration::from_secs(1);
 // {%- endif %}
 
 // {%- if net_services contains "ssh" %}
@@ -229,8 +245,8 @@ impl<IO: Read + Write> ConsoleCtx<'_, IO> {
     fsm::machine! {
         machine Console mod edges {
             states {
-                /// Консоль ждёт ввод.
-                Running,
+                /// Консоль ждёт ввод: пароль, затем команды.
+                Running { access: Access },
                 /// Недостижимо: обслуживание не возвращается. Состояние нужно
                 /// таблице — строка без ожидания не может остаться в своём
                 /// состоянии.
@@ -243,18 +259,30 @@ impl<IO: Read + Write> ConsoleCtx<'_, IO> {
         }
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "сигнатуру действия задаёт таблица `#[fsm::typestate]`"
-    )]
     fn begin(&mut self) -> Running {
         info!("console: узел запущен");
-        Running
+        Running {
+            access: Access::new(*self.login),
+        }
     }
 
-    /// Печатает приглашение заново после `exit`/Ctrl-D и не возвращается.
-    async fn serve(&mut self, _: Running) -> Down {
+    /// Спрашивает пароль, затем ведёт `shell`; после `exit`/Ctrl-D — снова
+    /// пароль. Не возвращается.
+    async fn serve(&mut self, s: &Running) -> Down {
         loop {
+            match sign_in(&mut *self.io, s.access).await {
+                Some(true) => info!("console: вход выполнен"),
+                Some(false) => {
+                    warn!("console: неверный пароль");
+                    self.io.write_all(b"wrong password\r\n").await.ok();
+                    Timer::after(WRONG_PASSWORD_PAUSE).await;
+                    continue;
+                }
+                None => {
+                    Timer::after(RESTART_PAUSE).await;
+                    continue;
+                }
+            }
             let device = Device {
                 info: self.info,
                 // {%- if has_net == "true" %}
@@ -265,19 +293,53 @@ impl<IO: Read + Write> ConsoleCtx<'_, IO> {
                 // {%- endif %}
             };
             match shell(&mut *self.io, &device, None).await {
-                Ok(ShellEnd::Exit) => info!("console: exit — приглашение заново"),
+                Ok(ShellEnd::Exit) => info!("console: exit — вход заново"),
                 Ok(ShellEnd::Idle) => {}
                 Ok(ShellEnd::Eof) => {
-                    info!("console: EOF — приглашение заново");
+                    info!("console: EOF — вход заново");
                     Timer::after(RESTART_PAUSE).await;
                 }
                 Err(_) => {
-                    info!("console: канал оборвался — приглашение заново");
+                    info!("console: канал оборвался — вход заново");
                     Timer::after(RESTART_PAUSE).await;
                 }
             }
         }
     }
+}
+
+/// Спрашивает пароль `cli` без эха: `Some(true)` — верный, `Some(false)` —
+/// неверный, `None` — поток кончился или отказал.
+async fn sign_in<IO: Read + Write>(io: &mut IO, access: Access) -> Option<bool> {
+    io.write_all(b"password: ").await.ok()?;
+    let mut line = [0; LINE];
+    let (mut len, mut long) = (0_usize, false);
+    loop {
+        let mut byte = [0];
+        if io.read(&mut byte).await.ok()? == 0 {
+            return None;
+        }
+        match byte[0] {
+            b'\r' | b'\n' if len > 0 || long => break,
+            // Пустая строка — хвост `\r\n` прошлого ввода или Enter без
+            // пароля: ждём пароль дальше.
+            b'\r' | b'\n' => {}
+            // Backspace/Delete стирают символ, Ctrl-C/Ctrl-U — строку.
+            0x08 | 0x7f => len = len.saturating_sub(1),
+            0x03 | 0x15 => (len, long) = (0, false),
+            byte => {
+                if let Some(slot) = line.get_mut(len) {
+                    *slot = byte;
+                    len += 1;
+                } else {
+                    // Длиннее строки — не пароль, даже если начало совпало.
+                    long = true;
+                }
+            }
+        }
+    }
+    io.write_all(b"\r\n").await.ok()?;
+    Some(!long && access.admits(&line[..len]))
 }
 // {%- endif %}
 
@@ -556,7 +618,16 @@ mod tests {
     use super::Confirm;
     // {%- endif %}
     // {%- if has_cli == "true" %}
-    use super::{ConsoleCtx, RESTART_PAUSE, task};
+    use super::login::tests::hashed;
+    use super::{
+        Access, ConsoleCtx, PasswordHash, RESTART_PAUSE, WRONG_PASSWORD_PAUSE, sign_in, task,
+    };
+
+    /// Приветствие `shell`: сколько их — столько раз открывался `shell`.
+    const BANNER: &str = "console, 'help' for commands";
+
+    /// Запрос пароля узла `CONSOLE`.
+    const PROMPT: &str = "password: ";
     // {%- endif %}
 
     /// Терминал в памяти: отдаёт `input` по байту, запоминает вывод.
@@ -967,61 +1038,23 @@ mod tests {
     }
 
     // {%- if has_cli == "true" %}
-    /// Сколько раз консоль поздоровалась — столько раз запускался `shell`.
-    fn banners(shown: &[u8]) -> usize {
-        const BANNER: &[u8] = b"console, 'help' for commands";
-        shown.windows(BANNER.len()).filter(|w| *w == BANNER).count()
+    /// Сколько раз в выводе `shown` встретилось `what`.
+    fn count(shown: &[u8], what: &str) -> usize {
+        shown
+            .windows(what.len())
+            .filter(|w| *w == what.as_bytes())
+            .count()
     }
 
-    /// Узел `CONSOLE` не падает на `exit`: печатает приглашение заново и
-    /// ждёт ввод дальше.
-    #[test]
-    fn the_node_restarts_the_shell_after_exit() {
-        let mut io = Keyboard {
-            input: b"exit\r",
-            shown: Vec::new(),
-        };
-        let mut info = device_info();
-        // {%- if has_net == "true" %}
-        let mut stack = None;
-        // {%- endif %}
-        // {%- if ota == "true" %}
-        let mut ota = crate::ota::tests::cmd().0;
-        // {%- endif %}
-        {
-            let mut node = pin!(task(ConsoleCtx {
-                io: &mut io,
-                info: &mut info,
-                // {%- if has_net == "true" %}
-                stack: &mut stack,
-                // {%- endif %}
-                // {%- if ota == "true" %}
-                ota: &mut ota,
-                // {%- endif %}
-                index: 0,
-            }));
-            let mut cx = Context::from_waker(Waker::noop());
-            assert!(node.as_mut().poll(&mut cx).is_pending());
-        }
-        assert_eq!(
-            banners(&io.shown),
-            2,
-            "{:?}",
-            String::from_utf8_lossy(&io.shown)
-        );
-    }
-
-    /// Поток, который кончается сразу, не крутит узел без `await`: новое
-    /// приглашение — не раньше [`RESTART_PAUSE`].
-    #[test]
-    fn a_dead_stream_does_not_spin_the_node() {
+    /// Узел `CONSOLE` над `io` с паролем `s3cret`: опрос, затем по опросу
+    /// после каждого сдвига часов из `advances`. Узел ни разу не кончается.
+    fn poll_node<IO: embedded_io_async::Read + embedded_io_async::Write>(
+        io: &mut IO,
+        advances: &[Duration],
+    ) {
         MockDriver::get().reset();
-        let mut io = Terminal {
-            input: b"",
-            shown: Vec::new(),
-            room: usize::MAX,
-        };
         let mut info = device_info();
+        let mut login = PasswordHash(hashed("s3cret"));
         // {%- if has_net == "true" %}
         let mut stack = None;
         // {%- endif %}
@@ -1029,31 +1062,113 @@ mod tests {
         let mut ota = crate::ota::tests::cmd().0;
         // {%- endif %}
         let mut cx = Context::from_waker(Waker::noop());
-        {
-            let mut node = pin!(task(ConsoleCtx {
-                io: &mut io,
-                info: &mut info,
-                // {%- if has_net == "true" %}
-                stack: &mut stack,
-                // {%- endif %}
-                // {%- if ota == "true" %}
-                ota: &mut ota,
-                // {%- endif %}
-                index: 0,
-            }));
-            // Первый `shell` кончился EOF — узел ждёт паузу, а не крутится.
-            assert!(node.as_mut().poll(&mut cx).is_pending());
-            MockDriver::get().advance(RESTART_PAUSE - Duration::from_millis(1));
-            assert!(node.as_mut().poll(&mut cx).is_pending());
-            MockDriver::get().advance(Duration::from_millis(1));
+        let mut node = pin!(task(ConsoleCtx {
+            io,
+            info: &mut info,
+            login: &mut login,
+            // {%- if has_net == "true" %}
+            stack: &mut stack,
+            // {%- endif %}
+            // {%- if ota == "true" %}
+            ota: &mut ota,
+            // {%- endif %}
+            index: 0,
+        }));
+        assert!(node.as_mut().poll(&mut cx).is_pending());
+        for &step in advances {
+            MockDriver::get().advance(step);
             assert!(node.as_mut().poll(&mut cx).is_pending());
         }
-        assert_eq!(
-            banners(&io.shown),
-            2,
-            "{:?}",
-            String::from_utf8_lossy(&io.shown)
-        );
+    }
+
+    /// `shell` — только после пароля; `exit` возвращает к паролю, а не роняет
+    /// узел.
+    #[test]
+    fn the_node_asks_the_password_again_after_exit() {
+        let mut io = Keyboard {
+            input: b"s3cret\rexit\r",
+            shown: Vec::new(),
+        };
+        poll_node(&mut io, &[]);
+        let shown = String::from_utf8_lossy(&io.shown);
+        assert_eq!(count(&io.shown, BANNER), 1, "{shown:?}");
+        assert_eq!(count(&io.shown, PROMPT), 2, "{shown:?}");
+    }
+
+    /// Неверный пароль — отказ и пауза [`WRONG_PASSWORD_PAUSE`] до нового
+    /// приглашения; `shell` не открывается.
+    #[test]
+    fn a_wrong_password_is_refused_with_a_pause() {
+        for (advances, prompts, banners) in [
+            (&[][..], 1, 0),
+            (&[WRONG_PASSWORD_PAUSE - Duration::from_millis(1)][..], 1, 0),
+            (&[WRONG_PASSWORD_PAUSE][..], 2, 1),
+        ] {
+            let mut io = Keyboard {
+                input: b"nope\rs3cret\r",
+                shown: Vec::new(),
+            };
+            poll_node(&mut io, advances);
+            let shown = String::from_utf8_lossy(&io.shown);
+            assert_eq!(count(&io.shown, "wrong password"), 1, "{shown:?}");
+            assert_eq!(count(&io.shown, PROMPT), prompts, "{advances:?}: {shown:?}");
+            assert_eq!(count(&io.shown, BANNER), banners, "{advances:?}: {shown:?}");
+        }
+    }
+
+    /// Поток, который кончается сразу, не крутит узел без `await`: новое
+    /// приглашение — не раньше [`RESTART_PAUSE`].
+    #[test]
+    fn a_dead_stream_does_not_spin_the_node() {
+        for (advances, prompts) in [
+            (&[RESTART_PAUSE - Duration::from_millis(1)][..], 1),
+            (&[RESTART_PAUSE][..], 2),
+        ] {
+            let mut io = Terminal {
+                input: b"",
+                shown: Vec::new(),
+                room: usize::MAX,
+            };
+            poll_node(&mut io, advances);
+            assert_eq!(count(&io.shown, PROMPT), prompts, "{advances:?}");
+        }
+    }
+
+    /// Пароль читается без эха; пустые строки (хвост `\r\n`) пропускаются,
+    /// Backspace стирает символ, Ctrl-U — строку, а строка длиннее [`LINE`] —
+    /// не пароль, даже если начало совпало.
+    #[test]
+    fn the_password_line_is_read_without_echo() {
+        let access = Access::new(PasswordHash(hashed("s3cret")));
+        let long: &'static [u8] = [b"s3cret".as_slice(), &[b'x'; LINE], b"\r"].concat().leak();
+        let mut cx = Context::from_waker(Waker::noop());
+        for (input, admitted) in [
+            (&b"s3cret\r"[..], true),
+            (b"\n\r\ns3cret\n", true),
+            (b"s3crex\x08t\r", true),
+            (b"junk\x15s3cret\r", true),
+            (b"s3cret!\r", false),
+            (long, false),
+        ] {
+            let mut terminal = Terminal {
+                input,
+                shown: Vec::new(),
+                room: usize::MAX,
+            };
+            let read = pin!(sign_in(&mut terminal, access)).poll(&mut cx);
+            assert_eq!(
+                read,
+                Poll::Ready(Some(admitted)),
+                "{}",
+                input.escape_ascii()
+            );
+            assert_eq!(
+                terminal.shown,
+                b"password: \r\n",
+                "{}",
+                input.escape_ascii()
+            );
+        }
     }
     // {%- endif %}
 }

@@ -26,10 +26,6 @@ use rhai::{
 
 const MASTER_FILE: &str = "crates-host/domain/src/modbus/master.rs";
 
-/// Ключ ed25519 для ответов `ssh_key`.
-const SSH_KEY: &str =
-    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl user@host";
-
 const NO_RAM: &str = "DOES NOT FIT in RAM";
 
 /// Ответы, с которыми ищется чип для `marks_are_recomputed_after_each_toggle` и
@@ -408,7 +404,7 @@ fn run_interview(
         );
     }
     {
-        // Ввод строки по regex (`ssh_key:`): ответ — значение из `picks` как
+        // Ввод строки по regex (`variable::prompt`): ответ — значение из `picks` как
         // есть, без него — «not a terminal». Regex не проверяется: его держит
         // cargo-generate, а хук проверяет ответ сам.
         let picks = picks.clone();
@@ -2641,7 +2637,7 @@ fn ethernet_item_becomes_tcp() {
 }
 
 /// Сетевые службы — тем же списком с отметками, что и транспорты, и только
-/// при Ethernet; у SSH затем — способ входа и ключ.
+/// при Ethernet; о входе в SSH не спрашивают — он всегда по паролю.
 #[test]
 fn net_services_are_marked_after_ethernet() {
     let result = interview(
@@ -2654,8 +2650,6 @@ fn net_services_are_marked_after_ethernet() {
             ("net_services", "rest"),
             ("net_services", "ssh"),
             ("net_services", "done"),
-            ("ssh_auth", "key"),
-            ("ssh_key", SSH_KEY),
         ],
     )
     .expect("каскад не должен падать");
@@ -2664,8 +2658,13 @@ fn net_services_are_marked_after_ethernet() {
     assert_eq!(menus[0], ["done", "ssh", "rest", "mqtt"]);
     // Порядок — пунктов меню, а не отметок.
     assert_eq!(var_of(&result, "net_services"), Some("ssh,rest"));
-    assert_eq!(var_of(&result, "ssh_auth"), Some("key"));
-    assert_eq!(var_of(&result, "ssh_key"), Some(SSH_KEY));
+    assert_eq!(var_of(&result, "has_console"), Some("true"));
+    assert!(
+        result
+            .prompts
+            .iter()
+            .all(|(label, _)| !label.starts_with("ssh_"))
+    );
 }
 
 /// Без Ethernet служб не предлагают, переменные пустые.
@@ -2683,8 +2682,7 @@ fn no_net_services_without_ethernet() {
         Vec::<Vec<String>>::new()
     );
     assert_eq!(var_of(&result, "net_services"), Some(""));
-    assert_eq!(var_of(&result, "ssh_auth"), Some(""));
-    assert_eq!(var_of(&result, "ssh_key"), Some(""));
+    assert_eq!(var_of(&result, "has_console"), Some("false"));
 }
 
 /// Без RNG SSH в списке нет, и хук говорит почему.
@@ -2864,7 +2862,7 @@ fn mqtt_ota_client_follows_rest_and_ssh() {
     );
 }
 
-/// Без терминала — без служб, о входе не спрашивают.
+/// Без терминала — без служб.
 #[test]
 fn no_terminal_gives_no_net_services() {
     let result = interview(
@@ -2876,51 +2874,9 @@ fn no_terminal_gives_no_net_services() {
     .expect("каскад не должен падать");
     assert_eq!(all_menu_values(&result, "net_services").len(), 1);
     assert_eq!(var_of(&result, "net_services"), Some(""));
-    assert_eq!(
-        all_menu_values(&result, "ssh_auth"),
-        Vec::<Vec<String>>::new()
-    );
-}
-
-/// Вход по паролю — ключ не спрашивают.
-#[test]
-fn password_login_asks_no_key() {
-    let result = interview(
-        &compile_script(),
-        "h743zi",
-        &[("links", "tcp"), ("net_services", "ssh")],
-        &[("ssh_auth", "password")],
-    )
-    .expect("каскад не должен падать");
-    assert_eq!(var_of(&result, "ssh_auth"), Some("password"));
-    assert_eq!(var_of(&result, "ssh_key"), Some(""));
-    assert!(
-        !result
-            .prompts
-            .iter()
-            .any(|(label, _)| label.starts_with("ssh_key:"))
-    );
-}
-
-/// Выбрали вход по ключу, а ключа под рукой нет: пустой ввод — вход по паролю.
-#[test]
-fn an_empty_key_falls_back_to_password() {
-    let result = interview(
-        &compile_script(),
-        "h743zi",
-        &[("links", "tcp"), ("net_services", "ssh")],
-        &[("ssh_auth", "key"), ("ssh_key", "")],
-    )
-    .expect("каскад не должен падать");
-    assert_eq!(var_of(&result, "ssh_auth"), Some("password"));
-    assert_eq!(var_of(&result, "ssh_key"), Some(""));
 }
 
 /// `--define` строгий: всё, что службы сделать не могут, — ошибка с причиной.
-#[expect(
-    clippy::too_many_lines,
-    reason = "таблица случаев `--define` с ожидаемыми ошибками"
-)]
 #[test]
 fn net_services_defines_are_strict() {
     let ast = compile_script();
@@ -2940,7 +2896,7 @@ fn net_services_defines_are_strict() {
             &[("links", "tcp"), ("net_services", "ssh")][..],
             "нет RNG",
         ),
-        // Вход по ключу без ключа (без терминала) и с ключом не ed25519.
+        // Прежние ответы о входе — ошибка: вход всегда по паролю.
         (
             "h743zi",
             &[
@@ -2948,69 +2904,16 @@ fn net_services_defines_are_strict() {
                 ("net_services", "ssh"),
                 ("ssh_auth", "key"),
             ][..],
-            "ssh_key: вход по ключу",
+            "ssh_auth: убран",
         ),
         (
             "h743zi",
             &[
                 ("links", "tcp"),
                 ("net_services", "ssh"),
-                ("ssh_auth", "key"),
-                ("ssh_key", "ssh-rsa AAAA"),
+                ("ssh_key", "ssh-ed25519 AAAA"),
             ][..],
-            "ssh_key: вход по ключу",
-        ),
-        // Одно начало без тела ключа и кавычка, которая сломала бы литерал.
-        (
-            "h743zi",
-            &[
-                ("links", "tcp"),
-                ("net_services", "ssh"),
-                ("ssh_auth", "key"),
-                ("ssh_key", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5"),
-            ][..],
-            "ssh_key: вход по ключу",
-        ),
-        (
-            "h743zi",
-            &[
-                ("links", "tcp"),
-                ("net_services", "ssh"),
-                ("ssh_auth", "key"),
-                (
-                    "ssh_key",
-                    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl a\"b",
-                ),
-            ][..],
-            "ssh_key: вход по ключу",
-        ),
-        (
-            "h743zi",
-            &[
-                ("links", "tcp"),
-                ("net_services", "ssh"),
-                ("ssh_auth", "otp"),
-            ][..],
-            "ssh_auth: ожидается",
-        ),
-        (
-            "h743zg",
-            &[
-                ("links", "tcp"),
-                ("net_services", "rest"),
-                ("ssh_auth", "key"),
-            ][..],
-            "ssh_auth: задаётся только",
-        ),
-        (
-            "h743zi",
-            &[
-                ("links", "tcp"),
-                ("net_services", "ssh"),
-                ("ssh_auth", "password"),
-                ("ssh_key", SSH_KEY),
-            ][..],
-            "ssh_key: ключ нужен только",
+            "ssh_key: убран",
         ),
     ] {
         let Err(err) = interview(&ast, suffix, defines, &[]) else {
@@ -3021,26 +2924,12 @@ fn net_services_defines_are_strict() {
     let ok = interview(
         &ast,
         "h743zi",
-        &[
-            ("links", "tcp"),
-            ("net_services", "rest, ssh"),
-            ("ssh_auth", "key"),
-            ("ssh_key", SSH_KEY),
-        ],
+        &[("links", "tcp"), ("net_services", "rest, ssh")],
         &[],
     )
     .expect("каскад не должен падать");
     assert_eq!(var_of(&ok, "net_services"), Some("rest,ssh"));
-    assert_eq!(var_of(&ok, "ssh_key"), Some(SSH_KEY));
-    // Без терминала вход — по паролю.
-    let silent = interview(
-        &ast,
-        "h743zi",
-        &[("links", "tcp"), ("net_services", "ssh")],
-        &[],
-    )
-    .expect("каскад не должен падать");
-    assert_eq!(var_of(&silent, "ssh_auth"), Some("password"));
+    assert_eq!(var_of(&ok, "has_console"), Some("true"));
 }
 
 /// Протоколу граф не нужен: без него узел спавнит `tasks::spawn_all`, и ни ответ `graph=no`,
@@ -4152,20 +4041,16 @@ fn every_path_through_the_menus_generates() {
     let mut paths = 0;
     let mut failures = Vec::new();
     for chip in chips {
-        // Ввод строки (`ssh_key:`) — не меню, перебирать в нём нечего: ответ
-        // готов заранее и расходуется, только если вопрос задан.
-        let ssh = ("ssh_key".to_string(), SSH_KEY.to_string());
-        let mut stack: Vec<Vec<(String, String)>> = vec![vec![ssh.clone()]];
+        let mut stack: Vec<Vec<(String, String)>> = vec![Vec::new()];
         // Список транспортов в обходе отвечается одним пунктом, поэтому два
         // отмеченных вида (UART и сетевой) заданы заранее, где чип их даёт.
-        if let Ok(first) = interview(&ast, chip, &[], &[("ssh_key", SSH_KEY)])
+        if let Ok(first) = interview(&ast, chip, &[], &[])
             && let Some(kinds) = menu_values(&first, "transports")
             && ["uart", "tcp"]
                 .iter()
                 .all(|kind| kinds.iter().any(|k| k == kind))
         {
             stack.push(vec![
-                ssh,
                 ("transports".to_string(), "uart".to_string()),
                 ("transports".to_string(), "tcp".to_string()),
                 ("transports".to_string(), "done".to_string()),

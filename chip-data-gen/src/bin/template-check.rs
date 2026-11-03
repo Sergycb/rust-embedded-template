@@ -188,8 +188,8 @@ const SECRETS: &[&str] = &[
     "ota-signing-key.bin",
     "ota-public-key.bin",
     "rest-token.txt",
-    "ssh-password.txt",
-    "ssh-password.hash",
+    "console-password.txt",
+    "console-password.hash",
     "ssh-host-key.bin",
     "mqtt.toml",
 ];
@@ -439,7 +439,9 @@ fn default_cases() -> Vec<Case> {
         // живёт в bootloader'е, и код `salty` под Thumb-1 заметно толще, чем
         // под M4; влезает ли release-bootloader в свою зону на M0+, проверяет эта
         // конфигурация.
-        Case::new("stm32g071rb").variant("no-graph", &["graph=no"]).smoke(),
+        Case::new("stm32g071rb")
+            .variant("no-graph", &["graph=no"])
+            .smoke(),
         // Единственная ветка, где стёртый флеш читается нулями: у L0/L1 хук
         // включает `flash-erase-zero` у embassy-boot, иначе bootloader читает
         // признак «стёрто» наоборот. Взят чип с запасом flash — на 64 KiB
@@ -462,8 +464,10 @@ fn default_cases() -> Vec<Case> {
         Case::new("stm32f407ve").variant("protobuf-uart", &["protocol=protobuf", "interface=uart"]),
         // Без OTA у `Request` схемы одна команда (`info`), и код `micropb-gen`
         // меняет форму: `if let` разбора `oneof` становится безальтернативным.
-        Case::new("stm32f407ve")
-            .variant("protobuf-uart-no-ota", &["protocol=protobuf", "interface=uart", "ota=no"]),
+        Case::new("stm32f407ve").variant(
+            "protobuf-uart-no-ota",
+            &["protocol=protobuf", "interface=uart", "ota=no"],
+        ),
         // CANopen на обоих CAN-контроллерах: `can_kind` — FDCAN (G4) и bxCAN
         // (F4) — различает документацию и имя блока в справочнике. Заодно —
         // крейт словаря `crates-host/canopen`, который в остальных
@@ -473,11 +477,12 @@ fn default_cases() -> Vec<Case> {
         // CANopen с разделом настроек: объекты по `save` и адрес по LSS — в
         // хранилище настроек (`domain::canopen`); колбэки стека и сам стек —
         // локальные задачи узла.
-        Case::new("stm32g474re").variant(
-            "canopen-config",
-            &["protocol=canopen", "interface=can", "config=yes"],
-        )
-        .smoke(),
+        Case::new("stm32g474re")
+            .variant(
+                "canopen-config",
+                &["protocol=canopen", "interface=can", "config=yes"],
+            )
+            .smoke(),
         // То же на внешней флеши (`ext_flash=yes`, OTA там же): у ошибки её
         // драйвера свой `defmt::Format`.
         Case::new("stm32f407ve").variant(
@@ -497,11 +502,12 @@ fn default_cases() -> Vec<Case> {
         // половина (`ports::ModbusClient`, `domain::modbus::master`, клиентские
         // impl'ы транспортов) собирается в сгенерированном проекте; остальные
         // Modbus (`modbus-uart`, `modbus-usb`) — без неё, по умолчанию.
-        Case::new("stm32h743zg").variant(
-            "modbus-tcp-master",
-            &["protocol=modbus", "interface=tcp", "modbus_master=yes"],
-        )
-        .smoke(),
+        Case::new("stm32h743zg")
+            .variant(
+                "modbus-tcp-master",
+                &["protocol=modbus", "interface=tcp", "modbus_master=yes"],
+            )
+            .smoke(),
         Case::new("stm32f407ve").variant("protobuf-udp", &["protocol=protobuf", "interface=udp"]),
         // Транспорт без протокола (свой протокол пишет проект): заглушка интерфейса
         // и его фоновый узел есть, узла протокола — нет. Граф и его отсутствие, по
@@ -578,10 +584,8 @@ fn default_cases() -> Vec<Case> {
             "rest-modbus-tcp",
             &["links=tcp:modbus", "net_services=rest"],
         ),
-        Case::new("stm32f407ve").variant(
-            "rest-no-ota",
-            &["links=tcp", "net_services=rest", "ota=no"],
-        ),
+        Case::new("stm32f407ve")
+            .variant("rest-no-ota", &["links=tcp", "net_services=rest", "ota=no"]),
         // Консоль SSH (`domain::ssh`, `getrandom` над RNG платы): вход по
         // паролю и ключ хоста, созданный платой в разделе настроек (`Stored`);
         // вместе с REST (клиенты OTA 0 и 1) — вход по ключу и ключ хоста из
@@ -591,20 +595,15 @@ fn default_cases() -> Vec<Case> {
         // а с консолью `bareminal` debug-образу нужно около 273K, поэтому чип
         // с запасом — H743ZI (ACTIVE 640K, CONFIG 256K в хвосте).
         Case::new("stm32h743zi").variant(
-            "ssh-password-config",
-            &[
-                "links=tcp",
-                "net_services=ssh",
-                "ssh_auth=password",
-                "config=yes",
-            ],
+            "ssh-config",
+            &["links=tcp", "net_services=ssh", "config=yes"],
         ),
         // SSH с OTA и без других служб и протоколов: тестам консоли нужен вход
         // `CMD` узла OTA без самого узла (`ota::tests::cmd`), а остальные
         // конфигурации с SSH тянут его через REST.
         Case::new("stm32h743zg").variant(
             "ssh-ota",
-            &["links=tcp", "net_services=ssh", "ssh_auth=password", "ext_flash=yes"],
+            &["links=tcp", "net_services=ssh", "ext_flash=yes"],
         ),
         // Консоль `cli` поверх UART/USB: одна на проект, рядом с Modbus и без
         // графа — задачами. SSH с ней не сочетается (`net_services=ssh` — ошибка).
@@ -612,23 +611,11 @@ fn default_cases() -> Vec<Case> {
             .variant("uart-cli-no-graph", &["links=uart:cli", "graph=no"])
             .smoke(),
         Case::new("stm32g474re").variant("usb-cli", &["links=usb:cli"]),
-        Case::new("stm32h743zi").variant(
-            "uart-modbus-cli",
-            &["links=uart:modbus,uart:cli"],
-        ),
-        Case::new("stm32h743zi").variant(
-            "uart-cli-ota",
-            &["links=uart:cli", "ext_flash=yes"],
-        ),
+        Case::new("stm32h743zi").variant("uart-modbus-cli", &["links=uart:modbus,uart:cli"]),
+        Case::new("stm32h743zi").variant("uart-cli-ota", &["links=uart:cli", "ext_flash=yes"]),
         Case::new("stm32h743zg").variant(
-            "rest-ssh-key",
-            &[
-                "links=tcp",
-                "net_services=rest,ssh",
-                "ssh_auth=key",
-                "ssh_key=ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl",
-                "ext_flash=yes",
-            ],
+            "rest-ssh",
+            &["links=tcp", "net_services=rest,ssh", "ext_flash=yes"],
         ),
         // Клиент MQTT (`domain::mqtt`, `domain::mqtt::TcpClient`): с OTA —
         // рядом с Modbus по TCP (клиент OTA 1, третий сокет); со всеми
@@ -640,19 +627,12 @@ fn default_cases() -> Vec<Case> {
         ),
         Case::new("stm32h743zg").variant(
             "rest-ssh-mqtt",
-            &[
-                "links=tcp",
-                "net_services=rest,ssh,mqtt",
-                "ssh_auth=password",
-                "ext_flash=yes",
-            ],
+            &["links=tcp", "net_services=rest,ssh,mqtt", "ext_flash=yes"],
         ),
         Case::new("stm32f407ve").variant("mqtt-udp", &["links=udp", "net_services=mqtt"]),
         // Без OTA: узел MQTT без клиента OTA, `cmd/reboot` — строка в лог.
-        Case::new("stm32f407ve").variant(
-            "mqtt-no-ota",
-            &["links=tcp", "net_services=mqtt", "ota=no"],
-        ),
+        Case::new("stm32f407ve")
+            .variant("mqtt-no-ota", &["links=tcp", "net_services=mqtt", "ota=no"]),
         // Клок RNG, которого умолчания HAL не дают, — мультиплексор на своём
         // источнике (`config()` в `bsp::board`): `RNGSEL` у G0 (SYS), WL
         // (MSI) и WBA (HSI), `CLK48SEL` у L476 без HSI48 (MSI). PLL48 и HSI48

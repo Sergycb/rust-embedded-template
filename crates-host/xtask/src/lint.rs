@@ -36,7 +36,7 @@ pub fn lint_host(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
 
 pub fn lint_cross(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     ensure_test_memory_matches_app()?;
-    // {%- if net_services contains "rest" or net_services contains "mqtt" or ssh_auth == "password" or ssh_host_key == "file" %}
+    // {%- if net_services contains "rest" or net_services contains "mqtt" or has_console == "true" or ssh_host_key == "file" %}
     // clippy компилирует `app`, а тот вшивает секреты служб (`include_str!`).
     crate::secrets::ensure(&root_dir())?;
     // {%- endif %}

@@ -21,9 +21,11 @@ async fn task(mut io: Source, mut info: DeviceInfo, mut ota: domain::ota::OtaCli
 async fn task(mut io: Source, mut info: DeviceInfo) {
 {%- endif %}
     // Сети без графа нет: `info` печатает `mac none`, `ip none`.
+    let mut login = crate::console::PASSWORD;
     domain::console::task(domain::console::ConsoleCtx {
         io: &mut io,
         info: &mut info,
+        login: &mut login,
         {%- if ota == "true" %}
         ota: &mut ota,
         {%- endif %}

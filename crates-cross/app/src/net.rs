@@ -80,43 +80,16 @@ pub mod rest {
     );
 }
 {%- endif %}
-{%- if net_services contains "ssh" %}
+{%- if net_services contains "ssh" and ssh_host_key == "file" %}
 
-/// Консоль SSH (`domain::ssh`, узел `SSH`): вход пользователя{% if ssh_host_key == "file" %} и ключ хоста{% endif %}.
+/// Консоль SSH (`domain::ssh`, узел `SSH`): ключ хоста. Пароль входа —
+/// `crate::console::PASSWORD`.
 pub mod ssh {
-{%- if ssh_auth == "password" %}
-    /// Как консоль SSH пускает пользователя: по паролю, чей хэш —
-    /// [`PASSWORD_HASH`].
-    pub const LOGIN: domain::ssh::Login = domain::ssh::Login::PasswordHash(PASSWORD_HASH);
-
-    /// Хэш пароля консоли SSH (`domain::ssh::USER`) — соль и SHA-256(соль ‖
-    /// пароль): файл `ssh-password.hash` в корне проекта, который создаёт
-    /// `cargo xtask` (README, «Консоль SSH»). Самого пароля в прошивке нет.
-    const PASSWORD_HASH: &[u8] = include_bytes!("../../../ssh-password.hash");
-
-    // Хэш не той длины `domain::ssh` не пустит никого — лучше узнать это при
-    // сборке, чем по отказу на плате.
-    const _: () = assert!(
-        PASSWORD_HASH.len() == domain::ssh::PASSWORD_HASH_LEN,
-        "ssh-password.hash битый: удалите его, и `cargo xtask build` создаст новый \
-         из ssh-password.txt (или новый пароль, если нет и его)"
-    );
-{%- else %}
-    /// Как консоль SSH пускает пользователя: по открытому ключу, данному при
-    /// генерации (`--define ssh_key=…`). Ключ открытый — его не страшно держать
-    /// в коде; сменить — поправить строку.
-    pub const LOGIN: domain::ssh::Login = domain::ssh::Login::Key(
-        "{{ssh_key}}",
-    );
-{%- endif %}
-{%- if ssh_host_key == "file" %}
-
     /// Зерно ключа хоста SSH (ed25519): `ssh-host-key.bin` в корне проекта, который
     /// создаёт `cargo xtask` (README, «Консоль SSH»).{% if has_canopen == "true" %} Плата не хранит его сама: раздел
     /// настроек забирает узел CANopen.{% elsif config == "true" and config_store == "external" %} Плата не хранит его
     /// сама: на внешней флеши до драйвера проекта стоит заглушка, и ключ менялся бы
     /// при каждом старте.{% endif %}
     pub static HOST_KEY: [u8; 32] = *include_bytes!("../../../ssh-host-key.bin");
-{%- endif %}
 }
 {%- endif %}

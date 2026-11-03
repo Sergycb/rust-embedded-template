@@ -46,7 +46,7 @@ pub fn build(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     // моменту компиляции.
     let seed = ensure_signing_key(&root_dir())?;
     // {%- endif %}
-    // {%- if net_services contains "rest" or net_services contains "mqtt" or ssh_auth == "password" or ssh_host_key == "file" %}
+    // {%- if net_services contains "rest" or net_services contains "mqtt" or has_console == "true" or ssh_host_key == "file" %}
     // Секреты служб — тоже до сборки: прошивка вшивает их `include_str!`.
     crate::secrets::ensure(&root_dir())?;
     // {%- endif %}

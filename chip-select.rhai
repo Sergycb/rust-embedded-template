@@ -544,22 +544,6 @@ fn checklist(label, values, texts, note, need_one) {
     out
 }
 
-/// Строка открытого ключа ed25519 из `~/.ssh/id_ed25519.pub`: `ssh-ed25519`,
-/// блоб — 51 байт, то есть ровно 68 символов base64 без `=`, — и
-/// необязательный комментарий. Кавычек, `\` и переводов строк нет: строка
-/// уезжает в исходники шаблона.
-fn ssh_key_ok(key, blob_prefix, base64_chars) {
-    if key.contains("\"") || key.contains("\\") || key.contains("\n") || key.contains("\r") { return false; }
-    let parts = key.split(" ");
-    if parts.len() < 2 || parts[0] != "ssh-ed25519" { return false; }
-    let blob = parts[1];
-    if blob.len() != 68 || !blob.starts_with(blob_prefix) { return false; }
-    for c in blob.chars() {
-        if !base64_chars.contains(c) { return false; }
-    }
-    true
-}
-
 /// Свободные блоки вида `kind`: `#{ tag, block }` по меткам `tags` вида, какие
 /// есть у чипа в `have` (в порядке `have`, внутри метки — в порядке `instances`),
 /// без блоков, уже отданных транспортам `links` этого вида. `tcp` и `udp` делят
@@ -986,10 +970,6 @@ const NET_SERVICE_ITEMS = [
     #{ value: "rest", text: "REST API over HTTP (picoserve)", needs_rng: false, min_partition: 0 },
     #{ value: "mqtt", text: "MQTT client (minimq)", needs_rng: false, min_partition: 0 },
 ];
-// Начало base64-блоба открытого ключа ed25519 (`ssh_key`): длина и имя типа,
-// затем длина ключа (32). Других ключей `sunset` без фич не проверяет.
-const SSH_KEY_BLOB_PREFIX = "AAAAC3NzaC1lZDI1NTE5AAAAI";
-const BASE64_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 const PROTOCOL_TEXT = #{
     "modbus": "modbus - Modbus slave",
     "protobuf": "protobuf - protobuf messages from the host",
@@ -1061,12 +1041,12 @@ const RAM_COST = #{
     // rest-modbus-tcp 28500 при оценке без REST 9680 (буферы двух соединений,
     // сокеты, futures `picoserve`; тело `/api/info` собирается в последнем
     // звене `write_content`, а не едет буфером `INFO_MAX` через десяток
-    // вложенных future — это сняло 7344 с прежних 26164); SSH — stm32h743zg ssh-password-config 20100
+    // вложенных future — это сняло 7344 с прежних 26164); SSH — stm32h743zg ssh-config 20100
     // против tcp config=yes 3380 (буферы, ключи, futures `sunset`, статик RNG
     // для `getrandom`) — 16720,
-    // но stm32h743zg rest-ssh-key (ext_flash=yes) 41652 на 608 больше суммы
+    // но stm32h743zg rest-ssh (ext_flash=yes) 41652 на 608 больше суммы
     // частей: SSH взят с этим запасом — 17328. Консоль `bareminal` — ещё 2176
-    // (stm32h743zi ssh-password-config: 22988 против 20812 с заглушкой), итого 19504.
+    // (stm32h743zi ssh-config: 22988 против 20812 с заглушкой), итого 19504.
     // MQTT — stm32h743zg mqtt-modbus-tcp 16436 при оценке без MQTT 9680
     // (буферы `minimq` и сокета, сокет, future узла) — 6756, но
     // rest-ssh-mqtt (ext_flash=yes) 56148 на 676 больше оценки с прежними 6800:
@@ -1775,8 +1755,8 @@ if protocol != "modbus" && variable::is_set("modbus_master") && yes_no_define("m
 
 // --- Сетевые службы (`net_services`, `NET_SERVICE_ITEMS`): список с отметками,
 // когда среди транспортов есть Ethernet; `--define net_services=ssh,rest` —
-// строго, как `links`. Затем у SSH — способ входа (`ssh_auth`) и при входе по
-// ключу — открытый ключ (`ssh_key`).
+// строго, как `links`. Вход в консоль (SSH и `cli`) — всегда по паролю:
+// вопроса нет.
 let has_eth = links.some(|link| link.kind == "tcp" || link.kind == "udp");
 let services = [];
 let service_items = NET_SERVICE_ITEMS.filter(|item| (!item.needs_rng || rng[0] != "")
@@ -1818,58 +1798,16 @@ if variable::is_set("net_services") {
     services = checklist("net_services: отметьте сетевые службы (Enter — отметить или снять)",
         service_items.map(|item| item.value), service_items.map(|item| item.text));
 }
-let ssh_auth = "";
-let ssh_key = "";
-if services.contains("ssh") {
-    ssh_auth = if variable::is_set("ssh_auth") {
-        variable::get("ssh_auth")
-    } else {
-        // Умолчание (и ответ без терминала) — пароль: вход по ключу без
-        // терминала было бы нечем закончить, а вопрос, который некому задать,
-        // генерацию не роняет.
-        ask("ssh_auth: вход в консоль SSH", ["password", "key"],
-            ["password - by password", "key - by ed25519 public key"], "password")
-    };
-    if ssh_auth != "key" && ssh_auth != "password" {
-        throw "ssh_auth: ожидается key или password, а не «" + ssh_auth + "»";
-    }
-    if ssh_auth == "key" {
-        // Пустой ввод — передумали: вход по паролю. Без терминала ввода нет
-        // вовсе, и `ssh_auth=key` из `--define` без ключа — ошибка ниже.
-        let declined = false;
-        if variable::is_set("ssh_key") {
-            ssh_key = variable::get("ssh_key");
-        } else {
-            try {
-                ssh_key = variable::prompt("ssh_key: открытый ключ — строка ssh-ed25519 AAAA… из ~/.ssh/id_ed25519.pub (пусто — вход по паролю)",
-                    "", "^$|^ssh-ed25519 " + SSH_KEY_BLOB_PREFIX + "[A-Za-z0-9+/]{43}( .*)?$");
-                ssh_key.trim();
-                declined = ssh_key == "";
-            } catch (err) {
-                if !err.to_string().contains("not a terminal") { throw err; }
-            }
-        }
-        ssh_key.trim();
-        if declined {
-            ssh_auth = "password";
-            print("Ключ не введён — вход в консоль SSH по паролю");
-        } else if !ssh_key_ok(ssh_key, SSH_KEY_BLOB_PREFIX, BASE64_CHARS) {
-            throw "ssh_key: вход по ключу — нужна строка открытого ключа ed25519 («ssh-ed25519 "
-                + SSH_KEY_BLOB_PREFIX + "…», без кавычек); задайте --define ssh_key=\"…\" или ssh_auth=password";
-        }
-    }
-}
+// Прежние ответы о способе входа: вход по ключу убран, пароль — всегда.
 for name in ["ssh_auth", "ssh_key"] {
-    if !services.contains("ssh") && variable::is_set(name) {
-        throw name + ": задаётся только вместе со службой ssh (net_services)";
+    if variable::is_set(name) {
+        throw name + ": убран — вход в консоль всегда по паролю (console-password.hash, README)";
     }
 }
-if ssh_auth == "password" && variable::is_set("ssh_key") {
-    throw "ssh_key: ключ нужен только при ssh_auth=key";
-}
+// Консоль — SSH или `cli`, одна на проект; у неё всегда пароль.
+let has_console = has_cli || services.contains("ssh");
 variable::set("net_services", services.reduce(|sum, name| if sum == "" { name } else { sum + "," + name }, ""));
-variable::set("ssh_auth", ssh_auth);
-variable::set("ssh_key", ssh_key);
+variable::set("has_console", if has_console { "true" } else { "false" });
 
 // --- RAM. Оценка (`ram_estimate`, байт статической RAM) — для сводки и для
 // `template-check`, который сверяет её с фактом сборки. Не помещается проект с
@@ -2941,8 +2879,10 @@ if !services.contains("ssh") {
     file::delete("crates-host/domain/src/ssh");
 }
 // Консоль живёт для SSH или `cli`: нет ни того, ни другого — нет и модуля.
-if !has_cli && !services.contains("ssh") {
+if !has_console {
     file::delete("crates-host/domain/src/console.rs");
+    file::delete("crates-host/domain/src/console");
+    file::delete("crates-cross/app/src/console.rs");
 }
 // MQTT — узел (с клиентом брокера `mqtt/client.rs`), разбор `mqtt.toml` в
 // build-скрипте `app` и описание.
@@ -2969,9 +2909,9 @@ variable::set("ssh_host_key", if !services.contains("ssh") { "" }
 if variable::get("ssh_host_key") == "file" {
     file::delete("crates-host/domain/src/ssh/host_key.rs");
 }
-// Файлы служб в корне проекта (`xtask::secrets`): токен REST, пароль и ключ
-// хоста SSH, настройки брокера MQTT — только если хоть один из них нужен.
-if !services.contains("rest") && !services.contains("mqtt") && ssh_auth != "password"
+// Файлы служб в корне проекта (`xtask::secrets`): токен REST, пароль консоли,
+// ключ хоста SSH, настройки брокера MQTT — только если хоть один из них нужен.
+if !services.contains("rest") && !services.contains("mqtt") && !has_console
     && variable::get("ssh_host_key") != "file" {
     file::delete("crates-host/xtask/src/secrets.rs");
 }

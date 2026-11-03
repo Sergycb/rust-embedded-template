@@ -172,12 +172,10 @@ Modbus. Через `--define` то же задаёт `links` (`parse_links()`, �
 транспортов); `ssh` в нём только у чипа с RNG (`rng_irq`) и с разделом приложения не
 меньше `SSH_MIN_PARTITION` (320 KiB: `sunset` с криптографией — около 165 KiB кода,
 консоль `bareminal` — ещё около 27 KiB release),
-иначе хук печатает, почему его нет. Отмечен `ssh` — `ssh_auth:` (`password` — умолчание, `key`), при `key` — ввод
-строки `ssh_key:` (`variable::prompt` с regex; пустой ввод — вход по паролю). Ключ из
-ввода и из `--define` хук проверяет одинаково — `ssh_key_ok()`: тип, блоб ровно 68
-символов base64, без кавычек и `\` (строка уедет в исходники).
+иначе хук печатает, почему его нет. Вопроса о входе нет: консоль (SSH или `cli`)
+пускает только по паролю; прежние `ssh_auth`/`ssh_key` в `--define` — ошибка.
 Итог — `net_services` (`ssh,rest,mqtt` в порядке пунктов, через `--define` — в порядке
-списка), `ssh_auth`, `ssh_key`, и `ssh_host_key`: `config` — ключ хоста плата создаёт
+списка), `has_console` (`cli` или `ssh`) и `ssh_host_key`: `config` — ключ хоста плата создаёт
 сама в разделе настроек (`domain::ssh::Stored`), `file` — вшит из `ssh-host-key.bin`
 (`crate::net::ssh::HOST_KEY` в `app`; так и при `config` вместе с CANopen — раздел
 настроек целиком его — и с настройками на внешней флеши: до драйвера проекта там
@@ -188,9 +186,8 @@ Modbus. Через `--define` то же задаёт `links` (`parse_links()`, �
 без Modbus. Сокеты стека считает `bsp::net::SOCKETS` из чисел генерации: DHCP-клиент,
 сетевые транспорты (`net_sockets`), по сокету на копию пула REST (`http_connections` →
 `HTTP_CONNECTIONS`), на SSH и на MQTT. Секреты
-(`rest-token.txt`, `ssh-password.hash` с паролем в `ssh-password.txt`, `ssh-host-key.bin`, заготовка `mqtt.toml`) создаёт `cargo xtask`
-(`secrets.rs`). Тесты — `net_services_*`, `ssh_*`, `password_login_asks_no_key` в
-`cascade.rs`; обход путей отвечает на `ssh_key` заранее.
+(`rest-token.txt`, `console-password.hash` с паролем в `console-password.txt`, `ssh-host-key.bin`, заготовка `mqtt.toml`) создаёт `cargo xtask`
+(`secrets.rs`). Тесты — `net_services_*`, `ssh_*`, `cli_*` в `cascade.rs`.
 
 #### Без терминала и `--define`
 

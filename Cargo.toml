@@ -300,11 +300,9 @@ sunset-async           = { version = "0.6.0" }
 bareminal_cli          = { version = "0.4.0", default-features = false, features = ["async-no-std"] }
 # `#[derive(Command)]` консоли: разбор enum и генерация `help` в compile time.
 bareminal_macros       = { version = "0.4.0" }
-# {%- endif %}
-# {%- if net_services contains "ssh" %}
-# Хэш пароля консоли SSH (`domain::ssh::Login::PasswordHash`; создаёт его
+# Хэш пароля консоли (`domain::console::PasswordHash`; создаёт его
 # `cargo xtask`, `secrets.rs`): SHA-256 и сравнение за постоянное время. Те же
-# версии, что уже тянет `sunset`, — нового кода в сборке нет.
+# версии, что тянет `sunset`: с SSH нового кода в сборке нет.
 sha2                   = { version = "0.11.1", default-features = false }
 subtle                 = { version = "2.6.1", default-features = false }
 # {%- endif %}

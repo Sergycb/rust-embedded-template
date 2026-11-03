@@ -7,11 +7,10 @@ use defmt_or_log::{info, warn};
 use embassy_futures::select::{Either, select, select3};
 use embassy_net::tcp::TcpSocket;
 use embassy_time::{Duration, Instant, Timer, with_timeout};
-use sunset_async::sunset::{ChanHandle, PubKey, ServEvent, SignKey};
+use sunset_async::sunset::{ChanHandle, ServEvent, SignKey};
 use sunset_async::{ProgressHolder, SSHServer};
 
-use crate::console::{Device, Idle, LINE, Out, ShellEnd, exec, shell};
-use crate::ssh::login::Access;
+use crate::console::{Access, Device, Idle, LINE, Out, ShellEnd, USER, exec, shell};
 
 /// Порт SSH.
 pub const PORT: u16 = 22;
@@ -192,32 +191,17 @@ async fn negotiate(
         // Запросы, которые не приняты явно, отклоняет их `Drop`.
         match server.progress(&mut ph).await? {
             ServEvent::Hostkeys(h) => h.hostkeys(&[key])?,
-            ServEvent::FirstAuth(mut a) => a.set_auth_methods(
-                matches!(access, Access::Password { .. }),
-                matches!(access, Access::Key(_)),
-            )?,
+            // Вход только по паролю: ключ клиенту не предлагается, и его
+            // попытку отклоняет `Drop` запроса.
+            ServEvent::FirstAuth(mut a) => a.set_auth_methods(true, false)?,
             ServEvent::PasswordAuth(a) => {
                 // Пароль не прочитался — как пустой: не пускает (так же
                 // `matches_password` `sunset`).
                 let password = a.raw_password().map(|p| p.0).unwrap_or_default();
-                if access.admits_password(|user| a.matches_username(user), password) {
+                if a.matches_username(USER) && access.admits(password) {
                     a.allow()?;
                 } else {
                     warn!("ssh: неверный пользователь или пароль");
-                    failures += 1;
-                }
-            }
-            ServEvent::PubkeyAuth(a) => {
-                // Не `match`: прочие варианты `PubKey` зависят от фич `sunset`.
-                let key = if let PubKey::Ed25519(given) = a.pubkey()? {
-                    Some(given.key.0)
-                } else {
-                    None
-                };
-                if access.admits_key(key, |user| a.username().map(|name| name == user))? {
-                    a.allow()?;
-                } else {
-                    warn!("ssh: чужой ключ или пользователь");
                     failures += 1;
                 }
             }

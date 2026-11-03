@@ -163,15 +163,15 @@ heapless           = { workspace = true }
 # `embassy-futures` — те же, что у `sunset-async`.
 bareminal_cli      = { workspace = true }
 bareminal_macros   = { workspace = true }
+# Вход по паролю (`domain::console::PasswordHash`): SHA-256 предъявленного
+# пароля с солью и сравнение с хэшем из прошивки за постоянное время.
+sha2               = { workspace = true }
+subtle             = { workspace = true }
 # {%- endif %}
 # {%- if net_services contains "ssh" %}
 # Узел SSH (`domain::ssh`): протокол `sunset` над сокетом — `sunset-async`
 # (реэкспортирует `sunset`), канал сессии — `embedded-io-async`.
 sunset-async       = { workspace = true }
-# Вход по паролю (`domain::ssh::Login::PasswordHash`): SHA-256 предъявленного
-# пароля с солью и сравнение с хэшем из прошивки за постоянное время.
-sha2               = { workspace = true }
-subtle             = { workspace = true }
 # {%- endif %}
 # {%- if ota == "true" or net_services contains "ssh" %}
 # {%- if ota == "true" %}
