@@ -14,9 +14,13 @@
 // {%- endif %}
 //! | `exit` | закрывает сессию (как и EOF, Ctrl-D) |
 //!
-//! Это отправная точка: свои команды проект добавляет в [`Command`](crate::ssh::Command),
-//! `parse` и `run`, данные берёт у своих узлов клиентами их входов{% if ota == "true" %}, как
-//! перезагрузку — у OTA{% endif %}.
+//! `shell` редактирует строку (стрелки, Home/End, Delete, Ctrl-U), помнит
+//! историю (Up/Down) и дополняет команды по Tab; `help` и `help <команда>`
+//! собираются из вариантов [`Command`](crate::ssh::Command).
+//! Это отправная точка: свои команды проект добавляет вариантами
+//! [`Command`](crate::ssh::Command) — разбор, `help`, историю и
+//! автодополнение строит `bareminal`, — данные берёт у своих узлов клиентами
+//! их входов{% if ota == "true" %}, как перезагрузку — у OTA{% endif %}.
 //!
 //! Протокол — `sunset`, его асинхронная обвязка — `sunset-async` над сокетом
 //! TCP `embassy-net`. Ключ хоста
@@ -58,7 +62,7 @@ use crate::ssh::console::Device;
 use crate::ssh::login::Access;
 use crate::ssh::session::{CLOSE_WAIT, IDLE, KEEP_ALIVE, session};
 
-pub use console::Command;
+pub use console::{Command, Confirm};
 // {%- if ssh_host_key == "config" %}
 pub use host_key::{HOST_KEY_ID, Stored};
 // {%- endif %}
@@ -230,7 +234,7 @@ mod tests {
 
     use crate::device::{DeviceInfo, PANIC_BRIEF};
     use crate::ssh::console::{
-        Device, Editor, INFO_TEXT, Key, LINE, SHELL_IDLE, parse, shell, write_info,
+        Confirm, Device, INFO_TEXT, LINE, Out, SHELL_IDLE, exec, parse, shell, write_info,
     };
     use crate::ssh::login::Access;
     use crate::ssh::session::{CLOSE_WAIT, tries_exhausted};
@@ -286,24 +290,31 @@ mod tests {
     }
     // {%- endif %}
 
-    /// Терминал, который молчит: чтение не кончается, вывод копится, пока в
-    /// окне канала есть место (`room` байт), дальше запись ждёт вечно.
-    struct Silent {
-        shown: Vec<u8>,
-        room: usize,
-    }
+    /// Терминал, который молчит: чтение не кончается.
+    struct Mute;
 
-    impl embedded_io_async::ErrorType for Silent {
+    impl embedded_io_async::ErrorType for Mute {
         type Error = Infallible;
     }
 
-    impl embedded_io_async::Read for Silent {
+    impl embedded_io_async::Read for Mute {
         async fn read(&mut self, _: &mut [u8]) -> Result<usize, Infallible> {
             core::future::pending().await
         }
     }
 
-    impl embedded_io_async::Write for Silent {
+    /// Терминал, который не читает: вывод копится, пока в окне канала есть
+    /// место (`room` байт), дальше запись ждёт вечно.
+    struct Screen {
+        shown: Vec<u8>,
+        room: usize,
+    }
+
+    impl embedded_io_async::ErrorType for Screen {
+        type Error = Infallible;
+    }
+
+    impl embedded_io_async::Write for Screen {
         async fn write(&mut self, buf: &[u8]) -> Result<usize, Infallible> {
             if self.room == 0 {
                 core::future::pending::<()>().await;
@@ -323,11 +334,9 @@ mod tests {
         }
     }
 
-    /// Терминал по сценарию: отдаёт байты `input` по одному, затем EOF;
-    /// вывод копится.
+    /// Ввод по сценарию: отдаёт байты `input` по одному, затем EOF.
     struct Script {
         input: &'static [u8],
-        shown: Vec<u8>,
     }
 
     impl embedded_io_async::ErrorType for Script {
@@ -346,25 +355,6 @@ mod tests {
             buf[0] = byte;
             self.input = rest;
             Ok(1)
-        }
-    }
-
-    impl embedded_io_async::Write for Script {
-        #[expect(
-            clippy::unused_async_trait_impl,
-            reason = "сигнатуру задаёт трейт `Write`; память пишется сразу"
-        )]
-        async fn write(&mut self, buf: &[u8]) -> Result<usize, Infallible> {
-            self.shown.extend_from_slice(buf);
-            Ok(buf.len())
-        }
-
-        #[expect(
-            clippy::unused_async_trait_impl,
-            reason = "сигнатуру задаёт трейт `Write`; у памяти нечего досылать"
-        )]
-        async fn flush(&mut self) -> Result<(), Infallible> {
-            Ok(())
         }
     }
 
@@ -545,168 +535,167 @@ mod tests {
         assert!(tries_exhausted(6));
     }
 
+    /// Разбор команд — тем же `Command::parse`, что у `shell` и `exec`.
+    fn command(line: &str) -> Option<Command> {
+        let mut error = heapless::String::<64>::new();
+        parse(line, &mut error)
+    }
+
     #[test]
-    fn commands_are_whole_words() {
-        assert_eq!(parse(""), Command::Empty);
-        assert_eq!(parse("  help "), Command::Help);
-        assert_eq!(parse("info"), Command::Info);
-        assert_eq!(parse("exit"), Command::Exit);
-        assert_eq!(parse("info now"), Command::Unknown);
-        assert_eq!(parse("helpme"), Command::Unknown);
+    fn commands_are_typed_and_qualified() {
+        assert_eq!(command("info"), Some(Command::Info));
+        assert_eq!(command("exit"), Some(Command::Exit));
+        assert_eq!(command("info now"), None);
+        assert_eq!(command("helpme"), None);
+        assert_eq!(command(""), None);
         // {%- if ota == "true" %}
-        assert_eq!(parse("reboot"), Command::Reboot { confirmed: false });
-        assert_eq!(parse("reboot yes"), Command::Reboot { confirmed: true });
-        assert_eq!(parse("reboot yes please"), Command::Unknown);
+        assert_eq!(command("reboot"), Some(Command::Reboot(Confirm::No)));
+        assert_eq!(command("reboot yes"), Some(Command::Reboot(Confirm::Yes)));
+        assert_eq!(command("reboot no"), Some(Command::Reboot(Confirm::No)));
+        assert_eq!(command("reboot yes please"), None);
+        assert_eq!(command("reboot maybe"), None);
         // {%- endif %}
     }
 
-    /// Что консоль делает с байтами `input`, без [`Key::Nothing`].
-    fn keys(editor: &mut Editor, input: &[u8]) -> Vec<Key> {
-        input
-            .iter()
-            .map(|&byte| editor.feed(byte))
-            .filter(|key| *key != Key::Nothing)
-            .collect()
-    }
-
-    /// Эхо каждого байта `text`.
-    fn echo(text: &str) -> impl Iterator<Item = Key> {
-        text.bytes().map(Key::Echo)
-    }
-
-    /// Правка строки: переводы строки, Backspace, управляющие
-    /// последовательности стрелок, Ctrl-C и Ctrl-D.
+    /// Консоль исполняет команды из enum: `help` встроен, неизвестная строка
+    /// даёт ошибку, Ctrl-C сбрасывает набранное.
     #[test]
-    fn the_editor_takes_only_what_it_shows() {
-        let cases: [(&[u8], Vec<Key>); 15] = [
-            (
-                b"help\r",
-                echo("help").chain([Key::Enter(Command::Help)]).collect(),
-            ),
-            // `\r\n` — один конец строки; `\r` и `\n` поодиночке — каждый.
-            (
-                b"help\r\n",
-                echo("help").chain([Key::Enter(Command::Help)]).collect(),
-            ),
-            (b"\r\r", vec![Key::Enter(Command::Empty); 2]),
-            (b"\n\n", vec![Key::Enter(Command::Empty); 2]),
-            (
-                b"inf\x08xy\x7f\x7fo\r",
-                echo("inf")
-                    .chain([Key::Erase])
-                    .chain(echo("xy"))
-                    .chain([Key::Erase; 2])
-                    .chain(echo("o"))
-                    .chain([Key::Enter(Command::Unknown)])
-                    .collect(),
-            ),
-            // Backspace на пустой строке не стирает приглашение.
-            (b"\x7f\r", vec![Key::Enter(Command::Empty)]),
-            // Стрелки и Ctrl-стрелки (CSI с параметрами) — ни в строку, ни
-            // в эхо.
-            (
-                b"\x1b[A\x1b[1;5Cinfo\x1b[D\r",
-                echo("info").chain([Key::Enter(Command::Info)]).collect(),
-            ),
-            // SS3 — стрелка в режиме приложения.
-            (
-                b"\x1bOAinfo\r",
-                echo("info").chain([Key::Enter(Command::Info)]).collect(),
-            ),
-            // Одиночный ESC отброшен, следующий байт — обычный ввод.
-            (
-                b"\x1binfo\r",
-                echo("info").chain([Key::Enter(Command::Info)]).collect(),
-            ),
-            // Оборванные CSI и SS3: перевод строки внутри — конец строки,
-            // и `\r\n` — всё так же один.
-            (
-                b"info\x1b[1\r\n",
-                echo("info").chain([Key::Enter(Command::Info)]).collect(),
-            ),
-            (
-                b"info\x1bO\r\n",
-                echo("info").chain([Key::Enter(Command::Info)]).collect(),
-            ),
-            // Ctrl-C сбрасывает набранное.
-            (
-                b"exi\x03info\r",
-                echo("exi")
-                    .chain([Key::Cancel])
-                    .chain(echo("info"))
-                    .chain([Key::Enter(Command::Info)])
-                    .collect(),
-            ),
-            (b"\x04", vec![Key::Eof]),
-            // Ctrl-D на набранной строке сессию не обрывает.
-            (
-                b"exit\x04\r",
-                echo("exit").chain([Key::Enter(Command::Exit)]).collect(),
-            ),
-            // Прочие управляющие байты не попадают ни в строку, ни в эхо.
-            (
-                b"in\tfo\x00\r",
-                echo("info").chain([Key::Enter(Command::Info)]).collect(),
-            ),
-        ];
-        for (input, expected) in cases {
-            assert_eq!(
-                keys(&mut Editor::default(), input),
-                expected,
-                "{}",
+    fn the_shell_runs_derived_commands() {
+        const BANNER: &str = "console, 'help' for commands\r\n";
+        let ((stack, _), _) = adapters_hw::net::fake::cable::pair();
+        let info = device_info();
+        let device = Device {
+            info: &info,
+            stack,
+            // {%- if ota == "true" %}
+            ota: crate::ota::tests::cmd().0,
+            // {%- endif %}
+        };
+        let mut cx = Context::from_waker(Waker::noop());
+        for (input, expected) in [
+            (&b"info\r"[..], "version 0.1.0"),
+            (b"help\r", "reboot"),
+            (b"unknown\r", "Unknown"),
+            // Ctrl-C сбрасывает `exi`, дальше идёт `info`.
+            (b"exi\x03info\r", "version 0.1.0"),
+        ] {
+            let mut rx = Script { input };
+            let mut tx = Screen {
+                shown: Vec::new(),
+                room: usize::MAX,
+            };
+            {
+                let console = pin!(shell(&mut rx, &mut tx, &device)).poll(&mut cx);
+                assert_eq!(console, Poll::Ready(Ok(())), "{}", input.escape_ascii());
+            }
+            let shown = String::from_utf8(tx.shown).expect("вывод — UTF-8");
+            assert!(
+                shown.starts_with(BANNER),
+                "{}: {shown:?}",
+                input.escape_ascii()
+            );
+            assert!(
+                shown.contains(expected),
+                "{}: {shown:?}",
                 input.escape_ascii()
             );
         }
     }
 
-    /// Строка длиннее [`LINE`] — неизвестная команда, а не префикс: из
-    /// `reboot`, пробелов и `yes` на последних байтах собралась бы другая.
+    /// Ctrl-D закрывает сессию сразу, на любой строке; непрочитанный ввод
+    /// остаётся в канале.
     #[test]
-    fn an_overlong_line_is_no_command() {
-        let mut editor = Editor::default();
-        let mut long = b"reboot".to_vec();
-        long.resize(LINE - "yes".len(), b' ');
-        long.extend_from_slice(b"yes please");
-        let pressed = keys(&mut editor, &long);
-        // Лишнее не принимается и не отображается.
-        assert_eq!(pressed.len(), LINE);
-        assert!(pressed.iter().all(|key| matches!(key, Key::Echo(_))));
-        assert_eq!(keys(&mut editor, b"\r"), vec![Key::Enter(Command::Unknown)]);
-        // Стёртый хвост потерянного не возвращает.
-        keys(&mut editor, &long);
-        assert_eq!(
-            keys(&mut editor, b"\x7f\r"),
-            vec![Key::Erase, Key::Enter(Command::Unknown)]
-        );
-        // Enter и Ctrl-C начинают новую строку.
-        assert_eq!(
-            keys(&mut editor, b"info\r").last(),
-            Some(&Key::Enter(Command::Info))
-        );
-        keys(&mut editor, &long);
-        assert_eq!(
-            keys(&mut editor, b"\x03info\r").last(),
-            Some(&Key::Enter(Command::Info))
-        );
-        // Строка, стёртая до пустой, — тоже новая: что на экране, то и
-        // в ней, и Ctrl-D на ней завершает сессию.
-        keys(&mut editor, &long);
-        keys(&mut editor, &[0x7f; LINE]);
-        assert_eq!(
-            keys(&mut editor, b"info\r").last(),
-            Some(&Key::Enter(Command::Info))
-        );
-        keys(&mut editor, &long);
-        keys(&mut editor, &[0x08; LINE]);
-        assert_eq!(keys(&mut editor, b"\x04"), vec![Key::Eof]);
-        // Ровно `LINE` байт — ещё строка.
-        let mut full = b"info".to_vec();
-        full.resize(LINE, b' ');
-        full.push(b'\r');
-        assert_eq!(
-            keys(&mut editor, &full).last(),
-            Some(&Key::Enter(Command::Info))
-        );
+    fn ctrl_d_closes_the_shell() {
+        let ((stack, _), _) = adapters_hw::net::fake::cable::pair();
+        let info = device_info();
+        let device = Device {
+            info: &info,
+            stack,
+            // {%- if ota == "true" %}
+            ota: crate::ota::tests::cmd().0,
+            // {%- endif %}
+        };
+        let mut cx = Context::from_waker(Waker::noop());
+        for input in [&b"\x04info\r"[..], b"exi\x04info\r"] {
+            let mut rx = Script { input };
+            let mut tx = Screen {
+                shown: Vec::new(),
+                room: usize::MAX,
+            };
+            let console = pin!(shell(&mut rx, &mut tx, &device)).poll(&mut cx);
+            assert_eq!(console, Poll::Ready(Ok(())), "{}", input.escape_ascii());
+            assert_eq!(rx.input, b"info\r", "{}", input.escape_ascii());
+        }
+    }
+
+    /// Строка длиннее [`LINE`] не роняет сессию и не превращается в другую
+    /// команду: разбор видит усечённую строку.
+    #[test]
+    fn an_overlong_line_is_not_a_command() {
+        let mut input = vec![b'x'; LINE + 32];
+        input.push(b'\r');
+        let input: &'static [u8] = input.leak();
+        let ((stack, _), _) = adapters_hw::net::fake::cable::pair();
+        let info = device_info();
+        let device = Device {
+            info: &info,
+            stack,
+            // {%- if ota == "true" %}
+            ota: crate::ota::tests::cmd().0,
+            // {%- endif %}
+        };
+        let mut rx = Script { input };
+        let mut tx = Screen {
+            shown: Vec::new(),
+            room: usize::MAX,
+        };
+        let mut cx = Context::from_waker(Waker::noop());
+        let console = pin!(shell(&mut rx, &mut tx, &device)).poll(&mut cx);
+        assert_eq!(console, Poll::Ready(Ok(())));
+        let shown = String::from_utf8(tx.shown).expect("вывод — UTF-8");
+        assert!(shown.contains("Unknown"), "{shown:?}");
+    }
+
+    /// `exec` не печатает ни ANSI, ни `\r`: его вывод читают скрипты.
+    #[test]
+    fn exec_writes_plain_text() {
+        let ((stack, _), _) = adapters_hw::net::fake::cable::pair();
+        let info = device_info();
+        let device = Device {
+            info: &info,
+            stack,
+            // {%- if ota == "true" %}
+            ota: crate::ota::tests::cmd().0,
+            // {%- endif %}
+        };
+        let mut cx = Context::from_waker(Waker::noop());
+        for (input, expected) in [
+            ("info", "version 0.1.0"),
+            ("help", "reboot"),
+            ("nope", "Unknown"),
+        ] {
+            let mut tx = Screen {
+                shown: Vec::new(),
+                room: usize::MAX,
+            };
+            {
+                let mut out = Out {
+                    io: &mut tx,
+                    crlf: false,
+                };
+                let done = pin!(exec(input, &mut out, &device)).poll(&mut cx);
+                assert_eq!(done, Poll::Ready(Ok(())), "{input}");
+            }
+            assert!(
+                tx.shown
+                    .windows(expected.len())
+                    .any(|w| w == expected.as_bytes()),
+                "{input}: {:?}",
+                String::from_utf8_lossy(&tx.shown)
+            );
+            assert!(!tx.shown.contains(&b'\r'), "{input}");
+            assert!(!tx.shown.contains(&0x1b), "{input}");
+        }
     }
 
     /// Консоль без ввода закрывается через [`SHELL_IDLE`], не раньше, и
@@ -728,79 +717,32 @@ mod tests {
         };
         let mut cx = Context::from_waker(Waker::noop());
 
-        let mut reading = Silent {
+        let mut rx = Mute;
+        let mut tx = Screen {
             shown: Vec::new(),
             room: usize::MAX,
         };
         {
-            let mut console = pin!(shell(&mut reading, &device));
+            let mut console = pin!(shell(&mut rx, &mut tx, &device));
             assert!(console.as_mut().poll(&mut cx).is_pending());
             MockDriver::get().advance(SHELL_IDLE - Duration::from_secs(1));
             assert!(console.as_mut().poll(&mut cx).is_pending());
             MockDriver::get().advance(Duration::from_secs(1));
             assert_eq!(console.as_mut().poll(&mut cx), Poll::Ready(Ok(())));
         }
-        assert_eq!(reading.shown, format!("{PROMPT}{FAREWELL}").as_bytes());
+        assert_eq!(tx.shown, format!("{PROMPT}{FAREWELL}").as_bytes());
 
-        let mut deaf = Silent {
+        let mut rx = Mute;
+        let mut tx = Screen {
             shown: Vec::new(),
             room: PROMPT.len(),
         };
-        let mut console = pin!(shell(&mut deaf, &device));
+        let mut console = pin!(shell(&mut rx, &mut tx, &device));
         assert!(console.as_mut().poll(&mut cx).is_pending());
         MockDriver::get().advance(SHELL_IDLE);
         assert!(console.as_mut().poll(&mut cx).is_pending());
         MockDriver::get().advance(CLOSE_WAIT);
         assert_eq!(console.as_mut().poll(&mut cx), Poll::Ready(Ok(())));
-    }
-
-    /// Что терминал видит на ввод: эхо, стирание `\x08 \x08`, `^C`,
-    /// исполненная команда с приглашением за ней; `exit`, Ctrl-D и EOF
-    /// кончают сессию.
-    #[test]
-    fn the_shell_shows_what_the_editor_decides() {
-        const PROMPT: &str = "console, 'help' for commands\r\n> ";
-        let ((stack, _), _) = adapters_hw::net::fake::cable::pair();
-        let info = device_info();
-        let device = Device {
-            info: &info,
-            stack,
-            // {%- if ota == "true" %}
-            ota: crate::ota::tests::cmd().0,
-            // {%- endif %}
-        };
-        let mut cx = Context::from_waker(Waker::noop());
-        // Ввод, вывод и что осталось непрочитанным после конца сессии.
-        let cases: [(&[u8], String, &[u8]); 4] = [
-            (
-                b"x\x7fbad\r\x03exit\rinfo\r",
-                format!(
-                    "{PROMPT}x\x08 \x08bad\r\nunknown command, 'help' for the list\r\n> \
-                     ^C\r\n> exit\r\n"
-                ),
-                b"info\r",
-            ),
-            // Ctrl-D на набранной строке не обрывает сессию и не отображается.
-            (b"ex\x04it\r", format!("{PROMPT}exit\r\n"), b""),
-            (b"\x04info\r", PROMPT.to_owned(), b"info\r"),
-            // EOF посреди строки — конец сессии без исполнения.
-            (b"exi", format!("{PROMPT}exi"), b""),
-        ];
-        for (input, shown, left) in cases {
-            let mut terminal = Script {
-                input,
-                shown: Vec::new(),
-            };
-            let console = pin!(shell(&mut terminal, &device)).poll(&mut cx);
-            let input = input.escape_ascii();
-            assert_eq!(console, Poll::Ready(Ok(())), "{input}");
-            assert_eq!(
-                terminal.shown.escape_ascii().to_string(),
-                shown.as_bytes().escape_ascii().to_string(),
-                "{input}"
-            );
-            assert_eq!(terminal.input, left, "{input}: ввод после конца сессии");
-        }
     }
 
     #[test]

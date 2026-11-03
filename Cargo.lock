@@ -80,6 +80,32 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
+name = "bareminal_cli"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fb5c05bc4eb4da6745c97a655abbd0287cb9aaa4f28bfbb1f9660bc595f1c01e"
+dependencies = [
+ "defmt 1.2.0",
+ "embassy-futures",
+ "embedded-io-async 0.7.0",
+ "heapless 0.9.3",
+]
+
+[[package]]
+name = "bareminal_macros"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c2771c71a91a8528e1b2008140518a6302493b5321933b14a9ce9ec7dbb263d9"
+dependencies = [
+ "bareminal_cli",
+ "heapless 0.9.3",
+ "heck",
+ "proc-macro2",
+ "quote",
+ "syn 3.0.9",
+]
+
+[[package]]
 name = "bit-set"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -570,6 +596,8 @@ name = "domain"
 version = "0.1.0"
 dependencies = [
  "adapters-hw",
+ "bareminal_cli",
+ "bareminal_macros",
  "canopen",
  "critical-section",
  "defmt 1.2.0",

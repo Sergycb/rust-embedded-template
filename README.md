@@ -712,8 +712,11 @@ curl -H "Authorization: Bearer $(cat rest-token.txt)" http://<адрес пла�
 ### Консоль SSH
 
 Узел `SSH` (`crates-host/domain/src/ssh.rs`) — сервер `sunset` на порту 22, одно
-соединение, пользователь `admin`. Команды: `help`, `info`{% if ota == "true" %}, `reboot yes`{% endif %}, `exit`; свои — в
-`Command`, `parse` и `run` (`crates-host/domain/src/ssh/console.rs`). `shell` и `exec` оба работают:
+соединение, пользователь `admin`. Команды: `help`, `info`{% if ota == "true" %}, `reboot yes`{% endif %}, `exit`; свои — вариантами
+enum `Command` (`crates-host/domain/src/ssh/console.rs`), а `help`, историю, автодополнение
+и редактирование строки строит `bareminal`. `shell` и `exec` оба работают:
+`shell` — интерактивный (ANSI: стрелки, история, Tab) и рассчитан на PTY обычного
+`ssh`; `exec` — без ANSI, для скриптов.
 
 ```
 ssh admin@<адрес платы>
@@ -753,9 +756,11 @@ cross` и перед прошивкой), не найдя `ssh-password.hash` в
 настроек целиком забирает узел CANopen.{% endif %}
 {%- endif %}
 
-SSH тяжёлый: около 165 KiB флеша, 17 KiB статической RAM и ещё около 40 KiB стека
-(обмен ключами ML-KEM) — `sunset` с ed25519, x25519, ML-KEM и ChaCha20-Poly1305, поэтому генерация предлагает его только с разделом
-приложения от 256 KiB. Случайность криптографии — аппаратный RNG через `getrandom`
+SSH тяжёлый: около 165 KiB флеша, 19 KiB статической RAM и ещё около 40 KiB стека
+(обмен ключами ML-KEM) — `sunset` с ed25519, x25519, ML-KEM и ChaCha20-Poly1305, а
+консоль `bareminal` (команды, `help`, история, автодополнение) добавляет ещё около
+27 KiB флеша, поэтому генерация предлагает SSH только с разделом
+приложения от 320 KiB. Случайность криптографии — аппаратный RNG через `getrandom`
 (`crates-cross/bsp/src/rng.rs`). Попыток входа на соединение — не больше шести
 и 30 секунд на вход: `sunset` их не считает, ограничивает узел. Консоль, в которой
 15 минут ничего не вводили, закрывается: соединение у платы одно, и забытое окно

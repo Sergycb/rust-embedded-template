@@ -587,9 +587,17 @@ fn default_cases() -> Vec<Case> {
         // вместе с REST (клиенты OTA 0 и 1) — вход по ключу и ключ хоста из
         // файла (`HOST_KEY` в `app`). Обе службы с OTA в 256K не влезают — там
         // `ext_flash=yes` (`ACTIVE` 384K).
-        Case::new("stm32h743zg").variant(
+        // SSH с настройками во flash. У H743ZG под приложение остаётся 256K,
+        // а с консолью `bareminal` debug-образу нужно около 273K, поэтому чип
+        // с запасом — H743ZI (ACTIVE 640K, CONFIG 256K в хвосте).
+        Case::new("stm32h743zi").variant(
             "ssh-password-config",
-            &["links=tcp", "net_services=ssh", "ssh_auth=password", "config=yes"],
+            &[
+                "links=tcp",
+                "net_services=ssh",
+                "ssh_auth=password",
+                "config=yes",
+            ],
         ),
         // SSH с OTA и без других служб и протоколов: тестам консоли нужен вход
         // `CMD` узла OTA без самого узла (`ota::tests::cmd`), а остальные

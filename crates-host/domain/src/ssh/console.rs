@@ -1,6 +1,12 @@
-//! Команды консоли: разбор строки, выполнение, вывод в канал и интерактивный
-//! `shell`.
+//! Команды консоли: типизированные команды `bareminal`, выполнение, вывод в
+//! канал и интерактивный `shell`.
 
+use core::str::FromStr;
+
+use bareminal_cli::buffer::Buffer;
+use bareminal_cli::cli::Bareminal;
+use bareminal_cli::process::{CommandsParser, HelpIter, ProcessError, RuntimeError};
+use bareminal_macros::Command;
 use defmt_or_log::info;
 use embassy_net::Stack;
 use embassy_time::{Duration, Instant, with_timeout};
@@ -13,8 +19,17 @@ use crate::ota::{OtaClient, OtaCommand};
 use crate::device::{DeviceInfo, PANIC_BRIEF};
 use crate::ssh::session::CLOSE_WAIT;
 
-/// Длина строки команды.
-pub(super) const LINE: usize = 64;
+/// Длина строки команды и буфера разбора.
+pub(super) const LINE: usize = 128;
+
+/// Сколько символов держит `bareminal` до разбора: та же строка, что у `exec`.
+const CMD_BUFFER: usize = LINE;
+
+/// Сколько команд помнит история (Up/Down).
+const HISTORY: usize = 4;
+
+/// Буфер текста ошибки разбора.
+const ERROR_TEXT: usize = 64;
 
 /// Сколько `shell` ждёт ввода, прежде чем закрыть сессию. Соединение у узла
 /// одно, а живой, но молчащий клиент (забытое окно терминала) держал бы его
@@ -29,26 +44,40 @@ pub(super) const SHELL_IDLE: Duration = Duration::from_secs(15 * 60);
 /// `last panic` с [`PANIC_BRIEF`] байт.
 pub(super) const INFO_TEXT: usize = 256 + 27 + "last panic \n".len() + PANIC_BRIEF;
 
-/// Команда консоли.
+/// Подтверждение перезагрузки: `reboot` — подсказка, `reboot yes` — сброс.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Confirm {
+    /// Без `yes`.
+    No,
+    /// `reboot yes`.
+    Yes,
+}
+
+impl FromStr for Confirm {
+    type Err = ();
+
+    fn from_str(text: &str) -> Result<Self, ()> {
+        match text {
+            "no" => Ok(Self::No),
+            "yes" => Ok(Self::Yes),
+            _ => Err(()),
+        }
+    }
+}
+
+/// Команда консоли.
+#[derive(Debug, PartialEq, Command)]
 pub enum Command {
-    /// Пустая строка.
-    Empty,
-    /// Список команд.
-    Help,
-    /// Сведения об устройстве.
+    /// Сведения об устройстве: firmware, chip, unique id, MAC, address,
+    /// uptime, reset cause, last panic
     Info,
     // {%- if ota == "true" %}
-    /// Перезагрузка; без подтверждения — только подсказка.
-    Reboot {
-        /// `reboot yes`.
-        confirmed: bool,
-    },
+    /// Перезагрузка; без `yes` — только подсказка
+    #[set(default = "no", one_of = ["yes", "no"])]
+    Reboot(Confirm),
     // {%- endif %}
-    /// Конец сессии.
+    /// Конец сессии (как и Ctrl-D)
     Exit,
-    /// Такой команды нет.
-    Unknown,
 }
 
 /// Что команды знают об устройстве.
@@ -84,173 +113,85 @@ impl<W: Write> Out<W> {
     }
 }
 
-/// Что консоли сделать с принятым байтом.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Key {
-    /// Ничего: байт не меняет строку.
-    Nothing,
-    /// Байт принят в строку — эхо им же.
-    Echo(u8),
-    /// Последний символ стёрт — стереть его и на экране.
-    Erase,
-    /// Ctrl-C: строка сброшена.
-    Cancel,
-    /// Конец строки: выполнить команду.
-    Enter(Command),
-    /// Ctrl-D на пустой строке: конец сессии.
-    Eof,
-}
-
-/// Где внутри управляющей последовательности терминала стоит ввод.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-enum Escape {
-    /// Вне последовательности.
-    #[default]
-    Off,
-    /// После ESC.
-    Started,
-    /// Внутри CSI (`ESC [` … финальный байт): стрелки, Home, Delete.
-    Csi,
-    /// После `ESC O` — SS3, ещё один байт: стрелки и F1–F4 в режиме
-    /// приложения.
-    Ss3,
-}
-
-/// Строка, которую набирает терминал `shell`: байт за байтом, без вывода —
-/// что показать, решает вызывающий по [`Key`].
-#[derive(Debug, Default)]
-pub(super) struct Editor {
-    line: heapless::String<LINE>,
-    /// Набрано больше [`LINE`]: лишнее не принято, и по Enter строка —
-    /// [`Command::Unknown`], а не обрезанный префикс: из длинной строки
-    /// иначе собиралась бы другая команда (`reboot` с `yes` на 64-м байте).
-    /// Сбрасывают Enter, Ctrl-C и строка, стёртая до пустой; стёртый хвост —
-    /// нет: потерянных символов он не возвращает, а начало на экране
-    /// осталось от той же длинной строки.
-    overflow: bool,
-    /// Прошлый байт — `\r`: `\r\n` — один конец строки, а не строка и
-    /// пустая за ней.
-    after_cr: bool,
-    escape: Escape,
-}
-
-impl Editor {
-    /// Принимает байт от терминала.
-    pub(super) fn feed(&mut self, byte: u8) -> Key {
-        // Байт, поглощённый последовательностью, — не ввод, и `\r` в нём не
-        // склеивается со следующим `\n`.
-        let after_cr = core::mem::take(&mut self.after_cr);
-        if self.escaped(byte) {
-            return Key::Nothing;
-        }
-        self.after_cr = byte == b'\r';
-        match byte {
-            0x1b => {
-                self.escape = Escape::Started;
-                Key::Nothing
-            }
-            b'\n' if after_cr => Key::Nothing,
-            b'\r' | b'\n' => {
-                let command = if self.overflow {
-                    Command::Unknown
-                } else {
-                    parse(&self.line)
-                };
-                self.reset();
-                Key::Enter(command)
-            }
-            // Ctrl-C.
-            0x03 => {
-                self.reset();
-                Key::Cancel
-            }
-            // Ctrl-D: на набранной строке не обрывает сессию.
-            0x04 if self.line.is_empty() => Key::Eof,
-            // Backspace/DEL.
-            0x08 | 0x7f if self.line.pop().is_some() => {
-                if self.line.is_empty() {
-                    self.overflow = false;
-                }
-                Key::Erase
-            }
-            c @ 0x20..0x7f => {
-                if self.line.push(char::from(c)).is_ok() {
-                    Key::Echo(c)
-                } else {
-                    // Не принят и не отображается.
-                    self.overflow = true;
-                    Key::Nothing
-                }
-            }
-            _ => Key::Nothing,
-        }
-    }
-
-    /// Поглощает байт управляющей последовательности; `false` — байт —
-    /// обычный ввод.
-    fn escaped(&mut self, byte: u8) -> bool {
-        let (consumed, next) = match (self.escape, byte) {
-            // `ESC [`, затем параметры и промежуточные байты CSI.
-            (Escape::Started, b'[') | (Escape::Csi, 0x20..=0x3f) => (true, Escape::Csi),
-            (Escape::Started, b'O') => (true, Escape::Ss3),
-            // Финальный байт CSI и байт за SS3 — конец последовательности.
-            (Escape::Csi, 0x40..=0x7e) | (Escape::Ss3, 0x20..=0x7e) => (true, Escape::Off),
-            // Вне последовательности; одиночный ESC отброшен, а управляющий
-            // байт обрывает начатую — дальше обычный ввод.
-            _ => (false, Escape::Off),
-        };
-        self.escape = next;
-        consumed
-    }
-
-    /// Новая строка.
-    fn reset(&mut self) {
-        self.line.clear();
-        self.overflow = false;
-    }
-}
-
-/// Команда из строки.
-pub(super) fn parse(line: &str) -> Command {
-    let mut words = line.split_ascii_whitespace();
-    let command = match (words.next(), words.next()) {
-        (None, _) => Command::Empty,
-        (Some("help"), None) => Command::Help,
-        (Some("info"), None) => Command::Info,
-        // {%- if ota == "true" %}
-        (Some("reboot"), None) => Command::Reboot { confirmed: false },
-        (Some("reboot"), Some("yes")) => Command::Reboot { confirmed: true },
-        // {%- endif %}
-        (Some("exit"), None) => Command::Exit,
-        _ => Command::Unknown,
+/// Команда из строки для `exec`; ошибка разбора — текстом в `error`.
+pub(super) fn parse(line: &str, error: &mut heapless::String<ERROR_TEXT>) -> Option<Command> {
+    let mut buffer = Buffer::<CMD_BUFFER>::from_str(line).ok()?;
+    let tokens = buffer.as_tokens()?;
+    let mut iter = tokens.iter();
+    let result = match Command::parse(&mut iter) {
+        // `exec` исполняет одну команду: хвост строки — ошибка, а не
+        // следующая команда, как в цепочке `shell`.
+        Ok(command) if iter.peek().is_none() => Ok(command),
+        Ok(_) => Err(ProcessError::Unknown),
+        Err(err) => Err(err),
     };
-    if words.next().is_some() {
-        Command::Unknown
-    } else {
-        command
+    match result {
+        Ok(command) => Some(command),
+        Err(err) => {
+            if let Ok(text) = err.to_string::<ERROR_TEXT>() {
+                *error = text;
+            }
+            None
+        }
     }
+}
+
+/// Печатает `help` в `exec`: у `shell` его рисует `bareminal`, а `exec`
+/// обходится без его ANSI-последовательностей.
+async fn write_help<W: Write>(out: &mut Out<W>, lines: HelpIter) -> Result<(), W::Error> {
+    for line in lines {
+        out.text(line.as_ref()).await?;
+        out.text("\n").await?;
+    }
+    Ok(())
+}
+
+/// Выполняет одну команду `exec`; вывод — без ANSI и без `\r`.
+pub(super) async fn exec<W: Write>(
+    line: &str,
+    out: &mut Out<W>,
+    device: &Device<'_>,
+) -> Result<(), W::Error> {
+    let mut words = line.split_ascii_whitespace();
+    if words.next() == Some("help") {
+        match words.next() {
+            Some(name) if words.next().is_none() => {
+                let help = Command::help_for(name);
+                if help.is_empty() {
+                    out.text("Unknown command\n").await?;
+                } else {
+                    write_help(out, HelpIter::single(help)).await?;
+                }
+            }
+            Some(_) => out.text("Unknown command\n").await?,
+            None => write_help(out, Command::help_lines()).await?,
+        }
+        return Ok(());
+    }
+    let mut error = heapless::String::<ERROR_TEXT>::new();
+    match parse(line, &mut error) {
+        Some(command) => {
+            run(command, out, device).await?;
+        }
+        None => {
+            if error.is_empty() {
+                out.text("unknown command, 'help' for the list\n").await?;
+            } else {
+                out.text(&error).await?;
+                out.text("\n").await?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Выполняет команду; `false` — сессия кончилась (`exit`).
-pub(super) async fn run<W: Write>(
+async fn run<W: Write>(
     command: Command,
     out: &mut Out<W>,
     device: &Device<'_>,
 ) -> Result<bool, W::Error> {
     match command {
-        Command::Empty => {}
-        Command::Help => {
-            out.text("help            this list\n").await?;
-            out.text("info            firmware, chip, unique id, MAC, address, uptime,\n")
-                .await?;
-            out.text("                reset cause, last panic\n")
-                .await?;
-            // {%- if ota == "true" %}
-            out.text("reboot yes      reboot the board\n").await?;
-            // {%- endif %}
-            out.text("exit            close the session (also Ctrl-D)\n")
-                .await?;
-        }
         Command::Info => {
             let mut text = heapless::String::<INFO_TEXT>::new();
             // Среда в стеке одна — Ethernet (`medium-ethernet`).
@@ -266,8 +207,8 @@ pub(super) async fn run<W: Write>(
             }
         }
         // {%- if ota == "true" %}
-        Command::Reboot { confirmed: false } => out.text("to reboot, type: reboot yes\n").await?,
-        Command::Reboot { confirmed: true } => {
+        Command::Reboot(Confirm::No) => out.text("to reboot, type: reboot yes\n").await?,
+        Command::Reboot(Confirm::Yes) => {
             // Узел OTA отвечает раньше сброса: ответ успевает уйти.
             let reply = match device.ota.request(OtaCommand::Reboot).await {
                 Ok(Ok(Progress::Rebooting)) => "rebooting\n",
@@ -278,47 +219,68 @@ pub(super) async fn run<W: Write>(
         }
         // {%- endif %}
         Command::Exit => return Ok(false),
-        Command::Unknown => out.text("unknown command, 'help' for the list\n").await?,
     }
     Ok(true)
 }
 
 /// Консоль `shell`: строка за строкой до `exit`, Ctrl-D, EOF или
 /// [`SHELL_IDLE`] без ввода.
-pub(super) async fn shell<IO: Read + Write>(io: IO, device: &Device<'_>) -> Result<(), IO::Error> {
-    let mut out = Out { io, crlf: true };
-    out.text("console, 'help' for commands\n> ").await?;
-    let mut editor = Editor::default();
+pub(super) async fn shell<R: Read, W: Write + Unpin>(
+    mut rx: R,
+    mut tx: W,
+    device: &Device<'_>,
+) -> Result<(), RuntimeError> {
+    tx.write_all(b"console, 'help' for commands\r\n")
+        .await
+        .map_err(|_err| RuntimeError::WriteFailed)?;
+    let mut cli = Bareminal::<Command, _, CMD_BUFFER, HISTORY>::with_prompt(tx, "> ").await?;
     let mut byte = [0];
     loop {
         // Брошенное по сроку чтение ничего нужного не теряет: сессия
         // кончается.
-        let Ok(read) = with_timeout(SHELL_IDLE, out.io.read(&mut byte)).await else {
+        let Ok(read) = with_timeout(SHELL_IDLE, rx.read(&mut byte)).await else {
             info!(
                 "ssh: консоль молчала {} с — сессия закрыта",
                 SHELL_IDLE.as_secs()
             );
             // Клиент, переставший читать канал, не держит сессию и
             // прощанием: окно, забитое прежним выводом, ждалось бы вечно.
-            let farewell = out.text("\nidle timeout, session closed\n");
-            return with_timeout(CLOSE_WAIT, farewell).await.unwrap_or(Ok(()));
+            let farewell = cli
+                .writer()
+                .write_all(b"\r\nidle timeout, session closed\r\n");
+            return with_timeout(CLOSE_WAIT, farewell)
+                .await
+                .unwrap_or(Ok(()))
+                .map_err(|_err| RuntimeError::WriteFailed);
         };
-        if read? == 0 {
+        if read.map_err(|_err| RuntimeError::ReadFailed)? == 0 {
             return Ok(());
         }
-        match editor.feed(byte[0]) {
-            Key::Nothing => {}
-            Key::Echo(c) => out.io.write_all(&[c]).await?,
-            Key::Erase => out.io.write_all(b"\x08 \x08").await?,
-            Key::Cancel => out.text("^C\n> ").await?,
-            Key::Enter(command) => {
-                out.text("\n").await?;
-                if !run(command, &mut out, device).await? {
-                    return Ok(());
+        // Ctrl-D — конец сессии; Ctrl-C в `bareminal` не сбрасывает строку,
+        // поэтому он идёт тем же байтом, что и Ctrl-U.
+        let byte = match byte[0] {
+            0x04 => return Ok(()),
+            0x03 => 0x15,
+            byte => byte,
+        };
+        if cli.add_byte(byte).await? {
+            loop {
+                if let Some((command, writer)) = cli.next_command().await? {
+                    let mut out = Out {
+                        io: &mut writer.writer,
+                        crlf: true,
+                    };
+                    if !run(command, &mut out, device)
+                        .await
+                        .map_err(|_err| RuntimeError::WriteFailed)?
+                    {
+                        return Ok(());
+                    }
+                } else {
+                    cli.finalize().await?;
+                    break;
                 }
-                out.text("> ").await?;
             }
-            Key::Eof => return Ok(()),
         }
     }
 }

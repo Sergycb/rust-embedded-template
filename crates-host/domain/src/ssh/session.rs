@@ -10,7 +10,7 @@ use embassy_time::{Duration, Instant, Timer, with_timeout};
 use sunset_async::sunset::{ChanHandle, PubKey, ServEvent, SignKey};
 use sunset_async::{ProgressHolder, SSHServer};
 
-use crate::ssh::console::{Device, LINE, Out, parse, run, shell};
+use crate::ssh::console::{Device, LINE, Out, exec, shell};
 use crate::ssh::login::Access;
 
 /// Порт SSH.
@@ -109,7 +109,7 @@ pub(super) async fn session(
         Start::Exec(command) => {
             let mut out = Out { io, crlf: false };
             let done = select(&mut run_protocol, async {
-                run(parse(&command), &mut out, device).await.map(|_| ())
+                exec(&command, &mut out, device).await
             })
             .await;
             match done {
@@ -129,8 +129,12 @@ pub(super) async fn session(
         // Консоли нужен цикл событий всё время: ввод с клавиатуры приходит
         // через `progress()`.
         Start::Shell => {
+            // `Bareminal` владеет writer-половиной канала, а читаем вторую:
+            // `split` отдаёт независимые `ChanIn`/`ChanOut` с временем жизни
+            // сервера, а не заимствование `io`.
+            let (rx, tx) = io.split();
             let shell_done = async {
-                if shell(io, device).await.is_err() {
+                if shell(rx, tx, device).await.is_err() {
                     warn!("ssh: канал сессии оборвался");
                 }
                 Timer::after(CLOSE_GRACE).await;

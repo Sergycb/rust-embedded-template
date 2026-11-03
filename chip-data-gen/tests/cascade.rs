@@ -2523,7 +2523,7 @@ fn ethernet_item_becomes_tcp() {
 fn net_services_are_marked_after_ethernet() {
     let result = interview(
         &compile_script(),
-        "h743zg",
+        "h743zi",
         &[],
         &[
             ("transports", "ethernet"),
@@ -2588,7 +2588,7 @@ fn ssh_is_not_offered_without_rng() {
     );
 }
 
-/// SSH (~165 KiB кода) — только в разделе приложения не меньше
+/// SSH (~190 KiB кода) — только в разделе приложения не меньше
 /// `SSH_MIN_PARTITION`: у stm32f407ve с OTA `ACTIVE` 128K — нет, без OTA —
 /// есть; `--define` в тесный раздел — ошибка.
 #[test]
@@ -2634,7 +2634,7 @@ fn the_ssh_host_key_lives_where_it_survives() {
     let host_key = |defines: &[(&str, &str)]| {
         let mut all = vec![("links", "tcp:modbus"), ("net_services", "rest,ssh")];
         all.extend_from_slice(defines);
-        let result = interview(&ast, "h743zg", &all, &[]).expect("каскад не должен падать");
+        let result = interview(&ast, "h743zi", &all, &[]).expect("каскад не должен падать");
         let var = |name| var_of(&result, name).map(str::to_string);
         (
             var("ssh_host_key"),
@@ -2728,7 +2728,7 @@ fn mqtt_is_offered_with_ethernet() {
 fn mqtt_ota_client_follows_rest_and_ssh() {
     let ast = compile_script();
     let client = |defines: &[(&str, &str)]| {
-        let result = interview(&ast, "h743zg", defines, &[]).expect("каскад не должен падать");
+        let result = interview(&ast, "h743zi", defines, &[]).expect("каскад не должен падать");
         var_of(&result, "mqtt_ota_client").map(str::to_string)
     };
     assert_eq!(
@@ -2764,7 +2764,7 @@ fn no_terminal_gives_no_net_services() {
 fn password_login_asks_no_key() {
     let result = interview(
         &compile_script(),
-        "h743zg",
+        "h743zi",
         &[("links", "tcp"), ("net_services", "ssh")],
         &[("ssh_auth", "password")],
     )
@@ -2784,7 +2784,7 @@ fn password_login_asks_no_key() {
 fn an_empty_key_falls_back_to_password() {
     let result = interview(
         &compile_script(),
-        "h743zg",
+        "h743zi",
         &[("links", "tcp"), ("net_services", "ssh")],
         &[("ssh_auth", "key"), ("ssh_key", "")],
     )
@@ -2819,7 +2819,7 @@ fn net_services_defines_are_strict() {
         ),
         // Вход по ключу без ключа (без терминала) и с ключом не ed25519.
         (
-            "h743zg",
+            "h743zi",
             &[
                 ("links", "tcp"),
                 ("net_services", "ssh"),
@@ -2828,7 +2828,7 @@ fn net_services_defines_are_strict() {
             "ssh_key: вход по ключу",
         ),
         (
-            "h743zg",
+            "h743zi",
             &[
                 ("links", "tcp"),
                 ("net_services", "ssh"),
@@ -2839,7 +2839,7 @@ fn net_services_defines_are_strict() {
         ),
         // Одно начало без тела ключа и кавычка, которая сломала бы литерал.
         (
-            "h743zg",
+            "h743zi",
             &[
                 ("links", "tcp"),
                 ("net_services", "ssh"),
@@ -2849,7 +2849,7 @@ fn net_services_defines_are_strict() {
             "ssh_key: вход по ключу",
         ),
         (
-            "h743zg",
+            "h743zi",
             &[
                 ("links", "tcp"),
                 ("net_services", "ssh"),
@@ -2862,7 +2862,7 @@ fn net_services_defines_are_strict() {
             "ssh_key: вход по ключу",
         ),
         (
-            "h743zg",
+            "h743zi",
             &[
                 ("links", "tcp"),
                 ("net_services", "ssh"),
@@ -2880,7 +2880,7 @@ fn net_services_defines_are_strict() {
             "ssh_auth: задаётся только",
         ),
         (
-            "h743zg",
+            "h743zi",
             &[
                 ("links", "tcp"),
                 ("net_services", "ssh"),
@@ -2897,7 +2897,7 @@ fn net_services_defines_are_strict() {
     }
     let ok = interview(
         &ast,
-        "h743zg",
+        "h743zi",
         &[
             ("links", "tcp"),
             ("net_services", "rest, ssh"),
@@ -2912,7 +2912,7 @@ fn net_services_defines_are_strict() {
     // Без терминала вход — по паролю.
     let silent = interview(
         &ast,
-        "h743zg",
+        "h743zi",
         &[("links", "tcp"), ("net_services", "ssh")],
         &[],
     )

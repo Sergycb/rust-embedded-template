@@ -41,6 +41,10 @@ defmt = [
 	# {%- if has_usb == "true" %}
 	"embassy-usb/defmt",
 	# {%- endif %}
+	# {%- if net_services contains "ssh" %}
+	# Ошибки консоли (`RuntimeError`) печатаются через `defmt`.
+	"bareminal_cli/defmt",
+	# {%- endif %}
 ]
 # {%- if ota == "true" %}
 # Код bootloader'а — проверка подписи нового образа (`ota::boot::screen_update`),
@@ -157,6 +161,11 @@ heapless           = { workspace = true }
 # Узел SSH (`domain::ssh`): протокол `sunset` над сокетом — `sunset-async`
 # (реэкспортирует `sunset`), канал сессии — `embedded-io-async`.
 sunset-async       = { workspace = true }
+# Консоль (`domain::ssh::console`): enum команд, разбор, история и `help`.
+# Async/no_std, статическая память; версии `heapless`/`embedded-io-async`/
+# `embassy-futures` — те же, что у `sunset-async`.
+bareminal_cli      = { workspace = true }
+bareminal_macros   = { workspace = true }
 # Вход по паролю (`domain::ssh::Login::PasswordHash`): SHA-256 предъявленного
 # пароля с солью и сравнение с хэшем из прошивки за постоянное время.
 sha2               = { workspace = true }

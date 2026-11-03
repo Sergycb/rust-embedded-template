@@ -291,6 +291,13 @@ picoserve              = { version = "0.20.1", features = ["embassy"] }
 # соединения — слоты узла. 0BSD. Случайность криптографии `sunset` берёт через
 # `getrandom` — в прошивке над RNG платы (`crates-cross/bsp/src/rng.rs`).
 sunset-async           = { version = "0.6.0" }
+# Консоль SSH (`domain::ssh::console`): редактирование строки, история,
+# автодополнение и `help` выводятся из enum команд. Async/no_std, статическая
+# память, без alloc; `heapless`, `embedded-io-async` и `embassy-futures` — те же
+# версии, что уже в workspace. `async-no-std` — фича, а не другая сборка.
+bareminal_cli          = { version = "0.4.0", default-features = false, features = ["async-no-std"] }
+# `#[derive(Command)]` консоли: разбор enum и генерация `help` в compile time.
+bareminal_macros       = { version = "0.4.0" }
 # Хэш пароля консоли SSH (`domain::ssh::Login::PasswordHash`; создаёт его
 # `cargo xtask`, `secrets.rs`): SHA-256 и сравнение за постоянное время. Те же
 # версии, что уже тянет `sunset`, — нового кода в сборке нет.
