@@ -171,6 +171,24 @@ async fn uart_drain_task(mut uart: bsp::LogTx) {
 в `fragments:` графа{% else %}`spawn` модуля задачи (`crates-cross/app/src/tasks/`), по модулю на
 задачу; `main` бинарника только зовёт `tasks::spawn_all`{% endif %}.
 {%- endif %}
+{%- if has_cli == "true" %}
+
+# Консоль `cli`: поток платы без канала
+
+Узел `CONSOLE` (`domain::CONSOLE_FRAG<T>`, `domain::console`) берёт поток платы
+как есть — `BufferedUart` или `CdcStream`, оба `embedded_io_async::{Read, Write}`;
+канала из `adapters-logic` под ним нет: консоль читает байты, а не кадры.
+{% if graph == "true" %}Привязка в `fragments:` графа (`crates-cross/app/src/graph.rs`) отдаёт
+узлу поле платы, сведения об устройстве{% if has_net == "true" %}, сетевой стек{% endif %}{% if ota == "true" %} и клиент OTA{% endif %}{% else %}Задача `crates-cross/app/src/tasks/cli.rs` — псевдоним `Source` над полем платы
+(задачи embassy не generic) и `spawn`, который собирает контекст узла{% endif %}.
+Слот `IO` — `local`: `shell` делит поток между чтением и `bareminal` через
+`RefCell`, и future выходит `!Send`.
+
+Консоль в проекте одна — генерация не даёт второй `cli` и SSH рядом с ней. Узел
+не падает: `exit`, Ctrl-D, EOF и ошибка потока ведут к новому приглашению; после
+EOF и ошибки — через паузу `RESTART_PAUSE`, чтобы поток, отказывающий сразу, не
+занял исполнитель.
+{%- endif %}
 {%- if has_modbus == "true" %}
 
 # Modbus: одна карта на все узлы `MODBUS_*`

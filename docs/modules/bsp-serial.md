@@ -4,6 +4,11 @@ UART платы — поток байтов, по подмодулю на тра
 приложение конкретным типом — {% if graph == "true" %}в привязке узла (`crates-cross/app/src/graph.rs`){% else %}в задаче протокола
 (`crates-cross/app/src/tasks/{{ protocol }}.rs`){% endif %}.
 {%- endif %}
+{%- capture cli_uart %}{% assign xs = links | split: "," %}{% for l in xs %}{% assign f = l | split: ":" %}{% if f[0] == "uart" and f[3] == "cli" %}{{ f[4] }}{% endif %}{% endfor %}{% endcapture %}
+{%- if cli_uart != "" %}
+Консоль `cli` (узел `CONSOLE`) берёт поток `board.{{ cli_uart }}` как есть, без канала:
+`BufferedUart` уже `Read + Write` (`docs/modules/app.md`, «Консоль `cli`»).
+{%- endif %}
 
 Шаблон выводы не выбирает (`docs/architecture.md`), поэтому в `Serial` пока
 стоит заглушка `bsp::stub::Serial`: проект собирается и

@@ -16,7 +16,7 @@ USB платы — драйвер USB-блока и устройство `embass
 Пару один раз собирает `Board::new` (`adapters_hw::usb::Usb::new`; почему —
 `docs/architecture.md`, «`Board` отдаёт рычаги платы, а не периферию и не
 протоколы»), а {% if graph == "true" %}граф{% else %}`tasks::spawn_all`{% endif %} делит её по полям (`board.<транспорт>.device` — узлу `USB_<транспорт>`,
-`board.<транспорт>.cdc` — каналу протокола или вашему узлу).
+`board.<транспорт>.cdc` — каналу протокола{% if has_cli == "true" %}, консоли `cli` (узел `CONSOLE`, поток без канала — `docs/modules/app.md`, «Консоль `cli`»){% endif %} или вашему узлу).
 
 ## Как подставить свой USB
 {%- assign xs = links | split: "," %}

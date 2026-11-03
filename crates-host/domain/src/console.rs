@@ -22,6 +22,9 @@ use defmt_or_log::info;
 use embassy_net::Stack;
 // {%- endif %}
 use embassy_time::{Duration, Instant, with_timeout};
+// {%- if has_cli == "true" %}
+use embassy_time::Timer;
+// {%- endif %}
 use embedded_io_async::{Read, Write};
 
 // {%- if ota == "true" %}
@@ -64,6 +67,13 @@ const CMD_BUFFER: usize = LINE;
 
 /// Сколько команд помнит история (Up/Down).
 const HISTORY: usize = 4;
+
+// {%- if has_cli == "true" %}
+/// Пауза узла `CONSOLE` перед новым приглашением после EOF или ошибки
+/// потока: поток, который отказывает сразу, иначе крутил бы цикл без
+/// `await` и не отдавал исполнитель другим задачам.
+const RESTART_PAUSE: Duration = Duration::from_millis(100);
+// {%- endif %}
 
 // {%- if net_services contains "ssh" %}
 /// Буфер текста ошибки разбора `exec`.
@@ -256,9 +266,15 @@ impl<IO: Read + Write> ConsoleCtx<'_, IO> {
             };
             match shell(&mut *self.io, &device, None).await {
                 Ok(ShellEnd::Exit) => info!("console: exit — приглашение заново"),
-                Ok(ShellEnd::Eof) => info!("console: EOF — приглашение заново"),
                 Ok(ShellEnd::Idle) => {}
-                Err(_) => info!("console: канал оборвался — приглашение заново"),
+                Ok(ShellEnd::Eof) => {
+                    info!("console: EOF — приглашение заново");
+                    Timer::after(RESTART_PAUSE).await;
+                }
+                Err(_) => {
+                    info!("console: канал оборвался — приглашение заново");
+                    Timer::after(RESTART_PAUSE).await;
+                }
             }
         }
     }
@@ -539,6 +555,9 @@ mod tests {
     // {%- if net_services contains "ssh" and ota == "true" %}
     use super::Confirm;
     // {%- endif %}
+    // {%- if has_cli == "true" %}
+    use super::{ConsoleCtx, RESTART_PAUSE, task};
+    // {%- endif %}
 
     /// Терминал в памяти: отдаёт `input` по байту, запоминает вывод.
     struct Terminal {
@@ -621,6 +640,49 @@ mod tests {
             Ok(())
         }
     }
+
+    // {%- if has_cli == "true" %}
+    /// Порт, в который печатают `input`, а дальше молчат: поток UART/USB
+    /// не кончается.
+    struct Keyboard {
+        input: &'static [u8],
+        shown: Vec<u8>,
+    }
+
+    impl embedded_io_async::ErrorType for Keyboard {
+        type Error = Infallible;
+    }
+
+    impl embedded_io_async::Read for Keyboard {
+        async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Infallible> {
+            let Some((&byte, rest)) = self.input.split_first() else {
+                return core::future::pending().await;
+            };
+            buf[0] = byte;
+            self.input = rest;
+            Ok(1)
+        }
+    }
+
+    impl embedded_io_async::Write for Keyboard {
+        #[expect(
+            clippy::unused_async_trait_impl,
+            reason = "сигнатуру задаёт трейт `Write`; память не ждёт"
+        )]
+        async fn write(&mut self, buf: &[u8]) -> Result<usize, Infallible> {
+            self.shown.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        #[expect(
+            clippy::unused_async_trait_impl,
+            reason = "сигнатуру задаёт трейт `Write`; у памяти нечего досылать"
+        )]
+        async fn flush(&mut self) -> Result<(), Infallible> {
+            Ok(())
+        }
+    }
+    // {%- endif %}
 
     /// Сведения об устройстве для консоли — значения не важны.
     fn device_info() -> DeviceInfo {
@@ -903,4 +965,95 @@ mod tests {
             "{out}"
         );
     }
+
+    // {%- if has_cli == "true" %}
+    /// Сколько раз консоль поздоровалась — столько раз запускался `shell`.
+    fn banners(shown: &[u8]) -> usize {
+        const BANNER: &[u8] = b"console, 'help' for commands";
+        shown.windows(BANNER.len()).filter(|w| *w == BANNER).count()
+    }
+
+    /// Узел `CONSOLE` не падает на `exit`: печатает приглашение заново и
+    /// ждёт ввод дальше.
+    #[test]
+    fn the_node_restarts_the_shell_after_exit() {
+        let mut io = Keyboard {
+            input: b"exit\r",
+            shown: Vec::new(),
+        };
+        let mut info = device_info();
+        // {%- if has_net == "true" %}
+        let mut stack = None;
+        // {%- endif %}
+        // {%- if ota == "true" %}
+        let mut ota = crate::ota::tests::cmd().0;
+        // {%- endif %}
+        {
+            let mut node = pin!(task(ConsoleCtx {
+                io: &mut io,
+                info: &mut info,
+                // {%- if has_net == "true" %}
+                stack: &mut stack,
+                // {%- endif %}
+                // {%- if ota == "true" %}
+                ota: &mut ota,
+                // {%- endif %}
+                index: 0,
+            }));
+            let mut cx = Context::from_waker(Waker::noop());
+            assert!(node.as_mut().poll(&mut cx).is_pending());
+        }
+        assert_eq!(
+            banners(&io.shown),
+            2,
+            "{:?}",
+            String::from_utf8_lossy(&io.shown)
+        );
+    }
+
+    /// Поток, который кончается сразу, не крутит узел без `await`: новое
+    /// приглашение — не раньше [`RESTART_PAUSE`].
+    #[test]
+    fn a_dead_stream_does_not_spin_the_node() {
+        MockDriver::get().reset();
+        let mut io = Terminal {
+            input: b"",
+            shown: Vec::new(),
+            room: usize::MAX,
+        };
+        let mut info = device_info();
+        // {%- if has_net == "true" %}
+        let mut stack = None;
+        // {%- endif %}
+        // {%- if ota == "true" %}
+        let mut ota = crate::ota::tests::cmd().0;
+        // {%- endif %}
+        let mut cx = Context::from_waker(Waker::noop());
+        {
+            let mut node = pin!(task(ConsoleCtx {
+                io: &mut io,
+                info: &mut info,
+                // {%- if has_net == "true" %}
+                stack: &mut stack,
+                // {%- endif %}
+                // {%- if ota == "true" %}
+                ota: &mut ota,
+                // {%- endif %}
+                index: 0,
+            }));
+            // Первый `shell` кончился EOF — узел ждёт паузу, а не крутится.
+            assert!(node.as_mut().poll(&mut cx).is_pending());
+            MockDriver::get().advance(RESTART_PAUSE - Duration::from_millis(1));
+            assert!(node.as_mut().poll(&mut cx).is_pending());
+            MockDriver::get().advance(Duration::from_millis(1));
+            assert!(node.as_mut().poll(&mut cx).is_pending());
+        }
+        assert_eq!(
+            banners(&io.shown),
+            2,
+            "{:?}",
+            String::from_utf8_lossy(&io.shown)
+        );
+    }
+    // {%- endif %}
 }
