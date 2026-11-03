@@ -10,7 +10,7 @@ use embassy_time::{Duration, Instant, Timer, with_timeout};
 use sunset_async::sunset::{ChanHandle, PubKey, ServEvent, SignKey};
 use sunset_async::{ProgressHolder, SSHServer};
 
-use crate::ssh::console::{Device, LINE, Out, exec, shell};
+use crate::console::{Device, Idle, LINE, Out, ShellEnd, exec, shell};
 use crate::ssh::login::Access;
 
 /// Порт SSH.
@@ -28,8 +28,19 @@ pub const SSH_BUFFER: usize = 2000;
 /// поэтому keep-alive включён: без него клиент, пропавший без FIN, держал бы
 /// единственное соединение узла вечно. Живого, но молчащего клиента это не
 /// отпускает — пробы keep-alive он подтверждает; его консоль закрывает
-/// [`SHELL_IDLE`](crate::ssh::console::SHELL_IDLE).
+/// [`SHELL_IDLE`].
 pub(super) const IDLE: Duration = Duration::from_secs(300);
+
+/// Сколько `shell` ждёт ввода, прежде чем закрыть сессию. Соединение у узла
+/// одно, а живой, но молчащий клиент (забытое окно терминала) держал бы его
+/// бессрочно: пробы keep-alive он подтверждает, и `IDLE` сокета не
+/// срабатывает, а keep-alive самого SSH до консоли не доходит. 15 минут —
+/// как `TMOUT=900` в рекомендациях CIS для оболочки: паузу, пока человек
+/// читает или отвлёкся, это переживает, брошенную консоль — отпускает.
+pub(super) const SHELL_IDLE: Duration = Duration::from_secs(15 * 60);
+
+/// Что `shell` пишет клиенту перед закрытием по [`SHELL_IDLE`].
+const FAREWELL: &str = "\r\nidle timeout, session closed\r\n";
 
 /// Период keep-alive: клиент, пропавший без FIN (кабель, сон ноутбука),
 /// отпускает соединение через `IDLE`.
@@ -129,13 +140,20 @@ pub(super) async fn session(
         // Консоли нужен цикл событий всё время: ввод с клавиатуры приходит
         // через `progress()`.
         Start::Shell => {
-            // `Bareminal` владеет writer-половиной канала, а читаем вторую:
-            // `split` отдаёт независимые `ChanIn`/`ChanOut` с временем жизни
-            // сервера, а не заимствование `io`.
-            let (rx, tx) = io.split();
             let shell_done = async {
-                if shell(rx, tx, device).await.is_err() {
-                    warn!("ssh: канал сессии оборвался");
+                match shell(
+                    io,
+                    device,
+                    Some(Idle {
+                        after: SHELL_IDLE,
+                        farewell: FAREWELL,
+                        write_timeout: CLOSE_WAIT,
+                    }),
+                )
+                .await
+                {
+                    Ok(ShellEnd::Exit | ShellEnd::Eof | ShellEnd::Idle) => {}
+                    Err(_) => warn!("ssh: канал сессии оборвался"),
                 }
                 Timer::after(CLOSE_GRACE).await;
             };

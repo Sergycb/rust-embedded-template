@@ -41,7 +41,7 @@ pub fn take() -> Option<&'static str> {
     cortex_m::interrupt::free(|cs| LAST.borrow(cs).set(last));
     last
 }
-{%- if has_protobuf == "true" or net_services != "" %}
+{%- if has_protobuf == "true" or net_services != "" or has_cli == "true" %}
 
 /// Сообщение, которое прочитал [`take`], — для сведений об устройстве; до
 /// него — `None`.

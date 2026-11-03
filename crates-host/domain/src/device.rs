@@ -11,6 +11,9 @@
 // {%- if net_services contains "mqtt" %}
 //! `MQTT`.
 // {%- endif %}
+// {%- if has_cli == "true" %}
+//! `CONSOLE` (консоль `cli`).
+// {%- endif %}
 
 /// Байт в заводском номере чипа STM32 (96 бит).
 pub const UID_BYTES: usize = 12;

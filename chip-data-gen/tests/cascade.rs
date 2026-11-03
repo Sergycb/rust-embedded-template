@@ -1884,7 +1884,7 @@ fn impossible_protocol_answers_are_rejected() {
         (
             "f407ve",
             &[("protocol", "opcua"), ("interface", "uart")],
-            "protocol: ожидается canopen, modbus, none, protobuf, а не",
+            "protocol: ожидается canopen, cli, modbus, none, protobuf, а не",
         ),
     ];
     for (chip, preset, reason) in cases {
@@ -1985,7 +1985,7 @@ fn links_reject_impossible_answers() {
         (
             "f407ve",
             &[("links", "uart:opcua")],
-            "links: ожидается протокол canopen, modbus, none, protobuf, а не «opcua»",
+            "links: ожидается протокол canopen, cli, modbus, none, protobuf, а не «opcua»",
         ),
         (
             "f407ve",
@@ -2122,12 +2122,135 @@ fn the_protocol_menu_follows_the_marked_order() {
     )
     .expect("каскад не должен падать");
     let menus = all_menu_values(&result, "protocol");
-    assert_eq!(menus, [["none", "modbus", "protobuf"]]);
+    assert_eq!(menus, [["none", "modbus", "protobuf", "cli"]]);
     assert_eq!(
         var_of(&result, "links"),
         Some("uart:usart:USART1:modbus:usart1,can:bxcan:CAN1:none:can1")
     );
     assert_eq!(var_of(&result, "interface"), Some("uart"));
+}
+
+/// Консоль `cli` одна на проект: после неё второй UART/USB её не предлагает,
+/// а Modbus и protobuf — по-прежнему.
+#[test]
+fn cli_is_offered_once_per_project() {
+    let result = interview(
+        &compile_script(),
+        "g474re",
+        &[],
+        &[
+            ("transports", "uart"),
+            ("transports", "usb"),
+            ("transports", "done"),
+            ("protocol", "cli"),
+        ],
+    )
+    .expect("каскад не должен падать");
+    let menus = all_menu_values(&result, "protocol");
+    assert_eq!(menus.len(), 2, "{menus:?}");
+    assert_eq!(menus[0], ["none", "modbus", "protobuf", "cli"]);
+    assert_eq!(menus[1], ["none", "modbus", "protobuf"]);
+    assert_eq!(var_of(&result, "has_cli"), Some("true"));
+    assert_eq!(var_of(&result, "protocol"), Some("cli"));
+}
+
+/// `cli` — наложение: рядом с ним один Modbus/protobuf, номер клиента OTA у
+/// него свой; второй `cli`, `cli` по сети и `cli` с SSH — ошибка.
+#[test]
+fn cli_links_are_exclusive() {
+    let script = compile_script();
+    let both = run_chip_with(&script, "h743zi", &[("links", "uart:modbus,uart:cli")])
+        .expect("cli рядом с Modbus допустим");
+    assert_eq!(var_of(&both, "protocol"), Some("modbus"));
+    assert_eq!(var_of(&both, "has_cli"), Some("true"));
+    assert_eq!(var_of(&both, "has_modbus"), Some("true"));
+    // Клиенты входа `CMD` узла OTA: Modbus и консоль.
+    assert_eq!(var_of(&both, "ota_cmd_clients"), Some("2"));
+
+    for (preset, reason) in [
+        (
+            &[("links", "uart:cli,usb:cli")][..],
+            "links: консоль cli одна на проект",
+        ),
+        (
+            &[("links", "tcp:cli")][..],
+            "links: протокол cli работает поверх uart, usb, а не «tcp»",
+        ),
+        (
+            &[("links", "uart:cli,tcp"), ("net_services", "ssh")][..],
+            "net_services: выбрана консоль cli",
+        ),
+        (
+            &[("protocol", "cli")][..],
+            "нужен транспорт — задайте interface (uart, usb)",
+        ),
+    ] {
+        let err = run_chip_with(&script, "h743zi", preset)
+            .err()
+            .unwrap_or_else(|| panic!("{preset:?}: каскад не остановился"));
+        assert!(
+            err.to_string().contains(reason),
+            "{preset:?}: ждали «{reason}», а получили: {err}"
+        );
+    }
+
+    let one = run_chip_with(
+        &script,
+        "h743zi",
+        &[("interface", "uart"), ("protocol", "cli")],
+    )
+    .expect("protocol=cli поверх uart допустим");
+    assert_eq!(var_of(&one, "has_cli"), Some("true"));
+}
+
+/// С консолью `cli` SSH в меню служб не предлагается и говорит почему.
+#[test]
+fn cli_hides_ssh() {
+    let result = interview(
+        &compile_script(),
+        "h743zg",
+        &[("links", "uart:cli,tcp")],
+        &[],
+    )
+    .expect("каскад не должен падать");
+    let menus = all_menu_values(&result, "net_services");
+    assert!(
+        !menus.iter().flatten().any(|value| value == "ssh"),
+        "{menus:?}"
+    );
+    assert!(
+        result
+            .prints
+            .iter()
+            .any(|line| line.starts_with("SSH не предлагается: выбрана консоль cli")),
+        "{:?}",
+        result.prints
+    );
+}
+
+/// `cli` — только там, где раздел приложения не меньше `CLI_MIN_PARTITION`:
+/// у G071RB с OTA он тесный — пункта нет, `--define` — ошибка.
+#[test]
+fn cli_needs_room_for_its_code() {
+    let ast = compile_script();
+    let tight = interview(
+        &ast,
+        "g071rb",
+        &[],
+        &[("transports", "uart"), ("transports", "done")],
+    )
+    .expect("каскад не должен падать");
+    assert_eq!(
+        menu_values(&tight, "protocol").expect("протокол не предложен"),
+        ["none", "modbus", "protobuf"]
+    );
+    let Err(err) = interview(&ast, "g071rb", &[("links", "uart:cli")], &[]) else {
+        panic!("cli в тесный раздел должен быть ошибкой");
+    };
+    assert!(
+        err.to_string().contains("cli: консоль не помещается"),
+        "{err}"
+    );
 }
 
 /// Транспорты идут в проект в порядке пунктов меню, а не отметок.
@@ -3858,7 +3981,7 @@ fn the_menus_come_in_order_and_offer_only_what_is_possible() {
 
     // Протоколы — только те, что работают поверх выбранного транспорта.
     for (chip, interface, expected) in [
-        ("g474re", "uart", &["none", "modbus", "protobuf"][..]),
+        ("g474re", "uart", &["none", "modbus", "protobuf", "cli"][..]),
         ("g474re", "can", &["none", "canopen"][..]),
         ("h743zg", "ethernet", &["none", "modbus", "protobuf"][..]),
     ] {
@@ -4096,6 +4219,7 @@ fn every_path_through_the_menus_generates() {
                 "none" => &["none", "uart", "can", "tcp", "udp", "usb"],
                 "modbus" | "protobuf" => &["uart", "tcp", "udp", "usb"],
                 "canopen" => &["can"],
+                "cli" => &["uart", "usb"],
                 _ => &[],
             };
             if !allowed.contains(&interface) {

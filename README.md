@@ -209,7 +209,7 @@ supervisor-графы, watchdog{% endif %}). Вся остальная логи�
 конкретный тип («Трейт — только под несколько реализаций»; исключение — рычаг
 платы, который зовёт узел: `domain` не видит `bsp`). Заводить ли свой порт под
 датчики и периферию вашего устройства — тот же раздел docs/architecture.md.
-{%- if ota == "true" or config == "true" or link_port == "true" or protocol != "none" %}
+{%- if ota == "true" or config == "true" or link_port == "true" or has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" %}
 
 Что это значит в этом проекте:
 {% if ota == "true" %}
@@ -381,7 +381,7 @@ interface=none` с OTA — ошибка генерации. Протокол м�
 во входных регистрах (FC04) с той же базы. Тайм-аут master'а на `Start` должен быть
 длиннее стирания раздела.{% elsif protocol == "canopen" %}В этом проекте команды — записи SDO в объект `0x4F00`: sub 1 — `Start`, 2 —
 `Chunk`, 3 — `Finish`, 4 — `Reboot`; исход хост читает из sub 5, перечитывая, пока там
-0 (ещё выполняется), принятую длину — из sub 6.{% elsif protocol == "none" %}Протокола в этом проекте нет, поэтому узел пока только подтверждает
+0 (ещё выполняется), принятую длину — из sub 6.{% elsif protocol == "none" or protocol == "cli" %}Протокола в этом проекте нет, поэтому узел пока только подтверждает
 образ. Команды ему шлёт ваш протокол через клиент входа{% if graph == "true" %} `ota_cmd_requester()` графа{% else %} — `crate::tasks::ota::CMD.requester()`
 (`static` в `crates-cross/app/src/tasks/ota.rs`){% endif %}, обёрнутый в
 `domain::ota::OtaClient::new(.., domain::ota::ClientId(n))`; номер `n` — `{{ ota_cmd_clients }}`{% if net_services != "" %},
@@ -651,10 +651,10 @@ HOST_TARGET_BAUD=115200              # скорость UART (по умолча�
 {%- assign xs = links | split: "," %}
 {%- for l in xs %}
 {%- assign f = l | split: ":" %}
-| `{{ f[4] }}` — {% if f[0] == "uart" %}UART{% elsif f[0] == "can" %}CAN{% elsif f[0] == "usb" %}USB CDC ACM{% elsif f[0] == "tcp" %}TCP{% else %}UDP{% endif %} `{{ f[2] }}` | {% if f[3] == "modbus" %}`MODBUS_{{ f[4] | upcase }}`{% elsif f[3] == "protobuf" %}`PROTOBUF_{{ f[4] | upcase }}`{% elsif f[3] == "canopen" %}`CANOPEN_{{ f[4] | upcase }}`{% else %}протокола нет — объект ждёт ваш узел{% endif %}{% if f[0] == "usb" %}, `USB_{{ f[4] | upcase }}`{% endif %}{% if f[0] == "tcp" or f[0] == "udp" %}, `NET`{% endif %} | `crates-cross/bsp/src/{% if f[0] == "uart" %}serial{% elsif f[0] == "can" %}can{% elsif f[0] == "usb" %}usb{% else %}net{% endif %}.rs` (`docs/modules/bsp-{% if f[0] == "uart" %}serial{% elsif f[0] == "can" %}can{% elsif f[0] == "usb" %}usb{% else %}net{% endif %}.md`) |
+| `{{ f[4] }}` — {% if f[0] == "uart" %}UART{% elsif f[0] == "can" %}CAN{% elsif f[0] == "usb" %}USB CDC ACM{% elsif f[0] == "tcp" %}TCP{% else %}UDP{% endif %} `{{ f[2] }}` | {% if f[3] == "modbus" %}`MODBUS_{{ f[4] | upcase }}`{% elsif f[3] == "protobuf" %}`PROTOBUF_{{ f[4] | upcase }}`{% elsif f[3] == "canopen" %}`CANOPEN_{{ f[4] | upcase }}`{% elsif f[3] == "cli" %}`CONSOLE` — консоль{% else %}протокола нет — объект ждёт ваш узел{% endif %}{% if f[0] == "usb" %}, `USB_{{ f[4] | upcase }}`{% endif %}{% if f[0] == "tcp" or f[0] == "udp" %}, `NET`{% endif %} | `crates-cross/bsp/src/{% if f[0] == "uart" %}serial{% elsif f[0] == "can" %}can{% elsif f[0] == "usb" %}usb{% else %}net{% endif %}.rs` (`docs/modules/bsp-{% if f[0] == "uart" %}serial{% elsif f[0] == "can" %}can{% elsif f[0] == "usb" %}usb{% else %}net{% endif %}.md`) |
 {%- endfor %}
 
-{%- if protocol != "none" %}
+{%- if protocol != "none" and protocol != "cli" %}
 
 Что править проекту:
 {%- if protocol == "modbus" %} карту регистров `crates-host/domain/src/modbus/map.rs` и её
@@ -713,7 +713,7 @@ curl -H "Authorization: Bearer $(cat rest-token.txt)" http://<адрес пла�
 
 Узел `SSH` (`crates-host/domain/src/ssh.rs`) — сервер `sunset` на порту 22, одно
 соединение, пользователь `admin`. Команды: `help`, `info`{% if ota == "true" %}, `reboot yes`{% endif %}, `exit`; свои — вариантами
-enum `Command` (`crates-host/domain/src/ssh/console.rs`), а `help`, историю, автодополнение
+enum `Command` (`crates-host/domain/src/console.rs`), а `help`, историю, автодополнение
 и редактирование строки строит `bareminal`. `shell` и `exec` оба работают:
 `shell` — интерактивный (ANSI: стрелки, история, Tab) и рассчитан на PTY обычного
 `ssh`; `exec` — без ANSI, для скриптов.
@@ -765,6 +765,19 @@ SSH тяжёлый: около 165 KiB флеша, 19 KiB статической
 и 30 секунд на вход: `sunset` их не считает, ограничивает узел. Консоль, в которой
 15 минут ничего не вводили, закрывается: соединение у платы одно, и забытое окно
 терминала не держит его вечно.
+{%- endif %}
+{%- if has_cli == "true" %}
+
+### Консоль `cli`
+
+Узел `CONSOLE` (`crates-host/domain/src/console.rs`) — консоль `bareminal` поверх
+{% assign xs = links | split: "," %}{% for l in xs %}{% assign f = l | split: ":" %}{% if f[3] == "cli" %}`{{ f[4] }}` ({% if f[0] == "usb" %}USB CDC ACM{% else %}UART{% endif %}){% endif %}{% endfor %}.
+Команды те же, что в SSH: `help`, `info`{% if ota == "true" %}, `reboot yes`{% endif %}, `exit`; свои — вариантами
+enum `Command`. Терминалу нужен ANSI (стрелки, история, Tab): `picocom`, `minicom`,
+PuTTY. Срока молчания нет: `exit` или Ctrl-D печатают приглашение заново.
+
+Консоль в проекте одна: с `cli` генерация не предлагает ни второй `cli`, ни SSH
+(`net_services=ssh` с `cli` — ошибка). Порог раздела приложения — 128 KiB.
 {%- endif %}
 {%- if net_services contains "mqtt" %}
 
@@ -967,9 +980,9 @@ FDCAN свои `IT0`/`IT1`, а у `SPI` и таймеров их нет вовс
 Рядом — причина сброса: `main` ещё до `Board::new` читает флаги `RCC` (сторож,
 программный сброс, питание, вывод `NRST`…) и снимает их (`bsp::reset::take_cause`), а
 строка старта `app: причина сброса …` её показывает.
-{%- if has_protobuf == "true" or net_services != "" %}
+{%- if has_protobuf == "true" or net_services != "" or has_cli == "true" %}
 Без пробника обе вещи видны хосту в сведениях об устройстве — поля `reset` и
-`last_panic`{% if has_protobuf == "true" %} (protobuf `Info`){% endif %}{% if net_services contains "rest" %}, REST `/api/info`{% endif %}{% if net_services contains "mqtt" %}, MQTT `info`{% endif %}{% if net_services contains "ssh" %}, `info` в SSH{% endif %}; паника там коротко: файл, строка
+`last_panic`{% if has_protobuf == "true" %} (protobuf `Info`){% endif %}{% if net_services contains "rest" %}, REST `/api/info`{% endif %}{% if net_services contains "mqtt" %}, MQTT `info`{% endif %}{% if net_services contains "ssh" %}, `info` в SSH{% endif %}{% if has_cli == "true" %}, `info` в консоли `cli`{% endif %}; паника там коротко: файл, строка
 и первая строка сообщения.
 {%- endif %} Подробности — `docs/diagnostics.md`.
 

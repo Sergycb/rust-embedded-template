@@ -80,7 +80,7 @@ fn main() -> ! {
     // в `Board::new` ставит свой флаг заново — его прочитает следующий старт.
     let reset = bsp::reset::take_cause();
     info!("app: причина сброса {}", reset);
-{%- if has_protobuf == "true" or net_services != "" %}
+{%- if has_protobuf == "true" or net_services != "" or has_cli == "true" %}
     app::device::set_reset(reset);
 {%- endif %}
 

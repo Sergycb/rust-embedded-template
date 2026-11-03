@@ -41,7 +41,6 @@
 //! `exec` встаёт в очередь раньше, чем разбирается EOF клиента (см.
 //! `session`).
 
-mod console;
 // {%- if ssh_host_key == "config" %}
 mod host_key;
 // {%- endif %}
@@ -58,11 +57,11 @@ use sunset_async::SSHServer;
 use sunset_async::sunset::SignKey;
 use sunset_async::sunset::ed25519_dalek::SigningKey;
 
-use crate::ssh::console::Device;
+use crate::console::Device;
 use crate::ssh::login::Access;
 use crate::ssh::session::{CLOSE_WAIT, IDLE, KEEP_ALIVE, session};
 
-pub use console::{Command, Confirm};
+pub use crate::console::{Command, Confirm};
 // {%- if ssh_host_key == "config" %}
 pub use host_key::{HOST_KEY_ID, Stored};
 // {%- endif %}
@@ -180,7 +179,7 @@ impl<F: NorFlash> SshCtx<'_, Stored<F>> {
         }
         let device = Device {
             info: self.info,
-            stack,
+            stack: Some(stack),
             // {%- if ota == "true" %}
             ota: *self.ota,
             // {%- endif %}
@@ -224,21 +223,11 @@ pub async fn task<F: NorFlash>(mut ctx: SshCtx<'_, Stored<F>>) {
 
 #[cfg(test)]
 mod tests {
-    //! Тесты узла `SSH`: ключ пользователя, вход, команды, `info`, ключ хоста.
+    //! Тесты узла `SSH`: ключ пользователя, вход, ключ хоста.
 
-    use core::convert::Infallible;
-    use core::pin::pin;
-    use core::task::{Context, Poll, Waker};
-
-    use embassy_time::{Duration, MockDriver};
-
-    use crate::device::{DeviceInfo, PANIC_BRIEF};
-    use crate::ssh::console::{
-        Confirm, Device, INFO_TEXT, LINE, Out, SHELL_IDLE, exec, parse, shell, write_info,
-    };
     use crate::ssh::login::Access;
-    use crate::ssh::session::{CLOSE_WAIT, tries_exhausted};
-    use crate::ssh::{Command, Login, USER, ed25519_public_key};
+    use crate::ssh::session::tries_exhausted;
+    use crate::ssh::{Login, USER, ed25519_public_key};
     // {%- if ssh_host_key == "config" %}
     use crate::settings::Settings;
     use crate::ssh::{HOST_KEY_ID, Stored};
@@ -290,74 +279,6 @@ mod tests {
     }
     // {%- endif %}
 
-    /// Терминал, который молчит: чтение не кончается.
-    struct Mute;
-
-    impl embedded_io_async::ErrorType for Mute {
-        type Error = Infallible;
-    }
-
-    impl embedded_io_async::Read for Mute {
-        async fn read(&mut self, _: &mut [u8]) -> Result<usize, Infallible> {
-            core::future::pending().await
-        }
-    }
-
-    /// Терминал, который не читает: вывод копится, пока в окне канала есть
-    /// место (`room` байт), дальше запись ждёт вечно.
-    struct Screen {
-        shown: Vec<u8>,
-        room: usize,
-    }
-
-    impl embedded_io_async::ErrorType for Screen {
-        type Error = Infallible;
-    }
-
-    impl embedded_io_async::Write for Screen {
-        async fn write(&mut self, buf: &[u8]) -> Result<usize, Infallible> {
-            if self.room == 0 {
-                core::future::pending::<()>().await;
-            }
-            let n = buf.len().min(self.room);
-            self.shown.extend_from_slice(&buf[..n]);
-            self.room -= n;
-            Ok(n)
-        }
-
-        #[expect(
-            clippy::unused_async_trait_impl,
-            reason = "сигнатуру задаёт трейт `Write`; у памяти нечего досылать"
-        )]
-        async fn flush(&mut self) -> Result<(), Infallible> {
-            Ok(())
-        }
-    }
-
-    /// Ввод по сценарию: отдаёт байты `input` по одному, затем EOF.
-    struct Script {
-        input: &'static [u8],
-    }
-
-    impl embedded_io_async::ErrorType for Script {
-        type Error = Infallible;
-    }
-
-    impl embedded_io_async::Read for Script {
-        #[expect(
-            clippy::unused_async_trait_impl,
-            reason = "сигнатуру задаёт трейт `Read`; сценарий в памяти не ждёт"
-        )]
-        async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Infallible> {
-            let Some((&byte, rest)) = self.input.split_first() else {
-                return Ok(0);
-            };
-            buf[0] = byte;
-            self.input = rest;
-            Ok(1)
-        }
-    }
-
     // {%- if ssh_host_key == "config" %}
     /// Хранилище над флешем `flash`.
     fn settings<F: NorFlash>(flash: F) -> Settings<F> {
@@ -374,20 +295,6 @@ mod tests {
             .map(<[u8]>::to_vec)
     }
     // {%- endif %}
-
-    /// Сведения об устройстве для консоли — значения не важны.
-    fn device_info() -> DeviceInfo {
-        DeviceInfo {
-            version: "0.1.0",
-            commit: "abc",
-            chip: "STM32G071RB",
-            uid: [0; crate::device::UID_BYTES],
-            flash_size: 0,
-            sys_hz: None,
-            reset: "software",
-            last_panic: None,
-        }
-    }
 
     #[test]
     fn an_openssh_line_gives_the_raw_key() {
@@ -535,264 +442,6 @@ mod tests {
         assert!(tries_exhausted(6));
     }
 
-    /// Разбор команд — тем же `Command::parse`, что у `shell` и `exec`.
-    fn command(line: &str) -> Option<Command> {
-        let mut error = heapless::String::<64>::new();
-        parse(line, &mut error)
-    }
-
-    #[test]
-    fn commands_are_typed_and_qualified() {
-        assert_eq!(command("info"), Some(Command::Info));
-        assert_eq!(command("exit"), Some(Command::Exit));
-        assert_eq!(command("info now"), None);
-        assert_eq!(command("helpme"), None);
-        assert_eq!(command(""), None);
-        // {%- if ota == "true" %}
-        assert_eq!(command("reboot"), Some(Command::Reboot(Confirm::No)));
-        assert_eq!(command("reboot yes"), Some(Command::Reboot(Confirm::Yes)));
-        assert_eq!(command("reboot no"), Some(Command::Reboot(Confirm::No)));
-        assert_eq!(command("reboot yes please"), None);
-        assert_eq!(command("reboot maybe"), None);
-        // {%- endif %}
-    }
-
-    /// Консоль исполняет команды из enum: `help` встроен, неизвестная строка
-    /// даёт ошибку, Ctrl-C сбрасывает набранное.
-    #[test]
-    fn the_shell_runs_derived_commands() {
-        const BANNER: &str = "console, 'help' for commands\r\n";
-        let ((stack, _), _) = adapters_hw::net::fake::cable::pair();
-        let info = device_info();
-        let device = Device {
-            info: &info,
-            stack,
-            // {%- if ota == "true" %}
-            ota: crate::ota::tests::cmd().0,
-            // {%- endif %}
-        };
-        let mut cx = Context::from_waker(Waker::noop());
-        for (input, expected) in [
-            (&b"info\r"[..], "version 0.1.0"),
-            (b"help\r", "reboot"),
-            (b"unknown\r", "Unknown"),
-            // Ctrl-C сбрасывает `exi`, дальше идёт `info`.
-            (b"exi\x03info\r", "version 0.1.0"),
-        ] {
-            let mut rx = Script { input };
-            let mut tx = Screen {
-                shown: Vec::new(),
-                room: usize::MAX,
-            };
-            {
-                let console = pin!(shell(&mut rx, &mut tx, &device)).poll(&mut cx);
-                assert_eq!(console, Poll::Ready(Ok(())), "{}", input.escape_ascii());
-            }
-            let shown = String::from_utf8(tx.shown).expect("вывод — UTF-8");
-            assert!(
-                shown.starts_with(BANNER),
-                "{}: {shown:?}",
-                input.escape_ascii()
-            );
-            assert!(
-                shown.contains(expected),
-                "{}: {shown:?}",
-                input.escape_ascii()
-            );
-        }
-    }
-
-    /// Ctrl-D закрывает сессию сразу, на любой строке; непрочитанный ввод
-    /// остаётся в канале.
-    #[test]
-    fn ctrl_d_closes_the_shell() {
-        let ((stack, _), _) = adapters_hw::net::fake::cable::pair();
-        let info = device_info();
-        let device = Device {
-            info: &info,
-            stack,
-            // {%- if ota == "true" %}
-            ota: crate::ota::tests::cmd().0,
-            // {%- endif %}
-        };
-        let mut cx = Context::from_waker(Waker::noop());
-        for input in [&b"\x04info\r"[..], b"exi\x04info\r"] {
-            let mut rx = Script { input };
-            let mut tx = Screen {
-                shown: Vec::new(),
-                room: usize::MAX,
-            };
-            let console = pin!(shell(&mut rx, &mut tx, &device)).poll(&mut cx);
-            assert_eq!(console, Poll::Ready(Ok(())), "{}", input.escape_ascii());
-            assert_eq!(rx.input, b"info\r", "{}", input.escape_ascii());
-        }
-    }
-
-    /// Строка длиннее [`LINE`] не роняет сессию и не превращается в другую
-    /// команду: разбор видит усечённую строку.
-    #[test]
-    fn an_overlong_line_is_not_a_command() {
-        let mut input = vec![b'x'; LINE + 32];
-        input.push(b'\r');
-        let input: &'static [u8] = input.leak();
-        let ((stack, _), _) = adapters_hw::net::fake::cable::pair();
-        let info = device_info();
-        let device = Device {
-            info: &info,
-            stack,
-            // {%- if ota == "true" %}
-            ota: crate::ota::tests::cmd().0,
-            // {%- endif %}
-        };
-        let mut rx = Script { input };
-        let mut tx = Screen {
-            shown: Vec::new(),
-            room: usize::MAX,
-        };
-        let mut cx = Context::from_waker(Waker::noop());
-        let console = pin!(shell(&mut rx, &mut tx, &device)).poll(&mut cx);
-        assert_eq!(console, Poll::Ready(Ok(())));
-        let shown = String::from_utf8(tx.shown).expect("вывод — UTF-8");
-        assert!(shown.contains("Unknown"), "{shown:?}");
-    }
-
-    /// `exec` не печатает ни ANSI, ни `\r`: его вывод читают скрипты.
-    #[test]
-    fn exec_writes_plain_text() {
-        let ((stack, _), _) = adapters_hw::net::fake::cable::pair();
-        let info = device_info();
-        let device = Device {
-            info: &info,
-            stack,
-            // {%- if ota == "true" %}
-            ota: crate::ota::tests::cmd().0,
-            // {%- endif %}
-        };
-        let mut cx = Context::from_waker(Waker::noop());
-        for (input, expected) in [
-            ("info", "version 0.1.0"),
-            ("help", "reboot"),
-            ("nope", "Unknown"),
-        ] {
-            let mut tx = Screen {
-                shown: Vec::new(),
-                room: usize::MAX,
-            };
-            {
-                let mut out = Out {
-                    io: &mut tx,
-                    crlf: false,
-                };
-                let done = pin!(exec(input, &mut out, &device)).poll(&mut cx);
-                assert_eq!(done, Poll::Ready(Ok(())), "{input}");
-            }
-            assert!(
-                tx.shown
-                    .windows(expected.len())
-                    .any(|w| w == expected.as_bytes()),
-                "{input}: {:?}",
-                String::from_utf8_lossy(&tx.shown)
-            );
-            assert!(!tx.shown.contains(&b'\r'), "{input}");
-            assert!(!tx.shown.contains(&0x1b), "{input}");
-        }
-    }
-
-    /// Консоль без ввода закрывается через [`SHELL_IDLE`], не раньше, и
-    /// говорит клиенту почему; клиент, который не читает, прощание держит
-    /// не дольше [`CLOSE_WAIT`].
-    #[test]
-    fn a_silent_shell_closes_after_idle() {
-        const PROMPT: &str = "console, 'help' for commands\r\n> ";
-        const FAREWELL: &str = "\r\nidle timeout, session closed\r\n";
-        MockDriver::get().reset();
-        let ((stack, _), _) = adapters_hw::net::fake::cable::pair();
-        let info = device_info();
-        let device = Device {
-            info: &info,
-            stack,
-            // {%- if ota == "true" %}
-            ota: crate::ota::tests::cmd().0,
-            // {%- endif %}
-        };
-        let mut cx = Context::from_waker(Waker::noop());
-
-        let mut rx = Mute;
-        let mut tx = Screen {
-            shown: Vec::new(),
-            room: usize::MAX,
-        };
-        {
-            let mut console = pin!(shell(&mut rx, &mut tx, &device));
-            assert!(console.as_mut().poll(&mut cx).is_pending());
-            MockDriver::get().advance(SHELL_IDLE - Duration::from_secs(1));
-            assert!(console.as_mut().poll(&mut cx).is_pending());
-            MockDriver::get().advance(Duration::from_secs(1));
-            assert_eq!(console.as_mut().poll(&mut cx), Poll::Ready(Ok(())));
-        }
-        assert_eq!(tx.shown, format!("{PROMPT}{FAREWELL}").as_bytes());
-
-        let mut rx = Mute;
-        let mut tx = Screen {
-            shown: Vec::new(),
-            room: PROMPT.len(),
-        };
-        let mut console = pin!(shell(&mut rx, &mut tx, &device));
-        assert!(console.as_mut().poll(&mut cx).is_pending());
-        MockDriver::get().advance(SHELL_IDLE);
-        assert!(console.as_mut().poll(&mut cx).is_pending());
-        MockDriver::get().advance(CLOSE_WAIT);
-        assert_eq!(console.as_mut().poll(&mut cx), Poll::Ready(Ok(())));
-    }
-
-    #[test]
-    fn info_fits_the_reply_buffer() {
-        let info = DeviceInfo {
-            version: "65535.65535.65535-rc.65535",
-            commit: "0123456789ab",
-            chip: "STM32H7R7L8HXH",
-            uid: [0xff; crate::device::UID_BYTES],
-            flash_size: u32::MAX,
-            sys_hz: Some(u32::MAX),
-            reset: "independent_watchdog",
-            last_panic: Some(String::leak("ж".repeat(PANIC_BRIEF / 2))),
-        };
-        let mut out = heapless::String::<INFO_TEXT>::new();
-        write_info(
-            &mut out,
-            &info,
-            [0xff; 6],
-            Some(embassy_net::Ipv4Address::BROADCAST),
-            u64::MAX,
-        )
-        .unwrap();
-        assert!(out.starts_with("version 65535"), "{out}");
-        assert!(
-            out.contains("\nreset independent_watchdog\nlast panic ж"),
-            "{out}"
-        );
-    }
-
-    /// Место и текст паники — одна строка `last panic …`, а не две.
-    #[test]
-    fn the_panic_stays_on_its_line() {
-        let info = DeviceInfo {
-            version: "0.1.0",
-            commit: "abc",
-            chip: "STM32G071RB",
-            uid: [0; crate::device::UID_BYTES],
-            flash_size: 0,
-            sys_hz: None,
-            reset: "software",
-            last_panic: Some("dhcp.rs:12:5:\nlease lost"),
-        };
-        let mut out = heapless::String::<INFO_TEXT>::new();
-        write_info(&mut out, &info, [0; 6], None, 0).unwrap();
-        assert!(
-            out.ends_with("\nlast panic dhcp.rs:12:5: lease lost\n"),
-            "{out}"
-        );
-    }
     // {%- if ssh_host_key == "config" %}
 
     /// Первый старт создаёт ключ и записывает, следующий читает тот же.

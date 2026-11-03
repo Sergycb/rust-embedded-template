@@ -19,6 +19,9 @@ pub mod ota;
 {%- if has_canopen == "true" %}
 mod canopen;
 {%- endif %}
+{%- if has_cli == "true" %}
+mod cli;
+{%- endif %}
 {%- if has_modbus == "true" %}
 mod modbus;
 {%- endif %}
@@ -43,7 +46,7 @@ pub fn spawn_all(
     image: crate::version::Image,
 ) {
 {%- else %}
-pub fn spawn_all(spawner: embassy_executor::Spawner, {% if has_usb == "true" or has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" %}board{% else %}_board{% endif %}: bsp::Board) {
+pub fn spawn_all(spawner: embassy_executor::Spawner, {% if has_usb == "true" or has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" or has_cli == "true" %}board{% else %}_board{% endif %}: bsp::Board) {
 {%- endif %}
     // Загрузку процессора меряет задача из `cpu_load.rs`: в домене
     // executor-обвязки быть не может, а там ровно место для неё.
@@ -71,6 +74,9 @@ pub fn spawn_all(spawner: embassy_executor::Spawner, {% if has_usb == "true" or 
         {% if config == "true" %}Some(domain::settings::Settings::whole(board.config)){% else %}None{% endif %},
         domain::canopen::serial(board.spec.uid),
     );
+{%- elsif f[3] == "cli" %}
+    let info = crate::device::info(board.spec{% if ota == "true" %}, image{% endif %});
+    cli::spawn(spawner, {% if f[0] == "uart" %}board.{{ f[4] }}{% else %}board.{{ f[4] }}.cdc{% endif %}, info);
 {%- endif %}
 {%- endfor %}
 }

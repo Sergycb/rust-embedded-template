@@ -131,12 +131,13 @@ ci = { type = "string", prompt = "CI provider", choices = [
 #     ошибка, `yes_no_define`; прежние `internal`/`external` у `ota`/`config` —
 #     ошибка с подсказкой про `ext_flash`);
 #   interface — `none`, `uart`, `can`, `tcp`, `udp`, `usb`; при OTA `none` — ошибка;
-#   protocol — `none`, `modbus`, `protobuf`, `canopen`; другой, чем `none`, без
-#     `interface` — ошибка, `none` без `interface` — список транспортов;
+#   protocol — `none`, `modbus`, `protobuf`, `canopen`, `cli`; другой, чем `none`,
+#     без `interface` — ошибка, `none` без `interface` — список транспортов;
 #   links — вместо `interface` + `protocol`: `вид[:протокол]` через запятую
 #     (`links=uart:modbus,uart:modbus,tcp:modbus,can`); второй транспорт того же
 #     вида (и TCP с UDP разом) — только так; протокол в проекте один, CANopen —
-#     на одной шине;
+#     на одной шине; `cli` (консоль, только `uart`/`usb`, раздел приложения от
+#     128 KiB) — сверх него и одна на проект: второй `cli` и `ssh` с ней — ошибка;
 #   net_services — `ssh,rest,mqtt`, только с Ethernet; ssh_auth — `password`
 #     (умолчание) или `key`, ssh_key — строка `ssh-ed25519 …` при `key`;
 #   rust_lib, hw_drivers (только с внешней флеш) — адреса, умолчания нет.

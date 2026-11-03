@@ -12,7 +12,7 @@
 // фолтов живут здесь и попадают в бинарник ровно по разу — docs/diagnostics.md,
 // «Два паникёра, один на сборку»{% if ota == "true" %}; docs/modules/app.md{% endif %}.
 pub mod cpu_load;
-{%- if has_protobuf == "true" or net_services != "" %}
+{%- if has_protobuf == "true" or net_services != "" or has_cli == "true" %}
 pub mod device;
 {%- endif %}
 pub mod fault;

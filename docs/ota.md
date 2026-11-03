@@ -84,7 +84,7 @@
 {%- if graph != "true" %} Клиента
 получает задача протокола.
 {%- endif %}
-{%- if protocol != "none" %}
+{%- if protocol != "none" and protocol != "cli" %}
 
 Как команды ложатся на протокол:
 {%- endif %}

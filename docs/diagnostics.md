@@ -96,10 +96,10 @@ bytes, питание, вывод; ни одного — `unknown`. Причин
 регистр (`unknown`), а не снятые из-за повисшего старта флаги копились бы от
 сброса к сбросу — после цикла сбросов по сторожу и кнопки плата назвала бы
 причиной сторож.
-{%- if has_protobuf == "true" or net_services != "" %}
+{%- if has_protobuf == "true" or net_services != "" or has_cli == "true" %}
 
 Обе вещи уходят наружу в сведениях об устройстве (`domain::device::DeviceInfo`:
-`reset`, `last_panic`){% if has_protobuf == "true" %} — protobuf `Info.reset`/`Info.last_panic`{% endif %}{% if net_services contains "rest" %}, REST `/api/info`{% endif %}{% if net_services contains "mqtt" %}, тема MQTT `info`{% endif %}{% if net_services contains "ssh" %}, `info` в консоли SSH{% endif %}.
+`reset`, `last_panic`){% if has_protobuf == "true" %} — protobuf `Info.reset`/`Info.last_panic`{% endif %}{% if net_services contains "rest" %}, REST `/api/info`{% endif %}{% if net_services contains "mqtt" %}, тема MQTT `info`{% endif %}{% if net_services contains "ssh" %}, `info` в консоли SSH{% endif %}{% if has_cli == "true" %}, `info` в консоли `cli`{% endif %}.
 Паника — коротко (`domain::device::panic_brief`, до `PANIC_BRIEF` = 96 байт): файл без
 каталогов, строка, столбец и первая строка сообщения; нет паники — `null`{% if has_protobuf == "true" %} (в protobuf —
 пустая строка){% endif %}. Так хост видит, что плата перезагрузилась сторожем или паникой, без

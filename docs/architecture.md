@@ -149,7 +149,7 @@ build`){% endif %}. В `domain` трейтов нет. Всё, что нужно
 сверяет транспорт (`MasterError`){% endif %}. Причина — реализация такие типы не видит:
 в `ports` всякая их правка задевала бы `adapters-logic` и `bsp` зря. Там же,
 в `domain`, — контексты узлов{% if graph == "true" %} (их эмитит фрагмент), состояния
-автоматов и входы фрагментов ({% if ota == "true" %}`OtaWiring`, {% endif %}`IdleMeter`){% else %} и состояния автоматов{% endif %}{% if protocol != "none" %},
+автоматов и входы фрагментов ({% if ota == "true" %}`OtaWiring`, {% endif %}`IdleMeter`){% else %} и состояния автоматов{% endif %}{% if protocol != "none" and protocol != "cli" %},
 включая обработчик протокола{% if graph == "true" %} на этом входе{% endif %}: {% if protocol == "protobuf" %}`protobuf::Service`{% elsif protocol == "modbus" %}`modbus::Slave` над картой
 `modbus::EmptyRegisters` (карта одна на все узлы `MODBUS_*` — `docs/modules/app.md`){% else %}`canopen::dictionary` (словарь объектов){% endif %} — логика приложения,
 которую проект правит под себя, поэтому живёт в `domain`, а не в `app`{% endif %}.

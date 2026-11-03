@@ -606,6 +606,20 @@ fn default_cases() -> Vec<Case> {
             "ssh-ota",
             &["links=tcp", "net_services=ssh", "ssh_auth=password", "ext_flash=yes"],
         ),
+        // Консоль `cli` поверх UART/USB: одна на проект, рядом с Modbus и без
+        // графа — задачами. SSH с ней не сочетается (`net_services=ssh` — ошибка).
+        Case::new("stm32f407ve")
+            .variant("uart-cli-no-graph", &["links=uart:cli", "graph=no"])
+            .smoke(),
+        Case::new("stm32g474re").variant("usb-cli", &["links=usb:cli"]),
+        Case::new("stm32h743zi").variant(
+            "uart-modbus-cli",
+            &["links=uart:modbus,uart:cli"],
+        ),
+        Case::new("stm32h743zi").variant(
+            "uart-cli-ota",
+            &["links=uart:cli", "ext_flash=yes"],
+        ),
         Case::new("stm32h743zg").variant(
             "rest-ssh-key",
             &[

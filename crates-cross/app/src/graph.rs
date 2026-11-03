@@ -119,7 +119,25 @@ supervisor_graph! {
 {%- capture src %}{{ board }}.{{ f[4] }}.cdc{% endcapture %}
 {%- capture srct %}bsp::usb::{{ f[4] }}::Cdc{% endcapture %}
 {%- endif %}
-{%- if f[3] == "modbus" %}
+{%- if f[3] == "cli" %}
+
+        // Узел `CONSOLE` — консоль `bareminal` поверх UART/USB (`domain::console`).
+        // Поток — рычаг платы; сеть показывает MAC и адрес в `info`, если она есть.
+        ::domain::CONSOLE_FRAG<{{ srct }}> as CONSOLE =
+            ::domain::console::ConsoleWiring {
+                io: {{ src }},
+                info: {{ info }},
+{%- if has_net == "true" %}
+                stack: Some({{ board }}.net.stack),
+{%- endif %}
+{%- if ota == "true" %}
+                ota: ::domain::ota::OtaClient::new(
+                    ota_cmd_requester(),
+                    ::domain::ota::ClientId({{ client }}),
+                ),
+{%- endif %}
+            },
+{%- elsif f[3] == "modbus" %}
 {%- if f[0] == "tcp" %}
 {%- capture ty %}::adapters_logic::modbus::Tcp<::adapters_logic::net::TcpServer>{% endcapture %}
 {%- capture link %}::adapters_logic::modbus::Tcp::new(::adapters_logic::net::TcpServer::new(

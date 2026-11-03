@@ -1,5 +1,11 @@
 #![cfg_attr(not(test), no_std)]
 
+// {%- if has_cli == "true" or net_services contains "ssh" %}
+/// Консоль платы: общие команды, `shell` и узел `CONSOLE` поверх UART/USB —
+/// см. модуль.
+pub mod console;
+// {%- endif %}
+
 // {%- if graph == "true" %}
 /// Узел `HEARTBEAT`: то, что граф из `crates-cross/app` спавнит, а делает —
 /// домен. Каркас под работу вашего устройства, см. модуль.
@@ -32,7 +38,7 @@ pub mod canopen;
 /// переживающие перезапуск и обновление прошивки — см. модуль.
 pub mod settings;
 // {%- endif %}
-// {%- if has_protobuf == "true" or net_services != "" %}
+// {%- if has_protobuf == "true" or net_services != "" or has_cli == "true" %}
 
 /// Сведения об устройстве — для узлов, которые отдают их наружу, см.
 /// модуль.

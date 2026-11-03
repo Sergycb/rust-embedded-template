@@ -200,6 +200,17 @@ const GRAPH_MIN_PARTITION = 32768;
 /// вместе с REST и протоколами нужно больше — это покажет сборка.
 const SSH_MIN_PARTITION = 327680;
 
+/// Ниже какого размера раздела приложения консоль `cli` на UART/USB не
+/// предлагается.
+///
+/// Консоль `bareminal` (enum команд, разбор, `help`, история, автодополнение)
+/// занимает около 27 KiB release и заметно больше в debug — плюс каркас
+/// шаблона. Замер `template-check`: F407VE `uart:cli` с OTA без графа —
+/// release `app` 68.3 KiB, и debug, и release помещаются в ACTIVE 128 KiB;
+/// G474RE `usb:cli` с графом — 86.4 KiB из 236 KiB. Порог — наименьший
+/// проверенный раздел; меньше него сборка не проверялась.
+const CLI_MIN_PARTITION = 131072;
+
 /// Ниже какого размера раздела `ACTIVE` OTA-схему предлагать нельзя.
 ///
 /// Дело не в самой схеме — её раскладка сходится и на 8 KiB, — а в том, что в
@@ -578,7 +589,10 @@ fn free_blocks(kind, tags, links, have, instances) {
 /// выбран, это проверяет назначение блоков (и отсев чипов до каскада).
 fn parse_links(text, kinds, protocol_interfaces) {
     let out = [];
+    // Не-`cli` протокол проекта: он один, как и раньше. `cli` — наложение и
+    // считается отдельно: консоль одна на проект.
     let chosen = "none";
+    let cli = false;
     for item in text.split(",") {
         let kind = item;
         let protocol = "none";
@@ -601,7 +615,12 @@ fn parse_links(text, kinds, protocol_interfaces) {
         if !protocol_interfaces[protocol].contains(kind) {
             throw "links: протокол " + protocol + " работает поверх " + listed(protocol_interfaces[protocol]) + ", а не «" + kind + "»";
         }
-        if protocol != "none" {
+        if protocol == "cli" {
+            if cli {
+                throw "links: консоль cli одна на проект";
+            }
+            cli = true;
+        } else if protocol != "none" {
             // Статики стека `zencan` — по одному на прошивку.
             if protocol == "canopen" && chosen == "canopen" {
                 throw "links: CANopen пока только на одной шине CAN";
@@ -936,6 +955,8 @@ const PROTOCOL_INTERFACES = #{
     "modbus": ["uart", "tcp", "udp", "usb"],
     "protobuf": ["uart", "tcp", "udp", "usb"],
     "canopen": ["can"],
+    // Консоль `bareminal`: одна на проект, только поверх UART/USB.
+    "cli": ["uart", "usb"],
 };
 // Виды транспорта по порядку.
 const LINK_KINDS = ["uart", "can", "tcp", "udp", "usb"];
@@ -973,6 +994,7 @@ const PROTOCOL_TEXT = #{
     "modbus": "modbus - Modbus slave",
     "protobuf": "protobuf - protobuf messages from the host",
     "canopen": "canopen - CANopen node (zencan stack)",
+    "cli": "cli - console over UART/USB (bareminal)",
 };
 
 // Статическая RAM (`.data` + `.bss` + `.uninit` release-образа `app`) по частям
@@ -1013,6 +1035,10 @@ const RAM_COST = #{
         // Modbus RTU держит свой буфер кадра (`adapters_logic::modbus::Rtu`, 256 байт):
         // stm32f407ve modbus-uart-can 6320 = 3880 + 2440 (UART с Modbus).
         "uart:none": 0, "uart:modbus": 2472, "uart:protobuf": 2944,
+        // Консоль `bareminal` поверх UART/USB, замер `template-check`:
+        // F407VE `uart:cli` без графа — +2520, G474RE `usb:cli` — +2532
+        // к `usb:none`.
+        "uart:cli": 2560,
         // CANopen — stm32g474re canopen-config 7620 против 3884 + 32 (настройки);
         // с OTA сюда входят ребро и метка входа `ASK` узла OTA.
         "can:none": 0, "can:canopen": 3704,
@@ -1026,6 +1052,7 @@ const RAM_COST = #{
         // 3880; protobuf — stm32f407ve два USB 12656 (по 4388).
         // Modbus по USB — тот же RTU: +272 к замеру до буфера кадра в `Rtu`.
         "usb:none": 1360, "usb:modbus": 3856, "usb:protobuf": 4388,
+        "usb:cli": 3904,
     },
     // Стек `embassy-net` и драйвер Ethernet — один раз на tcp/udp: stm32f407ve
     // modbus-tcp-udp 14296 — на 960 меньше, чем TCP и UDP по отдельности.
@@ -1562,6 +1589,12 @@ let ram_base_now = ram_base(RAM_COST, ram_plan);
 // Резерв стека без служб: их выбирают позже, и прибавку `ssh` докладывает итог.
 let stack_now = STACK_RESERVE + if ram_plan.ota { STACK_EXTRA.ota } else { 0 };
 let ram_limit = if manual_now { () } else { size_in_bytes(layout["ram_length"]) };
+// Раздел приложения по нынешним ответам; раскладку пишет человек
+// (`manual_now`) или её нет — места не знаем и не отсекаем, как граф.
+let app_room = if !manual_now && layout.contains(plan_now.app_length_key) { size_in_bytes(layout[plan_now.app_length_key]) } else { () };
+let room_for = |item| app_room == () || app_room >= item.min_partition;
+// Консоль `cli` предлагается только там, где влезает её debug-образ.
+let cli_room = app_room == () || app_room >= CLI_MIN_PARTITION;
 // Приписка к пункту меню, с которым транспорты `set` (`#{ kind, protocol }`) не
 // помещаются; помещаются или оценки нет — пусто.
 let ram_mark = |set| {
@@ -1570,6 +1603,7 @@ let ram_mark = |set| {
     if need > ram_limit { " - DOES NOT FIT in RAM (est. " + kib(need) + " of " + kib(ram_limit) + ")" } else { "" }
 };
 let links = [];
+let has_cli = false;
 let wanted_protocol = if variable::is_set("protocol") { variable::get("protocol") } else { "" };
 if wanted_protocol != "" && !PROTOCOL_INTERFACES.contains(wanted_protocol) {
     throw "protocol: ожидается " + listed(PROTOCOL_INTERFACES.keys()) + ", а не «" + wanted_protocol + "»";
@@ -1589,7 +1623,11 @@ if WANTED_LINKS.len() > 0 {
     for wanted in WANTED_LINKS {
         let free = free_blocks(wanted.kind, INTERFACE_BLOCKS[wanted.kind], links, have, instances);
         links.push(#{ kind: wanted.kind, tag: free[0].tag, block: free[0].block, protocol: wanted.protocol });
-        if wanted.protocol != "none" { protocol = wanted.protocol; }
+        if wanted.protocol == "cli" {
+            has_cli = true;
+        } else if wanted.protocol != "none" {
+            protocol = wanted.protocol;
+        }
     }
     if protocol == "modbus" { wants_master = modbus_master_answer(); }
 } else {
@@ -1673,6 +1711,13 @@ if WANTED_LINKS.len() > 0 {
                     texts.push(PROTOCOL_TEXT[name]);
                 }
             }
+            // Консоль — наложение: её можно выбрать рядом с уже выбранным
+            // Modbus/protobuf, но только одну на проект и только там, где она
+            // помещается.
+            if !has_cli && cli_room && (kind == "uart" || kind == "usb") {
+                values.push("cli");
+                texts.push(PROTOCOL_TEXT["cli"]);
+            }
             // Протокол, с которым этот транспорт к уже выбранным не помещается в
             // RAM, помечен так же, как пункт списка транспортов.
             for i in 0..values.len() {
@@ -1683,7 +1728,9 @@ if WANTED_LINKS.len() > 0 {
             }
         }
         links.push(#{ kind: kind, tag: free[0].tag, block: free[0].block, protocol: link_protocol });
-        if protocol == "none" && link_protocol != "none" {
+        if link_protocol == "cli" {
+            has_cli = true;
+        } else if protocol == "none" && link_protocol != "none" {
             protocol = link_protocol;
             if protocol == "modbus" { wants_master = modbus_master_answer(); }
         }
@@ -1691,6 +1738,13 @@ if WANTED_LINKS.len() > 0 {
     if links.len() == 0 && wanted_protocol != "" && wanted_protocol != "none" {
         throw "protocol: протокол " + wanted_protocol + " нужен транспорт — задайте interface (" + listed(PROTOCOL_INTERFACES[wanted_protocol]) + ")";
     }
+}
+if links.filter(|link| link.protocol == "cli").len() > 1 {
+    throw "links: консоль cli одна на проект";
+}
+if has_cli && !cli_room {
+    throw "cli: консоль не помещается — под приложение отведено " + layout[plan_now.app_length_key]
+        + ", а нужно не меньше " + kib(CLI_MIN_PARTITION);
 }
 // OTA без транспорта: образ приходит командами по транспорту проекта (узел
 // OTA своего канала не имеет), и проверяет готовое устройство `cargo xtask test
@@ -1725,11 +1779,8 @@ if protocol != "modbus" && variable::is_set("modbus_master") && yes_no_define("m
 // ключу — открытый ключ (`ssh_key`).
 let has_eth = links.some(|link| link.kind == "tcp" || link.kind == "udp");
 let services = [];
-// Раздел приложения по нынешним ответам; раскладку пишет человек
-// (`manual_now`) или её нет — места не знаем и не отсекаем, как граф.
-let app_room = if !manual_now && layout.contains(plan_now.app_length_key) { size_in_bytes(layout[plan_now.app_length_key]) } else { () };
-let room_for = |item| app_room == () || app_room >= item.min_partition;
-let service_items = NET_SERVICE_ITEMS.filter(|item| (!item.needs_rng || rng[0] != "") && room_for.call(item));
+let service_items = NET_SERVICE_ITEMS.filter(|item| (!item.needs_rng || rng[0] != "")
+    && room_for.call(item) && !(has_cli && item.value == "ssh"));
 if variable::is_set("net_services") {
     for name in variable::get("net_services").split(",") {
         name.trim();
@@ -1737,6 +1788,9 @@ if variable::is_set("net_services") {
         let known = NET_SERVICE_ITEMS.filter(|item| item.value == name);
         if known.len() == 0 {
             throw "net_services: ожидается " + listed(NET_SERVICE_ITEMS.map(|item| item.value)) + ", а не «" + name + "»";
+        }
+        if has_cli && name == "ssh" {
+            throw "net_services: выбрана консоль cli — ssh не предлагается, консоль одна на проект";
         }
         if !has_eth {
             throw "net_services: служба " + name + " работает поверх Ethernet — добавьте транспорт tcp или udp";
@@ -1752,7 +1806,9 @@ if variable::is_set("net_services") {
     }
 } else if has_eth {
     for item in NET_SERVICE_ITEMS {
-        if item.needs_rng && rng[0] == "" {
+        if has_cli && item.value == "ssh" {
+            print("SSH не предлагается: выбрана консоль cli — консоль одна на проект");
+        } else if item.needs_rng && rng[0] == "" {
             print(item.value.to_upper() + " не предлагается: у " + chip_name + " нет RNG, а криптографии нужны случайные числа");
         } else if !room_for.call(item) {
             print(item.value.to_upper() + " не предлагается: под приложение отведено " + layout[plan_now.app_length_key]
@@ -2557,7 +2613,7 @@ variable::set("ext_flash_block", bus[1]);
 // Крейт `flash-page` (crates-host): `ErasePage` — при своей странице у раздела,
 // `erase_size` — при OTA на внешней флеши (проверка раскладки в `bsp::external`).
 variable::set("flash_page", if variable::get("erase_page") == "true" || (variable::get("ota") == "true" && variable::get("ota_store") == "external") { "true" } else { "false" });
-variable::set("protocol", protocol);
+variable::set("protocol", if protocol != "none" { protocol } else if has_cli { "cli" } else { "none" });
 variable::set("interface", iface);
 // Все транспорты — по ним идут файлы шаблона: список и признаки видов.
 variable::set("links", links_text(links));
@@ -2567,6 +2623,7 @@ for kind in has.keys() {
     variable::set("has_" + kind, if has[kind] { "true" } else { "false" });
 }
 variable::set("has_net", if has.tcp || has.udp { "true" } else { "false" });
+variable::set("has_cli", if has_cli { "true" } else { "false" });
 // Итог по кэшам: тег `scb_d` — кэш данных ядра M7 — только там, где есть регион
 // `DMA_NC`. Файлы модулей, которых в проекте нет, уходят тут же.
 if variable::get("dma_nc") == "true" {
@@ -2590,7 +2647,7 @@ let modbus_udp = false;
 let cobs_used = false;
 let sockets = 0;
 for link in links {
-    if link.protocol == "none" { continue; }
+    if link.protocol == "none" || link.protocol == "cli" { continue; }
     on[link.protocol] = true;
     if link.protocol == "modbus" {
         if link.kind == "uart" || link.kind == "usb" { modbus_rtu = true; }
@@ -2827,8 +2884,11 @@ if variable::get("graph") != "true" {
     if !on.canopen {
         file::delete("crates-cross/app/src/tasks/canopen.rs");
     }
+    if !has_cli {
+        file::delete("crates-cross/app/src/tasks/cli.rs");
+    }
     // Ни одного модуля — каталог не нужен: `tasks.rs` спавнит только `CPU_LOAD`.
-    if variable::get("ota") != "true" && !has.usb && !on.modbus && !on.protobuf && !on.canopen {
+    if variable::get("ota") != "true" && !has.usb && !on.modbus && !on.protobuf && !on.canopen && !has_cli {
         file::delete("crates-cross/app/src/tasks");
     }
 }
@@ -2880,6 +2940,10 @@ if !services.contains("ssh") {
     file::delete("crates-host/domain/src/ssh.rs");
     file::delete("crates-host/domain/src/ssh");
 }
+// Консоль живёт для SSH или `cli`: нет ни того, ни другого — нет и модуля.
+if !has_cli && !services.contains("ssh") {
+    file::delete("crates-host/domain/src/console.rs");
+}
 // MQTT — узел (с клиентом брокера `mqtt/client.rs`), разбор `mqtt.toml` в
 // build-скрипте `app` и описание.
 if !services.contains("mqtt") {
@@ -2888,7 +2952,7 @@ if !services.contains("mqtt") {
     file::delete("crates-cross/app/build");
     file::delete("docs/modules/app-mqtt.md");
 }
-if !on.protobuf && services.len() == 0 {
+if !on.protobuf && services.len() == 0 && !has_cli {
     file::delete("crates-host/domain/src/device.rs");
     file::delete("crates-cross/app/src/device.rs");
 }
