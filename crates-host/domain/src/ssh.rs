@@ -118,26 +118,6 @@ supervisor::supervisor_fragment! {
 // иначе в проекте остался бы `//` перед собой с отступом блока, и
 // `cargo fmt --check` упал бы.
 // {%- if ssh_host_key == "config" %}
-pub async fn task<F: NorFlash>(mut ctx: SshCtx<'_, Stored<F>>) {
-    // {%- else %}{{newline}}pub async fn task(mut ctx: SshCtx<'_>) {
-    // {%- endif %}
-    info!("ssh: узел запущен");
-    // Ключ хоста и доступ — подготовка на весь срок работы: от сессии к
-    // сессии они не меняются.
-    // {%- if ssh_host_key == "config" %}
-    let seed = ctx.host_key.seed().await;
-    // {%- else %}
-    //{{newline}}    let seed = **ctx.host_key;
-    // {%- endif %}
-    let key = SignKey::Ed25519(SigningKey::from_bytes(&seed));
-    let access = Access::new(*ctx.login);
-    // Принимает соединение, ведёт его до конца, ждёт следующее — бесконечно.
-    loop {
-        ctx.connection(&key, access).await;
-    }
-}
-
-// {%- if ssh_host_key == "config" %}
 impl<F: NorFlash> SshCtx<'_, Stored<F>> {
     // {%- else %}{{newline}}impl SshCtx<'_> {
     // {%- endif %}
@@ -187,6 +167,26 @@ impl<F: NorFlash> SshCtx<'_, Stored<F>> {
             socket.abort();
         }
         info!("ssh: соединение закрыто");
+    }
+}
+
+// {%- if ssh_host_key == "config" %}
+pub async fn task<F: NorFlash>(mut ctx: SshCtx<'_, Stored<F>>) {
+    // {%- else %}{{newline}}pub async fn task(mut ctx: SshCtx<'_>) {
+    // {%- endif %}
+    info!("ssh: узел запущен");
+    // Ключ хоста и доступ — подготовка на весь срок работы: от сессии к
+    // сессии они не меняются.
+    // {%- if ssh_host_key == "config" %}
+    let seed = ctx.host_key.seed().await;
+    // {%- else %}
+    //{{newline}}    let seed = **ctx.host_key;
+    // {%- endif %}
+    let key = SignKey::Ed25519(SigningKey::from_bytes(&seed));
+    let access = Access::new(*ctx.login);
+    // Принимает соединение, ведёт его до конца, ждёт следующее — бесконечно.
+    loop {
+        ctx.connection(&key, access).await;
     }
 }
 

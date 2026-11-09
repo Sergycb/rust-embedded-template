@@ -1,13 +1,13 @@
 # Первый свой узел
 
-Узел — подсистема со своей задачей. Объявление (`supervisor_fragment!`), автомат
+Узел — подсистема со своей задачей. Объявление (`supervisor_fragment!`), задача
 и тесты живут в `domain`, а в `cross` от узла остаётся {% if graph == "true" %}одна запись в графе{% else %}модуль задачи,
 который раздаёт ему рычаги платы и спавнит его{% endif %}. Почему так —
 `docs/architecture.md`, «Узлы — фрагменты в `domain`» и следующие разделы; здесь —
 путь по шагам.
 {%- if graph == "true" %}
 
-Образец — `crates-host/domain/src/heartbeat.rs`: узел из одного состояния,
+Образец — `crates-host/domain/src/heartbeat.rs`: периодический узел,
 который только отмечается у сторожа. Что ещё умеет узел графа (почтовый ящик,
 публикация, большие объекты в слоте) — `docs/modules/app-graph.md`.
 {%- else %}
@@ -15,8 +15,8 @@
 
 Графа в проекте нет: узлы спавнит `tasks::spawn_all`
 (`crates-cross/app/src/tasks.rs`), по модулю на задачу. {% if samples != "" %}Образцы: {{ samples | remove_first: ", " }}.{% else %}Готового узла-образца в
-проекте нет: `domain::cpu_load` без графа — не узел, а цикл. Образцы фрагмента
-и автомата — в репозитории шаблона
+проекте нет: `domain::cpu_load` без графа — не узел, а цикл. Образец фрагмента
+и задачи — в репозитории шаблона
 ([rust-embedded-template](https://github.com/Sergycb/rust-embedded-template)):
 модуль `domain::usb` — самый короткий узел.{% endif %}
 Сторожа и перезапусков нет: узлы не падают, а зависший остаётся зависшим.
@@ -25,10 +25,10 @@
 1. **Модуль в `domain`** — `crates-host/domain/src/<узел>.rs` и строка
    `pub mod <узел>;` в `crates-host/domain/src/lib.rs`. В модуле — фрагмент
    (`supervisor_fragment!` с `ctx: $crate::<узел>::<Узел>Ctx` и
-   `task: $crate::<узел>::task`, всё внутри полным путём), автомат
-   `#[fsm::typestate]` на `impl <Узел>Ctx` и задача
-   `match ctx.run().await {}` (`docs/architecture.md`, «Каждая задача узла —
-   автомат `#[fsm::typestate]`»).
+   `task: $crate::<узел>::task`, всё внутри полным путём), задача
+   `pub async fn task(ctx: <Узел>Ctx<'_>)` с циклом по смыслу узла
+   (`docs/architecture.md`, «Каждая задача узла — цикл на контексте
+   фрагмента»).
 2. **Новое слово DSL — фича `supervisor`.** Слова фрагмента — под фичами
    `supervisor`, и все они выключены по умолчанию. Без фичи работают
    `resources:`, `inbox:` и `publish:`/`subscribe:`; включены те, что пишут

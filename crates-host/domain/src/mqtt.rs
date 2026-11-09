@@ -103,10 +103,7 @@ pub async fn task(ctx: MqttCtx<'_>) {
                     topics: &topics,
                     info: ctx.info,
                     mac: mac.0,
-                    ip: ctx
-                        .stack
-                        .config_v4()
-                        .map(|config| config.address.address()),
+                    ip: ctx.stack.config_v4().map(|config| config.address.address()),
                     rx: &mut ctx.mqtt_rx[..],
                     tx: &mut ctx.mqtt_tx[..],
                     // {%- if ota == "true" %}

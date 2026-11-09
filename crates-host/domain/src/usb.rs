@@ -54,7 +54,7 @@ supervisor::supervisor_fragment! {
 /// «сообщить о старте и отвечать хосту»: ни состояний, ни цикла.
 pub async fn task<D: Driver<'static>>(ctx: UsbCtx<'_, UsbDevice<'static, D>>) {
     info!("usb: узел запущен");
-    ctx.device.run().await
+    ctx.device.run().await;
 }
 
 #[cfg(test)]

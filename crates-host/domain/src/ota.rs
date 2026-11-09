@@ -201,7 +201,7 @@ supervisor::supervisor_fragment! {
 /// Состояние узла в цикле задачи.
 ///
 /// Typestate: переход возможен только через consuming-метод текущего
-/// состояния, а вызвать его можно только из ветки [`State::on_command`] под
+/// состояния, а вызвать его можно только из ветки `State::on_command` под
 /// свою команду. Так таблица переходов остаётся исчерпываемой: пары
 /// (состояние, команда) без перехода просто не пишутся, а компилятор ловит
 /// попытку собрать, скажем, [`Ready`] из чужого `Finish`.
@@ -373,6 +373,10 @@ impl Receiving {
     }
 
     /// Хост замолчал посреди образа: приём брошен.
+    #[expect(
+        clippy::unused_self,
+        reason = "сигнатура перехода: состояние потребляется целиком"
+    )]
     fn expired(self) -> State {
         warn!("ota: хост молчит дольше тайм-аута — приём брошен");
         State::Idle(Idle)
@@ -447,12 +451,6 @@ impl State {
             OtaCommand::Reboot => unreachable!("`Reboot` разбирается в цикле, до разводки"),
         }
     }
-}
-
-/// `Chunk` или `Finish` без приёма: отказ, состояние то же.
-fn no_session(served: Answer<'_>) {
-    warn!("ota: кусок или Finish без Start");
-    served.respond(Err(Rejection::NoSession));
 }
 
 impl<'a, D, S, R, const PARKED: usize> OtaCtx<'a, Updater<Partitions<D, S>>, R, PARKED>
@@ -575,7 +573,7 @@ where
     }
 }
 
-impl<'a, D, S, R, const PARKED: usize> OtaCtx<'a, Updater<Partitions<D, S>>, R, PARKED>
+impl<D, S, R, const PARKED: usize> OtaCtx<'_, Updater<Partitions<D, S>>, R, PARKED>
 where
     D: NorFlash,
     S: NorFlash,
@@ -588,6 +586,12 @@ where
         Timer::after(REBOOT_GRACE).await;
         self.reboot.reboot()
     }
+}
+
+/// `Chunk` или `Finish` без приёма: отказ, состояние то же.
+fn no_session(served: Answer<'_>) {
+    warn!("ota: кусок или Finish без Start");
+    served.respond(Err(Rejection::NoSession));
 }
 
 // {%- if graph == "true" %}

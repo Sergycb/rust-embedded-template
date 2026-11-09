@@ -3,14 +3,16 @@
 //! Две утилиты периодических циклов узлов. Обе — осознанные замены примитивам
 //! `embassy-time`:
 //!
-//! - [`next_tick`] вместо [`embassy_time::Ticker`]: отставший `Ticker`
-//!   догоняет пачкой тактов подряд, а циклам узлов пропущенные такты не
-//!   нужны — работа выполнилась бы N раз разом за один круг;
-//! - [`deadline`] вместо [`embassy_time::Timer::at`] в гонке `select`:
-//!   `Timer` на первом опросе всегда отвечает `Poll::Pending`, даже если срок
-//!   уже прошёл, и готовый прямо сейчас источник обогнал бы наступивший срок:
-//!   такт heartbeat откладывался бы потоком кадров, а просроченный приём OTA —
-//!   пришедшей командой. [`deadline`] читает часы на каждом опросе, первом
+//! - [`next_tick`](crate::tick::next_tick) вместо [`embassy_time::Ticker`]:
+//!   отставший `Ticker` догоняет пачкой тактов подряд, а циклам узлов
+//!   пропущенные такты не нужны — работа выполнилась бы N раз разом за один
+//!   круг;
+//! - [`deadline`](crate::tick::deadline) вместо [`embassy_time::Timer::at`] в
+//!   гонке `select`: `Timer` на первом опросе всегда отвечает `Poll::Pending`,
+//!   даже если срок уже прошёл, и готовый прямо сейчас источник обогнал бы
+//!   наступивший срок: такт heartbeat откладывался бы потоком кадров, а
+//!   просроченный приём OTA — пришедшей командой.
+//!   [`deadline`](crate::tick::deadline) читает часы на каждом опросе, первом
 //!   включённым: срок, наступивший до начала круга, выигрывает гонку у любого
 //!   события.
 
@@ -26,6 +28,7 @@ use embassy_time::{Duration, Instant, Timer};
 /// Опоздавший вызов получает один такт сразу, и сетка дальше идёт от `now`:
 /// пропущенные такты отброшены, а не выданы пачкой подряд, как у
 /// [`embassy_time::Ticker`]. Насыщается в [`Instant::MAX`].
+#[must_use]
 pub fn next_tick(prev: Instant, period: Duration, now: Instant) -> Instant {
     let next = prev.checked_add(period).unwrap_or(Instant::MAX);
     if next > now { next } else { now }
@@ -47,7 +50,9 @@ pub fn deadline(at: Instant) -> impl Future<Output = ()> {
         if at <= Instant::now() {
             Poll::Ready(())
         } else {
-            let _ = Pin::new(&mut Timer::at(at)).poll(cx);
+            // Timer на этом опросе нужен только ради регистрации waker —
+            // результат не важен: готовность решит проверка часов выше.
+            let _polled = Pin::new(&mut Timer::at(at)).poll(cx);
             Poll::Pending
         }
     })

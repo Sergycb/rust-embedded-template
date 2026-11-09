@@ -42,7 +42,7 @@ supervisor::supervisor_fragment! {
 /// «сообщить о старте и гнать пакеты»: ни состояний, ни цикла.
 pub async fn task<D: Driver>(ctx: NetCtx<'_, Runner<'static, D>>) {
     info!("net: узел запущен");
-    ctx.runner.run().await
+    ctx.runner.run().await;
 }
 
 #[cfg(test)]

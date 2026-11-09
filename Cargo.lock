@@ -613,7 +613,6 @@ dependencies = [
  "embedded-io-async 0.7.0",
  "embedded-storage",
  "embedded-storage-async",
- "fsm",
  "getrandom",
  "heapless 0.9.3",
  "log",
@@ -1019,26 +1018,6 @@ name = "fnv"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
-
-[[package]]
-name = "fsm"
-version = "0.4.0"
-source = "git+https://github.com/Sergycb/rust-lib.git?rev=ab5be5805ed581c2d040c6c08d6644f7f8471e7d#ab5be5805ed581c2d040c6c08d6644f7f8471e7d"
-dependencies = [
- "embassy-futures",
- "embassy-time",
- "fsm-macros",
-]
-
-[[package]]
-name = "fsm-macros"
-version = "0.4.0"
-source = "git+https://github.com/Sergycb/rust-lib.git?rev=ab5be5805ed581c2d040c6c08d6644f7f8471e7d#ab5be5805ed581c2d040c6c08d6644f7f8471e7d"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 3.0.9",
-]
 
 [[package]]
 name = "futures"

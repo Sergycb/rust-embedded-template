@@ -13,8 +13,9 @@ paths: crates-host/domain/**
 - Узел — самодостаточный `supervisor_fragment!`; новое слово DSL — фича в
   `crates-host/domain/Cargo.toml` — `docs/architecture.md`, «Узлы — фрагменты в
   `domain`».
-- Задача узла — автомат `#[fsm::typestate]`, `match ctx.run().await {}` —
-  `docs/architecture.md`, «Каждая задача узла — автомат `#[fsm::typestate]`».
+- Задача узла — цикл на контексте фрагмента (периодический, «событие —
+  обработка», гонка `select` или typestate по образцу `domain::ota`) —
+  `docs/architecture.md`, «Каждая задача узла — цикл на контексте фрагмента».
 - Узлы не падают — `docs/architecture.md`, «Узлы не падают».
 - Адаптер, чей тип или память выбирает приложение, узел получает готовым во
   входе (`LINK: local L = inputs.link`); трейта сборки у таких адаптеров нет —

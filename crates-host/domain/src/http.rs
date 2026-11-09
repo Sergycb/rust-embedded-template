@@ -72,12 +72,15 @@ supervisor::supervisor_fragment! {
 /// `listen_and_serve` не отдаёт управление наружу, поэтому узел — ровно
 /// «сообщить о старте и отвечать на запросы»: ни состояний, ни цикла.
 /// Отказ соединения сервер пишет в лог и слушает дальше.
+#[expect(
+    clippy::semicolon_if_nothing_returned,
+    reason = "`into_never()` возвращает `!`: хвостовая позиция — способ отдать его как `()`"
+)]
 pub async fn task(ctx: HttpCtx<'_>) {
-    info!("http: узел запущен, номер в пуле {}", ctx.index);
     // Соединение держится между запросами: клиентов столько же, сколько
     // узлов, и один не займёт сервер навсегда — простой закрывает таймаут.
-    static CONFIG: picoserve::Config =
-        picoserve::Config::const_default().keep_connection_alive();
+    static CONFIG: picoserve::Config = picoserve::Config::const_default().keep_connection_alive();
+    info!("http: узел запущен, номер в пуле {}", ctx.index);
     let api = Api {
         info: *ctx.info,
         stack: *ctx.stack,
@@ -88,13 +91,7 @@ pub async fn task(ctx: HttpCtx<'_>) {
     };
     let app = router().with_state(api);
     picoserve::Server::new(&app, &CONFIG, &mut ctx.http[..])
-        .listen_and_serve(
-            ctx.index,
-            api.stack,
-            PORT,
-            &mut ctx.rx[..],
-            &mut ctx.tx[..],
-        )
+        .listen_and_serve(ctx.index, api.stack, PORT, &mut ctx.rx[..], &mut ctx.tx[..])
         .await
         .into_never()
 }

@@ -693,12 +693,12 @@ fn is_dual_core(suffix) {
 
 // ==== 2. rust_lib, rust_lib_rev, newline ====================================
 
-// Источник rust-lib (supervisor, fsm, watchdog, sync-request) — одна переменная
+// Источник rust-lib (supervisor, watchdog, sync-request) — одна переменная
 // на все места: оба Cargo.toml, allow-git в deny.toml, ссылки в документации.
 // Умолчания нет намеренно: библиотека лежит на разных серверах, и шаблон ни одного
 // из них не называет — адрес вводит человек (`--define rust_lib=https://…/rust-lib`
 // без терминала). Без адреса проект не собрать, поэтому вопрос — до выбора чипа.
-let rust_lib = repo_url("rust_lib", "rust-lib (supervisor, fsm, watchdog)");
+let rust_lib = repo_url("rust_lib", "rust-lib (supervisor, watchdog, sync-request)");
 variable::set("rust_lib", rust_lib);
 // Ревизия rust-lib — тоже одна на все места: проекты не получают lock-файл,
 // и без `rev` первый же слом API в main rust-lib ронял бы свежую генерацию

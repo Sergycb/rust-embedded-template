@@ -183,7 +183,7 @@ where
     }
 
     /// Такт: обработка без нового кадра.
-    async fn tick<'f>(&mut self, s: &mut Running<'f>) {
+    async fn tick(&mut self, s: &mut Running<'_>) {
         s.next = next_tick(s.next, TICK, Instant::now());
         self.step(s).await;
     }
@@ -193,7 +193,7 @@ where
     /// Кадр, не адресованный узлу (чужой heartbeat, PDO, SDO других узлов),
     /// почтовый ящик не принимает — он пропускается без обработки: на
     /// загруженной шине таких большинство.
-    async fn received<'f>(&mut self, s: &mut Running<'f>, frame: C::Frame) {
+    async fn received(&mut self, s: &mut Running<'_>, frame: C::Frame) {
         let Some(mut message) = to_message(&frame) else {
             warn!(
                 "canopen: кадр CAN FD на {} байт пропущен — стек классический",
@@ -224,7 +224,7 @@ where
     // {%- endif %}
 
     /// `Node::process`, затем всё, что стек поставил в очередь, — на шину.
-    async fn step<'f>(&mut self, s: &mut Running<'f>) {
+    async fn step(&mut self, s: &mut Running<'_>) {
         let node = &mut *s.stack.node;
         // Стек объявляет о себе кадром boot-up при первом запуске, после
         // NMT Reset Node / Reset Communication и после смены адреса — в

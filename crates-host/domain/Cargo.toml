@@ -99,8 +99,6 @@ supervisor = { workspace = true, features = [
 # Прямо, а не транзитивно через `supervisor`: `Ticker`/`Timer`/`Duration` стоят
 # в теле задачи, а не только в её сигнатуре.
 embassy-time = { workspace = true }
-# Задачи узлов — автоматы `#[fsm::typestate]` на контексте фрагмента.
-fsm = { workspace = true }
 # {%- if ota == "true" %}
 # OTA над `embassy-boot`, сам он от чипа не зависит: решение bootloader'а
 # (`ota::boot`) — над блокирующими разделами `NorFlash`, адаптер обновления
