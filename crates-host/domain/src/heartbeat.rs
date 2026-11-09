@@ -5,10 +5,10 @@
 //! чем кормить сторож), а то, что узел делает, — логика.
 //! Логика тестируется на хосте и про чип не знает.
 //!
-//! Задача — автомат `#[fsm::typestate]` на контексте узла. Контекст
+//! Задача — периодический цикл на контексте узла. Контекст
 //! `HeartbeatCtx` эмитит фрагмент ниже (`ctx: $crate::heartbeat::HeartbeatCtx`)
 //! здесь же, в `domain`, а не compose-site: поэтому сигнатура не называет ни
-//! одного типа из крейта, где объявлен граф, и автомат с его действиями живёт
+//! одного типа из крейта, где объявлен граф, и цикл с его работой живёт
 //! рядом с узлом. Так же устроен и пример в самом `supervisor`
 //! (`supervisor-logic-fixture`).
 
@@ -18,6 +18,8 @@ pub use timing::WATCHDOG;
 
 use defmt_or_log::info;
 use embassy_time::Instant;
+
+use crate::tick;
 
 use timing::IDLE_PERIOD;
 
@@ -54,47 +56,6 @@ supervisor::supervisor_fragment! {
         task: $crate::heartbeat::task;
 }
 
-#[fsm::typestate]
-impl HeartbeatCtx<'_> {
-    fsm::machine! {
-        machine Heartbeat mod edges {
-            states {
-                /// Холостой ход: ждёт такт в `next`.
-                Idle { next: Instant },
-            }
-            start => begin -> Idle;
-            listen {
-                Idle { next } => tick: fsm::deadline(*next),
-            }
-            transitions {
-                Idle + tick(()) => idle -> self,
-            }
-        }
-    }
-
-    /// Сообщает о старте и назначает первый такт.
-    #[expect(
-        clippy::unused_self,
-        reason = "сигнатуру действия задаёт таблица `#[fsm::typestate]`"
-    )]
-    fn begin(&mut self) -> Idle {
-        info!("heartbeat: узел запущен");
-        Idle {
-            next: Instant::now() + IDLE_PERIOD,
-        }
-    }
-
-    /// Такт холостого хода: здесь ваша работа, отметка у сторожа — после неё.
-    ///
-    /// Следующий такт — `fsm::next_tick`, а не `Ticker`: отставший `Ticker`
-    /// догоняет пачкой тиков подряд, и работа выполнилась бы N раз разом;
-    /// `next_tick` пропущенные такты отбрасывает.
-    fn idle(&mut self, s: &mut Idle) {
-        self.heartbeat.feed();
-        s.next = fsm::next_tick(s.next, IDLE_PERIOD, Instant::now());
-    }
-}
-
 /// Узел графа — каркас под вашу работу.
 ///
 /// Здесь он только сообщает о старте и отмечается у сторожа в холостом цикле.
@@ -103,20 +64,29 @@ impl HeartbeatCtx<'_> {
 /// строки, которые важны. Поэтому цикл молчит.
 ///
 /// **`feed()` зовётся явно и только после реального прогресса** — здесь
-/// прогресса нет, поэтому отметка стоит в действии такта. Когда появится
+/// прогресса нет, поэтому отметка стоит на каждом такте. Когда появится
 /// работа, отметку ставьте ПОСЛЕ неё, а не до: автоматического «задача жива,
 /// раз её future опрашивают» тут нет намеренно, иначе сторож сторожил бы
 /// исполнитель, а не полезную работу.
 ///
-/// У автомата нет выходного состояния, `task` не возвращается никогда: узлы
-/// шаблона не падают (docs/architecture.md, «Узлы не падают»).
+/// Задача не возвращается никогда: узлы шаблона не падают
+/// (docs/architecture.md, «Узлы не падают»).
 ///
-/// Что дальше: добавьте автомату состояния и строки переходов, узлу —
-/// `deps:` (порядок старта), `inbox:` (очередь событий — источник в
-/// `listen`), `resources:` (состояние, которое живёт дольше прогона автомата)
-/// — всё это описано в `docs/modules/app-graph.md`.
-pub async fn task(mut ctx: HeartbeatCtx<'_>) {
-    match ctx.run().await {}
+/// Что дальше: добавьте в цикл веток под свою работу, узлу — `deps:` (порядок
+/// старта), `inbox:` (очередь событий — ещё один источник в гонке такта),
+/// `resources:` (состояние, которое живёт дольше прогона задачи) — всё это
+/// описано в `docs/modules/app-graph.md`.
+pub async fn task(ctx: HeartbeatCtx<'_>) {
+    info!("heartbeat: узел запущен");
+    let mut next = Instant::now() + IDLE_PERIOD;
+    loop {
+        // Ждёт такт: `deadline` готов на первом опросе, если срок уже прошёл,
+        // а `next_tick` отбрасывает такты, пропущенные пока исполнитель был
+        // занят чужой работой.
+        tick::deadline(next).await;
+        ctx.heartbeat.feed();
+        next = tick::next_tick(next, IDLE_PERIOD, Instant::now());
+    }
 }
 
 #[cfg(test)]
