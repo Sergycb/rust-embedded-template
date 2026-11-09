@@ -112,54 +112,35 @@ supervisor::supervisor_fragment! {
         task: $crate::ssh::task;
 }
 
-// Заголовок блока по варианту (здесь, у `begin` и у `task`): заголовок `file`
-// — в той же строке, что `else`. Отдельной строкой с `newline` он оставил бы в
-// проекте `//` перед собой с отступом блока, и `cargo fmt --check` упал бы.
-#[fsm::typestate]
+/// Узел `SSH`: обслуживает соединение за соединением, пока жива прошивка;
+/// не возвращается.
+// Заголовок по варианту: заголовок `file` — в той же строке, что `else`;
+// иначе в проекте остался бы `//` перед собой с отступом блока, и
+// `cargo fmt --check` упал бы.
+// {%- if ssh_host_key == "config" %}
+pub async fn task<F: NorFlash>(mut ctx: SshCtx<'_, Stored<F>>) {
+    // {%- else %}{{newline}}pub async fn task(mut ctx: SshCtx<'_>) {
+    // {%- endif %}
+    info!("ssh: узел запущен");
+    // Ключ хоста и доступ — подготовка на весь срок работы: от сессии к
+    // сессии они не меняются.
+    // {%- if ssh_host_key == "config" %}
+    let seed = ctx.host_key.seed().await;
+    // {%- else %}
+    //{{newline}}    let seed = **ctx.host_key;
+    // {%- endif %}
+    let key = SignKey::Ed25519(SigningKey::from_bytes(&seed));
+    let access = Access::new(*ctx.login);
+    // Принимает соединение, ведёт его до конца, ждёт следующее — бесконечно.
+    loop {
+        ctx.connection(&key, access).await;
+    }
+}
+
 // {%- if ssh_host_key == "config" %}
 impl<F: NorFlash> SshCtx<'_, Stored<F>> {
     // {%- else %}{{newline}}impl SshCtx<'_> {
     // {%- endif %}
-    fsm::machine! {
-        machine Ssh mod edges {
-            states {
-                /// Ждёт соединения: ключ хоста и кого пускать.
-                Listening { key: SignKey, access: Access },
-                /// Недостижимо: обслуживание не возвращается. Состояние нужно
-                /// таблице — строка без ожидания не может остаться в своём состоянии.
-                exit Down,
-            }
-            start => begin -> Listening;
-            transitions {
-                Listening => serve -> Down,
-            }
-        }
-    }
-
-    // {%- if ssh_host_key == "config" %}
-    async fn begin(&mut self) -> Listening {
-        // {%- else %}{{newline}}    fn begin(&mut self) -> Listening {
-        // {%- endif %}
-        info!("ssh: узел запущен");
-        // {%- if ssh_host_key == "config" %}
-        let seed = self.host_key.seed().await;
-        // {%- else %}
-        //{{newline}}        let seed = **self.host_key;
-        // {%- endif %}
-        Listening {
-            key: SignKey::Ed25519(SigningKey::from_bytes(&seed)),
-            access: Access::new(*self.login),
-        }
-    }
-
-    /// Принимает соединение, ведёт его до конца, ждёт следующее —
-    /// бесконечно.
-    async fn serve(&mut self, s: &Listening) -> Down {
-        loop {
-            self.connection(&s.key, s.access).await;
-        }
-    }
-
     /// Одно соединение. Отказ соединения или протокола узел пишет в лог и
     /// слушает дальше.
     async fn connection(&mut self, key: &SignKey, access: Access) {
@@ -207,15 +188,6 @@ impl<F: NorFlash> SshCtx<'_, Stored<F>> {
         }
         info!("ssh: соединение закрыто");
     }
-}
-
-/// Узел `SSH`: обслуживает соединение за соединением, пока жива прошивка;
-/// не возвращается.
-// {%- if ssh_host_key == "config" %}
-pub async fn task<F: NorFlash>(mut ctx: SshCtx<'_, Stored<F>>) {
-    // {%- else %}{{newline}}pub async fn task(mut ctx: SshCtx<'_>) {
-    // {%- endif %}
-    ctx.run().await;
 }
 
 #[cfg(test)]

@@ -14,6 +14,7 @@ use super::broker::Endpoint;
 use super::telemetry::{TELEMETRY_INTERVAL, write_telemetry};
 use super::topics::{CLIENT_ID_LEN, Command, TOPIC_LEN, Topics, parse_command};
 use crate::device::{DeviceInfo, INFO_MAX};
+use crate::tick;
 // {%- if ota == "true" %}
 use crate::ota::command::Progress;
 use crate::ota::{OtaClient, OtaCommand};
@@ -164,7 +165,7 @@ where
                     conn.publish(Publication::text(&topic, &json))
                         .await
                         .map_err(session_error)?;
-                    next = fsm::next_tick(next, TELEMETRY_INTERVAL, Instant::now());
+                    next = tick::next_tick(next, TELEMETRY_INTERVAL, Instant::now());
                     continue;
                 }
                 // SUBACK или PUBACK с кодом отказа (чаще всего — ACL брокера
