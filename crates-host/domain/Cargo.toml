@@ -173,12 +173,15 @@ subtle             = { workspace = true }
 # (реэкспортирует `sunset`), канал сессии — `embedded-io-async`.
 sunset-async       = { workspace = true }
 # {%- endif %}
-# {%- if ota == "true" or net_services contains "ssh" %}
+# {%- if ota == "true" or net_services contains "ssh" or has_canopen == "true" %}
 # {%- if ota == "true" %}
 # `yield_now` между страницами стирания (`ota::Updater`).
 # {%- endif %}
 # {%- if net_services contains "ssh" %}
 # `select` сессии SSH (`domain::ssh`).
+# {%- endif %}
+# {%- if has_canopen == "true" %}
+# Гонка такта, исхода OTA и кадра шины (`domain::canopen`).
 # {%- endif %}
 embassy-futures    = { workspace = true }
 # {%- endif %}
