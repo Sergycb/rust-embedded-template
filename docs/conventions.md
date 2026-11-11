@@ -147,7 +147,7 @@ Host-тесты гоняются `cargo xtask test host` — то есть `carg
 
 - Фейк, который нужен только тестам своего крейта, — `#[cfg(test)] mod fake`
   (подмодули и так видят его приватным; `pub(crate)` — если его берут модули
-  вне родителя{% if has_modbus == "true" %}, как `domain::server::fake`{% endif %})
+  вне родителя{% if has_modbus == "true" %}, как `domain::modbus::fake`{% endif %})
 {%- assign sep = ": " %}
 {%- if ota == "true" %}{{ sep }}разделы обновления в памяти — `domain::ota::fake` (их делят `ota`,
   `ota::download` и `ota::update`){% assign sep = ", " %}{% endif %}

@@ -1,7 +1,7 @@
 //! Транспорты Modbus:{% if modbus_rtu == "true" %} RTU поверх потока байтов{% endif %}{% if modbus_tcp == "true" %}{% if modbus_rtu == "true" %},{% endif %} TCP поверх потока{% endif %}{% if modbus_udp == "true" %}{% if modbus_rtu == "true" or modbus_tcp == "true" %},{% endif %} UDP поверх датаграмм{% endif %}.
 //! Для slave'а каждый — кадровый канал [`ports::FrameLink`] с кадром «адрес и PDU»:
 //! кадр разбирает обработчик `domain::modbus::Slave`, а обслуживает канал узел
-//! `domain::server`.
+//! `domain::modbus`.
 // {%- if modbus_master == "true" %}
 //! Они же реализуют порт master'а [`ports::ModbusClient`], но готовым
 //! master'ом работает только RTU над UART.

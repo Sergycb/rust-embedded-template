@@ -207,8 +207,8 @@ supervisor_graph! {
 {%- endcapture %}
 {%- if f[3] == "modbus" %}
 
-        // Узел `MODBUS_{{ f[4] | upcase }}` — Modbus slave (`domain::server` с обработчиком
-        // `domain::modbus::Slave`): канал (кадрирование{% if f[0] == "tcp" or f[0] == "udp" %}, сокет{% endif %}) строится здесь{% if f[0] == "uart" or f[0] == "usb" %} над рычагом
+        // Узел `MODBUS_{{ f[4] | upcase }}` — Modbus slave (`domain::modbus::MODBUS_FRAG`
+        // с обработчиком `domain::modbus::Slave`): канал (кадрирование{% if f[0] == "tcp" or f[0] == "udp" %}, сокет{% endif %}) строится здесь{% if f[0] == "uart" or f[0] == "usb" %} над рычагом
         // платы{% endif %} в памяти, которую объявляет граф (`static T`); карта регистров
         // одна на все узлы Modbus: ручку `crate::registers::handle()` (`Copy`) получает каждый, а
         // тип карты проект меняет в одном месте — `crate::registers::Map`.
@@ -218,11 +218,11 @@ supervisor_graph! {
         // Карта обёрнута окном OTA (`domain::modbus::OtaRegisters`): записи FC16
         // по `OTA_BASE` уходят узлу `OTA` командами — клиентом его входа `CMD`
         // (`Client` с номером этого транспорта), остальное — карте проекта.
-        ::domain::SERVER_FRAG<
+        ::domain::MODBUS_FRAG<
             {{ ty }},
             ::domain::modbus::OtaRegisters<crate::registers::Handle>,
         > as MODBUS_{{ f[4] | upcase }} =
-            ::domain::server::ServerWiring {
+            ::domain::modbus::ModbusWiring {
                 link: {{ link }},
                 handler: ::domain::modbus::Slave::new(
                     1,
@@ -237,8 +237,8 @@ supervisor_graph! {
                 ),
             },
 {%- else %}
-        ::domain::SERVER_FRAG<{{ ty }}, crate::registers::Handle> as MODBUS_{{ f[4] | upcase }} =
-            ::domain::server::ServerWiring {
+        ::domain::MODBUS_FRAG<{{ ty }}, crate::registers::Handle> as MODBUS_{{ f[4] | upcase }} =
+            ::domain::modbus::ModbusWiring {
                 link: {{ link }},
                 handler: ::domain::modbus::Slave::new(1, crate::registers::handle(), crate::build::PKG_VERSION),
             },

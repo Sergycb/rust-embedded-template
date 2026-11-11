@@ -182,8 +182,8 @@ Modbus. Через `--define` то же задаёт `links` (`parse_links()`, �
 заглушка, и ключ менялся бы при каждом старте). Пустые
 строки, когда не выбрано. Модули узлов невыбранных служб хук удаляет (`domain/src/http.rs`,
 `ssh.rs`, `mqtt.rs` с их каталогами, `app/src/net.rs` без служб вовсе (модули служб в нём — Liquid),
-`device.rs` без служб и protobuf); узел протокола `domain/src/server.rs` (Modbus slave) —
-без Modbus. Сокеты стека считает `bsp::net::SOCKETS` из чисел генерации: DHCP-клиент,
+`device.rs` без служб и protobuf); `domain/src/modbus.rs` с
+каталогом — без Modbus. Сокеты стека считает `bsp::net::SOCKETS` из чисел генерации: DHCP-клиент,
 сетевые транспорты (`net_sockets`), по сокету на копию пула REST (`http_connections` →
 `HTTP_CONNECTIONS`), на SSH и на MQTT. Секреты
 (`rest-token.txt`, `ssh-host-key.bin`, заготовка `mqtt.toml`) создаёт `cargo xtask`

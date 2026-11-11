@@ -1603,7 +1603,7 @@ fn protocol_over_uart_keeps_the_serial_module() {
             ("crates-host/adapters-logic", true),
             ("crates-host/domain/src/modbus.rs", protocol == "modbus"),
             ("crates-host/ports/src/modbus.rs", protocol == "modbus"),
-            // Кадровый канал нужен обоим: узел протокола `domain::server` —
+            // Кадровый канал нужен обоим: узел протокола `domain::modbus` —
             // над `FrameLink` и у protobuf, и у Modbus slave.
             ("crates-host/ports/src/link.rs", true),
             ("crates-host/canopen", false),
@@ -3601,7 +3601,7 @@ fn watchdog_and_link_port_follow_the_choices() {
     let cases: [Case; 7] = [
         ("g474re", &[], false, true),
         ("g474re", &[("graph", "no")], true, true),
-        // Modbus slave — канал узла протокола `domain::server` по любому
+        // Modbus slave — канал узла протокола `domain::modbus` по любому
         // транспорту: по потоку, как и по UDP.
         (
             "g474re",

@@ -10,7 +10,7 @@
 //! Что делать с принятым кадром, решает протокол, а не канал: протокол не
 //! знает, какой канал под ним.
 // {%- if has_modbus == "true" %}
-//! Modbus slave — узел `domain::server` над [`FrameLink`].
+//! Modbus slave — узел `domain::modbus` над [`FrameLink`].
 // {%- endif %}
 // {%- if has_protobuf == "true" %}
 //! protobuf хоста — узел `domain::protobuf` над [`FrameDuplex`].

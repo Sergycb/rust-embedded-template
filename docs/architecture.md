@@ -112,7 +112,7 @@ Compose-site — модули задач (подмодули `crates-cross/app/s
 фрагмент ({% if graph == "true" %}`ctx: $crate::heartbeat::HeartbeatCtx, task: $crate::heartbeat::task;`{% else %}`ctx: $crate::<узел>::<Узел>Ctx, task: $crate::<узел>::task;`{% endif %}). Внутри — по смыслу узла:
 периодический цикл «подожди такт, поработай» (`heartbeat`, `cpu_load`;
 тактовая сетка — `domain::tick`), цикл «подожди событие, обработай»
-(`server`, `protobuf`, `mqtt`), одно бесконечное действие (`net`, `usb`,
+(`modbus`, `protobuf`, `mqtt`), одно бесконечное действие (`net`, `usb`,
 `http`, `ssh`, `console`), гонка источников с приоритетом порядка (`canopen` —
 вложенные `select`: такт важнее исхода OTA важнее кадров) или
 typestate-состояния (`ota`: `Idle`/`Receiving`/`Ready` — типы, переход —

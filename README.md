@@ -223,7 +223,7 @@ supervisor-графы, watchdog{% endif %}). Вся остальная логи�
 {%- endif %}
 {%- if link_port == "true" %}
 - `FrameLink` — канал целых кадров, который держит свой буфер (один на приём и
-  ответ).{% if has_modbus == "true" %} Узел протокола `domain::SERVER_FRAG` обслуживает его Modbus slave'ом
+  ответ).{% if has_modbus == "true" %} Узел протокола `domain::MODBUS_FRAG` обслуживает его Modbus slave'ом
   (`domain::modbus::Slave`): обработчик один, трейта под него нет.{% endif %}
 {%- if has_modbus == "true" or has_protobuf == "true" %}
 - {% if graph == "true" %}Граф называет{% else %}Модули задач называют{% endif %} узел по протоколу и транспорту
@@ -663,7 +663,7 @@ HOST_TARGET_BAUD=115200              # скорость UART (по умолча�
 все узлы `MODBUS_*`, каждый получает ручку к ней (`domain::modbus::SharedRegisters`), так
 что запись по одному транспорту видна чтению по другому. Slave отвечает на функции
 1–6, 15, 16 (coils, discrete inputs, holding и input registers) и 43/14 Read Device
-Identification (производитель и модель — `crates-host/domain/src/modbus/identity.rs`,
+Identification (производитель и модель — `crates-host/domain/src/modbus/slave.rs`,
 ревизия — `build::PKG_VERSION` прошивки); на остальные — Illegal Function.{% if modbus_rtu == "true" %} По RTU
 это так для всех открытых функций спецификации; кадр пользовательской функции
 (65–72, 100–110), MEI, кроме 14, и FC08/00 длиннее двух байт данных slave

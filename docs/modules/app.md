@@ -163,8 +163,8 @@ async fn uart_drain_task(mut uart: bsp::LogTx) {
 Буфер кадра держит сам канал (`ports::FrameLink::buffer`), а протокол —
 обработчик ({% if has_modbus == "true" %}`domain::modbus::Slave`{% if has_protobuf == "true" %}; {% endif %}{% endif %}{% if has_protobuf == "true" %}`domain::protobuf::Service`{% endif %}) — конкретный тип домена, трейта
 под него нет: реализация одна.
-{%- if has_modbus == "true" %} Узел Modbus slave — `::domain::SERVER_FRAG<L, R>`,
-объявлен в `domain::server` ({% if graph == "true" %}граф называет узлы{% else %}узлы{% endif %} `MODBUS_<транспорт>`).{% endif %}
+{%- if has_modbus == "true" %} Узел Modbus slave — `::domain::MODBUS_FRAG<L, R>`,
+объявлен в `domain::modbus` ({% if graph == "true" %}граф называет узлы{% else %}узлы{% endif %} `MODBUS_<транспорт>`).{% endif %}
 {%- if has_protobuf == "true" %} Узел protobuf хоста — `::domain::PROTOBUF_FRAG<L>`,
 объявлен в `domain::protobuf` (`PROTOBUF_<транспорт>`); его канал —
 `ports::FrameDuplex` (контракт — doc трейта), а ответ уходит из своего буфера
@@ -195,15 +195,15 @@ EOF и ошибки — через паузу `RESTART_PAUSE`, чтобы пот
 # Modbus: одна карта на все узлы `MODBUS_*`
 
 Узел `MODBUS_<ТРАНСПОРТ>` — по одному на транспорт с Modbus в `links`.{% if graph == "true" %}
-Фрагмент — узел протокола `domain::SERVER_FRAG<L, R>`: канал
+Фрагмент — узел протокола `domain::MODBUS_FRAG<L, R>`: канал
 `L` (раздел выше) строит граф — конкретным типом из `adapters_logic::modbus`
 над рычагом платы в памяти `static T`, обработчик —
 `domain::modbus::Slave` над картой регистров `R` с адресом slave'а (вход
-`domain::server::ServerWiring`).{% else %}
+`domain::modbus::ModbusWiring`).{% else %}
 В этом проекте это задача в `crates-cross/app/src/tasks/modbus.rs`: она собирает
-контекст узла `domain::server::ServerCtx` — канал `adapters_logic::modbus::Rtu`
+контекст узла `domain::modbus::ModbusCtx` — канал `adapters_logic::modbus::Rtu`
 над рычагом платы и обработчик `domain::modbus::Slave` над
-картой регистров с адресом slave'а — и зовёт `domain::server::task`.{% endif %} Карта одна на проект: её
+картой регистров с адресом slave'а — и зовёт `domain::modbus::task`.{% endif %} Карта одна на проект: её
 заводит `crates-cross/app/src/registers.rs` в `static` (`OnceLock`) при первом
 `crate::registers::handle()`, и каждый узел берёт свою копию ручки
 (`crate::registers::Handle` = `domain::modbus::SharedRegisters<Map>`, `Copy`) — запись через один транспорт видна чтению через

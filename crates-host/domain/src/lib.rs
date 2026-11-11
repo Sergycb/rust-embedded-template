@@ -56,18 +56,12 @@ pub mod protobuf;
 // {%- endif %}
 // {%- if has_modbus == "true" %}
 
-/// Modbus: slave над картой регистров `modbus::Registers` — обработчик
-/// кадра для узла протокола — см. модуль.
+/// Modbus: узел протокола `MODBUS_<транспорт>`, slave над картой регистров
+/// `modbus::Registers` и, при выборе, master — см. модуль.
 // {%- if modbus_master == "true" %}
 /// Master — функции поверх `ports::ModbusClient`.
 // {%- endif %}
 pub mod modbus;
-// {%- endif %}
-
-// {%- if has_modbus == "true" %}
-/// Узел протокола «запрос — ответ» над кадровым каналом: Modbus slave — см.
-/// модуль.
-pub mod server;
 // {%- endif %}
 
 // {%- if has_net == "true" %}

@@ -2631,7 +2631,7 @@ let http_connections = if services.contains("rest") { 2 } else { 0 };
 variable::set("http_connections", http_connections.to_string());
 
 // Кадровый канал (`ports::FrameLink`, `LinkError`) нужен протоколам — Modbus
-// slave (узел `domain::server`) и protobuf (узел `domain::protobuf`, канал
+// slave (узел `domain::modbus`) и protobuf (узел `domain::protobuf`, канал
 // `FrameDuplex` поверх `FrameLink`), — шине CAN (ошибка `CanBus`) и
 // UDP-каналу (`adapters_logic::net::UdpLink` реализует `FrameLink`) — с протоколом и без него.
 variable::set("link_port", if on.protobuf || on.modbus || has.can || has.udp { "true" } else { "false" });
@@ -2760,11 +2760,6 @@ if !on.canopen {
     file::delete("crates-host/domain/src/canopen");
     file::delete("crates-host/canopen");
 }
-// Узел протокола «запрос — ответ» (`domain::server`) обслуживает только Modbus
-// slave: у protobuf свой узел (`domain::protobuf`).
-if !on.modbus {
-    file::delete("crates-host/domain/src/server.rs");
-}
 if variable::get("link_port") != "true" {
     file::delete("crates-host/ports/src/link.rs");
 }
@@ -2788,11 +2783,6 @@ if variable::get("ota") != "true" {
     // Подпись образа в `xtask` и описание OTA.
     file::delete("crates-host/xtask/src/signing.rs");
     file::delete("docs/ota.md");
-    // Перевод команд OTA у протокола: каталог невыбранного протокола уже
-    // удалён выше, поэтому — только у выбранного.
-    if on.modbus {
-        file::delete("crates-host/domain/src/modbus/ota.rs");
-    }
 }
 if variable::get("settings_port") != "true" {
     file::delete("crates-host/domain/src/settings.rs");
