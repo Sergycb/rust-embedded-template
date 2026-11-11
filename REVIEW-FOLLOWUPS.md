@@ -4,34 +4,11 @@
 (`5397197..HEAD`) нашло Critical/Important, они исправлены; здесь — то, что
 осознанно оставлено на потом.
 
-## 1. Совместимость старого хоста с OTA wire-форматом B
+OTA wire-формат B (`Request.command = Ota { command: Start/Chunk/Finish/Reboot }`)
+— окончательный: шаблон для новых проектов, совместимость со старыми клиентами
+не предусматривается.
 
-Протокол намеренно сломан: `Request.command = Ota { command: Start/Chunk/Finish/Reboot }`.
-Старый хост шлёт `Request.ota_start = 3`, `Request.ota_chunk = 4`,
-`Request.ota_finish = 5`, `Request.reboot = 6`.
-
-Что происходит со старым хостом:
-
-- `ota_start` (поле 3 старого `Request`) на новой схеме — тоже поле 3, но это
-  уже `Ota`. Внутри старый `OtaStart.len` — поле 1 типа varint, а у нового
-  `Ota` поле 1 — сообщение `Start`. `micropb` не сверяет wire type у
-  подсообщений: читает `len` как длину вложенного сообщения и разбирает как
-  `Start` следующие `len` байт. Обычно это обрезанный/битый `Start` →
-  `Request::decode` возвращает ошибку.
-- На ошибке разбора `domain::protobuf::task` отвечает через
-  `Service::malformed()`: это свежий `Response` с `request_id = 0` и `Error`.
-  Хост не может сопоставить ответ с запросом.
-- `ota_chunk`, `ota_finish`, `reboot` — поля 4–6 старого `Request`; в новом
-  `Request` их нет, они пропускаются как неизвестные. Новый обработчик
-  отвечает `Error "unknown command"` с правильным `request_id`. Перезагрузки
-  от старого `ota_chunk` нет: поле 4 старого `Request` — не поле 4 `Ota`.
-
-Решение: либо явно указать ломающее изменение в релиз-нотах (минимум), либо
-добавить в разбор `Request` совместимый путь: распознать старый `OtaStart`
-(поле 3 с wire-type varint внутри) и ответить `Error` с его `request_id`, не
-доводя до `malformed()`. Закрыть тестом на старые байты `ota_start`.
-
-## 2. `unreachable!()` в OTA-логике
+## 1. `unreachable!()` в OTA-логике
 
 `crates-host/domain/src/ota/logic.rs`:
 
@@ -46,7 +23,7 @@
 `on_command` или возврат `Outcome::Reboot` из разводки; тест, что `Reboot` не
 доходит до `on_command`.
 
-## 3. Голодание `ASK` при потоке `CMD`
+## 2. Голодание `ASK` при потоке `CMD`
 
 `Ota::command` опрашивает `CMD` первым и возвращается сразу, как только там
 есть запрос; `ASK` — только если `CMD` пуст. Клиент `CMD` не держит больше
@@ -59,7 +36,7 @@ sub 5 остаётся `0`.
 чередовать приоритет между кругами, опрашивать `ASK` первым при
 `Object.in_flight`, или явно задокументировать и закрыть тестом.
 
-## 4. Сквозной тест хэша пароля из `post-script.rhai`
+## 3. Сквозной тест хэша пароля из `post-script.rhai`
 
 `post-script.rhai` считает SHA-256 на Rhai; FIPS-вектор проверяет только ядро
 хэша. Связка «соль-строка → байты константы» держится на неявной семантике
@@ -70,7 +47,7 @@ Rhai/cargo-generate или правка соли может тихо запер�
 той же функцией и сверить с `sha2`/`domain::console::PasswordHash`; либо
 self-check в `post-script.rhai` (сравнить байты соли с `salt.bytes()`).
 
-## 5. Валидация схемы в `crates-host/proto/build.rs`
+## 4. Валидация схемы в `crates-host/proto/build.rs`
 
 Dispatch строится по имени RPC: `Some(Request_::Command::<Method>)`; считается,
 что имя метода — PascalCase имени поля `oneof command`. Соглашение описано в
@@ -88,7 +65,7 @@ Dispatch строится по имени RPC: `Some(Request_::Command::<Method>
 (сейчас перечислены только `PROTOS`). Фильтр «только целевые файлы» уже
 добавлен.
 
-## 6. Одиночные `Ota*`-имена (не семейства)
+## 5. Одиночные `Ota*`-имена (не семейства)
 
 Оставлены осознанно, переименование не входило в задачу:
 
@@ -99,12 +76,12 @@ Dispatch строится по имени RPC: `Some(Request_::Command::<Method>
 - сгенерированные `OtaCtx`, `OtaWiring`, `OTA_FRAG` — имена узлов из макроса;
 - `OtaService` и `Ota_::Start/Chunk/...` — имена proto-схемы.
 
-## 7. Гейт перед слиянием
+## 6. Гейт перед слиянием
 
 - [ ] Полный `template-check` (не только `--quick`) на финальном HEAD.
-- [ ] `cargo xtask lint`, `cargo xtask test host`.
+- [x] `cargo xtask lint`, `cargo xtask test host`.
 - [ ] Сгенерированные конфигурации с `swap_paged` (F1/F3/L4/G4) — `cargo fmt --check`
       в `crates-cross`; исправление `//{{newline}}` уже проверено на F303RE.
-- [ ] SSH без OTA и SSH + OTA — `lint cross`.
-- [ ] Проект с консолью — сборка `app` проходит с ненулевым
+- [x] SSH без OTA и SSH + OTA — `lint cross`.
+- [x] Проект с консолью — сборка `app` проходит с ненулевым
       `console_password.rs` (проверено на SSH без OTA).
