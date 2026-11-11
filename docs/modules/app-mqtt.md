@@ -146,5 +146,5 @@ Host-тесты сессии гоняют `serve` против поддельн�
 (брокер — сокет на втором стеке); часть двигает часы `MockDriver`, поэтому
 гоняются только `cargo xtask test host` — `docs/conventions.md`, «Host-тесты —
 только через nextest». Сам клиент (паузы, таймаут молчащего адреса) —
-тесты `domain::mqtt::client`; сборку узла с ним — сборка `crates-cross`
+тесты `domain::mqtt::connection`; сборку узла с ним — сборка `crates-cross`
 (`cargo xtask build`).

@@ -2503,7 +2503,6 @@ if variable::get("graph") != "true" {
     file::delete("docs/modules/bsp-wdg.md");
     // Узел `HEARTBEAT` спавнит только граф, и сторожа без графа нет.
     file::delete("crates-host/domain/src/heartbeat.rs");
-    file::delete("crates-host/domain/src/heartbeat");
     file::delete("docs/watchdog.md");
     // Документация `graph.rs`; общее для крейта `app` — в `docs/modules/app.md`.
     file::delete("docs/modules/app-graph.md");
@@ -2727,7 +2726,7 @@ if on.modbus {
     }
 }
 // Сервер транспортов TCP — `net/tcp.rs`; клиент MQTT живёт с узлом
-// (`domain/src/mqtt/client.rs`) и уходит вместе с ним.
+// (`domain/src/mqtt/connection.rs`) и уходит вместе с ним.
 if !has.tcp {
     file::delete("crates-host/adapters-logic/src/net/tcp.rs");
 }
@@ -2862,9 +2861,6 @@ if !services.contains("rest") {
 if !services.contains("ssh") {
     file::delete("crates-host/domain/src/ssh.rs");
     file::delete("crates-host/domain/src/ssh");
-} else if variable::get("ota") == "true" {
-    // Заглушка клиента OTA нужна только сборке SSH без OTA.
-    file::delete("crates-host/domain/src/ssh/ota_stub.rs");
 }
 // Консоль живёт для SSH или `cli`: нет ни того, ни другого — нет и модуля.
 if !has_console {
@@ -2873,7 +2869,7 @@ if !has_console {
     file::delete("crates-cross/app/src/console.rs");
     file::delete("crates-cross/app/src/console_password.rs");
 }
-// MQTT — узел (с клиентом брокера `mqtt/client.rs`), разбор `mqtt.toml` в
+// MQTT — узел (с клиентом брокера `mqtt/connection.rs`), разбор `mqtt.toml` в
 // build-скрипте `app` и описание.
 if !services.contains("mqtt") {
     file::delete("crates-host/domain/src/mqtt.rs");
