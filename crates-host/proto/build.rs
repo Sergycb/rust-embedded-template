@@ -131,12 +131,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Общий разбор команд: `Handlers` знает все сервисы схемы и их методы,
     // поэтому `domain::protobuf::Service` не пишет ни одного `if` на сервис.
+    // Только целевые файлы: у сервисов из импортов `compile_fdset_file` трейтов
+    // не создаёт.
     let dispatch = {
         let mut fields = Vec::new();
         let mut generics = Vec::new();
         let mut bounds = Vec::new();
         let mut arms = Vec::new();
-        for file in &fdset.file {
+        for file in fdset
+            .file
+            .iter()
+            .filter(|file| PROTOS.iter().any(|proto| proto.ends_with(file.name())))
+        {
             for service in &file.service {
                 let prefix = service_prefix(service.name());
                 let field = format_ident!("{}", snake_case(prefix));
