@@ -477,7 +477,7 @@ README, «Быстрый старт».
 
 ## Карта документации
 
-«Почему так решено» — по темам, не здесь: `docs/README.md`. Исключения: `boot/` описан в `README.md` и `docs/ota.md`, `app-mqtt.md` — в `docs/modules/` без `include_str!`.
+«Почему так решено» — по темам, не здесь: `docs/README.md`.{% if ota == "true" or net_services contains "mqtt" %} Исключения: {% if ota == "true" %}`boot/` описан в `README.md` и `docs/ota.md`{% endif %}{% if ota == "true" and net_services contains "mqtt" %}, {% endif %}{% if net_services contains "mqtt" %}`app-mqtt.md` — в `docs/modules/` без `include_str!`{% endif %}.{% endif %}
 
 ## Перед тем как отчитаться
 

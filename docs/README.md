@@ -20,7 +20,7 @@
 | `resources.md` | `assign_resources!`: какие группы уже есть, как добавить свою и собрать из неё рычаг `Board` | заполняете распиновку своей платы |
 | `buffers.md` | рецепт zero-copy DMA-буфера на `bbqueue` (зависимости в шаблоне нет), чем он не `embassy_sync::Pipe` | заводите статический буфер под периферию |
 
-`modules/` — документация модулей, подключённая в код через `#![doc = include_str!(...)]`. Исключения: `app-mqtt.md` — отдельный, без `include_str!`; `boot/` описывается в `README.md` и `docs/ota.md`. Правится вместе с кодом модуля, а не отдельно.
+`modules/` — документация модулей, подключённая в код через `#![doc = include_str!(...)]`. Правится вместе с кодом модуля, а не отдельно.{% if ota == "true" or net_services contains "mqtt" %} Исключения: {% if net_services contains "mqtt" %}`app-mqtt.md` — отдельный, без `include_str!`{% endif %}{% if ota == "true" %}{% if net_services contains "mqtt" %}; {% endif %}`boot/` описывается в `README.md` и `docs/ota.md`{% endif %}.{% endif %}
 
 | Модуль | О чём | Когда открывать |
 |---|---|---|
