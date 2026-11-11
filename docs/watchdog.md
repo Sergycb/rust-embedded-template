@@ -97,7 +97,7 @@
   `bsp::wdg::HW_TIMEOUT_MIN_US` минус `WATCHDOG_CHECK_EVERY`
   (`app/src/graph.rs`) — наименьшего реального таймаута железа, а не
   номинала `HW_TIMEOUT_US` (13 с; поправка — ниже). Каждая цифра живёт там, о чём она: левые — в
-  модуле своего узла (`domain::heartbeat::timing`, `domain::cpu_load::sampling`),
+  модуле своего узла (`domain::heartbeat`, `domain::cpu_load::sampling`),
   потому что это свойства узла, и фрагмент с ними самодостаточен; правая — у железа
   (`WATCHDOG_TIMEOUT_US` в `[env]` crates-cross/.cargo/config.toml, в коде —
   `bsp::wdg::HW_TIMEOUT_US`); интервал тикера — в графе, потому что

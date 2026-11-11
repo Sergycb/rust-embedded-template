@@ -23,13 +23,22 @@
 
 mod api;
 mod auth;
-mod config;
-
-pub use config::{HTTP_BUFFER, PORT, TCP_RX, TCP_TX};
-
-use defmt_or_log::info;
 
 use api::{Api, router};
+use defmt_or_log::info;
+
+/// Порт HTTP.
+pub const PORT: u16 = 80;
+
+/// Буфер приёма сокета, байт: полный сегмент Ethernet.
+pub const TCP_RX: usize = 1536;
+
+/// Буфер передачи сокета, байт.
+pub const TCP_TX: usize = 1536;
+
+/// Буфер разбора запроса `picoserve`, байт: строка запроса и заголовки
+/// целиком, тело читается потоком.
+pub const HTTP_BUFFER: usize = 2048;
 
 // Узел объявлен рядом со своей задачей — как остальные.
 // Пул: граф ставит

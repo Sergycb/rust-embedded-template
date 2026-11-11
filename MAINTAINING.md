@@ -974,7 +974,7 @@ STM32H743ZI, граф, без транспортов, минута работы)
 задачи) она не видит, поэтому корень — `TaskStorage<…>::poll` задачи. На той же плате
 она даёт для задачи OTA 2956 — не ниже замера, как и должна. Задача `SSH`
 (stm32h743zg, задача SSH) — 39624 байта: обмен ключами ML-KEM-768, кадры
-`domain::ssh::session::negotiate` 13712 и `EncapsulationKey::encapsulate_deterministic`
+`domain::ssh::connection::negotiate` 13712 и `EncapsulationKey::encapsulate_deterministic`
 20552. Прибавки взяты от этих чисел с округлением вверх; на ядрах M0/M0+ кадры другие,
 поэтому у чипов до `SMALL_RAM` хук просит проверить прошивку на плате.
 

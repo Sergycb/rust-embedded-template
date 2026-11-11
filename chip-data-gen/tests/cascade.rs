@@ -2828,7 +2828,7 @@ fn mqtt_is_offered_with_ethernet() {
     )
     .expect("каскад не должен падать");
     let deleted = |result: &CascadeResult, path: &str| result.deleted.iter().any(|d| d == path);
-    // Клиент брокера живёт с узлом (`domain/src/mqtt/client.rs`), сервер
+    // Клиент брокера живёт с узлом (`domain/src/mqtt/connection.rs`), сервер
     // транспортов TCP без tcp не нужен.
     assert!(deleted(&udp, "crates-host/adapters-logic/src/net/tcp.rs"));
     for path in mqtt_files {
