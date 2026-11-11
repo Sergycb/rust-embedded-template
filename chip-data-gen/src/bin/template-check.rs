@@ -668,22 +668,22 @@ fn default_cases() -> Vec<Case> {
         Case::new("stm32f407ve")
             .variant("ext-flash-empty", &["ext_flash=yes", "ota=no", "config=no"])
             .render_only(),
-        // Ручная раскладка (`write_size` через `--define`): заготовки
+        // Ручная раскладка (`swap_buffer` через `--define`): заготовки
         // `crates-cross/*/memory.x` с пропусками под числа человека — во всех
         // трёх формах: OTA во внутреннем флеше, OTA с `STATE`/`DFU` на
         // внешней флеши (символы — смещения в ней) и без OTA (`FLASH` — весь
         // чип, без bootloader'а). Собрать их нельзя: числа вписывает человек.
         Case::new("stm32f407ve")
-            .variant("manual-layout", &["write_size=4"])
+            .variant("manual-layout", &["swap_buffer=4"])
             .render_only(),
         Case::new("stm32f407ve")
             .variant(
                 "manual-layout-ota-external",
-                &["write_size=4", "ext_flash=yes", "config=yes"],
+                &["swap_buffer=4", "ext_flash=yes", "config=yes"],
             )
             .render_only(),
         Case::new("stm32f407ve")
-            .variant("manual-layout-no-ota", &["write_size=4", "ota=no"])
+            .variant("manual-layout-no-ota", &["swap_buffer=4", "ota=no"])
             .render_only(),
     ]
 }

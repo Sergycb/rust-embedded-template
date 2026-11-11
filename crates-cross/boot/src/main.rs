@@ -40,10 +40,10 @@ use flash_page::ErasePage;
 {%- if ota_store != "external" %}
 
 /// Буфер обмена `BootLoader::prepare` — слово записи флеша из генерации
-/// (`write_size`, его можно переопределить `--define`). `prepare` требует,
+/// (`swap_buffer`, его можно переопределить `--define`). `prepare` требует,
 /// чтобы буфер был кратен слову записи реального флеша; несовпадение — ошибка
 /// сборки, а не паника на старте bootloader'а.
-const SWAP_BUFFER_SIZE: usize = {{write_size}};
+const SWAP_BUFFER_SIZE: usize = {{swap_buffer}};
 
 {%- if boot_partitioned == "true" and dfu_bank == "true" %}
 
@@ -73,8 +73,8 @@ const _: () = assert!(
 
 const _: () = assert!(
     SWAP_BUFFER_SIZE.is_multiple_of(embassy_stm32::flash::WRITE_SIZE),
-    "write_size из генерации не кратен слову записи флеша чипа (embassy_stm32::flash::WRITE_SIZE): \
-     пересоберите проект без --define write_size или поправьте значение"
+    "swap_buffer из генерации не кратен слову записи флеша чипа (embassy_stm32::flash::WRITE_SIZE): \
+     пересоберите проект без --define swap_buffer или поправьте значение"
 );
 {%- if dfu_bank == "true" %}
 

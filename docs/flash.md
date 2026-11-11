@@ -86,7 +86,7 @@ F2/F4/F7 (у F4 16, 64 и 128 KiB): в мелких секторах можно 
   над `Whole`, а `const`-assert (`STATE_ERASE_SIZE == MAX_ERASE_SIZE`) в
   `bsp::flash` ловит расхождение генерации с реальным чипом (bootloader линкует
   тот же `bsp`).{% if config == "true" %} Так же и `CONFIG`
-  (`config_paged`).{% endif %} При ручной раскладке (`--define write_size=...`)
+  (`config_paged`).{% endif %} При ручной раскладке (`--define swap_buffer=...`)
   сектора `STATE` генерация не знает: раздел строится над `ErasePage`
   (`state_paged` = "true"), а строки `STATE_ERASE_SIZE` в `[env]` нет — допишите
   её с размером сектора, в котором лежит `STATE`, иначе проект не соберётся
@@ -116,7 +116,7 @@ F2/F4/F7 (у F4 16, 64 и 128 KiB): в мелких секторах можно 
   настроек — литерал в `bsp::flash` (`bsp::flash` строит раздел над
   `ErasePage` с этой страницей) и тот же литерал в `ASSERT` `memory.x`, который
   держит границы раздела (символы `__config_start`/`__config_end`) кратными ей. При ручной раскладке
-  (`--define write_size=...`) раздел настроек во флеше не выделяется: где
+  (`--define swap_buffer=...`) раздел настроек во флеше не выделяется: где
   начинается `CONFIG`, генерация не знает и выключает настройки с
   подсказкой добавить регион `CONFIG` и символы `__config_start`/`__config_end`
   в `memory.x` руками.

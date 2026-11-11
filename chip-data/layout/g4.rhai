@@ -10,7 +10,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 10K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "2048",
         "erase_zero": "false",
         "ota": "false",
@@ -35,7 +35,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 10K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "2048",
         "erase_zero": "false",
         "ota": "true",
@@ -91,7 +91,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 10K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "2048",
         "erase_zero": "false",
         "ota": "true",
@@ -147,7 +147,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 10K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "2048",
         "erase_zero": "false",
         "ota": "false",
@@ -172,7 +172,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 10K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "2048",
         "erase_zero": "false",
         "ota": "true",
@@ -228,7 +228,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 10K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "2048",
         "erase_zero": "false",
         "ota": "true",
@@ -284,7 +284,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 10K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "2048",
         "erase_zero": "false",
         "ota": "false",
@@ -309,7 +309,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 10K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "2048",
         "erase_zero": "false",
         "ota": "true",
@@ -365,7 +365,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 10K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "2048",
         "erase_zero": "false",
         "ota": "true",
@@ -421,7 +421,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 10K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "2048",
         "erase_zero": "false",
         "ota": "false",
@@ -446,7 +446,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 10K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "2048",
         "erase_zero": "false",
         "ota": "true",
@@ -502,7 +502,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 10K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "2048",
         "erase_zero": "false",
         "ota": "true",
@@ -558,7 +558,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 10K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "2048",
         "erase_zero": "false",
         "ota": "false",
@@ -583,7 +583,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 10K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "2048",
         "erase_zero": "false",
         "ota": "true",
@@ -639,7 +639,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 10K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "2048",
         "erase_zero": "false",
         "ota": "true",
@@ -695,7 +695,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 10K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "2048",
         "erase_zero": "false",
         "ota": "true",
@@ -751,7 +751,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 10K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "2048",
         "erase_zero": "false",
         "ota": "true",
@@ -807,7 +807,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 10K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "2048",
         "erase_zero": "false",
         "ota": "true",
@@ -863,7 +863,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 10K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "2048",
         "erase_zero": "false",
         "ota": "true",
@@ -919,7 +919,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 10K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "2048",
         "erase_zero": "false",
         "ota": "true",
@@ -975,7 +975,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -1031,7 +1031,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -1087,7 +1087,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -1143,7 +1143,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -1199,7 +1199,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -1255,7 +1255,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -1311,7 +1311,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -1367,7 +1367,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -1423,7 +1423,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -1479,7 +1479,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -1535,7 +1535,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -1591,7 +1591,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -1647,7 +1647,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -1703,7 +1703,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -1759,7 +1759,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -1815,7 +1815,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -1871,7 +1871,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -1927,7 +1927,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -1983,7 +1983,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -2039,7 +2039,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -2095,7 +2095,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -2151,7 +2151,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -2207,7 +2207,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -2263,7 +2263,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -2319,7 +2319,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -2375,7 +2375,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -2431,7 +2431,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -2487,7 +2487,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -2543,7 +2543,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -2599,7 +2599,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -2655,7 +2655,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -2711,7 +2711,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -2767,7 +2767,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -2823,7 +2823,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -2879,7 +2879,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -2935,7 +2935,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -2991,7 +2991,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -3047,7 +3047,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -3103,7 +3103,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -3159,7 +3159,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -3215,7 +3215,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -3271,7 +3271,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -3327,7 +3327,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -3383,7 +3383,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -3439,7 +3439,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -3495,7 +3495,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -3551,7 +3551,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -3607,7 +3607,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -3663,7 +3663,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -3719,7 +3719,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -3775,7 +3775,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -3831,7 +3831,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -3887,7 +3887,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -3943,7 +3943,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -3999,7 +3999,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -4055,7 +4055,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -4111,7 +4111,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -4167,7 +4167,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 32K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "4096",
         "erase_zero": "false",
         "ota": "true",
@@ -4223,7 +4223,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 16K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "2048",
         "erase_zero": "false",
         "ota": "true",
@@ -4279,7 +4279,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 16K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "2048",
         "erase_zero": "false",
         "ota": "true",
@@ -4335,7 +4335,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 16K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "2048",
         "erase_zero": "false",
         "ota": "true",
@@ -4391,7 +4391,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 16K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "2048",
         "erase_zero": "false",
         "ota": "true",
@@ -4447,7 +4447,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 16K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "2048",
         "erase_zero": "false",
         "ota": "true",
@@ -4503,7 +4503,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 16K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "2048",
         "erase_zero": "false",
         "ota": "true",
@@ -4559,7 +4559,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 16K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "2048",
         "erase_zero": "false",
         "ota": "true",
@@ -4615,7 +4615,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 16K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "2048",
         "erase_zero": "false",
         "ota": "true",
@@ -4671,7 +4671,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 16K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "2048",
         "erase_zero": "false",
         "ota": "true",
@@ -4727,7 +4727,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 16K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "2048",
         "erase_zero": "false",
         "ota": "true",
@@ -4783,7 +4783,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 16K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "2048",
         "erase_zero": "false",
         "ota": "true",
@@ -4839,7 +4839,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 16K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "2048",
         "erase_zero": "false",
         "ota": "true",
@@ -4895,7 +4895,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 16K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "2048",
         "erase_zero": "false",
         "ota": "true",
@@ -4951,7 +4951,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 16K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "2048",
         "erase_zero": "false",
         "ota": "true",
@@ -5007,7 +5007,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    /* CCMRAM_ICODE      (xrw) : ORIGIN = 0x10000000, LENGTH = 16K - второе окно того же блока, что CCMRAM_DCODE */",
         ],
-        "write_size": "8",
+        "swap_buffer": "8",
         "page_size": "2048",
         "erase_zero": "false",
         "ota": "true",

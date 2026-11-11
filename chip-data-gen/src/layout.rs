@@ -158,12 +158,11 @@ pub(crate) struct MemoryLayout {
     /// `extra_region_lines`. Одинаковы для `app` и `boot`.
     pub(crate) extra_regions: Vec<String>,
     /// Const generic `BootLoader::prepare::<_, _, _, N>` — размер буфера
-    /// подкачки. Требования к нему (`prepare_boot` в `embassy-boot`):
+    /// подкачки (плейсхолдер `{{swap_buffer}}`). Требования к нему
+    /// (`prepare_boot` в `embassy-boot`):
     /// делит `PAGE_SIZE`, кратен `NorFlash::WRITE_SIZE` и не меньше него.
     /// `NorFlash::WRITE_SIZE` чипа удовлетворяет всем трём, его и берём.
-    /// Имя плейсхолдера в шаблоне (`write_size`) осталось прежним ради
-    /// совместимости с проектами, задающими его через `--define`.
-    pub(crate) write_size: u64,
+    pub(crate) swap_buffer: u64,
     /// Физическая страница чипа: максимальный сектор стирания по цепочке
     /// flash. Страница обмена `embassy-boot` (`PAGE_SIZE`) — она же, пока
     /// прошивка не расширила её (`OtaPartitions::swap_page_size`, плейсхолдер
@@ -474,7 +473,7 @@ pub(crate) fn compute_memory_layout(chip: &str, regions: &[RawRegion]) -> Option
         // тоже до конца цепочки, а не `flash_total`: иначе у STM32WB банк,
         // обрезанный по памяти CPU2, вышел бы рабочим регионом поверх `FLASH`.
         extra_regions: extra_region_lines(chip, regions, (origin, chain_end), ram, dma_nc.as_ref()),
-        write_size,
+        swap_buffer: write_size,
         page_size,
         erase_zero,
         // Начало банка, а не разрыва: от него `Bank2Region` считает смещения.
