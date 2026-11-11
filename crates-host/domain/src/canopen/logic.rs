@@ -16,14 +16,14 @@ use zencan_node::common::nmt::NmtState;
 use zencan_node::{Callbacks, Node};
 
 // {%- if ota == "true" %}
-use super::ota::OTA;
+use super::dictionary::OTA;
 use crate::ota::{ClientId, Reply, Request};
 // {%- endif %}
+use super::dictionary::Dictionary;
 use super::frame::{fix_save_signature, is_heartbeat, to_frame, to_message};
 use super::persisted;
 use super::persisted::Persisted;
 use super::stack::{Stack, TICK};
-use super::wiring::Dictionary;
 use crate::settings::{Error as SettingsError, Settings};
 use crate::tick::next_tick;
 

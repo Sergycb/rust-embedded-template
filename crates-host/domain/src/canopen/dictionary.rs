@@ -1,31 +1,18 @@
-//! Объект OTA в словаре CANopen: команды обновления — записями SDO.
+//! Словарь объектов CANopen: вход узла и объект OTA 0x4F00.
 //!
-//! Объект [`OTA_INDEX`] (запись, `application_callback` в `device.toml`):
-//!
-//! | Sub | Доступ | Что |
-//! |---|---|---|
-//! | 1 | wo, domain | `Start`: длина (u32) и, если есть, подпись — 64 байта |
-//! | 2 | wo, domain | `Chunk`: смещение (u32), затем байты, до 128 |
-//! | 3 | wo, u32 | `Finish`: 4 байта, значение не важно |
-//! | 4 | wo, u32 | `Reboot`: 4 байта, значение не важно |
-//! | 5 | ro, u16 | код исхода последней команды (`domain::ota::commands::reply_code`); 0 — ещё выполняется |
-//! | 6 | ro, u32 | сколько байт образа принято |
-//!
-//! Числа — младшим байтом первым, как всё в CANopen.
-//!
-//! Запись SDO не ждёт исхода: `zencan`
-//! отвечает на неё синхронно, внутри обработки кадра, и отложить ответ нельзя.
-//! Поэтому запись только ставит команду, а узел CANopen после обработки кадра
-//! (`step`) отправляет её на вход `ASK` узла OTA, не дожидаясь исхода, и
-//! работает дальше: heartbeat, SDO и PDO идут и пока узел OTA стирает раздел.
-//! Исход узел забирает из `reply()` и кладёт в sub 5. Хост после каждой
-//! команды перечитывает sub 5, пока там 0. Новая команда до исхода прежней —
-//! отказ записи `CantStoreDeviceState`: квота узла — одна команда в полёте.
-//!
-//! Объект — [`OTA`], `static` здесь, а не у compose-site: стек держит
-//! обработчик ссылкой `'static`, а сам объект — логика, не железо. Он один на
-//! прошивку, как и словарь `zencan`, в котором стоит.
+//! [`Dictionary`] — ссылки на `static` словаря из `crates-host/canopen`,
+//! которые compose-site передаёт узлу. Объект OTA — запись словаря; команды
+//! обновления приходят SDO-записями и уходят на вход `ASK` узла OTA.
 
+#![expect(
+    clippy::arbitrary_source_item_ordering,
+    reason = "OTA-часть под Liquid: константы и Dictionary разделены условием генерации"
+)]
+
+use zencan_node::object_dict::ODEntry;
+use zencan_node::{NodeMbox, NodeState};
+
+// {%- if ota == "true" %}
 use defmt_or_log::warn;
 use zencan_node::common::AtomicCell;
 use zencan_node::common::objects::{AccessType, DataType, ObjectCode, PdoMappable, SubInfo};
@@ -34,6 +21,9 @@ use zencan_node::object_dict::ObjectAccess;
 
 use crate::ota::commands::{CHUNK_BYTES, Chunk, Progress, Rejection, SIGNATURE_BYTES, reply_code};
 use crate::ota::{ClientId, Command, Reply, Request};
+// {%- endif %}
+
+// {%- if ota == "true" %}
 
 /// Индекс объекта OTA — в области приложения `zencan` (0x2000–0x4FFF). Тот же,
 /// что в `device.toml`; разойтись им не даёт тест узла.
@@ -241,6 +231,66 @@ fn chunk(data: &[u8]) -> Result<Command, AbortCode> {
         .ok_or(AbortCode::DataTypeMismatchLengthHigh)
 }
 
+// {%- endif %}
+
+/// Сгенерированный словарь объектов: ссылки на `static` из крейта
+/// `crates-host/canopen`.
+#[derive(Clone, Copy)]
+#[expect(
+    missing_debug_implementations,
+    reason = "типы zencan-node не реализуют Debug"
+)]
+pub struct Dictionary {
+    /// `canopen::NODE_MBOX` — очереди приёма и передачи.
+    pub mbox: &'static NodeMbox,
+    /// `canopen::NODE_STATE` — PDO и общее состояние узла.
+    pub state: &'static NodeState<'static>,
+    /// `canopen::OD_TABLE` — словарь объектов.
+    pub od: &'static [ODEntry<'static>],
+    /// `canopen::OBJECT1018` — идентичность: серийный номер узел ставит при
+    /// старте.
+    pub identity: &'static ::canopen::Object1018,
+    // {%- if ota == "true" %}
+    /// Место объекта OTA ([`OTA_INDEX`](self::OTA_INDEX)) в словаре —
+    /// `application_callback`: обработчик [`Object`](self::Object) узел
+    /// регистрирует при старте.
+    pub ota: &'static zencan_node::object_dict::CallbackObject<'static>,
+    // {%- endif %}
+}
+
+// Словарь примера `crates-host/canopen` — только в проекте с CANopen: без него
+// крейта словаря в проекте нет вовсе.
+/// Словарь примера устройства `crates-host/canopen` — с ним стартует узел
+/// шаблона. Проект меняет `device.toml` того крейта, а не эту функцию.
+#[must_use]
+pub fn dictionary() -> Dictionary {
+    Dictionary {
+        mbox: &::canopen::NODE_MBOX,
+        state: &::canopen::NODE_STATE,
+        od: &::canopen::OD_TABLE,
+        identity: &::canopen::OBJECT1018,
+        // {%- if ota == "true" %}
+        ota: &::canopen::OBJECT4F00,
+        // {%- endif %}
+    }
+}
+
+/// Серийный номер для объекта идентичности (0x1018:04) — 32 бита из
+/// заводского номера чипа (`bsp::ChipSpec::uid`): XOR трёх его слов.
+///
+/// Заводской номер STM32 — 96 бит (координаты кристалла на пластине, номер
+/// пластины и партии), и единственен он только целиком. Свёртка этого не
+/// гарантирует: у двух кристаллов XOR слов может совпасть, — но на одной
+/// шине такое маловероятно.
+#[must_use]
+pub fn serial(uid: [u8; 12]) -> u32 {
+    let (words, _) = uid.as_chunks::<4>();
+    words
+        .iter()
+        .fold(0, |acc, word| acc ^ u32::from_le_bytes(*word))
+}
+
+// {%- if ota == "true" %}
 #[cfg(test)]
 mod tests {
     use crate::ota::Command;
@@ -424,3 +474,5 @@ mod tests {
         assert_eq!(read(&object, 6), [0; 4]);
     }
 }
+
+// {%- endif %}

@@ -7,7 +7,7 @@
 //! что узел поставил в очередь передачи, уходит на шину. Узел делает
 //! ровно это: ждёт кадр наперегонки с тактом
 //! [`TICK`](crate::canopen::TICK){% if ota == "true" %} и с исходом команды
-//! OTA, которую отправил, не дожидаясь (`canopen::ota`){% endif %}.
+//! OTA, которую отправил, не дожидаясь (`canopen::dictionary`){% endif %}.
 //!
 //! Словарь объектов — проектный: его `zencan-build` генерирует из
 //! `device.toml` крейта `crates-host/canopen`, а compose-site передаёт узлу
@@ -47,14 +47,11 @@
 //! * `funcan-rs` — заготовка без NMT/SDO/PDO; `oze-canopen`,
 //!   `industrial-protocols-canopen` — требуют `std`.
 
+mod dictionary;
 mod frame;
 mod logic;
-// {%- if ota == "true" %}
-mod ota;
-// {%- endif %}
 mod persisted;
 mod stack;
-mod wiring;
 
 use core::cell::RefCell;
 use core::convert::Infallible;
@@ -81,11 +78,11 @@ use crate::tick::deadline;
 
 use self::logic::CanOpen;
 
+pub use dictionary::{Dictionary, dictionary, serial};
 pub use persisted::{NODE_ID_KEY, OBJECTS_KEY, Persisted, STORE_CAPACITY};
 pub use stack::{Stack, TICK};
-pub use wiring::{Dictionary, dictionary, serial};
 // {%- if ota == "true" %}
-pub use ota::{OTA, OTA_INDEX, Object};
+pub use dictionary::{OTA, OTA_INDEX, Object};
 // {%- endif %}
 
 // Узел объявлен рядом со своей задачей.
@@ -496,7 +493,7 @@ mod tests {
         assert_eq!(sdo[1].data, [0x4B, 0x00, 0x4F, 0x05, 0, 0, 0, 0]);
         assert_eq!(sdo[2].data, [0x4B, 0x00, 0x4F, 0x05, 16, 0, 0, 0]);
     }
-    /// Объект OTA в `device.toml` стоит по индексу [`super::OTA_INDEX`]:
+    /// Объект OTA в `device.toml` стоит по индексу [`self::OTA_INDEX`]:
     /// разойдись они — хост писал бы в несуществующий объект.
     #[test]
     fn the_dictionary_has_the_ota_object_at_its_index() {
