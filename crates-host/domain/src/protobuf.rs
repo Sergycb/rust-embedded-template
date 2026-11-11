@@ -317,9 +317,11 @@ mod tests {
     fn an_update_command_is_answered_with_its_outcome() {
         let mut link = Link::with([Ok(request(
             1,
-            Request_::Command::OtaStart(proto::OtaStart {
-                len: 8,
-                signature: heapless::Vec::from_slice(&[9; 64]).unwrap(),
+            Request_::Command::Ota(proto::Ota {
+                command: Some(proto::Ota_::Command::Start(proto::Ota_::Start {
+                    len: 8,
+                    signature: heapless::Vec::from_slice(&[9; 64]).unwrap(),
+                })),
             }),
         ))]);
         {

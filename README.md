@@ -377,7 +377,7 @@ interface=none` с OTA — ошибка генерации. Протокол м�
 протокол — docs/ota.md, «Команды: образ приходит через протокол».
 
 {% if protocol == "protobuf" %}В этом проекте команды — сообщения схемы `crates-host/proto/proto/host.proto`
-(`ota_start`, `ota_chunk`, `ota_finish`, `reboot`), ответ — `Ok` или `Error`.{% elsif protocol == "modbus" %}В этом проекте команды — записи FC16 в окно holding-регистров с `0xF000`:
+(`ota` с вложенным `Ota.command`: `start`, `chunk`, `finish`, `reboot`), ответ — `Ok` или `Error`.{% elsif protocol == "modbus" %}В этом проекте команды — записи FC16 в окно holding-регистров с `0xF000`:
 одна запись — одна команда, ответ на запись — её исход, точный код и принятая длина —
 во входных регистрах (FC04) с той же базы. Тайм-аут master'а на `Start` должен быть
 длиннее стирания раздела.{% elsif protocol == "canopen" %}В этом проекте команды — записи SDO в объект `0x4F00`: sub 1 — `Start`, 2 —

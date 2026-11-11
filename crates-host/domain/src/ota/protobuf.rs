@@ -4,7 +4,7 @@ use core::array::TryFromSliceError;
 use core::fmt::Write as _;
 
 use defmt_or_log::warn;
-use proto::{Error, OtaChunk, OtaFinish, OtaStart, Reboot, Response_, heapless};
+use proto::{Error, Ota, Ota_, Response_, heapless};
 
 use super::command::{CHUNK_BYTES, Chunk, Rejection, SIGNATURE_BYTES};
 use super::{OtaClient, OtaCommand, OtaReply};
@@ -14,7 +14,7 @@ use crate::protobuf::error;
 // разойдутся — кусок или подпись, прошедшие разбор, не дойдут до узла.
 const _: () = assert!(
     proto::OTA_CHUNK_BYTES == CHUNK_BYTES && proto::OTA_SIGNATURE_BYTES == SIGNATURE_BYTES,
-    "пределы OtaChunk.data/OtaStart.signature в proto/build.rs разошлись с ota::command"
+    "пределы Ota.Chunk.data/Ota.Start.signature в proto/build.rs разошлись с ota::command"
 );
 
 /// Обработчик команд обновления.
@@ -32,20 +32,18 @@ impl Handler {
     }
 
     /// Команда узлу OTA и её исход; узел OTA пропал — отказ устройства.
-    async fn ota(&self, command: OtaCommand) -> Response_::Result {
+    async fn send(&self, command: OtaCommand) -> Response_::Result {
         let reply = self.ota.request(command).await.unwrap_or_else(|_lost| {
             warn!("protobuf: узел OTA не ответил");
             Err(Rejection::Device)
         });
         ota_reply(reply)
     }
-}
 
-impl proto::host::HandleOta for Handler {
-    async fn ota_start(&mut self, request: &OtaStart) -> Response_::Result {
+    async fn start(&mut self, request: &Ota_::Start) -> Response_::Result {
         match signature(&request.signature) {
             Ok(signature) => {
-                self.ota(OtaCommand::Start {
+                self.send(OtaCommand::Start {
                     len: request.len,
                     signature,
                 })
@@ -55,24 +53,36 @@ impl proto::host::HandleOta for Handler {
         }
     }
 
-    async fn ota_chunk(&mut self, request: &OtaChunk) -> Response_::Result {
+    async fn chunk(&mut self, request: &Ota_::Chunk) -> Response_::Result {
         match Chunk::new(request.offset, &request.data) {
-            Some(chunk) => self.ota(OtaCommand::Chunk(chunk)).await,
+            Some(chunk) => self.send(OtaCommand::Chunk(chunk)).await,
             // Ёмкость поля в схеме та же, что у куска: сюда не доходит.
             None => error("chunk too long"),
         }
     }
 
-    async fn ota_finish(&mut self, _request: &OtaFinish) -> Response_::Result {
-        self.ota(OtaCommand::Finish).await
+    async fn finish(&mut self) -> Response_::Result {
+        self.send(OtaCommand::Finish).await
     }
 
-    async fn reboot(&mut self, _request: &Reboot) -> Response_::Result {
-        self.ota(OtaCommand::Reboot).await
+    async fn reboot(&mut self) -> Response_::Result {
+        self.send(OtaCommand::Reboot).await
     }
 }
 
-/// Подпись из `ota_start`: пусто — подписи нет (узел OTA отвергнет `Start`),
+impl proto::host::HandleOta for Handler {
+    async fn ota(&mut self, request: &Ota) -> Response_::Result {
+        match &request.command {
+            Some(Ota_::Command::Start(request)) => self.start(request).await,
+            Some(Ota_::Command::Chunk(request)) => self.chunk(request).await,
+            Some(Ota_::Command::Finish(_)) => self.finish().await,
+            Some(Ota_::Command::Reboot(_)) => self.reboot().await,
+            None => error("unknown command"),
+        }
+    }
+}
+
+/// Подпись из `start`: пусто — подписи нет (узел OTA отвергнет `Start`),
 /// 64 байта — подпись, иначе
 /// отказ: обрезанную подпись принять за целую нельзя.
 fn signature(bytes: &[u8]) -> Result<Option<[u8; SIGNATURE_BYTES]>, TryFromSliceError> {

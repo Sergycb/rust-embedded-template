@@ -33,8 +33,8 @@ const LIMITS: &[(&str, &str, u32)] = &[
     // {%- if ota == "true" %}
     // Те же пределы, что у команды узлу OTA (`domain::ota::command`:
     // `SIGNATURE_BYTES`, `CHUNK_BYTES`): длиннее не дойдёт до узла.
-    ("OTA_SIGNATURE_BYTES", ".host.OtaStart.signature", 64),
-    ("OTA_CHUNK_BYTES", ".host.OtaChunk.data", 128),
+    ("OTA_SIGNATURE_BYTES", ".host.Ota.Start.signature", 64),
+    ("OTA_CHUNK_BYTES", ".host.Ota.Chunk.data", 128),
     // {%- endif %}
 ];
 
@@ -88,7 +88,7 @@ fn service_prefix(name: &str) -> &str {
         .unwrap_or_else(|| panic!("service `{name}` must end with `Service`"))
 }
 
-/// `OtaStart` → `ota_start`; имена RPC — `PascalCase`.
+/// `Info` → `info`; имена RPC — `PascalCase`.
 fn snake_case(name: &str) -> String {
     let mut out = String::with_capacity(name.len() + 4);
     for (i, ch) in name.char_indices() {

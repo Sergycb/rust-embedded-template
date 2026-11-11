@@ -157,9 +157,11 @@ mod tests {
             service(INFO),
             Request {
                 request_id: 7,
-                command: Some(Request_::Command::OtaStart(proto::OtaStart {
-                    len: 8,
-                    signature: heapless::Vec::from_slice(&[0; 8]).unwrap(),
+                command: Some(Request_::Command::Ota(proto::Ota {
+                    command: Some(proto::Ota_::Command::Start(proto::Ota_::Start {
+                        len: 8,
+                        signature: heapless::Vec::from_slice(&[0; 8]).unwrap(),
+                    })),
                 })),
             },
         );

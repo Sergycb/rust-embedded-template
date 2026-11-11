@@ -325,6 +325,13 @@ impl Device {
     }
     // {%- if ota == "true" %}
 
+    /// Конверт `Request` для команды обновления.
+    fn ota(command: proto::Ota_::Command) -> Request_::Command {
+        Request_::Command::Ota(proto::Ota {
+            command: Some(command),
+        })
+    }
+
     /// `Reboot`: ответ приходит до сброса. После `Ok` — пауза, чтобы
     /// следующий вызов не застал прежнюю прошивку.
     ///
@@ -333,7 +340,7 @@ impl Device {
     /// Канал не открылся или ответа нет в срок.
     pub fn reboot(&mut self) -> io::Result<Outcome> {
         let outcome = outcome(self.call(
-            Request_::Command::Reboot(proto::Reboot::default()),
+            Self::ota(proto::Ota_::Command::Reboot(proto::Ota_::Reboot::default())),
             REPLY_TIMEOUT,
         )?);
         if outcome.is_ok() {
@@ -343,23 +350,23 @@ impl Device {
         Ok(outcome)
     }
 
-    /// `ota_start`: длина образа и подпись (пустая — без подписи). Ответа
-    /// ждёт `slow`: перед ним устройство стирает раздел под образ.
+    /// `start` команды `ota`: длина образа и подпись (пустая — без подписи).
+    /// Ответа ждёт `slow`: перед ним устройство стирает раздел под образ.
     ///
     /// # Errors
     ///
     /// Канал не открылся, ответа нет в срок или подпись длиннее схемы.
     pub fn start(&mut self, len: usize, signature: &[u8], slow: Duration) -> io::Result<Outcome> {
-        let start = proto::OtaStart {
+        let start = proto::Ota_::Start {
             len: u32::try_from(len).map_err(io::Error::other)?,
             signature: proto::heapless::Vec::from_slice(signature)
                 .map_err(|err| io::Error::other(format!("подпись: {err:?}")))?,
         };
-        self.call(Request_::Command::OtaStart(start), slow)
+        self.call(Self::ota(proto::Ota_::Command::Start(start)), slow)
             .map(outcome)
     }
 
-    /// Весь образ: `ota_start`, куски по `OTA_CHUNK_BYTES`, `ota_finish`.
+    /// Весь образ: `start` команды `ota`, куски по `OTA_CHUNK_BYTES`, `finish`.
     /// Первый отказ обрывает загрузку и возвращается как есть.
     ///
     /// # Errors
@@ -375,20 +382,20 @@ impl Device {
             return Ok(Err(refused));
         }
         for (index, data) in image.chunks(proto::OTA_CHUNK_BYTES).enumerate() {
-            let chunk = proto::OtaChunk {
+            let chunk = proto::Ota_::Chunk {
                 data: proto::heapless::Vec::from_slice(data)
                     .map_err(|err| io::Error::other(format!("кусок: {err:?}")))?,
                 offset: u32::try_from(index * proto::OTA_CHUNK_BYTES).map_err(io::Error::other)?,
             };
             if let Err(refused) =
-                outcome(self.call(Request_::Command::OtaChunk(chunk), REPLY_TIMEOUT)?)
+                outcome(self.call(Self::ota(proto::Ota_::Command::Chunk(chunk)), REPLY_TIMEOUT)?)
             {
                 return Ok(Err(refused));
             }
         }
         // `Finish` пишет запись для bootloader'а и стирает `STATE` — до секунды.
         self.call(
-            Request_::Command::OtaFinish(proto::OtaFinish::default()),
+            Self::ota(proto::Ota_::Command::Finish(proto::Ota_::Finish::default())),
             slow,
         )
         .map(outcome)
@@ -474,7 +481,7 @@ pub fn skip(why: &str) {
     }
 }
 
-/// Срок для медленных шагов OTA — стирания раздела на `ota_start`, `Finish`
+/// Срок для медленных шагов OTA — стирания раздела на `start`, `finish`
 /// и сброса с обменом разделов, — по размеру `ACTIVE` (`HOST_TARGET_ACTIVE_LEN`
 /// от `xtask`).
 ///

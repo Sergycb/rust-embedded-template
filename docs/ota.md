@@ -29,7 +29,7 @@
   и второй транспорт ради прошивки ему не нужен. Каналом владеет узел
   протокола; будь у OTA свой вытягивающий порт, два
   узла делили бы один канал, и понадобился бы разборщик.
-- **Узел один на все протоколы.** Протоколу остаётся перевод: {% if has_protobuf == "true" %}`OtaChunk`
+- **Узел один на все протоколы.** Протоколу остаётся перевод: {% if has_protobuf == "true" %}`Ota.Chunk`
   protobuf{% elsif has_modbus == "true" %}запись регистров
   Modbus{% elsif has_canopen == "true" %}запись SDO
   CANopen{% else %}кусок образа
@@ -90,8 +90,9 @@
 {%- endif %}
 {%- if has_protobuf == "true" %}
 
-- **protobuf** — сообщения `ota_start`, `ota_chunk`, `ota_finish`, `reboot`,
-  ответ `Ok` или `Error` с именем отказа (`crates-host/proto/proto/host.proto`).
+- **protobuf** — команда `ota` с вложенным `Ota.command`: `start`, `chunk`,
+  `finish`, `reboot`; ответ `Ok` или `Error` с именем отказа
+  (`crates-host/proto/proto/host.proto`).
   Обработчик `domain::ota::protobuf::Handler` шлёт команду на вход `CMD` и ждёт
   исхода, как Modbus: ответ с `request_id` запроса — её исход; пока узел OTA
   стирает раздел (секунды на F4), канал не обслуживается. Исход
