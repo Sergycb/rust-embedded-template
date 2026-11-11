@@ -46,7 +46,7 @@ const _: () = assert!(
 /// Задержки — на `SysTick` ядра: исполнителя и драйвера времени здесь нет.
 /// Счётчик `SysTick` включается только на время задержки, и прыжок в
 /// приложение застаёт его выключенным.
-pub(crate) type ExternalFlash = w25q::device::W25qSync<bsp::stub::FlashBus, cortex_m::delay::Delay>;
+pub(crate) type ExternalFlash = w25q::device::W25qSync<bsp::stub::Bus, cortex_m::delay::Delay>;
 
 /// Собирает драйвер и опознаёт микросхему. Не прошёл `init` или микросхема
 /// меньше разделов (`bsp::layout::ext_flash_end`) — строка в лог, и драйвер
@@ -60,7 +60,7 @@ pub(crate) type ExternalFlash = w25q::device::W25qSync<bsp::stub::FlashBus, cort
 pub(crate) fn new(sys_hz: u32) -> ExternalFlash {
     let core = cortex_m::Peripherals::take().expect("boot: периферия ядра уже взята");
     let delay = cortex_m::delay::Delay::new(core.SYST, sys_hz);
-    let mut flash = ExternalFlash::new(bsp::stub::FlashBus, delay);
+    let mut flash = ExternalFlash::new(bsp::stub::Bus, delay);
     match flash.init() {
         Ok(_) if flash.capacity() >= bsp::layout::ext_flash_end() => flash,
         Ok(_) => {

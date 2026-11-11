@@ -29,7 +29,7 @@ const HTTP_CONNECTIONS: usize = match usize::from_str_radix(env!("HTTP_CONNECTIO
 {%- endif %}
 
 /// Сетевое устройство платы — пока заглушка, до Ethernet (см. модуль).
-pub type Device = crate::stub::NetDevice;
+pub type Device = crate::stub::Device;
 
 /// Сетевой стек платы — на нём открывают свои сокеты транспорты протоколов
 /// и сетевые службы приложения.

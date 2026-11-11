@@ -10,9 +10,9 @@
 чип».{% endif %}
 
 Шаблон выводы не выбирает (`docs/architecture.md`), поэтому `Device` пока —
-заглушка `bsp::stub::NetDevice`: линк всегда опущен, кадров нет. Всё остальное
+заглушка `bsp::stub::Device`: линк всегда опущен, кадров нет. Всё остальное
 настоящее: стек `embassy-net` с DHCP, его фоновая работа в узле `NET`
-(`domain::net`) и сокеты протоколов{% if has_tcp == "true" or has_udp == "true" %} ({% if has_tcp == "true" %}`adapters_logic::net::TcpServer`{% endif %}{% if has_tcp == "true" and has_udp == "true" %}, {% endif %}{% if has_udp == "true" %}`adapters_logic::net::UdpLink`{% endif %}){% endif %}.
+(`domain::net`) и сокеты протоколов{% if has_tcp == "true" or has_udp == "true" %} ({% if has_tcp == "true" %}`adapters_logic::net::Server`{% endif %}{% if has_tcp == "true" and has_udp == "true" %}, {% endif %}{% if has_udp == "true" %}`adapters_logic::net::UdpLink`{% endif %}){% endif %}.
 Проект собирается и запускается, протокол ждёт клиента вечно. Подставить
 Ethernet — заменить устройство: стек, сокеты и граф не меняются.
 
@@ -133,7 +133,7 @@ Ethernet — заменить устройство: стек, сокеты и г
   поэтому без запаса: свой сокет (или фича `dns` у `embassy-net` — она тоже
   занимает слот) — плюс один там же.
 {%- if has_tcp == "true" %}
-* TCP: клиент один, `TcpServer` принимает следующего, когда текущий отключился.
+* TCP: клиент один, `Server` принимает следующего, когда текущий отключился.
 {%- endif %}
 {%- if has_udp == "true" %}
 * UDP: ответ уходит отправителю последней датаграммы.

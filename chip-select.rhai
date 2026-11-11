@@ -2053,7 +2053,7 @@ if variable::is_set("write_size") {
         print("Настройки — во внутренней EEPROM чипа: флеш под них не тратится");
     } else if config && store == "external" {
         print("Настройки — на внешней флеши W25Q: подставьте шину с выводами платы в crates-cross/bsp/src/external.rs");
-        print("  (пока там заглушка bsp::stub::FlashBus — проект собирается, настройки не сохраняются; docs/modules/bsp-external.md)");
+        print("  (пока там заглушка bsp::stub::Bus — проект собирается, настройки не сохраняются; docs/modules/bsp-external.md)");
     }
     variable::set("write_size", m["write_size"]);
     // `page_size` — страница обмена embassy-boot (`PAGE_SIZE`, `SWAP_PAGE_SIZE`
@@ -2531,7 +2531,7 @@ if iface != "none" {
 // хоть один раздел его использует: `STATE`/`CONFIG` с секторами мельче страницы
 // чипа или `ACTIVE`/`DFU` со страницей обмена. Иначе типа в проекте нет вовсе.
 variable::set("erase_page", if variable::get("state_paged") == "true" || variable::get("config_paged") == "true" || variable::get("swap_paged") == "true" { "true" } else { "false" });
-// Драйвер внешней флеши (`bsp::external`, шина — заглушка `bsp::stub::FlashBus`) нужен, пока
+// Драйвер внешней флеши (`bsp::external`, шина — заглушка `bsp::stub::Bus`) нужен, пока
 // на внешней флеши лежит хоть что-то: разделы OTA или настройки.
 variable::set("external_flash", if (variable::get("ota") == "true" && variable::get("ota_store") == "external") || variable::get("config_store") == "external" { "true" } else { "false" });
 if wants_ext && variable::get("external_flash") != "true" {

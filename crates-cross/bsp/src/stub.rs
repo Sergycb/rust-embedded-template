@@ -19,7 +19,7 @@ pub use adapters_hw::usb::fake::{NoBus, NoEndpoint, UsbDriver};
 /// Стек `embassy-net` над ним настоящий, а линк всегда опущен: кадров нет ни
 /// на приёме, ни на передаче. Реализация — `adapters_hw::net::fake`: на ней же
 /// host-тесты гоняют узел `NET`.
-pub use adapters_hw::net::fake::{NetDevice, NoFrame};
+pub use adapters_hw::net::fake::{Device, NoFrame};
 {%- endif %}
 {%- if has_uart == "true" %}
 
@@ -89,13 +89,13 @@ impl ports::CanBus for Can {
 /// падает.{% if ota == "true" and ota_store == "external" %} Асинхронная — для приложения, блокирующая — для bootloader'а: тот
 /// с ней не обменивает разделы, а загружает текущий образ.{% endif %}
 #[derive(Debug, Default)]
-pub struct FlashBus;
+pub struct Bus;
 
-/// Ответ [`FlashBus`] на любую команду.
+/// Ответ [`Bus`] на любую команду.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, defmt::Format)]
 pub struct NotConnected;
 
-impl w25q::bus::FlashBusAsync for FlashBus {
+impl w25q::bus::FlashBusAsync for Bus {
     type Error = NotConnected;
 
     /// Ширина настоящей шины: по ней драйвер выбирает команды{% if ext_flash_bus != "spi" %} (и ставит
@@ -111,7 +111,7 @@ impl w25q::bus::FlashBusAsync for FlashBus {
     }
 }
 
-impl w25q::bus::FlashBusSync for FlashBus {
+impl w25q::bus::FlashBusSync for Bus {
     type Error = NotConnected;
 
     const LANES: w25q::bus::Lanes = <Self as w25q::bus::FlashBusAsync>::LANES;

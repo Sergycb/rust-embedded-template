@@ -42,6 +42,63 @@
 {%- assign flash_cache = "true" %}
 {%- endif %}
 
+{%- if firmware_here == "true" %}
+
+/// Флеш под `DFU`: банк 2, если он есть, или общий `Flash` чипа со страницей
+/// обмена. Типы банка — в этом модуле, чтобы `Dfu` не повторялся в именах.
+pub mod dfu {
+    use embassy_embedded_hal::adapter::BlockingAsync;
+    // {%- if dfu_bank == "true" %}
+    use core::cell::RefCell;
+
+    use embassy_embedded_hal::flash::partition::BlockingPartition;
+    use embassy_stm32::flash::Blocking;
+    use embassy_sync::blocking_mutex;
+    use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+    // {%- endif %}
+    // {%- if dfu_bank == "true" %}
+    //{{newline}}    use super::Bank2Region;
+    // {%- endif %}
+    // {%- if dfu_bank == "true" and flash_cache == "true" %}
+    //{{newline}}    use super::Coherent;
+    // {%- endif %}
+    // {%- if dfu_bank == "true" %}
+    // {%- elsif swap_paged == "true" %}
+    //{{newline}}    use super::{ErasePage, SWAP_PAGE_SIZE, Whole};
+    // {%- else %}
+    //{{newline}}    use super::Whole;
+    // {%- endif %}
+
+    // {%- if dfu_bank == "true" %}
+    /// Банк 2 — под `DFU`, и только под него: смещения в нём отсчитаны от его
+    /// начала, и символы `memory.x` у `DFU` посчитаны так же.
+    pub type BankFlash = {% if flash_cache == "true" %}Coherent<Bank2Region<'static, Blocking>>{% else %}Bank2Region<'static, Blocking>{% endif %};
+
+    /// Банк 2 под блокирующим замком.
+    pub type BankMutex = blocking_mutex::Mutex<NoopRawMutex, RefCell<BankFlash>>;
+
+    /// Весь банк 2 как раздел под замком — под него строится `DFU`.
+    type Bank = BlockingPartition<'static, NoopRawMutex, BankFlash>;
+    // {%- endif %}
+
+    /// Флеш под `DFU`: общий `Flash` чипа, видимый асинхронно
+    /// (`BlockingAsync`) — порт OTA асинхронный.
+    ///
+    /// Тот же цельный `Flash`, что и в `crates-cross/boot`: он сам знает
+    /// реальные границы секторов чипа, в том числе неравномерные (F4/F7/H7),
+    /// а банковые регионы у каждого семейства называются по-своему.
+    // {%- if dfu_bank == "true" %}
+    pub type Flash = BlockingAsync<Bank>;
+    // {%- elsif swap_paged == "true" %}
+    // {{newline}}    /// Но со страницей обмена `SWAP_PAGE_SIZE`, крупнее
+    // {{newline}}    /// физической страницы флеша (`flash_page::ErasePage`).
+    // {{newline}}    pub type Flash = BlockingAsync<ErasePage<Whole, SWAP_PAGE_SIZE>>;
+    // {%- else %}
+    //{{newline}}    pub type Flash = BlockingAsync<Whole>;
+    // {%- endif %}
+}
+{%- endif %}
+
 use core::cell::RefCell;
 {% if whole == "true" %}
 use embassy_embedded_hal::adapter::BlockingAsync;
@@ -199,22 +256,15 @@ const _: () = assert!(
 ///
 /// `NoopRawMutex`, а не `CriticalSectionRawMutex`: все пользователи работают из
 /// задач одного исполнителя; что менять вместе с ним — docs/flash.md.
-pub type FlashMutex = blocking_mutex::Mutex<NoopRawMutex, RefCell<ChipFlash>>;
+pub type Lock = blocking_mutex::Mutex<NoopRawMutex, RefCell<ChipFlash>>;
 {%- if dfu_bank == "true" %}
 
-/// Флеш под [`FlashMutex`] — банк 1, а не весь чип. Смещения в банке 1 те же,
+/// Флеш под [`Lock`] — банк 1, а не весь чип. Смещения в банке 1 те же,
 /// что у цельного `Flash`, — от базы flash.
 pub type ChipFlash = {% if flash_cache == "true" %}Coherent<Bank1Region<'static, Blocking>>{% else %}Bank1Region<'static, Blocking>{% endif %};
-
-/// Банк 2 — под `DFU`, и только под него: смещения в нём отсчитаны от его
-/// начала, и символы `memory.x` у `DFU` посчитаны так же.
-pub type DfuBankMutex = blocking_mutex::Mutex<NoopRawMutex, RefCell<DfuBankFlash>>;
-
-/// Банк 2 как флеш{% if flash_cache == "true" %} — с той же обёрткой кэша, что [`ChipFlash`]{% endif %}.
-pub type DfuBankFlash = {% if flash_cache == "true" %}Coherent<Bank2Region<'static, Blocking>>{% else %}Bank2Region<'static, Blocking>{% endif %};
 {%- else %}
 
-/// Флеш под [`FlashMutex`] — весь чип одним объектом.
+/// Флеш под [`Lock`] — весь чип одним объектом.
 pub type ChipFlash = {% if flash_cache == "true" %}Coherent<embassy_stm32::flash::Flash<'static, Blocking>>{% else %}embassy_stm32::flash::Flash<'static, Blocking>{% endif %};
 {%- endif %}
 {%- if firmware_here == "true" %}
@@ -224,7 +274,7 @@ pub type ChipFlash = {% if flash_cache == "true" %}Coherent<embassy_stm32::flash
 /// нарезанные платой по символам `memory.x` (`crate::layout`), со своими
 /// страницами, размер `ACTIVE` и отпечаток раскладки.
 pub type FirmwareFlash = ports::Partitions<
-    Partition<'static, NoopRawMutex, DfuFlash>,
+    Partition<'static, NoopRawMutex, dfu::Flash>,
     Partition<'static, NoopRawMutex, StateFlash>,
 >;
 {%- endif %}
@@ -240,16 +290,11 @@ pub type ConfigFlash = Partition<'static, NoopRawMutex, ConfigBacking>;
 /// Внутренняя EEPROM как `NorFlash` — носитель настроек, над которым
 /// стоит хранилище (`domain::settings`).
 /// Флеш под настройки не тратится вовсе: EEPROM пишется через тот же
-/// контроллер, что и флеш, поэтому доступ к ней — через общий [`FlashMutex`]
+/// контроллер, что и флеш, поэтому доступ к ней — через общий [`Lock`]
 /// (`embassy_stm32::flash::Flash::eeprom_*`), по операции под замком. Обёртку
 /// `adapters_hw::eeprom::Eeprom` (инверсия байтов, страница) собирает плата, и
 /// под хранилище отдана вся EEPROM, округлённая до её страницы.
 pub type ConfigFlash = adapters_hw::eeprom::Eeprom<EepromFlash>;
-{%- endif %}
-{%- if dfu_bank == "true" %}
-
-/// Весь банк 2 как раздел под замком — под него строится `DFU`.
-type DfuBank = BlockingPartition<'static, NoopRawMutex, DfuBankFlash>;
 {%- endif %}
 {%- if whole == "true" %}
 
@@ -259,28 +304,6 @@ type DfuBank = BlockingPartition<'static, NoopRawMutex, DfuBankFlash>;
 type Whole = BlockingPartition<'static, NoopRawMutex, ChipFlash>;
 {%- endif %}
 {%- if firmware_here == "true" %}
-
-/// Флеш под `DFU`: общий `Flash` чипа, видимый асинхронно (`BlockingAsync`) —
-/// порт OTA асинхронный.
-///
-/// Тот же цельный `Flash`, что и в `crates-cross/boot`: он сам знает реальные
-/// границы секторов чипа, в том числе неравномерные (F4/F7/H7), а банковые
-/// регионы у каждого семейства называются по-своему.
-{%- if dfu_bank == "true" %}
-///
-/// Кроме этого чипа: банк 2 у него стоит за разрывом, цельный `Flash` туда не
-/// дотягивается, и `DFU` лежит в регионе банка 2 ([`DfuBankMutex`]).
-type DfuFlash = BlockingAsync<DfuBank>;
-{%- elsif swap_paged == "true" %}
-///
-/// Но со страницей обмена [`SWAP_PAGE_SIZE`], крупнее физической страницы
-/// флеша (`flash_page::ErasePage`): `DFU` обязан видеть ту же страницу, что
-/// `ACTIVE` и `DFU` в bootloader'е, иначе размеры и смещения разделов у них
-/// разойдутся.
-type DfuFlash = BlockingAsync<ErasePage<Whole, SWAP_PAGE_SIZE>>;
-{%- else %}
-type DfuFlash = BlockingAsync<Whole>;
-{%- endif %}
 
 {%- if state_paged == "true" %}
 
@@ -306,9 +329,9 @@ type ConfigBacking = BlockingAsync<Whole>;
 {%- endif %}
 {%- if eeprom_here == "true" %}
 
-/// Общий [`FlashMutex`] как источник EEPROM. Свой тип, а не `impl` на самом
+/// Общий [`Lock`] как источник EEPROM. Свой тип, а не `impl` на самом
 /// мьютексе: и трейт `Storage`, и `Mutex` чужие для `bsp`.
-pub struct EepromFlash(&'static FlashMutex);
+pub struct EepromFlash(&'static Lock);
 
 // Вручную: у `Flash` из `embassy-stm32` нет `Debug`.
 impl core::fmt::Debug for EepromFlash {
@@ -428,27 +451,27 @@ impl<F: NorFlash> NorFlash for Coherent<F> {
 /// `&'static` он не для красоты: носители {% if firmware_here == "true" and config_here == "true" %}обновления и настроек{% elsif firmware_here == "true" %}обновления{% elsif config_here == "true" %}настроек{% else %}настроек{% endif %} отдаются в
 /// задачи, а аргументы задач embassy обязаны быть `'static`. Обычное поле
 /// `Board` этого не даёт — `Board` живёт в `main`, а не вечно.
-static FLASH: StaticCell<FlashMutex> = StaticCell::new();
+static FLASH: StaticCell<Lock> = StaticCell::new();
 {%- if dfu_bank == "true" %}
 
 /// `&'static` — по той же причине, что [`FLASH`].
-static DFU_BANK: StaticCell<DfuBankMutex> = StaticCell::new();
+static DFU_BANK: StaticCell<dfu::BankMutex> = StaticCell::new();
 {%- endif %}
 {%- if firmware_here == "true" %}
 
 /// Свои асинхронные мьютексы носителям `DFU` и `BOOTLOADER_STATE`:
 /// `embassy-boot` строит каждый раздел из `&Mutex<_, T>` своего типа. Внутри
-/// обоих — ссылка на общий [`FlashMutex`], а не второй `Flash`: контроллер на
+/// обоих — ссылка на общий [`Lock`], а не второй `Flash`: контроллер на
 /// чипе один.
-static DFU_FLASH: StaticCell<mutex::Mutex<NoopRawMutex, DfuFlash>> = StaticCell::new();
+static DFU_FLASH: StaticCell<mutex::Mutex<NoopRawMutex, dfu::Flash>> = StaticCell::new();
 static STATE_FLASH: StaticCell<mutex::Mutex<NoopRawMutex, StateFlash>> = StaticCell::new();
 {%- endif %}
 {%- if config_here == "true" %}
 
 /// Свой асинхронный мьютекс разделу `CONFIG`: `Partition` строится из
-/// `&Mutex<_, T>`. Внутри — ссылка на общий [`FlashMutex`], а не второй
+/// `&Mutex<_, T>`. Внутри — ссылка на общий [`Lock`], а не второй
 /// `Flash`: контроллер на чипе один. `NoopRawMutex` — то же допущение «один
-/// исполнитель», что у `FlashMutex`{% if firmware_here == "true" %} и носителей обновления{% endif %}; менять вместе.
+/// исполнитель», что у `Lock`{% if firmware_here == "true" %} и носителей обновления{% endif %}; менять вместе.
 static CONFIG_FLASH: StaticCell<mutex::Mutex<NoopRawMutex, ConfigBacking>> = StaticCell::new();
 {%- endif %}
 
@@ -458,7 +481,7 @@ static CONFIG_FLASH: StaticCell<mutex::Mutex<NoopRawMutex, ConfigBacking>> = Sta
 /// Вторым идёт банк 2 — под `DFU`.
 pub(crate) fn new(
     resources: crate::resources::FlashResources,
-) -> (&'static FlashMutex, &'static DfuBankMutex) {
+) -> (&'static Lock, &'static dfu::BankMutex) {
     let banks = embassy_stm32::flash::Flash::new_blocking(resources.flash).into_blocking_regions();
     (
 {%- if flash_cache == "true" %}
@@ -475,7 +498,7 @@ pub(crate) fn new(
     )
 }
 {%- else %}
-pub(crate) fn new(resources: crate::resources::FlashResources) -> &'static FlashMutex {
+pub(crate) fn new(resources: crate::resources::FlashResources) -> &'static Lock {
     FLASH.init(blocking_mutex::Mutex::new(RefCell::new({% if flash_cache == "true" %}Coherent({% endif %}
         embassy_stm32::flash::Flash::new_blocking(resources.flash),
     {% if flash_cache == "true" %}){% endif %})))
@@ -484,7 +507,7 @@ pub(crate) fn new(resources: crate::resources::FlashResources) -> &'static Flash
 {%- if firmware_here == "true" %}
 
 /// Нарезает разделы обновления: `DFU` и `BOOTLOADER_STATE` над общим
-/// [`FlashMutex`] со своими страницами — по символам `memory.x`, как их
+/// [`Lock`] со своими страницами — по символам `memory.x`, как их
 /// режет bootloader. Границы обязаны быть кратны страницам, иначе
 /// `Partition::new` паникует на старте: в сгенерированном `memory.x` это
 /// держит `ASSERT` (падает линковка), в заполненном руками — никто.
@@ -492,15 +515,15 @@ pub(crate) fn new(resources: crate::resources::FlashResources) -> &'static Flash
 ///
 /// `DFU` — в банке 2, `STATE` — в банке 1.
 pub(crate) fn firmware(
-    flash: &'static FlashMutex,
-    dfu_bank: &'static DfuBankMutex,
+    flash: &'static Lock,
+    dfu_bank: &'static dfu::BankMutex,
 ) -> FirmwareFlash {
     let dfu = BlockingAsync::new(BlockingPartition::new(dfu_bank, 0, DFU_BANK_SIZE));
 {%- elsif swap_paged == "true" %}
-pub(crate) fn firmware(flash: &'static FlashMutex) -> FirmwareFlash {
+pub(crate) fn firmware(flash: &'static Lock) -> FirmwareFlash {
     let dfu = BlockingAsync::new(ErasePage::new(BlockingPartition::new(flash, 0, SIZE)));
 {%- else %}
-pub(crate) fn firmware(flash: &'static FlashMutex) -> FirmwareFlash {
+pub(crate) fn firmware(flash: &'static Lock) -> FirmwareFlash {
     let dfu = BlockingAsync::new(BlockingPartition::new(flash, 0, SIZE));
 {%- endif %}
 {%- if state_paged == "true" %}
@@ -527,7 +550,7 @@ pub(crate) fn firmware(flash: &'static FlashMutex) -> FirmwareFlash {
 /// Собирает раздел `CONFIG`. Его границы кратны странице [`ConfigBacking`]
 /// (`ASSERT` в `memory.x`{% if config_paged != "true" %}; `CONFIG_ERASE_SIZE` равен странице цельного `Flash` —
 /// `const`-assert выше{% endif %}): иначе `Partition::new` паникует.
-pub(crate) fn config(flash: &'static FlashMutex) -> ConfigFlash {
+pub(crate) fn config(flash: &'static Lock) -> ConfigFlash {
 {%- if config_paged == "true" %}
     let backing = BlockingAsync::new(ErasePage::new(BlockingPartition::new(flash, 0, SIZE)));
 {%- else %}
@@ -541,7 +564,7 @@ pub(crate) fn config(flash: &'static FlashMutex) -> ConfigFlash {
 {%- if eeprom_here == "true" %}
 
 /// Собирает внутреннюю EEPROM как `NorFlash`.
-pub(crate) fn config(flash: &'static FlashMutex) -> ConfigFlash {
+pub(crate) fn config(flash: &'static Lock) -> ConfigFlash {
     adapters_hw::eeprom::Eeprom::new(EepromFlash(flash))
 }
 {%- endif %}
