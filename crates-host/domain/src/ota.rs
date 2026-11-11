@@ -12,13 +12,15 @@
 //! входов: `CMD` (`request:` фрагмента — клиент ждёт исхода в вызове) или `ASK`
 //! (`serves:` — клиент отправляет команду, не дожидаясь, и забирает исход из
 //! `reply()`, обслуживая тем временем свой канал). Для узла входы одинаковы:
-//! команды обоих идут в один автомат. На каждую команду узел отвечает
+//! команды обоих идут в один цикл. На каждую команду узел отвечает
 //! [`OtaReply`](crate::ota::OtaReply) — её исходом, и протокол передаёт его хосту
 //! как есть: ни опрашивать статус, ни угадывать, дошёл ли кусок, хосту не
 //! нужно. Узел про протокол не знает, протокол — про флеш.
 //!
-//! Задача — автомат `#[fsm::typestate]` на контексте `OtaCtx`, который
-//! эмитит фрагмент `OTA_FRAG`:
+//! Задача — цикл с typestate-состояниями на контексте `OtaCtx`, который
+//! эмитит фрагмент `OTA_FRAG`: каждое состояние — тип (`Idle`, `Receiving`,
+//! `Ready`), переход из него — только через его методы, а разводка
+//! (состояние × команда) — в `State::on_command`:
 //!
 //! * `Idle` — приёма нет; `Start` проверяет занятость и подпись и, если всё
 //!   в порядке, стирает раздел под образ;
@@ -90,6 +92,7 @@ use core::pin::pin;
 use core::task::Poll;
 
 use defmt_or_log::{info, warn};
+use embassy_futures::select::{Either, select};
 use embassy_time::{Instant, Timer};
 use embedded_storage_async::nor_flash::NorFlash;
 use ports::{Partitions, Reboot};
@@ -98,6 +101,7 @@ use crate::ota::client::Answer;
 use crate::ota::command::{Chunk, Progress, Rejection, SIGNATURE_BYTES};
 use crate::ota::download::Transfer;
 use crate::ota::rejection::{busy, download_rejection, update_rejection};
+use crate::tick::deadline;
 
 /// Подпись образа — из `Start`, до `Finish` её держит состояние `Receiving`.
 type Signature = [u8; SIGNATURE_BYTES];
@@ -194,58 +198,272 @@ supervisor::supervisor_fragment! {
         task: $crate::ota::task;
 }
 
-#[fsm::typestate]
-impl<'a, D, S, R, const PARKED: usize> OtaCtx<'a, Updater<Partitions<D, S>>, R, PARKED>
-where
-    D: NorFlash,
-    S: NorFlash,
-    R: Reboot,
-{
-    fsm::machine! {
-        machine Ota mod edges {
-            states {
-                /// Приёма нет.
-                Idle,
-                /// Идёт приём образа от клиента `owner`; `until` — когда бросить
-                /// его, если владелец замолчал.
-                Receiving {
-                    owner: ClientId,
-                    transfer: Transfer,
-                    signature: Signature,
-                    until: Instant,
-                },
-                /// Образ применён, обмен разделов — на следующем сбросе; `owner` —
-                /// чей `Finish` его применил: его повтор снова получает `Ready`.
-                Ready { owner: ClientId },
+/// Состояние узла в цикле задачи.
+///
+/// Typestate: переход возможен только через consuming-метод текущего
+/// состояния, а вызвать его можно только из ветки `State::on_command` под
+/// свою команду. Так таблица переходов остаётся исчерпываемой: пары
+/// (состояние, команда) без перехода просто не пишутся, а компилятор ловит
+/// попытку собрать, скажем, [`Ready`] из чужого `Finish`.
+#[derive(Debug)]
+pub enum State {
+    /// Приёма нет.
+    Idle(Idle),
+    /// Идёт приём.
+    Receiving(Receiving),
+    /// Образ применён, обмен разделов ждёт сброса.
+    Ready(Ready),
+}
+
+/// Приёма нет.
+#[derive(Debug)]
+pub struct Idle;
+
+/// Идёт приём образа от клиента `owner`; `until` — когда бросить
+/// его, если владелец замолчал.
+#[derive(Debug)]
+pub struct Receiving {
+    owner: ClientId,
+    transfer: Transfer,
+    signature: Signature,
+    until: Instant,
+}
+
+/// Образ применён, обмен разделов — на следующем сбросе; `owner` —
+/// чей `Finish` его применил: его повтор снова получает `Ready`.
+#[derive(Debug)]
+pub struct Ready {
+    owner: ClientId,
+}
+
+impl Idle {
+    /// `Start`: занятость и подпись, затем подготовка раздела — в
+    /// [`Receiving`](State::Receiving) или, по отказу, назад сюда.
+    async fn start<'a, D, S, R, const PARKED: usize>(
+        self,
+        io: &mut OtaCtx<'a, Updater<Partitions<D, S>>, R, PARKED>,
+        client: ClientId,
+        len: u32,
+        signature: Option<Signature>,
+        served: Answer<'a>,
+    ) -> State
+    where
+        D: NorFlash,
+        S: NorFlash,
+    {
+        io.accept(client, len, signature, served).await
+    }
+
+    /// `Chunk` без приёма: отказ, состояние то же.
+    fn chunk(self, served: Answer<'_>) -> State {
+        no_session(served);
+        State::Idle(self)
+    }
+
+    /// `Finish` без приёма: отказ, состояние то же.
+    fn finish(self, served: Answer<'_>) -> State {
+        no_session(served);
+        State::Idle(self)
+    }
+}
+
+impl Receiving {
+    /// `Start` владельца или после срока — обычный приём (незаконченный
+    /// приём брошен); чужого клиента в срок — `Busy`, приём продолжается.
+    async fn start<'a, D, S, R, const PARKED: usize>(
+        self,
+        io: &mut OtaCtx<'a, Updater<Partitions<D, S>>, R, PARKED>,
+        client: ClientId,
+        len: u32,
+        signature: Option<Signature>,
+        served: Answer<'a>,
+    ) -> State
+    where
+        D: NorFlash,
+        S: NorFlash,
+    {
+        // Приём другого клиента не трогаем — ни раздел, ни его срок; но
+        // срок вышел (молчание дольше `until` обогнала команда) — приём
+        // брошен, как по `expired`, и это обычный `Start`.
+        if self.owner != client && Instant::now() < self.until {
+            return State::Receiving(busy(self, client, served));
+        }
+        warn!("ota: незаконченный приём брошен новым Start");
+        io.accept(client, len, signature, served).await
+    }
+
+    /// `Chunk`: кусок во флеш. Отказ — приём брошен, хост начинает заново;
+    /// кусок не от владельца — `Busy`, не записан.
+    async fn chunk<'a, D, S, R, const PARKED: usize>(
+        mut self,
+        io: &mut OtaCtx<'a, Updater<Partitions<D, S>>, R, PARKED>,
+        client: ClientId,
+        chunk: &Chunk,
+        served: Answer<'a>,
+    ) -> State
+    where
+        D: NorFlash,
+        S: NorFlash,
+    {
+        if client != self.owner {
+            return State::Receiving(busy(self, client, served));
+        }
+        match self
+            .transfer
+            .chunk(&mut *io.flash, chunk.offset(), chunk.as_bytes())
+            .await
+        {
+            Ok(received) => {
+                served.respond(Ok(Progress::Received(received)));
+                self.until = Instant::now() + SESSION_TIMEOUT;
+                State::Receiving(self)
             }
-            start => begin -> Idle;
-            listen {
-                // Команда первой: срок — молчание хоста, и уже пришедшая
-                // команда владельца его не нарушила. Чужой `Start`, выигравший
-                // гонку у просроченного срока, `start` сверяет с `until` сам.
-                *                       => cmd: self.command(),
-                Receiving { until, .. } => expired: fsm::deadline(*until),
-            }
-            transitions {
-                // Чей приём — проверяют `start`/`chunk`/`finish`: чужому — `Busy`.
-                *         + cmd((OtaRequest { client, command: OtaCommand::Start { len, signature } }, served)) => start -> Receiving | Idle | Ready,
-                Receiving + cmd((OtaRequest { client, command: OtaCommand::Chunk(ref chunk) }, served))         => chunk -> Receiving | Idle,
-                Receiving + cmd((OtaRequest { client, command: OtaCommand::Finish }, served))                   => finish -> Ready | Idle | Receiving,
-                Idle      + cmd((OtaRequest { command: OtaCommand::Chunk(_) | OtaCommand::Finish, .. }, served)) => no_session -> self,
-                Ready     + cmd((OtaRequest { client, command: OtaCommand::Finish }, served))                   => finish_again -> self,
-                Ready     + cmd((OtaRequest { command: OtaCommand::Chunk(_), .. }, served))                     => no_session -> self,
-                *         + cmd((OtaRequest { command: OtaCommand::Reboot, .. }, served))                       => reboot -> self,
-                Receiving + expired(())                                                                         => abandon -> Idle,
+            Err(err) => {
+                warn!("ota: кусок отвергнут, приём брошен: {:?}", &err);
+                served.respond(Err(download_rejection(&err)));
+                State::Idle(Idle)
             }
         }
     }
 
-    /// Следующая команда с любого из двух входов — источник `cmd` автомата.
+    /// `Finish`: сверка длины, затем применение — проверки и запись подписи
+    /// для bootloader'а ([`apply`](crate::ota::update::apply));
+    /// не от владельца — `Busy`, приём продолжается.
+    async fn finish<'a, D, S, R, const PARKED: usize>(
+        self,
+        io: &mut OtaCtx<'a, Updater<Partitions<D, S>>, R, PARKED>,
+        client: ClientId,
+        served: Answer<'a>,
+    ) -> State
+    where
+        D: NorFlash,
+        S: NorFlash,
+    {
+        if client != self.owner {
+            return State::Receiving(busy(self, client, served));
+        }
+        let outcome = match self.transfer.finish(&mut *io.flash).await {
+            Ok(len) => update::apply(&mut *io.flash, *io.running_version, &self.signature, len)
+                .await
+                .map_err(|err| {
+                    warn!("ota: применение отвергнуто: {:?}", &err);
+                    update_rejection(&err)
+                }),
+            Err(err) => {
+                warn!("ota: приём не сошёлся: {:?}", &err);
+                Err(download_rejection(&err))
+            }
+        };
+        match outcome {
+            Ok(()) => {
+                // Обмен запрошен (`STATE = Swap`): подтверждение текущего
+                // образа теперь сняло бы запрос — и раз не вышло при старте,
+                // больше его не пробуем (см. `begin`).
+                *io.confirmed = true;
+                info!("ota: образ принят, обмен разделов на следующем сбросе");
+                served.respond(Ok(Progress::Ready));
+                State::Ready(Ready { owner: client })
+            }
+            Err(rejection) => {
+                warn!("ota: образ отвергнут: {:?}", rejection);
+                served.respond(Err(rejection));
+                State::Idle(Idle)
+            }
+        }
+    }
+
+    /// Хост замолчал посреди образа: приём брошен.
+    #[expect(
+        clippy::unused_self,
+        reason = "сигнатура перехода: состояние потребляется целиком"
+    )]
+    fn expired(self) -> State {
+        warn!("ota: хост молчит дольше тайм-аута — приём брошен");
+        State::Idle(Idle)
+    }
+}
+
+impl Ready {
+    /// `Start` после применения: образ ждёт обмена, затирать его нельзя.
+    /// Узел знает это сам, не спрашивая адаптер, — и не зовёт подтверждение,
+    /// которое сняло бы запрос на обмен (см. `begin`).
+    fn start(self, _client: ClientId, served: Answer<'_>) -> State {
+        warn!("ota: Start отвергнут: образ ждёт обмена, нужен Reboot");
+        served.respond(Err(Rejection::Busy));
+        State::Ready(self)
+    }
+
+    /// `Chunk` после применения: отказ, состояние то же.
+    fn chunk(self, served: Answer<'_>) -> State {
+        no_session(served);
+        State::Ready(self)
+    }
+
+    /// Повтор `Finish`: владельцу — снова `Ready`, ничего не
+    /// записано и не стёрто. Ответ на первый мог потеряться (`Finish` пишет
+    /// запись для bootloader'а и стирает `STATE` — на F4 до секунды), и
+    /// `NoSession` здесь хост счёл бы провалом и не прислал бы `Reboot`, а
+    /// образ молча применился бы на первом сбросе. Чужому — `NoSession`, как
+    /// любой `Finish` без своего приёма.
+    fn finish(self, client: ClientId, served: Answer<'_>) -> State {
+        if client == self.owner {
+            info!("ota: повтор Finish — образ уже принят");
+            served.respond(Ok(Progress::Ready));
+        } else {
+            no_session(served);
+        }
+        State::Ready(self)
+    }
+}
+
+impl State {
+    /// Команда — по переходу текущего состояния: разводка
+    /// (состояние × команда). `Chunk` без приёма, `Finish` владельца и т.п. —
+    /// ветки только там, где переход есть; компилятор не даст вызвать
+    /// `Receiving::chunk` из `Ready`.
+    async fn on_command<'a, D, S, R, const PARKED: usize>(
+        self,
+        io: &mut OtaCtx<'a, Updater<Partitions<D, S>>, R, PARKED>,
+        client: ClientId,
+        command: OtaCommand,
+        served: Answer<'a>,
+    ) -> State
+    where
+        D: NorFlash,
+        S: NorFlash,
+    {
+        match command {
+            OtaCommand::Start { len, signature } => match self {
+                State::Idle(s) => s.start(io, client, len, signature, served).await,
+                State::Receiving(s) => s.start(io, client, len, signature, served).await,
+                State::Ready(s) => s.start(client, served),
+            },
+            OtaCommand::Chunk(chunk) => match self {
+                State::Idle(s) => s.chunk(served),
+                State::Receiving(s) => s.chunk(io, client, &chunk, served).await,
+                State::Ready(s) => s.chunk(served),
+            },
+            OtaCommand::Finish => match self {
+                State::Idle(s) => s.finish(served),
+                State::Receiving(s) => s.finish(io, client, served).await,
+                State::Ready(s) => s.finish(client, served),
+            },
+            OtaCommand::Reboot => unreachable!("`Reboot` разбирается в цикле, до разводки"),
+        }
+    }
+}
+
+impl<'a, D, S, R, const PARKED: usize> OtaCtx<'a, Updater<Partitions<D, S>>, R, PARKED>
+where
+    D: NorFlash,
+    S: NorFlash,
+{
+    /// Следующая команда с любого из двух входов.
     ///
-    /// Без потерь при дропе, как требует `listen`: `serve()` обоих входов
-    /// забирает запрос только в том опросе, который его возвращает, а `CMD`
-    /// опрашивается первым и, готовый, `ASK` уже не трогает — запрос, который
-    /// не вернулся, остаётся в своей очереди.
+    /// Без потерь при дропе, как требует гонка в цикле: `serve()` обоих
+    /// входов забирает запрос только в том опросе, который его возвращает, а
+    /// `CMD` опрашивается первым и, готовый, `ASK` уже не трогает — запрос,
+    /// который не вернулся, остаётся в своей очереди.
     async fn command(&mut self) -> (OtaRequest, Answer<'a>) {
         let mut call = pin!(self.cmd.serve());
         let mut ask = pin!(self.ask.serve());
@@ -286,11 +504,10 @@ where
     /// мешает, хватит `deps: [OTA ready]{% if has_usb == "true" %}`. Так ждёт узел `USB`: перечисление,
     /// попавшее на стирание, хост бракует до переподключения (`docs/ota.md`).
     /// Переносите подтверждение позже — переносите и это{% else %}`{% endif %}{% comment %}`{% endcomment %}.
-    async fn begin(&mut self) -> Idle {
+    async fn begin(&mut self) {
         info!("ota: узел запущен");
         self.confirm().await;
         self.ready.set();
-        Idle
     }
 
     /// Подтверждение образа, если его ещё не было (см. `begin`).
@@ -303,41 +520,19 @@ where
         }
     }
 
-    /// `Start`: проверки до стирания — владелец приёма, занятость, затем
+    /// Общая часть `Start`: проверки до стирания — занятость, затем
     /// подпись, — и подготовка раздела. Без подписи — отказ ДО стирания:
     /// применить такой образ нечем, а стирание уничтожило бы образ, в который
-    /// устройство откатывается. Незаконченный приём того же клиента
-    /// брошен, чужой — `Busy`.
-    async fn start(
+    /// устройство откатывается. Владельца приёма вызывающий проверил сам:
+    /// сюда попадают только команды, которым можно стирать раздел.
+    async fn accept(
         &mut self,
-        from: edges::StartFrom,
         client: ClientId,
         len: u32,
         signature: Option<Signature>,
         served: Answer<'_>,
-    ) -> edges::Start {
+    ) -> State {
         info!("ota: Start от клиента {}: {} байт", client.0, len);
-        // Образ, ждущий обмена, затирать нельзя: `Busy`, и он ждёт дальше. Узел
-        // знает это сам, не спрашивая адаптер, — и не зовёт подтверждение,
-        // которое сняло бы запрос на обмен (см. `begin`).
-        let back: edges::Start = match from {
-            edges::StartFrom::Ready(s) => {
-                warn!("ota: Start отвергнут: образ ждёт обмена, нужен Reboot");
-                served.respond(Err(Rejection::Busy));
-                return s.into();
-            }
-            // Приём другого клиента не трогаем — ни раздел, ни его срок; но
-            // срок вышел (`expired` просто не успел) — приём брошен, как по
-            // `abandon`, и это обычный `Start`.
-            edges::StartFrom::Receiving(s) if s.owner != client && Instant::now() < s.until => {
-                return busy(s, client, served).into();
-            }
-            edges::StartFrom::Receiving(_) => {
-                warn!("ota: незаконченный приём брошен новым Start");
-                Idle.into()
-            }
-            edges::StartFrom::Idle(Idle) => Idle.into(),
-        };
         // Не удалось подтвердить при старте — ещё раз перед новым образом, а
         // не чаще: неудавшийся `mark_booted` может стоить стирания `STATE`.
         self.confirm().await;
@@ -356,122 +551,34 @@ where
             Err(rejection) => {
                 warn!("ota: Start отвергнут: {:?}", rejection);
                 served.respond(Err(rejection));
-                return back;
+                return State::Idle(Idle);
             }
         };
         match Transfer::start(&mut *self.flash, len).await {
             Ok(transfer) => {
                 served.respond(Ok(Progress::Started));
-                Receiving {
+                State::Receiving(Receiving {
                     owner: client,
                     transfer,
                     signature,
                     until: Instant::now() + SESSION_TIMEOUT,
-                }
-                .into()
+                })
             }
             Err(err) => {
                 warn!("ota: Start отвергнут: {:?}", &err);
                 served.respond(Err(download_rejection(&err)));
-                Idle.into()
+                State::Idle(Idle)
             }
         }
     }
+}
 
-    /// `Chunk`: кусок во флеш. Отказ — приём брошен, хост начинает заново;
-    /// кусок не от владельца — `Busy`, не записан.
-    async fn chunk(
-        &mut self,
-        mut s: Receiving,
-        client: ClientId,
-        chunk: &Chunk,
-        served: Answer<'_>,
-    ) -> edges::Chunk {
-        if client != s.owner {
-            return busy(s, client, served).into();
-        }
-        match s
-            .transfer
-            .chunk(&mut *self.flash, chunk.offset(), chunk.as_bytes())
-            .await
-        {
-            Ok(received) => {
-                served.respond(Ok(Progress::Received(received)));
-                s.until = Instant::now() + SESSION_TIMEOUT;
-                s.into()
-            }
-            Err(err) => {
-                warn!("ota: кусок отвергнут, приём брошен: {:?}", &err);
-                served.respond(Err(download_rejection(&err)));
-                Idle.into()
-            }
-        }
-    }
-
-    /// `Finish`: сверка длины, затем применение — проверки и запись подписи
-    /// для bootloader'а ([`apply`](crate::ota::update::apply));
-    /// не от владельца — `Busy`, приём продолжается.
-    async fn finish(
-        &mut self,
-        s: Receiving,
-        client: ClientId,
-        served: Answer<'_>,
-    ) -> edges::Finish {
-        if client != s.owner {
-            return busy(s, client, served).into();
-        }
-        let outcome = match s.transfer.finish(&mut *self.flash).await {
-            Ok(len) => update::apply(&mut *self.flash, *self.running_version, &s.signature, len)
-                .await
-                .map_err(|err| {
-                    warn!("ota: применение отвергнуто: {:?}", &err);
-                    update_rejection(&err)
-                }),
-            Err(err) => {
-                warn!("ota: приём не сошёлся: {:?}", &err);
-                Err(download_rejection(&err))
-            }
-        };
-        match outcome {
-            Ok(()) => {
-                // Обмен запрошен (`STATE = Swap`): подтверждение текущего
-                // образа теперь сняло бы запрос — и раз не вышло при старте,
-                // больше его не пробуем (см. `begin`).
-                *self.confirmed = true;
-                info!("ota: образ принят, обмен разделов на следующем сбросе");
-                served.respond(Ok(Progress::Ready));
-                Ready { owner: client }.into()
-            }
-            Err(rejection) => {
-                warn!("ota: образ отвергнут: {:?}", rejection);
-                served.respond(Err(rejection));
-                Idle.into()
-            }
-        }
-    }
-
-    /// Повтор `Finish` после `Ready`: владельцу — снова `Ready`, ничего не
-    /// записано и не стёрто. Ответ на первый мог потеряться (`Finish` пишет
-    /// запись для bootloader'а и стирает `STATE` — на F4 до секунды), и
-    /// `NoSession` здесь хост счёл бы провалом и не прислал бы `Reboot`, а
-    /// образ молча применился бы на первом сбросе. Чужому — `NoSession`, как
-    /// любой `Finish` без своего приёма.
-    fn finish_again(&mut self, s: &Ready, client: ClientId, served: Answer<'_>) {
-        if client == s.owner {
-            info!("ota: повтор Finish — образ уже принят");
-            served.respond(Ok(Progress::Ready));
-        } else {
-            self.no_session(served);
-        }
-    }
-
-    /// `Chunk` или `Finish` без приёма: отказ, состояние то же.
-    #[expect(clippy::unused_self, reason = "действие автомата")]
-    fn no_session(&mut self, served: Answer<'_>) {
-        warn!("ota: кусок или Finish без Start");
-        served.respond(Err(Rejection::NoSession));
-    }
-
+impl<D, S, R, const PARKED: usize> OtaCtx<'_, Updater<Partitions<D, S>>, R, PARKED>
+where
+    D: NorFlash,
+    S: NorFlash,
+    R: Reboot,
+{
     /// `Reboot`: ответ, пауза на его отправку, сброс.
     async fn reboot(&mut self, served: Answer<'_>) {
         info!("ota: перезагрузка по команде хоста");
@@ -479,13 +586,12 @@ where
         Timer::after(REBOOT_GRACE).await;
         self.reboot.reboot()
     }
+}
 
-    /// Хост замолчал посреди образа: приём брошен.
-    #[expect(clippy::unused_self, reason = "действие автомата")]
-    fn abandon(&mut self, _: Receiving) -> Idle {
-        warn!("ota: хост молчит дольше тайм-аута — приём брошен");
-        Idle
-    }
+/// `Chunk` или `Finish` без приёма: отказ, состояние то же.
+fn no_session(served: Answer<'_>) {
+    warn!("ota: кусок или Finish без Start");
+    served.respond(Err(Rejection::NoSession));
 }
 
 // {%- if graph == "true" %}
@@ -510,7 +616,39 @@ pub async fn task<D, S, R, const PARKED: usize>(
     S: NorFlash,
     R: Reboot,
 {
-    match ctx.run().await {}
+    let mut state = State::Idle(Idle);
+    ctx.begin().await;
+    loop {
+        // Команда первой, как первая строка `listen`: срок — молчание хоста,
+        // и уже пришедшая команда его не нарушила. `Receiving::start` сам
+        // сверяет `until`, так что обогнавшая срок команда всё равно
+        // обработана по своему событию.
+        let until = match &state {
+            State::Receiving(s) => Some(s.until),
+            _ => None,
+        };
+        let (request, served) = match until {
+            Some(until) => match select(ctx.command(), deadline(until)).await {
+                Either::First(turn) => turn,
+                Either::Second(()) => {
+                    let State::Receiving(s) = state else {
+                        unreachable!("срок только у Receiving")
+                    };
+                    state = s.expired();
+                    continue;
+                }
+            },
+            None => ctx.command().await,
+        };
+        let OtaRequest { client, command } = request;
+        if let OtaCommand::Reboot = command {
+            // `Reboot` — из любого состояния: ответ, пауза на его отправку,
+            // сброс. Состояние не меняется.
+            ctx.reboot(served).await;
+            continue;
+        }
+        state = state.on_command(&mut ctx, client, command, served).await;
+    }
 }
 
 #[cfg(test)]

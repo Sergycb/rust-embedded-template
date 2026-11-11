@@ -35,7 +35,7 @@ OTA или раздел настроек, которые на чип не пом
 
 ## Быстрый старт
 
-Часть зависимостей — `supervisor`, `fsm`{% if graph == "true" %}, `watchdog`{% endif %}{% if ota == "true" and graph != "true" %}, `sync-request`{% endif %} — git-крейты
+Часть зависимостей — `supervisor`{% if graph == "true" %}, `watchdog`{% endif %}{% if ota == "true" and graph != "true" %}, `sync-request`{% endif %} — git-крейты
 [rust-lib]({{rust_lib}}) (адрес — ответ при генерации): без доступа к этому
 репозиторию проект не соберётся ни локально, ни в CI.{% if external_flash == "true" %} Драйвер внешней
 флеши `w25q` — git-крейт из [hw-drivers]({{hw_drivers}}), второй адрес из генерации: без
@@ -92,7 +92,7 @@ cargo run -p app                    # прошить приложение и с�
 {%- if graph == "true" %}
 | Граф задач | `crates-cross/app/src/graph.rs` | `supervisor_graph!`: порядок старта, watchdog, обмен между задачами |
 {%- endif %}
-| Логика и узлы | `crates-host/domain/` | всё, что не про регистры: автоматы, протоколы, конфигурация, а также объявления узлов (`supervisor_fragment!`) и их работа ({% if graph == "true" %}`domain::heartbeat::task`, `domain::cpu_load::task` — {% endif %}автоматы `#[fsm::typestate]` на контексте узла) — тестируется на хосте; логика вне автоматов — функции над портами |
+| Логика и узлы | `crates-host/domain/` | всё, что не про регистры: протоколы, конфигурация, а также объявления узлов (`supervisor_fragment!`) и их работа ({% if graph == "true" %}`domain::heartbeat::task`, `domain::cpu_load::task` — циклы и typestate-состояния на контексте узла{% else %}циклы и typestate-состояния на контексте узла{% endif %}) — тестируется на хосте; логика вне задач — функции над портами |
 {%- if adapters_hw == "true" %}
 {%- capture hw_list %}{% if has_usb == "true" %}, устройство USB с потоком CDC ACM над `embassy-usb` (`adapters_hw::usb`){% endif %}{% if has_net == "true" %}, стек `embassy-net` с фоновой работой (`adapters_hw::net`){% endif %}{% if config_store == "eeprom" %}, EEPROM как `NorFlash` (`adapters_hw::eeprom`){% endif %}{% endcapture %}
 | Обёртки над железом без чипа | `crates-host/adapters-hw/` | то, из чего `bsp` собирает рычаги, когда чип не нужен{% if hw_list != "" %}: {{ hw_list | remove_first: ", " }}{% endif %}; драйверы без шины и линка и флеш в памяти (модули `fake` рядом с тем, что они подменяют) — заглушки платы и фейки host-тестов |

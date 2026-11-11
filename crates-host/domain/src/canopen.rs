@@ -59,6 +59,14 @@ use core::cell::RefCell;
 use core::convert::Infallible;
 
 use defmt_or_log::{FormatOrDebug, info, warn};
+// {%- if ota == "true" %}
+// Гонка такта, исхода OTA и кадра: `select3`.
+use embassy_futures::select::{Either3, select3};
+// {%- else %}
+// Гонка такта и кадра: `select`.
+use embassy_futures::select::{Either, select};
+// {%- endif %}
+use embassy_futures::yield_now;
 use embassy_time::Instant;
 use embedded_can::Frame;
 use embedded_storage_async::nor_flash::NorFlash;
@@ -72,6 +80,7 @@ use zencan_node::{Callbacks, Node};
 
 use crate::canopen::frame::{fix_save_signature, is_heartbeat, to_frame, to_message};
 use crate::settings::{Error as SettingsError, Settings};
+use crate::tick::{deadline, next_tick};
 
 pub use persisted::{NODE_ID_KEY, OBJECTS_KEY, Persisted, STORE_CAPACITY};
 pub use stack::{Stack, TICK};
@@ -117,57 +126,29 @@ supervisor::supervisor_fragment! {
         task: $crate::canopen::task;
 }
 
-#[fsm::typestate]
-impl<'f, C, F> CanOpenCtx<'_, C, Settings<F>>
+/// Стек в работе и ближайший такт: состояние, которое переживает круг цикла.
+struct Running<'f> {
+    stack: Stack<'f>,
+    /// Ближайший такт.
+    next: Instant,
+}
+
+impl<C, F> CanOpenCtx<'_, C, Settings<F>>
 where
     C: CanBus,
     C::Error: FormatOrDebug,
     F: NorFlash,
     SettingsError<F::Error>: FormatOrDebug,
 {
-    fsm::machine! {
-        machine CanOpen mod edges {
-            states {
-                /// Стек поднят, первая обработка ещё не прошла.
-                Booting { stack: Stack<'f> },
-                /// Стек работает; `next` — ближайший такт.
-                Running { stack: Stack<'f>, next: Instant },
-            }
-            start(
-                persisted: &'f RefCell<Persisted>,
-                callbacks: &'f mut Option<Callbacks<'f>>,
-                node: &'f mut Option<Node<'f>>,
-            ) => begin -> Booting;
-            listen {
-                // Такт — первым: под потоком кадров heartbeat не должен
-                // откладываться.
-                Running { next, .. } => tick: fsm::deadline(*next),
-                // {%- if ota == "true" %}
-                // Исход команды OTA — до кадров: держит квоту, пока не забран.
-                Running             => ota: self.ota_ask.reply(),
-                // {%- endif %}
-                Running             => frame: self.bus.recv(),
-            }
-            transitions {
-                Booting                    => boot     -> Running,
-                Running + tick(())         => tick     -> self,
-                Running + frame(Ok(frame)) => received -> self,
-                Running + frame(Err(err))  => failed   -> self,
-                // {%- if ota == "true" %}
-                Running + ota(reply)       => answered -> self,
-                // {%- endif %}
-            }
-        }
-    }
-
     /// Поднимает стек: адрес и сохранённые объекты — из хранилища, затем
-    /// `Node::new`.
-    async fn begin(
+    /// `Node::new` и первая обработка — стек ставит в очередь кадр boot-up, и
+    /// он уходит на шину.
+    async fn begin<'f>(
         &mut self,
         persisted: &'f RefCell<Persisted>,
         callbacks: &'f mut Option<Callbacks<'f>>,
         node: &'f mut Option<Node<'f>>,
-    ) -> Booting<'f> {
+    ) -> Running<'f> {
         let d = *self.dictionary;
         // {%- if ota == "true" %}
         // Объект OTA в словаре — место под обработчик: без регистрации стек
@@ -189,20 +170,12 @@ where
             d.state,
             d.od,
         ));
-        Booting {
+        let mut running = Running {
             stack: Stack {
                 node,
                 start: Instant::now(),
                 persisted,
             },
-        }
-    }
-
-    /// Первая обработка: стек ставит в очередь кадр boot-up, он уходит на
-    /// шину.
-    async fn boot(&mut self, s: Booting<'f>) -> Running<'f> {
-        let mut running = Running {
-            stack: s.stack,
             next: Instant::now() + TICK,
         };
         self.step(&mut running).await;
@@ -210,8 +183,8 @@ where
     }
 
     /// Такт: обработка без нового кадра.
-    async fn tick(&mut self, s: &mut Running<'f>) {
-        s.next = fsm::next_tick(s.next, TICK, Instant::now());
+    async fn tick(&mut self, s: &mut Running<'_>) {
+        s.next = next_tick(s.next, TICK, Instant::now());
         self.step(s).await;
     }
 
@@ -220,7 +193,7 @@ where
     /// Кадр, не адресованный узлу (чужой heartbeat, PDO, SDO других узлов),
     /// почтовый ящик не принимает — он пропускается без обработки: на
     /// загруженной шине таких большинство.
-    async fn received(&mut self, s: &mut Running<'f>, frame: C::Frame) {
+    async fn received(&mut self, s: &mut Running<'_>, frame: C::Frame) {
         let Some(mut message) = to_message(&frame) else {
             warn!(
                 "canopen: кадр CAN FD на {} байт пропущен — стек классический",
@@ -231,15 +204,6 @@ where
         fix_save_signature(&mut message);
         if self.dictionary.mbox.store_message(message).is_ok() {
             self.step(s).await;
-        }
-    }
-
-    /// Кадр потерян или шина отказала — в лог, и ждём следующий кадр.
-    #[expect(clippy::unused_self, reason = "действие автомата")]
-    fn failed(&mut self, err: LinkError<C::Error>) {
-        match err {
-            LinkError::Lost(err) => warn!("canopen: кадр потерян: {:?}", &err),
-            LinkError::Down(err) => warn!("canopen: шина недоступна: {:?}", &err),
         }
     }
 
@@ -260,7 +224,7 @@ where
     // {%- endif %}
 
     /// `Node::process`, затем всё, что стек поставил в очередь, — на шину.
-    async fn step(&mut self, s: &mut Running<'f>) {
+    async fn step(&mut self, s: &mut Running<'_>) {
         let node = &mut *s.stack.node;
         // Стек объявляет о себе кадром boot-up при первом запуске, после
         // NMT Reset Node / Reset Communication и после смены адреса — в
@@ -340,8 +304,8 @@ where
 /// Буфер сохранённых объектов и колбэки стека над ним — локальные этой
 /// функции: стек держит колбэки ссылками на всё время работы, и жить им,
 /// кроме кадра задачи, негде — тип замыкания не назвать в `static`, а поле
-/// контекста на время автомата не заимствовать. Автомат получает их
-/// аргументами стартового действия (`start(..)` в таблице). Без хранилища
+/// контекста на всё время работы не заимствовать. Поэтому `begin` получает
+/// их ссылками. Без хранилища
 /// (`settings` во входе — `None`) колбэков нет: стек отвечает на `save` и на
 /// LSS «Store configuration» отказом.
 ///
@@ -377,7 +341,53 @@ where
         reset_comms: Some(&mut reset_comms),
         ..Callbacks::default()
     });
-    match ctx.run(&persisted, &mut callbacks, &mut node).await {}
+    let mut running = ctx.begin(&persisted, &mut callbacks, &mut node).await;
+    loop {
+        // Такт — первым: под потоком кадров heartbeat не должен
+        // откладываться. Срок, наступивший до начала круга, обрабатывается
+        // без опроса шины{% if ota == "true" %} и исхода OTA{% endif %}: как
+        // в таблице `listen`, источник не опрашивается.
+        if running.next <= Instant::now() {
+            ctx.tick(&mut running).await;
+            // Такту по наступившему сроку — круг исполнителю: иначе
+            // накопившаяся очередь тактов крутила бы узел, не отдавая
+            // другим задачам.
+            yield_now().await;
+            continue;
+        }
+        // Источники — в порядке приоритета: такт{% if ota == "true" %}, исход
+        // OTA{% endif %}, кадр.
+        // {%- if ota == "true" %}
+        match select3(deadline(running.next), ctx.ota_ask.reply(), ctx.bus.recv()).await {
+            Either3::First(()) => {
+                ctx.tick(&mut running).await;
+                yield_now().await;
+            }
+            Either3::Second(reply) => ctx.answered(reply),
+            Either3::Third(result) => match result {
+                Ok(frame) => ctx.received(&mut running, frame).await,
+                // Кадр потерян или шина отказала — в лог, и ждём следующий
+                // кадр.
+                Err(LinkError::Lost(err)) => warn!("canopen: кадр потерян: {:?}", &err),
+                Err(LinkError::Down(err)) => warn!("canopen: шина недоступна: {:?}", &err),
+            },
+        }
+        // {%- else %}
+        match select(deadline(running.next), ctx.bus.recv()).await {
+            Either::First(()) => {
+                ctx.tick(&mut running).await;
+                yield_now().await;
+            }
+            Either::Second(result) => match result {
+                Ok(frame) => ctx.received(&mut running, frame).await,
+                // Кадр потерян или шина отказала — в лог, и ждём следующий
+                // кадр.
+                Err(LinkError::Lost(err)) => warn!("canopen: кадр потерян: {:?}", &err),
+                Err(LinkError::Down(err)) => warn!("canopen: шина недоступна: {:?}", &err),
+            },
+        }
+        // {%- endif %}
+    }
 }
 
 #[cfg(test)]

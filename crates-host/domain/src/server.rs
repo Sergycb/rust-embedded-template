@@ -25,7 +25,7 @@
 //!   вернётся, — дело реализации `FrameLink` на следующем `recv`.
 
 use defmt_or_log::{FormatOrDebug, info, warn};
-use ports::{FrameLink, LinkError, Registers};
+use ports::{FrameLink, Registers};
 
 // Узел объявлен рядом со своей задачей, по узлу на транспорт.
 //
@@ -48,69 +48,39 @@ supervisor::supervisor_fragment! {
         task: $crate::server::task;
 }
 
-#[fsm::typestate]
-impl<L, R> ServerCtx<'_, L, R>
-where
-    L: FrameLink,
-    L::Error: FormatOrDebug,
-    R: Registers,
-{
-    fsm::machine! {
-        machine Server mod edges {
-            states {
-                /// Ждёт кадр.
-                Listening,
-            }
-            start => begin -> Listening;
-            listen {
-                Listening => frame: self.link.recv(),
-            }
-            transitions {
-                Listening + frame(Ok(len))      => serve  -> self,
-                Listening + frame(Err(ref err)) => failed -> self,
-            }
-        }
-    }
-
-    fn begin(&mut self) -> Listening {
-        let capacity = self.link.buffer().len();
-        info!("server: узел запущен, буфер кадра {} байт", capacity);
-        self.handler.begin(capacity);
-        Listening
-    }
-
-    /// Отдаёт кадр обработчику и отправляет ответ, если он есть.
-    async fn serve(&mut self, len: usize) {
-        let Some(reply) = self.handler.handle(self.link.buffer(), len).await else {
-            return;
-        };
-        if let Err(err) = self.link.send(reply).await {
-            warn!("server: ответ не ушёл: {:?}", &err);
-        }
-    }
-
-    /// Кадр потерян или канал отказал — в лог; узел ждёт следующий кадр.
-    #[expect(
-        clippy::unused_self,
-        reason = "сигнатуру действия задаёт таблица `#[fsm::typestate]`"
-    )]
-    fn failed(&mut self, err: &LinkError<L::Error>) {
-        warn!("server: кадр не принят: {:?}", err);
-    }
-}
-
 /// Узел протокола: обслуживает канал, пока жив, и не выходит никогда.
+///
+/// Цикл: кадр — обработчику; ответ (`Some`) — в канал, без ответа (`None`) —
+/// ничего: чужой адрес, широковещание, кадр без PDU. Кадр потерян или канал
+/// отказал — на приёме или на отправке — в лог, и узел ждёт следующий кадр:
+/// восстановить канал и подождать, пока он вернётся, — дело реализации
+/// `FrameLink` на следующем `recv`.
 ///
 /// Без `watchdog:` намеренно: узел законно
 /// ждёт запрос сколько угодно, и отметка по таймеру сторожила бы
 /// исполнитель, а не работу.
-pub async fn task<L, R>(mut ctx: ServerCtx<'_, L, R>)
+pub async fn task<L, R>(ctx: ServerCtx<'_, L, R>)
 where
     L: FrameLink,
     L::Error: FormatOrDebug,
     R: Registers,
 {
-    match ctx.run().await {}
+    let capacity = ctx.link.buffer().len();
+    info!("server: узел запущен, буфер кадра {} байт", capacity);
+    ctx.handler.begin(capacity);
+    loop {
+        match ctx.link.recv().await {
+            Ok(len) => {
+                let Some(reply) = ctx.handler.handle(ctx.link.buffer(), len).await else {
+                    continue;
+                };
+                if let Err(err) = ctx.link.send(reply).await {
+                    warn!("server: ответ не ушёл: {:?}", &err);
+                }
+            }
+            Err(err) => warn!("server: кадр не принят: {:?}", err),
+        }
+    }
 }
 
 #[cfg(test)]

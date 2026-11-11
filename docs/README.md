@@ -6,7 +6,7 @@
 | Файл | О чём | Когда открывать |
 |---|---|---|
 | `architecture.md` | границы `domain`/`cross`, что пересекает границу `bsp` → `app`, `chip-info` | добавляете код и не знаете, в какой крейт |
-| `first-node.md` | свой узел по шагам: фрагмент и автомат в `domain`, фича слова DSL `supervisor`, {% if graph == "true" %}запись в графе, сторож{% else %}модуль задачи в `app`{% endif %}, тест на хосте | заводите новую подсистему со своей задачей |
+| `first-node.md` | свой узел по шагам: фрагмент и задача в `domain`, фича слова DSL `supervisor`, {% if graph == "true" %}запись в графе, сторож{% else %}модуль задачи в `app`{% endif %}, тест на хосте | заводите новую подсистему со своей задачей |
 | `clocks.md` | дамп частот, `EXPECTED_SYS_HZ`, кэши и `DMA_NC`, ядро (фолты, ловушка деления), `CPU_FREQ_BOOST`, пороги вроде `IMAGE_BUDGET_PERCENT` | трогаете тактирование, кэши, обработчик фолтов или порог проверки |
 {%- if ota == "true" %}
 | `ota.md` | приём образа, подпись, защита от отката, тест полного цикла | трогаете `domain::ota::Updater`, {% if shared_flash == "true" %}`bsp::flash`, {% endif %}`domain::ota`, `domain::ota::download` или `domain::ota::update` |
@@ -20,7 +20,7 @@
 | `resources.md` | `assign_resources!`: какие группы уже есть, как добавить свою и собрать из неё рычаг `Board` | заполняете распиновку своей платы |
 | `buffers.md` | рецепт zero-copy DMA-буфера на `bbqueue` (зависимости в шаблоне нет), чем он не `embassy_sync::Pipe` | заводите статический буфер под периферию |
 
-`modules/` — документация модулей, подключённая в код через `#![doc = include_str!(...)]`. Исключения: `app-mqtt.md` — отдельный, без `include_str!`; `boot/` описывается в `README.md` и `docs/ota.md`. Правится вместе с кодом модуля, а не отдельно.
+`modules/` — документация модулей, подключённая в код через `#![doc = include_str!(...)]`. Правится вместе с кодом модуля, а не отдельно.{% if ota == "true" or net_services contains "mqtt" %} Исключения: {% if net_services contains "mqtt" %}`app-mqtt.md` — отдельный, без `include_str!`{% endif %}{% if ota == "true" %}{% if net_services contains "mqtt" %}; {% endif %}`boot/` описывается в `README.md` и `docs/ota.md`{% endif %}.{% endif %}
 
 | Модуль | О чём | Когда открывать |
 |---|---|---|

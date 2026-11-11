@@ -79,18 +79,20 @@ Claude Code их покрывает skill `rust-engineering`, см. `CLAUDE.md`)
   новое слово DSL — фича в `crates-host/domain/Cargo.toml`{% if graph == "true" %};
   `crates-cross/app/src/graph.rs` собственных узлов не объявляет — только `boot:`,
   блок `watchdog:` и `fragments:` с именами узлов{% endif %} — «Узлы — фрагменты в `domain`»;
-- **каждая задача узла — автомат `#[fsm::typestate]`** на контексте фрагмента,
-  задача — `match ctx.run().await {}`; голый `loop` в функции `task`, проекция
-  аргументов (`task: f(ctx.поле)`) и вторая структура вокруг контекста не
-  пишутся{% if graph != "true" %} (исключение — `cpu_load::log_load`, не узел){% endif %}. Состояние
-  дольше прогона автомата — `resources:` узла, буферы кадра задачи — аргументы
-  стартового действия — «Каждая задача узла — автомат `#[fsm::typestate]`»;
+- **каждая задача узла — цикл на контексте фрагмента**: периодический
+  («подожди такт, поработай»), «подожди событие, обработай», гонка
+  источников вложенными `select` с приоритетом порядка или typestate-
+  состояния по образцу `domain::ota`; проекция аргументов
+  (`task: f(ctx.поле)`) не пишется{% if graph != "true" %} (исключение —
+  `cpu_load::log_load`, не узел){% endif %}. Состояние
+  дольше прогона — `resources:` узла, буферы кадра задачи — локальные и
+  ссылки — «Каждая задача узла — цикл на контексте фрагмента»;
 {%- if graph == "true" %}
 - объект от килобайта в слот по значению не кладётся: слот
   `&'static mut T = static` — `docs/modules/app-graph.md`;
 {%- endif %}
 - **узлы не падают:** `restart:` нет, задача возвращает `()`, отказ связи —
-  лог и возврат в начальное состояние автомата или переход в себя — «Узлы не
+  лог и продолжение цикла (возврат к ожиданию события) — «Узлы не
   падают»;
 - цена — зависимость `domain` от `supervisor` (транзитивно и от
   `embassy-executor`); `embassy-stm32` в `domain` нет — «Цена решения…».
@@ -333,10 +335,9 @@ README, «Быстрый старт».
 {%- endif %}
 {%- if protocol == "canopen" %}
 - Буфер сохранённых объектов CANopen, колбэки стека над ним и сам стек
-  (`Node`) — локальные `domain::canopen::task`, автомат получает их аргументами
-  стартового действия (`start(persisted, callbacks, node) => begin` в таблице,
-  `ctx.run(&persisted, &mut callbacks, &mut node)`), а в состояниях живёт
-  `Stack<'f>` — ссылки на них. Не переносить их в `static` или слот: тип
+  (`Node`) — локальные `domain::canopen::task`: `begin` получает их
+  ссылками (`ctx.begin(&persisted, &mut callbacks, &mut node)`), а в цикле
+  живёт `Running<'f>` — ссылки на них. Не переносить их в `static` или слот: тип
   замыкания там не назвать, а колбэки `zencan` своих данных не получают.
   Ключи `OBJECTS_KEY` и `NODE_ID_KEY` хранилища настроек заняты узлом{% if config == "true" %}, и носитель
   (`board.config`) уходит ему — хранилищем над ним (`Settings::whole`) во входе, и
@@ -476,7 +477,7 @@ README, «Быстрый старт».
 
 ## Карта документации
 
-«Почему так решено» — по темам, не здесь: `docs/README.md`. Исключения: `boot/` описан в `README.md` и `docs/ota.md`, `app-mqtt.md` — в `docs/modules/` без `include_str!`.
+«Почему так решено» — по темам, не здесь: `docs/README.md`.{% if ota == "true" or net_services contains "mqtt" %} Исключения: {% if ota == "true" %}`boot/` описан в `README.md` и `docs/ota.md`{% endif %}{% if ota == "true" and net_services contains "mqtt" %}, {% endif %}{% if net_services contains "mqtt" %}`app-mqtt.md` — в `docs/modules/` без `include_str!`{% endif %}.{% endif %}
 
 ## Перед тем как отчитаться
 

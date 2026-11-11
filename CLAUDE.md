@@ -16,7 +16,7 @@
 - **Скиллы — до работы, а не по памяти.** Если установлены: `rust-engineering` —
   на любую правку Rust (общие идиомы и embedded, `AGENTS.md` их не дублирует);
   `rust-lib` — на всё, что трогает `supervisor_fragment!`/`supervisor_graph!`,
-  `#[fsm::typestate]`, `watchdog`, `sync-request`.
+  `watchdog`, `sync-request`.
 - **Плата — через MCP, но с разрешения.** Запрет из `AGENTS.md` («не прошивать
   без явного разрешения») распространяется и на `embedded-debugger` (прошивка,
   сброс, запись памяти, RTT) и `serial`. Разрешение получено — работать ими, а не

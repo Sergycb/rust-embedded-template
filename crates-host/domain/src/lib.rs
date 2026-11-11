@@ -27,6 +27,10 @@ pub mod ota;
 // {%- endif %}
 pub mod cpu_load;
 
+/// Сетка периодических тактов и deadline для гонок с источниками событий —
+/// утилиты циклов узлов, см. модуль.
+pub mod tick;
+
 // {%- if has_canopen == "true" %}
 /// Узел `CANOPEN_<транспорт>`: узел CANopen на шине CAN — стек `zencan` — см.
 /// модуль.

@@ -22,7 +22,7 @@
   платы и адаптеры над ними — из входа фрагмента (`= inputs.поле`).
 * `inbox: [FIELD: Type; N]` — ограниченная упорядоченная очередь входящих
   сообщений (это и есть бывший `ector`: fire-and-forget между задачами).
-  В автомате узла (`#[fsm::typestate]`) это обычный источник `listen` —
+  В цикле узла это обычный источник событий — `await` в гонке,
   см. пример ниже.
 * `publish: [FIELD: Type; N]` / `subscribe: [OTHER.FIELD]` — broadcast
   состояния наружу через `embassy_sync::watch::Watch`.
@@ -61,9 +61,9 @@ doc-комментариях самого `supervisor` и `supervisor-macros`; �
 `ctx: $crate::путь::ИмяCtx, task: $crate::путь::задача;`: `supervisor_fragment!`
 эмитит структуру контекста (поля — слоты, каналы, `heartbeat`, `index`) в
 крейте фрагмента, а не compose-site, поэтому сигнатура задачи не называет
-ничего из крейта с графом. **Каждая задача — автомат `#[fsm::typestate]` на
-этом контексте** (`docs/architecture.md`, «Каждая задача узла — автомат
-`#[fsm::typestate]`»). Форма `task: имя` без `ctx:` тоже работает, но
+ничего из крейта с графом. **Каждая задача — цикл на этом контексте**
+(`docs/architecture.md`, «Каждая задача узла — цикл на контексте
+фрагмента»). Форма `task: имя` без `ctx:` тоже работает, но
 тип контекста тогда генерирует compose-site, и задача привязана к `cross`.
 
 **Вторая — фрагменты.** `supervisor_fragment!` объявляет самодостаточный
@@ -81,23 +81,17 @@ supervisor::supervisor_fragment! {
         task: $crate::heartbeat::task;
 }
 
-pub async fn task(mut ctx: HeartbeatCtx<'_>) {
-    match ctx.run().await {}
-}
-
-#[fsm::typestate]
-impl HeartbeatCtx<'_> {
-    fsm::machine! {
-        machine Heartbeat mod edges {
-            states { Idle { next: Instant } }
-            start => begin -> Idle;
-            listen { Idle { next } => tick: fsm::deadline(*next) }
-            transitions { Idle + tick(()) => idle -> self }
-        }
+pub async fn task(ctx: HeartbeatCtx<'_>) {
+    // Не возвращается: узлы графа не падают (docs/architecture.md,
+    // «Узлы не падают»).
+    let mut next = Instant::now() + IDLE_PERIOD;
+    loop {
+        // Ждёт такт: `domain::tick` — сетка, отбрасывающая пропущенные
+        // такты (не `Ticker`: отставший догоняет пачкой тиков подряд).
+        tick::deadline(next).await;
+        ctx.heartbeat.feed();
+        next = tick::next_tick(next, IDLE_PERIOD, Instant::now());
     }
-    // begin(), idle() — методы контекста; idle() переносит срок:
-    // s.next = fsm::next_tick(s.next, IDLE_PERIOD, Instant::now())
-    // (не `Ticker`: отставший догоняет пачкой тиков подряд).
 }
 ```
 
@@ -146,8 +140,8 @@ impl HeartbeatCtx<'_> {
 supervisor::supervisor_fragment! {
     name: SENSOR_FRAG<R>;
     boot: inputs: struct $crate::sensor::SensorWiring;
-    // Узлы шаблона не падают: на отказ автомат возвращается в начальное
-    // состояние, перезапускать графу нечего.
+    // Узлы шаблона не падают: на отказ цикл пишет в лог и ждёт дальше,
+    // перезапускать графу нечего.
     node resources: [BUS: R = inputs.bus],
         ctx: $crate::sensor::SensorCtx,
         task: $crate::sensor::task;
@@ -164,29 +158,22 @@ supervisor::supervisor_fragment! {
         task: $crate::peer::task;
 }
 
-pub async fn task(mut ctx: PeerCtx<'_>) {
-    match ctx.run().await {} // не возвращается
-}
-
-#[fsm::typestate]
-impl PeerCtx<'_> {
-    fsm::machine! {
-        machine Peer mod edges {
-            states { Disconnected, Connected { id: u8 } }
-            start -> Disconnected;
-            // Почтовый ящик узла — обычный источник событий.
-            listen { * => ev: self.events.receive() }
-            transitions {
-                Disconnected + ev(PeerEvent::Up(id))   => up   -> Connected,
-                Connected    + ev(PeerEvent::Down)     => down -> Disconnected,
-                // Каждое событие каждого состояния — строкой: забытое не
-                // скомпилируется (`E0004`), `_ =>` здесь нет.
-                Disconnected + ev(PeerEvent::Down)     => ignore,
-                Connected    + ev(PeerEvent::Up(_))    => ignore,
-            }
-        }
+pub async fn task(ctx: PeerCtx<'_>) {
+    // Не возвращается. Состояния — enum в кадре задачи: пара
+    // (состояние, событие) проверяется компилятором на исчерпываемость.
+    let mut state = State::Disconnected;
+    loop {
+        // Почтовый ящик узла — обычный источник событий.
+        let event = ctx.events.receive().await;
+        state = match (state, event) {
+            (State::Disconnected, PeerEvent::Up(id)) => State::Connected { id },
+            (State::Connected { .. }, PeerEvent::Down) => State::Disconnected,
+            // Каждое событие каждого состояния — строкой: забытое не
+            // скомпилируется (нехватка ветки — `E0004`), `_ =>` здесь нет.
+            (State::Disconnected, PeerEvent::Down) => state,
+            (State::Connected { id }, PeerEvent::Up(_)) => State::Connected { id },
+        };
     }
-    // up(), down() — методы контекста
 }
 
 // здесь, в graph.rs: две записи вместо одной. Рычаг платы узел получает

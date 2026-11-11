@@ -37,7 +37,7 @@ mod service;
 
 use defmt_or_log::{FormatOrDebug, info, warn};
 use micropb::MessageDecode;
-use ports::{FrameDuplex, LinkError};
+use ports::FrameDuplex;
 use proto::Request;
 
 use crate::protobuf::codec::{decode_reason, encode};
@@ -65,84 +65,61 @@ supervisor::supervisor_fragment! {
         task: $crate::protobuf::task;
 }
 
-#[fsm::typestate]
-impl<L> ProtobufCtx<'_, L>
-where
-    L: FrameDuplex,
-    L::Error: FormatOrDebug,
-{
-    fsm::machine! {
-        machine Protobuf mod edges {
-            states {
-                /// Ждёт кадр.
-                Listening,
-            }
-            start => begin -> Listening;
-            listen {
-                Listening => frame: self.link.recv(),
-            }
-            transitions {
-                Listening + frame(Ok(len))      => serve  -> self,
-                Listening + frame(Err(ref err)) => failed -> self,
-            }
-        }
-    }
-
-    fn begin(&mut self) -> Listening {
-        info!(
-            "protobuf: узел запущен, буфер ответа {} байт",
-            self.response.len()
-        );
-        Listening
-    }
-
-    /// Разбирает кадр и отвечает на запрос.
-    async fn serve(&mut self, len: usize) {
-        let mut request = Request::default();
-        let response = match request.decode_from_bytes(&self.link.buffer()[..len]) {
-            Ok(()) => self.service.handle(request).await,
-            Err(err) => {
-                warn!("protobuf: кадр не разобрался: {}", decode_reason(&err));
-                self.service.malformed()
-            }
-        };
-        self.respond(&response).await;
-    }
-    /// Кадр потерян или канал отказал — в лог; узел ждёт следующий кадр.
-    #[expect(
-        clippy::unused_self,
-        reason = "сигнатуру действия задаёт таблица `#[fsm::typestate]`"
-    )]
-    fn failed(&mut self, err: &LinkError<L::Error>) {
-        warn!("protobuf: кадр не принят: {:?}", err);
-    }
-
-    /// Ответ — в буфер ответа и в канал; не поместился или не ушёл — в лог.
-    async fn respond(&mut self, response: &proto::Response) {
-        let Some(len) = encode(response, self.response) else {
-            warn!(
-                "protobuf: ответ не помещается в буфер на {} байт",
-                self.response.len()
-            );
-            return;
-        };
-        if let Err(err) = self.link.send_from(&self.response[..len]).await {
-            warn!("protobuf: ответ не ушёл: {:?}", &err);
-        }
-    }
-}
-
 /// Узел `PROTOBUF`: обслуживает канал, пока жив, и не выходит никогда.
+///
+/// Цикл: кадр не разобрался как запрос — ответ
+/// [`Service::malformed`](crate::protobuf::Service::malformed); остальное —
+/// [`Service::handle`](crate::protobuf::Service::handle) и ответ{% if ota == "true" %} (команда
+/// обновления — узлу OTA на вход `CMD`, и ответ ждёт её исхода: пока OTA
+/// стирает раздел, канал не обслуживается, как у Modbus){% endif %}. Кадр
+/// потерян или канал отказал — в лог, и узел ждёт следующий кадр.
 ///
 /// Без `watchdog:` намеренно: узел законно
 /// ждёт запрос сколько угодно, и отметка по таймеру сторожила бы
 /// исполнитель, а не работу.
-pub async fn task<L>(mut ctx: ProtobufCtx<'_, L>)
+pub async fn task<L>(ctx: ProtobufCtx<'_, L>)
 where
     L: FrameDuplex,
     L::Error: FormatOrDebug,
 {
-    match ctx.run().await {}
+    info!(
+        "protobuf: узел запущен, буфер ответа {} байт",
+        ctx.response.len()
+    );
+    loop {
+        match ctx.link.recv().await {
+            Ok(len) => {
+                let mut request = Request::default();
+                let response = match request.decode_from_bytes(&ctx.link.buffer()[..len]) {
+                    Ok(()) => ctx.service.handle(request).await,
+                    Err(err) => {
+                        warn!("protobuf: кадр не разобрался: {}", decode_reason(&err));
+                        ctx.service.malformed()
+                    }
+                };
+                respond(&mut *ctx.link, ctx.response, &response).await;
+            }
+            Err(err) => warn!("protobuf: кадр не принят: {:?}", err),
+        }
+    }
+}
+
+/// Ответ — в буфер ответа и в канал; не поместился или не ушёл — в лог.
+async fn respond<L>(link: &mut L, buffer: &mut [u8], response: &proto::Response)
+where
+    L: FrameDuplex,
+    L::Error: FormatOrDebug,
+{
+    let Some(len) = encode(response, buffer) else {
+        warn!(
+            "protobuf: ответ не помещается в буфер на {} байт",
+            buffer.len()
+        );
+        return;
+    };
+    if let Err(err) = link.send_from(&buffer[..len]).await {
+        warn!("protobuf: ответ не ушёл: {:?}", &err);
+    }
 }
 
 #[cfg(test)]

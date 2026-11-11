@@ -22,7 +22,7 @@
 //!
 // {%- if graph == "true" %}
 //! Вход — `task`: замер (`CpuLoad::sample` над `snapshot`) публикуется в
-//! `Watch`. Узел — автомат `#[fsm::typestate]` на контексте `CpuLoadCtx`,
+//! `Watch`. Узел — периодический цикл на контексте `CpuLoadCtx`,
 //! который эмитит фрагмент ниже.
 //!
 //! Публикация — только половина задачи. Кто и зачем читает загрузку, решает
@@ -52,6 +52,7 @@ pub use sampling::log_load;
 // {%- if graph == "true" %}
 use embassy_time::Instant;
 
+use crate::tick;
 use load::CpuLoad;
 use sampling::{SAMPLE_INTERVAL, snapshot};
 
@@ -108,58 +109,6 @@ supervisor::supervisor_fragment! {
         task: $crate::cpu_load::task;
 }
 
-#[fsm::typestate]
-impl CpuLoadCtx<'_> {
-    fsm::machine! {
-        machine Sampler mod edges {
-            states {
-                /// Ждёт замера в `next`; `load` помнит прошлый снимок.
-                Waiting { next: Instant, load: CpuLoad },
-            }
-            start => begin -> Waiting;
-            listen {
-                Waiting { next, .. } => tick: fsm::deadline(*next),
-            }
-            transitions {
-                Waiting + tick(()) => sample -> self,
-            }
-        }
-    }
-
-    /// Назначает первый замер; прошлого снимка ещё нет.
-    #[expect(
-        clippy::unused_self,
-        reason = "сигнатуру действия задаёт таблица `#[fsm::typestate]`"
-    )]
-    fn begin(&mut self) -> Waiting {
-        Waiting {
-            next: Instant::now() + SAMPLE_INTERVAL,
-            load: CpuLoad::new(),
-        }
-    }
-
-    /// Отмечается у сторожа, снимает счётчики и публикует процент.
-    ///
-    /// Отметка — ПОСЛЕ пробуждения и до измерения: «узел жив» здесь значит
-    /// ровно «узел дождался своего интервала», а не «future опрашивают».
-    /// Автоматической отметки по факту опроса нет намеренно — иначе сторож
-    /// сторожил бы исполнитель, а не работу (см. `domain::heartbeat`).
-    ///
-    /// Первый снимок уходит в никуда (сравнивать не с чем) — так и задумано,
-    /// см. `CpuLoad::sample`.
-    ///
-    /// Следующий замер — `fsm::next_tick`, а не `Ticker`: отставший `Ticker`
-    /// догоняет пачкой тиков подряд, и замеры через микросекунды
-    /// опубликовали бы ложные 0% или 100% поверх честного значения.
-    fn sample(&mut self, s: &mut Waiting) {
-        self.heartbeat.feed();
-        if let Some(percent) = s.load.sample(snapshot(self.sleep_ticks)) {
-            self.percent.send(percent);
-        }
-        s.next = fsm::next_tick(s.next, SAMPLE_INTERVAL, Instant::now());
-    }
-}
-
 /// Узел `CPU_LOAD` графа: раз в `SAMPLE_INTERVAL` публикует занятость
 /// процессора в процентах.
 ///
@@ -168,9 +117,31 @@ impl CpuLoadCtx<'_> {
 /// значение, так что подписчик получит и пропущенные интервалы, лишь показав
 /// последний из них: счётчик знает «сколько сейчас», а не «сколько было когда».
 ///
-/// У автомата нет выходного состояния: узел не падает (docs/architecture.md,
-/// «Узлы не падают»), и `task` не возвращается.
-pub async fn task(mut ctx: CpuLoadCtx<'_>) {
-    match ctx.run().await {}
+/// Отметка у сторожа — ПОСЛЕ пробуждения и до измерения: «узел жив» здесь
+/// значит ровно «узел дождался своего интервала», а не «future опрашивают».
+/// Автоматической отметки по факту опроса нет намеренно — иначе сторож
+/// сторожил бы исполнитель, а не работу (см. `domain::heartbeat`).
+///
+/// Первый снимок уходит в никуда (сравнивать не с чем) — так и задумано,
+/// см. `CpuLoad::sample`.
+///
+/// У узла нет выхода: узел не падает (docs/architecture.md, «Узлы не падают»),
+/// и `task` не возвращается.
+pub async fn task(ctx: CpuLoadCtx<'_>) {
+    let mut next = Instant::now() + SAMPLE_INTERVAL;
+    let mut load = CpuLoad::new();
+    loop {
+        // Ждёт замер: `deadline` готов на первом опросе, если срок уже
+        // прошёл, а `next_tick` отбрасывает такты, пропущенные пока
+        // исполнитель был занят чужой работой, — иначе замеры через
+        // микросекунды опубликовали бы ложные 0% или 100% поверх честного
+        // значения.
+        tick::deadline(next).await;
+        ctx.heartbeat.feed();
+        if let Some(percent) = load.sample(snapshot(ctx.sleep_ticks)) {
+            ctx.percent.send(percent);
+        }
+        next = tick::next_tick(next, SAMPLE_INTERVAL, Instant::now());
+    }
 }
 // {%- endif %}

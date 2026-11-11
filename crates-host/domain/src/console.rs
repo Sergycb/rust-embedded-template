@@ -240,69 +240,46 @@ impl<IO: Read + Write> Write for Shared<'_, IO> {
 }
 
 // {%- if has_cli == "true" %}
-#[fsm::typestate]
-impl<IO: Read + Write> ConsoleCtx<'_, IO> {
-    fsm::machine! {
-        machine Console mod edges {
-            states {
-                /// Консоль ждёт ввод: пароль, затем команды.
-                Running { access: Access },
-                /// Недостижимо: обслуживание не возвращается. Состояние нужно
-                /// таблице — строка без ожидания не может остаться в своём
-                /// состоянии.
-                exit Down,
+/// Узел `CONSOLE`: обслуживает консоль, пока жива прошивка; не возвращается.
+///
+/// Спрашивает пароль, затем ведёт `shell`; после `exit`/Ctrl-D — снова
+/// пароль.
+pub async fn task<IO: Read + Write>(ctx: ConsoleCtx<'_, IO>) {
+    info!("console: узел запущен");
+    let access = Access::new(*ctx.login);
+    loop {
+        match sign_in(&mut *ctx.io, access).await {
+            Some(true) => info!("console: вход выполнен"),
+            Some(false) => {
+                warn!("console: неверный пароль");
+                ctx.io.write_all(b"wrong password\r\n").await.ok();
+                Timer::after(WRONG_PASSWORD_PAUSE).await;
+                continue;
             }
-            start => begin -> Running;
-            transitions {
-                Running => serve -> Down,
+            None => {
+                Timer::after(RESTART_PAUSE).await;
+                continue;
             }
         }
-    }
-
-    fn begin(&mut self) -> Running {
-        info!("console: узел запущен");
-        Running {
-            access: Access::new(*self.login),
-        }
-    }
-
-    /// Спрашивает пароль, затем ведёт `shell`; после `exit`/Ctrl-D — снова
-    /// пароль. Не возвращается.
-    async fn serve(&mut self, s: &Running) -> Down {
-        loop {
-            match sign_in(&mut *self.io, s.access).await {
-                Some(true) => info!("console: вход выполнен"),
-                Some(false) => {
-                    warn!("console: неверный пароль");
-                    self.io.write_all(b"wrong password\r\n").await.ok();
-                    Timer::after(WRONG_PASSWORD_PAUSE).await;
-                    continue;
-                }
-                None => {
-                    Timer::after(RESTART_PAUSE).await;
-                    continue;
-                }
+        let device = Device {
+            info: ctx.info,
+            // {%- if has_net == "true" %}
+            stack: *ctx.stack,
+            // {%- endif %}
+            // {%- if ota == "true" %}
+            ota: *ctx.ota,
+            // {%- endif %}
+        };
+        match shell(&mut *ctx.io, &device, None).await {
+            Ok(ShellEnd::Exit) => info!("console: exit — вход заново"),
+            Ok(ShellEnd::Idle) => {}
+            Ok(ShellEnd::Eof) => {
+                info!("console: EOF — вход заново");
+                Timer::after(RESTART_PAUSE).await;
             }
-            let device = Device {
-                info: self.info,
-                // {%- if has_net == "true" %}
-                stack: *self.stack,
-                // {%- endif %}
-                // {%- if ota == "true" %}
-                ota: *self.ota,
-                // {%- endif %}
-            };
-            match shell(&mut *self.io, &device, None).await {
-                Ok(ShellEnd::Exit) => info!("console: exit — вход заново"),
-                Ok(ShellEnd::Idle) => {}
-                Ok(ShellEnd::Eof) => {
-                    info!("console: EOF — вход заново");
-                    Timer::after(RESTART_PAUSE).await;
-                }
-                Err(_) => {
-                    info!("console: канал оборвался — вход заново");
-                    Timer::after(RESTART_PAUSE).await;
-                }
+            Err(_) => {
+                info!("console: канал оборвался — вход заново");
+                Timer::after(RESTART_PAUSE).await;
             }
         }
     }
@@ -590,13 +567,6 @@ pub(crate) fn write_info(
     }
     out.write_char('\n')
 }
-
-// {%- if has_cli == "true" %}
-/// Узел `CONSOLE`: обслуживает консоль, пока жива прошивка; не возвращается.
-pub async fn task<IO: Read + Write>(mut ctx: ConsoleCtx<'_, IO>) {
-    ctx.run().await;
-}
-// {%- endif %}
 
 #[cfg(test)]
 mod tests {

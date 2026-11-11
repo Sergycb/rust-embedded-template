@@ -48,42 +48,13 @@ supervisor::supervisor_fragment! {
         task: $crate::usb::task;
 }
 
-#[fsm::typestate]
-impl<D: Driver<'static>> UsbCtx<'_, UsbDevice<'static, D>> {
-    fsm::machine! {
-        machine Usb mod edges {
-            states {
-                /// Устройство работает.
-                Running,
-                /// Недостижимо: обслуживание не возвращается. Состояние нужно
-                /// таблице — строка без ожидания не может остаться в своём состоянии.
-                exit Down,
-            }
-            start => begin -> Running;
-            transitions {
-                Running => drive -> Down,
-            }
-        }
-    }
-
-    #[expect(
-        clippy::unused_self,
-        reason = "сигнатуру действия задаёт таблица `#[fsm::typestate]`"
-    )]
-    fn begin(&mut self) -> Running {
-        info!("usb: узел запущен");
-        Running
-    }
-
-    /// Отвечает хосту и гоняет пакеты классов — бесконечно.
-    async fn drive(&mut self, _: Running) -> Down {
-        self.device.run().await
-    }
-}
-
 /// Узел `USB`: исполняет устройство, пока жива прошивка; не возвращается.
-pub async fn task<D: Driver<'static>>(mut ctx: UsbCtx<'_, UsbDevice<'static, D>>) {
-    ctx.run().await;
+///
+/// `UsbDevice::run` не отдаёт управление наружу, поэтому узел — ровно
+/// «сообщить о старте и отвечать хосту»: ни состояний, ни цикла.
+pub async fn task<D: Driver<'static>>(ctx: UsbCtx<'_, UsbDevice<'static, D>>) {
+    info!("usb: узел запущен");
+    ctx.device.run().await;
 }
 
 #[cfg(test)]

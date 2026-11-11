@@ -99,8 +99,6 @@ supervisor = { workspace = true, features = [
 # Прямо, а не транзитивно через `supervisor`: `Ticker`/`Timer`/`Duration` стоят
 # в теле задачи, а не только в её сигнатуре.
 embassy-time = { workspace = true }
-# Задачи узлов — автоматы `#[fsm::typestate]` на контексте фрагмента.
-fsm = { workspace = true }
 # {%- if ota == "true" %}
 # OTA над `embassy-boot`, сам он от чипа не зависит: решение bootloader'а
 # (`ota::boot`) — над блокирующими разделами `NorFlash`, адаптер обновления
@@ -173,12 +171,15 @@ subtle             = { workspace = true }
 # (реэкспортирует `sunset`), канал сессии — `embedded-io-async`.
 sunset-async       = { workspace = true }
 # {%- endif %}
-# {%- if ota == "true" or net_services contains "ssh" %}
+# {%- if ota == "true" or net_services contains "ssh" or has_canopen == "true" %}
 # {%- if ota == "true" %}
 # `yield_now` между страницами стирания (`ota::Updater`).
 # {%- endif %}
 # {%- if net_services contains "ssh" %}
 # `select` сессии SSH (`domain::ssh`).
+# {%- endif %}
+# {%- if has_canopen == "true" %}
+# Гонка такта, исхода OTA и кадра шины (`domain::canopen`).
 # {%- endif %}
 embassy-futures    = { workspace = true }
 # {%- endif %}

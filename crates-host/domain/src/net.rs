@@ -36,42 +36,13 @@ supervisor::supervisor_fragment! {
         task: $crate::net::task;
 }
 
-#[fsm::typestate]
-impl<D: Driver> NetCtx<'_, Runner<'static, D>> {
-    fsm::machine! {
-        machine Net mod edges {
-            states {
-                /// Стек работает.
-                Running,
-                /// Недостижимо: обслуживание не возвращается. Состояние нужно
-                /// таблице — строка без ожидания не может остаться в своём состоянии.
-                exit Down,
-            }
-            start => begin -> Running;
-            transitions {
-                Running => drive -> Down,
-            }
-        }
-    }
-
-    #[expect(
-        clippy::unused_self,
-        reason = "сигнатуру действия задаёт таблица `#[fsm::typestate]`"
-    )]
-    fn begin(&mut self) -> Running {
-        info!("net: узел запущен");
-        Running
-    }
-
-    /// Гоняет пакеты между сокетами и устройством — бесконечно.
-    async fn drive(&mut self, _: Running) -> Down {
-        self.runner.run().await
-    }
-}
-
 /// Узел `NET`: исполняет стек, пока жива прошивка; не возвращается.
-pub async fn task<D: Driver>(mut ctx: NetCtx<'_, Runner<'static, D>>) {
-    ctx.run().await;
+///
+/// `Runner::run` не отдаёт управление наружу, поэтому узел — ровно
+/// «сообщить о старте и гнать пакеты»: ни состояний, ни цикла.
+pub async fn task<D: Driver>(ctx: NetCtx<'_, Runner<'static, D>>) {
+    info!("net: узел запущен");
+    ctx.runner.run().await;
 }
 
 #[cfg(test)]

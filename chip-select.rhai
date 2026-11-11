@@ -693,12 +693,12 @@ fn is_dual_core(suffix) {
 
 // ==== 2. rust_lib, rust_lib_rev, newline ====================================
 
-// Источник rust-lib (supervisor, fsm, watchdog, sync-request) — одна переменная
+// Источник rust-lib (supervisor, watchdog, sync-request) — одна переменная
 // на все места: оба Cargo.toml, allow-git в deny.toml, ссылки в документации.
 // Умолчания нет намеренно: библиотека лежит на разных серверах, и шаблон ни одного
 // из них не называет — адрес вводит человек (`--define rust_lib=https://…/rust-lib`
 // без терминала). Без адреса проект не собрать, поэтому вопрос — до выбора чипа.
-let rust_lib = repo_url("rust_lib", "rust-lib (supervisor, fsm, watchdog)");
+let rust_lib = repo_url("rust_lib", "rust-lib (supervisor, watchdog, sync-request)");
 variable::set("rust_lib", rust_lib);
 // Ревизия rust-lib — тоже одна на все места: проекты не получают lock-файл,
 // и без `rev` первый же слом API в main rust-lib ронял бы свежую генерацию
@@ -706,7 +706,7 @@ variable::set("rust_lib", rust_lib);
 // берёт сознательно, вместе с правками под неё; форку — `--define rust_lib_rev=…`.
 // Умолчание равно `rev` в корневом Cargo.toml — сверяет тест
 // `rust_lib_rev_default_matches_the_root_manifest` (chip-data-gen/tests/cascade.rs).
-let rust_lib_rev = if variable::is_set("rust_lib_rev") { variable::get("rust_lib_rev") } else { "ab5be5805ed581c2d040c6c08d6644f7f8471e7d" };
+let rust_lib_rev = if variable::is_set("rust_lib_rev") { variable::get("rust_lib_rev") } else { "6887070c427ed74044c6b0478d71f4e30e4a1ed0" };
 if rust_lib_rev == "" || rust_lib_rev.contains(" ") {
     throw "rust_lib_rev: пустая или с пробелом ревизия rust-lib";
 }
