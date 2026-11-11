@@ -4,7 +4,7 @@
 
 **Своего канала у OTA нет.** Образ приходит командами от узла протокола{% if has_protobuf == "true" %}
 (protobuf){% elsif has_modbus == "true" %} (Modbus){% elsif has_canopen == "true" %} (CANopen){% endif %}: протокол переводит
-свои сообщения в `domain::ota::OtaCommand` и отдаёт их узлу `OTA` (`domain::ota`)
+свои сообщения в `domain::ota::Command` и отдаёт их узлу `OTA` (`domain::ota`)
 через один из двух его входов.{% if graph == "true" %} `CMD` — `request:` графа, запрос с ответом
 (`sync-request`): клиент ждёт исхода в вызове. `ASK` — `serves:` графа: клиент
 объявляет ребро `asks:`, отправляет команду, не дожидаясь (`try_call`), и{% else %} `CMD` — `static` `RpcService` в `crate::tasks::ota`, запрос с
@@ -14,7 +14,7 @@
 забирает исход из `reply()`, тем временем обслуживая свой канал; это вход для
 узла протокола, которому нельзя молчать, пока узел OTA стирает раздел. Для
 цикла узла входы одинаковы. На каждую команду узел отвечает
-`domain::ota::OtaReply` — исходом именно её, и протокол передаёт его хосту как есть.
+`domain::ota::Reply` — исходом именно её, и протокол передаёт его хосту как есть.
 
 | Команда | Что делает узел | Ответ |
 |---|---|---|
@@ -64,12 +64,12 @@
 образа.
 
 **Несколько транспортов — один владелец сессии.** Запрос на вход `CMD` —
-`domain::ota::OtaRequest`: команда и номер клиента (`ClientId`). Клиент —
+`domain::ota::Request`: команда и номер клиента (`ClientId`). Клиент —
 транспорт, а не удалённый хост: каждый узел протокола — свой клиент, номер
 ему даёт генерация — порядковый номер транспорта с протоколом в `links`, с 0.
 Узел, который ходит на `CMD`, держит клиента входа — {% if graph == "true" %}`ota_cmd_requester()`
 графа{% else %}`crate::tasks::ota::CMD.requester()` (`static` в `crates-cross/app/src/tasks/ota.rs`){% endif %} —
-обёрнутым в `domain::ota::OtaClient::new(.., domain::ota::ClientId(n))`; узел,
+обёрнутым в `domain::ota::Client::new(.., domain::ota::ClientId(n))`; узел,
 который ходит на `ASK`{% if has_canopen == "true" %} (здесь — CANopen){% endif %}, держит во входе только номер
 `domain::ota::ClientId(n)`. Принятый `Start` делает клиента
 владельцем приёма; `Start`, `Chunk` и `Finish` другого клиента, пока приём
@@ -123,7 +123,7 @@
   `Start` должен быть длиннее стирания раздела (секунды на F2/F4/F7).
 {%- elsif has_canopen == "true" %}
 
-- **CANopen** — записи SDO в объект `0x4F00` (`domain::canopen::OtaObject`,
+- **CANopen** — записи SDO в объект `0x4F00` (`domain::canopen::Object`,
   `application_callback` в `crates-host/canopen/device.toml`): sub 1 — `Start`, 2 — `Chunk`, 3 —
   `Finish`, 4 — `Reboot`; исход — sub 5, принятая длина — sub 6. Здесь
   протокол не ждёт исход: `zencan` отвечает на SDO синхронно, внутри обработки

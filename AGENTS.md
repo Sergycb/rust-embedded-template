@@ -218,10 +218,10 @@ README, «Быстрый старт».
 {%- if ota == "true" %}
 - Узел OTA — `docs/ota.md`, «Команды: образ приходит через протокол»:
   - своего канала у OTA нет: узел протокола переводит сообщения в
-    `domain::ota::OtaCommand` на вход `CMD` (запрос с ответом) или `ASK` (исход —
-    из `reply()`), и каждая команда получает исход `domain::ota::OtaReply`;
+    `domain::ota::Command` на вход `CMD` (запрос с ответом) или `ASK` (исход —
+    из `reply()`), и каждая команда получает исход `domain::ota::Reply`;
   - приём держит один клиент-транспорт (`domain::ota::ClientId`,
-    `domain::ota::OtaClient`), чужим `Start`/`Chunk`/`Finish` — `Busy`;
+    `domain::ota::Client`), чужим `Start`/`Chunk`/`Finish` — `Busy`;
   - МК сбрасывается только командой `Reboot` (`ports::Reboot`), не по `Finish`:
     хост узнаёт исход до сброса;
   - отказы до стирания обязаны оставаться такими: `Busy` и отсутствие подписи —
@@ -354,7 +354,7 @@ README, «Быстрый старт».
   его объём. Носитель отдаёт плата рычагом `NorFlash`
   (`board.config: bsp::ConfigFlash`): {% if config_store == "eeprom" %}EEPROM L0/L1 (доступ — `embedded_storage::Storage`, обёртку
   `adapters_hw::eeprom::Eeprom` собирает сама плата){% elsif config_store == "external" %}внешняя флеш W25Q (драйвер
-  `w25q` в `bsp::external`, шина — заглушка `bsp::stub::FlashBus`, пока проект не
+  `w25q` в `bsp::external`, шина — заглушка `bsp::stub::Bus`, пока проект не
   подставит выводы){% else %}раздел `CONFIG` внутреннего
   флеша{% endif %}. Само хранилище — `Settings::whole(board.config)` на compose-site
   узла-потребителя; тип — `domain::settings::Settings<bsp::ConfigFlash>` прямо {% if graph == "true" %}в
@@ -425,7 +425,7 @@ README, «Быстрый старт».
 - Брокер MQTT (`domain::mqtt`, узел `MQTT`) — `mqtt.toml` в корне проекта:
   создаёт `cargo xtask` (`secrets::ensure`), он **коммитится**, вшивает его
   `crates-cross/app/build.rs` (README, «Клиент MQTT»). Паузы перед попытками
-  `dial` держит клиент `domain::mqtt::TcpClient`{% if ota == "true" %}; клиент входа `CMD` узла OTA — номер `{{ mqtt_ota_client }}`{% endif %}; доступ к `cmd/` —
+  `dial` держит клиент `domain::mqtt::Tcp`{% if ota == "true" %}; клиент входа `CMD` узла OTA — номер `{{ mqtt_ota_client }}`{% endif %}; доступ к `cmd/` —
   только ACL брокера — `docs/modules/app-mqtt.md`.
 {%- endif %}
 {%- if graph == "true" %}
@@ -448,7 +448,7 @@ README, «Быстрый старт».
 {%- if external_flash == "true" %}
 - Внешняя флеш — W25Q, драйвер `w25q` (hw-drivers, `rev` закреплён) в
   `bsp::external` — `docs/modules/bsp-external.md`:
-  - шина под ним — заглушка `bsp::stub::FlashBus`, пока плата не подставит
+  - шина под ним — заглушка `bsp::stub::Bus`, пока плата не подставит
     свою (рецепт — там же);
   - `Board::new` асинхронный: драйвер опознаёт микросхему (`init`, до 2 с, если
     она дотирает стирание), ждёт таймерами `embassy_time` и потому зовётся из

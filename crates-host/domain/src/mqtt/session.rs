@@ -10,13 +10,13 @@ use minimq::{
     Publication, QoS, RetainHandling, Session, SubscriptionOptions, TopicFilter, Will,
 };
 
-use super::broker::Endpoint;
+use super::broker::Broker;
 use super::telemetry::{TELEMETRY_INTERVAL, write_telemetry};
 use super::topics::{CLIENT_ID_LEN, Command, TOPIC_LEN, Topics, parse_command};
 use crate::device::{DeviceInfo, INFO_TEXT};
 // {%- if ota == "true" %}
+use crate::ota::Client;
 use crate::ota::command::Progress;
-use crate::ota::{OtaClient, OtaCommand};
 // {%- endif %}
 
 /// Буфер входящих пакетов `minimq`: самая длинная команда с темой.
@@ -87,7 +87,7 @@ pub(crate) struct Env<'a> {
     pub tx: &'a mut [u8],
     // {%- if ota == "true" %}
     /// Клиент входа `CMD` узла OTA — для `cmd/reboot`.
-    pub ota: &'a OtaClient,
+    pub ota: &'a Client,
     // {%- endif %}
 }
 
@@ -102,7 +102,7 @@ pub(crate) struct Env<'a> {
 /// `publish` отвечает `NotReady`, а не ждёт PUBACK, — сессия сочтёт это
 /// обрывом и переподключится. Брокеры по умолчанию дают больше
 /// (у Mosquitto — 20, `max_inflight_messages`).
-pub(crate) async fn serve<IO: minimq::Io>(io: IO, endpoint: &Endpoint, env: &mut Env<'_>) -> Ended
+pub(crate) async fn serve<IO: minimq::Io>(io: IO, endpoint: &Broker, env: &mut Env<'_>) -> Ended
 where
     IO::Error: FormatOrDebug,
 {
@@ -191,7 +191,7 @@ where
             match command {
                 Command::Reboot => {
                     // {%- if ota == "true" %}
-                    let reply = ota.request(OtaCommand::Reboot).await;
+                    let reply = ota.request(crate::ota::Command::Reboot).await;
                     let text = if matches!(reply, Ok(Ok(Progress::Rebooting))) {
                         "accepted"
                     } else {
@@ -241,7 +241,7 @@ const fn publish_rest(topic: usize, payload: usize) -> usize {
 /// Настройки клиента: идентификатор, вход (при непустом `user`) и Will
 /// `offline` на `status`.
 fn config<'a>(
-    endpoint: &Endpoint,
+    endpoint: &Broker,
     topics: &Topics,
     status: &str,
     rx: &'a mut [u8],

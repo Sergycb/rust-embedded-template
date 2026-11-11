@@ -10,9 +10,9 @@ use super::session::{CLOSE_WAIT, IDLE, KEEP_ALIVE, PORT, SSH_BUFFER, TCP_BUFFER,
 use crate::console::{Access, Device};
 use crate::device::DeviceInfo;
 // {%- if ota == "true" %}
-use crate::ota::OtaClient;
+use crate::ota::Client;
 // {%- else %}
-//{{newline}}use super::ota_stub::OtaClient;
+//{{newline}}use super::ota_stub::Client;
 // {%- endif %}
 
 /// Одно соединение и всё, что ему нужно на весь его срок.
@@ -26,7 +26,7 @@ pub(super) struct Connection<'a> {
     info: &'a DeviceInfo,
     /// Клиент входа `CMD` узла OTA; без OTA — заглушка, поле не читается.
     #[allow(dead_code, reason = "без OTA поле не читается, но тип общий")]
-    ota: OtaClient,
+    ota: Client,
     /// Приём сокета.
     tcp_rx: &'a mut [u8; TCP_BUFFER],
     /// Передача сокета.
@@ -43,7 +43,7 @@ impl<'a> Connection<'a> {
     pub(super) fn new(
         stack: crate::net::Stack<'static>,
         info: &'a DeviceInfo,
-        ota: OtaClient,
+        ota: Client,
         tcp_rx: &'a mut [u8; TCP_BUFFER],
         tcp_tx: &'a mut [u8; TCP_BUFFER],
         ssh_rx: &'a mut [u8; SSH_BUFFER],

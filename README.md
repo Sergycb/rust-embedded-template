@@ -245,7 +245,7 @@ supervisor-графы, watchdog{% endif %}). Вся остальная логи�
   проекта в `domain` и обёртки над ней (общая ручка{% if ota == "true" %}, окно OTA{% endif %}), а кадры к нему
   переводит обработчик `domain::modbus::Slave` (адрес, широковещание, исключения).
 {%- capture mb_links %}{% if modbus_rtu == "true" %}, `adapters_logic::modbus::Rtu` (RTU поверх потока
-  {% if has_uart == "true" %}UART{% if has_usb == "true" %} или {% endif %}{% endif %}{% if has_usb == "true" %}USB CDC{% endif %}){% endif %}{% if modbus_tcp == "true" %}, `adapters_logic::modbus::Tcp` (MBAP поверх потока TCP){% endif %}{% if modbus_udp == "true" %}, `adapters_logic::modbus::Udp` (MBAP в датаграмме){% endif %}{% endcapture %}
+  {% if has_uart == "true" %}UART{% if has_usb == "true" %} или {% endif %}{% endif %}{% if has_usb == "true" %}USB CDC{% endif %}){% endif %}{% if modbus_tcp == "true" %}, `adapters_logic::modbus::Link` (MBAP поверх потока TCP){% endif %}{% if modbus_udp == "true" %}, `adapters_logic::modbus::Udp` (MBAP в датаграмме){% endif %}{% endcapture %}
 - Канал slave'а — `FrameLink` с кадром «адрес и PDU»: {{ mb_links | remove_first: ", " }}.
 {%- if modbus_master == "true" %}
 - Те же каналы реализуют порт master'а `ModbusClient`, но рабочий master из
@@ -348,7 +348,7 @@ interface=none` с OTA — ошибка генерации. Протокол м�
 `DFU` и `BOOTLOADER_STATE` в этом проекте — на внешней SPI NOR: внутри
 остаются bootloader и `ACTIVE` почти на весь чип (на F407VE 384 KiB вместо 128).
 Драйвер микросхемы — W25Q (`w25q`), и он в шаблоне настоящий; заглушка — только шина
-под ним (`bsp::stub::FlashBus`). Шину с выводами своей платы вы подставляете в
+под ним (`bsp::stub::Bus`). Шину с выводами своей платы вы подставляете в
 `crates-cross/bsp/src/external.rs` (асинхронный драйвер) и в
 `crates-cross/boot/src/external.rs` (блокирующий), рецепт — `docs/modules/bsp-external.md`.
 Совместимость драйвера с раскладкой проверяет компилятор: стирание обязано делить
@@ -369,9 +369,9 @@ interface=none` с OTA — ошибка генерации. Протокол м�
 
 Своего канала у образа нет — он идёт через протокол, по которому хост и так
 говорит с устройством. Узел протокола переводит свои сообщения в четыре команды
-`domain::ota::OtaCommand` — `Start` (длина и подпись; стирает раздел под образ),
+`domain::ota::Command` — `Start` (длина и подпись; стирает раздел под образ),
 `Chunk`, `Finish` (применить), `Reboot` (сбросить МК, чтобы bootloader обменял
-разделы) — и отдаёт их узлу `OTA`, а исход каждой (`domain::ota::OtaReply`) возвращает
+разделы) — и отдаёт их узлу `OTA`, а исход каждой (`domain::ota::Reply`) возвращает
 хосту в том виде, который принят у протокола. Таблица команд и ответов, коды
 отказов, правила сессии при нескольких транспортах и как команды ложатся на
 протокол — docs/ota.md, «Команды: образ приходит через протокол».
@@ -385,7 +385,7 @@ interface=none` с OTA — ошибка генерации. Протокол м�
 0 (ещё выполняется), принятую длину — из sub 6.{% elsif protocol == "none" or protocol == "cli" %}Протокола в этом проекте нет, поэтому узел пока только подтверждает
 образ. Команды ему шлёт ваш протокол через клиент входа{% if graph == "true" %} `ota_cmd_requester()` графа{% else %} — `crate::tasks::ota::CMD.requester()`
 (`static` в `crates-cross/app/src/tasks/ota.rs`){% endif %}, обёрнутый в
-`domain::ota::OtaClient::new(.., domain::ota::ClientId(n))`; номер `n` — `{{ ota_cmd_clients }}`{% if net_services != "" %},
+`domain::ota::Client::new(.., domain::ota::ClientId(n))`; номер `n` — `{{ ota_cmd_clients }}`{% if net_services != "" %},
 следом за клиентами сетевых служб{% endif %}. Подключив клиента, прибавьте его к числу мест
 ожидания входа — {% if graph == "true" %}`OTA_CMD_PARKED` в `crates-cross/app/src/graph.rs`{% else %}`CMD_PARKED` в `crates-cross/app/src/tasks/ota.rs`{% endif %}.{% endif %}
 

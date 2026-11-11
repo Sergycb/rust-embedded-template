@@ -14,7 +14,7 @@
 use embedded_storage_async::nor_flash::NorFlash;
 use ports::{Partitions, PendingImage};
 
-use crate::ota::updater::{FlashError, Updater};
+use crate::ota::updater::{Error as UpdaterError, Updater};
 use crate::ota::version;
 
 /// Сколько байт в хвосте образа занимает версия.
@@ -63,11 +63,11 @@ pub enum UpdateError {
     /// Обмен не запрашивается — такой образ после него не запустился бы.
     Layout { device: u32, image: u32 },
     /// Всё, что приходит из адаптера: отказ флеша, негодное состояние.
-    Flash(FlashError),
+    Flash(UpdaterError),
 }
 
-impl From<FlashError> for UpdateError {
-    fn from(error: FlashError) -> Self {
+impl From<UpdaterError> for UpdateError {
+    fn from(error: UpdaterError) -> Self {
         Self::Flash(error)
     }
 }
@@ -181,7 +181,7 @@ mod tests {
     use embedded_storage::nor_flash::NorFlashErrorKind;
 
     use super::{UpdateError, apply};
-    use crate::ota::FlashError;
+    use crate::ota::UpdaterError;
     use crate::ota::fake::{LAYOUT, SIGNATURE, flash, with_image};
     use crate::ota::version::pack;
 
@@ -324,7 +324,7 @@ mod tests {
 
         assert_eq!(
             apply(&mut flash, CURRENT, &SIGNATURE, 64).await,
-            Err(UpdateError::Flash(FlashError::Flash(
+            Err(UpdateError::Flash(UpdaterError::Flash(
                 NorFlashErrorKind::Other
             )))
         );

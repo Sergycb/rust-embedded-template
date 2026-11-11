@@ -16,7 +16,7 @@ type Source = {% if f[0] == "usb" %}bsp::usb::{{ f[4] }}::Cdc{% else %}bsp::seri
 
 #[embassy_executor::task]
 {%- if ota == "true" %}
-async fn task(mut io: Source, mut info: DeviceInfo, mut ota: domain::ota::OtaClient) {
+async fn task(mut io: Source, mut info: DeviceInfo, mut ota: domain::ota::Client) {
 {%- else %}
 async fn task(mut io: Source, mut info: DeviceInfo) {
 {%- endif %}
@@ -38,7 +38,7 @@ async fn task(mut io: Source, mut info: DeviceInfo) {
 pub fn spawn(spawner: Spawner, source: Source, info: DeviceInfo) {
     {%- if ota == "true" %}
     let ota =
-        domain::ota::OtaClient::new(crate::tasks::ota::CMD.requester(), domain::ota::ClientId({{ client }}));
+        domain::ota::Client::new(crate::tasks::ota::CMD.requester(), domain::ota::ClientId({{ client }}));
     {%- endif %}
     let token = task(source, info{% if ota == "true" %}, ota{% endif %});
     spawner.spawn(token.expect("задача CONSOLE свежая: спавнится один раз"));

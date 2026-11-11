@@ -32,17 +32,17 @@ type Updater = domain::ota::Updater<bsp::FirmwareFlash>;
 {%- if askers > 0 %}
 
 /// Ребро входа `ASK` — доля одного клиента в его очереди.
-type OtaEdge =
-    Edge<'static, CriticalSectionRawMutex, domain::ota::OtaRequest, domain::ota::OtaReply>;
+type AskEdge =
+    Edge<'static, CriticalSectionRawMutex, domain::ota::Request, domain::ota::Reply>;
 {%- endif %}
 
 /// Вход команд узла — запрос с ответом, ёмкостью `domain::ota::CMD_BYTES`. Клиента{% if has_modbus != "true" and has_protobuf != "true" and has_canopen != "true" %} получает ваш протокол
-/// (`domain::ota::OtaClient` над `CMD.requester()`); без него узел только подтверждает образ{% else %} получает каждая задача протокола —
-/// `domain::ota::OtaClient` с номером своего транспорта{% endif %}.
+/// (`domain::ota::Client` над `CMD.requester()`); без него узел только подтверждает образ{% else %} получает каждая задача протокола —
+/// `domain::ota::Client` с номером своего транспорта{% endif %}.
 pub static CMD: RpcService<
     CriticalSectionRawMutex,
-    domain::ota::OtaRequest,
-    domain::ota::OtaReply,
+    domain::ota::Request,
+    domain::ota::Reply,
     { domain::ota::CMD_BYTES },
     CMD_PARKED,
 > = RpcService::new();
@@ -52,8 +52,8 @@ pub static CMD: RpcService<
 /// рёбра нулевые.{% endif %}
 pub static ASK: AskService<
     CriticalSectionRawMutex,
-    domain::ota::OtaRequest,
-    domain::ota::OtaReply,
+    domain::ota::Request,
+    domain::ota::Reply,
     {{ askers }},
     {{ askers }},
     { domain::ota::CMD_BYTES },
@@ -63,7 +63,7 @@ pub static ASK: AskService<
 
 /// Рёбра входа `ASK`: ребро `i` — `i`-го транспорта CANopen в `links`, слот `i`.
 {%- assign k = 0 %}
-pub static ASK_EDGES: [OtaEdge; {{ askers }}] = [
+pub static ASK_EDGES: [AskEdge; {{ askers }}] = [
 {%- for l in xs %}{% assign f = l | split: ":" %}{% if f[3] == "canopen" %}{% if k > 0 %}, {% endif %}ASK.edge({{ k }}, {{ k }}, 1){% assign k = k | plus: 1 %}{% endif %}{% endfor -%}
 ];
 {%- endif %}

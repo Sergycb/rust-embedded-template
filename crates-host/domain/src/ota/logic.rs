@@ -18,7 +18,7 @@ use super::download::Transfer;
 use super::rejection::{busy, download_rejection, update_rejection};
 use super::timing::{REBOOT_GRACE, SESSION_TIMEOUT};
 use super::updater::Updater;
-use super::{ClientId, OtaCommand, OtaReply, OtaRequest, update};
+use super::{ClientId, Command, Reply, Request, update};
 
 /// Подпись образа — из `Start`, до `Finish` её держит состояние `Receiving`.
 type Signature = [u8; SIGNATURE_BYTES];
@@ -34,9 +34,9 @@ pub(super) struct Ota<'a, F, R> {
     /// Подтверждён ли образ в этом запуске.
     confirmed: &'a mut bool,
     /// Вход `CMD`: запрос с ответом.
-    cmd: supervisor::Server<'a, OtaRequest, OtaReply>,
+    cmd: supervisor::Server<'a, Request, Reply>,
     /// Вход `ASK`: команда без ожидания исхода.
-    ask: supervisor::AskServer<'a, OtaRequest, OtaReply>,
+    ask: supervisor::AskServer<'a, Request, Reply>,
     /// Готовность узла: подтверждение образа выполнено.
     ready: supervisor::Readiness,
 }
@@ -49,8 +49,8 @@ impl<'a, F, R> Ota<'a, F, R> {
         reboot: &'a mut R,
         running_version: &'a mut u32,
         confirmed: &'a mut bool,
-        cmd: supervisor::Server<'a, OtaRequest, OtaReply>,
-        ask: supervisor::AskServer<'a, OtaRequest, OtaReply>,
+        cmd: supervisor::Server<'a, Request, Reply>,
+        ask: supervisor::AskServer<'a, Request, Reply>,
         ready: supervisor::Readiness,
     ) -> Self {
         Self {
@@ -120,7 +120,7 @@ impl State {
         self,
         io: &mut Ota<'a, Updater<Partitions<D, S>>, R>,
         client: ClientId,
-        command: OtaCommand,
+        command: Command,
         served: Answer<'a>,
     ) -> State
     where
@@ -128,22 +128,22 @@ impl State {
         S: NorFlash,
     {
         match command {
-            OtaCommand::Start { len, signature } => match self {
+            Command::Start { len, signature } => match self {
                 State::Idle(s) => s.start(io, client, len, signature, served).await,
                 State::Receiving(s) => s.start(io, client, len, signature, served).await,
                 State::Ready(s) => s.start(client, served),
             },
-            OtaCommand::Chunk(chunk) => match self {
+            Command::Chunk(chunk) => match self {
                 State::Idle(s) => s.chunk(served),
                 State::Receiving(s) => s.chunk(io, client, &chunk, served).await,
                 State::Ready(s) => s.chunk(served),
             },
-            OtaCommand::Finish => match self {
+            Command::Finish => match self {
                 State::Idle(s) => s.finish(served),
                 State::Receiving(s) => s.finish(io, client, served).await,
                 State::Ready(s) => s.finish(client, served),
             },
-            OtaCommand::Reboot => unreachable!("`Reboot` разбирается в цикле, до разводки"),
+            Command::Reboot => unreachable!("`Reboot` разбирается в цикле, до разводки"),
         }
     }
 }
@@ -339,7 +339,7 @@ where
     /// входов забирает запрос только в том опросе, который его возвращает, а
     /// `CMD` опрашивается первым и, готовый, `ASK` уже не трогает — запрос,
     /// который не вернулся, остаётся в своей очереди.
-    pub(super) async fn command(&mut self) -> (OtaRequest, Answer<'a>) {
+    pub(super) async fn command(&mut self) -> (Request, Answer<'a>) {
         let mut call = pin!(self.cmd.serve());
         let mut ask = pin!(self.ask.serve());
         poll_fn(|cx| {

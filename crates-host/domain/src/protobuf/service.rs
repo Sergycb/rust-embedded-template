@@ -7,8 +7,7 @@ use super::info;
 use super::reply::{error, response};
 use crate::device::DeviceInfo;
 // {%- if ota == "true" %}
-use crate::ota::OtaClient;
-use crate::ota::protobuf::Handler as OtaHandler;
+use crate::ota::Client;
 // {%- endif %}
 
 /// Самый длинный запрос схемы, байт: под него `app` заводит буфер канала
@@ -42,7 +41,7 @@ pub struct Service {
     handlers: proto::host::Handlers<
         info::Handler,
         // {%- if ota == "true" %}
-        OtaHandler,
+        crate::ota::protobuf::Handler,
         // {%- endif %}
     >,
 }
@@ -60,14 +59,14 @@ impl Service {
     pub const fn new(
         info: DeviceInfo,
         // {%- if ota == "true" %}
-        ota: OtaClient,
+        ota: Client,
         // {%- endif %}
     ) -> Self {
         Self {
             handlers: proto::host::Handlers {
                 info: info::Handler::new(info),
                 // {%- if ota == "true" %}
-                ota: OtaHandler::new(ota),
+                ota: crate::ota::protobuf::Handler::new(ota),
                 // {%- endif %}
             },
         }

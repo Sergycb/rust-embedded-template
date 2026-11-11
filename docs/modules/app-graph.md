@@ -275,16 +275,16 @@ resources: [WS: &'static mut $crate::x::Workspace = static |w| w.gain = inputs.g
 Узел `OTA` объявлен в `domain::ota` (`OTA_FRAG`; версию этого образа для
 защиты от отката он получает во входе из свойств образа `boot.image`) и спавнится отсюда записью в
 `fragments:` — она же даёт ему имя (`as OTA`) и типы двух его слотов
-аргументами. Образ он принимает командами (`domain::ota::OtaCommand`) на свой вход
+аргументами. Образ он принимает командами (`domain::ota::Command`) на свой вход
 `CMD` — `request:` фрагмента, запрос с ответом (или на `ASK` — `serves:`, для
 клиента, который не ждёт исхода в вызове): `Start` (сверка длины до
 стирания), `Chunk` (буферизация до слова флеша — `domain::ota::download::Transfer`),
 `Finish` (`domain::ota::update::apply`), `Reboot`, — и на
-каждую отвечает исходом `domain::ota::OtaReply`. Всё это — host-тесты в
+каждую отвечает исходом `domain::ota::Reply`. Всё это — host-тесты в
 `crates-host/domain/src/ota.rs`.
 
 Команды шлёт узел протокола: клиента входа отдаёт аксессор графа
-`ota_cmd_requester()`, а узел получает его обёрнутым в `domain::ota::OtaClient`
+`ota_cmd_requester()`, а узел получает его обёрнутым в `domain::ota::Client`
 с номером своего транспорта (`ClientId`, порядковый номер транспорта с
 протоколом в `links`, с 0){% if has_protobuf == "true" %} — его получает `domain::protobuf::Service`
 прямо во входе узла `PROTOBUF_*`{% endif %}. Номер нужен

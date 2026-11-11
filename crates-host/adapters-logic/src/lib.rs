@@ -13,7 +13,7 @@
 //! Транспорты master'а Modbus (`ports::ModbusClient`).
 // {%- endif %}
 // {%- if has_tcp == "true" %}
-//! TCP-сервер (`net::TcpServer`) — поток байтов над сокетом.
+//! TCP-сервер (`net::Server`) — поток байтов над сокетом.
 // {%- endif %}
 //!
 //! Чипа здесь нет: поток — любой `embedded_io_async::{Read, Write}`, сокеты —

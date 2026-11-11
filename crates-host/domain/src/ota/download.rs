@@ -1,6 +1,6 @@
 //! Приём образа по кускам: всё, что одинаково для любого протокола.
 //!
-//! Образ приходит командами ([`OtaCommand`]): узел протокола переводит
+//! Образ приходит командами ([`Command`]): узел протокола переводит
 //! свои сообщения в `Start`, `Chunk` и `Finish`, а узел [`ota`](crate::ota)
 //! ведёт приём шагами [`Transfer`](crate::ota::download::Transfer). Вокруг этих шагов есть работа, которая от
 //! протокола не зависит вовсе, и делать её в каждом проекте заново незачем:
@@ -25,7 +25,7 @@
 use embedded_storage_async::nor_flash::NorFlash;
 use ports::{MAX_WRITE_SIZE, Partitions};
 
-use crate::ota::updater::{FlashError, Updater};
+use crate::ota::updater::{Error as UpdaterError, Updater};
 
 /// Приём одного образа между `Start` и `Finish` — данные состояния
 /// `Receiving` узла OTA.
@@ -244,7 +244,7 @@ pub enum DownloadError {
     /// Передача кончилась, не добрав до обещанной длины.
     Incomplete { announced: u32, received: u32 },
     /// Отказ самого флеша.
-    Flash(FlashError),
+    Flash(UpdaterError),
 }
 
 #[cfg(test)]
@@ -256,7 +256,7 @@ mod tests {
 
     use super::{DownloadError, Transfer};
     use crate::ota::fake::{flash, flash_with_word};
-    use crate::ota::{FlashError, Updater};
+    use crate::ota::{Updater, UpdaterError};
 
     /// Исход приёма целиком и сколько кусков в него ушло.
     struct Received {
@@ -544,7 +544,7 @@ mod tests {
 
         assert_eq!(
             failed,
-            Err(DownloadError::Flash(FlashError::Flash(
+            Err(DownloadError::Flash(UpdaterError::Flash(
                 NorFlashErrorKind::Other
             )))
         );

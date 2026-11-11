@@ -8,12 +8,12 @@
 //! обновления — настоящий, над разделами в памяти.
 //!
 //! Образ приходит не по своему каналу: узел протокола переводит свои сообщения в
-//! [`OtaCommand`](crate::ota::OtaCommand) и отдаёт их узлу через один из двух
+//! [`Command`](crate::ota::command::Command) и отдаёт их узлу через один из двух
 //! входов: `CMD` (`request:` фрагмента — клиент ждёт исхода в вызове) или `ASK`
 //! (`serves:` — клиент отправляет команду, не дожидаясь, и забирает исход из
 //! `reply()`, обслуживая тем временем свой канал). Для узла входы одинаковы:
 //! команды обоих идут в один цикл. На каждую команду узел отвечает
-//! [`OtaReply`](crate::ota::OtaReply) — её исходом, и протокол передаёт его хосту
+//! [`Reply`](crate::ota::command::Reply) — её исходом, и протокол передаёт его хосту
 //! как есть: ни опрашивать статус, ни угадывать, дошёл ли кусок, хосту не
 //! нужно. Узел про протокол не знает, протокол — про флеш.
 //!
@@ -75,7 +75,7 @@ pub mod version;
 mod client;
 // {%- if has_protobuf == "true" %}
 /// Обработчик `OtaService` узла `PROTOBUF`: команды обновления в
-/// [`OtaCommand`](crate::ota::OtaCommand), исход — в ответ схемы.
+/// [`Command`], исход — в ответ схемы.
 pub(crate) mod protobuf;
 // {%- endif %}
 mod logic;
@@ -84,15 +84,15 @@ mod timing;
 /// Адаптер обновления над `embassy-boot`: разделы `DFU` и `STATE` платы.
 mod updater;
 
-// Типы входа `CMD` — и в корне `domain::ota`, под именами с `Ota`: их полным
-// путём называют фрагмент и compose-site (`app`).
-pub use command::{Command as OtaCommand, Reply as OtaReply};
+// Типы входа `CMD` — в корне `domain::ota`: их полным путём называют фрагмент
+// и compose-site (`app`).
+pub use command::{Command, Reply};
 
 // Подмодули — по теме; их типы видны как `domain::ota::…`.
-pub use client::{CMD_BYTES, ClientId, NodeLost, OtaClient, OtaRequest, cmd_parked};
+pub use client::{CMD_BYTES, Client, ClientId, NodeLost, Request, cmd_parked};
 pub use logic::{Idle, Ready, Receiving, State};
 pub use timing::{REBOOT_GRACE, SESSION_TIMEOUT};
-pub use updater::{FlashError, Updater};
+pub use updater::{Error as UpdaterError, Updater};
 
 use embassy_futures::select::{Either, select};
 use embedded_storage_async::nor_flash::NorFlash;
@@ -131,10 +131,10 @@ use crate::tick::deadline;
 // - `request: [CMD: …]` — запрос с ответом (`sync-request`), а не очередь:
 //   протокол отвечает хосту исходом именно своей команды.
 // {%- if graph == "true" %}
-//   Клиент — `OtaClient`: requester из аксессора графа `ota_cmd_requester()` и
+//   Клиент — `Client`: requester из аксессора графа `ota_cmd_requester()` и
 //   номер транспорта, который раздаёт compose-site.
 // {%- else %}
-//   Клиент — `OtaClient`: requester входа и номер транспорта, которые раздаёт
+//   Клиент — `Client`: requester входа и номер транспорта, которые раздаёт
 //   `crates-cross/app/src/tasks/ota.rs`.
 // {%- endif %}
 // - `serves: [ASK: …]` — тот же вход для клиента, которому нельзя ждать
@@ -159,7 +159,7 @@ use crate::tick::deadline;
 //   `&'static Mutex<NoopRawMutex, …>`), а обычный слот — `static`, которому
 //   нужен `Send`. `LocalResourceSlot` снимает требование, взамен обязывая
 //   держать значение на исполнителе, который спавнит задачи (то же
-//   допущение, что `NoopRawMutex` у `FlashMutex`). Цена на compose-site —
+//   допущение, что `NoopRawMutex` у `Lock`). Цена на compose-site —
 //   фича `supervisor/local-resources` и `unsafe`-блок на каждый
 //   `local`-`static`.
 // {%- if graph == "true" %}
@@ -186,8 +186,8 @@ supervisor::supervisor_fragment! {
             CONFIRMED: bool = inputs.confirmed
         ],
         // Литерал, а не `CMD_BYTES`: макрос принимает здесь только число. Равен ему.
-        request: [CMD: $crate::ota::OtaRequest -> $crate::ota::OtaReply; 144 parked PARKED],
-        serves: [ASK: $crate::ota::OtaRequest -> $crate::ota::OtaReply; 144],
+        request: [CMD: $crate::ota::Request -> $crate::ota::Reply; 144 parked PARKED],
+        serves: [ASK: $crate::ota::Request -> $crate::ota::Reply; 144],
         ready,
         ctx: $crate::ota::OtaCtx,
         task: $crate::ota::task;
@@ -245,8 +245,8 @@ pub async fn task<D, S, R, const PARKED: usize>(
             },
             None => ota.command().await,
         };
-        let OtaRequest { client, command } = request;
-        if let OtaCommand::Reboot = command {
+        let Request { client, command } = request;
+        if let Command::Reboot = command {
             // `Reboot` — из любого состояния: ответ, пауза на его отправку,
             // сброс. Состояние не меняется.
             ota.reboot(served).await;
@@ -534,13 +534,13 @@ pub(crate) mod tests {
     use ports::Reboot;
 
     use crate::ota::command::{Chunk, Progress, Rejection};
-    use crate::ota::{OtaCommand, OtaReply};
+    use crate::ota::{Command, Reply};
 
     // {%- if has_modbus == "true" or has_protobuf == "true" or has_cli == "true" or net_services contains "mqtt" or net_services contains "rest" or net_services contains "ssh" %}
-    use super::OtaClient;
+    use super::Client;
     // {%- endif %}
 
-    use super::{ClientId, OtaRequest, REBOOT_GRACE, SESSION_TIMEOUT, task};
+    use super::{ClientId, REBOOT_GRACE, Request, SESSION_TIMEOUT, task};
     /// Отпечаток раскладки фейка — образы тестов узла и протоколов несут его
     /// в хвосте.
     pub(crate) use crate::ota::fake::LAYOUT;
@@ -568,9 +568,9 @@ pub(crate) mod tests {
     /// он не успел увидеть (время ушло, а узел не опрошен).
     #[derive(Debug, Clone)]
     enum Step {
-        Send(OtaRequest),
+        Send(Request),
         /// Та же команда, но через вход `ASK`.
-        Ask(OtaRequest),
+        Ask(Request),
         Wait(Duration),
         Skip(Duration),
     }
@@ -598,7 +598,7 @@ pub(crate) mod tests {
     /// — стенд,
     /// флеш и слоты живут до конца процесса, как в прошивке: клиент —
     /// `'static`, как у `ota_cmd_requester()`.
-    pub(crate) fn live() -> (OtaClient, Node) {
+    pub(crate) fn live() -> (Client, Node) {
         let stand = Box::leak(Box::new(
             supervisor::stand!(OTA_FRAG<FakeFlash, FakeReboot, 1>; QUEUE_ASK = 1),
         ));
@@ -609,7 +609,7 @@ pub(crate) mod tests {
             Box::leak(Box::new(false)),
         ));
         (
-            OtaClient::new(stand.cmd.requester(), ClientId(0)),
+            Client::new(stand.cmd.requester(), ClientId(0)),
             Box::pin(node),
         )
     }
@@ -619,12 +619,12 @@ pub(crate) mod tests {
     /// Вход `CMD` узла OTA без самого узла и его клиент — для тестов
     /// протоколов (`http`, `ssh`, `modbus`) и консоли: на команду отвечает тест, и исходом,
     /// которого узел не даёт, и молчанием (сервер берёт запрос и бросает его).
-    pub(crate) fn cmd() -> (OtaClient, supervisor::Server<'static, OtaRequest, OtaReply>) {
+    pub(crate) fn cmd() -> (Client, supervisor::Server<'static, Request, Reply>) {
         let stand = Box::leak(Box::new(
             supervisor::stand!(OTA_FRAG<FakeFlash, FakeReboot, 1>; QUEUE_ASK = 1),
         ));
         (
-            OtaClient::new(stand.cmd.requester(), ClientId(0)),
+            Client::new(stand.cmd.requester(), ClientId(0)),
             stand.cmd.server().expect("сервер CMD стенда свободен"),
         )
     }
@@ -634,7 +634,7 @@ pub(crate) mod tests {
     /// Узел OTA на фейке флеша, чей вход `ASK` — `ask`: сервер ребра из стенда
     /// узла-клиента (`stand.ota_ask` у фрагмента с `asks: [OTA.ASK ..]`).
     pub(crate) fn serving<'a>(
-        ask: supervisor::AskServer<'a, OtaRequest, OtaReply>,
+        ask: supervisor::AskServer<'a, Request, Reply>,
     ) -> Pin<Box<dyn Future<Output = ()> + 'a>> {
         let stand = Box::leak(Box::new(
             supervisor::stand!(OTA_FRAG<FakeFlash, FakeReboot, 1>; QUEUE_ASK = 1),
@@ -653,8 +653,8 @@ pub(crate) mod tests {
     // {%- endif %}
 
     /// Команда от клиента 0 — единственного транспорта.
-    fn send(command: OtaCommand) -> Step {
-        Step::Send(OtaRequest {
+    fn send(command: Command) -> Step {
+        Step::Send(Request {
             client: ClientId(0),
             command,
         })
@@ -665,7 +665,7 @@ pub(crate) mod tests {
         let Step::Send(request) = step else {
             panic!("by() — только для команды");
         };
-        Step::Send(OtaRequest {
+        Step::Send(Request {
             client: ClientId(client),
             ..request
         })
@@ -702,7 +702,7 @@ pub(crate) mod tests {
     /// Гоняет узел по сценарию и возвращает ответы на команды по порядку.
     /// `confirmed` — слот снаружи: образ, который себя не подтверждает,
     /// приходит с `true`, а сценарий видит, чем узел его оставил.
-    fn run_on(flash: &mut FakeFlash, confirmed: &mut bool, steps: Vec<Step>) -> Vec<OtaReply> {
+    fn run_on(flash: &mut FakeFlash, confirmed: &mut bool, steps: Vec<Step>) -> Vec<Reply> {
         MockDriver::get().reset();
         let stand = supervisor::stand!(OTA_FRAG<FakeFlash, FakeReboot, 1>; QUEUE_ASK = 1);
         let (mut reboot, mut version) = (FakeReboot, RUNNING_VERSION);
@@ -737,14 +737,14 @@ pub(crate) mod tests {
         replies
     }
 
-    fn run(flash: &mut FakeFlash, steps: Vec<Step>) -> Vec<OtaReply> {
+    fn run(flash: &mut FakeFlash, steps: Vec<Step>) -> Vec<Reply> {
         run_on(flash, &mut false, steps)
     }
 
     /// `Start` с подписью — как его шлёт любой хост.
     #[expect(clippy::cast_possible_truncation, reason = "размеры в тестах малы")]
     fn start(len: usize) -> Step {
-        send(OtaCommand::Start {
+        send(Command::Start {
             len: len as u32,
             signature: Some(SIGNATURE),
         })
@@ -753,14 +753,14 @@ pub(crate) mod tests {
     /// `Start` без подписи — его узел отвергает.
     #[expect(clippy::cast_possible_truncation, reason = "размеры в тестах малы")]
     fn unsigned_start(len: usize) -> Step {
-        send(OtaCommand::Start {
+        send(Command::Start {
             len: len as u32,
             signature: None,
         })
     }
 
     fn chunk(offset: u32, data: &[u8]) -> Step {
-        send(OtaCommand::Chunk(
+        send(Command::Chunk(
             Chunk::new(offset, data).expect("кусок помещается"),
         ))
     }
@@ -775,7 +775,7 @@ pub(crate) mod tests {
     }
 
     fn finish() -> Step {
-        send(OtaCommand::Finish)
+        send(Command::Finish)
     }
 
     /// Образ, как его собирает `cargo xtask build`: хвост — отпечаток
@@ -1396,7 +1396,7 @@ pub(crate) mod tests {
     fn reboot_is_served_for_any_client() {
         let mut flash = flash(128);
 
-        let replies = run(&mut flash, vec![start(16), by(1, send(OtaCommand::Reboot))]);
+        let replies = run(&mut flash, vec![start(16), by(1, send(Command::Reboot))]);
 
         assert_eq!(
             replies,
@@ -1413,7 +1413,7 @@ pub(crate) mod tests {
         let replies = run(
             &mut flash,
             vec![
-                send(OtaCommand::Reboot),
+                send(Command::Reboot),
                 Step::Wait(REBOOT_GRACE - Duration::from_millis(1)),
             ],
         );
@@ -1421,7 +1421,7 @@ pub(crate) mod tests {
 
         run(
             &mut flash,
-            vec![send(OtaCommand::Reboot), Step::Wait(REBOOT_GRACE)],
+            vec![send(Command::Reboot), Step::Wait(REBOOT_GRACE)],
         );
     }
 

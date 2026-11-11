@@ -13,7 +13,7 @@ use picoserve::routing::post;
 use crate::device::DeviceInfo;
 // {%- if ota == "true" %}
 use crate::ota::command::Progress;
-use crate::ota::{OtaClient, OtaCommand};
+use crate::ota::{Client, Command};
 // {%- endif %}
 
 use super::auth::Auth;
@@ -25,7 +25,7 @@ pub(super) struct Api {
     pub(super) stack: Stack<'static>,
     pub(super) token: &'static str,
     // {%- if ota == "true" %}
-    pub(super) ota: OtaClient,
+    pub(super) ota: Client,
     // {%- endif %}
 }
 
@@ -129,7 +129,7 @@ fn info(api: &Api) -> Result<InfoBody, (StatusCode, &'static str)> {
 
 /// `POST /api/reboot`: узел OTA сбрасывает МК, ответив раньше сброса.
 async fn reboot(api: &Api) -> (StatusCode, &'static str) {
-    match api.ota.request(OtaCommand::Reboot).await {
+    match api.ota.request(Command::Reboot).await {
         Ok(Ok(Progress::Rebooting)) => (StatusCode::ACCEPTED, "rebooting\n"),
         Ok(_) => (StatusCode::CONFLICT, "reboot refused\n"),
         Err(_) => (StatusCode::SERVICE_UNAVAILABLE, "ota node lost\n"),
@@ -155,7 +155,7 @@ mod tests {
     use embassy_time::{Duration, MockDriver};
     // {%- if ota == "true" %}
     use crate::ota::command::{Progress, Rejection};
-    use crate::ota::{OtaCommand, OtaReply};
+    use crate::ota::{Command, Reply};
     use supervisor::Server;
     // {%- endif %}
 
@@ -163,7 +163,7 @@ mod tests {
     use crate::device::{DeviceInfo, UID_BYTES};
     use crate::http::{HTTP_BUFFER, PORT, TCP_RX, TCP_TX};
     // {%- if ota == "true" %}
-    use crate::ota::{OtaClient, OtaRequest};
+    use crate::ota::{Client, Request};
     // {%- endif %}
 
     /// Отложенное подтверждение `smoltcp` по умолчанию.
@@ -292,7 +292,7 @@ mod tests {
     /// `test` получает стек-хост.
     async fn with_server<R>(
         // {%- if ota == "true" %}
-        ota: OtaClient,
+        ota: Client,
         // {%- endif %}
         test: impl AsyncFnOnce(Stack<'static>) -> R,
     ) -> R {
@@ -318,7 +318,7 @@ mod tests {
 
     // {%- if ota == "true" %}
     /// Узел OTA, который на любую команду отвечает «сбрасываюсь».
-    async fn agree(cmd: &mut Server<'static, OtaRequest, OtaReply>) -> Infallible {
+    async fn agree(cmd: &mut Server<'static, Request, Reply>) -> Infallible {
         loop {
             let (_, served) = cmd.serve().await;
             served.respond(Ok(Progress::Rebooting));
@@ -410,7 +410,7 @@ mod tests {
     #[tokio::test]
     async fn reboot_answers_with_the_ota_outcome() {
         let (ota, mut cmd) = crate::ota::tests::cmd();
-        let cases: [(Option<OtaReply>, u16); 4] = [
+        let cases: [(Option<Reply>, u16); 4] = [
             (Some(Ok(Progress::Rebooting)), 202),
             (Some(Ok(Progress::Ready)), 409),
             (Some(Err(Rejection::Busy)), 409),
@@ -420,7 +420,7 @@ mod tests {
             let node = async {
                 for (reply, _) in &cases {
                     let (request, served) = cmd.serve().await;
-                    assert_eq!(request.command, OtaCommand::Reboot);
+                    assert_eq!(request.command, Command::Reboot);
                     // `None` — обязанность ответить брошена: узел потерян.
                     if let Some(reply) = reply {
                         served.respond(*reply);

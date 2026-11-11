@@ -85,7 +85,7 @@ pub use persisted::{NODE_ID_KEY, OBJECTS_KEY, Persisted, STORE_CAPACITY};
 pub use stack::{Stack, TICK};
 pub use wiring::{Dictionary, dictionary, serial};
 // {%- if ota == "true" %}
-pub use ota::{OTA, OTA_INDEX, OtaObject};
+pub use ota::{OTA, OTA_INDEX, Object};
 // {%- endif %}
 
 // Узел объявлен рядом со своей задачей.
@@ -119,7 +119,7 @@ supervisor::supervisor_fragment! {
         // Команды объекта OTA словаря ([`OTA`]) — на вход `ASK` узла OTA без
         // ожидания исхода: узел обслуживает шину, пока OTA стирает раздел.
         // Квота — одна команда: следующую объект не ставит до исхода.
-        asks: [OTA.ASK: $crate::ota::OtaRequest -> $crate::ota::OtaReply; 1 tag ()],
+        asks: [OTA.ASK: $crate::ota::Request -> $crate::ota::Reply; 1 tag ()],
         // {%- endif %}
         ctx: $crate::canopen::CanOpenCtx,
         task: $crate::canopen::task;

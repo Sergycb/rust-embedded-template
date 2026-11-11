@@ -14,7 +14,7 @@ const IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// TCP-сервер на одном порту — поток байтов для транспортов протоколов.
 // {%- if modbus_tcp == "true" %}
-/// Над ним работает `modbus::Tcp`.
+/// Над ним работает `modbus::Link`.
 // {%- endif %}
 // {%- if cobs_used == "true" %}
 /// Над ним работает `cobs::Cobs`.
@@ -28,21 +28,21 @@ const IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 /// второму стек отвечает RST (соединение отвергнуто), и переподключаться ему —
 /// после ухода первого. Молчаливо пропавшего клиента (обесточен, вынут кабель)
 /// снимают keep-alive и таймаут соединения — иначе сокет занят навсегда.
-pub struct TcpServer {
+pub struct Server {
     socket: TcpSocket<'static>,
     port: u16,
 }
 
 // Вручную: у сокетов `embassy-net` нет `Debug`.
-impl core::fmt::Debug for TcpServer {
+impl core::fmt::Debug for Server {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("TcpServer")
+        f.debug_struct("Server")
             .field("port", &self.port)
             .finish_non_exhaustive()
     }
 }
 
-impl TcpServer {
+impl Server {
     /// Сервер на порту `port` стека `stack` с буферами сокета `rx` и `tx`.
     #[must_use]
     pub fn new(
@@ -63,7 +63,7 @@ impl TcpServer {
     }
 
     /// Ждёт клиента, если соединения нет.
-    async fn connected(&mut self) -> Result<(), TcpError> {
+    async fn connected(&mut self) -> Result<(), Error> {
         if self.is_connected() {
             return Ok(());
         }
@@ -74,10 +74,7 @@ impl TcpServer {
         }
         self.socket.set_keep_alive(Some(KEEP_ALIVE));
         self.socket.set_timeout(Some(IDLE_TIMEOUT));
-        self.socket
-            .accept(self.port)
-            .await
-            .map_err(TcpError::Accept)
+        self.socket.accept(self.port).await.map_err(Error::Accept)
     }
 
     /// Сбрасывает соединение: следующее обращение примет новое.
@@ -88,19 +85,19 @@ impl TcpServer {
 
     /// Обрывает соединение: следующее чтение ждёт нового клиента. Нужен
     /// протоколу, который, потеряв в потоке границу кадра, в том же
-    /// соединении её уже не найдёт (`modbus::Tcp`): клиент переподключится и
+    /// соединении её уже не найдёт (`modbus::Link`): клиент переподключится и
     /// начнёт с чистого потока.
     pub(crate) async fn hang_up(&mut self) {
         self.drop_connection().await;
     }
     // {%- endif %}
 }
-impl ErrorType for TcpServer {
-    type Error = TcpError;
+impl ErrorType for Server {
+    type Error = Error;
 }
 
-impl Read for TcpServer {
-    async fn read(&mut self, buf: &mut [u8]) -> Result<usize, TcpError> {
+impl Read for Server {
+    async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
         // Пустой буфер — 0 и у живого соединения, концом потока он не считается.
         if buf.is_empty() {
             return Ok(0);
@@ -114,44 +111,44 @@ impl Read for TcpServer {
             Ok(n) => Ok(n),
             Err(err) => {
                 self.drop_connection().await;
-                Err(TcpError::Io(err))
+                Err(Error::Io(err))
             }
         }
     }
 }
 
-impl Write for TcpServer {
-    async fn write(&mut self, buf: &[u8]) -> Result<usize, TcpError> {
+impl Write for Server {
+    async fn write(&mut self, buf: &[u8]) -> Result<usize, Error> {
         if !self.is_connected() {
-            return Err(TcpError::NotConnected);
+            return Err(Error::NotConnected);
         }
         match self.socket.write(buf).await {
             Ok(n) => Ok(n),
             Err(err) => {
                 self.drop_connection().await;
-                Err(TcpError::Io(err))
+                Err(Error::Io(err))
             }
         }
     }
 
-    async fn flush(&mut self) -> Result<(), TcpError> {
+    async fn flush(&mut self) -> Result<(), Error> {
         if !self.is_connected() {
-            return Err(TcpError::NotConnected);
+            return Err(Error::NotConnected);
         }
         match self.socket.flush().await {
             Ok(()) => Ok(()),
             Err(err) => {
                 self.drop_connection().await;
-                Err(TcpError::Io(err))
+                Err(Error::Io(err))
             }
         }
     }
 }
 
-/// Почему [`TcpServer`] не прочитал или не записал.
+/// Почему [`Server`] не прочитал или не записал.
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum TcpError {
+pub enum Error {
     /// Клиента не удалось принять.
     Accept(AcceptError),
     /// Соединение оборвалось; следующее чтение примет новое.
@@ -160,7 +157,7 @@ pub enum TcpError {
     NotConnected,
 }
 
-impl core::fmt::Display for TcpError {
+impl core::fmt::Display for Error {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Accept(err) => write!(f, "клиент не принят: {err:?}"),
@@ -170,9 +167,9 @@ impl core::fmt::Display for TcpError {
     }
 }
 
-impl core::error::Error for TcpError {}
+impl core::error::Error for Error {}
 
-impl embedded_io_async::Error for TcpError {
+impl embedded_io_async::Error for Error {
     fn kind(&self) -> ErrorKind {
         match self {
             // Ошибка программы, а не сети: порт 0 или сокет в чужом состоянии.
@@ -217,7 +214,7 @@ mod tests {
     #[tokio::test]
     async fn tcp_server_serves_and_takes_the_next_client() {
         let ((device, device_runner), (host, host_runner)) = pair();
-        let mut server = TcpServer::new(device, PORT, leak([0; 256]), leak([0; 256]));
+        let mut server = Server::new(device, PORT, leak([0; 256]), leak([0; 256]));
         with_network(device_runner, host_runner, async {
             for round in 0..2_u8 {
                 // Сервер слушает с первого чтения — как узел протокола,
@@ -258,19 +255,19 @@ mod tests {
     #[tokio::test]
     async fn tcp_server_drops_a_reset_connection() {
         let ((device, device_runner), (host, host_runner)) = pair();
-        let mut server = TcpServer::new(device, PORT, leak([0; 64]), leak([0; 64]));
+        let mut server = Server::new(device, PORT, leak([0; 64]), leak([0; 64]));
         with_network(device_runner, host_runner, async {
             let device_side = async {
                 let mut buf = [0; 8];
                 assert!(matches!(
                     server.read(&mut buf).await,
-                    Err(TcpError::Io(tcp::Error::ConnectionReset))
+                    Err(Error::Io(tcp::Error::ConnectionReset))
                 ));
                 assert_eq!(server.socket.state(), State::Closed);
                 assert!(!server.is_connected());
                 assert!(matches!(
                     server.write(b"late").await,
-                    Err(TcpError::NotConnected)
+                    Err(Error::NotConnected)
                 ));
             };
             let host_side = async {
@@ -289,23 +286,23 @@ mod tests {
     #[tokio::test]
     async fn tcp_server_without_client_refuses_writes() {
         let ((device, _), _) = pair();
-        let mut server = TcpServer::new(device, PORT, leak([0; 64]), leak([0; 64]));
+        let mut server = Server::new(device, PORT, leak([0; 64]), leak([0; 64]));
         assert!(matches!(
             server.write(b"late").await,
-            Err(TcpError::NotConnected)
+            Err(Error::NotConnected)
         ));
-        assert!(matches!(server.flush().await, Err(TcpError::NotConnected)));
+        assert!(matches!(server.flush().await, Err(Error::NotConnected)));
         assert_eq!(server.read(&mut []).await.unwrap(), 0);
         assert_eq!(
-            embedded_io_async::Error::kind(&TcpError::NotConnected),
+            embedded_io_async::Error::kind(&Error::NotConnected),
             ErrorKind::NotConnected
         );
         assert_eq!(
-            embedded_io_async::Error::kind(&TcpError::Accept(AcceptError::InvalidPort)),
+            embedded_io_async::Error::kind(&Error::Accept(AcceptError::InvalidPort)),
             ErrorKind::Other
         );
         assert_eq!(
-            embedded_io_async::Error::kind(&TcpError::Io(tcp::Error::ConnectionReset)),
+            embedded_io_async::Error::kind(&Error::Io(tcp::Error::ConnectionReset)),
             ErrorKind::ConnectionReset
         );
     }

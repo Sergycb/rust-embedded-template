@@ -53,7 +53,7 @@ supervisor::supervisor_fragment! {
             TOKEN: &'static str = inputs.token,
             // {%- if ota == "true" %}
             /// Клиент входа `CMD` узла OTA — для `/api/reboot`.
-            OTA: $crate::ota::OtaClient = inputs.ota,
+            OTA: $crate::ota::Client = inputs.ota,
             // {%- endif %}
             /// Приём сокета.
             RX: &'static mut [u8; $crate::http::TCP_RX] = static,

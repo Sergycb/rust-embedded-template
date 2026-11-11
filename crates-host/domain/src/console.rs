@@ -35,8 +35,8 @@ use embassy_time::Timer;
 use embedded_io_async::{Read, Write};
 
 // {%- if ota == "true" %}
+use crate::ota::Client;
 use crate::ota::command::Progress;
-use crate::ota::{OtaClient, OtaCommand};
 // {%- endif %}
 use crate::device::{DeviceInfo, INFO_TEXT, write_info};
 
@@ -59,11 +59,11 @@ supervisor::supervisor_fragment! {
             LOGIN: $crate::console::PasswordHash = inputs.login,
             // {%- if has_net == "true" %}
             /// Стек сети проекта: `info` показывает MAC и адрес.
-            STACK: local $crate::console::NetStack = inputs.stack,
+            STACK: local $crate::console::ConsoleStack = inputs.stack,
             // {%- endif %}
             // {%- if ota == "true" %}
             /// Клиент входа `CMD` узла OTA — для `reboot`.
-            OTA: $crate::ota::OtaClient = inputs.ota,
+            OTA: $crate::ota::Client = inputs.ota,
             // {%- endif %}
         ],
         ctx: $crate::console::ConsoleCtx,
@@ -99,7 +99,7 @@ const ERROR_TEXT: usize = 64;
 // {%- if has_net == "true" %}
 /// Стек консоли. Псевдоним — чтобы `app`, где раскрывается фрагмент, не
 /// зависел от `embassy-net` сам.
-pub type NetStack = Option<Stack<'static>>;
+pub type ConsoleStack = Option<Stack<'static>>;
 // {%- endif %}
 
 /// Подтверждение перезагрузки: `reboot` — подсказка, `reboot yes` — сброс.
@@ -146,7 +146,7 @@ pub(crate) struct Device<'a> {
     pub(crate) stack: Option<Stack<'static>>,
     // {%- endif %}
     // {%- if ota == "true" %}
-    pub(crate) ota: OtaClient,
+    pub(crate) ota: Client,
     // {%- endif %}
 }
 
@@ -423,7 +423,7 @@ async fn run<W: Write>(
         Command::Reboot(Confirm::No) => out.text("to reboot, type: reboot yes\n").await?,
         Command::Reboot(Confirm::Yes) => {
             // Узел OTA отвечает раньше сброса: ответ успевает уйти.
-            let reply = match device.ota.request(OtaCommand::Reboot).await {
+            let reply = match device.ota.request(crate::ota::Command::Reboot).await {
                 Ok(Ok(Progress::Rebooting)) => "rebooting\n",
                 Ok(_) => "reboot refused\n",
                 Err(_) => "ota node lost\n",

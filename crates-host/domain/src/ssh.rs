@@ -98,7 +98,7 @@ supervisor::supervisor_fragment! {
             // {%- endif %}
             // {%- if ota == "true" %}
             /// Клиент входа `CMD` узла OTA — для `reboot`.
-            OTA: $crate::ota::OtaClient = inputs.ota,
+            OTA: $crate::ota::Client = inputs.ota,
             // {%- endif %}
             /// Приём сокета.
             TCP_RX: &'static mut [u8; $crate::ssh::TCP_BUFFER] = static,
@@ -133,7 +133,7 @@ pub async fn task<F: NorFlash>(ctx: SshCtx<'_, Stored<F>>) {
         *ctx.stack, ctx.info, // {%- if ota == "true" %}
         *ctx.ota,
         // {%- else %}
-        //{{newline}}    ota_stub::OtaClient,
+        //{{newline}}    ota_stub::Client,
         // {%- endif %}
         ctx.tcp_rx, ctx.tcp_tx, ctx.ssh_rx, ctx.ssh_tx,
     );

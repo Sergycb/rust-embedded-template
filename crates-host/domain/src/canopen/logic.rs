@@ -17,7 +17,7 @@ use zencan_node::{Callbacks, Node};
 
 // {%- if ota == "true" %}
 use super::ota::OTA;
-use crate::ota::{ClientId, OtaReply, OtaRequest};
+use crate::ota::{ClientId, Reply, Request};
 // {%- endif %}
 use super::frame::{fix_save_signature, is_heartbeat, to_frame, to_message};
 use super::persisted;
@@ -51,7 +51,7 @@ pub(super) struct CanOpen<'a, C, S> {
     /// Номер клиента узла OTA — транспорта.
     ota_client: &'a mut ClientId,
     /// Вход `ASK` узла OTA: команды без ожидания исхода.
-    pub(super) ota_ask: supervisor::Asker<'a, OtaRequest, OtaReply, ()>,
+    pub(super) ota_ask: supervisor::Asker<'a, Request, Reply, ()>,
     // {%- endif %}
 }
 
@@ -66,7 +66,7 @@ impl<'a, C, S> CanOpen<'a, C, S> {
         serial: &'a mut u32,
         // {%- if ota == "true" %}
         ota_client: &'a mut ClientId,
-        ota_ask: supervisor::Asker<'a, OtaRequest, OtaReply, ()>,
+        ota_ask: supervisor::Asker<'a, Request, Reply, ()>,
         // {%- endif %}
     ) -> Self {
         Self {
@@ -164,7 +164,7 @@ where
         clippy::needless_pass_by_value,
         reason = "событие `listen` автомат отдаёт действию по значению"
     )]
-    pub(super) fn answered(&mut self, reply: supervisor::AskReply<(), OtaReply>) {
+    pub(super) fn answered(&mut self, reply: supervisor::AskReply<(), Reply>) {
         let reply = reply.outcome.unwrap_or_else(|_dropped| {
             warn!("canopen: узел OTA не ответил");
             Err(crate::ota::command::Rejection::Device)

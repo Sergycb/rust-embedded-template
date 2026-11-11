@@ -7,7 +7,7 @@ use defmt_or_log::warn;
 use proto::{Error, Ota, Ota_, Response_, heapless};
 
 use super::command::{CHUNK_BYTES, Chunk, Rejection, SIGNATURE_BYTES};
-use super::{OtaClient, OtaCommand, OtaReply};
+use super::{Client, Command, Reply};
 use crate::protobuf::error;
 
 // Пределы полей схемы (`proto/build.rs`) — те же, что у команды узлу OTA:
@@ -21,18 +21,18 @@ const _: () = assert!(
 #[derive(Debug)]
 pub(crate) struct Handler {
     /// Клиент узла OTA: вход `CMD` и номер транспорта.
-    ota: OtaClient,
+    ota: Client,
 }
 
 impl Handler {
     /// Обработчик, отдающий команды обновления узлу OTA клиентом `ota`.
     #[must_use]
-    pub(crate) const fn new(ota: OtaClient) -> Self {
+    pub(crate) const fn new(ota: Client) -> Self {
         Self { ota }
     }
 
     /// Команда узлу OTA и её исход; узел OTA пропал — отказ устройства.
-    async fn send(&self, command: OtaCommand) -> Response_::Result {
+    async fn send(&self, command: Command) -> Response_::Result {
         let reply = self.ota.request(command).await.unwrap_or_else(|_lost| {
             warn!("protobuf: узел OTA не ответил");
             Err(Rejection::Device)
@@ -43,7 +43,7 @@ impl Handler {
     async fn start(&mut self, request: &Ota_::Start) -> Response_::Result {
         match signature(&request.signature) {
             Ok(signature) => {
-                self.send(OtaCommand::Start {
+                self.send(Command::Start {
                     len: request.len,
                     signature,
                 })
@@ -55,18 +55,18 @@ impl Handler {
 
     async fn chunk(&mut self, request: &Ota_::Chunk) -> Response_::Result {
         match Chunk::new(request.offset, &request.data) {
-            Some(chunk) => self.send(OtaCommand::Chunk(chunk)).await,
+            Some(chunk) => self.send(Command::Chunk(chunk)).await,
             // Ёмкость поля в схеме та же, что у куска: сюда не доходит.
             None => error("chunk too long"),
         }
     }
 
     async fn finish(&mut self) -> Response_::Result {
-        self.send(OtaCommand::Finish).await
+        self.send(Command::Finish).await
     }
 
     async fn reboot(&mut self) -> Response_::Result {
-        self.send(OtaCommand::Reboot).await
+        self.send(Command::Reboot).await
     }
 }
 
@@ -94,7 +94,7 @@ fn signature(bytes: &[u8]) -> Result<Option<[u8; SIGNATURE_BYTES]>, TryFromSlice
 
 /// Исход команды обновления — `ok` или `error` с именем отказа
 /// ([`Rejection`]).
-fn ota_reply(reply: OtaReply) -> Response_::Result {
+fn ota_reply(reply: Reply) -> Response_::Result {
     match reply {
         Ok(_) => Response_::Result::Ok(proto::Ok {}),
         Err(rejection) => {

@@ -2,7 +2,7 @@
 
 /// Куда подключаться.
 #[derive(Debug, Clone, Copy)]
-pub struct Endpoint {
+pub struct Broker {
     /// IPv4-адрес брокера.
     pub addr: [u8; 4],
     /// Порт брокера.

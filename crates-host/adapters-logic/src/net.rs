@@ -1,6 +1,6 @@
 //! Транспорты протоколов над сокетами `embassy-net`:
 // {%- if has_tcp == "true" %}
-//! TCP-сервер — поток байтов ([`TcpServer`](crate::net::TcpServer));
+//! TCP-сервер — поток байтов ([`Server`](crate::net::Server));
 // {%- endif %}
 // {%- if has_udp == "true" %}
 //! UDP-канал — кадр в датаграмме ([`UdpLink`](crate::net::UdpLink));
@@ -15,7 +15,7 @@ mod udp;
 // {%- endif %}
 
 // {%- if has_tcp == "true" %}
-pub use tcp::{TcpError, TcpServer};
+pub use tcp::{Error, Server};
 // {%- endif %}
 // {%- if has_udp == "true" %}
 pub use udp::{UdpError, UdpLink};

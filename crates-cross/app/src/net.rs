@@ -9,7 +9,7 @@
 pub mod mqtt {
     /// Брокер MQTT (`domain::mqtt`) из `mqtt.toml` в корне проекта: файл разбирает
     /// и проверяет `build.rs`, сюда он приходит переменными окружения компиляции.
-    pub const BROKER: domain::mqtt::Endpoint = domain::mqtt::Endpoint {
+    pub const BROKER: domain::mqtt::Broker = domain::mqtt::Broker {
         addr: [
             octet(env!("MQTT_HOST_0")),
             octet(env!("MQTT_HOST_1")),
