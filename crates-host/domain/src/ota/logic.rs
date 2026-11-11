@@ -13,11 +13,11 @@ use embedded_storage_async::nor_flash::NorFlash;
 use ports::{Partitions, Reboot};
 
 use super::client::Answer;
-use super::command::{Chunk, Progress, Rejection, SIGNATURE_BYTES};
+use super::commands::{Chunk, Progress, Rejection, SIGNATURE_BYTES};
 use super::download::Transfer;
 use super::rejection::{busy, download_rejection, update_rejection};
+use super::storage::Updater;
 use super::timing::{REBOOT_GRACE, SESSION_TIMEOUT};
-use super::updater::Updater;
 use super::{ClientId, Command, Reply, Request, update};
 
 /// Подпись образа — из `Start`, до `Finish` её держит состояние `Receiving`.

@@ -25,7 +25,7 @@
 use embedded_storage_async::nor_flash::NorFlash;
 use ports::{MAX_WRITE_SIZE, Partitions};
 
-use crate::ota::updater::{Error as UpdaterError, Updater};
+use crate::ota::storage::{Updater, UpdaterError};
 
 /// Приём одного образа между `Start` и `Finish` — данные состояния
 /// `Receiving` узла OTA.

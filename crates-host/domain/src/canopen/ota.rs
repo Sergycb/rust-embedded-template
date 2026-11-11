@@ -8,7 +8,7 @@
 //! | 2 | wo, domain | `Chunk`: смещение (u32), затем байты, до 128 |
 //! | 3 | wo, u32 | `Finish`: 4 байта, значение не важно |
 //! | 4 | wo, u32 | `Reboot`: 4 байта, значение не важно |
-//! | 5 | ro, u16 | код исхода последней команды (`domain::ota::command::reply_code`); 0 — ещё выполняется |
+//! | 5 | ro, u16 | код исхода последней команды (`domain::ota::commands::reply_code`); 0 — ещё выполняется |
 //! | 6 | ro, u32 | сколько байт образа принято |
 //!
 //! Числа — младшим байтом первым, как всё в CANopen.
@@ -32,7 +32,7 @@ use zencan_node::common::objects::{AccessType, DataType, ObjectCode, PdoMappable
 use zencan_node::common::sdo::AbortCode;
 use zencan_node::object_dict::ObjectAccess;
 
-use crate::ota::command::{CHUNK_BYTES, Chunk, Progress, Rejection, SIGNATURE_BYTES, reply_code};
+use crate::ota::commands::{CHUNK_BYTES, Chunk, Progress, Rejection, SIGNATURE_BYTES, reply_code};
 use crate::ota::{ClientId, Command, Reply, Request};
 
 /// Индекс объекта OTA — в области приложения `zencan` (0x2000–0x4FFF). Тот же,
@@ -244,7 +244,7 @@ fn chunk(data: &[u8]) -> Result<Command, AbortCode> {
 #[cfg(test)]
 mod tests {
     use crate::ota::Command;
-    use crate::ota::command::{Chunk, Progress, Rejection};
+    use crate::ota::commands::{Chunk, Progress, Rejection};
     use zencan_node::common::sdo::AbortCode;
     use zencan_node::object_dict::ObjectAccess;
 

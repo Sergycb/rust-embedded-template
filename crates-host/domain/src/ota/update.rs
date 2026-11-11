@@ -14,7 +14,7 @@
 use embedded_storage_async::nor_flash::NorFlash;
 use ports::{Partitions, PendingImage};
 
-use crate::ota::updater::{Error as UpdaterError, Updater};
+use crate::ota::storage::{Updater, UpdaterError};
 use crate::ota::version;
 
 /// Сколько байт в хвосте образа занимает версия.

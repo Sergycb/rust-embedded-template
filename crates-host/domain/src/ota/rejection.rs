@@ -5,7 +5,7 @@ use defmt_or_log::warn;
 
 use crate::ota::Receiving;
 use crate::ota::client::{Answer, ClientId};
-use crate::ota::command::Rejection;
+use crate::ota::commands::Rejection;
 use crate::ota::download::DownloadError;
 use crate::ota::update::UpdateError;
 

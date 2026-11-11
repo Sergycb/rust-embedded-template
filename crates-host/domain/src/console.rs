@@ -36,7 +36,7 @@ use embedded_io_async::{Read, Write};
 
 // {%- if ota == "true" %}
 use crate::ota::Client;
-use crate::ota::command::Progress;
+use crate::ota::commands::Progress;
 // {%- endif %}
 use crate::device::{DeviceInfo, INFO_TEXT, write_info};
 

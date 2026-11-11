@@ -29,7 +29,7 @@ use defmt_or_log::warn;
 use ports::Exception;
 
 use crate::modbus::{Bits, BitsMut, Registers, Words, WordsMut};
-use crate::ota::command::{CHUNK_BYTES, Chunk, Progress, Rejection, SIGNATURE_BYTES, reply_code};
+use crate::ota::commands::{CHUNK_BYTES, Chunk, Progress, Rejection, SIGNATURE_BYTES, reply_code};
 use crate::ota::{Client, Command};
 
 /// Начало окна OTA — высоко в адресах, чтобы не мешать карте проекта.
@@ -231,7 +231,7 @@ mod tests {
     use ports::Exception;
 
     use crate::ota::Command;
-    use crate::ota::command::{Progress, Rejection, reply_code};
+    use crate::ota::commands::{Progress, Rejection, reply_code};
 
     use super::{OTA_BASE, OTA_REGISTERS, OtaRegisters, STATUS_REGISTERS};
     use crate::modbus::{EmptyRegisters, Registers, Words, WordsMut};

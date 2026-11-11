@@ -16,7 +16,7 @@ use super::topics::{CLIENT_ID_LEN, Command, TOPIC_LEN, Topics, parse_command};
 use crate::device::{DeviceInfo, INFO_TEXT};
 // {%- if ota == "true" %}
 use crate::ota::Client;
-use crate::ota::command::Progress;
+use crate::ota::commands::Progress;
 // {%- endif %}
 
 /// Буфер входящих пакетов `minimq`: самая длинная команда с темой.

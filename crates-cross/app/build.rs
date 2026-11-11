@@ -29,26 +29,78 @@ fn main() {
     );
     println!("cargo::rustc-link-search={}", manifest.display());
 
+    // `[env]` из `crates-cross/.cargo/config.toml` читают `env!` в `bsp` и
+    // `app`; cargo не считает правку `config.toml` изменением входа
+    // build-скрипта, поэтому переменные объявляем явно.
+    for var in [
+        "WATCHDOG_TIMEOUT_US",
+        "STATE_ERASE_SIZE",
+        "SWAP_PAGE_SIZE",
+        "EXT_PAGE_SIZE",
+        "HTTP_CONNECTIONS",
+    ] {
+        println!("cargo::rerun-if-env-changed={var}");
+    }
+    if let Some(config) = manifest.parent().map(|dir| dir.join(".cargo/config.toml")) {
+        if config.exists() {
+            println!("cargo::rerun-if-changed={}", config.display());
+        }
+    }
+
     // Смена коммита должна пересобирать build-info (`shadow-rs` подставляет
-    // SHORT_COMMIT в баннер старта). Путь считается от корня проекта, а не
-    // относительный `.git/HEAD`, как было раньше: build-скрипт исполняется в
-    // каталоге крейта, где `.git` нет, а НЕСУЩЕСТВУЮЩИЙ путь в
-    // `rerun-if-changed` cargo считает вечно устаревшим — скрипт перезапускался
-    // на каждой сборке и тянул за собой полную пересборку прошивки.
-    //
-    // Проверка существования нужна по той же причине: проект могли распаковать
-    // без git.
-    let head = manifest
-        .parent()
-        .and_then(Path::parent)
-        .map(|root| root.join(".git").join("HEAD"));
-    if let Some(head) = head.filter(|path| path.exists()) {
-        println!("cargo::rerun-if-changed={}", head.display());
+    // SHORT_COMMIT в баннер старта). Смотрим не только на `.git/HEAD`:
+    // коммит меняет `refs/heads/*`, а в worktree `.git` — файл со ссылкой
+    // на настоящий git-каталог.
+    if let Some(root) = manifest.parent().and_then(Path::parent) {
+        watch_git(root);
     }
 
     ShadowBuilder::builder()
         .build()
         .expect("shadow-rs не собрал сведения о сборке");
+}
+
+/// Следит за git-ref, который меняется при коммите, и за `packed-refs`.
+///
+/// `.git` в worktree — файл `gitdir: <путь>`, а не каталог: без разрешения
+/// ссылки `HEAD` не находится и `shadow-rs` не перезапускается.
+fn watch_git(root: &Path) {
+    let dot_git = root.join(".git");
+    let git_dir = if dot_git.is_file() {
+        let Ok(text) = std::fs::read_to_string(&dot_git) else {
+            return;
+        };
+        let Some(path) = text.strip_prefix("gitdir:") else {
+            return;
+        };
+        let path = path.trim();
+        let path = Path::new(path);
+        if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            root.join(path)
+        }
+    } else {
+        dot_git
+    };
+
+    let head = git_dir.join("HEAD");
+    let Ok(text) = std::fs::read_to_string(&head) else {
+        return;
+    };
+    println!("cargo::rerun-if-changed={}", head.display());
+
+    let Some(reference) = text.strip_prefix("ref: ") else {
+        return;
+    };
+    let reference = git_dir.join(reference.trim());
+    if reference.exists() {
+        println!("cargo::rerun-if-changed={}", reference.display());
+    }
+    let packed = git_dir.join("packed-refs");
+    if packed.exists() {
+        println!("cargo::rerun-if-changed={}", packed.display());
+    }
 }
 {%- if net_services contains "rest" or ssh_host_key == "file" or net_services contains "mqtt" %}
 

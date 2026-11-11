@@ -13,11 +13,11 @@ const _: () = assert!(crate::device::PANIC_BRIEF <= proto::PANIC_BYTES);
 
 /// Обработчик команды `info`.
 #[derive(Debug)]
-pub(crate) struct Handler {
+pub(crate) struct InfoHandler {
     info: DeviceInfo,
 }
 
-impl Handler {
+impl InfoHandler {
     /// Обработчик, отвечающий на `info` сведениями `info`.
     ///
     /// # Panics
@@ -72,7 +72,7 @@ impl Handler {
     }
 }
 
-impl proto::host::HandleInfo for Handler {
+impl proto::host::HandleInfo for InfoHandler {
     // Команда не ждёт задачу, но трейт общий с теми, что ждут.
     #[allow(
         clippy::unused_async_trait_impl,
@@ -99,8 +99,8 @@ pub(crate) const INFO: DeviceInfo = DeviceInfo {
 mod tests {
     use super::*;
 
-    fn handler(info: DeviceInfo) -> Handler {
-        Handler::new(info)
+    fn handler(info: DeviceInfo) -> InfoHandler {
+        InfoHandler::new(info)
     }
 
     #[test]

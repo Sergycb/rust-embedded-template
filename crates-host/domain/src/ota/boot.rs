@@ -286,7 +286,7 @@ mod tests {
         use crate::ota::boot::fake::{Dfu, Flaky, MemFlash, State, Unreadable};
         use crate::ota::boot::{ScreenFailure, Screening, screen_update};
 
-        /// `ACTIVE` — три страницы `Dfu` (`fake`), как в тестах `ota::updater`.
+        /// `ACTIVE` — три страницы `Dfu` (`fake`), как в тестах `ota::storage`.
         const CAPACITY: u32 = 768;
         const SEED: [u8; 32] = [42; 32];
 

@@ -5,7 +5,7 @@ use crate::ota::{Command, Reply};
 use supervisor::{Asked, Requester, Served};
 
 /// Ёмкость входов `CMD` и `ASK`, байт: запрос (кусок
-/// [`CHUNK_BYTES`](crate::ota::command::CHUNK_BYTES) со смещением и длиной,
+/// [`CHUNK_BYTES`](crate::ota::commands::CHUNK_BYTES) со смещением и длиной,
 /// тег варианта, номер клиента) и ответ. Одно число на
 // {%- if graph == "true" %}
 /// граф (`request:` и `serves:` в `OTA_FRAG`). Во фрагменте оно записано

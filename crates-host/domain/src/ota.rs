@@ -8,12 +8,12 @@
 //! обновления — настоящий, над разделами в памяти.
 //!
 //! Образ приходит не по своему каналу: узел протокола переводит свои сообщения в
-//! [`Command`](crate::ota::command::Command) и отдаёт их узлу через один из двух
+//! [`Command`](crate::ota::commands::Command) и отдаёт их узлу через один из двух
 //! входов: `CMD` (`request:` фрагмента — клиент ждёт исхода в вызове) или `ASK`
 //! (`serves:` — клиент отправляет команду, не дожидаясь, и забирает исход из
 //! `reply()`, обслуживая тем временем свой канал). Для узла входы одинаковы:
 //! команды обоих идут в один цикл. На каждую команду узел отвечает
-//! [`Reply`](crate::ota::command::Reply) — её исходом, и протокол передаёт его хосту
+//! [`Reply`](crate::ota::commands::Reply) — её исходом, и протокол передаёт его хосту
 //! как есть: ни опрашивать статус, ни угадывать, дошёл ли кусок, хосту не
 //! нужно. Узел про протокол не знает, протокол — про флеш.
 //!
@@ -51,7 +51,7 @@
 
 /// Команды узлу и исходы на них: куски образа, подпись, коды для хоста — см.
 /// модуль.
-pub mod command;
+pub mod commands;
 
 /// Приём образа по кускам: сверка длины, стирание один раз, буферизация до
 /// слова флеша — шаги над адаптером [`Updater`], см. модуль.
@@ -73,26 +73,21 @@ pub mod update;
 pub mod version;
 
 mod client;
-// {%- if has_protobuf == "true" %}
-/// Обработчик `OtaService` узла `PROTOBUF`: команды обновления в
-/// [`Command`], исход — в ответ схемы.
-pub(crate) mod protobuf;
-// {%- endif %}
 mod logic;
 mod rejection;
-mod timing;
 /// Адаптер обновления над `embassy-boot`: разделы `DFU` и `STATE` платы.
-mod updater;
+mod storage;
+mod timing;
 
 // Типы входа `CMD` — в корне `domain::ota`: их полным путём называют фрагмент
 // и compose-site (`app`).
-pub use command::{Command, Reply};
+pub use commands::{Command, Reply};
 
 // Подмодули — по теме; их типы видны как `domain::ota::…`.
 pub use client::{CMD_BYTES, Client, ClientId, NodeLost, Request, cmd_parked};
 pub use logic::{Idle, Ready, Receiving, State};
+pub use storage::{Updater, UpdaterError};
 pub use timing::{REBOOT_GRACE, SESSION_TIMEOUT};
-pub use updater::{Error as UpdaterError, Updater};
 
 use embassy_futures::select::{Either, select};
 use embedded_storage_async::nor_flash::NorFlash;
@@ -533,7 +528,7 @@ pub(crate) mod tests {
     use embassy_time::{Duration, MockDriver};
     use ports::Reboot;
 
-    use crate::ota::command::{Chunk, Progress, Rejection};
+    use crate::ota::commands::{Chunk, Progress, Rejection};
     use crate::ota::{Command, Reply};
 
     // {%- if has_modbus == "true" or has_protobuf == "true" or has_cli == "true" or net_services contains "mqtt" or net_services contains "rest" or net_services contains "ssh" %}
