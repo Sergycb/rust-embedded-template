@@ -2751,11 +2751,6 @@ if !on.protobuf {
     file::delete("crates-host/domain/src/protobuf.rs");
     file::delete("crates-host/domain/src/protobuf");
     file::delete("crates-host/proto");
-    if variable::get("ota") == "true" {
-        // Обработчик OTA жил в каталоге `domain::ota`, который без OTA
-        // удаляется целиком ниже.
-        file::delete("crates-host/domain/src/ota/protobuf.rs");
-    }
 }
 if !has.can {
     file::delete("crates-host/ports/src/can.rs");
@@ -2797,9 +2792,6 @@ if variable::get("ota") != "true" {
     // удалён выше, поэтому — только у выбранного.
     if on.modbus {
         file::delete("crates-host/domain/src/modbus/ota.rs");
-    }
-    if on.canopen {
-        file::delete("crates-host/domain/src/canopen/ota.rs");
     }
 }
 if variable::get("settings_port") != "true" {

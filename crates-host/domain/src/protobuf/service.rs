@@ -103,7 +103,7 @@ impl Service {
 // разойдутся — кусок или подпись, прошедшие разбор, не дойдут до узла.
 const _: () = assert!(
     proto::OTA_CHUNK_BYTES == CHUNK_BYTES && proto::OTA_SIGNATURE_BYTES == SIGNATURE_BYTES,
-    "пределы Ota.Chunk.data/Ota.Start.signature в proto/build.rs разошлись с ota::commandss"
+    "пределы Ota.Chunk.data/Ota.Start.signature в proto/build.rs разошлись с ota::commands"
 );
 
 /// Обработчик команд обновления.

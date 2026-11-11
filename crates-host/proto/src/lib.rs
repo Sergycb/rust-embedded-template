@@ -7,7 +7,7 @@
 //! зависимостями сборки живёт в одном месте. Узел `PROTOBUF_<транспорт>`
 //! (`domain::PROTOBUF_FRAG`) только разбирает `Request` из кадра и кодирует
 //! ответ; что значат поля схемы, знают обработчики подсистем
-//! (`domain::protobuf::info`; с OTA — `domain::ota::protobuf`).
+//! (`domain::protobuf::info`; с OTA — `domain::protobuf::service::OtaHandler`).
 //!
 //! Пример схемы — конверт `Request`/`Response` с `request_id`; проект
 //! заменяет его своим.

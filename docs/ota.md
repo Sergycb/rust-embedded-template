@@ -93,7 +93,7 @@
 - **protobuf** — команда `ota` с вложенным `Ota.command`: `start`, `chunk`,
   `finish`, `reboot`; ответ `Ok` или `Error` с именем отказа
   (`crates-host/proto/proto/host.proto`).
-  Обработчик `domain::ota::protobuf::Handler` шлёт команду на вход `CMD` и ждёт
+  Обработчик `domain::protobuf::service::OtaHandler` шлёт команду на вход `CMD` и ждёт
   исхода, как Modbus: ответ с `request_id` запроса — её исход; пока узел OTA
   стирает раздел (секунды на F4), канал не обслуживается. Исход
   уходит тому, с кем канал говорит в этот момент{% if has_udp == "true" or has_tcp == "true" %}:{% if has_udp == "true" %} по UDP — отправителю
