@@ -8,8 +8,8 @@
 //! | Тема | Направление | Содержимое |
 //! |---|---|---|
 //! | `status` | плата → брокер | `online`/`offline` (retain; `offline` — will) |
-//! | `info` | плата → брокер | сведения об устройстве, JSON (retain) |
-//! | `telemetry` | плата → брокер | время работы раз в [`TELEMETRY_INTERVAL`](crate::mqtt::TELEMETRY_INTERVAL), JSON |
+//! | `info` | плата → брокер | сведения об устройстве, текст (retain) |
+//! | `telemetry` | плата → брокер | время работы раз в [`TELEMETRY_INTERVAL`](crate::mqtt::TELEMETRY_INTERVAL), текст |
 //! | `cmd/reboot` | брокер → плата | перезагрузка{% if ota != "true" %}; без OTA — только строка в лог{% endif %} |
 // {%- if ota == "true" %}
 //! | `cmd/reboot/result` | плата → брокер | исход команды |
@@ -17,11 +17,11 @@
 //!
 //! Здесь — фрагмент узла, его цикл и задача; имена тем и разбор команд —
 //! `topics`, адрес брокера — `broker`, TCP-клиент брокера с паузами между
-//! попытками — `client` ([`TcpClient`](crate::mqtt::TcpClient)), тексты
+//! попытками — `client` ([`Tcp`](crate::mqtt::Tcp)), тексты
 //! телеметрии — `telemetry`, одна сессия с брокером над готовым потоком
 //! байтов — `session` (`serve`). Вход узла (`MqttWiring`) выводит фрагмент.
 
-/// Адрес брокера: `Endpoint`.
+/// Адрес брокера: `Broker`.
 mod broker;
 /// TCP-клиент брокера над сокетом стека: подключение с паузой между попытками.
 mod client;
@@ -36,15 +36,15 @@ use core::net::SocketAddrV4;
 
 use defmt_or_log::{info, warn};
 
-pub use self::broker::Endpoint;
-pub use self::client::{ClientError, TcpClient};
+pub use self::broker::Broker;
+pub use self::client::{Error, Tcp};
 pub use self::session::{AUTH_MAX, CONNECT_TIMEOUT, RX_BUFFER, TX_BUFFER};
 use self::session::{Env, serve};
 pub use self::telemetry::{TELEMETRY_INTERVAL, write_telemetry};
 pub use self::topics::{Command, PREFIX_MAX, Topics, parse_command};
 
 // Узел объявлен рядом со своей задачей. Адрес брокера — во входе,
-// соединение — `TcpClient` над сокетом стека (его слот `LINK` собирает
+// соединение — `Tcp` над сокетом стека (его слот `LINK` собирает
 // compose-site из стека и буферов TCP от `app`); `local` у него и у стека —
 // оба вправе быть `!Send`.
 // Буферы `minimq` — слоты `= static`: через стек они не идут. Без
@@ -61,12 +61,12 @@ supervisor::supervisor_fragment! {
             /// Префикс тем, не длиннее `PREFIX_MAX`.
             PREFIX: &'static str = inputs.prefix,
             /// Адрес брокера.
-            BROKER: $crate::mqtt::Endpoint = inputs.broker,
+            BROKER: $crate::mqtt::Broker = inputs.broker,
             /// Соединение с брокером на стеке платы.
-            LINK: local $crate::mqtt::TcpClient = inputs.link,
+            LINK: local $crate::mqtt::Tcp = inputs.link,
             // {%- if ota == "true" %}
             /// Клиент входа `CMD` узла OTA — для `cmd/reboot`.
-            OTA: $crate::ota::OtaClient = inputs.ota,
+            OTA: $crate::ota::Client = inputs.ota,
             // {%- endif %}
             /// Входящие пакеты `minimq`.
             MQTT_RX: &'static mut [u8; $crate::mqtt::RX_BUFFER] = static,
@@ -89,7 +89,7 @@ pub async fn task(ctx: MqttCtx<'_>) {
     let topics = Topics::new(ctx.prefix, &ctx.info.uid);
     loop {
         // Адрес брокера и одна попытка подключиться к нему; паузу перед ней
-        // выдерживает клиент (`TcpClient::dial`).
+        // выдерживает клиент (`Tcp::dial`).
         let endpoint = *ctx.broker;
         match ctx
             .link
@@ -151,19 +151,19 @@ pub(crate) mod tests {
 
     use super::session::{Ended, Env, serve};
     use super::{
-        CONNECT_TIMEOUT, Command, Endpoint, PREFIX_MAX, RX_BUFFER, TELEMETRY_INTERVAL, TX_BUFFER,
-        TcpClient, Topics, parse_command, task, write_telemetry,
+        Broker, CONNECT_TIMEOUT, Command, PREFIX_MAX, RX_BUFFER, TELEMETRY_INTERVAL, TX_BUFFER,
+        Tcp, Topics, parse_command, task, write_telemetry,
     };
     use crate::device::{DeviceInfo, UID_BYTES};
     // {%- if ota == "true" %}
     use super::AUTH_MAX;
     use super::session::TX_BUDGET;
     use super::topics::{REBOOT, TOPIC_LEN};
-    use crate::device::INFO_MAX;
+    use crate::device::INFO_TEXT;
     // {%- endif %}
 
     /// Брокер — на «хосте» кабеля в памяти (`adapters_hw::net::fake::cable::HOST`).
-    const ENDPOINT: Endpoint = Endpoint {
+    const ENDPOINT: Broker = Broker {
         addr: [10, 0, 0, 2],
         port: 1883,
         user: "",
@@ -261,9 +261,9 @@ pub(crate) mod tests {
     type Running = Pin<Box<dyn Future<Output = Ended>>>;
 
     /// Брокер на «хосте» кабеля: сокет, на котором он принимает плату.
-    struct Broker(TcpSocket<'static>);
+    struct HostBroker(TcpSocket<'static>);
 
-    impl Broker {
+    impl HostBroker {
         fn new(host: Stack<'static>) -> Self {
             Self(TcpSocket::new(host, leak([0; 2048]), leak([0; 2048])))
         }
@@ -347,10 +347,10 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn telemetry_is_json() {
+    fn telemetry_is_text() {
         let mut s = std::string::String::new();
         write_telemetry(&mut s, 42).unwrap();
-        assert_eq!(s, r#"{"uptime_s":42}"#);
+        assert_eq!(s, "uptime_s 42\n");
     }
 
     /// CONNACK с кодом причины `code` (`0` — принято).
@@ -483,7 +483,7 @@ pub(crate) mod tests {
         assert_eq!(status.payload, b"online");
         assert!(status.retain);
         let info = sent.iter().find(|p| p.topic == topic("/info")).unwrap();
-        assert!(contains(&info.payload, br#""chip":"#));
+        assert!(contains(&info.payload, b"chip "));
         assert!(info.retain);
     }
 
@@ -497,7 +497,7 @@ pub(crate) mod tests {
             .iter()
             .find(|p| p.topic == topic("/telemetry"))
             .expect("телеметрия опубликована");
-        assert!(telemetry.payload.starts_with(br#"{"uptime_s":"#));
+        assert!(telemetry.payload.starts_with(b"uptime_s "));
         assert!(!telemetry.retain);
     }
 
@@ -618,14 +618,20 @@ pub(crate) mod tests {
         env.ota = Box::leak(Box::new(ota));
         env.tx = Box::leak(vec![0; tx].into_boxed_slice());
         let topics = Topics::new(&"p".repeat(PREFIX_MAX), &UID);
-        // `info` длиной ровно `INFO_MAX`: версия добирает недостающее.
+        // `info` длиной ровно `INFO_TEXT`: версия добирает недостающее.
         let mut info = *env.info;
-        let mut json = std::string::String::new();
-        crate::device::write_info(&mut json, &info, env.mac, env.ip, Instant::now().as_secs())
-            .unwrap();
-        info.version = leak("v".repeat(INFO_MAX - json.len() + info.version.len()));
+        let mut text = std::string::String::new();
+        crate::device::write_info(
+            &mut text,
+            &info,
+            Some(env.mac),
+            env.ip.map(|ip| core::net::Ipv4Addr::from(ip.octets())),
+            Instant::now().as_secs(),
+        )
+        .unwrap();
+        info.version = leak("v".repeat(INFO_TEXT - text.len() + info.version.len()));
         env.info = Box::leak(Box::new(info));
-        let endpoint = Box::leak(Box::new(Endpoint {
+        let endpoint = Box::leak(Box::new(Broker {
             user: leak("u".repeat(AUTH_MAX / 2)),
             password: leak("p".repeat(AUTH_MAX / 2)),
             ..ENDPOINT
@@ -650,7 +656,7 @@ pub(crate) mod tests {
         }
         let sent = sent(&broker.output());
         let info = sent.iter().find(|p| p.topic.ends_with("/info"))?;
-        assert_eq!(info.payload.len(), INFO_MAX);
+        assert_eq!(info.payload.len(), INFO_TEXT);
         let result = sent.iter().find(|p| p.topic == result.as_str())?;
         Some(result.payload.clone())
     }
@@ -692,7 +698,7 @@ pub(crate) mod tests {
             }),
             leak("devices"),
             leak(ENDPOINT),
-            leak(TcpClient::new(stack, leak([0; 1024]), leak([0; 1024]))),
+            leak(Tcp::new(stack, leak([0; 1024]), leak([0; 1024]))),
             // {%- if ota == "true" %}
             leak(crate::ota::tests::live().0),
             // {%- endif %}
@@ -703,7 +709,7 @@ pub(crate) mod tests {
 
     /// Гоняет оба стека и узел на «устройстве», пока брокер ведёт сценарий
     /// `script` на «хосте».
-    async fn with_broker<R>(script: impl AsyncFnOnce(Broker) -> R) -> R {
+    async fn with_broker<R>(script: impl AsyncFnOnce(HostBroker) -> R) -> R {
         MockDriver::get().reset();
         let ((device, mut device_runner), (host, mut host_runner)) = pair();
         let node = node(device);
@@ -711,7 +717,7 @@ pub(crate) mod tests {
             never = device_runner.run() => never,
             never = host_runner.run() => never,
             () = node => panic!("узел вернулся"),
-            result = script(Broker::new(host)) => result,
+            result = script(HostBroker::new(host)) => result,
         }
     }
 

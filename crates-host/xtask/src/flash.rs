@@ -56,7 +56,7 @@ pub fn flash_images(sh: &xshell::Shell, profile: &str) -> Result<(), anyhow::Err
 /// здесь и сразу сверяем его начало с началом раздела — той же проверкой, что
 /// и в `build`, только без печати размера.
 pub fn check_app(sh: &xshell::Shell, profile: &str) -> Result<(), anyhow::Error> {
-    // {%- if net_services contains "rest" or net_services contains "mqtt" or has_console == "true" or ssh_host_key == "file" %}
+    // {%- if net_services contains "rest" or net_services contains "mqtt" or ssh_host_key == "file" %}
     // Секреты вшиваются в прошивку (`include_str!`): к сборке файлы нужны.
     crate::secrets::ensure(&root_dir())?;
     // {%- endif %}

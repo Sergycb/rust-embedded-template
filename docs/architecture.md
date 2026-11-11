@@ -35,7 +35,7 @@ Modbus{% endif %}{% if net_services != "" %}, секреты служб{% endif 
 HAL (`bsp::board::init_peripherals` — на умолчаниях `embassy-stm32`, не на конфиге
 платы), константы раскладки ({% if shared_flash == "true" %}`bsp::flash`{% if external_flash == "true" %}, {% endif %}{% endif %}{% if external_flash == "true" %}`bsp::external`{% endif %}{% if graph == "true" %},
 `bsp::wdg::HW_TIMEOUT_US`{% endif %}){% if ota_store == "external" %}, шина внешней флеши и её конец
-(`bsp::stub::FlashBus`, `bsp::layout`){% endif %}, сброс МК в паникёре (`bsp::reset::Reboot`).
+(`bsp::stub::Bus`, `bsp::layout`){% endif %}, сброс МК в паникёре (`bsp::reset::Reboot`).
 Своих копий этих констант у `boot` нет. Точка входа
 (`cortex-m-rt`) и паникёр у него свои: паника и фолт — решение прошивки, а не
 рычаг платы, и у `boot` это сброс МК без сообщения, а у `app` — дамп в
@@ -69,7 +69,7 @@ HAL (`bsp::board::init_peripherals` — на умолчаниях `embassy-stm32
   (кадрирование, клиент, хранилище), требует `Spawner` → `app`.
 - Всё остальное (FSM, конкурентные примитивы, конфигурация, коллекции, RPC-протокол
   между задачами, конкретные типы логики{% if ota == "true" or settings_port == "true" or net_services contains "mqtt" %} —
-  {% assign sep = "" %}{% if ota == "true" %}{{ sep }}адаптер обновления `ota::Updater`{% assign sep = ", " %}{% endif %}{% if settings_port == "true" %}{{ sep }}хранилище настроек `settings::Settings`{% assign sep = ", " %}{% endif %}{% if net_services contains "mqtt" %}{{ sep }}клиент брокера `mqtt::TcpClient`{% endif %}{% endif %}) → `domain`,
+  {% assign sep = "" %}{% if ota == "true" %}{{ sep }}адаптер обновления `ota::Updater`{% assign sep = ", " %}{% endif %}{% if settings_port == "true" %}{{ sep }}хранилище настроек `settings::Settings`{% assign sep = ", " %}{% endif %}{% if net_services contains "mqtt" %}{{ sep }}клиент брокера `mqtt::Tcp`{% endif %}{% endif %}) → `domain`,
   даже если результат используется только из `cross`.
 
 ### Узлы — фрагменты в `domain`
@@ -152,7 +152,7 @@ build`){% endif %}. В `domain` трейтов нет. Всё, что нужно
 в `ports` всякая их правка задевала бы `adapters-logic` и `bsp` зря. Там же,
 в `domain`, — контексты узлов{% if graph == "true" %} (их эмитит фрагмент), состояния
 узлов (typestate-типы) и входы фрагментов ({% if ota == "true" %}`OtaWiring`, {% endif %}`IdleMeter`){% else %} и состояния узлов{% endif %}{% if protocol != "none" and protocol != "cli" %},
-включая обработчик протокола{% if graph == "true" %} на этом входе{% endif %}: {% if protocol == "protobuf" %}`protobuf::Service`{% elsif protocol == "modbus" %}`modbus::Slave` над картой
+включая обработчик протокола{% if graph == "true" %} на этом входе{% endif %}: {% if protocol == "protobuf" %}`protobuf::Service` (разводит команды по обработчикам `protobuf::info`{% if ota == "true" %} и `ota::protobuf`{% endif %}){% elsif protocol == "modbus" %}`modbus::Slave` над картой
 `modbus::EmptyRegisters` (карта одна на все узлы `MODBUS_*` — `docs/modules/app.md`){% else %}`canopen::dictionary` (словарь объектов){% endif %} — логика приложения,
 которую проект правит под себя, поэтому живёт в `domain`, а не в `app`{% endif %}.
 Состояние внутри одного вызова функции живёт в её локальных переменных, а не в
@@ -194,7 +194,7 @@ build`){% endif %}. В `domain` трейтов нет. Всё, что нужно
 библиотека службы зовётся в `domain` прямо, — а буферы сокета — слоты
 `= static` фрагмента.{% endif %}
 {%- if net_services contains "mqtt" %} Клиент MQTT — конкретный тип домена:
-`domain::mqtt::TcpClient` над стеком строит compose-site, буферы сокета — его
+`domain::mqtt::Tcp` над стеком строит compose-site, буферы сокета — его
 `static`.{% endif %}
 {%- assign sep = "" %}
 {%- capture types %}
@@ -256,7 +256,7 @@ Liquid'ом в коде логики (ниже, «Liquid в корневом wor
 {%- assign sep = " (" %}
 {%- if ota == "true" %}{{ sep }}`ota::Updater` — над разделами в памяти с отказами по заказу{% assign sep = ", " %}{% endif %}
 {%- if settings_port == "true" %}{{ sep }}`settings::Settings` — над флешем в памяти{% assign sep = ", " %}{% endif %}
-{%- if net_services contains "mqtt" %}{{ sep }}`mqtt::TcpClient` — по кабелю между двумя стеками{% assign sep = ", " %}{% endif %}
+{%- if net_services contains "mqtt" %}{{ sep }}`mqtt::Tcp` — по кабелю между двумя стеками{% assign sep = ", " %}{% endif %}
 {%- if has_modbus == "true" %}{{ sep }}узел протокола — над настоящим `modbus::Slave`{% assign sep = ", " %}{% endif %}
 {%- if sep == ", " %}){% endif %}: фейк трейта, которого нет, тестов не держит, а
 отказ, нужный тесту, разыгрывает флеш или сокет под настоящим типом.
@@ -508,7 +508,7 @@ host-тестируем. Саму подпись
 {%- endif %}
 
 **Метод — один, у самого типа.** У конкретного типа без трейта
-(`Updater`, `Settings`, `TcpClient`) методы — собственные; заводить рядом трейт с теми
+(`Updater`, `Settings`, `Tcp`) методы — собственные; заводить рядом трейт с теми
 же именами «на будущее» нельзя: собственный метод перекрыл бы трейтовый при
 вызове, и вторая реализация, ради которой трейт заводят, работала бы мимо него.
 

@@ -17,9 +17,7 @@ mod timing;
 pub use timing::WATCHDOG;
 
 use defmt_or_log::info;
-use embassy_time::Instant;
-
-use crate::tick;
+use embassy_time::Ticker;
 
 use timing::IDLE_PERIOD;
 
@@ -78,14 +76,13 @@ supervisor::supervisor_fragment! {
 /// описано в `docs/modules/app-graph.md`.
 pub async fn task(ctx: HeartbeatCtx<'_>) {
     info!("heartbeat: узел запущен");
-    let mut next = Instant::now() + IDLE_PERIOD;
+    let mut ticker = Ticker::every(IDLE_PERIOD);
     loop {
-        // Ждёт такт: `deadline` готов на первом опросе, если срок уже прошёл,
-        // а `next_tick` отбрасывает такты, пропущенные пока исполнитель был
-        // занят чужой работой.
-        tick::deadline(next).await;
+        // `Ticker` держит сетку и после долгой чужой работы отдаёт
+        // пропущенные такты подряд. Для heartbeat это безвредно: узел только
+        // кормит сторожа, а работа ему не мешает.
+        ticker.next().await;
         ctx.heartbeat.feed();
-        next = tick::next_tick(next, IDLE_PERIOD, Instant::now());
     }
 }
 

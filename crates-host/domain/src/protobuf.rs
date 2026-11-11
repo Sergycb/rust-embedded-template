@@ -1,10 +1,10 @@
 //! Узел `PROTOBUF_<транспорт>`: сообщения protobuf от хоста над кадровым
 //! каналом.
 //!
-//! Единственное место, где сообщения схемы превращаются в типы приложения,
-//! — обработчик [`Service`](crate::protobuf::Service): в задачи уходят проверенные значения своих
-//! типов. Узел только разбирает запрос из кадра и кодирует ответ; схема —
-//! крейт `crates-host/proto`, проект правит её и [`Service`](crate::protobuf::Service) здесь.
+//! Сообщения схемы превращают в типы приложения обработчики подсистем:
+//! `info` — сведения, а команды обновления — `ota::protobuf`, когда OTA
+//! включена. Узел только разбирает запрос из кадра и кодирует ответ; схема —
+//! крейт `crates-host/proto`, проект правит её и обработчики.
 //!
 //! Канал под ним — [`FrameDuplex`](ports::FrameDuplex), кадр — одно
 //! сообщение целиком.
@@ -30,10 +30,17 @@
 //! — пока нет.
 
 mod codec;
-// Обработчик по умолчанию над схемой `crates-host/proto` — только в проекте с
-// протоколом protobuf: без него крейта схемы в проекте нет вовсе.
+// Обработчики по умолчанию над схемой `crates-host/proto` — только в проекте
+// с протоколом protobuf: без него крейта схемы в проекте нет вовсе.
+mod info;
+mod reply;
 /// Обработчик по умолчанию над примером схемы `crates-host/proto`.
 mod service;
+
+// {%- if ota == "true" %}
+/// Ответ-отказ схемы — обработчику OTA (`crate::ota::protobuf`).
+pub(crate) use reply::error;
+// {%- endif %}
 
 use defmt_or_log::{FormatOrDebug, info, warn};
 use micropb::MessageDecode;
@@ -135,7 +142,7 @@ mod tests {
     use ports::{FrameDuplex, FrameLink, LinkError};
     use proto::{Get, Request, Request_, Response, Response_, heapless};
 
-    use super::service::tests::INFO;
+    use super::info::INFO;
     use super::{Service, task};
 
     /// Канал: отдаёт заготовленные исходы `recv` — кадр снимается в опросе,
@@ -310,9 +317,11 @@ mod tests {
     fn an_update_command_is_answered_with_its_outcome() {
         let mut link = Link::with([Ok(request(
             1,
-            Request_::Command::OtaStart(proto::OtaStart {
-                len: 8,
-                signature: heapless::Vec::from_slice(&[9; 64]).unwrap(),
+            Request_::Command::Ota(proto::Ota {
+                command: Some(proto::Ota_::Command::Start(proto::Ota_::Start {
+                    len: 8,
+                    signature: heapless::Vec::from_slice(&[9; 64]).unwrap(),
+                })),
             }),
         ))]);
         {

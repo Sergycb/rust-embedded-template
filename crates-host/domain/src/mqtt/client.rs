@@ -30,7 +30,7 @@ const MAX_BACKOFF: Duration = Duration::from_secs(30);
 /// нельзя); соединение, прожившее дольше, счёт сбрасывает. Чтение и запись без
 /// соединения — ошибка: поток принадлежит соединению, которое открыл `dial`.
 /// Пропавший сервер снимают keep-alive и таймаут.
-pub struct TcpClient {
+pub struct Tcp {
     socket: TcpSocket<'static>,
     /// Отказов подряд — от него пауза перед следующей попыткой.
     failures: u32,
@@ -39,15 +39,15 @@ pub struct TcpClient {
 }
 
 // Вручную: у сокетов `embassy-net` нет `Debug`.
-impl core::fmt::Debug for TcpClient {
+impl core::fmt::Debug for Tcp {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("TcpClient")
+        f.debug_struct("Tcp")
             .field("failures", &self.failures)
             .finish_non_exhaustive()
     }
 }
 
-impl TcpClient {
+impl Tcp {
     /// Клиент на стеке `stack` с буферами сокета `rx` и `tx`.
     #[must_use]
     pub fn new(stack: Stack<'static>, rx: &'static mut [u8], tx: &'static mut [u8]) -> Self {
@@ -99,46 +99,46 @@ impl TcpClient {
     }
 }
 
-impl ErrorType for TcpClient {
-    type Error = ClientError;
+impl ErrorType for Tcp {
+    type Error = Error;
 }
 
-impl Read for TcpClient {
-    async fn read(&mut self, buf: &mut [u8]) -> Result<usize, ClientError> {
+impl Read for Tcp {
+    async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
         if !is_open(&self.socket) {
-            return Err(ClientError::NotConnected);
+            return Err(Error::NotConnected);
         }
-        self.socket.read(buf).await.map_err(ClientError::Io)
+        self.socket.read(buf).await.map_err(Error::Io)
     }
 }
 
-impl Write for TcpClient {
-    async fn write(&mut self, buf: &[u8]) -> Result<usize, ClientError> {
+impl Write for Tcp {
+    async fn write(&mut self, buf: &[u8]) -> Result<usize, Error> {
         if !is_open(&self.socket) {
-            return Err(ClientError::NotConnected);
+            return Err(Error::NotConnected);
         }
-        self.socket.write(buf).await.map_err(ClientError::Io)
+        self.socket.write(buf).await.map_err(Error::Io)
     }
 
-    async fn flush(&mut self) -> Result<(), ClientError> {
+    async fn flush(&mut self) -> Result<(), Error> {
         if !is_open(&self.socket) {
-            return Err(ClientError::NotConnected);
+            return Err(Error::NotConnected);
         }
-        self.socket.flush().await.map_err(ClientError::Io)
+        self.socket.flush().await.map_err(Error::Io)
     }
 }
 
-/// Почему [`TcpClient`] не прочитал или не записал.
+/// Почему [`Tcp`] не прочитал или не записал.
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum ClientError {
+pub enum Error {
     /// Соединение оборвалось; следующий `dial` откроет новое.
     Io(tcp::Error),
     /// Чтение или запись без соединения.
     NotConnected,
 }
 
-impl core::fmt::Display for ClientError {
+impl core::fmt::Display for Error {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Io(err) => write!(f, "соединение оборвалось: {err:?}"),
@@ -147,9 +147,9 @@ impl core::fmt::Display for ClientError {
     }
 }
 
-impl core::error::Error for ClientError {}
+impl core::error::Error for Error {}
 
-impl embedded_io_async::Error for ClientError {
+impl embedded_io_async::Error for Error {
     fn kind(&self) -> ErrorKind {
         match self {
             Self::Io(_) => ErrorKind::ConnectionReset,
@@ -199,7 +199,7 @@ mod tests {
     /// Порт сервера на «хосте» пары.
     const PORT: u16 = 1883;
 
-    /// Сервер на «хосте» пары, к которому подключается [`TcpClient`].
+    /// Сервер на «хосте» пары, к которому подключается [`Tcp`].
     const SERVER: SocketAddrV4 = SocketAddrV4::new(HOST, PORT);
 
     #[test]
@@ -215,7 +215,7 @@ mod tests {
     #[tokio::test]
     async fn dial_connects_and_streams() {
         let ((device, device_runner), (host, host_runner)) = pair();
-        let mut client = TcpClient::new(device, leak([0; 64]), leak([0; 64]));
+        let mut client = Tcp::new(device, leak([0; 64]), leak([0; 64]));
         with_network(device_runner, host_runner, async {
             let device_side = async {
                 client.dial(SERVER).await.unwrap();
@@ -259,7 +259,7 @@ mod tests {
     #[tokio::test]
     async fn dial_fails_without_server_and_paces_the_next() {
         let ((device, device_runner), (host, host_runner)) = pair();
-        let mut client = TcpClient::new(device, leak([0; 64]), leak([0; 64]));
+        let mut client = Tcp::new(device, leak([0; 64]), leak([0; 64]));
         let dialed = Cell::new(false);
         with_network(device_runner, host_runner, async {
             assert!(client.dial(SERVER).await.is_err(), "сервера нет");
@@ -295,7 +295,7 @@ mod tests {
     async fn dial_to_a_silent_address_times_out() {
         const SILENT: SocketAddrV4 = SocketAddrV4::new(core::net::Ipv4Addr::new(10, 0, 0, 3), PORT);
         let ((device, device_runner), (_host, host_runner)) = pair();
-        let mut client = TcpClient::new(device, leak([0; 64]), leak([0; 64]));
+        let mut client = Tcp::new(device, leak([0; 64]), leak([0; 64]));
         let failed = Cell::new(false);
         with_network(device_runner, host_runner, async {
             let device_side = async {
@@ -319,7 +319,7 @@ mod tests {
     #[tokio::test]
     async fn quick_redial_is_paced() {
         let ((device, device_runner), (host, host_runner)) = pair();
-        let mut client = TcpClient::new(device, leak([0; 64]), leak([0; 64]));
+        let mut client = Tcp::new(device, leak([0; 64]), leak([0; 64]));
         let redialed = Cell::new(false);
         with_network(device_runner, host_runner, async {
             let mut server = TcpSocket::new(host, leak([0; 64]), leak([0; 64]));
@@ -356,18 +356,12 @@ mod tests {
     #[tokio::test]
     async fn tcp_client_without_connection_refuses_io() {
         let ((device, _), _) = pair();
-        let mut client = TcpClient::new(device, leak([0; 64]), leak([0; 64]));
+        let mut client = Tcp::new(device, leak([0; 64]), leak([0; 64]));
         assert!(matches!(
             client.read(&mut [0; 4]).await,
-            Err(ClientError::NotConnected)
+            Err(Error::NotConnected)
         ));
-        assert!(matches!(
-            client.write(b"x").await,
-            Err(ClientError::NotConnected)
-        ));
-        assert!(matches!(
-            client.flush().await,
-            Err(ClientError::NotConnected)
-        ));
+        assert!(matches!(client.write(b"x").await, Err(Error::NotConnected)));
+        assert!(matches!(client.flush().await, Err(Error::NotConnected)));
     }
 }

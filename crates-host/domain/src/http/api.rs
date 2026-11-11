@@ -1,5 +1,5 @@
 //! Маршруты REST API и то, что видят их обработчики: состояние роутера и
-//! тело ответа JSON.
+//! тело ответа текстом.
 
 use embassy_net::Stack;
 use picoserve::extract::State;
@@ -13,7 +13,7 @@ use picoserve::routing::post;
 use crate::device::DeviceInfo;
 // {%- if ota == "true" %}
 use crate::ota::command::Progress;
-use crate::ota::{OtaClient, OtaCommand};
+use crate::ota::{Client, Command};
 // {%- endif %}
 
 use super::auth::Auth;
@@ -25,15 +25,15 @@ pub(super) struct Api {
     pub(super) stack: Stack<'static>,
     pub(super) token: &'static str,
     // {%- if ota == "true" %}
-    pub(super) ota: OtaClient,
+    pub(super) ota: Client,
     // {%- endif %}
 }
 
-/// Тело `/api/info`: данные объекта и его длина, а не готовый JSON.
+/// Тело `/api/info`: данные объекта и его длина, а не готовый текст.
 ///
 /// `picoserve` передаёт тело по значению через десяток вложенных future
 /// (обработчик, `write_to`, `write_response`, …), и каждая держит свою копию:
-/// собранный заранее буфер на [`INFO_MAX`](crate::device::INFO_MAX) байт лёг
+/// собранный заранее буфер на [`INFO_TEXT`](crate::device::INFO_TEXT) байт лёг
 /// бы в задачу узла столько же раз. Буфер заводит только `write_content` —
 /// последнее звено цепочки.
 struct InfoBody {
@@ -46,13 +46,19 @@ struct InfoBody {
 
 impl InfoBody {
     fn write(&self, out: &mut impl core::fmt::Write) -> core::fmt::Result {
-        crate::device::write_info(out, &self.info, self.mac, self.ip, self.uptime_s)
+        crate::device::write_info(
+            out,
+            &self.info,
+            Some(self.mac),
+            self.ip.map(|ip| core::net::Ipv4Addr::from(ip.octets())),
+            self.uptime_s,
+        )
     }
 }
 
 impl Content for InfoBody {
     fn content_type(&self) -> &'static str {
-        "application/json"
+        "text/plain; charset=utf-8"
     }
 
     fn content_length(&self) -> usize {
@@ -60,7 +66,7 @@ impl Content for InfoBody {
     }
 
     async fn write_content<W: Write>(self, mut w: W) -> Result<(), W::Error> {
-        let mut text = heapless::String::<{ crate::device::INFO_MAX }>::new();
+        let mut text = heapless::String::<{ crate::device::INFO_TEXT }>::new();
         // Влезает: `info` измерил этот же объект и длиннее буфера не пропустил.
         let written = self.write(&mut text);
         debug_assert!(written.is_ok(), "сведения длиннее измеренного");
@@ -108,11 +114,11 @@ fn info(api: &Api) -> Result<InfoBody, (StatusCode, &'static str)> {
         len: 0,
     };
     let mut measure = Measure(0);
-    // Строки сведений короткие (версия, хеш, имя чипа): объект короче буфера.
+    // Строки сведений короткие (версия, хеш, имя чипа): текст короче буфера.
     // Не влез бы (проект удлинил строки или добавил поля) — `500`, а не
-    // обрезанный JSON.
+    // обрезанный текст.
     match body.write(&mut measure) {
-        Ok(()) if measure.0 <= crate::device::INFO_MAX => {
+        Ok(()) if measure.0 <= crate::device::INFO_TEXT => {
             body.len = measure.0;
             Ok(body)
         }
@@ -123,7 +129,7 @@ fn info(api: &Api) -> Result<InfoBody, (StatusCode, &'static str)> {
 
 /// `POST /api/reboot`: узел OTA сбрасывает МК, ответив раньше сброса.
 async fn reboot(api: &Api) -> (StatusCode, &'static str) {
-    match api.ota.request(OtaCommand::Reboot).await {
+    match api.ota.request(Command::Reboot).await {
         Ok(Ok(Progress::Rebooting)) => (StatusCode::ACCEPTED, "rebooting\n"),
         Ok(_) => (StatusCode::CONFLICT, "reboot refused\n"),
         Err(_) => (StatusCode::SERVICE_UNAVAILABLE, "ota node lost\n"),
@@ -149,7 +155,7 @@ mod tests {
     use embassy_time::{Duration, MockDriver};
     // {%- if ota == "true" %}
     use crate::ota::command::{Progress, Rejection};
-    use crate::ota::{OtaCommand, OtaReply};
+    use crate::ota::{Command, Reply};
     use supervisor::Server;
     // {%- endif %}
 
@@ -157,7 +163,7 @@ mod tests {
     use crate::device::{DeviceInfo, UID_BYTES};
     use crate::http::{HTTP_BUFFER, PORT, TCP_RX, TCP_TX};
     // {%- if ota == "true" %}
-    use crate::ota::{OtaClient, OtaRequest};
+    use crate::ota::{Client, Request};
     // {%- endif %}
 
     /// Отложенное подтверждение `smoltcp` по умолчанию.
@@ -286,7 +292,7 @@ mod tests {
     /// `test` получает стек-хост.
     async fn with_server<R>(
         // {%- if ota == "true" %}
-        ota: OtaClient,
+        ota: Client,
         // {%- endif %}
         test: impl AsyncFnOnce(Stack<'static>) -> R,
     ) -> R {
@@ -312,7 +318,7 @@ mod tests {
 
     // {%- if ota == "true" %}
     /// Узел OTA, который на любую команду отвечает «сбрасываюсь».
-    async fn agree(cmd: &mut Server<'static, OtaRequest, OtaReply>) -> Infallible {
+    async fn agree(cmd: &mut Server<'static, Request, Reply>) -> Infallible {
         loop {
             let (_, served) = cmd.serve().await;
             served.respond(Ok(Progress::Rebooting));
@@ -376,7 +382,7 @@ mod tests {
         .await;
     }
 
-    /// `GET /api/info` с токеном — `200` и JSON, длина которого заявлена в
+    /// `GET /api/info` с токеном — `200` и текст, длина которого заявлена в
     /// Content-Length.
     #[tokio::test]
     async fn info_answers_with_the_token() {
@@ -389,8 +395,8 @@ mod tests {
                 let response = exchange(host, &request("GET", "/api/info", Some(&auth))).await;
                 assert_eq!(response.status, 200);
                 assert_eq!(response.length, Some(response.body.len()));
-                let body = core::str::from_utf8(&response.body).expect("JSON — текст");
-                assert!(body.starts_with('{'), "{body}");
+                let body = core::str::from_utf8(&response.body).expect("info — текст");
+                assert!(body.starts_with("version "), "{body}");
                 assert!(body.contains(INFO.chip), "{body}");
             },
         )
@@ -404,7 +410,7 @@ mod tests {
     #[tokio::test]
     async fn reboot_answers_with_the_ota_outcome() {
         let (ota, mut cmd) = crate::ota::tests::cmd();
-        let cases: [(Option<OtaReply>, u16); 4] = [
+        let cases: [(Option<Reply>, u16); 4] = [
             (Some(Ok(Progress::Rebooting)), 202),
             (Some(Ok(Progress::Ready)), 409),
             (Some(Err(Rejection::Busy)), 409),
@@ -414,7 +420,7 @@ mod tests {
             let node = async {
                 for (reply, _) in &cases {
                     let (request, served) = cmd.serve().await;
-                    assert_eq!(request.command, OtaCommand::Reboot);
+                    assert_eq!(request.command, Command::Reboot);
                     // `None` — обязанность ответить брошена: узел потерян.
                     if let Some(reply) = reply {
                         served.respond(*reply);

@@ -203,11 +203,11 @@ pub mod fake {
 
     /// Сетевое устройство без линка: кадров нет ни на приёме, ни на передаче.
     #[derive(Debug)]
-    pub struct NetDevice {
+    pub struct Device {
         mac: [u8; 6],
     }
 
-    impl NetDevice {
+    impl Device {
         /// Устройство с адресом `mac` — его увидит стек, хотя в сеть ничего не
         /// уходит.
         #[must_use]
@@ -216,7 +216,7 @@ pub mod fake {
         }
     }
 
-    /// Кадр, которого не бывает: токены приёма и передачи [`NetDevice`].
+    /// Кадр, которого не бывает: токены приёма и передачи [`Device`].
     #[derive(Debug)]
     pub enum NoFrame {}
 
@@ -232,7 +232,7 @@ pub mod fake {
         }
     }
 
-    impl embassy_net::driver::Driver for NetDevice {
+    impl embassy_net::driver::Driver for Device {
         type RxToken<'a> = NoFrame;
         type TxToken<'a> = NoFrame;
 
@@ -269,7 +269,7 @@ pub mod fake {
         fn net_device_has_no_link_and_no_frames() {
             use embassy_net::driver::Driver;
 
-            let mut device = NetDevice::new([2, 1, 2, 3, 4, 5]);
+            let mut device = Device::new([2, 1, 2, 3, 4, 5]);
             let mut cx = Context::from_waker(Waker::noop());
             assert!(device.receive(&mut cx).is_none());
             assert!(device.transmit(&mut cx).is_none());

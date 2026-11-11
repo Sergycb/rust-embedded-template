@@ -150,7 +150,7 @@ F2/F4/F7 (у F4 16, 64 и 128 KiB): в мелких секторах можно 
 настоящий, объём он узнаёт по JEDEC ID. Шину генерация выбирает по чипу:
 QSPI, где он выведен (`QUADSPI`, иначе `OCTOSPI`), иначе SPI; блок кладётся в
 группу `ext_flash` в `resources.rs`. Выводы шаблон не выбирает, поэтому шина
-под драйвером — заглушка `bsp::stub::FlashBus`: `init` не проходит, каждая
+под драйвером — заглушка `bsp::stub::Bus`: `init` не проходит, каждая
 операция отвечает ошибкой, и проект работает без сохранения настроек, сказав
 об этом строкой в лог при старте. Раздел — {% if ota_store == "external" %}за `DFU`, см. ниже{% else %}с начала микросхемы, 128 KiB{% endif %}. Подключить — заменить шину в
 `bsp/src/external.rs`: рецепт под SPI и QSPI — docs/modules/bsp-external.md.
@@ -162,15 +162,15 @@ QSPI, где он выведен (`QUADSPI`, иначе `OCTOSPI`), иначе S
 {%- if shared_flash == "true" %}
 
 - **`Flash` на чипе один и создаётся ровно один раз** — `FLASH: StaticCell` в
-  `bsp/src/flash.rs`. {% if ota_in == "1" and cfg_in == "1" %}И носители обновления, и настройки получают{% elsif ota_in == "1" %}Носители обновления получают{% else %}Носитель настроек получает{% endif %} `&'static FlashMutex`, а не
+  `bsp/src/flash.rs`. {% if ota_in == "1" and cfg_in == "1" %}И носители обновления, и настройки получают{% elsif ota_in == "1" %}Носители обновления получают{% else %}Носитель настроек получает{% endif %} `&'static Lock`, а не
   свой объект: контроллер физически один. Ссылка `'static`, потому что {% if ota_in == "1" and cfg_in == "1" %}обе
   половины отдаются{% else %}носитель отдаётся в задачу{% endif %}{% if ota_in == "1" and cfg_in == "1" %} в задачи{% endif %}, а аргументы задач embassy обязаны быть `'static`.
 {%- if ota_in != "1" and cfg_flash != "1" %}
 - **EEPROM ходит к контроллеру через свой тип** (`bsp::flash::EepromFlash`): по
-  операции под замком `FlashMutex`. Свой тип, а не `impl` на мьютексе:
+  операции под замком `Lock`. Свой тип, а не `impl` на мьютексе:
   `Storage` и `Mutex` чужие для `bsp`.
 {%- else %}
-- **К общему флешу ходят через раздел на весь флеш.** `bsp::flash::FlashMutex` —
+- **К общему флешу ходят через раздел на весь флеш.** `bsp::flash::Lock` —
   псевдоним на `Mutex<NoopRawMutex, RefCell<…>>` (`RefCell` нужен блокирующему
   `Mutex` embassy), а над ним потребитель строит на месте
   `embassy_embedded_hal::flash::partition::BlockingPartition::new(flash, 0, flash::SIZE)`
@@ -192,11 +192,11 @@ QSPI, где он выведен (`QUADSPI`, иначе `OCTOSPI`), иначе S
   к флешу перестанет быть эксклюзивным. Это же допущение стоит за
 {%- assign sep = " " %}
 {%- if ota == "true" %}{{ sep }}мьютексами носителей обновления ({% if ota_store == "external" %}`bsp::external::ExternalMutex`{% else %}`bsp::flash::DFU_FLASH`, `STATE_FLASH`{% if dfu_bank == "true" %},
-  `bsp::flash::DfuBankMutex`{% endif %}{% endif %}){% assign sep = ", " %}{% endif %}
+  `bsp::flash::dfu::BankMutex`{% endif %}{% endif %}){% assign sep = ", " %}{% endif %}
 {%- if config_store == "flash" %}{{ sep }}мьютексом раздела настроек
   (`bsp::flash::CONFIG_FLASH`){% assign sep = ", " %}{% elsif config_store == "external" and ota_store != "external" %}{{ sep }}мьютексом носителя настроек
   (`bsp::external::ExternalMutex`){% assign sep = ", " %}{% endif %}
-{%- if sep == " " %} всеми носителями поверх `bsp::flash::FlashMutex`{% assign sep = ", " %}{% endif %}
+{%- if sep == " " %} всеми носителями поверх `bsp::flash::Lock`{% assign sep = ", " %}{% endif %}
 {%- if graph == "true" %}{{ sep }}`local`-слотами узлов графа{% if ota == "true" %} (у OTA — `FLASH`){% endif %}{% endif %} — менять их вместе с типом мьютекса.{% if has_modbus == "true" %} Карта регистров
   Modbus (`domain::modbus::MapMutex`) сюда не входит — `docs/modules/app.md`,
   «Modbus: одна карта на все узлы `MODBUS_*`».{% endif %}
@@ -504,7 +504,7 @@ NOR), а конец разделов — символ `memory.x` `__ext_flash_en
 `SysTick`, `cortex_m::delay::Delay`). Оба опознают микросхему (`init`) при старте:
 `Board::new` поэтому асинхронный, и зовёт его первая задача исполнителя
 (`start` в `main` бинарника — `crates-cross/app/src/main.rs`{% if test_image == "true" %} и `src/bin/app-unconfirmed.rs`{% endif %}). Шина
-под обоими в шаблоне — заглушка `bsp::stub::FlashBus`: проект собирается и
+под обоими в шаблоне — заглушка `bsp::stub::Bus`: проект собирается и
 работает, OTA не принимает образы, bootloader грузит текущий
 (docs/modules/bsp-external.md).
 

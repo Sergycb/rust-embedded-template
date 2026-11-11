@@ -35,10 +35,10 @@ use embassy_time::Timer;
 use embedded_io_async::{Read, Write};
 
 // {%- if ota == "true" %}
+use crate::ota::Client;
 use crate::ota::command::Progress;
-use crate::ota::{OtaClient, OtaCommand};
 // {%- endif %}
-use crate::device::{DeviceInfo, PANIC_BRIEF};
+use crate::device::{DeviceInfo, INFO_TEXT, write_info};
 
 pub(crate) use login::Access;
 pub use login::{PASSWORD_HASH_LEN, PasswordHash, USER};
@@ -59,11 +59,11 @@ supervisor::supervisor_fragment! {
             LOGIN: $crate::console::PasswordHash = inputs.login,
             // {%- if has_net == "true" %}
             /// Стек сети проекта: `info` показывает MAC и адрес.
-            STACK: local $crate::console::NetStack = inputs.stack,
+            STACK: local $crate::console::ConsoleStack = inputs.stack,
             // {%- endif %}
             // {%- if ota == "true" %}
             /// Клиент входа `CMD` узла OTA — для `reboot`.
-            OTA: $crate::ota::OtaClient = inputs.ota,
+            OTA: $crate::ota::Client = inputs.ota,
             // {%- endif %}
         ],
         ctx: $crate::console::ConsoleCtx,
@@ -96,15 +96,10 @@ const WRONG_PASSWORD_PAUSE: Duration = Duration::from_secs(1);
 const ERROR_TEXT: usize = 64;
 // {%- endif %}
 
-/// Самый длинный ответ на `info`, байт: 256 — прошлые строки с запасом под
-/// длинную версию, 27 — `reset independent_watchdog`, остальное — строка
-/// `last panic` с [`PANIC_BRIEF`] байт.
-pub(crate) const INFO_TEXT: usize = 256 + 27 + "last panic \n".len() + PANIC_BRIEF;
-
 // {%- if has_net == "true" %}
 /// Стек консоли. Псевдоним — чтобы `app`, где раскрывается фрагмент, не
 /// зависел от `embassy-net` сам.
-pub type NetStack = Option<Stack<'static>>;
+pub type ConsoleStack = Option<Stack<'static>>;
 // {%- endif %}
 
 /// Подтверждение перезагрузки: `reboot` — подсказка, `reboot yes` — сброс.
@@ -151,7 +146,7 @@ pub(crate) struct Device<'a> {
     pub(crate) stack: Option<Stack<'static>>,
     // {%- endif %}
     // {%- if ota == "true" %}
-    pub(crate) ota: OtaClient,
+    pub(crate) ota: Client,
     // {%- endif %}
 }
 
@@ -428,7 +423,7 @@ async fn run<W: Write>(
         Command::Reboot(Confirm::No) => out.text("to reboot, type: reboot yes\n").await?,
         Command::Reboot(Confirm::Yes) => {
             // Узел OTA отвечает раньше сброса: ответ успевает уйти.
-            let reply = match device.ota.request(OtaCommand::Reboot).await {
+            let reply = match device.ota.request(crate::ota::Command::Reboot).await {
                 Ok(Ok(Progress::Rebooting)) => "rebooting\n",
                 Ok(_) => "reboot refused\n",
                 Err(_) => "ota node lost\n",
@@ -514,60 +509,6 @@ pub(crate) async fn shell<IO: Read + Write>(
     }
 }
 
-/// Сведения об устройстве текстом.
-pub(crate) fn write_info(
-    out: &mut impl core::fmt::Write,
-    info: &DeviceInfo,
-    mac: Option<[u8; 6]>,
-    ip: Option<core::net::Ipv4Addr>,
-    uptime_s: u64,
-) -> core::fmt::Result {
-    writeln!(out, "version {} ({})", info.version, info.commit)?;
-    write!(
-        out,
-        "chip {}, flash {} KiB",
-        info.chip,
-        info.flash_size / 1024
-    )?;
-    match info.sys_hz {
-        Some(hz) => writeln!(out, ", core {} MHz", hz / 1_000_000)?,
-        None => out.write_char('\n')?,
-    }
-    out.write_str("uid ")?;
-    for b in info.uid {
-        write!(out, "{b:02x}")?;
-    }
-    out.write_str("\nmac ")?;
-    match mac {
-        Some(mac) => {
-            for (i, b) in mac.iter().enumerate() {
-                write!(out, "{}{b:02x}", if i == 0 { "" } else { ":" })?;
-            }
-            out.write_char('\n')?;
-        }
-        None => out.write_str("none\n")?,
-    }
-    match ip {
-        Some(ip) => writeln!(out, "ip {ip}")?,
-        None => out.write_str("ip none\n")?,
-    }
-    writeln!(out, "uptime {uptime_s} s")?;
-    writeln!(out, "reset {}", info.reset)?;
-    // Место и текст паники разделяет её же перевод строки, а консоль держит
-    // «ключ значение» по строке: текст идёт через пробел, а не второй строкой
-    // без ключа.
-    let (place, text) = match info.last_panic {
-        Some(panic) => panic.split_once('\n').unwrap_or((panic, "")),
-        None => ("none", ""),
-    };
-    out.write_str("last panic ")?;
-    out.write_str(place)?;
-    if !text.is_empty() {
-        write!(out, " {text}")?;
-    }
-    out.write_char('\n')
-}
-
 #[cfg(test)]
 mod tests {
     //! Тесты консоли: разбор, `exec`, `shell`, `info` и срок молчания.
@@ -578,9 +519,9 @@ mod tests {
 
     use embassy_time::{Duration, MockDriver};
 
-    use crate::device::{DeviceInfo, PANIC_BRIEF};
+    use crate::device::{DeviceInfo, INFO_TEXT, PANIC_BRIEF, write_info};
 
-    use super::{Device, INFO_TEXT, LINE, ShellEnd, shell, write_info};
+    use super::{Device, LINE, ShellEnd, shell};
     // {%- if net_services contains "ssh" %}
     use super::{Command, Out, exec, parse};
     // {%- endif %}

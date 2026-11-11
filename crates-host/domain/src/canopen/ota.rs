@@ -33,7 +33,7 @@ use zencan_node::common::sdo::AbortCode;
 use zencan_node::object_dict::ObjectAccess;
 
 use crate::ota::command::{CHUNK_BYTES, Chunk, Progress, Rejection, SIGNATURE_BYTES, reply_code};
-use crate::ota::{ClientId, OtaCommand, OtaReply, OtaRequest};
+use crate::ota::{ClientId, Command, Reply, Request};
 
 /// Индекс объекта OTA — в области приложения `zencan` (0x2000–0x4FFF). Тот же,
 /// что в `device.toml`; разойтись им не даёт тест узла.
@@ -46,15 +46,15 @@ const START_BYTES: usize = 4;
 const CHUNK_HEADER: usize = 4;
 
 /// Клиент входа `ASK` узла OTA — поле `ota_ask` контекста узла CANopen.
-pub(crate) type OtaAsker<'a> = supervisor::Asker<'a, OtaRequest, OtaReply, ()>;
+pub(crate) type Asker<'a> = supervisor::Asker<'a, Request, Reply, ()>;
 
 /// Объект OTA словаря: ставит команды и показывает исход последней.
 ///
 /// Состояние — под критической секцией (`AtomicCell`): объект — `static`, а
 /// стек зовёт его синхронно из `Node::process`.
-pub struct OtaObject {
+pub struct Object {
     /// Команда, которую узел CANopen ещё не отдал узлу OTA.
-    pending: AtomicCell<Option<OtaCommand>>,
+    pending: AtomicCell<Option<Command>>,
     /// Команда поставлена, а исхода ещё нет.
     in_flight: AtomicCell<bool>,
     /// Код исхода последней команды; 0 — выполняется или команд не было.
@@ -63,7 +63,7 @@ pub struct OtaObject {
     received: AtomicCell<u32>,
 }
 
-impl OtaObject {
+impl Object {
     /// Объект без команд и исходов.
     #[must_use]
     pub const fn new() -> Self {
@@ -87,11 +87,11 @@ impl OtaObject {
     /// дожидаясь исхода: его узел CANopen заберёт из `ota.reply()` и отдаст
     /// [`record`](Self::record). Зовёт узел после обработки кадра; нет
     /// команды — ничего.
-    pub(crate) fn send(&self, ota: &mut OtaAsker<'_>, client: ClientId) {
+    pub(crate) fn send(&self, ota: &mut Asker<'_>, client: ClientId) {
         let Some(command) = self.pending.take() else {
             return;
         };
-        if ota.try_call((), OtaRequest { client, command }).is_err() {
+        if ota.try_call((), Request { client, command }).is_err() {
             // Не бывает: запись не ставит команду, пока прежняя в полёте, а
             // квота — одна команда.
             warn!("canopen: вход ASK узла OTA занят");
@@ -100,7 +100,7 @@ impl OtaObject {
     }
 
     /// Исход — в sub 5 и 6; следующая команда снова принимается.
-    pub(crate) fn record(&self, reply: OtaReply) {
+    pub(crate) fn record(&self, reply: Reply) {
         match reply {
             Ok(Progress::Received(received)) => self.received.store(received),
             // Отказ обрывает приём: длина прошлого приёма больше ни к чему.
@@ -112,7 +112,7 @@ impl OtaObject {
     }
 
     /// Ставит команду; пока прежняя без исхода — отказ записи.
-    fn post(&self, command: OtaCommand) -> Result<(), AbortCode> {
+    fn post(&self, command: Command) -> Result<(), AbortCode> {
         if self.in_flight.load() {
             return Err(AbortCode::CantStoreDeviceState);
         }
@@ -123,22 +123,22 @@ impl OtaObject {
     }
 }
 
-impl Default for OtaObject {
+impl Default for Object {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl core::fmt::Debug for OtaObject {
+impl core::fmt::Debug for Object {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("OtaObject")
+        f.debug_struct("Object")
             .field("status", &self.status.load())
             .field("received", &self.received.load())
             .finish_non_exhaustive()
     }
 }
 
-impl ObjectAccess for OtaObject {
+impl ObjectAccess for Object {
     fn read(&self, sub: u8, offset: usize, buf: &mut [u8]) -> Result<usize, AbortCode> {
         let mut value = [0; 4];
         let value = match sub {
@@ -179,8 +179,8 @@ impl ObjectAccess for OtaObject {
         let command = match sub {
             1 => start(data)?,
             2 => chunk(data)?,
-            3 => OtaCommand::Finish,
-            4 => OtaCommand::Reboot,
+            3 => Command::Finish,
+            4 => Command::Reboot,
             0 | 5 | 6 => return Err(AbortCode::ReadOnly),
             _ => return Err(AbortCode::NoSuchSubIndex),
         };
@@ -212,10 +212,10 @@ impl ObjectAccess for OtaObject {
 }
 
 /// Объект OTA словаря — регистрирует его узел при старте (`canopen::begin`).
-pub static OTA: OtaObject = OtaObject::new();
+pub static OTA: Object = Object::new();
 
 /// `Start` из записи sub 1: длина и, если есть, подпись.
-fn start(data: &[u8]) -> Result<OtaCommand, AbortCode> {
+fn start(data: &[u8]) -> Result<Command, AbortCode> {
     let (len, signature) = data
         .split_first_chunk::<START_BYTES>()
         .ok_or(AbortCode::DataTypeMismatchLengthLow)?;
@@ -225,32 +225,32 @@ fn start(data: &[u8]) -> Result<OtaCommand, AbortCode> {
         n if n < SIGNATURE_BYTES => return Err(AbortCode::DataTypeMismatchLengthLow),
         _ => return Err(AbortCode::DataTypeMismatchLengthHigh),
     };
-    Ok(OtaCommand::Start {
+    Ok(Command::Start {
         len: u32::from_le_bytes(*len),
         signature,
     })
 }
 
 /// `Chunk` из записи sub 2: смещение, затем байты.
-fn chunk(data: &[u8]) -> Result<OtaCommand, AbortCode> {
+fn chunk(data: &[u8]) -> Result<Command, AbortCode> {
     let (offset, bytes) = data
         .split_first_chunk::<CHUNK_HEADER>()
         .ok_or(AbortCode::DataTypeMismatchLengthLow)?;
     Chunk::new(u32::from_le_bytes(*offset), bytes)
-        .map(OtaCommand::Chunk)
+        .map(Command::Chunk)
         .ok_or(AbortCode::DataTypeMismatchLengthHigh)
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::ota::OtaCommand;
+    use crate::ota::Command;
     use crate::ota::command::{Chunk, Progress, Rejection};
     use zencan_node::common::sdo::AbortCode;
     use zencan_node::object_dict::ObjectAccess;
 
-    use super::OtaObject;
+    use super::Object;
 
-    fn read(object: &OtaObject, sub: u8) -> Vec<u8> {
+    fn read(object: &Object, sub: u8) -> Vec<u8> {
         let mut buf = [0; 8];
         let len = object.read(sub, 0, &mut buf).expect("подобъект читается");
         buf[..len].to_vec()
@@ -259,13 +259,13 @@ mod tests {
     /// Записи ставят ровно ту команду, что описана в таблице подобъектов.
     #[test]
     fn writes_post_the_commands_of_the_table() {
-        let object = OtaObject::new();
+        let object = Object::new();
         let mut start = 8u32.to_le_bytes().to_vec();
         start.extend([7; 64]);
         object.write(1, &start).unwrap();
         assert_eq!(
             object.pending.take(),
-            Some(OtaCommand::Start {
+            Some(Command::Start {
                 len: 8,
                 signature: Some([7; 64])
             })
@@ -277,18 +277,18 @@ mod tests {
         object.write(2, &chunk).unwrap();
         assert_eq!(
             object.pending.take(),
-            Some(OtaCommand::Chunk(Chunk::new(16, &[1, 2, 3]).unwrap()))
+            Some(Command::Chunk(Chunk::new(16, &[1, 2, 3]).unwrap()))
         );
         object.record(Ok(Progress::Received(19)));
 
         object.write(3, &[0; 4]).unwrap();
-        assert_eq!(object.pending.take(), Some(OtaCommand::Finish));
+        assert_eq!(object.pending.take(), Some(Command::Finish));
     }
 
     /// Пока команда без исхода — sub 5 читается нулём, исход — его кодом.
     #[test]
     fn the_status_is_zero_until_the_outcome() {
-        let object = OtaObject::new();
+        let object = Object::new();
         object.write(3, &[0; 4]).unwrap();
         assert_eq!(read(&object, 5), [0, 0], "выполняется");
 
@@ -300,23 +300,23 @@ mod tests {
     /// Команда до исхода прежней — отказ записи; после исхода — принимается.
     #[test]
     fn a_command_waits_for_the_outcome_of_the_previous_one() {
-        let object = OtaObject::new();
+        let object = Object::new();
         object.write(3, &[0; 4]).unwrap();
         assert_eq!(
             object.write(4, &[0; 4]),
             Err(AbortCode::CantStoreDeviceState)
         );
-        assert_eq!(object.pending.take(), Some(OtaCommand::Finish));
+        assert_eq!(object.pending.take(), Some(Command::Finish));
 
         object.record(Ok(Progress::Ready));
         object.write(4, &[0; 4]).unwrap();
-        assert_eq!(object.pending.take(), Some(OtaCommand::Reboot));
+        assert_eq!(object.pending.take(), Some(Command::Reboot));
     }
 
     /// Записи не по форме — отказ до постановки команды.
     #[test]
     fn malformed_writes_are_refused() {
-        let object = OtaObject::new();
+        let object = Object::new();
         assert_eq!(
             object.write(1, &[0; 3]),
             Err(AbortCode::DataTypeMismatchLengthLow)
@@ -346,7 +346,7 @@ mod tests {
     /// записи кодов исхода и чужой подындекс.
     #[test]
     fn subindices_follow_the_table() {
-        let object = OtaObject::new();
+        let object = Object::new();
         let mut buf = [0; 8];
         for (sub, size) in [(0, Ok(1)), (1, Ok(0)), (4, Ok(0)), (5, Ok(2)), (6, Ok(4))] {
             assert_eq!(object.read_size(sub), size, "read_size({sub})");
@@ -381,7 +381,7 @@ mod tests {
     /// отказ, а не паника.
     #[test]
     fn reads_honour_the_offset() {
-        let object = OtaObject::new();
+        let object = Object::new();
         object.record(Ok(Progress::Received(0x0403_0201)));
         let mut buf = [0; 8];
         assert_eq!(object.read(6, 1, &mut buf), Ok(3));
@@ -408,7 +408,7 @@ mod tests {
     /// обнуляют, `Ready` оставляет.
     #[test]
     fn received_follows_the_replies() {
-        let object = OtaObject::new();
+        let object = Object::new();
         object.record(Ok(Progress::Received(300)));
         assert_eq!(read(&object, 6), 300u32.to_le_bytes());
         object.record(Ok(Progress::Ready));

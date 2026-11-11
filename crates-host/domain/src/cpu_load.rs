@@ -50,9 +50,8 @@ pub use sampling::log_load;
 // {%- endif %}
 
 // {%- if graph == "true" %}
-use embassy_time::Instant;
+use embassy_time::Timer;
 
-use crate::tick;
 use load::CpuLoad;
 use sampling::{SAMPLE_INTERVAL, snapshot};
 
@@ -128,20 +127,16 @@ supervisor::supervisor_fragment! {
 /// У узла нет выхода: узел не падает (docs/architecture.md, «Узлы не падают»),
 /// и `task` не возвращается.
 pub async fn task(ctx: CpuLoadCtx<'_>) {
-    let mut next = Instant::now() + SAMPLE_INTERVAL;
     let mut load = CpuLoad::new();
     loop {
-        // Ждёт замер: `deadline` готов на первом опросе, если срок уже
-        // прошёл, а `next_tick` отбрасывает такты, пропущенные пока
-        // исполнитель был занят чужой работой, — иначе замеры через
-        // микросекунды опубликовали бы ложные 0% или 100% поверх честного
-        // значения.
-        tick::deadline(next).await;
+        // `Timer::after` считает интервал от завершения прошлого замера:
+        // пропущенные такты не догоняются пачкой, а процент считается по
+        // фактическому приросту тиков между снимками.
+        Timer::after(SAMPLE_INTERVAL).await;
         ctx.heartbeat.feed();
         if let Some(percent) = load.sample(snapshot(ctx.sleep_ticks)) {
             ctx.percent.send(percent);
         }
-        next = tick::next_tick(next, SAMPLE_INTERVAL, Instant::now());
     }
 }
 // {%- endif %}

@@ -43,7 +43,7 @@ pdo_mapping = "rpdo"
 persist = true
 
 # {%- if ota == "true" %}
-# Объект OTA — команды обновления записями SDO (`domain::canopen::OtaObject`,
+# Объект OTA — команды обновления записями SDO (`domain::canopen::Object`,
 # там же таблица подобъектов). `application_callback`: хранения в словаре у
 # него нет, обработчик узел регистрирует при старте.
 [[objects]]

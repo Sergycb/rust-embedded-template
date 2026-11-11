@@ -18,8 +18,10 @@
 )]
 mod generated {
     include!(concat!(env!("OUT_DIR"), "/host.rs"));
+    include!(concat!(env!("OUT_DIR"), "/dispatch.rs"));
 }
 
+pub use generated::Handlers;
 pub use generated::host_::*;
 
 #[cfg(test)]

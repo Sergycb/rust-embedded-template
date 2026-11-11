@@ -4,7 +4,7 @@
 {% capture flash_users %}{% if ota == "true" and ota_store != "external" %}, флешу под
 обновлением (`DFU` и `BOOTLOADER_STATE`){% endif %}{% if config == "true" and config_store == "flash" %}, разделу `CONFIG` настроек{% elsif config == "true" and config_store == "eeprom" %}, EEPROM настроек (она пишется через тот же контроллер){% endif %}{% endcapture %}Контроллер флеша на чипе один, и работают с ним: {{ flash_users | remove_first: ", " }}. Поэтому объект
 создаётся ровно один раз (`flash::new`, ему отдаётся группа `flash` из
-`resources.rs`), лежит в `static` под блокирующим замком (`FlashMutex`), а
+`resources.rs`), лежит в `static` под блокирующим замком (`Lock`), а
 куски флеша получают на него ссылки.
 
 Куски — рычаги платы, полями `Board`:
@@ -22,7 +22,7 @@
   цельного `Flash`, и носитель — он сам (равенство проверяет `const`-assert).{% endif %}
 {%- if swap_paged == "true" %} Носитель `DFU` — `ErasePage` со страницей
   обмена `SWAP_PAGE_SIZE`, крупнее физической.{% endif %}{% if dfu_bank == "true" %} `DFU` — в банке 2 за разрывом
-  адресов (`DfuBankMutex`).{% endif %}{% if state_paged == "true" or swap_paged == "true" %} Те же
+  адресов (`dfu::BankMutex`).{% endif %}{% if state_paged == "true" or swap_paged == "true" %} Те же
   числа ({% if state_paged == "true" %}`STATE_ERASE_SIZE`{% if swap_paged == "true" %}, {% endif %}{% endif %}{% if swap_paged == "true" %}`SWAP_PAGE_SIZE`{% endif %}) берёт отсюда bootloader{% else %} Bootloader строит
   `STATE` над тем же цельным `Flash`, и его страницу держит `const`-assert
   отсюда (bootloader линкует `bsp`){% endif %}; почему страницы такие —
@@ -55,7 +55,7 @@
 {%- else %}
 
 EEPROM пишется через тот же контроллер: `EepromFlash` берёт замок
-`FlashMutex` на каждую операцию.
+`Lock` на каждую операцию.
 {%- endif %}
 
 `NoopRawMutex` подразумевает один исполнитель — подробности в `docs/flash.md`.

@@ -40,6 +40,8 @@ ignore = [
 	"Cargo.lock",
 	"crates-host/chip-info/Cargo.lock",
 	"MAINTAINING.md",
+	# Хвосты ревью ветки — заметки сопровождения шаблона, не проекта.
+	"REVIEW-FOLLOWUPS.md",
 	# CI самого репозитория шаблона. Лежит рядом с `ci.yml`, который в проекты
 	# как раз копируется, поэтому исключается поимённо: `[conditional]` ниже
 	# убирает `.github` целиком и только когда выбран не GitHub.
@@ -103,8 +105,6 @@ ignore = [
 	"ota-signing-key.bin",
 	"ota-public-key.bin",
 	"rest-token.txt",
-	"console-password.txt",
-	"console-password.hash",
 	"ssh-host-key.bin",
 	"mqtt.toml",
 ]

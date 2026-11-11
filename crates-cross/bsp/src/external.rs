@@ -34,7 +34,7 @@ const LOST: &str = "{% if ota == "true" and ota_store == "external" %}OTA{% if c
 /// Шина микросхемы — пока заглушка. Плата подставляет сюда {% if ext_flash_bus == "spi" %}`w25q::spi::SpiAdapter` над `SpiDevice` блока `{{ext_flash_block}}`{% else %}свою обёртку
 /// над `embassy_stm32::{% if ext_flash_bus == "quadspi" %}qspi::Qspi{% else %}ospi::Ospi{% endif %}` блока `{{ext_flash_block}}`{% endif %}
 /// (docs/modules/bsp-external.md).
-pub type Bus = crate::stub::FlashBus;
+pub type Bus = crate::stub::Bus;
 
 /// Драйвер внешней флеши: асинхронный W25Q над [`Bus`].
 pub type ExternalFlash = w25q::device::W25qAsync<Bus, embassy_time::Delay>;
@@ -42,7 +42,7 @@ pub type ExternalFlash = w25q::device::W25qAsync<Bus, embassy_time::Delay>;
 /// Внешняя флеш под замком — то, над чем строятся её разделы.
 ///
 /// `NoopRawMutex` — то же допущение «один исполнитель», что у
-/// `crate::flash::FlashMutex`; менять вместе.
+/// `crate::flash::Lock`; менять вместе.
 pub type ExternalMutex = Mutex<NoopRawMutex, ExternalFlash>;
 
 {%- if ota == "true" and ota_store == "external" %}
@@ -71,7 +71,7 @@ static EXTERNAL: StaticCell<ExternalMutex> = StaticCell::new();
 /// микросхемы проверять нечего.
 #[must_use]
 pub fn connected() -> bool {
-    TypeId::of::<Bus>() != TypeId::of::<crate::stub::FlashBus>()
+    TypeId::of::<Bus>() != TypeId::of::<crate::stub::Bus>()
 }
 
 /// Собирает драйвер и опознаёт микросхему (`init`: JEDEC ID, объём{% if ext_flash_bus != "spi" %}, бит QE{% endif %}).
@@ -80,7 +80,7 @@ pub fn connected() -> bool {
 /// лог, и драйвер отказывает в любой операции ошибкой, а не паникой. Плата без
 /// флеши (или с заглушкой шины) работает, только без того, что на флеши лежит.
 pub(crate) async fn new(_resources: crate::resources::ExtFlashResources) -> &'static ExternalMutex {
-    let mut flash = ExternalFlash::new(crate::stub::FlashBus, embassy_time::Delay);
+    let mut flash = ExternalFlash::new(crate::stub::Bus, embassy_time::Delay);
     let end = crate::layout::ext_flash_end();
     let flash = match flash.init().await {
         Ok(_) if flash.capacity() >= end => {

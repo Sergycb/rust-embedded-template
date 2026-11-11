@@ -48,6 +48,7 @@
 //!   `industrial-protocols-canopen` — требуют `std`.
 
 mod frame;
+mod logic;
 // {%- if ota == "true" %}
 mod ota;
 // {%- endif %}
@@ -58,7 +59,7 @@ mod wiring;
 use core::cell::RefCell;
 use core::convert::Infallible;
 
-use defmt_or_log::{FormatOrDebug, info, warn};
+use defmt_or_log::{FormatOrDebug, warn};
 // {%- if ota == "true" %}
 // Гонка такта, исхода OTA и кадра: `select3`.
 use embassy_futures::select::{Either3, select3};
@@ -68,25 +69,23 @@ use embassy_futures::select::{Either, select};
 // {%- endif %}
 use embassy_futures::yield_now;
 use embassy_time::Instant;
-use embedded_can::Frame;
 use embedded_storage_async::nor_flash::NorFlash;
 use ports::{CanBus, LinkError};
+use zencan_node::Callbacks;
 use zencan_node::common::NodeId;
-use zencan_node::common::messages::CanMessage;
-use zencan_node::common::nmt::NmtState;
 use zencan_node::embedded_io::Read;
 use zencan_node::object_dict::ODEntry;
-use zencan_node::{Callbacks, Node};
 
-use crate::canopen::frame::{fix_save_signature, is_heartbeat, to_frame, to_message};
 use crate::settings::{Error as SettingsError, Settings};
-use crate::tick::{deadline, next_tick};
+use crate::tick::deadline;
+
+use self::logic::CanOpen;
 
 pub use persisted::{NODE_ID_KEY, OBJECTS_KEY, Persisted, STORE_CAPACITY};
 pub use stack::{Stack, TICK};
 pub use wiring::{Dictionary, dictionary, serial};
 // {%- if ota == "true" %}
-pub use ota::{OTA, OTA_INDEX, OtaObject};
+pub use ota::{OTA, OTA_INDEX, Object};
 // {%- endif %}
 
 // Узел объявлен рядом со своей задачей.
@@ -120,180 +119,10 @@ supervisor::supervisor_fragment! {
         // Команды объекта OTA словаря ([`OTA`]) — на вход `ASK` узла OTA без
         // ожидания исхода: узел обслуживает шину, пока OTA стирает раздел.
         // Квота — одна команда: следующую объект не ставит до исхода.
-        asks: [OTA.ASK: $crate::ota::OtaRequest -> $crate::ota::OtaReply; 1 tag ()],
+        asks: [OTA.ASK: $crate::ota::Request -> $crate::ota::Reply; 1 tag ()],
         // {%- endif %}
         ctx: $crate::canopen::CanOpenCtx,
         task: $crate::canopen::task;
-}
-
-/// Стек в работе и ближайший такт: состояние, которое переживает круг цикла.
-struct Running<'f> {
-    stack: Stack<'f>,
-    /// Ближайший такт.
-    next: Instant,
-}
-
-impl<C, F> CanOpenCtx<'_, C, Settings<F>>
-where
-    C: CanBus,
-    C::Error: FormatOrDebug,
-    F: NorFlash,
-    SettingsError<F::Error>: FormatOrDebug,
-{
-    /// Поднимает стек: адрес и сохранённые объекты — из хранилища, затем
-    /// `Node::new` и первая обработка — стек ставит в очередь кадр boot-up, и
-    /// он уходит на шину.
-    async fn begin<'f>(
-        &mut self,
-        persisted: &'f RefCell<Persisted>,
-        callbacks: &'f mut Option<Callbacks<'f>>,
-        node: &'f mut Option<Node<'f>>,
-    ) -> Running<'f> {
-        let d = *self.dictionary;
-        // {%- if ota == "true" %}
-        // Объект OTA в словаре — место под обработчик: без регистрации стек
-        // отвечает на его SDO отказом `ResourceNotAvailable`.
-        d.ota.register_handler(&OTA);
-        OTA.reset();
-        // {%- endif %}
-        // Серийный номер — до `Node::new`: стек и LSS читают идентичность из
-        // словаря уже при старте.
-        d.identity.set_serial(*self.serial);
-        let node_id = self.restore(persisted).await;
-        info!("canopen: узел запущен, адрес {}", node_id.raw());
-        // `Node::new` сам зовёт `reset_app` — тот восстанавливает объекты из
-        // прочитанного `restore`.
-        let node = node.insert(Node::new(
-            node_id,
-            callbacks.take().unwrap_or_default(),
-            d.mbox,
-            d.state,
-            d.od,
-        ));
-        let mut running = Running {
-            stack: Stack {
-                node,
-                start: Instant::now(),
-                persisted,
-            },
-            next: Instant::now() + TICK,
-        };
-        self.step(&mut running).await;
-        running
-    }
-
-    /// Такт: обработка без нового кадра.
-    async fn tick(&mut self, s: &mut Running<'_>) {
-        s.next = next_tick(s.next, TICK, Instant::now());
-        self.step(s).await;
-    }
-
-    /// Кадр с шины — в почтовый ящик, затем обработка.
-    ///
-    /// Кадр, не адресованный узлу (чужой heartbeat, PDO, SDO других узлов),
-    /// почтовый ящик не принимает — он пропускается без обработки: на
-    /// загруженной шине таких большинство.
-    async fn received(&mut self, s: &mut Running<'_>, frame: C::Frame) {
-        let Some(mut message) = to_message(&frame) else {
-            warn!(
-                "canopen: кадр CAN FD на {} байт пропущен — стек классический",
-                frame.data().len()
-            );
-            return;
-        };
-        fix_save_signature(&mut message);
-        if self.dictionary.mbox.store_message(message).is_ok() {
-            self.step(s).await;
-        }
-    }
-
-    // {%- if ota == "true" %}
-    /// Исход команды OTA — в объект словаря (sub 5 и 6).
-    #[expect(clippy::unused_self, reason = "действие автомата")]
-    #[expect(
-        clippy::needless_pass_by_value,
-        reason = "событие `listen` автомат отдаёт действию по значению"
-    )]
-    fn answered(&mut self, reply: supervisor::AskReply<(), crate::ota::OtaReply>) {
-        let reply = reply.outcome.unwrap_or_else(|_dropped| {
-            warn!("canopen: узел OTA не ответил");
-            Err(crate::ota::command::Rejection::Device)
-        });
-        OTA.record(reply);
-    }
-    // {%- endif %}
-
-    /// `Node::process`, затем всё, что стек поставил в очередь, — на шину.
-    async fn step(&mut self, s: &mut Running<'_>) {
-        let node = &mut *s.stack.node;
-        // Стек объявляет о себе кадром boot-up при первом запуске, после
-        // NMT Reset Node / Reset Communication и после смены адреса — в
-        // обработке, которая начинается из состояния `Bootup`.
-        let booting = node.nmt_state() == NmtState::Bootup;
-        let id_before = node.node_id();
-        // Время — от старта стека, а не от включения МК: `Node` отсчитывает
-        // его с нуля, и абсолютное время дало бы на первой обработке
-        // огромный интервал (лишний heartbeat, обрезка до `u32`).
-        node.process((Instant::now() - s.stack.start).as_micros());
-        let node_id = node.node_id();
-        let mut boot_up = booting || node_id != id_before;
-        while let Some(mut message) = self.dictionary.mbox.next_transmit_message() {
-            let announcing = boot_up && is_heartbeat(&message, node_id);
-            if announcing {
-                // CiA 301: кадр boot-up — `0x700 + адрес` с байтом 0x00.
-                // `zencan-node` 0.0.5 переводит узел в pre-operational до
-                // отправки и шлёт 0x7F — обычный heartbeat (коммит d90a383
-                // «General updates», без обоснования; до него слал 0x00), и
-                // NMT-master, ждущий boot-up, не узнал бы о перезапуске узла.
-                // Убрать, когда исправят в zencan.
-                message.data[0] = 0x00;
-                boot_up = false;
-            }
-            self.transmit(&message).await;
-        }
-        // После ответов: запись во флеш долгая, а мастер ждёт подтверждения
-        // `save` по SDO. Хранилищу шина не нужна: `save` уже принят стеком.
-        if let Some(settings) = self.settings.as_mut() {
-            persisted::save(s.stack.persisted, settings).await;
-        }
-        // {%- if ota == "true" %}
-        // Команда OTA, поставленная записью SDO, — на вход `ASK` узла OTA, не
-        // дожидаясь исхода: его принесёт `reply()` (`answered`).
-        OTA.send(&mut self.ota_ask, *self.ota_client);
-        // {%- endif %}
-    }
-
-    /// Адрес узла и сохранённые объекты — из хранилища, до создания стека.
-    /// Без хранилища (`None`) не читает ничего.
-    ///
-    /// # Panics
-    ///
-    /// Если `node_id` во входе не 1..=127, а сохранённого адреса нет.
-    async fn restore(&mut self, persisted: &RefCell<Persisted>) -> NodeId {
-        if let Some(settings) = self.settings.as_mut()
-            && let Some(node_id) = persisted::load(persisted, settings).await
-        {
-            return node_id;
-        }
-        match NodeId::new(*self.node_id) {
-            Ok(node_id @ NodeId::Configured(_)) => node_id,
-            _ => panic!("адрес узла CANopen {} вне 1..=127", *self.node_id),
-        }
-    }
-
-    /// Сообщение стека — на шину; отказ (кадр не принят шиной, потеря, bus-off)
-    /// — в лог: кадр пропадает, а мастер уходит по таймауту.
-    async fn transmit(&mut self, message: &CanMessage) {
-        let Some(frame) = to_frame::<C::Frame>(message) else {
-            warn!("canopen: стек поставил в очередь кадр, который шина не примет");
-            return;
-        };
-        match self.bus.send(&frame).await {
-            Ok(()) => {}
-            Err(LinkError::Lost(err)) => warn!("canopen: кадр не отправлен: {:?}", &err),
-            Err(LinkError::Down(err)) => warn!("canopen: шина недоступна: {:?}", &err),
-        }
-    }
 }
 
 /// Узел `CANOPEN`: ведёт стек CANopen, пока жива шина.
@@ -317,7 +146,7 @@ where
 ///
 /// Если `node_id` во входе не 1..=127, а сохранённого адреса нет, — ошибка
 /// конфигурации.
-pub async fn task<C, F>(mut ctx: CanOpenCtx<'_, C, Settings<F>>)
+pub async fn task<C, F>(ctx: CanOpenCtx<'_, C, Settings<F>>)
 where
     C: CanBus,
     C::Error: FormatOrDebug,
@@ -341,14 +170,25 @@ where
         reset_comms: Some(&mut reset_comms),
         ..Callbacks::default()
     });
-    let mut running = ctx.begin(&persisted, &mut callbacks, &mut node).await;
+    let mut canopen = CanOpen::new(
+        ctx.bus,
+        ctx.node_id,
+        ctx.dictionary,
+        ctx.settings,
+        ctx.serial,
+        // {%- if ota == "true" %}
+        ctx.ota_client,
+        ctx.ota_ask,
+        // {%- endif %}
+    );
+    let mut running = canopen.begin(&persisted, &mut callbacks, &mut node).await;
     loop {
         // Такт — первым: под потоком кадров heartbeat не должен
         // откладываться. Срок, наступивший до начала круга, обрабатывается
         // без опроса шины{% if ota == "true" %} и исхода OTA{% endif %}: как
         // в таблице `listen`, источник не опрашивается.
         if running.next <= Instant::now() {
-            ctx.tick(&mut running).await;
+            canopen.tick(&mut running).await;
             // Такту по наступившему сроку — круг исполнителю: иначе
             // накопившаяся очередь тактов крутила бы узел, не отдавая
             // другим задачам.
@@ -358,14 +198,20 @@ where
         // Источники — в порядке приоритета: такт{% if ota == "true" %}, исход
         // OTA{% endif %}, кадр.
         // {%- if ota == "true" %}
-        match select3(deadline(running.next), ctx.ota_ask.reply(), ctx.bus.recv()).await {
+        match select3(
+            deadline(running.next),
+            canopen.ota_ask.reply(),
+            canopen.bus.recv(),
+        )
+        .await
+        {
             Either3::First(()) => {
-                ctx.tick(&mut running).await;
+                canopen.tick(&mut running).await;
                 yield_now().await;
             }
-            Either3::Second(reply) => ctx.answered(reply),
+            Either3::Second(reply) => canopen.answered(reply),
             Either3::Third(result) => match result {
-                Ok(frame) => ctx.received(&mut running, frame).await,
+                Ok(frame) => canopen.received(&mut running, frame).await,
                 // Кадр потерян или шина отказала — в лог, и ждём следующий
                 // кадр.
                 Err(LinkError::Lost(err)) => warn!("canopen: кадр потерян: {:?}", &err),
@@ -373,13 +219,13 @@ where
             },
         }
         // {%- else %}
-        match select(deadline(running.next), ctx.bus.recv()).await {
+        match select(deadline(running.next), canopen.bus.recv()).await {
             Either::First(()) => {
-                ctx.tick(&mut running).await;
+                canopen.tick(&mut running).await;
                 yield_now().await;
             }
             Either::Second(result) => match result {
-                Ok(frame) => ctx.received(&mut running, frame).await,
+                Ok(frame) => canopen.received(&mut running, frame).await,
                 // Кадр потерян или шина отказала — в лог, и ждём следующий
                 // кадр.
                 Err(LinkError::Lost(err)) => warn!("canopen: кадр потерян: {:?}", &err),

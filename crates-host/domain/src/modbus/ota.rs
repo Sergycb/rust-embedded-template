@@ -2,7 +2,7 @@
 //!
 //! [`OtaRegisters`] оборачивает карту проекта и перехватывает только своё окно
 //! с [`OTA_BASE`]; всё остальное уходит карте проекта как было. Одна запись
-//! FC16 по адресу [`OTA_BASE`] — одна команда узлу OTA ([`OtaCommand`]),
+//! FC16 по адресу [`OTA_BASE`] — одна команда узлу OTA ([`Command`]),
 //! и ответ на запись — её исход: обычный ответ FC16 — команда выполнена,
 //! исключение `ServerDeviceFailure` (04) — отвергнута или узел OTA не ответил
 //! (код `Device`). Точный код и сколько байт образа принято лежат во входных
@@ -30,7 +30,7 @@ use ports::Exception;
 
 use crate::modbus::{Bits, BitsMut, Registers, Words, WordsMut};
 use crate::ota::command::{CHUNK_BYTES, Chunk, Progress, Rejection, SIGNATURE_BYTES, reply_code};
-use crate::ota::{OtaClient, OtaCommand};
+use crate::ota::{Client, Command};
 
 /// Начало окна OTA — высоко в адресах, чтобы не мешать карте проекта.
 pub const OTA_BASE: u16 = 0xF000;
@@ -59,7 +59,7 @@ const SIGNATURE_REGISTERS: u16 = (SIGNATURE_BYTES / 2) as u16;
 pub struct OtaRegisters<R> {
     inner: R,
     /// Клиент входа `CMD` узла OTA.
-    ota: OtaClient,
+    ota: Client,
     /// Код последнего исхода — первый входной регистр окна.
     status: u16,
     /// Сколько байт образа принято — по последнему `Received`.
@@ -68,8 +68,8 @@ pub struct OtaRegisters<R> {
 
 impl<R> OtaRegisters<R> {
     /// Карта `inner` с окном OTA, команды из которого уходят `ota` — клиенту
-    /// входа `CMD` узла OTA ([`OtaClient`]).
-    pub const fn new(inner: R, ota: OtaClient) -> Self {
+    /// входа `CMD` узла OTA ([`Client`]).
+    pub const fn new(inner: R, ota: Client) -> Self {
         Self {
             inner,
             ota,
@@ -178,7 +178,7 @@ fn window(start: u16, len: u16, size: u16) -> Window {
 }
 
 /// Команда из записи по [`OTA_BASE`]; `None` — запись не по форме.
-fn parse(values: Words<'_>) -> Option<OtaCommand> {
+fn parse(values: Words<'_>) -> Option<Command> {
     let len = values.len();
     match values.get(0) {
         1 if len == START_REGISTERS || len == START_REGISTERS + SIGNATURE_REGISTERS => {
@@ -187,7 +187,7 @@ fn parse(values: Words<'_>) -> Option<OtaCommand> {
                 bytes(values, START_REGISTERS, &mut signature);
                 signature
             });
-            Some(OtaCommand::Start {
+            Some(Command::Start {
                 len: word32(values, 1),
                 signature,
             })
@@ -200,10 +200,10 @@ fn parse(values: Words<'_>) -> Option<OtaCommand> {
             let mut data = [0; CHUNK_BYTES];
             let data = &mut data[..usize::from(count)];
             bytes(values, CHUNK_HEADER, data);
-            Chunk::new(word32(values, 1), data).map(OtaCommand::Chunk)
+            Chunk::new(word32(values, 1), data).map(Command::Chunk)
         }
-        3 if len == 1 => Some(OtaCommand::Finish),
-        4 if len == 1 => Some(OtaCommand::Reboot),
+        3 if len == 1 => Some(Command::Finish),
+        4 if len == 1 => Some(Command::Reboot),
         _ => None,
     }
 }
@@ -230,7 +230,7 @@ mod tests {
 
     use ports::Exception;
 
-    use crate::ota::OtaCommand;
+    use crate::ota::Command;
     use crate::ota::command::{Progress, Rejection, reply_code};
 
     use super::{OTA_BASE, OTA_REGISTERS, OtaRegisters, STATUS_REGISTERS};
@@ -386,7 +386,7 @@ mod tests {
             served.respond(Ok(Progress::Received(9)));
             // Второй запрос узел берёт и бросает, не ответив: `_` — дроп сразу.
             let (request, _) = cmd.serve().await;
-            assert_eq!(request.command, OtaCommand::Finish);
+            assert_eq!(request.command, Command::Finish);
             core::future::pending::<()>().await;
         });
         let mut regs = OtaRegisters::new(EmptyRegisters, ota);

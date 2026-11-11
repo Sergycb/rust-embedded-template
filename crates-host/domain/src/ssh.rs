@@ -41,23 +41,24 @@
 //! `exec` встаёт в очередь раньше, чем разбирается EOF клиента (см.
 //! `session`).
 
+mod connection;
 // {%- if ssh_host_key == "config" %}
 mod host_key;
 // {%- endif %}
+// {%- if ota != "true" %}
+//{{newline}}mod ota_stub;
+// {%- endif %}
 mod session;
 
-use defmt_or_log::{info, warn};
-use embassy_net::tcp::TcpSocket;
-use embassy_time::with_timeout;
+use defmt_or_log::info;
 // {%- if ssh_host_key == "config" %}
 use embedded_storage_async::nor_flash::NorFlash;
 // {%- endif %}
-use sunset_async::SSHServer;
 use sunset_async::sunset::SignKey;
 use sunset_async::sunset::ed25519_dalek::SigningKey;
 
-use crate::console::{Access, Device};
-use crate::ssh::session::{CLOSE_WAIT, IDLE, KEEP_ALIVE, session};
+use crate::console::Access;
+use crate::ssh::connection::Connection;
 
 pub use crate::console::{Command, Confirm, USER};
 // {%- if ssh_host_key == "config" %}
@@ -97,7 +98,7 @@ supervisor::supervisor_fragment! {
             // {%- endif %}
             // {%- if ota == "true" %}
             /// Клиент входа `CMD` узла OTA — для `reboot`.
-            OTA: $crate::ota::OtaClient = inputs.ota,
+            OTA: $crate::ota::Client = inputs.ota,
             // {%- endif %}
             /// Приём сокета.
             TCP_RX: &'static mut [u8; $crate::ssh::TCP_BUFFER] = static,
@@ -114,65 +115,9 @@ supervisor::supervisor_fragment! {
 
 /// Узел `SSH`: обслуживает соединение за соединением, пока жива прошивка;
 /// не возвращается.
-// Заголовок по варианту: заголовок `file` — в той же строке, что `else`;
-// иначе в проекте остался бы `//` перед собой с отступом блока, и
-// `cargo fmt --check` упал бы.
 // {%- if ssh_host_key == "config" %}
-impl<F: NorFlash> SshCtx<'_, Stored<F>> {
-    // {%- else %}{{newline}}impl SshCtx<'_> {
-    // {%- endif %}
-    /// Одно соединение. Отказ соединения или протокола узел пишет в лог и
-    /// слушает дальше.
-    async fn connection(&mut self, key: &SignKey, access: Access) {
-        let stack = *self.stack;
-        let mut socket = TcpSocket::new(stack, &mut self.tcp_rx[..], &mut self.tcp_tx[..]);
-        socket.set_timeout(Some(IDLE));
-        socket.set_keep_alive(Some(KEEP_ALIVE));
-        if socket.accept(PORT).await.is_err() {
-            warn!("ssh: accept не удался");
-            return;
-        }
-        if let Some(peer) = socket.remote_endpoint() {
-            info!("ssh: соединение от {}", peer);
-        }
-        let device = Device {
-            info: self.info,
-            stack: Some(stack),
-            // {%- if ota == "true" %}
-            ota: *self.ota,
-            // {%- endif %}
-        };
-        session(
-            &mut socket,
-            SSHServer::new(&mut self.ssh_rx[..], &mut self.ssh_tx[..]),
-            key,
-            access,
-            &device,
-        )
-        .await;
-        // Соединение закрывает сервер: `sunset` закрывает канал, но не
-        // соединение, а клиент ждёт именно его. Сокет бросается только после
-        // FIN клиента: брошенный раньше ответит на него RST, и клиент под
-        // Windows теряет ещё не прочитанный вывод.
-        socket.close();
-        // Хвост вывода и наш FIN уходят раньше, чем ждётся FIN клиента:
-        // сокет, брошенный с неподтверждёнными данными, их не досылает.
-        let drained = with_timeout(CLOSE_WAIT, async {
-            socket.flush().await.ok();
-            let mut sink = [0; 64];
-            while let Ok(1..) = socket.read(&mut sink).await {}
-        })
-        .await;
-        if drained.is_err() {
-            socket.abort();
-        }
-        info!("ssh: соединение закрыто");
-    }
-}
-
-// {%- if ssh_host_key == "config" %}
-pub async fn task<F: NorFlash>(mut ctx: SshCtx<'_, Stored<F>>) {
-    // {%- else %}{{newline}}pub async fn task(mut ctx: SshCtx<'_>) {
+pub async fn task<F: NorFlash>(ctx: SshCtx<'_, Stored<F>>) {
+    // {%- else %}{{newline}}pub async fn task(ctx: SshCtx<'_>) {
     // {%- endif %}
     info!("ssh: узел запущен");
     // Ключ хоста и доступ — подготовка на весь срок работы: от сессии к
@@ -184,9 +129,17 @@ pub async fn task<F: NorFlash>(mut ctx: SshCtx<'_, Stored<F>>) {
     // {%- endif %}
     let key = SignKey::Ed25519(SigningKey::from_bytes(&seed));
     let access = Access::new(*ctx.login);
+    let mut connection = Connection::new(
+        *ctx.stack, ctx.info, // {%- if ota == "true" %}
+        *ctx.ota,
+        // {%- else %}
+        //{{newline}}        ota_stub::Client,
+        // {%- endif %}
+        ctx.tcp_rx, ctx.tcp_tx, ctx.ssh_rx, ctx.ssh_tx,
+    );
     // Принимает соединение, ведёт его до конца, ждёт следующее — бесконечно.
     loop {
-        ctx.connection(&key, access).await;
+        connection.run(&key, access).await;
     }
 }
 

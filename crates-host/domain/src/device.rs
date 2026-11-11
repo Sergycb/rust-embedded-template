@@ -22,19 +22,11 @@ pub const UID_BYTES: usize = 12;
 /// первая строка сообщения обычно короче, а дольше строку не держит ни
 /// одна схема ответа.
 pub const PANIC_BRIEF: usize = 96;
-// {%- if net_services != "" %}
-
-/// Самый длинный объект [`write_info`], байт: 256 — остальные поля с запасом
-/// под длинную версию, 243 — `reset` (31) и худший `last_panic` (14 и 198:
-/// [`PANIC_BRIEF`] байт из кавычек по два и перевода строки в шесть).
-// {%- if net_services contains "rest" %}
-/// Под него — буфер ответа REST.
-// {%- endif %}
-// {%- if net_services contains "mqtt" %}
-/// Под него — тело `info` MQTT.
-// {%- endif %}
-pub const INFO_MAX: usize = 499;
-// {%- endif %}
+/// Самый длинный вывод [`write_info`], байт: 256 — остальные поля с запасом
+/// под длинную версию, 27 — `reset independent_watchdog`, остальное — строка
+/// `last panic` с [`PANIC_BRIEF`] байт. Под него заводятся буферы `info` в
+/// консоли, REST и MQTT.
+pub const INFO_TEXT: usize = 256 + 27 + "last panic \n".len() + PANIC_BRIEF;
 
 /// Сведения об устройстве.
 ///
@@ -72,7 +64,7 @@ pub struct DeviceInfo {
 /// Из `panicked at src/net/dhcp.rs:12:5:\nmessage\n…` остаётся
 /// `dhcp.rs:12:5:\nmessage` — срез исходной строки, поэтому место и текст
 /// разделяет её же перевод строки. Текст обрезается на первом управляющем
-/// символе, а не только на `\n`: в JSON каждый такой символ стоит шести байт.
+/// символе, а не только на `\n`: управляющий символ ломает вывод `info`.
 /// Так же и место: управляющий символ в нём (сообщение не в формате
 /// паникёра) кончает строку, текст тогда не берётся.
 #[must_use]
@@ -89,84 +81,71 @@ pub fn panic_brief(m: &str, max: usize) -> &str {
     let brief = &m[start..end];
     &brief[..brief.floor_char_boundary(max)]
 }
-// {%- if net_services != "" %}
-
-/// Строка JSON в кавычках: `"` и `\` экранируются, управляющие символы —
-/// `\u00XX`. Строки сведений задаёт сборка, но проект волен поставить свои —
-/// с кавычкой внутри ответ без экранирования был бы не JSON.
+/// Сведения об устройстве текстом: прошивка, чип, MAC, адрес, время работы,
+/// причина сброса и прошлая паника.
 ///
 /// # Errors
 ///
-/// Ошибка записи в `out` (например, буфер короче строки).
-fn write_json_string(out: &mut impl core::fmt::Write, s: &str) -> core::fmt::Result {
-    out.write_char('"')?;
-    for c in s.chars() {
-        match c {
-            '"' => out.write_str(r#"\""#)?,
-            '\\' => out.write_str(r"\\")?,
-            c if u32::from(c) < 0x20 => write!(out, r"\u{:04x}", u32::from(c))?,
-            c => out.write_char(c)?,
-        }
-    }
-    out.write_char('"')
-}
-
-/// Сведения об устройстве JSON-объектом: прошивка, чип, MAC, адрес, время
-/// работы, причина сброса и прошлая паника.
-///
-/// # Errors
-///
-/// Ошибка записи в `out`: объект не влез в буфер.
+/// Ошибка записи в `out`: сведения не влезли в буфер.
 pub fn write_info(
     out: &mut impl core::fmt::Write,
     info: &DeviceInfo,
-    mac: [u8; 6],
-    ip: Option<embassy_net::Ipv4Address>,
+    mac: Option<[u8; 6]>,
+    ip: Option<core::net::Ipv4Addr>,
     uptime_s: u64,
 ) -> core::fmt::Result {
-    // Скобки объекта — `write_char`, а не удвоенные фигурные скобки в строке
-    // формата: это исходник шаблона, и пару скобок Liquid принял бы за свой
-    // тег.
-    out.write_char('{')?;
-    for (name, value) in [
-        ("version", info.version),
-        ("commit", info.commit),
-        ("chip", info.chip),
-    ] {
-        write!(out, r#""{name}":"#)?;
-        write_json_string(out, value)?;
-        out.write_char(',')?;
+    writeln!(out, "version {} ({})", info.version, info.commit)?;
+    write!(
+        out,
+        "chip {}, flash {} KiB",
+        info.chip,
+        info.flash_size / 1024
+    )?;
+    match info.sys_hz {
+        Some(hz) => writeln!(out, ", core {} MHz", hz / 1_000_000)?,
+        None => out.write_char('\n')?,
     }
-    out.write_str(r#""uid":""#)?;
+    out.write_str("uid ")?;
     for b in info.uid {
         write!(out, "{b:02x}")?;
     }
-    out.write_str(r#"","mac":""#)?;
-    for (i, b) in mac.iter().enumerate() {
-        write!(out, "{}{b:02x}", if i == 0 { "" } else { ":" })?;
+    out.write_str("\nmac ")?;
+    match mac {
+        Some(mac) => {
+            for (i, b) in mac.iter().enumerate() {
+                write!(out, "{}{b:02x}", if i == 0 { "" } else { ":" })?;
+            }
+            out.write_char('\n')?;
+        }
+        None => out.write_str("none\n")?,
     }
-    out.write_str(r#"","ip":"#)?;
     match ip {
-        Some(ip) => write!(out, r#""{ip}""#)?,
-        None => out.write_str("null")?,
+        Some(ip) => writeln!(out, "ip {ip}")?,
+        None => out.write_str("ip none\n")?,
     }
-    write!(out, r#","uptime_s":{uptime_s},"reset":"{}","#, info.reset)?;
-    out.write_str(r#""last_panic":"#)?;
-    match info.last_panic {
-        Some(m) => write_json_string(out, m)?,
-        None => out.write_str("null")?,
+    writeln!(out, "uptime {uptime_s} s")?;
+    writeln!(out, "reset {}", info.reset)?;
+    // Место и текст паники разделяет её же перевод строки, а консоль держит
+    // «ключ значение» по строке: текст идёт через пробел, а не второй строкой
+    // без ключа.
+    let (place, text) = match info.last_panic {
+        Some(panic) => panic.split_once('\n').unwrap_or((panic, "")),
+        None => ("none", ""),
+    };
+    out.write_str("last panic ")?;
+    out.write_str(place)?;
+    if !text.is_empty() {
+        write!(out, " {text}")?;
     }
-    out.write_char('}')
+    out.write_char('\n')
 }
-// {%- endif %}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // {%- if net_services != "" %}
     #[test]
-    fn info_is_a_json_object() {
+    fn info_carries_every_field() {
         let info = DeviceInfo {
             version: "1.2.3",
             commit: "abc1234",
@@ -182,40 +161,38 @@ mod tests {
         write_info(
             &mut out,
             &info,
-            mac,
-            Some(embassy_net::Ipv4Address::new(10, 0, 0, 7)),
+            Some(mac),
+            Some(core::net::Ipv4Addr::new(10, 0, 0, 7)),
             42,
         )
         .unwrap();
-        assert_eq!(
-            out,
-            r#"{"version":"1.2.3","commit":"abc1234","chip":"STM32F407VE","uid":"000102030405060708090aff","mac":"02:00:00:00:00:1f","ip":"10.0.0.7","uptime_s":42,"reset":"pin","last_panic":null}"#
-        );
-        out.clear();
-        write_info(&mut out, &info, mac, None, 0).unwrap();
-        assert!(out.contains(r#""ip":null"#), "{out}");
-        out.clear();
-        let info = DeviceInfo {
-            reset: "software",
-            last_panic: Some("main.rs:7:1:\nboom \"x\""),
-            ..info
-        };
-        write_info(&mut out, &info, mac, None, 0).unwrap();
+        assert!(out.starts_with("version 1.2.3 (abc1234)\n"), "{out}");
         assert!(
-            out.ends_with(r#""reset":"software","last_panic":"main.rs:7:1:\u000aboom \"x\""}"#),
+            out.contains("chip STM32F407VE, flash 512 KiB, core 168 MHz\n"),
             "{out}"
         );
+        assert!(out.contains("uid 000102030405060708090aff\n"), "{out}");
+        assert!(out.contains("mac 02:00:00:00:00:1f\n"), "{out}");
+        assert!(out.contains("ip 10.0.0.7\n"), "{out}");
+        assert!(out.contains("uptime 42 s\n"), "{out}");
+        assert!(out.contains("reset pin\n"), "{out}");
+        assert!(out.ends_with("last panic none\n"), "{out}");
+        out.clear();
+        write_info(&mut out, &info, None, None, 0).unwrap();
+        assert!(out.contains("mac none\n"), "{out}");
+        assert!(out.contains("ip none\n"), "{out}");
     }
 
-    /// Самые длинные сведения, какие отдаёт плата, помещаются в [`INFO_MAX`]:
-    /// худшая паника — место и текст из кавычек (каждая — два байта JSON),
-    /// разделённые переводом строки (шесть).
+    /// Самые длинные сведения, какие отдаёт плата, помещаются в [`INFO_TEXT`].
     #[test]
     fn the_longest_info_fits_the_buffer() {
-        let quotes = "\"".repeat(PANIC_BRIEF);
-        let panic = format!("panicked at {}\n{quotes}", &quotes[..PANIC_BRIEF / 2]);
+        let panic = format!(
+            "panicked at {}\n{}",
+            "a".repeat(PANIC_BRIEF / 2),
+            "b".repeat(PANIC_BRIEF)
+        );
         let brief = panic_brief(&panic, PANIC_BRIEF);
-        assert_eq!((brief.len(), brief.matches('\n').count()), (PANIC_BRIEF, 1));
+        assert_eq!(brief.len(), PANIC_BRIEF);
         let info = DeviceInfo {
             version: "65535.65535.65535-rc.65535",
             commit: "0123456789ab",
@@ -230,14 +207,13 @@ mod tests {
         write_info(
             &mut out,
             &info,
-            [0xff; 6],
-            Some(embassy_net::Ipv4Address::BROADCAST),
+            Some([0xff; 6]),
+            Some(core::net::Ipv4Addr::BROADCAST),
             u64::MAX,
         )
         .unwrap();
-        assert!(out.len() <= INFO_MAX, "{} > {INFO_MAX}", out.len());
+        assert!(out.len() <= INFO_TEXT, "{} > {INFO_TEXT}", out.len());
     }
-    // {%- endif %}
 
     #[test]
     fn panic_brief_keeps_the_file_and_the_first_line() {
@@ -273,15 +249,4 @@ mod tests {
         assert_eq!(panic_brief(m, 11), "m.rs:1:1:\n");
         assert_eq!(panic_brief(m, 0), "");
     }
-    // {%- if net_services != "" %}
-
-    /// Кавычки, обратная косая и управляющие символы в строках сведений не
-    /// ломают JSON.
-    #[test]
-    fn strings_are_escaped() {
-        let mut out = String::new();
-        write_json_string(&mut out, "a\"b\\c\nd").unwrap();
-        assert_eq!(out, r#""a\"b\\c\u000ad""#);
-    }
-    // {%- endif %}
 }

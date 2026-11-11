@@ -102,7 +102,7 @@ cargo run -p app                    # прошить приложение и с�
 | Реализации портов | `crates-host/adapters-logic/` | реализации трейтов `ports`, когда их несколько: {{ logic_list | remove_first: ", " }} — тестируется на хосте |
 {%- endif %}
 {%- if protocol == "protobuf" %}
-| Схема protobuf | `crates-host/proto/` | `.proto` и типы, сгенерированные `micropb-gen` в `build.rs` (схему разбирает `protox`, системный `protoc` не нужен); пример — конверт `Request`/`Response` с `request_id`, проект заменяет своим. Обрабатывает узел `domain::PROTOBUF_FRAG` с обработчиком `domain::protobuf::Service` |
+| Схема protobuf | `crates-host/proto/` | `.proto` и типы, сгенерированные `micropb-gen` в `build.rs` (схему разбирает `protox`, системный `protoc` не нужен); пример — конверт `Request`/`Response` с `request_id`, проект заменяет своим. Обрабатывает узел `domain::PROTOBUF_FRAG`: `domain::protobuf::Service` разводит команды по обработчикам `domain::protobuf::info`{% if ota == "true" %} и `domain::ota::protobuf`{% endif %} |
 {%- endif %}
 {%- if protocol == "canopen" %}
 | Описание устройства CANopen | `crates-host/canopen/` | `device.toml` — идентичность, PDO, объекты приложения; `build.rs` (`zencan-build`) генерирует из него словарь объектов и `static`-объекты узла (`NODE_MBOX`, `NODE_STATE`, `OD_TABLE`), которые compose-site передаёт узлу `domain::CANOPEN_FRAG`; пример — проект заменяет своим |
@@ -245,7 +245,7 @@ supervisor-графы, watchdog{% endif %}). Вся остальная логи�
   проекта в `domain` и обёртки над ней (общая ручка{% if ota == "true" %}, окно OTA{% endif %}), а кадры к нему
   переводит обработчик `domain::modbus::Slave` (адрес, широковещание, исключения).
 {%- capture mb_links %}{% if modbus_rtu == "true" %}, `adapters_logic::modbus::Rtu` (RTU поверх потока
-  {% if has_uart == "true" %}UART{% if has_usb == "true" %} или {% endif %}{% endif %}{% if has_usb == "true" %}USB CDC{% endif %}){% endif %}{% if modbus_tcp == "true" %}, `adapters_logic::modbus::Tcp` (MBAP поверх потока TCP){% endif %}{% if modbus_udp == "true" %}, `adapters_logic::modbus::Udp` (MBAP в датаграмме){% endif %}{% endcapture %}
+  {% if has_uart == "true" %}UART{% if has_usb == "true" %} или {% endif %}{% endif %}{% if has_usb == "true" %}USB CDC{% endif %}){% endif %}{% if modbus_tcp == "true" %}, `adapters_logic::modbus::Link` (MBAP поверх потока TCP){% endif %}{% if modbus_udp == "true" %}, `adapters_logic::modbus::Udp` (MBAP в датаграмме){% endif %}{% endcapture %}
 - Канал slave'а — `FrameLink` с кадром «адрес и PDU»: {{ mb_links | remove_first: ", " }}.
 {%- if modbus_master == "true" %}
 - Те же каналы реализуют порт master'а `ModbusClient`, но рабочий master из
@@ -256,10 +256,11 @@ supervisor-графы, watchdog{% endif %}). Вся остальная логи�
 {%- endif %}
 {%- endif %}
 {%- if protocol == "protobuf" %}
-- Сообщения protobuf от хоста переводит в свои проверенные типы обработчик
-  `domain::protobuf::Service` — логика приложения, а не порт, — а кадры к нему
-  переводит узел `domain::PROTOBUF_FRAG`.{% if ota == "true" %} Команды обновления обработчик отдаёт
-  узлу OTA на вход `CMD` и отвечает хосту их исходом.{% endif %}
+- Сообщения protobuf от хоста разбирает узел `domain::PROTOBUF_FRAG`, а в свои
+  проверенные типы переводит обработчик подсистемы: `domain::protobuf::info` —
+  сведения{% if ota == "true" %}, `domain::ota::protobuf` — команды обновления{% endif %}. Разводит их
+  `domain::protobuf::Service` — логика приложения, а не порт.{% if ota == "true" %} Команды обновления
+  обработчик отдаёт узлу OTA на вход `CMD` и отвечает хосту их исходом.{% endif %}
 {%- endif %}
 {%- if protocol == "canopen" %}
 - `CanBus` — шина CAN под узлом CANopen `domain::CANOPEN_FRAG` (стек `zencan`): его
@@ -347,7 +348,7 @@ interface=none` с OTA — ошибка генерации. Протокол м�
 `DFU` и `BOOTLOADER_STATE` в этом проекте — на внешней SPI NOR: внутри
 остаются bootloader и `ACTIVE` почти на весь чип (на F407VE 384 KiB вместо 128).
 Драйвер микросхемы — W25Q (`w25q`), и он в шаблоне настоящий; заглушка — только шина
-под ним (`bsp::stub::FlashBus`). Шину с выводами своей платы вы подставляете в
+под ним (`bsp::stub::Bus`). Шину с выводами своей платы вы подставляете в
 `crates-cross/bsp/src/external.rs` (асинхронный драйвер) и в
 `crates-cross/boot/src/external.rs` (блокирующий), рецепт — `docs/modules/bsp-external.md`.
 Совместимость драйвера с раскладкой проверяет компилятор: стирание обязано делить
@@ -368,15 +369,15 @@ interface=none` с OTA — ошибка генерации. Протокол м�
 
 Своего канала у образа нет — он идёт через протокол, по которому хост и так
 говорит с устройством. Узел протокола переводит свои сообщения в четыре команды
-`domain::ota::OtaCommand` — `Start` (длина и подпись; стирает раздел под образ),
+`domain::ota::Command` — `Start` (длина и подпись; стирает раздел под образ),
 `Chunk`, `Finish` (применить), `Reboot` (сбросить МК, чтобы bootloader обменял
-разделы) — и отдаёт их узлу `OTA`, а исход каждой (`domain::ota::OtaReply`) возвращает
+разделы) — и отдаёт их узлу `OTA`, а исход каждой (`domain::ota::Reply`) возвращает
 хосту в том виде, который принят у протокола. Таблица команд и ответов, коды
 отказов, правила сессии при нескольких транспортах и как команды ложатся на
 протокол — docs/ota.md, «Команды: образ приходит через протокол».
 
 {% if protocol == "protobuf" %}В этом проекте команды — сообщения схемы `crates-host/proto/proto/host.proto`
-(`ota_start`, `ota_chunk`, `ota_finish`, `reboot`), ответ — `Ok` или `Error`.{% elsif protocol == "modbus" %}В этом проекте команды — записи FC16 в окно holding-регистров с `0xF000`:
+(`ota` с вложенным `Ota.command`: `start`, `chunk`, `finish`, `reboot`), ответ — `Ok` или `Error`.{% elsif protocol == "modbus" %}В этом проекте команды — записи FC16 в окно holding-регистров с `0xF000`:
 одна запись — одна команда, ответ на запись — её исход, точный код и принятая длина —
 во входных регистрах (FC04) с той же базы. Тайм-аут master'а на `Start` должен быть
 длиннее стирания раздела.{% elsif protocol == "canopen" %}В этом проекте команды — записи SDO в объект `0x4F00`: sub 1 — `Start`, 2 —
@@ -384,7 +385,7 @@ interface=none` с OTA — ошибка генерации. Протокол м�
 0 (ещё выполняется), принятую длину — из sub 6.{% elsif protocol == "none" or protocol == "cli" %}Протокола в этом проекте нет, поэтому узел пока только подтверждает
 образ. Команды ему шлёт ваш протокол через клиент входа{% if graph == "true" %} `ota_cmd_requester()` графа{% else %} — `crate::tasks::ota::CMD.requester()`
 (`static` в `crates-cross/app/src/tasks/ota.rs`){% endif %}, обёрнутый в
-`domain::ota::OtaClient::new(.., domain::ota::ClientId(n))`; номер `n` — `{{ ota_cmd_clients }}`{% if net_services != "" %},
+`domain::ota::Client::new(.., domain::ota::ClientId(n))`; номер `n` — `{{ ota_cmd_clients }}`{% if net_services != "" %},
 следом за клиентами сетевых служб{% endif %}. Подключив клиента, прибавьте его к числу мест
 ожидания входа — {% if graph == "true" %}`OTA_CMD_PARKED` в `crates-cross/app/src/graph.rs`{% else %}`CMD_PARKED` в `crates-cross/app/src/tasks/ota.rs`{% endif %}.{% endif %}
 
@@ -668,7 +669,7 @@ Identification (производитель и модель — `crates-host/doma
 (65–72, 100–110), MEI, кроме 14, и FC08/00 длиннее двух байт данных slave
 пропускает молча: длину кадра по коду функции не вывести, а без неё не
 проверить CRC (`adapters_logic::modbus::Rtu`).{% endif %}
-{%- elsif protocol == "protobuf" %} схему `crates-host/proto` и обработчик `crates-host/domain/src/protobuf/service.rs`.
+{%- elsif protocol == "protobuf" %} схему `crates-host/proto` и обработчики `crates-host/domain/src/protobuf/info.rs`{% if ota == "true" %} и `crates-host/domain/src/ota/protobuf.rs`{% endif %}.
 {%- else %} словарь объектов `crates-host/canopen/device.toml`.
 {%- endif %}
 {%- if protocol_link == "true" %} Канал протокола (кадрирование, сокет) строит `app` над рычагом
@@ -692,7 +693,7 @@ Identification (производитель и модель — `crates-host/doma
 
 Узлы `HTTP` (`crates-host/domain/src/http.rs`) — HTTP-сервер `picoserve` на порту 80,
 по сокету стека на соединение (`HTTP_CONNECTIONS` в `[env]` `crates-cross/.cargo/config.toml`, пул `HTTP[{{ http_connections }}]` в графе).
-`GET /api/info` — сведения об устройстве JSON{% if ota == "true" %}, `POST /api/reboot` — перезагрузка
+`GET /api/info` — сведения об устройстве текстом{% if ota == "true" %}, `POST /api/reboot` — перезагрузка
 командой узлу OTA{% endif %}; свои маршруты — в `router()` (`crates-host/domain/src/http/api.rs`).
 
 ```
@@ -765,21 +766,18 @@ PuTTY. Сначала консоль спрашивает пароль (`passwor
 
 ### Пароль консоли
 
-Вход в консоль — всегда по паролю{% if net_services contains "ssh" %} (пользователь SSH — `admin`){% endif %}. Пароля нет ни в образе, ни в
-git: `cargo xtask` (`build`, `lint cross` и перед прошивкой), не найдя
-`console-password.hash` в корне проекта, создаёт случайный пароль (128 бит), один
-раз печатает его и кладёт в `console-password.txt` — этот файл в `.gitignore`,
-сохраните пароль сами. Коммитится и вшивается в прошивку
-(`crate::console::PASSWORD`, `crates-cross/app/src/console.rs`) `console-password.hash`:
-16 байт соли и SHA-256(соль ‖ пароль), плата сверяет с ним предъявленный пароль за
-постоянное время. Хэш есть, а `console-password.txt` нет (свежий клон) — сборка идёт
-как есть: пароль знает тот, кто его создал.
+Вход в консоль — всегда по паролю{% if net_services contains "ssh" %} (пользователь SSH — `admin`){% endif %}. Пароль задаёт
+`post-script.rhai` при `cargo generate`: это **имя проекта плюс `00`**, например
+`my-project00`. В прошивку (`crate::console::PASSWORD`,
+`crates-cross/app/src/console.rs`) попадает только константа
+`crates-cross/app/src/console_password.rs` — 16 байт соли и SHA-256(соль ‖ пароль);
+файлов `console-password.*` в проекте нет. Плата сверяет предъявленный пароль с
+хэшем за постоянное время.
 
-Хэш — SHA-256, а не медленная функция вроде argon2: 128 случайных бит по хэшу не
-перебрать и без замедления. Сменить пароль — вписать свой в `console-password.txt`,
-удалить `console-password.hash` и собрать: `cargo xtask` захэширует пароль из файла.
-Но пароль, придуманный человеком, по хэшу из образа перебирается быстро — берите
-случайный не короче 16 символов. Пароль один на все платы с этой прошивкой — ниже,
+Пароль — не секрет: он выводится из имени репозитория и одинаков у всех, кто это
+имя знает. Для шаблона, стенда и закрытой сети этого достаточно; для устройства в
+поле смените `console_password.rs` на случайный пароль (хэш — SHA-256 с солью) или
+уберите консоль из сборки. Пароль один на все платы с этой прошивкой — ниже,
 «Секреты служб».
 {%- endif %}
 {%- if net_services contains "mqtt" %}
@@ -794,7 +792,7 @@ git: `cargo xtask` (`build`, `lint cross` и перед прошивкой), н�
 ограничивает ACL брокера. Темы, ACL, как добавить поле и команду —
 `docs/modules/app-mqtt.md`. Вход на брокер одинаков у всех плат — ниже, «Секреты служб».
 {%- endif %}
-{%- capture service_secrets %}{% if net_services contains "rest" %}, токен REST (`rest-token.txt`){% endif %}{% if has_console == "true" %}, хэш пароля консоли (`console-password.hash`){% endif %}{% if net_services contains "ssh" %}{% if ssh_host_key == "file" %}, ключ хоста SSH (`ssh-host-key.bin`){% endif %}{% endif %}{% if net_services contains "mqtt" %}, вход на брокер MQTT (`mqtt.toml`){% endif %}{% endcapture %}
+{%- capture service_secrets %}{% if net_services contains "rest" %}, токен REST (`rest-token.txt`){% endif %}{% if net_services contains "ssh" %}{% if ssh_host_key == "file" %}, ключ хоста SSH (`ssh-host-key.bin`){% endif %}{% endif %}{% if net_services contains "mqtt" %}, вход на брокер MQTT (`mqtt.toml`){% endif %}{% endcapture %}
 {%- if service_secrets != "" %}
 
 ### Секреты служб — одни на все устройства

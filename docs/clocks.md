@@ -73,9 +73,9 @@ RM0455 и RM0468; у H7R/S своя карта).
 **Кэш и стирание флеша.** Ядро читает флеш через кэш (кэш данных M7, `ICACHE`,
 `DCEN` акселератора), а стирание и запись идут мимо него, и `embassy-stm32`
 после них кэш не сбрасывает: прочитанное до стирания так и читалось бы после
-(поймано на NUCLEO-H743).{% if shared_flash == "true" %}{% if cache contains "scb_d" or cache contains "icache" or cache contains "dcen" %} Поэтому флеш чипа под `bsp::flash::FlashMutex` —
+(поймано на NUCLEO-H743).{% if shared_flash == "true" %}{% if cache contains "scb_d" or cache contains "icache" or cache contains "dcen" %} Поэтому флеш чипа под `bsp::flash::Lock` —
 обёртка `bsp::flash::Coherent`: после каждого `erase`/`write` она сбрасывает
-кэш, видящий флеш.{% endif %} Пишете во флеш мимо `FlashMutex` — сбрасывайте кэш сами.{% else %}
+кэш, видящий флеш.{% endif %} Пишете во флеш мимо `Lock` — сбрасывайте кэш сами.{% else %}
 Пишете во флеш сами — после стирания и записи сбрасывайте кэш, видящий флеш.{% endif %}
 
 **Кэш данных ядра M7 и DMA.** Он стоит перед всей RAM, а DMA его не видит:

@@ -98,7 +98,7 @@ assign-resources = { workspace = true }
 cortex-m = { workspace = true }
 {%- if shared_flash == "true" or ota == "true" or external_flash == "true" %}
 {%- if shared_flash == "true" %}
-# Общий `Flash` всего чипа — один объект под `blocking_mutex` (`FlashMutex` в
+# Общий `Flash` всего чипа — один объект под `blocking_mutex` (`Lock` в
 # src/flash.rs){% if ota == "true" and ota_store != "external" and config_store != "none" and config_store != "external" %}: через него работают и OTA, и настройки{% endif %}.
 {%- else %}
 # Мьютексы носителей на внешней флеши (src/external.rs).

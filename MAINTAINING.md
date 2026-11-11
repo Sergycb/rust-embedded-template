@@ -186,8 +186,10 @@ Modbus. Через `--define` то же задаёт `links` (`parse_links()`, �
 без Modbus. Сокеты стека считает `bsp::net::SOCKETS` из чисел генерации: DHCP-клиент,
 сетевые транспорты (`net_sockets`), по сокету на копию пула REST (`http_connections` →
 `HTTP_CONNECTIONS`), на SSH и на MQTT. Секреты
-(`rest-token.txt`, `console-password.hash` с паролем в `console-password.txt`, `ssh-host-key.bin`, заготовка `mqtt.toml`) создаёт `cargo xtask`
-(`secrets.rs`). Тесты — `net_services_*`, `ssh_*`, `cli_*` в `cascade.rs`.
+(`rest-token.txt`, `ssh-host-key.bin`, заготовка `mqtt.toml`) создаёт `cargo xtask`
+(`secrets.rs`). Пароль консоли `post-script.rhai` пишет константой в
+`crates-cross/app/src/console_password.rs`; файлов `console-password.*` нет.
+Тесты — `net_services_*`, `ssh_*`, `cli_*` в `cascade.rs`.
 
 #### Без терминала и `--define`
 
@@ -238,10 +240,10 @@ supervisor   = { git = "https://github.com/Sergycb/rust-lib.git", rev = "<рев
 литералы корневого `Cargo.toml`, `Cargo.lock`, затем проверка генерацией.
 
 Удвоенная фигурная скобка в исходнике — тег Liquid, где бы она ни стояла: в
-строке формата Rust (экранированная скобка JSON в `write!`), в комментарии, в
+строке формата Rust (экранированная скобка в `write!`), в комментарии, в
 литерале. Генерация падает на ней с «Substitution skipped, found invalid
 syntax», а компилятор шаблона в репозитории ничего не замечает. Скобку пишут
-отдельно (`write_char('{')`, как `domain::device::write_info`).
+отдельно (`write_char('{')`) или прячут участок в `{% raw %}`/`{% comment %}`.
 
 ### `${{ ... }}` в файлах GitHub Actions обязано быть в `{% raw %}`
 

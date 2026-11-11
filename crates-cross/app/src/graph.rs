@@ -66,7 +66,7 @@ supervisor_graph! {
         // (`domain::ota::OtaWiring`): адаптер обновления над разделами `{{ board }}.firmware`, сброс МК
         // `bsp::reset::Reboot` и свойства этого образа из `boot.image` (защита от
         // отката: образ не новее неё узел отвергает). Образ узел принимает командами на свой вход
-        // `CMD`{% if has_modbus != "true" and has_protobuf != "true" and has_canopen != "true" %}: клиента (`::domain::ota::OtaClient` над `ota_cmd_requester()`) получает ваш
+        // `CMD`{% if has_modbus != "true" and has_protobuf != "true" and has_canopen != "true" %}: клиента (`::domain::ota::Client` над `ota_cmd_requester()`) получает ваш
         // протокол — без него узел только подтверждает образ{% else %} — их шлют узлы протоколов ниже, каждый со своим номером
         // транспорта (сессию приёма держит один клиент, остальным — `Busy`){% endif %}{% if has_canopen == "true" %}; узлы
         // CANopen — на вход `ASK`, не дожидаясь исхода (ребро `asks:` в их фрагменте){% endif %}; алгоритм обновления — в
@@ -133,7 +133,7 @@ supervisor_graph! {
                 stack: Some({{ board }}.net.stack),
 {%- endif %}
 {%- if ota == "true" %}
-                ota: ::domain::ota::OtaClient::new(
+                ota: ::domain::ota::Client::new(
                     ota_cmd_requester(),
                     ::domain::ota::ClientId({{ client }}),
                 ),
@@ -141,8 +141,8 @@ supervisor_graph! {
             },
 {%- elsif f[3] == "modbus" %}
 {%- if f[0] == "tcp" %}
-{%- capture ty %}::adapters_logic::modbus::Tcp<::adapters_logic::net::TcpServer>{% endcapture %}
-{%- capture link %}::adapters_logic::modbus::Tcp::new(::adapters_logic::net::TcpServer::new(
+{%- capture ty %}::adapters_logic::modbus::Link<::adapters_logic::net::Server>{% endcapture %}
+{%- capture link %}::adapters_logic::modbus::Link::new(::adapters_logic::net::Server::new(
                     {{ board }}.net.stack,
                     {{ port }},
                     static [u8; SOCKET_BUFFER],
@@ -177,13 +177,13 @@ supervisor_graph! {
                 ){% endcapture %}
 {%- else %}
 {%- if f[0] == "tcp" %}
-{%- capture src %}::adapters_logic::net::TcpServer::new(
+{%- capture src %}::adapters_logic::net::Server::new(
                         {{ board }}.net.stack,
                         {{ port }},
                         static [u8; SOCKET_BUFFER],
                         static [u8; SOCKET_BUFFER],
                     ){% endcapture %}
-{%- capture srct %}::adapters_logic::net::TcpServer{% endcapture %}
+{%- capture srct %}::adapters_logic::net::Server{% endcapture %}
 {%- endif %}
 {%- capture ty %}::adapters_logic::cobs::Cobs<'static, {{ srct }}>{% endcapture %}
 {%- capture link %}::adapters_logic::cobs::Cobs::new(
@@ -217,7 +217,7 @@ supervisor_graph! {
 {%- if ota == "true" %}
         // Карта обёрнута окном OTA (`domain::modbus::OtaRegisters`): записи FC16
         // по `OTA_BASE` уходят узлу `OTA` командами — клиентом его входа `CMD`
-        // (`OtaClient` с номером этого транспорта), остальное — карте проекта.
+        // (`Client` с номером этого транспорта), остальное — карте проекта.
         ::domain::SERVER_FRAG<
             {{ ty }},
             ::domain::modbus::OtaRegisters<crate::modbus::Handle>,
@@ -228,7 +228,7 @@ supervisor_graph! {
                     1,
                     ::domain::modbus::OtaRegisters::new(
                         crate::modbus::handle(),
-                        ::domain::ota::OtaClient::new(
+                        ::domain::ota::Client::new(
                             ota_cmd_requester(),
                             ::domain::ota::ClientId({{ client }}),
                         ),
@@ -282,7 +282,7 @@ supervisor_graph! {
                 service: ::domain::protobuf::Service::new(
                     {{ info }},
 {%- if ota == "true" %}
-                    ::domain::ota::OtaClient::new(ota_cmd_requester(), ::domain::ota::ClientId({{ client }})),
+                    ::domain::ota::Client::new(ota_cmd_requester(), ::domain::ota::ClientId({{ client }})),
 {%- endif %}
                 ),
             },
@@ -302,7 +302,7 @@ supervisor_graph! {
             info: {{ info }},
             token: crate::net::rest::TOKEN,
 {%- if ota == "true" %}
-            ota: ::domain::ota::OtaClient::new(
+            ota: ::domain::ota::Client::new(
                 ota_cmd_requester(),
                 ::domain::ota::ClientId(
                     {% if rest_ota_client != "0" %}{{ rest_ota_client }} + {% endif %}u8::try_from(i).expect("копий пула HTTP меньше 256"),
@@ -330,7 +330,7 @@ supervisor_graph! {
                 host_key: &crate::net::ssh::HOST_KEY,
 {%- endif %}
 {%- if ota == "true" %}
-                ota: ::domain::ota::OtaClient::new(
+                ota: ::domain::ota::Client::new(
                     ota_cmd_requester(),
                     ::domain::ota::ClientId({{ ssh_ota_client }}),
                 ),
@@ -351,13 +351,13 @@ supervisor_graph! {
                 info: {{ info }},
                 prefix: crate::net::mqtt::PREFIX,
                 broker: crate::net::mqtt::BROKER,
-                link: ::domain::mqtt::TcpClient::new(
+                link: ::domain::mqtt::Tcp::new(
                     {{ board }}.net.stack,
                     static [u8; crate::net::mqtt::TCP_BUFFER],
                     static [u8; crate::net::mqtt::TCP_BUFFER],
                 ),
 {%- if ota == "true" %}
-                ota: ::domain::ota::OtaClient::new(
+                ota: ::domain::ota::Client::new(
                     ota_cmd_requester(),
                     ::domain::ota::ClientId({{ mqtt_ota_client }}),
                 ),

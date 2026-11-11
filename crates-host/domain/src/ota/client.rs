@@ -1,7 +1,7 @@
 //! Клиент узла `OTA`: номер транспорта, запрос входа `CMD`/`ASK`, обёртка
 //! для узла протокола и обязанность ответить тому входу, с которого пришла команда.
 
-use crate::ota::{OtaCommand, OtaReply};
+use crate::ota::{Command, Reply};
 use supervisor::{Asked, Requester, Served};
 
 /// Ёмкость входов `CMD` и `ASK`, байт: запрос (кусок
@@ -19,7 +19,7 @@ use supervisor::{Asked, Requester, Served};
 pub const CMD_BYTES: usize = 144;
 
 const _: () = assert!(
-    size_of::<OtaRequest>() <= CMD_BYTES && size_of::<OtaReply>() <= CMD_BYTES,
+    size_of::<Request>() <= CMD_BYTES && size_of::<Reply>() <= CMD_BYTES,
     "команда OTA не помещается во вход CMD: поднимите CMD_BYTES"
 );
 
@@ -38,11 +38,11 @@ pub struct ClientId(pub u8);
 /// `Busy`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct OtaRequest {
+pub struct Request {
     /// Кто прислал команду.
     pub client: ClientId,
     /// Сама команда.
-    pub command: OtaCommand,
+    pub command: Command,
 }
 
 /// Клиент узла OTA для узла протокола: requester входа `CMD` и свой номер.
@@ -50,15 +50,15 @@ pub struct OtaRequest {
 /// Узел протокола зовёт [`request`](Self::request) с голой командой; номер
 /// клиента подставляется сам.
 #[derive(Debug, Clone, Copy)]
-pub struct OtaClient {
-    requester: Requester<'static, OtaRequest, OtaReply>,
+pub struct Client {
+    requester: Requester<'static, Request, Reply>,
     id: ClientId,
 }
 
-impl OtaClient {
+impl Client {
     /// Клиент `id` над `requester` входа `CMD`.
     #[must_use]
-    pub const fn new(requester: Requester<'static, OtaRequest, OtaReply>, id: ClientId) -> Self {
+    pub const fn new(requester: Requester<'static, Request, Reply>, id: ClientId) -> Self {
         Self { requester, id }
     }
 
@@ -67,9 +67,9 @@ impl OtaClient {
     /// # Errors
     ///
     /// [`NodeLost`] — узел взял запрос, но не ответил.
-    pub async fn request(&self, command: OtaCommand) -> Result<OtaReply, NodeLost> {
+    pub async fn request(&self, command: Command) -> Result<Reply, NodeLost> {
         self.requester
-            .request(OtaRequest {
+            .request(Request {
                 client: self.id,
                 command,
             })
@@ -102,14 +102,14 @@ impl core::error::Error for NodeLost {}
 #[derive(Debug)]
 pub(super) enum Answer<'a> {
     /// Команда с входа `CMD`.
-    Call(Served<'a, OtaRequest, OtaReply>),
+    Call(Served<'a, Request, Reply>),
     /// Команда с входа `ASK`.
-    Ask(Asked<'a, OtaRequest, OtaReply>),
+    Ask(Asked<'a, Request, Reply>),
 }
 
 impl Answer<'_> {
     /// Исход команды — клиенту.
-    pub(super) fn respond(self, reply: OtaReply) {
+    pub(super) fn respond(self, reply: Reply) {
         match self {
             Self::Call(served) => served.respond(reply),
             Self::Ask(asked) => asked.respond(reply),

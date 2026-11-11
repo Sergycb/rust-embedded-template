@@ -10,14 +10,13 @@ use minimq::{
     Publication, QoS, RetainHandling, Session, SubscriptionOptions, TopicFilter, Will,
 };
 
-use super::broker::Endpoint;
+use super::broker::Broker;
 use super::telemetry::{TELEMETRY_INTERVAL, write_telemetry};
 use super::topics::{CLIENT_ID_LEN, Command, TOPIC_LEN, Topics, parse_command};
-use crate::device::{DeviceInfo, INFO_MAX};
-use crate::tick;
+use crate::device::{DeviceInfo, INFO_TEXT};
 // {%- if ota == "true" %}
+use crate::ota::Client;
 use crate::ota::command::Progress;
-use crate::ota::{OtaClient, OtaCommand};
 // {%- endif %}
 
 /// Буфер входящих пакетов `minimq`: самая длинная команда с темой.
@@ -54,7 +53,7 @@ pub(super) const TX_BUDGET: usize = 5
         CLIENT_ID_LEN + "/status".len(),
         "online".len(),
     ))
-    + packet_len(publish_rest(CLIENT_ID_LEN + "/info".len(), INFO_MAX))
+    + packet_len(publish_rest(CLIENT_ID_LEN + "/info".len(), INFO_TEXT))
     + 5
     + publish_rest(TOPIC_LEN, "accepted".len());
 const _: () = assert!(
@@ -88,7 +87,7 @@ pub(crate) struct Env<'a> {
     pub tx: &'a mut [u8],
     // {%- if ota == "true" %}
     /// Клиент входа `CMD` узла OTA — для `cmd/reboot`.
-    pub ota: &'a OtaClient,
+    pub ota: &'a Client,
     // {%- endif %}
 }
 
@@ -103,7 +102,7 @@ pub(crate) struct Env<'a> {
 /// `publish` отвечает `NotReady`, а не ждёт PUBACK, — сессия сочтёт это
 /// обрывом и переподключится. Брокеры по умолчанию дают больше
 /// (у Mosquitto — 20, `max_inflight_messages`).
-pub(crate) async fn serve<IO: minimq::Io>(io: IO, endpoint: &Endpoint, env: &mut Env<'_>) -> Ended
+pub(crate) async fn serve<IO: minimq::Io>(io: IO, endpoint: &Broker, env: &mut Env<'_>) -> Ended
 where
     IO::Error: FormatOrDebug,
 {
@@ -158,14 +157,14 @@ where
                 // `recv` отменяется без потерь; публикация `QoS` 0 — нет, она
                 // вне таймаута.
                 Err(_) => {
-                    let mut json = String::<40>::new();
-                    write_telemetry(&mut json, Instant::now().as_secs())
-                        .expect("u64 в объекте влезает в 40 байт");
+                    let mut text = String::<40>::new();
+                    write_telemetry(&mut text, Instant::now().as_secs())
+                        .expect("u64 в тексте влезает в 40 байт");
                     let topic = topics.telemetry();
-                    conn.publish(Publication::text(&topic, &json))
+                    conn.publish(Publication::text(&topic, &text))
                         .await
                         .map_err(session_error)?;
-                    next = tick::next_tick(next, TELEMETRY_INTERVAL, Instant::now());
+                    next = Instant::now() + TELEMETRY_INTERVAL;
                     continue;
                 }
                 // SUBACK или PUBACK с кодом отказа (чаще всего — ACL брокера
@@ -192,7 +191,7 @@ where
             match command {
                 Command::Reboot => {
                     // {%- if ota == "true" %}
-                    let reply = ota.request(OtaCommand::Reboot).await;
+                    let reply = ota.request(crate::ota::Command::Reboot).await;
                     let text = if matches!(reply, Ok(Ok(Progress::Rebooting))) {
                         "accepted"
                     } else {
@@ -242,7 +241,7 @@ const fn publish_rest(topic: usize, payload: usize) -> usize {
 /// Настройки клиента: идентификатор, вход (при непустом `user`) и Will
 /// `offline` на `status`.
 fn config<'a>(
-    endpoint: &Endpoint,
+    endpoint: &Broker,
     topics: &Topics,
     status: &str,
     rx: &'a mut [u8],
@@ -286,14 +285,22 @@ async fn announce<IO: minimq::Io>(
     )
     .await
     .map_err(session_error)?;
-    let mut json = String::<INFO_MAX>::new();
-    if crate::device::write_info(&mut json, info, mac, ip, Instant::now().as_secs()).is_err() {
+    let mut text = String::<INFO_TEXT>::new();
+    if crate::device::write_info(
+        &mut text,
+        info,
+        Some(mac),
+        ip.map(|ip| core::net::Ipv4Addr::from(ip.octets())),
+        Instant::now().as_secs(),
+    )
+    .is_err()
+    {
         warn!("mqtt: сведения об устройстве не влезли в буфер");
         return Ok(());
     }
     let topic = topics.info();
     conn.publish(
-        Publication::text(&topic, &json)
+        Publication::text(&topic, &text)
             .qos(QoS::AtLeastOnce)
             .retain(),
     )

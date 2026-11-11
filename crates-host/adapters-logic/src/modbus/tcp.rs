@@ -16,7 +16,7 @@ use super::mbap::{self, HEADER, MAX_ADU};
 use super::master_error;
 // {%- endif %}
 use super::{FrameError, io_error, read_error};
-use crate::net::{TcpError, TcpServer};
+use crate::net::{Error, Server};
 
 /// Modbus TCP поверх потока `io` (сокет `embassy-net`).
 ///
@@ -27,7 +27,7 @@ use crate::net::{TcpError, TcpServer};
 /// записи оставляет на линии полкадра, после чего соединение стоит
 /// переоткрыть.
 ///
-/// Для slave'а — канал [`FrameLink`] над [`TcpServer`] с кадром «адрес и PDU» прямо в приёмном
+/// Для slave'а — канал [`FrameLink`] над [`Server`] с кадром «адрес и PDU» прямо в приёмном
 /// буфере, за заголовком: любой запрос приходит как адресованный самому
 /// устройству, 0xFF (см. [модуль](super)), а ответ несёт адрес и номер
 /// транзакции запроса.
@@ -36,14 +36,14 @@ use crate::net::{TcpError, TcpServer};
 /// устройство, которое его не повторяет, так и не ответит.
 // {%- endif %}
 ///
-/// Соединение slave'а — забота [`TcpServer`]: закрытое клиентом — потеря
+/// Соединение slave'а — забота [`Server`]: закрытое клиентом — потеря
 /// кадра ([`FrameError::Eof`]), а не отказ: узел обслуживает дальше, а
-/// следующее чтение `TcpServer` примет новое соединение. Длина в
+/// следующее чтение `Server` примет новое соединение. Длина в
 /// заголовке вне допустимой — граница кадра потеряна, и slave обрывает
-/// соединение сам (`TcpServer::hang_up`): клиент переподключится и начнёт с
+/// соединение сам (`Server::hang_up`): клиент переподключится и начнёт с
 /// чистого потока. Кадр без PDU (только адрес) пропускается — его граница известна.
 #[derive(Debug)]
-pub struct Tcp<T> {
+pub struct Link<T> {
     io: T,
     /// Принятые байты текущего кадра — `rx[..have]`; для slave'а с
     /// адреса (`rx[HEADER - 1..]`) это и буфер канала.
@@ -58,7 +58,7 @@ pub struct Tcp<T> {
     unit: u8,
 }
 
-impl<T> Tcp<T> {
+impl<T> Link<T> {
     /// Транспорт поверх потока `io`.
     pub const fn new(io: T) -> Self {
         Self {
@@ -84,7 +84,7 @@ impl<E> From<ReadExactError<E>> for Recv<E> {
     }
 }
 
-impl<T: Read + Write> Tcp<T> {
+impl<T: Read + Write> Link<T> {
     /// Принимает кадр целиком в начало `rx`; возвращает заголовок и длину
     /// кадра.
     async fn frame(&mut self) -> Result<(MbapHeader, usize), Recv<T::Error>> {
@@ -124,8 +124,8 @@ impl<T: Read + Write> Tcp<T> {
     // {%- endif %}
 }
 
-impl FrameLink for Tcp<TcpServer> {
-    type Error = FrameError<TcpError>;
+impl FrameLink for Link<Server> {
+    type Error = FrameError<Error>;
 
     async fn recv(&mut self) -> Result<usize, LinkError<Self::Error>> {
         loop {
@@ -168,7 +168,7 @@ impl FrameLink for Tcp<TcpServer> {
 }
 
 // {%- if modbus_master == "true" %}
-impl<T: Read + Write> ModbusClient for Tcp<T> {
+impl<T: Read + Write> ModbusClient for Link<T> {
     type Error = T::Error;
 
     async fn exchange(
@@ -254,8 +254,8 @@ mod tests {
     }
 
     /// Slave над настоящим TCP-сервером на «устройстве» кабеля.
-    fn slave(device: Stack<'static>) -> Tcp<TcpServer> {
-        Tcp::new(TcpServer::new(device, PORT, leak([0; 512]), leak([0; 512])))
+    fn slave(device: Stack<'static>) -> Link<Server> {
+        Link::new(Server::new(device, PORT, leak([0; 512]), leak([0; 512])))
     }
 
     #[tokio::test]
@@ -363,7 +363,7 @@ mod tests {
 
     // {%- if modbus_master == "true" %}
     async fn exchange(unit: u8, io: Duplex) -> (Result<Vec<u8>, MasterError<Infallible>>, Vec<u8>) {
-        let mut tcp = Tcp::new(io);
+        let mut tcp = Link::new(io);
         let mut out = [0; MAX_PDU];
         let r = tcp.exchange(unit, &[0x03, 0, 0, 0, 1], &mut out).await;
         (r.map(|len| out[..len].to_vec()), tcp.io.tx)
@@ -409,7 +409,7 @@ mod tests {
             frame(1, 0, 1, &[0x03, 2, 0, 1]),
             frame(2, 0, 1, &[0x03, 2, 0, 2]),
         );
-        let mut tcp = Tcp::new(Duplex::replying(&stale[..4]).waiting());
+        let mut tcp = Link::new(Duplex::replying(&stale[..4]).waiting());
         let mut out = [0; MAX_PDU];
         {
             // Ответ на первый запрос пришёл до четвёртого байта, дальше —
@@ -463,7 +463,7 @@ mod tests {
         fn never_panics(input in proptest::collection::vec(proptest::num::u8::ANY, 0..600)) {
             let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
             rt.block_on(async {
-                let mut tcp = Tcp::new(Duplex::new(&input));
+                let mut tcp = Link::new(Duplex::new(&input));
                 while tcp.frame().await.is_ok() {}
                 // {%- if modbus_master == "true" %}
                 let _ignored = exchange(1, Duplex::replying(&input)).await;

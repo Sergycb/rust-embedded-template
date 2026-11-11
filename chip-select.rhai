@@ -1040,7 +1040,7 @@ const RAM_COST = #{
     // Сетевые службы (`NET_SERVICE_ITEMS`), с графом. REST — stm32h743zg
     // rest-modbus-tcp 28500 при оценке без REST 9680 (буферы двух соединений,
     // сокеты, futures `picoserve`; тело `/api/info` собирается в последнем
-    // звене `write_content`, а не едет буфером `INFO_MAX` через десяток
+    // звене `write_content`, а не едет буфером `INFO_TEXT` через десяток
     // вложенных future — это сняло 7344 с прежних 26164); SSH — stm32h743zg ssh-config 20100
     // против tcp config=yes 3380 (буферы, ключи, futures `sunset`, статик RNG
     // для `getrandom`) — 16720,
@@ -1801,7 +1801,7 @@ if variable::is_set("net_services") {
 // Прежние ответы о способе входа: вход по ключу убран, пароль — всегда.
 for name in ["ssh_auth", "ssh_key"] {
     if variable::is_set(name) {
-        throw name + ": убран — вход в консоль всегда по паролю (console-password.hash, README)";
+        throw name + ": убран — вход в консоль всегда по паролю (его задаёт cargo generate, README)";
     }
 }
 // Консоль — SSH или `cli`, одна на проект; у неё всегда пароль.
@@ -2053,7 +2053,7 @@ if variable::is_set("write_size") {
         print("Настройки — во внутренней EEPROM чипа: флеш под них не тратится");
     } else if config && store == "external" {
         print("Настройки — на внешней флеши W25Q: подставьте шину с выводами платы в crates-cross/bsp/src/external.rs");
-        print("  (пока там заглушка bsp::stub::FlashBus — проект собирается, настройки не сохраняются; docs/modules/bsp-external.md)");
+        print("  (пока там заглушка bsp::stub::Bus — проект собирается, настройки не сохраняются; docs/modules/bsp-external.md)");
     }
     variable::set("write_size", m["write_size"]);
     // `page_size` — страница обмена embassy-boot (`PAGE_SIZE`, `SWAP_PAGE_SIZE`
@@ -2531,7 +2531,7 @@ if iface != "none" {
 // хоть один раздел его использует: `STATE`/`CONFIG` с секторами мельче страницы
 // чипа или `ACTIVE`/`DFU` со страницей обмена. Иначе типа в проекте нет вовсе.
 variable::set("erase_page", if variable::get("state_paged") == "true" || variable::get("config_paged") == "true" || variable::get("swap_paged") == "true" { "true" } else { "false" });
-// Драйвер внешней флеши (`bsp::external`, шина — заглушка `bsp::stub::FlashBus`) нужен, пока
+// Драйвер внешней флеши (`bsp::external`, шина — заглушка `bsp::stub::Bus`) нужен, пока
 // на внешней флеши лежит хоть что-то: разделы OTA или настройки.
 variable::set("external_flash", if (variable::get("ota") == "true" && variable::get("ota_store") == "external") || variable::get("config_store") == "external" { "true" } else { "false" });
 if wants_ext && variable::get("external_flash") != "true" {
@@ -2751,6 +2751,11 @@ if !on.protobuf {
     file::delete("crates-host/domain/src/protobuf.rs");
     file::delete("crates-host/domain/src/protobuf");
     file::delete("crates-host/proto");
+    if variable::get("ota") == "true" {
+        // Обработчик OTA жил в каталоге `domain::ota`, который без OTA
+        // удаляется целиком ниже.
+        file::delete("crates-host/domain/src/ota/protobuf.rs");
+    }
 }
 if !has.can {
     file::delete("crates-host/ports/src/can.rs");
@@ -2877,12 +2882,16 @@ if !services.contains("rest") {
 if !services.contains("ssh") {
     file::delete("crates-host/domain/src/ssh.rs");
     file::delete("crates-host/domain/src/ssh");
+} else if variable::get("ota") == "true" {
+    // Заглушка клиента OTA нужна только сборке SSH без OTA.
+    file::delete("crates-host/domain/src/ssh/ota_stub.rs");
 }
 // Консоль живёт для SSH или `cli`: нет ни того, ни другого — нет и модуля.
 if !has_console {
     file::delete("crates-host/domain/src/console.rs");
     file::delete("crates-host/domain/src/console");
     file::delete("crates-cross/app/src/console.rs");
+    file::delete("crates-cross/app/src/console_password.rs");
 }
 // MQTT — узел (с клиентом брокера `mqtt/client.rs`), разбор `mqtt.toml` в
 // build-скрипте `app` и описание.
@@ -2911,7 +2920,7 @@ if variable::get("ssh_host_key") == "file" {
 }
 // Файлы служб в корне проекта (`xtask::secrets`): токен REST, пароль консоли,
 // ключ хоста SSH, настройки брокера MQTT — только если хоть один из них нужен.
-if !services.contains("rest") && !services.contains("mqtt") && !has_console
+if !services.contains("rest") && !services.contains("mqtt")
     && variable::get("ssh_host_key") != "file" {
     file::delete("crates-host/xtask/src/secrets.rs");
 }

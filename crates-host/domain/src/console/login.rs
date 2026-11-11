@@ -6,8 +6,8 @@ use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
 /// Длина хэша пароля [`PasswordHash`]: 16 байт соли и 32 байта
-/// SHA-256(соль ‖ пароль). Тот же формат пишет `cargo xtask` в
-/// `console-password.hash` (`secrets.rs`).
+/// SHA-256(соль ‖ пароль). Тот же формат пишет `post-script.rhai` в
+/// `crates-cross/app/src/console_password.rs` при генерации проекта.
 pub const PASSWORD_HASH_LEN: usize = SALT_LEN + DIGEST_LEN;
 
 /// Пользователь консоли SSH. У `cli` имени нет — только пароль.
@@ -23,9 +23,11 @@ const DIGEST_LEN: usize = 32;
 /// SHA-256(соль ‖ пароль). Самого пароля в прошивке нет; хэш другой длины не
 /// пускает никого.
 ///
-/// SHA-256 без KDF (bcrypt, argon2) — потому что пароль генерирует
-/// `cargo xtask`: 128 бит из ОС, перебор их по хэшу невозможен и без
-/// замедления. Пароль, придуманный человеком, такой защиты не даёт.
+/// SHA-256 без KDF (bcrypt, argon2) — потому что защищать нечего: шаблон
+/// выводит пароль из имени проекта (`<project>00`) с фиксированной солью, и
+/// он документированно не секрет. Поле на плате меняется в
+/// `crates-cross/app/src/console_password.rs`; для настоящей защиты нужен
+/// случайный пароль и KDF, а не эта схема.
 #[derive(Debug, Clone, Copy)]
 pub struct PasswordHash(pub &'static [u8]);
 
@@ -86,7 +88,7 @@ pub(crate) mod tests {
 
     use super::{Access, PASSWORD_HASH_LEN, PasswordHash};
 
-    /// Хэш пароля, как его пишет `cargo xtask` в `console-password.hash`:
+    /// Хэш пароля, как его пишет `post-script.rhai` в `console_password.rs`:
     /// соль и SHA-256(соль ‖ пароль).
     pub(crate) fn hashed(password: &str) -> &'static [u8] {
         let salt = [7; 16];

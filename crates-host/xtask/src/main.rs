@@ -6,7 +6,7 @@ mod memory;
 mod panic_info;
 mod pins;
 mod project;
-// {%- if net_services contains "rest" or net_services contains "mqtt" or has_console == "true" or ssh_host_key == "file" %}
+// {%- if net_services contains "rest" or net_services contains "mqtt" or ssh_host_key == "file" %}
 mod secrets;
 // {%- endif %}
 mod setup;

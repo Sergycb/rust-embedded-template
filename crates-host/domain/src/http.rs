@@ -8,7 +8,7 @@
 //!
 //! | Запрос | Ответ |
 //! |---|---|
-//! | `GET /api/info` | сведения об устройстве, JSON |
+//! | `GET /api/info` | сведения об устройстве, текст |
 // {%- if ota == "true" %}
 //! | `POST /api/reboot` | перезагрузка — командой узлу OTA; ответ `202` уходит до сброса |
 // {%- endif %}
@@ -53,7 +53,7 @@ supervisor::supervisor_fragment! {
             TOKEN: &'static str = inputs.token,
             // {%- if ota == "true" %}
             /// Клиент входа `CMD` узла OTA — для `/api/reboot`.
-            OTA: $crate::ota::OtaClient = inputs.ota,
+            OTA: $crate::ota::Client = inputs.ota,
             // {%- endif %}
             /// Приём сокета.
             RX: &'static mut [u8; $crate::http::TCP_RX] = static,
