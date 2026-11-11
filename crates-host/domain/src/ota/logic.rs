@@ -12,13 +12,13 @@ use embassy_time::{Instant, Timer};
 use embedded_storage_async::nor_flash::NorFlash;
 use ports::{Partitions, Reboot};
 
-use super::client::Answer;
+use super::Answer;
 use super::commands::{Chunk, Progress, Rejection, SIGNATURE_BYTES};
 use super::download::Transfer;
-use super::rejection::{busy, download_rejection, update_rejection};
 use super::storage::Updater;
-use super::timing::{REBOOT_GRACE, SESSION_TIMEOUT};
 use super::{ClientId, Command, Reply, Request, update};
+use super::{REBOOT_GRACE, SESSION_TIMEOUT};
+use super::{busy, download_rejection, update_rejection};
 
 /// Подпись образа — из `Start`, до `Finish` её держит состояние `Receiving`.
 type Signature = [u8; SIGNATURE_BYTES];
