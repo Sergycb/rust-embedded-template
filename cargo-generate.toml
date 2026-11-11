@@ -108,7 +108,7 @@ ignore = [
 ]
 
 [placeholders]
-# chip/chip_feature/cpu/target/write_size здесь не объявлены: их выставляет
+# chip/chip_feature/cpu/target/swap_buffer здесь не объявлены: их выставляет
 # pre-хук chip-select.rhai — MAINTAINING.md, «Плейсхолдеры шаблона».
 # Подпись видна только в меню; `--define`, `default` и Liquid получают `value`.
 # Подписи — ASCII, как и пункты меню хука (MAINTAINING.md, «Вопросы в хуке»).

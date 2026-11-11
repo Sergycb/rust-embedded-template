@@ -10,7 +10,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -66,7 +66,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -122,7 +122,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -178,7 +178,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -234,7 +234,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -290,7 +290,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -346,7 +346,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -402,7 +402,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -458,7 +458,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -514,7 +514,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -570,7 +570,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -626,7 +626,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -682,7 +682,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -738,7 +738,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -794,7 +794,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -850,7 +850,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -906,7 +906,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -962,7 +962,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -1018,7 +1018,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -1074,7 +1074,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -1130,7 +1130,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -1186,7 +1186,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -1242,7 +1242,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -1298,7 +1298,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -1354,7 +1354,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -1410,7 +1410,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -1466,7 +1466,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -1522,7 +1522,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -1578,7 +1578,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -1634,7 +1634,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -1690,7 +1690,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -1746,7 +1746,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -1802,7 +1802,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -1858,7 +1858,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -1914,7 +1914,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -1970,7 +1970,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -2026,7 +2026,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -2082,7 +2082,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -2138,7 +2138,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -2194,7 +2194,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -2250,7 +2250,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -2306,7 +2306,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -2362,7 +2362,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -2418,7 +2418,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -2474,7 +2474,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -2530,7 +2530,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -2586,7 +2586,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -2642,7 +2642,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -2698,7 +2698,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -2754,7 +2754,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -2810,7 +2810,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -2866,7 +2866,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -2922,7 +2922,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -2978,7 +2978,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -3034,7 +3034,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -3090,7 +3090,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -3146,7 +3146,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -3202,7 +3202,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -3258,7 +3258,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -3314,7 +3314,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -3370,7 +3370,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -3426,7 +3426,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -3482,7 +3482,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -3539,7 +3539,7 @@ export const MEMORY_LAYOUT = #{
             "    BANK_2            (rx)  : ORIGIN = 0x08200000, LENGTH = 1024K",
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "dfu_bank_origin": "0x08200000",
@@ -3596,7 +3596,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -3652,7 +3652,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -3708,7 +3708,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -3765,7 +3765,7 @@ export const MEMORY_LAYOUT = #{
             "    BANK_2            (rx)  : ORIGIN = 0x08200000, LENGTH = 1024K",
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "dfu_bank_origin": "0x08200000",
@@ -3822,7 +3822,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -3879,7 +3879,7 @@ export const MEMORY_LAYOUT = #{
             "    BANK_2            (rx)  : ORIGIN = 0x08200000, LENGTH = 1024K",
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "dfu_bank_origin": "0x08200000",
@@ -3936,7 +3936,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -3992,7 +3992,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -4048,7 +4048,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -4104,7 +4104,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -4160,7 +4160,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",
@@ -4216,7 +4216,7 @@ export const MEMORY_LAYOUT = #{
         "extra_regions": [
             "    OTP               (rx)  : ORIGIN = 0x0BFA0000, LENGTH = 512",
         ],
-        "write_size": "16",
+        "swap_buffer": "16",
         "page_size": "8192",
         "erase_zero": "false",
         "ota": "true",

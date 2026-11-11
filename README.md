@@ -315,10 +315,10 @@ STOP — это разница между единицами миллиампе�
 старте он проверяет подпись нового образа и меняет разделы `ACTIVE`/`DFU`; затем
 прыгает в `ACTIVE` (`unsafe { bl.load(entry) }`). Сам прыжок безусловный, как в официальном
 примере `embassy-boot-stm32`: вектор сброса и SP образа не проверяются — это осознанный
-компромисс минимального шаблона, не забытая деталь. `write_size` — размер буфера
+компромисс минимального шаблона, не забытая деталь. `swap_buffer` — размер буфера
 подкачки `BootLoader::prepare::<_,_,_,N>`; генерация берёт его равным слову записи
 flash чипа (4–32 байта). Это не `PAGE_SIZE`: тот `embassy-boot` вычисляет сам из
-`NorFlash::ERASE_SIZE`. `write_size` и оба `memory.x` вычисляются
+`NorFlash::ERASE_SIZE`. `swap_buffer` и оба `memory.x` вычисляются
 автоматически по выбранному чипу — см. [«Как выбирается чип»](#как-выбирается-чип) ниже. На
 чипах, куда схема не помещается, OTA либо отключают (тогда `crates-cross/boot` в проект
 не входит), либо берут с ручной раскладкой — см.
@@ -1231,7 +1231,7 @@ Renovate (менеджер `gitlabci`, группа `gitlab images` в `renovate
 - `target` — целевой target triple (`thumbv7em-none-eabihf` и т.п.);
 - `cpu` — `target-cpu` для rustflags (`cortex-m4` и т.п.);
 {%- if ota == "true" %}
-- `write_size` — параметр буфера подкачки для bootloader (`BootLoader::prepare::<_,_,_,N>`);
+- `swap_buffer` — параметр буфера подкачки для bootloader (`BootLoader::prepare::<_,_,_,N>`);
 {%- endif %}
 - фича банковой схемы `embassy-stm32` (`single-bank`) — только для чипов, у которых
   их несколько; без неё build-скрипт `embassy-stm32` просто паникует;
@@ -1254,10 +1254,10 @@ Renovate (менеджер `gitlabci`, группа `gitlab images` в `renovate
 Чтобы задать чип без интерактивного каскада (например в CI/скриптах), передайте
 `--define chip_feature=stm32f407ve` — остальные поля выведутся из него автоматически
 (опечатка в значении будет замечена сразу, до генерации файлов). Любое из `chip`/`cpu`/
-`target`/`write_size` можно и переопределить по отдельности своим `--define` — например
+`target`/`swap_buffer` можно и переопределить по отдельности своим `--define` — например
 если дефолтный `chip` указывает не на самый специфичный вариант probe-rs для вашего чипа.
-`--define write_size=...` заодно отключает автогенерацию `memory.x` (адреса привязаны
-именно к вычисленному `write_size`) — в этом случае `memory.x` в `crates-cross/app`,
+`--define swap_buffer=...` заодно отключает автогенерацию `memory.x` (адреса привязаны
+именно к вычисленному `swap_buffer`) — в этом случае `memory.x` в `crates-cross/app`,
 `crates-cross/target-tests`{% if ota == "true" %} и `crates-cross/boot`{% endif %} придётся заполнить вручную (у `app` и
 `target-tests` — одинаково).
 {%- if ota == "true" %}
@@ -1292,7 +1292,7 @@ manual memory layout`. Ответ «no» даёт проект **без OTA**: �
 
 ```
 Выбранное не помещается на STM32H723VE: раскладку памяти (memory.x и числа в [env]
-  crates-cross/.cargo/config.toml) вы заполняете сами — так же, как при --define write_size=...
+  crates-cross/.cargo/config.toml) вы заполняете сами — так же, как при --define swap_buffer=...
   OTA: flash 512 KiB при секторе 128 KiB: под BOOTLOADER+STATE уходит 256 KiB, на ACTIVE+DFU остаётся стираемых страниц: 2 (нужно 3)
   с DFU/STATE на внешней флеши OTA помещается: ACTIVE 384K; сгенерируйте с --define ext_flash=yes
 ```
