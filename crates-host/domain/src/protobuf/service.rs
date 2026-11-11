@@ -1,10 +1,6 @@
 //! Обработчик сообщений хоста по умолчанию — над примером схемы
 //! `crates-host/proto`.
 
-use proto::host::HandleInfo;
-// {%- if ota == "true" %}
-use proto::host::HandleOta;
-// {%- endif %}
 use proto::{Request, Response};
 
 use super::info;
@@ -30,24 +26,25 @@ pub const RESPONSE_MAX: usize = match <Response as micropb::MessageEncode>::MAX_
     Err(_) => panic!("у ответа схемы нет предела длины"),
 };
 
-/// Обработчик сообщений узла `PROTOBUF`: разводит запрос по обработчикам
-/// подсистем, а `request_id` возвращает в ответе.
+/// Обработчик сообщений узла `PROTOBUF`: общий `Handlers` схемы разводит
+/// запрос по обработчикам подсистем, а `request_id` возвращается в ответе.
 ///
 /// Каждая подсистема знает свои команды и обрабатывает их в своём модуле
 /// (`crate::protobuf::info`{% if ota == "true" %}, `crate::ota::protobuf`{% endif %}).
-/// Здесь — только маршрутизация: `match` по командам генерирует
-/// `ServiceGenerator` (`crates-host/proto/build.rs`) из объявлений `service` в
-/// `.proto`.
+/// `match` по командам генерирует `crates-host/proto/build.rs` из объявлений
+/// `service` в `.proto`; здесь — только `Handlers` и ответ.
 ///
 /// Команда, которой нужно что-то от платы, получает это полем — портом
 /// (`ports::…`) над адаптером, а не железом: тогда её ответ проверяется на
 /// хосте заглушкой порта.
 #[derive(Debug)]
 pub struct Service {
-    info: info::Handler,
-    // {%- if ota == "true" %}
-    ota: OtaHandler,
-    // {%- endif %}
+    handlers: proto::host::Handlers<
+        info::Handler,
+        // {%- if ota == "true" %}
+        OtaHandler,
+        // {%- endif %}
+    >,
 }
 
 impl Service {
@@ -67,25 +64,23 @@ impl Service {
         // {%- endif %}
     ) -> Self {
         Self {
-            info: info::Handler::new(info),
-            // {%- if ota == "true" %}
-            ota: OtaHandler::new(ota),
-            // {%- endif %}
+            handlers: proto::host::Handlers {
+                info: info::Handler::new(info),
+                // {%- if ota == "true" %}
+                ota: OtaHandler::new(ota),
+                // {%- endif %}
+            },
         }
     }
 
     /// Выполняет запрос и строит ответ с его `request_id`.
     pub async fn handle(&mut self, request: Request) -> Response {
         let request_id = request.request_id;
-        let result = if let Some(result) = self.info.handle(&request).await {
-            result
-        // {%- if ota == "true" %}
-        } else if let Some(result) = self.ota.handle(&request).await {
-            result
-        // {%- endif %}
-        } else {
-            error("unknown command")
-        };
+        let result = self
+            .handlers
+            .handle(&request)
+            .await
+            .unwrap_or_else(|| error("unknown command"));
         response(request_id, result)
     }
 

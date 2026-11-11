@@ -45,15 +45,13 @@ const LENGTHS: &[(&str, &str, u32)] = &[
     // ("READINGS_LEN", ".host.Telemetry.readings", 8),
 ];
 
-/// Трейт на protobuf-сервис: `handle` разбирает только команды своего
-/// сервиса, а модуль подсистемы реализует его у себя.
+/// Трейт на protobuf-сервис: модуль подсистемы реализует его у себя, а общий
+/// `Handlers` разводит команды по сервисам.
 struct HostServices;
 
 impl ServiceGenerator for HostServices {
     fn generate(&mut self, service: &ServiceView<'_>, resolver: &dyn TypeResolver) -> TokenStream {
-        let Some(prefix) = service.name.strip_suffix("Service") else {
-            panic!("service `{}` must end with `Service`", service.name);
-        };
+        let prefix = service_prefix(service.name);
         let trait_name = format_ident!("Handle{prefix}");
         let service_name = service.name;
         let service_doc = format!("Обработчик команд protobuf-сервиса `{service_name}`.");
@@ -67,38 +65,27 @@ impl ServiceGenerator for HostServices {
                 async fn #method_name(&mut self, request: &#input) -> Response_::Result;
             }
         });
-        let arms = service.methods.iter().map(|method| {
-            let method_name = format_ident!("{}", snake_case(method.name));
-            let variant = format_ident!("{}", method.name);
-            quote! {
-                Some(Request_::Command::#variant(request)) => {
-                    Some(self.#method_name(request).await)
-                }
-            }
-        });
 
         quote! {
             #[doc = #service_doc]
             ///
-            /// Модуль подсистемы реализует его у себя; `handle` разбирает
-            /// только команды этого сервиса, чужие возвращает `None`.
+            /// Модуль подсистемы реализует его у себя; общий `Handlers`
+            /// разводит команды по сервисам.
             #[allow(
                 async_fn_in_trait,
                 reason = "трейт реализует модуль подсистемы; dyn и Send не нужны"
             )]
             pub trait #trait_name {
                 #(#methods)*
-
-                /// Разбирает команду своего сервиса; чужая — `None`.
-                async fn handle(&mut self, request: &Request) -> Option<Response_::Result> {
-                    match &request.command {
-                        #(#arms)*
-                        _ => None,
-                    }
-                }
             }
         }
     }
+}
+
+/// Имя сервиса без суффикса `Service` (`OtaService` → `Ota`).
+fn service_prefix(name: &str) -> &str {
+    name.strip_suffix("Service")
+        .unwrap_or_else(|| panic!("service `{name}` must end with `Service`"))
 }
 
 /// `OtaStart` → `ota_start`; имена RPC — `PascalCase`.
@@ -123,10 +110,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("cargo:rerun-if-changed={proto}");
     }
 
-    let descriptor = protox::Compiler::new(["proto"])?
-        .include_imports(true)
-        .open_files(PROTOS)?
-        .encode_file_descriptor_set();
+    let mut compiler = protox::Compiler::new(["proto"])?;
+    compiler.include_imports(true);
+    compiler.open_files(PROTOS)?;
+    let descriptor = compiler.encode_file_descriptor_set();
+    let fdset = compiler.file_descriptor_set();
     let descriptor_path = out.join("host.fdset");
     std::fs::write(&descriptor_path, descriptor)?;
 
@@ -140,6 +128,58 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         generator.configure(field, Config::new().max_len(*len));
     }
     generator.compile_fdset_file(&descriptor_path, out.join("host.rs"))?;
+
+    // Общий разбор команд: `Handlers` знает все сервисы схемы и их методы,
+    // поэтому `domain::protobuf::Service` не пишет ни одного `if` на сервис.
+    let dispatch = {
+        let mut fields = Vec::new();
+        let mut generics = Vec::new();
+        let mut bounds = Vec::new();
+        let mut arms = Vec::new();
+        for file in &fdset.file {
+            for service in &file.service {
+                let prefix = service_prefix(service.name());
+                let field = format_ident!("{}", snake_case(prefix));
+                let generic = format_ident!("H{}", generics.len());
+                let trait_name = format_ident!("Handle{prefix}");
+                fields.push(quote! { pub #field: #generic });
+                bounds.push(quote! { #generic: host_::#trait_name });
+                for method in &service.method {
+                    let method_name = format_ident!("{}", snake_case(method.name()));
+                    let variant = format_ident!("{}", method.name());
+                    arms.push(quote! {
+                        Some(host_::Request_::Command::#variant(request)) => {
+                            Some(self.#field.#method_name(request).await)
+                        }
+                    });
+                }
+                generics.push(generic);
+            }
+        }
+        quote! {
+            /// Обработчики сервисов схемы: разводит команды по подсистемам.
+            #[derive(Debug)]
+            pub struct Handlers<#(#generics),*> {
+                #(#fields),*
+            }
+            impl<#(#generics),*> Handlers<#(#generics),*>
+            where
+                #(#bounds),*
+            {
+                /// Разбирает команду и отдаёт её обработчику своего сервиса.
+                pub async fn handle(
+                    &mut self,
+                    request: &host_::Request,
+                ) -> Option<host_::Response_::Result> {
+                    match &request.command {
+                        #(#arms)*
+                        _ => None,
+                    }
+                }
+            }
+        }
+    };
+    std::fs::write(out.join("dispatch.rs"), dispatch.to_string())?;
 
     // Те же ёмкости — константами крейта: тот, кто кладёт в поле строку своей
     // длины (`domain::protobuf::Service` — сведения об устройстве), сверяет её при
