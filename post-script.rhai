@@ -283,7 +283,7 @@ if variable::get("graph") == "true" {
 		print("Блоки интерфейсов назначены по умолчанию: " + blocks + ". Сменить блок и задать выводы своей платы — crates-cross/bsp/src/resources.rs (cargo xtask pins <БЛОК> --snippet печатает готовую группу); имена транспортов (поле Board, модули bsp и app, имена узлов) остаются от блока по умолчанию.");
 	}
 	if variable::get("has_modbus") == "true" {
-		print("Modbus: карта регистров — crates-host/domain/src/modbus/map.rs (заготовка EmptyRegisters); одна на все узлы, тип подставляет crates-cross/app/src/modbus.rs (псевдоним Map, строится Map::default()).");
+		print("Modbus: карта регистров — crates-host/domain/src/modbus/map.rs (заготовка EmptyRegisters); одна на все узлы, тип подставляет crates-cross/app/src/registers.rs (псевдоним Map, строится Map::default()).");
 	}
 	if variable::get("has_canopen") == "true" {
 		print("CANopen: словарь объектов — crates-host/canopen/device.toml.");

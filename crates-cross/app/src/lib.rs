@@ -24,7 +24,7 @@ pub mod fault;
 mod graph;
 {%- endif %}
 {%- if has_modbus == "true" %}
-mod modbus;
+mod registers;
 {%- endif %}
 {%- if net_services != "" %}
 mod net;

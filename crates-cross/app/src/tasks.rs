@@ -63,7 +63,7 @@ pub fn spawn_all(spawner: embassy_executor::Spawner, {% if has_usb == "true" or 
 {%- for l in xs %}
 {%- assign f = l | split: ":" %}
 {%- if f[3] == "modbus" %}
-    modbus::{{ f[4] }}::spawn(spawner, {% if f[0] == "uart" %}board.{{ f[4] }}{% else %}board.{{ f[4] }}.cdc{% endif %}, crate::modbus::handle(){% if ota == "true" %}, image.text{% endif %});
+    modbus::{{ f[4] }}::spawn(spawner, {% if f[0] == "uart" %}board.{{ f[4] }}{% else %}board.{{ f[4] }}.cdc{% endif %}, crate::registers::handle(){% if ota == "true" %}, image.text{% endif %});
 {%- elsif f[3] == "protobuf" %}
     let info = crate::device::info(board.spec{% if ota == "true" %}, image{% endif %});
     protobuf::{{ f[4] }}::spawn(spawner, {% if f[0] == "uart" %}board.{{ f[4] }}{% else %}board.{{ f[4] }}.cdc{% endif %}, info);

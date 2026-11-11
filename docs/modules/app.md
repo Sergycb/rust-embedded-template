@@ -204,9 +204,9 @@ EOF и ошибки — через паузу `RESTART_PAUSE`, чтобы пот
 контекст узла `domain::server::ServerCtx` — канал `adapters_logic::modbus::Rtu`
 над рычагом платы и обработчик `domain::modbus::Slave` над
 картой регистров с адресом slave'а — и зовёт `domain::server::task`.{% endif %} Карта одна на проект: её
-заводит `crates-cross/app/src/modbus.rs` в `static` (`OnceLock`) при первом
-`crate::modbus::handle()`, и каждый узел берёт свою копию ручки
-(`crate::modbus::Handle` = `domain::modbus::SharedRegisters<Map>`, `Copy`) — запись через один транспорт видна чтению через
+заводит `crates-cross/app/src/registers.rs` в `static` (`OnceLock`) при первом
+`crate::registers::handle()`, и каждый узел берёт свою копию ручки
+(`crate::registers::Handle` = `domain::modbus::SharedRegisters<Map>`, `Copy`) — запись через один транспорт видна чтению через
 другой. Ручка берёт мьютекс карты (`domain::modbus::MapMutex`,
 `CriticalSectionRawMutex` — `OnceLock` в `static` требует `Sync`) на время
 одного вызова порта, так что запросы с разных транспортов идут по
@@ -216,9 +216,9 @@ EOF и ошибки — через паузу `RESTART_PAUSE`, чтобы пот
 порядковый номер транспорта (`docs/ota.md`).{% endif %}
 
 Свою карту проект подставляет в одном месте — псевдоним `Map` в
-`crates-cross/app/src/modbus.rs` (по умолчанию `domain::modbus::EmptyRegisters`):
+`crates-cross/app/src/registers.rs` (по умолчанию `domain::modbus::EmptyRegisters`):
 тип реализует `domain::modbus::Registers` и живёт в `domain`. Карта строится через
-`Map::default()`; без `Default` замените эту одну строку в `crate::modbus::handle`
+`Map::default()`; без `Default` замените эту одну строку в `crate::registers::handle`
 своим конструктором. Узлы{% if graph == "true" %} и граф{% endif %} тип берут оттуда и правок не требуют.
 {%- endif %}
 {%- if test_image == "true" %}

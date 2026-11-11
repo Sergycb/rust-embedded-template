@@ -659,7 +659,7 @@ HOST_TARGET_BAUD=115200              # скорость UART (по умолча�
 
 Что править проекту:
 {%- if protocol == "modbus" %} карту регистров `crates-host/domain/src/modbus/map.rs` и её
-тип в `crates-cross/app/src/modbus.rs` (псевдоним `Map` и начальное значение): карта одна на
+тип в `crates-cross/app/src/registers.rs` (псевдоним `Map` и начальное значение): карта одна на
 все узлы `MODBUS_*`, каждый получает ручку к ней (`domain::modbus::SharedRegisters`), так
 что запись по одному транспорту видна чтению по другому. Slave отвечает на функции
 1–6, 15, 16 (coils, discrete inputs, holding и input registers) и 43/14 Read Device

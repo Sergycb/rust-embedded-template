@@ -113,7 +113,7 @@ sync-request = { workspace = true }
 {%- endif %}
 {%- if has_modbus == "true" or ota == "true" and graph != "true" %}
 {%- if has_modbus == "true" %}
-# `OnceLock` карты регистров Modbus (src/modbus.rs).
+# `OnceLock` карты регистров Modbus (src/registers.rs).
 {%- endif %}
 {%- if ota == "true" and graph != "true" %}
 # Мьютекс и сигналы узла OTA (src/tasks/ota.rs){% if has_canopen == "true" %}, метки ребра `ASK` у задач CANopen
