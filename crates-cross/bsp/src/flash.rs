@@ -90,9 +90,9 @@ pub mod dfu {
     // {%- if dfu_bank == "true" %}
     pub type Flash = BlockingAsync<Bank>;
     // {%- elsif swap_paged == "true" %}
-    // {{newline}}    /// Но со страницей обмена `SWAP_PAGE_SIZE`, крупнее
-    // {{newline}}    /// физической страницы флеша (`flash_page::ErasePage`).
-    // {{newline}}    pub type Flash = BlockingAsync<ErasePage<Whole, SWAP_PAGE_SIZE>>;
+    //{{newline}}    /// Но со страницей обмена `SWAP_PAGE_SIZE`, крупнее
+    //{{newline}}    /// физической страницы флеша (`flash_page::ErasePage`).
+    //{{newline}}    pub type Flash = BlockingAsync<ErasePage<Whole, SWAP_PAGE_SIZE>>;
     // {%- else %}
     //{{newline}}    pub type Flash = BlockingAsync<Whole>;
     // {%- endif %}

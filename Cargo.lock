@@ -2817,7 +2817,6 @@ dependencies = [
  "object",
  "ports",
  "salty",
- "sha2",
  "xshell",
 ]
 

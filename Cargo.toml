@@ -188,13 +188,13 @@ sequential-storage     = { version = "8.0.2", default-features = false }
 # Его реализует поток USB CDC (`adapters_hw::usb`).
 # {%- endif %}
 # {%- if has_tcp == "true" %}
-# Его реализует сокет TCP `embassy-net` (`adapters_logic::net::TcpServer`).
+# Его реализует сокет TCP `embassy-net` (`adapters_logic::net::Server`).
 # {%- endif %}
 # {%- if net_services contains "ssh" %}
 # По нему идёт канал сессии SSH (`domain::ssh`).
 # {%- endif %}
 # {%- if net_services contains "mqtt" %}
-# По нему идёт соединение MQTT (`domain::mqtt::TcpClient`).
+# По нему идёт соединение MQTT (`domain::mqtt::Tcp`).
 # {%- endif %}
 embedded-io-async      = { version = "0.7.0" }
 # {%- endif %}
@@ -296,9 +296,9 @@ sunset-async           = { version = "0.6.0" }
 bareminal_cli          = { version = "0.4.0", default-features = false, features = ["async-no-std"] }
 # `#[derive(Command)]` консоли: разбор enum и генерация `help` в compile time.
 bareminal_macros       = { version = "0.4.0" }
-# Хэш пароля консоли (`domain::console::PasswordHash`; создаёт его
-# `cargo xtask`, `secrets.rs`): SHA-256 и сравнение за постоянное время. Те же
-# версии, что тянет `sunset`: с SSH нового кода в сборке нет.
+# Хэш пароля консоли (`domain::console::PasswordHash`; пишет `post-script.rhai`
+# при генерации проекта): SHA-256 и сравнение за постоянное время. Те же версии,
+# что тянет `sunset`: с SSH нового кода в сборке нет.
 sha2                   = { version = "0.11.1", default-features = false }
 subtle                 = { version = "2.6.1", default-features = false }
 # {%- endif %}

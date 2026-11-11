@@ -26,19 +26,14 @@ salty = { version = "0.3.0", default-features = false }
 # у прошивки, а не повторяется здесь руками.
 ports = { workspace = true }
 # {%- endif %}
-# {%- if ota == "true" or net_services contains "rest" or has_console == "true" or ssh_host_key == "file" %}
+# {%- if ota == "true" or net_services contains "rest" or ssh_host_key == "file" %}
 # {%- if ota == "true" %}
 # Случайный ключ подписи OTA и чужой ключ для `test host-target` (`signing.rs`).
 # {%- endif %}
-# {%- if net_services contains "rest" or has_console == "true" or ssh_host_key == "file" %}
+# {%- if net_services contains "rest" or ssh_host_key == "file" %}
 # Случайные секреты сетевых служб (`secrets.rs`).
 # {%- endif %}
 getrandom = "0.4.3"
-# {%- endif %}
-# {%- if has_console == "true" %}
-# Хэш пароля консоли (`secrets.rs`) — тот же SHA-256, которым прошивка
-# сверяет предъявленный пароль (`domain::console::PasswordHash`).
-sha2 = { workspace = true }
 # {%- endif %}
 # Сырой образ из ELF — своим разбором, а не `cargo objcopy`: тот требует
 # cargo-binutils, которого `cargo xtask setup` не ставит, и у пользователя

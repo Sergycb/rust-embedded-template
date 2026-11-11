@@ -2776,7 +2776,7 @@ fn the_ssh_host_key_lives_where_it_survives() {
 }
 
 /// MQTT предлагается с Ethernet (RNG ему не нужен); без Ethernet `--define` —
-/// ошибка. Узел, его TCP-клиент (`domain::mqtt::TcpClient`) и разбор `mqtt.toml` —
+/// ошибка. Узел, его TCP-клиент (`domain::mqtt::Tcp`) и разбор `mqtt.toml` —
 /// только с ним.
 #[test]
 fn mqtt_is_offered_with_ethernet() {

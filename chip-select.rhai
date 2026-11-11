@@ -1040,7 +1040,7 @@ const RAM_COST = #{
     // Сетевые службы (`NET_SERVICE_ITEMS`), с графом. REST — stm32h743zg
     // rest-modbus-tcp 28500 при оценке без REST 9680 (буферы двух соединений,
     // сокеты, futures `picoserve`; тело `/api/info` собирается в последнем
-    // звене `write_content`, а не едет буфером `INFO_MAX` через десяток
+    // звене `write_content`, а не едет буфером `INFO_TEXT` через десяток
     // вложенных future — это сняло 7344 с прежних 26164); SSH — stm32h743zg ssh-config 20100
     // против tcp config=yes 3380 (буферы, ключи, futures `sunset`, статик RNG
     // для `getrandom`) — 16720,
@@ -2751,6 +2751,11 @@ if !on.protobuf {
     file::delete("crates-host/domain/src/protobuf.rs");
     file::delete("crates-host/domain/src/protobuf");
     file::delete("crates-host/proto");
+    if variable::get("ota") == "true" {
+        // Обработчик OTA жил в каталоге `domain::ota`, который без OTA
+        // удаляется целиком ниже.
+        file::delete("crates-host/domain/src/ota/protobuf.rs");
+    }
 }
 if !has.can {
     file::delete("crates-host/ports/src/can.rs");
@@ -2877,12 +2882,16 @@ if !services.contains("rest") {
 if !services.contains("ssh") {
     file::delete("crates-host/domain/src/ssh.rs");
     file::delete("crates-host/domain/src/ssh");
+} else if variable::get("ota") == "true" {
+    // Заглушка клиента OTA нужна только сборке SSH без OTA.
+    file::delete("crates-host/domain/src/ssh/ota_stub.rs");
 }
 // Консоль живёт для SSH или `cli`: нет ни того, ни другого — нет и модуля.
 if !has_console {
     file::delete("crates-host/domain/src/console.rs");
     file::delete("crates-host/domain/src/console");
     file::delete("crates-cross/app/src/console.rs");
+    file::delete("crates-cross/app/src/console_password.rs");
 }
 // MQTT — узел (с клиентом брокера `mqtt/client.rs`), разбор `mqtt.toml` в
 // build-скрипте `app` и описание.
@@ -2911,7 +2920,7 @@ if variable::get("ssh_host_key") == "file" {
 }
 // Файлы служб в корне проекта (`xtask::secrets`): токен REST, пароль консоли,
 // ключ хоста SSH, настройки брокера MQTT — только если хоть один из них нужен.
-if !services.contains("rest") && !services.contains("mqtt") && !has_console
+if !services.contains("rest") && !services.contains("mqtt")
     && variable::get("ssh_host_key") != "file" {
     file::delete("crates-host/xtask/src/secrets.rs");
 }

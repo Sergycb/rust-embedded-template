@@ -133,7 +133,7 @@ pub async fn task<F: NorFlash>(ctx: SshCtx<'_, Stored<F>>) {
         *ctx.stack, ctx.info, // {%- if ota == "true" %}
         *ctx.ota,
         // {%- else %}
-        //{{newline}}    ota_stub::Client,
+        //{{newline}}        ota_stub::Client,
         // {%- endif %}
         ctx.tcp_rx, ctx.tcp_tx, ctx.ssh_rx, ctx.ssh_tx,
     );
