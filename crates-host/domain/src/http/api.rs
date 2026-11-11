@@ -1,5 +1,5 @@
 //! Маршруты REST API и то, что видят их обработчики: состояние роутера и
-//! тело ответа JSON.
+//! тело ответа текстом.
 
 use embassy_net::Stack;
 use picoserve::extract::State;
@@ -29,11 +29,11 @@ pub(super) struct Api {
     // {%- endif %}
 }
 
-/// Тело `/api/info`: данные объекта и его длина, а не готовый JSON.
+/// Тело `/api/info`: данные объекта и его длина, а не готовый текст.
 ///
 /// `picoserve` передаёт тело по значению через десяток вложенных future
 /// (обработчик, `write_to`, `write_response`, …), и каждая держит свою копию:
-/// собранный заранее буфер на [`INFO_MAX`](crate::device::INFO_MAX) байт лёг
+/// собранный заранее буфер на [`INFO_TEXT`](crate::device::INFO_TEXT) байт лёг
 /// бы в задачу узла столько же раз. Буфер заводит только `write_content` —
 /// последнее звено цепочки.
 struct InfoBody {
@@ -46,13 +46,19 @@ struct InfoBody {
 
 impl InfoBody {
     fn write(&self, out: &mut impl core::fmt::Write) -> core::fmt::Result {
-        crate::device::write_info(out, &self.info, self.mac, self.ip, self.uptime_s)
+        crate::device::write_info(
+            out,
+            &self.info,
+            Some(self.mac),
+            self.ip.map(|ip| core::net::Ipv4Addr::from(ip.octets())),
+            self.uptime_s,
+        )
     }
 }
 
 impl Content for InfoBody {
     fn content_type(&self) -> &'static str {
-        "application/json"
+        "text/plain; charset=utf-8"
     }
 
     fn content_length(&self) -> usize {
@@ -60,7 +66,7 @@ impl Content for InfoBody {
     }
 
     async fn write_content<W: Write>(self, mut w: W) -> Result<(), W::Error> {
-        let mut text = heapless::String::<{ crate::device::INFO_MAX }>::new();
+        let mut text = heapless::String::<{ crate::device::INFO_TEXT }>::new();
         // Влезает: `info` измерил этот же объект и длиннее буфера не пропустил.
         let written = self.write(&mut text);
         debug_assert!(written.is_ok(), "сведения длиннее измеренного");
@@ -108,11 +114,11 @@ fn info(api: &Api) -> Result<InfoBody, (StatusCode, &'static str)> {
         len: 0,
     };
     let mut measure = Measure(0);
-    // Строки сведений короткие (версия, хеш, имя чипа): объект короче буфера.
+    // Строки сведений короткие (версия, хеш, имя чипа): текст короче буфера.
     // Не влез бы (проект удлинил строки или добавил поля) — `500`, а не
-    // обрезанный JSON.
+    // обрезанный текст.
     match body.write(&mut measure) {
-        Ok(()) if measure.0 <= crate::device::INFO_MAX => {
+        Ok(()) if measure.0 <= crate::device::INFO_TEXT => {
             body.len = measure.0;
             Ok(body)
         }
@@ -376,7 +382,7 @@ mod tests {
         .await;
     }
 
-    /// `GET /api/info` с токеном — `200` и JSON, длина которого заявлена в
+    /// `GET /api/info` с токеном — `200` и текст, длина которого заявлена в
     /// Content-Length.
     #[tokio::test]
     async fn info_answers_with_the_token() {
@@ -389,8 +395,8 @@ mod tests {
                 let response = exchange(host, &request("GET", "/api/info", Some(&auth))).await;
                 assert_eq!(response.status, 200);
                 assert_eq!(response.length, Some(response.body.len()));
-                let body = core::str::from_utf8(&response.body).expect("JSON — текст");
-                assert!(body.starts_with('{'), "{body}");
+                let body = core::str::from_utf8(&response.body).expect("info — текст");
+                assert!(body.starts_with("version "), "{body}");
                 assert!(body.contains(INFO.chip), "{body}");
             },
         )

@@ -13,8 +13,7 @@ use minimq::{
 use super::broker::Endpoint;
 use super::telemetry::{TELEMETRY_INTERVAL, write_telemetry};
 use super::topics::{CLIENT_ID_LEN, Command, TOPIC_LEN, Topics, parse_command};
-use crate::device::{DeviceInfo, INFO_MAX};
-use crate::tick;
+use crate::device::{DeviceInfo, INFO_TEXT};
 // {%- if ota == "true" %}
 use crate::ota::command::Progress;
 use crate::ota::{OtaClient, OtaCommand};
@@ -54,7 +53,7 @@ pub(super) const TX_BUDGET: usize = 5
         CLIENT_ID_LEN + "/status".len(),
         "online".len(),
     ))
-    + packet_len(publish_rest(CLIENT_ID_LEN + "/info".len(), INFO_MAX))
+    + packet_len(publish_rest(CLIENT_ID_LEN + "/info".len(), INFO_TEXT))
     + 5
     + publish_rest(TOPIC_LEN, "accepted".len());
 const _: () = assert!(
@@ -158,14 +157,14 @@ where
                 // `recv` отменяется без потерь; публикация `QoS` 0 — нет, она
                 // вне таймаута.
                 Err(_) => {
-                    let mut json = String::<40>::new();
-                    write_telemetry(&mut json, Instant::now().as_secs())
-                        .expect("u64 в объекте влезает в 40 байт");
+                    let mut text = String::<40>::new();
+                    write_telemetry(&mut text, Instant::now().as_secs())
+                        .expect("u64 в тексте влезает в 40 байт");
                     let topic = topics.telemetry();
-                    conn.publish(Publication::text(&topic, &json))
+                    conn.publish(Publication::text(&topic, &text))
                         .await
                         .map_err(session_error)?;
-                    next = tick::next_tick(next, TELEMETRY_INTERVAL, Instant::now());
+                    next = Instant::now() + TELEMETRY_INTERVAL;
                     continue;
                 }
                 // SUBACK или PUBACK с кодом отказа (чаще всего — ACL брокера
@@ -286,14 +285,22 @@ async fn announce<IO: minimq::Io>(
     )
     .await
     .map_err(session_error)?;
-    let mut json = String::<INFO_MAX>::new();
-    if crate::device::write_info(&mut json, info, mac, ip, Instant::now().as_secs()).is_err() {
+    let mut text = String::<INFO_TEXT>::new();
+    if crate::device::write_info(
+        &mut text,
+        info,
+        Some(mac),
+        ip.map(|ip| core::net::Ipv4Addr::from(ip.octets())),
+        Instant::now().as_secs(),
+    )
+    .is_err()
+    {
         warn!("mqtt: сведения об устройстве не влезли в буфер");
         return Ok(());
     }
     let topic = topics.info();
     conn.publish(
-        Publication::text(&topic, &json)
+        Publication::text(&topic, &text)
             .qos(QoS::AtLeastOnce)
             .retain(),
     )

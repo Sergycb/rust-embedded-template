@@ -8,8 +8,8 @@
 //! | Тема | Направление | Содержимое |
 //! |---|---|---|
 //! | `status` | плата → брокер | `online`/`offline` (retain; `offline` — will) |
-//! | `info` | плата → брокер | сведения об устройстве, JSON (retain) |
-//! | `telemetry` | плата → брокер | время работы раз в [`TELEMETRY_INTERVAL`](crate::mqtt::TELEMETRY_INTERVAL), JSON |
+//! | `info` | плата → брокер | сведения об устройстве, текст (retain) |
+//! | `telemetry` | плата → брокер | время работы раз в [`TELEMETRY_INTERVAL`](crate::mqtt::TELEMETRY_INTERVAL), текст |
 //! | `cmd/reboot` | брокер → плата | перезагрузка{% if ota != "true" %}; без OTA — только строка в лог{% endif %} |
 // {%- if ota == "true" %}
 //! | `cmd/reboot/result` | плата → брокер | исход команды |
@@ -159,7 +159,7 @@ pub(crate) mod tests {
     use super::AUTH_MAX;
     use super::session::TX_BUDGET;
     use super::topics::{REBOOT, TOPIC_LEN};
-    use crate::device::INFO_MAX;
+    use crate::device::INFO_TEXT;
     // {%- endif %}
 
     /// Брокер — на «хосте» кабеля в памяти (`adapters_hw::net::fake::cable::HOST`).
@@ -347,10 +347,10 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn telemetry_is_json() {
+    fn telemetry_is_text() {
         let mut s = std::string::String::new();
         write_telemetry(&mut s, 42).unwrap();
-        assert_eq!(s, r#"{"uptime_s":42}"#);
+        assert_eq!(s, "uptime_s 42\n");
     }
 
     /// CONNACK с кодом причины `code` (`0` — принято).
@@ -483,7 +483,7 @@ pub(crate) mod tests {
         assert_eq!(status.payload, b"online");
         assert!(status.retain);
         let info = sent.iter().find(|p| p.topic == topic("/info")).unwrap();
-        assert!(contains(&info.payload, br#""chip":"#));
+        assert!(contains(&info.payload, b"chip "));
         assert!(info.retain);
     }
 
@@ -497,7 +497,7 @@ pub(crate) mod tests {
             .iter()
             .find(|p| p.topic == topic("/telemetry"))
             .expect("телеметрия опубликована");
-        assert!(telemetry.payload.starts_with(br#"{"uptime_s":"#));
+        assert!(telemetry.payload.starts_with(b"uptime_s "));
         assert!(!telemetry.retain);
     }
 
@@ -618,12 +618,18 @@ pub(crate) mod tests {
         env.ota = Box::leak(Box::new(ota));
         env.tx = Box::leak(vec![0; tx].into_boxed_slice());
         let topics = Topics::new(&"p".repeat(PREFIX_MAX), &UID);
-        // `info` длиной ровно `INFO_MAX`: версия добирает недостающее.
+        // `info` длиной ровно `INFO_TEXT`: версия добирает недостающее.
         let mut info = *env.info;
-        let mut json = std::string::String::new();
-        crate::device::write_info(&mut json, &info, env.mac, env.ip, Instant::now().as_secs())
-            .unwrap();
-        info.version = leak("v".repeat(INFO_MAX - json.len() + info.version.len()));
+        let mut text = std::string::String::new();
+        crate::device::write_info(
+            &mut text,
+            &info,
+            Some(env.mac),
+            env.ip.map(|ip| core::net::Ipv4Addr::from(ip.octets())),
+            Instant::now().as_secs(),
+        )
+        .unwrap();
+        info.version = leak("v".repeat(INFO_TEXT - text.len() + info.version.len()));
         env.info = Box::leak(Box::new(info));
         let endpoint = Box::leak(Box::new(Endpoint {
             user: leak("u".repeat(AUTH_MAX / 2)),
@@ -650,7 +656,7 @@ pub(crate) mod tests {
         }
         let sent = sent(&broker.output());
         let info = sent.iter().find(|p| p.topic.ends_with("/info"))?;
-        assert_eq!(info.payload.len(), INFO_MAX);
+        assert_eq!(info.payload.len(), INFO_TEXT);
         let result = sent.iter().find(|p| p.topic == result.as_str())?;
         Some(result.payload.clone())
     }

@@ -692,7 +692,7 @@ Identification (производитель и модель — `crates-host/doma
 
 Узлы `HTTP` (`crates-host/domain/src/http.rs`) — HTTP-сервер `picoserve` на порту 80,
 по сокету стека на соединение (`HTTP_CONNECTIONS` в `[env]` `crates-cross/.cargo/config.toml`, пул `HTTP[{{ http_connections }}]` в графе).
-`GET /api/info` — сведения об устройстве JSON{% if ota == "true" %}, `POST /api/reboot` — перезагрузка
+`GET /api/info` — сведения об устройстве текстом{% if ota == "true" %}, `POST /api/reboot` — перезагрузка
 командой узлу OTA{% endif %}; свои маршруты — в `router()` (`crates-host/domain/src/http/api.rs`).
 
 ```
