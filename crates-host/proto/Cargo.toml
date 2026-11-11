@@ -17,3 +17,6 @@ heapless = { workspace = true }
 # Схема → описание (`protox`, без `protoc`) → код (`micropb-gen`).
 micropb-gen = { workspace = true }
 protox      = { workspace = true }
+# Генератор сервисов отдаёт `TokenStream`; `quote!` собирает его.
+proc-macro2 = { workspace = true }
+quote       = { workspace = true }

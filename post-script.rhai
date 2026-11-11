@@ -289,7 +289,11 @@ if variable::get("graph") == "true" {
 		print("CANopen: словарь объектов — crates-host/canopen/device.toml.");
 	}
 	if variable::get("has_protobuf") == "true" {
-		print("protobuf: схема — crates-host/proto, обработчик — crates-host/domain/src/protobuf/service.rs.");
+		if variable::get("ota") == "true" {
+			print("protobuf: схема — crates-host/proto, обработчики — crates-host/domain/src/protobuf/info.rs и crates-host/domain/src/ota/protobuf.rs.");
+		} else {
+			print("protobuf: схема — crates-host/proto, обработчик — crates-host/domain/src/protobuf/info.rs.");
+		}
 	}
 }
 

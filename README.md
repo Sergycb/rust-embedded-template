@@ -102,7 +102,7 @@ cargo run -p app                    # прошить приложение и с�
 | Реализации портов | `crates-host/adapters-logic/` | реализации трейтов `ports`, когда их несколько: {{ logic_list | remove_first: ", " }} — тестируется на хосте |
 {%- endif %}
 {%- if protocol == "protobuf" %}
-| Схема protobuf | `crates-host/proto/` | `.proto` и типы, сгенерированные `micropb-gen` в `build.rs` (схему разбирает `protox`, системный `protoc` не нужен); пример — конверт `Request`/`Response` с `request_id`, проект заменяет своим. Обрабатывает узел `domain::PROTOBUF_FRAG` с обработчиком `domain::protobuf::Service` |
+| Схема protobuf | `crates-host/proto/` | `.proto` и типы, сгенерированные `micropb-gen` в `build.rs` (схему разбирает `protox`, системный `protoc` не нужен); пример — конверт `Request`/`Response` с `request_id`, проект заменяет своим. Обрабатывает узел `domain::PROTOBUF_FRAG`: `domain::protobuf::Service` разводит команды по обработчикам `domain::protobuf::info`{% if ota == "true" %} и `domain::ota::protobuf`{% endif %} |
 {%- endif %}
 {%- if protocol == "canopen" %}
 | Описание устройства CANopen | `crates-host/canopen/` | `device.toml` — идентичность, PDO, объекты приложения; `build.rs` (`zencan-build`) генерирует из него словарь объектов и `static`-объекты узла (`NODE_MBOX`, `NODE_STATE`, `OD_TABLE`), которые compose-site передаёт узлу `domain::CANOPEN_FRAG`; пример — проект заменяет своим |
@@ -256,10 +256,11 @@ supervisor-графы, watchdog{% endif %}). Вся остальная логи�
 {%- endif %}
 {%- endif %}
 {%- if protocol == "protobuf" %}
-- Сообщения protobuf от хоста переводит в свои проверенные типы обработчик
-  `domain::protobuf::Service` — логика приложения, а не порт, — а кадры к нему
-  переводит узел `domain::PROTOBUF_FRAG`.{% if ota == "true" %} Команды обновления обработчик отдаёт
-  узлу OTA на вход `CMD` и отвечает хосту их исходом.{% endif %}
+- Сообщения protobuf от хоста разбирает узел `domain::PROTOBUF_FRAG`, а в свои
+  проверенные типы переводит обработчик подсистемы: `domain::protobuf::info` —
+  сведения{% if ota == "true" %}, `domain::ota::protobuf` — команды обновления{% endif %}. Разводит их
+  `domain::protobuf::Service` — логика приложения, а не порт.{% if ota == "true" %} Команды обновления
+  обработчик отдаёт узлу OTA на вход `CMD` и отвечает хосту их исходом.{% endif %}
 {%- endif %}
 {%- if protocol == "canopen" %}
 - `CanBus` — шина CAN под узлом CANopen `domain::CANOPEN_FRAG` (стек `zencan`): его
@@ -668,7 +669,7 @@ Identification (производитель и модель — `crates-host/doma
 (65–72, 100–110), MEI, кроме 14, и FC08/00 длиннее двух байт данных slave
 пропускает молча: длину кадра по коду функции не вывести, а без неё не
 проверить CRC (`adapters_logic::modbus::Rtu`).{% endif %}
-{%- elsif protocol == "protobuf" %} схему `crates-host/proto` и обработчик `crates-host/domain/src/protobuf/service.rs`.
+{%- elsif protocol == "protobuf" %} схему `crates-host/proto` и обработчики `crates-host/domain/src/protobuf/info.rs`{% if ota == "true" %} и `crates-host/domain/src/ota/protobuf.rs`{% endif %}.
 {%- else %} словарь объектов `crates-host/canopen/device.toml`.
 {%- endif %}
 {%- if protocol_link == "true" %} Канал протокола (кадрирование, сокет) строит `app` над рычагом

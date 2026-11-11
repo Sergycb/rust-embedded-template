@@ -87,6 +87,22 @@ message Info {
 message Error {
   string text = 1;
 }
+
+// Группировка команд по подсистемам — только для кодогенерации
+// (`ServiceGenerator` в `build.rs`). На провод не влияет: байты задают
+// `Request`/`Response`; имя RPC — PascalCase имени поля `command`, тип входа —
+// тип этого поля, имя сервиса обязано кончаться на `Service`.
+service InfoService {
+  rpc Info(Get) returns (Info);
+}
+// {%- if ota == "true" %}
+service OtaService {
+  rpc OtaStart(OtaStart) returns (Ok);
+  rpc OtaChunk(OtaChunk) returns (Ok);
+  rpc OtaFinish(OtaFinish) returns (Ok);
+  rpc Reboot(Reboot) returns (Ok);
+}
+// {%- endif %}
 // {%- if ota == "true" %}
 
 // Начать приём образа. Новый `ota_start` бросает незаконченный приём.

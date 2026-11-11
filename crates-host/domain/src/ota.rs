@@ -73,6 +73,11 @@ pub mod update;
 pub mod version;
 
 mod client;
+// {%- if has_protobuf == "true" %}
+/// Обработчик `OtaService` узла `PROTOBUF`: команды обновления в
+/// [`OtaCommand`](crate::ota::OtaCommand), исход — в ответ схемы.
+pub(crate) mod protobuf;
+// {%- endif %}
 mod rejection;
 mod timing;
 /// Адаптер обновления над `embassy-boot`: разделы `DFU` и `STATE` платы.

@@ -239,6 +239,9 @@ micropb                = { version = "0.7.0", default-features = false, features
 # разработчику, ни в CI.
 micropb-gen            = { version = "0.7.0" }
 protox                 = { version = "0.10.0" }
+# Кодогенерация сервисов в `build.rs`: `TokenStream` и `quote!`.
+proc-macro2            = { version = "1.0" }
+quote                  = { version = "1.0" }
 # {%- endif %}
 # {%- if has_net == "true" %}
 # Сетевой стек под интерфейсами tcp/udp (`adapters_hw::net`, транспорты
