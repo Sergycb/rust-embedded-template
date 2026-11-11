@@ -765,21 +765,18 @@ PuTTY. Сначала консоль спрашивает пароль (`passwor
 
 ### Пароль консоли
 
-Вход в консоль — всегда по паролю{% if net_services contains "ssh" %} (пользователь SSH — `admin`){% endif %}. Пароля нет ни в образе, ни в
-git: `cargo xtask` (`build`, `lint cross` и перед прошивкой), не найдя
-`console-password.hash` в корне проекта, создаёт случайный пароль (128 бит), один
-раз печатает его и кладёт в `console-password.txt` — этот файл в `.gitignore`,
-сохраните пароль сами. Коммитится и вшивается в прошивку
-(`crate::console::PASSWORD`, `crates-cross/app/src/console.rs`) `console-password.hash`:
-16 байт соли и SHA-256(соль ‖ пароль), плата сверяет с ним предъявленный пароль за
-постоянное время. Хэш есть, а `console-password.txt` нет (свежий клон) — сборка идёт
-как есть: пароль знает тот, кто его создал.
+Вход в консоль — всегда по паролю{% if net_services contains "ssh" %} (пользователь SSH — `admin`){% endif %}. Пароль задаёт
+`post-script.rhai` при `cargo generate`: это **имя проекта плюс `00`**, например
+`my-project00`. В прошивку (`crate::console::PASSWORD`,
+`crates-cross/app/src/console.rs`) попадает только константа
+`crates-cross/app/src/console_password.rs` — 16 байт соли и SHA-256(соль ‖ пароль);
+файлов `console-password.*` в проекте нет. Плата сверяет предъявленный пароль с
+хэшем за постоянное время.
 
-Хэш — SHA-256, а не медленная функция вроде argon2: 128 случайных бит по хэшу не
-перебрать и без замедления. Сменить пароль — вписать свой в `console-password.txt`,
-удалить `console-password.hash` и собрать: `cargo xtask` захэширует пароль из файла.
-Но пароль, придуманный человеком, по хэшу из образа перебирается быстро — берите
-случайный не короче 16 символов. Пароль один на все платы с этой прошивкой — ниже,
+Пароль — не секрет: он выводится из имени репозитория и одинаков у всех, кто это
+имя знает. Для шаблона, стенда и закрытой сети этого достаточно; для устройства в
+поле смените `console_password.rs` на случайный пароль (хэш — SHA-256 с солью) или
+уберите консоль из сборки. Пароль один на все платы с этой прошивкой — ниже,
 «Секреты служб».
 {%- endif %}
 {%- if net_services contains "mqtt" %}
@@ -794,7 +791,7 @@ git: `cargo xtask` (`build`, `lint cross` и перед прошивкой), н�
 ограничивает ACL брокера. Темы, ACL, как добавить поле и команду —
 `docs/modules/app-mqtt.md`. Вход на брокер одинаков у всех плат — ниже, «Секреты служб».
 {%- endif %}
-{%- capture service_secrets %}{% if net_services contains "rest" %}, токен REST (`rest-token.txt`){% endif %}{% if has_console == "true" %}, хэш пароля консоли (`console-password.hash`){% endif %}{% if net_services contains "ssh" %}{% if ssh_host_key == "file" %}, ключ хоста SSH (`ssh-host-key.bin`){% endif %}{% endif %}{% if net_services contains "mqtt" %}, вход на брокер MQTT (`mqtt.toml`){% endif %}{% endcapture %}
+{%- capture service_secrets %}{% if net_services contains "rest" %}, токен REST (`rest-token.txt`){% endif %}{% if net_services contains "ssh" %}{% if ssh_host_key == "file" %}, ключ хоста SSH (`ssh-host-key.bin`){% endif %}{% endif %}{% if net_services contains "mqtt" %}, вход на брокер MQTT (`mqtt.toml`){% endif %}{% endcapture %}
 {%- if service_secrets != "" %}
 
 ### Секреты служб — одни на все устройства

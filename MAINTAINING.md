@@ -186,8 +186,10 @@ Modbus. Через `--define` то же задаёт `links` (`parse_links()`, �
 без Modbus. Сокеты стека считает `bsp::net::SOCKETS` из чисел генерации: DHCP-клиент,
 сетевые транспорты (`net_sockets`), по сокету на копию пула REST (`http_connections` →
 `HTTP_CONNECTIONS`), на SSH и на MQTT. Секреты
-(`rest-token.txt`, `console-password.hash` с паролем в `console-password.txt`, `ssh-host-key.bin`, заготовка `mqtt.toml`) создаёт `cargo xtask`
-(`secrets.rs`). Тесты — `net_services_*`, `ssh_*`, `cli_*` в `cascade.rs`.
+(`rest-token.txt`, `ssh-host-key.bin`, заготовка `mqtt.toml`) создаёт `cargo xtask`
+(`secrets.rs`). Пароль консоли `post-script.rhai` пишет константой в
+`crates-cross/app/src/console_password.rs`; файлов `console-password.*` нет.
+Тесты — `net_services_*`, `ssh_*`, `cli_*` в `cascade.rs`.
 
 #### Без терминала и `--define`
 

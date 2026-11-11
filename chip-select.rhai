@@ -1801,7 +1801,7 @@ if variable::is_set("net_services") {
 // Прежние ответы о способе входа: вход по ключу убран, пароль — всегда.
 for name in ["ssh_auth", "ssh_key"] {
     if variable::is_set(name) {
-        throw name + ": убран — вход в консоль всегда по паролю (console-password.hash, README)";
+        throw name + ": убран — вход в консоль всегда по паролю (его задаёт cargo generate, README)";
     }
 }
 // Консоль — SSH или `cli`, одна на проект; у неё всегда пароль.

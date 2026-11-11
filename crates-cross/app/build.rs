@@ -17,9 +17,6 @@ fn main() {
 {%- if net_services contains "rest" %}
     require("rest-token.txt", "токена REST API");
 {%- endif %}
-{%- if has_console == "true" %}
-    require("console-password.hash", "хэша пароля консоли");
-{%- endif %}
 {%- if ssh_host_key == "file" %}
     require("ssh-host-key.bin", "ключа хоста SSH");
 {%- endif %}
@@ -53,7 +50,7 @@ fn main() {
         .build()
         .expect("shadow-rs не собрал сведения о сборке");
 }
-{%- if net_services contains "rest" or has_console == "true" or ssh_host_key == "file" or net_services contains "mqtt" %}
+{%- if net_services contains "rest" or ssh_host_key == "file" or net_services contains "mqtt" %}
 
 /// Секрет службы из корня проекта, который `src/net.rs` (`src/console.rs`) вшивает
 /// `include_str!`/`include_bytes!`. Без файла компилятор сказал бы только

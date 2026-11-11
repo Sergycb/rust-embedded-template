@@ -415,11 +415,11 @@ README, «Быстрый старт».
   «Консоль `cli`».
 {%- endif %}
 {%- if has_console == "true" %}
-- Вход в консоль — всегда по паролю, способа без пароля нет. Хэш —
-  `console-password.hash` (`crate::console::PASSWORD`): создаёт `cargo xtask`
-  (`secrets::ensure`), он **коммитится**. Открытый пароль —
-  `console-password.txt`, он в `.gitignore` и в прошивку не попадает: не
-  коммитить и не вшивать его вместо хэша — README, «Пароль консоли».
+- Вход в консоль — всегда по паролю, способа без пароля нет. Пароль —
+  имя проекта плюс `00`; `post-script.rhai` при генерации кладёт в
+  `crates-cross/app/src/console_password.rs` соль и хэш, файлов
+  `console-password.*` нет. В прошивку попадает только хэш
+  (`crate::console::PASSWORD`) — README, «Пароль консоли».
 {%- endif %}
 {%- if net_services contains "mqtt" %}
 - Брокер MQTT (`domain::mqtt`, узел `MQTT`) — `mqtt.toml` в корне проекта:

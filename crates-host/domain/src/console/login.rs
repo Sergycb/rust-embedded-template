@@ -6,8 +6,8 @@ use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
 /// Длина хэша пароля [`PasswordHash`]: 16 байт соли и 32 байта
-/// SHA-256(соль ‖ пароль). Тот же формат пишет `cargo xtask` в
-/// `console-password.hash` (`secrets.rs`).
+/// SHA-256(соль ‖ пароль). Тот же формат пишет `post-script.rhai` в
+/// `crates-cross/app/src/console_password.rs` при генерации проекта.
 pub const PASSWORD_HASH_LEN: usize = SALT_LEN + DIGEST_LEN;
 
 /// Пользователь консоли SSH. У `cli` имени нет — только пароль.
@@ -86,7 +86,7 @@ pub(crate) mod tests {
 
     use super::{Access, PASSWORD_HASH_LEN, PasswordHash};
 
-    /// Хэш пароля, как его пишет `cargo xtask` в `console-password.hash`:
+    /// Хэш пароля, как его пишет `post-script.rhai` в `console_password.rs`:
     /// соль и SHA-256(соль ‖ пароль).
     pub(crate) fn hashed(password: &str) -> &'static [u8] {
         let salt = [7; 16];

@@ -13,6 +13,7 @@
 // «Два паникёра, один на сборку»{% if ota == "true" %}; docs/modules/app.md{% endif %}.
 {%- if has_console == "true" %}
 pub mod console;
+mod console_password;
 {%- endif %}
 pub mod cpu_load;
 {%- if has_protobuf == "true" or net_services != "" or has_cli == "true" %}
