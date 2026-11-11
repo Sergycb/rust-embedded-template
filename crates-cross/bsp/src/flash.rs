@@ -514,10 +514,7 @@ pub(crate) fn new(resources: crate::resources::FlashResources) -> &'static Lock 
 {%- if dfu_bank == "true" %}
 ///
 /// `DFU` — в банке 2, `STATE` — в банке 1.
-pub(crate) fn firmware(
-    flash: &'static Lock,
-    dfu_bank: &'static dfu::BankMutex,
-) -> FirmwareFlash {
+pub(crate) fn firmware(flash: &'static Lock, dfu_bank: &'static dfu::BankMutex) -> FirmwareFlash {
     let dfu = BlockingAsync::new(BlockingPartition::new(dfu_bank, 0, DFU_BANK_SIZE));
 {%- elsif swap_paged == "true" %}
 pub(crate) fn firmware(flash: &'static Lock) -> FirmwareFlash {

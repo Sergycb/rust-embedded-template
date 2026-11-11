@@ -41,10 +41,10 @@ fn main() {
     ] {
         println!("cargo::rerun-if-env-changed={var}");
     }
-    if let Some(config) = manifest.parent().map(|dir| dir.join(".cargo/config.toml")) {
-        if config.exists() {
-            println!("cargo::rerun-if-changed={}", config.display());
-        }
+    if let Some(config) = manifest.parent().map(|dir| dir.join(".cargo/config.toml"))
+        && config.exists()
+    {
+        println!("cargo::rerun-if-changed={}", config.display());
     }
 
     // Смена коммита должна пересобирать build-info (`shadow-rs` подставляет

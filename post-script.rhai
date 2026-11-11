@@ -201,11 +201,23 @@ if variable::get("has_console") == "true" {
     let source = "// Сгенерировано `post-script.rhai` при создании проекта.\n";
     source += "// Пароль консоли — имя проекта плюс `00`; здесь только соль и хэш.\n";
     source += "pub const PASSWORD_HASH: [u8; 48] = [\n";
+    let bytes = [];
     for ch in salt {
-        source += "    0x" + hex_byte(ch.to_int()) + ",\n";
+        bytes.push(ch.to_int());
     }
     for b in hash {
-        source += "    0x" + hex_byte(b) + ",\n";
+        bytes.push(b);
+    }
+    for i in 0..bytes.len() {
+        if i % 16 == 0 {
+            source += "    ";
+        }
+        source += "0x" + hex_byte(bytes[i]);
+        if i % 16 == 15 {
+            source += ",\n";
+        } else {
+            source += ", ";
+        }
     }
     source += "];\n";
     file::write("crates-cross/app/src/console_password.rs", source);
