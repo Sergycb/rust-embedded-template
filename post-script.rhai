@@ -304,7 +304,7 @@ if variable::get("graph") == "true" {
 		if variable::get("ota") == "true" {
 			print("protobuf: схема — crates-host/proto, обработчики — crates-host/domain/src/protobuf/service.rs.");
 		} else {
-			print("protobuf: схема — crates-host/proto, обработчик — crates-host/domain/src/protobuf/info.rs.");
+			print("protobuf: схема — crates-host/proto, обработчик — crates-host/domain/src/protobuf/service.rs.");
 		}
 	}
 }

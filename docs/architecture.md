@@ -152,7 +152,7 @@ build`){% endif %}. В `domain` трейтов нет. Всё, что нужно
 в `ports` всякая их правка задевала бы `adapters-logic` и `bsp` зря. Там же,
 в `domain`, — контексты узлов{% if graph == "true" %} (их эмитит фрагмент), состояния
 узлов (typestate-типы) и входы фрагментов ({% if ota == "true" %}`OtaWiring`, {% endif %}`IdleMeter`){% else %} и состояния узлов{% endif %}{% if protocol != "none" and protocol != "cli" %},
-включая обработчик протокола{% if graph == "true" %} на этом входе{% endif %}: {% if protocol == "protobuf" %}`protobuf::Service` (разводит команды по обработчикам `protobuf::info`{% if ota == "true" %} и `protobuf::service::OtaHandler`{% endif %}){% elsif protocol == "modbus" %}`modbus::Slave` над картой
+включая обработчик протокола{% if graph == "true" %} на этом входе{% endif %}: {% if protocol == "protobuf" %}`protobuf::Service` (разводит команды по обработчикам `protobuf::service`{% if ota == "true" %} и `protobuf::service::OtaHandler`{% endif %}){% elsif protocol == "modbus" %}`modbus::Slave` над картой
 `modbus::EmptyRegisters` (карта одна на все узлы `MODBUS_*` — `docs/modules/app.md`){% else %}`canopen::dictionary` (словарь объектов){% endif %} — логика приложения,
 которую проект правит под себя, поэтому живёт в `domain`, а не в `app`{% endif %}.
 Состояние внутри одного вызова функции живёт в её локальных переменных, а не в
