@@ -360,7 +360,7 @@ salty                  = { version = "0.3.0", default-features = false, features
 # Property-based testing: свойства проверяются на любых входах, а не на
 # нескольких выбранных руками. Только `[dev-dependencies]`.
 # {%- if ota == "true" %}
-# `domain::ota::download::Transfer` — на любом разбиении образа на куски и
+# `domain::ota::Transfer` — на любом разбиении образа на куски и
 # любой ширине слова; узел OTA — на любой последовательности команд.
 # {%- endif %}
 # {%- if has_protobuf == "true" %}

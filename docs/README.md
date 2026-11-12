@@ -9,7 +9,7 @@
 | `first-node.md` | свой узел по шагам: фрагмент и задача в `domain`, фича слова DSL `supervisor`, {% if graph == "true" %}запись в графе, сторож{% else %}модуль задачи в `app`{% endif %}, тест на хосте | заводите новую подсистему со своей задачей |
 | `clocks.md` | дамп частот, `EXPECTED_SYS_HZ`, кэши и `DMA_NC`, ядро (фолты, ловушка деления), `CPU_FREQ_BOOST`, пороги вроде `IMAGE_BUDGET_PERCENT` | трогаете тактирование, кэши, обработчик фолтов или порог проверки |
 {%- if ota == "true" %}
-| `ota.md` | приём образа, подпись, защита от отката, тест полного цикла | трогаете `domain::ota::Updater`, {% if shared_flash == "true" %}`bsp::flash`, {% endif %}`domain::ota`, `domain::ota::download` или `domain::ota::update` |
+| `ota.md` | приём образа, подпись, защита от отката, тест полного цикла | трогаете `domain::ota::Updater`, {% if shared_flash == "true" %}`bsp::flash`, {% endif %}`domain::ota` или `domain::ota::transfer` |
 {%- endif %}
 | `flash.md` | {% if ota == "true" %}стёртое состояние (`0xFF` против `0x00`), {% endif %}{% if config == "true" %}раздел настроек, {% endif %}{% if shared_flash == "true" %}один `Flash` на всех, {% endif %}банки flash{% if ota_store == "external" %}, OTA с разделами на внешней флеши{% endif %} | трогаете {% if config == "true" %}`domain::settings`, {% endif %}{% if erase_page == "true" %}`flash_page`, {% endif %}{% if shared_flash == "true" %}`bsp::flash`, {% endif %}{% if ota == "true" %}`domain::ota`{% if graph == "true" %} (его `local`-слоты связаны с типом мьютекса){% endif %}, {% endif %}раскладку памяти |
 {%- if graph == "true" %}

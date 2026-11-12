@@ -278,8 +278,8 @@ resources: [WS: &'static mut $crate::x::Workspace = static |w| w.gain = inputs.g
 аргументами. Образ он принимает командами (`domain::ota::Command`) на свой вход
 `CMD` — `request:` фрагмента, запрос с ответом (или на `ASK` — `serves:`, для
 клиента, который не ждёт исхода в вызове): `Start` (сверка длины до
-стирания), `Chunk` (буферизация до слова флеша — `domain::ota::download::Transfer`),
-`Finish` (`domain::ota::update::apply`), `Reboot`, — и на
+стирания), `Chunk` (буферизация до слова флеша — `domain::ota::Transfer`),
+`Finish` (`domain::ota::apply`), `Reboot`, — и на
 каждую отвечает исходом `domain::ota::Reply`. Всё это — host-тесты в
 `crates-host/domain/src/ota.rs`.
 

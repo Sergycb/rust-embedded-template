@@ -132,7 +132,7 @@ Host-тесты гоняются `cargo xtask test host` — то есть `carg
 либо `#![doc = include_str!(..)]` в самом модуле, как в `bsp`; у приватных и
 тестовых{% if ota == "true" %} (`ota::fake`){% endif %} — по необходимости. Определений — типов,
 трейтов, функций, `impl` — в нём нет: они живут в модулях, названных по
-предметной области ({% if ota == "true" %}`ports::ota`, `domain::ota::download`{% else %}`domain::cpu_load::load`{% endif %}), а не по слою
+предметной области ({% if ota == "true" %}`ports::ota`, `domain::ota::transfer`{% else %}`domain::cpu_load::load`{% endif %}), а не по слою
 (`types`, `utils`).
 
 Реэкспорт в корне — часть правила, а не исключение из него: так устроены
@@ -149,8 +149,8 @@ Host-тесты гоняются `cargo xtask test host` — то есть `carg
   (подмодули и так видят его приватным; `pub(crate)` — если его берут модули
   вне родителя{% if has_modbus == "true" %}, как `domain::modbus::fake`{% endif %})
 {%- assign sep = ": " %}
-{%- if ota == "true" %}{{ sep }}разделы обновления в памяти — `domain::ota::fake` (их делят `ota`,
-  `ota::download` и `ota::update`){% assign sep = ", " %}{% endif %}
+{%- if ota == "true" %}{{ sep }}разделы обновления в памяти — `domain::ota::fake` (их делят `ota`
+  и `ota::transfer`){% assign sep = ", " %}{% endif %}
 {%- if has_net == "true" %}{{ sep }}прогон двух стеков `embassy-net` на кабеле —
   `adapters_logic::net::fake` ({% if has_tcp == "true" %}`net::tcp`{% if has_udp == "true" %} и {% endif %}{% endif %}{% if has_udp == "true" %}`net::udp`{% endif %}){% endif %}.
 {%- if has_usb == "true" or has_net == "true" or ota == "true" or settings_port == "true" %}

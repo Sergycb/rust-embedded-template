@@ -502,7 +502,7 @@ bootloader'е (`crates-cross/boot`), который подпись и прове
 **Применение обновления — методы адаптера.** `mark_updated` — метод
 `Updater`; запись о подписи (`ports::PendingImage`) кладётся обычным
 `write` в запасную страницу `DFU`, отдельного трейта под подпись нет. Порядок
-проверок перед вызовом — `domain::ota::update::apply`, и он
+проверок перед вызовом — `domain::ota::apply`, и он
 host-тестируем. Саму подпись
 проверяет bootloader (`domain::ota::boot::screen_update`) — `docs/ota.md`.
 {%- endif %}
