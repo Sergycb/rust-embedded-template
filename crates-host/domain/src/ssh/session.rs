@@ -9,7 +9,7 @@ use embassy_time::{Duration, Instant, Timer, with_timeout};
 use sunset_async::sunset::{ChanHandle, ServEvent, SignKey};
 use sunset_async::{ProgressHolder, SSHServer};
 
-use crate::console::commands::{Device, LINE, Out, exec, shell};
+use crate::console::shell::{Device, LINE, Out, exec, shell};
 use crate::console::{Access, Idle, ShellEnd, USER};
 use crate::device::DeviceInfo;
 // {%- if ota == "true" %}

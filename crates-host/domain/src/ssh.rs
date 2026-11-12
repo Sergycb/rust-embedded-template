@@ -41,7 +41,7 @@
 //! `exec` встаёт в очередь раньше, чем разбирается EOF клиента (см.
 //! `connection`).
 
-mod connection;
+mod session;
 // {%- if ssh_host_key == "config" %}
 mod host_key;
 // {%- endif %}
@@ -54,13 +54,13 @@ use sunset_async::sunset::SignKey;
 use sunset_async::sunset::ed25519_dalek::SigningKey;
 
 use crate::console::Access;
-use crate::ssh::connection::Connection;
+use crate::ssh::session::Connection;
 
 pub use crate::console::{Command, Confirm, USER};
 // {%- if ssh_host_key == "config" %}
 pub use host_key::{HOST_KEY_ID, Stored};
 // {%- endif %}
-pub use connection::{PORT, SSH_BUFFER, TCP_BUFFER};
+pub use session::{PORT, SSH_BUFFER, TCP_BUFFER};
 
 // Узел объявлен рядом со своей задачей.
 // {%- if ssh_host_key == "config" %}
@@ -140,7 +140,7 @@ pub async fn task<F: NorFlash>(ctx: SshCtx<'_, Stored<F>>) {
 mod tests {
     //! Тесты узла `SSH`: попытки входа, ключ хоста.
 
-    use crate::ssh::connection::tries_exhausted;
+    use crate::ssh::session::tries_exhausted;
     // {%- if ssh_host_key == "config" %}
     use crate::settings::Settings;
     use crate::ssh::{HOST_KEY_ID, Stored};

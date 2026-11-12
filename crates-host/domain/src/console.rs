@@ -6,19 +6,19 @@
 //! или `cli` поверх UART/USB (узел ниже). Вход — всегда по паролю, и у SSH, и
 //! у `cli`.
 
-pub(crate) mod commands;
 mod login;
+pub(crate) mod shell;
 
-pub use commands::{Command, Confirm, Idle, ShellEnd};
 pub(crate) use login::Access;
 pub use login::{PASSWORD_HASH_LEN, PasswordHash, USER};
+pub use shell::{Command, Confirm, Idle, ShellEnd};
 
 // {%- if has_cli == "true" %}
 use defmt_or_log::{info, warn};
 use embassy_time::{Duration, Timer};
 use embedded_io_async::{Read, Write};
 
-use commands::{Device, LINE, shell};
+use shell::{Device, LINE, shell};
 // {%- endif %}
 // {%- if has_net == "true" %}
 use embassy_net::Stack;
@@ -160,12 +160,12 @@ mod tests {
 
     use crate::device::{DeviceInfo, INFO_TEXT, PANIC_BRIEF, write_info};
 
-    use super::commands::{Device, LINE, ShellEnd, shell};
+    use super::shell::{Device, LINE, ShellEnd, shell};
     // {%- if net_services contains "ssh" %}
-    use super::commands::{Command, Out, exec, parse};
+    use super::shell::{Command, Out, exec, parse};
     // {%- endif %}
     // {%- if net_services contains "ssh" and ota == "true" %}
-    use super::commands::Confirm;
+    use super::shell::Confirm;
     // {%- endif %}
     // {%- if has_cli == "true" %}
     use super::login::tests::hashed;

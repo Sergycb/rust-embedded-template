@@ -714,7 +714,7 @@ curl -H "Authorization: Bearer $(cat rest-token.txt)" http://<адрес пла�
 
 Узел `SSH` (`crates-host/domain/src/ssh.rs`) — сервер `sunset` на порту 22, одно
 соединение, пользователь `admin`. Команды: `help`, `info`{% if ota == "true" %}, `reboot yes`{% endif %}, `exit`; свои — вариантами
-enum `Command` (`crates-host/domain/src/console/commands.rs`), а `help`, историю, автодополнение
+enum `Command` (`crates-host/domain/src/console/shell.rs`), а `help`, историю, автодополнение
 и редактирование строки строит `bareminal`. `shell` и `exec` оба работают:
 `shell` — интерактивный (ANSI: стрелки, история, Tab) и рассчитан на PTY обычного
 `ssh`; `exec` — без ANSI, для скриптов.
