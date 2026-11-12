@@ -29,11 +29,6 @@
 //! Второго входа — сообщений по инициативе устройства (события, телеметрия)
 //! — пока нет.
 
-mod codec;
-// Обработчики по умолчанию над схемой `crates-host/proto` — только в проекте
-// с протоколом protobuf: без него крейта схемы в проекте нет вовсе.
-mod info;
-mod reply;
 /// Обработчик по умолчанию над примером схемы `crates-host/proto`.
 mod service;
 
@@ -42,7 +37,7 @@ use micropb::MessageDecode;
 use ports::FrameDuplex;
 use proto::Request;
 
-use crate::protobuf::codec::{decode_reason, encode};
+use self::service::{decode_reason, encode};
 
 pub use service::{REQUEST_MAX, RESPONSE_MAX, Service};
 
@@ -137,7 +132,7 @@ mod tests {
     use ports::{FrameDuplex, FrameLink, LinkError};
     use proto::{Get, Request, Request_, Response, Response_, heapless};
 
-    use super::info::INFO;
+    use super::service::INFO;
     use super::{Service, task};
 
     /// Канал: отдаёт заготовленные исходы `recv` — кадр снимается в опросе,
