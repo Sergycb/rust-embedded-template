@@ -154,18 +154,20 @@ Host-тесты гоняются `cargo xtask test host` — то есть `carg
 {%- if has_net == "true" %}{{ sep }}прогон двух стеков `embassy-net` на кабеле —
   `adapters_logic::net::fake` ({% if has_tcp == "true" %}`net::tcp`{% if has_udp == "true" %} и {% endif %}{% endif %}{% if has_udp == "true" %}`net::udp`{% endif %}){% endif %}.
 {%- if has_usb == "true" or has_net == "true" or ota == "true" or settings_port == "true" %}
+{%- if has_usb == "true" or has_net == "true" %}
+- Заглушка драйвера, которая едет в прошивку, — `pub mod stub` в `adapters-hw`
+  без фичи{% if has_usb == "true" %}: драйвер USB без шины (`usb::stub`){% endif %}{% if has_net == "true" %}{% if has_usb == "true" %},{% endif %} устройство без линка
+  (`net::stub`){% endif %}. В слотах платы их отдаёт `bsp::stub`.
+{%- endif %}
 - Фейк, который берут другие крейты, — `#[cfg(any(test, feature = "fake"))]
   pub mod fake` в `adapters-hw`
 {%- assign sep = ": " %}
-{%- if has_usb == "true" %}{{ sep }}драйвер USB без шины (`usb::fake`){% assign sep = ", " %}{% endif %}
-{%- if has_net == "true" %}{{ sep }}устройство без линка и кабель между двумя стеками
-  (`net::fake`, `net::fake::cable`){% assign sep = ", " %}{% endif %}
+{%- if has_net == "true" %}{{ sep }}кабель между двумя стеками
+  (`net::fake::cable`){% assign sep = ", " %}{% endif %}
 {%- if ota == "true" or settings_port == "true" %}{{ sep }}флеш в памяти с семантикой NOR
   (`flash::fake::MemFlash` — его берут тесты {% if ota == "true" %}`domain::ota`, `domain::ota::boot`{% if settings_port == "true" %} и {% endif %}{% endif %}{% if settings_port == "true" %}`domain::settings`{% endif %}; готового
   мока `NorFlash` в экосистеме нет — `embedded-hal-mock` флеш не покрывает){% endif %}.
-  Фичу `fake` включают dev-зависимости `domain` и `adapters-logic`{% if has_usb == "true" or has_net == "true" %}, а
-  в прошивке — `bsp`: те же драйверы стоят заглушками в слотах платы
-  (`bsp::stub`){% endif %}.
+  Фичу `fake` включают dev-зависимости `domain` и `adapters-logic`.
 {%- endif %}
 - Вспомогательный тип одного теста (сценарный драйвер, сокет-брокер) — в самом
   `mod tests`; `mod fake` — для фейков, на которых стоит набор тестов модуля

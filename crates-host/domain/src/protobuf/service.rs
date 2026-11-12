@@ -202,7 +202,10 @@ fn ota_reply(reply: Reply) -> Response_::Result {
 mod tests {
     use core::task::{Context, Poll, Waker};
 
-    use proto::{Get, Request_, Response_, heapless};
+    use proto::{Get, Request_, Response_};
+    // {%- if ota == "true" %}
+    use proto::heapless;
+    // {%- endif %}
 
     use super::*;
     use crate::protobuf::info::INFO;

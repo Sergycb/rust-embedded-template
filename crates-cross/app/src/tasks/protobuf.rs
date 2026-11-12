@@ -42,10 +42,7 @@ pub mod {{ f[4] }} {
         let mut service = domain::protobuf::Service::new(
             info,
 {%- if ota == "true" %}
-            domain::ota::Client::new(
-                crate::tasks::ota::CMD.requester(),
-                domain::ota::ClientId({{ client }}),
-            ),
+            domain::ota::Client::new(crate::tasks::ota::CMD.requester(), domain::ota::ClientId({{ client }})),
 {%- endif %}
         );
         domain::protobuf::task(domain::protobuf::ProtobufCtx {

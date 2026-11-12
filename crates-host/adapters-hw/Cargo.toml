@@ -11,9 +11,8 @@ workspace = true
 [features]
 # `defmt` — вывод стеков под обёртками (`embassy-net`, `embassy-usb`) в
 # прошивке; включает crates-cross/Cargo.toml. Свой код крейта в лог не пишет.
-# Драйверы без шины и линка (`usb::fake`, `net::fake`) и флеш в памяти
-# (`flash::fake`, только хост) — для host-тестов `domain`, `adapters-logic` и
-# заглушек платы (`bsp::stub`).
+# `fake` — только host-тестам: кабель в памяти (`net::fake::cable`) и флеш в
+# памяти (`flash::fake`).
 fake = []
 defmt = [
 	# {%- if has_net == "true" %}
