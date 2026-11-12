@@ -2445,12 +2445,13 @@ fn derived_flags_follow_every_link() {
         "crates-cross/bsp/src/serial.rs",
         "crates-cross/bsp/src/can.rs",
         "crates-host/adapters-logic/src/modbus/rtu.rs",
-        "crates-host/adapters-logic/src/modbus/tcp.rs",
+        "crates-host/adapters-logic/src/modbus/mbap.rs",
+        "crates-host/adapters-logic/src/modbus/client.rs",
     ] {
         assert!(!deleted(path), "{path} удалён: {:?}", result.deleted);
     }
     for path in [
-        "crates-host/adapters-logic/src/modbus/udp.rs",
+        "crates-host/adapters-logic/src/net/udp.rs",
         "crates-host/adapters-logic/src/cobs.rs",
     ] {
         assert!(deleted(path), "{path} не удалён: {:?}", result.deleted);
@@ -3464,20 +3465,20 @@ fn transports_are_kept_only_for_the_selected_interface() {
         (
             "g474re",
             &[("protocol", "modbus"), ("interface", "uart")],
-            &["modbus/tcp.rs", "modbus/udp.rs", "modbus/mbap.rs"],
-            &["modbus/rtu.rs"],
+            &["modbus/mbap.rs"],
+            &["modbus/rtu.rs", "modbus/client.rs"],
         ),
         (
             "h743zg",
             &[("protocol", "modbus"), ("interface", "udp")],
-            &["modbus/rtu.rs", "modbus/tcp.rs", "net/tcp.rs"],
-            &["modbus/udp.rs", "modbus/mbap.rs", "net/udp.rs"],
+            &["modbus/rtu.rs", "net/tcp.rs"],
+            &["modbus/client.rs", "modbus/mbap.rs", "net/udp.rs"],
         ),
         (
             "h743zg",
             &[("protocol", "modbus"), ("interface", "tcp")],
-            &["modbus/rtu.rs", "modbus/udp.rs", "net/udp.rs"],
-            &["modbus/tcp.rs", "modbus/mbap.rs", "net/tcp.rs"],
+            &["modbus/rtu.rs", "net/udp.rs"],
+            &["modbus/client.rs", "modbus/mbap.rs", "net/tcp.rs"],
         ),
         // COBS нужен потоку (UART, USB, TCP), а UDP кадр даёт сама датаграмма.
         (

@@ -21,7 +21,7 @@ defmt = [
 [dependencies]
 ports = { workspace = true }
 # {%- if stream_io == "true" %}
-# Поток байтов `embedded_io_async::{Read, Write}`{% if has_tcp == "true" %} — его реализует `net::Server`{% endif %}{% if modbus_stream == "true" or cobs_used == "true" %}; над потоком —{% if modbus_rtu == "true" %} `modbus::Rtu`{% endif %}{% if modbus_tcp == "true" %}{% if modbus_rtu == "true" %},{% endif %} `modbus::Link`{% endif %}{% if cobs_used == "true" %} `cobs::Cobs`{% endif %}{% endif %}.
+# Поток байтов `embedded_io_async::{Read, Write}`{% if has_tcp == "true" %} — его реализует `net::Server`{% endif %}{% if modbus_stream == "true" or cobs_used == "true" %}; над потоком —{% if modbus_rtu == "true" %} `modbus::Rtu`{% endif %}{% if modbus_tcp == "true" %}{% if modbus_rtu == "true" %},{% endif %} `modbus::Tcp`{% endif %}{% if cobs_used == "true" %} `cobs::Cobs`{% endif %}{% endif %}.
 # {%- if has_udp == "true" %}
 # UDP-каналу поток не нужен: границу кадра даёт датаграмма.
 # {%- endif %}
@@ -30,7 +30,7 @@ embedded-io-async = { workspace = true }
 # {%- if crc_used == "true" %}
 # CRC кадра:
 # {%- if modbus_rtu == "true" %}
-# RTU (`modbus::Rtu`);
+# RTU (`modbus::rtu`);
 # {%- endif %}
 # {%- if cobs_used == "true" %}
 # COBS (`cobs::Cobs`).

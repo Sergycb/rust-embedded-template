@@ -1,5 +1,13 @@
-//! Транспорты Modbus:{% if modbus_rtu == "true" %} RTU поверх потока байтов{% endif %}{% if modbus_tcp == "true" %}{% if modbus_rtu == "true" %},{% endif %} TCP поверх потока{% endif %}{% if modbus_udp == "true" %}{% if modbus_rtu == "true" or modbus_tcp == "true" %},{% endif %} UDP поверх датаграмм{% endif %}.
-//! Для slave'а каждый — кадровый канал [`ports::FrameLink`] с кадром «адрес и PDU»:
+﻿//! Modbus: протокол и каналы поверх транспорта.
+//!
+//! Протокол отделён от транспорта: `rtu` собирает и разбирает кадр RTU
+//! (адрес, PDU, CRC), `mbap` — заголовок MBAP, общий для Modbus TCP и UDP.
+//! Ни тот, ни другой не знает, откуда приходят байты.
+//!
+//! Каналы собирают протокол над транспортом (`client`):{% if modbus_rtu == "true" %} [`Rtu`](crate::modbus::Rtu) — RTU над потоком байтов{% endif %}{% if modbus_tcp == "true" %}{% if modbus_rtu == "true" %},{% endif %} [`Tcp`](crate::modbus::Tcp) — MBAP над потоком (`net::Server`){% endif %}{% if modbus_udp == "true" %}{% if modbus_rtu == "true" or modbus_tcp == "true" %},{% endif %} [`Udp`](crate::modbus::Udp) — MBAP в датаграмме (`net::UdpLink`){% endif %}.
+//! Транспорты — сокеты `net` и рычаги платы — строятся вне `modbus`.
+//!
+//! Для slave'а каждый канал — кадровый [`ports::FrameLink`] с кадром «адрес и PDU»:
 //! кадр разбирает обработчик `domain::modbus::Slave`, а обслуживает канал узел
 //! `domain::modbus`.
 // {%- if modbus_master == "true" %}
@@ -14,8 +22,8 @@
 // {%- endif %}
 // {%- endif %}
 // {%- if modbus_tcp == "true" %}
-//! - [`Link`](crate::modbus::Link) над `net::Server` — сервер: соединение
-//!   открывает удалённая сторона, а без него запись — ошибка. Master'у к
+//! - [`Tcp`](crate::modbus::Tcp) над `net::Server` — сервер: соединение
+//!   открывает удалённая сторона, а без него запись — ошибка. Master'у
 //!   выбранному slave'у нужен свой исходящий поток — клиент TCP.
 // {%- endif %}
 // {%- if modbus_udp == "true" %}
@@ -41,7 +49,7 @@
 //!
 // {%- endif %}
 // {%- if modbus_tcp == "true" %}
-//! [`Link`](crate::modbus::Link) — заголовок MBAP (номер транзакции,
+//! [`Tcp`](crate::modbus::Tcp) — заголовок MBAP (номер транзакции,
 //! протокол 0, длина, адрес) и PDU поверх потока. CRC нет — целостность
 //! обеспечивает TCP, границу — длина в заголовке. Длина вне допустимой —
 //! граница потеряна, и поток не выровнять: slave обрывает соединение, а кадр
@@ -86,110 +94,29 @@ mod mbap;
 
 // {%- endif %}
 // {%- if modbus_rtu == "true" %}
-/// Modbus RTU: кадр с CRC поверх потока байтов.
+/// Кадр RTU: адрес, PDU, CRC — без транспорта.
 mod rtu;
 
 // {%- endif %}
-// {%- if modbus_tcp == "true" %}
-/// Modbus TCP: MBAP поверх потока байтов.
-mod tcp;
-
-// {%- endif %}
-// {%- if modbus_udp == "true" %}
-/// Modbus UDP: MBAP в датаграмме.
-mod udp;
-// {%- endif %}
+/// Каналы: протокол поверх потока байтов или датаграммы.
+mod client;
 
 // {%- if modbus_rtu == "true" %}
-pub use rtu::Rtu;
+pub use client::Rtu;
 // {%- endif %}
 // {%- if modbus_tcp == "true" %}
-pub use tcp::Link;
+pub use client::Tcp;
 // {%- endif %}
 // {%- if modbus_udp == "true" %}
-pub use udp::{DATAGRAM, Udp};
+pub use client::{DATAGRAM, Udp};
 // {%- endif %}
-
 // {%- if modbus_stream == "true" %}
-use embedded_io_async::{Error, ErrorKind, ReadExactError};
-use ports::LinkError;
-// {%- endif %}
-
-// {%- if modbus_stream == "true" %}
-/// Почему поток Modbus (RTU, TCP) не принял или не отправил кадр.
-#[derive(Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum FrameError<E> {
-    /// Отказ потока.
-    Io(E),
-    /// Поток кончился: соединение закрыто. Потеря, а не отказ канала: над
-    /// TCP-сервером (`net::Server`) следующий `recv` примет нового клиента.
-    Eof,
-    /// Длина в заголовке MBAP вне допустимой: граница кадра в потоке потеряна.
-    /// Slave обрывает соединение (`net::Server`), следующий `recv` примет
-    /// нового клиента.
-    Framing,
-}
-
-// {%- if modbus_tcp == "true" %}
-/// Дочитывает `rx` из `io` до `want` байт. Каждый прочитанный кусок сразу
-/// учтён в `have`, поэтому брошенное чтение ничего не теряет: следующий
-/// вызов продолжит с того же места.
-async fn fill<T: embedded_io_async::Read>(
-    io: &mut T,
-    rx: &mut [u8],
-    have: &mut usize,
-    want: usize,
-) -> Result<(), ReadExactError<T::Error>> {
-    while *have < want {
-        match io.read(&mut rx[*have..want]).await {
-            Ok(0) => return Err(ReadExactError::UnexpectedEof),
-            Ok(n) => *have += n,
-            Err(e) => return Err(ReadExactError::Other(e)),
-        }
-    }
-    Ok(())
-}
-// {%- endif %}
-
-/// Отказ потока как исход канала: разорванное соединение — отказ, шум на
-/// линии (переполнение, чётность; `embassy-stm32` отдаёт их как
-/// `ErrorKind::Other`) — потеря кадра.
-fn io_error<E: Error>(e: E) -> LinkError<FrameError<E>> {
-    if matches!(
-        e.kind(),
-        ErrorKind::ConnectionReset
-            | ErrorKind::ConnectionAborted
-            | ErrorKind::ConnectionRefused
-            | ErrorKind::NotConnected
-            | ErrorKind::BrokenPipe
-    ) {
-        LinkError::Down(FrameError::Io(e))
-    } else {
-        LinkError::Lost(FrameError::Io(e))
-    }
-}
-
-fn read_error<E: Error>(e: ReadExactError<E>) -> LinkError<FrameError<E>> {
-    match e {
-        ReadExactError::UnexpectedEof => LinkError::Lost(FrameError::Eof),
-        ReadExactError::Other(e) => io_error(e),
-    }
-}
-
-// {%- if modbus_master == "true" %}
-fn master_error<E>(e: ReadExactError<E>) -> ports::MasterError<E> {
-    match e {
-        ReadExactError::UnexpectedEof => ports::MasterError::Eof,
-        ReadExactError::Other(e) => ports::MasterError::Io(e),
-    }
-}
-// {%- endif %}
+pub use client::FrameError;
 // {%- endif %}
 
 #[cfg(test)]
 mod fake {
-    //! Фейки для host-тестов транспортов: поток байтов и канал датаграмм.
+    //! Фейки для host-тестов каналов: поток байтов и канал датаграмм.
     //!
     //! Ни один не ждёт по-настоящему — их future готовы с первого `poll`, —
     //! поэтому тестам хватает однопоточного `#[tokio::test]`.

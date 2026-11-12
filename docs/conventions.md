@@ -61,7 +61,7 @@ Host-тесты гоняются `cargo xtask test host` — то есть `carg
 (`advance`). nextest запускает каждый тест отдельным процессом, а `cargo test`
 и IDE — потоками одного, и два теста с часами двигают время друг другу: такой
 тест то проходит, то нет, и дело не в тесте.
-{%- capture clocked %}{% if graph == "true" %}, `domain::heartbeat`{% endif %}{% if ota == "true" %}, `domain::ota`{% endif %}{% if has_protobuf == "true" %}, `domain::protobuf::info`{% endif %}{% if net_services contains "rest" %}, `domain::http`{% endif %}{% if net_services contains "mqtt" %}, `domain::mqtt`{% endif %}{% if net_services contains "ssh" %}, `domain::ssh`{% endif %}{% if has_usb == "true" %}, `adapters_hw::usb`{% endif %}{% if modbus_rtu == "true" %}, `adapters_logic::modbus::rtu`{% endif %}{% endcapture %}
+{%- capture clocked %}{% if graph == "true" %}, `domain::heartbeat`{% endif %}{% if ota == "true" %}, `domain::ota`{% endif %}{% if has_protobuf == "true" %}, `domain::protobuf::info`{% endif %}{% if net_services contains "rest" %}, `domain::http`{% endif %}{% if net_services contains "mqtt" %}, `domain::mqtt`{% endif %}{% if net_services contains "ssh" %}, `domain::ssh`{% endif %}{% if has_usb == "true" %}, `adapters_hw::usb`{% endif %}{% if modbus_rtu == "true" %}, `adapters_logic::modbus::client`{% endif %}{% endcapture %}
 {%- if clocked != "" %} В этом проекте с часами работают тесты {{ clocked | remove_first: ", " }},
 и то же касается любого нового теста с `MockDriver`.{% else %} Касается любого теста с
 `MockDriver`, в том числе первого, который появится в проекте.{% endif %}

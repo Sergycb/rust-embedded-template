@@ -335,7 +335,8 @@ bootloader и `STATE`. Отсюда и второй набор цифр в `MEMO
 `true`/`false` на входе — ошибка), хук приводит ответ к `"true"`/`"false"`. Смысл он имеет только при
 `protocol=modbus`: меню спрашивает его только тогда, а `--define modbus_master=yes` при другом
 протоколе — ошибка (`no` принимается). Master не получают ни protobuf, ни CANopen. «true» оставляет `ports::ModbusClient`/`MasterError`,
-`domain::modbus::master`, клиентские impl'ы транспортов `Rtu`/`Tcp`/`Udp` (в них же
+`domain::modbus::master`, клиентские impl'ы каналов `Rtu`/`Tcp`/`Udp` в
+`adapters-logic/src/modbus/client.rs` (в них же
 слив `MAX_DRAIN` RTU и `master_error`) и их тесты; «false» вырезает всё это
 Liquid-блоками `// {%- if modbus_master == "true" %}` … `// {%- endif %}` (в
 комментариях — правило корневого workspace, `docs/architecture.md`), а `domain/src/modbus/master.rs`

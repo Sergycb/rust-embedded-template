@@ -219,7 +219,7 @@ cobs                   = { version = "0.5.1", default-features = false }
 # CRC-16/IBM-SDLC (X.25, FCS у HDLC/PPP) в `adapters_logic::cobs`.
 # {%- endif %}
 # {%- if has_modbus == "true" %}
-# CRC-16/MODBUS в `adapters_logic::modbus::Rtu`.
+# CRC-16/MODBUS в `adapters_logic::modbus::rtu`.
 # {%- endif %}
 crc                    = { version = "3.4.0" }
 # {%- endif %}
