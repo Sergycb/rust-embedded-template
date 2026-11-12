@@ -39,16 +39,12 @@
 //! EOF/CLOSE канала по инициативе сервера — оба `sunset` шлёт только эхом на
 //! пакеты клиента. Поэтому соединение после сессии закрывает узел, а вывод
 //! `exec` встаёт в очередь раньше, чем разбирается EOF клиента (см.
-//! `session`).
+//! `connection`).
 
-mod connection;
+mod session;
 // {%- if ssh_host_key == "config" %}
 mod host_key;
 // {%- endif %}
-// {%- if ota != "true" %}
-//{{newline}}mod ota_stub;
-// {%- endif %}
-mod session;
 
 use defmt_or_log::info;
 // {%- if ssh_host_key == "config" %}
@@ -58,7 +54,7 @@ use sunset_async::sunset::SignKey;
 use sunset_async::sunset::ed25519_dalek::SigningKey;
 
 use crate::console::Access;
-use crate::ssh::connection::Connection;
+use crate::ssh::session::Connection;
 
 pub use crate::console::{Command, Confirm, USER};
 // {%- if ssh_host_key == "config" %}
@@ -131,10 +127,7 @@ pub async fn task<F: NorFlash>(ctx: SshCtx<'_, Stored<F>>) {
     let access = Access::new(*ctx.login);
     let mut connection = Connection::new(
         *ctx.stack, ctx.info, // {%- if ota == "true" %}
-        *ctx.ota,
-        // {%- else %}
-        //{{newline}}        ota_stub::Client,
-        // {%- endif %}
+        *ctx.ota, // {%- endif %}
         ctx.tcp_rx, ctx.tcp_tx, ctx.ssh_rx, ctx.ssh_tx,
     );
     // Принимает соединение, ведёт его до конца, ждёт следующее — бесконечно.

@@ -1,5 +1,4 @@
-//! Соединение и протокол на нём: порт, буферы и сроки сокета, ключ хоста,
-//! вход и сессия `sunset`.
+//! Одно SSH-соединение: сокет, протокол и сессия — до конца соединения.
 
 use core::pin::pin;
 
@@ -10,7 +9,12 @@ use embassy_time::{Duration, Instant, Timer, with_timeout};
 use sunset_async::sunset::{ChanHandle, ServEvent, SignKey};
 use sunset_async::{ProgressHolder, SSHServer};
 
-use crate::console::{Access, Device, Idle, LINE, Out, ShellEnd, USER, exec, shell};
+use crate::console::shell::{Device, LINE, Out, exec, shell};
+use crate::console::{Access, Idle, ShellEnd, USER};
+use crate::device::DeviceInfo;
+// {%- if ota == "true" %}
+use crate::ota::Client;
+// {%- endif %}
 
 /// Порт SSH.
 pub const PORT: u16 = 22;
@@ -62,6 +66,105 @@ const MAX_AUTH_TRIES: u8 = 6;
 /// EOF и CLOSE клиента (сам `sunset` их не начинает — `//!` модуля `ssh`).
 const CLOSE_GRACE: Duration = Duration::from_millis(200);
 
+/// Одно соединение и всё, что ему нужно на весь его срок.
+///
+/// Поля — из контекста узла: задача забирает их один раз, а не передаёт
+/// контекст в логику.
+pub(super) struct Connection<'a> {
+    /// Сетевой стек, на котором открывается сокет.
+    stack: crate::net::Stack<'static>,
+    /// Сведения для `info`.
+    info: &'a DeviceInfo,
+    // {%- if ota == "true" %}
+    /// Клиент входа `CMD` узла OTA.
+    ota: Client,
+    // {%- endif %}
+    /// Приём сокета.
+    tcp_rx: &'a mut [u8; TCP_BUFFER],
+    /// Передача сокета.
+    tcp_tx: &'a mut [u8; TCP_BUFFER],
+    /// Пакеты SSH от клиента.
+    ssh_rx: &'a mut [u8; SSH_BUFFER],
+    /// Пакеты SSH клиенту.
+    ssh_tx: &'a mut [u8; SSH_BUFFER],
+}
+
+impl<'a> Connection<'a> {
+    /// Собирает соединение из полей контекста узла.
+    #[must_use]
+    pub(super) fn new(
+        stack: crate::net::Stack<'static>,
+        info: &'a DeviceInfo,
+        // {%- if ota == "true" %}
+        ota: Client,
+        // {%- endif %}
+        tcp_rx: &'a mut [u8; TCP_BUFFER],
+        tcp_tx: &'a mut [u8; TCP_BUFFER],
+        ssh_rx: &'a mut [u8; SSH_BUFFER],
+        ssh_tx: &'a mut [u8; SSH_BUFFER],
+    ) -> Self {
+        Self {
+            stack,
+            info,
+            // {%- if ota == "true" %}
+            ota,
+            // {%- endif %}
+            tcp_rx,
+            tcp_tx,
+            ssh_rx,
+            ssh_tx,
+        }
+    }
+
+    /// Одно соединение. Отказ соединения или протокола узел пишет в лог и
+    /// слушает дальше.
+    pub(super) async fn run(&mut self, key: &SignKey, access: Access) {
+        let stack = self.stack;
+        let mut socket = TcpSocket::new(stack, &mut self.tcp_rx[..], &mut self.tcp_tx[..]);
+        socket.set_timeout(Some(IDLE));
+        socket.set_keep_alive(Some(KEEP_ALIVE));
+        if socket.accept(PORT).await.is_err() {
+            warn!("ssh: accept не удался");
+            return;
+        }
+        if let Some(peer) = socket.remote_endpoint() {
+            info!("ssh: соединение от {}", peer);
+        }
+        let device = Device {
+            info: self.info,
+            stack: Some(stack),
+            // {%- if ota == "true" %}
+            ota: self.ota,
+            // {%- endif %}
+        };
+        session(
+            &mut socket,
+            SSHServer::new(&mut self.ssh_rx[..], &mut self.ssh_tx[..]),
+            key,
+            access,
+            &device,
+        )
+        .await;
+        // Соединение закрывает сервер: `sunset` закрывает канал, но не
+        // соединение, а клиент ждёт именно его. Сокет бросается только после
+        // FIN клиента: брошенный раньше ответит на него RST, и клиент под
+        // Windows теряет ещё не прочитанный вывод.
+        socket.close();
+        // Хвост вывода и наш FIN уходят раньше, чем ждётся FIN клиента:
+        // сокет, брошенный с неподтверждёнными данными, их не досылает.
+        let drained = with_timeout(CLOSE_WAIT, async {
+            socket.flush().await.ok();
+            let mut sink = [0; 64];
+            while let Ok(1..) = socket.read(&mut sink).await {}
+        })
+        .await;
+        if drained.is_err() {
+            socket.abort();
+        }
+        info!("ssh: соединение закрыто");
+    }
+}
+
 /// Что клиент попросил на канале сессии.
 enum Start {
     /// Интерактивная консоль.
@@ -71,7 +174,7 @@ enum Start {
 }
 
 /// Протокол на принятом соединении: вход, сессия и её конец.
-pub(super) async fn session(
+async fn session(
     socket: &mut TcpSocket<'_>,
     server: SSHServer<'_>,
     key: &SignKey,

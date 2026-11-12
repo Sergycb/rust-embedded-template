@@ -210,7 +210,7 @@ README, «Быстрый старт».
   сборка — `docs/diagnostics.md`, «Два паникёра, один на сборку».
 {%- if ota == "true" %}
 - `prepare(len)` адаптера `domain::ota::Updater` зовётся один раз перед приёмом образа
-  (внутри `domain::ota::download::Transfer::start`), `write()` сектор не
+  (внутри `domain::ota::Transfer::start`), `write()` сектор не
   стирает — `docs/ota.md`.
 {%- endif %}
 - `lib.rs` только объявляет: атрибуты, `//!`, `mod`, `pub use` — определения

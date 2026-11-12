@@ -99,6 +99,9 @@ pub mod dfu {
 }
 {%- endif %}
 
+{%- if flash_cache == "true" %}
+use crate::cache::Coherent;
+{%- endif %}
 use core::cell::RefCell;
 {% if whole == "true" %}
 use embassy_embedded_hal::adapter::BlockingAsync;
@@ -120,12 +123,6 @@ use embassy_sync::blocking_mutex;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 {%- if whole == "true" %}
 use embassy_sync::{blocking_mutex, mutex};
-{%- endif %}
-{%- if flash_cache == "true" %}
-use embedded_storage::nor_flash::{ErrorType, NorFlash, ReadNorFlash};
-{%- endif %}
-{%- if eeprom_here == "true" %}
-use embedded_storage::{ReadStorage, Storage};
 {%- endif %}
 {%- if paged == "true" %}
 use flash_page::ErasePage;
@@ -285,17 +282,6 @@ pub type FirmwareFlash = ports::Partitions<
 /// флеш: запись за его границы отказывает, а не стирает {% if ota == "true" %}`ACTIVE` или bootloader{% else %}прошивку{% endif %}.
 pub type ConfigFlash = Partition<'static, NoopRawMutex, ConfigBacking>;
 {%- endif %}
-{%- if eeprom_here == "true" %}
-
-/// Внутренняя EEPROM как `NorFlash` — носитель настроек, над которым
-/// стоит хранилище (`domain::settings`).
-/// Флеш под настройки не тратится вовсе: EEPROM пишется через тот же
-/// контроллер, что и флеш, поэтому доступ к ней — через общий [`Lock`]
-/// (`embassy_stm32::flash::Flash::eeprom_*`), по операции под замком. Обёртку
-/// `adapters_hw::eeprom::Eeprom` (инверсия байтов, страница) собирает плата, и
-/// под хранилище отдана вся EEPROM, округлённая до её страницы.
-pub type ConfigFlash = adapters_hw::eeprom::Eeprom<EepromFlash>;
-{%- endif %}
 {%- if whole == "true" %}
 
 /// Весь флеш как один раздел: смещения те же, что у самого флеша, а операции
@@ -327,127 +313,7 @@ type ConfigBacking = BlockingAsync<ErasePage<Whole, CONFIG_ERASE_SIZE>>;
 type ConfigBacking = BlockingAsync<Whole>;
 {%- endif %}
 {%- endif %}
-{%- if eeprom_here == "true" %}
 
-/// Общий [`Lock`] как источник EEPROM. Свой тип, а не `impl` на самом
-/// мьютексе: и трейт `Storage`, и `Mutex` чужие для `bsp`.
-pub struct EepromFlash(&'static Lock);
-
-// Вручную: у `Flash` из `embassy-stm32` нет `Debug`.
-impl core::fmt::Debug for EepromFlash {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("EepromFlash").finish_non_exhaustive()
-    }
-}
-
-impl ReadStorage for EepromFlash {
-    type Error = embassy_stm32::flash::Error;
-
-    fn read(&mut self, offset: u32, buf: &mut [u8]) -> Result<(), Self::Error> {
-        self.0
-            .lock(|flash| flash.borrow_mut().eeprom_read_slice(offset, buf))
-    }
-
-    fn capacity(&self) -> usize {
-        embassy_stm32::flash::EEPROM_SIZE
-    }
-}
-
-impl Storage for EepromFlash {
-    fn write(&mut self, offset: u32, data: &[u8]) -> Result<(), Self::Error> {
-        self.0
-            .lock(|flash| flash.borrow_mut().eeprom_write_slice(offset, data))
-    }
-}
-{%- endif %}
-
-{%- if flash_cache == "true" %}
-/// Флеш чипа, после стирания и записи которого кэш не отдаёт старое.
-///
-/// Ядро читает флеш через кэш ({% if cache contains "scb_d" %}кэш данных ядра Cortex-M7{% elsif cache contains "icache" %}блок `ICACHE`{% else %}кэш данных акселератора флеша, `FLASH_ACR.DCEN`{% endif %}),
-/// а стирание и запись идут мимо него, и `embassy-stm32` после них кэш не
-/// сбрасывает: прочитанное до стирания так и читалось бы после, и
-/// `sequential-storage` с `embassy-boot` видели бы стёртое старым (поймано на
-/// NUCLEO-H743 target-тестом `prepare_erases_what_the_swap_moves`). Кэши
-/// включает `crate::cache::enable` — docs/clocks.md, «Кэши».
-pub struct Coherent<F>(F);
-
-// Вручную: у `Flash` из `embassy-stm32` нет `Debug`.
-impl<F> core::fmt::Debug for Coherent<F> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("Coherent").finish_non_exhaustive()
-    }
-}
-
-impl<F> Coherent<F> {
-    /// Сбрасывает кэш, видящий флеш: следующее чтение пойдёт во флеш.
-{%- if cache contains "scb_d" %}
-    #[expect(unsafe_code, reason = "обоснование — в комментарии ниже")]
-{%- endif %}
-    fn forget() {
-{%- if cache contains "scb_d" %}
-        // SAFETY: только обслуживание кэша, под замком флеша, на одном ядре;
-        // `SCB` и `CPUID` берутся через `steal()`, как в `crate::cache`.
-        let mut core = unsafe { cortex_m::Peripherals::steal() };
-        // Весь кэш с выпиской грязных строк, а не по адресам: строки RAM
-        // выписываются, а не теряются, и адреса разделов знать не нужно. На
-        // кэше в 16 KiB это микросекунды против миллисекунд стирания.
-        core.SCB.clean_invalidate_dcache(&mut core.CPUID);
-{%- endif %}
-{%- if cache contains "icache" %}
-        embassy_stm32::pac::ICACHE
-            .cr()
-            .modify(|w| w.set_cacheinv(true));
-        while embassy_stm32::pac::ICACHE.sr().read().busyf() {}
-{%- endif %}
-{%- if cache contains "dcen" %}
-        let acr = embassy_stm32::pac::FLASH.acr();
-        // Сброс — только при выключенном кэше данных (RM, `FLASH_ACR.DCRST`).
-        if acr.read().dcen() {
-            acr.modify(|w| w.set_dcen(false));
-            acr.modify(|w| w.set_dcrst(true));
-            acr.modify(|w| w.set_dcrst(false));
-            acr.modify(|w| w.set_dcen(true));
-        }
-{%- endif %}
-    }
-}
-
-impl<F: ErrorType> ErrorType for Coherent<F> {
-    type Error = F::Error;
-}
-
-impl<F: ReadNorFlash> ReadNorFlash for Coherent<F> {
-    const READ_SIZE: usize = F::READ_SIZE;
-
-    fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), Self::Error> {
-        self.0.read(offset, bytes)
-    }
-
-    fn capacity(&self) -> usize {
-        self.0.capacity()
-    }
-}
-
-impl<F: NorFlash> NorFlash for Coherent<F> {
-    const WRITE_SIZE: usize = F::WRITE_SIZE;
-    const ERASE_SIZE: usize = F::ERASE_SIZE;
-
-    fn erase(&mut self, from: u32, to: u32) -> Result<(), Self::Error> {
-        let result = self.0.erase(from, to);
-        // И при отказе: часть страниц могла успеть стереться.
-        Self::forget();
-        result
-    }
-
-    fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), Self::Error> {
-        let result = self.0.write(offset, bytes);
-        Self::forget();
-        result
-    }
-}
-
-{%- endif %}
 /// `&'static` он не для красоты: носители {% if firmware_here == "true" and config_here == "true" %}обновления и настроек{% elsif firmware_here == "true" %}обновления{% elsif config_here == "true" %}настроек{% else %}настроек{% endif %} отдаются в
 /// задачи, а аргументы задач embassy обязаны быть `'static`. Обычное поле
 /// `Board` этого не даёт — `Board` живёт в `main`, а не вечно.
@@ -485,10 +351,10 @@ pub(crate) fn new(
     let banks = embassy_stm32::flash::Flash::new_blocking(resources.flash).into_blocking_regions();
     (
 {%- if flash_cache == "true" %}
-        FLASH.init(blocking_mutex::Mutex::new(RefCell::new(Coherent(
+        FLASH.init(blocking_mutex::Mutex::new(RefCell::new(Coherent::new(
             banks.bank1_region,
         )))),
-        DFU_BANK.init(blocking_mutex::Mutex::new(RefCell::new(Coherent(
+        DFU_BANK.init(blocking_mutex::Mutex::new(RefCell::new(Coherent::new(
             banks.bank2_region,
         )))),
 {%- else %}
@@ -499,7 +365,7 @@ pub(crate) fn new(
 }
 {%- else %}
 pub(crate) fn new(resources: crate::resources::FlashResources) -> &'static Lock {
-    FLASH.init(blocking_mutex::Mutex::new(RefCell::new({% if flash_cache == "true" %}Coherent({% endif %}
+    FLASH.init(blocking_mutex::Mutex::new(RefCell::new({% if flash_cache == "true" %}Coherent::new({% endif %}
         embassy_stm32::flash::Flash::new_blocking(resources.flash),
     {% if flash_cache == "true" %}){% endif %})))
 }
@@ -514,10 +380,7 @@ pub(crate) fn new(resources: crate::resources::FlashResources) -> &'static Lock 
 {%- if dfu_bank == "true" %}
 ///
 /// `DFU` — в банке 2, `STATE` — в банке 1.
-pub(crate) fn firmware(
-    flash: &'static Lock,
-    dfu_bank: &'static dfu::BankMutex,
-) -> FirmwareFlash {
+pub(crate) fn firmware(flash: &'static Lock, dfu_bank: &'static dfu::BankMutex) -> FirmwareFlash {
     let dfu = BlockingAsync::new(BlockingPartition::new(dfu_bank, 0, DFU_BANK_SIZE));
 {%- elsif swap_paged == "true" %}
 pub(crate) fn firmware(flash: &'static Lock) -> FirmwareFlash {
@@ -559,12 +422,5 @@ pub(crate) fn config(flash: &'static Lock) -> ConfigFlash {
     let backing = CONFIG_FLASH.init(mutex::Mutex::new(backing));
     let (start, len) = crate::layout::config();
     Partition::new(backing, start, len)
-}
-{%- endif %}
-{%- if eeprom_here == "true" %}
-
-/// Собирает внутреннюю EEPROM как `NorFlash`.
-pub(crate) fn config(flash: &'static Lock) -> ConfigFlash {
-    adapters_hw::eeprom::Eeprom::new(EepromFlash(flash))
 }
 {%- endif %}

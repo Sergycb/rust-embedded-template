@@ -141,8 +141,8 @@ supervisor_graph! {
             },
 {%- elsif f[3] == "modbus" %}
 {%- if f[0] == "tcp" %}
-{%- capture ty %}::adapters_logic::modbus::Link<::adapters_logic::net::Server>{% endcapture %}
-{%- capture link %}::adapters_logic::modbus::Link::new(::adapters_logic::net::Server::new(
+{%- capture ty %}::adapters_logic::modbus::Tcp<::adapters_logic::net::Server>{% endcapture %}
+{%- capture link %}::adapters_logic::modbus::Tcp::new(::adapters_logic::net::Server::new(
                     {{ board }}.net.stack,
                     {{ port }},
                     static [u8; SOCKET_BUFFER],
@@ -207,27 +207,27 @@ supervisor_graph! {
 {%- endcapture %}
 {%- if f[3] == "modbus" %}
 
-        // Узел `MODBUS_{{ f[4] | upcase }}` — Modbus slave (`domain::server` с обработчиком
-        // `domain::modbus::Slave`): канал (кадрирование{% if f[0] == "tcp" or f[0] == "udp" %}, сокет{% endif %}) строится здесь{% if f[0] == "uart" or f[0] == "usb" %} над рычагом
+        // Узел `MODBUS_{{ f[4] | upcase }}` — Modbus slave (`domain::modbus::MODBUS_FRAG`
+        // с обработчиком `domain::modbus::Slave`): канал (кадрирование{% if f[0] == "tcp" or f[0] == "udp" %}, сокет{% endif %}) строится здесь{% if f[0] == "uart" or f[0] == "usb" %} над рычагом
         // платы{% endif %} в памяти, которую объявляет граф (`static T`); карта регистров
-        // одна на все узлы Modbus: ручку `crate::modbus::handle()` (`Copy`) получает каждый, а
-        // тип карты проект меняет в одном месте — `crate::modbus::Map`.
+        // одна на все узлы Modbus: ручку `crate::registers::handle()` (`Copy`) получает каждый, а
+        // тип карты проект меняет в одном месте — `crate::registers::Map`.
         // Адрес slave'а — `unit`{% if f[0] == "tcp" or f[0] == "udp" %}: по сети устройство адресуется по IP, и
         // slave отвечает на любой адрес в MBAP{% endif %}.{{ sizes }}
 {%- if ota == "true" %}
         // Карта обёрнута окном OTA (`domain::modbus::OtaRegisters`): записи FC16
         // по `OTA_BASE` уходят узлу `OTA` командами — клиентом его входа `CMD`
         // (`Client` с номером этого транспорта), остальное — карте проекта.
-        ::domain::SERVER_FRAG<
+        ::domain::MODBUS_FRAG<
             {{ ty }},
-            ::domain::modbus::OtaRegisters<crate::modbus::Handle>,
+            ::domain::modbus::OtaRegisters<crate::registers::Handle>,
         > as MODBUS_{{ f[4] | upcase }} =
-            ::domain::server::ServerWiring {
+            ::domain::modbus::ModbusWiring {
                 link: {{ link }},
                 handler: ::domain::modbus::Slave::new(
                     1,
                     ::domain::modbus::OtaRegisters::new(
-                        crate::modbus::handle(),
+                        crate::registers::handle(),
                         ::domain::ota::Client::new(
                             ota_cmd_requester(),
                             ::domain::ota::ClientId({{ client }}),
@@ -237,10 +237,10 @@ supervisor_graph! {
                 ),
             },
 {%- else %}
-        ::domain::SERVER_FRAG<{{ ty }}, crate::modbus::Handle> as MODBUS_{{ f[4] | upcase }} =
-            ::domain::server::ServerWiring {
+        ::domain::MODBUS_FRAG<{{ ty }}, crate::registers::Handle> as MODBUS_{{ f[4] | upcase }} =
+            ::domain::modbus::ModbusWiring {
                 link: {{ link }},
-                handler: ::domain::modbus::Slave::new(1, crate::modbus::handle(), crate::build::PKG_VERSION),
+                handler: ::domain::modbus::Slave::new(1, crate::registers::handle(), crate::build::PKG_VERSION),
             },
 {%- endif %}
 {%- elsif f[3] == "canopen" %}

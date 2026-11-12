@@ -196,7 +196,7 @@ pub fn ota_image(elf: &Path) -> Result<OtaImage, anyhow::Error> {
 
 /// Дописывает хвост `[раскладка u32 LE][версия u32 LE]` в конец образа.
 ///
-/// Читает его `domain::ota::update::apply` с конца: версия — на
+/// Читает его `domain::ota::apply` с конца: версия — на
 /// `len - 4`, раскладка — перед ней. Зависимости на `domain` у xtask нет,
 /// поэтому формат держит пара тестов — см. `writes_the_tail_domain_reads`.
 fn append_tail(image: &mut Vec<u8>, layout: u32, version: u32) {
@@ -210,7 +210,7 @@ mod tests {
     /// значит разъехаться они могут только молча.
     ///
     /// Ловит это ПАРА тестов: здесь и `reads_the_tail_xtask_writes` в
-    /// `domain::ota::update` (`crates-host/domain/src/ota/update.rs`), где
+    /// `domain::ota::transfer` (`crates-host/domain/src/ota/transfer.rs`), где
     /// стоят те же литералы. Поодиночке ни один из них расхождения не увидит —
     /// каждый проверяет свою сторону. Байты несимметричны, так что пойман
     /// будет и обмен полей местами, и смена порядка байт.

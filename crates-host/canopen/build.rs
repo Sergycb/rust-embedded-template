@@ -41,7 +41,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let out = PathBuf::from(std::env::var_os("OUT_DIR").ok_or("OUT_DIR не задан")?);
     let device = out.join("device.toml");
-    std::fs::write(&device, toml)?;
+    // Перезапись файла в OUT_DIR делает устаревшим всё, что от него зависит;
+    // пишем, только если содержимое изменилось.
+    if std::fs::read_to_string(&device).ok().as_deref() != Some(toml.as_str()) {
+        std::fs::write(&device, toml)?;
+    }
     zencan_build::build_node_from_device_config("DEVICE", device)?;
     Ok(())
 }

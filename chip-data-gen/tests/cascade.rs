@@ -52,7 +52,7 @@ type Prints = Rc<RefCell<Vec<String>>>;
 type Prompts = Rc<RefCell<Vec<(String, Vec<String>)>>>;
 
 /// Итог одного прогона: переменные (`chip`, `chip_feature`, `cpu`, `target`,
-/// `write_size`, `ota`, `bank_mode`…), файлы, записанные через `file::write`
+/// `swap_buffer`, `ota`, `bank_mode`…), файлы, записанные через `file::write`
 /// (memory.x), построчно, и пути, снесённые через `file::delete` (crates-cross/boot у чипов без OTA).
 struct CascadeResult {
     vars: HashMap<String, String>,
@@ -308,7 +308,7 @@ fn run_chip_with(
 
 /// То же, но с заранее выставленными переменными — так проверяются ветки,
 /// которые в реальной генерации приходят из `[placeholders]` или `--define`
-/// (`ota`, `write_size`, `chip`).
+/// (`ota`, `swap_buffer`, `chip`).
 fn run_cascade_with(
     script: &Script,
     target_suffix: &str,
@@ -743,7 +743,10 @@ fn memory_layout_is_written_when_available() {
     // f407ve — чип с неравномерными секторами (см. commit про BANK1_REGION),
     // у него MEMORY_LAYOUT точно должен быть посчитан.
     let result = run_cascade_to(&compile_script(), "f407ve").expect("каскад не должен падать");
-    assert_eq!(result.vars.get("write_size").map(String::as_str), Some("4"));
+    assert_eq!(
+        result.vars.get("swap_buffer").map(String::as_str),
+        Some("4")
+    );
     assert_eq!(result.vars.get("ota").map(String::as_str), Some("true"));
 
     // У приложения FLASH — это ACTIVE, а не весь чип: с базы flash стартует
@@ -1269,12 +1272,12 @@ fn every_yes_no_define_takes_only_yes_or_no() {
 #[test]
 fn an_ota_answer_that_does_not_fit_keeps_ota_and_leaves_memory_to_the_user() {
     // Явный ответ уважается: h723ve схему не вмещает, но bootloader остаётся, а
-    // раскладку памяти пользователь заполняет сам (как при `--define write_size`).
+    // раскладку памяти пользователь заполняет сам (как при `--define swap_buffer`).
     let result = run_chip_with(&compile_script(), "h723ve", &[("ota", "yes")])
         .expect("каскад не должен падать");
     assert_eq!(result.vars.get("ota").map(String::as_str), Some("true"));
     assert!(!result.deleted.contains(&"crates-cross/boot".to_string()));
-    assert!(result.vars.contains_key("write_size"), "ручная раскладка");
+    assert!(result.vars.contains_key("swap_buffer"), "ручная раскладка");
     assert!(
         result
             .prints
@@ -1603,7 +1606,7 @@ fn protocol_over_uart_keeps_the_serial_module() {
             ("crates-host/adapters-logic", true),
             ("crates-host/domain/src/modbus.rs", protocol == "modbus"),
             ("crates-host/ports/src/modbus.rs", protocol == "modbus"),
-            // Кадровый канал нужен обоим: узел протокола `domain::server` —
+            // Кадровый канал нужен обоим: узел протокола `domain::modbus` —
             // над `FrameLink` и у protobuf, и у Modbus slave.
             ("crates-host/ports/src/link.rs", true),
             ("crates-host/canopen", false),
@@ -2442,12 +2445,13 @@ fn derived_flags_follow_every_link() {
         "crates-cross/bsp/src/serial.rs",
         "crates-cross/bsp/src/can.rs",
         "crates-host/adapters-logic/src/modbus/rtu.rs",
-        "crates-host/adapters-logic/src/modbus/tcp.rs",
+        "crates-host/adapters-logic/src/modbus/mbap.rs",
+        "crates-host/adapters-logic/src/modbus/client.rs",
     ] {
         assert!(!deleted(path), "{path} удалён: {:?}", result.deleted);
     }
     for path in [
-        "crates-host/adapters-logic/src/modbus/udp.rs",
+        "crates-host/adapters-logic/src/net/udp.rs",
         "crates-host/adapters-logic/src/cobs.rs",
     ] {
         assert!(deleted(path), "{path} не удалён: {:?}", result.deleted);
@@ -2825,7 +2829,7 @@ fn mqtt_is_offered_with_ethernet() {
     )
     .expect("каскад не должен падать");
     let deleted = |result: &CascadeResult, path: &str| result.deleted.iter().any(|d| d == path);
-    // Клиент брокера живёт с узлом (`domain/src/mqtt/client.rs`), сервер
+    // Клиент брокера живёт с узлом (`domain/src/mqtt/connection.rs`), сервер
     // транспортов TCP без tcp не нужен.
     assert!(deleted(&udp, "crates-host/adapters-logic/src/net/tcp.rs"));
     for path in mqtt_files {
@@ -3018,7 +3022,7 @@ fn declining_the_graph_is_final() {
     assert_eq!(result.vars.get("graph").map(String::as_str), Some("false"));
 }
 
-/// Ветка ручной раскладки (`--define write_size=...`) тоже обязана раздать
+/// Ветка ручной раскладки (`--define swap_buffer=...`) тоже обязана раздать
 /// `graph`.
 ///
 /// Тест не теоретический: ровно здесь ответ и терялся — `variable::set` стоял
@@ -3029,11 +3033,11 @@ fn declining_the_graph_is_final() {
 fn manual_layout_still_answers_about_the_graph() {
     let script = compile_script();
 
-    let kept = run_cascade_with(&script, "f407ve", &[("write_size", "8"), ("graph", "yes")])
+    let kept = run_cascade_with(&script, "f407ve", &[("swap_buffer", "8"), ("graph", "yes")])
         .expect("каскад не должен падать");
     assert_eq!(kept.vars.get("graph").map(String::as_str), Some("true"));
 
-    let dropped = run_cascade_with(&script, "f407ve", &[("write_size", "8"), ("graph", "no")])
+    let dropped = run_cascade_with(&script, "f407ve", &[("swap_buffer", "8"), ("graph", "no")])
         .expect("каскад не должен падать");
     assert_eq!(dropped.vars.get("graph").map(String::as_str), Some("false"));
 }
@@ -3213,13 +3217,13 @@ fn settings_avoid_flash_that_erases_to_zero() {
 }
 
 /// EEPROM раскладка flash не нужна, поэтому и при ручной раскладке
-/// (`--define write_size=...`) настройки на L0/L1 остаются — в EEPROM.
+/// (`--define swap_buffer=...`) настройки на L0/L1 остаются — в EEPROM.
 #[test]
 fn eeprom_settings_survive_a_manual_layout() {
     let result = run_cascade_with(
         &compile_script(),
         "l073rz",
-        &[("config", "yes"), ("write_size", "4")],
+        &[("config", "yes"), ("swap_buffer", "4")],
     )
     .expect("каскад до l073rz");
 
@@ -3461,20 +3465,20 @@ fn transports_are_kept_only_for_the_selected_interface() {
         (
             "g474re",
             &[("protocol", "modbus"), ("interface", "uart")],
-            &["modbus/tcp.rs", "modbus/udp.rs", "modbus/mbap.rs"],
-            &["modbus/rtu.rs"],
+            &["modbus/mbap.rs"],
+            &["modbus/rtu.rs", "modbus/client.rs"],
         ),
         (
             "h743zg",
             &[("protocol", "modbus"), ("interface", "udp")],
-            &["modbus/rtu.rs", "modbus/tcp.rs", "net/tcp.rs"],
-            &["modbus/udp.rs", "modbus/mbap.rs", "net/udp.rs"],
+            &["modbus/rtu.rs", "net/tcp.rs"],
+            &["modbus/client.rs", "modbus/mbap.rs", "net/udp.rs"],
         ),
         (
             "h743zg",
             &[("protocol", "modbus"), ("interface", "tcp")],
-            &["modbus/rtu.rs", "modbus/udp.rs", "net/udp.rs"],
-            &["modbus/tcp.rs", "modbus/mbap.rs", "net/tcp.rs"],
+            &["modbus/rtu.rs", "net/udp.rs"],
+            &["modbus/client.rs", "modbus/mbap.rs", "net/tcp.rs"],
         ),
         // COBS нужен потоку (UART, USB, TCP), а UDP кадр даёт сама датаграмма.
         (
@@ -3530,6 +3534,12 @@ fn ota_and_settings_code_is_kept_only_when_selected() {
         "crates-host/domain/src/ota",
     ];
     const SETTINGS: [&str; 1] = ["crates-host/domain/src/settings.rs"];
+    // Внутренняя EEPROM — только у L0/L1 и только когда в ней настройки; без
+    // них `bsp::eeprom` и его документация — мусор, до которого не дотянуться.
+    const EEPROM: [&str; 2] = [
+        "crates-cross/bsp/src/eeprom.rs",
+        "docs/modules/bsp-eeprom.md",
+    ];
     const FLASH: &str = "crates-host/flash-page";
     // (чип, ответы, OTA вырезана, настройки вырезаны, flash-page вырезан)
     type Case<'a> = (&'a str, &'a [(&'a str, &'a str)], bool, bool, bool);
@@ -3585,6 +3595,9 @@ fn ota_and_settings_code_is_kept_only_when_selected() {
         for path in SETTINGS {
             assert_eq!(gone(path), no_settings, "{chip} {answers:?}: {path}");
         }
+        for path in EEPROM {
+            assert!(gone(path), "{chip} {answers:?}: {path} не удалён без EEPROM");
+        }
         assert_eq!(gone(FLASH), no_flash, "{chip} {answers:?}: {FLASH}");
     }
 }
@@ -3601,7 +3614,7 @@ fn watchdog_and_link_port_follow_the_choices() {
     let cases: [Case; 7] = [
         ("g474re", &[], false, true),
         ("g474re", &[("graph", "no")], true, true),
-        // Modbus slave — канал узла протокола `domain::server` по любому
+        // Modbus slave — канал узла протокола `domain::modbus` по любому
         // транспорту: по потоку, как и по UDP.
         (
             "g474re",
@@ -4783,7 +4796,7 @@ fn swap_page_follows_the_layout() {
         ("h743zg", &[][..]),
         ("l073rz", &[("ota", "no")][..]),
         ("l073rz", &[("ext_flash", "yes")][..]),
-        ("l073rz", &[("write_size", "4")][..]),
+        ("l073rz", &[("swap_buffer", "4")][..]),
     ] {
         let result = run_cascade_with(&ast, chip, preset).expect("каскад не должен падать");
         assert_eq!(
@@ -5016,7 +5029,7 @@ fn define_interface_and_protocol_filter_by_ram_before_the_cascade() {
     assert_eq!(var_of(&result, "chip"), Some("STM32F042F6"));
 }
 
-/// Ручная раскладка (`write_size`): регион RAM пишет человек — оценки нет,
+/// Ручная раскладка (`swap_buffer`): регион RAM пишет человек — оценки нет,
 /// меню без пометок, `--define` не отвергается.
 #[test]
 fn manual_layout_skips_the_ram_estimate() {
@@ -5024,12 +5037,12 @@ fn manual_layout_skips_the_ram_estimate() {
     let result = run_chip_with(
         &ast,
         "f042f6",
-        &[("write_size", "4"), ("links", "usb:protobuf")],
+        &[("swap_buffer", "4"), ("links", "usb:protobuf")],
     )
     .expect("ручная раскладка не должна отвергаться по RAM");
     assert_eq!(var_of(&result, "ram_estimate"), Some(""));
     let result =
-        interview(&ast, "f042f6", &[("write_size", "4")], &[]).expect("каскад не должен падать");
+        interview(&ast, "f042f6", &[("swap_buffer", "4")], &[]).expect("каскад не должен падать");
     for shown in transport_menus(&result) {
         assert!(
             shown.iter().all(|choice| !choice.contains(NO_RAM)),
@@ -5260,7 +5273,12 @@ fn the_link_filter_does_not_assume_unasked_answers() {
     run_cascade_with(
         &ast,
         "f100rb",
-        &[links, ("ota", "yes"), ("graph", "yes"), ("write_size", "4")],
+        &[
+            links,
+            ("ota", "yes"),
+            ("graph", "yes"),
+            ("swap_buffer", "4"),
+        ],
     )
     .expect("ручная раскладка не отсеивается по RAM");
 }

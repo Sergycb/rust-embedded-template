@@ -1,6 +1,6 @@
 //! Узлы `MODBUS_*`: Modbus slave, адрес 1, по модулю на транспорт. Канал —
 //! кадр RTU над рычагом платы, конкретным типом прямо в задаче; карта
-//! регистров одна на все узлы (`crate::modbus`), каждый получает её ручку.
+//! регистров одна на все узлы (`crate::registers`), каждый получает её ручку.
 {%- assign xs = links | split: "," %}
 {%- comment %} Номер клиента OTA — порядковый номер транспорта с протоколом в `links`, как в графе (`crate::graph`). {% endcomment %}
 {%- assign client = 0 %}
@@ -16,14 +16,11 @@ pub mod {{ f[4] }} {
     type Source = {% if f[0] == "usb" %}bsp::usb::{{ f[4] }}::Cdc{% else %}bsp::serial::{{ f[4] }}::Serial{% endif %};
 
     #[embassy_executor::task]
-    async fn task(source: Source, map: crate::modbus::Handle{% if ota == "true" %}, version: &'static str{% endif %}) {
+    async fn task(source: Source, map: crate::registers::Handle{% if ota == "true" %}, version: &'static str{% endif %}) {
 {%- if ota == "true" %}
         let regs = domain::modbus::OtaRegisters::new(
             map,
-            domain::ota::Client::new(
-                crate::tasks::ota::CMD.requester(),
-                domain::ota::ClientId({{ client }}),
-            ),
+            domain::ota::Client::new(crate::tasks::ota::CMD.requester(), domain::ota::ClientId({{ client }})),
         );
 {%- else %}
         let regs = map;
@@ -31,7 +28,7 @@ pub mod {{ f[4] }} {
         // Кадр RTU памяти извне не просит.
         let mut link = adapters_logic::modbus::Rtu::new(source);
         let mut handler = domain::modbus::Slave::new(1, regs, {% if ota == "true" %}version{% else %}crate::build::PKG_VERSION{% endif %});
-        domain::server::task(domain::server::ServerCtx {
+        domain::modbus::task(domain::modbus::ModbusCtx {
             link: &mut link,
             handler: &mut handler,
             index: 0,
@@ -46,14 +43,14 @@ pub mod {{ f[4] }} {
     pub fn spawn(
         spawner: Spawner,
         source: Source,
-        map: crate::modbus::Handle,
+        map: crate::registers::Handle,
         version: &'static str,
     ) {
         let token = task(source, map, version);
 {%- else %}
 
     /// Спавнит узел над рычагом платы `source` и картой `map`.
-    pub fn spawn(spawner: Spawner, source: Source, map: crate::modbus::Handle) {
+    pub fn spawn(spawner: Spawner, source: Source, map: crate::registers::Handle) {
         let token = task(source, map);
 {%- endif %}
         spawner.spawn(token.expect("задача MODBUS_{{ f[4] | upcase }} свежая: спавнится один раз"));

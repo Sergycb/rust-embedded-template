@@ -201,11 +201,23 @@ if variable::get("has_console") == "true" {
     let source = "// Сгенерировано `post-script.rhai` при создании проекта.\n";
     source += "// Пароль консоли — имя проекта плюс `00`; здесь только соль и хэш.\n";
     source += "pub const PASSWORD_HASH: [u8; 48] = [\n";
+    let bytes = [];
     for ch in salt {
-        source += "    0x" + hex_byte(ch.to_int()) + ",\n";
+        bytes.push(ch.to_int());
     }
     for b in hash {
-        source += "    0x" + hex_byte(b) + ",\n";
+        bytes.push(b);
+    }
+    for i in 0..bytes.len() {
+        if i % 16 == 0 {
+            source += "    ";
+        }
+        source += "0x" + hex_byte(bytes[i]);
+        if i % 16 == 15 {
+            source += ",\n";
+        } else {
+            source += ", ";
+        }
     }
     source += "];\n";
     file::write("crates-cross/app/src/console_password.rs", source);
@@ -229,7 +241,7 @@ if ota == "true" {
 if config == "true" {
 	let store = variable::get("config_store");
 	if store == "eeprom" {
-		print("Настройки: внутренняя EEPROM чипа (crates-cross/bsp/src/flash.rs, поле Board::config); хранилище над ней (domain::settings) строит приложение и отдаёт узлу-потребителю.");
+		print("Настройки: внутренняя EEPROM чипа (crates-cross/bsp/src/eeprom.rs, поле Board::config); хранилище над ней (domain::settings) строит приложение и отдаёт узлу-потребителю.");
 	} else if store == "external" {
 		print("Настройки: внешняя флеш — подставьте шину драйвера в crates-cross/bsp/src/external.rs (поле Board::config); хранилище над ней (domain::settings) строит приложение и отдаёт узлу-потребителю.");
 	} else {
@@ -283,16 +295,16 @@ if variable::get("graph") == "true" {
 		print("Блоки интерфейсов назначены по умолчанию: " + blocks + ". Сменить блок и задать выводы своей платы — crates-cross/bsp/src/resources.rs (cargo xtask pins <БЛОК> --snippet печатает готовую группу); имена транспортов (поле Board, модули bsp и app, имена узлов) остаются от блока по умолчанию.");
 	}
 	if variable::get("has_modbus") == "true" {
-		print("Modbus: карта регистров — crates-host/domain/src/modbus/map.rs (заготовка EmptyRegisters); одна на все узлы, тип подставляет crates-cross/app/src/modbus.rs (псевдоним Map, строится Map::default()).");
+		print("Modbus: карта регистров — crates-host/domain/src/modbus/map.rs (заготовка EmptyRegisters); одна на все узлы, тип подставляет crates-cross/app/src/registers.rs (псевдоним Map, строится Map::default()).");
 	}
 	if variable::get("has_canopen") == "true" {
 		print("CANopen: словарь объектов — crates-host/canopen/device.toml.");
 	}
 	if variable::get("has_protobuf") == "true" {
 		if variable::get("ota") == "true" {
-			print("protobuf: схема — crates-host/proto, обработчики — crates-host/domain/src/protobuf/info.rs и crates-host/domain/src/ota/protobuf.rs.");
+			print("protobuf: схема — crates-host/proto, обработчики — crates-host/domain/src/protobuf/service.rs.");
 		} else {
-			print("protobuf: схема — crates-host/proto, обработчик — crates-host/domain/src/protobuf/info.rs.");
+			print("protobuf: схема — crates-host/proto, обработчик — crates-host/domain/src/protobuf/service.rs.");
 		}
 	}
 }

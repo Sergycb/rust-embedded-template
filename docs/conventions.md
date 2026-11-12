@@ -61,7 +61,7 @@ Host-тесты гоняются `cargo xtask test host` — то есть `carg
 (`advance`). nextest запускает каждый тест отдельным процессом, а `cargo test`
 и IDE — потоками одного, и два теста с часами двигают время друг другу: такой
 тест то проходит, то нет, и дело не в тесте.
-{%- capture clocked %}{% if graph == "true" %}, `domain::heartbeat`{% endif %}{% if ota == "true" %}, `domain::ota`{% endif %}{% if has_protobuf == "true" %}, `domain::protobuf::info`{% endif %}{% if net_services contains "rest" %}, `domain::http`{% endif %}{% if net_services contains "mqtt" %}, `domain::mqtt`{% endif %}{% if net_services contains "ssh" %}, `domain::ssh`{% endif %}{% if has_usb == "true" %}, `adapters_hw::usb`{% endif %}{% if modbus_rtu == "true" %}, `adapters_logic::modbus::rtu`{% endif %}{% endcapture %}
+{%- capture clocked %}{% if graph == "true" %}, `domain::heartbeat`{% endif %}{% if ota == "true" %}, `domain::ota`{% endif %}{% if has_protobuf == "true" %}, `domain::protobuf::service`{% endif %}{% if net_services contains "rest" %}, `domain::http`{% endif %}{% if net_services contains "mqtt" %}, `domain::mqtt`{% endif %}{% if net_services contains "ssh" %}, `domain::ssh`{% endif %}{% if has_usb == "true" %}, `adapters_hw::usb`{% endif %}{% if modbus_rtu == "true" %}, `adapters_logic::modbus::client`{% endif %}{% endcapture %}
 {%- if clocked != "" %} В этом проекте с часами работают тесты {{ clocked | remove_first: ", " }},
 и то же касается любого нового теста с `MockDriver`.{% else %} Касается любого теста с
 `MockDriver`, в том числе первого, который появится в проекте.{% endif %}
@@ -132,12 +132,39 @@ Host-тесты гоняются `cargo xtask test host` — то есть `carg
 либо `#![doc = include_str!(..)]` в самом модуле, как в `bsp`; у приватных и
 тестовых{% if ota == "true" %} (`ota::fake`){% endif %} — по необходимости. Определений — типов,
 трейтов, функций, `impl` — в нём нет: они живут в модулях, названных по
-предметной области ({% if ota == "true" %}`ports::ota`, `domain::ota::download`{% else %}`domain::cpu_load::load`{% endif %}), а не по слою
+предметной области ({% if ota == "true" %}`ports::ota`, `domain::ota::transfer`{% else %}`domain::cpu_load::load`{% endif %}), а не по слою
 (`types`, `utils`).
 
 Реэкспорт в корне — часть правила, а не исключение из него: так устроены
 `embedded-hal` и `embassy-*`, и так путь `ports::{% if ota == "true" %}Partitions{% else %}<Трейт>{% endif %}` остаётся
 коротким, а перестановка модулей внутри крейта не касается его пользователей.
+
+## Модуль — логическая единица, а не слой
+
+Имя модуля — предмет или операция домена (`ota::transfer`, `canopen::dictionary`,
+`modbus::map`), а не тип внутри и не роль/слой (`logic`, `wiring`, `config`,
+`shared`, `types`, `utils`). Если имя модуля — только имя типа, модуль
+сливается с соседним, а не переименовывается в синоним.
+
+В одном крейте не бывает двух модулей с одним именем для разных логических
+единиц. Одинаковое имя под разными родителями допустимо, только если это одно
+и то же понятие, уточнённое протоколом. Подмодуль — самостоятельная единица,
+которую родитель использует; он не дополняет родителя и не получает смысл от
+его имени. Кросс-доменный адаптер живёт на стороне протокола, который
+обращается к узлу (`canopen::dictionary`, `modbus::map`, `protobuf::service`),
+а не внутри узла: узел объявляет вход, взаимодействующая сторона его реализует.
+
+Размер модуля — не причина дробить: `mod tests` и `mod fake` в счёте не
+участвуют. Делить нужно, когда у модуля несколько ответственностей, а не когда
+он длинный.
+
+## Массив — тип хранения, срез — тип интерфейса
+
+`&[T; N]` — когда длина входит в контракт (seed, подпись, запись формата) или
+значение лежит в `static`/слоте и обязано быть `Sized`. `&[T]` — на границе
+интерфейса (`NorFlash`, `Read`/`Write`, `FrameLink`). Замена массива срезом
+переносит проверку длины в рантайм и не сокращает вызовы: `&[T; N]` и так
+коэрцится к `&[T]` неявно.
 
 ## Фейки
 
@@ -147,25 +174,27 @@ Host-тесты гоняются `cargo xtask test host` — то есть `carg
 
 - Фейк, который нужен только тестам своего крейта, — `#[cfg(test)] mod fake`
   (подмодули и так видят его приватным; `pub(crate)` — если его берут модули
-  вне родителя{% if has_modbus == "true" %}, как `domain::server::fake`{% endif %})
+  вне родителя{% if has_modbus == "true" %}, как `domain::modbus::fake`{% endif %})
 {%- assign sep = ": " %}
-{%- if ota == "true" %}{{ sep }}разделы обновления в памяти — `domain::ota::fake` (их делят `ota`,
-  `ota::download` и `ota::update`){% assign sep = ", " %}{% endif %}
+{%- if ota == "true" %}{{ sep }}разделы обновления в памяти — `domain::ota::fake` (их делят `ota`
+  и `ota::transfer`){% assign sep = ", " %}{% endif %}
 {%- if has_net == "true" %}{{ sep }}прогон двух стеков `embassy-net` на кабеле —
   `adapters_logic::net::fake` ({% if has_tcp == "true" %}`net::tcp`{% if has_udp == "true" %} и {% endif %}{% endif %}{% if has_udp == "true" %}`net::udp`{% endif %}){% endif %}.
 {%- if has_usb == "true" or has_net == "true" or ota == "true" or settings_port == "true" %}
+{%- if has_usb == "true" or has_net == "true" %}
+- Заглушка драйвера, которая едет в прошивку, — `pub mod stub` в `adapters-hw`
+  без фичи{% if has_usb == "true" %}: драйвер USB без шины (`usb::stub`){% endif %}{% if has_net == "true" %}{% if has_usb == "true" %},{% endif %} устройство без линка
+  (`net::stub`){% endif %}. В слотах платы их отдаёт `bsp::stub`.
+{%- endif %}
 - Фейк, который берут другие крейты, — `#[cfg(any(test, feature = "fake"))]
   pub mod fake` в `adapters-hw`
 {%- assign sep = ": " %}
-{%- if has_usb == "true" %}{{ sep }}драйвер USB без шины (`usb::fake`){% assign sep = ", " %}{% endif %}
-{%- if has_net == "true" %}{{ sep }}устройство без линка и кабель между двумя стеками
-  (`net::fake`, `net::fake::cable`){% assign sep = ", " %}{% endif %}
+{%- if has_net == "true" %}{{ sep }}кабель между двумя стеками
+  (`net::fake::cable`){% assign sep = ", " %}{% endif %}
 {%- if ota == "true" or settings_port == "true" %}{{ sep }}флеш в памяти с семантикой NOR
   (`flash::fake::MemFlash` — его берут тесты {% if ota == "true" %}`domain::ota`, `domain::ota::boot`{% if settings_port == "true" %} и {% endif %}{% endif %}{% if settings_port == "true" %}`domain::settings`{% endif %}; готового
   мока `NorFlash` в экосистеме нет — `embedded-hal-mock` флеш не покрывает){% endif %}.
-  Фичу `fake` включают dev-зависимости `domain` и `adapters-logic`{% if has_usb == "true" or has_net == "true" %}, а
-  в прошивке — `bsp`: те же драйверы стоят заглушками в слотах платы
-  (`bsp::stub`){% endif %}.
+  Фичу `fake` включают dev-зависимости `domain` и `adapters-logic`.
 {%- endif %}
 - Вспомогательный тип одного теста (сценарный драйвер, сокет-брокер) — в самом
   `mod tests`; `mod fake` — для фейков, на которых стоит набор тестов модуля

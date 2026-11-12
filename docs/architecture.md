@@ -50,15 +50,15 @@ HAL (`bsp::board::init_peripherals` — на умолчаниях `embassy-stm32
 {%- if ota == "true" or config == "true" %}
 
 Тесты на плате (`target-tests`) тоже зовут `domain`: собирают над рычагами платы
-те же адаптеры, что приложение ({% if ota == "true" %}`ota::Updater`{% if config == "true" %}, {% endif %}{% endif %}{% if config == "true" %}`settings::Settings`{% endif %}).
+те же адаптеры, что приложение ({% if ota == "true" %}`domain::ota::Updater`{% if config == "true" %}, {% endif %}{% endif %}{% if config == "true" %}`settings::Settings`{% endif %}).
 {%- endif %}
 
 Как решить, куда класть новую зависимость/код:
 - Знает имя чипа или блока, раскладку флеша, создаёт DMA-буфер под железо,
   строит объект драйвера микросхемы на плате → `bsp`.
 - Обёртка над железом или стеком драйвера без чипа — то, из чего плата
-  собирает рычаг (устройство USB, стек сети, EEPROM как флеш), и фейки драйверов
-  для host-тестов (модули `fake`) → `adapters-hw`.
+  собирает рычаг (устройство USB, стек сети, EEPROM как флеш), заглушки
+  драйверов до железа (`stub`) и фейки для host-тестов (`fake`) → `adapters-hw`.
 - Реализация порта, когда реализаций несколько (каналы протоколов над потоком
   и датаграммой, транспорты Modbus) → `adapters-logic`; реализация, которая
   сама логика приложения (карты регистров Modbus — `Registers`), → `domain`.
@@ -69,7 +69,7 @@ HAL (`bsp::board::init_peripherals` — на умолчаниях `embassy-stm32
   (кадрирование, клиент, хранилище), требует `Spawner` → `app`.
 - Всё остальное (FSM, конкурентные примитивы, конфигурация, коллекции, RPC-протокол
   между задачами, конкретные типы логики{% if ota == "true" or settings_port == "true" or net_services contains "mqtt" %} —
-  {% assign sep = "" %}{% if ota == "true" %}{{ sep }}адаптер обновления `ota::Updater`{% assign sep = ", " %}{% endif %}{% if settings_port == "true" %}{{ sep }}хранилище настроек `settings::Settings`{% assign sep = ", " %}{% endif %}{% if net_services contains "mqtt" %}{{ sep }}клиент брокера `mqtt::Tcp`{% endif %}{% endif %}) → `domain`,
+  {% assign sep = "" %}{% if ota == "true" %}{{ sep }}адаптер обновления `domain::ota::Updater`{% assign sep = ", " %}{% endif %}{% if settings_port == "true" %}{{ sep }}хранилище настроек `settings::Settings`{% assign sep = ", " %}{% endif %}{% if net_services contains "mqtt" %}{{ sep }}клиент брокера `mqtt::Tcp`{% endif %}{% endif %}) → `domain`,
   даже если результат используется только из `cross`.
 
 ### Узлы — фрагменты в `domain`
@@ -112,7 +112,7 @@ Compose-site — модули задач (подмодули `crates-cross/app/s
 фрагмент ({% if graph == "true" %}`ctx: $crate::heartbeat::HeartbeatCtx, task: $crate::heartbeat::task;`{% else %}`ctx: $crate::<узел>::<Узел>Ctx, task: $crate::<узел>::task;`{% endif %}). Внутри — по смыслу узла:
 периодический цикл «подожди такт, поработай» (`heartbeat`, `cpu_load`;
 тактовая сетка — `domain::tick`), цикл «подожди событие, обработай»
-(`server`, `protobuf`, `mqtt`), одно бесконечное действие (`net`, `usb`,
+(`modbus`, `protobuf`, `mqtt`), одно бесконечное действие (`net`, `usb`,
 `http`, `ssh`, `console`), гонка источников с приоритетом порядка (`canopen` —
 вложенные `select`: такт важнее исхода OTA важнее кадров) или
 typestate-состояния (`ota`: `Idle`/`Receiving`/`Ready` — типы, переход —
@@ -136,8 +136,8 @@ consuming-метод текущего состояния, разводка (со
 
 ### Логика — функции над портами и конкретными типами; трейты — только в `ports`
 
-{% if ota == "true" %}Приём образа (`download::Transfer` — данные состояния `Receiving`, шаги — его
-методы), применение обновления (`update::apply`),
+{% if ota == "true" %}Приём образа (`ota::Transfer` — данные состояния `Receiving`, шаги — его
+методы), применение обновления (`ota::apply`),
 версия (`ota::version::*`), решение bootloader'а (`ota::boot::*`) — функции, а циклы узлов зовут их. {% endif %}`ports` —
 все трейты проекта (каждый — под несколько реализаций, ниже) и то, без чего
 контракт не выразить: типы из сигнатур трейтов{% if link_port == "true" %} (`LinkError`){% endif %} и форматы,
@@ -145,19 +145,19 @@ consuming-метод текущего состояния, разводка (со
 `PendingImage` читает bootloader, `layout_fingerprint` считает и `cargo xtask
 build`){% endif %}. В `domain` трейтов нет. Всё, что нужно только логике, — в `domain`,
 подмодулем рядом с узлом, которому оно нужно{% if ota == "true" %}: команды узлу OTA и исходы
-(`ota::command`), ошибки приёма и применения (`download::DownloadError`,
-`update::UpdateError`){% endif %}{% if modbus_master == "true" %}; ошибка запроса master'а
+(`ota::commands`), ошибки приёма и применения (`ota::DownloadError`,
+`ota::UpdateError`){% endif %}{% if modbus_master == "true" %}; ошибка запроса master'а
 (`modbus::master::RequestError`) — тоже здесь, в `ports` — только то, что
 сверяет транспорт (`MasterError`){% endif %}. Причина — реализация такие типы не видит:
 в `ports` всякая их правка задевала бы `adapters-logic` и `bsp` зря. Там же,
 в `domain`, — контексты узлов{% if graph == "true" %} (их эмитит фрагмент), состояния
 узлов (typestate-типы) и входы фрагментов ({% if ota == "true" %}`OtaWiring`, {% endif %}`IdleMeter`){% else %} и состояния узлов{% endif %}{% if protocol != "none" and protocol != "cli" %},
-включая обработчик протокола{% if graph == "true" %} на этом входе{% endif %}: {% if protocol == "protobuf" %}`protobuf::Service` (разводит команды по обработчикам `protobuf::info`{% if ota == "true" %} и `ota::protobuf`{% endif %}){% elsif protocol == "modbus" %}`modbus::Slave` над картой
+включая обработчик протокола{% if graph == "true" %} на этом входе{% endif %}: {% if protocol == "protobuf" %}`protobuf::Service` (разводит команды по обработчикам `protobuf::service`{% if ota == "true" %} и `protobuf::service::OtaHandler`{% endif %}){% elsif protocol == "modbus" %}`modbus::Slave` над картой
 `modbus::EmptyRegisters` (карта одна на все узлы `MODBUS_*` — `docs/modules/app.md`){% else %}`canopen::dictionary` (словарь объектов){% endif %} — логика приложения,
 которую проект правит под себя, поэтому живёт в `domain`, а не в `app`{% endif %}.
 Состояние внутри одного вызова функции живёт в её локальных переменных, а не в
 структуре; то, что переживает вызов, — данные состояния узла{% if ota == "true" %}
-(`download::Transfer` у `Receiving`: длина, записанное, хвост до слова флеша){% endif %}.
+(`ota::Transfer` у `Receiving`: длина, записанное, хвост до слова флеша){% endif %}.
 
 ### Адаптеры делятся по одному признаку — нужен ли чип
 
@@ -166,8 +166,8 @@ build`){% endif %}. В `domain` трейтов нет. Всё, что нужно
 только `ports`.
 {%- capture hw_list %}{% if has_usb == "true" %}, устройство USB с потоком CDC (`adapters_hw::usb::Usb::new`){% endif %}{% if has_net == "true" %}, стек сети с фоновой работой (`adapters_hw::net::Net`){% endif %}{% if config_store == "eeprom" %}, EEPROM как `NorFlash`
 (`adapters_hw::eeprom::Eeprom`){% endif %}{% endcapture %}
-{%- capture logic_list %}{% if cobs_used == "true" %}, кадрирование потока (`adapters_logic::cobs::Cobs`){% endif %}{% if has_modbus == "true" %}, транспорты Modbus
-(`adapters_logic::modbus`){% endif %}{% if has_net == "true" %}, транспорты над сокетами `embassy-net` (`adapters_logic::net`){% endif %}{% endcapture %}
+{%- capture logic_list %}{% if cobs_used == "true" %}, кадрирование потока (`adapters_logic::cobs::Cobs`){% endif %}{% if has_modbus == "true" %}, протокол Modbus
+и каналы (`adapters_logic::modbus`){% endif %}{% if has_net == "true" %}, транспорты над сокетами `embassy-net` (`adapters_logic::net`){% endif %}{% endcapture %}
 {%- if hw_list != "" %} Обёртки над железом в проекте: {{ hw_list | remove_first: ", " }}.{% endif %}
 {%- if logic_list != "" %} Реализации портов: {{ logic_list | remove_first: ", " }}.{% endif %}
 {%- if adapters_hw == "true" or adapters_logic == "true" %}
@@ -199,7 +199,7 @@ build`){% endif %}. В `domain` трейтов нет. Всё, что нужно
 {%- assign sep = "" %}
 {%- capture types %}
 {%- if protocol_link == "true" %}{{ sep }}канал протокола (`adapters_logic::…`, `docs/modules/app.md`){% assign sep = ", " %}{% endif %}
-{%- if ota == "true" %}{{ sep }}`domain::ota::Updater<bsp::FirmwareFlash>`{% assign sep = ", " %}{% endif %}
+{%- if ota == "true" %}{{ sep }}`domain::ota::storage<bsp::FirmwareFlash>`{% assign sep = ", " %}{% endif %}
 {%- if config == "true" %}{{ sep }}`domain::settings::Settings<bsp::ConfigFlash>`{% assign sep = ", " %}{% endif %}
 {%- endcapture %}
 {%- if types != "" %} Тип адаптера —
@@ -254,7 +254,7 @@ Liquid'ом в коде логики (ниже, «Liquid в корневом wor
 
 Одна реализация — конкретный тип прямо в узле, и тест идёт над ним же
 {%- assign sep = " (" %}
-{%- if ota == "true" %}{{ sep }}`ota::Updater` — над разделами в памяти с отказами по заказу{% assign sep = ", " %}{% endif %}
+{%- if ota == "true" %}{{ sep }}`domain::ota::Updater` — над разделами в памяти с отказами по заказу{% assign sep = ", " %}{% endif %}
 {%- if settings_port == "true" %}{{ sep }}`settings::Settings` — над флешем в памяти{% assign sep = ", " %}{% endif %}
 {%- if net_services contains "mqtt" %}{{ sep }}`mqtt::Tcp` — по кабелю между двумя стеками{% assign sep = ", " %}{% endif %}
 {%- if has_modbus == "true" %}{{ sep }}узел протокола — над настоящим `modbus::Slave`{% assign sep = ", " %}{% endif %}
@@ -291,7 +291,7 @@ Liquid'ом в коде логики (ниже, «Liquid в корневом wor
 
 **Типы ресурсных слотов** узла OTA — параметры фрагмента: `name: OTA_FRAG<F, R, const PARKED: usize>`,
 а compose-site подставляет их в `fragments:` угловыми скобками
-(`::domain::OTA_FRAG<::domain::ota::Updater<bsp::FirmwareFlash>, bsp::reset::Reboot, OTA_CMD_PARKED>`). Слот — `static`, тип ему
+(`::domain::OTA_FRAG<::domain::ota::storage<bsp::FirmwareFlash>, bsp::reset::Reboot, OTA_CMD_PARKED>`). Слот — `static`, тип ему
 нужен, а конкретный тип знает только `cross`; generic-`static` не бывает, и
 параметр — единственный способ фрагмента назвать тип, которого он не видит.
 Bound'ов у параметров нет намеренно: их держит сигнатура `ota::task`, и rustc
@@ -502,7 +502,7 @@ bootloader'е (`crates-cross/boot`), который подпись и прове
 **Применение обновления — методы адаптера.** `mark_updated` — метод
 `Updater`; запись о подписи (`ports::PendingImage`) кладётся обычным
 `write` в запасную страницу `DFU`, отдельного трейта под подпись нет. Порядок
-проверок перед вызовом — `domain::ota::update::apply`, и он
+проверок перед вызовом — `domain::ota::apply`, и он
 host-тестируем. Саму подпись
 проверяет bootloader (`domain::ota::boot::screen_update`) — `docs/ota.md`.
 {%- endif %}
@@ -551,7 +551,7 @@ host`), поэтому их исходник обязан оставаться �
 {%- assign sep = "" %}
 {%- capture concrete %}
 {%- if protocol_link == "true" %}{{ sep }}канал протокола из `adapters_logic` (`docs/modules/app.md`){% assign sep = ", " %}{% endif %}
-{%- if ota == "true" %}{{ sep }}`domain::ota::Updater<bsp::FirmwareFlash>`{% assign sep = ", " %}{% endif %}
+{%- if ota == "true" %}{{ sep }}`domain::ota::storage<bsp::FirmwareFlash>`{% assign sep = ", " %}{% endif %}
 {%- if config == "true" %}{{ sep }}`domain::settings::Settings<bsp::ConfigFlash>`{% assign sep = ", " %}{% endif %}
 {%- endcapture %} Рычагу платы его даёт `bsp` ({% if levers != "" %}{{ levers }}{% else %}`pub type X = ...`{% endif %})
 {%- if concrete != "" %}, адаптеру — конкретный тип прямо {% if graph == "true" %}во входе узла{% else %}в задаче{% endif %} ({{ concrete }} — модуля

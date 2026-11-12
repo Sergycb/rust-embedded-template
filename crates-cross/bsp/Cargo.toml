@@ -29,22 +29,22 @@ time-driver = ["embassy-stm32/time-driver-any"]
 # `unstable-pac` — там, где `bsp` читает и пишет регистры сам (src/reset.rs — флаги
 # сброса `RCC`{% if bank_switch != "" or cpu_freq_boost == "true" %}; src/{% if cpu_freq_boost == "true" %}clocks.rs{% if bank_switch != "" %}, src/{% endif %}{% endif %}{% if bank_switch != "" %}banks.rs{% endif %} — option bytes{% endif %}{% if cache contains "icen" or cache contains "icache" %};
 # src/cache.rs — `FLASH_ACR` и `ICACHE`{% endif %}{% if graph == "true" and dbgmcu_freeze != "" %};
-# src/wdg.rs — заморозка IWDG в `DBGMCU`{% endif %}{% if shared_flash == "true" %}{% if cache contains "icache" or cache contains "dcen" %};
-# src/flash.rs — сброс кэша после стирания{% endif %}{% endif %}): их нет в API HAL, а сырой адрес вместо
+# src/wdg.rs — заморозка IWDG в `DBGMCU`{% endif %}{% if shared_flash == "true" %}{% if cache contains "scb_d" or cache contains "icache" or cache contains "dcen" %};
+# src/cache.rs — сброс кэша после стирания{% endif %}{% endif %}): их нет в API HAL, а сырой адрес вместо
 # типизированного регистра `stm32-metapac` ничем не проверялся бы.
 embassy-stm32 = { workspace = true, features = ["unstable-pac"] }
 {%- if has_usb == "true" or has_net == "true" or config_store == "eeprom" %}
 # Обёртки над железом, из которых плата собирает свои рычаги, — по строке на рычаг:
 {%- if config_store == "eeprom" %}
-#   EEPROM как `NorFlash` (`adapters_hw::eeprom::Eeprom`, src/flash.rs)
+#   EEPROM как `NorFlash` (`adapters_hw::eeprom::Eeprom`, src/eeprom.rs)
 {%- endif %}
 {%- if has_usb == "true" %}
 #   USB-устройство с потоком CDC (`adapters_hw::usb`, src/usb.rs)
-#   драйвер-заглушка до USB-блока (`adapters_hw::usb::fake`, фича `fake`, src/stub.rs)
+#   драйвер-заглушка до USB-блока (`adapters_hw::usb::stub`, src/stub.rs)
 {%- endif %}
 {%- if has_net == "true" %}
 #   стек с фоновой работой (`adapters_hw::net::Net`, src/net.rs)
-#   устройство-заглушка до Ethernet (`adapters_hw::net::fake`, фича `fake`, src/stub.rs)
+#   устройство-заглушка до Ethernet (`adapters_hw::net::stub`, src/stub.rs)
 {%- endif %}
 {%- if has_usb == "true" or has_net == "true" %}
 {%- if has_usb == "true" and has_net == "true" %}
@@ -58,7 +58,7 @@ embassy-stm32 = { workspace = true, features = ["unstable-pac"] }
 # плата.
 {%- endif %}
 {%- endif %}
-adapters-hw = { workspace = true{% if has_usb == "true" or has_net == "true" %}, features = ["fake"]{% endif %} }
+adapters-hw = { workspace = true }
 {%- endif %}
 {%- if ota == "true" or has_can == "true" %}
 # Из `ports` плата реализует трейты, которых нет в `embedded-hal`:{% if ota == "true" %}
@@ -111,8 +111,8 @@ embassy-embedded-hal = { workspace = true }
 {%- if shared_flash == "true" %}
 {%- if cache contains "scb_d" or cache contains "icache" or cache contains "dcen" or config_store == "eeprom" %}
 # {% if config_store == "eeprom" %}Трейт `Storage` — доступ к EEPROM под обёрткой `adapters_hw::eeprom::Eeprom`
-# (`EepromFlash` в src/flash.rs){% else %}Трейты `NorFlash` — обёртка флеша чипа, сбрасывающая кэш после стирания и
-# записи (`Coherent` в src/flash.rs){% endif %}.
+# (`EepromFlash` в src/eeprom.rs){% else %}Трейты `NorFlash` — обёртка флеша чипа, сбрасывающая кэш после стирания и
+# записи (`Coherent` в src/cache.rs){% endif %}.
 embedded-storage = { workspace = true }
 {%- endif %}
 {%- endif %}

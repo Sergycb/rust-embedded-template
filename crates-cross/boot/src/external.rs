@@ -26,16 +26,16 @@ const _: () = assert!(
 /// Буфер обмена: кратен слову записи и внутреннего флеша (`ACTIVE`), и
 /// внешнего (`DFU`), и не меньше слова `STATE` — требования `prepare_boot`.
 /// Оба слова — степени двойки, так что общее кратное — большее из них.
-const BUFFER_SIZE: usize = if <ExternalFlash as NorFlash>::WRITE_SIZE > {{write_size}} {
+const BUFFER_SIZE: usize = if <ExternalFlash as NorFlash>::WRITE_SIZE > {{swap_buffer}} {
     <ExternalFlash as NorFlash>::WRITE_SIZE
 } else {
-    {{write_size}}
+    {{swap_buffer}}
 };
 
 const _: () = assert!(
     BUFFER_SIZE.is_multiple_of(embassy_stm32::flash::WRITE_SIZE),
     "буфер обмена не кратен слову записи внутреннего флеша (embassy_stm32::flash::WRITE_SIZE): \
-     проверьте write_size из генерации"
+     проверьте swap_buffer из генерации"
 );
 
 /// Драйвер внешней флеши, на которой лежат `STATE` и `DFU`: та же W25Q, что

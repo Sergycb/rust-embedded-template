@@ -58,7 +58,7 @@ pub(crate) fn format_memory_layouts(
             }
             out.push_str("        ],\n");
         }
-        push_field(&mut out, "write_size", &m.write_size.to_string());
+        push_field(&mut out, "swap_buffer", &m.swap_buffer.to_string());
         push_field(&mut out, "page_size", &m.page_size.to_string());
         // Строкой, а не булевым: `variable::get` в rhai-хуках читает только
         // строки, и весь остальной обмен с шаблоном устроен так же.

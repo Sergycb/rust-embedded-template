@@ -12,7 +12,7 @@ use picoserve::routing::post;
 
 use crate::device::DeviceInfo;
 // {%- if ota == "true" %}
-use crate::ota::command::Progress;
+use crate::ota::commands::Progress;
 use crate::ota::{Client, Command};
 // {%- endif %}
 
@@ -154,7 +154,7 @@ mod tests {
     use embassy_net::tcp::TcpSocket;
     use embassy_time::{Duration, MockDriver};
     // {%- if ota == "true" %}
-    use crate::ota::command::{Progress, Rejection};
+    use crate::ota::commands::{Progress, Rejection};
     use crate::ota::{Command, Reply};
     use supervisor::Server;
     // {%- endif %}

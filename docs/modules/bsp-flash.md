@@ -2,7 +2,7 @@
 узлам.
 
 {% capture flash_users %}{% if ota == "true" and ota_store != "external" %}, флешу под
-обновлением (`DFU` и `BOOTLOADER_STATE`){% endif %}{% if config == "true" and config_store == "flash" %}, разделу `CONFIG` настроек{% elsif config == "true" and config_store == "eeprom" %}, EEPROM настроек (она пишется через тот же контроллер){% endif %}{% endcapture %}Контроллер флеша на чипе один, и работают с ним: {{ flash_users | remove_first: ", " }}. Поэтому объект
+обновлением (`DFU` и `BOOTLOADER_STATE`){% endif %}{% if config == "true" and config_store == "flash" %}, разделу `CONFIG` настроек{% elsif config == "true" and config_store == "eeprom" %}, EEPROM настроек (она пишется через тот же контроллер, модуль — `bsp::eeprom`){% endif %}{% endcapture %}Контроллер флеша на чипе один, и работают с ним: {{ flash_users | remove_first: ", " }}. Поэтому объект
 создаётся ровно один раз (`flash::new`, ему отдаётся группа `flash` из
 `resources.rs`), лежит в `static` под блокирующим замком (`Lock`), а
 куски флеша получают на него ссылки.
@@ -37,9 +37,8 @@
   запись за его границы отказывает, а не стирает {% if ota == "true" %}`ACTIVE` или bootloader{% else %}код приложения{% endif %}.
 {%- elsif config == "true" and config_store == "eeprom" %}
 
-- `config` (`ConfigFlash` — `adapters_hw::eeprom::Eeprom` над `EepromFlash`) —
-  внутренняя EEPROM как `NorFlash`, под замком того же контроллера; над ней
-  compose-site узла-потребителя строит хранилище (`domain::settings`).
+- `config` (`ConfigFlash`) — внутренняя EEPROM как `NorFlash`; носитель,
+  обёртка над замком и `EepromFlash` — в `bsp::eeprom` (`docs/modules/bsp-eeprom.md`).
 {%- endif %}
 {%- assign ota_in = "" %}{% if ota == "true" and ota_store != "external" %}{% assign ota_in = "1" %}{% endif %}
 {%- assign cfg_in = "" %}{% if config == "true" and config_store == "flash" %}{% assign cfg_in = "1" %}{% endif %}
@@ -54,8 +53,8 @@
 `const`-assert'а на объём нет ни здесь, ни в `boot`{% else %}`const`-assert здесь{% if boot_partitioned == "true" %} и в `boot`{% endif %} проверяет это при сборке{% endif %}.
 {%- else %}
 
-EEPROM пишется через тот же контроллер: `EepromFlash` берёт замок
-`Lock` на каждую операцию.
+Внутренняя EEPROM настроек ходит к тому же контроллеру через [`Lock`] — её
+носитель собран в `bsp::eeprom` (`docs/modules/bsp-eeprom.md`).
 {%- endif %}
 
 `NoopRawMutex` подразумевает один исполнитель — подробности в `docs/flash.md`.

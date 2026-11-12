@@ -238,7 +238,7 @@ impl Board {
             firmware: {% if ota_store == "external" %}crate::external::firmware(external){% elsif dfu_bank == "true" %}crate::flash::firmware(flash, dfu_bank){% else %}crate::flash::firmware(flash){% endif %},
 {%- endif %}
 {%- if config == "true" %}
-            config: {% if config_store != "external" %}crate::flash::config(flash){% else %}crate::external::config(external){% endif %},
+            config: {% if config_store == "external" %}crate::external::config(external){% elsif config_store == "eeprom" %}crate::eeprom::config(flash){% else %}crate::flash::config(flash){% endif %},
 {%- endif %}
 {%- for l in xs %}
 {%- assign f = l | split: ":" %}

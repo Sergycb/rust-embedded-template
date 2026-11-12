@@ -30,7 +30,7 @@
   - [Банковая схема (`bank_mode`, блок `BANK_MODE`)](#банковая-схема-bank_mode-блок-bank_mode)
   - [Сторожевой таймер (`watchdog_peripheral`, блок `WATCHDOG`)](#сторожевой-таймер-watchdog_peripheral-блок-watchdog)
   - [Другие признаки чипа](#другие-признаки-чипа)
-  - [Раскладка памяти (`write_size`, `ota`, блок `MEMORY_LAYOUT`)](#раскладка-памяти-write_size-ota-блок-memory_layout)
+  - [Раскладка памяти (`swap_buffer`, `ota`, блок `MEMORY_LAYOUT`)](#раскладка-памяти-swap_buffer-ota-блок-memory_layout)
   - [OTA на внешней флеши (`ext_flash=yes`, набор `ext_*`)](#ota-на-внешней-флеши-ext_flashyes-набор-ext_)
   - [Чипы без OTA (`ota = "false"`)](#чипы-без-ota-ota--false)
   - [Оценка RAM (`ram_estimate`, таблица `RAM_COST`)](#оценка-ram-ram_estimate-таблица-ram_cost)
@@ -98,7 +98,7 @@
 ## Плейсхолдеры шаблона (`cargo-generate.toml`)
 
 Плейсхолдеры, подставляемые Liquid-рендером cargo-generate (`{{chip}}`, `{{target}}`,
-`{{write_size}}`, `{{rust_lib}}` и т.д.), — переменные pre-хука; полный список —
+`{{swap_buffer}}`, `{{rust_lib}}` и т.д.), — переменные pre-хука; полный список —
 вызовы `variable::set` в `chip-select.rhai`. В `[placeholders]` объявлен один `ci` —
 его cargo-generate задаёт сам, до хука. Остальные значения выставляет `variable::set` в
 `[hooks].pre`-скрипте `chip-select.rhai` — каскадном посимвольном выборе STM32
@@ -125,8 +125,8 @@
 `chip-select.rhai`): граф, который не влезает в раздел приложения, и интерфейс без блока
 у чипа не предлагаются, протоколы берутся из `PROTOCOL_INTERFACES` для выбранного
 транспорта; OTA и настройки, не помещающиеся на чип, остаются в меню с пометкой
-`DOES NOT FIT` — их выбор включает ручную раскладку (хук ставит `write_size`, как при
-`--define write_size=...`). Объявить эти вопросы в `[placeholders]` нельзя: `cargo-generate`
+`DOES NOT FIT` — их выбор включает ручную раскладку (хук ставит `swap_buffer`, как при
+`--define swap_buffer=...`). Объявить эти вопросы в `[placeholders]` нельзя: `cargo-generate`
 задал бы их сам до выбора чипа (и требует `prompt` у любого объявленного).
 
 #### Транспорты и протоколы
@@ -182,8 +182,8 @@ Modbus. Через `--define` то же задаёт `links` (`parse_links()`, �
 заглушка, и ключ менялся бы при каждом старте). Пустые
 строки, когда не выбрано. Модули узлов невыбранных служб хук удаляет (`domain/src/http.rs`,
 `ssh.rs`, `mqtt.rs` с их каталогами, `app/src/net.rs` без служб вовсе (модули служб в нём — Liquid),
-`device.rs` без служб и protobuf); узел протокола `domain/src/server.rs` (Modbus slave) —
-без Modbus. Сокеты стека считает `bsp::net::SOCKETS` из чисел генерации: DHCP-клиент,
+`device.rs` без служб и protobuf); `domain/src/modbus.rs` с
+каталогом — без Modbus. Сокеты стека считает `bsp::net::SOCKETS` из чисел генерации: DHCP-клиент,
 сетевые транспорты (`net_sockets`), по сокету на копию пула REST (`http_connections` →
 `HTTP_CONNECTIONS`), на SSH и на MQTT. Секреты
 (`rest-token.txt`, `ssh-host-key.bin`, заготовка `mqtt.toml`) создаёт `cargo xtask`
@@ -299,7 +299,7 @@ GH_TOKEN: {% raw %}${{ secrets.GITHUB_TOKEN }}{% endraw %}
 носитель настроек (`ConfigFlash` в `bsp::flash` или `bsp::external`). На чипе, куда
 выбранное не помещается, меню помечает пункт `DOES NOT FIT` и по умолчанию ставит «нет»,
 а явное «да» (в меню или `--define`) переводит хук на ручную раскладку (как
-`--define write_size=...`) с причиной под «Выбранное не помещается» (см. «Чипы без OTA»
+`--define swap_buffer=...`) с причиной под «Выбранное не помещается» (см. «Чипы без OTA»
 ниже). Для `ota` такое «да» окончательное — `ota` остаётся "true". Для `config` — только
 на EEPROM и внешней флеши: раздел во внутреннем флеше живёт по границам из `memory.x`,
 который в ручной раскладке пишет человек, поэтому там хук ставит `config` = "false" и
@@ -326,7 +326,7 @@ bootloader и `STATE`. Отсюда и второй набор цифр в `MEMO
 (`PACKAGE_VERSION` и свойства образа `Image` для него; без OTA его удаляет `post-script.rhai`). Режима без подписи нет и
 в `domain`. Подпись проверяет bootloader
 (`domain::ota::boot::screen_update`), приложение — только длину, занятость и версию
-(`domain::ota::update::apply`), см. docs/ota.md.
+(`domain::ota::apply`), см. docs/ota.md.
 
 ### Modbus master (`modbus_master`)
 
@@ -335,7 +335,8 @@ bootloader и `STATE`. Отсюда и второй набор цифр в `MEMO
 `true`/`false` на входе — ошибка), хук приводит ответ к `"true"`/`"false"`. Смысл он имеет только при
 `protocol=modbus`: меню спрашивает его только тогда, а `--define modbus_master=yes` при другом
 протоколе — ошибка (`no` принимается). Master не получают ни protobuf, ни CANopen. «true» оставляет `ports::ModbusClient`/`MasterError`,
-`domain::modbus::master`, клиентские impl'ы транспортов `Rtu`/`Tcp`/`Udp` (в них же
+`domain::modbus::master`, клиентские impl'ы каналов `Rtu`/`Tcp`/`Udp` в
+`adapters-logic/src/modbus/client.rs` (в них же
 слив `MAX_DRAIN` RTU и `master_error`) и их тесты; «false» вырезает всё это
 Liquid-блоками `// {%- if modbus_master == "true" %}` … `// {%- endif %}` (в
 комментариях — правило корневого workspace, `docs/architecture.md`), а `domain/src/modbus/master.rs`
@@ -370,7 +371,7 @@ MQTT) с порядком старта и номерами клиентов OTA;
 `tasks/{net,http,ssh,mqtt}.rs`) был вторым способом сделать одно, и его держали только
 тесты шаблона. Тест каскада — `the_network_needs_the_graph`.
 
-В ветке ручной раскладки (`--define write_size=...`) размер раздела знает только
+В ветке ручной раскладки (`--define swap_buffer=...`) размер раздела знает только
 человек, поэтому ответ пользователя проходит как есть: не влезет — скажет линкер.
 
 ### Выбор чипа (`chip_feature`, `chip`/`cpu`/`target`)
@@ -628,7 +629,7 @@ D2 с `0x30000000`, мимо AXI-SRAM ядра CM7. `DMA_NC` не берётся
 собирается короче (`pc`/`lr`). Тест — `baseline_cores_are_marked`. Обработчик остаётся у всех: `#[exception]` экспортирует имя, и
 `app` держит его в образе без ссылок; на плате фолт не вызывался.
 
-### Раскладка памяти (`write_size`, `ota`, блок `MEMORY_LAYOUT`)
+### Раскладка памяти (`swap_buffer`, `ota`, блок `MEMORY_LAYOUT`)
 
 `embassy-stm32` уже зависит (фича `metadata`) от `stm32-metapac`, а тот для каждого чипа
 несёт `chips/<chip>/metadata.rs` — обычный Rust-файл с литералом `Metadata { memory: &[&[
@@ -640,8 +641,8 @@ MemoryRegion { address, size, settings: Some(FlashSettings { erase_size, write_s
 том поиске ~194 чипа молча выпадали из генерации.
 
 Отсюда `chip-data-gen` считает адреса/размеры (`compute_memory_layout` +
-`compute_ota_partitions`) и пишет их в `MEMORY_LAYOUT`, а хук в конце — если `write_size`
-не задан через `--define` (запись есть у каждого чипа, без неё хук делает `abort`) — выставляет `write_size`/`ota` и
+`compute_ota_partitions`) и пишет их в `MEMORY_LAYOUT`, а хук в конце — если `swap_buffer`
+не задан через `--define` (запись есть у каждого чипа, без неё хук делает `abort`) — выставляет `swap_buffer`/`ota` и
 пишет `memory.x` через `file::write` (во временную копию шаблона ДО рендера — то самое
 "the template folder", о котором предупреждает документация `file::write`, не в
 `crates-cross/*/memory.x` этого репозитория).
@@ -756,15 +757,14 @@ STM32CubeProgrammer (Option bytes → Secure) — docs/flash.md, «Память 
 3. `DFU - ACTIVE >= PAGE_SIZE` — запас алгоритма swap;
 4. `2 + 4 * (ACTIVE / PAGE_SIZE) <= BOOTLOADER_STATE / NorFlash::WRITE_SIZE`.
 
-`PAGE_SIZE` здесь — **не** плейсхолдер `write_size`, а `max(ACTIVE::ERASE_SIZE,
+`PAGE_SIZE` здесь — **не** плейсхолдер `swap_buffer`, а `max(ACTIVE::ERASE_SIZE,
 DFU::ERASE_SIZE)`, который `embassy-boot` вычисляет сам; обе партиции живут поверх
 цельного `Flash` (`crates-cross/boot/src/main.rs`), у которого `NorFlash::ERASE_SIZE =
 MAX_ERASE_SIZE` всего чипа, — либо поверх `ErasePage<_, SWAP_PAGE_SIZE>`, если страницу
-обмена расширили (абзац про `swap_paged` ниже). Плейсхолдер `write_size` — это const generic
+обмена расширили (абзац про `swap_paged` ниже). Плейсхолдер `swap_buffer` — это const generic
 `BootLoader::prepare::<_,_,_,N>`, размер буфера подкачки: обязан делить `PAGE_SIZE`, быть
 кратным `NorFlash::WRITE_SIZE` и не меньше него — `NorFlash::WRITE_SIZE` чипа (4/8/32)
-удовлетворяет всем трём, его и подставляем. Имя плейсхолдера осталось прежним ради
-совместимости с проектами, задающими его через `--define`.
+удовлетворяет всем трём, его и подставляем.
 
 Четвёртый assert — причина, по которой `BOOTLOADER_STATE` нельзя делать «просто одним
 сектором»: в нём лежит журнал прогресса swap, по слову на страницу `ACTIVE` в каждом из
@@ -828,7 +828,7 @@ bootloader'а не меньше `BOOTLOADER_MIN`» стережёт `bootloader_
 меньше, чем суффиксов, а хук — `abort`, если записи для чипа в `chip-data/layout/` нет
 (разошлось правило семейства или каталог недоперегенерирован). Запасной ветки с
 `memory.x`-плейсхолдером у хука больше нет; ручная раскладка — только через `--define
-write_size=...`. `PANIC` выводится всегда,
+swap_buffer=...`. `PANIC` выводится всегда,
 когда есть раскладка, и это обязательство, а не удобство: паникёр release-профиля `app`
 (`panic-persist`) стоит безусловно, и без символов `_panic_dump_*` release-образ `app` не
 линкуется. У `boot` паникёр свой — сброс без дампа, символов `_panic_dump_*` нет, — но
@@ -840,9 +840,9 @@ write_size=...`. `PANIC` выводится всегда,
 генерируются в заведомо несобираемый проект». Других резервов в RAM нет, кроме `DMA_NC` у
 ядер M7 («Регион `DMA_NC` и кэш данных M7» выше): прежний `PERSIST`
 (счётчик запусков) и символ `_hw_ram_start` (замер стека) ушли вместе со своими
-потребителями. Ручной override — как и у `chip`/`cpu`/`target`: `--define write_size=...`
+потребителями. Ручной override — как и у `chip`/`cpu`/`target`: `--define swap_buffer=...`
 отключает автогенерацию memory.x целиком (адреса привязаны именно к вычисленному
-`write_size`, доверять чужому нельзя) — тогда всё, как раньше, вручную.
+`swap_buffer`, доверять чужому нельзя) — тогда всё, как раньше, вручную.
 
 Регрессионные тесты на всё перечисленное — `chip-data-gen/tests/cascade.rs`
 (`memory_layout_invariants_hold_for_every_chip` проходит по всем чипам сразу) и юнит-тесты
@@ -863,7 +863,7 @@ write_size=...`. `PANIC` выводится всегда,
 выставляет `ota_store` (на него смотрят `boot`, `bsp::flash`, `bsp::external`,
 `target-tests`, `xtask`) и `ext_page_size`.
 
-В ветке с ручной раскладкой (`write_size` через `--define`) `ext_page_size` — 4 KiB
+В ветке с ручной раскладкой (`swap_buffer` через `--define`) `ext_page_size` — 4 KiB
 (сектор внешней NOR) с подсказкой вписать `max(сектор чипа, стирание драйвера)`;
 `state_erase_size` там пуст, и хук просит вписать `STATE_ERASE_SIZE`.
 
@@ -931,7 +931,7 @@ OTA у всех подряд незамеченным.
 протокол своего вида), `--define links`/`interface` с ним — ошибка, а отсев чипов до
 каскада по `links` или паре `interface` + `protocol` такие чипы не показывает (пара
 без `protocol` оценивается как транспорт без протокола). Проект без транспортов не отвергается
-никогда. С ручной раскладкой (`write_size`, невлезающие OTA или настройки) регион RAM
+никогда. С ручной раскладкой (`swap_buffer`, невлезающие OTA или настройки) регион RAM
 пишет человек — оценки нет (`ram_estimate` пуст).
 
 Числа в таблице — замеренные. `cargo xtask build` печатает факт строкой `ram:`, хук —
@@ -1036,7 +1036,7 @@ Rust — rust-analyzer ругается на них прямо в репозит
 Что входит в набор и зачем — doc-комментарий в начале того же файла; точный список —
 сама функция (число конфигураций растёт вместе с ветками, здесь его не повторяем).
 Часть конфигураций — `.render_only()`: генерация и проверки над файлами без сборки
-даже в полном прогоне — ручная раскладка (`write_size`, все три формы заготовок
+даже в полном прогоне — ручная раскладка (`swap_buffer`, все три формы заготовок
 `memory.x`: внутренняя OTA, внешняя, без OTA — собрать их нельзя, числа вписывает
 человек), внешняя флеш, на которой хранить нечего, и чипы остальных серий (F0, F2,
 F3, L1, U0, U3), у которых своих веток сборки нет. Дальше

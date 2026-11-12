@@ -28,10 +28,10 @@ pub mod cobs;
 
 // {%- endif %}
 // {%- if has_modbus == "true" %}
-/// Транспорты Modbus — каналы slave'а (`ports::FrameLink` с
-/// кадром «адрес и PDU») для узла протокола `domain::server`.
+/// Протокол Modbus и каналы над транспортами — RTU, TCP и UDP
+/// (`ports::FrameLink` с кадром «адрес и PDU») для узла `domain::modbus`.
 // {%- if modbus_master == "true" %}
-/// Они же реализуют порт master'а `ports::ModbusClient`.
+/// Каналы же реализуют порт master'а `ports::ModbusClient`.
 // {%- endif %}
 pub mod modbus;
 

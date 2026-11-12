@@ -8,12 +8,12 @@
 //! обновления — настоящий, над разделами в памяти.
 //!
 //! Образ приходит не по своему каналу: узел протокола переводит свои сообщения в
-//! [`Command`](crate::ota::command::Command) и отдаёт их узлу через один из двух
+//! [`Command`](crate::ota::commands::Command) и отдаёт их узлу через один из двух
 //! входов: `CMD` (`request:` фрагмента — клиент ждёт исхода в вызове) или `ASK`
 //! (`serves:` — клиент отправляет команду, не дожидаясь, и забирает исход из
 //! `reply()`, обслуживая тем временем свой канал). Для узла входы одинаковы:
 //! команды обоих идут в один цикл. На каждую команду узел отвечает
-//! [`Reply`](crate::ota::command::Reply) — её исходом, и протокол передаёт его хосту
+//! [`Reply`](crate::ota::commands::Reply) — её исходом, и протокол передаёт его хосту
 //! как есть: ни опрашивать статус, ни угадывать, дошёл ли кусок, хосту не
 //! нужно. Узел про протокол не знает, протокол — про флеш.
 //!
@@ -26,7 +26,7 @@
 //!   в порядке, стирает раздел под образ;
 //! * `Receiving` — идёт приём от одного клиента
 //!   ([`ClientId`](crate::ota::ClientId), транспорт): куски пишутся во флеш
-//!   шагами [`Transfer`](crate::ota::download::Transfer), `Finish` применяет образ;
+//!   шагами [`Transfer`](crate::ota::Transfer), `Finish` применяет образ;
 //!   `Start`/`Chunk`/`Finish` другого клиента получают `Busy`; владелец молчит
 //!   дольше [`SESSION_TIMEOUT`](crate::ota::SESSION_TIMEOUT) — приём брошен;
 //! * `Ready` — образ применён, обмен разделов ждёт сброса; новый `Start`
@@ -39,7 +39,7 @@
 //! так хост узнаёт исход образа до сброса, а не по факту перезагрузки.
 //!
 //! Образ всегда подписан: `Start` без подписи отвергается до стирания, а
-//! `Finish` применяет образ [`apply`](crate::ota::update::apply)
+//! `Finish` применяет образ [`apply`](crate::ota::apply)
 //! — с проверкой версии против версии этой прошивки, которую узел получает во
 //! входе
 // {%- if graph == "true" %}
@@ -51,55 +51,180 @@
 
 /// Команды узлу и исходы на них: куски образа, подпись, коды для хоста — см.
 /// модуль.
-pub mod command;
-
-/// Приём образа по кускам: сверка длины, стирание один раз, буферизация до
-/// слова флеша — шаги над адаптером [`Updater`], см. модуль.
-pub mod download;
+pub mod commands;
 
 /// Решение bootloader'а при старте и проверка подписи нового образа — над
 /// блокирующими разделами: у bootloader'а нет исполнителя. Функции над
 /// `embassy-boot`, не над портами — см. модуль.
 pub mod boot;
 
-/// Применение подписанного обновления: порядок проверок, в котором каждый
-/// отказ различим, и запись подписи для bootloader'а. Функция над адаптером
-/// [`Updater`] — см. модуль.
-pub mod update;
-
 /// Версия прошивки в 32 битах и правило приёма обновления (защита от
 /// отката). Образец границы: `bsp` достаёт четыре байта из флеша, `domain`
 /// решает, что с ними делать, — см. модуль.
 pub mod version;
 
-mod client;
-// {%- if has_protobuf == "true" %}
-/// Обработчик `OtaService` узла `PROTOBUF`: команды обновления в
-/// [`Command`], исход — в ответ схемы.
-pub(crate) mod protobuf;
-// {%- endif %}
-mod logic;
-mod rejection;
-mod timing;
 /// Адаптер обновления над `embassy-boot`: разделы `DFU` и `STATE` платы.
-mod updater;
+mod storage;
+/// Передача и применение образа: автомат узла, приём по кускам и проверки
+/// перед обменом разделов — см. модуль.
+mod transfer;
 
 // Типы входа `CMD` — в корне `domain::ota`: их полным путём называют фрагмент
 // и compose-site (`app`).
-pub use command::{Command, Reply};
+pub use commands::{Command, Reply};
 
 // Подмодули — по теме; их типы видны как `domain::ota::…`.
-pub use client::{CMD_BYTES, Client, ClientId, NodeLost, Request, cmd_parked};
-pub use logic::{Idle, Ready, Receiving, State};
-pub use timing::{REBOOT_GRACE, SESSION_TIMEOUT};
-pub use updater::{Error as UpdaterError, Updater};
+pub use storage::{Updater, UpdaterError};
+pub use transfer::{
+    DownloadError, Idle, LAYOUT_BYTES, REBOOT_GRACE, Ready, Receiving, SESSION_TIMEOUT, State,
+    Transfer, UpdateError, VERSION_BYTES, apply,
+};
 
 use embassy_futures::select::{Either, select};
 use embedded_storage_async::nor_flash::NorFlash;
 use ports::{Partitions, Reboot};
+use supervisor::{Asked, Requester, Served};
 
-use crate::ota::logic::Ota;
+use crate::ota::transfer::Ota;
 use crate::tick::deadline;
+
+/// Ёмкость входов `CMD` и `ASK`, байт: запрос (кусок
+/// [`CHUNK_BYTES`](crate::ota::commands::CHUNK_BYTES) со смещением и длиной,
+/// тег варианта, номер клиента) и ответ. Одно число на
+// {%- if graph == "true" %}
+/// граф (`request:` и `serves:` в `OTA_FRAG`). Во фрагменте оно записано
+/// литералом — макрос не принимает путь, — так что меняется в трёх местах.
+// {%- else %}
+/// фрагмент (`request:` и `serves:` в `OTA_FRAG`) и на `static` входов
+/// (`crates-cross/app/src/tasks/ota.rs`). Во фрагменте оно записано
+/// литералом — макрос не принимает путь, — так что меняется во всех этих
+/// местах вместе.
+// {%- endif %}
+pub const CMD_BYTES: usize = 144;
+
+const _: () = assert!(
+    size_of::<Request>() <= CMD_BYTES && size_of::<Reply>() <= CMD_BYTES,
+    "команда OTA не помещается во вход CMD: поднимите CMD_BYTES"
+);
+// Литерал `144` во фрагменте (`request:`/`serves:`) — макрос не принимает
+// путь: смена одного без другого разошлась бы молча.
+const _: () = assert!(CMD_BYTES == 144);
+
+/// Номер клиента входа `CMD` — транспорта, с которого пришла команда.
+///
+/// Транспорт, а не удалённый хост: два хоста на одной шине для узла — один
+/// клиент. Номера раздаёт compose-site (`app`), по одному на узел протокола.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct ClientId(pub u8);
+
+/// Запрос на вход `CMD`: команда и клиент, от которого она пришла.
+///
+/// Клиент нужен автомату, чтобы приём образа принадлежал одному транспорту:
+/// пока идёт приём, `Start`/`Chunk`/`Finish` другого клиента получают
+/// `Busy`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct Request {
+    /// Кто прислал команду.
+    pub client: ClientId,
+    /// Сама команда.
+    pub command: Command,
+}
+
+/// Клиент узла OTA для узла протокола: requester входа `CMD` и свой номер.
+///
+/// Узел протокола зовёт [`request`](Self::request) с голой командой; номер
+/// клиента подставляется сам.
+#[derive(Debug, Clone, Copy)]
+pub struct Client {
+    requester: Requester<'static, Request, Reply>,
+    id: ClientId,
+}
+
+impl Client {
+    /// Клиент `id` над `requester` входа `CMD`.
+    #[must_use]
+    pub const fn new(requester: Requester<'static, Request, Reply>, id: ClientId) -> Self {
+        Self { requester, id }
+    }
+
+    /// Команда узлу OTA от этого клиента и её исход.
+    ///
+    /// # Errors
+    ///
+    /// [`NodeLost`] — узел взял запрос, но не ответил.
+    pub async fn request(&self, command: Command) -> Result<Reply, NodeLost> {
+        self.requester
+            .request(Request {
+                client: self.id,
+                command,
+            })
+            .await
+            // `RequestDroppedError` — единичный тип: причины, которую стоило бы
+            // хранить, в нём нет.
+            .map_err(|_dropped| NodeLost)
+    }
+}
+
+/// Узел OTA взял команду, но ответа на неё не будет: задача узла
+/// прервалась посреди обработки.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct NodeLost;
+
+impl core::fmt::Display for NodeLost {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("узел OTA не ответил на команду")
+    }
+}
+
+impl core::error::Error for NodeLost {}
+
+/// Обязанность ответить на команду — тому входу, с которого она пришла.
+///
+/// Действиям автомата всё равно, ждёт ли клиент в вызове (`CMD`) или забирает
+/// исход позже (`ASK`): ответ один и тот же, дроп без ответа у обоих —
+/// «узел не ответил».
+#[derive(Debug)]
+pub(super) enum Answer<'a> {
+    /// Команда с входа `CMD`.
+    Call(Served<'a, Request, Reply>),
+    /// Команда с входа `ASK`.
+    Ask(Asked<'a, Request, Reply>),
+}
+
+impl Answer<'_> {
+    /// Исход команды — клиенту.
+    pub(super) fn respond(self, reply: Reply) {
+        match self {
+            Self::Call(served) => served.respond(reply),
+            Self::Ask(asked) => asked.respond(reply),
+        }
+    }
+}
+
+/// Мест ожидания входа `CMD` на `clients` его клиентов — параметр `PARKED`
+/// фрагмента `OTA_FRAG`; число клиентов знает только compose-site.
+///
+/// Клиенты — заранее известный набор, по одному на транспорт: один держит
+/// вызов, ждут остальные, так что мест на одно меньше клиентов — тогда
+/// ждущие не будят друг друга по кругу (`sync_request::PARKED_CALLERS`,
+/// документация). Не меньше одного: ноль мест не компилируется, а одного
+/// хватает и на двух клиентов — в том числе тех, что проект без протокола
+/// подключит к входу сам.
+///
+/// ```
+/// use domain::ota::cmd_parked;
+///
+/// assert_eq!(cmd_parked(0), 1);
+/// assert_eq!(cmd_parked(2), 1);
+/// assert_eq!(cmd_parked(6), 5);
+/// ```
+#[must_use]
+pub const fn cmd_parked(clients: usize) -> usize {
+    if clients > 2 { clients - 1 } else { 1 }
+}
 
 // {%- if graph == "true" %}
 // Узел объявлен рядом со своей задачей, как `HEARTBEAT_FRAG` в
@@ -259,7 +384,7 @@ pub async fn task<D, S, R, const PARKED: usize>(
 #[cfg(test)]
 mod fake {
     //! Разделы обновления в памяти под настоящим [`Updater`] — общие для
-    //! `download`, `update` и узла `ota`.
+    //! `transfer` и узла `ota`.
     //!
     //! Флеш — `MemFlash` (придирчивый, как NOR: кратность слову, запись только
     //! «единицы в нули»), а поверх — [`Probe`]: журнал операций и отказы там,
@@ -277,7 +402,7 @@ mod fake {
     use ports::{Partitions, PendingImage};
 
     use crate::ota::Updater;
-    use crate::ota::update::{LAYOUT_BYTES, VERSION_BYTES};
+    use crate::ota::transfer::{LAYOUT_BYTES, VERSION_BYTES};
 
     /// Отпечаток раскладки разделов тестов — его отдаёт `layout()`; образы
     /// тестов несут его в хвосте, кроме тех, что разыгрывают чужую раскладку.
@@ -533,7 +658,7 @@ pub(crate) mod tests {
     use embassy_time::{Duration, MockDriver};
     use ports::Reboot;
 
-    use crate::ota::command::{Chunk, Progress, Rejection};
+    use crate::ota::commands::{Chunk, Progress, Rejection};
     use crate::ota::{Command, Reply};
 
     // {%- if has_modbus == "true" or has_protobuf == "true" or has_cli == "true" or net_services contains "mqtt" or net_services contains "rest" or net_services contains "ssh" %}
@@ -545,7 +670,7 @@ pub(crate) mod tests {
     /// в хвосте.
     pub(crate) use crate::ota::fake::LAYOUT;
     use crate::ota::fake::{FakeFlash, SIGNATURE, flash};
-    use crate::ota::update::{LAYOUT_BYTES, VERSION_BYTES};
+    use crate::ota::transfer::{LAYOUT_BYTES, VERSION_BYTES};
     use crate::ota::version::pack;
 
     /// Версия «этой прошивки» во входе узла — у стендов протоколов тоже.

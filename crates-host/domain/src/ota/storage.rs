@@ -10,8 +10,8 @@
 //! может стоять и внутренний флеш, и внешняя микросхема на SPI. Чего нет: ни
 //! решения bootloader'а и проверки подписи нового образа (`ota::boot`, над
 //! блокирующими разделами: у bootloader'а нет исполнителя), ни порядка
-//! проверок при применении (`ota::update`), ни буферизации до слова
-//! (`ota::download`) — это логика, а здесь только доступ к разделам.
+//! проверок при применении, ни буферизации до слова — это логика
+//! (`ota::transfer`), а здесь только доступ к разделам.
 //!
 //! Тип конкретный, без трейта: реализация одна, и приём, применение и узел
 //! зовут её прямо. Отказы, которые надо проверить на хосте (запись для
@@ -40,7 +40,7 @@ use ports::{MAX_WRITE_SIZE, Partitions, PendingImage};
 /// Почему разделы обновления не дали операцию.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum Error {
+pub enum UpdaterError {
     /// Отказ флеша, в том числе длина или смещение за разделом.
     Flash(NorFlashErrorKind),
     /// Операция запрещена в нынешнем состоянии: в `DFU` лежит образ, который
@@ -48,7 +48,7 @@ pub enum Error {
     BadState,
 }
 
-impl From<FirmwareUpdaterError> for Error {
+impl From<FirmwareUpdaterError> for UpdaterError {
     fn from(error: FirmwareUpdaterError) -> Self {
         match error {
             FirmwareUpdaterError::Flash(kind) => Self::Flash(kind),
@@ -64,7 +64,7 @@ impl From<FirmwareUpdaterError> for Error {
 /// Доступ к разделам обновления `P` — [`Partitions`] платы.
 ///
 /// `prepare` стирает всё, что обмен перенесёт в `ACTIVE` (`DFU[..capacity]`),
-/// и запасную страницу за ним — туда `ota::update::apply` кладёт запись для
+/// и запасную страницу за ним — туда `ota::apply` кладёт запись для
 /// bootloader'а ([`PendingImage`]); оставь её нестёртой — запись легла бы
 /// поверх остатков прошлого обмена.
 ///
@@ -99,7 +99,7 @@ impl<D: NorFlash, S: NorFlash> Updater<Partitions<D, S>> {
                 S::WRITE_SIZE <= MAX_WRITE_SIZE,
                 "слово записи раздела состояния шире буфера адаптера (MAX_WRITE_SIZE)"
             );
-            // Слово `DFU` — то, до чего приём (`ota::download`) копит хвост
+            // Слово `DFU` — то, до чего приём (`ota::transfer`) копит хвост
             // образа в буфере на `MAX_WRITE_SIZE`: шире буфер не вместит, а
             // нулевое делило бы на ноль.
             assert!(
@@ -140,7 +140,7 @@ impl<D: NorFlash, S: NorFlash> Updater<Partitions<D, S>> {
     ///
     /// Канал доставки об этом не знает и отдаёт пакеты какой угодно длины,
     /// поэтому кто-то должен копить их до кратности;
-    /// `ota::download::Transfer` делает это за вас.
+    /// `ota::Transfer` делает это за вас.
     ///
     /// # Panics
     ///
@@ -204,7 +204,7 @@ impl<D: NorFlash, S: NorFlash> Updater<Partitions<D, S>> {
     /// # Errors
     ///
     /// Отказ флеша при чтении состояния.
-    pub async fn is_busy(&mut self) -> Result<bool, Error> {
+    pub async fn is_busy(&mut self) -> Result<bool, UpdaterError> {
         Ok(matches!(
             self.updater().get_state().await?,
             State::Swap | State::Revert
@@ -247,16 +247,16 @@ impl<D: NorFlash, S: NorFlash> Updater<Partitions<D, S>> {
     ///
     /// `BadState` — раздел занят ([`is_busy`](Self::is_busy)); `Flash` —
     /// негодная длина (`OutOfBounds`) или отказ стирания.
-    pub async fn prepare(&mut self, len: u32) -> Result<(), Error> {
+    pub async fn prepare(&mut self, len: u32) -> Result<(), UpdaterError> {
         if self.is_busy().await? {
-            return Err(Error::BadState);
+            return Err(UpdaterError::BadState);
         }
         // Негодная длина — отказ ДО стирания: стерев раздел, мы уничтожаем
         // образ, в который bootloader откатывается. Ноль отвергается по той же
         // причине: стирать нечего, а следующая запись легла бы в нестёртую
         // память.
         if len == 0 || len > self.parts.capacity {
-            return Err(Error::Flash(NorFlashErrorKind::OutOfBounds));
+            return Err(UpdaterError::Flash(NorFlashErrorKind::OutOfBounds));
         }
         // `capacity` кратна странице, и за ней помещается запасная — это
         // проверил `new`, поэтому `end` не выходит за раздел.
@@ -267,7 +267,7 @@ impl<D: NorFlash, S: NorFlash> Updater<Partitions<D, S>> {
                 .dfu
                 .erase(from, from + page)
                 .await
-                .map_err(|error| Error::Flash(error.kind()))?;
+                .map_err(|error| UpdaterError::Flash(error.kind()))?;
             embassy_futures::yield_now().await;
         }
         Ok(())
@@ -285,19 +285,19 @@ impl<D: NorFlash, S: NorFlash> Updater<Partitions<D, S>> {
     /// # Errors
     ///
     /// `BadState` — раздел занят; `Flash` — отказ записи.
-    pub async fn write(&mut self, offset: u32, data: &[u8]) -> Result<(), Error> {
+    pub async fn write(&mut self, offset: u32, data: &[u8]) -> Result<(), UpdaterError> {
         // Запрет на запись, пока раздел занят, — та самая проверка, с которой
         // начинался `write_firmware` (`verify_booted`), только строже на одно
         // состояние. Прямая запись её не делает, а без неё приложение затёрло
         // бы образ, в который bootloader собирается откатиться.
         if self.is_busy().await? {
-            return Err(Error::BadState);
+            return Err(UpdaterError::BadState);
         }
         self.parts
             .dfu
             .write(offset, data)
             .await
-            .map_err(|error| Error::Flash(error.kind()))
+            .map_err(|error| UpdaterError::Flash(error.kind()))
     }
 
     /// Читает записанное обратно — проверить принятое, не полагаясь на то, что
@@ -307,7 +307,7 @@ impl<D: NorFlash, S: NorFlash> Updater<Partitions<D, S>> {
     /// # Errors
     ///
     /// Отказ чтения.
-    pub async fn read(&mut self, offset: u32, buf: &mut [u8]) -> Result<(), Error> {
+    pub async fn read(&mut self, offset: u32, buf: &mut [u8]) -> Result<(), UpdaterError> {
         Ok(self.updater().read_dfu(offset, buf).await?)
     }
 
@@ -319,14 +319,14 @@ impl<D: NorFlash, S: NorFlash> Updater<Partitions<D, S>> {
     /// # Errors
     ///
     /// Отказ флеша при пометке.
-    pub async fn mark_booted(&mut self) -> Result<(), Error> {
+    pub async fn mark_booted(&mut self) -> Result<(), UpdaterError> {
         Ok(self.updater().mark_booted().await?)
     }
 
     /// Просит bootloader поменять разделы местами на следующем сбросе. Сам
     /// сброс — за вызывающим.
     ///
-    /// Проверок здесь нет намеренно: они — в `ota::update::apply`, и обмен
+    /// Проверок здесь нет намеренно: они — в `ota::apply`, и обмен
     /// запрашивается только через неё. Она сверяет длину, раскладку и
     /// версию, оставляет bootloader'у запись о подписи ([`PendingImage`]) и
     /// только потом зовёт этот метод. Прямой вызов мимо неё бессмыслен: обмен
@@ -340,7 +340,7 @@ impl<D: NorFlash, S: NorFlash> Updater<Partitions<D, S>> {
     /// # Errors
     ///
     /// Отказ флеша при пометке.
-    pub async fn mark_updated(&mut self) -> Result<(), Error> {
+    pub async fn mark_updated(&mut self) -> Result<(), UpdaterError> {
         Ok(self.state().mark_updated().await?)
     }
 
@@ -376,7 +376,7 @@ mod tests {
     use embedded_storage::nor_flash::NorFlashErrorKind;
     use ports::Partitions;
 
-    use super::{Error, Updater};
+    use super::{Updater, UpdaterError};
 
     /// Отпечаток раскладки в тестах — адаптер отдаёт его как получил.
     const LAYOUT: u32 = 0x5EED_1A70;
@@ -411,7 +411,7 @@ mod tests {
     }
 
     /// Сквозной путь: `Updater` готовит раздел, образ и запись ложатся туда,
-    /// куда пишет `ota::update::apply` (смещение `capacity`), — и bootloader
+    /// куда пишет `ota::apply` (смещение `capacity`), — и bootloader
     /// находит их там же.
     #[cfg(feature = "boot")]
     #[tokio::test]
@@ -503,7 +503,7 @@ mod tests {
             let refused = u.prepare(len).await;
 
             assert!(
-                refused == Err(Error::Flash(NorFlashErrorKind::OutOfBounds)),
+                refused == Err(UpdaterError::Flash(NorFlashErrorKind::OutOfBounds)),
                 "{len}"
             );
             assert!(
@@ -520,8 +520,8 @@ mod tests {
             let mut u = with_state(magic);
 
             assert!(u.is_busy().await.expect("состояние"), "{magic:#x}");
-            assert_eq!(u.prepare(8).await, Err(Error::BadState));
-            assert_eq!(u.write(0, &[0; 8]).await, Err(Error::BadState));
+            assert_eq!(u.prepare(8).await, Err(UpdaterError::BadState));
+            assert_eq!(u.write(0, &[0; 8]).await, Err(UpdaterError::BadState));
             assert!(
                 u.read(0, &mut [0; 8]).await.is_ok(),
                 "чтение занятого раздела разрешено"

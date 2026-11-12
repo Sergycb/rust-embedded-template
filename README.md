@@ -95,14 +95,14 @@ cargo run -p app                    # прошить приложение и с�
 | Логика и узлы | `crates-host/domain/` | всё, что не про регистры: протоколы, конфигурация, а также объявления узлов (`supervisor_fragment!`) и их работа ({% if graph == "true" %}`domain::heartbeat::task`, `domain::cpu_load::task` — циклы и typestate-состояния на контексте узла{% else %}циклы и typestate-состояния на контексте узла{% endif %}) — тестируется на хосте; логика вне задач — функции над портами |
 {%- if adapters_hw == "true" %}
 {%- capture hw_list %}{% if has_usb == "true" %}, устройство USB с потоком CDC ACM над `embassy-usb` (`adapters_hw::usb`){% endif %}{% if has_net == "true" %}, стек `embassy-net` с фоновой работой (`adapters_hw::net`){% endif %}{% if config_store == "eeprom" %}, EEPROM как `NorFlash` (`adapters_hw::eeprom`){% endif %}{% endcapture %}
-| Обёртки над железом без чипа | `crates-host/adapters-hw/` | то, из чего `bsp` собирает рычаги, когда чип не нужен{% if hw_list != "" %}: {{ hw_list | remove_first: ", " }}{% endif %}; драйверы без шины и линка и флеш в памяти (модули `fake` рядом с тем, что они подменяют) — заглушки платы и фейки host-тестов |
+| Обёртки над железом без чипа | `crates-host/adapters-hw/` | то, из чего `bsp` собирает рычаги, когда чип не нужен{% if hw_list != "" %}: {{ hw_list | remove_first: ", " }}{% endif %}; заглушки платы (`stub`) и фейки host-тестов (`fake`) — модулями рядом с тем, что они подменяют |
 {%- endif %}
 {%- if adapters_logic == "true" %}
-{%- capture logic_list %}{% if cobs_used == "true" %}, кадрирование потока COBS + CRC (`adapters_logic::cobs`){% endif %}{% if protocol == "modbus" %}, транспорты Modbus (`adapters_logic::modbus`){% endif %}{% if has_net == "true" %}, транспорты над сокетами `embassy-net` (`adapters_logic::net`){% endif %}{% endcapture %}
+{%- capture logic_list %}{% if cobs_used == "true" %}, кадрирование потока COBS + CRC (`adapters_logic::cobs`){% endif %}{% if protocol == "modbus" %}, протокол Modbus и каналы (`adapters_logic::modbus`){% endif %}{% if has_net == "true" %}, транспорты над сокетами `embassy-net` (`adapters_logic::net`){% endif %}{% endcapture %}
 | Реализации портов | `crates-host/adapters-logic/` | реализации трейтов `ports`, когда их несколько: {{ logic_list | remove_first: ", " }} — тестируется на хосте |
 {%- endif %}
 {%- if protocol == "protobuf" %}
-| Схема protobuf | `crates-host/proto/` | `.proto` и типы, сгенерированные `micropb-gen` в `build.rs` (схему разбирает `protox`, системный `protoc` не нужен); пример — конверт `Request`/`Response` с `request_id`, проект заменяет своим. Обрабатывает узел `domain::PROTOBUF_FRAG`: `domain::protobuf::Service` разводит команды по обработчикам `domain::protobuf::info`{% if ota == "true" %} и `domain::ota::protobuf`{% endif %} |
+| Схема protobuf | `crates-host/proto/` | `.proto` и типы, сгенерированные `micropb-gen` в `build.rs` (схему разбирает `protox`, системный `protoc` не нужен); пример — конверт `Request`/`Response` с `request_id`, проект заменяет своим. Обрабатывает узел `domain::PROTOBUF_FRAG`: `domain::protobuf::Service` разводит команды по обработчикам `domain::protobuf::service`{% if ota == "true" %} и `domain::protobuf::service::OtaHandler`{% endif %} |
 {%- endif %}
 {%- if protocol == "canopen" %}
 | Описание устройства CANopen | `crates-host/canopen/` | `device.toml` — идентичность, PDO, объекты приложения; `build.rs` (`zencan-build`) генерирует из него словарь объектов и `static`-объекты узла (`NODE_MBOX`, `NODE_STATE`, `OD_TABLE`), которые compose-site передаёт узлу `domain::CANOPEN_FRAG`; пример — проект заменяет своим |
@@ -223,7 +223,7 @@ supervisor-графы, watchdog{% endif %}). Вся остальная логи�
 {%- endif %}
 {%- if link_port == "true" %}
 - `FrameLink` — канал целых кадров, который держит свой буфер (один на приём и
-  ответ).{% if has_modbus == "true" %} Узел протокола `domain::SERVER_FRAG` обслуживает его Modbus slave'ом
+  ответ).{% if has_modbus == "true" %} Узел протокола `domain::MODBUS_FRAG` обслуживает его Modbus slave'ом
   (`domain::modbus::Slave`): обработчик один, трейта под него нет.{% endif %}
 {%- if has_modbus == "true" or has_protobuf == "true" %}
 - {% if graph == "true" %}Граф называет{% else %}Модули задач называют{% endif %} узел по протоколу и транспорту
@@ -245,7 +245,7 @@ supervisor-графы, watchdog{% endif %}). Вся остальная логи�
   проекта в `domain` и обёртки над ней (общая ручка{% if ota == "true" %}, окно OTA{% endif %}), а кадры к нему
   переводит обработчик `domain::modbus::Slave` (адрес, широковещание, исключения).
 {%- capture mb_links %}{% if modbus_rtu == "true" %}, `adapters_logic::modbus::Rtu` (RTU поверх потока
-  {% if has_uart == "true" %}UART{% if has_usb == "true" %} или {% endif %}{% endif %}{% if has_usb == "true" %}USB CDC{% endif %}){% endif %}{% if modbus_tcp == "true" %}, `adapters_logic::modbus::Link` (MBAP поверх потока TCP){% endif %}{% if modbus_udp == "true" %}, `adapters_logic::modbus::Udp` (MBAP в датаграмме){% endif %}{% endcapture %}
+  {% if has_uart == "true" %}UART{% if has_usb == "true" %} или {% endif %}{% endif %}{% if has_usb == "true" %}USB CDC{% endif %}){% endif %}{% if modbus_tcp == "true" %}, `adapters_logic::modbus::Tcp` (MBAP поверх потока TCP){% endif %}{% if modbus_udp == "true" %}, `adapters_logic::modbus::Udp` (MBAP в датаграмме){% endif %}{% endcapture %}
 - Канал slave'а — `FrameLink` с кадром «адрес и PDU»: {{ mb_links | remove_first: ", " }}.
 {%- if modbus_master == "true" %}
 - Те же каналы реализуют порт master'а `ModbusClient`, но рабочий master из
@@ -257,8 +257,8 @@ supervisor-графы, watchdog{% endif %}). Вся остальная логи�
 {%- endif %}
 {%- if protocol == "protobuf" %}
 - Сообщения protobuf от хоста разбирает узел `domain::PROTOBUF_FRAG`, а в свои
-  проверенные типы переводит обработчик подсистемы: `domain::protobuf::info` —
-  сведения{% if ota == "true" %}, `domain::ota::protobuf` — команды обновления{% endif %}. Разводит их
+  проверенные типы переводит обработчик подсистемы: `domain::protobuf::service` —
+  сведения{% if ota == "true" %}, `domain::protobuf::service::OtaHandler` — команды обновления{% endif %}. Разводит их
   `domain::protobuf::Service` — логика приложения, а не порт.{% if ota == "true" %} Команды обновления
   обработчик отдаёт узлу OTA на вход `CMD` и отвечает хосту их исходом.{% endif %}
 {%- endif %}
@@ -315,10 +315,10 @@ STOP — это разница между единицами миллиампе�
 старте он проверяет подпись нового образа и меняет разделы `ACTIVE`/`DFU`; затем
 прыгает в `ACTIVE` (`unsafe { bl.load(entry) }`). Сам прыжок безусловный, как в официальном
 примере `embassy-boot-stm32`: вектор сброса и SP образа не проверяются — это осознанный
-компромисс минимального шаблона, не забытая деталь. `write_size` — размер буфера
+компромисс минимального шаблона, не забытая деталь. `swap_buffer` — размер буфера
 подкачки `BootLoader::prepare::<_,_,_,N>`; генерация берёт его равным слову записи
 flash чипа (4–32 байта). Это не `PAGE_SIZE`: тот `embassy-boot` вычисляет сам из
-`NorFlash::ERASE_SIZE`. `write_size` и оба `memory.x` вычисляются
+`NorFlash::ERASE_SIZE`. `swap_buffer` и оба `memory.x` вычисляются
 автоматически по выбранному чипу — см. [«Как выбирается чип»](#как-выбирается-чип) ниже. На
 чипах, куда схема не помещается, OTA либо отключают (тогда `crates-cross/boot` в проект
 не входит), либо берут с ручной раскладкой — см.
@@ -358,7 +358,7 @@ interface=none` с OTA — ошибка генерации. Протокол м�
 
 Всё, что не зависит от протокола, готово и уже крутится{% if graph == "true" %} в графе задач{% endif %}: узел
 `OTA` (`domain::ota`) принимает образ командами в раздел `DFU`, применяет его
-(`domain::ota::update::apply`) и отвечает
+(`domain::ota::apply`) и отвечает
 исходом на каждую команду. Пишет образ и хранит состояние bootloader'а адаптер
 `domain::ota::Updater` над `embassy-boot`; строит его `app` над полем платы `firmware`
 (`bsp::FirmwareFlash`, `crates-cross/bsp/src/{% if ota_store == "external" %}external{% else %}flash{% endif %}.rs`) — разделами `DFU` и
@@ -389,7 +389,7 @@ interface=none` с OTA — ошибка генерации. Протокол м�
 следом за клиентами сетевых служб{% endif %}. Подключив клиента, прибавьте его к числу мест
 ожидания входа — {% if graph == "true" %}`OTA_CMD_PARKED` в `crates-cross/app/src/graph.rs`{% else %}`CMD_PARKED` в `crates-cross/app/src/tasks/ota.rs`{% endif %}.{% endif %}
 
-Писать приём руками не стоит: узел и `domain::ota::download::Transfer` закрывают его
+Писать приём руками не стоит: узел и `domain::ota::Transfer` закрывают его
 грабли и проверены host-тестами. Под приёмом лежит `prepare` — стирание места под
 образ, самый долгий вызов обновления: всё это время исполнитель embassy стоит{% if graph == "true" %}, и
 одна страница стирания обязана укладываться в таймаут сторожа{% endif %} — docs/ota.md,
@@ -521,7 +521,7 @@ git tag v1.2.3 && git push origin v1.2.3
 
 Настройки лежат {% if config_store == "eeprom" %}во внутренней EEPROM чипа{% elsif config_store == "external" %}на внешней флеши{% else %}в разделе `CONFIG` во flash{% endif %}: `Board` отдаёт поле `config`
 (`bsp::ConfigFlash`), носитель — {% if config_store == "eeprom" %}EEPROM, обёрнутая платой в `NorFlash`
-(`crates-cross/bsp/src/flash.rs`){% elsif config_store == "external" %}внешняя флеш (`crates-cross/bsp/src/external.rs`){% else %}раздел `CONFIG` от границ из генерации
+(`crates-cross/bsp/src/eeprom.rs`){% elsif config_store == "external" %}внешняя флеш (`crates-cross/bsp/src/external.rs`){% else %}раздел `CONFIG` от границ из генерации
 (`crates-cross/bsp/src/flash.rs`){% endif %}. Само хранилище —
 `domain::settings::Settings` (тестируется на хосте) поверх `sequential-storage`
 на весь объём носителя, пары «ключ — значение», переживающие и перезапуск, и
@@ -659,17 +659,17 @@ HOST_TARGET_BAUD=115200              # скорость UART (по умолча�
 
 Что править проекту:
 {%- if protocol == "modbus" %} карту регистров `crates-host/domain/src/modbus/map.rs` и её
-тип в `crates-cross/app/src/modbus.rs` (псевдоним `Map` и начальное значение): карта одна на
+тип в `crates-cross/app/src/registers.rs` (псевдоним `Map` и начальное значение): карта одна на
 все узлы `MODBUS_*`, каждый получает ручку к ней (`domain::modbus::SharedRegisters`), так
 что запись по одному транспорту видна чтению по другому. Slave отвечает на функции
 1–6, 15, 16 (coils, discrete inputs, holding и input registers) и 43/14 Read Device
-Identification (производитель и модель — `crates-host/domain/src/modbus/identity.rs`,
+Identification (производитель и модель — `crates-host/domain/src/modbus/slave.rs`,
 ревизия — `build::PKG_VERSION` прошивки); на остальные — Illegal Function.{% if modbus_rtu == "true" %} По RTU
 это так для всех открытых функций спецификации; кадр пользовательской функции
 (65–72, 100–110), MEI, кроме 14, и FC08/00 длиннее двух байт данных slave
 пропускает молча: длину кадра по коду функции не вывести, а без неё не
 проверить CRC (`adapters_logic::modbus::Rtu`).{% endif %}
-{%- elsif protocol == "protobuf" %} схему `crates-host/proto` и обработчики `crates-host/domain/src/protobuf/info.rs`{% if ota == "true" %} и `crates-host/domain/src/ota/protobuf.rs`{% endif %}.
+{%- elsif protocol == "protobuf" %} схему `crates-host/proto` и обработчики `crates-host/domain/src/protobuf/service.rs`.
 {%- else %} словарь объектов `crates-host/canopen/device.toml`.
 {%- endif %}
 {%- if protocol_link == "true" %} Канал протокола (кадрирование, сокет) строит `app` над рычагом
@@ -714,7 +714,7 @@ curl -H "Authorization: Bearer $(cat rest-token.txt)" http://<адрес пла�
 
 Узел `SSH` (`crates-host/domain/src/ssh.rs`) — сервер `sunset` на порту 22, одно
 соединение, пользователь `admin`. Команды: `help`, `info`{% if ota == "true" %}, `reboot yes`{% endif %}, `exit`; свои — вариантами
-enum `Command` (`crates-host/domain/src/console.rs`), а `help`, историю, автодополнение
+enum `Command` (`crates-host/domain/src/console/shell.rs`), а `help`, историю, автодополнение
 и редактирование строки строит `bareminal`. `shell` и `exec` оба работают:
 `shell` — интерактивный (ANSI: стрелки, история, Tab) и рассчитан на PTY обычного
 `ssh`; `exec` — без ANSI, для скриптов.
@@ -1231,7 +1231,7 @@ Renovate (менеджер `gitlabci`, группа `gitlab images` в `renovate
 - `target` — целевой target triple (`thumbv7em-none-eabihf` и т.п.);
 - `cpu` — `target-cpu` для rustflags (`cortex-m4` и т.п.);
 {%- if ota == "true" %}
-- `write_size` — параметр буфера подкачки для bootloader (`BootLoader::prepare::<_,_,_,N>`);
+- `swap_buffer` — параметр буфера подкачки для bootloader (`BootLoader::prepare::<_,_,_,N>`);
 {%- endif %}
 - фича банковой схемы `embassy-stm32` (`single-bank`) — только для чипов, у которых
   их несколько; без неё build-скрипт `embassy-stm32` просто паникует;
@@ -1254,10 +1254,10 @@ Renovate (менеджер `gitlabci`, группа `gitlab images` в `renovate
 Чтобы задать чип без интерактивного каскада (например в CI/скриптах), передайте
 `--define chip_feature=stm32f407ve` — остальные поля выведутся из него автоматически
 (опечатка в значении будет замечена сразу, до генерации файлов). Любое из `chip`/`cpu`/
-`target`/`write_size` можно и переопределить по отдельности своим `--define` — например
+`target`/`swap_buffer` можно и переопределить по отдельности своим `--define` — например
 если дефолтный `chip` указывает не на самый специфичный вариант probe-rs для вашего чипа.
-`--define write_size=...` заодно отключает автогенерацию `memory.x` (адреса привязаны
-именно к вычисленному `write_size`) — в этом случае `memory.x` в `crates-cross/app`,
+`--define swap_buffer=...` заодно отключает автогенерацию `memory.x` (адреса привязаны
+именно к вычисленному `swap_buffer`) — в этом случае `memory.x` в `crates-cross/app`,
 `crates-cross/target-tests`{% if ota == "true" %} и `crates-cross/boot`{% endif %} придётся заполнить вручную (у `app` и
 `target-tests` — одинаково).
 {%- if ota == "true" %}
@@ -1292,7 +1292,7 @@ manual memory layout`. Ответ «no» даёт проект **без OTA**: �
 
 ```
 Выбранное не помещается на STM32H723VE: раскладку памяти (memory.x и числа в [env]
-  crates-cross/.cargo/config.toml) вы заполняете сами — так же, как при --define write_size=...
+  crates-cross/.cargo/config.toml) вы заполняете сами — так же, как при --define swap_buffer=...
   OTA: flash 512 KiB при секторе 128 KiB: под BOOTLOADER+STATE уходит 256 KiB, на ACTIVE+DFU остаётся стираемых страниц: 2 (нужно 3)
   с DFU/STATE на внешней флеши OTA помещается: ACTIVE 384K; сгенерируйте с --define ext_flash=yes
 ```

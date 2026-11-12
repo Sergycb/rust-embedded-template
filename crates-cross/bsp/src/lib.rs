@@ -21,6 +21,9 @@ pub mod clocks;
 {%- if cache contains "scb_d" %}
 pub mod dma_nc;
 {%- endif %}
+{%- if config_store == "eeprom" %}
+pub mod eeprom;
+{%- endif %}
 {%- if external_flash == "true" %}
 pub mod external;
 {%- endif %}
@@ -56,6 +59,8 @@ pub use board::{Board, ChipSpec};
 {%- if config == "true" %}
 {%- if config_store == "external" %}
 pub use external::ConfigFlash;
+{%- elsif config_store == "eeprom" %}
+pub use eeprom::ConfigFlash;
 {%- else %}
 pub use flash::ConfigFlash;
 {%- endif %}

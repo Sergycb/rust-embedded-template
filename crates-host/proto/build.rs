@@ -31,7 +31,7 @@ const LIMITS: &[(&str, &str, u32)] = &[
     ("PANIC_BYTES", ".host.Info.last_panic", 96),
     ("ERROR_TEXT_BYTES", ".host.Error.text", 64),
     // {%- if ota == "true" %}
-    // Те же пределы, что у команды узлу OTA (`domain::ota::command`:
+    // Те же пределы, что у команды узлу OTA (`domain::ota::commands`:
     // `SIGNATURE_BYTES`, `CHUNK_BYTES`): длиннее не дойдёт до узла.
     ("OTA_SIGNATURE_BYTES", ".host.Ota.Start.signature", 64),
     ("OTA_CHUNK_BYTES", ".host.Ota.Chunk.data", 128),
@@ -115,6 +115,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     compiler.open_files(PROTOS)?;
     let descriptor = compiler.encode_file_descriptor_set();
     let fdset = compiler.file_descriptor_set();
+    // Импортированные `.proto` тоже вход: `include_imports(true)` компилирует
+    // их, но cargo о них не знает.
+    for file in &fdset.file {
+        let path = std::path::Path::new("proto").join(file.name());
+        if path.exists() {
+            println!("cargo:rerun-if-changed={}", path.display());
+        }
+    }
     let descriptor_path = out.join("host.fdset");
     std::fs::write(&descriptor_path, descriptor)?;
 

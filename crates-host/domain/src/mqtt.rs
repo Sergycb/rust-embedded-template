@@ -16,17 +16,13 @@
 // {%- endif %}
 //!
 //! Здесь — фрагмент узла, его цикл и задача; имена тем и разбор команд —
-//! `topics`, адрес брокера — `broker`, TCP-клиент брокера с паузами между
-//! попытками — `client` ([`Tcp`](crate::mqtt::Tcp)), тексты
-//! телеметрии — `telemetry`, одна сессия с брокером над готовым потоком
-//! байтов — `session` (`serve`). Вход узла (`MqttWiring`) выводит фрагмент.
+//! `topics`, адрес брокера, TCP-клиент с паузами между попытками и одна
+//! сессия с брокером над готовым потоком байтов — `connection`
+//! ([`Tcp`](crate::mqtt::Tcp)), тексты телеметрии — `telemetry`. Вход узла
+//! (`MqttWiring`) выводит фрагмент.
 
-/// Адрес брокера: `Broker`.
-mod broker;
-/// TCP-клиент брокера над сокетом стека: подключение с паузой между попытками.
-mod client;
-/// Сессия `minimq` над готовым потоком байтов и её буферы.
-mod session;
+/// Соединение с брокером: адрес, TCP-клиент и сессия `minimq`.
+mod connection;
 /// Как часто и что плата публикует в `telemetry`.
 mod telemetry;
 /// Имена тем, идентификатор клиента и разбор команд.
@@ -36,10 +32,8 @@ use core::net::SocketAddrV4;
 
 use defmt_or_log::{info, warn};
 
-pub use self::broker::Broker;
-pub use self::client::{Error, Tcp};
-pub use self::session::{AUTH_MAX, CONNECT_TIMEOUT, RX_BUFFER, TX_BUFFER};
-use self::session::{Env, serve};
+pub use self::connection::{AUTH_MAX, Broker, CONNECT_TIMEOUT, Error, RX_BUFFER, TX_BUFFER, Tcp};
+use self::connection::{Env, serve};
 pub use self::telemetry::{TELEMETRY_INTERVAL, write_telemetry};
 pub use self::topics::{Command, PREFIX_MAX, Topics, parse_command};
 
@@ -149,7 +143,7 @@ pub(crate) mod tests {
     use embassy_time::Instant;
     // {%- endif %}
 
-    use super::session::{Ended, Env, serve};
+    use super::connection::{Ended, Env, serve};
     use super::{
         Broker, CONNECT_TIMEOUT, Command, PREFIX_MAX, RX_BUFFER, TELEMETRY_INTERVAL, TX_BUFFER,
         Tcp, Topics, parse_command, task, write_telemetry,
@@ -157,7 +151,7 @@ pub(crate) mod tests {
     use crate::device::{DeviceInfo, UID_BYTES};
     // {%- if ota == "true" %}
     use super::AUTH_MAX;
-    use super::session::TX_BUDGET;
+    use super::connection::TX_BUDGET;
     use super::topics::{REBOOT, TOPIC_LEN};
     use crate::device::INFO_TEXT;
     // {%- endif %}

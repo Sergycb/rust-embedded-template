@@ -2,8 +2,8 @@
 //! каналом.
 //!
 //! Сообщения схемы превращают в типы приложения обработчики подсистем:
-//! `info` — сведения, а команды обновления — `ota::protobuf`, когда OTA
-//! включена. Узел только разбирает запрос из кадра и кодирует ответ; схема —
+//! `service` — сведения и команды обновления, когда OTA включена. Узел только
+//! разбирает запрос из кадра и кодирует ответ; схема —
 //! крейт `crates-host/proto`, проект правит её и обработчики.
 //!
 //! Канал под ним — [`FrameDuplex`](ports::FrameDuplex), кадр — одно
@@ -29,25 +29,15 @@
 //! Второго входа — сообщений по инициативе устройства (события, телеметрия)
 //! — пока нет.
 
-mod codec;
-// Обработчики по умолчанию над схемой `crates-host/proto` — только в проекте
-// с протоколом protobuf: без него крейта схемы в проекте нет вовсе.
-mod info;
-mod reply;
 /// Обработчик по умолчанию над примером схемы `crates-host/proto`.
 mod service;
-
-// {%- if ota == "true" %}
-/// Ответ-отказ схемы — обработчику OTA (`crate::ota::protobuf`).
-pub(crate) use reply::error;
-// {%- endif %}
 
 use defmt_or_log::{FormatOrDebug, info, warn};
 use micropb::MessageDecode;
 use ports::FrameDuplex;
 use proto::Request;
 
-use crate::protobuf::codec::{decode_reason, encode};
+use self::service::{decode_reason, encode};
 
 pub use service::{REQUEST_MAX, RESPONSE_MAX, Service};
 
@@ -142,7 +132,7 @@ mod tests {
     use ports::{FrameDuplex, FrameLink, LinkError};
     use proto::{Get, Request, Request_, Response, Response_, heapless};
 
-    use super::info::INFO;
+    use super::service::INFO;
     use super::{Service, task};
 
     /// Канал: отдаёт заготовленные исходы `recv` — кадр снимается в опросе,

@@ -813,6 +813,13 @@ const RNG = rng_data::RNG;
 
 // ==== 4. Ответы --define до каскада, меню, оценка RAM =======================
 
+// Прежнее имя ручной раскладки — `write_size` (переименовано в `swap_buffer`).
+// Молча проигнорированный старый `--define` оставил бы проект без раскладки:
+// человек был бы уверен, что задал её.
+if variable::is_set("write_size") {
+    throw "write_size переименован в swap_buffer: задайте --define swap_buffer=…";
+}
+
 // Внешняя флеш W25Q на плате (`ext_flash`: `yes`/`no`). Есть — на неё
 // уезжает всё, что прошивка хранит во флеше помимо себя: `STATE`/`DFU` OTA и
 // раздел настроек; во внутреннем flash остаются bootloader и `ACTIVE`, который
@@ -833,7 +840,7 @@ if variable::is_set("ext_flash") {
 //
 // Оба ответа окончательные: «нет» — проверять нечего, а не поместившееся «да»
 // не превращается в «нет» — bootloader остаётся, раскладку памяти заполняет
-// человек, как при `--define write_size=...` (см. `WANTS_FINAL` ниже). Где лежат
+// человек, как при `--define swap_buffer=...` (см. `WANTS_FINAL` ниже). Где лежат
 // `DFU` и `STATE` (`ota_store`), решает `ext_flash`.
 //
 // Незнакомый ответ (опечатка в `--define`) — ошибка, а не «без OTA»: молча
@@ -859,7 +866,7 @@ if !wants_ota {
 // механикой ответа (`--define config=yes|no`). Не поместившееся «да» тоже
 // уводит раскладку памяти человеку (`WANTS_FINAL` ниже), но раздела во flash
 // тогда нет: `config` = false, и хук печатает, что `CONFIG` вписывается в
-// memory.x вручную (ветка `write_size` ниже).
+// memory.x вручную (ветка `swap_buffer` ниже).
 //
 // Во flash чипа он стоит дороже, чем кажется: две страницы стирания. С OTA
 // chip-data-gen кладёт их в мелкие сектора перед ACTIVE, где это выгоднее (на
@@ -1146,8 +1153,8 @@ if !variable::is_set("chip_feature")
         // И транспорты (`RAM_LINKS`) должны поместиться в RAM. База — только из
         // заданных ответов (`NEED`): умолчание «да» для OTA и графа чипов не
         // отсекает, а невлезающее с итоговыми ответами отвергнет проверка после
-        // них. С ручной раскладкой (`write_size`) оценки нет.
-        if RAM_LINKS.len() > 0 && !variable::is_set("write_size") {
+        // них. С ручной раскладкой (`swap_buffer`) оценки нет.
+        if RAM_LINKS.len() > 0 && !variable::is_set("swap_buffer") {
             let asked = #{ ota: NEED.ota, ext_ota: NEED.ext_ota, config: NEED.config, external: NEED.config && wants_external, graph: NEED.graph };
             let p = plan(m, m["erase_zero"] == "true", asked, LIMITS);
             let stack = STACK_RESERVE + if p.ota { STACK_EXTRA.ota } else { 0 };
@@ -1286,7 +1293,7 @@ if !variable::is_set("target") {
 // `Board::new()` зовёт `init_primary()` вместо `init()` (Cargo-фичи под это
 // у `bsp`/`boot` нет — ядро выбирает сама чип-фича `embassy-stm32`).
 // Без переопределения через --define (в отличие от chip/cpu/target/
-// write_size): значение полностью выводится из chip_feature, легитимной
+// swap_buffer): значение полностью выводится из chip_feature, легитимной
 // причины расходиться с ним нет.
 variable::set("dual_core", if dual_core { "true" } else { "false" });
 
@@ -1388,13 +1395,11 @@ variable::set("rng_source", rng[2]);
 //   "false" — не помещается (слишком мелкий flash или слишком крупные сектора,
 //             причина в "note"): один образ на весь flash, crates-cross/boot из
 //             сборки исключается.
-// "write_size" — const generic BootLoader::prepare::<_,_,_,N>, размер буфера
+// "swap_buffer" — const generic BootLoader::prepare::<_,_,_,N>, размер буфера
 // подкачки (НЕ PAGE_SIZE: тот embassy-boot вычисляет сам из ERASE_SIZE флеша).
 // "page_size" — физическая страница чипа; страница обмена (PAGE_SIZE embassy-boot)
 // лежит в "swap_page_size" и бывает крупнее — "swap_paged" = "true": тогда ACTIVE
 // и DFU прошивка оборачивает в ErasePage ради малого журнала STATE.
-// Имя плейсхолдера осталось прежним ради совместимости с проектами, которые
-// задают его через --define.
 //
 // Таблица разложена по файлам семейств — первые два символа суффикса, тот же
 // ключ, что `layout_family` в chip-data-gen: целиком она ~75 тысяч строк, а
@@ -1427,7 +1432,7 @@ variable::set("erase_zero", if erase_zero { "true" } else { "false" });
 //   * протоколы показываются только те, что работают поверх выбранного транспорта;
 //   * OTA и настройки, которые на чип не помещаются, остаются в меню с
 //     пометкой «DOES NOT FIT»: выбрав их, пользователь получает ручную
-//     раскладку памяти (как при `--define write_size=...`) и сам решает, что
+//     раскладку памяти (как при `--define swap_buffer=...`) и сам решает, что
 //     менять.
 // Ответ, пришедший через `--define`, — режим для скриптов, и проверяется строго:
 // опечатка и невозможное для чипа значение остаются ошибкой с объяснением.
@@ -1532,7 +1537,7 @@ let wants_now = #{ ota: wants_ota, ext_ota: wants_ext_ota, config: wants_config,
 let plan_now = plan(layout, erase_zero, wants_now, LIMITS);
 // Выбор, который на чип не помещается: размер раздела приложения тогда знает
 // только человек, поэтому граф не отсекается (как в ручной раскладке ниже).
-let manual_now = variable::is_set("write_size") || (wants_ota && !plan_now.ota) || (wants_config && !plan_now.config);
+let manual_now = variable::is_set("swap_buffer") || (wants_ota && !plan_now.ota) || (wants_config && !plan_now.config);
 if variable::is_set("graph") {
     if wants_graph && !manual_now && !plan_now.graph {
         throw "graph: у " + chip_name + " под приложение отведено " + layout[plan_now.app_length_key] + ", а граф задач (supervisor) туда не помещается; выберите graph=no";
@@ -1853,13 +1858,13 @@ iface = primary.kind;
 // ==== 8. Раскладка памяти и memory.x ========================================
 
 // Итог ответов: по нему считается раскладка. Если выбранное на чип не
-// помещается, память остаётся человеку — как при `--define write_size=...`.
+// помещается, память остаётся человеку — как при `--define swap_buffer=...`.
 const WANTS_FINAL = #{ ota: wants_ota, ext_ota: wants_ext_ota, config: wants_config, external: wants_external, graph: wants_graph };
 let plan_final = plan(layout, erase_zero, WANTS_FINAL, LIMITS);
-if !variable::is_set("write_size") && ((wants_ota && !plan_final.ota) || (wants_config && !plan_final.config)) {
-    variable::set("write_size", layout["write_size"]);
+if !variable::is_set("swap_buffer") && ((wants_ota && !plan_final.ota) || (wants_config && !plan_final.config)) {
+    variable::set("swap_buffer", layout["swap_buffer"]);
     print("Выбранное не помещается на " + chip_name + ": раскладку памяти (memory.x и числа в [env]");
-    print("  crates-cross/.cargo/config.toml) вы заполняете сами — так же, как при --define write_size=...");
+    print("  crates-cross/.cargo/config.toml) вы заполняете сами — так же, как при --define swap_buffer=...");
     // Причина — здесь и только здесь: автоматическая раскладка ниже до
     // невместившегося выбора не доходит. OTA объясняет набор цифр, по которому
     // считается вся раскладка (`ota_key`: `note`, `config_note` или `ext_note`
@@ -1889,14 +1894,14 @@ if !variable::is_set("write_size") && ((wants_ota && !plan_final.ota) || (wants_
 // ниже (см. `config_store()` выше).
 let store = config_store(MEMORY_LAYOUT[suffix], wants_config, wants_external, EEPROM_MIN);
 
-// write_size, memory.x и признак ota — вместе, одним источником: если
-// пользователь уже задал write_size вручную через `--define`, авточипу
+// swap_buffer, memory.x и признак ota — вместе, одним источником: если
+// пользователь уже задал swap_buffer вручную через `--define`, авточипу
 // доверять нельзя (адреса в memory.x привязаны именно к вычисленному
-// write_size), оставляем всё как есть — ручное заполнение, как раньше.
+// swap_buffer), оставляем всё как есть — ручное заполнение, как раньше.
 // Тогда же остаётся и ota = "true": bootloader из проекта не исчезает,
 // раскладку под него пользователь пишет сам.
 // Страница `STATE` для `[env]` (crates-cross/.cargo/config.toml): пустая, пока
-// её не посчитала раскладка ниже. При ручной раскладке (`write_size`) её пишет
+// её не посчитала раскладка ниже. При ручной раскладке (`swap_buffer`) её пишет
 // человек, а в `[env]` пустая строка не выводится. Границы разделов и регионов
 // в `[env]` не ездят: это символы `memory.x` (`bsp::layout`).
 variable::set("state_erase_size", "");
@@ -1926,7 +1931,7 @@ variable::set("config_paged", "false");
 // тогда ему нужны `FLASH_BYTES` и обёртки; иначе все три раздела — прямо
 // над `Flash`.
 variable::set("boot_partitioned", "false");
-if variable::is_set("write_size") {
+if variable::is_set("swap_buffer") {
     variable::set("ota", if wants_ota { "true" } else { "false" });
     variable::set("ota_store", if wants_ext_ota { "external" } else { "internal" });
     // Раскладку здесь пишет человек: DFU через регион банка 2 включает он сам.
@@ -1949,7 +1954,7 @@ if variable::is_set("write_size") {
         variable::set("config", "false");
         variable::set("config_store", "none");
         if wants_config {
-            print("Раздел настроек не выделен: memory.x вы заполняете сами (задан write_size)");
+            print("Раздел настроек не выделен: memory.x вы заполняете сами (задан swap_buffer)");
             print("  добавьте регион CONFIG и символы __config_start/__config_end в memory.x вручную");
         }
     }
@@ -2055,7 +2060,7 @@ if variable::is_set("write_size") {
         print("Настройки — на внешней флеши W25Q: подставьте шину с выводами платы в crates-cross/bsp/src/external.rs");
         print("  (пока там заглушка bsp::stub::Bus — проект собирается, настройки не сохраняются; docs/modules/bsp-external.md)");
     }
-    variable::set("write_size", m["write_size"]);
+    variable::set("swap_buffer", m["swap_buffer"]);
     // `page_size` — страница обмена embassy-boot (`PAGE_SIZE`, `SWAP_PAGE_SIZE`
     // в `[env]`): ею bootloader переносит разделы (прежний образ уезжает в
     // `DFU[i + 1]`). С внутренней OTA это `swap_page_size` её набора цифр — она крупнее
@@ -2505,7 +2510,6 @@ if variable::get("graph") != "true" {
     file::delete("docs/modules/bsp-wdg.md");
     // Узел `HEARTBEAT` спавнит только граф, и сторожа без графа нет.
     file::delete("crates-host/domain/src/heartbeat.rs");
-    file::delete("crates-host/domain/src/heartbeat");
     file::delete("docs/watchdog.md");
     // Документация `graph.rs`; общее для крейта `app` — в `docs/modules/app.md`.
     file::delete("docs/modules/app-graph.md");
@@ -2631,7 +2635,7 @@ let http_connections = if services.contains("rest") { 2 } else { 0 };
 variable::set("http_connections", http_connections.to_string());
 
 // Кадровый канал (`ports::FrameLink`, `LinkError`) нужен протоколам — Modbus
-// slave (узел `domain::server`) и protobuf (узел `domain::protobuf`, канал
+// slave (узел `domain::modbus`) и protobuf (узел `domain::protobuf`, канал
 // `FrameDuplex` поверх `FrameLink`), — шине CAN (ошибка `CanBus`) и
 // UDP-каналу (`adapters_logic::net::UdpLink` реализует `FrameLink`) — с протоколом и без него.
 variable::set("link_port", if on.protobuf || on.modbus || has.can || has.udp { "true" } else { "false" });
@@ -2709,27 +2713,23 @@ if !on.modbus {
     file::delete("crates-host/adapters-logic/src/modbus");
     file::delete("crates-host/domain/src/modbus.rs");
     file::delete("crates-host/domain/src/modbus");
-    file::delete("crates-cross/app/src/modbus.rs");
+    file::delete("crates-cross/app/src/registers.rs");
 }
-// Транспорты Modbus и сокеты сети — только под выбранные транспорты: остальные
-// файлы адаптеров были бы кодом, до которого не дотянуться. `mod`, `pub use` и
-// тесты в `modbus.rs`/`net.rs` вырезает Liquid в комментариях.
+// Файлы протокола Modbus — только под выбранные транспорты: `rtu.rs` нужен
+// RTU, `mbap.rs` — TCP и UDP; `client.rs` собирает каналы при любом из них.
+// Сокеты сети — под выбранные интерфейсы. Остальные файлы адаптеров были бы
+// кодом, до которого не дотянуться; `mod`, `pub use` и тесты вырезает Liquid
+// в комментариях.
 if on.modbus {
     if !modbus_rtu {
         file::delete("crates-host/adapters-logic/src/modbus/rtu.rs");
-    }
-    if !modbus_tcp {
-        file::delete("crates-host/adapters-logic/src/modbus/tcp.rs");
-    }
-    if !modbus_udp {
-        file::delete("crates-host/adapters-logic/src/modbus/udp.rs");
     }
     if !modbus_mbap {
         file::delete("crates-host/adapters-logic/src/modbus/mbap.rs");
     }
 }
 // Сервер транспортов TCP — `net/tcp.rs`; клиент MQTT живёт с узлом
-// (`domain/src/mqtt/client.rs`) и уходит вместе с ним.
+// (`domain/src/mqtt/connection.rs`) и уходит вместе с ним.
 if !has.tcp {
     file::delete("crates-host/adapters-logic/src/net/tcp.rs");
 }
@@ -2751,11 +2751,6 @@ if !on.protobuf {
     file::delete("crates-host/domain/src/protobuf.rs");
     file::delete("crates-host/domain/src/protobuf");
     file::delete("crates-host/proto");
-    if variable::get("ota") == "true" {
-        // Обработчик OTA жил в каталоге `domain::ota`, который без OTA
-        // удаляется целиком ниже.
-        file::delete("crates-host/domain/src/ota/protobuf.rs");
-    }
 }
 if !has.can {
     file::delete("crates-host/ports/src/can.rs");
@@ -2764,11 +2759,6 @@ if !on.canopen {
     file::delete("crates-host/domain/src/canopen.rs");
     file::delete("crates-host/domain/src/canopen");
     file::delete("crates-host/canopen");
-}
-// Узел протокола «запрос — ответ» (`domain::server`) обслуживает только Modbus
-// slave: у protobuf свой узел (`domain::protobuf`).
-if !on.modbus {
-    file::delete("crates-host/domain/src/server.rs");
 }
 if variable::get("link_port") != "true" {
     file::delete("crates-host/ports/src/link.rs");
@@ -2793,14 +2783,6 @@ if variable::get("ota") != "true" {
     // Подпись образа в `xtask` и описание OTA.
     file::delete("crates-host/xtask/src/signing.rs");
     file::delete("docs/ota.md");
-    // Перевод команд OTA у протокола: каталог невыбранного протокола уже
-    // удалён выше, поэтому — только у выбранного.
-    if on.modbus {
-        file::delete("crates-host/domain/src/modbus/ota.rs");
-    }
-    if on.canopen {
-        file::delete("crates-host/domain/src/canopen/ota.rs");
-    }
 }
 if variable::get("settings_port") != "true" {
     file::delete("crates-host/domain/src/settings.rs");
@@ -2882,9 +2864,6 @@ if !services.contains("rest") {
 if !services.contains("ssh") {
     file::delete("crates-host/domain/src/ssh.rs");
     file::delete("crates-host/domain/src/ssh");
-} else if variable::get("ota") == "true" {
-    // Заглушка клиента OTA нужна только сборке SSH без OTA.
-    file::delete("crates-host/domain/src/ssh/ota_stub.rs");
 }
 // Консоль живёт для SSH или `cli`: нет ни того, ни другого — нет и модуля.
 if !has_console {
@@ -2893,7 +2872,7 @@ if !has_console {
     file::delete("crates-cross/app/src/console.rs");
     file::delete("crates-cross/app/src/console_password.rs");
 }
-// MQTT — узел (с клиентом брокера `mqtt/client.rs`), разбор `mqtt.toml` в
+// MQTT — узел (с клиентом брокера `mqtt/connection.rs`), разбор `mqtt.toml` в
 // build-скрипте `app` и описание.
 if !services.contains("mqtt") {
     file::delete("crates-host/domain/src/mqtt.rs");
@@ -2946,6 +2925,12 @@ variable::set("ota_cmd_clients", (protocol_clients
 // тестами и `pub mod eeprom;` (закрыт тем же условием в lib.rs) — мусор.
 if variable::get("config_store") != "eeprom" {
     file::delete("crates-host/adapters-hw/src/eeprom.rs");
+}
+// Модуль EEPROM платы — по тому же условию: `ConfigFlash` и доступ к EEPROM
+// под общим замком флеша есть только в этой ветке (`pub mod eeprom;` в lib.rs).
+if variable::get("config_store") != "eeprom" {
+    file::delete("crates-cross/bsp/src/eeprom.rs");
+    file::delete("docs/modules/bsp-eeprom.md");
 }
 // Обёртки над железом без чипа (`adapters-hw`): USB, сеть, EEPROM и фейки —
 // флеш в памяти тестам OTA и настроек. Нет ни одной — нет и крейта; член

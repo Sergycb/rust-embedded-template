@@ -23,13 +23,13 @@ pub mod fault;
 {%- if graph == "true" %}
 mod graph;
 {%- endif %}
-{%- if has_modbus == "true" %}
-mod modbus;
-{%- endif %}
 {%- if net_services != "" %}
 mod net;
 {%- endif %}
 pub mod panic;
+{%- if has_modbus == "true" %}
+mod registers;
+{%- endif %}
 {%- if graph != "true" %}
 mod tasks;
 {%- endif %}
