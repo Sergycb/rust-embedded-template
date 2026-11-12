@@ -77,7 +77,7 @@ mod tests {
     #[test]
     fn drives_the_device_forever() {
         let mut device = Builder::new(
-            adapters_hw::usb::fake::UsbDriver::default(),
+            adapters_hw::usb::stub::UsbDriver::default(),
             Config::new(0xC0DE, 0xCAFE),
             leak([0; 64]),
             leak([0; 64]),

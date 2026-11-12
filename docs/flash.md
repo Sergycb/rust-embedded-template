@@ -138,7 +138,7 @@ F2/F4/F7 (у F4 16, 64 и 128 KiB): в мелких секторах можно 
 
 Опциональное, спрашивается при генерации (`config`, в меню после выбора чипа). Хранилище — `domain::settings` поверх `sequential-storage`
 — принимает любой асинхронный `NorFlash`, и плата подставляет в этот слот
-носитель (где — решает генерация по чипу и ответу `ext_flash`; `ConfigFlash` в `crates-cross/bsp/src/{% if config_store == "external" %}external{% else %}flash{% endif %}.rs`):
+носитель (где — решает генерация по чипу и ответу `ext_flash`; `ConfigFlash` в `crates-cross/bsp/src/{% if config_store == "external" %}external{% elsif config_store == "eeprom" %}eeprom{% else %}flash{% endif %}.rs`):
 {% if config_store == "eeprom" %}внутренняя EEPROM чипа целиком — `adapters_hw::eeprom::Eeprom` над `Flash::eeprom_*`{% elsif config_store == "external" %}раздел на внешней флеши W25Q над драйвером `w25q` (`bsp::external`); шина — заглушка, пока плата её не подставит{% else %}раздел `CONFIG` во внутреннем флеше — `BlockingAsync<{% if config_paged == "true" %}ErasePage<Whole>{% else %}Whole{% endif %}>`{% endif %}.
 
 `Board` отдаёт поле `config` (`bsp::ConfigFlash`).
@@ -166,7 +166,7 @@ QSPI, где он выведен (`QUADSPI`, иначе `OCTOSPI`), иначе S
   свой объект: контроллер физически один. Ссылка `'static`, потому что {% if ota_in == "1" and cfg_in == "1" %}обе
   половины отдаются{% else %}носитель отдаётся в задачу{% endif %}{% if ota_in == "1" and cfg_in == "1" %} в задачи{% endif %}, а аргументы задач embassy обязаны быть `'static`.
 {%- if ota_in != "1" and cfg_flash != "1" %}
-- **EEPROM ходит к контроллеру через свой тип** (`bsp::flash::EepromFlash`): по
+- **EEPROM ходит к контроллеру через свой тип** (`bsp::eeprom::EepromFlash`): по
   операции под замком `Lock`. Свой тип, а не `impl` на мьютексе:
   `Storage` и `Mutex` чужие для `bsp`.
 {%- else %}
@@ -182,7 +182,7 @@ QSPI, где он выведен (`QUADSPI`, иначе `OCTOSPI`), иначе S
   разделы OTA{% if cfg_flash == "1" %} и настройки{% endif %} — асинхронные и стоят на `BlockingAsync` поверх `Whole`; `boot` строит разделы над тем же
   `Mutex<_, RefCell<_>>` блокирующе.{% elsif cfg_flash == "1" %} Потребитель —
   раздел настроек — асинхронный и стоит на `BlockingAsync` поверх `Whole`.{% endif %}{% if config_store == "eeprom" %} Свой тип поверх мьютекса есть только в
-  ветке EEPROM (`bsp::flash::EepromFlash`): `Storage` и `Mutex` чужие
+  ветке EEPROM (`bsp::eeprom::EepromFlash`): `Storage` и `Mutex` чужие
   для `bsp`.{% endif %}
 {%- endif %}
 {%- endif %}

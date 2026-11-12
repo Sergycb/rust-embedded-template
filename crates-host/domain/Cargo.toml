@@ -247,8 +247,8 @@ embassy-time = { workspace = true, features = ["mock-driver", "generic-queue-8"]
 critical-section = { workspace = true, features = ["std"] }
 # {%- if has_net == "true" or has_usb == "true" or ota == "true" or settings_port == "true" %}
 # {%- if has_net == "true" or has_usb == "true" %}
-# Узлы транспортов тестируются над драйверами без шины (`adapters_hw::usb::fake`,
-# `adapters_hw::net::fake`).
+# Узлы транспортов тестируются над драйверами без шины (`adapters_hw::usb::stub`,
+# `adapters_hw::net::stub`).
 # {%- endif %}
 # {%- if net_services != "" %}
 # Узлы сетевых служб — над кабелем между двумя стеками

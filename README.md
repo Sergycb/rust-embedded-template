@@ -521,7 +521,7 @@ git tag v1.2.3 && git push origin v1.2.3
 
 Настройки лежат {% if config_store == "eeprom" %}во внутренней EEPROM чипа{% elsif config_store == "external" %}на внешней флеши{% else %}в разделе `CONFIG` во flash{% endif %}: `Board` отдаёт поле `config`
 (`bsp::ConfigFlash`), носитель — {% if config_store == "eeprom" %}EEPROM, обёрнутая платой в `NorFlash`
-(`crates-cross/bsp/src/flash.rs`){% elsif config_store == "external" %}внешняя флеш (`crates-cross/bsp/src/external.rs`){% else %}раздел `CONFIG` от границ из генерации
+(`crates-cross/bsp/src/eeprom.rs`){% elsif config_store == "external" %}внешняя флеш (`crates-cross/bsp/src/external.rs`){% else %}раздел `CONFIG` от границ из генерации
 (`crates-cross/bsp/src/flash.rs`){% endif %}. Само хранилище —
 `domain::settings::Settings` (тестируется на хосте) поверх `sequential-storage`
 на весь объём носителя, пары «ключ — значение», переживающие и перезапуск, и

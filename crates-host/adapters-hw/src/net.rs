@@ -15,6 +15,76 @@
     )
 )]
 
+pub mod stub {
+    //! Заглушка устройства до Ethernet: стек над ним настоящий, а линк
+    //! всегда опущен — кадров нет ни на приёме, ни на передаче.
+
+    use core::task::Context;
+
+    use embassy_net::driver::{Capabilities, HardwareAddress, LinkState, RxToken, TxToken};
+
+    /// MTU Ethernet: 1500 байт IP и 14 байт заголовка.
+    pub const ETHERNET_MTU: usize = 1514;
+
+    /// Сетевое устройство без линка: кадров нет ни на приёме, ни на передаче.
+    #[derive(Debug)]
+    pub struct Device {
+        mac: [u8; 6],
+    }
+
+    impl Device {
+        /// Устройство с адресом `mac` — его увидит стек, хотя в сеть ничего не
+        /// уходит.
+        #[must_use]
+        pub const fn new(mac: [u8; 6]) -> Self {
+            Self { mac }
+        }
+    }
+
+    /// Кадр, которого не бывает: токены приёма и передачи [`Device`].
+    #[derive(Debug)]
+    pub enum NoFrame {}
+
+    impl RxToken for NoFrame {
+        fn consume<R, F: FnOnce(&mut [u8]) -> R>(self, _: F) -> R {
+            match self {}
+        }
+    }
+
+    impl TxToken for NoFrame {
+        fn consume<R, F: FnOnce(&mut [u8]) -> R>(self, _: usize, _: F) -> R {
+            match self {}
+        }
+    }
+
+    impl embassy_net::driver::Driver for Device {
+        type RxToken<'a> = NoFrame;
+        type TxToken<'a> = NoFrame;
+
+        fn receive(&mut self, _: &mut Context) -> Option<(NoFrame, NoFrame)> {
+            None
+        }
+
+        fn transmit(&mut self, _: &mut Context) -> Option<NoFrame> {
+            None
+        }
+
+        fn link_state(&mut self, _: &mut Context) -> LinkState {
+            LinkState::Down
+        }
+
+        fn capabilities(&self) -> Capabilities {
+            let mut capabilities = Capabilities::default();
+            capabilities.max_transmission_unit = ETHERNET_MTU;
+            capabilities
+        }
+
+        fn hardware_address(&self) -> HardwareAddress {
+            HardwareAddress::Ethernet(self.mac)
+        }
+    }
+}
+
 use embassy_net::driver::Driver;
 
 /// Сеть платы: фоновая работа стека для узла `NET` и сам стек, на котором
@@ -36,10 +106,8 @@ impl<D: Driver + 'static> core::fmt::Debug for Net<D> {
     }
 }
 
-/// Устройство без линка — заглушка в слоте сети платы (`bsp::stub`, фичу
-/// `fake` включает `bsp`) и драйвер host-тестов: стек над ним настоящий, кадров
-/// нет; и кабель в памяти ([`fake::cable`]), по которому кадры между двумя
-/// стеками доходят.
+/// Кабель в памяти ([`fake::cable`]), по которому кадры между двумя стеками
+/// доходят, — для host-тестов транспортов и сервисов.
 #[cfg(any(test, feature = "fake"))]
 pub mod fake {
     /// Кабель в памяти между двумя стеками `embassy-net` — устройством и хостом:
@@ -49,8 +117,8 @@ pub mod fake {
     // {%- endif %}
     /// — стек, сокеты и сервер над ними настоящие, линк — очередь кадров.
     ///
-    /// Только на хосте: ему нужен `alloc`, а прошивка, где `fake` тоже
-    /// собирается (`bsp::stub`), глобального аллокатора не держит.
+    /// Только на хосте: ему нужен `alloc`, а у прошивки глобального
+    /// аллокатора нет.
     #[cfg(not(target_os = "none"))]
     pub mod cable {
         extern crate alloc;
@@ -70,7 +138,7 @@ pub mod fake {
             Config, Ipv4Address, Ipv4Cidr, Runner, Stack, StackResources, StaticConfigV4,
         };
 
-        use super::ETHERNET_MTU;
+        use crate::net::stub::ETHERNET_MTU;
 
         /// Адрес стека-устройства.
         pub const DEVICE: Ipv4Address = Ipv4Address::new(10, 0, 0, 1);
@@ -193,92 +261,27 @@ pub mod fake {
             (stack(device, DEVICE), stack(host, HOST))
         }
     }
+}
 
-    use core::task::Context;
+#[cfg(test)]
+mod tests {
+    use core::task::{Context, Waker};
 
-    use embassy_net::driver::{Capabilities, HardwareAddress, LinkState, RxToken, TxToken};
+    use embassy_net::driver::{Driver, HardwareAddress, LinkState};
 
-    /// MTU Ethernet: 1500 байт IP и 14 байт заголовка.
-    pub const ETHERNET_MTU: usize = 1514;
+    use super::stub::{Device, ETHERNET_MTU};
 
-    /// Сетевое устройство без линка: кадров нет ни на приёме, ни на передаче.
-    #[derive(Debug)]
-    pub struct Device {
-        mac: [u8; 6],
-    }
-
-    impl Device {
-        /// Устройство с адресом `mac` — его увидит стек, хотя в сеть ничего не
-        /// уходит.
-        #[must_use]
-        pub const fn new(mac: [u8; 6]) -> Self {
-            Self { mac }
-        }
-    }
-
-    /// Кадр, которого не бывает: токены приёма и передачи [`Device`].
-    #[derive(Debug)]
-    pub enum NoFrame {}
-
-    impl RxToken for NoFrame {
-        fn consume<R, F: FnOnce(&mut [u8]) -> R>(self, _: F) -> R {
-            match self {}
-        }
-    }
-
-    impl TxToken for NoFrame {
-        fn consume<R, F: FnOnce(&mut [u8]) -> R>(self, _: usize, _: F) -> R {
-            match self {}
-        }
-    }
-
-    impl embassy_net::driver::Driver for Device {
-        type RxToken<'a> = NoFrame;
-        type TxToken<'a> = NoFrame;
-
-        fn receive(&mut self, _: &mut Context) -> Option<(NoFrame, NoFrame)> {
-            None
-        }
-
-        fn transmit(&mut self, _: &mut Context) -> Option<NoFrame> {
-            None
-        }
-
-        fn link_state(&mut self, _: &mut Context) -> LinkState {
-            LinkState::Down
-        }
-
-        fn capabilities(&self) -> Capabilities {
-            let mut capabilities = Capabilities::default();
-            capabilities.max_transmission_unit = ETHERNET_MTU;
-            capabilities
-        }
-
-        fn hardware_address(&self) -> HardwareAddress {
-            HardwareAddress::Ethernet(self.mac)
-        }
-    }
-
-    #[cfg(test)]
-    mod tests {
-        use core::task::{Context, Waker};
-
-        use super::*;
-
-        #[test]
-        fn net_device_has_no_link_and_no_frames() {
-            use embassy_net::driver::Driver;
-
-            let mut device = Device::new([2, 1, 2, 3, 4, 5]);
-            let mut cx = Context::from_waker(Waker::noop());
-            assert!(device.receive(&mut cx).is_none());
-            assert!(device.transmit(&mut cx).is_none());
-            assert!(matches!(device.link_state(&mut cx), LinkState::Down));
-            assert_eq!(device.capabilities().max_transmission_unit, ETHERNET_MTU);
-            assert_eq!(
-                device.hardware_address(),
-                HardwareAddress::Ethernet([2, 1, 2, 3, 4, 5])
-            );
-        }
+    #[test]
+    fn net_device_has_no_link_and_no_frames() {
+        let mut device = Device::new([2, 1, 2, 3, 4, 5]);
+        let mut cx = Context::from_waker(Waker::noop());
+        assert!(device.receive(&mut cx).is_none());
+        assert!(device.transmit(&mut cx).is_none());
+        assert!(matches!(device.link_state(&mut cx), LinkState::Down));
+        assert_eq!(device.capabilities().max_transmission_unit, ETHERNET_MTU);
+        assert_eq!(
+            device.hardware_address(),
+            HardwareAddress::Ethernet([2, 1, 2, 3, 4, 5])
+        );
     }
 }

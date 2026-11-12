@@ -8,18 +8,18 @@
 /// USB-блок, которого ещё нет на плате, — место под драйвер `embassy-stm32`.
 ///
 /// Устройство `embassy-usb` и класс CDC над ним настоящие, а шина никогда не
-/// просыпается — хост устройство не видит. Реализация — `adapters_hw::usb::fake`: на
-/// ней же host-тесты гоняют узел `USB`.
-pub use adapters_hw::usb::fake::{NoBus, NoEndpoint, UsbDriver};
+/// просыпается — хост устройство не видит. Реализация — `adapters_hw::usb::stub`:
+/// на ней же host-тесты гоняют узел `USB`.
+pub use adapters_hw::usb::stub::{NoBus, NoEndpoint, UsbDriver};
 {%- endif %}
 {%- if has_net == "true" %}
 
 /// Сетевое устройство, которого ещё нет на плате, — место под Ethernet.
 ///
 /// Стек `embassy-net` над ним настоящий, а линк всегда опущен: кадров нет ни
-/// на приёме, ни на передаче. Реализация — `adapters_hw::net::fake`: на ней же
+/// на приёме, ни на передаче. Реализация — `adapters_hw::net::stub`: на ней же
 /// host-тесты гоняют узел `NET`.
-pub use adapters_hw::net::fake::{Device, NoFrame};
+pub use adapters_hw::net::stub::{Device, NoFrame};
 {%- endif %}
 {%- if has_uart == "true" %}
 

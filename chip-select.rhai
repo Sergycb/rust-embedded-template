@@ -2923,6 +2923,12 @@ variable::set("ota_cmd_clients", (protocol_clients
 if variable::get("config_store") != "eeprom" {
     file::delete("crates-host/adapters-hw/src/eeprom.rs");
 }
+// Модуль EEPROM платы — по тому же условию: `ConfigFlash` и доступ к EEPROM
+// под общим замком флеша есть только в этой ветке (`pub mod eeprom;` в lib.rs).
+if variable::get("config_store") != "eeprom" {
+    file::delete("crates-cross/bsp/src/eeprom.rs");
+    file::delete("docs/modules/bsp-eeprom.md");
+}
 // Обёртки над железом без чипа (`adapters-hw`): USB, сеть, EEPROM и фейки —
 // флеш в памяти тестам OTA и настроек. Нет ни одной — нет и крейта; член
 // workspace и зависимости на него вырезает Liquid. Последним: файлы крейта
