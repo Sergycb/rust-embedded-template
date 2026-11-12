@@ -20,10 +20,7 @@ pub mod {{ f[4] }} {
 {%- if ota == "true" %}
         let regs = domain::modbus::OtaRegisters::new(
             map,
-            domain::ota::Client::new(
-                crate::tasks::ota::CMD.requester(),
-                domain::ota::ClientId({{ client }}),
-            ),
+            domain::ota::Client::new(crate::tasks::ota::CMD.requester(), domain::ota::ClientId({{ client }})),
         );
 {%- else %}
         let regs = map;
