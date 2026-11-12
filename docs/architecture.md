@@ -50,7 +50,7 @@ HAL (`bsp::board::init_peripherals` — на умолчаниях `embassy-stm32
 {%- if ota == "true" or config == "true" %}
 
 Тесты на плате (`target-tests`) тоже зовут `domain`: собирают над рычагами платы
-те же адаптеры, что приложение ({% if ota == "true" %}`ota::storage`{% if config == "true" %}, {% endif %}{% endif %}{% if config == "true" %}`settings::Settings`{% endif %}).
+те же адаптеры, что приложение ({% if ota == "true" %}`domain::ota::Updater`{% if config == "true" %}, {% endif %}{% endif %}{% if config == "true" %}`settings::Settings`{% endif %}).
 {%- endif %}
 
 Как решить, куда класть новую зависимость/код:
@@ -69,7 +69,7 @@ HAL (`bsp::board::init_peripherals` — на умолчаниях `embassy-stm32
   (кадрирование, клиент, хранилище), требует `Spawner` → `app`.
 - Всё остальное (FSM, конкурентные примитивы, конфигурация, коллекции, RPC-протокол
   между задачами, конкретные типы логики{% if ota == "true" or settings_port == "true" or net_services contains "mqtt" %} —
-  {% assign sep = "" %}{% if ota == "true" %}{{ sep }}адаптер обновления `ota::storage`{% assign sep = ", " %}{% endif %}{% if settings_port == "true" %}{{ sep }}хранилище настроек `settings::Settings`{% assign sep = ", " %}{% endif %}{% if net_services contains "mqtt" %}{{ sep }}клиент брокера `mqtt::Tcp`{% endif %}{% endif %}) → `domain`,
+  {% assign sep = "" %}{% if ota == "true" %}{{ sep }}адаптер обновления `domain::ota::Updater`{% assign sep = ", " %}{% endif %}{% if settings_port == "true" %}{{ sep }}хранилище настроек `settings::Settings`{% assign sep = ", " %}{% endif %}{% if net_services contains "mqtt" %}{{ sep }}клиент брокера `mqtt::Tcp`{% endif %}{% endif %}) → `domain`,
   даже если результат используется только из `cross`.
 
 ### Узлы — фрагменты в `domain`
@@ -136,8 +136,8 @@ consuming-метод текущего состояния, разводка (со
 
 ### Логика — функции над портами и конкретными типами; трейты — только в `ports`
 
-{% if ota == "true" %}Приём образа (`download::Transfer` — данные состояния `Receiving`, шаги — его
-методы), применение обновления (`update::apply`),
+{% if ota == "true" %}Приём образа (`ota::Transfer` — данные состояния `Receiving`, шаги — его
+методы), применение обновления (`ota::apply`),
 версия (`ota::version::*`), решение bootloader'а (`ota::boot::*`) — функции, а циклы узлов зовут их. {% endif %}`ports` —
 все трейты проекта (каждый — под несколько реализаций, ниже) и то, без чего
 контракт не выразить: типы из сигнатур трейтов{% if link_port == "true" %} (`LinkError`){% endif %} и форматы,
@@ -145,8 +145,8 @@ consuming-метод текущего состояния, разводка (со
 `PendingImage` читает bootloader, `layout_fingerprint` считает и `cargo xtask
 build`){% endif %}. В `domain` трейтов нет. Всё, что нужно только логике, — в `domain`,
 подмодулем рядом с узлом, которому оно нужно{% if ota == "true" %}: команды узлу OTA и исходы
-(`ota::commands`), ошибки приёма и применения (`download::DownloadError`,
-`update::UpdateError`){% endif %}{% if modbus_master == "true" %}; ошибка запроса master'а
+(`ota::commands`), ошибки приёма и применения (`ota::DownloadError`,
+`ota::UpdateError`){% endif %}{% if modbus_master == "true" %}; ошибка запроса master'а
 (`modbus::master::RequestError`) — тоже здесь, в `ports` — только то, что
 сверяет транспорт (`MasterError`){% endif %}. Причина — реализация такие типы не видит:
 в `ports` всякая их правка задевала бы `adapters-logic` и `bsp` зря. Там же,
@@ -157,7 +157,7 @@ build`){% endif %}. В `domain` трейтов нет. Всё, что нужно
 которую проект правит под себя, поэтому живёт в `domain`, а не в `app`{% endif %}.
 Состояние внутри одного вызова функции живёт в её локальных переменных, а не в
 структуре; то, что переживает вызов, — данные состояния узла{% if ota == "true" %}
-(`download::Transfer` у `Receiving`: длина, записанное, хвост до слова флеша){% endif %}.
+(`ota::Transfer` у `Receiving`: длина, записанное, хвост до слова флеша){% endif %}.
 
 ### Адаптеры делятся по одному признаку — нужен ли чип
 
@@ -254,7 +254,7 @@ Liquid'ом в коде логики (ниже, «Liquid в корневом wor
 
 Одна реализация — конкретный тип прямо в узле, и тест идёт над ним же
 {%- assign sep = " (" %}
-{%- if ota == "true" %}{{ sep }}`ota::storage` — над разделами в памяти с отказами по заказу{% assign sep = ", " %}{% endif %}
+{%- if ota == "true" %}{{ sep }}`domain::ota::Updater` — над разделами в памяти с отказами по заказу{% assign sep = ", " %}{% endif %}
 {%- if settings_port == "true" %}{{ sep }}`settings::Settings` — над флешем в памяти{% assign sep = ", " %}{% endif %}
 {%- if net_services contains "mqtt" %}{{ sep }}`mqtt::Tcp` — по кабелю между двумя стеками{% assign sep = ", " %}{% endif %}
 {%- if has_modbus == "true" %}{{ sep }}узел протокола — над настоящим `modbus::Slave`{% assign sep = ", " %}{% endif %}
@@ -445,7 +445,7 @@ device, cdc }` (классы `embassy-usb` регистрируются до п�
 `ports::Partitions`: разделы `DFU` и `STATE` со своими страницами, предел
 образа, равный `ACTIVE`, и отпечаток раскладки). {% if graph == "true" %}Compose-site кладёт его во вход узла,
 `domain::ota::OtaWiring { flash: Updater::new(boot.board.firmware), reboot: bsp::reset::Reboot, running_version, confirmed }`,
-прямо в `fragments:`: адаптер{% else %}Адаптер{% endif %} обновления (`domain::ota::storage` — конкретный
+прямо в `fragments:`: адаптер{% else %}Адаптер{% endif %} обновления (`domain::ota::Updater` — конкретный
 тип домена, трейта нет) над ним строит compose-site. Режет разделы плата — по символам
 `memory.x` (`bsp::layout`), тем же, что читает bootloader: где они лежат, знает
 раскладка, а она — дело платы. Сам `bsp` про `domain` не знает: логика приёма и

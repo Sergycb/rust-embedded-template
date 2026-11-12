@@ -4,10 +4,12 @@
 //! которые compose-site передаёт узлу. Объект OTA — запись словаря; команды
 //! обновления приходят SDO-записями и уходят на вход `ASK` узла OTA.
 
+// {%- if ota == "true" %}
 #![expect(
     clippy::arbitrary_source_item_ordering,
     reason = "OTA-часть под Liquid: константы и Dictionary разделены условием генерации"
 )]
+// {%- endif %}
 
 use zencan_node::object_dict::ODEntry;
 use zencan_node::{NodeMbox, NodeState};

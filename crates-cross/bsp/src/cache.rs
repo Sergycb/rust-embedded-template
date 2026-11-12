@@ -13,17 +13,16 @@
 //! - `scb_d` — и кэш данных ядра: он стоит перед всей RAM, а DMA его не видит,
 //!   поэтому сначала `bsp::dma_nc` помечает в MPU non-cacheable регион под
 //!   буферы DMA (у каждого M7, кроме ядра CM4 двухъядерных H7).
+{%- assign flash_cache = "false" %}
+{%- if cache contains "scb_d" or cache contains "icache" or cache contains "dcen" %}
+{%- assign flash_cache = "true" %}
+{%- endif %}
 {%- if shared_flash == "true" %}
 {%- if flash_cache == "true" %}
 //!
 //! Здесь же — [`Coherent`], обёртка флеша чипа: стирание и запись идут мимо
 //! кэша, и после них она его сбрасывает.
 {%- endif %}
-{%- endif %}
-
-{%- assign flash_cache = "false" %}
-{%- if cache contains "scb_d" or cache contains "icache" or cache contains "dcen" %}
-{%- assign flash_cache = "true" %}
 {%- endif %}
 
 {%- if cache contains "icen" or cache contains "icache" %}

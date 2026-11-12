@@ -98,6 +98,11 @@ impl Service {
     }
 }
 
+// Поле `uid` схемы — ровно заводской номер: копируется без проверки длины.
+const _: () = assert!(proto::UID_BYTES == crate::device::UID_BYTES);
+// Прошлую панику `app` сжимает до `PANIC_BRIEF` — она помещается в поле.
+const _: () = assert!(crate::device::PANIC_BRIEF <= proto::PANIC_BYTES);
+
 /// Обработчик команды `info`.
 #[derive(Debug)]
 pub(crate) struct InfoHandler {

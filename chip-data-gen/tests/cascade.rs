@@ -3534,6 +3534,12 @@ fn ota_and_settings_code_is_kept_only_when_selected() {
         "crates-host/domain/src/ota",
     ];
     const SETTINGS: [&str; 1] = ["crates-host/domain/src/settings.rs"];
+    // Внутренняя EEPROM — только у L0/L1 и только когда в ней настройки; без
+    // них `bsp::eeprom` и его документация — мусор, до которого не дотянуться.
+    const EEPROM: [&str; 2] = [
+        "crates-cross/bsp/src/eeprom.rs",
+        "docs/modules/bsp-eeprom.md",
+    ];
     const FLASH: &str = "crates-host/flash-page";
     // (чип, ответы, OTA вырезана, настройки вырезаны, flash-page вырезан)
     type Case<'a> = (&'a str, &'a [(&'a str, &'a str)], bool, bool, bool);
@@ -3588,6 +3594,9 @@ fn ota_and_settings_code_is_kept_only_when_selected() {
         }
         for path in SETTINGS {
             assert_eq!(gone(path), no_settings, "{chip} {answers:?}: {path}");
+        }
+        for path in EEPROM {
+            assert!(gone(path), "{chip} {answers:?}: {path} не удалён без EEPROM");
         }
         assert_eq!(gone(FLASH), no_flash, "{chip} {answers:?}: {FLASH}");
     }
