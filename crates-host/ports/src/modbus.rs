@@ -3,10 +3,11 @@
 //! Данные slave'а — трейт [`Registers`] и представления
 //! кадра (`registers`): его реализуют карта проекта и обёртки над ней в
 //! `domain::modbus`, а зовёт обработчик `domain::modbus::Slave`.
-//! Транспорт slave'а — канал [`FrameLink`] с кадром «адрес
-//! и PDU», его реализует `adapters_logic::modbus` (RTU, TCP, UDP).
+//! Канал slave'а — [`FrameLink`] с кадром «адрес
+//! и PDU»: протокол Modbus над транспортом, его реализует
+//! `adapters_logic::modbus` (RTU, TCP, UDP).
 // {%- if modbus_master == "true" %}
-//! Транспорт master'а — [`ModbusClient`] — реализуют они
+//! Канал master'а — [`ModbusClient`] — реализуют они
 //! же; его ошибка — [`MasterError`]
 //! (`domain::modbus::master`).
 // {%- endif %}
@@ -18,7 +19,7 @@ pub use registers::{Bits, BitsMut, Registers, Words, WordsMut};
 
 /// Наибольший PDU Modbus — функция и данные: 253 байта. Предел пришёл из
 /// кадра RTU (256 байт с адресом и CRC) и одинаков для всех транспортов.
-/// Буферы PDU транспортов — не короче.
+/// Буферы PDU каналов — не короче.
 pub const MAX_PDU: usize = 253;
 
 /// Код исключения Modbus — ответ slave'а вместо данных.

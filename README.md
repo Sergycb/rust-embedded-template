@@ -98,7 +98,7 @@ cargo run -p app                    # прошить приложение и с�
 | Обёртки над железом без чипа | `crates-host/adapters-hw/` | то, из чего `bsp` собирает рычаги, когда чип не нужен{% if hw_list != "" %}: {{ hw_list | remove_first: ", " }}{% endif %}; драйверы без шины и линка и флеш в памяти (модули `fake` рядом с тем, что они подменяют) — заглушки платы и фейки host-тестов |
 {%- endif %}
 {%- if adapters_logic == "true" %}
-{%- capture logic_list %}{% if cobs_used == "true" %}, кадрирование потока COBS + CRC (`adapters_logic::cobs`){% endif %}{% if protocol == "modbus" %}, транспорты Modbus (`adapters_logic::modbus`){% endif %}{% if has_net == "true" %}, транспорты над сокетами `embassy-net` (`adapters_logic::net`){% endif %}{% endcapture %}
+{%- capture logic_list %}{% if cobs_used == "true" %}, кадрирование потока COBS + CRC (`adapters_logic::cobs`){% endif %}{% if protocol == "modbus" %}, протокол Modbus и каналы (`adapters_logic::modbus`){% endif %}{% if has_net == "true" %}, транспорты над сокетами `embassy-net` (`adapters_logic::net`){% endif %}{% endcapture %}
 | Реализации портов | `crates-host/adapters-logic/` | реализации трейтов `ports`, когда их несколько: {{ logic_list | remove_first: ", " }} — тестируется на хосте |
 {%- endif %}
 {%- if protocol == "protobuf" %}
@@ -245,7 +245,7 @@ supervisor-графы, watchdog{% endif %}). Вся остальная логи�
   проекта в `domain` и обёртки над ней (общая ручка{% if ota == "true" %}, окно OTA{% endif %}), а кадры к нему
   переводит обработчик `domain::modbus::Slave` (адрес, широковещание, исключения).
 {%- capture mb_links %}{% if modbus_rtu == "true" %}, `adapters_logic::modbus::Rtu` (RTU поверх потока
-  {% if has_uart == "true" %}UART{% if has_usb == "true" %} или {% endif %}{% endif %}{% if has_usb == "true" %}USB CDC{% endif %}){% endif %}{% if modbus_tcp == "true" %}, `adapters_logic::modbus::Link` (MBAP поверх потока TCP){% endif %}{% if modbus_udp == "true" %}, `adapters_logic::modbus::Udp` (MBAP в датаграмме){% endif %}{% endcapture %}
+  {% if has_uart == "true" %}UART{% if has_usb == "true" %} или {% endif %}{% endif %}{% if has_usb == "true" %}USB CDC{% endif %}){% endif %}{% if modbus_tcp == "true" %}, `adapters_logic::modbus::Tcp` (MBAP поверх потока TCP){% endif %}{% if modbus_udp == "true" %}, `adapters_logic::modbus::Udp` (MBAP в датаграмме){% endif %}{% endcapture %}
 - Канал slave'а — `FrameLink` с кадром «адрес и PDU»: {{ mb_links | remove_first: ", " }}.
 {%- if modbus_master == "true" %}
 - Те же каналы реализуют порт master'а `ModbusClient`, но рабочий master из

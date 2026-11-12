@@ -2708,18 +2708,14 @@ if !on.modbus {
     file::delete("crates-host/domain/src/modbus");
     file::delete("crates-cross/app/src/registers.rs");
 }
-// Транспорты Modbus и сокеты сети — только под выбранные транспорты: остальные
-// файлы адаптеров были бы кодом, до которого не дотянуться. `mod`, `pub use` и
-// тесты в `modbus.rs`/`net.rs` вырезает Liquid в комментариях.
+// Файлы протокола Modbus — только под выбранные транспорты: `rtu.rs` нужен
+// RTU, `mbap.rs` — TCP и UDP; `client.rs` собирает каналы при любом из них.
+// Сокеты сети — под выбранные интерфейсы. Остальные файлы адаптеров были бы
+// кодом, до которого не дотянуться; `mod`, `pub use` и тесты вырезает Liquid
+// в комментариях.
 if on.modbus {
     if !modbus_rtu {
         file::delete("crates-host/adapters-logic/src/modbus/rtu.rs");
-    }
-    if !modbus_tcp {
-        file::delete("crates-host/adapters-logic/src/modbus/tcp.rs");
-    }
-    if !modbus_udp {
-        file::delete("crates-host/adapters-logic/src/modbus/udp.rs");
     }
     if !modbus_mbap {
         file::delete("crates-host/adapters-logic/src/modbus/mbap.rs");

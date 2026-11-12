@@ -166,8 +166,8 @@ build`){% endif %}. В `domain` трейтов нет. Всё, что нужно
 только `ports`.
 {%- capture hw_list %}{% if has_usb == "true" %}, устройство USB с потоком CDC (`adapters_hw::usb::Usb::new`){% endif %}{% if has_net == "true" %}, стек сети с фоновой работой (`adapters_hw::net::Net`){% endif %}{% if config_store == "eeprom" %}, EEPROM как `NorFlash`
 (`adapters_hw::eeprom::Eeprom`){% endif %}{% endcapture %}
-{%- capture logic_list %}{% if cobs_used == "true" %}, кадрирование потока (`adapters_logic::cobs::Cobs`){% endif %}{% if has_modbus == "true" %}, транспорты Modbus
-(`adapters_logic::modbus`){% endif %}{% if has_net == "true" %}, транспорты над сокетами `embassy-net` (`adapters_logic::net`){% endif %}{% endcapture %}
+{%- capture logic_list %}{% if cobs_used == "true" %}, кадрирование потока (`adapters_logic::cobs::Cobs`){% endif %}{% if has_modbus == "true" %}, протокол Modbus
+и каналы (`adapters_logic::modbus`){% endif %}{% if has_net == "true" %}, транспорты над сокетами `embassy-net` (`adapters_logic::net`){% endif %}{% endcapture %}
 {%- if hw_list != "" %} Обёртки над железом в проекте: {{ hw_list | remove_first: ", " }}.{% endif %}
 {%- if logic_list != "" %} Реализации портов: {{ logic_list | remove_first: ", " }}.{% endif %}
 {%- if adapters_hw == "true" or adapters_logic == "true" %}

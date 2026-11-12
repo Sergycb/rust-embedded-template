@@ -141,8 +141,8 @@ supervisor_graph! {
             },
 {%- elsif f[3] == "modbus" %}
 {%- if f[0] == "tcp" %}
-{%- capture ty %}::adapters_logic::modbus::Link<::adapters_logic::net::Server>{% endcapture %}
-{%- capture link %}::adapters_logic::modbus::Link::new(::adapters_logic::net::Server::new(
+{%- capture ty %}::adapters_logic::modbus::Tcp<::adapters_logic::net::Server>{% endcapture %}
+{%- capture link %}::adapters_logic::modbus::Tcp::new(::adapters_logic::net::Server::new(
                     {{ board }}.net.stack,
                     {{ port }},
                     static [u8; SOCKET_BUFFER],
