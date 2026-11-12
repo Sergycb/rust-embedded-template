@@ -307,7 +307,7 @@ mod tests {
     /// версии, `Layout`, и `Rollback` тест бы не увидел.
     #[test]
     async fn ota_rejects_an_older_image(board: Board) {
-        use domain::ota::update::UpdateError;
+        use domain::ota::UpdateError;
 
         const LENGTH: u32 = 32;
         const LONGER: u32 = LENGTH * 2;
@@ -338,7 +338,7 @@ mod tests {
             .await
             .expect("раздел DFU должен принимать запись");
 
-        let refused = domain::ota::update::apply(&mut ota, RUNNING, &[0u8; 64], LENGTH).await;
+        let refused = domain::ota::apply(&mut ota, RUNNING, &[0u8; 64], LENGTH).await;
         assert!(
             matches!(refused, Err(UpdateError::Rollback { .. })),
             "старый образ должен отвергаться отдельной ошибкой, а не общей"
@@ -359,7 +359,7 @@ mod tests {
             .await
             .expect("раздел DFU должен принимать запись");
 
-        let accepted = domain::ota::update::apply(&mut ota, RUNNING, &[0u8; 64], LONGER).await;
+        let accepted = domain::ota::apply(&mut ota, RUNNING, &[0u8; 64], LONGER).await;
         ota.mark_booted().await.expect("снять запрос на обмен");
         assert!(
             accepted.is_ok(),

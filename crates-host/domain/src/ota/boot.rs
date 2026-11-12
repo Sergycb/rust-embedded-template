@@ -40,7 +40,7 @@ pub enum Screening {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScreenFailure {
     /// Обмен запрошен, а записи о принятом образе нет — образ положили мимо
-    /// `domain::ota::update::apply`, то есть без подписи.
+    /// `domain::ota::apply`, то есть без подписи.
     NoRecord,
     /// Длина в записи — ноль или больше `ACTIVE`.
     Length,

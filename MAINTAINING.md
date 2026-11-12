@@ -326,7 +326,7 @@ bootloader и `STATE`. Отсюда и второй набор цифр в `MEMO
 (`PACKAGE_VERSION` и свойства образа `Image` для него; без OTA его удаляет `post-script.rhai`). Режима без подписи нет и
 в `domain`. Подпись проверяет bootloader
 (`domain::ota::boot::screen_update`), приложение — только длину, занятость и версию
-(`domain::ota::update::apply`), см. docs/ota.md.
+(`domain::ota::apply`), см. docs/ota.md.
 
 ### Modbus master (`modbus_master`)
 

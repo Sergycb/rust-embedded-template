@@ -358,7 +358,7 @@ interface=none` с OTA — ошибка генерации. Протокол м�
 
 Всё, что не зависит от протокола, готово и уже крутится{% if graph == "true" %} в графе задач{% endif %}: узел
 `OTA` (`domain::ota`) принимает образ командами в раздел `DFU`, применяет его
-(`domain::ota::update::apply`) и отвечает
+(`domain::ota::apply`) и отвечает
 исходом на каждую команду. Пишет образ и хранит состояние bootloader'а адаптер
 `domain::ota::Updater` над `embassy-boot`; строит его `app` над полем платы `firmware`
 (`bsp::FirmwareFlash`, `crates-cross/bsp/src/{% if ota_store == "external" %}external{% else %}flash{% endif %}.rs`) — разделами `DFU` и
@@ -389,7 +389,7 @@ interface=none` с OTA — ошибка генерации. Протокол м�
 следом за клиентами сетевых служб{% endif %}. Подключив клиента, прибавьте его к числу мест
 ожидания входа — {% if graph == "true" %}`OTA_CMD_PARKED` в `crates-cross/app/src/graph.rs`{% else %}`CMD_PARKED` в `crates-cross/app/src/tasks/ota.rs`{% endif %}.{% endif %}
 
-Писать приём руками не стоит: узел и `domain::ota::download::Transfer` закрывают его
+Писать приём руками не стоит: узел и `domain::ota::Transfer` закрывают его
 грабли и проверены host-тестами. Под приёмом лежит `prepare` — стирание места под
 образ, самый долгий вызов обновления: всё это время исполнитель embassy стоит{% if graph == "true" %}, и
 одна страница стирания обязана укладываться в таймаут сторожа{% endif %} — docs/ota.md,

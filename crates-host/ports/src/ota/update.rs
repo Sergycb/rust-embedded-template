@@ -6,7 +6,7 @@
 //! одна, и логика OTA зовёт её прямо.
 //!
 //! [`PendingImage`](crate::PendingImage) — то, что приложение оставляет
-//! bootloader'у о принятом подписанном образе; пишет его `domain::ota::update`,
+//! bootloader'у о принятом подписанном образе; пишет его `domain::ota::transfer`,
 //! читает `domain::ota::boot::screen_update` в bootloader'е. Формат здесь, потому
 //! что обе стороны обязаны понимать его одинаково.
 //!
@@ -36,7 +36,7 @@ pub const LAYOUT_SYMBOLS: [&str; 6] = [
 /// Буфер под слово держится на этот максимум, а флешу отдаётся срез нужной
 /// длины: так адаптер обновления (`embassy-boot` требует буфер ровно в
 /// `STATE::WRITE_SIZE` байт с выравниванием флеша), буферизация образа до
-/// слова (`domain::ota::download`) и решение bootloader'а
+/// слова (`domain::ota::transfer`) и решение bootloader'а
 /// (`domain::ota::boot`) остаются generic и не знают слова конкретного чипа.
 pub const MAX_WRITE_SIZE: usize = 32;
 

@@ -26,7 +26,7 @@
 //!   в порядке, стирает раздел под образ;
 //! * `Receiving` — идёт приём от одного клиента
 //!   ([`ClientId`](crate::ota::ClientId), транспорт): куски пишутся во флеш
-//!   шагами [`Transfer`](crate::ota::download::Transfer), `Finish` применяет образ;
+//!   шагами [`Transfer`](crate::ota::Transfer), `Finish` применяет образ;
 //!   `Start`/`Chunk`/`Finish` другого клиента получают `Busy`; владелец молчит
 //!   дольше [`SESSION_TIMEOUT`](crate::ota::SESSION_TIMEOUT) — приём брошен;
 //! * `Ready` — образ применён, обмен разделов ждёт сброса; новый `Start`
@@ -39,7 +39,7 @@
 //! так хост узнаёт исход образа до сброса, а не по факту перезагрузки.
 //!
 //! Образ всегда подписан: `Start` без подписи отвергается до стирания, а
-//! `Finish` применяет образ [`apply`](crate::ota::update::apply)
+//! `Finish` применяет образ [`apply`](crate::ota::apply)
 //! — с проверкой версии против версии этой прошивки, которую узел получает во
 //! входе
 // {%- if graph == "true" %}
@@ -53,49 +53,40 @@
 /// модуль.
 pub mod commands;
 
-/// Приём образа по кускам: сверка длины, стирание один раз, буферизация до
-/// слова флеша — шаги над адаптером [`Updater`], см. модуль.
-pub mod download;
-
 /// Решение bootloader'а при старте и проверка подписи нового образа — над
 /// блокирующими разделами: у bootloader'а нет исполнителя. Функции над
 /// `embassy-boot`, не над портами — см. модуль.
 pub mod boot;
-
-/// Применение подписанного обновления: порядок проверок, в котором каждый
-/// отказ различим, и запись подписи для bootloader'а. Функция над адаптером
-/// [`Updater`] — см. модуль.
-pub mod update;
 
 /// Версия прошивки в 32 битах и правило приёма обновления (защита от
 /// отката). Образец границы: `bsp` достаёт четыре байта из флеша, `domain`
 /// решает, что с ними делать, — см. модуль.
 pub mod version;
 
-mod logic;
 /// Адаптер обновления над `embassy-boot`: разделы `DFU` и `STATE` платы.
 mod storage;
+/// Передача и применение образа: автомат узла, приём по кускам и проверки
+/// перед обменом разделов — см. модуль.
+mod transfer;
 
 // Типы входа `CMD` — в корне `domain::ota`: их полным путём называют фрагмент
 // и compose-site (`app`).
 pub use commands::{Command, Reply};
 
 // Подмодули — по теме; их типы видны как `domain::ota::…`.
-pub use logic::{Idle, Ready, Receiving, State};
 pub use storage::{Updater, UpdaterError};
+pub use transfer::{
+    DownloadError, Idle, LAYOUT_BYTES, REBOOT_GRACE, Ready, Receiving, SESSION_TIMEOUT, State,
+    Transfer, UpdateError, VERSION_BYTES, apply,
+};
 
 use embassy_futures::select::{Either, select};
-use embassy_time::Duration;
 use embedded_storage_async::nor_flash::NorFlash;
 use ports::{Partitions, Reboot};
 use supervisor::{Asked, Requester, Served};
 
-use crate::ota::commands::Rejection;
-use crate::ota::download::DownloadError;
-use crate::ota::logic::Ota;
-use crate::ota::update::UpdateError;
+use crate::ota::transfer::Ota;
 use crate::tick::deadline;
-use defmt_or_log::warn;
 
 /// Ёмкость входов `CMD` и `ASK`, байт: запрос (кусок
 /// [`CHUNK_BYTES`](crate::ota::commands::CHUNK_BYTES) со смещением и длиной,
@@ -115,21 +106,6 @@ const _: () = assert!(
     size_of::<Request>() <= CMD_BYTES && size_of::<Reply>() <= CMD_BYTES,
     "команда OTA не помещается во вход CMD: поднимите CMD_BYTES"
 );
-
-/// Сколько приём ждёт следующую команду, прежде чем его бросить.
-///
-/// Хост пропал посреди образа — раздел остаётся стёртым наполовину, но это
-/// раздел обновления, не активный: ничего не сломано, следующий `Start`
-/// начнёт заново. Без тайм-аута приём навсегда остался бы за замолчавшим
-/// клиентом: команды других транспортов получали бы `Busy` до перезагрузки.
-pub const SESSION_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// Сколько узел ждёт после ответа на `Reboot`, прежде чем сбросить МК.
-///
-/// Ответ уходит хосту через узел протокола, а тот работает, только когда узел
-/// OTA уступит исполнитель: без паузы МК сбросился бы раньше, чем ответ
-/// покинул устройство.
-pub const REBOOT_GRACE: Duration = Duration::from_millis(100);
 
 /// Номер клиента входа `CMD` — транспорта, с которого пришла команда.
 ///
@@ -245,42 +221,6 @@ impl Answer<'_> {
 #[must_use]
 pub const fn cmd_parked(clients: usize) -> usize {
     if clients > 2 { clients - 1 } else { 1 }
-}
-
-/// Команда приёма не от владельца: `Busy`, приём владельца — и его срок — как
-/// были.
-fn busy(s: Receiving, client: ClientId, served: Answer<'_>) -> Receiving {
-    warn!(
-        "ota: команда клиента {} отвергнута: идёт приём клиента {}",
-        client.0, s.owner.0
-    );
-    served.respond(Err(Rejection::Busy));
-    s
-}
-
-/// Код отказа для хоста по ошибке приёма.
-fn download_rejection(err: &DownloadError) -> Rejection {
-    match err {
-        DownloadError::Empty | DownloadError::TooLong { .. } => Rejection::Length,
-        DownloadError::TooMuchData { .. }
-        | DownloadError::Incomplete { .. }
-        | DownloadError::OutOfOrder { .. } => Rejection::Transfer,
-        // `Flash` и незнакомые варианты (перечисление `non_exhaustive`)
-        // сообщаются как отказ устройства, а не прячутся.
-        _ => Rejection::Device,
-    }
-}
-
-/// Код отказа для хоста по ошибке применения.
-fn update_rejection(err: &UpdateError) -> Rejection {
-    match err {
-        UpdateError::TooLong { .. } | UpdateError::Truncated { .. } => Rejection::Length,
-        UpdateError::Busy => Rejection::Busy,
-        UpdateError::Rollback { .. } => Rejection::Rollback,
-        UpdateError::Layout { .. } => Rejection::Layout,
-        // `Flash` и незнакомые варианты (перечисление `non_exhaustive`).
-        _ => Rejection::Device,
-    }
 }
 
 // {%- if graph == "true" %}
@@ -459,7 +399,7 @@ mod fake {
     use ports::{Partitions, PendingImage};
 
     use crate::ota::Updater;
-    use crate::ota::update::{LAYOUT_BYTES, VERSION_BYTES};
+    use crate::ota::transfer::{LAYOUT_BYTES, VERSION_BYTES};
 
     /// Отпечаток раскладки разделов тестов — его отдаёт `layout()`; образы
     /// тестов несут его в хвосте, кроме тех, что разыгрывают чужую раскладку.
@@ -727,7 +667,7 @@ pub(crate) mod tests {
     /// в хвосте.
     pub(crate) use crate::ota::fake::LAYOUT;
     use crate::ota::fake::{FakeFlash, SIGNATURE, flash};
-    use crate::ota::update::{LAYOUT_BYTES, VERSION_BYTES};
+    use crate::ota::transfer::{LAYOUT_BYTES, VERSION_BYTES};
     use crate::ota::version::pack;
 
     /// Версия «этой прошивки» во входе узла — у стендов протоколов тоже.
