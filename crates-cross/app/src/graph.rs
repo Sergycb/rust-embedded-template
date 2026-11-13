@@ -139,7 +139,7 @@ supervisor_graph! {
         ::domain::CONSOLE_FRAG<{{ srct }}> as CONSOLE =
             ::domain::console::ConsoleWiring {
                 io: {{ src }},
-                device: {{ device }},
+                info: {{ device }},
                 app: {{ app_info }},
                 login: domain::console::PASSWORD,
 {%- if has_net == "true" %}
@@ -313,7 +313,7 @@ supervisor_graph! {
         // следом за транспортами: сессия приёма у OTA — одного клиента.{% endif %}
         ::domain::HTTP_FRAG as HTTP[{{ http_connections }}] = core::array::from_fn(|{% if ota == "true" %}i{% else %}_{% endif %}| ::domain::http::HttpWiring {
             stack: {{ board }}.net.stack,
-            device: {{ device }},
+            info: {{ device }},
             app: {{ app_info }},
             token: crate::net::rest::TOKEN,
 {%- if ota == "true" %}
@@ -337,7 +337,7 @@ supervisor_graph! {
         ::domain::SSH_FRAG{% if ssh_host_key == "config" %}<::domain::ssh::Stored<bsp::ConfigFlash>>{% endif %} as SSH =
             ::domain::ssh::SshWiring {
                 stack: {{ board }}.net.stack,
-                device: {{ device }},
+                info: {{ device }},
                 app: {{ app_info }},
                 login: domain::console::PASSWORD,
 {%- if ssh_host_key == "config" %}
@@ -364,7 +364,7 @@ supervisor_graph! {
         ::domain::MQTT_FRAG as MQTT =
             ::domain::mqtt::MqttWiring {
                 stack: {{ board }}.net.stack,
-                device: {{ device }},
+                info: {{ device }},
                 app: {{ app_info }},
                 prefix: crate::net::mqtt::PREFIX,
                 broker: crate::net::mqtt::BROKER,
