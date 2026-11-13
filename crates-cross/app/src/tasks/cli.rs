@@ -16,7 +16,12 @@ type Source = {% if f[0] == "usb" %}bsp::usb::{{ f[4] }}::Cdc{% else %}bsp::seri
 
 #[embassy_executor::task]
 {%- if ota == "true" %}
-async fn task(mut io: Source, mut device: DeviceInfo, mut app: AppInfo, mut ota: domain::ota::Client) {
+async fn task(
+    mut io: Source,
+    mut device: DeviceInfo,
+    mut app: AppInfo,
+    mut ota: domain::ota::Client,
+) {
 {%- else %}
 async fn task(mut io: Source, mut device: DeviceInfo, mut app: AppInfo) {
 {%- endif %}
