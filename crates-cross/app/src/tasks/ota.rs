@@ -32,8 +32,7 @@ type Updater = domain::ota::Updater<bsp::FirmwareFlash>;
 {%- if askers > 0 %}
 
 /// Ребро входа `ASK` — доля одного клиента в его очереди.
-type AskEdge =
-    Edge<'static, CriticalSectionRawMutex, domain::ota::Request, domain::ota::Reply>;
+type AskEdge = Edge<'static, CriticalSectionRawMutex, domain::ota::Request, domain::ota::Reply>;
 {%- endif %}
 
 /// Вход команд узла — запрос с ответом, ёмкостью `domain::ota::CMD_BYTES`. Клиента{% if has_modbus != "true" and has_protobuf != "true" and has_canopen != "true" %} получает ваш протокол
