@@ -85,6 +85,12 @@ pub mod can;
 pub mod link;
 
 // {%- endif %}
+// {%- if cobs_used == "true" %}
+/// Sans-IO кодек кадрирования потока (COBS + CRC): протокол без транспорта;
+/// драйвер поверх потока — `adapters_logic::cobs` — см. модуль.
+pub mod cobs;
+
+// {%- endif %}
 // {%- if has_modbus == "true" %}
 // {%- if modbus_master == "true" %}
 /// Modbus: предел PDU, коды исключений, данные slave'а, транспорт master'а,

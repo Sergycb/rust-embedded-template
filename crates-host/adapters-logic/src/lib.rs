@@ -23,7 +23,7 @@
 
 // {%- if cobs_used == "true" %}
 /// Драйвер кадрирования потока (`ports::FrameLink`, `ports::FrameDuplex`):
-/// sans-IO кодек `domain::cobs` поверх `embedded_io_async::{Read, Write}`.
+/// sans-IO кодек `ports::cobs` поверх `embedded_io_async::{Read, Write}`.
 pub mod cobs;
 
 // {%- endif %}

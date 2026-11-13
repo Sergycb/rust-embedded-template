@@ -24,8 +24,6 @@ dependencies = [
  "crc",
  "critical-section",
  "defmt 1.2.0",
- "domain",
- "embassy-executor",
  "embassy-net",
  "embassy-time",
  "embedded-io-async 0.7.0",
@@ -600,8 +598,6 @@ dependencies = [
  "bareminal_cli",
  "bareminal_macros",
  "canopen",
- "cobs",
- "crc",
  "critical-section",
  "defmt 1.2.0",
  "defmt-or-log",
@@ -1658,8 +1654,11 @@ checksum = "05c8b63e8d9609db387f0324918f81d68fe27748f084ef092fb35954d0539a85"
 name = "ports"
 version = "0.1.0"
 dependencies = [
+ "cobs",
+ "crc",
  "defmt 1.2.0",
  "embedded-can",
+ "proptest",
  "thiserror",
 ]
 

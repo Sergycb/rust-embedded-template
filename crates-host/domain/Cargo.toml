@@ -119,12 +119,6 @@ embedded-storage-async = { workspace = true }
 # Хранилище настроек (`domain::settings`) над любым async `NorFlash`.
 sequential-storage = { workspace = true }
 # {%- endif %}
-# {%- if cobs_used == "true" %}
-# Кодек кадрирования потока (`domain::cobs`): COBS и CRC-16/IBM-SDLC. Sans-IO:
-# логика без транспорта; драйвер поверх `embedded_io_async` — `adapters-logic`.
-cobs = { workspace = true }
-crc = { workspace = true }
-# {%- endif %}
 # Прямо, а не транзитивно: тип счётчика в `cpu_load::SleepTicks` —
 # `portable_atomic::AtomicU32`, потому что на Cortex-M0/M0+ у `core`
 # атомика нет `fetch_add`.

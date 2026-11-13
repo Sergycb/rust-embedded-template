@@ -40,11 +40,7 @@ mod usb;
 /// Если задачу уже спавнили: `spawn_all` зовётся один раз за запуск, а
 /// проглоченный `SpawnError::Busy` означал бы, что узел молча не работает.
 {%- if ota == "true" %}
-pub fn spawn_all(
-    spawner: embassy_executor::Spawner,
-    board: bsp::Board,
-    image: domain::ota::Image,
-) {
+pub fn spawn_all(spawner: embassy_executor::Spawner, board: bsp::Board, image: domain::ota::Image) {
 {%- else %}
 pub fn spawn_all(spawner: embassy_executor::Spawner, {% if has_usb == "true" or has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" or has_cli == "true" %}board{% else %}_board{% endif %}: bsp::Board) {
 {%- endif %}

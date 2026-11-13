@@ -14,6 +14,12 @@ workspace = true
 defmt = ["dep:defmt"]
 
 [dependencies]
+# Кодек кадрирования потока (`cobs`): COBS и CRC-16/IBM-SDLC, sans-IO. Крейты
+# без лог-фич: host- и cross-сборки резолвят его одинаково.
+# {%- if cobs_used == "true" %}
+cobs = { workspace = true }
+crc = { workspace = true }
+# {%- endif %}
 # `Display` у ошибки из сигнатуры порта — `modbus::MasterError` транспорта
 # master'а Modbus: человек читает её в логе.
 # {%- if modbus_master == "true" %}
@@ -23,4 +29,11 @@ defmt = { workspace = true, optional = true }
 # Кадр в порту `CanBus` — трейт, который реализует кадр `embassy-stm32`.
 # {%- if has_can == "true" %}
 embedded-can = { workspace = true }
+# {%- endif %}
+
+[dev-dependencies]
+# {%- if cobs_used == "true" %}
+# Property-тесты кодека кадрирования (`cobs`): любое дробление потока и любой
+# мусор; только в этот Cargo.toml.
+proptest = { workspace = true }
 # {%- endif %}

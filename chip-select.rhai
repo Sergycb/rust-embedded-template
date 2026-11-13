@@ -2731,11 +2731,11 @@ if on.modbus {
 // Сервер транспортов TCP и UDP-канал — подмодули внутри `net.rs`
 // (`adapters-logic`): невыбранный генерация вырезает Liquid-веткой, файлов
 // под них нет. Клиент MQTT живёт с узлом (`domain/src/mqtt/connection.rs`)
-// и уходит вместе с ним. Кодек кадрирования (COBS + CRC) — в `domain::cobs`,
+// и уходит вместе с ним. Кодек кадрирования (COBS + CRC) — в `ports::cobs`,
 // транспорт его под ним не трогает.
 if !cobs_used {
     file::delete("crates-host/adapters-logic/src/cobs.rs");
-    file::delete("crates-host/domain/src/cobs.rs");
+    file::delete("crates-host/ports/src/cobs.rs");
 }
 // Реализации портов, которых несколько (`adapters-logic`): каналы протоколов
 // и транспорты над сокетами. Нет ни одной — нет и крейта; член workspace и

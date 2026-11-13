@@ -54,12 +54,6 @@ pub mod device;
 /// обработчик приложения, ответ — см. модуль.
 pub mod protobuf;
 // {%- endif %}
-// {%- if cobs_used == "true" %}
-
-/// Sans-IO кодек кадрирования потока (COBS + CRC) — протокол без транспорта;
-/// драйвер поверх потока — `adapters_logic::cobs` — см. модуль.
-pub mod cobs;
-// {%- endif %}
 // {%- if has_modbus == "true" %}
 
 /// Modbus: узел протокола `MODBUS_<транспорт>`, slave над картой регистров

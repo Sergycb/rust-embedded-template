@@ -201,8 +201,8 @@ supervisor_graph! {
 {%- capture ty %}::adapters_logic::cobs::Cobs<'static, {{ srct }}>{% endcapture %}
 {%- capture link %}::adapters_logic::cobs::Cobs::new(
                     {{ src }},
-                    static [u8; ::domain::cobs::rx_len(::domain::protobuf::REQUEST_MAX)],
-                    static [u8; ::domain::cobs::tx_len(::domain::protobuf::RESPONSE_MAX)],
+                    static [u8; ::ports::cobs::rx_len(::domain::protobuf::REQUEST_MAX)],
+                    static [u8; ::ports::cobs::tx_len(::domain::protobuf::RESPONSE_MAX)],
                 ){% endcapture %}
 {%- endif %}
 {%- endif %}
