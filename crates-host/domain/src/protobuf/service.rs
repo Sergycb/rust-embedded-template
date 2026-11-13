@@ -362,16 +362,11 @@ mod tests {
     use crate::ota::commands::Progress;
     // {%- endif %}
 
-    /// Обработчик со сведениями `info`{% if ota == "true" %}; клиент OTA — к узлу, которого
-    /// никто не опрашивает (команды обновления гоняют тесты узлов){% endif %}.
+    // {%- if ota == "true" %}
+    /// Обработчик со сведениями `info`; клиент OTA — к узлу, которого никто
+    /// не опрашивает (команды обновления гоняют тесты узлов).
     fn service(info: DeviceInfo) -> Service {
-        Service::new(
-            info,
-            APP,
-            // {%- if ota == "true" %}
-            crate::ota::tests::live().0,
-            // {%- endif %}
-        )
+        Service::new(info, APP, crate::ota::tests::live().0)
     }
 
     /// Ответ на запрос, который не ждёт задачу.
@@ -410,7 +405,6 @@ mod tests {
         assert!(matches!(reply.result, Some(Response_::Result::Error(_))));
     }
 
-    // {%- if ota == "true" %}
     /// Подпись не той длины — ответ-отказ сразу, до узла OTA она не доходит:
     /// узла здесь никто не опрашивает, и ответ готов с первого опроса.
     #[test]
