@@ -40,7 +40,7 @@ pub mod {{ f[4] }} {
     /// его не трогает, контроллер платы соберётся из него и выводов.
     pub(crate) fn new(_resources: crate::resources::{% for part in parts %}{{ part | capitalize }}{% endfor %}Resources) -> Can {
         defmt::warn!("bsp: {{ f[2] }} не подключён — {% if f[3] == "canopen" %}узел CANopen ждёт впустую{% else %}шина ждёт впустую{% endif %}");
-        Can::default()
+        Can
     }
 }
 {%- endif %}

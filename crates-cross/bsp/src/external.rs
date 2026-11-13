@@ -124,7 +124,10 @@ pub fn connected() -> bool {
 /// лог, и драйвер отказывает в любой операции ошибкой, а не паникой. Плата без
 /// флеши (или с заглушкой шины) работает, только без того, что на флеши лежит.
 pub(crate) async fn new(_resources: crate::resources::ExtFlashResources) -> &'static ExternalMutex {
-    let mut flash = ExternalFlash::new(Bus, embassy_time::Delay);
+    // Шина из шаблона — заглушка: `Bus` — псевдоним, значения у него нет.
+    // Плата подставляет свою шину — вместе с этой строкой (рецепт —
+    // docs/modules/bsp-external.md).
+    let mut flash = ExternalFlash::new(StubBus, embassy_time::Delay);
     let end = crate::layout::ext_flash_end();
     let flash = match flash.init().await {
         Ok(_) if flash.capacity() >= end => {
