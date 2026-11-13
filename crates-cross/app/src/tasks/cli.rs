@@ -8,7 +8,7 @@
 {%- for l in xs %}
 {%- assign f = l | split: ":" %}
 {%- if f[3] == "cli" %}
-use domain::device::DeviceInfo;
+use domain::device::{AppInfo, DeviceInfo};
 use embassy_executor::Spawner;
 
 /// Рычаг платы, поверх которого работает консоль (`board.{{ f[4] }}{% if f[0] == "usb" %}.cdc{% endif %}`).
@@ -16,15 +16,16 @@ type Source = {% if f[0] == "usb" %}bsp::usb::{{ f[4] }}::Cdc{% else %}bsp::seri
 
 #[embassy_executor::task]
 {%- if ota == "true" %}
-async fn task(mut io: Source, mut info: DeviceInfo, mut ota: domain::ota::Client) {
+async fn task(mut io: Source, mut device: DeviceInfo, mut app: AppInfo, mut ota: domain::ota::Client) {
 {%- else %}
-async fn task(mut io: Source, mut info: DeviceInfo) {
+async fn task(mut io: Source, mut device: DeviceInfo, mut app: AppInfo) {
 {%- endif %}
     // Сети без графа нет: `info` печатает `mac none`, `ip none`.
-    let mut login = crate::console::PASSWORD;
+    let mut login = domain::console::PASSWORD;
     domain::console::task(domain::console::ConsoleCtx {
         io: &mut io,
-        info: &mut info,
+        info: &mut device,
+        app: &mut app,
         login: &mut login,
         {%- if ota == "true" %}
         ota: &mut ota,
@@ -35,12 +36,12 @@ async fn task(mut io: Source, mut info: DeviceInfo) {
 }
 
 /// Спавнит узел на рычаге платы `source`.
-pub fn spawn(spawner: Spawner, source: Source, info: DeviceInfo) {
+pub fn spawn(spawner: Spawner, source: Source, device: DeviceInfo, app: AppInfo) {
     {%- if ota == "true" %}
     let ota =
         domain::ota::Client::new(crate::tasks::ota::CMD.requester(), domain::ota::ClientId({{ client }}));
     {%- endif %}
-    let token = task(source, info{% if ota == "true" %}, ota{% endif %});
+    let token = task(source, device, app{% if ota == "true" %}, ota{% endif %});
     spawner.spawn(token.expect("задача CONSOLE свежая: спавнится один раз"));
 }
 {%- endif %}

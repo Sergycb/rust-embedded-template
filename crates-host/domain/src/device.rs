@@ -28,20 +28,13 @@ pub const PANIC_BRIEF: usize = 96;
 /// консоли, REST и MQTT.
 pub const INFO_TEXT: usize = 256 + 27 + "last panic \n".len() + PANIC_BRIEF;
 
-/// Сведения об устройстве.
+/// Сведения об устройстве — то, что знает плата.
 ///
-/// Приходят снаружи: версию и коммит знает прошивка (`app`), чип — плата
-/// (`bsp::ChipSpec`), а не `domain`. Пределы длины строк, если они есть, —
-/// у того, кто их отдаёт.
-// {%- if has_protobuf == "true" %}
-/// Схема protobuf проверяет свои в `protobuf::Service::new`.
-// {%- endif %}
+/// Приходят снаружи: чип — плата (`bsp::ChipSpec`), а не `domain`. Заполняет
+/// compose-site из полей платы. Пределы длины строк, если они есть, — у того,
+/// кто их отдаёт.
 #[derive(Debug, Clone, Copy)]
 pub struct DeviceInfo {
-    /// Версия прошивки.
-    pub version: &'static str,
-    /// Короткий хеш коммита.
-    pub commit: &'static str,
     /// Имя чипа.
     pub chip: &'static str,
     /// Заводской номер экземпляра чипа.
@@ -50,6 +43,19 @@ pub struct DeviceInfo {
     pub flash_size: u32,
     /// Частота ядра, Гц; `None` — неизвестна.
     pub sys_hz: Option<u32>,
+}
+
+/// Сведения о приложении — то, что знает прошивка.
+///
+/// Заполняет compose-site приложения: версию и коммит знает бинарник
+/// (`shadow-rs`), причину сброса и прошлую панику — адаптер диагностики
+/// старта (`app`).
+#[derive(Debug, Clone, Copy)]
+pub struct AppInfo {
+    /// Версия прошивки.
+    pub version: &'static str,
+    /// Короткий хеш коммита.
+    pub commit: &'static str,
     /// Причина последнего сброса в `snake_case` (`pin`, `software`,
     /// `independent_watchdog`…) — как её называет `bsp::reset::take_cause`.
     pub reset: &'static str,
@@ -89,24 +95,25 @@ pub fn panic_brief(m: &str, max: usize) -> &str {
 /// Ошибка записи в `out`: сведения не влезли в буфер.
 pub fn write_info(
     out: &mut impl core::fmt::Write,
-    info: &DeviceInfo,
+    device: &DeviceInfo,
+    app: &AppInfo,
     mac: Option<[u8; 6]>,
     ip: Option<core::net::Ipv4Addr>,
     uptime_s: u64,
 ) -> core::fmt::Result {
-    writeln!(out, "version {} ({})", info.version, info.commit)?;
+    writeln!(out, "version {} ({})", app.version, app.commit)?;
     write!(
         out,
         "chip {}, flash {} KiB",
-        info.chip,
-        info.flash_size / 1024
+        device.chip,
+        device.flash_size / 1024
     )?;
-    match info.sys_hz {
+    match device.sys_hz {
         Some(hz) => writeln!(out, ", core {} MHz", hz / 1_000_000)?,
         None => out.write_char('\n')?,
     }
     out.write_str("uid ")?;
-    for b in info.uid {
+    for b in device.uid {
         write!(out, "{b:02x}")?;
     }
     out.write_str("\nmac ")?;
@@ -124,11 +131,11 @@ pub fn write_info(
         None => out.write_str("ip none\n")?,
     }
     writeln!(out, "uptime {uptime_s} s")?;
-    writeln!(out, "reset {}", info.reset)?;
+    writeln!(out, "reset {}", app.reset)?;
     // Место и текст паники разделяет её же перевод строки, а консоль держит
     // «ключ значение» по строке: текст идёт через пробел, а не второй строкой
     // без ключа.
-    let (place, text) = match info.last_panic {
+    let (place, text) = match app.last_panic {
         Some(panic) => panic.split_once('\n').unwrap_or((panic, "")),
         None => ("none", ""),
     };
@@ -144,23 +151,32 @@ pub fn write_info(
 mod tests {
     use super::*;
 
-    #[test]
-    fn info_carries_every_field() {
-        let info = DeviceInfo {
-            version: "1.2.3",
-            commit: "abc1234",
+    fn device() -> DeviceInfo {
+        DeviceInfo {
             chip: "STM32F407VE",
             uid: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 0xff],
             flash_size: 512 * 1024,
             sys_hz: Some(168_000_000),
+        }
+    }
+
+    fn app() -> AppInfo {
+        AppInfo {
+            version: "1.2.3",
+            commit: "abc1234",
             reset: "pin",
             last_panic: None,
-        };
+        }
+    }
+
+    #[test]
+    fn info_carries_every_field() {
         let mut out = String::new();
         let mac = [2, 0, 0, 0, 0, 0x1f];
         write_info(
             &mut out,
-            &info,
+            &device(),
+            &app(),
             Some(mac),
             Some(core::net::Ipv4Addr::new(10, 0, 0, 7)),
             42,
@@ -178,12 +194,13 @@ mod tests {
         assert!(out.contains("reset pin\n"), "{out}");
         assert!(out.ends_with("last panic none\n"), "{out}");
         out.clear();
-        write_info(&mut out, &info, None, None, 0).unwrap();
+        write_info(&mut out, &device(), &app(), None, None, 0).unwrap();
         assert!(out.contains("mac none\n"), "{out}");
         assert!(out.contains("ip none\n"), "{out}");
     }
 
-    /// Самые длинные сведения, какие отдаёт плата, помещаются в [`INFO_TEXT`].
+    /// Самые длинные сведения, какие отдаёт плата и прошивка, помещаются в
+    /// [`INFO_TEXT`].
     #[test]
     fn the_longest_info_fits_the_buffer() {
         let panic = format!(
@@ -193,20 +210,23 @@ mod tests {
         );
         let brief = panic_brief(&panic, PANIC_BRIEF);
         assert_eq!(brief.len(), PANIC_BRIEF);
-        let info = DeviceInfo {
-            version: "65535.65535.65535-rc.65535",
-            commit: "0123456789ab",
+        let device = DeviceInfo {
             chip: "STM32H7R7L8HXH",
             uid: [0xff; UID_BYTES],
             flash_size: u32::MAX,
             sys_hz: None,
+        };
+        let app = AppInfo {
+            version: "65535.65535.65535-rc.65535",
+            commit: "0123456789ab",
             reset: "independent_watchdog",
             last_panic: Some(String::leak(brief.to_owned())),
         };
         let mut out = String::new();
         write_info(
             &mut out,
-            &info,
+            &device,
+            &app,
             Some([0xff; 6]),
             Some(core::net::Ipv4Addr::BROADCAST),
             u64::MAX,

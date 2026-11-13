@@ -6,24 +6,18 @@
 )]
 
 // Библиотека пакета — всё, что не запуск: узлы{% if graph == "true" %} (граф){% else %} (задачи){% endif %}, паникёр и логгер,
-// обработчик `HardFault`, счётчик сна{% if ota == "true" %}, свойства образа{% endif %}. Запуск — `#[entry]`
+// обработчик `HardFault`, цикл исполнителя{% if ota == "true" %}, свойства образа
+// объявляет бинарник константой `IMAGE` (`domain::ota::Image`){% endif %}. Запуск — `#[entry]`
 // бинарника: рабочего `app` (`src/main.rs`){% if test_image == "true" %} и тестового
 // `test-ota` (`src/bin/test-ota.rs`), у каждого свой{% endif %}. Паникёр, логгер и обработчики
 // фолтов живут здесь и попадают в бинарник ровно по разу — docs/diagnostics.md,
 // «Два паникёра, один на сборку»{% if ota == "true" %}; docs/modules/app.md{% endif %}.
-{%- if has_console == "true" %}
-pub mod console;
-mod console_password;
-{%- endif %}
 pub mod cpu_load;
-{%- if has_protobuf == "true" or net_services != "" or has_cli == "true" %}
-pub mod device;
-{%- endif %}
 pub mod fault;
 {%- if graph == "true" %}
 mod graph;
 {%- endif %}
-{%- if net_services != "" %}
+{%- if net_services contains "rest" or net_services contains "mqtt" or (net_services contains "ssh" and ssh_host_key == "file") %}
 mod net;
 {%- endif %}
 pub mod panic;
@@ -32,9 +26,6 @@ mod registers;
 {%- endif %}
 {%- if graph != "true" %}
 mod tasks;
-{%- endif %}
-{%- if ota == "true" %}
-pub mod version;
 {%- endif %}
 
 // Узлы бинарник только спавнит: модуль {% if graph == "true" %}графа{% else %}задач{% endif %} закрыт, наружу — `spawn_all`{% if graph == "true" and ota == "true" %} и

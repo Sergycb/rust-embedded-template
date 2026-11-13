@@ -10,7 +10,7 @@
 
 /// Узел `PROTOBUF_{{ f[4] | upcase }}`.
 pub mod {{ f[4] }} {
-    use domain::device::DeviceInfo;
+    use domain::device::{AppInfo, DeviceInfo};
     use embassy_executor::Spawner;
     use static_cell::ConstStaticCell;
 
@@ -35,13 +35,14 @@ pub mod {{ f[4] }} {
         ConstStaticCell::new([0; domain::protobuf::RESPONSE_MAX]);
 
     #[embassy_executor::task]
-    async fn task(source: Source, info: DeviceInfo) {
+    async fn task(source: Source, device: DeviceInfo, app: AppInfo) {
         // Канал — над рычагом платы; статики берутся один раз: задача
         // спавнится один раз за запуск.
         let mut link =
             adapters_logic::cobs::Cobs::new(source, LINK_BUFFER.take(), LINK_FRAME.take());
         let mut service = domain::protobuf::Service::new(
-            info,
+            device,
+            app,
 {%- if ota == "true" %}
             domain::ota::Client::new(crate::tasks::ota::CMD.requester(), domain::ota::ClientId({{ client }})),
 {%- endif %}
@@ -56,8 +57,8 @@ pub mod {{ f[4] }} {
     }
 
     /// Спавнит узел над рычагом платы `source`.
-    pub fn spawn(spawner: Spawner, source: Source, info: DeviceInfo) {
-        let token = task(source, info);
+    pub fn spawn(spawner: Spawner, source: Source, device: DeviceInfo, app: AppInfo) {
+        let token = task(source, device, app);
         spawner.spawn(token.expect("задача PROTOBUF_{{ f[4] | upcase }} свежая: спавнится один раз"));
     }
 }

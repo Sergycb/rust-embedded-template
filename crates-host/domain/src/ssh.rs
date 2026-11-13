@@ -82,8 +82,10 @@ supervisor::supervisor_fragment! {
     node resources: [
             /// Сетевой стек, на котором узел открывает свой сокет.
             STACK: local $crate::net::Stack<'static> = inputs.stack,
-            /// Сведения для `info`.
+            /// Сведения об устройстве для `info`.
             INFO: $crate::device::DeviceInfo = inputs.info,
+            /// Сведения о приложении для `info`.
+            APP: $crate::device::AppInfo = inputs.app,
             /// Хэш пароля пользователя.
             LOGIN: $crate::console::PasswordHash = inputs.login,
             /// Ключ хоста.
@@ -126,7 +128,7 @@ pub async fn task<F: NorFlash>(ctx: SshCtx<'_, Stored<F>>) {
     let key = SignKey::Ed25519(SigningKey::from_bytes(&seed));
     let access = Access::new(*ctx.login);
     let mut connection = Connection::new(
-        *ctx.stack, ctx.info, // {%- if ota == "true" %}
+        *ctx.stack, ctx.info, ctx.app,  // {%- if ota == "true" %}
         *ctx.ota, // {%- endif %}
         ctx.tcp_rx, ctx.tcp_tx, ctx.ssh_rx, ctx.ssh_tx,
     );

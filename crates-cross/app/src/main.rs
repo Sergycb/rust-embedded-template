@@ -14,14 +14,13 @@
 use defmt::{error, info};
 use embassy_executor::Spawner;
 use embassy_executor::raw::Executor;
-use embassy_time::Instant;
 use static_cell::StaticCell;
 {%- if ota == "true" %}
 
-/// Свойства этого образа (`app::version`): версия — `version` из Cargo.toml;
-/// `confirmed: false` — узел OTA подтвердит образ сам (`mark_booted`).
-const IMAGE: app::version::Image = app::version::Image {
-    version: app::version::PACKAGE_VERSION,
+/// Свойства этого образа (`domain::ota::Image`): версия — `version` из
+/// Cargo.toml; `confirmed: false` — узел OTA подтвердит образ сам (`mark_booted`).
+const IMAGE: domain::ota::Image = domain::ota::Image {
+    version: domain::ota::version::pack_str(env!("CARGO_PKG_VERSION")),
     text: app::build::PKG_VERSION,
     confirmed: false,
 };
@@ -81,7 +80,7 @@ fn main() -> ! {
     let reset = bsp::reset::take_cause();
     info!("app: причина сброса {}", reset);
 {%- if has_protobuf == "true" or net_services != "" or has_cli == "true" %}
-    app::device::set_reset(reset);
+    app::panic::set_reset(reset);
 {%- endif %}
 
     // Причина прошлого падения, если оно было: паникёр release-профиля успел
@@ -104,7 +103,7 @@ fn main() -> ! {
         error!("app: предыдущий запуск упал: {}", reason);
     }
 
-    // Исполнитель — свой, а не `#[embassy_executor::main]`, и это единственная
+    // Цикл исполнителя — ручной (`domain::cpu_load::run`), и это единственная
     // причина, по которой `main` здесь синхронный: только так измеряется сон
     // (docs/modules/app-cpu-load.md, «Почему цикл исполнителя в `main` написан
     // руками»).
@@ -112,38 +111,14 @@ fn main() -> ! {
     // `usize::MAX` вместо нуля — тот же «контекст», что и у макроса: на
     // thread-режиме `__pender` делает `SEV` (пока `executor-interrupt` не
     // включён, ровно так же), а не `WFE`, то есть пробуждение задач не теряет.
-    // Цикл ниже ставит `WFE` сам, и всё, что остаётся на долю pender'а, — это
+    // Цикл ставит `WFE` сам, и всё, что остаётся на долю pender'а, — это
     // возврат из него, а не сон.
     let executor = EXECUTOR.init(Executor::new(usize::MAX as *mut ()));
     let spawner = executor.spawner();
     // Плату собирает и узлы спавнит первая задача, `start`, — до неё в цикле
     // ничего не выполняется.
     spawner.spawn(start(spawner).expect("задача start свежая: спавнится один раз"));
-
-    // Цикл исполнителя: поллим, потом спим, пока нечего делать, и отмечаем в
-    // счётчике, сколько тиков проспали. `wfe()` возвращается и по событию (SEV
-    // от `spawn`, от пробуждения задачи), и по таймеру — от того, что сработал
-    // следующий `Timer` задачи, — так что это единственное место, где цикл ждёт.
-    // `poll` — первым: часы, которыми меряется сон, поднимает `Board::new` в
-    // первом же проходе (`embassy_stm32::init`), и до него `Instant` читать
-    // нечем.
-    loop {
-        // SAFETY: поллить исполнитель можно только из единственного места, а
-        // оно здесь — этот цикл единственный, кто его крутит. Ровно то же
-        // обещание, что у `Executor::run`.
-        //
-        // `#[expect(unsafe_code)]` — вместе с остальными в `crates-cross` (см.
-        // `crates-cross/Cargo.toml`): unsafe в прошивке допустим, но каждое
-        // место обязано быть перечислено и объяснено, а линт `unsafe_code`
-        // заставляет перечислять.
-        #[expect(unsafe_code, reason = "обоснование — в комментарии выше")]
-        unsafe {
-            executor.poll();
-        }
-        let before = Instant::now().as_ticks();
-        cortex_m::asm::wfe();
-        app::cpu_load::record_sleep_ticks(Instant::now().as_ticks().saturating_sub(before));
-    }
+    domain::cpu_load::run(executor, cortex_m::asm::wfe)
 }
 
 /// Первая задача: собирает плату и спавнит узлы.

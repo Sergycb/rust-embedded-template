@@ -21,10 +21,11 @@ name = "adapters-logic"
 version = "0.1.0"
 dependencies = [
  "adapters-hw",
- "cobs",
  "crc",
  "critical-section",
  "defmt 1.2.0",
+ "domain",
+ "embassy-executor",
  "embassy-net",
  "embassy-time",
  "embedded-io-async 0.7.0",
@@ -599,6 +600,8 @@ dependencies = [
  "bareminal_cli",
  "bareminal_macros",
  "canopen",
+ "cobs",
+ "crc",
  "critical-section",
  "defmt 1.2.0",
  "defmt-or-log",

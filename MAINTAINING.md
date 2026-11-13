@@ -69,8 +69,8 @@
   `layout/<семейство>.rhai` — раскладка памяти, разложенная по первым двум символам
   суффикса (`f4`, `h7`, `wb`). Целиком раскладка — ~75 тысяч строк, а хуку нужна одна
   запись, поэтому он импортирует только файл своего семейства. Руками не правится.
-- `post-script.rhai` — post-хук: удаляет `crates-cross/app/src/version.rs` без
-  OTA и печатает сводку «что дальше». Команд не выполняет: `cargo update` оттуда убран
+- `post-script.rhai` — post-хук: пишет пароль консоли в `domain` и печатает
+  сводку «что дальше». Команд не выполняет: `cargo update` оттуда убран
   (причина — комментарий в начале `post-script.rhai`), поэтому и `--allow-commands`
   при генерации не нужен.
 - `chip-data-gen/` — два инструмента мейнтейнера (каталог в `ignore`):
@@ -188,7 +188,7 @@ Modbus. Через `--define` то же задаёт `links` (`parse_links()`, �
 `HTTP_CONNECTIONS`), на SSH и на MQTT. Секреты
 (`rest-token.txt`, `ssh-host-key.bin`, заготовка `mqtt.toml`) создаёт `cargo xtask`
 (`secrets.rs`). Пароль консоли `post-script.rhai` пишет константой в
-`crates-cross/app/src/console_password.rs`; файлов `console-password.*` нет.
+`crates-host/domain/src/console/password.rs`; файлов `console-password.*` нет.
 Тесты — `net_services_*`, `ssh_*`, `cli_*` в `cascade.rs`.
 
 #### Без терминала и `--define`
@@ -322,8 +322,8 @@ bootloader и `STATE`. Отсюда и второй набор цифр в `MEMO
 подпись, нет OTA (в том числе если схема не поместилась во flash) — нет и подписи. Всё,
 что к ней относится, закрыто условием по `ota`: фича `boot` у `domain` (проверка подписи — `domain::ota::boot`, ею пользуется `boot`), ключ в `crates-cross/boot`
 (`boot/build.rs`, `OTA_PUBLIC_KEY_IN_IMAGE`, вызов `screen_update`),
-`running_version` во входе узла OTA (`app/src/graph.rs`, `app/src/tasks/ota.rs`) и файл `crates-cross/app/src/version.rs`
-(`PACKAGE_VERSION` и свойства образа `Image` для него; без OTA его удаляет `post-script.rhai`). Режима без подписи нет и
+`running_version` во входе узла OTA (`app/src/graph.rs`, `app/src/tasks/ota.rs`) и константа `IMAGE`
+каждого бинарника (`domain::ota::Image`, `version::pack_str` из `version` его Cargo.toml). Режима без подписи нет и
 в `domain`. Подпись проверяет bootloader
 (`domain::ota::boot::screen_update`), приложение — только длину, занятость и версию
 (`domain::ota::apply`), см. docs/ota.md.

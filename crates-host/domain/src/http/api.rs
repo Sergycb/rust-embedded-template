@@ -10,7 +10,7 @@ use picoserve::routing::get;
 use picoserve::routing::post;
 // {%- endif %}
 
-use crate::device::DeviceInfo;
+use crate::device::{AppInfo, DeviceInfo};
 // {%- if ota == "true" %}
 use crate::ota::commands::Progress;
 use crate::ota::{Client, Command};
@@ -22,6 +22,7 @@ use super::auth::Auth;
 #[derive(Clone, Copy)]
 pub(super) struct Api {
     pub(super) info: DeviceInfo,
+    pub(super) app: AppInfo,
     pub(super) stack: Stack<'static>,
     pub(super) token: &'static str,
     // {%- if ota == "true" %}
@@ -38,6 +39,7 @@ pub(super) struct Api {
 /// последнее звено цепочки.
 struct InfoBody {
     info: DeviceInfo,
+    app: AppInfo,
     mac: [u8; 6],
     ip: Option<embassy_net::Ipv4Address>,
     uptime_s: u64,
@@ -49,6 +51,7 @@ impl InfoBody {
         crate::device::write_info(
             out,
             &self.info,
+            &self.app,
             Some(self.mac),
             self.ip.map(|ip| core::net::Ipv4Addr::from(ip.octets())),
             self.uptime_s,
@@ -108,6 +111,7 @@ fn info(api: &Api) -> Result<InfoBody, (StatusCode, &'static str)> {
     let embassy_net::HardwareAddress::Ethernet(mac) = api.stack.hardware_address();
     let mut body = InfoBody {
         info: api.info,
+        app: api.app,
         mac: mac.0,
         ip: api.stack.config_v4().map(|config| config.address.address()),
         uptime_s: embassy_time::Instant::now().as_secs(),
@@ -160,7 +164,7 @@ mod tests {
     // {%- endif %}
 
     use super::{Api, router};
-    use crate::device::{DeviceInfo, UID_BYTES};
+    use crate::device::{AppInfo, DeviceInfo, UID_BYTES};
     use crate::http::{HTTP_BUFFER, PORT, TCP_RX, TCP_TX};
     // {%- if ota == "true" %}
     use crate::ota::{Client, Request};
@@ -178,14 +182,18 @@ mod tests {
     /// Токен прошивки в тестах.
     const TOKEN: &str = "s3cret";
 
-    /// Сведения для `/api/info`.
+    /// Сведения об устройстве для `/api/info`.
     const INFO: DeviceInfo = DeviceInfo {
-        version: "1.2.3",
-        commit: "abcdef12",
         chip: "stm32f407ve",
         uid: [0x5a; UID_BYTES],
         flash_size: 512 * 1024,
         sys_hz: Some(168_000_000),
+    };
+
+    /// Сведения о приложении для `/api/info`.
+    const APP: AppInfo = AppInfo {
+        version: "1.2.3",
+        commit: "abcdef12",
         reset: "pin",
         last_panic: None,
     };
@@ -300,6 +308,7 @@ mod tests {
         let ((device, mut device_runner), (host, mut host_runner)) = pair();
         let app = router().with_state(Api {
             info: INFO,
+            app: APP,
             stack: device,
             token: TOKEN,
             // {%- if ota == "true" %}

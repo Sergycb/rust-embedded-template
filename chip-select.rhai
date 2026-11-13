@@ -2872,7 +2872,6 @@ if !services.contains("mqtt") {
 }
 if !on.protobuf && services.len() == 0 && !has_cli {
     file::delete("crates-host/domain/src/device.rs");
-    file::delete("crates-cross/app/src/device.rs");
 }
 // Ключ хоста SSH (`ssh_host_key`): `config` — плата создаёт его при первом
 // старте и хранит в разделе настроек; `file` — `ssh-host-key.bin` из корня

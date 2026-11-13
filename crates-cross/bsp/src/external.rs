@@ -31,10 +31,54 @@ const _: () = assert!(
 /// Что не работает, пока флеш не отвечает, — для строки в лог.
 const LOST: &str = "{% if ota == "true" and ota_store == "external" %}OTA{% if config_store == "external" %} и настройки не работают{% else %} не работает{% endif %}{% else %}настройки не сохраняются{% endif %}";
 
-/// Шина микросхемы — пока заглушка. Плата подставляет сюда {% if ext_flash_bus == "spi" %}`w25q::spi::SpiAdapter` над `SpiDevice` блока `{{ext_flash_block}}`{% else %}свою обёртку
+/// Шина-заглушка: микросхема не подключена. Драйвер W25Q над ней настоящий,
+/// а каждая команда отвечает [`NotConnected`]: `init` не проходит, и драйвер
+/// отказывает в любой операции — {% if ota == "true" and ota_store == "external" %}образ не принимается{% endif %}{% if ota == "true" and ota_store == "external" and config_store == "external" %}, {% endif %}{% if config_store == "external" %}настройки не сохраняются{% endif %}, но ничего не
+/// падает. Асинхронная — для приложения, блокирующая — для bootloader'а: тот
+/// с ней не обменивает разделы, а загружает текущий образ.
+///
+/// Плата подставляет сюда {% if ext_flash_bus == "spi" %}`w25q::spi::SpiAdapter` над `SpiDevice` блока `{{ext_flash_block}}`{% else %}свою обёртку
 /// над `embassy_stm32::{% if ext_flash_bus == "quadspi" %}qspi::Qspi{% else %}ospi::Ospi{% endif %}` блока `{{ext_flash_block}}`{% endif %}
 /// (docs/modules/bsp-external.md).
-pub type Bus = crate::stub::Bus;
+#[derive(Debug, Default)]
+pub struct StubBus;
+
+/// Ответ [`StubBus`] на любую команду.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, defmt::Format)]
+pub struct NotConnected;
+
+impl w25q::bus::FlashBusAsync for StubBus {
+    type Error = NotConnected;
+
+    /// Ширина настоящей шины: по ней драйвер выбирает команды{% if ext_flash_bus != "spi" %} (и ставит
+    /// бит QE){% endif %}.
+    const LANES: w25q::bus::Lanes = w25q::bus::Lanes::{% if ext_flash_bus == "spi" %}Single{% else %}Quad{% endif %};
+
+    fn transfer(
+        &mut self,
+        _: &w25q::bus::Command,
+        _: w25q::bus::Data<'_>,
+    ) -> impl Future<Output = Result<(), Self::Error>> {
+        core::future::ready(Err(NotConnected))
+    }
+}
+
+impl w25q::bus::FlashBusSync for StubBus {
+    type Error = NotConnected;
+
+    const LANES: w25q::bus::Lanes = <Self as w25q::bus::FlashBusAsync>::LANES;
+
+    fn transfer(
+        &mut self,
+        _: &w25q::bus::Command,
+        _: w25q::bus::Data<'_>,
+    ) -> Result<(), Self::Error> {
+        Err(NotConnected)
+    }
+}
+
+/// Шина микросхемы: по умолчанию — [`StubBus`]; плата подставляет свою.
+pub type Bus = StubBus;
 
 /// Драйвер внешней флеши: асинхронный W25Q над [`Bus`].
 pub type ExternalFlash = w25q::device::W25qAsync<Bus, embassy_time::Delay>;
@@ -71,7 +115,7 @@ static EXTERNAL: StaticCell<ExternalMutex> = StaticCell::new();
 /// микросхемы проверять нечего.
 #[must_use]
 pub fn connected() -> bool {
-    TypeId::of::<Bus>() != TypeId::of::<crate::stub::Bus>()
+    TypeId::of::<Bus>() != TypeId::of::<StubBus>()
 }
 
 /// Собирает драйвер и опознаёт микросхему (`init`: JEDEC ID, объём{% if ext_flash_bus != "spi" %}, бит QE{% endif %}).
@@ -80,7 +124,7 @@ pub fn connected() -> bool {
 /// лог, и драйвер отказывает в любой операции ошибкой, а не паникой. Плата без
 /// флеши (или с заглушкой шины) работает, только без того, что на флеши лежит.
 pub(crate) async fn new(_resources: crate::resources::ExtFlashResources) -> &'static ExternalMutex {
-    let mut flash = ExternalFlash::new(crate::stub::Bus, embassy_time::Delay);
+    let mut flash = ExternalFlash::new(Bus, embassy_time::Delay);
     let end = crate::layout::ext_flash_end();
     let flash = match flash.init().await {
         Ok(_) if flash.capacity() >= end => {

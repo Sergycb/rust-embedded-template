@@ -5,7 +5,7 @@ use embassy_time::Instant;
 use micropb::{DecodeError, MessageEncode, PbEncoder};
 use proto::{Get, Info, Request, Response, Response_, heapless};
 
-use crate::device::DeviceInfo;
+use crate::device::{AppInfo, DeviceInfo};
 // {%- if ota == "true" %}
 use core::array::TryFromSliceError;
 use core::fmt::Write as _;
@@ -64,14 +64,15 @@ impl Service {
     /// `const`-контексте — ошибка компиляции.
     #[must_use]
     pub const fn new(
-        info: DeviceInfo,
+        device: DeviceInfo,
+        app: AppInfo,
         // {%- if ota == "true" %}
         ota: Client,
         // {%- endif %}
     ) -> Self {
         Self {
             handlers: proto::host::Handlers {
-                info: InfoHandler::new(info),
+                info: InfoHandler::new(device, app),
                 // {%- if ota == "true" %}
                 ota: OtaHandler::new(ota),
                 // {%- endif %}
@@ -106,60 +107,62 @@ const _: () = assert!(crate::device::PANIC_BRIEF <= proto::PANIC_BYTES);
 /// Обработчик команды `info`.
 #[derive(Debug)]
 pub(crate) struct InfoHandler {
-    info: DeviceInfo,
+    device: DeviceInfo,
+    app: AppInfo,
 }
 
 impl InfoHandler {
-    /// Обработчик, отвечающий на `info` сведениями `info`.
+    /// Обработчик, отвечающий на `info` сведениями платы и прошивки.
     ///
     /// # Panics
     ///
-    /// Если строка `info` длиннее ёмкости своего поля в схеме (`proto::*_BYTES`):
+    /// Если строка длиннее ёмкости своего поля в схеме (`proto::*_BYTES`):
     /// обрезанная выглядела бы как настоящая, а пустую ответ не заслуживает. В
     /// `const`-контексте — ошибка компиляции.
     #[must_use]
-    pub(crate) const fn new(info: DeviceInfo) -> Self {
+    pub(crate) const fn new(device: DeviceInfo, app: AppInfo) -> Self {
         assert!(
-            info.version.len() <= proto::VERSION_BYTES,
+            app.version.len() <= proto::VERSION_BYTES,
             "версия не помещается в Info.version"
         );
         assert!(
-            info.commit.len() <= proto::COMMIT_BYTES,
+            app.commit.len() <= proto::COMMIT_BYTES,
             "коммит не помещается в Info.commit"
         );
         assert!(
-            info.chip.len() <= proto::CHIP_BYTES,
+            device.chip.len() <= proto::CHIP_BYTES,
             "имя чипа не помещается в Info.chip"
         );
         assert!(
-            info.reset.len() <= proto::RESET_BYTES,
+            app.reset.len() <= proto::RESET_BYTES,
             "причина сброса не помещается в Info.reset"
         );
-        if let Some(panic) = info.last_panic {
+        if let Some(panic) = app.last_panic {
             assert!(
                 panic.len() <= proto::PANIC_BYTES,
                 "паника не помещается в Info.last_panic"
             );
         }
-        Self { info }
+        Self { device, app }
     }
 
     fn message(&self) -> Info {
-        let info = &self.info;
+        let device = &self.device;
+        let app = &self.app;
         Info {
-            version: text(info.version),
-            commit: text(info.commit),
-            chip: text(info.chip),
+            version: text(app.version),
+            commit: text(app.commit),
+            chip: text(device.chip),
             // Ёмкость поля — `UID_BYTES`, длина массива — та же: не откажет.
-            uid: heapless::Vec::from_slice(&info.uid).unwrap_or_default(),
-            flash_size: info.flash_size,
-            sys_hz: info.sys_hz.unwrap_or(0),
+            uid: heapless::Vec::from_slice(&device.uid).unwrap_or_default(),
+            flash_size: device.flash_size,
+            sys_hz: device.sys_hz.unwrap_or(0),
             // Часы `embassy-time` идут с запуска: их отсчёт и есть время работы.
             // Секунды в `u32` — 136 лет; 64-битные поля `micropb` кодирует
             // только с фичей `enable-64bit`.
             uptime_s: u32::try_from(Instant::now().as_secs()).unwrap_or(u32::MAX),
-            reset: text(info.reset),
-            last_panic: text(info.last_panic.unwrap_or("")),
+            reset: text(app.reset),
+            last_panic: text(app.last_panic.unwrap_or("")),
         }
     }
 }
@@ -330,12 +333,16 @@ pub(super) fn encode(message: &impl MessageEncode, buf: &mut [u8]) -> Option<usi
 
 #[cfg(test)]
 pub(crate) const INFO: DeviceInfo = DeviceInfo {
-    version: "1.2.3",
-    commit: "abcdef12",
     chip: "stm32f407ve",
     uid: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
     flash_size: 512 * 1024,
     sys_hz: None,
+};
+
+#[cfg(test)]
+pub(crate) const APP: AppInfo = AppInfo {
+    version: "1.2.3",
+    commit: "abcdef12",
     reset: "pin",
     last_panic: None,
 };
@@ -360,6 +367,7 @@ mod tests {
     fn service(info: DeviceInfo) -> Service {
         Service::new(
             info,
+            APP,
             // {%- if ota == "true" %}
             crate::ota::tests::live().0,
             // {%- endif %}
@@ -451,13 +459,13 @@ mod tests {
 mod info_tests {
     use super::*;
 
-    fn handler(info: DeviceInfo) -> InfoHandler {
-        InfoHandler::new(info)
+    fn handler(device: DeviceInfo, app: AppInfo) -> InfoHandler {
+        InfoHandler::new(device, app)
     }
 
     #[test]
     fn info_carries_every_field() {
-        let info = handler(INFO).message();
+        let info = handler(INFO, APP).message();
         assert_eq!(info.version, "1.2.3");
         assert_eq!(info.commit, "abcdef12");
         assert_eq!(info.chip, "stm32f407ve");
@@ -466,10 +474,13 @@ mod info_tests {
         assert_eq!(info.sys_hz, 0, "неизвестная частота — 0");
         assert_eq!(info.reset, "pin");
         assert_eq!(info.last_panic, "", "паники не было — пусто");
-        let info = handler(DeviceInfo {
-            last_panic: Some("main.rs:7:1:\nboom"),
-            ..INFO
-        })
+        let info = handler(
+            INFO,
+            AppInfo {
+                last_panic: Some("main.rs:7:1:\nboom"),
+                ..APP
+            },
+        )
         .message();
         assert_eq!(info.last_panic, "main.rs:7:1:\nboom");
     }
@@ -478,31 +489,34 @@ mod info_tests {
     #[should_panic(expected = "не помещается")]
     fn a_reset_cause_over_the_limit_is_refused() {
         let reset: &'static str = "r".repeat(proto::RESET_BYTES + 1).leak();
-        let _handler = handler(DeviceInfo { reset, ..INFO });
+        let _handler = handler(INFO, AppInfo { reset, ..APP });
     }
 
     #[test]
     #[should_panic(expected = "не помещается")]
     fn a_panic_over_the_limit_is_refused() {
         let panic: &'static str = "p".repeat(proto::PANIC_BYTES + 1).leak();
-        let _handler = handler(DeviceInfo {
-            last_panic: Some(panic),
-            ..INFO
-        });
+        let _handler = handler(
+            INFO,
+            AppInfo {
+                last_panic: Some(panic),
+                ..APP
+            },
+        );
     }
 
     #[test]
     fn info_reports_uptime() {
-        let before = handler(INFO).message().uptime_s;
+        let before = handler(INFO, APP).message().uptime_s;
         embassy_time::MockDriver::get().advance(embassy_time::Duration::from_secs(2));
-        assert!(handler(INFO).message().uptime_s >= before + 2);
+        assert!(handler(INFO, APP).message().uptime_s >= before + 2);
     }
 
     /// Версия ровно в предел поля уходит целиком, а не обрезанной.
     #[test]
     fn a_version_of_exactly_the_limit_is_accepted() {
         let version: &'static str = "v".repeat(proto::VERSION_BYTES).leak();
-        let info = handler(DeviceInfo { version, ..INFO }).message();
+        let info = handler(INFO, AppInfo { version, ..APP }).message();
         assert_eq!(info.version, version);
     }
 
@@ -510,13 +524,13 @@ mod info_tests {
     #[should_panic(expected = "не помещается")]
     fn a_version_over_the_limit_is_refused() {
         let version: &'static str = "v".repeat(proto::VERSION_BYTES + 1).leak();
-        let _handler = handler(DeviceInfo { version, ..INFO });
+        let _handler = handler(INFO, AppInfo { version, ..APP });
     }
 
     #[test]
     #[should_panic(expected = "не помещается")]
     fn a_chip_name_over_the_limit_is_refused() {
         let chip: &'static str = "c".repeat(proto::CHIP_BYTES + 1).leak();
-        let _handler = handler(DeviceInfo { chip, ..INFO });
+        let _handler = handler(DeviceInfo { chip, ..INFO }, APP);
     }
 }

@@ -6,7 +6,7 @@ USB платы — драйвер USB-блока и устройство `embass
 устройство и поток не собрать.
 
 Шаблон выводы не выбирает (`docs/architecture.md`), поэтому драйвер подмодуля
-(`type Driver`) пока — заглушка `bsp::stub::UsbDriver`: шина никогда не просыпается, хост устройство не
+(`type Driver`) пока — заглушка `adapters_hw::usb::stub::UsbDriver`: шина никогда не просыпается, хост устройство не
 видит. Всё остальное настоящее: устройство `embassy-usb` с классом CDC, его
 фоновая работа в узле `USB_<транспорт>` (`domain::usb`) и поток
 `adapters_hw::usb::CdcStream` под протоколом или вашим узлом. Проект собирается и
@@ -58,7 +58,7 @@ USB платы — драйвер USB-блока и устройство `embass
    а `Driver::default()` в `new` — его сборкой:
 
    ```rust,ignore
-   // Вместо `type Driver = crate::stub::UsbDriver;`:
+   // Вместо `type Driver = adapters_hw::usb::stub::UsbDriver;`:
    type Driver = embassy_stm32::usb::Driver<'static, embassy_stm32::peripherals::{{ usb_block }}>;
 
 {%- if usb_tag == "otg" %}

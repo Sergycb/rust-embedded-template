@@ -29,7 +29,7 @@ use embedded_io_async::{Read, Write};
 use crate::ota::Client;
 use crate::ota::commands::Progress;
 // {%- endif %}
-use crate::device::{DeviceInfo, INFO_TEXT, write_info};
+use crate::device::{AppInfo, DeviceInfo, INFO_TEXT, write_info};
 
 /// Длина строки команды и буфера разбора.
 pub(crate) const LINE: usize = 128;
@@ -84,6 +84,8 @@ pub enum Command {
 /// Что команды знают об устройстве.
 pub(crate) struct Device<'a> {
     pub(crate) info: &'a DeviceInfo,
+    /// Сведения прошивки: версия, коммит, причина сброса, прошлая паника.
+    pub(crate) app: &'a AppInfo,
     // {%- if has_net == "true" %}
     /// Сетевой стек: без него `info` печатает `mac none`, `ip none`.
     pub(crate) stack: Option<Stack<'static>>,
@@ -276,7 +278,7 @@ async fn run<W: Write>(
             //{{newline}}            let (mac, ip) = (None, None);
             // {%- endif %}
             let uptime_s = Instant::now().as_secs();
-            match write_info(&mut text, device.info, mac, ip, uptime_s) {
+            match write_info(&mut text, device.info, device.app, mac, ip, uptime_s) {
                 Ok(()) => out.text(&text).await?,
                 Err(core::fmt::Error) => out.text("info too long\n").await?,
             }

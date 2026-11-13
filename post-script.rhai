@@ -1,5 +1,4 @@
-// Пост-хук: удаляет crates-cross/app/src/version.rs без OTA и печатает
-// сводку по сгенерированному проекту.
+// Пост-хук: печатает сводку по сгенерированному проекту.
 //
 // `cargo update` здесь был и намеренно убран. Он занимал больше половины
 // времени генерации (два вызова, каждый резолвит свой воркспейс и лезет за
@@ -189,6 +188,7 @@ let config = variable::get("config");
 
 // Хэш пароля консоли — константой в исходнике: файлов `console-password.*`
 // нет. Пароль — имя проекта плюс `00`; в README это написано явно.
+// Живёт в `domain`: пароль — свойство проекта, а не прошивки.
 if variable::get("has_console") == "true" {
     let project = variable::get("project-name");
     if project == "" {
@@ -220,15 +220,8 @@ if variable::get("has_console") == "true" {
         }
     }
     source += "];\n";
-    file::write("crates-cross/app/src/console_password.rs", source);
+    file::write("crates-host/domain/src/console/password.rs", source);
     print("Пароль консоли: " + password);
-}
-
-// Версия и ключ подписи живут в приложении и нужны только с OTA (подпись —
-// всегда вместе с ним). Здесь, а не в pre-хуке: окончательное `ota` pre-хук
-// выставляет в нескольких ветках раскладки, а к этому моменту оно уже одно.
-if variable::get("ota") != "true" {
-	file::delete("crates-cross/app/src/version.rs");
 }
 
 print("");

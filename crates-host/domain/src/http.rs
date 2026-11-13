@@ -56,8 +56,10 @@ supervisor::supervisor_fragment! {
     node resources: [
             /// Сетевой стек, на котором узел открывает свой сокет.
             STACK: local $crate::net::Stack<'static> = inputs.stack,
-            /// Сведения для `/api/info`.
+            /// Сведения об устройстве для `/api/info`.
             INFO: $crate::device::DeviceInfo = inputs.info,
+            /// Сведения о приложении для `/api/info`.
+            APP: $crate::device::AppInfo = inputs.app,
             /// Токен `Authorization: Bearer`.
             TOKEN: &'static str = inputs.token,
             // {%- if ota == "true" %}
@@ -92,6 +94,7 @@ pub async fn task(ctx: HttpCtx<'_>) {
     info!("http: узел запущен, номер в пуле {}", ctx.index);
     let api = Api {
         info: *ctx.info,
+        app: *ctx.app,
         stack: *ctx.stack,
         token: ctx.token,
         // {%- if ota == "true" %}

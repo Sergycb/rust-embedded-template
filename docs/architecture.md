@@ -35,7 +35,7 @@ Modbus{% endif %}{% if net_services != "" %}, секреты служб{% endif 
 HAL (`bsp::board::init_peripherals` — на умолчаниях `embassy-stm32`, не на конфиге
 платы), константы раскладки ({% if shared_flash == "true" %}`bsp::flash`{% if external_flash == "true" %}, {% endif %}{% endif %}{% if external_flash == "true" %}`bsp::external`{% endif %}{% if graph == "true" %},
 `bsp::wdg::HW_TIMEOUT_US`{% endif %}){% if ota_store == "external" %}, шина внешней флеши и её конец
-(`bsp::stub::Bus`, `bsp::layout`){% endif %}, сброс МК в паникёре (`bsp::reset::Reboot`).
+(`bsp::external::Bus`, `bsp::layout`){% endif %}, сброс МК в паникёре (`bsp::reset::Reboot`).
 Своих копий этих констант у `boot` нет. Точка входа
 (`cortex-m-rt`) и паникёр у него свои: паника и фолт — решение прошивки, а не
 рычаг платы, и у `boot` это сброс МК без сообщения, а у `app` — дамп в
@@ -209,8 +209,8 @@ build`){% endif %}. В `domain` трейтов нет. Всё, что нужно
 (`bsp::reset`){% if graph == "true" %}, сторож над IWDG (`bsp::wdg`){% endif %}
 {%- if shared_flash == "true" or external_flash == "true" %}, куски флеша со своими страницами ({% if shared_flash == "true" %}`bsp::flash`{% if external_flash == "true" %},
 {% endif %}{% endif %}{% if external_flash == "true" %}`bsp::external`{% endif %}){% endif %}
-{%- if has_stub == "true" %}, а также заглушки в полях `Board`, пока
-нет драйвера (`bsp::stub`): место под драйвер платы{% endif %}{% if erase_page == "true" %}. Страница раздела
+{%- if has_uart == "true" or has_can == "true" or has_usb == "true" or has_net == "true" or external_flash == "true" %}, а также заглушки в полях `Board`, пока
+нет драйвера (в модуле `bsp` своего транспорта): место под драйвер платы{% endif %}{% if erase_page == "true" %}. Страница раздела
 (`flash_page::ErasePage`) — свой хостовый крейт{% if boot_partitioned == "true" %}, общий у `bsp` и `boot`{% endif %}: это
 геометрия флеша, а не адаптер{% if ota == "true" %}, и обмен `embassy-boot` над ней проверяется на
 хосте{% endif %}{% endif %}. HAL-объект, который уже реализует нужный трейт, `bsp` отдаёт
@@ -247,7 +247,7 @@ Liquid'ом в коде логики (ниже, «Liquid в корневом wor
 {%- if has_modbus == "true" %}{{ sep }}`Registers` — карта slave'а: карта проекта, {% if ota == "true" %}окно OTA поверх неё, {% endif %}общая ручка на
 все узлы `MODBUS_*` вложены друг в друга{% assign sep = "; " %}{% endif %}
 {%- if modbus_master == "true" %}{{ sep }}`ModbusClient` — транспорт master'а (RTU, MBAP-TCP, MBAP-UDP){% assign sep = "; " %}{% endif %}
-{%- if has_can == "true" %}{{ sep }}`CanBus` — шина CAN: заглушка платы (`bsp::stub::Can`) и свой тип над
+{%- if has_can == "true" %}{{ sep }}`CanBus` — шина CAN: заглушка платы (`bsp::can::<транспорт>::Can`) и свой тип над
 контроллером, который ставит проект (`docs/modules/bsp-can.md`){% assign sep = "; " %}{% endif %}
 {%- if ota == "true" %}{{ sep }}`Reboot` — сброс МК: реализация на плате (`bsp::reset`), за границей, которую `domain` не видит{% assign sep = "; " %}{% endif %}{%- endcapture %}
 {%- if traits != "" %} В этом проекте: {{ traits }}.{% endif %}
@@ -400,10 +400,10 @@ compose-site, а не фрагмент (там же).
 {%- if has_usb == "true" or has_net == "true" %} Память, без которой рычаг не собрать
 ({% if has_usb == "true" %}буферы класса CDC{% if has_net == "true" %}, {% endif %}{% endif %}{% if has_net == "true" %}`StackResources` стека{% endif %}), — наоборот, у платы:
 адаптер над ней строит она (выше).{% endif %}
-{%- if has_stub == "true" %}
+{%- if has_uart == "true" or has_can == "true" or has_usb == "true" or has_net == "true" or external_flash == "true" %}
 
 **Выводов шаблон не выбирает — до драйвера в поле `Board` стоит заглушка
-(`bsp::stub`).** Какой блок и на каких ножках, знает только плата. Пока драйвер не
+(в модуле `bsp` своего транспорта).** Какой блок и на каких ножках, знает только плата. Пока драйвер не
 подставлен, проект с заглушкой собирается и запускается: приём ждёт вечно (узел
 спит, не занимая исполнитель), а передача молча выбрасывает данные. Заглушка —
 часть платы, а не приложения: «железо, которого пока нет». Заменить её —
@@ -454,7 +454,7 @@ device, cdc }` (классы `embassy-usb` регистрируются до п�
 а командами узла протокола на вход узла `CMD` ({% if graph == "true" %}`request:` графа, клиент —
 `ota_cmd_requester()`{% else %}`static` в `crate::tasks::ota`{% endif %}; `docs/ota.md`). Вместимость раздела отдаёт сам
 адаптер (`Updater::capacity`). Версия образа — свойство прошивки, а не
-платы: её задаёт бинарник приложения (свойства образа, `crates-cross/app/src/version.rs`) во входе
+платы: её задаёт бинарник приложения (константа `IMAGE`, `domain::ota::Image`) во входе
 узла (`running_version`){% if graph == "true" %} прямо в `fragments:`{% endif %}; ключ подписи — в
 bootloader'е (`crates-cross/boot`), который подпись и проверяет.
 {%- endif %}

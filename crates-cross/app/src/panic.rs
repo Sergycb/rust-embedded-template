@@ -24,6 +24,22 @@ use cortex_m::interrupt::Mutex;
 /// Сообщение паники прошлого запуска: пишет [`take`], читает [`last`].
 static LAST: Mutex<Cell<Option<&'static str>>> = Mutex::new(Cell::new(None));
 
+/// Причина сброса этого запуска (`bsp::reset::take_cause`): пишет
+/// [`set_reset`], читает [`reset_cause`].
+static RESET: Mutex<Cell<&'static str>> = Mutex::new(Cell::new("unknown"));
+
+/// Запоминает причину сброса этого запуска для сведений об устройстве.
+/// Зовёт `main` бинарника сразу за `bsp::reset::take_cause`, до `Board::new`.
+pub fn set_reset(cause: &'static str) {
+    cortex_m::interrupt::free(|cs| RESET.borrow(cs).set(cause));
+}
+
+/// Причина сброса, которую запомнил [`set_reset`]; до неё — `"unknown"`.
+#[must_use]
+pub fn reset_cause() -> &'static str {
+    cortex_m::interrupt::free(|cs| RESET.borrow(cs).get())
+}
+
 /// Читает сообщение паники прошлого запуска и запоминает его для [`last`];
 /// зовёт один раз `main`, до `Board::new`. В dev — всегда `None`.
 ///

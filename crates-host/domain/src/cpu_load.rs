@@ -7,9 +7,9 @@
 //! двумя числами и есть загрузка.
 //!
 //! **Считает не этот узел, а цикл исполнителя.** Счётчик `SleepTicks` живёт
-//! в `crates-cross/app/src/cpu_load.rs`, а пополняет его ручной цикл в
-//! `main` бинарника приложения: тот спит в `WFE` и кладёт в счётчик ровно то, сколько тиков
-//! проспал.
+//! здесь (`cpu_load::sleep_ticks`), а пополняет его [`run`] — ручной цикл
+//! исполнителя в `main` бинарника: тот спит в `WFE` и кладёт в счётчик ровно
+//! то, сколько тиков проспал.
 // {%- if graph == "true" %}
 //! Узел его только читает — через слот ресурса (вход `IdleMeter`).
 // {%- else %}
@@ -43,6 +43,7 @@ pub mod load;
 mod sampling;
 
 pub use sampling::SleepTicks;
+pub use sampling::{record_sleep_ticks, run, sleep_ticks};
 // {%- if graph == "true" %}
 pub use sampling::WATCHDOG;
 // {%- else %}
@@ -57,7 +58,7 @@ use sampling::{SAMPLE_INTERVAL, snapshot};
 
 // Вход узла — `IdleMeter`: структуру эмитит сам фрагмент (`boot: …
 // struct`). Собирает её compose-site из того, что знает
-// приложение (счётчик лежит в `crates-cross/app/src/cpu_load.rs`).
+// приложение (счётчик лежит здесь же, в `domain::cpu_load`).
 //
 // Тип объявлен здесь, а не назван графом, по правилу фрагментов
 // `supervisor`: подсистема говорит, что ей нужно, приложение это

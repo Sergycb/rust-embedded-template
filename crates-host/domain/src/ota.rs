@@ -63,6 +63,10 @@ pub mod boot;
 /// решает, что с ними делать, — см. модуль.
 pub mod version;
 
+/// Свойства образа: версия и подтверждение. Объявляет константой каждый
+/// бинарник `app` — см. модуль.
+pub mod image;
+
 /// Адаптер обновления над `embassy-boot`: разделы `DFU` и `STATE` платы.
 mod storage;
 /// Передача и применение образа: автомат узла, приём по кускам и проверки
@@ -74,6 +78,7 @@ mod transfer;
 pub use commands::{Command, Reply};
 
 // Подмодули — по теме; их типы видны как `domain::ota::…`.
+pub use image::Image;
 pub use storage::{Updater, UpdaterError};
 pub use transfer::{
     DownloadError, Idle, LAYOUT_BYTES, REBOOT_GRACE, Ready, Receiving, SESSION_TIMEOUT, State,
@@ -249,7 +254,7 @@ pub const fn cmd_parked(clients: usize) -> usize {
 // {%- endif %}
 // - `CONFIRMED` — подтверждён ли образ в этом запуске (см. `begin`). Начальное
 //   значение — из свойств образа бинарника (константа `IMAGE` типа
-//   `app::version::Image` в `crates-cross/app/src/main.rs`{% if test_image == "true" %} и
+//   `domain::ota::Image` в `crates-cross/app/src/main.rs`{% if test_image == "true" %} и
 //   `src/bin/test-ota.rs`{% endif %}): у рабочего `false`{% if test_image == "true" %}; у тестового
 //   `test-ota` (`cargo xtask test host-target`) — `true`, он
 //   себя не подтверждает, и следующий сброс его откатывает{% endif %}.

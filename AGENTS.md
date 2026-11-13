@@ -252,7 +252,7 @@ README, «Быстрый старт».
     `crates-cross/app/src/bin/`), чтобы сброс его откатил; в `cargo xtask build`
     и релиз он не попадает — `docs/ota.md`, «Тесты OTA по протоколу (host-target)».
 {%- endif %}
-- Свойства образа (`app::version::Image`: версия для защиты от отката,
+- Свойства образа (`domain::ota::Image`: версия для защиты от отката,
   версия текстом, `confirmed`) объявляет константой `IMAGE` каждый бинарник
   `app` и отдаёт в `app::spawn_all`{% if graph == "true" %} (`boot:`-объект `app::Boot`){% endif %}; рядом у
   каждого бинарника свой символ `FW_VERSION_IN_IMAGE` — его читает `cargo xtask`
@@ -354,7 +354,7 @@ README, «Быстрый старт».
   его объём. Носитель отдаёт плата рычагом `NorFlash`
   (`board.config: bsp::ConfigFlash`): {% if config_store == "eeprom" %}EEPROM L0/L1 (доступ — `embedded_storage::Storage`, обёртку
   `adapters_hw::eeprom::Eeprom` собирает сама плата){% elsif config_store == "external" %}внешняя флеш W25Q (драйвер
-  `w25q` в `bsp::external`, шина — заглушка `bsp::stub::Bus`, пока проект не
+  `w25q` в `bsp::external`, шина — заглушка `bsp::external::StubBus`, пока проект не
   подставит выводы){% else %}раздел `CONFIG` внутреннего
   флеша{% endif %}. Само хранилище — `Settings::whole(board.config)` на compose-site
   узла-потребителя; тип — `domain::settings::Settings<bsp::ConfigFlash>` прямо {% if graph == "true" %}в
@@ -375,10 +375,13 @@ README, «Быстрый старт».
 - Сторожа нет ни в `boot`, ни в приложении: зависший до `mark_booted` образ сам
   не откатится.
 {%- endif %}
-- Цикл исполнителя в `main` бинарника (`crates-cross/app/src/main.rs`{% if test_image == "true" %} и
-  `src/bin/test-ota.rs` — запуск у каждого свой{% endif %}) поднят руками, а не
-  `#[embassy_executor::main]`: возврат к макросу молча ломает замер загрузки —
-  `docs/modules/app-cpu-load.md`, «Почему цикл исполнителя в `main` написан руками».
+- Цикл исполнителя — ручной, но живёт в домене: `main` бинарника
+  (`crates-cross/app/src/main.rs`{% if test_image == "true" %} и
+  `src/bin/test-ota.rs` — запуск у каждого свой{% endif %}) поднимает
+  `embassy_executor::raw::Executor` и отдаёт его в `domain::cpu_load::run`, а
+  не `#[embassy_executor::main]`: возврат к макросу молча ломает замер
+  загрузки — `docs/modules/app-cpu-load.md`, «Почему цикл исполнителя в `main`
+  написан руками».
 {%- if protocol_link == "true" %}
 - Канал протокола — конкретный тип из `adapters-logic` над рычагом платы; строит его
   {% if graph == "true" %}привязка узла в `fragments:` графа (тип — параметр фрагмента, память —
@@ -417,9 +420,9 @@ README, «Быстрый старт».
 {%- if has_console == "true" %}
 - Вход в консоль — всегда по паролю, способа без пароля нет. Пароль —
   имя проекта плюс `00`; `post-script.rhai` при генерации кладёт в
-  `crates-cross/app/src/console_password.rs` соль и хэш, файлов
+  `crates-host/domain/src/console/password.rs` соль и хэш, файлов
   `console-password.*` нет. В прошивку попадает только хэш
-  (`crate::console::PASSWORD`) — README, «Пароль консоли».
+  (`domain::console::PASSWORD`) — README, «Пароль консоли».
 {%- endif %}
 {%- if net_services contains "mqtt" %}
 - Брокер MQTT (`domain::mqtt`, узел `MQTT`) — `mqtt.toml` в корне проекта:
@@ -438,7 +441,9 @@ README, «Быстрый старт».
 - `Board` отдаёт рычаги платы — объекты под трейтами — и данные о чипе
   (`bsp::ChipSpec`) и ничего не настраивает: ни `Peripherals`, ни периферии
   ядра, ни `Clocks` в полях нет; протоколов приложения над рычагами и их буферов
-  в `bsp` нет — их строит `app`{% if has_stub == "true" %}. Заглушка периферии до драйвера — `bsp::stub`{% endif %} —
+  в `bsp` нет — их строит `app`. Заглушка периферии до драйвера живёт в модуле
+  своего транспорта (`bsp::serial`, `bsp::can`, `bsp::usb`, `bsp::net`,
+  `bsp::external`) —
   `docs/architecture.md`, «`Board` отдаёт рычаги платы, а не периферию и не протоколы».
 - `bsp` ничего не инициализирует сверх подъёма HAL: конструкторы зовутся `new`
   и только создают объекты; всё, что запускает железо{% if graph == "true" %} (`arm()` у сторожа){% endif %},
@@ -448,7 +453,7 @@ README, «Быстрый старт».
 {%- if external_flash == "true" %}
 - Внешняя флеш — W25Q, драйвер `w25q` (hw-drivers, `rev` закреплён) в
   `bsp::external` — `docs/modules/bsp-external.md`:
-  - шина под ним — заглушка `bsp::stub::Bus`, пока плата не подставит
+  - шина под ним — заглушка `bsp::external::StubBus`, пока плата не подставит
     свою (рецепт — там же);
   - `Board::new` асинхронный: драйвер опознаёт микросхему (`init`, до 2 с, если
     она дотирает стирание), ждёт таймерами `embassy_time` и потому зовётся из

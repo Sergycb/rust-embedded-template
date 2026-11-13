@@ -132,7 +132,7 @@ mod tests {
     use ports::{FrameDuplex, FrameLink, LinkError};
     use proto::{Get, Request, Request_, Response, Response_, heapless};
 
-    use super::service::INFO;
+    use super::service::{APP, INFO};
     use super::{Service, task};
 
     /// Канал: отдаёт заготовленные исходы `recv` — кадр снимается в опросе,
@@ -223,7 +223,7 @@ mod tests {
         let (ota, mut ota_node) = crate::ota::tests::live();
         // {%- endif %}
         let mut service = Service::new(
-            INFO, // {%- if ota == "true" %}
+            INFO, APP, // {%- if ota == "true" %}
             ota,
             // {%- endif %}
         );
@@ -317,7 +317,7 @@ mod tests {
         {
             let stand = supervisor::stand!(PROTOBUF_FRAG<Link>);
             let (ota, mut ota_node) = crate::ota::tests::live();
-            let mut service = Service::new(INFO, ota);
+            let mut service = Service::new(INFO, APP, ota);
             let response: &'static mut [u8] = vec![0; 64].leak();
             let mut node = pin!(task(stand.ctx(&mut link, &mut service, response)));
             for _ in 0..8 {

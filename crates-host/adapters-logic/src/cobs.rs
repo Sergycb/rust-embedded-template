@@ -19,6 +19,10 @@ use domain::cobs::{self, Codec};
 use embedded_io_async::{Error, ErrorKind, Read, Write};
 use ports::{FrameDuplex, FrameLink, LinkError};
 
+/// Сколько байт читается из потока за раз. Прочитанное сверх кадра не
+/// теряется — ждёт следующего `recv`.
+const CHUNK: usize = 64;
+
 /// Что пошло не так при приёме или отправке кадра.
 #[derive(Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -66,10 +70,6 @@ struct Reader<T> {
     start: usize,
     end: usize,
 }
-
-/// Сколько байт читается из потока за раз. Прочитанное сверх кадра не
-/// теряется — ждёт следующего `recv`.
-const CHUNK: usize = 64;
 
 impl<'b, T> Cobs<'b, T> {
     /// Канал поверх потока `io` с буфером канала `buf` и буфером кадра
@@ -171,6 +171,10 @@ async fn encode_frame<T: Write>(
 }
 
 /// Потеря кадра из кодека — в ошибку канала (отказа транспорта у неё нет).
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "варианты без полей: match не консьюмит, ссылка ничего не дала бы"
+)]
 fn codec_error<E>(err: cobs::Error) -> LinkError<CobsError<E>> {
     LinkError::Lost(match err {
         cobs::Error::Corrupt => CobsError::Corrupt,
@@ -395,7 +399,10 @@ mod tests {
         let (mut buf, mut frame) = ([0; 64], [0; 16]);
         let mut link = Cobs::new(Stream::new(wire, 64), &mut buf, &mut frame);
         let got = recv_all(&mut link).await;
-        let want: Vec<Received> = vec![Err(LinkError::Lost(CobsError::TooLong)), Ok(b"next".to_vec())];
+        let want: Vec<Received> = vec![
+            Err(LinkError::Lost(CobsError::TooLong)),
+            Ok(b"next".to_vec()),
+        ];
         assert_eq!(got, want);
     }
 }

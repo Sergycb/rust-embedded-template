@@ -7,14 +7,42 @@
 
 /// UART `{{ f[2] }}` платы — транспорт `{{ f[4] }}`.
 pub mod {{ f[4] }} {
-    /// Поток байтов `{{ f[2] }}` — пока заглушка, до драйвера (см. модуль `bsp::serial`).
-    pub type Serial = crate::stub::Serial;
+    /// UART, который ещё не подключили, — заглушка до `BufferedUart` платы.
+    /// Поток байтов, как у `BufferedUart`: читает вечно, пишет в никуда.
+    #[derive(Debug, Default)]
+    pub struct Serial;
+
+    impl embedded_io_async::ErrorType for Serial {
+        type Error = core::convert::Infallible;
+    }
+
+    impl embedded_io_async::Read for Serial {
+        async fn read(&mut self, _: &mut [u8]) -> Result<usize, Self::Error> {
+            core::future::pending().await
+        }
+    }
+
+    impl embedded_io_async::ReadReady for Serial {
+        fn read_ready(&mut self) -> Result<bool, Self::Error> {
+            Ok(false)
+        }
+    }
+
+    impl embedded_io_async::Write for Serial {
+        fn write(&mut self, buf: &[u8]) -> impl Future<Output = Result<usize, Self::Error>> {
+            core::future::ready(Ok(buf.len()))
+        }
+
+        fn flush(&mut self) -> impl Future<Output = Result<(), Self::Error>> {
+            core::future::ready(Ok(()))
+        }
+    }
 
     /// Собирает `{{ f[2] }}`. Блок приходит группой `resources.rs` — заглушка его не
     /// трогает, драйвер платы соберётся из него и выводов.
     pub(crate) fn new(_resources: crate::resources::{% for part in parts %}{{ part | capitalize }}{% endfor %}Resources) -> Serial {
         defmt::warn!("bsp: {{ f[2] }} не подключён — {% if f[3] == "none" %}поток ждёт впустую{% else %}узел протокола ждёт впустую{% endif %}");
-        crate::stub::Serial
+        Serial
     }
 }
 {%- endif %}

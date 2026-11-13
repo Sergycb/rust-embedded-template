@@ -168,7 +168,7 @@ embassy-sync       = { version = "0.8.0" }
 embedded-storage   = { version = "0.3.2" }
 {%- endif %}
 {%- if has_uart == "true" %}
-# Заглушка UART (`bsp::stub::Serial`) — поток байтов, как у `BufferedUart`.
+# Заглушка UART (`bsp::serial::<транспорт>::Serial`) — поток байтов, как у `BufferedUart`.
 embedded-io-async  = { version = "0.7.0" }
 {%- endif %}
 # `portable-atomic` здесь не объявлен намеренно: на Cortex-M0/M0+ ему нужно

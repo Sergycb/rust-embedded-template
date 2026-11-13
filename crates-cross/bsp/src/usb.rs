@@ -23,7 +23,7 @@ pub mod {{ f[4] }} {
     use static_cell::{ConstStaticCell, StaticCell};
 
     /// USB-драйвер `{{ f[2] }}` — пока заглушка, до USB-блока чипа (см. модуль `bsp::usb`).
-    type Driver = crate::stub::UsbDriver;
+    type Driver = adapters_hw::usb::stub::UsbDriver;
 
     /// Группа блока в `resources.rs`. Псевдоним — ради сигнатуры `new` одной
     /// длины при любом имени блока: rustfmt не переносит её ни при каком.

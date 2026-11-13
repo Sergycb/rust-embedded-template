@@ -339,7 +339,7 @@ fn default_cases() -> Vec<Case> {
         // Одноядерный с OTA и подписью образа (она всегда идёт вместе с OTA:
         // проверка в bootloader'е `screen_update`, ключ через `boot/build.rs`,
         // `salty` со своей `slow-motion` и профилем dev, свойства образа
-        // `app/src/version.rs` во входе узла OTA), одна карта памяти — самый
+        // `IMAGE` бинарника во входе узла OTA), одна карта памяти — самый
         // обычный случай.
         Case::new("stm32f407ve").smoke(),
         // Тот же чип, но от OTA отказались при генерации: ветка «один образ на
@@ -431,8 +431,8 @@ fn default_cases() -> Vec<Case> {
         // quad-командами.
         Case::new("stm32l476rg").variant("ota-external", &["ext_flash=yes"]),
         // OTA без графа: узел OTA (`app/src/tasks/ota.rs`) спавнит
-        // `tasks::spawn_all` (`app/src/version.rs` есть, `graph.rs` нет), а
-        // bootloader — без сторожа.
+        // `tasks::spawn_all` (свойства образа — константой `IMAGE` бинарника,
+        // `graph.rs` нет), а bootloader — без сторожа.
         // Чип — Cortex-M0+: проверка подписи (она есть всегда, когда есть OTA)
         // живёт в bootloader'е, и код `salty` под Thumb-1 заметно толще, чем
         // под M4; влезает ли release-bootloader в свою зону на M0+, проверяет эта

@@ -348,7 +348,7 @@ interface=none` с OTA — ошибка генерации. Протокол м�
 `DFU` и `BOOTLOADER_STATE` в этом проекте — на внешней SPI NOR: внутри
 остаются bootloader и `ACTIVE` почти на весь чип (на F407VE 384 KiB вместо 128).
 Драйвер микросхемы — W25Q (`w25q`), и он в шаблоне настоящий; заглушка — только шина
-под ним (`bsp::stub::Bus`). Шину с выводами своей платы вы подставляете в
+под ним (`bsp::external::StubBus`). Шину с выводами своей платы вы подставляете в
 `crates-cross/bsp/src/external.rs` (асинхронный драйвер) и в
 `crates-cross/boot/src/external.rs` (блокирующий), рецепт — `docs/modules/bsp-external.md`.
 Совместимость драйвера с раскладкой проверяет компилятор: стирание обязано делить
@@ -364,7 +364,7 @@ interface=none` с OTA — ошибка генерации. Протокол м�
 (`bsp::FirmwareFlash`, `crates-cross/bsp/src/{% if ota_store == "external" %}external{% else %}flash{% endif %}.rs`) — разделами `DFU` и
 `BOOTLOADER_STATE`, которые плата нарезает по символам `memory.x`. {% if graph == "true" %}Граф забирает поле одной строкой (`fragments:` в
 `crates-cross/app/src/graph.rs`){% else %}Задача забирает поле в `crates-cross/app/src/tasks/ota.rs`{% endif %}. Версию образа задаёт приложение — свойства
-образа своего бинарника (`crates-cross/app/src/version.rs`, `main.rs`), а не плата; открытый ключ,
+образа своего бинарника (константа `IMAGE` в `main.rs` и `src/bin/test-ota.rs`), а не плата; открытый ключ,
 которым проверяется подпись, зашит в bootloader (`crates-cross/boot`).
 
 Своего канала у образа нет — он идёт через протокол, по которому хост и так
@@ -678,7 +678,7 @@ Identification (производитель и модель — `crates-host/doma
 {%- endif %}
 
 Выводы шаблон не выбирает: в поле `Board`{% if has_usb == "true" or has_net == "true" %} ({% if has_usb == "true" %}у USB — под устройство
-`embassy-usb`{% if has_net == "true" %}, {% endif %}{% endif %}{% if has_net == "true" %}у Ethernet — под стек `embassy-net`{% endif %}; их собирает плата){% endif %} встаёт заглушка (`bsp::stub`), с которой проект
+`embassy-usb`{% if has_net == "true" %}, {% endif %}{% endif %}{% if has_net == "true" %}у Ethernet — под стек `embassy-net`{% endif %}; их собирает плата){% endif %} встаёт заглушка в модуле `bsp` транспорта, с которой проект
 собирается и запускается, но узел ждёт впустую (`docs/architecture.md`). Подставить своё железо —
 правка в модуле `bsp` транспорта по рецепту из таблицы
 (`cargo xtask pins <БЛОК> --snippet`).
@@ -768,15 +768,14 @@ PuTTY. Сначала консоль спрашивает пароль (`passwor
 
 Вход в консоль — всегда по паролю{% if net_services contains "ssh" %} (пользователь SSH — `admin`){% endif %}. Пароль задаёт
 `post-script.rhai` при `cargo generate`: это **имя проекта плюс `00`**, например
-`my-project00`. В прошивку (`crate::console::PASSWORD`,
-`crates-cross/app/src/console.rs`) попадает только константа
-`crates-cross/app/src/console_password.rs` — 16 байт соли и SHA-256(соль ‖ пароль);
+`my-project00`. В прошивку (`domain::console::PASSWORD`) попадает только константа
+`crates-host/domain/src/console/password.rs` — 16 байт соли и SHA-256(соль ‖ пароль);
 файлов `console-password.*` в проекте нет. Плата сверяет предъявленный пароль с
 хэшем за постоянное время.
 
 Пароль — не секрет: он выводится из имени репозитория и одинаков у всех, кто это
 имя знает. Для шаблона, стенда и закрытой сети этого достаточно; для устройства в
-поле смените `console_password.rs` на случайный пароль (хэш — SHA-256 с солью) или
+поле смените `console/password.rs` на случайный пароль (хэш — SHA-256 с солью) или
 уберите консоль из сборки. Пароль один на все платы с этой прошивкой — ниже,
 «Секреты служб».
 {%- endif %}

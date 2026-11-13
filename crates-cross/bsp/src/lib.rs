@@ -45,9 +45,6 @@ pub mod rng;
 {%- if has_uart == "true" %}
 pub mod serial;
 {%- endif %}
-{%- if has_stub == "true" %}
-pub mod stub;
-{%- endif %}
 {%- if has_usb == "true" %}
 pub mod usb;
 {%- endif %}

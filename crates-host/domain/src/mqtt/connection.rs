@@ -16,7 +16,7 @@ use minimq::{
 
 use super::telemetry::{TELEMETRY_INTERVAL, write_telemetry};
 use super::topics::{CLIENT_ID_LEN, Command, TOPIC_LEN, Topics, parse_command};
-use crate::device::{DeviceInfo, INFO_TEXT};
+use crate::device::{AppInfo, DeviceInfo, INFO_TEXT};
 // {%- if ota == "true" %}
 use crate::ota::Client;
 use crate::ota::commands::Progress;
@@ -242,8 +242,10 @@ pub(crate) enum Ended {
 pub(crate) struct Env<'a> {
     /// Темы этой платы.
     pub topics: &'a Topics,
-    /// Сведения для `info`.
+    /// Сведения об устройстве для `info`.
     pub info: &'a DeviceInfo,
+    /// Сведения о приложении для `info`.
+    pub app: &'a AppInfo,
     /// MAC для `info`.
     pub mac: [u8; 6],
     /// Адрес платы для `info`; `None` — ещё не получен.
@@ -303,6 +305,7 @@ where
     let Env {
         topics,
         info,
+        app,
         mac,
         ip,
         rx,
@@ -342,7 +345,7 @@ where
     // не годится, следующая сессия — с новым. Кроме отказа брокера в ответ на
     // подписку или публикацию (ниже, у `recv`).
     let online = async {
-        announce(&mut conn, topics, &status, info, *mac, *ip).await?;
+        announce(&mut conn, topics, &status, info, app, *mac, *ip).await?;
         let mut next = Instant::now() + TELEMETRY_INTERVAL;
         loop {
             let command = match with_deadline(next, conn.recv()).await {
@@ -456,6 +459,7 @@ async fn announce<IO: minimq::Io>(
     topics: &Topics,
     status: &str,
     info: &DeviceInfo,
+    app: &AppInfo,
     mac: [u8; 6],
     ip: Option<embassy_net::Ipv4Address>,
 ) -> Result<(), MqttError<IO::Error>> {
@@ -481,6 +485,7 @@ async fn announce<IO: minimq::Io>(
     if crate::device::write_info(
         &mut text,
         info,
+        app,
         Some(mac),
         ip.map(|ip| core::net::Ipv4Addr::from(ip.octets())),
         Instant::now().as_secs(),

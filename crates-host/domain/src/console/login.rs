@@ -7,7 +7,7 @@ use subtle::ConstantTimeEq;
 
 /// Длина хэша пароля [`PasswordHash`]: 16 байт соли и 32 байта
 /// SHA-256(соль ‖ пароль). Тот же формат пишет `post-script.rhai` в
-/// `crates-cross/app/src/console_password.rs` при генерации проекта.
+/// `crates-host/domain/src/console/password.rs` при генерации проекта.
 pub const PASSWORD_HASH_LEN: usize = SALT_LEN + DIGEST_LEN;
 
 /// Пользователь консоли SSH. У `cli` имени нет — только пароль.
@@ -26,7 +26,7 @@ const DIGEST_LEN: usize = 32;
 /// SHA-256 без KDF (bcrypt, argon2) — потому что защищать нечего: шаблон
 /// выводит пароль из имени проекта (`<project>00`) с фиксированной солью, и
 /// он документированно не секрет. Поле на плате меняется в
-/// `crates-cross/app/src/console_password.rs`; для настоящей защиты нужен
+/// `crates-host/domain/src/console/password.rs`; для настоящей защиты нужен
 /// случайный пароль и KDF, а не эта схема.
 #[derive(Debug, Clone, Copy)]
 pub struct PasswordHash(pub &'static [u8]);
@@ -45,7 +45,7 @@ pub(crate) enum Access {
 impl Access {
     pub(crate) fn new(hash: PasswordHash) -> Self {
         // Битый хэш — не «пускать всех»: прошивку с хэшем не той длины не
-        // соберёт `const`-assert в `app`, здесь — защита для любого другого
+        // соберёт `const`-assert в `domain`, здесь — защита для любого другого
         // источника хэша.
         if let Some((salt, digest)) = hash.0.split_first_chunk()
             && let Ok(digest) = digest.try_into()
@@ -88,7 +88,7 @@ pub(crate) mod tests {
 
     use super::{Access, PASSWORD_HASH_LEN, PasswordHash};
 
-    /// Хэш пароля, как его пишет `post-script.rhai` в `console_password.rs`:
+    /// Хэш пароля, как его пишет `post-script.rhai` в `console/password.rs`:
     /// соль и SHA-256(соль ‖ пароль).
     pub(crate) fn hashed(password: &str) -> &'static [u8] {
         let salt = [7; 16];

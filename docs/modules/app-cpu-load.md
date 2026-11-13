@@ -1,8 +1,9 @@
-# Загрузка процессора (`app::cpu_load`)
+# Загрузка процессора (`domain::cpu_load`)
 
-Модуль без строк бизнес-логики: один `static`-счётчик{% if graph == "true" %} и две функции{% else %}, две функции и
-объявление задачи{% endif %}. Всё, что он делает, — измерять,
-во сколько процентов занят процессор, и отдавать это тем, кому это нужно.
+Всё измерение — в `domain`: один `static`-счётчик, функции замера и сам
+ручной цикл исполнителя. `app` осталось только позвать его из `main`
+бинарника. Всё, что он делает, — измерять, во сколько процентов занят
+процессор, и отдавать это тем, кому это нужно.
 
 ## Откуда берутся числа
 
@@ -34,14 +35,22 @@
 
 Поэтому `main` бинарника (`#[entry]` в `crates-cross/app/src/main.rs`{% if test_image == "true" %}, и так же
 у тестового образа в `src/bin/test-ota.rs` — запуск у каждого свой{% endif %})
-поднимает `embassy_executor::raw::Executor` вручную и крутит цикл сам:
+поднимает `embassy_executor::raw::Executor` вручную и отдаёт его в цикл
+`domain::cpu_load::run` — тот крутит `poll`/`wait` сам и пишет сон в счётчик:
+
+```ignore
+domain::cpu_load::run(executor, cortex_m::asm::wfe);
+```
+
+Внутри — ровно этот цикл (ждать он умеет через переданную функцию, и у
+прошивки это `wfe`):
 
 ```ignore
 loop {
     unsafe { executor.poll() };
     let before = Instant::now().as_ticks();
-    cortex_m::asm::wfe();
-    cpu_load::record_sleep_ticks(Instant::now().as_ticks().saturating_sub(before));
+    wait();
+    domain::cpu_load::record_sleep_ticks(Instant::now().as_ticks().saturating_sub(before));
 }
 ```
 

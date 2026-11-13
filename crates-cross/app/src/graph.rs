@@ -16,7 +16,19 @@
 {%- if graph == "true" %}
 {%- comment %} Плата — `boot:`-объект графа целиком, а с OTA — его поле `board`: рядом едут свойства образа (`Boot`). {% endcomment %}
 {%- if ota == "true" %}{% assign board = "boot.board" %}{% else %}{% assign board = "board" %}{% endif %}
-{%- capture info %}crate::device::info({{ board }}.spec{% if ota == "true" %}, boot.image{% endif %}){% endcapture %}
+{%- capture device %}domain::device::DeviceInfo {
+                        chip: {{ board }}.spec.chip,
+                        uid: {{ board }}.spec.uid,
+                        flash_size: {{ board }}.spec.flash_size,
+                        sys_hz: {{ board }}.spec.sys_hz,
+                    }{% endcapture %}
+{%- capture app_info %}domain::device::AppInfo {
+                        version: {% if ota == "true" %}boot.image.text{% else %}crate::build::PKG_VERSION{% endif %},
+                        commit: crate::build::SHORT_COMMIT,
+                        reset: crate::panic::reset_cause(),
+                        last_panic: crate::panic::last()
+                            .map(|message| domain::device::panic_brief(message, domain::device::PANIC_BRIEF)),
+                    }{% endcapture %}
 use defmt::{info, warn};
 use supervisor::{Duration, Liveness, supervisor_graph};
 
@@ -55,7 +67,7 @@ supervisor_graph! {
         // `cpu_load_percent_receiver()`. Само значение в лог не идёт — читатель
         // должен быть, иначе процент некуда девать.
         ::domain::CPU_LOAD_FRAG as CPU_LOAD = ::domain::cpu_load::IdleMeter {
-            sleep_ticks: crate::cpu_load::sleep_ticks(),
+            sleep_ticks: ::domain::cpu_load::sleep_ticks(),
         },
 {%- if ota == "true" %}
 
@@ -127,7 +139,8 @@ supervisor_graph! {
         ::domain::CONSOLE_FRAG<{{ srct }}> as CONSOLE =
             ::domain::console::ConsoleWiring {
                 io: {{ src }},
-                info: {{ info }},
+                device: {{ device }},
+                app: {{ app_info }},
                 login: domain::console::PASSWORD,
 {%- if has_net == "true" %}
                 stack: Some({{ board }}.net.stack),
@@ -280,7 +293,8 @@ supervisor_graph! {
                 // недочитанный кадр, и ответ уходит через `send_from`.
                 response: static [u8; ::domain::protobuf::RESPONSE_MAX],
                 service: ::domain::protobuf::Service::new(
-                    {{ info }},
+                    {{ device }},
+                    {{ app_info }},
 {%- if ota == "true" %}
                     ::domain::ota::Client::new(ota_cmd_requester(), ::domain::ota::ClientId({{ client }})),
 {%- endif %}
@@ -299,7 +313,8 @@ supervisor_graph! {
         // следом за транспортами: сессия приёма у OTA — одного клиента.{% endif %}
         ::domain::HTTP_FRAG as HTTP[{{ http_connections }}] = core::array::from_fn(|{% if ota == "true" %}i{% else %}_{% endif %}| ::domain::http::HttpWiring {
             stack: {{ board }}.net.stack,
-            info: {{ info }},
+            device: {{ device }},
+            app: {{ app_info }},
             token: crate::net::rest::TOKEN,
 {%- if ota == "true" %}
             ota: ::domain::ota::Client::new(
@@ -322,7 +337,8 @@ supervisor_graph! {
         ::domain::SSH_FRAG{% if ssh_host_key == "config" %}<::domain::ssh::Stored<bsp::ConfigFlash>>{% endif %} as SSH =
             ::domain::ssh::SshWiring {
                 stack: {{ board }}.net.stack,
-                info: {{ info }},
+                device: {{ device }},
+                app: {{ app_info }},
                 login: domain::console::PASSWORD,
 {%- if ssh_host_key == "config" %}
                 host_key: ::domain::ssh::Stored(::domain::settings::Settings::whole({{ board }}.config)),
@@ -348,7 +364,8 @@ supervisor_graph! {
         ::domain::MQTT_FRAG as MQTT =
             ::domain::mqtt::MqttWiring {
                 stack: {{ board }}.net.stack,
-                info: {{ info }},
+                device: {{ device }},
+                app: {{ app_info }},
                 prefix: crate::net::mqtt::PREFIX,
                 broker: crate::net::mqtt::BROKER,
                 link: ::domain::mqtt::Tcp::new(
@@ -434,7 +451,7 @@ const _: () = assert!(
 /// `boot:`-объект графа: что `spawn_all` получает от задачи `start` бинарника.
 ///
 /// Плата — рычаги для узлов, свойства образа — версия и подтверждение
-/// (`crate::version`).
+/// (`domain::ota::Image`).
 // {%- if test_image == "true" %}
 /// Ими рабочий `app` и тестовый `test-ota` и различаются.
 // {%- endif %}
@@ -445,7 +462,7 @@ pub struct Boot {
     pub board: bsp::Board,
     /// Свойства образа: версия и подтверждение — узлу OTA, версия текстом —
     /// в сведения об устройстве{% if has_modbus == "true" %} и Modbus{% endif %}.
-    pub image: crate::version::Image,
+    pub image: domain::ota::Image,
 }
 {%- endif %}
 

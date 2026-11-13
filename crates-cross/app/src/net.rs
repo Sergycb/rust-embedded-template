@@ -83,7 +83,7 @@ pub mod rest {
 {%- if net_services contains "ssh" and ssh_host_key == "file" %}
 
 /// Консоль SSH (`domain::ssh`, узел `SSH`): ключ хоста. Пароль входа —
-/// `crate::console::PASSWORD`.
+/// `domain::console::PASSWORD`.
 pub mod ssh {
     /// Зерно ключа хоста SSH (ed25519): `ssh-host-key.bin` в корне проекта, который
     /// создаёт `cargo xtask` (README, «Консоль SSH»).{% if has_canopen == "true" %} Плата не хранит его сама: раздел

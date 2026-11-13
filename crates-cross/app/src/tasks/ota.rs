@@ -80,7 +80,7 @@ pub static READY_{{ f[4] | upcase }}: Signal<CriticalSectionRawMutex, ()> = Sign
 {%- endfor %}
 
 /// Спавнит узел над разделами обновления платы — адаптер обновления строит задача;
-/// `image` — свойства этого образа (`crate::version`): версия для защиты от
+/// `image` — свойства этого образа (`domain::ota::Image`): версия для защиты от
 /// отката и подтверждение.
 ///
 /// # Panics
@@ -89,7 +89,7 @@ pub static READY_{{ f[4] | upcase }}: Signal<CriticalSectionRawMutex, ()> = Sign
 pub fn spawn(
     spawner: embassy_executor::Spawner,
     firmware: bsp::FirmwareFlash,
-    image: crate::version::Image,
+    image: domain::ota::Image,
 ) {
     // `confirmed` — из свойств образа бинарника{% if test_image == "true" %}: тестовый
     // `test-ota` начинает «уже подтверждённым» и `mark_booted` не

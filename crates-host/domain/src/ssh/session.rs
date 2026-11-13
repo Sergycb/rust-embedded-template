@@ -11,7 +11,7 @@ use sunset_async::{ProgressHolder, SSHServer};
 
 use crate::console::shell::{Device, LINE, Out, exec, shell};
 use crate::console::{Access, Idle, ShellEnd, USER};
-use crate::device::DeviceInfo;
+use crate::device::{AppInfo, DeviceInfo};
 // {%- if ota == "true" %}
 use crate::ota::Client;
 // {%- endif %}
@@ -73,8 +73,10 @@ const CLOSE_GRACE: Duration = Duration::from_millis(200);
 pub(super) struct Connection<'a> {
     /// Сетевой стек, на котором открывается сокет.
     stack: crate::net::Stack<'static>,
-    /// Сведения для `info`.
+    /// Сведения об устройстве для `info`.
     info: &'a DeviceInfo,
+    /// Сведения о приложении для `info`.
+    app: &'a AppInfo,
     // {%- if ota == "true" %}
     /// Клиент входа `CMD` узла OTA.
     ota: Client,
@@ -91,10 +93,15 @@ pub(super) struct Connection<'a> {
 
 impl<'a> Connection<'a> {
     /// Собирает соединение из полей контекста узла.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "по аргументу на ресурс узла; в поля одной структуры их столько же"
+    )]
     #[must_use]
     pub(super) fn new(
         stack: crate::net::Stack<'static>,
         info: &'a DeviceInfo,
+        app: &'a AppInfo,
         // {%- if ota == "true" %}
         ota: Client,
         // {%- endif %}
@@ -106,6 +113,7 @@ impl<'a> Connection<'a> {
         Self {
             stack,
             info,
+            app,
             // {%- if ota == "true" %}
             ota,
             // {%- endif %}
@@ -132,6 +140,7 @@ impl<'a> Connection<'a> {
         }
         let device = Device {
             info: self.info,
+            app: self.app,
             stack: Some(stack),
             // {%- if ota == "true" %}
             ota: self.ota,

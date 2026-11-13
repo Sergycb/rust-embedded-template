@@ -99,6 +99,9 @@ supervisor = { workspace = true, features = [
 # Прямо, а не транзитивно через `supervisor`: `Ticker`/`Timer`/`Duration` стоят
 # в теле задачи, а не только в её сигнатуре.
 embassy-time = { workspace = true }
+# Прямо, а не транзитивно: ручной цикл исполнителя (`cpu_load::run`) поллит
+# `embassy_executor::raw::Executor`.
+embassy-executor = { workspace = true }
 # {%- if ota == "true" %}
 # OTA над `embassy-boot`, сам он от чипа не зависит: решение bootloader'а
 # (`ota::boot`) — над блокирующими разделами `NorFlash`, адаптер обновления

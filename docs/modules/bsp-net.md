@@ -10,7 +10,7 @@
 чип».{% endif %}
 
 Шаблон выводы не выбирает (`docs/architecture.md`), поэтому `Device` пока —
-заглушка `bsp::stub::Device`: линк всегда опущен, кадров нет. Всё остальное
+заглушка `adapters_hw::net::stub::Device`: линк всегда опущен, кадров нет. Всё остальное
 настоящее: стек `embassy-net` с DHCP, его фоновая работа в узле `NET`
 (`domain::net`) и сокеты протоколов{% if has_tcp == "true" or has_udp == "true" %} ({% if has_tcp == "true" %}`adapters_logic::net::Server`{% endif %}{% if has_tcp == "true" and has_udp == "true" %}, {% endif %}{% if has_udp == "true" %}`adapters_logic::net::UdpLink`{% endif %}){% endif %}.
 Проект собирается и запускается, протокол ждёт клиента вечно. Подставить

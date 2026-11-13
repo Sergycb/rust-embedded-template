@@ -13,8 +13,28 @@
 )]
 {%- endif %}
 pub mod {{ f[4] }} {
-    /// Шина `{{ f[2] }}` — пока заглушка, до контроллера (см. модуль `bsp::can`).
-    pub type Can = crate::stub::Can;
+    /// Шина `{{ f[2] }}`, которую ещё не подключили, — заглушка до контроллера
+    /// платы. Кадр — тот же тип, что у драйвера `embassy-stm32`, но сам драйвер
+    /// `ports::CanBus` не реализует: замена — свой тип над контроллером,
+    /// реализующий порт, и псевдоним на него (`docs/modules/bsp-can.md`).
+    #[derive(Debug, Default)]
+    pub struct Can;
+
+    impl ports::CanBus for Can {
+        type Frame = embassy_stm32::can::Frame;
+        type Error = core::convert::Infallible;
+
+        async fn recv(&mut self) -> Result<Self::Frame, ports::LinkError<Self::Error>> {
+            core::future::pending().await
+        }
+
+        fn send(
+            &mut self,
+            _: &Self::Frame,
+        ) -> impl Future<Output = Result<(), ports::LinkError<Self::Error>>> {
+            core::future::ready(Ok(()))
+        }
+    }
 
     /// Собирает шину `{{ f[2] }}`. Блок приходит группой `resources.rs` — заглушка
     /// его не трогает, контроллер платы соберётся из него и выводов.

@@ -7,6 +7,7 @@
 //! у `cli`.
 
 mod login;
+mod password;
 pub(crate) mod shell;
 
 pub(crate) use login::Access;
@@ -24,6 +25,11 @@ use shell::{Device, LINE, shell};
 use embassy_net::Stack;
 // {%- endif %}
 
+/// Хэш пароля консоли — соль и SHA-256(соль ‖ пароль): константа из
+/// `console/password.rs`, которую пишет `post-script.rhai` при генерации
+/// проекта. Пароль — имя проекта плюс `00`; самого пароля в прошивке нет.
+pub const PASSWORD: PasswordHash = PasswordHash(&password::PASSWORD_HASH);
+
 // {%- if has_cli == "true" %}
 /// Пауза узла `CONSOLE` перед новым приглашением после EOF или ошибки
 /// потока: поток, который отказывает сразу, иначе крутил бы цикл без
@@ -34,12 +40,35 @@ const RESTART_PAUSE: Duration = Duration::from_millis(100);
 /// секунду.
 const WRONG_PASSWORD_PAUSE: Duration = Duration::from_secs(1);
 // {%- endif %}
-
 // {%- if has_net == "true" %}
+
 /// Стек консоли. Псевдоним — чтобы `app`, где раскрывается фрагмент, не
 /// зависел от `embassy-net` сам.
 pub type ConsoleStack = Option<Stack<'static>>;
 // {%- endif %}
+
+// Хэш не той длины консоль не пустит никого — лучше узнать это при сборке,
+// чем по отказу на плате.
+const _: () = assert!(
+    PASSWORD.0.len() == PASSWORD_HASH_LEN,
+    "console/password.rs битый: post-script.rhai должен положить 48 байт"
+);
+const _: () = assert!(
+    !placeholder(&password::PASSWORD_HASH),
+    "console/password.rs не заполнен: сгенерируйте проект заново или впишите соль и хэш"
+);
+
+/// Вся заготовка нулевая — `post-script.rhai` её не перезаписал.
+const fn placeholder(hash: &[u8; 48]) -> bool {
+    let mut i = 0;
+    while i < hash.len() {
+        if hash[i] != 0 {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
 
 // {%- if has_cli == "true" %}
 // Узел `CONSOLE`: консоль поверх выбранного UART/USB. Живёт рядом с задачей;
@@ -51,8 +80,10 @@ supervisor::supervisor_fragment! {
     node resources: [
             /// Поток консоли: `BufferedUart` или `CdcStream`.
             IO: local T = inputs.io,
-            /// Сведения для `info`.
+            /// Сведения об устройстве: чип, заводской номер.
             INFO: $crate::device::DeviceInfo = inputs.info,
+            /// Сведения о приложении: версия, коммит, причины старта.
+            APP: $crate::device::AppInfo = inputs.app,
             /// Хэш пароля входа.
             LOGIN: $crate::console::PasswordHash = inputs.login,
             // {%- if has_net == "true" %}
@@ -91,6 +122,7 @@ pub async fn task<IO: Read + Write>(ctx: ConsoleCtx<'_, IO>) {
         }
         let device = Device {
             info: ctx.info,
+            app: ctx.app,
             // {%- if has_net == "true" %}
             stack: *ctx.stack,
             // {%- endif %}
@@ -158,7 +190,7 @@ mod tests {
 
     use embassy_time::{Duration, MockDriver};
 
-    use crate::device::{DeviceInfo, INFO_TEXT, PANIC_BRIEF, write_info};
+    use crate::device::{AppInfo, DeviceInfo, INFO_TEXT, PANIC_BRIEF, write_info};
 
     use super::shell::{Device, LINE, ShellEnd, shell};
     // {%- if net_services contains "ssh" %}
@@ -308,20 +340,27 @@ mod tests {
     /// Сведения об устройстве для консоли — значения не важны.
     fn device_info() -> DeviceInfo {
         DeviceInfo {
-            version: "0.1.0",
-            commit: "abc",
             chip: "STM32G071RB",
             uid: [0; crate::device::UID_BYTES],
             flash_size: 0,
             sys_hz: None,
+        }
+    }
+
+    /// Сведения о приложении для консоли — значения не важны.
+    fn app_info() -> AppInfo {
+        AppInfo {
+            version: "0.1.0",
+            commit: "abc",
             reset: "software",
             last_panic: None,
         }
     }
 
-    fn device(info: &DeviceInfo) -> Device<'_> {
+    fn device<'a>(info: &'a DeviceInfo, app: &'a AppInfo) -> Device<'a> {
         Device {
             info,
+            app,
             // {%- if has_net == "true" %}
             stack: None,
             // {%- endif %}
@@ -361,7 +400,8 @@ mod tests {
     fn the_shell_runs_derived_commands() {
         const BANNER: &str = "console, 'help' for commands\r\n";
         let info = device_info();
-        let device = device(&info);
+        let app = app_info();
+        let device = device(&info, &app);
         let mut cx = Context::from_waker(Waker::noop());
         for (input, expected) in [
             (&b"info\r"[..], "version 0.1.0"),
@@ -403,7 +443,8 @@ mod tests {
     #[test]
     fn ctrl_d_closes_the_shell() {
         let info = device_info();
-        let device = device(&info);
+        let app = app_info();
+        let device = device(&info, &app);
         let mut cx = Context::from_waker(Waker::noop());
         for input in [&b"\x04info\r"[..], b"exi\x04info\r"] {
             let mut terminal = Terminal {
@@ -430,7 +471,8 @@ mod tests {
         input.push(b'\r');
         let input: &'static [u8] = input.leak();
         let info = device_info();
-        let device = device(&info);
+        let app = app_info();
+        let device = device(&info, &app);
         let mut terminal = Terminal {
             input,
             shown: Vec::new(),
@@ -448,7 +490,8 @@ mod tests {
     #[test]
     fn exec_writes_plain_text() {
         let info = device_info();
-        let device = device(&info);
+        let app = app_info();
+        let device = device(&info, &app);
         let mut cx = Context::from_waker(Waker::noop());
         for (input, expected) in [
             ("info", "version 0.1.0"),
@@ -492,7 +535,8 @@ mod tests {
         const AFTER: Duration = Duration::from_secs(15 * 60);
         const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
         let info = device_info();
-        let device = device(&info);
+        let app = app_info();
+        let device = device(&info, &app);
         let mut cx = Context::from_waker(Waker::noop());
         MockDriver::get().reset();
 
@@ -541,12 +585,14 @@ mod tests {
     #[test]
     fn info_fits_the_reply_buffer() {
         let info = DeviceInfo {
-            version: "65535.65535.65535-rc.65535",
-            commit: "0123456789ab",
             chip: "STM32H7R7L8HXH",
             uid: [0xff; crate::device::UID_BYTES],
             flash_size: u32::MAX,
             sys_hz: Some(u32::MAX),
+        };
+        let app = AppInfo {
+            version: "65535.65535.65535-rc.65535",
+            commit: "0123456789ab",
             reset: "independent_watchdog",
             last_panic: Some(String::leak("ж".repeat(PANIC_BRIEF / 2))),
         };
@@ -554,6 +600,7 @@ mod tests {
         write_info(
             &mut out,
             &info,
+            &app,
             Some([0xff; 6]),
             Some(core::net::Ipv4Addr::BROADCAST),
             u64::MAX,
@@ -569,18 +616,15 @@ mod tests {
     /// Место и текст паники — одна строка `last panic …`, а не две.
     #[test]
     fn the_panic_stays_on_its_line() {
-        let info = DeviceInfo {
+        let info = device_info();
+        let app = AppInfo {
             version: "0.1.0",
             commit: "abc",
-            chip: "STM32G071RB",
-            uid: [0; crate::device::UID_BYTES],
-            flash_size: 0,
-            sys_hz: None,
             reset: "software",
             last_panic: Some("dhcp.rs:12:5:\nlease lost"),
         };
         let mut out = heapless::String::<INFO_TEXT>::new();
-        write_info(&mut out, &info, None, None, 0).unwrap();
+        write_info(&mut out, &info, &app, None, None, 0).unwrap();
         assert!(
             out.ends_with("\nlast panic dhcp.rs:12:5: lease lost\n"),
             "{out}"
@@ -604,6 +648,7 @@ mod tests {
     ) {
         MockDriver::get().reset();
         let mut info = device_info();
+        let mut app = app_info();
         let mut login = PasswordHash(hashed("s3cret"));
         // {%- if has_net == "true" %}
         let mut stack = None;
@@ -615,6 +660,7 @@ mod tests {
         let mut node = pin!(task(ConsoleCtx {
             io,
             info: &mut info,
+            app: &mut app,
             login: &mut login,
             // {%- if has_net == "true" %}
             stack: &mut stack,

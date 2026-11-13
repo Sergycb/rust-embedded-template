@@ -50,8 +50,10 @@ supervisor::supervisor_fragment! {
     node resources: [
             /// Сетевой стек — ради адреса платы и MAC в `info`.
             STACK: local $crate::net::Stack<'static> = inputs.stack,
-            /// Сведения для `info`.
+            /// Сведения об устройстве для `info`.
             INFO: $crate::device::DeviceInfo = inputs.info,
+            /// Сведения о приложении для `info`.
+            APP: $crate::device::AppInfo = inputs.app,
             /// Префикс тем, не длиннее `PREFIX_MAX`.
             PREFIX: &'static str = inputs.prefix,
             /// Адрес брокера.
@@ -96,6 +98,7 @@ pub async fn task(ctx: MqttCtx<'_>) {
                 let mut env = Env {
                     topics: &topics,
                     info: ctx.info,
+                    app: ctx.app,
                     mac: mac.0,
                     ip: ctx.stack.config_v4().map(|config| config.address.address()),
                     rx: &mut ctx.mqtt_rx[..],
@@ -148,7 +151,7 @@ pub(crate) mod tests {
         Broker, CONNECT_TIMEOUT, Command, PREFIX_MAX, RX_BUFFER, TELEMETRY_INTERVAL, TX_BUFFER,
         Tcp, Topics, parse_command, task, write_telemetry,
     };
-    use crate::device::{DeviceInfo, UID_BYTES};
+    use crate::device::{AppInfo, DeviceInfo, UID_BYTES};
     // {%- if ota == "true" %}
     use super::AUTH_MAX;
     use super::connection::TX_BUDGET;
@@ -420,12 +423,14 @@ pub(crate) mod tests {
         Box::leak(Box::new(Env {
             topics: Box::leak(Box::new(Topics::new("devices", &UID))),
             info: Box::leak(Box::new(DeviceInfo {
-                version: "1.2.3",
-                commit: "abcdef12",
                 chip: "stm32f407ve",
                 uid: UID,
                 flash_size: 512 * 1024,
                 sys_hz: None,
+            })),
+            app: Box::leak(Box::new(AppInfo {
+                version: "1.2.3",
+                commit: "abcdef12",
                 reset: "pin",
                 last_panic: None,
             })),
@@ -613,18 +618,19 @@ pub(crate) mod tests {
         env.tx = Box::leak(vec![0; tx].into_boxed_slice());
         let topics = Topics::new(&"p".repeat(PREFIX_MAX), &UID);
         // `info` длиной ровно `INFO_TEXT`: версия добирает недостающее.
-        let mut info = *env.info;
+        let mut app = *env.app;
         let mut text = std::string::String::new();
         crate::device::write_info(
             &mut text,
-            &info,
+            env.info,
+            &app,
             Some(env.mac),
             env.ip.map(|ip| core::net::Ipv4Addr::from(ip.octets())),
             Instant::now().as_secs(),
         )
         .unwrap();
-        info.version = leak("v".repeat(INFO_TEXT - text.len() + info.version.len()));
-        env.info = Box::leak(Box::new(info));
+        app.version = leak("v".repeat(INFO_TEXT - text.len() + app.version.len()));
+        env.app = Box::leak(Box::new(app));
         let endpoint = Box::leak(Box::new(Broker {
             user: leak("u".repeat(AUTH_MAX / 2)),
             password: leak("p".repeat(AUTH_MAX / 2)),
@@ -681,12 +687,14 @@ pub(crate) mod tests {
         Box::pin(task(stand.ctx(
             leak(stack),
             leak(DeviceInfo {
-                version: "1.2.3",
-                commit: "abcdef12",
                 chip: "stm32f407ve",
                 uid: UID,
                 flash_size: 512 * 1024,
                 sys_hz: None,
+            }),
+            leak(AppInfo {
+                version: "1.2.3",
+                commit: "abcdef12",
                 reset: "pin",
                 last_panic: None,
             }),

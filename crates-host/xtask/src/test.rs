@@ -322,16 +322,10 @@ fn ota_env<'a>(
     let OtaImage { image, .. } = &test_ota;
     let mut vars = vec![
         sh.push_env("HOST_TARGET_IMAGE", write("app.bin", &working.image)?),
-        sh.push_env(
-            "HOST_TARGET_TEST_OTA_IMAGE",
-            write("test-ota.bin", image)?,
-        ),
+        sh.push_env("HOST_TARGET_TEST_OTA_IMAGE", write("test-ota.bin", image)?),
         sh.push_env(
             "HOST_TARGET_FOREIGN_SIG",
-            write(
-                "test-ota.bin.foreign-sig",
-                &foreign_signature(image)?,
-            )?,
+            write("test-ota.bin.foreign-sig", &foreign_signature(image)?)?,
         ),
         // Сколько ждать стирания `DFU` и обмена разделов — от размера `ACTIVE`.
         sh.push_env("HOST_TARGET_ACTIVE_LEN", active.length.to_string()),

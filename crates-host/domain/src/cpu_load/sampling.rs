@@ -61,6 +61,69 @@ const _: () = assert!(
 /// `docs/modules/app-cpu-load.md`, «Почему `portable_atomic::AtomicU32`».
 pub type SleepTicks = AtomicU32;
 
+/// Тики, проведённые во сне. Пишет [`run`] (цикл исполнителя), читает узел
+/// `CPU_LOAD` через [`sleep_ticks`], и ничто больше — отсюда и `Relaxed`:
+/// значение нужно как грубая прикидка «сколько стояли», а порядок замеров
+/// задаёт сам периодический тик.
+static SLEEP_TICKS: SleepTicks = SleepTicks::new(0);
+
+/// Записать, сколько тиков цикл исполнителя проспал в `WFE`.
+///
+/// Счётчик 32-битный и перематывается штатно: `fetch_add` складывает по
+/// модулю 2³², и усечение `delta_ticks` — то же сложение по модулю. Узел
+/// `CPU_LOAD` считает прирост между снимками так же
+/// ([`load`](super::load::CpuLoad)).
+pub fn record_sleep_ticks(delta_ticks: u64) {
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "счётчик по модулю 2³²: усечение и есть сложение по модулю"
+    )]
+    SLEEP_TICKS.fetch_add(delta_ticks as u32, Ordering::Relaxed);
+}
+
+/// Счётчик, который читает узел `CPU_LOAD`.
+///
+// {%- if graph == "true" %}
+/// `'static` — потому что узел берёт его ресурсным слотом графа, а слот
+/// живёт в `static`.
+// {%- else %}
+/// `'static` — потому что ссылку уносит задача замера, а аргументы задач
+/// обязаны быть `'static`.
+// {%- endif %}
+#[must_use]
+pub fn sleep_ticks() -> &'static SleepTicks {
+    &SLEEP_TICKS
+}
+
+/// Ручной цикл исполнителя: поллить, ждать, пока нечего делать, и отмечать в
+/// [`SLEEP_TICKS`], сколько тиков проспали.
+///
+/// Бесконечный: вызывается из `main` бинарника вместо `Executor::run`,
+/// единственная причина, по которой `main` не `#[embassy_executor::main]`, —
+/// замер сна (docs/modules/app-cpu-load.md, «Почему цикл исполнителя в `main`
+/// написан руками»). `wait` — ожидание события (`WFE` у прошивки); цикл ждёт
+/// ровно там. `poll` — первым: часы, которыми меряется сон, поднимает
+/// `Board::new` в первом же проходе (`embassy_stm32::init`), и до него
+/// `Instant` читать нечем.
+///
+/// # Safety
+///
+/// Обязанности те же, что у `Executor::run`: поллить исполнитель можно только
+/// из единственного места, и это оно.
+pub fn run(executor: &'static mut embassy_executor::raw::Executor, wait: impl Fn()) -> ! {
+    loop {
+        // SAFETY: этот цикл — единственный, кто поллит исполнитель; ровно то
+        // обещание, которое даёт `Executor::run`.
+        #[expect(unsafe_code, reason = "обоснование — в документации `run`")]
+        unsafe {
+            executor.poll();
+        }
+        let before = Instant::now().as_ticks();
+        wait();
+        record_sleep_ticks(Instant::now().as_ticks().saturating_sub(before));
+    }
+}
+
 // {%- if graph != "true" %}
 /// Замер загрузки: спавнится из `tasks::spawn_all` в `app` (через
 /// `#[embassy_executor::task]`, потому что `Spawner::spawn` берёт токен, а не

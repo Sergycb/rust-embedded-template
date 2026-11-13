@@ -184,7 +184,7 @@ Host-тесты гоняются `cargo xtask test host` — то есть `carg
 {%- if has_usb == "true" or has_net == "true" %}
 - Заглушка драйвера, которая едет в прошивку, — `pub mod stub` в `adapters-hw`
   без фичи{% if has_usb == "true" %}: драйвер USB без шины (`usb::stub`){% endif %}{% if has_net == "true" %}{% if has_usb == "true" %},{% endif %} устройство без линка
-  (`net::stub`){% endif %}. В слотах платы их отдаёт `bsp::stub`.
+  (`net::stub`){% endif %}. В слотах платы их отдают модули `bsp` транспортов.
 {%- endif %}
 - Фейк, который берут другие крейты, — `#[cfg(any(test, feature = "fake"))]
   pub mod fake` в `adapters-hw`

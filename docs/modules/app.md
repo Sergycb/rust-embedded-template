@@ -28,10 +28,10 @@
 
 Задача `cpu_load` меряет, во сколько процентов занят процессор, и пишет
 результат в лог. Арифметика и её host-тесты —
-`crates-host/domain/src/cpu_load/load.rs`, счётчик и объяснения —
-`app-cpu-load.md`. Спавнит её `tasks::spawn_all` — через
-`#[embassy_executor::task]` в `app/src/cpu_load.rs`, потому что
-`Spawner::spawn` берёт `SpawnToken`, а не функцию.
+`crates-host/domain/src/cpu_load/load.rs`, счётчик, цикл замера и
+объяснения — `app-cpu-load.md`. Тело — `domain::cpu_load::log_load`,
+спавнит его `tasks::spawn_all` тонкой обёрткой-задачей (`#[embassy_executor::task]`
+нужен ради `SpawnToken`, который `Spawner::spawn` берёт вместо функции).
 {%- endif %}
 
 Ради одного счётчика шаблон отказался от `#[embassy_executor::main]`: у
@@ -235,11 +235,11 @@ EOF и ошибки — через паузу `RESTART_PAUSE`, чтобы пот
 тестовый повторяет рабочий шаг в шаг, добавляя только `warn!` в логе старта.
 
 Чем образы различаются, бинарник говорит сам — константой свойств образа
-`IMAGE` (`app::version::Image`), которую отдаёт в `app::spawn_all`{% if graph == "true" %}
+`IMAGE` (`domain::ota::Image`), которую отдаёт в `app::spawn_all`{% if graph == "true" %}
 полем `image` `boot:`-объекта графа `app::Boot`{% endif %}:
 
 * `version` — версия для защиты от отката: у `app` — `version` из Cargo.toml
-  (`app::version::PACKAGE_VERSION`), у тестового — на единицу больше, ровно
+  (`domain::ota::version::pack_str`), у тестового — на единицу больше, ровно
   настолько, чтобы рабочий образ той же сборки принял его как обновление;
 * `text` — версия текстом хосту и в баннере: у тестового — метка
   `test-ota`;

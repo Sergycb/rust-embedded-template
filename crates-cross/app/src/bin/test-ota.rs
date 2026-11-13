@@ -10,10 +10,9 @@
 use defmt::{error, info, warn};
 use embassy_executor::Spawner;
 use embassy_executor::raw::Executor;
-use embassy_time::Instant;
 use static_cell::StaticCell;
 
-/// Свойства этого образа (`app::version`).
+/// Свойства этого образа (`domain::ota::Image`).
 ///
 /// Версия — рабочая + 1: ровно настолько, чтобы устройство на рабочем образе
 /// той же сборки приняло тестовый (защита от отката — строго «новее»), и не
@@ -26,8 +25,8 @@ use static_cell::StaticCell;
 /// разделов состоялся, не читая флеш{% if has_protobuf == "true" %} (та же строка — в
 /// `crates-host/host-target-tests/tests/test.rs`){% endif %}. `confirmed: true` —
 /// узел OTA начинает «уже подтверждённым» и `mark_booted` не зовёт.
-const IMAGE: app::version::Image = app::version::Image {
-    version: match app::version::PACKAGE_VERSION.checked_add(1) {
+const IMAGE: domain::ota::Image = domain::ota::Image {
+    version: match domain::ota::version::pack_str(env!("CARGO_PKG_VERSION")).checked_add(1) {
         Some(next) => next,
         None => panic!("version в Cargo.toml — уже наибольшая, тестовому образу некуда расти"),
     },
@@ -63,7 +62,7 @@ fn main() -> ! {
     let reset = bsp::reset::take_cause();
     info!("app: причина сброса {}", reset);
 {%- if has_protobuf == "true" or net_services != "" or has_cli == "true" %}
-    app::device::set_reset(reset);
+    app::panic::set_reset(reset);
 {%- endif %}
 
     if let Some(reason) = app::panic::take() {
@@ -75,17 +74,7 @@ fn main() -> ! {
     let executor = EXECUTOR.init(Executor::new(usize::MAX as *mut ()));
     let spawner = executor.spawner();
     spawner.spawn(start(spawner).expect("задача start свежая: спавнится один раз"));
-    loop {
-        // SAFETY: этот цикл — единственное место, которое поллит исполнитель
-        // (то же обещание, что у `Executor::run`); подробнее — `src/main.rs`.
-        #[expect(unsafe_code, reason = "обоснование — в комментарии выше")]
-        unsafe {
-            executor.poll();
-        }
-        let before = Instant::now().as_ticks();
-        cortex_m::asm::wfe();
-        app::cpu_load::record_sleep_ticks(Instant::now().as_ticks().saturating_sub(before));
-    }
+    domain::cpu_load::run(executor, cortex_m::asm::wfe)
 }
 
 /// Первая задача: собирает плату и спавнит узлы — как у `app`, со своими

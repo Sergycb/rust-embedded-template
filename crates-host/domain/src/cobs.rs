@@ -111,10 +111,8 @@ impl Codec {
         }
         // Пустой кадр между двумя `0x00` — ведущий разделитель, а не кадр.
         let encoded = core::mem::take(&mut self.pos);
-        (encoded > 0).then(|| {
-            decode_in_place(&mut buf[..encoded])
-                .map_err(|_corrupt| Error::Corrupt)
-        })
+        (encoded > 0)
+            .then(|| decode_in_place(&mut buf[..encoded]).map_err(|_corrupt| Error::Corrupt))
     }
 }
 
@@ -149,12 +147,8 @@ pub fn encode(frame: &mut [u8], message: &[u8]) -> Result<usize, Error> {
     frame[0] = 0;
     let mut encoder = CobsEncoder::new(&mut frame[1..]);
     // Размер проверен выше — места хватит на худший случай.
-    encoder
-        .push(message)
-        .map_err(|_too_small| Error::TooLong)?;
-    encoder
-        .push(&crc)
-        .map_err(|_too_small| Error::TooLong)?;
+    encoder.push(message).map_err(|_too_small| Error::TooLong)?;
+    encoder.push(&crc).map_err(|_too_small| Error::TooLong)?;
     let end = 1 + encoder.finalize();
     frame[end] = 0;
     Ok(end + 1)
@@ -239,14 +233,12 @@ mod tests {
         let mut got: Vec<Result<Vec<u8>, super::Error>> = Vec::new();
         for &byte in &input {
             if let Some(outcome) = codec.feed(byte, &mut buf) {
-                got.push(
-                    outcome.and_then(|len| decode(&buf, len).map(|m| buf[..m].to_vec())),
-                );
+                got.push(outcome.and_then(|len| decode(&buf, len).map(|m| buf[..m].to_vec())));
             }
         }
         assert_eq!(got.last(), Some(&Ok(b"ok".to_vec())), "все {got:?}");
         assert!(
-            got[..got.len() - 1].iter().all(|r| r.is_err()),
+            got[..got.len() - 1].iter().all(Result::is_err),
             "до хорошего кадра — только потери: {got:?}"
         );
     }

@@ -33,7 +33,7 @@ mod usb;
 {%- endif %}
 
 /// Спавнит задачи всех узлов проекта{% if ota == "true" %}; `image` — свойства образа, которые
-/// отдаёт задача `start` бинарника (`crate::version`){% endif %}.
+/// отдаёт задача `start` бинарника (`domain::ota::Image`){% endif %}.
 ///
 /// # Panics
 ///
@@ -43,14 +43,16 @@ mod usb;
 pub fn spawn_all(
     spawner: embassy_executor::Spawner,
     board: bsp::Board,
-    image: crate::version::Image,
+    image: domain::ota::Image,
 ) {
 {%- else %}
 pub fn spawn_all(spawner: embassy_executor::Spawner, {% if has_usb == "true" or has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" or has_cli == "true" %}board{% else %}_board{% endif %}: bsp::Board) {
 {%- endif %}
-    // Загрузку процессора меряет задача из `cpu_load.rs`: в домене
-    // executor-обвязки быть не может, а там ровно место для неё.
-    spawner.spawn(crate::cpu_load::task().expect("задача CPU_LOAD свежая: спавнится один раз"));
+    // Загрузку процессора меряет цикл домена (`domain::cpu_load::log_load`);
+    // обёртка — ровно место для неё в задаче: тело — в домене.
+    {%- if graph != "true" %}
+    spawner.spawn(cpu_load().expect("задача CPU_LOAD свежая: спавнится один раз"));
+    {%- endif %}
 {%- if ota == "true" %}
     ota::spawn(spawner, board.firmware, image);
 {%- endif %}
@@ -74,8 +76,20 @@ pub fn spawn_all(spawner: embassy_executor::Spawner, {% if has_usb == "true" or 
     modbus::{{ f[4] }}::spawn(spawner, {% if f[0] == "uart" %}board.{{ f[4] }}{% else %}board.{{ f[4] }}.cdc{% endif %}, crate::registers::handle());
 {%- endif %}
 {%- elsif f[3] == "protobuf" %}
-    let info = crate::device::info(board.spec{% if ota == "true" %}, image{% endif %});
-    protobuf::{{ f[4] }}::spawn(spawner, {% if f[0] == "uart" %}board.{{ f[4] }}{% else %}board.{{ f[4] }}.cdc{% endif %}, info);
+    let device = domain::device::DeviceInfo {
+        chip: board.spec.chip,
+        uid: board.spec.uid,
+        flash_size: board.spec.flash_size,
+        sys_hz: board.spec.sys_hz,
+    };
+    let app_info = domain::device::AppInfo {
+        version: {% if ota == "true" %}image.text{% else %}crate::build::PKG_VERSION{% endif %},
+        commit: crate::build::SHORT_COMMIT,
+        reset: crate::panic::reset_cause(),
+        last_panic: crate::panic::last()
+            .map(|message| domain::device::panic_brief(message, domain::device::PANIC_BRIEF)),
+    };
+    protobuf::{{ f[4] }}::spawn(spawner, {% if f[0] == "uart" %}board.{{ f[4] }}{% else %}board.{{ f[4] }}.cdc{% endif %}, device, app_info);
 {%- elsif f[3] == "canopen" %}
     canopen::{{ f[4] }}::spawn(
         spawner,
@@ -84,8 +98,30 @@ pub fn spawn_all(spawner: embassy_executor::Spawner, {% if has_usb == "true" or 
         domain::canopen::serial(board.spec.uid),
     );
 {%- elsif f[3] == "cli" %}
-    let info = crate::device::info(board.spec{% if ota == "true" %}, image{% endif %});
-    cli::spawn(spawner, {% if f[0] == "uart" %}board.{{ f[4] }}{% else %}board.{{ f[4] }}.cdc{% endif %}, info);
+    let device = domain::device::DeviceInfo {
+        chip: board.spec.chip,
+        uid: board.spec.uid,
+        flash_size: board.spec.flash_size,
+        sys_hz: board.spec.sys_hz,
+    };
+    let app_info = domain::device::AppInfo {
+        version: {% if ota == "true" %}image.text{% else %}crate::build::PKG_VERSION{% endif %},
+        commit: crate::build::SHORT_COMMIT,
+        reset: crate::panic::reset_cause(),
+        last_panic: crate::panic::last()
+            .map(|message| domain::device::panic_brief(message, domain::device::PANIC_BRIEF)),
+    };
+    cli::spawn(spawner, {% if f[0] == "uart" %}board.{{ f[4] }}{% else %}board.{{ f[4] }}.cdc{% endif %}, device, app_info);
 {%- endif %}
 {%- endfor %}
+{%- if graph != "true" %}
+
+// Узла `CPU_LOAD` без графа нет: замер — просто цикл в лог (`log_load`).
+// Обёртка — минимум, ради которого задача здесь, а не в домене: токен спавна
+// выдаёт только `#[embassy_executor::task]`, тело — `domain::cpu_load`.
+#[embassy_executor::task]
+async fn cpu_load() {
+    domain::cpu_load::log_load(domain::cpu_load::sleep_ticks()).await;
+}
+{%- endif %}
 }

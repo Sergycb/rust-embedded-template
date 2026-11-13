@@ -328,7 +328,6 @@ mod tcp {
         }
     }
 }
-pub use tcp::{Error, Server};
 // {%- endif %}
 
 // {%- if has_udp == "true" %}
@@ -517,6 +516,12 @@ mod udp {
         }
     }
 }
+// {%- endif %}
+
+// {%- if has_tcp == "true" %}
+pub use tcp::{Error, Server};
+// {%- endif %}
+// {%- if has_udp == "true" %}
 pub use udp::{UdpError, UdpLink};
 // {%- endif %}
 
