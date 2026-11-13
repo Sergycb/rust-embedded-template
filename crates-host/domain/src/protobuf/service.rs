@@ -349,20 +349,16 @@ pub(crate) const APP: AppInfo = AppInfo {
 
 #[cfg(test)]
 mod tests {
+    // {%- if ota == "true" %}
     use core::task::{Context, Poll, Waker};
 
-    use proto::{Get, Request_, Response_};
-    // {%- if ota == "true" %}
     use proto::heapless;
-    // {%- endif %}
+    use proto::{Get, Request_, Response_};
 
     use super::INFO;
     use super::*;
-    // {%- if ota == "true" %}
     use crate::ota::commands::Progress;
-    // {%- endif %}
 
-    // {%- if ota == "true" %}
     /// Обработчик со сведениями `info`; клиент OTA — к узлу, которого никто
     /// не опрашивает (команды обновления гоняют тесты узлов).
     fn service(info: DeviceInfo) -> Service {
