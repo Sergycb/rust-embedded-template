@@ -70,6 +70,12 @@ panic-persist = { workspace = true }
 # которому драйвер времени нельзя{% endif %}.
 bsp = { workspace = true, features = ["time-driver"] }
 domain = { workspace = true }
+# Буферы канала COBS меряются кодеком (`ports::cobs::rx_len/tx_len` в
+# graph.rs / tasks/protobuf.rs) — прямо, а не транзитивно: имя крейта в коде
+# `app` обязано быть своей зависимостью.
+# {%- if cobs_used == "true" %}
+ports = { workspace = true }
+# {%- endif %}
 {%- if protocol_link == "true" %}
 # Каналы протоколов над потоком, CDC или сокетом строит приложение в своей
 # памяти ({% if graph == "true" %}привязка узла в src/graph.rs{% else %}задача протокола в src/tasks/{% endif %}) и отдаёт узлам готовыми.
