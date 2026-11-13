@@ -2763,7 +2763,7 @@ if !on.canopen {
 if variable::get("link_port") != "true" {
     file::delete("crates-host/ports/src/link.rs");
 }
-// Тестовый образ `app-unconfirmed` — бинарник для сценариев OTA `cargo xtask test
+// Тестовый образ `test-ota` — бинарник для сценариев OTA `cargo xtask test
 // host-target`, а они есть только у protobuf: без них образ никто не грузит, и
 // второй бинарник лишь удлинял бы сборку. Оставленный файл в `src/bin/` cargo сам
 // нашёл бы вторым бинарником, поэтому удаляется каталог.

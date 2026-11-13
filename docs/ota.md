@@ -633,9 +633,9 @@ SPI NOR — клипсой программатора: записать в `STAT
 - `foreign_signature_is_not_swapped` — образ под чужим ключом: `Finish`
   проходит (приложение — `domain::ota::apply` — подпись не проверяет,
   это делает bootloader), после `Reboot` версия прежняя;
-- `unconfirmed_image_is_swapped_and_rolled_back` — главный тест обмена:
+- `test_ota_image_is_swapped_and_rolled_back` — главный тест обмена:
   загрузка тестового образа, `Reboot` — работает он (`Info` называет метку
-  `unconfirmed`, обмен состоялся), ещё `Reboot` — прежняя версия (откат);
+  `test-ota`, обмен состоялся), ещё `Reboot` — прежняя версия (откат);
 - `same_version_is_rejected` — рабочий образ той же версии: `Rollback`.
 
 Теста «новый образ подтвердился и остался» нет намеренно: он оставил бы
@@ -645,13 +645,13 @@ SPI NOR — клипсой программатора: записать в `STAT
 {%- endif %}
 {%- if test_image == "true" %}
 
-### Тестовый образ `app-unconfirmed`
+### Тестовый образ `test-ota`
 
 Откат проверяется только на образе, который себя не подтверждает, — рабочая
 прошивка подтверждает себя в `begin` узла OTA. Поэтому тестовый образ —
-отдельный бинарник того же `app` (`[[bin]] app-unconfirmed`,
+отдельный бинарник того же `app` (`[[bin]] test-ota`,
 `crates-cross/app/Cargo.toml`) со своим запуском
-(`crates-cross/app/src/bin/app-unconfirmed.rs`; всё, что не запуск, у обоих —
+(`crates-cross/app/src/bin/test-ota.rs`; всё, что не запуск, у обоих —
 библиотека пакета) и своими свойствами образа — константой `IMAGE`
 (`app::version::Image`), которую он отдаёт в `spawn_all`:
 
@@ -666,18 +666,18 @@ SPI NOR — клипсой программатора: записать в `STAT
   подтверждении), закрыл бы устройству все обычные обновления; `+1` — самое
   большее одну версию;
 - хосту (`Info`{% if has_modbus == "true" %}, Modbus FC43{% endif %}) и в баннере он называет себя меткой
-  `unconfirmed` вместо версии: по ней тест видит, что обмен состоялся, не
+  `test-ota` вместо версии: по ней тест видит, что обмен состоялся, не
   читая флеш;
-- в логе старта — `warn!` «ТЕСТОВЫЙ образ app-unconfirmed».
+- в логе старта — `warn!` «ТЕСТОВЫЙ образ test-ota».
 
 Собирает его только `cargo xtask test host-target` (`cargo build -p app
---release --bin app-unconfirmed`, без фич): `cargo xtask build` собирает
+--release --bin test-ota`, без фич): `cargo xtask build` собирает
 только `--bin app`, так что в `app.bin` релиза он не попадает, а `cargo flash`
 шьёт `--bin app`. Голый `cargo build` в `crates-cross/` собирает оба
 бинарника, `cargo xtask lint cross` линтует оба. Образ OTA из него — та же
 функция, что у `build` (`ota_image` в `crates-host/xtask/src/firmware.rs`:
 сырой образ, хвост `[образ][раскладка][версия]`, сверка раскладки с
-bootloader'ом). Подписей две: ключом проекта (`HOST_TARGET_UNCONFIRMED_SIG`) и
+bootloader'ом). Подписей две: ключом проекта (`HOST_TARGET_TEST_OTA_SIG`) и
 случайным ключом, которого нет ни в одном bootloader'е
 (`HOST_TARGET_FOREIGN_SIG`). Закрытого ключа нет (CI, свежий клон) — тест
 обмена пропускается, остальные идут.
@@ -688,7 +688,7 @@ bootloader'ом). Подписей две: ключом проекта (`HOST_TA
 существующий не берётся; на unix права 0700) и удаляет его в конце `test
 host-target` — и после ошибки, и при панике; ни в `target/`, ни
 рядом с `app.bin` их нет. Оборванный снаружи процесс (Ctrl+C) каталог
-оставит — он во временных файлах ОС. ELF `app-unconfirmed` в `target/`
+оставит — он во временных файлах ОС. ELF `test-ota` в `target/`
 остаётся, но он не подписан. Сам образ на устройстве тоже не задерживается:
 подтверждения нет, и первый же сброс возвращает прежний.
 

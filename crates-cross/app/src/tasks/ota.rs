@@ -92,7 +92,7 @@ pub fn spawn(
     image: crate::version::Image,
 ) {
     // `confirmed` — из свойств образа бинарника{% if test_image == "true" %}: тестовый
-    // `app-unconfirmed` начинает «уже подтверждённым» и `mark_booted` не
+    // `test-ota` начинает «уже подтверждённым» и `mark_booted` не
     // зовёт, следующий сброс его откатывает (`cargo xtask test host-target`,
     // docs/ota.md){% endif %}. В задачу — только два
     // поля, а не `image` целиком: аргументы задачи и есть её слоты, и текст

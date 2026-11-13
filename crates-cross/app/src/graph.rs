@@ -79,7 +79,7 @@ supervisor_graph! {
             reboot: bsp::reset::Reboot,
             running_version: boot.image.version,
             // `confirmed` — из свойств образа бинарника{% if test_image == "true" %}: тестовый
-            // `app-unconfirmed` начинает «уже подтверждённым» и `mark_booted` не
+            // `test-ota` начинает «уже подтверждённым» и `mark_booted` не
             // зовёт, следующий сброс его откатывает (`cargo xtask test
             // host-target`, docs/ota.md){% endif %}.
             confirmed: boot.image.confirmed,
@@ -436,7 +436,7 @@ const _: () = assert!(
 /// Плата — рычаги для узлов, свойства образа — версия и подтверждение
 /// (`crate::version`).
 // {%- if test_image == "true" %}
-/// Ими рабочий `app` и тестовый `app-unconfirmed` и различаются.
+/// Ими рабочий `app` и тестовый `test-ota` и различаются.
 // {%- endif %}
 /// Инициализаторы `fragments:` и `watchdog:` забирают из него поля частичными
 /// move.

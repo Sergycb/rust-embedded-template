@@ -54,7 +54,7 @@ pub fn build(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     {
         let _p = sh.push_dir(root_dir().join("crates-cross"));
         // Только рабочий бинарник: голый `cargo build` собрал бы все
-        // бинарники `app`{% if test_image == "true" %}, и тестовый `app-unconfirmed` (`cargo xtask test
+        // бинарники `app`{% if test_image == "true" %}, и тестовый `test-ota` (`cargo xtask test
         // host-target`) лёг бы в сборку релиза рядом с рабочим{% endif %}. Пакеты — те же
         // `default-members`, что у голого вызова, поэтому и фичи те же.
         cmd!(sh, "cargo build --bin {APP_ARTIFACT}").run()?;
@@ -154,7 +154,7 @@ pub fn sign() -> Result<(), anyhow::Error> {
 /// Собирает [`OtaImage`] из release-ELF приложения `elf` — для `build`.
 // {%- if test_image == "true" %}
 /// Им же пользуется `test host-target` (рабочий образ и тестовый
-/// `app-unconfirmed`).
+/// `test-ota`).
 // {%- endif %}
 /// Bootloader (release-ELF `boot` рядом) уже собран: с ним сверяется
 /// раскладка.

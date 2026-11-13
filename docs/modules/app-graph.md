@@ -301,7 +301,7 @@ resources: [WS: &'static mut $crate::x::Workspace = static |w| w.gain = inputs.g
 bsp::reset::Reboot, running_version: boot.image.version, confirmed:
 boot.image.confirmed }`). Плата и свойства образа (`crate::version::Image`) —
 поля `boot:`-объекта `Boot`: его собирает задача `start` бинарника{% if test_image == "true" %}, и у рабочего `app`
-и тестового `app-unconfirmed` свойства свои{% endif %}. Типы слотов — аргументы фрагмента
+и тестового `test-ota` свойства свои{% endif %}. Типы слотов — аргументы фрагмента
 (`OTA_FRAG<::domain::ota::Updater<bsp::FirmwareFlash>, bsp::reset::Reboot, OTA_CMD_PARKED>`):
 слот — `static`, тип ему нужен, а знает его только эта сторона. Третий
 аргумент — места ожидания входа `CMD`, `domain::ota::cmd_parked` от числа его

@@ -5,7 +5,7 @@ edition.workspace      = true
 license.workspace      = true
 rust-version.workspace = true
 {%- if test_image == "true" %}
-# `cargo run -p app` — рабочий образ, а не тестовый `app-unconfirmed` ниже.
+# `cargo run -p app` — рабочий образ, а не тестовый `test-ota` ниже.
 default-run = "app"
 {%- endif %}
 
@@ -27,17 +27,17 @@ harness = false
 {%- if test_image == "true" %}
 
 # Тестовый образ `cargo xtask test host-target`: та же библиотека пакета, свой
-# запуск и свои свойства образа (`src/bin/app-unconfirmed.rs`) — версия на
+# запуск и свои свойства образа (`src/bin/test-ota.rs`) — версия на
 # единицу больше, себя не подтверждает, и следующий сброс его откатывает
 # (docs/ota.md, «Тесты OTA по протоколу»). Отдельным бинарником: у ELF своё
 # имя, и рабочий `app` (`app.bin` из `cargo xtask build`, `cargo flash -p app
 # --bin app`) с ним не спутать. Голый `cargo build` собирает оба; `cargo xtask
 # build` и прошивка — только `--bin app`, `cargo xtask test host-target` —
-# `--bin app-unconfirmed`, `cargo xtask lint cross` линтует оба. Есть только с
+# `--bin test-ota`, `cargo xtask lint cross` линтует оба. Есть только с
 # protobuf: сценарии OTA по протоколу пока написаны только под него.
 [[bin]]
-name = "app-unconfirmed"
-path = "src/bin/app-unconfirmed.rs"
+name = "test-ota"
+path = "src/bin/test-ota.rs"
 harness = false
 test = false
 bench = false

@@ -250,8 +250,8 @@ pub const fn cmd_parked(clients: usize) -> usize {
 // - `CONFIRMED` — подтверждён ли образ в этом запуске (см. `begin`). Начальное
 //   значение — из свойств образа бинарника (константа `IMAGE` типа
 //   `app::version::Image` в `crates-cross/app/src/main.rs`{% if test_image == "true" %} и
-//   `src/bin/app-unconfirmed.rs`{% endif %}): у рабочего `false`{% if test_image == "true" %}; у тестового
-//   `app-unconfirmed` (`cargo xtask test host-target`) — `true`, он
+//   `src/bin/test-ota.rs`{% endif %}): у рабочего `false`{% if test_image == "true" %}; у тестового
+//   `test-ota` (`cargo xtask test host-target`) — `true`, он
 //   себя не подтверждает, и следующий сброс его откатывает{% endif %}.
 // - `request: [CMD: …]` — запрос с ответом (`sync-request`), а не очередь:
 //   протокол отвечает хосту исходом именно своей команды.
@@ -1016,7 +1016,7 @@ pub(crate) mod tests {
     /// Образ с `confirmed = true` во входе себя не подтверждает ни при
     /// старте, ни на `Start`, и следующий сброс его откатывает.
     // {%- if test_image == "true" %}
-    /// Так приходит тестовый образ `app-unconfirmed`; на этом стоит тест
+    /// Так приходит тестовый образ `test-ota`; на этом стоит тест
     /// отката `host-target`.
     // {%- endif %}
     #[test]

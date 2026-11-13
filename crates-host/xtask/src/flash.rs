@@ -93,7 +93,7 @@ pub fn flash_boot(sh: &xshell::Shell, watchdog: bool) -> Result<(), anyhow::Erro
 
 /// Бинарник пакета — явно (`--bin`, одноимённый пакету).
 // {%- if test_image == "true" %}
-/// У `app` бинарников два, второй — тестовый `app-unconfirmed`, и шить надо
+/// У `app` бинарников два, второй — тестовый `test-ota`, и шить надо
 /// не его.
 // {%- endif %}
 fn flash_package(sh: &xshell::Shell, package: &str, profile: &str) -> Result<(), anyhow::Error> {

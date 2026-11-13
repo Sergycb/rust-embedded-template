@@ -26,7 +26,7 @@ pub const PUBLIC_KEY_SYMBOL: &str = "OTA_PUBLIC_KEY_IN_IMAGE";
 /// Определён в бинарнике `app` (`crates-cross/app/src/main.rs`) под
 /// `#[unsafe(no_mangle)]` ровно ради этого чтения.
 // {%- if test_image == "true" %}
-/// Свой — и у тестового `app-unconfirmed` (`src/bin/app-unconfirmed.rs`).
+/// Свой — и у тестового `test-ota` (`src/bin/test-ota.rs`).
 // {%- endif %}
 const FW_VERSION_SYMBOL: &str = "FW_VERSION_IN_IMAGE";
 

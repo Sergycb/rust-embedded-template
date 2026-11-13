@@ -4,8 +4,8 @@
 //! объявляет бинарник пакета константой [`Image`] и отдаёт их в {% if graph == "true" %}`graph::spawn_all` (поле `image` `boot:`-объекта
 //! [`crate::graph::Boot`]){% else %}`tasks::spawn_all`{% endif %}; библиотека их не выбирает.
 // {%- if test_image == "true" %}
-//! Бинарников два — рабочий `app` (`src/main.rs`) и тестовый `app-unconfirmed`
-//! (`src/bin/app-unconfirmed.rs`), свойства у каждого свои.
+//! Бинарников два — рабочий `app` (`src/main.rs`) и тестовый `test-ota`
+//! (`src/bin/test-ota.rs`), свойства у каждого свои.
 // {%- endif %}
 //! Узел OTA получает
 //! версию (`running_version`, защита от отката) и подтверждение во входе.
@@ -47,7 +47,7 @@ pub struct Image {
     /// `true` — подтверждать не надо: узел OTA `mark_booted` не зовёт, образ
     /// остаётся неподтверждённым, и следующий сброс его откатывает.
     // {%- if test_image == "true" %}
-    /// Так — у тестового `app-unconfirmed`.
+    /// Так — у тестового `test-ota`.
     // {%- endif %}
     /// Рабочий образ — `false`: узел подтверждает его в стартовом действии.
     pub confirmed: bool,

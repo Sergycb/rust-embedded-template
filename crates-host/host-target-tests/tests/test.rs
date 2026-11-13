@@ -37,9 +37,9 @@ use host_target_tests::Device;
 // {%- if ota == "true" %}
 use host_target_tests::{Info, slow_timeout};
 
-/// Как называет себя тестовый образ `app-unconfirmed` вместо версии — `text`
-/// его `IMAGE` (`crates-cross/app/src/bin/app-unconfirmed.rs`).
-const UNCONFIRMED: &str = "unconfirmed";
+/// Как называет себя тестовый образ `test-ota` вместо версии — `text`
+/// его `IMAGE` (`crates-cross/app/src/bin/test-ota.rs`).
+const TEST_OTA: &str = "test-ota";
 
 /// Подпись, которой заведомо нет: устройство подпись не проверяет (только
 /// её наличие), и отказ той же версии приходит раньше; пропусти его
@@ -102,7 +102,7 @@ fn unsigned_start_is_rejected() {
         return;
     };
     let before = settle(&mut device);
-    let image = file("HOST_TARGET_UNCONFIRMED_IMAGE");
+    let image = file("HOST_TARGET_TEST_OTA_IMAGE");
     assert_eq!(
         device
             .start(image.len(), &[], slow_timeout())
@@ -122,7 +122,7 @@ fn foreign_signature_is_not_swapped() {
         return;
     };
     let before = settle(&mut device);
-    let image = file("HOST_TARGET_UNCONFIRMED_IMAGE");
+    let image = file("HOST_TARGET_TEST_OTA_IMAGE");
     let signature = file("HOST_TARGET_FOREIGN_SIG");
     assert_eq!(
         device
@@ -133,7 +133,7 @@ fn foreign_signature_is_not_swapped() {
     );
     assert_eq!(device.reboot().expect("Reboot"), Ok(()));
     let after = back(&mut device);
-    if after.version == UNCONFIRMED {
+    if after.version == TEST_OTA {
         // Встал — откатываем, чтобы оставить устройство на рабочем образе.
         if device.reboot().is_ok_and(|outcome| outcome.is_ok()) {
             device.wait_back(slow_timeout()).ok();
@@ -143,23 +143,23 @@ fn foreign_signature_is_not_swapped() {
     assert_eq!(after.version, before.version);
 }
 
-/// Главный тест обмена: тестовый образ `app-unconfirmed` встаёт после
+/// Главный тест обмена: тестовый образ `test-ota` встаёт после
 /// сброса (обмен разделов), но себя не подтверждает — и следующий сброс
 /// возвращает прежнюю прошивку (откат). Без перепрошивки: устройство
 /// остаётся на рабочем образе.
 #[test]
-fn unconfirmed_image_is_swapped_and_rolled_back() {
+fn test_ota_image_is_swapped_and_rolled_back() {
     let Some(mut device) = Device::from_env() else {
         return;
     };
-    let Some(signature) = env::var_os("HOST_TARGET_UNCONFIRMED_SIG") else {
+    let Some(signature) = env::var_os("HOST_TARGET_TEST_OTA_SIG") else {
         host_target_tests::skip(
             "обмен и откат: закрытого ключа нет — тестовый образ подписать нечем",
         );
         return;
     };
     let before = settle(&mut device);
-    let image = file("HOST_TARGET_UNCONFIRMED_IMAGE");
+    let image = file("HOST_TARGET_TEST_OTA_IMAGE");
     let signature = fs::read(&signature).expect("прочитать подпись тестового образа");
     assert_eq!(
         device
@@ -172,7 +172,7 @@ fn unconfirmed_image_is_swapped_and_rolled_back() {
     assert_eq!(device.reboot().expect("Reboot"), Ok(()));
     let swapped = back(&mut device);
     assert_eq!(
-        swapped.version, UNCONFIRMED,
+        swapped.version, TEST_OTA,
         "после сброса работает не тестовый образ — обмена не было. Если плату прошивали не \
          здесь (пробника не было), в её bootloader'е может быть другой открытый ключ, и он \
          отвергает образы этого проекта"
@@ -223,7 +223,7 @@ fn same_version_is_rejected() {
 /// прогон) — сброс его откатывает.
 fn settle(device: &mut Device) -> Info {
     let info = back(device);
-    if info.version != UNCONFIRMED {
+    if info.version != TEST_OTA {
         return info;
     }
     eprintln!("на устройстве тестовый образ от прерванного прогона — откатываем сбросом");

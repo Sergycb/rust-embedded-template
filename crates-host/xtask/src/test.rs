@@ -277,7 +277,7 @@ fn report_skipped(log: &str) {
 
 /// Образы для сценариев OTA — в окружение теста.
 ///
-/// Тестовый образ `app-unconfirmed` (версия рабочего + 1, себя не
+/// Тестовый образ `test-ota` (версия рабочего + 1, себя не
 /// подтверждает) — с подписью ключом проекта, если он есть, и подписью
 /// случайным ключом, которого нет ни в одном bootloader'е. Рабочий образ —
 /// для отказа той же версии. Длина `ACTIVE` — сроки ожидания стирания и
@@ -296,17 +296,17 @@ fn ota_env<'a>(
         // Bootloader — отдельным вызовом, как в `build` (там же почему): с
         // его ELF сверяются раскладка и ключ.
         cmd!(sh, "cargo build -p boot --release").run()?;
-        cmd!(sh, "cargo build -p app --release --bin app-unconfirmed").run()?;
+        cmd!(sh, "cargo build -p app --release --bin test-ota").run()?;
     }
     let release = cross_target_dir().join(TARGET).join("release");
     let working = ota_image(&release.join(APP_ARTIFACT))?;
-    let unconfirmed = ota_image(&release.join("app-unconfirmed"))?;
+    let test_ota = ota_image(&release.join("test-ota"))?;
     anyhow::ensure!(
-        Some(unconfirmed.version) == working.version.checked_add(1),
-        "тестовый образ app-unconfirmed собран с версией {:#010x}, а не рабочей + 1 \
-         ({:#010x}) — сверьте `IMAGE` в crates-cross/app/src/bin/app-unconfirmed.rs и \
+        Some(test_ota.version) == working.version.checked_add(1),
+        "тестовый образ test-ota собран с версией {:#010x}, а не рабочей + 1 \
+         ({:#010x}) — сверьте `IMAGE` в crates-cross/app/src/bin/test-ota.rs и \
          crates-cross/app/src/main.rs",
-        unconfirmed.version,
+        test_ota.version,
         working.version,
     );
     let regions = app_memory_regions()?;
@@ -319,17 +319,17 @@ fn ota_env<'a>(
             .with_context(|| format!("записать {}", path.display()))
             .map(|()| path)
     };
-    let OtaImage { image, .. } = &unconfirmed;
+    let OtaImage { image, .. } = &test_ota;
     let mut vars = vec![
         sh.push_env("HOST_TARGET_IMAGE", write("app.bin", &working.image)?),
         sh.push_env(
-            "HOST_TARGET_UNCONFIRMED_IMAGE",
-            write("app-unconfirmed.bin", image)?,
+            "HOST_TARGET_TEST_OTA_IMAGE",
+            write("test-ota.bin", image)?,
         ),
         sh.push_env(
             "HOST_TARGET_FOREIGN_SIG",
             write(
-                "app-unconfirmed.bin.foreign-sig",
+                "test-ota.bin.foreign-sig",
                 &foreign_signature(image)?,
             )?,
         ),
@@ -346,8 +346,8 @@ fn ota_env<'a>(
         let (boot_base, boot_image) = raw_image(&boot_elf)?;
         ensure_image_key(&boot_elf, boot_base, &boot_image, seed)?;
         vars.push(sh.push_env(
-            "HOST_TARGET_UNCONFIRMED_SIG",
-            write("app-unconfirmed.bin.sig", &signature(image, seed))?,
+            "HOST_TARGET_TEST_OTA_SIG",
+            write("test-ota.bin.sig", &signature(image, seed))?,
         ));
     }
     if flash {

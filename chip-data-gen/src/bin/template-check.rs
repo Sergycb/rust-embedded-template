@@ -1093,7 +1093,7 @@ fn check_one(
             )
         })?;
         note(log, &output)?;
-        // Тестовый образ `app-unconfirmed` (есть только с OTA и protobuf —
+        // Тестовый образ `test-ota` (есть только с OTA и protobuf —
         // `test_image` в chip-select.rhai) линтует `lint cross` выше (оба
         // бинарника `app`, debug и release), а собирает только `test
         // host-target`, которому нужна плата. `build` его не собирает (`--bin
@@ -1105,7 +1105,7 @@ fn check_one(
             for entry in fs::read_dir(cargo_target_dir)
                 .with_context(|| format!("прочитать {}", cargo_target_dir.display()))?
             {
-                let leaked = entry?.path().join("release").join("app-unconfirmed");
+                let leaked = entry?.path().join("release").join("test-ota");
                 if leaked.exists() {
                     bail!(
                         "{}: `cargo xtask build` собрал тестовый образ {} — он не должен \

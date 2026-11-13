@@ -223,10 +223,10 @@ EOF и ошибки — через паузу `RESTART_PAUSE`, чтобы пот
 {%- endif %}
 {%- if test_image == "true" %}
 
-# Тестовый образ `app-unconfirmed`: свой бинарник, свои свойства образа
+# Тестовый образ `test-ota`: свой бинарник, свои свойства образа
 
 У пакета два бинарника, у каждого свой запуск: рабочий `app`
-(`src/main.rs`) и тестовый `app-unconfirmed` (`src/bin/app-unconfirmed.rs`),
+(`src/main.rs`) и тестовый `test-ota` (`src/bin/test-ota.rs`),
 которым `cargo xtask test host-target` проверяет обмен и откат по протоколу
 проекта. Всё, что не запуск, — библиотека пакета (`src/lib.rs`): узлы, паникёр,
 логгер и обработчик `HardFault` из неё попадают в каждый бинарник по разу.
@@ -242,14 +242,14 @@ EOF и ошибки — через паузу `RESTART_PAUSE`, чтобы пот
   (`app::version::PACKAGE_VERSION`), у тестового — на единицу больше, ровно
   настолько, чтобы рабочий образ той же сборки принял его как обновление;
 * `text` — версия текстом хосту и в баннере: у тестового — метка
-  `unconfirmed`;
+  `test-ota`;
 * `confirmed` — у тестового `true`: узел OTA `mark_booted` не зовёт, и
   следующий сброс откатывает образ.
 
 Символ `FW_VERSION_IN_IMAGE` (версия, которую `cargo xtask` дописывает в хвост
 образа) у каждого бинарника тоже свой. Фич Cargo для этого нет: голый `cargo
 build` собирает оба бинарника, `cargo xtask build` и прошивка — только `--bin
-app`, `cargo xtask test host-target` — `--bin app-unconfirmed`, `cargo xtask
+app`, `cargo xtask test host-target` — `--bin test-ota`, `cargo xtask
 lint cross` линтует оба; `cargo run -p app` берёт `app` (`default-run`).
 Подробности — `docs/ota.md`, «Тесты OTA по протоколу».
 {%- endif %}
@@ -296,7 +296,7 @@ USB, Ethernet и CAN в STOP не работают.
 //          });
 //      }
 //
-// 4. main.rs{% if test_image == "true" %} (и bin/app-unconfirmed.rs){% endif %}: цикл остаётся ручным, меняется только сон —
+// 4. main.rs{% if test_image == "true" %} (и bin/test-ota.rs){% endif %}: цикл остаётся ручным, меняется только сон —
 //    вместо `wfe()` `bsp::power::sleep(&WORK)`.
 //
 //    Замер сна для {% if graph == "true" %}узла `CPU_LOAD`{% else %}загрузки{% endif %} не ломается: после пробуждения драйвер

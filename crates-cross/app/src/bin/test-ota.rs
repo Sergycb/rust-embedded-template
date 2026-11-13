@@ -1,6 +1,6 @@
 //! Тестовый образ{% if has_protobuf == "true" %} `cargo xtask test host-target`{% endif %} — запуск той же прошивки, что
 //! `app` (`src/main.rs`), с другими свойствами образа ([`IMAGE`]): версия на
-//! единицу больше, хосту образ называет себя меткой `unconfirmed` и себя не
+//! единицу больше, хосту образ называет себя меткой `test-ota` и себя не
 //! подтверждает — следующий сброс его откатывает (docs/ota.md, «Тесты OTA по
 //! протоколу»). Запуск повторяет `src/main.rs` шаг в шаг: почему каждый шаг
 //! такой — в комментариях там, здесь — только чем образ отличается.
@@ -22,7 +22,7 @@ use static_cell::StaticCell;
 /// `+1` закрыл бы самое большее одну версию — docs/ota.md, «Тесты OTA по
 /// протоколу».
 ///
-/// Текст — метка `unconfirmed` вместо версии: по ней хост видит, что обмен
+/// Текст — метка `test-ota` вместо версии: по ней хост видит, что обмен
 /// разделов состоялся, не читая флеш{% if has_protobuf == "true" %} (та же строка — в
 /// `crates-host/host-target-tests/tests/test.rs`){% endif %}. `confirmed: true` —
 /// узел OTA начинает «уже подтверждённым» и `mark_booted` не зовёт.
@@ -31,7 +31,7 @@ const IMAGE: app::version::Image = app::version::Image {
         Some(next) => next,
         None => panic!("version в Cargo.toml — уже наибольшая, тестовому образу некуда расти"),
     },
-    text: "unconfirmed",
+    text: "test-ota",
     confirmed: true,
 };
 
@@ -58,7 +58,7 @@ fn main() -> ! {
 {%- endif %}
     info!("app: запуск {} ({})", IMAGE.text, app::build::SHORT_COMMIT);
     // Тестовый образ виден с первых строк лога.
-    warn!("app: ТЕСТОВЫЙ образ app-unconfirmed: себя не подтверждает, следующий сброс его откатит");
+    warn!("app: ТЕСТОВЫЙ образ test-ota: себя не подтверждает, следующий сброс его откатит");
 
     let reset = bsp::reset::take_cause();
     info!("app: причина сброса {}", reset);
