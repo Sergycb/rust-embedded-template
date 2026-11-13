@@ -122,13 +122,13 @@ supervisor_graph! {
 {%- if f[3] == "cli" %}
 
         // Узел `CONSOLE` — консоль `bareminal` поверх UART/USB (`domain::console`).
-        // Поток — рычаг платы; вход — по паролю `crate::console::PASSWORD`;
+        // Поток — рычаг платы; вход — по паролю `domain::console::PASSWORD`;
         // сеть показывает MAC и адрес в `info`, если она есть.
         ::domain::CONSOLE_FRAG<{{ srct }}> as CONSOLE =
             ::domain::console::ConsoleWiring {
                 io: {{ src }},
                 info: {{ info }},
-                login: crate::console::PASSWORD,
+                login: domain::console::PASSWORD,
 {%- if has_net == "true" %}
                 stack: Some({{ board }}.net.stack),
 {%- endif %}
@@ -188,8 +188,8 @@ supervisor_graph! {
 {%- capture ty %}::adapters_logic::cobs::Cobs<'static, {{ srct }}>{% endcapture %}
 {%- capture link %}::adapters_logic::cobs::Cobs::new(
                     {{ src }},
-                    static [u8; ::adapters_logic::cobs::rx_len(::domain::protobuf::REQUEST_MAX)],
-                    static [u8; ::adapters_logic::cobs::tx_len(::domain::protobuf::RESPONSE_MAX)],
+                    static [u8; ::domain::cobs::rx_len(::domain::protobuf::REQUEST_MAX)],
+                    static [u8; ::domain::cobs::tx_len(::domain::protobuf::RESPONSE_MAX)],
                 ){% endcapture %}
 {%- endif %}
 {%- endif %}
@@ -315,7 +315,7 @@ supervisor_graph! {
 
         // Узел `SSH` — консоль (`domain::ssh`): своё соединение на стеке
         // `{{ board }}.net.stack`, буферы — слоты `= static` фрагмента. Вход —
-        // по паролю, `crate::console::PASSWORD`; ключ хоста — {% if ssh_host_key == "config" %}создаётся платой при первом старте и
+        // по паролю, `domain::console::PASSWORD`; ключ хоста — {% if ssh_host_key == "config" %}создаётся платой при первом старте и
         // хранится в разделе настроек (`domain::ssh::Stored`){% else %}вшит из `ssh-host-key.bin`
         // (`crate::net::ssh::HOST_KEY`){% endif %}.{% if ota == "true" %} `reboot` — командой узлу `OTA` своим
         // клиентом, номер следом за остальными.{% endif %}
@@ -323,7 +323,7 @@ supervisor_graph! {
             ::domain::ssh::SshWiring {
                 stack: {{ board }}.net.stack,
                 info: {{ info }},
-                login: crate::console::PASSWORD,
+                login: domain::console::PASSWORD,
 {%- if ssh_host_key == "config" %}
                 host_key: ::domain::ssh::Stored(::domain::settings::Settings::whole({{ board }}.config)),
 {%- else %}

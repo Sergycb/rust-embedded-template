@@ -14,11 +14,12 @@ pub mod {{ f[4] }} {
     use embassy_executor::Spawner;
     use static_cell::ConstStaticCell;
 
-    /// Буфер канала — закодированные сообщение и CRC (`rx_len`).
-    const BUFFER: usize = adapters_logic::cobs::rx_len(domain::protobuf::REQUEST_MAX);
-    /// Кадр передачи — худший случай COBS от самого длинного ответа (`tx_len`):
-    /// узел отвечает из своего буфера (`send_from`), а не из буфера канала.
-    const FRAME: usize = adapters_logic::cobs::tx_len(domain::protobuf::RESPONSE_MAX);
+    /// Буфер канала — закодированные сообщение и CRC (`domain::cobs::rx_len`).
+    const BUFFER: usize = domain::cobs::rx_len(domain::protobuf::REQUEST_MAX);
+    /// Кадр передачи — худший случай COBS от самого длинного ответа
+    /// (`domain::cobs::tx_len`): узел отвечает из своего буфера (`send_from`),
+    /// а не из буфера канала.
+    const FRAME: usize = domain::cobs::tx_len(domain::protobuf::RESPONSE_MAX);
 
     /// Рычаг платы, над которым строится канал (`board.{{ f[4] }}{% if f[0] == "usb" %}.cdc{% endif %}`).
     type Source = {% if f[0] == "usb" %}bsp::usb::{{ f[4] }}::Cdc{% else %}bsp::serial::{{ f[4] }}::Serial{% endif %};

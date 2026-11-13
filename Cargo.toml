@@ -86,6 +86,7 @@ arbitrary_source_item_ordering = "warn"
 # Крейты самого проекта: порты/адаптеры domain объявлены здесь, чтобы версия
 # и путь были в одном месте, как у внешних зависимостей.
 ports        = { path = "crates-host/ports" }
+domain       = { path = "crates-host/domain" }
 # {%- if adapters_hw == "true" %}
 adapters-hw  = { path = "crates-host/adapters-hw" }
 # {%- endif %}
