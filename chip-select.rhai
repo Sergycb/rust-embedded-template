@@ -2885,8 +2885,9 @@ variable::set("ssh_host_key", if !services.contains("ssh") { "" }
 // `app::net` (секреты, брокер MQTT) живёт, пока в нём есть хоть один
 // подмодуль: `rest`, `mqtt` или `ssh` с ключом из файла. SSH с ключом из
 // настроек подмодуля не даёт — без других служб файл из одних комментариев.
-if !services.contains("rest") && !services.contains("mqtt")
-    && variable::get("ssh_host_key") != "file" {
+variable::set("has_app_net", if !services.contains("rest") && !services.contains("mqtt")
+    && variable::get("ssh_host_key") != "file" { "false" } else { "true" });
+if variable::get("has_app_net") != "true" {
     file::delete("crates-cross/app/src/net.rs");
 }
 // Ключ из файла узел берёт статикой `app`, модуль хранимого ключа ему не нужен.

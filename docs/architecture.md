@@ -395,7 +395,7 @@ compose-site, а не фрагмент (там же).
 сообщений{% if has_net == "true" %}, сокеты протоколов{% if net_services contains "mqtt" %} и клиента MQTT{% endif %}{% endif %}{% if ota == "true" %}, адаптер обновления{% endif %}{% if config == "true" %}, хранилище настроек{% endif %} —
 решение проекта, а не свойство платы. Их строит `app` (выше) в своей памяти:
 захотел проект другой буфер или порт — правится
-`app`{% if protocol_link == "true" or net_services != "" %} ({% if protocol_link == "true" %}{% if graph == "true" %}`crates-cross/app/src/graph.rs`{% else %}`crates-cross/app/src/tasks/`{% endif %}{% if net_services != "" %}, {% endif %}{% endif %}{% if net_services != "" %}`crates-cross/app/src/net.rs`{% endif %}){% endif %}, плата не меняется. Буфер
+`app`{% if protocol_link == "true" or has_app_net == "true" %} ({% if protocol_link == "true" %}{% if graph == "true" %}`crates-cross/app/src/graph.rs`{% else %}`crates-cross/app/src/tasks/`{% endif %}{% if has_app_net == "true" %}, {% endif %}{% endif %}{% if has_app_net == "true" %}`crates-cross/app/src/net.rs`{% endif %}){% endif %}, плата не меняется. Буфер
 заводится там, где решают его размер, — в `app`, — а узел получает ссылку.
 {%- if has_usb == "true" or has_net == "true" %} Память, без которой рычаг не собрать
 ({% if has_usb == "true" %}буферы класса CDC{% if has_net == "true" %}, {% endif %}{% endif %}{% if has_net == "true" %}`StackResources` стека{% endif %}), — наоборот, у платы:

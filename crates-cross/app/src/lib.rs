@@ -16,11 +16,7 @@ pub mod fault;
 {%- if graph == "true" %}
 mod graph;
 {%- endif %}
-{%- if net_services contains "rest" %}
-mod net;
-{%- elsif net_services contains "mqtt" %}
-mod net;
-{%- elsif net_services contains "ssh" and ssh_host_key == "file" %}
+{%- if has_app_net == "true" %}
 mod net;
 {%- endif %}
 pub mod panic;

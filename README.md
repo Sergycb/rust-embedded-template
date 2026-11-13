@@ -117,7 +117,7 @@ cargo run -p app                    # прошить приложение и с�
 `Board::new()` — единственное место, где начинается владение железом: наружу он
 отдаёт не периферию, а рычаги платы — объекты под трейтами{% if has_usb == "true" or has_net == "true" %} (пары, которые порознь
 не собрать, — {% if has_usb == "true" %}USB-устройство с потоком CDC{% if has_net == "true" %} и {% endif %}{% endif %}{% if has_net == "true" %}сетевой стек с его фоновой работой{% endif %}, — собранными){% endif %}.
-Протоколы приложения над ними строит `app`{% if protocol_link == "true" or net_services != "" %} ({% if protocol_link == "true" %}{% if graph == "true" %}`crates-cross/app/src/graph.rs`{% else %}`crates-cross/app/src/tasks/`{% endif %}{% if net_services != "" %}, {% endif %}{% endif %}{% if net_services != "" %}`crates-cross/app/src/net.rs`{% endif %}){% endif %}, и
+Протоколы приложения над ними строит `app`{% if protocol_link == "true" or has_app_net == "true" %} ({% if protocol_link == "true" %}{% if graph == "true" %}`crates-cross/app/src/graph.rs`{% else %}`crates-cross/app/src/tasks/`{% endif %}{% if has_app_net == "true" %}, {% endif %}{% endif %}{% if has_app_net == "true" %}`crates-cross/app/src/net.rs`{% endif %}){% endif %}, и
 ни приложение, ни домен про регистры не знают — `embassy-stm32` нет даже в
 манифесте `app`. Подробно — docs/architecture.md, «`Board` отдаёт рычаги платы,
 а не периферию и не протоколы».

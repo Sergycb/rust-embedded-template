@@ -3,7 +3,7 @@
 (`stack`). Стек, его память и адресацию собирает плата; сокеты на нём открывают
 узлы{% if link_kinds contains "tcp" or link_kinds contains "udp" %} — каналы протоколов{% if net_services contains "mqtt" %} и клиент MQTT{% endif %} строит приложение в своей
 памяти и отдаёт узлам готовыми, в привязках узлов (`crates-cross/app/src/graph.rs`){% elsif net_services contains "mqtt" %} — клиент MQTT строит приложение в своей
-памяти и отдаёт узлу готовым, в привязке узла (`crates-cross/app/src/graph.rs`){% endif %}{% if net_services != "" %};
+памяти и отдаёт узлу готовым, в привязке узла (`crates-cross/app/src/graph.rs`){% endif %}{% if has_app_net == "true" %};
 константы и секреты служб — в `crates-cross/app/src/net.rs`{% endif %}. Порты — решение
 протокола, а не платы.{% if net_services contains "rest" or net_services contains "ssh" %} Сервер службы адаптера не получает и открывает сокет
 сам — `docs/architecture.md`, «Адаптеры делятся по одному признаку — нужен ли
