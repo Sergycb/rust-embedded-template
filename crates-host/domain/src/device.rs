@@ -18,7 +18,7 @@
 /// Байт в заводском номере чипа STM32 (96 бит).
 pub const UID_BYTES: usize = 12;
 
-/// Предел [`panic_brief`] для [`DeviceInfo::last_panic`], байт: место и
+/// Предел [`panic_brief`] для [`AppInfo::last_panic`], байт: место и
 /// первая строка сообщения обычно короче, а дольше строку не держит ни
 /// одна схема ответа.
 pub const PANIC_BRIEF: usize = 96;

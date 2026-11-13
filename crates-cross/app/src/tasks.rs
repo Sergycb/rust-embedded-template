@@ -114,8 +114,9 @@ pub fn spawn_all(spawner: embassy_executor::Spawner, {% if has_usb == "true" or 
     cli::spawn(spawner, {% if f[0] == "uart" %}board.{{ f[4] }}{% else %}board.{{ f[4] }}.cdc{% endif %}, device, app_info);
 {%- endif %}
 {%- endfor %}
-{%- if graph != "true" %}
+}
 
+{%- if graph != "true" %}
 // Узла `CPU_LOAD` без графа нет: замер — просто цикл в лог (`log_load`).
 // Обёртка — минимум, ради которого задача здесь, а не в домене: токен спавна
 // выдаёт только `#[embassy_executor::task]`, тело — `domain::cpu_load`.
@@ -124,4 +125,3 @@ async fn cpu_load() {
     domain::cpu_load::log_load(domain::cpu_load::sleep_ticks()).await;
 }
 {%- endif %}
-}

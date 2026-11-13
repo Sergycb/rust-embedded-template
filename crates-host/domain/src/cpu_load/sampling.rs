@@ -96,7 +96,7 @@ pub fn sleep_ticks() -> &'static SleepTicks {
 }
 
 /// Ручной цикл исполнителя: поллить, ждать, пока нечего делать, и отмечать в
-/// [`SLEEP_TICKS`], сколько тиков проспали.
+/// счётчике сна, сколько тиков проспали.
 ///
 /// Бесконечный: вызывается из `main` бинарника вместо `Executor::run`,
 /// единственная причина, по которой `main` не `#[embassy_executor::main]`, —
@@ -110,7 +110,7 @@ pub fn sleep_ticks() -> &'static SleepTicks {
 ///
 /// Обязанности те же, что у `Executor::run`: поллить исполнитель можно только
 /// из единственного места, и это оно.
-pub fn run(executor: &'static mut embassy_executor::raw::Executor, wait: impl Fn()) -> ! {
+pub fn run(executor: &'static embassy_executor::raw::Executor, wait: impl Fn()) -> ! {
     loop {
         // SAFETY: этот цикл — единственный, кто поллит исполнитель; ровно то
         // обещание, которое даёт `Executor::run`.

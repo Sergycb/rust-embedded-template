@@ -10,7 +10,9 @@
 //! [`domain::cobs::tx_len`]`(n)`.
 //!
 //! Разорванное соединение (TCP) поток не восстанавливает: конец потока —
-//! [`LinkError::Lost`] с [`CobsError::Eof`], а принять новое соединение — дело
+//! [`LinkError::Lost`](ports::LinkError::Lost) с
+//! [`CobsError::Eof`](crate::cobs::CobsError::Eof), а принять новое соединение —
+//! дело
 //! потока под ним (`net::Server` делает это на следующем чтении).
 //!
 //! Хост собирает кадр так же: `b"\0" + cobs_encode(message + crc_le) + b"\0"`.

@@ -12,12 +12,15 @@
 // `test-ota` (`src/bin/test-ota.rs`), у каждого свой{% endif %}. Паникёр, логгер и обработчики
 // фолтов живут здесь и попадают в бинарник ровно по разу — docs/diagnostics.md,
 // «Два паникёра, один на сборку»{% if ota == "true" %}; docs/modules/app.md{% endif %}.
-pub mod cpu_load;
 pub mod fault;
 {%- if graph == "true" %}
 mod graph;
 {%- endif %}
-{%- if net_services contains "rest" or net_services contains "mqtt" or (net_services contains "ssh" and ssh_host_key == "file") %}
+{%- if net_services contains "rest" %}
+mod net;
+{%- elsif net_services contains "mqtt" %}
+mod net;
+{%- elsif net_services contains "ssh" and ssh_host_key == "file" %}
 mod net;
 {%- endif %}
 pub mod panic;
