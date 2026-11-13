@@ -1520,7 +1520,6 @@ fn no_protocol_by_default() {
         "crates-host/adapters-logic/src/modbus",
         "crates-host/adapters-logic/src/cobs.rs",
         "crates-host/adapters-logic",
-        "crates-cross/bsp/src/stub.rs",
         "crates-host/domain/src/modbus",
         "crates-host/domain/src/protobuf",
         "crates-host/domain/src/canopen.rs",
@@ -2451,7 +2450,6 @@ fn derived_flags_follow_every_link() {
         assert!(!deleted(path), "{path} удалён: {:?}", result.deleted);
     }
     for path in [
-        "crates-host/adapters-logic/src/net/udp.rs",
         "crates-host/adapters-logic/src/cobs.rs",
     ] {
         assert!(deleted(path), "{path} не удалён: {:?}", result.deleted);
@@ -2829,9 +2827,8 @@ fn mqtt_is_offered_with_ethernet() {
     )
     .expect("каскад не должен падать");
     let deleted = |result: &CascadeResult, path: &str| result.deleted.iter().any(|d| d == path);
-    // Клиент брокера живёт с узлом (`domain/src/mqtt/connection.rs`), сервер
-    // транспортов TCP без tcp не нужен.
-    assert!(deleted(&udp, "crates-host/adapters-logic/src/net/tcp.rs"));
+    // TCP без tcp-транспорта не нужен: генерация вырезает его из `net.rs`
+    // Liquid-веткой (файлов под подмодули нет — хук ничего не удаляет).
     for path in mqtt_files {
         assert!(!deleted(&udp, path), "{path} удалён: {:?}", udp.deleted);
     }
@@ -2842,7 +2839,6 @@ fn mqtt_is_offered_with_ethernet() {
         &[],
     )
     .expect("каскад не должен падать");
-    assert!(deleted(&rest, "crates-host/adapters-logic/src/net/tcp.rs"));
     for path in mqtt_files {
         assert!(deleted(&rest, path), "{path} не удалён: {:?}", rest.deleted);
     }
@@ -3458,7 +3454,6 @@ fn transports_are_kept_only_for_the_selected_interface() {
         &'a [&'a str],
     );
     const M: &str = "crates-host/adapters-logic/src/modbus/";
-    const N: &str = "crates-host/adapters-logic/src/net/";
     const COBS: &str = "crates-host/adapters-logic/src/cobs.rs";
     let ast = compile_script();
     let cases: [Case; 5] = [
@@ -3471,14 +3466,14 @@ fn transports_are_kept_only_for_the_selected_interface() {
         (
             "h743zg",
             &[("protocol", "modbus"), ("interface", "udp")],
-            &["modbus/rtu.rs", "net/tcp.rs"],
-            &["modbus/client.rs", "modbus/mbap.rs", "net/udp.rs"],
+            &["modbus/rtu.rs"],
+            &["modbus/client.rs", "modbus/mbap.rs"],
         ),
         (
             "h743zg",
             &[("protocol", "modbus"), ("interface", "tcp")],
-            &["modbus/rtu.rs", "net/udp.rs"],
-            &["modbus/client.rs", "modbus/mbap.rs", "net/tcp.rs"],
+            &["modbus/rtu.rs"],
+            &["modbus/client.rs", "modbus/mbap.rs"],
         ),
         // COBS нужен потоку (UART, USB, TCP), а UDP кадр даёт сама датаграмма.
         (
@@ -3500,8 +3495,6 @@ fn transports_are_kept_only_for_the_selected_interface() {
         let full = |short: &str| {
             if short == "cobs.rs" {
                 COBS.to_owned()
-            } else if let Some(rest) = short.strip_prefix("net/") {
-                format!("{N}{rest}")
             } else {
                 format!("{M}{}", short.trim_start_matches("modbus/"))
             }
@@ -3575,7 +3568,7 @@ fn ota_and_settings_code_is_kept_only_when_selected() {
             false,
             true,
         ),
-        // Внешняя флеш без OTA: заглушка драйвера — в `bsp::stub`, страница
+        // Внешняя флеш без OTA: заглушка драйвера — в `bsp::external`, страница
         // раздела своя не нужна.
         (
             "l073rz",

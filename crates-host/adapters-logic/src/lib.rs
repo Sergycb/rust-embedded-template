@@ -22,8 +22,8 @@
 //! признаку — нужен ли чип».
 
 // {%- if cobs_used == "true" %}
-/// Кадрирование потока байтов в кадры `ports::FrameLink`:
-/// COBS и CRC.
+/// Драйвер кадрирования потока (`ports::FrameLink`, `ports::FrameDuplex`):
+/// sans-IO кодек `domain::cobs` поверх `embedded_io_async::{Read, Write}`.
 pub mod cobs;
 
 // {%- endif %}

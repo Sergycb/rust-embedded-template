@@ -2058,7 +2058,7 @@ if variable::is_set("swap_buffer") {
         print("Настройки — во внутренней EEPROM чипа: флеш под них не тратится");
     } else if config && store == "external" {
         print("Настройки — на внешней флеши W25Q: подставьте шину с выводами платы в crates-cross/bsp/src/external.rs");
-        print("  (пока там заглушка bsp::stub::Bus — проект собирается, настройки не сохраняются; docs/modules/bsp-external.md)");
+        print("  (пока там заглушка bsp::external::Bus — проект собирается, настройки не сохраняются; docs/modules/bsp-external.md)");
     }
     variable::set("swap_buffer", m["swap_buffer"]);
     // `page_size` — страница обмена embassy-boot (`PAGE_SIZE`, `SWAP_PAGE_SIZE`
@@ -2535,7 +2535,7 @@ if iface != "none" {
 // хоть один раздел его использует: `STATE`/`CONFIG` с секторами мельче страницы
 // чипа или `ACTIVE`/`DFU` со страницей обмена. Иначе типа в проекте нет вовсе.
 variable::set("erase_page", if variable::get("state_paged") == "true" || variable::get("config_paged") == "true" || variable::get("swap_paged") == "true" { "true" } else { "false" });
-// Драйвер внешней флеши (`bsp::external`, шина — заглушка `bsp::stub::Bus`) нужен, пока
+// Драйвер внешней флеши (`bsp::external`, шина — заглушка `bsp::external::StubBus`) нужен, пока
 // на внешней флеши лежит хоть что-то: разделы OTA или настройки.
 variable::set("external_flash", if (variable::get("ota") == "true" && variable::get("ota_store") == "external") || variable::get("config_store") == "external" { "true" } else { "false" });
 if wants_ext && variable::get("external_flash") != "true" {
@@ -2644,8 +2644,8 @@ variable::set("link_port", if on.protobuf || on.modbus || has.can || has.udp { "
 // раздела получает `None` (`Option<Settings<NoFlash>>`). Иначе модуля нет.
 variable::set("settings_port", if variable::get("config") == "true" || on.canopen { "true" } else { "false" });
 variable::set("stream_io", if has.uart || has.usb || has.tcp { "true" } else { "false" });
-// Заглушки периферии в `bsp/src/stub.rs`: UART, CAN, USB, Ethernet, внешняя флеш.
-variable::set("has_stub", if has.uart || has.can || has.usb || has.tcp || has.udp || variable::get("external_flash") == "true" { "true" } else { "false" });
+// Заглушки периферии живут в модулях своих транспортов (`bsp::serial`,
+// `bsp::can`, `bsp::usb`, `bsp::net`, `bsp::external`).
 // CRC кадра: RTU (Modbus по UART и USB) и COBS (protobuf по потоку).
 variable::set("crc_used", if modbus_rtu || cobs_used { "true" } else { "false" });
 // Property-тесты кадрирования есть у Modbus (RTU, TCP, UDP) и у COBS.
@@ -2728,16 +2728,14 @@ if on.modbus {
         file::delete("crates-host/adapters-logic/src/modbus/mbap.rs");
     }
 }
-// Сервер транспортов TCP — `net/tcp.rs`; клиент MQTT живёт с узлом
-// (`domain/src/mqtt/connection.rs`) и уходит вместе с ним.
-if !has.tcp {
-    file::delete("crates-host/adapters-logic/src/net/tcp.rs");
-}
-if !has.udp {
-    file::delete("crates-host/adapters-logic/src/net/udp.rs");
-}
+// Сервер транспортов TCP и UDP-канал — подмодули внутри `net.rs`
+// (`adapters-logic`): невыбранный генерация вырезает Liquid-веткой, файлов
+// под них нет. Клиент MQTT живёт с узлом (`domain/src/mqtt/connection.rs`)
+// и уходит вместе с ним. Кодек кадрирования (COBS + CRC) — в `domain::cobs`,
+// транспорт его под ним не трогает.
 if !cobs_used {
     file::delete("crates-host/adapters-logic/src/cobs.rs");
+    file::delete("crates-host/domain/src/cobs.rs");
 }
 // Реализации портов, которых несколько (`adapters-logic`): каналы протоколов
 // и транспорты над сокетами. Нет ни одной — нет и крейта; член workspace и
@@ -2817,9 +2815,8 @@ if variable::get("graph") != "true" {
         file::delete("crates-cross/app/src/tasks");
     }
 }
-if variable::get("has_stub") != "true" {
-    file::delete("crates-cross/bsp/src/stub.rs");
-}
+// Заглушки периферии живут в модулях своих транспортов (`bsp::serial`,
+// `bsp::can`, `bsp::usb`, `bsp::net`, `bsp::external`) — отдельного модуля нет.
 // Флеш в памяти (`flash::fake::MemFlash`) — тестам разделов OTA и хранилища
 // настроек (`domain::settings` есть и у CANopen без раздела — `settings_port`).
 let mem_flash = variable::get("ota") == "true" || variable::get("settings_port") == "true";
@@ -2841,7 +2838,6 @@ if !has.tcp && !has.udp {
     // Крейта `adapters-logic` без сети может не быть вовсе (удалён выше).
     if adapters_logic {
         file::delete("crates-host/adapters-logic/src/net.rs");
-        file::delete("crates-host/adapters-logic/src/net");
     }
     file::delete("crates-host/domain/src/net.rs");
 }
@@ -2849,11 +2845,6 @@ if !has.tcp && !has.udp {
 if rng[0] == "" || (!has.tcp && !has.udp) {
     file::delete("crates-cross/bsp/src/rng.rs");
     file::delete("docs/modules/bsp-rng.md");
-}
-// Сетевые службы приложения (`app::net`: секреты, брокер MQTT) — только с
-// выбранной службой.
-if services.len() == 0 {
-    file::delete("crates-cross/app/src/net.rs");
 }
 // Узлы сетевых служб — только выбранных. Сведения об устройстве
 // (`domain::device`) читают PROTOBUF, HTTP, SSH и MQTT.
@@ -2866,11 +2857,10 @@ if !services.contains("ssh") {
     file::delete("crates-host/domain/src/ssh");
 }
 // Консоль живёт для SSH или `cli`: нет ни того, ни другого — нет и модуля.
+// Пароль консоли (`console/password.rs`) уезжает вместе с каталогом.
 if !has_console {
     file::delete("crates-host/domain/src/console.rs");
     file::delete("crates-host/domain/src/console");
-    file::delete("crates-cross/app/src/console.rs");
-    file::delete("crates-cross/app/src/console_password.rs");
 }
 // MQTT — узел (с клиентом брокера `mqtt/connection.rs`), разбор `mqtt.toml` в
 // build-скрипте `app` и описание.
@@ -2893,6 +2883,13 @@ if !on.protobuf && services.len() == 0 && !has_cli {
 variable::set("ssh_host_key", if !services.contains("ssh") { "" }
     else if variable::get("config") == "true" && variable::get("config_store") != "external" && !on.canopen { "config" }
     else { "file" });
+// `app::net` (секреты, брокер MQTT) живёт, пока в нём есть хоть один
+// подмодуль: `rest`, `mqtt` или `ssh` с ключом из файла. SSH с ключом из
+// настроек подмодуля не даёт — без других служб файл из одних комментариев.
+if !services.contains("rest") && !services.contains("mqtt")
+    && variable::get("ssh_host_key") != "file" {
+    file::delete("crates-cross/app/src/net.rs");
+}
 // Ключ из файла узел берёт статикой `app`, модуль хранимого ключа ему не нужен.
 if variable::get("ssh_host_key") == "file" {
     file::delete("crates-host/domain/src/ssh/host_key.rs");
