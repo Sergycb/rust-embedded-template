@@ -1,4 +1,4 @@
-//! Заголовок MBAP — [`MbapHeader`] из словаря `rusty-modbus-types`: номер
+//! Заголовок MBAP — `MbapHeader` из словаря `rusty-modbus-types`: номер
 //! транзакции, протокол (0 — Modbus), длина оставшегося (адрес и PDU), адрес
 //! устройства — семь байт, старший байт первым.
 //!
@@ -7,7 +7,7 @@
 //! на него у крейта нет — поля собираются через `From<u16>` и читаются `get`.
 //! И проверка длины принятого кадра: `MbapHeader` сверяет длину только при
 //! сборке (`try_new`), а `pdu_length`/`adu_length` принятого не проверяют —
-//! длина вне допустимой отсюда, [`total`].
+//! длина вне допустимой отсюда, `total`.
 
 use ports::MAX_PDU;
 use rusty_modbus_types::{MAX_PDU_SIZE, MAX_TCP_ADU_SIZE, MBAP_HEADER_LEN, MbapHeader};

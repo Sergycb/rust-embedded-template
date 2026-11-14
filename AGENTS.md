@@ -10,6 +10,7 @@ doc-комментариях (`//!`) над её примером использ
 README — не дублируется здесь.
 
 ## Для кого этот файл
+
 - **Репозиторий шаблона** (признак — каталог `chip-data-gen/` и файл `chip-select.rhai` в корне): описывает то, что шаблон раздаёт проектам. Механика раздачи (каскад выбора чипа, плейсхолдеры, генерация `memory.x`) — в `MAINTAINING.md`. В сгенерированные проекты этот файл **не копируется**. Правило: **в файлах шаблона живёт Liquid** — `crates-cross/` в самом репозитории не собирается, проверяется генерацией (`--bin template-check`).
 - **Сгенерированный проект**: после разрешения Liquid остаются только активные ветки. `AGENTS.md` применим как есть, без сырых Liquid-веток.
 
@@ -24,6 +25,7 @@ Claude Code их покрывает skill `rust-engineering`, см. `CLAUDE.md`)
 ## Граница `domain`/`cross`
 
 Два независимых workspace:
+
 - Корневой workspace проекта покрывает host-часть (`crates-host/*`: `domain`, `ports`, `adapters-*`, `proto`, `canopen`, `flash-page`, `xtask`, `host-target-tests`). `domain` лежит в `crates-host/domain/`, `no_std`, не знает про `embassy-stm32` и ни про какое железо, тестируется на host (`cargo xtask test host`).
 - `crates-cross/` — отдельный workspace с аппаратной прошивкой (`bsp`, `app`{% if ota == "true" %}, `boot`{% endif %}), собирается под `{{target}}`, подключает `crates-host/domain` как обычную path-зависимость.
 
@@ -113,6 +115,7 @@ Claude Code их покрывает skill `rust-engineering`, см. `CLAUDE.md`)
 | `cargo xtask sign` | подписать уже собранный `app.bin` ключом `ota-signing-key.bin`; так подписывает релиз — ключ появляется после сборки |
 {%- endif %}
 | `typos` | опечатки в коде и документации; исключения — `.typos.toml`. Нужен `typos-cli` (ставит `cargo xtask setup`){% if ci != "none" %}, гоняется в CI отдельным джобом{% endif %} |
+| `rumdl check .` | Markdown и Markdown внутри `///`/`//!` по `.rumdl.toml`: формат, якоря, относительные пути. Нужен `rumdl` (ставит `cargo xtask setup`){% if ci != "none" %}, гоняется в CI отдельным джобом{% endif %}. В репозитории шаблона запускать на сгенерированном проекте: в сырых доках Liquid |
 | `cargo deny check` | лицензии (только пермиссивные{% if has_canopen == "true" %}; исключение — MPL-2.0 у `zencan`{% endif %}{% if protobuf_serial == "true" %}; исключение — MPL-2.0 у `serialport` клиента `host-target-tests`{% endif %}), источники, уязвимости зависимостей по `deny.toml`; для прошивки — с `--manifest-path crates-cross/Cargo.toml`. Нужен `cargo-deny` (ставит `cargo xtask setup`){% if ci != "none" %}, гоняется в CI{% endif %} |
 | `cargo xtask pins [БЛОК\|ПИН]` | справочник по чипу `{{chip}}`: выводы, альтернативные функции, DMA, тактирование |
 | `cargo xtask pins --check` | распиновка во всём `crates-cross/bsp/src`: занятый отладочный порт — ошибка, выводы кварца и MCO — предупреждение |
@@ -139,19 +142,25 @@ cargo xtask lint cross    # cross: fmt --check + clippy -D warnings
 cargo xtask build         # cross: debug + release
 ```
 
+В сгенерированном проекте сюда же `rumdl check .` — Markdown и doc-комментарии;
+в репозитории шаблона его гоняйте на сгенерированном проекте, не на сырых файлах
+(Liquid).
+
 {% if ci != "none" %}Это основа CI — там host и cross разнесены по разным джобам, которые идут
 параллельно и с раздельными кешами. Сверх этих четырёх CI гоняет `cargo deny
-check`, `cargo hack --feature-powerset`, покрытие (`cargo llvm-cov`) и `typos`:
-все четыре ставит `cargo xtask setup`, и при правке зависимостей или фич первые
-три стоит прогнать и локально.{% else %}CI в проекте нет, поэтому эти четыре гоняются руками. Сверх них —
-`cargo deny check`, `cargo hack --feature-powerset`, покрытие (`cargo llvm-cov`)
-и `typos`: все четыре ставит `cargo xtask setup`, и при правке зависимостей или
-фич первые три стоит прогнать.{% endif %}{% if ci == "github" %} Отдельно от `ci.yml`: `pins.yml` (Pins) —
+check`, `cargo hack --feature-powerset`, покрытие (`cargo llvm-cov`), `typos`
+и `rumdl`: все пять ставит `cargo xtask setup`, и при правке зависимостей или
+фич первые три стоит прогнать и локально.{% else %}CI в проекте нет, поэтому эти четыре гоняются руками. Сверх них —
+`cargo deny check`, `cargo hack --feature-powerset`, покрытие (`cargo llvm-cov`),
+`typos` и `rumdl`: все пять ставит `cargo xtask setup`, и при правке зависимостей
+или фич первые три стоит прогнать.{% endif %}{% if ci == "github" %} Отдельно от `ci.yml`: `pins.yml` (Pins) —
 `chip-info --check` по фильтру путей (распиновка и справочник), `audit.yml` (Audit) —
-`cargo deny check advisories` по обоим lock-файлам каждую ночь{% if ota == "true" %}, `release.yml`
+`cargo deny check advisories` по обоим lock-файлам каждую ночь, `links.yml` (Links) —
+`lychee` по внешним ссылкам раз в неделю{% if ota == "true" %}, `release.yml`
 (Release) — `cargo xtask build` и подпись по тегу `v*`{% endif %}.{% elsif ci == "gitlab" %} В `.gitlab-ci.yml` отдельно:
 `pins:check` — `chip-info --check` по фильтру путей (распиновка и справочник),
 `audit` — `cargo deny check advisories` по обоим lock-файлам по расписанию,
+`links:audit` — `lychee` по внешним ссылкам по тому же расписанию,
 `renovate` — обновления зависимостей по тому же расписанию{% if ota == "true" %},
 `release:build`/`release:publish` — `cargo xtask build` и подпись по тегу `v*`{% endif %}.{% endif %}{% if ci != "none" %} Полный
 перечень и что нужно для зелёного CI — README, «Что проверяет CI». Добавили шаг

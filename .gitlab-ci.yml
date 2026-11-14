@@ -20,6 +20,8 @@ variables:
   HACK_VERSION: "0.6.45"
   DENY_VERSION: "0.20.2"
   TYPOS_VERSION: "1.51.1"
+  RUMDL_VERSION: "0.3.4"
+  LYCHEE_VERSION: "0.24.2"
   # Домашний каталог cargo — внутри проекта: GitLab кеширует только пути
   # проекта, а у образа `rust:` он в `/usr/local/cargo`, и ни реестр, ни
   # поставленные `cargo install` инструменты в кеш не попадали. Джобы,
@@ -137,6 +139,25 @@ typos:
     - export PATH="$CARGO_HOME/bin:$PATH"
     - cargo install typos-cli --version "$TYPOS_VERSION" --locked
     - typos
+
+# Документация: Markdown и Markdown внутри `///`/`//!`. Отдельным джобом,
+# потому что rumdl — внешний бинарь, а не зависимость проекта. Версия
+# закреплена — та же, что в `cargo xtask setup`; конфиг — `.rumdl.toml`.
+# В репозитории шаблона raw-прогон не годится: в доках
+# живёт Liquid.
+docs:check:
+  stage: test
+  image: rust:1.99.1
+  <<: *not_scheduled
+  cache:
+    key: "$CI_COMMIT_REF_SLUG-docs"
+    paths:
+      - .cargo-home/registry
+      - .cargo-home/bin
+  script:
+    - export PATH="$CARGO_HOME/bin:$PATH"
+    - cargo install rumdl --version "$RUMDL_VERSION" --locked
+    - rumdl check .
 
 # Проверка распиновки: не занят ли выводами платы отладочный порт (`PA13`/
 # `PA14` — после прошивки плата перестаёт отвечать пробнику) и выводы кварца.
@@ -408,7 +429,8 @@ release:publish:
 #
 # Джоб намеренно не в стейдже сборки и запускается ТОЛЬКО по расписанию: на
 # обычных push/MR он не нужен, а сборка и тесты, наоборот, исключены из
-# расписания (см. .not-scheduled выше). По расписанию идёт ещё только `audit`.
+# расписания (см. .not-scheduled выше). По расписанию идут ещё `audit` и
+# `links:audit`.
 #
 # Взят образ renovate/renovate вместо `include:` официального
 # renovate-bot/renovate-runner — так конфиг самодостаточен и не зависит от
@@ -447,3 +469,22 @@ audit:
     - cargo install cargo-deny --version "$DENY_VERSION" --locked
     - cargo deny check advisories
     - cargo deny --manifest-path crates-cross/Cargo.toml check advisories
+
+# Внешние ссылки — по тому же расписанию, не на push/MR. Только http(s):
+# локальные ссылки и якоря ловит `rumdl` (`MD051`/`MD057`), а Liquid-плейсхолдеры
+# в шаблоне — не URL. Сеть и редиректы нестабильны, поэтому это отдельный
+# еженедельный джоб, а не гейт.
+links:audit:
+  stage: test
+  image: rust:1.99.1
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+  cache:
+    key: "links-$CI_COMMIT_REF_SLUG"
+    paths:
+      - .cargo-home/registry
+      - .cargo-home/bin
+  script:
+    - export PATH="$CARGO_HOME/bin:$PATH"
+    - cargo install lychee --version "$LYCHEE_VERSION" --locked
+    - lychee --config lychee.toml --no-progress README.md docs

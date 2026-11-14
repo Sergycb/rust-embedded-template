@@ -56,7 +56,7 @@ const _: () = assert!(
 ///
 /// Тик — тик `embassy-time` (`Instant::as_ticks`), а не цикл CPU. 32 бита
 /// хватает: загрузку дают не значения, а прирост между снимками по модулю 2³²
-/// ([`CpuLoad`](super::load::CpuLoad)). Почему 32 бита и
+/// ([`CpuLoad`]). Почему 32 бита и
 /// [`portable_atomic`], а не [`core::sync::atomic::AtomicU32`], —
 /// `docs/modules/app-cpu-load.md`, «Почему `portable_atomic::AtomicU32`».
 pub type SleepTicks = AtomicU32;

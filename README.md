@@ -1046,14 +1046,18 @@ panicked at crates-cross/app/src/main.rs:207:9:
 ограничения»). Состав самих джобов — {% if ci == "github" %}`.github/workflows/*.yml`{% else %}`.gitlab-ci.yml`{% endif %};
 в `AGENTS.md` перечень дан одной строкой. Отдельным дешёвым джобом идёт `typos`
 (опечатки в коде и документации); что он считает не опечаткой — в `.typos.toml`.
+Ещё один отдельный джоб — `rumdl check .` по `.rumdl.toml`: Markdown и Markdown
+внутри `///`/`//!` (формат, якоря, относительные пути, регистр). Он проверяет
+**сгенерированный** проект: в репозитории шаблона в доках живёт Liquid, и raw-прогон
+дал бы ложные срабатывания.
 
 Сверх этих четырёх команд host-прогон гоняет `cargo hack check --feature-powerset` —
 `check` каждого сочетания фич каждого крейта (`log` и `defmt` взаимоисключающие, но одна
 из них обязательна) — и `cargo deny check` по `deny.toml`: лицензии, источники
 зависимостей, уязвимости. Прошивка проходит тот же `cargo deny check` по своему
 `crates-cross/Cargo.lock`. Локально — те же команды, их ставит `cargo xtask setup`.
-{%- if ci == "gitlab" %} По расписанию, кроме `audit` (ниже), идёт джоб `renovate` — см.
-[«Обновление зависимостей»](#обновление-зависимостей).{% endif %}
+{%- if ci == "gitlab" %} По расписанию, кроме `audit` (ниже), идут `renovate` (см.
+[«Обновление зависимостей»](#обновление-зависимостей)) и `links:audit`.{% endif %}
 {%- if ota == "true" %} Пуш тега `v*` запускает релизный прогон —
 {% if ci == "github" %}`.github/workflows/release.yml`{% else %}джобы `release:build` и `release:publish`{% endif %}, см.
 [«Выпуск релиза по тегу»](#выпуск-релиза-по-тегу).{% endif %}
@@ -1062,6 +1066,8 @@ panicked at crates-cross/app/src/main.rs:207:9:
 проекте ничего не меняли, а основной прогон идёт только на push и PR. Это
 {% if ci == "github" %}`.github/workflows/audit.yml`{% else %}джоб `audit` (ему нужен Pipeline schedule, тот же, что у
 `renovate`){% endif %}: `cargo deny check advisories` по обоим lock-файлам.
+Внешние ссылки в документации — тоже по расписанию, а не на PR: `lychee`
+проверяет только `http(s)`, локальные ссылки и якоря уже закрывает `rumdl`.
 
 К host-прогону добавлено покрытие — `cargo llvm-cov`. {% if ci == "github" %}Таблица попадает в
 сводку прогона{% else %}Процент показывается рядом с пайплайном, а cobertura-отчёт
@@ -1184,8 +1190,13 @@ Renovate (менеджер `gitlabci`, группа `gitlab images` в `renovate
 `cargo xtask setup` ставит всё нужное: целевой target тулчейна, компоненты `rustfmt`,
 `clippy` и `llvm-tools-preview`, `probe-rs-tools` (прошивка, отладка, запуск тестов на
 устройстве), `flip-link` (линкер, уводящий стек от переполнения в статические данные),
-`cargo-nextest`, а также то, что гоняет CI: `cargo-deny`, `cargo-hack`, `cargo-llvm-cov`
-и `typos-cli`. Уже установленное не переставляется.
+`cargo-nextest`, а также то, что гоняет CI: `cargo-deny`, `cargo-hack`, `cargo-llvm-cov`,
+`typos-cli` и `rumdl`. Уже установленное не переставляется.
+
+`rumdl check .` проверяет Markdown и doc-комментарии по `.rumdl.toml`. В репозитории
+шаблона его не запускайте на сырых файлах: в них Liquid-подстановки и условия,
+и ссылки/ветки выглядят битыми. Запускайте в сгенерированном проекте или после
+`cargo generate`; в CI это отдельный джоб.
 
 Пять инструментов ставятся для ручного запуска, в CI их нет:
 
@@ -1203,6 +1214,24 @@ Renovate (менеджер `gitlabci`, группа `gitlab images` в `renovate
 - `taplo` — формат и проверка манифестов. `taplo check` проверяет синтаксис; `taplo fmt`
   использовать не стоит: он заменит табы на пробелы и уберёт выравнивание `=`, принятое
   в манифестах проекта.
+
+Необязательные проверки документации — не в PR-гейте, а по расписанию или запросу:
+
+- `lychee --config lychee.toml README.md docs` — внешние ссылки. В проекте их мало, а сеть
+  нестабильна, поэтому это еженедельный джоб (`Links`/`links:audit`), а не гейт на
+  каждый PR.
+- `hyperlink target/doc --check-anchors --sources docs` — после `cargo doc`. Проверяет
+  HTML-вывод rustdoc, включая относительные ссылки из `include_str!`-доков: `cargo doc`
+  их не считает ошибкой, потому что для него это обычный URL.
+- `hunspell -l -d ru_RU` или LanguageTool — русская орфография/грамматика.
+  `cargo-spellcheck` для русских доков не готов: встроенный словарь — `en_US`, а
+  токенизатор — английский `nlprule`.
+- `cargo echoes` и `jscpd --format markdown docs` — дубли doctest’ов и code fences.
+  Только отчёт: в доках есть намеренные повторы команд.
+
+Ставятся отдельно, `cargo xtask setup` их не трогает: `cargo install lychee --version
+0.24.2 --locked`, `cargo install hyperlink --version 0.3.2 --locked`, `cargo install
+echoes`, `cargo install jscpd`. `hunspell` — пакетным менеджером ОС.
 
 `flip-link` даёт HardFault при переполнении стека вместо тихой порчи статики; замера
 «сколько запаса осталось» в шаблоне нет. Версия компилятора закреплена в
@@ -1333,4 +1362,3 @@ manual memory layout`. Ответ «no» даёт проект **без OTA**: �
 1479 чипов. Инструменты, которые его собирают и проверяют шаблон целиком, живут в
 репозитории шаблона и в сгенерированные проекты не попадают — про них написано в
 `MAINTAINING.md` там же.
-

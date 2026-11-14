@@ -253,8 +253,8 @@ pub struct Dictionary {
     /// старте.
     pub identity: &'static ::canopen::Object1018,
     // {%- if ota == "true" %}
-    /// Место объекта OTA ([`OTA_INDEX`](self::OTA_INDEX)) в словаре —
-    /// `application_callback`: обработчик [`Object`](self::Object) узел
+    /// Место объекта OTA ([`OTA_INDEX`]) в словаре —
+    /// `application_callback`: обработчик [`Object`] узел
     /// регистрирует при старте.
     pub ota: &'static zencan_node::object_dict::CallbackObject<'static>,
     // {%- endif %}

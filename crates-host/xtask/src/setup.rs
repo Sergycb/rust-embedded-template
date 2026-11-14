@@ -39,6 +39,10 @@ pub fn setup(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     // по-разному.
     install_if_missing(sh, &["cargo-machete"], "cargo-machete")?;
     install_if_missing(sh, &["typos"], "typos-cli")?;
+    // Документация: Markdown и Markdown внутри `///`/`//!`. Версия закреплена —
+    // та же, что в CI: новые правила и исправления меняют baseline, и без пина
+    // CI и локальный прогон разъезжаются.
+    install_if_missing(sh, &["rumdl"], "rumdl@0.3.4")?;
     install_if_missing(sh, &["taplo"], "taplo-cli")?;
     // Вручную, в CI их нет: мутационное тестирование (`cargo mutants`) идёт
     // часами, а `cargo bloat` отвечает на вопрос «из чего состоит образ», а не

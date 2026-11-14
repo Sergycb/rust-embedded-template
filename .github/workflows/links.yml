@@ -1,0 +1,29 @@
+# Внешние ссылки в документации: еженедельно, не на каждый PR.
+#
+# Проверяются только http(s)-URL: локальные ссылки и якоря ловит `rumdl`
+# (`MD051`/`MD057`), а сырые Liquid-плейсхолдеры в шаблоне — не URL. Сеть и
+# редиректы нестабильны, поэтому это отдельное расписание, а не гейт PR.
+name: Links
+
+on:
+  schedule:
+    # Понедельник, 04:00 UTC — после ночного audit.yml, чтобы не толкаться.
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  links:
+    name: External links (lychee)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7 (7.0.1)
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2 (2.9.3)
+      - run: cargo install lychee --version 0.24.2 --locked
+      - run: lychee --config lychee.toml --no-progress README.md docs

@@ -47,8 +47,8 @@ const ECHO: usize = 5;
 /// битыми данными: функция проверяется первой. Битые кадры отбрасывает канал.
 ///
 /// На FC43/14 (Read Device Identification) отвечает сам, без `regs`:
-/// производитель и модель — константы [`VENDOR`](crate::modbus::VENDOR) и
-/// [`PRODUCT`](crate::modbus::PRODUCT), ревизия — `revision`.
+/// производитель и модель — константы [`VENDOR`] и
+/// [`PRODUCT`], ревизия — `revision`.
 #[derive(Debug)]
 pub struct Slave<R> {
     unit: u8,

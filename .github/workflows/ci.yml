@@ -121,6 +121,25 @@ jobs:
           tool: typos@1.51.1
       - run: typos
 
+  # Документация: Markdown и Markdown внутри `///`/`//!`. Отдельным джобом,
+  # потому что rumdl — внешний бинарь, а не зависимость проекта: `cargo xtask
+  # lint` не должен требовать его у каждого, кто собирает прошивку. Версия
+  # закреплена — та же, что в `cargo xtask setup`; конфиг — `.rumdl.toml`.
+  # Проверка идёт по сгенерированному проекту: в репозитории шаблона в доках
+  # живёт Liquid, и raw-прогон дал бы ложные срабатывания.
+  docs:
+    name: Docs (rumdl)
+    runs-on: ubuntu-latest
+    concurrency:
+      group: {% raw %}${{ github.workflow }}-${{ github.ref }}-docs{% endraw %}
+      cancel-in-progress: true
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7 (7.0.1)
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2 (2.9.3)
+      - run: cargo install rumdl --version 0.3.4 --locked
+      - run: rumdl check .
+
   cross:
     name: Cross (fmt, clippy, build)
     runs-on: ubuntu-latest

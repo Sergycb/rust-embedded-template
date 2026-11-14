@@ -25,11 +25,18 @@ pub fn lint_host(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     .run()?;
     // {%- endif %}
     // Битые ссылки в документации ломали бы `cargo doc` у пользователя крейта.
+    // `--document-private-items` — иначе ссылки в приватных доках (а их в
+    // `domain` большинство) не проверяются вовсе. `redundant_explicit_links`
+    // на приватном проходе отключён: явные цели в приватных доках часто нужны,
+    // чтобы сослаться на элемент, которого нет в области видимости.
     cmd!(
         sh,
-        "cargo doc --no-deps --workspace --exclude host-target-tests --features {features}"
+        "cargo doc --no-deps --workspace --exclude host-target-tests --features {features} --document-private-items"
     )
-    .env("RUSTDOCFLAGS", "-D warnings")
+    .env(
+        "RUSTDOCFLAGS",
+        "-D warnings -W rustdoc::unescaped_backticks -A rustdoc::redundant_explicit_links",
+    )
     .run()?;
     Ok(())
 }
