@@ -1,0 +1,30 @@
+# Доступ к приватному rust-lib/hw-drivers на GitHub. Один шаг на все джобы,
+# которым нужен `cargo fetch`/`cargo deny`: без него они падают на приватном
+# репозитории. Секрет — RUST_LIB_TOKEN (fine-grained PAT, Contents: Read на
+# rust-lib и hw-drivers).
+#
+# Проект с другим источником (`library_source=…`) ходит в публичное зеркало
+# git.socrat.pro: токена нет, grep по github.com не срабатывает, шаг ничего не
+# делает. Тот же grep ловит и `--define rust_lib=…` на github.com: токен тогда
+# обязателен.
+name: Private git dependencies
+description: Настроить git для приватного rust-lib и hw-drivers на GitHub
+inputs:
+  token:
+    description: Fine-grained PAT с Contents: Read на rust-lib и hw-drivers
+    required: false
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        RUST_LIB_TOKEN: {% raw %}${{ inputs.token }}{% endraw %}
+      run: |
+        if [ -z "$RUST_LIB_TOKEN" ] && grep -q 'git = "https://github.com/' crates-cross/Cargo.toml; then
+          echo "::error::секрет RUST_LIB_TOKEN не задан — приватный rust-lib не склонируется"
+          exit 1
+        fi
+        if [ -n "$RUST_LIB_TOKEN" ]; then
+          git config --global url."https://x-access-token:${RUST_LIB_TOKEN}@github.com/".insteadOf "https://github.com/"
+          echo "CARGO_NET_GIT_FETCH_WITH_CLI=true" >> "$GITHUB_ENV"
+        fi

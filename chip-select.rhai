@@ -16,12 +16,12 @@
 //
 // Порядок блоков (разделители `// ==== N.` ниже; порядок исполнения важен):
 //  1. Функции (без `variable::set`) и пороги раскладки
-//  2. rust_lib, rust_lib_rev, newline — до выбора чипа
+//  2. rust_lib_rev, newline — до выбора чипа; rust_lib — после вопроса о графе
 //  3. Таблицы chip-data/ (`import`)
 //  4. Ответы `--define` до каскада, меню, оценка RAM
 //  5. Отсев чипов и каскад (или `--define chip_feature`)
 //  6. Свойства чипа без вопросов: ядро, банки, сторож, кэш, сброс, RNG, раскладка
-//  7. Вопросы: ext_flash, ota, config, graph, транспорты и протокол, службы, RAM
+//  7. Вопросы: ext_flash, ota, config, graph, источник библиотеки, транспорты и протокол, службы, RAM
 //  8. Раскладка памяти и memory.x (app, target-tests, boot)
 //  9. Производные флаги Liquid и удаление файлов под ответы
 // Все переменные Liquid — вызовы `variable::set`, все удаления — `file::delete`.
@@ -461,24 +461,18 @@ fn ask(label, values, texts, default_value) {
     default_value
 }
 
-/// Адрес git-репозитория зависимости: `--define <name>=…` или ввод строки.
-/// Умолчания нет — без терминала и без `--define` генерация падает с подсказкой.
-/// Хранится без `.git` и завершающего `/`: Cargo.toml дописывает `.git` сам, а
-/// allow-git в deny.toml сравнивает адрес без него. Пробелов, кавычек и `\`
-/// в адресе быть не может — проверка одна и для ввода, и для `--define`:
-/// строка уезжает литералом в TOML (`git = "…"` в Cargo.toml), и кавычка в
-/// ней сломала бы манифест.
-fn repo_url(name, what) {
-    let url = "";
-    if variable::is_set(name) {
-        url = variable::get(name);
+/// Адрес git-репозитория зависимости: `--define <name>=…` или умолчание
+/// `default_url` (его выбирает `library_source`). Хранится без `.git` и
+/// завершающего `/`: Cargo.toml дописывает `.git` сам, а allow-git в deny.toml
+/// сравнивает адрес без него. Пробелов, кавычек и `\` в адресе быть не может —
+/// проверка одна и для ввода, и для `--define`: строка уезжает литералом в
+/// TOML (`git = "…"` в Cargo.toml), и кавычка в ней сломала бы манифест.
+fn repo_url(name, what, default_url) {
+    let url = if variable::is_set(name) {
+        variable::get(name)
     } else {
-        try {
-            url = variable::prompt(name + ": адрес git-репозитория " + what, "", "^\\S+$");
-        } catch (err) {
-            if !err.to_string().contains("not a terminal") { throw err; }
-        }
-    }
+        default_url
+    };
     url.trim();
     while url.ends_with("/") {
         url.pop();
@@ -495,6 +489,17 @@ fn repo_url(name, what) {
         }
     }
     url
+}
+
+/// Адрес библиотеки по источнику: `github` — github.com/Sergycb, `gitlab` —
+/// git.socrat.pro/lib. Без `.git` и `/` в конце, как его хранит [`repo_url`]:
+/// Cargo.toml дописывает `.git` сам.
+fn library_url(source, repo) {
+    if source == "gitlab" {
+        "https://git.socrat.pro/lib/" + repo
+    } else {
+        "https://github.com/Sergycb/" + repo
+    }
 }
 
 /// Список с отметками: отмеченные `values` в порядке пунктов. В хуках
@@ -691,16 +696,14 @@ fn is_dual_core(suffix) {
     core_override(suffix.sub_string(dash + 1)) != ()
 }
 
-// ==== 2. rust_lib, rust_lib_rev, newline ====================================
+// ==== 2. rust_lib_rev, newline ==============================================
 
-// Источник rust-lib (supervisor, watchdog, sync-request) — одна переменная
-// на все места: оба Cargo.toml, allow-git в deny.toml, ссылки в документации.
-// Умолчания нет намеренно: библиотека лежит на разных серверах, и шаблон ни одного
-// из них не называет — адрес вводит человек (`--define rust_lib=https://…/rust-lib`
-// без терминала). Без адреса проект не собрать, поэтому вопрос — до выбора чипа.
-let rust_lib = repo_url("rust_lib", "rust-lib (supervisor, watchdog, sync-request)");
-variable::set("rust_lib", rust_lib);
-// Ревизия rust-lib — тоже одна на все места: проекты не получают lock-файл,
+// `ci` — единственный плейсхолдер `cargo-generate.toml`: cargo-generate задаёт
+// его до хука. По нему выбирается источник git-зависимостей; при `none`
+// источник спрашивается после вопроса о графе (rust-lib нужен всегда —
+// `supervisor` объявлен безусловно в `domain` и `crates-cross`).
+let ci = if variable::is_set("ci") { variable::get("ci") } else { "github" };
+// Ревизия rust-lib — одна на все места: проекты не получают lock-файл,
 // и без `rev` первый же слом API в main rust-lib ронял бы свежую генерацию
 // (так было с supervisor 0.4: слова DSL ушли под фичи). Новую ревизию шаблон
 // берёт сознательно, вместе с правками под неё; форку — `--define rust_lib_rev=…`.
@@ -1558,6 +1561,37 @@ if variable::is_set("graph") {
     print("Граф задач не предлагается: у " + chip_name + " под приложение отведено " + layout[plan_now.app_length_key]
         + ", а supervisor туда не помещается");
 }
+
+// --- Источник git-зависимостей. У github/gitlab он следует за CI; без CI
+// (`ci=none`) спрашивается после графа. rust-lib нужен всегда — `supervisor`
+// объявлен безусловно в `domain` и `crates-cross`, без графа тоже.
+let library_source = "";
+if variable::is_set("library_source") {
+    library_source = variable::get("library_source");
+    if library_source != "github" && library_source != "gitlab" {
+        throw "library_source: ожидается github или gitlab, а не «" + library_source + "»";
+    }
+} else if ci == "gitlab" {
+    library_source = "gitlab";
+} else if ci == "github" {
+    library_source = "github";
+} else {
+    library_source = ask(
+        "library_source: source of rust-lib and hw-drivers",
+        ["github", "gitlab"],
+        ["github - github.com", "gitlab - git.socrat.pro"],
+        "github"
+    );
+}
+variable::set("library_source", library_source);
+// Источник rust-lib (supervisor, watchdog, sync-request) — одна переменная на
+// все места: оба Cargo.toml, allow-git в deny.toml, ссылки в документации.
+let rust_lib = repo_url(
+    "rust_lib",
+    "rust-lib (supervisor, watchdog, sync-request)",
+    library_url(library_source, "rust-lib")
+);
+variable::set("rust_lib", rust_lib);
 
 // --- Транспорты. Транспорт — `#{ kind, tag, block, protocol }`: вид, метка
 // блока (chip-data/interfaces.rhai), блок чипа и протокол поверх него. Блок
@@ -2541,11 +2575,15 @@ variable::set("external_flash", if (variable::get("ota") == "true" && variable::
 if wants_ext && variable::get("external_flash") != "true" {
     print("Внешняя флеш: хранить на ней нечего (ни OTA, ни настроек) — драйвер W25Q в проект не входит");
 }
-// Источник hw-drivers (драйвер `w25q`) — как у `rust_lib`, без умолчания, но
-// спрашивается только с внешней флешью: без неё переменной нет, и ссылаются
+// Источник hw-drivers (драйвер `w25q`) — тот же `library_source`, что у
+// rust-lib; переменная задаётся только с внешней флешью: без неё ссылаются
 // на неё только блоки под `external_flash`.
 if variable::get("external_flash") == "true" {
-    variable::set("hw_drivers", repo_url("hw_drivers", "hw-drivers (w25q)"));
+    variable::set("hw_drivers", repo_url(
+        "hw_drivers",
+        "hw-drivers (w25q)",
+        library_url(library_source, "hw-drivers")
+    ));
 }
 // Шина внешней флеши — `flash_bus`: QSPI, где он выведен, иначе SPI; что шина
 // у чипа есть, проверено при ответе `ext_flash`.

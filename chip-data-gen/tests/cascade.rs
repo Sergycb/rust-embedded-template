@@ -17,7 +17,10 @@ use std::{
 
 use chip_data_gen::{
     emit::source_stamp_versions,
-    source::{declared_embassy_version, repo_root, resolved_metapac_version},
+    source::{
+        HW_DRIVERS_GITHUB, HW_DRIVERS_GITLAB, RUST_LIB, RUST_LIB_GITLAB, declared_embassy_version,
+        repo_root, resolved_metapac_version,
+    },
 };
 use rhai::{
     AST, Array, Dynamic, Engine, EvalAltResult, Module, Scope,
@@ -148,29 +151,111 @@ fn rust_lib_rev_default_matches_the_root_manifest() {
     }
 }
 
-/// Шаблон не называет сервер git-зависимостей: у `rust_lib`/`hw_drivers` нет
-/// умолчаний, адреса вводит человек.
+/// Базы адресов в хуке и в генераторе совпадают: `library_url` собирает
+/// полный адрес из базы, а `source.rs` хранит готовые — разъедутся, и
+/// `template-check` будет собирать не то, что получит проект.
 #[test]
-fn hook_names_no_dependency_server() {
+fn library_urls_match_the_generator() {
     let script = read_script();
-    for line in script.lines().filter(|line| line.contains("://")) {
-        assert!(line.contains("://…"), "адрес в хуке: {line}");
+    for base in [
+        "\"https://github.com/Sergycb/\" + repo",
+        "\"https://git.socrat.pro/lib/\" + repo",
+    ] {
+        assert!(script.contains(base), "в хуке нет {base}");
     }
+    assert!(RUST_LIB.starts_with("https://github.com/Sergycb/"));
+    assert!(RUST_LIB_GITLAB.starts_with("https://git.socrat.pro/lib/"));
+    assert!(HW_DRIVERS_GITHUB.starts_with("https://github.com/Sergycb/"));
+    assert!(HW_DRIVERS_GITLAB.starts_with("https://git.socrat.pro/lib/"));
 }
 
-/// Пустой адрес — ошибка с подсказкой; `.git` и `/` в конце срезаются;
-/// `hw_drivers` нужен только с внешней флешью.
+/// Источник git-зависимостей следует за CI: github — github.com/Sergycb,
+/// gitlab — git.socrat.pro/lib. Без CI (`ci=none`) — вопрос, умолчание github;
+/// `--define library_source=…` и прямой `--define rust_lib=…` переопределяют.
+#[test]
+fn dependency_urls_follow_the_ci_provider() {
+    let ast = compile_script();
+    let var = |result: &CascadeResult, name: &str| result.vars.get(name).cloned();
+
+    let github = run_cascade_with(&ast, "f407ve", &[("ci", "github")]).expect("ci=github");
+    assert_eq!(
+        var(&github, "rust_lib").as_deref(),
+        Some("https://github.com/Sergycb/rust-lib")
+    );
+
+    let gitlab = run_cascade_with(&ast, "f407ve", &[("ci", "gitlab")]).expect("ci=gitlab");
+    assert_eq!(
+        var(&gitlab, "rust_lib").as_deref(),
+        Some("https://git.socrat.pro/lib/rust-lib")
+    );
+
+    // Без CI умолчание — github; `library_source` его переопределяет.
+    let none = run_cascade_with(&ast, "f407ve", &[("ci", "none")]).expect("ci=none");
+    assert_eq!(
+        var(&none, "rust_lib").as_deref(),
+        Some("https://github.com/Sergycb/rust-lib")
+    );
+    let none_gitlab = run_cascade_with(
+        &ast,
+        "f407ve",
+        &[("ci", "none"), ("library_source", "gitlab")],
+    )
+    .expect("ci=none, library_source=gitlab");
+    assert_eq!(
+        var(&none_gitlab, "rust_lib").as_deref(),
+        Some("https://git.socrat.pro/lib/rust-lib")
+    );
+
+    // Прямой адрес сильнее источника: форк задаёт свой.
+    let fork = run_cascade_with(
+        &ast,
+        "f407ve",
+        &[("ci", "gitlab"), ("rust_lib", "https://h/rust-lib.git/")],
+    )
+    .expect("fork rust_lib");
+    assert_eq!(
+        var(&fork, "rust_lib").as_deref(),
+        Some("https://h/rust-lib")
+    );
+
+    // hw-drivers нужен только с внешней флешью и следует тому же источнику.
+    for (ci, expected) in [
+        ("github", "https://github.com/Sergycb/hw-drivers"),
+        ("gitlab", "https://git.socrat.pro/lib/hw-drivers"),
+    ] {
+        let ext = run_cascade_with(&ast, "f407ve", &[("ci", ci), ("ext_flash", "yes")])
+            .expect("ext_flash=yes");
+        assert_eq!(
+            var(&ext, "hw_drivers").as_deref(),
+            Some(expected),
+            "ci={ci}"
+        );
+    }
+    let no_ext = run_cascade_with(&ast, "f407ve", &[("ci", "github")]).expect("no ext_flash");
+    assert_eq!(var(&no_ext, "hw_drivers"), None);
+}
+
+/// Пустой явный адрес — ошибка с подсказкой; без `--define` работает
+/// умолчание по `ci`; `.git` и `/` в конце срезаются; `hw_drivers` нужен
+/// только с внешней флешью.
 #[test]
 fn dependency_urls_are_normalized_and_required() {
     let ast = compile_script();
+    let var = |result: &CascadeResult, name: &str| result.vars.get(name).cloned();
     let Err(err) = run_cascade_with(&ast, "f407ve", &[("rust_lib", "")]) else {
         panic!("пустой rust_lib должен падать");
     };
     assert!(err.to_string().contains("--define rust_lib="), "{err}");
 
+    let default =
+        run_cascade_with(&ast, "f407ve", &[("ci", "github")]).expect("умолчание rust_lib");
+    assert_eq!(
+        var(&default, "rust_lib").as_deref(),
+        Some("https://github.com/Sergycb/rust-lib")
+    );
+
     let plain = run_cascade_with(&ast, "f407ve", &[("rust_lib", "https://h/rust-lib.git/")])
         .expect("каскад с rust_lib");
-    let var = |result: &CascadeResult, name: &str| result.vars.get(name).cloned();
     assert_eq!(
         var(&plain, "rust_lib").as_deref(),
         Some("https://h/rust-lib")
@@ -340,17 +425,14 @@ fn run_interview(
         .iter()
         .map(|(id, value)| ((*id).to_string(), (*value).to_string()))
         .collect();
-    // Адреса git-зависимостей умолчаний в хуке не имеют — их всегда задаёт
-    // `--define`; тест, которому важен сам адрес, задаёт свой.
+    // `ci` задаёт cargo-generate до хука; по нему хук выбирает источник
+    // git-зависимостей. Тест, которому важен сам адрес, задаёт `--define`.
     let vars: Vars = Rc::new(RefCell::new(
-        [
-            ("rust_lib", "https://example.com/rust-lib"),
-            ("hw_drivers", "https://example.com/hw-drivers"),
-        ]
-        .iter()
-        .chain(preset)
-        .map(|(name, value)| ((*name).to_string(), (*value).to_string()))
-        .collect::<HashMap<_, _>>(),
+        [("ci", "github")]
+            .iter()
+            .chain(preset)
+            .map(|(name, value)| ((*name).to_string(), (*value).to_string()))
+            .collect::<HashMap<_, _>>(),
     ));
     let files: Files = Rc::new(RefCell::new(HashMap::new()));
     let deleted: Deleted = Rc::new(RefCell::new(Vec::new()));
@@ -3700,6 +3782,12 @@ fn file_variables(text: &str) -> std::collections::BTreeSet<String> {
     let mut declared = BTreeSet::new();
     let mut rest = text;
     while let Some(start) = rest.find("{{") {
+        // `${{ ... }}` — выражение GitHub Actions, а не Liquid: в файлах
+        // `.github` оно стоит внутри `{% raw %}` и хук его не задаёт.
+        if start > 0 && rest.as_bytes()[start - 1] == b'$' {
+            rest = &rest[start + 2..];
+            continue;
+        }
         let after = &rest[start + 2..];
         let Some(end) = after.find("}}") else { break };
         let inner = after[..end].trim().trim_start_matches('-').trim();
@@ -3968,7 +4056,7 @@ fn menu_picks_reach_the_template_variables() {
 /// Без терминала и без `--define` вопросы получают умолчания, и генерация не
 /// падает ни на одном чипе: ни одного вопроса, на который некому ответить.
 /// Протокола по умолчанию нет; транспорта нет без OTA, а с OTA — первый из
-/// списка (`ota_needs_a_transport`).
+/// списка (`ota_needs_a_transport`); источник библиотеки — github.
 #[test]
 fn every_chip_generates_with_the_defaults() {
     let ast = compile_script();
@@ -3992,6 +4080,9 @@ fn every_chip_generates_with_the_defaults() {
                     failures.push(format!(
                         "{suffix}: OTA по умолчанию, а раскладка не посчитана"
                     ));
+                }
+                if var("rust_lib") != Some("https://github.com/Sergycb/rust-lib") {
+                    failures.push(format!("{suffix}: rust_lib по умолчанию не github"));
                 }
             }
         }
@@ -4098,7 +4189,12 @@ fn every_path_through_the_menus_generates() {
             let missing: Vec<&String> = used
                 .iter()
                 .filter(|name| {
-                    !result.vars.contains_key(name.as_str()) && !external.contains(&name.as_str())
+                    !result.vars.contains_key(name.as_str())
+                        && !external.contains(&name.as_str())
+                        // `hw_drivers` нужен только под `external_flash`: без
+                        // внешней флеши шаблон на него не ссылается.
+                        && (name.as_str() != "hw_drivers"
+                            || var("external_flash") == Some("true"))
                 })
                 .collect();
             if !missing.is_empty() {

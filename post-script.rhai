@@ -226,6 +226,10 @@ if variable::get("has_console") == "true" {
 
 print("");
 print("Проект под " + chip + " (" + target + ").");
+print("Git-зависимости: " + variable::get("rust_lib") + " (" + variable::get("library_source") + ").");
+if variable::get("ci") == "github" && variable::get("library_source") == "github" {
+	print("CI: приватный rust-lib — добавьте секрет RUST_LIB_TOKEN (fine-grained PAT, Contents: Read).");
+}
 if ota == "true" {
 	print("Раскладка памяти в crates-cross/app/memory.x и crates-cross/boot/memory.x посчитана по секторам чипа.");
 } else {

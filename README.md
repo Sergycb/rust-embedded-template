@@ -36,10 +36,15 @@ OTA или раздел настроек, которые на чип не пом
 ## Быстрый старт
 
 Часть зависимостей — `supervisor`{% if graph == "true" %}, `watchdog`{% endif %}{% if ota == "true" and graph != "true" %}, `sync-request`{% endif %} — git-крейты
-[rust-lib]({{rust_lib}}) (адрес — ответ при генерации): без доступа к этому
-репозиторию проект не соберётся ни локально, ни в CI.{% if external_flash == "true" %} Драйвер внешней
-флеши `w25q` — git-крейт из [hw-drivers]({{hw_drivers}}), второй адрес из генерации: без
-доступа к нему проект тоже не соберётся.{% endif %}
+[rust-lib]({{rust_lib}}) (адрес выбирается по `ci`/`library_source`; форк —
+`--define rust_lib=…`): без доступа к этому репозиторию проект не соберётся ни
+локально, ни в CI, если источник приватный; публичному зеркалу доступ не нужен.{% if ci == "github" %}
+Приватному источнику в `.github`-джобах нужен секрет `RUST_LIB_TOKEN` (см.
+«Что проверяет CI»).{% elsif ci == "gitlab" %} Приватному источнику в
+`.gitlab-ci.yml` нужен `RUST_LIB_TOKEN` и шаг `insteadOf` — шаблон его не
+добавляет.{% endif %}{% if external_flash == "true" %} Драйвер внешней
+флеши `w25q` — git-крейт из [hw-drivers]({{hw_drivers}}), адрес — по тому же
+`ci`/`library_source`: без доступа к нему проект тоже не соберётся.{% endif %}
 
 ```sh
 cargo xtask setup        # тулчейн, probe-rs, flip-link и cargo-плагины (CI и ручные)
@@ -1041,9 +1046,15 @@ panicked at crates-cross/app/src/main.rs:207:9:
 
 Основной прогон — то же, что вы запускаете локально: `cargo xtask lint` и
 `test host` на хосте, `lint cross` и `build` для прошивки. Этапы с платой в CI не
-идут: пробника у раннера нет. Сгенерированный проект тянет приватный `rust-lib`, поэтому
-без доступа к нему CI будет красным (`docs/conventions.md`, «Известные, осознанные
-ограничения»). Состав самих джобов — {% if ci == "github" %}`.github/workflows/*.yml`{% else %}`.gitlab-ci.yml`{% endif %};
+идут: пробника у раннера нет. Источник `rust-lib` может быть публичным или
+приватным: публичному доступ не нужен, приватному — токен.{% if ci == "github" %}
+В `.github`-джобах, которым нужен `cargo fetch`, шаг авторизации берёт
+`RUST_LIB_TOKEN` (fine-grained PAT, `Contents: Read` на rust-lib и hw-drivers);
+для публичного зеркала на git.socrat.pro он ничего не делает.{% else %}В `.gitlab-ci.yml` шага
+авторизации нет: публичный источник работает без него, а приватному нужны
+`RUST_LIB_TOKEN` и `insteadOf` в джобах, которым нужен `cargo fetch`.{% endif %}
+Подробности — `docs/conventions.md`, «Известные, осознанные ограничения».
+Состав самих джобов — {% if ci == "github" %}`.github/workflows/*.yml`{% else %}`.gitlab-ci.yml`{% endif %};
 в `AGENTS.md` перечень дан одной строкой. Отдельным дешёвым джобом идёт `typos`
 (опечатки в коде и документации); что он считает не опечаткой — в `.typos.toml`.
 Ещё один отдельный джоб — `rumdl check .` по `.rumdl.toml`: Markdown и Markdown
@@ -1160,7 +1171,11 @@ protection: PR, не трогающий распиновку, его не зап
 {% if ci == "github" %}Обновления версий приносит Dependabot (`.github/dependabot.yml`) — по всем трём
 cargo-воркспейсам (корневой, `crates-cross/`, `crates-host/chip-info/`). **Работает он сразу после
 пуша**: его исполняет сама платформа, ничего настраивать не нужно. SHA-пины
-экшенов он обновляет тоже.{% else %}Обновления версий приносит Renovate (`renovate.json` плюс джоб `renovate` в
+экшенов он обновляет тоже. Приватный git-крейт ему, однако, нужен доступный:
+если источник остаётся приватным, добавьте `registries: type: git`
+с `RUST_LIB_TOKEN` в Dependabot secrets (или генерируйте с
+`--define library_source=…` на публичное зеркало). `rev` rust-lib бот не
+поднимает, его меняют руками.{% else %}Обновления версий приносит Renovate (`renovate.json` плюс джоб `renovate` в
 `.gitlab-ci.yml`) — по всем трём cargo-воркспейсам (корневой, `crates-cross/`, `crates-host/chip-info/`).
 **Сам он не запускается**:
 `renovate.json` — это конфигурация репозитория, а не запускалка, и без того, кто его
@@ -1169,8 +1184,10 @@ cargo-воркспейсам (корневой, `crates-cross/`, `crates-host/ch
 остальные джобы из расписания исключены). Чтобы он заработал, нужны две вещи со стороны
 проекта:
 
-1. **CI/CD variable `RENOVATE_TOKEN`** — Project или Group Access Token с ролью
-   `Developer` и скоупом `api`. Пометьте masked; protected ставить не надо, если
+1. **CI/CD variable `RENOVATE_TOKEN`** — Project Access Token с ролью
+   `Developer` и скоупом `api` (пока зеркало rust-lib публичное; если закроете —
+   Group Access Token с доступом к `lib`, иначе `lockFileMaintenance` его не
+   склонирует). Пометьте masked; protected ставить не надо, если
    расписание будет ходить по незащищённой ветке.
 2. **Pipeline schedule** (*CI/CD → Schedules*), например ежедневно ночью. Без расписания
    джоб не запустится никогда — на обычных push/MR он намеренно не срабатывает.
@@ -1179,7 +1196,9 @@ cargo-воркспейсам (корневой, `crates-cross/`, `crates-host/ch
 не на `latest`: на них идут джобы с секретами. `release-cli` и `renovate` поднимает
 Renovate (менеджер `gitlabci`, группа `gitlab images` в `renovate.json`), а `rust` —
 нет: его версия — это версия тулчейна, её поднимают руками вместе с
-`rust-toolchain.toml` (`docs/conventions.md`, «Тулчейн запинен»).
+`rust-toolchain.toml` (`docs/conventions.md`, «Тулчейн запинен»). Сам
+`rust-toolchain.toml` Renovate тоже не трогает — правило в `renovate.json`;
+`rev` rust-lib и `w25q` бот не обновляет, их меняют руками.
 
 Альтернатива джобу — подключить к проекту [Mend Renovate App](https://docs.renovatebot.com/getting-started/running/)
 (он поддерживает GitLab); тогда джоб можно удалить.{% endif %}

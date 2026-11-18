@@ -11,11 +11,22 @@ use std::{
 
 use anyhow::{Context, bail};
 
-/// Адрес rust-lib, которым заменяется плейсхолдер `{{rust_lib}}` в
-/// `crates-cross/Cargo.toml` (без `.git`, как его хранит хук): с ним как есть
-/// `cargo metadata` падает на «invalid url». Его же подставляет при генерации
-/// `template-check` (`REPO_DEFAULTS`).
+/// Адрес rust-lib по умолчанию для `ci=github`, которым заменяется плейсхолдер
+/// `{{rust_lib}}` в `crates-cross/Cargo.toml` (без `.git`, как его хранит хук):
+/// с ним как есть `cargo metadata` падает на «invalid url». Его же подставляет
+/// при генерации `template-check` (`repo_defaults`).
 pub const RUST_LIB: &str = "https://github.com/Sergycb/rust-lib";
+
+/// Адрес rust-lib по умолчанию для `ci=gitlab` — публичное зеркало на своём
+/// сервере. Без `.git`, как `RUST_LIB`.
+pub const RUST_LIB_GITLAB: &str = "https://git.socrat.pro/lib/rust-lib";
+
+/// Адрес hw-drivers по умолчанию для `ci=github` (нужен только с внешней
+/// флешью). Без `.git`.
+pub const HW_DRIVERS_GITHUB: &str = "https://github.com/Sergycb/hw-drivers";
+
+/// Адрес hw-drivers по умолчанию для `ci=gitlab` — публичное зеркало. Без `.git`.
+pub const HW_DRIVERS_GITLAB: &str = "https://git.socrat.pro/lib/hw-drivers";
 
 /// Любая реальная чип-фича годится — нужна только чтобы `cargo metadata` смог
 /// разрешить зависимость `embassy-stm32`: в самом `crates-cross/Cargo.toml` вместо

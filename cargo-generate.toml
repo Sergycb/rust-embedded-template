@@ -9,7 +9,9 @@ cargo_generate_version = ">=0.26.0"
 # `fmt` не задан — сгенерированные `.rs` проходят через rustfmt (умолчание с
 # 0.26). Вывод шаблона и без этого обязан быть чистым: `template-check`
 # генерирует с `--no-fmt`, и огрехи Liquid ловит `cargo xtask lint` в проекте.
-exclude = ["CLAUDE.md"]
+# `audit.yml` — без Liquid: в нём `${{ secrets.RUST_LIB_TOKEN }}`, а сам файл
+# ещё и работает в репозитории шаблона, где raw-теги недопустимы.
+exclude = ["CLAUDE.md", ".github/workflows/audit.yml"]
 # "target"/"crates-cross/target" — сборочный кэш (см. .gitignore), не источник
 # шаблона; без исключения `cargo generate` падает с "Substitution skipped,
 # found invalid syntax", пытаясь Liquid-рендерить бинарные файлы внутри
@@ -138,7 +140,12 @@ ci = { type = "string", prompt = "CI provider", choices = [
 #     128 KiB) — сверх него и одна на проект: второй `cli` и `ssh` с ней — ошибка;
 #   net_services — `ssh,rest,mqtt`, только с Ethernet; вход в консоль (SSH и
 #     `cli`) — всегда по паролю, прежние `ssh_auth`/`ssh_key` — ошибка;
-#   rust_lib, hw_drivers (только с внешней флеш) — адреса, умолчания нет.
+#   library_source — `github`/`gitlab`: источник rust-lib и hw-drivers. При
+#     `ci=github`/`gitlab` он следует за CI, при `ci=none` спрашивается после
+#     вопроса о графе (умолчание github); `--define` переопределяет и в CI;
+#   rust_lib, hw_drivers (только с внешней флешью) — адреса: по умолчанию по
+#     `ci`/`library_source` (github.com/Sergycb или git.socrat.pro/lib),
+#     `--define` задаёт свой (форк).
 # Умолчания без терминала: `ota` и `graph` — `yes`, если помещаются; с OTA
 # `interface` — первый транспорт чипа без протокола; остальное — `no`/`none`.
 # Транспорт без протокола — рабочий проект (заглушка и фоновый узел, протокол

@@ -25,6 +25,12 @@
       "matchDatasources": ["docker"],
       "matchPackageNames": ["rust"],
       "enabled": false
+    },
+    {
+      "description": "Тулчейн поднимают руками вместе с образами rust: — иначе Renovate разведёт rust-toolchain.toml и .gitlab-ci.yml, а pinned_versions_agree упадёт",
+      "matchManagers": ["rust-toolchain"],
+      "matchDepTypes": ["toolchain"],
+      "enabled": false
     }
   ],
   "lockFileMaintenance": {

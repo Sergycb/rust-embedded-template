@@ -60,7 +60,9 @@ use std::{
 };
 
 use anyhow::{Context, bail};
-use chip_data_gen::source::{RUST_LIB, repo_root};
+use chip_data_gen::source::{
+    HW_DRIVERS_GITHUB, HW_DRIVERS_GITLAB, RUST_LIB, RUST_LIB_GITLAB, repo_root,
+};
 
 /// Сколько конфигураций собирается одновременно. Сборка цепочки проектных
 /// крейтов (`ports` → `domain`/`adapters-logic` → `app`) ядра почти не загружает, поэтому
@@ -143,14 +145,6 @@ const NOT_HOST: &[&str] = &[
     "docs",
     "crates-cross",
     "crates-host/chip-info",
-];
-
-/// Адреса git-зависимостей для генерации: в хуке умолчаний нет (шаблон не
-/// называет сервер), проверка берёт рабочие зеркала автора. `rust_lib` — тот же
-/// адрес, которым генератор подставляет плейсхолдер в манифестах.
-const REPO_DEFAULTS: [(&str, &str); 2] = [
-    ("rust_lib", RUST_LIB),
-    ("hw_drivers", "https://github.com/Sergycb/hw-drivers"),
 ];
 
 /// Начала путей проекта, которые доки и комментарии называют: по ним ссылка
@@ -969,9 +963,9 @@ fn check_one(
     for define in case.defines.iter().chain(&options.defines) {
         command.arg("--define").arg(define);
     }
-    // Адресов зависимостей у хука нет умолчания: без них генерация без
-    // терминала падает. Свой `--define` с тем же ключом их заменяет.
-    let repos = repo_urls(&case.defines, &options.defines);
+    // Умолчания адресов git-зависимостей — по `ci`/`library_source`; свой
+    // `--define` с тем же ключом их заменяет.
+    let repos = repo_urls(&case.defines, &options.defines, &options.ci);
     for (key, url) in &repos {
         let define = format!("{key}={url}");
         if !case
@@ -1371,10 +1365,36 @@ fn check_ci_mentions(
     )
 }
 
+/// Адреса git-зависимостей для генерации: те же умолчания, что у хука по
+/// `ci`/`library_source`, чтобы `--ci gitlab` проверял GitLab-зеркало, а не
+/// GitHub. `--define rust_lib=…`/`hw_drivers=…` всё равно сильнее.
+fn repo_defaults(ci: &str, library_source: &str) -> [(&'static str, &'static str); 2] {
+    let source = if library_source.is_empty() {
+        if ci == "gitlab" { "gitlab" } else { "github" }
+    } else {
+        library_source
+    };
+    if source == "gitlab" {
+        [
+            ("rust_lib", RUST_LIB_GITLAB),
+            ("hw_drivers", HW_DRIVERS_GITLAB),
+        ]
+    } else {
+        [("rust_lib", RUST_LIB), ("hw_drivers", HW_DRIVERS_GITHUB)]
+    }
+}
+
 /// Адрес каждой git-зависимости, с которым идёт генерация: последний
-/// `--define` конфигурации или общий, иначе — из [`REPO_DEFAULTS`].
-fn repo_urls(case: &[String], common: &[String]) -> Vec<(&'static str, String)> {
-    REPO_DEFAULTS
+/// `--define` конфигурации или общий, иначе — умолчание по `ci`/`library_source`
+/// ([`repo_defaults`]).
+fn repo_urls(case: &[String], common: &[String], ci: &str) -> Vec<(&'static str, String)> {
+    let library_source = case
+        .iter()
+        .chain(common)
+        .filter_map(|d| d.strip_prefix("library_source="))
+        .next_back()
+        .unwrap_or("");
+    repo_defaults(ci, library_source)
         .iter()
         .map(|&(key, url)| {
             let prefix = format!("{key}=");
