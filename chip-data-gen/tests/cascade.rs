@@ -2449,11 +2449,8 @@ fn derived_flags_follow_every_link() {
     ] {
         assert!(!deleted(path), "{path} удалён: {:?}", result.deleted);
     }
-    for path in [
-        "crates-host/adapters-logic/src/cobs.rs",
-    ] {
-        assert!(deleted(path), "{path} не удалён: {:?}", result.deleted);
-    }
+    let cobs = "crates-host/adapters-logic/src/cobs.rs";
+    assert!(deleted(cobs), "{cobs} не удалён: {:?}", result.deleted);
 }
 
 /// protobuf по UDP рядом с protobuf по потоку: COBS нужен потоку, хотя основной
@@ -3589,7 +3586,10 @@ fn ota_and_settings_code_is_kept_only_when_selected() {
             assert_eq!(gone(path), no_settings, "{chip} {answers:?}: {path}");
         }
         for path in EEPROM {
-            assert!(gone(path), "{chip} {answers:?}: {path} не удалён без EEPROM");
+            assert!(
+                gone(path),
+                "{chip} {answers:?}: {path} не удалён без EEPROM"
+            );
         }
         assert_eq!(gone(FLASH), no_flash, "{chip} {answers:?}: {FLASH}");
     }
@@ -5298,10 +5298,11 @@ fn protocols_that_do_not_fit_are_marked() {
     assert!(item(shown, "protobuf").contains(NO_RAM), "{shown:?}");
 }
 
-/// Версии, закреплённые ради воспроизводимого релиза, записаны в нескольких
-/// файлах (docs/conventions.md, «Тулчейн запинен»): rustc — в
-/// `rust-toolchain.toml` и образах `rust:` GitLab, `flip-link` — в `setup` и
-/// обоих CI. Поднятая в одном месте версия молча развела бы CI с релизом.
+/// Версии, закреплённые ради воспроизводимого релиза и стабильного CI,
+/// записаны в нескольких файлах (docs/conventions.md, «Тулчейн запинен»):
+/// rustc — в `rust-toolchain.toml` и образах `rust:` GitLab, `flip-link` — в
+/// `setup` и обоих CI, `rumdl`/`lychee` — в `setup` и джобах документации.
+/// Поднятая в одном месте версия молча развела бы CI с локальным прогоном.
 #[test]
 fn pinned_versions_agree() {
     let read = |path: &str| {
@@ -5349,6 +5350,24 @@ fn pinned_versions_agree() {
             (".github/workflows/ci.yml", "flip-link@"),
             (".github/workflows/release.yml", "FLIP_LINK_VERSION: \""),
             (".gitlab-ci.yml", "FLIP_LINK_VERSION: \""),
+        ],
+    );
+    check(
+        "rumdl",
+        &[
+            ("crates-host/xtask/src/setup.rs", "rumdl@"),
+            (".github/workflows/ci.yml", "cargo install rumdl --version "),
+            (".gitlab-ci.yml", "RUMDL_VERSION: \""),
+        ],
+    );
+    check(
+        "lychee",
+        &[
+            (
+                ".github/workflows/links.yml",
+                "cargo install lychee --version ",
+            ),
+            (".gitlab-ci.yml", "LYCHEE_VERSION: \""),
         ],
     );
 }

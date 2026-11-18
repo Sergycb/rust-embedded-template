@@ -35,7 +35,7 @@ pub fn lint_host(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     )
     .env(
         "RUSTDOCFLAGS",
-        "-D warnings -W rustdoc::unescaped_backticks -A rustdoc::redundant_explicit_links",
+        "-D warnings -D rustdoc::unescaped_backticks -A rustdoc::redundant_explicit_links",
     )
     .run()?;
     Ok(())
