@@ -1427,7 +1427,11 @@ fn check_ci_files(project: &Path, ci: &str, log: &File) -> anyhow::Result<()> {
     // (должен быть, не должен быть) относительно корня проекта.
     let (present, absent): (&[&str], &[&str]) = match ci {
         "github" => (
-            &[".github/workflows/ci.yml"],
+            &[
+                ".github/workflows/ci.yml",
+                ".github/workflows/audit.yml",
+                ".github/actions/private-deps/action.yml",
+            ],
             &[
                 ".github/workflows/template.yml",
                 ".gitlab-ci.yml",

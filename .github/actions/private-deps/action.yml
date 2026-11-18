@@ -3,6 +3,9 @@
 # репозитории. Секрет — RUST_LIB_TOKEN (fine-grained PAT, Contents: Read на
 # rust-lib и hw-drivers).
 #
+# Токен уходит в GIT_CONFIG_* окружения шага, а не в ~/.gitconfig: на
+# self-hosted раннере (hil) он иначе остался бы после прогона.
+#
 # Проект с другим источником (`library_source=…`) ходит в публичное зеркало
 # git.socrat.pro: токена нет, grep по github.com не срабатывает, шаг ничего не
 # делает. Тот же grep ловит и `--define rust_lib=…` на github.com: токен тогда
@@ -11,20 +14,24 @@ name: Private git dependencies
 description: Настроить git для приватного rust-lib и hw-drivers на GitHub
 inputs:
   token:
-    description: Fine-grained PAT с Contents: Read на rust-lib и hw-drivers
+    description: "Fine-grained PAT с Contents: Read на rust-lib и hw-drivers"
     required: false
 runs:
   using: composite
   steps:
     - shell: bash
       env:
-        RUST_LIB_TOKEN: {% raw %}${{ inputs.token }}{% endraw %}
+        RUST_LIB_TOKEN: ${{ inputs.token }}
       run: |
         if [ -z "$RUST_LIB_TOKEN" ] && grep -q 'git = "https://github.com/' crates-cross/Cargo.toml; then
-          echo "::error::секрет RUST_LIB_TOKEN не задан — приватный rust-lib не склонируется"
+          echo "::error::секрет RUST_LIB_TOKEN не задан — источник rust-lib на github.com не склонируется"
           exit 1
         fi
         if [ -n "$RUST_LIB_TOKEN" ]; then
-          git config --global url."https://x-access-token:${RUST_LIB_TOKEN}@github.com/".insteadOf "https://github.com/"
-          echo "CARGO_NET_GIT_FETCH_WITH_CLI=true" >> "$GITHUB_ENV"
+          {
+            echo "GIT_CONFIG_COUNT=1"
+            echo "GIT_CONFIG_KEY_0=url.https://x-access-token:${RUST_LIB_TOKEN}@github.com/.insteadOf"
+            echo "GIT_CONFIG_VALUE_0=https://github.com/"
+            echo "CARGO_NET_GIT_FETCH_WITH_CLI=true"
+          } >> "$GITHUB_ENV"
         fi

@@ -94,7 +94,10 @@
 реестр агентов, расписания, mailbox и т.п. — не едут: они поимённо в `ignore`
 `cargo-generate.toml`, каталог `.claude` целиком там больше не значится (см.
 комментарий там же). `CLAUDE.md` едет без Liquid-рендера (`exclude` в
-`cargo-generate.toml`): в нём Liquid упомянут текстом.
+`cargo-generate.toml`): в нём Liquid упомянут текстом. Так же
+`.github/workflows/audit.yml` и `.github/actions/private-deps/action.yml`: в них
+`${{ ... }}` GitHub Actions, и оба должны оставаться валидным YAML в самом
+репозитории шаблона — Liquid в эти файлы добавлять нельзя.
 
 ## Плейсхолдеры шаблона (`cargo-generate.toml`)
 

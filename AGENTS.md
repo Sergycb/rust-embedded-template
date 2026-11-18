@@ -162,7 +162,12 @@ check`, `cargo hack --feature-powerset`, покрытие (`cargo llvm-cov`), `t
 `audit` — `cargo deny check advisories` по обоим lock-файлам по расписанию,
 `links:audit` — `lychee` по внешним ссылкам по тому же расписанию,
 `renovate` — обновления зависимостей по тому же расписанию{% if ota == "true" %},
-`release:build`/`release:publish` — `cargo xtask build` и подпись по тегу `v*`{% endif %}.{% endif %}{% if ci != "none" %} Полный
+`release:build`/`release:publish` — `cargo xtask build` и подпись по тегу `v*`{% endif %}.{% endif %}{% if ci == "github" %} Джобы
+с `cargo fetch` начинаются с `./.github/actions/private-deps`: на приватном
+источнике нужен секрет `RUST_LIB_TOKEN`, на публичном зеркале шаг ничего не
+делает.{% elsif ci == "gitlab" %} В `.gitlab-ci.yml` шага авторизации нет:
+публичное зеркало работает без него, а приватному нужны `RUST_LIB_TOKEN` и
+`insteadOf` в джобах с `cargo fetch`.{% endif %}{% if ci != "none" %} Полный
 перечень и что нужно для зелёного CI — README, «Что проверяет CI». Добавили шаг
 в CI — допишите его сюда, компилятор такого расхождения не увидит.{% endif %}
 

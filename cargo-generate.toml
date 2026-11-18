@@ -9,9 +9,9 @@ cargo_generate_version = ">=0.26.0"
 # `fmt` не задан — сгенерированные `.rs` проходят через rustfmt (умолчание с
 # 0.26). Вывод шаблона и без этого обязан быть чистым: `template-check`
 # генерирует с `--no-fmt`, и огрехи Liquid ловит `cargo xtask lint` в проекте.
-# `audit.yml` — без Liquid: в нём `${{ secrets.RUST_LIB_TOKEN }}`, а сам файл
-# ещё и работает в репозитории шаблона, где raw-теги недопустимы.
-exclude = ["CLAUDE.md", ".github/workflows/audit.yml"]
+# `audit.yml` и `action.yml` — без Liquid: в них `${{ ... }}` GitHub Actions,
+# а оба файла должны оставаться валидным YAML и в репозитории шаблона.
+exclude = ["CLAUDE.md", ".github/workflows/audit.yml", ".github/actions/private-deps/action.yml"]
 # "target"/"crates-cross/target" — сборочный кэш (см. .gitignore), не источник
 # шаблона; без исключения `cargo generate` падает с "Substitution skipped,
 # found invalid syntax", пытаясь Liquid-рендерить бинарные файлы внутри

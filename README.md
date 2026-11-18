@@ -1173,9 +1173,9 @@ cargo-воркспейсам (корневой, `crates-cross/`, `crates-host/ch
 пуша**: его исполняет сама платформа, ничего настраивать не нужно. SHA-пины
 экшенов он обновляет тоже. Приватный git-крейт ему, однако, нужен доступный:
 если источник остаётся приватным, добавьте `registries: type: git`
-с `RUST_LIB_TOKEN` в Dependabot secrets (или генерируйте с
-`--define library_source=…` на публичное зеркало). `rev` rust-lib бот не
-поднимает, его меняют руками.{% else %}Обновления версий приносит Renovate (`renovate.json` плюс джоб `renovate` в
+с `username: x-access-token` и паролем из секрета `RUST_LIB_TOKEN` в Dependabot
+secrets (или генерируйте с `--define library_source=…` на публичное зеркало).
+`rev` rust-lib бот не поднимает, его меняют руками.{% else %}Обновления версий приносит Renovate (`renovate.json` плюс джоб `renovate` в
 `.gitlab-ci.yml`) — по всем трём cargo-воркспейсам (корневой, `crates-cross/`, `crates-host/chip-info/`).
 **Сам он не запускается**:
 `renovate.json` — это конфигурация репозитория, а не запускалка, и без того, кто его
