@@ -20,7 +20,7 @@ module-item-order-groupings = [
 	["macros", ["macro"]],
 	["global_asm", ["global_asm"]],
 	["const", ["const"]],
-	["types", ["ty_alias", "enum", "struct", "union", "trait", "trait_alias", "impl"]],
+	["types", ["ty_alias", "enum", "struct", "union", "trait", "trait_alias", "impl", "test_binder_constraints"]],
 	["static", ["static"]],
 	["fn", ["fn"]],
 ]

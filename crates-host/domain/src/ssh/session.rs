@@ -309,7 +309,7 @@ async fn negotiate(
             ServEvent::PasswordAuth(a) => {
                 // Пароль не прочитался — как пустой: не пускает (так же
                 // `matches_password` `sunset`).
-                let password = a.raw_password().map(|p| p.0).unwrap_or_default();
+                let password = a.raw_password().map_or_default(|p| p.0);
                 if a.matches_username(USER) && access.admits(password) {
                     a.allow()?;
                 } else {

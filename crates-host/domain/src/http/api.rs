@@ -255,9 +255,7 @@ mod tests {
 
     /// Запрос без тела; `auth` — значение заголовка `Authorization`.
     fn request(method: &str, path: &str, auth: Option<&str>) -> String {
-        let auth = auth
-            .map(|value| format!("Authorization: {value}\r\n"))
-            .unwrap_or_default();
+        let auth = auth.map_or_default(|value| format!("Authorization: {value}\r\n"));
         format!("{method} {path} HTTP/1.1\r\nHost: {DEVICE}\r\n{auth}\r\n")
     }
 

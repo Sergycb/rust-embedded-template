@@ -308,10 +308,6 @@ impl ErrorType for NoFlash {
 impl ReadNorFlash for NoFlash {
     const READ_SIZE: usize = 1;
 
-    #[expect(
-        clippy::unused_async_trait_impl,
-        reason = "значений у типа нет: тело не исполняется никогда"
-    )]
     async fn read(&mut self, _: u32, _: &mut [u8]) -> Result<(), Self::Error> {
         match *self {}
     }
@@ -325,18 +321,10 @@ impl NorFlash for NoFlash {
     const WRITE_SIZE: usize = 1;
     const ERASE_SIZE: usize = 1;
 
-    #[expect(
-        clippy::unused_async_trait_impl,
-        reason = "значений у типа нет: тело не исполняется никогда"
-    )]
     async fn erase(&mut self, _: u32, _: u32) -> Result<(), Self::Error> {
         match *self {}
     }
 
-    #[expect(
-        clippy::unused_async_trait_impl,
-        reason = "значений у типа нет: тело не исполняется никогда"
-    )]
     async fn write(&mut self, _: u32, _: &[u8]) -> Result<(), Self::Error> {
         match *self {}
     }
