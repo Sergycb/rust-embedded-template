@@ -18,7 +18,7 @@ version      = "0.1.0"
 edition      = "2024"
 license      = "MIT"
 # Тот же MSRV, что в корневом Cargo.toml — воркспейса два, а тулчейн один.
-rust-version = "1.99"
+rust-version = "1.100"
 
 [workspace.lints.rust]
 # `#[embedded_test::tests]` генерирует ветку под `cfg(rust_analyzer)`, чтобы IDE
@@ -217,7 +217,9 @@ embedded-test      = { version = "0.7.3", default-features = false, features = [
 ] }
 # Все трейты проекта, типы из их сигнатур и форматы, общие у реализации и
 # логики. `defmt` — ради `Format` на ошибках в логе.
+{%- if ota == "true" or has_can == "true" or cobs_used == "true" %}
 ports            = { path = "../crates-host/ports", features = ["defmt"] }
+{%- endif %}
 {%- if config_store == "eeprom" or has_usb == "true" or has_net == "true" %}
 # Обёртки над железом без чипа: из них `bsp` строит рычаги сам. `defmt` —
 # вывод стеков под обёртками в логе прошивки; на хосте крейт собирается без
