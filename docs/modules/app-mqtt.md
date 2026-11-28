@@ -7,7 +7,7 @@
 `board.net.stack` в памяти, которую объявляет там же
 (`static [u8; crate::net::mqtt::TCP_BUFFER]`), и отдаёт узлу во входе
 (`fragments:` графа); буферы `minimq` — слоты `= static` фрагмента. Сокет клиента —
-слот стека, его учитывает `bsp::net::SOCKETS`.
+слот стека, его учитывает `bsp::ethernet::SOCKETS`.
 
 ## Темы и содержимое
 

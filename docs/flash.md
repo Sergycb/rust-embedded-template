@@ -71,20 +71,20 @@ F2/F4/F7 (у F4 16, 64 и 128 KiB): в мелких секторах можно 
   меняется.{% if config == "true" %} С разделом настроек мелкие
   сектора отдаются ему (ему нужны две равные страницы), и `STATE` на F4 уходит
   в сектор 4 — см. раздел про `CONFIG` ниже.{% endif %}
-- **`STATE_ERASE_SIZE` — одно число на `boot` и `bsp::flash`** из плейсхолдера
+- **`STATE_ERASE_SIZE` — одно число на `boot` и `cpu::flash`** из плейсхолдера
   `state_erase_size`: оно едет переменной среды в `[env]`
-  `crates-cross/.cargo/config.toml`; через `env!` её читает `bsp::flash`
-  (`bsp::flash::STATE_ERASE_SIZE`), а `boot` берёт константу оттуда же —
-  разделу в bootloader'е и в приложении расходиться нельзя.{% if swap_paged == "true" or ota_store == "external" %} Так же едет{% if swap_paged == "true" %} `SWAP_PAGE_SIZE` (`bsp::flash`){% endif %}{% if ota_store == "external" %} `EXT_PAGE_SIZE` (`bsp::external`){% endif %}.{% endif %}
+  `crates-cross/.cargo/config.toml`; через `env!` её читает `cpu::flash`
+  (`cpu::flash::STATE_ERASE_SIZE`), а `boot` берёт константу оттуда же —
+  разделу в bootloader'е и в приложении расходиться нельзя.{% if swap_paged == "true" or ota_store == "external" %} Так же едет{% if swap_paged == "true" %} `SWAP_PAGE_SIZE` (`cpu::flash`){% endif %}{% if ota_store == "external" %} `EXT_PAGE_SIZE` (`cpu::external`){% endif %}.{% endif %}
   В `[env]` — только числа, которые нужны компилятору (параметр `ErasePage`,
   `const`-assert). Границы разделов — размер `ACTIVE`{% if config == "true" %}, границы раздела настроек{% endif %} —
   туда не ездят: это символы `memory.x` (`__bootloader_active_*`{% if config == "true" %},
-  `__config_start`/`__config_end`{% endif %}), их вычисляет линкер, а читает `bsp::layout`
+  `__config_start`/`__config_end`{% endif %}), их вычисляет линкер, а читает `app::layout`
   (подробнее — «Символы раскладки» ниже). **`ErasePage` над `STATE` нужен не всегда**:
   плейсхолдер `state_paged` = "true" только там, где сектор `STATE` мельче страницы
   цельного `Flash` (F2/F4/F7). На чипах с равными секторами раздел строится прямо
   над `Whole`, а `const`-assert (`STATE_ERASE_SIZE == MAX_ERASE_SIZE`) в
-  `bsp::flash` ловит расхождение генерации с реальным чипом (bootloader линкует
+  `cpu::flash` ловит расхождение генерации с реальным чипом (bootloader линкует
   тот же `bsp`).{% if config == "true" %} Так же и `CONFIG`
   (`config_paged`).{% endif %} При ручной раскладке (`--define swap_buffer=...`)
   сектора `STATE` генерация не знает: раздел строится над `ErasePage`
@@ -113,7 +113,7 @@ F2/F4/F7 (у F4 16, 64 и 128 KiB): в мелких секторах можно 
   мельче сектора: стирание «половины сектора» снесло бы и вторую половину.
 {%- else %}
 - **`CONFIG_ERASE_SIZE` — число из генерации**: страница сектора раздела
-  настроек — литерал в `bsp::flash` (`bsp::flash` строит раздел над
+  настроек — литерал в `cpu::flash` (`cpu::flash` строит раздел над
   `ErasePage` с этой страницей) и тот же литерал в `ASSERT` `memory.x`, который
   держит границы раздела (символы `__config_start`/`__config_end`) кратными ей. При ручной раскладке
   (`--define swap_buffer=...`) раздел настроек во флеше не выделяется: где
@@ -128,7 +128,7 @@ F2/F4/F7 (у F4 16, 64 и 128 KiB): в мелких секторах можно 
 У этого чипа {% if ota_in == "1" %}сектора, в которых лежат `STATE`{% if cfg_flash == "1" %} и `CONFIG`{% endif %},{% else %}сектор, в котором лежит `CONFIG`,{% endif %} не мельче страницы
 цельного `embassy_stm32::flash::Flash` (`MAX_ERASE_SIZE`), поэтому разделы
 строятся прямо над `Whole`, без обёрток. Число из генерации ({% if ota_in == "1" %}`STATE_ERASE_SIZE`{% if cfg_flash == "1" %},
-{% endif %}{% endif %}{% if cfg_flash == "1" %}`CONFIG_ERASE_SIZE`{% endif %}) равно этой странице, и `const`-assert в `bsp::flash` ловит расхождение при
+{% endif %}{% endif %}{% if cfg_flash == "1" %}`CONFIG_ERASE_SIZE`{% endif %}) равно этой странице, и `const`-assert в `cpu::flash` ловит расхождение при
 сборке, а не на плате{% if ota_in == "1" %} (bootloader линкует тот же `bsp`){% endif %}.
 {%- endif %}
 {%- if config == "true" or shared_flash == "true" %}
@@ -137,23 +137,23 @@ F2/F4/F7 (у F4 16, 64 и 128 KiB): в мелких секторах можно 
 {%- if config == "true" %}
 
 Опциональное, спрашивается при генерации (`config`, в меню после выбора чипа). Хранилище — `domain::settings` поверх `sequential-storage`
-— принимает любой асинхронный `NorFlash`, и плата подставляет в этот слот
-носитель (где — решает генерация по чипу и ответу `ext_flash`; `ConfigFlash` в `crates-cross/bsp/src/{% if config_store == "external" %}external{% elsif config_store == "eeprom" %}eeprom{% else %}flash{% endif %}.rs`):
-{% if config_store == "eeprom" %}внутренняя EEPROM чипа целиком — `adapters_hw::eeprom::Eeprom` над `Flash::eeprom_*`{% elsif config_store == "external" %}раздел на внешней флеши W25Q над драйвером `w25q` (`bsp::external`); шина — заглушка, пока плата её не подставит{% else %}раздел `CONFIG` во внутреннем флеше — `BlockingAsync<{% if config_paged == "true" %}ErasePage<Whole>{% else %}Whole{% endif %}>`{% endif %}.
+— принимает любой асинхронный `NorFlash`, и compose-site строит над ним
+носитель (`app::storage::settings(…, board.flash)`: где — решает генерация по чипу и ответу `ext_flash`):
+{% if config_store == "eeprom" %}внутренняя EEPROM чипа целиком — `adapters_hw::eeprom::Eeprom` над `Flash::eeprom_*`{% elsif config_store == "external" %}раздел на внешней флеши W25Q над драйвером `w25q` (`cpu::external`); шина — заглушка, пока плата её не подставит{% else %}раздел `CONFIG` во внутреннем флеше — `BlockingAsync<{% if config_paged == "true" %}ErasePage<Whole>{% else %}Whole{% endif %}>`{% endif %}.
 
-`Board` отдаёт поле `config` (`bsp::ConfigFlash`).
+Носитель — `app::storage::ConfigFlash`; поля `config` у `Board` нет.
 {%- endif %}
 {%- if config_store == "external" %}
 
 **Внешняя флеш — W25Q, шина за платой.** Микросхема — Winbond W25Q
-(W25Q10..W25Q128): драйвер `w25q` из hw-drivers стоит в `bsp::external`
+(W25Q10..W25Q128): драйвер `w25q` из hw-drivers стоит в `cpu::external`
 настоящий, объём он узнаёт по JEDEC ID. Шину генерация выбирает по чипу:
 QSPI, где он выведен (`QUADSPI`, иначе `OCTOSPI`), иначе SPI; блок кладётся в
-группу `ext_flash` в `resources.rs`. Выводы шаблон не выбирает, поэтому шина
-под драйвером — заглушка `bsp::external::StubBus`: `init` не проходит, каждая
+группу `ext_flash` в `wiring.rs`. Выводы шаблон не выбирает, поэтому шина
+под драйвером — заглушка `cpu::external::StubBus`: `init` не проходит, каждая
 операция отвечает ошибкой, и проект работает без сохранения настроек, сказав
 об этом строкой в лог при старте. Раздел — {% if ota_store == "external" %}за `DFU`, см. ниже{% else %}с начала микросхемы, 128 KiB{% endif %}. Подключить — заменить шину в
-`bsp/src/external.rs`: рецепт под SPI и QSPI — docs/modules/bsp-external.md.
+`cpu/src/external.rs`: рецепт под SPI и QSPI — docs/modules/cpu-external.md.
 Внутренний флеш под настройки при этом не тратится вовсе{% if shared_flash != "true" %}, а общий объект
 `Flash` не создаётся{% endif %}.
 {%- endif %}
@@ -162,41 +162,41 @@ QSPI, где он выведен (`QUADSPI`, иначе `OCTOSPI`), иначе S
 {%- if shared_flash == "true" %}
 
 - **`Flash` на чипе один и создаётся ровно один раз** — `FLASH: StaticCell` в
-  `bsp/src/flash.rs`. {% if ota_in == "1" and cfg_in == "1" %}И носители обновления, и настройки получают{% elsif ota_in == "1" %}Носители обновления получают{% else %}Носитель настроек получает{% endif %} `&'static Lock`, а не
+  `cpu/src/flash.rs`. {% if ota_in == "1" and cfg_in == "1" %}И носители обновления, и настройки получают{% elsif ota_in == "1" %}Носители обновления получают{% else %}Носитель настроек получает{% endif %} `&'static Lock`, а не
   свой объект: контроллер физически один. Ссылка `'static`, потому что {% if ota_in == "1" and cfg_in == "1" %}обе
   половины отдаются{% else %}носитель отдаётся в задачу{% endif %}{% if ota_in == "1" and cfg_in == "1" %} в задачи{% endif %}, а аргументы задач embassy обязаны быть `'static`.
 {%- if ota_in != "1" and cfg_flash != "1" %}
-- **EEPROM ходит к контроллеру через свой тип** (`bsp::eeprom::EepromFlash`): по
+- **EEPROM ходит к контроллеру через свой тип** (`cpu::eeprom::EepromFlash`): по
   операции под замком `Lock`. Свой тип, а не `impl` на мьютексе:
   `Storage` и `Mutex` чужие для `bsp`.
 {%- else %}
-- **К общему флешу ходят через раздел на весь флеш.** `bsp::flash::Lock` —
-  псевдоним на `Mutex<NoopRawMutex, RefCell<…>>` (`RefCell` нужен блокирующему
+- **К общему флешу ходят через раздел на весь флеш.** `cpu::flash::Lock` —
+  псевдоним на `Mutex<ThreadModeRawMutex, RefCell<…>>` (`RefCell` нужен блокирующему
   `Mutex` embassy), а над ним потребитель строит на месте
   `embassy_embedded_hal::flash::partition::BlockingPartition::new(flash, 0, flash::SIZE)`
-  (`Whole` в `bsp::flash`) — раздел с нулевым смещением: операции идут под замком, по одной. `BlockingPartition::new`
+  (`Whole` в `cpu::flash`) — раздел с нулевым смещением: операции идут под замком, по одной. `BlockingPartition::new`
   паникует, если объём флеша не кратен `ERASE_SIZE`; у STM32 он всегда кратен
   самому крупному сектору{% if dfu_bank == "true" %}. Здесь раздел — банк 1 (банк 2 с `DFU` — отдельный
-  раздел), и `const`-assert'а на объём нет ни в `bsp::flash`, ни в `boot`{% else %}, и `const`-assert в `bsp::flash`{% if boot_partitioned == "true" %} и в `boot`{% endif %} проверяет это
+  раздел), и `const`-assert'а на объём нет ни в `cpu::flash`, ни в `boot`{% else %}, и `const`-assert в `cpu::flash`{% if boot_partitioned == "true" %} и в `boot`{% endif %} проверяет это
   при сборке{% endif %}.{% if ota_in == "1" %} Потребители —
   разделы OTA{% if cfg_flash == "1" %} и настройки{% endif %} — асинхронные и стоят на `BlockingAsync` поверх `Whole`; `boot` строит разделы над тем же
   `Mutex<_, RefCell<_>>` блокирующе.{% elsif cfg_flash == "1" %} Потребитель —
   раздел настроек — асинхронный и стоит на `BlockingAsync` поверх `Whole`.{% endif %}{% if config_store == "eeprom" %} Свой тип поверх мьютекса есть только в
-  ветке EEPROM (`bsp::eeprom::EepromFlash`): `Storage` и `Mutex` чужие
+  ветке EEPROM (`cpu::eeprom::EepromFlash`): `Storage` и `Mutex` чужие
   для `bsp`.{% endif %}
 {%- endif %}
 {%- endif %}
 {% if shared_flash != "true" %}
-{% endif %}- **`NoopRawMutex` подразумевает один исполнитель.** Появится второй
+{% endif %}- **`ThreadModeRawMutex` подразумевает один исполнитель.** Появится второй
   (прерывательный приоритет, второе ядро) — менять тип мьютекса, иначе доступ
   к флешу перестанет быть эксклюзивным. Это же допущение стоит за
 {%- assign sep = " " %}
-{%- if ota == "true" %}{{ sep }}мьютексами носителей обновления ({% if ota_store == "external" %}`bsp::external::ExternalMutex`{% else %}`bsp::flash::DFU_FLASH`, `STATE_FLASH`{% if dfu_bank == "true" %},
-  `bsp::flash::dfu::BankMutex`{% endif %}{% endif %}){% assign sep = ", " %}{% endif %}
+{%- if ota == "true" %}{{ sep }}мьютексами носителей обновления ({% if ota_store == "external" %}`cpu::external::ExternalMutex`{% else %}`cpu::flash::DFU_FLASH`, `STATE_FLASH`{% if dfu_bank == "true" %},
+  `cpu::flash::dfu::BankMutex`{% endif %}{% endif %}){% assign sep = ", " %}{% endif %}
 {%- if config_store == "flash" %}{{ sep }}мьютексом раздела настроек
-  (`bsp::flash::CONFIG_FLASH`){% assign sep = ", " %}{% elsif config_store == "external" and ota_store != "external" %}{{ sep }}мьютексом носителя настроек
-  (`bsp::external::ExternalMutex`){% assign sep = ", " %}{% endif %}
-{%- if sep == " " %} всеми носителями поверх `bsp::flash::Lock`{% assign sep = ", " %}{% endif %}
+  (`cpu::flash::CONFIG_FLASH`){% assign sep = ", " %}{% elsif config_store == "external" and ota_store != "external" %}{{ sep }}мьютексом носителя настроек
+  (`cpu::external::ExternalMutex`){% assign sep = ", " %}{% endif %}
+{%- if sep == " " %} всеми носителями поверх `cpu::flash::Lock`{% assign sep = ", " %}{% endif %}
 {%- if graph == "true" %}{{ sep }}`local`-слотами узлов графа{% if ota == "true" %} (у OTA — `FLASH`){% endif %}{% endif %} — менять их вместе с типом мьютекса.{% if has_modbus == "true" %} Карта регистров
   Modbus (`domain::modbus::MapMutex`) сюда не входит — `docs/modules/app.md`,
   «Modbus: одна карта на все узлы `MODBUS_*`».{% endif %}
@@ -222,7 +222,7 @@ QSPI, где он выведен (`QUADSPI`, иначе `OCTOSPI`), иначе S
   по `PAGE_SIZE` (в начале стоит таблица векторов приложения, и раздел посреди
   `FLASH` разорвал бы его): 4 KiB на G0, 256 KiB на F4/H7 и F72x/F73x, 512 KiB
   на F74x–F77x.{% endif %} Страница раздела — `CONFIG_ERASE_SIZE` в
-  `bsp::flash`{% if config_paged == "true" %}, над `flash_page::ErasePage`{% if state_paged == "true" %}, как и у `STATE`{% endif %}{% else %}, прямо над `Whole`: сектор раздела равен странице чипа{% endif %}. Полезного
+  `cpu::flash`{% if config_paged == "true" %}, над `flash_page::ErasePage`{% if state_paged == "true" %}, как и у `STATE`{% endif %}{% else %}, прямо над `Whole`: сектор раздела равен странице чипа{% endif %}. Полезного
   места в разделе — около одной страницы (вторая держится свободной под
   перенос){% if ota == "true" %}, то есть ~16 KiB на F4 с OTA{% endif %}.
 {%- endif %}
@@ -295,7 +295,7 @@ QSPI, где он выведен (`QUADSPI`, иначе `OCTOSPI`), иначе S
 | `__bdma_nc_start`/`_end` | `SRAM4` целиком — память BDMA | `ORIGIN`/`LENGTH(SRAM4)` |
 {%- endif %}
 
-- **Одно место чтения — `bsp::layout`.** Символы объявлены в одном блоке
+- **Одно место чтения — `app::layout`.** Символы объявлены в одном блоке
   `unsafe extern "C"` как обычные `static … : u8`; значение символа — его адрес
   (`&raw const`), содержимое не читается. Блок — единственный unsafe ради них
   (`#[expect(unsafe_code)]`). Символ со значением 0 (раздел с начала внешней флеши)
@@ -318,7 +318,7 @@ QSPI, где он выведен (`QUADSPI`, иначе `OCTOSPI`), иначе S
   `memory.x`, а это второй разбор раскладки ради одного числа.{% endif %}
 {%- else %}
 - **Проверять в `memory.x` нечего:** объём микросхемы сверяет на старте
-  `bsp::external` по `__ext_flash_end`.
+  `cpu::external` по `__ext_flash_end`.
 {%- endif %}
 - **`[env]` — только то, что нужно компилятору**: параметр `ErasePage`,
   `const`-assert, размер пула
@@ -352,8 +352,8 @@ QSPI, где он выведен (`QUADSPI`, иначе `OCTOSPI`), иначе S
   раскладка однобанковая: `embassy-stm32` на G0/G4 паникует в `Flash::new`
   («configured as single-bank, but the hardware is running in dual-bank
   mode»), а на L4+ молча стирает страницы не того размера.
-  `bsp::banks::ensure_single_bank()` переключает режим сама — первым делом в
-  {% if ota == "true" %}`boot` и в {% endif %}`Board::new`, до любой работы с флешем: сбрасывает бит режима и
+  `cpu::banks::ensure_single_bank()` переключает режим сама — первым делом в
+  {% if ota == "true" %}`boot` и в {% endif %}`cpu::init`, до любой работы с флешем: сбрасывает бит режима и
   запускает загрузку option bytes, а та сбрасывает МК. Бит — `DBANK` у G4,
   `DUAL_BANK` у G0, а у L4+ и L5 зависит от объёма: `DBANK` у чипа с
   наибольшим flash в серии, `DB1M`/`DB256` у остальных (чужой бит может быть
@@ -472,7 +472,7 @@ QSPI, где он выведен (`QUADSPI`, иначе `OCTOSPI`), иначе S
   `__bootloader_state_*`/`__bootloader_dfu_*` в `memory.x` — смещения от начала внешней флеши, без
   регионов в `MEMORY`: в адресном пространстве МК её нет.
 - **Страница обмена** (`ext_page_size`, переменная среды `EXT_PAGE_SIZE` в
-  `[env]` `crates-cross/.cargo/config.toml`, общая у `boot` и `bsp::external`) — max(крупнейший сектор чипа, 4 KiB). `embassy-boot`
+  `[env]` `crates-cross/.cargo/config.toml`, общая у `boot` и `cpu::external`) — max(крупнейший сектор чипа, 4 KiB). `embassy-boot`
   меняет разделы страницами `max(ACTIVE::ERASE_SIZE, DFU::ERASE_SIZE)`, и
   `ACTIVE` обязан быть им кратен, иначе `assert_partitions` паникует на
   старте. Поэтому **стирание драйвера обязано делить `EXT_PAGE_SIZE`** — это
@@ -485,7 +485,7 @@ QSPI, где он выведен (`QUADSPI`, иначе `OCTOSPI`), иначе S
 Объём микросхемы генерация не знает — его узнаёт драйвер по JEDEC ID при
 `init`; поэтому выравнивание с запасом (64 KiB — самый крупный блок стирания
 NOR), а конец разделов — символ `memory.x` `__ext_flash_end` (`MAX` по концам
-разделов, считает линкер). Микросхема меньше этого конца — `Board::new` пишет
+разделов, считает линкер). Микросхема меньше этого конца — `cpu::external::init` пишет
 об этом строку в лог при старте, и драйвер отказывает во всех операциях
 ошибкой, а не паникой.
 {%- if config == "true" %}
@@ -497,16 +497,16 @@ NOR), а конец разделов — символ `memory.x` `__ext_flash_en
 {%- endif %}
 
 **Драйвер — два вида, микросхема одна.** Приложение работает с ней асинхронно
-(`bsp::external`: `W25qAsync` под одним `embassy_sync::mutex::Mutex` на
+(`cpu::external`: `W25qAsync` под одним `embassy_sync::mutex::Mutex` на
 `DFU`, `STATE`{% if config == "true" %} и настройки{% endif %} — команды разных разделов не должны
 перемежаться), bootloader — блокирующим `W25qSync` (`ExternalFlash` в
 `crates-cross/boot/src/external.rs`: исполнителя там нет, задержки — на
 `SysTick`, `cortex_m::delay::Delay`). Оба опознают микросхему (`init`) при старте:
-`Board::new` поэтому асинхронный, и зовёт его первая задача исполнителя
+Поэтому `cpu::external::init` зовёт первая задача исполнителя
 (`start` в `main` бинарника — `crates-cross/app/src/main.rs`{% if test_image == "true" %} и `src/bin/test-ota.rs`{% endif %}). Шина
-под обоими в шаблоне — заглушка `bsp::external::StubBus`: проект собирается и
+под обоими в шаблоне — заглушка `cpu::external::StubBus`: проект собирается и
 работает, OTA не принимает образы, bootloader грузит текущий
-(docs/modules/bsp-external.md).
+(docs/modules/cpu-external.md).
 
 **Стёртое состояние:** внешняя NOR стирается в `0xFF`, даже если внутренний
 флеш — в ноль (L0/L1). `flash-erase-zero` у `embassy-boot` — про `STATE`, и

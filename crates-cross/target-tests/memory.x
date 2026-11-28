@@ -67,13 +67,13 @@ __bootloader_dfu_end   = ORIGIN(DFU) + LENGTH(DFU) - __flash_base;
 {%- endif %}
 {%- if config_store == "external" %}
 
-/* Раздел настроек на внешней флеши (bsp::layout): смещения от её начала. */
+/* Раздел настроек на внешней флеши (app::layout): смещения от её начала. */
 __config_start = /* 0xXXXXXXXX */;
 __config_end   = /* 0xXXXXXXXX */;
 {%- endif %}
 {%- if external_flash == "true" %}
 
-/* Конец последнего раздела на внешней флеши (bsp::layout): микросхема меньше
+/* Конец последнего раздела на внешней флеши (app::layout): микросхема меньше
    не годится. */
 __ext_flash_end = {% if ota == "true" and ota_store == "external" and config_store == "external" %}MAX(MAX(__bootloader_state_end, __bootloader_dfu_end), __config_end){% elsif ota == "true" and ota_store == "external" %}MAX(__bootloader_state_end, __bootloader_dfu_end){% else %}__config_end{% endif %};
 {%- endif %}

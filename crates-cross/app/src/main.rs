@@ -14,6 +14,7 @@
 use defmt::{error, info};
 use embassy_executor::Spawner;
 use embassy_executor::raw::Executor;
+use panic_handler as _;
 use static_cell::StaticCell;
 {%- if ota == "true" %}
 
@@ -57,7 +58,7 @@ static EXECUTOR: StaticCell<Executor> = StaticCell::new();
 fn main() -> ! {
 {%- if core_baseline != "true" %}
     // Первым делом: ловушка деления действует на всё, что выполнится дальше,
-    // включая `Board::new` (см. `app::fault`).
+    // включая `cpu::init` (см. `app::fault`).
     app::fault::enable_div_0_trap();
 {%- endif %}
     // Первая же строка лога отвечает на вопрос «а что вообще залито в плату»:
@@ -74,10 +75,11 @@ fn main() -> ! {
     );
 {%- endif %}
 
-    // Причина сброса — до `Board::new` и до всего, что может повиснуть или
+    // Причина сброса — до `cpu::init` и до всего, что может повиснуть или
     // упасть (docs/diagnostics.md, «Причина сброса»). Сброс из `ensure_*`
-    // в `Board::new` ставит свой флаг заново — его прочитает следующий старт.
-    let reset = bsp::reset::take_cause();
+    // в `cpu::init` ставит свой флаг заново — его прочитает следующий старт.
+    let mut system = cpu::System;
+    let reset = system.take_cause();
     info!("app: причина сброса {}", reset);
 {%- if has_protobuf == "true" or net_services != "" or has_cli == "true" %}
     app::panic::set_reset(reset);
@@ -89,10 +91,10 @@ fn main() -> ! {
     // `panic-persist` стирает свою магию, — поэтому печатать надо сразу и до
     // всего остального: следующий сброс эту строку уже не покажет.
     //
-    // ДО `Board::new`, и это важно: он умеет паниковать сам
+    // ДО `cpu::init`, и это важно: он умеет паниковать сам
     // (негодная конфигурация тактирования, раздел `CONFIG` не на границах
     // страниц, нет клока у RNG), а в release паника это сброс. Печатай мы после
-    // них — устройство, падающее внутри `new`, крутилось бы в цикле
+    // них — устройство, падающее внутри `init`, крутилось бы в цикле
     // перезагрузок молча.
     //
     // В dev паникёр — `panic-probe`, дамп никто не пишет, и `panic::take`
@@ -123,28 +125,27 @@ fn main() -> ! {
 
 /// Первая задача: собирает плату и спавнит узлы.
 ///
-/// Задачей, а не в [`main`] до исполнителя: {% if external_flash == "true" %}`Board::new` ждёт таймерами
-/// `embassy_time` (`init` внешней флеши){% else %}так `Board::new` может ждать таймерами
-/// `embassy_time`, когда плате это понадобится (сейчас он синхронный){% endif %}, а встроенной очереди
-/// таймеров нужен waker исполнителя — под `block_on` таймер паникует. Узлов в
-/// этот момент ещё нет, так что `Board::new` по-прежнему выполняется раньше
-/// всего остального.
-{%- if external_flash != "true" %}
-// `allow`, а не `expect`: `#[embassy_executor::task]` копирует атрибут и на
-// внешнюю, синхронную функцию, где линт не срабатывает, и `expect` там остаётся
-// неисполненным.
+/// Задачей, а не в [`main`] до исполнителя: плату собирает `start`, а узлы
+/// спавнятся тем же `Spawner`, что пришёл сюда, — тестовый образ при этом
+/// повторяет запуск шаг в шаг. Плата (`bsp::Board::new`) синхронна, и опознание
+/// внешней флеши (`cpu::external::init`) — тоже, так что до узлов всё
+/// выполняется подряд.
 #[allow(
     clippy::unused_async,
-    reason = "задача embassy обязана быть async, а без внешней флеши `Board::new` синхронный"
+    reason = "задача embassy обязана быть async, а плата синхронна: ждать нечего"
 )]
-{%- endif %}
 #[embassy_executor::task]
 async fn start(spawner: Spawner) {
     // Плата — рычаги для узлов.
-    let board = bsp::Board::new(){% if external_flash == "true" %}.await{% endif %};
+    let board = bsp::Board::new(cpu::init());
+{%- if external_flash == "true" %}
+    // Внешняя флеш: опознание микросхемы и проверка, что разделы на ней
+    // помещаются, — до узлов, которым она нужна.
+    cpu::external::init(board.ext_flash_bus, app::layout::ext_flash_end());
+{%- endif %}
     // Следом — на чём именно: чип и его заводской номер, по которому
     // экземпляр платы отличается от соседнего.
-    info!("app: {}", board.spec);
+    info!("app: {}", board.cpu_info);
 {%- if graph == "true" %}
 
     // Граф задач — единственное место, где в этом проекте появляются задачи.
@@ -155,7 +156,7 @@ async fn start(spawner: Spawner) {
     // `boot:`-объекте графа (`app::Boot`){% else %} — это объявленный графом `boot:`-объект{% endif %},
     // из которого его инициализаторы забирают объекты частичными move.
     // Такие заборы уже есть — сторож в блоке `watchdog:`{% if ota == "true" %}, вход узла
-    // OTA в `fragments:` (`boot.board.firmware` и `boot.image`){% endif %} — и здесь же
+    // OTA в `fragments:` (`boot.board.flash` и `boot.image`){% endif %} — и здесь же
     // окажутся ваши: привязка фрагмента в `fragments:` (`= …Wiring { поле:
     // {% if ota == "true" %}boot.{% endif %}board.<поле> }`, docs/modules/app-graph.md) вместо
     // `provide_<slot>(..)` перед этой строкой. Оттого и последняя строка
@@ -165,13 +166,13 @@ async fn start(spawner: Spawner) {
     // блока `watchdog:` (docs/watchdog.md); всё своё долгое
     // (запись во flash) держите ВЫШЕ этой строки.{% if ota == "true" %} В release сторож
     // к этой строке уже тикает — его запустил bootloader, и путь от прыжка
-    // сюда обязан уложиться в `bsp::wdg::HW_TIMEOUT_MIN_US` (таймаут сторожа
+    // сюда обязан уложиться в `cpu::wdg::HW_TIMEOUT_MIN_US` (таймаут сторожа
     // при самом быстром LSI).{% endif %}
     //
     // Паника, а не `let _ =`, и это не педантизм: сторож запускается в
     // прологе, ДО спавна узлов, поэтому отказ (узел уже занят) оставляет
     // железо тикающим, а кормить его некому — проглоти вы `Err`, плата ушла
-    // бы в сброс через `bsp::wdg::HW_TIMEOUT_US` без единой строки о причине.
+    // бы в сброс через `cpu::wdg::HW_TIMEOUT_US` без единой строки о причине.
     // Через `Display2Format`, а не `expect`: `Debug` у ошибки графа нет —
     // `supervisor` убрал его ради флеша, имя узла и вид отказа даёт `Display`.
 {%- if ota == "true" %}

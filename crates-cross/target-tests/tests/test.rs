@@ -12,7 +12,7 @@
 //! каждый тест сбрасывает МК и говорит прошивке через semihosting, какой
 //! именно тест выполнять — поэтому у каждого теста своя, чистая инициализация,
 //! и `#[init]` ниже вызывается для каждого из них заново (иначе повторный
-//! `embassy_stm32::init` паниковал бы).
+//! `cpu::init` паниковал бы).
 //!
 //! Тесты ниже — минимальный каркас: они проверяют то, что верно для любой
 //! платы, и потому переживают генерацию под любой чип. Настоящие проверки
@@ -32,17 +32,17 @@ use defmt_rtt as _;
 
 #[embedded_test::tests]
 mod tests {
-    use bsp::Board;
+    use app::Board;
     use embassy_time::{Duration, Instant, Timer};
 
     /// Частота, которую вы задумали для этой платы, в герцах. `None` —
     /// проверка выключена, тест только печатает фактическое тактирование
-    /// (дамп делает `Board::new`) и следит за инвариантами ниже.
+    /// (дамп делает `cpu::init`) и следит за инвариантами ниже.
     ///
     /// Шаблон не может подставить сюда число: он знает чип, но не знает вашу
     /// плату — есть ли кварц, на какую частоту вы её считали. Заполняется один
     /// раз, когда тактирование настроено (`embassy_stm32::Config` в
-    /// `config()` в `bsp/src/board.rs`): после этого любая правка PLL, которая
+    /// `config()` в `cpu/src/cpu.rs`): после этого любая правка PLL, которая
     /// изменила результат, роняет тест вместо того, чтобы всплыть через
     /// неделю кривым битрейтом.
     const EXPECTED_SYS_HZ: Option<u32> = None;
@@ -66,32 +66,44 @@ mod tests {
 {%- endif %}
 
 {%- if ota == "true" %}
-    /// Адаптер обновления над разделами платы — так же, как его строит
+    /// Адаптер обновления над разделами приложения — так же, как его строит
     /// compose-site узла OTA.
-    fn updater(firmware: bsp::FirmwareFlash) -> domain::ota::Updater<bsp::FirmwareFlash> {
-        domain::ota::Updater::new(firmware)
+    fn updater(
+        // Ручка чипа, и — с разделами на внешней флеши — забор её драйвера.
+        flash: cpu::flash::Flash,
+{%- if external_flash == "true" %}
+        ext: cpu::external::ExtFlash,
+{%- endif %}
+    ) -> domain::ota::Updater<app::storage::Ota> {
+        domain::ota::Updater::new(app::storage::ota(flash{% if external_flash == "true" %}, ext{% endif %}))
     }
 {%- endif %}
 {%- if config == "true" and config_store != "external" %}
-    /// Хранилище настроек на весь носитель платы — так же, как его строит
+    /// Хранилище настроек на весь носитель приложения — так же, как его строит
     /// compose-site узла-потребителя.
-    fn settings(flash: bsp::ConfigFlash) -> domain::settings::Settings<bsp::ConfigFlash> {
-        domain::settings::Settings::whole(flash)
+    fn settings(
+        // Ручка чипа, и — с внешней флешью — её шина.
+        flash: cpu::flash::Flash,
+{%- if external_flash == "true" %}
+        ext: cpu::external::ExtFlash,
+{%- endif %}
+    ) -> app::storage::Settings {
+        app::storage::settings(flash{% if external_flash == "true" %}, ext{% endif %})
     }
 {%- endif %}
 
     /// Выполняется перед каждым тестом (устройство между ними сброшено) и
     /// отдаёт результат тесту параметром.
     #[init]
-{%- if external_flash == "true" %}
-    async fn init() -> Board {
-        Board::new().await
-    }
-{%- else %}
     fn init() -> Board {
-        Board::new()
-    }
+{%- if external_flash == "true" %}
+        let board = Board::new(cpu::init());
+        cpu::external::init(board.ext_flash_bus, app::layout::ext_flash_end());
+        board
+{%- else %}
+        Board::new(cpu::init())
 {%- endif %}
+    }
 
     /// Драйвер времени реально тикает. Проверка дешёвая, но ловит целый класс
     /// молчаливых поломок конфигурации (не тот источник тактирования, не
@@ -123,10 +135,10 @@ mod tests {
         reason = "`embedded-test` отдаёт состояние `#[init]` по значению"
     )]
     fn clocks_match_intent(board: Board) {
-        // Частота приходит данными из `Board::spec`: `Board::new` считал её у
+        // Частота приходит данными из `Board::cpu_info`: `cpu::init` считал её у
         // HAL сам, пока владел `RCC`.
         let sys = board
-            .spec
+            .cpu_info
             .sys_hz
             .expect("частота ядра должна быть посчитана");
 
@@ -149,12 +161,12 @@ mod tests {
 {%- if ota_store == "external" %}
 
     /// С разделами на внешней флеши тесты ниже проверяют подставленный драйвер
-    /// микросхемы. Пока на его месте заглушка (`bsp/src/external.rs`),
+    /// микросхемы. Пока на его месте заглушка (`cpu/src/external.rs`),
     /// проверять нечего: тест пропускается с предупреждением, а не падает.
     fn no_external_flash() -> bool {
-        let stub = !bsp::external::connected();
+        let stub = !cpu::external::connected();
         if stub {
-            defmt::warn!("внешняя флеш не подключена (bsp/src/external.rs) — тест пропущен");
+            defmt::warn!("внешняя флеш не подключена (cpu/src/external.rs) — тест пропущен");
         }
         stub
     }
@@ -187,7 +199,7 @@ mod tests {
         }
 
 {%- endif %}
-        let mut ota = updater(board.firmware);
+        let mut ota = updater(board.flash{% if external_flash == "true" %}, board.ext_flash_bus{% endif %});
         let page = ota.erase_size();
         let capacity = ota.capacity();
         // Последняя страница `ACTIVE`: дальше всего от короткого образа.
@@ -263,7 +275,7 @@ mod tests {
         }
 
 {%- endif %}
-        let mut ota = updater(board.firmware);
+        let mut ota = updater(board.flash{% if external_flash == "true" %}, board.ext_flash_bus{% endif %});
 
         let first = [0xA1u8; 32];
         let second = [0xB2u8; 32];
@@ -322,7 +334,7 @@ mod tests {
         }
 
 {%- endif %}
-        let mut ota = updater(board.firmware);
+        let mut ota = updater(board.flash{% if external_flash == "true" %}, board.ext_flash_bus{% endif %});
 
         // Кратно WRITE_SIZE флеша. Хвост — раскладка этой прошивки (иначе
         // отказ `Layout` раньше версии) и версия `0.0.0`, заведомо не новее
@@ -385,7 +397,7 @@ mod tests {
         const KEY: u32 = 0;
         let written = b"template";
         let mut scratch = [0u8; 32];
-        let mut settings = settings(board.config);
+        let mut settings = settings(board.flash{% if external_flash == "true" %}, board.ext_flash_bus{% endif %});
 
         settings
             .write(KEY, written)

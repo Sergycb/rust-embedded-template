@@ -5,13 +5,13 @@
 
 | Файл | О чём | Когда открывать |
 |---|---|---|
-| `architecture.md` | границы `domain`/`cross`, что пересекает границу `bsp` → `app`, `chip-info` | добавляете код и не знаете, в какой крейт |
+| `architecture.md` | границы `domain`/`cross`, что пересекает границу `cpu`/`bsp` → `app`, `chip-info` | добавляете код и не знаете, в какой крейт |
 | `first-node.md` | свой узел по шагам: фрагмент и задача в `domain`, фича слова DSL `supervisor`, {% if graph == "true" %}запись в графе, сторож{% else %}модуль задачи в `app`{% endif %}, тест на хосте | заводите новую подсистему со своей задачей |
 | `clocks.md` | дамп частот, `EXPECTED_SYS_HZ`, кэши и `DMA_NC`, ядро (фолты, ловушка деления), `CPU_FREQ_BOOST`, пороги вроде `IMAGE_BUDGET_PERCENT` | трогаете тактирование, кэши, обработчик фолтов или порог проверки |
 {%- if ota == "true" %}
-| `ota.md` | приём образа, подпись, защита от отката, тест полного цикла | трогаете `domain::ota::Updater`, {% if shared_flash == "true" %}`bsp::flash`, {% endif %}`domain::ota` или `domain::ota::transfer` |
+| `ota.md` | приём образа, подпись, защита от отката, тест полного цикла | трогаете `domain::ota::Updater`, {% if shared_flash == "true" %}`cpu::flash`, {% endif %}`domain::ota` или `domain::ota::transfer` |
 {%- endif %}
-| `flash.md` | {% if ota == "true" %}стёртое состояние (`0xFF` против `0x00`), {% endif %}{% if config == "true" %}раздел настроек, {% endif %}{% if shared_flash == "true" %}один `Flash` на всех, {% endif %}банки flash{% if ota_store == "external" %}, OTA с разделами на внешней флеши{% endif %} | трогаете {% if config == "true" %}`domain::settings`, {% endif %}{% if erase_page == "true" %}`flash_page`, {% endif %}{% if shared_flash == "true" %}`bsp::flash`, {% endif %}{% if ota == "true" %}`domain::ota`{% if graph == "true" %} (его `local`-слоты связаны с типом мьютекса){% endif %}, {% endif %}раскладку памяти |
+| `flash.md` | {% if ota == "true" %}стёртое состояние (`0xFF` против `0x00`), {% endif %}{% if config == "true" %}раздел настроек, {% endif %}{% if shared_flash == "true" %}один `Flash` на всех, {% endif %}банки flash{% if ota_store == "external" %}, OTA с разделами на внешней флеши{% endif %} | трогаете {% if config == "true" %}`domain::settings`, {% endif %}{% if erase_page == "true" %}`flash_page`, {% endif %}{% if shared_flash == "true" %}`cpu::flash`, {% endif %}{% if ota == "true" %}`domain::ota`{% if graph == "true" %} (его `local`-слоты связаны с типом мьютекса){% endif %}, {% endif %}раскладку памяти |
 {%- if graph == "true" %}
 | `watchdog.md` | связанные цепочкой таймауты узлов, почему узел `observe`, почему взводится в `spawn_all`, а не в `Board::new` | трогаете сторож или тайминги графа задач |
 {%- endif %}
@@ -30,19 +30,20 @@
 {%- if net_services contains "mqtt" %}
 | `app-mqtt.md` | MQTT: темы, `mqtt.toml`, ACL, добавление полей/команд | правите MQTT (отдельный, без `include_str!`) |
 {%- endif %}
-| `bsp-can.md` | CAN-рычаг, заглушка до драйвера платы | правите CAN |
-{%- if config_store == "eeprom" %}
-| `bsp-eeprom.md` | внутренняя EEPROM как носитель настроек | правите настройки на EEPROM |
-{%- endif %}
-| `bsp-flash.md` | флеш, разделы, страницы, банки | правите флеш/раскладку |
-| `bsp-net.md` | сеть, стек, сокеты, счётчик сокетов | правите сеть |
-| `bsp-external.md` | внешняя флеш W25Q, init, заглушка шины | правите внешнюю флеш |
-| `bsp-rng.md` | RNG, затравка, getrandom | правите RNG/сеть/SSH |
-| `bsp-serial.md` | UART/транспорты, заглушка | правите UART |
+| `app-layout.md` | `app::layout`{% if ota == "true" %} и `boot::layout`{% endif %}: символы `memory.x`, разделы, fingerprint | правите раскладку/OTA |
+| `board.md` | `Board<C>`, `cpu::CpuInfo`, сборка рычагов, граница `cpu`/`bsp` → `app` | правите board/рычаги платы |
+| `bsp-ethernet.md` | сеть: стек и сокеты платы | правите сеть |
 | `bsp-usb.md` | USB/CDC, пары | правите USB |
-| `bsp-wdg.md` | сторож, арма, таймауты | правите watchdog |
-| `board.md` | Board, ChipSpec, сборка, граница bsp->app | правите board/рычаги платы |
-| `reset.md` | Reboot, причина сброса RCC | правите reset/паникёр |
-| `layout.md` | символы memory.x, разделы, fingerprint | правите раскладку/OTA |
+| `cpu.md` | чип: `cpu::init`, `Cpu`, `wiring`, `split` | правите инициализацию чипа |
+| `cpu-can.md` | CAN-рычаг, заглушка до драйвера платы | правите CAN |
+{%- if config_store == "eeprom" %}
+| `cpu-eeprom.md` | внутренняя EEPROM как носитель настроек | правите настройки на EEPROM |
+{%- endif %}
+| `cpu-external.md` | внешняя флеш W25Q, init, заглушка шины | правите внешнюю флеш |
+| `cpu-flash.md` | флеш чипа: замок, сырая ручка, разделы | правите флеш/раскладку |
+| `cpu-rng.md` | RNG, затравка, getrandom | правите RNG/сеть/SSH |
+| `cpu-com.md` | UART/транспорты, заглушка | правите UART |
+| `cpu-system.md` | `cpu::System`: сброс, причина сброса, `Reboot` | правите reset/паникёр |
+| `cpu-wdg.md` | сторож, арма, таймауты | правите watchdog |
 | `fault.md` | HardFault, ловушка деления | правите обработку фолтов |
-| `panic.md` | паникёр, panic-persist, дефолтный транспорт | правите паникёр/диагностику |
+| `panic.md` | паникёр (`panic-handler`), panic-persist, дефолтный транспорт | правите паникёр/диагностику |

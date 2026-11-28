@@ -49,8 +49,8 @@ Claude Code их покрывает skill `rust-engineering`, см. `CLAUDE.md`)
 Куда класть код (пограничные случаи — `docs/architecture.md`, «Адаптеры делятся
 по одному признаку — нужен ли чип» и «Трейт — только под несколько реализаций»):
 
-- **нужен чип — `bsp`**: HAL-объект с трейтом `bsp` отдаёт псевдонимом, своя
-  структура в `bsp` — только обёртка там, где реализации трейта нет;
+- **нужен чип — `cpu`**: HAL-объект `cpu` отдаёт псевдонимом, своя
+  структура в `cpu` — только обёртка там, где реализации трейта нет;
 - **обёртка над железом без чипа — `adapters-hw`; реализации портов, когда их
   несколько, — `adapters-logic`**{% if adapters_hw != "true" or adapters_logic != "true" %} (в этом проекте {% if adapters_hw != "true" and adapters_logic != "true" %}крейтов `adapters-hw` и
   `adapters-logic`{% elsif adapters_hw != "true" %}крейта `adapters-hw`{% else %}крейта `adapters-logic`{% endif %} нет: генерации нечего было туда положить, крейт
@@ -118,7 +118,7 @@ Claude Code их покрывает skill `rust-engineering`, см. `CLAUDE.md`)
 | `rumdl check .` | Markdown и Markdown внутри `///`/`//!` по `.rumdl.toml`: формат, якоря, относительные пути. Нужен `rumdl` (ставит `cargo xtask setup`){% if ci != "none" %}, гоняется в CI отдельным джобом{% endif %}. В репозитории шаблона запускать на сгенерированном проекте: в сырых доках Liquid |
 | `cargo deny check` | лицензии (только пермиссивные{% if has_canopen == "true" %}; исключение — MPL-2.0 у `zencan`{% endif %}{% if protobuf_serial == "true" %}; исключение — MPL-2.0 у `serialport` клиента `host-target-tests`{% endif %}), источники, уязвимости зависимостей по `deny.toml`; для прошивки — с `--manifest-path crates-cross/Cargo.toml`. Нужен `cargo-deny` (ставит `cargo xtask setup`){% if ci != "none" %}, гоняется в CI{% endif %} |
 | `cargo xtask pins [БЛОК\|ПИН]` | справочник по чипу `{{chip}}`: выводы, альтернативные функции, DMA, тактирование |
-| `cargo xtask pins --check` | распиновка во всём `crates-cross/bsp/src`: занятый отладочный порт — ошибка, выводы кварца и MCO — предупреждение |
+| `cargo xtask pins --check` | распиновка во всём `crates-cross/cpu/src`: занятый отладочный порт — ошибка, выводы кварца и MCO — предупреждение |
 
 ### С платой — не запускать без явного разрешения пользователя
 
@@ -213,9 +213,9 @@ README, «Быстрый старт».
 ## Инварианты, которые не ловит компилятор
 
 - Задачи `embassy` не могут быть generic: тип, уезжающий в `#[embassy_executor::task]`,
-  получает псевдоним (`pub type X = ...`): рычаг — от `bsp`{% if ota == "true" or config == "true" %} ({% if ota == "true" %}`bsp::FirmwareFlash`{% if config == "true" %},
-  {% endif %}{% endif %}{% if config == "true" %}`bsp::ConfigFlash`{% endif %}){% endif %}, адаптер — от `app` или
-  конкретным типом прямо {% if graph == "true" %}в графе{% else %}в задаче{% endif %}{% if ota == "true" %} (`domain::ota::Updater<bsp::FirmwareFlash>`){% endif %}
+  получает псевдоним (`pub type X = ...`): рычаг — от `bsp`{% if ota == "true" or config == "true" %} ({% if ota == "true" %}`app::storage::Ota`{% if config == "true" %},
+  {% endif %}{% endif %}{% if config == "true" %}`app::storage::ConfigFlash`{% endif %}){% endif %}, адаптер — от `app` или
+  конкретным типом прямо {% if graph == "true" %}в графе{% else %}в задаче{% endif %}{% if ota == "true" %} (`domain::ota::Updater<app::storage::Ota>`){% endif %}
   — `docs/architecture.md`.
 - Паникёр у каждого бинарника свой; у `app` его выбирает профиль —
   `#[cfg(debug_assertions)]` на `use … as _;` в `crates-cross/app/src/panic.rs`, а не
@@ -246,7 +246,7 @@ README, «Быстрый старт».
   `docs/ota.md`, «Подпись OTA-образа».
 {%- endif %}
 {%- if shared_flash == "true" or ota == "true" or config_store == "flash" or external_flash == "true" %}
-- `NoopRawMutex` у мьютексов флеша{% if graph == "true" %} и `local`-слоты узлов графа{% if ota == "true" %} (у OTA — `FLASH`){% endif %}{% endif %} — одно допущение
+- `ThreadModeRawMutex` у мьютексов флеша{% if graph == "true" %} и `local`-слоты узлов графа{% if ota == "true" %} (у OTA — `FLASH`){% endif %}{% endif %} — одно допущение
   «один исполнитель», менять вместе — `docs/flash.md`.{% if has_modbus == "true" %} Карта регистров Modbus
   (`domain::modbus::MapMutex`, `CriticalSectionRawMutex`) в него не входит —
   `docs/modules/app.md`, «Modbus: одна карта на все узлы `MODBUS_*`».{% endif %}
@@ -275,7 +275,7 @@ README, «Быстрый старт».
 {%- endif %}
 {%- if ota == "true" and ota_store == "external" %}
 - С `ext_flash=yes` (`DFU`/`STATE` на внешней флеши):
-  - `EXT_PAGE_SIZE` — одно число на `boot` и `bsp::external`, и стирание
+  - `EXT_PAGE_SIZE` — одно число на `boot` и `cpu::external`, и стирание
     драйвера обязано его делить — `docs/flash.md`;
   - bootloader грузит текущий образ мимо `prepare`, только если `STATE` не
     читается или флеш отказала при проверке подписи, но не на журнале после
@@ -285,66 +285,68 @@ README, «Быстрый старт».
 {%- endif %}
 {%- if swap_paged == "true" %}
 - `SWAP_PAGE_SIZE` ({{page_size}}) — страница обмена крупнее физической, одно число на
-  `boot` и `bsp::flash`; `ACTIVE` и `DFU` стоят на `ErasePage<_, SWAP_PAGE_SIZE>` —
+  `boot` и `cpu::flash`; `ACTIVE` и `DFU` стоят на `ErasePage<_, SWAP_PAGE_SIZE>` —
   `docs/flash.md`, «Страница раздела — не всегда страница чипа».
 {%- endif %}
 {%- if ota == "true" and ota_store != "external" %}
 - `STATE_ERASE_SIZE` — страница сектора `STATE`, одно число на `boot` и
-  приложение (`bsp::flash::STATE_ERASE_SIZE`) —
+  приложение (`cpu::flash::STATE_ERASE_SIZE`) —
   `docs/flash.md`, «Страница раздела — {% if erase_page == "true" %}не всегда {% endif %}страница чипа».
 {%- endif %}
 {%- if config_store == "flash" %}
 - `CONFIG_ERASE_SIZE` — страница сектора `CONFIG`: литерал генерации в
-  `bsp::flash` и тот же литерал в `ASSERT` границ `CONFIG` в `memory.x`; менять
+  `cpu::flash` и тот же литерал в `ASSERT` границ `CONFIG` в `memory.x`; менять
   только вместе — `docs/flash.md`, «Страница раздела — {% if erase_page == "true" %}не всегда {% endif %}страница чипа».
 {%- endif %}
 {%- if ota == "true" %}
-- Разделы обновления плата отдаёт нарезанными (`board.firmware:
-  bsp::FirmwareFlash` = `ports::Partitions`: `DFU`/`STATE` со своими
-  страницами, размер `ACTIVE`, отпечаток раскладки). Режет их `bsp::flash`
-  по символам `memory.x` (`bsp::layout::{dfu, state}`) — тем же, что читает
+- Разделы обновления плата отдаёт нарезанными (`app::storage::ota(board.flash):
+  app::storage::Ota` = `ports::Partitions`: `DFU`/`STATE` со своими
+  страницами, размер `ACTIVE`, отпечаток раскладки). Режет их `cpu::flash`
+  по символам `memory.x` (`app::layout::{dfu, state}`) — тем же, что читает
   `from_linkerfile` в bootloader'е; узел OTA собирает над ними
   `domain::ota::Updater`. Нарезку проверяет только `cargo xtask lint cross`/`build`,
   host-тесты подают адаптеру разделы в памяти — `docs/ota.md`.
 {%- endif %}
 {%- if ota == "true" or config_store == "flash" or config_store == "external" or dma_nc == "true" %}
 - Границы разделов и регионов памяти, нужные рычагам платы, — символы
-  `memory.x`, и читает их только `bsp::layout`; проверки над ними — `ASSERT` в
+  `memory.x`, и читает их только `app::layout`; проверки над ними — `ASSERT` в
   `memory.x`, не `const`-assert; в `[env]` — только числа, нужные компилятору;
   символы обязаны быть в `memory.x` каждого бинарника, который их читает —
   `docs/flash.md`, «Символы раскладки».
 {%- endif %}
 {%- if bank_switch != "" %}
-- `bsp::banks::ensure_single_bank()` стоит первой строкой {% if ota == "true" %}и в `boot`, и в
-  `Board::new`{% else %}`Board::new`{% endif %} — до любого `Flash::new`; не переносить ниже и не убирать —
+- `cpu::banks::ensure_single_bank()` стоит первой строкой {% if ota == "true" %}и в `boot`, и в
+  `cpu::init`{% else %}`cpu::init`{% endif %} — до любого `Flash::new`; не переносить ниже и не убирать —
   `docs/flash.md`, «Банки flash».
 {%- endif %}
-- Паникёр, обработчик `HardFault` с причиной и ловушка деления — в `app`
-  (`crates-cross/app/src/panic.rs`, `fault.rs`), не в `bsp`: с LTO обработчик
-  попал бы в любой бинарник, линкующий `bsp` — `docs/clocks.md`, «Ядро: фолты
-  и ловушка деления». Сброс МК — рычаг `bsp::reset::Reboot`.
+- Паникёр и транспорт лога — в `crates-cross/panic-handler`, состояние паники —
+  в `app` (`crates-cross/app/src/panic.rs`); `HardFault` с причиной и ловушка
+  деления — в `app` (`fault.rs`). Не в `bsp`: с LTO обработчик попал бы в любой
+  бинарник, линкующий `bsp`, а библиотеку `app` линкует `target-tests`, где
+  паникёр даёт `embedded-test` — `docs/clocks.md`, «Ядро: фолты и ловушка
+  деления». Сброс МК — рычаг `cpu::System`.
 - `app` про `embassy-stm32` не знает — ни `use`, ни строки в манифесте; ядро
   берёт напрямую (`cortex-m-rt` — точка входа и `HardFault`, `cortex-m` —
-  свободные функции ядра), без обёрток в `bsp` — там же.
+  свободные функции ядра), без обёрток в `bsp` и `cpu` — там же.
 - Логирование только `defmt`; `log` в прошивке не используется.
 - Флаги сброса `RCC` читает и снимает только `main` приложения — первым делом,
-  до `Board::new` (`bsp::reset::take_cause`), один раз за запуск —
+  до `cpu::init` (`cpu::System::take_cause`), один раз за запуск —
   `docs/diagnostics.md`, «Причина сброса».
 {%- if cache != "" %}
-- `bsp::cache::enable()` — в `Board::new` сразу за `embassy_stm32::init`{% if cache contains "scb_d" %}; буфер
+- `cpu::cache::enable()` — в `cpu::init` сразу за `embassy_stm32::init`{% if cache contains "scb_d" %}; буфер
   DMA кладите в `#[link_section = ".dma_nc"]`{% if bdma_nc == "true" %} (BDMA — `".bdma_nc"`){% endif %}, не в обычный `static`:
   кэш данных M7 DMA не видит{% endif %} — `docs/clocks.md`, «Кэши».
 {%- endif %}
 {%- if cpu_freq_boost == "true" %}
-- `bsp::clocks::ensure_cpu_freq_boost()` — первой строкой `Board::new`, до
+- `cpu::clocks::ensure_cpu_freq_boost()` — первой строкой `cpu::init`, до
   `embassy_stm32::init` — `docs/clocks.md`, «`CPU_FREQ_BOOST`».
 {%- endif %}
 {%- if has_net == "true" %}
 {%- if rng_irq != "" %}
-- Клок блока `RNG` даёт `config()` в `crates-cross/bsp/src/board.rs` — меняете
+- Клок блока `RNG` даёт `config()` в `crates-cross/cpu/src/cpu.rs` — меняете
   тактирование, сохраните его: без клока прошивка паникует или виснет в
-  `Board::new`. Генератор наружу из `bsp` не выходит{% if net_services contains "ssh" %}: SSH берёт байты только
-  через `getrandom`{% endif %} — `docs/modules/bsp-rng.md`.
+  `cpu::init`. Генератор наружу из `cpu` не выходит{% if net_services contains "ssh" %}: SSH берёт байты только
+  через `getrandom`{% endif %} — `docs/modules/cpu-rng.md`.
 {%- endif %}
 {%- endif %}
 {%- if protocol == "canopen" %}
@@ -354,7 +356,7 @@ README, «Быстрый старт».
   живёт `Running<'f>` — ссылки на них. Не переносить их в `static` или слот: тип
   замыкания там не назвать, а колбэки `zencan` своих данных не получают.
   Ключи `OBJECTS_KEY` и `NODE_ID_KEY` хранилища настроек заняты узлом{% if config == "true" %}, и носитель
-  (`board.config`) уходит ему — хранилищем над ним (`Settings::whole`) во входе, и
+  (`app::storage::settings(…, board.flash)`) уходит ему — хранилищем над ним (`Settings::whole`) во входе, и
   своим настройкам проекта нужен общий доступ через него{% endif %} —
   `domain::canopen`.
 {%- endif %}
@@ -366,19 +368,19 @@ README, «Быстрый старт».
 {%- if config == "true" %}
 - Хранилище настроек — `domain::settings` над любым async `NorFlash`, на весь
   его объём. Носитель отдаёт плата рычагом `NorFlash`
-  (`board.config: bsp::ConfigFlash`): {% if config_store == "eeprom" %}EEPROM L0/L1 (доступ — `embedded_storage::Storage`, обёртку
+  (`app::storage::settings(…, board.flash): app::storage::ConfigFlash`): {% if config_store == "eeprom" %}EEPROM L0/L1 (доступ — `embedded_storage::Storage`, обёртку
   `adapters_hw::eeprom::Eeprom` собирает сама плата){% elsif config_store == "external" %}внешняя флеш W25Q (драйвер
-  `w25q` в `bsp::external`, шина — заглушка `bsp::external::StubBus`, пока проект не
+  `w25q` в `cpu::external`, шина — заглушка `cpu::external::StubBus`, пока проект не
   подставит выводы){% else %}раздел `CONFIG` внутреннего
-  флеша{% endif %}. Само хранилище — `Settings::whole(board.config)` на compose-site
-  узла-потребителя; тип — `domain::settings::Settings<bsp::ConfigFlash>` прямо {% if graph == "true" %}в
+  флеша{% endif %}. Само хранилище — `Settings::whole(app::storage::settings(…, board.flash))` на compose-site
+  узла-потребителя; тип — `domain::settings::Settings<app::storage::ConfigFlash>` прямо {% if graph == "true" %}в
   графе{% else %}в задаче{% endif %}{% if config_store == "eeprom" %}. EEPROM под хранилищем инвертирована: без
   этого заводские нули выглядели бы для `sequential-storage` закрытыми
   страницами{% endif %} — `docs/flash.md`.
 {%- endif %}
 {%- if graph == "true" %}
 - У каждого узла с `watchdog:` цепочка таймаутов (период отметок < таймаут
-  узла < `bsp::wdg::HW_TIMEOUT_MIN_US` минус `WATCHDOG_CHECK_EVERY`; справа —
+  узла < `cpu::wdg::HW_TIMEOUT_MIN_US` минус `WATCHDOG_CHECK_EVERY`; справа —
   наименьший реальный таймаут IWDG при самом быстром LSI, а не номинал
   `HW_TIMEOUT_US`) — менять только вместе; новый узел с `watchdog:` обязан встать
   в список `const`-assert'а в `crates-cross/app/src/graph.rs` — `docs/watchdog.md`.
@@ -420,7 +422,7 @@ README, «Быстрый старт».
   Ключ хоста плата создаёт при первом старте (ключ настроек
   `domain::ssh::HOST_KEY_ID`) — хранилище настроек забирает узел `SSH`, своим
   настройкам проекта нужен общий доступ через него.{% endif %} Случайность `sunset`
-  берёт через `getrandom` (`docs/modules/bsp-rng.md`): без бэкенда ключи сессий
+  берёт через `getrandom` (`docs/modules/cpu-rng.md`): без бэкенда ключи сессий
   предсказуемы. Код `sunset` — около 165 KiB, отсюда порог раздела приложения в
   генерации (`SSH_MIN_PARTITION`).
 {%- endif %}
@@ -453,38 +455,38 @@ README, «Быстрый старт».
   в `graph.rs` свою логику — тоже.
 {%- endif %}
 - `Board` отдаёт рычаги платы — объекты под трейтами — и данные о чипе
-  (`bsp::ChipSpec`) и ничего не настраивает: ни `Peripherals`, ни периферии
+  (`cpu::CpuInfo`) и ничего не настраивает: ни `Peripherals`, ни периферии
   ядра, ни `Clocks` в полях нет; протоколов приложения над рычагами и их буферов
   в `bsp` нет — их строит `app`. Заглушка периферии до драйвера живёт в модуле
-  своего транспорта (`bsp::serial`, `bsp::can`, `bsp::usb`, `bsp::net`,
-  `bsp::external`) —
+  своего транспорта (`cpu::com`, `cpu::can`, `bsp::usb`, `bsp::ethernet`,
+  `cpu::external`) —
   `docs/architecture.md`, «`Board` отдаёт рычаги платы, а не периферию и не протоколы».
 - `bsp` ничего не инициализирует сверх подъёма HAL: конструкторы зовутся `new`
   и только создают объекты; всё, что запускает железо{% if graph == "true" %} (`arm()` у сторожа){% endif %},
   делает тот, кто этим железом распоряжается. Исключения — `ensure_*` для
-  option bytes и `bsp::cache::enable()` (кэши чипа) — `docs/clocks.md`{% if external_flash == "true" %}; и `init`
-  внешней флеши в `bsp::external::new` (ниже){% endif %}.
+  option bytes и `cpu::cache::enable()` (кэши чипа) — `docs/clocks.md`{% if external_flash == "true" %}; и опознание
+  внешней флеши в `cpu::external::init` (ниже){% endif %}.
 {%- if external_flash == "true" %}
 - Внешняя флеш — W25Q, драйвер `w25q` (hw-drivers, `rev` закреплён) в
-  `bsp::external` — `docs/modules/bsp-external.md`:
-  - шина под ним — заглушка `bsp::external::StubBus`, пока плата не подставит
+  `cpu::external` — `docs/modules/cpu-external.md`:
+  - шина под ним — заглушка `cpu::external::StubBus`, пока плата не подставит
     свою (рецепт — там же);
-  - `Board::new` асинхронный: драйвер опознаёт микросхему (`init`, до 2 с, если
-    она дотирает стирание), ждёт таймерами `embassy_time` и потому зовётся из
-    первой задачи исполнителя (`start` в `main.rs`{% if test_image == "true" %} и `bin/test-ota.rs`{% endif %} —
-    `crates-cross/app/src/`), а не через `block_on` до него — там таймер
+  - микросхему опознаёт `cpu::external::init` (`init` драйвера — до 2 с, если
+    она дотирает стирание), ждёт таймерами `embassy_time`, поэтому его зовёт
+    первая задача исполнителя (`start` в `main.rs`{% if test_image == "true" %} и `bin/test-ota.rs`{% endif %} —
+    `crates-cross/app/src/`, и `boot`), а не `block_on` до неё — там таймер
     паникует{% if graph == "true" %}; путь до `spawn_all` обязан уложиться в таймаут сторожа{% endif %};
   - не прошёл `init` или микросхема меньше конца разделов (символ `memory.x`
-    `__ext_flash_end`, `bsp::layout::ext_flash_end`) — строка в лог, флеш
+    `__ext_flash_end`, `app::layout::ext_flash_end`) — строка в лог, флеш
     отказывает, а не паникует.
 {%- endif %}
 - `Board::new()` отдаёт один `Board`{% if has_usb == "true" or has_net == "true" %}; пары, которые нельзя собрать порознь
-  ({% if has_usb == "true" %}`bsp::usb::<транспорт>::Usb { device, cdc }`{% if has_net == "true" %}, {% endif %}{% endif %}{% if has_net == "true" %}`bsp::net::Net { runner, stack }`{% endif %}), собирает плата{% endif %}.
+  ({% if has_usb == "true" %}`bsp::usb::<транспорт>::Usb { device, cdc }`{% if has_net == "true" %}, {% endif %}{% endif %}{% if has_net == "true" %}`bsp::ethernet::Net { runner, stack }`{% endif %}), собирает плата{% endif %}.
   {% if graph == "true" %}Граф берёт {% if ota == "true" %}`boot: boot: Boot;` (плата и свойства образа){% else %}`boot: board: bsp::Board;`{% endif %} и делит по полям{% else %}Поля делит `app::spawn_all(spawner, board{% if ota == "true" %}, IMAGE{% endif %})`{% endif %}. Не делать поля
   `Board` `Option`{% if has_usb == "true" or has_net == "true" %} и не передавать половину пары через `static`{% endif %} — там же.
 {%- capture bsp_deps %}{% if flash_page == "true" %}, `flash-page`{% endif %}{% if has_usb == "true" or has_net == "true" or config_store == "eeprom" %}, обёртки `adapters-hw`{% endif %}{% endcapture %}
-- `bsp` зависит от HAL{% if ota == "true" or has_can == "true" %}, `ports`{% endif %} и того, из чего собирает свои рычаги{% if bsp_deps != "" %}
-  ({{ bsp_deps | remove_first: ", " }}){% endif %}, но не от `domain`: входы узлов из полей `Board`
+- `cpu` зависит от HAL и `ports`; `bsp` — от `ports` и того, из чего собирает
+  свои рычаги{% if bsp_deps != "" %} ({{ bsp_deps | remove_first: ", " }}){% endif %}, но не от `domain`: входы узлов из полей `Board`
   заполняет compose-site в `app` — `docs/architecture.md`, «Адаптеры делятся по
   одному признаку — нужен ли чип».
 - Liquid в корневом workspace (все его члены и корневой `Cargo.toml`) — только

@@ -17,10 +17,10 @@
 {%- comment %} Плата — `boot:`-объект графа целиком, а с OTA — его поле `board`: рядом едут свойства образа (`Boot`). {% endcomment %}
 {%- if ota == "true" %}{% assign board = "boot.board" %}{% else %}{% assign board = "board" %}{% endif %}
 {%- capture device %}domain::device::DeviceInfo {
-                        chip: {{ board }}.spec.chip,
-                        uid: {{ board }}.spec.uid,
-                        flash_size: {{ board }}.spec.flash_size,
-                        sys_hz: {{ board }}.spec.sys_hz,
+                        chip: {{ board }}.cpu_info.chip,
+                        uid: {{ board }}.cpu_info.uid,
+                        flash_size: {{ board }}.cpu_info.flash_size,
+                        sys_hz: {{ board }}.cpu_info.sys_hz,
                     }{% endcapture %}
 {%- capture app_info %}domain::device::AppInfo {
                         version: {% if ota == "true" %}boot.image.text{% else %}crate::build::PKG_VERSION{% endif %},
@@ -47,10 +47,10 @@ supervisor_graph! {
     // `start` бинарника{% if test_image == "true" %}, у рабочего и тестового образа они свои{% endif %}.
     boot: boot: Boot;
 {%- else %}
-    boot: board: bsp::Board;
+    boot: board: crate::Board;
 {%- endif %}
 
-    watchdog: bsp::wdg::BoardWatchdog = {{ board }}.watchdog.arm(),
+    watchdog: cpu::wdg::BoardWatchdog = {{ board }}.watchdog.arm(),
         check_every: WATCHDOG_CHECK_EVERY, observe: report_liveness;
 
     fragments: [
@@ -75,8 +75,9 @@ supervisor_graph! {
         // (`<Updater, Reboot, …>`) — типы его слотов: слот — `static`, тип ему
         // нужен, а знает его только эта сторона; третий, число, — места ожидания
         // входа `CMD` (`OTA_CMD_PARKED` ниже). Привязка (`= …`) — вход узла
-        // (`domain::ota::OtaWiring`): адаптер обновления над разделами `{{ board }}.firmware`, сброс МК
-        // `bsp::reset::Reboot` и свойства этого образа из `boot.image` (защита от
+        // (`domain::ota::OtaWiring`): адаптер обновления над разделами, которые строит
+        // `crate::storage::ota` из ручек чипа, сброс МК
+        // `cpu::System` и свойства этого образа из `boot.image` (защита от
         // отката: образ не новее неё узел отвергает). Образ узел принимает командами на свой вход
         // `CMD`{% if has_modbus != "true" and has_protobuf != "true" and has_canopen != "true" %}: клиента (`::domain::ota::Client` над `ota_cmd_requester()`) получает ваш
         // протокол — без него узел только подтверждает образ{% else %} — их шлют узлы протоколов ниже, каждый со своим номером
@@ -84,11 +85,11 @@ supervisor_graph! {
         // CANopen — на вход `ASK`, не дожидаясь исхода (ребро `asks:` в их фрагменте){% endif %}; алгоритм обновления — в
         // `domain::ota`. Вычисляется привязка в прологе `spawn_all` первой
         // строкой — раньше инициализатора блока `watchdog:`, как бы они ни стояли
-        // в тексте, — частичным move: `firmware` уезжает в слот узла, `watchdog`
+        // в тексте, — частичным move: `flash` уезжает в слот узла, `watchdog`
         // следом забирает сторож, остаток `boot` дропается в конце пролога.
-        ::domain::OTA_FRAG<::domain::ota::Updater<bsp::FirmwareFlash>, bsp::reset::Reboot, OTA_CMD_PARKED> as OTA = ::domain::ota::OtaWiring {
-            flash: ::domain::ota::Updater::new({{ board }}.firmware),
-            reboot: bsp::reset::Reboot,
+        ::domain::OTA_FRAG<::domain::ota::Updater<crate::storage::Ota>, cpu::System, OTA_CMD_PARKED> as OTA = ::domain::ota::OtaWiring {
+            flash: ::domain::ota::Updater::new(crate::storage::ota({{ board }}.flash{% if external_flash == "true" %}, {{ board }}.ext_flash_bus{% endif %})),
+            reboot: cpu::System,
             running_version: boot.image.version,
             // `confirmed` — из свойств образа бинарника{% if test_image == "true" %}: тестовый
             // `test-ota` начинает «уже подтверждённым» и `mark_booted` не
@@ -100,36 +101,38 @@ supervisor_graph! {
 {%- assign xs = links | split: "," %}
 {%- for l in xs %}
 {%- assign f = l | split: ":" %}
+{%- assign parts = f[4] | split: "_" %}
 {%- if f[0] == "usb" %}
 
         // Узел `USB_{{ f[4] | upcase }}` — фоновая работа устройства `embassy-usb` (`domain::usb`),
         // которое собрала плата (`{{ board }}.{{ f[4] }}.device`, `bsp::usb::{{ f[4] }}`): без него хост
         // не видит устройства, а поток CDC — ни одного пакета.
-        ::domain::USB_FRAG<bsp::usb::{{ f[4] }}::Device> as USB_{{ f[4] | upcase }} =
+        ::domain::USB_FRAG<crate::{% for part in parts %}{{ part | capitalize }}{% endfor %}Device> as USB_{{ f[4] | upcase }} =
             ::domain::usb::UsbWiring { device: {{ board }}.{{ f[4] }}.device },
 {%- endif %}
 {%- endfor %}
 {%- if has_net == "true" %}
 
         // Узел `NET` — фоновая работа стека `embassy-net` (`domain::net`) над
-        // устройством платы `bsp::net::Device`: без него сокеты протоколов не
+        // устройством чипа (`crate::EthernetDevice`): без него сокеты протоколов не
         // получают ни одного пакета. Один на `tcp` и `udp`: стек у них общий.
-        ::domain::NET_FRAG<::domain::net::Runner<'static, bsp::net::Device>> as NET =
-            ::domain::net::NetWiring { runner: {{ board }}.net.runner },
+        ::domain::NET_FRAG<::domain::net::Runner<'static, crate::EthernetDevice>> as NET =
+            ::domain::net::NetWiring { runner: {{ board }}.ethernet.runner },
 {%- endif %}
 {%- comment %} Номер клиента OTA — порядковый номер транспорта с протоколом в `links`, тот же, что у задачи без графа (`crate::tasks`). {% endcomment %}
 {%- assign client = 0 %}
 {%- for l in xs %}
 {%- assign f = l | split: ":" %}
+{%- assign parts = f[4] | split: "_" %}
 {%- comment %} Канал — конкретным типом прямо в привязке: тип (`ty`) и конструктор (`link`) над рычагом платы в памяти, которую объявляет граф (`static T`). {% endcomment %}
 {%- assign port = "502" %}
 {%- if f[3] == "protobuf" %}{% assign port = "5000" %}{% endif %}
 {%- if f[0] == "uart" %}
 {%- capture src %}{{ board }}.{{ f[4] }}{% endcapture %}
-{%- capture srct %}bsp::serial::{{ f[4] }}::Serial{% endcapture %}
+{%- capture srct %}cpu::com::{{ f[4] }}::Serial{% endcapture %}
 {%- elsif f[0] == "usb" %}
 {%- capture src %}{{ board }}.{{ f[4] }}.cdc{% endcapture %}
-{%- capture srct %}bsp::usb::{{ f[4] }}::Cdc{% endcapture %}
+{%- capture srct %}crate::{% for part in parts %}{{ part | capitalize }}{% endfor %}Cdc{% endcapture %}
 {%- endif %}
 {%- if f[3] == "cli" %}
 
@@ -143,7 +146,7 @@ supervisor_graph! {
                 app: {{ app_info }},
                 login: domain::console::PASSWORD,
 {%- if has_net == "true" %}
-                stack: Some({{ board }}.net.stack),
+                stack: Some({{ board }}.ethernet.stack),
 {%- endif %}
 {%- if ota == "true" %}
                 ota: ::domain::ota::Client::new(
@@ -156,7 +159,7 @@ supervisor_graph! {
 {%- if f[0] == "tcp" %}
 {%- capture ty %}::adapters_logic::modbus::Tcp<::adapters_logic::net::Server>{% endcapture %}
 {%- capture link %}::adapters_logic::modbus::Tcp::new(::adapters_logic::net::Server::new(
-                    {{ board }}.net.stack,
+                    {{ board }}.ethernet.stack,
                     {{ port }},
                     static [u8; SOCKET_BUFFER],
                     static [u8; SOCKET_BUFFER],
@@ -164,7 +167,7 @@ supervisor_graph! {
 {%- elsif f[0] == "udp" %}
 {%- capture ty %}::adapters_logic::modbus::Udp<::adapters_logic::net::UdpLink>{% endcapture %}
 {%- capture link %}::adapters_logic::modbus::Udp::new(::adapters_logic::net::UdpLink::new(
-                    {{ board }}.net.stack,
+                    {{ board }}.ethernet.stack,
                     {{ port }},
                     static ::core::mem::MaybeUninit<[::embassy_net::udp::PacketMetadata; 4]>,
                     static [u8; SOCKET_BUFFER],
@@ -180,7 +183,7 @@ supervisor_graph! {
 {%- if f[0] == "udp" %}
 {%- capture ty %}::adapters_logic::net::UdpLink{% endcapture %}
 {%- capture link %}::adapters_logic::net::UdpLink::new(
-                    {{ board }}.net.stack,
+                    {{ board }}.ethernet.stack,
                     {{ port }},
                     static ::core::mem::MaybeUninit<[::embassy_net::udp::PacketMetadata; 4]>,
                     static [u8; SOCKET_BUFFER],
@@ -191,7 +194,7 @@ supervisor_graph! {
 {%- else %}
 {%- if f[0] == "tcp" %}
 {%- capture src %}::adapters_logic::net::Server::new(
-                        {{ board }}.net.stack,
+                        {{ board }}.ethernet.stack,
                         {{ port }},
                         static [u8; SOCKET_BUFFER],
                         static [u8; SOCKET_BUFFER],
@@ -259,19 +262,19 @@ supervisor_graph! {
 {%- elsif f[3] == "canopen" %}
 
         // Узел `CANOPEN_{{ f[4] | upcase }}` — узел CANopen (стек `zencan`) на шине CAN платы `{{ board }}.{{ f[4] }}`
-        // (заглушка, пока проект не подставит свой контроллер — docs/modules/bsp-can.md)
+        // (заглушка, пока проект не подставит свой контроллер — docs/modules/cpu-can.md)
         // и словаре объектов из `crates-host/canopen` (`device.toml`). Адрес узла в
         // сети — `node_id`, 1..=127. Хранилище — {% if config == "true" %}раздел настроек платы: в нём узел сохраняет
         // объекты по команде `save` и адрес, назначенный по LSS (ключи
         // `domain::canopen::{OBJECTS_KEY, NODE_ID_KEY}`){% else %}раздела настроек нет — объекты и адрес не сохраняются{% endif %}.
-        ::domain::CANOPEN_FRAG<bsp::can::{{ f[4] }}::Can, ::domain::settings::Settings<{% if config == "true" %}bsp::ConfigFlash{% else %}::domain::settings::NoFlash{% endif %}>> as CANOPEN_{{ f[4] | upcase }} =
+        ::domain::CANOPEN_FRAG<cpu::can::{{ f[4] }}::Can, ::domain::settings::Settings<{% if config == "true" %}crate::storage::ConfigFlash{% else %}::domain::settings::NoFlash{% endif %}>> as CANOPEN_{{ f[4] | upcase }} =
             ::domain::canopen::CanOpenWiring {
                 bus: {{ board }}.{{ f[4] }},
                 node_id: 1,
                 dictionary: ::domain::canopen::dictionary(),
-                settings: {% if config == "true" %}Some(::domain::settings::Settings::whole({{ board }}.config)){% else %}None{% endif %},
+                settings: {% if config == "true" %}Some(crate::storage::settings({{ board }}.flash{% if external_flash == "true" %}, {{ board }}.ext_flash_bus{% endif %})){% else %}None{% endif %},
                 // Серийный номер идентичности (0x1018:04) — из заводского номера чипа.
-                serial: ::domain::canopen::serial({{ board }}.spec.uid),
+                serial: ::domain::canopen::serial({{ board }}.cpu_info.uid),
 {%- if ota == "true" %}
                 // Команды объекта OTA словаря (0x4F00) узел шлёт на вход `ASK`
                 // узла `OTA` (ребро `asks:` фрагмента) с номером этого транспорта.
@@ -307,12 +310,12 @@ supervisor_graph! {
 
         // Узлы `HTTP` — REST API (`domain::http`): пул, по копии на соединение
         // (`crate::net::rest::CONNECTIONS`), у каждой свой сокет на стеке
-        // `{{ board }}.net.stack` и свои буферы (слоты `= static` фрагмента).
+        // `{{ board }}.ethernet.stack` и свои буферы (слоты `= static` фрагмента).
         // Токен — `crate::net::rest::TOKEN` (файл `rest-token.txt`).{% if ota == "true" %}
         // Перезагрузку узлы просят у узла `OTA` каждый своим клиентом — номера
         // следом за транспортами: сессия приёма у OTA — одного клиента.{% endif %}
         ::domain::HTTP_FRAG as HTTP[{{ http_connections }}] = core::array::from_fn(|{% if ota == "true" %}i{% else %}_{% endif %}| ::domain::http::HttpWiring {
-            stack: {{ board }}.net.stack,
+            stack: {{ board }}.ethernet.stack,
             info: {{ device }},
             app: {{ app_info }},
             token: crate::net::rest::TOKEN,
@@ -329,19 +332,19 @@ supervisor_graph! {
 {%- if net_services contains "ssh" %}
 
         // Узел `SSH` — консоль (`domain::ssh`): своё соединение на стеке
-        // `{{ board }}.net.stack`, буферы — слоты `= static` фрагмента. Вход —
+        // `{{ board }}.ethernet.stack`, буферы — слоты `= static` фрагмента. Вход —
         // по паролю, `domain::console::PASSWORD`; ключ хоста — {% if ssh_host_key == "config" %}создаётся платой при первом старте и
         // хранится в разделе настроек (`domain::ssh::Stored`){% else %}вшит из `ssh-host-key.bin`
         // (`crate::net::ssh::HOST_KEY`){% endif %}.{% if ota == "true" %} `reboot` — командой узлу `OTA` своим
         // клиентом, номер следом за остальными.{% endif %}
-        ::domain::SSH_FRAG{% if ssh_host_key == "config" %}<::domain::ssh::Stored<bsp::ConfigFlash>>{% endif %} as SSH =
+        ::domain::SSH_FRAG{% if ssh_host_key == "config" %}<::domain::ssh::Stored<crate::storage::ConfigFlash>>{% endif %} as SSH =
             ::domain::ssh::SshWiring {
-                stack: {{ board }}.net.stack,
+                stack: {{ board }}.ethernet.stack,
                 info: {{ device }},
                 app: {{ app_info }},
                 login: domain::console::PASSWORD,
 {%- if ssh_host_key == "config" %}
-                host_key: ::domain::ssh::Stored(::domain::settings::Settings::whole({{ board }}.config)),
+                host_key: ::domain::ssh::Stored(crate::storage::settings({{ board }}.flash{% if external_flash == "true" %}, {{ board }}.ext_flash_bus{% endif %})),
 {%- else %}
                 host_key: &crate::net::ssh::HOST_KEY,
 {%- endif %}
@@ -357,19 +360,19 @@ supervisor_graph! {
 
         // Узел `MQTT` — клиент брокера (`domain::mqtt`): адрес и префикс тем
         // — из `mqtt.toml` (`crate::net::mqtt::BROKER`, `PREFIX`),
-        // соединение — TCP-клиент на стеке `{{ board }}.net.stack` в буферах, которые
+        // соединение — TCP-клиент на стеке `{{ board }}.ethernet.stack` в буферах, которые
         // объявляет граф (`static T`), буферы `minimq` — слоты
         // `= static` фрагмента.{% if ota == "true" %} `cmd/reboot` — командой узлу `OTA` своим
         // клиентом, номер следом за остальными.{% endif %}
         ::domain::MQTT_FRAG as MQTT =
             ::domain::mqtt::MqttWiring {
-                stack: {{ board }}.net.stack,
+                stack: {{ board }}.ethernet.stack,
                 info: {{ device }},
                 app: {{ app_info }},
                 prefix: crate::net::mqtt::PREFIX,
                 broker: crate::net::mqtt::BROKER,
                 link: ::domain::mqtt::Tcp::new(
-                    {{ board }}.net.stack,
+                    {{ board }}.ethernet.stack,
                     static [u8; crate::net::mqtt::TCP_BUFFER],
                     static [u8; crate::net::mqtt::TCP_BUFFER],
                 ),
@@ -438,10 +441,10 @@ const WATCHDOG_CHECK_EVERY: Duration = Duration::from_millis(100);
 // цепочка сходилась бы там, где на быстром LSI железо её опережает.
 const _: () = assert!(
     ::domain::heartbeat::WATCHDOG.as_micros() + WATCHDOG_CHECK_EVERY.as_micros()
-        < bsp::wdg::HW_TIMEOUT_MIN_US
+        < cpu::wdg::HW_TIMEOUT_MIN_US
         && ::domain::cpu_load::WATCHDOG.as_micros() + WATCHDOG_CHECK_EVERY.as_micros()
-            < bsp::wdg::HW_TIMEOUT_MIN_US,
-    "таймаут узла плюс WATCHDOG_CHECK_EVERY обязан быть меньше bsp::wdg::HW_TIMEOUT_MIN_US (таймаут \
+            < cpu::wdg::HW_TIMEOUT_MIN_US,
+    "таймаут узла плюс WATCHDOG_CHECK_EVERY обязан быть меньше cpu::wdg::HW_TIMEOUT_MIN_US (таймаут \
      IWDG при самом быстром LSI): иначе железо сбросит МК раньше, чем узел заметит зависшую задачу, и \
      сброс придёт от железа, а не от supervisor"
 );
@@ -459,7 +462,7 @@ const _: () = assert!(
 /// move.
 pub struct Boot {
     /// Плата целиком: её поля делят узлы.
-    pub board: bsp::Board,
+    pub board: crate::Board,
     /// Свойства образа: версия и подтверждение — узлу OTA, версия текстом —
     /// в сведения об устройстве{% if has_modbus == "true" %} и Modbus{% endif %}.
     pub image: domain::ota::Image,

@@ -25,7 +25,7 @@ use crate::{
 
 /// Семейства, у которых двухбанковый режим стоит с завода, — по версии блока
 /// FLASH в метаданных, с именем варианта регистров option bytes в
-/// `crates-cross/bsp/src/banks.rs`. Заводское значение — знание документации, а
+/// `crates-cross/cpu/src/banks.rs`. Заводское значение — знание документации, а
 /// не метаданных: `DBANK`/`DUAL_BANK` = 1 в `FLASH_OPTR` нового кристалла (RM0440
 /// G4, RM0444 G0, RM0432 L4+, RM0438 L5; `OpenOCD` `stm32l4x.c`). У F4 с 1 MiB
 /// (`DB1M` = 0) и F76x/F77x (`nDBANK` = 1) с завода однобанковый, и их здесь нет.
@@ -129,7 +129,7 @@ pub fn run() -> anyhow::Result<()> {
             rngs.insert(suffix, (interrupt.clone(), clock));
         }
         // Одобанковая раскладка на чипе, который с завода двухбанковый: режим
-        // переключает прошивка (`bsp::banks`).
+        // переключает прошивка (`cpu::banks`).
         if bank_mode == "single-bank"
             && let Some(variant) = shared.flash_version.as_deref().and_then(|version| {
                 FACTORY_DUAL_BANK

@@ -246,7 +246,7 @@ quote                  = { version = "1.0" }
 # версия, парная к `embassy-stm32` 0.6 (те же `embassy-net-driver` 0.2,
 # `embassy-sync`, `embassy-time`, `embedded-io-async`). `smoltcp` под ним —
 # 0BSD, разрешение в `deny.toml`. DHCP и статический адрес — оба: что из них,
-# решает `bsp::net`.
+# решает `bsp::ethernet`.
 embassy-net            = { version = "0.9.1", features = [
 	"tcp",
 	"udp",
@@ -282,7 +282,7 @@ picoserve              = { version = "0.20.1", features = ["embassy"] }
 # {%- if net_services contains "ssh" %}
 # SSH-сервер (`domain::ssh`) поверх сокета `embassy-net`: без кучи, буферы
 # соединения — слоты узла. 0BSD. Случайность криптографии `sunset` берёт через
-# `getrandom` — в прошивке над RNG платы (`crates-cross/bsp/src/rng.rs`).
+# `getrandom` — в прошивке над RNG платы (`crates-cross/cpu/src/rng.rs`).
 sunset-async           = { version = "0.6.0" }
 # {%- endif %}
 # {%- if has_cli == "true" or net_services contains "ssh" %}

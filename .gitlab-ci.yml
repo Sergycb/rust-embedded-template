@@ -187,7 +187,7 @@ pins:check:
   rules:
     - if: $CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "merge_request_event"
       changes:
-        - crates-cross/bsp/src/**
+        - crates-cross/cpu/src/**
         # Обновление `stm32-metapac` (манифест `chip-info` renovate находит
         # правилом `**/Cargo.toml`) меняет те самые метаданные, по которым идёт
         # проверка; смена чипа правит обе чип-фичи сразу.

@@ -1,71 +1,17 @@
 #![no_std]
+//! Плата: рычаги, которые приложение получает от чипа, и интерфейсы над ними.
+//!
+//! Плата generic по [`ports::Cpu`] и о чипе не знает ничего: ни
+//! `embassy-stm32`, ни раскладки памяти, ни разделов. Что именно лежит в
+//! полях [`Board`], решает чип (`crates-cross/cpu`), а собирает их
+//! [`Board::new`].
 
-// Первым и с `#[macro_use]`: `split_resources!`, который объявляет
-// `assign_resources!`, виден `board.rs` только в текстовой области — модуль
-// с ним обязан стоять раньше. rustfmt такие модули не переставляет.
-#[macro_use]
-mod resources;
-{% if bank_switch != "" %}
-pub mod banks;
-{%- endif %}
 pub mod board;
-{%- if cache != "" %}
-pub mod cache;
-{%- endif %}
-{%- if has_can == "true" %}
-pub mod can;
-{%- endif %}
-{%- if cpu_freq_boost == "true" %}
-pub mod clocks;
-{%- endif %}
-{%- if cache contains "scb_d" %}
-pub mod dma_nc;
-{%- endif %}
-{%- if config_store == "eeprom" %}
-pub mod eeprom;
-{%- endif %}
-{%- if external_flash == "true" %}
-pub mod external;
-{%- endif %}
-{%- if shared_flash == "true" %}
-pub mod flash;
-{%- endif %}
-{%- if ota == "true" or config_store == "flash" or config_store == "external" or dma_nc == "true" %}
-pub mod layout;
-{%- endif %}
 {%- if has_net == "true" %}
-pub mod net;
-{%- endif %}
-pub mod reset;
-{%- if has_net == "true" %}
-{%- if rng_irq != "" %}
-pub mod rng;
-{%- endif %}
-{%- endif %}
-{%- if has_uart == "true" %}
-pub mod serial;
+pub mod ethernet;
 {%- endif %}
 {%- if has_usb == "true" %}
 pub mod usb;
 {%- endif %}
-{%- if graph == "true" %}
-pub mod wdg;
-{%- endif %}
 
-pub use board::{Board, ChipSpec};
-{%- if config == "true" %}
-{%- if config_store == "external" %}
-pub use external::ConfigFlash;
-{%- elsif config_store == "eeprom" %}
-pub use eeprom::ConfigFlash;
-{%- else %}
-pub use flash::ConfigFlash;
-{%- endif %}
-{%- endif %}
-{%- if ota == "true" %}
-{%- if ota_store == "external" %}
-pub use external::FirmwareFlash;
-{%- else %}
-pub use flash::FirmwareFlash;
-{%- endif %}
-{%- endif %}
+pub use board::Board;

@@ -1,0 +1,96 @@
+#![doc = include_str!("../../../docs/modules/cpu-system.md")]
+//! Сброс МК: программный — рычаг чипа, им приложение заканчивает панику, а
+//! узел OTA выполняет команду `Reboot` (порт [`ports::Reboot`]); причина
+//! прошлого — флаги `RCC`, их читает и снимает [`System::take_cause`] по
+//! вызову `main`.
+{%- if cache contains "scb_d" %}
+//!
+//! Сброс, а не голый `SCB::sys_reset`: кэш данных ядра M7 перед сбросом
+//! сбрасывается в RAM (`clean`), иначе дамп паники в регионе `PANIC` (он лежит
+//! в кэшируемой RAM — на F7 и H7) остался бы в кэше и пропал.
+{%- endif %}
+
+/// Система чипа: перезагрузка и причина прошлого сброса.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct System;
+
+impl System {
+    /// Сбрасывает МК; не возвращается.
+{%- if ota == "true" %}
+    ///
+    /// Своё имя, а не `reboot`: собственный метод с именем трейтового
+    /// [`ports::Reboot::reboot`] перекрыл бы его при вызове
+    /// (`docs/architecture.md`, «Метод — один, у самого типа»). Трейтовый —
+    /// [`ports::Reboot`] — оставлен узлу OTA.
+{%- endif %}
+{%- if cache contains "scb_d" %}
+    #[expect(
+        unsafe_code,
+        reason = "периферия ядра берётся через `steal()`: сброс — последнее, что выполняет прошивка"
+    )]
+{%- endif %}
+    pub fn reset_now(self) -> ! {
+{%- if cache contains "scb_d" %}
+        // SAFETY: после сброса ничего не выполняется, владельцу `Peripherals`
+        // конфликтовать не с кем.
+        let mut core = unsafe { cortex_m::Peripherals::steal() };
+        core.SCB.clean_dcache(&mut core.CPUID);
+{%- endif %}
+        cortex_m::peripheral::SCB::sys_reset()
+    }
+
+    /// Причина последнего сброса по флагам `RCC.{{ reset_reg | upcase }}` — имя в
+    /// `snake_case` (`pin`, `software`, `independent_watchdog`…); флаги снимает
+    /// (`RMVF`), иначе они копились бы от сброса к сбросу.
+    ///
+    /// Зовёт его один раз `main` приложения, первым делом — до `cpu::init`,
+    /// больше никто{% if ota == "true" %}: bootloader флаги не трогает, и до приложения они доходят
+    /// нетронутыми{% endif %}. Второе чтение за запуск увидело бы снятые флаги (`unknown`).
+    /// Флагов бывает несколько сразу — внутренний сброс выставляет и флаг вывода
+    /// `NRST`, — поэтому проверяются от самого конкретного: выход из low-power,
+    /// оконный сторож, независимый сторож, программный сброс, option bytes,
+    /// питание; вывод — последним. Поля регистра у семейств разные; набор под
+    /// этот чип выписан при генерации из `stm32-metapac`. Самое длинное имя —
+    /// `independent_watchdog`, 20 байт.
+    #[must_use]
+    pub fn take_cause(&mut self) -> &'static str {
+        let rcc = embassy_stm32::pac::RCC;
+        let flags = rcc.{{ reset_reg }}().read();
+        rcc.{{ reset_reg }}().modify(|w| w.set_rmvf(true));
+{%- if watchdog_peripheral == "IWDG2" %}
+        // Прошивка второго ядра (CM4) двухъядерного H7: его сброс отмечают
+        // свои флаги (RM0399, `RCC_RSR`: `LPWR2RSTF` 31, `WWDG2RSTF` 29,
+        // `IWDG2RSTF` 27, `SFT2RSTF` 25), а без них сторож и `sys_reset` этого
+        // ядра читались бы как вывод. У `stm32-metapac` полей для них нет —
+        // сырые биты; проверяются первыми, раз ядро — своё.
+        let core2 = [
+            (31, "low_power"),
+            (29, "window_watchdog"),
+            (27, "independent_watchdog"),
+            (25, "software"),
+        ];
+        if let Some((_, cause)) = core2
+            .into_iter()
+            .find(|&(bit, _)| flags.0 & (1 << bit) != 0)
+        {
+            return cause;
+        }
+{%- endif %}
+{%- assign pairs = reset_flags | split: " " %}
+{%- for pair in pairs %}
+{%- assign p = pair | split: ":" %}
+{%- capture name %}{% case p[1] %}{% when "LowPower" %}low_power{% when "WindowWatchdog" %}window_watchdog{% when "IndependentWatchdog" %}independent_watchdog{% when "Software" %}software{% when "OptionBytes" %}option_bytes{% when "PowerOn" %}power_on{% when "Pin" %}pin{% endcase %}{% endcapture %}
+        {% unless forloop.first %}} else {% endunless %}if flags.{{ p[0] | split: "," | join: "() || flags." }}() {
+            "{{ name }}"
+{%- endfor %}
+        } else {
+            "unknown"
+        }
+    }
+}
+
+impl ports::Reboot for System {
+    fn reboot(&mut self) -> ! {
+        self.reset_now()
+    }
+}

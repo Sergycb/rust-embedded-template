@@ -7,18 +7,11 @@ fn main() {
         std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR задаёт cargo"),
     );
 
-    // `[env]` из `crates-cross/.cargo/config.toml` читают `env!` в `bsp`;
-    // cargo не считает правку `config.toml` изменением входа build-скрипта,
-    // поэтому переменные объявляем явно.
-    for var in [
-        "WATCHDOG_TIMEOUT_US",
-        "STATE_ERASE_SIZE",
-        "SWAP_PAGE_SIZE",
-        "EXT_PAGE_SIZE",
-        "HTTP_CONNECTIONS",
-    ] {
-        println!("cargo::rerun-if-env-changed={var}");
-    }
+    // `[env]` из `crates-cross/.cargo/config.toml` читает `env!` в `bsp`
+    // (`HTTP_CONNECTIONS` в src/ethernet.rs); cargo не считает правку
+    // `config.toml` изменением входа build-скрипта, поэтому переменную
+    // объявляем явно.
+    println!("cargo::rerun-if-env-changed=HTTP_CONNECTIONS");
     if let Some(config) = manifest.parent().map(|dir| dir.join(".cargo/config.toml"))
         && config.exists()
     {

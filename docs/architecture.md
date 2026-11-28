@@ -6,14 +6,16 @@
 
 - **`domain`** (корень репозитория) — вся бизнес-логика. `no_std`, не знает про
   `embassy-stm32` и ни про какое железо, тестируется на host (`cargo xtask test host`).
-- **`crates-cross/`** — аппаратная прошивка STM32 (`bsp`, `app`{% if ota == "true" %}, `boot`{% endif %}, тесты на плате
+- **`crates-cross/`** — аппаратная прошивка STM32 (`cpu`, `bsp`, `app`{% if ota == "true" %}, `boot`{% endif %}, тесты на плате
   `target-tests`). Собирается под
   `{{target}}` (или другой ARM target), подключает `domain` как обычную
   path-зависимость.
 
-**Правило**: `cross` должен оставаться минимальным. `bsp` — рычаги платы:
-объекты под трейтами и портами, которыми можно управлять (потоки, шины, разделы
-флеша, {% if graph == "true" %}сторож, {% endif %}объекты драйверов микросхем платы), и DMA-буферы, которые нужны железу.
+**Правило**: `cross` должен оставаться минимальным. `cpu` знает чип: HAL,
+распиновку (`assign_resources!`), драйверы блоков, сырые ручки флеша и систему.
+`bsp` — рычаги платы: объекты под трейтами и портами, которыми можно управлять
+(потоки, шины, {% if graph == "true" %}сторож, {% endif %}USB-устройство, стек сети),
+и DMA-буферы, которые нужны железу.
 `app` — оркестрация задач (`Spawner`{% if graph == "true" %}, supervisor-графы, watchdog{% endif %}) и статики,
 которые домен получает ссылками: буферы узлов и транспортов{% if has_modbus == "true" %}, общая карта
 Modbus{% endif %}{% if net_services != "" %}, секреты служб{% endif %}. Адаптер, чей тип или память выбирает приложение,
@@ -29,19 +31,21 @@ Modbus{% endif %}{% if net_services != "" %}, секреты служб{% endif 
 выбрасывают всё, на что нет ссылок (узлы, `supervisor`, `embassy-executor`). Типы
 решения bootloader'а — `Screening`, `ScreenFailure` — живут там же, в
 `domain::ota::boot`; логика решения остаётся в `domain` и тестируется на хосте, а не
-копируется в `boot`. `bsp` по-прежнему `domain` не зависит (см. ниже).
+копируется в `boot`. `bsp` и `cpu` по-прежнему `domain` не зависят (см. ниже).
 
-От `bsp` bootloader зависит всегда: {% if bank_switch != "" %}переключение банков (`bsp::banks`), {% endif %}подъём
-HAL (`bsp::board::init_peripherals` — на умолчаниях `embassy-stm32`, не на конфиге
-платы), константы раскладки ({% if shared_flash == "true" %}`bsp::flash`{% if external_flash == "true" %}, {% endif %}{% endif %}{% if external_flash == "true" %}`bsp::external`{% endif %}{% if graph == "true" %},
-`bsp::wdg::HW_TIMEOUT_US`{% endif %}){% if ota_store == "external" %}, шина внешней флеши и её конец
-(`bsp::external::Bus`, `bsp::layout`){% endif %}, сброс МК в паникёре (`bsp::reset::Reboot`).
+От `cpu` bootloader зависит всегда: {% if bank_switch != "" %}переключение банков (`cpu::banks`), {% endif %}подъём
+HAL (`cpu::init` — на умолчаниях `embassy-stm32`, не на конфиге
+платы), константы раскладки ({% if shared_flash == "true" %}`cpu::flash`{% if external_flash == "true" %}, {% endif %}{% endif %}{% if external_flash == "true" %}`cpu::external`{% endif %}{% if graph == "true" %},
+`cpu::wdg::HW_TIMEOUT_US`{% endif %}){% if ota_store == "external" %}, шина внешней флеши и её конец
+(`cpu::external::Bus`, `app::layout`){% endif %}, сброс МК в паникёре (`cpu::System`).
 Своих копий этих констант у `boot` нет. Точка входа
 (`cortex-m-rt`) и паникёр у него свои: паника и фолт — решение прошивки, а не
 рычаг платы, и у `boot` это сброс МК без сообщения, а у `app` — дамп в
 `PANIC` и обработчик `HardFault` с причиной (`app/src/panic.rs`,
-`app/src/fault.rs`; в `bsp` обработчик с LTO попадал бы в образ `boot` целиком,
-около 14 KiB зоны). Всё, что в `bsp` нужно только бинарнику с исполнителем, — за
+`app/src/fault.rs`). Паникёр и транспорт лога (`defmt-rtt`) вынесены в
+`crates-cross/panic-handler`: библиотеку `app` линкует `target-tests`, где
+паникёр даёт `embedded-test`, и второй `#[panic_handler]` в том же образе не
+собрался бы. Всё, что в `cpu` нужно только бинарнику с исполнителем, — за
 фичей, которую включает `app`, а `boot` нет: `time-driver` (драйвер времени
 запускал бы TIM и оставлял его прерывание размаскированным на момент прыжка в
 приложение). Фичи сливаются по всем крейтам одного вызова cargo, поэтому `boot`
@@ -55,8 +59,10 @@ HAL (`bsp::board::init_peripherals` — на умолчаниях `embassy-stm32
 
 Как решить, куда класть новую зависимость/код:
 
-- Знает имя чипа или блока, раскладку флеша, создаёт DMA-буфер под железо,
-  строит объект драйвера микросхемы на плате → `bsp`.
+- Знает имя чипа или блока, поднимает HAL, держит распиновку, создаёт буфер
+  под DMA, строит объект драйвера микросхемы → `cpu`.
+- Собирает из рычагов `cpu` то, что плата отдаёт приложению, о чипе не зная
+  (USB-устройство, стек сети над драйвером) → `bsp`.
 - Обёртка над железом или стеком драйвера без чипа — то, из чего плата
   собирает рычаг (устройство USB, стек сети, EEPROM как флеш), заглушки
   драйверов до железа (`stub`) и фейки для host-тестов (`fake`) → `adapters-hw`.
@@ -162,7 +168,8 @@ build`){% endif %}. В `domain` трейтов нет. Всё, что нужно
 
 ### Адаптеры делятся по одному признаку — нужен ли чип
 
-Нужен чип — `bsp`; обёртка над железом без чипа — `adapters-hw`; реализации
+Нужен чип — `cpu`; сборка рычагов платы без чипа — `bsp`; обёртка над железом
+без чипа — `adapters-hw`; реализации
 портов, когда их несколько, — `adapters-logic`; остальное — `domain`; трейты —
 только `ports`.
 {%- capture hw_list %}{% if has_usb == "true" %}, устройство USB с потоком CDC (`adapters_hw::usb::Usb::new`){% endif %}{% if has_net == "true" %}, стек сети с фоновой работой (`adapters_hw::net::Net`){% endif %}{% if config_store == "eeprom" %}, EEPROM как `NorFlash`
@@ -182,7 +189,7 @@ build`){% endif %}. В `domain` трейтов нет. Всё, что нужно
 Адаптер, чей тип или память
 выбирает приложение, строит **compose-site** — место, где фрагмент получает
 типы и входы, — а не узел и не `bsp`: {% if graph == "true" %}привязка узла в `fragments:` графа — одним выражением над рычагом
-платы (`link({% if ota == "true" %}boot.{% endif %}board.net.stack, static [u8; N], …)`{% if ota == "true" %}, `Updater::new(boot.board.firmware)`{% endif %}),
+платы (`link({% if ota == "true" %}boot.{% endif %}board.net.stack, static [u8; N], …)`{% if ota == "true" %}, `Updater::new(boot.app::storage::ota(boot.board.flash))`{% endif %}),
 а память адаптера объявляет там же `static T`: ячейка на вхождение, в `.bss`,
 мимо стека{% else %}модуль задачи (подмодуль `crates-cross/app/src/tasks.rs`) над рычагом платы, память — его
 статики{% endif %}. Узел получает адаптер готовым во входе и только читает поле
@@ -200,22 +207,22 @@ build`){% endif %}. В `domain` трейтов нет. Всё, что нужно
 {%- assign sep = "" %}
 {%- capture types %}
 {%- if protocol_link == "true" %}{{ sep }}канал протокола (`adapters_logic::…`, `docs/modules/app.md`){% assign sep = ", " %}{% endif %}
-{%- if ota == "true" %}{{ sep }}`domain::ota::storage<bsp::FirmwareFlash>`{% assign sep = ", " %}{% endif %}
-{%- if config == "true" %}{{ sep }}`domain::settings::Settings<bsp::ConfigFlash>`{% assign sep = ", " %}{% endif %}
+{%- if ota == "true" %}{{ sep }}`domain::ota::storage<app::storage::Ota>`{% assign sep = ", " %}{% endif %}
+{%- if config == "true" %}{{ sep }}`domain::settings::Settings<app::storage::ConfigFlash>`{% assign sep = ", " %}{% endif %}
 {%- endcapture %}
 {%- if types != "" %} Тип адаптера —
 {% if graph == "true" %}параметр фрагмента{% else %}в модуле задачи{% endif %}: {{ types }}.
 {%- endif %} Та реализация, которой
-нужны `embassy_stm32::peripherals` или регистр, — в `crates-cross/bsp`: сброс МК
-(`bsp::reset`){% if graph == "true" %}, сторож над IWDG (`bsp::wdg`){% endif %}
-{%- if shared_flash == "true" or external_flash == "true" %}, куски флеша со своими страницами ({% if shared_flash == "true" %}`bsp::flash`{% if external_flash == "true" %},
-{% endif %}{% endif %}{% if external_flash == "true" %}`bsp::external`{% endif %}){% endif %}
+нужны `embassy_stm32::peripherals` или регистр, — в `crates-cross/cpu`: сброс МК
+(`cpu::system`){% if graph == "true" %}, сторож над IWDG (`cpu::wdg`){% endif %}
+{%- if shared_flash == "true" or external_flash == "true" %}, куски флеша со своими страницами ({% if shared_flash == "true" %}`cpu::flash`{% if external_flash == "true" %},
+{% endif %}{% endif %}{% if external_flash == "true" %}`cpu::external`{% endif %}){% endif %}
 {%- if has_uart == "true" or has_can == "true" or has_usb == "true" or has_net == "true" or external_flash == "true" %}, а также заглушки в полях `Board`, пока
-нет драйвера (в модуле `bsp` своего транспорта): место под драйвер платы{% endif %}{% if erase_page == "true" %}. Страница раздела
-(`flash_page::ErasePage`) — свой хостовый крейт{% if boot_partitioned == "true" %}, общий у `bsp` и `boot`{% endif %}: это
+нет драйвера (в модуле `cpu`/`bsp` своего транспорта): место под драйвер платы{% endif %}{% if erase_page == "true" %}. Страница раздела
+(`flash_page::ErasePage`) — свой хостовый крейт{% if boot_partitioned == "true" %}, общий у `cpu` и `boot`{% endif %}: это
 геометрия флеша, а не адаптер{% if ota == "true" %}, и обмен `embassy-boot` над ней проверяется на
-хосте{% endif %}{% endif %}. HAL-объект, который уже реализует нужный трейт, `bsp` отдаёт
-псевдонимом типа; своя структура в `bsp` — только обёртка там, где реализации
+хосте{% endif %}{% endif %}. HAL-объект, который уже реализует нужный трейт, `cpu` отдаёт
+псевдонимом типа; своя структура в `cpu` — только обёртка там, где реализации
 трейта нет.
 {%- assign sep = "" %}
 {%- capture wrappers %}
@@ -228,7 +235,7 @@ build`){% endif %}. В `domain` трейтов нет. Всё, что нужно
 без которых рычаг не собрать, и строит их сама плата в `Board::new` — {{ wrappers }}{% if has_usb == "true" or has_net == "true" %}; их память ({% if has_usb == "true" %}буферы класса CDC{% if has_net == "true" %}, {% endif %}{% endif %}{% if has_net == "true" %}`StackResources`
 стека{% endif %}) — статики `bsp`: кто строит адаптер, тот держит и его память{% endif %}; от `domain` `bsp` не зависит.
 {%- else %} От `domain` `bsp` не зависит.
-{%- endif %}{% if ota == "true" %} Разделы обновления плата отдаёт контрактом из `ports`
+{%- endif %}{% if ota == "true" %} Разделы обновления `app::storage` отдаёт контрактом из `ports`
 (`ports::Partitions`): адаптер над ними — тип домена.{% endif %}
 
 ### Трейт — только под несколько реализаций
@@ -238,7 +245,7 @@ build`){% endif %}. В `domain` трейтов нет. Всё, что нужно
 них остаётся один, и узел называет его конкретным типом, а ветки различаются
 Liquid'ом в коде логики (ниже, «Liquid в корневом workspace — внутри
 комментариев»). Одна реализация — конкретный тип без трейта. Все трейты живут в `ports`; в `domain` трейтов нет. Исключение из
-мерки одно — граница зависимостей: `domain` не видит `bsp`, и рычаг платы,
+мерки одно — граница зависимостей: `domain` не видит `bsp`/`cpu`, и рычаг платы,
 который зовёт логика узла, приходит к ней трейтом даже при одной реализации
 на плате{% if ota == "true" %} (`Reboot`){% endif %}.
 {%- assign sep = "" %}
@@ -248,9 +255,9 @@ Liquid'ом в коде логики (ниже, «Liquid в корневом wor
 {%- if has_modbus == "true" %}{{ sep }}`Registers` — карта slave'а: карта проекта, {% if ota == "true" %}окно OTA поверх неё, {% endif %}общая ручка на
 все узлы `MODBUS_*` вложены друг в друга{% assign sep = "; " %}{% endif %}
 {%- if modbus_master == "true" %}{{ sep }}`ModbusClient` — транспорт master'а (RTU, MBAP-TCP, MBAP-UDP){% assign sep = "; " %}{% endif %}
-{%- if has_can == "true" %}{{ sep }}`CanBus` — шина CAN: заглушка платы (`bsp::can::<транспорт>::Can`) и свой тип над
-контроллером, который ставит проект (`docs/modules/bsp-can.md`){% assign sep = "; " %}{% endif %}
-{%- if ota == "true" %}{{ sep }}`Reboot` — сброс МК: реализация на плате (`bsp::reset`), за границей, которую `domain` не видит{% assign sep = "; " %}{% endif %}{%- endcapture %}
+{%- if has_can == "true" %}{{ sep }}`CanBus` — шина CAN: заглушка платы (`cpu::can::<транспорт>::Can`) и свой тип над
+контроллером, который ставит проект (`docs/modules/cpu-can.md`){% assign sep = "; " %}{% endif %}
+{%- if ota == "true" %}{{ sep }}`Reboot` — сброс МК: реализация на плате (`cpu::system`), за границей, которую `domain` не видит{% assign sep = "; " %}{% endif %}{%- endcapture %}
 {%- if traits != "" %} В этом проекте: {{ traits }}.{% endif %}
 
 Одна реализация — конкретный тип прямо в узле, и тест идёт над ним же
@@ -275,9 +282,9 @@ Liquid'ом в коде логики (ниже, «Liquid в корневом wor
 есть ли за ним вторая реализация.
 
 Та же мерка — для датчиков и микросхем, которых в шаблоне ещё нет: объект
-драйвера строит `bsp` и отдаёт полем `Board` (рычаг платы), а тип драйвера —
+драйвера строит `cpu` и отдаёт полем `Board` (рычаг платы), а тип драйвера —
 `adapters-hw` или внешний крейт, пока ему хватает трейтов `embedded-hal` (нужен
-чип — `bsp`); трейт в `ports` — если датчиков одного назначения несколько и
+чип — `cpu`); трейт в `ports` — если датчиков одного назначения несколько и
 логика над ними одна. Светодиоду, у которого реализация одна, хватает трейта
 `embedded-hal`: свой трейт ему не нужен.
 {%- if graph == "true" %}
@@ -292,7 +299,7 @@ Liquid'ом в коде логики (ниже, «Liquid в корневом wor
 
 **Типы ресурсных слотов** узла OTA — параметры фрагмента: `name: OTA_FRAG<F, R, const PARKED: usize>`,
 а compose-site подставляет их в `fragments:` угловыми скобками
-(`::domain::OTA_FRAG<::domain::ota::storage<bsp::FirmwareFlash>, bsp::reset::Reboot, OTA_CMD_PARKED>`). Слот — `static`, тип ему
+(`::domain::OTA_FRAG<::domain::ota::storage<app::storage::Ota>, cpu::System, OTA_CMD_PARKED>`). Слот — `static`, тип ему
 нужен, а конкретный тип знает только `cross`; generic-`static` не бывает, и
 параметр — единственный способ фрагмента назвать тип, которого он не видит.
 Bound'ов у параметров нет намеренно: их держит сигнатура `ota::task`, и rustc
@@ -361,7 +368,7 @@ compose-site, а не фрагмент (там же).
    обновлении требует перечитывания; это подсказка, решает компилятор.
 
    `cargo xtask pins --check` читает текстом все исходники
-   `crates-cross/bsp/src` (`assign_resources!` — макрос, до раскрытия там
+   `crates-cross/cpu/src` (`assign_resources!` — макрос, до раскрытия там
    токены, а не дерево; каталогом, а не одним файлом, потому что объявить
    группы проект волен где угодно) и ловит единственное, что не ловит
    компилятор: занятый отладочный порт (ненулевой код возврата) и выводы
@@ -372,14 +379,14 @@ compose-site, а не фрагмент (там же).
 в `crates-host/chip-info/src/drift.rs`), имя и target (`CHIP`/`TARGET` в
 `crates-host/xtask/src/project.rs`, `target` и `runner` в
 `crates-cross/.cargo/config.toml`, `targets` в `rust-toolchain.toml`,
-`ChipSpec::chip` в `crates-cross/bsp/src/board.rs`), раскладка (`memory.x` у
+`CpuInfo::chip` в `crates-cross/cpu/src/cpu.rs`), раскладка (`memory.x` у
 `app`{% if ota == "true" %}, `boot`{% endif %} и `target-tests`{% if ota == "true" %}, страницы в `[env]`{% endif %}). Сменить чип надёжнее
 перегенерацией проекта с переносом своего кода. `chip-info` предупреждает только
 об одном: в `crates-cross/Cargo.toml` нет чип-фичи, под которую он собран.
 
 ## `Board` отдаёт рычаги платы, а не периферию и не протоколы
 
-Границу `bsp` → `app` пересекают рычаги платы — объекты, которыми можно
+Границу `cpu`/`bsp` → `app` пересекают рычаги платы — объекты, которыми можно
 управлять, под трейтами:
 {%- if has_uart == "true" or has_usb == "true" %} `embedded-io-async` ({% if has_uart == "true" %}поток UART{% if has_usb == "true" %}, {% endif %}{% endif %}{% if has_usb == "true" %}поток CDC{% endif %}),{% endif %}
 {%- if ota == "true" or config == "true" %}
@@ -387,9 +394,10 @@ compose-site, а не фрагмент (там же).
 сторожа (`watchdog::HardwareWatchdog`),{% endif %} порты из
 `crates-host/ports` там, где стандартного трейта нет{% if has_can == "true" or ota == "true" %} ({% if has_can == "true" %}`CanBus`{% if ota == "true" %}, {% endif %}{% endif %}{% if ota == "true" %}`Reboot`{% endif %}){% endif %}, — и объекты драйверов микросхем платы
 ({% if external_flash == "true" %}внешняя флеш W25Q; так же лягут{% else %}так лягут{% endif %} датчики и светодиоды; тип драйвера —
-`adapters-hw` или внешний крейт{% if external_flash == "true" %}, как `w25q`{% endif %}, а строит объект `bsp`). `Peripherals`,
-отдельные пины и группы `assign_resources!` наружу из `bsp` не выходят: их
-потребляет сам `Board::new`, собирая рычаги. Приложение работает через трейты
+`adapters-hw` или внешний крейт{% if external_flash == "true" %}, как `w25q`{% endif %}, а строит объект
+`cpu`). `Peripherals`, отдельные пины и группы `assign_resources!` наружу из
+`cpu`/`bsp` не выходят: их потребляет `cpu::init`, собирая драйверы, и
+`Board::new`, собирая рычаги. Приложение работает через трейты
 и про регистры не знает.
 
 Протоколов приложения над рычагами `bsp` не собирает: кадрирование транспорта, буферы
@@ -404,24 +412,24 @@ compose-site, а не фрагмент (там же).
 {%- if has_uart == "true" or has_can == "true" or has_usb == "true" or has_net == "true" or external_flash == "true" %}
 
 **Выводов шаблон не выбирает — до драйвера в поле `Board` стоит заглушка
-(в модуле `bsp` своего транспорта).** Какой блок и на каких ножках, знает только плата. Пока драйвер не
+(в модуле `cpu`/`bsp` своего транспорта).** Какой блок и на каких ножках, знает только плата. Пока драйвер не
 подставлен, проект с заглушкой собирается и запускается: приём ждёт вечно (узел
 спит, не занимая исполнитель), а передача молча выбрасывает данные. Заглушка —
 часть платы, а не приложения: «железо, которого пока нет». Заменить её —
 поменять псевдоним в модуле блока на драйвер `embassy-stm32`{% if has_can == "true" %} (у CAN — свой тип
-над контроллером, реализующий `ports::CanBus`){% endif %}; рецепт — `docs/modules/bsp-*.md`
-модуля блока.
+над контроллером, реализующий `ports::CanBus`){% endif %}; рецепт — `docs/modules/cpu-*.md`
+и `bsp-*.md` модуля блока.
 {%- endif %}
 
-`Board` один (`Board::new() -> Board`)
+`Board` один (`Board::new(cpu) -> Board`)
 {%- if has_usb == "true" or has_net == "true" %}, и пары, которые нельзя собрать порознь,
 собирает сама плата:{% if has_usb == "true" %} USB — `board.<транспорт>: bsp::usb::<транспорт>::Usb {
 device, cdc }` (классы `embassy-usb` регистрируются до постройки устройства;
 устройство — узлу `USB_*`, поток CDC — транспорту протокола){% endif %}{% if has_usb == "true" and has_net == "true" %} и{% endif %}{% if has_net == "true" %} сеть —
-`board.net: bsp::net::Net { runner, stack }` (их рождает один `embassy_net::new`;
+`board.ethernet: bsp::ethernet::Net { runner, stack }` (их рождает один `embassy_net::new`;
 фоновая работа — узлу `NET`, стек — сокетам узлов). Стек строит плата, поэтому
-и счёт сокетов у неё (`bsp::net::SOCKETS`, `docs/modules/bsp-net.md`).{% if rng_irq != "" %} Затравка стека{% if net_services contains "ssh" %} и бэкенд
-`getrandom`{% endif %} над RNG — тоже плата (`bsp::rng`).{% endif %}{% else %}.{% endif %}
+и счёт сокетов у неё (`bsp::ethernet::SOCKETS`, `docs/modules/bsp-ethernet.md`).{% if rng_irq != "" %} Затравка стека{% if net_services contains "ssh" %} и бэкенд
+`getrandom`{% endif %} над RNG — тоже `cpu` (`cpu::rng`).{% endif %}{% else %}.{% endif %}
 {%- else %}.
 {%- endif %} {% if graph == "true" %}Граф берёт `Board`
 `boot:`-объектом ({% if ota == "true" %}`boot: boot: Boot;` — плата и рядом свойства образа от бинарника,
@@ -433,7 +441,7 @@ device, cdc }` (классы `embassy-usb` регистрируются до п�
 `app`: тогда `app` строил бы объекты, которые по смыслу — рычаг
 платы. Прямое следствие того же правила: `embassy-stm32` нет и в манифесте `app` —
 даже драйвер времени (`time-driver-any`) приложение включает фичей
-`bsp/time-driver`.
+`cpu/time-driver`.
 {%- if graph == "true" %}
 
 Сторож (поле `watchdog`) отдаётся **заряженным, но не запущенным** (`wdg::UnarmedBoardWatchdog`), а
@@ -442,14 +450,15 @@ device, cdc }` (классы `embassy-usb` регистрируются до п�
 {%- endif %}
 {%- if ota == "true" %}
 
-{% if graph == "true" %}Кроме сторожа в граф уезжает поле `firmware`{% else %}В задачу узла OTA уезжает поле `firmware`{% endif %} (`bsp::FirmwareFlash` —
-`ports::Partitions`: разделы `DFU` и `STATE` со своими страницами, предел
-образа, равный `ACTIVE`, и отпечаток раскладки). {% if graph == "true" %}Compose-site кладёт его во вход узла,
-`domain::ota::OtaWiring { flash: Updater::new(boot.board.firmware), reboot: bsp::reset::Reboot, running_version, confirmed }`,
-прямо в `fragments:`: адаптер{% else %}Адаптер{% endif %} обновления (`domain::ota::Updater` — конкретный
-тип домена, трейта нет) над ним строит compose-site. Режет разделы плата — по символам
-`memory.x` (`bsp::layout`), тем же, что читает bootloader: где они лежат, знает
-раскладка, а она — дело платы. Сам `bsp` про `domain` не знает: логика приёма и
+Узел OTA получает `app::storage::Ota` (`ports::Partitions`: разделы `DFU` и
+`STATE` со своими страницами, предел образа, равный `ACTIVE`, и отпечаток
+раскладки). {% if graph == "true" %}Compose-site кладёт его во вход узла,
+`domain::ota::OtaWiring { flash: Updater::new(boot.app::storage::ota(boot.board.flash)), reboot: cpu::System, running_version, confirmed }`,
+прямо в `fragments:`{% else %}Носитель строит `app` из ручки `board.flash`{% endif %};
+адаптер (`domain::ota::Updater` — конкретный тип домена, трейта нет) — над ним.
+Разделы режет `app::storage` по символам
+`memory.x` (`app::layout`), тем же, что читает bootloader: где они лежат, знает
+раскладка, а она — дело приложения. Сам `cpu` про `domain` не знает: логика приёма и
 применения образа живёт в `domain::ota` и видит только `Partitions`; host-тесты подают
 адаптеру разделы в памяти, а саму нарезку проверяет сборка `crates-cross`. Образ приходит не по каналу,
 а командами узла протокола на вход узла `CMD` ({% if graph == "true" %}`request:` графа, клиент —
@@ -460,34 +469,35 @@ device, cdc }` (классы `embassy-usb` регистрируются до п�
 bootloader'е (`crates-cross/boot`), который подпись и проверяет.
 {%- endif %}
 
-**`Board::new` ничего не настраивает.** Он поднимает HAL (`embassy_stm32::init`
-— иначе `Peripherals` взять негде) и собирает объекты. {% if graph == "true" %}Ни сторож не
+**`cpu::init` — единственное место, где поднимается HAL**, и ничего «на будущее»
+не настраивает: `embassy_stm32::init` (иначе `Peripherals` взять негде), кэши,
+option bytes, распиновка; дальше — `Board::new(cpu)`, который только раскладывает
+готовые объекты по полям. {% if graph == "true" %}Ни сторож не
 взводится, ни периферия не{% else %}Периферия не{% endif %} конфигурируется «на будущее»:
-что делать с объектом, решает приложение, а не `bsp`. Отсюда и имя `new` вместо
-прежнего `init`.
+что делать с объектом, решает приложение.
 {%- if bank_switch != "" or cpu_freq_boost == "true" or cache != "" or core_baseline != "true" %}
 
-{% if bank_switch != "" or cpu_freq_boost == "true" %}Исключения — option bytes ({% if bank_switch != "" %}`bsp::banks::ensure_single_bank()`{% if cpu_freq_boost == "true" %}, {% endif %}{% endif %}{% if cpu_freq_boost == "true" %}`bsp::clocks::ensure_cpu_freq_boost()`{% endif %}){% if cache != "" %} и{% else %}.{% endif %}{% elsif cache != "" %}Исключение —{% endif %}{% if cache != "" %} `bsp::cache::enable()`: он включает
+{% if bank_switch != "" or cpu_freq_boost == "true" %}Исключения — option bytes ({% if bank_switch != "" %}`cpu::banks::ensure_single_bank()`{% if cpu_freq_boost == "true" %}, {% endif %}{% endif %}{% if cpu_freq_boost == "true" %}`cpu::clocks::ensure_cpu_freq_boost()`{% endif %}){% if cache != "" %} и{% else %}.{% endif %}{% elsif cache != "" %}Исключение —{% endif %}{% if cache != "" %} `cpu::cache::enable()`: он включает
 кэши чипа сразу за `init` (`docs/clocks.md`, «Кэши»). Это не «на будущее»: с
-завода кэши выключены, а знает, что есть у этого ядра, только `bsp`; периферию
+завода кэши выключены, а знает, что есть у этого ядра, только `cpu`; периферию
 ядра (`SCB`) он берёт через `steal()`, не трогая флаг `take()`.{% endif %}{% if core_baseline != "true" %} Ловушку
 деления включает не плата, а `app` (`app/src/fault.rs`, первой строкой `main`).{% endif %}
 {%- endif %}
 {%- if external_flash == "true" %}
 
-И внешняя флеш: её драйвер (`bsp::external`) в `Board::new` опознаёт микросхему
-— `init` читает JEDEC ID{% if ext_flash_bus != "spi" %} и ставит бит QE{% endif %}: без этого драйвер не знает объёма и
-не годится ни для одной операции. `init` ждёт микросхему (до 2 с, если она
-ещё стирает после сброса), поэтому `Board::new` асинхронный, а зовёт его первая
-задача исполнителя (`start` в `main` бинарника — `crates-cross/app/src/main.rs`{% if test_image == "true" %} и `src/bin/test-ota.rs`{% endif %}): ждёт он таймерами `embassy_time`, а
-встроенной очереди таймеров нужен waker исполнителя, не `block_on`; не прошёл —
-строка в лог, и флеш отказывает, а не паникует (docs/modules/bsp-external.md).
+И внешняя флеш: микросхему опознаёт `cpu::external::init` — читает JEDEC ID{% if ext_flash_bus != "spi" %} и ставит
+бит QE{% endif %}: без этого драйвер не знает объёма и не годится ни для одной
+операции. `init` ждёт микросхему (до 2 с, если она ещё стирает после сброса)
+таймерами `embassy_time`, поэтому зовёт его первая задача исполнителя (`start` в
+`main` бинарника — `crates-cross/app/src/main.rs`{% if test_image == "true" %} и `src/bin/test-ota.rs`{% endif %}), а не
+`block_on`: встроенной очереди таймеров нужен waker исполнителя. Не прошёл —
+строка в лог, и флеш отказывает, а не паникует (docs/modules/cpu-external.md).
 {%- endif %}
 
-**Данные — сведения о чипе, и только они.** `spec: bsp::ChipSpec` — имя,
+**Данные — сведения о чипе, и только они.** `cpu_info: C::CpuInfo` — имя,
 заводской UID, объём flash, частота `sys` — лежит полем `Board`, хотя порта не
 реализует: это то, что приложение сообщает о себе наружу (лог старта, ответ
-хосту), а знает это только `bsp`. Тип объявлен в `bsp`, рядом с `Board`, а не
+хосту), а знает это только `cpu`. Тип объявлен в `cpu`, а не
 в `ports`: домен его не читает, а порт заводится под то, чем пользуется
 логика (раздел «Трейт — только под несколько реализаций» выше).
 Понадобятся эти сведения домену — тогда тип и переедет в `ports`. По той же
@@ -495,8 +505,8 @@ bootloader'е (`crates-cross/boot`), который подпись и прове
 это диагностика старта, и её печатает `main` напрямую из `panic-persist`.
 
 Целиком `rcc::Clocks` полем не хранится: это тип HAL, и состав его полей
-генерируется под чип. `Board::new` печатает его в лог при старте, а `sys`
-числом кладёт в `ChipSpec` — их читает target-тест `clocks_match_intent`, см. `docs/clocks.md`.
+генерируется под чип. `cpu::init` печатает его в лог при старте, а `sys`
+числом кладёт в `CpuInfo` — их читает target-тест `clocks_match_intent`, см. `docs/clocks.md`.
 
 {%- if ota == "true" %}
 
@@ -545,15 +555,15 @@ host`), поэтому их исходник обязан оставаться �
 {%- capture levers %}
 {%- if has_uart == "true" %}{{ sep }}`pub type Serial = ...`{% assign sep = ", " %}{% endif %}
 {%- if has_usb == "true" %}{{ sep }}`bsp::usb::<транспорт>::Device`/`Cdc`{% assign sep = ", " %}{% endif %}
-{%- if has_net == "true" %}{{ sep }}`bsp::net::Stack`{% assign sep = ", " %}{% endif %}
-{%- if ota == "true" %}{{ sep }}`bsp::FirmwareFlash`{% assign sep = ", " %}{% endif %}
-{%- if config == "true" %}{{ sep }}`bsp::ConfigFlash`{% assign sep = ", " %}{% endif %}
+{%- if has_net == "true" %}{{ sep }}`bsp::ethernet::Stack`{% assign sep = ", " %}{% endif %}
+{%- if ota == "true" %}{{ sep }}`app::storage::Ota`{% assign sep = ", " %}{% endif %}
+{%- if config == "true" %}{{ sep }}`app::storage::ConfigFlash`{% assign sep = ", " %}{% endif %}
 {%- endcapture %}
 {%- assign sep = "" %}
 {%- capture concrete %}
 {%- if protocol_link == "true" %}{{ sep }}канал протокола из `adapters_logic` (`docs/modules/app.md`){% assign sep = ", " %}{% endif %}
-{%- if ota == "true" %}{{ sep }}`domain::ota::storage<bsp::FirmwareFlash>`{% assign sep = ", " %}{% endif %}
-{%- if config == "true" %}{{ sep }}`domain::settings::Settings<bsp::ConfigFlash>`{% assign sep = ", " %}{% endif %}
+{%- if ota == "true" %}{{ sep }}`domain::ota::storage<app::storage::Ota>`{% assign sep = ", " %}{% endif %}
+{%- if config == "true" %}{{ sep }}`domain::settings::Settings<app::storage::ConfigFlash>`{% assign sep = ", " %}{% endif %}
 {%- endcapture %} Рычагу платы его даёт `bsp` ({% if levers != "" %}{{ levers }}{% else %}`pub type X = ...`{% endif %})
 {%- if concrete != "" %}, адаптеру — конкретный тип прямо {% if graph == "true" %}во входе узла{% else %}в задаче{% endif %} ({{ concrete }} — модуля
 под одну строку `app` не заводит){% endif %}.

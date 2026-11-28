@@ -238,11 +238,11 @@ if ota == "true" {
 if config == "true" {
 	let store = variable::get("config_store");
 	if store == "eeprom" {
-		print("Настройки: внутренняя EEPROM чипа (crates-cross/bsp/src/eeprom.rs, поле Board::config); хранилище над ней (domain::settings) строит приложение и отдаёт узлу-потребителю.");
+		print("Настройки: внутренняя EEPROM чипа (crates-cross/cpu/src/eeprom.rs, ручка board.flash); хранилище над ней (domain::settings) строит приложение и отдаёт узлу-потребителю.");
 	} else if store == "external" {
-		print("Настройки: внешняя флеш — подставьте шину драйвера в crates-cross/bsp/src/external.rs (поле Board::config); хранилище над ней (domain::settings) строит приложение и отдаёт узлу-потребителю.");
+		print("Настройки: внешняя флеш — подставьте шину драйвера в crates-cross/cpu/src/external.rs (ручка board.ext_flash_bus); хранилище над ней (domain::settings) строит приложение и отдаёт узлу-потребителю.");
 	} else {
-		print("Настройки: раздел CONFIG во flash (crates-cross/bsp/src/flash.rs, поле Board::config); хранилище над ним (domain::settings) строит приложение и отдаёт узлу-потребителю.");
+		print("Настройки: раздел CONFIG во flash (crates-cross/cpu/src/flash.rs, ручка board.flash); хранилище над ним (domain::settings) строит приложение и отдаёт узлу-потребителю.");
 	}
 }
 if variable::get("graph") == "true" {
@@ -280,16 +280,16 @@ if variable::get("graph") == "true" {
 				net_block = block;
 				print(line + ".");
 			} else {
-				let file = if kind == "uart" { "serial" } else { kind };
-				print(line + "; заглушка — crates-cross/bsp/src/" + file + ".rs (cargo xtask pins " + block + " --snippet).");
+				let file = if kind == "uart" { "com" } else { kind };
+				print(line + "; заглушка — crates-cross/cpu/src/" + file + ".rs (cargo xtask pins " + block + " --snippet).");
 			}
 		}
 	}
 	if net_block != "" {
-		print("Сеть: фоновый узел NET — стек embassy-net над заглушкой устройства, оба в crates-cross/bsp/src/net.rs (cargo xtask pins " + net_block + " --snippet).");
+		print("Сеть: фоновый узел NET — стек embassy-net над заглушкой устройства, стек — в crates-cross/bsp/src/ethernet.rs, устройство — в crates-cross/cpu/src/eth.rs (cargo xtask pins " + net_block + " --snippet).");
 	}
 	if blocks != "" {
-		print("Блоки интерфейсов назначены по умолчанию: " + blocks + ". Сменить блок и задать выводы своей платы — crates-cross/bsp/src/resources.rs (cargo xtask pins <БЛОК> --snippet печатает готовую группу); имена транспортов (поле Board, модули bsp и app, имена узлов) остаются от блока по умолчанию.");
+		print("Блоки интерфейсов назначены по умолчанию: " + blocks + ". Сменить блок и задать выводы своей платы — crates-cross/cpu/src/wiring.rs (cargo xtask pins <БЛОК> --snippet печатает готовую группу); имена транспортов (поле Board, модули cpu и app, имена узлов) остаются от блока по умолчанию.");
 	}
 	if variable::get("has_modbus") == "true" {
 		print("Modbus: карта регистров — crates-host/domain/src/modbus/map.rs (заготовка EmptyRegisters); одна на все узлы, тип подставляет crates-cross/app/src/registers.rs (псевдоним Map, строится Map::default()).");
@@ -328,12 +328,12 @@ print("  cargo xtask lint        # проверить, что всё на мес
 print("  cargo xtask test host   # тесты domain на хосте; этапы с платой — README");
 print("");
 if variable::get("graph") == "true" {
-	print("Что заполнить под свою плату: crates-cross/bsp/src/resources.rs (распиновка),");
+	print("Что заполнить под свою плату: crates-cross/cpu/src/wiring.rs (распиновка),");
 	print("crates-cross/app/src/graph.rs (граф задач), crates-host/domain/ (логика).");
 } else {
 	// Файла графа в таком проекте нет вовсе — его удаляет chip-select.rhai
 	// вместе с отключением графа, и звать сюда некуда.
-	print("Что заполнить под свою плату: crates-cross/bsp/src/resources.rs (распиновка),");
+	print("Что заполнить под свою плату: crates-cross/cpu/src/wiring.rs (распиновка),");
 	print("crates-host/domain/ (логика).");
 }
 // Справочник упомянут ровно здесь, а не в списке «Дальше» выше: он нужен не

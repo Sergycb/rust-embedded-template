@@ -3,6 +3,7 @@
 {%- assign xs = links | split: "," %}
 {%- for l in xs %}
 {%- assign f = l | split: ":" %}
+{%- assign parts = f[4] | split: "_" %}
 {%- if f[0] == "usb" %}
 
 /// Узел `USB_{{ f[4] | upcase }}`.
@@ -16,7 +17,7 @@ pub mod {{ f[4] }} {
     use embassy_executor::Spawner;
 
     #[embassy_executor::task]
-    async fn task(mut device: bsp::usb::{{ f[4] }}::Device) {
+    async fn task(mut device: crate::{% for part in parts %}{{ part | capitalize }}{% endfor %}Device) {
 {%- if ota == "true" %}
         // На шину — после подтверждения образа (`crate::tasks::ota`).
         crate::tasks::ota::READY_{{ f[4] | upcase }}.wait().await;
@@ -29,7 +30,7 @@ pub mod {{ f[4] }} {
     }
 
     /// Спавнит узел.
-    pub fn spawn(spawner: Spawner, device: bsp::usb::{{ f[4] }}::Device) {
+    pub fn spawn(spawner: Spawner, device: crate::{% for part in parts %}{{ part | capitalize }}{% endfor %}Device) {
         let token = task(device);
         spawner.spawn(token.expect("задача USB_{{ f[4] | upcase }} свежая: спавнится один раз"));
     }

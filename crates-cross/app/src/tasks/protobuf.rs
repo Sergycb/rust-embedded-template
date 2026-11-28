@@ -6,6 +6,7 @@
 {%- assign client = 0 %}
 {%- for l in xs %}
 {%- assign f = l | split: ":" %}
+{%- assign parts = f[4] | split: "_" %}
 {%- if f[3] == "protobuf" %}
 
 /// Узел `PROTOBUF_{{ f[4] | upcase }}`.
@@ -22,7 +23,7 @@ pub mod {{ f[4] }} {
     const FRAME: usize = ports::cobs::tx_len(domain::protobuf::RESPONSE_MAX);
 
     /// Рычаг платы, над которым строится канал (`board.{{ f[4] }}{% if f[0] == "usb" %}.cdc{% endif %}`).
-    type Source = {% if f[0] == "usb" %}bsp::usb::{{ f[4] }}::Cdc{% else %}bsp::serial::{{ f[4] }}::Serial{% endif %};
+    type Source = {% if f[0] == "usb" %}crate::{% for part in parts %}{{ part | capitalize }}{% endfor %}Cdc{% else %}cpu::com::{{ f[4] }}::Serial{% endif %};
 
     // Память канала и буфер ответа: граф объявил бы её сам (`static T`), без
     // него — статики задачи. `ConstStaticCell` — нули известны при компиляции

@@ -1,17 +1,25 @@
-//! `STATE` и `DFU` на внешней флеши: драйвер и страница обмена.
+//! `STATE` и `DFU` на внешней флеши: состояние драйвера и страница обмена.
+//!
+//! Драйвер и его шину держит `cpu::external` — тот же, что у приложения;
+//! блокирующий, потому что bootloader не поднимает исполнитель. `cpu::init`
+//! драйвер только собирает, микросхему опознаёт `cpu::external::init` (его
+//! зовёт `main` до проверки подписи). Здесь — забор опознанного состояния из
+//! руки чипа и строгий `prepare` над ним.
 
 // Страница обмена, под которую посчитана раскладка (`memory.x`): `ACTIVE`
 // кратен ей. Обмен идёт страницами `max(ACTIVE::ERASE_SIZE,
 // DFU::ERASE_SIZE)`, и драйвер с более крупным стиранием потребовал бы
 // `ACTIVE`, кратного уже его странице, — `assert_partitions` паниковал бы на
 // старте. Поэтому стирание драйвера обязано эту страницу делить. Число — то
-// же, что у приложения (`bsp::external`).
-use bsp::external::EXT_PAGE_SIZE;
+// же, что у приложения (`cpu::external`).
+use cpu::external::{EXT_PAGE_SIZE, ExtFlashState};
 use embassy_boot_stm32::{BootLoader, BootLoaderConfig};
 use embedded_storage::nor_flash::NorFlash;
 
+use cpu::flash::WRITE_SIZE;
+
 const _: () = assert!(
-    EXT_PAGE_SIZE.is_multiple_of(<ExternalFlash as NorFlash>::ERASE_SIZE),
+    EXT_PAGE_SIZE.is_multiple_of(<ExtFlashState as NorFlash>::ERASE_SIZE),
     "стирание драйвера внешней флеши не делит страницу обмена (EXT_PAGE_SIZE): \
      перегенерируйте раскладку или возьмите стирание мельче (сектор 4 KiB)"
 );
@@ -19,63 +27,32 @@ const _: () = assert!(
 /// Журнал `STATE` в раскладке посчитан на слово не шире 32 байт — столько же
 /// держит буфер адаптера в приложении (`ports::MAX_WRITE_SIZE`).
 const _: () = assert!(
-    <ExternalFlash as NorFlash>::WRITE_SIZE <= ports::MAX_WRITE_SIZE,
+    <ExtFlashState as NorFlash>::WRITE_SIZE <= ports::MAX_WRITE_SIZE,
     "слово записи драйвера внешней флеши шире 32 байт"
 );
 
 /// Буфер обмена: кратен слову записи и внутреннего флеша (`ACTIVE`), и
 /// внешнего (`DFU`), и не меньше слова `STATE` — требования `prepare_boot`.
 /// Оба слова — степени двойки, так что общее кратное — большее из них.
-const BUFFER_SIZE: usize = if <ExternalFlash as NorFlash>::WRITE_SIZE > {{swap_buffer}} {
-    <ExternalFlash as NorFlash>::WRITE_SIZE
+const BUFFER_SIZE: usize = if <ExtFlashState as NorFlash>::WRITE_SIZE > {{swap_buffer}} {
+    <ExtFlashState as NorFlash>::WRITE_SIZE
 } else {
     {{swap_buffer}}
 };
 
 const _: () = assert!(
-    BUFFER_SIZE.is_multiple_of(embassy_stm32::flash::WRITE_SIZE),
-    "буфер обмена не кратен слову записи внутреннего флеша (embassy_stm32::flash::WRITE_SIZE): \
+    BUFFER_SIZE.is_multiple_of(WRITE_SIZE),
+    "буфер обмена не кратен слову записи внутреннего флеша (cpu::flash::WRITE_SIZE): \
      проверьте swap_buffer из генерации"
 );
 
-/// Драйвер внешней флеши, на которой лежат `STATE` и `DFU`: та же W25Q, что
-/// у приложения (`bsp::external`), но блокирующая — bootloader не поднимает
-/// исполнитель. Шина — пока заглушка; подключая микросхему, плата меняет её
-/// здесь и в `bsp::external` (docs/modules/bsp-external.md).
-///
-/// Задержки — на `SysTick` ядра: исполнителя и драйвера времени здесь нет.
-/// Счётчик `SysTick` включается только на время задержки, и прыжок в
-/// приложение застаёт его выключенным.
-pub(crate) type ExternalFlash = w25q::device::W25qSync<bsp::external::Bus, cortex_m::delay::Delay>;
-
-/// Собирает драйвер и опознаёт микросхему. Не прошёл `init` или микросхема
-/// меньше разделов (`bsp::layout::ext_flash_end`) — строка в лог, и драйвер
-/// отказывает в любой операции: `STATE` не читается, и [`prepare`] загружает
-/// текущий образ без обмена, а не упирается посреди обмена в конец микросхемы.
-///
-/// # Panics
-///
-/// Если периферию ядра уже кто-то взял (`cortex_m::Peripherals::take`): у
-/// `SysTick` задержки один владелец, и зовётся `new` один раз.
-pub(crate) fn new(sys_hz: u32) -> ExternalFlash {
-    let core = cortex_m::Peripherals::take().expect("boot: периферия ядра уже взята");
-    let delay = cortex_m::delay::Delay::new(core.SYST, sys_hz);
-    let mut flash = ExternalFlash::new(bsp::external::StubBus, delay);
-    match flash.init() {
-        Ok(_) if flash.capacity() >= bsp::layout::ext_flash_end() => flash,
-        Ok(_) => {
-            defmt::error!(
-                "boot: внешняя флеш {=u32} KiB меньше разделов — загружается текущий образ",
-                flash.capacity() / 1024
-            );
-            let (bus, delay) = flash.release();
-            ExternalFlash::new(bus, delay)
-        }
-        Err(err) => {
-            defmt::warn!("boot: внешняя флеш не отвечает: {}", err);
-            flash
-        }
-    }
+/// Забирает опознанный драйвер из руки чипа. После этого статик чипа держит
+/// [`ExtFlashState::Broken`] — приложение его не увидит: у него своя копия
+/// статика и свой `init`.
+pub(crate) fn take(handle: cpu::external::ExtFlash) -> ExtFlashState {
+    handle
+        .lock
+        .lock(|state| core::mem::replace(&mut *state.borrow_mut(), ExtFlashState::Broken))
 }
 
 /// Строгий `BootLoader::prepare`: зовётся, когда проверка нового образа

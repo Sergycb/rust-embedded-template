@@ -1,8 +1,8 @@
 //! Порт шины CAN.
 //!
-//! Реализует `crates-cross/bsp`: в шаблоне — заглушка `bsp::can::<транспорт>::Can` (кадр —
+//! Реализует `crates-cross/cpu`: в шаблоне — заглушка `cpu::can::<транспорт>::Can` (кадр —
 //! `embassy_stm32::can::Frame`, он уже реализует `embedded_can::Frame`); свой
-//! тип над контроллером проект ставит по рецепту `docs/modules/bsp-can.md`.
+//! тип над контроллером проект ставит по рецепту `docs/modules/cpu-can.md`.
 // {%- if has_canopen == "true" %}
 //! Пользуется им узел CANopen `domain::canopen`.
 // {%- endif %}

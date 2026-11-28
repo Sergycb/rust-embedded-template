@@ -17,10 +17,10 @@ pub mod {{ f[4] }} {
 {%- endif %}
 
     /// Хранилище узла: {% if config == "true" %}раздел настроек платы{% else %}раздела настроек нет — объекты и адрес не сохраняются{% endif %}.
-    type Store = Option<domain::settings::Settings<{% if config == "true" %}bsp::ConfigFlash{% else %}domain::settings::NoFlash{% endif %}>>;
+    type Store = Option<domain::settings::Settings<{% if config == "true" %}crate::storage::ConfigFlash{% else %}domain::settings::NoFlash{% endif %}>>;
 
     /// Шина узла.
-    type Bus = bsp::can::{{ f[4] }}::Can;
+    type Bus = cpu::can::{{ f[4] }}::Can;
 
 {%- if ota == "true" %}
 

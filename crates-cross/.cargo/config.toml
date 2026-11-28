@@ -19,7 +19,7 @@ rustflags = [
 	"link-arg=--nmagic",
 {%- if net_services contains "ssh" %}
 	# Своего источника у `getrandom` на `target_os = "none"` нет: бэкенд —
-	# `__getrandom_v03_custom` в `bsp/src/rng.rs`, над RNG платы.
+	# `__getrandom_v03_custom` в `cpu/src/rng.rs`, над RNG платы.
 	"--cfg",
 	'getrandom_backend="custom"',
 {%- endif %}
@@ -47,9 +47,9 @@ rustflags = [
 # только от своего ядра — общее с другим ядром в атомиках держать нельзя ни при
 # каком варианте, для этого HSEM.
 #
-# Здесь, а не фичей в манифестах `app` и `bsp`: rustflags цели доезжают до
-# КАЖДОГО крейта, собираемого под неё, включая зависимости и сборку одного `bsp`
-# (заготовки `pins --snippet`), тогда как фича включалась бы отдельно в каждом
+# Здесь, а не фичей в манифестах `app`, `bsp` и `cpu`: rustflags цели доезжают
+# до КАЖДОГО крейта, собираемого под неё, включая зависимости и сборку одного
+# `cpu` (заготовки `pins --snippet`), тогда как фича включалась бы отдельно в каждом
 # члене, которому она нужна транзитивно, и терялась при сборке члена в одиночку.
 # Cargo складывает эту секцию с `[target.'cfg(...)']` выше, а не выбирает одну
 # из них (проверено `cargo build -v`: у `portable_atomic` в одной команде и
@@ -63,16 +63,16 @@ rustflags = ["--cfg", "portable_atomic_unsafe_assume_single_core"]
 DEFMT_LOG = "info"
 {%- if graph == "true" %}
 # Аппаратный таймаут сторожа, мкс. Здесь, а не константой в коде, потому что
-# у неё есть обоснование и пара — `bsp::wdg::HW_TIMEOUT_US` (там же почему
+# у неё есть обоснование и пара — `cpu::wdg::HW_TIMEOUT_US` (там же почему
 # цифра такая){% if ota == "true" %}; bootloader берёт её оттуда же{% endif %} (docs/watchdog.md).
 WATCHDOG_TIMEOUT_US = "13000000"
 {%- endif %}
 {%- if ota == "true" %}
 # Страницы раздела, посчитанные при генерации (`memory.x` считается теми же
 # цифрами): их ждёт компилятор — параметром `ErasePage` и `const`-assert'ами, —
-# и приложение, и bootloader берут их из `bsp` (`{% if ota_store == "external" %}bsp::external{% else %}bsp::flash{% endif %}`; docs/flash.md).
+# и приложение, и bootloader берут их из `cpu` (`{% if ota_store == "external" %}cpu::external{% else %}cpu::flash{% endif %}`; docs/flash.md).
 # Границы разделов и регионов (`ACTIVE`, `CONFIG`, конец внешней флеши, `DMA_NC`)
-# здесь не лежат: это символы `memory.x`, `bsp::layout` читает их линкерными
+# здесь не лежат: это символы `memory.x`, `app::layout` читает их линкерными
 # символами, а проверки над ними — `ASSERT` там же.
 {%- if ota_store == "external" %}
 # Страница обмена с внешней флешью: стирание драйвера обязано её делить.
@@ -83,7 +83,7 @@ EXT_PAGE_SIZE = "{{ext_page_size | remove: '_'}}"
 STATE_ERASE_SIZE = "{{state_erase_size | remove: '_'}}"
 {%- else %}
 # Ручная раскладка: впишите страницу сектора `BOOTLOADER_STATE` — без неё
-# проект не соберётся (её читает `bsp::flash::STATE_ERASE_SIZE`).
+# проект не соберётся (её читает `cpu::flash::STATE_ERASE_SIZE`).
 # STATE_ERASE_SIZE = "…"
 {%- endif %}
 {%- if swap_paged == "true" %}
@@ -96,6 +96,6 @@ SWAP_PAGE_SIZE = "{{page_size | remove: '_'}}"
 # Соединений REST API разом — копий пула узлов `HTTP` (`app::net`, пул в
 # `app/src/graph.rs`): у каждой свой сокет и свои буферы. Меняете — меняйте и
 # литерал пула в графе (DSL не берёт константу); сокеты под пул считает
-# `bsp::net` по этому же числу.
+# `bsp::ethernet` по этому же числу.
 HTTP_CONNECTIONS = "{{http_connections}}"
 {%- endif %}

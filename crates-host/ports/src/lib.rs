@@ -28,7 +28,8 @@
 //! в `adapters-logic` — каналы и транспорты протоколов над потоком и сокетами;
 // {%- endif %}
 // {%- if ota == "true" or has_can == "true" %}
-//! в `crates-cross/bsp` — то, чему нужна периферия конкретного чипа;
+//! в `crates-cross/cpu` — периферия конкретного чипа и её распиновка, а в
+//! `crates-cross/bsp` — плата над ней;
 // {%- endif %}
 // {%- if has_modbus == "true" %}
 //! в `domain` — карта регистров;
@@ -36,8 +37,8 @@
 //! почему так — docs/architecture.md, «Трейт — только под несколько реализаций».
 // {%- endif %}
 //!
-//! Отсюда и то, чего здесь нет: сведения о чипе (`bsp::ChipSpec`) — данные, а
-//! не поведение, и их тип живёт в `bsp`, рядом с `Board`. Причина сброса и
+//! Отсюда и то, чего здесь нет: сведения о чипе (`cpu::CpuInfo`) — данные, а
+//! не поведение, и их тип живёт в `cpu`, рядом с `Cpu`. Причина сброса и
 //! сообщение прошлой паники приходят в сведения об устройстве строками от `app`.
 //!
 //! Нет здесь и того, что нужно только логике, — команд узлам, ошибок её
@@ -75,6 +76,12 @@
 pub mod can;
 
 // {%- endif %}
+/// Чип и его распиновка: периферия, которую плата получает одним трейтом.
+pub mod cpu;
+
+/// Перезагрузка МК: команда узла OTA и конец паники.
+pub mod reboot;
+
 // {%- if link_port == "true" %}
 // {%- if adapters_logic == "true" %}
 /// Кадровый канал связи: сообщения целиком, поверх датаграмм или адаптера
@@ -111,6 +118,8 @@ pub mod ota;
 // {%- if has_can == "true" %}
 pub use can::CanBus;
 // {%- endif %}
+pub use cpu::Cpu;
+pub use reboot::Reboot;
 // {%- if link_port == "true" %}
 // {%- if adapters_logic == "true" %}
 pub use link::{FrameDuplex, FrameLink, LinkError};
@@ -125,7 +134,6 @@ pub use modbus::{MasterError, ModbusClient};
 // {%- endif %}
 // {%- endif %}
 // {%- if ota == "true" %}
-pub use ota::reboot::Reboot;
 pub use ota::update::{
     LAYOUT_SYMBOLS, MAX_WRITE_SIZE, Partitions, PendingImage, layout_fingerprint,
 };

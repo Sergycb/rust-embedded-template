@@ -25,7 +25,7 @@ use super::load::Sample;
 /// сектора флеша при приёме образа блокирует исполнитель на секунды. Нижнюю
 /// границу — больше интервала — держит `const`-assert ниже. Второе звено, с
 /// другого конца, не здесь:
-/// `WATCHDOG + WATCHDOG_CHECK_EVERY < bsp::wdg::HW_TIMEOUT_MIN_US`
+/// `WATCHDOG + WATCHDOG_CHECK_EVERY < cpu::wdg::HW_TIMEOUT_MIN_US`
 /// (`docs/watchdog.md`) — его держит `const`-assert в `app/src/graph.rs`, где
 /// видны оба конца.
 pub const WATCHDOG: Duration = Duration::from_secs(7);

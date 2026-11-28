@@ -42,8 +42,8 @@ fn family_table() {
     //
     // ОСОЗНАННОЕ ОГРАНИЧЕНИЕ (не забытая деталь, зафиксировано по решению
     // пользователя): для выбранного суффикса каскад выставляет переменную
-    // `dual_core` (см. is_dual_core() и конец скрипта), по которой `Board::new()`
-    // в crates-cross/bsp/src/board.rs зовёт `embassy_stm32::init_primary()`
+    // `dual_core` (см. is_dual_core() и конец скрипта), по которой `cpu::init()`
+    // в crates-cross/cpu/src/cpu.rs зовёт `embassy_stm32::init_primary()`
     // вместо недоступного на dual-core `init()` — сгенерированный `cross`
     // собирается. Но код пишется только под ОДНО (то, что выбрано в
     // каскаде) ядро: второй образ шаблон не генерирует, взаимодействие с
@@ -258,6 +258,37 @@ fn size_in_bytes(text) {
     parse_int(raw)
 }
 
+/// Число в том виде, в каком его принимает Rust: без суффиксов `memory.x`
+/// (`"32K"` → `"32_768"`), длинные разряды — с подчёркиваниями, чтобы
+/// `clippy::unreadable_literal` не ругался на литерал. Так `cpu::dma_nc`
+/// получает границы MPU-регионов числами: линкерных символов он не читает.
+fn rust_number(text) {
+    let raw = text;
+    raw.replace("_", "");
+    if raw.starts_with("0x") || raw.starts_with("0X") {
+        let digits = raw.sub_string(2, raw.len - 2);
+        let out = "0x";
+        let n = digits.len;
+        for i in 0..n {
+            if i > 0 && (n - i) % 4 == 0 {
+                out += "_";
+            }
+            out += digits.sub_string(i, 1);
+        }
+        return out;
+    }
+    let digits = size_in_bytes(raw).to_string();
+    let out = "";
+    let n = digits.len;
+    for i in 0..n {
+        if i > 0 && (n - i) % 3 == 0 {
+            out += "_";
+        }
+        out += digits.sub_string(i, 1);
+    }
+    out
+}
+
 /// Число из таблицы раскладки с разделителями, как в Rust: `"131_072"`; без них
 /// (`"131072"`) тоже годится. `parse_int` подчёркиваний не знает.
 fn plain_number(text) {
@@ -338,7 +369,7 @@ fn plan(m, erase_zero, wants, limits) {
     // начале стоит таблица векторов приложения. С OTA — там, где его положил
     // chip-data-gen (`config_ota_settings_*`): в мелких секторах перед ACTIVE,
     // если так ACTIVE больше (F2/F4/F7), иначе тоже в хвосте. Страница — сектор
-    // под разделом (`flash_page::ErasePage` в bsp::flash). Нужен только при
+    // под разделом (`flash_page::ErasePage` в `app`). Нужен только при
     // `in_flash`, а значит, не при внешней OTA.
     let settings_key = if ota { "config_ota_settings_" } else { "config_" };
 
@@ -755,13 +786,13 @@ import "chip-data/bank_mode" as bank_mode_data;
 const BANK_MODE = bank_mode_data::BANK_MODE;
 
 // Чипы, у которых раскладка однобанковая, а с завода флеш двухбанковый (G0B/G0C,
-// G4 cat3, L4+, L5): режим переключает сама прошивка (crates-cross/bsp/src/banks.rs,
+// G4 cat3, L4+, L5): режим переключает сама прошивка (crates-cross/cpu/src/banks.rs,
 // docs/flash.md). Значение — вариант регистров option bytes.
 import "chip-data/bank_switch" as bank_switch_data;
 const BANK_SWITCH = bank_switch_data::BANK_SWITCH;
 
 // Как у чипа зовётся блок независимого сторожевого таймера. Нужно затем, что
-// `bsp` объявляет поле типа `wdg::Iwdg<peripherals::IWDG…>`, а имя типа в
+// `cpu` объявляет поле типа `wdg::Iwdg<peripherals::IWDG…>`, а имя типа в
 // embassy-stm32 — ровно то, что стоит в метаданных: у подавляющего
 // большинства чипов `IWDG`, у H7 `IWDG1`, у двухъядерных H7 ещё и `IWDG2`
 // (первый принадлежит ядру CM7, второй — CM4; метаданные обоих ядер
@@ -779,11 +810,11 @@ const WATCHDOG = watchdog_data::WATCHDOG;
 // Чипы с option byte CPU_FREQ_BOOST (STM32H723/725/730/733/735, RM0468): без
 // него потолок ядра на VOS0 — 520 МГц, с ним — 550 МГц. Признак — блок PWR
 // версии h7rm0468 в метаданных, по нему же embassy-stm32 выбирает предел
-// частоты. Таким чипам bsp получает `ensure_cpu_freq_boost()` (docs/clocks.md).
+// частоты. Таким чипам `cpu` получает `ensure_cpu_freq_boost()` (docs/clocks.md).
 import "chip-data/cpu_freq_boost" as boost_data;
 const CPU_FREQ_BOOST = boost_data::CPU_FREQ_BOOST;
 
-// Кэши, которые bsp включает сам (`bsp::cache::enable()`, docs/clocks.md):
+// Кэши, которые `cpu` включает сам (`cpu::cache::enable()`, docs/clocks.md):
 // теги через пробел — `icen`/`dcen` (кэши акселератора флеша, биты FLASH_ACR),
 // `icache` (блок ICACHE). Из метаданных stm32-metapac, не из имени чипа. Кэши
 // ядра Cortex-M7 (`scb`) добавляются ниже по `cpu`: ядро уже выбрано каскадом.
@@ -792,7 +823,7 @@ const CACHE = cache_data::CACHE;
 
 // Флаги сброса `RCC`: у чипа — версия регистров `RCC`, у версии — регистр с
 // `RMVF` (`csr`, `csr2` у C0, `rsr` у H5/H7) и пары `поле[,поле]:Причина` в
-// порядке проверки. По ним `bsp::reset::take_cause` читает причину сброса
+// порядке проверки. По ним `cpu::System::take_cause` читает причину сброса
 // (docs/diagnostics.md). Запись есть у каждого чипа: генератор без неё падает.
 import "chip-data/reset" as reset_data;
 const RESET = reset_data::RESET;
@@ -803,13 +834,13 @@ const RESET_REGS = reset_data::RESET_REGS;
 import "chip-data/interfaces" as interfaces_data;
 const INTERFACES = interfaces_data::INTERFACES;
 // Имя блока каждого интерфейса (`USART1`, `FDCAN1`, `USB_OTG_HS`...) — для групп
-// `resources.rs`: по метке его не угадать, у части чипов нет и `USART2`, и
+// `wiring.rs`: по метке его не угадать, у части чипов нет и `USART2`, и
 // `USB_OTG_FS`.
 import "chip-data/instances" as instances_data;
 const INSTANCES = instances_data::INSTANCES;
 
-// Аппаратный RNG: [прерывание, клок, источник] — по ним bsp заводит
-// `bsp::rng` и даёт блоку клок в конфиге HAL (docs/modules/bsp-rng.md). Чипа
+// Аппаратный RNG: [прерывание, клок, источник] — по ним `cpu` заводит
+// `cpu::rng` и даёт блоку клок в конфиге HAL (docs/modules/cpu-rng.md). Чипа
 // нет в таблице — RNG у него нет или источник клока не проверен.
 import "chip-data/rng" as rng_data;
 const RNG = rng_data::RNG;
@@ -878,13 +909,13 @@ if !wants_ota {
 // умолчанию «нет», а цена печатается ниже — до того, как пользователь увидит
 // собранный проект.
 //
-// Где лежат настройки (`config_store`, на него смотрят bsp::flash и bsp::external):
+// Где лежат настройки (`config_store`, на него смотрят `cpu::flash` и `cpu::external`):
 //   "flash"    — раздел во внутреннем флеше (как описано выше);
 //   "eeprom"   — внутренняя EEPROM, если она у чипа есть (L0/L1): флеш не
 //                тратится вовсе, и это единственное место под настройки на
 //                чипах, чей флеш стирается в ноль;
 //   "external" — внешняя флеш W25Q (`ext_flash=yes`): драйвер `w25q` в
-//                `bsp::external`, шину (выводы) подставляете вы;
+//                `cpu::external`, шину (выводы) подставляете вы;
 //   "none"     — настроек нет.
 // Первые два различает сам чип, третий — `ext_flash`.
 let wants_config = false;
@@ -1001,7 +1032,7 @@ const RAM_COST = #{
     // stm32f407ve: 3880 с OTA против 1952 без неё; внешняя — stm32h723ve 3996
     // (ext_flash=yes config=yes) против 2012 (то же с ota=no), с драйвером
     // W25Q над заглушкой шины; плюс 152 — задача `start` держит future
-    // `Board::new` через `.await` (`init` внешней флеши): `app::start::POOL`
+    // `cpu::external::init` внешней флеши (future `start`): `app::start::POOL`
     // 208 байт вместо 56 в `core`. Ещё 24 у обоих — владелец в состоянии
     // `Ready` узла OTA (повтор `Finish`): без графа узел OTA дороже, чем в
     // замере с графом выше, — stm32g474re can-only-no-graph 3344 и stm32f407ve
@@ -1292,9 +1323,9 @@ if !variable::is_set("cpu") {
 if !variable::is_set("target") {
     variable::set("target", family[1]);
 }
-// Читается Liquid-ом в crates-cross/bsp/src/board.rs: на двухъядерном чипе
-// `Board::new()` зовёт `init_primary()` вместо `init()` (Cargo-фичи под это
-// у `bsp`/`boot` нет — ядро выбирает сама чип-фича `embassy-stm32`).
+// Читается Liquid-ом в crates-cross/cpu/src/cpu.rs: на двухъядерном чипе
+// `cpu::init()` зовёт `init_primary()` вместо `init()` (Cargo-фичи под это
+// у `cpu`/`boot` нет — ядро выбирает сама чип-фича `embassy-stm32`).
 // Без переопределения через --define (в отличие от chip/cpu/target/
 // swap_buffer): значение полностью выводится из chip_feature, легитимной
 // причины расходиться с ним нет.
@@ -1319,17 +1350,17 @@ if BANK_SWITCH.contains(suffix) {
 variable::set("bank_switch", bank_switch);
 variable::set("dual_bank_bit", dual_bank_bit);
 if bank_switch == "" {
-    file::delete("crates-cross/bsp/src/banks.rs");
+    file::delete("crates-cross/cpu/src/banks.rs");
 }
 
 // Имя блока сторожевого таймера (см. WATCHDOG выше) — подставляется в тип
-// поля `Board::watchdog` в bsp и в графовый блок `watchdog:` в app. Без
+// поле `Board::watchdog` в bsp и графовый блок `watchdog:` в app. Без
 // переопределения через --define, как dual_core и bank_mode: значение целиком
 // выводится из chip_feature.
 variable::set("watchdog_peripheral", if WATCHDOG.contains(suffix) { WATCHDOG[suffix] } else { "IWDG" });
 
 // Сторож по семейству (см. watchdog_family_table()): верхний предел LSI — им
-// `bsp::wdg` поправляет таймаут в цепочке; заморозка IWDG при остановленном ядре —
+// `cpu::wdg` поправляет таймаут в цепочке; заморозка IWDG при остановленном ядре —
 // её dev-сборка ставит при взводе. Ключ — самый длинный префикс, как в
 // family_table(). У `IWDG2` (ядро CM4 двухъядерных H7) бита заморозки в
 // `stm32-metapac` нет — заморозки нет (docs/watchdog.md).
@@ -1348,12 +1379,12 @@ variable::set("lsi_max_hz", watchdog_family[1].to_string());
 variable::set("dbgmcu_freeze", if variable::get("watchdog_peripheral") == "IWDG2" { "" } else { watchdog_family[2] });
 variable::set("dbgmcu_clock", watchdog_family[3]);
 
-// Option byte CPU_FREQ_BOOST (см. CPU_FREQ_BOOST выше): включает в bsp модуль
+// Option byte CPU_FREQ_BOOST (см. CPU_FREQ_BOOST выше): включает в cpu модуль
 // `clocks` с `ensure_cpu_freq_boost()`. Без переопределения через --define:
 // значение целиком выводится из chip_feature.
 variable::set("cpu_freq_boost", if CPU_FREQ_BOOST.contains(suffix) { "true" } else { "false" });
 if !CPU_FREQ_BOOST.contains(suffix) {
-    file::delete("crates-cross/bsp/src/clocks.rs");
+    file::delete("crates-cross/cpu/src/clocks.rs");
 }
 
 // Ядра Armv6-M/Armv8-M Baseline (Cortex-M0, M0+, M23): без счётчика циклов `DWT`,
@@ -1676,7 +1707,7 @@ if WANTED_LINKS.len() > 0 {
     } else {
         // Список с отметками (`checklist()`). Пункт — вид, у которого есть блок;
         // имени блока в пункте нет: транспорт получает первый блок вида, а
-        // сменить блок — дело `resources.rs`.
+        // сменить блок — дело `wiring.rs`.
         // Сеть — только с графом (см. проверку ниже): без него пункта нет.
         let items = TRANSPORT_ITEMS.filter(|item| (wants_graph || item.value != "ethernet")
             && free_blocks(item.kind, INTERFACE_BLOCKS[item.kind], [], have, instances).len() > 0);
@@ -1937,7 +1968,7 @@ let store = config_store(MEMORY_LAYOUT[suffix], wants_config, wants_external, EE
 // Страница `STATE` для `[env]` (crates-cross/.cargo/config.toml): пустая, пока
 // её не посчитала раскладка ниже. При ручной раскладке (`swap_buffer`) её пишет
 // человек, а в `[env]` пустая строка не выводится. Границы разделов и регионов
-// в `[env]` не ездят: это символы `memory.x` (`bsp::layout`).
+// в `[env]` не ездят: это символы `memory.x` (`app::layout`).
 variable::set("state_erase_size", "");
 // Переменные, которые ниже задаются только в части веток: Liquid не должен
 // встречать неопределённую, даже если ветку с её чтением он не рисует.
@@ -1949,6 +1980,13 @@ variable::set("iface_periph", "");
 variable::set("dma_nc", "false");
 // То же для `SRAM4` целиком под буферы BDMA (H7).
 variable::set("bdma_nc", "false");
+// Границы регионов MPU (`cpu::dma_nc`): `cpu` линкерных символов не читает, и
+// числа, которые генерация пишет в `memory.x`, он повторяет у себя. Пустые,
+// пока регион не посчитан раскладкой.
+variable::set("dma_nc_origin", "");
+variable::set("dma_nc_length", "");
+variable::set("bdma_nc_origin", "");
+variable::set("bdma_nc_length", "");
 variable::set("can_kind", "");
 variable::set("usb_kind", "");
 // Список транспортов и признаки видов; итог — после ответов, рядом с `interface`.
@@ -1957,7 +1995,7 @@ for kind in LINK_KINDS { variable::set("has_" + kind, "false"); }
 variable::set("has_net", "false");
 // Нужна ли `STATE` и `CONFIG` своя страница (`flash_page::ErasePage`): только
 // когда сектор раздела мельче страницы цельного `Flash` — F2/F4/F7. Иначе раздел
-// строится прямо над `Whole`, а равенство страниц держит `const`-assert в `bsp`.
+// строится прямо над `Whole`, а равенство страниц держит `const`-assert в `cpu`.
 variable::set("state_paged", "false");
 variable::set("config_paged", "false");
 // Строит ли bootloader хоть один раздел над `BlockingPartition` + `ErasePage`
@@ -1992,16 +2030,9 @@ if variable::is_set("swap_buffer") {
             print("  добавьте регион CONFIG и символы __config_start/__config_end в memory.x вручную");
         }
     }
-    // Общий объект `Flash` в bsp нужен OTA во внутреннем flash и настройкам во
+    // Общий объект `Flash` нужен OTA во внутреннем flash и настройкам во
     // флеше или EEPROM; внешней флеши он не нужен (см. ту же переменную ниже).
     variable::set("shared_flash", if (wants_ota && !wants_ext_ota) || (wants_config && store == "eeprom") { "true" } else { "false" });
-    // Модуль флеша в bsp нужен, пока есть общий замок; без него
-    // файла и его документации быть не должно (`pub mod flash;` закрыт тем же
-    // условием в lib.rs).
-    if !(wants_ota && !wants_ext_ota) && !(wants_config && store == "eeprom") {
-        file::delete("crates-cross/bsp/src/flash.rs");
-        file::delete("docs/modules/bsp-flash.md");
-    }
     // Страницу обмена знает только раскладка, а её тут пишет пользователь —
     // угадывать нельзя. Пустая строка означает «неизвестна»:
     // xtask по ней не отдаёт host-target тесту адреса разделов, и тест
@@ -2013,8 +2044,7 @@ if variable::is_set("swap_buffer") {
     // здесь — страница цельного `Flash` (как было до расширения страницы).
     variable::set("swap_paged", "false");
     // Страница раздела `BOOTLOADER_STATE` (`flash_page::ErasePage`; число
-    // уезжает переменной среды в crates-cross/.cargo/config.toml, её читают
-    // bsp::flash и boot) — тоже знание раскладки. Её здесь нет, поэтому
+    // уезжает переменной среды в crates-cross/.cargo/config.toml, её читают `cpu::flash` и boot) — тоже знание раскладки. Её здесь нет, поэтому
     // пустая строка: `STATE_ERASE_SIZE` вписывает человек, без него проект не
     // соберётся — об этом печатается подсказка ниже.
     variable::set("state_erase_size", "");
@@ -2046,15 +2076,19 @@ if variable::is_set("swap_buffer") {
     let m = MEMORY_LAYOUT[suffix];
 
     // Кэш данных ядра M7 включается только вместе с non-cacheable регионом под DMA
-    // (`bsp::dma_nc`): без него буфер периферии читался бы из кэша устаревшим.
+    // (`cpu::dma_nc`): без него буфер периферии читался бы из кэша устаревшим.
     // Регион есть у каждого M7 (F7, H7, H7R/S), кроме ядра CM4 двухъядерных H7;
     // откуда он взят — решает chip-data-gen. `SRAM4` под BDMA — только у H7.
     if variable::get("cpu") == "cortex-m7" {
         if m.contains("dma_nc_origin") {
             variable::set("dma_nc", "true");
+            variable::set("dma_nc_origin", rust_number(m["dma_nc_origin"]));
+            variable::set("dma_nc_length", rust_number(m["dma_nc_length"]));
         }
         if m.contains("bdma_nc_origin") {
             variable::set("bdma_nc", "true");
+            variable::set("bdma_nc_origin", rust_number(m["bdma_nc_origin"]));
+            variable::set("bdma_nc_length", rust_number(m["bdma_nc_length"]));
         }
     }
 
@@ -2091,8 +2125,8 @@ if variable::is_set("swap_buffer") {
     } else if config && store == "eeprom" {
         print("Настройки — во внутренней EEPROM чипа: флеш под них не тратится");
     } else if config && store == "external" {
-        print("Настройки — на внешней флеши W25Q: подставьте шину с выводами платы в crates-cross/bsp/src/external.rs");
-        print("  (пока там заглушка bsp::external::Bus — проект собирается, настройки не сохраняются; docs/modules/bsp-external.md)");
+        print("Настройки — на внешней флеши W25Q: подставьте шину с выводами платы в crates-cross/cpu/src/external.rs");
+        print("  (пока там заглушка cpu::external::Bus — проект собирается, настройки не сохраняются; docs/modules/cpu-external.md)");
     }
     variable::set("swap_buffer", m["swap_buffer"]);
     // `page_size` — страница обмена embassy-boot (`PAGE_SIZE`, `SWAP_PAGE_SIZE`
@@ -2139,16 +2173,12 @@ if variable::is_set("swap_buffer") {
         variable::set("config_erase_size", m[settings_key + "erase_size"]);
         variable::set("config_paged", if plain_number(m[settings_key + "erase_size"]) != plain_number(m["page_size"]) { "true" } else { "false" });
     }
-    // Общий объект `Flash` в bsp: его делят OTA во внутреннем flash и настройки
+    // Ручка на `Flash` чипа: её делят OTA во внутреннем flash и настройки
     // во флеше или EEPROM (EEPROM пишется через тот же контроллер). Внешней
     // флеши он не нужен — с `ext_flash=yes` приложение во внутренний flash не
     // пишет вовсе (`ACTIVE` пишет bootloader), — и без OTA создавать его
     // незачем: был бы неиспользуемый код.
     variable::set("shared_flash", if (ota && !ext_ota) || (config && store != "external") { "true" } else { "false" });
-    if !((ota && !ext_ota) || (config && store != "external")) {
-        file::delete("crates-cross/bsp/src/flash.rs");
-        file::delete("docs/modules/bsp-flash.md");
-    }
     variable::set("graph", if graph { "true" } else { "false" });
 
     // База flash одна на оба режима: `__bootloader_*` отсчитываются от неё, а не
@@ -2197,7 +2227,7 @@ if variable::is_set("swap_buffer") {
             "_panic_dump_end   = ORIGIN(PANIC) + LENGTH(PANIC);",
         ];
     }
-    // Секции под буферы DMA (`bsp::dma_nc`): статика с `#[link_section = ".dma_nc"]`
+    // Секции под буферы DMA (`cpu::dma_nc`): статика с `#[link_section = ".dma_nc"]`
     // (`.bdma_nc` — для BDMA) ложится в non-cacheable регион и размечается в MPU.
     // Только в memory.x приложения — у bootloader'а кэшей нет. `INSERT AFTER
     // .gnu.sgstubs`, а не `.uninit`: вставка сразу за `.uninit` ломает проверку
@@ -2206,7 +2236,7 @@ if variable::is_set("swap_buffer") {
     if variable::get("dma_nc") == "true" {
         dma_sections = [
             "",
-            "/* Буферы DMA при включённом кэше данных ядра: bsp::dma_nc, docs/clocks.md. */",
+            "/* Буферы DMA при включённом кэше данных ядра: cpu::dma_nc, docs/clocks.md. */",
             "SECTIONS",
             "{",
             "    .dma_nc (NOLOAD) : ALIGN(4)",
@@ -2229,23 +2259,23 @@ if variable::is_set("swap_buffer") {
         ram += m["extra_regions"];
     }
     if variable::get("dma_nc") == "true" {
-        ram.push("    /* DMA_NC - bsp::dma_nc держит его non-cacheable в MPU, из него берутся буферы DMA. */");
+        ram.push("    /* DMA_NC - cpu::dma_nc держит его non-cacheable в MPU, из него берутся буферы DMA. */");
     }
 
-    // Символы раскладки, которые читает `bsp::layout` (значение символа — его
+    // Символы раскладки, которые читает `app::layout` (значение символа — его
     // адрес), и `ASSERT`'ы над ними: нарушение роняет линковку, а не плату.
     // Величину, которой линкер не знает (страницу раздела `CONFIG`), генерация
     // знает сама и вписывает литералом — тем же, что `CONFIG_ERASE_SIZE` в
-    // `bsp::flash`. В memory.x bootloader'а попадают только символы внешней
+    // `app`. В memory.x bootloader'а попадают только символы внешней
     // флеши: прочие куски платы (`CONFIG`, `DMA_NC`) он не собирает.
     let layout_symbols = [];
     if in_flash {
         let erase = plain_number(m[settings_key + "erase_size"]).to_string();
         layout_symbols += [
             "",
-            "/* Раздел настроек (bsp::layout): смещения от базы flash — так их ждёт */",
+            "/* Раздел настроек (app::layout): смещения от базы flash — так их ждёт */",
             "/* embassy_stm32::flash::Flash. Границы кратны странице раздела (CONFIG_ERASE_SIZE */",
-            "/* в bsp::flash), иначе Partition::new паникует на старте. */",
+            "/* в app), иначе Partition::new паникует на старте. */",
             "__config_start = ORIGIN(CONFIG) - " + flash_base + ";",
             "__config_end   = ORIGIN(CONFIG) + LENGTH(CONFIG) - " + flash_base + ";",
             "ASSERT(__config_start % " + erase + " == 0 && __config_end % " + erase + " == 0,",
@@ -2254,14 +2284,14 @@ if variable::is_set("swap_buffer") {
     }
     // Внешняя флеш: раздел настроек (смещения от её начала — за `DFU` или с
     // начала, если OTA на ней нет) и конец последнего раздела — `MAX` по концам,
-    // с ним `bsp::external` и `boot` сверяют объём микросхемы.
+    // с ним `app` и `boot` сверяют объём микросхемы.
     let ext_layout = [];
     if config && store == "external" {
         let offset = if ext_ota { m[ota_key + "config_offset"] } else { "0x00000000" };
         let length = if ext_ota { m[ota_key + "config_length"] } else { EXT_CONFIG_LENGTH.to_string() };
         ext_layout += [
             "",
-            "/* Раздел настроек на внешней флеши (bsp::layout): смещения от её начала. */",
+            "/* Раздел настроек на внешней флеши (app::layout): смещения от её начала. */",
             "__config_start = " + offset + ";",
             "__config_end   = " + offset + " + " + length + ";",
         ];
@@ -2280,7 +2310,7 @@ if variable::is_set("swap_buffer") {
             "__ext_flash_end = " + ends + ";",
         ];
     }
-    // Регионы под буферы DMA (`bsp::dma_nc` размечает их в MPU Armv7-M).
+    // Регионы под буферы DMA (`cpu::dma_nc` размечает их в MPU Armv7-M).
     let dma_symbols = [];
     if variable::get("dma_nc") == "true" {
         let regions = [["DMA_NC", "__dma_nc"]];
@@ -2289,7 +2319,7 @@ if variable::is_set("swap_buffer") {
         }
         dma_symbols += [
             "",
-            "/* Регионы под буферы DMA (bsp::layout, bsp::dma_nc — MPU): размер — степень */",
+            "/* Регионы под буферы DMA (app::layout, cpu::dma_nc — MPU): размер — степень */",
             "/* двойки не меньше 32 байт, адрес кратен размеру. */",
         ];
         for r in regions {
@@ -2314,7 +2344,7 @@ if variable::is_set("swap_buffer") {
         let base = flash_base;
         let ext_symbols = [
             "",
-            "/* STATE и DFU — на внешней флеши (драйвер в bsp и boot). Смещения от её */",
+            "/* STATE и DFU — на внешней флеши (драйвер в cpu и boot). Смещения от её */",
             "/* начала; шаг " + m[ota_key + "align"] + " байт, страница обмена — " + m[ota_key + "page_size"] + ": */",
             "/* стирание драйвера обязано её делить. */",
             "__bootloader_state_start = " + m[ota_key + "state_offset"] + ";",
@@ -2540,8 +2570,8 @@ if variable::get("graph") != "true" {
     file::delete("crates-cross/app/src/graph.rs");
     // Сторож запускает блок `watchdog:` графа; без графа его некому взводить, а
     // `Board` поля сторожа не имеет.
-    file::delete("crates-cross/bsp/src/wdg.rs");
-    file::delete("docs/modules/bsp-wdg.md");
+    file::delete("crates-cross/cpu/src/wdg.rs");
+    file::delete("docs/modules/cpu-wdg.md");
     // Узел `HEARTBEAT` спавнит только граф, и сторожа без графа нет.
     file::delete("crates-host/domain/src/heartbeat.rs");
     file::delete("docs/watchdog.md");
@@ -2554,7 +2584,7 @@ if variable::get("graph") != "true" {
 }
 
 // Протокол и транспорт выбраны и проверены выше (вопросы после выбора чипа), а
-// здесь остаётся подставить блок основного транспорта для групп `resources.rs`. Граф
+// здесь остаётся подставить блок основного транспорта для групп `wiring.rs`. Граф
 // протоколу не нужен: без него узел спавнит `tasks::spawn_all` в `app` (как узел OTA).
 if iface != "none" {
     variable::set("iface_periph", primary.block);
@@ -2569,7 +2599,7 @@ if iface != "none" {
 // хоть один раздел его использует: `STATE`/`CONFIG` с секторами мельче страницы
 // чипа или `ACTIVE`/`DFU` со страницей обмена. Иначе типа в проекте нет вовсе.
 variable::set("erase_page", if variable::get("state_paged") == "true" || variable::get("config_paged") == "true" || variable::get("swap_paged") == "true" { "true" } else { "false" });
-// Драйвер внешней флеши (`bsp::external`, шина — заглушка `bsp::external::StubBus`) нужен, пока
+// Драйвер внешней флеши (`cpu::external`, шина — заглушка `cpu::external::StubBus`) нужен, пока
 // на внешней флеши лежит хоть что-то: разделы OTA или настройки.
 variable::set("external_flash", if (variable::get("ota") == "true" && variable::get("ota_store") == "external") || variable::get("config_store") == "external" { "true" } else { "false" });
 if wants_ext && variable::get("external_flash") != "true" {
@@ -2591,7 +2621,7 @@ let bus = if variable::get("external_flash") == "true" { flash_bus(instances) } 
 variable::set("ext_flash_bus", bus[0]);
 variable::set("ext_flash_block", bus[1]);
 // Крейт `flash-page` (crates-host): `ErasePage` — при своей странице у раздела,
-// `erase_size` — при OTA на внешней флеши (проверка раскладки в `bsp::external`).
+// `erase_size` — при OTA на внешней флеши (проверка раскладки в `cpu::external`).
 variable::set("flash_page", if variable::get("erase_page") == "true" || (variable::get("ota") == "true" && variable::get("ota_store") == "external") { "true" } else { "false" });
 variable::set("protocol", if protocol != "none" { protocol } else if has_cli { "cli" } else { "none" });
 variable::set("interface", iface);
@@ -2609,11 +2639,11 @@ variable::set("has_cli", if has_cli { "true" } else { "false" });
 if variable::get("dma_nc") == "true" {
     cache += " scb_d";
 } else {
-    file::delete("crates-cross/bsp/src/dma_nc.rs");
+    file::delete("crates-cross/cpu/src/dma_nc.rs");
 }
 variable::set("cache", cache);
 if cache == "" {
-    file::delete("crates-cross/bsp/src/cache.rs");
+    file::delete("crates-cross/cpu/src/cache.rs");
 }
 
 // Протоколы и их транспорты — по всем транспортам, а не по основному: «Modbus по
@@ -2682,8 +2712,8 @@ variable::set("link_port", if on.protobuf || on.modbus || has.can || has.udp { "
 // раздела получает `None` (`Option<Settings<NoFlash>>`). Иначе модуля нет.
 variable::set("settings_port", if variable::get("config") == "true" || on.canopen { "true" } else { "false" });
 variable::set("stream_io", if has.uart || has.usb || has.tcp { "true" } else { "false" });
-// Заглушки периферии живут в модулях своих транспортов (`bsp::serial`,
-// `bsp::can`, `bsp::usb`, `bsp::net`, `bsp::external`).
+// Заглушки периферии живут в модулях своих транспортов (`cpu::com`,
+// `cpu::can`, `cpu::usb`, `cpu::eth`, `cpu::external`), интерфейсы над ними — в bsp.
 // CRC кадра: RTU (Modbus по UART и USB) и COBS (protobuf по потоку).
 variable::set("crc_used", if modbus_rtu || cobs_used { "true" } else { "false" });
 // Property-тесты кадрирования есть у Modbus (RTU, TCP, UDP) и у COBS.
@@ -2710,15 +2740,10 @@ for kind in link_kinds {
     link_kinds_text += if link_kinds_text == "" { kind } else { "," + kind };
 }
 variable::set("link_kinds", link_kinds_text);
-// Символы раскладки `memory.x` (`bsp::layout`: `ACTIVE`, границы `CONFIG`, конец
-// внешней флеши, регионы DMA) — пока есть что из них читать.
-let layout_store = variable::get("config_store");
-if variable::get("ota") != "true" && layout_store != "flash" && layout_store != "external" && variable::get("dma_nc") != "true" {
-    file::delete("crates-cross/bsp/src/layout.rs");
-}
-// Группы `resources.rs` нужны, пока есть что в них класть: общий флеш, сторож
-// графа, блоки транспортов или шина внешней флеши. Иначе в файле остаётся пустая группа.
-variable::set("has_resources", if links.len() > 0 || variable::get("shared_flash") == "true" || variable::get("graph") == "true" || variable::get("external_flash") == "true" { "true" } else { "false" });
+// Группы `wiring.rs` нужны, пока есть что в них класть: сторож графа, блоки
+// транспортов или шина внешней флеши. Иначе в файле остаётся пустая группа.
+// Флеш группы не требует: контроллер забирает сам `cpu::init`.
+variable::set("has_resources", if links.len() > 0 || variable::get("graph") == "true" || variable::get("external_flash") == "true" { "true" } else { "false" });
 // Master Modbus: ответ на вопрос выше (только при protocol=modbus).
 let master = on.modbus && wants_master;
 variable::set("modbus_master", if master { "true" } else { "false" });
@@ -2728,16 +2753,16 @@ variable::set("modbus_master", if master { "true" } else { "false" });
 if on.modbus && !master {
     file::delete("crates-host/domain/src/modbus/master.rs");
 }
-// Модуль заглушки UART в bsp — только с транспортом uart: без него
-// `bsp::serial` не объявлен, и файл остался бы мусором с Liquid внутри.
+// Модуль заглушки UART в cpu — только с транспортом uart: без него
+// `cpu::com` не объявлен, и файл остался бы мусором с Liquid внутри.
 if !has.uart {
-    file::delete("crates-cross/bsp/src/serial.rs");
-    file::delete("docs/modules/bsp-serial.md");
+    file::delete("crates-cross/cpu/src/com.rs");
+    file::delete("docs/modules/cpu-com.md");
 }
 // То же для CAN: модуль шины и его документация — только с транспортом can.
 if !has.can {
-    file::delete("crates-cross/bsp/src/can.rs");
-    file::delete("docs/modules/bsp-can.md");
+    file::delete("crates-cross/cpu/src/can.rs");
+    file::delete("docs/modules/cpu-can.md");
 }
 // Стек протокола целиком — порт, адаптер, узел и крейт (`proto` — схема
 // protobuf с генерацией в `build.rs`, `canopen` — словарь объектов) — только в
@@ -2853,25 +2878,30 @@ if variable::get("graph") != "true" {
         file::delete("crates-cross/app/src/tasks");
     }
 }
-// Заглушки периферии живут в модулях своих транспортов (`bsp::serial`,
-// `bsp::can`, `bsp::usb`, `bsp::net`, `bsp::external`) — отдельного модуля нет.
+// Заглушки периферии живут в модулях своих транспортов (`cpu::com`,
+// `cpu::can`, `cpu::usb`, `cpu::eth`, `cpu::external`), интерфейсы над ними — в bsp —
+// отдельного модуля нет.
 // Флеш в памяти (`flash::fake::MemFlash`) — тестам разделов OTA и хранилища
 // настроек (`domain::settings` есть и у CANopen без раздела — `settings_port`).
 let mem_flash = variable::get("ota") == "true" || variable::get("settings_port") == "true";
 if !mem_flash {
     file::delete("crates-host/adapters-hw/src/flash.rs");
 }
-// USB — устройство `embassy-usb`, узел USB и поток CDC — только с транспортом usb.
+// USB — устройство `embassy-usb` (интерфейс платы) и драйвер чипа, узел USB и
+// поток CDC — только с транспортом usb.
 if !has.usb {
     file::delete("crates-cross/bsp/src/usb.rs");
+    file::delete("crates-cross/cpu/src/usb.rs");
     file::delete("docs/modules/bsp-usb.md");
     file::delete("crates-host/adapters-hw/src/usb.rs");
     file::delete("crates-host/domain/src/usb.rs");
 }
-// Сеть — стек `embassy-net`, узел NET и их сокеты — только с tcp/udp.
+// Сеть — стек `embassy-net` (интерфейс платы) и драйвер Ethernet чипа, узел NET
+// и их сокеты — только с tcp/udp.
 if !has.tcp && !has.udp {
-    file::delete("crates-cross/bsp/src/net.rs");
-    file::delete("docs/modules/bsp-net.md");
+    file::delete("crates-cross/bsp/src/ethernet.rs");
+    file::delete("crates-cross/cpu/src/eth.rs");
+    file::delete("docs/modules/bsp-ethernet.md");
     file::delete("crates-host/adapters-hw/src/net.rs");
     // Крейта `adapters-logic` без сети может не быть вовсе (удалён выше).
     if adapters_logic {
@@ -2881,8 +2911,8 @@ if !has.tcp && !has.udp {
 }
 // RNG — только с tcp/udp и только если он есть у чипа (`rng_irq` не пуст).
 if rng[0] == "" || (!has.tcp && !has.udp) {
-    file::delete("crates-cross/bsp/src/rng.rs");
-    file::delete("docs/modules/bsp-rng.md");
+    file::delete("crates-cross/cpu/src/rng.rs");
+    file::delete("docs/modules/cpu-rng.md");
 }
 // Узлы сетевых служб — только выбранных. Сведения об устройстве
 // (`domain::device`) читают PROTOBUF, HTTP, SSH и MQTT.
@@ -2961,11 +2991,11 @@ variable::set("ota_cmd_clients", (protocol_clients
 if variable::get("config_store") != "eeprom" {
     file::delete("crates-host/adapters-hw/src/eeprom.rs");
 }
-// Модуль EEPROM платы — по тому же условию: `ConfigFlash` и доступ к EEPROM
-// под общим замком флеша есть только в этой ветке (`pub mod eeprom;` в lib.rs).
+// Модуль EEPROM чипа — по тому же условию: доступ к EEPROM под общим замком
+// флеша есть только в этой ветке (`pub mod eeprom;` в lib.rs).
 if variable::get("config_store") != "eeprom" {
-    file::delete("crates-cross/bsp/src/eeprom.rs");
-    file::delete("docs/modules/bsp-eeprom.md");
+    file::delete("crates-cross/cpu/src/eeprom.rs");
+    file::delete("docs/modules/cpu-eeprom.md");
 }
 // Обёртки над железом без чипа (`adapters-hw`): USB, сеть, EEPROM и фейки —
 // флеш в памяти тестам OTA и настроек. Нет ни одной — нет и крейта; член
@@ -2977,12 +3007,12 @@ if !adapters_hw {
     file::delete("crates-host/adapters-hw");
 }
 
-// Драйвер внешней флеши в bsp — только когда на ней что-то лежит: разделы
-// OTA или настройки. Без него `bsp::external` не объявлен, и файл остался бы
+// Драйвер внешней флеши в cpu — только когда на ней что-то лежит: разделы
+// OTA или настройки. Без него `cpu::external` не объявлен, и файл остался бы
 // мусором с Liquid внутри; рецепт подключения — вместе с ним.
 if variable::get("external_flash") != "true" {
-    file::delete("crates-cross/bsp/src/external.rs");
-    file::delete("docs/modules/bsp-external.md");
+    file::delete("crates-cross/cpu/src/external.rs");
+    file::delete("docs/modules/cpu-external.md");
 }
 
 // Подмодули bootloader'а под ответы — по той же причине: `mod` в

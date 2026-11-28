@@ -83,7 +83,7 @@ impl<F: NorFlash, const ERASE_SIZE: usize> NorFlash for ErasePage<F, ERASE_SIZE>
 
 // {%- if ota_store == "external" %}
 /// `ERASE_SIZE` асинхронного флеша — для проверок при компиляции там, где
-/// трейт не в зависимостях (`bsp::external` проверяет им, что стирание
+/// трейт не в зависимостях (`cpu::external` проверяет им, что стирание
 /// драйвера делит страницу обмена раскладки).
 #[must_use]
 pub const fn erase_size<F: embedded_storage_async::nor_flash::NorFlash>() -> usize {

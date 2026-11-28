@@ -2,9 +2,9 @@
 //!
 //! В модуле — задача-обёртка `#[embassy_executor::task]` — она раздаёт узлу
 //! рычаги платы и адаптеры над ними в памяти своих статиков —
-//! и `spawn`. Задача `start` бинарника отдаёт плату (`bsp::Board`) в
+//! и `spawn`. Задача `start` бинарника отдаёт плату (`crate::Board`) в
 //! [`spawn_all`] целиком и сама задачами узлов не занимается. Embassy-задача
-//! не может быть generic, поэтому каждая типизирована рычагом платы (`bsp`);
+//! не может быть generic, поэтому каждая типизирована рычагом платы (`cpu`);
 //! канал протокола над ним задача строит сама, конкретным типом. Контекст узла
 //! собирается из локальных переменных кадра задачи. Сама задача — `task` узла из `domain`.
 //!
@@ -39,10 +39,18 @@ mod usb;
 ///
 /// Если задачу уже спавнили: `spawn_all` зовётся один раз за запуск, а
 /// проглоченный `SpawnError::Busy` означал бы, что узел молча не работает.
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "плату делят по полям: в этой конфигурации уезжают только `Copy`-ручки, в других — поля move"
+)]
 {%- if ota == "true" %}
-pub fn spawn_all(spawner: embassy_executor::Spawner, board: bsp::Board, image: domain::ota::Image) {
+pub fn spawn_all(
+    spawner: embassy_executor::Spawner,
+    board: crate::Board,
+    image: domain::ota::Image,
+) {
 {%- else %}
-pub fn spawn_all(spawner: embassy_executor::Spawner, {% if has_usb == "true" or has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" or has_cli == "true" %}board{% else %}_board{% endif %}: bsp::Board) {
+pub fn spawn_all(spawner: embassy_executor::Spawner, {% if has_usb == "true" or has_modbus == "true" or has_protobuf == "true" or has_canopen == "true" or has_cli == "true" %}board{% else %}_board{% endif %}: crate::Board) {
 {%- endif %}
     // Загрузку процессора меряет цикл домена (`domain::cpu_load::log_load`);
     // обёртка — ровно место для неё в задаче: тело — в домене.
@@ -50,7 +58,8 @@ pub fn spawn_all(spawner: embassy_executor::Spawner, {% if has_usb == "true" or 
     spawner.spawn(cpu_load().expect("задача CPU_LOAD свежая: спавнится один раз"));
     {%- endif %}
 {%- if ota == "true" %}
-    ota::spawn(spawner, board.firmware, image);
+    let firmware = crate::storage::ota(board.flash{% if external_flash == "true" %}, board.ext_flash_bus{% endif %});
+    ota::spawn(spawner, firmware, image);
 {%- endif %}
 {%- for l in xs %}
 {%- assign f = l | split: ":" %}
@@ -73,10 +82,10 @@ pub fn spawn_all(spawner: embassy_executor::Spawner, {% if has_usb == "true" or 
 {%- endif %}
 {%- elsif f[3] == "protobuf" %}
     let device = domain::device::DeviceInfo {
-        chip: board.spec.chip,
-        uid: board.spec.uid,
-        flash_size: board.spec.flash_size,
-        sys_hz: board.spec.sys_hz,
+        chip: board.cpu_info.chip,
+        uid: board.cpu_info.uid,
+        flash_size: board.cpu_info.flash_size,
+        sys_hz: board.cpu_info.sys_hz,
     };
     let app_info = domain::device::AppInfo {
         version: {% if ota == "true" %}image.text{% else %}crate::build::PKG_VERSION{% endif %},
@@ -90,15 +99,15 @@ pub fn spawn_all(spawner: embassy_executor::Spawner, {% if has_usb == "true" or 
     canopen::{{ f[4] }}::spawn(
         spawner,
         board.{{ f[4] }},
-        {% if config == "true" %}Some(domain::settings::Settings::whole(board.config)){% else %}None{% endif %},
-        domain::canopen::serial(board.spec.uid),
+        {% if config == "true" %}Some(crate::storage::settings(board.flash{% if external_flash == "true" %}, board.ext_flash_bus{% endif %})){% else %}None{% endif %},
+        domain::canopen::serial(board.cpu_info.uid),
     );
 {%- elsif f[3] == "cli" %}
     let device = domain::device::DeviceInfo {
-        chip: board.spec.chip,
-        uid: board.spec.uid,
-        flash_size: board.spec.flash_size,
-        sys_hz: board.spec.sys_hz,
+        chip: board.cpu_info.chip,
+        uid: board.cpu_info.uid,
+        flash_size: board.cpu_info.flash_size,
+        sys_hz: board.cpu_info.sys_hz,
     };
     let app_info = domain::device::AppInfo {
         version: {% if ota == "true" %}image.text{% else %}crate::build::PKG_VERSION{% endif %},
