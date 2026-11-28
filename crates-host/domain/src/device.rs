@@ -30,7 +30,7 @@ pub const INFO_TEXT: usize = 256 + 27 + "last panic \n".len() + PANIC_BRIEF;
 
 /// Сведения об устройстве — то, что знает плата.
 ///
-/// Приходят снаружи: чип — плата (`bsp::ChipSpec`), а не `domain`. Заполняет
+/// Приходят снаружи: чип — `cpu` (`cpu::CpuInfo`), а не `domain`. Заполняет
 /// compose-site из полей платы. Пределы длины строк, если они есть, — у того,
 /// кто их отдаёт.
 #[derive(Debug, Clone, Copy)]
@@ -57,7 +57,7 @@ pub struct AppInfo {
     /// Короткий хеш коммита.
     pub commit: &'static str,
     /// Причина последнего сброса в `snake_case` (`pin`, `software`,
-    /// `independent_watchdog`…) — как её называет `bsp::reset::take_cause`.
+    /// `independent_watchdog`…) — как её называет `cpu::System::take_cause`.
     pub reset: &'static str,
     /// Прошлая паника, сжатая [`panic_brief`] до [`PANIC_BRIEF`] байт;
     /// `None` — её не было или сборка отладочная (там дамп никто не пишет).

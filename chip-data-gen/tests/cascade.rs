@@ -1272,11 +1272,18 @@ fn declining_ota_gives_a_single_image_even_when_it_would_fit() {
             "bootloader должен быть удалён, а удалено: {:?}",
             result.deleted
         );
+        assert_eq!(
+            result.vars.get("shared_flash").map(String::as_str),
+            Some("false"),
+            "без OTA и настроек общий объект Flash не нужен"
+        );
+        // Сырая ручка `Board::flash` нужна и без OTA: модуль `cpu::flash`
+        // остаётся, уходит только общий объект под замком (`shared_flash`).
         assert!(
-            result
+            !result
                 .deleted
-                .contains(&"crates-cross/bsp/src/flash.rs".to_string()),
-            "модуль flash без OTA и настроек должен быть удалён, а удалено: {:?}",
+                .contains(&"crates-cross/cpu/src/flash.rs".to_string()),
+            "модуль flash без OTA не удаляется, а удалено: {:?}",
             result.deleted
         );
 
@@ -1465,7 +1472,7 @@ fn external_ota_places_settings_where_the_project_asked() {
     );
 }
 
-/// Границы разделов — символы `memory.x`, которые считает линкер (`bsp::layout`
+/// Границы разделов — символы `memory.x`, которые считает линкер (`app::layout`
 /// читает их адресами), а не числа в `[env]`; кратность `CONFIG` его странице —
 /// `ASSERT` там же, литералом страницы из генерации.
 #[test]
@@ -1589,7 +1596,7 @@ fn no_protocol_by_default() {
         result
             .deleted
             .iter()
-            .any(|path| path == "crates-cross/bsp/src/serial.rs"),
+            .any(|path| path == "crates-cross/cpu/src/com.rs"),
         "заглушка UART без интерфейса uart: {:?}",
         result.deleted
     );
@@ -1608,8 +1615,8 @@ fn no_protocol_by_default() {
         "crates-host/domain/src/canopen",
         "crates-host/domain/src/net.rs",
         "crates-host/adapters-hw/src/net.rs",
-        "crates-cross/bsp/src/net.rs",
-        "docs/modules/bsp-net.md",
+        "crates-cross/cpu/src/eth.rs",
+        "docs/modules/bsp-ethernet.md",
         "crates-cross/bsp/src/usb.rs",
         "crates-host/adapters-hw/src/usb.rs",
         "crates-host/domain/src/usb.rs",
@@ -1671,7 +1678,7 @@ fn protocol_over_uart_keeps_the_serial_module() {
             !result
                 .deleted
                 .iter()
-                .any(|path| path == "crates-cross/bsp/src/serial.rs"),
+                .any(|path| path == "crates-cross/cpu/src/com.rs"),
             "{protocol}: заглушка UART удалена"
         );
         // Стек — только выбранного протокола: modbus поверх uart не тянет ни
@@ -1692,9 +1699,9 @@ fn protocol_over_uart_keeps_the_serial_module() {
             ("crates-host/ports/src/link.rs", true),
             ("crates-host/canopen", false),
             ("crates-host/ports/src/can.rs", false),
-            // Заглушка UART в `bsp`; модулей USB/сети нет, а флеш в памяти
+            // Заглушка UART в `cpu`; модулей USB/сети нет, а флеш в памяти
             // остаётся (OTA на g474re).
-            ("crates-cross/bsp/src/stub.rs", true),
+            ("crates-cross/cpu/src/com.rs", true),
             ("crates-host/adapters-hw/src/net.rs", false),
             ("crates-host/adapters-hw/src/flash.rs", true),
         ] {
@@ -1802,7 +1809,7 @@ fn modbus_master_is_false_without_modbus() {
 }
 
 /// CANopen поверх CAN: хук берёт вид контроллера из таблицы интерфейсов
-/// (имя блока и рецепт в `docs/modules/bsp-can.md` у FDCAN и bxCAN разные) и
+/// (имя блока и рецепт в `docs/modules/cpu-can.md` у FDCAN и bxCAN разные) и
 /// оставляет крейт словаря.
 #[test]
 fn canopen_picks_the_can_controller_of_the_chip() {
@@ -1819,7 +1826,7 @@ fn canopen_picks_the_can_controller_of_the_chip() {
             "{chip}"
         );
         for kept in [
-            "crates-cross/bsp/src/can.rs",
+            "crates-cross/cpu/src/can.rs",
             "crates-host/canopen",
             "crates-host/domain/src/canopen.rs",
             "crates-host/domain/src/canopen",
@@ -1860,7 +1867,7 @@ fn the_interface_block_is_named_by_the_chip() {
     }
 }
 
-/// Протокол по сети оставляет стек — `bsp::net`, `adapters_hw::net`, транспорты
+/// Протокол по сети оставляет стек — `bsp::ethernet`, `adapters_hw::net`, транспорты
 /// `adapters_logic::net`, узел `domain::net` — только у чипа с выведенным
 /// Ethernet.
 #[test]
@@ -1873,7 +1880,7 @@ fn protocol_over_network_keeps_the_net_stack() {
         )
         .expect("каскад не должен падать");
         for kept in [
-            "crates-cross/bsp/src/net.rs",
+            "crates-cross/cpu/src/eth.rs",
             "crates-host/adapters-hw/src/net.rs",
             "crates-host/adapters-logic/src/net.rs",
             "crates-host/adapters-logic/src/net",
@@ -1889,7 +1896,7 @@ fn protocol_over_network_keeps_the_net_stack() {
             result
                 .deleted
                 .iter()
-                .any(|path| path == "crates-cross/bsp/src/serial.rs"),
+                .any(|path| path == "crates-cross/cpu/src/com.rs"),
             "{iface}: модуль UART остался"
         );
     }
@@ -2523,8 +2530,8 @@ fn derived_flags_follow_every_link() {
     assert_eq!(var_of(&result, "protocol_sockets"), Some("1"));
     let deleted = |path: &str| result.deleted.iter().any(|d| d == path);
     for path in [
-        "crates-cross/bsp/src/serial.rs",
-        "crates-cross/bsp/src/can.rs",
+        "crates-cross/cpu/src/com.rs",
+        "crates-cross/cpu/src/can.rs",
         "crates-host/adapters-logic/src/modbus/rtu.rs",
         "crates-host/adapters-logic/src/modbus/mbap.rs",
         "crates-host/adapters-logic/src/modbus/client.rs",
@@ -3395,7 +3402,7 @@ fn external_flash_bus_follows_the_chip() {
             Some(block),
             "{chip}"
         );
-        // Конец разделов — символ `memory.x`: без него `bsp::external` не
+        // Конец разделов — символ `memory.x`: без него `cpu::external` не
         // слинкуется.
         let app = written(&result, "crates-cross/app/memory.x");
         assert!(app.contains("__ext_flash_end = "), "{chip}:\n{app}");
@@ -3607,10 +3614,10 @@ fn ota_and_settings_code_is_kept_only_when_selected() {
     ];
     const SETTINGS: [&str; 1] = ["crates-host/domain/src/settings.rs"];
     // Внутренняя EEPROM — только у L0/L1 и только когда в ней настройки; без
-    // них `bsp::eeprom` и его документация — мусор, до которого не дотянуться.
+    // них `cpu::eeprom` и его документация — мусор, до которого не дотянуться.
     const EEPROM: [&str; 2] = [
-        "crates-cross/bsp/src/eeprom.rs",
-        "docs/modules/bsp-eeprom.md",
+        "crates-cross/cpu/src/eeprom.rs",
+        "docs/modules/cpu-eeprom.md",
     ];
     const FLASH: &str = "crates-host/flash-page";
     // (чип, ответы, OTA вырезана, настройки вырезаны, flash-page вырезан)
@@ -3647,7 +3654,7 @@ fn ota_and_settings_code_is_kept_only_when_selected() {
             false,
             true,
         ),
-        // Внешняя флеш без OTA: заглушка драйвера — в `bsp::external`, страница
+        // Внешняя флеш без OTA: заглушка драйвера — в `cpu::external`, страница
         // раздела своя не нужна.
         (
             "l073rz",
@@ -3677,11 +3684,11 @@ fn ota_and_settings_code_is_kept_only_when_selected() {
     }
 }
 
-/// Сторож платы (`bsp::wdg`) нужен только графу, а кадровый канал
+/// Сторож платы (`cpu::wdg`) нужен только графу, а кадровый канал
 /// (`ports::link`) — только протоколам, которые им пользуются.
 #[test]
 fn watchdog_and_link_port_follow_the_choices() {
-    const WDG: [&str; 2] = ["crates-cross/bsp/src/wdg.rs", "docs/modules/bsp-wdg.md"];
+    const WDG: [&str; 2] = ["crates-cross/cpu/src/wdg.rs", "docs/modules/cpu-wdg.md"];
     const LINK: &str = "crates-host/ports/src/link.rs";
     // (чип, ответы, сторож удалён, канал удалён)
     type Case<'a> = (&'a str, &'a [(&'a str, &'a str)], bool, bool);
@@ -4463,7 +4470,7 @@ fn bank_switch_follows_the_factory_bank_mode() {
             result
                 .deleted
                 .iter()
-                .any(|path| path == "crates-cross/bsp/src/banks.rs"),
+                .any(|path| path == "crates-cross/cpu/src/banks.rs"),
             expected.is_empty(),
             "{suffix}: banks.rs"
         );
@@ -4471,7 +4478,7 @@ fn bank_switch_follows_the_factory_bank_mode() {
 }
 
 /// RNG — из таблицы `chip-data/rng.rhai`: прерывание и клок по линии. Чипу
-/// без RNG модуль `bsp::rng` и его рецепт удаляются.
+/// без RNG модуль `cpu::rng` и его рецепт удаляются.
 #[test]
 fn rng_follows_the_chip_table() {
     let ast = compile_script();
@@ -4523,14 +4530,14 @@ fn reset_flags_follow_the_chip_table() {
     }
 }
 
-/// Файлы `bsp::rng` остаются только под tcp/udp (сид стека `embassy-net`) и
+/// Файлы `cpu::rng` остаются только под tcp/udp (сид стека `embassy-net`) и
 /// только у чипа с RNG; без интерфейса или на другом интерфейсе — удалены.
 #[test]
 fn rng_files_stay_only_for_network_interfaces() {
     // (чип, ответы, удалены ли файлы)
     type RngCase<'a> = (&'a str, &'a [(&'a str, &'a str)], bool);
     let ast = compile_script();
-    let files = ["crates-cross/bsp/src/rng.rs", "docs/modules/bsp-rng.md"];
+    let files = ["crates-cross/cpu/src/rng.rs", "docs/modules/cpu-rng.md"];
     let deleted = |suffix: &str, preset: &[(&str, &str)]| {
         let result = run_cascade_with(&ast, suffix, preset).expect("каскад не должен падать");
         files
@@ -4598,7 +4605,7 @@ fn cpu_freq_boost_only_on_the_rm0468_line() {
             !result
                 .deleted
                 .iter()
-                .any(|path| path == "crates-cross/bsp/src/clocks.rs"),
+                .any(|path| path == "crates-cross/cpu/src/clocks.rs"),
             expected,
             "{suffix}: clocks.rs"
         );
@@ -4607,7 +4614,7 @@ fn cpu_freq_boost_only_on_the_rm0468_line() {
 
 /// Кэши (`cache`): теги из метаданных — `icen`/`dcen` по полям `FLASH_ACR`,
 /// `icache` по блоку `ICACHE`, — а `scb` добавляет ядро Cortex-M7. Где кэша нет
-/// (F1, L0), `bsp/src/cache.rs` удаляется.
+/// (F1, L0), `cpu/src/cache.rs` удаляется.
 #[test]
 fn caches_follow_the_metadata_and_the_core() {
     let ast = compile_script();
@@ -4635,7 +4642,7 @@ fn caches_follow_the_metadata_and_the_core() {
             result
                 .deleted
                 .iter()
-                .any(|path| path == "crates-cross/bsp/src/cache.rs"),
+                .any(|path| path == "crates-cross/cpu/src/cache.rs"),
             expected.is_empty(),
             "{suffix}: cache.rs"
         );

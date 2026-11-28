@@ -61,7 +61,7 @@ fn main() -> Result<(), anyhow::Error> {
         anyhow::ensure!(
             query.is_none() && !snippet,
             "--check работает сам по себе: он смотрит не на один блок, а на всю распиновку в \
-             crates-cross/bsp/src",
+             crates-cross/cpu/src",
         );
         return check_resources();
     }

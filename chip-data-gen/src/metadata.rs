@@ -12,7 +12,7 @@ use anyhow::{Context, bail};
 /// Метки интерфейсов в таблице `INTERFACES` — в этом порядке.
 pub(crate) const INTERFACE_TAGS: [&str; 6] = ["usart", "fdcan", "bxcan", "eth", "usb", "otg"];
 
-/// Причины сброса в порядке проверки (имена — в `bsp::reset::take_cause`) и
+/// Причины сброса в порядке проверки (имена — в `cpu::System::take_cause`) и
 /// поля флагов `RCC`, которые каждую означают. Флагов бывает несколько сразу,
 /// поэтому порядок — от самого конкретного: флаг вывода (`PINRSTF`, у F2/F4/F7
 /// `PADRSTF`) ставится при любом внутреннем сбросе и идёт последним, а питание
@@ -30,7 +30,7 @@ const RESET_CAUSES: &[(&str, &[&str])] = &[
 ];
 
 /// Что добавить к `embassy_stm32::Config::default()`, чтобы у блока `RNG`
-/// был клок: способ (`bsp::board` разворачивает его в строку конфига) и
+/// был клок: способ (`cpu` разворачивает его в строку конфига) и
 /// вариант мультиплексора, если способ — мультиплексор.
 pub(crate) type RngClock = (&'static str, &'static str);
 
@@ -104,7 +104,7 @@ pub(crate) struct SharedMetadata {
     pub(crate) rcc_version: Option<String>,
     /// Интерфейсы связи, выведенные в корпусе, — см. [`parse_interfaces`].
     pub(crate) interfaces: Vec<&'static str>,
-    /// Имена блоков, которыми `resources.rs` называет каждый интерфейс, — см.
+    /// Имена блоков, которыми `wiring.rs` называет каждый интерфейс, — см.
     /// [`parse_instances`].
     pub(crate) instances: BTreeMap<&'static str, Vec<String>>,
     /// Прерывание блока `RNG` — см. [`parse_rng_interrupt`].
@@ -224,7 +224,7 @@ pub(crate) fn shared_metadata<'c>(
     Ok((shared_path, facts))
 }
 
-/// Кэши чипа, которые включает `bsp::cache` (кроме кэшей ядра Cortex-M7 — их
+/// Кэши чипа, которые включает `cpu::cache` (кроме кэшей ядра Cortex-M7 — их
 /// шаблон выбирает по `cpu`): `icen`/`dcen` — кэши инструкций и данных
 /// акселератора флеша (биты `FLASH_ACR`), `icache` — блок `ICACHE`.
 ///
@@ -523,7 +523,7 @@ fn block_pins(block: &str) -> &str {
     })
 }
 
-/// Какие блоки чипа называет `resources.rs` для каждой метки интерфейса.
+/// Какие блоки чипа называет `wiring.rs` для каждой метки интерфейса.
 ///
 /// Метка говорит, что на чипе есть блок такого рода, но не как он зовётся:
 /// у STM32F030F4 нет `USART2` (только `USART1`), а у STM32H723 нет

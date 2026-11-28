@@ -283,7 +283,7 @@ pub const fn cmd_parked(clients: usize) -> usize {
 //   этого мест было бы `sync_request::PARKED_CALLERS`, и ждущие сверх него
 //   будили бы друг друга по кругу.
 // - `<F, R>` — адаптер обновления над разделами платы
-//   (`Updater<bsp::FirmwareFlash>`) и порт перезагрузки: их типов `domain` не
+//   (`Updater<app::storage::Ota>`) и порт перезагрузки: их типов `domain` не
 //   видит.
 // - `local` на `FLASH` — `Updater` над разделами `!Send` (держит
 //   `&'static Mutex<NoopRawMutex, …>`), а обычный слот — `static`, которому

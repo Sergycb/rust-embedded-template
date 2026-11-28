@@ -7,14 +7,15 @@
 // {%- endif %}
 // {%- if config == "true" %}
 //!
-//! Носитель отдаёт плата (`board.config: bsp::ConfigFlash`) готовым
+//! Носитель отдаёт `app::storage::settings(…, board.flash)`
+//! (`app::storage::ConfigFlash`) готовым
 //! `NorFlash`, и хранилище берёт весь его объём (`Settings::whole`):
 // {%- if config_store == "eeprom" %}
 //! внутренняя EEPROM L0/L1 под обёрткой `adapters_hw::eeprom::Eeprom`.
 // {%- elsif config_store == "external" %}
-//! раздел настроек на внешней флеши (`bsp::external`, драйвер `w25q`).
+//! раздел настроек на внешней флеши (`cpu::external`, драйвер `w25q`).
 // {%- else %}
-//! раздел `CONFIG` внутреннего flash (`bsp::flash`). Режет его генерация:
+//! раздел `CONFIG` внутреннего flash (`cpu::flash`). Режет его генерация:
 //! две страницы стирания — меньше `sequential-storage` не берёт; в хвосте
 //! flash или, с OTA на F2/F4/F7, в мелких секторах перед `ACTIVE`{% if config_paged == "true" %}
 //! (страница — `flash_page::ErasePage` вокруг флеша){% endif %}.
@@ -24,9 +25,9 @@
 //! `miniconf`, свой формат), решает проект.
 //!
 //! ```ignore
-//! // Хранилище — на весь носитель платы (`board.config`); строит его
-//! // compose-site и отдаёт узлу во входе.
-//! let mut settings = Settings::whole(board.config);
+//! // Хранилище — на весь носитель (`app::storage::settings`);
+//! // строит его compose-site и отдаёт узлу во входе.
+//! let mut settings = Settings::whole(carrier);
 //! let mut scratch = [0u8; 64];
 //! let mut buf = [0u8; 64];
 //! settings.write(KEY_CALIBRATION, &postcard::to_slice(&cal, &mut buf)?).await?;
@@ -187,11 +188,11 @@ impl<F: NorFlash> Settings<F> {
     }
 
     // {%- if config_store == "eeprom" %}
-    /// Хранилище на весь носитель платы (внутренняя EEPROM, `board.config`).
+    /// Хранилище на весь носитель (`app::storage::ConfigFlash` над внутренней EEPROM).
     // {%- elsif config_store == "external" %}
-    /// Хранилище на весь носитель платы (раздел внешней флеши, `board.config`).
+    /// Хранилище на весь носитель (`app::storage::ConfigFlash` над разделом внешней флеши).
     // {%- else %}
-    /// Хранилище на весь носитель платы (раздел флеша, `board.config`).
+    /// Хранилище на весь носитель (`app::storage::ConfigFlash` над разделом флеша).
     // {%- endif %}
     ///
     /// # Panics

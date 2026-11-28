@@ -216,7 +216,7 @@ pub(crate) fn format_interfaces(chips: &BTreeMap<&str, Vec<&'static str>>) -> St
 }
 
 /// Имена блоков интерфейсов каждого чипа (см. `metadata::parse_instances`): по ним
-/// `resources.rs` кладёт блок выбранного интерфейса в свою группу.
+/// `wiring.rs` кладёт блок выбранного интерфейса в свою группу.
 pub(crate) fn format_instances(
     chips: &BTreeMap<&str, BTreeMap<&'static str, Vec<String>>>,
 ) -> String {
@@ -460,7 +460,7 @@ pub(crate) fn write_data_dir(dir: &Path, files: &[(String, String)]) -> anyhow::
 }
 
 /// Число как литерал Rust с разделителями разрядов (`131_072`): значение
-/// уходит прямо в `const` crates-cross (`CONFIG_ERASE_SIZE` в `bsp::flash`), а
+/// уходит прямо в `const` crates-cross (`CONFIG_ERASE_SIZE` в `cpu::flash`), а
 /// там `clippy::unreadable_literal` под `-D warnings` не пропускает шесть цифр
 /// подряд. В `[env]` (`STATE_ERASE_SIZE`, `EXT_PAGE_SIZE`) `_` снимает фильтр
 /// Liquid `remove`.

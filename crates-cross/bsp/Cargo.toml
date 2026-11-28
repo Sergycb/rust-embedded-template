@@ -15,151 +15,35 @@ bench = false
 [lints]
 workspace = true
 
-[features]
-# Драйвер времени — фичей, которую включает `app` (`target-tests` просит его у
-# `embassy-stm32` сам): приложение про чип не знает, а `bsp` — единственный, кто
-# с ним работает.{% if ota == "true" %} Не безусловно, потому что от `bsp` зависит и `boot`: драйвер
-# там запускал бы TIM и оставлял его прерывание размаскированным на момент
-# прыжка в приложение (см. комментарий в crates-cross/Cargo.toml). Фичи
-# сливаются по всем крейтам одного вызова cargo, поэтому `boot` собирается
-# отдельным (`cargo build -p boot --release`, crates-host/xtask/src/firmware.rs).{% endif %}
-time-driver = ["embassy-stm32/time-driver-any"]
-
 [dependencies]
-# `unstable-pac` — там, где `bsp` читает и пишет регистры сам (src/reset.rs — флаги
-# сброса `RCC`{% if bank_switch != "" or cpu_freq_boost == "true" %}; src/{% if cpu_freq_boost == "true" %}clocks.rs{% if bank_switch != "" %}, src/{% endif %}{% endif %}{% if bank_switch != "" %}banks.rs{% endif %} — option bytes{% endif %}{% if cache contains "icen" or cache contains "icache" %};
-# src/cache.rs — `FLASH_ACR` и `ICACHE`{% endif %}{% if graph == "true" and dbgmcu_freeze != "" %};
-# src/wdg.rs — заморозка IWDG в `DBGMCU`{% endif %}{% if shared_flash == "true" %}{% if cache contains "scb_d" or cache contains "icache" or cache contains "dcen" %};
-# src/cache.rs — сброс кэша после стирания{% endif %}{% endif %}): их нет в API HAL, а сырой адрес вместо
-# типизированного регистра `stm32-metapac` ничем не проверялся бы.
-embassy-stm32 = { workspace = true, features = ["unstable-pac"] }
-{%- if has_usb == "true" or has_net == "true" or config_store == "eeprom" %}
-# Обёртки над железом, из которых плата собирает свои рычаги, — по строке на рычаг:
-{%- if config_store == "eeprom" %}
-#   EEPROM как `NorFlash` (`adapters_hw::eeprom::Eeprom`, src/eeprom.rs)
-{%- endif %}
+# Порт чипа: плата generic по нему и о самом чипе не знает ничего — ни
+# `embassy-stm32`, ни раскладки памяти, ни разделов (src/board.rs).
+ports = { workspace = true }
+{%- if has_usb == "true" or has_net == "true" %}
+# Обёртки над железом без чипа, из которых плата собирает рычаги, — по строке
+# на рычаг:
 {%- if has_usb == "true" %}
 #   USB-устройство с потоком CDC (`adapters_hw::usb`, src/usb.rs)
-#   драйвер-заглушка до USB-блока (`adapters_hw::usb::stub`, src/stub.rs)
 {%- endif %}
 {%- if has_net == "true" %}
-#   стек с фоновой работой (`adapters_hw::net::Net`, src/net.rs)
-#   устройство-заглушка до Ethernet (`adapters_hw::net::stub`, src/stub.rs)
-{%- endif %}
-{%- if has_usb == "true" or has_net == "true" %}
-{%- if has_usb == "true" and has_net == "true" %}
-# Классы USB регистрируются до постройки устройства, а стек и его фон рождает
-# один `embassy_net::new`, поэтому эти пары собирает плата.
-{%- elsif has_usb == "true" %}
-# Классы USB регистрируются до постройки устройства, поэтому эту пару собирает
-# плата.
-{%- else %}
-# Стек и его фон рождает один `embassy_net::new`, поэтому эту пару собирает
-# плата.
-{%- endif %}
+#   стек с фоновой работой (`adapters_hw::net::Net`, src/ethernet.rs)
 {%- endif %}
 adapters-hw = { workspace = true }
 {%- endif %}
-{%- if ota == "true" or has_can == "true" %}
-# Из `ports` плата реализует трейты, которых нет в `embedded-hal`:{% if ota == "true" %}
-# перезагрузку для узла OTA (`Reboot`, src/reset.rs){% endif %}{% if ota == "true" and has_can == "true" %},{% endif %}{% if has_can == "true" %}
-# шину CAN (`CanBus`, заглушка в src/stub.rs){% endif %}.{% if ota == "true" %} И берёт оттуда типы
-# обновления: разделы (`Partitions`, src/{% if ota_store == "external" %}external{% else %}flash{% endif %}.rs) и отпечаток раскладки
-# (`layout_fingerprint`, src/layout.rs).{% endif %}
-ports = { workspace = true }
-{%- endif %}
-{%- if flash_page == "true" %}
-{%- if erase_page == "true" %}
-# Страница стирания раздела (`ErasePage`){% if boot_partitioned == "true" %} — общая с bootloader'ом{% endif %}.
-{%- endif %}
-{%- if ota == "true" and ota_store == "external" %}
-# Страница драйвера внешней флеши (`erase_size`, src/external.rs).
-{%- endif %}
-flash-page = { workspace = true }
-{%- endif %}
-{%- if has_uart == "true" %}
-# Поток байтов заглушки UART (src/stub.rs).
-embedded-io-async = { workspace = true }
-{%- endif %}
-{%- if external_flash == "true" %}
-{%- if ota == "true" and ota_store == "external" %}
-# Драйвер внешней флеши W25Q (src/external.rs): асинхронный — приложению,
-# блокирующий — bootloader'у; шину-заглушку (src/stub.rs) оба видят своим
-# трейтом, поэтому обе фичи здесь, а не по одной у `app` и `boot`.
-{%- else %}
-# Драйвер внешней флеши W25Q (src/external.rs).
-{%- endif %}
-w25q = { workspace = true, features = ["sync", "async"] }
-{%- endif %}
-assign-resources = { workspace = true }
-# Регистры ядра, которые настраивает плата: {% if cache != "" %}кэши{% if dma_nc == "true" %} и MPU{% endif %} (src/cache.rs{% if dma_nc == "true" %},
-# src/dma_nc.rs{% endif %}), {% endif %}сброс (src/reset.rs){% if graph == "true" %}, `wfi` в ожидании сброса от сторожа
-# (src/wdg.rs){% endif %}.
-cortex-m = { workspace = true }
-{%- if shared_flash == "true" or ota == "true" or external_flash == "true" %}
-{%- if shared_flash == "true" %}
-# Общий `Flash` всего чипа — один объект под `blocking_mutex` (`Lock` в
-# src/flash.rs){% if ota == "true" and ota_store != "external" and config_store != "none" and config_store != "external" %}: через него работают и OTA, и настройки{% endif %}.
-{%- else %}
-# Мьютексы носителей на внешней флеши (src/external.rs).
-{%- endif %}
-embassy-sync = { workspace = true }
-# Адаптеры флеша (`BlockingAsync`, `BlockingPartition`, `Partition`) — носители и
-# разделы, которые нарезает плата ({% if shared_flash == "true" %}src/flash.rs{% endif %}{% if external_flash == "true" %}{% if shared_flash == "true" %}, {% endif %}src/external.rs{% endif %}).
-embassy-embedded-hal = { workspace = true }
-{%- endif %}
-{%- if shared_flash == "true" %}
-{%- if cache contains "scb_d" or cache contains "icache" or cache contains "dcen" or config_store == "eeprom" %}
-# {% if config_store == "eeprom" %}Трейт `Storage` — доступ к EEPROM под обёрткой `adapters_hw::eeprom::Eeprom`
-# (`EepromFlash` в src/eeprom.rs){% else %}Трейты `NorFlash` — обёртка флеша чипа, сбрасывающая кэш после стирания и
-# записи (`Coherent` в src/cache.rs){% endif %}.
-embedded-storage = { workspace = true }
-{%- endif %}
-{%- endif %}
-{%- if shared_flash == "true" or ota == "true" or external_flash == "true" or has_usb == "true" or has_net == "true" %}
-{%- capture cells %}{% if shared_flash == "true" %}, общему флешу и его разделам{% endif %}{% if external_flash == "true" %}, внешней флеши{% endif %}{% if has_usb == "true" %}, USB-устройству{% endif %}{% if has_net == "true" %}, стеку{% endif %}{% endcapture %}
-# `static-cell` — потому что объектам платы нужна память `&'static`:
-# {{ cells | remove_first: ", " }} — иначе их нельзя отдать в задачу, которую
-# спавнит `Spawner` (аргументы задач обязаны быть 'static).
-static_cell = { workspace = true }
-{%- endif %}
 {%- if has_usb == "true" %}
-# Устройство с классом CDC над драйвером USB-блока — `embassy-usb` (src/usb.rs).
+# Устройство с классом CDC над драйвером чипа — `embassy-usb` (src/usb.rs).
 embassy-usb = { workspace = true }
 {%- endif %}
 {%- if has_net == "true" %}
-# Стек над драйвером Ethernet — `embassy-net` (src/net.rs), сокеты на стеке
-# открывают узлы.
+# Стек над драйвером Ethernet — `embassy-net` (src/ethernet.rs), сокеты на
+# стеке открывают узлы.
 embassy-net = { workspace = true }
 {%- endif %}
-{%- if net_services contains "ssh" %}
-# Бэкенд `getrandom` над RNG платы (src/rng.rs): случайность для криптографии
-# проекта — и крейтов, что зовут `getrandom` сами, и тех, что берут генератор
-# параметром (`getrandom::SysRng`). Мьютекс генератора — `embassy-sync`.
-getrandom = { workspace = true }
-{%- if shared_flash != "true" and ota != "true" and external_flash != "true" %}
-embassy-sync = { workspace = true }
-{%- endif %}
-{%- endif %}
-{%- if ota == "true" and erase_zero == "true" and ota_store != "external" %}
-# Прямая зависимость только ради фичи — свойства этого чипа: стёртая страница
-# читается нулями, и `embassy-boot` в адаптере обновления (`domain::ota::Updater`) должен
-# ждать 0x00 вместо 0xFF. Отсюда она достаётся всем, кто линкует `bsp`, — `app` и
-# `target-tests`; bootloader просит её сам (crates-cross/boot).
-embassy-boot = { workspace = true, features = ["flash-erase-zero"] }
-{%- endif %}
-{%- if graph == "true" %}
-# Аппаратный сторож под трейт `HardwareWatchdog` (см. src/wdg.rs). Крейт
-# объявлен здесь, а не у `app`, потому что реализация трейта — это железо:
-# сам `watchdog` про HAL не знает и знать не должен.
-watchdog = { workspace = true }
-{%- endif %}
-{%- if graph == "true" or external_flash == "true" %}
-# Время в проекте одно — `embassy_time`:{% if graph == "true" %} `Duration` в сигнатуре сторожа
-# (src/wdg.rs; `core::time::Duration` стоил бы вызова `__aeabi_uldivmod` на
-# каждой конверсии — docs/modules/app-graph.md, раздел про supervisor){% endif %}{% if graph == "true" and external_flash == "true" %};{% endif %}{% if external_flash == "true" %}
-# `Delay` асинхронного драйвера внешней флеши (src/external.rs){% endif %}.
-embassy-time = { workspace = true }
+{%- if has_usb == "true" or has_net == "true" %}
+# `static-cell` — потому что объектам платы нужна память `&'static`:
+# {% if has_usb == "true" %}USB-устройству{% endif %}{% if has_usb == "true" and has_net == "true" %}, {% endif %}{% if has_net == "true" %}стеку{% endif %} — иначе их нельзя отдать в задачу, которую
+# спавнит `Spawner` (аргументы задач обязаны быть 'static).
+static_cell = { workspace = true }
 {%- endif %}
 # Безусловно, не за фичей: `log` в прошивке не используется вовсе, поэтому
 # фичам `defmt`/`log` у bsp (и мосту `defmt-or-log`) выбирать не из

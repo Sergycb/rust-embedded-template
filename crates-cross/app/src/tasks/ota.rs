@@ -28,7 +28,7 @@ use sync_request::ask::AskService;
 const CMD_PARKED: usize = domain::ota::cmd_parked({{ ota_cmd_clients }});
 
 /// Адаптер обновления над флешем платы.
-type Updater = domain::ota::Updater<bsp::FirmwareFlash>;
+type Updater = domain::ota::Updater<crate::storage::Ota>;
 {%- if askers > 0 %}
 
 /// Ребро входа `ASK` — доля одного клиента в его очереди.
@@ -87,7 +87,7 @@ pub static READY_{{ f[4] | upcase }}: Signal<CriticalSectionRawMutex, ()> = Sign
 /// Если задачу уже спавнили: `spawn` зовётся один раз за запуск.
 pub fn spawn(
     spawner: embassy_executor::Spawner,
-    firmware: bsp::FirmwareFlash,
+    firmware: crate::storage::Ota,
     image: domain::ota::Image,
 ) {
     // `confirmed` — из свойств образа бинарника{% if test_image == "true" %}: тестовый
@@ -101,10 +101,10 @@ pub fn spawn(
 }
 
 #[embassy_executor::task]
-async fn task(firmware: bsp::FirmwareFlash, mut running_version: u32, mut confirmed: bool) {
+async fn task(firmware: crate::storage::Ota, mut running_version: u32, mut confirmed: bool) {
     // Адаптер обновления — над разделами обновления платы.
     let mut flash = Updater::new(firmware);
-    let mut reboot = bsp::reset::Reboot;
+    let mut reboot = cpu::System;
     domain::ota::task(domain::ota::OtaCtx::<'_, _, _, CMD_PARKED> {
         flash: &mut flash,
         reboot: &mut reboot,

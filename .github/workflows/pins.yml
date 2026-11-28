@@ -24,7 +24,7 @@ on:
     # Список продублирован ниже намеренно: GitHub Actions не поддерживает
     # YAML-якоря, `&paths`/`*paths` он не развернёт.
     paths:
-      - crates-cross/bsp/src/**
+      - crates-cross/cpu/src/**
       # Справочник и его зависимости: обновление `stm32-metapac` (у него своя
       # запись в dependabot.yml) меняет ровно те метаданные, по которым идёт
       # проверка, а смена чипа правит обе чип-фичи сразу.
@@ -33,7 +33,7 @@ on:
       - .github/workflows/pins.yml
   pull_request:
     paths:
-      - crates-cross/bsp/src/**
+      - crates-cross/cpu/src/**
       - crates-host/chip-info/**
       - crates-cross/Cargo.toml
       - .github/workflows/pins.yml

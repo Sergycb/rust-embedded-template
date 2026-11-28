@@ -112,7 +112,7 @@ pub async fn task(ctx: HeartbeatCtx<'_>) {
   называет, пишется полным путём (`$crate::heartbeat::WATCHDOG`; почему —
   `docs/architecture.md`, «Узлы — фрагменты в `domain`»). Типы,
   которых фрагмент назвать не может (адаптер над рычагом в слоте), — его параметры:
-  {% if ota == "true" %}`name: OTA_FRAG<F, R, const PARKED: usize>` во фрагменте, `::domain::OTA_FRAG<::domain::ota::Updater<bsp::FirmwareFlash>, bsp::reset::Reboot, OTA_CMD_PARKED>` здесь{% else %}`name: SENSOR_FRAG<R>` во фрагменте, `::domain::SENSOR_FRAG<bsp::SensorBus>` здесь
+  {% if ota == "true" %}`name: OTA_FRAG<F, R, const PARKED: usize>` во фрагменте, `::domain::OTA_FRAG<::domain::ota::Updater<app::storage::Ota>, cpu::System, OTA_CMD_PARKED>` здесь{% else %}`name: SENSOR_FRAG<R>` во фрагменте, `::domain::SENSOR_FRAG<bsp::SensorBus>` здесь
   (пример ниже){% endif %}.
 * **Порядок items фиксирован**: `name:` → `boot:` → `watchdog:` →
   `cloned:`/`shared:` → `executor` → `fragments:` последним. `fragments:`
@@ -247,17 +247,17 @@ resources: [WS: &'static mut $crate::x::Workspace = static |w| w.gain = inputs.g
 тогда, когда МК может не проснуться), а прежний `core::time::Duration`
 стоил вызова `__aeabi_uldivmod` на каждой конверсии.
 
-Реализация привязана к железу, поэтому её место — `bsp`, и она там уже
-есть: `bsp::wdg::Iwdg` (см. `crates-cross/bsp/src/wdg.rs`).
+Реализация привязана к железу, поэтому её место — `cpu`, и она там уже
+есть: `cpu::wdg::Iwdg` (см. `crates-cross/cpu/src/wdg.rs`).
 Писать её руками не нужно, и подключать тоже: имя блока подставлено при
 генерации из метаданных чипа (`IWDG`, на H7 `IWDG1`, на двухъядерных H7 у
-ядра CM4 `IWDG2`), объект собирает `Board::new`, а запускает его блок
+ядра CM4 `IWDG2`), объект собирает `cpu::init`, а запускает его блок
 `watchdog:` графа — инициализатором `= {% if ota == "true" %}boot.{% endif %}board.watchdog.arm()`, где
 {% if ota == "true" %}`boot` — объявленный выше `boot:`-объект (`Boot`: плата и свойства образа){% else %}`board` — объявленный выше `boot:`-объект{% endif %}, который задача `start`
 бинарника передаёт в `spawn_all`. Всё, что осталось на вас, — цифры:
 `WATCHDOG_CHECK_EVERY` здесь, таймаут узла во фрагменте, у железа —
 `WATCHDOG_TIMEOUT_US` в `[env]` crates-cross/.cargo/config.toml
-(`bsp::wdg::HW_TIMEOUT_US`); их цепочка и где какое звено проверяется —
+(`cpu::wdg::HW_TIMEOUT_US`); их цепочка и где какое звено проверяется —
 `docs/watchdog.md`.
 
 Узлы шаблона (`HEARTBEAT`, `CPU_LOAD`) объявлены **наблюдаемыми** (`watchdog: ... observe`): их просрочка
@@ -292,17 +292,17 @@ resources: [WS: &'static mut $crate::x::Workspace = static |w| w.gain = inputs.g
 (`docs/ota.md`). Своего канала у образа нет: он идёт по протоколу,
 которым хост и так говорит с устройством (`docs/ota.md`).
 
-Плата отдаёт для узла разделы обновления `board.firmware`
-(`bsp::FirmwareFlash` — `ports::Partitions`, нарезанные по символам
-`memory.x`) и порт перезагрузки `bsp::reset::Reboot`; эта сторона кладёт их во
+Плата отдаёт для узла разделы обновления `app::storage::ota(board.flash)`
+(`app::storage::Ota` — `ports::Partitions`, нарезанные по символам
+`memory.x`) и порт перезагрузки `cpu::System`; эта сторона кладёт их во
 вход фрагмента вместе с адаптером обновления над разделами: `bsp` про `domain`
 не знает
-(`= ::domain::ota::OtaWiring { flash: Updater::new(boot.board.firmware), reboot:
-bsp::reset::Reboot, running_version: boot.image.version, confirmed:
+(`= ::domain::ota::OtaWiring { flash: Updater::new(boot.app::storage::ota(board.flash)), reboot:
+cpu::System, running_version: boot.image.version, confirmed:
 boot.image.confirmed }`). Плата и свойства образа (`domain::ota::Image`) —
 поля `boot:`-объекта `Boot`: его собирает задача `start` бинарника{% if test_image == "true" %}, и у рабочего `app`
 и тестового `test-ota` свойства свои{% endif %}. Типы слотов — аргументы фрагмента
-(`OTA_FRAG<::domain::ota::Updater<bsp::FirmwareFlash>, bsp::reset::Reboot, OTA_CMD_PARKED>`):
+(`OTA_FRAG<::domain::ota::Updater<app::storage::Ota>, cpu::System, OTA_CMD_PARKED>`):
 слот — `static`, тип ему нужен, а знает его только эта сторона. Третий
 аргумент — места ожидания входа `CMD`, `domain::ota::cmd_parked` от числа его
 клиентов, которое считает генерация: один клиент держит вызов, остальные
@@ -311,12 +311,12 @@ boot.image.confirmed }`). Плата и свойства образа (`domain::
 клиента — прибавьте его к числу в `OTA_CMD_PARKED`. Слот адаптера — `local` (фича
 `supervisor/local-resources` в
 `crates-cross/Cargo.toml`): адаптер `Updater` не `Send` (держит `&'static
-Mutex<NoopRawMutex, …>`), и граф держит его на своём исполнителе, не требуя
+Mutex<ThreadModeRawMutex, …>`), и граф держит его на своём исполнителе, не требуя
 `Send`. Плата за это — по `unsafe`-блоку на каждый такой `local`-`static`,
 который макрос эмитит в `app`. Узел, чей `local`-слот заполняется
 из `inputs`, нельзя перевести на другой
 исполнитель (`executor:`): это допущение «один исполнитель», и менять его
-вместе с `NoopRawMutex` у флеша (`docs/flash.md`).
+вместе с `ThreadModeRawMutex` у флеша (`docs/flash.md`).
 
 У узла нет `watchdog:`, и это не забывчивость: команды может не быть всю
 жизнь платы, и прогресса, о котором можно отметиться, у узла нет. Аппаратный

@@ -1,21 +1,11 @@
-//! Паникёр приложения: в dev — `panic-probe`, в release — дамп в переживающую
-//! сброс память и сброс МК. И транспорт лога, `defmt-rtt`: у обоих ровно по
-//! одному на бинарник, и оба приходят в каждый бинарник пакета отсюда.
+//! Состояние паники приложения: причина прошлого запуска и причина сброса —
+//! то, что читают сведения об устройстве и узел протокола.
 //!
-//! Здесь, а не в `bsp`: что делать с паникой — решение прошивки, а не плата.
-//! {% if ota == "true" %}У bootloader'а паникёр свой, без сообщений (`crates-cross/boot`), у
-//! `target-tests` — свой от `embedded-test`.{% else %}У `target-tests` паникёр свой — от `embedded-test`.{% endif %}
-
-/// В dev-сборке паника печатается в RTT и оставляет МК в `HardFault` — под отладчиком.
-#[cfg(debug_assertions)]
-use panic_probe as _;
-
-// RTT остаётся дефолтным транспортом в обоих профилях — шаблон не знает,
-// какой конкретный USART на плате пользователь отведёт под лог без пробника.
-// Паттерн замены (UART, без RTT/пробника) для release — в
-// docs/modules/app.md, подключается по мере готовности платы (`Board`
-// должен будет отдавать рычаг UART под лог).
-use defmt_rtt as _;
+//! Сам паникёр и транспорт лога — в крейте `panic-handler`: он входит в
+//! каждый бинарник пакета отдельно (`src/main.rs`{% if test_image == "true" %}, `src/bin/test-ota.rs`{% endif %}),
+//! а не в библиотеку: библиотеку линкует `target-tests`, где паникёр даёт
+//! `embedded-test`, и второй `#[panic_handler]` в том же образе не собрался бы.
+//! Здесь же только состояние — оно нужно и библиотеке.
 
 use core::cell::Cell;
 
@@ -24,12 +14,12 @@ use cortex_m::interrupt::Mutex;
 /// Сообщение паники прошлого запуска: пишет [`take`], читает [`last`].
 static LAST: Mutex<Cell<Option<&'static str>>> = Mutex::new(Cell::new(None));
 
-/// Причина сброса этого запуска (`bsp::reset::take_cause`): пишет
+/// Причина сброса этого запуска (`cpu::System::take_cause`): пишет
 /// [`set_reset`], читает [`reset_cause`].
 static RESET: Mutex<Cell<&'static str>> = Mutex::new(Cell::new("unknown"));
 
 /// Запоминает причину сброса этого запуска для сведений об устройстве.
-/// Зовёт `main` бинарника сразу за `bsp::reset::take_cause`, до `Board::new`.
+/// Зовёт `main` бинарника сразу за `cpu::System::take_cause`, до `cpu::init`.
 pub fn set_reset(cause: &'static str) {
     cortex_m::interrupt::free(|cs| RESET.borrow(cs).set(cause));
 }
@@ -41,7 +31,7 @@ pub fn reset_cause() -> &'static str {
 }
 
 /// Читает сообщение паники прошлого запуска и запоминает его для [`last`];
-/// зовёт один раз `main`, до `Board::new`. В dev — всегда `None`.
+/// зовёт один раз `main`, до `cpu::init`. В dev — всегда `None`.
 ///
 /// Один раз: `panic-persist` при чтении стирает свою магию, и второй вызов
 /// `get_panic_message_utf8` вернул бы `None`. Строка живёт в регионе `PANIC`,
@@ -66,28 +56,3 @@ pub fn last() -> Option<&'static str> {
     cortex_m::interrupt::free(|cs| LAST.borrow(cs).get())
 }
 {%- endif %}
-
-/// Пишет панику в переживающий сброс регион `PANIC` и в RTT, затем сбрасывает МК.
-///
-/// Сначала дамп, потом лог: дамп — то, ради чего обработчик существует, и
-/// ничто в печати не должно ему помешать. Сама печать не блокируется (у
-/// `defmt-rtt` фича `disable-blocking-mode`): не влезла в буфер — теряется,
-/// и МК всё равно сбрасывается. Флаг — от повторного входа: паника внутри самого
-/// defmt (чужой `Format`, логгер уже занят) вернула бы сюда же, затёрла бы
-/// первую причину и паниковала бы снова, пока не кончится стек.
-#[cfg(not(debug_assertions))]
-#[panic_handler]
-fn panic(info: &core::panic::PanicInfo) -> ! {
-    use core::sync::atomic::{AtomicBool, Ordering};
-
-    static PANICKING: AtomicBool = AtomicBool::new(false);
-
-    cortex_m::interrupt::disable();
-    // load/store, а не swap: на thumbv6m нет CAS, а прерывания уже выключены.
-    if !PANICKING.load(Ordering::Relaxed) {
-        PANICKING.store(true, Ordering::Relaxed);
-        panic_persist::report_panic_info(info);
-        defmt::error!("panic: {}", defmt::Display2Format(info));
-    }
-    bsp::reset::Reboot.reset_now()
-}

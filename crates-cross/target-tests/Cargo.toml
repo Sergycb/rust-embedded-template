@@ -40,10 +40,12 @@ embassy-time = { workspace = true, features = ["defmt-timestamp-uptime-ms"] }
 # воркспейсе фичи нет{% if ota == "true" %}, чтобы она не досталась бутлоадеру{% endif %} (см. комментарий в
 # crates-cross/Cargo.toml), а тестовый образ линкуется с `embassy-time` и без
 # драйвера не соберётся.
-embassy-stm32 = { workspace = true, features = ["time-driver-any"] }
+cpu = { workspace = true, features = ["time-driver"] }
 # Паникёр у тестов свой (`embedded-test`), `HardFault` — по умолчанию из
 # `cortex-m-rt`: обработчик с причиной — у `app` (src/fault.rs).
-bsp = { workspace = true }
+# Плату и разделы тесты собирают той же библиотекой, что прошивка:
+# `app::Board`, `app::storage::ota`/`settings`.
+app = { workspace = true }
 {%- if ota == "true" or config == "true" %}
 # {% if ota == "true" %}Адаптер обновления над разделами платы и проверка версии образа в тесте
 # отката (`domain::ota`, `updater` в tests/test.rs){% if config == "true" and config_store != "external" %};

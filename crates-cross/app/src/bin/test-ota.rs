@@ -10,6 +10,7 @@
 use defmt::{error, info, warn};
 use embassy_executor::Spawner;
 use embassy_executor::raw::Executor;
+use panic_handler as _;
 use static_cell::StaticCell;
 
 /// Свойства этого образа (`domain::ota::Image`).
@@ -59,7 +60,8 @@ fn main() -> ! {
     // Тестовый образ виден с первых строк лога.
     warn!("app: ТЕСТОВЫЙ образ test-ota: себя не подтверждает, следующий сброс его откатит");
 
-    let reset = bsp::reset::take_cause();
+    let mut system = cpu::System;
+    let reset = system.take_cause();
     info!("app: причина сброса {}", reset);
 {%- if has_protobuf == "true" or net_services != "" or has_cli == "true" %}
     app::panic::set_reset(reset);
@@ -79,17 +81,17 @@ fn main() -> ! {
 
 /// Первая задача: собирает плату и спавнит узлы — как у `app`, со своими
 /// свойствами образа.
-{%- if external_flash != "true" %}
-// `allow`, а не `expect` — почему, у `start` в `src/main.rs`.
 #[allow(
     clippy::unused_async,
-    reason = "задача embassy обязана быть async, а без внешней флеши `Board::new` синхронный"
+    reason = "задача embassy обязана быть async, а плата синхронна: ждать нечего"
 )]
-{%- endif %}
 #[embassy_executor::task]
 async fn start(spawner: Spawner) {
-    let board = bsp::Board::new(){% if external_flash == "true" %}.await{% endif %};
-    info!("app: {}", board.spec);
+    let board = bsp::Board::new(cpu::init());
+{%- if external_flash == "true" %}
+    cpu::external::init(board.ext_flash_bus, app::layout::ext_flash_end());
+{%- endif %}
+    info!("app: {}", board.cpu_info);
 {%- if graph == "true" %}
     let boot = app::Boot {
         board,

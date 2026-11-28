@@ -339,7 +339,7 @@ fn default_cases() -> Vec<Case> {
         // Тот же чип, но от OTA отказались при генерации: ветка «один образ на
         // весь flash» на чипе, куда схема прекрасно помещается.
         Case::new("stm32f407ve").variant("no-ota", &["ota=no"]),
-        // Голый проект — без OTA, графа и транспортов: `resources.rs` в нём
+        // Голый проект — без OTA, графа и транспортов: `wiring.rs` в нём
         // заглушка без групп, и только тогда `check_snippets_compile` собирает
         // половину `assign_resources!` из `pins --snippet`. Заготовки у каждого
         // чипа свои, поэтому голый вариант — у каждого из основных чипов набора,
@@ -350,15 +350,15 @@ fn default_cases() -> Vec<Case> {
         // Несколько карт памяти: в crates-cross/Cargo.toml должна появиться фича
         // "single-bank", без неё build.rs embassy-stm32 паникует.
         Case::new("stm32f429zg"),
-        // Банк 2 за разрывом (H743ZG: банк 2 с 0x0810_0000): `boot` и `bsp`
+        // Банк 2 за разрывом (H743ZG: банк 2 с 0x0810_0000): `boot` и `cpu`
         // разбирают флеш на `Bank1Region`/`Bank2Region`, `DFU` пишется через
         // второй, подпись проверяется над обоими банками (`screen` со своей
         // веткой). Без `config=yes`: с настройками во flash на этом чипе
         // OTA не помещается (`config_ota = false`), `boot` в проект не входит,
         // и ветка `dfu_bank` не собиралась бы вовсе.
         Case::new("stm32h743zg").variant("dfu-bank", &[]),
-        // С завода двухбанковый флеш при однобанковой раскладке: `bsp/src/banks.rs`
-        // (вариант `g4`) в `bsp`, его зовут и `Board::new`, и `boot`; `unstable-pac` — у `bsp`.
+        // С завода двухбанковый флеш при однобанковой раскладке: `cpu/src/banks.rs`
+        // (вариант `g4`) в `cpu`, его зовёт и `cpu::init`, и `boot`; `unstable-pac` — у `cpu`.
         Case::new("stm32g474re"),
         // OTA не помещается: crates-cross/boot удаляется из проекта, members и xtask
         // должны это пережить.
@@ -366,14 +366,14 @@ fn default_cases() -> Vec<Case> {
         // Заодно — настройки на внешней флеши (`ext_flash=yes`, `ota=no`): драйвер
         // W25Q над шиной-заглушкой, раздел с начала микросхемы. Без OTA общий
         // объект `Flash` при этом не нужен вовсе (`shared_flash = false`), и
-        // это единственная конфигурация, где bsp собирается без него. H7 —
+        // это единственная конфигурация, где `cpu` собирается без него. H7 —
         // потому что именно у него раздел во внутреннем флеше дороже всего
         // (2×128 KiB).
         Case::new("stm32h723ve").variant(
             "config-external",
             &["ext_flash=yes", "config=yes", "ota=no"],
         ),
-        // Двухъядерный: bsp/boot получают init_primary() с SharedData.
+        // Двухъядерный: cpu/boot получают init_primary() с SharedData.
         //
         // Ядро именно CM4, а не CM7: у двухъядерных H7 блок сторожа зовётся
         // `IWDG2` у CM4 и `IWDG1` у CM7 (см. таблицу WATCHDOG в
@@ -389,7 +389,7 @@ fn default_cases() -> Vec<Case> {
         // Раздел настроек вместе с OTA на равных секторах (2 KiB): в хвосте
         // flash, страница раздела — страница чипа, схема OTA после него всё ещё
         // помещается — в проект попадают разом bootloader, разделы OTA и хранилище
-        // настроек (`bsp::flash`, `domain::ota`, `domain::settings`).
+        // настроек (`cpu::flash`, `domain::ota`, `domain::settings`).
         Case::new("stm32g071rb").variant("config", &["config=yes"]),
         // Он же без OTA: две последние страницы flash (таблица векторов
         // приложения стоит в начале). Ветка «config есть, bootloader и
@@ -403,7 +403,7 @@ fn default_cases() -> Vec<Case> {
         Case::new("stm32f407ve").variant("config", &["config=yes"]),
         // OTA с `STATE`/`DFU` на внешней флеши (`ext_flash=yes`) — на чипе, куда
         // внутренняя схема не помещается вовсе. Разом: слот драйвера в `boot`
-        // (блокирующий, со строгим `prepare` после проверки подписи) и в `bsp::external`
+        // (блокирующий, со строгим `prepare` после проверки подписи) и в `cpu::external`
         // (асинхронный, общий мьютекс), проверка подписи над внешними
         // разделами, настройки на той же
         // микросхеме за `DFU` (`__config_start`/`__config_end` в `memory.x` — смещения от её начала), и
@@ -444,11 +444,11 @@ fn default_cases() -> Vec<Case> {
         // `adapters_hw::eeprom::Eeprom` поверх `Flash::eeprom_*`, единственное место
         // под настройки на флеше, стирающемся в ноль.
         Case::new("stm32l073rz").variant("config", &["config=yes"]),
-        // Та же EEPROM без OTA: в `bsp::flash` остаются только общий замок и
+        // Та же EEPROM без OTA: в `cpu::flash` остаются только общий замок и
         // EEPROM — без раздела на весь флеш и без асинхронных мьютексов
         // (`whole = false`), и импорты у этой ветки свои.
         Case::new("stm32l073rz").variant("eeprom-no-ota", &["config=yes", "ota=no"]),
-        // Протоколы поверх UART: узел в графе, заглушка `bsp::serial` и
+        // Протоколы поверх UART: узел в графе, заглушка `cpu::com` и
         // транспорт из `adapters-logic` вокруг неё. Modbus — на USART v4 (G4, есть
         // аппаратный DE), protobuf — на F4 (USART v2, без него): оба
         // интерфейса из таблицы chip-data/interfaces.rhai.
@@ -543,12 +543,12 @@ fn default_cases() -> Vec<Case> {
             ],
         ),
         // Несколько транспортов (`links`): у каждого своя группа ресурсов,
-        // подмодуль драйвера в `bsp` и канала в `app`, поле `Board` и узел
+        // подмодуль драйвера в `cpu` и канала в `app`, поле `Board` и узел
         // графа (без графа — модуль задачи). Два UART
         // одного вида рядом с сетью (H7: три узла Modbus и один `NET`), два USB
         // (два устройства с разными серийными номерами; без графа — и по
         // сигналу готовности OTA на каждое), TCP и UDP на одном стеке
-        // (`bsp::net::SOCKETS` = 1 + 2), поток с протоколом рядом с шиной без протокола,
+        // (`bsp::ethernet::SOCKETS` = 1 + 2), поток с протоколом рядом с шиной без протокола,
         // UART с UDP под одним протоколом. Транспорты без протокола: UDP (сокет и
         // `PacketMetadata` ждут ваш узел) и USB с графом (поток CDC в
         // `Board` никто не забирает).
@@ -626,14 +626,14 @@ fn default_cases() -> Vec<Case> {
         Case::new("stm32f407ve")
             .variant("mqtt-no-ota", &["links=tcp", "net_services=mqtt", "ota=no"]),
         // Клок RNG, которого умолчания HAL не дают, — мультиплексор на своём
-        // источнике (`config()` в `bsp::board`): `RNGSEL` у G0 (SYS), WL
+        // источнике (`config()` в `cpu`): `RNGSEL` у G0 (SYS), WL
         // (MSI) и WBA (HSI), `CLK48SEL` у L476 без HSI48 (MSI). PLL48 и HSI48
         // проверяют F4, L0 и G4/H7 выше.
         Case::new("stm32g081rb"),
         Case::new("stm32wle5jc"),
         Case::new("stm32wba52cg"),
         Case::new("stm32l476rg"),
-        // Остальные варианты `bsp/src/banks.rs` (`g4` — у g474re выше): регистры
+        // Остальные варианты `cpu/src/banks.rs` (`g4` — у g474re выше): регистры
         // FLASH у G0B/G0C (`g0`), L4+ (`l4`) и L5 (`l5`) различаются.
         Case::new("stm32g0b1rc"),
         Case::new("stm32l4r5zi"),
@@ -1027,7 +1027,7 @@ fn check_one(
             })
         };
 
-        let resources = project.join("crates-cross/bsp/src/resources.rs");
+        let resources = project.join("crates-cross/cpu/src/wiring.rs");
         let placeholder_resources = is_placeholder_resources(
             &fs::read_to_string(&resources)
                 .with_context(|| format!("прочитать {}", resources.display()))?,
@@ -1149,7 +1149,7 @@ fn check_one(
             "crates-cross/Cargo.toml",
             "check",
         ])?;
-        // От проекта зависит: `--check` на нетронутом `bsp` обязан проходить —
+        // От проекта зависит: `--check` на нетронутом `cpu` обязан проходить —
         // шаблон не занимает ни одного вывода, а выбранный интерфейс — свои.
         cargo(&["xtask", "pins", "--check"])?;
         // Обратная сторона той же проверки — раз на прогон: от конфигурации
@@ -1172,10 +1172,10 @@ fn check_one(
 /// и `--check`, который молча пропускает `PA13`, прошёл бы его так же, как
 /// исправный.
 ///
-/// В `resources.rs` на время одного запуска дописывается группа со SWDIO
+/// В `wiring.rs` на время одного запуска дописывается группа со SWDIO
 /// (`PA13`), потом файл возвращается как был — до разбора исхода, чтобы и
 /// проваленная проверка не оставила проект испорченным. Пересборки нет:
-/// `--check` читает исходники `bsp` текстом во время работы, а сам `chip-info`
+/// `--check` читает исходники `cpu` текстом во время работы, а сам `chip-info`
 /// уже собран положительным `pins --check` перед этим. Ждём не просто
 /// ненулевой код, а строку `КОНФЛИКТ: PA13` (её печатает `check_resources` в
 /// `crates-host/chip-info/src/check.rs`): иначе за отказ сошла бы любая
@@ -1186,7 +1186,7 @@ fn check_pins_reject_debug_port(
     mut log: &File,
 ) -> anyhow::Result<()> {
     const HEAD: &str = "assign_resources! {";
-    let resources = project.join("crates-cross/bsp/src/resources.rs");
+    let resources = project.join("crates-cross/cpu/src/wiring.rs");
     let original = fs::read_to_string(&resources)
         .with_context(|| format!("прочитать {}", resources.display()))?;
     anyhow::ensure!(
@@ -1222,11 +1222,11 @@ fn check_pins_reject_debug_port(
     }
     note(
         log,
-        "pins --check: на занятом `PA13` отказал, как и должен — resources.rs возвращён",
+        "pins --check: на занятом `PA13` отказал, как и должен — wiring.rs возвращён",
     )
 }
 
-/// `resources.rs` — заглушка без групп: проект без интерфейса.
+/// `wiring.rs` — заглушка без групп: проект без интерфейса.
 fn is_placeholder_resources(resources: &str) -> bool {
     resources.contains("BoardResources {}")
 }
@@ -1739,7 +1739,7 @@ fn capture(
 }
 
 /// Заготовки из `cargo xtask pins <БЛОК> --snippet` для ВСЕХ блоков чипа —
-/// собираются в один временный модуль `bsp` и компилируются.
+/// собираются в один временный модуль `cpu` и компилируются.
 ///
 /// Зачем это здесь. Заготовку человек вставляет в свой проект как есть, то
 /// есть она обязана компилироваться, — а проверялось до сих пор лишь то, что
@@ -1789,7 +1789,7 @@ fn check_snippets_compile(
     // есть кладёт его в корень крейта — двух вызовов в одном крейте не бывает
     // (`error[E0428]: the name split_resources is defined multiple times`).
     // По той же причине она встаёт не рядом с `bind_interrupts!`, а на место
-    // `resources.rs` — туда, куда группу переносит человек.
+    // `wiring.rs` — туда, куда группу переносит человек.
     // Блок выбирается с подчёркиванием в имени, если такой есть: именно на нём
     // ловится имя структуры ресурсов (`USB_OTG_FS` давал
     // `Usb_otg_fsResources`, который не проходит `non_camel_case_types`).
@@ -1799,13 +1799,13 @@ fn check_snippets_compile(
         .unwrap_or(&blocks[0])
         .clone();
 
-    // В проекте с выбранным интерфейсом `resources.rs` уже не пуст: в нём
-    // группы блока интерфейса и RNG, на которые опирается `Board::new`, и
+    // В проекте с выбранным интерфейсом `wiring.rs` уже не пуст: в нём
+    // группы блока интерфейса и RNG, на которые опирается `cpu::init`, и
     // подменять файл заготовкой нельзя. Половина `assign_resources!` проверяется
-    // тогда в проектах без интерфейса (те же чипы, `resources.rs` — заглушка),
+    // тогда в проектах без интерфейса (те же чипы, `wiring.rs` — заглушка),
     // а здесь — только `bind_interrupts!`.
-    let bsp = project.join("crates-cross").join("bsp").join("src");
-    let resources_path = bsp.join("resources.rs");
+    let cpu = project.join("crates-cross").join("cpu").join("src");
+    let resources_path = cpu.join("wiring.rs");
     let original_resources = fs::read_to_string(&resources_path)?;
     let placeholder_only = is_placeholder_resources(&original_resources);
 
@@ -1846,8 +1846,8 @@ fn check_snippets_compile(
         }
     }
 
-    let module_path = bsp.join("snippet_check.rs");
-    let lib_path = bsp.join("lib.rs");
+    let module_path = cpu.join("snippet_check.rs");
+    let lib_path = cpu.join("lib.rs");
     let lib = fs::read_to_string(&lib_path)?;
     if placeholder_only {
         fs::write(
@@ -1869,20 +1869,20 @@ fn check_snippets_compile(
     )?;
 
     let checked = run_command(
-        Command::new("cargo").args(["clippy", "-p", "bsp", "--", "-D", "warnings"]),
+        Command::new("cargo").args(["clippy", "-p", "cpu", "--", "-D", "warnings"]),
         &project.join("crates-cross"),
         Some(cargo_target_dir),
         log,
     );
 
     // Проект возвращается в исходное состояние в любом случае: следом за этой
-    // проверкой идут другие, и им нужен нетронутый `bsp`.
+    // проверкой идут другие, и им нужен нетронутый `cpu`.
     //
     // Результат восстановления НЕ пробрасывается здесь же: сорвись оно (файл
     // занят, права), сообщение об этом вытеснило бы настоящую причину —
     // «заготовка не компилируется», — ради которой прогон и затевался.
     // Сначала главное, потом уборка.
-    // Каждый файл — независимо: сорвись `lib.rs`, `resources.rs` всё равно
+    // Каждый файл — независимо: сорвись `lib.rs`, `wiring.rs` всё равно
     // должен вернуться, иначе следующие проверки идут на чужой распиновке.
     let restored = [
         fs::write(&lib_path, lib),

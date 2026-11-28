@@ -1,15 +1,15 @@
 [workspace]
 {%- if ota == "true" %}
 # "boot" — bootloader схемы OTA (embassy-boot).
-members  = ["app", "boot", "bsp", "target-tests"]
+members  = ["app", "boot", "bsp", "cpu", "panic-handler", "target-tests"]
 # Bootloader собирается только в release и только явно (`cargo build -p boot
 # --release`, `cargo flash -p boot --release`): debug-сборки у него нет, поэтому
 # голые `cargo build`/`cargo check` его не трогают. Размер зоны bootloader'а
 # (порядка 28–32 KiB) рассчитан на release — с подписью debug-сборка в неё не
 # влезает.
-default-members = ["app", "bsp", "target-tests"]
+default-members = ["app", "bsp", "cpu", "panic-handler", "target-tests"]
 {%- else %}
-members  = ["app", "bsp", "target-tests"]
+members  = ["app", "bsp", "cpu", "panic-handler", "target-tests"]
 {%- endif %}
 resolver = "3"
 
@@ -27,8 +27,8 @@ rust-version = "1.100"
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(rust_analyzer)"] }
 # `warn`, а не `deny`, как в корневом workspace: unsafe в `crates-cross` есть
 # и оправдан — {% if ota == "true" %}прыжок в образ и символ ключа подписи в `boot`, {% endif %}поллинг
-# исполнителя{% if ota == "true" %}, символ версии образа{% endif %} и регистры фолта в `app`, регистры ядра и
-# линкерные символы в `bsp`. На каждом таком месте стоит
+# исполнителя{% if ota == "true" %}, символ версии образа{% endif %} и регистры фолта в `app`, регистры ядра,
+# периферии и MPU в `cpu`{% if ota == "true" or config_store == "flash" or config_store == "external" %}, линкерные символы в `app`{% endif %}. На каждом таком месте стоит
 # `#[expect(unsafe_code)]` с объяснением (`#[allow]` с `reason` — там, где линт
 # срабатывает в коде макроса, как у `#[exception]` в `app/src/fault.rs`), и это весь
 # unsafe этого воркспейса, который видит clippy (проверено прогоном с
@@ -99,18 +99,18 @@ panic-probe   = { version = "1.0.0" }
 # обнулён его `.bss` и до его собственной инициализации. Бутлоадеру драйвер
 # времени не нужен вовсе — в примере embassy его тоже нет.
 #
-# Просят его только те, кому он и правда нужен: `app` — фичей `bsp/time-driver`
+# Просят его только те, кому он и правда нужен: `app` — фичей `cpu/time-driver`
 # (про `embassy-stm32` приложение не знает), `target-tests` — сам. `boot`
-# зависит от `bsp` без этой фичи и собирается отдельным вызовом cargo.
+# зависит от `cpu` без этой фичи и собирается отдельным вызовом cargo.
 {%- else %}
 # `time-driver-any` здесь нет: его просят те, кому он нужен, — `app` фичей
-# `bsp/time-driver` (про `embassy-stm32` приложение не знает), `target-tests` — сам.
+# `cpu/time-driver` (про `embassy-stm32` приложение не знает), `target-tests` — сам.
 {%- endif %}
 embassy-stm32 = { version = "0.6.0", features = [
 	# Не «за компанию» с остальным defmt в проекте: без этой фичи `Clocks` не
 	# реализует `defmt::Format`, а перечислить её поля вручную шаблон не может
 	# — их состав генерируется под конкретный чип и различается по семействам.
-	# То есть дамп фактических частот в `Board::new` без неё нереализуем.
+	# То есть дамп фактических частот в `cpu::init` без неё нереализуем.
 	# Побочно включаются собственные логи embassy — это плюс, а не цена:
 	# строки defmt лежат в отдельной секции ELF и во flash не попадают.
 	"defmt",
@@ -126,14 +126,14 @@ embassy-executor = { version = "0.10.0", features = [
 ] }
 {%- if ota == "true" %}
 {%- if erase_zero == "true" and ota_store != "external" %}
-# Фича `flash-erase-zero` у `boot` и `bsp`: флеш этого чипа стирается нулями, а
+# Фича `flash-erase-zero` у `boot` и `cpu`: флеш этого чипа стирается нулями, а
 # `embassy-boot-stm32` её не пробрасывает.
 embassy-boot         = { version = "0.7.0" }
 {%- endif %}
 embassy-boot-stm32 = { version = "0.8.0" }
 {%- endif %}
 {%- if ota == "true" or shared_flash == "true" or external_flash == "true" %}
-# Разделы и асинхронный вид блокирующего флеша (`bsp`{% if ota == "true" %}, `boot`{% endif %}).{% if ota == "true" %} Версия
+# Разделы и асинхронный вид блокирующего флеша (`app` и `boot`).{% if ota == "true" %} Версия
 # та же, что тянет embassy-boot.{% endif %}
 embassy-embedded-hal = { version = "0.6.0" }
 {%- endif %}
@@ -145,11 +145,11 @@ static_cell            = { version = "2.1.1" }
 embassy-usb            = { version = "0.6.0", default-features = false, features = ["defmt"] }
 {%- endif %}
 {%- if has_net == "true" %}
-# Сетевой стек (`bsp::net`): та же версия и фичи, что в корневом Cargo.toml,
+# Сетевой стек (`bsp::ethernet`): та же версия и фичи, что в корневом Cargo.toml,
 # плюс `defmt`.
 embassy-net            = { version = "0.9.1", features = ["tcp", "udp", "proto-ipv4", "medium-ethernet", "dhcpv4", "defmt"] }
 {%- if net_services contains "ssh" %}
-# Случайность для криптографии (`bsp::rng` — бэкенд над RNG платы): через
+# Случайность для криптографии (`cpu::rng` — бэкенд над RNG чипа): через
 # `getrandom` её берут крейты, что зовут его сами (`sunset`, `domain::ssh`);
 # крейту с генератором-параметром годится `getrandom::SysRng` (фича `sys_rng`,
 # сейчас не включена). Своих фич здесь нет: источника на `target_os = "none"`
@@ -157,18 +157,19 @@ embassy-net            = { version = "0.9.1", features = ["tcp", "udp", "proto-i
 getrandom              = { version = "0.4.3" }
 {%- endif %}
 {%- endif %}
-{%- if ota == "true" or has_modbus == "true" or shared_flash == "true" or external_flash == "true" or net_services contains "ssh" %}
+# Мьютексы флеша, внешней флеши и сторожа (`cpu/src/flash.rs`,
+# `cpu/src/external.rs`, `cpu/src/wdg.rs`), а ещё каналы узлов (`app`/`boot`).
 embassy-sync       = { version = "0.8.0" }
-{%- endif %}
-{%- if shared_flash == "true" or ota == "true" and ota_store == "external" %}
+{%- if shared_flash == "true" or external_flash == "true" or ota == "true" and ota_store == "external" or cache contains "scb_d" or cache contains "icache" or cache contains "dcen" or config_store == "eeprom" %}
 # Трейты `NorFlash` — нужны `boot/src/external.rs` (геометрия драйвера внешней
-# флеши в проверках при компиляции) и `bsp/src/cache.rs` (обёртка флеша,
-# сбрасывающая кэш) или `bsp/src/eeprom.rs` (доступ к EEPROM через `Storage`).
+# флеши в проверках при компиляции) и `cpu/src/cache.rs` (обёртка флеша,
+# сбрасывающая кэш), `cpu/src/eeprom.rs` (доступ к EEPROM через `Storage`) или
+# `cpu/src/external.rs` (отказ драйвера как `NorFlash`).
 # Та же версия, что тянет embassy-boot.
 embedded-storage   = { version = "0.3.2" }
 {%- endif %}
 {%- if has_uart == "true" %}
-# Заглушка UART (`bsp::serial::<транспорт>::Serial`) — поток байтов, как у `BufferedUart`.
+# Заглушка UART (`cpu::com::<транспорт>::Serial`) — поток байтов, как у `BufferedUart`.
 embedded-io-async  = { version = "0.7.0" }
 {%- endif %}
 # `portable-atomic` здесь не объявлен намеренно: на Cortex-M0/M0+ ему нужно
@@ -185,7 +186,7 @@ embedded-io-async  = { version = "0.7.0" }
 {%- if ota == "true" %}
 # Фича — у бинарников с драйвером времени (`app`, `target-tests`), а не здесь,
 # по той же причине, что и `time-driver-any` выше: отметка зовёт
-# `Instant::now()`, а у `boot` драйвера нет. `bsp`, от которого он зависит,
+# `Instant::now()`, а у `boot` драйвера нет. `cpu`, от которого он зависит,
 # использует `embassy-time`, крейт попадает в образ, и отметка из воркспейса
 # требовала бы `_embassy_time_now` — линковка `boot` падает. Без фичи его логи
 # идут без отметки (дефолт `defmt.x`), как и прежде.
@@ -216,12 +217,12 @@ embedded-test      = { version = "0.7.3", default-features = false, features = [
 	"panic-handler",
 ] }
 # Все трейты проекта, типы из их сигнатур и форматы, общие у реализации и
-# логики. `defmt` — ради `Format` на ошибках в логе.
-{%- if ota == "true" or has_can == "true" or cobs_used == "true" %}
+# логики. `defmt` — ради `Format` на ошибках в логе. Безусловно: `ports::Reboot`
+# реализует система чипа (`cpu/src/system.rs`) в любом проекте.
 ports            = { path = "../crates-host/ports", features = ["defmt"] }
-{%- endif %}
 {%- if config_store == "eeprom" or has_usb == "true" or has_net == "true" %}
-# Обёртки над железом без чипа: из них `bsp` строит рычаги сам. `defmt` —
+# Обёртки над железом без чипа: из них `cpu` строит заглушки драйверов, а
+# `bsp` — интерфейсы над ними. `defmt` —
 # вывод стеков под обёртками в логе прошивки; на хосте крейт собирается без
 # фич вывода вовсе.
 adapters-hw      = { path = "../crates-host/adapters-hw", features = ["defmt"] }
@@ -236,6 +237,13 @@ adapters-logic   = { path = "../crates-host/adapters-logic", features = ["defmt"
 flash-page       = { path = "../crates-host/flash-page" }
 {%- endif %}
 bsp              = { path = "./bsp" }
+cpu              = { path = "./cpu" }
+# Библиотека `app` — её `spawn_all`/`Boot`/`Board` нужны target-тестам: те
+# собирают ту же плату и те же разделы, что прошивка.
+app              = { path = "./app" }
+# Паникёр и транспорт лога бинарников `app` — отдельным крейтом: библиотеку
+# `app` линкует `target-tests` со своим паникёром от `embedded-test`.
+panic-handler    = { path = "./panic-handler" }
 # `default-features = false` обязательно: дефолт domain — фича `log` (нужна
 # хост-сборке, см. её [features]), а в прошивке используется только defmt.
 domain           = { path = "../crates-host/domain", default-features = false, features = [
@@ -255,12 +263,12 @@ assign-resources = { version = "0.5.0" }
 # (actor-паттерн — здесь поля `inbox:`/`publish:`/`request:` узла). С ними
 # три независимых макро-DSL описывали бы один и тот же граф задач трижды.
 # `watchdog` — no_std-ядро мультиплексора (трейт `HardwareWatchdog`),
-# нужно напрямую, чтобы `bsp` мог реализовать этот трейт над IWDG.
+# нужно напрямую, чтобы `cpu` мог реализовать этот трейт над IWDG.
 #
 # Фичи `defmt` у `supervisor` нет: библиотека сама ничего не
 # печатает. Что видно в логе, решает прошивка: ошибку
 # `spawn_all` печатает задача `start` бинарника `app`, имя узла, переставшего кормить сторож, перед
-# аппаратным сбросом — `before_reset` в `bsp::wdg`, застой и восстановление
+# аппаратным сбросом — `before_reset` в `cpu::wdg`, застой и восстановление
 # узла — наблюдатель `observe:` в `graph.rs`, исход прогона — тело задачи.
 {%- else %}
 # `supervisor` — контексты узлов из `domain` и
@@ -276,8 +284,9 @@ assign-resources = { version = "0.5.0" }
 #   `&'static str` на узел.
 #
 # * `local-resources` — ради слотов `local`: они держат `!Send`-объекты
-#   платы{% if ota == "true" %} (например, `domain::ota::Updater` над разделами `{% if ota_store == "external" %}bsp::external{% else %}bsp::flash{% endif %}`
-#   ссылается на `Mutex<NoopRawMutex, …>`){% endif %}, а обычный слот — это `static`,
+#   платы{% if ota == "true" %} (например, `domain::ota::Updater` над разделами, которые строит `app`
+#   из ручки `board.flash` или `board.ext_flash_bus`,
+#   ссылается на `Mutex<ThreadModeRawMutex, …>`){% endif %}, а обычный слот — это `static`,
 #   которому нужен `Send`.
 #   Фича включает `LocalResourceSlot` и снимает у `supervisor`
 #   `forbid(unsafe_code)` до `deny` (у слота один документированный
@@ -285,7 +294,7 @@ assign-resources = { version = "0.5.0" }
 #   `static` (`LocalResourceSlot::empty()`) в `app`: обязательство «значение
 #   живёт на исполнителе, спавнящем узлы» лежит в `app`, а не в
 #   библиотеке.{% if shared_flash == "true" %} Это то же допущение «один исполнитель», что у
-#   `NoopRawMutex` флеша (docs/flash.md).{% endif %}{% else %}. Фичу просят и фрагменты `domain` (их слоты
+#   неблокирующего мьютекса флеша (docs/flash.md).{% endif %}{% else %}. Фичу просят и фрагменты `domain` (их слоты
 #   `local`); без графа статиков слотов в `app` нет.{% endif %}
 #
 # * Слова DSL — под фичами, все выключены по умолчанию: фичи слов своих
@@ -314,8 +323,8 @@ sync-request     = { git = "{{rust_lib}}.git", rev = "{{rust_lib_rev}}" }
 {%- if external_flash == "true" %}
 
 # Драйвер внешней флеши Winbond W25Q (W25Q10..W25Q128) по SPI или QSPI —
-# `bsp::external`: асинхронный у приложения (фича `async`){% if ota == "true" and ota_store == "external" %}, блокирующий у
-# bootloader'а (`sync`){% endif %}. Объём — по JEDEC ID при `init`. Своя библиотека
+# `cpu::external`: блокирующий (фича `sync`), им пользуются и `app`
+# (`BlockingAsync`){% if ota == "true" and ota_store == "external" %}, и bootloader{% endif %}. Объём — по JEDEC ID при `init`. Своя библиотека
 # драйверов, по git; `rev` закреплён: драйвер стоит под {% if ota == "true" and ota_store == "external" %}данными OTA{% if config_store == "external" %} и
 # настройками{% endif %}{% else %}настройками{% endif %}, и чужое изменение команд микросхемы не должно приехать молча.
 w25q             = { git = "{{hw_drivers}}.git", rev = "4deb2e145fb5ed135f335b98c97b8bb12af98cc4", default-features = false, features = [
@@ -326,7 +335,7 @@ w25q             = { git = "{{hw_drivers}}.git", rev = "4deb2e145fb5ed135f335b98
 
 # Причина паники, переживающая сброс: release-паникёр `app`
 # (`app/src/panic.rs`) пишет её `report_panic_info` в регион PANIC (посчитан при
-# генерации, см. memory.x) и сбрасывает МК рычагом `bsp::reset::Reboot`;
+# генерации, см. memory.x) и сбрасывает МК рычагом `cpu::System` (`ports::Reboot`);
 # следующий старт `app` читает её
 # и печатает. `custom-panic-handler` снимает собственный `#[panic_handler]`
 # крейта — свой нужен, чтобы вдобавок напечатать причину в RTT. `utf8` добавляет

@@ -54,28 +54,46 @@ static_cell = { workspace = true }
 # crates-cross/Cargo.toml).
 embassy-time = { workspace = true, features = ["defmt-timestamp-uptime-ms"] }
 defmt = { workspace = true }
-defmt-rtt = { workspace = true }
 # Точка входа (`#[entry]`) и обработчик `HardFault` (src/fault.rs).
 cortex-m-rt = { workspace = true }
 # Свободные функции ядра: `wfe` в цикле исполнителя, запрет прерываний в
 # паникёре, ловушка деления и регистры фолта (src/fault.rs).
 cortex-m = { workspace = true }
-# Паникёр по профилю (src/panic.rs) — обе обычные зависимости, выбор делает
-# `#[cfg(debug_assertions)]` (docs/diagnostics.md, «Два паникёра, один на
-# сборку»). `panic-persist` собран с `custom-panic-handler` — своего
-# обработчика у него нет.
-panic-probe = { workspace = true, features = ["print-defmt"] }
+# Паникёр по профилю и транспорт лога — отдельным крейтом (`panic-handler`):
+# библиотеку `app` линкует `target-tests` со своим паникёром от `embedded-test`,
+# и второй `#[panic_handler]` в том же образе не собрался бы. Бинарники
+# подключают его (`use panic_handler as _`).
+panic-handler = { workspace = true }
+# Дамп причины паники в регион `PANIC` (release-паникёр) и её чтение — в
+# `panic-handler` и `src/panic.rs`. `custom-panic-handler` снимает собственный
+# `#[panic_handler]` крейта — свой нужен, чтобы вдобавок напечатать причину.
 panic-persist = { workspace = true }
-# Драйвер времени — фичей `bsp` (там же почему){% if ota == "true" %}: от него зависит и `boot`,
+# Драйвер времени — фичей `cpu` (там же почему){% if ota == "true" %}: от него зависит и `boot`,
 # которому драйвер времени нельзя{% endif %}.
-bsp = { workspace = true, features = ["time-driver"] }
+cpu = { workspace = true, features = ["time-driver"] }
+# Плата: рычаги чипа, разложенные по полям (`crate::Board` — псевдоним над ней).
+bsp = { workspace = true }
 domain = { workspace = true }
 # Буферы канала COBS меряются кодеком (`ports::cobs::rx_len/tx_len` в
 # graph.rs / tasks/protobuf.rs) — прямо, а не транзитивно: имя крейта в коде
-# `app` обязано быть своей зависимостью.
-# {%- if cobs_used == "true" %}
+# `app` обязано быть своей зависимостью. Псевдонимы графа над `ports::Cpu` —
+# тоже отсюда.
 ports = { workspace = true }
-# {%- endif %}
+{%- if ota == "true" or config == "true" %}
+# Разделы обновления и настройки: `BlockingPartition`/`BlockingAsync` над
+# сырыми ручками чипа (src/storage.rs) — то же, чем их строит bootloader.
+embassy-embedded-hal = { workspace = true }
+{%- endif %}
+{%- if flash_page == "true" %}
+# Страница раздела, не равная странице чипа (`flash_page::ErasePage`): у
+# `STATE`/`CONFIG` мельче, у `ACTIVE`/`DFU` — страница обмена.
+flash-page = { workspace = true }
+{%- endif %}
+{%- if external_flash == "true" %}
+# Ёмкость внешней флеши как `NorFlash` (`ReadNorFlash::capacity`) — под размер
+# её раздела настроек (src/storage.rs).
+embedded-storage = { workspace = true }
+{%- endif %}
 {%- if protocol_link == "true" %}
 # Каналы протоколов над потоком, CDC или сокетом строит приложение в своей
 # памяти ({% if graph == "true" %}привязка узла в src/graph.rs{% else %}задача протокола в src/tasks/{% endif %}) и отдаёт узлам готовыми.
@@ -95,7 +113,7 @@ shadow-rs = { workspace = true }
 # (`supervisor-sole-dep-fixture` в rust-lib): всё, что compose-site называет
 # сам, — `Duration` для `check_every:`, `Liveness` в сигнатуре наблюдателя
 # (`observe:`), `HardwareWatchdog` — он реэкспортирует публичными путями.
-# Реализация трейта над IWDG живёт в `bsp` (bsp/src/wdg.rs), и там `watchdog`
+# Реализация трейта над IWDG живёт в `cpu` (cpu/src/wdg.rs), и там `watchdog`
 # стоит прямой зависимостью; граф получает оттуда готовый тип.
 {%- elsif ota == "true" %}
 # `supervisor::Readiness` в контексте узла OTA (src/tasks/ota.rs).
@@ -106,10 +124,10 @@ shadow-rs = { workspace = true }
 {%- endif %}
 supervisor = { workspace = true }
 #
-# `embassy-stm32` здесь нет и быть не должно: про чип знает `bsp`, а
-# приложение — только про объекты, которые тот отдаёт. Драйвер времени
-# (`time-driver-any`) включает фича `bsp/time-driver` — см. `bsp/Cargo.toml`,
-# почему она не в воркспейсе{% if ota == "true" %} и не безусловная{% endif %}.
+# `embassy-stm32` здесь нет и быть не должно: про чип знает `cpu`, а
+# приложение — только про объекты, которые тот отдаёт (`crate::Board`).
+# Драйвер времени (`time-driver-any`) включает фича `cpu/time-driver` — см.
+# `cpu/Cargo.toml`, почему она не в воркспейсе{% if ota == "true" %} и не безусловная{% endif %}.
 
 {%- if ota == "true" and graph != "true" %}
 # Входы команд узла OTA (`tasks::ota::CMD` и `ASK`): модуль задачи объявляет
@@ -117,14 +135,11 @@ supervisor = { workspace = true }
 # и `ask` контекста узла не сойдутся.
 sync-request = { workspace = true }
 {%- endif %}
-{%- if has_modbus == "true" or ota == "true" and graph != "true" %}
-{%- if has_modbus == "true" %}
-# `OnceLock` карты регистров Modbus (src/registers.rs).
-{%- endif %}
-{%- if ota == "true" and graph != "true" %}
-# Мьютекс и сигналы узла OTA (src/tasks/ota.rs){% if has_canopen == "true" %}, метки ребра `ASK` у задач CANopen
-# (src/tasks/canopen.rs){% endif %}.
-{%- endif %}
+{%- if has_modbus == "true" or ota == "true" or config == "true" %}
+# Мьютексы того, что проект заводит один раз на запуск: {% if has_modbus == "true" %}карта регистров
+# (src/registers.rs){% endif %}{% if ota == "true" %}{% if has_modbus == "true" %}; {% endif %}разделы обновления (src/storage.rs){% if graph != "true" %} и входы
+# узла OTA (src/tasks/ota.rs){% if has_canopen == "true" %}, метки ребра `ASK` у задач CANopen (src/tasks/canopen.rs){% endif %}{% endif %}{% endif %}{% if config == "true" %}{% if has_modbus == "true" or ota == "true" %}; {% endif %}носитель
+# настроек (src/storage.rs){% endif %}.
 embassy-sync = { workspace = true }
 {%- endif %}
 

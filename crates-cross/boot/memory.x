@@ -38,7 +38,7 @@ __config_start = /* 0xXXXXXXXX */;
 __config_end   = /* 0xXXXXXXXX */;
 {%- endif %}
 
-/* Конец последнего раздела на внешней флеши (bsp::layout): микросхема меньше
+/* Конец последнего раздела на внешней флеши (boot::layout): микросхема меньше
    не годится. */
 __ext_flash_end = {% if config_store == "external" %}MAX(MAX(__bootloader_state_end, __bootloader_dfu_end), __config_end){% else %}MAX(__bootloader_state_end, __bootloader_dfu_end){% endif %};
 {%- else %}

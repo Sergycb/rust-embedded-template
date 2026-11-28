@@ -43,7 +43,7 @@ pub(crate) fn project_root() -> Option<PathBuf> {
 /// вручную (иначе примеры из doc-комментария считались бы занятыми выводами).
 pub(crate) fn check_resources() -> Result<(), anyhow::Error> {
     let root = project_root().context("не найден корень проекта рядом с chip-info")?;
-    let src = root.join("crates-cross").join("bsp").join("src");
+    let src = root.join("crates-cross").join("cpu").join("src");
     let sources = resource_sources(&src)?;
 
     print_header(Some("проверка распиновки"));
@@ -53,7 +53,7 @@ pub(crate) fn check_resources() -> Result<(), anyhow::Error> {
     for path in &sources {
         let text =
             fs::read_to_string(path).with_context(|| format!("не читается {}", path.display()))?;
-        // Путь от `bsp/src`, а не одно имя файла: с рекурсивным обходом
+        // Путь от `cpu/src`, а не одно имя файла: с рекурсивным обходом
         // `board/pins.rs` и `pins.rs` иначе выглядели бы одинаково.
         let name = path
             .strip_prefix(&src)
@@ -179,14 +179,14 @@ fn assigned_lines(text: &str) -> Vec<(usize, String)> {
     lines
 }
 
-/// Исходники `bsp`, в которых ищется распиновка.
+/// Исходники `cpu`, в которых ищется распиновка.
 ///
 /// Каталогом, а не одним файлом: шаблон кладёт `assign_resources!` в
-/// `resources.rs`, но держать его там проект не обязан, поэтому проверяются
+/// `wiring.rs`, но держать его там проект не обязан, поэтому проверяются
 /// все.
 ///
 /// Обход рекурсивный, и это не запас на будущее: `assign_resources!` в
-/// `bsp/src/board/pins.rs` пропущенным быть не может — молчаливое «выводов не
+/// `cpu/src/board/pins.rs` пропущенным быть не может — молчаливое «выводов не
 /// назначено» на занятом `PA13` хуже отсутствия проверки, потому что выглядит
 /// как её прохождение.
 ///
@@ -255,7 +255,7 @@ mod tests {
         found.iter().map(|(_, pin)| pin.as_str()).collect()
     }
 
-    /// Обычный `resources.rs`: назначенные выводы находятся с номерами строк
+    /// Обычный `wiring.rs`: назначенные выводы находятся с номерами строк
     /// исходного файла, а `//!`, импорты и код за макросом не в счёт.
     #[test]
     fn finds_pins_assigned_in_the_macro_body() {
@@ -374,7 +374,7 @@ static AFTER: u8 = PA13;
             fs::remove_dir_all(&root).unwrap();
         }
         fs::create_dir_all(root.join("board")).unwrap();
-        for file in ["resources.rs", "board.rs", "board/pins.rs", "memory.x"] {
+        for file in ["wiring.rs", "board.rs", "board/pins.rs", "memory.x"] {
             fs::write(root.join(file), "").unwrap();
         }
 
@@ -390,7 +390,7 @@ static AFTER: u8 = PA13;
             [
                 ["board", "pins.rs"].iter().collect(),
                 PathBuf::from("board.rs"),
-                PathBuf::from("resources.rs"),
+                PathBuf::from("wiring.rs"),
             ]
         );
     }

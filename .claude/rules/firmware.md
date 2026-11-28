@@ -9,7 +9,7 @@ paths: crates-cross/**
   типом: задачи не generic — `docs/architecture.md`.
 - Паникёр у каждого бинарника свой, профиль — `#[cfg(debug_assertions)]`, не
   Cargo-фича — `docs/diagnostics.md`, «Два паникёра, один на сборку».
-- `Board` отдаёт рычаги платы и `bsp::ChipSpec`, не периферию и не протоколы —
+- `Board` отдаёт рычаги платы и `cpu::CpuInfo`, не периферию и не протоколы —
   `docs/architecture.md`, «`Board` отдаёт рычаги платы, а не периферию и не
   протоколы».
 - Куда класть код и кто держит память адаптера — `AGENTS.md`, «Граница

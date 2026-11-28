@@ -1,31 +1,9 @@
 //! Проверка подписи нового образа до обмена разделов.
 
-use core::cell::RefCell;
-
 use defmt::{info, warn};
 use domain::ota::boot::{ScreenFailure, Screening, screen_update};
 use embassy_boot_stm32::BootLoaderConfig;
-{%- if boot_partitioned == "true" %}
-use embassy_embedded_hal::flash::partition::BlockingPartition;
-{%- endif %}
-{%- if dfu_bank != "true" %}
-use embassy_stm32::flash::{Blocking, Flash};
-{%- endif %}
-use embassy_sync::blocking_mutex::Mutex;
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-{%- if boot_partitioned == "true" %}
-use flash_page::ErasePage;
-{%- endif %}
-{%- if ota_store == "external" %}
-
-use crate::external::ExternalFlash;
-{%- elsif dfu_bank == "true" %}
-
-use crate::{Bank1, Bank2{% if state_paged == "true" %}, FLASH_BYTES, STATE_ERASE_SIZE{% endif %}};
-{%- elsif boot_partitioned == "true" %}
-
-use crate::{FLASH_BYTES{% if state_paged == "true" %}, STATE_ERASE_SIZE{% endif %}{% if swap_paged == "true" %}, SWAP_PAGE_SIZE{% endif %}};
-{%- endif %}
+use embedded_storage::nor_flash::NorFlash;
 
 /// Открытый ключ, которым проверяется подпись нового образа.
 ///
@@ -43,8 +21,8 @@ use crate::{FLASH_BYTES{% if state_paged == "true" %}, STATE_ERASE_SIZE{% endif 
 pub static OTA_PUBLIC_KEY_IN_IMAGE: [u8; 32] =
     *include_bytes!(concat!(env!("OUT_DIR"), "/ota-public-key.bin"));
 
-/// Проверяет новый образ в `DFU`, если обмен запрошен, и возвращает флеш
-/// дальше — в обмен и прыжок.
+/// Проверяет новый образ в `DFU`, если обмен запрошен, и возвращает конфиг
+/// разделов дальше — в обмен и прыжок.
 ///
 /// Проверка подписи живёт здесь, а не в приложении (docs/ota.md, «Подпись
 /// OTA-образа»). Решает `domain::ota::boot::screen_update` (там же — почему
@@ -54,9 +32,14 @@ pub static OTA_PUBLIC_KEY_IN_IMAGE: [u8; 32] =
 /// Причина отказа печатается строкой на вариант, а не через
 /// `defmt::Debug2Format`: тот тянет `core::fmt` — несколько килобайт в зону
 /// bootloader'а, где их и так впритык.
+///
+/// Разделы приходят готовыми (`BootLoaderConfig`): их границы — символы
+/// `memory.x` этого бинарника (`crate::layout`), а не линкерные символы
+/// `embassy-boot`, потому что мьютексы у них общие с приложением
+/// (`ThreadModeRawMutex`, а не неблокирующий).
 {%- if ota_store == "external" %}
 ///
-/// Третье в ответе — можно ли обменивать разделы. Нельзя, если внешняя флеш
+/// Второе в ответе — можно ли обменивать разделы. Нельзя, если внешняя флеш
 /// не ответила: образ не проверен, и обмен без проверки запустил бы
 /// неподписанный — даже если на следующем шаге флеш вдруг ответит. Тогда
 /// загружается текущий образ, и запрос на обмен до следующего сброса не
@@ -66,95 +49,49 @@ pub static OTA_PUBLIC_KEY_IN_IMAGE: [u8; 32] =
 /// (docs/ota.md, «Bootloader и внешняя флеш»). Кроме отказа на журнале после прочитанной магии `Swap`
 /// (`Screening::JournalUnreadable`): обмен, может быть, идёт, и `report`
 /// паникует, а не отдаёт `ACTIVE` прыжку.
-pub(crate) fn screen(
-    flash: Flash<'static, Blocking>,
-    external: ExternalFlash,
-) -> (Flash<'static, Blocking>, ExternalFlash, bool) {
-    let flash = Mutex::<NoopRawMutex, _>::new(RefCell::new(flash));
-    let external = Mutex::<NoopRawMutex, _>::new(RefCell::new(external));
-    let swap_allowed = {
-        let mut config = BootLoaderConfig::from_linkerfile_blocking(&flash, &external, &external);
-        let capacity = config.active.size();
-        if let Ok(screening) = screen_update(
-            &mut config.dfu,
-            &mut config.state,
-            capacity,
-            &OTA_PUBLIC_KEY_IN_IMAGE,
-        ) {
-            report(screening);
-            true
-        } else {
-            warn!("boot: внешняя флеш не отвечает — новый образ не проверен, обмен пропущен");
-            false
-        }
+pub(crate) fn screen<ACTIVE, DFU, STATE>(
+    mut config: BootLoaderConfig<ACTIVE, DFU, STATE>,
+) -> (BootLoaderConfig<ACTIVE, DFU, STATE>, bool)
+where
+    ACTIVE: NorFlash,
+    DFU: NorFlash,
+    STATE: NorFlash,
+{
+    let swap_allowed = if let Ok(screening) = screen_update(
+        &mut config.dfu,
+        &mut config.state,
+        crate::layout::active().1,
+        &OTA_PUBLIC_KEY_IN_IMAGE,
+    ) {
+        report(screening);
+        true
+    } else {
+        warn!("boot: внешняя флеш не отвечает — новый образ не проверен, обмен пропущен");
+        false
     };
-    (
-        flash.into_inner().into_inner(),
-        external.into_inner().into_inner(),
-        swap_allowed,
-    )
-}
-{%- elsif dfu_bank == "true" %}
-pub(crate) fn screen(flash: Bank1, dfu: Bank2) -> (Bank1, Bank2) {
-    let flash = Mutex::<NoopRawMutex, _>::new(RefCell::new(flash));
-    let dfu = Mutex::<NoopRawMutex, _>::new(RefCell::new(dfu));
-    {
-{%- if state_paged == "true" %}
-        let state = Mutex::<NoopRawMutex, _>::new(RefCell::new(
-            ErasePage::<_, STATE_ERASE_SIZE>::new(BlockingPartition::new(&flash, 0, FLASH_BYTES)),
-        ));
-{%- endif %}
-        let mut config = BootLoaderConfig::from_linkerfile_blocking(&flash, &dfu, {% if state_paged == "true" %}&state{% else %}&flash{% endif %});
-        let capacity = config.active.size();
-        let Ok(screening) = screen_update(
-            &mut config.dfu,
-            &mut config.state,
-            capacity,
-            &OTA_PUBLIC_KEY_IN_IMAGE,
-        ) else {
-            // Флеш не читается — дальше обмен всё равно упал бы: паника, а что
-            // за ней — решает паникёр bootloader'а (`boot/src/main.rs`).
-            panic!("boot: проверка нового образа: ошибка флеша");
-        };
-        report(screening);
-    }
-    (
-        flash.into_inner().into_inner(),
-        dfu.into_inner().into_inner(),
-    )
+    (config, swap_allowed)
 }
 {%- else %}
-pub(crate) fn screen(flash: Flash<'static, Blocking>) -> Flash<'static, Blocking> {
-    let flash = Mutex::<NoopRawMutex, _>::new(RefCell::new(flash));
-    {
-{%- if state_paged == "true" %}
-        let state = Mutex::<NoopRawMutex, _>::new(RefCell::new(
-            ErasePage::<_, STATE_ERASE_SIZE>::new(BlockingPartition::new(&flash, 0, FLASH_BYTES)),
-        ));
-{%- endif %}
-{%- if swap_paged == "true" %}
-        // `ACTIVE` и `DFU` — со страницей обмена, как в `main` (`SWAP_PAGE_SIZE`).
-        let swap = Mutex::<NoopRawMutex, _>::new(RefCell::new(
-            ErasePage::<_, SWAP_PAGE_SIZE>::new(BlockingPartition::new(&flash, 0, FLASH_BYTES)),
-        ));
-        let mut config = BootLoaderConfig::from_linkerfile_blocking(&swap, &swap, {% if state_paged == "true" %}&state{% else %}&flash{% endif %});
-{%- else %}
-        let mut config = BootLoaderConfig::from_linkerfile_blocking(&flash, &flash, {% if state_paged == "true" %}&state{% else %}&flash{% endif %});
-{%- endif %}
-        let capacity = config.active.size();
-        let Ok(screening) = screen_update(
-            &mut config.dfu,
-            &mut config.state,
-            capacity,
-            &OTA_PUBLIC_KEY_IN_IMAGE,
-        ) else {
-            // Флеш не читается — дальше обмен всё равно упал бы: паника, а что
-            // за ней — решает паникёр bootloader'а (`boot/src/main.rs`).
-            panic!("boot: проверка нового образа: ошибка флеша");
-        };
-        report(screening);
-    }
-    flash.into_inner().into_inner()
+pub(crate) fn screen<ACTIVE, DFU, STATE>(
+    mut config: BootLoaderConfig<ACTIVE, DFU, STATE>,
+) -> BootLoaderConfig<ACTIVE, DFU, STATE>
+where
+    ACTIVE: NorFlash,
+    DFU: NorFlash,
+    STATE: NorFlash,
+{
+    let Ok(screening) = screen_update(
+        &mut config.dfu,
+        &mut config.state,
+        crate::layout::active().1,
+        &OTA_PUBLIC_KEY_IN_IMAGE,
+    ) else {
+        // Флеш не читается — дальше обмен всё равно упал бы: паника, а что
+        // за ней — решает паникёр bootloader'а (`boot/src/main.rs`).
+        panic!("boot: проверка нового образа: ошибка флеша");
+    };
+    report(screening);
+    config
 }
 {%- endif %}
 

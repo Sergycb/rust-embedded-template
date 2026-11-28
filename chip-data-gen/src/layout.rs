@@ -263,7 +263,7 @@ pub(crate) struct OtaPartitions {
 }
 
 /// Где лежит раздел настроек и какая у него страница (`flash_page::ErasePage`
-/// в `bsp::flash`).
+/// в `cpu::flash`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct SettingsPartition {
     pub(crate) origin: u64,
@@ -304,7 +304,7 @@ enum H7Core {
     Cm4,
 }
 
-/// Регион `DMA_NC`: non-cacheable память под буферы DMA, которую `bsp::dma_nc`
+/// Регион `DMA_NC`: non-cacheable память под буферы DMA, которую `cpu::dma_nc`
 /// размечает в MPU. Без неё кэш данных ядра M7 DMA не видит.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DmaNc {
@@ -631,7 +631,7 @@ fn dma_nc_region(chip: &str, (start, end): (u64, u64)) -> Option<DmaNc> {
 
 /// `SRAM4` домена D3 у H7 целиком — память BDMA (SPI6, I2C4, LPUART1, ADC3):
 /// остальные блоки ей недоступны. Кэш данных её не видит так же, как DMA1/2, поэтому
-/// блок тоже non-cacheable (`bsp::dma_nc`, регион MPU по границам блока).
+/// блок тоже non-cacheable (`cpu::dma_nc`, регион MPU по границам блока).
 fn bdma_nc_region(chip: &str, regions: &[RawRegion]) -> Option<(u64, u64)> {
     if !chip.starts_with("h7") || !is_cortex_m7(chip) {
         return None;

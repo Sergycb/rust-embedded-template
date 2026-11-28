@@ -272,7 +272,7 @@ pub(crate) fn print_snippet(name: &str) -> Result<(), anyhow::Error> {
                 .join(", "),
         ),
         Some(row) => {
-            println!("// в модуль crates-cross/bsp/src, где строится объект блока (Irqs — в new)");
+            println!("// в модуль crates-cross/cpu/src, где строится объект блока (Irqs — в new)");
             // Импорты печатаются вместе с макросом, а не подразумеваются:
             // заготовку вставляют как есть, и без них она не собирается.
             // `peripherals` нужен не всегда — у `eth` обработчик без
@@ -302,7 +302,7 @@ pub(crate) fn print_snippet(name: &str) -> Result<(), anyhow::Error> {
     }
 
     println!();
-    println!("// crates-cross/bsp/src/resources.rs — оттуда в макрос переносится только группа");
+    println!("// crates-cross/cpu/src/wiring.rs — оттуда в макрос переносится только группа");
     // `Peri` — не для красоты: `assign_resources!` раскрывается в
     // `Peri<'static, peripherals::X>` и требует оба имени в области видимости
     // вызова. Без него вставленная заготовка падает с `error[E0425]: cannot

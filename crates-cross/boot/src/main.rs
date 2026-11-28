@@ -1,42 +1,47 @@
 #![no_std]
 #![no_main]
+{%- assign xs = links | split: "," %}
 {%- if ota_store == "external" %}
 
 mod external;
 {%- endif %}
 
+mod layout;
 mod signature;
 
-use core::cell::RefCell;
-{% if state_paged == "true" %}
-use bsp::flash::STATE_ERASE_SIZE;
-{%- endif %}
-{%- if swap_paged == "true" and dfu_bank != "true" %}
-use bsp::flash::SWAP_PAGE_SIZE;
-{%- endif %}
 use defmt::info;
 // RTT — дефолтный транспорт в обоих профилях (см. crates-cross/app/src/panic.rs);
 // почему без UART-транспорта — crates-cross/boot/Cargo.toml.
 use defmt_rtt as _;
-{%- if ota_store == "external" %}
-use embassy_boot_stm32::{BootLoader, BootLoaderConfig, State};
-{%- else %}
 use embassy_boot_stm32::{BootLoader, BootLoaderConfig};
+{%- if ota_store == "external" %}
+
+use embassy_boot_stm32::State;
 {%- endif %}
-{%- if boot_partitioned == "true" %}
-use embassy_embedded_hal::flash::partition::BlockingPartition;
-{%- endif %}
-use embassy_stm32::flash::{FLASH_BASE, Flash};
-{%- if graph == "true" %}
-#[cfg(not(feature = "no-watchdog"))]
-use embassy_stm32::wdg::IndependentWatchdog;
-{%- endif %}
-use embassy_sync::blocking_mutex::Mutex;
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-{%- if boot_partitioned == "true" %}
-use flash_page::ErasePage;
+{%- if ota_store == "external" or boot_partitioned == "true" %}
+
+use core::cell::RefCell;
 {%- endif %}
 
+use embassy_embedded_hal::flash::partition::BlockingPartition;
+{%- if ota_store == "external" or boot_partitioned == "true" %}
+
+use embassy_sync::blocking_mutex::Mutex;
+use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
+{%- endif %}
+{%- if state_paged == "true" %}
+
+use cpu::flash::STATE_ERASE_SIZE;
+{%- endif %}
+{%- if swap_paged == "true" and dfu_bank != "true" %}
+
+use cpu::flash::SWAP_PAGE_SIZE;
+{%- endif %}
+{%- if boot_partitioned == "true" %}
+
+use flash_page::ErasePage;
+{%- endif %}
+use ports::Cpu as _;
 {%- if ota_store != "external" %}
 
 /// Буфер обмена `BootLoader::prepare` — слово записи флеша из генерации
@@ -45,144 +50,134 @@ use flash_page::ErasePage;
 /// сборки, а не паника на старте bootloader'а.
 const SWAP_BUFFER_SIZE: usize = {{swap_buffer}};
 
-{%- if boot_partitioned == "true" and dfu_bank == "true" %}
-
-/// Размер банка 1 в байтах — столько занимает раздел на весь флеш, из
-/// которого строится `STATE`.
-const FLASH_BYTES: u32 = embassy_stm32::flash::BANK1_REGION.size;
-{%- elsif boot_partitioned == "true" %}
-
-/// Размер всего флеша в байтах — столько занимает раздел на весь флеш, из
-/// которого строятся разделы со своей страницей (`ErasePage`): {% if state_paged == "true" %}`STATE`{% endif %}{% if state_paged == "true" and swap_paged == "true" %}, {% endif %}{% if swap_paged == "true" %}`ACTIVE` и `DFU`{% endif %}.
-///
-/// `usize` на Cortex-M — 32 бита, усечения нет.
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "`usize` на Cortex-M — 32 бита"
-)]
-const FLASH_BYTES: u32 = embassy_stm32::flash::FLASH_SIZE as u32;
-
-// `BlockingPartition::new` паникует на объёме, не кратном `ERASE_SIZE`; у STM32
-// объём всегда кратен самому крупному сектору, и сборка это проверяет, а не
-// первый запуск на плате.
 const _: () = assert!(
-    embassy_stm32::flash::FLASH_SIZE.is_multiple_of(embassy_stm32::flash::MAX_ERASE_SIZE),
-    "объём flash не кратен самому крупному сектору: `BlockingPartition::new` паникует на старте"
-);
-{%- endif %}
-
-const _: () = assert!(
-    SWAP_BUFFER_SIZE.is_multiple_of(embassy_stm32::flash::WRITE_SIZE),
-    "swap_buffer из генерации не кратен слову записи флеша чипа (embassy_stm32::flash::WRITE_SIZE): \
+    SWAP_BUFFER_SIZE.is_multiple_of(cpu::flash::WRITE_SIZE),
+    "swap_buffer из генерации не кратен слову записи флеша чипа (cpu::flash::WRITE_SIZE): \
      пересоберите проект без --define swap_buffer или поправьте значение"
 );
-{%- if dfu_bank == "true" %}
-
-/// Банк 1 — bootloader, `STATE`, `ACTIVE` (смещения от базы flash, как у
-/// цельного `Flash`).
-type Bank1 = embassy_stm32::flash::Bank1Region<'static, embassy_stm32::flash::Blocking>;
-
-/// Банк 2 — `DFU`, со смещениями от своего начала (символы `memory.x`
-/// посчитаны так же).
-type Bank2 = embassy_stm32::flash::Bank2Region<'static, embassy_stm32::flash::Blocking>;
 {%- endif %}
+{%- if boot_partitioned == "true" %}
+
+/// Весь флеш чипа как раздел: смещения те же, что у самого флеша, а операции
+/// идут под замком контроллера.
+type Whole = BlockingPartition<'static, ThreadModeRawMutex, cpu::flash::ChipFlash>;
+{%- endif %}
+{%- if boot_partitioned == "true" %}
+
+/// Весь флеш чипа как раздел — основа разделов со своей страницей.
+fn whole(flash: cpu::flash::Flash) -> Whole {
+    BlockingPartition::new(flash.lock, 0, cpu::flash::SIZE)
+}
+{%- endif %}
+{%- if swap_paged == "true" and dfu_bank != "true" %}
+
+/// `ACTIVE` и `DFU` — со страницей обмена, крупнее физической.
+fn swap_page(flash: cpu::flash::Flash) -> ErasePage<Whole, SWAP_PAGE_SIZE> {
+    ErasePage::new(whole(flash))
+}
+{%- endif %}
+{%- if state_paged == "true" %}
+
+/// `BOOTLOADER_STATE` — со страницей своего сектора.
+fn state_page(flash: cpu::flash::Flash) -> ErasePage<Whole, STATE_ERASE_SIZE> {
+    ErasePage::new(whole(flash))
+}
 {%- endif %}
 
 #[cortex_m_rt::entry]
 fn main() -> ! {
-{%- if bank_switch != "" %}
-    // Первым делом: `Flash::new` ниже паникует на двухбанковом флеше при
-    // однобанковой раскладке (см. `bsp::banks`).
-    bsp::banks::ensure_single_bank();
+    // Чип поднимает `cpu::init` — то же, что у приложения: банки, option byte,
+    // HAL, кэши. Периферия транспортов и сеть bootloader'у не нужны: их отдаёт
+    // `split`, а связываются они с `_`.
+    let (
+        // Периферия транспортов, Ethernet и затравка сети bootloader'у не нужны.
+        _info,
+        flash,
+{%- if external_flash == "true" %}
+        ext,
 {%- endif %}
-    // На умолчаниях HAL, а не на конфиге платы: тактирование настраивает
-    // приложение, bootloader'у хватает HSI.
-    let p = bsp::board::init_peripherals(embassy_stm32::Config::default());
-{%- if dfu_bank == "true" %}
-    // Банк 2 стоит за разрывом, и цельный `Flash` туда не дотягивается (его
-    // `FLASH_SIZE` — сумма банков, меньше смещения банка 2): флеш разбирается на
-    // регионы банков. Банк 1 — bootloader, `STATE` и `ACTIVE`, банк 2 — `DFU`;
-    // смещения в `memory.x` у `DFU` отсчитаны от начала банка 2.
-    let banks = Flash::new_blocking(p.FLASH).into_blocking_regions();
-    let (flash, dfu): (Bank1, Bank2) = (banks.bank1_region, banks.bank2_region);
-{%- else %}
-    let flash = Flash::new_blocking(p.FLASH);
+{%- for l in xs %}
+{%- assign f = l | split: ":" %}
+{%- unless f[0] == "tcp" or f[0] == "udp" %}
+        _,
+{%- endunless %}
+{%- endfor %}
+{%- if has_net == "true" %}
+        _ethernet,
 {%- endif %}
+        _system,
+{%- if graph == "true" %}
+        watchdog,
+{%- endif %}
+{%- if has_net == "true" %}
+        _seed,
+{%- endif %}
+    ) = cpu::init().split();
+{%- if external_flash == "true" %}
+    // Микросхему опознаём до проверки подписи: `STATE` и `DFU` — на ней.
+    cpu::external::init(ext, crate::layout::ext_flash_end());
+{%- endif %}
+
 {%- if ota_store == "external" %}
-    // `STATE` и `DFU` — на внешней флеши. Драйвер блокирующий (в приложении —
-    // асинхронный, `bsp::external`), задержкам — SysTick на частоте ядра. В
-    // шаблоне шина под ним — заглушка: `init` не проходит, каждая операция
-    // отвечает ошибкой, и bootloader загружает текущий образ, не обменивая
-    // разделы.
-    let sys_hz = embassy_stm32::rcc::clocks(&p.RCC)
-        .sys
-        .to_hertz()
-        .expect("boot: HAL не посчитал частоту ядра — задержкам драйвера флеши не на чем считать")
-        .0;
-    let external = external::new(sys_hz);
+    // `STATE` и `DFU` — на внешней флеши: забираем опознанный драйвер из руки
+    // чипа и держим в своём мьютексе — разделы делят один драйвер. `ACTIVE` —
+    // во внутреннем флеше, его раздел — из ручки как есть.
+    let state = external::take(ext);
+    let external = Mutex::<ThreadModeRawMutex, _>::new(RefCell::new(state));
+    let (active_start, active_len) = crate::layout::active();
+    let (dfu_start, dfu_len) = crate::layout::dfu();
+    let (state_start, state_len) = crate::layout::state();
+    let config = BootLoaderConfig {
+        active: BlockingPartition::new(flash.lock, active_start, active_len),
+        dfu: BlockingPartition::new(&external, dfu_start, dfu_len),
+        state: BlockingPartition::new(&external, state_start, state_len),
+    };
+{%- else %}
+{%- if swap_paged == "true" and dfu_bank != "true" %}
+    // `ACTIVE` и `DFU` — со страницей обмена `SWAP_PAGE_SIZE`, крупнее физической
+    // страницы флеша (см. её описание): один мьютекс на оба раздела — они
+    // делят один контроллер.
+    let swap = Mutex::<ThreadModeRawMutex, _>::new(RefCell::new(swap_page(flash)));
+{%- endif %}
+{%- if state_paged == "true" %}
+    // `BOOTLOADER_STATE` — со страницей своего сектора, а не всего чипа (см.
+    // `STATE_ERASE_SIZE`), но над тем же контроллером: свой мьютекс, а не
+    // второй объект флеша.
+    let state = Mutex::<ThreadModeRawMutex, _>::new(RefCell::new(state_page(flash)));
+{%- endif %}
+    let (active_start, active_len) = crate::layout::active();
+    let (dfu_start, dfu_len) = crate::layout::dfu();
+    let (state_start, state_len) = crate::layout::state();
+    let config = BootLoaderConfig {
+{%- if swap_paged == "true" and dfu_bank != "true" %}
+        active: BlockingPartition::new(&swap, active_start, active_len),
+{%- else %}
+        active: BlockingPartition::new(flash.lock, active_start, active_len),
+{%- endif %}
+{%- if dfu_bank == "true" %}
+        dfu: BlockingPartition::new(flash.bank2, dfu_start, dfu_len),
+{%- elsif swap_paged == "true" %}
+        dfu: BlockingPartition::new(&swap, dfu_start, dfu_len),
+{%- else %}
+        dfu: BlockingPartition::new(flash.lock, dfu_start, dfu_len),
+{%- endif %}
+{%- if state_paged == "true" %}
+        state: BlockingPartition::new(&state, state_start, state_len),
+{%- else %}
+        state: BlockingPartition::new(flash.lock, state_start, state_len),
+{%- endif %}
+    };
 {%- endif %}
     // Новый образ проверяется до обмена разделов: см. `signature::screen`.
 {%- if ota_store == "external" %}
-    let (flash, external, swap_allowed) = signature::screen(flash, external);
-{%- elsif dfu_bank == "true" %}
-    let (flash, dfu) = signature::screen(flash, dfu);
-{%- else %}
-    let flash = signature::screen(flash);
-{%- endif %}
-
-    // `Flash` (до `.into_blocking_regions()`) сам реализует `NorFlash` на
-    // весь диапазон flash — erase/write внутри учитывают реальные границы
-    // секторов чипа, даже неравномерные (F4/F7/H7: сектора внутри банка
-    // разного размера). `.into_blocking_regions().bank1_region` — для чипов
-    // с ОДНИМ равномерным регионом (F0/F1/F3/G0/L0/L1 и т.п.) даёт то же
-    // самое, но для F4/F7/H7 региона с таким именем просто нет — там
-    // `bank1_region1`/`bank1_region2`/`bank1_region3` (по одному на зону с
-    // одинаковым размером сектора), и число регионов зависит от чипа.
-    // Цельный `Flash` — единственный вариант, не завязанный на семейство.
-{%- if dfu_bank == "true" %}
-    // Кроме этого чипа: банк 2 стоит за разрывом, и регионы банков выше — не
-    // выбор, а единственный способ до него дотянуться (см. начало `main`).
-{%- endif %}
-    let flash = Mutex::<NoopRawMutex, _>::new(RefCell::new(flash));
-{%- if ota_store == "external" %}
-    // `STATE` и `DFU` — над одним драйвером: свой мьютекс на микросхему, а не
-    // по объекту на раздел.
-    let external = Mutex::new(RefCell::new(external));
-
-    let config = BootLoaderConfig::from_linkerfile_blocking(&flash, &external, &external);
-    let active_offset = config.active.offset();
+    let (config, swap_allowed) = signature::screen(config);
     let bl = if swap_allowed {
         external::prepare(config)
     } else {
         BootLoader { state: State::Boot }
     };
 {%- else %}
-{%- if state_paged == "true" %}
-    // `BOOTLOADER_STATE` — со страницей своего сектора, а не всего чипа (см.
-    // `STATE_ERASE_SIZE`), но над тем же `Flash`: свой мьютекс, а не второй
-    // объект контроллера.
-    let state = Mutex::new(RefCell::new(ErasePage::<_, STATE_ERASE_SIZE>::new(
-        BlockingPartition::new(&flash, 0, FLASH_BYTES),
-    )));
-{%- endif %}
-{%- if dfu_bank == "true" %}
-    let dfu = Mutex::new(RefCell::new(dfu));
-
-    let config = BootLoaderConfig::from_linkerfile_blocking(&flash, &dfu, {% if state_paged == "true" %}&state{% else %}&flash{% endif %});
-{%- elsif swap_paged == "true" %}
-    // `ACTIVE` и `DFU` — со страницей обмена `SWAP_PAGE_SIZE`, крупнее физической
-    // страницы флеша (см. её описание): один мьютекс на оба раздела — они
-    // делят один контроллер `Flash`.
-    let swap = Mutex::new(RefCell::new(ErasePage::<_, SWAP_PAGE_SIZE>::new(
-        BlockingPartition::new(&flash, 0, FLASH_BYTES),
-    )));
-
-    let config = BootLoaderConfig::from_linkerfile_blocking(&swap, &swap, {% if state_paged == "true" %}&state{% else %}&flash{% endif %});
-{%- else %}
-
-    let config = BootLoaderConfig::from_linkerfile_blocking(&flash, &flash, {% if state_paged == "true" %}&state{% else %}&flash{% endif %});
-{%- endif %}
-    let active_offset = config.active.offset();
+    let config = signature::screen(config);
     let bl = BootLoader::prepare::<_, _, _, SWAP_BUFFER_SIZE>(config);
 {%- endif %}
 
@@ -196,7 +191,23 @@ fn main() -> ! {
         clippy::cast_possible_truncation,
         reason = "`usize` на Cortex-M — 32 бита"
     )]
-    let entry = FLASH_BASE as u32 + active_offset;
+    let entry = cpu::flash::FLASH_BASE as u32 + crate::layout::active().0;
+{%- if cache contains "scb_d" %}
+    // Кэш данных ядра включил `cpu::init` — и здесь тоже, а он переживает
+    // прыжок в приложение. Строки, прочитанные bootloader'ом до стирания
+    // разделов, устарели бы для приложения: сбрасываем кэш в память и
+    // обесцениваем. Инструкции обесценит сам `load` (VTOR и invalidate I-cache).
+    #[expect(
+        unsafe_code,
+        reason = "периферия ядра берётся через `steal()`: после прыжка инвариантов Rust нет"
+    )]
+    {
+        // SAFETY: дальше идёт прыжок в приложение; после него ни один инвариант
+        // Rust этого образа не действует, конфликтовать за периферию ядра некому.
+        let mut core = unsafe { cortex_m::Peripherals::steal() };
+        core.SCB.clean_invalidate_dcache(&mut core.CPUID);
+    }
+{%- endif %}
     info!("boot: переход в приложение по адресу {:x}", entry);
 {%- if graph == "true" %}
     // Сторож — последним, прямо перед прыжком, и целиком достаётся приложению:
@@ -204,11 +215,15 @@ fn main() -> ! {
     // Раньше он не нужен: бутлоадер защищает от неисправного образа (не
     // стартует, не кормит), а не от собственного обмена разделов, сколько бы
     // тот ни длился. Остановить его уже нельзя — приложение лишь подхватывает
-    // идущий счётчик (`bsp::wdg`, `arm()`). Без фичи `no-watchdog`: ею `cargo
+    // идущий счётчик (`cpu::wdg`, `arm()`). Без фичи `no-watchdog`: ею `cargo
     // xtask test target` собирает bootloader под тесты на плате, где кормить
     // сторож некому.
     #[cfg(not(feature = "no-watchdog"))]
-    IndependentWatchdog::new(p.{{watchdog_peripheral}}, bsp::wdg::HW_TIMEOUT_US).unleash();
+    let _armed = watchdog.arm();
+    // С фичей сторож не взводится, но значение из `split` обязано быть
+    // использовано — иначе предупреждение о неиспользованной переменной.
+    #[cfg(feature = "no-watchdog")]
+    let _ = watchdog;
 {%- endif %}
     // SAFETY: `load` ставит VTOR на этот адрес, читает из образа по нему
     // начальный MSP (первое слово) и reset-вектор (второе) и прыгает — за этой
@@ -217,11 +232,10 @@ fn main() -> ! {
     //
     // Предпосылки — раскладка и записанный образ, и обе сводятся к файлам:
     // * `entry` — это `FLASH_BASE` плюс смещение раздела ACTIVE, которое
-    //   `BootLoaderConfig::from_linkerfile_blocking` берёт из символов
-    //   `__bootloader_active_*`, то есть из `ORIGIN(ACTIVE)` в
-    //   `crates-cross/boot/memory.x` (тот же адрес, что `ORIGIN(FLASH)` в
-    //   `crates-cross/app/memory.x`); раскладку приложения с линковкой
-    //   сверяют `cargo xtask build` и прошивка перед тестами на плате.
+    //   `crate::layout` берёт из символов `__bootloader_active_*`, то есть из
+    //   `ORIGIN(ACTIVE)` в `crates-cross/boot/memory.x` (тот же адрес, что
+    //   `ORIGIN(FLASH)` в `crates-cross/app/memory.x`); раскладку приложения с
+    //   линковкой сверяют `cargo xtask build` и прошивка перед тестами на плате.
     // * первое и второе слова по этому адресу — MSP и reset-вектор образа,
     //   которые линкер положил в тот же раздел. Что bootloader их не
     //   проверяет — оговорка выше, про повреждённый образ.
@@ -245,5 +259,5 @@ fn main() -> ! {
 /// некому — дамп разбирает только `app`.
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo) -> ! {
-    bsp::reset::Reboot.reset_now()
+    cpu::System.reset_now()
 }

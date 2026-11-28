@@ -1,0 +1,28 @@
+[package]
+name = "panic-handler"
+version.workspace      = true
+edition.workspace      = true
+license.workspace      = true
+rust-version.workspace = true
+
+# Без целей unit-тестов и бенчмарков: им нужен крейт `test`, а его для
+# `thumbv*-none-*` нет (E0463), как и у `bsp`.
+[lib]
+test = false
+bench = false
+
+[lints]
+workspace = true
+
+[dependencies]
+defmt = { workspace = true }
+# Транспорт лога — RTT в обоих профилях (см. src/lib.rs).
+defmt-rtt = { workspace = true }
+# Паникёр dev-сборки и дамп release-сборки: оба приходят сюда, а не в `app`,
+# потому что библиотеку `app` линкует ещё и `target-tests` со своим паникёром.
+panic-probe = { workspace = true, features = ["print-defmt"] }
+panic-persist = { workspace = true }
+# Запрет прерываний в обработчике паники.
+cortex-m = { workspace = true }
+# Сброс МК после дампа — рычаг чипа.
+cpu = { workspace = true }

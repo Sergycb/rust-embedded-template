@@ -51,20 +51,25 @@ pub fn lint_cross(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     cmd!(sh, "cargo fmt --check").run()?;
     // `--all-targets` — та же команда, что зовёт rust-analyzer: заодно
     // линтятся тесты на устройстве (`target-tests`, свой harness). Цели
-    // unit-тестов у `bsp` нет (`test = false` в его манифесте): ей нужен крейт
-    // `test`, а его для `thumbv*-none-*` не существует (E0463).
+    // unit-тестов у `bsp`/`cpu` нет (`test = false` в их манифестах): ей нужен
+    // крейт `test`, а его для `thumbv*-none-*` не существует (E0463).
     cmd!(sh, "cargo clippy --workspace --all-targets -- -D warnings").run()?;
     // Второй проход, только release: профиль release выключает
     // `debug-assertions`/`overflow-checks`, поэтому всё, что за `debug_assert!`
     // или `#[cfg(not(debug_assertions))]` (паникёр release в
-    // `app/src/panic.rs`), проверяется только здесь. `bsp` линтуется вместе с
-    // `app`, чтобы получить фичи `app`. В `target-tests` такого кода нет —
-    // повторный проход над ними повторил бы первый.
+    // `panic-handler`), проверяется только здесь. `bsp` и `cpu` линтуются
+    // вместе с `app`, чтобы получить фичи `app` (`cpu` — в том числе
+    // `time-driver`). В `target-tests` такого кода нет — повторный проход над
+    // ними повторил бы первый.
     // {%- if ota == "true" %}
-    cmd!(sh, "cargo clippy -p app -p bsp --release -- -D warnings").run()?;
+    cmd!(
+        sh,
+        "cargo clippy -p app -p bsp -p cpu --release -- -D warnings"
+    )
+    .run()?;
     // `boot` — отдельным вызовом: в одном с `app` cargo объединил бы фичи, и
-    // `bsp` пришёл бы к нему с `time-driver`, которого у настоящего bootloader'а
-    // нет (он всегда release, `docs/architecture.md`).
+    // `cpu` пришёл бы к нему с `time-driver`, которого у настоящего
+    // bootloader'а нет (он всегда release, `docs/architecture.md`).
     cmd!(sh, "cargo clippy -p boot --release -- -D warnings").run()?;
     // Bootloader под тесты на плате (`cargo xtask test target`) собирается с
     // фичей `no-watchdog`: эта ветка нигде больше не компилируется.
@@ -74,7 +79,7 @@ pub fn lint_cross(sh: &xshell::Shell) -> Result<(), anyhow::Error> {
     )
     .run()?;
     // {%- else %}
-    //{{newline}}    cmd!(sh, "cargo clippy -p app -p bsp --release -- -D warnings").run()?;
+    //{{newline}}    cmd!({{newline}}        sh,{{newline}}        "cargo clippy -p app -p bsp -p cpu --release -- -D warnings"{{newline}}    ){{newline}}    .run()?;
     // {%- endif %}
     Ok(())
 }

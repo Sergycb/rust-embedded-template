@@ -30,52 +30,43 @@ defmt-rtt = { workspace = true }
 defmt = { workspace = true }
 # Точка входа (`#[entry]`).
 cortex-m-rt = { workspace = true }
-{%- if ota_store == "external" %}
-# Задержка на `SysTick` драйвера внешней флеши (src/external.rs).
+{%- if cache contains "scb_d" %}
+# Кэш данных ядра: `cpu::init` включает его и в bootloader'е, а приложение
+# получает управление без сброса — перед прыжком кэш надо сбросить (src/main.rs).
 cortex-m = { workspace = true }
 {%- endif %}
-# Переключение банков, HAL, общие с приложением константы раскладки и сброс МК
-# в паникёре (`bsp::reset`) — из `bsp`, а не копиями. Фичи `time-driver` здесь нет и быть не должно (см.
-# `bsp/Cargo.toml`).
-bsp = { workspace = true }
+# Чип и его периферия: HAL, распиновка, сырые ручки флеша и система
+# (`cpu::System` в паникёре). Фичи `time-driver` здесь нет и быть не должно
+# (см. `cpu/Cargo.toml`).
+cpu = { workspace = true }
+# Разделы и их границы: `ports::layout_fingerprint` (src/layout.rs) и
+# `ports::MAX_WRITE_SIZE` (src/external.rs).
+ports = { workspace = true }
 embassy-boot-stm32 = { workspace = true, features = ["defmt"] }
 {%- if erase_zero == "true" and ota_store != "external" %}
 # Прямая зависимость только ради фичи: у этого чипа стёртая страница читается
 # нулями, и `embassy-boot` должен ждать 0x00 вместо 0xFF, иначе признак
 # «стёрто» читается наоборот. Только при STATE во внутреннем flash: внешняя
-# NOR стирается в 0xFF. `embassy-boot-stm32` фичу не пробрасывает; `bsp` её
+# NOR стирается в 0xFF. `embassy-boot-stm32` фичу не пробрасывает; `cpu` её
 # тоже включает, но признак, от которого зависит обмен разделов, bootloader
 # просит сам, а не через соседа.
 embassy-boot = { workspace = true, features = ["flash-erase-zero"] }
 {%- endif %}
-embassy-stm32 = { workspace = true, features = ["defmt"] }
+# Мьютексы разделов со своей страницей (`ErasePage` поверх `BlockingPartition`,
+# src/main.rs): под ними — один контроллер чипа.
 embassy-sync = { workspace = true }
+# `BlockingPartition` — раздел над ручкой чипа: из него строятся и разделы
+# обмена, и `ErasePage`.
+embassy-embedded-hal = { workspace = true }
 {%- if boot_partitioned == "true" %}
 # Разделы со своей страницей, а не страницей всего чипа
-# (`flash_page::ErasePage` поверх `BlockingPartition`, src/main.rs). Тот же
-# код, что строит их в приложении (bsp), — расходиться им нельзя.
+# (`flash_page::ErasePage` поверх `BlockingPartition`, src/main.rs).
 flash-page = { workspace = true }
 {%- endif %}
-{%- if ota_store == "external" %}
-# Слово записи адаптера OTA приложения (`ports::MAX_WRITE_SIZE`,
-# src/external.rs) — предел, под который посчитан журнал `STATE`.
-ports = { workspace = true }
-{%- endif %}
-{%- if boot_partitioned == "true" %}
-# Раздел на весь флеш под замком (`BlockingPartition`) — основа разделов со
-# своей страницей (`flash_page::ErasePage`, src/main.rs): тот же приём, что в `bsp`.
-embassy-embedded-hal = { workspace = true }
-{%- endif %}
+# Трейты `NorFlash` — в проверках при компиляции (src/external.rs) и в границах
+# проверки подписи (src/signature.rs). Та же версия, что тянет embassy-boot.
+embedded-storage = { workspace = true }
 # Решение bootloader'а — проверка нового образа перед обменом
 # (`domain::ota::boot::screen_update`, фича `boot` у `domain`); почему `boot` зависит
-# от `domain` и что из него попадает в образ — docs/architecture.md. Драйвер
-# времени `domain` не включает — см. комментарий к `embassy-stm32` в
-# crates-cross/Cargo.toml.
+# от `domain` и что из него попадает в образ — docs/architecture.md.
 domain = { workspace = true, features = ["boot"] }
-{%- if ota_store == "external" %}
-# Геометрия драйвера внешней флеши в проверках при компиляции.
-embedded-storage = { workspace = true }
-# Блокирующий драйвер внешней флеши (src/external.rs) — тот же крейт, что у
-# `bsp::external`, с фичей `sync`.
-w25q = { workspace = true, features = ["sync"] }
-{%- endif %}

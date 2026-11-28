@@ -6,6 +6,7 @@
 {%- assign client = 0 %}
 {%- for l in xs %}
 {%- assign f = l | split: ":" %}
+{%- assign parts = f[4] | split: "_" %}
 {%- if f[3] == "modbus" %}
 
 /// Узел `MODBUS_{{ f[4] | upcase }}`.
@@ -13,7 +14,7 @@ pub mod {{ f[4] }} {
     use embassy_executor::Spawner;
 
     /// Рычаг платы, над которым строится канал (`board.{{ f[4] }}{% if f[0] == "usb" %}.cdc{% endif %}`).
-    type Source = {% if f[0] == "usb" %}bsp::usb::{{ f[4] }}::Cdc{% else %}bsp::serial::{{ f[4] }}::Serial{% endif %};
+    type Source = {% if f[0] == "usb" %}crate::{% for part in parts %}{{ part | capitalize }}{% endfor %}Cdc{% else %}cpu::com::{{ f[4] }}::Serial{% endif %};
 
     #[embassy_executor::task]
     async fn task(source: Source, map: crate::registers::Handle{% if ota == "true" %}, version: &'static str{% endif %}) {

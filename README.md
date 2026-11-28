@@ -91,7 +91,7 @@ cargo run -p app                    # прошить приложение и с�
 
 | Что | Где | Зачем |
 |---|---|---|
-| Распиновка платы | `crates-cross/bsp/src/resources.rs` | `assign_resources!` разложит `Peripherals` по именованным группам — из них `bsp` соберёт драйверы; наружу уходит не периферия, а объект платы под трейтом (`docs/resources.md`) |
+| Распиновка платы | `crates-cross/cpu/src/wiring.rs` | `assign_resources!` разложит `Peripherals` по именованным группам — из них `cpu` соберёт драйверы; наружу уходит не периферия, а объект платы под трейтом (`docs/resources.md`) |
 {%- capture app_mods %}{% if net_services != "" %}, `net`{% endif %}{% if graph == "true" %}, `graph.rs`{% else %}, `tasks`{% endif %}{% endcapture %}
 | Сборка адаптеров | `crates-cross/app/src/` ({{ app_mods | remove_first: ", " }}) | типы и буферы каналов протоколов и служб{% if ota == "true" or config == "true" %}; {% if ota == "true" %}адаптер обновления{% if config == "true" %} и {% endif %}{% endif %}{% if config == "true" %}хранилище настроек{% endif %} над кусками флеша платы — их тип назван прямо во входе узла{% endif %} |
 {%- if graph == "true" %}
@@ -116,10 +116,11 @@ cargo run -p app                    # прошить приложение и с�
 Первый свой узел — от модуля в `domain` до {% if graph == "true" %}записи в графе{% else %}модуля задачи в `app`{% endif %} и теста на хосте —
 по шагам в `docs/first-node.md`.
 
-{% if graph == "true" %}Граф и модули{% else %}Модули{% endif %} `bsp` уже содержат рабочие примеры в doc-комментариях и в `docs/` — с
+{% if graph == "true" %}Граф и модули{% else %}Модули{% endif %} `cpu` и `bsp` уже содержат рабочие примеры в doc-комментариях и в `docs/` — с
 объяснением, почему выбрана именно эта библиотека, а не соседняя.
 
-`Board::new()` — единственное место, где начинается владение железом: наружу он
+`cpu::init()` — единственное место, где начинается владение железом: он поднимает
+HAL и отдаёт `Cpu`. `Board::new(cpu)` раскладывает его по полям, а наружу плата
 отдаёт не периферию, а рычаги платы — объекты под трейтами{% if has_usb == "true" or has_net == "true" %} (пары, которые порознь
 не собрать, — {% if has_usb == "true" %}USB-устройство с потоком CDC{% if has_net == "true" %} и {% endif %}{% endif %}{% if has_net == "true" %}сетевой стек с его фоновой работой{% endif %}, — собранными){% endif %}.
 Протоколы приложения над ними строит `app`{% if protocol_link == "true" or has_app_net == "true" %} ({% if protocol_link == "true" %}{% if graph == "true" %}`crates-cross/app/src/graph.rs`{% else %}`crates-cross/app/src/tasks/`{% endif %}{% if has_app_net == "true" %}, {% endif %}{% endif %}{% if has_app_net == "true" %}`crates-cross/app/src/net.rs`{% endif %}){% endif %}, и
@@ -193,20 +194,20 @@ supervisor-графы, watchdog{% endif %}). Вся остальная логи�
 «системная» на вид (стейтчарты, RPC, конкурентные примитивы). Подробное правило
 «куда класть что» и разбор пограничных случаев — в docs/architecture.md.
 
-Границу `bsp` → `app` пересекают **объекты под трейтами, а не периферия**.
+Границу `cpu` → `app` пересекают **объекты под трейтами, а не периферия**.
 Путь драйвера микросхемы платы такой:
 
 ```
-вывод чипа → группа assign_resources! (bsp/src/resources.rs)
+вывод чипа → группа assign_resources! (cpu/src/wiring.rs)
            → тип драйвера, generic по трейтам embedded-hal, живёт в хостовом крейте
              (или во внешнем крейте) и проверяется на хосте моком — до тех пор,
              пока ему не понадобится периферия конкретного чипа
-           → объект драйвера над шиной собирает bsp в Board::new
-           → готовый объект становится полем Board
+           → объект драйвера над шиной собирает cpu в cpu::init
+           → готовый объект становится полем Board (его собирает bsp::Board::new)
            → узел domain получает его во входе и зовёт через порт из ports
 ```
 
-Где лежит тип, решает один признак: нужен чип — `bsp`; обёртка над железом
+Где лежит тип, решает один признак: нужен чип — `cpu`; обёртка над железом
 без чипа — `adapters-hw`; реализации портов, когда их несколько, —
 `adapters-logic`; остальное — `domain` (docs/architecture.md, «Адаптеры
 делятся по одному признаку — нужен ли чип»). В `ports` — все трейты, и каждый —
@@ -220,7 +221,7 @@ supervisor-графы, watchdog{% endif %}). Вся остальная логи�
 {% if ota == "true" %}
 - Адаптер обновления — конкретный тип `domain::ota::Updater`, его строит `app` над
   разделами флеша, которые отдаёт `Board` (`ports::Partitions`); порт перезагрузки
-  `Reboot` для узла OTA реализует `bsp::reset`.
+  `Reboot` для узла OTA реализует `cpu::system`.
 {%- endif %}
 {%- if config == "true" %}
 - Хранилище настроек — конкретный тип `domain::settings::Settings`, его строит `app`
@@ -269,7 +270,7 @@ supervisor-графы, watchdog{% endif %}). Вся остальная логи�
 {%- endif %}
 {%- if protocol == "canopen" %}
 - `CanBus` — шина CAN под узлом CANopen `domain::CANOPEN_FRAG` (стек `zencan`): его
-  реализует плата поверх CAN-контроллера чипа (`bsp::can`), а на хосте узел
+  реализует плата поверх CAN-контроллера чипа (`cpu::can`), а на хосте узел
   проверяется над фейком шины.
 {%- endif %}
 {%- endif %}
@@ -291,7 +292,7 @@ supervisor-графы, watchdog{% endif %}). Вся остальная логи�
 |---|---|---|
 {%- if graph == "true" %}
 | `supervisor` | Весь граф embassy-задач одним макросом `supervisor_graph!` из фрагментов `domain`: передача рычагов платы в задачу через `resources:`, почтовые ящики `inbox:`, broadcast `publish:`/`subscribe:`{% if ota == "true" %}, упорядоченный старт по `deps:`, RPC `request:`/`calls:`{% endif %} и общий watchdog. Остальные слова DSL (перезапуск, остановка, флаги статуса…) — под фичами `supervisor`, включаются в манифесте (`docs/first-node.md`). Заменил связку `embassy-supervisor` + `embassy-task-watchdog` + `ector`, где один и тот же граф описывался тремя независимыми DSL. | `crates-cross/app/src/graph.rs` |
-| `watchdog` | `no_std`-ядро мультиплексора: несколько программных watchdog'ов задач, каждый со своим таймаутом, поверх одного аппаратного. Привязка к железу — единственный трейт `HardwareWatchdog`, и в шаблоне она не только написана (`bsp::wdg::Iwdg` поверх IWDG), но и подключена: запускает и кормит сторож блок `watchdog:` графа. Узлы шаблона объявлены наблюдаемыми (`observe`) — их просрочка попадает в лог, а не сбрасывает плату. Разбор — `docs/watchdog.md`. | `crates-cross/bsp/src/wdg.rs` |
+| `watchdog` | `no_std`-ядро мультиплексора: несколько программных watchdog'ов задач, каждый со своим таймаутом, поверх одного аппаратного. Привязка к железу — единственный трейт `HardwareWatchdog`, и в шаблоне она не только написана (`cpu::wdg::Iwdg` поверх IWDG), но и подключена: запускает и кормит сторож блок `watchdog:` графа. Узлы шаблона объявлены наблюдаемыми (`observe`) — их просрочка попадает в лог, а не сбрасывает плату. Разбор — `docs/watchdog.md`. | `crates-cross/cpu/src/wdg.rs` |
 {%- else %}
 | `supervisor` | Контексты узлов `domain` (`supervisor_fragment!`) и каналы между ними; без графа узлы спавнит `tasks::spawn_all`. | `crates-cross/app/src/tasks.rs` |
 {%- endif %}
@@ -340,7 +341,7 @@ flash чипа (4–32 байта). Это не `PAGE_SIZE`: тот `embassy-boo
 
 От OTA можно отказаться прямо при генерации — ответом `no` на вопрос про неё (или
 `--define ota=no`). Тогда приложению достаётся весь flash вместо раздела `ACTIVE`, а
-из проекта уходят `crates-cross/boot`, разделы OTA в `bsp::flash` и всё, что ниже.
+из проекта уходят `crates-cross/boot`, разделы OTA в `cpu::flash` и всё, что ниже.
 
 С OTA проекту нужен хотя бы один транспорт: образ приходит по нему{% if has_protobuf == "true" %}, и `cargo xtask
 test host-target` проверяет устройство тоже через него{% endif %}. В списке транспортов тогда нет
@@ -353,9 +354,9 @@ interface=none` с OTA — ошибка генерации. Протокол м�
 `DFU` и `BOOTLOADER_STATE` в этом проекте — на внешней SPI NOR: внутри
 остаются bootloader и `ACTIVE` почти на весь чип (на F407VE 384 KiB вместо 128).
 Драйвер микросхемы — W25Q (`w25q`), и он в шаблоне настоящий; заглушка — только шина
-под ним (`bsp::external::StubBus`). Шину с выводами своей платы вы подставляете в
-`crates-cross/bsp/src/external.rs` (асинхронный драйвер) и в
-`crates-cross/boot/src/external.rs` (блокирующий), рецепт — `docs/modules/bsp-external.md`.
+под ним (`cpu::external::StubBus`). Шину с выводами своей платы вы подставляете в
+`crates-cross/cpu/src/external.rs` (асинхронный драйвер) и в
+`crates-cross/boot/src/external.rs` (блокирующий), рецепт — `docs/modules/cpu-external.md`.
 Совместимость драйвера с раскладкой проверяет компилятор: стирание обязано делить
 страницу обмена `EXT_PAGE_SIZE` (сектор 4 KiB годится везде), а слово записи — быть не
 шире 32 байт. Раскладка и ограничения — `docs/flash.md`, поведение bootloader'а — `docs/ota.md`.
@@ -366,7 +367,7 @@ interface=none` с OTA — ошибка генерации. Протокол м�
 (`domain::ota::apply`) и отвечает
 исходом на каждую команду. Пишет образ и хранит состояние bootloader'а адаптер
 `domain::ota::Updater` над `embassy-boot`; строит его `app` над полем платы `firmware`
-(`bsp::FirmwareFlash`, `crates-cross/bsp/src/{% if ota_store == "external" %}external{% else %}flash{% endif %}.rs`) — разделами `DFU` и
+(`app::storage::Ota`, `crates-cross/cpu/src/{% if ota_store == "external" %}external{% else %}flash{% endif %}.rs`) — разделами `DFU` и
 `BOOTLOADER_STATE`, которые плата нарезает по символам `memory.x`. {% if graph == "true" %}Граф забирает поле одной строкой (`fragments:` в
 `crates-cross/app/src/graph.rs`){% else %}Задача забирает поле в `crates-cross/app/src/tasks/ota.rs`{% endif %}. Версию образа задаёт приложение — свойства
 образа своего бинарника (константа `IMAGE` в `main.rs` и `src/bin/test-ota.rs`), а не плата; открытый ключ,
@@ -525,18 +526,18 @@ git tag v1.2.3 && git push origin v1.2.3
 ### Настройки во flash
 
 Настройки лежат {% if config_store == "eeprom" %}во внутренней EEPROM чипа{% elsif config_store == "external" %}на внешней флеши{% else %}в разделе `CONFIG` во flash{% endif %}: `Board` отдаёт поле `config`
-(`bsp::ConfigFlash`), носитель — {% if config_store == "eeprom" %}EEPROM, обёрнутая платой в `NorFlash`
-(`crates-cross/bsp/src/eeprom.rs`){% elsif config_store == "external" %}внешняя флеш (`crates-cross/bsp/src/external.rs`){% else %}раздел `CONFIG` от границ из генерации
-(`crates-cross/bsp/src/flash.rs`){% endif %}. Само хранилище —
+(`app::storage::ConfigFlash`), носитель — {% if config_store == "eeprom" %}EEPROM, обёрнутая платой в `NorFlash`
+(`crates-cross/cpu/src/eeprom.rs`){% elsif config_store == "external" %}внешняя флеш (`crates-cross/cpu/src/external.rs`){% else %}раздел `CONFIG` от границ из генерации
+(`crates-cross/cpu/src/flash.rs`){% endif %}. Само хранилище —
 `domain::settings::Settings` (тестируется на хосте) поверх `sequential-storage`
 на весь объём носителя, пары «ключ — значение», переживающие и перезапуск, и
 обновление прошивки, — строит `app` над носителем и отдаёт узлу, которому оно
-нужно (тип — `domain::settings::Settings<bsp::ConfigFlash>` во входе узла).
+нужно (тип — `domain::settings::Settings<app::storage::ConfigFlash>` во входе узла).
 
 ```rust
-// {% if graph == "true" %}Граф{% else %}Задача{% endif %} строит хранилище над носителем `board.config` и отдаёт
+// {% if graph == "true" %}Граф{% else %}Задача{% endif %} строит хранилище над носителем `app::storage::settings(…, board.flash)` и отдаёт
 // его узлу в `domain`, обобщённому по носителю `F`.
-let mut settings = domain::settings::Settings::whole(board.config);
+let mut settings = domain::settings::Settings::whole(app::storage::settings(…, board.flash));
 settings.write(KEY_CALIBRATION, &encoded).await?;
 if let Some(raw) = settings.read(KEY_CALIBRATION, &mut scratch).await? {
     // раскодировать тем же, чем кодировали: postcard, miniconf, свой формат
@@ -549,13 +550,13 @@ if let Some(raw) = settings.read(KEY_CALIBRATION, &mut scratch).await? {
 
 В этом проекте носитель уже забирает узел {% if has_canopen == "true" %}CANopen (ключи
 `domain::canopen::{OBJECTS_KEY, NODE_ID_KEY}`){% else %}`SSH` (ключ хоста, `domain::ssh::HOST_KEY_ID`){% endif %}: своим настройкам
-нужен общий доступ через его хранилище, второй `Settings::whole(board.config)` не соберётся.
+нужен общий доступ через его хранилище, второй `Settings::whole(app::storage::settings(…, board.flash))` не соберётся.
 {%- endif %}
 
 {% if config_store == "external" %}Внешняя флеш — W25Q: драйвер `w25q` в
 шаблоне настоящий, а шину с выводами своей платы вы подставляете в
-`crates-cross/bsp/src/external.rs` (QSPI или OCTOSPI, где они у чипа есть, иначе SPI; рецепт —
-docs/modules/bsp-external.md). {% elsif config_store == "eeprom" %}EEPROM на L0/L1 хранит настройки, не тратя флеш. {% endif %}Подробности — docs/flash.md.
+`crates-cross/cpu/src/external.rs` (QSPI или OCTOSPI, где они у чипа есть, иначе SPI; рецепт —
+docs/modules/cpu-external.md). {% elsif config_store == "eeprom" %}EEPROM на L0/L1 хранит настройки, не тратя флеш. {% endif %}Подробности — docs/flash.md.
 {%- if config_store == "flash" %}
 
 По умолчанию раздел выключен, и это не случайность: во флеше он стоит **две страницы стирания**.
@@ -590,7 +591,7 @@ H7{% if ota != "true" %} и F4/F7{% endif %} с секторами по 128 KiB 
 печатает список этапов и завершается с ошибкой, ничего не запуская.
 
 Второй и третий этапы приезжают с рабочим минимумом, а не пустым файлом.
-`crates-cross/target-tests/tests/test.rs` проверяет на реальном чипе, что `Board::new()`
+`crates-cross/target-tests/tests/test.rs` проверяет на реальном чипе, что `Board::new(cpu::init())`
 доходит до конца и что драйвер времени тикает (частая молчаливая поломка
 тактирования — прошивка стартует, но любой `Timer::after` висит вечно).
 
@@ -657,7 +658,7 @@ HOST_TARGET_BAUD=115200              # скорость UART (по умолча�
 {%- assign xs = links | split: "," %}
 {%- for l in xs %}
 {%- assign f = l | split: ":" %}
-| `{{ f[4] }}` — {% if f[0] == "uart" %}UART{% elsif f[0] == "can" %}CAN{% elsif f[0] == "usb" %}USB CDC ACM{% elsif f[0] == "tcp" %}TCP{% else %}UDP{% endif %} `{{ f[2] }}` | {% if f[3] == "modbus" %}`MODBUS_{{ f[4] | upcase }}`{% elsif f[3] == "protobuf" %}`PROTOBUF_{{ f[4] | upcase }}`{% elsif f[3] == "canopen" %}`CANOPEN_{{ f[4] | upcase }}`{% elsif f[3] == "cli" %}`CONSOLE` — консоль{% else %}протокола нет — объект ждёт ваш узел{% endif %}{% if f[0] == "usb" %}, `USB_{{ f[4] | upcase }}`{% endif %}{% if f[0] == "tcp" or f[0] == "udp" %}, `NET`{% endif %} | `crates-cross/bsp/src/{% if f[0] == "uart" %}serial{% elsif f[0] == "can" %}can{% elsif f[0] == "usb" %}usb{% else %}net{% endif %}.rs` (`docs/modules/bsp-{% if f[0] == "uart" %}serial{% elsif f[0] == "can" %}can{% elsif f[0] == "usb" %}usb{% else %}net{% endif %}.md`) |
+| `{{ f[4] }}` — {% if f[0] == "uart" %}UART{% elsif f[0] == "can" %}CAN{% elsif f[0] == "usb" %}USB CDC ACM{% elsif f[0] == "tcp" %}TCP{% else %}UDP{% endif %} `{{ f[2] }}` | {% if f[3] == "modbus" %}`MODBUS_{{ f[4] | upcase }}`{% elsif f[3] == "protobuf" %}`PROTOBUF_{{ f[4] | upcase }}`{% elsif f[3] == "canopen" %}`CANOPEN_{{ f[4] | upcase }}`{% elsif f[3] == "cli" %}`CONSOLE` — консоль{% else %}протокола нет — объект ждёт ваш узел{% endif %}{% if f[0] == "usb" %}, `USB_{{ f[4] | upcase }}`{% endif %}{% if f[0] == "tcp" or f[0] == "udp" %}, `NET`{% endif %} | `crates-cross/cpu/src/{% if f[0] == "uart" %}com{% elsif f[0] == "can" %}can{% elsif f[0] == "usb" %}usb{% else %}eth{% endif %}.rs` (`docs/modules/{% if f[0] == "uart" %}cpu-com{% elsif f[0] == "can" %}cpu-can{% elsif f[0] == "usb" %}bsp-usb{% else %}bsp-ethernet{% endif %}.md`) |
 {%- endfor %}
 
 {%- if protocol != "none" and protocol != "cli" %}
@@ -747,7 +748,7 @@ SSH тяжёлый: около 165 KiB флеша, 19 KiB статической
 консоль `bareminal` (команды, `help`, история, автодополнение) добавляет ещё около
 27 KiB флеша, поэтому генерация предлагает SSH только с разделом
 приложения от 320 KiB. Случайность криптографии — аппаратный RNG через `getrandom`
-(`crates-cross/bsp/src/rng.rs`). Попыток входа на соединение — не больше шести
+(`crates-cross/cpu/src/rng.rs`). Попыток входа на соединение — не больше шести
 и 30 секунд на вход: `sunset` их не считает, ограничивает узел. Консоль, в которой
 15 минут ничего не вводили, закрывается: соединение у платы одно, и забытое окно
 терминала не держит его вечно.
@@ -815,8 +816,8 @@ PuTTY. Сначала консоль спрашивает пароль (`passwor
 
 ## Тактирование: дамп при старте и контракт платы
 
-`Board::new()` печатает в defmt фактические частоты, посчитанные HAL
-(`bsp: плата готова, частоты ...`). Это не отладочный
+`cpu::init()` печатает в defmt фактические частоты, посчитанные HAL
+(`cpu: чип готов, частоты ...`). Это не отладочный
 вывод, а единственный способ увидеть, что получилось: компилятор про частоты не знает
 ничего, а embassy проверяет только верхние границы шин (`assert!(hclk <= hclk_max)`).
 Конфигурация, из-за которой HSE не завёлся и HAL молча уехал на HSI, или та, что даёт
@@ -975,15 +976,15 @@ FDCAN свои `IT0`/`IT1`, а у `SPI` и таймеров их нет вовс
 | Профиль | Паникёр | После падения |
 |---|---|---|
 | debug | `panic-probe` | причина в defmt-логе, остановка на месте |
-| release | свой, поверх `panic-persist` | причина в регионе `PANIC` и в defmt-логе, сброс МК (`bsp::reset::Reboot`) |
+| release | свой, поверх `panic-persist` | причина в регионе `PANIC` и в defmt-логе, сброс МК (`cpu::System`) |
 
 Регион `PANIC` отрезан от конца RAM при генерации. При следующем старте release-`app`
 читает сохранённое сообщение и печатает его первым делом — одной строкой
 `предыдущий запуск упал: ...`. Читается оно ровно один раз: `panic-persist` стирает
 свою магию, чтобы одно и то же падение не всплывало после каждого сброса.
 
-Рядом — причина сброса: `main` ещё до `Board::new` читает флаги `RCC` (сторож,
-программный сброс, питание, вывод `NRST`…) и снимает их (`bsp::reset::take_cause`), а
+Рядом — причина сброса: `main` ещё до `cpu::init` читает флаги `RCC` (сторож,
+программный сброс, питание, вывод `NRST`…) и снимает их (`cpu::System::take_cause`), а
 строка старта `app: причина сброса …` её показывает.
 {%- if has_protobuf == "true" or net_services != "" or has_cli == "true" %}
 Без пробника обе вещи видны хосту в сведениях об устройстве — поля `reset` и
@@ -1120,7 +1121,7 @@ cargo llvm-cov nextest --workspace --exclude host-target-tests \
 [«На сколько вырос образ»](#на-сколько-вырос-образ).
 
 Отдельно стоит джоб **{% if ci == "github" %}`Pins`{% else %}`pins:check`{% endif %}**. Он запускается **только**
-когда правили `crates-cross/bsp/src/`, сам `crates-host/chip-info/` или
+когда правили `crates-cross/cpu/src/`, сам `crates-host/chip-info/` или
 `crates-cross/Cargo.toml`, и проверяет то, чего не видит компилятор: не заняли ли вы
 выводы отладочного порта. Заняли `PA13`/`PA14` — джоб падает, и это правильно: с
 такой прошивкой плата перестанет отвечать пробнику, доставать её придётся через
