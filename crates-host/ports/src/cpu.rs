@@ -37,7 +37,7 @@ pub trait Cpu {
 {%- endunless %}
 {%- endfor %}
 {%- if has_net == "true" %}
-    /// HAL-драйвер Ethernet (`embassy_net::Driver`).
+    /// HAL-драйвер Ethernet: трейт драйвера связывает `bsp`, здесь он не назван.
     type Ethernet;
 {%- endif %}
     /// Система: перезагрузка МК и причина прошлого сброса.
